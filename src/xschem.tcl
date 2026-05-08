@@ -4689,6 +4689,93 @@ proc load_additional_files {} {
 # confirm_overwrt: ask before overwriting an existing file
 # initialf: fill the file entry box with this name (used when saving)
 #
+proc fuzzy_subseq_score {q s} {
+  set q [string tolower $q]
+  regsub -all { } $q {} q
+  set s [string tolower $s]
+  set n [string length $q]
+  set m [string length $s]
+  if {$n == 0} { return 0 }
+  if {$n > $m} { return -1 }
+  set qi 0
+  set last -2
+  set score 0
+  for {set i 0} {$i < $m && $qi < $n} {incr i} {
+    if {[string index $q $qi] eq [string index $s $i]} {
+      incr score 1
+      if {$i == $last + 1} { incr score 3 }
+      if {$i == 0} {
+        incr score 6
+      } else {
+        if {[regexp {[/_\-. ]} [string index $s [expr {$i-1}]]]} { incr score 4 }
+      }
+      set last $i
+      incr qi
+    }
+  }
+  if {$qi < $n} { return -1 }
+  return [expr {$score * 100 - $last}]
+}
+
+proc fuzzy_match_glob {pat name} {
+  if {[regexp {^(.*)\{([^{}]+)\}(.*)$} $pat -> pre alts post]} {
+    foreach alt [split $alts ","] {
+      if {[string match "${pre}${alt}${post}" $name]} { return 1 }
+    }
+    return 0
+  }
+  return [string match $pat $name]
+}
+
+proc fuzzy_walk {dir maxdepth} {
+  set out {}
+  if {$maxdepth <= 0} { return $out }
+  if {[catch {glob -nocomplain -directory $dir -tails *} entries]} { return $out }
+  foreach e $entries {
+    if {[string index $e 0] eq "."} { continue }
+    set full [file join $dir $e]
+    if {[file isdirectory $full]} {
+      foreach sub [fuzzy_walk $full [expr {$maxdepth - 1}]] {
+        lappend out [file join $e $sub]
+      }
+    } else {
+      lappend out $e
+    }
+  }
+  return $out
+}
+
+proc fuzzy_filter_files2 {q} {
+  global file_dialog_files2 file_dialog_dir1 file_dialog_ext
+  if {$q eq {}} {
+    setglob $file_dialog_dir1
+    return
+  }
+  set all [fuzzy_walk $file_dialog_dir1 6]
+  set ext_pat $file_dialog_ext
+  if {$ext_pat ne {} && $ext_pat ne {*}} {
+    set filt {}
+    foreach f $all {
+      if {[fuzzy_match_glob $ext_pat [file tail $f]]} { lappend filt $f }
+    }
+    set all $filt
+  }
+  set scored {}
+  foreach name $all {
+    set sc [fuzzy_subseq_score $q $name]
+    if {$sc >= 0} { lappend scored [list $sc $name] }
+  }
+  set sorted [lsort -decreasing -integer -index 0 $scored]
+  set out {}
+  set n 0
+  foreach pair $sorted {
+    if {$n >= 500} break
+    lappend out [lindex $pair 1]
+    incr n
+  }
+  set file_dialog_files2 $out
+}
+
 proc load_file_dialog {{msg {}} {ext {}} {global_initdir {INITIALINSTDIR}}
      {loadfile {1}} {confirm_overwrt {1}} {initialf {}}} {
   global file_dialog_index1 file_dialog_files2 file_dialog_files1 file_dialog_retval file_dialog_dir1 pathlist OS
@@ -4853,6 +4940,21 @@ proc load_file_dialog {{msg {}} {ext {}} {global_initdir {INITIALINSTDIR}}
     set file_dialog_retval {   }
   }
 
+  label .load.buttons_bot.fzflab -text { Fuzzy:}
+  entry .load.buttons_bot.fzf -width 18 -highlightcolor red -highlightthickness 2 \
+    -highlightbackground [option get . background {}]
+  entry_replace_selection .load.buttons_bot.fzf
+  bind .load.buttons_bot.fzf <KeyRelease> {
+    fuzzy_filter_files2 [.load.buttons_bot.fzf get]
+    file_dialog_set_colors2
+    set file_dialog_retval {   }
+  }
+  bind .load.buttons_bot.fzf <FocusIn> {
+    fuzzy_filter_files2 [.load.buttons_bot.fzf get]
+    file_dialog_set_colors2
+    set file_dialog_retval {   }
+  }
+
   button .load.buttons.up -width 5 -text Up -command {load_file_dialog_up  $file_dialog_dir1} -takefocus 0
   label .load.buttons.mkdirlab -text { New dir: }
   entry .load.buttons.newdir -width 16 -takefocus 0
@@ -4887,6 +4989,8 @@ proc load_file_dialog {{msg {}} {ext {}} {global_initdir {INITIALINSTDIR}}
   pack .load.buttons.rmdir .load.buttons.mkdir -side right
   pack .load.buttons_bot.srclab -side left
   pack .load.buttons_bot.src -side left
+  pack .load.buttons_bot.fzflab -side left
+  pack .load.buttons_bot.fzf -side left
   pack .load.buttons_bot.label -side left
   pack .load.buttons_bot.entry -side left -fill x -expand true
 
@@ -5741,6 +5845,77 @@ proc file_chooser_delete {} {
 }
 
 #### maxdepth: how many levels to descend for each $paths directory (-1: no limit)
+proc fuzzy_chooser_inline {q} {
+  global file_chooser new_file_browser_depth new_file_browser_ext pathlist
+  if {$q eq {}} {
+    set file_chooser(files) {}
+    set file_chooser(fullpathlist) {}
+    set file_chooser(nitems) 0
+    .ins.center.leftdir.l selection clear 0 end
+    file_chooser_dirlist
+    return
+  }
+  set nfbe $new_file_browser_ext
+  if {[catch {regexp $nfbe {12345}}]} { set nfbe {} }
+  set allfiles [match_file {} {} $new_file_browser_depth 1]
+  set scored {}
+  foreach f $allfiles {
+    if {$nfbe ne {}} {
+      set ok 0
+      catch {set ok [regexp $nfbe $f]}
+      if {!$ok} continue
+    }
+    set sc [fuzzy_subseq_score $q $f]
+    if {$sc >= 0} { lappend scored [list $sc $f] }
+  }
+  set sorted [lsort -decreasing -integer -index 0 $scored]
+  set hits {}
+  set n 0
+  foreach pair $sorted {
+    if {$n >= 500} break
+    lappend hits [lindex $pair 1]
+    incr n
+  }
+  set seen_dir [dict create]
+  set new_dirs {}
+  foreach f $hits {
+    set d [file dirname $f]
+    if {![dict exists $seen_dir $d]} {
+      dict set seen_dir $d 1
+      lappend new_dirs $d
+    }
+  }
+  set new_tails {}
+  foreach d $new_dirs {
+    set t {}
+    foreach p $pathlist {
+      set pp [file dirname $p]/
+      if {[string first $pp $d] == 0} {
+        set t [string range $d [string length $pp] end]
+        break
+      }
+    }
+    if {$t eq {}} { set t [file tail $d] }
+    lappend new_tails $t
+  }
+  set file_chooser(dirs) $new_dirs
+  set file_chooser(dirtails) $new_tails
+  set file_chooser(files) $hits
+  set file_chooser(fullpathlist) $hits
+  set file_chooser(nitems) [llength $hits]
+  global dark_gui_colorscheme
+  if {$dark_gui_colorscheme} { set col cyan } else { set col blue }
+  set i 0
+  foreach p $file_chooser(dirs) {
+    if {[lsearch -exact $pathlist $p] != -1} {
+      .ins.center.leftdir.l itemconfigure $i -foreground $col -selectforeground $col
+    } else {
+      .ins.center.leftdir.l itemconfigure $i -foreground black -selectforeground black
+    }
+    incr i
+  }
+}
+
 proc file_chooser {} {
   global file_chooser new_file_browser_ext new_file_browser_depth USER_CONF_DIR
   set file_chooser(action) load
@@ -5865,6 +6040,17 @@ proc file_chooser {} {
   entry .ins.top3.ext_e -width 30 -takefocus 0  -state normal -textvariable new_file_browser_ext
   balloon .ins.top3.ext_e "Show only files matching the\nextension regular expression"
 
+  label .ins.top3.fzf_l -text {  Fuzzy:}
+  entry .ins.top3.fzf_e -width 25 -highlightcolor red -highlightthickness 2 \
+    -highlightbackground [option get . background {}]
+  balloon .ins.top3.fzf_e "Subsequence-match across all library paths.\nLeft pane shows dirs with hits; middle pane shows full paths."
+  bind .ins.top3.fzf_e <KeyRelease> {
+    fuzzy_chooser_inline [.ins.top3.fzf_e get]
+  }
+  bind .ins.top3.fzf_e <FocusIn> {
+    fuzzy_chooser_inline [.ins.top3.fzf_e get]
+  }
+
   button .ins.top4.select_current -takefocus 0 -text {Select current} -command {
     set file_chooser(regex) {}
     file_chooser_select [xschem get schname]
@@ -5935,6 +6121,10 @@ proc file_chooser {} {
   }
 
   bind .ins.top3.pat_e <KeyRelease> {
+    if {[winfo exists .ins.top3.fzf_e] && [.ins.top3.fzf_e get] ne {}} {
+      .ins.top3.fzf_e delete 0 end
+      fuzzy_chooser_inline {}
+    }
     file_chooser_search current
   }
   bind .ins.center.leftdir.l <<ListboxSelect>> {
@@ -6037,6 +6227,8 @@ proc file_chooser {} {
   pack .ins.top.editpaths -side left
   pack .ins.top3.ext_l -side left
   pack .ins.top3.ext_e -side left
+  pack .ins.top3.fzf_l -side left
+  pack .ins.top3.fzf_e -side left
   if { [info exists file_chooser(geometry)]} {
     wm geometry .ins "${file_chooser(geometry)}"
   } elseif {[file exists $USER_CONF_DIR/file_chooser_geometry]} {
@@ -6081,6 +6273,9 @@ proc file_chooser {} {
       "set file_chooser(sp1) $file_chooser(sp1)\n" \
     ] $USER_CONF_DIR/file_chooser_geometry
   }
+  set file_chooser(files) {}
+  set file_chooser(fullpathlist) {}
+  set file_chooser(nitems) 0
   file_chooser_dirlist
   file_chooser_filelist
   set file_chooser(old_dirs) $file_chooser(dirs)
