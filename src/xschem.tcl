@@ -4683,12 +4683,6 @@ proc load_additional_files {} {
   }
 }
 
-# global_initdir: name of global variable containing the initial directory
-# loadfile: set to 0 if calling for saving instead of loading a file
-#           set to 2 for non blocking operation (symbol insertion)
-# confirm_overwrt: ask before overwriting an existing file
-# initialf: fill the file entry box with this name (used when saving)
-#
 proc fuzzy_subseq_score {q s} {
   set q [string tolower $q]
   regsub -all { } $q {} q
@@ -4776,6 +4770,12 @@ proc fuzzy_filter_files2 {q} {
   set file_dialog_files2 $out
 }
 
+# global_initdir: name of global variable containing the initial directory
+# loadfile: set to 0 if calling for saving instead of loading a file
+#           set to 2 for non blocking operation (symbol insertion)
+# confirm_overwrt: ask before overwriting an existing file
+# initialf: fill the file entry box with this name (used when saving)
+#
 proc load_file_dialog {{msg {}} {ext {}} {global_initdir {INITIALINSTDIR}}
      {loadfile {1}} {confirm_overwrt {1}} {initialf {}}} {
   global file_dialog_index1 file_dialog_files2 file_dialog_files1 file_dialog_retval file_dialog_dir1 pathlist OS
@@ -5389,9 +5389,7 @@ proc file_chooser_select {f} {
   if {$f ne {} && [info exists file_chooser(dirs)] && [info exists file_chooser(files)]} {
     set dir [file dirname $f]
     set file [file tail $f]
-    set dirtail [file tail $dir]
     # puts "file=$file"
-    # puts "   dirtail=$dirtail"
     # puts "   dir=$dir"
     set dirindex [lsearch -exact  $file_chooser(dirs) $dir]
     if {$dirindex != -1} {
@@ -5844,7 +5842,6 @@ proc file_chooser_delete {} {
   }
 }
 
-#### maxdepth: how many levels to descend for each $paths directory (-1: no limit)
 proc fuzzy_chooser_inline {q} {
   global file_chooser new_file_browser_depth new_file_browser_ext pathlist
   if {$q eq {}} {
