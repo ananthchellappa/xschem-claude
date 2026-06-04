@@ -64,13 +64,33 @@ Re-run `hotspots.py` after each refactor to watch the hotspot list shrink.
 
 ## Recommended first move
 
-Start with the **netlist `global_*` duplication cluster** (or `Tcl_AppInit` for the
-safest warm-up):
-- highest on **extensibility** (the stated goal) — duplication across formats is
-  precisely what makes format work painful;
-- in a **safe seam** (backends do not call each other — verified);
-- **harness-verifiable** — netlist output is exactly what `tests/headless/`
-  golden-checks, so behavior-preservation is demonstrable.
+> **Deep-read refinement (step 6 applied to the top candidates).** Reading the
+> code revised the ranking — which is the whole point of confirming before
+> committing:
+>
+> - The **`global_*_netlist` cluster** is the highest *extensibility* value but is
+>   **NOT low-hanging-mechanical**. The format-specific differences are interwoven
+>   line-by-line (`****` vs `////`, `print_spice_element` vs `print_spectre_element`,
+>   `device_model` vs `spectre_device_model`, `model_table` vs `spectre_model_table`).
+>   Unifying them needs a *designed abstraction* (a format-descriptor struct of
+>   strings + callbacks), not a pure move. Real value, **medium** effort/risk.
+> - **`Tcl_AppInit` (xinit.c, 924)** is the genuine **lowest-hanging mechanical**
+>   target: a flat, linear init sequence the author already split into commented
+>   phases (`SHAREDIR DETECTION`, `SOURCE xschemrc`, `LOOKING FOR xschem.tcl`,
+>   `EXECUTE xschem.tcl`, …). Each block → one `static` helper. Near-zero risk.
+>   Value is **readability/maintainability** (it is startup code — rarely extended).
+> - `load_sym_def` is a recursive, stateful parser (`lcc[level]`) — medium, less
+>   clean than `Tcl_AppInit`.
 
-Then iterate the same loop used for the utility extraction:
-**plan doc → pure move/extraction → build → harness → commit.**
+There is a real tension: lowest-risk (`Tcl_AppInit`) ≠ highest-extensibility-value
+(`global_*`). No single target is both trivially mechanical *and* a big
+extensibility win.
+
+Suggested sequence:
+1. **`Tcl_AppInit`** — safe warm-up that proves the decomposition loop on this
+   codebase (extract each commented phase into a named `static` helper).
+2. **`global_*_netlist` unification** — the extensibility play, as a deliberately
+   *designed* refactor (format-descriptor), with the harness as the safety net.
+
+Either way, iterate the same loop used for the utility extraction:
+**plan doc → pure extraction → build → harness → commit.**
