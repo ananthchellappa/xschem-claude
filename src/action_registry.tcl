@@ -301,6 +301,51 @@ proc remap_action_accel {id new_accel {topwin .drw}} {
   return [accel_to_tk_sequence $new_accel]
 }
 
+# --- generated keybindings cheat-sheet ---------------------------------------
+# Build the keyboard-shortcut cheat-sheet FROM the action table, so it can never
+# drift from the actual bindings (which are also generated from the same table).
+# Replaces the hand-maintained prose in keys.help. Rows migrated to the
+# data-driven binding (migrated_action_ids) are flagged with '*'; the rest show
+# the accel that the C handle_key_press chain implements.
+proc generate_keybindings_text {} {
+  global action_table migrated_action_ids
+  set lines {}
+  lappend lines "XSCHEM KEYBOARD SHORTCUTS"
+  lappend lines "Generated from actions.csv - do not edit by hand."
+  lappend lines [string repeat - 64]
+  lappend lines ""
+  # menus in first-seen table order
+  set menus {}
+  foreach row $action_table {
+    set m [dict get $row menu]
+    if {$m ne {} && [lsearch -exact $menus $m] < 0} { lappend menus $m }
+  }
+  foreach m $menus {
+    set section {}
+    foreach row $action_table {
+      if {[dict get $row menu] ne $m} continue
+      if {[dict get $row type] ne {command}} continue
+      set accel [dict get $row accel]
+      if {$accel eq {}} continue
+      set mark [expr {[lsearch -exact $migrated_action_ids [dict get $row id]] >= 0 ? "*" : " "}]
+      lappend section [format "  %s %-24s %s" $mark $accel [dict get $row label]]
+    }
+    if {[llength $section]} {
+      lappend lines "\[$m\]"
+      foreach s $section { lappend lines $s }
+      lappend lines ""
+    }
+  }
+  lappend lines [string repeat - 64]
+  lappend lines "  * = data-driven binding (remappable, set in actions.csv)."
+  return [join $lines "\n"]
+}
+
+# Show the generated cheat-sheet in a read-only window.
+proc show_keybindings_help {} {
+  viewdata [generate_keybindings_text] ro .keybindings_help
+}
+
 # --- command palette ---------------------------------------------------------
 # Fuzzy-searchable launcher over the action table. Reuses fuzzy_subseq_score
 # (the file-chooser matcher in xschem.tcl). Bound to Ctrl+Shift+P in

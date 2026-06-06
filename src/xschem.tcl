@@ -10232,6 +10232,9 @@ proc build_widgets { {topwin {} } } {
        -accelerator {?}
   $topwin.menubar.help add command -label "Keys" -command "textwindow \"${XSCHEM_SHAREDIR}/keys.help\" ro"
   $topwin.menubar.help add command -label "Show Keybindings" -command "show_bindkeys"
+  # Keyboard cheat-sheet generated from actions.csv (always accurate; supersedes
+  # the hand-maintained keys.help prose).
+  $topwin.menubar.help add command -label "Keybindings (from table)" -command "show_keybindings_help"
   $topwin.menubar.help add command -label "Command palette" -command "command_palette $topwin" \
        -accelerator {Ctrl+Shift+P}
   $topwin.menubar.help add command -label "About XSCHEM" -command "about"

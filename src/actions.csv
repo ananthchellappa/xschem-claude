@@ -75,6 +75,7 @@ edit.push_schematic,command,edit,Push schematic,E,xschem descend,,,Push schemati
 edit.push_symbol,command,edit,Push symbol,I,xschem descend_symbol,,,Push symbol
 edit.pop,command,edit,Pop,Ctrl+E,xschem go_back,,,Pop
 help.show_keybindings,command,help,Show Keybindings,,show_bindkeys,,,Show Keybindings
+help.keybindings_cheatsheet,command,help,Keybindings (from table),,show_keybindings_help,,,Keyboard shortcut cheat-sheet generated from the action table
 help.about_xschem,command,help,About XSCHEM,,about,,,About XSCHEM
 hilight.set_schematic_to_compare_and_compare_with,command,hilight,Set schematic to compare and compare with,,xschem compare_schematics; set compare_sch 1,,,Set schematic to compare and compare with
 hilight.swap_compare_schematics,command,hilight,Swap compare schematics,,swap_compare_schematics,,,Swap compare schematics
