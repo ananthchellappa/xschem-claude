@@ -68,11 +68,13 @@ event generate .drw <Shift-Key-U> ; update idletasks ;# redo
 set n_redo [xschem get wires]
 check "redo key restores wire" [expr {$n_redo == $n1}] "(=> $n_redo)"
 
-# 5) un-migrated keys must NOT have a specific binding, so they still reach the
-# generic <KeyPress> -> C dispatcher unchanged. (f=zoom full, s=simulate,
-# w=wire are deliberately left in C this batch.)
+# 5) these keys must NOT have a per-key Tcl accelerator bind, so they still reach
+# the generic <KeyPress> -> C handle_key_press dispatcher. (s=simulate, w=wire are
+# left entirely in the C switch; f=zoom-full now has its *routing* in the C binding
+# table (Phase 3c c4/c5) but is still dispatched via the same generic path, not a
+# Tcl-level bind.)
 foreach k {f s w} {
-  check "unmigrated <Key-$k> left to C" [expr {[bind .drw <Key-$k>] eq {}}] {}
+  check "<Key-$k> reaches C dispatcher (no Tcl bind)" [expr {[bind .drw <Key-$k>] eq {}}] {}
 }
 
 if {$fail == 0} { puts "RESULT: ALL PASS" } else { puts "RESULT: $fail FAILED" }

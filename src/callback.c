@@ -2228,6 +2228,13 @@ typedef int (*action_fn)(const ActionEvent *e);  /* returns 1 if handled */
 /* --- action behaviors (the "what it does"; ids match src/actions.csv) --- */
 static int act_zoom_in(const ActionEvent *e)  { (void)e; view_zoom(CADZOOMSTEP);   return 1; }
 static int act_zoom_out(const ActionEvent *e) { (void)e; view_unzoom(CADZOOMSTEP); return 1; }
+static int act_zoom_full(const ActionEvent *e) {
+  int flags = 1;
+  (void)e;
+  if(tclgetboolvar("zoom_full_center")) flags |= 2;
+  zoom_full(1, 0, flags, 0.97);
+  return 1;
+}
 static int act_pan_left(const ActionEvent *e) {
   (void)e; xctx->xorigin += -CADMOVESTEP*xctx->zoom/2.; draw(); redraw_w_a_l_r_p_z_rubbers(1); return 1; }
 static int act_pan_right(const ActionEvent *e) {
@@ -2253,6 +2260,7 @@ typedef struct { const char *id; action_fn fn; const char *help; } ActionDef;
 static const ActionDef action_registry[] = {
   { "view.zoom_in",   act_zoom_in,   "Zoom in"   },
   { "view.zoom_out",  act_zoom_out,  "Zoom out"  },
+  { "view.zoom_full", act_zoom_full, "Zoom full" },
   { "view.pan_left",  act_pan_left,  "Pan left"  },
   { "view.pan_right", act_pan_right, "Pan right" },
   { "view.pan_up",    act_pan_up,    "Pan up"    },
@@ -2345,12 +2353,34 @@ static void init_input_bindings(void)
   set_input_binding(DEV_WHEEL, WHEEL_DOWN, 0,         ACTX_OVER_GRAPH, "graph.forward");
   set_input_binding(DEV_WHEEL, WHEEL_UP,   ShiftMask, ACTX_OVER_GRAPH, "graph.forward");
   set_input_binding(DEV_WHEEL, WHEEL_DOWN, ShiftMask, ACTX_OVER_GRAPH, "graph.forward");
+  /* Phase 3c c4/c5: context-routed keys become data. Plain 'f' over a graph
+   * forwards to the waveform handler (the old inline waves_selected guard, now a
+   * row); on the canvas it runs view.zoom_full. Other 'f' chords (Ctrl=search,
+   * Alt=flip) are NOT migrated, so they stay in the handle_key_press switch. */
+  set_input_binding(DEV_KEY, 'f', 0, ACTX_CANVAS,     "view.zoom_full");
+  set_input_binding(DEV_KEY, 'f', 0, ACTX_OVER_GRAPH, "graph.forward");
   input_bindings_initialized = 1;
 }
 
 static void ensure_input_bindings(void)
 {
   if(!input_bindings_initialized) init_input_bindings();
+}
+
+/* true if any DEV_KEY binding (in any context) exists for this keysym+mods chord.
+ * The handle_key_press DEV_KEY dispatch uses this to gate itself: only a chord we
+ * actually migrated consults the (side-effectful) graph context via
+ * current_input_ctx/waves_selected, so un-migrated keys behave exactly as before
+ * (Phase 3c c4/c5). */
+static int key_chord_has_binding(int code, int mods)
+{
+  int i;
+  ensure_input_bindings();
+  for(i = 0; i < num_input_bindings; ++i) {
+    InputBinding *b = &input_bindings[i];
+    if(b->device==DEV_KEY && b->code==code && b->mods==mods) return 1;
+  }
+  return 0;
 }
 
 /* map an input event to its binding context: over a waveform graph, or the normal
@@ -2861,6 +2891,25 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
 {
   char str[PATH_MAX + 100];
   int dr_gr;
+
+  /* Phase 3c c4/c5: data-driven context routing for migrated keys, tried before
+   * the switch. The gate ensures only chords we actually bound consult the
+   * (side-effectful) graph context, so every un-migrated key reaches the switch
+   * exactly as before. mods normalized the way the switch branches: letter/
+   * printable keysyms strip ShiftMask (rstate); named keys (arrows, Tab, ...)
+   * use the raw state. */
+  {
+    int kmods = (key < 0xff00) ? rstate : state;
+    if(key_chord_has_binding((int)key, kmods)) {
+      ActionEvent ae;
+      ae.device = DEV_KEY; ae.code = (int)key; ae.mods = kmods;
+      ae.ctx = current_input_ctx(event, key, state, button);
+      ae.mx = mx; ae.my = my; ae.state = state;
+      ae.xevent = event; ae.key = key; ae.button = button; ae.aux = aux;
+      if(dispatch_input_action(&ae)) return;
+    }
+  }
+
   switch (key) {
     case '0':
     case '1':
@@ -3141,16 +3190,9 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
       break;
 
     case 'f':
-      if(rstate == 0) { /* full zoom */
-        int flags = 1;
-        if(waves_selected(event, key, state, button)) {
-          waves_callback(event, mx, my, key, button, aux, state);
-          break;
-        }
-        if(tclgetboolvar("zoom_full_center")) flags |= 2;
-        zoom_full(1, 0, flags, 0.97);
-      }
-      else if(rstate == ControlMask) { /* search */
+      /* rstate==0 (full zoom on canvas / forward over a graph) is data-driven now;
+       * handled by the DEV_KEY dispatch above. See init_input_bindings (Phase 3c). */
+      if(rstate == ControlMask) { /* search */
         if(xctx->semaphore >= 2) break;
         if(waves_selected(event, key, state, button)) {
           waves_callback(event, mx, my, key, button, aux, state);
