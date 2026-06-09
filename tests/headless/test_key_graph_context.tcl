@@ -65,6 +65,44 @@ keyat $cx $cy $F
 check "over-canvas f zooms full" [expr {[xschem get zoom] != $zp}] \
   "(zp=$zp z1=[xschem get zoom] @ $cx,$cy)"
 
+# ---- arrow keys (Phase 3c c4/c5 batch 2): no-modifier scroll is data-driven ----
+set Up 65362; set Down 65364; set Left 65361; set Right 65363
+proc origin {} { list [xschem get zoom] [xschem get xorigin] [xschem get yorigin] }
+
+# the data: all 4 arrows have canvas-scroll + over_graph-forward rows, and NO
+# modified-arrow rows (Ctrl+Left/Right tab-switch etc. stay in the C switch)
+check "arrow scroll rows present" [expr {
+  [lsearch -exact $dump {key 65362 0 canvas view.scroll_up}]    >= 0 &&
+  [lsearch -exact $dump {key 65363 0 canvas view.scroll_right}] >= 0 &&
+  [lsearch -exact $dump {key 65362 0 graph graph.forward}]      >= 0 }] {}
+check "no modified-arrow rows (still in C switch)" [expr {
+  [lsearch -glob $dump {key 65361 ctrl *}] < 0 &&
+  [lsearch -glob $dump {key 65363 ctrl *}] < 0 }] {}
+
+# (c) Up arrow on bare canvas -> vertical scroll (yorigin moves; zoom & xorigin not)
+lassign [screen 870 100] cx cy
+lassign [origin] z0 x0 y0
+keyat $cx $cy $Up
+lassign [origin] z1 x1 y1
+check "over-canvas Up = vertical scroll" [expr {$z1==$z0 && $x1==$x0 && $y1!=$y0}] \
+  "(z:$z0->$z1 x:$x0->$x1 y:$y0->$y1)"
+
+# (d) Right arrow on bare canvas -> horizontal scroll (xorigin moves; zoom & yorigin not)
+lassign [screen 870 100] cx cy
+lassign [origin] z0 x0 y0
+keyat $cx $cy $Right
+lassign [origin] z1 x1 y1
+check "over-canvas Right = horizontal scroll" [expr {$z1==$z0 && $y1==$y0 && $x1!=$x0}] \
+  "(z:$z0->$z1 x:$x0->$x1 y:$y0->$y1)"
+
+# (e) Up arrow over the graph forwards to the graph -> the canvas origin does NOT move
+lassign [screen 870 -540] gx gy
+lassign [origin] z0 x0 y0
+keyat $gx $gy $Up
+lassign [origin] z1 x1 y1
+check "over-graph Up leaves canvas origin" [expr {$z1==$z0 && $x1==$x0 && $y1==$y0}] \
+  "(z:$z0->$z1 x:$x0->$x1 y:$y0->$y1 @ $gx,$gy)"
+
 if {$fail == 0} { puts "RESULT: ALL PASS" } else { puts "RESULT: $fail FAILED" }
 flush stdout
 exit [expr {$fail == 0 ? 0 : 1}]

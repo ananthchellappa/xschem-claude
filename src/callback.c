@@ -2243,6 +2243,19 @@ static int act_pan_up(const ActionEvent *e) {
   (void)e; xctx->yorigin += -CADMOVESTEP*xctx->zoom/2.; draw(); redraw_w_a_l_r_p_z_rubbers(1); return 1; }
 static int act_pan_down(const ActionEvent *e) {
   (void)e; xctx->yorigin -= -CADMOVESTEP*xctx->zoom/2.; draw(); redraw_w_a_l_r_p_z_rubbers(1); return 1; }
+/* full-step viewport scroll, bound to the arrow keys (Phase 3c c4/c5). Distinct
+ * from the half-step wheel pan (view.pan_*): a full CADMOVESTEP, and the sign is
+ * copied verbatim from the historical arrow-key arithmetic in handle_key_press
+ * (Right scrolls xorigin the same way the wheel's pan_left does — preserved as-is,
+ * not "corrected"). Named by the triggering arrow so a binding row reads naturally. */
+static int act_scroll_up(const ActionEvent *e) {
+  (void)e; xctx->yorigin -= -CADMOVESTEP*xctx->zoom; draw(); redraw_w_a_l_r_p_z_rubbers(1); return 1; }
+static int act_scroll_down(const ActionEvent *e) {
+  (void)e; xctx->yorigin += -CADMOVESTEP*xctx->zoom; draw(); redraw_w_a_l_r_p_z_rubbers(1); return 1; }
+static int act_scroll_left(const ActionEvent *e) {
+  (void)e; xctx->xorigin -= -CADMOVESTEP*xctx->zoom; draw(); redraw_w_a_l_r_p_z_rubbers(1); return 1; }
+static int act_scroll_right(const ActionEvent *e) {
+  (void)e; xctx->xorigin += -CADMOVESTEP*xctx->zoom; draw(); redraw_w_a_l_r_p_z_rubbers(1); return 1; }
 /* gesture START: only the initiating chord is data-driven. zoom_rectangle(START)
  * sets ui_state STARTZOOM; the rubber-band (motion) and completion (release)
  * already key off that bit, so they need no per-button binding (Phase 3b). */
@@ -2265,6 +2278,10 @@ static const ActionDef action_registry[] = {
   { "view.pan_right", act_pan_right, "Pan right" },
   { "view.pan_up",    act_pan_up,    "Pan up"    },
   { "view.pan_down",  act_pan_down,  "Pan down"  },
+  { "view.scroll_up",    act_scroll_up,    "Scroll up (Up arrow)"       },
+  { "view.scroll_down",  act_scroll_down,  "Scroll down (Down arrow)"   },
+  { "view.scroll_left",  act_scroll_left,  "Scroll left (Left arrow)"   },
+  { "view.scroll_right", act_scroll_right, "Scroll right (Right arrow)" },
   { "view.zoom_rect", act_zoom_rect_start, "Zoom to rectangle (drag)" },
   { "graph.forward",  act_graph_forward,   "Forward event to the waveform graph" },
 };
@@ -2359,6 +2376,19 @@ static void init_input_bindings(void)
    * Alt=flip) are NOT migrated, so they stay in the handle_key_press switch. */
   set_input_binding(DEV_KEY, 'f', 0, ACTX_CANVAS,     "view.zoom_full");
   set_input_binding(DEV_KEY, 'f', 0, ACTX_OVER_GRAPH, "graph.forward");
+  /* arrow keys: only the NO-MODIFIER scroll is migrated (canvas scroll / forward
+   * over a graph). Modified arrows stay in the switch — Ctrl+Left/Right are tab
+   * switching, and Up/Down historically pan under *any* modifier; those chords have
+   * no rows here so they fall through unchanged. mods for named keysyms = raw state,
+   * so a plain arrow press (state 0) matches these rows. */
+  set_input_binding(DEV_KEY, XK_Up,    0, ACTX_CANVAS,     "view.scroll_up");
+  set_input_binding(DEV_KEY, XK_Up,    0, ACTX_OVER_GRAPH, "graph.forward");
+  set_input_binding(DEV_KEY, XK_Down,  0, ACTX_CANVAS,     "view.scroll_down");
+  set_input_binding(DEV_KEY, XK_Down,  0, ACTX_OVER_GRAPH, "graph.forward");
+  set_input_binding(DEV_KEY, XK_Left,  0, ACTX_CANVAS,     "view.scroll_left");
+  set_input_binding(DEV_KEY, XK_Left,  0, ACTX_OVER_GRAPH, "graph.forward");
+  set_input_binding(DEV_KEY, XK_Right, 0, ACTX_CANVAS,     "view.scroll_right");
+  set_input_binding(DEV_KEY, XK_Right, 0, ACTX_OVER_GRAPH, "graph.forward");
   input_bindings_initialized = 1;
 }
 
@@ -4297,6 +4327,10 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
       break;
 #endif
     case XK_Right:
+      /* No-modifier scroll is data-driven now (view.scroll_right; see
+       * init_input_bindings, Phase 3c) and never reaches here. This case still owns
+       * Ctrl (tab switch) and every other modified chord — do not delete the else
+       * pan, it serves Shift/Alt/lock-mask arrows. */
       if(state == ControlMask) {
         int save = xctx->semaphore;
         if(waves_selected(event, key, state, button)) {
@@ -4320,6 +4354,8 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
       break;
 
     case XK_Left:
+      /* No-modifier scroll is data-driven (view.scroll_left, Phase 3c). This case
+       * still owns Ctrl (tab switch) and other modified chords. */
       if(state == ControlMask) {
         int save = xctx->semaphore;
         if(waves_selected(event, key, state, button)) {
@@ -4343,6 +4379,9 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
       break;
 
     case XK_Down:          /* down */
+      /* No-modifier scroll is data-driven (view.scroll_down, Phase 3c); this case
+       * still handles Down + ANY modifier (the historical mod-agnostic pan, incl.
+       * lock masks) — keep it. */
       if(waves_selected(event, key, state, button)) {
         waves_callback(event, mx, my, key, button, aux, state);
         break;
@@ -4353,6 +4392,8 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
       break;
 
     case XK_Up:           /* up */
+      /* No-modifier scroll is data-driven (view.scroll_up, Phase 3c); this case
+       * still handles Up + ANY modifier — keep it. */
       if(waves_selected(event, key, state, button)) {
         waves_callback(event, mx, my, key, button, aux, state);
         break;
