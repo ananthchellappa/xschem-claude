@@ -9,6 +9,59 @@ Newest entries on top.
 
 ---
 
+## Q4. So far, how has this work made the code easier to read and maintain?
+
+- **Asked:** 2026-06-08
+- **Project state:** branch `feature/action-registry` @ `21ea55f4`. We are partway
+  through **Phase 3c** (moving keyboard/mouse handling into the lookup table); the
+  scroll wheel, the right-drag zoom gesture, the no-modifier `f` and arrow keys, and
+  the graph-routing of six more keys are done. **Phase 3d** (deleting the old
+  hard-wired code) has not started.
+
+**The honest headline first: the code is currently a bit *longer*, not shorter.**
+This phase is an investment. We added the new "controls list" machinery (the lookup
+table, the part that reads it, and the commands to edit it) *before* we could start
+removing the old hard-wired handling. So the file grew by roughly 425 lines. That
+reverses later, in Phase 3d, when the old code gets deleted now that the new system
+can replace it. So far we've only begun that removal (about 30 lines gone in the
+most recent step).
+
+**What is genuinely easier to read today:**
+
+1. **Commands have names now.** Before, what a key did was spelled out as raw math
+   and function calls buried inside one enormous 1,600-line block. Now each behavior
+   is a small, clearly named piece (e.g. "zoom full", "scroll up", "hand this to the
+   waveform graph"). You can tell what a key does by its name instead of decoding it.
+
+2. **"Which key does what" is now a plain list, separate from "what it does."**
+   Previously those two ideas were tangled together in every case. Now there's an
+   editable list of "this input → this command," and you can print the whole list
+   with one command to see every shortcut at a glance. That single, readable
+   overview simply did not exist before.
+
+3. **A copy-pasted block is being deleted.** The exact same five-line check —
+   "if the mouse is over a waveform graph, hand the event to the graph" — had been
+   pasted into the code about twenty times. We've removed it from the scroll-wheel
+   handling entirely and from six keyboard shortcuts so far, each time replacing the
+   duplicated code with a single line in the list. More removals are queued.
+
+4. **One shared path instead of three different ones.** The wheel, the mouse-drag
+   gestures, and the keyboard now all flow through the same handling, with one clear
+   rule for which binding wins. A maintainer learns one mechanism, not three.
+
+5. **The tricky, easy-to-break details are now written down.** The handful of subtle
+   rules that used to be invisible traps (why certain shortcuts must stay as-is, why
+   one check has to happen before another) are now explained in comments right where
+   they matter, plus a short tutorial and these FAQ entries — so the next person
+   doesn't have to rediscover them the hard way.
+
+**Bottom line:** any individual shortcut is clearer (named, self-explaining, with its
+reasoning attached), and the system as a whole is now navigable through one readable
+list instead of a giant undocumented block. The raw line count is temporarily higher;
+it drops below where it started once Phase 3d removes the now-replaceable old code.
+
+---
+
 ## Q3. In plain language (high-school level): what are the next couple of steps, and what's the end goal?
 
 - **Asked:** 2026-06-08
