@@ -2406,6 +2406,12 @@ static void init_input_bindings(void)
   set_input_binding(DEV_KEY, 'b', ControlMask, ACTX_OVER_GRAPH, "graph.forward"); /* toggle sym text */
   set_input_binding(DEV_KEY, 'B', 0,           ACTX_OVER_GRAPH, "graph.forward"); /* edit header */
   set_input_binding(DEV_KEY, 'B', ControlMask, ACTX_OVER_GRAPH, "graph.forward"); /* graph-only (hcursor2) */
+  /* 't': plain (place text) is an EXACT chord -> its switch guard is deleted like
+   * the rest of Group B. Ctrl+t uses `rstate & ControlMask` (a FAMILY), so its guard
+   * is KEPT but narrowed to `rstate != ControlMask`: the row below owns the exact
+   * Ctrl+t chord, the guard still serves the Ctrl+<other mods> remainder. */
+  set_input_binding(DEV_KEY, 't', 0,           ACTX_OVER_GRAPH, "graph.forward"); /* place text */
+  set_input_binding(DEV_KEY, 't', ControlMask, ACTX_OVER_GRAPH, "graph.forward"); /* new schematic */
   input_bindings_initialized = 1;
 }
 
@@ -3871,11 +3877,7 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
       break;
 
     case 't':
-      if(rstate == 0) { /* place text */
-        if(waves_selected(event, key, state, button)) {
-          waves_callback(event, mx, my, key, button, aux, state);
-          break;
-        }
+      if(rstate == 0) { /* place text (graph routing is data: over_graph -> graph.forward) */
         if(xctx->semaphore >= 2) break;
         xctx->last_command = 0;
         xctx->mx_double_save = xctx->mousex_snap;
@@ -3887,9 +3889,12 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
           xctx->ui_state |= PLACE_TEXT;
         }
       }
-      else if(rstate & ControlMask) {
+      else if(rstate & ControlMask) { /* new schematic */
         int save = xctx->semaphore;
-        if(waves_selected(event, key, state, button)) {
+        /* Exact Ctrl+t routing is data (over_graph row); this guard remains only for
+         * the Ctrl+<other mods> remainder the row doesn't cover (rstate != ControlMask).
+         * Skipping it for the exact chord also avoids a redundant waves_selected. */
+        if((rstate != ControlMask) && waves_selected(event, key, state, button)) {
           waves_callback(event, mx, my, key, button, aux, state);
           break;
         }

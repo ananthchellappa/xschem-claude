@@ -167,6 +167,26 @@ lassign [origin] z1 x1 y1
 check "over-graph Ctrl+Right leaves canvas origin (forwarded)" [expr {$z1==$z0 && $x1==$x0 && $y1==$y0}] \
   "(z:$z0->$z1 x:$x0->$x1 y:$y0->$y1 @ $gx,$gy)"
 
+# ---- 't' routing (Phase 3c): plain t (place text, EXACT) and Ctrl+t (new schematic,
+#      FAMILY rstate&Ctrl). Only the over-graph FORWARD path is exercised here: the
+#      canvas behaviors are deliberately not triggered (place_text starts a modal
+#      placement; Ctrl+t creates a new schematic/tab — both would mutate the fixture).
+set tkey 116
+check "'t' over_graph rows present" [expr {
+  [lsearch -exact $dump {key 116 0 graph graph.forward}]    >= 0 &&
+  [lsearch -exact $dump {key 116 ctrl graph graph.forward}] >= 0 }] {}
+check "'t' has no canvas rows (place_text/new_schematic stay in C)" [expr {
+  [lsearch -glob $dump {key 116 0 canvas *}]    < 0 &&
+  [lsearch -glob $dump {key 116 ctrl canvas *}] < 0 }] {}
+
+# plain 't' over a graph forwards -> place_text must NOT run (PLACE_TEXT=1024 stays clear)
+lassign [screen 870 -540] gx gy
+set u0 [xschem get ui_state]
+keyat $gx $gy $tkey
+check "over-graph t forwards (no place_text)" \
+  [expr {[xschem get ui_state] == $u0 && !([xschem get ui_state] & 1024)}] \
+  "(ui_state $u0 -> [xschem get ui_state])"
+
 if {$fail == 0} { puts "RESULT: ALL PASS" } else { puts "RESULT: $fail FAILED" }
 flush stdout
 exit [expr {$fail == 0 ? 0 : 1}]
