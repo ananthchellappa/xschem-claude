@@ -2962,13 +2962,22 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
    * (side-effectful) graph context, so every un-migrated key reaches the switch
    * exactly as before. mods normalized the way the switch branches: letter/
    * printable keysyms strip ShiftMask (rstate); named keys (arrows, Tab, ...)
-   * use the raw state. */
+   * use the raw state.
+   *
+   * Phase 3d.2: only chords that actually have an over_graph row consult the graph
+   * context (current_input_ctx -> waves_selected, which is side-effectful). A
+   * canvas-only chord uses ACTX_CANVAS directly: this both avoids a spurious
+   * waves_selected side effect and is *required* for correctness — otherwise a
+   * canvas-only key whose case has been deleted would resolve to ACTX_OVER_GRAPH
+   * (pointer over a graph), find no row, and do nothing. */
   {
     int kmods = (key < 0xff00) ? rstate : state;
     if(key_chord_has_binding((int)key, kmods)) {
       ActionEvent ae;
       ae.device = DEV_KEY; ae.code = (int)key; ae.mods = kmods;
-      ae.ctx = current_input_ctx(event, key, state, button);
+      ae.ctx = find_binding(DEV_KEY, (int)key, kmods, ACTX_OVER_GRAPH)
+               ? current_input_ctx(event, key, state, button)
+               : ACTX_CANVAS;
       ae.mx = mx; ae.my = my; ae.state = state;
       ae.xevent = event; ae.key = key; ae.button = button; ae.aux = aux;
       if(dispatch_input_action(&ae)) return;
