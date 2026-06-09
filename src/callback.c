@@ -2389,6 +2389,18 @@ static void init_input_bindings(void)
   set_input_binding(DEV_KEY, XK_Left,  0, ACTX_OVER_GRAPH, "graph.forward");
   set_input_binding(DEV_KEY, XK_Right, 0, ACTX_CANVAS,     "view.scroll_right");
   set_input_binding(DEV_KEY, XK_Right, 0, ACTX_OVER_GRAPH, "graph.forward");
+  /* Group B (Phase 3c): keys whose *canvas* behavior stays in the C switch, but
+   * whose graph-vs-canvas *routing* becomes data. Only an over_graph row is added
+   * (no canvas row); on the canvas the dispatch finds nothing and falls through to
+   * the switch, which runs the original behavior. Seeded only for the EXACT chords
+   * (== 0 / == ControlMask) whose inline waves guard had no preceding semaphore
+   * check — so hoisting the forward to the top dispatch is behavior-preserving. */
+  set_input_binding(DEV_KEY, 'a', ControlMask, ACTX_OVER_GRAPH, "graph.forward"); /* select all */
+  set_input_binding(DEV_KEY, 'A', 0,           ACTX_OVER_GRAPH, "graph.forward"); /* toggle show netlist */
+  set_input_binding(DEV_KEY, 'A', ControlMask, ACTX_OVER_GRAPH, "graph.forward"); /* graph-only (hcursor1) */
+  set_input_binding(DEV_KEY, 'b', ControlMask, ACTX_OVER_GRAPH, "graph.forward"); /* toggle sym text */
+  set_input_binding(DEV_KEY, 'B', 0,           ACTX_OVER_GRAPH, "graph.forward"); /* edit header */
+  set_input_binding(DEV_KEY, 'B', ControlMask, ACTX_OVER_GRAPH, "graph.forward"); /* graph-only (hcursor2) */
   input_bindings_initialized = 1;
 }
 
@@ -3011,22 +3023,14 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
          make_symbol();
         }
       }
-      else if(rstate == ControlMask) { /* select all */
-        if(waves_selected(event, key, state, button)) {
-          waves_callback(event, mx, my, key, button, aux, state);
-          break;
-        }
+      else if(rstate == ControlMask) { /* select all (graph routing is data: over_graph -> graph.forward) */
         select_all();
       }
       break;
 
     case 'A':
-      if(rstate == 0) { /* toggle show netlist */
+      if(rstate == 0) { /* toggle show netlist (graph routing is data: over_graph -> graph.forward) */
         int net_s;
-        if(waves_selected(event, key, state, button)) {
-          waves_callback(event, mx, my, key, button, aux, state);
-          break;
-        }
         net_s = tclgetboolvar("netlist_show");
         net_s = !net_s;
         if(net_s) {
@@ -3038,11 +3042,9 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
           tclsetvar("netlist_show","0");
         }
       }
-      else if(rstate == ControlMask) { /* only for graph (toggle hcursor1 if graph_use_ctrl_key set) */
-        if(waves_selected(event, key, state, button)) {
-          waves_callback(event, mx, my, key, button, aux, state);
-          break;
-        }
+      else if(rstate == ControlMask) {
+        /* graph-only (toggle hcursor1 if graph_use_ctrl_key set): routing is data
+         * now (over_graph -> graph.forward); on the canvas this does nothing. */
       }
       break;
 
@@ -3055,11 +3057,7 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
         }
         merge_file(0, ""); /* 2nd parameter not used any more for merge 25122002 */
       }
-      else if(rstate==ControlMask) { /* toggle show text in symbol */
-        if(waves_selected(event, key, state, button)) {
-          waves_callback(event, mx, my, key, button, aux, state);
-          break;
-        }
+      else if(rstate==ControlMask) { /* toggle show text in symbol (graph routing is data) */
         xctx->sym_txt =!xctx->sym_txt;
         if(xctx->sym_txt) {
             /* tcleval("alert_ { enabling text in symbol} {}"); */
@@ -3082,18 +3080,12 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
       break;
 
     case 'B':
-      if(rstate == 0) { /* edit schematic header/license */
-        if(waves_selected(event, key, state, button)) {
-          waves_callback(event, mx, my, key, button, aux, state);
-          break;
-        }
+      if(rstate == 0) { /* edit schematic header/license (graph routing is data) */
         tcleval("update_schematic_header");
       }
-      else if(rstate == ControlMask) { /* only for graph (toggle hcursor2 if graph_use_ctrl_key set) */
-        if(waves_selected(event, key, state, button)) {
-          waves_callback(event, mx, my, key, button, aux, state);
-          break;
-        }
+      else if(rstate == ControlMask) {
+        /* graph-only (toggle hcursor2 if graph_use_ctrl_key set): routing is data
+         * now (over_graph -> graph.forward); on the canvas this does nothing. */
       }
       break;
 

@@ -103,6 +103,45 @@ lassign [origin] z1 x1 y1
 check "over-graph Up leaves canvas origin" [expr {$z1==$z0 && $x1==$x0 && $y1==$y0}] \
   "(z:$z0->$z1 x:$x0->$x1 y:$y0->$y1 @ $gx,$gy)"
 
+# ---- Group B routing-only (Phase 3c): canvas behavior stays in C, only the
+#      graph-vs-canvas routing is data. Verified with clean boolean observables:
+#      'A' (Shift+a, no-mod chord) toggles netlist_show; Ctrl+b toggles sym_txt. ----
+proc keyats {x y ks st} { xschem callback .drw 2 $x $y $ks 0 0 $st; update idletasks }
+set Akey 65; set bkey 98
+set Shift 1; set Ctrl 4
+
+# the data: over_graph rows for the migrated chords, and NO canvas rows (so the
+# canvas behavior still falls through to the C switch)
+check "Group B over_graph rows present" [expr {
+  [lsearch -exact $dump {key 97 ctrl graph graph.forward}] >= 0 &&
+  [lsearch -exact $dump {key 65 0 graph graph.forward}]    >= 0 &&
+  [lsearch -exact $dump {key 98 ctrl graph graph.forward}] >= 0 &&
+  [lsearch -exact $dump {key 66 0 graph graph.forward}]    >= 0 }] {}
+check "Group B has no canvas rows (behavior stays in C)" [expr {
+  [lsearch -glob $dump {key 97 ctrl canvas *}] < 0 &&
+  [lsearch -glob $dump {key 65 0 canvas *}]    < 0 &&
+  [lsearch -glob $dump {key 98 ctrl canvas *}] < 0 }] {}
+
+# 'A' (Shift+a) toggles netlist_show on the canvas; over a graph it forwards (no toggle)
+lassign [screen 870 100] cx cy
+set b0 $netlist_show
+keyats $cx $cy $Akey $Shift
+check "canvas A toggles netlist_show" [expr {$netlist_show != $b0}] "($b0 -> $netlist_show)"
+lassign [screen 870 -540] gx gy
+set b1 $netlist_show
+keyats $gx $gy $Akey $Shift
+check "over-graph A leaves netlist_show" [expr {$netlist_show == $b1}] "($b1 == $netlist_show)"
+
+# Ctrl+b toggles sym_txt on the canvas; over a graph it forwards (no toggle)
+lassign [screen 870 100] cx cy
+set b0 $sym_txt
+keyats $cx $cy $bkey $Ctrl
+check "canvas Ctrl+b toggles sym_txt" [expr {$sym_txt != $b0}] "($b0 -> $sym_txt)"
+lassign [screen 870 -540] gx gy
+set b1 $sym_txt
+keyats $gx $gy $bkey $Ctrl
+check "over-graph Ctrl+b leaves sym_txt" [expr {$sym_txt == $b1}] "($b1 == $sym_txt)"
+
 if {$fail == 0} { puts "RESULT: ALL PASS" } else { puts "RESULT: $fail FAILED" }
 flush stdout
 exit [expr {$fail == 0 ? 0 : 1}]
