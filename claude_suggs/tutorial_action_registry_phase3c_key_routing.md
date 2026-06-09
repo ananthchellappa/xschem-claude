@@ -314,8 +314,24 @@ behavior stays in C). This is the recurring lesson from c3 restated: **scope an
 assertion to what the test owns, because the next batch will add the thing the broad
 version forbids.**
 
-Next: the deferred chords — the **semaphore-first** ones (plain `a`, plain `b`, `s`,
-`Ctrl+s`, `Ctrl+f`, `Ctrl+r`) need a semaphore-aware dispatch or to keep their guard;
-the **family** chord `Ctrl+t` keeps its branch and adds a row, like §9. Then Phase 3d:
-let an action id resolve to a Tcl command, generate the cheat-sheet from
-`xschem bindings dump`, and delete the dead ladders.
+**Batch 5 — `t` (commit `cc673858`)**
+
+| File | What changed |
+|---|---|
+| `src/callback.c` | plain `t` exact → guard deleted + `{t,0,over_graph}` row; `Ctrl+t` family → `{t,Ctrl,over_graph}` row + guard **narrowed** to `(rstate != ControlMask) && waves_selected(...)` |
+| `tests/headless/test_key_graph_context.tcl` | 23 checks: `t` over_graph rows present, no canvas rows; over a graph plain `t` forwards (PLACE_TEXT stays clear). Canvas behaviors not triggered (modal placement / new tab mutate the fixture) |
+
+The family chord here got a sharper treatment than the arrows did in §9. Instead of
+keeping the *whole* guard (which would call `waves_selected` twice on the exact
+chord's canvas fall-through — once in the top dispatch, once in the branch), the
+guard is **narrowed to the remainder it still owns**: `(rstate != ControlMask) &&
+waves_selected(...)`. The table row owns the exact `Ctrl+t`; the guard owns
+`Ctrl+<anything-else>`. Rule of thumb for a family chord whose canvas behavior stays
+in C: *narrow* the guard to "the states the row doesn't cover," don't just keep it.
+
+Next: only the **semaphore-first** chords remain (plain `a`, plain `b`, `s`,
+`Ctrl+s`, `Ctrl+f`, `Ctrl+r`) — their guard sits *after* `if(sem>=2) break;`, so they
+need a semaphore-aware approach (a dedicated forward action, or gating the dispatch),
+discussed separately before coding. Then Phase 3d: let an action id resolve to a Tcl
+command, generate the cheat-sheet from `xschem bindings dump`, and delete the dead
+ladders.
