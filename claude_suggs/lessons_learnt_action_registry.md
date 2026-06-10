@@ -287,3 +287,12 @@ one.**
 
 *Maintainers: add a themed bullet when a batch teaches something transferable; cite the
 concrete example (key/commit) so the lesson stays falsifiable.*
+- **`event generate` needs a mapped window — probe the display before chasing code.**
+  Mid-session the WSLg compositor wedged: `.drw` stopped mapping (`winfo ismapped`
+  = 0, `focus -force` refused) and Tk silently dropped synthesized KeyPress events,
+  so the event-generate smokes failed ("ratio key=1") and graph-fixture tests hung,
+  while `xschem callback`-driven tests stayed green (callback bypasses X event
+  delivery entirely). The tell: effects fire via direct callback but not via event
+  generate. Bisect environment-vs-code by stashing the change and re-running at
+  clean HEAD before touching anything; fix = restart WSL. (Surfaced during
+  dispatcher-decomposition batch 1, which it briefly framed.)
