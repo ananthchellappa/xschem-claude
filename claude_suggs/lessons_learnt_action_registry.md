@@ -198,6 +198,17 @@ one.**
   it's not a source of truth.
 - **"Data-driven" is a claim about *change*, not *origin*** — dispatch can stay in C;
   what matters is that the *binding* is editable data.
+- **Generate every *view* from the live source, not a parallel copy.** The cheat-sheet
+  (d3) was rebuilt to read `xschem bindings dump` (what the C dispatch actually does)
+  instead of the decorative `actions.csv` `accel` column, which had drifted from the
+  real keys. A view that reads a *second* description of the truth can disagree with it;
+  a view that reads the truth can't. Test it by mutating the source and re-rendering
+  (unbind a key → its row vanishes from the sheet).
+- **A faithful view doubles as a gap-finder.** Rendering the dump made the not-yet-in-csv
+  action ids glaringly visible (they show as `view.scroll_up` instead of a label) — that
+  list *is* the d4 work-item, surfaced for free. And building it forced the `mods_name`
+  Mod4/Super fix (d3a) that was only a latent cosmetic bug before. Generating a complete
+  view flushes out the incompleteness elsewhere.
 
 ## 12. Process / working rhythm that paid off
 
@@ -227,10 +238,10 @@ one.**
   the clean discriminator between zoom and pan is "did `zoom` change?". `view_unzoom`
   multiplies. There are getters (`xschem get zoom|xorigin|instances|semaphore|…`) and a
   few setters (`xschem set cadsnap|semaphore|…`) but not for everything.
-- **Known cosmetic gap:** `mods_name` in `bindings dump` doesn't render `Mod4Mask`
-  (Super) — those rows print mods `0` (the binding works; `find_binding` uses the stored
-  mods). Pre-existing since Alt-`h`. Fix when d3 builds the cheat-sheet from the dump
-  (and teach `parse_mods` "super"/"mod4" for round-trip).
+- **`bindings dump` mods rendering** (fixed in d3a, commit `d8cf32bd`): `mods_name`
+  renders `Mod4Mask` as `super` and `parse_mods` accepts `super`/`mod4`. (Before, Super
+  rows printed mods `0` — a latent cosmetic bug since Alt-`h`, surfaced when d3 built the
+  cheat-sheet from the dump.)
 
 ---
 

@@ -1,50 +1,58 @@
-# Opening prompt for the next session (Phase 3d — pivot to d3: cheat-sheet from the binding table)
+# Opening prompt for the next session (Phase 3d — d4: actions.csv unification + load-from-file remap)
 
 Committed on branch `feature/action-registry`: 3a (wheel), 3b (right-drag zoom
 gesture), 3c (context-routed keys — complete), 3d.1 (Tcl-command-backed actions; `B`
 out), 3d.2 batches 1-3 (`H`, Alt-h, `y`,`G`,`g`,`T`,`O`, `A`,`L`,`=`,`$`), **3d.1b
-(semaphore `idle_only` flag)** (graph routing of `a`,`b`,`Ctrl+f`,`Ctrl+s`), and
-**3d.2 sem-gated batches 1-3** (`n`,`U`,`u`; `k`,`K`; `j` branch).
+(semaphore `idle_only`)** (`a`,`b`,`Ctrl+f`,`Ctrl+s` routing), **3d.2 sem-gated batches
+1-3** (`n`,`U`,`u`; `k`,`K`; `j` branch), and **3d.3** (cheat-sheet generated live from
+`xschem bindings dump`; `mods_name`/`parse_mods` now do Super).
 
 Keys/chords out of the switch so far: **B, H, Alt-h, y, G, g, T, O, A, L, =, $, n, U,
 k, K** (whole or branch), **u, j** (branch); plus graph routing for `f`/arrows/Group-B/
 `t`/the 4 sem-first chords.
 
-**The clean sem-gated well is now thin.** What remains is mostly dialogs (`Q` edit-attrs,
-`i`/`I` insert-symbol), `semaphore`-manipulating keys (`q` quit, `o` load, `e`/`I`
-edit-in-new-window), or *unconditional* symbol keys (`&`,`>`,`<`,`?`,`/`,`*`,`:`,`%`,`_`
-— additive-only). So the recommended next move is the **d3 pivot: generate the keyboard
-cheat-sheet from `xschem bindings dump`** — Tcl-side, no switch edits, low risk, and the
-natural place to fix the `mods_name` Mod4/Super display gap. Paste the block below into a
-fresh session.
+The clean sem-gated well is thin (remaining keys are dialogs / `semaphore`-manipulating /
+unconditional — see SKIP/DEFER below). The recommended next move per the plan is **d4**.
+Paste the block below into a fresh session.
 
 ---
 
 ```
-Goal: implement d3 — make the keyboard cheat-sheet / accel display a generated view of
-the live binding table (`xschem bindings dump`) instead of the decorative, drifting
-actions.csv `accel` column. Two atomic steps (do d3a first, it's a prerequisite):
+Goal: implement d4 — make actions.csv the single source of truth for EVERY bound id, then
+load bindings from a file at startup so users can remap by editing a file. Two atomic
+steps (do d4a first):
 
-  d3a (small C fix): teach `mods_name` (callback.c) to render Mod4Mask as "super", and
-      `parse_mods` to accept "super"/"mod4", so `bindings dump` shows Mod4/Super rows
-      correctly (today they print mods "0") and `xschem bind super …` round-trips.
-      Test: a bind+dump round-trip on a Super chord; existing smokes stay green.
+  d4a (data + small reconcile): the cheat-sheet (d3) now shows several bound action ids
+      with NO human label because they live only in the C registry, not actions.csv —
+      that un-labeled list IS this work-item. Run the cheat-sheet
+      (`generate_keybindings_text`) and add an actions.csv row for each id printed as a
+      bare id: view.scroll_up/down/left/right, view.pan_up/down/left/right,
+      view.zoom_full, view.zoom_rect, view.snap_half/snap_double, edit.toggle_stretch,
+      view.toggle_show_netlist, view.toggle_draw_pixmap, edit.toggle_orthogonal_wiring,
+      sch.edit_header, sym.attach_net_labels_to_component_instance,
+      sym.make_schematic_and_symbol_from_selected_components,
+      sym.create_symbol_pins_from_selected_schematic_pins, graph.forward (+ any others
+      the dump shows id-only). Add an `idle` column to the csv schema (so the
+      idle-ness is data too). RECONCILE the Z/view.zoom_in collision: the wheel binds
+      view.zoom_in = view_zoom(CADZOOMSTEP) but the csv maps view.zoom_in→Shift+Z→
+      view_zoom(0.0); give Shift+Z a DISTINCT id (e.g. view.zoom_in_center) so one id =
+      one behavior. Keep the C registry ids and csv ids in agreement.
+      Test: extend test_keybindings_help.tcl to assert NO bound row falls back to a bare
+      id (every chord shows a label); test_palette/dump_file_menu still green.
 
-  d3b (Tcl): change generate_keybindings_text / show_keybindings_help (the Help menu
-      "Keybindings" sheet, in xschem.tcl) to read `xschem bindings dump`, join each row
-      with actions.csv for the human-readable command name (and `idle` flag), and render
-      a grouped, readable sheet. Retire reliance on the drifting `accel` column. Test:
-      extend tests/headless/test_keybindings_help.tcl to assert the sheet's rows match
-      the dump (e.g. a known migrated chord like `f`/`k` appears with its action name).
+  d4b (Tcl loader): read keybindings.csv / mousebindings.csv at startup (Tcl parses ->
+      `xschem bind <device> <code> <mods> <ctx> <action> [idle]`), so editing a file
+      remaps or un-binds defaults without recompiling. Seed the default files FROM the
+      current built-in init_input_bindings table so behavior is identical when no user
+      file is present. Test: a fixture rc that remaps + unbinds a key, asserting the
+      live behavior follows (drive the key via `xschem callback`).
 
-  If instead you want to keep migrating keys, the remaining sem-gated candidates are all
-  caveated (dialogs / semaphore-manipulating / unconditional) — see SKIP/DEFER below;
-  prefer d3 unless the user asks otherwise.
+  NB the C side (`xschem bind/unbind/bindings`, idle) already exists — d4 is mostly
+  Tcl + csv. If you'd rather keep migrating keys instead, see SKIP/DEFER below (all
+  remaining sem-gated candidates are caveated); prefer d4 unless the user says otherwise.
 
-Behavior-preserving, tested, the
-same rhythm as the d2 batches. No pre-written plan — you scope it, propose 3-5 chords
-with my sign-off, write a short plan doc (mirror claude_suggs/plan_phase3d2_batch3.md),
-then implement.
+Behavior-preserving, tested, small commits (split code vs docs). No pre-written plan —
+scope it, write a short plan doc (mirror plan_phase3d2_semgated_batch3.md), implement.
 
 WHAT d1b GIVES YOU (read claude_suggs/plan_phase3d1b_idle_only.md +
 tutorial_action_registry_phase3d.md §d1b first):
