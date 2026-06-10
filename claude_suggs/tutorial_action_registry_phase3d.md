@@ -277,3 +277,53 @@ each verified byte-identical to the switch branch *including* the `redraw_hiligh
 > `Mod4Mask` (Super) — those rows print mods `0`. The binding *works* (find_binding uses
 > the stored mods); only the dump string is wrong. Pre-existing since Alt-`h`. Fix when
 > d3 builds the cheat-sheet from the dump (and teach `parse_mods` "super"/"mod4" too).
+
+## d3 — the cheat-sheet becomes a view of the live table (commits `d8cf32bd`, `2c8d9e16`)
+
+(Chronicled fully in the refactor plan / lessons; the short version.) `generate_
+keybindings_text` stopped reading the decorative `accel` column and now renders
+`xschem bindings dump` — the truth the C dispatch actually uses — joining `actions.csv`
+only for human labels. Building the view forced the `mods_name` Mod4/Super fix (d3a)
+and surfaced the full list of bound-but-unlabeled C ids: the d4a work-list, for free.
+
+## d4 — actions.csv labels every bound id; bindings load from files (commits `7cb366f1`, `99564587`)
+
+The closing move of the "single source of truth" thread, in two halves.
+
+**d4a (`7cb366f1`)** folded the cheat-sheet's bare ids into `actions.csv`:
+
+- **15 label-only rows** (`view.scroll_*`, `view.pan_*`, `view.snap_*`,
+  `view.zoom_rect`, the toggle ids). Their `command` cell is deliberately EMPTY —
+  the behavior is C-backed and only the binding table can run it; inventing a
+  near-equivalent Tcl command per id would be the `e` trap at scale. The palette
+  skips empty-command rows; the csv header documents the convention.
+- **A new `idle` column** — the *action-level* mirror ("needs an idle engine") of the
+  binding table's per-chord `idle_only`. Informational: nothing dispatches off it.
+- **Two id reconciles, both by READING, not refactoring.** `sch.edit_header` was a
+  second name for the csv's `prop.edit_header_license_text` (identical command) →
+  renamed, one id one behavior. The long-deferred `Z`/`view.zoom_in` "collision"
+  *dissolved*: `view_zoom(0.0)` defaults its factor to `CADZOOMSTEP` (actions.c), so
+  the csv command and the wheel act were identical all along. A deferral is a
+  hypothesis; re-derive it from the code before building mechanism around it.
+- **The gap-finder became a gap-guard:** the smoke check "C-only ids fall back to a
+  bare id" inverted into "NO bound id may lack a csv label" — future drift fails CI.
+
+**d4b (`99564587`)** made the binding table file-loadable — the user-facing payoff:
+
+- `keybindings.csv` / `mousebindings.csv` rows are exactly the `xschem bind` token
+  vocabulary (`device,code,mods,ctx,action,idle`; action `-` = un-bind), replayed
+  once at startup from xschem.tcl: share-dir defaults first, then `USER_CONF_DIR`
+  copies (later wins). Malformed rows warn and are skipped — a typo can't brick
+  startup.
+- The shipped defaults are **generated from the builtin C table**
+  (`save_input_bindings_file` over `bindings dump`), so they load as a no-op; the
+  smoke test diffs the committed files against a fresh save every run, so changing
+  the builtins without regenerating fails the suite. Generated artifacts need a
+  freshness check or they're just a second source of truth waiting to drift.
+- Ordering found while wiring the call: **xschemrc is sourced before the `xschem`
+  command exists**, so `xschem bind` never worked from xschemrc — the csv files are
+  *the* supported file-remap path, and they can't be clobbered by anything earlier.
+- Proof of the loop closing: `test_bindings_file.tcl` writes a fixture that remaps
+  backtick to `edit.toggle_stretch` and un-binds `y`, loads it, and drives real
+  KeyPress events — the var flips on backtick and stops flipping on `y`. Edit a
+  file, the keys obey. That was the Phase-3 starting question, answered.

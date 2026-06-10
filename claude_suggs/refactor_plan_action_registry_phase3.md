@@ -288,7 +288,28 @@ new context tests) stays green.
   - **Batch 2 DONE** (commit `9a8e517a`; plan `plan_phase3d2_batch2.md`): five clean canvas-only command keys — `y`→`edit.toggle_stretch` (case deleted), `G`→`view.snap_double` (case deleted), `g`→`view.snap_half`, `T`→`prop.toggle_ignore_attribute_on_selected_instances`, `O`→`view.toggle_colorscheme` (g/T/O plain branch only; Ctrl/Alt branches stay). All C-backed; snap acts read `tclgetdoublevar("cadsnap")`, stretch act flips the `enable_stretch` var. Verified via the vars they flip/scale. Engine 6/6 + smokes green. New ids `edit.toggle_stretch`/`view.snap_*` not yet in actions.csv (→ d4).
   - **Next batches:** more pure-global no-sem command keys (C- or Tcl-backed). Still deferred: semaphore-gated (→ d1b) and mouse-coord/embedded-logic commands.
 - [x] **d3. DONE** (commits `d8cf32bd` d3a, `2c8d9e16` d3b). **d3a:** `mods_name` now renders `Mod4Mask` as `super` (it printed `0` before) and `parse_mods` accepts `super`/`mod4`, so `bindings dump` shows Super chords and `xschem bind … super …` round-trips. **d3b:** `generate_keybindings_text` (action_registry.tcl) now reads `xschem bindings dump` (the live table) instead of the decorative `accel` column — new `keybinding_chord_label` renders each signature as a readable chord (keysym→name, wheel/button words, mods incl. Super), joined with `actions.csv` only for the human `label` (C-only ids fall back to the id → folded in at d4). idle rows annotated `(when idle)`; `graph.forward` routing rows footnoted, not listed. The sheet can't drift from the C dispatch. The Phase-2 `accel`/`migrated_action_ids`/`remap_action_accel` machinery is left intact (still used by `test_remap`/`test_accelerators`). `test_keybindings_help.tcl` rewritten for the dump-driven output incl. a "sheet follows the live table" unbind/rebind check. Engine 6/6 + smokes green.
-- [ ] **d4.** (User-facing) Load `keybindings.csv`/`mousebindings.csv` at startup (Tcl reads → `xschem bind`), enabling edit-a-file remapping *and* un-binding defaults
+- [x] **d4. DONE** (commits `7cb366f1` d4a, `99564587` d4b; plans
+  `plan_phase3d4a_csv_single_source.md`, `plan_phase3d4b_bindings_file_loader.md`).
+  **d4a:** `actions.csv` is the single source of truth for every bound id — 15 new
+  label-only rows (empty `command` → palette skips them) for the C-registered ids
+  (`view.scroll_*`, `view.pan_*`, `view.snap_*`, `view.zoom_rect`, toggles); new
+  `idle` column (informational mirror of the binding `idle_only` flag, set on the 11
+  sem-gated ids); `sch.edit_header` renamed to the pre-existing csv id
+  `prop.edit_header_license_text` (same command, one id = one behavior). The
+  `Z`/`view.zoom_in` "collision" dissolved on reading both sides: `view_zoom(0.0)`
+  defaults to `CADZOOMSTEP`, so csv `xschem zoom_in` == wheel `act_zoom_in` — no id
+  split, and a future `Z` migration is unblocked. `view.zoom_rect` vs `view.zoom_box`
+  verified genuinely distinct (immediate gesture vs MENUSTART). Smoke now asserts NO
+  bound id (graph.forward excepted — footnoted routing plumbing, deliberately no csv
+  row) falls back to a bare id in the cheat-sheet.
+  **d4b:** `keybindings.csv`/`mousebindings.csv` (rows = the `xschem bind` token
+  vocabulary; action `-` = un-bind) are replayed at startup from xschem.tcl
+  (share-dir defaults first, then `USER_CONF_DIR` copies, which win) — edit-a-file
+  remapping with no recompile. The shipped files are GENERATED from the builtin table
+  by `save_input_bindings_file`; `test_bindings_file.tcl` (13 checks) diffs them
+  against a fresh save (drift guard), proves the no-op re-load, and proves a fixture
+  remap+un-bind changes LIVE key behavior. Note: xschemrc is sourced before the
+  `xschem` command exists, so these files are *the* file-remap path.
 - [ ] **d5.** Delete the dead hardcoded ladders once parity is proven
 
 ## Risks & honest trade-offs

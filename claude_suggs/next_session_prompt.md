@@ -1,167 +1,111 @@
-# Opening prompt for the next session (Phase 3d — d4: actions.csv unification + load-from-file remap)
+# Opening prompt for the next session (Phase 3d — d5: retire the Phase-2 Tk intercept; dead-remnant audit)
 
-Committed on branch `feature/action-registry`: 3a (wheel), 3b (right-drag zoom
-gesture), 3c (context-routed keys — complete), 3d.1 (Tcl-command-backed actions; `B`
-out), 3d.2 batches 1-3 (`H`, Alt-h, `y`,`G`,`g`,`T`,`O`, `A`,`L`,`=`,`$`), **3d.1b
-(semaphore `idle_only`)** (`a`,`b`,`Ctrl+f`,`Ctrl+s` routing), **3d.2 sem-gated batches
-1-3** (`n`,`U`,`u`; `k`,`K`; `j` branch), and **3d.3** (cheat-sheet generated live from
-`xschem bindings dump`; `mods_name`/`parse_mods` now do Super).
+Goal: Phase 3d.5 — retire the Phase-2 Tcl keyboard interception so ONE mechanism (the
+C binding table) owns every key, then audit/delete dead remnants. d4 is DONE (d4a
+`7cb366f1` csv single-source, d4b `99564587` file loader): every bound id has a csv
+label, and keybindings.csv/mousebindings.csv remap/un-bind chords at startup.
 
-Keys/chords out of the switch so far: **B, H, Alt-h, y, G, g, T, O, A, L, =, $, n, U,
-k, K** (whole or branch), **u, j** (branch); plus graph routing for `f`/arrows/Group-B/
-`t`/the 4 sem-first chords.
+  d5a (recommended first): RETIRE THE PHASE-2 TK INTERCEPT. `migrated_action_ids`
+      (action_registry.tcl) still Tk-binds u/U/Shift+Z/Ctrl+Z via
+      bind_accelerators_from_table — a Tk binding with a key detail PRE-EMPTS the
+      generic <KeyPress>, so in the real GUI those four chords never reach the C
+      dispatch (the C rows for u/U added in sem-gated batch 1 are shadowed; worse, the
+      Tk path has NO idle gate, so `u` during a busy engine runs `xschem undo` where
+      the C row would be skipped — a real behavior divergence between mechanisms).
+      Plan: (1) seed C rows for the two zoom chords — key 90 (Z; Shift folds into the
+      keysym for letters) mods 0 canvas -> view.zoom_in, and key 122 mods ctrl canvas
+      -> view.zoom_out; d4a PROVED view_zoom(0.0) == view_zoom(CADZOOMSTEP) so the csv
+      commands and C acts are identical (one id, one behavior — see
+      plan_phase3d4a_csv_single_source.md "Reconciles" §2). VERIFY first what case
+      'Z'/'z' in the switch do with those exact chords (delete or keep per the
+      exact-vs-family rule; also re-read `xschem zoom_out` = view_unzoom(0.0) ==
+      act_zoom_out anyway). (2) empty migrated_action_ids (keep the Phase-2 machinery
+      procs — bind_accelerators_from_table/remap_action_accel are tested and become
+      no-ops over an empty list). (3) rewrite/retire test_remap + test_accelerators:
+      their job flips from "Tcl intercept works" to "NO Tk key-detail binding shadows
+      the C table"; remap coverage lives in test_bindings_file. (4) u/U regain their
+      idle gate in the real GUI for free — assert no Tk binding exists for <Key-u> so
+      the C path must serve it.
 
-The clean sem-gated well is thin (remaining keys are dialogs / `semaphore`-manipulating /
-unconditional — see SKIP/DEFER below). The recommended next move per the plan is **d4**.
-Paste the block below into a fresh session.
+  d5b (audit, small): grep for dead/duplicated remnants the migrations left behind —
+      e.g. the Button2 special-casing noted at Phase 3b (callback.c skip logic),
+      keys.help vs the generated cheat-sheet (two help texts; consider pointing the
+      old Help menu entry at show_keybindings_help or just note the overlap), comments
+      referencing already-deleted cases. Delete only what is provably dead.
 
----
+  AFTER d5: the well of clean key migrations is dry. Remaining un-migrated chords are
+  structurally parked: dialogs (Q edit-attrs, i/I insert-sym), semaphore-manipulating
+  (q quit, o load, e/I new-window branches), unconditional symbol keys
+  (&/>/</?/:/%/_/* — additive-only), cadence_compat-gated (plain s, Ctrl+r — need a
+  mode axis the plan explicitly resists; revisit only on a concrete user ask).
+  Candidate new directions (ask the user): generate more menus from actions.csv (only
+  File is), an `xschem action <id>` dispatcher so label-only rows become
+  palette-runnable, or a customize-shortcuts dialog writing keybindings.csv.
 
-```
-Goal: implement d4 — make actions.csv the single source of truth for EVERY bound id, then
-load bindings from a file at startup so users can remap by editing a file. Two atomic
-steps (do d4a first):
-
-  d4a (data + small reconcile): the cheat-sheet (d3) now shows several bound action ids
-      with NO human label because they live only in the C registry, not actions.csv —
-      that un-labeled list IS this work-item. Run the cheat-sheet
-      (`generate_keybindings_text`) and add an actions.csv row for each id printed as a
-      bare id: view.scroll_up/down/left/right, view.pan_up/down/left/right,
-      view.zoom_full, view.zoom_rect, view.snap_half/snap_double, edit.toggle_stretch,
-      view.toggle_show_netlist, view.toggle_draw_pixmap, edit.toggle_orthogonal_wiring,
-      sch.edit_header, sym.attach_net_labels_to_component_instance,
-      sym.make_schematic_and_symbol_from_selected_components,
-      sym.create_symbol_pins_from_selected_schematic_pins, graph.forward (+ any others
-      the dump shows id-only). Add an `idle` column to the csv schema (so the
-      idle-ness is data too). RECONCILE the Z/view.zoom_in collision: the wheel binds
-      view.zoom_in = view_zoom(CADZOOMSTEP) but the csv maps view.zoom_in→Shift+Z→
-      view_zoom(0.0); give Shift+Z a DISTINCT id (e.g. view.zoom_in_center) so one id =
-      one behavior. Keep the C registry ids and csv ids in agreement.
-      Test: extend test_keybindings_help.tcl to assert NO bound row falls back to a bare
-      id (every chord shows a label); test_palette/dump_file_menu still green.
-
-  d4b (Tcl loader): read keybindings.csv / mousebindings.csv at startup (Tcl parses ->
-      `xschem bind <device> <code> <mods> <ctx> <action> [idle]`), so editing a file
-      remaps or un-binds defaults without recompiling. Seed the default files FROM the
-      current built-in init_input_bindings table so behavior is identical when no user
-      file is present. Test: a fixture rc that remaps + unbinds a key, asserting the
-      live behavior follows (drive the key via `xschem callback`).
-
-  NB the C side (`xschem bind/unbind/bindings`, idle) already exists — d4 is mostly
-  Tcl + csv. If you'd rather keep migrating keys instead, see SKIP/DEFER below (all
-  remaining sem-gated candidates are caveated); prefer d4 unless the user says otherwise.
-
-Behavior-preserving, tested, small commits (split code vs docs). No pre-written plan —
-scope it, write a short plan doc (mirror plan_phase3d2_semgated_batch3.md), implement.
-
-WHAT d1b GIVES YOU (read claude_suggs/plan_phase3d1b_idle_only.md +
-tutorial_action_registry_phase3d.md §d1b first):
-- A binding can be idle_only: the DEV_KEY dispatch skips it when xctx->semaphore>=2,
-  BEFORE current_input_ctx (so no waves_selected side effect while busy) — reproducing
-  `if(sem>=2)break;`. Seed with set_input_binding_idle(...); or `xschem bind ... idle`.
-- `bindings dump` appends " idle" to idle_only rows; the gate is testable via
-  `xschem set semaphore <n>` + an observable action.
-- So a sem-gated key whose branch is `if(sem>=2)break; <behavior>` migrates by: add an
-  idle_only canvas row → <behavior's action> (C- or Tcl-backed), delete the whole case
-  (or just the branch if other chords stay). If the key ALSO had a waves guard, add an
-  idle_only over_graph→graph.forward row too (that's what the 4 sem-first chords did).
+Behavior-preserving, tested, small commits (split code vs docs). Scope -> short plan
+doc (mirror plan_phase3d4a/b) -> implement.
 
 PRE-FLIGHT:
 1. Re-grep callback.c line numbers (they shift every batch).
-2. Re-run the cleanliness scan, but this time you WANT sem-gated branches. Find ones
-   that are sem-gated and OTHERWISE clean (no mouse-coords mousex_snap|mx_double|
-   infix_interface, no modal move_objects|new_*|place_|start_line|ui_state, no
-   cadence_compat / other untable-able mode condition). Inspect each candidate as-is.
-3. SKIP already-migrated (B,H,Alt-h,y,G,g,T,O,A,L,=,$,n,U,u,k,K,j and the routing-only
-   a/b/Ctrl+f/Ctrl+s). DEFER anything cadence_compat-gated (plain s, Ctrl+r),
-   param-dependent (`\` fullscreen uses win_path), or that manipulates the semaphore
-   directly (q quit, o load, the e/I edit-in-new-window branches) until a mechanism
-   exists.
+2. Read case 'Z' and case 'z' in handle_key_press as they are NOW; verify which exact
+   chords they serve and whether Shift+Z / Ctrl+z are exact (deletable) or families.
+3. Read bind_accelerators_from_table + accel_to_tk_sequence + test_remap +
+   test_accelerators BEFORE emptying migrated_action_ids — know exactly what each
+   test asserts so the rewrite keeps real coverage.
+4. Check whether the Z/z switch branches have `if(sem>=2)break;` — if yes the new
+   rows must be idle_only (and the Tk intercept's missing gate was a second
+   divergence worth recording).
 
-STRONG CANDIDATES for batch 3 (verify against scheduler.c, don't trust) — sem-gated,
-EXPLICIT mod guard, single-fn. The clean well is thinning; remaining decent ones:
-  `j`/`J` (print_hilight_net — but `j`'s 4th branch `SET_MODMASK && state&ControlMask`
-  is a FAMILY with no sem guard → `j` can only BRANCH-migrate plain/Ctrl/Alt and keep
-  the case; `J`'s sole guard is `SET_MODMASK`, also a family → additive/branch),
-  `Q` (plain edit_property(1) sem-gated, Ctrl edit_property(2) NOT — both DIALOGS; test
-  via the gate, don't open them), `i`/`I` (descend_symbol etc. — but Ctrl/Alt branches
-  are dialogs / semaphore-save; branch-migrate the clean plain one), `K`-like leftovers.
-  Prefer reusing a csv Tcl id ONLY after verifying it equals the C branch incl. any
-  redraw tail (the `e` trap: xschem descend ≠ the key's descend params; batch 2 verified
-  every hilight cmd's redraw). Else write a C act.
-  AVOID: `?`,`/`,`&`,`>`,`<`,`*`,`:`,`%`,`_` (UNCONDITIONAL — no mod guard — whole-delete
-  changes modified-press behavior; additive-only).
+BACKINGS: reuse csv ids view.zoom_in / view.zoom_out (C-backed acts already in the
+registry, proven == the csv commands). Don't coin new ids.
 
-If the clean well is genuinely thin, PIVOT to d3 (cheat-sheet from `xschem bindings
-dump`): Tcl-side, no switch edits, low risk; it can flag idle_only chords and is the
-right place to FIX the cosmetic `mods_name` Mod4/Super gap (dump prints Mod4 rows as
-mods "0"; teach `mods_name` "super" and `parse_mods` "super"/"mod4" for round-trip).
-
-BACKINGS: call the exact C fn the switch did (C-backed act) OR a global tcl command
-string (Tcl-backed). For a tcleval branch, prefer Tcl-backed reusing an actions.csv id
-if one exists (grep src/actions.csv); else coin a C id (fold into csv at d4). Don't swap
-a C fn for its `xschem ...` Tcl equivalent unless verified identical.
-
-TEST (extend tests/headless/test_key_graph_context.tcl):
-- rows present (+ " idle" marker on the new idle_only rows; canvas-only keys have no
-  graph row).
-- the action fires when idle: observe its effect (tcl var flip, or stub a Tcl proc as a
-  counter). For destructive canvas ops (dialogs), prove via the idle GATE on a probe
-  like d1b did, or assert dispatch-without-error + rows.
-- the idle GATE: `xschem set semaphore 2` → the migrated key does NOT fire; reset to 0 →
-  it does. (Reset semaphore to 0 afterwards — leaving it high wedges later checks.)
-- Re-run the full suite: engine run.sh 6/6, all GUI smokes green. Watch for older
-  count/glob assertions tripped by new rows (narrow them, as every batch has).
+TEST (extend test_key_graph_context.tcl or a new smoke):
+- rows present for the new chords; cases deleted/kept per exact-vs-family.
+- live: Shift+Z via `xschem callback` divides zoom by 1.2 (zoom-toward-mouse), Ctrl+z
+  multiplies; u/U still undo/redo via callback at sem=0, skipped at sem=2 (reuse
+  batch-1's instance-count pattern).
+- after emptying migrated_action_ids: `bind .drw <Key-u>` etc. return EMPTY (no Tk
+  shadow); the cheat-sheet is unchanged (it reads the dump).
+- engine run.sh 6/6 + ALL smokes incl. test_bindings_file. NB: regenerate
+  keybindings.csv via save_input_bindings_file after seeding the new rows — the
+  drift guard WILL fail until you do; that is it working, not a flake.
+- Watch for older count/glob assertions tripped by new rows (every batch narrows one).
 
 Warm-start reads:
-- CLAUDE.md; claude_suggs/refactor_plan_action_registry_phase3.md (d1b DONE, d2/d3/d4/d5)
-- claude_suggs/plan_phase3d1b_idle_only.md (the gate; the cadence_compat deferral)
-- claude_suggs/lessons_learnt_action_registry.md (THE cross-cutting lessons — read first;
-  themed: behavior-preservation, the dispatch gate, exact-vs-family, idle_only, don't-swap-
-  for-an-equivalent, testing, process. Append to it when a batch teaches something.)
-- claude_suggs/tutorial_action_registry_phase3d.md (all d1/d2/d1b lessons, chronological)
-- src/callback.c — RE-GREP: action_registry[] + find_action_def (~2325-2400); act_* fns
-  above it; set_input_binding_idle + key_chord_is_idle_only (~2415-2455);
-  init_input_bindings (~2435-2545); the DEV_KEY dispatch gate (~3095) — idle term is
-  already folded into the `if(...)` condition there.
-- tests/headless/run.sh (engine 6/6)
+- CLAUDE.md; claude_suggs/refactor_plan_action_registry_phase3.md (d4 DONE, d5 last)
+- claude_suggs/lessons_learnt_action_registry.md (READ FIRST — themed lessons; note
+  the new d4 entries: a deferred "collision" is a hypothesis too, drift-guard for
+  generated defaults, label-only rows, idle in two layers, xschemrc ordering)
+- claude_suggs/plan_phase3d4a_csv_single_source.md + plan_phase3d4b_bindings_file_loader.md
+- claude_suggs/tutorial_action_registry_phase3d.md (d1..d4 chronological)
+- src/action_registry.tcl — migrated_action_ids (~l.168), bind_accelerators_from_table,
+  load/save_input_bindings_file (d4b), generate_keybindings_text
+- src/callback.c — action_registry[] + init_input_bindings (re-grep; ~2325-2600)
+- tests/headless/run.sh; test_bindings_file.tcl (the drift guard)
 
 Gotchas (also project memory action-registry.md):
-- GUI: DISPLAY=:0, capture with --pipe: `DISPLAY=:0 ./src/xschem --pipe -q --script FILE`.
+- GUI: DISPLAY=:0, capture with --pipe: `DISPLAY=:0 ./src/xschem --pipe -q --script F`.
   Drive events: `xschem callback .drw 2 <mx> <my> <keysym> 0 0 <state>` (KeyPress=2;
-  Shift=1,Ctrl=4,Alt=8). kmods=(key<0xff00)?rstate:state; letters strip Shift.
-- A migrated act() takes (const ActionEvent*e), ignores mouse ctx, must NOT read
-  handle_key_press params — read the source (tcl var / xctx field).
-- Whole-delete a case only when EVERY chord it handled is data-or-noop; else delete the
-  branch and keep the case + break. For a sem-gated chord, the idle_only row replaces
-  the `if(sem>=2)break;` — confirm the branch had NOTHING else before the break.
-- Commit code and docs separately; don't push or do anything outward-facing without asking.
+  Shift=1,Ctrl=4,Alt=8). kmods=(key<0xff00)?rstate:state; letters strip Shift -> the
+  Shift+Z chord is keysym 90 ('Z') with mods 0; Ctrl+z is keysym 122 mods ctrl.
+- `xschem callback` BYPASSES Tk bindings — it proves the C path, NOT the Tk
+  shadowing. The shadowing claim needs `bind .drw <seq>` introspection (or Tk
+  event generate, which is flaky headless — see test_palette).
+- The shipped keybindings.csv/mousebindings.csv are GENERATED; after ANY
+  init_input_bindings change run save_input_bindings_file for {key} and
+  {wheel button} and commit the regenerated files.
+- Whole-delete a case only when EVERY chord it handled is data-or-noop; else delete
+  the branch and keep the case + break.
+- Commit code and docs separately; don't push or do anything outward-facing without
+  asking.
 
 DoD:
-1. Small sem-gated batch scoped + signed off + short plan doc.
-2. idle_only rows added (canvas, + over_graph if it routed); cases whole-deleted where
-   single-branch; acts match the originals exactly.
-3. Verified empirically (effect or gate-via-semaphore probe); engine 6/6 + smokes green;
-   test extended.
-4. After it lands: update plan/tutorial/refactor-plan/memory and refresh THIS prompt.
+1. d5a scoped + signed off + short plan doc; one mechanism per key in the real GUI.
+2. New zoom rows seeded (+ regenerated keybindings.csv); migrated_action_ids empty;
+   Phase-2 tests rewritten to assert the new invariant (no Tk shadows).
+3. Verified empirically (live zoom/undo behavior + bind introspection); engine 6/6 +
+   all smokes green.
+4. Docs chain updated (plan/tutorial/refactor-plan/memory) + refresh THIS prompt.
 
-Start with the pre-flight: re-grep, scan for clean sem-gated branches, propose the batch.
-```
-
----
-
-## Roadmap after this batch
-
-- More sem-gated full-migration batches (the bulk of the remaining switch) until that
-  well thins.
-- **d3** cheat-sheet from `xschem bindings dump` (can now show `idle`).
-- **d4** load `keybindings.csv`/`mousebindings.csv` at startup (incl. an `idle` column);
-  **fold the C-only ids into `actions.csv`** (`edit.toggle_stretch`, `view.snap_half`,
-  `view.snap_double`, `view.toggle_show_netlist`, `edit.toggle_orthogonal_wiring`,
-  `view.toggle_draw_pixmap`); **reconcile `Z`/`view.zoom_in`** (wheel CADZOOMSTEP vs
-  Shift+Z `view_zoom(0.0)` — distinct ids). Consider a `cadence_compat` axis so plain
-  `s`/`Ctrl+r` can migrate.
-- **d5** delete the dead switch ladders.
-
-The running user-facing Q&A lives in `code_analysis/action_registry_faq.md` (stamped
-with phase + HEAD); add to it when the user asks a keep-worthy question.
+Start with the pre-flight: read case Z/z and the Phase-2 test pair, then propose the
+d5a plan.

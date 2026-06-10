@@ -116,10 +116,13 @@ hypothesis until you read the scheduler branch.
   matched its C branch *including the redraw tail*.
 - **Looks-alike but differs → write a C act or defer.** `e`: `xschem descend` =
   `descend_schematic(0,0,0,1)` but the key calls `(0,1,1,1)`, and `xschem go_back` adds
-  an internal `semaphore==0` check the C `go_back(1)` lacks. `Z`: the csv maps
-  `view.zoom_in` → Shift+Z → `view_zoom(0.0)`, but the C registry already binds
-  `view.zoom_in` = `view_zoom(CADZOOMSTEP)` to the *wheel* — same id, two behaviors.
-  Both deferred rather than forced.
+  an internal `semaphore==0` check the C `go_back(1)` lacks. Deferred rather than forced.
+- **…and the rule cuts both ways: a deferred "collision" is a hypothesis too.** `Z` was
+  deferred for months as "csv `view.zoom_in` = `view_zoom(0.0)` vs wheel =
+  `view_zoom(CADZOOMSTEP)`, same id two behaviors" — but `view_zoom(0.0)` *defaults its
+  factor to CADZOOMSTEP* (actions.c `factor = z!=0.0 ? z : CADZOOMSTEP`), so they were
+  identical all along; d4a resolved the "collision" by reading both sides and doing
+  nothing. Re-derive deferrals from the code before designing mechanism around them.
 - **Translate to the *behavior*, not the *label*.** "Alt-F" is really Alt+`f`; an accel
   display string can be wrong. Bind/verify by keysym + observable, never by the
   decorative `accel` column.
@@ -208,7 +211,29 @@ one.**
   action ids glaringly visible (they show as `view.scroll_up` instead of a label) — that
   list *is* the d4 work-item, surfaced for free. And building it forced the `mods_name`
   Mod4/Super fix (d3a) that was only a latent cosmetic bug before. Generating a complete
-  view flushes out the incompleteness elsewhere.
+  view flushes out the incompleteness elsewhere. **Then make the gap STAY closed by
+  inverting the gap into an assertion** (d4a): once every bound id had a csv label, the
+  smoke test that used to assert "C-only ids fall back to the bare id" became "NO bound
+  id may fall back" — a freshly-coined C id without a csv row now fails the suite instead
+  of silently rendering ugly.
+- **Ship generated defaults with a drift-guard test.** d4b ships
+  `keybindings.csv`/`mousebindings.csv` *generated from* the built-in C table
+  (`save_input_bindings_file` over `bindings dump`). Two descriptions of the defaults
+  (C seeds + files) would normally be a drift hazard, so the smoke test diffs the
+  committed files against a fresh save every run — change the builtins without
+  regenerating and the suite fails. A generated artifact is only trustworthy while
+  something *checks* it was regenerated.
+- **A metadata row is allowed to be partial — model it explicitly.** d4a's 15 new
+  `actions.csv` rows have an EMPTY `command`: the behavior is C-backed and only the
+  binding table can run it; the row exists for label/help. Rather than inventing a
+  near-equivalent Tcl command per id (the `e` trap again) or a junk palette entry, the
+  empty cell became part of the schema's meaning (palette skips empty-command rows;
+  csv header documents it). Half-truths beat plausible lies in a source-of-truth table.
+- **Idle-ness lives in two layers — keep their roles straight.** The csv `idle` column
+  records the *action's* default ("this command needs an idle engine"), per-chord truth
+  stays in the binding table (`bindings dump` / the file loader's idle field). The csv
+  column is informational; nothing dispatches off it. Don't promote a per-chord fact to
+  a per-action column and then *use* it as if it were per-chord.
 
 ## 12. Process / working rhythm that paid off
 
@@ -242,6 +267,12 @@ one.**
   renders `Mod4Mask` as `super` and `parse_mods` accepts `super`/`mod4`. (Before, Super
   rows printed mods `0` — a latent cosmetic bug since Alt-`h`, surfaced when d3 built the
   cheat-sheet from the dump.)
+- **Startup ordering (xinit.c):** xschemrc is sourced (~:2742) *before*
+  `Tcl_CreateCommand "xschem"` (:2845), which precedes sourcing xschem.tcl (:2883). So
+  an `xschem bind` in xschemrc errors at source time — the supported file-remap path is
+  `keybindings.csv`/`mousebindings.csv` (d4b), loaded from xschem.tcl top-level where
+  the command exists. `xschem bind` itself needs no xctx (only `ensure_input_bindings`),
+  so top-of-xschem.tcl is early enough.
 
 ---
 
