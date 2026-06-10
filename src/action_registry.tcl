@@ -302,42 +302,69 @@ proc remap_action_accel {id new_accel {topwin .drw}} {
 }
 
 # --- generated keybindings cheat-sheet ---------------------------------------
-# Build the keyboard-shortcut cheat-sheet FROM the action table, so it can never
-# drift from the actual bindings (which are also generated from the same table).
-# Replaces the hand-maintained prose in keys.help. Rows migrated to the
-# data-driven binding (migrated_action_ids) are flagged with '*'; the rest show
-# the accel that the C handle_key_press chain implements.
+# Phase 3d.3: the cheat-sheet is now a generated *view of the live binding table*
+# (`xschem bindings dump`), so it can never drift from what the C dispatch actually
+# does. The decorative actions.csv `accel` column is no longer consulted; only the
+# human-readable `label` is joined in (by action id). Rows whose action id isn't in
+# actions.csv yet (C-registered ids, folded in at d4) fall back to showing the id.
+
+# Render one binding signature (device, keysym/code, mods) as a readable chord, e.g.
+# {key 107 ctrl} -> "Ctrl+k", {wheel up 0} -> "Wheel up", {button 3 0} -> "Button 3".
+proc keybinding_chord_label {dev code mods} {
+  set pfx ""
+  foreach {tok disp} {ctrl Ctrl+ alt Alt+ super Super+ shift Shift+} {
+    if {[string match "*$tok*" $mods]} { append pfx $disp }
+  }
+  if {$dev eq "wheel"}  { return "${pfx}Wheel $code" }
+  if {$dev eq "button"} { return "${pfx}Button $code" }
+  # device == key: code is an X keysym number
+  set named {65362 Up 65364 Down 65361 Left 65363 Right 65289 Tab 65293 Return \
+             65307 Esc 65535 Delete 65288 BackSpace 32 Space}
+  if {[dict exists $named $code]} {
+    set k [dict get $named $code]
+  } elseif {$code >= 33 && $code <= 126} {
+    set k [format %c $code]
+  } else {
+    set k "key$code"
+  }
+  return "${pfx}$k"
+}
+
 proc generate_keybindings_text {} {
-  global action_table migrated_action_ids
+  global action_table
+  # action id -> human label, from actions.csv (the single source for names)
+  set label {}
+  foreach row $action_table { dict set label [dict get $row id] [dict get $row label] }
+
   set lines {}
-  lappend lines "XSCHEM KEYBOARD SHORTCUTS"
-  lappend lines "Generated from actions.csv - do not edit by hand."
+  lappend lines "XSCHEM KEYBOARD & MOUSE BINDINGS"
+  lappend lines "Generated live from the binding table (xschem bindings dump)."
   lappend lines [string repeat - 64]
   lappend lines ""
-  # menus in first-seen table order
-  set menus {}
-  foreach row $action_table {
-    set m [dict get $row menu]
-    if {$m ne {} && [lsearch -exact $menus $m] < 0} { lappend menus $m }
+  set groups {Keys {} Mouse {}}
+  foreach row [xschem bindings dump] {
+    lassign $row dev code mods ctx id idle
+    # graph-routing rows are context plumbing, not user commands -> footnote, not list
+    if {$id eq "graph.forward"} continue
+    set chord [keybinding_chord_label $dev $code $mods]
+    set desc  [expr {[dict exists $label $id] ? [dict get $label $id] : $id}]
+    set ann {}
+    if {$ctx eq "global"} { lappend ann "global" }
+    if {$idle eq "idle"}  { lappend ann "when idle" }
+    set suffix [expr {[llength $ann] ? " ([join $ann {, }])" : ""}]
+    set g [expr {$dev eq "key" ? "Keys" : "Mouse"}]
+    dict lappend groups $g [format "  %-16s %s%s" $chord $desc $suffix]
   }
-  foreach m $menus {
-    set section {}
-    foreach row $action_table {
-      if {[dict get $row menu] ne $m} continue
-      if {[dict get $row type] ne {command}} continue
-      set accel [dict get $row accel]
-      if {$accel eq {}} continue
-      set mark [expr {[lsearch -exact $migrated_action_ids [dict get $row id]] >= 0 ? "*" : " "}]
-      lappend section [format "  %s %-24s %s" $mark $accel [dict get $row label]]
-    }
-    if {[llength $section]} {
-      lappend lines "\[$m\]"
-      foreach s $section { lappend lines $s }
-      lappend lines ""
-    }
+  foreach g {Keys Mouse} {
+    set rows [dict get $groups $g]
+    if {![llength $rows]} continue
+    lappend lines "\[$g\]"
+    foreach r [lsort $rows] { lappend lines $r }
+    lappend lines ""
   }
   lappend lines [string repeat - 64]
-  lappend lines "  * = data-driven binding (remappable, set in actions.csv)."
+  lappend lines "  Keys/wheel also forward to a waveform graph when the pointer is over one."
+  lappend lines "  Remap any row: xschem bind <device> <code> <mods> <ctx> <action> \[idle\]"
   return [join $lines "\n"]
 }
 
