@@ -2372,6 +2372,11 @@ static const ActionDef action_registry[] = {
   { "hilight.select_hilight_nets_pins",              NULL, "xschem select_hilight_net", "Select highlighted nets/pins" },
   { "hilight.un_highlight_all_net_pins",             NULL, "xschem unhilight_all",      "Un-highlight all net/pins" },
   { "hilight.propagate_highlight_selected_net_pins", NULL, "xschem hilight drill",      "Propagate highlight (drill)" },
+  /* Phase 3d.2 sem-gated batch 3 — `j` hilight-list (branch migration). Tcl commands
+   * are `xschem print_hilight_net N` = print_hilight_net(N), identical to the switch. */
+  { "sym.list.print_list_of_highlight_nets",    NULL, "xschem print_hilight_net 1", "Print list of highlight nets" },
+  { "sym.list.create_pins_from_highlight_nets", NULL, "xschem print_hilight_net 0", "Create pins from highlight nets" },
+  { "sym.list.create_labels_from_highlight_nets", NULL, "xschem print_hilight_net 4", "Create labels from highlight nets" },
 };
 static const int num_action_defs = (int)(sizeof(action_registry)/sizeof(action_registry[0]));
 
@@ -2578,6 +2583,13 @@ static void init_input_bindings(void)
   set_input_binding     (DEV_KEY, 'k', Mod4Mask,    ACTX_CANVAS, "hilight.select_hilight_nets_pins"); /* Super, non-idle */
   set_input_binding_idle(DEV_KEY, 'K', 0,           ACTX_CANVAS, "hilight.un_highlight_all_net_pins");
   set_input_binding_idle(DEV_KEY, 'K', ControlMask, ACTX_CANVAS, "hilight.propagate_highlight_selected_net_pins");
+  /* Phase 3d.2 sem-gated batch 3: `j` hilight-list, BRANCH migration. The 3 exact-chord
+   * sem-gated branches become idle_only canvas rows; case 'j' keeps its 4th branch
+   * (SET_MODMASK && Ctrl -> print_hilight_net(3), a non-sem family). All canvas-only. */
+  set_input_binding_idle(DEV_KEY, 'j', 0,           ACTX_CANVAS, "sym.list.print_list_of_highlight_nets");
+  set_input_binding_idle(DEV_KEY, 'j', ControlMask, ACTX_CANVAS, "sym.list.create_pins_from_highlight_nets");
+  set_input_binding_idle(DEV_KEY, 'j', Mod1Mask,    ACTX_CANVAS, "sym.list.create_labels_from_highlight_nets"); /* Alt */
+  set_input_binding_idle(DEV_KEY, 'j', Mod4Mask,    ACTX_CANVAS, "sym.list.create_labels_from_highlight_nets"); /* Super */
   input_bindings_initialized = 1;
 }
 
@@ -3549,19 +3561,12 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
       break;
 
     case 'j':
-      if(rstate==0 ) { /* print list of highlight nets */
-        if(xctx->semaphore >= 2) break;
-        print_hilight_net(1);
-      }
-      else if(rstate==ControlMask) { /* create ipins from highlight nets */
-        if(xctx->semaphore >= 2) break;
-        print_hilight_net(0);
-      }
-      else if(EQUAL_MODMASK) { /* create labels without i prefix from hilight nets */
-        if(xctx->semaphore >= 2) break;
-        print_hilight_net(4);
-      }
-      else if( SET_MODMASK && (state & ControlMask) ) { /* print list of highlight net with label expansion */
+      /* plain / Ctrl / Alt branches migrated to the binding table (Phase 3d.2 sem-gated
+       * batch 3): idle_only canvas rows -> sym.list.{print_list,create_pins,create_labels}
+       * (Tcl `xschem print_hilight_net 1|0|4`, identical to the old C calls). The 4th
+       * branch (SET_MODMASK && Ctrl -> print_hilight_net(3)) is a non-sem FAMILY chord,
+       * so it stays in C. See init_input_bindings. */
+      if( SET_MODMASK && (state & ControlMask) ) { /* print list of highlight net with label expansion */
         print_hilight_net(3);
       }
       break;

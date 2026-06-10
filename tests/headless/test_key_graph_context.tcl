@@ -400,6 +400,23 @@ check "K (clear hilights, idle) clears" [expr {[xschem get bbox_hilighted] eq $n
 xschem unhilight_all
 xschem set semaphore 0
 
+# ---- Phase 3d.2 sem-gated batch 3: j hilight-list (BRANCH migration). The 3 exact-chord
+#      sem-gated branches (plain/Ctrl/Alt -> print_hilight_net 1/0/4) become idle_only
+#      canvas rows (Tcl `xschem print_hilight_net N`, identical). case 'j' keeps its 4th
+#      branch (SET_MODMASK && Ctrl -> show 3, a non-sem family). ----
+set jl [xschem bindings dump]
+check "batch-3 j idle_only rows present" [expr {
+  [lsearch -exact $jl {key 106 0 canvas sym.list.print_list_of_highlight_nets idle}]     >= 0 &&
+  [lsearch -exact $jl {key 106 ctrl canvas sym.list.create_pins_from_highlight_nets idle}] >= 0 &&
+  [lsearch -exact $jl {key 106 alt canvas sym.list.create_labels_from_highlight_nets idle}] >= 0 }] {}
+check "batch-3 j canvas-only (no graph rows)" [expr {[lsearch -glob $jl {key 106 * graph *}] < 0}] {}
+# print_hilight_net isn't cleanly observable (show 1/3 open a viewdata window; 0/4 run
+# tmpfile procs that are no-ops here). Assert j Ctrl (create pins) dispatches without
+# error; do NOT press j plain (opens a window). The idle gate is proven elsewhere.
+lassign [screen 870 100] cx cy
+xschem set semaphore 0
+check "j Ctrl (create pins) dispatches without error" [expr {![catch {keyats $cx $cy 106 4}]}] {}
+
 if {$fail == 0} { puts "RESULT: ALL PASS" } else { puts "RESULT: $fail FAILED" }
 flush stdout
 exit [expr {$fail == 0 ? 0 : 1}]
