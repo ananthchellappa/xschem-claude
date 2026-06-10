@@ -8,10 +8,10 @@
 #  of hand-syncing menu items, accelerators and help text — is what makes UI/UX
 #  features (palette, customizable shortcuts, toolbars, tooltips) cheap to add.
 #
-#  Phase 1 scope: generate the File menu from the table, and offer a command
-#  palette over it. The C keysym dispatcher (callback.c handle_key_press) is
-#  untouched and remains the source of truth for keyboard handling; the 'accel'
-#  column here is a display string only.
+#  This file owns the actions.csv table (menus, command palette, cheat-sheet
+#  labels) and the keybindings.csv/mousebindings.csv loader. Input DISPATCH lives
+#  in the C input-binding table (callback.c action_registry/input_bindings,
+#  remappable via `xschem bind`); the 'accel' column here is a display string only.
 #
 #  This file is GPL like the rest of XSCHEM (see xschem.tcl header).
 
@@ -149,156 +149,14 @@ proc action_reload {} {
   }
 }
 
-# --- data-driven keyboard accelerators ---------------------------------------
-# Phase 2: generate real key bindings from the table's 'accel' column instead of
-# hardcoding them in the C handle_key_press chain (callback.c). Each generated
-# binding is installed on the drawing widget in set_bindings; because a binding
-# with a key detail (e.g. <Control-Key-z>) is more *specific* than the generic
-# <KeyPress> binding on the same widget, Tk fires only the specific one, so the
-# C keysym dispatcher is bypassed for migrated keys ONLY. The C side is untouched
-# and still owns every key not migrated here.
-#
-# Migration is deliberately incremental: only action ids in migrated_action_ids
-# are bound. Keys that depend on in-progress editing state, infix-mode placement,
-# or whether the mouse is over a waveform graph stay in C and are NOT listed.
-
-# Action ids whose keyboard shortcut is generated from the table (and so bypass
-# the C handle_key_press chain). RETIRED at Phase 3d.5a: the four Phase-2 chords
-# (u undo, Shift+U redo, Shift+Z zoom in, Ctrl+z zoom out) are now rows in the C
-# input-binding table — a Tk key-detail binding pre-empts the generic <KeyPress>,
-# which both shadowed the C rows and bypassed the idle (busy-skip) gate. The list
-# stays (empty) because the machinery below still works and could serve a future
-# genuinely-Tcl-only accelerator; remapping is now `xschem bind` / keybindings.csv.
-set migrated_action_ids {}
-
-# Translate an accelerator DISPLAY string (e.g. "Ctrl+S", "Shift+Z", "Alt-F",
-# "U") into a real Tk event sequence (e.g. <Control-Key-s>, <Shift-Key-Z>,
-# <Alt-Key-f>, <Key-u>). Returns {} when the accel is not a single, bindable
-# keyboard shortcut (empty, mouse button, "Print Scrn", multi-key alternatives
-# like "Ins, Shift-I", a still-unhandled symbol key, or an unknown modifier);
-# the caller logs and leaves those to C.
-#
-# IMPORTANT: the real keysym, not the display casing, decides the binding. A
-# bare letter with no Shift maps to the LOWERCASE keysym ("U" undo -> <Key-u>,
-# matching C's case 'u'); a letter WITH Shift maps to the uppercase keysym
-# ("Shift+U" redo -> <Shift-Key-U>, matching C's case 'U'). This mirrors how C
-# strips ShiftMask and switches on the character keysym.
-proc accel_to_tk_sequence {accel} {
-  if {$accel eq {}} { return {} }
-  # Not single keyboard shortcuts: alternatives, mouse buttons, special labels.
-  if {[string match *,* $accel]}      { return {} } ;# e.g. "Ins, Shift-I"
-  if {[string match *Butt.* $accel]}  { return {} } ;# mouse button
-  if {[string match *Scrn* $accel]}   { return {} } ;# "Print Scrn"
-  if {[string match {* *} $accel]}    { return {} } ;# any space => multi-word
-
-  # Split into modifier tokens + a final key token. '+' and '-' both separate.
-  set tokens {}
-  foreach t [split [string map {+ -} $accel] -] {
-    if {$t ne {}} { lappend tokens $t }
-  }
-  if {[llength $tokens] == 0} { return {} }
-  set keytok [lindex $tokens end]
-  set modtoks [lrange $tokens 0 end-1]
-
-  # Normalize modifiers; bail on anything we don't recognize.
-  set mods {}
-  set shift 0
-  foreach m $modtoks {
-    switch -- $m {
-      Ctrl - Control { lappend mods Control }
-      Alt            { lappend mods Alt }
-      Shift          { set shift 1 }
-      default        { return {} } ;# unknown modifier (Meta/Super/...) -> leave to C
-    }
-  }
-
-  # Resolve the key token into a Tk keysym.
-  if {[string length $keytok] == 1 && [string is alpha $keytok]} {
-    if {$shift} {
-      set keysym [string toupper $keytok]
-    } else {
-      set keysym [string tolower $keytok]
-    }
-  } elseif {[string length $keytok] == 1 && [string is digit $keytok]} {
-    set keysym $keytok
-    if {$shift} { lappend mods Shift } ;# digit row keeps Shift as a real modifier
-  } else {
-    # Symbol keys (# = * & ! ...) and named keys (Del/Esc/...) need a keysym map;
-    # deferred to a later batch. Flag as not-yet-translatable.
-    return {}
-  }
-
-  # Emit modifiers in canonical order (Control, Alt, Shift) like the palette
-  # binding <Control-Shift-Key-P>, then the keysym.
-  set seq {}
-  if {[lsearch -exact $mods Control] >= 0} { lappend seq Control }
-  if {[lsearch -exact $mods Alt] >= 0}     { lappend seq Alt }
-  if {$shift && [string length $keytok] == 1 && [string is alpha $keytok]} { lappend seq Shift }
-  if {[lsearch -exact $mods Shift] >= 0}   { lappend seq Shift } ;# digit Shift
-  lappend seq Key $keysym
-  return "<[join $seq -]>"
-}
-
-# Run a table command at global scope, reporting (not raising) errors so a bad
-# binding can't take down the event loop. Mirrors the command palette's runner.
-proc run_action {cmd} {
-  if {[catch {uplevel #0 $cmd} err]} {
-    puts stderr "action registry: error running '$cmd': $err"
-  }
-}
-
-# Install the generated accelerators on the drawing widget <topwin>. Only rows in
-# migrated_action_ids are bound; each pre-empts the generic <KeyPress> binding so
-# C never sees that key. Untranslatable accels are logged and left to C.
-#
-# Re-runnable: any sequence this proc bound on a previous call for $topwin is
-# removed first, so editing an accel in the table and re-running moves the
-# binding (the old key reverts to the generic <KeyPress> -> C path). This is what
-# makes shortcuts genuinely remappable, not just generated once at startup.
-proc bind_accelerators_from_table {topwin} {
-  global action_table migrated_action_ids accel_bound_seqs
-  # release previously generated bindings for this widget
-  if {[info exists accel_bound_seqs($topwin)]} {
-    foreach seq $accel_bound_seqs($topwin) { bind $topwin $seq {} }
-  }
-  set accel_bound_seqs($topwin) {}
-  foreach row $action_table {
-    set id [dict get $row id]
-    if {[lsearch -exact $migrated_action_ids $id] < 0} continue
-    if {[dict get $row type] ne {command}} continue
-    set accel [dict get $row accel]
-    set seq [accel_to_tk_sequence $accel]
-    if {$seq eq {}} {
-      puts stderr "action registry: '$id' accel '$accel' not translatable; left to C"
-      continue
-    }
-    set cmd [dict get $row command]
-    bind $topwin $seq "run_action [list $cmd]; break"
-    lappend accel_bound_seqs($topwin) $seq
-  }
-}
-
-# Change one action's accelerator at runtime and re-install bindings so the new
-# key takes effect immediately (old key reverts to C). Returns the new Tk
-# sequence, or {} if the new accel isn't a bindable shortcut. This is the
-# programmatic core a future "customize shortcuts" dialog would call; it proves
-# the table is the single source of truth for keys.
-proc remap_action_accel {id new_accel {topwin .drw}} {
-  global action_table
-  set found 0
-  set newtab {}
-  foreach row $action_table {
-    if {[dict get $row id] eq $id} {
-      dict set row accel $new_accel
-      set found 1
-    }
-    lappend newtab $row
-  }
-  if {!$found} { puts stderr "remap_action_accel: no such id '$id'"; return {} }
-  set action_table $newtab
-  bind_accelerators_from_table $topwin
-  return [accel_to_tk_sequence $new_accel]
-}
+# --- (removed) Phase-2 Tcl-intercept accelerators ------------------------------
+# Phase 2 generated Tk key-detail bindings from the 'accel' column
+# (migrated_action_ids / bind_accelerators_from_table / remap_action_accel).
+# Retired at 3d.5a and deleted at 3d.5b: a Tk key-detail binding pre-empts the
+# generic <KeyPress>, shadowing the C binding table and bypassing its idle gate.
+# The capability is strictly superseded: bind any chord (including to a
+# Tcl-backed action id) with `xschem bind` or keybindings.csv (see below).
+# The 'accel' column remains as a DISPLAY string for menus and the palette.
 
 # --- loadable input-binding files (Phase 3d.4b) -------------------------------
 # keybindings.csv / mousebindings.csv hold one chord per row,

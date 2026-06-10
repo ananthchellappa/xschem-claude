@@ -45,6 +45,10 @@ static int waves_selected(int event, KeySym key, int state, int button)
    * This is useful on touchpads with TappingDragLock enabled */
   else if(graph_use_ctrl_key && !(state & ControlMask) && !(xctx->ui_state & GRAPHPAN)) skip = 1;
   else if(SET_MODMASK) skip = 1;
+  /* Button2 (middle) is the canvas pan gesture (handle_button_press), so its
+   * press/drag/release must never be treated as graph-targeted: panning has to
+   * work with the pointer over a waveform graph too. (If the pan gesture is ever
+   * migrated to the binding table like zoom-rect was, these skips go with it.) */
   else if(event == MotionNotify && (state & Button2Mask)) skip = 1;
   else if(event == MotionNotify && (state & Button1Mask) && (state & ShiftMask)) skip = 1;
   else if(event == ButtonPress && button == Button2) skip = 1;

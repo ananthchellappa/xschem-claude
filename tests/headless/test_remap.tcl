@@ -35,8 +35,11 @@ event generate .drw <Shift-Key-Z> ; update idletasks
 set z3 [xschem get zoom]
 check "restored Shift+Z zooms in again" [expr {$z3 < $z2}] "(z2=$z2 z3=$z3)"
 
-# The retired Phase-2 machinery is inert: nothing is Tk-bound from the table.
-check "migrated_action_ids is empty" [expr {[llength $migrated_action_ids] == 0}] {}
+# The Phase-2 machinery is gone (deleted at 3d.5b): no proc, no Tk shadow.
+check "Phase-2 accel machinery deleted" \
+  [expr {[info procs bind_accelerators_from_table] eq {} &&
+         [info procs remap_action_accel] eq {} &&
+         ![info exists migrated_action_ids]}] {}
 check "no Tk shadow on <Shift-Key-Z>" [expr {[bind .drw <Shift-Key-Z>] eq {}}] {}
 
 if {$fail == 0} { puts "RESULT: ALL PASS" } else { puts "RESULT: $fail FAILED" }

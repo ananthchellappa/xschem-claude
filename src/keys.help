@@ -1,3 +1,10 @@
+----------------------------------------------------------------------
+NOTE: key/mouse bindings are REMAPPABLE (xschem bind, or edit
+keybindings.csv / mousebindings.csv). This file documents the DEFAULTS;
+for a list generated live from the current binding table see
+Help -> "Keybindings (from table)".
+----------------------------------------------------------------------
+
                         XSCHEM MOUSE BINDINGS
 ----------------------------------------------------------------------
 LeftButton              Clear selection and select a graphic object 
