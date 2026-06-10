@@ -158,31 +158,13 @@ static void xschem_cmd_help(int argc, const char **argv)
 }
 
 /* can be used to reach C functions from the Tk shell. */
-int xschem(ClientData clientdata, Tcl_Interp *interp, int argc, const char * argv[])
-{
- int i;
- char name[1024]; /* overflow safe 20161122 */
- int cmd_found = 1;
- char *not_avail = "Not available in this context. If using --tcl consider using --command";
+static char *not_avail = "Not available in this context. If using --tcl consider using --command";
 
- Tcl_ResetResult(interp);
- if(argc < 2) {
-   Tcl_SetResult(interp, "Missing arguments.", TCL_STATIC);
-   return TCL_ERROR;
- }
- if(debug_var>=2) {
-   int i;
-   fprintf(errfp, "xschem():");
-   for(i=0; i<argc; ++i) {
-     fprintf(errfp, "%s ", argv[i]);
-   }
-   fprintf(errfp, "\n");
- }
- /*
-  * ********** xschem commands  IN SORTED ORDER !!! *********
-  */
-  switch(argv[1][0]) {
-    case 'a': /*----------------------------------------------*/
+/* `xschem a...` commands, moved verbatim from the xschem() dispatcher
+ * (dispatcher decomposition batch 1). Sets *cmd_found = 0 when argv[1]
+ * matches no command in this group; early returns propagate unchanged. */
+static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *cmd_found)
+{
     /* abort_operation
      *   Resets UI state, unselect all and abort any pending operation */
     if(!strcmp(argv[1], "abort_operation"))
@@ -447,9 +429,15 @@ int xschem(ClientData clientdata, Tcl_Interp *interp, int argc, const char * arg
       attach_labels_to_inst(interactive);
       Tcl_ResetResult(interp);
     }
-    else { cmd_found = 0;}
-    break;
-    case 'b': /*----------------------------------------------*/
+    else { *cmd_found = 0;}
+  return TCL_OK;
+}
+
+/* `xschem b...` commands, moved verbatim from the xschem() dispatcher
+ * (dispatcher decomposition batch 1). Sets *cmd_found = 0 when argv[1]
+ * matches no command in this group; early returns propagate unchanged. */
+static int xschem_cmds_b(Tcl_Interp *interp, int argc, const char *argv[], int *cmd_found)
+{
     /* bbox begin|end
      *   Start/end bounding box calculation: parameter is either 'begin' or 'end' */
     if(!strcmp(argv[1], "bbox"))
@@ -505,9 +493,16 @@ int xschem(ClientData clientdata, Tcl_Interp *interp, int argc, const char * arg
     {
       return action_cmd_bindings(argc, argv);
     }
-    else { cmd_found = 0;}
-    break;
-    case 'c': /*----------------------------------------------*/
+    else { *cmd_found = 0;}
+  return TCL_OK;
+}
+
+/* `xschem c...` commands, moved verbatim from the xschem() dispatcher
+ * (dispatcher decomposition batch 1). Sets *cmd_found = 0 when argv[1]
+ * matches no command in this group; early returns propagate unchanged. */
+static int xschem_cmds_c(Tcl_Interp *interp, int argc, const char *argv[], int *cmd_found)
+{
+  int i;
     /* callback win_path event mx my key button aux state
      *   Invoke the callback event dispatcher with a software event */
     if(!strcmp(argv[1], "callback") )
@@ -878,7 +873,42 @@ int xschem(ClientData clientdata, Tcl_Interp *interp, int argc, const char * arg
       delete(1/*to_push_undo*/);
       Tcl_ResetResult(interp);
     }
-    else { cmd_found = 0;}
+    else { *cmd_found = 0;}
+  return TCL_OK;
+}
+
+int xschem(ClientData clientdata, Tcl_Interp *interp, int argc, const char * argv[])
+{
+ int i;
+ char name[1024]; /* overflow safe 20161122 */
+ int cmd_found = 1;
+ int retcode = TCL_OK;
+
+ Tcl_ResetResult(interp);
+ if(argc < 2) {
+   Tcl_SetResult(interp, "Missing arguments.", TCL_STATIC);
+   return TCL_ERROR;
+ }
+ if(debug_var>=2) {
+   int i;
+   fprintf(errfp, "xschem():");
+   for(i=0; i<argc; ++i) {
+     fprintf(errfp, "%s ", argv[i]);
+   }
+   fprintf(errfp, "\n");
+ }
+ /*
+  * ********** xschem commands  IN SORTED ORDER !!! *********
+  */
+  switch(argv[1][0]) {
+    case 'a': /*----------------------------------------------*/
+    retcode = xschem_cmds_a(interp, argc, argv, &cmd_found);
+    break;
+    case 'b': /*----------------------------------------------*/
+    retcode = xschem_cmds_b(interp, argc, argv, &cmd_found);
+    break;
+    case 'c': /*----------------------------------------------*/
+    retcode = xschem_cmds_c(interp, argc, argv, &cmd_found);
     break;
     case 'd': /*----------------------------------------------*/
     /* debug n
@@ -6928,6 +6958,7 @@ int xschem(ClientData clientdata, Tcl_Interp *interp, int argc, const char * arg
     cmd_found = 0;
     break;
   } /* switch */
+  if(retcode != TCL_OK) return retcode;
   if(!cmd_found) {
     Tcl_AppendResult(interp, "xschem ", argv[1], ": invalid command.", NULL);
     return TCL_ERROR;
