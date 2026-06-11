@@ -157,9 +157,16 @@ Window. Not full-featured for v1.
   `test_action_log.sh`.
 - **Phase 2** — Layer C (gesture END hooks).
 - **Phase 3** — mint `pan`/`scroll`/`snap` subcommands to close coverage gaps.
-- **Acceptance test (the real one):** record → replay → diff. Drive gestures via
-  `xschem callback …` headless, capture `Xschem.log`, `source` it into a fresh
-  instance, compare state. Built as a first-class smoke as soon as Phase 1 lands.
+- **Acceptance test (the real one) — DONE** (`tests/headless/test_action_replay.sh`):
+  record → replay → diff across two processes. Process A loads a fixture, is
+  driven through bound actions via `xschem callback …`, snapshots state; process
+  B loads the same fixture fresh, `source`s A's `Xschem.log`, snapshots; the
+  snapshots must match. Diffs the geometry-INDEPENDENT state the log reproduces
+  — the relative zoom transform (final/baseline), the colorscheme flag, object
+  counts — not the absolute view (origin/absolute zoom depend on the mouse and
+  the drawing-area size, which the log does not capture; see issue 0005). Guards
+  against a vacuous pass (asserts the transform is non-trivial) and checks the
+  log holds the expected replayable commands.
 
 ## 6. Future (explicitly not v1)
 

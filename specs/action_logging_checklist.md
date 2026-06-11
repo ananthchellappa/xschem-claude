@@ -88,7 +88,7 @@ Statuses are verified against the code, not the phasing notes, before flipping.
 |---|------|--------------|
 | 48 | Phase-0 smoke: `tests/headless/test_action_log.sh` | yes |
 | 49 | CIW smoke: `tests/headless/test_ciw.tcl` | yes |
-| 50 | Acceptance smoke: record → replay (`source` log into fresh instance) → diff state | no |
+| 50 | Acceptance smoke: record → replay (`source` log into fresh instance) → diff state | yes |
 
 ## 6. Explicitly not v1 (spec §6)
 

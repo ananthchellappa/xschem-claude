@@ -66,6 +66,12 @@ Most smokes print `RESULT: ALL PASS` / `RESULT: N FAILED` and exit nonzero on
 failure (`test_palette.tcl` predates the convention and prints per-check lines
 only).
 
+`test_action_replay.sh` is a shell-orchestrated **two-process acceptance smoke**
+for the action log: it records a session in one xschem, replays the captured
+`Xschem.log` into a second fresh xschem, and diffs their state — proving the log
+is replayable, not just well-formed. Run it directly with a display:
+`DISPLAY=:0 sh test_action_replay.sh`.
+
 ## Workflow for a bug fix
 
 1. `./run.sh` to confirm a clean PASS baseline.
