@@ -30,8 +30,11 @@ proc ciw_create {} {
   wm protocol .ciw WM_DELETE_WINDOW {wm withdraw .ciw}
 
   ## fat raised sash: the default is a near-invisible few-pixel strip that is
-  ## both undiscoverable and a poor drag target
-  panedwindow .ciw.p -orient vertical -sashwidth 8 -sashrelief raised
+  ## both undiscoverable and a poor drag target (8px was still too thin on a
+  ## HiDPI display -- user feedback). Darker background makes the sash band
+  ## read as a control, and the cursor signals draggability on hover.
+  panedwindow .ciw.p -orient vertical -sashwidth 14 -sashrelief raised \
+    -background gray55 -sashcursor sb_v_double_arrow
 
   # upper pane: read-only log display, fed by ciw_echo
   frame .ciw.l

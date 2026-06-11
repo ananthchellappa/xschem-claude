@@ -18,7 +18,7 @@ check "log pane is a text"       [expr {[winfo exists .ciw.l.t] && [winfo class 
 check "log pane is read-only"    [expr {[.ciw.l.t cget -state] eq {disabled}}]
 check "entry pane exists"        [expr {[winfo exists .ciw.c.e] && [winfo class .ciw.c.e] eq {Text}}]
 check "entry is editable (log pane is not)" [expr {[.ciw.c.e cget -state] eq {normal}}]
-check "sash has a fat grab target" [expr {[.ciw.p cget -sashwidth] >= 6}]
+check "sash has a fat grab target" [expr {[.ciw.p cget -sashwidth] >= 12}]
 
 # the entry AREA grows when the sash is dragged up (the original entry widget
 # kept its one-line height and left dead space -- the UX bug). Drive the sash
