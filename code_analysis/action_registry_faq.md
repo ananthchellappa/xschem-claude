@@ -1,13 +1,85 @@
 # Action-registry FAQ
 
 Running Q&A about the input action-registry / binding-table work (branch
-`feature/action-registry`). Each entry records the **project state when it was
-asked** (branch + HEAD commit + phase), because answers are tied to how much of the
-refactor had landed at that moment — a later phase may make an old "no" a "yes."
+`feature/action-registry`) and its follow-on, the action-logging / CIW work
+(branch `feature/action-logging`). Each entry records the **project state when
+it was asked** (branch + HEAD commit + phase), because answers are tied to how
+much of the refactor had landed at that moment — a later phase may make an old
+"no" a "yes."
 
 Newest entries on top.
 
 ---
+
+## Q5. Is the CIW a full-fledged Tcl interpreter? And what would Ctrl-Backspace word-delete and Up-arrow history take?
+
+- **Asked:** 2026-06-11
+- **Project state:** branch `feature/action-logging` @ `094ee4a2`. Phase 0 (log
+  file), the CIW (incl. the sash UX rework), Layer A slice 1 (Tcl-backed action
+  logging) and `--nolog` are done; Layer A slice 2 is planned.
+- **Prompted by an experiment:** the user typed `set a 10`, `set b 20`,
+  `expr {$a + $b}` into the CIW and it printed `30`.
+
+**Yes — and it's even better (or scarier) than "a" Tcl interpreter: it is THE
+application's own interpreter.** When you press Return, the CIW runs your line
+with `uplevel #0 $cmd` — "evaluate this at the top level of the running
+program." There is no sandbox, no separate baby interpreter. That has three
+consequences worth understanding:
+
+1. **State persists between commands.** Your `set a 10` created a real global
+   variable in the live program — that's exactly why `expr {$a + $b}` could see
+   it two commands later. You can define procs, run loops, `source` whole
+   files.
+2. **You share the interpreter with the GUI itself.** Everything xschem's menus
+   and dialogs can do, you can do — reconfigure widgets, call any `xschem …`
+   subcommand. The flip side: a long-running loop freezes the UI until it
+   finishes, because your command runs on the same thread that redraws the
+   screen.
+3. **Your session is being recorded.** Successful commands are appended to
+   `Xschem.log` (that's the design — the file is a faithful, replayable session
+   record), so `set a 10` is now part of the log. Failed commands are written
+   as `# failed:` comments so replaying the file never aborts.
+
+One honest limitation: each Return must be a **complete** command. The CIW
+doesn't (yet) check `info complete`, so you can't type an open
+`foreach x {1 2} {` and finish it on the next line — it errors immediately.
+Type the whole construct on one line (it wraps in the entry area).
+
+**What the two conveniences take — both are small, pure-Tcl widget bindings in
+`ciw.tcl`; no C changes at all:**
+
+*Ctrl-Backspace deletes a word.* Tk's text widget doesn't bind
+`<Control-BackSpace>` by default on X11, but its index arithmetic does all the
+real work — `{insert -1c wordstart}` literally means "the start of the word
+just before the cursor":
+
+```tcl
+bind .ciw.c.e <Control-BackSpace> {
+  .ciw.c.e delete {insert -1c wordstart} insert
+  break    ;# stop the class binding from ALSO deleting one character
+}
+```
+
+The only refinement worth adding is shell-like whitespace handling (skip the
+spaces behind the cursor first, then eat the word) — a few more lines.
+
+*Up/Down recalls history.* Three pieces, ~15 lines:
+1. a global list that `ciw_exec` appends each executed command to;
+2. `<Up>`/`<Down>` bindings that replace the entry's content with the
+   previous/next list item (each ending in `break`, so the cursor-movement
+   class binding doesn't fire);
+3. the standard nicety: the first Up stashes whatever you'd half-typed, so
+   pressing Down past the newest entry brings your draft back.
+
+One design trade-off to know about: because the entry is now a multi-line-
+capable text widget, Up natively means "move the cursor up one display line"
+inside a tall, wrapped command. Binding it to history steals that. The simple
+answer (what terminals and Virtuoso do) is history-always; the fancier version
+triggers history only when the cursor is on the first display line.
+
+Both features are listed in the spec's §6 "explicitly not v1" bucket — doing
+them is consciously pulling future items forward, justified because they're
+cheap and the CIW is a window you type into constantly.
 
 ## Q4. So far, how has this work made the code easier to read and maintain?
 
