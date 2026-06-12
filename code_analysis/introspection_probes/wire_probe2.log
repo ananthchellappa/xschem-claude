@@ -1,0 +1,8 @@
+baseline: resolved_net of wire 5 | 
+setprop lab=my_probe_net | 
+resolved_net right after setprop | 
+after rebuild_connectivity | 
+selected_wire now | {OUTI}
+does the rename propagate to attached segments? | {OUTI} {OUTI} {OUTI} {OUTI} {OUTI} {OUTI} {OUTI} {OUTI}
+instances_to_net OUTI | { {vd} {plus} {1110} {-660} } { {vu} {minus} {1110} {-700} } { {R18} {M} {1240} {-900} } { {v5} {minus} {690} {-740} } { {v8} {plus} {1270} {-680} } { {p60} {p} {790} {-690} } 
+instances_to_net PLUS | { {Q5} {B} {140} {-620} } 
