@@ -1,4 +1,9 @@
-# Plan: Phase 3 — mint missing subcommands, close markers & silent ids (FOR REVIEW)
+# Plan: Phase 3 — mint missing subcommands, close markers & silent ids
+
+**Decisions (user, 2026-06-11):** (1) nolog the gesture-start commands;
+(2) word-arg naming `xschem scroll up` / `xschem pan dx dy` as designed;
+(3) mint all 4 toggle subcommands (uniform route); (4) rectcolor logging and
+rotate-during-move stay out of scope.
 
 Checklist rows 29–32 + the Layer C deferrals + the START/END reconciliation.
 Goal: after this phase the feature is functionally complete and a final

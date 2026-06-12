@@ -29,12 +29,12 @@ Statuses are verified against the code, not the phasing notes, before flipping.
 
 | # | Spec | Implemented? |
 |---|------|--------------|
-| 11 | Every user action is logged | no |
+| 11 | Every user action is logged | partial — bounded by design: click-select (issue 0005, row 17), stdin-REPL/TCP commands (issue 0003), menu picks, and keys still living in the un-migrated C switch (they never reach `dispatch_input_action`; they log only where a Layer B/C hook covers their effect) |
 | 12 | Each logged action line is an executable `xschem …` Tcl command (replayable) | yes |
 | 13 | Granularity = the action's effect; multi-event gestures collapse to one command | yes (Layer C: one command/marker per completed gesture; manhattan wire = one line per stored segment) |
-| 14 | RMB click → context-menu pick logged as the chosen action's command | no |
+| 14 | RMB click → context-menu pick logged as the chosen action's command | yes (replayable subset, row 25; dialogs/object-ref picks = `#` markers) |
 | 15 | RMB press+drag+release logged as `xschem zoom_box x1 y1 x2 y2` | yes |
-| 16 | Actions with no Tcl form logged as a `#` non-replayable comment marker | partial (Layer B dialogs/object-ref + Layer C polygon/paste-drop/sympin/rot-flip-move/point-edit; click-select still silent, row 17) |
+| 16 | Actions with no Tcl form logged as a `#` non-replayable comment marker | partial (Layer B dialogs/object-ref + Layer C paste-drop/sympin/rot-flip-move/point-edit; click-select still silent, row 17) |
 | 17 | Click-select marker records what and where (`# selected instance at <x> <y>`) | no |
 | 18 | Commands typed into the CIW are written to the log file | yes |
 | 19 | Typed-command results/errors are NOT written to the file (pane-only) | yes |
@@ -45,17 +45,17 @@ Statuses are verified against the code, not the phasing notes, before flipping.
 
 | # | Spec | Implemented? |
 |---|------|--------------|
-| 22 | Layer A: bound keys/buttons/wheel logged at `dispatch_input_action()` | partial (empty-command ids silent until Phase 3 minting; attach_labels excluded via csv nolog) |
+| 22 | Layer A: bound keys/buttons/wheel logged at `dispatch_input_action()` | yes (Phase 3 minted the 14 empty-command ids; only view.zoom_rect stays silent by design — its END logs `zoom_box`; nolog rows excluded: attach_labels + the 14 gesture starts) |
 | 23 | Layer A: Tcl-backed actions log their `d->tcl` verbatim | yes |
 | 24 | Layer A: C-backed actions log the canonical command from the single source (`actions.csv` col 6 / `ActionDef`), never hand-written per call site | yes |
 | 25 | Layer B: context-menu picks emit the equivalent `xschem …` command (replayable picks); dialogs/object-ref picks get `#` markers; gesture-start picks deferred to Layer C | yes |
 | 26 | Layer C: zoom-rectangle gesture logged at gesture END with final params | yes |
 | 27 | Layer C: move/copy gesture END logged | yes (translation + kissing; placement drops log the placed instance/text; rot/flip-during-move + paste/sympin drops = `#` markers) |
-| 28 | Layer C: wire/line/rect/poly draw gesture END logged | partial (wire/line/rect/arc = commands at the new_* store sites; polygon = `#` marker pending a Phase-3 coordinate subcommand) |
-| 29 | Mint `pan` subcommand (coverage gap) | no |
-| 30 | Mint `scroll` subcommand (coverage gap) | no |
-| 31 | Mint `snap` halve/double subcommand (coverage gap) | no |
-| 32 | Middle-button pan gesture logged | no |
+| 28 | Layer C: wire/line/rect/poly draw gesture END logged | yes (wire/line/rect/arc/polygon commands at the new_* store sites; polygon coordinate form minted in Phase 3) |
+| 29 | Mint `pan` subcommand (coverage gap) | yes (`xschem pan up\|down\|left\|right` half-step + `xschem pan dx dy` drag replay) |
+| 30 | Mint `scroll` subcommand (coverage gap) | yes (`xschem scroll up\|down\|left\|right`) |
+| 31 | Mint `snap` halve/double subcommand (coverage gap) | yes (`xschem snap half\|double`) |
+| 32 | Middle-button pan gesture logged | yes (`xschem pan dx dy` at the un-pan sites; no-motion clicks silent) |
 
 ## 4. The CIW — live log window (spec §3)
 

@@ -192,8 +192,32 @@ Window. Not full-featured for v1.
   Phase 3 reconciliation question. Smoke
   `tests/headless/test_gesture_end_log.tcl`; acceptance smoke extended with
   wire/rect/instance gestures + a byte-identical saved-schematic diff.
-- **Phase 3** — mint `pan`/`scroll`/`snap` + polygon/place-at-coord
-  subcommands to close coverage gaps; reconcile gesture-START log lines.
+- **Phase 3 — DONE** (commits `bc4e2fc9` A, `3e911386` B, `a9111307` C,
+  `c4dba7bb` D; plan `claude_suggs/plan_phase3_mints.md`, decisions locked
+  2026-06-11). Slice A: `xschem scroll <dir>` / `xschem pan <dir>|<dx dy>` /
+  `xschem snap half|double` / `xschem toggle_{stretch,orthogonal_wiring,
+  draw_pixmap,show_netlist}` — each runs the SAME C body the bound chord runs
+  (acts delegate to exported functions; equivalence by construction), csv
+  command column filled → the 14 silent Layer A ids now log (only
+  view.zoom_rect stays empty by design). Slice B: `xschem polygon x1 y1 …
+  [prop]` coordinate form + `xschem get polygons <layer>`; the Layer C
+  polygon `#` marker upgraded to the real command. Slice C: middle-button
+  drag-pan logged as `xschem pan dx dy` (origin snapshotted at the two
+  pan(START) sites, delta logged at the two un-pan sites). Slice D:
+  ActionDef `nolog` flag + `xschem set_action_nolog`, honored by the
+  Tcl-backed dispatch branch; the 14 gesture-START csv rows are nolog'd
+  (effect logs at the gesture END; an aborted gesture leaves no trace —
+  matches granularity decision 3). Audit note: those ids are not yet in the
+  C registry (their keys are un-migrated switch cases, unbindable today);
+  the flag arms automatically when a future migration registers them.
+
+**The feature is functionally complete.** Remaining gaps, all
+deferred-by-design: click-select marker/replay (row 17, issue 0005),
+stdin-REPL + TCP logging (issue 0003), menu picks and un-migrated C-switch
+keys (log only where a Layer B/C effect hook covers them), rectcolor/layer
+switches not logged (line/rect replay layer = replay-time rectcolor),
+rotate/flip-during-move single-command replay (needs an anchor-preserving
+subcommand).
 - **Acceptance test (the real one) — DONE** (`tests/headless/test_action_replay.sh`):
   record → replay → diff across two processes. Process A loads a fixture, is
   driven through bound actions via `xschem callback …`, snapshots state; process
