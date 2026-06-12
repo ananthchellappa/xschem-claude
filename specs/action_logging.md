@@ -167,8 +167,33 @@ Window. Not full-featured for v1.
   runs from auto-opening short-lived CIWs; adopted by `run.sh` and the GUI
   smoke invocation pattern; smokes `tests/headless/test_nolog.tcl` + extended
   `test_action_log.sh`.
-- **Phase 2** — Layer C (gesture END hooks).
-- **Phase 3** — mint `pan`/`scroll`/`snap` subcommands to close coverage gaps.
+- **Phase 2 Layer C — DONE (replayable subset)** (commit `73096349`; plan
+  `claude_suggs/plan_layer_c_gesture_end.md`): gesture ENDs logged as the
+  single command reproducing their effect. zoom-rect drag → `xschem zoom_box`
+  (audit: factor-1 form effect-identical to `zoom_rectangle(END)`); move/copy
+  drop → `xschem move_objects/copy_objects dx dy [kissing]` via
+  `end_move_copy_logged()` wrapping BOTH callback completion paths (state
+  captured before the END resets it; selection-dependent, issue 0005 bound);
+  symbol-placement drop → `xschem instance {sym} x y rot flip {prop}` and text
+  drop → `xschem text …` (placed object read back post-END — closes the
+  Layer B place-symbol/text deferrals); wire/line/rect placements logged at
+  the `storeobject` sites in `new_wire/new_line/new_rect` (the one point all
+  gesture paths funnel through; one line per manhattan segment; scheduler
+  replay bypasses `new_*` so replays never double-log); arc → `xschem arc …
+  layer`. `tcl_braceable()` refuses embedded `{}\` so the file always stays
+  source-able. `#` markers (deferred): polygon close (no coordinate
+  subcommand yet — Phase 3 mint), paste/merge drop, symbol-pin drop,
+  rotate/flip-during-move, shape control-point drag (issue 0005). Known
+  accepted deltas: replay undo granularity differs (per-segment pushes),
+  line/rect replay layer = rectcolor at replay time (layer switches are not
+  yet logged), and Layer A's gesture-START commands (`xschem wire`, no-arg
+  `xschem move_objects`, …) still precede the END line in the log — replaying
+  them leaves benign MENUSTART state; whether to csv-`nolog` them is a
+  Phase 3 reconciliation question. Smoke
+  `tests/headless/test_gesture_end_log.tcl`; acceptance smoke extended with
+  wire/rect/instance gestures + a byte-identical saved-schematic diff.
+- **Phase 3** — mint `pan`/`scroll`/`snap` + polygon/place-at-coord
+  subcommands to close coverage gaps; reconcile gesture-START log lines.
 - **Acceptance test (the real one) — DONE** (`tests/headless/test_action_replay.sh`):
   record → replay → diff across two processes. Process A loads a fixture, is
   driven through bound actions via `xschem callback …`, snapshots state; process

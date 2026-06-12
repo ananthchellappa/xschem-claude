@@ -1,104 +1,81 @@
 # Next session — continue the action-logging feature
 
-**Branch:** `feature/action-logging`. **Last commit:** `9a3e613e` (Layer B).
-**Spec:** `specs/action_logging.md` (decisions locked). **Progress tracker:**
-`specs/action_logging_checklist.md` (68 rows; keep the Implemented? column
+**Branch:** `feature/action-logging`. **Last commit:** Layer C (`73096349` +
+docs). **Spec:** `specs/action_logging.md` (decisions locked). **Progress
+tracker:** `specs/action_logging_checklist.md` (keep the Implemented? column
 current). **Running tutorial:** `claude_suggs/lessons_learnt_action_registry.md`.
-
-(This file previously held the action-registry Phase-3 handoff; that work is
-complete and its prompt is superseded here.)
 
 ## Where we are
 
-The replayable action log + CIW is well advanced. DONE:
-- Phase 0 (log file, rotation, `--logdir`, `--nolog`), CIW (live pane + command
-  entry, sash UX, history, word-delete), `xschem log_action` / `get
-  actionlog_filename`.
-- **Layer A** — bound keys/buttons/wheel logged at `dispatch_input_action`
-  (callback.c): slice 1 Tcl-backed (`d->tcl`), slice 2 C-backed (canonical
-  `actions.csv` command pushed via `xschem set_action_log_cmd`).
-- **Layer B** — context-menu picks logged at `context_menu_action` (callback.c)
-  via a retval-indexed classification table.
-- **Acceptance smoke** — `tests/headless/test_action_replay.sh`: two-process
-  record → replay → diff (diffs the zoom *transform* ratio, not absolute — see
-  the lesson in §10 of the tutorial).
+Phases 0–2 are DONE: log file (+`--logdir`/`--nolog`), CIW, Layer A (bound
+keys/buttons/wheel at `dispatch_input_action`), Layer B (context-menu picks),
+Layer C (gesture ENDs — `73096349`, plan
+`claude_suggs/plan_layer_c_gesture_end.md`). Acceptance smoke
+`tests/headless/test_action_replay.sh` now diffs a byte-identical saved
+schematic across record/replay processes; `test_gesture_end_log.tcl` covers
+every gesture in-process.
 
-## NEXT: Layer C — gesture END hooks (Phase 2, checklist rows 26–28)
+## NEXT: Phase 3 — mint the missing subcommands, close the `#` markers and silent ids
 
-When a drag gesture *completes*, log the single `xschem …` command that
-reproduces its effect. This closes the 10 gesture-start picks deferred from
-Layer B AND their keyboard/toolbar twins in ONE place.
+Checklist rows 29–32 + the deferrals Layer C recorded. Worklist, roughly in
+value order:
 
-**The chokepoint is `end_place_move_copy_zoom()` (callback.c:1421)** — the
-single function that completes STARTZOOM / STARTWIRE / STARTARC / STARTLINE /
-STARTRECT / STARTPOLYGON / STARTMOVE / STARTCOPY. Logging here (after each END
-runs, record-after-evaluation as everywhere else) covers every gesture
-regardless of how it was started (RMB-drag, key, context menu). NOTE there are
-ALSO `move_objects(END,…)` / `copy_objects(END)` call sites scattered elsewhere
-in callback.c (grep shows ~12) — check whether gesture completions all funnel
-through `end_place_move_copy_zoom` or some bypass it; log at the common point,
-not per call site (the Layer B / slice-2 "single chokepoint, not per-site"
-discipline).
+1. **`xschem polygon x1 y1 x2 y2 ...` coordinate form** (store_poly is ready;
+   model on the `xschem rect` branch). Then upgrade the Layer C marker in
+   `new_polygon` (actions.c) to the real command — the point list is in
+   `xctx->nl_polyx/nl_polyy[0..nl_points-1]` at the store.
+2. **`pan` / `scroll` / `snap` subcommands** (rows 29–31) to un-silence the
+   empty-command Layer A ids (`actions.csv` rows with no command) and row 32
+   (middle-button pan gesture — its END is in callback.c, look for STARTPAN).
+3. **Reconcile gesture-START vs gesture-END log lines.** Layer A logs the
+   start commands (`xschem wire`, no-arg `xschem move_objects`, `xschem
+   zoom_box` from key Z, …); Layer C now logs the END. Replaying the start
+   forms leaves benign MENUSTART state. Decide: csv-`nolog` the start forms
+   (log shows only the effect) or keep both (log shows intent + effect).
+   Audit which ids are affected via `grep ',xschem \(wire\|line\|rect\|polygon\|arc\|move_objects\|copy_objects\|zoom_box\)' src/actions.csv`.
+4. **Optional fidelity upgrades** noted in the Layer C plan: log layer
+   switches (rectcolor) so line/rect replay lands on the right layer;
+   rotate/flip-during-move (needs an anchor-preserving subcommand — audit
+   before minting, `xschem rotate` uses a different anchor).
 
-### Start with the clear win, then audit the rest
+Then the feature is functionally complete → do a spec/checklist
+reconciliation pass (row 11 "every user action" will still be bounded by
+issues 0003/0005 — state that explicitly rather than chasing it).
 
-1. **zoom-rectangle → `xschem zoom_box x1 y1 x2 y2`** is the spec's worked
-   example and the cleanest: the END (`zoom_rectangle(END)`) has final coords in
-   `xctx->nl_x1/nl_y1/nl_x2/nl_y2`, and `zoom_box` already exists
-   (`actions.c:3108`, verified distinct from `zoom_rect`). Confirm the arg order
-   and that the degenerate (x1==x2) case is skipped — `end_place_move_copy_zoom`
-   already returns 0 for it. Geometry-faithful and fully replayable — unlike the
-   view zooms, this one DOES round-trip absolute coords.
+## Layer C facts the next session will want
 
-2. **Everything else needs a per-gesture step-0 audit** (the slice-2 / Layer B
-   discipline — read the END body AND the candidate subcommand; a command that
-   *looks* right is a hypothesis):
-   - wire/line/rect/poly END place at coordinates — is there an `xschem`
-     subcommand that places one at given coords? If not, it is a Phase-3 mint
-     (rows 29–31 territory) → defer with a `#` marker for now.
-   - move/copy END translate the selection by `deltax/deltay` — selection-
-     dependent (issue 0005 bound), like Layer B's cut/copy. `xschem
-     move`/`paste`? audit args.
-   - **`persistent_command` mode** complicates wire/line/poly (multi-segment,
-     PLACE vs PLACE|END branches) — make sure the logged command matches the
-     branch actually taken.
-
-3. **Defer cleanly, note loudly.** Any gesture whose faithful command needs a
-   not-yet-existing subcommand → `#` marker now, real command when Phase 3 mints
-   it (pan/scroll/snap + likely place-at-coord). Record deferrals in the spec
-   status + checklist, same as Layer B did.
-
-### Test approach
-
-Mirror `test_context_menu_log.tcl` / `test_action_log_dispatch.tcl`: drive a
-gesture to its END via `xschem callback` (press → move → release, or the
-ui_state path) and assert the log gains the expected command. zoom_box is the
-easiest end-to-end (drive an RMB drag, assert `xschem zoom_box …` lands and
-replays). Then EXTEND `test_action_replay.sh` with a gesture so the acceptance
-smoke covers Layer C too. Wheel/event-arg gotchas and the focus/mapping
-flakiness are in the tutorial §13 — guard, don't fight.
+- Move/copy logging lives in `end_move_copy_logged()` (callback.c): captures
+  deltax/deltay/move_rot/move_flip/ui_state BEFORE the END (which resets
+  them), logs after. Placement drops (PLACE_SYMBOL/PLACE_TEXT) read the
+  placed object back post-END instead.
+- Placement logging lives at the `storeobject` sites inside
+  `new_wire/new_line/new_rect/new_arc/new_polygon` (actions.c) — every
+  gesture path funnels there; the scheduler's coordinate forms do NOT, so
+  replays never double-log. Keep that invariant when minting new subcommands:
+  the replay path must not pass through `new_*`.
+- `tcl_braceable()` (callback.c) guards embedded free text; refuse-don't-fix.
+- The saved-schematic diff in the acceptance smoke needs
+  `xschem rebuild_connectivity` before `saveas` in BOTH processes (the
+  gesture path stamps the derived `lab=` cache eagerly, replay defers it).
+- Driving gestures headless: motion = `xschem callback .drw 6 x y 0 0 0 0`,
+  click = press(4)+release(5) button 1; `set infix_interface 1` makes
+  `xschem wire/rect/polygon gui` start at the mouse; menu-started move/copy
+  is click-to-start then click-to-drop; a no-motion RMB release opens the
+  context menu — stub `proc context_menu {} {return 21}` or it blocks.
 
 ## Standing context / conventions
 
 - **Build:** `cd src && make xschem`. **GUI smokes:** `DISPLAY=:0 ./src/xschem
   --pipe -q --nolog --script tests/headless/<t>.tcl` (use `--logdir $(mktemp -d)`
-  instead of `--nolog` for the logging/CIW smokes; `--nolog` exists precisely so
-  test runs don't auto-open a CIW — issue 0002). **Engine harness:** `cd
-  tests/headless && ./run.sh`.
+  instead of `--nolog` for the logging/CIW smokes; `test_nolog.tcl` needs
+  `--nolog` itself). **Engine harness:** `cd tests/headless && ./run.sh`.
 - **Rhythm:** scope → short plan doc → implement (pure addition, no spaghetti) →
   test → commit code+tests, then a separate docs/memory commit. Keep the
   checklist + spec status + project memory current each step.
 - **Deferred-by-design issues (do NOT implement without a steer):** 0003
   (stdin-REPL + TCP command logging holes), 0004 (TCP server has no auth), 0005
-  (replayable click-select needs stable object referents — blocks faithful
-  selection replay; bounds Layer B/C selection-dependent commands).
+  (replayable click-select needs stable object referents — bounds Layer B/C
+  selection-dependent commands).
 - **WSLg ghost frames:** smokes that open toplevels `destroy .ciw; update`
   before exit; if a windowless empty frame appears after a run, it is the issue
   0002 RAIL leak — `wsl --shutdown` clears it (commit work first).
-
-## After Layer C
-
-Phase 3 — mint `pan`/`scroll`/`snap` and any place-at-coord subcommands (rows
-29–32) to upgrade the Layer-C `#` markers into real commands and close the
-empty-command Layer-A silent ids. Then the feature is functionally complete; do
-a spec/checklist reconciliation pass.
