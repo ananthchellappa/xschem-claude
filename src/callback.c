@@ -1417,6 +1417,86 @@ static int waves_callback(int event, int mx, int my, KeySym key, int button, int
   return 0;
 }
 
+/* action-log Layer C: can s be embedded in a logged command as a {braced} Tcl
+ * word with no reparse risk? Conservative: refuse braces and backslashes
+ * outright rather than balance-check, so the log file ALWAYS stays
+ * source-able (the Layer B invariant). */
+static int tcl_braceable(const char *s)
+{
+  for(; *s; s++) if(*s == '{' || *s == '}' || *s == '\\') return 0;
+  return 1;
+}
+
+/* action-log Layer C (spec section 2): complete a move/copy drag and record
+ * the single command reproducing its effect. The two callback completion
+ * paths (end_place_move_copy_zoom and the intuitive-interface release) both
+ * come through here; the scheduler's own move_objects(END) calls and the
+ * inline key rotate/flip sequences do NOT (they are not drag gestures --
+ * hooking move.c instead would double-log every replay).
+ * deltax/deltay/move_rot/move_flip and the placement ui_state flags are
+ * captured BEFORE the END (which resets them); the line is written after the
+ * END ran (record-after-evaluation, as everywhere else). A plain translation
+ * replays as `xschem move_objects/copy_objects dx dy [kissing]` on the then-
+ * current selection -- fidelity bounded by issue 0005 exactly like the
+ * Layer B cut/copy picks. Drops completing a placement flow read the placed
+ * object back instead (coordinate-replayable) or leave a '#' marker. */
+static void end_move_copy_logged(int is_copy)
+{
+  int ui = xctx->ui_state;
+  double dx = xctx->deltax, dy = xctx->deltay;
+  int rot = xctx->move_rot, flip = xctx->move_flip;
+  int kissing = xctx->kissing;
+  /* mirror the END early-return: click on elements without motion does nothing */
+  int nothing = xctx->drag_elements && dx == 0. && dy == 0.;
+
+  if(is_copy) copy_objects(END);
+  else        move_objects(END, 0, 0, 0);
+
+  if(nothing) return;
+  if(ui & STARTMERGE) {
+    log_action("# paste/merge drop at delta %.16g %.16g (pending-merge replay, issue 0005)", dx, dy);
+  }
+  else if(ui & START_SYMPIN) {
+    log_action("# place symbol pin (no replayable subcommand yet)");
+  }
+  else if(ui & PLACE_SYMBOL) {
+    int n = (xctx->lastsel == 1 && xctx->sel_array[0].type == ELEMENT) ? xctx->sel_array[0].n : -1;
+    if(n >= 0 && n < xctx->instances) {
+      const char *prop = xctx->inst[n].prop_ptr ? xctx->inst[n].prop_ptr : "";
+      if(tcl_braceable(xctx->inst[n].name) && tcl_braceable(prop)) {
+        log_action("xschem instance {%s} %.16g %.16g %d %d {%s}",
+          xctx->inst[n].name, xctx->inst[n].x0, xctx->inst[n].y0,
+          (int)xctx->inst[n].rot, (int)xctx->inst[n].flip, prop);
+        return;
+      }
+    }
+    log_action("# place symbol (instance not cleanly recordable)");
+  }
+  else if(ui & PLACE_TEXT) {
+    int n = (xctx->lastsel == 1 && xctx->sel_array[0].type == xTEXT) ? xctx->sel_array[0].n : -1;
+    if(n >= 0 && n < xctx->texts) {
+      const char *txt = xctx->text[n].txt_ptr ? xctx->text[n].txt_ptr : "";
+      const char *prop = xctx->text[n].prop_ptr ? xctx->text[n].prop_ptr : "";
+      if(tcl_braceable(txt) && tcl_braceable(prop)) {
+        log_action("xschem text %.16g %.16g %d %d {%s} {%s} %.16g 1",
+          xctx->text[n].x0, xctx->text[n].y0,
+          (int)xctx->text[n].rot, (int)xctx->text[n].flip, txt, prop,
+          xctx->text[n].xscale);
+        return;
+      }
+    }
+    log_action("# place text (text not cleanly recordable)");
+  }
+  else if(rot || flip) {
+    log_action("# %s selection with rotate/flip (rot=%d flip=%d delta %.16g %.16g): "
+      "no single-command replay", is_copy ? "duplicate" : "move", rot, flip, dx, dy);
+  }
+  else {
+    log_action("xschem %s %.16g %.16g%s", is_copy ? "copy_objects" : "move_objects",
+      dx, dy, kissing ? " kissing" : "");
+  }
+}
+
 /* complete the STARTWIRE, STARTRECT, STARTZOOM, STARTCOPY ... operations */
 static int end_place_move_copy_zoom()
 {
@@ -1425,6 +1505,11 @@ static int end_place_move_copy_zoom()
     if( xctx->nl_x1 == xctx->nl_x2 && xctx->nl_y1 == xctx->nl_y2) {
       return 0;
     }
+    /* action-log Layer C: the final coords replay through `xschem zoom_box`
+     * (factor defaults to 1 -> same origin/zoom math as zoom_rectangle(END);
+     * the degenerate no-op rectangle above is skipped in both). */
+    log_action("xschem zoom_box %.16g %.16g %.16g %.16g",
+      xctx->nl_x1, xctx->nl_y1, xctx->nl_x2, xctx->nl_y2);
     return 1;
   }
   else if(xctx->ui_state & STARTWIRE) {
@@ -1483,14 +1568,14 @@ static int end_place_move_copy_zoom()
     return 0;
   }
   else if(xctx->ui_state & STARTMOVE) {
-    move_objects(END,0,0,0);
+    end_move_copy_logged(0);
     xctx->ui_state &=~START_SYMPIN;
     xctx->constr_mv=0;
     tcleval("set constr_mv 0" );
     return 1;
   }
   else if(xctx->ui_state & STARTCOPY) {
-    copy_objects(END);
+    end_move_copy_logged(1);
     xctx->constr_mv=0;
     tcleval("set constr_mv 0" );
     return 1;
@@ -2978,6 +3063,7 @@ static int handle_mouse_wheel(int event, int mx, int my, KeySym key, int button,
 static void end_shape_point_edit(double c_snap)
 {
      int save = xctx->modified;
+     int edited = 0;
      double sx, sy;
      dbg(1, "%g %g %g %g\n",
          xctx->mx_double_save, xctx->my_double_save, xctx->mousex_snap, xctx->mousey_snap);
@@ -2986,6 +3072,7 @@ static void end_shape_point_edit(double c_snap)
         int n = xctx->sel_array[0].n;
         int c = xctx->sel_array[0].col;
         move_objects(END,0,0,0);
+        edited = 1;
         xctx->constr_mv=0;
         tcleval("set constr_mv 0" );
         xctx->poly[c][n].sel = SELECTED;
@@ -2999,6 +3086,7 @@ static void end_shape_point_edit(double c_snap)
         int n = xctx->sel_array[0].n;
         int c = xctx->sel_array[0].col;
         move_objects(END,0,0,0);
+        edited = 1;
         xctx->constr_mv=0;
         tcleval("set constr_mv 0" );
         xctx->rect[c][n].sel = SELECTED;
@@ -3009,6 +3097,7 @@ static void end_shape_point_edit(double c_snap)
         int n = xctx->sel_array[0].n;
         int c = xctx->sel_array[0].col;
         move_objects(END,0,0,0);
+        edited = 1;
         xctx->constr_mv=0;
         tcleval("set constr_mv 0" );
         xctx->line[c][n].sel = SELECTED;
@@ -3018,6 +3107,7 @@ static void end_shape_point_edit(double c_snap)
      else if(xctx->lastsel == 1 && xctx->sel_array[0].type==WIRE) {
         int n = xctx->sel_array[0].n;
         move_objects(END,0,0,0);
+        edited = 1;
         xctx->constr_mv=0;
         tcleval("set constr_mv 0" );
         xctx->wire[n].sel = SELECTED;
@@ -3029,6 +3119,12 @@ static void end_shape_point_edit(double c_snap)
 
      if(sx == xctx->mousex_snap && sy == xctx->mousey_snap) {
        set_modify(save);
+     }
+     /* action-log Layer C: a control-point drag has no replayable form yet
+      * (needs a stable object referent, issue 0005) -> '#' marker, skipped
+      * for the no-net-move case restored just above. */
+     else if(edited) {
+       log_action("# edit shape control point (drag; not replayable: needs object referent, issue 0005)");
      }
 }
 
@@ -5098,7 +5194,7 @@ static void handle_button_release(int event, KeySym key, int state, int button, 
 
    /* end intuitive_interface copy or move */
    if(xctx->ui_state & STARTCOPY && xctx->drag_elements) {
-      copy_objects(END);
+      end_move_copy_logged(1);
       xctx->constr_mv=0;
       tcleval("set constr_mv 0" );
       xctx->drag_elements = 0;
@@ -5108,7 +5204,7 @@ static void handle_button_release(int event, KeySym key, int state, int button, 
       if(!(state & ShiftMask) && !xctx->mouse_moved) {
         move_objects(ABORT,0,0,0);
       } else {
-        move_objects(END,0,0,0);
+        end_move_copy_logged(0);
       }
       xctx->constr_mv=0;
       tcleval("set constr_mv 0" );

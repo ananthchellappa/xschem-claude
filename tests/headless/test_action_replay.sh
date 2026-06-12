@@ -38,7 +38,8 @@ if [ -z "${DISPLAY:-}" ]; then echo "SKIP: no DISPLAY (this smoke drives the can
 if [ ! -x "$XSCHEM" ]; then echo "FATAL: $XSCHEM not built"; exit 3; fi
 
 LOGDIR=$(mktemp -d); REC=$(mktemp); REP=$(mktemp); RECD=$(mktemp); REPD=$(mktemp)
-cleanup() { rm -rf "$LOGDIR" "$REC" "$REP" "$RECD" "$REPD"; }
+RECSCH=$(mktemp --suffix=.sch); REPSCH=$(mktemp --suffix=.sch)
+cleanup() { rm -rf "$LOGDIR" "$REC" "$REP" "$RECD" "$REPD" "$RECSCH" "$REPSCH"; }
 trap cleanup EXIT
 
 # snapshot helper text shared by both drivers (Tcl): geometry-independent state.
@@ -53,6 +54,15 @@ puts $out "wires [xschem get wires]"
 close $out'
 
 # --- RECORD driver -----------------------------------------------------------
+# Layer C gestures: only the selection-INDEPENDENT ones belong here (wire/rect
+# placement, symbol drop). A move/copy drop replays onto the then-current
+# selection and the driver's `xschem select` is a script call that is NOT
+# logged (issue 0005), so it cannot round-trip across processes. The zoom-drag
+# gesture is also excluded: it logs an ABSOLUTE `xschem zoom_box`, whose
+# resulting zoom depends on the drawing-area size (varies between processes,
+# issues 0001/0002) -- its exact-view replay is proven in-process by
+# test_gesture_end_log.tcl. Object state fidelity is diffed via the saved
+# schematic below, which is geometry-independent.
 cat > "$RECD" <<EOF
 set ::SNAP "$REC"
 xschem load $FIXTURE
@@ -66,8 +76,31 @@ xschem callback .drw 4 350 250 0 4 0 0
 xschem callback .drw 4 350 250 0 4 0 0
 xschem callback .drw 4 350 250 0 5 0 0
 xschem callback .drw 2 350 250 79 0 0 0
+# Layer C gesture ENDs (logged at completion with final coords):
+#   wire draw, rect draw, symbol placement drop -- each: position the mouse
+#   (motion), start via the gui form, move, complete with a Button1 click
+set infix_interface 1
+xschem callback .drw 6 100 100 0 0 0 0
+xschem wire gui
+xschem callback .drw 6 300 100 0 0 0 0
+xschem callback .drw 4 300 100 0 1 0 0
+xschem callback .drw 5 300 100 0 1 0 256
+xschem callback .drw 6 150 150 0 0 0 0
+xschem rect gui
+xschem callback .drw 6 250 220 0 0 0 0
+xschem callback .drw 4 250 220 0 1 0 0
+xschem callback .drw 5 250 220 0 1 0 256
+xschem callback .drw 6 120 120 0 0 0 0
+xschem place_symbol lab_pin.sym
+xschem callback .drw 6 180 140 0 0 0 0
+xschem callback .drw 4 180 140 0 1 0 0
+xschem callback .drw 5 180 140 0 1 0 256
 update idletasks
 $SNAP
+# normalize the derived net-name cache (lab=...) before saving: the gesture
+# path stamps it via prepare_netlist_structs, the replayed command defers it
+xschem rebuild_connectivity
+xschem saveas "$RECSCH" schematic
 catch {destroy .ciw}; update            ;# clean RAIL teardown (issue 0002)
 exit
 EOF
@@ -80,6 +113,10 @@ LOG="$LOGDIR/Xschem.log"
 if grep -qx "xschem zoom_in"  "$LOG" 2>/dev/null; then ok "log has zoom_in";  else bad "log missing zoom_in"; fi
 if grep -qx "xschem zoom_out" "$LOG" 2>/dev/null; then ok "log has zoom_out"; else bad "log missing zoom_out"; fi
 if grep -qx "xschem toggle_colorscheme" "$LOG" 2>/dev/null; then ok "log has toggle_colorscheme"; else bad "log missing toggle_colorscheme"; fi
+# Layer C gesture ENDs, with the final coordinates
+if grep -q "^xschem wire " "$LOG" 2>/dev/null; then ok "log has gesture wire"; else bad "log missing gesture wire"; fi
+if grep -q "^xschem rect " "$LOG" 2>/dev/null; then ok "log has gesture rect"; else bad "log missing gesture rect"; fi
+if grep -q "^xschem instance {lab_pin.sym} " "$LOG" 2>/dev/null; then ok "log has placed instance"; else bad "log missing placed instance"; fi
 
 # the recorded actions actually moved the view (guard against a vacuous pass:
 # a no-op session would record zoomxform==1 and still "match" on replay)
@@ -95,6 +132,8 @@ set ::z0 [xschem get zoom]             ;# this process's own post-load baseline
 uplevel #0 [list source "$LOG"]        ;# replay the recorded session
 update idletasks
 $SNAP
+xschem rebuild_connectivity
+xschem saveas "$REPSCH" schematic
 exit
 EOF
 DISPLAY="$DISPLAY" timeout 40 "$XSCHEM" --pipe -q --nolog --script "$REPD" >/dev/null 2>&1
@@ -107,6 +146,15 @@ else
   bad "replayed state DIFFERS from recorded state"
   echo "--- recorded:"; sed 's/^/    /' "$REC"
   echo "--- replayed:"; sed 's/^/    /' "$REP"
+fi
+
+# the full saved schematics must be byte-identical: every gesture-placed object
+# (wire segment, rect, instance) round-tripped with its exact coordinates
+if [ -s "$RECSCH" ] && diff -q "$RECSCH" "$REPSCH" >/dev/null 2>&1; then
+  ok "replayed schematic file is byte-identical"
+else
+  bad "replayed schematic file DIFFERS"
+  diff -u "$RECSCH" "$REPSCH" 2>&1 | head -20 | sed 's/^/    /'
 fi
 
 if [ "$fail" -eq 0 ]; then echo "RESULT: ALL PASS"; else echo "RESULT: $fail FAILED"; fi

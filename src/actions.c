@@ -3267,6 +3267,13 @@ void new_wire(int what, double mx_snap, double my_snap)
           nl_xx2 = xctx->nl_x2; nl_yy2 = xctx->nl_y2;
           ORDER(nl_xx1,nl_yy1,nl_xx2,nl_yy1);
           storeobject(-1, nl_xx1,nl_yy1,nl_xx2,nl_yy1,WIRE,0,0,NULL);
+          /* action-log Layer C (spec section 2): every gesture path (release,
+           * intermediate click, persistent mode, infix gui, context menu)
+           * places its segment through these storeobject calls, so this is the
+           * single recording point; one line per stored segment (manhattan
+           * modes place up to two). Replaying `xschem wire ...` stores
+           * directly in the scheduler, NOT through new_wire -> no double-log. */
+          log_action("xschem wire %.16g %.16g %.16g %.16g", nl_xx1, nl_yy1, nl_xx2, nl_yy1);
           modified = 1;
           hash_wire(XINSERT, xctx->wires-1, 1);
           drawline(WIRELAYER,NOW, nl_xx1,nl_yy1,nl_xx2,nl_yy1, 0.0, 0, NULL);
@@ -3276,6 +3283,7 @@ void new_wire(int what, double mx_snap, double my_snap)
           nl_xx2 = xctx->nl_x2; nl_yy2 = xctx->nl_y2;
           ORDER(nl_xx2,nl_yy1,nl_xx2,nl_yy2);
           storeobject(-1, nl_xx2,nl_yy1,nl_xx2,nl_yy2,WIRE,0,0,NULL);
+          log_action("xschem wire %.16g %.16g %.16g %.16g", nl_xx2, nl_yy1, nl_xx2, nl_yy2);
           modified = 1;
           hash_wire(XINSERT, xctx->wires-1, 1);
           drawline(WIRELAYER,NOW, nl_xx2,nl_yy1,nl_xx2,nl_yy2, 0.0, 0, NULL);
@@ -3286,6 +3294,7 @@ void new_wire(int what, double mx_snap, double my_snap)
           nl_xx2 = xctx->nl_x2; nl_yy2 = xctx->nl_y2;
           ORDER(nl_xx1,nl_yy1,nl_xx1,nl_yy2);
           storeobject(-1, nl_xx1,nl_yy1,nl_xx1,nl_yy2,WIRE,0,0,NULL);
+          log_action("xschem wire %.16g %.16g %.16g %.16g", nl_xx1, nl_yy1, nl_xx1, nl_yy2);
           modified = 1;
           hash_wire(XINSERT, xctx->wires-1, 1);
           drawline(WIRELAYER,NOW, nl_xx1,nl_yy1,nl_xx1,nl_yy2, 0.0, 0, NULL);
@@ -3295,6 +3304,7 @@ void new_wire(int what, double mx_snap, double my_snap)
           nl_xx2=xctx->nl_x2;nl_yy2=xctx->nl_y2;
           ORDER(nl_xx1,nl_yy2,nl_xx2,nl_yy2);
           storeobject(-1, nl_xx1,nl_yy2,nl_xx2,nl_yy2,WIRE,0,0,NULL);
+          log_action("xschem wire %.16g %.16g %.16g %.16g", nl_xx1, nl_yy2, nl_xx2, nl_yy2);
           modified = 1;
           hash_wire(XINSERT, xctx->wires-1, 1);
           drawline(WIRELAYER,NOW, nl_xx1,nl_yy2,nl_xx2,nl_yy2, 0.0, 0, NULL);
@@ -3304,6 +3314,7 @@ void new_wire(int what, double mx_snap, double my_snap)
         nl_xx2 = xctx->nl_x2; nl_yy2 = xctx->nl_y2;
         ORDER(nl_xx1,nl_yy1,nl_xx2,nl_yy2);
         storeobject(-1, nl_xx1,nl_yy1,nl_xx2,nl_yy2,WIRE,0,0,NULL);
+        log_action("xschem wire %.16g %.16g %.16g %.16g", nl_xx1, nl_yy1, nl_xx2, nl_yy2);
         modified = 1;
         hash_wire(XINSERT, xctx->wires-1, 1);
         drawline(WIRELAYER,NOW, nl_xx1,nl_yy1,nl_xx2,nl_yy2, 0.0, 0, NULL);
@@ -3422,6 +3433,8 @@ void new_arc(int what, double sweep, double mousex_snap, double mousey_snap)
         xctx->push_undo();
         drawarc(xctx->rectcolor, NOW, xctx->nl_x, xctx->nl_y, xctx->nl_r, xctx->nl_a, xctx->nl_b, 0, 0.0, 0);
         store_arc(-1, xctx->nl_x, xctx->nl_y, xctx->nl_r, xctx->nl_a, xctx->nl_b, xctx->rectcolor, 0, NULL);
+        log_action("xschem arc %.16g %.16g %.16g %.16g %.16g %d",
+          xctx->nl_x, xctx->nl_y, xctx->nl_r, xctx->nl_a, xctx->nl_b, xctx->rectcolor);
         set_modify(1);
       }
       xctx->ui_state &= ~STARTARC;
@@ -3473,6 +3486,7 @@ void new_line(int what, double mx_snap, double my_snap)
           nl_xx2 = xctx->nl_x2; nl_yy2 = xctx->nl_y2;
           ORDER(nl_xx1,nl_yy1,nl_xx2,nl_yy1);
           storeobject(-1, nl_xx1,nl_yy1,nl_xx2,nl_yy1,LINE,xctx->rectcolor,0,NULL);
+          log_action("xschem line %.16g %.16g %.16g %.16g", nl_xx1, nl_yy1, nl_xx2, nl_yy1);
           modified = 1;
           drawline(xctx->rectcolor,NOW, nl_xx1,nl_yy1,nl_xx2,nl_yy1, 0.0, 0, NULL);
         }
@@ -3481,6 +3495,7 @@ void new_line(int what, double mx_snap, double my_snap)
           nl_xx2 = xctx->nl_x2; nl_yy2 = xctx->nl_y2;
           ORDER(nl_xx2,nl_yy1,nl_xx2,nl_yy2);
           storeobject(-1, nl_xx2,nl_yy1,nl_xx2,nl_yy2,LINE,xctx->rectcolor,0,NULL);
+          log_action("xschem line %.16g %.16g %.16g %.16g", nl_xx2, nl_yy1, nl_xx2, nl_yy2);
           modified = 1;
           drawline(xctx->rectcolor,NOW, nl_xx2,nl_yy1,nl_xx2,nl_yy2, 0.0, 0, NULL);
         }
@@ -3490,6 +3505,7 @@ void new_line(int what, double mx_snap, double my_snap)
           nl_xx2 = xctx->nl_x2; nl_yy2 = xctx->nl_y2;
           ORDER(nl_xx1,nl_yy1,nl_xx1,nl_yy2);
           storeobject(-1, nl_xx1,nl_yy1,nl_xx1,nl_yy2,LINE,xctx->rectcolor,0,NULL);
+          log_action("xschem line %.16g %.16g %.16g %.16g", nl_xx1, nl_yy1, nl_xx1, nl_yy2);
           modified = 1;
           drawline(xctx->rectcolor,NOW, nl_xx1,nl_yy1,nl_xx1,nl_yy2, 0.0, 0, NULL);
         }
@@ -3498,6 +3514,7 @@ void new_line(int what, double mx_snap, double my_snap)
           nl_xx2=xctx->nl_x2;nl_yy2=xctx->nl_y2;
           ORDER(nl_xx1,nl_yy2,nl_xx2,nl_yy2);
           storeobject(-1, nl_xx1,nl_yy2,nl_xx2,nl_yy2,LINE,xctx->rectcolor,0,NULL);
+          log_action("xschem line %.16g %.16g %.16g %.16g", nl_xx1, nl_yy2, nl_xx2, nl_yy2);
           modified = 1;
           drawline(xctx->rectcolor,NOW, nl_xx1,nl_yy2,nl_xx2,nl_yy2, 0.0, 0, NULL);
         }
@@ -3506,6 +3523,7 @@ void new_line(int what, double mx_snap, double my_snap)
         nl_xx2 = xctx->nl_x2; nl_yy2 = xctx->nl_y2;
         ORDER(nl_xx1,nl_yy1,nl_xx2,nl_yy2);
         storeobject(-1, nl_xx1,nl_yy1,nl_xx2,nl_yy2,LINE,xctx->rectcolor,0,NULL);
+        log_action("xschem line %.16g %.16g %.16g %.16g", nl_xx1, nl_yy1, nl_xx2, nl_yy2);
         modified = 1;
         drawline(xctx->rectcolor,NOW, nl_xx1,nl_yy1,nl_xx2,nl_yy2, 0.0, 0, NULL);
       }
@@ -3546,6 +3564,8 @@ void new_rect(int what, double mousex_snap, double mousey_snap)
     filledrect(xctx->rectcolor, NOW, xctx->nl_x1,xctx->nl_y1,xctx->nl_x2,xctx->nl_y2, 1, -1, -1);
     xctx->draw_window = save_draw;
     storeobject(-1, xctx->nl_x1,xctx->nl_y1,xctx->nl_x2,xctx->nl_y2,xRECT,xctx->rectcolor, 0, NULL);
+    log_action("xschem rect %.16g %.16g %.16g %.16g",
+      xctx->nl_x1, xctx->nl_y1, xctx->nl_x2, xctx->nl_y2);
     modified = 1;
    }
    xctx->nl_x1 = xctx->nl_x2 = mousex_snap;xctx->nl_y1 = xctx->nl_y2 = mousey_snap;
@@ -3626,6 +3646,8 @@ void new_polygon(int what, double mousex_snap, double mousey_snap)
      xctx->push_undo();
      drawtemppolygon(xctx->gctiled, NOW, xctx->nl_polyx, xctx->nl_polyy, xctx->nl_points+1, 0);
      store_poly(-1, xctx->nl_polyx, xctx->nl_polyy, xctx->nl_points, xctx->rectcolor, 0, NULL);
+     log_action("# place polygon (%d points; no coordinate subcommand yet, Phase 3)",
+       xctx->nl_points);
      /* fprintf(errfp, "new_poly: finish: nl_points=%d\n", xctx->nl_points); */
      drawtemppolygon(xctx->gc[xctx->rectcolor], NOW, xctx->nl_polyx, xctx->nl_polyy, xctx->nl_points, 0);
      xctx->ui_state &= ~STARTPOLYGON;
