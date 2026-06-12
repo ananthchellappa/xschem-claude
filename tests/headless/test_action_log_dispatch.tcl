@@ -78,13 +78,14 @@ check "direct scheduler call is not logged" \
 uplevel #0 [list source [xschem get actionlog_filename]]
 check "replaying the log restores the zoom" [expr {[xschem get zoom] eq $z1}]
 
-# 4c) C-backed actions with EMPTY csv command (scroll/pan/gesture/routing) stay
-#     silent this slice (Phase 3 mints their subcommands): Up arrow dispatches
-#     view.scroll_up and must add no line.
+# 4c) Phase 3 minted the view subcommands: Up arrow dispatches view.scroll_up,
+#     whose csv command is now `xschem scroll up` -> the line IS logged
+#     (test_phase3_mints.tcl covers the whole batch; this guards the dispatch
+#     seam). Truly command-less ids (e.g. graph routing) remain silent.
 set n0 [llength [loglines]]
 key 65362
-check "empty-command C-backed action adds no line" \
-  [expr {[llength [loglines]] == $n0}]
+check "minted C-backed action logs its csv command" \
+  [expr {[lsearch -exact [loglines] {xschem scroll up}] >= $n0}]
 
 # 4d) the push subcommand: menu-only ids are ignored (returns 0), registry ids
 #     accept (returns 1; probing with a Tcl-backed id is side-effect-free --

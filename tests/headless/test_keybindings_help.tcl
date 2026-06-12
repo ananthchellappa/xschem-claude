@@ -66,15 +66,15 @@ foreach row $action_table {
 set pal_bare 0
 foreach row $action_table {
   if {[dict get $row type] ne "command"} continue
-  if {[dict get $row command] eq "" && [dict get $row id] eq "view.scroll_up"} { set pal_bare 1 }
+  if {[dict get $row command] eq "" && [dict get $row id] eq "view.zoom_rect"} { set pal_bare 1 }
 }
-check "view.scroll_up is a label-only row (empty command)" $pal_bare {}
+check "view.zoom_rect is a label-only row (empty command)" $pal_bare {}
 command_palette .
 set ::palette_query {}
 unset -nocomplain ::palette_last_query
 palette_refilter
 set in_palette 0
-foreach row $::palette_rows { if {[dict get $row id] eq "view.scroll_up"} { set in_palette 1 } }
+foreach row $::palette_rows { if {[dict get $row id] eq "view.zoom_rect"} { set in_palette 1 } }
 destroy .cmd_palette
 check "palette skips label-only rows" [expr {!$in_palette}] {}
 

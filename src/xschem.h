@@ -1441,6 +1441,15 @@ extern void backannotate_at_cursor_b_pos(xRect *r, Graph_ctx *gr);
 extern void unselect_attached_floaters(void);
 extern int callback(const char *win_path, int event, int mx, int my, KeySym key,
                         int button, int aux, int state);
+/* Phase 3 (action-logging): act_* bodies shared with the `xschem
+ * pan|scroll|snap|toggle_*` subcommands (callback.c) */
+extern int view_pan_dir(const char *dir);
+extern int view_scroll_dir(const char *dir);
+extern void view_snap_change(int dbl);
+extern void toggle_stretch_cmd(void);
+extern void toggle_show_netlist_cmd(void);
+extern void toggle_orthogonal_wiring_cmd(void);
+extern void toggle_draw_pixmap_cmd(void);
 /* Phase 3 data-driven input bindings (callback.c); backends for the
  * `xschem bind`/`unbind`/`bindings` subcommands. See
  * claude_suggs/refactor_plan_action_registry_phase3.md */

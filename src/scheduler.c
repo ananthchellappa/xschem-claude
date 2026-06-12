@@ -3868,12 +3868,37 @@ static int xschem_cmds_o(Tcl_Interp *interp, int argc, const char *argv[], int *
  * matches no command in this group; early returns propagate unchanged. */
 static int xschem_cmds_p(Tcl_Interp *interp, int argc, const char *argv[], int *cmd_found)
 {
+    /* pan up|down|left|right
+     *   Pan the viewport half a step in the given direction (the wheel-pan
+     *   action; full-step arrow scrolling is `xschem scroll`).
+     * pan dx dy
+     *   Shift the view origin by (dx, dy) schematic units -- the replay form
+     *   of a middle-button drag-pan recorded in the action log (Phase 3). */
+    if(!strcmp(argv[1], "pan"))
+    {
+      char *end1, *end2;
+      double dx, dy;
+      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(argc > 3 &&
+         (dx = strtod(argv[2], &end1), dy = strtod(argv[3], &end2),
+          end1 != argv[2] && end2 != argv[3])) {
+        xctx->xorigin += dx;
+        xctx->yorigin += dy;
+        draw();
+        redraw_w_a_l_r_p_z_rubbers(1);
+      } else if(argc < 3 || !view_pan_dir(argv[2])) {
+        Tcl_SetResult(interp, "xschem pan: expected up|down|left|right or dx dy", TCL_STATIC);
+        return TCL_ERROR;
+      }
+      Tcl_ResetResult(interp);
+    }
+
     /* parse_cmd
      *   debug command to test parse_cmd_string()
      *   splits a command string into argv-like arguments
      *   return # of args in *argc
      *   argv[*argc] is always set to NULL */
-    if(!strcmp(argv[1], "parse_cmd"))
+    else if(!strcmp(argv[1], "parse_cmd"))
     {
       if(argc > 2) {
         int c, i;
@@ -6205,6 +6230,34 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
       Tcl_ResetResult(interp);
     }
 
+    /* scroll up|down|left|right
+     *   Scroll the viewport one full step in the given direction (the
+     *   arrow-key action; half-step wheel panning is `xschem pan`). */
+    else if(!strcmp(argv[1], "scroll"))
+    {
+      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(argc < 3 || !view_scroll_dir(argv[2])) {
+        Tcl_SetResult(interp, "xschem scroll: expected up|down|left|right", TCL_STATIC);
+        return TCL_ERROR;
+      }
+      Tcl_ResetResult(interp);
+    }
+
+    /* snap half|double
+     *   Halve or double the mouse snap factor (relative, like the bound keys;
+     *   absolute setting stays `xschem set cadsnap <value>`). */
+    else if(!strcmp(argv[1], "snap"))
+    {
+      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(argc > 2 && !strcmp(argv[2], "half"))        view_snap_change(0);
+      else if(argc > 2 && !strcmp(argv[2], "double")) view_snap_change(1);
+      else {
+        Tcl_SetResult(interp, "xschem snap: expected half|double", TCL_STATIC);
+        return TCL_ERROR;
+      }
+      Tcl_ResetResult(interp);
+    }
+
     /* snap_wire
      *   Start a GUI start snapped wire placement (click to start a
      *   wire to closest pin/net endpoint) */
@@ -6573,6 +6626,42 @@ static int xschem_cmds_t(Tcl_Interp *interp, int argc, const char *argv[], int *
       tclsetdoublevar("dim_bg", 0.0);
       build_colors(0.0, 0.0);
       draw();
+      Tcl_ResetResult(interp);
+    }
+
+    /* toggle_draw_pixmap
+     *   Toggle off-screen pixmap (double buffered) drawing */
+    else if(!strcmp(argv[1], "toggle_draw_pixmap"))
+    {
+      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      toggle_draw_pixmap_cmd();
+      Tcl_ResetResult(interp);
+    }
+
+    /* toggle_show_netlist
+     *   Toggle showing the netlist window when netlisting */
+    else if(!strcmp(argv[1], "toggle_show_netlist"))
+    {
+      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      toggle_show_netlist_cmd();
+      Tcl_ResetResult(interp);
+    }
+
+    /* toggle_stretch
+     *   Toggle stretching of wires attached to moved objects */
+    else if(!strcmp(argv[1], "toggle_stretch"))
+    {
+      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      toggle_stretch_cmd();
+      Tcl_ResetResult(interp);
+    }
+
+    /* toggle_orthogonal_wiring
+     *   Toggle orthogonal (manhattan) wire drawing */
+    else if(!strcmp(argv[1], "toggle_orthogonal_wiring"))
+    {
+      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      toggle_orthogonal_wiring_cmd();
       Tcl_ResetResult(interp);
     }
 

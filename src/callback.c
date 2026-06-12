@@ -2380,27 +2380,48 @@ static int act_zoom_full(const ActionEvent *e) {
   zoom_full(1, 0, flags, 0.97);
   return 1;
 }
-static int act_pan_left(const ActionEvent *e) {
-  (void)e; xctx->xorigin += -CADMOVESTEP*xctx->zoom/2.; draw(); redraw_w_a_l_r_p_z_rubbers(1); return 1; }
-static int act_pan_right(const ActionEvent *e) {
-  (void)e; xctx->xorigin -= -CADMOVESTEP*xctx->zoom/2.; draw(); redraw_w_a_l_r_p_z_rubbers(1); return 1; }
-static int act_pan_up(const ActionEvent *e) {
-  (void)e; xctx->yorigin += -CADMOVESTEP*xctx->zoom/2.; draw(); redraw_w_a_l_r_p_z_rubbers(1); return 1; }
-static int act_pan_down(const ActionEvent *e) {
-  (void)e; xctx->yorigin -= -CADMOVESTEP*xctx->zoom/2.; draw(); redraw_w_a_l_r_p_z_rubbers(1); return 1; }
-/* full-step viewport scroll, bound to the arrow keys (Phase 3c c4/c5). Distinct
- * from the half-step wheel pan (view.pan_*): a full CADMOVESTEP, and the sign is
- * copied verbatim from the historical arrow-key arithmetic in handle_key_press
- * (Right scrolls xorigin the same way the wheel's pan_left does — preserved as-is,
- * not "corrected"). Named by the triggering arrow so a binding row reads naturally. */
-static int act_scroll_up(const ActionEvent *e) {
-  (void)e; xctx->yorigin -= -CADMOVESTEP*xctx->zoom; draw(); redraw_w_a_l_r_p_z_rubbers(1); return 1; }
-static int act_scroll_down(const ActionEvent *e) {
-  (void)e; xctx->yorigin += -CADMOVESTEP*xctx->zoom; draw(); redraw_w_a_l_r_p_z_rubbers(1); return 1; }
-static int act_scroll_left(const ActionEvent *e) {
-  (void)e; xctx->xorigin -= -CADMOVESTEP*xctx->zoom; draw(); redraw_w_a_l_r_p_z_rubbers(1); return 1; }
-static int act_scroll_right(const ActionEvent *e) {
-  (void)e; xctx->xorigin += -CADMOVESTEP*xctx->zoom; draw(); redraw_w_a_l_r_p_z_rubbers(1); return 1; }
+/* Phase 3 (action-logging): the view-step bodies, shared between the act_*
+ * wrappers and the `xschem pan|scroll <dir>` subcommands (scheduler.c) -- the
+ * csv command for these ids is the subcommand, so the line Layer A logs
+ * replays through the SAME code the bound chord ran (equivalence by
+ * construction). The scroll (full-step, arrow-key) and pan (half-step, wheel)
+ * sign conventions differ on purpose: each is preserved verbatim from its
+ * historical arithmetic in handle_key_press / the wheel acts (Right scrolls
+ * xorigin the same way the wheel's pan_left does -- not "corrected"). */
+int view_pan_dir(const char *dir)     /* half step; wheel signs */
+{
+  double s = CADMOVESTEP * xctx->zoom / 2.;
+  if(!strcmp(dir, "left"))       xctx->xorigin += -s;
+  else if(!strcmp(dir, "right")) xctx->xorigin -= -s;
+  else if(!strcmp(dir, "up"))    xctx->yorigin += -s;
+  else if(!strcmp(dir, "down"))  xctx->yorigin -= -s;
+  else return 0;
+  draw();
+  redraw_w_a_l_r_p_z_rubbers(1);
+  return 1;
+}
+int view_scroll_dir(const char *dir)  /* full step; arrow-key signs */
+{
+  double s = CADMOVESTEP * xctx->zoom;
+  if(!strcmp(dir, "up"))         xctx->yorigin -= -s;
+  else if(!strcmp(dir, "down"))  xctx->yorigin += -s;
+  else if(!strcmp(dir, "left"))  xctx->xorigin -= -s;
+  else if(!strcmp(dir, "right")) xctx->xorigin += -s;
+  else return 0;
+  draw();
+  redraw_w_a_l_r_p_z_rubbers(1);
+  return 1;
+}
+static int act_pan_left(const ActionEvent *e)  { (void)e; return view_pan_dir("left");  }
+static int act_pan_right(const ActionEvent *e) { (void)e; return view_pan_dir("right"); }
+static int act_pan_up(const ActionEvent *e)    { (void)e; return view_pan_dir("up");    }
+static int act_pan_down(const ActionEvent *e)  { (void)e; return view_pan_dir("down");  }
+/* full-step viewport scroll, bound to the arrow keys (Phase 3c c4/c5). Named by
+ * the triggering arrow so a binding row reads naturally. */
+static int act_scroll_up(const ActionEvent *e)    { (void)e; return view_scroll_dir("up");    }
+static int act_scroll_down(const ActionEvent *e)  { (void)e; return view_scroll_dir("down");  }
+static int act_scroll_left(const ActionEvent *e)  { (void)e; return view_scroll_dir("left");  }
+static int act_scroll_right(const ActionEvent *e) { (void)e; return view_scroll_dir("right"); }
 /* gesture START: only the initiating chord is data-driven. zoom_rectangle(START)
  * sets ui_state STARTZOOM; the rubber-band (motion) and completion (release)
  * already key off that bit, so they need no per-button binding (Phase 3b). */
@@ -2420,13 +2441,22 @@ static int act_make_sch_sym_from_sel(const ActionEvent *e) { (void)e; make_schem
  * current snap the same way the c_snap parameter is derived (tclgetdoublevar
  * "cadsnap", callback.c); the stretch act flips the enable_stretch tcl var (the old
  * branch's local toggle was dead after the function returned). */
-static int act_toggle_stretch(const ActionEvent *e) {
-  (void)e; tclsetboolvar("enable_stretch", !tclgetboolvar("enable_stretch")); return 1; }
+/* shared bodies for the snap/toggle acts and their `xschem snap half|double`,
+ * `xschem toggle_*` subcommands (Phase 3, same rule as view_pan_dir above) */
+void view_snap_change(int dbl)
+{
+  set_snap(tclgetdoublevar("cadsnap") * (dbl ? 2.0 : 0.5));
+  change_linewidth(-1.);
+  draw();
+}
+void toggle_stretch_cmd(void)
+{
+  tclsetboolvar("enable_stretch", !tclgetboolvar("enable_stretch"));
+}
+static int act_toggle_stretch(const ActionEvent *e) { (void)e; toggle_stretch_cmd(); return 1; }
 static int act_toggle_ignore(const ActionEvent *e) { (void)e; toggle_ignore(); return 1; }
-static int act_snap_half(const ActionEvent *e) {
-  (void)e; set_snap(tclgetdoublevar("cadsnap") / 2.0); change_linewidth(-1.); draw(); return 1; }
-static int act_snap_double(const ActionEvent *e) {
-  (void)e; set_snap(tclgetdoublevar("cadsnap") * 2.0); change_linewidth(-1.); draw(); return 1; }
+static int act_snap_half(const ActionEvent *e)   { (void)e; view_snap_change(0); return 1; }
+static int act_snap_double(const ActionEvent *e) { (void)e; view_snap_change(1); return 1; }
 static int act_toggle_colorscheme(const ActionEvent *e) {
   (void)e;
   tclsetboolvar("dark_colorscheme", !tclgetboolvar("dark_colorscheme"));
@@ -2439,27 +2469,27 @@ static int act_toggle_colorscheme(const ActionEvent *e) {
 /* Phase 3d.2 batch 3 — clean canvas-only command keys. Each replicates its switch
  * branch verbatim (multi-statement tcl-var toggle / C-flag toggle), reading the
  * source of truth rather than any handle_key_press parameter. */
-static int act_toggle_show_netlist(const ActionEvent *e) {
-  int v; (void)e;
-  v = !tclgetboolvar("netlist_show");
+void toggle_show_netlist_cmd(void)
+{
+  int v = !tclgetboolvar("netlist_show");
   if(v) { tcleval("alert_ { enabling show netlist window} {}");  tclsetvar("netlist_show","1"); }
   else  { tcleval("alert_ { disabling show netlist window } {}"); tclsetvar("netlist_show","0"); }
-  return 1;
 }
-static int act_toggle_orthogonal_wiring(const ActionEvent *e) {
-  (void)e;
+void toggle_orthogonal_wiring_cmd(void)
+{
   if(tclgetboolvar("orthogonal_wiring")) { tclsetboolvar("orthogonal_wiring", 0); xctx->manhattan_lines = 0; }
   else                                   { tclsetboolvar("orthogonal_wiring", 1); }
   redraw_w_a_l_r_p_z_rubbers(1);
-  return 1;
 }
-static int act_toggle_draw_pixmap(const ActionEvent *e) {
-  (void)e;
+void toggle_draw_pixmap_cmd(void)
+{
   xctx->draw_pixmap = !xctx->draw_pixmap;
   if(xctx->draw_pixmap) tcleval("alert_ { enabling draw pixmap} {}");
   else                  tcleval("alert_ { disabling draw pixmap} {}");
-  return 1;
 }
+static int act_toggle_show_netlist(const ActionEvent *e) { (void)e; toggle_show_netlist_cmd(); return 1; }
+static int act_toggle_orthogonal_wiring(const ActionEvent *e) { (void)e; toggle_orthogonal_wiring_cmd(); return 1; }
+static int act_toggle_draw_pixmap(const ActionEvent *e) { (void)e; toggle_draw_pixmap_cmd(); return 1; }
 
 /* --- action registry: stable id -> behavior --- */
 /* An action is backed by EITHER a C function (fn) OR a Tcl command (tcl); exactly
