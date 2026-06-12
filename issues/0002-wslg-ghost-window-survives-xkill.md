@@ -200,3 +200,20 @@ wsl --shutdown     # from Windows; kills the session — commit work first
 
 Minimizing the ghost or dragging it aside also works for ignoring it within a
 session.
+
+## 9. Recurrences
+
+- **2026-06-11 (Layer C session).** Ghost frame titled `xschem - untitled.sch`,
+  transparent body. Verified per §3: `pgrep xschem` empty, `xlsclients` empty,
+  nothing in `xwininfo -root -tree` — compositor-side orphan again. Trigger was
+  a NEW variant of the same class: the first run of
+  `tests/headless/test_gesture_end_log.tcl` hung (a no-motion right-click fell
+  through to the real context-menu popup, which blocked on a Tk grab) and was
+  SIGTERM-killed by `timeout` — an abnormal teardown while a grabbed popup was
+  mapped. The test now stubs `proc context_menu {} {return 21}` so that hang
+  cannot recur, but the general lesson stands: **a timeout-killed GUI smoke is
+  a ghost-frame factory** — stub anything that can block (popups, dialogs) so
+  smokes always reach their clean `destroy`+`update`+`exit` path, and treat a
+  smoke that needed `timeout` to die as a bug in the smoke. The stale title is
+  expected: the orphaned frame stops receiving title updates, so it shows
+  whatever was last set (here the pre-load default).
