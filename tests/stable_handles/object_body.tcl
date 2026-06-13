@@ -68,18 +68,18 @@ proc nrect {c} {return [xschem get rects $c]}
 ### count is known from the fixture, not queried.)
 obj_fixture
 set all [objs]
-xcheck {O1a objects returns a Tcl list with one dict per object} \
+check {O1a objects returns a Tcl list with one dict per object} \
   {$all ne "-2" && [llength $all] > 0}
-xcheck {O1b objects count == 10 (2 wire + 1 inst + 1 text + 3 rect + 1 line + 1 poly + 1 arc)} \
+check {O1b objects count == 10 (2 wire + 1 inst + 1 text + 3 rect + 1 line + 1 poly + 1 arc)} \
   {[llength $all] == 10}
 
 ### O2 — each descriptor has the five keys with correct, cross-checked values
 obj_fixture
 set inst_row {}
 foreach o [objs] { if {[dg $o type] eq "instance"} {set inst_row $o} }
-xcheck {O2a the instance descriptor carries type/index/layer/id/name keys} \
+check {O2a the instance descriptor carries type/index/layer/id/name keys} \
   {[dg $inst_row type] eq "instance" && [dg $inst_row name] eq "RTEST"}
-xcheck {O2b the descriptor id == instance_id of that index, and > 0} \
+check {O2b the descriptor id == instance_id of that index, and > 0} \
   {[dg $inst_row id] > 0 && [dg $inst_row id] == [xschem instance_id [dg $inst_row index]]}
 
 ### O3 — -type filter restricts to one type
@@ -87,8 +87,8 @@ obj_fixture
 set rects [objs -type rect]
 set only_rects 1
 foreach o $rects { if {[dg $o type] ne "rect"} {set only_rects 0} }
-xcheck {O3a -type rect returns only rect descriptors} {$rects ne "-2" && $only_rects == 1}
-xcheck {O3b -type rect count == total rects across layers (3)} \
+check {O3a -type rect returns only rect descriptors} {$rects ne "-2" && $only_rects == 1}
+check {O3b -type rect count == total rects across layers (3)} \
   {[llength $rects] == [expr {[nrect 5] + [nrect 6]}]}
 
 ### O4 — -selected filter restricts to the current selection
@@ -97,56 +97,56 @@ xschem unselect_all
 xschem select rect 5 0
 xschem select instance RTEST
 set sel [objs -selected]
-xcheck {O4a -selected returns exactly the 2 selected objects} \
+check {O4a -selected returns exactly the 2 selected objects} \
   {$sel ne "-2" && [llength $sel] == 2}
 set sel_types [lsort [lmap o $sel {dg $o type}]]
-xcheck {O4b -selected reports the right types (instance + rect)} \
+check {O4b -selected reports the right types (instance + rect)} \
   {$sel_types eq {instance rect}}
 
 ### O5 — -layer filter restricts graphical objects to one layer
 obj_fixture
 set l5 [objs -type rect -layer 5]
 set l6 [objs -type rect -layer 6]
-xcheck {O5a -type rect -layer 5 returns the 2 layer-5 rects} \
+check {O5a -type rect -layer 5 returns the 2 layer-5 rects} \
   {$l5 ne "-2" && [llength $l5] == 2}
-xcheck {O5b -type rect -layer 6 returns the 1 layer-6 rect} \
+check {O5b -type rect -layer 6 returns the 1 layer-6 rect} \
   {[llength $l6] == 1 && [dg [lindex $l6 0] layer] == 6}
 
 ### O6 — `object <type> @id` resolves a held id to its descriptor
 obj_fixture
 set iid [xschem instance_id RTEST]
 set d [obj instance @$iid]
-xcheck {O6 object instance @<id> resolves to the same instance (by name+index)} \
+check {O6 object instance @<id> resolves to the same instance (by name+index)} \
   {[dg $d name] eq "RTEST" && [dg $d id] == $iid && [dg $d index] == [xschem instance_index $iid]}
 
 ### O7 — `object <type> #layer,index` resolves a per-layer position
 obj_fixture
 set d [obj rect #5,1]
-xcheck {O7 object rect #5,1 resolves to rect at layer 5 index 1} \
+check {O7 object rect #5,1 resolves to rect at layer 5 index 1} \
   {[dg $d type] eq "rect" && [dg $d layer] == 5 && [dg $d index] == 1 && \
    [dg $d id] == [xschem rect_id 5 1]}
 
 ### O8 — `object instance <name>` resolves by name (bareword)
 obj_fixture
 set d [obj instance RTEST]
-xcheck {O8 object instance <name> resolves by name} \
+check {O8 object instance <name> resolves by name} \
   {[dg $d name] eq "RTEST" && [dg $d id] == [xschem instance_id RTEST]}
 
 ### O9 — `object wire @id` and `object rect #index` round-trip with the resolvers
 obj_fixture
 set wid [xschem wire_id 0]
 set dw [obj wire @$wid]
-xcheck {O9a object wire @<id> resolves to wire index 0} \
+check {O9a object wire @<id> resolves to wire index 0} \
   {[dg $dw type] eq "wire" && [dg $dw index] == [xschem wire_index $wid] && [dg $dw id] == $wid}
 set dr [obj rect #5,0]
-xcheck {O9b object rect #5,0 round-trips through rect_index} \
+check {O9b object rect #5,0 round-trips through rect_index} \
   {[xschem rect_index [dg $dr id]] eq "5 0"}
 
 ### O10 — text is the honest straggler: its descriptor carries id -1
 obj_fixture
 set txt_row {}
 foreach o [objs] { if {[dg $o type] eq "text"} {set txt_row $o} }
-xcheck {O10 the text descriptor reports id -1 (text has no stable id yet)} \
+check {O10 the text descriptor reports id -1 (text has no stable id yet)} \
   {[dg $txt_row type] eq "text" && [dg $txt_row id] == -1}
 
 ### O11 — a dangling id resolves to nothing (loud, not a stranger)
@@ -156,7 +156,7 @@ xschem unselect_all
 xschem select rect 5 0
 xschem delete
 set d [obj rect @$rid]
-xcheck {O11 object rect @<freed-id> returns empty (the id dangles, not a stranger)} \
+check {O11 object rect @<freed-id> returns empty (the id dangles, not a stranger)} \
   {$d eq ""}
 
 ### O12 — the descriptor's id agrees with the `selection` enumerator for a
@@ -166,7 +166,7 @@ xschem unselect_all
 xschem select rect 5 1
 set selrow [lindex [xschem selection] 0]
 set d [obj rect #5,1]
-xcheck {O12 object descriptor id == selection row id for the same object} \
+check {O12 object descriptor id == selection row id for the same object} \
   {[lindex $selrow 3] == [dg $d id] && [dg $d id] > 0}
 
 xschem set modified 0

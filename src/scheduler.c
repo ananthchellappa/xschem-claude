@@ -3971,11 +3971,187 @@ static int xschem_cmds_n(Tcl_Interp *interp, int argc, const char *argv[], int *
 /* `xschem o...` commands, moved verbatim from the xschem() dispatcher
  * (dispatcher decomposition batch 3). Sets *cmd_found = 0 when argv[1]
  * matches no command in this group; early returns propagate unchanged. */
+/* Map a uniform-API type name ("wire"/"instance"/"rect"/"line"/"poly"/"arc"/
+ * "text") to its internal type constant, or -1 if unknown. Used by the
+ * `xschem object`/`objects` read API. */
+static int object_type_from_name(const char *s)
+{
+  if(!strcmp(s, "wire"))     return WIRE;
+  if(!strcmp(s, "instance")) return ELEMENT;
+  if(!strcmp(s, "rect"))     return xRECT;
+  if(!strcmp(s, "line"))     return LINE;
+  if(!strcmp(s, "poly"))     return POLYGON;
+  if(!strcmp(s, "arc"))      return ARC;
+  if(!strcmp(s, "text"))     return xTEXT;
+  return -1;
+}
+
+/* Build the uniform descriptor of one object into 'buf' as a BARE Tcl dict:
+ *   type T index I layer C id ID name {N}
+ * (no outer braces — the single-object `object` command returns this verbatim;
+ * the `objects` list enumerator wraps each in {...} to make a list element.)
+ * 'type' is one of WIRE/ELEMENT/xRECT/LINE/POLYGON/ARC/xTEXT; i is the array
+ * index; c is the layer (the real per-layer layer for graphical types, the
+ * fixed display layer otherwise, or the text's own .layer). id is the stable
+ * id (-1 for text, which has none yet); name is the instance name (empty for
+ * every other type). The id is held as int and printed %d so -1 renders
+ * correctly, matching the `selection` enumerator. */
+static void object_descriptor(char *buf, int bufsz, int type, int i, int c)
+{
+  const char *tname, *name = "";
+  int id = -1;
+  switch(type) {
+    case WIRE:    tname = "wire";     id = (int)xctx->wire[i].id; break;
+    case ELEMENT: tname = "instance"; id = (int)xctx->inst[i].id;
+                  name = xctx->inst[i].instname ? xctx->inst[i].instname : ""; break;
+    case xRECT:   tname = "rect";     id = (int)xctx->rect[c][i].id; break;
+    case LINE:    tname = "line";     id = (int)xctx->line[c][i].id; break;
+    case POLYGON: tname = "poly";     id = (int)xctx->poly[c][i].id; break;
+    case ARC:     tname = "arc";      id = (int)xctx->arc[c][i].id;  break;
+    case xTEXT:   tname = "text";     id = -1; break;
+    default:      tname = "unknown";  break;
+  }
+  my_snprintf(buf, bufsz, "type %s index %d layer %d id %d name {%s}",
+              tname, i, c, id, name);
+}
+
 static int xschem_cmds_o(Tcl_Interp *interp, int argc, const char *argv[], int *cmd_found)
 {
+    /* object <type> <selector>
+     *   return the uniform descriptor dict of ONE object, or "" if it does not
+     *   resolve. <type> is wire|instance|rect|line|poly|arc|text. <selector> is
+     *     @<id>            resolve by stable id (the durable handle)
+     *     #<index>         resolve by array index (flat types: wire/instance/text)
+     *     #<layer>,<index> resolve by per-layer position (rect/line/poly/arc)
+     *     <name>           resolve by name (instance only)
+     *   The dict is {type T index I layer C id ID name {N}}. Read-only.
+     *   See `xschem objects` for the bulk enumerator. */
+    if(!strcmp(argv[1], "object"))
+    {
+      int type, i = -1, c = WIRELAYER;
+      const char *sel;
+      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(argc < 4) {
+        Tcl_SetResult(interp, "xschem object needs <type> <selector>", TCL_STATIC);
+        return TCL_ERROR;
+      }
+      if((type = object_type_from_name(argv[2])) < 0) {
+        Tcl_SetResult(interp, "xschem object: unknown type", TCL_STATIC);
+        return TCL_ERROR;
+      }
+      sel = argv[3];
+      if(sel[0] == '@') {                       /* by stable id */
+        unsigned int id = (unsigned int)strtoul(sel + 1, NULL, 10);
+        switch(type) {
+          case WIRE:    i = wire_index_from_id(id); c = WIRELAYER; break;
+          case ELEMENT: i = inst_index_from_id(id); c = WIRELAYER; break;
+          case xRECT: case LINE: case POLYGON: case ARC:
+                        i = gfx_index_from_id(type, id, &c); break;
+          case xTEXT:   i = -1; break;          /* text has no id */
+        }
+      } else if(sel[0] == '#') {                /* by index or layer,index */
+        const char *comma = strchr(sel + 1, ',');
+        if(comma) { c = atoi(sel + 1); i = atoi(comma + 1); }
+        else      { i = atoi(sel + 1); }
+        /* range-check and fix up the layer for flat types */
+        switch(type) {
+          case WIRE:    if(i < 0 || i >= xctx->wires) i = -1; c = WIRELAYER; break;
+          case ELEMENT: if(i < 0 || i >= xctx->instances) i = -1; c = WIRELAYER; break;
+          case xTEXT:   if(i < 0 || i >= xctx->texts) i = -1;
+                        else c = xctx->text[i].layer; break;
+          case xRECT:   if(c < 0 || c >= cadlayers || i < 0 || i >= xctx->rects[c]) i = -1; break;
+          case LINE:    if(c < 0 || c >= cadlayers || i < 0 || i >= xctx->lines[c]) i = -1; break;
+          case POLYGON: if(c < 0 || c >= cadlayers || i < 0 || i >= xctx->polygons[c]) i = -1; break;
+          case ARC:     if(c < 0 || c >= cadlayers || i < 0 || i >= xctx->arcs[c]) i = -1; break;
+        }
+      } else {                                  /* by name (instance only) */
+        if(type == ELEMENT) { i = get_instance(sel); c = WIRELAYER; }
+        else i = -1;
+      }
+      if(i >= 0) {
+        char row[256];
+        object_descriptor(row, S(row), type, i, c);
+        Tcl_SetResult(interp, row, TCL_VOLATILE);
+      }
+      /* else: leave the result empty — a dangling/unknown reference */
+    }
+
+    /* objects [-type T] [-selected] [-layer L]
+     *   return a Tcl LIST of uniform descriptor dicts, one per object, across
+     *   all seven drawable types (wire, instance, text, rect, line, poly, arc).
+     *   Filters (combinable):
+     *     -type T      only objects of type T (a type name as in `object`)
+     *     -selected    only currently-selected objects
+     *     -layer L     only objects whose reported layer == L
+     *   Each element is {type T index I layer C id ID name {N}}. Read-only. */
+    else if(!strcmp(argv[1], "objects"))
+    {
+      int filt_type = -1, filt_layer = -1, only_sel = 0;
+      int a, c, i, first = 1;
+      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      for(a = 2; a < argc; a++) {
+        if(!strcmp(argv[a], "-type") && a + 1 < argc) {
+          filt_type = object_type_from_name(argv[++a]);
+          if(filt_type < 0) { Tcl_SetResult(interp, "xschem objects -type: unknown type", TCL_STATIC); return TCL_ERROR; }
+        }
+        else if(!strcmp(argv[a], "-layer") && a + 1 < argc) filt_layer = atoi(argv[++a]);
+        else if(!strcmp(argv[a], "-selected")) only_sel = 1;
+      }
+      #define OBJ_EMIT(TYPE, IDX, LAY) do { \
+          char row[256]; \
+          object_descriptor(row, S(row), (TYPE), (IDX), (LAY)); \
+          if(!first) Tcl_AppendResult(interp, " ", NULL); \
+          Tcl_AppendResult(interp, "{", row, "}", NULL); first = 0; \
+        } while(0)
+      /* flat types: wire, instance, text */
+      if(filt_type == -1 || filt_type == WIRE)
+        for(i = 0; i < xctx->wires; i++) {
+          if(only_sel && xctx->wire[i].sel != SELECTED) continue;
+          if(filt_layer != -1 && filt_layer != WIRELAYER) continue;
+          OBJ_EMIT(WIRE, i, WIRELAYER);
+        }
+      if(filt_type == -1 || filt_type == ELEMENT)
+        for(i = 0; i < xctx->instances; i++) {
+          if(only_sel && xctx->inst[i].sel != SELECTED) continue;
+          if(filt_layer != -1 && filt_layer != WIRELAYER) continue;
+          OBJ_EMIT(ELEMENT, i, WIRELAYER);
+        }
+      if(filt_type == -1 || filt_type == xTEXT)
+        for(i = 0; i < xctx->texts; i++) {
+          if(only_sel && xctx->text[i].sel != SELECTED) continue;
+          if(filt_layer != -1 && filt_layer != xctx->text[i].layer) continue;
+          OBJ_EMIT(xTEXT, i, xctx->text[i].layer);
+        }
+      /* per-layer graphical types */
+      for(c = 0; c < cadlayers; c++) {
+        if(filt_layer != -1 && filt_layer != c) continue;
+        if(filt_type == -1 || filt_type == xRECT)
+          for(i = 0; i < xctx->rects[c]; i++) {
+            if(only_sel && xctx->rect[c][i].sel != SELECTED) continue;
+            OBJ_EMIT(xRECT, i, c);
+          }
+        if(filt_type == -1 || filt_type == LINE)
+          for(i = 0; i < xctx->lines[c]; i++) {
+            if(only_sel && xctx->line[c][i].sel != SELECTED) continue;
+            OBJ_EMIT(LINE, i, c);
+          }
+        if(filt_type == -1 || filt_type == POLYGON)
+          for(i = 0; i < xctx->polygons[c]; i++) {
+            if(only_sel && xctx->poly[c][i].sel != SELECTED) continue;
+            OBJ_EMIT(POLYGON, i, c);
+          }
+        if(filt_type == -1 || filt_type == ARC)
+          for(i = 0; i < xctx->arcs[c]; i++) {
+            if(only_sel && xctx->arc[c][i].sel != SELECTED) continue;
+            OBJ_EMIT(ARC, i, c);
+          }
+      }
+      #undef OBJ_EMIT
+    }
+
     /* only_probes
      * dim schematic to better show highlights */
-    if(!strcmp(argv[1], "only_probes"))
+    else if(!strcmp(argv[1], "only_probes"))
     {
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
       xctx->only_probes = !xctx->only_probes;
