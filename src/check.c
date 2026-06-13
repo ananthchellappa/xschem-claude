@@ -201,39 +201,28 @@ void trim_wires(void)
             xctx->wire[j].x1, xctx->wire[j].y1, xctx->wire[j].x2, xctx->wire[j].y2,
             x0, y0
           );
-          check_wire_storage();
-          xctx->wire[xctx->wires].x1=xctx->wire[j].x1;
-          xctx->wire[xctx->wires].y1=xctx->wire[j].y1;
-          xctx->wire[xctx->wires].x2=x0;
-          xctx->wire[xctx->wires].y2=y0;
-
-
-          if(xctx->wire[j].sel == SELECTED1) {
-            xctx->wire[xctx->wires].sel = SELECTED1;
-            xctx->wire[j].sel = 0;
-          } else if(xctx->wire[j].sel == SELECTED2) {
-            xctx->wire[xctx->wires].sel = 0;
-            xctx->wire[j].sel = SELECTED2;
-          } else if(xctx->wire[j].sel == SELECTED) {
-            xctx->wire[xctx->wires].sel = SELECTED;
-            xctx->wire[j].sel = SELECTED;
-          } else {
-            xctx->wire[xctx->wires].sel = 0;
-            xctx->wire[j].sel = 0;
+          {
+            unsigned short newsel;
+            if(xctx->wire[j].sel == SELECTED1) {
+              newsel = SELECTED1;
+              xctx->wire[j].sel = 0;
+            } else if(xctx->wire[j].sel == SELECTED2) {
+              newsel = 0;
+              xctx->wire[j].sel = SELECTED2;
+            } else if(xctx->wire[j].sel == SELECTED) {
+              newsel = SELECTED;
+              xctx->wire[j].sel = SELECTED;
+            } else {
+              newsel = 0;
+              xctx->wire[j].sel = 0;
+            }
+            wire_store_split(j, x0, y0, newsel);
           }
-          xctx->wire[xctx->wires].prop_ptr=NULL;
-          my_strdup(_ALLOC_ID_, &xctx->wire[xctx->wires].prop_ptr, xctx->wire[j].prop_ptr);
-          xctx->wire[xctx->wires].bus = xctx->wire[j].bus;
-          xctx->wire[xctx->wires].node=NULL;
-
-          my_strdup(_ALLOC_ID_, &xctx->wire[xctx->wires].node, xctx->wire[j].node);
           xctx->wire[j].x1 = x0;
           xctx->wire[j].y1 = y0;
-          hash_wire(XINSERT, xctx->wires, 0);
           i--; /* redo current i iteration, since we break the 'j' loop due to changed wire hash table */
           hash_wire(XDELETE, j, 0); /* rehash since endpoint x1, y1 changed */
           hash_wire(XINSERT, j, 0);
-          xctx->wires++;
           changed = 1;
           break;
         }
@@ -498,26 +487,8 @@ void break_wires_at_point(double x0, double y0, int align)
         dbg(1, "break_wires_at_point(): processing wire %d: %g %g %g %g\n",
             i, xctx->wire[i].x1, xctx->wire[i].y1, xctx->wire[i].x2, xctx->wire[i].y2);
         if(!changed) { xctx->push_undo(); changed=1;}
-        check_wire_storage();
-        xctx->wire[xctx->wires].x1=xctx->wire[i].x1;
-        xctx->wire[xctx->wires].y1=xctx->wire[i].y1;
-        xctx->wire[xctx->wires].end1 = xctx->wire[i].end1;
-        xctx->wire[xctx->wires].end2 = 1;
-        xctx->wire[xctx->wires].x2=x0;
-        xctx->wire[xctx->wires].y2=y0;
-        xctx->wire[xctx->wires].sel=0;
-        xctx->wire[xctx->wires].flags = xctx->wire[i].flags;
-        xctx->wire[xctx->wires].prop_ptr=NULL;
-        my_strdup(_ALLOC_ID_, &xctx->wire[xctx->wires].prop_ptr, xctx->wire[i].prop_ptr);
-        xctx->wire[xctx->wires].bus = xctx->wire[i].bus;
-        xctx->wire[xctx->wires].node=NULL;
-        hash_wire(XINSERT, xctx->wires, 0);  /* insertion happens at beginning of list */
-        dbg(1, "break_wires_at_pins(): hashing new wire %d: %g %g %g %g\n",
-            xctx->wires, xctx->wire[xctx->wires].x1, xctx->wire[xctx->wires].y1,
-                         xctx->wire[xctx->wires].x2, xctx->wire[xctx->wires].y2);
-        my_strdup(_ALLOC_ID_, &xctx->wire[xctx->wires].node, xctx->wire[i].node);
+        wire_store_split(i, x0, y0, 0);
         xctx->need_reb_sel_arr=1;
-        xctx->wires++;
         xctx->wire[i].x1 = x0;
         xctx->wire[i].y1 = y0;
         xctx->wire[i].sel = 0;
@@ -569,30 +540,12 @@ void break_wires_at_pins(int remove)
               dbg(1, "break_wires_at_pins(): processing wire %d: %g %g %g %g\n",
                   i, xctx->wire[i].x1, xctx->wire[i].y1, xctx->wire[i].x2, xctx->wire[i].y2);
               if(!changed) { xctx->push_undo(); changed=1;}
-              check_wire_storage();
               if(!remove || !RECT_INSIDE(xctx->wire[i].x1, xctx->wire[i].y1, x0, y0,
                              xctx->inst[k].xx1, xctx->inst[k].yy1, xctx->inst[k].xx2, xctx->inst[k].yy2)
                              || (!touches_inst_pin(xctx->wire[i].x1, xctx->wire[i].y1, k) && xctx->wire[i].end1 > 0)
                 ) {
-                xctx->wire[xctx->wires].x1=xctx->wire[i].x1;
-                xctx->wire[xctx->wires].y1=xctx->wire[i].y1;
-                xctx->wire[xctx->wires].end1 = xctx->wire[i].end1;
-                xctx->wire[xctx->wires].end2 = 1;
-                xctx->wire[xctx->wires].flags = xctx->wire[i].flags;
-                xctx->wire[xctx->wires].x2=x0;
-                xctx->wire[xctx->wires].y2=y0;
-                xctx->wire[xctx->wires].sel=xctx->wire[i].sel;
-                xctx->wire[xctx->wires].prop_ptr=NULL;
-                my_strdup(_ALLOC_ID_, &xctx->wire[xctx->wires].prop_ptr, xctx->wire[i].prop_ptr);
-                xctx->wire[xctx->wires].bus = xctx->wire[i].bus;
-                xctx->wire[xctx->wires].node=NULL;
-                hash_wire(XINSERT, xctx->wires, 0);  /* insertion happens at beginning of list */
-                dbg(1, "break_wires_at_pins(): hashing new wire %d: %g %g %g %g\n",
-                    xctx->wires, xctx->wire[xctx->wires].x1, xctx->wire[xctx->wires].y1,
-                                 xctx->wire[xctx->wires].x2, xctx->wire[xctx->wires].y2);
-                my_strdup(_ALLOC_ID_, &xctx->wire[xctx->wires].node, xctx->wire[i].node);
+                wire_store_split(i, x0, y0, xctx->wire[i].sel);
                 xctx->need_reb_sel_arr=1;
-                xctx->wires++;
               } else {
                 deleted_wire = 1;
               }
@@ -666,23 +619,11 @@ void break_wires_at_pins(int remove)
               (y0!=xctx->wire[i].y1 && y0!=xctx->wire[i].y2) ) {
             /* printf("touch in mid point: %d\n", l+1); */
             if(!changed) { xctx->push_undo(); changed=1;}
-            check_wire_storage();
-            xctx->wire[xctx->wires].x1=xctx->wire[i].x1;
-            xctx->wire[xctx->wires].y1=xctx->wire[i].y1;
-            xctx->wire[xctx->wires].x2=x0;
-            xctx->wire[xctx->wires].y2=y0;
-            xctx->wire[xctx->wires].end1 = xctx->wire[i].end1;
-            xctx->wire[xctx->wires].end2 = 1;
-            xctx->wire[xctx->wires].flags = xctx->wire[i].flags;
-            xctx->wire[xctx->wires].sel=SELECTED;
-            set_first_sel(WIRE, xctx->wires, 0);
-            xctx->wire[xctx->wires].prop_ptr=NULL;
-            my_strdup(_ALLOC_ID_, &xctx->wire[xctx->wires].prop_ptr, xctx->wire[i].prop_ptr);
-            xctx->wire[xctx->wires].bus = xctx->wire[i].bus;
-            xctx->wire[xctx->wires].node=NULL;
-            hash_wire(XINSERT, xctx->wires, 0);  /* insertion happens at beginning of list */
+            {
+              int n = wire_store_split(i, x0, y0, SELECTED);
+              set_first_sel(WIRE, n, 0);
+            }
             xctx->need_reb_sel_arr=1;
-            xctx->wires++;
             xctx->wire[i].x1 = x0;
             xctx->wire[i].y1 = y0;
             xctx->wire[i].end1 = 1;

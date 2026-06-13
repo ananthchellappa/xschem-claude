@@ -126,6 +126,39 @@ check {CH4e trim_wires merges collinear pair into one} {[nwires] == 1}
 xschem undo
 check {CH4f undo of trim restores the pair} {[nwires] == 2}
 
+# synthetic T-junction: a wire ending mid-span of another must SPLIT it.
+# These three cases execute the wire-split birth sites (census B3, B4, B6)
+# that the fixture runs above do not reach (the fixture is well-formed).
+proc tj_setup {} {
+  xschem set modified 0
+  xschem clear force schematic
+  xschem wire 0 0 200 0
+  xschem wire 100 0 100 100
+  xschem unselect_all
+}
+tj_setup
+xschem trim_wires
+check {CH4g trim_wires splits at T-junction (B3): 3 wires} {[nwires] == 3}
+check {CH4h split produces the exact segment set} \
+  {[wire_snapshot ch4h] eq [lsort {{N 0 0 100 0} {N 100 0 200 0} {N 100 0 100 100}}]}
+# B4 (break_wires_at_point) depends on a populated wire spatial hash —
+# a freshly scripted schematic has a stale one, so rehash first; the cut
+# point may be off-wire within cadsnap and is projected onto the wire
+xschem set modified 0
+xschem clear force schematic
+xschem wire 0 0 200 0
+xschem unselect_all
+xschem rebuild_connectivity
+xschem wire_cut 100 3 noalign
+check {CH4i wire_cut splits at projected point (B4): 2 wires} {[nwires] == 2}
+check {CH4i2 wire_cut split produces the exact segment set} \
+  {[wire_snapshot ch4i] eq [lsort {{N 0 0 100 0} {N 100 0 200 0}}]}
+tj_setup
+xschem select wire 1
+xschem break_wires
+check {CH4j break_wires at selected wire's endpoint (B6): 3 wires} {[nwires] == 3}
+check {CH4k B6 split: new segment joins the selection} {[xschem get lastsel] >= 2}
+
 ### CH5 — whole-pipeline drift detector (byte-level)
 reload
 xschem saveas /tmp/sh_save_clean1.sch schematic

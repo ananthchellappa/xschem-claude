@@ -370,3 +370,36 @@ int wire_store(int pos, double x1, double y1, double x2, double y2,
  xctx->wires++;
  return n;
 }
+
+/* Birth door for connectivity-engine wire splits (census sites B3-B6,
+ * see code_analysis/wire_lifecycle_census.md): append a new wire that is
+ * the [x1,y1]..[x0,y0] head of wire src, inheriting prop_ptr, bus, node,
+ * flags and end1 from src; end2 (the split point) is a junction.
+ * Hashes the new wire incrementally like all call sites do. The caller
+ * updates src's own endpoint/sel/end fields and any selection bookkeeping
+ * (set_first_sel / need_reb_sel_arr) afterwards.
+ * Returns the new wire's array index. */
+int wire_store_split(int src, double x0, double y0, unsigned short sel)
+{
+ int n;
+ check_wire_storage();
+ n = xctx->wires;
+ dbg(1, "wire_store_split(): new wire %d from %d: %g %g %g %g\n",
+     n, src, xctx->wire[src].x1, xctx->wire[src].y1, x0, y0);
+ xctx->wire[n].x1 = xctx->wire[src].x1;
+ xctx->wire[n].y1 = xctx->wire[src].y1;
+ xctx->wire[n].x2 = x0;
+ xctx->wire[n].y2 = y0;
+ xctx->wire[n].end1 = xctx->wire[src].end1;
+ xctx->wire[n].end2 = 1;
+ xctx->wire[n].flags = xctx->wire[src].flags;
+ xctx->wire[n].sel = sel;
+ xctx->wire[n].prop_ptr = NULL;
+ my_strdup(_ALLOC_ID_, &xctx->wire[n].prop_ptr, xctx->wire[src].prop_ptr);
+ xctx->wire[n].bus = xctx->wire[src].bus;
+ xctx->wire[n].node = NULL;
+ my_strdup(_ALLOC_ID_, &xctx->wire[n].node, xctx->wire[src].node);
+ hash_wire(XINSERT, n, 0);  /* insertion happens at beginning of list */
+ xctx->wires++;
+ return n;
+}
