@@ -645,6 +645,12 @@ typedef struct
   char **node;
   char *lab;      /*  lab attribute if any (pin/label) */
   char *instname; /*  20150409 instance name (example: I23)  */
+  unsigned int id; /* session-stable identity, stamped at birth in store.c
+                    * (inst_register), never reused within a context's lifetime.
+                    * The canonical durable session handle (the name is the
+                    * human / cross-session form, reusable+renamable — see
+                    * code_analysis/instance_identity_decision.md). Not persisted
+                    * in .sch files. 0 = never stamped (no live instance has 0). */
 } xInstance;
 
 typedef struct
@@ -943,6 +949,9 @@ typedef struct {
   unsigned int wire_id_counter; /* store.c: last wire id stamped; monotonic per context,
                                  * survives clear_drawing/load so ids are never reused
                                  * within a window/tab session */
+  unsigned int inst_id_counter; /* store.c: last instance id stamped at inst_register;
+                                 * monotonic per context, survives clear_drawing/load
+                                 * so ids are never reused within a window/tab session */
   char *schprop;
   char *schtedaxprop;
   char *schvhdlprop;
@@ -1550,6 +1559,7 @@ extern int wire_index_from_id(unsigned int id);
 extern int inst_delete_compact(int (*doomed)(int n, void *arg), void *arg);
 extern void inst_storage_reset(void);
 extern void inst_register(int n);
+extern int inst_index_from_id(unsigned int id);
 extern void store_poly(int pos, double *x, double *y, int points,
            unsigned int rectcolor, unsigned short sel, char *prop_ptr);
 extern void store_arc(int pos, double x, double y, double r, double a, double b,

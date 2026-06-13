@@ -533,6 +533,28 @@ void inst_storage_reset(void)
  * (every place_symbol caller passes pos=-1, so n == xctx->instances there too). */
 void inst_register(int n)
 {
- (void)n; /* used in Phase D to stamp xctx->inst[n].id */
+ xctx->inst[n].id = ++xctx->inst_id_counter; /* session-stable identity, stamped
+   * here at the one birth chokepoint the Phase C funnel created — never reused
+   * within a context's lifetime, not persisted (step-2 Phase D). */
  xctx->instances++;
+}
+
+/* Resolve a session-stable instance id (stamped by inst_register above) back to
+ * its current array index, or -1 if no live instance carries that id (deleted,
+ * or invalidated by a disk-undo restore). Deliberately a linear scan and not a
+ * maintained map, exactly like wire_index_from_id: the id travels inside the
+ * struct, so the array itself is the authoritative id->index relation under
+ * every census mutation (compaction shift ID1, change_elem_order swap IR2,
+ * mem-undo bulk replace, clear IZ1) with zero coherence machinery to go stale.
+ * Queries arrive at Tcl/script speed over arrays of typically O(100) instances;
+ * a rebuild-on-miss cache can later hide behind this same signature if needed. */
+int inst_index_from_id(unsigned int id)
+{
+ int i;
+ if(id == 0) return -1;
+ for(i = 0; i < xctx->instances; ++i)
+ {
+  if(xctx->inst[i].id == id) return i;
+ }
+ return -1;
 }

@@ -2700,6 +2700,43 @@ static int xschem_cmds_i(Tcl_Interp *interp, int argc, const char *argv[], int *
       }
     }
 
+    /* instance_id inst
+     *   return the session-stable id of the given instance ('inst' is an
+     *   instance name or array index, resolved via get_instance), or -1 if it
+     *   does not resolve. Ids are stamped at instance creation (store.c
+     *   inst_register), never reused within a window/tab session and not
+     *   persisted in .sch files. Resolve back with `xschem instance_index id`.
+     *   The id is the durable machine handle; the name is the human /
+     *   cross-session form (reusable, renamable) — see
+     *   code_analysis/instance_identity_decision.md */
+    else if(!strcmp(argv[1], "instance_id"))
+    {
+      int i;
+      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(argc > 2) {
+        i = get_instance(argv[2]);
+        if(i >= 0) {
+          char s[30];
+          my_snprintf(s, S(s), "%u", xctx->inst[i].id);
+          Tcl_SetResult(interp, s, TCL_VOLATILE);
+        } else {
+          Tcl_SetResult(interp, "-1", TCL_STATIC);
+        }
+      }
+    }
+    /* instance_index id
+     *   return the current array index of the instance whose session-stable id
+     *   (see `xschem instance_id`) is given, or -1 if no live instance carries
+     *   that id (deleted, or invalidated by a disk-undo restore) */
+    else if(!strcmp(argv[1], "instance_index"))
+    {
+      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(argc > 2) {
+        unsigned int id = (unsigned int)strtoul(argv[2], NULL, 10);
+        Tcl_SetResult(interp, my_itoa(inst_index_from_id(id)), TCL_VOLATILE);
+      }
+    }
+
     /* instance_coord [instance]
      *   Return instance name, symbol name, x placement coord, y placement coord, rotation and flip
      *   of selected instances
@@ -5675,7 +5712,7 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
           case WIRE:    tname = "wire";     id = (int)xctx->wire[i].id; break;
           case xRECT:   tname = "rect";     break;
           case LINE:    tname = "line";     break;
-          case ELEMENT: tname = "instance"; break;
+          case ELEMENT: tname = "instance"; id = (int)xctx->inst[i].id; break;
           case xTEXT:   tname = "text";     break;
           case POLYGON: tname = "poly";     break;
           case ARC:     tname = "arc";      break;
