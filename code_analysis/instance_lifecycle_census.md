@@ -91,6 +91,20 @@ maintenance. Suite green throughout (instances 33/33, wires 57/57).
 | bulk channel | IZ1, IZ2, IB7/`pop_undo`, IR2 swap (or a tiny `inst_swap`) |
 | unchanged | IG1/IG2 (allocation plumbing, called from inside the funnel) |
 
+## Phase D (identity) — DONE (2026-06-13)
+
+The funnel paid off exactly as banked below: identity was stamped in **one
+line** at the `inst_register` chokepoint (`xctx->inst[n].id =
+++xctx->inst_id_counter`), with a per-context monotonic counter, an
+`inst_index_from_id` linear-scan resolver, two scheduler commands
+(`instance_id` / `instance_index`), and the id surfaced in the `selection`
+instance row. Memory undo round-tripped it for free; disk undo invalidates on
+restore (the settled wire-D3 behavior). Decision (`both`, id as durable session
+handle + name as human/cross-session form) is recorded and now marked
+**implemented** in `instance_identity_decision.md`; suite
+`tests/stable_handles/inst_*.tcl` (48 PASS) and probe
+`code_analysis/introspection_probes/probe4.tcl`.
+
 ## Facts banked for Phase D (identity)
 
 - **Memory undo round-trips an `id` field for free**: IB7 copies whole structs

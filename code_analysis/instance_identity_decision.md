@@ -5,8 +5,13 @@ Phase C (the lifecycle funnel) is done; the birth chokepoint `inst_register(n)`
 is the one place an identity would be stamped. Before stamping anything, this
 records the choice of *what* identity instances should carry.
 
-- **Status:** recommendation presented to the user, **awaiting ratification**.
-  Nothing implemented. (Stamped at `eb1e73b2`, 2026-06-13.)
+- **Status:** **IMPLEMENTED** (Phase D done, 2026-06-13). User ratified
+  **both**; shipped RED→GREEN: ids stamped at `inst_register`, queryable via
+  `xschem instance_id <name|index>` / `xschem instance_index <id>`, surfaced in
+  the `selection` instance row, sabotage-verified on the live path. Suite:
+  `tests/stable_handles/inst_*.tcl` 48 PASS. End-to-end demo:
+  `code_analysis/introspection_probes/probe4.tcl`. (Recommendation originally
+  stamped at `eb1e73b2`.)
 - **Recommendation:** **both** — a numeric `id` as the canonical durable
   identity, with the existing `name` kept as the human / cross-session
   addressing form, under an explicit role contract (§4).

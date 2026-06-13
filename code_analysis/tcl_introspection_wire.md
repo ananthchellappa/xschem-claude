@@ -169,6 +169,18 @@ prop string readable, and a real query family:
 | bbox | `instance_bbox p0` ▸ instance + symbol boxes | assemble from `wire_coord` |
 | appears in `selected_set` | yes (by name) | **no** |
 | coordinates | `instance_coord`, `instance_pos` | `wire_coord` (with the 0 bug) |
+| **stable session handle** | **yes — `instance_id`/`instance_index`** (Phase D) | **yes — `wire_id`/`wire_index`** (step 1) |
+
+> **Update (stable-object-handles, 2026-06-13).** The "address by stable-ish
+> name" row above understated the hazard: instance names are not just
+> reused-across-files but **reused within a session** (`R37`/`R25` come back
+> after a delete) and **renamable**, so a held name silently aliases a
+> different instance — the §2e identity problem with a name instead of an
+> index. Both wires and instances now carry a session-stable numeric **id**
+> (monotonic, never reused, not persisted), queryable via `wire_id`/`wire_index`
+> and `instance_id`/`instance_index`, and returned in every `selection` row.
+> Per the role contract (`instance_identity_decision.md`) the **id** is the
+> durable machine handle and the **name** stays the human / cross-session form.
 
 This reflects history (netlisting needed instance queries; wires only needed
 to be drawn), not design intent. Texts and rects sit in between; lines,
@@ -213,7 +225,7 @@ self-documentation.
 | 4 | `selected_set` omits WIRE, LINE, POLYGON, ARC | `scheduler.c:5589` | API hole |
 | 5 | no whole-prop read for wires (instances have it) | `scheduler.c:2193` | API hole |
 | 6 | `setprop wire n lab` silently overwritten by connectivity engine | `netlist.c:1051,1075` | trap — needs doc or rejection |
-| 7 | indices not stable across delete (compaction reorders) | `storeobject`/delete path | architectural — **ADDRESSED for wires** (2026-06-12): session-stable ids via `xschem wire_id <index>` / `xschem wire_index <id>`, stamped at the store.c lifecycle funnel (`plan_stable_handles_step1.md` Phases C–D). Memory undo round-trips ids; disk undo invalidates them loudly (deref → −1, never a stranger). Probe `introspection_probes/probe3.tcl` re-runs the §2e failure side-by-side with the handle version. Other six object types: pending (step 2) |
+| 7 | indices not stable across delete (compaction reorders) | `storeobject`/delete path | architectural — **ADDRESSED for wires** (2026-06-12) **and instances** (2026-06-13): session-stable ids via `xschem wire_id`/`wire_index` and `xschem instance_id`/`instance_index`, stamped at the store.c lifecycle funnels (`plan_stable_handles_step1.md`; instance Phase D). Memory undo round-trips ids; disk undo invalidates them loudly (deref → −1, never a stranger). For instances the id additionally cures the name-reuse/rename alias (a name is *not* a safe handle — `R37` returns after a delete; `instance_identity_decision.md`). Probes `introspection_probes/probe3.tcl` (wires) and `probe4.tcl` (instances) re-run the §2e failure side-by-side with the handle version. Other five graphical object types: pending (step 3) |
 | 8 | unknown `get` attr → silent `""` | `scheduler.c:1466` ff. | typo hazard |
 | 9 | no `get texts` (counts inconsistent across types) | `scheduler.c` get branch | API hole |
 
