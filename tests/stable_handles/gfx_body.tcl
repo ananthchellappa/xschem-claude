@@ -314,4 +314,205 @@ xschem paste 500 0
 check {GC13 copy+paste a rect (merge_rect birth): layer-5 count +1} \
   {[nrect 5] == $before + 1}
 
+### GH1–GH11 — session-stable graphical-object ids (Phase D of the step-3 plan).
+### Committed RED first per the TDD discipline: every xcheck below logs XFAIL
+### until the D2 implementation lands, then flips to a plain check. GH7 (disk
+### undo = invalidate-on-restore) flips to a HARD check too, like the instance
+### HI7 — the disk-undo contract is already settled for the whole effort.
+###
+### Surface under test (additive, per-type, two scheduler subcommands each;
+### the index is the per-layer PAIR {layer index} because graphical objects
+### live in per-layer arrays):
+###   xschem <type>_id <layer> <index>  → session-stable id (or -1)
+###   xschem <type>_index <id>          → {layer index} (or -1)
+### for <type> in rect line poly arc. One SHARED id space across all four
+### types (a rect and a line never collide on id value).
+###
+### Conventions: wrappers h_gid/h_gidx catch the "invalid command" error so the
+### RED suite runs to completion (-2 sentinel, transparent once the commands
+### exist). The id is the ONLY handle (graphical types have no name).
+
+proc h_gid {type c n} {
+  if {[catch {xschem ${type}_id $c $n} r]} {return -2}
+  return $r
+}
+proc h_gidx {type id} {
+  if {[catch {xschem ${type}_index $id} r]} {return -2}
+  return $r
+}
+
+### GH1 — created objects have positive, pairwise-distinct ids ACROSS all four
+### types (one shared id space): a rect, a line, a poly and an arc
+reload
+xschem set rectcolor 5
+xschem rect 700 0 800 100
+xschem line 700 200 800 200
+xschem polygon 700 400 800 400 750 500
+xschem set rectcolor 6
+xschem arc 700 600 30 0 180 6
+set ir [h_gid rect 5 [expr {[nrect 5] - 1}]]
+set il [h_gid line 5 [expr {[nline 5] - 1}]]
+set ip [h_gid poly 5 [expr {[npoly 5] - 1}]]
+set ia [h_gid arc 6 0]
+xcheck {GH1 four new objects have positive pairwise-distinct ids (shared id space)} \
+  {$ir > 0 && $il > 0 && $ip > 0 && $ia > 0 && \
+   $ir != $il && $ir != $ip && $ir != $ia && $il != $ip && $il != $ia && $ip != $ia}
+
+### GH2 — the §2e per-layer scenario: hold a rect's id, delete an EARLIER rect
+### on the SAME layer; the held rect's array index shifts down by the
+### compaction but the id still resolves to its new {layer index}, and the id
+### round-trips there (proving it is the same rect — ids are unique)
+reload
+xschem set rectcolor 5
+xschem rect 700 0 800 100        ;# 4th rect on layer 5, at index 3
+set ida [h_gid rect 5 3]
+xschem unselect_all
+xschem select rect 5 0           ;# delete the lowest-index rect on layer 5
+xschem delete
+set loc [h_gidx rect $ida]
+xcheck {GH2a id survives an earlier-rect delete; resolves to the shifted {5 2}} \
+  {$loc eq {5 2}}
+xcheck {GH2b round-trip: rect_id at the resolved location returns the held id} \
+  {$ida > 0 && [h_gid rect 5 2] == $ida}
+
+### GH3 — delete the held rect itself: the id dangles LOUDLY (-1), not a stranger
+reload
+xschem set rectcolor 5
+xschem rect 700 0 800 100
+set ida [h_gid rect 5 [expr {[nrect 5] - 1}]]
+xschem unselect_all
+xschem select rect 5 [expr {[nrect 5] - 1}]
+xschem delete
+xcheck {GH3 deref after own deletion returns -1} {[h_gidx rect $ida] == -1}
+
+### GH4 — no id reuse: create→delete→create at the same coords mints a fresh id
+reload
+xschem set rectcolor 5
+xschem rect 700 0 800 100
+set id4a [h_gid rect 5 [expr {[nrect 5] - 1}]]
+xschem unselect_all
+xschem select rect 5 [expr {[nrect 5] - 1}]
+xschem delete
+xschem rect 700 0 800 100
+set id4b [h_gid rect 5 [expr {[nrect 5] - 1}]]
+xcheck {GH4 recreated rect at same coords gets a fresh id} \
+  {$id4a > 0 && $id4b > 0 && $id4a != $id4b}
+
+### GH5 — memory-undo round-trip. Graphical create is not undoable (GC4e), so
+### the undoable cycle is delete→undo: deleting dangles the id, undo restores
+### the SAME id (memory undo copies whole structs, the id rides free)
+reload
+xschem undo_type memory
+xschem set rectcolor 5
+xschem rect 700 0 800 100
+set id5 [h_gid rect 5 [expr {[nrect 5] - 1}]]
+xschem unselect_all
+xschem select rect 5 [expr {[nrect 5] - 1}]
+xschem delete
+set gone [h_gidx rect $id5]
+xschem undo
+set back [h_gidx rect $id5]
+xcheck {GH5a memory undo: deleted rect's id dangles} {$gone == -1}
+xcheck {GH5b memory undo restores the SAME id resolving to the rect} \
+  {[lindex $back 0] >= 0 && [h_gid rect [lindex $back 0] [lindex $back 1]] == $id5}
+xschem undo_type memory
+
+### GH6 — the DESIGN CALL, characterized to the implementation reality: a layer
+### change is `xschem set rectcolor <c>` on a selection, which change_layer()
+### implements as DELETE+RECREATE. So the id does NOT survive a layer change —
+### the reconstructed rect on the new layer gets a FRESH id and the old id
+### dangles. (A held id is stable only within a layer-stable lifetime.)
+reload
+xschem set rectcolor 5
+xschem rect 700 0 800 100
+set id6 [h_gid rect 5 [expr {[nrect 5] - 1}]]
+set l6_before [nrect 6]
+xschem unselect_all
+xschem select rect 5 [expr {[nrect 5] - 1}]
+xschem set rectcolor 6           ;# selection present -> change_layer(): rect moves to layer 6
+# GH6a exercises only change_layer() (no new id surface), so it is true TODAY —
+# a plain check characterizing the delete+recreate move; GH6b/GH6c (the id half)
+# are the id-dependent XFAILs.
+check {GH6a layer change moved the rect to layer 6 (count +1 there)} \
+  {[nrect 6] == $l6_before + 1}
+xcheck {GH6b the old id dangles after the layer change (delete+recreate)} \
+  {[h_gidx rect $id6] == -1}
+set id6b [h_gid rect 6 [expr {[nrect 6] - 1}]]
+xcheck {GH6c the reconstructed rect on layer 6 carries a fresh id} \
+  {$id6b > 0 && $id6b != $id6}
+
+### GH7 — disk-undo round-trip = invalidate-on-restore (settled, like HI7/wire
+### D3): a disk-undo restore re-reads the .sch (no id persisted) and mints a
+### fresh id, so the held id dangles -1 and the restored rect carries a new id.
+reload
+xschem undo_type disk
+xschem set rectcolor 5
+xschem rect 700 0 800 100
+set id7 [h_gid rect 5 [expr {[nrect 5] - 1}]]
+xschem unselect_all
+xschem select rect 5 [expr {[nrect 5] - 1}]
+xschem delete
+xschem undo
+set after7 [h_gidx rect $id7]
+set id7b [h_gid rect 5 [expr {[nrect 5] - 1}]]
+xcheck {GH7a disk undo+restore: the held id is invalidated (dangles -1)} \
+  {$after7 == -1}
+xcheck {GH7b disk undo+restore: the restored rect carries a fresh id} \
+  {$id7b > 0 && $id7b != $id7}
+xschem undo_type memory
+
+### GH8 — copy/paste (merge_rect birth) gets a FRESH id distinct from the source
+reload
+xschem set rectcolor 5
+xschem rect 700 0 800 100
+set src8 [h_gid rect 5 [expr {[nrect 5] - 1}]]
+xschem unselect_all
+xschem select rect 5 [expr {[nrect 5] - 1}]
+xschem copy
+xschem paste 500 0
+set id8 [h_gid rect 5 [expr {[nrect 5] - 1}]]
+xcheck {GH8 paste/merge birth gets a fresh id distinct from the source} \
+  {$id8 > 0 && $src8 > 0 && $id8 != $src8}
+
+### GH9 — the selection enumerator carries the real id for graphical rows:
+### {rect <idx> <layer> <id>} with <id> == rect_id <layer> <idx> > 0
+reload
+xschem set rectcolor 5
+xschem rect 700 0 800 100
+xschem unselect_all
+xschem select rect 5 [expr {[nrect 5] - 1}]
+set row [lindex [xschem selection] 0]
+set sidx [lindex $row 1]
+set slay [lindex $row 2]
+set sid  [lindex $row 3]
+xcheck {GH9 selection rect row carries the real id (== rect_id layer idx > 0)} \
+  {$sid > 0 && $sid == [h_gid rect $slay $sidx]}
+
+### GH10 — one SHARED id space: a rect and a line get distinct ids, and neither
+### type's resolver answers the other's id (type-scoped resolvers)
+reload
+xschem set rectcolor 5
+xschem rect 700 0 800 100
+set rid [h_gid rect 5 [expr {[nrect 5] - 1}]]
+xschem line 700 200 800 200
+set lid [h_gid line 5 [expr {[nline 5] - 1}]]
+xcheck {GH10a rect id and line id are distinct (shared counter)} {$rid != $lid && $rid > 0 && $lid > 0}
+xcheck {GH10b line_index does not resolve a rect's id (type-scoped resolver)} \
+  {[h_gidx line $rid] == -1}
+xcheck {GH10c rect_index does not resolve a line's id} \
+  {[h_gidx rect $lid] == -1}
+
+### GH11 — positional-insert reorder (GR1): inserting a rect at a position mints
+### a fresh id for the inserted rect, while the shifted rect keeps its id
+reload
+xschem set rectcolor 5
+set id_at1_before [h_gid rect 5 1]    ;# the rect currently at index 1
+xschem rect 900 0 950 100 1           ;# insert at position 1
+set id_inserted [h_gid rect 5 1]      ;# the new rect now occupies index 1
+set id_shifted  [h_gid rect 5 2]      ;# the old index-1 rect shifted to index 2
+xcheck {GH11a the inserted rect at index 1 has a fresh id} \
+  {$id_inserted > 0 && $id_inserted != $id_at1_before}
+xcheck {GH11b the shifted rect kept its id (now at index 2)} \
+  {$id_shifted == $id_at1_before && $id_at1_before > 0}
+
 xschem set modified 0
