@@ -403,3 +403,28 @@ int wire_store_split(int src, double x0, double y0, unsigned short sel)
  xctx->wires++;
  return n;
 }
+
+/* Death door of the wire lifecycle funnel (census sites D1-D4): delete every
+ * wire for which doomed() returns nonzero, compacting the array in place
+ * with an order-preserving shift. Frees prop_ptr and node of deleted wires.
+ * Incremental hash maintenance is impossible here (deletions change wire
+ * indexes in the array), so callers must invalidate/rebuild the wire hash
+ * and any other derived state when the returned deletion count is nonzero. */
+int wire_delete_compact(int (*doomed)(int n, void *arg), void *arg)
+{
+ int i, j = 0;
+ for(i = 0; i < xctx->wires; ++i)
+ {
+   if((*doomed)(i, arg)) {
+     ++j;
+     my_free(_ALLOC_ID_, &xctx->wire[i].prop_ptr);
+     my_free(_ALLOC_ID_, &xctx->wire[i].node);
+     continue;
+   }
+   if(j) {
+     xctx->wire[i-j] = xctx->wire[i];
+   }
+ }
+ xctx->wires -= j;
+ return j;
+}

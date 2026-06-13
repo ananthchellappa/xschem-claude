@@ -45,6 +45,13 @@ static int check_breaks(double x1, double y1, double x2, double y2, double x, do
   return 0;
 }
 
+
+/* predicates for wire_delete_compact() — see wire lifecycle census */
+static int wire_doomed_flagged(int n, void *arg)
+{
+  return ((unsigned short *)arg)[n];
+}
+
 void update_conn_cues(int layer, int draw_cues, int dr_win)
 {
   int k, i, l, sqx, sqy, save_draw;
@@ -270,21 +277,7 @@ void trim_wires(void)
     /* dbg(1, "trim_wires(): included: %g\n", timer(1)); */
 
     /* delete wires */
-    j = 0;
-    for(i=0;i<xctx->wires; ++i)
-    {
-      if(wireflag[i]) {
-        ++j;
-        /* hash_wire(XDELETE, i, 0);*/ /* can not be done since wire deletions change wire idexes in array */
-        my_free(_ALLOC_ID_, &xctx->wire[i].prop_ptr);
-        my_free(_ALLOC_ID_, &xctx->wire[i].node);
-        continue;
-      }
-      if(j) {
-        xctx->wire[i-j] = xctx->wire[i];
-      }
-    }
-    xctx->wires -= j;
+    j = wire_delete_compact(wire_doomed_flagged, wireflag);
     if(j) {
       xctx->prep_hash_wires=0;
       changed = 1;
@@ -370,22 +363,10 @@ void trim_wires(void)
     /* dbg(1, "trim_wires(): merge: %g\n", timer(1)); */
 
     /* delete wires */
-    j = 0;
-    for(i=0;i<xctx->wires; ++i)
-    {
+    for(i=0;i<xctx->wires; ++i) {
       xctx->wire[i].end1 = xctx->wire[i].end2 = -1; /* reset all endpoints we recalculate all at end */
-      if(wireflag[i]) {
-        ++j;
-        /* hash_wire(XDELETE, i, 0);*/ /* can not be done since wire deletions change wire idexes in array */
-        my_free(_ALLOC_ID_, &xctx->wire[i].prop_ptr);
-        my_free(_ALLOC_ID_, &xctx->wire[i].node);
-        continue;
-      }
-      if(j) {
-        xctx->wire[i-j] = xctx->wire[i];
-      }
     }
-    xctx->wires -= j;
+    j = wire_delete_compact(wire_doomed_flagged, wireflag);
     if(j) {
       xctx->prep_hash_wires=0; /* after wire deletions full rehash is needed */
       changed = 1;

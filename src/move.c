@@ -123,28 +123,20 @@ void rebuild_selected_array() /* can be used only if new selected set is lower *
  xctx->need_reb_sel_arr=0;
 }
 
+/* predicate for wire_delete_compact() — see wire lifecycle census */
+static int wire_doomed_degenerate(int n, void *arg)
+{
+  (void)arg;
+  return xctx->wire[n].x1==xctx->wire[n].x2 && xctx->wire[n].y1 == xctx->wire[n].y2;
+}
+
 void check_collapsing_objects()
 {
   int  j,i, c;
   int found=0;
 
-  j=0;
-  for(i=0;i<xctx->wires; ++i)
-  {
-   if(xctx->wire[i].x1==xctx->wire[i].x2 && xctx->wire[i].y1 == xctx->wire[i].y2)
-   {
-    my_free(_ALLOC_ID_, &xctx->wire[i].prop_ptr);
-    my_free(_ALLOC_ID_, &xctx->wire[i].node);
-    found=1;
-    ++j;
-    continue;
-   }
-   if(j)
-   {
-    xctx->wire[i-j] = xctx->wire[i];
-   }
-  }
-  xctx->wires -= j;
+  j = wire_delete_compact(wire_doomed_degenerate, NULL);
+  if(j) found=1;
 
  /* option: remove degenerated lines  */
    for(c=0;c<cadlayers; ++c)

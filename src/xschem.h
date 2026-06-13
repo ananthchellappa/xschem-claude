@@ -1538,6 +1538,7 @@ extern int storeobject(int pos, double x1,double y1,double x2,double y2,
 extern int wire_store(int pos, double x1, double y1, double x2, double y2,
                         unsigned short sel, const char *prop_ptr);
 extern int wire_store_split(int src, double x0, double y0, unsigned short sel);
+extern int wire_delete_compact(int (*doomed)(int n, void *arg), void *arg);
 extern void store_poly(int pos, double *x, double *y, int points,
            unsigned int rectcolor, unsigned short sel, char *prop_ptr);
 extern void store_arc(int pos, double x, double y, double r, double a, double b,

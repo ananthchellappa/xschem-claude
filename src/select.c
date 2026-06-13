@@ -492,25 +492,17 @@ static void del_rect_line_arc_poly()
  }
 }
 
+/* predicate for wire_delete_compact() — see wire lifecycle census */
+static int wire_doomed_sel(int n, void *arg)
+{
+  return xctx->wire[n].sel == *(int *)arg;
+}
+
 int delete_wires(int selected_flag)
 {
-  int i, j = 0, deleted = 0;
-  for(i=0;i<xctx->wires; ++i)
-  {
-    if(xctx->wire[i].sel == selected_flag) {
-      ++j;
-      /* hash_wire(XDELETE, i, 0); */ /* can not be done since wire deletions change wire idexes in array */
-      my_free(_ALLOC_ID_, &xctx->wire[i].prop_ptr);
-      my_free(_ALLOC_ID_, &xctx->wire[i].node);
-
-      deleted = 1;
-      continue;
-    }
-    if(j) {
-      xctx->wire[i-j] = xctx->wire[i];
-    }
-  }
-  xctx->wires -= j;
+  int j, deleted = 0;
+  j = wire_delete_compact(wire_doomed_sel, &selected_flag);
+  if(j) deleted = 1;
   if(j) {
     xctx->prep_hash_wires=0;
     xctx->prep_net_structs=0;
