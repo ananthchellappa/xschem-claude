@@ -8,7 +8,12 @@ Phase B DONE (`code_analysis/wire_lifecycle_census.md`: 7 births, 4 deaths,
 2 bulk resets, 2 reorders, 3 growth sites — incl. two found only by the
 struct-write sweep: change_elem_order swap, mem_pop_undo bulk replace;
 banked for D: memory undo struct-copies ids for free, disk undo re-loads
-through load_wire). Phases C–E pending.
+through load_wire).
+Phase C DONE (C1 9c332c76, C2 ea08bb0e, C3 6a6986a2, C4 ba13cc1f): all 18
+census sites route through store.c — wire_store / wire_store_split /
+wire_delete_compact / wire_storage_reset; suite grew to 32 checks (split
+births now provably executed, verified green on the PRE-refactor build
+first via git stash). Phases D–E pending.
 Prereqs: `code_analysis/tcl_introspection_wire.md` (the why),
 `code_analysis/objects_in_c_vs_cpp.md` §5 (the how),
 FAQ Q7 (why the funnel comes before the handle).
