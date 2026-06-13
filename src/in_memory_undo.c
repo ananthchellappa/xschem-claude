@@ -525,7 +525,10 @@ void mem_pop_undo(int redo, int set_modify_status)
     my_strdup2(_ALLOC_ID_, &xctx->text[i].floater_ptr, xctx->uslot[slot].tptr[i].floater_ptr);
   }
 
-  /* wires */
+  /* wires — bulk-replace channel of the wire lifecycle funnel (census B7):
+   * whole-struct copies from the undo slot; preceded by clear_drawing()
+   * which empties storage through wire_storage_reset(). Any per-wire
+   * payload added to xWire (e.g. ids) rides the struct copy. */
   xctx->maxw = xctx->wires = xctx->uslot[slot].wires;
   xctx->wire = my_calloc(_ALLOC_ID_, xctx->wires, sizeof(xWire));
   for(i = 0;i<xctx->wires; ++i) {

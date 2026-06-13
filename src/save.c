@@ -2837,28 +2837,19 @@ static void load_text(FILE *fd)
 
 static void load_wire(FILE *fd)
 {
-    xWire *ptr;
-    int i;
+    double x1, y1, x2, y2;
+    char *prop = NULL;
 
-    check_wire_storage();
-    ptr = xctx->wire;
-    i = xctx->wires;
     dbg(3, "load_wire(): start\n");
-    if(fscanf(fd, "%lf %lf %lf %lf",&ptr[i].x1, &ptr[i].y1, &ptr[i].x2, &ptr[i].y2 )<4) {
+    if(fscanf(fd, "%lf %lf %lf %lf", &x1, &y1, &x2, &y2 )<4) {
       fprintf(errfp,"WARNING:  missing fields for WIRE object, ignoring\n");
       read_line(fd, 0);
       return;
     }
-    ptr[i].prop_ptr = NULL;
-    ptr[i].end1 = ptr[i].end2 = ptr[i].sel = 0;
-    ptr[i].bus = 0.0;
-    ptr[i].flags = 0;
-    load_ascii_string( &ptr[i].prop_ptr, fd);
-    ORDER(ptr[i].x1, ptr[i].y1, ptr[i].x2, ptr[i].y2);
-    ptr[i].bus = get_attr_val(get_tok_value(ptr[i].prop_ptr, "bus", 0));
-    set_wire_flags(&ptr[i]);
-    ptr[i].node = NULL;
-    xctx->wires++;
+    load_ascii_string( &prop, fd);
+    ORDER(x1, y1, x2, y2);
+    wire_store(-1, x1, y1, x2, y2, 0, prop); /* funnel birth door, census B2 */
+    my_free(_ALLOC_ID_, &prop);
 }
 
 static void load_inst(int k, FILE *fd)

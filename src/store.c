@@ -428,3 +428,17 @@ int wire_delete_compact(int (*doomed)(int n, void *arg), void *arg)
  xctx->wires -= j;
  return j;
 }
+
+/* Bulk-reset channel of the wire lifecycle funnel (census site Z1): free all
+ * wire heap data and empty the wire array. Callers own derived-state
+ * invalidation, as with the other funnel doors. */
+void wire_storage_reset(void)
+{
+ int i;
+ for(i=0;i<xctx->wires; ++i)
+ {
+  my_free(_ALLOC_ID_, &xctx->wire[i].prop_ptr);
+  my_free(_ALLOC_ID_, &xctx->wire[i].node);
+ }
+ xctx->wires = 0;
+}

@@ -1061,12 +1061,7 @@ void clear_drawing(void)
  my_free(_ALLOC_ID_, &xctx->schspectreprop);
  my_free(_ALLOC_ID_, &xctx->version_string);
  if(xctx->header_text) my_free(_ALLOC_ID_, &xctx->header_text);
- for(i=0;i<xctx->wires; ++i)
- {
-  my_free(_ALLOC_ID_, &xctx->wire[i].prop_ptr);
-  my_free(_ALLOC_ID_, &xctx->wire[i].node);
- }
- xctx->wires = 0;
+ wire_storage_reset();
  for(i=0;i<xctx->instances; ++i)
  {
   my_free(_ALLOC_ID_, &xctx->inst[i].prop_ptr);
