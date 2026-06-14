@@ -6621,7 +6621,213 @@ proc dialog_minsize_floor {w} {
   }
 }
 
+# ---------------------------------------------------------------------------
+# Slick enter_text: the text-appearance attributes (font, bold, italic, centering,
+# colour/layer, hidden, floater) are discoverable widgets instead of a raw token
+# box. The widget-independent core (parse/assemble/bool-safety) lives in
+# src/property_form.tcl (slickprop::text_*); this namespace is the thin Tk view
+# that binds widgets to it. The previous raw-box dialog is preserved verbatim as
+# enter_text_legacy for rollback. Spec: specs/slick_text_dialog.md.
+# ---------------------------------------------------------------------------
+namespace eval slicktext {
+  variable orig {}     ;# the property string the dialog opened with
+  variable chk          ;# array: bool field -> current checkbox state
+  variable chk0         ;# array: bool field -> initial checkbox state
+  variable loaded       ;# array: field    -> value it opened with
+  variable val          ;# array: combo/layer field -> current value
+}
+
+# Seed the per-field state arrays from the incoming property string.
+proc slicktext::init {props} {
+  variable orig; variable chk; variable chk0; variable loaded; variable val
+  array unset chk; array unset chk0; array unset loaded; array unset val
+  set orig $props
+  foreach row [slickprop::text_fields $props] {
+    set tok [dict get $row tok]
+    set v   [dict get $row value]
+    set loaded($tok) $v
+    if {[dict get $row widget] eq "bool"} {
+      set chk0($tok) [slickprop::text_bool_checked $tok $v]
+      set chk($tok)  $chk0($tok)
+    } else {
+      set val($tok) $v
+    }
+  }
+}
+
+# The {tok val ...} desired-token list from the current field state (no widget
+# reads, so it is unit-testable headlessly).
+proc slicktext::desired {} {
+  variable chk; variable chk0; variable loaded; variable val
+  set desired {}
+  foreach row [slickprop::text_schema] {
+    set tok [dict get $row tok]
+    if {[dict get $row widget] eq "bool"} {
+      lappend desired $tok [slickprop::text_bool_value $tok $loaded($tok) $chk0($tok) $chk($tok)]
+    } else {
+      lappend desired $tok [string trim $val($tok)]
+    }
+  }
+  return $desired
+}
+
+# Assemble the final property string from the current widget state (called on OK).
+proc slicktext::collect {} {
+  variable orig
+  set extra [string trim [.dialog.edit.other.e get]]
+  return [slickprop::text_assemble $orig [slicktext::desired] $extra]
+}
+
 proc enter_text {textlabel {preserve_disabled disabled}} {
+  global has_cairo preserve_unchanged_attrs wm_fix props enter_text_default_geometry
+  global text_tabs_setting tabstop cadlayers
+  set tctx::rcode {}
+  slicktext::init $props
+  toplevel .dialog -class Dialog
+  wm title .dialog {Enter text}
+  wm transient .dialog [xschem get topwindow]
+
+  set X [expr {[winfo pointerx .dialog] - 30}]
+  set Y [expr {[winfo pointery .dialog] - 25}]
+  bind .dialog <Configure> {
+    set enter_text_default_geometry [wm geometry .dialog]
+    regsub {\+.*} $enter_text_default_geometry {} enter_text_default_geometry
+  }
+  if { $wm_fix } { tkwait visibility .dialog }
+  wm geometry .dialog "${enter_text_default_geometry}+$X+$Y"
+
+  # --- text label + preserve checkbox ---
+  frame .dialog.f1
+  label .dialog.f1.txtlab -text $textlabel
+  checkbutton .dialog.f1.l1 -text "preserve unchanged props" -variable preserve_unchanged_attrs \
+     -state $preserve_disabled
+  pack .dialog.f1 -side top -fill x
+  pack .dialog.f1.l1 -side left
+  pack .dialog.f1.txtlab -side left -expand yes -fill x
+
+  # --- the (unchanged) multi-line text content ---
+  frame .dialog.f2
+  eval text .dialog.f2.txt -undo 1 -width 90 -height 9 $text_tabs_setting -yscrollcommand \".dialog.f2.yscroll set\"
+  scrollbar .dialog.f2.yscroll -command ".dialog.f2.txt yview"
+  .dialog.f2.txt delete 1.0 end
+  .dialog.f2.txt insert 1.0 $tctx::retval
+  pack .dialog.f2 -side top -fill both -expand yes
+  pack .dialog.f2.txt -side left -fill both -expand yes
+  pack .dialog.f2.yscroll -side left -expand no -fill y
+
+  # --- the edit block: size + Appearance panel + Other properties ---
+  frame .dialog.edit
+  pack .dialog.edit -side top -fill x
+
+  # size (existing hsize/vsize entries)
+  frame .dialog.edit.sz
+  if {$has_cairo} {
+    label .dialog.edit.sz.hl -text "size:"
+    entry .dialog.edit.sz.he -relief sunken -textvariable tctx::vsize -width 12
+    entry_replace_selection .dialog.edit.sz.he
+    pack .dialog.edit.sz.hl .dialog.edit.sz.he -side left
+  } else {
+    label .dialog.edit.sz.hl -text "hsize:"
+    entry .dialog.edit.sz.he -relief sunken -textvariable tctx::hsize -width 12
+    entry_replace_selection .dialog.edit.sz.he
+    label .dialog.edit.sz.vl -text "  vsize:"
+    entry .dialog.edit.sz.ve -relief sunken -textvariable tctx::vsize -width 12
+    entry_replace_selection .dialog.edit.sz.ve
+    pack .dialog.edit.sz.hl .dialog.edit.sz.he .dialog.edit.sz.vl .dialog.edit.sz.ve -side left
+  }
+  pack .dialog.edit.sz -side top -fill x -pady 2
+
+  # Appearance panel — discoverable widgets, bound to slicktext:: state
+  labelframe .dialog.edit.appear -text "Appearance"
+  frame .dialog.edit.appear.r1
+  label .dialog.edit.appear.r1.fl -text "Font:"
+  set ltk [expr {[info tclversion] > 8.4}]
+  if {$ltk} {
+    ttk::combobox .dialog.edit.appear.r1.fe -textvariable slicktext::val(font) -width 18 \
+      -values [lsort -unique [font families]]
+  } else {
+    entry .dialog.edit.appear.r1.fe -textvariable slicktext::val(font) -width 18
+  }
+  set lvals {}
+  for {set i 0} {$i < $cadlayers} {incr i} { lappend lvals $i }
+  label .dialog.edit.appear.r1.cl -text "   Color (layer):"
+  if {$ltk} {
+    ttk::combobox .dialog.edit.appear.r1.ce -textvariable slicktext::val(layer) -width 5 -values $lvals
+  } else {
+    entry .dialog.edit.appear.r1.ce -textvariable slicktext::val(layer) -width 5
+  }
+  pack .dialog.edit.appear.r1.fl .dialog.edit.appear.r1.fe \
+       .dialog.edit.appear.r1.cl .dialog.edit.appear.r1.ce -side left
+  frame .dialog.edit.appear.r2
+  checkbutton .dialog.edit.appear.r2.bold   -text "Bold"     -variable slicktext::chk(weight)
+  checkbutton .dialog.edit.appear.r2.ital   -text "Italic"   -variable slicktext::chk(slant)
+  checkbutton .dialog.edit.appear.r2.hcen   -text "Center H" -variable slicktext::chk(hcenter)
+  checkbutton .dialog.edit.appear.r2.vcen   -text "Center V" -variable slicktext::chk(vcenter)
+  checkbutton .dialog.edit.appear.r2.hide   -text "Hidden"   -variable slicktext::chk(hide)
+  checkbutton .dialog.edit.appear.r2.float  -text "Floater"  -variable slicktext::chk(floater)
+  pack .dialog.edit.appear.r2.bold .dialog.edit.appear.r2.ital .dialog.edit.appear.r2.hcen \
+       .dialog.edit.appear.r2.vcen .dialog.edit.appear.r2.hide .dialog.edit.appear.r2.float -side left
+  pack .dialog.edit.appear.r1 -side top -anchor w -fill x
+  pack .dialog.edit.appear.r2 -side top -anchor w -fill x
+  pack .dialog.edit.appear -side top -fill x -pady 2
+
+  # Other properties — the leftover (non-owned) tokens, round-tripped verbatim
+  frame .dialog.edit.other
+  label .dialog.edit.other.l -text "Other properties:"
+  entry .dialog.edit.other.e -width 60
+  .dialog.edit.other.e insert 0 [slickprop::text_extra $props]
+  pack .dialog.edit.other.l -side left
+  pack .dialog.edit.other.e -side left -fill x -expand yes
+  pack .dialog.edit.other -side top -fill x -pady 2
+
+  # --- buttons ---
+  frame .dialog.buttons
+  button .dialog.buttons.ok -text "OK" -command \
+  {
+   set props [slicktext::collect]
+   set tctx::retval [.dialog.f2.txt get 1.0 {end - 1 chars}]
+   if {$has_cairo} { set tctx::hsize $tctx::vsize }
+   set tctx::rcode {ok}
+   destroy .dialog
+  }
+  button .dialog.buttons.cancel -text "Cancel" -command \
+  {
+   set tctx::retval {}
+   set tctx::rcode {}
+   destroy .dialog
+  }
+  button .dialog.buttons.b3 -text "Load" -command \
+  {
+    global INITIALTEXTDIR
+    if { ![info exists INITIALTEXTDIR] } { set INITIALTEXTDIR [xschem get current_dirname] }
+    set a [tk_getOpenFile -parent .dialog -initialdir $INITIALTEXTDIR ]
+    if [string compare $a ""] {
+     set INITIALTEXTDIR [file dirname $a]
+     read_data_window  .dialog.f2.txt  $a
+    }
+  }
+  button .dialog.buttons.b4 -text "Del" -command \
+  {
+    .dialog.f2.txt delete 1.0 end
+  }
+  pack .dialog.buttons.ok .dialog.buttons.cancel .dialog.buttons.b3 .dialog.buttons.b4 \
+       -side left -fill x -expand yes
+  pack .dialog.buttons -side bottom -fill x
+  bind .dialog <Escape> {
+    if ![string compare $tctx::retval [.dialog.f2.txt get 1.0 {end - 1 chars}]] {
+      .dialog.buttons.cancel invoke
+    }
+  }
+  bind .dialog.f2.txt <Shift-KeyRelease-Return> {return_release %W; .dialog.buttons.ok invoke}
+  .dialog.f2.txt tag add sel 1.0 {end - 1 chars}
+  .dialog.f2.txt mark set insert 1.0
+  focus .dialog.f2.txt
+  dialog_minsize_floor .dialog
+  tkwait window .dialog
+  return $tctx::retval
+}
+
+proc enter_text_legacy {textlabel {preserve_disabled disabled}} {
   global has_cairo preserve_unchanged_attrs wm_fix props enter_text_default_geometry
   global text_tabs_setting tabstop
   set tctx::rcode {}
