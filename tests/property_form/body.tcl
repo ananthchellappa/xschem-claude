@@ -1223,3 +1223,27 @@ check {TX8d edited extras: set owned tokens still applied} \
   {[xschem get_tok $::A_OUT3 font 2] eq "Sans" && [xschem get_tok $::A_OUT3 weight 2] eq "bold"}
 check {TX8e edited extras replace the old extras (orig-only name dropped)} \
   {[xschem get_tok $::A_OUT3 name 2] eq ""}
+
+### TX9 — slickprop::text_bool_checked <tok> <value>: should a bool field's box be
+### ticked for this current token value? (weight ticks only on 'bold'; slant ticks
+### on italic OR oblique; the rest tick on any truthy, incl. hide=instance).
+proc f_bchecked {t v} { if {[catch {slickprop::text_bool_checked $t $v} r]} {return -2}; return $r }
+check {TX9a weight=bold -> ticked}        {[f_bchecked weight bold] == 1}
+check {TX9b weight=normal -> unticked}    {[f_bchecked weight normal] == 0}
+check {TX9c slant=italic -> ticked}       {[f_bchecked slant italic] == 1}
+check {TX9d slant=oblique -> ticked}      {[f_bchecked slant oblique] == 1}
+check {TX9e hcenter=true -> ticked}       {[f_bchecked hcenter true] == 1}
+check {TX9f hide=instance -> ticked}      {[f_bchecked hide instance] == 1}
+check {TX9g empty -> unticked}            {[f_bchecked floater {}] == 0}
+check {TX9h false -> unticked}            {[f_bchecked hcenter false] == 0}
+
+### TX10 — slickprop::text_bool_value <tok> <loaded> <chk0> <chk>: the token value
+### to write on OK. Unchanged box (chk==chk0) preserves the LOADED raw value so an
+### un-touched oblique/instance/normal is never clobbered; toggled on writes the
+### schema on-value; toggled off removes (empty).
+proc f_bvalue {t l c0 c} { if {[catch {slickprop::text_bool_value $t $l $c0 $c} r]} {return -2}; return $r }
+check {TX10a unchanged keeps loaded 'oblique'}    {[f_bvalue slant oblique 1 1] eq "oblique"}
+check {TX10b unchanged keeps loaded 'instance'}   {[f_bvalue hide instance 1 1] eq "instance"}
+check {TX10c toggled on writes schema on-value}   {[f_bvalue weight {} 0 1] eq "bold"}
+check {TX10d toggled off removes (empty)}         {[f_bvalue weight bold 1 0] eq ""}
+check {TX10e unchanged-unticked keeps 'normal'}   {[f_bvalue weight normal 0 0] eq "normal"}

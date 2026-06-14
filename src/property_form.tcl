@@ -183,6 +183,37 @@ proc slickprop::text_assemble {orig desired extra} {
   return [slickprop::apply $extra $changes]
 }
 
+# Should a bool field's checkbox be ticked for the token's CURRENT value? weight
+# ticks only on 'bold' (weight=normal is not-bold); slant ticks on italic OR
+# oblique (both are slanted); every other bool ticks on any truthy value — which
+# includes hide=instance (hide-when-instantiated still means "hidden").
+proc slickprop::text_bool_checked {tok value} {
+  switch -- $tok {
+    weight { return [expr {$value eq "bold"}] }
+    slant  { return [expr {$value eq "italic" || $value eq "oblique"}] }
+    default {
+      set v [string tolower $value]
+      return [expr {$v ne "" && $v ne "false" && $v ne "0" && $v ne "no"}]
+    }
+  }
+}
+
+# The token value to write back for a bool field on OK. <loaded> is the value the
+# field opened with, <chk0> its initial tick state, <chk> its current tick state.
+# An UNCHANGED checkbox returns the loaded raw value verbatim, so a value the
+# schema's on-value does not capture (slant=oblique, hide=instance, weight=normal)
+# is preserved untouched; a freshly ticked box writes the schema on-value; a
+# freshly unticked box removes the token (empty).
+proc slickprop::text_bool_value {tok loaded chk0 chk} {
+  if {$chk == $chk0} { return $loaded }
+  if {$chk} {
+    foreach row [slickprop::text_schema] {
+      if {[dict get $row tok] eq $tok} { return [dict get $row on] }
+    }
+  }
+  return {}
+}
+
 # ===========================================================================
 # THE FORM (Tk). Built on the core above. State for the single open dialog
 # lives in slickprop::cur(...) (only one Edit Properties dialog exists at a
