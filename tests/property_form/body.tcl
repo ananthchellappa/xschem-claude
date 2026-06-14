@@ -1201,3 +1201,25 @@ check {TX6c font updated to Mono}            {[xschem get_tok $::OUT6 font 2] eq
 ### TX7 — the cardinal invariant carried to text props: assembling with no edits
 ### is byte-identical (apply with empty changes returns the original string).
 check {TX7 no-edit assembly is byte-identical} {[f_apply {font=Sans weight=bold name=note1} {}] eq {font=Sans weight=bold name=note1}}
+
+### TX8 — slickprop::text_assemble <orig> <desired> <extra>: the OK-time merge.
+### <desired> is {tok val ...} for every owned field (val ""=off/absent); <extra>
+### is the (maybe edited) Other-properties box. When <extra> is untouched it
+### substs only the owned fields that changed into <orig> (byte-identical on no
+### change); when <extra> is edited it rebuilds from <extra> + the set owned tokens.
+proc f_assemble {o d e} { if {[catch {slickprop::text_assemble $o $d $e} r]} {return -2}; return $r }
+set ::A_ORIG  {font=Sans weight=bold name=note1}
+set ::A_EXTRA [f_textra $::A_ORIG]
+set ::A_DES   {font Sans weight bold slant {} hcenter {} vcenter {} layer {} hide {} floater {}}
+check {TX8a no change + extras untouched -> byte-identical} \
+  {[f_assemble $::A_ORIG $::A_DES $::A_EXTRA] eq $::A_ORIG}
+set ::A_DES2  {font Sans weight {} slant {} hcenter {} vcenter {} layer {} hide {} floater {}}
+set ::A_OUT2  [f_assemble $::A_ORIG $::A_DES2 $::A_EXTRA]
+check {TX8b Bold off removes weight; name preserved in place} \
+  {[xschem get_tok $::A_OUT2 weight 2] eq "" && [xschem get_tok $::A_OUT2 name 2] eq "note1"}
+set ::A_OUT3  [f_assemble $::A_ORIG $::A_DES {foo=bar}]
+check {TX8c edited extras: new token foo present} {[xschem get_tok $::A_OUT3 foo 2] eq "bar"}
+check {TX8d edited extras: set owned tokens still applied} \
+  {[xschem get_tok $::A_OUT3 font 2] eq "Sans" && [xschem get_tok $::A_OUT3 weight 2] eq "bold"}
+check {TX8e edited extras replace the old extras (orig-only name dropped)} \
+  {[xschem get_tok $::A_OUT3 name 2] eq ""}

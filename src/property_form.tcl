@@ -154,6 +154,35 @@ proc slickprop::text_extra {prop} {
   return $out
 }
 
+# Assemble the final property string on OK. <desired> is {tok val ...} for EVERY
+# owned field (val "" means the field is off / its token should be absent);
+# <extra> is the current contents of the "Other properties" box.
+#   * extras untouched (== text_extra of <orig>): subst-into-original — only the
+#     owned fields whose value actually changed are written back into <orig>, so
+#     unchanged tokens keep their position and an unedited dialog returns <orig>
+#     byte-for-byte (no spurious "modified").
+#   * extras edited: rebuild from the edited <extra> as the base, overlaying every
+#     owned field that is currently set. (The Other box IS the non-owned portion,
+#     so editing it replaces those tokens wholesale — by design.)
+proc slickprop::text_assemble {orig desired extra} {
+  set loaded {}
+  foreach row [slickprop::text_fields $orig] {
+    dict set loaded [dict get $row tok] [dict get $row value]
+  }
+  if {$extra eq [slickprop::text_extra $orig]} {
+    set changes {}
+    foreach {tok val} $desired {
+      if {$val ne [dict get $loaded $tok]} { lappend changes $tok $val }
+    }
+    return [slickprop::apply $orig $changes]
+  }
+  set changes {}
+  foreach {tok val} $desired {
+    if {$val ne {}} { lappend changes $tok $val }
+  }
+  return [slickprop::apply $extra $changes]
+}
+
 # ===========================================================================
 # THE FORM (Tk). Built on the core above. State for the single open dialog
 # lives in slickprop::cur(...) (only one Edit Properties dialog exists at a
