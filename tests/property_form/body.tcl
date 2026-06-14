@@ -564,4 +564,82 @@ if {[gui2_ok]} {
              PF29a PF29b PF29c PF30a PF30b PF30c} { check "$t (skipped: no main window)" {1} }
 }
 
+# ===========================================================================
+# PF31-PF34 — P3: the "values differ" warning. Under All Selected / All, when
+# the FOCUSED field's value is not uniform across the in-scope instances, the
+# footer hint turns into a red warning (applying would overwrite those differing
+# values). It clears when the field is uniform across the set or scope=current.
+# ===========================================================================
+
+# place 3 res with DIFFERING values (R1/R3 = 1k, R2 = 2k) + a capa (other master)
+proc pf_setup_varied {} {
+  xschem set modified 0
+  xschem clear force schematic
+  xschem instance res.sym    0 0 0 0 {name=R1 value=1k}
+  xschem instance res.sym  100 0 0 0 {name=R2 value=2k}
+  xschem instance res.sym  200 0 0 0 {name=R3 value=1k}
+  xschem instance capa.sym 300 0 0 0 {name=C1 value=1p}
+}
+
+if {[gui2_ok]} {
+  ### PF31 — scope=selected: a varying field (value) warns red; a uniform field
+  ### (footprint, unset on all) restores the muted hint.
+  pf_setup_varied
+  xschem select instance R1; xschem select instance R2; xschem select instance R3
+  pf_form_run selected {
+    slickprop::on_focus value
+    set ::pf31_fg  [.dialog.fb.hint cget -foreground]
+    set ::pf31_tx  [.dialog.fb.hint cget -text]
+    slickprop::on_focus footprint
+    set ::pf31_fg2 [.dialog.fb.hint cget -foreground]
+  }
+  check {PF31a a varying focused field warns in the warn color} \
+    {$::pf31_fg eq [slickprop::warn_color]}
+  check {PF31b the warning text names the field} {[string match {*value*} $::pf31_tx]}
+  check {PF31c a uniform field restores the muted hint (not warn color)} \
+    {$::pf31_fg2 ne [slickprop::warn_color]}
+
+  ### PF32 — scope=current never warns, even for a field that varies across the
+  ### (unviewed) selection.
+  pf_setup_varied
+  xschem select instance R1; xschem select instance R2; xschem select instance R3
+  pf_form_run current {
+    slickprop::on_focus value
+    set ::pf32_fg [.dialog.fb.hint cget -foreground]
+  }
+  check {PF32 scope=current suppresses the varying-value warning} \
+    {$::pf32_fg ne [slickprop::warn_color]}
+
+  ### PF33 — scope=all: the in-scope set is every same-master instance, and a
+  ### value varying across them warns.
+  pf_setup_varied
+  xschem select instance R1
+  pf_form_run all {
+    set ::pf33_n  [llength [slickprop::scope_instances]]
+    slickprop::on_focus value
+    set ::pf33_fg [.dialog.fb.hint cget -foreground]
+  }
+  check {PF33a all-scope sees every same-master instance (3 res, not the capa)} \
+    {$::pf33_n == 3}
+  check {PF33b all-scope varying value warns} {$::pf33_fg eq [slickprop::warn_color]}
+
+  ### PF34 — live: switching scope current->selected updates the warning without
+  ### re-focusing (the scope-change path refreshes it).
+  pf_setup_varied
+  xschem select instance R1; xschem select instance R2; xschem select instance R3
+  pf_form_run current {
+    slickprop::on_focus value
+    set ::pf34_cur [.dialog.fb.hint cget -foreground]
+    set ::slickprop_apply_scope selected
+    set ::pf34_sel [.dialog.fb.hint cget -foreground]
+  }
+  check {PF34a current scope: focused varying field does not warn} \
+    {$::pf34_cur ne [slickprop::warn_color]}
+  check {PF34b switching to selected live-updates to the warning} \
+    {$::pf34_sel eq [slickprop::warn_color]}
+} else {
+  foreach t {PF31a PF31b PF31c PF32 PF33a PF33b PF34a PF34b} {
+    check "$t (skipped: no main window)" {1} }
+}
+
 xschem set modified 0
