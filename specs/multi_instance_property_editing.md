@@ -1,7 +1,10 @@
 # Spec — multi-instance property editing (Cadence-style)
 
-*Status:* **DESIGN — key decisions ratified (2026-06-14), ready to implement P1.**
-No code yet. Builds on the slick per-field property form ([[slick-property-forms]],
+*Status:* **P1 IMPLEMENTED (2026-06-13) — default-fix + sticky "Apply to" scope +
+name-greying, changed-fields-only for all scopes. Next: P2 (Apply button +
+Next/Prev, needs the mid-session `apply_properties` command), then P3
+(varying-value warning); highlighting backlogged.** Key decisions ratified
+(2026-06-14). Builds on the slick per-field property form ([[slick-property-forms]],
 branch `slick-property-forms`) and the stable instance handles
 ([[stable-object-handles]]). Highlighting (§3 deferred) is explicitly **backlog**,
 out of scope for this round.
