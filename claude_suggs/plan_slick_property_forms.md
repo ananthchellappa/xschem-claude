@@ -24,7 +24,10 @@ below is run-verified against the build on this branch.
 >    why the multi-line widget is a v2 item (§4.4).
 >
 > **v1 build choices (confirmed):** pure-Tcl reskin, no C changes (§7.A); single-
-> line entries only (§4.4); subst-into-original reassembly (§4.3, §7.C).
+> line entries only (§4.4); subst-into-original reassembly (§4.3, §7.C) — **only the
+> fields the user actually touched are modified on submit**; pre-existing undeclared
+> "Extra" tokens are **retained** (shown editable + deletable, never auto-dropped,
+> §4.5). **All decisions settled; the plan is ready to implement.**
 
 ---
 
@@ -321,15 +324,12 @@ it in front of the user, then generalize.
 
 ## 10. Open questions for the user
 
-*(All scoping + the build-strategy questions are resolved — see the ratified box up
-top. One behavioral call remains for v1:)*
-
-1. **"Extra (undeclared)" section** — for an instance that already carries a
-   non-template token (e.g. `foobar=123`, or stray junk), should the strict form
-   **show it, editable + deletable** (recommended — visible, removable, no silent
-   loss, and it can't be *added*), or instead **refuse to open** on such an object?
-   This is the only v1 behavior still to confirm. (Multi-line *widget* feel —
-   N-row boxes vs. auto-grow, Ctrl+Enter vs. Shift+Enter — is a v2 question.)
+**None — all v1 decisions are settled (2026-06-13).** The "Extra (undeclared)"
+call is resolved: the strict form **shows** pre-existing non-template tokens
+(editable + deletable) and **retains** them on submit; only fields the user
+touches are modified. Remaining items are explicitly v2 (multi-line widgets and
+their Enter/Tab handling, optional per-attribute validators, the other dialogs in
+§5, and a possible C `object_fields` API). **v1 is ready to implement.**
 
 ---
 
