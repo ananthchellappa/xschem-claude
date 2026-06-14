@@ -783,4 +783,134 @@ catch {xschem highlight_scope clear}
 check {PF39b clear empties the general overlay too} \
   {[catch {xschem highlight_scope} c] == 0 && $c == 0}
 
+# ===========================================================================
+# PF40-PF46 — M1 of the modeless, selection-reactive form: while the dialog is
+# open the user can keep selecting on the canvas, and the form reacts (the nav
+# set, scope, "values differ" warning and the white highlight follow the new
+# selection). The C side unlocks SELECTION gestures at semaphore>=2 (move/wire/
+# place stay locked) and fires `slickprop::on_selection_changed`; these tests
+# drive that Tcl reaction directly (selection changed via `xschem select`, then
+# the hook called) the same way the P3/H1 tests drive on_focus / nav — the C
+# event gate itself is a manual eyeball item (synthetic ButtonPress is WSLg-
+# flaky). Decision doc: code_analysis/modeless_property_form_decision.md.
+#
+# Pending-edit policy (D2, ratified = Cadence prompt): a selection change while
+# the form is dirty pops a 3-way tk_messageBox — Apply / Discard / Cancel (the
+# last restores the previous selection and stays put). A clean change switches
+# silently. Tests stub tk_messageBox per case (and restore the suite's default).
+# ===========================================================================
+
+if {[gui2_ok]} {
+  ### PF40 — is_dirty: a freshly opened form is clean; editing a field makes it
+  ### dirty (the gate that decides whether a selection change prompts).
+  catch {xschem highlight_scope clear}
+  pf_setup_insts
+  xschem select instance R1
+  pf_form_run current {
+    set ::pf40_clean [slickprop::is_dirty]
+    pf_setfield value 9k
+    set ::pf40_dirty [slickprop::is_dirty]
+  }
+  check {PF40a a freshly opened form is not dirty} {$::pf40_clean == 0}
+  check {PF40b an edited field makes the form dirty} {$::pf40_dirty == 1}
+
+  ### PF41 — clean selection change adopts the new selection: the nav set follows
+  ### the canvas, and (current scope, single click) the displayed instance
+  ### retargets to the newly selected one.
+  pf_setup_insts
+  xschem select instance R1; xschem select instance R2; xschem select instance R3
+  pf_form_run current {
+    xschem unselect_all
+    xschem select instance R3
+    slickprop::on_selection_changed
+    set ::pf41_ids  $slickprop::nav(ids)
+    set ::pf41_disp $slickprop::nav(disp_id)
+  }
+  set ::pf41_r3 [xschem instance_id R3]
+  check {PF41a the nav set follows the new canvas selection} {$::pf41_ids eq $::pf41_r3}
+  check {PF41b displayed instance retargets to the newly selected one} {$::pf41_disp eq $::pf41_r3}
+
+  ### PF42 — the white highlight follows a selection change (ties M1 to H1):
+  ### under All Selected, outlined set == the new selected set.
+  pf_setup_insts
+  xschem select instance R1; xschem select instance R2; xschem select instance R3
+  pf_form_run selected {
+    xschem unselect_all
+    xschem select instance R1
+    xschem select instance R2
+    slickprop::on_selection_changed
+    set ::pf42_hc  [xschem highlight_scope]
+    set ::pf42_ids [lsort [xschem highlight_scope ids]]
+  }
+  set ::pf42_exp [lsort [list [xschem instance_id R1] [xschem instance_id R2]]]
+  check {PF42a highlight count tracks the new selection (2)} {$::pf42_hc == 2}
+  check {PF42b outlined set == the new selected set} {$::pf42_ids eq $::pf42_exp}
+
+  ### PF43 — dirty change, Apply path: the prompt's "Apply" writes the edited
+  ### (old) instance, then the form moves to the new selection.
+  pf_setup_insts
+  xschem select instance R1; xschem select instance R2; xschem select instance R3
+  pf_form_run current {
+    pf_setfield value 7k
+    proc ::tk_messageBox {args} {return yes}
+    xschem unselect_all; xschem select instance R3
+    slickprop::on_selection_changed
+    set ::pf43_disp $slickprop::nav(disp_id)
+  }
+  proc ::tk_messageBox {args} {return ok}
+  check {PF43a Apply writes the edited (old) instance} {[pf_value_of_name R1] eq "7k"}
+  check {PF43b after Apply the form moves to the new instance} {$::pf43_disp eq [xschem instance_id R3]}
+  check {PF43c only the edited instance changed (scope=current)} {[pf_count_value 7k] == 1}
+
+  ### PF44 — dirty change, Discard path: edits dropped, old instance unchanged,
+  ### form still moves to the new selection.
+  pf_setup_insts
+  xschem select instance R1; xschem select instance R2; xschem select instance R3
+  pf_form_run current {
+    pf_setfield value 6k
+    proc ::tk_messageBox {args} {return no}
+    xschem unselect_all; xschem select instance R3
+    slickprop::on_selection_changed
+    set ::pf44_disp $slickprop::nav(disp_id)
+  }
+  proc ::tk_messageBox {args} {return ok}
+  check {PF44a Discard leaves the old instance unedited} {[pf_value_of_name R1] eq "1k"}
+  check {PF44b Discard still moves the form to the new instance} {$::pf44_disp eq [xschem instance_id R3]}
+
+  ### PF45 — dirty change, Cancel path: stay on the original instance, drop
+  ### nothing/write nothing, and RESTORE the previous canvas selection so the
+  ### form, selection and highlight stay in agreement.
+  pf_setup_insts
+  xschem select instance R1; xschem select instance R2; xschem select instance R3
+  pf_form_run current {
+    set ::pf45_disp0 $slickprop::nav(disp_id)
+    pf_setfield value 5k
+    proc ::tk_messageBox {args} {return cancel}
+    xschem unselect_all; xschem select instance R3
+    slickprop::on_selection_changed
+    set ::pf45_disp1  $slickprop::nav(disp_id)
+    set ::pf45_selids [lsort [slickprop::selected_inst_ids]]
+  }
+  proc ::tk_messageBox {args} {return ok}
+  set ::pf45_all [lsort [list [xschem instance_id R1] [xschem instance_id R2] [xschem instance_id R3]]]
+  check {PF45a Cancel keeps the form on the original instance} {$::pf45_disp1 eq $::pf45_disp0}
+  check {PF45b Cancel leaves the old instance unedited} {[pf_value_of_name R1] eq "1k"}
+  check {PF45c Cancel restores the previous selection} {$::pf45_selids eq $::pf45_all}
+
+  ### PF46 — a CLEAN selection change does not prompt (no nag on every click).
+  pf_setup_insts
+  xschem select instance R1; xschem select instance R2; xschem select instance R3
+  set ::pf46_calls 0
+  pf_form_run current {
+    proc ::tk_messageBox {args} {incr ::pf46_calls; return ok}
+    xschem unselect_all; xschem select instance R2
+    slickprop::on_selection_changed
+  }
+  proc ::tk_messageBox {args} {return ok}
+  check {PF46 a clean selection change does not prompt} {$::pf46_calls == 0}
+} else {
+  foreach t {PF40a PF40b PF41a PF41b PF42a PF42b PF43a PF43b PF43c
+             PF44a PF44b PF45a PF45b PF45c PF46} { check "$t (skipped: no main window)" {1} }
+}
+
 xschem set modified 0
