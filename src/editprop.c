@@ -833,7 +833,7 @@ int drc_check(int i)
 /* x=0 use text widget   x=1 use vim editor */
 static int update_symbol(const char *result, int x, int selected_inst)
 {
-  int k, sym_number;
+  int i, k, sym_number;
   int no_change_props=0;
   int only_different=0;
   int copy_cell=0;
@@ -842,6 +842,8 @@ static int update_symbol(const char *result, int x, int selected_inst)
   char symbol[PATH_MAX], *translated_sym = NULL, *old_translated_sym = NULL;
   int changed_symbol = 0;
   int pushed=0;
+  int *targets = NULL;       /* the instances this Apply touches (the scope) */
+  int ntargets = 0;
   int *ii = &xctx->edit_sym_i; /* static var */
   int *netl_com = &xctx->netlist_commands; /* static var */
   int modified = 0;
@@ -868,7 +870,11 @@ static int update_symbol(const char *result, int x, int selected_inst)
   my_strncpy(symbol, (char *) tclgetvar("symbol") , S(symbol));
   dbg(1, "update_symbol(): symbol=%s\n", symbol);
   no_change_props=tclgetboolvar("no_change_attrs");
-  only_different=tclgetboolvar("preserve_unchanged_attrs");
+  /* Changed-fields-only is now the unconditional contract for instance edits
+   * (the slick "Apply to" scope governs WHICH instances, not whether unchanged
+   * tokens are preserved). The legacy "Preserve unchanged props" checkbox is
+   * therefore ignored here — every scope keeps each instance's own attributes. */
+  only_different=1;
   copy_cell=tclgetboolvar("user_wants_copy_cell");
   /* 20191227 necessary? --> Yes since a symbol copy has already been done
      in edit_symbol_property() -> tcl edit_prop, this ensures new symbol is loaded from disk.
@@ -882,10 +888,41 @@ static int update_symbol(const char *result, int x, int selected_inst)
   if(strcmp(symbol, xctx->inst[*ii].name)) {
     changed_symbol = 1;
   }
-  for(k=0;k<xctx->lastsel; ++k) {
+
+  /* Build the target instance list from the sticky "Apply to" scope set by the
+   * slick form (::slickprop_apply_scope, default "current"). The change set
+   * (new_prop vs old_prop) is then fanned out to each target by the loop below.
+   *   current  -> only the displayed (first-selected) instance
+   *   selected -> every selected ELEMENT (the prior multi-edit set)
+   *   all      -> every instance of the SAME master (symbol) in this sheet
+   * For the non-slick paths (vim editor, x!=0) keep the prior "all selected"
+   * semantics, which combined with changed-fields-only matches the old behavior. */
+  targets = my_malloc(_ALLOC_ID_, (xctx->instances + 1) * sizeof(int));
+  {
+    const char *scope;
+    if(x == 0) {
+      scope = tclgetvar("slickprop_apply_scope");
+      if(!scope || !scope[0]) scope = "current";
+    } else {
+      scope = "selected";
+    }
+    if(!strcmp(scope, "all")) {
+      int master = xctx->inst[selected_inst].ptr;
+      for(i = 0; i < xctx->instances; ++i) {
+        if(xctx->inst[i].ptr == master) targets[ntargets++] = i;
+      }
+    } else if(!strcmp(scope, "selected")) {
+      for(k = 0; k < xctx->lastsel; ++k) {
+        if(xctx->sel_array[k].type == ELEMENT) targets[ntargets++] = xctx->sel_array[k].n;
+      }
+    } else { /* current */
+      targets[ntargets++] = selected_inst;
+    }
+  }
+
+  for(k=0;k<ntargets; ++k) {
     dbg(1, "update_symbol(): for k loop: k=%d\n", k);
-    if(xctx->sel_array[k].type != ELEMENT) continue;
-    *ii=xctx->sel_array[k].n;
+    *ii=targets[k];
     old_prefix=(get_tok_value(xctx->sym[xctx->inst[*ii].ptr].templ, "name",0))[0];
     /* 20171220 calculate bbox before changes to correctly redraw areas */
     /* must be recalculated as cairo text extents vary with zoom factor. */
@@ -999,6 +1036,7 @@ static int update_symbol(const char *result, int x, int selected_inst)
   my_free(_ALLOC_ID_, &name);
   my_free(_ALLOC_ID_, &ptr);
   my_free(_ALLOC_ID_, &new_prop);
+  my_free(_ALLOC_ID_, &targets);
   my_free(_ALLOC_ID_, &xctx->old_prop);
   return modified;
 }
@@ -1278,12 +1316,11 @@ void edit_property(int x)
    return;
  } /* if((xctx->lastsel==0 ) */
 
- /* set 'preserve unchanged properties if multiple selection */
- if(xctx->lastsel > 1) {
-   tclsetvar("preserve_unchanged_attrs", "1");
- } else {
-   tclsetvar("preserve_unchanged_attrs", "0");
- }
+ /* The old "force preserve_unchanged_attrs when multi-selected" default is gone:
+  * selecting N instances no longer implies editing N. Changed-fields-only is now
+  * the unconditional contract (forced in update_symbol) and the slick form's
+  * sticky "Apply to" scope (::slickprop_apply_scope, default Only Current) is the
+  * sole authority over which instances an Apply/OK touches. */
 
  j = set_first_sel(0, -2, 0);
  type = xctx->sel_array[j].type;

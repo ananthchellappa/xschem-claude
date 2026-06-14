@@ -307,6 +307,46 @@ proc slickprop::cancel {} {
   destroy .dialog
 }
 
+# ===========================================================================
+# "Apply to" scope (multi-instance editing, P1). A sticky session global
+# ::slickprop_apply_scope holds the canonical value (current|selected|all);
+# the C side (update_symbol) reads it to decide which instances an Apply/OK
+# touches. The form shows a readonly dropdown of display labels and greys the
+# `name` field whenever the scope spans more than the current instance (a name
+# is per-instance and must stay unique, so it is never fanned out).
+# ===========================================================================
+
+# canonical scope value  -> display label
+proc slickprop::scope_label {v} {
+  switch -- $v {
+    selected { return "All Selected" }
+    all      { return "All (same symbol)" }
+    default  { return "Only Current" }
+  }
+}
+# display label -> canonical scope value
+proc slickprop::scope_value {label} {
+  switch -- $label {
+    "All Selected"      { return selected }
+    "All (same symbol)" { return all }
+    default             { return current }
+  }
+}
+
+# Grey (disable) the name entry when the scope spans many instances, enable it
+# for Only Current. Bound as a write trace on ::slickprop_apply_scope so it
+# tracks live as the dropdown changes; safe to call when no name field exists.
+proc slickprop::apply_scope_greying {args} {
+  variable cur
+  if {![info exists cur(entry,name)] || ![winfo exists $cur(entry,name)]} return
+  if {![info exists ::slickprop_apply_scope]} { set ::slickprop_apply_scope current }
+  if {$::slickprop_apply_scope eq "current"} {
+    $cur(entry,name) configure -state normal
+  } else {
+    $cur(entry,name) configure -state disabled
+  }
+}
+
 # The slick replacement for the legacy edit_prop dialog: one single-line entry
 # per declared symbol attribute (Cadence-style, strict), Enter=OK / Escape=Cancel.
 # Same C contract as the old edit_prop: reads tctx::retval (current property
@@ -319,6 +359,8 @@ proc slickprop::edit_form {txtlabel} {
   set ::tctx::rcode {}
   set ::tctx::retval_orig $::tctx::retval
   if { [winfo exists .dialog] } return
+  # sticky "Apply to" scope: default Only Current, retained across opens
+  if {![info exists ::slickprop_apply_scope]} { set ::slickprop_apply_scope current }
   slickprop::init_fonts
   xschem set semaphore [expr {[xschem get semaphore] + 1}]
   toplevel .dialog -class Dialog
@@ -337,6 +379,19 @@ proc slickprop::edit_form {txtlabel} {
   label .dialog.hdr -text "  $hdr" -bg grey60 -anchor w -font slickPropHeader
   pack .dialog.hdr -side top -fill x
 
+  # --- "Apply to" scope selector (sticky; the C side reads the canonical var) -
+  frame .dialog.fscope
+  label .dialog.fscope.l -text "Apply to" -font slickPropLabel
+  ttk::combobox .dialog.fscope.cb -state readonly -width 20 -font slickPropLabel \
+    -values [list "Only Current" "All Selected" "All (same symbol)"]
+  .dialog.fscope.cb set [slickprop::scope_label $::slickprop_apply_scope]
+  bind .dialog.fscope.cb <<ComboboxSelected>> {
+    set ::slickprop_apply_scope [slickprop::scope_value [.dialog.fscope.cb get]]
+  }
+  pack .dialog.fscope.l  -side left -padx {4 6} -pady {2 0}
+  pack .dialog.fscope.cb -side left -pady {2 0}
+  pack .dialog.fscope -side top -fill x
+
   # --- top: symbol entry + Browse -----------------------------------------
   frame .dialog.f1
   label .dialog.f1.l2 -text "Symbol" -font slickPropLabel
@@ -352,11 +407,15 @@ proc slickprop::edit_form {txtlabel} {
   pack .dialog.f1.b5 -side left -padx {6 4}
 
   # --- options row (the legacy checkbuttons; their globals are read by C) ---
+  # "Preserve unchanged props" is omitted: changed-fields-only is now the
+  # unconditional contract for instance edits (governed by the "Apply to" scope),
+  # so the checkbox would be inert. Its global is still created so any C/Tcl
+  # reader sees a defined value.
   frame .dialog.f2
   checkbutton .dialog.f2.r1 -text "No change properties" -variable no_change_attrs -font slickPropLabel
   checkbutton .dialog.f2.r2 -text "Preserve unchanged props" -variable preserve_unchanged_attrs -font slickPropLabel
   checkbutton .dialog.f2.r3 -text "Copy cell" -variable copy_cell -font slickPropLabel
-  pack .dialog.f2.r1 .dialog.f2.r2 .dialog.f2.r3 -side left -padx 2
+  pack .dialog.f2.r1 .dialog.f2.r3 -side left -padx 2
 
   # --- scrollable per-field area ------------------------------------------
   frame .dialog.fa
@@ -387,6 +446,10 @@ proc slickprop::edit_form {txtlabel} {
 
   # populate the fields from the property string + symbol template
   slickprop::build_fields .dialog.fa.c.inner $::tctx::retval [slickprop::template_of $symbol]
+
+  # grey the name field live with the scope (and apply the initial state)
+  trace add variable ::slickprop_apply_scope write slickprop::apply_scope_greying
+  slickprop::apply_scope_greying
 
   # size the scroll area to the content, capped (so tall forms scroll, short
   # ones are compact) — a light size-to-content.
@@ -431,6 +494,7 @@ proc slickprop::edit_form {txtlabel} {
   }
 
   tkwait window .dialog
+  catch {trace remove variable ::slickprop_apply_scope write slickprop::apply_scope_greying}
   xschem set semaphore [expr {[xschem get semaphore] - 1}]
   return $::tctx::rcode
 }
