@@ -210,6 +210,9 @@ proc slickprop::build_fields {parent prop template} {
     bind $parent.e$r <KeyRelease> [list slickprop::update_dirty $tok]
     bind $parent.e$r <<Paste>>    [list after idle [list slickprop::update_dirty $tok]]
     bind $parent.e$r <<Cut>>      [list after idle [list slickprop::update_dirty $tok]]
+    # P3: flag a varying field in the footer when this field gains focus
+    # (appended so it coexists with the placeholder-clear FocusIn handler)
+    bind $parent.e$r <FocusIn> +[list slickprop::on_focus $tok]
     incr r
   }
   grid columnconfigure $parent 1 -minsize 90   ;# fixed label column so labels align
@@ -368,14 +371,107 @@ proc slickprop::scope_value {label} {
 # Grey (disable) the name entry when the scope spans many instances, enable it
 # for Only Current. Bound as a write trace on ::slickprop_apply_scope so it
 # tracks live as the dropdown changes; safe to call when no name field exists.
+# Also refreshes the "values differ" warning, which depends on the scope.
 proc slickprop::apply_scope_greying {args} {
   variable cur
+  slickprop::update_warning
   if {![info exists cur(entry,name)] || ![winfo exists $cur(entry,name)]} return
   if {![info exists ::slickprop_apply_scope]} { set ::slickprop_apply_scope current }
   if {$::slickprop_apply_scope eq "current"} {
     $cur(entry,name) configure -state normal
   } else {
     $cur(entry,name) configure -state disabled
+  }
+}
+
+# ===========================================================================
+# "Values differ" warning (P3). Under All Selected / All, applying the one
+# edited value to many instances overwrites whatever each had. When the FOCUSED
+# field's value is not uniform across the in-scope set, the footer hint turns
+# red to flag that; it clears for a uniform field or scope=current.
+# ===========================================================================
+
+# the warning colour — a saturated red readable on light AND dark themes;
+# overridable via ::slickprop_warn.
+proc slickprop::warn_color {} {
+  if {[info exists ::slickprop_warn] && $::slickprop_warn ne {}} { return $::slickprop_warn }
+  return "#d02020"
+}
+
+# the instance indices currently in scope, relative to the displayed instance:
+#   current  -> just the displayed one
+#   selected -> the selected set (nav ids)
+#   all      -> every instance of the displayed instance's master (same symbol)
+proc slickprop::scope_instances {} {
+  variable nav
+  set scope current
+  if {[info exists ::slickprop_apply_scope]} { set scope $::slickprop_apply_scope }
+  set out {}
+  if {$scope eq "selected"} {
+    if {[info exists nav(ids)]} {
+      foreach id $nav(ids) {
+        set ix [xschem instance_index $id]
+        if {$ix >= 0} { lappend out $ix }
+      }
+    }
+  } elseif {$scope eq "all"} {
+    if {[info exists nav(disp_id)] && $nav(disp_id) ne {}} {
+      set didx [xschem instance_index $nav(disp_id)]
+      if {$didx >= 0} {
+        set master [xschem getprop instance $didx cell::name]
+        set n [xschem get instances]
+        for {set i 0} {$i < $n} {incr i} {
+          if {[xschem getprop instance $i cell::name] eq $master} { lappend out $i }
+        }
+      }
+    }
+  } else {
+    if {[info exists nav(disp_id)] && $nav(disp_id) ne {}} {
+      set didx [xschem instance_index $nav(disp_id)]
+      if {$didx >= 0} { lappend out $didx }
+    }
+  }
+  return $out
+}
+
+# 1 if token <tok>'s clean value is not the same across all <insts>.
+proc slickprop::field_varies {tok insts} {
+  set first {}; set got 0
+  foreach i $insts {
+    set v [xschem get_tok [xschem getprop instance $i] $tok 2]
+    if {!$got} { set first $v; set got 1 } elseif {$v ne $first} { return 1 }
+  }
+  return 0
+}
+
+# Record the focused field and refresh the warning. Bound to each entry's
+# <FocusIn> (alongside the placeholder-clear handler).
+proc slickprop::on_focus {tok} {
+  variable nav
+  set nav(focustok) $tok
+  slickprop::update_warning
+}
+
+# Set or clear the footer warning for the currently-focused field under the
+# current scope. Safe to call any time (guards on the widget existing).
+proc slickprop::update_warning {} {
+  variable nav
+  if {![winfo exists .dialog.fb.hint]} return
+  set tok {}
+  if {[info exists nav(focustok)]} { set tok $nav(focustok) }
+  set scope current
+  if {[info exists ::slickprop_apply_scope]} { set scope $::slickprop_apply_scope }
+  set warn {}
+  if {$tok ne {} && $scope ne "current"} {
+    set insts [slickprop::scope_instances]
+    if {[llength $insts] > 1 && [slickprop::field_varies $tok $insts]} {
+      set warn "⚠  '$tok' differs across [llength $insts] instances — Apply overwrites them"
+    }
+  }
+  if {$warn ne {}} {
+    .dialog.fb.hint configure -text $warn -fg [slickprop::warn_color]
+  } else {
+    .dialog.fb.hint configure -text "Enter: OK    Esc: Cancel" -fg grey50
   }
 }
 
@@ -418,6 +514,7 @@ proc slickprop::load_pos {pos} {
   slickprop::build_fields .dialog.fa.c.inner $prop [slickprop::template_of $sym]
   slickprop::apply_scope_greying
   slickprop::update_nav_ui
+  slickprop::update_warning
 }
 
 # Step the displayed instance by <dir> (+1 Next / -1 Prev) within the selected
