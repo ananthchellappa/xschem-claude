@@ -110,6 +110,8 @@ int get_instance(const char *s)
   return i;
 }
 
+static int object_type_from_name(const char *s); /* defined below; used by xschem_cmds_h */
+
 static void xschem_cmd_help(int argc, const char **argv)
 {
   char prog[PATH_MAX];
@@ -2545,6 +2547,74 @@ static int xschem_cmds_h(Tcl_Interp *interp, int argc, const char *argv[], int *
       }
       hier_psprint(NULL, 1);
       Tcl_ResetResult(interp);
+    }
+
+    /* highlight_scope [clear | ids | <scope> <displayed_id>]
+     *   The apply-scope highlight overlay (the white outline on edit targets).
+     *   With <scope> <displayed_id>: resolve the SAME set apply_symbol_prop
+     *   would write (shared scope_targets(), so outlined==applied) relative to
+     *   the displayed instance's stable id, store it as the overlay, redraw, and
+     *   return the resolved stable-id list. No args: return the overlay count.
+     *   'ids': return the stored stable-id list. 'clear': empty + redraw. */
+    else if(!strcmp(argv[1], "highlight_scope"))
+    {
+      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(argc == 2) {
+        Tcl_SetResult(interp, my_itoa(xctx->scope_hi_n), TCL_VOLATILE);
+      } else if(!strcmp(argv[2], "clear")) {
+        clear_scope_highlight();
+        draw();
+        Tcl_ResetResult(interp); /* draw() leaves a stale tcleval result */
+      } else if(!strcmp(argv[2], "ids")) {
+        int k;
+        for(k = 0; k < xctx->scope_hi_n; ++k)
+          Tcl_AppendElement(interp, my_itoa((int)xctx->scope_hi_id[k]));
+      } else if(argc == 4) {
+        int idx = inst_index_from_id((unsigned int)strtoul(argv[3], NULL, 10));
+        int *targets, n, k;
+        if(idx < 0) { Tcl_SetResult(interp, "", TCL_STATIC); return TCL_OK; }
+        rebuild_selected_array(); /* 'selected' scope reads the live selection */
+        targets = my_malloc(_ALLOC_ID_, (xctx->instances + 1) * sizeof(int));
+        n = scope_targets(idx, argv[2], targets);
+        clear_scope_highlight();
+        for(k = 0; k < n; ++k) add_scope_highlight(ELEMENT, xctx->inst[targets[k]].id);
+        my_free(_ALLOC_ID_, &targets);
+        draw();
+        /* build the result AFTER draw() (its internal tcleval()s clobber the
+         * interp result); report from the stored overlay = the resolved set. */
+        Tcl_ResetResult(interp);
+        for(k = 0; k < xctx->scope_hi_n; ++k)
+          Tcl_AppendElement(interp, my_itoa((int)xctx->scope_hi_id[k]));
+      } else {
+        Tcl_SetResult(interp,
+          "xschem highlight_scope needs: [clear | ids | <scope> <displayed_id>]", TCL_STATIC);
+        return TCL_ERROR;
+      }
+    }
+
+    /* highlight_objects <type> <id> [<type> <id> ...]
+     *   The GENERAL overlay primitive: outline an explicit list of drawable
+     *   objects (any of wire|instance|rect|line|poly|arc), each by its stable id,
+     *   in its natural shape. The property form only ever feeds instances (via
+     *   highlight_scope), but this proves the per-type dispatch — notably a WIRE
+     *   outlined as its line segment. Returns the resulting overlay count. */
+    else if(!strcmp(argv[1], "highlight_objects"))
+    {
+      int j;
+      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(argc < 3 || ((argc - 2) % 2) != 0) {
+        Tcl_SetResult(interp,
+          "xschem highlight_objects needs: <type> <id> [<type> <id> ...]", TCL_STATIC);
+        return TCL_ERROR;
+      }
+      clear_scope_highlight();
+      for(j = 2; j + 1 < argc; j += 2) {
+        int type = object_type_from_name(argv[j]);
+        if(type >= 0)
+          add_scope_highlight(type, (unsigned int)strtoul(argv[j + 1], NULL, 10));
+      }
+      draw();
+      Tcl_SetResult(interp, my_itoa(xctx->scope_hi_n), TCL_VOLATILE);
     }
 
     /* hilight [drill]

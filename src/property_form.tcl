@@ -331,6 +331,7 @@ proc slickprop::ok {} {
   slickprop::do_apply
   set ::tctx::rcode {ok}
   catch {set ::slickprop_geometry [wm geometry .dialog]} ;# remember size+pos
+  catch {xschem highlight_scope clear}                   ;# remove the scope outline
   destroy .dialog
 }
 
@@ -339,7 +340,29 @@ proc slickprop::cancel {} {
   set ::tctx::rcode {}
   set edit_symbol_prop_new_sel {}
   catch {set ::slickprop_geometry [wm geometry .dialog]} ;# remember size+pos
+  catch {xschem highlight_scope clear}                   ;# remove the scope outline
   destroy .dialog
+}
+
+# ===========================================================================
+# Apply-scope highlight (H1): a white outline around exactly the objects an
+# OK/Apply would write to — the apply-scope set. C owns the drawing; the form
+# just hands it the current scope + the displayed instance's STABLE id and lets
+# C resolve the set the same way the apply does (so outlined == applied). Hung
+# off the same triggers as P1's greying / P3's warning: the scope write-trace,
+# load_pos (open + Next/Prev), and cleared on every close path (ok / cancel).
+# Safe to call any time (guards on a displayed id existing); a no-op without a
+# main window / when the command is absent.
+# ===========================================================================
+proc slickprop::update_highlight {} {
+  variable nav
+  set scope current
+  if {[info exists ::slickprop_apply_scope]} { set scope $::slickprop_apply_scope }
+  if {[info exists nav(disp_id)] && $nav(disp_id) ne {} && $nav(disp_id) >= 0} {
+    catch {xschem highlight_scope $scope $nav(disp_id)}
+  } else {
+    catch {xschem highlight_scope clear}
+  }
 }
 
 # ===========================================================================
@@ -375,6 +398,7 @@ proc slickprop::scope_value {label} {
 proc slickprop::apply_scope_greying {args} {
   variable cur
   slickprop::update_warning
+  slickprop::update_highlight
   if {![info exists cur(entry,name)] || ![winfo exists $cur(entry,name)]} return
   if {![info exists ::slickprop_apply_scope]} { set ::slickprop_apply_scope current }
   if {$::slickprop_apply_scope eq "current"} {

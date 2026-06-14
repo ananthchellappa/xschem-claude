@@ -840,10 +840,39 @@ int drc_check(int i)
  *   scope: "current"  -> only <displayed_inst>
  *          "selected" -> every selected ELEMENT (the multi-edit set)
  *          "all"      -> every instance of <displayed_inst>'s master this sheet */
+/* Resolve <scope> (current|selected|all) relative to the displayed instance into
+ * a list of instance indices written into the caller-provided targets[] (sized
+ * at least xctx->instances+1); returns the count. The single source of truth for
+ * "what an Apply/OK touches", shared by apply_symbol_prop() and the
+ * `xschem highlight_scope` overlay so the outlined set == the applied set
+ * (decision doc D3). Per D7 the displayed instance's MASTER defines the edited
+ * kind: both 'selected' and 'all' are filtered to instances of that master, so a
+ * mixed-master selection only fans the edit to the same-master instances. The
+ * master is read at call time (callers that may reassign inst[].ptr must resolve
+ * before mutating). */
+int scope_targets(int displayed_inst, const char *scope, int *targets)
+{
+  int i, k, n = 0;
+  int master = xctx->inst[displayed_inst].ptr;
+  if(!strcmp(scope, "all")) {
+    for(i = 0; i < xctx->instances; ++i) {
+      if(xctx->inst[i].ptr == master) targets[n++] = i;
+    }
+  } else if(!strcmp(scope, "selected")) {
+    for(k = 0; k < xctx->lastsel; ++k) {
+      if(xctx->sel_array[k].type == ELEMENT &&
+         xctx->inst[xctx->sel_array[k].n].ptr == master) targets[n++] = xctx->sel_array[k].n;
+    }
+  } else { /* current */
+    targets[n++] = displayed_inst;
+  }
+  return n;
+}
+
 static int apply_symbol_prop(const char *new_prop, const char *old_prop,
                              int displayed_inst, const char *scope)
 {
-  int i, k, sym_number;
+  int k, sym_number;
   int no_change_props=0;
   int only_different=1; /* changed-fields-only: the unconditional contract */
   int copy_cell=0;
@@ -875,22 +904,11 @@ static int apply_symbol_prop(const char *new_prop, const char *old_prop,
     changed_symbol = 1;
   }
 
-  /* Build the target instance list from <scope>. The master (for "all") is
-   * captured BEFORE the loop since the loop may reassign inst[].ptr on a
-   * symbol change. */
+  /* Build the target instance list from <scope> via the shared resolver (the
+   * single source of truth, also used by the `xschem highlight_scope` overlay so
+   * the outlined set == the applied set by construction — decision doc D3/D7). */
   targets = my_malloc(_ALLOC_ID_, (xctx->instances + 1) * sizeof(int));
-  if(!strcmp(scope, "all")) {
-    int master = xctx->inst[displayed_inst].ptr;
-    for(i = 0; i < xctx->instances; ++i) {
-      if(xctx->inst[i].ptr == master) targets[ntargets++] = i;
-    }
-  } else if(!strcmp(scope, "selected")) {
-    for(k = 0; k < xctx->lastsel; ++k) {
-      if(xctx->sel_array[k].type == ELEMENT) targets[ntargets++] = xctx->sel_array[k].n;
-    }
-  } else { /* current */
-    targets[ntargets++] = displayed_inst;
-  }
+  ntargets = scope_targets(displayed_inst, scope, targets);
 
   for(k=0;k<ntargets; ++k) {
     dbg(1, "apply_symbol_prop(): for k loop: k=%d\n", k);

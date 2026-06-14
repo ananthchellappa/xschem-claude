@@ -1042,6 +1042,11 @@ typedef struct {
   GC gctiled;
   GC *gc;
   GC *gcstipple;
+  GC gc_scope;          /* apply-scope highlight: dedicated white/high-contrast GC */
+  int *scope_hi_type;   /* apply-scope highlight overlay: per-entry object type */
+  unsigned int *scope_hi_id; /* per-entry STABLE id (resolved to index at draw time) */
+  int scope_hi_n;       /* number of objects in the overlay (0 = inactive) */
+  int scope_hi_alloc;   /* allocated capacity of the two arrays above */
   char **color_array;
   unsigned int color_index[256];
   XColor xcolor_array[256];
@@ -1419,6 +1424,9 @@ extern const char *get_sym_template(char *s, char *extra);
 extern void zoom_full(int draw, int sel, int flags, double shrink);
 extern void updatebbox(int count,xRect *boundbox,xRect *tmp);
 extern void draw_selection(GC g, int interruptable);
+extern void draw_scope_highlight(void);     /* apply-scope white-outline overlay */
+extern void clear_scope_highlight(void);
+extern void add_scope_highlight(int type, unsigned int id);
 extern int delete_wires(int selected_flag);
 extern void delete(int to_push_undo);
 extern void delete_only_rect_line_arc_poly(void);
@@ -1686,6 +1694,7 @@ extern int get_instance(const char *s);
 extern void edit_property(int x);
 extern int apply_instance_properties(const char *scope, unsigned int displayed_id,
                               const char *new_prop, const char *old_prop);
+extern int scope_targets(int displayed_inst, const char *scope, int *targets);
 extern int xschem(ClientData clientdata, Tcl_Interp *interp,
            int argc, const char * argv[]);
 extern const char *tcleval(const char str[]);

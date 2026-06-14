@@ -701,9 +701,9 @@ if {[gui2_ok]} {
 #   xschem highlight_scope            -> the current overlay count;
 #   xschem highlight_scope ids        -> the stored stable-id list;
 #   xschem highlight_scope clear      -> empty the overlay + redraw;
-#   xschem highlight_objects {type id ...} -> general primitive (any drawable
-#       type in its natural shape; the dialog only ever feeds instances, but
-#       this proves a WIRE is accepted/outlined as its line).
+#   xschem highlight_objects <type> <id> [<type> <id> ...] -> general primitive
+#       (any drawable type in its natural shape; the dialog only ever feeds
+#       instances, but this proves a WIRE is accepted/outlined as its line).
 # These assertions are pixel-FREE (state, not colour); the look (white, halo,
 # distinct from selection) is a manual eyeball item, noted in the spec.
 # Every new-command call is guarded (catch / inside a check) so the RED phase
@@ -777,7 +777,7 @@ xschem clear force schematic
 xschem wire 0 0 100 0
 set ::pf39_wid [xschem wire_id 0]
 check {PF39a highlight_objects accepts a wire (general primitive, wire-as-line)} \
-  {[catch {xschem highlight_objects [list wire $::pf39_wid]} r] == 0 &&
+  {[catch {xschem highlight_objects wire $::pf39_wid} r] == 0 &&
    [catch {xschem highlight_scope} c] == 0 && $c == 1}
 catch {xschem highlight_scope clear}
 check {PF39b clear empties the general overlay too} \

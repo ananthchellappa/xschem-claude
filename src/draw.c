@@ -5324,6 +5324,105 @@ void svg_embedded_graph(FILE *fd, int i, double rx1, double ry1, double rx2, dou
   #endif
 }
 
+/* ===========================================================================
+ * Apply-scope highlight overlay (the white outline on edit targets).
+ *
+ * A transient overlay holding a set of {type, stable-id} drawable references,
+ * stroked with the dedicated high-contrast GC (xctx->gc_scope) by
+ * draw_scope_highlight(), which runs at the END of draw() — right after the
+ * selection overlay (draw.c) — so it is RE-STROKED on every full redraw while
+ * active and survives pan/zoom (decision doc D2). The set is held by STABLE ID
+ * so it survives any reindexing while the dialog is open; indices are resolved
+ * at draw time. Clearing it is just `scope_hi_n = 0` followed by a redraw — no
+ * XOR erase, the canvas rebuilds from the pixmap pixel-identical. The form
+ * drives it through the `xschem highlight_scope` / `highlight_objects` commands.
+ *
+ * The renderer mirrors draw_selection()'s per-type shape dispatch but strokes a
+ * white outline and reads its set from the overlay (not sel_array): each type in
+ * its NATURAL shape — instances as their (no-text) bounding box, a WIRE as its
+ * line segment, etc. Text (pure annotation, never an edit target here) is
+ * deferred (its outline needs the font-extent bbox — H3).
+ * =========================================================================== */
+void clear_scope_highlight(void)
+{
+  xctx->scope_hi_n = 0;
+}
+
+void add_scope_highlight(int type, unsigned int id)
+{
+  if(xctx->scope_hi_n >= xctx->scope_hi_alloc) {
+    xctx->scope_hi_alloc = xctx->scope_hi_alloc ? xctx->scope_hi_alloc * 2 : 16;
+    my_realloc(_ALLOC_ID_, &xctx->scope_hi_type, xctx->scope_hi_alloc * sizeof(int));
+    my_realloc(_ALLOC_ID_, &xctx->scope_hi_id, xctx->scope_hi_alloc * sizeof(unsigned int));
+  }
+  xctx->scope_hi_type[xctx->scope_hi_n] = type;
+  xctx->scope_hi_id[xctx->scope_hi_n] = id;
+  ++xctx->scope_hi_n;
+}
+
+void draw_scope_highlight(void)
+{
+  int k, idx, layer;
+  GC g = xctx->gc_scope;
+
+  if(!has_x || xctx->scope_hi_n <= 0) return;
+  for(k = 0; k < xctx->scope_hi_n; ++k) {
+    unsigned int id = xctx->scope_hi_id[k];
+    switch(xctx->scope_hi_type[k]) {
+      case ELEMENT:
+        idx = inst_index_from_id(id);
+        if(idx >= 0) {
+          double x1 = xctx->inst[idx].xx1, y1 = xctx->inst[idx].yy1;
+          double x2 = xctx->inst[idx].xx2, y2 = xctx->inst[idx].yy2;
+          RECTORDER(x1, y1, x2, y2);
+          drawtemprect(g, ADD, x1, y1, x2, y2);
+        }
+        break;
+      case WIRE:
+        idx = wire_index_from_id(id);
+        if(idx >= 0)
+          drawtempline(g, ADD, xctx->wire[idx].x1, xctx->wire[idx].y1,
+                               xctx->wire[idx].x2, xctx->wire[idx].y2);
+        break;
+      case xRECT:
+        idx = gfx_index_from_id(xRECT, id, &layer);
+        if(idx >= 0) {
+          double x1 = xctx->rect[layer][idx].x1, y1 = xctx->rect[layer][idx].y1;
+          double x2 = xctx->rect[layer][idx].x2, y2 = xctx->rect[layer][idx].y2;
+          RECTORDER(x1, y1, x2, y2);
+          drawtemprect(g, ADD, x1, y1, x2, y2);
+        }
+        break;
+      case LINE:
+        idx = gfx_index_from_id(LINE, id, &layer);
+        if(idx >= 0)
+          drawtempline(g, ADD, xctx->line[layer][idx].x1, xctx->line[layer][idx].y1,
+                               xctx->line[layer][idx].x2, xctx->line[layer][idx].y2);
+        break;
+      case POLYGON:
+        idx = gfx_index_from_id(POLYGON, id, &layer);
+        if(idx >= 0) {
+          int bezier = 2 + !strboolcmp(
+            get_tok_value(xctx->poly[layer][idx].prop_ptr, "bezier", 0), "true");
+          drawtemppolygon(g, NOW, xctx->poly[layer][idx].x, xctx->poly[layer][idx].y,
+                          xctx->poly[layer][idx].points, bezier);
+        }
+        break;
+      case ARC:
+        idx = gfx_index_from_id(ARC, id, &layer);
+        if(idx >= 0)
+          drawtemparc(g, ADD, xctx->arc[layer][idx].x, xctx->arc[layer][idx].y,
+                      xctx->arc[layer][idx].r, xctx->arc[layer][idx].a, xctx->arc[layer][idx].b);
+        break;
+      default: break; /* xTEXT deferred (H3) */
+    }
+  }
+  /* flush the batched primitives (polygons draw immediately, no END) */
+  drawtemparc(g, END, 0.0, 0.0, 0.0, 0.0, 0.0);
+  drawtemprect(g, END, 0.0, 0.0, 0.0, 0.0);
+  drawtempline(g, END, 0.0, 0.0, 0.0, 0.0);
+}
+
 
 void draw(void)
 {
@@ -5570,6 +5669,7 @@ void draw(void)
     } else {
       draw_selection(xctx->gc[SELLAYER], 0); /* 20181009 moved outside of cadlayers loop */
     }
+    draw_scope_highlight(); /* apply-scope white outline, on top of the selection */
     if(tclgetboolvar("draw_crosshair")) draw_crosshair(7, 0); /* what = 1(clear) + 2(draw) */
   } /* if(has_x) */
 }

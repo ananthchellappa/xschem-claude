@@ -414,6 +414,8 @@ static void free_xschem_data()
   my_free(_ALLOC_ID_, &xctx->maxa);
   my_free(_ALLOC_ID_, &xctx->maxl);
   my_free(_ALLOC_ID_, &xctx->sel_array);
+  my_free(_ALLOC_ID_, &xctx->scope_hi_type);
+  my_free(_ALLOC_ID_, &xctx->scope_hi_id);
   for(i=0;i<CADMAXHIER; ++i) {
     if(xctx->portmap[i].table) str_hash_free(&xctx->portmap[i]);
     if(xctx->sch[i]) my_free(_ALLOC_ID_, &xctx->sch[i]);
@@ -452,6 +454,9 @@ void create_gc(void)
     if(xctx->fill_type[i]==2)  XSetFillStyle(display,xctx->gcstipple[i],FillSolid);
     else XSetFillStyle(display,xctx->gcstipple[i],FillStippled);
   }
+  /* dedicated GC for the apply-scope highlight overlay (white outline on edit
+   * targets); foreground + line width set in build_colors() (theme-aware). */
+  xctx->gc_scope = XCreateGC(display,xctx->window,0L,NULL);
 }
 
 void free_gc()
@@ -461,6 +466,7 @@ void free_gc()
     XFreeGC(display,xctx->gc[i]);
     XFreeGC(display,xctx->gcstipple[i]);
   }
+  XFreeGC(display,xctx->gc_scope);
 }
 
 static void alloc_xschem_data(const char *top_path, const char *win_path)
@@ -1074,6 +1080,16 @@ int build_colors(double dim, double dim_bg)
       XSetBackground(display, xctx->gc[i], xctx->color_index[0]); /* for dashed lines 'off' color */
       XSetForeground(display, xctx->gc[i], xctx->color_index[i]);
       XSetForeground(display, xctx->gcstipple[i], xctx->color_index[i]);
+    }
+    /* apply-scope highlight color (decision doc D1): theme-aware default — white
+     * on the dark scheme, a near-black high-contrast stroke on the light scheme —
+     * overridable by the Tcl var ::slickprop_highlight_color. Fixed ~2px screen
+     * width (D4) so the outline reads as a halo and is zoom-independent. */
+    if(has_x) {
+      const char *hc = tclgetvar("slickprop_highlight_color");
+      if(!hc || !hc[0]) hc = tclgetboolvar("dark_colorscheme") ? "#ffffff" : "#101010";
+      XSetForeground(display, xctx->gc_scope, find_best_color((char *)hc));
+      XSetLineAttributes(display, xctx->gc_scope, 2, LineSolid, LINECAP, LINEJOIN);
     }
     if(has_x) for(i=0;i<cadlayers; ++i) {
 #ifdef __unix__
