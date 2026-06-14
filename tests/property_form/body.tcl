@@ -932,4 +932,61 @@ if {[gui2_ok]} {
              PF44a PF44b PF45a PF45b PF45c PF46} { check "$t (skipped: no main window)" {1} }
 }
 
+# ===========================================================================
+# PF47 — action-logging the property apply. An interactive form Apply/OK should
+# append its replayable EFFECT to the action log:
+#     xschem apply_properties <scope> <displayed_id> <new_prop> <old_prop>
+# Logged at the INTERACTIVE layer (slickprop::do_apply), NOT in the engine
+# apply_instance_properties() — logging the engine would double-log CIW-typed
+# applies and re-log on replay (the action-log invariant; see
+# code_analysis/apply_properties_logging_decision.md). The emit goes through a
+# thin seam slickprop::log_apply (wrapping `xschem log_action`); tests SPY on
+# that seam (same technique as the tk_messageBox stub) so the assertions cover
+# the decision logic (when + exact line) without depending on the log file path.
+# ===========================================================================
+
+if {[gui2_ok]} {
+  # spy: capture every logged apply line (overrides the real seam for the suite)
+  proc slickprop::log_apply {line} { lappend ::pf47_log $line }
+
+  ### PF47a/b/c — OK with an edit logs exactly one replayable apply line that
+  ### names the scope, the new value, and (for changed-fields-only replay) the
+  ### old value.
+  pf_setup_insts
+  xschem select instance R1
+  set ::pf47_log {}
+  pf_form_run current {
+    pf_setfield value 2k
+    slickprop::ok
+  }
+  check {PF47a OK-with-edit logs exactly one apply line} {[llength $::pf47_log] == 1}
+  check {PF47b the line is the replayable apply command (scope + new value)} \
+    {[string match "xschem apply_properties current *value=2k*" [lindex $::pf47_log 0]]}
+  check {PF47c the line carries the old value too (changed-fields-only replay)} \
+    {[string match "*value=1k*" [lindex $::pf47_log 0]]}
+
+  ### PF47d — a no-op OK (no edit) logs nothing (log effects, not intentions).
+  pf_setup_insts
+  xschem select instance R1
+  set ::pf47_log {}
+  pf_form_run current {
+    slickprop::ok
+  }
+  check {PF47d a no-op OK logs nothing} {[llength $::pf47_log] == 0}
+
+  ### PF47e — the Apply button (apply_now) also logs (it routes through do_apply).
+  pf_setup_insts
+  xschem select instance R1
+  set ::pf47_log {}
+  pf_form_run current {
+    pf_setfield value 3k
+    slickprop::apply_now
+    slickprop::cancel
+  }
+  check {PF47e the Apply button also logs the apply} \
+    {[llength $::pf47_log] == 1 && [string match "*value=3k*" [lindex $::pf47_log 0]]}
+} else {
+  foreach t {PF47a PF47b PF47c PF47d PF47e} { check "$t (skipped: no main window)" {1} }
+}
+
 xschem set modified 0
