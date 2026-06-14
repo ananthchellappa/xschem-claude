@@ -1,11 +1,16 @@
 # Spec — slick `enter_text` dialog (discoverable text attributes)
 
-*Status:* **PROPOSED 2026-06-14 — awaiting ratification before RED-first build.**
-Scope chosen by user: **`enter_text` first** (text objects), **common visual
-attributes only**. Builds on the slick instance form
-([[slick-property-forms]], `src/property_form.tcl`) and reuses its
-subst-into-original + per-field contract. `text_line` (graphical primitives) is a
-deliberate **follow-up**, not in this spec.
+*Status:* **IMPLEMENTED 2026-06-14 (RED→GREEN), pending eyeball gate.** Ratified
+§2 mapping + §3 layout. Core landed in `src/property_form.tcl`
+(`slickprop::text_schema`/`text_fields`/`text_extra`/`text_assemble`/
+`text_bool_checked`/`text_bool_value`), tests TX1–TX10 (suite 181/0,
+sabotage-verified); the Tk form (`enter_text` + `slicktext::` view) landed in
+`src/xschem.tcl`, raw-box preserved as `enter_text_legacy`. Headless `--pipe`
+data-path smoke green (incl. no-data-loss on untouched `slant=oblique`). **Only
+remaining item: the manual eyeball pass (§6) — Tk layout/UX can't be asserted
+headlessly.** Scope: **`enter_text` first** (text objects), **common visual
+attributes only**. `text_line` (graphical primitives) is a deliberate
+**follow-up**, not in this spec.
 
 ---
 
