@@ -6817,7 +6817,15 @@ proc enter_text {textlabel {preserve_disabled disabled}} {
       .dialog.buttons.cancel invoke
     }
   }
-  bind .dialog.f2.txt <Shift-KeyRelease-Return> {return_release %W; .dialog.buttons.ok invoke}
+  # Enter = OK from any field. The multi-line text content is the sole exception
+  # (there Enter is a newline): its widget-level bindings below insert the newline
+  # and `break`, so the toplevel <Return> never fires while typing text. Shift-
+  # Enter in the text box still commits (OK). KP_Enter (keypad) mirrors Return.
+  bind .dialog <Return>   {.dialog.buttons.ok invoke}
+  bind .dialog <KP_Enter> {.dialog.buttons.ok invoke}
+  bind .dialog.f2.txt <Return>       {%W insert insert "\n"; break}
+  bind .dialog.f2.txt <KP_Enter>     {%W insert insert "\n"; break}
+  bind .dialog.f2.txt <Shift-Return> {.dialog.buttons.ok invoke; break}
   # Tab leaves the multi-line text field for the next form field (size, Font, …)
   # instead of inserting a tab; Shift-Tab steps back. Without this the text widget
   # traps keyboard focus and the Appearance widgets are unreachable by keyboard.
