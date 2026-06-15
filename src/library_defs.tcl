@@ -73,11 +73,18 @@ proc library_registry {} {
   global XSCHEM_LIBRARY_DEFS pathlist OS
   set defs [dict create]
 
-  # source 2 (lower precedence): tagged dirs on the search list
+  # sources on the search list (lower precedence than the defs files below):
+  #  - a dir carrying a library.tag is a library with the tag's NAME
+  #  - any other search-path dir is ALSO a library, named by its basename, so the
+  #    Library Manager shows the user's existing (flat) libraries out of the box.
+  #    First occurrence wins (mirrors the search order).
   if {[info exists pathlist]} {
     foreach dir $pathlist {
       if {[file exists [file join $dir library.tag]]} {
         dict set defs [library_tag_name $dir] $dir
+      } else {
+        set bn [file tail [file normalize $dir]]
+        if {$bn ne {} && ![dict exists $defs $bn]} { dict set defs $bn $dir }
       }
     }
   }
@@ -117,8 +124,13 @@ proc cellview_resolve {libname cell view} {
   set lpath [library_resolve $libname]
   if {$lpath eq {}} { return {} }
   set ext [expr {$view eq "schematic" ? ".sch" : ".sym"}]
+  # new lib/cell/view layout
   set cand [file join $lpath $cell $view $cell$ext]
   if {[file exists $cand]} { return $cand }
+  # legacy flat layout (so the Library Manager can open/place flat cells, and a
+  # lib-qualified ref to a flat lib resolves to the same file rule 3 would find)
+  set flat [file join $lpath $cell$ext]
+  if {[file exists $flat]} { return $flat }
   return {}
 }
 
@@ -137,9 +149,14 @@ proc library_cells {libname} {
   set lpath [library_resolve $libname]
   if {$lpath eq {}} { return {} }
   set cells {}
+  # new lib/cell/view layout: subdirs holding a view dir with a <cell>.<ext>
   foreach d [glob -nocomplain -type d [file join $lpath *]] {
     set cell [file tail $d]
     if {[llength [glob -nocomplain [file join $d * $cell.*]]] > 0} { lappend cells $cell }
+  }
+  # legacy flat layout: <cell>.sym / <cell>.sch directly in the library dir
+  foreach f [glob -nocomplain [file join $lpath *.sym] [file join $lpath *.sch]] {
+    lappend cells [file rootname [file tail $f]]
   }
   return [lsort -unique $cells]
 }
@@ -149,12 +166,15 @@ proc library_cells {libname} {
 proc cell_views {libname cell} {
   set lpath [library_resolve $libname]
   if {$lpath eq {}} { return {} }
-  set base [file join $lpath $cell]
   set views {}
-  foreach d [glob -nocomplain -type d [file join $base *]] {
+  # new layout: subdirs of <lib>/<cell> holding a <cell>.<ext> datafile
+  foreach d [glob -nocomplain -type d [file join $lpath $cell *]] {
     if {[llength [glob -nocomplain [file join $d $cell.*]]] > 0} { lappend views [file tail $d] }
   }
-  return [lsort $views]
+  # legacy flat layout: <cell>.sym -> symbol, <cell>.sch -> schematic
+  if {[file isfile [file join $lpath $cell.sym]]} { lappend views symbol }
+  if {[file isfile [file join $lpath $cell.sch]]} { lappend views schematic }
+  return [lsort -unique $views]
 }
 
 # abs_sym_path rule 2: resolve a lib-qualified reference "lib/cell[.ext]" under

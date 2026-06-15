@@ -40,6 +40,24 @@ check "LB2c buf schematic-only"   [expr {[q cell_views tlib buf] eq {schematic}}
 check "LB3a unknown lib empty"  [expr {[q lib_cells nolib] eq {}}]            "(=> '[q lib_cells nolib]')"
 check "LB3b unknown cell empty" [expr {[q cell_views tlib nocell] eq {}}]     "(=> '[q cell_views tlib nocell]')"
 
+# --- LB4 — a FLAT library dir on the search path is a library too -----------
+# (no defs entry, no tag): named by basename, with flat-layout cells/views.
+# This is what makes the Library Manager non-empty in a stock install.
+file mkdir $tmp/flatlib
+touch $tmp/flatlib/fa.sym
+touch $tmp/flatlib/fb.sch
+touch $tmp/flatlib/fc.sym
+touch $tmp/flatlib/fc.sch
+lappend ::pathlist "$tmp/flatlib"
+
+proc lib_listed {name} { foreach p [q libraries] { if {[lindex $p 0] eq $name} { return 1 } }; return 0 }
+check "LB4 flat search-path dir is a library" [lib_listed flatlib] {}
+check "LB5 flat lib enumerates cells" [expr {[q lib_cells flatlib] eq {fa fb fc}}] "(=> [q lib_cells flatlib])"
+check "LB6a flat cell both views" [expr {[q cell_views flatlib fc] eq {schematic symbol}}] "(=> [q cell_views flatlib fc])"
+check "LB6b flat cell symbol-only" [expr {[q cell_views flatlib fa] eq {symbol}}] "(=> [q cell_views flatlib fa])"
+check "LB7 cellview_path resolves a flat cell" \
+  [expr {[q cellview_path flatlib/fc symbol] eq "$tmp/flatlib/fc.sym"}] "(=> [q cellview_path flatlib/fc symbol])"
+
 file delete -force $tmp
 if {$fail == 0} { puts "RESULT: ALL PASS" } else { puts "RESULT: $fail FAILED" }
 flush stdout
