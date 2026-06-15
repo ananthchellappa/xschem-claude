@@ -1,9 +1,13 @@
 # Issue 0007 — undo after a property edit silently deselects the object
 
 **Opened:** 2026-06-14
-**Status:** OPEN — root cause found + verified in both undo backends; not yet
-fixed. Reported during the slick-form work but it is a **pre-existing,
-general undo behaviour**, not specific to the slick forms.
+**Status:** RESOLVED 2026-06-15 — fixed on `fix/0007-undo-keep-selection` (off
+master) and propagated here (slick) + `feature/hover-highlight`. The fix keys off
+**array position** (not stable id, as originally sketched): the default `disk`
+backend re-mints ids on reload, so an id snapshot would not survive it. See
+`code_analysis/undo_keep_selection_decision.md` and
+`tests/headless/test_undo_selection.tcl` (20/20, both backends). Was: pre-existing,
+general undo behaviour, not specific to the slick forms.
 **Affects:** the selection after any `xschem undo` (key `u`, menu, or typed
 `xschem undo; xschem redraw` in the CIW) that actually restores a slot — the
 previously-selected object(s) come back **unselected**.
