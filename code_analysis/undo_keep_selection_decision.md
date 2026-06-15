@@ -1,7 +1,11 @@
 # Issue 0007 — keep selection across undo/redo: plan + decisions
 
-**Status:** RATIFIED 2026-06-15 — approach = **index + count-guard, at the call
-site**. Ready for RED-first implementation.
+**Status:** RESOLVED 2026-06-15 — RED `75d2472e` / GREEN `01a22b39`. Approach =
+**index + count-guard, at the call site** (`pop_undo_keep_selection` in select.c,
+wrapping the two scheduler undo/redo sites). Test `tests/headless/test_undo_selection.tcl`
+20/20 on **both** backends; sabotage-verified; core regression clean. Fully headless
+(no eyeball needed). NOTE: branch is off master, which needed `./configure` to
+regenerate the (feature-branch-stale) `src/Makefile` before building.
 **Branch:** `fix/0007-undo-keep-selection` (off `master`).
 **Issue:** `issues/0007-undo-deselects-objects-after-property-edit.md`.
 
