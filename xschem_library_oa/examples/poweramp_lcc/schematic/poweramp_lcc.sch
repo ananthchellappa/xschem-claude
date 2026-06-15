@@ -402,8 +402,8 @@ tclcommand="
 xschem raw_read $netlist_dir/poweramp_lcc_xyce.raw tran
 "
 }
-C {examples/mos_power_ampli} 310 1440 0 0 {name=x0}
-C {examples/mos_power_ampli} 310 -120 0 0 {name=x1}
+C {examples/mos_power_ampli.sch} 310 1440 0 0 {name=x0}
+C {examples/mos_power_ampli.sch} 310 -120 0 0 {name=x1}
 C {devices/lab_wire} 1760 760 0 1 {name=p29 lab=OUTP}
 C {devices/lab_wire} 1760 -800 0 1 {name=p30 lab=OUTM}
 C {devices/lab_pin} 80 940 0 0 {name=p33 lab=OUTP}

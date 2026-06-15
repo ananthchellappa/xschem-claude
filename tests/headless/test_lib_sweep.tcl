@@ -24,6 +24,9 @@ proc body {text} {
   foreach ln [split $text \n] {
     set t [string trim $ln]
     if {$t eq "" || [string index $t 0] eq "*"} continue
+    # .include paths are deployment-specific (lib location / netlist_dir for
+    # generated models): compare the file name, not the absolute directory.
+    if {[regexp {^\.include\s+(.*)$} $t -> inc]} { set t ".include [file tail $inc]" }
     lappend out $t
   }
   return [lsort $out]
@@ -62,6 +65,10 @@ check "P3 refs lib-qualified" [expr {[file isfile $cm] && [regexp {C \{devices/n
 # --- P4 — netlist-equivalence sweep over every migrated schematic ------------
 set oadirs {};   foreach d [glob -nocomplain -type d $OA/*]   { lappend oadirs $d }
 set flatdirs {}; foreach d [glob -nocomplain -type d $FLAT/*] { lappend flatdirs $d }
+# the intended deployment: the migrated registry (library.defs) resolves the
+# migrated libs (lib-qualified refs -> oa), while the flat search path still
+# covers the libraries deliberately left flat (generators, inst_sch_select, ...).
+set migdirs [concat $oadirs $flatdirs]
 proc netlist_body {sch defs dirs outdir} {
   file delete -force $outdir; file mkdir $outdir
   set ::XSCHEM_LIBRARY_DEFS $defs
@@ -82,7 +89,7 @@ foreach lib $MIGRATED {
     set fsch [file join $FLAT $lib $cell.sch]
     if {![file isfile $fsch]} continue
     set fb [netlist_body $fsch  ""    $flatdirs [file join $tmp f]]
-    set mb [netlist_body $msch  $defs $oadirs   [file join $tmp m]]
+    set mb [netlist_body $msch  $defs $migdirs  [file join $tmp m]]
     incr compared
     if {!($fb eq $mb && [llength $fb] > 0)} {
       lappend diffs "$lib/$cell (flat=[llength $fb] mig=[llength $mb])"

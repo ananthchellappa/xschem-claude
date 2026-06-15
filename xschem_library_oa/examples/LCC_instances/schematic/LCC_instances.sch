@@ -278,9 +278,9 @@ device=resistor
 m=1}
 C {devices/lab_pin} 1240 -360 0 0 {name=p15 lab=HALF}
 C {devices/title} 160 -30 0 0 {name=l1 author="Stefan Schippers"}
-C {examples/cmos_inv} 50 -260 0 0 {name=Xinv WN=15u WP=45u LLN=3u LLP=3u}
+C {examples/cmos_inv.sch} 50 -260 0 0 {name=Xinv WN=15u WP=45u LLN=3u LLP=3u}
 C {examples/cmos_inv} 250 -190 0 0 {name=Xinv2 WN=15u WP=45u LLN=3u LLP=3u}
-C {examples/bus_keeper} 1290 60 0 0 {name=Xkeeper WN_FB=6u WP_FB=12u}
+C {examples/bus_keeper.sch} 1290 60 0 0 {name=Xkeeper WN_FB=6u WP_FB=12u}
 C {devices/lab_pin} 1350 -490 0 1 {name=p1 lab=ZZ}
 C {devices/lab_pin} 410 -860 0 0 {name=p14 lab=A}
 C {devices/lab_pin} 570 -910 0 1 {name=p2 lab=Z}

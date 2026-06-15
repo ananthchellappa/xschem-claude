@@ -320,7 +320,7 @@ m=1
 }
 C {devices/lab_pin} 1510 -640 0 0 {name=p22 sig_type=std_logic lab=VSS
 }
-C {rom2_sa.sym} 830 -1110 0 0 {name=xsa[15:0]}
+C {rom8k/rom2_sa} 830 -1110 0 0 {name=xsa[15:0]}
 C {devices/lab_pin} 680 -1170 0 0 {name=p24 lab=LDCP}
 C {devices/lab_pin} 680 -1150 0 0 {name=p25 lab=LDYMS}
 C {devices/lab_pin} 680 -1130 0 0 {name=p26 lab=LDOE}

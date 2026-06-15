@@ -373,7 +373,7 @@ C {devices/ammeter} 460 -870 0 0 {name=vd}
 C {devices/ammeter} 460 -970 0 0 {name=vu}
 C {devices/lab_pin} 460 -1160 0 0 {name=p27 lab=VPP}
 C {devices/lab_pin} 460 -910 0 0 {name=p3 lab=OUT}
-C {comp_ngspice.sym} 550 -370 2 1 {name=x1 
+C {ngspice/comp_ngspice} 550 -370 2 1 {name=x1 
 OFFSET=5
 AMPLITUDE=10}
 C {devices/lab_pin} 750 -370 0 1 {name=p6 lab=DRIVED}
@@ -427,7 +427,7 @@ descr="Netlist + Simulate
 Ctrl-Left-Click" 
 tclcommand="xschem netlist; xschem simulate"
 }
-C {comp_ngspice.sym} 550 -520 0 0 {name=x2 
+C {ngspice/comp_ngspice} 550 -520 0 0 {name=x2 
 OFFSET=5
 AMPLITUDE=10}
 C {devices/lab_pin} 750 -520 0 1 {name=p1 lab=DRIVEU}

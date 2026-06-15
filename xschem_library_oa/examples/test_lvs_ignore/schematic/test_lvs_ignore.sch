@@ -90,7 +90,7 @@ xschem unhilight_all
 "}
 C {devices/vsource} 850 -350 0 0 {name=V2 value=0
 lvs_ignore=open}
-C {inv_ngspice.sym} 1050 -430 0 0 {name=x5 ROUT=1000}
+C {ngspice/inv_ngspice} 1050 -430 0 0 {name=x5 ROUT=1000}
 C {devices/lab_show} 920 -430 0 1 {name=l10 }
 C {devices/lab_show} 1110 -430 0 1 {name=l3 }
 C {devices/gnd} 850 -290 0 0 {name=l4 lab=GND}
@@ -109,7 +109,7 @@ device="ceramic capacitor"}
 C {devices/gnd} 50 -290 0 0 {name=l13 lab=GND}
 C {devices/lab_show} 170 -430 2 0 {name=l14 }
 C {devices/lab_pin} 430 -430 0 1 {name=p1 sig_type=std_logic lab=STARTUP}
-C {inv_ngspice.sym} 320 -430 0 0 {name=x2 ROUT=1000}
+C {ngspice/inv_ngspice} 320 -430 0 0 {name=x2 ROUT=1000}
 C {devices/res} 850 -540 0 0 {name=R2
 value=100MEG
 footprint=1206

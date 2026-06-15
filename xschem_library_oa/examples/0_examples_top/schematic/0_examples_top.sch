@@ -145,9 +145,9 @@ C {devices/lab_pin} 410 -350 3 1 {name=l4 sig_type=std_logic lab=BUS[2]}
 C {examples/LCC_instances} 160 -620 0 0 {name=x7}
 C {examples/test_backannotated_subckt} 160 -580 0 0 {name=x10}
 C {examples/plot_manipulation} 160 -540 0 0 {name=x11}
-C {logic_test.sym} 160 -500 0 0 {name=x12}
-C {simulate_ff.sym} 160 -460 0 0 {name=x13}
-C {test_mos_verilog.sym} 160 -420 0 0 {name=x14}
+C {xschem_simulator/logic_test} 160 -500 0 0 {name=x12}
+C {xschem_simulator/simulate_ff} 160 -460 0 0 {name=x13}
+C {logic/test_mos_verilog} 160 -420 0 0 {name=x14}
 C {devices/launcher} 1265 -225 0 0 {name=h5 
 descr=" Ctrl-Left-Click to load/
 unload waveforms" 
@@ -1481,11 +1481,11 @@ cwtAyKwqggMC8z8AAABAXz/APixDHOviNio/cIyWTt0GHEAHmaX3NW0zQHJvU5F/bTNA3V5CW3kqoL85
 UsA+"
 }
 C {examples/test_ac} 160 -380 0 0 {name=x15}
-C {rom8k.sym} 160 -220 0 0 {name=x17}
+C {rom8k/rom8k} 160 -220 0 0 {name=x17}
 C {examples/test_doublepin} 160 -340 0 0 {name=x19}
 C {examples/classD_amp} 160 -260 0 0 {name=x20}
-C {delta_sigma.sym} 480 -900 0 0 {name=x21}
-C {solar_panel.sym} 480 -860 0 0 {name=xsolar}
+C {ngspice/delta_sigma} 480 -900 0 0 {name=x21}
+C {ngspice/solar_panel} 480 -860 0 0 {name=xsolar}
 C {examples/test_extracted_netlist} 160 -300 0 0 {name=x23
 tclcommand="xschem descend"}
 C {examples/poweramp_lcc} 160 -140 0 0 {name=x16
@@ -1498,11 +1498,11 @@ C {examples/test_jfet} 480 -660 0 0 {name=x25}
 C {examples/test_short_option} 480 -620 0 0 {name=x26}
 C {examples/test_lvs_ignore} 480 -580 0 0 {name=x27}
 C {test_generators.sym} 480 -540 0 0 {name=x28}
-C {autozero_comp.sym} 480 -500 0 0 {name=x29}
+C {ngspice/autozero_comp} 480 -500 0 0 {name=x29}
 C {examples/tb_symbol_include} 480 -780 0 0 {name=x30}
 C {devices/intuitive_interface_cheatsheet} 1060 -100 0 0 {name=x31}
 C {examples/test_nyquist} 480 -460 0 0 {name=x32}
-C {tb_diff_amp.sym} 890 -900 0 0 {name=x33}
-C {tb_sar_adc.sym} 1360 -870 0 0 {name=x34}
-C {tb_counter_wrapper.sym} 1360 -900 0 0 {name=x35}
+C {ngspice/tb_diff_amp} 890 -900 0 0 {name=x33}
+C {ngspice_verilog_cosim/tb_sar_adc} 1360 -870 0 0 {name=x34}
+C {ngspice_verilog_cosim/tb_counter_wrapper} 1360 -900 0 0 {name=x35}
 C {examples/tb_test_evaluated_param} 480 -940 0 0 {name=x36}

@@ -42,8 +42,8 @@ N 190 -690 210 -690 {
 lab=A}
 N 160 -300 190 -300 {
 lab=A}
-C {examples/cmos_inv} 150 -70 0 0 {name=X2 WN=15u WP=45u LLN=3u LLP=3u}
-C {examples/cmos_inv} 580 -460 0 1 {name=X1 WN=WN_FB WP=WP_FB LLN=3u LLP=3u}
+C {examples/cmos_inv.sch} 150 -70 0 0 {name=X2 WN=15u WP=45u LLN=3u LLP=3u}
+C {examples/cmos_inv.sch} 580 -460 0 1 {name=X1 WN=WN_FB WP=WP_FB LLN=3u LLP=3u}
 C {devices/iopin} 160 -300 0 1 {name=p1 lab=A}
 C {devices/title} 160 -30 0 0 {name=l1 author="Stefan Schippers"}
 C {devices/capa} 550 -270 0 0 {name=C1

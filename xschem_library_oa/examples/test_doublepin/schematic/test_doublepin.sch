@@ -356,15 +356,15 @@ C {devices/lab_pin} 680 -180 0 0 {name=p8 lab=ZZ[16]}
 C {examples/doublepin} 1230 -230 0 0 {name=x22[1:0]
 }
 C {devices/lab_pin} 1410 -180 0 1 {name=p1 lab=ZZ[15]}
-C {inv_ngspice.sym} 80 -260 0 0 {name=x18 ROUT=1000}
-C {inv_ngspice.sym} 70 -450 0 0 {name=x19 ROUT=1000}
+C {ngspice/inv_ngspice} 80 -260 0 0 {name=x18 ROUT=1000}
+C {ngspice/inv_ngspice} 70 -450 0 0 {name=x19 ROUT=1000}
 C {examples/doublepin} 1590 -460 0 0 {name=x20
 }
 C {devices/lab_pin} 1770 -310 0 1 {name=p8 lab=ZZ[18]}
 C {examples/doublepin} 1890 -460 0 0 {name=x21
 }
 C {devices/lab_pin} 2070 -310 0 1 {name=p8 lab=ZZ[19]}
-C {inv_ngspice.sym} 770 -350 0 0 {name=x15 ROUT=1000}
+C {ngspice/inv_ngspice} 770 -350 0 0 {name=x15 ROUT=1000}
 C {examples/doublepin} 1410 -870 0 0 {name=x23
 }
 C {devices/lab_wire} 1180 -880 0 0 {name=l2 sig_type=std_logic lab=AA[3:0]}

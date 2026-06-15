@@ -144,11 +144,11 @@ use work.rrreal_pkg.all;
 }
 C {examples/pump} 250 -680 0 0 {name=x4 conduct="1.0/20000.0" val=4.5}
 C {devices/lab_pin} 150 -680 0 0 {name=l4  lab=ING}
-C {examples/switch_rreal} 660 -670 0 0 {name=x5 del="2 ns"}
+C {examples/switch_rreal.sch} 660 -670 0 0 {name=x5 del="2 ns"}
 C {devices/lab_pin} 510 -660 0 0 {name=l5  lab=SW}
 C {examples/real_capa} 450 -540 0 0 {name=x3 cap=30.0}
 C {examples/real_capa} 830 -540 0 0 {name=x1 cap=100.0}
-C {examples/switch_rreal} 1050 -670 0 0 {name=x2 del="2 ns"}
+C {examples/switch_rreal.sch} 1050 -670 0 0 {name=x2 del="2 ns"}
 C {devices/lab_pin} 900 -660 0 0 {name=l2  lab=SW1}
 C {devices/lab_pin} 1240 -680 0 1 {name=l3  lab=SP sig_type=rrreal}
 C {examples/real_capa} 1230 -540 0 0 {name=x6 cap=20.0}

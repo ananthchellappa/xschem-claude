@@ -127,18 +127,18 @@ spice_ignore="tcleval([if \{$IGNORE == 1\} \{return \{true\}\} else \{return \{f
 C {devices/lab_show} 480 -580 0 1 {name=l3 }
 C {devices/ipin} 100 -170 0 0 { name=p7 lab=NET_C }
 C {devices/lab_show} 660 -480 0 1 {name=l5 }
-C {inv_ngspice.sym} 570 -480 0 0 {name=x3  
+C {ngspice/inv_ngspice} 570 -480 0 0 {name=x3  
 ROUT=1000}
-C {inv_ngspice.sym} 570 -290 0 0 {name=x6  
+C {ngspice/inv_ngspice} 570 -290 0 0 {name=x6  
 ROUT=1000
 spice_ignore="tcleval([if \{$IGNORE == 1\} \{return \{false\}\} else \{return \{short\}\}])"}
-C {inv_ngspice.sym} 340 -480 0 0 {name=x7  
+C {ngspice/inv_ngspice} 340 -480 0 0 {name=x7  
 spice_ignore="tcleval([if \{$IGNORE == 1\} \{return \{false\}\} else \{return \{true\}\}])"
 ROUT=1000}
-C {inv_ngspice.sym} 340 -290 0 0 {name=x8  
+C {ngspice/inv_ngspice} 340 -290 0 0 {name=x8  
 spice_ignore="tcleval([if \{$IGNORE == 1\} \{return \{true\}\} else \{return \{false\}\}])"
 ROUT=1000}
-C {and_ngspice.sym} 790 -380 0 0 {name=x4 ROUT=1000 
+C {ngspice/and_ngspice} 790 -380 0 0 {name=x4 ROUT=1000 
 spice_ignore="tcleval([if \{$IGNORE == 0\} \{return \{false\}\} else \{return \{true\}\}])"
 }
 C {devices/short} 790 -460 1 0 {name=x1
@@ -167,10 +167,10 @@ spice_ignore="tcleval([if \{$IGNORE == 0\} \{return \{true\}\} else \{return \{s
 C {devices/lab_show} 180 -580 0 0 {name=l6 }
 C {devices/lab_wire} 920 -380 0 0 {name=p6 sig_type=std_logic lab=NET_E}
 C {devices/lab_pin} 1820 -590 0 1 {name=p8 sig_type=std_logic lab=NET_F}
-C {inv_ngspice.sym} 1520 -590 0 0 {name=x10  
+C {ngspice/inv_ngspice} 1520 -590 0 0 {name=x10  
 ROUT=1000
 spice_ignore="tcleval([if \{$IGNORE == 0\} \{return \{false\}\} else \{return \{short\}\}])"}
-C {inv_ngspice.sym} 1720 -590 0 0 {name=x11  
+C {ngspice/inv_ngspice} 1720 -590 0 0 {name=x11  
 ROUT=1000}
 C {devices/lab_pin} 1210 -590 0 0 {name=p9 sig_type=std_logic lab=NET_B}
 C {devices/lab_show} 1590 -590 0 1 {name=l7 }

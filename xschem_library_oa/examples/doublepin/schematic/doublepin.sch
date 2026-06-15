@@ -47,6 +47,6 @@ library ieee;
         use ieee.std_logic_1164.all;
         use ieee.numeric_std.all;}
 C {devices/lab_pin} 580 -280 0 1 {name=l2 sig_type=std_logic lab=Z,NC1,NC2,NC3}
-C {latch.sym} 470 -260 0 0 {name=x2[3:0] delay="200 ps" del=200}
+C {logic/latch} 470 -260 0 0 {name=x2[3:0] delay="200 ps" del=200}
 C {devices/lab_pin} 540 -240 0 1 {name=l3 sig_type=std_logic lab=NC4,NC5,NC6,NC7}
 C {devices/noconn} 400 -190 2 0 {name=l4}
