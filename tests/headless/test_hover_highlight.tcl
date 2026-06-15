@@ -106,6 +106,26 @@ check "HV4 active gesture suppresses hover" [expr {[hov_type] eq ""}] "(=> [hov_
 set qx [expr {int((420 + $xo) / $z)}]; set qy [expr {int((420 + $yo) / $z)}]
 xschem callback .drw $BR $qx $qy 0 $B3 $B3MASK 0; update idletasks
 
+# --- HV7 — a resting SELECTION must NOT kill the hover cue -------------------
+# Selecting an object sets ui_state|=SELECTION. That is a resting state (not a
+# transient gesture), so hovering a DIFFERENT, unselected object must still work.
+xschem unselect_all
+set ::hover_highlight 1
+xschem select instance R1
+motion_to 200 100
+check "HV7 hover works while another object is selected" \
+  [expr {[hov_type] eq "wire"}] "(=> [hov_type], ui_state=[xschem get ui_state])"
+
+# --- HV8 — no hover outline on an object that is ALREADY selected ------------
+# The hover (dashed yellow) and the selection highlight would fight on the same
+# object, so hovering the selected object itself reports nothing.
+xschem unselect_all
+xschem select wire 0
+motion_to 200 100
+check "HV8 no hover on an already-selected object" \
+  [expr {[hov_type] eq ""}] "(=> [hov_type], ui_state=[xschem get ui_state])"
+xschem unselect_all
+
 if {$fail == 0} { puts "RESULT: ALL PASS" } else { puts "RESULT: $fail FAILED" }
 flush stdout
 exit [expr {$fail == 0 ? 0 : 1}]
