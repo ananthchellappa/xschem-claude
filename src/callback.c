@@ -1804,6 +1804,24 @@ void draw_crosshair(int what, int state)
  * re-establish the outline after a full redraw). Focus-independent: it runs on
  * MotionNotify, which X11 delivers to the window under the pointer regardless of
  * keyboard focus. See code_analysis/hover_highlight_decision.md. */
+
+/* Is the object (type, n, layer c) currently selected? Used to suppress the
+ * hover outline on an already-selected object — the dashed-yellow cue and the
+ * selection highlight would otherwise fight on the same shape. */
+static int hover_obj_selected(int type, int n, int c)
+{
+  switch(type) {
+    case ELEMENT: return n >= 0 && n < xctx->instances && xctx->inst[n].sel == SELECTED;
+    case WIRE:    return n >= 0 && n < xctx->wires     && xctx->wire[n].sel == SELECTED;
+    case xTEXT:   return n >= 0 && n < xctx->texts     && xctx->text[n].sel == SELECTED;
+    case xRECT:   return c >= 0 && c < cadlayers && n >= 0 && n < xctx->rects[c]    && xctx->rect[c][n].sel == SELECTED;
+    case LINE:    return c >= 0 && c < cadlayers && n >= 0 && n < xctx->lines[c]    && xctx->line[c][n].sel == SELECTED;
+    case POLYGON: return c >= 0 && c < cadlayers && n >= 0 && n < xctx->polygons[c] && xctx->poly[c][n].sel == SELECTED;
+    case ARC:     return c >= 0 && c < cadlayers && n >= 0 && n < xctx->arcs[c]     && xctx->arc[c][n].sel == SELECTED;
+    default: return 0;
+  }
+}
+
 void draw_hover(int force)
 {
   int sdw = xctx->draw_window, sdp = xctx->draw_pixmap;
@@ -1811,9 +1829,16 @@ void draw_hover(int force)
   Selected newsel;
 
   if(!has_x) return;
+  /* A resting SELECTION (ui_state&SELECTION) is not a transient gesture, so it
+   * must not suppress the hover cue — mask it off before the idle check. The
+   * remaining ui_state bits (STARTMOVE, STARTWIRE, panning, ...) still gate it. */
   if(tclgetboolvar("hover_highlight") && xctx->mouse_inside &&
-     xctx->ui_state == 0 && xctx->semaphore < 2) {
+     (xctx->ui_state & ~SELECTION) == 0 && xctx->semaphore < 2) {
     newsel = find_closest_obj(xctx->mousex, xctx->mousey, 0);
+    /* don't outline an object that is already selected (overlays would fight) */
+    if(newsel.type && hover_obj_selected(newsel.type, (int)newsel.n, newsel.col)) {
+      newsel.type = 0; newsel.n = 0; newsel.col = 0;
+    }
   } else {
     newsel.type = 0; newsel.n = 0; newsel.col = 0;
   }
