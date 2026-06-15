@@ -94,6 +94,21 @@ xschem undo_type disk; xschem undo_type memory   ;# force a clean memory stack
 core_check "US6(memory)"
 xschem undo_type memory; xschem undo_type disk   ;# restore default
 
+# --- US7: the GUI undo via the 'u' KEY (not the `xschem undo` command) -------
+# On master the u-key handler calls pop_undo directly in C, bypassing the
+# scheduler `xschem undo` wrapper, so this guards the route the command path does
+# not cover. (On the action-registry feature branches 'u' is Tcl-backed -> xschem
+# undo, so this also passes there — branch-agnostic in outcome.) keysym u = 117,
+# X11 KeyPress = event 2.
+xschem undo_type memory; xschem undo_type disk
+setup
+xschem select instance R1
+xschem setprop instance R1 value 55k
+xschem callback .drw 2 100 100 117 0 0 0          ;# press 'u' -> undo
+update idletasks
+check "US7 'u'-KEY undo keeps the selection" [expr {[xschem get lastsel] == 1}] "(lastsel=[xschem get lastsel])"
+check "US7 'u'-KEY undo reverted the edit (value=1k)" [string match {*value=1k*} [inst_prop R1]] "([inst_prop R1])"
+
 if {$fail == 0} { puts "RESULT: ALL PASS" } else { puts "RESULT: $fail FAILED" }
 flush stdout
 exit [expr {$fail == 0 ? 0 : 1}]

@@ -3512,7 +3512,7 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
     case 'u':
       if(rstate==0) { /* undo */
         if(xctx->semaphore >= 2) break;
-        xctx->pop_undo(0, 1);  /* 2nd parameter: set_modify_status */
+        pop_undo_keep_selection(0, 1);  /* issue 0007: keep selection (2nd param: set_modify_status) */
         draw();
       }
       else if(EQUAL_MODMASK) { /* align to grid */
@@ -3537,7 +3537,7 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
     case 'U':
       if(rstate == 0) { /* redo */
         if(xctx->semaphore >= 2) break;
-        xctx->pop_undo(1, 1); /* 2nd parameter: set_modify_status */
+        pop_undo_keep_selection(1, 1); /* issue 0007: keep selection (2nd param: set_modify_status) */
         draw();
       }
       break;
