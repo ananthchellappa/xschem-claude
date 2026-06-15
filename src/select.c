@@ -1845,4 +1845,82 @@ void select_all(void)
  rebuild_selected_array(); /* sets or clears xctx->ui_state SELECTION flag */
 }
 
+/* sum of per-layer counts for a graphical object kind (rect/line/poly/arc) */
+static int gfx_total(int *per_layer)
+{
+  int c, n = 0;
+  for(c = 0; c < cadlayers; ++c) n += per_layer[c];
+  return n;
+}
+
+/* Issue 0007: preserve the selection across an undo/redo restore.
+ *
+ * Both undo backends clear the selection during a restore (unselect_all), and
+ * selection is NOT part of the undo snapshot, so undoing an edit used to silently
+ * deselect the object. Here we snapshot the selected set by ARRAY POSITION
+ * (type, layer, index) before the restore and re-apply it after — but only if the
+ * object population is unchanged (a non-structural edit was undone): for a
+ * property/geometry edit the restored objects keep their order in BOTH backends,
+ * so the indices still point at the same objects.
+ *
+ * Array position (not stable id) is used deliberately: the default 'disk' backend
+ * restores by reloading the slot file, which re-mints stable ids, so an id
+ * snapshot would not survive it (memory keeps ids, disk does not). Structural
+ * undos (create/delete/reorder change the per-type counts) skip re-selection —
+ * the selection drops, exactly the prior behaviour. Backend-agnostic: wraps the
+ * xctx->pop_undo function pointer, so it covers both backends from one place.
+ * Plan: code_analysis/undo_keep_selection_decision.md. */
+void pop_undo_keep_selection(int redo, int set_modify)
+{
+  int nsel, i;
+  int *sty = NULL, *scl = NULL, *sn = NULL;   /* snapshot: type, layer(col), index */
+  int b_inst, b_wire, b_text, b_rect, b_line, b_poly, b_arc; /* population, before */
+
+  rebuild_selected_array();
+  nsel = xctx->lastsel;
+  if(nsel > 0) {
+    sty = my_malloc(_ALLOC_ID_, nsel * sizeof(int));
+    scl = my_malloc(_ALLOC_ID_, nsel * sizeof(int));
+    sn  = my_malloc(_ALLOC_ID_, nsel * sizeof(int));
+    for(i = 0; i < nsel; ++i) {
+      sty[i] = xctx->sel_array[i].type;
+      scl[i] = xctx->sel_array[i].col;
+      sn[i]  = xctx->sel_array[i].n;
+    }
+  }
+  /* population fingerprint before the restore (per-type totals) */
+  b_inst = xctx->instances; b_wire = xctx->wires; b_text = xctx->texts;
+  b_rect = gfx_total(xctx->rects); b_line = gfx_total(xctx->lines);
+  b_poly = gfx_total(xctx->polygons); b_arc = gfx_total(xctx->arcs);
+
+  /* the actual restore (clears the selection + reloads the object model) */
+  xctx->pop_undo(redo, set_modify);
+
+  /* re-apply the selection only if the population is unchanged (non-structural
+   * undo). select_*(..., 3, 1): fast=3 = no status line + no draw (a redraw
+   * follows); override_lock=1 = faithfully reselect (these were selected). */
+  if(nsel > 0 &&
+     b_inst == xctx->instances && b_wire == xctx->wires && b_text == xctx->texts &&
+     b_rect == gfx_total(xctx->rects) && b_line == gfx_total(xctx->lines) &&
+     b_poly == gfx_total(xctx->polygons) && b_arc == gfx_total(xctx->arcs)) {
+    for(i = 0; i < nsel; ++i) {
+      int c = scl[i], n = sn[i];
+      switch(sty[i]) {
+        case ELEMENT: if(n < xctx->instances)                       select_element(n, SELECTED, 3, 1); break;
+        case WIRE:    if(n < xctx->wires)                           select_wire(n, SELECTED, 3, 1);    break;
+        case xTEXT:   if(n < xctx->texts)                           select_text(n, SELECTED, 3, 1);    break;
+        case xRECT:   if(c < cadlayers && n < xctx->rects[c])       select_box(c, n, SELECTED, 3, 1);  break;
+        case LINE:    if(c < cadlayers && n < xctx->lines[c])       select_line(c, n, SELECTED, 3, 1); break;
+        case POLYGON: if(c < cadlayers && n < xctx->polygons[c])    select_polygon(c, n, SELECTED, 3, 1); break;
+        case ARC:     if(c < cadlayers && n < xctx->arcs[c])        select_arc(c, n, SELECTED, 3, 1);  break;
+        default: break;
+      }
+    }
+    rebuild_selected_array();
+  }
+  my_free(_ALLOC_ID_, &sty);
+  my_free(_ALLOC_ID_, &scl);
+  my_free(_ALLOC_ID_, &sn);
+}
+
 

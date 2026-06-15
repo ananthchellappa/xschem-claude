@@ -5657,7 +5657,7 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
     else if(!strcmp(argv[1], "redo"))
     {
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
-      xctx->pop_undo(1, 1); /* 2nd param: set_modify_status */
+      pop_undo_keep_selection(1, 1); /* issue 0007: keep selection across redo */
       Tcl_ResetResult(interp);
     }
 
@@ -7638,7 +7638,7 @@ static int xschem_cmds_u(Tcl_Interp *interp, int argc, const char *argv[], int *
       if(argc > 3) {
         set_modify = atoi(argv[3]);
       }
-      xctx->pop_undo(redo, set_modify); /* 2nd param: set_modify_status */
+      pop_undo_keep_selection(redo, set_modify); /* issue 0007: keep selection across undo */
       Tcl_ResetResult(interp);
     }
 

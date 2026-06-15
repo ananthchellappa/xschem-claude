@@ -1695,6 +1695,7 @@ extern void new_polygon(int what, double mousex_snap, double mousey_snap);
 extern void compile_font(void);
 extern void flip_rotate_ellipse(xRect *r, int rot, int flip);
 extern void rebuild_selected_array(void);
+extern void pop_undo_keep_selection(int redo, int set_modify); /* undo/redo, keep selection (issue 0007) */
 
 extern int get_instance(const char *s);
 extern void edit_property(int x);
