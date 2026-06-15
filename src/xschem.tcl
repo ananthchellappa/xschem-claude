@@ -7940,7 +7940,213 @@ proc write_data {data f} {
   return {}
 }
 
-proc text_line {txtlabel clear {preserve_disabled disabled} } {
+# ---------------------------------------------------------------------------
+# Slick text_line: when editing a GRAPHICAL object (rect/line/poly/arc/wire — the
+# `normal` caller path) whose type has a slickprop::gfx_schema, show a discoverable
+# Appearance panel instead of the raw token box. The global-netlist-prop and
+# header paths (genuinely freeform) keep the legacy editor. The edited type is the
+# first selected object's type (`xschem selection`): whenever this graphical path
+# is reached the primary selection is sel_array[0] (an instance primary routes to
+# the slick instance form instead), so that type is exactly what C edits.
+# Spec: specs/slick_text_line_dialog.md. Legacy preserved as text_line_legacy.
+# ---------------------------------------------------------------------------
+namespace eval gfxform {
+  variable orig {}      ;# property string the dialog opened with (tctx::retval)
+  variable schema {}    ;# the per-type slickprop::gfx_schema
+  variable val          ;# array: int-field tok -> current value (dash)
+  variable loaded       ;# array: tok -> value it opened with
+  variable fillchoices {}
+  variable fill_label {} ;# enum combobox var (a choice label)
+  variable fill_label0 {}
+  variable ell_on 0 ; variable ell_on0 0
+  variable ell_start 0 ; variable ell_end 360
+}
+
+# First selected object's type, in sel_array order (matches the C primary type on
+# the graphical text_line path). Empty if nothing selected.
+proc gfxform::selected_type {} {
+  set sel [xschem selection]
+  if {[llength $sel] == 0} { return {} }
+  return [lindex [lindex $sel 0] 0]
+}
+
+# The choice label whose mapped value == <v>; falls back to the empty-mapped
+# label so an unknown value round-trips untouched (collect writes the loaded value
+# when the label is unchanged).
+proc gfxform::label_for {choices v} {
+  dict for {lab val} $choices { if {$val eq $v} { return $lab } }
+  dict for {lab val} $choices { if {$val eq {}}  { return $lab } }
+  return [lindex [dict keys $choices] 0]
+}
+
+# Seed the field state from the incoming property string for object <type>.
+proc gfxform::init {prop type} {
+  variable orig; variable schema; variable val; variable loaded
+  variable fillchoices; variable fill_label; variable fill_label0
+  variable ell_on; variable ell_on0; variable ell_start; variable ell_end
+  array unset val; array unset loaded
+  set orig $prop
+  set schema [slickprop::gfx_schema $type]
+  set ell_on 0; set ell_on0 0; set ell_start 0; set ell_end 360
+  foreach row [slickprop::schema_fields $schema $prop] {
+    set tok [dict get $row tok]
+    set v   [dict get $row value]
+    set loaded($tok) $v
+    switch -- [dict get $row widget] {
+      int  { set val($tok) $v }
+      enum {
+        set fillchoices [dict get $row choices]
+        set fill_label0 [gfxform::label_for $fillchoices $v]
+        set fill_label  $fill_label0
+      }
+      ellipse {
+        if {$v ne {}} {
+          set ell_on0 1; set ell_on 1
+          set parts [regexp -all -inline {-?[0-9]+} $v]
+          if {[lindex $parts 0] ne {}} { set ell_start [lindex $parts 0] }
+          if {[lindex $parts 1] ne {}} { set ell_end   [lindex $parts 1] }
+        }
+      }
+    }
+  }
+}
+
+# {tok val ...} desired-token list from the current field state (no widget reads).
+proc gfxform::desired {} {
+  variable schema; variable val; variable loaded; variable fillchoices
+  variable fill_label; variable fill_label0
+  variable ell_on; variable ell_start; variable ell_end
+  set d {}
+  foreach row $schema {
+    set tok [dict get $row tok]
+    switch -- [dict get $row widget] {
+      int {
+        set v [string trim $val($tok)]
+        if {$v eq {} || $v eq "0"} { lappend d $tok {} } else { lappend d $tok $v }
+      }
+      enum {
+        if {$fill_label eq $fill_label0} {
+          lappend d $tok $loaded($tok)
+        } else {
+          lappend d $tok [dict get $fillchoices $fill_label]
+        }
+      }
+      ellipse {
+        if {$ell_on} {
+          set s [string trim $ell_start]; if {$s eq {}} { set s 0 }
+          set e [string trim $ell_end];   if {$e eq {}} { set e 360 }
+          lappend d $tok "$s $e"
+        } else {
+          lappend d $tok {}
+        }
+      }
+    }
+  }
+  return $d
+}
+
+# Assemble the final property string from the current widget state (called on OK).
+proc gfxform::collect {} {
+  variable orig; variable schema
+  set extra [string trim [.dialog.other.e get]]
+  return [slickprop::schema_assemble $schema $orig [gfxform::desired] $extra]
+}
+
+# The slick graphical-object property dialog (rect in L1). Reads/writes tctx::retval
+# (the property string C passes in and applies to every selected same-type object);
+# sets tctx::rcode ({ok}|{}) and returns it — same contract as text_line_legacy.
+proc text_line_slick {txtlabel clear preserve_disabled type} {
+  global wm_fix cadlayers
+  set tctx::rcode {}
+  if { [winfo exists .dialog] } return
+  gfxform::init $tctx::retval $type
+  toplevel .dialog -class Dialog
+  wm title .dialog "Edit [string totitle $type] properties"
+  wm transient .dialog [xschem get topwindow]
+  set X [expr {[winfo pointerx .dialog] - 60}]
+  set Y [expr {[winfo pointery .dialog] - 35}]
+  if { $wm_fix } { tkwait visibility .dialog }
+  wm geometry .dialog "+$X+$Y" ;# position only, size to content
+
+  labelframe .dialog.appear -text "Appearance"
+  set ltk [expr {[info tclversion] > 8.4}]
+  foreach row $gfxform::schema {
+    set tok [dict get $row tok]
+    set lab [dict get $row label]
+    set f .dialog.appear.$tok
+    frame $f
+    switch -- [dict get $row widget] {
+      int {
+        label $f.l -text "$lab"
+        entry $f.e -textvariable gfxform::val($tok) -width 6
+        pack $f.l $f.e -side left
+      }
+      enum {
+        label $f.l -text "$lab:"
+        if {$ltk} {
+          ttk::combobox $f.cb -state readonly -width 10 \
+            -textvariable gfxform::fill_label -values [dict keys $gfxform::fillchoices]
+        } else {
+          entry $f.cb -textvariable gfxform::fill_label -width 10
+        }
+        pack $f.l $f.cb -side left
+      }
+      ellipse {
+        checkbutton $f.ck -text "$lab" -variable gfxform::ell_on
+        label $f.sl -text "  Start:"
+        entry $f.se -textvariable gfxform::ell_start -width 5
+        label $f.el -text "End:"
+        entry $f.ee -textvariable gfxform::ell_end -width 5
+        pack $f.ck $f.sl $f.se $f.el $f.ee -side left
+      }
+    }
+    pack $f -side top -anchor w -pady 1
+  }
+  pack .dialog.appear -side top -fill x -padx 4 -pady 4
+
+  frame .dialog.other
+  label .dialog.other.l -text "Other properties:"
+  entry .dialog.other.e -width 50
+  .dialog.other.e insert 0 [slickprop::schema_extra $gfxform::schema $tctx::retval]
+  pack .dialog.other.l -side left
+  pack .dialog.other.e -side left -fill x -expand yes
+  pack .dialog.other -side top -fill x -padx 4 -pady 2
+
+  frame .dialog.buttons
+  button .dialog.buttons.ok -text OK -command {
+    set tctx::retval [gfxform::collect]
+    set tctx::rcode {ok}
+    destroy .dialog
+  }
+  button .dialog.buttons.cancel -text Cancel -command {
+    set tctx::rcode {}
+    destroy .dialog
+  }
+  pack .dialog.buttons.ok .dialog.buttons.cancel -side left -fill x -expand yes
+  pack .dialog.buttons -side bottom -fill x
+  # No multi-line text box here, so Enter = OK from anywhere; Escape = Cancel.
+  bind .dialog <Return>   {.dialog.buttons.ok invoke}
+  bind .dialog <KP_Enter> {.dialog.buttons.ok invoke}
+  bind .dialog <Escape>   {.dialog.buttons.cancel invoke}
+  dialog_minsize_floor .dialog
+  tkwait window .dialog
+  return $tctx::rcode
+}
+
+proc text_line {txtlabel clear {preserve_disabled disabled}} {
+  # Slick Appearance panel only for a graphical object with a known schema; every
+  # other caller (global netlist props, header text, types without a schema yet)
+  # keeps the legacy raw-token editor.
+  if {$preserve_disabled eq {normal}} {
+    set t [gfxform::selected_type]
+    if {$t ne {} && [llength [slickprop::gfx_schema $t]] > 0} {
+      return [text_line_slick $txtlabel $clear $preserve_disabled $t]
+    }
+  }
+  return [text_line_legacy $txtlabel $clear $preserve_disabled]
+}
+
+proc text_line_legacy {txtlabel clear {preserve_disabled disabled} } {
   global text_line_default_geometry preserve_unchanged_attrs wm_fix tabstop
   global debug_var text_tabs_setting
 
