@@ -1,10 +1,10 @@
 # Hover ("awareness") highlight — design + decisions
 
-**Status:** IMPLEMENTED 2026-06-14 (RED `7600a024` / GREEN `0a2e8def`) — D2 = on by
-default; D3 = all drawable types. Headless suite
-`tests/headless/test_hover_highlight.tcl` 8/8; core regression + gesture +
-property_form suites green. **PENDING MANUAL EYEBALL** (pixels + unfocused-window
-tracking — see §6 checklist).
+**Status:** DONE 2026-06-15 — D2 = on by default; D3 = all drawable types. RED
+`7600a024` / GREEN `0a2e8def`. Headless suite `tests/headless/test_hover_highlight.tcl`
+8/8; core regression + gesture + property_form suites green. **Manual eyeball PASSED**
+on the real display ("works perfectly", user) — pixels + unfocused-window tracking
+confirmed. Tutorial: `code_analysis/hover_highlight_tutorial.md`. Branch ready to merge.
 **Branch:** `feature/hover-highlight` (off `slick-property-forms`).
 **Goal:** Cadence-style awareness cue — when the tracking cursor is over an
 object, outline it with a **mild dashed yellow** line (minimum, config-controlled
