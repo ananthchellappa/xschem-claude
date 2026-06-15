@@ -1,11 +1,11 @@
 # Issue 0009 — the property editor form blocks schematic interaction (not fully modeless)
 
 **Opened:** 2026-06-14
-**Status:** IMPLEMENTED 2026-06-14 — PENDING MANUAL EYEBALL (D3 focus/activation
-is WM-dependent; WSLg can't verify it headlessly). Commits: `a557170f` (RED),
-`ad8c7f45` (GREEN). Decision doc (ratified Option A + D3): `code_analysis/
-modeless_form_M2_decision.md`. The audit **corrected** the original D1 framing —
-see §1 note below.
+**Status:** RESOLVED 2026-06-14 — implemented + manual eyeball passed ("works
+fine", user). Commits: `a557170f` (RED), `ad8c7f45` (GREEN). Decision doc
+(ratified Option A + D3): `code_analysis/modeless_form_M2_decision.md`. Tutorial:
+`code_analysis/modeless_forms_tutorial.md`. The audit **corrected** the original
+D1 framing — see §1 note below.
 
 **What landed:** `slickprop::edit_form` is non-blocking (no `tkwait`), no longer
 raises the semaphore, and is a plain toplevel (no `wm transient`, initial
@@ -16,12 +16,11 @@ No semaphore>=2 guard was rewritten. Tests: property_form suite 220→226 (PF60-
 PF61 = semaphore 0 while open, PF62 = no transient, PF64 drives the real C release
 hook via `xschem callback`); main regression + headless callback tests green.
 
-**EYEBALL CHECKLIST (do on the real display, then mark RESOLVED):** open the form
-(Q) → (1) click the schematic title bar — it activates, form stays visible and
-does not capture focus; (2) run pan / move / wire / place / delete / descend while
-the form floats — all work; (3) selecting a different instance re-targets the
-form; (4) delete the edited instance — Apply/OK no-ops (no crash); (5) form does
-not get lost behind the main window. Record the result here.
+**EYEBALL PASS (2026-06-14, on the real WM): "works fine".** All checks confirmed:
+click the schematic title bar activates it with the form floating non-capturing;
+pan/move/wire/place/delete/descend all run while the form is open; selection
+re-targets the form; deleting the edited instance does not crash; the form stays
+on-screen. **→ RESOLVED.**
 **Affects:** the slick instance property form (`slickprop::edit_form`,
 `src/property_form.tcl`). While it is open, the schematic window accepts only
 **selection** (Shift-click add, via M1) and **zoom** — every other command is
