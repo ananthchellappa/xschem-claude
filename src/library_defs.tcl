@@ -35,14 +35,19 @@ proc library_defs_expand_path {path} {
 }
 
 # Parse one library.defs file, appending name->path into the dict in `defsvar`.
+# A relative DEFINE path is resolved against the directory of the defs file (the
+# cds.lib convention), so a committed library.defs is location-independent.
 proc library_defs_parse_file {fname defsvar} {
   upvar 1 $defsvar defs
   if {[catch {open $fname r} fp]} { return }
+  set base [file dirname [file normalize $fname]]
   while {[gets $fp line] >= 0} {
     set line [string trim $line]
     if {$line eq {} || [string index $line 0] eq "#"} { continue }
     if {[regexp {^DEFINE\s+(\S+)\s+(.+)$} $line -> name path]} {
-      dict set defs $name [library_defs_expand_path [string trim $path]]
+      set p [library_defs_expand_path [string trim $path]]
+      if {[file pathtype $p] ne "absolute"} { set p [file normalize [file join $base $p]] }
+      dict set defs $name $p
     }
   }
   close $fp

@@ -157,7 +157,9 @@ def migrate(libs, dst_root, dry_run=False, defs_name="library.defs"):
                 shutil.copy2(full, os.path.join(libdst, fn))
         if not dry_run:
             _write(os.path.join(libdst, "library.tag"), "NAME %s\n" % name)
-        defs_lines.append("DEFINE %s %s" % (name, os.path.abspath(libdst)))
+        # relative to the defs file (dst_root) so the registry is portable; the
+        # reader resolves it against the library.defs directory (cds.lib style)
+        defs_lines.append("DEFINE %s %s" % (name, os.path.relpath(libdst, dst_root)))
         report["libs"].append(name)
     if not dry_run and defs_lines:
         _write(os.path.join(dst_root, defs_name),

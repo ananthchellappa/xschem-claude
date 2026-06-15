@@ -89,6 +89,12 @@ set fp [open $tmp/decoy/library.tag w]; puts $fp "NAME liba"; close $fp
 lappend ::pathlist "$tmp/decoy"
 check "LD7 DEFINE beats tag of same name" [expr {[lib_path liba] eq "$tmp/liba"}] "(=> [lib_path liba])"
 
+# --- LD8 — a RELATIVE DEFINE path resolves against the defs file's dir -------
+# (cds.lib convention -> a committed library.defs is location-independent)
+set fp [open $defs a]; puts $fp "DEFINE rellib ./liba"; close $fp
+check "LD8 relative DEFINE path resolves to defs dir" \
+  [expr {[lib_path rellib] eq [file normalize "$tmp/liba"]}] "(=> [lib_path rellib])"
+
 # --- cleanup ---------------------------------------------------------------
 file delete -force $tmp
 
