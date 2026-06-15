@@ -1247,3 +1247,57 @@ check {TX10b unchanged keeps loaded 'instance'}   {[f_bvalue hide instance 1 1] 
 check {TX10c toggled on writes schema on-value}   {[f_bvalue weight {} 0 1] eq "bold"}
 check {TX10d toggled off removes (empty)}         {[f_bvalue weight bold 1 0] eq ""}
 check {TX10e unchanged-unticked keeps 'normal'}   {[f_bvalue weight normal 0 0] eq "normal"}
+
+# ===========================================================================
+# Slick text_line dialog — discoverable graphical-object attributes (L1: core +
+# Rectangle). Spec: specs/slick_text_line_dialog.md. Generalises the enter_text
+# core to a SCHEMA argument so both dialogs share the read/assemble helpers:
+#   slickprop::gfx_schema <type>            -> per-type ordered field descriptors
+#   slickprop::schema_fields <schema> <p>   -> descriptors + current value/present
+#   slickprop::schema_extra  <schema> <p>   -> leftover (owned tokens stripped)
+#   slickprop::schema_assemble <schema> <orig> <desired> <extra> -> OK merge
+# The text_* procs become thin wrappers over these (TX1-TX10 still guard them).
+# RED first: gfx_schema/schema_* absent -> RL* fail.
+# ===========================================================================
+
+proc f_gschema   {t}      { if {[catch {slickprop::gfx_schema $t} r]}            {return -2}; return $r }
+proc f_sfields   {s p}    { if {[catch {slickprop::schema_fields $s $p} r]}      {return -2}; return $r }
+proc f_sextra    {s p}    { if {[catch {slickprop::schema_extra $s $p} r]}       {return -2}; return $r }
+proc f_sassemble {s o d e} { if {[catch {slickprop::schema_assemble $s $o $d $e} r]} {return -2}; return $r }
+
+### RL1 — the Rectangle schema: owned tokens, order, widget kinds.
+set ::RSC [f_gschema rect]
+check {RL1a rect schema has 3 fields}            {[llength $::RSC] == 3}
+check {RL1b rect schema order dash fill ellipse} {[tx_toks $::RSC] eq {dash fill ellipse}}
+check {RL1c dash is an int widget}               {[f_dg [f_trow $::RSC dash] widget] eq "int"}
+check {RL1d fill is an enum widget}              {[f_dg [f_trow $::RSC fill] widget] eq "enum"}
+check {RL1e fill choices map Full->full}         {[dict get [f_dg [f_trow $::RSC fill] choices] Full] eq "full"}
+check {RL1f fill choices map None->false}        {[dict get [f_dg [f_trow $::RSC fill] choices] None] eq "false"}
+check {RL1g ellipse is an ellipse widget}        {[f_dg [f_trow $::RSC ellipse] widget] eq "ellipse"}
+
+### RL2 — schema_fields parses current values out of a rect prop string.
+set ::RP {dash=4 fill=full name=foo}
+set ::RF [f_sfields $::RSC $::RP]
+check {RL2a dash value 4}                {[f_dg [f_trow $::RF dash] value] eq "4"}
+check {RL2b fill value full}             {[f_dg [f_trow $::RF fill] value] eq "full"}
+check {RL2c ellipse absent -> empty}     {[f_dg [f_trow $::RF ellipse] value] eq ""}
+check {RL2d dash present=1}              {[f_dg [f_trow $::RF dash] present] == 1}
+check {RL2e ellipse present=0}          {[f_dg [f_trow $::RF ellipse] present] == 0}
+
+### RL3 — schema_extra: owned tokens stripped, pin/unknown tokens kept.
+set ::RX [f_sextra $::RSC $::RP]
+check {RL3a owned dash stripped}        {[lsearch [xschem list_tokens $::RX 0] dash] < 0}
+check {RL3b owned fill stripped}        {[lsearch [xschem list_tokens $::RX 0] fill] < 0}
+check {RL3c unknown name kept}          {[xschem get_tok $::RX name 2] eq "foo"}
+
+### RL4 — schema_assemble: no-edit byte-identical; edits subst into original.
+check {RL4a no-edit byte-identical} {[f_sassemble $::RSC $::RP {} [f_sextra $::RSC $::RP]] eq $::RP}
+set ::RO [f_sassemble $::RSC $::RP {dash 2 fill {} ellipse {}} [f_sextra $::RSC $::RP]]
+check {RL4b dash updated to 2}          {[xschem get_tok $::RO dash 2] eq "2"}
+check {RL4c fill removed (None/off)}    {[xschem get_tok $::RO fill 2] eq ""}
+check {RL4d unknown name preserved}     {[xschem get_tok $::RO name 2] eq "foo"}
+
+### RL5 — the text_* procs still delegate correctly after the schema refactor
+### (guards that generalising the core did not change enter_text behaviour).
+check {RL5a text_fields still parses weight} {[f_dg [f_trow [f_tfields {weight=bold}] weight] value] eq "bold"}
+check {RL5b text_extra still strips owned}   {[lsearch [xschem list_tokens [f_textra {weight=bold name=n}] 0] weight] < 0}

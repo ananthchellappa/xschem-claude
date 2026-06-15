@@ -124,16 +124,37 @@ proc slickprop::text_schema {} {
     [dict create tok floater label {Floater}  widget bool  on true]]
 }
 
-# The schema, with each field's CURRENT value parsed out of <prop>. Each row is
-# the schema descriptor plus:
+# A per-object-type schema (used by the slick text_line dialog). Each row is the
+# same descriptor shape as text_schema. Only prop-string tokens are owned — for
+# graphical objects layer/colour is structural (not a token) and is out of scope.
+# Value forms (verified in editprop.c): dash int (0=solid); fill enum
+# full|false|absent; bus numeric width; bezier bool true; ellipse "a b" angles.
+proc slickprop::gfx_schema {type} {
+  switch -- $type {
+    rect - rectangle - xRECT {
+      return [list \
+        [dict create tok dash    label {Dash (0=solid)} widget int] \
+        [dict create tok fill    label {Fill} widget enum \
+           choices [dict create Default {} None false Full full]] \
+        [dict create tok ellipse label {Ellipse} widget ellipse]]
+    }
+    default { return {} }
+  }
+}
+
+# Generic core (schema-parameterised). The text_* procs below are thin wrappers
+# passing text_schema, so the slick enter_text and text_line dialogs share one
+# implementation (TX* tests guard the text path; RL* the graphical path).
+
+# The schema rows with each field's CURRENT value parsed out of <prop>:
 #   value    the token's current value in <prop> (clean; empty if absent)
 #   present  1 if the token is actually present in <prop>, else 0
 # An absent token keeps value "" / present 0 so the form does not write it back
-# unless the user toggles it on.
-proc slickprop::text_fields {prop} {
+# unless the user edits it.
+proc slickprop::schema_fields {schema prop} {
   set have [xschem list_tokens $prop 0]
   set rows {}
-  foreach row [slickprop::text_schema] {
+  foreach row $schema {
     set tok [dict get $row tok]
     set present [expr {[lsearch -exact $have $tok] >= 0}]
     dict set row present $present
@@ -144,11 +165,10 @@ proc slickprop::text_fields {prop} {
 }
 
 # The leftover "Other properties" string: <prop> with every owned token removed,
-# all other tokens (declared-elsewhere or unknown) preserved. Round-trips
-# verbatim through the panel so nothing the schema does not cover is ever lost.
-proc slickprop::text_extra {prop} {
+# all other tokens (declared-elsewhere or unknown) preserved verbatim.
+proc slickprop::schema_extra {schema prop} {
   set out $prop
-  foreach row [slickprop::text_schema] {
+  foreach row $schema {
     set out [xschem subst_tok $out [dict get $row tok] <NULL>]
   }
   return $out
@@ -157,19 +177,18 @@ proc slickprop::text_extra {prop} {
 # Assemble the final property string on OK. <desired> is {tok val ...} for EVERY
 # owned field (val "" means the field is off / its token should be absent);
 # <extra> is the current contents of the "Other properties" box.
-#   * extras untouched (== text_extra of <orig>): subst-into-original — only the
+#   * extras untouched (== schema_extra of <orig>): subst-into-original — only the
 #     owned fields whose value actually changed are written back into <orig>, so
 #     unchanged tokens keep their position and an unedited dialog returns <orig>
 #     byte-for-byte (no spurious "modified").
 #   * extras edited: rebuild from the edited <extra> as the base, overlaying every
-#     owned field that is currently set. (The Other box IS the non-owned portion,
-#     so editing it replaces those tokens wholesale — by design.)
-proc slickprop::text_assemble {orig desired extra} {
+#     owned field that is currently set (the Other box IS the non-owned portion).
+proc slickprop::schema_assemble {schema orig desired extra} {
   set loaded {}
-  foreach row [slickprop::text_fields $orig] {
+  foreach row [slickprop::schema_fields $schema $orig] {
     dict set loaded [dict get $row tok] [dict get $row value]
   }
-  if {$extra eq [slickprop::text_extra $orig]} {
+  if {$extra eq [slickprop::schema_extra $schema $orig]} {
     set changes {}
     foreach {tok val} $desired {
       if {$val ne [dict get $loaded $tok]} { lappend changes $tok $val }
@@ -182,6 +201,11 @@ proc slickprop::text_assemble {orig desired extra} {
   }
   return [slickprop::apply $extra $changes]
 }
+
+# text_* : the enter_text dialog's view over the generic core (text_schema).
+proc slickprop::text_fields   {prop}              { return [slickprop::schema_fields   [slickprop::text_schema] $prop] }
+proc slickprop::text_extra    {prop}              { return [slickprop::schema_extra    [slickprop::text_schema] $prop] }
+proc slickprop::text_assemble {orig desired extra} { return [slickprop::schema_assemble [slickprop::text_schema] $orig $desired $extra] }
 
 # Should a bool field's checkbox be ticked for the token's CURRENT value? weight
 # ticks only on 'bold' (weight=normal is not-bold); slant ticks on italic OR
