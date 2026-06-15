@@ -26,4 +26,5 @@
 26. Support similar use model to Cadence's o=car(geGetSelSet()) and then o~>?? to look at properties. Currently, we have selected_set for things other than wire and selected_wire 
 27. Error message calling out line number when parsing xschemrc. DONE! Thank you Stefan Schippers 
 28. Allow users to run from anywhere, not just the src directory (DONE! Thank you Claude Code! Waiting on SS to merge) 
-
+29. Be able to open a schematic or symbol in read-only mode, and, having opened, be able to change mode - easily :)
+30. 
