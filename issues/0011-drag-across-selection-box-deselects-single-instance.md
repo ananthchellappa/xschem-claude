@@ -1,121 +1,142 @@
-# Issue 0011 — dragging across the selection box deselects a *single* selected instance
+# Issue 0011 — moving the pointer across the dashed annotation box visually drops the selection highlight
 
 **Opened:** 2026-06-15
-**Status:** OPEN — reported, root cause not yet verified (leading hypothesis in §3).
-**Affects:** interactive selection with the Cadence-style interaction settings
-(`src/cadence_style_rc`: `intuitive_interface=1`, `cadence_compat=1`,
-`enable_stretch=1`). Mouse/GUI only — not reproducible headlessly without an event
-stream.
-**Severity:** low–medium (workflow annoyance; the user loses a selection they
-expected to keep — no data loss).
-**Branch:** suggest a small dedicated branch when picked up; the selection-handling
-code touched is shared (`callback.c`), independent of `library-manager`.
-**Related:** the broader interaction-mode analysis in
-`code_analysis/FAQ.md` Q14 and `code_analysis/wire_follow_stretch_move.md`
-(same `intuitive_interface` / `cadence_compat` selection machinery).
+**Refined:** 2026-06-16 — reproduction corrected after investigation: this is
+**motion-triggered** (no button press) and the object stays **logically
+selected**; the visible effect is the hover-highlight redraw disturbing the
+selection overlay. Earlier framing ("a drag deselects", press-path root cause)
+was wrong and is superseded below.
+**Status:** OPEN — reproduction + implicated code confirmed (§1–§3); exact
+overlay-repair defect is a leading hypothesis pending a pixel-level check (§4).
+**Affects:** interactive use with `src/cadence_style_rc`
+(`intuitive_interface=1`, `cadence_compat=1`, `enable_stretch=1`,
+`hover_highlight` on). Seen on `xschem_library/examples/mos_power_ampli.sch`.
+**Severity:** low–medium (the user believes the object was deselected, so they
+re-select; no data loss — the object is in fact still selected).
+**Branch:** the implicated code (`draw_hover`, the hover-awareness cue) landed on
+this lineage; see [[hover-highlight]]. Suggest a small branch when picked up.
+**Related:** `code_analysis/FAQ.md` Q14, `code_analysis/wire_follow_stretch_move.md`.
 
 ---
 
-## 1. Reproduction (reported)
+## 1. Reproduction (corrected — confirmed headlessly)
 
-1. Open `xschem_library/examples/mos_power_ampli.sch` (run with
-   `--script src/cadence_style_rc`, as the reporter does).
-2. Click a **single** instance to select it → its dashed selection rectangle
-   (bounding box) is drawn.
-3. Press Button1 and **drag the mouse pointer across that dashed rectangle**
-   (the drag path crosses the box).
-4. **Observed:** the instance becomes **deselected**.
+1. Run with `--script src/cadence_style_rc`; open
+   `xschem_library/examples/mos_power_ampli.sch`.
+2. Select a single instance — e.g. **R18** (around schematic (1240,-930)). Its
+   dashed selection box is drawn.
+3. **Without pressing any mouse button**, move the pointer horizontally to the
+   right, e.g. to ~(1440,-930), so it **crosses the edge of the large dashed box**
+   that surrounds the circuit.
+4. **Observed:** R18's selection highlight disappears — it *looks* deselected.
 
-**The tell-tale asymmetry:** the same gesture does **not** deselect when **more
-than one** object is selected. So the bug is specific to the `lastsel == 1`
-(single-selection) state.
+**No button press or drag is involved** — bare pointer motion across that boundary
+is enough. This corrects the original report, which described it as a click/drag.
 
----
+### What the "dashed rectangle" actually is
+It is **not** the selection highlight and **not** a UI artifact — it is a real
+drawn object in the schematic: `mos_power_ampli.sch:100`
 
-## 2. Expected behaviour
+```
+P 4 5 0 -1290 1390 -1290 1390 -130 0 -130 0 -1290 {dash=3}
+```
 
-Dragging the pointer across (or near) the selection box of an already-selected
-object should not silently drop the selection. Either:
-- it should begin a move/drag of the selected object (if the gesture starts on it),
-  or
-- it should begin a fresh rubber-band selection (if it starts on empty canvas),
-  matching whatever rule applies when *several* objects are selected.
-
-Whatever the rule is, it must be **independent of the selection count** — the
-single-object case should behave like the multi-object case.
-
----
-
-## 3. Candidate root cause (hypothesis — NOT yet verified)
-
-The behaviour lives in the intuitive / cadence_compat selection logic in
-`callback.c`. Several count- or selection-clearing branches are in play; the bug
-is most likely one (or an interaction) of these:
-
-1. **Press-time unselect in the intuitive interface** —
-   `handle_button_press`, `callback.c:5198-5203`:
-   ```c
-   if(xctx->intuitive_interface && !already_selected && no_shift_no_ctrl)
-     unselect_all(1);
-   if(!already_selected) select_object(...);
-   ```
-   `already_selected` is computed from `find_closest_obj()` **at the press point**.
-   If the drag starts just *off* the instance (on empty canvas), `already_selected`
-   is 0 → `unselect_all(1)` fires immediately on press and the instance is dropped.
-   This is the leading suspect for "crossing the box from outside."
-   - *Why it might look count-dependent:* with several objects selected, the chosen
-     drag-start point is more likely to land on one of them (`already_selected==1`),
-     so the unselect is skipped. With a single small instance there is more empty
-     space around it, so the press lands on emptiness and clears it. This would make
-     the asymmetry **circumstantial rather than a hard rule** — needs confirming.
-
-2. **cadence_compat release branch (explicitly count-gated)** —
-   `handle_button_release`, `callback.c:5321-5343`:
-   ```c
-   else if(cadence_compat && xctx->lastsel != 1 && state == Button1Mask && !xctx->mouse_moved) {
-     ... if(already_selected) { unselect_all(1); select_object(...); }
-   }
-   ```
-   This is gated on `lastsel != 1`, i.e. it deliberately treats the single-selection
-   case differently — exactly the axis of the reported asymmetry. It requires
-   `!mouse_moved` (a click, not a drag), so it only applies if the "drag" is short
-   enough not to set `mouse_moved`. Worth checking whether a small cross-the-box
-   motion still counts as `!mouse_moved`.
-
-3. **Rubber-band select END** — `callback.c:5387-5397`
-   (`select_rect(enable_stretch, END, -1)`): if the press did start a `STARTSELECT`
-   rubber band, the END reselects whatever the box covered, replacing the prior
-   selection. Combined with (1)'s press-time clear, the net effect is "old selection
-   gone, new (possibly empty) selection."
-
-Note `prev_last_sel` (`callback.c:5146`, used at `:5256`) is only consulted for
-highlight redraw, not selection — likely a red herring.
+a dashed **polygon** (a box from (0,-1290) to (1390,-130)) drawn as an annotation
+around the whole circuit. Most elements in this example sit inside it, which is
+why "most of the elements" are affected. Crossing its outline makes that polygon
+the object under the cursor.
 
 ---
 
-## 4. How to verify (interactive — WSLg caveat applies)
+## 2. Key finding: the object is NOT actually deselected
 
-1. Build, run with `--script src/cadence_style_rc`, open the example.
-2. Add `dbg(1, ...)` (or use existing dbg lines) around `callback.c:5200`,
-   `:5323`, `:5340` and run with `-d 1` to see which `unselect_all` actually fires
-   for the failing gesture.
-3. Distinguish the two hypotheses:
-   - If the deselect happens **on press** → it's branch (1) (empty-canvas press).
-   - If it happens **on release** with no net movement → it's branch (2).
-4. Repeat with 2+ objects selected and confirm which branch is skipped — that
-   identifies the count-dependent path to fix.
+Driving the exact gesture headlessly via `xschem callback` (bare `MotionNotify`
+events sweeping across the box edge) and querying `xschem objects -selected` after
+each step shows **the instance remains selected the entire time** (its `.sel`
+flag stays `SELECTED`; the `ui_state` `SELECTION` bit stays set). A subsequent
+`xschem redraw` brings the highlight back.
 
-Because this is pointer-driven, the WSLg flakiness noted elsewhere (issue 0001)
-applies; drive it by hand or via `xschem callback`-level event injection rather
-than relying on `event generate` smokes.
+So the user-visible "deselection" is a **rendering artifact**: the selection
+*highlight overlay* is erased on screen while the selection itself is intact.
 
 ---
 
-## 5. Acceptance criteria
+## 3. Implicated code (confirmed) — the hover-highlight redraw
 
-- With a single instance selected in `mos_power_ampli.sch`, dragging the pointer
-  across its selection box no longer silently deselects it.
-- The single-selection and multi-selection cases behave identically for the same
-  gesture.
-- No regression to: click-empty-to-clear, click-object-to-select, rubber-band
-  area select, and intuitive drag-to-move (all under `cadence_compat=1`).
+Every `MotionNotify` runs `draw_hover(0)` (`callback.c:3491`, inside
+`handle_motion_notify`; `mouse_inside` is set just above at `:3369`). `draw_hover`
+(`callback.c:1817`) outlines the object under the cursor with a dashed-yellow cue
+and, when the hovered object changes, **erases the previous outline and repairs
+the selection/scope overlays**:
+
+```c
+if(prev_type) { /* erase previous hover outline, then repair overlays */
+  draw_hover_shape(xctx->gctiled, prev_type, xctx->hover_n, xctx->hover_col); /* erase */
+  draw_selection(xctx->gc[SELLAYER], 0);   /* repair selection highlight */
+  draw_scope_highlight();
+}
+if(newsel.type) draw_hover_shape(xctx->gc_hover, newsel.type, ...); /* draw new outline */
+```
+
+(`callback.c:1849-1862`; `draw_hover_shape` is `draw.c:5462` — for a POLYGON it
+draws the polygon outline via `drawtemppolygon`.)
+
+Instrumented trace of the sweep: as the pointer leaves the selected instance
+(hover is **suppressed** on a selected object, so `newsel.type=0`) and approaches
+the box edge, `find_closest_obj` starts returning the dashed **polygon**
+(`newsel.type=32 == POLYGON`), and the erase/redraw path runs on the
+`draw_window=1, draw_pixmap=0` overlay. The selection highlight is collateral in
+that window-only erase/repair dance.
+
+This path **only exists because the hover-awareness cue is enabled**
+(`hover_highlight`); `draw_hover` early-returns when it is off (`callback.c:1835`).
+So this is most likely an **interaction introduced by the hover feature**
+([[hover-highlight]]), not pre-existing selection logic.
+
+---
+
+## 4. Leading hypothesis for the exact defect (NOT yet pixel-verified)
+
+The window-only erase/repair in `draw_hover` does not faithfully restore the
+selection highlight when the hovered object is a large shape overlapping the
+selected object (here the big dashed polygon encloses R18). Candidates:
+
+- the erase (`draw_hover_shape(gctiled, …)`) over/around the big polygon paints
+  background where the selection box is, and `draw_selection(gc[SELLAYER],0)` does
+  not fully repaint it in the window-only (`draw_pixmap=0`) pass; or
+- an overlay/XOR ordering issue between the hover outline, the selection
+  highlight, and the scope highlight when shapes overlap.
+
+A clean horizontal sweep in the headless harness fires the erase/repair branch
+only a little (few intervening hovered objects on that row), which is likely why
+the *logical* state is trivially confirmed but the *visual* artifact is best seen
+in the live GUI, where the cursor crosses many objects.
+
+### Quick confirmation step (for the live GUI)
+Set `hover_highlight 0` and repeat the gesture. If the highlight no longer
+vanishes, the hover redraw is confirmed as the cause (code-evident: `draw_hover`
+no-ops when `hover_highlight` is false, `callback.c:1835`).
+
+---
+
+## 5. How to verify a fix (headless + eyeball)
+
+- **Headless (state):** the existing probe pattern — select an instance, inject a
+  `MotionNotify` sweep across the polygon edge, assert `xschem objects -selected`
+  is unchanged. (This already passes today, since the bug is visual — keep it as a
+  guard that no fix turns the visual bug into a logical one.)
+- **Eyeball (the real bug):** in the GUI, confirm the selection highlight stays
+  drawn while the pointer crosses the dashed box, with `hover_highlight` on.
+- A faithful automated check needs a window pixel grab (the highlight is a
+  window-only overlay, absent from `xschem print` output).
+
+---
+
+## 6. Acceptance criteria
+
+- With `hover_highlight` on, moving the bare pointer across the dashed annotation
+  box (or any large overlapping shape) leaves a selected object's highlight
+  intact on screen.
+- The object remains selected (it already does) — no regression to logical
+  selection state.
+- The hover cue itself still works (objects under the cursor still outline).
