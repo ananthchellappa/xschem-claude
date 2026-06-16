@@ -29,6 +29,8 @@ file delete -force $tmp
 touch $tmp/tlib/foo/schematic/foo.sch "v {xschem version=3.4.8RC file_version=1.3}"
 touch $tmp/tlib/foo/symbol/foo.sym    "v {xschem version=3.4.8RC file_version=1.3}"
 touch $tmp/tlib/bar/schematic/bar.sch "v {xschem version=3.4.8RC file_version=1.3}"
+touch $tmp/tlib/baz/schematic/baz.sch "v {xschem version=3.4.8RC file_version=1.3}"
+touch $tmp/tlib/qux/schematic/qux.sch "v {xschem version=3.4.8RC file_version=1.3}"
 set defs [file join $tmp library.defs]
 set fp [open $defs w]; puts $fp "DEFINE tlib $tmp/tlib"; close $fp
 set ::XSCHEM_LIBRARY_DEFS $defs
@@ -68,6 +70,38 @@ check "AL5 read-only open logs the lock" [expr {[regexp -all {xschem set readonl
 check "AL6 log holds bare replayable commands" \
   [expr {![string match "*log_action*" [logtext]]}] {}
 
+# AL7/AL8 — the file browser's open-in-new-window also logs (same gap, same fix).
+# Drive file_chooser_place directly with the minimal widget/state it reads.
+frame .ins; frame .ins.center; frame .ins.center.left
+listbox .ins.center.left.l
+.ins.center.left.l insert end baz
+.ins.center.left.l activate 0
+set ::file_chooser(fullpathlist) [list $tmp/tlib/baz/schematic/baz.sch]
+set ::open_in_new_window 1
+file_chooser_place load
+check "AL7 file browser open-in-new-window logged" \
+  [string match "*load_new_window {*baz/schematic/baz.sch}*" [logtext]] {}
+
+.ins.center.left.l delete 0 end
+.ins.center.left.l insert end qux
+.ins.center.left.l activate 0
+set ::file_chooser(fullpathlist) [list $tmp/tlib/qux/schematic/qux.sch]
+file_chooser_place load_new_win
+check "AL8 file browser 'open in new window' action logged" \
+  [string match "*load_new_window {*qux/schematic/qux.sch}*" [logtext]] {}
+
+# AL9 — Library Manager "Place symbol" starts the INTERACTIVE placement
+# (PLACE_SYMBOL=8192). Its drop already logs a concrete, replayable
+# `xschem instance {...}` (callback.c), so no command-level logging is added for
+# place_symbol (that would be non-replayable and duplicate the drop's line).
+pick lib tlib; libmgr::on_lib
+pick cell foo; libmgr::on_cell
+libmgr::place_symbol
+check "AL9 place_symbol starts the logged placement (PLACE_SYMBOL state)" \
+  [expr {([xschem get ui_state] & 8192) != 0}] "(=> ui_state=[xschem get ui_state])"
+xschem abort_operation
+
+destroy .ins
 destroy .libmgr
 file delete -force $tmp
 if {$fail == 0} { puts "RESULT: ALL PASS" } else { puts "RESULT: $fail FAILED" }

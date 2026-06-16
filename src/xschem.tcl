@@ -5543,11 +5543,13 @@ proc file_chooser_place {action} {
         } elseif {$action eq {load}} {
           if {$open_in_new_window} {
             xschem load_new_window $f
+            xschem log_action "xschem load_new_window {$f}"
           } else {
             xschem load -gui $f
           }
         } elseif {$action eq {load_new_win}} {
          xschem load_new_window $f
+         xschem log_action "xschem load_new_window {$f}"
         }
       }
     }
