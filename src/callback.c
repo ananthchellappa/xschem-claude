@@ -1849,6 +1849,13 @@ void draw_hover(int force)
   xctx->draw_pixmap = 0;
   xctx->draw_window = 1;
   if(prev_type) { /* erase the previous outline, then repair selection/scope overlays */
+    /* draw_selection() repaints from sel_array/lastsel (it is the move-time drawer);
+     * on the motion/hover path that snapshot can be stale (lastsel==0) while objects
+     * are still selected by their .sel flag. Without this rebuild the repair would be
+     * a no-op, so the erase below (which, with fix_broken_tiled_fill, restores a whole
+     * bounding box from the backing pixmap and thus wipes the window-only selection
+     * overlay) would leave selected objects looking deselected. See issue 0011. */
+    rebuild_selected_array();
     draw_hover_shape(xctx->gctiled, prev_type, xctx->hover_n, xctx->hover_col);
     draw_selection(xctx->gc[SELLAYER], 0);
     draw_scope_highlight();

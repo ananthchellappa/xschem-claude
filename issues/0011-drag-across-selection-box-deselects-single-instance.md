@@ -6,8 +6,14 @@
 selected**; the visible effect is the hover-highlight redraw disturbing the
 selection overlay. Earlier framing ("a drag deselects", press-path root cause)
 was wrong and is superseded below.
-**Status:** OPEN — reproduction + implicated code confirmed (§1–§3); exact
-overlay-repair defect is a leading hypothesis pending a pixel-level check (§4).
+**Status:** FIX APPLIED 2026-06-16 (pending visual eyeball) — root cause pinned
+to `draw_hover`'s stale-`sel_array` repair (see §7); one-line fix in `callback.c`
+(`rebuild_selected_array()` before the repair `draw_selection`). Verified at the
+data level (the bug condition `lastsel==0` at repair time now rebuilds to the real
+count) and guarded by `tests/headless/test_hover_selection_repair.tcl`. The
+on-screen repair is a window-only overlay → final confirmation is a manual eyeball
+(move the bare pointer across the dashed box with `hover_highlight` on; the
+selection box must stay drawn).
 **Affects:** interactive use with `src/cadence_style_rc`
 (`intuitive_interface=1`, `cadence_compat=1`, `enable_stretch=1`,
 `hover_highlight` on). Seen on `xschem_library/examples/mos_power_ampli.sch`.
@@ -140,3 +146,53 @@ no-ops when `hover_highlight` is false, `callback.c:1835`).
 - The object remains selected (it already does) — no regression to logical
   selection state.
 - The hover cue itself still works (objects under the cursor still outline).
+
+---
+
+## 7. Root cause (pinned) and fix
+
+Confirmed by instrumenting `draw_hover` and driving the exact bare-motion sweep
+across the dashed polygon headlessly:
+
+1. `draw_hover` (`callback.c`), on a hover change, **erases the previous outline
+   then repairs overlays** with `draw_selection(xctx->gc[SELLAYER], 0)`.
+2. `draw_selection` (`move.c:210`) is the **move-time** drawer: it paints from
+   `xctx->sel_array` / `xctx->lastsel` (via `movelastsel`). On the motion/hover
+   path nothing rebuilds that snapshot, so **`lastsel` is stale `0`** while the
+   object is still selected by its `.sel` flag. With `lastsel==0` the repair
+   draws **nothing**.
+3. The erase is destructive here: with `fix_broken_tiled_fill` set (it is `1` on
+   this WSL host), `drawtemppolygon(gctiled, …)` (`draw.c:2194`) restores the
+   shape's **whole bounding box** from the backing pixmap. For the big enclosing
+   polygon that bbox is essentially the whole schematic, so it wipes the
+   window-only selection overlay across the entire area.
+4. Erase wipes the highlight; no-op repair never repaints it → the object *looks*
+   deselected while its `.sel` flag is untouched (hence `xschem objects
+   -selected` still lists it, and the earlier headless probes saw selcount==1).
+
+Instrumented proof: at the repair, `lastsel=0`/`movelastsel=0` (buggy); after the
+fix, `lastsel=1`/`movelastsel=1`, so `draw_selection` repaints the box.
+
+**Fix** (`callback.c`, in `draw_hover`, repair branch): call
+`rebuild_selected_array()` before `draw_selection`, so the repair paints from the
+true selection (the `.sel` flags) rather than a stale snapshot. The branch only
+runs on a hover *change*, so the extra rebuild is infrequent (and the path
+already calls `find_closest_obj` every motion).
+
+**Why it was single-vs-multiple in the original report:** unrelated to the true
+mechanism — that framing came from the earlier (wrong) press-path hypothesis. The
+confirmed motion mechanism does not depend on the selection count.
+
+**Note (not fixed, separate):** even with a correct repair, erasing a *huge*
+hovered shape via a full-bbox pixmap restore is wasteful on
+`fix_broken_tiled_fill` hosts (it repaints a large region on every hover change
+near the polygon). Could be tightened later to the actual outline region; out of
+scope for this fix.
+
+**Verification:**
+- Data level: instrumented `lastsel` 0→1 at the repair (above).
+- Headless guard: `tests/headless/test_hover_selection_repair.tcl` (logical
+  selection survives the real motion sweep across the polygon; hover engages the
+  polygon so the repair branch is reachable; gated by `hover_highlight`).
+- Manual eyeball (pending): with `hover_highlight` on, the selection box stays
+  drawn while the pointer crosses the dashed box.
