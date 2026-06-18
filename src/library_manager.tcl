@@ -459,6 +459,25 @@ proc libmgr::simple_prompt {title label {default {}}} {
   return $res
 }
 
+# Folder chooser for the New-library Directory field. Seeds the dialog at the
+# current entry value (if it names a real dir), else the primary library.defs dir
+# (where a blank field would create the library), else the cwd. Writes the chosen
+# directory back into the entry; leaves it untouched on Cancel.
+proc libmgr::newlib_browse {entry} {
+  set start [string trim [$entry get]]
+  if {$start eq {} || ![file isdirectory $start]} {
+    set defs [library_primary_defs_file]
+    if {$defs ne {} && [file isfile $defs]} {
+      set start [file dirname $defs]
+    } else {
+      set start [pwd]
+    }
+  }
+  set dir [tk_chooseDirectory -parent .libmgr.nl -mustexist 0 \
+    -title "New library directory" -initialdir $start]
+  if {$dir ne {}} { $entry delete 0 end; $entry insert 0 $dir }
+}
+
 # Library name + directory. Returns {name path} or {} on cancel / empty name.
 proc libmgr::newlib_dialog {} {
   variable dlg_done
@@ -469,14 +488,19 @@ proc libmgr::newlib_dialog {} {
   wm transient $d .libmgr
   ttk::label $d.l1 -text "Library name:"
   ttk::entry $d.name -width 28
-  ttk::label $d.l2 -text "Directory (blank = beside library.defs):"
-  ttk::entry $d.path -width 36
+  ttk::label $d.l2 -text "Directory (blank = in same directory as library.defs):"
+  ttk::frame $d.pf
+  ttk::entry $d.pf.path -width 32
+  ttk::button $d.pf.browse -text "Browse…" -command \
+    [list libmgr::newlib_browse $d.pf.path]
+  pack $d.pf.path -side left
+  pack $d.pf.browse -side left -padx {4 0}
   ttk::frame $d.b
   ttk::button $d.b.ok     -text OK     -command {set libmgr::dlg_done 1}
   ttk::button $d.b.cancel -text Cancel -command {set libmgr::dlg_done 0}
   pack $d.b.ok $d.b.cancel -side left -padx 4
   grid $d.l1 $d.name -sticky w -padx 6 -pady 4
-  grid $d.l2 $d.path -sticky w -padx 6 -pady 4
+  grid $d.l2 $d.pf   -sticky w -padx 6 -pady 4
   grid $d.b  -       -pady 6
   bind $d <Return> {set libmgr::dlg_done 1}
   bind $d <Escape> {set libmgr::dlg_done 0}
@@ -487,7 +511,7 @@ proc libmgr::newlib_dialog {} {
   set res {}
   if {$ok == 1} {
     set name [string trim [$d.name get]]
-    if {$name ne {}} { set res [list $name [string trim [$d.path get]]] }
+    if {$name ne {}} { set res [list $name [string trim [$d.pf.path get]]] }
   }
   catch {destroy $d}
   return $res

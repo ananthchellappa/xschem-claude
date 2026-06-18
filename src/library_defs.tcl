@@ -67,10 +67,72 @@ proc library_tag_name {dir} {
   return [file tail $dir]
 }
 
+# The library.defs files listed in $XSCHEM_LIBRARY_DEFS, in listed order ("" if
+# the variable is unset/empty). These are the EXPLICIT defs files.
+proc library_explicit_defs_files {} {
+  global XSCHEM_LIBRARY_DEFS OS
+  if {![info exists XSCHEM_LIBRARY_DEFS] || $XSCHEM_LIBRARY_DEFS eq {}} { return {} }
+  set sep [expr {$OS eq "Windows" ? {;} : {:}}]
+  set out {}
+  foreach f [split $XSCHEM_LIBRARY_DEFS $sep] { if {$f ne {}} { lappend out $f } }
+  return $out
+}
+
+# Every library.defs DISCOVERABLE on the search list `pathlist`: one sitting in a
+# pathlist dir or in its parent (the cds.lib / OA convention, where the defs file
+# lives alongside the per-library subdirs). Deduped by normalized path, search
+# order preserved. This is why the Library Manager can find a writable
+# library.defs even when XSCHEM_LIBRARY_DEFS is unset (the default).
+proc library_discovered_defs_files {} {
+  global pathlist
+  set out {}; set seen [dict create]
+  if {[info exists pathlist]} {
+    foreach dir $pathlist {
+      foreach cand [list [file join $dir library.defs] \
+                         [file join [file dirname $dir] library.defs]] {
+        if {[file isfile $cand]} {
+          set n [file normalize $cand]
+          if {![dict exists $seen $n]} { dict set seen $n 1; lappend out $cand }
+        }
+      }
+    }
+  }
+  return $out
+}
+
+# The user's personal library.defs (Cadence personal cds.lib analog):
+# $USER_CONF_DIR/library.defs (typically ~/.xschem/library.defs). This is the
+# always-available, writable registry of last resort — so creating a library
+# works out of the box even with no $XSCHEM_LIBRARY_DEFS and no library.defs on
+# the search path. May not exist yet; returns "" only if USER_CONF_DIR is unset.
+proc library_personal_defs_file {} {
+  global USER_CONF_DIR
+  if {![info exists USER_CONF_DIR] || $USER_CONF_DIR eq {}} { return {} }
+  return [file join $USER_CONF_DIR library.defs]
+}
+
+# The ordered set of library.defs files the write side may append to / scan:
+# explicit ($XSCHEM_LIBRARY_DEFS) first, then discovered on the search path, then
+# the personal one in the user config dir (created on demand). Deduped by
+# normalized path, order preserved.
+proc library_candidate_defs_files {} {
+  set out {}; set seen [dict create]
+  set all [concat [library_explicit_defs_files] [library_discovered_defs_files]]
+  set personal [library_personal_defs_file]
+  if {$personal ne {}} { lappend all $personal }
+  foreach f $all {
+    set n [file normalize $f]
+    if {![dict exists $seen $n]} { dict set seen $n 1; lappend out $f }
+  }
+  return $out
+}
+
 # The library registry as an ordered dict {name -> abs path}. Auto-discovered
-# tags first, then defs files (so an explicit DEFINE overrides a tag).
+# tags/basenames first, then defs files (so an explicit DEFINE overrides a tag).
+# Among defs files, discovered-on-the-path ones are parsed before explicit
+# $XSCHEM_LIBRARY_DEFS ones, so an explicit DEFINE keeps highest precedence.
 proc library_registry {} {
-  global XSCHEM_LIBRARY_DEFS pathlist OS
+  global pathlist
   set defs [dict create]
 
   # sources on the search list (lower precedence than the defs files below):
@@ -89,12 +151,15 @@ proc library_registry {} {
     }
   }
 
-  # source 1 (higher precedence): the defs files
-  if {[info exists XSCHEM_LIBRARY_DEFS] && $XSCHEM_LIBRARY_DEFS ne {}} {
-    set sep [expr {$OS eq "Windows" ? {;} : {:}}]
-    foreach f [split $XSCHEM_LIBRARY_DEFS $sep] {
-      if {$f ne {} && [file exists $f]} { library_defs_parse_file $f defs }
-    }
+  # the defs files (higher precedence): personal (lowest of the three) first,
+  # then discovered-on-the-path, then explicit $XSCHEM_LIBRARY_DEFS, so the
+  # last-parsed wins on a name clash (explicit beats all). A not-yet-created
+  # personal defs is simply skipped by the isfile guard.
+  set personal [library_personal_defs_file]
+  set order {}
+  if {$personal ne {}} { lappend order $personal }
+  foreach f [concat $order [library_discovered_defs_files] [library_explicit_defs_files]] {
+    if {[file isfile $f]} { library_defs_parse_file $f defs }
   }
   return $defs
 }
@@ -388,14 +453,12 @@ proc library_new_cell {lib cell {view schematic}} {
   return ""
 }
 
-# The first library.defs in $XSCHEM_LIBRARY_DEFS we can append to (existing &
-# writable, or absent with a writable parent), or "" if none.
+# The first library.defs we can append to: explicit ($XSCHEM_LIBRARY_DEFS) first,
+# then any discovered on the search path. A candidate qualifies if it exists and
+# is writable, or (for an explicit entry) is absent with a writable parent dir so
+# it can be created. Returns "" if none qualifies.
 proc library_primary_defs_file {} {
-  global XSCHEM_LIBRARY_DEFS OS
-  if {![info exists XSCHEM_LIBRARY_DEFS] || $XSCHEM_LIBRARY_DEFS eq {}} { return {} }
-  set sep [expr {$OS eq "Windows" ? {;} : {:}}]
-  foreach f [split $XSCHEM_LIBRARY_DEFS $sep] {
-    if {$f eq {}} { continue }
+  foreach f [library_candidate_defs_files] {
     if {[file isfile $f]} { if {[file writable $f]} { return $f }; continue }
     if {[file isdirectory [file dirname $f]] && [file writable [file dirname $f]]} { return $f }
   }
@@ -426,23 +489,19 @@ proc library_new {name {path {}}} {
 # left untouched). Errors if the library is only auto-discovered (no DEFINE to
 # remove — it comes from library.tag or a bare search-path dir).
 proc library_unregister {name} {
-  global XSCHEM_LIBRARY_DEFS OS
   set removed 0
-  if {[info exists XSCHEM_LIBRARY_DEFS] && $XSCHEM_LIBRARY_DEFS ne {}} {
-    set sep [expr {$OS eq "Windows" ? {;} : {:}}]
-    foreach f [split $XSCHEM_LIBRARY_DEFS $sep] {
-      if {$f eq {} || ![file isfile $f]} { continue }
-      set fp [open $f r]; set lines [split [read $fp] \n]; close $fp
-      set out {}; set hit 0
-      foreach line $lines {
-        if {[regexp {^\s*DEFINE\s+(\S+)\s} $line -> dn] && $dn eq $name} { set hit 1; continue }
-        lappend out $line
-      }
-      if {$hit} {
-        if {![file writable $f]} { error "library.defs not writable: $f" }
-        set fp [open $f w]; puts -nonewline $fp [join $out \n]; close $fp
-        set removed 1
-      }
+  foreach f [library_candidate_defs_files] {
+    if {![file isfile $f]} { continue }
+    set fp [open $f r]; set lines [split [read $fp] \n]; close $fp
+    set out {}; set hit 0
+    foreach line $lines {
+      if {[regexp {^\s*DEFINE\s+(\S+)\s} $line -> dn] && $dn eq $name} { set hit 1; continue }
+      lappend out $line
+    }
+    if {$hit} {
+      if {![file writable $f]} { error "library.defs not writable: $f" }
+      set fp [open $f w]; puts -nonewline $fp [join $out \n]; close $fp
+      set removed 1
     }
   }
   if {!$removed} { error "library is auto-discovered (no DEFINE to remove): $name" }
