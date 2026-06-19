@@ -336,8 +336,8 @@ TC1–TC15 written as `tests/headless/wireedit/test_wireedit_<NN>_*.tcl`, assert
 | TC1 | stretch OFF → no follow | A | 🟢 GREEN (guard) | — |
 | TC2 | parallel stretch | — | 🟢 GREEN (control) | — |
 | TC3 | perpendicular lone wire L-jog | D | 🟢 **GREEN** | — (ortho already handles it) |
-| TC4 | sub-grid endpoint follows | B | 🔴 RED | 2 |
-| TC5 | T-junction follows | C | 🔴 RED | 3 |
+| TC4 | sub-grid endpoint follows | B | 🟢 **GREEN** (Phase 2 done) | 2 |
+| TC5 | T-junction follows | C | 🟢 **GREEN** (Phase 3 done) | 3 |
 | TC6 | corner-slide | D1/D2 | 🔴 RED (4 checks) | 4 |
 | TC7 | colinear merge | R10 | 🔴 RED | 5 |
 | TC8 | duplicate/overlap removal | R11 | 🔴 RED | 5 |
@@ -348,7 +348,7 @@ TC1–TC15 written as `tests/headless/wireedit/test_wireedit_<NN>_*.tcl`, assert
 | TC13 | multi-component rigid move | R5 | 🟢 GREEN (guard) | — |
 | TC14 | undo restores geometry | R17 | 🟢 GREEN (guard) | — |
 | TC15 | far end on fixed pin | R18 | 🟢 GREEN (guard) | — |
-| TC16 | pin-to-pin abutment generates wire | H/R20 | 🔴 RED (drag path) | 3 |
+| TC16 | pin-to-pin abutment generates wire | H/R20 | 🟢 **GREEN** (Phase 3 done) | 3 |
 
 **Findings beyond the predicted map:**
 - **TC3 is already GREEN** — with `orthogonal_wiring` on, a perpendicular move of a
@@ -377,7 +377,18 @@ TC1–TC15 written as `tests/headless/wireedit/test_wireedit_<NN>_*.tcl`, assert
   tolerant ≡ `==`), stable_handles 58 PASS. Sabotage-verified (tol→0 reddens TC4).
   Test fixtures pin `cadsnap 10` in `we_reset` for a deterministic tolerance.
 
-### Phase 3 — T-junction follow + pin abutment *(Issues C & H → R4/R20; TC5, TC16)*
+### Phase 3 — T-junction follow + pin abutment ✅ DONE *(Issues C & H → R4/R20; TC5, TC16)*
+**Status: COMPLETE.** Approach (b) taken — the plain (cadence + intuitive-stretch) drag
+now sets `connect_by_kissing = 2` alongside `select_attached_nets()` in
+`handle_button_press` (callback.c, both the cadence plain arm and the non-cadence
+plain-stretch arm). `connect_by_kissing()` already handles abutment (TC16) and mid-span
+T-junction (TC5) in one mechanism. TC5 geometry confirmed from the test = horizontal
+wire kept `(-60,30)-(60,30)` + new vertical stub `(0,30)-(0,70)`. The headless helper
+`we_move_stretch` now mirrors the drag faithfully via `move_objects … stretch kissing`.
+Gesture-level proof added as test_cadence_drag Phase 6 (plain drag of abutted pins
+generates a wire). Sabotage-verified both ways (drop callback trigger → cadence Phase 6
+reddens; drop helper kissing → TC5/TC16 redden). Guards green: wireedit
+TC1/2/3/4/11/13/14/15, golden harness, stable_handles 58, test_cadence_drag 12.
 - **3.1** RED: TC5 fails (mid-span wire not selected); TC16 fails on the drag/stretch
   path (abutted pins disconnect — no wire generated).
 - **3.2** Decide approach (open the choice in the tests' expected geometry first):

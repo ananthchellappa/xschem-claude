@@ -5246,14 +5246,18 @@ static void handle_button_press(int event, int state, int rstate, KeySym key, in
             *   plain  -> attached move (wires follow)
             *   Ctrl   -> detached move (wires left behind)
             *   Shift  -> copy
-            * T-junction (connect_by_kissing) following is deferred to the
-            * wire-follow work; the plain move uses select_attached_nets() only. */
+            * The plain move also follows abutments and T-junctions via
+            * connect_by_kissing() (wire-follow spec Phase 3): a pin that abuts
+            * another pin or touches a wire mid-span gets a connecting wire so the
+            * connection survives the drag. This restores what cadence_compat lost
+            * when Shift+drag became copy (legacy Shift+drag set kissing). */
            if(state & ShiftMask) {
              copy_objects(START);
            } else if(state & ControlMask) {
              move_objects(START,0,0,0);
            } else {
              select_attached_nets(); /* nets that land on selected instance pins follow */
+             xctx->connect_by_kissing = 2; /* 2 will be used to reset var to 0 at end of move */
              move_objects(START,0,0,0);
            }
          } else {
@@ -5265,6 +5269,11 @@ static void handle_button_press(int event, int state, int rstate, KeySym key, in
            /* select attached nets depending on ControlMask and enable_stretch */
            if(stretch && !(state & ShiftMask)) {
              select_attached_nets(); /* stretch nets that land on selected instance pins */
+             /* plain stretch drag also follows abutments and T-junctions
+              * (wire-follow spec Phase 3); kissing only adds wires where a pin
+              * abuts a pin or touches a wire, so non-stretch (default) moves are
+              * unaffected. */
+             xctx->connect_by_kissing = 2; /* 2 will be used to reset var to 0 at end of move */
            }
            /* if dragging instances with stretch enabled and Shift down add wires to pins
             * attached to something */

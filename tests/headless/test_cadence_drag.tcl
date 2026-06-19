@@ -131,6 +131,23 @@ check "non-cadence plain drag still moves the gate" [expr {[inst_pos $GATE] ne $
 check "non-cadence plain drag leaves wires behind (enable_stretch=0 stock)" \
   [expr {[wires_moved $before [allwires]] == 0}]
 
+# === Phase 6 — plain drag KISSES: abutted pins generate a connecting wire ====
+# Two devices with directly coincident pins (no wire). A plain cadence drag of
+# one must GENERATE a wire so the abutment connection survives -- this proves the
+# production wiring (handle_button_press plain arm now sets connect_by_kissing).
+# Built in-memory so the abutment is exact; driven through the same gesture path.
+xschem clear force
+set ::cadence_compat 1; set ::enable_stretch 1
+set ::intuitive_interface 1; xschem set intuitive_interface 1
+xschem instance {res.sym} 0 0 0 0 {}    ;# dev0: pin M (0,30)
+xschem instance {res.sym} 0 60 0 0 {}   ;# dev1: pin P (0,30) -> abuts dev0.M, no wire
+xschem zoom_full; update idletasks
+check "abutment fixture starts with no wire" [expr {[xschem get wires] == 0}]
+lassign [inst_screen 0] sx sy
+drag1 $sx $sy [expr {$sx+30}] [expr {$sy+30}] 0
+check "plain cadence drag of abutted pin GENERATES a connecting wire" \
+  [expr {[xschem get wires] >= 1}]
+
 # --- teardown --------------------------------------------------------------
 catch {destroy .ciw}; update
 puts [expr {$::fails == 0 ? "RESULT: ALL PASS" : "RESULT: $::fails FAILED"}]

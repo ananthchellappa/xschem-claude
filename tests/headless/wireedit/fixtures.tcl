@@ -113,8 +113,13 @@ proc netcount {} {
 }
 
 # --- moves -----------------------------------------------------------------
-# Stretch-move the current selection by (dx,dy): selects attached nets then
-# moves, exactly as the interactive stretch drag does at release.
-proc we_move_stretch {dx dy} { xschem move_objects $dx $dy stretch }
+# Stretch-move the current selection by (dx,dy): the faithful scripted mirror of
+# the interactive plain (cadence/intuitive) stretch drag. That drag does
+# select_attached_nets() (endpoint-on-pin follow) AND connect_by_kissing()
+# (abutment + mid-span/T-junction follow), wired into handle_button_press
+# (callback.c). The `stretch` keyword runs select_attached_nets(); the `kissing`
+# keyword sets connect_by_kissing=2 -- together they reproduce the drag's release
+# output (spec wire_editing Phase 3).
+proc we_move_stretch {dx dy} { xschem move_objects $dx $dy stretch kissing }
 # Plain (non-stretch) move of the current selection by (dx,dy).
 proc we_move {dx dy} { xschem move_objects $dx $dy }
