@@ -285,13 +285,25 @@ TC14, the existing `tests/headless/run.sh` golden netlist harness, and the
 (`orthogonal_wiring`/`enable_stretch` off) must be untouched — assert by keeping the
 golden harness (which sets neither) green.
 
-### Phase 0 — Test scaffold *(no product code)*
-- **0.1** Add `tests/headless/wireedit/` with a `fixtures.tcl` helper providing
-  `build_*`, `segset` (parse N records → normalized set), `has`/`has_seg`,
-  `netcount`/`nets_distinct` (wrap `prepare_netlist_structs(0)` + node query). RED:
-  helper-selftest asserts `segset` round-trips a known build. GREEN: helper works.
-- **0.2** Add `run_wireedit.sh` aggregating every `test_wireedit_*.tcl` `RESULT:` line,
-  nonzero on any FAIL. RED: runner finds 0 tests. GREEN: runs the 0.1 self-test.
+### Phase 0 — Test scaffold *(no product code)* — ✅ DONE
+- **0.1** ✅ `tests/headless/wireedit/fixtures.tcl`: `we_reset`/`we_device`/`we_wire`/
+  `we_label`, `segset`+`we_norm`+`has_seg` (endpoint-order-independent), `we_net`/
+  `nets_distinct`/`netcount`, `we_move`/`we_move_stretch`. Self-test
+  `test_wireedit_00_selftest.tcl` (11 checks) GREEN.
+- **0.2** ✅ `run_wireedit.sh` aggregates every `test_wireedit_*.tcl` `RESULT:` line,
+  exits nonzero on any FAIL / no-result; finds + runs the self-test.
+- **Established facts (so they aren't re-derived):**
+  - **`xschem wire_coord <n>` had an off-by-one** (`n > 0` → index 0 unqueryable);
+    fixed to `n >= 0` (scheduler.c). Real bug; `wire_id` already used `>= 0`. The
+    stable_handles suite documented it as a "pad wire at index 0" workaround — still
+    GREEN (58 checks) after the fix; nothing asserted index 0 was empty.
+  - **Net identity:** `we_net` = `xschem resolved_net` (to run
+    `prepare_netlist_structs(0)` and refresh the cache) **then** `getprop wire <n>
+    lab` for the bare token. Do **not** use `resolved_net`'s return for identity — it
+    adds an inconsistent hierarchy prefix (`0NETA` vs `NETA`) and has the
+    stale-sel_array defect. Use explicit `lab_pin` labels for unambiguous nets.
+  - **Run from REPO ROOT** under X: `DISPLAY=:0 src/xschem --pipe -q --nolog --script
+    tests/headless/wireedit/<t>.tcl` (fixture paths are CWD-relative).
 
 ### Phase 1 — Baseline characterization *(tests only; no product code)*
 Write TC1–TC15 asserting **desired** behavior; run against current binary; record the
