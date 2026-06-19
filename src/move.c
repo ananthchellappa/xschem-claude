@@ -632,8 +632,11 @@ void copy_objects(int what)
 
    if(xctx->kissing) {
      pop_undo(0, 0);
-     if(xctx->connect_by_kissing == 2) xctx->connect_by_kissing = 0;
+     check_collapsing_objects(); /* sweep degenerate kiss stubs (see move_objects ABORT) */
    }
+   /* Always clear the kissing request on abort (see move_objects ABORT): a
+    * stale connect_by_kissing == 2 would leak into the next gesture. */
+   if(xctx->connect_by_kissing == 2) xctx->connect_by_kissing = 0;
 
    xctx->move_rot = xctx->move_flip = 0;
    xctx->deltax = xctx->deltay = 0.;
@@ -1179,8 +1182,19 @@ void move_objects(int what, int merge, double dx, double dy)
    draw_selection(xctx->gctiled,0);
    if(xctx->kissing) {
      pop_undo(0, 0);
-     if(xctx->connect_by_kissing == 2) xctx->connect_by_kissing = 0;
+     /* connect_by_kissing() created zero-length stub wires at the kissed pins
+      * (meant to be stretched by the move). On an aborted/no-motion gesture they
+      * stay degenerate; the pop_undo above can miss them when the cadence
+      * deselect-on-release path perturbed the undo pointers, so sweep them with
+      * the same degenerate-wire cleanup the normal move END uses. */
+     check_collapsing_objects();
    }
+   /* Always clear the kissing request on abort, even when nothing was kissed
+    * (xctx->kissing == 0). Otherwise connect_by_kissing stays at 2 and leaks
+    * into the NEXT move/copy gesture -- e.g. a plain press that kisses nothing
+    * would make a subsequent Shift+drag copy spuriously draw connecting wires.
+    * move END already resets it unconditionally; mirror that here. */
+   if(xctx->connect_by_kissing == 2) xctx->connect_by_kissing = 0;
 
    xctx->move_rot=xctx->move_flip=0;
    xctx->deltax=xctx->deltay=0.;

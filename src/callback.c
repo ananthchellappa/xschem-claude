@@ -5335,6 +5335,21 @@ static void handle_button_release(int event, KeySym key, int state, int button, 
      end_place_move_copy_zoom();
    }
 
+   /* A plain intuitive press starts a move and may run connect_by_kissing(),
+    * which inserts zero-length stub wires at kissed pins (to be stretched by the
+    * drag). If the gesture ends with NO motion it is just a click: abort the move
+    * here -- BEFORE the cadence deselect-others test below reads xctx->lastsel --
+    * so the kiss stub neither inflates the selection (spuriously triggering the
+    * deselect branch) nor survives as a degenerate wire. move_objects(ABORT)
+    * sweeps the stub via check_collapsing_objects(). Shift(copy)/Ctrl(detached or
+    * launcher) are handled by their own branches, so exclude them. Gestures WITH
+    * motion complete normally further down. */
+   if(intuitive && (xctx->ui_state & STARTMOVE) && xctx->drag_elements &&
+      !xctx->mouse_moved && !(state & (ShiftMask | ControlMask))) {
+     move_objects(ABORT, 0, 0.0, 0.0);
+     xctx->drag_elements = 0;
+   }
+
    /* launcher, no intuitive interface */
    if(!intuitive && state == (Button1Mask | ControlMask) &&
       !xctx->shape_point_selected && xctx->mouse_moved == 0) {

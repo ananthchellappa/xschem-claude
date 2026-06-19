@@ -148,6 +148,59 @@ drag1 $sx $sy [expr {$sx+30}] [expr {$sy+30}] 0
 check "plain cadence drag of abutted pin GENERATES a connecting wire" \
   [expr {[xschem get wires] >= 1}]
 
+# === Phase 7 — kissing must NOT misfire on no-motion clicks ==================
+# Regression for the bug where, with cadence_compat, a Shift+drag copy drew
+# spurious connecting wires. Root cause: a plain press arms connect_by_kissing,
+# and a click (no motion) leaked the flag / left a degenerate stub.
+# a 1px "drag" stays under the 5px motion threshold => treated as a click.
+proc click1 {x y mod} {
+  global BP BR Button1Mask
+  xschem callback .drw $BP $x $y 0 1 0 $mod
+  xschem callback .drw $BR [expr {$x+1}] [expr {$y+1}] 0 1 0 [expr {$Button1Mask | $mod}]
+  update idletasks
+}
+set ::cadence_compat 1; set ::enable_stretch 1
+set ::intuitive_interface 1; xschem set intuitive_interface 1
+
+# 7a: a no-motion click on an abutted instance must NOT leave a stub wire
+xschem clear force
+xschem instance {res.sym} 0 0 0 0 {}
+xschem instance {res.sym} 0 60 0 0 {}   ;# pins abut at (0,30)
+xschem zoom_full; update idletasks
+lassign [inst_screen 0] sx sy
+click1 $sx $sy 0
+check "no-motion click on abutted instance leaves no stub wire" \
+  [expr {[xschem get wires] == 0}]
+
+# 7b: click that kisses nothing must not leak the flag into a later Shift+copy
+xschem clear force
+xschem instance {res.sym} 500 500 0 0 {} ;# isolated: a click here kisses nothing
+xschem instance {res.sym} 0 0 0 0 {}
+xschem instance {res.sym} 0 60 0 0 {}    ;# abutted copy target
+xschem zoom_full; update idletasks
+lassign [inst_screen 0] sx sy
+click1 $sx $sy 0                          ;# leaks connect_by_kissing if not reset
+xschem unselect_all
+lassign [inst_screen 1] sx sy
+drag1 $sx $sy [expr {$sx+30}] [expr {$sy+30}] $ShiftMask
+check "Shift+copy after a no-kiss click draws no spurious wire" \
+  [expr {[xschem get wires] == 0}]
+check "Shift+copy still duplicated the instance" \
+  [expr {[xschem get instances] == 4}]
+
+# 7c: cadence deselect-others (the path whose lastsel read we protect) still works
+xschem clear force
+xschem instance {res.sym} 0 0 0 0 {}
+xschem instance {res.sym} 200 0 0 0 {}
+xschem instance {res.sym} 400 0 0 0 {}
+xschem zoom_full; update idletasks
+xschem select instance 0; xschem select instance 1; xschem select instance 2
+lassign [inst_screen 1] sx sy
+xschem select instance 0; xschem select instance 1; xschem select instance 2
+click1 $sx $sy 0
+check "cadence click-to-isolate still leaves exactly one selected" \
+  [expr {[xschem get lastsel] == 1}]
+
 # --- teardown --------------------------------------------------------------
 catch {destroy .ciw}; update
 puts [expr {$::fails == 0 ? "RESULT: ALL PASS" : "RESULT: $::fails FAILED"}]
