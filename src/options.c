@@ -171,6 +171,13 @@ static int check_opt(char *opt, char *optval, int type)
     } else if( (type == SHORT && *opt == 'x') || (type == LONG && !strcmp("no_x", opt)) ) {
         has_x = 0;
 
+    } else if( type == LONG && !strcmp("nogui", opt) ) {
+        /* true headless: never connect to X, never load Tk, no window is mapped.
+         * cli_opt_nogui records that headless was requested explicitly (vs. simply
+         * having no DISPLAY), so GUI-only operations can fail with a clear message. */
+        cli_opt_nogui = 1;
+        has_x = 0;
+
     } else if( (type == SHORT && *opt == 'z') || (type == LONG && !strcmp("rainbow", opt)) ) {
         rainbow_colors = 1;
 

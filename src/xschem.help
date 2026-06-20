@@ -27,6 +27,10 @@ Options:
       --spectre        Set netlist type to SPECTRE.
   -y  --symbol         Set netlist type to SYMBOL (used when drawing symbols)
   -x  --no_x           Don't use X (only command mode).
+      --nogui          True headless mode: never connect to the X server and never
+                       load Tk, so no window is ever opened even if DISPLAY is set.
+                       Implies --no_x. Intended for batch netlisting and regression
+                       tests. Combine with --pipe -q for scripted, windowless runs.
   -z  --rainbow        Use a raibow-looking layer color table.
   -W  --waves          Show simulation waveforms.
   -f  --flat_netlist   Set flat netlist (for spice format only).

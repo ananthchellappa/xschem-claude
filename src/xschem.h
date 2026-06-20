@@ -1268,6 +1268,7 @@ extern int cli_opt_do_simulation;
 extern int cli_opt_do_waves;
 extern int cli_opt_detach; /* no TCL console */
 extern int cli_opt_quit;
+extern int cli_opt_nogui; /* --nogui: true headless, never init Tk / map a window */
 extern char cli_opt_tcl_script[PATH_MAX];
 extern char cli_opt_initial_netlist_name[PATH_MAX];
 extern char cli_opt_rcfile[PATH_MAX];

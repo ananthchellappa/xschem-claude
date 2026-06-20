@@ -220,6 +220,7 @@ int cli_opt_do_simulation=0;
 int cli_opt_do_waves=0;
 int cli_opt_detach = 0; /* no tcl console if set; batch mode */
 int cli_opt_quit=0;  /* set from process_options (ex netlist from cmdline and quit) */
+int cli_opt_nogui=0; /* --nogui: true headless, never init Tk / map a window */
 char cli_opt_tcl_script[PATH_MAX] = {'\0'};
 char cli_opt_initial_netlist_name[PATH_MAX]={0};
 char cli_opt_rcfile[PATH_MAX] = {'\0'};

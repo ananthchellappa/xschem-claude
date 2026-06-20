@@ -122,6 +122,12 @@ Set netlist type to symbol global property edit.
 Dont use X (only command mode).
 .TP
 
+.B --nogui
+True headless mode: never connect to the X server and never load Tk, so no window
+is ever opened even if DISPLAY is set. Implies --no_x. Intended for batch netlisting
+and regression tests; combine with --pipe -q for scripted, windowless runs.
+.TP
+
 .B -z, --rainbow
 Use a raibow-looking layer color table.
 .TP
