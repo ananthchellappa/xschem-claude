@@ -31,7 +31,14 @@ proc ciw_create {} {
     return
   }
   toplevel .ciw
-  wm title .ciw {xschem CIW}
+  ## title shows the full path of the action-log file being displayed (e.g.
+  ## /tmp/Xschem.log.38), so the user always knows which file the pane mirrors.
+  set _log [xschem get actionlog_filename]
+  if {$_log ne {}} {
+    wm title .ciw "xschem CIW - [file normalize $_log]"
+  } else {
+    wm title .ciw {xschem CIW}
+  }
   ## closing the CIW must not exit xschem: withdraw, keeping the accumulated
   ## log so a later ciw_create just re-shows it
   wm protocol .ciw WM_DELETE_WINDOW {wm withdraw .ciw}

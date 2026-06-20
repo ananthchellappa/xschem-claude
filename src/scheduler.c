@@ -1620,6 +1620,9 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
             Tcl_SetResult(interp, xctx->current_name, TCL_VOLATILE);
           }
+          else if(!strcmp(argv[2], "actionlog_filename")) { /* resolved action-log path, "" if logging off */
+            Tcl_SetResult(interp, actionlog_filename, TCL_VOLATILE);
+          }
           else if(!strcmp(argv[2], "current_win_path")) { /* path of current tab/window (.drw, .x1.drw, ...) */
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
             Tcl_SetResult(interp, xctx->current_win_path, TCL_VOLATILE);

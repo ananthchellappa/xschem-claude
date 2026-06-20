@@ -43,6 +43,10 @@ if {[winfo viewable .ciw.p] && $h0 > 1} {
 set logf [xschem get actionlog_filename]
 check "actionlog_filename set"   [expr {$logf ne {}}]
 
+# 2b) the CIW title bar shows the full path of the log file it mirrors
+check "CIW title shows the log path" \
+  [expr {[string first [file normalize $logf] [wm title .ciw]] >= 0}]
+
 # 3) C mirror: an xschem log_action line lands in the pane (file checked below)
 xschem log_action {xschem zoom_full}
 update idletasks
