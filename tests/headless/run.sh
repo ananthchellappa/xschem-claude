@@ -70,7 +70,7 @@ echo "   driver: $DRIVER"
 # Run xschem headless. Pin the netlist dir, use the hermetic rcfile, quit after.
 set +e
 REPO="$REPO" CASES_FILE="$CASES_FILE" \
-  "$XSCHEM" --rcfile "$HERE/minrc" --netlist_path "$NETLISTS" \
+  "$XSCHEM" --no_x --rcfile "$HERE/minrc" --netlist_path "$NETLISTS" \
             --pipe -q --script "$DRIVER" \
             > "$RESULTS/state.txt" 2> "$RESULTS/stderr.log"
 rc=$?
