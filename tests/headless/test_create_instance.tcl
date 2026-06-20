@@ -3,8 +3,11 @@
 #     Tools > Insert symbol is gone.
 #   - single window: re-launch reuses it (stable X id).
 #   - 3-column Lib/Cell/View browser; View column shows only SYMBOL views.
-#   - the .sym guard: Create is enabled only for a cell with a symbol view.
-#   - Create starts interactive placement (PLACE_SYMBOL) and the form stays open.
+#   - NO Create button: picking a cell+symbol-view arms placement automatically
+#     (preview); a cell without a symbol view does not arm.
+#   - recursion guard: a cell may not be instantiated inside its own schematic.
+#   - Esc ends placement AND dismisses the form.
+#   - reopening restores the last selection and re-arms it.
 #   - the Legacy button routes to the no-arg place_symbol dialog.
 #
 # Needs X. Run under X with --pipe from src/:
@@ -16,6 +19,7 @@ proc check {name ok detail} {
   if {$ok} { puts "ok:   $name $detail" } else { puts "FAIL: $name $detail"; incr fail }
 }
 proc touch {f txt} { file mkdir [file dirname $f]; set fp [open $f w]; puts $fp $txt; close $fp }
+proc armed {} { return [expr {([xschem get ui_state] & 8192) != 0}] }
 proc menu_cmd {m label} {
   if {![winfo exists $m]} { return "" }
   for {set i 0} {$i <= [$m index end]} {incr i} {
@@ -24,7 +28,6 @@ proc menu_cmd {m label} {
   return ""
 }
 proc menu_has {m label} { return [expr {[menu_cmd $m $label] ne {}}] }
-# select item $txt in a .mkinst listbox column and fire its handler
 proc pick {col txt handler} {
   set lb .mkinst.pw.$col.lb
   set i [lsearch -exact [$lb get 0 end] $txt]
@@ -53,6 +56,7 @@ check "CI1b Edit > Create Instance wired to the command" \
   [expr {[menu_cmd .menubar.edit {Create Instance}] eq {xschem create_instance}}] \
   "(=> '[menu_cmd .menubar.edit {Create Instance}]')"
 check "CI1c Tools > Insert symbol removed" [expr {![menu_has .menubar.tools {Insert symbol}]}] {}
+check "CI1d no Create button (selection arms instead)" [expr {![winfo exists .mkinst.b.create]}] {}
 
 # === CI2 — single window: re-launch reuses it (same X id) ===================
 set id1 [winfo id .mkinst]
@@ -66,38 +70,59 @@ check "CI3a library pane lists tlib" [expr {[lsearch [.mkinst.pw.lib.lb get 0 en
 pick lib tlib mkinst::on_lib
 check "CI3b cell pane lists both cells" \
   [expr {[lsearch [.mkinst.pw.cell.lb get 0 end] withsym] >= 0 && [lsearch [.mkinst.pw.cell.lb get 0 end] schonly] >= 0}] {}
-pick cell withsym mkinst::on_cell
-check "CI3c view pane shows the symbol view" [expr {[.mkinst.pw.view.lb get 0 end] eq {symbol}}] \
-  "(=> [.mkinst.pw.view.lb get 0 end])"
 
-# === CI4 — the .sym guard ===================================================
-check "CI4a withsym: Create enabled" [expr {[.mkinst.b.create cget -state] eq {normal}}] {}
-check "CI4b withsym: symbol view resolves to a .sym" \
-  [string match {*.sym} [xschem cellview_path tlib/withsym symbol]] "(=> [xschem cellview_path tlib/withsym symbol])"
+# === CI4 — auto-arm on selection + the .sym guard ===========================
+xschem abort_operation
+pick cell withsym mkinst::on_cell
+check "CI4a withsym: symbol view listed" [expr {[.mkinst.pw.view.lb get 0 end] eq {symbol}}] "(=> [.mkinst.pw.view.lb get 0 end])"
+check "CI4b withsym: selection auto-arms placement (preview)" [armed] "(=> ui_state=[xschem get ui_state])"
+xschem abort_operation
 pick cell schonly mkinst::on_cell
 check "CI4c schonly: no symbol view listed" [expr {[.mkinst.pw.view.lb get 0 end] eq {}}] {}
-check "CI4d schonly: Create disabled" [expr {[.mkinst.b.create cget -state] eq {disabled}}] {}
-check "CI4e schonly: cellview_path symbol is empty" [expr {[xschem cellview_path tlib/schonly symbol] eq {}}] {}
+check "CI4d schonly: does NOT arm" [expr {![armed]}] "(=> ui_state=[xschem get ui_state])"
 
-# === CI5 — Create starts interactive placement; form stays open =============
-catch {xschem abort_operation}
+# === CI5 — re-arm on switching; form stays open =============================
 pick cell withsym mkinst::on_cell
-mkinst::create
-check "CI5a Create starts placement (PLACE_SYMBOL bit set)" \
-  [expr {([xschem get ui_state] & 8192) != 0}] "(=> ui_state=[xschem get ui_state])"
-check "CI5b form stays open after Create" [winfo exists .mkinst] {}
-xschem abort_operation
-check "CI5c placement cleared after abort" [expr {([xschem get ui_state] & 8192) == 0}] "(=> ui_state=[xschem get ui_state])"
-mkinst::create
-check "CI5d can place again after abort" [expr {([xschem get ui_state] & 8192) != 0}] "(=> ui_state=[xschem get ui_state])"
+check "CI5a re-arm on selecting a placeable cell" [armed] {}
+check "CI5b form stays open" [winfo exists .mkinst] {}
+
+# === CI8 — Esc ends placement AND dismisses the form ========================
+check "CI8a armed before Esc" [armed] {}
+mkinst::escape
+update idletasks
+check "CI8b Esc cleared the placement" [expr {![armed]}] "(=> ui_state=[xschem get ui_state])"
+check "CI8c Esc dismissed the form" [expr {![winfo exists .mkinst]}] {}
+
+# === CI9 — reopen restores the last selection and re-arms ===================
+xschem create_instance
+update idletasks
+check "CI9a reopened" [winfo exists .mkinst] {}
+check "CI9b last library restored" [expr {[mkinst::cursel .mkinst.pw.lib.lb] eq {tlib}}] "(=> [mkinst::cursel .mkinst.pw.lib.lb])"
+check "CI9c last cell restored" [expr {[mkinst::cursel .mkinst.pw.cell.lb] eq {withsym}}] "(=> [mkinst::cursel .mkinst.pw.cell.lb])"
+check "CI9d preview re-armed on reopen" [armed] "(=> ui_state=[xschem get ui_state])"
 xschem abort_operation
 
 # === CI6 — Legacy button routes to the no-arg place_symbol dialog ============
-# (don't invoke it -- the legacy dialog is modal; assert the wiring instead)
 check "CI6a Legacy button calls mkinst::legacy" [expr {[.mkinst.b.legacy cget -command] eq {mkinst::legacy}}] {}
 check "CI6b mkinst::legacy uses no-arg place_symbol" \
   [expr {[string match {*xschem place_symbol*} [info body mkinst::legacy]] && \
          ![string match {*place_symbol *} [info body mkinst::legacy]]}] {}
+
+# === CI7 — recursion guard: a cell may not be placed in its own schematic ====
+xschem abort_operation
+xschem load $tmp/tlib/withsym/schematic/withsym.sch
+check "CI7a current schematic is withsym" \
+  [expr {[file normalize [xschem get schname]] eq [file normalize $tmp/tlib/withsym/schematic/withsym.sch]}] \
+  "(=> [xschem get schname])"
+pick lib  tlib    mkinst::on_lib
+pick cell withsym mkinst::on_cell
+check "CI7b recursive selection does NOT arm" [expr {![armed]}] "(=> ui_state=[xschem get ui_state])"
+check "CI7c status explains the recursion" [string match {*recursion*} [.mkinst.status cget -text]] "(=> [.mkinst.status cget -text])"
+# a non-recursive cell still arms in the same schematic context
+pick cell schonly mkinst::on_cell   ;# no symbol view -> still not armed, but not the recursion message
+check "CI7d schonly here is rejected for lacking a symbol, not recursion" \
+  [expr {![string match {*recursion*} [.mkinst.status cget -text]]}] "(=> [.mkinst.status cget -text])"
+xschem abort_operation
 
 catch {destroy .mkinst}
 file delete -force $tmp

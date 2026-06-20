@@ -82,6 +82,33 @@ A **new, dedicated, modeless** toplevel — separate from the Library Manager.
   so no extra command-level logging is added for Create (that would duplicate the
   drop and be non-replayable).
 
+## 3.4 Fluid placement (refinement)
+
+The form is a *selector that arms a live preview*, not a click-Create dialog:
+
+- **No Create button.** As soon as a cell + symbol view is selected (and on every
+  selection change), the symbol is **armed for placement automatically** — the
+  preview follows the cursor the moment the mouse returns to the schematic canvas.
+  Switching selection re-arms with the new symbol (the previous, undropped preview
+  is aborted first).
+- **Repeat.** After dropping an instance the same symbol stays armed (xschem's
+  native place loop), so the user keeps clicking to place more.
+- **Esc ends the whole gesture.** While the form is open, Esc both aborts the
+  current placement **and dismisses the form** (whether the canvas or the form has
+  focus). Closing the form by any means (Close, WM close) likewise aborts an armed
+  placement. (Esc is bound at the Tcl level on the canvas and the form while open,
+  and removed when the form is destroyed, restoring the default Esc.)
+- **Resume on reopen.** The form remembers the most recently armed Library / Cell /
+  View. Re-launching (`Edit ▸ Create Instance` / the `i` key) restores that
+  selection **and re-arms the preview immediately**, so the user can place without
+  touching the form.
+- **Recursion guard (a circuit is physical — no cell may contain itself).** A
+  selection is refused when its schematic view *is the schematic currently being
+  edited* (`cellview_path <lib/cell> schematic` == `xschem get schname`): the
+  preview is not armed and the status line explains. Cells with no schematic
+  (primitives) are always placeable. v1 guards the current schematic; guarding the
+  whole hierarchy stack (an ancestor is also recursion) is a noted extension.
+
 ## 4. Out of scope (v1)
 
 - **Instance parameter fields** in the form (Cadence shows property fields before
