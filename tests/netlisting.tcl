@@ -82,7 +82,7 @@ proc run_xschem_netlist {type output_dir dir fn} {
   set general_failure 0
 
   cd $dir
-  set catch_status [catch {eval exec {$xschem_cmd $fn -q -x -r -$opt -o $netlist_output_dir -n 2> $output}} msg opt]
+  set catch_status [catch {eval exec {$xschem_cmd $fn -q --nogui -r -$opt -o $netlist_output_dir -n 2> $output}} msg opt]
   cd $cwd
   if {$catch_status} {
     set error_code [dict get $opt -errorcode]
@@ -95,7 +95,7 @@ proc run_xschem_netlist {type output_dir dir fn} {
     }
   }
   if {$general_failure} {
-    puts "FATAL: $xschem_cmd $fn -q -x -r -$opt -o $netlist_output_dir -n 2> $output : $msg"
+    puts "FATAL: $xschem_cmd $fn -q --nogui -r -$opt -o $netlist_output_dir -n 2> $output : $msg"
     incr num_fatals
   } else {
     lappend pathlist $fn_debug

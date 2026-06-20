@@ -48,10 +48,10 @@ proc open_close {dir fn} {
     puts "Output: $fn_debug"
     set cwd [pwd]
     cd $dir
-    set catch_status [catch {eval exec {$xschem_cmd $fn -q -x -r -d 1 2> $cwd/$output}} msg]
+    set catch_status [catch {eval exec {$xschem_cmd $fn -q --nogui -r -d 1 2> $cwd/$output}} msg]
     cd $cwd
     if {$catch_status} {
-      puts "FATAL: $xschem_cmd $fn -q -x -r -d 1 2> $cwd/$output : $msg"
+      puts "FATAL: $xschem_cmd $fn -q --nogui -r -d 1 2> $cwd/$output : $msg"
       incr num_fatals
     } else {
       lappend pathlist $fn_debug
