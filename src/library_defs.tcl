@@ -101,12 +101,17 @@ proc library_discovered_defs_files {} {
 }
 
 # The user's personal library.defs (Cadence personal cds.lib analog):
-# $USER_CONF_DIR/library.defs (typically ~/.xschem/library.defs). This is the
-# always-available, writable registry of last resort — so creating a library
-# works out of the box even with no $XSCHEM_LIBRARY_DEFS and no library.defs on
-# the search path. May not exist yet; returns "" only if USER_CONF_DIR is unset.
+# $USER_CONF_DIR/library.defs (typically ~/.xschem/library.defs). Historically the
+# always-available, writable registry of last resort, so creating a library worked
+# out of the box even with no $XSCHEM_LIBRARY_DEFS and no library.defs on the
+# search path. That fallback is now OPT-IN: it is used (for read and write) only
+# when the global `library_personal_defs` is set to 1. With it off (the default)
+# we never read from nor auto-create libraries in ~/.xschem — a library needs an
+# explicit $XSCHEM_LIBRARY_DEFS or a writable library.defs on the search path.
+# Returns "" when disabled or when USER_CONF_DIR is unset.
 proc library_personal_defs_file {} {
-  global USER_CONF_DIR
+  global USER_CONF_DIR library_personal_defs
+  if {![info exists library_personal_defs] || !$library_personal_defs} { return {} }
   if {![info exists USER_CONF_DIR] || $USER_CONF_DIR eq {}} { return {} }
   return [file join $USER_CONF_DIR library.defs]
 }
@@ -132,7 +137,7 @@ proc library_candidate_defs_files {} {
 # Among defs files, discovered-on-the-path ones are parsed before explicit
 # $XSCHEM_LIBRARY_DEFS ones, so an explicit DEFINE keeps highest precedence.
 proc library_registry {} {
-  global pathlist
+  global pathlist library_registry_defs_only
   set defs [dict create]
 
   # sources on the search list (lower precedence than the defs files below):
@@ -140,7 +145,11 @@ proc library_registry {} {
   #  - any other search-path dir is ALSO a library, named by its basename, so the
   #    Library Manager shows the user's existing (flat) libraries out of the box.
   #    First occurrence wins (mirrors the search order).
-  if {[info exists pathlist]} {
+  # When `library_registry_defs_only` is 1 this auto-discovery is skipped entirely,
+  # so ONLY the library.defs registries below define what libraries exist (used by
+  # the Cadence-style setup, where the search path is not a library source).
+  if {(![info exists library_registry_defs_only] || !$library_registry_defs_only) \
+       && [info exists pathlist]} {
     foreach dir $pathlist {
       if {[file exists [file join $dir library.tag]]} {
         dict set defs [library_tag_name $dir] $dir
@@ -362,9 +371,44 @@ proc library_delete_view {lib cell view} {
   return ""
 }
 
+# The layout STYLE a library uses for newly created/copied cells: "nested"
+# (Cadence-style lib/cell/view) or "flat" (<cell>.{sym,sch} in the library dir).
+# Resolution, highest precedence first:
+#   1. an explicit "LAYOUT nested|flat" line in the library's library.tag;
+#   2. inferred from existing cells — any nested cell => nested, else any flat
+#      cell => flat (so a library keeps using whatever style it already holds);
+#   3. for an empty/unknown library, the global $library_default_layout (default
+#      "nested", the tool's native style — library_new_cell always creates nested).
+proc library_layout_style {lib} {
+  global library_default_layout
+  set lp [library_resolve $lib]
+  if {$lp ne {}} {
+    set tag [file join $lp library.tag]
+    if {![catch {open $tag r} fp]} {
+      while {[gets $fp line] >= 0} {
+        if {[regexp {^\s*LAYOUT\s+(nested|flat)\y} [string trim $line] -> st]} { close $fp; return $st }
+      }
+      close $fp
+    }
+    set sawflat 0
+    foreach cell [library_cells $lib] {
+      switch -- [library_cell_layout $lib $cell] {
+        nested { return nested }
+        flat   { set sawflat 1 }
+      }
+    }
+    if {$sawflat} { return flat }
+  }
+  if {[info exists library_default_layout] && $library_default_layout eq "flat"} { return flat }
+  return nested
+}
+
 # Copy a cell (optionally into another library). The destination must not exist.
-# The source layout is preserved; in the nested case each view's <srccell>.<ext>
-# datafile is renamed to <dstcell>.<ext>.
+# The cell is written in the DESTINATION library's layout style (see
+# library_layout_style), converting between flat and nested as needed: a flat
+# source copied into a nested library becomes <dstcell>/<view>/<dstcell>.<ext>
+# (.sch->schematic, .sym->symbol), and a nested source copied into a flat library
+# is flattened to <dstcell>.<ext>. The cell datafile is renamed to <dstcell>.
 proc library_copy_cell {srclib srccell dstlib dstcell} {
   set slp [library_resolve $srclib]
   set dlp [library_resolve $dstlib]
@@ -373,23 +417,45 @@ proc library_copy_cell {srclib srccell dstlib dstcell} {
   set layout [library_cell_layout $srclib $srccell]
   if {$layout eq {}} { error "no such cell: $srclib/$srccell" }
   if {[library_cell_layout $dstlib $dstcell] ne {}} { error "cell already exists: $dstlib/$dstcell" }
-  if {$layout eq "nested"} {
-    set sd [file join $slp $srccell]
+  set style [library_layout_style $dstlib]
+  if {$style eq "nested"} {
     set dd [file join $dlp $dstcell]
     file mkdir $dd
-    foreach vd [glob -nocomplain -type d [file join $sd *]] {
-      set odir [file join $dd [file tail $vd]]
-      file mkdir $odir
-      foreach f [glob -nocomplain [file join $vd *]] {
-        set tail [file tail $f]
-        if {[file rootname $tail] eq $srccell} { set tail "$dstcell[file extension $tail]" }
-        file copy -- $f [file join $odir $tail]
+    if {$layout eq "nested"} {
+      # nested -> nested: preserve the view dirs, rename each <srccell>.<ext>
+      set sd [file join $slp $srccell]
+      foreach vd [glob -nocomplain -type d [file join $sd *]] {
+        set odir [file join $dd [file tail $vd]]
+        file mkdir $odir
+        foreach f [glob -nocomplain [file join $vd *]] {
+          set tail [file tail $f]
+          if {[file rootname $tail] eq $srccell} { set tail "$dstcell[file extension $tail]" }
+          file copy -- $f [file join $odir $tail]
+        }
+      }
+    } else {
+      # flat -> nested: map each datafile to a view dir by extension
+      foreach {ext view} {sch schematic sym symbol} {
+        set f [file join $slp $srccell.$ext]
+        if {[file isfile $f]} {
+          set odir [file join $dd $view]
+          file mkdir $odir
+          file copy -- $f [file join $odir $dstcell.$ext]
+        }
       }
     }
   } else {
-    foreach ext {sym sch} {
-      set f [file join $slp $srccell.$ext]
-      if {[file isfile $f]} { file copy -- $f [file join $dlp $dstcell.$ext] }
+    if {$layout eq "flat"} {
+      # flat -> flat: copy the datafiles, renaming to <dstcell>
+      foreach ext {sym sch} {
+        set f [file join $slp $srccell.$ext]
+        if {[file isfile $f]} { file copy -- $f [file join $dlp $dstcell.$ext] }
+      }
+    } else {
+      # nested -> flat: flatten each view's <srccell>.<ext> to <dstcell>.<ext>
+      foreach f [glob -nocomplain [file join $slp $srccell * $srccell.*]] {
+        file copy -- $f [file join $dlp "$dstcell[file extension $f]"]
+      }
     }
   }
   return ""

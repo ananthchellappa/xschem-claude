@@ -1,4 +1,4 @@
-# xschem_library_oa — lib/cell/view layout
+# xschem_libraries_oa — lib/cell/view layout
 
 This is a **generated**, sibling copy of part of `../xschem_library/` converted to
 the Cadence/OpenAccess-style **library / cell / view** layout. The original flat
@@ -47,10 +47,10 @@ keep working unchanged.
 
 ```sh
 # point xschem at this registry (in xschemrc, or the environment):
-#   set XSCHEM_LIBRARY_DEFS /path/to/xschem_library_oa/library.defs
+#   set XSCHEM_LIBRARY_DEFS /path/to/xschem_libraries_oa/library.defs
 cd src
-XSCHEM_LIBRARY_DEFS=$PWD/../xschem_library_oa/library.defs \
-  ./xschem ../xschem_library_oa/examples/cmos_inv/schematic/cmos_inv.sch
+XSCHEM_LIBRARY_DEFS=$PWD/../xschem_libraries_oa/library.defs \
+  ./xschem ../xschem_libraries_oa/examples/cmos_inv/schematic/cmos_inv.sch
 ```
 
 ## Regenerate

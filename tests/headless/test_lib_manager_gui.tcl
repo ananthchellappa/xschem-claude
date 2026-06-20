@@ -1,7 +1,7 @@
 # Phase 7a (library-manager) — headless smoke of the Library Manager panes.
 # Cadence-style layout: three always-visible columns Library | Cell | View
 # (left->right). Selecting a library fills the Cell list; selecting a cell fills
-# the View list. This drives the real listbox logic against xschem_library_oa;
+# the View list. This drives the real listbox logic against xschem_libraries_oa;
 # pixels / interaction remain a manual eyeball item.
 #
 # Run under X with --pipe from src/:
@@ -25,7 +25,7 @@ proc lb_pick {lb txt handler} {
 }
 
 set repo [file normalize [file join [pwd] ..]]
-set ::XSCHEM_LIBRARY_DEFS [file join $repo xschem_library_oa library.defs]
+set ::XSCHEM_LIBRARY_DEFS [file join $repo xschem_libraries_oa library.defs]
 
 library_manager
 update idletasks

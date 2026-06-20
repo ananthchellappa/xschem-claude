@@ -1,5 +1,5 @@
 #!/bin/sh
-# Regenerate the lib/cell/view tree (xschem_library_oa/) from the flat
+# Regenerate the lib/cell/view tree (xschem_libraries_oa/) from the flat
 # xschem_library/ libraries. Non-destructive: rebuilds only the generated tree;
 # the flat source is never touched. The library order below is the reference
 # search order (a bare ref resolves to the first library that defines the cell).
@@ -19,7 +19,7 @@ repo=$(CDPATH= cd -- "$here/../.." && pwd)
 LIBS="devices examples ngspice ngspice_verilog_cosim logic xschem_simulator \
       binto7seg pcb rom8k analyses xTAG rulz-r8c33"
 
-dst="$repo/xschem_library_oa"
+dst="$repo/xschem_libraries_oa"
 # remove only the generated parts; keep the hand-written README.md
 rm -f "$dst/library.defs"
 for l in $LIBS; do rm -rf "$dst/$l"; done

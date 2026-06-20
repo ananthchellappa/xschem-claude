@@ -1,4 +1,30 @@
 # run with $> xschem --script /path/to/cadence_style_rc
+
+# --- Libraries: use ONLY the OA (lib/cell/view) registry --------------------
+# Anchor on this rc's own location (repo/src/cadence_style_rc) to find the
+# sibling repo/xschem_libraries_oa/ tree.
+set _cad_oa [file normalize [file join [file dirname [info script]] .. xschem_libraries_oa]]
+
+# The registry to use is the library.defs that ships inside that tree (the
+# Cadence cds.lib analog). Making it the EXPLICIT $XSCHEM_LIBRARY_DEFS gives its
+# DEFINEs highest precedence.
+set XSCHEM_LIBRARY_DEFS [file join $_cad_oa library.defs]
+
+# Make the OA libraries the ONLY ones the Library Manager shows: drop search-path
+# auto-discovery so the registry comes purely from the library.defs above, and
+# clear the legacy search path so no flat directory leaks in. OA references are
+# lib-qualified (e.g. "C {devices/nmos4}") and resolve through the registry
+# (abs_sym_path rule 2 / cellview_resolve), so an empty search path does not break
+# opening the OA schematics.
+set library_registry_defs_only 1
+set XSCHEM_LIBRARY_PATH {}
+
+# Cells copied/created into an empty library use the nested lib/cell/view layout
+# (a non-empty library keeps whatever style it already holds). Copying a flat
+# cell into a nested library converts it to <cell>/<view>/<cell>.<ext>.
+set library_default_layout nested
+unset _cad_oa
+
 set draw_crosshair 1
 set crosshair_size 2
 set infix_interface 0

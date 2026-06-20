@@ -15,7 +15,7 @@ new library failed: no writable library.defs (set XSCHEM_LIBRARY_DEFS)
 ```
 
 This is misleading: the active library tree *does* have a writable `library.defs`
-(e.g. `xschem_library_oa/library.defs`), so the user reasonably expects the new
+(e.g. `xschem_libraries_oa/library.defs`), so the user reasonably expects the new
 library to be created beside it.
 
 ## Root cause
@@ -44,8 +44,8 @@ never sets it; a fresh headless session reports `DEFS_SET=0`). So
 though a perfectly good, writable `library.defs` sits in the active tree.
 
 In the OA layout the search path holds the per-library subdirs
-(`xschem_library_oa/devices`, `…/examples`, …) and the `library.defs` lives in
-their **parent** (`xschem_library_oa/`). The registry surfaces those libraries by
+(`xschem_libraries_oa/devices`, `…/examples`, …) and the `library.defs` lives in
+their **parent** (`xschem_libraries_oa/`). The registry surfaces those libraries by
 basename, which is *why the user sees them* — but nothing on the write path ever
 looks at that `library.defs`.
 

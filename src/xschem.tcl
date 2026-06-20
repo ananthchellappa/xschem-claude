@@ -10827,6 +10827,19 @@ proc load_raw {{type {}}} {
 source $XSCHEM_SHAREDIR/action_registry.tcl
 load_action_table
 # Library registry (Cadence cds.lib analog): `xschem libraries` / `xschem library`
+# When 0 (default) the personal ~/.xschem/library.defs is never read or used as a
+# write target, so "New library" with a blank directory will NOT silently create
+# libraries in ~/.xschem; it requires an explicit XSCHEM_LIBRARY_DEFS or a writable
+# library.defs on the search path. Set to 1 to restore the old personal fallback.
+if {![info exists library_personal_defs]} { set library_personal_defs 0 }
+# When 1, the registry is built ONLY from library.defs files; search-path
+# directories are no longer auto-discovered as libraries (used by cadence_style_rc
+# to show only the OA registry). Default 0 keeps the legacy flat-dir bridge.
+if {![info exists library_registry_defs_only]} { set library_registry_defs_only 0 }
+# Layout style for cells created/copied into an empty or undetermined library:
+# "nested" (Cadence lib/cell/view) or "flat". A non-empty library keeps its own
+# style (inferred from its cells); this only sets the default for empty ones.
+if {![info exists library_default_layout]} { set library_default_layout nested }
 source $XSCHEM_SHAREDIR/library_defs.tcl
 # Library Manager GUI (Cadence-style Library/Cell/View browser)
 source $XSCHEM_SHAREDIR/library_manager.tcl

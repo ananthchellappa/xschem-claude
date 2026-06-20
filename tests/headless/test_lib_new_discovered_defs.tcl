@@ -114,10 +114,8 @@ check "LND7 explicit DEFINE beats a discovered defs of the same name" \
   [expr {[file normalize [xschem library devices]] eq [file normalize $xdir/mydevices]}] \
   "(=> [xschem library devices])"
 
-# === LND8 — NOTHING on the path: fall back to the personal library.defs ------
-# Reproduces the stock-session failure: no $XSCHEM_LIBRARY_DEFS, and no
-# library.defs anywhere on the search path. Creating a library must still work by
-# establishing a personal registry in $USER_CONF_DIR (the absent file is created).
+# === LND8 — NOTHING on the path, personal fallback OFF (the default): creating
+#     a library must FAIL rather than silently dumping it into ~/.xschem. --------
 set conf $tmp/conf
 file mkdir $conf
 set pdefs [file join $conf library.defs]
@@ -126,16 +124,29 @@ catch {unset ::env(XSCHEM_LIBRARY_DEFS)}
 set ::pathlist [list $tmp/nodefs_a $tmp/nodefs_b]   ;# dirs with no library.defs
 file mkdir $tmp/nodefs_a $tmp/nodefs_b
 set ::USER_CONF_DIR $conf
-check "LND8a primary_defs_file falls back to the personal library.defs" \
+set ::library_personal_defs 0
+check "LND8a no writable defs anywhere -> primary_defs_file is empty" \
+  [expr {[library_primary_defs_file] eq {}}] "(=> '[library_primary_defs_file]')"
+check "LND8b new library (blank dir) ERRORS instead of using ~/.xschem" \
+  [errs {library_new PERSONALLIB {}}] {}
+check "LND8c personal library.defs NOT created in ~/.xschem" \
+  [expr {![file isfile $pdefs]}] "(=> $pdefs)"
+check "LND8d PERSONALLIB NOT registered" \
+  [expr {[xschem library PERSONALLIB] eq {}}] {}
+
+# === LND9 — opt-in: with library_personal_defs=1 the old behavior is restored --
+set ::library_personal_defs 1
+check "LND9a primary_defs_file falls back to the personal library.defs" \
   [expr {[file normalize [library_primary_defs_file]] eq [file normalize $pdefs]}] \
   "(=> '[library_primary_defs_file]')"
-check "LND8b new library PERSONALLIB (blank dir) does not error" \
+check "LND9b new library PERSONALLIB (blank dir) now succeeds" \
   [expr {![errs {library_new PERSONALLIB {}}]}] {}
-check "LND8c personal library.defs created" [file isfile $pdefs] "(=> $pdefs)"
-check "LND8d DEFINE PERSONALLIB appended to personal defs" [defs_has_define $pdefs PERSONALLIB] {}
-check "LND8e PERSONALLIB resolves via the registry" \
+check "LND9c personal library.defs created" [file isfile $pdefs] "(=> $pdefs)"
+check "LND9d DEFINE PERSONALLIB appended to personal defs" [defs_has_define $pdefs PERSONALLIB] {}
+check "LND9e PERSONALLIB resolves via the registry" \
   [expr {[file normalize [xschem library PERSONALLIB]] eq [file normalize $conf/PERSONALLIB]}] \
   "(=> [xschem library PERSONALLIB])"
+set ::library_personal_defs 0
 
 # --- cleanup ---------------------------------------------------------------
 if {$saved_conf ne {}} { set ::USER_CONF_DIR $saved_conf } else { catch {unset ::USER_CONF_DIR} }

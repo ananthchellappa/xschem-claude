@@ -1,5 +1,5 @@
 # Phase 6 (library-manager) — full sweep: the repo's standard libraries migrated
-# to the sibling xschem_library_oa/ (lib/cell/view). The flat xschem_library/ is
+# to the sibling xschem_libraries_oa/ (lib/cell/view). The flat xschem_library/ is
 # untouched. Migrated set (12): devices examples ngspice ngspice_verilog_cosim
 # logic xschem_simulator binto7seg pcb rom8k analyses xTAG rulz-r8c33.
 # Intentionally left FLAT (special mechanisms, documented in the README):
@@ -33,7 +33,7 @@ proc body {text} {
 }
 
 set repo [file normalize [file join [pwd] ..]]
-set OA   [file join $repo xschem_library_oa]
+set OA   [file join $repo xschem_libraries_oa]
 set FLAT [file join $repo xschem_library]
 set MIGRATED {devices examples ngspice ngspice_verilog_cosim logic xschem_simulator
               binto7seg pcb rom8k analyses xTAG rulz-r8c33}

@@ -178,6 +178,70 @@ check "VOP6 copy onto an existing view errors" [errs {library_copy_view tlib vc 
 check "VOP7 new_view name collision errors" [errs {library_new_view tlib vc altsch schematic}] {}
 check "VOP8 view ops on a flat cell error" [errs {library_rename_view tlib vflat symbol s2}] {}
 
+# === copy across layout STYLES (destination style wins) ======================
+# Fresh, isolated libraries so each style is unambiguous.
+set tmp2 [file join [pwd] _libops2_[pid]]
+file delete -force $tmp2
+# flatlib: only flat cells.  nestlib: only nested cells.  emptylib: no cells.
+touch $tmp2/flatlib/fa.sym "v {fa sym}"
+touch $tmp2/flatlib/fa.sch "v {fa sch}"
+touch $tmp2/nestlib/na/schematic/na.sch "v {na sch}"
+touch $tmp2/nestlib/na/symbol/na.sym    "v {na sym}"
+file mkdir $tmp2/emptylib
+# taglib: empty but tagged LAYOUT flat -> must stay flat even though default=nested
+file mkdir $tmp2/taglib
+set fp [open [file join $tmp2 taglib library.tag] w]; puts $fp "NAME taglib"; puts $fp "LAYOUT flat"; close $fp
+set defs2 [file join $tmp2 library.defs]
+set fp [open $defs2 w]
+foreach l {flatlib nestlib emptylib taglib} { puts $fp "DEFINE $l $tmp2/$l" }
+close $fp
+set ::XSCHEM_LIBRARY_DEFS $defs2
+set ::library_default_layout nested
+
+# style detection
+check "CV0a flatlib style is flat"   [expr {[library_layout_style flatlib]  eq {flat}}]   "(=> [library_layout_style flatlib])"
+check "CV0b nestlib style is nested" [expr {[library_layout_style nestlib]  eq {nested}}] "(=> [library_layout_style nestlib])"
+check "CV0c emptylib style follows default(nested)" [expr {[library_layout_style emptylib] eq {nested}}] "(=> [library_layout_style emptylib])"
+check "CV0d taglib LAYOUT tag forces flat" [expr {[library_layout_style taglib] eq {flat}}] "(=> [library_layout_style taglib])"
+
+# flat source -> nested destination: convert to <cell>/<view>/<cell>.<ext>
+library_copy_cell flatlib fa nestlib fa_n
+check "CV1a flat->nested present" [has nestlib fa_n] {}
+check "CV1b flat->nested has nested datafiles" \
+  [expr {[file exists [file join $tmp2 nestlib fa_n schematic fa_n.sch]] && \
+         [file exists [file join $tmp2 nestlib fa_n symbol fa_n.sym]]}] {}
+check "CV1c flat->nested NOT left flat" [expr {![file exists [file join $tmp2 nestlib fa_n.sch]]}] {}
+
+# flat source -> empty(default nested) destination: also converts
+library_copy_cell flatlib fa emptylib fa_e
+check "CV2 flat->empty(nested-default) nests" \
+  [file exists [file join $tmp2 emptylib fa_e schematic fa_e.sch]] {}
+
+# nested source -> flat destination: flatten to <cell>.<ext>
+library_copy_cell nestlib na flatlib na_f
+check "CV3a nested->flat present" [has flatlib na_f] {}
+check "CV3b nested->flat datafiles flattened" \
+  [expr {[file isfile [file join $tmp2 flatlib na_f.sch]] && \
+         [file isfile [file join $tmp2 flatlib na_f.sym]]}] {}
+check "CV3c nested->flat has no cell dir" [expr {![file isdirectory [file join $tmp2 flatlib na_f]]}] {}
+
+# flat source -> taglib (LAYOUT flat) stays flat despite default=nested
+library_copy_cell flatlib fa taglib fa_t
+check "CV4 LAYOUT-flat tag keeps copy flat" \
+  [expr {[file isfile [file join $tmp2 taglib fa_t.sym]] && \
+         ![file isdirectory [file join $tmp2 taglib fa_t]]}] {}
+
+# global default=flat makes an empty destination flat
+set ::library_default_layout flat
+file mkdir $tmp2/emptflat
+set fp [open $defs2 a]; puts $fp "DEFINE emptflat $tmp2/emptflat"; close $fp
+library_copy_cell flatlib fa emptflat fa_ef
+check "CV5 default=flat nests nothing in an empty lib" \
+  [expr {[file isfile [file join $tmp2 emptflat fa_ef.sym]] && \
+         ![file isdirectory [file join $tmp2 emptflat fa_ef]]}] {}
+set ::library_default_layout nested
+file delete -force $tmp2
+
 file delete -force $tmp
 if {$fail == 0} { puts "RESULT: ALL PASS" } else { puts "RESULT: $fail FAILED" }
 flush stdout
