@@ -1,8 +1,13 @@
 # Issue 0017 — dragging a free wire vertex should stretch/shorten it directly, without a pre-select step
 
 **Opened:** 2026-06-20
-**Status:** OPEN — feature / UX gap (not a regression). Specified here with a RED-first
-plan; not yet implemented.
+**Status:** ✅ **RESOLVED 2026-06-20** (commit `fef43aa6`, branch `fluid-editing`).
+Implemented per the plan below: `grab_free_wire_vertex()` + `wire_endpoint_is_free()` in
+`callback.c`, routed before `add_wire_from_wire` (gated `cadence_compat`). Reuses
+`edit_wire_point → move_objects` so it commits on release with no `STARTWIRE` mode. Test
+`tests/headless/test_wire_vertex_grab.tcl` (shorten/grow/no-wire-draw + junction & stock
+guards); sabotage-verified; guards green (cadence_drag 16, gesture_bindings, wireedit
+TC0-17, golden, stable58). Eyeball on a real schematic still recommended (Phase 4).
 **Affects:** interactive editing — grabbing the end of a wire. Most relevant to the
 `cadence_compat` / fluid-editing experience.
 **Severity:** low (workaround exists: select the wire first) but high-frequency, so the
