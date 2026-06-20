@@ -64,3 +64,8 @@ xschem bind wheel down ctrl canvas view.zoom_out
 xschem bind wheel up   0    canvas view.pan_up
 xschem bind wheel down 0    canvas view.pan_down
 # (Shift+wheel already pans horizontally — view.pan_left/right — by default, no change needed)
+
+# Cadence-style instantiation: the "i" key opens the Create Instance browser
+# (Edit > Create Instance). `break` stops the event reaching the generic <KeyPress>
+# -> C dispatcher, which otherwise maps 'i' to descend-into-symbol.
+bind .drw <Key-i> {xschem create_instance; break}

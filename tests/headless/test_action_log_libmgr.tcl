@@ -108,6 +108,12 @@ xschem library_manager
 check "AL10 launch logs replayable 'xschem library_manager'" \
   [expr {[regexp -all -line {^xschem library_manager$} [logtext]] >= 1}] {}
 
+# AL11 — the Create Instance launch also logs a single replayable line
+xschem create_instance
+check "AL11 launch logs replayable 'xschem create_instance'" \
+  [expr {[regexp -all -line {^xschem create_instance$} [logtext]] >= 1}] {}
+catch {destroy .mkinst}
+
 destroy .ins
 destroy .libmgr
 file delete -force $tmp

@@ -10843,6 +10843,8 @@ if {![info exists library_default_layout]} { set library_default_layout nested }
 source $XSCHEM_SHAREDIR/library_defs.tcl
 # Library Manager GUI (Cadence-style Library/Cell/View browser)
 source $XSCHEM_SHAREDIR/library_manager.tcl
+# Create Instance browser (Cadence-style Add Instance; specs/cadence_create_instance.md)
+source $XSCHEM_SHAREDIR/create_instance.tcl
 # Slick per-field "Edit Properties" form (replaces the legacy raw-text dialog)
 source $XSCHEM_SHAREDIR/property_form.tcl
 # Replay keybindings.csv / mousebindings.csv (share-dir defaults, then the user's
@@ -11069,6 +11071,7 @@ proc build_widgets { {topwin {} } } {
   $topwin.menubar.edit add command -label "Paste" -command "xschem paste" -accelerator Ctrl+V
   $topwin.menubar.edit add command -label "Delete" -command "xschem delete" -accelerator Del
   $topwin.menubar.edit add command -label "Select all" -command "xschem select_all" -accelerator Ctrl+A
+  $topwin.menubar.edit add command -label "Create Instance" -command "xschem create_instance"
   $topwin.menubar.edit add command -label "Duplicate objects" -command "xschem copy_objects" -accelerator C
   $topwin.menubar.edit add command -label "Move objects" -command "xschem move_objects" -accelerator M
   $topwin.menubar.edit add command -label "Move objects stretching attached wires" \
@@ -11286,7 +11289,6 @@ proc build_widgets { {topwin {} } } {
       -selectcolor $selectcolor -variable disable_unique_names
   $topwin.menubar.tools add command -label "Library Manager" -command "xschem library_manager"
   $topwin.menubar.tools add separator
-  $topwin.menubar.tools add command -label "Insert symbol" -command "xschem place_symbol" -accelerator {Ins, Shift-I}
   $topwin.menubar.tools add command -label "Insert text" -command "xschem place_text" -accelerator T
   $topwin.menubar.tools add command -label "Insert wire" -command "xschem wire" -accelerator W
   $topwin.menubar.tools add command -label "Insert snap wire" -command "xschem snap_wire" -accelerator Shift+W

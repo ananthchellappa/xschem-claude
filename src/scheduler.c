@@ -593,6 +593,19 @@ static int xschem_cmds_c(Tcl_Interp *interp, int argc, const char *argv[], int *
       else Tcl_ResetResult(interp);
     }
 
+    /* create_instance
+     *   Open the Create Instance browser (Cadence-style Add Instance): a library
+     *   browser to pick a Library/Cell/symbol-View and place it as an instance.
+     *   Logs itself so the launch is replayable (CIW + Xschem.log) and bindable.
+     *   See specs/cadence_create_instance.md. */
+    else if(!strcmp(argv[1], "create_instance"))
+    {
+      if(has_x) {
+        log_action("xschem create_instance");
+        tcleval("mkinst::open");
+      }
+    }
+
     /* case_insensitive 1|0
      *   Set case insensitive symbol lookup. Use only on case insensitive filesystems */
     else if(!strcmp(argv[1], "case_insensitive"))
