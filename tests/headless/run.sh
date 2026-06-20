@@ -72,7 +72,7 @@ echo "   driver: $DRIVER"
 # CIW auto-open (short-lived toplevels leak WSLg ghost frames -- issue 0002).
 set +e
 REPO="$REPO" CASES_FILE="$CASES_FILE" \
-  "$XSCHEM" --rcfile "$HERE/minrc" --netlist_path "$NETLISTS" \
+  "$XSCHEM" --no_x --rcfile "$HERE/minrc" --netlist_path "$NETLISTS" \
             --pipe -q --nolog --script "$DRIVER" \
             > "$RESULTS/state.txt" 2> "$RESULTS/stderr.log"
 rc=$?
