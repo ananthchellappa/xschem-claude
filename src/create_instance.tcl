@@ -17,6 +17,11 @@ namespace eval mkinst {
   variable last_lib  ""
   variable last_cell ""
   variable last_view ""
+  # keep-placing mode: a valid symbol is armed; after each drop it re-arms so the
+  # user can place copies until Esc. xschem's place_symbol is one-shot (the drop
+  # clears PLACE_SYMBOL), so we re-issue it on the canvas ButtonRelease.
+  variable armed 0
+  variable hook_installed 0
 }
 
 proc mkinst::cursel {lb} {
@@ -52,8 +57,26 @@ proc mkinst::refocus {w} {
   if {[winfo exists $w]} { catch {focus -force $w.pw.lib.lb} }
 }
 
+# Re-arm the same symbol after each canvas drop, so placement continues until Esc.
+# Appended (+) to the canvas ButtonRelease binding so it runs AFTER xschem has
+# handled the drop; a no-op unless a symbol is armed and a drop just completed.
+proc mkinst::install_drop_hook {} {
+  if {$mkinst::hook_installed} return
+  if {![winfo exists .drw]} return
+  bind .drw <ButtonRelease> {+mkinst::after_drop %b}
+  set mkinst::hook_installed 1
+}
+proc mkinst::after_drop {b} {
+  if {$b != 1} return
+  if {!$mkinst::armed} return
+  if {![winfo exists .mkinst]} { set mkinst::armed 0; return }
+  if {[mkinst::placing]} return   ;# preview still attached -> no drop happened
+  mkinst::arm                     ;# a drop completed -> re-arm the same symbol
+}
+
 proc mkinst::open {} {
   set w .mkinst
+  mkinst::install_drop_hook
   if {[winfo exists $w]} {
     mkinst::raise_to_front
     mkinst::populate_libs
@@ -109,10 +132,12 @@ proc mkinst::open {} {
 # Esc / close: abort any armed placement and remove the canvas Esc binding so the
 # default Esc behavior is restored.
 proc mkinst::escape {} {
+  set mkinst::armed 0
   mkinst::abort_if_placing
   catch {destroy .mkinst}
 }
 proc mkinst::on_destroy {} {
+  set mkinst::armed 0
   catch {bind .drw <Key-Escape> {}}
   mkinst::abort_if_placing
 }
@@ -162,6 +187,7 @@ proc mkinst::on_cell {} {
     $vl selection set $i; $vl activate $i
     mkinst::arm
   } else {
+    set mkinst::armed 0
     mkinst::abort_if_placing
     mkinst::status "no symbol view for $mkinst::sel_lib/$mkinst::sel_cell"
   }
@@ -188,21 +214,24 @@ proc mkinst::arm {} {
   if {$v eq {}} return
   set f [xschem cellview_path "$mkinst::sel_lib/$mkinst::sel_cell" $v]
   if {$f eq {} || ![string match {*.sym} $f]} {
+    set mkinst::armed 0
     mkinst::abort_if_placing
     mkinst::status "no symbol view for $mkinst::sel_lib/$mkinst::sel_cell"
     return
   }
   if {[mkinst::is_recursive $mkinst::sel_lib $mkinst::sel_cell]} {
+    set mkinst::armed 0
     mkinst::abort_if_placing
     mkinst::status "cannot instantiate $mkinst::sel_cell inside its own schematic (recursion)"
     return
   }
   mkinst::abort_if_placing
   xschem place_symbol $f
+  set mkinst::armed 1
   set mkinst::last_lib  $mkinst::sel_lib
   set mkinst::last_cell $mkinst::sel_cell
   set mkinst::last_view $v
-  mkinst::status "placing $mkinst::sel_lib/$mkinst::sel_cell ($v) - click to place; Esc to finish"
+  mkinst::status "placing $mkinst::sel_lib/$mkinst::sel_cell ($v) - click to place repeatedly; Esc to finish"
 }
 
 # Restore the most recently armed selection (on reopen) and re-arm its preview.

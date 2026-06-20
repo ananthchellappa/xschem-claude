@@ -91,8 +91,11 @@ The form is a *selector that arms a live preview*, not a click-Create dialog:
   preview follows the cursor the moment the mouse returns to the schematic canvas.
   Switching selection re-arms with the new symbol (the previous, undropped preview
   is aborted first).
-- **Repeat.** After dropping an instance the same symbol stays armed (xschem's
-  native place loop), so the user keeps clicking to place more.
+- **Repeat (keep-placing).** After dropping an instance the same symbol is
+  re-armed so the user keeps clicking to place more, until Esc. xschem's
+  `place_symbol` is **one-shot** (a drop clears `PLACE_SYMBOL`), so the form
+  re-issues it on each canvas `ButtonRelease` (a `+`-appended binding that is a
+  no-op unless a symbol is armed and a drop just completed).
 - **Esc ends the whole gesture.** While the form is open, Esc both aborts the
   current placement **and dismisses the form** (whether the canvas or the form has
   focus). Closing the form by any means (Close, WM close) likewise aborts an armed

@@ -86,6 +86,23 @@ pick cell withsym mkinst::on_cell
 check "CI5a re-arm on selecting a placeable cell" [armed] {}
 check "CI5b form stays open" [winfo exists .mkinst] {}
 
+# === CI10 — keep-placing: each drop re-arms the same symbol =================
+xschem abort_operation
+pick cell withsym mkinst::on_cell
+check "CI10a armed (preview attached)" [armed] {}
+# drop #1 (simulate a left click on the canvas: ButtonPress=4, ButtonRelease=5)
+xschem callback .drw 4 300 300 0 1 0 0
+xschem callback .drw 5 300 300 0 1 0 0
+check "CI10b drop cleared the placement" [expr {![armed]}] "(=> ui=[xschem get ui_state])"
+mkinst::after_drop 1   ;# the canvas ButtonRelease hook re-arms
+check "CI10c same symbol re-armed after drop" [armed] "(=> ui=[xschem get ui_state])"
+# drop #2 -> a second placed instance, re-arm again
+xschem callback .drw 4 500 500 0 1 0 0
+xschem callback .drw 5 500 500 0 1 0 0
+mkinst::after_drop 1
+check "CI10d two instances placed (continuous)" [expr {[xschem get instances] >= 2}] "(=> inst=[xschem get instances])"
+check "CI10e drop hook is wired on the canvas" [string match {*after_drop*} [bind .drw <ButtonRelease>]] {}
+
 # === CI8 — Esc ends placement AND dismisses the form ========================
 check "CI8a armed before Esc" [armed] {}
 mkinst::escape
