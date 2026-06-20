@@ -342,7 +342,7 @@ TC1–TC15 written as `tests/headless/wireedit/test_wireedit_<NN>_*.tcl`, assert
 | TC7 | colinear merge | R10 | 🟢 **GREEN** (Phase 5 done) | 5 |
 | TC8 | duplicate/overlap removal | R11 | 🟢 **GREEN** (Phase 5 done) | 5 |
 | TC9 | move-orphaned stub removal | R12 | 🟢 **GREEN** (Phase 5 done) | 5 |
-| TC10 | exit-stub preserved | E | 🔴 RED | 6 |
+| TC10 | exit-stub preserved | E | 🟢 **GREEN** (Phase 6 done, switch ON) | 6 |
 | TC11 | two nets, no over-grab | R16 | 🟢 GREEN (guard) | — |
 | TC12 | bus rubber-band, lab kept | R19 | 🔴 **RED** | (new gap, see below) |
 | TC13 | multi-component rigid move | R5 | 🟢 GREEN (guard) | — |
@@ -455,14 +455,34 @@ hand-built residue (option A).
   elsewhere are untouched. **Guard:** TC11/TC14 (undo must still restore) + golden.
 - **5.4** Re-run TC6's horizontal sibling: confirm the Phase-4 overlap is now merged.
 
-### Phase 6 — Exit-stub preservation *(Issue E → R13; TC10)*
-- **6.1** RED: TC10 fails (no stub out of pin).
-- **6.2** Implement: after slide/route, ensure a one-minor-grid segment leaves each
-  moved pin along its exit direction before the first bend. Choose stub length =
-  symbol pin spacing / minor grid (document the constant).
-- **6.3** GREEN: TC10. **Guard:** TC6 still GREEN (stub is additive, route otherwise
-  unchanged) + full guard set. *This is the biggest behavior change — keep behind a
-  switch (e.g. `wire_exit_stub`) if it alters too many goldens.*
+### Phase 6 — Exit-stub preservation ✅ DONE *(Issue E → R13; TC10)*
+**Status: COMPLETE.** Gated behind a new `wire_exit_stub` switch (default OFF, mirrored
+C↔Tcl: Tcl default + `tctx::global_list` + Options-menu checkbutton; read in C via
+`tclgetboolvar`). New `insert_exit_stubs()` (move.c) runs at move END **after**
+`trim_wires()`/`remove_move_orphan_wires()` (so the inserted stub is never merged back),
+guarded `wire_exit_stub && stretch_select && orthogonal_wiring && non-rotating`.
+- **6.1** ✅ RED: TC10's Phase-1 assertion was a wrong GUESS (asserted a *horizontal*
+  stub). **Corrected:** res.sym pin M sits at the top of a `+y` lead, so its outward
+  normal is **vertical** (`+y`) — confirmed headlessly (`instance_pin_coord` + bbox) and
+  against the user golden `desired1` (`N 1360 -900 1360 -880`, vertical). TC10 rewritten
+  to assert the vertical stub `(1360,-870)-(1360,-860)`, RED against the new geometry.
+- **6.2** ✅ Algorithm: for each moving pin carrying exactly one attached first-leg wire,
+  the exit normal = dominant axis of (pin − symbol-bbox-center). A leg **colinear** with
+  the normal (straight exit) is left alone (a colinear stub would just be re-merged, and
+  a straight exit can't cross the body). A leg **perpendicular** to the normal is **slid**
+  one minor grid out along the normal (its far endpoint and every neighbour at that
+  corner dragged the same grid, keeping it Manhattan + connected), and the gap at the pin
+  is filled with the short exit stub. **Stub length = one minor grid (`cadsnap`)** — the
+  grid the route snaps to. Guards mirror `compute_wire_slide`: never pull a far end off a
+  fixed pin; only at a real corner (far end meets another wire).
+- **6.3** ✅ GREEN: TC10 (switch ON). TC10 also embeds the **switch-OFF guard** (same
+  fixture, OFF ⇒ no stub, plain corner-slide route = `desired2`) so the gate is proven in
+  one file. **Sabotage-verified** (drop the call ⇒ TC10's 4 stub checks redden, switch-OFF
+  + Manhattan + connectivity stay green). **Guards GREEN, switch OFF (unchanged geometry):**
+  wireedit TC1-9/11/13-17 (TC12 still its own RED, separate), golden harness `== HARNESS:
+  PASS ==`, stable_handles 58, test_cadence_drag 16, regression create_save/open_close/
+  netlisting. Undo fidelity (G2/R17) verified with the switch ON (one undo restores exact
+  prior geometry — the stub is in the move's undo unit).
 
 ### Phase 7 — `desired0` aesthetic *(Issue F → R9; optional)*
 Corner-slide + cleanup get `desired2`; `desired0` additionally relocates the riser to

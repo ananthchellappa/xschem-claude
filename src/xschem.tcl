@@ -10383,7 +10383,7 @@ set tctx::global_list {
  top_is_subckt transparent_svg undo_type unselect_partial_sel_wires uppercase_subckt
  use_cursor_for_selection use_lab_wire use_label_prefix use_tclreadline user_wants_copy_cell
  verilog_2001 verilog_bitblast
- viewdata_fileid viewdata_filename viewdata_w xschem_libs xschem_listen_port zoom_full_center
+ viewdata_fileid viewdata_filename viewdata_w wire_exit_stub xschem_libs xschem_listen_port zoom_full_center
 }
 
 ## list of global arrays to save/restore on context switching
@@ -10948,6 +10948,8 @@ proc build_widgets { {topwin {} } } {
      -selectcolor $selectcolor
   $topwin.menubar.option add checkbutton -label "Enable orthogonal wiring" -variable orthogonal_wiring \
      -selectcolor $selectcolor  -accelerator Shift-L
+  $topwin.menubar.option add checkbutton -label "Keep stub out of moved pins (exit stub)" \
+     -selectcolor $selectcolor -variable wire_exit_stub
   $topwin.menubar.option add checkbutton -label "Unsel. partial sel. wires after stretch move" \
      -selectcolor $selectcolor -variable unselect_partial_sel_wires
 
@@ -12048,6 +12050,10 @@ set_ne cadence_compat 0
 set_ne infix_interface 1
 set_ne snap_cursor 0
 set_ne orthogonal_wiring 0
+# wire-editing Phase 6 (Issue E): preserve a one-grid stub out of each moved pin along
+# its outward normal before the route's first bend. Biggest rubber-band behavior change,
+# so default OFF; read in C via tclgetboolvar("wire_exit_stub") at move_objects() END.
+set_ne wire_exit_stub 0
 set_ne compare_sch 0
 set_ne disable_unique_names 0
 set_ne sym_txt 1

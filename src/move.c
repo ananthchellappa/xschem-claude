@@ -1348,6 +1348,103 @@ static void remove_move_orphan_wires(void)
   my_free(_ALLOC_ID_, &doomed);
 }
 
+/* Exit-stub preservation (wire-editing Phase 6, Issue E -> R13, TC10). The "dream":
+ * after a stretch move, a short stub leaves each moved pin along the pin's OUTWARD
+ * NORMAL (its natural lead direction) before the route's first bend, so the wire
+ * physically exits the pin the way the symbol draws its lead rather than turning
+ * immediately. A uniform, symbol-driven rule (the most predictable one -- Issue E).
+ *
+ * For each MOVING (selected) instance pin carrying exactly one attached wire (the
+ * route's first leg):
+ *   - the pin's outward normal = the dominant axis of (pin - symbol-bbox-center); e.g.
+ *     res.sym pin M sits at the top of a +y lead (body below it) so it exits +y. (The
+ *     bbox can be skewed a little by pin-number text, but for real symbols the pin's
+ *     outward offset dwarfs that skew, so the dominant axis is the lead direction.)
+ *   - if the first leg already runs ALONG that normal (a straight exit) leave it: a
+ *     colinear stub would just be merged back by trim_wires, and a straight exit can't
+ *     cross the symbol body, so no stub is needed;
+ *   - if the first leg runs PERPENDICULAR to the normal (it bends right at the pin),
+ *     SLIDE that leg one minor grid out along the normal and fill the gap at the pin
+ *     with the short stub. The leg's far endpoint is dragged the same one grid so the
+ *     leg stays axis-aligned, and every wire endpoint coincident with that far end is
+ *     dragged too, so the connected riser/corner follows -- the route stays Manhattan
+ *     and electrically identical (same net, still connected: G1/R16, netlist unchanged).
+ *
+ * Guards mirror compute_wire_slide: never pull a leg's far end off a FIXED pin (would
+ * disconnect it); only when the far end meets another wire (a real corner/route, not a
+ * lone dangling stub). Stub length = one minor grid (cadsnap) -- the grid the route
+ * snaps to (the fixtures pin cadsnap=10; documented constant).
+ *
+ * Runs at move END AFTER trim_wires()/remove_move_orphan_wires() so the cleanup never
+ * eats the freshly inserted stub (and the perpendicular bend just past it keeps it from
+ * looking like a colinear degree-2 merge candidate anyway). Gated on wire_exit_stub
+ * (default OFF): the biggest behavior change in the plan, shipped dark. */
+static void insert_exit_stubs(void)
+{
+  int inst, r, rects, n, m;
+  double grid = tclgetdoublevar("cadsnap");
+  if(grid <= 0.0) grid = 1.0;
+  for(inst = 0; inst < xctx->instances; inst++) {
+    double bx1, by1, bx2, by2, cx, cy;
+    if(!xctx->inst[inst].sel) continue;        /* only MOVING instances */
+    if(xctx->inst[inst].ptr < 0) continue;
+    symbol_bbox(inst, &bx1, &by1, &bx2, &by2);
+    cx = (bx1 + bx2) / 2.0; cy = (by1 + by2) / 2.0;
+    rects = (xctx->inst[inst].ptr + xctx->sym)->rects[PINLAYER];
+    for(r = 0; r < rects; r++) {
+      double px, py, ddx, ddy, nx, ny, sx, sy, fx, fy, nfx, nfy;
+      int wfound = -1, endsel = 0, cnt = 0, has_corner = 0;
+      get_inst_pin_coord(inst, r, &px, &py);
+      /* outward normal = dominant axis of (pin - symbol center) */
+      ddx = px - cx; ddy = py - cy;
+      if(ddx == 0.0 && ddy == 0.0) continue;
+      if(fabs(ddx) >= fabs(ddy)) { nx = (ddx > 0) ? 1.0 : -1.0; ny = 0.0; }
+      else                       { nx = 0.0; ny = (ddy > 0) ? 1.0 : -1.0; }
+      /* exactly one wire endpoint exactly on the pin = the route's first leg */
+      for(n = 0; n < xctx->wires; n++) {
+        if(xctx->wire[n].x1 == px && xctx->wire[n].y1 == py)      { cnt++; wfound = n; endsel = 1; }
+        else if(xctx->wire[n].x2 == px && xctx->wire[n].y2 == py) { cnt++; wfound = n; endsel = 2; }
+      }
+      if(cnt != 1) continue;
+      n = wfound;
+      if(endsel == 1) { fx = xctx->wire[n].x2; fy = xctx->wire[n].y2; }
+      else            { fx = xctx->wire[n].x1; fy = xctx->wire[n].y1; }
+      /* need the first leg PERPENDICULAR to the normal: vertical normal -> horizontal
+       * leg, horizontal normal -> vertical leg. A leg colinear with the normal (straight
+       * exit) or diagonal is left alone. */
+      if(ny != 0.0 && xctx->wire[n].y1 != xctx->wire[n].y2) continue; /* vert normal needs horiz leg */
+      if(nx != 0.0 && xctx->wire[n].x1 != xctx->wire[n].x2) continue; /* horiz normal needs vert leg */
+      /* never pull the far end off a fixed (non-moving) pin -> would disconnect it */
+      if(point_on_fixed_pin(fx, fy)) continue;
+      /* require a real corner/route at the far end (another wire endpoint there) */
+      for(m = 0; m < xctx->wires; m++) {
+        if(m == n) continue;
+        if((xctx->wire[m].x1 == fx && xctx->wire[m].y1 == fy) ||
+           (xctx->wire[m].x2 == fx && xctx->wire[m].y2 == fy)) { has_corner = 1; break; }
+      }
+      if(!has_corner) continue;
+
+      /* slide the first leg one grid out along the normal; drag the corner with it */
+      sx  = px + grid * nx; sy  = py + grid * ny;   /* stub tip = leg's new pin end  */
+      nfx = fx + grid * nx; nfy = fy + grid * ny;   /* leg's new far (corner) end     */
+      for(m = 0; m < xctx->wires; m++) {            /* drag every neighbour at the corner */
+        if(m == n) continue;
+        if(xctx->wire[m].x1 == fx && xctx->wire[m].y1 == fy) { xctx->wire[m].x1 = nfx; xctx->wire[m].y1 = nfy; }
+        if(xctx->wire[m].x2 == fx && xctx->wire[m].y2 == fy) { xctx->wire[m].x2 = nfx; xctx->wire[m].y2 = nfy; }
+      }
+      if(endsel == 1) { xctx->wire[n].x1 = sx; xctx->wire[n].y1 = sy; xctx->wire[n].x2 = nfx; xctx->wire[n].y2 = nfy; }
+      else            { xctx->wire[n].x2 = sx; xctx->wire[n].y2 = sy; xctx->wire[n].x1 = nfx; xctx->wire[n].y1 = nfy; }
+      /* fill the gap at the pin with the short exit stub (inherits the leg's net prop) */
+      storeobject(-1, px, py, sx, sy, WIRE, 0, 0, xctx->wire[n].prop_ptr);
+    }
+  }
+  xctx->prep_hash_wires = 0;
+  xctx->prep_net_structs = 0;
+  xctx->prep_hi_structs = 0;
+  xctx->need_reb_sel_arr = 1;
+  set_modify(1);
+}
+
 /* merge param unused, RFU */
 void move_objects(int what, int merge, double dx, double dy)
 {
@@ -1806,6 +1903,15 @@ void move_objects(int what, int merge, double dx, double dy)
     *      overlapping colinear pair would look like a stub-on-a-wire. */
    if(xctx->stretch_select || tclgetboolvar("autotrim_wires")) trim_wires();
    if(xctx->stretch_select) remove_move_orphan_wires();
+   /* Exit-stub preservation (wire-editing Phase 6, Issue E -> R13). After the cleanup
+    * above, ensure each moved pin's route leaves the pin along the pin's outward normal
+    * (a short stub before the first bend). Runs AFTER trim_wires() so the stub it inserts
+    * is never merged back. Gated on wire_exit_stub (default OFF) -- the biggest behavior
+    * change, so it ships dark and leaves every existing move byte-identical when off. */
+   if(xctx->stretch_select && tclgetboolvar("wire_exit_stub") && orthogonal_wiring &&
+      xctx->move_rot == 0 && xctx->move_flip == 0) {
+     insert_exit_stubs();
+   }
    unselect_partial_sel_wires();
    xctx->stretch_select = 0;
    xctx->stretch_grabbed_n = 0;
