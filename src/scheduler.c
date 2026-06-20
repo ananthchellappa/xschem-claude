@@ -3792,6 +3792,19 @@ static int xschem_cmds_l(Tcl_Interp *interp, int argc, const char *argv[], int *
       if(argc > 2) tclvareval("library_cells {", argv[2], "}", NULL);
       else Tcl_ResetResult(interp);
     }
+
+    /* library_manager
+     *   Open the Library Manager window (or, if already open, raise it and move
+     *   focus into it -- see libmgr::open). Logs itself so the launch is a
+     *   replayable action (CIW + Xschem.log) and can be bound to a key.
+     *   See specs/library_manager_launch.md. */
+    else if(!strcmp(argv[1], "library_manager"))
+    {
+      if(has_x) {
+        log_action("xschem library_manager");
+        tcleval("libmgr::open");
+      }
+    }
     else { *cmd_found = 0;}
   return TCL_OK;
 }

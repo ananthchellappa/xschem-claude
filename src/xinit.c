@@ -3353,6 +3353,12 @@ int Tcl_AppInit(Tcl_Interp *inter)
    source_tcl_file(cli_opt_tcl_script);
  }
 
+ /* autostart the Library Manager if the rc / --script asked for it (after the
+  * main window and any --script exist). See specs/library_manager_launch.md. */
+ if(has_x && !cli_opt_quit && tclgetboolvar("launch_library_manager")) {
+   tcleval("xschem library_manager");
+ }
+
  /* load additional files */
  if(cli_opt_lastopened || cli_opt_lastclosed) i = 1;
  else i = 2;

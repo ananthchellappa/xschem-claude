@@ -11284,7 +11284,7 @@ proc build_widgets { {topwin {} } } {
      -label "Search all search-paths for schematic associated to symbol" -variable search_schematic
   $topwin.menubar.sym add checkbutton -label "Allow duplicated instance names (refdes)" \
       -selectcolor $selectcolor -variable disable_unique_names
-  $topwin.menubar.tools add command -label "Library Manager" -command "library_manager"
+  $topwin.menubar.tools add command -label "Library Manager" -command "xschem library_manager"
   $topwin.menubar.tools add separator
   $topwin.menubar.tools add command -label "Insert symbol" -command "xschem place_symbol" -accelerator {Ins, Shift-I}
   $topwin.menubar.tools add command -label "Insert text" -command "xschem place_text" -accelerator T
@@ -12054,6 +12054,8 @@ set_ne autotrim_wires 0
 set_ne auto_set_wire_bus 0
 set_ne cadence_compat 0
 set_ne infix_interface 1
+# autostart the Library Manager window at launch (specs/library_manager_launch.md)
+set_ne launch_library_manager 0
 set_ne snap_cursor 0
 set_ne orthogonal_wiring 0
 set_ne compare_sch 0

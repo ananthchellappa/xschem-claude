@@ -26,9 +26,45 @@ namespace eval libmgr {
   variable new_window 1 ;# open schematics in a new window/tab (vs the current one)
 }
 
+# Bring the (existing) Library Manager window to the front AND give it the
+# keyboard focus. Plain `focus` cannot move focus across toplevels, so when
+# another window (e.g. the CIW) is the active one it would be ignored -- we use
+# `focus -force`. It is re-asserted at idle so this also works for a window that
+# was just created and is not yet mapped. See specs/library_manager_launch.md.
+proc libmgr::raise_to_front {} {
+  set w .libmgr
+  if {![winfo exists $w]} return
+  # Window managers with focus-stealing prevention refuse raise/focus on an
+  # ALREADY-OPEN window, but grant focus to a freshly MAPPED one (which is why
+  # opening from closed gets focus and re-launching does not). So re-map an open
+  # window (withdraw + deiconify) to make the WM treat it as a fresh map and give
+  # it focus; preserve geometry so it doesn't jump. See
+  # specs/library_manager_launch.md.
+  if {[winfo ismapped $w]} {
+    set geo [wm geometry $w]
+    wm withdraw $w
+    wm deiconify $w
+    catch {wm geometry $w $geo}
+  } else {
+    catch {wm deiconify $w}
+  }
+  raise $w
+  catch {focus -force $w.pw.lib.lb}
+  after idle [list libmgr::refocus $w]
+}
+proc libmgr::refocus {w} {
+  if {[winfo exists $w]} { catch {focus -force $w.pw.lib.lb} }
+}
+
 proc libmgr::open {} {
   set w .libmgr
-  if {[winfo exists $w]} { raise $w; libmgr::refresh; return }
+  if {[winfo exists $w]} {
+    # single window: bring the existing one forward and focus it rather than
+    # building a second one. See specs/library_manager_launch.md.
+    libmgr::raise_to_front
+    libmgr::refresh
+    return
+  }
   toplevel $w
   wm title $w "Library Manager"
   wm geometry $w 760x460
@@ -76,6 +112,9 @@ proc libmgr::open {} {
   bind $w.pw.view.lb <Button-3> {libmgr::ctx_post view %y %X %Y}
 
   libmgr::populate_libs
+  # a freshly created window should also come up focused, even if another
+  # toplevel (the CIW, the main window) was active when it was launched.
+  libmgr::raise_to_front
 }
 
 # Per-column right-click menus, built once and re-targeted on each click.

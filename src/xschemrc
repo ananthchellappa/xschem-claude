@@ -108,6 +108,12 @@
 # set XSCHEM_START_WINDOW {0_examples_top.sch}
 
 ###########################################################################
+#### Open the Library Manager window automatically at startup. Default: 0
+#### The window can also be opened any time with the (replayable, bindable)
+#### command `xschem library_manager`, e.g.  bind .drw <Key-F9> {xschem library_manager}
+# set launch_library_manager 1
+
+###########################################################################
 #### DIRECTORY WHERE SIMULATIONS, NETLIST AND SIMULATOR OUTPUTS ARE PLACED
 ###########################################################################
 #### If unset $USER_CONF_DIR/simulations is assumed (normally ~/.xschem/simulations) 

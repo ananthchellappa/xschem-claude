@@ -101,6 +101,13 @@ check "AL9 place_symbol starts the logged placement (PLACE_SYMBOL state)" \
   [expr {([xschem get ui_state] & 8192) != 0}] "(=> ui_state=[xschem get ui_state])"
 xschem abort_operation
 
+# AL10 — the Library Manager launch command logs itself: a single replayable
+# `xschem library_manager` line (bindable to a key). .libmgr is already open, so
+# this exercises the raise path; it must still log the launch.
+xschem library_manager
+check "AL10 launch logs replayable 'xschem library_manager'" \
+  [expr {[regexp -all -line {^xschem library_manager$} [logtext]] >= 1}] {}
+
 destroy .ins
 destroy .libmgr
 file delete -force $tmp
