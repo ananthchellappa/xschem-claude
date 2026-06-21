@@ -15,9 +15,10 @@ Companion docs:
 - Design/plan: `specs/descend_hierarchy_in_memory.md`
 - Progress + resume state: `specs/descend_handoff.md`
 
-Covered so far: **Parts 1–8 (Steps 0–6, the design pivot, B1–B4 of the
-backing-file autosave, B5 — removing the descend save prompt, and B6 — extending
-autosave to symbols + the descend_symbol no-prompt path).**
+Covered so far: **Parts 1–9 (Steps 0–6, the design pivot, B1–B4 of the
+backing-file autosave, B5 — removing the descend save prompt, B6 — extending
+autosave to symbols + the descend_symbol no-prompt path, and B7 — hiding the `~`
+backups from cell listings).**
 
 ---
 
@@ -701,6 +702,53 @@ elsewhere if it shared the guard you removed. Before deleting a guard, ask which
 other paths leaned on it — and for each one you're deferring, keep it exactly as safe
 as it was and write a test that *fails* if someone later removes that safety. Deferred
 is a promise to leave it working, not a license to let it rot.
+
+---
+
+## Part 9 — Hiding the artifact: enumerate every surface, exempt the resolver
+
+### Lesson 29 — A new on-disk artifact leaks into every directory listing; find them all
+
+The moment edits started writing `cellName~.sch`/`~.sym` next to the real cells,
+those `~` files became visible everywhere the tool *lists* cells: the file-open
+dialog, the library browser, the insert-symbol search. Nobody wants to open
+`opamp~.sch` from a picker. Creating a sibling file is never just "write a file" —
+it's "write a file that now shows up in every `glob` of that directory."
+
+The work was to enumerate the listing surfaces, not guess one. A grep for `glob`
+in the GUI layer surfaced the real set: `setglob` (the dialog lister, with *two*
+branches — the `*` show-everything case and the `*.sch`/`*.sym` filter case, both of
+which match the `~` siblings), `sub_match_file` (the browser/insert regexp matcher),
+and `get_list_of_dirs_with_files` (which decides whether a directory even *appears*
+as "containing cells"). Miss any one and the artifact leaks through that path.
+
+The fix is one predicate (`is_backup_file`) applied at each surface — not three
+ad-hoc string checks. A single helper means the definition of "what is a backup" can
+never drift between the dialog and the browser.
+
+**Takeaway:** when you introduce a file the program writes, list every place that
+*reads the directory* and decide what each should do with it. One predicate, applied
+at each enumeration point, beats scattering the same `string match` in three styles.
+
+### Lesson 30 — Distinguish a *lister* from a *resolver*; only the lister hides
+
+Two kinds of code touch these files. *Listers* enumerate "what cells are here?" for
+a human to choose from — those must hide `~` backups. *Resolvers* answer "where is
+the file named exactly X?" — symbol→schematic resolution (`abs_sym_path`) only ever
+asks for `cellName.sch`, never `cellName~`, so it needs no change, and
+`sub_find_file` (exact `$fname == $f` match) is a resolver too and was left
+untouched. Filtering a resolver would be wrong: if something legitimately asked for
+that exact name you'd hide the answer.
+
+This is why hiding the backups is *complete and safe* with edits only to the
+listers: nothing resolves a cell *by globbing*, so a hidden-from-listing file is
+still perfectly loadable by its real name (which is exactly what go_back does with
+`cellName~.sch` in B3). Cosmetic invisibility, zero functional reach.
+
+**Takeaway:** before filtering a file out of a code path, classify the path: does it
+*enumerate choices* or *resolve a known name*? Hide in the first, never in the
+second. The same filename can be correctly invisible to a picker and fully reachable
+by the loader at the same time.
 
 ---
 

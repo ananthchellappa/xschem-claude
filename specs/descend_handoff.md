@@ -6,14 +6,17 @@
 > from an in-memory snapshot to an editor-style `cellName~.sch` backing file — read
 > the "DESIGN PIVOT" section of `specs/descend_hierarchy_in_memory.md` (plan) and
 > this file first. Steps 1–6 (in-memory, now superseded) and B1–B6 (backing file)
-> are DONE and committed; resume at **B7** (hide `*~.sch`/`*~.sym` from the file-open
-> dialog, library browser, and directory scans so they aren't listed as cells). The
-> in-memory machinery was removed in B4; B5 removed the descend save prompt (S2
-> GREEN); B6 extended autosave to symbols and removed the descend_symbol prompt for
-> NON-embedded symbols (SY1/SY2 GREEN) — embedded-symbol descent deliberately keeps
-> the legacy save prompt (go_back's embedded path reloads parent from disk, not the
-> ~ backup, so dropping it would lose parent edits; pinned by Part C). Build + run
-> the suites after each step, commit per step, and EXTEND the living tutorial
+> are DONE and committed; resume at **B8** (lifecycle + crash recovery: a real save
+> / window-close already removes the `~`; on OPEN, detect a stale `cellName~.sch`
+> that is newer than `cellName.sch` and offer to restore it). The in-memory
+> machinery was removed in B4; B5 removed the descend save prompt (S2 GREEN); B6
+> extended autosave to symbols and removed the descend_symbol prompt for NON-embedded
+> symbols (SY1/SY2 GREEN) — embedded-symbol descent deliberately keeps the legacy save
+> prompt (go_back's embedded path reloads parent from disk, not the ~ backup, so
+> dropping it would lose parent edits; pinned by Part C); B7 hides `*~.sch`/`*~.sym`
+> from the file dialog, library browser, and dir scans (one is_backup_file predicate
+> in xschem.tcl; listers hide, resolvers untouched). Build + run the suites after each
+> step, commit per step, and EXTEND the living tutorial
 > `code_analysis/descend_in_memory_tutorial.md` with each step's lesson(s).
 >
 > Backing-file model: a genuine edit (`set_modify(1)`) writes `cellName~.sch`/
@@ -35,8 +38,9 @@
 > RESUME PROMPT above + the "DESIGN PIVOT" section of the spec. Backing-file
 > commits: B1 `c408fe3`, B2 `a9ca3cf`, B3 `7a30ff8`, B4 `b4bbfa4` (removed the
 > in-memory machinery), B5 `f9fda05` (removed descend save prompt → S2 green),
-> B6 `6d9d8a3` (symbol autosave + descend_symbol no-prompt, embedded guard kept).
-> Next: B7 (hide `~` files from file dialog / library browser / dir scans).
+> B6 `6d9d8a3` (symbol autosave + descend_symbol no-prompt, embedded guard kept),
+> B7 `1d1bf75` (hide `~` backups from cell listings).
+> Next: B8 (lifecycle + crash recovery: offer to restore a stale `~` on open).
 
 ## (HISTORY — superseded) Where things stood with the in-memory design
 
