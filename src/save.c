@@ -5298,17 +5298,23 @@ int descend_symbol(void)
   if(xctx->lastsel > 1)  return 0;
   if(xctx->lastsel==1 && xctx->sel_array[0].type==ELEMENT) {
     n =xctx->sel_array[0].n;
-    if(xctx->modified)
-    {
-      int ret;
-      ret = save(1, 1);
-      /* if circuit is changed but not saved before descending
-       * state will be inconsistent when returning, can not propagare hilights
-       * save() return value:
-       *  1 : file saved
-       * -1 : user cancel
-       *  0 : file not saved due to errors or per user request
-       */
+    /* No save prompt on descend into a NON-embedded symbol (B6, mirrors
+     * descend_schematic/B5): a genuine edit to the parent schematic was already
+     * persisted to cellName~.sch by the autosave hook (set_modify -> write_backup),
+     * and go_back() reloads that backup, restoring the unsaved edits and the
+     * modified flag, so descending is not a save point and must not prompt.
+     *
+     * EXCEPTION: an embedded symbol (embed attr or EMBEDDED flag -- the same
+     * predicate used below to dump the .xschem_embedded_ temp file) is still
+     * handled by the legacy save path. go_back's embedded return (from_embedded_sym)
+     * reloads the parent from DISK, not from cellName~.sch, so without this prompt
+     * the parent's unsaved edits would be silently lost. Embedded-symbol editing is
+     * deferred (see specs/descend_hierarchy_in_memory.md); until it is handled,
+     * keep the guard rather than trade a prompt for data loss. */
+    if(((xctx->inst[n].ptr+ xctx->sym)->flags & EMBEDDED || xctx->inst[n].embed) &&
+       xctx->modified) {
+      int ret = save(1, 1);
+      /* save() return: 1 saved, -1 user cancel, 0 not saved (errors/declined) */
       if(ret == 0) clear_all_hilights();
       if(ret == -1) return 0; /* user cancel */
     }
