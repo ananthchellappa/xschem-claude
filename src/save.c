@@ -3707,8 +3707,18 @@ int load_schematic(int load_symbols, const char *fname, int reset_undo, int aler
     my_mstrcat(_ALLOC_ID_, &xctx->sch[xctx->currsch],  xctx->current_dirname, "/", name, NULL);
     if(reset_undo) set_modify(0);
   }
-  check_collapsing_objects();
-  if(reset_undo && tclgetboolvar("autotrim_wires")) trim_wires();
+  {
+    /* Load-time normalization (collapsing degenerate objects, and auto-join/trim
+     * of wires when autotrim_wires is set -- e.g. cadence_compat mode) can rewrite
+     * geometry and call set_modify(1). That must NOT leave a freshly-opened, user-
+     * untouched schematic flagged as modified: it produces a spurious "save?" prompt
+     * on the first descend/close. Snapshot the clean state and restore it if the only
+     * change came from this normalization. */
+    int mod_before_norm = xctx->modified;
+    check_collapsing_objects();
+    if(reset_undo && tclgetboolvar("autotrim_wires")) trim_wires();
+    if(reset_undo && !mod_before_norm && xctx->modified) set_modify(0);
+  }
   update_conn_cues(WIRELAYER, 0, 0);
   if(xctx->hilight_nets && load_symbols) {
     propagate_hilights(1, 1, XINSERT_NOREPLACE);
