@@ -2581,18 +2581,9 @@ int descend_schematic(int instnumber, int fallback, int alert, int set_title)
      if(ret == 0) clear_all_hilights();
      if(ret == -1) return 0; /* user cancel */
    }
-   /* Preserve the parent in memory ONLY when it has unsaved edits: that is the
-    * sole case go_back() consumes the snapshot (a clean/just-saved parent is
-    * restored authoritatively from disk). Skipping the snapshot for an unmodified
-    * parent avoids a full deep-copy of the whole schematic on every plain descend
-    * into the hierarchy. Snapshot at the parent's level index, before the currsch++
-    * and before descend's prepare_netlist_structs() below (which bakes derived net
-    * names into wire props) so the captured state matches the on-disk original.
-    * specs/descend_hierarchy_in_memory.md. */
-   if(tclgetboolvar("descend_keep_in_memory") && xctx->modified) {
-     mem_snapshot_hier(xctx->currsch);
-     xctx->hier_slot_modified[xctx->currsch] = 1;
-   }
+   /* No in-memory snapshot needed: a genuine edit to the parent was already
+    * persisted to cellName~.sch by the autosave hook (set_modify -> write_backup),
+    * and go_back() reloads that backup. specs/descend_hierarchy_in_memory.md */
    /*  build up current hierarchy path */
    dbg(1, "descend_schematic(): selected instname=%s\n", xctx->inst[n].instname);
 
@@ -2733,6 +2724,9 @@ void go_back(int what)
  int from_embedded_sym;
  int save_modified;
  char filename[PATH_MAX];
+ char bak[PATH_MAX];
+ char msg[PATH_MAX+100];
+ struct stat sb;
  int prev_sch_type;
  int confirm = what & 1;
  int set_title = !(what & 2);
@@ -2782,26 +2776,24 @@ void go_back(int what)
   save_modified = xctx->modified; /* we propagate modified flag (cleared by load_schematic */
                             /* by default) to parent schematic if going back from embedded symbol */
 
-  my_strncpy(filename, xctx->sch[xctx->currsch], S(filename));
-  load_schematic(1, filename, set_title, 1);
-  /* Overlay the in-memory parent snapshot taken at descend: load_schematic above
-   * restored file identity/title/netlist-dir from disk; now swap in the preserved
-   * geometry (incl. unsaved edits) and the parent's modified flag, so descending
-   * neither loses edits nor required a save. specs/descend_hierarchy_in_memory.md.
-   * Embedded-symbol returns keep the disk path for now (Step 8). */
-  if(xctx->hier_slot_valid[xctx->currsch] && tclgetboolvar("descend_keep_in_memory")) {
-    /* Only override the disk reload when the parent had UNSAVED edits: then the
-     * in-memory snapshot is the truth and must win. When the parent was clean the
-     * disk reload is already authoritative AND avoids persisting the derived
-     * net-name baking that select/netlist leaves in live wire props -- so an
-     * untouched parent returns byte-identical to disk. Embedded returns keep the
-     * disk path for now (Step 8). */
-    if(!from_embedded_sym && xctx->hier_slot_modified[xctx->currsch]) {
-      mem_restore_hier(xctx->currsch);
-      set_modify(1);
-    } else {
-      mem_free_hier_slot(xctx->currsch);
-    }
+  my_strncpy(filename, xctx->sch[xctx->currsch], S(filename)); /* logical cell name */
+  /* If the parent has unsaved edits persisted in its cellName~.sch backup, load
+   * those instead of the on-disk cellName.sch -- the buffer's logical identity
+   * stays cellName and it returns flagged modified, so descending neither lost
+   * edits nor required a save. A clean parent (no ~) loads normally. Embedded-symbol
+   * returns keep the plain disk path (Step 8). specs/descend_hierarchy_in_memory.md */
+  if(!from_embedded_sym && tclgetboolvar("autosave_backup") &&
+     backup_file_name(bak, S(bak), filename) && !stat(bak, &sb)) {
+    load_schematic(1, bak, set_title, 1);
+    /* restore the logical identity: this buffer IS cellName, not cellName~ */
+    my_strdup2(_ALLOC_ID_, &xctx->sch[xctx->currsch], filename);
+    my_strncpy(xctx->current_name, rel_sym_path(filename), S(xctx->current_name));
+    my_snprintf(msg, S(msg), "get_directory {%s}", filename);
+    my_strncpy(xctx->current_dirname, tcleval(msg), S(xctx->current_dirname));
+    if(!stat(filename, &sb)) xctx->time_last_modify = sb.st_mtime;
+    set_modify(1); /* unsaved relative to cellName (also refreshes the title) */
+  } else {
+    load_schematic(1, filename, set_title, 1);
   }
   /* if we are returning from a symbol created from a generator don't set modified flag on parent
    * as these symbols can not be edited / saved as embedded

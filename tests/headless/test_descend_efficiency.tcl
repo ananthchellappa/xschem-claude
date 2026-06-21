@@ -1,35 +1,43 @@
-# Efficiency invariant for the in-memory descend snapshot.
+# Efficiency invariant for the backing-file design.
 # Spec: specs/descend_hierarchy_in_memory.md
 #
-# The full-schematic snapshot taken on descend is only ever CONSUMED by go_back
-# when the parent had unsaved edits (a clean parent is restored from disk). So the
-# snapshot must only be TAKEN when the parent is modified -- otherwise a plain
-# browse down through an unmodified hierarchy would deep-copy each parent for
-# nothing. `xschem get hier_slots` reports the number of live snapshots.
+# Navigating an UNMODIFIED hierarchy must do no disk writes: descending into and
+# back out of clean cells creates no cellName~.sch backups (only a genuine edit
+# does). Works on a /tmp copy.
 #
 # Run: src/xschem --nogui --pipe -q --nolog --script tests/headless/test_descend_efficiency.tcl
 
 set fixdir [file normalize [file join [file dirname [info script]] fixtures descend]]
+set work /tmp/beff_work
+file delete -force $work; file mkdir $work
+foreach fn {descend_parent.sch descend_child.sch descend_child.sym} {
+  file copy -force $fixdir/$fn $work/$fn
+}
 if {![info exists XSCHEM_LIBRARY_PATH]} { set XSCHEM_LIBRARY_PATH {} }
-set XSCHEM_LIBRARY_PATH "$fixdir:$XSCHEM_LIBRARY_PATH"
+set XSCHEM_LIBRARY_PATH "$work:$fixdir:$XSCHEM_LIBRARY_PATH"
 
 set ::f 0
 proc ck {name ok} { puts "[expr {$ok ? {ok:  } : {FAIL:}}] $name"; if {!$ok} {incr ::f} }
 proc ask_save {{c {}}} { return no }
 
-# unmodified parent: descending must NOT snapshot (no wasted deep copy)
-xschem load $fixdir/descend_parent.sch
-xschem unselect_all; xschem select instance 0; xschem descend
-ck "unmodified descend takes NO snapshot (hier_slots==0)" [expr {[xschem get hier_slots] == 0}]
-xschem go_back
+set pbak $work/descend_parent~.sch
+set cbak $work/descend_child~.sch
+file delete -force $pbak $cbak
 
-# modified parent: exactly one snapshot while descended, freed on return
-xschem load $fixdir/descend_parent.sch
-xschem wire 200 300 300 300
+# descend into an unmodified parent: no backup written
+xschem load $work/descend_parent.sch
 xschem unselect_all; xschem select instance 0; xschem descend
-ck "modified descend takes ONE snapshot (hier_slots==1)" [expr {[xschem get hier_slots] == 1}]
+ck "unmodified descend writes no parent backup" [expr {![file exists $pbak]}]
+ck "viewing an unmodified child writes no child backup" [expr {![file exists $cbak]}]
+
+# return: still no backups for a clean round trip
 xschem go_back
-ck "snapshot freed after go_back (hier_slots==0)" [expr {[xschem get hier_slots] == 0}]
+ck "clean descend/go_back round trip leaves no backups" \
+  [expr {![file exists $pbak] && ![file exists $cbak]}]
+
+# sanity: a real edit DOES write one (the hook is live, not disabled)
+xschem wire 200 300 300 300
+ck "a genuine edit does write a backup (hook live)" [file exists $pbak]
 
 puts [expr {$::f == 0 ? "RESULT: ALL PASS" : "RESULT: $::f FAILED"}]
 exit [expr {$::f != 0}]
