@@ -2573,6 +2573,16 @@ int descend_schematic(int instnumber, int fallback, int alert, int set_title)
      if(ret == 0) clear_all_hilights();
      if(ret == -1) return 0; /* user cancel */
    }
+   /* Preserve the parent schematic in memory (at its own level index, before the
+    * currsch++) so go_back() can restore it -- including any unsaved edits -- without
+    * a disk reload. Snapshot HERE, before descend's prepare_netlist_structs() below,
+    * which bakes derived net names into wire props: capturing the pre-resolution
+    * state keeps the restored parent byte-identical to the on-disk original.
+    * specs/descend_hierarchy_in_memory.md. */
+   if(tclgetboolvar("descend_keep_in_memory")) {
+     mem_snapshot_hier(xctx->currsch);
+     xctx->hier_slot_modified[xctx->currsch] = xctx->modified;
+   }
    /*  build up current hierarchy path */
    dbg(1, "descend_schematic(): selected instname=%s\n", xctx->inst[n].instname);
 
@@ -2669,13 +2679,6 @@ int descend_schematic(int instnumber, int fallback, int alert, int set_title)
    dbg(1, "descend_schematic(): current path: %s\n", xctx->sch_path[xctx->currsch+1]);
    dbg(1, "descend_schematic(): inst_number=%d\n", inst_number);
 
-   /* Preserve the parent schematic in memory (at its own level index, before the
-    * currsch++) so go_back() can restore it -- including any unsaved edits -- without
-    * a disk reload. specs/descend_hierarchy_in_memory.md. */
-   if(tclgetboolvar("descend_keep_in_memory")) {
-     mem_snapshot_hier(xctx->currsch);
-     xctx->hier_slot_modified[xctx->currsch] = xctx->modified;
-   }
    xctx->previous_instance[xctx->currsch]=n;
    xctx->zoom_array[xctx->currsch].x=xctx->xorigin;
    xctx->zoom_array[xctx->currsch].y=xctx->yorigin;
@@ -2777,10 +2780,15 @@ void go_back(int what)
    * neither loses edits nor required a save. specs/descend_hierarchy_in_memory.md.
    * Embedded-symbol returns keep the disk path for now (Step 8). */
   if(xctx->hier_slot_valid[xctx->currsch] && tclgetboolvar("descend_keep_in_memory")) {
-    if(!from_embedded_sym) {
-      int parent_modified = xctx->hier_slot_modified[xctx->currsch];
+    /* Only override the disk reload when the parent had UNSAVED edits: then the
+     * in-memory snapshot is the truth and must win. When the parent was clean the
+     * disk reload is already authoritative AND avoids persisting the derived
+     * net-name baking that select/netlist leaves in live wire props -- so an
+     * untouched parent returns byte-identical to disk. Embedded returns keep the
+     * disk path for now (Step 8). */
+    if(!from_embedded_sym && xctx->hier_slot_modified[xctx->currsch]) {
       mem_restore_hier(xctx->currsch);
-      set_modify(parent_modified ? 1 : 0);
+      set_modify(1);
     } else {
       mem_free_hier_slot(xctx->currsch);
     }
