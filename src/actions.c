@@ -2567,23 +2567,12 @@ int descend_schematic(int instnumber, int fallback, int alert, int set_title)
       strcmp( (xctx->inst[n].ptr+ xctx->sym)->type, "subcircuit") &&
       strcmp( (xctx->inst[n].ptr+ xctx->sym)->type, "primitive")
    ) return 0;
-   if(xctx->modified) {
-     int ret;
-
-     ret = save(1, 0);
-     /* if circuit is changed but not saved before descending
-      * state will be inconsistent when returning, can not propagare hilights
-      * save() return value:
-      *  1 : file saved
-      * -1 : user cancel
-      *  0 : file not saved due to errors or per user request
-      */
-     if(ret == 0) clear_all_hilights();
-     if(ret == -1) return 0; /* user cancel */
-   }
-   /* No in-memory snapshot needed: a genuine edit to the parent was already
+   /* No save prompt on descend: a genuine edit to the parent was already
     * persisted to cellName~.sch by the autosave hook (set_modify -> write_backup),
-    * and go_back() reloads that backup. specs/descend_hierarchy_in_memory.md */
+    * and go_back() reloads that backup, restoring the unsaved edits and the
+    * modified flag. Descending is not a save point and never loses data, so it
+    * must not prompt. Prompts remain at go_back and window-close, where edits
+    * are actually at risk. specs/descend_hierarchy_in_memory.md (B5) */
    /*  build up current hierarchy path */
    dbg(1, "descend_schematic(): selected instname=%s\n", xctx->inst[n].instname);
 
