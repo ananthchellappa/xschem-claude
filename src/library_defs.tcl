@@ -296,6 +296,35 @@ proc lib_qualified_rel {symbol} {
   return $best
 }
 
+# Reverse-resolve an absolute schematic/symbol file path to its library cell view.
+# Returns {lib cell view layout} (layout = nested|flat), or {} if the path is not
+# under any registered library. The longest matching library root wins (so a library
+# nested inside another resolves to the inner one). Pure path/string work -- used by
+# the library-aware "Make symbol from schematic" to decide where the symbol view
+# goes. specs/create_symbol_view.md
+proc schematic_cellview {abspath} {
+  set abspath [file normalize $abspath]
+  set best {}; set bestlen -1
+  foreach pair [library_list] {
+    set lname [lindex $pair 0]
+    set lp [file normalize [lindex $pair 1]]/
+    set pl [string length $lp]
+    if {$pl <= $bestlen} { continue }
+    if {![string equal -length $pl $lp $abspath/]} { continue }
+    set comps [file split [string range $abspath $pl end]]
+    set n [llength $comps]
+    set root [file rootname [lindex $comps end]]
+    if {$n == 3 && $root eq [lindex $comps 0]} {
+      # nested: <cell>/<view>/<cell>.ext
+      set best [list $lname [lindex $comps 0] [lindex $comps 1] nested]; set bestlen $pl
+    } elseif {$n == 1} {
+      # flat: <cell>.ext directly under the library root (no view dir)
+      set best [list $lname $root {} flat]; set bestlen $pl
+    }
+  }
+  return $best
+}
+
 # --- Phase 7b: mutation backend (Library Manager right-click context menu) ---
 # Filesystem operations behind copy / rename / delete / new on the Library ->
 # Cell -> View tree. Model (mirrors the read side above):
