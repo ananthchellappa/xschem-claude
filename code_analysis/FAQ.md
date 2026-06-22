@@ -14,6 +14,60 @@ Newest entries on top.
 
 ---
 
+## Q14. The Edit Properties form has Library/Cell/View rows for an instance, but on *this* branch they never show up. What's missing, and how do I turn them on?
+
+- **Asked:** 2026-06-22
+- **Project state:** branch `slick-property-forms` @ `ebcee4a1` (the editable
+  master Library/Cell/View rows just cherry-picked in from `fluid-editing`; the
+  OpenAccess library registry they depend on is **not** on this branch).
+
+**Because the rows depend on the OA *library registry*, which lives on the
+`library-manager` lineage and was never ported here — and the feature is
+deliberately written to stay invisible without it.** `slickprop::update_lcv`
+calls `library_inst_lcv` to resolve an instance's symbol reference to
+`{lib cell view}`; `slickprop::lcv_compose_symbol` calls `xschem cellview_path`
+to turn an edited L/C/V back into a `.sym` when re-pointing the master. Both
+calls are `catch`ed (`src/property_form.tcl`), so on a branch without the
+registry the lookup returns nothing, the rows are hidden, the legacy
+`Symbol`+`Browse` row is shown instead, and editing is gated off. The form is
+never broken by the absence — it just falls back to its old self.
+
+**What's actually missing splits into two tiers:**
+
+- **Tier 1 — just to *display* the rows (read-only). No C changes.** The display
+  path `library_inst_lcv → abs_sym_path + library_defs_registry` is pure Tcl +
+  filesystem. You need: (1) `src/library_defs.tcl` (the ~700-line registry Tcl,
+  absent here); (2) its `source $XSCHEM_SHAREDIR/library_defs.tcl` line in
+  `src/xschem.tcl` (this branch has neither file nor line); (3) the **OA-aware**
+  `abs_sym_path`/`rel_sym_path` procs in `src/xschem.tcl` (they *differ* from
+  this branch — the OA-awareness is woven inside them); (4) runtime data: a
+  `library.defs` + an OA library tree, so instances reference *registered* cells.
+
+- **Tier 2 — to make the rows *editable* (re-point the master). Adds thin C
+  shims.** `xschem cellview_path` is a 4-line `scheduler.c` shim that
+  `tclvareval`s into the Tcl `cellview_path`; it (via `cellview_resolve →
+  library_resolve`) also needs the `library` / `libraries` shims. The remaining
+  registry shims (`get_inst_lcv`, `library_manager`, `create_instance`) back the
+  Library Manager GUI and the Cadence helpers — *not* this form.
+
+**Why it's not a clean file-drop:** item (3) — the OA logic lives **inside** the
+core `abs_sym_path`/`rel_sym_path` resolvers that every symbol load funnels
+through. Copy `library_defs.tcl` alone and OA references won't resolve; port the
+resolvers wrong and you degrade *all* symbol resolution. Treat the registry as a
+coherent subsystem.
+
+**How to turn it on (two routes):** (A) **merge `library-manager`** into this
+branch — cleanest correctness, but also brings the whole Library Manager surface
+(~57 commits); or (B) **surgically cherry-pick** just `library_defs.tcl`, the
+`xschem.tcl` resolver/source hunks, and the `scheduler.c` shims — leaner, but you
+must isolate the resolver changes and reconcile conflicts. A read-only Tier-1
+demo needs no recompile at all. Step-by-step recipe, verification checklist, and
+the exact `git log`/`cherry-pick` commands are in
+`claude_suggs/oa_registry_for_lcv_rows.md`. ⚠ Another contributor actively
+develops `library-manager` — coordinate and work in a separate `git worktree`.
+
+---
+
 ## Q13. Why doesn't pressing `q` to open the Edit Properties form write `xschem edit_prop` to the action log?
 
 - **Asked:** 2026-06-14
