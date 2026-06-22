@@ -15,11 +15,12 @@ Companion docs:
 - Design/plan: `specs/descend_hierarchy_in_memory.md`
 - Progress + resume state: `specs/descend_handoff.md`
 
-Covered so far: **Parts 1–11 (Steps 0–6, the design pivot, B1–B4 of the
+Covered so far: **Parts 1–12 (Steps 0–6, the design pivot, B1–B4 of the
 backing-file autosave, B5 — removing the descend save prompt, B6 — extending
 autosave to symbols + the descend_symbol no-prompt path, B7 — hiding the `~`
-backups from cell listings, B8 — lifecycle + crash recovery, and the start of the
-B9 deep-hierarchy audit — close/quit prompting across the descend stack).**
+backups from cell listings, B8 — lifecycle + crash recovery, the B9 deep-hierarchy
+audit — close/quit prompting across the descend stack, and the Cadence-style
+per-level close/quit walk-up + dialog polish).**
 
 ---
 
@@ -907,6 +908,81 @@ forces off (`has_x`, `isatty`, a GUI toolkit), the wiring between detector and t
 is untested *by construction*. Enumerate those sites deliberately, fix them as a set,
 and route them to a human check — and never let the detector's passing test be quoted
 as evidence the trigger fires.
+
+---
+
+## Part 12 — Polishing the close/quit UX: reuse the level machine, decide once
+
+Once the deep-close *guard* fired (Part 11), the user drove it in the real GUI and
+asked for three quality fixes: the save dialog was too small; declining a save on
+`go_back` left the `~` behind; and Ctrl-W/Ctrl-Q should behave like Cadence — walk
+*up* the hierarchy prompting per cell that needs attention, not throw one generic
+"unsaved data, exit?" box. These are "make it nicer," but each carries a lesson.
+
+### Lesson 38 — Drive a multi-step flow with the single-step primitive you already trust
+
+The Cadence walk-up is not new traversal code — it is `go_back` in a loop. `go_back`
+already ascends one level *and* prompts about that level (Save/No/Cancel) *and*
+reloads the parent's backing file *and* honors the embedded-symbol guard. So "prompt
+every dirty level, bottom to top" is just "call `xschem go_back 1` until `currsch`
+hits 0," detecting Cancel by "did `currsch` actually decrease?". A hand-rolled
+walk-up would have re-implemented the exact per-level save/discard/ascend logic the
+whole project spent ten parts getting right.
+
+```tcl
+while {[xschem get currsch] > 0} {
+  set before [xschem get currsch]
+  xschem go_back 1                              ;# prompts + saves/discards + ascends
+  if {[xschem get currsch] >= $before} { return 0 }   ;# go_back was cancelled -> abort
+}
+```
+
+**Takeaway:** before writing a loop that repeats an operation, check whether the
+single-step primitive already encapsulates everything one iteration needs —
+*including its prompts and side effects*. The cleanest multi-step flow is often N
+calls to a primitive you already trust, plus a termination/cancel check.
+
+### Lesson 39 — Prompt in your layer, then *force* the layer that would prompt again
+
+The close paths (`xschem exit`, `destroy_tab`, …) prompt on their own when modified.
+Once `hierarchy_close` has walked the user through every level's decision, letting
+those paths prompt again double-asks. So the orchestration layer does all the asking,
+then invokes the teardown with `force`, which both skips the redundant prompt and
+clears the modified flag. The discard case *needs* this: "No" leaves the buffer
+modified in memory (we only deleted the `~` file), so only `force` makes the
+subsequent close honor "don't save" without re-asking.
+
+**Takeaway:** when you lift a decision up into an orchestration layer, tell the lower
+layer the decision is already made — pass its `force`/no-confirm flag so it *executes*
+instead of re-prompting. A half-lifted decision double-prompts.
+
+### Lesson 40 — "Clean exit removes the artifact" has many exits — including go-back
+
+B8 established the invariant (Lesson 32): every non-crash ending removes the `~`, so
+its presence unambiguously means a crash. The user found the exit we'd missed —
+declining the save on `go_back` left the `~`. "Leaving a cell without saving" *is* a
+discard, a clean ending, so it must drop the `~` too, exactly like clear/new-file/
+close. The rule was never "save and close remove it"; it's "every path where the user
+consciously abandons edits removes it" — and per-level discard inside a walk-up is one
+more such path.
+
+**Takeaway:** when you define "clean endings remove the artifact," enumerate *all* of
+them, not the obvious two. Each conscious-discard path that forgets to clean up
+degrades the crash-recovery signal back into noise.
+
+### Lesson 41 — A GUI-gated trigger is still testable if you stub the gate's collaborator
+
+Lessons 33/37 noted the `has_x` gate makes prompt-*firing* untestable headless. But
+the walk-up *logic* — which levels are visited, what's saved vs discarded, when it
+aborts — is fully testable by stubbing `ask_save` (the proc the gate calls) to return
+scripted answers. `test_hier_walkup` drives a real 3-level descend and asserts the
+`~` files and `currsch` after save-all / discard-all / cancel, dialog stubbed. The
+pixels need a human; the decision tree does not.
+
+**Takeaway:** "the trigger is GUI-gated" means the *rendering* is untestable, not the
+*behavior*. Stub the dialog proc and the orchestration logic — the part that actually
+has bugs — becomes an ordinary unit test. Reserve the human for what only eyes can
+judge: layout, wording, feel.
 
 ---
 
