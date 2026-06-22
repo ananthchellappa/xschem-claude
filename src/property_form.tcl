@@ -453,6 +453,7 @@ proc slickprop::do_apply {} {
   variable cur
   variable nav
   global symbol prev_symbol copy_cell user_wants_copy_cell
+  slickprop::lcv_compose_symbol     ;# fold any Library/Cell/View edit into the ref
   set symbol [.dialog.f1.e2 get]
   set abssymbol [abs_sym_path $symbol]
   set user_wants_copy_cell $copy_cell
@@ -574,9 +575,24 @@ proc slickprop::update_highlight {} {
 # Decision doc: code_analysis/modeless_property_form_decision.md.
 # ===========================================================================
 
-# True iff any field's value differs from what it loaded with (gates the prompt).
+# True iff the active Library/Cell/View rows differ from what they loaded with —
+# a pending master-cell change counts as dirty just like any edited field.
+proc slickprop::lcv_dirty {} {
+  variable loaded_lcv
+  variable lcv_active
+  if {![info exists lcv_active] || !$lcv_active} { return 0 }
+  if {![winfo exists .dialog.flcv]} { return 0 }
+  set now [list [string trim [.dialog.flcv.e0 get]] \
+                [string trim [.dialog.flcv.e1 get]] \
+                [string trim [.dialog.flcv.e2 get]]]
+  return [expr {$now ne $loaded_lcv}]
+}
+
+# True iff any field's value (or the master L/C/V) differs from what it loaded
+# with (gates the Apply/Discard prompt on Next/Prev and selection changes).
 proc slickprop::is_dirty {} {
   variable cur
+  if {[slickprop::lcv_dirty]} { return 1 }
   if {![info exists cur(tokens)]} { return 0 }
   return [expr {[llength [slickprop::collect_changes]] > 0}]
 }
@@ -833,6 +849,7 @@ proc slickprop::load_pos {pos} {
   set hdr $sym
   if {$inst_name ne {}} { set hdr "$inst_name  —  $sym" }
   if {[winfo exists .dialog.hdr]} { .dialog.hdr configure -text "  $hdr" }
+  slickprop::update_lcv $sym
   slickprop::build_fields .dialog.fa.c.inner $prop [slickprop::template_of $sym]
   slickprop::apply_scope_greying
   slickprop::update_nav_ui
@@ -861,6 +878,70 @@ proc slickprop::update_nav_ui {} {
   .dialog.fnav.pos configure -text "[expr {$pos + 1}] of $n"
   .dialog.fnav.prev configure -state [expr {$pos <= 0     ? "disabled" : "normal"}]
   .dialog.fnav.next configure -state [expr {$pos >= $n - 1 ? "disabled" : "normal"}]
+}
+
+# Populate (and show/hide) the master Library / Cell / View rows for the symbol
+# reference <sym> of the DISPLAYED instance. Resolved from the OA library registry
+# (library_inst_lcv maps the reference to {lib cell view}); it returns {} for
+# anything that is not a registered library cell. So the three editable rows show
+# for library instances and stay hidden for wires, pins, and non-library symbols
+# — in which case the raw Symbol entry row (.dialog.f1) is shown instead. Called
+# at build time and on every Next/Prev (load_pos), so the rows track the current
+# instance. The registry lookup is `catch`ed: on builds without it the rows never
+# appear and the form behaves exactly as before.
+proc slickprop::update_lcv {sym} {
+  variable loaded_lcv
+  variable lcv_active
+  if {![winfo exists .dialog.flcv]} return
+  set lcv {}
+  catch {set lcv [library_inst_lcv $sym]}
+  if {[llength $lcv] == 3} {
+    lassign $lcv lib cell view
+    foreach {i v} [list 0 $lib 1 $cell 2 $view] {
+      .dialog.flcv.e$i delete 0 end
+      .dialog.flcv.e$i insert 0 $v
+    }
+    set loaded_lcv $lcv
+    set lcv_active 1
+    pack .dialog.flcv -side top -fill x -after .dialog.fscope
+    catch {pack forget .dialog.f1}            ;# library instance: hide raw Symbol row
+  } else {
+    set loaded_lcv {}
+    set lcv_active 0
+    pack forget .dialog.flcv
+    catch {pack .dialog.f1 -side top -fill x -pady {4 0} -after .dialog.fscope}
+  }
+}
+
+# If the Library/Cell/View rows are active (a library instance) AND the user
+# edited them, recompose them into the Symbol reference that the apply path
+# consumes (.dialog.f1.e2), so an L/C/V edit re-points the instance at a different
+# master cell. Unchanged L/C/V is a no-op (the original reference is preserved
+# verbatim — no abs/relative churn). An unresolvable or non-symbol combination
+# leaves the master untouched and warns, so a typo never blanks the reference.
+proc slickprop::lcv_compose_symbol {} {
+  variable loaded_lcv
+  variable lcv_active
+  if {![info exists lcv_active] || !$lcv_active} return
+  if {![winfo exists .dialog.flcv]} return
+  set lib  [string trim [.dialog.flcv.e0 get]]
+  set cell [string trim [.dialog.flcv.e1 get]]
+  set view [string trim [.dialog.flcv.e2 get]]
+  if {[list $lib $cell $view] eq $loaded_lcv} return    ;# unchanged: keep original ref
+  if {$lib eq {} || $cell eq {} || $view eq {}} {
+    catch {ciw_echo "Library/Cell/View must all be set — master unchanged" error}
+    return
+  }
+  set f {}
+  catch {set f [xschem cellview_path "$lib/$cell" $view]}
+  if {$f eq {} || ![string match *.sym $f]} {
+    catch {ciw_echo "no '$view' symbol view for $lib/$cell — master unchanged" error}
+    return
+  }
+  if {[winfo exists .dialog.f1.e2]} {
+    .dialog.f1.e2 delete 0 end
+    .dialog.f1.e2 insert 0 $f
+  }
 }
 
 # The slick replacement for the legacy edit_prop dialog: one single-line entry
@@ -906,6 +987,20 @@ proc slickprop::edit_form {txtlabel} {
   label .dialog.hdr -text "  $hdr" -bg grey60 -anchor w -font slickPropHeader
   pack .dialog.hdr -side top -fill x
 
+  # --- master Library / Cell / View rows (Cadence-style, editable) ----------
+  # Three editable rows identifying the instance's master. Shown for library
+  # instances (hidden for wires/pins/non-library, where the raw Symbol row below
+  # is shown instead — see update_lcv). Editing a row re-points the instance at a
+  # different master on Apply/OK (lcv_compose_symbol folds them into the Symbol
+  # reference). Built here unpacked; update_lcv packs + populates it.
+  frame .dialog.flcv
+  foreach {i lbl} {0 Library 1 Cell 2 View} {
+    label .dialog.flcv.l$i -text $lbl -font slickPropLabel -anchor w -width 8
+    entry .dialog.flcv.e$i -font slickPropValue -relief sunken -borderwidth 1
+    grid  .dialog.flcv.l$i .dialog.flcv.e$i -sticky we -padx {4 6} -pady 1
+  }
+  grid columnconfigure .dialog.flcv 1 -weight 1
+
   # --- "Apply to" scope selector (sticky; the C side reads the canonical var) -
   frame .dialog.fscope
   label .dialog.fscope.l -text "Apply to" -font slickPropLabel
@@ -917,7 +1012,7 @@ proc slickprop::edit_form {txtlabel} {
   }
   pack .dialog.fscope.l  -side left -padx {4 6} -pady {2 0}
   pack .dialog.fscope.cb -side left -pady {2 0}
-  pack .dialog.fscope -side top -fill x
+  pack .dialog.fscope -side top -fill x -after .dialog.hdr
 
   # --- top: symbol entry + Browse -----------------------------------------
   frame .dialog.f1
@@ -1006,6 +1101,9 @@ proc slickprop::edit_form {txtlabel} {
     slickprop::build_fields .dialog.fa.c.inner $::tctx::retval [slickprop::template_of $symbol]
     slickprop::update_nav_ui
   }
+  # show/populate the Library/Cell/View rows for the displayed instance (the nav
+  # path already did this via load_pos; this covers the single-shot else path).
+  slickprop::update_lcv $symbol
 
   # grey the name field live with the scope (and apply the initial state)
   trace add variable ::slickprop_apply_scope write slickprop::apply_scope_greying
