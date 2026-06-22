@@ -43,12 +43,18 @@
 > B6 `6d9d8a3` (symbol autosave + descend_symbol no-prompt, embedded guard kept),
 > B7 `1d1bf75` (hide `~` backups from cell listings), B8 `58e053a` (lifecycle +
 > crash recovery: load_backup_as / discard-cleanup / xschem_recover_backup),
-> B9-partial `3306d76` (deep-close fix: `xschem exit` prompts when an ANCESTOR
-> level is unsaved, via `hierarchy_modified()` — found by GUI eyeball: descend 2
-> levels then Ctrl-W closed with no prompt).
-> Next: finish B9 (tabs interaction, leak audit `xschemtest -d 3`, remaining GUI
-> eyeball per the recipe). Possible polish: the deep-close tk_messageBox names the
-> current (child) cell, not the dirty ancestor — wording could be made generic.
+> B9-partial: `3306d76` (deep-close: `xschem exit` uses `hierarchy_modified()`),
+> `e0e2b92` (same guard in the 4 xinit.c tab/window close paths — the tabbed GUI
+> closes through those, not `xschem exit`), `6918906` (Cadence per-level walk-up +
+> nicer `ask_save` + go_back "No" removes ~). Walk-up = `hierarchy_close {close|quit}`
+> (xschem.tcl): ascend bottom→top, prompt each DIRTY level naming the cell
+> (intermediate via go_back Save/No/Cancel; top via ask_save), then force teardown;
+> Ctrl-W=`close_schematic_window`, Ctrl-Q=`quit_xschem` (force only if sole window).
+> Logic tested headless (test_hier_walkup); DIALOG APPEARANCE + live GUI close are
+> has_x-gated → NEED USER EYEBALL.
+> Next: finish B9 (USER eyeball of the close/quit walk-up + dialog sizing; tabs
+> interaction; leak audit `xschemtest -d 3`). Possible polish: multi-window quit
+> only walks up the CURRENT window (others get a single hierarchy_modified prompt).
 
 ## (HISTORY — superseded) Where things stood with the in-memory design
 
