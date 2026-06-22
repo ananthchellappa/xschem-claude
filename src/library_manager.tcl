@@ -24,6 +24,9 @@ namespace eval libmgr {
   variable sel_lib  "" ;# currently selected library name
   variable sel_cell "" ;# currently selected cell name
   variable new_window 1 ;# open schematics in a new window/tab (vs the current one)
+  variable hist_counter 0 ;# unique-id source for History dialog windows
+  variable hist_msg       ;# array: history-window path -> dict(hash -> message)
+  array set hist_msg {}
 }
 
 # Bring the (existing) Library Manager window to the front AND give it the
@@ -72,12 +75,23 @@ proc libmgr::open {} {
   ttk::panedwindow $w.pw -orient horizontal
   pack $w.pw -side top -fill both -expand 1
 
-  # one column = header label + listbox + scrollbar, in a frame added to the pane
+  # a bold font for git-tracked rows (specs/library_git.md §4.3). Derived from the
+  # treeview's default font so it matches; created once.
+  if {[lsearch -exact [font names] LibMgrBold] < 0} {
+    catch {font create LibMgrBold {*}[font actual TkDefaultFont] -weight bold}
+  }
+  # one column = header label + treeview + scrollbar, in a frame added to the
+  # pane. ttk::treeview (not listbox) so each row can carry a per-row font: a
+  # revision-controlled library/cell/view renders bold. The treeview ROW ID is
+  # the item name, so [$lb children {}] is the ordered name list and selection /
+  # lookup are by name.
   foreach {col title} {lib Library cell Cell view View} {
     set f [ttk::frame $w.pw.$col]
     ttk::label $f.h -text $title -anchor w -padding {4 2}
-    listbox $f.lb -exportselection 0 -activestyle dotbox \
-            -yscrollcommand "$f.sb set" -width 18 -height 20
+    ttk::treeview $f.lb -show tree -selectmode browse -height 20 \
+            -yscrollcommand "$f.sb set"
+    $f.lb column #0 -width 150
+    $f.lb tag configure tracked -font LibMgrBold
     ttk::scrollbar $f.sb -orient vertical -command "$f.lb yview"
     grid $f.h  -row 0 -column 0 -columnspan 2 -sticky we
     grid $f.lb -row 1 -column 0 -sticky nsew
@@ -100,16 +114,17 @@ proc libmgr::open {} {
   pack $w.b.close -side right -padx 4 -pady 4
   pack $w.b -side bottom -fill x
 
-  bind $w.pw.lib.lb  <<ListboxSelect>> libmgr::on_lib
-  bind $w.pw.cell.lb <<ListboxSelect>> libmgr::on_cell
-  bind $w.pw.view.lb <<ListboxSelect>> libmgr::on_view
-  bind $w.pw.cell.lb <Double-1>        libmgr::open_view
-  bind $w.pw.view.lb <Double-1>        libmgr::open_view
+  bind $w.pw.lib.lb  <<TreeviewSelect>> libmgr::on_lib
+  bind $w.pw.cell.lb <<TreeviewSelect>> libmgr::on_cell
+  bind $w.pw.view.lb <<TreeviewSelect>> libmgr::on_view
+  bind $w.pw.cell.lb <Double-1>         libmgr::open_view
+  bind $w.pw.view.lb <Double-1>         libmgr::open_view
 
   libmgr::build_menus $w
-  bind $w.pw.lib.lb  <Button-3> {libmgr::ctx_post lib  %y %X %Y}
-  bind $w.pw.cell.lb <Button-3> {libmgr::ctx_post cell %y %X %Y}
-  bind $w.pw.view.lb <Button-3> {libmgr::ctx_post view %y %X %Y}
+  libmgr::build_menubar $w
+  bind $w.pw.lib.lb  <Button-3> {libmgr::ctx_post lib  %x %y %X %Y}
+  bind $w.pw.cell.lb <Button-3> {libmgr::ctx_post cell %x %y %X %Y}
+  bind $w.pw.view.lb <Button-3> {libmgr::ctx_post view %x %y %X %Y}
 
   libmgr::populate_libs
   # a freshly created window should also come up focused, even if another
@@ -125,6 +140,10 @@ proc libmgr::build_menus {w} {
   $w.mlib add command -label "New cell…"    -command libmgr::ctx_new_cell
   $w.mlib add command -label "New library…" -command libmgr::ctx_new_library
   $w.mlib add separator
+  $w.mlib add command -label "Show Checkouts" -command libmgr::ctx_show_checkouts
+  $w.mlib add command -label "Check in…"      -command libmgr::ctx_checkin_lib
+  $w.mlib add command -label "History"        -command libmgr::ctx_history_lib
+  $w.mlib add separator
   $w.mlib add command -label "Remove from list" -command libmgr::ctx_unregister_lib
   $w.mlib add separator
   $w.mlib add command -label "Refresh" -command libmgr::refresh
@@ -132,6 +151,11 @@ proc libmgr::build_menus {w} {
   menu $w.mcell -tearoff 0
   $w.mcell add command -label "Open"             -command libmgr::open_view
   $w.mcell add command -label "Open (read-only)" -command libmgr::open_view_ro
+  $w.mcell add separator
+  $w.mcell add command -label "Check out"        -command libmgr::ctx_checkout_cell
+  $w.mcell add command -label "Check in…"        -command libmgr::ctx_checkin_cell
+  $w.mcell add command -label "Cancel checkout"  -command libmgr::ctx_cancel_checkout_cell
+  $w.mcell add command -label "History"          -command libmgr::ctx_history_cell
   $w.mcell add separator
   $w.mcell add command -label "Copy…"   -command libmgr::ctx_copy_cell
   $w.mcell add command -label "Rename…" -command libmgr::ctx_rename_cell
@@ -144,6 +168,11 @@ proc libmgr::build_menus {w} {
   $w.mview add command -label "Open"             -command libmgr::open_view
   $w.mview add command -label "Open (read-only)" -command libmgr::open_view_ro
   $w.mview add separator
+  $w.mview add command -label "Check out"        -command libmgr::ctx_checkout_view
+  $w.mview add command -label "Check in…"        -command libmgr::ctx_checkin_view
+  $w.mview add command -label "Cancel checkout"  -command libmgr::ctx_cancel_checkout_view
+  $w.mview add command -label "History"          -command libmgr::ctx_history_view
+  $w.mview add separator
   $w.mview add command -label "Copy…"   -command libmgr::ctx_copy_view
   $w.mview add command -label "Rename…" -command libmgr::ctx_rename_view
   $w.mview add command -label "New view…" -command libmgr::ctx_new_view
@@ -151,32 +180,143 @@ proc libmgr::build_menus {w} {
   $w.mview add command -label "Delete view" -command libmgr::ctx_delete_view
 }
 
-# Right-click in column $col: select the row under the pointer, sync the panes,
-# then post that column's menu.
-proc libmgr::ctx_post {col y rootx rooty} {
+# The window's real menubar (the panes also have right-click popups). The
+# Maintain cascade hosts the git revision-control reports (specs/library_git.md).
+proc libmgr::build_menubar {w} {
+  set mb $w.menubar
+  catch {destroy $mb}
+  menu $mb -tearoff 0
+  $w configure -menu $mb
+  menu $mb.maintain -tearoff 0
+  $mb add cascade -label Maintain -menu $mb.maintain
+  $mb.maintain add command -label "Show Status…" -command libmgr::show_status
+  $mb.maintain add command -label "History…"     -command libmgr::show_history
+}
+
+# Modal multi-select library picker shared by the Maintain reports. Ctrl/Shift-
+# click extends the selection (selectmode extended). Returns the chosen library
+# names, or {} on Cancel / empty selection.
+proc libmgr::maintain_picker {title} {
+  variable dlg_done
+  set d .libmgr.mp
+  catch {destroy $d}
+  toplevel $d
+  wm title $d $title
+  wm transient $d .libmgr
+  ttk::label $d.l -text "Select one or more libraries (Ctrl/Shift-click):" -anchor w
+  listbox $d.lb -selectmode extended -exportselection 0 \
+          -yscrollcommand "$d.sb set" -width 32 -height 14
+  ttk::scrollbar $d.sb -orient vertical -command "$d.lb yview"
+  foreach name [libmgr::lib_names] { $d.lb insert end $name }
+  ttk::frame $d.b
+  ttk::button $d.b.ok     -text OK     -command {set libmgr::dlg_done 1}
+  ttk::button $d.b.cancel -text Cancel -command {set libmgr::dlg_done 0}
+  pack $d.b.ok $d.b.cancel -side left -padx 4
+  grid $d.l  -row 0 -column 0 -columnspan 2 -sticky we  -padx 6 -pady {6 2}
+  grid $d.lb -row 1 -column 0 -sticky nsew -padx {6 0} -pady 2
+  grid $d.sb -row 1 -column 1 -sticky ns   -padx {0 6} -pady 2
+  grid $d.b  -row 2 -column 0 -columnspan 2 -pady 6
+  grid rowconfigure $d 1 -weight 1
+  grid columnconfigure $d 0 -weight 1
+  bind $d <Escape> {set libmgr::dlg_done 0}
+  set dlg_done -1
+  catch {grab $d}; focus $d.lb
+  vwait libmgr::dlg_done
+  set res {}
+  if {$dlg_done == 1} { foreach i [$d.lb curselection] { lappend res [$d.lb get $i] } }
+  catch {destroy $d}
+  return $res
+}
+
+# Maintain → Show Status: pick libraries, render their untracked / pending
+# cellviews in the read-only viewdata text window.
+proc libmgr::show_status {} {
+  set libs [libmgr::maintain_picker "Show Status — pick libraries"]
+  if {![llength $libs]} return
+  viewdata [lib_git_status_report $libs] ro
+}
+
+# Maintain → History: pick libraries, render their git log in viewdata.
+proc libmgr::show_history {} {
+  set libs [libmgr::maintain_picker "History — pick libraries"]
+  if {![llength $libs]} return
+  viewdata [lib_git_history_report $libs] ro
+}
+
+# Right-click at widget coords ($x,$y) in column $col: select the row under the
+# pointer, sync the panes, then post that column's menu. `identify item x y`
+# needs BOTH coordinates (a single arg misparses as the legacy `identify x y`).
+proc libmgr::ctx_post {col x y rootx rooty} {
   set lb .libmgr.pw.$col.lb
-  set idx [$lb nearest $y]
-  if {$idx >= 0 && [lindex [$lb bbox $idx] 1] ne {}} {
-    $lb selection clear 0 end; $lb selection set $idx; $lb activate $idx
+  set id ""
+  catch {$lb identify item $x $y} id
+  if {$id ne ""} {
+    $lb selection set $id; $lb focus $id
     switch -- $col { lib {libmgr::on_lib} cell {libmgr::on_cell} view {libmgr::on_view} }
   }
   catch {tk_popup .libmgr.m$col $rootx $rooty}
 }
 
-# helper: the selected text in a listbox, or "" if none
+# helper: the selected item NAME in a pane treeview, or "" if none. The row id is
+# the item name, so the selection is already the name.
 proc libmgr::cursel {lb} {
-  set i [$lb curselection]
-  if {$i eq {}} { return "" }
-  return [$lb get [lindex $i 0]]
+  set s [$lb selection]
+  if {$s eq {}} { return "" }
+  return [lindex $s 0]
+}
+
+# Fill pane $col's treeview with $names (clearing first); rows whose name is a key
+# of the $tracked dict (used as a set) get the bold `tracked` tag. Row id == name.
+proc libmgr::pane_fill {col names {tracked {}}} {
+  set t .libmgr.pw.$col.lb
+  $t delete [$t children {}]
+  foreach n $names {
+    $t insert {} end -id $n -text $n
+    if {[dict exists $tracked $n]} { $t item $n -tags tracked }
+  }
+}
+proc libmgr::pane_clear {col} {
+  set t .libmgr.pw.$col.lb
+  $t delete [$t children {}]
+}
+
+# --- git-tracked sets driving the bold tag (specs/library_git.md §4.3) --------
+# Each returns a dict used as a set; empty (nothing bold) when the library is not
+# under git or git is absent (lib_git_tracked_set degrades to {}). A library is
+# bold if it holds any tracked datafile; a cell if any of its views are tracked;
+# a view if its own datafile is tracked.
+proc libmgr::tracked_libs {} {
+  set out [dict create]
+  foreach pair [xschem libraries] {
+    if {[dict size [lib_git_tracked_set [lindex $pair 1]]] > 0} { dict set out [lindex $pair 0] 1 }
+  }
+  return $out
+}
+proc libmgr::tracked_cells {lib} {
+  set out [dict create]
+  set path [library_resolve $lib]
+  if {$path eq ""} { return $out }
+  dict for {cv v} [lib_git_tracked_set $path] { dict set out [lindex [split $cv /] 0] 1 }
+  return $out
+}
+proc libmgr::tracked_views {lib cell} {
+  set out [dict create]
+  set path [library_resolve $lib]
+  if {$path eq ""} { return $out }
+  dict for {cv v} [lib_git_tracked_set $path] {
+    lassign [split $cv /] c view
+    if {$c eq $cell} { dict set out $view 1 }
+  }
+  return $out
 }
 
 proc libmgr::populate_libs {} {
   variable sel_lib; variable sel_cell
-  set lb .libmgr.pw.lib.lb
-  $lb delete 0 end
-  foreach pair [xschem libraries] { $lb insert end [lindex $pair 0] }
-  .libmgr.pw.cell.lb delete 0 end
-  .libmgr.pw.view.lb delete 0 end
+  set names {}
+  foreach pair [xschem libraries] { lappend names [lindex $pair 0] }
+  libmgr::pane_fill lib $names [libmgr::tracked_libs]
+  libmgr::pane_clear cell
+  libmgr::pane_clear view
   set sel_lib ""; set sel_cell ""
 }
 
@@ -189,11 +329,10 @@ proc libmgr::on_lib {args} {
   variable sel_lib; variable sel_cell
   set sel_lib [libmgr::cursel .libmgr.pw.lib.lb]
   set sel_cell ""
-  set cl .libmgr.pw.cell.lb
-  $cl delete 0 end
-  .libmgr.pw.view.lb delete 0 end
+  libmgr::pane_clear cell
+  libmgr::pane_clear view
   if {$sel_lib ne ""} {
-    foreach c [xschem lib_cells $sel_lib] { $cl insert end $c }
+    libmgr::pane_fill cell [xschem lib_cells $sel_lib] [libmgr::tracked_cells $sel_lib]
   }
   .libmgr.status configure -text "library: $sel_lib"
 }
@@ -202,10 +341,9 @@ proc libmgr::on_lib {args} {
 proc libmgr::on_cell {args} {
   variable sel_lib; variable sel_cell
   set sel_cell [libmgr::cursel .libmgr.pw.cell.lb]
-  set vl .libmgr.pw.view.lb
-  $vl delete 0 end
+  libmgr::pane_clear view
   if {$sel_lib ne "" && $sel_cell ne ""} {
-    foreach v [xschem cell_views $sel_lib $sel_cell] { $vl insert end $v }
+    libmgr::pane_fill view [xschem cell_views $sel_lib $sel_cell] [libmgr::tracked_views $sel_lib $sel_cell]
   }
   .libmgr.status configure -text "$sel_lib / $sel_cell"
 }
@@ -282,33 +420,27 @@ proc libmgr::lib_names {} {
   return $out
 }
 
-# Rebuild the Library pane, then restore the given lib (and cell) selection so
-# the panes reflect a just-completed mutation.
+# Rebuild the Library pane, then restore the given lib (and cell/view) selection
+# so the panes reflect a just-completed mutation. Selection is by name (the
+# treeview row id), so a missing target simply leaves the deeper panes empty.
 proc libmgr::refresh_after {{lib {}} {cell {}} {view {}}} {
   variable sel_lib; variable sel_cell
   if {![winfo exists .libmgr]} return
-  set ll .libmgr.pw.lib.lb
-  $ll delete 0 end
-  foreach name [libmgr::lib_names] { $ll insert end $name }
-  .libmgr.pw.cell.lb delete 0 end
-  .libmgr.pw.view.lb delete 0 end
-  set sel_lib ""; set sel_cell ""
+  libmgr::populate_libs
   if {$lib eq {}} return
-  set i [lsearch -exact [$ll get 0 end] $lib]
-  if {$i < 0} return
-  $ll selection clear 0 end; $ll selection set $i; $ll activate $i
+  set ll .libmgr.pw.lib.lb
+  if {![$ll exists $lib]} return
+  $ll selection set $lib; $ll focus $lib; $ll see $lib
   libmgr::on_lib
   if {$cell eq {}} return
   set cl .libmgr.pw.cell.lb
-  set j [lsearch -exact [$cl get 0 end] $cell]
-  if {$j < 0} return
-  $cl selection clear 0 end; $cl selection set $j; $cl activate $j
+  if {![$cl exists $cell]} return
+  $cl selection set $cell; $cl focus $cell; $cl see $cell
   libmgr::on_cell
   if {$view eq {}} return
   set vl .libmgr.pw.view.lb
-  set k [lsearch -exact [$vl get 0 end] $view]
-  if {$k < 0} return
-  $vl selection clear 0 end; $vl selection set $k; $vl activate $k
+  if {![$vl exists $view]} return
+  $vl selection set $view; $vl focus $view; $vl see $view
   libmgr::on_view
 }
 
@@ -354,6 +486,308 @@ proc libmgr::do_delete_view {lib cell view} {
   libmgr::refresh_after $lib $cell
   libmgr::status "deleted view $lib/$cell/$view (recoverable in .xschem_trash)"
   return 1
+}
+
+# --- git revision control (specs/library_git.md §4.2) ------------------------
+# The do_* workers here are the dialog-free seam: explicit args, call the
+# library_git.tcl backend, refresh the panes, report via the status bar, return
+# 1 on success and 0 on a caught backend error (e.g. nothing to commit).
+
+# "<lib>/<cell>" or "<lib>/<cell>/<view>" for status messages.
+proc libmgr::cv_label {lib cell {view {}}} {
+  set s "$lib/$cell"; if {$view ne {}} { append s "/$view" }; return $s
+}
+# The datafile path(s) for a target: one view -> its datafile; a whole cell ->
+# every view's datafile. Resolved via the same path rules as Open.
+proc libmgr::cellview_files {lib cell {view {}}} {
+  set out {}
+  if {$view ne {}} {
+    set f [xschem cellview_path "$lib/$cell" $view]
+    if {$f ne {}} { lappend out $f }
+  } else {
+    foreach v [xschem cell_views $lib $cell] {
+      set f [xschem cellview_path "$lib/$cell" $v]
+      if {$f ne {}} { lappend out $f }
+    }
+  }
+  return $out
+}
+# {root pathspecs} for a target (all its files share one repo root). Throws if
+# the target has no datafile or is not under git.
+proc libmgr::git_target {lib cell {view {}}} {
+  set files [libmgr::cellview_files $lib $cell $view]
+  if {![llength $files]} { error "no datafile for [libmgr::cv_label $lib $cell $view]" }
+  set ctx [lib_git_context [lindex $files 0]]
+  if {$ctx eq {}} { error "[libmgr::cv_label $lib $cell] is not under git revision control" }
+  lassign $ctx root x
+  set ps {}
+  foreach f $files { lappend ps [lib_git_relpath $root $f] }
+  return [list $root $ps]
+}
+
+proc libmgr::do_checkout {lib cell {view {}}} {
+  if {[catch {
+    foreach f [libmgr::cellview_files $lib $cell $view] { lib_git_checkout $f }
+  } e]} { libmgr::status "check out failed: $e"; return 0 }
+  libmgr::refresh_after $lib $cell $view
+  libmgr::status "checked out [libmgr::cv_label $lib $cell $view]"
+  return 1
+}
+
+proc libmgr::do_cancel_checkout {lib cell {view {}}} {
+  if {[catch {
+    foreach f [libmgr::cellview_files $lib $cell $view] { lib_git_cancel_checkout $f }
+  } e]} { libmgr::status "cancel checkout failed: $e"; return 0 }
+  libmgr::refresh_after $lib $cell $view
+  libmgr::status "cancelled checkout of [libmgr::cv_label $lib $cell $view]"
+  return 1
+}
+
+proc libmgr::do_checkin {lib cell view message} {
+  if {[catch {
+    lassign [libmgr::git_target $lib $cell $view] root ps
+    lib_git_commit $root $ps $message
+  } e]} { libmgr::status "check in failed: $e"; return 0 }
+  libmgr::refresh_after $lib $cell $view
+  libmgr::status "checked in [libmgr::cv_label $lib $cell $view]"
+  return 1
+}
+
+# Library-level check-in: commit everything pending under THIS library's pathspec
+# only (never a sibling library or unrelated repo files — spec §2.1 / §7).
+proc libmgr::do_checkin_lib {lib message} {
+  if {[catch {
+    set path [library_resolve $lib]
+    if {$path eq {}} { error "no such library: $lib" }
+    set ctx [lib_git_context $path]
+    if {$ctx eq {}} { error "$lib is not under git revision control" }
+    lassign $ctx root pathspec
+    lib_git_commit $root [list $pathspec] $message
+  } e]} { libmgr::status "check in failed: $e"; return 0 }
+  libmgr::refresh_after $lib
+  libmgr::status "checked in library $lib"
+  return 1
+}
+
+# A local-mode-labelled report of a library's checked-out cell/views (spec §3:
+# under plain git this is YOUR uncommitted edits + checkouts, not cross-user
+# locks; the label makes that explicit).
+proc libmgr::checkouts_text {lib} {
+  set path [library_resolve $lib]
+  if {$path eq {}} { return "Library '$lib' not found.\n" }
+  set lfs [expr {[lsearch -exact [lib_git_available] lfs] >= 0}]
+  set mode [expr {$lfs ? "Git LFS locks" : "local edit-lock (your uncommitted edits + checkouts)"}]
+  set out "Checkouts for library '$lib'  \[mode: $mode\]\n\n"
+  if {[lib_git_root $path] eq {}} { append out "  (not under git revision control)\n"; return $out }
+  set cks [lib_git_checkouts $path]
+  if {![llength $cks]} { append out "  (nothing checked out)\n"; return $out }
+  foreach cv $cks { append out "  $cv\n" }
+  return $out
+}
+proc libmgr::do_show_checkouts {lib} {
+  viewdata [libmgr::checkouts_text $lib] ro
+  return 1
+}
+
+# --- History form (two panes: commit list above, message below) --------------
+# Non-modal viewer. Upper ttk::treeview lists commits (date | short hash |
+# subject), newest first; selecting one shows its full message in the lower
+# read-only text pane. Returns the window path. Scoped to $pathspecs.
+proc libmgr::history_dialog {title root pathspecs} {
+  variable hist_counter
+  variable hist_msg
+  # prune state for any History windows the user already closed
+  foreach k [array names hist_msg] { if {![winfo exists $k]} { unset hist_msg($k) } }
+  incr hist_counter
+  set w .lmhist$hist_counter
+  catch {destroy $w}
+  toplevel $w
+  wm title $w $title
+  wm geometry $w 660x480
+
+  ttk::panedwindow $w.pw -orient vertical
+  ttk::frame $w.top
+  ttk::treeview $w.top.tv -columns {date hash subject} -show headings \
+      -selectmode browse -yscrollcommand "$w.top.sb set"
+  $w.top.tv heading date    -text Date
+  $w.top.tv heading hash    -text Commit
+  $w.top.tv heading subject -text Subject
+  $w.top.tv column date    -width 130 -stretch 0
+  $w.top.tv column hash    -width 90  -stretch 0
+  $w.top.tv column subject -width 400 -stretch 1
+  ttk::scrollbar $w.top.sb -orient vertical -command "$w.top.tv yview"
+  grid $w.top.tv -row 0 -column 0 -sticky nsew
+  grid $w.top.sb -row 0 -column 1 -sticky ns
+  grid rowconfigure $w.top 0 -weight 1
+  grid columnconfigure $w.top 0 -weight 1
+
+  ttk::frame $w.bot
+  text $w.bot.txt -height 8 -wrap word -state disabled -yscrollcommand "$w.bot.sb set"
+  ttk::scrollbar $w.bot.sb -orient vertical -command "$w.bot.txt yview"
+  grid $w.bot.txt -row 0 -column 0 -sticky nsew
+  grid $w.bot.sb  -row 0 -column 1 -sticky ns
+  grid rowconfigure $w.bot 0 -weight 1
+  grid columnconfigure $w.bot 0 -weight 1
+
+  $w.pw add $w.top -weight 3
+  $w.pw add $w.bot -weight 1
+  ttk::frame $w.b
+  ttk::button $w.b.close -text Close -command [list destroy $w]
+  pack $w.b.close -side right -padx 4
+  pack $w.b -side bottom -fill x -pady 2
+  pack $w.pw -side top -fill both -expand 1
+
+  set hist_msg($w) [dict create]
+  foreach rec [lib_git_log_records $root $pathspecs] {
+    set hash [dict get $rec hash]
+    $w.top.tv insert {} end -id $hash -values [list \
+      [dict get $rec date] [dict get $rec short] [dict get $rec subject]]
+    set full "commit [dict get $rec short]    [dict get $rec date]    [dict get $rec author]\n\n[dict get $rec subject]"
+    set body [dict get $rec body]
+    if {$body ne {}} { append full "\n\n$body" }
+    dict set hist_msg($w) $hash $full
+  }
+  bind $w.top.tv <<TreeviewSelect>> [list libmgr::history_show $w]
+  bind $w <Escape> [list destroy $w]
+  set first [lindex [$w.top.tv children {}] 0]
+  if {$first ne {}} { $w.top.tv selection set $first; libmgr::history_show $w }
+  return $w
+}
+
+# Refresh the lower message pane from the selected commit row.
+proc libmgr::history_show {win} {
+  variable hist_msg
+  if {![winfo exists $win.top.tv]} return
+  set sel [$win.top.tv selection]
+  set msg ""
+  if {$sel ne {} && [info exists hist_msg($win)] && [dict exists $hist_msg($win) [lindex $sel 0]]} {
+    set msg [dict get $hist_msg($win) [lindex $sel 0]]
+  }
+  $win.bot.txt configure -state normal
+  $win.bot.txt delete 1.0 end
+  $win.bot.txt insert end $msg
+  $win.bot.txt configure -state disabled
+}
+
+# do_history seam: resolve the target's {root pathspecs} and open the form.
+# Returns the window path, or "" (with a status note) when not under git.
+proc libmgr::do_history {lib cell {view {}}} {
+  if {[catch {libmgr::git_target $lib $cell $view} res]} { libmgr::status "history: $res"; return "" }
+  lassign $res root ps
+  return [libmgr::history_dialog "History — [libmgr::cv_label $lib $cell $view]" $root $ps]
+}
+proc libmgr::do_history_view {lib cell view} { return [libmgr::do_history $lib $cell $view] }
+proc libmgr::do_history_cell {lib cell}      { return [libmgr::do_history $lib $cell {}] }
+proc libmgr::do_history_lib {lib} {
+  set path [library_resolve $lib]
+  if {$path eq {}} { libmgr::status "history: no such library: $lib"; return "" }
+  set ctx [lib_git_context $path]
+  if {$ctx eq {}} { libmgr::status "history: $lib is not under git revision control"; return "" }
+  lassign $ctx root pathspec
+  return [libmgr::history_dialog "History — $lib" $root [list $pathspec]]
+}
+
+# --- ctx_* handlers (gather input via dialogs, then delegate to do_*) ---------
+proc libmgr::ctx_show_checkouts {} {
+  variable sel_lib
+  if {$sel_lib eq {}} { libmgr::status "select a library first"; return }
+  libmgr::do_show_checkouts $sel_lib
+}
+proc libmgr::ctx_checkin_lib {} {
+  variable sel_lib
+  if {$sel_lib eq {}} { libmgr::status "select a library first"; return }
+  set msg [libmgr::commit_dialog "Check in library '$sel_lib'"]
+  if {$msg eq {}} return
+  libmgr::do_checkin_lib $sel_lib $msg
+}
+proc libmgr::ctx_history_lib {} {
+  variable sel_lib
+  if {$sel_lib eq {}} { libmgr::status "select a library first"; return }
+  libmgr::do_history_lib $sel_lib
+}
+proc libmgr::ctx_history_cell {} {
+  set lc [libmgr::current_cell]; if {$lc eq {}} return
+  lassign $lc lib cell; libmgr::do_history_cell $lib $cell
+}
+proc libmgr::ctx_history_view {} {
+  variable sel_lib; variable sel_cell
+  set v [libmgr::cursel .libmgr.pw.view.lb]
+  if {$sel_lib eq {} || $sel_cell eq {} || $v eq {}} return
+  libmgr::do_history_view $sel_lib $sel_cell $v
+}
+proc libmgr::ctx_checkout_cell {} {
+  set lc [libmgr::current_cell]; if {$lc eq {}} return
+  lassign $lc lib cell; libmgr::do_checkout $lib $cell
+}
+proc libmgr::ctx_checkin_cell {} {
+  set lc [libmgr::current_cell]; if {$lc eq {}} return
+  lassign $lc lib cell
+  set msg [libmgr::commit_dialog "Check in '$lib/$cell'"]
+  if {$msg eq {}} return
+  libmgr::do_checkin $lib $cell {} $msg
+}
+proc libmgr::ctx_cancel_checkout_cell {} {
+  set lc [libmgr::current_cell]; if {$lc eq {}} return
+  lassign $lc lib cell
+  if {[libmgr::confirm_cancel [libmgr::cv_label $lib $cell]]} { libmgr::do_cancel_checkout $lib $cell }
+}
+proc libmgr::ctx_checkout_view {} {
+  variable sel_lib; variable sel_cell
+  set v [libmgr::cursel .libmgr.pw.view.lb]
+  if {$sel_lib eq {} || $sel_cell eq {} || $v eq {}} return
+  libmgr::do_checkout $sel_lib $sel_cell $v
+}
+proc libmgr::ctx_checkin_view {} {
+  variable sel_lib; variable sel_cell
+  set v [libmgr::cursel .libmgr.pw.view.lb]
+  if {$sel_lib eq {} || $sel_cell eq {} || $v eq {}} return
+  set msg [libmgr::commit_dialog "Check in '[libmgr::cv_label $sel_lib $sel_cell $v]'"]
+  if {$msg eq {}} return
+  libmgr::do_checkin $sel_lib $sel_cell $v $msg
+}
+proc libmgr::ctx_cancel_checkout_view {} {
+  variable sel_lib; variable sel_cell
+  set v [libmgr::cursel .libmgr.pw.view.lb]
+  if {$sel_lib eq {} || $sel_cell eq {} || $v eq {}} return
+  if {[libmgr::confirm_cancel [libmgr::cv_label $sel_lib $sel_cell $v]]} {
+    libmgr::do_cancel_checkout $sel_lib $sel_cell $v
+  }
+}
+
+proc libmgr::confirm_cancel {what} {
+  set ans [tk_messageBox -parent .libmgr -type yesno -icon warning -title "Cancel checkout" \
+    -message "Cancel checkout of '$what'?\n\nThis rolls the datafile(s) back to the last committed version (HEAD); uncommitted edits are lost."]
+  return [expr {$ans eq "yes"}]
+}
+
+# Multiline commit-comment dialog. Returns the trimmed message, or {} on Cancel /
+# empty (every check-in goes through this).
+proc libmgr::commit_dialog {title} {
+  variable dlg_done
+  set d .libmgr.cm
+  catch {destroy $d}
+  toplevel $d
+  wm title $d $title
+  wm transient $d .libmgr
+  ttk::label $d.l -text "Commit message:" -anchor w
+  text $d.t -width 56 -height 8 -wrap word
+  ttk::frame $d.b
+  ttk::button $d.b.ok     -text OK     -command {set libmgr::dlg_done 1}
+  ttk::button $d.b.cancel -text Cancel -command {set libmgr::dlg_done 0}
+  pack $d.b.ok $d.b.cancel -side left -padx 4
+  grid $d.l -row 0 -column 0 -sticky we  -padx 6 -pady {6 2}
+  grid $d.t -row 1 -column 0 -sticky nsew -padx 6 -pady 2
+  grid $d.b -row 2 -column 0 -pady 6
+  grid rowconfigure $d 1 -weight 1
+  grid columnconfigure $d 0 -weight 1
+  bind $d <Escape> {set libmgr::dlg_done 0}
+  set dlg_done -1
+  catch {grab $d}; focus $d.t
+  vwait libmgr::dlg_done
+  set res {}
+  if {$dlg_done == 1} { set res [string trim [$d.t get 1.0 {end - 1 chars}]] }
+  catch {destroy $d}
+  return $res
 }
 
 # --- copy / rename (destination library + new name dialog) ---

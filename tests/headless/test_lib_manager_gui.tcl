@@ -12,15 +12,12 @@ proc check {name ok detail} {
   global fail
   if {$ok} { puts "ok:   $name $detail" } else { puts "FAIL: $name $detail"; incr fail }
 }
-proc lb_items {lb} { return [$lb get 0 end] }
-proc lb_index {lb txt} {
-  set i 0; foreach v [$lb get 0 end] { if {$v eq $txt} { return $i }; incr i }; return -1
-}
-# select item $txt in listbox $lb and fire the given handler
+# panes are ttk::treeview now: row ids == item names
+proc lb_items {lb} { return [$lb children {}] }
+# select item $txt in pane treeview $lb and fire the given handler
 proc lb_pick {lb txt handler} {
-  set i [lb_index $lb $txt]
-  if {$i < 0} return
-  $lb selection clear 0 end; $lb selection set $i; $lb activate $i
+  if {![$lb exists $txt]} return
+  $lb selection set $txt; $lb focus $txt
   eval $handler
 }
 

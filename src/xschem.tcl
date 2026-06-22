@@ -10841,6 +10841,8 @@ if {![info exists library_registry_defs_only]} { set library_registry_defs_only 
 # style (inferred from its cells); this only sets the default for empty ones.
 if {![info exists library_default_layout]} { set library_default_layout nested }
 source $XSCHEM_SHAREDIR/library_defs.tcl
+# Library Manager git revision-control backend (specs/library_git.md)
+source $XSCHEM_SHAREDIR/library_git.tcl
 # Library Manager GUI (Cadence-style Library/Cell/View browser)
 source $XSCHEM_SHAREDIR/library_manager.tcl
 # Create Instance browser (Cadence-style Add Instance; specs/cadence_create_instance.md)

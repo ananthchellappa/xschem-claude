@@ -38,9 +38,8 @@ set ::XSCHEM_LIBRARY_DEFS $defs
 library_manager
 update idletasks
 proc pick {col txt} {
-  set lb .libmgr.pw.$col.lb
-  set i [lsearch -exact [$lb get 0 end] $txt]
-  $lb selection clear 0 end; $lb selection set $i; $lb activate $i
+  set lb .libmgr.pw.$col.lb  ;# panes are ttk::treeview; row id == item name
+  $lb selection set $txt; $lb focus $txt
 }
 
 # AL1 — a Library Manager open is logged with the replayable command

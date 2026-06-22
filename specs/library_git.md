@@ -1,6 +1,14 @@
 # Spec: Git revision control in the Library Manager
 
-Branch: `library-manager`. Status: design (Phase 1 implementation starting).
+Branch: `library-manager`. Status: Phases 1–4 done & verified under the built
+binary (X): git backend, Maintain reports (grouping, Show Status, History),
+Maintain menubar + multi-select picker → viewdata, listbox→ttk::treeview panes
+with the bold `tracked` tag, and the check-out / check-in / cancel-checkout +
+Show Checkouts context-menu actions (commit-comment dialog, confirm boxes,
+do_* seam). All headless tclsh tests, the GUI tests
+(`test_lib_manager_{bold,ctx,gui,maintain,checkin}`, `test_action_log_libmgr`,
+`test_create_instance`, launch/browse) and the netlist golden sweep are green.
+Phase 5 (docs + final sweep) remaining.
 
 ## 1. Goal
 
@@ -106,8 +114,14 @@ Add a real menubar with a **Maintain** cascade:
   pathspecs, shown via `viewdata`.
 
 ### 4.2 Right-click context-menu additions
-- **Library menu:** *Show Checkouts*, *Check in…*
-- **Cell menu** and **View menu:** *Check out*, *Check in…*, *Cancel checkout*
+- **Library menu:** *Show Checkouts*, *Check in…*, *History*
+- **Cell menu** and **View menu:** *Check out*, *Check in…*, *Cancel checkout*,
+  *History*
+- **History** opens a non-modal two-pane form (`libmgr::history_dialog`): the
+  upper scrollable `ttk::treeview` lists commits (Date | Commit hash | Subject,
+  newest first); selecting a row shows that commit's full message (header +
+  subject + body) in the lower read-only pane. Backed by
+  `lib_git_log_records {root pathspecs}`.
 - Every **check-in** pops a **commit-comment dialog** (multiline text, OK/Cancel).
   *Cancel checkout* and *Delete* get confirm boxes.
 

@@ -16,7 +16,9 @@ proc touch {f {txt {v {xschem}}}} {
   file mkdir [file dirname $f]; set fp [open $f w]; puts $fp $txt; close $fp
 }
 proc has {lib cell} { expr {[lsearch [xschem lib_cells $lib] $cell] >= 0} }
-proc lb {col} { return [.libmgr.pw.$col.lb get 0 end] }
+# panes are ttk::treeview now: row ids == item names, so children{} is the list
+proc lb {col} { return [.libmgr.pw.$col.lb children {}] }
+proc tvsel {col name} { .libmgr.pw.$col.lb selection set $name; .libmgr.pw.$col.lb focus $name }
 
 # --- private fixture (never touches the repo libraries) ---------------------
 set tmp [file join [pwd] _ctx_[pid]]
@@ -47,13 +49,29 @@ check "CTX2 cell menu has the core ops" [expr {
   [lsearch $labels "Delete"] >= 0 && [lsearch $labels "Open (read-only)"] >= 0}] "(=> $labels)"
 
 # CTX3 — ctx_post selects the row under the pointer and syncs the panes
-.libmgr.pw.lib.lb selection set [lsearch -exact [lb lib] tlib]
+tvsel lib tlib
 libmgr::on_lib
 check "CTX3 selecting tlib fills cells" [expr {[lsearch [lb cell] inv] >= 0 && [lsearch [lb cell] buf] >= 0}] "(=> [lb cell])"
 
+# CTX3b — the REAL right-click path (regression: ttk::treeview `identify item x y`
+# needs both coords; a one-arg `identify row $y` misparses as legacy and throws).
+update idletasks
+set bb [.libmgr.pw.cell.lb bbox inv]
+if {$bb ne ""} {
+  lassign $bb bx by bw bh
+  set cx [expr {$bx + 2}]; set cy [expr {$by + 2}]
+  check "CTX3b identify item returns the pointed row id" \
+    [expr {[.libmgr.pw.cell.lb identify item $cx $cy] eq "inv"}] "(=> [.libmgr.pw.cell.lb identify item $cx $cy])"
+  set perr [catch {libmgr::ctx_post cell $cx $cy 1 1} pmsg]
+  catch {.libmgr.mcell unpost}
+  check "CTX3c ctx_post runs without error and selects the row" \
+    [expr {$perr == 0 && [libmgr::cursel .libmgr.pw.cell.lb] eq "inv"}] "(err=$perr msg=$pmsg sel=[libmgr::cursel .libmgr.pw.cell.lb])"
+} else {
+  check "CTX3b cell row visible for identify" 0 "(bbox empty — row not rendered)"
+}
+
 # CTX4 — copy a flat cell into another library; panes refresh onto the dest
-.libmgr.pw.cell.lb selection clear 0 end
-.libmgr.pw.cell.lb selection set [lsearch -exact [lb cell] inv]
+tvsel cell inv
 libmgr::on_cell
 check "CTX4a do_copy_cell succeeds" [libmgr::do_copy_cell tlib inv dlib inv] {}
 check "CTX4b copy landed in dest library" [has dlib inv] {}
@@ -72,8 +90,7 @@ check "CTX6b new cell present + selected" [expr {[has tlib fresh] && $libmgr::se
 check "CTX6c new cell has schematic view" [expr {[lsearch [lb view] schematic] >= 0}] "(=> [lb view])"
 
 # CTX7 — delete a view (recoverable); the other view remains
-.libmgr.pw.cell.lb selection clear 0 end
-.libmgr.pw.cell.lb selection set [lsearch -exact [lb cell] buffer]
+tvsel cell buffer
 libmgr::on_cell
 check "CTX7a do_delete_view succeeds" [libmgr::do_delete_view tlib buffer symbol] {}
 check "CTX7b view trashed, cell + other view remain" [expr {[has tlib buffer] && \
@@ -99,11 +116,9 @@ check "CTX11 collision is a soft failure" [expr {[libmgr::do_copy_cell tlib buff
   "(status: [.libmgr.status cget -text])"
 
 # --- view-level ops on nested cell 'buffer' (schematic view) ----------------
-.libmgr.pw.lib.lb selection clear 0 end
-.libmgr.pw.lib.lb selection set [lsearch -exact [lb lib] tlib]
+tvsel lib tlib
 libmgr::on_lib
-.libmgr.pw.cell.lb selection clear 0 end
-.libmgr.pw.cell.lb selection set [lsearch -exact [lb cell] buffer]
+tvsel cell buffer
 libmgr::on_cell
 
 # CTX12 — rename a view; pane relabels + reselects, and it still resolves to open
