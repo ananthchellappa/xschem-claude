@@ -130,3 +130,12 @@ designs and generators. The library search path is configured in `Makefile.conf`
   `create_alloc_ids*.awk` / `get_malloc_id.awk` scripts rewrite those placeholders
   into unique numeric ids for leak tracing — write `_ALLOC_ID_`, don't hand-number.
   Debug logging via `dbg(level, ...)`.
+
+## Working with git branches
+- Before any file edit, commit, or git-mutating command, run `git branch
+  --show-current` and state the branch you are on. The active branch can change
+  between turns (the user may switch it); never assume it is the same as earlier
+  in the conversation.
+- If the current branch differs from the one established earlier, STOP and confirm
+  with the user before proceeding — work meant for a feature branch must not land
+  on whatever branch happens to be checked out.
