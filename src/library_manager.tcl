@@ -23,6 +23,10 @@
 namespace eval libmgr {
   variable sel_lib  "" ;# currently selected library name
   variable sel_cell "" ;# currently selected cell name
+  variable suppress_select 0 ;# 1 while refresh_after drives the panes programmatically:
+                             ;# the bound <<TreeviewSelect>> handlers are no-op'd so the
+                             ;# deferred select events don't re-clear the Cell/View panes
+                             ;# we just populated (see refresh_after / locate).
   variable new_window 1 ;# open schematics in a new window/tab (vs the current one)
   variable hist_counter 0 ;# unique-id source for History dialog windows
   variable hist_msg       ;# array: history-window path -> dict(hash -> message)
@@ -126,9 +130,12 @@ proc libmgr::open {{lcv {}}} {
   # expanding 3-pane area fills whatever is left ABOVE the status + button bars
   pack $w.pw -side top -fill both -expand 1
 
-  bind $w.pw.lib.lb  <<TreeviewSelect>> libmgr::on_lib
-  bind $w.pw.cell.lb <<TreeviewSelect>> libmgr::on_cell
-  bind $w.pw.view.lb <<TreeviewSelect>> libmgr::on_view
+  # guard against the deferred-select clobber: a programmatic `selection set` (in
+  # refresh_after/locate) queues a <<TreeviewSelect>> that would re-run on_lib and
+  # wipe the Cell/View panes after we filled them. Skip the handler while suppressed.
+  bind $w.pw.lib.lb  <<TreeviewSelect>> {if {!$libmgr::suppress_select} libmgr::on_lib}
+  bind $w.pw.cell.lb <<TreeviewSelect>> {if {!$libmgr::suppress_select} libmgr::on_cell}
+  bind $w.pw.view.lb <<TreeviewSelect>> {if {!$libmgr::suppress_select} libmgr::on_view}
   bind $w.pw.cell.lb <Double-1>         libmgr::open_view
   bind $w.pw.view.lb <Double-1>         libmgr::open_view
 
@@ -153,21 +160,10 @@ proc libmgr::open {{lcv {}}} {
 proc libmgr::locate {lcv} {
   lassign $lcv lib cell view
   if {![winfo exists .libmgr] || $lib eq ""} return
+  # refresh_after selects lib -> cell -> view across the three panes and scrolls
+  # each into view (treeview `see`). It is the single source of truth for the
+  # cascade; the old per-pane listbox lookups here errored on the ttk::treeview.
   libmgr::refresh_after $lib $cell $view
-  set ll .libmgr.pw.lib.lb
-  set i [lsearch -exact [$ll get 0 end] $lib]
-  if {$i < 0} { libmgr::status "library not found: $lib"; return }
-  $ll see $i
-  if {$cell eq ""} return
-  set cl .libmgr.pw.cell.lb
-  set j [lsearch -exact [$cl get 0 end] $cell]
-  if {$j < 0} { libmgr::status "cell not found: $lib / $cell"; return }
-  $cl see $j
-  if {$view eq ""} return
-  set vl .libmgr.pw.view.lb
-  set k [lsearch -exact [$vl get 0 end] $view]
-  if {$k < 0} { libmgr::status "view not found: $lib / $cell / $view"; return }
-  $vl see $k
 }
 
 # Per-column right-click menus, built once and re-targeted on each click.
@@ -485,8 +481,15 @@ proc libmgr::lib_names {} {
 # so the panes reflect a just-completed mutation. Selection is by name (the
 # treeview row id), so a missing target simply leaves the deeper panes empty.
 proc libmgr::refresh_after {{lib {}} {cell {}} {view {}}} {
-  variable sel_lib; variable sel_cell
+  variable sel_lib; variable sel_cell; variable suppress_select
   if {![winfo exists .libmgr]} return
+  # Drive the panes programmatically with the bound select-handlers suppressed, so
+  # the deferred <<TreeviewSelect>> events queued by our `selection set` calls fire
+  # as no-ops (they run before the after-idle reset below) instead of re-clearing
+  # the Cell/View panes we are about to populate. Scheduled up front so early
+  # returns still re-enable the handlers.
+  set suppress_select 1
+  after idle [list set libmgr::suppress_select 0]
   libmgr::populate_libs
   if {$lib eq {}} return
   set ll .libmgr.pw.lib.lb

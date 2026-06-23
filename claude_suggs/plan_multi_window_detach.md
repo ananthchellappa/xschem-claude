@@ -254,10 +254,17 @@ opened a **tab**, not a window, because the function used the plain `"create"` v
 passes `force window`; the other caller (xschem.tcl hierarchy-copy flow) is
 unchanged. Test **MWn** (plain → group `.`/tab; `window` → group `.xN`/real window).
 
-**Still open (flagged, separate subsystems — not multi-window):**
-- CTRL-ALT-S `locate_selected_in_libmgr` selects only the Library, not L/C/V — bug is
-  downstream in `library_inst_lcv` (library_defs.tcl) or `libmgr::open`'s cell/view
-  selection (likely the listbox→treeview migration). Library-manager subsystem.
+**CTRL-ALT-S locate (library-manager subsystem) ✅ FIXED:** `libmgr::locate`
+selected only the Library. Two causes: (1) dead listbox code (`$lb get 0 end`)
+that errors on the migrated `ttk::treeview`; (2) the real culprit — `refresh_after`'s
+`selection set` queues a deferred `<<TreeviewSelect>>` that re-runs `on_lib` once the
+event loop turns, clearing the Cell/View panes it just filled (looked right until
+the first `update`). Fix: a `suppress_select` flag on the bound handlers, reset via
+`after idle` so the queued events fire as no-ops before re-enabling; `locate` now
+just delegates to `refresh_after`. Test `tests/headless/test_lib_manager_locate.tcl`
+(LM-LOC2 is the discriminating after-`update` check; sabotage-verified).
+
+**Still open (flagged, separate subsystem — not multi-window):**
 - Window closes don't log to the CIW — the `destroy` dispatch never `log_action`s
   (only final `xschem exit` does). Action-log gap.
 
