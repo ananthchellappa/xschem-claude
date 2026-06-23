@@ -20,6 +20,12 @@ set ::ciw_history {}
 set ::ciw_hist_pos 0
 set ::ciw_hist_pending {}
 
+## Tab-completion: the `xschem` subcommand vocabulary, loaded lazily from the
+## build-generated xschem_subcommands.txt (see specs/ciw_autocomplete.md). Empty
+## until the first Tab, and stays empty (gracefully) if the file is absent, in
+## which case only command/var/path completion work.
+set ::ciw_subcommands {}
+
 ## Build (or re-show) the CIW. The two panes sit in a vertical panedwindow so
 ## the split is user-adjustable by dragging the sash (spec decision 9); the
 ## entry pane starts at its natural one-line height and stays fixed on window
@@ -75,6 +81,10 @@ proc ciw_create {} {
   bind .ciw.c.e <Control-BackSpace> {ciw_delete_word; break}
   bind .ciw.c.e <Up>   {ciw_hist_move -1; break}
   bind .ciw.c.e <Down> {ciw_hist_move  1; break}
+  ## Tab completes the token under the cursor (readline/bash style). 'break' is
+  ## load-bearing: without it Tk also runs the default <Tab> binding and moves
+  ## keyboard focus out of the entry.
+  bind .ciw.c.e <Tab> {ciw_complete; break}
   pack .ciw.c.e -side top -fill both -expand yes -padx 3 -pady 5
 
   .ciw.p add .ciw.l .ciw.c
@@ -149,5 +159,111 @@ proc ciw_exec {} {
   } else {
     if {$res ne {}} {ciw_echo $res result}
     xschem log_action -noecho $cmd
+  }
+}
+
+## --- Tab completion ---------------------------------------------------------
+## Readline/bash-style completion of the token under the cursor. Spec:
+## specs/ciw_autocomplete.md.
+
+## Load the xschem-subcommand vocabulary once, on the first Tab. The file is
+## build-generated from scheduler.c (see the Makefile rule) and shipped to
+## XSHAREDIR alongside ciw.tcl. A missing file is not an error: the list simply
+## stays empty and subcommand completion is a no-op while the other sources work.
+proc ciw_load_subcommands {} {
+  if {[llength $::ciw_subcommands]} return
+  global XSCHEM_SHAREDIR
+  set f [file join $XSCHEM_SHAREDIR xschem_subcommands.txt]
+  if {[catch {open $f r} fh]} return
+  set ::ciw_subcommands [split [string trim [read $fh]] \n]
+  close $fh
+}
+
+## Longest common prefix of a non-empty list of strings (case-sensitive). Used
+## to advance an ambiguous token as far as is unambiguous before listing.
+proc ciw_lcp {strings} {
+  set pfx [lindex $strings 0]
+  foreach s [lrange $strings 1 end] {
+    while {![string equal -length [string length $pfx] $pfx $s]} {
+      set pfx [string range $pfx 0 end-1]
+      if {$pfx eq {}} return {}
+    }
+  }
+  return $pfx
+}
+
+## Filesystem candidates for a path token (the fallback source: arguments to
+## load/save/instance/... without having to know which subcommands take a path).
+## Directories come back with a trailing '/' so a single match descends instead
+## of terminating the token. glob expands a leading '~'.
+proc ciw_path_candidates {tok} {
+  set out {}
+  foreach p [glob -nocomplain ${tok}*] {
+    if {[file isdirectory $p]} { append p / }
+    lappend out $p
+  }
+  return $out
+}
+
+## Candidate list for the token at position 'idx' (tok), given all tokens to the
+## left of the cursor. Sources, most-specific first: $variable, xschem
+## subcommand (2nd token), Tcl command/proc (1st token), else file path.
+proc ciw_candidates {toks idx tok} {
+  if {[string index $tok 0] eq "\$"} {
+    set pfx [string range $tok 1 end]
+    set out {}
+    foreach v [info globals ${pfx}*] { lappend out "\$$v" }
+    return $out
+  }
+  if {$idx == 1 && [lindex $toks 0] eq {xschem}} {
+    ciw_load_subcommands
+    set out {}
+    foreach c $::ciw_subcommands {
+      if {[string match ${tok}* $c]} { lappend out $c }
+    }
+    return $out
+  }
+  if {$idx == 0} {
+    return [lsort -unique [info commands ${tok}*]]
+  }
+  return [ciw_path_candidates $tok]
+}
+
+## Replace the current token (its last [string length tok] chars before the
+## cursor) with 'full'. A unique, non-directory completion (addspace) gets a
+## trailing space so the next token can be typed straight away; a directory
+## (ends in '/') and longest-common-prefix insertions never do.
+proc ciw_insert_completion {tok full addspace} {
+  set w .ciw.c.e
+  set n [string length $tok]
+  if {$n} { $w delete "insert - $n chars" insert }
+  $w insert insert $full
+  if {$addspace && [string index $full end] ne "/"} { $w insert insert { } }
+}
+
+## The <Tab> handler. The current token is the trailing run of non-whitespace
+## before the cursor (empty when the cursor follows a space or the line is
+## empty -- then Tab lists everything valid in that position).
+proc ciw_complete {} {
+  set line [.ciw.c.e get 1.0 insert]
+  set toks [regexp -all -inline {\S+} $line]
+  if {$line eq {} || [regexp {\s$} $line]} {
+    set tok {}
+    set idx [llength $toks]
+  } else {
+    set tok [lindex $toks end]
+    set idx [expr {[llength $toks] - 1}]
+  }
+  set cands [ciw_candidates $toks $idx $tok]
+  if {![llength $cands]} { bell; return }
+  if {[llength $cands] == 1} {
+    ciw_insert_completion $tok [lindex $cands 0] 1
+  } else {
+    set lcp [ciw_lcp $cands]
+    if {[string length $lcp] > [string length $tok]} {
+      ciw_insert_completion $tok $lcp 0
+    } else {
+      ciw_echo [join [lsort $cands] {  }] result
+    }
   }
 }

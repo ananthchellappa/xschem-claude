@@ -23,6 +23,9 @@ src/eval_expr.c
 src/parselabel.c
 src/parselabel.h
 
+# CIW autocomplete vocabulary (generated from scheduler.c by the Makefile)
+src/xschem_subcommands.txt
+
 # Action log (created at runtime in the cwd)
 Xschem.log
 Xschem.log.*

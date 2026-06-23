@@ -18,7 +18,7 @@ put /local/install_shares {
  ngspice_backannotate.tcl gschemtoxschem.awk mouse_bindings.tcl cadence_style_rc
  place_sym_pins.tcl place_pins.tcl make_sch_from_spice.awk make_sym_from_spice.awk
  action_registry.tcl actions.csv keybindings.csv mousebindings.csv ciw.tcl
- property_form.tcl library_defs.tcl library_manager.tcl
+ property_form.tcl library_defs.tcl library_manager.tcl xschem_subcommands.txt
 }
 
 # generate a list of objects from the list of source files
@@ -35,7 +35,7 @@ print [@
 ROOT = ..
 OBJ = @/local/obj@
 
-all: xschem rawtovcd
+all: xschem rawtovcd xschem_subcommands.txt
 
 include $(ROOT)/Makefile.conf
 
@@ -54,12 +54,19 @@ expandlabel.c expandlabel.h: expandlabel.y
 eval_expr.c: eval_expr.y
 	bison -p kk -o eval_expr.c eval_expr.y
 
+# CIW Tab-completion vocabulary: the `xschem` subcommand names, extracted from
+# the dispatcher (scheduler.c strcmp(argv[1], "...") branches). Regenerated
+# whenever scheduler.c changes so it can never drift from the real command set.
+# Shipped to XSHAREDIR and loaded by ciw.tcl (see specs/ciw_autocomplete.md).
+xschem_subcommands.txt: scheduler.c
+	grep -oE 'strcmp\(argv\[1\], *"[A-Za-z0-9_]+"' $< | sed -E 's/.*"([A-Za-z0-9_]+)"/\1/' | sort -u > $@
+
 parselabel.o: expandlabel.h
 
 $(OBJ): xschem.h util.h ../config.h Makefile
 
 clean: FORCE
-	rm -rf rawtovcd xschem *.o eval_expr.c expandlabel.[ch] parselabel.c
+	rm -rf rawtovcd xschem *.o eval_expr.c expandlabel.[ch] parselabel.c xschem_subcommands.txt
 
 # Explicit rule for each object:
 @]
