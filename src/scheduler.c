@@ -3311,6 +3311,22 @@ static int xschem_cmds_i(Tcl_Interp *interp, int argc, const char *argv[], int *
   return TCL_OK;
 }
 
+/* True if the current window holds a pristine, reusable "untitled" scratch buffer:
+ * top level, never modified, empty (no instances/wires), and the conventional
+ * untitled name (or none). Editor behavior (NEdit/Notepad++): the launch placeholder
+ * is consumed by the first file opened, so untitled.sch never sits alongside a real
+ * file. A scratch buffer the user has actually drawn in is `modified`, so it is NOT
+ * reused (their work is preserved; the open goes to a new window/tab instead). */
+static int is_pristine_untitled(void)
+{
+  if(!xctx) return 0;
+  if(xctx->currsch != 0) return 0;
+  if(xctx->modified) return 0;
+  if(xctx->instances != 0 || xctx->wires != 0) return 0;
+  return (xctx->sch[xctx->currsch][0] == '\0' ||
+          strstr(xctx->sch[xctx->currsch], "untitled") != NULL);
+}
+
 /* `xschem l...` commands, moved verbatim from the xschem() dispatcher
  * (dispatcher decomposition batch 3). Sets *cmd_found = 0 when argv[1]
  * matches no command in this group; early returns propagate unchanged. */
@@ -3694,7 +3710,10 @@ static int xschem_cmds_l(Tcl_Interp *interp, int argc, const char *argv[], int *
              tcleval(msg);
              if(strcmp(tclresult(), "ok")) continue;
            }
-           new_schematic(force_window ? "create_window" : "create", "noconfirm", f, 1);
+           /* reuse a pristine untitled scratch buffer rather than leaving it
+            * orphaned beside the file being opened (editor behavior) */
+           if(is_pristine_untitled()) tclvareval("xschem load {", f, "}", NULL);
+           else new_schematic(force_window ? "create_window" : "create", "noconfirm", f, 1);
            tclvareval("update_recent_file {", f, "}", NULL);
           } else {
             new_schematic(force_window ? "create_window" : "create", NULL, NULL, 1);
@@ -3710,7 +3729,9 @@ static int xschem_cmds_l(Tcl_Interp *interp, int argc, const char *argv[], int *
         if(!cancel) {
           if(f[0]) {
            dbg(1, "f=%s\n", f);
-           new_schematic("create", "noconfirm", f, 1);
+           /* reuse a pristine untitled scratch buffer (editor behavior) */
+           if(is_pristine_untitled()) tclvareval("xschem load {", f, "}", NULL);
+           else new_schematic("create", "noconfirm", f, 1);
            /* action-log (file-menu plan): dialog-resolved new-window open;
             * the with-filename arm above is the replay form and stays silent */
            if(tcl_braceable(f)) log_action("xschem load_new_window {%s}", f);
