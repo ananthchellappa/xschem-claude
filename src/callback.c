@@ -5703,8 +5703,13 @@ static int handle_window_switching(int event, int tabbed_interface, const char *
         dbg(1, "callback(): switching window context for copy : %s --> %s, semaphore=%d\n",
                 xctx->current_win_path, win_path, xctx->semaphore);
         new_schematic("switch", win_path, "", 1);
-      /* switch context to window *sending* copied objects, when returning back in */
-      } else if( event == EnterNotify && /* stat(sel_file, &buf) && */ (save_xctx[n]->ui_state & STARTCOPY)) {
+      /* switch context to window *sending* copied objects, when returning back in.
+       * Guard the slot: get_tab_or_window_number() returns -1 for an unknown win_path
+       * (e.g. a stale EnterNotify during teardown), and the widened entry condition
+       * (cur_is_real) now admits this branch in tabbed mode too, so save_xctx[n] must
+       * be range/NULL checked before the deref (issue 0021). */
+      } else if( event == EnterNotify && n >= 0 && save_xctx[n] &&
+                 /* stat(sel_file, &buf) && */ (save_xctx[n]->ui_state & STARTCOPY)) {
         dbg(1, "callback(): switching window context for copy : %s --> %s, semaphore=%d\n",
                 xctx->current_win_path, win_path, xctx->semaphore);
         redraw_only = 1;

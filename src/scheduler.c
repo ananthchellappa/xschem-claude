@@ -3311,6 +3311,26 @@ static int xschem_cmds_i(Tcl_Interp *interp, int argc, const char *argv[], int *
   return TCL_OK;
 }
 
+/* Match the conventional scratch-buffer name produced by clear_schematic:
+ * "untitled.sch" / "untitled-<n>.sch" (and the .sym variants). Compared on the
+ * BASENAME, not strstr of the whole path, so a real file under a directory whose
+ * name merely contains "untitled" is not mistaken for a scratch buffer (issue 0023). */
+static int is_untitled_basename(const char *path)
+{
+  const char *base, *p;
+  if(!path) return 0;
+  base = strrchr(path, '/');
+  base = base ? base + 1 : path;
+  if(strncmp(base, "untitled", 8)) return 0;
+  p = base + 8;
+  if(*p == '-') {                       /* untitled-<n> */
+    p++;
+    if(*p < '0' || *p > '9') return 0;
+    while(*p >= '0' && *p <= '9') p++;
+  }
+  return (!strcmp(p, ".sch") || !strcmp(p, ".sym"));
+}
+
 /* True if the current window holds a pristine, reusable "untitled" scratch buffer:
  * top level, never modified, empty (no instances/wires), and the conventional
  * untitled name (or none). Editor behavior (NEdit/Notepad++): the launch placeholder
@@ -3323,8 +3343,9 @@ static int is_pristine_untitled(void)
   if(xctx->currsch != 0) return 0;
   if(xctx->modified) return 0;
   if(xctx->instances != 0 || xctx->wires != 0) return 0;
+  if(!xctx->sch[xctx->currsch]) return 0;   /* NULL-safe (issue 0023) */
   return (xctx->sch[xctx->currsch][0] == '\0' ||
-          strstr(xctx->sch[xctx->currsch], "untitled") != NULL);
+          is_untitled_basename(xctx->sch[xctx->currsch]));
 }
 
 /* `xschem l...` commands, moved verbatim from the xschem() dispatcher
@@ -3711,8 +3732,11 @@ static int xschem_cmds_l(Tcl_Interp *interp, int argc, const char *argv[], int *
              if(strcmp(tclresult(), "ok")) continue;
            }
            /* reuse a pristine untitled scratch buffer rather than leaving it
-            * orphaned beside the file being opened (editor behavior) */
-           if(is_pristine_untitled()) tclvareval("xschem load {", f, "}", NULL);
+            * orphaned beside the file being opened (editor behavior). Only when the
+            * path can be safely brace-wrapped; otherwise fall through to new_schematic
+            * (which takes f as a C string, no Tcl quoting) so a brace/backslash in the
+            * path can't corrupt the load command (issue 0022). */
+           if(is_pristine_untitled() && tcl_braceable(f)) tclvareval("xschem load {", f, "}", NULL);
            else new_schematic(force_window ? "create_window" : "create", "noconfirm", f, 1);
            tclvareval("update_recent_file {", f, "}", NULL);
           } else {
@@ -3729,8 +3753,9 @@ static int xschem_cmds_l(Tcl_Interp *interp, int argc, const char *argv[], int *
         if(!cancel) {
           if(f[0]) {
            dbg(1, "f=%s\n", f);
-           /* reuse a pristine untitled scratch buffer (editor behavior) */
-           if(is_pristine_untitled()) tclvareval("xschem load {", f, "}", NULL);
+           /* reuse a pristine untitled scratch buffer (editor behavior); brace-wrap
+            * only when safe, else fall through to new_schematic (issue 0022) */
+           if(is_pristine_untitled() && tcl_braceable(f)) tclvareval("xschem load {", f, "}", NULL);
            else new_schematic("create", "noconfirm", f, 1);
            /* action-log (file-menu plan): dialog-resolved new-window open;
             * the with-filename arm above is the replay form and stays silent */
@@ -8023,10 +8048,14 @@ static int xschem_cmds_w(Tcl_Interp *interp, int argc, const char *argv[], int *
     {
       int i;
       Xschem_ctx *ctx, **save_xctx = get_save_xctx();
+      /* build the result as a proper Tcl list of 5-element sublists so a schematic
+       * name containing braces/spaces can't break the list structure (issue 0022) */
+      Tcl_Obj *result = Tcl_NewListObj(0, NULL);
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
       for(i = 0; i < MAX_NEW_WINDOWS; ++i) {
         const char *wp, *tp, *nm;
         char xwin[32];
+        Tcl_Obj *entry;
         ctx = save_xctx[i];
         /* the sole schematic is not yet mirrored into save_xctx[] */
         if(get_window_count() == 0 && i == 0) ctx = xctx;
@@ -8035,9 +8064,16 @@ static int xschem_cmds_w(Tcl_Interp *interp, int argc, const char *argv[], int *
         tp = (ctx->top_path && ctx->top_path[0]) ? ctx->top_path : ".";
         nm = ctx->sch[ctx->currsch] ? ctx->sch[ctx->currsch] : "";
         my_snprintf(xwin, S(xwin), "%lu", (unsigned long)ctx->window);
-        /* group == tp for now (Phase 0) */
-        Tcl_AppendResult(interp, "{", wp, " {", tp, "} ", tp, " ", xwin, " {", nm, "}} ", NULL);
+        /* {win_path top_path group xwindow current_name}; group == tp for now (Phase 0) */
+        entry = Tcl_NewListObj(0, NULL);
+        Tcl_ListObjAppendElement(interp, entry, Tcl_NewStringObj(wp, -1));
+        Tcl_ListObjAppendElement(interp, entry, Tcl_NewStringObj(tp, -1));
+        Tcl_ListObjAppendElement(interp, entry, Tcl_NewStringObj(tp, -1));
+        Tcl_ListObjAppendElement(interp, entry, Tcl_NewStringObj(xwin, -1));
+        Tcl_ListObjAppendElement(interp, entry, Tcl_NewStringObj(nm, -1));
+        Tcl_ListObjAppendElement(interp, result, entry);
       }
+      Tcl_SetObjResult(interp, result);
     }
     /* wire_coord n
      *   return 4 coordinates of wire[n] */

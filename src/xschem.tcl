@@ -9537,7 +9537,11 @@ proc context_menu { } {
     # "Descend schematic (edit)" descends and forces the child editable. Shown only
     # when descend defaults to read-only (browse mode), where it is the way to edit.
     if {[info exists ::descend_readonly] && $::descend_readonly} {
-      button .ctxmenu.b22 -text {Descend schematic (edit)} -padx 3 -pady 0 -anchor w -activebackground grey50 \
+      # NOTE: distinct widget name (.b26) -- .b22 is the "Rotate selection" button
+      # below; reusing it errored ("window name b22 already exists") and broke the
+      # whole menu in cadence mode (issue 0019). retval 22 still selects the
+      # edit-descend action in callback.c.
+      button .ctxmenu.b26 -text {Descend schematic (edit)} -padx 3 -pady 0 -anchor w -activebackground grey50 \
        -bg {#d9d9d9} -fg black -activeforeground black -image CtxmenuDown -compound left \
         -font [subst $font] -command {set tctx::retval 22; destroy .ctxmenu}
     }
@@ -9615,7 +9619,7 @@ proc context_menu { } {
   pack .ctxmenu.b10 .ctxmenu.b11 -fill x -expand true
   if {$selection} {
     pack .ctxmenu.b12 -fill x -expand true
-    if {[winfo exists .ctxmenu.b22]} { pack .ctxmenu.b22 -fill x -expand true }
+    if {[winfo exists .ctxmenu.b26]} { pack .ctxmenu.b26 -fill x -expand true }
     pack .ctxmenu.b13 .ctxmenu.b18 -fill x -expand true
     pack .ctxmenu.b22 .ctxmenu.b23 -fill x -expand true
     pack .ctxmenu.b24 .ctxmenu.b25 -fill x -expand true
@@ -10875,13 +10879,18 @@ proc show_bindkeys {} {
 
 # Replicate the user's canvas key/mouse bindings (e.g. those bound to the main
 # .drw in cadence_style_rc) onto another window's canvas, so custom shortcuts work
-# in new and detached windows too. The standard set_bindings have already run on
-# $dst; the standard binds are %W-templated so re-copying them is idempotent — the
-# user's own overrides (e.g. Control-x -> descend, with a trailing 'break') are what
-# this actually adds. specs/multi_window_detach.md
+# in new and detached windows too. The standard set_bindings have ALREADY run on
+# $dst and tailored its per-window bindings — several of which bake $dst's own path
+# into their body (e.g. <Expose>/<Enter>/<Leave> guard `{%W} eq {<canvas>}`, and
+# <Control-Shift-Key-P> -> `command_palette <toplevel>`), NOT %W. So we must NOT copy
+# any sequence $dst already binds, or we clobber those correct per-window bindings
+# with $src's (the guards would never match; the palette would target $src). Only the
+# user's EXTRA bindings — sequences set_bindings never touched — are carried over.
+# (issue 0020) specs/multi_window_detach.md
 proc clone_canvas_bindings {src dst} {
   if {![winfo exists $src] || ![winfo exists $dst] || $src eq $dst} return
   foreach seq [bind $src] {
+    if {[bind $dst $seq] ne {}} continue ;# keep dst's own per-window binding
     bind $dst $seq [bind $src $seq]
   }
 }
@@ -10895,12 +10904,27 @@ proc clone_canvas_bindings {src dst} {
 # width, default 0.5 = "half the display"). specs/multi_window_detach.md
 proc size_new_window {win} {
   if {![winfo exists $win]} return
+  # Try now, and once more after the window is actually mapped. Some WMs maximize a
+  # new toplevel only AFTER it is created, so the immediate `winfo width` is still the
+  # requested size, not the maximized one — the immediate check would see a "small"
+  # window and no-op, leaving it fullscreen (issue 0026). The <Map> handler is one-shot
+  # (it removes itself) so a later USER resize is never overridden.
+  _size_new_window_apply $win
+  bind $win <Map> [list apply {{w} {
+    if {[winfo exists $w]} { bind $w <Map> {}; after idle [list _size_new_window_apply $w] }
+  }} $win]
+}
+
+# The actual clamp: only acts when the window is hogging (near-)the whole screen; a
+# window already a reasonable size is left exactly as set_geom placed it.
+proc _size_new_window_apply {win} {
+  if {![winfo exists $win]} return
   set frac 0.5
   if {[info exists ::new_window_size_frac]} { set frac $::new_window_size_frac }
   update idletasks
+  if {![winfo exists $win]} return
   set sw [winfo screenwidth $win]
   set sh [winfo screenheight $win]
-  # only intervene if the window is hogging (near-)the whole screen
   if {[winfo width $win] <= int($sw * 0.9) && [winfo height $win] <= int($sh * 0.9)} return
   set w [expr {int($sw * $frac)}]
   if {$w > 1800} { set w 1800 }   ;# don't straddle monitors on a wide X screen

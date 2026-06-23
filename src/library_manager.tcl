@@ -27,6 +27,10 @@ namespace eval libmgr {
                              ;# the bound <<TreeviewSelect>> handlers are no-op'd so the
                              ;# deferred select events don't re-clear the Cell/View panes
                              ;# we just populated (see refresh_after / locate).
+  variable suppress_after {} ;# pending `after idle` id that re-enables the handlers;
+                             ;# cancelled+rescheduled per refresh_after so two cascades
+                             ;# in one event-loop turn share a single reset that fires
+                             ;# only after BOTH have populated (issue 0024).
   variable new_window 1 ;# open schematics in a new window/tab (vs the current one)
   variable hist_counter 0 ;# unique-id source for History dialog windows
   variable hist_msg       ;# array: history-window path -> dict(hash -> message)
@@ -481,15 +485,18 @@ proc libmgr::lib_names {} {
 # so the panes reflect a just-completed mutation. Selection is by name (the
 # treeview row id), so a missing target simply leaves the deeper panes empty.
 proc libmgr::refresh_after {{lib {}} {cell {}} {view {}}} {
-  variable sel_lib; variable sel_cell; variable suppress_select
+  variable sel_lib; variable sel_cell; variable suppress_select; variable suppress_after
   if {![winfo exists .libmgr]} return
   # Drive the panes programmatically with the bound select-handlers suppressed, so
   # the deferred <<TreeviewSelect>> events queued by our `selection set` calls fire
   # as no-ops (they run before the after-idle reset below) instead of re-clearing
   # the Cell/View panes we are about to populate. Scheduled up front so early
-  # returns still re-enable the handlers.
+  # returns still re-enable the handlers. Cancel any pending reset first so two
+  # refresh_after calls in one event-loop turn collapse to a single reset that runs
+  # only after the LAST cascade's deferred events drain (issue 0024).
   set suppress_select 1
-  after idle [list set libmgr::suppress_select 0]
+  if {$suppress_after ne {}} { after cancel $suppress_after }
+  set suppress_after [after idle {set libmgr::suppress_select 0; set libmgr::suppress_after {}}]
   libmgr::populate_libs
   if {$lib eq {}} return
   set ll .libmgr.pw.lib.lb

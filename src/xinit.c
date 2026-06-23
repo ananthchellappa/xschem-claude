@@ -2058,8 +2058,18 @@ static void destroy_window(int *window_count, const char *win_path)
         /* delete Tcl context of deleted schematic window */
         tclvareval("delete_ctx ", win_path, NULL);
         xctx = save_xctx[n];
-        /* set saved ctx to main window if current is to be destroyed */
-        if(savectx == xctx) savectx = save_xctx[0];
+        /* If we are closing the CURRENT window, return to the most-recently-active
+         * tab the user came from (tab_queue GET), not unconditionally the main window
+         * (issue 0025). Real windows are never stored in tab_queue, so GET is the last
+         * tab visited; fall back to main when there is none / it is invalid. Closing a
+         * NON-current window leaves savectx (the still-current context) untouched. */
+        if(savectx == xctx) {
+          char prev_path[WINDOW_PATH_SIZE];
+          int prev;
+          my_strncpy(prev_path, tcleval("tab_queue GET"), S(prev_path));
+          prev = get_tab_or_window_number(prev_path);
+          savectx = (prev >= 1 && prev != n && save_xctx[prev]) ? save_xctx[prev] : save_xctx[0];
+        }
         if(has_x) {
           tclvareval("winfo toplevel ", win_path, NULL);
           my_strdup2(_ALLOC_ID_, &toplevel, tclresult());
