@@ -226,6 +226,21 @@ proc accel_to_tk_sequence {accel} {
   }
 
   # Resolve the key token into a Tk keysym.
+  set symkeys {
+    # numbersign    = equal         * asterisk
+    & ampersand     ! exclam        @ at           ^ asciicircum
+    ~ asciitilde    | bar           \\ backslash     > greater
+    < less          ? question
+  }
+  set namedkeys {
+    Del Delete       Ins Insert      Esc Escape     Tab Tab
+    Return Return    BackSpace BackSpace  Space space
+    F1 F1  F2 F2  F3 F3  F4 F4  F5 F5  F6 F6
+    F7 F7  F8 F8  F9 F9  F10 F10  F11 F11  F12 F12
+    Up Up  Down Down  Left Left  Right Right
+    Home Home  End End  PgUp Prior  PgDn Next
+  }
+
   if {[string length $keytok] == 1 && [string is alpha $keytok]} {
     if {$shift} {
       set keysym [string toupper $keytok]
@@ -235,9 +250,14 @@ proc accel_to_tk_sequence {accel} {
   } elseif {[string length $keytok] == 1 && [string is digit $keytok]} {
     set keysym $keytok
     if {$shift} { lappend mods Shift } ;# digit row keeps Shift as a real modifier
+  } elseif {[string length $keytok] == 1 && [dict exists $symkeys $keytok]} {
+    set keysym [dict get $symkeys $keytok]
+    if {$shift} { lappend mods Shift }
+  } elseif {[string length $keytok] > 1 && [dict exists $namedkeys $keytok]} {
+    set keysym [dict get $namedkeys $keytok]
+    if {$shift} { lappend mods Shift }
   } else {
-    # Symbol keys (# = * & ! ...) and named keys (Del/Esc/...) need a keysym map;
-    # deferred to a later batch. Flag as not-yet-translatable.
+    # Unhandled key
     return {}
   }
 
@@ -247,7 +267,7 @@ proc accel_to_tk_sequence {accel} {
   if {[lsearch -exact $mods Control] >= 0} { lappend seq Control }
   if {[lsearch -exact $mods Alt] >= 0}     { lappend seq Alt }
   if {$shift && [string length $keytok] == 1 && [string is alpha $keytok]} { lappend seq Shift }
-  if {[lsearch -exact $mods Shift] >= 0}   { lappend seq Shift } ;# digit Shift
+  if {[lsearch -exact $mods Shift] >= 0}   { lappend seq Shift } ;# digit, sym, or named Shift
   lappend seq Key $keysym
   return "<[join $seq -]>"
 }
