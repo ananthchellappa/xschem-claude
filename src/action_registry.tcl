@@ -109,20 +109,24 @@ proc build_menu_from_table {topwin menukey} {
         if {$accel ne {}} { lappend opts -accelerator $accel }
         $m add command {*}$opts
       }
-      cascade -
-      dynamic {
+      cascade {
         set sub [dict get $row submenu]
         set subw $topwin.menubar.$sub
         if {![winfo exists $subw]} {
           menu $subw -tearoff 0 -takefocus 0
         }
         $m add cascade -label $label -menu $subw
-        if {$type eq {cascade}} {
-          build_menu_from_table $topwin $sub
-        } else {
-          set hook [dict get $row hook]
-          if {$hook ne {}} { $hook $topwin }
+        build_menu_from_table $topwin $sub
+      }
+      dynamic {
+        set sub [dict get $row submenu]
+        set subw $topwin.menubar.$sub
+        set hook [dict get $row hook]
+        if {![winfo exists $subw]} {
+          set postcmd [expr {$hook ne {} ? [list $hook $topwin] : {}}]
+          menu $subw -tearoff 0 -takefocus 0 -postcommand $postcmd
         }
+        $m add cascade -label $label -menu $subw
       }
       default {
         puts stderr "action registry: unknown row type '$type' for [dict get $row id]"
