@@ -83,6 +83,13 @@ if [ $rc -ne 0 ]; then
   exit 4
 fi
 
+if grep -q "Tcl_AppInit() error" "$RESULTS/stderr.log"; then
+  echo "FATAL: xschem reported an uncaught Tcl exception" >&2
+  echo "----- stderr (tail) -----" >&2
+  tail -20 "$RESULTS/stderr.log" >&2
+  exit 4
+fi
+
 # Surface any in-script errors the harness reported.
 if grep -q "ERROR " "$RESULTS/state.txt"; then
   echo "WARNING: harness reported case errors:"
@@ -101,6 +108,10 @@ if [ "$AD_HOC" -eq 1 ]; then
   echo "   state:    $RESULTS/state.txt"
   echo "   netlists: $NETLISTS/"
   cat "$RESULTS/state.txt"
+  if grep -q " FAILED" "$RESULTS/state.txt"; then
+    echo "== AD-HOC: FAIL =="
+    exit 1
+  fi
   exit 0
 fi
 
