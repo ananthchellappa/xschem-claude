@@ -1,32 +1,17 @@
-# Pull Request: Action Registry Bug Fixes and Test Infrastructure Improvements
+# Action Registry Phase 2 Implementation
 
-## Overview
-This PR addresses several subtle bugs introduced during the Phase 1 & 2 Claude-assisted refactoring where the core C action handlers and static UI setup were migrated to a data-driven model using `actions.csv`. In addition to fixing the bugs, this PR expands the `run.sh` regression harness to prevent similar regressions from happening in the future, including full integration with CI and automated tests for complex PDK schematics.
+This PR completes Phase 2 of the Action Registry refactor, migrating hardcoded Tcl UI elements to a data-driven system backed by `actions.csv`.
 
-**Note:** The C engine remains byte-for-byte identical to the upstream `xschem` source. All modifications are constrained exclusively to the Tcl UI layer and testing infrastructure.
-
-## Bug Fixes
-
-- **BUG-A (`<Key-u>` modifier collisions):** The `action_registry.tcl` keyboard mapper was interpreting `Ctrl+u`, `Alt+u`, and `u` identically because it failed to account for keysym modifier string variants. Added a strict exact-match verification to restore `Ctrl+U` (unselect floaters) and `Alt+U` (align to grid).
-- **BUG-B (Regex parser failure):** The fallback Regex parser in `run_regression.tcl` failed to correctly strip and parse characters inside quoted CSV fields. Removed regex in favor of `action_parse_csv_line` logic across the board.
-- **BUG-C (Missing semicolon in `simulation.set_netlist_dir`):** Added the missing Tcl semicolon between concatenated command strings in `actions.csv`.
-- **BUG-D (Missing semicolon in `view.show.visible_layers`):** Added the missing Tcl semicolon between concatenated command strings in `actions.csv`.
-- **BUG-E (Carriage returns (`\r`) in keys):** A trailing carriage return character polluted action dictionary keys if the `actions.csv` was edited with CRLF. Added `.csv` normalization to strip `\r`.
-- **BUG-F (Dynamic submenus not populating):** Dynamic submenus (like "Open Recent") were incorrectly bound via `-postcommand` causing them to fail to populate or trigger correctly. Refactored to properly instantiate standard submenus that dynamically update items.
-- **BUG-G (CI not executing headless tests):** The `ci.yaml` GitHub workflow was green, but it was omitting the execution of the `tests/headless/run.sh` bash script. Brought it into the CI pipeline loop.
-- **BUG-H (`remap_action_accel` failing silently):** The `remap_action_accel` proc was halting on the first widget that didn't support the `-state` option, causing it to skip updating accelerators on the rest of the canvas UI. Rewrote to correctly iterate over `-state` safe widgets.
-- **BUG-I (Silent CSV ingestion failure):** Added an explicit strict `error` to `load_action_table` to crash fast when loading a malformed CSV row instead of silently garbling the menus.
-- **BUG-J (Typo in mouse accelerator):** Fixed the typo `Ctrl-Righ Butt.` causing lookup failures on `tools.select_conn_wires_stop_at_junctions`.
-
-## Test Infrastructure & Audits
-
-- **Ad-Hoc Scripts to CI:** All unit/functional tests inside `tests/headless/test_*.tcl` (accelerators, palettes, keys, CSV parsing) are now explicitly run in the `.github/workflows/ci.yaml` loop.
-- **`run.sh` Trap Fixes:** The headless `run.sh` test driver previously missed errors like `Tcl_AppInit() error` or skipped reporting ad-hoc script failures. It has been strictly updated to report non-zero exits accurately.
-- **PDK Regression Coverages:** Cloned complex top-level schematics representing SKY130A (`UREx-LDO-EA_testbed.sch`), GF180MCU-D (`test_sc_diode.sch`), and IHP SG13G2 (`tran_logic_not.sch`) into `tests/headless/pdk_cases/`. These are now integrated directly into `cases.txt` to continuously verify the Tcl parsing behavior scales gracefully.
-- **`xvfb` Addition:** Modified `ci.yaml` to utilize `xvfb-run -a` to support regression components that previously demanded an X server.
+## Summary of Changes
+- **Bug Fixes**: Resolved all priority bugs A through J from the initial code review, including modifier-guarding issues and action typos.
+- **Menu Migration**: Successfully migrated the remaining menus (`View`, `Properties`, `Layers`, `Tools`, `Symbol`, `Highlight`, `Simulation`, `Help`) to be generated dynamically from `actions.csv`.
+- **Accelerator Migration (Batch 1-3)**: Migrated Tcl keybindings to the action registry.
+  - Added support for symbol keys (`#`, `=`, `&`, `!`) by updating the keysym lookup table in `accel_to_tk_sequence`.
+  - Keys requiring context (such as `f` for zoom full which is WAVES-guarded, `F` for flip while moving, and `Esc` for aborting an operation) have deliberately been left in C to avoid breaking contextual behaviors, per the refactor plan.
+- **Status Bar Help**: Implemented a `<<MenuSelect>>` event hook (`handle_menu_hover`) to display descriptive help text from the registry in the status bar when hovering over any migrated menu item.
+- **Test Coverage**: Added extensive headless test coverage (`test_accelerators.tcl` and `test_keybindings_help.tcl`) to ensure the generated bindings exactly mirror the behavior of the old C dispatch logic.
 
 ## Verification
-- Run `make -C src && tests/headless/run.sh` -> **PASS**
-- Run `cd tests && xvfb-run -a tclsh run_regression.tcl` -> **PASS**
-- Netlists generated by the Cloned Binary match the System Binary output **byte-for-byte** (ignoring timestamps) across the SKY130A, GF180MCU-D, and IHP SG13G2 testing samples when supplied with the standard `XSCHEM_SHAREDIR` runtime library path.
-- CI pipeline execution confirmed hermetic.
+- `tests/headless/run.sh` passes 100%.
+- GUI headless tests `test_accelerators.tcl` and `test_keybindings_help.tcl` pass 100%.
+- Verified `make -C src` builds with zero warnings.
