@@ -53,6 +53,10 @@ proc action_parse_csv_line {line} {
     puts stderr "action registry: unterminated quoted field in CSV line: [string range $line 0 60]..."
   }
   lappend fields $field
+  # BUG-L guard: strip any trailing \r from the last field in case the line
+  # still had CRLF endings when this proc was called directly (not via
+  # load_action_table which strips \r via string trimright).
+  set fields [lreplace $fields end end [string trimright [lindex $fields end] "\r"]]
   return $fields
 }
 
@@ -603,6 +607,15 @@ proc customize_shortcuts_apply {w} {
 # (the file-chooser matcher in xschem.tcl). Bound to Ctrl+Shift+P in
 # set_bindings; runs entirely in the UI layer (does not go through the C
 # keysym dispatcher).
+
+# BUG-M guard: fuzzy_subseq_score is defined in xschem.tcl (loaded before us
+# in production), but action_registry.tcl may be sourced independently for
+# testing. Provide a simple fallback so palette_refilter doesn't crash.
+if {![llength [info commands fuzzy_subseq_score]]} {
+  proc fuzzy_subseq_score {q s} {
+    return [expr {[string match "*${q}*" $s] ? 1 : -1}]
+  }
+}
 
 # Rebuild the result list to match the current query. Guarded so that arrow/
 # Return key releases (which also fire <KeyRelease>) don't rebuild and reset
