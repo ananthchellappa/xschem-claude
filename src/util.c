@@ -272,6 +272,17 @@ void dbg(int level, char *fmt, ...)
   }
 }
 
+/* Keep at most this many Xschem.log[.N] files per directory: repeated sessions
+ * (every GUI run opens a fresh one) must not pile up logs without bound. */
+#define ACTIONLOG_KEEP 10
+
+/* Build the Nth action-log name ("Xschem.log" for 0, "Xschem.log.<n>" otherwise). */
+static void actionlog_name(char *out, size_t sz, const char *dir, int n)
+{
+  if(n == 0) my_snprintf(out, sz, "%s/Xschem.log", dir);
+  else       my_snprintf(out, sz, "%s/Xschem.log.%d", dir, n);
+}
+
 /* Action log (Phase 0).
  *
  * Opens a per-session log of user actions, each line a replayable `xschem ...`
@@ -320,10 +331,27 @@ void init_action_log(void)
     my_strncpy(dir, ".", S(dir));
   }
 
-  for(i = 0; ; ++i) {               /* first free name in the increment sequence */
-    if(i == 0) my_snprintf(fname, S(fname), "%s/Xschem.log", dir);
-    else       my_snprintf(fname, S(fname), "%s/Xschem.log.%d", dir, i);
-    if(stat(fname, &buf)) break;    /* name is free */
+  /* Pick a slot in [0, ACTIONLOG_KEEP): reuse the first free one; if all are taken,
+   * recycle (truncate) the OLDEST so the count stays capped instead of growing without
+   * bound. The oldest is almost never a concurrently-open session (those have recent
+   * mtimes), so this rarely clobbers a live log. */
+  {
+    int slot = -1, oldest = 0;
+    time_t oldest_mtime = 0;
+    for(i = 0; i < ACTIONLOG_KEEP; ++i) {
+      actionlog_name(fname, S(fname), dir, i);
+      if(stat(fname, &buf)) { slot = i; break; }   /* free slot */
+      if(i == 0 || buf.st_mtime < oldest_mtime) { oldest_mtime = buf.st_mtime; oldest = i; }
+    }
+    if(slot < 0) slot = oldest;                     /* all full -> recycle the oldest */
+    /* reap the orphan tail (.KEEP, .KEEP+1, ... contiguous) left by older builds that
+     * incremented the name without a cap, so an existing pile collapses to the cap */
+    for(i = ACTIONLOG_KEEP; ; ++i) {
+      actionlog_name(fname, S(fname), dir, i);
+      if(stat(fname, &buf)) break;                  /* gap -> tail ends */
+      remove(fname);
+    }
+    actionlog_name(fname, S(fname), dir, slot);
   }
 
   actionlog_fp = fopen(fname, "w");
