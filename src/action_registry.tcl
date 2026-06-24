@@ -98,6 +98,30 @@ proc load_action_table {} {
 # Build (populate) the menu widget <topwin>.menubar.<menukey> from every table
 # row whose 'menu' field equals <menukey>, in table order. Submenus recurse;
 # dynamic submenus delegate to their populate hook. The parent menu widget is
+proc handle_menu_hover {menu_w} {
+  global action_table
+  set topwin [winfo toplevel $menu_w]
+  set status_lbl [expr {$topwin eq "." ? ".statusbar.1" : "$topwin.statusbar.1"}]
+  
+  if {[catch {$menu_w index active} idx] || $idx eq "none"} {
+    catch { $status_lbl configure -text "" }
+    return
+  }
+  if {[catch {$menu_w entrycget $idx -label} label]} {
+    catch { $status_lbl configure -text "" }
+    return
+  }
+  set menukey [lindex [split $menu_w .] end]
+  set help_text ""
+  foreach row $action_table {
+    if {[dict get $row menu] eq $menukey && [dict get $row label] eq $label} {
+      set help_text [dict get $row help]
+      break
+    }
+  }
+  catch { $status_lbl configure -text $help_text }
+}
+
 # expected to already exist (created in build_widgets like the other menus).
 proc build_toolbar_from_table {topwin} {
   global action_table toolbar_list
@@ -168,6 +192,7 @@ proc build_menu_from_table {topwin menukey} {
       }
     }
   }
+  bind $m <<MenuSelect>> [list handle_menu_hover %W]
 }
 
 # --- actions extracted from inline menu scripts ------------------------------
