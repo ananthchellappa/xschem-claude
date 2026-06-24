@@ -53,3 +53,4 @@ foreach rel [read_cases $cases_file] {
 }
 
 puts "HARNESS_END"
+exit 0

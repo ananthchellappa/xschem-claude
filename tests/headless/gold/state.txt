@@ -10,5 +10,11 @@ xschem_version=3.4.8RC
   instances=15 wires=2
 == xschem_library/examples/cmos_example.sch ==
   instances=50 wires=39
+== tests/headless/pdk_cases/UREx-LDO-EA_testbed.sch ==
+  instances=30 wires=81
+== tests/headless/pdk_cases/test_sc_diode.sch ==
+  instances=7 wires=3
+== tests/headless/pdk_cases/tran_logic_not.sch ==
+  instances=14 wires=21
 HARNESS_END
 

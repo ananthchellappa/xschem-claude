@@ -1,0 +1,18 @@
+**.subckt test_sc_diode
+*  D1 -  sc_diode  IS MISSING !!!!
+**** begin user architecture code
+?
+
+
+vp p 0 0
+.control
+save all
+dc vp -0.4 0.8 0.001
+write test_sc_diode.raw
+.endc
+
+
+**** end user architecture code
+**.ends
+.GLOBAL GND
+.end

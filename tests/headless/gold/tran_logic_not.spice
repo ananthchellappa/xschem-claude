@@ -1,0 +1,24 @@
+**.subckt tran_logic_not
+Vin in GND dc 0 ac 0 pulse(0, 1.2, 0, 100p, 100p, 2n, 4n )
+Vdd net1 GND 1.2
+*  M1 -  sg13_lv_nmos  IS MISSING !!!!
+*  M2 -  sg13_lv_pmos  IS MISSING !!!!
+**** begin user architecture code
+
+.lib cornerMOSlv.lib mos_tt
+
+
+
+.param temp=27
+.control
+save all
+tran 50p 20n
+meas tran tdelay TRIG v(in) VAl=0.9 FALl=1 TARG v(out) VAl=0.9 RISE=1
+write tran_logic_not.raw
+.endc
+
+
+**** end user architecture code
+**.ends
+.GLOBAL GND
+.end

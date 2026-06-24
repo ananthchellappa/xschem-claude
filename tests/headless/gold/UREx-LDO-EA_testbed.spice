@@ -1,0 +1,52 @@
+**.subckt UREx-LDO-EA_testbed VDD V+ VDD Vout V+ V-
+*.ipin VDD
+*.ipin V+
+*.ipin VDD
+*.opin Vout
+*.ipin V+
+*.ipin V-
+V1 VDD GND {VDD}
+V6 V+ GND SIN(0.6 1m 1k)
+C1 net2 Vout 0.5p
+C2 GND Vout 5p
+I0 VDD net4 4u
+V2 V- GND 0.6
+R1 net6 net5 99k
+R2 net5 GND 1k
+*  M1 -  nfet_01v8_lvt  IS MISSING !!!!
+*  M4 -  pfet_01v8_lvt  IS MISSING !!!!
+*  M2 -  nfet_01v8_lvt  IS MISSING !!!!
+*  M9 -  nfet_01v8_lvt  IS MISSING !!!!
+*  M5 -  nfet_01v8_lvt  IS MISSING !!!!
+*  M7 -  nfet_01v8_lvt  IS MISSING !!!!
+*  M3 -  pfet_01v8_lvt  IS MISSING !!!!
+*  M6 -  pfet_01v8_lvt  IS MISSING !!!!
+**** begin user architecture code
+
+
+
+.lib /usr/local/share/pdk/sky130A/libs.tech/ngspice/sky130.lib.spice tt
+.param VDD=1.8 amp=1.2
+.tran 5u 5m
+*.ac dec 20 1 1e12
+.save all
+
+.control
+run
+*plot -i(v1)
+plot vout
+*plot db(vout/v(v+))
+*plot 180*cph(vout)/pi
+set wr_singlescale
+set wr_vecnames
+*wrdata /foss/designs/2stageCMOSOpAmp/sim_data/GainvsFreq/gain(max).txt db(vout/v(v+))
+*wrdata /foss/designs/2stageCMOSOpAmp/sim_data/sample_waves/a1.3m_f1k_gain700.txt vout
+*wrdata /foss/designs/2stageCMOSOpAmp/sim_data/SR/SR.txt vout
+
+.endc
+
+
+**** end user architecture code
+**.ends
+.GLOBAL GND
+.end
