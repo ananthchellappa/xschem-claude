@@ -49,6 +49,9 @@ proc action_parse_csv_line {line} {
       }
     }
   }
+  if {$inq} {
+    puts stderr "action registry: unterminated quoted field in CSV line: [string range $line 0 60]..."
+  }
   lappend fields $field
   return $fields
 }
@@ -75,6 +78,10 @@ proc load_action_table {} {
     set fields [action_parse_csv_line $line]
     if {$header eq {}} {
       set header $fields
+      continue
+    }
+    if {[llength $fields] != [llength $header]} {
+      puts stderr "action registry: skipping malformed row (got [llength $fields] fields, expected [llength $header]): $line"
       continue
     }
     set row {}
