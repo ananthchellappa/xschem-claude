@@ -182,6 +182,15 @@ set migrated_action_ids {
   edit.redo
   view.zoom_in
   view.zoom_out
+  toolbar.netlist
+  prop.toggle_ignore_attribute_on_selected_instances
+  prop.change_selected_object_insertion_order
+  file.new_process
+  sym.list.print_list_of_highlight_nets
+  sym.list.create_labels_from_highlight_nets_with_i_prefix
+  hilight.highlight_selected_net_pins
+  hilight.un_highlight_all_net_pins
+  view.redraw
 }
 
 # Translate an accelerator DISPLAY string (e.g. "Ctrl+S", "Shift+Z", "Alt-F",

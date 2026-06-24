@@ -24,6 +24,15 @@ set expect {
   <Shift-Key-U>     {xschem redo; xschem redraw}
   <Shift-Key-Z>     {xschem zoom_in}
   <Control-Key-z>   {xschem zoom_out}
+  <Key-n>           {xschem netlist -erc}
+  <Shift-Key-T>     {xschem toggle_ignore}
+  <Shift-Key-S>     {xschem change_elem_order -1}
+  <Key-x>           {xschem new_process}
+  <Key-j>           {xschem print_hilight_net 1}
+  <Shift-Key-J>     {xschem print_hilight_net 2}
+  <Key-k>           {xschem hilight}
+  <Shift-Key-K>     {xschem unhilight_all}
+  <Key-Escape>      {xschem redraw}
 }
 
 # 1) bindings installed and carry the right command
@@ -81,6 +90,16 @@ foreach {key desc} {
   <Control-Key-u>    {Ctrl+U: unselect_attached_floaters}
   <Alt-Key-u>        {Alt+U: align-to-grid}
   <Control-Shift-Key-Z> {Ctrl+Shift+Z: unused, verify no binding}
+  <Control-Key-n>    {Ctrl+N: clear schematic}
+  <Control-Shift-Key-T> {Ctrl+Shift+T: load last closed}
+  <Control-Shift-Key-S> {Ctrl+Shift+S: save as schematic}
+  <Control-Key-x>    {Ctrl+X: cut}
+  <Alt-Key-x>        {Alt+X: toggle crosshair}
+  <Control-Key-j>    {Ctrl+J: create ipins from highlight nets}
+  <Control-Shift-Key-J> {Ctrl+Shift+J: unused, verify no binding}
+  <Control-Key-k>    {Ctrl+K: unhilight net}
+  <Alt-Key-k>        {Alt+K: select whole net}
+  <Control-Shift-Key-K> {Ctrl+Shift+K: hilight drill}
 } {
   check "no Tcl binding for $desc" [expr {[bind .drw $key] eq {}}] {}
 }
