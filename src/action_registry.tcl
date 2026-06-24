@@ -1,3 +1,4 @@
+set recent_palette_ids {}
 #
 #  File: action_registry.tcl
 #
@@ -20,6 +21,12 @@
 # Parse one RFC4180-style CSV line into a list of fields. Handles quoted fields
 # containing commas and doubled "" escapes. Embedded newlines are not supported
 # (the registry keeps every row on a single line).
+
+set recent_palette_ids {}
+set action_log {}
+set action_log_enabled 1
+set action_status_text {}
+
 proc action_parse_csv_line {line} {
   set fields {}
   set field {}
@@ -400,7 +407,7 @@ proc bind_accelerators_from_table {topwin} {
     } else {
       # Plain key: guard so modifier variants reach C.
       bind $topwin $seq \
-        "if {\[action_key_unmodified %s\]} {run_action [list $cmd]; break}"
+        "if {\[action_key_unmodified %s\]} {run_action [list $cmd]; break} else { xschem callback %W %T %x %y %N 0 0 %s; break }"
     }
     lappend accel_bound_seqs($topwin) $seq
   }

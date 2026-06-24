@@ -10202,7 +10202,6 @@ proc build_widgets { {topwin {} } } {
   ## activate menus when hovering the mouse, even without button pressed
   # bind Menubutton <Motion> { tk::MbMotion %W down %X %Y}
 
-  build_menu_from_table $topwin help
   # File menu is generated from the action registry (actions.csv). The parent
   # menu widget $topwin.menubar.file is created above; submenus (Image export,
   # Open recent) are created by the generator. Other menus remain hand-written.
@@ -10213,10 +10212,12 @@ proc build_widgets { {topwin {} } } {
   build_menu_from_table $topwin view
   build_menu_from_table $topwin prop
   build_menu_from_table $topwin layers
+  create_layers_menu $topwin
   build_menu_from_table $topwin tools
   build_menu_from_table $topwin sym
   build_menu_from_table $topwin hilight
   build_menu_from_table $topwin simulation
+  build_menu_from_table $topwin help
   frame $topwin.drw -background {} -takefocus 1 -width $canvas_width -height $canvas_height
 
   if { $topwin == {} } {set rootwin .} else { set rootwin $topwin}
