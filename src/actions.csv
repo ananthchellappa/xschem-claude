@@ -97,7 +97,7 @@ prop.toggle_ignore_attribute_on_selected_instances,command,prop,Toggle *_ignore 
 prop.change_selected_object_insertion_order,command,prop,Change selected object insertion order,Shift+S,xschem change_elem_order -1,,,Change selected object insertion order
 prop.edit_header_license_text,command,prop,Edit Header/License text,Shift+B,update_schematic_header,,,Edit Header/License text
 prop.edit_file_danger,command,prop,Edit file (danger!),Alt+Q,xschem edit_file,,,Edit file (danger!)
-simulation.set_netlist_dir,command,simulation,Set netlist Dir,,set local_netlist_dir 0 set_netlist_dir 1,,,Set netlist Dir
+simulation.set_netlist_dir,command,simulation,Set netlist Dir,,set local_netlist_dir 0; set_netlist_dir 1,,,Set netlist Dir
 simulation.configure_simulators_and_tools,command,simulation,Configure simulators and tools,,simconf,,,Configure simulators and tools
 simulation.list_running_sub_processes,command,simulation,List running sub-processes,,list_running_cmds,,,List running sub-processes
 simulation.send_highlighted_nets_to_viewer,command,simulation,Send highlighted nets to viewer,Ctrl+Shift+X,xschem create_plot_cmd,,,Send highlighted nets to viewer
