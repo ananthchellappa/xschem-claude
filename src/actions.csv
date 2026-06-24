@@ -139,7 +139,7 @@ tools.remove_wires_running_through_selected_inst_pins,command,tools,Remove wires
 tools.break_wires_at_mouse_position,command,tools,Break wires at mouse position,Alt-Shift-Right Butt.,xschem wire_cut noalign,,,Break wires at mouse position
 tools.break_wires_at_mouse_position_align_cut_point,command,tools,"Break wires at mouse position, align cut point",Alt-Right Butt.,xschem wire_cut,,,"Break wires at mouse position, align cut point"
 tools.select_all_connected_wires_labels_pins,command,tools,Select all connected wires/labels/pins,Shift-Right Butt.,xschem connected_nets,,,Select all connected wires/labels/pins
-tools.select_conn_wires_stop_at_junctions,command,tools,"Select conn. wires, stop at junctions",Ctrl-Righ Butt.,xschem connected_nets 1,,,"Select conn. wires, stop at junctions"
+tools.select_conn_wires_stop_at_junctions,command,tools,"Select conn. wires, stop at junctions",Ctrl-Right Butt.,xschem connected_nets 1,,,"Select conn. wires, stop at junctions"
 view.redraw,command,view,Redraw,Esc,xschem redraw,,,Redraw
 view.zoom_full,command,view,Zoom Full,F,xschem zoom_full,,,Zoom Full
 view.zoom_in,command,view,Zoom In,Shift+Z,xschem zoom_in,,,Zoom In
