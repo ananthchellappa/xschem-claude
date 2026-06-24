@@ -10200,7 +10200,7 @@ proc build_widgets { {topwin {} } } {
   build_menu_from_table $topwin file
   build_menu_from_table $topwin edit
   build_menu_from_table $topwin option
-  $topwin.menubar.view add command -label "Redraw" -command "xschem redraw" -accelerator Esc
+
   build_menu_from_table $topwin view
   build_menu_from_table $topwin prop
   build_menu_from_table $topwin layers
@@ -10208,7 +10208,6 @@ proc build_widgets { {topwin {} } } {
   build_menu_from_table $topwin sym
   build_menu_from_table $topwin hilight
   build_menu_from_table $topwin simulation
-  build_menu_from_table $topwin waves
   frame $topwin.drw -background {} -takefocus 1 -width $canvas_width -height $canvas_height
 
   if { $topwin == {} } {set rootwin .} else { set rootwin $topwin}
