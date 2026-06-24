@@ -251,7 +251,6 @@ set migrated_action_ids {
   sym.list.create_labels_from_highlight_nets_with_'i'_prefix
   hilight.highlight_selected_net_pins
   hilight.un-highlight_all_net_pins
-  view.redraw
   hilight.highlight_duplicate_instance_names
   hilight.rename_duplicate_instance_names
   tools.execute_tcl_command
@@ -259,6 +258,9 @@ set migrated_action_ids {
   tools.break_wires_at_selected_instance_pins
   tools.remove_wires_running_through_selected_inst_pins
 }
+# NOTE: view.redraw (Esc) is intentionally NOT migrated. XK_Escape in C calls
+# abort_operation() + extra cleanup — far more than 'xschem redraw'. Migrating
+# it would steal Esc from every in-progress operation (wire draw, move, etc.).
 
 # Translate an accelerator DISPLAY string (e.g. "Ctrl+S", "Shift+Z", "Alt-F",
 # "U") into a real Tk event sequence (e.g. <Control-Key-s>, <Shift-Key-Z>,
@@ -372,6 +374,7 @@ proc bind_accelerators_from_table {topwin} {
   }
   set accel_bound_seqs($topwin) {}
   foreach row $action_table {
+    if {![dict exists $row menu]} continue
     set id [dict get $row id]
     if {[lsearch -exact $migrated_action_ids $id] < 0} continue
     if {[dict get $row type] ne {command}} continue
@@ -382,17 +385,30 @@ proc bind_accelerators_from_table {topwin} {
       continue
     }
     set cmd [dict get $row command]
-    bind $topwin $seq "run_action [list $cmd]; break"
+    # Plain-key bindings (no modifier in the Tk sequence) must guard against
+    # modifier variants so we don't steal Ctrl+key, Alt+key etc. from C.
+    # A sequence has a modifier iff it starts with <Control- or <Alt- or <Shift-.
+    # Shift-only bindings for uppercase letters (e.g. <Shift-Key-Z>) are already
+    # exclusive by virtue of requiring Shift, so no guard needed there.
+    if {[regexp {^<(Control|Alt)-} $seq]} {
+      # Already modifier-specific; bind unconditionally.
+      bind $topwin $seq "run_action [list $cmd]; break"
+    } else {
+      # Plain key (or Shift+letter): guard so modifier variants reach C.
+      bind $topwin $seq \
+        "if {\[action_key_unmodified %s\]} {run_action [list $cmd]; break}"
+    }
     lappend accel_bound_seqs($topwin) $seq
   }
 }
 
-# Run $cmd only if no modifier keys are held (modifier bitmask %s == 0).
-# This prevents plain-key bindings (e.g. <Key-u>) from stealing modifier
-# combinations (e.g. Ctrl+U, Alt+U) that C handles via rstate.
-proc should_handle_unmodified {state} {
-  # Allow NumLock (Mod2Mask=0x10) and CapsLock (LockMask=0x02) as "no modifier"
-  set ignore [expr {[winfo pixels . 1] ? 0x12 : 0x12}]  ;# Mod2|LockMask
+# Test whether a key event has no real modifier held. Used by plain-key bindings
+# to let Ctrl+key, Alt+key, etc. fall through to the C handle_key_press chain.
+#   state  = %s substitution from the Tk event (X11 modifier bitmask)
+# We ignore NumLock (Mod2Mask = 0x10) and CapsLock (LockMask = 0x02) because
+# those are lock keys, not intentional modifiers. Any other modifier bit means
+# "C should handle this" → return 0 so the caller skips run_action/break.
+proc action_key_unmodified {state} {
   return [expr {($state & ~0x12) == 0}]
 }
 
