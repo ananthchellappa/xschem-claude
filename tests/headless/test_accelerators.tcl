@@ -32,11 +32,9 @@ set expect {
   <Key-k>           {xschem hilight}
   <Shift-Key-K>     {xschem unhilight_all}
   <Key-numbersign>  {xschem check_unique_names 0}
-  <Control-Key-numbersign> {xschem check_unique_names 1}
   <Key-equal>       {tclcmd}
   <Key-ampersand>   {xschem trim_wires}
   <Key-exclam>      {xschem break_wires}
-  <Control-Key-exclam> {xschem break_wires 1}
 }
 
 # 1) bindings installed and carry the right command
@@ -49,7 +47,7 @@ foreach {seq cmd} $expect {
 # 2) Plain-key bindings must include the modifier guard (action_key_unmodified),
 #    but modifier-specific bindings (Ctrl+, Alt+) must NOT have the guard.
 set plain_keys {<Key-u> <Key-n> <Key-x> <Key-j> <Key-k> <Key-numbersign> <Key-equal> <Key-ampersand> <Key-exclam>}
-set mod_keys   {<Control-Key-z> <Control-Key-numbersign> <Control-Key-exclam>}
+set mod_keys   {<Control-Key-z> <Shift-Key-U> <Shift-Key-Z> <Shift-Key-T> <Shift-Key-S> <Shift-Key-K>}
 foreach seq $plain_keys {
   set b [bind .drw $seq]
   check "plain-key $seq has modifier guard" \
@@ -118,17 +116,18 @@ foreach {key desc} {
   <Control-Key-j>    {Ctrl+J: create ipins from highlight nets}
   <Alt-Key-k>        {Alt+K: select whole net}
   <Control-Shift-Key-K> {Ctrl+Shift+K: propagate hilight}
+  <Control-Key-numbersign> {Ctrl+#: rename duplicate instance names}
+  <Control-Key-exclam>     {Ctrl+!: remove wires running through selected inst pins}
 } {
   check "no Tcl binding for $desc" [expr {[bind .drw $key] eq {}}] {}
 }
 
-# 9) Shift-letter keys (e.g. <Shift-Key-Z>) must also have the guard because
-#    the accel_to_tk_sequence emits <Shift-Key-Z> (no Control/Alt prefix).
+# 9) Shift-letter keys (e.g. <Shift-Key-Z>) are explicitly bound without the guard
 foreach seq {<Shift-Key-Z> <Shift-Key-T> <Shift-Key-S> <Shift-Key-K>} {
   set b [bind .drw $seq]
   if {$b ne {}} {
-    check "Shift-letter $seq has modifier guard" \
-      [expr {[string first {action_key_unmodified} $b] >= 0}] "=> [string range $b 0 80]..."
+    check "Shift-letter $seq has NO modifier guard" \
+      [expr {[string first {action_key_unmodified} $b] < 0}] "=> [string range $b 0 80]..."
   }
 }
 

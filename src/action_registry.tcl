@@ -258,11 +258,9 @@ set migrated_action_ids {
   hilight.highlight_selected_net_pins
   hilight.un-highlight_all_net_pins
   hilight.highlight_duplicate_instance_names
-  hilight.rename_duplicate_instance_names
   tools.execute_tcl_command
   tools.join_trim_wires
   tools.break_wires_at_selected_instance_pins
-  tools.remove_wires_running_through_selected_inst_pins
 }
 # NOTE: view.redraw (Esc) is intentionally NOT migrated. XK_Escape in C calls
 # abort_operation() + extra cleanup — far more than 'xschem redraw'. Migrating
@@ -396,11 +394,11 @@ proc bind_accelerators_from_table {topwin} {
     # A sequence has a modifier iff it starts with <Control- or <Alt- or <Shift-.
     # Shift-only bindings for uppercase letters (e.g. <Shift-Key-Z>) are already
     # exclusive by virtue of requiring Shift, so no guard needed there.
-    if {[regexp {^<(Control|Alt)-} $seq]} {
+    if {[regexp {^<(Control|Alt|Shift)-} $seq]} {
       # Already modifier-specific; bind unconditionally.
       bind $topwin $seq "run_action [list $cmd]; break"
     } else {
-      # Plain key (or Shift+letter): guard so modifier variants reach C.
+      # Plain key: guard so modifier variants reach C.
       bind $topwin $seq \
         "if {\[action_key_unmodified %s\]} {run_action [list $cmd]; break}"
     }
