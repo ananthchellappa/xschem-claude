@@ -30,12 +30,24 @@ jobs:
     name: Headless regression
     steps:
     - name: Install dependencies
-      run: sudo apt-get install -y flex bison gawk tcl tcl-dev tk tk-dev libcairo2 libcairo2-dev xcb libxcb1 libxcb1-dev libxrender-dev libxpm-dev libxcb-render0-dev libx11-xcb1 libx11-xcb-dev
+      run: sudo apt-get install -y flex bison gawk tcl tcl-dev tk tk-dev libcairo2 libcairo2-dev xcb libxcb1 libxcb1-dev libxrender-dev libxpm-dev libxcb-render0-dev libx11-xcb1 libx11-xcb-dev xvfb
     - name: Checkout source
       uses: actions/checkout@v4
     - name: Build
       run: ./configure && make -C src
     - name: Run headless regression
       run: cd tests/headless && ./run.sh
+    - name: Run ad-hoc scripts
+      run: |
+        cd tests/headless
+        for test_script in test_*.tcl; do
+          echo "Running $test_script..."
+          if [ "$test_script" = "test_regression_parser.tcl" ]; then
+            continue
+          fi
+          ./run.sh --script "$test_script"
+        done
+    - name: Run regression parser test
+      run: cd tests && tclsh test_regression_parser.tcl
     - name: Run regression harness
-      run: cd tests && tclsh run_regression.tcl
+      run: cd tests && xvfb-run -a tclsh run_regression.tcl
