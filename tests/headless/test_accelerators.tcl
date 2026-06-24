@@ -3,10 +3,8 @@
 #   DISPLAY=:0 ./src/xschem --pipe --script tests/headless/test_accelerators.tcl
 #
 # Proves, for each migrated key, that (1) the generator installed a binding on
-# the drawing canvas carrying the table's command, and (2) pressing the key in
-# the GUI produces the SAME observable effect as running that command directly
-# (so the generated binding mirrors what the C handle_key_press chain did, and
-# pre-empts it). Batch 1 keys: undo, redo, zoom in, zoom out.
+# the drawing canvas carrying the table's command, and (2) plain-key bindings
+# include the action_key_unmodified guard so modifier variants reach C.
 update idletasks
 focus -force .drw
 update idletasks
@@ -17,8 +15,9 @@ proc check {name ok detail} {
   if {$ok} { puts "ok:   $name $detail" } else { puts "FAIL: $name $detail"; incr fail }
 }
 
-# Expected (sequence -> command) for the batch-1 migrated rows, mirroring the C
-# handlers they replace. Keep in sync with migrated_action_ids in the registry.
+# Expected (sequence -> command) for migrated rows. Esc is NOT listed here because
+# XK_Escape in C calls abort_operation(), not just xschem redraw, so it is
+# intentionally kept in C and must not appear as a Tk binding.
 set expect {
   <Key-u>           {xschem undo; xschem redraw}
   <Shift-Key-U>     {xschem redo; xschem redraw}
@@ -32,7 +31,6 @@ set expect {
   <Alt-Shift-Key-J> {xschem print_hilight_net 2}
   <Key-k>           {xschem hilight}
   <Shift-Key-K>     {xschem unhilight_all}
-  <Key-Escape>      {xschem redraw}
   <Key-numbersign>  {xschem check_unique_names 0}
   <Control-Key-numbersign> {xschem check_unique_names 1}
   <Key-equal>       {tclcmd}
@@ -48,12 +46,29 @@ foreach {seq cmd} $expect {
     "=> [string trim $b]"
 }
 
+# 2) Plain-key bindings must include the modifier guard (action_key_unmodified),
+#    but modifier-specific bindings (Ctrl+, Alt+) must NOT have the guard.
+set plain_keys {<Key-u> <Key-n> <Key-x> <Key-j> <Key-k> <Key-numbersign> <Key-equal> <Key-ampersand> <Key-exclam>}
+set mod_keys   {<Control-Key-z> <Control-Key-numbersign> <Control-Key-exclam>}
+foreach seq $plain_keys {
+  set b [bind .drw $seq]
+  check "plain-key $seq has modifier guard" \
+    [expr {$b ne {} && [string first {action_key_unmodified} $b] >= 0}] \
+    "=> [string range $b 0 60]..."
+}
+foreach seq $mod_keys {
+  set b [bind .drw $seq]
+  check "mod-key $seq has NO modifier guard" \
+    [expr {$b ne {} && [string first {action_key_unmodified} $b] < 0}] \
+    "=> [string range $b 0 60]..."
+}
+
 # view_zoom/view_unzoom multiply 'zoom' by a constant factor per call, so the
 # key press and the direct command must apply the SAME ratio. (There is no
 # 'xschem set zoom' to reset, so compare consecutive ratios instead.)
 proc approx_eq {a b} { return [expr {abs($a - $b) < 1e-9 * (abs($a) + 1)}] }
 
-# 2) zoom in
+# 3) zoom in
 set z0 [xschem get zoom]
 event generate .drw <Shift-Key-Z> ; update idletasks ; set z1 [xschem get zoom]
 xschem zoom_in ; set z2 [xschem get zoom]
@@ -62,7 +77,7 @@ set r_cmd [expr {$z2 / $z1}]
 check "zoom_in key effect" [expr {$r_key < 1.0 && [approx_eq $r_key $r_cmd]}] \
   "(ratio key=$r_key cmd=$r_cmd)"
 
-# 3) zoom out
+# 4) zoom out
 set zo0 [xschem get zoom]
 event generate .drw <Control-Key-z> ; update idletasks ; set zo1 [xschem get zoom]
 xschem zoom_out ; set zo2 [xschem get zoom]
@@ -71,7 +86,7 @@ set ro_cmd [expr {$zo2 / $zo1}]
 check "zoom_out key effect" [expr {$ro_key > 1.0 && [approx_eq $ro_key $ro_cmd]}] \
   "(ratio key=$ro_key cmd=$ro_cmd)"
 
-# 4) undo / redo: create a wire, then drive undo+redo from the keyboard
+# 5) undo / redo: create a wire, then drive undo+redo from the keyboard
 set n0 [xschem get wires]
 xschem wire 0 0 1000 0
 set n1 [xschem get wires]
@@ -83,33 +98,39 @@ event generate .drw <Shift-Key-U> ; update idletasks ;# redo
 set n_redo [xschem get wires]
 check "redo key restores wire" [expr {$n_redo == $n1}] "(=> $n_redo)"
 
-# 5) un-migrated keys must NOT have a specific binding, so they still reach the
-# generic <KeyPress> -> C dispatcher unchanged. (f=zoom full, s=simulate,
-# w=wire are deliberately left in C this batch.)
-foreach k {f s w} {
+# 6) Esc MUST NOT have a specific Tk binding (abort_operation must reach C).
+check "Escape not stolen from C" [expr {[bind .drw <Key-Escape>] eq {}}] {}
+
+# 7) un-migrated keys must NOT have a specific binding, so they still reach the
+# generic <KeyPress> -> C dispatcher unchanged.
+foreach k {f F s w} {
   check "unmigrated <Key-$k> left to C" [expr {[bind .drw <Key-$k>] eq {}}] {}
 }
 
-# Verify modifier variants of migrated keys are NOT stolen from C.
-# Each of these should have NO specific Tk binding (so they fall through to <KeyPress> -> C).
+# 8) Verify modifier variants of migrated plain keys are NOT stolen from C.
+# Each of these should have NO specific Tk binding.
 foreach {key desc} {
   <Control-Key-u>    {Ctrl+U: unselect_attached_floaters}
   <Alt-Key-u>        {Alt+U: align-to-grid}
-  <Control-Shift-Key-Z> {Ctrl+Shift+Z: unused, verify no binding}
   <Control-Key-n>    {Ctrl+N: clear schematic}
-  <Control-Shift-Key-T> {Ctrl+Shift+T: load last closed}
-  <Control-Shift-Key-S> {Ctrl+Shift+S: save as schematic}
   <Control-Key-x>    {Ctrl+X: cut}
   <Alt-Key-x>        {Alt+X: toggle crosshair}
   <Control-Key-j>    {Ctrl+J: create ipins from highlight nets}
-  <Control-Shift-Key-J> {Ctrl+Shift+J: unused, verify no binding}
-  <Control-Key-k>    {Ctrl+K: unhilight net}
   <Alt-Key-k>        {Alt+K: select whole net}
-  <Control-Shift-Key-K> {Ctrl+Shift+K: hilight drill}
+  <Control-Shift-Key-K> {Ctrl+Shift+K: propagate hilight}
 } {
   check "no Tcl binding for $desc" [expr {[bind .drw $key] eq {}}] {}
 }
 
+# 9) Shift-letter keys (e.g. <Shift-Key-Z>) must also have the guard because
+#    the accel_to_tk_sequence emits <Shift-Key-Z> (no Control/Alt prefix).
+foreach seq {<Shift-Key-Z> <Shift-Key-T> <Shift-Key-S> <Shift-Key-K>} {
+  set b [bind .drw $seq]
+  if {$b ne {}} {
+    check "Shift-letter $seq has modifier guard" \
+      [expr {[string first {action_key_unmodified} $b] >= 0}] "=> [string range $b 0 80]..."
+  }
+}
 
 if {$fail == 0} { puts "RESULT: ALL PASS" } else { puts "RESULT: $fail FAILED" }
 flush stdout
