@@ -29,7 +29,7 @@ proc summarize_all {fn fd} {
   set num_fail 0
   if (!$b) {
     while {[gets $fdread line] >=0} {
-      if { [regexp {[FAIL]$} $line] || [regexp {[GOLD\?]$} $line] || [regexp {^[FATAL]} $line]} {
+      if { [regexp {FAIL$} $line] || [regexp {GOLD\?$} $line] || [regexp {^FATAL} $line]} {
         puts $fd $line
         incr num_fail
       }
