@@ -421,6 +421,40 @@ proc generate_keybindings_text {} {
   return [join $lines "\n"]
 }
 
+proc handle_menu_select {w} {
+  global action_table
+  set topwin [winfo toplevel $w]
+  if {![winfo exists $topwin.statusbar.1]} { return }
+  
+  if {[catch {$w index active} idx] || $idx eq "none"} {
+    $topwin.statusbar.1 configure -text ""
+    return
+  }
+  
+  if {[catch {$w entrycget $idx -label} label]} {
+    $topwin.statusbar.1 configure -text ""
+    return
+  }
+  
+  set help ""
+  foreach row $action_table {
+    if {[dict get $row label] eq $label} {
+      set help [dict get $row help]
+      break
+    }
+  }
+  
+  if {$help ne ""} {
+    $topwin.statusbar.1 configure -text $help
+  } else {
+    $topwin.statusbar.1 configure -text ""
+  }
+}
+
+if {[info commands bind] ne {}} {
+  bind Menu <<MenuSelect>> { handle_menu_select %W }
+}
+
 # Show the generated cheat-sheet in a read-only window.
 proc show_keybindings_help {} {
   viewdata [generate_keybindings_text] ro .keybindings_help
