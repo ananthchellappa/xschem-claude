@@ -114,6 +114,10 @@ proc handle_menu_hover {menu_w} {
   set menukey [lindex [split $menu_w .] end]
   set help_text ""
   foreach row $action_table {
+    if {![dict exists $row menu]} {
+      puts stderr "ERROR: row missing menu key: $row"
+      continue
+    }
     if {[dict get $row menu] eq $menukey && [dict get $row label] eq $label} {
       set help_text [dict get $row help]
       break
@@ -143,6 +147,10 @@ proc build_menu_from_table {topwin menukey} {
   global action_table
   set m $topwin.menubar.$menukey
   foreach row $action_table {
+    if {![dict exists $row menu]} {
+      puts stderr "ERROR: row missing menu key in build_menu: $row"
+      continue
+    }
     if {[dict get $row menu] ne $menukey} continue
     set type [dict get $row type]
     set label [dict get $row label]

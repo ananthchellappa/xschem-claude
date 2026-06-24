@@ -116,8 +116,6 @@ option.netlist.verilog_netlist,radio,option.netlist,Verilog netlist,Ctrl+Shift+V
 option.netlist.tedax_netlist,radio,option.netlist,tEDAx netlist,Ctrl+Shift+V,xschem set netlist_type tedax; xschem redraw,netlist_type,tedax,,,tEDAx netlist,
 option.netlist.symbol_global_attrs,radio,option.netlist,Symbol global attrs,Ctrl+Shift+V,xschem flip_in_place,netlist_type,symbol,,,Symbol global attrs,
 toolbar.waves,command,toolbar,Waves,,waves,,,,,View results,Waves
-"Error: unknown toolbar item ""tools.join_trim"""
-"Error: unknown toolbar item ""tools.break"""
 # --- view menu ---
 view.redraw,command,view,Redraw,Esc,xschem redraw,,,,,Redraw,ViewRedraw
 view.fullscreen,command,view,Fullscreen,\,         if {$fullscreen == 1} {set fullscreen 2} ;# avoid hiding menu in true fullscreen         xschem fullscreen .drw      ,,,,,Fullscreen,
