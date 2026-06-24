@@ -41,3 +41,11 @@ doc/manpages/xschem.1
 Makefile.conf
 config.h
 *.Identifier
+
+# Auto-generated test artifacts
+tests/headless/results/
+tools/*.log
+*.pyc
+__pycache__/
+*~
+*.swp
