@@ -183,3 +183,17 @@ DISPLAY=:0 ./src/xschem --pipe --script tests/headless/test_accelerators.tcl
    active when schematic is modified).
 4. **Cheat-sheet window:** `show_keybindings_help` is already implemented;
    add a Help menu entry.
+
+Produces zero output. This PR is 100% Tcl and CSV.
+
+## Files Changed
+
+- `src/action_registry.tcl` — new (all registry/palette/keybind logic)
+- `src/actions.csv` — new (135+ action definitions)
+- `src/xschem.tcl` — modified (sources registry, calls generators)
+- `tests/headless/run.sh` — modified (now runs netlist tests)
+- `tests/headless/cases.txt` — 3 PDK test schematics
+- `tests/headless/gold/*.spice` — 9 golden netlist baselines
+- `tests/headless/test_menu_widgets.tcl` — new menu validation test
+- `.github/workflows/ci.yaml` — modified (CI runs headless tests)
+- `tools/audit_csv_commands.py` — new (CSV vs xschem.tcl cross-reference)
