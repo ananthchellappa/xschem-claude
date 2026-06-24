@@ -9570,6 +9570,9 @@ proc get_lastopened {} {
 proc quit_xschem { {force {}}} {
   global tabbed_interface
 
+  # D1/D2: persist remaps and recent commands before destroying windows
+  catch {save_accel_overrides}
+  catch {save_recent_actions}
   xschem new_schematic destroy_all $force
   xschem new_schematic switch .drw
   if {[winfo exists .ins]} { .ins.bottom.dismiss invoke }
@@ -9975,6 +9978,12 @@ global env has_x OS autofocus_mainwindow
     # is a more-specific binding that pre-empts the generic <KeyPress> above, so
     # the C keysym dispatcher is bypassed for migrated keys only.
     bind_accelerators_from_table $topwin
+    # D1/D2: load persisted accel remaps and recent-command list once at startup
+    # (only for the main .drw window; child tabs share the same accel table)
+    if {$topwin eq {.drw}} {
+      load_accel_overrides
+      load_recent_actions
+    }
     bind $topwin <KeyRelease> "xschem callback %W %T %x %y %N 0 0 %s"
     if {$autofocus_mainwindow} {
       bind $topwin <Motion> "focus $topwin; xschem callback %W %T %x %y 0 0 0 %s"

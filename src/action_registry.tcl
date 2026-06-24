@@ -92,6 +92,8 @@ proc load_action_table {} {
     foreach col $header val $fields {
       dict set row $col $val
     }
+    # D1: store the original CSV accel so save_accel_overrides can detect changes
+    dict set row orig_accel [dict get $row accel]
     lappend action_table $row
   }
   return [llength $action_table]
@@ -440,7 +442,66 @@ proc remap_action_accel {id new_accel} {
   return [accel_to_tk_sequence $new_accel]
 }
 
-# --- generated keybindings cheat-sheet ---------------------------------------
+# --- D1: Persist keyboard shortcut remaps across sessions -------------------
+# Remaps survive restart by writing/reading $USER_CONF_DIR/accel_overrides.tcl.
+# Only changed accels (different from the CSV orig_accel) are saved.
+
+proc save_accel_overrides {} {
+  global USER_CONF_DIR action_table
+  if {![info exists USER_CONF_DIR] || $USER_CONF_DIR eq {}} return
+  catch {
+    set fp [open "$USER_CONF_DIR/accel_overrides.tcl" w]
+    foreach row $action_table {
+      set id    [dict get $row id]
+      set accel [dict get $row accel]
+      set orig  [expr {[dict exists $row orig_accel] ? [dict get $row orig_accel] : $accel}]
+      if {$accel ne $orig} {
+        puts $fp "catch {remap_action_accel [list $id] [list $accel]}"
+      }
+    }
+    close $fp
+  }
+}
+
+proc load_accel_overrides {} {
+  global USER_CONF_DIR
+  if {![info exists USER_CONF_DIR] || $USER_CONF_DIR eq {}} return
+  set f "$USER_CONF_DIR/accel_overrides.tcl"
+  if {[file exists $f]} { catch {source $f} }
+}
+
+# --- D2: Recently-used command tracking for the palette ----------------------
+# When the palette runs an action, record it so empty-query results put recent
+# commands first. Persisted to $USER_CONF_DIR/recent_actions.tcl.
+
+set recent_palette_ids {}
+
+proc record_recent_action {id} {
+  global recent_palette_ids
+  set recent_palette_ids [lsearch -all -inline -not $recent_palette_ids $id]
+  set recent_palette_ids [linsert $recent_palette_ids 0 $id]
+  if {[llength $recent_palette_ids] > 8} {
+    set recent_palette_ids [lrange $recent_palette_ids 0 7]
+  }
+}
+
+proc save_recent_actions {} {
+  global USER_CONF_DIR recent_palette_ids
+  if {![info exists USER_CONF_DIR] || $USER_CONF_DIR eq {}} return
+  catch {
+    set fp [open "$USER_CONF_DIR/recent_actions.tcl" w]
+    puts $fp "set recent_palette_ids [list $recent_palette_ids]"
+    close $fp
+  }
+}
+
+proc load_recent_actions {} {
+  global USER_CONF_DIR
+  if {![info exists USER_CONF_DIR] || $USER_CONF_DIR eq {}} return
+  set f "$USER_CONF_DIR/recent_actions.tcl"
+  if {[file exists $f]} { catch {source $f} }
+}
+
 # Build the keyboard-shortcut cheat-sheet FROM the action table, so it can never
 # drift from the actual bindings (which are also generated from the same table).
 # Replaces the hand-maintained prose in keys.help. Rows migrated to the
@@ -629,6 +690,7 @@ proc palette_refilter {} {
   set q $palette_query
   set scored {}
   foreach row $action_table {
+    if {![dict exists $row menu]} continue
     if {[dict get $row type] ne {command}} continue
     if {$q eq {}} {
       lappend scored [list 0 $row]
@@ -645,9 +707,41 @@ proc palette_refilter {} {
   set palette_rows {}
   $w.l delete 0 end
   set n 0
+  # D2: when query is empty, show recent commands first then a separator
+  if {$q eq {}} {
+    set recent_rows {}
+    foreach rid $recent_palette_ids {
+      foreach pair $scored {
+        set row [lindex $pair 1]
+        if {[dict get $row id] eq $rid} {
+          lappend recent_rows $row
+          break
+        }
+      }
+    }
+    if {[llength $recent_rows] > 0} {
+      foreach row $recent_rows {
+        lappend palette_rows $row
+        set label [dict get $row label]
+        set accel [dict get $row accel]
+        if {$accel ne {}} {
+          $w.l insert end [format "%-46s %s" $label "\[$accel\]"]
+        } else {
+          $w.l insert end $label
+        }
+        incr n
+      }
+      # Visual separator between recent and all
+      $w.l insert end {--- All commands ---}
+      lappend palette_rows {}  ;# sentinel: no command to run for the separator
+      incr n
+    }
+  }
   foreach pair $scored {
     if {$n >= 200} break
     set row [lindex $pair 1]
+    # Skip rows already shown in recent section
+    if {$q eq {} && [lsearch -exact $recent_palette_ids [dict get $row id]] >= 0} continue
     lappend palette_rows $row
     set label [dict get $row label]
     set accel [dict get $row accel]
@@ -694,7 +788,11 @@ proc palette_run {} {
     set idx [$w.l index active]
   }
   if {$idx eq {} || $idx < 0 || $idx >= [llength $palette_rows]} return
-  set cmd [dict get [lindex $palette_rows $idx] command]
+  set row [lindex $palette_rows $idx]
+  if {$row eq {}} return  ;# separator row — no action
+  set cmd [dict get $row command]
+  # D2: record before destroying so recent list is valid even if cmd errors
+  catch { record_recent_action [dict get $row id] }
   destroy $w
   if {$cmd ne {}} {
     if {[catch {uplevel #0 $cmd} err]} { puts stderr "command palette: $err" }
