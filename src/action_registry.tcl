@@ -68,7 +68,8 @@ proc load_action_table {} {
   set data [read $fp]
   close $fp
   set header {}
-  foreach line [split $data "\n"] {
+  foreach rawline [split $data "\n"] {
+    set line [string trimright $rawline "\r"]
     if {$line eq {}} continue
     if {[string index $line 0] eq "#"} continue
     set fields [action_parse_csv_line $line]
