@@ -23,3 +23,19 @@ jobs:
       with:
         name: xschem
         path: src/xschem
+
+  test:
+    runs-on: ubuntu-latest
+    needs: build
+    name: Headless regression
+    steps:
+    - name: Install dependencies
+      run: sudo apt-get install -y flex bison gawk tcl tcl-dev tk tk-dev libcairo2 libcairo2-dev xcb libxcb1 libxcb1-dev libxrender-dev libxpm-dev libxcb-render0-dev libx11-xcb1 libx11-xcb-dev
+    - name: Checkout source
+      uses: actions/checkout@v4
+    - name: Build
+      run: ./configure && make -C src
+    - name: Run headless regression
+      run: cd tests/headless && ./run.sh
+    - name: Run regression harness
+      run: cd tests && tclsh run_regression.tcl
