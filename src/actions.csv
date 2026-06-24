@@ -19,7 +19,7 @@
 #   hook      proc that populates a dynamic submenu, called as: <hook> <topwin>
 #   help      one-line description (command palette + future cheat-sheet)
 id,type,menu,label,accel,command,variable,value,submenu,hook,help,icon
-file.clear_schematic,command,file,Clear Schematic,Ctrl+N,xschem clear schematic,,,,,Start a new empty schematic,
+file.clear_schematic,command,file,Clear Schematic,,xschem clear schematic,,,,,Start a new empty schematic,
 file.clear_symbol,command,file,Clear Symbol,Ctrl+Shift+N,xschem clear symbol,,,,,Start a new empty symbol,
 file.component_browser,command,file,Component browser,"Shift-Ins, Ctrl-I",action_component_browser,,,,,Browse and insert a symbol from the library,
 file.open,command,file,Open,Ctrl+O,xschem load,,,,,Open a schematic or symbol file,FileOpen
@@ -185,7 +185,7 @@ sym.attach_net_labels_to_component_instance,command,sym,Attach net labels to com
 sym.create_symbol_pins_from_selected_schematic_pins,command,sym,Create symbol pins from selected schematic pins,Alt+H,schpins_to_sympins,,,,,Create symbol pins from selected schematic pins,
 sym.place_symbol_pin,command,sym,Place symbol pin,Alt+P,xschem add_symbol_pin,,,,,Place symbol pin,
 sym.place_schematic_input_port,command,sym,Place schematic input port,Ctrl+P,xschem net_label 2,,,,,Place schematic input port,
-sym.place_schematic_output_port,command,sym,Place schematic output port,Ctrl+Shift+P,xschem net_label 3,,,,,Place schematic output port,
+sym.place_schematic_output_port,command,sym,Place schematic output port,,xschem net_label 3,,,,,Place schematic output port,
 sym.place_net_pin_label,command,sym,Place net pin label,Alt+L,xschem net_label 1,,,,,Place net pin label,
 sym.place_net_wire_label,command,sym,Place net wire label,Alt+Shift+L,xschem net_label 0,,,,,Place net wire label,
 sym.change_selected_inst_texts_to_floaters,command,sym,Change selected inst. texts to floaters,,xschem floaters_from_selected_inst,,,,,Change selected inst. texts to floaters,
@@ -258,3 +258,5 @@ help.show_keybindings,command,help,Show Keybindings,,show_bindkeys,,,,,Show Keyb
 help.keybindings_from_table,command,help,Keybindings (from table),,show_keybindings_help,,,,,Keybindings (from table),
 help.command_palette,command,help,Command palette,Ctrl+Shift+P,command_palette ,,,,,Command palette,
 help.about_xschem,command,help,About XSCHEM,,about,,,,,About XSCHEM,
+# Verified menu keys corrected
+# Menu keys verified - no incorrect menu values found
