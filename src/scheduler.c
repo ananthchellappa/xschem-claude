@@ -3656,7 +3656,23 @@ static int xschem_cmds_l(Tcl_Interp *interp, int argc, const char *argv[], int *
           if(has_x) tcleval("store_geom [xschem get topwindow] [xschem get current_name]");
           dbg(1, "scheduler(): load: filename=%s\n", f);
           my_strncpy(f,  abs_sym_path(f, ""), S(f));
-          if(!force && f[0] && check_loaded(f, win_path) &&
+          /* interactive open (-gui) of a file load_schematic() can't open: alert and skip,
+           * rather than letting it rename the current (e.g. pristine untitled) buffer to a
+           * missing/unreadable path -- that strands the buffer and cascades into broken
+           * untitled-reuse and window-close. Probe with the same my_fopen() test
+           * load_schematic() uses (covers missing AND unreadable, every path form). Generators
+           * (run via popen) and web urls are not local files and are exempt. Scripted loads
+           * (no -gui) keep the legacy create-on-missing behavior. */
+          if(!force && f[0] && !is_generator(f) && !is_from_web(f)) {
+            FILE *probe = my_fopen(f, fopen_read_mode);
+            if(probe) fclose(probe);
+            else {
+              if(has_x) tclvareval("alert_ {Unable to open file: ", f, "}", NULL);
+              else dbg(0, "xschem load -gui: unable to open file: %s\n", f);
+              skip = 1;
+            }
+          }
+          if(!force && !skip && f[0] && check_loaded(f, win_path) &&
               xctx->current_win_path && strcmp(win_path, xctx->current_win_path)) {
             char msg[PATH_MAX + 100];
             my_snprintf(msg, S(msg),
