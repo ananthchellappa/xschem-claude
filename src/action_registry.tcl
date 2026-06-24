@@ -298,8 +298,8 @@ proc should_handle_unmodified {state} {
 # sequence, or {} if the new accel isn't a bindable shortcut. This is the
 # programmatic core a future "customize shortcuts" dialog would call; it proves
 # the table is the single source of truth for keys.
-proc remap_action_accel {id new_accel {topwin .drw}} {
-  global action_table
+proc remap_action_accel {id new_accel} {
+  global action_table accel_bound_seqs
   set found 0
   set newtab {}
   foreach row $action_table {
@@ -311,7 +311,9 @@ proc remap_action_accel {id new_accel {topwin .drw}} {
   }
   if {!$found} { puts stderr "remap_action_accel: no such id '$id'"; return {} }
   set action_table $newtab
-  bind_accelerators_from_table $topwin
+  foreach topwin [array names accel_bound_seqs] {
+    bind_accelerators_from_table $topwin
+  }
   return [accel_to_tk_sequence $new_accel]
 }
 
