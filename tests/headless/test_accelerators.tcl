@@ -75,6 +75,17 @@ foreach k {f s w} {
   check "unmigrated <Key-$k> left to C" [expr {[bind .drw <Key-$k>] eq {}}] {}
 }
 
+# Verify modifier variants of migrated keys are NOT stolen from C.
+# Each of these should have NO specific Tk binding (so they fall through to <KeyPress> -> C).
+foreach {key desc} {
+  <Control-Key-u>    {Ctrl+U: unselect_attached_floaters}
+  <Alt-Key-u>        {Alt+U: align-to-grid}
+  <Control-Shift-Key-Z> {Ctrl+Shift+Z: unused, verify no binding}
+} {
+  check "no Tcl binding for $desc" [expr {[bind .drw $key] eq {}}] {}
+}
+
+
 if {$fail == 0} { puts "RESULT: ALL PASS" } else { puts "RESULT: $fail FAILED" }
 flush stdout
 exit [expr {$fail == 0 ? 0 : 1}]

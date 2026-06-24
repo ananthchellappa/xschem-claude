@@ -274,9 +274,18 @@ proc bind_accelerators_from_table {topwin} {
       continue
     }
     set cmd [dict get $row command]
-    bind $topwin $seq "run_action [list $cmd]; break"
+    bind $topwin $seq "if {\[should_handle_unmodified %s\]} { run_action [list $cmd]; break }"
     lappend accel_bound_seqs($topwin) $seq
   }
+}
+
+# Run $cmd only if no modifier keys are held (modifier bitmask %s == 0).
+# This prevents plain-key bindings (e.g. <Key-u>) from stealing modifier
+# combinations (e.g. Ctrl+U, Alt+U) that C handles via rstate.
+proc should_handle_unmodified {state} {
+  # Allow NumLock (Mod2Mask=0x10) and CapsLock (LockMask=0x02) as "no modifier"
+  set ignore [expr {[winfo pixels . 1] ? 0x12 : 0x12}]  ;# Mod2|LockMask
+  return [expr {($state & ~0x12) == 0}]
 }
 
 # Change one action's accelerator at runtime and re-install bindings so the new
