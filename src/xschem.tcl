@@ -10243,6 +10243,7 @@ proc build_widgets { {topwin {} } } {
   # menu widget $topwin.menubar.file is created above; submenus (Image export,
   # Open recent) are created by the generator. Other menus remain hand-written.
   build_menu_from_table $topwin file
+  build_menu_from_table $topwin edit
   build_menu_from_table $topwin option
   $topwin.menubar.view add command -label "Redraw" -command "xschem redraw" -accelerator Esc
   $topwin.menubar.view add command -label "Fullscreen" \

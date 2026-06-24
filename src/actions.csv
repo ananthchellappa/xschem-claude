@@ -71,6 +71,11 @@ edit.rotate_in_place_selected_objects,command,edit,Rotate in place selected obje
 edit.vertical_flip_selected_objects,command,edit,Vertical Flip selected objects,Shift-V,xschem flipv,,,,,Vertical Flip selected objects
 edit.horizontal_flip_selected_objects,command,edit,Horizontal Flip selected objects,Shift-F,xschem flip,,,,,Horizontal Flip selected objects
 edit.rotate_selected_objects,command,edit,Rotate selected objects,Shift-R,xschem rotate,,,,,Rotate selected objects
+edit.separator,separator,edit,,,,,,,,
+edit.unconstrained_move,radio,edit,Unconstrained move,,xschem set constr_mv 0,constr_mv,0,,,Unconstrained move
+edit.constrained_horizontal_move,radio,edit,Constrained Horizontal move,H,xschem set constr_mv 1,constr_mv,1,,,Constrained Horizontal move
+edit.constrained_vertical_move,radio,edit,Constrained Vertical move,V,xschem set constr_mv 2,constr_mv,2,,,Constrained Vertical move
+edit.separator,separator,edit,,,,,,,,
 edit.push_schematic,command,edit,Push schematic,E,xschem descend,,,,,Push schematic
 edit.push_symbol,command,edit,Push symbol,I,xschem descend_symbol,,,,,Push symbol
 edit.pop,command,edit,Pop,Ctrl+E,xschem go_back,,,,,Pop
