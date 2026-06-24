@@ -211,14 +211,20 @@ set migrated_action_ids {
   view.zoom_in
   view.zoom_out
   toolbar.netlist
-  prop.toggle_ignore_attribute_on_selected_instances
+  prop.toggle_*_ignore_attribute_on_selected_instances
   prop.change_selected_object_insertion_order
   file.new_process
   sym.list.print_list_of_highlight_nets
-  sym.list.create_labels_from_highlight_nets_with_i_prefix
+  sym.list.create_labels_from_highlight_nets_with_'i'_prefix
   hilight.highlight_selected_net_pins
-  hilight.un_highlight_all_net_pins
+  hilight.un-highlight_all_net_pins
   view.redraw
+  hilight.highlight_duplicate_instance_names
+  hilight.rename_duplicate_instance_names
+  tools.execute_tcl_command
+  tools.join_trim_wires
+  tools.break_wires_at_selected_instance_pins
+  tools.remove_wires_running_through_selected_inst_pins
 }
 
 # Translate an accelerator DISPLAY string (e.g. "Ctrl+S", "Shift+Z", "Alt-F",
@@ -343,7 +349,7 @@ proc bind_accelerators_from_table {topwin} {
       continue
     }
     set cmd [dict get $row command]
-    bind $topwin $seq "if {\[should_handle_unmodified %s\]} { run_action [list $cmd]; break }"
+    bind $topwin $seq "run_action [list $cmd]; break"
     lappend accel_bound_seqs($topwin) $seq
   }
 }

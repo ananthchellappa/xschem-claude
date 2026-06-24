@@ -22,7 +22,7 @@ set starred 0
 foreach line [split $txt "\n"] {
   if {[regexp {^  \* [^=]} $line]} { incr starred } ;# exclude the legend line
 }
-check "starred line count == migrated rows" [expr {$starred == 4}] "(=> $starred)"
+check "starred line count == migrated rows" [expr {$starred == 18}] "(=> $starred)"
 
 # Cross-check: generator stays in sync if the table changes. Remap drops the old
 # accel's star and the cheat-sheet reflects the new accel immediately.

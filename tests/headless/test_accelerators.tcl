@@ -29,10 +29,16 @@ set expect {
   <Shift-Key-S>     {xschem change_elem_order -1}
   <Key-x>           {xschem new_process}
   <Key-j>           {xschem print_hilight_net 1}
-  <Shift-Key-J>     {xschem print_hilight_net 2}
+  <Alt-Shift-Key-J> {xschem print_hilight_net 2}
   <Key-k>           {xschem hilight}
   <Shift-Key-K>     {xschem unhilight_all}
   <Key-Escape>      {xschem redraw}
+  <Key-numbersign>  {xschem check_unique_names 0}
+  <Control-Key-numbersign> {xschem check_unique_names 1}
+  <Key-equal>       {tclcmd}
+  <Key-ampersand>   {xschem trim_wires}
+  <Key-exclam>      {xschem break_wires}
+  <Control-Key-exclam> {xschem break_wires 1}
 }
 
 # 1) bindings installed and carry the right command
