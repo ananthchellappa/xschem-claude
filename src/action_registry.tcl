@@ -116,6 +116,18 @@ proc build_menu_from_table {topwin menukey} {
         if {$accel ne {}} { lappend opts -accelerator $accel }
         $m add command {*}$opts
       }
+      toggle {
+        set selectcolor [expr {$::dark_gui_colorscheme ? "white" : "black"}]
+        set opts [list -label $label -variable [dict get $row variable] -selectcolor $selectcolor -command [dict get $row command]]
+        if {$accel ne {}} { lappend opts -accelerator $accel }
+        $m add checkbutton {*}$opts
+      }
+      radio {
+        set selectcolor [expr {$::dark_gui_colorscheme ? "white" : "black"}]
+        set opts [list -label $label -variable [dict get $row variable] -value [dict get $row value] -selectcolor $selectcolor -command [dict get $row command]]
+        if {$accel ne {}} { lappend opts -accelerator $accel }
+        $m add radiobutton {*}$opts
+      }
       cascade {
         set sub [dict get $row submenu]
         set subw $topwin.menubar.$sub

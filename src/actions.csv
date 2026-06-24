@@ -18,144 +18,179 @@
 #   submenu   child menu key (cascade/dynamic rows)
 #   hook      proc that populates a dynamic submenu, called as: <hook> <topwin>
 #   help      one-line description (command palette + future cheat-sheet)
-id,type,menu,label,accel,command,submenu,hook,help
-file.clear_schematic,command,file,Clear Schematic,Ctrl+N,xschem clear schematic,,,Start a new empty schematic
-file.clear_symbol,command,file,Clear Symbol,Ctrl+Shift+N,xschem clear symbol,,,Start a new empty symbol
-file.component_browser,command,file,Component browser,"Shift-Ins, Ctrl-I",action_component_browser,,,Browse and insert a symbol from the library
-file.open,command,file,Open,Ctrl+O,xschem load,,,Open a schematic or symbol file
-file.open_new_window,command,file,Open in new window,Alt+O,xschem load_new_window,,,Open a file in a new window
-file.open_last_closed,command,file,Open last closed,Ctrl+Shift+T,xschem load -gui -lastclosed,,,Reopen the most recently closed file
-file.open_most_recent,command,file,Open most recent,Ctrl+Shift+O,xschem load -gui -lastopened,,,Open the most recently used file
-file.open_recent,dynamic,file,Open recent,,,file.recent,setup_recent_menu,List of recently opened files
-file.new_window_tab,command,file,Create new window/tab,Ctrl+T,xschem new_schematic create,,,Create a new window or tab
-file.open_sub_sch,command,file,Open selected schematic in new window,Alt+E,open_sub_schematic,,,Open the selected instance's schematic in a new window
-file.open_sub_sym,command,file,Open selected symbol in new window,Alt+I,xschem symbol_in_new_window,,,Open the selected instance's symbol in a new window
-file.delete_files,command,file,Delete files,Shift-D,xschem delete_files,,,Delete schematic or symbol files from disk
-file.save,command,file,Save,Ctrl+S,xschem save,,,Save the current schematic or symbol
-file.merge,command,file,Merge,B,xschem merge,,,Merge another file into the current one
-file.reload,command,file,Reload,Alt+S,action_reload,,,Reload the current file from disk (discard changes)
-file.save_as,command,file,Save as,Ctrl+Shift+S,xschem saveas,,,Save under a new name
-file.save_as_symbol,command,file,Save as symbol,Ctrl+Alt+S,xschem saveas {} symbol,,,Save the current cell as a symbol
-file.image_export,cascade,file,Image export,,,file.im_exp,,Export the drawing as an image (EPS/PDF/PNG/SVG)
-file.sep1,separator,file,,,,,,
-file.new_process,command,file,Start new Xschem process,X,xschem new_process,,,Launch a separate Xschem process
-file.close,command,file,Close schematic,Ctrl+W,xschem exit,,,Close the current schematic window
-file.quit,command,file,Quit Xschem,Ctrl+Q,quit_xschem,,,Quit Xschem
-file.im_exp.eps,command,file.im_exp,EPS Selection Export,,xschem print eps,,,Export the selection as EPS
-file.im_exp.pdf,command,file.im_exp,PDF/PS Export,*,xschem print pdf,,,Export the view as PDF/PostScript
-file.im_exp.pdf_full,command,file.im_exp,PDF/PS Export Full,,xschem print pdf_full,,,Export the full drawing as PDF/PostScript
-file.im_exp.pdf_hier,command,file.im_exp,Hierarchical PDF/PS Export,,xschem hier_psprint,,,Export every hierarchy level as PDF/PostScript
-file.im_exp.png,command,file.im_exp,PNG Export,Ctrl+*,xschem print png,,,Export the view as a PNG image
-file.im_exp.svg,command,file.im_exp,SVG Export,Alt+*,xschem print svg,,,Export the view as an SVG image
+id,type,menu,label,accel,command,variable,value,submenu,hook,help
+file.clear_schematic,command,file,Clear Schematic,Ctrl+N,xschem clear schematic,,,,,Start a new empty schematic
+file.clear_symbol,command,file,Clear Symbol,Ctrl+Shift+N,xschem clear symbol,,,,,Start a new empty symbol
+file.component_browser,command,file,Component browser,"Shift-Ins, Ctrl-I",action_component_browser,,,,,Browse and insert a symbol from the library
+file.open,command,file,Open,Ctrl+O,xschem load,,,,,Open a schematic or symbol file
+file.open_new_window,command,file,Open in new window,Alt+O,xschem load_new_window,,,,,Open a file in a new window
+file.open_last_closed,command,file,Open last closed,Ctrl+Shift+T,xschem load -gui -lastclosed,,,,,Reopen the most recently closed file
+file.open_most_recent,command,file,Open most recent,Ctrl+Shift+O,xschem load -gui -lastopened,,,,,Open the most recently used file
+file.open_recent,dynamic,file,Open recent,,,,,file.recent,setup_recent_menu,List of recently opened files
+file.new_window_tab,command,file,Create new window/tab,Ctrl+T,xschem new_schematic create,,,,,Create a new window or tab
+file.open_sub_sch,command,file,Open selected schematic in new window,Alt+E,open_sub_schematic,,,,,Open the selected instance's schematic in a new window
+file.open_sub_sym,command,file,Open selected symbol in new window,Alt+I,xschem symbol_in_new_window,,,,,Open the selected instance's symbol in a new window
+file.delete_files,command,file,Delete files,Shift-D,xschem delete_files,,,,,Delete schematic or symbol files from disk
+file.save,command,file,Save,Ctrl+S,xschem save,,,,,Save the current schematic or symbol
+file.merge,command,file,Merge,B,xschem merge,,,,,Merge another file into the current one
+file.reload,command,file,Reload,Alt+S,action_reload,,,,,Reload the current file from disk (discard changes)
+file.save_as,command,file,Save as,Ctrl+Shift+S,xschem saveas,,,,,Save under a new name
+file.save_as_symbol,command,file,Save as symbol,Ctrl+Alt+S,xschem saveas {} symbol,,,,,Save the current cell as a symbol
+file.image_export,cascade,file,Image export,,,,,file.im_exp,,Export the drawing as an image (EPS/PDF/PNG/SVG)
+file.sep1,separator,file,,,,,,,,
+file.new_process,command,file,Start new Xschem process,X,xschem new_process,,,,,Launch a separate Xschem process
+file.close,command,file,Close schematic,Ctrl+W,xschem exit,,,,,Close the current schematic window
+file.quit,command,file,Quit Xschem,Ctrl+Q,quit_xschem,,,,,Quit Xschem
+file.im_exp.eps,command,file.im_exp,EPS Selection Export,,xschem print eps,,,,,Export the selection as EPS
+file.im_exp.pdf,command,file.im_exp,PDF/PS Export,*,xschem print pdf,,,,,Export the view as PDF/PostScript
+file.im_exp.pdf_full,command,file.im_exp,PDF/PS Export Full,,xschem print pdf_full,,,,,Export the full drawing as PDF/PostScript
+file.im_exp.pdf_hier,command,file.im_exp,Hierarchical PDF/PS Export,,xschem hier_psprint,,,,,Export every hierarchy level as PDF/PostScript
+file.im_exp.png,command,file.im_exp,PNG Export,Ctrl+*,xschem print png,,,,,Export the view as a PNG image
+file.im_exp.svg,command,file.im_exp,SVG Export,Alt+*,xschem print svg,,,,,Export the view as an SVG image
 
 # --- imported from menu inventory: palette-only command rows -------------
 # Auto-generated by code_analysis/menu_inventory/gen_actions.tcl. These keep
 # their original menu name but are not yet generated (only File is); they are
 # discoverable in the command palette. help defaults to the label for now.
-toolbar.netlist,command,toolbar,Netlist,N,xschem netlist -erc,,,Netlist
-toolbar.simulate,command,toolbar,Simulate,,simulate_from_button,,,Simulate
-edit.undo,command,edit,Undo,U,xschem undo; xschem redraw,,,Undo
-edit.redo,command,edit,Redo,Shift+U,xschem redo; xschem redraw,,,Redo
-edit.copy,command,edit,Copy,Ctrl+C,xschem copy,,,Copy
-edit.cut,command,edit,Cut,Ctrl+X,xschem cut,,,Cut
-edit.paste,command,edit,Paste,Ctrl+V,xschem paste,,,Paste
-edit.delete,command,edit,Delete,Del,xschem delete,,,Delete
-edit.select_all,command,edit,Select all,Ctrl+A,xschem select_all,,,Select all
-edit.duplicate_objects,command,edit,Duplicate objects,C,xschem copy_objects,,,Duplicate objects
-edit.move_objects,command,edit,Move objects,M,xschem move_objects,,,Move objects
-edit.move_objects_stretching_attached_wires,command,edit,Move objects stretching attached wires,Control+M,xschem move_objects stretch,,,Move objects stretching attached wires
-edit.move_objects_adding_wires_to_connected_pins,command,edit,Move objects adding wires to connected pins,Shift+M,xschem move_objects kissing,,,Move objects adding wires to connected pins
-edit.horizontal_flip_in_place_selected_objects,command,edit,Horizontal Flip in place selected objects,Alt-F,xschem flip_in_place,,,Horizontal Flip in place selected objects
-edit.vertical_flip_in_place_selected_objects,command,edit,Vertical Flip in place selected objects,Alt-V,xschem flipv_in_place,,,Vertical Flip in place selected objects
-edit.rotate_in_place_selected_objects,command,edit,Rotate in place selected objects,Alt-R,xschem rotate_in_place,,,Rotate in place selected objects
-edit.vertical_flip_selected_objects,command,edit,Vertical Flip selected objects,Shift-V,xschem flipv,,,Vertical Flip selected objects
-edit.horizontal_flip_selected_objects,command,edit,Horizontal Flip selected objects,Shift-F,xschem flip,,,Horizontal Flip selected objects
-edit.rotate_selected_objects,command,edit,Rotate selected objects,Shift-R,xschem rotate,,,Rotate selected objects
-edit.push_schematic,command,edit,Push schematic,E,xschem descend,,,Push schematic
-edit.push_symbol,command,edit,Push symbol,I,xschem descend_symbol,,,Push symbol
-edit.pop,command,edit,Pop,Ctrl+E,xschem go_back,,,Pop
-help.show_keybindings,command,help,Show Keybindings,,show_bindkeys,,,Show Keybindings
-help.keybindings_cheatsheet,command,help,Keybindings (from table),,show_keybindings_help,,,Keyboard shortcut cheat-sheet generated from the action table
-help.about_xschem,command,help,About XSCHEM,,about,,,About XSCHEM
-hilight.set_schematic_to_compare_and_compare_with,command,hilight,Set schematic to compare and compare with,,xschem compare_schematics; set compare_sch 1,,,Set schematic to compare and compare with
-hilight.swap_compare_schematics,command,hilight,Swap compare schematics,,swap_compare_schematics,,,Swap compare schematics
-hilight.highlight_net_pin_mismatches_on_sel_instances,command,hilight,Highlight net-pin mismatches on sel. instances,Shift-X,xschem net_pin_mismatch,,,Highlight net-pin mismatches on sel. instances
-hilight.highlight_duplicate_instance_names,command,hilight,Highlight duplicate instance names,#,xschem check_unique_names 0,,,Highlight duplicate instance names
-hilight.rename_duplicate_instance_names,command,hilight,Rename duplicate instance names,Ctrl+#,xschem check_unique_names 1,,,Rename duplicate instance names
-hilight.select_overlapped_instances,command,hilight,Select overlapped instances,,xschem warning_overlapped_symbols 1; xschem redraw,,,Select overlapped instances
-hilight.propagate_highlight_selected_net_pins,command,hilight,Propagate Highlight selected net/pins,Ctrl+Shift+K,xschem hilight drill,,,Propagate Highlight selected net/pins
-hilight.highlight_selected_net_pins,command,hilight,Highlight selected net/pins,K,xschem hilight,,,Highlight selected net/pins
-hilight.send_selected_net_pins_to_viewer,command,hilight,Send selected net/pins to Viewer,Alt+G,xschem send_to_viewer,,,Send selected net/pins to Viewer
-hilight.select_hilight_nets_pins,command,hilight,Select hilight nets / pins,Alt+K,xschem select_hilight_net,,,Select hilight nets / pins
-hilight.un_highlight_all_net_pins,command,hilight,Un-highlight all net/pins,Shift+K,xschem unhilight_all,,,Un-highlight all net/pins
-hilight.un_highlight_selected_net_pins,command,hilight,Un-highlight selected net/pins,Ctrl+K,xschem unhilight,,,Un-highlight selected net/pins
-hilight.show_labels_on_unconnected_instance_pins,command,hilight,Show labels on unconnected instance pins,,xschem show_unconnected_pins,,,Show labels on unconnected instance pins
-prop.edit,command,prop,Edit,Q,xschem edit_prop,,,Edit
-prop.edit_with_editor,command,prop,Edit with editor,Shift+Q,xschem edit_vi_prop,,,Edit with editor
-prop.view,command,prop,View,Ctrl+Shift+Q,xschem view_prop,,,View
-prop.toggle_ignore_attribute_on_selected_instances,command,prop,Toggle *_ignore attribute on selected instances,Shift+T,xschem toggle_ignore,,,Toggle *_ignore attribute on selected instances
-prop.change_selected_object_insertion_order,command,prop,Change selected object insertion order,Shift+S,xschem change_elem_order -1,,,Change selected object insertion order
-prop.edit_header_license_text,command,prop,Edit Header/License text,Shift+B,update_schematic_header,,,Edit Header/License text
-prop.edit_file_danger,command,prop,Edit file (danger!),Alt+Q,xschem edit_file,,,Edit file (danger!)
-simulation.set_netlist_dir,command,simulation,Set netlist Dir,,set local_netlist_dir 0; set_netlist_dir 1,,,Set netlist Dir
-simulation.configure_simulators_and_tools,command,simulation,Configure simulators and tools,,simconf,,,Configure simulators and tools
-simulation.list_running_sub_processes,command,simulation,List running sub-processes,,list_running_cmds,,,List running sub-processes
-simulation.send_highlighted_nets_to_viewer,command,simulation,Send highlighted nets to viewer,Ctrl+Shift+X,xschem create_plot_cmd,,,Send highlighted nets to viewer
-simulation.graph.add_waveform_graph,command,simulation.graph,Add waveform graph,,xschem add_graph,,,Add waveform graph
-sym.make_symbol_from_schematic,command,sym,Make symbol from schematic,A,xschem make_symbol,,,Make symbol from schematic
-sym.make_schematic_from_symbol,command,sym,Make schematic from symbol,Ctrl+L,xschem make_sch,,,Make schematic from symbol
-sym.make_schematic_and_symbol_from_selected_components,command,sym,Make schematic and symbol from selected components,Ctrl+Shift+H,xschem make_sch_from_sel,,,Make schematic and symbol from selected components
-sym.attach_net_labels_to_component_instance,command,sym,Attach net labels to component instance,Shift+H,xschem attach_labels,,,Attach net labels to component instance
-sym.create_symbol_pins_from_selected_schematic_pins,command,sym,Create symbol pins from selected schematic pins,Alt+H,schpins_to_sympins,,,Create symbol pins from selected schematic pins
-sym.place_symbol_pin,command,sym,Place symbol pin,Alt+P,xschem add_symbol_pin,,,Place symbol pin
-sym.place_schematic_input_port,command,sym,Place schematic input port,Ctrl+P,xschem net_label 2,,,Place schematic input port
-sym.place_schematic_output_port,command,sym,Place schematic output port,Ctrl+Shift+P,xschem net_label 3,,,Place schematic output port
-sym.place_net_pin_label,command,sym,Place net pin label,Alt+L,xschem net_label 1,,,Place net pin label
-sym.place_net_wire_label,command,sym,Place net wire label,Alt+Shift+L,xschem net_label 0,,,Place net wire label
-sym.change_selected_inst_texts_to_floaters,command,sym,Change selected inst. texts to floaters,,xschem floaters_from_selected_inst,,,Change selected inst. texts to floaters
-sym.unselect_attached_floaters,command,sym,Unselect attached floaters,,xschem unselect_attached_floaters,,,Unselect attached floaters
-sym.list.print_list_of_highlight_nets,command,sym.list,Print list of highlight nets,J,xschem print_hilight_net 1,,,Print list of highlight nets
-sym.list.print_list_of_highlight_nets_with_buses_expanded,command,sym.list,"Print list of highlight nets, with buses expanded",Alt-Ctrl-J,xschem print_hilight_net 3,,,"Print list of highlight nets, with buses expanded"
-sym.list.create_labels_from_highlight_nets,command,sym.list,Create labels from highlight nets,Alt-J,xschem print_hilight_net 4,,,Create labels from highlight nets
-sym.list.create_labels_from_highlight_nets_with_i_prefix,command,sym.list,Create labels from highlight nets with 'i' prefix,Shift+J,xschem print_hilight_net 2,,,Create labels from highlight nets with 'i' prefix
-sym.list.create_pins_from_highlight_nets,command,sym.list,Create pins from highlight nets,Ctrl-J,xschem print_hilight_net 0,,,Create pins from highlight nets
-tools.insert_symbol,command,tools,Insert symbol,"Ins, Shift-I",xschem place_symbol,,,Insert symbol
-tools.insert_text,command,tools,Insert text,T,xschem place_text,,,Insert text
-tools.insert_wire,command,tools,Insert wire,W,xschem wire,,,Insert wire
-tools.insert_snap_wire,command,tools,Insert snap wire,Shift+W,xschem snap_wire,,,Insert snap wire
-tools.insert_line,command,tools,Insert line,L,xschem line,,,Insert line
-tools.insert_rect,command,tools,Insert rect,R,xschem rect,,,Insert rect
-tools.insert_polygon,command,tools,Insert polygon,P,xschem polygon,,,Insert polygon
-tools.insert_arc,command,tools,Insert arc,Shift+C,xschem arc,,,Insert arc
-tools.insert_circle,command,tools,Insert circle,Ctrl+Shift+C,xschem circle,,,Insert circle
-tools.insert_jpg_png_svg_image,command,tools,Insert JPG/PNG/SVG image,,xschem add_image,,,Insert JPG/PNG/SVG image
-tools.grab_screen_area,command,tools,Grab screen area,Print Scrn,xschem grabscreen,,,Grab screen area
-tools.search,command,tools,Search,Ctrl+F,property_search,,,Search
-tools.align_to_grid,command,tools,Align to Grid,Alt+U,xschem align,,,Align to Grid
-tools.execute_tcl_command,command,tools,Execute TCL command,=,tclcmd,,,Execute TCL command
-tools.join_trim_wires,command,tools,Join/Trim wires,&,xschem trim_wires,,,Join/Trim wires
-tools.break_wires_at_selected_instance_pins,command,tools,Break wires at selected instance pins,!,xschem break_wires,,,Break wires at selected instance pins
-tools.remove_wires_running_through_selected_inst_pins,command,tools,Remove wires running through selected inst. pins,Ctrl-!,xschem break_wires 1,,,Remove wires running through selected inst. pins
-tools.break_wires_at_mouse_position,command,tools,Break wires at mouse position,Alt-Shift-Right Butt.,xschem wire_cut noalign,,,Break wires at mouse position
-tools.break_wires_at_mouse_position_align_cut_point,command,tools,"Break wires at mouse position, align cut point",Alt-Right Butt.,xschem wire_cut,,,"Break wires at mouse position, align cut point"
-tools.select_all_connected_wires_labels_pins,command,tools,Select all connected wires/labels/pins,Shift-Right Butt.,xschem connected_nets,,,Select all connected wires/labels/pins
-tools.select_conn_wires_stop_at_junctions,command,tools,"Select conn. wires, stop at junctions",Ctrl-Right Butt.,xschem connected_nets 1,,,"Select conn. wires, stop at junctions"
-view.redraw,command,view,Redraw,Esc,xschem redraw,,,Redraw
-view.zoom_full,command,view,Zoom Full,F,xschem zoom_full,,,Zoom Full
-view.zoom_in,command,view,Zoom In,Shift+Z,xschem zoom_in,,,Zoom In
-view.zoom_out,command,view,Zoom Out,Ctrl+Z,xschem zoom_out,,,Zoom Out
-view.zoom_box,command,view,Zoom box,Z,xschem zoom_box,,,Zoom box
-view.toggle_colorscheme,command,view,Toggle colorscheme,Shift+O,xschem toggle_colorscheme,,,Toggle colorscheme
-view.dim_colors,command,view,Dim colors,,color_dim,,,Dim colors
-view.change_current_layer_color,command,view,Change current layer color,,change_color,,,Change current layer color
-view.reset_all_colors_to_default,command,view,Reset all colors to default,,reset_colors 1,,,Reset all colors to default
-view.show.visible_layers,command,view.show,Visible layers,,select_layers; xschem redraw,,,Visible layers
-waves.external_viewer,command,waves,External viewer,,waves external,,,External viewer
-waves.clear,command,waves,Clear,,xschem raw_clear,,,Clear
-waves.op,command,waves,Op,,waves op,,,Op
-waves.dc,command,waves,Dc,,waves dc,,,Dc
-waves.ac,command,waves,Ac,,waves ac,,,Ac
-waves.tran,command,waves,Tran,,waves tran,,,Tran
-waves.noise,command,waves,Noise,,waves noise,,,Noise
-waves.sp,command,waves,Sp,,waves ac,,,Sp
-waves.spectrum,command,waves,Spectrum,,waves ac,,,Spectrum
+toolbar.netlist,command,toolbar,Netlist,N,xschem netlist -erc,,,,,Netlist
+toolbar.simulate,command,toolbar,Simulate,,simulate_from_button,,,,,Simulate
+edit.undo,command,edit,Undo,U,xschem undo; xschem redraw,,,,,Undo
+edit.redo,command,edit,Redo,Shift+U,xschem redo; xschem redraw,,,,,Redo
+edit.copy,command,edit,Copy,Ctrl+C,xschem copy,,,,,Copy
+edit.cut,command,edit,Cut,Ctrl+X,xschem cut,,,,,Cut
+edit.paste,command,edit,Paste,Ctrl+V,xschem paste,,,,,Paste
+edit.delete,command,edit,Delete,Del,xschem delete,,,,,Delete
+edit.select_all,command,edit,Select all,Ctrl+A,xschem select_all,,,,,Select all
+edit.duplicate_objects,command,edit,Duplicate objects,C,xschem copy_objects,,,,,Duplicate objects
+edit.move_objects,command,edit,Move objects,M,xschem move_objects,,,,,Move objects
+edit.move_objects_stretching_attached_wires,command,edit,Move objects stretching attached wires,Control+M,xschem move_objects stretch,,,,,Move objects stretching attached wires
+edit.move_objects_adding_wires_to_connected_pins,command,edit,Move objects adding wires to connected pins,Shift+M,xschem move_objects kissing,,,,,Move objects adding wires to connected pins
+edit.horizontal_flip_in_place_selected_objects,command,edit,Horizontal Flip in place selected objects,Alt-F,xschem flip_in_place,,,,,Horizontal Flip in place selected objects
+edit.vertical_flip_in_place_selected_objects,command,edit,Vertical Flip in place selected objects,Alt-V,xschem flipv_in_place,,,,,Vertical Flip in place selected objects
+edit.rotate_in_place_selected_objects,command,edit,Rotate in place selected objects,Alt-R,xschem rotate_in_place,,,,,Rotate in place selected objects
+edit.vertical_flip_selected_objects,command,edit,Vertical Flip selected objects,Shift-V,xschem flipv,,,,,Vertical Flip selected objects
+edit.horizontal_flip_selected_objects,command,edit,Horizontal Flip selected objects,Shift-F,xschem flip,,,,,Horizontal Flip selected objects
+edit.rotate_selected_objects,command,edit,Rotate selected objects,Shift-R,xschem rotate,,,,,Rotate selected objects
+edit.push_schematic,command,edit,Push schematic,E,xschem descend,,,,,Push schematic
+edit.push_symbol,command,edit,Push symbol,I,xschem descend_symbol,,,,,Push symbol
+edit.pop,command,edit,Pop,Ctrl+E,xschem go_back,,,,,Pop
+help.show_keybindings,command,help,Show Keybindings,,show_bindkeys,,,,,Show Keybindings
+help.keybindings_cheatsheet,command,help,Keybindings (from table),,show_keybindings_help,,,,,Keyboard shortcut cheat-sheet generated from the action table
+help.about_xschem,command,help,About XSCHEM,,about,,,,,About XSCHEM
+hilight.set_schematic_to_compare_and_compare_with,command,hilight,Set schematic to compare and compare with,,xschem compare_schematics; set compare_sch 1,,,,,Set schematic to compare and compare with
+hilight.swap_compare_schematics,command,hilight,Swap compare schematics,,swap_compare_schematics,,,,,Swap compare schematics
+hilight.highlight_net_pin_mismatches_on_sel_instances,command,hilight,Highlight net-pin mismatches on sel. instances,Shift-X,xschem net_pin_mismatch,,,,,Highlight net-pin mismatches on sel. instances
+hilight.highlight_duplicate_instance_names,command,hilight,Highlight duplicate instance names,#,xschem check_unique_names 0,,,,,Highlight duplicate instance names
+hilight.rename_duplicate_instance_names,command,hilight,Rename duplicate instance names,Ctrl+#,xschem check_unique_names 1,,,,,Rename duplicate instance names
+hilight.select_overlapped_instances,command,hilight,Select overlapped instances,,xschem warning_overlapped_symbols 1; xschem redraw,,,,,Select overlapped instances
+hilight.propagate_highlight_selected_net_pins,command,hilight,Propagate Highlight selected net/pins,Ctrl+Shift+K,xschem hilight drill,,,,,Propagate Highlight selected net/pins
+hilight.highlight_selected_net_pins,command,hilight,Highlight selected net/pins,K,xschem hilight,,,,,Highlight selected net/pins
+hilight.send_selected_net_pins_to_viewer,command,hilight,Send selected net/pins to Viewer,Alt+G,xschem send_to_viewer,,,,,Send selected net/pins to Viewer
+hilight.select_hilight_nets_pins,command,hilight,Select hilight nets / pins,Alt+K,xschem select_hilight_net,,,,,Select hilight nets / pins
+hilight.un_highlight_all_net_pins,command,hilight,Un-highlight all net/pins,Shift+K,xschem unhilight_all,,,,,Un-highlight all net/pins
+hilight.un_highlight_selected_net_pins,command,hilight,Un-highlight selected net/pins,Ctrl+K,xschem unhilight,,,,,Un-highlight selected net/pins
+hilight.show_labels_on_unconnected_instance_pins,command,hilight,Show labels on unconnected instance pins,,xschem show_unconnected_pins,,,,,Show labels on unconnected instance pins
+prop.edit,command,prop,Edit,Q,xschem edit_prop,,,,,Edit
+prop.edit_with_editor,command,prop,Edit with editor,Shift+Q,xschem edit_vi_prop,,,,,Edit with editor
+prop.view,command,prop,View,Ctrl+Shift+Q,xschem view_prop,,,,,View
+prop.toggle_ignore_attribute_on_selected_instances,command,prop,Toggle *_ignore attribute on selected instances,Shift+T,xschem toggle_ignore,,,,,Toggle *_ignore attribute on selected instances
+prop.change_selected_object_insertion_order,command,prop,Change selected object insertion order,Shift+S,xschem change_elem_order -1,,,,,Change selected object insertion order
+prop.edit_header_license_text,command,prop,Edit Header/License text,Shift+B,update_schematic_header,,,,,Edit Header/License text
+prop.edit_file_danger,command,prop,Edit file (danger!),Alt+Q,xschem edit_file,,,,,Edit file (danger!)
+simulation.set_netlist_dir,command,simulation,Set netlist Dir,,set local_netlist_dir 0; set_netlist_dir 1,,,,,Set netlist Dir
+simulation.configure_simulators_and_tools,command,simulation,Configure simulators and tools,,simconf,,,,,Configure simulators and tools
+simulation.list_running_sub_processes,command,simulation,List running sub-processes,,list_running_cmds,,,,,List running sub-processes
+simulation.send_highlighted_nets_to_viewer,command,simulation,Send highlighted nets to viewer,Ctrl+Shift+X,xschem create_plot_cmd,,,,,Send highlighted nets to viewer
+simulation.graph.add_waveform_graph,command,simulation.graph,Add waveform graph,,xschem add_graph,,,,,Add waveform graph
+sym.make_symbol_from_schematic,command,sym,Make symbol from schematic,A,xschem make_symbol,,,,,Make symbol from schematic
+sym.make_schematic_from_symbol,command,sym,Make schematic from symbol,Ctrl+L,xschem make_sch,,,,,Make schematic from symbol
+sym.make_schematic_and_symbol_from_selected_components,command,sym,Make schematic and symbol from selected components,Ctrl+Shift+H,xschem make_sch_from_sel,,,,,Make schematic and symbol from selected components
+sym.attach_net_labels_to_component_instance,command,sym,Attach net labels to component instance,Shift+H,xschem attach_labels,,,,,Attach net labels to component instance
+sym.create_symbol_pins_from_selected_schematic_pins,command,sym,Create symbol pins from selected schematic pins,Alt+H,schpins_to_sympins,,,,,Create symbol pins from selected schematic pins
+sym.place_symbol_pin,command,sym,Place symbol pin,Alt+P,xschem add_symbol_pin,,,,,Place symbol pin
+sym.place_schematic_input_port,command,sym,Place schematic input port,Ctrl+P,xschem net_label 2,,,,,Place schematic input port
+sym.place_schematic_output_port,command,sym,Place schematic output port,Ctrl+Shift+P,xschem net_label 3,,,,,Place schematic output port
+sym.place_net_pin_label,command,sym,Place net pin label,Alt+L,xschem net_label 1,,,,,Place net pin label
+sym.place_net_wire_label,command,sym,Place net wire label,Alt+Shift+L,xschem net_label 0,,,,,Place net wire label
+sym.change_selected_inst_texts_to_floaters,command,sym,Change selected inst. texts to floaters,,xschem floaters_from_selected_inst,,,,,Change selected inst. texts to floaters
+sym.unselect_attached_floaters,command,sym,Unselect attached floaters,,xschem unselect_attached_floaters,,,,,Unselect attached floaters
+sym.list.print_list_of_highlight_nets,command,sym.list,Print list of highlight nets,J,xschem print_hilight_net 1,,,,,Print list of highlight nets
+sym.list.print_list_of_highlight_nets_with_buses_expanded,command,sym.list,"Print list of highlight nets, with buses expanded",Alt-Ctrl-J,xschem print_hilight_net 3,,,,,"Print list of highlight nets, with buses expanded"
+sym.list.create_labels_from_highlight_nets,command,sym.list,Create labels from highlight nets,Alt-J,xschem print_hilight_net 4,,,,,Create labels from highlight nets
+sym.list.create_labels_from_highlight_nets_with_i_prefix,command,sym.list,Create labels from highlight nets with 'i' prefix,Shift+J,xschem print_hilight_net 2,,,,,Create labels from highlight nets with 'i' prefix
+sym.list.create_pins_from_highlight_nets,command,sym.list,Create pins from highlight nets,Ctrl-J,xschem print_hilight_net 0,,,,,Create pins from highlight nets
+tools.insert_symbol,command,tools,Insert symbol,"Ins, Shift-I",xschem place_symbol,,,,,Insert symbol
+tools.insert_text,command,tools,Insert text,T,xschem place_text,,,,,Insert text
+tools.insert_wire,command,tools,Insert wire,W,xschem wire,,,,,Insert wire
+tools.insert_snap_wire,command,tools,Insert snap wire,Shift+W,xschem snap_wire,,,,,Insert snap wire
+tools.insert_line,command,tools,Insert line,L,xschem line,,,,,Insert line
+tools.insert_rect,command,tools,Insert rect,R,xschem rect,,,,,Insert rect
+tools.insert_polygon,command,tools,Insert polygon,P,xschem polygon,,,,,Insert polygon
+tools.insert_arc,command,tools,Insert arc,Shift+C,xschem arc,,,,,Insert arc
+tools.insert_circle,command,tools,Insert circle,Ctrl+Shift+C,xschem circle,,,,,Insert circle
+tools.insert_jpg_png_svg_image,command,tools,Insert JPG/PNG/SVG image,,xschem add_image,,,,,Insert JPG/PNG/SVG image
+tools.grab_screen_area,command,tools,Grab screen area,Print Scrn,xschem grabscreen,,,,,Grab screen area
+tools.search,command,tools,Search,Ctrl+F,property_search,,,,,Search
+tools.align_to_grid,command,tools,Align to Grid,Alt+U,xschem align,,,,,Align to Grid
+tools.execute_tcl_command,command,tools,Execute TCL command,=,tclcmd,,,,,Execute TCL command
+tools.join_trim_wires,command,tools,Join/Trim wires,&,xschem trim_wires,,,,,Join/Trim wires
+tools.break_wires_at_selected_instance_pins,command,tools,Break wires at selected instance pins,!,xschem break_wires,,,,,Break wires at selected instance pins
+tools.remove_wires_running_through_selected_inst_pins,command,tools,Remove wires running through selected inst. pins,Ctrl-!,xschem break_wires 1,,,,,Remove wires running through selected inst. pins
+tools.break_wires_at_mouse_position,command,tools,Break wires at mouse position,Alt-Shift-Right Butt.,xschem wire_cut noalign,,,,,Break wires at mouse position
+tools.break_wires_at_mouse_position_align_cut_point,command,tools,"Break wires at mouse position, align cut point",Alt-Right Butt.,xschem wire_cut,,,,,"Break wires at mouse position, align cut point"
+tools.select_all_connected_wires_labels_pins,command,tools,Select all connected wires/labels/pins,Shift-Right Butt.,xschem connected_nets,,,,,Select all connected wires/labels/pins
+tools.select_conn_wires_stop_at_junctions,command,tools,"Select conn. wires, stop at junctions",Ctrl-Right Butt.,xschem connected_nets 1,,,,,"Select conn. wires, stop at junctions"
+view.redraw,command,view,Redraw,Esc,xschem redraw,,,,,Redraw
+view.zoom_full,command,view,Zoom Full,F,xschem zoom_full,,,,,Zoom Full
+view.zoom_in,command,view,Zoom In,Shift+Z,xschem zoom_in,,,,,Zoom In
+view.zoom_out,command,view,Zoom Out,Ctrl+Z,xschem zoom_out,,,,,Zoom Out
+view.zoom_box,command,view,Zoom box,Z,xschem zoom_box,,,,,Zoom box
+view.toggle_colorscheme,command,view,Toggle colorscheme,Shift+O,xschem toggle_colorscheme,,,,,Toggle colorscheme
+view.dim_colors,command,view,Dim colors,,color_dim,,,,,Dim colors
+view.change_current_layer_color,command,view,Change current layer color,,change_color,,,,,Change current layer color
+view.reset_all_colors_to_default,command,view,Reset all colors to default,,reset_colors 1,,,,,Reset all colors to default
+view.show.visible_layers,command,view.show,Visible layers,,select_layers; xschem redraw,,,,,Visible layers
+waves.external_viewer,command,waves,External viewer,,waves external,,,,,External viewer
+waves.clear,command,waves,Clear,,xschem raw_clear,,,,,Clear
+waves.op,command,waves,Op,,waves op,,,,,Op
+waves.dc,command,waves,Dc,,waves dc,,,,,Dc
+waves.ac,command,waves,Ac,,waves ac,,,,,Ac
+waves.tran,command,waves,Tran,,waves tran,,,,,Tran
+waves.noise,command,waves,Noise,,waves noise,,,,,Noise
+waves.sp,command,waves,Sp,,waves ac,,,,,Sp
+waves.spectrum,command,waves,Spectrum,,waves ac,,,,,Spectrum
+option.color_postscript_svg,toggle,option,Color Postscript/SVG,,if { $color_ps==1 } {xschem set color_ps 1} else { xschem set color_ps 0},color_ps,,,,Color Postscript/SVG
+option.transparent_svg_background,toggle,option,Transparent SVG background,,,transparent_svg,,,,Transparent SVG background
+option.debug_mode,toggle,option,Debug mode,,if { $menu_debug_var==1 } {xschem debug 1} else { xschem debug 0},menu_debug_var,,,,Debug mode
+option.undo_buffer_on_disk,toggle,option,Undo buffer on Disk,,switch_undo,undo_type,,,,Undo buffer on Disk
+option.enable_stretch,toggle,option,Enable stretch,Y,,enable_stretch,,,,Enable stretch
+option.enable_infix_interface,toggle,option,Enable infix-interface,,,infix_interface,,,,Enable infix-interface
+option.enable_orthogonal_wiring,toggle,option,Enable orthogonal wiring,Shift-L,,orthogonal_wiring,,,,Enable orthogonal wiring
+option.unsel_partial_sel_wires_after_stretch_move,toggle,option,Unsel. partial sel. wires after stretch move,,,unselect_partial_sel_wires,,,,Unsel. partial sel. wires after stretch move
+option.auto_join_trim_wires,toggle,option,Auto Join/Trim Wires,,if {$autotrim_wires == 1} { xschem trim_wires xschem redraw },autotrim_wires,,,,Auto Join/Trim Wires
+option.persistent_wire_line_place_command,toggle,option,Persistent wire/line place command,,,persistent_command,,,,Persistent wire/line place command
+option.intuitive_click_drag_interface,toggle,option,Intuitive Click & Drag interface,,xschem set intuitive_interface $intuitive_interface,intuitive_interface,,,,Intuitive Click & Drag interface
+option.crosshair,cascade,option,Crosshair,,,,,,,Crosshair
+option.crosshair.draw_snap_cursor,toggle,option.crosshair,Draw snap cursor,Alt-Z,,snap_cursor,,,,Draw snap cursor
+option.crosshair.draw_crosshair,toggle,option.crosshair,Draw crosshair,Alt-X,,draw_crosshair,,,,Draw crosshair
+option.crosshair.crosshair_size,command,option.crosshair,Crosshair size,,"input_line ""Enter crosshair size (int, 0 = full screen width):"" \ ""set crosshair_size"" $crosshair_size",,,,,Crosshair size
+option.replace_and_for_buses_in_spice_netlist,command,option,Replace \[ and \] for buses in SPICE netlist,,"input_line ""Enter two characters to replace default bus \[\] delimiters:"" ""set bus_replacement_char""",,,,,Replace \[ and \] for buses in SPICE netlist
+option.group_bus_slices_in_verilog_instances,toggle,option,Group bus slices in Verilog instances,,,verilog_bitblast,,,,Group bus slices in Verilog instances
+option.draw_grid,toggle,option,Draw grid,%,xschem redraw,draw_grid,,,,Draw grid
+option.half_snap_threshold,command,option,Half Snap Threshold,G,xschem set cadsnap [expr {$cadsnap / 2.0} ],,,,,Half Snap Threshold
+option.double_snap_threshold,command,option,Double Snap Threshold,Shift-G,xschem set cadsnap [expr {$cadsnap * 2.0} ],,,,,Double Snap Threshold
+option.variable_grid_point_size,toggle,option,Variable grid point size,,xschem redraw,big_grid_points,,,,Variable grid point size
+option.separator,separator,option,,,,,,,,
+option.no_xcopyarea_drawing_model,toggle,option,No XCopyArea drawing model,Ctrl+$,if { $draw_window == 1} { xschem set draw_window 1} else { xschem set draw_window 0},draw_window,,,,No XCopyArea drawing model
+option.fix_for_gpus_with_broken_tiled_fill,toggle,option,Fix for GPUs with broken tiled fill,,if { $fix_broken_tiled_fill == 1} { xschem set fix_broken_tiled_fill 1 } else { xschem set fix_broken_tiled_fill 0 } xschem resetwin 1 1 1 0 0 xschem redraw,fix_broken_tiled_fill,,,,Fix for GPUs with broken tiled fill
+option.fix_broken_rdp_mouse_coordinates,toggle,option,Fix broken RDP mouse coordinates,,xschem set fix_mouse_coord $fix_mouse_coord,fix_mouse_coord,,,,Fix broken RDP mouse coordinates
+option.separator,separator,option,,,,,,,,
+option.netlist_format_symbol_mode,cascade,option,Netlist format / Symbol mode,,,,,,,Netlist format / Symbol mode
+option.netlist.flat_netlist,toggle,option.netlist,Flat netlist,:,if { $flat_netlist==1 } {xschem set flat_netlist 1} else { xschem set flat_netlist 0},flat_netlist,,,,Flat netlist
+option.netlist.split_netlist,toggle,option.netlist,Split netlist,{},,split_files,,,,Split netlist
+option.netlist.spectre_netlist,radio,option.netlist,Spectre netlist,Ctrl+Shift+V,xschem set netlist_type spectre; xschem redraw,netlist_type,spectre,,,Spectre netlist
+option.netlist.spice_netlist,radio,option.netlist,Spice netlist,Ctrl+Shift+V,xschem set netlist_type spice; xschem redraw,netlist_type,spice,,,Spice netlist
+option.netlist.vhdl_netlist,radio,option.netlist,VHDL netlist,Ctrl+Shift+V,xschem set netlist_type vhdl; xschem redraw,netlist_type,vhdl,,,VHDL netlist
+option.netlist.verilog_netlist,radio,option.netlist,Verilog netlist,Ctrl+Shift+V,xschem set netlist_type verilog; xschem redraw,netlist_type,verilog,,,Verilog netlist
+option.netlist.tedax_netlist,radio,option.netlist,tEDAx netlist,Ctrl+Shift+V,xschem set netlist_type tedax; xschem redraw,netlist_type,tedax,,,tEDAx netlist
+option.netlist.symbol_global_attrs,radio,option.netlist,Symbol global attrs,Ctrl+Shift+V,xschem flip_in_place,netlist_type,symbol,,,Symbol global attrs
