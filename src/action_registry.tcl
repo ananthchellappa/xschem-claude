@@ -460,6 +460,89 @@ proc show_keybindings_help {} {
   viewdata [generate_keybindings_text] ro .keybindings_help
 }
 
+proc customize_shortcuts_ui {} {
+  global action_table migrated_action_ids
+  
+  set w .customize_shortcuts
+  if {[winfo exists $w]} {
+    wm deiconify $w
+    raise $w
+    return
+  }
+  
+  toplevel $w
+  wm title $w "Customize Shortcuts"
+  
+  frame $w.f
+  pack $w.f -fill both -expand yes -padx 10 -pady 10
+  
+  # Listbox to show remappable actions
+  listbox $w.f.lb -width 60 -height 15
+  pack $w.f.lb -side left -fill both -expand yes
+  
+  # Scrollbar for listbox
+  scrollbar $w.f.sb -command [list $w.f.lb yview]
+  $w.f.lb configure -yscrollcommand [list $w.f.sb set]
+  pack $w.f.sb -side right -fill y
+  
+  # Populate listbox
+  set ::customize_shortcuts_map {}
+  foreach row $action_table {
+    set id [dict get $row id]
+    if {[lsearch -exact $migrated_action_ids $id] != -1} {
+      set label [dict get $row label]
+      set accel [dict get $row accel]
+      if {$accel eq ""} { set accel "<none>" }
+      $w.f.lb insert end [format "%-30s | %s" $label $accel]
+      lappend ::customize_shortcuts_map $id
+    }
+  }
+  
+  # Entry and apply button
+  frame $w.b
+  pack $w.b -fill x -padx 10 -pady 10
+  
+  label $w.b.lbl -text "New shortcut:"
+  entry $w.b.ent -width 20
+  button $w.b.apply -text "Apply" -command [list customize_shortcuts_apply $w]
+  
+  pack $w.b.lbl -side left
+  pack $w.b.ent -side left -padx 5
+  pack $w.b.apply -side left
+  
+  # Add help text
+  label $w.help -text "Select an action, type a new shortcut (e.g. Ctrl+K), and click Apply." -foreground gray
+  pack $w.help -side bottom -pady 5
+}
+
+proc customize_shortcuts_apply {w} {
+  global action_table migrated_action_ids
+  
+  set sel [$w.f.lb curselection]
+  if {$sel eq ""} { return }
+  
+  set new_accel [$w.b.ent get]
+  set id [lindex $::customize_shortcuts_map $sel]
+  
+  # Call remap_action_accel
+  remap_action_accel $id $new_accel
+  
+  # Update listbox text
+  set label ""
+  foreach row $action_table {
+    if {[dict get $row id] eq $id} {
+      set label [dict get $row label]
+      break
+    }
+  }
+  set disp_accel $new_accel
+  if {$disp_accel eq ""} { set disp_accel "<none>" }
+  
+  $w.f.lb delete $sel
+  $w.f.lb insert $sel [format "%-30s | %s" $label $disp_accel]
+  $w.f.lb selection set $sel
+}
+
 # --- command palette ---------------------------------------------------------
 # Fuzzy-searchable launcher over the action table. Reuses fuzzy_subseq_score
 # (the file-chooser matcher in xschem.tcl). Bound to Ctrl+Shift+P in

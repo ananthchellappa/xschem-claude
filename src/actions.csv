@@ -190,6 +190,8 @@ option.no_xcopyarea_drawing_model,toggle,option,No XCopyArea drawing model,Ctrl+
 option.fix_for_gpus_with_broken_tiled_fill,toggle,option,Fix for GPUs with broken tiled fill,,if { $fix_broken_tiled_fill == 1} { xschem set fix_broken_tiled_fill 1 } else { xschem set fix_broken_tiled_fill 0 } xschem resetwin 1 1 1 0 0 xschem redraw,fix_broken_tiled_fill,,,,Fix for GPUs with broken tiled fill,
 option.fix_broken_rdp_mouse_coordinates,toggle,option,Fix broken RDP mouse coordinates,,xschem set fix_mouse_coord $fix_mouse_coord,fix_mouse_coord,,,,Fix broken RDP mouse coordinates,
 option.separator,separator,option,,,,,,,,,
+option.customize_shortcuts,command,option,Customize Shortcuts,,customize_shortcuts_ui,,,,,Customize keyboard shortcuts,
+option.separator2,separator,option,,,,,,,,,
 option.netlist_format_symbol_mode,cascade,option,Netlist format / Symbol mode,,,,,,,Netlist format / Symbol mode,
 option.netlist.flat_netlist,toggle,option.netlist,Flat netlist,:,if { $flat_netlist==1 } {xschem set flat_netlist 1} else { xschem set flat_netlist 0},flat_netlist,,,,Flat netlist,
 option.netlist.split_netlist,toggle,option.netlist,Split netlist,{},,split_files,,,,Split netlist,
