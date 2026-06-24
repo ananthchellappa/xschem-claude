@@ -99,6 +99,22 @@ proc load_action_table {} {
 # row whose 'menu' field equals <menukey>, in table order. Submenus recurse;
 # dynamic submenus delegate to their populate hook. The parent menu widget is
 # expected to already exist (created in build_widgets like the other menus).
+proc build_toolbar_from_table {topwin} {
+  global action_table toolbar_list
+  # create the toolbar buttons
+  foreach row $action_table {
+    set id [dict get $row id]
+    set icon [dict get $row icon]
+    if {$icon ne ""} {
+      set cmd [dict get $row command]
+      set help [dict get $row help]
+      # Button name: sanitize action id by replacing dot with underscore
+      set btn_name [string map {. _} $id]
+      toolbar_add $btn_name $cmd $help $topwin $icon
+    }
+  }
+}
+
 proc build_menu_from_table {topwin menukey} {
   global action_table
   set m $topwin.menubar.$menukey

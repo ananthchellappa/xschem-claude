@@ -9036,40 +9036,44 @@ proc setup_toolbar {} {
   set_ne toolbar_visible 1
   set_ne toolbar_horiz   1
   set_ne toolbar_list {
-    FileOpen
-    FileSave
-    FileReload
+    file.open
+    file.save
+    file.reload
     ---
-    EditUndo
-    EditRedo
-    EditCut
-    EditCopy
-    EditPaste
-    EditDelete
+    edit.undo
+    edit.redo
+    edit.cut
+    edit.copy
+    edit.paste
+    edit.delete
     ---
-    EditDuplicate
-    EditMove
+    edit.duplicate_objects
+    edit.move_objects
     ---
-    EditPushSch
-    EditPushSym
-    EditPop
+    edit.push_schematic
+    edit.push_symbol
+    edit.pop
     ---
-    ViewRedraw
-    ViewToggleColors
+    view.redraw
+    view.toggle_colorscheme
     ---
-    ToolInsertSymbol
-    ToolInsertText
-    ToolInsertWire
-    ToolInsertLine
-    ToolInsertRect
-    ToolInsertPolygon
-    ToolInsertArc
-    ToolInsertCircle
+    tools.insert_symbol
+    tools.insert_text
+    tools.insert_wire
+    tools.insert_line
+    tools.insert_rect
+    tools.insert_polygon
+    tools.insert_arc
+    tools.insert_circle
     ---
-    ToolSearch
+    tools.search
     ---
-    ToolJoinTrim
-    ToolBreak
+    tools.join_trim
+    tools.break
+    ---
+    toolbar.netlist
+    toolbar.simulate
+    toolbar.waves
   }
   #
   # Pull in the toolbar graphics resources
@@ -9083,9 +9087,10 @@ proc setup_toolbar {} {
 #
 # Create a tool button which may be displayed
 #
-proc toolbar_add {name cmd { help "" } {topwin {} } } {
+proc toolbar_add {name cmd { help "" } {topwin {}} {icon {}}} {
     global dark_gui_colorscheme toolbar_icon_zoom
 
+    if {$icon eq ""} { set icon $name }
     set toolbar_icon_size [expr {$toolbar_icon_zoom * 24}]
     if { $dark_gui_colorscheme ==1} {
       set bg black
@@ -9096,7 +9101,7 @@ proc toolbar_add {name cmd { help "" } {topwin {} } } {
        frame $topwin.toolbar -relief raised -bd 0 -background $bg -takefocus 0
     }
     if { ![winfo exists $topwin.toolbar.b$name]} {
-      button $topwin.toolbar.b$name -image img$name -relief flat -bd 0 -takefocus 0 \
+      button $topwin.toolbar.b$name -image img$icon -relief flat -bd 0 -takefocus 0 \
       -background $bg -fg $bg -height $toolbar_icon_size  -padx 0 -pady 0 -command $cmd
       if { $help == "" } { balloon $topwin.toolbar.b$name $name } else { balloon $topwin.toolbar.b$name $help }
     }
@@ -9128,8 +9133,8 @@ proc toolbar_show { { topwin {} } } {
     if { $toolbar_horiz } { set pos "left" }
     set tlist [ winfo children $topwin.toolbar ]
     set toolbar_sepn 0
-    foreach b $toolbar_list {
-        if { $b == "---" } {
+    foreach action_id $toolbar_list {
+        if { $action_id == "---" } {
             if { $toolbar_horiz } {
                 frame $topwin.toolbar.sep$toolbar_sepn -background lightgrey -width 2 -takefocus 0
                 pack $topwin.toolbar.sep$toolbar_sepn -side $pos -padx 1 -pady 0 -fill y
@@ -9139,17 +9144,21 @@ proc toolbar_show { { topwin {} } } {
             }
             incr toolbar_sepn
         } else {
+            set b [string map {. _} $action_id]
             if { [ lsearch -exact $tlist "$topwin.toolbar.b$b" ] != -1 } {
                 pack $topwin.toolbar.b$b -side $pos
             } else {
-                puts "Error: unknown toolbar item \"$b\""
+                puts "Error: unknown toolbar item \"$action_id\""
             }
         }
     }
     set pos "bottom"
     if { $toolbar_horiz } { set pos "right" }
-    foreach b { Waves Simulate Netlist } {
-        pack $topwin.toolbar.b$b -side $pos
+    foreach action_id { toolbar.waves toolbar.simulate toolbar.netlist } {
+        set b [string map {. _} $action_id]
+        if { [ lsearch -exact $tlist "$topwin.toolbar.b$b" ] != -1 } {
+            pack $topwin.toolbar.b$b -side $pos
+        }
     }
 }
 
@@ -9173,50 +9182,6 @@ proc toolbar_hide { { topwin {} } } {
 }
 
 
-proc add_toolbuttons {{topwin {}}} {
-  # toolbar_add FileNew {xschem clear schematic} "New Schematic" $topwin
-  # toolbar_add FileNewSym {xschem clear symbol} "New Symbol" $topwin
-  toolbar_add FileOpen "xschem load" "Open File" $topwin
-  toolbar_add FileSave "xschem save" "Save File" $topwin
-  # toolbar_add FileMerge "xschem merge" "Merge File" $topwin
-  toolbar_add FileReload {
-      if {[alert_ "Are you sure you want to reload?" {} 0 1] == 1} {
-        xschem reload
-      }
-    } "Reload File" $topwin
-  toolbar_add EditUndo "xschem undo; xschem redraw" "Undo" $topwin
-  toolbar_add EditRedo "xschem redo; xschem redraw" "Redo" $topwin
-  toolbar_add EditCut "xschem cut" "Cut" $topwin
-  toolbar_add EditCopy "xschem copy" "Copy" $topwin
-  toolbar_add EditPaste "xschem paste" "Paste" $topwin
-  toolbar_add EditDelete "xschem delete" "Delete" $topwin
-  toolbar_add EditDuplicate "xschem copy_objects" "Duplicate objects" $topwin
-  toolbar_add EditMove "xschem move_objects" "Move objects" $topwin
-  toolbar_add EditPushSch "xschem descend" "Push schematic" $topwin
-  toolbar_add EditPushSym "xschem descend_symbol" "Push symbol" $topwin
-  toolbar_add EditPop "xschem go_back" "Pop" $topwin
-  toolbar_add ViewRedraw "xschem redraw" "Redraw" $topwin
-  # toolbar_add ViewZoomIn "xschem zoom_in" "Zoom In" $topwin
-  # toolbar_add ViewZoomOut "xschem zoom_out" "Zoom Out" $topwin
-  # toolbar_add ViewZoomBox "xschem zoom_box" "Zoom Box" $topwin
-  toolbar_add ViewToggleColors {
-     xschem toggle_colorscheme
-  } "Toggle Color Scheme" $topwin
-  toolbar_add ToolInsertSymbol "xschem place_symbol" "Insert Symbol" $topwin
-  toolbar_add ToolInsertText "xschem place_text" "Insert Text" $topwin
-  toolbar_add ToolInsertWire "xschem wire" "Insert Wire" $topwin
-  toolbar_add ToolInsertLine "xschem line" "Insert Line" $topwin
-  toolbar_add ToolInsertRect "xschem rect" "Insert Rectangle" $topwin
-  toolbar_add ToolInsertPolygon "xschem polygon" "Insert Polygon" $topwin
-  toolbar_add ToolInsertArc "xschem arc" "Insert Arc" $topwin
-  toolbar_add ToolInsertCircle "xschem circle" "Insert Circle" $topwin
-  toolbar_add ToolSearch property_search "Search" $topwin
-  toolbar_add ToolJoinTrim "xschem trim_wires" "Join/Trim Wires" $topwin
-  toolbar_add ToolBreak "xschem break_wires" "Break wires at selected\ninstance pin intersections" $topwin
-  toolbar_add Netlist { xschem netlist -erc } "Create netlist" $topwin
-  toolbar_add Simulate "simulate_from_button" "Run simulation" $topwin
-  toolbar_add Waves { waves } "View results" $topwin
-}
 
 proc pack_tabs {} {
   global toolbar_horiz
@@ -10627,7 +10592,7 @@ tclcommand=\"xschem raw_read \$netlist_dir/[file tail [file rootname [xschem get
   label $topwin.statusbar.10 -activebackground green -text {} ;# DRAW WIRE or DRAW LINE or ...
   label $topwin.statusbar.9 -textvariable enable_stretch
   label $topwin.statusbar.8 -activebackground red -text {} ;# Caps lock, Num lock status
-  add_toolbuttons $topwin
+  build_toolbar_from_table $topwin
 }
 
 proc set_initial_dirs {} {
