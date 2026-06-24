@@ -149,7 +149,7 @@ view.toggle_colorscheme,command,view,Toggle colorscheme,Shift+O,xschem toggle_co
 view.dim_colors,command,view,Dim colors,,color_dim,,,Dim colors
 view.change_current_layer_color,command,view,Change current layer color,,change_color,,,Change current layer color
 view.reset_all_colors_to_default,command,view,Reset all colors to default,,reset_colors 1,,,Reset all colors to default
-view.show.visible_layers,command,view.show,Visible layers,,select_layers xschem redraw,,,Visible layers
+view.show.visible_layers,command,view.show,Visible layers,,select_layers; xschem redraw,,,Visible layers
 waves.external_viewer,command,waves,External viewer,,waves external,,,External viewer
 waves.clear,command,waves,Clear,,xschem raw_clear,,,Clear
 waves.op,command,waves,Op,,waves op,,,Op
