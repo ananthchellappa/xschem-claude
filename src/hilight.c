@@ -2771,9 +2771,14 @@ void draw_hilight_net(int on_window)
       * the legacy rendering exactly. */
      NetHilightStyle *st = (entry->value >= 0) ? get_hilight_style(entry->value) : NULL;
      unsigned int fg;
+     double dash_off;
      if(anim_on && !net_hilight_style_on_now(st, anim_now)) continue; /* blink OFF: skip wire+dots */
      fg = hilight_pixel_of(entry->value, st);
-     draw_hilight_wire(fg, st,
+     /* Pass 2b marching ants: nonzero dash-scroll offset ONLY in an animation frame (anim_on);
+      * 0 on ordinary/hardcopy draws keeps export deterministic. net_hilight_march_offset returns
+      * 0 for non-marching styles, so this is a no-op for blink-only / static highlights. */
+     dash_off = anim_on ? net_hilight_march_offset(st, anim_now) : 0.0;
+     draw_hilight_wire(fg, st, dash_off,
           xctx->wire[i].x1, xctx->wire[i].y1, xctx->wire[i].x2, xctx->wire[i].y2, xctx->wire[i].bus);
      if(xctx->cadhalfdotsize*xctx->mooz>=0.7) {
        if( xctx->wire[i].end1 >1 ) draw_hilight_dot(fg, xctx->wire[i].x1, xctx->wire[i].y1, xctx->cadhalfdotsize);

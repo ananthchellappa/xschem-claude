@@ -1519,8 +1519,8 @@ extern double net_hilight_march_offset(NetHilightStyle *st, double now); /* Pass
 extern int net_hilight_has_animation(void);             /* window needs the animation tick? */
 extern int draw_hilight_region(double *next_ms);        /* regional redraw of animating nets */
 extern void net_hilight_anim_update(void);              /* (re)evaluate start/stop of the tick */
-extern void draw_hilight_wire(unsigned int fg, NetHilightStyle *st, double linex1, double liney1,
-                              double linex2, double liney2, double bus);
+extern void draw_hilight_wire(unsigned int fg, NetHilightStyle *st, double dash_offset,
+                              double linex1, double liney1, double linex2, double liney2, double bus);
 extern void draw_hilight_dot(unsigned int fg, double x, double y, double r);
 extern void incr_hilight_color(void);
 extern void get_inst_pin_coord(int i, int j, double *x, double *y);

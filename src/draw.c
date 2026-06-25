@@ -1492,7 +1492,7 @@ static void hilight_cairo_set_source(cairo_t *ct, NetHilightStyle *st, unsigned 
  * is done), 0 to fall back to the Xlib flat-dash path (thin wire, degenerate segment, or
  * no cairo context for an active target). */
 static int draw_hilight_wire_striped(unsigned int fg, NetHilightStyle *st,
-        double x1, double y1, double x2, double y2, int width)
+        double x1, double y1, double x2, double y2, int width, double dash_offset)
 {
   double dx = x2 - x1, dy = y2 - y1;
   double len = sqrt(dx * dx + dy * dy);
@@ -1535,8 +1535,10 @@ static int draw_hilight_wire_striped(unsigned int fg, NetHilightStyle *st,
   shear = half * tan(st->angle * (XSCH_PI / 180.0));   /* angle <= 45 -> |shear| <= half */
   /* start a whole number of periods before the wire start so a band begins at x=0 (phase
    * parity with XSetDashes), far enough back that the sheared back edge AND the cap
-   * overhang at x=-ext are still covered regardless of the width/period ratio */
-  cstart = -ceil((ext + shear + period) / period) * period;
+   * overhang at x=-ext are still covered regardless of the width/period ratio. The Pass-2b
+   * marching offset (dash_offset, in [0,period)) then shifts the whole pattern along +x so
+   * the stripes crawl; it is absorbed by the +period slack above, so x=-ext stays covered. */
+  cstart = -ceil((ext + shear + period) / period) * period + dash_offset;
 
   for(t = 0; t < nt; ++t) {
     cairo_t *ct = targets[t];
@@ -1585,8 +1587,8 @@ static int draw_hilight_wire_striped(unsigned int fg, NetHilightStyle *st,
  * given the bbox clip by set_clip_mask(). dash_len 0 = solid; else a full XSetDashes
  * pattern. A nonzero stripe angle (with a dash pattern) is rendered as tilted stripes via
  * cairo (draw_hilight_wire_striped); Xlib-only builds fall back to perpendicular dashes. */
-void draw_hilight_wire(unsigned int fg, NetHilightStyle *st, double linex1, double liney1,
-                       double linex2, double liney2, double bus)
+void draw_hilight_wire(unsigned int fg, NetHilightStyle *st, double dash_offset,
+                       double linex1, double liney1, double linex2, double liney2, double bus)
 {
   double x1, y1, x2, y2;
   int width, base, mult, cap, join;
@@ -1611,14 +1613,17 @@ void draw_hilight_wire(unsigned int fg, NetHilightStyle *st, double linex1, doub
    * dashes are perpendicular-only). Falls through to the flat dash path if cairo can't
    * handle this wire (thin/degenerate) or has no usable context for the active target. */
   if(st && st->angle > 0 && st->dash_len > 0) {
-    if(draw_hilight_wire_striped(fg, st, x1, y1, x2, y2, width)) return;
+    if(draw_hilight_wire_striped(fg, st, x1, y1, x2, y2, width, dash_offset)) return;
   }
 #endif
 
   XSetForeground(display, gc, fg);
   if(st && st->dash_len > 0) {
     XSetLineAttributes(display, gc, width, xDashType, cap, join);
-    XSetDashes(display, gc, 0, st->dash_arr, st->dash_len);
+    /* dash_offset (Pass 2b marching ants): phase into the pattern, in dash-length units; 0 on
+     * ordinary/hardcopy draws (deterministic), nonzero only in an animation frame so the dashes
+     * crawl. XSetDashes' phase is measured from the drawn start (after clip), like cstart above. */
+    XSetDashes(display, gc, (int)dash_offset, st->dash_arr, st->dash_len);
   } else {
     XSetLineAttributes(display, gc, width, LineSolid, cap, join);
   }
