@@ -2800,16 +2800,33 @@ int draw_hilight_region(double *next_ms)
   return 1;
 }
 
-/* (Re)evaluate whether the current window's animation tick should run, after any change to
- * the highlight set or styles. Delegates start/stop to the Tcl per-window `after` loop (it
- * owns the after-ids). The tick is self-terminating, so the STOP side is mostly self-healing;
- * this exists chiefly to START the loop when a blinking highlight first appears. */
+/* (Re)evaluate whether EACH open window's animation tick should run, after any change to the
+ * highlight set or styles. Delegates start/stop to the Tcl per-window `after` loop (it owns the
+ * after-ids). The tick is self-terminating, so the STOP side is mostly self-healing; this exists
+ * chiefly to START the loop when a blinking highlight first appears.
+ *
+ * Phase D (multi-window anim): arm/cancel EVERY open window, not just the front. The per-window
+ * Tcl `net_hilight_anim_update {win}` forwards <win> to `get net_hilight_animated`, which borrows
+ * that window's context, so each window arms on its OWN animation state and visibility. Iteration
+ * mirrors `xschem windows` (save_xctx[]; the sole schematic still lives in the live xctx). The
+ * borrow inside the Tcl call restores xctx before returning, so the loop's xctx stays stable. */
 void net_hilight_anim_update(void)
 {
-  /* current_win_path can be NULL mid window-alloc/teardown; a NULL middle arg would truncate
-   * tclvareval's va_arg list and run the unbalanced fragment "net_hilight_anim_update {". */
-  if(!has_x || !xctx->current_win_path) return;
-  tclvareval("net_hilight_anim_update {", xctx->current_win_path, "}", NULL);
+  int i;
+  Xschem_ctx *ctx, **save_xctx;
+  if(!has_x) return;
+  save_xctx = get_save_xctx();
+  for(i = 0; i < MAX_NEW_WINDOWS; ++i) {
+    const char *wp;
+    ctx = save_xctx[i];
+    if(get_window_count() == 0 && i == 0) ctx = xctx; /* sole schematic not yet in save_xctx[] */
+    if(!ctx) continue;
+    wp = (i == 0) ? ".drw" : get_window_path(i);
+    /* a NULL/empty middle arg would truncate tclvareval's va_arg list and run the unbalanced
+     * fragment "net_hilight_anim_update {"; skip such a slot. */
+    if(!wp || !wp[0]) continue;
+    tclvareval("net_hilight_anim_update {", wp, "}", NULL);
+  }
 }
 
 void draw_hilight_net(int on_window)

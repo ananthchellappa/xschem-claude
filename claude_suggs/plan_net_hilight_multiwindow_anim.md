@@ -314,3 +314,38 @@ whatever window it is told; the decision **not** to tick a non-viewable backgrou
 there. Phase C tested detached windows only.
 
 Next: Phase D (arm every animating window from C + the visibility gate).
+
+---
+
+## Phase D — STATUS: DONE (2026-06-25)
+
+D1+D2 implemented and verified RED→GREEN→sabotage. D2's `winfo viewable` gate also closes C3
+(background tabs). Single commit.
+
+### What landed
+- **D1 — `net_hilight_anim_update()` (C, `hilight.c`) arms EVERY open window**, not just the
+  front. It now iterates the open windows (mirroring `xschem windows`: `save_xctx[]`, with the
+  sole-schematic caveat → the live `xctx`) and calls the per-window Tcl `net_hilight_anim_update
+  {win}` for each. That proc forwards `<win>` to `get net_hilight_animated` (Phase B), which
+  borrows the window's context, so each window arms/cancels on its **own** animation state. The
+  borrow restores `xctx` before returning, so the C loop's `xctx` stays stable across iterations.
+- **D2 — visibility gate** (`xschem.tcl`): both `net_hilight_anim_update {win}` (arm) and
+  `net_hilight_anim_tick {win}` (run) now `return` early when `![winfo viewable $win]`. A
+  withdrawn/iconified detached window stops; **and a background tab — whose shared canvas is
+  unmapped — is not viewable, so it stays front-only (closes C3)** with no tab-specific code.
+
+### Verification (`scratchpad/phaseD_arm_test.tcl`, `DISPLAY=:0`)
+Two detached windows (front `.drw` cmos_inv, background `.x1.drw` LCC_instances), each with a
+blinking highlight; assertions on the per-window `net_hilight_after(<win>)` timer registration
+(no event loop needed — `clear_timers` after any `update` drops self-rescheduled Phase-C ticks so
+the checks isolate the arm DECISION):
+- **D1** — RED (front-only): a global `net_hilight_anim_update()` arms `.drw` only; `.x1.drw` gets
+  no timer (1 fail). GREEN: both armed. Sabotage: `unhilight_all` in `.x1.drw` → its timer cancels,
+  `.drw` untouched.
+- **D2** — RED (D1 landed, no gate): a **withdrawn** `.x1.drw` is still armed (1 fail). GREEN
+  (`winfo viewable` gate): withdrawn `.x1.drw` not armed, `.drw` still armed. Sabotage:
+  `wm deiconify` → `.x1.drw` arms again.
+Phase B/C tests still green; regression (create_save/open_close/netlisting) clean.
+
+Next: Phase E (serialization E1/E2 — never borrow mid-gesture, non-reentrant — + live multi-window
+`vwait` verification E3 + docs E4).

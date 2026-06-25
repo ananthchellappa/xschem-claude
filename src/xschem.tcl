@@ -458,6 +458,10 @@ proc net_hilight_anim_tick {win} {
   if { ![info exists has_x] || !$has_x } return
   if { !$net_hilight_animate } return
   if { ![winfo exists $win] } return
+  # Visibility gate (multi-window anim, Phase D2): only a viewable canvas animates. A withdrawn/
+  # iconified detached window -- or a background TAB, whose shared canvas is unmapped (C3) -- is
+  # not `winfo viewable`, so its tick stops (don't reschedule) until it is shown again.
+  if { ![winfo viewable $win] } return
   # One C call advances + decides; returns "tristate next_ms": 0 = nothing animates / not the
   # front window -> stop; 1 = redrew; 2 = keep ticking (busy or no blink edge). It pauses itself
   # mid-gesture (returns 2), so we just stop on 0. next_ms = how long to sleep before the next
@@ -480,6 +484,10 @@ proc net_hilight_anim_update {win} {
   if { ![info exists has_x] || !$has_x } return
   if { !$net_hilight_animate } return
   if { ![winfo exists $win] } return
+  # Visibility gate (multi-window anim, Phase D2): don't arm a non-viewable window. A withdrawn/
+  # iconified detached window -- or a background TAB, whose shared canvas is unmapped (C3) -- is
+  # not `winfo viewable`; its tick is left cancelled (above) until the window is shown again.
+  if { ![winfo viewable $win] } return
   # Ask about THIS window's context (multi-window anim, Phase B): pass $win so the start gate
   # for a non-front window consults its own animation state, not the front's. Today $win is
   # always the front window (the C net_hilight_anim_update() arms only current_win_path), so
