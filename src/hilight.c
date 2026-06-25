@@ -2503,6 +2503,7 @@ double net_hilight_now_ms(void)
 #define NET_HILIGHT_TICK_MIN  16.0
 #define NET_HILIGHT_TICK_MAX  250.0
 #define NET_HILIGHT_TICK_BUSY 50.0
+#define NET_HILIGHT_FRAME_MS  33.0   /* Pass 2b marching cadence: ~30fps (continuous scroll, no edge) */
 
 /* Blink gate: ON if the style does not blink (blink_ms<=0), else a 50% duty cycle of
  * period blink_ms. 'now' is wall-clock ms from net_hilight_now_ms(). */
@@ -2516,29 +2517,39 @@ int net_hilight_style_on_now(NetHilightStyle *st, double now)
   return fmod(floor(now / half), 2.0) < 0.5;
 }
 
-/* Does this style drive the animation tick? Two independent animators (which compose):
- * blink (blink_ms>0, Pass 2a) and marching ants (anim!=0, Pass 2b). Marching scrolls the dash
- * pattern, so it needs both a dash pattern (dash_len>0) and a positive scroll rate (rate_persec>0)
- * — a marching solid style has nothing to scroll, and rate<=0 never moves, so neither animates
- * (and arming the tick for them would just churn redraws; parse_net_hilight_styles warns about
- * both). Keep in sync with net_hilight_march_offset's "returns 0" conditions. */
-static int net_hilight_style_animates(NetHilightStyle *st)
+/* Does this style do marching ants? Needs an anim direction, a dash pattern to scroll, and a
+ * positive rate — the exact conditions under which net_hilight_march_offset returns nonzero.
+ * Single source of truth so the animation gate, the frame cadence, and the offset all agree
+ * (a marching-no-dash or rate<=0 style is warned about at parse and does NOT march). */
+static int net_hilight_style_marches(NetHilightStyle *st)
 {
-  return st && (st->blink_ms > 0 || (st->anim != 0 && st->dash_len > 0 && st->rate_persec > 0));
+  return st && st->anim != 0 && st->dash_len > 0 && st->rate_persec > 0;
 }
 
-/* Time (ms) until style st's next blink phase edge, given wall-clock 'now'. Always in
- * (0, blink_ms/2]: lets the tick sleep until the next visible change instead of polling.
- * A non-blinking style (blink_ms<=0, e.g. a pure marching-ants style, which now reaches here
- * via the broadened net_hilight_style_animates) has no blink edge, so return the ceiling: it
- * never lowers the tick's next-edge min, and we avoid a blink_ms==0 divide-by-zero (mirrors
- * net_hilight_style_on_now's guard). Marching's own frame cadence arrives in Pass 2b Phase D. */
+/* Does this style drive the animation tick? Two independent animators (which compose):
+ * blink (blink_ms>0, Pass 2a) and marching ants (Pass 2b, net_hilight_style_marches). */
+static int net_hilight_style_animates(NetHilightStyle *st)
+{
+  return st && (st->blink_ms > 0 || net_hilight_style_marches(st));
+}
+
+/* Time (ms) until style st's next visible change, given wall-clock 'now' — lets the tick sleep
+ * to the next change instead of polling. For a blinking style that is the next 50%-duty phase
+ * edge (in (0, blink_ms/2]); a non-blinking style has no edge (ceiling, and avoids a blink_ms==0
+ * divide-by-zero — mirrors net_hilight_style_on_now's guard). A marching style scrolls
+ * continuously (no discrete edge), so cap the wait at the ~30fps frame cadence: the tick samples
+ * the moving offset every frame and the change-detection signature skips redraws between
+ * whole-pixel moves (so slow marching wakes but rarely redraws). A blink+march style takes the
+ * min of the two. */
 static double net_hilight_next_edge_ms(NetHilightStyle *st, double now)
 {
-  double half;
-  if(st->blink_ms <= 0) return NET_HILIGHT_TICK_MAX;
-  half = st->blink_ms / 2.0;
-  return (floor(now / half) + 1.0) * half - now;
+  double half, edge = NET_HILIGHT_TICK_MAX;
+  if(st->blink_ms > 0) {
+    half = st->blink_ms / 2.0;
+    edge = (floor(now / half) + 1.0) * half - now;
+  }
+  if(net_hilight_style_marches(st) && NET_HILIGHT_FRAME_MS < edge) edge = NET_HILIGHT_FRAME_MS;
+  return edge;
 }
 
 /* Dash repeat period of a highlight style, in dash-length units. = sum(dash_arr), DOUBLED when
@@ -2568,7 +2579,7 @@ double net_hilight_dash_period(NetHilightStyle *st)
 double net_hilight_march_offset(NetHilightStyle *st, double now)
 {
   double P, turns, frac;
-  if(!st || st->anim == 0 || st->rate_persec <= 0) return 0.0;
+  if(!net_hilight_style_marches(st)) return 0.0;
   P = net_hilight_dash_period(st);
   if(P <= 0.0) return 0.0;
   turns = (double)st->rate_persec * (now / 1000.0); /* periods elapsed; >= 0 (rate, now >= 0) */
@@ -2599,7 +2610,16 @@ static int scan_animating_hilights(double now, unsigned int *sig, int *maxw, dou
     st = get_hilight_style(entry->value);
     if(!net_hilight_style_animates(st)) continue;
     if(predicate) return 1;
-    if(sig)  *sig = *sig * 1000003u + (unsigned int)(st->index * 2 + net_hilight_style_on_now(st, now));
+    if(sig) {
+      /* fold the blink on/off phase AND (wire-only) the whole-pixel marching offset, so the tick
+       * redraws exactly when something visibly changes: a blink edge, or the dashes scrolling >=1px.
+       * (int) matches the flat path's whole-pixel XSetDashes phase, so sub-pixel scroll costs no
+       * redraw. Marching is wire-only (symbols are colored, never marched), so the instance loop
+       * below folds the blink phase only. */
+      unsigned int term = (unsigned int)(st->index * 2 + net_hilight_style_on_now(st, now));
+      term = term * 31u + (unsigned int)(int)net_hilight_march_offset(st, now);
+      *sig = *sig * 1000003u + term;
+    }
     if(maxw && st->width > *maxw) *maxw = st->width;
     if(next_ms) { double d = net_hilight_next_edge_ms(st, now); if(d < *next_ms) *next_ms = d; }
     if(bx1) {
