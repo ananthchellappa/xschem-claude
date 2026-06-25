@@ -1,8 +1,15 @@
 # Issue 0031 — net-highlight style table is compiled per-window and only the current window is rebuilt, so other windows go stale and wrap highlight styles to the wrong row
 
 **Opened:** 2026-06-25
-**Status:** 🔵 OPEN (discovered while building the Phase B test harness for multi-window
-net-highlight animation, `claude_suggs/plan_net_hilight_multiwindow_anim.md`). Pre-existing
+**Status:** ✅ RESOLVED (2026-06-25) — `update_net_hilight_style` now calls new
+`net_hilight_invalidate_other_styles()` (hilight.c), which frees every OTHER open context's
+compiled `net_hilight_style[]` (my_free NULLs it) so each rebuilds lazily from the just-edited
+global Tcl var via `get_hilight_style()`. Took option 1 (lazy-invalidate, no borrow/draw). Verified
+with a two-window GUI RED/GREEN test: window A (stale 2-row table) errors on style idx 3 BEFORE the
+update reaches it (proving switch alone doesn't rebuild), and resolves idx 3 (marching offset 2.0)
+AFTER the update in window B invalidates A — the update→invalidate is the sole differing action.
+Regression suites green. Discovered while building the Phase B test harness for multi-window
+net-highlight animation, `claude_suggs/plan_net_hilight_multiwindow_anim.md`. Pre-existing
 behavior, **not** introduced by the Phase A/B borrow work.
 **Affects:** `build_net_hilight_styles()` / `get_hilight_style()` (`src/hilight.c`),
 `xschem update_net_hilight_style` (`src/scheduler.c:8172`), the per-`xctx`

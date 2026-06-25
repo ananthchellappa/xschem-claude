@@ -1511,6 +1511,7 @@ extern unsigned int get_hilight_pixel(int value);
 extern void resolve_hilight_style_rgb(NetHilightStyle *st);
 extern unsigned int find_best_color(char colorname[]);
 extern void build_net_hilight_styles(void);
+extern void net_hilight_invalidate_other_styles(void); /* force OTHER windows to rebuild their table */
 /* Pass 2a net-highlight animation (blink). See specs/net_hilight_styles.md §2 (Pass 2). */
 extern double net_hilight_now_ms(void);                 /* wall-clock ms (or test override) */
 extern int net_hilight_style_on_now(NetHilightStyle *st, double now); /* blink ON/OFF gate */

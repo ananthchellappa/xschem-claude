@@ -571,6 +571,33 @@ void build_net_hilight_styles(void)
 #endif
 }
 
+/* Invalidate the compiled net-highlight style table in EVERY open context EXCEPT the current one
+ * (the caller has just rebuilt that one), so each lazily rebuilds from the just-edited GLOBAL
+ * `net_hilight_style` Tcl var on its next use. The source var is global but the compiled C table
+ * is per-xctx, and `update_net_hilight_style` rebuilds only the current window; without this, other
+ * windows keep a stale table and wrap a new style's index onto an old row -- e.g. a blink style
+ * added in window B renders static (or as the wrong row) in window A (issue 0031). Frees each
+ * other context's table directly (my_free NULLs the pointer) so get_hilight_style()'s
+ * `!net_hilight_style` guard rebuilds it; the caller also runs net_hilight_anim_update(), so an
+ * animating window re-arms and rebuilds at once, while a static one rebuilds on its next draw.
+ * Edits each context's fields directly -- NO borrow/switch of the global xctx, no draw, no GUI
+ * side effects -- so it is safe to call synchronously. Includes background tabs (each has its own
+ * per-xctx table, even though they share the .drw canvas). */
+void net_hilight_invalidate_other_styles(void)
+{
+  int i;
+  Xschem_ctx *ctx, **save_xctx;
+  if(!has_x) return;
+  save_xctx = get_save_xctx();
+  for(i = 0; i < MAX_NEW_WINDOWS; ++i) {
+    ctx = save_xctx[i];
+    if(get_window_count() == 0 && i == 0) continue; /* sole schematic IS the current xctx (just rebuilt) */
+    if(!ctx || ctx == xctx) continue;               /* NULL slot, or the window already rebuilt */
+    my_free(_ALLOC_ID_, &ctx->net_hilight_style);    /* frees + NULLs; get_hilight_style rebuilds */
+    ctx->n_net_hilight_styles = 0;
+  }
+}
+
 /* Resolve a net-hilight value (>= 0) to its style, wrapping modulo the table size.
  * Negative values are sim logic levels and never index the style table (see get_color). */
 NetHilightStyle *get_hilight_style(int value)

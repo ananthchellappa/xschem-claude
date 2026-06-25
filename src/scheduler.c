@@ -8280,6 +8280,10 @@ static int xschem_cmds_u(Tcl_Interp *interp, int argc, const char *argv[], int *
     {
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
       build_net_hilight_styles();
+      /* the edited net_hilight_style var is global but the compiled table is per-window; rebuilding
+       * only the current xctx leaves other windows stale (issue 0031) -- invalidate theirs so each
+       * rebuilds lazily from the new var on its next use/draw. */
+      net_hilight_invalidate_other_styles();
       draw();
       net_hilight_anim_update(); /* Pass 2a: an edit may add/remove blink on highlighted nets */
     }
