@@ -838,6 +838,9 @@ typedef struct {
   int blink_ms;          /* blink period ms, 0 = steady (Pass 2) */
   int anim;              /* 0 none, 1 march_fwd, 2 march_rev (Pass 2) */
   int rate_persec;       /* animation rate (Pass 2) */
+  double period;         /* cached dash repeat period (sum(dash_arr), odd-len doubled); computed
+                          * once at build time so the ~30fps marching tick reads it O(1) instead of
+                          * re-walking dash_arr per wire per frame. Read via net_hilight_dash_period. */
 } NetHilightStyle;
 
 typedef struct {
@@ -1512,6 +1515,7 @@ extern void resolve_hilight_style_rgb(NetHilightStyle *st);
 extern unsigned int find_best_color(char colorname[]);
 extern void build_net_hilight_styles(void);
 extern void net_hilight_invalidate_other_styles(void); /* force OTHER windows to rebuild their table */
+extern void net_hilight_redraw_other_windows(void);    /* repaint OTHER detached windows after an edit */
 /* Pass 2a net-highlight animation (blink). See specs/net_hilight_styles.md §2 (Pass 2). */
 extern double net_hilight_now_ms(void);                 /* wall-clock ms (or test override) */
 extern int net_hilight_style_on_now(NetHilightStyle *st, double now); /* blink ON/OFF gate */

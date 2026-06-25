@@ -78,6 +78,18 @@ No behavioral change, so no RED is available; this is a refactor verified by:
   `net_hilight_test_now` times across a march step, as in the Pass 2a/2b checks);
 - the regression suite (`create_save`/`open_close`/`netlisting`) stays green.
 
+## 5b. Superseded by a per-style period cache (2026-06-25)
+
+A `/code-review high` of the fix found the `_p` (precompute-P) split was incomplete: it deduped the
+`scan_animating_hilights` wire loop but **not** the render hot path `draw_hilight_net()`, which still
+called `net_hilight_march_offset()` per wire per frame and re-walked the dash array; and even in the
+scan it was per-*wire*, though the period is per-*style*. Replaced the whole `_p` approach with a
+cached `NetHilightStyle.period` (computed once at build via `net_hilight_compute_dash_period()`);
+`net_hilight_dash_period()` is now an O(1) read, so scan AND render AND the striped renderer all read
+the cached value — no per-wire/per-frame walk anywhere. The `_p` variants and the now-dead
+`net_hilight_next_edge_ms` wrapper were removed. Verified: analytic offsets identical (march_check.tcl),
+0031/0032 tests and the regression suites still green.
+
 ## 5. Notes
 
 Surfaced (CONFIRMED) by the high-effort code review of the Phase A context-borrow work

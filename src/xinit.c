@@ -1566,11 +1566,8 @@ int check_loaded(const char *f, char *win_path)
   my_strncpy(win_path, "", S(window_path[i]));
   for(i = 0; i < MAX_NEW_WINDOWS; ++i) {
     const char *wp;
-    ctx = get_window_ctx(i, &wp);
+    ctx = get_window_ctx(i, &wp);  /* wp is ".drw" for slot 0; the slot-0 path rule lives only here now */
     dbg(1, "window_count=%d i=%d\n", window_count, i);
-    /* normalize the global window_path[0] to ".drw" when the sole schematic occupies slot 0 (some
-     * early states leave it unset); get_window_ctx already returns wp == ".drw" for slot 0. */
-    if(window_count == 0 && i == 0) my_snprintf(window_path[0], S(window_path[0]), ".drw");
     if(ctx && ctx->sch[ctx->currsch]) {
       dbg(1, "%s <--> %s\n", ctx->sch[ctx->currsch], f);
       if(!strcmp(ctx->sch[ctx->currsch], f)) {

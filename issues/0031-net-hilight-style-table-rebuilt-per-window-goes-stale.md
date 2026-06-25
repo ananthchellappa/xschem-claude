@@ -95,6 +95,17 @@ rebuild, not just the front (ties into Phase D of the multi-window-anim plan).
   passes after the fix.
 - Regression (`create_save`/`open_close`/`netlisting`) stays green.
 
+## 5b. Follow-up: repaint other windows' PIXELS, not just their table (2026-06-25)
+
+A `/code-review high` noted the original fix invalidated other windows' compiled tables but
+`update_net_hilight_style` only `draw()`s the current window — so a STATIC (non-animating) detached
+window kept showing the OLD style until it independently repainted. Added
+`net_hilight_redraw_other_windows()` (hilight.c): after invalidating, it borrows each other detached
+window and `draw()`s it, with the same cross-window guards as `redraw_hilight_region` (skip mid-gesture,
+skip background tabs, skip unexposed windows with no save_pixmap). Verified by pixmap RED/GREEN
+(redrawother.tcl): a style edit in window A now changes window B's backing pixmap (a control confirms
+the var-change alone does not). Animating windows were already covered by their tick.
+
 ## 5. Notes
 
 Found as a **test-harness gotcha** during Phase B of the multi-window net-highlight animation

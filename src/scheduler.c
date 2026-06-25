@@ -7792,7 +7792,12 @@ static int xschem_cmds_t(Tcl_Interp *interp, int argc, const char *argv[], int *
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
       for(i = 0; i < MAX_NEW_WINDOWS; ++i) {
         ctx = get_window_ctx(i, &wp);
-        if(ctx) Tcl_AppendResult(interp, wp, " {", ctx->sch[ctx->currsch], "}\n", NULL);
+        if(ctx) {
+          /* guard a NULL schematic name: it would terminate Tcl_AppendResult's variadic list early,
+           * dropping the trailing " {...}\n" and corrupting the row (matches the 'windows' branch). */
+          const char *nm = ctx->sch[ctx->currsch] ? ctx->sch[ctx->currsch] : "";
+          Tcl_AppendResult(interp, wp, " {", nm, "}\n", NULL);
+        }
       }
       dbg(1, "tab_list: return %d\n", found);
       return found;
@@ -8276,7 +8281,9 @@ static int xschem_cmds_u(Tcl_Interp *interp, int argc, const char *argv[], int *
        * only the current xctx leaves other windows stale (issue 0031) -- invalidate theirs so each
        * rebuilds lazily from the new var on its next use/draw. */
       net_hilight_invalidate_other_styles();
-      draw();
+      draw();                            /* repaint the current window's highlights with the new style */
+      net_hilight_redraw_other_windows(); /* and every other detached window's, so static ones aren't
+                                           * left showing the old style until they happen to repaint */
       net_hilight_anim_update(); /* Pass 2a: an edit may add/remove blink on highlighted nets */
     }
     /* update_all_sym_bboxes
