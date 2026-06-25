@@ -356,6 +356,15 @@ int hilight_graph_node(const char *node, int col)
  * xctx->n_active_layers is the total number of layers for hilights.
  * standard xschem conf: cadlayers=22, xctx->n_active_layers=15 if no disabled layers.
  */
+static int net_hilight_style_animates(NetHilightStyle *st); /* defined with the Pass 2a/2b code below */
+
+/* Cheap global predicate for net_hilight_anim_update()'s short-circuit (issue 0032): nonzero iff
+ * the LAST-built style table contains at least one animating (blink or marching) style. The source
+ * net_hilight_style var is global, so this is window-independent; recomputed at the end of every
+ * build_net_hilight_styles(). When 0 (the default table has no blink/march styles), no highlight in
+ * any window can animate, so the per-window borrow+scan fan-out is skipped entirely. */
+static int net_hilight_has_anim_style = 0;
+
 /* free the current style table (styles hold no heap members) */
 static void free_net_hilight_styles(void)
 {
@@ -551,6 +560,13 @@ void build_net_hilight_styles(void)
     publish_net_hilight_styles_to_tcl();
   }
   dbg(1, "build_net_hilight_styles(): %d styles\n", xctx->n_net_hilight_styles);
+  { /* cache "any animating style?" for net_hilight_anim_update's fan-out short-circuit (issue 0032) */
+    int i;
+    net_hilight_has_anim_style = 0;
+    for(i = 0; i < xctx->n_net_hilight_styles; ++i) {
+      if(net_hilight_style_animates(&xctx->net_hilight_style[i])) { net_hilight_has_anim_style = 1; break; }
+    }
+  }
 #if HAS_CAIRO==0
   { /* tilted stripes need cairo; warn once if a style asks for a nonzero angle (Xlib-only
      * builds render those as plain perpendicular dashes) */
@@ -2888,6 +2904,21 @@ void net_hilight_anim_update(void)
   int i;
   Xschem_ctx *ctx, **save_xctx;
   if(!has_x) return;
+  /* Cheap global short-circuits before the O(open_windows) borrow+scan fan-out (issue 0032). In
+   * BOTH cases no window can be animating, so there is no tick to (re)start, and any tick already
+   * running self-terminates (net_hilight_anim_tick / draw_hilight_region recheck the same two
+   * conditions and stop). This turns the common case -- animation disabled, or the default table
+   * with no blink/march styles -- from up to MAX_NEW_WINDOWS C<->Tcl round-trips (each a context
+   * borrow + net scan) into one boolean read.
+   *   (a) no compiled style animates at all: safe regardless of caller -- if nothing can animate
+   *       there is nothing to cancel either (a window with a running tick must have had an
+   *       animating style, so this flag would be set);
+   *   (b) the global kill-switch is off: the per-window Tcl proc already early-returns on it before
+   *       the borrow, so skipping here only drops the cheap `after cancel`; the running ticks still
+   *       stop on their next fire (they recheck net_hilight_animate), and net_hilight_animate_changed
+   *       has already issued a full redraw to restore steady highlights. */
+  if(!net_hilight_has_anim_style) return;
+  if(!tclgetboolvar("net_hilight_animate")) return;
   save_xctx = get_save_xctx();
   for(i = 0; i < MAX_NEW_WINDOWS; ++i) {
     const char *wp;

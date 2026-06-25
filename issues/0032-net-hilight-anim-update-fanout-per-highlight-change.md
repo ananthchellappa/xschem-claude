@@ -1,9 +1,18 @@
 # Issue 0032 — `net_hilight_anim_update()` fans a C→Tcl borrow+query out to every open window on every highlight change, with no short-circuit
 
 **Opened:** 2026-06-25
-**Status:** 🔵 OPEN (from the `/code-review high` of multi-window net-highlight animation
-Phase D, commit `4ab92062`/`03597562`; finding [3]). Pre-existing hot path made
-multi-window in Phase D.
+**Status:** ✅ RESOLVED (2026-06-25) — added two O(1) short-circuits at the top of
+`net_hilight_anim_update()` before the fan-out: (a) a cached `net_hilight_has_anim_style` flag
+(recomputed at the end of `build_net_hilight_styles()` — nonzero iff some compiled style
+blinks/marches) skips the whole loop for the common default table; (b) `!net_hilight_animate`
+(kill-switch off) skips it too. The expensive borrow+scan was already gated inside the per-window
+Tcl proc (it early-returns on the kill-switch before `xschem get net_hilight_animated`), so the
+real storm was kill-switch-ON-but-nothing-animating — exactly what flag (a) cuts. Verified with a
+call-counter GUI test (scratchpad/fanout.tcl): default table → 0 fan-out calls (was ≥1), blink/march
+style defined → fan-out runs, kill-switch off → 0. Regression suites green. Lazy-cancel on
+toggle-off is safe: `draw_hilight_region()` already returns 0 (stop) when the switch is off, so an
+orphaned tick self-terminates on its next fire. Originally from the `/code-review high` of
+multi-window net-highlight animation Phase D, commit `4ab92062`/`03597562`; finding [3].
 **Affects:** `net_hilight_anim_update(void)` (`src/hilight.c`), its 8 callers
 (`hilight.c:1441,2279,2313`; `scheduler.c:2815,4406,6931,8220,8273` — the standard
 hilight / unhilight_all / interactive 9/8/0 / waveform / edit paths), and the per-window
