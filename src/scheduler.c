@@ -1861,9 +1861,16 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
             /* 1 if this window should run the net-highlight animation tick: animation
              * enabled, on-screen, idle, and >=1 highlighted net has an animating style
              * (blinking, Pass 2a; or marching, Pass 2b). The Tcl tick polls this to decide
-             * whether to keep rescheduling. */
+             * whether to keep rescheduling.
+             * Optional <win> arg (multi-window anim, Phase B): evaluate THAT window's context
+             * via the Phase-A borrow (no GUI side effects), then restore -- so a per-window
+             * tick for a non-front window gets its own window's answer, not the front's. With
+             * no arg the front (current) behavior is unchanged. */
+            Xschem_ctx *borrowed = NULL;
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            if(argc > 3) borrowed = net_hilight_borrow_ctx(argv[3]);
             Tcl_SetResult(interp, net_hilight_has_animation() ? "1" : "0", TCL_STATIC);
+            net_hilight_restore_ctx(borrowed);
           }
           else if(!strcmp(argv[2], "no_draw")) { /* disable drawing */
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}

@@ -235,3 +235,35 @@ The per-window Tcl `after` ticks already fire between event-loop iterations (not
 `draw()` is synchronous, so these hold naturally — but Phase E (serialization E1/E2) must assert them
 explicitly. No buffer save/restore is needed; serialization is sufficient. **A3 clears Phase C to
 start**, with the cross-talk PNG checks (C2) as the safety net for the buffer invariant.
+
+---
+
+## Phase B — STATUS: DONE (2026-06-25)
+
+B1+B2 implemented and verified RED→GREEN; single commit on `fluid-editing`.
+
+### What landed
+- **`xschem get net_hilight_animated <win>`** (`scheduler.c`): with an optional `<win>` arg the
+  query borrows that window's context (Phase-A `net_hilight_borrow_ctx`), calls
+  `net_hilight_has_animation()`, and restores — so a per-window tick for a NON-front window gets
+  its own window's answer, not the front's. No-arg form is byte-unchanged (front/current behavior).
+- **B2:** `net_hilight_has_animation()` needed **no change** — it already reads the global `xctx`,
+  which the borrow has repointed. Its per-context guards (`hilight_nets`, `semaphore`,
+  `ui_state & HILIGHT_ANIM_BUSY`, the `scan_animating_hilights` walk) now correctly evaluate the
+  borrowed context; the only global guard is the `net_hilight_animate` kill-switch (intentionally
+  global). Confirmed via the sabotage assertion below.
+
+### Verification (`scratchpad/phaseB_animated_test.tcl`, `DISPLAY=:0`)
+Two detached windows: front `.drw` (no highlights), background `.x1.drw` with a **blinking**
+highlight (style `{idx magenta 2 {} 0 600 none 0}` applied via `net_hilight_apply` — NB the styledef
+is a full 8-column row incl. a leading index placeholder; a 7-col row silently mis-maps `blink`).
+Focus returned to `.drw`:
+- **RED** (pre-wiring binary): `get net_hilight_animated .x1.drw` → `0` (arg ignored, reads front).
+  Exactly one assertion fails; front behavior / restore / unknown-path / sabotage all already pass.
+- **GREEN**: → `1` (borrows `.x1.drw`); front no-arg/`.drw` query stays `0`; `current_win_path`
+  unchanged across the borrowed query; unknown win path → front answer (`0`). ALL PASS.
+- **Sabotage (B1 + B2 guard):** `unhilight_all` in `.x1.drw` → its `hilight_nets` drops to 0 →
+  `get net_hilight_animated .x1.drw` → `0`, proving the query tracks the *borrowed* context's live
+  state, not a constant. Regression suite (create_save/open_close/netlisting) clean.
+
+Next: Phase C (context-aware regional redraw — the one real draw risk; gated A3-clear).
