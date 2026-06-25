@@ -1749,6 +1749,9 @@ extern int get_last_created_window(void);
 extern char *get_window_path(int i);
 extern int get_window_count(void);
 extern Xschem_ctx **get_save_xctx(void);
+/* resolve open-window slot i -> its Xschem_ctx (NULL if empty) and, if win_path!=NULL, its window
+ * path (".drw" for slot 0). Centralizes the single-schematic/save_xctx[0] invariant (see xinit.c). */
+extern Xschem_ctx *get_window_ctx(int i, const char **win_path);
 extern Xschem_ctx *get_old_xctx(void);
 extern void link_symbols_to_instances(int from);
 extern void load_ascii_string(char **ptr, FILE *fd);

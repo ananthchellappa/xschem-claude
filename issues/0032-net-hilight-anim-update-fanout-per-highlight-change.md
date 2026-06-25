@@ -83,7 +83,15 @@ animate.
 Surfaced (CONFIRMED) by the Phase D review; deferred there as a Phase E (perf/finish)
 item rather than fixed inline, to keep the review-response commit to correctness only.
 Related cleanup flagged in the same review (not logged separately): the `save_xctx[]`
-window-iteration idiom in this function is now a 4th near-duplicate of the loop in
-`xschem windows` (`scheduler.c`), `scheduler.c:7759`, and `get_tab_or_window_number`
-(`xinit.c`); a shared "iterate open contexts → (ctx, win_path)" helper would dedup it and
-make a future change to the single-schematic / `save_xctx[0]` invariant a one-site edit.
+window-iteration idiom in this function was a near-duplicate of the loop in `xschem windows`
+(`scheduler.c`), `xschem tab_list`, and `get_tab_or_window_number` (`xinit.c`); a shared
+"iterate open contexts → (ctx, win_path)" helper would dedup it and make a future change to the
+single-schematic / `save_xctx[0]` invariant a one-site edit.
+
+✅ DONE (2026-06-25): added `get_window_ctx(i, &win_path)` (xinit.c, extern xschem.h) — the single
+place encoding the single-schematic / `save_xctx[0]` invariant — and converted all 6 hand-copied
+sites to it: `net_hilight_invalidate_other_styles`, `net_hilight_anim_update` (hilight.c),
+`xschem windows`, `xschem tab_list` (scheduler.c), `get_tab_or_window_number`, `check_loaded`
+(xinit.c). Pure refactor, no warnings; verified the `windows`/`tab_list`/`check_loaded` outputs are
+unchanged (two-window GUI probe), 0031/0032 GUI tests still pass through the refactor, and the
+regression suites stay green.

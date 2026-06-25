@@ -7786,21 +7786,13 @@ static int xschem_cmds_t(Tcl_Interp *interp, int argc, const char *argv[], int *
     if(!strcmp(argv[1], "tab_list"))
     {
       int i;
-      Xschem_ctx *ctx, **save_xctx = get_save_xctx();
+      Xschem_ctx *ctx;
+      const char *wp;
       int found = 0;
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
       for(i = 0; i < MAX_NEW_WINDOWS; ++i) {
-        ctx = save_xctx[i];
-        /* if only one schematic it is not yet saved in save_xctx */
-        if(get_window_count() == 0 && i == 0)  {
-          ctx = xctx;
-        }
-        if(i == 0 ) {
-          if(ctx) Tcl_AppendResult(interp, ".drw", " {", ctx->sch[ctx->currsch], "}\n", NULL);
-        }
-        else if(ctx) {
-          Tcl_AppendResult(interp, get_window_path(i), " {", ctx->sch[ctx->currsch], "}\n", NULL);
-        }
+        ctx = get_window_ctx(i, &wp);
+        if(ctx) Tcl_AppendResult(interp, wp, " {", ctx->sch[ctx->currsch], "}\n", NULL);
       }
       dbg(1, "tab_list: return %d\n", found);
       return found;
@@ -8370,7 +8362,7 @@ static int xschem_cmds_w(Tcl_Interp *interp, int argc, const char *argv[], int *
     else if(!strcmp(argv[1], "windows"))
     {
       int i;
-      Xschem_ctx *ctx, **save_xctx = get_save_xctx();
+      Xschem_ctx *ctx;
       /* build the result as a proper Tcl list of 5-element sublists so a schematic
        * name containing braces/spaces can't break the list structure (issue 0022) */
       Tcl_Obj *result = Tcl_NewListObj(0, NULL);
@@ -8379,11 +8371,8 @@ static int xschem_cmds_w(Tcl_Interp *interp, int argc, const char *argv[], int *
         const char *wp, *tp, *nm;
         char xwin[32];
         Tcl_Obj *entry;
-        ctx = save_xctx[i];
-        /* the sole schematic is not yet mirrored into save_xctx[] */
-        if(get_window_count() == 0 && i == 0) ctx = xctx;
+        ctx = get_window_ctx(i, &wp);
         if(!ctx) continue;
-        wp = (i == 0) ? ".drw" : get_window_path(i);
         tp = (ctx->top_path && ctx->top_path[0]) ? ctx->top_path : ".";
         nm = ctx->sch[ctx->currsch] ? ctx->sch[ctx->currsch] : "";
         my_snprintf(xwin, S(xwin), "%lu", (unsigned long)ctx->window);

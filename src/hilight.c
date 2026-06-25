@@ -602,13 +602,13 @@ void build_net_hilight_styles(void)
 void net_hilight_invalidate_other_styles(void)
 {
   int i;
-  Xschem_ctx *ctx, **save_xctx;
+  Xschem_ctx *ctx;
   if(!has_x) return;
-  save_xctx = get_save_xctx();
   for(i = 0; i < MAX_NEW_WINDOWS; ++i) {
-    ctx = save_xctx[i];
-    if(get_window_count() == 0 && i == 0) continue; /* sole schematic IS the current xctx (just rebuilt) */
-    if(!ctx || ctx == xctx) continue;               /* NULL slot, or the window already rebuilt */
+    ctx = get_window_ctx(i, NULL);
+    /* skip a NULL slot and the current window (the caller just rebuilt it); get_window_ctx maps the
+     * sole-schematic slot 0 to xctx, so this also covers that case. */
+    if(!ctx || ctx == xctx) continue;
     my_free(_ALLOC_ID_, &ctx->net_hilight_style);    /* frees + NULLs; get_hilight_style rebuilds */
     ctx->n_net_hilight_styles = 0;
   }
@@ -2902,7 +2902,7 @@ int draw_hilight_region(double *next_ms)
 void net_hilight_anim_update(void)
 {
   int i;
-  Xschem_ctx *ctx, **save_xctx;
+  Xschem_ctx *ctx;
   if(!has_x) return;
   /* Cheap global short-circuits before the O(open_windows) borrow+scan fan-out (issue 0032). In
    * BOTH cases no window can be animating, so there is no tick to (re)start, and any tick already
@@ -2919,11 +2919,9 @@ void net_hilight_anim_update(void)
    *       has already issued a full redraw to restore steady highlights. */
   if(!net_hilight_has_anim_style) return;
   if(!tclgetboolvar("net_hilight_animate")) return;
-  save_xctx = get_save_xctx();
   for(i = 0; i < MAX_NEW_WINDOWS; ++i) {
     const char *wp;
-    ctx = save_xctx[i];
-    if(get_window_count() == 0 && i == 0) ctx = xctx; /* sole schematic not yet in save_xctx[] */
+    ctx = get_window_ctx(i, &wp);
     if(!ctx) continue;
     /* Skip a BACKGROUND TAB: a tab (empty top_path) shares the single .drw canvas and is shown
      * only when it is the front context. Animating a non-front tab would scribble its highlights
@@ -2932,8 +2930,7 @@ void net_hilight_anim_update(void)
      * context (ctx==xctx) and every detached window (own top_path/canvas) DO animate (LOCKED:
      * tabs stay front-only). */
     if(ctx != xctx && (!ctx->top_path || !ctx->top_path[0])) continue;
-    wp = (i == 0) ? ".drw" : get_window_path(i);
-    /* a NULL/empty middle arg would truncate tclvareval's va_arg list and run the unbalanced
+    /* a NULL/empty win path would truncate tclvareval's va_arg list and run the unbalanced
      * fragment "net_hilight_anim_update {"; skip such a slot. */
     if(!wp || !wp[0]) continue;
     tclvareval("net_hilight_anim_update {", wp, "}", NULL);

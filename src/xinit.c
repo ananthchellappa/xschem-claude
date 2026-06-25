@@ -96,6 +96,23 @@ char *get_window_path(int i)
   return window_path[i];
 }
 
+/* Resolve open-window slot i (0..MAX_NEW_WINDOWS-1) to its Xschem_ctx and, optionally, its window
+ * path. THE single place that encodes the single-schematic / save_xctx[0] invariant: the sole
+ * schematic is not yet mirrored into save_xctx[] -- it lives in the live `xctx` -- so slot 0 with no
+ * detached windows resolves to xctx, not save_xctx[0]. Returns the slot's context, or NULL if the
+ * slot is empty/unused. When win_path != NULL it receives the slot's window path (".drw" for slot 0,
+ * get_window_path(i) otherwise; slot 0 is special-cased because window_path[0] is not reliably set in
+ * every state). Callers that need extra filtering (skip the current ctx, skip background tabs, match
+ * a name) apply it to the returned ctx. Replaces ~6 hand-copied copies of this loop body (the
+ * issue-0032 dedup); changing the invariant is now a one-site edit. */
+Xschem_ctx *get_window_ctx(int i, const char **win_path)
+{
+  Xschem_ctx **save_xctx = get_save_xctx();
+  Xschem_ctx *ctx = (get_window_count() == 0 && i == 0) ? xctx : save_xctx[i];
+  if(win_path) *win_path = (i == 0) ? ".drw" : get_window_path(i);
+  return ctx;
+}
+
 Xschem_ctx *get_old_xctx(void)
 {
   return old_xctx;
@@ -1395,7 +1412,7 @@ int preview_window(const char *what, const char *win_path, const char *fname)
 int get_tab_or_window_number(const char *win_path)
 {
   int i, n = -1;
-  Xschem_ctx *ctx, **save_xctx = get_save_xctx();
+  Xschem_ctx *ctx;
   for(i = 0; i < MAX_NEW_WINDOWS; ++i) {
     if(!strcmp(win_path, window_path[i])) {
       n = i;
@@ -1404,12 +1421,7 @@ int get_tab_or_window_number(const char *win_path)
   }
   if(n == -1) {
     for(i = 0; i < MAX_NEW_WINDOWS; ++i) {
-      /* if only one schematic it is not yet saved in save_xctx */
-      if(get_window_count() == 0 && i == 0)  {
-        ctx = xctx;
-      } else {
-        ctx = save_xctx[i];
-      }
+      ctx = get_window_ctx(i, NULL);
       if(ctx && !strcmp(win_path, get_cell_w_ext(ctx->current_name, 0))) {
         n = i;
         break;
@@ -1553,20 +1565,18 @@ int check_loaded(const char *f, char *win_path)
   int found = 0;
   my_strncpy(win_path, "", S(window_path[i]));
   for(i = 0; i < MAX_NEW_WINDOWS; ++i) {
+    const char *wp;
+    ctx = get_window_ctx(i, &wp);
     dbg(1, "window_count=%d i=%d\n", window_count, i);
-    /* if only one schematic it is not yet saved in save_xctx */
-    if(window_count == 0 && i == 0)  {
-      ctx = xctx;
-      my_snprintf(window_path[0],  S(window_path[0]), ".drw" );
-    } else {
-      ctx = save_xctx[i];
-    }
+    /* normalize the global window_path[0] to ".drw" when the sole schematic occupies slot 0 (some
+     * early states leave it unset); get_window_ctx already returns wp == ".drw" for slot 0. */
+    if(window_count == 0 && i == 0) my_snprintf(window_path[0], S(window_path[0]), ".drw");
     if(ctx && ctx->sch[ctx->currsch]) {
       dbg(1, "%s <--> %s\n", ctx->sch[ctx->currsch], f);
       if(!strcmp(ctx->sch[ctx->currsch], f)) {
         dbg(1, "check_loaded(): f=%s, sch=%s\n", f, ctx->sch[ctx->currsch]);
         found = 1;
-        my_strncpy(win_path, window_path[i], S(window_path[i]));
+        my_strncpy(win_path, wp, S(window_path[i]));
         break;
       }
     }
