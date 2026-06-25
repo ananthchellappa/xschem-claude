@@ -1515,7 +1515,7 @@ extern void build_net_hilight_styles(void);
 extern double net_hilight_now_ms(void);                 /* wall-clock ms (or test override) */
 extern int net_hilight_style_on_now(NetHilightStyle *st, double now); /* blink ON/OFF gate */
 extern int net_hilight_has_animation(void);             /* window needs the animation tick? */
-extern int draw_hilight_region(void);                   /* regional redraw of animating nets */
+extern int draw_hilight_region(double *next_ms);        /* regional redraw of animating nets */
 extern void net_hilight_anim_update(void);              /* (re)evaluate start/stop of the tick */
 extern void draw_hilight_wire(unsigned int fg, NetHilightStyle *st, double linex1, double liney1,
                               double linex2, double liney2, double bus);

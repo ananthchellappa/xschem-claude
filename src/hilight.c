@@ -2482,18 +2482,27 @@ static int net_hilight_style_animates(NetHilightStyle *st)
   return st && st->blink_ms > 0;
 }
 
+/* Time (ms) until style st's next blink phase edge, given wall-clock 'now'. Always in
+ * (0, blink_ms/2]: lets the tick sleep until the next visible change instead of polling. */
+static double net_hilight_next_edge_ms(NetHilightStyle *st, double now)
+{
+  double half = st->blink_ms / 2.0;
+  return (floor(now / half) + 1.0) * half - now;
+}
+
 /* Single source of truth for "which highlighted objects animate": walks the highlighted
  * wires + instances and, for each whose style animates, optionally folds its on/off phase
- * into *sig, grows the union bbox (*bx1.. in schematic units), and tracks the widest style
- * (*maxw). Any out-param may be NULL; when ALL are NULL this is a pure predicate and it
- * early-exits on the first animating object. Returns nonzero iff at least one animating
- * object exists. Shared by net_hilight_has_animation() and draw_hilight_region() so the two
- * never drift (esp. once Pass 2b extends net_hilight_style_animates). */
-static int scan_animating_hilights(double now, unsigned int *sig, int *maxw,
+ * into *sig, grows the union bbox (*bx1.. in schematic units), tracks the widest style
+ * (*maxw), and the soonest next blink edge (*next_ms, the min across all animating styles).
+ * Any out-param may be NULL; when ALL are NULL this is a pure predicate and it early-exits on
+ * the first animating object. Returns nonzero iff at least one animating object exists. Shared
+ * by net_hilight_has_animation() and draw_hilight_region() so the two never drift (esp. once
+ * Pass 2b extends net_hilight_style_animates). */
+static int scan_animating_hilights(double now, unsigned int *sig, int *maxw, double *next_ms,
                                    double *bx1, double *by1, double *bx2, double *by2)
 {
   int i, found = 0;
-  int predicate = (!sig && !maxw && !bx1); /* caller only wants "does any animate?" */
+  int predicate = (!sig && !maxw && !next_ms && !bx1); /* only wants "does any animate?" */
   Hilight_hashentry *entry;
   prepare_netlist_structs(0);
   for(i = 0; i < xctx->wires; ++i) {
@@ -2505,6 +2514,7 @@ static int scan_animating_hilights(double now, unsigned int *sig, int *maxw,
     if(predicate) return 1;
     if(sig)  *sig = *sig * 1000003u + (unsigned int)(st->index * 2 + net_hilight_style_on_now(st, now));
     if(maxw && st->width > *maxw) *maxw = st->width;
+    if(next_ms) { double d = net_hilight_next_edge_ms(st, now); if(d < *next_ms) *next_ms = d; }
     if(bx1) {
       a = xctx->wire[i].x1; b = xctx->wire[i].x2; if(a > b) { double t = a; a = b; b = t; }
       if(!found || a < *bx1) *bx1 = a;
@@ -2524,6 +2534,7 @@ static int scan_animating_hilights(double now, unsigned int *sig, int *maxw,
     if(predicate) return 1;
     if(sig)  *sig = *sig * 1000003u + (unsigned int)(st->index * 2 + net_hilight_style_on_now(st, now));
     if(maxw && st->width > *maxw) *maxw = st->width;
+    if(next_ms) { double d = net_hilight_next_edge_ms(st, now); if(d < *next_ms) *next_ms = d; }
     if(bx1) {
       if(!found || xctx->inst[i].x1 < *bx1) *bx1 = xctx->inst[i].x1;
       if(!found || xctx->inst[i].y1 < *by1) *by1 = xctx->inst[i].y1;
@@ -2544,8 +2555,16 @@ int net_hilight_has_animation(void)
   if(!tclgetboolvar("net_hilight_animate")) return 0;
   if(xctx->semaphore) return 0;
   if(xctx->ui_state & HILIGHT_ANIM_BUSY) return 0;
-  return scan_animating_hilights(0.0, NULL, NULL, NULL, NULL, NULL, NULL) > 0;
+  return scan_animating_hilights(0.0, NULL, NULL, NULL, NULL, NULL, NULL, NULL) > 0;
 }
+
+/* Bounds (ms) on the adaptive tick delay: floor caps the wake rate near a blink edge (~60fps);
+ * the ceiling bounds how stale a highlight can look after an external full draw invalidates the
+ * change-detection signature (the next reconcile tick is at most this far off); busy = retry
+ * cadence while the animation is paused mid-gesture. */
+#define NET_HILIGHT_TICK_MIN  16.0
+#define NET_HILIGHT_TICK_MAX  250.0
+#define NET_HILIGHT_TICK_BUSY 50.0
 
 /* One animation frame (the tick's only C call). Regional-redraws just the union bbox of the
  * *animating* highlighted objects (steady highlights keep their pixels). Change-detection:
@@ -2555,22 +2574,32 @@ int net_hilight_has_animation(void)
  *   0 = nothing animates here -> the tick should stop (don't reschedule)
  *   1 = redrew (a blink edge)
  *   2 = animating but no redraw this frame (busy, or no edge) -> keep ticking
- * Reused by Pass 2b, which redraws every frame (the dash offset always changes). */
-int draw_hilight_region(void)
+ * *next_ms (may be NULL) returns the suggested delay until the next tick: the soonest blink
+ * edge (clamped to [MIN,MAX]) so the tick sleeps to the next visible change instead of polling
+ * at a fixed rate; a short retry while paused. Reused by Pass 2b (which redraws every frame). */
+int draw_hilight_region(double *next_ms)
 {
   int maxw = 1;
   double now, x1u = 0.0, y1u = 0.0, x2u = 0.0, y2u = 0.0, marg;
+  double next = NET_HILIGHT_TICK_MAX; /* min next-edge across animating styles (scan lowers it) */
   unsigned int sig = 2166136261u; /* FNV offset basis: a nonzero seed so a real signature
                                    * never collides with the 0 "no frame drawn yet" sentinel
                                    * (e.g. a single OFF-phase style-0 net would hash to 0) */
+  if(next_ms) *next_ms = NET_HILIGHT_TICK_BUSY;
   if(!has_x || !xctx->hilight_nets) return 0;
   /* self-guard the kill-switch: the Tcl tick already checks net_hilight_animate, but a direct
    * `xschem redraw_hilight_region` call must not bypass it (and must stop the tick -> 0). */
   if(!tclgetboolvar("net_hilight_animate")) return 0;
   now = net_hilight_now_ms();
-  if(!scan_animating_hilights(now, &sig, &maxw, &x1u, &y1u, &x2u, &y2u)) return 0; /* -> stop */
-  /* pause (but keep ticking) while a draw is in progress or a gesture owns the screen */
+  if(!scan_animating_hilights(now, &sig, &maxw, &next, &x1u, &y1u, &x2u, &y2u)) return 0; /* stop */
+  /* pause (but keep ticking, retrying soon) while a draw is in progress or a gesture owns the
+   * screen -- keep *next_ms at the short busy retry so we resume promptly after the gesture. */
   if(xctx->semaphore || (xctx->ui_state & HILIGHT_ANIM_BUSY)) return 2;
+  /* sleep until the next blink edge (clamped); after a full draw invalidates the signature the
+   * MAX ceiling bounds how long a reconcile can lag. */
+  if(next < NET_HILIGHT_TICK_MIN) next = NET_HILIGHT_TICK_MIN;
+  if(next > NET_HILIGHT_TICK_MAX) next = NET_HILIGHT_TICK_MAX;
+  if(next_ms) *next_ms = next;
   if(sig == xctx->net_hilight_anim_sig) return 2; /* no blink edge since the last frame */
   xctx->net_hilight_anim_sig = sig;
   /* Grow the clip (schematic units) by the widest in-use highlight half-width + endpoint dot

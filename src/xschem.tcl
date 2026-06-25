@@ -448,8 +448,8 @@ proc insert_running_cmds {lb} {
 # (animation enabled, on-screen, idle, and a blinking highlight present).
 array set net_hilight_after {}
 
-# poll period (ms): bounds the worst-case latency between a blink edge and the redraw; the
-# blink cadence itself comes from each style's blink_ms, not from this tick.
+# initial tick delay (ms). After the first tick the C core returns an ADAPTIVE delay (the time
+# to the next blink edge), so a slow blink does not wake at a fixed fast rate.
 set net_hilight_tick_ms 50
 
 proc net_hilight_anim_tick {win} {
@@ -458,11 +458,17 @@ proc net_hilight_anim_tick {win} {
   if { ![info exists has_x] || !$has_x } return
   if { !$net_hilight_animate } return
   if { ![winfo exists $win] } return
-  # One C call advances + decides: 0 = nothing animates / not the front window -> stop;
-  # 1 = redrew; 2 = keep ticking (busy or no blink edge). It pauses itself mid-gesture
-  # (returns 2), so we just stop on 0. Pass $win so a non-front window's tick stops cleanly.
-  if { [catch {xschem redraw_hilight_region $win} r] || $r == 0 } return
-  set net_hilight_after($win) [after $net_hilight_tick_ms [list net_hilight_anim_tick $win]]
+  # One C call advances + decides; returns "tristate next_ms": 0 = nothing animates / not the
+  # front window -> stop; 1 = redrew; 2 = keep ticking (busy or no blink edge). It pauses itself
+  # mid-gesture (returns 2), so we just stop on 0. next_ms = how long to sleep before the next
+  # tick (time to the next blink edge), so we don't poll at a fixed rate. Pass $win so a non-front
+  # window's tick stops cleanly.
+  if { [catch {xschem redraw_hilight_region $win} res] } return
+  set r [lindex $res 0]
+  if { $r == 0 } return
+  set delay [lindex $res 1]
+  if { ![string is integer -strict $delay] || $delay < 10 } { set delay $net_hilight_tick_ms }
+  set net_hilight_after($win) [after $delay [list net_hilight_anim_tick $win]]
 }
 
 proc net_hilight_anim_update {win} {

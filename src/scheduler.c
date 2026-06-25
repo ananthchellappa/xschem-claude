@@ -6014,6 +6014,8 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
     else if(!strcmp(argv[1], "redraw_hilight_region"))
     {
       int r;
+      double next = 50.0;
+      char buf[64];
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
       /* Optional window arg: the C core animates only the current (front) window's global
        * xctx, so a per-window tick for a non-front window must stop (return 0) rather than
@@ -6021,9 +6023,11 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
        * net_hilight_anim_update on schematic switch; multi-window animation is otherwise
        * deferred, see specs/multi_window_detach.md). */
       if(argc > 2 && strcmp(argv[2], xctx->current_win_path)) r = 0;
-      else r = draw_hilight_region();
-      /* tri-state: 0 = stop the tick, 1 = redrew (edge), 2 = keep ticking (busy/no edge) */
-      Tcl_SetResult(interp, my_itoa(r), TCL_VOLATILE);
+      else r = draw_hilight_region(&next);
+      /* Return "tristate next_ms": 0 = stop the tick, 1 = redrew (edge), 2 = keep ticking
+       * (busy/no edge); next_ms = ms the tick should sleep before the next call. */
+      my_snprintf(buf, S(buf), "%d %d", r, (int)next);
+      Tcl_SetResult(interp, buf, TCL_VOLATILE);
     }
 
     /* reload
