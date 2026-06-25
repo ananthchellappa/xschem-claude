@@ -1,8 +1,13 @@
 # Issue 0030 — `net_hilight_dash_period` recomputed twice per marching wire each animation frame
 
 **Opened:** 2026-06-25
-**Status:** 🔵 OPEN (logged from `/code-review high` of the multi-window-anim Phase A work;
-finding is on **pre-existing Pass 2b code**, not the Phase A borrow primitive).
+**Status:** ✅ RESOLVED (2026-06-25) — split out `net_hilight_march_offset_p()` /
+`net_hilight_next_edge_ms_p()` (period-precomputed cores); `scan_animating_hilights()` now computes
+`P = net_hilight_dash_period(st)` once per wire and feeds both. Public signatures unchanged. Verified:
+clean build, regression suite 0 FATAL/0 FAIL, and `net_hilight_march_offset` bit-matches the analytic
+`P*frac(rate*now/1000)` across even/odd-dash periods, march_fwd/rev, and the non-marching guard.
+Originally logged from `/code-review high` of the multi-window-anim Phase A work;
+finding was on **pre-existing Pass 2b code**, not the Phase A borrow primitive.
 **Affects:** `scan_animating_hilights()` wire loop (`src/hilight.c`), via
 `net_hilight_march_offset()` (line ~2591) and `net_hilight_next_edge_ms()` (line ~2555),
 both of which call `net_hilight_dash_period()` (line ~2572).

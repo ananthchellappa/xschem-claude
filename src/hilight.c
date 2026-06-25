@@ -2547,16 +2547,26 @@ static double net_hilight_blink_edge_ms(NetHilightStyle *st, double now)
  * wake then actually redraws) rather than a flat 30fps poll that mostly no-ops for slow scrolls.
  * Floored at NET_HILIGHT_FRAME_MS so fast marching is capped at ~30fps, and the caller clamps the
  * result into [TICK_MIN, TICK_MAX]. Lets the tick sleep to the next change instead of polling. */
-static double net_hilight_next_edge_ms(NetHilightStyle *st, double now)
+/* Core of net_hilight_next_edge_ms given the style's dash period P already computed (0 for a
+ * non-marching / empty-dash style). Split out so the per-frame wire scan, which also needs P for
+ * net_hilight_march_offset, walks the dash-array sum once per wire instead of once here and once
+ * there (issue 0030). P<=0 means "no marching cadence" -> blink edge only, matching the old
+ * P>0 guard (which yielded px_ms=TICK_MAX, never below the edge). */
+static double net_hilight_next_edge_ms_p(NetHilightStyle *st, double now, double P)
 {
   double edge = net_hilight_blink_edge_ms(st, now);
-  if(net_hilight_style_marches(st)) {
-    double P = net_hilight_dash_period(st);
-    double px_ms = (P > 0.0) ? 1000.0 / ((double)st->rate_persec * P) : NET_HILIGHT_TICK_MAX;
+  if(P > 0.0 && net_hilight_style_marches(st)) {
+    double px_ms = 1000.0 / ((double)st->rate_persec * P);
     double march = px_ms > NET_HILIGHT_FRAME_MS ? px_ms : NET_HILIGHT_FRAME_MS;
     if(march < edge) edge = march;
   }
   return edge;
+}
+
+static double net_hilight_next_edge_ms(NetHilightStyle *st, double now)
+{
+  return net_hilight_next_edge_ms_p(st, now,
+           net_hilight_style_marches(st) ? net_hilight_dash_period(st) : 0.0);
 }
 
 /* Dash repeat period of a highlight style, in dash-length units. = sum(dash_arr), DOUBLED when
@@ -2583,16 +2593,24 @@ double net_hilight_dash_period(NetHilightStyle *st)
  * at that magnitude (the same 64-bit trap net_hilight_style_on_now dodges by reducing first).
  * Returns 0 for a non-marching style, an empty dash, or rate_persec<=0 (rate 0 = static; negative
  * rates are clamped away at parse, so a march_fwd style can never scroll backward). */
+/* Core of net_hilight_march_offset given the dash period P (assumed >0 and the style marching;
+ * the public wrapper guards both). Split out so the per-frame wire scan can supply a P it already
+ * computed for net_hilight_next_edge_ms rather than re-walking the dash array (issue 0030). */
+static double net_hilight_march_offset_p(NetHilightStyle *st, double now, double P)
+{
+  double turns = (double)st->rate_persec * (now / 1000.0); /* periods elapsed; >= 0 (rate, now >= 0) */
+  double frac = turns - floor(turns);                      /* fractional turn in [0, 1) */
+  if(st->anim == 2 && frac > 0.0) frac = 1.0 - frac; /* march_rev: mirror; 0 stays 0 (no -0.0) */
+  return P * frac;                                  /* in [0, P): frac < 1, and >= 0, never -0.0 */
+}
+
 double net_hilight_march_offset(NetHilightStyle *st, double now)
 {
-  double P, turns, frac;
+  double P;
   if(!net_hilight_style_marches(st)) return 0.0;
   P = net_hilight_dash_period(st);
   if(P <= 0.0) return 0.0;
-  turns = (double)st->rate_persec * (now / 1000.0); /* periods elapsed; >= 0 (rate, now >= 0) */
-  frac = turns - floor(turns);                      /* fractional turn in [0, 1) */
-  if(st->anim == 2 && frac > 0.0) frac = 1.0 - frac; /* march_rev: mirror; 0 stays 0 (no -0.0) */
-  return P * frac;                                  /* in [0, P): frac < 1, and >= 0, never -0.0 */
+  return net_hilight_march_offset_p(st, now, P);
 }
 
 /* Single source of truth for "which highlighted objects animate": walks the highlighted
@@ -2612,11 +2630,15 @@ static int scan_animating_hilights(double now, unsigned int *sig, int *maxw, dou
   prepare_netlist_structs(0);
   for(i = 0; i < xctx->wires; ++i) {
     NetHilightStyle *st;
-    double a, b;
+    double a, b, P;
     if(!(entry = bus_hilight_hash_lookup(xctx->wire[i].node, 0, XLOOKUP)) || entry->value < 0) continue;
     st = get_hilight_style(entry->value);
     if(!net_hilight_style_animates(st)) continue;
     if(predicate) return 1;
+    /* dash period is per-style and frame-invariant; compute once here and feed both the marching
+     * offset (sig) and the wake cadence (next_ms) so each walks the dash array no more than once per
+     * wire instead of once each (issue 0030). 0 for a non-marching/empty-dash style. */
+    P = net_hilight_style_marches(st) ? net_hilight_dash_period(st) : 0.0;
     if(sig) {
       /* fold the blink on/off phase AND (wire-only) the whole-pixel marching offset, so the tick
        * redraws exactly when something visibly changes: a blink edge, or the dashes scrolling >=1px.
@@ -2624,11 +2646,11 @@ static int scan_animating_hilights(double now, unsigned int *sig, int *maxw, dou
        * redraw. Marching is wire-only (symbols are colored, never marched), so the instance loop
        * below folds the blink phase only. */
       unsigned int term = (unsigned int)(st->index * 2 + net_hilight_style_on_now(st, now));
-      term = term * 31u + (unsigned int)(int)net_hilight_march_offset(st, now);
+      term = term * 31u + (unsigned int)(int)(P > 0.0 ? net_hilight_march_offset_p(st, now, P) : 0.0);
       *sig = *sig * 1000003u + term;
     }
     if(maxw && st->width > *maxw) *maxw = st->width;
-    if(next_ms) { double d = net_hilight_next_edge_ms(st, now); if(d < *next_ms) *next_ms = d; }
+    if(next_ms) { double d = net_hilight_next_edge_ms_p(st, now, P); if(d < *next_ms) *next_ms = d; }
     if(bx1) {
       a = xctx->wire[i].x1; b = xctx->wire[i].x2; if(a > b) { double t = a; a = b; b = t; }
       if(!found || a < *bx1) *bx1 = a;
