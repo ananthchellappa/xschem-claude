@@ -2682,7 +2682,15 @@ static int scan_animating_hilights(double now, unsigned int *sig, int *maxw, dou
  * Returns the Xschem_ctx* that was current (pass it to net_hilight_restore_ctx), or NULL when
  * NO borrow happened -- either `win_path` is unknown/empty, or it is already the current
  * window. A NULL return means "do not switch and do not restore": callers treat it as a no-op,
- * so a stale/unknown win path safely degrades to operating on the front context. */
+ * so a stale/unknown win path safely degrades to operating on the front context.
+ *
+ * Re-entrant safety (Phase E2): borrow/restore are a balanced stack -- each call saves the
+ * current xctx and the matching restore puts it back -- and every caller restores synchronously
+ * within one command/tick with NO vwait/update between borrow and restore. So even if borrows
+ * nested they would unwind correctly (stack), and in practice the single-threaded Tcl event loop
+ * runs each tick callback to completion before the next, so two windows' ticks never interleave
+ * mid-borrow. The net effect: any sequence of borrowed reads/draws leaves the global xctx exactly
+ * as it found it (verified by the E2 interleaving test). */
 Xschem_ctx *net_hilight_borrow_ctx(const char *win_path)
 {
   int i, n = -1;
@@ -2733,6 +2741,16 @@ int net_hilight_win_known(const char *win_path)
   return 0;
 }
 
+/* 1 iff the CURRENT window has a drawing gesture / operation in progress, so a net-highlight
+ * animation frame must not draw now. Single source of truth for the HILIGHT_ANIM_BUSY mask +
+ * the semaphore. Used per-context (is THIS window busy?) and, in redraw_hilight_region, on the
+ * pre-borrow front context (multi-window anim E1: never animate ANY window while the focused
+ * window is mid-gesture -- the gesture is always in the focused = global xctx). */
+int net_hilight_ctx_busy(void)
+{
+  return xctx->semaphore || (xctx->ui_state & HILIGHT_ANIM_BUSY);
+}
+
 /* True iff the current window should be running the animation tick: animation globally
  * enabled, on-screen, not mid-gesture, and >=1 highlighted net/instance uses an animating
  * style. Drives `xschem get net_hilight_animated` and the Tcl start/stop logic. */
@@ -2740,8 +2758,7 @@ int net_hilight_has_animation(void)
 {
   if(!has_x || !xctx->hilight_nets) return 0;
   if(!tclgetboolvar("net_hilight_animate")) return 0;
-  if(xctx->semaphore) return 0;
-  if(xctx->ui_state & HILIGHT_ANIM_BUSY) return 0;
+  if(net_hilight_ctx_busy()) return 0;
   return scan_animating_hilights(0.0, NULL, NULL, NULL, NULL, NULL, NULL, NULL) > 0;
 }
 
@@ -2777,7 +2794,7 @@ int draw_hilight_region(double *next_ms)
   if(!scan_animating_hilights(now, &sig, &maxw, &next, &x1u, &y1u, &x2u, &y2u)) return 0; /* stop */
   /* pause (but keep ticking, retrying soon) while a draw is in progress or a gesture owns the
    * screen -- keep *next_ms at the short busy retry so we resume promptly after the gesture. */
-  if(xctx->semaphore || (xctx->ui_state & HILIGHT_ANIM_BUSY)) return 2;
+  if(net_hilight_ctx_busy()) return 2;
   /* sleep until the next blink edge (clamped); after a full draw invalidates the signature the
    * MAX ceiling bounds how long a reconcile can lag. */
   if(next < NET_HILIGHT_TICK_MIN) next = NET_HILIGHT_TICK_MIN;

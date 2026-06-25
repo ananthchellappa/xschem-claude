@@ -1519,6 +1519,7 @@ extern double net_hilight_march_offset(NetHilightStyle *st, double now); /* Pass
 extern Xschem_ctx *net_hilight_borrow_ctx(const char *win_path); /* repoint xctx at win (no GUI fx) */
 extern void net_hilight_restore_ctx(Xschem_ctx *saved);  /* undo net_hilight_borrow_ctx() */
 extern int net_hilight_win_known(const char *win_path);  /* is win an open window? (vs borrow NULL) */
+extern int net_hilight_ctx_busy(void);                   /* current window mid-gesture? (anim E1) */
 extern int net_hilight_has_animation(void);             /* window needs the animation tick? */
 extern int draw_hilight_region(double *next_ms);        /* regional redraw of animating nets */
 extern void net_hilight_anim_update(void);              /* (re)evaluate start/stop of the tick */

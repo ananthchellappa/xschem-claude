@@ -6160,6 +6160,13 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
        * <win> that IS the current window borrows to NULL and correctly redraws the front. */
       if(argc > 2 && !net_hilight_win_known(argv[2])) {
         r = 0;
+      } else if(net_hilight_ctx_busy()) {
+        /* E1: the focused (global) window is mid-gesture (drag / wire / move / select). Never
+         * animate ANY window's frame now -- a borrow would swap xctx out from under the in-flight
+         * gesture and the shared draw batch buffers. Checked BEFORE the borrow: the gesture is
+         * always in the focused = global xctx (switch_window refuses to leave mid-operation).
+         * Return 2 (busy, keep ticking) so the tick resumes promptly once the gesture ends. */
+        r = 2;
       } else {
         if(argc > 2) borrowed = net_hilight_borrow_ctx(argv[2]);
         /* Background-TAB guard: a real borrow (borrowed != NULL) onto a context with an empty
