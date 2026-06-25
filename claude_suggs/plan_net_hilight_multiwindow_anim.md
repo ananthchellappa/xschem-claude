@@ -174,3 +174,64 @@ reusable for other background-window redraws).
 3. Land **read-only borrow (query) before draw borrow**; the A3 audit gates the draw phase.
 4. Test seam = **`<win>` arg on `get net_hilight_animated` + `redraw_hilight_region`** + per-window
    PNG `cmp`.
+
+---
+
+## Phase A — STATUS: DONE (2026-06-25, HEAD after `714ce42d`)
+
+A1+A2 implemented and verified RED→GREEN→sabotage; A3 audit below. Single commit on `fluid-editing`.
+
+### What landed
+- **`net_hilight_borrow_ctx(const char *win_path)` / `net_hilight_restore_ctx(Xschem_ctx *saved)`**
+  (`hilight.c`, prototypes in `xschem.h`). The borrow maps `win_path` → context via
+  `get_tab_or_window_number()` + `get_save_xctx()`, honoring the single-schematic caveat
+  (`get_window_count()==0 && n==0` → the live `xctx`, not `save_xctx[0]`), repoints the global
+  `xctx`, and returns the previous one. Returns **NULL = no borrow** (unknown/empty win, or already
+  current); restore of a NULL is a no-op, so the pair is always balanced. **No** GUI side effects —
+  no raise/focus/title, no Tcl `save_ctx`/`restore_ctx`, no layer-button reconfigure (explicitly
+  NOT `switch_window()`).
+- **Probe wiring:** `xschem get current_name <win>` now borrows `<win>`, reads `xctx->current_name`
+  (copied via `TCL_VOLATILE` before restore), restores. No-arg form unchanged. This is the A2 test
+  seam; the real feature wiring (`net_hilight_animated <win>`, `redraw_hilight_region <win>`) is
+  Phase B/C.
+
+### Verification (`scratchpad/phaseA_borrow_test.tcl`, `DISPLAY=:0`)
+Two detached windows (`.drw`=LM5134A, `.x1.drw`=LCC_instances), focus returned to `.drw`:
+- **RED** (pre-change binary): `get current_name .x1.drw` → `LM5134A.sch` (arg ignored). 1 FAIL.
+- **GREEN**: → `LCC_instances.sch`; front no-arg/own-path reads unchanged; `current_win_path`
+  identical before/after the borrow (restore exact); unknown win path falls back to front. ALL PASS.
+- **Sabotage** (restore body `#if`'d out): after the borrowed read the global `xctx` leaks at
+  `.x1.drw`, so the follow-up front no-arg reads return `.x1.drw`/`LCC_instances.sch` (2 FAIL) —
+  proving the restore is load-bearing. Reverted; rebuilt GREEN.
+
+### A3 — borrow audit of draw-path globals (gates Phase C)
+Audited every global the regional-redraw path (`draw_hilight_region` → `bbox()` → `set_clip_mask()`
+→ `draw()` → `drawline/filledrect/drawarc/...`) reads that is NOT inside `Xschem_ctx`:
+
+| Draw-path state | Owner | xctx-relative? | Verdict under borrow |
+|---|---|---|---|
+| `bbox()` machinery (`bbx*`, `area*`, `savex*`, `xrect[0]`, `bbox_set`, `lw`, `mooz`) | all `xctx->…` (`select.c`) | YES | **SAFE** — per-context |
+| `set_clip_mask()` (`gc[]`, `gcstipple[]`, `gctiled`, `gc_hilight`, `cairo_ctx`, `cairo_save_ctx`) | all `xctx->…` (`xinit.c:1139`) | YES | **SAFE** — per-context |
+| cairo source/font (`set_cairo_color`, `set_text_custom_font`: `cairo_ctx`, `cairo_save_ctx`, `xcolor_array`, `cairo_font`) | all `xctx->…` (`draw.c`) | YES | **SAFE** — per-context |
+| draw target (`window`, `save_pixmap`, `draw_window`, `draw_pixmap`, `gc[c]`) | all `xctx->…` (`draw.c:1362`) | YES | **SAFE** — per-context |
+| `display`, `colormap`, `visual`, `screen_number/depth`, `cadlayers` | `globals.c`, init-once | global, read-only | **SAFE** — shared handle/constants |
+| `pixmap[]`, `pixdata[]` (16×16 layer stipple bitmaps) | `globals.c`, set at init, bound into `gcstipple[]` | global, read-only during draw | **SAFE** — window-independent fill patterns |
+| `cairo_font_scale`, `cairo_vert_correct`, `nocairo_vert_correct`, `text_svg/ps` | `globals.c`, config | global, read-only | **SAFE** — style constants |
+| **static draw batch buffers** — `static int i; static XSegment/XArc/XRectangle r[CADDRAWBUFFERSIZE]` in `drawline`/`drawarc`/`filledrect`/`drawtemp*` (`draw.c`) | **draw.c file scope — ONE set shared by ALL contexts** | **NO — truly global** | **CONDITIONALLY SAFE** (see below) |
+| `rstate` | `callback.c` event-handler **locals** | N/A | not a draw-path global — irrelevant to the borrow |
+
+**The one truly-global draw state = the static batch buffers.** Each batched primitive function
+accumulates segments/arcs/rects into a file-scope `r[]` (counter `i`) on `ADD` and flushes them to
+**whatever `xctx` is current at flush time** (`xctx->window`/`save_pixmap`/`gc[c]`) on `END` (or when
+the buffer fills). They are **empty between top-level `draw()` calls** — the existing single-window
+regional redraw (`draw_hilight_region`) already relies on every `ADD` being matched by an `END`
+flush within one synchronous `draw()`.
+
+→ **Phase C/E constraint (gate satisfied):** a borrow is safe to draw **only** if it
+(1) wraps a *complete* `draw()`/`draw_hilight_region()` call — never interrupts one mid-accumulation,
+(2) is **non-reentrant** (no nested borrow), and
+(3) does **no** `vwait`/`update` inside the borrow (which could let another draw start mid-buffer).
+The per-window Tcl `after` ticks already fire between event-loop iterations (not mid-draw) and
+`draw()` is synchronous, so these hold naturally — but Phase E (serialization E1/E2) must assert them
+explicitly. No buffer save/restore is needed; serialization is sufficient. **A3 clears Phase C to
+start**, with the cross-talk PNG checks (C2) as the safety net for the buffer invariant.

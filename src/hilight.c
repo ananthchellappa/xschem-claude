@@ -2669,6 +2669,48 @@ static int scan_animating_hilights(double now, unsigned int *sig, int *maxw, dou
   return found;
 }
 
+/* Phase A (multi-window net-highlight animation): the context-borrow primitive.
+ *
+ * Repoint the global `xctx` at window `win_path`'s context so a context-specific read or a
+ * regional redraw evaluates THAT window, then restore it exactly. Unlike switch_window()
+ * (xinit.c) this has NO GUI side effects -- no raise/focus/title, no Tcl save_ctx/restore_ctx,
+ * no layer-button reconfigure: it is the minimal pointer swap and nothing else, so it is safe
+ * to use synchronously inside an animation tick callback. The draw-path globals that live
+ * OUTSIDE Xschem_ctx are audited in plan_net_hilight_multiwindow_anim.md (Phase A3) before any
+ * borrow is used to draw (Phase C); a read-only borrow (Phase A/B) touches none of them.
+ *
+ * Returns the Xschem_ctx* that was current (pass it to net_hilight_restore_ctx), or NULL when
+ * NO borrow happened -- either `win_path` is unknown/empty, or it is already the current
+ * window. A NULL return means "do not switch and do not restore": callers treat it as a no-op,
+ * so a stale/unknown win path safely degrades to operating on the front context. */
+Xschem_ctx *net_hilight_borrow_ctx(const char *win_path)
+{
+  int n;
+  Xschem_ctx *target, **save_xctx = get_save_xctx();
+  if(!win_path || !win_path[0]) return NULL;
+  /* fast path: asking for the window we are already on -> no swap, no restore */
+  if(xctx && xctx->current_win_path && !strcmp(win_path, xctx->current_win_path)) return NULL;
+  n = get_tab_or_window_number(win_path);
+  if(n < 0 || n >= MAX_NEW_WINDOWS) return NULL;
+  /* single-schematic caveat: with only one schematic open the front context is the live
+   * `xctx`, not save_xctx[0] (see get_tab_or_window_number()/create_new_window(), xinit.c). */
+  if(get_window_count() == 0 && n == 0) target = xctx;
+  else target = save_xctx[n];
+  if(!target || target == xctx) return NULL; /* unallocated, or already current */
+  {
+    Xschem_ctx *prev = xctx;
+    xctx = target;
+    return prev;
+  }
+}
+
+/* Restore the global `xctx` saved by net_hilight_borrow_ctx(). A NULL arg (meaning no borrow
+ * happened) is a no-op, so a borrow/restore pair is always balanced regardless of outcome. */
+void net_hilight_restore_ctx(Xschem_ctx *saved)
+{
+  if(saved) xctx = saved;
+}
+
 /* True iff the current window should be running the animation tick: animation globally
  * enabled, on-screen, not mid-gesture, and >=1 highlighted net/instance uses an animating
  * style. Drives `xschem get net_hilight_animated` and the Tcl start/stop logic. */

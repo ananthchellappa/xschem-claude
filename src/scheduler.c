@@ -1658,8 +1658,13 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
             Tcl_SetResult(interp, xctx->current_dirname, TCL_VOLATILE);
           }
           else if(!strcmp(argv[2], "current_name")) { /* name of current design (no library path) */
+            /* optional <win> arg: read that window's context via the Phase-A context-borrow
+             * primitive (no GUI side effects), then restore. Doubles as the borrow probe. */
+            Xschem_ctx *borrowed = NULL;
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
-            Tcl_SetResult(interp, xctx->current_name, TCL_VOLATILE);
+            if(argc > 3) borrowed = net_hilight_borrow_ctx(argv[3]);
+            Tcl_SetResult(interp, xctx->current_name, TCL_VOLATILE); /* copies before restore */
+            net_hilight_restore_ctx(borrowed);
           }
           else if(!strcmp(argv[2], "actionlog_filename")) { /* resolved action-log path, "" if logging off */
             Tcl_SetResult(interp, actionlog_filename, TCL_VOLATILE);

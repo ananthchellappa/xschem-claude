@@ -1516,6 +1516,8 @@ extern double net_hilight_now_ms(void);                 /* wall-clock ms (or tes
 extern int net_hilight_style_on_now(NetHilightStyle *st, double now); /* blink ON/OFF gate */
 extern double net_hilight_dash_period(NetHilightStyle *st); /* dash repeat (odd-len doubled) */
 extern double net_hilight_march_offset(NetHilightStyle *st, double now); /* Pass 2b dash scroll */
+extern Xschem_ctx *net_hilight_borrow_ctx(const char *win_path); /* repoint xctx at win (no GUI fx) */
+extern void net_hilight_restore_ctx(Xschem_ctx *saved);  /* undo net_hilight_borrow_ctx() */
 extern int net_hilight_has_animation(void);             /* window needs the animation tick? */
 extern int draw_hilight_region(double *next_ms);        /* regional redraw of animating nets */
 extern void net_hilight_anim_update(void);              /* (re)evaluate start/stop of the tick */
