@@ -395,6 +395,7 @@ proc bind_accelerators_from_table {topwin} {
     if {[lsearch -exact $migrated_action_ids $id] < 0} continue
     if {[dict get $row type] ne {command}} continue
     set accel [dict get $row accel]
+    if {$accel eq ""} continue
     set seq [accel_to_tk_sequence $accel]
     if {$seq eq {}} {
       puts stderr "action registry: '$id' accel '$accel' not translatable; left to C"
