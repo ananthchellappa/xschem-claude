@@ -159,6 +159,11 @@ proc build_toolbar_from_table {topwin} {
 proc build_menu_from_table {topwin menukey} {
   global action_table
   set m $topwin.menubar.$menukey
+  if {![winfo exists $m]} {
+    # If the menu widget was not created (e.g., by xschem.tcl or a PDK script),
+    # we cannot populate it. Skip safely instead of crashing Tcl_AppInit().
+    return
+  }
   foreach row $action_table {
     if {![dict exists $row menu]} {
       puts stderr "ERROR: row missing menu key in build_menu: $row"
