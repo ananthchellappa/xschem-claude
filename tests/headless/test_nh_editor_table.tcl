@@ -36,12 +36,12 @@ update idletasks
 check "T1 scrollable body built"  [winfo exists $body]            "(=> [winfo exists $body])"
 check "T2 one row per style (3)"  [expr {[nrows $body] == 3}]     "(=> [nrows $body])"
 check "T3 row0 idx col = 0"        [expr {[celltext $body.r0.c0] eq {0}}]        "(=> [celltext $body.r0.c0])"
-check "T4 row0 color col = 4"      [expr {[celltext $body.r0.c1] eq {4}}]        "(=> [celltext $body.r0.c1])"
-check "T5 row1 color = red"        [expr {[celltext $body.r1.c1] eq {red}}]      "(=> [celltext $body.r1.c1])"
-check "T6 row1 pattern = '6 4'"    [expr {[celltext $body.r1.c3] eq {6 4}}]      "(=> [celltext $body.r1.c3])"
-check "T7 row1 march = march_fwd"  [expr {[celltext $body.r1.c6] eq {march_fwd}}] "(=> [celltext $body.r1.c6])"
-check "T8 row2 color = #00ff00"    [expr {[celltext $body.r2.c1] eq {#00ff00}}]  "(=> [celltext $body.r2.c1])"
-check "T9 row2 blink = 250"        [expr {[celltext $body.r2.c5] eq {250}}]      "(=> [celltext $body.r2.c5])"
+# Body cells are editing widgets (slice 4): the rendered values are read back through the same
+# edit model used for commit. Re-assembling the bound cell vars must reproduce the seeded rows.
+set asm [nhse_assemble_table]
+check "T4 row0 reflects seed"      [expr {[lindex $asm 0] eq {0 4 1 {} 0 0 none 0}}]        "(=> [lindex $asm 0])"
+check "T5 row1 reflects seed"      [expr {[lindex $asm 1] eq {1 red 3 {6 4} 30 0 march_fwd 2}}] "(=> [lindex $asm 1])"
+check "T6 row2 reflects seed"      [expr {[lindex $asm 2] eq {2 #00ff00 2 {} 0 250 none 0}}]  "(=> [lindex $asm 2])"
 check "T10 header row has Color"   [string match -nocase *color* [celltext .nhse.tbl.head.c1]] "(=> [celltext .nhse.tbl.head.c1])"
 
 # --- external change -> reopen re-renders -------------------------------------

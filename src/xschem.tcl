@@ -715,33 +715,223 @@ proc load_net_hilight_conf {} {
 # read-only, scrollable view of the current table -- one row per style, one column per field.
 # Editing widgets, the free-to-edit row, the live preview and Save/Cancel land in later slices.
 
-# Column layout shared by the fixed header and every body row so the columns line up. Each entry:
-# {header-text  width-in-chars  field-index-into-the-8-column-style-row}.
+# Column layout for the fixed header row. Each entry: {header-text width-in-chars field-index}.
+# Body cells (slice 4) are heterogeneous editing widgets, so these widths only approximate the
+# body columns; the header is a guide, not pixel-aligned.
 proc nhse_columns {} {
   return {
-    {Idx 4 0} {Color 12 1} {Width 6 2} {Pattern 10 3}
-    {Angle 6 4} {Blink(ms) 9 5} {March 10 6} {Speed 8 7}
+    {Idx 4 0} {Color 14 1} {Width 6 2} {Pattern 13 3}
+    {Angle 9 4} {Blink(ms) 9 5} {March 9 6} {Speed 7 7}
   }
 }
 
-# (Re)render the table body from the live table. Destroys the previous rows first, so this is also
-# the refresh path when the dialog is re-opened after an external net_hilight_style change.
+# ---- per-cell value helpers (used by the widgets, all unit-testable) ---------------------
+# The single-token X11 color names from the same source the engine resolves names through
+# (/usr/share/X11/rgb.txt -> XAllocNamedColor). Multi-word names are skipped: they would split a
+# Tcl-list style row. Cached; a bundled fallback covers platforms without the file.
+proc nhse_rgb_names {} {
+  global nhse_rgb_names_cache
+  if {[info exists nhse_rgb_names_cache]} { return $nhse_rgb_names_cache }
+  set names {}
+  if {[file exists /usr/share/X11/rgb.txt] && ![catch {open /usr/share/X11/rgb.txt r} fp]} {
+    while {[gets $fp line] >= 0} {
+      if {[regexp {^[ \t]*[0-9]+[ \t]+[0-9]+[ \t]+[0-9]+[ \t]+(\S+)[ \t]*$} $line -> name]} {
+        lappend names $name
+      }
+    }
+    close $fp
+  }
+  if {![llength $names]} {
+    set names {black white red green blue yellow orange cyan magenta gray grey pink purple brown
+               gold violet navy teal maroon olive coral salmon turquoise khaki orchid tan}
+  }
+  set nhse_rgb_names_cache [lsort -unique $names]
+  return $nhse_rgb_names_cache
+}
+
+# Color combobox value list: Layer 0..N (the engine's own layer colors), then names, then Custom.
+proc nhse_color_values {} {
+  set vals {}
+  if {[info exists ::tctx::colors]} {
+    for {set i 0} {$i < [llength $::tctx::colors]} {incr i} { lappend vals "Layer $i" }
+  }
+  set vals [concat $vals [nhse_rgb_names]]
+  lappend vals "Custom..."
+  return $vals
+}
+
+# Resolve a stored color value (layer index | name | #rrggbb) to a Tk color for the swatch, or {}.
+proc nhse_color_to_tk {val} {
+  if {[string is integer -strict $val] && [info exists ::tctx::colors] \
+      && $val >= 0 && $val < [llength $::tctx::colors]} {
+    return [lindex $::tctx::colors $val]
+  }
+  if {![catch {winfo rgb . $val}]} { return $val }
+  return {}
+}
+
+# Friendly marching label <-> stored anim token.
+proc nhse_march_to_disp {raw}  { switch -- $raw  {march_fwd {return Forward} march_rev {return Reverse} default {return Off}} }
+proc nhse_march_to_raw  {disp} { switch -- $disp {Forward {return march_fwd} Reverse {return march_rev} default {return none}} }
+
+# Named dash-pattern examples (name -> on/off run-length list; Solid = no dash).
+proc nhse_dash_examples {} { return {Solid {} Dash {6 4} Dot {2 3} Dash-Dot {6 3 2 3} Long-Dash {12 4}} }
+
+# ---- the editing model: per-cell vars (::nhse_v(row,field)) <-> the table -----------------
+# Assemble the live edit table from the bound cell vars. Field 6 holds a FRIENDLY march label and
+# is converted back to its token; the angle (a slider) is coerced to an int so net_hilight_style_norm
+# does not clamp a "30.0" to 0.
+proc nhse_assemble_table {} {
+  set rows {}
+  set i 0
+  while {[info exists ::nhse_v($i,0)]} {
+    set angle $::nhse_v($i,4)
+    if {[string is double -strict $angle]} { set angle [expr {int(round($angle))}] }
+    lappend rows [list $i $::nhse_v($i,1) $::nhse_v($i,2) $::nhse_v($i,3) $angle \
+                       $::nhse_v($i,5) [nhse_march_to_raw $::nhse_v($i,6)] $::nhse_v($i,7)]
+    incr i
+  }
+  return $rows
+}
+
+# Commit the current cell vars to the table (live-applies + redraws via net_hilight_style_replace),
+# then re-sync the vars/swatch/enable-state to the NORMALIZED result without rebuilding widgets.
+proc nhse_commit {} {
+  if {[info exists ::nhse_building] && $::nhse_building} return
+  if {![info exists ::nhse_v(0,0)]} return
+  set newtab [net_hilight_style_replace [nhse_assemble_table]]
+  set i 0
+  foreach r $newtab {
+    set ::nhse_v($i,0) $i
+    set ::nhse_v($i,1) [lindex $r 1]
+    set ::nhse_v($i,2) [lindex $r 2]
+    set ::nhse_v($i,3) [lindex $r 3]
+    set ::nhse_v($i,4) [lindex $r 4]
+    set ::nhse_v($i,5) [lindex $r 5]
+    set ::nhse_v($i,6) [nhse_march_to_disp [lindex $r 6]]
+    set ::nhse_v($i,7) [lindex $r 7]
+    catch {nhse_update_swatch $i}
+    catch {nhse_row_enable_state $i}
+    incr i
+  }
+}
+
+# Angle/March/Speed only matter with a dash pattern: grey them out for a solid (empty-dash) row.
+proc nhse_row_enable_state {i} {
+  set rf .nhse.tbl.sf.body.r$i
+  if {![winfo exists $rf]} return
+  set on [expr {[string trim $::nhse_v($i,3)] ne {}}]
+  set st [expr {$on ? {normal} : {disabled}}]
+  catch { $rf.c4 configure -state $st }
+  catch { $rf.c6 configure -state [expr {$on ? {readonly} : {disabled}}] }
+  catch { $rf.c7 configure -state $st }
+}
+
+proc nhse_update_swatch {i} {
+  set sw .nhse.tbl.sf.body.r$i.c1.sw
+  if {![winfo exists $sw]} return
+  set tk [nhse_color_to_tk $::nhse_v($i,1)]
+  if {$tk ne {}} { catch { $sw configure -background $tk } } else { catch { $sw configure -background [.nhse cget -background] } }
+}
+
+# Custom... -> a #rrggbb picker with the current color as the starting point.
+proc nhse_color_pick {i} {
+  set init [nhse_color_to_tk $::nhse_v($i,1)]
+  set opt {}
+  if {$init ne {}} { set opt [list -initialcolor $init] }
+  set c [eval tk_chooseColor -parent .nhse $opt]
+  if {$c ne {}} { set ::nhse_v($i,1) $c }
+  nhse_update_swatch $i
+}
+
+proc nhse_color_selected {i} {
+  set v $::nhse_v($i,1)
+  if {$v eq "Custom..."} {
+    nhse_color_pick $i
+  } elseif {[regexp {^Layer ([0-9]+)$} $v -> n]} {
+    set ::nhse_v($i,1) $n
+  }
+  nhse_update_swatch $i
+  nhse_commit
+}
+
+proc nhse_dash_apply_example {i} {
+  array set m [nhse_dash_examples]
+  if {[info exists ::nhse_ex($i)] && [info exists m($::nhse_ex($i))]} { set ::nhse_v($i,3) $m($::nhse_ex($i)) }
+  nhse_row_enable_state $i
+  nhse_commit
+}
+
+proc nhse_dash_changed {i} { nhse_row_enable_state $i ; nhse_commit }
+
+# Build the editing widgets for one style row, each bound to ::nhse_v(row,field).
+proc nhse_build_row {body i row} {
+  set rf $body.r$i
+  frame $rf
+  for {set f 0} {$f < 8} {incr f} { set ::nhse_v($i,$f) [lindex $row $f] }
+  set ::nhse_v($i,0) $i
+  set ::nhse_v($i,6) [nhse_march_to_disp [lindex $row 6]]
+
+  label $rf.c0 -width 4 -anchor w -relief flat -text $i
+  pack $rf.c0 -side left -padx 1
+
+  frame $rf.c1                                              ;# color: swatch + editable combobox
+  label $rf.c1.sw -width 2 -relief solid -borderwidth 1
+  ttk::combobox $rf.c1.cb -width 10 -textvariable ::nhse_v($i,1) -values [nhse_color_values]
+  pack $rf.c1.sw $rf.c1.cb -side left -padx 1
+  bind $rf.c1.cb <<ComboboxSelected>> [list nhse_color_selected $i]
+  bind $rf.c1.cb <Return> nhse_commit ; bind $rf.c1.cb <FocusOut> nhse_commit
+  pack $rf.c1 -side left -padx 1
+
+  spinbox $rf.c2 -width 5 -from 1 -to 100 -textvariable ::nhse_v($i,2) -command nhse_commit
+  bind $rf.c2 <Return> nhse_commit ; bind $rf.c2 <FocusOut> nhse_commit
+  pack $rf.c2 -side left -padx 1
+
+  frame $rf.c3                                              ;# dash: entry + examples dropdown
+  entry $rf.c3.e -width 7 -textvariable ::nhse_v($i,3)
+  set exnames {} ; foreach {n d} [nhse_dash_examples] { lappend exnames $n }
+  ttk::combobox $rf.c3.ex -width 3 -state readonly -textvariable ::nhse_ex($i) -values $exnames
+  pack $rf.c3.e $rf.c3.ex -side left -padx 1
+  bind $rf.c3.e <Return> [list nhse_dash_changed $i] ; bind $rf.c3.e <FocusOut> [list nhse_dash_changed $i]
+  bind $rf.c3.ex <<ComboboxSelected>> [list nhse_dash_apply_example $i]
+  pack $rf.c3 -side left -padx 1
+
+  scale $rf.c4 -from 0 -to 45 -orient horizontal -length 70 -showvalue 1 -resolution 1 -variable ::nhse_v($i,4)
+  bind $rf.c4 <ButtonRelease-1> nhse_commit
+  pack $rf.c4 -side left -padx 1
+
+  entry $rf.c5 -width 8 -textvariable ::nhse_v($i,5)
+  bind $rf.c5 <Return> nhse_commit ; bind $rf.c5 <FocusOut> nhse_commit
+  pack $rf.c5 -side left -padx 1
+
+  ttk::combobox $rf.c6 -width 8 -state readonly -textvariable ::nhse_v($i,6) -values {Off Forward Reverse}
+  bind $rf.c6 <<ComboboxSelected>> nhse_commit
+  pack $rf.c6 -side left -padx 1
+
+  entry $rf.c7 -width 6 -textvariable ::nhse_v($i,7)
+  bind $rf.c7 <Return> nhse_commit ; bind $rf.c7 <FocusOut> nhse_commit
+  pack $rf.c7 -side left -padx 1
+
+  pack $rf -side top -fill x -anchor w
+  nhse_update_swatch $i
+  nhse_row_enable_state $i
+}
+
+# (Re)render the table body from the live table as EDITING rows. Destroys prior rows + their bound
+# vars first, so this is also the refresh path when the dialog is re-opened after an external change.
 proc nhse_rebuild {} {
   set body .nhse.tbl.sf.body
   if {![winfo exists $body]} return
+  set ::nhse_building 1
   foreach c [winfo children $body] { destroy $c }
+  array unset ::nhse_v
+  array unset ::nhse_ex
   set i 0
   foreach row [net_hilight_style_current] {
-    set rf $body.r$i
-    frame $rf
-    foreach col [nhse_columns] {
-      lassign $col hdr wdt fld
-      label $rf.c$fld -width $wdt -anchor w -relief flat -text [lindex $row $fld]
-      pack $rf.c$fld -side left -padx 1
-    }
-    pack $rf -side top -fill x -anchor w
+    nhse_build_row $body $i $row
     incr i
   }
+  set ::nhse_building 0
   update idletasks
   catch { .nhse.tbl.sf configure -scrollregion [.nhse.tbl.sf bbox all] }
 }
