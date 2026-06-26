@@ -10189,6 +10189,8 @@ proc build_widgets { {topwin {} } } {
   menu $topwin.menubar.hilight -tearoff 0 -takefocus 0
   $topwin.menubar add cascade -label "Simulation" -menu $topwin.menubar.simulation
   menu $topwin.menubar.simulation -tearoff 0 -takefocus 0
+  $topwin.menubar add cascade -label "Waves" -menu $topwin.menubar.waves
+  menu $topwin.menubar.waves -tearoff 0 -takefocus 0
   $topwin.menubar add cascade -label "Help" -menu $topwin.menubar.help
   menu $topwin.menubar.help -tearoff 0 -takefocus 0
 
@@ -10217,7 +10219,17 @@ proc build_widgets { {topwin {} } } {
   build_menu_from_table $topwin sym
   build_menu_from_table $topwin hilight
   build_menu_from_table $topwin simulation
+  build_menu_from_table $topwin waves
   build_menu_from_table $topwin help
+
+  $topwin.menubar add command -label { - } -state disabled
+  $topwin.menubar add command -label Netlist -background {#888888} \
+    -activebackground orange -command {xschem netlist -erc}
+  $topwin.menubar add command -label Simulate -background green -background {#888888} \
+    -activebackground orange -command {
+     simulate_from_button
+  }
+
   set ::simulate_bg [$topwin.menubar cget -background]
   frame $topwin.drw -background {} -takefocus 1 -width $canvas_width -height $canvas_height
 

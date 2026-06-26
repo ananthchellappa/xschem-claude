@@ -131,6 +131,8 @@ fi
 
 # Compare normalized output against the baseline.
 fail=0
+pass_count=0
+total_count=0
 for g in "$GOLD"/*; do
   base=$(basename "$g")
   if [ ! -f "$NORM/$base" ]; then
@@ -140,9 +142,12 @@ for g in "$GOLD"/*; do
   fi
   if diff -u "$g" "$NORM/$base" > "$RESULTS/$base.diff"; then
     echo "PASS  $base"
+    pass_count=$((pass_count + 1))
+    total_count=$((total_count + 1))
   else
     echo "FAIL  $base (see results/$base.diff)"
     fail=1
+    total_count=$((total_count + 1))
   fi
 done
 # Flag brand-new artifacts not yet in gold.
@@ -152,7 +157,7 @@ for n in "$NORM"/*; do
 done
 
 if [ "$fail" -ne 0 ]; then
-  echo "== HARNESS: FAIL =="
+  echo "== HARNESS: FAIL ($pass_count/$total_count) =="
   exit 1
 fi
-echo "== HARNESS: PASS =="
+echo "== HARNESS: PASS ($pass_count/$total_count) =="
