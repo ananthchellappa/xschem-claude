@@ -90,7 +90,7 @@ single instance, edits the one global table.
   the flag. **Factor the "which row to emphasize" decision into a tiny pure proc** so it is testable
   without a real listbox.
 
-### Slice 3 — table view (read-only render of the current rows)
+### Slice 3 — table view (read-only render of the current rows) — STATUS: DONE (`2ff6f4c1`)
 **Goal:** the dialog shows the existing table, one row per style; no editing yet.
 - Build a scrollable frame (`canvas`+inner `frame`, the standard Tk scroll idiom) inside `.nhse`.
 - `proc nhse_rebuild {}` reads `net_hilight_style_current` and renders one row per style: a read-only
