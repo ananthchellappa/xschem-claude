@@ -166,7 +166,7 @@ tools.search,command,tools,Search,Ctrl+F,property_search,,,,,Search,ToolSearch
 tools.align_to_grid,command,tools,Align to Grid,Alt+U,xschem align,,,,,Align to Grid,
 tools.execute_tcl_command,command,tools,Execute TCL command,=,tclcmd,,,,,Execute TCL command,
 tools.join_trim_wires,command,tools,Join/Trim wires,&,xschem trim_wires,,,,,Join/Trim wires,
-tools.break_wires_at_selected_instance_pins,command,tools,Break wires at selected instance pins,!,xschem break_wires,,,,,Break wires at selected instance pins,
+tools.break_wires_at_selected_instance_pins,command,tools,Break wires at selected instance pins,,xschem break_wires,,,,,Break wires at selected instance pins,
 tools.remove_wires_running_through_selected_inst_pins,command,tools,Remove wires running through selected inst. pins,Ctrl-!,xschem break_wires 1,,,,,Remove wires running through selected inst. pins,
 tools.break_wires_at_mouse_position,command,tools,Break wires at mouse position,Alt-Shift-Right Butt.,xschem wire_cut noalign,,,,,Break wires at mouse position,
 tools.break_wires_at_mouse_position_align_cut_point,command,tools,"Break wires at mouse position, align cut point",Alt-Right Butt.,xschem wire_cut,,,,,"Break wires at mouse position, align cut point",
@@ -260,3 +260,5 @@ help.command_palette,command,help,Command palette,Ctrl+Shift+P,command_palette ,
 help.about_xschem,command,help,About XSCHEM,,about,,,,,About XSCHEM,
 # Verified menu keys corrected
 # Menu keys verified - no incorrect menu values found
+tools.break_wires_at_pins,command,tools,Break wires at pins,!,xschem break_wires_at_pins 0,,,Break wires at pin crossings,,,,!
+tools.break_wires_at_pins_align,command,tools,Break wires at pins (aligned),Ctrl+!,xschem break_wires_at_pins 1,,,Break wires at pins with grid alignment,,,,Ctrl+!
