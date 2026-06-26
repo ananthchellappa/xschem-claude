@@ -11,3 +11,4 @@ xschem_library/examples/cmos_example.sch
 tests/headless/pdk_cases/UREx-LDO-EA_testbed.sch
 tests/headless/pdk_cases/test_sc_diode.sch
 tests/headless/pdk_cases/tran_logic_not.sch
+xschem_library/examples/cmos_inv.sch

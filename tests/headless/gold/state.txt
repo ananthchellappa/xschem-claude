@@ -16,5 +16,7 @@ xschem_version=3.4.8RC
   instances=7 wires=3
 == tests/headless/pdk_cases/tran_logic_not.sch ==
   instances=14 wires=21
+== xschem_library/examples/cmos_inv.sch ==
+  instances=14 wires=14
 HARNESS_END
 

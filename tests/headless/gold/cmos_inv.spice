@@ -1,0 +1,13 @@
+**.subckt cmos_inv Z A
+*.opin Z
+*.ipin A
+M2 net1 A VDD VDD p w=WP l=LLP
+M1 D A 0 0 n w=WN l=LLN
+R1 net2 D 10
+V1 net1 D 0
+.save i(v1)
+Vmeas net2 Z 0
+.save i(vmeas)
+**.ends
+.GLOBAL VDD
+.end

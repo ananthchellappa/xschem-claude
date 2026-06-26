@@ -133,13 +133,39 @@ fi
 fail=0
 pass_count=0
 total_count=0
-for g in "$GOLD"/*; do
-  base=$(basename "$g")
+
+# First, diff the overall state.txt
+if [ ! -f "$NORM/state.txt" ]; then
+  echo "FAIL  state.txt: missing from results"
+  fail=1
+else
+  if diff -u "$GOLD/state.txt" "$NORM/state.txt" > "$RESULTS/state.txt.diff"; then
+    echo "PASS  state.txt"
+  else
+    echo "FAIL  state.txt (see results/state.txt.diff)"
+    fail=1
+  fi
+fi
+
+# Then diff each schematic listed in cases.txt
+while IFS= read -r schematic; do
+  [ -z "$schematic" ] && continue
+  case "$schematic" in \#*) continue ;; esac
+
+  base="$(basename "$schematic" .sch).spice"
+  g="$GOLD/$base"
+  
+  if [ ! -f "$g" ]; then
+    echo "FAIL  $base: missing from gold baseline"
+    fail=1
+    continue
+  fi
   if [ ! -f "$NORM/$base" ]; then
     echo "FAIL  $base: missing from results"
     fail=1
     continue
   fi
+  
   if diff -u "$g" "$NORM/$base" > "$RESULTS/$base.diff"; then
     echo "PASS  $base"
     pass_count=$((pass_count + 1))
@@ -149,7 +175,7 @@ for g in "$GOLD"/*; do
     fail=1
     total_count=$((total_count + 1))
   fi
-done
+done < "$CASES_FILE"
 # Flag brand-new artifacts not yet in gold.
 for n in "$NORM"/*; do
   base=$(basename "$n")
