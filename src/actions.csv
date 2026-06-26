@@ -72,7 +72,6 @@ edit.separator,separator,edit,,,,,,,,,
 edit.unconstrained_move,radio,edit,Unconstrained move,,xschem set constr_mv 0,constr_mv,0,,,Unconstrained move,
 edit.constrained_horizontal_move,radio,edit,Constrained Horizontal move,H,xschem set constr_mv 1,constr_mv,1,,,Constrained Horizontal move,
 edit.constrained_vertical_move,radio,edit,Constrained Vertical move,V,xschem set constr_mv 2,constr_mv,2,,,Constrained Vertical move,
-edit.separator,separator,edit,,,,,,,,,
 edit.push_schematic,command,edit,Push schematic,E,xschem descend,,,,,Push schematic,EditPushSch
 edit.push_symbol,command,edit,Push symbol,I,xschem descend_symbol,,,,,Push symbol,EditPushSym
 edit.pop,command,edit,Pop,Ctrl+E,xschem go_back,,,,,Pop,EditPop
@@ -101,7 +100,6 @@ option.separator,separator,option,,,,,,,,,
 option.no_xcopyarea_drawing_model,toggle,option,No XCopyArea drawing model,Ctrl+$,if { $draw_window == 1} { xschem set draw_window 1} else { xschem set draw_window 0},draw_window,,,,No XCopyArea drawing model,
 option.fix_for_gpus_with_broken_tiled_fill,toggle,option,Fix for GPUs with broken tiled fill,,if { $fix_broken_tiled_fill == 1} { xschem set fix_broken_tiled_fill 1 } else { xschem set fix_broken_tiled_fill 0 } xschem resetwin 1 1 1 0 0 xschem redraw,fix_broken_tiled_fill,,,,Fix for GPUs with broken tiled fill,
 option.fix_broken_rdp_mouse_coordinates,toggle,option,Fix broken RDP mouse coordinates,,xschem set fix_mouse_coord $fix_mouse_coord,fix_mouse_coord,,,,Fix broken RDP mouse coordinates,
-option.separator,separator,option,,,,,,,,,
 option.customize_shortcuts,command,option,Customize Shortcuts,,customize_shortcuts_ui,,,,,Customize keyboard shortcuts,
 option.separator2,separator,option,,,,,,,,,
 option.netlist_format_symbol_mode,cascade,option,Netlist format / Symbol mode,,,,,,,Netlist format / Symbol mode,
@@ -162,7 +160,6 @@ tools.grab_screen_area,command,tools,Grab screen area,Print Scrn,xschem grabscre
 tools.search,command,tools,Search,Ctrl+F,property_search,,,,,Search,ToolSearch
 tools.align_to_grid,command,tools,Align to Grid,Alt+U,xschem align,,,,,Align to Grid,
 tools.execute_tcl_command,command,tools,Execute TCL command,=,tclcmd,,,,,Execute TCL command,
-tools.join_trim_wires,command,tools,Join/Trim wires,&,xschem trim_wires,,,,,Join/Trim wires,
 tools.break_wires_at_selected_instance_pins,command,tools,Break wires at selected instance pins,,xschem break_wires,,,,,Break wires at selected instance pins,
 tools.remove_wires_running_through_selected_inst_pins,command,tools,Remove wires running through selected inst. pins,Ctrl-!,xschem break_wires 1,,,,,Remove wires running through selected inst. pins,
 tools.break_wires_at_mouse_position,command,tools,Break wires at mouse position,Alt-Shift-Right Butt.,xschem wire_cut noalign,,,,,Break wires at mouse position,
@@ -265,3 +262,9 @@ waves.clear,command,waves,Clear,,xschem raw_clear,,,,,,
 waves.sep2,separator,waves,,,,,,,,,
 waves.load_first,command,waves,Load first analysis found,,waves {},,,,,,
 waves.op_annotate,command,waves,Op Annotate,,set tctx::retval [select_raw [xschem get topwindow]]; set show_hidden_texts 1; eval $tctx::retval,,,,,,
+hidden.netlist,command,hidden,Netlist,n,xschem netlist -erc,,,,,,
+tools.join_trim,command,,,,,xschem trim_wires,,,,Trim dangling wire ends,ToolJoinTrim
+tools.break,command,,,,,xschem break_wires_at_pins 0,,,,Break wires at pins,ToolBreak
+toolbar.netlist,command,,Netlist,n,xschem netlist -erc,,,,,Netlist the schematic,Netlist
+toolbar.simulate,command,,Simulate,,,simulate_from_button,,,,Run Simulation,Simulate
+toolbar.waves,command,,Waves,,,waves,,,,View waveforms,Waves
