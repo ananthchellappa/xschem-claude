@@ -1,19 +1,28 @@
 # Issue 0035 — a freshly descended NEW window is spuriously flagged "modified" (asterisk + save prompt)
 
 **Opened:** 2026-06-25
-**Status:** ✅ RESOLVED (2026-06-26) for the read-only / default workflow — `callback()`'s
-disk-mtime check (`src/callback.c` ~5976) now skips `set_modify(1)` when
-`xctx->readonly` is set. A read-only (browse) view can never hold unsaved local edits,
-so flagging it modified was simply wrong; external on-disk changes for a read-only file
-are surfaced by the reload mechanism, not by faking "modified". Since `hi_descend`
-descends **read-only by default**, the descended browse window no longer shows the
-spurious `*` nor prompts to save on close. Verified by forcing the trigger condition
-(`time_last_modify != st_mtime` via `file mtime`): read-only → `modified` stays 0;
-editable (discriminator) → `modified` becomes 1 (the external-change detection is still
-active, not disabled). The `save()` twin at `actions.c:583` was already behind a
-read-only early-return. Edit-mode descends are unaffected: a genuine on-disk mtime
-change there still flags modified (intended) — and a *fresh* descend with no real change
-does not trip it (repro showed matching mtimes → modified 0).
+**Status:** ✅ RESOLVED (2026-06-26) for the read-only / default workflow. The first
+attempt (read-only guard on the mtime check at `callback.c`) was not enough — the user
+still saw the `*`, because the trigger is NOT only the mtime check: a child schematic
+that **auto-normalizes on load** (`check.c`/`netlist.c` `set_modify(1)`) is flagged
+modified during load, before read-only is applied. Comprehensive fix, two parts:
+
+1. **`set_modify()` (`src/actions.c`)** — a read-only buffer can never hold unsaved
+   edits, so a "becoming modified" call (`mod==1||3`) while `xctx->readonly` is demoted
+   to a plain title/floater refresh (`-1`). This covers EVERY path and timing
+   (mtime check, on-load auto-normalize, any future caller). Verified discriminating:
+   `set readonly 1; set_modify 1` → `modified` 0; editable → `modified` 1.
+2. **`hi_descend_finish` (`src/xschem.tcl`)** — after a read-only descend, `set_modify 0`
+   clears any modified the LOAD set before read-only was applied (does not delete the
+   crash-recovery `~` backup).
+
+Since `hi_descend` descends **read-only by default**, the browse window now shows no
+bogus `*` and never prompts to save on close. The mtime-check read-only guard
+(`callback.c`) is kept (redundant but skips a `stat`). `save()`'s twin at `actions.c:583`
+was already behind a read-only early-return. Headless regression added
+(`test_hi_descend.tcl`: "read-only view cannot be flagged modified"). Edit-mode descends
+are intentionally unaffected (a genuine load-normalization there legitimately flags
+modified).
 **Affects:** the disk-mtime modified check in `callback()`
 (`src/callback.c` ~5962), `set_modify()`/title rendering (`src/actions.c` ~218),
 new-context init (`create_new_window`/`create_new_tab`, `src/xinit.c` ~1699/1847),

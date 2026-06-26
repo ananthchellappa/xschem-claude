@@ -95,6 +95,14 @@ reload
 hi_descend inst=x1 target=current mode=edit
 check "MODE edit makes the descended view editable" [expr {[xschem get readonly] == 0}] "(ro=[xschem get readonly])"
 xschem go_back
+# issue 0035: a read-only descended (browse) view is never flagged modified -- even a
+# forced set_modify(1) (as on-load auto-normalization / mtime change would do) is a no-op
+reload
+hi_descend inst=x1 target=current
+xschem set_modify 1
+check "MODE read-only view cannot be flagged modified (0035)" \
+  [expr {[xschem get modified] == 0}] "(modified=[xschem get modified])"
+xschem go_back
 
 # --- ITER: bussed instance xb[1:0] -> pick the iteration ------------------------
 reload

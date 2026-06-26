@@ -2,18 +2,29 @@
 
 **Opened:** 2026-06-25
 **Status:** ✅ FIX APPLIED (2026-06-26) — needs interactive two-window confirmation.
-`handle_motion_notify()` (`src/callback.c:3586`) now drops motion whose `win_path`
-differs from `xctx->current_win_path` whenever a REAL (detached, own canvas) window is
-involved on either side (`win_is_real || cur_is_real`, computed exactly as in
-`handle_window_switching` via `get_tab_or_window_number`/`get_save_xctx`), in addition
-to the old non-tabbed case. Background tabs share `.drw` and still match the active
-tab's path, so the tab-switch-keeps-crosshair-alive case (issue 0010) is preserved.
-Single-window motion is provably unchanged (`win_path` always equals
-`current_win_path`); verified no crash on a two-window cross-motion scenario and the
-regression suites stay green. The crosshair-follows-the-pointer behaviour itself is a
-GUI visual and still wants an eyeball: open a detached window via
-`hi_descend target=new_window` and confirm the crosshair tracks the window under the
-pointer (and a tab switch still keeps it alive).
+Two complementary parts:
+
+1. **Stop the wrong-window draw** — `handle_motion_notify()` (`src/callback.c`) drops
+   motion whose `win_path` differs from `xctx->current_win_path` whenever a REAL
+   (detached) window is involved on either side (`win_is_real || cur_is_real`, computed
+   as in `handle_window_switching`), in addition to the old non-tabbed case. (This alone,
+   shipped first, removed the wrong-window crosshair — confirmed by the user — but left
+   the HOVERED window with no crosshair at all, since nothing made it draw.)
+2. **Draw in the hovered window** — `mouse_follows_focus` (new mirrored Tcl global,
+   default 1): a plain `EnterNotify` into a different visible window now does the same
+   full context switch as `FocusIn` (`handle_window_switching`, idle/`semaphore==0`
+   only), so the drawing context follows the pointer across windows and the hovered
+   window runs the FULL motion handler — crosshair AND hover-highlight — without needing
+   a click. Set `mouse_follows_focus 0` to require a click/FocusIn instead.
+
+Together: the crosshair + hover track the pointer into whatever visible window it is
+over; part (1) prevents stray cross-window draws during the brief gap before the switch.
+Background tabs share `.drw` and still match the active tab's path, preserving the
+tab-switch-keeps-crosshair-alive case (issue 0010). Verified: context follows the pointer
+on `EnterNotify` (and respects the flag); single-window motion unchanged; regression
+green. The visual crosshair/hover behaviour wants a GUI eyeball: detach a window via
+`hi_descend` Destination → New window and confirm both windows show the crosshair + hover
+under the pointer.
 **Affects:** `handle_motion_notify()` motion guard (`src/callback.c:3586`),
 `handle_window_switching()` (`src/callback.c` ~5905), the `<FocusIn>`/`<Enter>`/`<Motion>`
 bindings (`set_bindings`, `src/xschem.tcl`). Reachable from any

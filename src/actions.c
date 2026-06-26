@@ -157,6 +157,15 @@ int set_modify(int mod)
 
   dbg(1, "set_modify(): %d, prev_set_modify=%d\n", mod, xctx->prev_set_modify);
 
+  /* A read-only buffer cannot hold unsaved edits, so never flag it modified: the '*'
+   * title marker and the save-on-close prompt would be bogus (issue 0035 -- e.g. a
+   * read-only browse window whose child auto-normalizes on load, or an on-disk mtime
+   * change). Demote a "becoming modified" request to a plain title/floater refresh (-1);
+   * external on-disk changes are surfaced by the reload mechanism, not by faking
+   * modified. Genuine edits can't reach here while read-only (they are blocked upstream).
+   * A pre-existing modified flag from before the buffer was made read-only is left as-is. */
+  if((mod == 1 || mod == 3) && xctx->readonly) mod = -1;
+
   /* set modify state */
   if(mod == 0 || mod == 1 || mod == 2 || mod == 3) {
     xctx->modified = (mod & 1);

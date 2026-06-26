@@ -5898,8 +5898,14 @@ static int handle_window_switching(int event, int tabbed_interface, const char *
         redraw_only = 1;
         my_strncpy(old_win_path, xctx->current_win_path, S(old_win_path));
         new_schematic("switch_no_tcl_ctx", win_path, "", 1);
-      /* this is the regular context switch when window gets focused */
-      } else if(event == FocusIn && xctx->semaphore == 0) {
+      /* this is the regular context switch when window gets focused. With
+       * mouse_follows_focus (default on) a plain EnterNotify switches too, so the
+       * crosshair + hover-highlight track the pointer into whatever VISIBLE window it is
+       * over, without a click -- the drawing context follows the mouse across windows.
+       * Idle only (semaphore==0): never steal context mid-gesture. */
+      } else if((event == FocusIn ||
+                 (event == EnterNotify && tclgetboolvar("mouse_follows_focus"))) &&
+                xctx->semaphore == 0) {
         dbg(1, "callback(): switching window context: %s --> %s, semaphore=%d\n",
                 xctx->current_win_path, win_path, xctx->semaphore);
         new_schematic("switch", win_path, "", 1);

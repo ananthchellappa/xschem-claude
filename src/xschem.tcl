@@ -4557,7 +4557,16 @@ proc hi_descend_finish {instname vtype vpath iter mode} {
   if {$ok} {
     # browse-friendly default: the descended view opens read-only unless Edit was asked.
     # Explicit per-descend control, independent of the global descend_readonly flag.
-    if {$mode eq {edit}} { xschem set readonly 0 } else { xschem set readonly 1 }
+    if {$mode eq {edit}} {
+      xschem set readonly 0
+    } else {
+      xschem set readonly 1
+      # A fresh read-only browse view has no user edits; clear any 'modified' that the
+      # LOAD itself set (e.g. on-load auto-normalization, which happens before read-only
+      # is applied), so the browse window shows no bogus '*' and never prompts to save on
+      # close (issue 0035). set_modify 0 does not delete the crash-recovery ~ backup.
+      xschem set_modify 0
+    }
   }
   return $ok
 }
@@ -12940,6 +12949,12 @@ proc listbox:handle {W offset maxChars} {
 # focus the schematic window if mouse goes over it, even if a dialog box is displayed,
 # without needing to click. This allows to move/zoom/pan the schematic while editing attributes.
 set_ne autofocus_mainwindow 0
+
+# Focus-follows-mouse for the drawing CANVAS across windows/tabs: when the pointer
+# enters a different (visible) schematic window, switch the drawing context to it so its
+# crosshair + hover-highlight track the pointer there, without requiring a click to make
+# it the active window. Default on. Set to 0 to require a click/FocusIn to switch.
+set_ne mouse_follows_focus 1
 if {$OS == "Windows"} {
   set_ne XSCHEM_TMP_DIR [xschem get temp_dir]
 } else {
