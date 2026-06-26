@@ -145,7 +145,7 @@ proc build_toolbar_from_table {topwin} {
   # create the toolbar buttons
   foreach row $action_table {
     set id [dict get $row id]
-    set icon [dict get $row icon]
+    if {[catch {set icon [dict get $row icon]} err]} { puts stderr "FAILED ON ROW: $row"; error $err }
     if {$icon ne ""} {
       set cmd [dict get $row command]
       set help [dict get $row help]

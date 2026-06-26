@@ -9148,7 +9148,6 @@ proc toolbar_show { { topwin {} } } {
             if { [ lsearch -exact $tlist "$topwin.toolbar.b$b" ] != -1 } {
                 pack $topwin.toolbar.b$b -side $pos
             } else {
-                puts "Error: unknown toolbar item \"$action_id\""
             }
         }
     }
