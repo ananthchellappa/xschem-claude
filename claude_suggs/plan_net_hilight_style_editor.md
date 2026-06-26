@@ -100,7 +100,7 @@ single instance, edits the one global table.
 - **Done-when:** `nhse_rebuild` faithfully reflects the table; reopening after an external
   `net_hilight_style_replace` re-renders.
 
-### Slice 4 — per-cell editing widgets (static; live-apply on commit)
+### Slice 4 — per-cell editing widgets (static; live-apply on commit) — STATUS: DONE (`f067b78a`)
 **Goal:** real widgets, each writing back to the table on commit. No animation/preview yet.
 - Color: swatch button + `ttk::combobox`. Populate list = `Layer 0..N` + names parsed from
   `/usr/share/X11/rgb.txt` (single-token CamelCase variants; dedupe; bundled fallback list if the
