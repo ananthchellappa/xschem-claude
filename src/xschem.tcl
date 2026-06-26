@@ -4600,6 +4600,16 @@ proc hi_descend_newwin {instname row dest iter mode} {
   lassign $row vname vtype vpath
   set current_win_path [xschem get current_win_path]
 
+  # Open the CURRENT (parent) schematic in the new window, then descend -- NOT the
+  # instance's schematic directly. With the instance still selected,
+  # schematic_in_new_window takes its lastsel==1 branch and loads solar_ctl as a fresh
+  # top level; copy_hierarchy then clobbers it with the parent and the later descend
+  # finds no such instance, leaving a desynced window (schname=parent, currsch=0,
+  # read-only not applied). Unselecting first (as open_sub_schematic does) makes
+  # schematic_in_new_window open the parent, so the descend below is a real descend that
+  # preserves the hierarchy path. The target instance is re-selected after the switch.
+  xschem unselect_all
+
   # preserve an annotated raw waveform across the new window (as open_sub_schematic does)
   set rawfile {}
   if {[xschem raw loaded] >= 0} {

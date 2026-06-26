@@ -147,4 +147,17 @@ check "NOLEAK plain descend after override uses default" \
   [expr {[has /schematic/leaf.sch] && ![has /schematic_old/leaf.sch]}] "(name=[schname])"
 xschem go_back
 
+# --- SELNW: new-window descend with the instance SELECTED is a REAL descend --------
+# Regression: hi_descend_newwin must unselect before schematic_in_new_window, else it
+# opens the child as a flat top-level (currsch 0, hierarchy lost) and the descend no-ops.
+reload
+xschem select instance x1 fast
+set w0 [llength [xschem windows]]
+set rnw [hi_descend target=new_window]
+check "SELNW selected-instance new window does a REAL descend" \
+  [expr {$rnw == 1 && [llength [xschem windows]] == $w0 + 1 && [xschem get currsch] == 1 \
+         && [xschem get sch_path] eq {.x1.} && [has /schematic/leaf.sch]}] \
+  "(ret=$rnw wins=$w0->[llength [xschem windows]] currsch=[xschem get currsch] path=[xschem get sch_path] name=[schname])"
+catch {xschem new_schematic destroy_all force}
+
 puts "hi_descend headless: [expr {$fails ? "$fails FAILURE(S)" : {all checks passed}}]"
