@@ -707,15 +707,73 @@ proc load_net_hilight_conf {} {
 }
 
 # Net highlight style editor (Tools > Net highlight styles..., the command palette, or this proc).
-# SLICE 2 STUB: records that the user has opened the editor -- which clears the palette's
-# first-launch emphasis (write_net_hilight_editor_seen persists the harmless breadcrumb) -- and
-# opens an empty, single-instance window. The table-editing UI is built in later slices.
+# Single-instance, non-modal dialog editing the global net_hilight_style table. Opening it records
+# that the user has seen the editor (clearing the palette's first-launch emphasis). SLICE 3: a
+# read-only, scrollable view of the current table -- one row per style, one column per field.
+# Editing widgets, the free-to-edit row, the live preview and Save/Cancel land in later slices.
+
+# Column layout shared by the fixed header and every body row so the columns line up. Each entry:
+# {header-text  width-in-chars  field-index-into-the-8-column-style-row}.
+proc nhse_columns {} {
+  return {
+    {Idx 4 0} {Color 12 1} {Width 6 2} {Pattern 10 3}
+    {Angle 6 4} {Blink(ms) 9 5} {March 10 6} {Speed 8 7}
+  }
+}
+
+# (Re)render the table body from the live table. Destroys the previous rows first, so this is also
+# the refresh path when the dialog is re-opened after an external net_hilight_style change.
+proc nhse_rebuild {} {
+  set body .nhse.tbl.sf.body
+  if {![winfo exists $body]} return
+  foreach c [winfo children $body] { destroy $c }
+  set i 0
+  foreach row [net_hilight_style_current] {
+    set rf $body.r$i
+    frame $rf
+    foreach col [nhse_columns] {
+      lassign $col hdr wdt fld
+      label $rf.c$fld -width $wdt -anchor w -relief flat -text [lindex $row $fld]
+      pack $rf.c$fld -side left -padx 1
+    }
+    pack $rf -side top -fill x -anchor w
+    incr i
+  }
+  update idletasks
+  catch { .nhse.tbl.sf configure -scrollregion [.nhse.tbl.sf bbox all] }
+}
+
 proc net_hilight_style_editor { {topwin {}} } {
   write_net_hilight_editor_seen
   set w .nhse
-  if {[winfo exists $w]} { raise $w ; focus $w ; return $w }
+  if {[winfo exists $w]} { raise $w ; focus $w ; nhse_rebuild ; return $w }
   toplevel $w
   wm title $w {Net highlight styles}
+
+  set t $w.tbl
+  frame $t
+  pack $t -side top -fill both -expand 1 -padx 4 -pady 4
+
+  # fixed header row (same per-column widths as the body rows => columns align)
+  frame $t.head
+  pack $t.head -side top -fill x -anchor w
+  foreach col [nhse_columns] {
+    lassign $col hdr wdt fld
+    label $t.head.c$fld -width $wdt -anchor w -relief flat -text $hdr
+    pack $t.head.c$fld -side left -padx 1
+  }
+
+  # scrollable body: a canvas hosting an inner frame, plus a vertical scrollbar.
+  canvas $t.sf -highlightthickness 0 -height 240
+  scrollbar $t.vsb -orient vertical -command "$t.sf yview"
+  $t.sf configure -yscrollcommand "$t.vsb set"
+  pack $t.vsb -side right -fill y
+  pack $t.sf -side left -fill both -expand 1
+  frame $t.sf.body
+  $t.sf create window 0 0 -anchor nw -window $t.sf.body -tags body
+  bind $t.sf.body <Configure> "$t.sf configure -scrollregion \[$t.sf bbox all\]"
+
+  nhse_rebuild
   return $w
 }
 
