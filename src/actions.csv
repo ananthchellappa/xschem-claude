@@ -198,8 +198,8 @@ hilight.swap_compare_schematics,command,hilight,Swap compare schematics,,swap_co
 hilight.compare_schematics,toggle,hilight,Compare schematics,,       xschem unselect_all       xschem redraw ,compare_sch,,,,Compare schematics,
 hilight.view_only_probes,toggle,hilight,View only Probes,5, xschem only_probes ,only_probes,,,,View only Probes,
 hilight.highlight_net-pin_mismatches_on_sel_instances,command,hilight,Highlight net-pin mismatches on sel. instances,Shift-X,xschem net_pin_mismatch,,,,,Highlight net-pin mismatches on sel. instances,
-hilight.highlight_duplicate_instance_names,command,hilight,Highlight duplicate instance names,#,xschem check_unique_names 0,,,,,Highlight duplicate instance names,
-hilight.rename_duplicate_instance_names,command,hilight,Rename duplicate instance names,Ctrl+#,xschem check_unique_names 1,,,,,Rename duplicate instance names,
+hilight.highlight_duplicate_instance_names,command,hilight,Highlight duplicate instance names,,xschem check_unique_names 0,,,,,Highlight duplicate instance names,
+hilight.rename_duplicate_instance_names,command,hilight,Rename duplicate instance names,,xschem check_unique_names 1,,,,,Rename duplicate instance names,
 hilight.select_overlapped_instances,command,hilight,Select overlapped instances,,xschem warning_overlapped_symbols 1; xschem redraw,,,,,Select overlapped instances,
 hilight.propagate_highlight_selected_net_pins,command,hilight,Propagate Highlight selected net/pins,Ctrl+Shift+K,xschem hilight drill,,,,,Propagate Highlight selected net/pins,
 hilight.increment_hilight_color,toggle,hilight,Increment Hilight Color,,,incr_hilight,,,,Increment Hilight Color,
@@ -255,7 +255,7 @@ help.about_xschem,command,help,About XSCHEM,,about,,,,,About XSCHEM,
 # Verified menu keys corrected
 # Menu keys verified - no incorrect menu values found
 tools.break_wires_at_pins,command,tools,Break wires at pins,!,xschem break_wires_at_pins 0,,,Break wires at pin crossings,,,
-tools.break_wires_at_pins_align,command,tools,Break wires at pins (aligned),Ctrl+!,xschem break_wires_at_pins 1,,,Break wires at pins with grid alignment,,,
+tools.break_wires_at_pins_align,command,tools,Break wires at pins (aligned),,xschem break_wires_at_pins 1,,,Break wires at pins with grid alignment,,,
 waves.external,command,waves,External viewer,,waves external,,,,,,
 waves.sep1,separator,waves,,,,,,,,,
 waves.clear,command,waves,Clear,,xschem raw_clear,,,,,,
@@ -268,3 +268,7 @@ tools.break,command,,,,,xschem break_wires_at_pins 0,,,,Break wires at pins,
 toolbar.netlist,command,,Netlist,n,xschem netlist -erc,,,,,Netlist the schematic,
 toolbar.simulate,command,,Simulate,,,simulate_from_button,,,,Run Simulation,
 toolbar.waves,command,,Waves,,,waves,,,,View waveforms,
+tools.check_unique_names,command,tools,Check unique names,#,xschem check_unique_names 0,,,Check for duplicate names,,,,#
+tools.trim_wires,command,tools,Trim wires,&,xschem trim_wires,,,Trim dangling wire ends,,,,&
+tools.break_wires_at_pins_a,command,tools,Break wires (aligned),Ctrl+!,xschem break_wires_at_pins 1,,,Break wires at pins with alignment,,,,Ctrl+!
+tools.check_unique_names_fix,command,tools,Check and fix names,Ctrl+#,xschem check_unique_names 1,,,Check and auto-fix duplicate names,,,,Ctrl+#
