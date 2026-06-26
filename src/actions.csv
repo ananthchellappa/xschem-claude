@@ -19,8 +19,6 @@
 #   hook      proc that populates a dynamic submenu, called as: <hook> <topwin>,,,,,,,,,,
 #   help      one-line description (command palette + future cheat-sheet)
 id,type,menu,label,accel,command,variable,value,submenu,hook,help,icon
-file.clear_schematic,command,file,Clear Schematic,,xschem clear schematic,,,,,Start a new empty schematic,
-file.clear_symbol,command,file,Clear Symbol,Ctrl+Shift+N,xschem clear symbol,,,,,Start a new empty symbol,
 file.component_browser,command,file,Component browser,"Shift-Ins, Ctrl-I",action_component_browser,,,,,,
 file.open,command,file,Open,Ctrl+O,xschem load,,,,,Open a schematic or symbol file,
 file.open_new_window,command,file,Open in new window,Alt+O,xschem load_new_window,,,,,Open a file in a new window,
@@ -36,6 +34,8 @@ file.merge,command,file,Merge,B,xschem merge,,,,,Merge another file into the cur
 file.reload,command,file,Reload,Alt+S,action_reload,,,,,Reload the current file from disk (discard changes),
 file.save_as,command,file,Save as,Ctrl+Shift+S,xschem saveas,,,,,Save under a new name,
 file.save_as_symbol,command,file,Save as symbol,Ctrl+Alt+S,xschem saveas {} symbol,,,,,Save the current cell as a symbol,
+file.clear_schematic,command,file,Clear Schematic,,xschem clear schematic,,,,,Start a new empty schematic,
+file.clear_symbol,command,file,Clear Symbol,Ctrl+Shift+N,xschem clear symbol,,,,,Start a new empty symbol,
 file.image_export,cascade,file,Image export,,,,,file.im_exp,,Export the drawing as an image (EPS/PDF/PNG/SVG),
 file.sep1,separator,file,,,,,,,,,
 file.new_process,command,file,Start new Xschem process,X,xschem new_process,,,,,Launch a separate Xschem process,
