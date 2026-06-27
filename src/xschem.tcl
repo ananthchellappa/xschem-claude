@@ -1283,14 +1283,79 @@ proc nhse_op_duplicate {} {
   nhse_focus_after_op [expr {$i + 1}]
 }
 
+# ---- slice 8: OK / Apply / Save... / Cancel, snapshot-revert, located save + warning + CIW echo --
+
+# Is $path the file sourced automatically at startup ($USER_CONF_DIR/net_hilight_style)? Pure, so the
+# located-save warn/echo branch is unit-testable.
+proc nhse_is_autoload_path {path} {
+  global USER_CONF_DIR
+  return [expr {[file normalize $path] eq [file normalize [file join $USER_CONF_DIR net_hilight_style]]}]
+}
+
+# After a Save to $path, announce via the CIW (see [[ciw-feedback-channels]] -- use ciw_echo). The
+# auto-load file loads next session (quiet confirm, returns 0); any other path will NOT, so echo the
+# exact load command and return 1 (the caller then pops the warning dialog). Factored out so the
+# branch + the exact echoed line are testable without driving tk_getSaveFile/tk_messageBox.
+proc nhse_save_announce {path} {
+  if {[nhse_is_autoload_path $path]} {
+    catch { ciw_echo "# net highlight styles saved to {$path} -- loads automatically next session" }
+    return 0
+  }
+  catch { ciw_echo "# to load these highlight styles next session: xschem --script {$path}" }
+  return 1
+}
+
+# Save... -- the ONLY path that writes the style table to disk (everything else is live-only).
+proc nhse_save {} {
+  global USER_CONF_DIR
+  set path [tk_getSaveFile -parent .nhse -initialdir $USER_CONF_DIR -initialfile net_hilight_style \
+              -title {Save net highlight styles}]
+  if {$path eq {}} return
+  if {![write_net_hilight_style_conf $path]} {
+    catch { tk_messageBox -parent .nhse -type ok -icon error -title {Save failed} \
+              -message "Could not write {$path}." }
+    return
+  }
+  if {[nhse_save_announce $path]} {
+    catch { tk_messageBox -parent .nhse -type ok -icon info -title {Saved} \
+      -message "Saved to:\n$path\n\nThis file will NOT be loaded automatically next session. To use\
+ it, start xschem with:\n    xschem --script {$path}\nor add  source {$path}  to your\
+ ~/.xschem/xschemrc. (The load command was also printed to the CIW log.)" }
+  }
+}
+
+# Apply -- force-(re)apply the current table to the running session and redraw; stay open. Live-apply
+# already runs on each commit, so this just recompiles the global table (the explicit, reassuring path).
+proc nhse_apply {} { catch { xschem update_net_hilight_style } }
+
+# OK -- the state is already live; just close (no disk write, no revert).
+proc nhse_ok {} { catch { destroy .nhse } }
+
+# Cancel / WM-close -- revert the running session to the open-time snapshot, then close. Discards the
+# experiments made since the dialog opened (a Save... already written to disk is untouched).
+proc nhse_cancel {} {
+  global net_hilight_style
+  if {[info exists ::nhse_snapshot]} {
+    set net_hilight_style $::nhse_snapshot
+    catch { xschem update_net_hilight_style }
+  }
+  catch { destroy .nhse }
+}
+
+# Reset to defaults -- discard customization, re-derive the layer default (itself a savable state).
+proc nhse_reset {} { net_hilight_style_reset ; nhse_rebuild }
+
 proc net_hilight_style_editor { {topwin {}} } {
-  global net_hilight_editor_seen
+  global net_hilight_editor_seen net_hilight_style
   # record "seen" once, on the first open only (no redundant rewrite every open)
   if {!$net_hilight_editor_seen} { write_net_hilight_editor_seen }
   set w .nhse
   if {[winfo exists $w]} { raise $w ; focus $w ; nhse_rebuild ; return $w }
   toplevel $w
   wm title $w {Net highlight styles}
+  # snapshot the table as it is now, so Cancel / WM-close can revert the live session (slice 8)
+  set ::nhse_snapshot $net_hilight_style
+  wm protocol $w WM_DELETE_WINDOW nhse_cancel
 
   # top bar: a Help button (top-right) explaining every column without leaving the dialog.
   frame $w.topbar
@@ -1305,15 +1370,26 @@ proc net_hilight_style_editor { {topwin {}} } {
   bind $w.preview <Configure> { catch { nhse_preview_paint } }
 
   # per-row ops bar (slice 7), pinned at the bottom; enabled only when a TABLE row has field focus.
-  # (slice 8's OK/Apply/Save/Cancel bar packs below this, via -before.)
   frame $w.ops
-  pack $w.ops -side bottom -fill x -padx 4 -pady {2 4}
+  pack $w.ops -side bottom -fill x -padx 4 -pady {2 2}
   label  $w.ops.lbl  -text {Row ops:}
   button $w.ops.up   -text {Move Up}   -command {nhse_op_move -1}
   button $w.ops.down -text {Move Down} -command {nhse_op_move 1}
   button $w.ops.del  -text {Delete}    -command nhse_op_delete
   button $w.ops.dup  -text {Duplicate} -command nhse_op_duplicate
   pack $w.ops.lbl $w.ops.up $w.ops.down $w.ops.del $w.ops.dup -side left -padx 2
+
+  # commit/persist bar (slice 8), pinned BELOW the ops bar: Reset (left); OK/Apply/Save.../Cancel
+  # (right). Live-apply means edits already show; Save... is the only path that writes to disk.
+  frame $w.btns
+  pack $w.btns -side bottom -fill x -padx 4 -pady {2 4} -before $w.ops
+  button $w.btns.reset  -text {Reset to defaults} -command nhse_reset
+  button $w.btns.ok     -text {OK}       -command nhse_ok
+  button $w.btns.apply  -text {Apply}    -command nhse_apply
+  button $w.btns.save   -text {Save...}  -command nhse_save
+  button $w.btns.cancel -text {Cancel}   -command nhse_cancel
+  pack $w.btns.reset -side left -padx 4
+  pack $w.btns.cancel $w.btns.save $w.btns.apply $w.btns.ok -side right -padx 4
 
   set t $w.tbl
   frame $t
