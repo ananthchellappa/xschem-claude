@@ -1704,6 +1704,11 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
             my_snprintf(b, S(b), "%u", (unsigned int)xctx->window); /* XIDs fit in 32 bits; my_snprintf has no %lx */
             Tcl_SetResult(interp, b, TCL_VOLATILE);
           }
+          else if(!strcmp(argv[2], "drawcount")) { /* monotonic count of full draw() runs; a test seam to detect a (missing) redraw */
+            char b[32];
+            my_snprintf(b, S(b), "%u", draw_count);
+            Tcl_SetResult(interp, b, TCL_VOLATILE);
+          }
           break;
           case 'f':
           if(!strcmp(argv[2], "first_sel")) { /* get data about first selected object */

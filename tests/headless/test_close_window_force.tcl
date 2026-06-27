@@ -39,14 +39,24 @@ xschem new_schematic switch .drw ; update idletasks
 check "C3 back on main, still drawing into .drw (precondition)" [drawmatch] "(draw=[xschem get drawwindowid] winfo=[winfo id .drw])"
 
 # close the MAIN window while the separate window is open (the Ctrl+W / xschem exit path)
+# Capture the draw counter immediately around the close: the close path must SYNCHRONOUSLY redraw
+# the surviving main window (no expose event fires -- the .drw canvas neither moved nor resized --
+# so without an explicit draw() the canvas stays stale showing a.sch). Sample before/after the
+# exit and BEFORE any update, so an async expose redraw cannot mask a missing synchronous draw.
+set dc_before [xschem get drawcount]
 catch {xschem exit force}
+set dc_after [xschem get drawcount]
 update idletasks
 
 check "C4 main absorbed the other window's schematic (b.sch)" [string match {*b.sch} [xschem get schname]] "(=> [file tail [xschem get schname]])"
 check "C5 the separate window was destroyed" [expr {![winfo exists .x1]}] "(.x1 exists=[winfo exists .x1])"
-# THE BUG: the surviving main window must draw into its OWN live canvas, not the destroyed window
+# THE FREEZE BUG (issue 0049): the surviving main window must draw into its OWN live canvas
 check "C6 surviving main draws into the LIVE main canvas (not the destroyed window)" [drawmatch] \
   "(draw=[xschem get drawwindowid] winfo.drw=[winfo id .drw])"
+# THE STALE-DISPLAY BUG (0049 follow-up): the close must redraw the absorbed schematic right away,
+# not leave the canvas showing a.sch until a manual resize/zoom/pan.
+check "C7 close synchronously redrew the surviving window" [expr {$dc_after > $dc_before}] \
+  "(drawcount $dc_before -> $dc_after)"
 
 file delete -force $dir
 if {$fail == 0} { puts "RESULT: ALL PASS" } else { puts "RESULT: $fail FAILED" }

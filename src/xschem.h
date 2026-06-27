@@ -1320,6 +1320,7 @@ extern int constrained_move;
 extern double cairo_font_scale; /*  default: 1.0, allows to adjust font size */
 extern double cairo_font_line_spacing;
 extern int debug_var;
+extern unsigned int draw_count; /* incremented on every full draw(); test/introspection seam */
 extern int fix_broken_tiled_fill; /* if set to 1 work around some GPUs with rotten tiled fill operations */
 /* this fix uses an alternative method for getting mouse coordinates on KeyPress/KeyRelease
  * events. Some remote connection softwares do not generate the correct coordinates

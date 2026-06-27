@@ -2040,7 +2040,7 @@ static void detach_tab(int *window_count, const char *win_path)
   xctx = cur;                /* restore the active context */
 }
 
-static void destroy_window(int *window_count, const char *win_path)
+static void destroy_window(int *window_count, const char *win_path, int dr)
 {
   int i, n;
   Xschem_ctx *savectx;
@@ -2118,6 +2118,13 @@ static void destroy_window(int *window_count, const char *win_path)
     if(xctx->current_win_path)
       tclvareval("restore_ctx ", xctx->current_win_path, " ; housekeeping_ctx", NULL);
     set_modify(-1); /* sets window title */
+    /* Redraw the surviving window when the caller asked for it (dr). destroy_tab() always
+     * draws at its tail, but destroy_window() historically dropped the dr flag, so closing
+     * the main .drw while a detached force-window was open (swap_tabs() then this destroy)
+     * left the absorbed schematic's title correct but the canvas stale until a manual
+     * resize/zoom/pan — issue 0049 follow-up. The non-tabbed close path passes dr=0 and
+     * issues its own draw(), so it is unaffected. */
+    if(dr && close) draw();
   } else {
     dbg(0, "new_schematic() destroy_window: there are no additional windows\n");
   }
@@ -2357,7 +2364,7 @@ int new_schematic(const char *what, const char *win_path, const char *fname, int
     /* a real window is always closed by destroy_window (which destroys the
      * toplevel); only true tabs go to destroy_tab — even in tabbed mode */
     if(!tabbed_interface || is_window_context(win_path)) {
-      destroy_window(&window_count, win_path);
+      destroy_window(&window_count, win_path, dr);
     } else {
       destroy_tab(&window_count, win_path);
     }
