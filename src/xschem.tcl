@@ -816,10 +816,21 @@ proc nhse_commit {} {
   }
 }
 
+# Commit a CELL edit to the live table -- but only for a real TABLE row (integer key). The free row
+# (key "new", slice 6) is composed-only: its edits never touch the table until Update is pressed.
+proc nhse_cell_commit {i} { if {[string is integer -strict $i]} { nhse_commit } }
+
+# The widget frame that holds row $i's cells. Set per row by nhse_build_row, so the same builder/
+# helpers serve both the scrollable table rows AND the pinned free row (which lives elsewhere).
+proc nhse_row_frame {i} {
+  if {[info exists ::nhse_rowpath($i)]} { return $::nhse_rowpath($i) }
+  return {}
+}
+
 # Angle/March/Speed only matter with a dash pattern: grey them out for a solid (empty-dash) row.
 proc nhse_row_enable_state {i} {
-  set rf .nhse.tbl.sf.body.r$i
-  if {![winfo exists $rf]} return
+  set rf [nhse_row_frame $i]
+  if {$rf eq {} || ![winfo exists $rf]} return
   set on [expr {[string trim $::nhse_v($i,3)] ne {}}]
   set st [expr {$on ? {normal} : {disabled}}]
   catch { $rf.c4 configure -state $st }
@@ -828,8 +839,9 @@ proc nhse_row_enable_state {i} {
 }
 
 proc nhse_update_swatch {i} {
-  set sw .nhse.tbl.sf.body.r$i.c1.sw
-  if {![winfo exists $sw]} return
+  set rf [nhse_row_frame $i]
+  if {$rf eq {} || ![winfo exists $rf.c1.sw]} return
+  set sw $rf.c1.sw
   set tk [nhse_color_to_tk $::nhse_v($i,1)]
   if {$tk ne {}} { catch { $sw configure -background $tk } } else { catch { $sw configure -background [.nhse cget -background] } }
 }
@@ -852,27 +864,32 @@ proc nhse_color_selected {i} {
     set ::nhse_v($i,1) $n
   }
   nhse_update_swatch $i
-  nhse_commit
+  nhse_cell_commit $i
 }
 
 proc nhse_dash_apply_example {i} {
   array set m [nhse_dash_examples]
   if {[info exists ::nhse_ex($i)] && [info exists m($::nhse_ex($i))]} { set ::nhse_v($i,3) $m($::nhse_ex($i)) }
   nhse_row_enable_state $i
-  nhse_commit
+  nhse_cell_commit $i
 }
 
-proc nhse_dash_changed {i} { nhse_row_enable_state $i ; nhse_commit }
+proc nhse_dash_changed {i} { nhse_row_enable_state $i ; nhse_cell_commit $i }
 
-# Build the editing widgets for one style row, each bound to ::nhse_v(row,field).
-proc nhse_build_row {body i row} {
+# Build the editing widgets for one style row, each bound to ::nhse_v(row,field). $i is the row key
+# (an integer for a table row, the string "new" for the pinned free row); $idxlabel overrides the
+# read-only index cell text (the free row shows "NEW"). Edits commit only for table rows (the free
+# row composes a style that is applied only on Update) -- see nhse_cell_commit.
+proc nhse_build_row {body i row {idxlabel {}}} {
   set rf $body.r$i
   frame $rf
+  set ::nhse_rowpath($i) $rf
   for {set f 0} {$f < 8} {incr f} { set ::nhse_v($i,$f) [lindex $row $f] }
   set ::nhse_v($i,0) $i
   set ::nhse_v($i,6) [nhse_march_to_disp [lindex $row 6]]
+  if {$idxlabel eq {}} { set idxlabel $i }
 
-  label $rf.c0 -width 4 -anchor w -relief flat -text $i
+  label $rf.c0 -width 4 -anchor w -relief flat -text $idxlabel
   pack $rf.c0 -side left -padx 1
 
   frame $rf.c1                                              ;# color: swatch + editable combobox
@@ -880,11 +897,11 @@ proc nhse_build_row {body i row} {
   ttk::combobox $rf.c1.cb -width 10 -textvariable ::nhse_v($i,1) -values [nhse_color_values]
   pack $rf.c1.sw $rf.c1.cb -side left -padx 1
   bind $rf.c1.cb <<ComboboxSelected>> [list nhse_color_selected $i]
-  bind $rf.c1.cb <Return> nhse_commit ; bind $rf.c1.cb <FocusOut> nhse_commit
+  bind $rf.c1.cb <Return> [list nhse_cell_commit $i] ; bind $rf.c1.cb <FocusOut> [list nhse_cell_commit $i]
   pack $rf.c1 -side left -padx 1
 
-  spinbox $rf.c2 -width 5 -from 1 -to 100 -textvariable ::nhse_v($i,2) -command nhse_commit
-  bind $rf.c2 <Return> nhse_commit ; bind $rf.c2 <FocusOut> nhse_commit
+  spinbox $rf.c2 -width 5 -from 1 -to 100 -textvariable ::nhse_v($i,2) -command [list nhse_cell_commit $i]
+  bind $rf.c2 <Return> [list nhse_cell_commit $i] ; bind $rf.c2 <FocusOut> [list nhse_cell_commit $i]
   pack $rf.c2 -side left -padx 1
 
   frame $rf.c3                                              ;# dash: entry + examples dropdown
@@ -897,19 +914,19 @@ proc nhse_build_row {body i row} {
   pack $rf.c3 -side left -padx 1
 
   scale $rf.c4 -from 0 -to 45 -orient horizontal -length 70 -showvalue 1 -resolution 1 -variable ::nhse_v($i,4)
-  bind $rf.c4 <ButtonRelease-1> nhse_commit
+  bind $rf.c4 <ButtonRelease-1> [list nhse_cell_commit $i]
   pack $rf.c4 -side left -padx 1
 
   entry $rf.c5 -width 8 -textvariable ::nhse_v($i,5)
-  bind $rf.c5 <Return> nhse_commit ; bind $rf.c5 <FocusOut> nhse_commit
+  bind $rf.c5 <Return> [list nhse_cell_commit $i] ; bind $rf.c5 <FocusOut> [list nhse_cell_commit $i]
   pack $rf.c5 -side left -padx 1
 
   ttk::combobox $rf.c6 -width 8 -state readonly -textvariable ::nhse_v($i,6) -values {Off Forward Reverse}
-  bind $rf.c6 <<ComboboxSelected>> nhse_commit
+  bind $rf.c6 <<ComboboxSelected>> [list nhse_cell_commit $i]
   pack $rf.c6 -side left -padx 1
 
   entry $rf.c7 -width 6 -textvariable ::nhse_v($i,7)
-  bind $rf.c7 <Return> nhse_commit ; bind $rf.c7 <FocusOut> nhse_commit
+  bind $rf.c7 <Return> [list nhse_cell_commit $i] ; bind $rf.c7 <FocusOut> [list nhse_cell_commit $i]
   pack $rf.c7 -side left -padx 1
 
   pack $rf -side top -fill x -anchor w
@@ -921,22 +938,32 @@ proc nhse_build_row {body i row} {
   }
 }
 
-# (Re)render the table body from the live table as EDITING rows. Destroys prior rows + their bound
-# vars first, so this is also the refresh path when the dialog is re-opened after an external change.
+# Forget every TABLE-row (integer-keyed) bound var/path, leaving the pinned free row ("new") intact.
+# Stale higher-index entries must go: nhse_assemble_table walks 0,1,2,... while ::nhse_v($i,0) exists,
+# so a leftover row N from a since-shrunk table would extend the assembled list past its real end.
+proc nhse_clear_table_rows {} {
+  foreach k [array names ::nhse_v]       { if {[string is integer -strict [lindex [split $k ,] 0]]} { unset ::nhse_v($k) } }
+  foreach k [array names ::nhse_ex]      { if {[string is integer -strict $k]} { unset ::nhse_ex($k) } }
+  foreach k [array names ::nhse_rowpath] { if {[string is integer -strict $k]} { unset ::nhse_rowpath($k) } }
+}
+
+# (Re)render the table body from the live table as EDITING rows. Destroys prior table rows + their
+# bound vars first (the free row is preserved), so this is also the refresh path when the dialog is
+# re-opened or an Update/external change alters the table.
 proc nhse_rebuild {} {
   set body .nhse.tbl.sf.body
   if {![winfo exists $body]} return
   set ::nhse_focus_row 0    ;# rows are recreated below -> the preview follows row 0 by default
   set ::nhse_building 1
   foreach c [winfo children $body] { destroy $c }
-  array unset ::nhse_v
-  array unset ::nhse_ex
+  nhse_clear_table_rows
   set i 0
   foreach row [net_hilight_style_current] {
     nhse_build_row $body $i $row
     incr i
   }
   set ::nhse_building 0
+  catch { nhse_refresh_over_range }
   update idletasks
   catch { .nhse.tbl.sf configure -scrollregion [.nhse.tbl.sf bbox all] }
   catch { nhse_preview_paint }
@@ -1091,6 +1118,58 @@ proc nhse_preview_stop {win} {
   if {[info exists ::nhse_preview_after]} { after cancel $::nhse_preview_after ; unset ::nhse_preview_after }
 }
 
+# ---- slice 6: the free-to-edit row (compose a style, then Add / Overwrite via Update) ----------
+
+# The free row's CURRENT widget values as a raw 8-col row, index column a placeholder 0 (Add ignores
+# it; Overwrite replaces it with the chosen row #). Friendly march label -> token; float angle -> int.
+proc nhse_free_row {} {
+  set angle $::nhse_v(new,4)
+  if {[string is double -strict $angle]} { set angle [expr {int(round($angle))}] }
+  return [list 0 $::nhse_v(new,1) $::nhse_v(new,2) $::nhse_v(new,3) $angle \
+               $::nhse_v(new,5) [nhse_march_to_raw $::nhse_v(new,6)] $::nhse_v(new,7)]
+}
+
+# Keep the Overwrite row-# spinbox range in sync with the table size (0..N-1), clamping a stale value.
+proc nhse_refresh_over_range {} {
+  set sp .nhse.tbl.free.act.over
+  if {![winfo exists $sp]} return
+  set n [llength [net_hilight_style_current]]
+  set max [expr {$n > 0 ? $n - 1 : 0}]
+  $sp configure -from 0 -to $max
+  if {![string is integer -strict $::nhse_over_idx] || $::nhse_over_idx < 0 || $::nhse_over_idx > $max} {
+    set ::nhse_over_idx 0
+  }
+}
+
+# Show the row-# spinbox only for Overwrite (it picks which existing row the composed style replaces).
+proc nhse_action_changed {} {
+  set lbl .nhse.tbl.free.act.overlbl
+  set sp  .nhse.tbl.free.act.over
+  if {![winfo exists $sp]} return
+  if {$::nhse_action eq {Overwrite}} {
+    nhse_refresh_over_range
+    pack $lbl $sp -side left -padx 2 -before .nhse.tbl.free.act.update
+  } else {
+    catch { pack forget $lbl $sp }
+  }
+}
+
+# Commit the free row: Add appends it as a new last row; Overwrite replaces the row whose number is in
+# the spinbox. Both route through the fault-tolerant procs (live apply + redraw), then the table view
+# is rebuilt; the free row keeps its values so several similar styles can be added quickly (spec §6).
+proc nhse_free_update {} {
+  if {![info exists ::nhse_v(new,0)]} return
+  set row [nhse_free_row]
+  if {$::nhse_action eq {Overwrite}} {
+    set n $::nhse_over_idx
+    if {![string is integer -strict $n] || $n < 0} { set n 0 }
+    net_hilight_style_merge [list [lreplace $row 0 0 $n]]
+  } else {
+    net_hilight_style_append [list $row]
+  }
+  nhse_rebuild
+}
+
 proc net_hilight_style_editor { {topwin {}} } {
   global net_hilight_editor_seen
   # record "seen" once, on the first open only (no redundant rewrite every open)
@@ -1118,6 +1197,28 @@ proc net_hilight_style_editor { {topwin {}} } {
     label $t.head.c$fld -width $wdt -anchor w -relief flat -text $hdr
     pack $t.head.c$fld -side left -padx 1
   }
+
+  # free-to-edit row (NEW): compose a style with the same widgets, then Add/Overwrite it via Update.
+  set ::nhse_action Add
+  set ::nhse_over_idx 0
+  frame $t.free
+  pack $t.free -side top -fill x -anchor w
+  nhse_build_row $t.free new [net_hilight_style_default_row 0] NEW
+  frame $t.free.act
+  pack $t.free.act -side top -fill x -anchor w -pady {2 0}
+  label $t.free.act.lbl -text {Action:}
+  ttk::combobox $t.free.act.action -width 10 -state readonly -textvariable ::nhse_action -values {Add Overwrite}
+  bind $t.free.act.action <<ComboboxSelected>> nhse_action_changed
+  label $t.free.act.overlbl -text {Row #:}
+  spinbox $t.free.act.over -width 4 -from 0 -to 0 -textvariable ::nhse_over_idx
+  button $t.free.act.update -text {Update} -command nhse_free_update
+  pack $t.free.act.lbl $t.free.act.action -side left -padx 2
+  pack $t.free.act.update -side left -padx 6
+  # $t.free.act.overlbl / .over are packed in (before Update) only when action == Overwrite
+
+  # separator between the free row and the table (spec §5.1 divider)
+  ttk::separator $t.sep -orient horizontal
+  pack $t.sep -side top -fill x -pady 3
 
   # scrollable body: a canvas hosting an inner frame, plus a vertical scrollbar.
   canvas $t.sf -highlightthickness 0 -height 240
