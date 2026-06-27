@@ -433,7 +433,8 @@ static void publish_net_hilight_styles_to_tcl(void)
  * Returns 1 if a non-empty table was built, 0 otherwise (caller falls back to default). */
 static int parse_net_hilight_styles(const char *tab)
 {
-  int nrows = 0, j;
+  Tcl_Size nrows = 0; /* Tcl_Size, NOT int: Tcl 9's Tcl_SplitList writes a ptrdiff_t count here (issue 0041) */
+  int j;
   const char **rows = NULL;
   if(!interp) return 0;
   if(Tcl_SplitList(interp, tab, &nrows, &rows) != TCL_OK) return 0;
@@ -442,7 +443,7 @@ static int parse_net_hilight_styles(const char *tab)
   xctx->n_net_hilight_styles = nrows;
   for(j = 0; j < nrows; ++j) {
     NetHilightStyle *s = &xctx->net_hilight_style[j]; /* my_calloc zeroed all fields */
-    int nf = 0; const char **f = NULL;
+    Tcl_Size nf = 0; const char **f = NULL; /* Tcl_Size: Tcl 9 ABI (issue 0041) */
     s->index = j;
     s->color_layer = cadlayers > 5 ? 5 : cadlayers - 1; /* sane default until parsed */
     s->width = 1;
@@ -463,7 +464,7 @@ static int parse_net_hilight_styles(const char *tab)
     }
     if(nf > 2) { s->width = atoi(f[2]); if(s->width < 1) s->width = 1; if(s->width > 100) s->width = 100; }
     if(nf > 3 && f[3][0]) { /* dash pattern: list of on/off run lengths */
-      int nd = 0, k; const char **dd = NULL;
+      Tcl_Size nd = 0; int k; const char **dd = NULL; /* Tcl_Size: Tcl 9 ABI (issue 0041) */
       if(Tcl_SplitList(interp, f[3], &nd, &dd) == TCL_OK) {
         for(k = 0; k < nd && s->dash_len < (int)sizeof(s->dash_arr); ++k) {
           int dv = atoi(dd[k]); if(dv < 1) dv = 1; if(dv > 255) dv = 255;
