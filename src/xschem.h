@@ -1511,6 +1511,7 @@ extern int hilight_graph_node(const char *node, int col);
 extern int get_color(int value);
 extern NetHilightStyle *get_hilight_style(int value);
 extern unsigned int get_hilight_pixel(int value);
+extern int hilight_custom_rgb8(int value, unsigned char *r, unsigned char *g, unsigned char *b);
 extern void resolve_hilight_style_rgb(NetHilightStyle *st);
 extern unsigned int find_best_color(char colorname[]);
 extern void build_net_hilight_styles(void);

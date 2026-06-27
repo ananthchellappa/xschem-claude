@@ -422,6 +422,25 @@ static void set_ps_colors(unsigned int pixel)
 
 }
 
+/* Custom-RGB hilight color override for export (issue 0044), the PS analog of svgdraw's. set_ps_colors
+ * emits an inline RGB per color change, so temporarily repointing ps_colors[layer] to the style's RGB
+ * just before the highlighted wire/symbol is drawn (and restoring after) paints it in the custom color
+ * instead of the fallback layer get_color() maps a custom style to. Returns 1 (with *saved filled) if it
+ * overrode that layer's palette entry, else 0; the caller restores with ps_pop_hilight(). */
+static int ps_push_hilight(int value, int layer, Ps_color *saved)
+{
+  unsigned char r, g, b;
+  if(layer < 0 || layer >= cadlayers) return 0;
+  if(value < 0 || !hilight_custom_rgb8(value, &r, &g, &b)) return 0;
+  *saved = ps_colors[layer];
+  ps_colors[layer].red = r; ps_colors[layer].green = g; ps_colors[layer].blue = b;
+  return 1;
+}
+static void ps_pop_hilight(int layer, int did, Ps_color *saved)
+{
+  if(did && layer >= 0 && layer < cadlayers) ps_colors[layer] = *saved;
+}
+
 static void ps_xdrawarc(int layer, int fillarc, double x, double y, double r, double a, double b)
 {
  if(xctx->fill_pattern && xctx->fill_type[layer]  && fillarc)
@@ -1547,22 +1566,33 @@ void create_ps(char **psfile, int what, int fullzoom, int eps)
     /* bring outside previous for(c=0...) loop since ps_embedded_graph() calls ps_draw_symbol() */
     for(c=0;c<cadlayers; ++c) {
       for(i=0;i<xctx->instances; ++i) {
+        Ps_color sv; int did = 0, hlayer = 0;
+        /* a highlighted symbol (label/pin) drawn with a custom-RGB style takes the style's color, not
+         * the fallback layer get_color() maps it to inside ps_draw_symbol (0044) */
+        if(xctx->inst[i].color != -10000) {
+          hlayer = get_color(xctx->inst[i].color);
+          did = ps_push_hilight(xctx->inst[i].color, hlayer, &sv);
+        }
         ps_draw_symbol(c, i, c, what, 0,0, 0.0, 0.0);
         if(c == cadlayers - 1) {
           ps_draw_symbol(c + 1 , i, c + 1, what, 0, 0, 0.0, 0.0); /* ... draw texts */
         }
+        ps_pop_hilight(hlayer, did, &sv);
       }
     }
     prepare_netlist_structs(0); /* NEEDED: data was cleared by trim_wires() */
     for(i=0;i<xctx->wires; ++i)
     {
-      int color = WIRELAYER;
+      int color = WIRELAYER, hval = -1, did;
+      Ps_color sv;
       if(xctx->hilight_nets && (entry=bus_hilight_hash_lookup( xctx->wire[i].node, 0, XLOOKUP))) {
-        color = get_color(entry->value);
+        color = get_color(entry->value); hval = entry->value;
       }
+      did = ps_push_hilight(hval, color, &sv);   /* a custom-RGB hilight overrides the fallback layer (0044) */
       set_ps_colors(color);
       ps_drawline(color, xctx->wire[i].x1,xctx->wire[i].y1,xctx->wire[i].x2,xctx->wire[i].y2,
                   0 ,xctx->wire[i].bus);
+      ps_pop_hilight(color, did, &sv);
     }
 
     {

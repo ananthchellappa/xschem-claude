@@ -645,6 +645,27 @@ int get_color(int value)
   return cadlayers > 5 ? 5 : cadlayers - 1;
 }
 
+/* For the layer-indexed exporters (SVG/PS): get_color() collapses a custom-RGB hilight style
+ * (color_layer < 0) to a fallback layer, losing the color, so the exported wire/symbol would render
+ * in that fallback layer's color instead of the on-screen one. This fills 8-bit r/g/b with the style's
+ * actual color and returns 1 iff 'value' resolves to such a custom style AND its RGB could be resolved;
+ * the caller then paints the highlighted element in r/g/b (SVG: an inline style override of the class
+ * color; PS: a temporary palette repoint, mirroring the on-screen GC repoint). Returns 0 for a
+ * layer-index style, a sim logic level (value < 0), or when the pixel can't be resolved (no X). */
+int hilight_custom_rgb8(int value, unsigned char *r, unsigned char *g, unsigned char *b)
+{
+  NetHilightStyle *st;
+  if(value < 0) return 0;
+  st = get_hilight_style(value);
+  if(!st || st->color_layer >= 0) return 0;
+  resolve_hilight_style_rgb(st);
+  if(!st->rgb_resolved) return 0;
+  *r = (unsigned char)(st->cr >> 8);
+  *g = (unsigned char)(st->cg >> 8);
+  *b = (unsigned char)(st->cb >> 8);
+  return 1;
+}
+
 /* Pixel for a hilight value given its already-resolved style (st may be NULL when
  * value < 0). Single source of truth for value->pixel, shared by get_hilight_pixel()
  * and the draw_hilight_net() hot loop (which resolves the style once):
