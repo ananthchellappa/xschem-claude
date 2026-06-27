@@ -549,19 +549,20 @@ proc net_hilight_style_current {} {
 }
 
 # MODE 1 -- replace: the table becomes EXACTLY the given rows (positions 0..n-1; given index
-# columns are ignored and renumbered to position).
-proc net_hilight_style_replace {rows} {
+# columns are ignored and renumbered to position). $apply=0 stages the table (set the var only,
+# no C recompile/redraw) -- the editor uses this to defer the live update until Apply/OK.
+proc net_hilight_style_replace {rows {apply 1}} {
   global net_hilight_style
   set t {} ; set i 0
   foreach row $rows { lappend t [net_hilight_style_norm $row $i] ; incr i }
   set net_hilight_style $t
-  xschem update_net_hilight_style
+  if {$apply} { xschem update_net_hilight_style }
   return $t
 }
 
 # MODE 2 -- merge: each row's index column selects the position to overwrite; every other row is
 # kept. An index past the current end extends the table, padding gaps with default rows.
-proc net_hilight_style_merge {rows} {
+proc net_hilight_style_merge {rows {apply 1}} {
   global net_hilight_style
   set t [net_hilight_style_current]
   foreach row $rows {
@@ -571,17 +572,17 @@ proc net_hilight_style_merge {rows} {
     lset t $idx [net_hilight_style_norm $row $idx]
   }
   set net_hilight_style $t
-  xschem update_net_hilight_style
+  if {$apply} { xschem update_net_hilight_style }
   return $t
 }
 
 # MODE 3 -- append: ignore each row's index column; add the styles as new rows at the end.
-proc net_hilight_style_append {rows} {
+proc net_hilight_style_append {rows {apply 1}} {
   global net_hilight_style
   set t [net_hilight_style_current]
   foreach row $rows { lappend t [net_hilight_style_norm $row [llength $t]] }
   set net_hilight_style $t
-  xschem update_net_hilight_style
+  if {$apply} { xschem update_net_hilight_style }
   return $t
 }
 
@@ -595,7 +596,7 @@ proc net_hilight_style_reset {} {
 }
 
 # Bonus -- remove rows by position; the survivors are renumbered to keep index == position.
-proc net_hilight_style_remove {indices} {
+proc net_hilight_style_remove {indices {apply 1}} {
   global net_hilight_style
   set t [net_hilight_style_current]
   foreach idx [lsort -integer -decreasing -unique $indices] {
@@ -604,7 +605,7 @@ proc net_hilight_style_remove {indices} {
   set re {} ; set i 0
   foreach row $t { lappend re [net_hilight_style_norm $row $i] ; incr i }
   set net_hilight_style $re
-  xschem update_net_hilight_style
+  if {$apply} { xschem update_net_hilight_style }
   return $re
 }
 
@@ -796,12 +797,13 @@ proc nhse_assemble_table {} {
   return $rows
 }
 
-# Commit the current cell vars to the table (live-applies + redraws via net_hilight_style_replace),
-# then re-sync the vars/swatch/enable-state to the NORMALIZED result without rebuilding widgets.
+# Stage the current cell vars into the table (net_hilight_style_replace with apply=0 -- updates the
+# staged var only, no live redraw; Apply/OK push it to the schematic), then re-sync the vars/swatch/
+# enable-state to the NORMALIZED result without rebuilding widgets.
 proc nhse_commit {} {
   if {[info exists ::nhse_building] && $::nhse_building} return
   if {![info exists ::nhse_v(0,0)]} return
-  set newtab [net_hilight_style_replace [nhse_assemble_table]]
+  set newtab [net_hilight_style_replace [nhse_assemble_table] 0]   ;# stage only; Apply/OK push to live
   set i 0
   foreach r $newtab {
     set ::nhse_v($i,0) $i
@@ -1165,9 +1167,9 @@ proc nhse_free_update {} {
   if {$::nhse_action eq {Overwrite}} {
     set n $::nhse_over_idx
     if {![string is integer -strict $n] || $n < 0} { set n 0 }
-    net_hilight_style_merge [list [lreplace $row 0 0 $n]]
+    net_hilight_style_merge [list [lreplace $row 0 0 $n]] 0
   } else {
-    net_hilight_style_append [list $row]
+    net_hilight_style_append [list $row] 0
   }
   nhse_rebuild
 }
@@ -1188,10 +1190,11 @@ proc nhse_show_help {} {
   pack $h.t -side top -fill both -expand 1
   $h.t insert end \
 "Each row in the table is one highlight STYLE. Apply a style to a net with the 9 / 8 / 0\
- keys (or net_hilight_apply). Every edit here applies live to the open schematic.
+ keys (or net_hilight_apply). Your edits are STAGED here and only reach the open schematic when\
+ you press Apply or OK -- Cancel (or the window's close button) discards them.
 
-PREVIEW (top): an animated sample of the row your cursor is in -- including edits you have\
- not committed yet, so you can see a style before applying it.
+PREVIEW (top): an animated sample of the row your cursor is in -- including edits you have not\
+ applied yet, so you can see a style before committing it to the schematic.
 
 COLUMNS
   Color    A layer color (Layer N), a named color (e.g. red), or Custom... for a custom RGB.
@@ -1208,7 +1211,19 @@ THE 'NEW' ROW (top, above the separator)
   Compose a style in the NEW row, then choose an Action and press Update:
     Add        -- append the composed style as a new row at the end of the table.
     Overwrite  -- replace the existing row whose number you set in 'Row #'.
-  The NEW row keeps its values after Update, so you can add several similar styles quickly."
+  The NEW row keeps its values after Update, so you can add several similar styles quickly.
+
+ROW OPS (bottom): Move Up/Down, Delete and Duplicate act on the row your cursor is in
+  (greyed until a table row -- not the NEW row -- has focus). Scroll the table with the mouse
+  wheel anywhere over it.
+
+BUTTONS
+  Apply  -- push your staged edits to the schematic now; the dialog stays open.
+  OK     -- push your staged edits and close.
+  Save...-- write the table to a file (the only thing that touches disk). Saving to the
+            offered ~/.xschem/net_hilight_style makes it load automatically next session.
+  Cancel -- discard every change since you opened the dialog and close.
+  Reset to defaults -- replace the table with one style per layer (the legacy look)."
   $h.t configure -state disabled
   return $h
 }
@@ -1261,7 +1276,7 @@ proc nhse_op_move {dir} {
   set ri [lindex $rows $i] ; set rj [lindex $rows $j]
   set rows [lreplace $rows $i $i $rj]
   set rows [lreplace $rows $j $j $ri]
-  net_hilight_style_replace $rows
+  net_hilight_style_replace $rows 0
   nhse_rebuild
   nhse_focus_after_op $j
 }
@@ -1270,7 +1285,7 @@ proc nhse_op_delete {} {
   set i [nhse_op_target]
   if {$i eq {}} return
   nhse_flush
-  net_hilight_style_remove [list $i]
+  net_hilight_style_remove [list $i] 0
   nhse_rebuild
   nhse_focus_after_op $i   ;# clamps to the new last row if we removed it
 }
@@ -1282,7 +1297,7 @@ proc nhse_op_duplicate {} {
   nhse_flush
   set rows [net_hilight_style_current]
   set rows [linsert $rows [expr {$i + 1}] [lindex $rows $i]]
-  net_hilight_style_replace $rows
+  net_hilight_style_replace $rows 0
   nhse_rebuild
   nhse_focus_after_op [expr {$i + 1}]
 }
@@ -1335,22 +1350,24 @@ proc nhse_save {} {
   }
 }
 
-# Apply -- flush any in-progress field edit into the table and (re)apply it to the running session;
-# stay open. nhse_flush -> nhse_commit re-applies the whole table, so this is the explicit commit point
-# even when the user typed a value without tabbing out of the field first.
-proc nhse_apply {} { nhse_flush }
+# Push the STAGED table (the net_hilight_style global, kept current by the editor's apply=0 edits) to
+# the running session: recompile the C table + redraw. The single point where edits become live, so
+# the dialog follows a staged model -- typing/moving/deleting only restage; nothing reaches the
+# schematic until Apply/OK (or a Cancel revert).
+proc nhse_apply_live {} { catch { xschem update_net_hilight_style } }
 
-# OK -- flush any in-progress edit, then close (the state is already live; no disk write, no revert).
-proc nhse_ok {} { nhse_flush ; catch { destroy .nhse } }
+# Apply -- flush any in-progress field edit into the staged table, then push it live; stay open.
+proc nhse_apply {} { nhse_flush ; nhse_apply_live }
 
-# Cancel / WM-close -- revert the running session to the open-time snapshot, then close. Discards the
-# experiments made since the dialog opened (a Save... already written to disk is untouched).
+# OK -- flush + push live, then close.
+proc nhse_ok {} { nhse_flush ; nhse_apply_live ; catch { destroy .nhse } }
+
+# Cancel / WM-close -- discard every staged edit by restoring the open-time snapshot, push that live
+# (so any earlier Apply is also undone), then close. (A Save... already written to disk is untouched.)
 proc nhse_cancel {} {
   global net_hilight_style
-  if {[info exists ::nhse_snapshot]} {
-    set net_hilight_style $::nhse_snapshot
-    catch { xschem update_net_hilight_style }
-  }
+  if {[info exists ::nhse_snapshot]} { set net_hilight_style $::nhse_snapshot }
+  nhse_apply_live
   catch { destroy .nhse }
 }
 

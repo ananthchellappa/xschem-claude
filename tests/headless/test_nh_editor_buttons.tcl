@@ -53,9 +53,9 @@ check "B5 button bar present" [expr {[winfo exists .nhse.btns.ok] && [winfo exis
 check "B6 snapshot captured on open" [expr {[info exists ::nhse_snapshot] && $::nhse_snapshot eq {{0 4 1 {} 0 0 none 0} {1 3 1 {} 0 0 none 0}}}] "(=> [expr {[info exists ::nhse_snapshot] ? $::nhse_snapshot : {<unset>}}])"
 check "B7 WM-close bound to Cancel" [expr {[wm protocol .nhse WM_DELETE_WINDOW] eq {nhse_cancel}}] "(=> [wm protocol .nhse WM_DELETE_WINDOW])"
 
-# a live edit applies immediately, then Cancel reverts it to the open-time snapshot
+# an edit is staged into the table, then Cancel reverts it to the open-time snapshot
 set ::nhse_v(0,1) red ; nhse_commit
-check "B8 edit applied live (row 0 = red)" [expr {[c0] eq {red}}] "(=> [c0])"
+check "B8 edit staged into the table (row 0 = red)" [expr {[c0] eq {red}}] "(=> [c0])"
 nhse_cancel
 check "B9 Cancel reverted row 0 to 4" [expr {[c0] == 4}] "(=> [c0])"
 check "B10 Cancel closed the dialog"  [expr {![winfo exists .nhse]}] {}
