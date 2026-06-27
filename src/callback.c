@@ -2480,11 +2480,11 @@ static void context_menu_action(double mx, double my)
     case 8: /* paste from clipboard */
       merge_file(2,".sch");
       break;
-    case 9: /* load most recent file */
+    case 9: /* load most recent file (read-only, like the File menu's Open Most Recent) */
       /* action-log: the resolved filename is recorded by the scheduler load
        * branch's -gui hook (file-menu logging), shared with the File menu's
        * recent/last-closed picks -- nothing to log here anymore. */
-      tclvareval("xschem load -gui [lindex $tctx::recentfile 0]", NULL);
+      tclvareval("xschem load -gui -readonly [lindex $tctx::recentfile 0]", NULL);
       break;
     case 10: /* edit attributes */
       edit_property(0);

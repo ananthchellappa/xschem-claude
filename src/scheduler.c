@@ -3628,11 +3628,14 @@ static int xschem_cmds_l(Tcl_Interp *interp, int argc, const char *argv[], int *
      *   '-nofullzoom': do not do a full zoom on new schematic.
      *   '-nodraw': do not draw.
      *   '-keep_symbols': retain symbols that are already loaded.
+     *   '-readonly': open the loaded file in read mode (read-only) regardless of its writability
+     *       -- used by the reopen shortcuts (Open Most Recent / Last Closed / Recent menu) so
+     *       reopening defaults to a safe browse view; edit with Ctrl-2 / View > Toggle Read Only.
      */
     else if(!strcmp(argv[1], "load") )
     {
       int load_symbols = 1, force = 1, undo_reset = 1, nofullzoom = 0, nodraw = 0;
-      int keep_symbols = 0, first;
+      int keep_symbols = 0, first, readonly_open = 0;
       int lastclosed = 0, lastopened = 0;
       int first_loaded = 0;
       int i;
@@ -3656,6 +3659,8 @@ static int xschem_cmds_l(Tcl_Interp *interp, int argc, const char *argv[], int *
             nofullzoom = 1; nodraw = 1;
           } else if(!strcmp(argv[i], "-keep_symbols")) {
             keep_symbols = 1;
+          } else if(!strcmp(argv[i], "-readonly")) {
+            readonly_open = 1;
           }
         } else {
           break;
@@ -3775,6 +3780,13 @@ static int xschem_cmds_l(Tcl_Interp *interp, int argc, const char *argv[], int *
             }
           }
         }
+      }
+      /* -readonly (reopen shortcuts: Open Most Recent / Last Closed / Recent menu): force the freshly
+       * loaded buffer into read mode regardless of file writability, so reopening defaults to a safe
+       * browse view. Edit it with Ctrl-2 / View > Toggle Read Only (mirrors descend_readonly). */
+      if(readonly_open && first_loaded && !xctx->readonly) {
+        xctx->readonly = 1;
+        set_modify(-1); /* refresh window title to show the read-only marker */
       }
       Tcl_SetResult(interp, xctx->sch[xctx->currsch], TCL_STATIC);
     }

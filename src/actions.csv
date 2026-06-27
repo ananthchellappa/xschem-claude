@@ -40,8 +40,8 @@ file.clear_symbol,command,file,Clear Symbol,Ctrl+Shift+N,xschem clear symbol,,,S
 file.component_browser,command,file,Component browser,"Shift-Ins, Ctrl-I",action_component_browser,,,Browse and insert a symbol from the library,,1
 file.open,command,file,Open,Ctrl+O,xschem load,,,Open a schematic or symbol file,,1
 file.open_new_window,command,file,Open in new window,Alt+O,xschem load_new_window,,,Open a file in a new window,,1
-file.open_last_closed,command,file,Open last closed,Ctrl+Shift+T,xschem load -gui -lastclosed,,,Reopen the most recently closed file,,1
-file.open_most_recent,command,file,Open most recent,Ctrl+Shift+O,xschem load -gui -lastopened,,,Open the most recently used file,,1
+file.open_last_closed,command,file,Open last closed,Ctrl+Shift+T,xschem load -gui -lastclosed -readonly,,,Reopen the most recently closed file (read-only; Ctrl-2 to edit),,1
+file.open_most_recent,command,file,Open most recent,Ctrl+Shift+O,xschem load -gui -lastopened -readonly,,,Open the most recently used file (read-only; Ctrl-2 to edit),,1
 file.open_recent,dynamic,file,Open recent,,,file.recent,setup_recent_menu,List of recently opened files,
 file.new_window_tab,command,file,Create new window/tab,Ctrl+T,xschem new_schematic create,,,Create a new window or tab,
 file.open_sub_sch,command,file,Open selected schematic in new window,Alt+E,open_sub_schematic,,,Open the selected instance's schematic in a new window,

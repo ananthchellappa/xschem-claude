@@ -2494,7 +2494,7 @@ proc setup_recent_menu { { topwin {} } } {
   if { [info exists tctx::recentfile] } {
     foreach i $tctx::recentfile {
       $topwin.menubar.file.recent add command \
-        -command "xschem load -gui {$i}" \
+        -command "xschem load -gui -readonly {$i}" \
         -label [file tail $i]
     }
   }
