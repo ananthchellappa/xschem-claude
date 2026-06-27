@@ -774,8 +774,10 @@ proc nhse_color_to_tk {val} {
 proc nhse_march_to_disp {raw}  { switch -- $raw  {march_fwd {return Forward} march_rev {return Reverse} default {return Off}} }
 proc nhse_march_to_raw  {disp} { switch -- $disp {Forward {return march_fwd} Reverse {return march_rev} default {return none}} }
 
-# Named dash-pattern examples (name -> on/off run-length list; Solid = no dash).
-proc nhse_dash_examples {} { return {Solid {} Dash {6 4} Dot {2 3} Dash-Dot {6 3 2 3} Long-Dash {12 4}} }
+# Dash-pattern quick-pick values: the literal on/off run-length lists that fill the Pattern entry
+# (shown verbatim so the dropdown self-documents the "6 4" = 6 on / 4 off format), plus "Solid" (no
+# dash). Picking one fills the Pattern entry to its left -- see nhse_dash_apply_example.
+proc nhse_dash_examples {} { return {Solid {6 4} {2 3} {6 3 2 3} {12 4}} }
 
 # ---- the editing model: per-cell vars (::nhse_v(row,field)) <-> the table -----------------
 # Assemble the live edit table from the bound cell vars. Field 6 holds a FRIENDLY march label and
@@ -868,8 +870,10 @@ proc nhse_color_selected {i} {
 }
 
 proc nhse_dash_apply_example {i} {
-  array set m [nhse_dash_examples]
-  if {[info exists ::nhse_ex($i)] && [info exists m($::nhse_ex($i))]} { set ::nhse_v($i,3) $m($::nhse_ex($i)) }
+  if {![info exists ::nhse_ex($i)]} return
+  set v $::nhse_ex($i)
+  if {$v eq {Solid}} { set v {} }   ;# "Solid" is the no-dash sentinel; all others are literal patterns
+  set ::nhse_v($i,3) $v
   nhse_row_enable_state $i
   nhse_cell_commit $i
 }
@@ -906,8 +910,7 @@ proc nhse_build_row {body i row {idxlabel {}}} {
 
   frame $rf.c3                                              ;# dash: entry + examples dropdown
   entry $rf.c3.e -width 7 -textvariable ::nhse_v($i,3)
-  set exnames {} ; foreach {n d} [nhse_dash_examples] { lappend exnames $n }
-  ttk::combobox $rf.c3.ex -width 3 -state readonly -textvariable ::nhse_ex($i) -values $exnames
+  ttk::combobox $rf.c3.ex -width 8 -state readonly -textvariable ::nhse_ex($i) -values [nhse_dash_examples]
   pack $rf.c3.e $rf.c3.ex -side left -padx 1
   bind $rf.c3.e <Return> [list nhse_dash_changed $i] ; bind $rf.c3.e <FocusOut> [list nhse_dash_changed $i]
   bind $rf.c3.ex <<ComboboxSelected>> [list nhse_dash_apply_example $i]
@@ -1141,17 +1144,13 @@ proc nhse_refresh_over_range {} {
   }
 }
 
-# Show the row-# spinbox only for Overwrite (it picks which existing row the composed style replaces).
+# The row-# spinbox (which existing row Overwrite replaces) is always visible so the target field is
+# discoverable, but enabled only for Overwrite -- greyed for Add, where it has no meaning.
 proc nhse_action_changed {} {
-  set lbl .nhse.tbl.free.act.overlbl
-  set sp  .nhse.tbl.free.act.over
+  set sp .nhse.tbl.free.act.over
   if {![winfo exists $sp]} return
-  if {$::nhse_action eq {Overwrite}} {
-    nhse_refresh_over_range
-    pack $lbl $sp -side left -padx 2 -before .nhse.tbl.free.act.update
-  } else {
-    catch { pack forget $lbl $sp }
-  }
+  nhse_refresh_over_range
+  $sp configure -state [expr {$::nhse_action eq {Overwrite} ? {normal} : {disabled}}]
 }
 
 # Commit the free row: Add appends it as a new last row; Overwrite replaces the row whose number is in
@@ -1170,6 +1169,47 @@ proc nhse_free_update {} {
   nhse_rebuild
 }
 
+# A self-contained help window: the no-docs explanation of every column + the NEW-row workflow, so
+# the editor is usable without reading the spec (a read-only Text in its own toplevel).
+proc nhse_show_help {} {
+  set h .nhse_help
+  if {[winfo exists $h]} { raise $h ; focus $h ; return $h }
+  toplevel $h
+  wm title $h {Net highlight styles — Help}
+  text $h.t -wrap word -width 78 -height 28 -padx 8 -pady 8 -takefocus 0
+  scrollbar $h.sb -orient vertical -command "$h.t yview"
+  $h.t configure -yscrollcommand "$h.sb set"
+  button $h.close -text Close -command [list destroy $h]
+  pack $h.close -side bottom -pady 4
+  pack $h.sb -side right -fill y
+  pack $h.t -side top -fill both -expand 1
+  $h.t insert end \
+"Each row in the table is one highlight STYLE. Apply a style to a net with the 9 / 8 / 0\
+ keys (or net_hilight_apply). Every edit here applies live to the open schematic.
+
+PREVIEW (top): an animated sample of the row your cursor is in -- including edits you have\
+ not committed yet, so you can see a style before applying it.
+
+COLUMNS
+  Color    A layer color (Layer N), a named color (e.g. red), or Custom... for a custom RGB.
+  Width    Line thickness; 1 = thinnest.
+  Pattern  Dash pattern as on/off run lengths, e.g. \"6 4\" = 6 on then 4 off. Empty = solid.
+           The dropdown to its right fills this with a ready-made pattern (or Solid).
+  Angle    Tilt of the dash stripes, 0-45 degrees.
+  Blink    Blink period in milliseconds; 0 = steady (no blink).
+  March    Marching ants: Off / Forward / Reverse.
+  Speed    Marching speed in dash-periods per second.
+  (Angle, March and Speed only matter with a dash pattern, so they grey out for a solid row.)
+
+THE 'NEW' ROW (top, above the separator)
+  Compose a style in the NEW row, then choose an Action and press Update:
+    Add        -- append the composed style as a new row at the end of the table.
+    Overwrite  -- replace the existing row whose number you set in 'Row #'.
+  The NEW row keeps its values after Update, so you can add several similar styles quickly."
+  $h.t configure -state disabled
+  return $h
+}
+
 proc net_hilight_style_editor { {topwin {}} } {
   global net_hilight_editor_seen
   # record "seen" once, on the first open only (no redundant rewrite every open)
@@ -1178,6 +1218,12 @@ proc net_hilight_style_editor { {topwin {}} } {
   if {[winfo exists $w]} { raise $w ; focus $w ; nhse_rebuild ; return $w }
   toplevel $w
   wm title $w {Net highlight styles}
+
+  # top bar: a Help button (top-right) explaining every column without leaving the dialog.
+  frame $w.topbar
+  pack $w.topbar -side top -fill x -padx 4 -pady {4 0}
+  button $w.topbar.help -text {Help} -command nhse_show_help
+  pack $w.topbar.help -side right
 
   # one shared animated preview (slice 5), pinned ABOVE the table; mirrors the focused row, live.
   set ::nhse_focus_row 0
@@ -1212,9 +1258,10 @@ proc net_hilight_style_editor { {topwin {}} } {
   label $t.free.act.overlbl -text {Row #:}
   spinbox $t.free.act.over -width 4 -from 0 -to 0 -textvariable ::nhse_over_idx
   button $t.free.act.update -text {Update} -command nhse_free_update
-  pack $t.free.act.lbl $t.free.act.action -side left -padx 2
+  # the Row # field is always visible (so the Overwrite target is discoverable) but greyed for Add
+  pack $t.free.act.lbl $t.free.act.action $t.free.act.overlbl $t.free.act.over -side left -padx 2
   pack $t.free.act.update -side left -padx 6
-  # $t.free.act.overlbl / .over are packed in (before Update) only when action == Overwrite
+  nhse_action_changed   ;# set the initial Row # enabled state (Add -> disabled)
 
   # separator between the free row and the table (spec §5.1 divider)
   ttk::separator $t.sep -orient horizontal

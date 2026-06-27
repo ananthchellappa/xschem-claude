@@ -42,8 +42,8 @@ check "C10 width widget re-synced to 1"  [expr {$::nhse_v(0,2) == 1}] "(=> $::nh
 set ::nhse_v(0,1) blue ; nhse_commit
 check "C11 color edit -> table" [expr {[f0 1] eq {blue}}] "(=> [f0 1])"
 
-# dash example fills the entry and the table, and enables angle/speed
-set ::nhse_ex(0) Dash ; nhse_dash_apply_example 0
+# dash example fills the entry and the table, and enables angle/speed (examples are literal patterns)
+set ::nhse_ex(0) {6 4} ; nhse_dash_apply_example 0
 check "C12 dash example fills entry" [expr {$::nhse_v(0,3) eq {6 4}}] "(=> $::nhse_v(0,3))"
 check "C13 dash in table"            [expr {[f0 3] eq {6 4}}] "(=> [f0 3])"
 check "C14 angle+speed enabled with dash" \

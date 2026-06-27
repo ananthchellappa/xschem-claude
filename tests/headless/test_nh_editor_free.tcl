@@ -64,11 +64,13 @@ check "S11 row 1 overwritten by composed style" \
 set r0 [lindex $tab 0]
 check "S12 row 0 untouched" [expr {[lindex $r0 1] == 4 && [lindex $r0 3] eq {}}] "(=> $r0)"
 
-# --- the row# spinbox is shown only for Overwrite (pack info errors when not managed) ----------
-check "S13 row# spinbox shown for Overwrite" [expr {![catch {pack info .nhse.tbl.free.act.over}]}] {}
+# --- the row# spinbox is always visible (discoverable) but enabled only for Overwrite ----------
+set ::nhse_action Overwrite ; nhse_action_changed
+check "S13a row# spinbox always present" [winfo exists .nhse.tbl.free.act.over] {}
+check "S13b row# spinbox enabled for Overwrite" [expr {[.nhse.tbl.free.act.over cget -state] eq {normal}}] "(=> [.nhse.tbl.free.act.over cget -state])"
 set ::nhse_action Add ; nhse_action_changed
 update idletasks
-check "S14 row# spinbox hidden for Add" [expr {[catch {pack info .nhse.tbl.free.act.over}]}] {}
+check "S14 row# spinbox disabled for Add" [expr {[.nhse.tbl.free.act.over cget -state] eq {disabled}}] "(=> [.nhse.tbl.free.act.over cget -state])"
 
 # --- a free-row edit must NOT commit to the table; a table-row edit must (count real commits) ---
 # (count nhse_commit invocations so the guard's behaviour is observable -- the free row is excluded
@@ -83,6 +85,22 @@ set c1 $::nhse_commit_calls
 set ::nhse_v(0,2) 7 ; nhse_cell_commit 0
 check "S16 table-row cell edit DOES commit" [expr {$::nhse_commit_calls == $c1 + 1}] "(calls +[expr {$::nhse_commit_calls - $c1}])"
 rename nhse_commit {} ; rename nhse_commit_orig nhse_commit
+
+# --- user-feedback fixes: Help button + readable, self-documenting dash examples ---------------
+check "S17 Help button present"  [winfo exists .nhse.topbar.help] {}
+nhse_show_help
+check "S18 Help window opens"    [winfo exists .nhse_help] {}
+catch {destroy .nhse_help}
+check "S19 dash examples are literal patterns" \
+  [expr {[lsearch -exact [nhse_dash_examples] {6 4}] >= 0 && [lsearch -exact [nhse_dash_examples] Solid] >= 0 && [lsearch -exact [nhse_dash_examples] Dash] < 0}] \
+  "(=> [nhse_dash_examples])"
+check "S20 dash example dropdown readable width" \
+  [expr {[.nhse.tbl.free.rnew.c3.ex cget -width] >= 8}] "(=> [.nhse.tbl.free.rnew.c3.ex cget -width])"
+# picking a literal pattern fills the entry; "Solid" clears it
+set ::nhse_ex(new) {6 4} ; nhse_dash_apply_example new
+check "S21 dash pick fills Pattern entry" [expr {$::nhse_v(new,3) eq {6 4}}] "(=> $::nhse_v(new,3))"
+set ::nhse_ex(new) Solid ; nhse_dash_apply_example new
+check "S22 Solid clears the Pattern entry" [expr {$::nhse_v(new,3) eq {}}] "(=> [list $::nhse_v(new,3)])"
 
 catch {destroy .nhse}
 file delete -force $::USER_CONF_DIR
