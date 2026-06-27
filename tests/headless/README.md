@@ -58,7 +58,7 @@ DISPLAY=:0 ../../src/xschem --pipe -q --nolog --script test_<name>.tcl
 **Pass `--nolog` unless the test's subject IS logging/the CIW.** It disables the
 action log (no `Xschem.log` litter in the launch cwd) and the CIW auto-open
 (short-lived toplevels leak WSLg ghost frames — see
-`issues/0002-wslg-ghost-window-survives-xkill.md`). The exceptions —
+`doc/claude/issues/0002-wslg-ghost-window-survives-xkill.md`). The exceptions —
 `test_ciw.tcl` and `test_action_log_dispatch.tcl` — use `--logdir $(mktemp -d)`
 instead, and destroy the CIW before exiting. `run.sh` already passes `--nolog`.
 

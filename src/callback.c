@@ -1861,7 +1861,7 @@ void draw_crosshair(int what, int state)
  * none is drawn. <force> redraws even if the hovered object is unchanged (used to
  * re-establish the outline after a full redraw). Focus-independent: it runs on
  * MotionNotify, which X11 delivers to the window under the pointer regardless of
- * keyboard focus. See code_analysis/hover_highlight_decision.md. */
+ * keyboard focus. See doc/claude/code_analysis/hover_highlight_decision.md. */
 
 /* Is the object (type, n, layer c) currently selected? Used to suppress the
  * hover outline on an already-selected object — the dashed-yellow cue and the
@@ -2558,7 +2558,7 @@ static void context_menu_action(double mx, double my)
 
 /* ===========================================================================
  * Phase 3a: data-driven input-action dispatch (mouse wheel).
- * See claude_suggs/refactor_plan_action_registry_phase3.md.
+ * See doc/claude/suggestions/refactor_plan_action_registry_phase3.md.
  *
  * Separates *binding* (which physical input maps to which action -- held as
  * data in input_bindings[], remappable at runtime via `xschem bind`) from
@@ -2716,7 +2716,7 @@ static int act_toggle_orthogonal_wiring(const ActionEvent *e) { (void)e; toggle_
 static int act_toggle_draw_pixmap(const ActionEvent *e) { (void)e; toggle_draw_pixmap_cmd(); return 1; }
 
 /* "Highlight net and send to waveform viewer" — verbatim body of the old Alt-g
- * (EQUAL_MODMASK) branch of the hardcoded case 'g' (specs/keybind_snap_grid_actions.md).
+ * (EQUAL_MODMASK) branch of the hardcoded case 'g' (doc/claude/specs/keybind_snap_grid_actions.md).
  * No-op while busy: returns 0 so the dispatch falls through exactly as the old `break`. */
 static int act_highlight_send_waveform(const ActionEvent *e)
 {
@@ -2835,7 +2835,7 @@ static ActionDef action_registry[] = {
   /* keybind_snap_grid_actions: snap / grid / highlight ops made bindable; they ship
    * UNBOUND (no default chord) — the user binds them via `xschem bind` / their rc.
    * Two Tcl-backed (reuse the View/Options menu commands), one C-backed (sim-tool
-   * detection). specs/keybind_snap_grid_actions.md. */
+   * detection). doc/claude/specs/keybind_snap_grid_actions.md. */
   { "view.set_snap_value", NULL,
     "input_line {Enter snap value (float):} {xschem set cadsnap} $cadsnap", "Set snap value (dialog)" },
   { "view.toggle_draw_grid", NULL,
@@ -3004,7 +3004,7 @@ static void init_input_bindings(void)
   /* Phase 3d.2 batch 2: plain-chord command keys (the cases' Ctrl/Alt branches stay in C). */
   set_input_binding(DEV_KEY, 'y', 0, ACTX_CANVAS, "edit.toggle_stretch");
   /* snap/grid/highlight ops ship UNBOUND — no default chord; the user binds them via
-   * `xschem bind` / their rc (specs/keybind_snap_grid_actions.md). The old 'g'/'G'
+   * `xschem bind` / their rc (doc/claude/specs/keybind_snap_grid_actions.md). The old 'g'/'G'
    * snap defaults were removed here (keybindings.csv regenerated to match). */
   set_input_binding(DEV_KEY, 'T', 0, ACTX_CANVAS, "prop.toggle_ignore_attribute_on_selected_instances");
   set_input_binding(DEV_KEY, 'O', 0, ACTX_CANVAS, "view.toggle_colorscheme");
@@ -4064,7 +4064,7 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
     /* 'g'/'G' (halve/double snap), Ctrl-g (set snap value) and Alt-g (highlight net ->
      * waveform viewer) are fully data-driven now: registered actions view.snap_half /
      * view.snap_double / view.set_snap_value / hilight.send_to_waveform, shipped UNBOUND
-     * and user-bound via `xschem bind` (specs/keybind_snap_grid_actions.md). The hardcoded
+     * and user-bound via `xschem bind` (doc/claude/specs/keybind_snap_grid_actions.md). The hardcoded
      * case 'g' (incl. its Ctrl/Alt branches) and case 'G' are removed. */
 
     case 'h':
@@ -4882,7 +4882,7 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
 
     /* '%' (toggle draw grid) is data-driven now: registered action view.toggle_draw_grid,
      * shipped UNBOUND and user-bound via `xschem bind` (cadence_style_rc binds CTRL-G to
-     * it by default). specs/keybind_snap_grid_actions.md. The hardcoded case is removed. */
+     * it by default). doc/claude/specs/keybind_snap_grid_actions.md. The hardcoded case is removed. */
 
     case '$':
       /* plain '$' (toggle pixmap saving) migrated to the binding table (Phase 3d.2
@@ -5329,7 +5329,7 @@ static void handle_button_press(int event, int state, int rstate, KeySym key, in
       * selection path below; the form is re-targeted from the relocated hook at the
       * end of handle_button_release(). The branches below remain for the LEGACY
       * blocking dialogs (edit_prop_legacy / text_line / enter_text), which still
-      * raise the semaphore. See code_analysis/modeless_form_M2_decision.md. */
+      * raise the semaphore. See doc/claude/code_analysis/modeless_form_M2_decision.md. */
      if(tcleval("winfo exists .dialog.f2.txt")[0] == '1') { /* proc enter_text */
        tcleval(".dialog.buttons.ok invoke");
        return;
@@ -5392,7 +5392,7 @@ static void handle_button_press(int event, int state, int rstate, KeySym key, in
        int prev_last_sel = xctx->lastsel;
        int no_shift_no_ctrl = !(state & (ShiftMask | ControlMask));
        /* cadence_compat forces the intuitive interface (Cadence-style direct
-        * click-drag to move/copy objects), spec specs/cadence_modifier_drag.md */
+        * click-drag to move/copy objects), spec doc/claude/specs/cadence_modifier_drag.md */
        int intuitive = xctx->intuitive_interface || cadence_compat;
 
        xctx->shape_point_selected = 0;
@@ -5491,7 +5491,7 @@ static void handle_button_press(int event, int state, int rstate, KeySym key, in
           !xctx->shape_point_selected) {
          xctx->drag_elements = 1;
          if(cadence_compat) {
-           /* Cadence-style modifier-drag (spec specs/cadence_modifier_drag.md),
+           /* Cadence-style modifier-drag (spec doc/claude/specs/cadence_modifier_drag.md),
             * INDEPENDENT of enable_stretch:
             *   plain  -> attached move (wires follow)
             *   Ctrl   -> detached move (wires left behind)
@@ -5562,7 +5562,7 @@ static void handle_button_release(int event, KeySym key, int state, int button, 
 {
    char str[PATH_MAX + 100];
    /* cadence_compat forces the intuitive interface (matches handle_button_press),
-    * spec specs/cadence_modifier_drag.md */
+    * spec doc/claude/specs/cadence_modifier_drag.md */
    int intuitive = xctx->intuitive_interface || cadence_compat;
    if(waves_selected(event, key, state, button)) {
      waves_callback(event, mx, my, key, button, aux, state);
@@ -5865,7 +5865,7 @@ static int handle_window_switching(int event, int tabbed_interface, const char *
   Xschem_ctx **save_xctx = get_save_xctx();
   /* A real top-level window (non-empty top_path) owns its own X canvas, so focus/
    * expose/enter must switch xctx to it — even in tabbed mode, where windows and
-   * tabs now coexist (specs/multi_window_detach.md). Pure tabs share the main
+   * tabs now coexist (doc/claude/specs/multi_window_detach.md). Pure tabs share the main
    * canvas and switch via the tab bar, so they stay out of this path. The switch
    * runs when either the event window OR the current context is a real window. */
   int win_is_real = (n > 0 && save_xctx[n] && save_xctx[n]->top_path && save_xctx[n]->top_path[0]);

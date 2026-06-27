@@ -9,7 +9,7 @@
 #   - the config vars exist with the ratified defaults (on; min width; yellow)
 # Focus-independence + the actual pixels (dash/color/weight) are a MANUAL EYEBALL
 # item (WSLg can't drive a real unfocused-window pointer). Decision doc:
-# code_analysis/hover_highlight_decision.md.
+# doc/claude/code_analysis/hover_highlight_decision.md.
 #
 # Run under X with --pipe:
 #   DISPLAY=:0 ./src/xschem --pipe -q --script tests/headless/test_hover_highlight.tcl

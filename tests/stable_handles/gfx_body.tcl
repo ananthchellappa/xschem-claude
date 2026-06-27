@@ -14,7 +14,7 @@
 # so a held (layer,index) dangles silently across a delete — the §2e hazard with
 # no handle at all. That is exactly what Phase D will cure.
 #
-# Lifecycle sites exercised (census in code_analysis/graphical_lifecycle_census.md):
+# Lifecycle sites exercised (census in doc/claude/code_analysis/graphical_lifecycle_census.md):
 #   BIRTH store fns   -> GC2  (xschem rect/line/polygon/arc ...)   [store.c]
 #   BIRTH merge fns   -> GC13 (xschem copy + paste)                [paste.c]
 #   BIRTH load fns    -> every reload                              [save.c]

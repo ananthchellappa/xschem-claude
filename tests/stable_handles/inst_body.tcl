@@ -6,7 +6,7 @@
 #
 # Sourced by inst_wrap.tcl, which provides `check`, `xcheck`, `::qo_dir`.
 #
-# Lifecycle sites exercised (census: code_analysis/instance_lifecycle_census.md):
+# Lifecycle sites exercised (census: doc/claude/code_analysis/instance_lifecycle_census.md):
 #   BIRTH place_symbol  -> CHI1 (xschem instance ...)
 #   BIRTH load_inst     -> every reload
 #   BIRTH move-copy     -> CHI4 (copy_objects)        [move.c:972]
@@ -274,7 +274,7 @@ check {CHI10 clear force schematic: zero instances} {[ninst] == 0}
 ###   xschem instance_id <name|index>  → session-stable id of that instance (or -1)
 ###   xschem instance_index <id>       → current array index of that instance (or -1)
 ###
-### Role contract (code_analysis/instance_identity_decision.md): the id is the
+### Role contract (doc/claude/code_analysis/instance_identity_decision.md): the id is the
 ### canonical *durable session* handle (monotonic, never reused, NOT persisted);
 ### the name is the *human / cross-session* form (user-editable, file-persisted,
 ### REUSABLE — R37 came back after a delete, verified). The headline divergence:

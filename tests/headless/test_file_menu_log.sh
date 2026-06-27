@@ -1,5 +1,5 @@
 #!/bin/sh
-# Action-log, file-menu effects (plan claude_suggs/plan_file_menu_logging.md):
+# Action-log, file-menu effects (plan doc/claude/suggestions/plan_file_menu_logging.md):
 # every effect reachable through the File menu is recorded as its resolved,
 # replayable command -- opens as `xschem load {/abs/path}` (dialog resolved in
 # ask_new_file, recent/-gui resolved in the scheduler load branch), save-as as

@@ -41,7 +41,7 @@ namespace eval libmgr {
 # keyboard focus. Plain `focus` cannot move focus across toplevels, so when
 # another window (e.g. the CIW) is the active one it would be ignored -- we use
 # `focus -force`. It is re-asserted at idle so this also works for a window that
-# was just created and is not yet mapped. See specs/library_manager_launch.md.
+# was just created and is not yet mapped. See doc/claude/specs/library_manager_launch.md.
 proc libmgr::raise_to_front {} {
   set w .libmgr
   if {![winfo exists $w]} return
@@ -50,7 +50,7 @@ proc libmgr::raise_to_front {} {
   # opening from closed gets focus and re-launching does not). So re-map an open
   # window (withdraw + deiconify) to make the WM treat it as a fresh map and give
   # it focus; preserve geometry so it doesn't jump. See
-  # specs/library_manager_launch.md.
+  # doc/claude/specs/library_manager_launch.md.
   if {[winfo ismapped $w]} {
     set geo [wm geometry $w]
     wm withdraw $w
@@ -75,7 +75,7 @@ proc libmgr::open {{lcv {}}} {
   set w .libmgr
   if {[winfo exists $w]} {
     # single window: bring the existing one forward and focus it rather than
-    # building a second one. See specs/library_manager_launch.md.
+    # building a second one. See doc/claude/specs/library_manager_launch.md.
     libmgr::raise_to_front
     libmgr::refresh
     libmgr::locate $lcv
@@ -92,7 +92,7 @@ proc libmgr::open {{lcv {}}} {
   # Open/Place/Refresh/Close bar off the bottom (fixed bottom bars must be packed
   # before the expanding central widget).
 
-  # a bold font for git-tracked rows (specs/library_git.md §4.3). Derived from the
+  # a bold font for git-tracked rows (doc/claude/specs/library_git.md §4.3). Derived from the
   # treeview's default font so it matches; created once.
   if {[lsearch -exact [font names] LibMgrBold] < 0} {
     catch {font create LibMgrBold {*}[font actual TkDefaultFont] -weight bold}
@@ -219,7 +219,7 @@ proc libmgr::build_menus {w} {
 }
 
 # The window's real menubar (the panes also have right-click popups). The
-# Maintain cascade hosts the git revision-control reports (specs/library_git.md).
+# Maintain cascade hosts the git revision-control reports (doc/claude/specs/library_git.md).
 proc libmgr::build_menubar {w} {
   set mb $w.menubar
   catch {destroy $mb}
@@ -318,7 +318,7 @@ proc libmgr::pane_clear {col} {
   $t delete [$t children {}]
 }
 
-# --- git-tracked sets driving the bold tag (specs/library_git.md §4.3) --------
+# --- git-tracked sets driving the bold tag (doc/claude/specs/library_git.md §4.3) --------
 # Each returns a dict used as a set; empty (nothing bold) when the library is not
 # under git or git is absent (lib_git_tracked_set degrades to {}). A library is
 # bold if it holds any tracked datafile; a cell if any of its views are tracked;
@@ -449,7 +449,7 @@ proc libmgr::open_view {args} {
   if {$new_window} {
     # -window forces a real top-level OS window (draggable to another monitor),
     # not just a tab, even when the tabbed interface is on
-    # (specs/multi_window_detach.md).
+    # (doc/claude/specs/multi_window_detach.md).
     xschem load_new_window -window $f
     xschem log_action "xschem load_new_window -window {$f}"
   } else {
@@ -559,7 +559,7 @@ proc libmgr::do_delete_view {lib cell view} {
   return 1
 }
 
-# --- git revision control (specs/library_git.md §4.2) ------------------------
+# --- git revision control (doc/claude/specs/library_git.md §4.2) ------------------------
 # The do_* workers here are the dialog-free seam: explicit args, call the
 # library_git.tcl backend, refresh the panes, report via the status bar, return
 # 1 on success and 0 on a caught backend error (e.g. nothing to commit).

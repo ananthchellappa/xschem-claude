@@ -1,4 +1,4 @@
-# Library Manager — History form on the cell/view right-click (specs/library_git.md
+# Library Manager — History form on the cell/view right-click (doc/claude/specs/library_git.md
 # §4.2/§4.1). A two-pane, non-modal dialog: the upper ttk::treeview lists commits
 # (date + short hash + subject), the lower read-only text shows the SELECTED
 # commit's full message. Driven through the do_history_* seam.

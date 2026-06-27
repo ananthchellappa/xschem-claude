@@ -4,7 +4,7 @@
 # the fix: after an undo (and redo) that restores a still-present object, the
 # previously-selected object(s) stay selected — on BOTH backends (the fix keys off
 # array position, not stable id, precisely because the default 'disk' backend
-# re-mints ids on reload). Plan: code_analysis/undo_keep_selection_decision.md.
+# re-mints ids on reload). Plan: doc/claude/code_analysis/undo_keep_selection_decision.md.
 #
 # Run under X with --pipe:
 #   DISPLAY=:0 ./src/xschem --pipe -q --script tests/headless/test_undo_selection.tcl

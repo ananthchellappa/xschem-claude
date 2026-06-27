@@ -1,5 +1,5 @@
 # Shared helpers for the wire-editing-on-move test suite (Phase 0 scaffold).
-# Spec: code_analysis/wire_editing_spec_and_plan.md.
+# Spec: doc/claude/code_analysis/wire_editing_spec_and_plan.md.
 #
 # Fixtures are built IN MEMORY (xschem instance / xschem wire), moved with the
 # scripted stretch path (`xschem move_objects dx dy stretch`, which is byte-identical

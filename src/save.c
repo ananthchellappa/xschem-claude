@@ -3460,7 +3460,7 @@ int backup_file_name(char *dest, int destsize, const char *src)
 /* Autosave: write the current schematic content to its "~" backup file WITHOUT
  * touching the live buffer's identity, selection, timestamp or title (unlike
  * save_schematic). Used as the on-disk persistence of unsaved edits, so a descend
- * never has to save and edits survive a crash (specs/descend_hierarchy_in_memory.md).
+ * never has to save and edits survive a crash (doc/claude/specs/descend_hierarchy_in_memory.md).
  * Skipped when autosave_backup is off or the buffer has no real on-disk file yet
  * (untitled): there is nothing to back a "~" file against. */
 void write_backup(void)
@@ -3502,7 +3502,7 @@ void remove_backup(void)
  * re-asserts identity -- the editor "buffer name vs backing file" distinction. Used
  * both by go_back (return to a parent with unsaved edits) and by crash recovery on
  * open. Returns 1 if a backup existed and was loaded, 0 otherwise (the caller should
- * then load cellfile normally). specs/descend_hierarchy_in_memory.md (B3/B8) */
+ * then load cellfile normally). doc/claude/specs/descend_hierarchy_in_memory.md (B3/B8) */
 int load_backup_as(const char *cellfile, int set_title)
 {
   char bak[PATH_MAX];
@@ -3531,7 +3531,7 @@ int load_backup_as(const char *cellfile, int set_title)
  * unsaved parent (edits live in cellName~.sch), so a deep close/quit must look up
  * the WHOLE stack. (With autosave_backup off the ~ trail is gone, so we can only
  * report the current level -- consistent with there being no crash protection then.)
- * specs/descend_hierarchy_in_memory.md */
+ * doc/claude/specs/descend_hierarchy_in_memory.md */
 int hierarchy_modified(void)
 {
   int i;
@@ -5359,7 +5359,7 @@ int descend_symbol(void)
      * handled by the legacy save path. go_back's embedded return (from_embedded_sym)
      * reloads the parent from DISK, not from cellName~.sch, so without this prompt
      * the parent's unsaved edits would be silently lost. Embedded-symbol editing is
-     * deferred (see specs/descend_hierarchy_in_memory.md); until it is handled,
+     * deferred (see doc/claude/specs/descend_hierarchy_in_memory.md); until it is handled,
      * keep the guard rather than trade a prompt for data loss. */
     if(((xctx->inst[n].ptr+ xctx->sym)->flags & EMBEDDED || xctx->inst[n].embed) &&
        xctx->modified) {

@@ -1,5 +1,5 @@
 # B1: autosave backup-file helpers (cellName~.sch).
-# Spec: specs/descend_hierarchy_in_memory.md
+# Spec: doc/claude/specs/descend_hierarchy_in_memory.md
 #
 # Verifies the low-level helpers (not yet hooked to edits -- that is B2):
 #   xschem backup name|write|remove

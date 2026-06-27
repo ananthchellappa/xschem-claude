@@ -11,7 +11,7 @@ durable id; this gives you a durable way to name and read a **net**, which is
 not stored at all.
 
 Every code block below was run against a real build (see
-`code_analysis/introspection_probes/probe7.tcl`).
+`doc/claude/code_analysis/introspection_probes/probe7.tcl`).
 
 ---
 
@@ -135,7 +135,7 @@ xschem net @wire $h                           ;# -> ""   (dangled, loud)
 
 `resolved_net` of the *selection* famously returns empty on a cold call and the
 right net only after some unrelated query has rebuilt the selection array — the
-"§2c" trap (`code_analysis/tcl_introspection_wire.md`). The net commands here
+"§2c" trap (`doc/claude/code_analysis/tcl_introspection_wire.md`). The net commands here
 avoid it by contract: each one runs `prepare_netlist_structs(0)` first, and
 `nets -selected` rebuilds the selection array too, so **a query never returns
 stale data because of call order.** The characterization suite proves the old
@@ -155,12 +155,12 @@ trap (test NC3) and the new commands' freedom from it (test NH5).
   *anchor's* id. If you delete the anchor, the handle dangles (correctly). A
   future "real net registry" (ids carried across rebuilds by matching
   equivalence classes) is recorded as the next step if this proves limiting; see
-  `code_analysis/net_identity_decision.md` (option c3).
+  `doc/claude/code_analysis/net_identity_decision.md` (option c3).
 
 ---
 
-*See `code_analysis/net_identity_decision.md` for why the handle is anchored on a
+*See `doc/claude/code_analysis/net_identity_decision.md` for why the handle is anchored on a
 stored object (the ratified c2 design), the characterization +
 implementation tests in `tests/stable_handles/net_*.tcl`, and
-`code_analysis/step3_directions_guide.md` §4 for where this fits the larger
+`doc/claude/code_analysis/step3_directions_guide.md` §4 for where this fits the larger
 stable-handles effort.*

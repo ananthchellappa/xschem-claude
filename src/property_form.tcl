@@ -95,7 +95,7 @@ proc slickprop::apply {orig changes} {
 
 # ===========================================================================
 # Slick enter_text core — discoverable text-appearance attributes.
-# Spec: specs/slick_text_dialog.md. A text object's visual attributes all live as
+# Spec: doc/claude/specs/slick_text_dialog.md. A text object's visual attributes all live as
 # tokens in its property string (read by C's set_text_flags() into cached fields,
 # then drawn). So the panel is pure Tcl: parse the owned tokens out of the prop
 # string into per-field widgets, and on OK substitute the edited ones back via
@@ -484,7 +484,7 @@ proc slickprop::do_apply {} {
       # command itself, so sourcing the log re-applies the edit. Logged here at
       # the interactive layer — NOT in the C engine, which the replay command and
       # CIW-typed commands reuse and would double-log (see
-      # code_analysis/apply_properties_logging_decision.md).
+      # doc/claude/code_analysis/apply_properties_logging_decision.md).
       slickprop::log_apply [list xschem apply_properties \
         $::slickprop_apply_scope $nav(disp_id) $::tctx::retval $cur(orig)]
     }
@@ -572,7 +572,7 @@ proc slickprop::update_highlight {} {
 # which adopts the new selection into the nav set and refreshes the form (scope,
 # warning, highlight). A selection change with unapplied edits asks first,
 # Cadence-style: Apply / Discard / Cancel (Cancel restores the prior selection).
-# Decision doc: code_analysis/modeless_property_form_decision.md.
+# Decision doc: doc/claude/code_analysis/modeless_property_form_decision.md.
 # ===========================================================================
 
 # True iff the active Library/Cell/View rows differ from what they loaded with —

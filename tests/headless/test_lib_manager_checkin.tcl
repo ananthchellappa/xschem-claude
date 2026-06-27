@@ -1,4 +1,4 @@
-# Library Manager — git check-in / check-out / cancel (specs/library_git.md §4.2,
+# Library Manager — git check-in / check-out / cancel (doc/claude/specs/library_git.md §4.2,
 # Phase 4). Drives the dialog-free do_* workers (the testable seam under each
 # ctx_* menu action) against a real git-backed library, plus asserts the new
 # menu entries exist. Modal commit-comment / confirm dialogs remain manual.

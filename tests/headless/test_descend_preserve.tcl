@@ -1,5 +1,5 @@
 # Acceptance test for crash-safe hierarchical editing (backing-file design).
-# Spec: specs/descend_hierarchy_in_memory.md
+# Spec: doc/claude/specs/descend_hierarchy_in_memory.md
 #
 # Run TRUE HEADLESS from the repo root:
 #   src/xschem --nogui --pipe -q --nolog --script tests/headless/test_descend_preserve.tcl

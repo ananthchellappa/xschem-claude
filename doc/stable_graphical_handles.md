@@ -13,7 +13,7 @@ format) are identical and explained in full there. This document covers what is
 they have no name, so the numeric id is the only handle.
 
 Everything in the code blocks below was run against a real build (see
-`code_analysis/introspection_probes/probe5.tcl`).
+`doc/claude/code_analysis/introspection_probes/probe5.tcl`).
 
 ---
 
@@ -151,5 +151,5 @@ to go stale. The wire manual §8.3 explains this at length.
 full developer walkthrough) and
 [`stable_instance_handles.md`](stable_instance_handles.md) (the id-vs-name
 story);
-[`../code_analysis/graphical_lifecycle_census.md`](../code_analysis/graphical_lifecycle_census.md)
+[`claude/code_analysis/graphical_lifecycle_census.md`](claude/code_analysis/graphical_lifecycle_census.md)
 for the lifecycle map and the layer-change design call.*

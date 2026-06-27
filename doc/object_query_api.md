@@ -12,7 +12,7 @@ object type a durable id; this gives you **one uniform way to read and address
 them all**, instead of a different command per type.
 
 Every code block below was run against a real build (see
-`code_analysis/introspection_probes/probe6.tcl`).
+`doc/claude/code_analysis/introspection_probes/probe6.tcl`).
 
 ---
 
@@ -169,5 +169,5 @@ form and, for instances, the only thing that survives save/reload.
 
 *See also the per-type manuals (`doc/stable_*_handles.md`) for how the ids
 themselves work, `doc/net_as_object.md` for the net-level handle that composes
-with this API, and `code_analysis/step3_directions_guide.md` for where this API
+with this API, and `doc/claude/code_analysis/step3_directions_guide.md` for where this API
 fits in the larger plan.*

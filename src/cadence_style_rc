@@ -70,7 +70,7 @@ xschem bind wheel down 0    canvas view.pan_down
 # -> C dispatcher, which otherwise maps 'i' to descend-into-symbol.
 bind .drw <Key-i> {xschem create_instance; break}
 
-# Cadence-style net highlighting (see specs/net_hilight_styles.md):
+# Cadence-style net highlighting (see doc/claude/specs/net_hilight_styles.md):
 #   9 : highlight net. If a net/wire/label is selected, highlight it (advancing the
 #       style each time, leaving the selection intact); otherwise enter highlight mode
 #       and click nets/labels to highlight, ESC to end.
@@ -84,7 +84,7 @@ bind .drw <Key-0> {xschem unhilight_all;             break}
 
 # --------------------------------------------------------------------------
 # Cadence-style key bindings (library navigation + hierarchy).
-# See specs/cadence_bindkey_plan.md. Pure Tcl, no C changes: each bind lives on
+# See doc/claude/specs/cadence_bindkey_plan.md. Pure Tcl, no C changes: each bind lives on
 # .drw and ends in `break`, so it captures the chord before the generic
 # <KeyPress> -> C dispatcher sees it. Five of these chords are claimed by the C
 # dispatcher (Save as Symbol, Clear symbol, Cut, Edit-in-new-window, Crosshair);
@@ -137,7 +137,7 @@ set descend_readonly 1
 # Clear symbol (was Ctrl-Shift-N) and Draw crosshair (was Alt-X) are left as
 # menu items only (Symbol > Clear symbol; Options > Crosshair > Draw crosshair).
 
-# --- snap / grid / highlight key actions (specs/keybind_snap_grid_actions.md) --
+# --- snap / grid / highlight key actions (doc/claude/specs/keybind_snap_grid_actions.md) --
 # These ship UNBOUND: no built-in default chord. Each is a registered action, also
 # reachable from the menus (Options / View). Map any action to any chord with
 #   xschem bind key <keysym> <mods> canvas <action>

@@ -333,7 +333,7 @@ int storeobject(int pos, double x1,double y1,double x2,double y2,
 }
 
 /* The single entry point for storing a wire into xctx->wire[] ("birth door"
- * of the wire lifecycle funnel — see code_analysis/wire_lifecycle_census.md).
+ * of the wire lifecycle funnel — see doc/claude/code_analysis/wire_lifecycle_census.md).
  * pos == -1 appends, pos >= 0 inserts shifting up every index >= pos.
  * Returns the array index the wire was stored at. */
 int wire_store(int pos, double x1, double y1, double x2, double y2,
@@ -373,7 +373,7 @@ int wire_store(int pos, double x1, double y1, double x2, double y2,
 }
 
 /* Birth door for connectivity-engine wire splits (census sites B3-B6,
- * see code_analysis/wire_lifecycle_census.md): append a new wire that is
+ * see doc/claude/code_analysis/wire_lifecycle_census.md): append a new wire that is
  * the [x1,y1]..[x0,y0] head of wire src, inheriting prop_ptr, bus, node,
  * flags and end1 from src; end2 (the split point) is a junction.
  * Hashes the new wire incrementally like all call sites do. The caller
@@ -468,7 +468,7 @@ void wire_storage_reset(void)
 }
 
 /* ---- instance lifecycle funnel (stable-object-handles step 2) ----
- * See code_analysis/instance_lifecycle_census.md. Mirrors the wire funnel
+ * See doc/claude/code_analysis/instance_lifecycle_census.md. Mirrors the wire funnel
  * above. Instance births are heterogeneous (place_symbol / load_inst /
  * merge_inst / move-copy each init fields differently), so there is no single
  * birth *factory* like wire_store; instead every birth funnels its count
@@ -560,7 +560,7 @@ int inst_index_from_id(unsigned int id)
 }
 
 /* ---- graphical-object lifecycle funnel (stable-object-handles step 3) ----
- * See code_analysis/graphical_lifecycle_census.md. rect/line/poly/arc live in
+ * See doc/claude/code_analysis/graphical_lifecycle_census.md. rect/line/poly/arc live in
  * PER-LAYER arrays (xctx->rect[c][n] etc., count xctx->rects[c]); an object is
  * addressed by the pair (layer c, index n). As with instances there is no
  * single birth factory — store/merge/load init the structs differently — so

@@ -1,6 +1,6 @@
 # library_defs.tcl — library registry (Cadence cds.lib analog).
 #
-# Phase 1 of the library-manager work (see code_analysis/library_manager_design.md).
+# Phase 1 of the library-manager work (see doc/claude/code_analysis/library_manager_design.md).
 # Read-only model only: it answers "what libraries exist and where do they live",
 # and changes NOTHING about reference resolution (that is Phase 2). A library is a
 # NAME -> directory mapping drawn from two sources:
@@ -313,7 +313,7 @@ proc lib_qualified_rel {symbol} {
 # under any registered library. The longest matching library root wins (so a library
 # nested inside another resolves to the inner one). Pure path/string work -- used by
 # the library-aware "Make symbol from schematic" to decide where the symbol view
-# goes. specs/create_symbol_view.md
+# goes. doc/claude/specs/create_symbol_view.md
 proc schematic_cellview {abspath} {
   set abspath [file normalize $abspath]
   set best {}; set bestlen -1

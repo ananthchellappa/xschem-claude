@@ -1,5 +1,5 @@
 # library_git.tcl — git revision-control backend for the Library Manager.
-# specs/library_git.md (Phase 1). Pure Tcl `exec git` wrappers; the C engine and
+# doc/claude/specs/library_git.md (Phase 1). Pure Tcl `exec git` wrappers; the C engine and
 # the .sch/.sym record format are untouched (no rebuild needed beyond installing
 # this file). Mirrors library_defs.tcl conventions: throw a Tcl error with a
 # human-readable message on failure, return "" on success, so GUI callers `catch`.

@@ -1,4 +1,4 @@
-# Library Manager — structured git history (specs/library_git.md §4.1, History
+# Library Manager — structured git history (doc/claude/specs/library_git.md §4.1, History
 # form). `lib_git_log_records {root pathspecs}` returns one dict per commit
 # (hash, short, date, author, subject, body), newest-first, scoped to the
 # pathspecs — the data behind the two-pane History dialog (commit list above,

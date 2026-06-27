@@ -1,6 +1,6 @@
 # Cadence-style hierarchy navigation helpers for XSchem.
 # Loaded from cadence_style_rc. Pure Tcl, no C changes. See
-# specs/cadence_bindkey_plan.md.
+# doc/claude/specs/cadence_bindkey_plan.md.
 
 namespace eval cadence {
   variable last_loc       ;# per-window: last_loc(<win_path>) = {inst1 inst2 ...}

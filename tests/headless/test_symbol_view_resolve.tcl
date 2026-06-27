@@ -1,4 +1,4 @@
-# P0: schematic_cellview reverse resolver. Spec: specs/create_symbol_view.md
+# P0: schematic_cellview reverse resolver. Spec: doc/claude/specs/create_symbol_view.md
 #
 # Run TRUE HEADLESS from the repo root:
 #   src/xschem --nogui --pipe -q --nolog --script tests/headless/test_symbol_view_resolve.tcl

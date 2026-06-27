@@ -2546,8 +2546,8 @@ char *resolved_net(const char *net)
  * blink_ms makes a highlighted net's highlight toggle on/off in real time. The shared
  * foundation here (wall-clock source + ON/OFF gate + regional redraw + start/stop
  * predicate) is reused by Pass 2b (marching ants), which additionally animates the
- * anim/rate_persec columns. See specs/net_hilight_styles.md §2 and
- * claude_suggs/plan_net_hilight_styles.md "Pass 2". */
+ * anim/rate_persec columns. See doc/claude/specs/net_hilight_styles.md §2 and
+ * doc/claude/suggestions/plan_net_hilight_styles.md "Pass 2". */
 
 /* ui_state bits meaning a drawing gesture is in progress: pause animation during these
  * (a regional redraw mid-gesture would fight the gesture's own rubber-band drawing). */

@@ -1,5 +1,5 @@
 # Efficiency invariant for the backing-file design.
-# Spec: specs/descend_hierarchy_in_memory.md
+# Spec: doc/claude/specs/descend_hierarchy_in_memory.md
 #
 # Navigating an UNMODIFIED hierarchy must do no disk writes: descending into and
 # back out of clean cells creates no cellName~.sch backups (only a genuine edit

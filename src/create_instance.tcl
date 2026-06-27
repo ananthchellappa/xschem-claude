@@ -1,6 +1,6 @@
 # create_instance.tcl — Cadence-style "Create Instance".
 #
-# Two cooperating pieces (see specs/cadence_create_instance.md):
+# Two cooperating pieces (see doc/claude/specs/cadence_create_instance.md):
 #
 #   ciform::  the Create Instance FORM — a properties-form-style dialog with
 #             Library Name / Cell Name / View Name / Instance Name entry fields
@@ -40,7 +40,7 @@ proc ciform::abort_if_placing {} { if {[ciform::placing]} { catch {xschem abort_
 
 # Bring the (existing) form to the front with keyboard focus (same withdraw/
 # deiconify trick the Library Manager uses to defeat focus-stealing prevention,
-# specs/library_manager_launch.md).
+# doc/claude/specs/library_manager_launch.md).
 proc ciform::raise_to_front {} {
   set w .ciform
   if {![winfo exists $w]} return

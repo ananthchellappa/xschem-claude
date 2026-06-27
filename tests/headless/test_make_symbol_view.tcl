@@ -1,5 +1,5 @@
 # P1: "Make symbol from schematic" routes the .sym into the OA library's symbol
-# view dir. Spec: specs/create_symbol_view.md
+# view dir. Spec: doc/claude/specs/create_symbol_view.md
 #
 # Run TRUE HEADLESS from the repo root:
 #   src/xschem --nogui --pipe -q --nolog --script tests/headless/test_make_symbol_view.tcl

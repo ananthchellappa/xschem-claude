@@ -677,7 +677,7 @@ typedef struct
                     * (inst_register), never reused within a context's lifetime.
                     * The canonical durable session handle (the name is the
                     * human / cross-session form, reusable+renamable — see
-                    * code_analysis/instance_identity_decision.md). Not persisted
+                    * doc/claude/code_analysis/instance_identity_decision.md). Not persisted
                     * in .sch files. 0 = never stamped (no live instance has 0). */
 } xInstance;
 
@@ -835,7 +835,7 @@ struct hilight_hashentry
  * Wires render color (color_layer or custom pixel) + width + dash; stripe angle is
  * clamped/stored but rendered flat until Pass 1.5; blink_ms/anim/rate_persec are
  * reserved for Pass 2 animation (parsed/stored but inert). The on-screen draw uses the
- * shared xctx->gc_hilight scratch GC. See specs/net_hilight_styles.md. */
+ * shared xctx->gc_hilight scratch GC. See doc/claude/specs/net_hilight_styles.md. */
 typedef struct {
   int index;             /* style id (table order) */
   int color_layer;       /* layer index used as the draw color, or < 0 for a custom pixel */
@@ -1529,7 +1529,7 @@ extern unsigned int find_best_color(char colorname[]);
 extern void build_net_hilight_styles(void);
 extern void net_hilight_invalidate_other_styles(void); /* force OTHER windows to rebuild their table */
 extern void net_hilight_redraw_other_windows(void);    /* repaint OTHER detached windows after an edit */
-/* Pass 2a net-highlight animation (blink). See specs/net_hilight_styles.md §2 (Pass 2). */
+/* Pass 2a net-highlight animation (blink). See doc/claude/specs/net_hilight_styles.md §2 (Pass 2). */
 extern double net_hilight_now_ms(void);                 /* wall-clock ms (or test override) */
 extern int net_hilight_style_on_now(NetHilightStyle *st, double now); /* blink ON/OFF gate */
 extern double net_hilight_dash_period(NetHilightStyle *st); /* dash repeat (odd-len doubled) */
@@ -1606,7 +1606,7 @@ extern void toggle_orthogonal_wiring_cmd(void);
 extern void toggle_draw_pixmap_cmd(void);
 /* Phase 3 data-driven input bindings (callback.c); backends for the
  * `xschem bind`/`unbind`/`bindings` subcommands. See
- * claude_suggs/refactor_plan_action_registry_phase3.md */
+ * doc/claude/suggestions/refactor_plan_action_registry_phase3.md */
 extern int action_cmd_set_log_cmd(int argc, const char **argv);
 extern int action_cmd_set_nolog(int argc, const char **argv);
 /* action-log: is s safe to embed in a logged command as a {braced} Tcl word?

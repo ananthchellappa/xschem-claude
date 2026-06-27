@@ -1,5 +1,5 @@
 # Cadence-style modifier-drag on objects, gated on cadence_compat.
-# Spec: specs/cadence_modifier_drag.md.
+# Spec: doc/claude/specs/cadence_modifier_drag.md.
 #   plain LMB drag  -> attached move (wires follow), independent of enable_stretch
 #   Ctrl  + drag    -> detached move (wires left behind)
 #   Shift + drag    -> copy

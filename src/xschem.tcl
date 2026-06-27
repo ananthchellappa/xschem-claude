@@ -516,7 +516,7 @@ proc net_hilight_animate_changed {args} {
 # run lengths ({} = solid) ; anim = none | march_fwd | march_rev. These helpers NORMALIZE every
 # row (filling defaults for any missing field, coercing out-of-range ones) and keep the invariant
 # that a row's index column equals its position, then recompile the C table via
-# 'xschem update_net_hilight_style'. See specs/net_hilight_styles.md.
+# 'xschem update_net_hilight_style'. See doc/claude/specs/net_hilight_styles.md.
 
 # canonical per-column defaults (the index column is supplied per call)
 proc net_hilight_style_default_row {idx} { return [list $idx 4 1 {} 0 0 none 0] }
@@ -5438,7 +5438,7 @@ proc open_sub_schematic {{inst {}} {inst_number 0}} {
 
 # ===========================================================================
 #  hi_descend  --  human-interface descend with view + destination choice
-#  specs/hi_descend.md
+#  doc/claude/specs/hi_descend.md
 #
 #  hi_descend ?view? ?key=value ...?
 #    - no args            -> open the modal chooser dialog (this is what 'E' runs)
@@ -5456,7 +5456,7 @@ proc open_sub_schematic {{inst {}} {inst_number 0}} {
 # ===========================================================================
 
 # transient one-shot view override consumed by get_sch_from_sym() in C (see
-# specs/hi_descend.md). Keep it defined so tclgetvar() never errors.
+# doc/claude/specs/hi_descend.md). Keep it defined so tclgetvar() never errors.
 if {![info exists hi_descend_view_path]} { set hi_descend_view_path {} }
 # the key that runs the interactive hi_descend dialog (default E). A user rc may
 # pre-set it before this file is sourced.
@@ -6146,7 +6146,7 @@ proc file_dialog_set_home {dir} {
 # save.c) are internal crash-recovery artifacts, not cells. They must never be
 # listed as cells in the file dialog, the library browser, or directory scans.
 # (Symbol->schematic resolution never looks for a "~" name, so hiding them here is
-# both safe and complete.) specs/descend_hierarchy_in_memory.md (B7)
+# both safe and complete.) doc/claude/specs/descend_hierarchy_in_memory.md (B7)
 proc is_backup_file {name} {
   set t [file tail $name]
   return [expr {[string match {*~.sch} $t] || [string match {*~.sym} $t]}]
@@ -6163,7 +6163,7 @@ proc filter_backup_files {names} {
 # ended without committing -- i.e. a crash. Offer to restore it. A backup OLDER than
 # the on-disk cell is stale junk (the cell was saved more recently) and is removed
 # without asking. Returns 1 if the backup was restored, 0 otherwise.
-# specs/descend_hierarchy_in_memory.md
+# doc/claude/specs/descend_hierarchy_in_memory.md
 proc xschem_recover_backup {cellfile} {
   set bak [xschem backup name]
   if {$bak eq {} || ![file exists $bak]} { return 0 }
@@ -8176,7 +8176,7 @@ proc create_symbol {name {in {}} {out {}} {inout {}}} {
 # Target .sym path for a schematic's symbol view. In an OA/nested library the symbol
 # is the cell's <view> view: <libpath>/<cell>/<view>/<cell>.sym (view defaults to
 # "symbol"). In a flat/unregistered layout it is the legacy same-dir <cell>.sym.
-# specs/create_symbol_view.md
+# doc/claude/specs/create_symbol_view.md
 proc symbol_view_path {schpath {view symbol}} {
   set cv [schematic_cellview $schpath]
   if {$cv ne {} && [lindex $cv 3] eq {nested}} {
@@ -8205,7 +8205,7 @@ proc make_symbol {name {ask {no}} {view symbol}} {
 # Interactive, library-aware "Make symbol from schematic" (the Symbol menu entry).
 # Asks for the view (name + action) via the adaptive dialog, generates the symbol
 # into the proper view dir (OA symbol view, or legacy same-dir for flat), and opens
-# the new view in a new window for editing. specs/create_symbol_view.md
+# the new view in a new window for editing. doc/claude/specs/create_symbol_view.md
 proc make_symbol_dialog {schpath} {
   if {$schpath eq {} || [string match {*untitled*} [file tail $schpath]]} {
     catch {ciw_echo "Save the schematic to a real file before making a symbol." error}
@@ -8298,7 +8298,7 @@ proc ask_symbol_view {schpath} {
 # but missing from the symbol. Existing artwork and pins are left untouched (records
 # are appended, never rewritten); new inputs go on the left column, new outputs/inouts
 # on the right, stacked below the existing pins. The symbol box is NOT resized -- a
-# new pin may sit below it, by design. specs/create_symbol_view.md
+# new pin may sit below it, by design. doc/claude/specs/create_symbol_view.md
 proc modify_symbol_pins {schpath sympath} {
   global XSCHEM_SHAREDIR symbol_width
   if {![file exists $sympath]} { return [make_symbol $schpath yes] } ;# nothing to merge into
@@ -8471,7 +8471,7 @@ proc set_netlist_dir { what {dir {} }} {
 
 # Floor a modal dialog's minimum size to its natural requested size so a
 # remembered-too-short (or WM-placed-short) geometry can never clip the
-# packed-at-bottom action button row (OK/Cancel/Load/Del). See issues/0006.
+# packed-at-bottom action button row (OK/Cancel/Load/Del). See doc/claude/issues/0006.
 # Call AFTER all widgets are packed and BEFORE the modal tkwait.
 #
 # Gridded caveat: dialogs whose text widget uses -setgrid 1 (text_line,
@@ -8497,7 +8497,7 @@ proc dialog_minsize_floor {w} {
 # box. The widget-independent core (parse/assemble/bool-safety) lives in
 # src/property_form.tcl (slickprop::text_*); this namespace is the thin Tk view
 # that binds widgets to it. The previous raw-box dialog is preserved verbatim as
-# enter_text_legacy for rollback. Spec: specs/slick_text_dialog.md.
+# enter_text_legacy for rollback. Spec: doc/claude/specs/slick_text_dialog.md.
 # ---------------------------------------------------------------------------
 namespace eval slicktext {
   variable orig {}     ;# the property string the dialog opened with
@@ -9819,7 +9819,7 @@ proc write_data {data f} {
 # first selected object's type (`xschem selection`): whenever this graphical path
 # is reached the primary selection is sel_array[0] (an instance primary routes to
 # the slick instance form instead), so that type is exactly what C edits.
-# Spec: specs/slick_text_line_dialog.md. Legacy preserved as text_line_legacy.
+# Spec: doc/claude/specs/slick_text_line_dialog.md. Legacy preserved as text_line_legacy.
 # ---------------------------------------------------------------------------
 namespace eval gfxform {
   variable orig {}      ;# property string the dialog opened with (tctx::retval)
@@ -10841,7 +10841,7 @@ proc rel_sym_path {symbol {paths {}} } {
   regsub {^~/} $symbol ${env(HOME)}/ symbol
   ## rule 2 (library-manager): a symbol-view path inside a registered library
   ## relativizes to the portable "lib/cell" reference. On a miss fall through to
-  ## the legacy prefix stripping below. See code_analysis/library_manager_design.md.
+  ## the legacy prefix stripping below. See doc/claude/code_analysis/library_manager_design.md.
   set q [lib_qualified_rel $symbol]
   if {$q ne {}} { return $q }
   # if {$OS eq "Windows"} {
@@ -10955,7 +10955,7 @@ proc abs_sym_path {fname {ext {} } {paths {}}} {
   ## rule 2 (library-manager): a lib-qualified reference "lib/cell[.ext]" whose
   ## library is registered resolves under the lib/cell/view layout. On any miss
   ## fall through to the legacy search below (rule 3) so flat libraries and old
-  ## references keep working. See code_analysis/library_manager_design.md.
+  ## references keep working. See doc/claude/code_analysis/library_manager_design.md.
   set libabs [lib_qualified_abs $fname]
   if {$libabs ne {}} { return $libabs }
   ## if fname is present in one of the paths paths get the absolute path
@@ -11413,7 +11413,7 @@ proc tab_ctx_cmd {tab_but what} {
       }
     } elseif {$what eq {detach}} {
       # tear this tab off into its own top-level window (draggable to another
-      # monitor). specs/multi_window_detach.md
+      # monitor). doc/claude/specs/multi_window_detach.md
       xschem new_schematic detach $win_path
       xschem log_action "xschem new_schematic detach $win_path"
     } elseif {[regexp {^open } $what]} {
@@ -12198,7 +12198,7 @@ proc get_lastopened {} {
 # attention (go_back's own per-level Save/No/Cancel dialog), then handle the top
 # level. $action is "close" or "quit" (only affects wording). Returns 1 if the caller
 # should proceed with the actual teardown, 0 if the user cancelled (abort, stay put).
-# specs/descend_hierarchy_in_memory.md
+# doc/claude/specs/descend_hierarchy_in_memory.md
 proc hierarchy_close {action} {
   # Walk up: each dirty intermediate level gets go_back's Save/No/Cancel prompt,
   # which saves (removes ~) or discards (removes ~) that cell, then ascends. A clean
@@ -12588,7 +12588,7 @@ proc show_bindkeys {} {
 # any sequence $dst already binds, or we clobber those correct per-window bindings
 # with $src's (the guards would never match; the palette would target $src). Only the
 # user's EXTRA bindings — sequences set_bindings never touched — are carried over.
-# (issue 0020) specs/multi_window_detach.md
+# (issue 0020) doc/claude/specs/multi_window_detach.md
 proc clone_canvas_bindings {src dst} {
   if {![winfo exists $src] || ![winfo exists $dst] || $src eq $dst} return
   foreach seq [bind $src] {
@@ -12603,7 +12603,7 @@ proc clone_canvas_bindings {src dst} {
 # already a reasonable size is left exactly as set_geom placed it. Detects the
 # actual display from $win's screen; the width is capped so the window can't span a
 # multi-monitor X screen. Tunable via ::new_window_size_frac (fraction of screen
-# width, default 0.5 = "half the display"). specs/multi_window_detach.md
+# width, default 0.5 = "half the display"). doc/claude/specs/multi_window_detach.md
 proc size_new_window {win} {
   if {![winfo exists $win]} return
   # Try now, and once more after the window is actually mapped. Some WMs maximize a
@@ -12703,7 +12703,7 @@ global env has_x OS autofocus_mainwindow hi_descend_key
     # <KeyPress>, so plain E opens the human-interface descend dialog instead of the C
     # descend. The body is window-agnostic (acts on the focused context) so it is correct
     # on every canvas and survives clone_canvas_bindings. Remap via hi_descend_set_key.
-    # specs/hi_descend.md
+    # doc/claude/specs/hi_descend.md
     if {$hi_descend_key ne {}} { bind $topwin <Key-$hi_descend_key> [hi_descend_keybind_script] }
     # (Phase-2 per-key Tcl accelerators were retired at 3d.5a/b: every key goes
     # through the generic <KeyPress> -> C input-binding table; remap via
@@ -12888,11 +12888,11 @@ if {![info exists library_registry_defs_only]} { set library_registry_defs_only 
 # style (inferred from its cells); this only sets the default for empty ones.
 if {![info exists library_default_layout]} { set library_default_layout nested }
 source $XSCHEM_SHAREDIR/library_defs.tcl
-# Library Manager git revision-control backend (specs/library_git.md)
+# Library Manager git revision-control backend (doc/claude/specs/library_git.md)
 source $XSCHEM_SHAREDIR/library_git.tcl
 # Library Manager GUI (Cadence-style Library/Cell/View browser)
 source $XSCHEM_SHAREDIR/library_manager.tcl
-# Create Instance browser (Cadence-style Add Instance; specs/cadence_create_instance.md)
+# Create Instance browser (Cadence-style Add Instance; doc/claude/specs/cadence_create_instance.md)
 source $XSCHEM_SHAREDIR/create_instance.tcl
 # Slick per-field "Edit Properties" form (replaces the legacy raw-text dialog)
 source $XSCHEM_SHAREDIR/property_form.tcl
@@ -12922,7 +12922,7 @@ foreach row $action_table {
 }
 
 # CIW (Command Interpreter Window): live action-log pane + command entry
-# (specs/action_logging.md section 3). Auto-opened for interactive sessions
+# (doc/claude/specs/action_logging.md section 3). Auto-opened for interactive sessions
 # in the build-widgets block below.
 source $XSCHEM_SHAREDIR/ciw.tcl
 
@@ -13055,7 +13055,7 @@ proc build_widgets { {topwin {} } } {
   $topwin.menubar.option add checkbutton \
     -selectcolor $selectcolor -label "Group bus slices in Verilog instances" -variable verilog_bitblast
   # accelerators blanked: these ops ship UNBOUND (no built-in key); they are
-  # user-bound via `xschem bind` (specs/keybind_snap_grid_actions.md). The live
+  # user-bound via `xschem bind` (doc/claude/specs/keybind_snap_grid_actions.md). The live
   # cheat-sheet (show_bindkeys) reflects whatever the user actually bound.
   $topwin.menubar.option add checkbutton -label "Draw grid" -variable draw_grid \
      -selectcolor $selectcolor -accelerator {} \
@@ -14126,11 +14126,11 @@ set_ne autotrim_wires 0
 set_ne auto_set_wire_bus 0
 # autosave: every genuine edit immediately writes a cellName~.sch backup; saving
 # the real file removes it. Persists unsaved edits across descend and crashes
-# (specs/descend_hierarchy_in_memory.md). Off => no backup files.
+# (doc/claude/specs/descend_hierarchy_in_memory.md). Off => no backup files.
 set_ne autosave_backup 1
 set_ne cadence_compat 0
 set_ne infix_interface 1
-# autostart the Library Manager window at launch (specs/library_manager_launch.md)
+# autostart the Library Manager window at launch (doc/claude/specs/library_manager_launch.md)
 set_ne launch_library_manager 0
 set_ne snap_cursor 0
 set_ne orthogonal_wiring 0
@@ -14517,7 +14517,7 @@ if { ( $OS== "Windows" || [string length [lindex [array get env DISPLAY] 1] ] > 
   set_replace_key_binding
 
   # CIW auto-opens for every interactive session unless --nolog was given
-  # (specs/action_logging.md decision 8; issue 0002 -- test runs pass --nolog
+  # (doc/claude/specs/action_logging.md decision 8; issue 0002 -- test runs pass --nolog
   # so short-lived windows don't leak WSLg ghost frames); closing it merely
   # withdraws the window
   if {![info exists cli_opt_nolog] || !$cli_opt_nolog} { ciw_create }

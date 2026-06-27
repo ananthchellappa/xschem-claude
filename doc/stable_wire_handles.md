@@ -51,7 +51,7 @@ churn even when you didn't touch the wire you cared about.
 
 This is the single biggest obstacle to writing real automation against xschem:
 **there was nothing a script could hold on to.** (This was documented as
-defect #7 in `code_analysis/tcl_introspection_wire.md` §2e — the analysis that
+defect #7 in `doc/claude/code_analysis/tcl_introspection_wire.md` §2e — the analysis that
 motivated this whole effort.)
 
 ---
@@ -224,7 +224,7 @@ modify the schematic, undo stack, or selection.
 Let's build something real: a command that sums the length of every wire in the
 current schematic. This tutorial doubles as a lesson in *verifying your own
 output*, which is a theme of this codebase (see
-`claude_suggs/green_but_hollow_tests.md`).
+`doc/claude/suggestions/green_but_hollow_tests.md`).
 
 ### First attempt — the obvious loop
 
@@ -307,7 +307,7 @@ total came up exactly one wire short.
 
 This is the "green but hollow" failure mode in miniature: code that runs
 cleanly and produces a confident number that is quietly off (see
-`claude_suggs/green_but_hollow_tests.md` for the project's writeup of this
+`doc/claude/suggestions/green_but_hollow_tests.md` for the project's writeup of this
 trap). The lesson is not "guard the empty string" — that's what *caused* the
 silent version. The lesson is *cross-check the result against an independent
 count.*
@@ -504,7 +504,7 @@ change in lines of code but a deliberate one in design.
 ### 8.1 The hard part was *not* the id — it was finding every birth
 
 You can't stamp a stable id at creation if you don't know where "creation"
-happens. The surprise, documented in `code_analysis/wire_lifecycle_census.md`,
+happens. The surprise, documented in `doc/claude/code_analysis/wire_lifecycle_census.md`,
 was that wires are **born in seven different places**, not one. The obvious
 factory (`storeobject` in `store.c`) is only one; the connectivity engine in
 `check.c` creates and splits wires directly in four more spots, the file loader
@@ -613,7 +613,7 @@ wrong answer.
 - `tests/stable_handles/` — the characterization + identity suite (46 checks),
   written test-first (failing tests committed *before* the implementation, by
   design).
-- `code_analysis/introspection_probes/probe3.tcl` — the before/after
+- `doc/claude/code_analysis/introspection_probes/probe3.tcl` — the before/after
   demonstration that re-runs the original §2e failure side by side with the
   handle version.
 
@@ -671,7 +671,7 @@ To watch the problem and the fix side by side:
 
 ```sh
 cd src
-./xschem -q --script ../code_analysis/introspection_probes/probe3.tcl
+./xschem -q --script ../doc/claude/code_analysis/introspection_probes/probe3.tcl
 cat /tmp/wire_probe3.log
 ```
 
@@ -685,10 +685,10 @@ cat /tmp/sh_test.log        # 46 PASS, 0 FAIL
 
 ### See also
 
-- `code_analysis/tcl_introspection_wire.md` — the analysis that motivated the
+- `doc/claude/code_analysis/tcl_introspection_wire.md` — the analysis that motivated the
   work; §2e is the original identity failure, §5 the defect list.
-- `code_analysis/wire_lifecycle_census.md` — the eighteen wire-mutation sites.
-- `claude_suggs/plan_stable_handles_step1.md` — the full TDD plan and phase
+- `doc/claude/code_analysis/wire_lifecycle_census.md` — the eighteen wire-mutation sites.
+- `doc/claude/suggestions/plan_stable_handles_step1.md` — the full TDD plan and phase
   history.
-- `claude_suggs/green_but_hollow_tests.md` — the verification discipline the
+- `doc/claude/suggestions/green_but_hollow_tests.md` — the verification discipline the
   §6 tutorial illustrates.

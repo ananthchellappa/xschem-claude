@@ -1,4 +1,4 @@
-# Library Manager — git revision-control backend (specs/library_git.md, Phase 1).
+# Library Manager — git revision-control backend (doc/claude/specs/library_git.md, Phase 1).
 # Exercises the pure-Tcl `exec git` wrappers in src/library_git.tcl against real
 # temp git-repo fixtures covering EVERY topology in spec §2:
 #

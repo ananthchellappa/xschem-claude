@@ -1877,7 +1877,7 @@ int copy_hierarchy_data(const char *from_win_path, const char *to_win_path)
 /*  20111007 duplicate current schematic if no inst selected */
 /* if force set to 1 force opening another new schematic even if already open */
 /* win: when set, force a real top-level window (create_window) instead of letting
- * the global tabbed_interface decide tab-vs-window (specs/multi_window_detach.md).
+ * the global tabbed_interface decide tab-vs-window (doc/claude/specs/multi_window_detach.md).
  * Used by the cadence "open instance schematic read-only in a new window" flow. */
 int schematic_in_new_window(int new_process, int dr, int force, int win)
 {
@@ -2361,7 +2361,7 @@ void get_additional_symbols(int what)
  * (<libpath>/<cell>/schematic/<cell>.sch), return its absolute path, else "".
  * Thin wrapper over the Tcl resolver (library-manager Phase 4). Lets descend and
  * the schematic= override target the cell's schematic VIEW rather than ext-swap
- * the symbol-view path. See code_analysis/library_manager_design.md. */
+ * the symbol-view path. See doc/claude/code_analysis/library_manager_design.md. */
 static const char *cellview_sch_path(const char *ref)
 {
   char c[PATH_MAX + 100];
@@ -2400,7 +2400,7 @@ void get_sch_from_sym(char *filename, xSymbol *sym, int inst, int fallback)
   dbg(1, "get_sch_from_sym(): symbol %s inst=%d web_url=%d\n", sym->name, inst, web_url);
   /* resolve schematic=generator.tcl( @n ) where n=11 is defined in instance attrs */
   if(inst >=0 ) {
-    /* hi_descend: one-shot transient view override (specs/hi_descend.md). When the Tcl
+    /* hi_descend: one-shot transient view override (doc/claude/specs/hi_descend.md). When the Tcl
      * global hi_descend_view_path is non-empty, resolve THIS one descend into that exact
      * view file instead of the instance/symbol 'schematic' attribute -- so choosing a
      * non-default named view does not rewrite (and dirty) the instance. Single-use: it is
@@ -2601,7 +2601,7 @@ int descend_schematic(int instnumber, int fallback, int alert, int set_title)
     * and go_back() reloads that backup, restoring the unsaved edits and the
     * modified flag. Descending is not a save point and never loses data, so it
     * must not prompt. Prompts remain at go_back and window-close, where edits
-    * are actually at risk. specs/descend_hierarchy_in_memory.md (B5) */
+    * are actually at risk. doc/claude/specs/descend_hierarchy_in_memory.md (B5) */
    /*  build up current hierarchy path */
    dbg(1, "descend_schematic(): selected instname=%s\n", xctx->inst[n].instname);
 
@@ -2819,7 +2819,7 @@ void go_back(int what)
    * stays cellName and it returns flagged modified, so descending neither lost
    * edits nor required a save (load_backup_as does the content/identity split). A
    * clean parent (no ~) loads normally. Embedded-symbol returns keep the plain disk
-   * path (deferred). specs/descend_hierarchy_in_memory.md */
+   * path (deferred). doc/claude/specs/descend_hierarchy_in_memory.md */
   if(from_embedded_sym || !load_backup_as(filename, set_title)) {
     load_schematic(1, filename, set_title, 1);
   }
@@ -2859,7 +2859,7 @@ void clear_schematic(int cancel, int symbol)
         /* The current buffer is being discarded (saved above, or the user declined
          * to save). Drop its cellName~.sch autosave backup so a leftover ~ on the
          * next open unambiguously means a crash, not an intentional discard. (A real
-         * save already removed it; this no-ops then.) specs/...in_memory.md (B8) */
+         * save already removed it; this no-ops then.) doc/claude/specs/...in_memory.md (B8) */
         remove_backup();
         xctx->currsch = 0;
         unselect_all(1);

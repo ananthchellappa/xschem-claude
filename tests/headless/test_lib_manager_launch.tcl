@@ -1,4 +1,4 @@
-# Library Manager launch behavior (specs/library_manager_launch.md):
+# Library Manager launch behavior (doc/claude/specs/library_manager_launch.md):
 #   - `xschem library_manager` opens the window (replayable / bindable command)
 #   - it is a SINGLE window: a second launch raises+focuses, never rebuilds
 #   - a re-launch deiconifies a minimized window
@@ -36,7 +36,7 @@ check "LL2 single window: same window id on re-launch" \
 # removed), so they cannot tell the bug from the fix. The code uses
 # `focus -force` + `wm deiconify` + `raise` (libmgr::raise_to_front) on BOTH the
 # create and raise paths; that cross-window focus is a manual eyeball item
-# (specs/library_manager_launch.md).
+# (doc/claude/specs/library_manager_launch.md).
 
 # LL5 — the autostart flag exists and defaults off
 check "LL5 launch_library_manager defaults to 0" \

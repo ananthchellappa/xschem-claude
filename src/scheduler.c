@@ -541,7 +541,7 @@ static int xschem_cmds_b(Tcl_Interp *interp, int argc, const char *argv[], int *
      * bindings dump
      *   List current input bindings as {device code mods ctx action_id} rows.
      * (the matching `unbind` lives under case 'u')
-     * See claude_suggs/refactor_plan_action_registry_phase3.md */
+     * See doc/claude/suggestions/refactor_plan_action_registry_phase3.md */
     /* backup write|remove|name
      * Autosave "~" backup file for the current cell:
      *   write  -> write cellName~.sch from the current (unsaved) buffer
@@ -597,7 +597,7 @@ static int xschem_cmds_c(Tcl_Interp *interp, int argc, const char *argv[], int *
      *   <lib> under the lib/cell/view layout (<libpath>/<cell>/<view>/<cell>.ext),
      *   or "" if the library/cell/view does not exist. <view> is "schematic" or
      *   "symbol". Read-only resolver (library-manager Phase 2); implemented in
-     *   Tcl (src/library_defs.tcl). See code_analysis/library_manager_design.md. */
+     *   Tcl (src/library_defs.tcl). See doc/claude/code_analysis/library_manager_design.md. */
     else if(!strcmp(argv[1], "cellview_path"))
     {
       if(argc > 3) tclvareval("cellview_path {", argv[2], "} {", argv[3], "}", NULL);
@@ -621,7 +621,7 @@ static int xschem_cmds_c(Tcl_Interp *interp, int argc, const char *argv[], int *
      *   {lib cell view [instname]} list that pre-fills the form (e.g.
      *   `xschem create_instance [libmgr::selection]`). Logs itself so the launch
      *   is replayable (CIW + Xschem.log) and bindable.
-     *   See specs/cadence_create_instance.md. */
+     *   See doc/claude/specs/cadence_create_instance.md. */
     else if(!strcmp(argv[1], "create_instance"))
     {
       if(has_x) {
@@ -3068,7 +3068,7 @@ static int xschem_cmds_i(Tcl_Interp *interp, int argc, const char *argv[], int *
      *   persisted in .sch files. Resolve back with `xschem instance_index id`.
      *   The id is the durable machine handle; the name is the human /
      *   cross-session form (reusable, renamable) — see
-     *   code_analysis/instance_identity_decision.md */
+     *   doc/claude/code_analysis/instance_identity_decision.md */
     else if(!strcmp(argv[1], "instance_id"))
     {
       int i;
@@ -3790,7 +3790,7 @@ static int xschem_cmds_l(Tcl_Interp *interp, int argc, const char *argv[], int *
                * cellName~.sch autosave backup means the previous session ended without
                * saving (a clean discard/save removes the ~). Offer to restore it. Only
                * in GUI + interactive mode -- never on scripted/replay loads or headless.
-               * specs/descend_hierarchy_in_memory.md (B8) */
+               * doc/claude/specs/descend_hierarchy_in_memory.md (B8) */
               if(!force && has_x) {
                 tclvareval("xschem_recover_backup {", xctx->sch[xctx->currsch], "}", NULL);
               }
@@ -4068,7 +4068,7 @@ static int xschem_cmds_l(Tcl_Interp *interp, int argc, const char *argv[], int *
      *   Tcl list of {name path} pairs for every defined library. The registry =
      *   library.defs files listed in $XSCHEM_LIBRARY_DEFS plus auto-discovered
      *   dirs carrying a library.tag on the search path. Implemented in Tcl
-     *   (src/library_defs.tcl); see code_analysis/library_manager_design.md. */
+     *   (src/library_defs.tcl); see doc/claude/code_analysis/library_manager_design.md. */
     else if(!strcmp(argv[1], "libraries"))
     {
       tcleval("library_list");
@@ -4098,7 +4098,7 @@ static int xschem_cmds_l(Tcl_Interp *interp, int argc, const char *argv[], int *
      *   The optional argument is a list: a single element is a library name; a
      *   {lib cell} or {lib cell view} list pre-selects and scrolls to that
      *   entry -- handy for locating a cell (e.g. `xschem library_manager
-     *   [xschem get_inst_lcv]`). See specs/library_manager_launch.md. */
+     *   [xschem get_inst_lcv]`). See doc/claude/specs/library_manager_launch.md. */
     else if(!strcmp(argv[1], "library_manager"))
     {
       if(has_x) {
@@ -4269,7 +4269,7 @@ static int xschem_cmds_m(Tcl_Interp *interp, int argc, const char *argv[], int *
  * These helpers are READ-ONLY and assume the caller has already run
  * prepare_netlist_structs(0) (and rebuild_selected_array() if it reads the
  * selection) — the §2c coherence rule (tcl_introspection_wire.md, NC3).
- * See code_analysis/net_identity_decision.md (c2, ratified). */
+ * See doc/claude/code_analysis/net_identity_decision.md (c2, ratified). */
 
 /* Resolve a net selector to its current net token, or NULL if it does not
  * resolve (dangling anchor / unknown pin). 'base' is the argv index of the
@@ -4377,7 +4377,7 @@ static int xschem_cmds_n(Tcl_Interp *interp, int argc, const char *argv[], int *
      *     <token>             by current net name (the human form; may alias)
      *   The descriptor is {name {<tok>} nwires N npins M anchor {wire <id>} |
      *   {inst <id> <pin>} | {}}. Read-only. See `xschem nets` /
-     *   `xschem net_members`; code_analysis/net_identity_decision.md (c2). */
+     *   `xschem net_members`; doc/claude/code_analysis/net_identity_decision.md (c2). */
     if(!strcmp(argv[1], "net"))
     {
       const char *token;
@@ -6630,7 +6630,7 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
      *   if 'new_process' is given start a new xschem process
      *   if 'nodraw' is given do not draw loaded schematic
      *   if 'window' is given force a real top-level window even in tabbed mode
-     *     (specs/multi_window_detach.md)
+     *     (doc/claude/specs/multi_window_detach.md)
      *   returns '1' if a new schematic was opened, 0 otherwise */
     else if(!strcmp(argv[1], "schematic_in_new_window"))
     {
@@ -8216,7 +8216,7 @@ static int xschem_cmds_u(Tcl_Interp *interp, int argc, const char *argv[], int *
 {
     /* unbind <device> <code> <mods> <ctx>
      *   Remove an input binding (result = number removed). Pairs with `bind`
-     *   under case 'b'. See claude_suggs/refactor_plan_action_registry_phase3.md */
+     *   under case 'b'. See doc/claude/suggestions/refactor_plan_action_registry_phase3.md */
     if(!strcmp(argv[1], "unbind"))
     {
       return action_cmd_unbind(argc, argv);
@@ -8421,7 +8421,7 @@ static int xschem_cmds_w(Tcl_Interp *interp, int argc, const char *argv[], int *
      *     {win_path top_path group xwindow current_name}
      *   'group' is the owning top-level ("." for the main window). Read-only
      *   introspection seam for multi-window / detach
-     *   (specs/multi_window_detach.md). In Phase 0 group == top_path (the owning
+     *   (doc/claude/specs/multi_window_detach.md). In Phase 0 group == top_path (the owning
      *   toplevel); per-window tab grouping (Phase 1) refines it. */
     else if(!strcmp(argv[1], "windows"))
     {

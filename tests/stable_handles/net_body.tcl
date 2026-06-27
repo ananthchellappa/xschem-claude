@@ -4,7 +4,7 @@
 # THE POINT OF THIS FILE: before giving a net a stable handle, lock down exactly
 # what the net surface does today, so the new work has a sensitivity net and the
 # baseline is documented. Two facts established here drive the identity design
-# (code_analysis/net_identity_decision.md):
+# (doc/claude/code_analysis/net_identity_decision.md):
 #
 #   1. A net is DERIVED, not stored. The net name lives as wire[].node / a token
 #      in node_table, recomputed on every rebuild. NC2/NC8 prove the wire's lab
@@ -171,7 +171,7 @@ check {NC11c membership lists devices, not the net's own label instance} \
 # Phase C — the new net-as-object commands (direction c2: a net's durable
 # handle IS the stable id of a wire/label ANCHOR on it). Committed RED first:
 # the NH* tests are xcheck (XFAIL) until xschem net / nets / net_members land,
-# then flip to check. Surface (code_analysis/net_identity_decision.md §5):
+# then flip to check. Surface (doc/claude/code_analysis/net_identity_decision.md §5):
 #
 #   xschem net <selector>          -> {name <tok> nwires N npins M anchor {..}}
 #       selector: @wire <id> | @inst <id> <pin> | <token>

@@ -3,7 +3,7 @@
 ## CIW (Command Interpreter Window, after Virtuoso's) -- a standalone toplevel
 ## with a live view of the action log plus a command entry evaluated by the
 ## xschem Tcl interpreter (starts at one line; dragging the sash grows it).
-## Spec: specs/action_logging.md section 3.
+## Spec: doc/claude/specs/action_logging.md section 3.
 ##
 ## Sourced from xschem.tcl at startup; ciw_create is called automatically for
 ## interactive sessions (spec decision 8). The C action-log sink (log_action()
@@ -21,7 +21,7 @@ set ::ciw_hist_pos 0
 set ::ciw_hist_pending {}
 
 ## Tab-completion: the `xschem` subcommand vocabulary, loaded lazily from the
-## build-generated xschem_subcommands.txt (see specs/ciw_autocomplete.md). Empty
+## build-generated xschem_subcommands.txt (see doc/claude/specs/ciw_autocomplete.md). Empty
 ## until the first Tab, and stays empty (gracefully) if the file is absent, in
 ## which case only command/var/path completion work.
 set ::ciw_subcommands {}
@@ -149,7 +149,7 @@ proc ciw_hist_move {dir} {
 ## tag, and any OTHER channel (a file/socket) or a malformed call is delegated VERBATIM to the real
 ## puts (saved as ::ciw_saved_puts while capture is active). `-nonewline` is accepted and ignored
 ## for the console channels (the log pane is line-oriented), but preserved when delegating. Only
-## installed for the dynamic extent of a CIW command -- see ciw_exec. Spec: specs/ciw_puts_capture.md.
+## installed for the dynamic extent of a CIW command -- see ciw_exec. Spec: doc/claude/specs/ciw_puts_capture.md.
 proc ciw_capture_puts {argl} {
   set a $argl
   if {[lindex $a 0] eq "-nonewline"} {set a [lrange $a 1 end]}
@@ -195,7 +195,7 @@ proc ciw_exec {} {
 
 ## --- Tab completion ---------------------------------------------------------
 ## Readline/bash-style completion of the token under the cursor. Spec:
-## specs/ciw_autocomplete.md.
+## doc/claude/specs/ciw_autocomplete.md.
 
 ## Load the xschem-subcommand vocabulary once, on the first Tab. The file is
 ## build-generated from scheduler.c (see the Makefile rule) and shipped to

@@ -1,5 +1,5 @@
 # B7: autosave "~" backups (cellName~.sch / cellName~.sym) must never be listed
-# as cells. Spec: specs/descend_hierarchy_in_memory.md
+# as cells. Spec: doc/claude/specs/descend_hierarchy_in_memory.md
 #
 # Run TRUE HEADLESS from the repo root:
 #   src/xschem --nogui --pipe -q --nolog --script tests/headless/test_backup_hidden.tcl

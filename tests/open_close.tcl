@@ -59,7 +59,7 @@ proc open_close {dir fn} {
     # Private XSCHEM_TMP_DIR per job: xschem creates a temp/undo dir on load whose
     # name comes from rand() seeded with 16-bit time(NULL); same-second sibling
     # processes generate the same name and collide in a shared /tmp. A private parent
-    # dir makes that impossible. See claude_suggs/parallel_regression_tests.md.
+    # dir makes that impossible. See doc/claude/suggestions/parallel_regression_tests.md.
     set tmpdir "$cwd/$workroot/$idx.tmp"
     set cmd "mkdir -p '$tmpdir' && cd '$cwd/$dir' && $xschem_cmd '$fn' -q --nogui -r -d 1 --preinit 'set XSCHEM_TMP_DIR {$tmpdir}' 2> '$cwd/$output'; echo \$? > '$status'"
     lappend jobs [list $fn_debug "$cwd/$output" $status $cmd]

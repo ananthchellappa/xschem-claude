@@ -1688,7 +1688,7 @@ static int switch_tab(int *window_count, const char *win_path, int dr)
 
       if(has_x) tclvareval("reconfigure_layers_button {}", NULL);
       /* tabs share the main canvas; a detached window (non-empty top_path) keeps
-       * its own X window (specs/multi_window_detach.md) */
+       * its own X window (doc/claude/specs/multi_window_detach.md) */
       if(!xctx->top_path || !xctx->top_path[0]) xctx->window = save_xctx[0]->window;
       if(dr) resetwin(1, 1, 1, 0, 0);
       set_modify(-1); /* sets window title */
@@ -1830,7 +1830,7 @@ static void create_new_window(int *window_count, const char *win_path, const cha
   if(has_x) {
     windowid(toppath);
     /* bring the new window to the front so it is not lost behind the launcher /
-     * on another monitor (specs/multi_window_detach.md) */
+     * on another monitor (doc/claude/specs/multi_window_detach.md) */
     tclvareval("wm deiconify ", toppath, "; raise ", toppath, NULL);
     /* paint now rather than waiting for an Expose event — some window managers
      * (e.g. WSLg) drop the first Expose, leaving the window blank until the mouse
@@ -1974,7 +1974,7 @@ static void create_new_tab(int *window_count, const char *noconfirm, const char 
  * context's X window is repointed to it, its GCs and pixmap are recreated against
  * it, and the tab button + tab-queue entry are dropped. Done in the background
  * (operating on the detached context, restoring the active one) so the active tab
- * and the main strip are left untouched. specs/multi_window_detach.md. */
+ * and the main strip are left untouched. doc/claude/specs/multi_window_detach.md. */
 static void detach_tab(int *window_count, const char *win_path)
 {
   int n;
@@ -2322,7 +2322,7 @@ static void destroy_all_tabs(int *window_count, int force)
  * detach), so destroy/switch must route by the TARGET context's kind, not by the
  * global flag — else a real window gets handled by the tab path (which deletes the
  * context but never destroys the toplevel → a zombie window).
- * specs/multi_window_detach.md. */
+ * doc/claude/specs/multi_window_detach.md. */
 static int is_window_context(const char *win_path)
 {
   int n;
@@ -2354,11 +2354,11 @@ int new_schematic(const char *what, const char *win_path, const char *fname, int
     }
   } else if(!strcmp(what, "create_window")) {
     /* force a real top-level window regardless of tabbed_interface, so a tab and a
-     * detached window can coexist (specs/multi_window_detach.md, Phase 0) */
+     * detached window can coexist (doc/claude/specs/multi_window_detach.md, Phase 0) */
     create_new_window(&window_count, win_path, fname, dr);
   } else if(!strcmp(what, "detach")) {
     /* tear an existing tab off into its own top-level window
-     * (specs/multi_window_detach.md, detach-first reorder) */
+     * (doc/claude/specs/multi_window_detach.md, detach-first reorder) */
     detach_tab(&window_count, win_path);
   } else if(!strcmp(what, "destroy")) {
     /* a real window is always closed by destroy_window (which destroys the
@@ -2377,7 +2377,7 @@ int new_schematic(const char *what, const char *win_path, const char *fname, int
   } else if(!strcmp(what, "switch")) {
     /* a real window switches like windowed mode (keeps its own X canvas); only pure
      * tabs use switch_tab (shared canvas). Holds even in tabbed mode so windows and
-     * tabs can coexist (specs/multi_window_detach.md) */
+     * tabs can coexist (doc/claude/specs/multi_window_detach.md) */
     int ret;
     if(is_window_context(win_path)) ret = switch_window(&window_count, win_path, 1);
     else if(tabbed_interface) ret = switch_tab(&window_count, win_path, dr);
@@ -3534,7 +3534,7 @@ int Tcl_AppInit(Tcl_Interp *inter)
  }
 
  /* autostart the Library Manager if the rc / --script asked for it (after the
-  * main window and any --script exist). See specs/library_manager_launch.md. */
+  * main window and any --script exist). See doc/claude/specs/library_manager_launch.md. */
  if(has_x && !cli_opt_quit && tclgetboolvar("launch_library_manager")) {
    tcleval("xschem library_manager");
  }

@@ -1,5 +1,5 @@
 # B6 acceptance: backing-file autosave for SYMBOLS (cellName~.sym) and the
-# descend_symbol path. Spec: specs/descend_hierarchy_in_memory.md
+# descend_symbol path. Spec: doc/claude/specs/descend_hierarchy_in_memory.md
 #
 # Run TRUE HEADLESS from the repo root:
 #   src/xschem --nogui --pipe -q --nolog --script tests/headless/test_descend_symbol.tcl
@@ -102,7 +102,7 @@ check "SY2: descend_symbol did not pop the save prompt" \
 # legacy guard), because go_back's embedded return reloads the parent from disk
 # (not from parent~.sch), so dropping the prompt there would silently lose the
 # parent's unsaved edits. This pins the deferral boundary: B6 covers only the
-# non-embedded case. See specs/descend_hierarchy_in_memory.md.
+# non-embedded case. See doc/claude/specs/descend_hierarchy_in_memory.md.
 # ---------------------------------------------------------------------------
 set embpar $work/emb_parent.sch
 set fp [open $embpar w]

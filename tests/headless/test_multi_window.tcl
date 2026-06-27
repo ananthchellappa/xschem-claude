@@ -1,11 +1,11 @@
-# Detachable tabs & true multi-window  (specs/multi_window_detach.md)
+# Detachable tabs & true multi-window  (doc/claude/specs/multi_window_detach.md)
 #
 # GUI smoke: opens real Tk toplevels, driven entirely by script. Needs a display.
 # Standard invocation (from src/):
 #   DISPLAY=:0 ./xschem --pipe -q --nolog --script ../tests/headless/test_multi_window.tcl
 #
 # RED-first skeleton. Checks map 1:1 to the spec's acceptance list MW1..MW8 and to
-# claude_suggs/plan_multi_window_detach.md phases:
+# doc/claude/suggestions/plan_multi_window_detach.md phases:
 #   MW1..MW4  Phase 0  (introspection seam + force-a-window)   <-- live
 #   MW5..MW8  Phase 1-3 (per-window tabs, detach, attach, lock) <-- pending stubs
 # Each live check is expected to FAIL until its phase lands (that is the RED state).

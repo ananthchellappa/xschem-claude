@@ -1,5 +1,5 @@
 # TC1 (Issue A, guard) — stretch toggle OFF: a plain move must NOT drag the wire.
-# Spec: code_analysis/wire_editing_spec_and_plan.md.
+# Spec: doc/claude/code_analysis/wire_editing_spec_and_plan.md.
 source [file join [file dirname [info script]] fixtures.tcl]
 we_reset 0 0                 ;# enable_stretch OFF
 we_device 0 0                ;# pin M (0,30)

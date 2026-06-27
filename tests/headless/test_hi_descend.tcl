@@ -2,7 +2,7 @@
 # Covers the headless (scripted, no-dialog) paths: view enumeration, descending
 # into the DEFAULT and a NAMED ALTERNATE schematic view, the symbol view, bad-view
 # rejection, the one-shot C view override NOT dirtying the parent, and no override
-# leak into a subsequent plain descend. specs/hi_descend.md
+# leak into a subsequent plain descend. doc/claude/specs/hi_descend.md
 #
 # Run TRUE HEADLESS from the repo root:
 #   src/xschem --nogui --pipe -q --nolog --script tests/headless/test_hi_descend.tcl
