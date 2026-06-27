@@ -1,0 +1,1 @@
+NAME xschem_test
