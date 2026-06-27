@@ -453,6 +453,7 @@ proc slickprop::do_apply {} {
   variable cur
   variable nav
   global symbol prev_symbol copy_cell user_wants_copy_cell
+  if {[xschem get readonly]} { return 0 }  ;# read-only viewer: never commit (issue 0051)
   slickprop::lcv_compose_symbol     ;# fold any Library/Cell/View edit into the ref
   set symbol [.dialog.f1.e2 get]
   set abssymbol [abs_sym_path $symbol]
@@ -622,6 +623,9 @@ proc slickprop::disp_name {} {
 # <action>) or <cancelaction> (Cancel: stay put / restore). Not dirty -> just
 # <action>. Next/Prev and selection changes both route through here.
 proc slickprop::maybe_apply_then {action cancelaction} {
+  # Read-only viewer (issue 0051): there is nothing to apply, so never prompt —
+  # just proceed (adopt the new selection / move to the next instance).
+  if {[xschem get readonly]} { uplevel #0 $action; return }
   if {![slickprop::is_dirty]} { uplevel #0 $action; return }
   set ans [tk_messageBox -parent .dialog -icon question -type yesnocancel \
     -title "Edit Properties" \
@@ -1138,6 +1142,20 @@ proc slickprop::edit_form {txtlabel} {
   bind .dialog <Alt-Right>  {slickprop::nav 1}
   bind .dialog <Alt-Left>   {slickprop::nav -1}
   wm protocol .dialog WM_DELETE_WINDOW {slickprop::cancel}
+
+  # Read-only view (issue 0051): the form is a VIEWER, not an editor. It opens so
+  # the user can read — and even experiment with — the values (fields stay
+  # editable), but OK/Apply are greyed and Enter behaves like Esc (Cancel) so
+  # nothing is ever written back. do_apply/maybe_apply_then are also guarded, so
+  # no other path (selection-change prompt, a stray binding) can commit either.
+  if {[xschem get readonly]} {
+    .dialog.fb.ok     configure -state disabled -default normal
+    .dialog.fb.apply  configure -state disabled
+    .dialog.fb.cancel configure -default active
+    .dialog.fb.hint   configure -text "Read-only view — changes cannot be applied (Enter/Esc: close)"
+    bind .dialog <Return>   {slickprop::cancel}
+    bind .dialog <KP_Enter> {slickprop::cancel}
+  }
 
   # focus + select the most-likely-to-edit field (the symbol's `select` attr,
   # else value/lab/name), mirroring the legacy dialog's cursor placement.

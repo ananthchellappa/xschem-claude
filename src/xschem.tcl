@@ -8702,6 +8702,15 @@ proc enter_text {textlabel {preserve_disabled disabled}} {
   bind .dialog.f2.txt <Tab>          {focus [tk_focusNext %W]; break}
   bind .dialog.f2.txt <Shift-Tab>    {focus [tk_focusPrev %W]; break}
   bind .dialog.f2.txt <ISO_Left_Tab> {focus [tk_focusPrev %W]; break}
+  # Read-only view (issue 0051): a property VIEWER — disable OK and make every
+  # commit chord (Enter / keypad Enter / Shift-Enter in the text box) Cancel
+  # instead, so the text can be read but not written back.
+  if {[xschem get readonly]} {
+    .dialog.buttons.ok configure -state disabled
+    bind .dialog <Return>              {.dialog.buttons.cancel invoke}
+    bind .dialog <KP_Enter>            {.dialog.buttons.cancel invoke}
+    bind .dialog.f2.txt <Shift-Return> {.dialog.buttons.cancel invoke; break}
+  }
   .dialog.f2.txt tag add sel 1.0 {end - 1 chars}
   .dialog.f2.txt mark set insert 1.0
   focus .dialog.f2.txt
@@ -10012,6 +10021,12 @@ proc text_line_slick {txtlabel clear preserve_disabled type} {
   bind .dialog <Return>   {.dialog.buttons.ok invoke}
   bind .dialog <KP_Enter> {.dialog.buttons.ok invoke}
   bind .dialog <Escape>   {.dialog.buttons.cancel invoke}
+  # Read-only view (issue 0051): a property VIEWER — disable OK, Enter == Esc (Cancel).
+  if {[xschem get readonly]} {
+    .dialog.buttons.ok configure -state disabled
+    bind .dialog <Return>   {.dialog.buttons.cancel invoke}
+    bind .dialog <KP_Enter> {.dialog.buttons.cancel invoke}
+  }
   dialog_minsize_floor .dialog
   tkwait window .dialog
   return $tctx::rcode
@@ -10269,6 +10284,15 @@ proc text_line_legacy {txtlabel clear {preserve_disabled disabled} } {
   }
 
   bind .dialog.textinput <Shift-KeyRelease-Return> {return_release %W; .dialog.f1.b1 invoke}
+  # Read-only view (issue 0051): a property VIEWER — disable OK (the global-props
+  # path below also self-guards), force Esc to always cancel, and disable the Mode
+  # selector (changing it commits via set_global_mode). The text stays readable/
+  # editable, but nothing is written back.
+  if {[xschem get readonly]} {
+    catch {.dialog.f1.b1 configure -state disabled}
+    catch {.dialog.f1.r7 configure -state disabled}
+    bind .dialog <Escape> {.dialog.f1.b2 invoke}
+  }
   #tkwait visibility .dialog
   #grab set .dialog
   #focus .dialog.textinput
@@ -10276,7 +10300,7 @@ proc text_line_legacy {txtlabel clear {preserve_disabled disabled} } {
   dialog_minsize_floor .dialog
   tkwait window .dialog
 
-  if {$preserve_disabled eq {disabled}} {
+  if {$preserve_disabled eq {disabled} && ![xschem get readonly]} {
     if {$tctx::retval ne $tctx::retval_orig} {
       xschem push_undo
       xschem set_modify 1
@@ -11778,6 +11802,16 @@ proc toggle_readonly {} {
   set v [expr {[xschem get readonly] ? 0 : 1}]
   xschem set readonly $v
   xschem log_action "xschem set readonly $v"
+}
+
+# Modal "this view is read-only" notice — the Tcl twin of callback.c readonly_block(),
+# for edit actions driven from Tcl (e.g. Create Instance, issue 0051) that the C
+# keyboard guard never sees. Same wording so the two surfaces stay identical.
+proc readonly_notice {} {
+  if {![info exists ::has_x] || !$::has_x} return
+  tk_messageBox -type ok -icon info -parent [xschem get topwindow] \
+    -title {Read-only view} \
+    -message "View is Read Only.\n\nUse Edit > Make Editable to enable editing."
 }
 
 # -postcommand for each window's Edit menu. Read-only is per-window, so this runs

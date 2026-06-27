@@ -2418,11 +2418,14 @@ static void context_menu_action(double mx, double my)
   if(!status) return;
   ret = atoi(status);
   /* read-only: refuse the object-mutating context-menu picks (place sym/wire/line/
-   * rect/poly/text/arc/circle, cut, paste, edit attrs, move, duplicate, delete).
-   * Navigation picks (descend/pop/load/copy-to-clipboard) fall through. */
+   * rect/poly/text/arc/circle, cut, paste, move, duplicate, delete, edit-in-editor).
+   * Navigation picks (descend/pop/load/copy-to-clipboard) fall through -- and so does
+   * "Edit attributes" (case 10), which opens the property form as a read-only VIEWER
+   * (issue 0051): viewing properties is not an edit. (case 11 = edit-in-editor stays
+   * blocked, the right-click twin of the 'Q' key.) */
   switch(ret) {
     case 1: case 2: case 3: case 4: case 5: case 6: case 7: case 8:
-    case 10: case 11: case 16: case 17: case 18: case 19: case 20:
+    case 11: case 16: case 17: case 18: case 19: case 20:
       if(readonly_block()) return;
       break;
     default: break;
@@ -4430,7 +4433,12 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
       }
       else if(rstate==0) { /* edit attributes */
         if(xctx->semaphore >= 2) break;
-        if(readonly_block()) break;
+        /* Viewing properties is NOT an edit (issue 0051): open the form even on a
+         * read-only view. The form opens as a viewer there -- OK/Apply greyed,
+         * Enter == Esc (Cancel) -- so nothing can be committed (property_form.tcl
+         * + the gfx/legacy dialogs). The menu path (xschem edit_prop) was already
+         * unguarded; this makes the 'q' key match it. ('Q' = edit-with-editor
+         * stays an explicit edit and keeps its readonly_block below.) */
         edit_property(0);
       }
       else if(EQUAL_MODMASK) { /* edit .sch file (DANGER!!) */

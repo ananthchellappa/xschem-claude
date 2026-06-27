@@ -90,6 +90,11 @@ proc ciform::set_fields {lcv} {
 # pre-fills the form (overwriting the current fields) and re-arms. With no arg the
 # singleton keeps whatever it last held.
 proc ciform::open {{lcv {}}} {
+  # Creating an instance IS an edit: refuse it on a read-only view (issue 0051).
+  # This is the single chokepoint every route funnels through — the Cadence `i`
+  # key (bind .drw <Key-i> {xschem create_instance}), Edit > Create Instance, and
+  # any scripted `xschem create_instance [lcv]` — so one guard covers them all.
+  if {[xschem get readonly]} { readonly_notice; return }
   set w .ciform
   ciform::install_drop_hook
   set have [expr {[llength $lcv] > 0}]
