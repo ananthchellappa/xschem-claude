@@ -1698,6 +1698,12 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
             Tcl_SetResult(interp, my_itoa(xctx->draw_window),TCL_VOLATILE);
           }
+          else if(!strcmp(argv[2], "drawwindowid")) { /* X Window id this context draws into; compare numerically to [winfo id <canvas>] */
+            char b[32];
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            my_snprintf(b, S(b), "%u", (unsigned int)xctx->window); /* XIDs fit in 32 bits; my_snprintf has no %lx */
+            Tcl_SetResult(interp, b, TCL_VOLATILE);
+          }
           break;
           case 'f':
           if(!strcmp(argv[2], "first_sel")) { /* get data about first selected object */

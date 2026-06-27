@@ -1440,6 +1440,7 @@ void swap_tabs(void)
   if(wc) {
     Xschem_ctx *ctx;
     char *tmp;
+    Window window;
     int i = 0;
     int j;
     for(j = 1; j < MAX_NEW_WINDOWS; j++) {
@@ -1461,6 +1462,14 @@ void swap_tabs(void)
     tmp = save_xctx[i]->current_win_path;
     save_xctx[i]->current_win_path = save_xctx[j]->current_win_path;
     save_xctx[j]->current_win_path = tmp;
+
+    /* Swap the X Window id too (as swap_windows does). For genuine tabs both slots share the .drw
+     * X window, so this is a no-op; but a FORCE-WINDOW (schematic_in_new_window ... window) has its
+     * OWN X window, and without this swap the surviving primary context would keep the sub-window's
+     * id -- which is then DESTROYED below -- and draw into a dead drawable (frozen main window). */
+    window = save_xctx[i]->window;
+    save_xctx[i]->window = save_xctx[j]->window;
+    save_xctx[j]->window = window;
 
     ctx = save_xctx[i];
     save_xctx[i] = save_xctx[j];
