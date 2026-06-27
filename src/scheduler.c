@@ -3667,6 +3667,12 @@ static int xschem_cmds_l(Tcl_Interp *interp, int argc, const char *argv[], int *
         }
       }
       first = i;
+      /* -lastopened/-lastclosed come ONLY from the reopen shortcuts (Open Most Recent Ctrl+Shift+O /
+       * Open Last Closed Ctrl+Shift+T / the Recent menu), which default to read mode. Treat them as
+       * -readonly so EVERY dispatch site gets it -- the keyboard handlers (callback.c case 'O'/'T')
+       * run `xschem load -gui -lastopened` directly, bypassing the actions.csv command, so threading
+       * the flag only through the menu rows is not enough. Edit with Ctrl-2 / View > Toggle Read Only. */
+      if(lastclosed || lastopened) readonly_open = 1;
       if(argc==first && !(lastclosed || lastopened)) {
         if(tclgetboolvar("new_file_browser")) {
           tcleval("file_chooser");
@@ -3818,6 +3824,7 @@ static int xschem_cmds_l(Tcl_Interp *interp, int argc, const char *argv[], int *
     {
       char f[PATH_MAX + 100];
       int cancel = 0;
+      int reopen = 0; /* -lastopened/-lastclosed: a reopen shortcut, open the new window read-only */
       int force_window = 0; /* -window: open a real top-level even in tabbed mode */
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
       if(argc > 2) {
@@ -3829,8 +3836,10 @@ static int xschem_cmds_l(Tcl_Interp *interp, int argc, const char *argv[], int *
             continue;
           } else if(!strcmp(argv[i], "-lastclosed")) {
             my_strncpy(f, tcleval("get_lastclosed"), S(f));
+            reopen = 1;
           } else if(!strcmp(argv[i], "-lastopened")) {
             my_strncpy(f, tcleval("get_lastopened"), S(f));
+            reopen = 1;
           } else if(!is_from_web(argv[i])) {
             my_snprintf(f, S(f),"regsub {^~/} {%s} {%s/}", argv[i], home_dir);
             tcleval(f);
@@ -3858,6 +3867,8 @@ static int xschem_cmds_l(Tcl_Interp *interp, int argc, const char *argv[], int *
            if(is_pristine_untitled() && tcl_braceable(f)) tclvareval("xschem load {", f, "}", NULL);
            else new_schematic(force_window ? "create_window" : "create", "noconfirm", f, 1);
            tclvareval("update_recent_file {", f, "}", NULL);
+           /* a reopen-shortcut new-window open is read mode by default, like the in-window reopen */
+           if(reopen && xctx && !xctx->readonly) { xctx->readonly = 1; set_modify(-1); }
           } else {
             new_schematic(force_window ? "create_window" : "create", NULL, NULL, 1);
           }

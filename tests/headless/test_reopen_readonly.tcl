@@ -29,6 +29,18 @@ check "R2 load -readonly opens READ mode" [expr {[xschem get readonly] == 1}] "(
 xschem load $f
 check "R3 plain load after -readonly is editable again" [expr {[xschem get readonly] == 0}] "(ro=[xschem get readonly])"
 
+# ---- (1b) the ACTUAL bug: the keyboard Ctrl+Shift+O runs `xschem load -gui -lastopened` directly
+# (the actions.csv accel is display-only), so -lastopened/-lastclosed must THEMSELVES imply read mode.
+set fa [file join $dir a.sch] ; set fb [file join $dir b.sch]
+file copy -force $lib $fa ; file copy -force $lib $fb
+file attributes $fa -permissions 0644 ; file attributes $fb -permissions 0644
+xschem load $fa            ;# fa becomes recent, then we move off it so it is the "last opened" not-loaded
+xschem load $fb
+check "R8 plain load of fb is editable" [expr {[xschem get readonly] == 0}] "(ro=[xschem get readonly])"
+set got [xschem load -lastopened]   ;# == the keyboard reopen path, WITHOUT an explicit -readonly
+check "R9 -lastopened (keyboard reopen) implies READ mode" [expr {[xschem get readonly] == 1}] "(ro=[xschem get readonly])"
+check "R10 -lastopened resolved to the prior file (fa)" [expr {[file tail $got] eq {a.sch}}] "(=> $got)"
+
 # ---- (2) wiring: the reopen shortcuts carry -readonly; File > Open (file_chooser_place) does not ----
 proc slurp {p} { set fd [open $p r] ; set s [read $fd] ; close $fd ; return $s }
 set csv [slurp [file join [pwd] src actions.csv]]
