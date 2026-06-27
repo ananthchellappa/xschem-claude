@@ -106,6 +106,11 @@ bind .drw <Control-Alt-Key-n>   {place_libmgr_selection;          break}
 bind .drw <Control-Shift-Key-N> {cadence::open_inst_sch_readonly; break}
 # Ctrl-X : descend into selected instance's schematic (no-op if none selected)
 bind .drw <Control-Key-x>       {cadence::descend_into_inst;      break}
+# Ctrl-E : return one level. Overrides the C default (go_back / ascend in place) with
+# the window-chain-aware version: a window descended-into-new-window returns focus to
+# the PARENT window instead of ascending the child in place (issue 0053). Cloned to
+# every new/detached canvas by clone_canvas_bindings, so it works in child windows too.
+bind .drw <Control-Key-e>       {cadence::return_one_level;       break}
 # Alt-E : return to top of hierarchy, remembering where we were (per window)
 bind .drw <Alt-Key-e>           {cadence::return_to_top;          break}
 # Alt-X : descend back into the location remembered by the last Alt-E

@@ -5688,6 +5688,15 @@ proc hi_descend_newwin {instname row dest iter mode} {
   }
   xschem select instance $instname fast
   set ok [hi_descend_finish $instname $vtype $vpath $iter $mode]
+  # Cross-window descend chain (issue 0053): link the new window/tab to the window it
+  # was descended FROM, and remember the level it was born at (its "entry level"), so the
+  # Cadence return (Ctrl-E) / return-to-top (Alt-E) can step back to the PARENT window
+  # instead of ascending this child in place. Recorded for both window and tab dests; the
+  # Cadence nav reads ::descend_parent_win()/::descend_entry_level() (harmless when unused).
+  if {$ok} {
+    set ::descend_parent_win($new_window_path)  $current_win_path
+    set ::descend_entry_level($new_window_path) [xschem get currsch]
+  }
   # A real new window has not yet settled to its on-screen size when descend runs (its
   # Map/Configure events are still queued), so the descend's zoom_full used a transient
   # geometry and the window comes up blank / grid-only / off-screen until a manual zoom-full
