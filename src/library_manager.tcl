@@ -456,6 +456,11 @@ proc libmgr::open_view {args} {
     xschem load $f
     xschem log_action "xschem load {$f}"
   }
+  # WSLg leaves the target window blank (and its renamed tab stale) when a load is
+  # driven from this persistent dialog: the window never gets the focus/expose that
+  # would flush the paint. Force a deferred repaint of it. No-op on a normal X server
+  # / when the window already painted (issue 0052).
+  after 120 [list force_window_repaint [xschem get current_win_path] 0]
   return 1
 }
 

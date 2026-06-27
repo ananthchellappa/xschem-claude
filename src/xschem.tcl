@@ -5353,6 +5353,31 @@ proc _newwin_fit_fullzoom {win tries} {
   }
 }
 
+# Force a window to repaint after a load that was initiated while the window did NOT
+# have focus -- e.g. opened from the persistent Library Manager dialog. WSLg repaints
+# a window only after it processes an X event for it, so such a load leaves the canvas
+# blank (and its renamed tab stale) until the user moves the pointer in / activates it,
+# even though the data, draw(), tab name and title are all already correct (issue 0052).
+# Do the same work a resize/expose would do -- xschem resetwin: recreate the backing
+# pixmap + redraw (performing the armed full-zoom if one is pending) -- from a timer, so
+# it runs in the event loop (which is what makes WSLg flush). Retries until the window is
+# realized, then stops. Unlike _newwin_fit_fullzoom this does NOT require a pending
+# full-zoom, so it also repaints an in-place reuse load (untitled-reuse) where nothing is
+# zoom-pending and the load already fit the view. Cheap, invisible no-op on a normal X
+# server (the window already painted).
+proc force_window_repaint {win {tries 0}} {
+  global has_x
+  if { ![info exists has_x] || !$has_x } return
+  if {![winfo exists $win]} return
+  # only act while this window is still the active context (the user may have moved on)
+  if {[xschem get current_win_path] ne $win} return
+  if {[winfo ismapped $win] && [winfo width $win] > 1 && [winfo height $win] > 1} {
+    xschem resetwin [winfo width $win] [winfo height $win]
+  } elseif {$tries < 25} {
+    after 120 [list force_window_repaint $win [expr {$tries + 1}]]
+  }
+}
+
 # A new-window descend reloads the parent from DISK, so any UNSAVED edits in the source window
 # (e.g. an instance just added but not saved) are missing from the new window -- and a descend
 # into such a freshly-added instance then no-ops, leaving the new window on the stale parent
