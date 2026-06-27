@@ -1,7 +1,9 @@
 # Issue 0049 — Closing the main window while a detached force-window is open freezes the main display
 
 **Opened:** 2026-06-27
-**Status:** ✅ RESOLVED (2026-06-27, commit `1130bda7`) — `swap_tabs()` (`src/xinit.c`) now also swaps
+**Status:** ✅ RESOLVED (2026-06-27, commit `1130bda7`), with a **follow-up** (display no longer froze but
+stayed STALE until a manual resize/zoom/pan — see §5 below). The freeze fix below addresses the dead drawable.
+**Status (freeze):** `swap_tabs()` (`src/xinit.c`) now also swaps
 the `window` (X Window id) field between the two contexts, mirroring `swap_windows()`. For genuine tabs
 (which share the single `.drw` X window) this is a no-op; for a force-window (its own X window) it keeps
 each X window with its path, so after the main window absorbs the detached schematic and destroys the
@@ -105,3 +107,58 @@ no-op there), and the user's exact SANDBOX files (`test_hier_descend_etc` + `sol
   `scheduler.c`), so a new get-key must be added under the matching `case '<firstletter>':`.
 - The fallback `my_snprintf` (non-`HAS_SNPRINTF`, `util.c`) supports only `%s/%d/%x/%c/%u/%p/%g/%e/%f`
   as `int` — **no `%lx`/`%l`**; format XIDs with `%u` and an `(unsigned int)` cast (they fit in 32 bits).
+
+---
+
+## 5. Follow-up — stale (un-redrawn) main display after the close
+
+**Reported by:** user (2026-06-27), same flow. After the freeze fix, the close path no longer wedges the
+canvas (resize / `F` zoom-full / pan all recover it), but the main window's title/tab correctly switch to
+`solar_ctl` (the absorbed schematic) while the **canvas keeps showing the OLD schematic (`A`)** until one of
+those manual gestures triggers a redraw. "Just needs cleaning up."
+
+### Root cause (a second, independent defect on the same path)
+The freeze was the X window id; this is a **missing synchronous redraw**. The tabbed close path is:
+`swap_tabs()` → `set_modify(0)` → `new_schematic("destroy", xctx->current_win_path, NULL, 1)` (note `dr=1`).
+For a force-window that destroy routes to **`destroy_window()`** (real top-level), *not* `destroy_tab()`.
+
+- `destroy_tab()` ends with `resetwin(...); set_modify(-1); … draw();` — it **always redraws** the surviving
+  tab, so a genuine-tab close looks fine.
+- `destroy_window()` **dropped the `dr` flag entirely** and never drew. The dispatcher passed `dr` to neither
+  destroy helper. So `dr=1`'s intent ("draw after") was honored for tabs but silently lost for windows.
+- `swap_tabs()`'s `new_schematic("switch_tab", …)` is a **no-op** — there is no `"switch_tab"` branch in the
+  `new_schematic()` dispatcher (it uses `"switch"`), so nothing there draws either.
+
+Net: closing the main `.drw` while a force-window is open did **zero synchronous draws** → title updates
+(via `set_modify`) but the pixmap stays stale. No expose event fires (the `.drw` canvas neither moved nor
+resized — only its backing schematic was swapped), which is why it does **not** self-heal; a resize/zoom/pan
+issues the first real `draw()`.
+
+### Fix (one line, symmetric with `destroy_tab`)
+Thread `dr` into `destroy_window()` and redraw the surviving window when set:
+```c
+static void destroy_window(int *window_count, const char *win_path, int dr) { …
+    set_modify(-1);
+    if(dr && close) draw();   /* destroy_tab() always draws; destroy_window() used to drop dr */
+```
+and pass it at the call site: `destroy_window(&window_count, win_path, dr);`.
+- Tabbed main-close with a force-window (`dr=1`): now redraws → **fixed**.
+- Non-tabbed main-close (`dr=0`, scheduler issues its own `draw()` right after): unchanged (single draw).
+- Closing a *non-main* detached window (`dr=1`): also now redraws — a latent stale-display fix.
+- Genuine-tab close: routes to `destroy_tab()` (unchanged), so no double draw.
+
+### Test / verification
+Added **C7** to `tests/headless/test_close_window_force.tcl` plus a new introspection seam
+`xschem get drawcount` (a monotonic `unsigned int draw_count` bumped at the top of `draw()`):
+sample `drawcount` immediately **before and after** `xschem exit force` (before any `update`) and assert it
+incremented — i.e. the close drew **synchronously**, not via a later expose. Sabotage-verified: with the
+`draw()` removed, C7 fails (`drawcount 8 → 8`) while **C6 still passes** — confirming C7 catches exactly this
+stale-draw defect and that it is independent of the freeze (C6). Post-fix all of C1–C7 pass (`8 → 9`).
+Headless regression cases (create_save / open_close / netlisting) run with 0 FATAL.
+
+### Notes for future work
+- The two defects are orthogonal: **C6** (`drawwindowid`) guards the live-drawable/freeze; **C7**
+  (`drawcount`) guards the synchronous-redraw. A future refactor must keep both — a correct draw *target*
+  with no draw *call* still looks broken.
+- `new_schematic("switch_tab", …)` in `swap_tabs()` matches no dispatcher branch and is a dead no-op; the
+  destroy step is what actually repositions `xctx` (via its `savectx`/`tab_queue GET` fallback).
