@@ -1280,11 +1280,11 @@ static int source_tcl_file(char *s)
 
     fprintf(errfp, "Tcl_AppInit() error: can not execute %s, please fix:\n", s);
     fprintf(errfp, "%s", tclresult());
-    #if TCL_MAJOR_VERSION >= 8 && TCL_MINOR_VERSION >=6
+    #if TCL_MAJOR_VERSION > 8 || (TCL_MAJOR_VERSION == 8 && TCL_MINOR_VERSION >= 6) /* Tcl_GetErrorLine: 8.6+ (incl. Tcl 9; old `&& MINOR>=6` was false on 9.0) */
     fprintf(errfp, "\nLine No: %d\n", Tcl_GetErrorLine(interp));
     #endif
     fprintf(errfp, "\n");
-    #if TCL_MAJOR_VERSION >= 8 && TCL_MINOR_VERSION >=6
+    #if TCL_MAJOR_VERSION > 8 || (TCL_MAJOR_VERSION == 8 && TCL_MINOR_VERSION >= 6) /* Tcl_GetErrorLine: 8.6+ (incl. Tcl 9; old `&& MINOR>=6` was false on 9.0) */
     my_snprintf(tmp, S(tmp), "tk_messageBox -icon error -type ok -message \
        {Tcl_AppInit() err 1: can not execute %s, please fix:\n%s\nLine No: %d\n}",
        s, tclresult(), Tcl_GetErrorLine(interp));

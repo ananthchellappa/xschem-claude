@@ -8910,7 +8910,7 @@ int tclvareval(const char *script, ...)
     dbg(2, "tclvareval(): p=%s, str=%s, size=%d\n", p, str, size);
   }
   dbg(2, "tclvareval(): script=%s, str=%s, size=%d\n", script, str ? str : "<NULL>", size);
-  return_code = Tcl_EvalEx(interp, str, (int)size, TCL_EVAL_GLOBAL);
+  return_code = Tcl_EvalEx(interp, str, (Tcl_Size)size, TCL_EVAL_GLOBAL); /* Tcl_Size: no-op on 8.6 (=int), avoids >2GB truncation on Tcl 9 */
   va_end(args);
   if(return_code != TCL_OK) {
     dbg(0, "tclvareval(): error executing %s: %s\n", str, tclresult());
