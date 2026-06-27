@@ -59,15 +59,17 @@ proc ciform::refocus {w} { if {[winfo exists $w]} { catch {focus -force $w.f.eli
 # Appended (+) to the canvas ButtonRelease binding so it runs AFTER xschem has
 # handled the drop; a no-op unless a symbol is armed and a drop just completed.
 proc ciform::install_drop_hook {} {
-  if {$ciform::hook_installed} return
+  variable hook_installed
+  if {$hook_installed} return
   if {![winfo exists .drw]} return
   bind .drw <ButtonRelease> {+ciform::after_drop %b}
-  set ciform::hook_installed 1
+  set hook_installed 1
 }
 proc ciform::after_drop {b} {
+  variable armed
   if {$b != 1} return
-  if {!$ciform::armed} return
-  if {![winfo exists .ciform]} { set ciform::armed 0; return }
+  if {!$armed} return
+  if {![winfo exists .ciform]} { set armed 0; return }
   if {[ciform::placing]} return   ;# preview still attached -> no drop happened
   ciform::arm                     ;# a drop completed -> re-arm the same symbol
 }
@@ -190,11 +192,11 @@ proc ciform::is_recursive {lib cell} {
 # view, or would recurse. The Instance Name, if set, becomes the instance's
 # name= attribute.
 proc ciform::arm {} {
-  variable lib; variable cell; variable view; variable instname
-  if {![winfo exists .ciform]} { set ciform::armed 0; return }
+  variable lib; variable cell; variable view; variable instname; variable armed
+  if {![winfo exists .ciform]} { set armed 0; return }
   set f [ciform::resolve]
   if {$f eq ""} {
-    set ciform::armed 0
+    set armed 0
     ciform::abort_if_placing
     if {$lib eq "" || $cell eq "" || $view eq ""} {
       ciform::status "specify Library, Cell and View to place an instance"
@@ -204,7 +206,7 @@ proc ciform::arm {} {
     return
   }
   if {[ciform::is_recursive $lib $cell]} {
-    set ciform::armed 0
+    set armed 0
     ciform::abort_if_placing
     ciform::status "cannot instantiate $cell here — it is in the current hierarchy (recursion)"
     return
@@ -215,13 +217,14 @@ proc ciform::arm {} {
   } else {
     xschem place_symbol $f
   }
-  set ciform::armed 1
+  set armed 1
   ciform::status "placing $lib/$cell ($view) — click the canvas to place; Esc to finish"
 }
 
 # Esc / close: end placement, dismiss the browser AND the form.
 proc ciform::escape {} {
-  set ciform::armed 0
+  variable armed
+  set armed 0
   ciform::abort_if_placing
   catch {destroy .mkinst}
   catch {destroy .ciform}
@@ -229,7 +232,8 @@ proc ciform::escape {} {
 # Form destroyed by any means: abort an armed placement, restore default Esc,
 # and take the browser down with it.
 proc ciform::on_destroy {} {
-  set ciform::armed 0
+  variable armed
+  set armed 0
   catch {bind .drw <Key-Escape> {}}
   ciform::abort_if_placing
   catch {destroy .mkinst}
@@ -327,11 +331,13 @@ proc mkinst::cancel {} { catch {destroy .mkinst} }
 # selection change calls this). Suppressed while restore_from_form is positioning
 # the panes, so reopening does not clobber the form with transient partial state.
 proc mkinst::push {} {
-  if {$mkinst::suppress_push} return
-  ciform::set_lcv $mkinst::sel_lib $mkinst::sel_cell [mkinst::cursel .mkinst.pw.view.lb]
+  variable sel_lib; variable sel_cell; variable suppress_push
+  if {$suppress_push} return
+  ciform::set_lcv $sel_lib $sel_cell [mkinst::cursel .mkinst.pw.view.lb]
 }
 
 proc mkinst::populate_libs {} {
+  variable sel_lib; variable sel_cell
   set lb .mkinst.pw.lib.lb
   if {![winfo exists $lb]} return
   $lb delete 0 end
@@ -340,20 +346,21 @@ proc mkinst::populate_libs {} {
   foreach n [lsort $names] { $lb insert end $n }
   .mkinst.pw.cell.lb delete 0 end
   .mkinst.pw.view.lb delete 0 end
-  set mkinst::sel_lib  ""
-  set mkinst::sel_cell ""
+  set sel_lib  ""
+  set sel_cell ""
 }
 
 # Library chosen -> fill the Cell column, clear Cell/View, push {lib "" ""} so the
 # form tracks the (now incomplete) selection.
 proc mkinst::on_lib {} {
-  set mkinst::sel_lib [mkinst::cursel .mkinst.pw.lib.lb]
-  set mkinst::sel_cell ""
+  variable sel_lib; variable sel_cell
+  set sel_lib [mkinst::cursel .mkinst.pw.lib.lb]
+  set sel_cell ""
   set cl .mkinst.pw.cell.lb
   $cl delete 0 end
   .mkinst.pw.view.lb delete 0 end
-  if {$mkinst::sel_lib ne {}} {
-    foreach c [xschem lib_cells $mkinst::sel_lib] { $cl insert end $c }
+  if {$sel_lib ne {}} {
+    foreach c [xschem lib_cells $sel_lib] { $cl insert end $c }
   }
   mkinst::push
 }
@@ -371,39 +378,46 @@ proc mkinst::symbol_views {lib cell} {
 # select it so clicking the cell also fills the form's View field; with several,
 # leave the View unselected (the user picks one) and the form's View stays empty.
 proc mkinst::on_cell {} {
-  set mkinst::sel_cell [mkinst::cursel .mkinst.pw.cell.lb]
+  variable sel_lib; variable sel_cell
+  set sel_cell [mkinst::cursel .mkinst.pw.cell.lb]
   set vl .mkinst.pw.view.lb
   $vl delete 0 end
-  if {$mkinst::sel_lib eq {} || $mkinst::sel_cell eq {}} { mkinst::push; return }
-  set sv [mkinst::symbol_views $mkinst::sel_lib $mkinst::sel_cell]
+  if {$sel_lib eq {} || $sel_cell eq {}} { mkinst::push; return }
+  set sv [mkinst::symbol_views $sel_lib $sel_cell]
   foreach v $sv { $vl insert end $v }
   if {[llength $sv] == 1} {
     $vl selection set 0; $vl activate 0
-    mkinst::status "$mkinst::sel_lib/$mkinst::sel_cell ([lindex $sv 0])"
+    mkinst::status "$sel_lib/$sel_cell ([lindex $sv 0])"
   } elseif {[llength $sv] == 0} {
-    mkinst::status "no symbol view for $mkinst::sel_lib/$mkinst::sel_cell"
+    mkinst::status "no symbol view for $sel_lib/$sel_cell"
   } else {
-    mkinst::status "$mkinst::sel_lib/$mkinst::sel_cell — choose a symbol View"
+    mkinst::status "$sel_lib/$sel_cell — choose a symbol View"
   }
   mkinst::push
 }
 
 proc mkinst::on_view {} {
+  variable sel_lib; variable sel_cell
   set v [mkinst::cursel .mkinst.pw.view.lb]
-  if {$v ne {}} { mkinst::status "$mkinst::sel_lib/$mkinst::sel_cell ($v)" }
+  if {$v ne {}} { mkinst::status "$sel_lib/$sel_cell ($v)" }
   mkinst::push
 }
 
 # On (re)open, highlight whatever the form currently holds, so the browser comes
 # up positioned on the form's Library / Cell / View.
 proc mkinst::restore_from_form {} {
-  set lib  $ciform::lib
-  set cell $ciform::cell
-  set view $ciform::view
+  variable suppress_push
+  # Read ciform's vars by ABSOLUTE name (::ciform::…): from a mkinst:: proc a relative
+  # `ciform::lib` resolves to ::mkinst::ciform::lib under Tcl 9 (TIP 278, no global
+  # fallback) and would silently read nothing. The info exists guard also avoids a
+  # "no such variable" error if the form was never opened / the namespace was reset.
+  set lib  [expr {[info exists ::ciform::lib]  ? $::ciform::lib  : {}}]
+  set cell [expr {[info exists ::ciform::cell] ? $::ciform::cell : {}}]
+  set view [expr {[info exists ::ciform::view] ? $::ciform::view : {}}]
   if {$lib eq {}} return
-  set mkinst::suppress_push 1   ;# positioning only — do not echo back to the form
+  set suppress_push 1   ;# positioning only — do not echo back to the form
   mkinst::restore_path $lib $cell $view
-  set mkinst::suppress_push 0
+  set suppress_push 0
 }
 proc mkinst::restore_path {lib cell view} {
   set ll .mkinst.pw.lib.lb

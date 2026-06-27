@@ -2546,7 +2546,7 @@ proc ngspice::get_current {n} {
     set n $currname\($n\)
   }
   # puts "ngspice::get_current --> $n"
-  set err [catch {set ngspice::ngspice_data($n)} res]
+  set err [catch {set ::ngspice::ngspice_data($n)} res]
   if { $err } {
     set res {?}
   }
@@ -2569,15 +2569,15 @@ proc ngspice::get_diff_voltage {n m} {
   set m [string tolower $m]
   set nn $path$n
   set mm $path$m
-  set errn [catch {set ngspice::ngspice_data($nn)} resn]
+  set errn [catch {set ::ngspice::ngspice_data($nn)} resn]
   if {$errn} {
     set nn v(${path}${n})
-    set errn [catch {set ngspice::ngspice_data($nn)} resn]
+    set errn [catch {set ::ngspice::ngspice_data($nn)} resn]
   }
-  set errm [catch {set ngspice::ngspice_data($mm)} resm]
+  set errm [catch {set ::ngspice::ngspice_data($mm)} resm]
   if {$errm} {
     set mm v(${path}${m})
-    set errm [catch {set ngspice::ngspice_data($mm)} resm]
+    set errm [catch {set ::ngspice::ngspice_data($mm)} resm]
   }
   if { $errn  || $errm} {
     set res {?}
@@ -2601,11 +2601,11 @@ proc ngspice::get_voltage {n} {
   # puts "ngspice::get_voltage: path=$path n=$n"
   set node $path$n
   # puts "ngspice::get_voltage: trying $node"
-  set err [catch {set ngspice::ngspice_data($node)} res]
+  set err [catch {set ::ngspice::ngspice_data($node)} res]
   if {$err} {
     set node v(${path}${n})
     # puts "ngspice::get_voltage: trying $node"
-    set err [catch {set ngspice::ngspice_data($node)} res]
+    set err [catch {set ::ngspice::ngspice_data($node)} res]
   }
   if { $err } {
     set res {?}
@@ -2635,7 +2635,7 @@ proc ngspice::get_node {n} {
   set n [string tolower $n]
   # n may contain $path, so substitute its value
   set n [ subst -nocommand $n ]
-  set err [catch {set ngspice::ngspice_data($n)} res]
+  set err [catch {set ::ngspice::ngspice_data($n)} res]
   if { $err } {
     set res {?}
   }
@@ -11651,7 +11651,11 @@ proc toolbar_show { { topwin {} } } {
     }
     if {[winfo ismapped $topwin.toolbar]} {return}
     if { $toolbar_horiz } {
-        if {$tabbed_interface} {
+        # Secondary windows (.x1, .x2 …) never have their own $topwin.tabs widget;
+        # that only exists on the main window as the global .tabs frame.  Falling back
+        # to $topwin.drw as the "before" anchor keeps the toolbar visible and avoids
+        # "bad window path name .x1.tabs" every time a secondary window opens. (issue 0042)
+        if {$tabbed_interface && [winfo exists $topwin.tabs]} {
           pack $topwin.toolbar -fill x -before $topwin.tabs
         } else {
           pack $topwin.toolbar -fill x -before $topwin.drw
@@ -11989,11 +11993,20 @@ proc set_tab_names {{mod {}}} {
     set currsch [xschem get schname]
     regsub {\.drw} $currwin {} tabname
     if {$tabname eq {}} { set tabname .x0}
-    .tabs$tabname configure -text [file tail $currsch]$mod -background $tab_color
-    # puts ".tabs$tabname --> name=[file tail $currsch]$mod"
-    balloon .tabs$tabname $currsch
+    # A detached window (.x1, .x2 …) removes its tab button from .tabs on detach;
+    # set_tab_names is still called (e.g. via set_modify) while that window is current,
+    # so guard to avoid "invalid command name .tabs.x1". (issue 0042)
+    if {[winfo exists .tabs$tabname]} {
+      .tabs$tabname configure -text [file tail $currsch]$mod -background $tab_color
+      # puts ".tabs$tabname --> name=[file tail $currsch]$mod"
+      balloon .tabs$tabname $currsch
+    }
     for { set i 0} { $i < $tctx::max_new_windows} { incr i} {
-      if { [winfo exists .tabs.x$i] && ($tabname ne ".x$i")} {
+      # tctx::tab_bg is set by C when the first extra tab button is created
+      # (scheduler.c).  If only real windows (no tab buttons) have been opened
+      # yet, the variable is unset.  Guard so set_tab_names never throws a
+      # "can't read tctx::tab_bg" error in that scenario. (issue 0043)
+      if { [info exists tctx::tab_bg] && [winfo exists .tabs.x$i] && ($tabname ne ".x$i")} {
          .tabs.x$i configure -background $tctx::tab_bg
       }
     }
@@ -12058,16 +12071,18 @@ proc store_geom {win filename} {
     if { [file exists $geom_file]} {
       set fd [ open $geom_file]
       while {[gets $fd line] >= 0} {
-        if { [llength $line] == 2} {
-          lassign $line f g
-          set d {0}
-        } elseif {[llength $line] == 3} {
-          lassign $line f g d
-        } else {
-          continue
-        }
-        set f [rel_sym_path $f]
-        set geom_array($f) [list $g $d]
+        if {[catch {
+          if { [llength $line] == 2} {
+            lassign $line f g
+            set d {0}
+          } elseif {[llength $line] == 3} {
+            lassign $line f g d
+          } else {
+            continue
+          }
+          set f [rel_sym_path $f]
+          set geom_array($f) [list $g $d]
+        }]} continue
       }
       close $fd
     }
@@ -12075,32 +12090,19 @@ proc store_geom {win filename} {
 
     set geom_data {}
     foreach i [array names geom_array] {
-      append geom_data "{" $i  "}" { } $geom_array($i) \n
+      append geom_data [list $i {*}$geom_array($i)] \n
     }
-    # puts $geom_data
-    # puts [llength $geom_data]
-    # puts ---
+    # sort newest-first (field 2 = timestamp) so the cap below keeps the most recent entries
     set geom_data2 [lsort -stride 3 -decreasing -index 2 -integer $geom_data]
-    # puts $geom_data2
-    # puts [llength $geom_data2]
-    # puts ---
+
     set geom_data3 {}
     set j 0
-    foreach i $geom_data2 {
-      if {$geom_data3 ne {}} {
-        if {$j % 3 == 0} {
-          append geom_data3 \n
-        } else {
-          append geom_data3 { }
-        }
-      }
-      append geom_data3 "{" $i  "}"
+    foreach {f g d} $geom_data2 {
+      if {$j >= 100} break   ;# cap the geometry history at the 100 most-recent files (bounds file growth)
+      append geom_data3 [list $f $g $d] \n
       incr j
     }
 
-    # puts $geom_data3
-    # puts [llength $geom_data3]
-    # puts ===
     set geom_data $geom_data3
     write_data $geom_data\n $geom_file
   }
@@ -13629,7 +13631,7 @@ proc trace_set_vars {varname idxname op} {
         }
       }
     }
-  } elseif {$varname eq {file_chooser} && idxname eq {dirs}} {
+  } elseif {$varname eq {file_chooser} && $idxname eq {dirs}} {
     uplevel #0 {
       if {![info exists file_chooser(old_dirs)] ||
            $file_chooser(old_dirs) ne $file_chooser(dirs)} {

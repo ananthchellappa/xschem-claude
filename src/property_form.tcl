@@ -955,6 +955,8 @@ proc slickprop::edit_form {txtlabel} {
   global symbol prev_symbol no_change_attrs preserve_unchanged_attrs copy_cell
   global user_wants_copy_cell edit_prop_size edit_prop_pos edit_symbol_prop_new_sel
   variable nav
+  variable cur   ;# link to ::slickprop::cur — a relative $slickprop::cur read in this proc body
+                 ;# resolves to ::slickprop::slickprop::cur on Tcl 9 (TIP 278, no global fallback)
   set user_wants_copy_cell 0
   set ::tctx::rcode {}
   set ::tctx::retval_orig $::tctx::retval
@@ -1143,14 +1145,14 @@ proc slickprop::edit_form {txtlabel} {
   if {$sel_attr eq {}} { catch {set sel_attr [xschem getprop symbol $symbol select]} }
   set focused 0
   foreach a [list $sel_attr value lab name] {
-    if {$a ne {} && [info exists slickprop::cur(entry,$a)]} {
-      set e $slickprop::cur(entry,$a)
+    if {$a ne {} && [info exists cur(entry,$a)]} {
+      set e $cur(entry,$a)
       focus $e; $e selection range 0 end; $e icursor end
       set focused 1; break
     }
   }
-  if {!$focused && [llength $slickprop::cur(tokens)]} {
-    focus $slickprop::cur(entry,[lindex $slickprop::cur(tokens) 0])
+  if {!$focused && [llength $cur(tokens)]} {
+    focus $cur(entry,[lindex $cur(tokens) 0])
   }
 
   raise .dialog                 ;# M2: float in front initially (no transient), non-capturing
