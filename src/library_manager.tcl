@@ -45,10 +45,9 @@ namespace eval libmgr {
 proc libmgr::raise_to_front {} {
   set w .libmgr
   if {![winfo exists $w]} return
-  # Re-map to defeat focus-stealing prevention (WMs grant focus to a freshly MAPPED
-  # window, not an already-open one). raise_activate_toplevel sets the geometry WHILE
-  # WITHDRAWN so the window does not creep a little on every re-launch (issue 0054);
-  # see doc/claude/specs/library_manager_launch.md.
+  # Bring it to the front via the shared helper (a stacking-attribute toggle that does
+  # NOT re-map or touch geometry, so the window no longer creeps North-West on every
+  # CTRL-ALT-S re-launch, issue 0054); then put keyboard focus on the library list.
   raise_activate_toplevel $w
   catch {focus -force $w.pw.lib.lb}
   after idle [list libmgr::refocus $w]

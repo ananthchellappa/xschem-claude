@@ -76,18 +76,28 @@ WSLg it should now also update the title tint — unlike the earlier plain `rais
 WSLg. The context-switch logic IS verified headless (`test_descend_newwin_return.tcl`,
 `current_win_path`/`currsch`/`schname` after each return).
 
-## 3a. Follow-up — the re-mapped window crept on every raise
+## 3a. Follow-up — the re-mapped window crept on every raise (North-West)
 
 The re-map (`wm withdraw` + `wm deiconify`) brought the window forward, but the window **drifted a
-little each time** it was raised — reported for both the return and the Library Manager launch
-(which used the identical pattern). Cause: re-applying `wm geometry $top $geo` to a still-**mapped**
-window makes a reparenting WM re-add the title-bar/border offset on every call, so the position
-accumulates that offset. Fix: a shared helper `raise_activate_toplevel` (`src/xschem.tcl`) sets the
-geometry **while the window is withdrawn**, so `deiconify` uses it as the initial map placement
-instead of moving an already-mapped window. Verified deterministically: `raise_activate_toplevel`
-called 5× in a row keeps the geometry byte-identical (`+32+32`), no drift, no jump — vs the old
-order which drifted. `cadence::focus_window`, `libmgr::raise_to_front` and `ciform::raise_to_front`
-all now go through the shared helper.
+little North-West each time** it was raised — most repeatably the Library Manager on every
+**CTRL-ALT-S** (`locate_selected_in_libmgr` → `libmgr::open` → `raise_to_front`), and also the
+descend-return.
+
+First attempt — set `wm geometry` **while withdrawn** (so `deiconify` uses it as the initial map
+placement) — looked stable when reading `wm geometry` back, but measuring the actual `winfo
+rootx`/`rooty` showed the window still walked NW each cycle (`306,227 → 242,163 → 210,131 → 178,99`):
+a reparenting/placing WM re-positions on every **map**, regardless of how the geometry is fed in. A
+bare `raise` separately could fling the main window to another monitor.
+
+**Actual fix:** never re-map, never touch geometry, and don't `raise`. The shared helper
+`raise_activate_toplevel` (`src/xschem.tcl`) now just **toggles the `-topmost` stacking attribute**
+(set 1, `update idletasks`, set 0). That forces the window to the front on WMs that ignore `raise`,
+leaves no lasting always-on-top, and — because a stacking attribute never changes geometry — the
+window cannot drift. Verified deterministically: `rootx`/`rooty` byte-identical across 6 cycles on
+**both** a dialog toplevel and the main window (`1103,424` and `3608,116` respectively), vs the
+set-while-withdrawn order which still drifted NW. `cadence::focus_window`, `libmgr::raise_to_front`
+and `ciform::raise_to_front` all route through the shared helper; callers add their own keyboard
+focus afterward.
 
 ## 4. Acceptance
 

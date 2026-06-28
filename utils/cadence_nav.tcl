@@ -85,15 +85,13 @@ proc cadence::focus_window {win} {
     set top [winfo toplevel $win]
     set curtop {}
     if {[winfo exists $cur]} { set curtop [winfo toplevel $cur] }
-    # Raise + activate the target's TOP-LEVEL via the freshly-mapped trick (a plain
-    # `raise` is refused by WSLg/WM focus-stealing prevention on an already-open window
-    # -- the reported "doesn't even get raised when under another window"). Shared with
-    # the Library Manager / Create Instance launch; it sets geometry WHILE WITHDRAWN so
-    # the window does not creep on each raise (issue 0054). Only when the target is a
-    # DIFFERENT OS window (tabs share one toplevel; switching tabs needs no re-map).
+    # Bring the target's TOP-LEVEL to the front via the shared helper (a stacking-
+    # attribute toggle: a plain `raise` is ignored by WSLg focus-stealing prevention,
+    # and re-mapping makes the window creep -- issue 0054). Only when the target is a
+    # DIFFERENT OS window (no point toggling the window we are already on).
     if {[winfo exists $top] && $top ne $curtop} {
       raise_activate_toplevel $top
-      update idletasks   ;# let the re-map/raise settle before we measure + warp into it
+      update idletasks
     }
     if {[winfo exists $win]} {
       # mouse_follows_focus (default) ties the engine context to the POINTER, switching

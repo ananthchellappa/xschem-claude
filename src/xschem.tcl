@@ -5378,28 +5378,29 @@ proc force_window_repaint {win {tries 0}} {
   }
 }
 
-# Raise + activate an already-open top-level reliably. WSLg/WM focus-stealing
-# prevention refuses raise/focus on an already-mapped window but grants it to a
-# freshly MAPPED one, so re-map it (withdraw + deiconify). The catch: re-applying
-# `wm geometry` to a still-MAPPED window makes a reparenting WM re-add the title-bar/
-# border offset on every call, so the window creeps a little each time it is raised
-# (reported for both this and the Library Manager). Setting the geometry WHILE
-# WITHDRAWN makes the deiconify use it as the initial map placement instead -- which
-# round-trips exactly (verified: stable across repeated cycles, no drift, no jump).
-# Callers add their own focus afterward. (issue 0054)
+# Raise an already-open top-level to the front reliably, WITHOUT moving it.
+#
+# WSLg/WM focus-stealing prevention ignores a plain `raise` on an already-open window.
+# The re-map workaround (wm withdraw + wm deiconify, with/without re-applying geometry)
+# does raise it, but it MOVES the window: a reparenting/placing WM nudges it on every
+# map -- the reported North-West creep on each CTRL-ALT-S / return (it drifts even when
+# `wm geometry` is set while withdrawn: the reported geometry stays put but the actual
+# rootx/rooty walk NW). And a bare `raise` can fling the main window to another monitor.
+#
+# So do NOT re-map, do NOT touch geometry, and do NOT `raise`: toggle the "above/topmost"
+# stacking attribute, which forces the window to the top on WMs that ignore `raise`, then
+# clear it (no lasting always-on-top). A stacking attribute never changes geometry, so the
+# window cannot drift -- verified rootx/rooty byte-stable across cycles on both a dialog and
+# the main window. Callers add their own keyboard focus afterward. (issue 0054)
 proc raise_activate_toplevel {top} {
   global has_x
   if { ![info exists has_x] || !$has_x } return
   if {![winfo exists $top]} return
-  if {[winfo ismapped $top]} {
-    set geo [wm geometry $top]
-    wm withdraw $top
-    catch {wm geometry $top $geo}
-    wm deiconify $top
-  } else {
-    catch {wm deiconify $top}
+  catch {
+    wm attributes $top -topmost 1
+    update idletasks
+    wm attributes $top -topmost 0
   }
-  raise $top
 }
 
 # A new-window descend reloads the parent from DISK, so any UNSAVED edits in the source window
