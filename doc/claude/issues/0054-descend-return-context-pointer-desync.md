@@ -98,21 +98,23 @@ Third attempt — `wm iconify` + `wm deiconify` (Windows minimize+restore): **re
 deiconify did not undo the minimize — the window got stuck minimized in the tray and had to be
 restored by hand. Worse than the drift.
 
-**Conclusion — no single method gives BOTH raise and no-drift on WSLg** (all empirically tested):
+None of the *Tk-level* tricks gives BOTH raise and no-drift on WSLg (all empirically tested):
 re-map (`withdraw`/`deiconify`) raises but the WM re-places it NW; `-topmost` toggle never moves it
 but doesn't raise; `iconify` gets stuck minimized; geometry restore / measured correction don't hold.
-So the shared helper `raise_activate_toplevel` (`src/xschem.tcl`) exposes the trade-off via a flag
-`::raise_no_drift`:
-- **default** — `withdraw`/`deiconify` re-map: the window **raises** (the reported, working
-  behavior) but drifts a little NW each time.
-- **`set raise_no_drift 1`** — `-topmost` toggle: never drifts, but does **not** raise on WSLg (the
-  engine context still switches — Ctrl-A acts on the right window — you just may need to click it
-  forward).
 
-`cadence::focus_window`, `libmgr::raise_to_front` and `ciform::raise_to_front` all route through the
-helper and add their own keyboard focus. (A WSLg WM that honored either `_NET_ACTIVE_WINDOW` or a
-real `SetWindowPos` topmost toggle would let us have both, but Tk on this XWayland→Windows path
-exposes neither.)
+**Actual fix — EWMH `_NET_ACTIVE_WINDOW`.** The WSLg window manager identifies as **"Weston WM"** and
+**advertises `_NET_ACTIVE_WINDOW`** in `_NET_SUPPORTED`. That client message is the standard "activate
+this window" request: the WM raises it to the front and focuses it **without unmapping or moving it**,
+so there is no drift. `wmctrl`/`xdotool` aren't installed, but xschem is itself an Xlib app and
+already has a `client_msg()` helper (used for `_NET_WM_STATE` fullscreen), so a new C function
+`net_active_window()` (`xinit.c`) sends it (source indication 2 = pager/direct-user-action, which
+bypasses focus-stealing prevention), exposed as `xschem activate_window <xid>` (`scheduler.c`,
+`xschem_cmds_a`). The shared helper `raise_activate_toplevel` (`src/xschem.tcl`) now just does
+`raise $top; xschem activate_window [winfo id $top]`. Verified: command runs clean and the window's
+`rootx`/`rooty` are byte-identical across cycles (no drift); the raise itself can't be asserted
+headless (this WM's `wm stackorder` is unreliable) but the message is the WM-honored one. No re-map,
+no flash, no always-on-top side effect. `cadence::focus_window`, `libmgr::raise_to_front` and
+`ciform::raise_to_front` all route through the helper and add their own keyboard focus.
 
 ## 4. Acceptance
 

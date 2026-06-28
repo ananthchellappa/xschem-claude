@@ -5378,37 +5378,20 @@ proc force_window_repaint {win {tries 0}} {
   }
 }
 
-# Raise + activate an already-open top-level on WMs (notably WSLg) whose focus-stealing
-# prevention ignores a plain `raise`. The freshly-MAPPED window IS granted focus, so re-map
-# it (withdraw + deiconify). Whether ::raise_no_drift is set picks the trade-off, because no
-# single method gives both raise AND no-drift on WSLg (all empirically tested, issue 0054):
-#  - DEFAULT (raise): withdraw + deiconify brings the window forward, but WSLg's WM re-places
-#    it a little North-West on every map (geometry restore does NOT hold -- the reported
-#    `wm geometry` stays put while the real rootx/rooty creep; a measured correction does not
-#    stick either). So the window raises but drifts a little each time.
-#  - ::raise_no_drift on: do NOT re-map; just `wm attributes -topmost` toggle. Never touches
-#    geometry so it cannot drift, but on WSLg it does NOT actually raise (clearing the
-#    attribute drops the window back) -- the engine context still switches, you just may need
-#    to click the window to bring it forward.
-# (`wm iconify`+`deiconify` was tried and REJECTED: on WSLg the deiconify did not undo the
-# minimize, leaving the window stuck in the system tray.) Callers add their own focus.
+# Raise + activate an already-open top-level on WMs (notably WSLg/Weston) whose focus-
+# stealing prevention ignores a plain `raise`. Use the EWMH _NET_ACTIVE_WINDOW client
+# message (`xschem activate_window`): the WM raises the window to the front and focuses it
+# WITHOUT unmapping or moving it, so -- unlike the withdraw/deiconify re-map -- it does not
+# drift. Honored by any WM that advertises _NET_ACTIVE_WINDOW (Weston does). The `raise` is
+# a harmless companion for plain X servers. Earlier attempts and why they failed are in
+# doc/claude/issues/0054 (re-map raises but drifts NW; `-topmost` toggle no drift but does
+# not raise; `wm iconify` got stuck minimized). Callers add their own keyboard focus. (0054)
 proc raise_activate_toplevel {top} {
-  global has_x raise_no_drift
+  global has_x
   if { ![info exists has_x] || !$has_x } return
   if {![winfo exists $top]} return
-  if {[info exists raise_no_drift] && $raise_no_drift} {
-    catch { wm attributes $top -topmost 1; update idletasks; wm attributes $top -topmost 0 }
-    return
-  }
-  if {[winfo ismapped $top]} {
-    set geo [wm geometry $top]
-    wm withdraw $top
-    wm deiconify $top
-    catch {wm geometry $top $geo}
-  } else {
-    catch {wm deiconify $top}
-  }
   raise $top
+  catch { xschem activate_window [winfo id $top] }
 }
 
 # A new-window descend reloads the parent from DISK, so any UNSAVED edits in the source window

@@ -175,6 +175,18 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
       abort_operation();
     }
 
+    /* activate_window <xid>
+     *   Ask the WM to raise to the front + focus the top-level X window 'xid' (a hex id
+     *   from Tcl `winfo id`) via EWMH _NET_ACTIVE_WINDOW. Raises WITHOUT re-mapping or
+     *   moving the window, so there is no position drift (issue 0054). A no-op without X
+     *   or on a WM that does not honor the hint. */
+    else if(!strcmp(argv[1], "activate_window"))
+    {
+      if(has_x && argc > 2) {
+        net_active_window((Window) strtoul(argv[2], NULL, 0));
+      }
+    }
+
     /* apply_properties scope displayed_id new_prop old_prop
      *   Mid-session apply for the slick property form (P2 Apply / OK). Fans the
      *   change set (new_prop vs old_prop, changed-fields-only) to the instances

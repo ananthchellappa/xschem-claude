@@ -1986,6 +1986,7 @@ extern void windowid(const char *win_path);
 extern int preview_window(const char *what, const char *tk_win_path, const char *fname);
 extern int new_schematic(const char *what, const char *win_path, const char *fname, int dr);
 extern void toggle_fullscreen(const char *topwin);
+extern int net_active_window(Window win); /* EWMH raise+focus, no re-map/drift (issue 0054) */
 extern void toggle_only_probes();
 extern int build_colors(double dim, double dim_bg); /*  reparse the TCL 'colors' list and reassign colors 20171113 */
 extern void set_clip_mask(int what);

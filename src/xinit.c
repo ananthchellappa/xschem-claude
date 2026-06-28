@@ -80,6 +80,23 @@ static int client_msg(Display *disp, Window win, char *msg, /* {{{ */
     }
 }/*}}}*/
 
+/* Ask the window manager to ACTIVATE (raise to the front + give focus to) the top-level
+ * X window 'win' via the EWMH _NET_ACTIVE_WINDOW client message. Unlike a withdraw/
+ * deiconify re-map this neither unmaps nor moves the window, so it cannot drift; honored
+ * by EWMH window managers that advertise _NET_ACTIVE_WINDOW (e.g. Weston on WSLg). Source
+ * indication 2 = "pager / direct user action", which WMs honor in spite of focus-stealing
+ * prevention. Used by raise_activate_toplevel (Tcl) for the Library Manager / Create
+ * Instance / descend-return raises. (issue 0054) */
+int net_active_window(Window win)
+{
+  int r;
+  if(!display || !win) return EXIT_FAILURE;
+  r = client_msg(display, win, "_NET_ACTIVE_WINDOW",
+                 2 /* source: pager / direct user action */, CurrentTime, 0, 0, 0);
+  XFlush(display);
+  return r;
+}
+
 Xschem_ctx **get_save_xctx(void)
 {
   return save_xctx;
