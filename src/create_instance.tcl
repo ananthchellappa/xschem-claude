@@ -44,12 +44,9 @@ proc ciform::abort_if_placing {} { if {[ciform::placing]} { catch {xschem abort_
 proc ciform::raise_to_front {} {
   set w .ciform
   if {![winfo exists $w]} return
-  if {[winfo ismapped $w]} {
-    set geo [wm geometry $w]; wm withdraw $w; wm deiconify $w; catch {wm geometry $w $geo}
-  } else {
-    catch {wm deiconify $w}
-  }
-  raise $w
+  # re-map to grab focus, setting geometry while withdrawn so it doesn't creep on
+  # each raise (shared helper; issue 0054)
+  raise_activate_toplevel $w
   catch {focus -force $w.f.elib}
   after idle [list ciform::refocus $w]
 }

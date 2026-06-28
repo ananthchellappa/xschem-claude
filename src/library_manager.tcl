@@ -45,21 +45,11 @@ namespace eval libmgr {
 proc libmgr::raise_to_front {} {
   set w .libmgr
   if {![winfo exists $w]} return
-  # Window managers with focus-stealing prevention refuse raise/focus on an
-  # ALREADY-OPEN window, but grant focus to a freshly MAPPED one (which is why
-  # opening from closed gets focus and re-launching does not). So re-map an open
-  # window (withdraw + deiconify) to make the WM treat it as a fresh map and give
-  # it focus; preserve geometry so it doesn't jump. See
-  # doc/claude/specs/library_manager_launch.md.
-  if {[winfo ismapped $w]} {
-    set geo [wm geometry $w]
-    wm withdraw $w
-    wm deiconify $w
-    catch {wm geometry $w $geo}
-  } else {
-    catch {wm deiconify $w}
-  }
-  raise $w
+  # Re-map to defeat focus-stealing prevention (WMs grant focus to a freshly MAPPED
+  # window, not an already-open one). raise_activate_toplevel sets the geometry WHILE
+  # WITHDRAWN so the window does not creep a little on every re-launch (issue 0054);
+  # see doc/claude/specs/library_manager_launch.md.
+  raise_activate_toplevel $w
   catch {focus -force $w.pw.lib.lb}
   after idle [list libmgr::refocus $w]
 }

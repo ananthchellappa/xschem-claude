@@ -76,6 +76,19 @@ WSLg it should now also update the title tint — unlike the earlier plain `rais
 WSLg. The context-switch logic IS verified headless (`test_descend_newwin_return.tcl`,
 `current_win_path`/`currsch`/`schname` after each return).
 
+## 3a. Follow-up — the re-mapped window crept on every raise
+
+The re-map (`wm withdraw` + `wm deiconify`) brought the window forward, but the window **drifted a
+little each time** it was raised — reported for both the return and the Library Manager launch
+(which used the identical pattern). Cause: re-applying `wm geometry $top $geo` to a still-**mapped**
+window makes a reparenting WM re-add the title-bar/border offset on every call, so the position
+accumulates that offset. Fix: a shared helper `raise_activate_toplevel` (`src/xschem.tcl`) sets the
+geometry **while the window is withdrawn**, so `deiconify` uses it as the initial map placement
+instead of moving an already-mapped window. Verified deterministically: `raise_activate_toplevel`
+called 5× in a row keeps the geometry byte-identical (`+32+32`), no drift, no jump — vs the old
+order which drifted. `cadence::focus_window`, `libmgr::raise_to_front` and `ciform::raise_to_front`
+all now go through the shared helper.
+
 ## 4. Acceptance
 
 After a cross-window return (Ctrl-E or Alt-E), the pointer is in the target window and that window's

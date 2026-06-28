@@ -85,23 +85,14 @@ proc cadence::focus_window {win} {
     set top [winfo toplevel $win]
     set curtop {}
     if {[winfo exists $cur]} { set curtop [winfo toplevel $cur] }
-    # Raise + activate the target's TOP-LEVEL. A plain `raise` is refused by WSLg/WM
-    # focus-stealing prevention on an already-open window (the reported "doesn't even
-    # get raised when under another window"), but focus IS granted to a freshly MAPPED
-    # one -- so re-map it (withdraw + deiconify, preserving geometry), the same trick
-    # the Library Manager launch uses (doc/claude/specs/library_manager_launch.md). Only
-    # when the target is a DIFFERENT OS window (tabs share one toplevel; switching tabs
-    # needs no re-map). Verified safe on the main window '.'.
+    # Raise + activate the target's TOP-LEVEL via the freshly-mapped trick (a plain
+    # `raise` is refused by WSLg/WM focus-stealing prevention on an already-open window
+    # -- the reported "doesn't even get raised when under another window"). Shared with
+    # the Library Manager / Create Instance launch; it sets geometry WHILE WITHDRAWN so
+    # the window does not creep on each raise (issue 0054). Only when the target is a
+    # DIFFERENT OS window (tabs share one toplevel; switching tabs needs no re-map).
     if {[winfo exists $top] && $top ne $curtop} {
-      if {[winfo ismapped $top]} {
-        set geo [wm geometry $top]
-        wm withdraw $top
-        wm deiconify $top
-        catch {wm geometry $top $geo}
-      } else {
-        catch {wm deiconify $top}
-      }
-      raise $top
+      raise_activate_toplevel $top
       update idletasks   ;# let the re-map/raise settle before we measure + warp into it
     }
     if {[winfo exists $win]} {

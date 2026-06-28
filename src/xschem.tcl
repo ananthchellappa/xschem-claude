@@ -5378,6 +5378,30 @@ proc force_window_repaint {win {tries 0}} {
   }
 }
 
+# Raise + activate an already-open top-level reliably. WSLg/WM focus-stealing
+# prevention refuses raise/focus on an already-mapped window but grants it to a
+# freshly MAPPED one, so re-map it (withdraw + deiconify). The catch: re-applying
+# `wm geometry` to a still-MAPPED window makes a reparenting WM re-add the title-bar/
+# border offset on every call, so the window creeps a little each time it is raised
+# (reported for both this and the Library Manager). Setting the geometry WHILE
+# WITHDRAWN makes the deiconify use it as the initial map placement instead -- which
+# round-trips exactly (verified: stable across repeated cycles, no drift, no jump).
+# Callers add their own focus afterward. (issue 0054)
+proc raise_activate_toplevel {top} {
+  global has_x
+  if { ![info exists has_x] || !$has_x } return
+  if {![winfo exists $top]} return
+  if {[winfo ismapped $top]} {
+    set geo [wm geometry $top]
+    wm withdraw $top
+    catch {wm geometry $top $geo}
+    wm deiconify $top
+  } else {
+    catch {wm deiconify $top}
+  }
+  raise $top
+}
+
 # A new-window descend reloads the parent from DISK, so any UNSAVED edits in the source window
 # (e.g. an instance just added but not saved) are missing from the new window -- and a descend
 # into such a freshly-added instance then no-ops, leaving the new window on the stale parent
