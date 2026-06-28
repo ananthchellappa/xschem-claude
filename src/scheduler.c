@@ -1823,6 +1823,14 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
             Tcl_SetResult(interp, my_itoa(xctx->modified),TCL_VOLATILE);
           }
+          if(!strcmp(argv[2], "mousex_snap")) { /* last snapped mouse x, schematic coords */
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            Tcl_SetResult(interp, dtoa(xctx->mousex_snap),TCL_VOLATILE);
+          }
+          if(!strcmp(argv[2], "mousey_snap")) { /* last snapped mouse y, schematic coords */
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            Tcl_SetResult(interp, dtoa(xctx->mousey_snap),TCL_VOLATILE);
+          }
           break;
           case 'n':
           if(!strcmp(argv[2], "netlist_name")) { /* netlist name if set. If 'fallback' given get default name */
@@ -2093,6 +2101,10 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
               Tcl_SetResult(interp, "1",TCL_STATIC);
             else
               Tcl_SetResult(interp, "0",TCL_STATIC);
+          }
+          else if(!strcmp(argv[2], "texts")) { /* number of text objects in schematic */
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            Tcl_SetResult(interp, my_itoa(xctx->texts), TCL_VOLATILE);
           }
           else if(!strcmp(argv[2], "textlayer")) { /* layer number for texts */
             Tcl_SetResult(interp, my_itoa(TEXTLAYER), TCL_VOLATILE);

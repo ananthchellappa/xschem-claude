@@ -26,6 +26,36 @@ proc cadence::hier_instnames {} {
   return $names
 }
 
+# --- text-note parsing (pure; unit-testable) ------------------------------
+# See doc/claude/specs/cadence_note_nav.md. Charset is \w ([A-Za-z0-9_]); bracketed
+# vector instance names are a documented non-match.
+
+# First "library/cell" token anywhere in $text -> {lib cell}, or {} if none.
+# Used by Ctrl-Alt-S (locate) and Ctrl-Shift-N (open read-only).
+proc cadence::first_libcell {text} {
+  if {[regexp {(\w+)/(\w+)} $text -> lib cell]} { return [list $lib $cell] }
+  return {}
+}
+
+# If $text STARTS WITH a multi-component instance path (word/word/...), return it as a
+# list of names; else {}. Used by Ctrl-Alt-D to read a deep location from a note.
+proc cadence::deeppath_from_text {text} {
+  if {[regexp {^\s*(\w+(?:/\w+)+)} $text -> path]} { return [split $path /] }
+  return {}
+}
+
+# Classify the current selection for the note-aware shortcuts:
+#   none | {inst <n>} | {text <n> <string>} | multi | other
+proc cadence::selkind {} {
+  set ns [xschem get lastsel]
+  if {$ns == 0} { return none }
+  if {$ns != 1} { return multi }
+  lassign [xschem get first_sel] type n col     ;# ELEMENT==8, xTEXT==16
+  if {$type == 8}  { return [list inst $n] }
+  if {$type == 16} { return [list text $n [xschem text_string $n]] }
+  return other
+}
+
 # Walk up to the top. `go_back 1` asks to save when a level is modified; if the
 # user cancels, currsch stops decreasing and we abort. 1 = reached top, 0 = stopped.
 proc cadence::ascend_to_top {} {
@@ -135,17 +165,42 @@ proc cadence::return_one_level {} {
 # --- actions --------------------------------------------------------------
 
 # Ctrl-Shift-N: schematic of selected instance, new window, read-only, always fresh.
+# Open file $f read-only in a NEW top-level OS window (the libmgr::open_view_ro recipe):
+# load into a real window, force read-only, and defer a repaint for WSLg (issue 0052).
+proc cadence::open_file_readonly_newwin {f} {
+  xschem load_new_window -window $f
+  xschem set readonly 1
+  xschem log_action "xschem set readonly 1"
+  after 120 [list force_window_repaint [xschem get current_win_path] 0]
+}
+
+# Ctrl-Shift-N: open a schematic view read-only in a NEW top-level window. Acts on:
+#   - the one selected instance's schematic (force a real window even in tabbed mode), or
+#   - the first "lib/cell" token in a selected text note (see cadence_note_nav.md).
 proc cadence::open_inst_sch_readonly {} {
-  if {![cadence::one_instance_selected]} {
-    ciw_echo "select one instance to open its schematic (read-only)" error ; return
+  set k [cadence::selkind]
+  switch -- [lindex $k 0] {
+    inst {
+      # 'force' => open even if already loaded; 'window' => real top-level OS window.
+      if {[xschem schematic_in_new_window force window] == 0} {
+        ciw_echo "selected instance has no schematic view" error ; return
+      }
+      xschem set readonly 1   ;# new window is now the current context
+      ciw_echo "opened [xschem get schname] (read-only) in [xschem get current_win_path]"
+    }
+    text {
+      set lc [cadence::first_libcell [lindex $k 2]]
+      if {$lc eq {}} { ciw_echo "no library/cell (lib/cell) in the selected note" error ; return }
+      lassign $lc lib cell
+      set f [xschem cellview_path "$lib/$cell" schematic]
+      if {$f eq {}} { ciw_echo "no schematic view for $lib/$cell" error ; return }
+      cadence::open_file_readonly_newwin $f
+      ciw_echo "opened $lib/$cell (read-only) in [xschem get current_win_path]"
+    }
+    default {
+      ciw_echo "select one instance, or a lib/cell text note, to open its schematic (read-only)" error
+    }
   }
-  # 'force'  => open even if that schematic is already loaded.
-  # 'window' => a real top-level OS window (draggable to another monitor), not a tab.
-  if {[xschem schematic_in_new_window force window] == 0} {
-    ciw_echo "selected instance has no schematic view" error ; return
-  }
-  xschem set readonly 1   ;# new window is now the current context
-  ciw_echo "opened [xschem get schname] (read-only) in [xschem get current_win_path]"
 }
 
 # Ctrl-X: descend into selected instance's schematic; no-op if no instance selected.
@@ -214,6 +269,26 @@ proc cadence::return_to_top {} {
   ciw_echo "at top in $root; remembered: $loc  (Alt-X to return)"
 }
 
+# Descend engine: from the current window, ascend to top and then descend through the
+# given top-relative list of instance names, level by level (select-by-name + descend).
+# Shared by Alt-X (descend_to_last) and Ctrl-Alt-D (deeploc_note, descend-from-note).
+# Returns 1 on reaching the leaf, 0 (with a ciw_echo) on the first failure.
+proc cadence::descend_instnames {names} {
+  if {![cadence::ascend_to_top]} {
+    ciw_echo "cannot return to top to begin descent" error ; return 0
+  }
+  foreach name $names {
+    xschem unselect_all
+    if {[xschem select instance $name] == 0} {
+      ciw_echo "instance '$name' not found while descending to $names" error ; return 0
+    }
+    if {[xschem descend] == 0} {
+      ciw_echo "cannot descend into '$name'" error ; return 0
+    }
+  }
+  return 1
+}
+
 # Alt-X: descend back into the location remembered by the last Alt-E for this window.
 proc cadence::descend_to_last {} {
   set win [xschem get current_win_path]
@@ -221,17 +296,62 @@ proc cadence::descend_to_last {} {
     ciw_echo "no remembered location for this window (use Alt-E first)" error ; return
   }
   set loc $cadence::last_loc($win)
-  if {![cadence::ascend_to_top]} {
-    ciw_echo "cannot return to top to begin descent" error ; return
-  }
-  foreach name $loc {
-    xschem unselect_all
-    if {[xschem select instance $name] == 0} {
-      ciw_echo "instance '$name' not found while descending to $loc" error ; return
+  if {[cadence::descend_instnames $loc]} { ciw_echo "descended back to: $loc" }
+}
+
+# --- Ctrl-Alt-D: deep-location <-> text-note round trip -------------------
+# See doc/claude/specs/cadence_note_nav.md.
+
+# The deep location remembered by the last Alt-E for $win, "/"-joined (e.g. "Xamp/Xstage1"),
+# or "" if none. Testable seam for the write path.
+proc cadence::remembered_path {win} {
+  if {![info exists cadence::last_loc($win)] || $cadence::last_loc($win) eq {}} { return {} }
+  return [join $cadence::last_loc($win) /]
+}
+
+# Create a text note pre-filled with $txt and hand it to interactive placement. Mirrors
+# place_text() (actions.c) but KEEPS the seed: place_text clears tctx::retval, so it cannot
+# be pre-filled through it. enter_text pre-fills its entry from tctx::retval; the user may
+# edit, then click to drop the note (xschem move_objects = cursor-follow placement).
+proc cadence::place_note_prefilled {txt} {
+  set ::tctx::retval $txt
+  if {![info exists ::tctx::hsize] || $::tctx::hsize eq {}} { set ::tctx::hsize 0.4 }
+  if {![info exists ::tctx::vsize] || $::tctx::vsize eq {}} { set ::tctx::vsize 0.4 }
+  set ::props {}
+  enter_text {text:} normal
+  set t $::tctx::retval
+  if {$t eq {}} { return 0 }
+  set x [xschem get mousex_snap] ; set y [xschem get mousey_snap]
+  xschem text $x $y 0 0 $t $::props $::tctx::hsize 1      ;# create + draw (vsize=hsize)
+  xschem select text [expr {[xschem get texts] - 1}]
+  xschem move_objects                                     ;# cursor-follow; click to place
+  return 1
+}
+
+# Ctrl-Alt-D: round-trip a deep hierarchy location through a text note.
+#   - nothing selected -> WRITE the location remembered by the last Alt-E as a "/"-joined
+#     note, placed by the user.
+#   - a text note that STARTS WITH a "word/word/..." instance path -> READ it and descend
+#     there using the Alt-X engine (cadence::descend_instnames).
+proc cadence::deeploc_note {} {
+  set k [cadence::selkind]
+  switch -- [lindex $k 0] {
+    none {
+      set path [cadence::remembered_path [xschem get current_win_path]]
+      if {$path eq {}} {
+        ciw_echo "no remembered location (use Alt-E from a deep view first)" error ; return
+      }
+      cadence::place_note_prefilled $path
     }
-    if {[xschem descend] == 0} {
-      ciw_echo "cannot descend into '$name'" error ; return
+    text {
+      set names [cadence::deeppath_from_text [lindex $k 2]]
+      if {$names eq {}} {
+        ciw_echo "selected note is not a deep location (word/word/...)" error ; return
+      }
+      if {[cadence::descend_instnames $names]} { ciw_echo "descended to: [join $names /]" }
+    }
+    default {
+      ciw_echo "Ctrl-Alt-D: select nothing (save Alt-E location) or a word/word/... note (descend)" error
     }
   }
-  ciw_echo "descended back to: $loc"
 }

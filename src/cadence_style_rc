@@ -98,11 +98,13 @@ source [file join $_ut lib_mgr_helpers.tcl]
 source [file join $_ut cadence_nav.tcl]
 # moved unset _ut
 
-# Ctrl-Alt-S : show the selected instance in the Library Manager
+# Ctrl-Alt-S : locate a cell in the Library Manager. Acts on the selected instance's
+# master, or (nothing selected) the cell being viewed, or a "lib/cell" text note.
 bind .drw <Control-Alt-Key-s>   {locate_selected_in_libmgr;       break}
 # Ctrl-Alt-N : place the current Library-Manager selection
 bind .drw <Control-Alt-Key-n>   {place_libmgr_selection;          break}
-# Ctrl-Shift-N : selected instance's schematic in a NEW, read-only window
+# Ctrl-Shift-N : open a schematic read-only in a NEW window -- the selected instance's,
+# or the cell named by a "lib/cell" text note.
 bind .drw <Control-Shift-Key-N> {cadence::open_inst_sch_readonly; break}
 # Ctrl-X : descend into selected instance's schematic (no-op if none selected)
 bind .drw <Control-Key-x>       {cadence::descend_into_inst;      break}
@@ -115,6 +117,10 @@ bind .drw <Control-Key-e>       {cadence::return_one_level;       break}
 bind .drw <Alt-Key-e>           {cadence::return_to_top;          break}
 # Alt-X : descend back into the location remembered by the last Alt-E
 bind .drw <Alt-Key-x>           {cadence::descend_to_last;        break}
+# Ctrl-Alt-D : round-trip a deep location through a text note. Nothing selected ->
+# write the last Alt-E location as a "inst/inst/..." note you place; a note that starts
+# with such a path -> descend there (same engine as Alt-X).
+bind .drw <Control-Alt-Key-d>   {cadence::deeploc_note;           break}
 # Ctrl-2 / Ctrl-Shift-2 : make the current view Editable / Read Only.
 # GOTCHA: with Shift held, the number-row "2" key emits its SHIFTED keysym, not
 # "2" -- so <Control-Shift-Key-2> never matches. On a US layout Shift-2 is "@"
