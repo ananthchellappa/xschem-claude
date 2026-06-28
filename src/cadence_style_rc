@@ -96,6 +96,7 @@ bind .drw <Key-0> {xschem unhilight_all;             break}
 set _ut [file join [file dirname [file normalize [info script]]] .. utils]
 source [file join $_ut lib_mgr_helpers.tcl]
 source [file join $_ut cadence_nav.tcl]
+source [file join $_ut cadence_clip.tcl]
 # moved unset _ut
 
 # Ctrl-Alt-S : locate a cell in the Library Manager. Acts on the selected instance's
@@ -120,6 +121,11 @@ bind .drw <Control-Key-e>       {cadence::return_one_level;       break}
 bind .drw <Alt-Key-e>           {cadence::return_to_top;          break}
 # Alt-X : descend back into the location remembered by the last Alt-E
 bind .drw <Alt-Key-x>           {cadence::descend_to_last;        break}
+# Alt-Shift-C : capture lib/cell/view to the clipboard + CIW. Selected instance ->
+# its master's L/C/V; selected text note -> the first "a/b/c" slash path in it;
+# nothing selected -> the current cellview's L/C/V. GOTCHA (same as Ctrl-Shift-2/N
+# above): with Shift held the "c" key emits the capital "C" keysym, so bind Key-C.
+bind .drw <Alt-Shift-Key-C>     {cadence::capture_lcv;            break}
 # Ctrl-Alt-D : round-trip a deep location through a text note. Nothing selected ->
 # write the last Alt-E location as a "inst/inst/..." note you place; a note that starts
 # with such a path -> descend there (same engine as Alt-X).
