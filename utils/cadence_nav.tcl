@@ -64,17 +64,30 @@ proc cadence::win_live {win} {
   foreach w [xschem windows] { if {[lindex $w 0] eq $win} { return 1 } }
   return 0
 }
-# Make win the active context and bring it to the user: raise its top-level and put
-# keyboard focus on its CANVAS (the canvas, not the toplevel, is where the .drw key
-# bindings fire). A tab is already front after the context switch. No-op if already
-# there.
+# Make win the active context AND bring the user's pointer/focus to it. The engine
+# context is switched synchronously (so return_to_top's loop sees it); then the pointer
+# is WARPED into the target canvas.
+#
+# Why the warp (issue 0054): with mouse_follows_focus on (the default) the engine
+# context follows the POINTER and only switches on EnterNotify. Switching the context
+# to $win while the pointer is still over the OLD window desyncs them -- the old
+# window's clicks/hover keep acting on $win's context, and hover highlighting in the
+# old window stops, until the pointer next crosses a window boundary. Warping the
+# pointer into $win makes pointer, Tk focus and context all agree immediately, which is
+# the honest meaning of "this window is now active" under focus-follows-mouse. (The WM
+# title-bar "active" tint is the window manager's own call -- on WSLg it only updates on
+# a click -- so that cosmetic may lag; the schematic itself is fully live.)
 proc cadence::focus_window {win} {
   if {$win eq [xschem get current_win_path]} return
   xschem new_schematic switch $win
   catch {
     set top [winfo toplevel $win]
     if {[winfo exists $top]} { raise $top }
-    if {[winfo exists $win]} { focus -force $win }
+    if {[winfo exists $win]} {
+      event generate $win <Motion> -warp 1 \
+        -x [expr {[winfo width $win] / 2}] -y [expr {[winfo height $win] / 2}]
+      focus -force $win
+    }
   }
 }
 
