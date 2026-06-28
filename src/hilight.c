@@ -67,6 +67,17 @@ static void hilight_hash_free(void) /* remove the whole hash table  */
  }
 }
 
+/* Monotonic apply-order counter for the buried-net cue (see compute_buried_hilights).
+ * Bumped each time a highlight entry's value is set, so the most recently applied
+ * buried net can be identified by max seq. Process-global ordering is sufficient;
+ * copy_hilights() carries the stamp across descend so recency survives. */
+static unsigned int hilight_apply_seq = 0;
+
+/* Screen-px outset of the buried-net cue rectangle beyond the symbol bbox. Shared by the
+ * draw (draw_hilight_net) and the animation redraw-region scan (scan_animating_hilights) so
+ * the region always fully covers what's drawn. See doc/claude/specs/buried_net_hilight.md */
+#define BURIED_CUE_OUTSET_PX 4.0
+
 static Hilight_hashentry *hilight_hash_lookup(const char *token, int value, int what)
 /*    token           what       ... what ...
  * --------------------------------------------------------------------------
@@ -98,6 +109,7 @@ static Hilight_hashentry *hilight_hash_lookup(const char *token, int value, int 
         entry->oldvalue = value-1000; /* no old value, set different value anyway*/
         entry->value = value;
         entry->time = xctx->hilight_time;
+        entry->seq = ++hilight_apply_seq; /* recency stamp for the buried-net cue */
         entry->hash = hashcode;
         *preventry = entry;
         xctx->hilight_nets = 1; /* some nets should be hilighted ....  07122002 */
@@ -117,6 +129,7 @@ static Hilight_hashentry *hilight_hash_lookup(const char *token, int value, int 
         (*preventry)->oldvalue =(*preventry)->value;
         (*preventry)->value = value;
         (*preventry)->time=xctx->hilight_time;
+        (*preventry)->seq = ++hilight_apply_seq; /* re-applied: refresh recency */
       }
       return (*preventry); /* found matching entry, return the address */
     }
@@ -228,6 +241,7 @@ void copy_hilights(void)
       new->oldvalue = (*entry)->oldvalue;
       new->value = (*entry)->value;
       new->time = (*entry)->time;
+      new->seq = (*entry)->seq; /* preserve buried-cue recency across descend copy */
       new->next = NULL;
 
       *new_entry = new;
@@ -877,6 +891,8 @@ void clear_all_hilights(void)
   xctx->hilight_nets=0;
   for(i=0;i<xctx->instances; ++i) {
     xctx->inst[i].color = -10000 ;
+    xctx->inst[i].buried_hilight = -1; /* derived buried-net cue: cleared with the table.
+      * This path does not call propagate_hilights(), so reset it directly here. */
   }
   dbg(1, "clear_all_hilights(): clearing\n");
 }
@@ -1750,6 +1766,96 @@ static void send_current_to_gaw(int simtype, const char *node)
   my_free(_ALLOC_ID_, &t);
 }
 
+/* Compare instance name 'inst' (which may carry a [..] vector suffix, e.g. x_d[1:0])
+ * against a hierarchy-path component 'comp' of length 'clen' (which, for a vector
+ * instance, is an EXPANDED slice name like x_d[1]). Match on the base name, i.e. the
+ * text before any '['. See doc/claude/specs/buried_net_hilight.md §8.4 — exact
+ * per-slice matching for vector instances is a documented v1 approximation. */
+static int buried_name_match(const char *inst, const char *comp, int clen)
+{
+  int a, b;
+  if(!inst) return 0;
+  for(a = 0; inst[a] && inst[a] != '['; ++a);
+  for(b = 0; b < clen && comp[b] != '['; ++b);
+  return a == b && !strncmp(inst, comp, (size_t)a);
+}
+
+/* Is instance i shown as highlighted at the CURRENT level through one of its pins?
+ * Mirrors the pin scan in propagate_hilights() but read-only and independent of
+ * inst[].color, so the buried-cue exclusion is robust on every code path. */
+static int buried_inst_pin_hilighted(int i)
+{
+  xSymbol *sym;
+  const char *type;
+  int j, rects;
+  if(xctx->inst[i].ptr < 0) return 0;
+  sym = xctx->inst[i].ptr + xctx->sym;
+  type = sym->type;
+  if(!type || !xctx->inst[i].node) return 0;
+  if(IS_LABEL_SH_OR_PIN(type)) {
+    return xctx->inst[i].node[0] &&
+           bus_hilight_hash_lookup(xctx->inst[i].node[0], 0, XLOOKUP) != NULL;
+  }
+  rects = sym->rects[PINLAYER];
+  for(j = 0; j < rects; ++j) {
+    if(xctx->inst[i].node[j] &&
+       bus_hilight_hash_lookup(xctx->inst[i].node[j], 0, XLOOKUP)) return 1;
+  }
+  return 0;
+}
+
+/* Buried-net highlight cue (see doc/claude/specs/buried_net_hilight.md).
+ * Mark each instance at the current level whose subtree contains a highlighted net
+ * that is NOT exposed at the instance's pins, so a highlight buried below survives
+ * ascending. inst[i].buried_hilight holds the style index of such a net (the lowest
+ * among several), or -1 for none.
+ *
+ * Derived state recomputed from xctx->hilight_table here (in propagate_hilights, on
+ * every highlight change / descend / ascend) — NEVER per draw or per animation frame.
+ * A buried net is identified by its hierarchy path being STRICTLY deeper than the
+ * current path through some child instance; this is inherently recursive over depth
+ * (the same deep net flags x_d at C, x_c at B, x_b at A) via prefix matching against
+ * the current path alone. */
+static void compute_buried_hilights(void)
+{
+  int i, k;
+  const char *P = xctx->sch_path[xctx->currsch];
+  int lp = (int) strlen(P);
+  Hilight_hashentry *e;
+  unsigned int *bseq; /* per-instance apply-seq of the winning (most recent) buried net */
+
+  for(i = 0; i < xctx->instances; ++i) xctx->inst[i].buried_hilight = -1;
+  if(xctx->instances <= 0) return;
+  bseq = my_calloc(_ALLOC_ID_, xctx->instances, sizeof(unsigned int));
+
+  for(i = 0; i < HASHSIZE; ++i) {
+    for(e = xctx->hilight_table[i]; e; e = e->next) {
+      const char *rest, *dot;
+      int clen, style;
+      if(e->value < 0) continue;                  /* sim logic level, not a style cue */
+      if(!e->token || e->token[0] == ' ') continue; /* skip instance/label entries (derived
+                                                     * from nets; the net entry carries style) */
+      if(!e->path || (int) strlen(e->path) <= lp) continue; /* at/above level: not buried */
+      if(strncmp(e->path, P, (size_t)lp)) continue;         /* not under current level */
+      rest = e->path + lp;                        /* immediate child component + tail */
+      dot = strchr(rest, '.');
+      clen = dot ? (int)(dot - rest) : (int) strlen(rest);
+      if(clen <= 0) continue;
+      style = e->value;
+      for(k = 0; k < xctx->instances; ++k) {
+        if(!buried_name_match(xctx->inst[k].instname, rest, clen)) continue;
+        if(buried_inst_pin_hilighted(k)) continue; /* visible here via a pin: no cue */
+        /* most-recently-applied buried net wins the cue style (per the spec); -1 = unset */
+        if(xctx->inst[k].buried_hilight == -1 || e->seq >= bseq[k]) {
+          xctx->inst[k].buried_hilight = style;
+          bseq[k] = e->seq;
+        }
+      }
+    }
+  }
+  my_free(_ALLOC_ID_, &bseq);
+}
+
 /* hilight/clear pin/label instances attached to hilight nets, or instances with "highlight=true"
  * attr if en_hilight_conn_inst option is set
  */
@@ -1814,6 +1920,8 @@ void propagate_hilights(int set, int clear, int mode)
   }
   xctx->hilight_nets = there_are_hilights();
   if(xctx->hilight_nets && xctx->enable_drill && set) drill_hilight(mode);
+  /* recompute the buried-net cue from the (now final, post-drill) highlight table */
+  compute_buried_hilights();
 }
 
 /* use negative values to bypass the normal hilight color enumeration */
@@ -2742,6 +2850,35 @@ static int scan_animating_hilights(double now, unsigned int *sig, int *maxw, dou
     }
     found = 1;
   }
+  /* Buried-net cue (doc/claude/specs/buried_net_hilight.md): the ancestor-instance rectangle is
+   * drawn as styled wire edges (draw_hilight_net), so unlike a colored symbol it can BOTH blink
+   * AND march. The wire/instance scans above never see it — the animated net is buried in a child,
+   * not a wire at this level — so without this a window whose ONLY animated element is a buried cue
+   * would report "no animation", never arm the tick, and the rectangle would stay static. */
+  for(i = 0; i < xctx->instances; ++i) {
+    NetHilightStyle *st;
+    int val = xctx->inst[i].buried_hilight;
+    double m;
+    if(val < 0) continue;
+    st = get_hilight_style(val);
+    if(!net_hilight_style_animates(st)) continue;   /* blink OR march (cue is wire-drawn) */
+    if(predicate) return 1;
+    if(sig) {
+      unsigned int term = (unsigned int)(st->index * 2 + net_hilight_style_on_now(st, now));
+      term = term * 31u + (unsigned int)(int)net_hilight_march_offset(st, now);
+      *sig = *sig * 1000003u + term;
+    }
+    if(maxw && st->width > *maxw) *maxw = st->width;
+    if(next_ms) { double d = net_hilight_next_edge_ms(st, now); if(d < *next_ms) *next_ms = d; }
+    if(bx1) { /* the outset cue rectangle, matching draw_hilight_net's BURIED_CUE_OUTSET_PX */
+      m = (xctx->mooz > 0.0) ? BURIED_CUE_OUTSET_PX / xctx->mooz : 0.0;
+      if(!found || xctx->inst[i].xx1 - m < *bx1) *bx1 = xctx->inst[i].xx1 - m;
+      if(!found || xctx->inst[i].yy1 - m < *by1) *by1 = xctx->inst[i].yy1 - m;
+      if(!found || xctx->inst[i].xx2 + m > *bx2) *bx2 = xctx->inst[i].xx2 + m;
+      if(!found || xctx->inst[i].yy2 + m > *by2) *by2 = xctx->inst[i].yy2 + m;
+    }
+    found = 1;
+  }
   return found;
 }
 
@@ -3139,6 +3276,39 @@ void draw_hilight_net(int on_window)
      }
    }
  }
+ /* Buried-net highlight cue: a styled rectangle around each instance whose subtree
+  * holds a highlighted net NOT exposed at its pins (set by compute_buried_hilights();
+  * see doc/claude/specs/buried_net_hilight.md). Drawn here, in the highlight pass, so it
+  * inherits the SAME blink/march gates as the highlighted wires above. The four bbox
+  * edges are drawn as styled "wires" so color/width/dash/march match the buried net
+  * exactly. inst[].xx1..yy2 is the schematic-coord symbol bbox (without text); off-screen
+  * edges are dropped by draw_hilight_wire()'s clip(). Iterates all instances (the flagged
+  * few are sparse), independent of the spatial-hash visibility iterator above. */
+ for(i = 0; i < xctx->instances; ++i) {
+   int val = xctx->inst[i].buried_hilight;
+   NetHilightStyle *st;
+   unsigned int fg;
+   double dash_off, bx1, by1, bx2, by2;
+   if(val < 0) continue;
+   st = get_hilight_style(val);
+   if(anim_on && !net_hilight_style_on_now(st, anim_now)) continue; /* blink OFF: skip cue */
+   fg = hilight_pixel_of(val, st);
+   dash_off = anim_on ? net_hilight_march_offset(st, anim_now) : 0.0;
+   /* outset a few screen px (mooz = px/schematic-unit) so the cue clearly SURROUNDS the
+    * instance rather than tracing its outline; xx1<=xx2, yy1<=yy2 (symbol_bbox order). */
+   { double m = (xctx->mooz > 0.0) ? BURIED_CUE_OUTSET_PX / xctx->mooz : 0.0;
+     bx1 = xctx->inst[i].xx1 - m; by1 = xctx->inst[i].yy1 - m;
+     bx2 = xctx->inst[i].xx2 + m; by2 = xctx->inst[i].yy2 + m; }
+   draw_hilight_wire(fg, st, dash_off, bx1, by1, bx2, by1, 0.0); /* top    */
+   draw_hilight_wire(fg, st, dash_off, bx1, by2, bx2, by2, 0.0); /* bottom */
+   draw_hilight_wire(fg, st, dash_off, bx1, by1, bx1, by2, 0.0); /* left   */
+   draw_hilight_wire(fg, st, dash_off, bx2, by1, bx2, by2, 0.0); /* right  */
+ }
+#if HAS_CAIRO==1
+ /* commit any tilted-stripe cairo fills produced by angled-style cue edges */
+ if(xctx->draw_window && xctx->cairo_ctx) cairo_surface_flush(xctx->cairo_sfc);
+ if(xctx->draw_pixmap && xctx->cairo_save_ctx) cairo_surface_flush(xctx->cairo_save_sfc);
+#endif
  xctx->draw_window = save_draw;
 }
 

@@ -536,6 +536,10 @@ void inst_register(int n)
  xctx->inst[n].id = ++xctx->inst_id_counter; /* session-stable identity, stamped
    * here at the one birth chokepoint the Phase C funnel created — never reused
    * within a context's lifetime, not persisted (step-2 Phase D). */
+ xctx->inst[n].buried_hilight = -1; /* derived buried-net-highlight cue, none at birth;
+   * recomputed in propagate_hilights(). memset() at slot growth zeroes this field, and
+   * 0 is a valid style index, so it MUST be stamped here, not left to memset.
+   * See doc/claude/specs/buried_net_hilight.md */
  xctx->instances++;
 }
 

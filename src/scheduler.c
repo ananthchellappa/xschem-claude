@@ -2907,6 +2907,27 @@ static int xschem_cmds_h(Tcl_Interp *interp, int argc, const char *argv[], int *
       }
       Tcl_ResetResult(interp);
     }
+
+    /* hilight_buried <instname>
+     *   Read-only query: return the style index of a highlighted net buried in the
+     *   named instance's subtree (a net not exposed at the instance's pins), or -1 if
+     *   none. Derived state recomputed in propagate_hilights(); this only reads
+     *   inst[i].buried_hilight. See doc/claude/specs/buried_net_hilight.md */
+    else if(!strcmp(argv[1], "hilight_buried"))
+    {
+      int inst, val = -1;
+      char res[30];
+      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(argc < 3) {
+        Tcl_SetResult(interp, "xschem hilight_buried: missing instance name", TCL_STATIC);
+        return TCL_ERROR;
+      }
+      prepare_netlist_structs(0);
+      if((inst = get_instance(argv[2])) >= 0) val = xctx->inst[inst].buried_hilight;
+      my_snprintf(res, S(res), "%d", val);
+      Tcl_SetResult(interp, res, TCL_VOLATILE);
+    }
+
     /* hilight_netname [-fast] net
      *   Highlight net name 'net'
      *   if '-fast' is given do not redraw hilights after operation */

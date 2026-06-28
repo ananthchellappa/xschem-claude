@@ -653,6 +653,11 @@ typedef struct
   short sel;
   short embed; /* cache embed=true|false attribute in prop_ptr */
   int color; /* hilight color */
+  int buried_hilight; /* style index of a highlighted net buried in this instance's
+                       * subtree (a net not exposed at this instance's pins), -1 = none.
+                       * Derived state: recomputed from xctx->hilight_table in
+                       * propagate_hilights(); read-only at draw time. Stamped to -1 at
+                       * birth in inst_register(). See doc/claude/specs/buried_net_hilight.md */
   int flags;   /* bit 0: skip field, set to 1 while drawing layer 0 if symbol is outside bbox
                 *        to avoid doing the evaluation again.
                 * bit 1: flag for different textlayer for pin/labels,
@@ -827,6 +832,10 @@ struct hilight_hashentry
   int oldvalue;  /* used for FF simulation */
   int value;  /* >=0: net highlight style index (see NetHilightStyle); <0: sim logic level */
   int time; /*delta-time for sims */
+  unsigned int seq; /* monotonic apply-order stamp, bumped each time this entry's highlight
+                     * is (re)applied. Used by compute_buried_hilights() to pick the MOST
+                     * RECENTLY applied buried net's style for the ancestor-instance cue.
+                     * See doc/claude/specs/buried_net_hilight.md */
 };
 
 /* A user-customizable net highlight style (Cadence display.drf-like "packet").
