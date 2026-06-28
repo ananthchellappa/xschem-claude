@@ -5693,13 +5693,72 @@ void draw_scope_highlight(void)
  * Called with g = gc_hover to draw, or g = gctiled to erase (re-stamp the
  * background pixmap over the old outline). type 0 = nothing -> no-op.
  * =========================================================================== */
+/* Union bounding box of an instance's *visible* symbol texts (the rendered net name
+ * for a label/pin), mirroring the text loop of symbol_bbox() in select.c: translate
+ * @-vars, skip @spice annotator texts, honor hidden-text flags, account for per-text
+ * size and Cairo custom fonts. Returns 1 and fills *x1..*y2 if at least one text was
+ * found, else 0. Used by draw_hover_shape() so hovering a net label outlines its name
+ * text rather than the tiny pin stub. See doc/claude/specs/hover_netlabel_text.md */
+static int inst_text_bbox(int n, double *x1, double *y1, double *x2, double *y2)
+{
+  xSymbol *symptr = xctx->inst[n].ptr + xctx->sym;
+  short flip = xctx->inst[n].flip, rot = xctx->inst[n].rot;
+  double x0 = xctx->inst[n].x0, y0 = xctx->inst[n].y0;
+  int j, found = 0, tmp;
+  double dtmp;
+  for(j = 0; j < symptr->texts; ++j) {
+    double xscale, yscale, text_x0, text_y0, tx1, ty1, tx2, ty2;
+    const char *tmp_txt;
+    char *estr;
+    xText text = symptr->text[j];
+    #if HAS_CAIRO==1
+    int customfont;
+    #endif
+    if(!xctx->show_hidden_texts && (text.flags & (HIDE_TEXT | HIDE_TEXT_INSTANTIATED))) continue;
+    get_sym_text_size(n, j, &xscale, &yscale);
+    tmp_txt = translate(n, text.txt_ptr);
+    if(!tmp_txt || !tmp_txt[0]) continue;
+    if(!strncmp(tmp_txt, "@spice", 6)) continue; /* annotator texts not part of the visible name */
+    ROTATION(rot, flip, 0.0, 0.0, text.x0, text.y0, text_x0, text_y0);
+    #if HAS_CAIRO==1
+    customfont = set_text_custom_font(&text);
+    #endif
+    estr = my_expand(tmp_txt, tclgetintvar("tabstop"));
+    if(text_bbox(estr, xscale, yscale,
+       (text.rot + ((flip && (text.rot & 1)) ? rot+2 : rot)) & 0x3,
+       flip ^ text.flip, text.hcenter, text.vcenter,
+       x0+text_x0, y0+text_y0, &tx1, &ty1, &tx2, &ty2, &tmp, &dtmp)) {
+      if(!found) { *x1 = tx1; *y1 = ty1; *x2 = tx2; *y2 = ty2; found = 1; }
+      else {
+        if(tx1 < *x1) *x1 = tx1;
+        if(ty1 < *y1) *y1 = ty1;
+        if(tx2 > *x2) *x2 = tx2;
+        if(ty2 > *y2) *y2 = ty2;
+      }
+    }
+    my_free(_ALLOC_ID_, &estr);
+    #if HAS_CAIRO==1
+    if(customfont) cairo_restore(xctx->cairo_ctx);
+    #endif
+  }
+  return found;
+}
+
 void draw_hover_shape(GC g, int type, int n, int c)
 {
   switch(type) {
     case ELEMENT:
       if(n >= 0 && n < xctx->instances) {
-        double x1 = xctx->inst[n].xx1, y1 = xctx->inst[n].yy1;
-        double x2 = xctx->inst[n].xx2, y2 = xctx->inst[n].yy2;
+        double x1, y1, x2, y2;
+        const char *symtype = (xctx->inst[n].ptr + xctx->sym)->type;
+        /* for net labels/pins the body is a tiny stub at the attachment point; outline
+         * the visible net-name text the user is actually pointing at instead */
+        if(symtype && IS_LABEL_SH_OR_PIN(symtype) && inst_text_bbox(n, &x1, &y1, &x2, &y2)) {
+          /* x1..y2 already hold the text union bbox */
+        } else {
+          x1 = xctx->inst[n].xx1; y1 = xctx->inst[n].yy1;
+          x2 = xctx->inst[n].xx2; y2 = xctx->inst[n].yy2;
+        }
         RECTORDER(x1, y1, x2, y2);
         drawtemprect(g, ADD, x1, y1, x2, y2);
       }
