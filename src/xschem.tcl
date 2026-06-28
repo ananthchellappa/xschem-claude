@@ -920,7 +920,8 @@ proc nhse_build_row {body i row {idxlabel {}}} {
   bind $rf.c3.ex <<ComboboxSelected>> [list nhse_dash_apply_example $i]
   grid $rf.c3 -row 0 -column 3 -sticky w -padx 1
 
-  scale $rf.c4 -from -45 -to 45 -orient horizontal -length 90 -showvalue 1 -resolution 1 -variable ::nhse_v($i,4)
+  scale $rf.c4 -from -45 -to 45 -orient horizontal -length 90 -showvalue 1 -resolution 1 \
+      -variable ::nhse_v($i,4) -command [list nhse_scale_changed $i]
   bind $rf.c4 <ButtonRelease-1> [list nhse_cell_commit $i]
   grid $rf.c4 -row 0 -column 4 -sticky w -padx 1
 
@@ -1135,6 +1136,19 @@ proc nhse_preview_paint {} {
 # A table cell gained field focus: the preview now mirrors this row (incl. its uncommitted edits),
 # and the per-row ops (slice 7) enable/disable for this row.
 proc nhse_focus_set {i} { set ::nhse_focus_row $i ; catch { nhse_preview_paint } ; catch { nhse_ops_enable_state } }
+
+# A row's Angle slider moved (issue 0059). A Tk scale does not take keyboard focus on
+# click, so dragging it never fires <FocusIn> and the preview would keep mirroring the
+# previously focused row. The scale's -command fires on every value change (only on real
+# user interaction -- not at creation or on a programmatic var-set), AFTER the linked
+# ::nhse_v var is updated, so make this row the focused row and repaint the preview live
+# with no lag. Works for both table rows ($i integer) and the free/new row ($i "new").
+# Commit to the C styles still happens only on ButtonRelease (one rebuild per drag, not
+# per pixel).
+proc nhse_scale_changed {i val} {
+  set ::nhse_focus_row $i
+  catch { nhse_preview_paint }
+}
 
 # One self-rescheduling animation tick. Repaints (which re-samples clock milliseconds, so blink and
 # marching advance) then re-arms. Self-terminates if the canvas is gone (belt-and-suspenders; the
