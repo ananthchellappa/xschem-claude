@@ -103,6 +103,9 @@ source [file join $_ut cadence_nav.tcl]
 bind .drw <Control-Alt-Key-s>   {locate_selected_in_libmgr;       break}
 # Ctrl-Alt-N : place the current Library-Manager selection
 bind .drw <Control-Alt-Key-n>   {place_libmgr_selection;          break}
+# Ctrl-N : open a NEW blank editor window (untitled.sch scratchpad), leaving the current
+# schematic untouched. Overrides the default Ctrl-N = Clear Schematic (still on File menu).
+bind .drw <Control-Key-n>       {cadence::new_blank_window;       break}
 # Ctrl-Shift-N : open a schematic read-only in a NEW window -- the selected instance's,
 # or the cell named by a "lib/cell" text note.
 bind .drw <Control-Shift-Key-N> {cadence::open_inst_sch_readonly; break}

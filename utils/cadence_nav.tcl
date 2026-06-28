@@ -203,6 +203,16 @@ proc cadence::open_inst_sch_readonly {} {
   }
 }
 
+# Ctrl-N: open a NEW blank editor window (a fresh untitled.sch scratchpad) WITHOUT touching
+# the schematic the user is in. 'create_window' forces a real top-level window even under the
+# tabbed interface; the empty filename gives a blank untitled schematic; create_new_window
+# clones the .drw (cadence) bindings into it. See doc/claude/specs/cadence_new_blank_window.md.
+proc cadence::new_blank_window {} {
+  xschem new_schematic create_window {}
+  xschem log_action "xschem new_schematic create_window {}"   ;# replayable (cf. issue 0055)
+  ciw_echo "new blank window: [xschem get current_win_path]"
+}
+
 # Ctrl-X: descend into selected instance's schematic; no-op if no instance selected.
 # With descend_readonly set (the cadence default) this opens the child read-only.
 proc cadence::descend_into_inst {} {
