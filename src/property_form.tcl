@@ -344,6 +344,7 @@ proc slickprop::template_of {symbol} {
 # (not part of the value). Returns the list of token names placed.
 proc slickprop::build_fields {parent prop template} {
   variable cur
+  variable has_name_field
   slickprop::init_fonts
   set ew $::slickprop_entry_width
   array unset cur
@@ -355,11 +356,33 @@ proc slickprop::build_fields {parent prop template} {
   set fields [slickprop::to_fields $prop $template]
   set r 0
   set extras_started 0
+  set has_name_field 0
   foreach f $fields {
     set tok      [dict get $f name]
     set val      [dict get $f value]
     set declared [dict get $f declared]
     set default  [dict get $f default]
+    # The instance name lives in the dedicated row below the identity block (issue
+    # 0058) when the real dialog is up; wire it into cur there and skip the grid row.
+    # Without the dialog (the .pf.f core tests) fall through to a normal grid row.
+    if {$tok eq "name" && [winfo exists .dialog.fname.e]} {
+      set has_name_field 1
+      set e .dialog.fname.e
+      set cur(ind,name)         .dialog.fname.i
+      set cur(entry,name)       $e
+      set cur(loaded,name)      $val
+      set cur(placeholder,name) 0
+      set cur(normalfg,name)    [$e cget -foreground]
+      lappend cur(tokens) name
+      $e delete 0 end
+      if {$val ne {}} { $e insert 0 $val }
+      $cur(ind,name) configure -text " "
+      bind $e <KeyRelease> [list slickprop::update_dirty name]
+      bind $e <<Paste>>    [list after idle [list slickprop::update_dirty name]]
+      bind $e <<Cut>>      [list after idle [list slickprop::update_dirty name]]
+      bind $e <FocusIn> +[list slickprop::on_focus name]
+      continue
+    }
     # a themed divider before the first undeclared "Extra" token (fixed widget
     # names — there is only one Extra section; tying them to $r broke because the
     # widgets are created before the row counter is advanced)
@@ -400,6 +423,7 @@ proc slickprop::build_fields {parent prop template} {
     incr r
   }
   grid columnconfigure $parent 1 -minsize 90   ;# fixed label column so labels align
+  slickprop::update_name_row   ;# show/hide the dedicated Name row per has_name_field (0058)
   return $cur(tokens)
 }
 
@@ -500,8 +524,11 @@ proc slickprop::do_apply {} {
   if {[info exists loaded_prop]} { set oldprop $loaded_prop }
   set did 0
   if {[info exists nav(disp_id)] && $nav(disp_id) ne {} && $nav(disp_id) >= 0} {
+    # keep_name=1: the dedicated Name field is authoritative, so a source change does
+    # NOT re-prefix the instance name (issue 0058). Passed as the 5th arg so the
+    # logged/replayed command reproduces the same name behavior.
     set did [xschem apply_properties $::slickprop_apply_scope $nav(disp_id) \
-               $::tctx::retval $oldprop]
+               $::tctx::retval $oldprop 1]
     if {$did} {
       set ::tctx::applied 1
       # action-log the EFFECT (only when something changed): the replayable
@@ -510,7 +537,7 @@ proc slickprop::do_apply {} {
       # CIW-typed commands reuse and would double-log (see
       # doc/claude/code_analysis/apply_properties_logging_decision.md).
       slickprop::log_apply [list xschem apply_properties \
-        $::slickprop_apply_scope $nav(disp_id) $::tctx::retval $oldprop]
+        $::slickprop_apply_scope $nav(disp_id) $::tctx::retval $oldprop 1]
     }
   }
   set copy_cell 0
@@ -945,6 +972,25 @@ proc slickprop::update_lcv {sym} {
     pack forget .dialog.flcv
     catch {pack .dialog.f1 -side top -fill x -pady {4 0} -after .dialog.fscope}
   }
+  # the dedicated Name row sits directly below the identity block (issue 0058),
+  # tracking whichever of flcv/f1 is currently shown.
+  slickprop::update_name_row
+}
+
+# Pack (or hide) the dedicated Name row directly below the visible identity block.
+# Hidden when the current field set has no `name` token (has_name_field, set by
+# build_fields). Called from both update_lcv and build_fields so it stays correct
+# regardless of their call order (load_pos runs update_lcv before build_fields).
+proc slickprop::update_name_row {} {
+  variable lcv_active
+  variable has_name_field
+  if {![winfo exists .dialog.fname]} return
+  if {[info exists has_name_field] && !$has_name_field} {
+    pack forget .dialog.fname
+    return
+  }
+  set anchor [expr {([info exists lcv_active] && $lcv_active) ? ".dialog.flcv" : ".dialog.f1"}]
+  catch {pack .dialog.fname -side top -fill x -after $anchor}
 }
 
 # If the Library/Cell/View rows are active (a library instance) AND the user
@@ -1022,6 +1068,17 @@ proc slickprop::on_identity_changed {} {
   if {[abs_sym_path $newref] eq [abs_sym_path $symbol]} return ;# same master: nothing to do
   set template [slickprop::template_of $newref]
   if {$template eq {}} return                                ;# unknown symbol: keep fields
+  # PRESERVE the instance name across the source change (issue 0058): the name is
+  # arbitrary, so re-pointing to a new cell resets only the OTHER props to the new
+  # cell's defaults. Capture the current Name (the dedicated field's value, edits
+  # included) and fold it into the new template so the rebuilt grid + Name field keep
+  # it verbatim and result/cur(orig) carry it (no spurious dirty cue).
+  set keepname {}
+  catch {set keepname [slickprop::field_value name]}
+  set newprop $template
+  if {$keepname ne {}} {
+    catch {set newprop [xschem subst_tok $template name [slickprop::requote $keepname]]}
+  }
   # adopt the new master for the rest of the form + apply machinery (prev_symbol is
   # intentionally left at the ORIGINAL so do_apply still sees a symbol change and the
   # copy-cell path keys off the real previous master)
@@ -1030,14 +1087,14 @@ proc slickprop::on_identity_changed {} {
     .dialog.f1.e2 delete 0 end
     .dialog.f1.e2 insert 0 $newref
   }
-  set inst_name [xschem get_tok $template name 2]
   set hdr $newref
-  if {$inst_name ne {}} { set hdr "$inst_name  —  $newref" }
+  if {$keepname ne {}} { set hdr "$keepname  —  $newref" }
   if {[winfo exists .dialog.hdr]} { .dialog.hdr configure -text "  $hdr" }
   slickprop::update_lcv $newref                              ;# resync L/C/V rows + loaded_lcv
-  # the heart of the fix: defaults of the new cell (prop == template -> declared
-  # tokens shown with their default values, like a freshly placed instance)
-  slickprop::build_fields .dialog.fa.c.inner $template $template
+  # the heart of the fix: the new cell's defaults (prop == template, with the name
+  # preserved) -> declared tokens shown with their defaults, like a freshly placed
+  # instance, but keeping the user's instance name
+  slickprop::build_fields .dialog.fa.c.inner $newprop $template
   set identity_pending 1                                     ;# a real pending change (gates is_dirty)
   catch {slickprop::apply_scope_greying}
   catch {slickprop::update_warning}
@@ -1113,6 +1170,21 @@ proc slickprop::edit_form {txtlabel} {
     grid  .dialog.flcv.l$i .dialog.flcv.e$i -sticky we -padx {4 6} -pady 1
   }
   grid columnconfigure .dialog.flcv 1 -weight 1
+
+  # --- dedicated instance Name row (issue 0058) -----------------------------
+  # The instance name is the user's primary handle, so it lives in its OWN row
+  # directly below the identity block (packed by update_lcv) rather than buried in
+  # the scrollable grid. Built here once; build_fields wires the `name` token to it
+  # (and is_dirty/result/the modified-cue all flow through cur as for any field).
+  # Layout mirrors a grid row: dot | "Name" label | entry.
+  frame .dialog.fname
+  label .dialog.fname.i -text " " -width 2 -anchor center -font slickPropLabel -fg [slickprop::accent]
+  label .dialog.fname.l -text "Name" -anchor e -font slickPropLabel
+  entry .dialog.fname.e -font slickPropValue -relief sunken -borderwidth 1
+  grid .dialog.fname.i -row 0 -column 0 -padx {2 0} -pady 4
+  grid .dialog.fname.l -row 0 -column 1 -sticky e -padx {2 8} -pady 4
+  grid .dialog.fname.e -row 0 -column 2 -sticky we -padx {0 8} -pady 4 -ipady 3 -ipadx 2
+  grid columnconfigure .dialog.fname 2 -weight 1
 
   # --- "Apply to" scope selector (sticky; the C side reads the canonical var) -
   frame .dialog.fscope

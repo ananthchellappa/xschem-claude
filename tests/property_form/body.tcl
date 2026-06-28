@@ -1461,8 +1461,12 @@ if {[gui2_ok]} {
     {$::pf65_new_val eq "1k"}
   check {PF65d the device field shows res's default (resistor)} \
     {$::pf65_new_dev eq "resistor"}
-  check {PF65e cur(orig) became the res template (apply baseline reset to new cell)} \
-    {$::pf65_orig eq $::pf65_restmpl}
+  # cur(orig) = the new cell's defaults (apply baseline reset) but with the Name
+  # PRESERVED (issue 0058): res's value/device defaults, name kept = C1.
+  check {PF65e cur(orig) reset to res defaults but kept the name (C1, value 1k, device resistor)} \
+    {[xschem get_tok $::pf65_orig name 2] eq "C1" &&
+     [xschem get_tok $::pf65_orig value 2] eq "1k" &&
+     [xschem get_tok $::pf65_orig device 2] eq "resistor"}
   check {PF65f an identity change marks the form dirty (Next/Prev will prompt)} {$::pf65_dirty == 1}
   # --- after OK: the instance is genuinely a resistor now ---------------------
   check {PF65g OK re-pointed the master to res.sym} \
@@ -1471,8 +1475,9 @@ if {[gui2_ok]} {
     {[xschem get_tok [xschem getprop instance 0] value 2] eq "1k"}
   check {PF65i the applied instance took res's device=resistor} \
     {[xschem get_tok [xschem getprop instance 0] device 2] eq "resistor"}
-  check {PF65j the instance name was re-prefixed for the new cell (R…)} \
-    {[string match R* [xschem get_tok [xschem getprop instance 0] name 2]]}
+  # issue 0058: the instance name is PRESERVED across a source change (not re-prefixed)
+  check {PF65j the instance name was preserved across the source change (C1, no C->R)} \
+    {[xschem get_tok [xschem getprop instance 0] name 2] eq "C1"}
 } else {
   foreach t {PF65a PF65b PF65c PF65d PF65e PF65f PF65g PF65h PF65i PF65j} {
     check "$t (skipped: no main window)" {1}
@@ -1538,6 +1543,134 @@ if {[gui2_ok] && [file isdirectory $::pf66_oa] &&
     {[xschem get_tok [xschem getprop instance 0] value 2] eq "1k"}
 } else {
   foreach t {PF66a PF66b PF66b2 PF66c PF66d PF66e PF66f PF66g} {
+    check "$t (skipped: no main window / OA library tree absent)" {1}
+  }
+}
+
+# ===========================================================================
+# NA1-NA7 — issue 0058: the instance Name field is (1) a DEDICATED row directly
+# below the View/identity block (not buried in the scrollable grid) and (2)
+# PRESERVED across an identity change (changing the source resets the OTHER props
+# to the new cell's defaults, but the Name -- which can be anything -- is kept;
+# no auto C->R re-prefix). The Name field stays authoritative: explicitly editing
+# it renames. (NA1-NA6 raw Symbol path; NA7 the OA Library/Cell/View path.)
+# ===========================================================================
+if {[gui2_ok]} {
+  catch {while {[winfo exists .dialog]} {slickprop::cancel; update}}
+  foreach id [after info] {catch {after cancel $id}}
+  xschem set modified 0
+  xschem clear force schematic
+  xschem instance capa.sym 0 0 0 0 {name=C3 m=1 value=22p}
+  xschem select instance C3
+  set ::no_change_attrs 0; set ::preserve_unchanged_attrs 0; set ::copy_cell 0
+  set ::slickprop_apply_scope current
+  set ::na_built 0
+  catch {xschem edit_prop}
+  if {[winfo exists .dialog] && [pf_has_field value]} {
+    set ::na_built 1
+    # NA1: dedicated Name row exists below the identity block; not a grid row
+    set ::na_fname_exists  [winfo exists .dialog.fname.e]
+    # NA1d: in the raw-Symbol layout, Name is packed directly after the Symbol row
+    set ::na_pack [pack slaves .dialog]
+    set ::na_name_after_id \
+      [expr {[lsearch -exact $::na_pack .dialog.fname] == [lsearch -exact $::na_pack .dialog.f1] + 1}]
+    set ::na_entry_is_ded  [expr {[info exists ::slickprop::cur(entry,name)] &&
+                                  $::slickprop::cur(entry,name) eq ".dialog.fname.e"}]
+    # the grid (.dialog.fa.c.inner) must NOT contain a name entry row
+    set ::na_name_in_grid 0
+    foreach w [winfo children .dialog.fa.c.inner] {
+      if {[winfo class $w] eq "Label" && [$w cget -text] eq "name"} { set ::na_name_in_grid 1 }
+    }
+    # NA2: the Name field shows the instance name on open
+    set ::na_open_name [slickprop::field_value name]
+    # --- identity change capa -> res (raw Symbol entry) ---------------------
+    .dialog.f1.e2 delete 0 end
+    .dialog.f1.e2 insert 0 res.sym
+    slickprop::on_identity_changed
+    set ::na_name_after_change [slickprop::field_value name]   ;# must stay C3
+    set ::na_val_after_change  [slickprop::field_value value]  ;# res default 1k
+    slickprop::ok
+    set ::na_inst_name  [xschem get_tok [xschem getprop instance 0] name 2]
+    set ::na_inst_value [xschem get_tok [xschem getprop instance 0] value 2]
+  }
+  check {NA1a a dedicated Name entry (.dialog.fname.e) exists} {$::na_fname_exists == 1}
+  check {NA1b cur(entry,name) is wired to the dedicated entry, not a grid row} {$::na_entry_is_ded == 1}
+  check {NA1c the scrollable grid has NO name row} {$::na_name_in_grid == 0}
+  check {NA1d the Name row is packed directly below the identity (Symbol) row} {$::na_name_after_id == 1}
+  check {NA2 the Name field shows the instance name on open (C3)} {$::na_open_name eq "C3"}
+  check {NA3 an identity change keeps the Name field value (C3, not res default)} \
+    {$::na_name_after_change eq "C3"}
+  check {NA5a the identity change DID reset the value field to res default (1k)} \
+    {$::na_val_after_change eq "1k"}
+  check {NA4 OK preserves the instance name across the source change (C3, no C->R)} \
+    {$::na_inst_name eq "C3"}
+  check {NA5b the applied instance took res's value=1k (other props reset)} \
+    {$::na_inst_value eq "1k"}
+
+  # NA6 — explicitly editing the Name field renames the instance (authoritative).
+  catch {while {[winfo exists .dialog]} {slickprop::cancel; update}}
+  foreach id [after info] {catch {after cancel $id}}
+  xschem set modified 0
+  xschem clear force schematic
+  xschem instance res.sym 0 0 0 0 {name=R7 value=1k}
+  xschem select instance R7
+  set ::slickprop_apply_scope current
+  set ::na6_ok 0
+  catch {xschem edit_prop}
+  if {[winfo exists .dialog] && [winfo exists .dialog.fname.e]} {
+    set ::na6_ok 1
+    slickprop::placeholder_in name
+    .dialog.fname.e delete 0 end
+    .dialog.fname.e insert 0 Rnew
+    slickprop::update_dirty name
+    slickprop::ok
+  }
+  check {NA6a editing the dedicated Name field is available} {$::na6_ok == 1}
+  check {NA6b an explicit Name edit renames the instance} \
+    {[xschem get_tok [xschem getprop instance 0] name 2] eq "Rnew"}
+} else {
+  foreach t {NA1a NA1b NA1c NA1d NA2 NA3 NA5a NA4 NA5b NA6a NA6b} {
+    check "$t (skipped: no main window)" {1}
+  }
+}
+
+# NA7 — the LCV (Library/Cell/View) Cell-field path also preserves the Name.
+if {[gui2_ok] && [info exists ::pf66_oa] && [file isdirectory $::pf66_oa] &&
+    [file exists [file join $::pf66_oa devices res symbol res.sym]]} {
+  catch {while {[winfo exists .dialog]} {slickprop::cancel; update}}
+  foreach id [after info] {catch {after cancel $id}}
+  set ::env(XSCHEM_LIBRARY_DEFS) [file join $::pf66_oa library.defs]
+  catch {set ::XSCHEM_LIBRARY_DEFS [file join $::pf66_oa library.defs]}
+  if {[lsearch -exact $::pathlist $::pf66_oa] < 0} { lappend ::pathlist $::pf66_oa }
+  xschem set modified 0
+  xschem clear force schematic
+  xschem instance devices/capa 0 0 0 0 {name=C9 m=1 value=22p}
+  xschem select instance C9
+  set ::slickprop_apply_scope current
+  set ::na7_ok 0
+  catch {xschem edit_prop}
+  if {[winfo exists .dialog] && [winfo exists .dialog.fname.e] &&
+      [info exists ::slickprop::lcv_active] && $::slickprop::lcv_active} {
+    set ::na7_ok 1
+    # the Name row sits directly below the View row (the LCV block) here
+    set ::na7_pack [pack slaves .dialog]
+    set ::na7_name_below_view \
+      [expr {[lsearch -exact $::na7_pack .dialog.fname] == [lsearch -exact $::na7_pack .dialog.flcv] + 1}]
+    .dialog.flcv.e1 delete 0 end
+    .dialog.flcv.e1 insert 0 res
+    slickprop::on_identity_changed
+    set ::na7_name_after [slickprop::field_value name]
+    slickprop::ok
+    set ::na7_inst_name [xschem get_tok [xschem getprop instance 0] name 2]
+    set ::na7_inst_val  [xschem get_tok [xschem getprop instance 0] value 2]
+  }
+  check {NA7a the LCV form opened with a dedicated Name field} {$::na7_ok == 1}
+  check {NA7e the Name row is directly below the View row (LCV block)} {$::na7_name_below_view == 1}
+  check {NA7b Cell capa->res keeps the Name field value (C9)} {$::na7_name_after eq "C9"}
+  check {NA7c OK preserves the instance name via the LCV path (C9)} {$::na7_inst_name eq "C9"}
+  check {NA7d OK reset the other props to res defaults (value=1k)} {$::na7_inst_val eq "1k"}
+} else {
+  foreach t {NA7a NA7e NA7b NA7c NA7d} {
     check "$t (skipped: no main window / OA library tree absent)" {1}
   }
 }

@@ -187,23 +187,26 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
       }
     }
 
-    /* apply_properties scope displayed_id new_prop old_prop
+    /* apply_properties scope displayed_id new_prop old_prop [keep_name]
      *   Mid-session apply for the slick property form (P2 Apply / OK). Fans the
      *   change set (new_prop vs old_prop, changed-fields-only) to the instances
      *   named by 'scope' (current|selected|all) relative to the displayed
      *   instance, given by its session-stable id (see `xschem instance_id`).
-     *   Pushes one undo; returns 1 if anything changed, else 0. */
+     *   keep_name (optional, default 0): preserve the instance name across a source
+     *   change instead of re-prefixing it (issue 0058) -- passed in the logged command
+     *   so replay is faithful. Pushes one undo; returns 1 if anything changed, else 0. */
     else if(!strcmp(argv[1], "apply_properties"))
     {
-      int modified;
+      int modified, keep_name = 0;
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
       if(argc < 6) {
         Tcl_SetResult(interp,
-          "xschem apply_properties needs: scope displayed_id new_prop old_prop", TCL_STATIC);
+          "xschem apply_properties needs: scope displayed_id new_prop old_prop [keep_name]", TCL_STATIC);
         return TCL_ERROR;
       }
+      if(argc > 6) keep_name = atoi(argv[6]);
       modified = apply_instance_properties(argv[2],
-                   (unsigned int)strtoul(argv[3], NULL, 10), argv[4], argv[5]);
+                   (unsigned int)strtoul(argv[3], NULL, 10), argv[4], argv[5], keep_name);
       Tcl_SetResult(interp, modified ? "1" : "0", TCL_STATIC);
     }
 
