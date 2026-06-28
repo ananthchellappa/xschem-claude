@@ -428,8 +428,8 @@ static void publish_net_hilight_styles_to_tcl(void)
 /* Parse the user 'net_hilight_style' Tcl table: a list of rows, each row a list
  *   {index  color  width  dash-pattern  stripe-angle-deg  blink_ms  anim  rate_persec}
  * color: a layer index in [0,cadlayers) OR an X color name / #rrggbb (resolved to a pixel).
- * dash-pattern: a list of on/off run lengths ({} = solid). stripe-angle clamped to [0,45]
- * (warned). blink_ms/anim/rate_persec stored for Pass 2 animation (inert in Pass 1).
+ * dash-pattern: a list of on/off run lengths ({} = solid). stripe-angle clamped to [-45,45]
+ * (warned; negative tilts the opposite way). blink_ms/anim/rate_persec stored for Pass 2 (inert in Pass 1).
  * Returns 1 if a non-empty table was built, 0 otherwise (caller falls back to default). */
 static int parse_net_hilight_styles(const char *tab)
 {
@@ -473,13 +473,14 @@ static int parse_net_hilight_styles(const char *tab)
         Tcl_Free((char *)dd);
       }
     }
-    if(nf > 4) { /* stripe-angle-deg: clamp to [0,45] with a warning (render: Pass 1.5) */
+    if(nf > 4) { /* stripe-angle-deg: clamp to [-45,45] with a warning (render: Pass 1.5).
+                  * Negative tilts the stripes the opposite way from positive; 0 = perpendicular. */
       int ang = atoi(f[4]);
-      if(ang < 0 || ang > 45) {
-        int cl = ang < 0 ? 0 : 45;
+      if(ang < -45 || ang > 45) {
+        int cl = ang < -45 ? -45 : 45;
         char msg[200];
         my_snprintf(msg, S(msg),
-          "net_hilight_style: style %d stripe-angle %d out of range [0,45], clamped to %d",
+          "net_hilight_style: style %d stripe-angle %d out of range [-45,45], clamped to %d",
           s->index, ang, cl);
         hilight_style_warn(msg);
         ang = cl;
@@ -507,7 +508,7 @@ static int parse_net_hilight_styles(const char *tab)
     }
     /* a stripe angle only manifests through dash bands; with no dash pattern there is
      * nothing to tilt, so warn that the angle has no effect (rather than silently ignore) */
-    if(s->angle > 0 && s->dash_len == 0) {
+    if(s->angle != 0 && s->dash_len == 0) {
       char msg[200];
       my_snprintf(msg, S(msg),
         "net_hilight_style: style %d has stripe-angle %d but no dash pattern; angle has no "
@@ -579,7 +580,7 @@ void build_net_hilight_styles(void)
     static int warned = 0;
     int i;
     for(i = 0; !warned && i < xctx->n_net_hilight_styles; ++i) {
-      if(xctx->net_hilight_style[i].angle > 0) {
+      if(xctx->net_hilight_style[i].angle != 0) {
         hilight_style_warn("net_hilight_style: nonzero stripe angle needs a cairo build; "
                            "rendering as perpendicular dashes");
         /* only latch once the message actually reached the CIW; if styles are (re)built

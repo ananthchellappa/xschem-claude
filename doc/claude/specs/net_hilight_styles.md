@@ -80,14 +80,14 @@ Each row is a list with these columns, in order:
 | 2   | `color`           | Color spec: `#rrggbb`, X color name (`yellow`), or layer index.      | used   |
 | 3   | `width`           | Line thickness. **`1` = same thickness as the thinnest wire.**       | used   |
 | 4   | `dash-pattern`    | Tcl list of on/off run lengths, e.g. `{}` solid, `{4 4}`, `{8 4 2 4}`.| used  |
-| 5   | `stripe-angle-deg`| Tilt of dash "stripes" on a thick line. Clamped to **[0, 45]**.      | used*  |
+| 5   | `stripe-angle-deg`| Tilt of dash "stripes" on a thick line. Clamped to **[-45, 45]**.    | used*  |
 | 6   | `blink_ms`        | Blink period in ms (`0` = steady). **Live (Pass 2a).**               | used   |
 | 7   | `anim`            | Marching mode: `none` / `march_fwd` / `march_rev`. **Live (Pass 2b).**| used   |
 | 8   | `rate_persec`     | Marching speed in dash-periods/sec (needs `anim`+dash). **Live (2b).**| used   |
 
-\* `stripe-angle-deg` is parsed, clamped to [0,45], and stored in Pass 1, but **nonzero
-angles are rendered as plain 0° dashes until Pass 1.5** (tilted-stripe rendering needs
-Cairo hatch; see §7 / Phase 5). The column and clamp behavior are final in Pass 1.
+\* `stripe-angle-deg` is parsed, clamped to **[-45,45]** (see the 2026-06-27 note below;
+originally [0,45]), and stored in Pass 1, but **nonzero angles are rendered as plain 0°
+dashes until Pass 1.5** (tilted-stripe rendering needs Cairo hatch; see §7 / Phase 5).
 
 Example (`net_hilight_style_rc`, to be `source`d):
 
@@ -120,11 +120,13 @@ There is **no 10-entry limit**. The table length *is* the number of styles.
   `XSetDashes` (and `cairo_set_dash`) as the on/off run pattern. With width > 1, each
   "on" run is a band across the line = a **stripe**; with `angle = 0` the bands are
   perpendicular to the wire (a barcode).
-- **stripe-angle-deg**: tilts the stripes. `0` = perpendicular (native dash). As the
-  angle grows the stripes shear toward parallel-with-the-wire, which is degenerate, so
-  the input is **clamped to a maximum of 45°** (and minimum 0°). When clamping occurs,
-  `update_net_hilight_style` emits a **warning to the log/CIW** naming the offending
-  style index and the original vs clamped value.
+- **stripe-angle-deg**: tilts the stripes. `0` = perpendicular (native dash). A positive
+  angle shears the stripes one way, a **negative angle shears them the other way**; as the
+  magnitude grows toward parallel-with-the-wire it becomes degenerate, so the input is
+  **clamped to [-45°, 45°]**. When clamping occurs, `update_net_hilight_style` emits a
+  **warning to the log/CIW** naming the offending style index and the original vs clamped
+  value. (Range was [0,45] through 2026-06-26; widened to [-45,45] on 2026-06-27 — the
+  original upper-only bound was an oversight that permitted a tilt in one direction only.)
 - **blink_ms** (Pass 2a) / **anim + rate_persec** (Pass 2b): the animation columns. `blink_ms>0`
   blinks the highlight; `anim` (`march_fwd`/`march_rev`) with a dash pattern and `rate_persec>0`
   scrolls the dashes ("marching ants"). A negative `rate_persec` is clamped to 0 with a warning;
@@ -162,7 +164,7 @@ Touch points (from code survey):
 
 ### 5.1 `xschem update_net_hilight_style`
 Re-reads the `net_hilight_style` Tcl variable, (re)compiles it into the C style array,
-resolves colors to pixels, **clamps stripe angles to [0,45] with a warning per clamp**,
+resolves colors to pixels, **clamps stripe angles to [-45,45] with a warning per clamp**,
 rebuilds the per-style GC pool, and triggers a redraw. **Must be called after changing
 the table** — the Tcl variable alone has no effect because styles are compiled into GCs.
 (Naming: `update_net_hilight_style` chosen for prefix consistency with the

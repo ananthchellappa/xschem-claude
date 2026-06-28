@@ -8339,7 +8339,7 @@ static int xschem_cmds_u(Tcl_Interp *interp, int argc, const char *argv[], int *
      *   Recompile the net highlight style table from the 'net_hilight_style' Tcl
      *   variable (after editing it) and redraw. Required: changing the variable
      *   alone has no effect, since styles are compiled into the C table.
-     *   Out-of-range stripe angles are clamped to [0,45] with a warning.
+     *   Out-of-range stripe angles are clamped to [-45,45] with a warning.
      *   An empty variable resets to the layer-derived default (re-materialized into
      *   the variable). */
     else if(!strcmp(argv[1], "update_net_hilight_style"))

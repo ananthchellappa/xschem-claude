@@ -1478,7 +1478,7 @@ static void hilight_cairo_set_source(cairo_t *ct, NetHilightStyle *st, unsigned 
 }
 
 /* Pass 1.5 tilted-stripe rendering. Render a highlighted thick wire's dash pattern as
- * "stripes" sheared by st->angle (0..45 deg) instead of perpendicular dash bands (which
+ * "stripes" sheared by st->angle (-45..45 deg; sign picks the tilt direction) instead of perpendicular dash bands (which
  * is all native XSetDashes can do). Works in a wire-local frame (translate to the start,
  * rotate so the wire lies along +x) and fills one parallelogram per dash "on" run with
  * its edges tilted by `half_width * tan(angle)`. Resolution-independent. x1,y1,x2,y2 are
@@ -1532,13 +1532,15 @@ static int draw_hilight_wire_striped(unsigned int fg, NetHilightStyle *st,
   if(period <= 0.0) return 0;          /* no "on" runs: let the flat path draw it */
 
   theta = atan2(dy, dx);
-  shear = half * tan(st->angle * (XSCH_PI / 180.0));   /* angle <= 45 -> |shear| <= half */
+  shear = half * tan(st->angle * (XSCH_PI / 180.0));   /* |angle| <= 45 -> |shear| <= half; sign = tilt dir */
   /* start a whole number of periods before the wire start so a band begins at x=0 (phase
    * parity with XSetDashes), far enough back that the sheared back edge AND the cap
-   * overhang at x=-ext are still covered regardless of the width/period ratio. The Pass-2b
-   * marching offset (dash_offset, in [0,period)) then shifts the whole pattern along +x so
-   * the stripes crawl; it is absorbed by the +period slack above, so x=-ext stays covered. */
-  cstart = -ceil((ext + shear + period) / period) * period + dash_offset;
+   * overhang at x=-ext are still covered regardless of the width/period ratio. Use |shear|
+   * so the slack covers EITHER tilt direction (a negative angle leans the bands the other
+   * way, reaching |shear| past the axis on the opposite side). The Pass-2b marching offset
+   * (dash_offset, in [0,period)) then shifts the whole pattern along +x so the stripes
+   * crawl; it is absorbed by the +period slack above, so x=-ext stays covered. */
+  cstart = -ceil((ext + fabs(shear) + period) / period) * period + dash_offset;
 
   for(t = 0; t < nt; ++t) {
     cairo_t *ct = targets[t];
@@ -1551,7 +1553,7 @@ static int draw_hilight_wire_striped(unsigned int fg, NetHilightStyle *st,
     cairo_clip(ct);
     hilight_cairo_set_source(ct, st, fg);
     pos = cstart; idx = 0; on = 1;
-    while(pos < len + ext + shear + 1.0) {
+    while(pos < len + ext + fabs(shear) + 1.0) {   /* |shear|: cover the far end for either tilt */
       seg = (unsigned char)st->dash_arr[idx % st->dash_len];
       if(on) {
         /* parallelogram for the "on" run [pos, pos+seg], top/bottom edges sheared so the
@@ -1612,7 +1614,7 @@ void draw_hilight_wire(unsigned int fg, NetHilightStyle *st, double dash_offset,
   /* nonzero stripe angle on a dashed style: render tilted stripes via cairo (native Xlib
    * dashes are perpendicular-only). Falls through to the flat dash path if cairo can't
    * handle this wire (thin/degenerate) or has no usable context for the active target. */
-  if(st && st->angle > 0 && st->dash_len > 0) {
+  if(st && st->angle != 0 && st->dash_len > 0) {   /* angle<0 tilts the other way (sign of tan) */
     if(draw_hilight_wire_striped(fg, st, x1, y1, x2, y2, width, dash_offset)) return;
   }
 #endif
@@ -1625,7 +1627,7 @@ void draw_hilight_wire(unsigned int fg, NetHilightStyle *st, double dash_offset,
      *  - DIRECTION: XSetDashes' phase advances the pattern toward the wire START (-x) as it
      *    grows -- the OPPOSITE of the cairo striped path (cstart += offset -> +x). Negate it
      *    (period - offset, reduced into [0,period)) so a march_fwd style scrolls the SAME
-     *    visual direction at angle 0 and angle>0. period = net_hilight_dash_period(st) (doubled
+     *    visual direction at angle 0 and any nonzero angle. period = net_hilight_dash_period(st) (doubled
      *    for odd dash_len; the X server honors that doubled period -- verified by render).
      *  - PRECISION: the phase arg is an int, so the flat Xlib path steps in whole pixels (no
      *    sub-pixel glide like cairo); fine for marching ants, but slow scrolls advance coarsely.

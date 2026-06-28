@@ -444,7 +444,7 @@
 # A list of rows, each:
 #   {index  color  width  dash-pattern  stripe-angle-deg  blink_ms  anim  rate_persec}
 # color = layer index (0..cadlayers-1) or X color name / #rrggbb; width 1 = thin wire;
-# dash-pattern = list of on/off runs ({} = solid); stripe-angle clamps to [0,45];
+# dash-pattern = list of on/off runs ({} = solid); stripe-angle clamps to [-45,45] (sign = tilt dir);
 # blink_ms = blink period (0 = steady, Pass 2a); anim = none|march_fwd|march_rev with
 # rate_persec dash-periods/sec = marching ants on a dashed style (Pass 2b). blink + march
 # compose. The global var net_hilight_animate (default 1) is the animation kill-switch.

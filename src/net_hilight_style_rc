@@ -13,8 +13,9 @@
 #   color   a layer index (0..cadlayers-1) OR an X color name / #rrggbb
 #   width   line thickness; 1 = thinnest wire (same as a normal wire)
 #   dash    on/off run lengths as a list; {} = solid, e.g. {4 4} or {8 4 2 4}
-#   angle   stripe tilt in degrees, clamped to [0,45]; tilts the dash bands on a thick
-#           wire (needs a dash pattern + Cairo; out-of-range values warn)
+#   angle   stripe tilt in degrees, clamped to [-45,45] (sign picks the tilt direction,
+#           0 = perpendicular); tilts the dash bands on a thick wire (needs a dash
+#           pattern + Cairo; out-of-range values warn)
 #   blink   blink period in ms; 0 = steady. Nonzero makes the highlight blink (Pass 2a).
 #           The global Tcl var net_hilight_animate (default 1) is the on/off kill-switch.
 #   anim    none | march_fwd | march_rev  -- marching ants: scrolls the dash pattern along

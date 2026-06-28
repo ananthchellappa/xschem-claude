@@ -532,7 +532,7 @@ proc net_hilight_style_norm {row idx} {
   lset out 0 $idx                                            ;# index column == position
   if {![string is integer -strict [lindex $out 2]] || [lindex $out 2] < 1} { lset out 2 1 }
   set a [lindex $out 4]
-  if {![string is integer -strict $a]} { set a 0 } elseif {$a < 0} { set a 0 } elseif {$a > 45} { set a 45 }
+  if {![string is integer -strict $a]} { set a 0 } elseif {$a < -45} { set a -45 } elseif {$a > 45} { set a 45 }
   lset out 4 $a
   if {![string is integer -strict [lindex $out 5]] || [lindex $out 5] < 0} { lset out 5 0 }
   if {[lsearch -exact {none march_fwd march_rev} [lindex $out 6]] < 0} { lset out 6 none }
@@ -920,7 +920,7 @@ proc nhse_build_row {body i row {idxlabel {}}} {
   bind $rf.c3.ex <<ComboboxSelected>> [list nhse_dash_apply_example $i]
   grid $rf.c3 -row 0 -column 3 -sticky w -padx 1
 
-  scale $rf.c4 -from 0 -to 45 -orient horizontal -length 70 -showvalue 1 -resolution 1 -variable ::nhse_v($i,4)
+  scale $rf.c4 -from -45 -to 45 -orient horizontal -length 90 -showvalue 1 -resolution 1 -variable ::nhse_v($i,4)
   bind $rf.c4 <ButtonRelease-1> [list nhse_cell_commit $i]
   grid $rf.c4 -row 0 -column 4 -sticky w -padx 1
 
@@ -1118,7 +1118,7 @@ proc nhse_preview_paint {} {
     return
   }
   set half [expr {$w / 2.0}]
-  set shear [expr {$angle > 0 ? $half * tan($angle * 3.141592653589793 / 180.0) : 0}]
+  set shear [expr {$angle != 0 ? $half * tan($angle * 3.141592653589793 / 180.0) : 0}]
   foreach band [nhse_dash_bands $dash $offset $xs $xe] {
     lassign $band a b
     if {$shear == 0} {
@@ -14425,7 +14425,7 @@ if {!$rainbow_colors} {
 # Each row is:
 #   {index  color  width  dash-pattern  stripe-angle-deg  blink_ms  anim  rate_persec}
 # color: a layer index (0..cadlayers-1) or an X color name / #rrggbb. dash-pattern: a list of
-# on/off run lengths ({} = solid). stripe-angle-deg clamps to [0,45]. blink_ms drives blink
+# on/off run lengths ({} = solid). stripe-angle-deg clamps to [-45,45]. blink_ms drives blink
 # animation (period ms, 0 = steady); anim (none|march_fwd|march_rev) + rate_persec (periods/sec)
 # drive marching ants on a dashed style. There is no 10-style limit.
 #
