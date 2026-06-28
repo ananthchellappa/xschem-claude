@@ -104,6 +104,28 @@ proc busresize::is_label_type {t} {
   return [expr {$t in {label ipin opin iopin scope show_label bus_tap}}]
 }
 
+# Apply a list of changes as ONE undo step (shared by busresize and bustranspose).
+# Each change is {kind index arg value}, kind = wire | instance. A wheel notch is one
+# user operation, so in xschem's snapshot-undo model we push_undo exactly once and then
+# use the non-snapshotting `setprop -fast`. The fast path skips symbol_bbox, so each
+# changed instance's bbox is refreshed (recompute_inst_bbox) to keep hit-testing/
+# re-selection correct, then a single redraw paints the result. Empty list -> nothing
+# happens (no undo step pushed).
+proc busresize::apply_changes {changes} {
+  if {![llength $changes]} return
+  xschem push_undo
+  foreach c $changes {
+    lassign $c kind idx arg val
+    if {$kind eq "wire"} {
+      xschem setprop -fast wire $idx $arg $val
+    } else {
+      xschem setprop -fast instance $idx $arg $val
+      xschem recompute_inst_bbox $idx
+    }
+  }
+  xschem redraw
+}
+
 # ---- the action entry point (global proc, named by the registered action) ----
 
 # dir is "grow" or "shrink". One wheel notch is ONE user operation, so the whole
@@ -146,17 +168,6 @@ proc busresize_apply {dir} {
       }
     }
   }
-  if {![llength $changes]} return
-  # pass 2: single undo step, fast (non-snapshotting) edits, then bbox refresh + redraw
-  xschem push_undo
-  foreach c $changes {
-    lassign $c kind idx arg val
-    if {$kind eq "wire"} {
-      xschem setprop -fast wire $idx $arg $val
-    } else {
-      xschem setprop -fast instance $idx $arg $val
-      xschem recompute_inst_bbox $idx
-    }
-  }
-  xschem redraw
+  # pass 2: apply as a single undo step (shared with bustranspose)
+  busresize::apply_changes $changes
 }

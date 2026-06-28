@@ -2857,6 +2857,14 @@ static ActionDef action_registry[] = {
     "Grow selected: wire thickness / bus width [N:M]" },
   { "edit.shrink_selection", NULL, "busresize_apply shrink",
     "Shrink selected: wire thickness / bus width [N:M]" },
+  /* bus_transpose_scroll: step the single [N] bus index on a pin/netlabel `lab` or an
+   * instance `name` (wires/text tolerated). Tcl-backed: utils/bus_transpose.tcl. Ship
+   * UNBOUND; cadence_style_rc binds them to Alt+Shift-wheel.
+   * doc/claude/specs/bus_transpose_scroll.md. */
+  { "edit.transpose_grow_selection",   NULL, "bustranspose_apply grow",
+    "Transpose selected up: bus index [N] -> [N+1]" },
+  { "edit.transpose_shrink_selection", NULL, "bustranspose_apply shrink",
+    "Transpose selected down: bus index [N] -> [N-1]" },
 };
 static const int num_action_defs = (int)(sizeof(action_registry)/sizeof(action_registry[0]));
 
@@ -3125,7 +3133,8 @@ static int action_id_mutates(const char *id)
     "sym.list.create_pins_from_highlight_nets",
     "sym.list.create_labels_from_highlight_nets",
     "file.clear_schematic",
-    "edit.grow_selection", "edit.shrink_selection"
+    "edit.grow_selection", "edit.shrink_selection",
+    "edit.transpose_grow_selection", "edit.transpose_shrink_selection"
   };
   int i;
   if(!id) return 0;
@@ -3406,10 +3415,14 @@ static int handle_mouse_wheel(int event, int mx, int my, KeySym key, int button,
    int graph_use_ctrl_key = tclgetboolvar("graph_use_ctrl_key");
    ActionEvent ae;
    int wheel, mods, ctx;
+   /* normalized modifier mask (the bits the bind table uses), lock/button bits dropped */
+   int m;
 
    if(button == Button4)      wheel = WHEEL_UP;
    else if(button == Button5) wheel = WHEEL_DOWN;
    else return 0;
+
+   m = state & (ShiftMask | ControlMask | Mod1Mask | Mod4Mask);
 
    /* The graph-vs-canvas routing that used to be a hardcoded
     * waves_selected/waves_callback block is now data: over_graph wheel rows map
@@ -3418,20 +3431,22 @@ static int handle_mouse_wheel(int event, int mx, int my, KeySym key, int button,
    if(state == 0) {
      mods = 0; ctx = current_input_ctx(event, key, state, button);
    }
-   else if(!graph_use_ctrl_key && (state & ShiftMask) && !(state & Button2Mask)) {
+   else if(!graph_use_ctrl_key && m == ShiftMask && !(state & Button2Mask)) {
      mods = ShiftMask; ctx = current_input_ctx(event, key, state, button);
    }
-   else if(!graph_use_ctrl_key && (state & ControlMask) && !(state & Button2Mask)) {
+   else if(!graph_use_ctrl_key && m == ControlMask && !(state & Button2Mask)) {
      mods = ControlMask; ctx = ACTX_CANVAS;
    }
    else {
-     /* Any OTHER modifier combo (Alt, Super, multi-mod like Ctrl+Shift): consult the
-      * binding table on the canvas, so users can map e.g. Alt-wheel to an action
-      * (doc/claude/specs/bus_thickness_scroll.md). Lone Shift / lone Ctrl / no-mod
-      * keep their exact routing above (incl. the graph_use_ctrl_key reservation), so
-      * this only adds behavior for combos that previously did nothing. No matching
+     /* Any OTHER modifier combo (Alt, Super, multi-mod like Ctrl+Shift or Alt+Shift):
+      * consult the binding table on the canvas, so users can map e.g. Alt-wheel or
+      * Alt+Shift-wheel to an action (doc/claude/specs/bus_thickness_scroll.md,
+      * bus_transpose_scroll.md). The Shift / Ctrl branches above match the LONE
+      * modifier EXACTLY (m == ...), so a combo containing Shift/Ctrl falls through here
+      * instead of being mistaken for plain Shift/Ctrl. Lone Shift / lone Ctrl / no-mod
+      * keep their routing (incl. the graph_use_ctrl_key reservation). No matching
       * binding -> dispatch_input_action() is a harmless no-op. */
-     mods = state & (ShiftMask | ControlMask | Mod1Mask | Mod4Mask);
+     mods = m;
      if(mods == 0 || mods == ShiftMask || mods == ControlMask) return 0;
      ctx = ACTX_CANVAS;
    }

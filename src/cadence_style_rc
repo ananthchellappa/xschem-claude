@@ -71,6 +71,11 @@ xschem bind wheel down 0    canvas view.pan_down
 # See doc/claude/specs/bus_thickness_scroll.md.
 xschem bind wheel up   alt canvas edit.grow_selection
 xschem bind wheel down alt canvas edit.shrink_selection
+# Alt+Shift+wheel : transpose the single [N] bus index on a selected pin/netlabel name
+# or instance name (wires/text tolerated, no effect). something -> something[0] ->
+# something[1]; down steps back, [0] -> something. See bus_transpose_scroll.md.
+xschem bind wheel up   alt+shift canvas edit.transpose_grow_selection
+xschem bind wheel down alt+shift canvas edit.transpose_shrink_selection
 
 # Cadence-style instantiation: the "i" key opens the Create Instance browser
 # (Edit > Create Instance). `break` stops the event reaching the generic <KeyPress>
@@ -113,6 +118,7 @@ source [file join $_ut cadence_nav.tcl]
 source [file join $_ut cadence_clip.tcl]
 source [file join $_ut hilight_style_nav.tcl]
 source [file join $_ut bus_resize.tcl]
+source [file join $_ut bus_transpose.tcl]
 # moved unset _ut
 
 # Ctrl-Alt-S : locate a cell in the Library Manager. Acts on the selected instance's
