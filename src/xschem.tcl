@@ -5378,18 +5378,36 @@ proc force_window_repaint {win {tries 0}} {
   }
 }
 
-# Raise + activate an already-open top-level on WMs (notably WSLg/Weston) whose focus-
-# stealing prevention ignores a plain `raise`. Use the EWMH _NET_ACTIVE_WINDOW client
-# message (`xschem activate_window`): the WM raises the window to the front and focuses it
-# WITHOUT unmapping or moving it, so -- unlike the withdraw/deiconify re-map -- it does not
-# drift. Honored by any WM that advertises _NET_ACTIVE_WINDOW (Weston does). The `raise` is
-# a harmless companion for plain X servers. Earlier attempts and why they failed are in
-# doc/claude/issues/0054 (re-map raises but drifts NW; `-topmost` toggle no drift but does
-# not raise; `wm iconify` got stuck minimized). Callers add their own keyboard focus. (0054)
+# Raise an already-open top-level to the front. On WSLg/Weston this is genuinely hard: that WM
+# applies stacking ONLY at map time, so a plain `raise`, the EWMH `_NET_ACTIVE_WINDOW` message
+# (every source indication + a real timestamp) and `_NET_WM_STATE_ABOVE` are ALL ignored once a
+# window is mapped (exhaustively verified -- see doc/claude/issues/0054 and its probes). The one
+# thing that brings a mapped window forward is to re-MAP it (withdraw + deiconify): a fresh map
+# re-runs the WM's stacking.
+#
+# The unavoidable cost is a ~32px North-West CREEP per raise: on each map this WM computes the
+# new client position as (previous position - 32) and IGNORES any geometry we request -- proven
+# by re-mapping to a fixed +X+Y every cycle and watching winfo rootx still sink -32 while
+# `wm geometry` falsely echoed the requested value. No Tk- or X-level trick stops it
+# (`positionfrom user`, pre-compensation, post-map geometry set, measure-and-correct -- all
+# failed). The user chose raise-with-creep over no-raise. Keep it to a SINGLE re-map: the
+# earlier measure/double-remap variant fired a second map on alternating raises, which read as
+# the Library Manager "disappearing and reappearing every other time". Dead ends that must NOT
+# come back: `-topmost` toggle (no drift but no raise), `wm iconify` (stuck minimized in tray),
+# a user-set flag. The trailing `xschem activate_window` (_NET_ACTIVE_WINDOW) is a no-op on
+# Weston but helps real EWMH WMs / the title-bar active tint. Callers add their own focus. (0054)
 proc raise_activate_toplevel {top} {
   global has_x
   if { ![info exists has_x] || !$has_x } return
   if {![winfo exists $top]} return
+  if {[winfo ismapped $top]} {
+    set geo [wm geometry $top]
+    wm withdraw $top
+    wm deiconify $top
+    catch { wm geometry $top $geo }   ;# best-effort; this WM ignores it for client placement
+  } else {
+    catch { wm deiconify $top }       ;# never mapped / withdrawn: a deiconify maps + raises it
+  }
   raise $top
   catch { xschem activate_window [winfo id $top] }
 }

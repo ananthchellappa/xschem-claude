@@ -98,27 +98,48 @@ Third attempt — `wm iconify` + `wm deiconify` (Windows minimize+restore): **re
 deiconify did not undo the minimize — the window got stuck minimized in the tray and had to be
 restored by hand. Worse than the drift.
 
-None of the *Tk-level* tricks gives BOTH raise and no-drift on WSLg (all empirically tested):
-re-map (`withdraw`/`deiconify`) raises but the WM re-places it NW; `-topmost` toggle never moves it
-but doesn't raise; `iconify` gets stuck minimized; geometry restore / measured correction don't hold.
+## 3b. Resolution — raise-without-drift is impossible on this WSLg/Weston; ship the clean re-map
 
-**Actual fix — EWMH `_NET_ACTIVE_WINDOW`.** The WSLg window manager identifies as **"Weston WM"** and
-**advertises `_NET_ACTIVE_WINDOW`** in `_NET_SUPPORTED`. That client message is the standard "activate
-this window" request: the WM raises it to the front and focuses it **without unmapping or moving it**,
-so there is no drift. `wmctrl`/`xdotool` aren't installed, but xschem is itself an Xlib app and
-already has a `client_msg()` helper (used for `_NET_WM_STATE` fullscreen), so a new C function
-`net_active_window()` (`xinit.c`) sends it (source indication 2 = pager/direct-user-action, which
-bypasses focus-stealing prevention), exposed as `xschem activate_window <xid>` (`scheduler.c`,
-`xschem_cmds_a`). The shared helper `raise_activate_toplevel` (`src/xschem.tcl`) now just does
-`raise $top; xschem activate_window [winfo id $top]`. Verified: command runs clean and the window's
-`rootx`/`rooty` are byte-identical across cycles (no drift); the raise itself can't be asserted
-headless (this WM's `wm stackorder` is unreliable) but the message is the WM-honored one. No re-map,
-no flash, no always-on-top side effect. `cadence::focus_window`, `libmgr::raise_to_front` and
-`ciform::raise_to_front` all route through the helper and add their own keyboard focus.
+A long empirical campaign (probe scripts kept alongside this doc: `0054-raise-drift-probe.tcl`,
+`0054-activate-probe.tcl` + `0054-xactivate.c`, run by the user on the **real** visible desktop —
+the headless dev Weston cannot reproduce the drift, it pins test windows off-screen at
+`rootx=-32730` with zero movement for every strategy) established the WM's behavior conclusively:
+
+- **This Weston restacks ONLY at map time.** Once a window is mapped, *every* in-place raise is
+  ignored: plain `raise`, `_NET_ACTIVE_WINDOW` (tested with source indication **0, 1 and 2** and a
+  **real server timestamp** via the ICCCM property-stamp trick, not just CurrentTime), and
+  `_NET_WM_STATE_ABOVE` (add, and add+remove) — **none** bring the window forward. So the earlier
+  "_NET_ACTIVE_WINDOW is the fix" claim was wrong: it runs clean and doesn't drift, but it also
+  **does not raise** on this WM.
+- **The only thing that raises a mapped window is a re-map** (`wm withdraw` + `wm deiconify`) — a
+  fresh map re-runs stacking.
+- **The re-map always creeps ~32px NW, uncontrollably.** The WM computes the new client position as
+  `previous - 32` and **ignores the geometry we request**: re-mapping to a *fixed* `+513+353` every
+  cycle still showed `winfo rootx` sinking `551→519→487→455→423` while `wm geometry` falsely echoed a
+  constant `+513+353`. Nothing stops it — `wm positionfrom user` (USPosition), fixed `+32`
+  pre-compensation, post-map `wm geometry` (ignored outright), and measure-then-recorrect all drifted
+  the same `-160/5cycles`. Measure-and-correct is impossible anyway: the shift lands *asynchronously*
+  after our read, and the frame offset itself changes between maps (38→6→-26 …), which also produced a
+  "disappear and reappear every other raise" flicker when the helper did a conditional second re-map.
+
+**Decision (user-chosen, via explicit trade-off prompt):** since raise-AND-no-drift is impossible,
+take **raise-with-creep over no-raise**. The helper `raise_activate_toplevel` (`src/xschem.tcl`) does a
+**single** clean re-map (`withdraw`+`deiconify`, best-effort geometry restore the WM ignores), then
+`raise` + the harmless `xschem activate_window` companion (a no-op on Weston, but helps real EWMH WMs
+and the title-bar active tint). Exactly one re-map = one clean flash per raise; the every-other-raise
+flicker is gone. The ~32px NW creep remains as a known WSLg/Weston platform limitation (drag the window
+back occasionally). `cadence::focus_window`, `libmgr::raise_to_front` and `ciform::raise_to_front` all
+route through the helper and add their own keyboard focus. The C `net_active_window()` /
+`xschem activate_window` are retained (harmless, portable) but are NOT what raises on WSLg.
+
+Dead ends that must not be reintroduced: `-topmost` toggle (no drift but no raise), `wm iconify`
+(stuck minimized in the tray), a user-set flag, or a measure/double-remap correction (the flicker).
 
 ## 4. Acceptance
 
 After a cross-window return (Ctrl-E or Alt-E), the pointer is in the target window and that window's
 context is active: clicks/selection/hover all act on the window the pointer is in; no input is routed
 to the previously-active window. Headless `test_descend_newwin_return.tcl` still passes (context-level
-assertions); a GUI check confirms pointer + context land together on the parent window.
+assertions); a GUI check confirms pointer + context land together on the parent window. The visual
+raise works (re-map) at the cost of a ~32px NW creep per raise, accepted as a WSLg/Weston limitation
+(§3b); a single re-map keeps it to one clean flash with no every-other-raise flicker.
