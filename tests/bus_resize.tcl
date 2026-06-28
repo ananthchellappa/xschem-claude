@@ -81,5 +81,41 @@ xschem select wire $wi
 busresize_apply grow
 check "wire grow bus>0" [expr {[xschem getprop wire $wi bus] > 0}] 1
 
+# --- single-undo: one wheel notch over a MULTI-object selection = ONE undo step ---
+# (regression for the user-reported bug: a multi-object grow needed several undos)
+xschem load [file normalize buried_hilight/a.sch]
+xschem instance devices/lab_pin.sym 100 100 0 0 {name=la lab=aaa}
+xschem instance devices/lab_pin.sym 100 200 0 0 {name=lb lab=bbb}
+xschem unselect_all ; xschem select instance la ; xschem select instance lb
+check "two instances selected" [xschem get lastsel] 2
+busresize_apply grow
+check "multi grow la" [xschem getprop instance la lab] {aaa[1:0]}
+check "multi grow lb" [xschem getprop instance lb lab] {bbb[1:0]}
+xschem undo
+check "ONE undo reverts la" [xschem getprop instance la lab] {aaa}
+check "ONE undo reverts lb" [xschem getprop instance lb lab] {bbb}
+
+# multi-wire: one notch = one undo for several wires too
+xschem load [file normalize buried_hilight/a.sch]
+xschem wire 0 0 200 0
+xschem wire 0 50 200 50
+xschem unselect_all ; xschem select wire 0 ; xschem select wire 1
+check "two wires selected" [xschem get lastsel] 2
+busresize_apply grow
+check "wire0 grew" [expr {[xschem getprop wire 0 bus] > 0}] 1
+check "wire1 grew" [expr {[xschem getprop wire 1 bus] > 0}] 1
+xschem undo
+check "ONE undo reverts wire0" [xschem getprop wire 0 bus] {}
+check "ONE undo reverts wire1" [xschem getprop wire 1 bus] {}
+
+# an all-no-op gesture pushes NO undo step (shrinking an all-scalar selection)
+xschem load [file normalize buried_hilight/a.sch]
+xschem instance devices/lab_pin.sym 120 120 0 0 {name=lc lab=ccc}
+xschem unselect_all ; xschem select instance lc
+xschem setprop instance lc lab marker   ;# a standalone change = the latest undo state
+busresize_apply shrink                  ;# scalar floor -> no change, must not push undo
+xschem undo                             ;# should undo the 'marker' change, not a no-op step
+check "no-op gesture pushes no undo" [xschem getprop instance lc lab] {ccc}
+
 if {$nfail} { puts "bus_resize: $nfail check(s): FAIL" } \
 else        { puts "bus_resize: all checks PASS" }

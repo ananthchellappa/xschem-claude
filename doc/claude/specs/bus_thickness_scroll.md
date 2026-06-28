@@ -65,12 +65,17 @@ A wire's drawn width is already driven by its `bus` attribute (`draw.c`: `bus>0`
 ### Selection handling
 Iterate `xschem objects -selected`; for each, branch on `type`:
 `wire` → thickness; `instance` → if its symbol type is a label/pin, edit `lab`, else
-edit `name`. Non-matching types (text, rect, …) are ignored. Each change uses the
-normal (non-fast) `xschem setprop`, which recomputes the instance bbox, redraws and
-pushes an undo step — so display and re-selection stay correct after a label's text
-grows. A single-object notch is therefore one undo step; a multi-object selection is
-one undo step per changed object (a later optimization could coalesce these, but it
-must still recompute each instance's bbox, which the fast path skips).
+edit `name`. Non-matching types (text, rect, …) are ignored.
+
+**One notch = one undo step (even over a multi-object selection).** A wheel notch is a
+single user operation, so it must be a single undo. In xschem's snapshot-undo model
+that means: pass 1 collects only the changes that actually differ; if there are none
+the gesture pushes nothing; otherwise pass 2 calls `xschem push_undo` exactly once,
+then applies every change with the non-snapshotting `setprop -fast`. Because the fast
+path also skips `symbol_bbox`, each changed instance is refreshed with
+`xschem recompute_inst_bbox <idx>` (so hit-testing / re-selection stay correct after a
+label's text grows), and a single `xschem redraw` paints the result. One `xschem undo`
+then reverts the entire gesture.
 
 ## Extensibility design
 
@@ -89,11 +94,15 @@ must still recompute each instance's bbox, which the fast path skips).
 
 ## Files
 
-- `utils/bus_resize.tcl` (new): the transform + wire-thickness model + `busresize_apply`.
+- `utils/bus_resize.tcl` (new): the transform + wire-thickness model + `busresize_apply`
+  (single-undo: collect changes → one `push_undo` → `-fast` edits → `recompute_inst_bbox`
+  → one `redraw`).
 - `src/callback.c`: wheel dispatch widening + two `action_registry[]` rows +
   `action_id_mutates` entries.
+- `src/scheduler.c`: `xschem recompute_inst_bbox [inst]` — refresh one (or all selected)
+  instance bbox(es) without undo/redraw, so a `-fast` batch keeps hit-testing correct.
 - `src/cadence_style_rc`: source the util + the two default binds.
-- `tests/bus_resize.tcl` (new): RED-first.
+- `tests/bus_resize.tcl` (new): RED-first, incl. the single-undo regression.
 
 ## Test
 

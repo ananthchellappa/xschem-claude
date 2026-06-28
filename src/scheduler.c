@@ -5804,7 +5804,35 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
      *     Example: xschem raw add power {outm outp - i(@r1[i]) *}
      *
      */
-    if(!strcmp(argv[1], "raw") || !strcmp(argv[1], "raw_query"))
+    /* recompute_inst_bbox [inst]
+     *   Recompute the cached bounding box (x1/y1/x2/y2, which includes the instance's
+     *   texts) of one instance (by name or index) or, with no arg, of every currently
+     *   SELECTED instance. Does NOT push undo or redraw — it just refreshes the bbox
+     *   the hit-test/selection/redraw machinery relies on. Needed after a batch of
+     *   `setprop -fast instance` edits (the fast path skips symbol_bbox) so a single
+     *   undo can cover a multi-object gesture while hit-testing stays correct.
+     *   See doc/claude/specs/bus_thickness_scroll.md / its undo update. */
+    if(!strcmp(argv[1], "recompute_inst_bbox"))
+    {
+      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(argc > 2) {
+        int i = get_instance(argv[2]);
+        if(i < 0) { Tcl_SetResult(interp, "xschem recompute_inst_bbox: instance not found",
+                                   TCL_STATIC); return TCL_ERROR; }
+        symbol_bbox(i, &xctx->inst[i].x1, &xctx->inst[i].y1, &xctx->inst[i].x2, &xctx->inst[i].y2);
+      } else {
+        int i;
+        rebuild_selected_array();
+        for(i = 0; i < xctx->lastsel; ++i) {
+          if(xctx->sel_array[i].type == ELEMENT) {
+            int n = xctx->sel_array[i].n;
+            symbol_bbox(n, &xctx->inst[n].x1, &xctx->inst[n].y1, &xctx->inst[n].x2, &xctx->inst[n].y2);
+          }
+        }
+      }
+      Tcl_ResetResult(interp);
+    }
+    else if(!strcmp(argv[1], "raw") || !strcmp(argv[1], "raw_query"))
     {
       double sweep1 = -1.0, sweep2 = -1.0;
       int err = 0;

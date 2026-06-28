@@ -106,17 +106,22 @@ proc busresize::is_label_type {t} {
 
 # ---- the action entry point (global proc, named by the registered action) ----
 
-# dir is "grow" or "shrink". Applies to every selected object per its type. Uses the
-# normal (non-fast) setprop so each change recomputes the instance bbox, redraws, and
-# pushes an undo step -- correct display and re-selection after a label grows. The
-# common single-selection notch is therefore one undo step; a multi-object selection
-# yields one undo step per changed object.
+# dir is "grow" or "shrink". One wheel notch is ONE user operation, so the whole
+# selection collapses to a SINGLE undo step: in xschem's snapshot-undo model that means
+# push_undo exactly once and then apply every change with the non-snapshotting `-fast`
+# setprop. The fast path also skips the instance bbox recompute (symbol_bbox), so each
+# changed instance is refreshed afterwards via `xschem recompute_inst_bbox` to keep
+# hit-testing/selection correct, then a single redraw paints the result.
+# A first pass computes only the real changes, so an all-no-op gesture (e.g. shrinking
+# an all-scalar selection) pushes no undo step at all.
 proc busresize_apply {dir} {
   if {$dir ne "grow" && $dir ne "shrink"} return
   if {[xschem get lastsel] == 0} {
     ciw_echo "grow/shrink: select wires, labels, pins or instances first"
     return
   }
+  # pass 1: collect the changes that actually differ -> {kind index arg value}
+  set changes {}
   foreach o [xschem objects -selected] {
     array unset d ; array set d $o
     switch -- $d(type) {
@@ -125,7 +130,7 @@ proc busresize_apply {dir} {
         set nt [expr {$dir eq "grow" ? [busresize::wire_grow $cur] \
                                      : [busresize::wire_shrink $cur]}]
         if {$nt != [busresize::wire_thickness $cur]} {
-          xschem setprop wire $d(index) bus $nt
+          lappend changes [list wire $d(index) bus $nt]
         }
       }
       instance {
@@ -137,8 +142,21 @@ proc busresize_apply {dir} {
         set cur [xschem getprop instance $d(index) $attr]
         set nn [expr {$dir eq "grow" ? [busresize::grow_name $cur] \
                                      : [busresize::shrink_name $cur]}]
-        if {$nn ne $cur} { xschem setprop instance $d(index) $attr $nn }
+        if {$nn ne $cur} { lappend changes [list instance $d(index) $attr $nn] }
       }
     }
   }
+  if {![llength $changes]} return
+  # pass 2: single undo step, fast (non-snapshotting) edits, then bbox refresh + redraw
+  xschem push_undo
+  foreach c $changes {
+    lassign $c kind idx arg val
+    if {$kind eq "wire"} {
+      xschem setprop -fast wire $idx $arg $val
+    } else {
+      xschem setprop -fast instance $idx $arg $val
+      xschem recompute_inst_bbox $idx
+    }
+  }
+  xschem redraw
 }
