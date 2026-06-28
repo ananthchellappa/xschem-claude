@@ -64,6 +64,13 @@ xschem bind wheel down ctrl canvas view.zoom_out
 xschem bind wheel up   0    canvas view.pan_up
 xschem bind wheel down 0    canvas view.pan_down
 # (Shift+wheel already pans horizontally — view.pan_left/right — by default, no change needed)
+# Alt+wheel : grow / shrink every selected object -- wire thickness, and the [N:M] bus
+# suffix on a pin/netlabel net name or an instance name. The actions are registered in
+# C (edit.grow_selection / edit.shrink_selection -> busresize_apply, utils/bus_resize.tcl);
+# rebind to any chord, e.g. `xschem bind wheel up ctrl+shift canvas edit.grow_selection`.
+# See doc/claude/specs/bus_thickness_scroll.md.
+xschem bind wheel up   alt canvas edit.grow_selection
+xschem bind wheel down alt canvas edit.shrink_selection
 
 # Cadence-style instantiation: the "i" key opens the Create Instance browser
 # (Edit > Create Instance). `break` stops the event reaching the generic <KeyPress>
@@ -105,6 +112,7 @@ source [file join $_ut lib_mgr_helpers.tcl]
 source [file join $_ut cadence_nav.tcl]
 source [file join $_ut cadence_clip.tcl]
 source [file join $_ut hilight_style_nav.tcl]
+source [file join $_ut bus_resize.tcl]
 # moved unset _ut
 
 # Ctrl-Alt-S : locate a cell in the Library Manager. Acts on the selected instance's

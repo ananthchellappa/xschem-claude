@@ -2848,6 +2848,15 @@ static ActionDef action_registry[] = {
     "set draw_grid [expr {!$draw_grid}]; xschem redraw", "Toggle grid display" },
   { "hilight.send_to_waveform", act_highlight_send_waveform, NULL,
     "Highlight net and send to waveform viewer" },
+  /* bus_thickness_scroll: grow/shrink every selected object (wire thickness, and the
+   * [N:M] bus suffix on pin/netlabel `lab` or instance `name`). Tcl-backed: the logic
+   * lives in utils/bus_resize.tcl (busresize_apply), sourced by cadence_style_rc. Ship
+   * UNBOUND; cadence_style_rc binds them to Alt-wheel, any user can rebind via
+   * `xschem bind`. doc/claude/specs/bus_thickness_scroll.md. */
+  { "edit.grow_selection",   NULL, "busresize_apply grow",
+    "Grow selected: wire thickness / bus width [N:M]" },
+  { "edit.shrink_selection", NULL, "busresize_apply shrink",
+    "Shrink selected: wire thickness / bus width [N:M]" },
 };
 static const int num_action_defs = (int)(sizeof(action_registry)/sizeof(action_registry[0]));
 
@@ -3115,7 +3124,8 @@ static int action_id_mutates(const char *id)
     "sym.create_symbol_pins_from_selected_schematic_pins",
     "sym.list.create_pins_from_highlight_nets",
     "sym.list.create_labels_from_highlight_nets",
-    "file.clear_schematic"
+    "file.clear_schematic",
+    "edit.grow_selection", "edit.shrink_selection"
   };
   int i;
   if(!id) return 0;
@@ -3415,7 +3425,15 @@ static int handle_mouse_wheel(int event, int mx, int my, KeySym key, int button,
      mods = ControlMask; ctx = ACTX_CANVAS;
    }
    else {
-     return 0;             /* no built-in handling for other modifier combos */
+     /* Any OTHER modifier combo (Alt, Super, multi-mod like Ctrl+Shift): consult the
+      * binding table on the canvas, so users can map e.g. Alt-wheel to an action
+      * (doc/claude/specs/bus_thickness_scroll.md). Lone Shift / lone Ctrl / no-mod
+      * keep their exact routing above (incl. the graph_use_ctrl_key reservation), so
+      * this only adds behavior for combos that previously did nothing. No matching
+      * binding -> dispatch_input_action() is a harmless no-op. */
+     mods = state & (ShiftMask | ControlMask | Mod1Mask | Mod4Mask);
+     if(mods == 0 || mods == ShiftMask || mods == ControlMask) return 0;
+     ctx = ACTX_CANVAS;
    }
 
    ae.device = DEV_WHEEL; ae.code = wheel; ae.mods = mods; ae.ctx = ctx;
