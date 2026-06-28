@@ -45,9 +45,8 @@ namespace eval libmgr {
 proc libmgr::raise_to_front {} {
   set w .libmgr
   if {![winfo exists $w]} return
-  # Bring it to the front via the shared helper (a stacking-attribute toggle that does
-  # NOT re-map or touch geometry, so the window no longer creeps North-West on every
-  # CTRL-ALT-S re-launch, issue 0054); then put keyboard focus on the library list.
+  # Bring it to the front via the shared helper (raises without the North-West creep
+  # that the old re-map caused on every CTRL-ALT-S, issue 0054); then focus the list.
   raise_activate_toplevel $w
   catch {focus -force $w.pw.lib.lb}
   after idle [list libmgr::refocus $w]

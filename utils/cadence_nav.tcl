@@ -85,10 +85,9 @@ proc cadence::focus_window {win} {
     set top [winfo toplevel $win]
     set curtop {}
     if {[winfo exists $cur]} { set curtop [winfo toplevel $cur] }
-    # Bring the target's TOP-LEVEL to the front via the shared helper (a stacking-
-    # attribute toggle: a plain `raise` is ignored by WSLg focus-stealing prevention,
-    # and re-mapping makes the window creep -- issue 0054). Only when the target is a
-    # DIFFERENT OS window (no point toggling the window we are already on).
+    # Bring the target's TOP-LEVEL to the front via the shared helper (raises reliably on
+    # WSLg without the creep the old re-map caused -- issue 0054). Only when the target is a
+    # DIFFERENT OS window (no point raising the window we are already on).
     if {[winfo exists $top] && $top ne $curtop} {
       raise_activate_toplevel $top
       update idletasks

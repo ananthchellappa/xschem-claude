@@ -89,15 +89,19 @@ rootx`/`rooty` showed the window still walked NW each cycle (`306,227 → 242,16
 a reparenting/placing WM re-positions on every **map**, regardless of how the geometry is fed in. A
 bare `raise` separately could fling the main window to another monitor.
 
-**Actual fix:** never re-map, never touch geometry, and don't `raise`. The shared helper
-`raise_activate_toplevel` (`src/xschem.tcl`) now just **toggles the `-topmost` stacking attribute**
-(set 1, `update idletasks`, set 0). That forces the window to the front on WMs that ignore `raise`,
-leaves no lasting always-on-top, and — because a stacking attribute never changes geometry — the
-window cannot drift. Verified deterministically: `rootx`/`rooty` byte-identical across 6 cycles on
-**both** a dialog toplevel and the main window (`1103,424` and `3608,116` respectively), vs the
-set-while-withdrawn order which still drifted NW. `cadence::focus_window`, `libmgr::raise_to_front`
-and `ciform::raise_to_front` all route through the shared helper; callers add their own keyboard
-focus afterward.
+Second attempt — toggle the `-topmost` stacking attribute (no re-map, no geometry): killed the
+drift (`rootx`/`rooty` byte-stable across cycles) but on WSLg it did **not raise** the window —
+clearing the attribute drops it back, so the window stayed behind. (Context still switched, so e.g.
+Ctrl-A after a return correctly acted on the now-current window; only the visual raise was missing.)
+
+**Actual fix:** `wm iconify` + `wm deiconify`. On WSLg (X11 → Windows) that maps to a **minimize +
+restore**: restoring brings the window to the front and active (as if its taskbar button were
+clicked) **and** restores it to its *remembered* position — so it raises **and** does not drift.
+Verified position-stable (`rootx`/`rooty` byte-identical across cycles) on both a dialog and the main
+window. The `update` between iconify and deiconify lets the WM register the minimize. Trade-off: a
+brief minimize/restore flash on each raise. The shared helper `raise_activate_toplevel`
+(`src/xschem.tcl`) does this; `cadence::focus_window`, `libmgr::raise_to_front` and
+`ciform::raise_to_front` all route through it and add their own keyboard focus afterward.
 
 ## 4. Acceptance
 

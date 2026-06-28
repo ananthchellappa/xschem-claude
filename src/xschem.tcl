@@ -5378,28 +5378,29 @@ proc force_window_repaint {win {tries 0}} {
   }
 }
 
-# Raise an already-open top-level to the front reliably, WITHOUT moving it.
+# Raise + activate an already-open top-level reliably, WITHOUT it drifting.
 #
-# WSLg/WM focus-stealing prevention ignores a plain `raise` on an already-open window.
-# The re-map workaround (wm withdraw + wm deiconify, with/without re-applying geometry)
-# does raise it, but it MOVES the window: a reparenting/placing WM nudges it on every
-# map -- the reported North-West creep on each CTRL-ALT-S / return (it drifts even when
-# `wm geometry` is set while withdrawn: the reported geometry stays put but the actual
-# rootx/rooty walk NW). And a bare `raise` can fling the main window to another monitor.
+# On WSLg (X11 -> Windows) the cheaper tricks each fail one half of the goal:
+#  - a plain `raise` is ignored by focus-stealing prevention (window does not come forward);
+#  - the `-topmost` stacking toggle also fails to raise it here (clearing it drops it back);
+#  - the withdraw/deiconify re-map DOES raise it but lets the WM re-PLACE the window, so it
+#    crept North-West on every raise (it drifts even with `wm geometry` set while withdrawn:
+#    the reported geometry stays put while the real rootx/rooty walk NW).
 #
-# So do NOT re-map, do NOT touch geometry, and do NOT `raise`: toggle the "above/topmost"
-# stacking attribute, which forces the window to the top on WMs that ignore `raise`, then
-# clear it (no lasting always-on-top). A stacking attribute never changes geometry, so the
-# window cannot drift -- verified rootx/rooty byte-stable across cycles on both a dialog and
-# the main window. Callers add their own keyboard focus afterward. (issue 0054)
+# wm iconify + wm deiconify maps to a Windows MINIMIZE + RESTORE: restoring brings the
+# window to the front and active (as if its taskbar button were clicked) AND restores it to
+# its REMEMBERED position, so it raises without drifting -- verified position-stable
+# (rootx/rooty byte-identical) across cycles on both a dialog and the main window. The cost
+# is a brief minimize/restore flash. The `update` between lets the WM register the iconify
+# before the deiconify. Callers add their own keyboard focus afterward. (issue 0054)
 proc raise_activate_toplevel {top} {
   global has_x
   if { ![info exists has_x] || !$has_x } return
   if {![winfo exists $top]} return
   catch {
-    wm attributes $top -topmost 1
-    update idletasks
-    wm attributes $top -topmost 0
+    wm iconify $top
+    update
+    wm deiconify $top
   }
 }
 
