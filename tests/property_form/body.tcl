@@ -1415,3 +1415,129 @@ if {[gui2_ok]} {
 } else {
   foreach t {PF60 PF61 PF62 PF63a PF63b PF64} { check "$t (skipped: no main window)" {1} }
 }
+
+# ===========================================================================
+# PF65 — issue 0057: changing the instance IDENTITY (here, the raw Symbol entry,
+# the path that is always available without the OA registry) must re-read the new
+# cell and repopulate the field grid with the NEW cell's DEFAULTS — the old cell's
+# values do not apply to a different cell. capa and res happen to declare the same
+# token set; what differs is the DEFAULT VALUES (value 1p->1k, device "ceramic
+# capacitor"->resistor). The user starts with a capa edited to value=22p, changes
+# the cell to res, and must see res's defaults (value=1k, device=resistor) — NOT
+# the stale 22p — then on OK get a real resistor (re-pointed master, name R…).
+# ===========================================================================
+proc pf_has_field {tok} { return [info exists ::slickprop::cur(entry,$tok)] }
+if {[gui2_ok]} {
+  catch {while {[winfo exists .dialog]} {slickprop::cancel; update}}
+  foreach id [after info] {catch {after cancel $id}}
+  xschem set modified 0
+  xschem clear force schematic
+  xschem instance capa.sym 0 0 0 0 {name=C1 m=1 value=22p}
+  xschem select instance C1
+  set ::no_change_attrs 0; set ::preserve_unchanged_attrs 0; set ::copy_cell 0
+  set ::slickprop_apply_scope current
+  set ::pf65_built 0
+  catch {xschem edit_prop}
+  if {[winfo exists .dialog] && [pf_has_field value]} {
+    set ::pf65_built 1
+    # capa context up front: the instance's value=22p is shown
+    set ::pf65_cap_val [slickprop::field_value value]
+    # --- change the identity: Symbol entry capa.sym -> res.sym ---------------
+    .dialog.f1.e2 delete 0 end
+    .dialog.f1.e2 insert 0 res.sym
+    slickprop::on_identity_changed
+    # the field grid is now the res cell's defaults
+    set ::pf65_new_val  [slickprop::field_value value]
+    set ::pf65_new_dev  [slickprop::field_value device]
+    set ::pf65_orig     $::slickprop::cur(orig)
+    set ::pf65_dirty    [slickprop::is_dirty]
+    set ::pf65_restmpl  [slickprop::template_of res.sym]
+    slickprop::ok
+  }
+  check {PF65a edit_form opened on the capa instance} {$::pf65_built == 1}
+  check {PF65b the capa form carried the instance's edited value (22p)} \
+    {$::pf65_cap_val eq "22p"}
+  check {PF65c after identity change the value field shows res's default (1k, not 22p)} \
+    {$::pf65_new_val eq "1k"}
+  check {PF65d the device field shows res's default (resistor)} \
+    {$::pf65_new_dev eq "resistor"}
+  check {PF65e cur(orig) became the res template (apply baseline reset to new cell)} \
+    {$::pf65_orig eq $::pf65_restmpl}
+  check {PF65f an identity change marks the form dirty (Next/Prev will prompt)} {$::pf65_dirty == 1}
+  # --- after OK: the instance is genuinely a resistor now ---------------------
+  check {PF65g OK re-pointed the master to res.sym} \
+    {[string match *res.sym [xschem getprop instance 0 cell::name]]}
+  check {PF65h the applied instance took res's value=1k (the stale 22p is gone)} \
+    {[xschem get_tok [xschem getprop instance 0] value 2] eq "1k"}
+  check {PF65i the applied instance took res's device=resistor} \
+    {[xschem get_tok [xschem getprop instance 0] device 2] eq "resistor"}
+  check {PF65j the instance name was re-prefixed for the new cell (R…)} \
+    {[string match R* [xschem get_tok [xschem getprop instance 0] name 2]]}
+} else {
+  foreach t {PF65a PF65b PF65c PF65d PF65e PF65f PF65g PF65h PF65i PF65j} {
+    check "$t (skipped: no main window)" {1}
+  }
+}
+
+# ===========================================================================
+# PF66 — issue 0057 via the LIBRARY/CELL/VIEW rows (the path the user actually
+# hits in cadence_style_rc: an OA lib/cell/view registry, nested layout). Edit
+# the *Cell* field capa->res and TAB out: on_identity_changed must re-read res's
+# defaults — even though res is NOT loaded yet and cellview_path hands back an
+# ABSOLUTE path while the loaded symbol is keyed by its lib-qualified rel name.
+# This is the case the raw-Symbol PF65 missed; it regressed once (template_of
+# queried only the abs path -> empty -> no-op -> "nothing changes").
+# ===========================================================================
+set ::pf66_oa [file normalize [file join $::pf_dir .. .. xschem_libraries_oa]]
+if {[gui2_ok] && [file isdirectory $::pf66_oa] &&
+    [file exists [file join $::pf66_oa devices res symbol res.sym]]} {
+  catch {while {[winfo exists .dialog]} {slickprop::cancel; update}}
+  foreach id [after info] {catch {after cancel $id}}
+  # register the OA tree so devices/capa + devices/res resolve as lib/cell/view
+  set ::env(XSCHEM_LIBRARY_DEFS) [file join $::pf66_oa library.defs]
+  catch {set ::XSCHEM_LIBRARY_DEFS [file join $::pf66_oa library.defs]}
+  if {[lsearch -exact $::pathlist $::pf66_oa] < 0} { lappend ::pathlist $::pf66_oa }
+  set ::pf66_lcv_ok [expr {[llength [library_inst_lcv [xschem cellview_path devices/capa symbol]]] == 3}]
+  xschem set modified 0
+  xschem clear force schematic
+  xschem instance devices/capa 0 0 0 0 {name=C1 m=1 value=22p}
+  xschem select instance C1
+  set ::no_change_attrs 0; set ::preserve_unchanged_attrs 0; set ::copy_cell 0
+  set ::slickprop_apply_scope current
+  set ::pf66_built 0; set ::pf66_active 0
+  catch {xschem edit_prop}
+  if {[winfo exists .dialog] && [pf_has_field value]} {
+    set ::pf66_built 1
+    set ::pf66_active [expr {[info exists ::slickprop::lcv_active] && $::slickprop::lcv_active
+                            && [winfo exists .dialog.flcv]}]
+    # the Cell row must carry the identity-change handler that <TAB> (FocusOut) fires
+    set ::pf66_bound [expr {[string match *on_identity_changed* [bind .dialog.flcv.e1 <FocusOut>]]}]
+    if {$::pf66_active} {
+      # the user edits the CELL row: devices / capa / symbol  ->  devices / res / symbol
+      .dialog.flcv.e1 delete 0 end
+      .dialog.flcv.e1 insert 0 res
+      slickprop::on_identity_changed          ;# what <TAB> FocusOut triggers
+      set ::pf66_new_val [slickprop::field_value value]
+      set ::pf66_new_dev [slickprop::field_value device]
+      set ::pf66_dirty   [slickprop::is_dirty]
+      slickprop::ok
+    }
+  }
+  check {PF66a the LCV rows are active for an OA lib/cell/view instance} {$::pf66_lcv_ok == 1}
+  check {PF66b edit_form opened with the LCV rows showing} {$::pf66_built == 1 && $::pf66_active == 1}
+  check {PF66b2 the Cell row has the FocusOut identity handler (what TAB fires)} \
+    {[info exists ::pf66_bound] && $::pf66_bound == 1}
+  check {PF66c editing the Cell to res re-read the new cell's value default (1k)} \
+    {$::pf66_new_val eq "1k"}
+  check {PF66d editing the Cell to res re-read device=resistor} {$::pf66_new_dev eq "resistor"}
+  check {PF66e the Cell change marks the form dirty} {$::pf66_dirty == 1}
+  check {PF66f OK re-pointed the instance master to the res cell} \
+    {[string match */res/symbol/res.sym [xschem getprop instance 0 cell::name]] ||
+     [string match *res* [xschem getprop instance 0 cell::name]]}
+  check {PF66g the resistor took value=1k (the stale 22p is gone)} \
+    {[xschem get_tok [xschem getprop instance 0] value 2] eq "1k"}
+} else {
+  foreach t {PF66a PF66b PF66b2 PF66c PF66d PF66e PF66f PF66g} {
+    check "$t (skipped: no main window / OA library tree absent)" {1}
+  }
+}

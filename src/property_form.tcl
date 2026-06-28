@@ -317,10 +317,25 @@ proc slickprop::update_dirty {tok} {
   }
 }
 
-# Get the symbol's template (declared attributes), or "" if unavailable.
+# Get the symbol's template (declared attributes), or "" if unavailable. If the
+# symbol is not in the table yet (e.g. an identity change to a cell that has not
+# been placed/loaded this session — issue 0057), load its definition on demand
+# from the resolved absolute path and retry, so changing the cell can read the new
+# cell's defaults before anything is applied.
 proc slickprop::template_of {symbol} {
-  if {[catch {xschem getprop symbol $symbol template} t]} { return "" }
-  return $t
+  if {![catch {xschem getprop symbol $symbol template} t]} { return $t }
+  set abs $symbol
+  catch {set abs [abs_sym_path $symbol]}
+  catch {xschem load_symbol $abs}
+  # load_symbol stores the definition under its rel_sym_path (lib-qualified) name,
+  # so a lib/cell/view symbol loaded from an ABSOLUTE path is keyed as e.g.
+  # "devices/res" — query every name form, not just the absolute one (issue 0057).
+  set rel $abs
+  catch {set rel [rel_sym_path $abs]}
+  foreach ref [list $symbol $abs $rel] {
+    if {$ref ne {} && ![catch {xschem getprop symbol $ref template} t]} { return $t }
+  }
+  return ""
 }
 
 # Build the per-field rows for <prop>+<template> into the frame <parent>,
@@ -452,6 +467,8 @@ proc slickprop::result {} {
 proc slickprop::do_apply {} {
   variable cur
   variable nav
+  variable loaded_prop
+  variable identity_pending
   global symbol prev_symbol copy_cell user_wants_copy_cell
   if {[xschem get readonly]} { return 0 }  ;# read-only viewer: never commit (issue 0051)
   slickprop::lcv_compose_symbol     ;# fold any Library/Cell/View edit into the ref
@@ -475,10 +492,16 @@ proc slickprop::do_apply {} {
     }
   }
   set ::tctx::retval [slickprop::result]   ;# keep the legacy C contract populated
+  # old_prop baseline for the C diff (set_different_token). Normally this equals
+  # cur(orig); after an identity change cur(orig) is the NEW cell's template (the
+  # new_prop), while loaded_prop is still the instance's REAL old prop — exactly the
+  # pair the diff needs to drop the old cell's tokens and adopt the new ones (0057).
+  set oldprop $cur(orig)
+  if {[info exists loaded_prop]} { set oldprop $loaded_prop }
   set did 0
   if {[info exists nav(disp_id)] && $nav(disp_id) ne {} && $nav(disp_id) >= 0} {
     set did [xschem apply_properties $::slickprop_apply_scope $nav(disp_id) \
-               $::tctx::retval $cur(orig)]
+               $::tctx::retval $oldprop]
     if {$did} {
       set ::tctx::applied 1
       # action-log the EFFECT (only when something changed): the replayable
@@ -487,11 +510,12 @@ proc slickprop::do_apply {} {
       # CIW-typed commands reuse and would double-log (see
       # doc/claude/code_analysis/apply_properties_logging_decision.md).
       slickprop::log_apply [list xschem apply_properties \
-        $::slickprop_apply_scope $nav(disp_id) $::tctx::retval $cur(orig)]
+        $::slickprop_apply_scope $nav(disp_id) $::tctx::retval $oldprop]
     }
   }
   set copy_cell 0
   set prev_symbol $symbol
+  set identity_pending 0   ;# applied: identity change consumed
   return $did
 }
 
@@ -593,6 +617,8 @@ proc slickprop::lcv_dirty {} {
 # with (gates the Apply/Discard prompt on Next/Prev and selection changes).
 proc slickprop::is_dirty {} {
   variable cur
+  variable identity_pending
+  if {[info exists identity_pending] && $identity_pending} { return 1 }
   if {[slickprop::lcv_dirty]} { return 1 }
   if {![info exists cur(tokens)]} { return 0 }
   return [expr {[llength [slickprop::collect_changes]] > 0}]
@@ -831,6 +857,8 @@ proc slickprop::update_warning {} {
 proc slickprop::load_pos {pos} {
   variable cur
   variable nav
+  variable loaded_prop
+  variable identity_pending
   global symbol prev_symbol
   set n [llength $nav(ids)]
   if {$n == 0} return
@@ -845,6 +873,8 @@ proc slickprop::load_pos {pos} {
   set sym  [xschem getprop instance $idx cell::name]
   set symbol $sym
   set prev_symbol $sym
+  set loaded_prop $prop          ;# apply baseline (old_prop); survives an identity rebuild
+  set identity_pending 0         ;# fresh instance: no pending identity change yet
   if {[winfo exists .dialog.f1.e2]} {
     .dialog.f1.e2 delete 0 end
     .dialog.f1.e2 insert 0 $sym
@@ -945,6 +975,83 @@ proc slickprop::lcv_compose_symbol {} {
   if {[winfo exists .dialog.f1.e2]} {
     .dialog.f1.e2 delete 0 end
     .dialog.f1.e2 insert 0 $f
+  }
+}
+
+# ===========================================================================
+# Identity change -> re-read the new cell and repopulate with defaults (0057).
+# Changing the master (Library/Cell/View rows, or the raw Symbol entry) makes the
+# displayed instance a DIFFERENT cell; the old cell's attributes do not apply to
+# it, so the field grid must be rebuilt from the NEW symbol's template defaults —
+# exactly as if a fresh instance of that cell had just been placed.
+# ===========================================================================
+
+# The symbol reference currently entered in the identity rows. With the L/C/V form
+# active, compose lib/cell/view via cellview_path (same resolution as
+# lcv_compose_symbol); otherwise read the raw Symbol entry. Returns {} when the
+# combination is incomplete or does not resolve to a .sym, so a half-typed edit
+# never triggers a reset.
+proc slickprop::current_symbol_ref {} {
+  variable lcv_active
+  if {[info exists lcv_active] && $lcv_active && [winfo exists .dialog.flcv]} {
+    set lib  [string trim [.dialog.flcv.e0 get]]
+    set cell [string trim [.dialog.flcv.e1 get]]
+    set view [string trim [.dialog.flcv.e2 get]]
+    if {$lib eq {} || $cell eq {} || $view eq {}} { return {} }
+    set f {}
+    catch {set f [xschem cellview_path "$lib/$cell" $view]}
+    if {$f eq {} || ![string match *.sym $f]} { return {} }
+    return $f
+  } elseif {[winfo exists .dialog.f1.e2]} {
+    return [string trim [.dialog.f1.e2 get]]
+  }
+  return {}
+}
+
+# Commit handler for the identity rows. If the entered reference now names a
+# DIFFERENT, resolvable symbol than the one displayed (compared by absolute path)
+# AND that symbol has a readable template, adopt the new identity and rebuild the
+# field grid from the new template's defaults. Unchanged / unresolvable / template-
+# less references are a no-op, so a typo or a partial edit never wipes the fields.
+proc slickprop::on_identity_changed {} {
+  global symbol
+  variable identity_pending
+  if {![winfo exists .dialog]} return
+  set newref [slickprop::current_symbol_ref]
+  if {$newref eq {}} return                                  ;# incomplete / unresolvable
+  if {[abs_sym_path $newref] eq [abs_sym_path $symbol]} return ;# same master: nothing to do
+  set template [slickprop::template_of $newref]
+  if {$template eq {}} return                                ;# unknown symbol: keep fields
+  # adopt the new master for the rest of the form + apply machinery (prev_symbol is
+  # intentionally left at the ORIGINAL so do_apply still sees a symbol change and the
+  # copy-cell path keys off the real previous master)
+  set symbol $newref
+  if {[winfo exists .dialog.f1.e2]} {
+    .dialog.f1.e2 delete 0 end
+    .dialog.f1.e2 insert 0 $newref
+  }
+  set inst_name [xschem get_tok $template name 2]
+  set hdr $newref
+  if {$inst_name ne {}} { set hdr "$inst_name  —  $newref" }
+  if {[winfo exists .dialog.hdr]} { .dialog.hdr configure -text "  $hdr" }
+  slickprop::update_lcv $newref                              ;# resync L/C/V rows + loaded_lcv
+  # the heart of the fix: defaults of the new cell (prop == template -> declared
+  # tokens shown with their default values, like a freshly placed instance)
+  slickprop::build_fields .dialog.fa.c.inner $template $template
+  set identity_pending 1                                     ;# a real pending change (gates is_dirty)
+  catch {slickprop::apply_scope_greying}
+  catch {slickprop::update_warning}
+}
+
+# Wire the identity-change handler onto the L/C/V entries and the raw Symbol entry,
+# firing when an edit is committed (focus leaves the field or Return is pressed).
+proc slickprop::bind_identity_rows {} {
+  foreach e {.dialog.flcv.e0 .dialog.flcv.e1 .dialog.flcv.e2 .dialog.f1.e2} {
+    if {[winfo exists $e]} {
+      bind $e <FocusOut>      +[list slickprop::on_identity_changed]
+      bind $e <Key-Return>    +[list slickprop::on_identity_changed]
+      bind $e <Key-KP_Enter>  +[list slickprop::on_identity_changed]
+    }
   }
 }
 
@@ -1105,11 +1212,16 @@ proc slickprop::edit_form {txtlabel} {
     slickprop::load_pos $nav(pos)
   } else {
     slickprop::build_fields .dialog.fa.c.inner $::tctx::retval [slickprop::template_of $symbol]
+    set slickprop::loaded_prop $::tctx::retval   ;# apply baseline for the single-shot path
+    set slickprop::identity_pending 0
     slickprop::update_nav_ui
   }
   # show/populate the Library/Cell/View rows for the displayed instance (the nav
   # path already did this via load_pos; this covers the single-shot else path).
   slickprop::update_lcv $symbol
+  # react to an identity (Library/Cell/View or Symbol) change: re-read the new cell
+  # and repopulate the fields with its defaults (issue 0057)
+  slickprop::bind_identity_rows
 
   # grey the name field live with the scope (and apply the initial state)
   trace add variable ::slickprop_apply_scope write slickprop::apply_scope_greying
