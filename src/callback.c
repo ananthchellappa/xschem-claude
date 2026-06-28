@@ -1887,11 +1887,14 @@ void draw_hover(int force)
   Selected newsel;
 
   if(!has_x) return;
-  /* A resting SELECTION (ui_state&SELECTION) is not a transient gesture, so it
-   * must not suppress the hover cue — mask it off before the idle check. The
-   * remaining ui_state bits (STARTMOVE, STARTWIRE, panning, ...) still gate it. */
+  /* SELECTION and the interactive net-(un)highlight pick modes (NET_HILIGHT/NET_UNHILIGHT,
+   * the verb-noun "press 9/8 then click a net" states) are RESTING ui_state bits, not
+   * transient gestures, so they must NOT suppress the hover cue — during a pick mode the
+   * hover outline is exactly what tells the user which net/label they are about to click.
+   * Mask them off before the idle check; the remaining bits (STARTMOVE, STARTWIRE, panning,
+   * ...) still gate it, so a real gesture started mid-pick still suppresses hover. */
   if(tclgetboolvar("hover_highlight") && xctx->mouse_inside &&
-     (xctx->ui_state & ~SELECTION) == 0 && xctx->semaphore < 2) {
+     (xctx->ui_state & ~(SELECTION | NET_HILIGHT | NET_UNHILIGHT)) == 0 && xctx->semaphore < 2) {
     newsel = find_closest_obj(xctx->mousex, xctx->mousey, 0);
     /* don't outline an object that is already selected (overlays would fight) */
     if(newsel.type && hover_obj_selected(newsel.type, (int)newsel.n, newsel.col)) {
