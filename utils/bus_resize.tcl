@@ -118,6 +118,8 @@ proc busresize::apply_changes {changes} {
     lassign $c kind idx arg val
     if {$kind eq "wire"} {
       xschem setprop -fast wire $idx $arg $val
+    } elseif {$kind eq "text"} {
+      xschem setprop -fast text $idx $arg $val
     } else {
       xschem setprop -fast instance $idx $arg $val
       xschem recompute_inst_bbox $idx

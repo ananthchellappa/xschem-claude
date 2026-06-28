@@ -2865,6 +2865,14 @@ static ActionDef action_registry[] = {
     "Transpose selected up: bus index [N] -> [N+1]" },
   { "edit.transpose_shrink_selection", NULL, "bustranspose_apply shrink",
     "Transpose selected down: bus index [N] -> [N-1]" },
+  /* text_size_scroll: grow/shrink displayed text size of selected text notes and
+   * pin/netlabel names (~10%, min step, per-type floor). Tcl-backed:
+   * utils/text_resize.tcl. Ship UNBOUND; cadence_style_rc binds Ctrl+Plus/Minus.
+   * doc/claude/specs/text_size_scroll.md. */
+  { "edit.text_grow",   NULL, "textsize_apply grow",
+    "Grow displayed text size of selected notes / pin-label names" },
+  { "edit.text_shrink", NULL, "textsize_apply shrink",
+    "Shrink displayed text size of selected notes / pin-label names" },
 };
 static const int num_action_defs = (int)(sizeof(action_registry)/sizeof(action_registry[0]));
 
@@ -3134,7 +3142,8 @@ static int action_id_mutates(const char *id)
     "sym.list.create_labels_from_highlight_nets",
     "file.clear_schematic",
     "edit.grow_selection", "edit.shrink_selection",
-    "edit.transpose_grow_selection", "edit.transpose_shrink_selection"
+    "edit.transpose_grow_selection", "edit.transpose_shrink_selection",
+    "edit.text_grow", "edit.text_shrink"
   };
   int i;
   if(!id) return 0;

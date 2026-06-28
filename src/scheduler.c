@@ -2448,6 +2448,11 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
           }
           if(!strcmp(argv[4], "txt_ptr"))
             Tcl_SetResult(interp, xctx->text[n].txt_ptr, TCL_VOLATILE);
+          else if(!strcmp(argv[4], "size")) { /* pseudo-token: the text's xscale (display size) */
+            char buf[40];
+            my_snprintf(buf, S(buf), "%.10g", xctx->text[n].xscale);
+            Tcl_SetResult(interp, buf, TCL_VOLATILE);
+          }
           else
             Tcl_SetResult(interp, (char *)get_tok_value(xctx->text[n].prop_ptr, argv[4], 2), TCL_VOLATILE);
         }
@@ -3030,6 +3035,43 @@ static int xschem_cmds_i(Tcl_Interp *interp, int argc, const char *argv[], int *
       incr_hilight_color();
       my_snprintf(res, S(res), "%d", xctx->hilight_color);
       Tcl_SetResult(interp, res, TCL_VOLATILE);
+    }
+    /* inst_name_text inst
+     *   For the named/indexed instance, find the symbol text that displays the net/pin
+     *   NAME (the "@lab" text of a pin / net label) and return "<index> <size>", where
+     *   size is its current effective display size -- the per-instance text_size_<n>
+     *   override if present, else the symbol's default text xscale (via
+     *   get_sym_text_size). Returns "" when the symbol has no @lab text (e.g. a normal
+     *   component), so callers skip non-label instances. Read-only.
+     *   Used by the CTRL+Plus/Minus text-size feature, doc/claude/specs/text_size_scroll.md */
+    else if(!strcmp(argv[1], "inst_name_text"))
+    {
+      int i, j, symn, idx = -1;
+      double xs, ys;
+      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(argc < 3) {
+        Tcl_SetResult(interp, "xschem inst_name_text needs <inst>", TCL_STATIC); return TCL_ERROR;
+      }
+      i = get_instance(argv[2]);
+      if(i < 0) {
+        Tcl_AppendResult(interp, "xschem inst_name_text: instance not found: ", argv[2], NULL);
+        return TCL_ERROR;
+      }
+      symn = xctx->inst[i].ptr;
+      if(symn >= 0) {
+        for(j = 0; j < xctx->sym[symn].texts; ++j) {
+          const char *tp = xctx->sym[symn].text[j].txt_ptr;
+          if(tp && !strcmp(tp, "@lab")) { idx = j; break; }
+        }
+      }
+      if(idx < 0) {
+        Tcl_ResetResult(interp);
+      } else {
+        char buf[60];
+        get_sym_text_size(i, idx, &xs, &ys);
+        my_snprintf(buf, S(buf), "%d %.10g", idx, xs);
+        Tcl_SetResult(interp, buf, TCL_VOLATILE);
+      }
     }
     else if(!strcmp(argv[1], "image"))
     {
@@ -7695,6 +7737,13 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
               change_done = 1;
               if(fast == 3 || fast == 0) xctx->push_undo();
               my_strdup2(_ALLOC_ID_, &t->txt_ptr, argv[5]);
+            }
+          } else if(!strcmp(argv[4], "size")) { /* pseudo-token: set display size (xscale=yscale) */
+            double v = atof(argv[5]);
+            if(v != t->xscale || v != t->yscale) {
+              change_done = 1;
+              if(fast == 3 || fast == 0) xctx->push_undo();
+              t->xscale = t->yscale = v;
             }
           } else if(strcmp(argv[5], get_tok_value(t->prop_ptr, argv[4], 0))) {
             change_done = 1;

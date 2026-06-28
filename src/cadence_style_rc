@@ -119,6 +119,7 @@ source [file join $_ut cadence_clip.tcl]
 source [file join $_ut hilight_style_nav.tcl]
 source [file join $_ut bus_resize.tcl]
 source [file join $_ut bus_transpose.tcl]
+source [file join $_ut text_resize.tcl]
 # moved unset _ut
 
 # Ctrl-Alt-S : locate a cell in the Library Manager. Acts on the selected instance's
@@ -189,6 +190,17 @@ set descend_readonly 1
 
 # CTRL-G toggles grid visibility (active):
 xschem bind key 103 ctrl canvas view.toggle_draw_grid
+
+# CTRL+Plus / CTRL+Minus : grow / shrink the DISPLAYED text size of selected text notes
+# and pin/net-label names (~10%, min step, per-type floor). Other objects ignored.
+# Four keysyms cover both the main row and the numeric keypad; the C key path strips
+# Shift for printable keys, so Ctrl+Shift+= (main-row '+') arrives as keysym 43 (plus)
+# with mods=ctrl. 43=plus  45=minus  65451=KP_Add  65453=KP_Subtract. Rebind freely.
+# See doc/claude/specs/text_size_scroll.md.
+xschem bind key 43    ctrl canvas edit.text_grow      ;# Ctrl+Shift+=  (main-row +)
+xschem bind key 65451 ctrl canvas edit.text_grow      ;# Ctrl+KP_Add  (keypad +)
+xschem bind key 45    ctrl canvas edit.text_shrink    ;# Ctrl+-       (main-row -)
+xschem bind key 65453 ctrl canvas edit.text_shrink    ;# Ctrl+KP_Subtract (keypad -)
 
 # Optional -- uncomment to give the others a key again:
 # xschem bind key 103 0   canvas view.snap_half               ;# halve snap    (old 'g')
