@@ -140,6 +140,17 @@ extern char win_temp_dir[PATH_MAX];
 #include <tcl.h>
 #include <tk.h>
 
+/* Tcl 9 changed the count out-parameter of the list/string APIs (Tcl_SplitList,
+ * Tcl_ListObjGetElements, Tcl_GetStringFromObj, ...) from `int *` to `Tcl_Size *`
+ * (ptrdiff_t, 8 bytes on LP64). Passing the address of a plain `int` then makes the
+ * library write 8 bytes into a 4-byte slot, corrupting an adjacent variable -> crash
+ * (issue 0041: net_hilight_style parse SIGSEGV on Tcl 9). Tcl 8.6 has no Tcl_Size, so
+ * shim it to int there. Guard on TCL_SIZE_MAX (a macro Tcl 9 defines) -- Tcl_Size itself
+ * is a typedef, not a macro, so it cannot be tested with #ifndef. */
+#ifndef TCL_SIZE_MAX
+typedef int Tcl_Size;
+#endif
+
 #define _ALLOC_ID_ 0 /* to be replaced with unique IDs in my_*() allocations for memory tracking
                       * see create_alloc_ids.awk */
 
@@ -666,7 +677,7 @@ typedef struct
                     * (inst_register), never reused within a context's lifetime.
                     * The canonical durable session handle (the name is the
                     * human / cross-session form, reusable+renamable — see
-                    * code_analysis/instance_identity_decision.md). Not persisted
+                    * doc/claude/code_analysis/instance_identity_decision.md). Not persisted
                     * in .sch files. 0 = never stamped (no live instance has 0). */
 } xInstance;
 
@@ -824,7 +835,7 @@ struct hilight_hashentry
  * Wires render color (color_layer or custom pixel) + width + dash; stripe angle is
  * clamped/stored but rendered flat until Pass 1.5; blink_ms/anim/rate_persec are
  * reserved for Pass 2 animation (parsed/stored but inert). The on-screen draw uses the
- * shared xctx->gc_hilight scratch GC. See specs/net_hilight_styles.md. */
+ * shared xctx->gc_hilight scratch GC. See doc/claude/specs/net_hilight_styles.md. */
 typedef struct {
   int index;             /* style id (table order) */
   int color_layer;       /* layer index used as the draw color, or < 0 for a custom pixel */
@@ -1320,6 +1331,7 @@ extern int constrained_move;
 extern double cairo_font_scale; /*  default: 1.0, allows to adjust font size */
 extern double cairo_font_line_spacing;
 extern int debug_var;
+extern unsigned int draw_count; /* incremented on every full draw(); test/introspection seam */
 extern int fix_broken_tiled_fill; /* if set to 1 work around some GPUs with rotten tiled fill operations */
 /* this fix uses an alternative method for getting mouse coordinates on KeyPress/KeyRelease
  * events. Some remote connection softwares do not generate the correct coordinates
@@ -1511,12 +1523,13 @@ extern int hilight_graph_node(const char *node, int col);
 extern int get_color(int value);
 extern NetHilightStyle *get_hilight_style(int value);
 extern unsigned int get_hilight_pixel(int value);
+extern int hilight_custom_rgb8(int value, unsigned char *r, unsigned char *g, unsigned char *b);
 extern void resolve_hilight_style_rgb(NetHilightStyle *st);
 extern unsigned int find_best_color(char colorname[]);
 extern void build_net_hilight_styles(void);
 extern void net_hilight_invalidate_other_styles(void); /* force OTHER windows to rebuild their table */
 extern void net_hilight_redraw_other_windows(void);    /* repaint OTHER detached windows after an edit */
-/* Pass 2a net-highlight animation (blink). See specs/net_hilight_styles.md §2 (Pass 2). */
+/* Pass 2a net-highlight animation (blink). See doc/claude/specs/net_hilight_styles.md §2 (Pass 2). */
 extern double net_hilight_now_ms(void);                 /* wall-clock ms (or test override) */
 extern int net_hilight_style_on_now(NetHilightStyle *st, double now); /* blink ON/OFF gate */
 extern double net_hilight_dash_period(NetHilightStyle *st); /* dash repeat (odd-len doubled) */
@@ -1593,7 +1606,7 @@ extern void toggle_orthogonal_wiring_cmd(void);
 extern void toggle_draw_pixmap_cmd(void);
 /* Phase 3 data-driven input bindings (callback.c); backends for the
  * `xschem bind`/`unbind`/`bindings` subcommands. See
- * claude_suggs/refactor_plan_action_registry_phase3.md */
+ * doc/claude/suggestions/refactor_plan_action_registry_phase3.md */
 extern int action_cmd_set_log_cmd(int argc, const char **argv);
 extern int action_cmd_set_nolog(int argc, const char **argv);
 /* action-log: is s safe to embed in a logged command as a {braced} Tcl word?

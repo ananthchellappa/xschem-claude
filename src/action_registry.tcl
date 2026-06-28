@@ -49,6 +49,13 @@ proc action_parse_csv_line {line} {
       }
     }
   }
+  if {$inq} {
+    # Unterminated quoted field: the closing '"' is missing, so every remaining
+    # character (including commas that should have been delimiters) was swallowed
+    # into this one field. Warn loudly — silently returning the garbled row makes
+    # the resulting wrong menu label / command impossible to trace to its source.
+    puts stderr "action registry: unterminated quoted field in CSV line: [string range $line 0 60]..."
+  }
   lappend fields $field
   return $fields
 }
@@ -69,6 +76,11 @@ proc load_action_table {} {
   close $fp
   set header {}
   foreach line [split $data "\n"] {
+    # Tolerate Windows CRLF. The default channel translation is 'auto', which
+    # already maps \r\n -> \n on read, so this is a no-op for the normal path;
+    # the trimright keeps the parser correct even if the channel is ever opened
+    # in a non-auto (e.g. binary) translation mode where the \r would survive.
+    set line [string trimright $line "\r"]
     if {$line eq {}} continue
     if {[string index $line 0] eq "#"} continue
     set fields [action_parse_csv_line $line]
@@ -121,15 +133,26 @@ proc build_menu_from_table {topwin menukey} {
       dynamic {
         set sub [dict get $row submenu]
         set subw $topwin.menubar.$sub
-        if {![winfo exists $subw]} {
-          menu $subw -tearoff 0 -takefocus 0
-        }
-        $m add cascade -label $label -menu $subw
-        if {$type eq {cascade}} {
-          build_menu_from_table $topwin $sub
-        } else {
+        if {$type eq {dynamic}} {
+          # Dynamic submenu: attach the populate hook to the menu widget's
+          # -postcommand so it re-runs every time the user posts the submenu and
+          # the list stays current. The previous build-time call populated it
+          # once and never refreshed (only masked for file.open_recent because
+          # add_recent_file also calls setup_recent_menu on each load).
           set hook [dict get $row hook]
-          if {$hook ne {}} { $hook $topwin }
+          set postcmd [expr {$hook ne {} ? [list $hook $topwin] : {}}]
+          if {![winfo exists $subw]} {
+            menu $subw -tearoff 0 -takefocus 0 -postcommand $postcmd
+          } else {
+            $subw configure -postcommand $postcmd
+          }
+          $m add cascade -label $label -menu $subw
+        } else {
+          if {![winfo exists $subw]} {
+            menu $subw -tearoff 0 -takefocus 0
+          }
+          $m add cascade -label $label -menu $subw
+          build_menu_from_table $topwin $sub
         }
       }
       default {
@@ -204,6 +227,11 @@ proc load_input_bindings_file {path} {
   set n 0
   set header {}
   foreach line [split $data "\n"] {
+    # Tolerate Windows CRLF: the default 'auto' channel translation already maps
+    # \r\n -> \n on read, so this is a no-op for the normal path; it keeps the
+    # parser correct if the channel is ever opened in a non-auto translation mode
+    # where a trailing \r would otherwise corrupt the last field (e.g. 'idle\r').
+    set line [string trimright $line "\r"]
     if {$line eq {}} continue
     if {[string index $line 0] eq "#"} continue
     set fields [action_parse_csv_line $line]
@@ -343,6 +371,20 @@ proc show_keybindings_help {} {
 # set_bindings; runs entirely in the UI layer (does not go through the C
 # keysym dispatcher).
 
+# Which palette result row should get the first-launch attention color, or -1 for none.
+# Purpose-built for the net highlight style editor (the spec is explicit this is a one-off):
+# returns its row's index in $rows while the user has not opened it yet (seen==0). Pure so it
+# is unit-testable without a listbox.
+proc palette_emphasis_index {rows seen} {
+  if {$seen} { return -1 }
+  set i 0
+  foreach row $rows {
+    if {[dict get $row id] eq {tools.net_hilight_style_editor}} { return $i }
+    incr i
+  }
+  return -1
+}
+
 # Rebuild the result list to match the current query. Guarded so that arrow/
 # Return key releases (which also fire <KeyRelease>) don't rebuild and reset
 # the selection while the user is navigating.
@@ -391,6 +433,15 @@ proc palette_refilter {} {
     $w.l selection clear 0 end
     $w.l selection set 0
     $w.l activate 0
+  }
+  # First-launch emphasis: tint the net-highlight style editor's row until the user has opened
+  # it once (net_hilight_editor_seen). A Tk listbox can't bold a single item, so use a per-item
+  # -foreground (overridable via ::palette_emphasis_color).
+  set seen [expr {[info exists ::net_hilight_editor_seen] ? $::net_hilight_editor_seen : 1}]
+  set ei [palette_emphasis_index $palette_rows $seen]
+  if {$ei >= 0} {
+    set acc [expr {[info exists ::palette_emphasis_color] ? $::palette_emphasis_color : {#1a6fff}}]
+    catch { $w.l itemconfigure $ei -foreground $acc }
   }
 }
 

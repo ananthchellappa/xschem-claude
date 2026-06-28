@@ -52,7 +52,7 @@ function beginfile(f)
  # optional explicit output path (-v outsym=...): write the symbol there instead of
  # the same-dir <cell>.sym (used to route into an OA library's symbol view dir).
  # The existing-template (K record) read below then also uses the target. See
- # specs/create_symbol_view.md
+ # doc/claude/specs/create_symbol_view.md
  if(outsym != "") sym=outsym
  print "**** symbol-izing: " sym "  ****"
   template="" ; start=0

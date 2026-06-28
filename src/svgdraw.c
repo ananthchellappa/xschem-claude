@@ -42,9 +42,48 @@ static void svg_restore_lw(void)
    svg_linew = (xctx->lw <= 0.01 ? 0.2 : xctx->lw) * 1.2;
 }
 
+/* Custom-RGB hilight color override for export (issue 0044). SVG colors every element by its CSS
+ * layer class (.lN), and get_color() collapses a custom-RGB hilight style to a fallback layer, so a
+ * custom-colored highlighted net/symbol would export in the wrong (fallback) color. While svg_hi_on is
+ * set, the wire / junction-dot / symbol emitters add an inline style="stroke:#rrggbb;fill:#rrggbb" that
+ * overrides the class color (inline style beats an author-stylesheet class), so the export matches the
+ * on-screen custom color. svg_set_hilight(value) turns it on iff 'value' is a custom-RGB hilight style;
+ * svg_clr_hilight() turns it off; both are no-ops for layer-index styles. */
+static int svg_hi_on = 0;
+static unsigned char svg_hi_r, svg_hi_g, svg_hi_b;
+
+/* the inline color DECLARATIONS (trailing ';'), for emitters that build their own style="..." */
+static const char *svg_hi_decl(void)
+{
+  static char buf[48];
+  if(!svg_hi_on) return "";
+  my_snprintf(buf, S(buf), "stroke:#%02x%02x%02x;fill:#%02x%02x%02x;",
+              svg_hi_r, svg_hi_g, svg_hi_b, svg_hi_r, svg_hi_g, svg_hi_b);
+  return buf;
+}
+
+/* a complete style="..." ATTRIBUTE (trailing space), for emitters that have no style of their own */
+static const char *svg_hi_attr(void)
+{
+  static char buf[64];
+  if(!svg_hi_on) return "";
+  my_snprintf(buf, S(buf), "style=\"stroke:#%02x%02x%02x;fill:#%02x%02x%02x\" ",
+              svg_hi_r, svg_hi_g, svg_hi_b, svg_hi_r, svg_hi_g, svg_hi_b);
+  return buf;
+}
+
+static int svg_set_hilight(int value)
+{
+  if(value >= 0 && hilight_custom_rgb8(value, &svg_hi_r, &svg_hi_g, &svg_hi_b)) { svg_hi_on = 1; return 1; }
+  svg_hi_on = 0;
+  return 0;
+}
+static void svg_clr_hilight(void) { svg_hi_on = 0; }
+
 static void svg_xdrawline(int layer, double bus, double x1, double y1, double x2, double y2, int dash)
 {
  double width;
+ const char *hi = svg_hi_decl();
 
  if(bus == -1.0) width = BUS_WIDTH * svg_linew;
  else if(bus > 0.0) width = bus * xctx->mooz;
@@ -52,9 +91,9 @@ static void svg_xdrawline(int layer, double bus, double x1, double y1, double x2
 
  fprintf(fd,"<path class=\"l%d\" ", layer);
  if(dash) fprintf(fd, "stroke-dasharray=\"%g,%g\" ", 0.8*dash/xctx->zoom, 0.8*dash/xctx->zoom);
-  if(width >= 0.0) {
-    if(width > 0) fprintf(fd, "style=\"stroke-width:%g; ", width);
-    else          fprintf(fd, "style=\"");
+  if(width >= 0.0 || hi[0]) {
+    fprintf(fd, "style=\"%s", hi);
+    if(width > 0) fprintf(fd, "stroke-width:%g; ", width);
     if(bus > 0.0) {
       fprintf(fd, " stroke-linecap:square;\n");
       fprintf(fd, " stroke-linejoin:miter;\n");
@@ -171,11 +210,13 @@ static void svg_drawpolygon(int c, int what, double *x, double *y, int points,
   if( !rectclip(xctx->areax1,xctx->areay1,xctx->areax2,xctx->areay2,&x1,&y1,&x2,&y2) ) {
     return;
   }
+  {
+  const char *hi = svg_hi_decl();
   fprintf(fd, "<path class=\"l%d\" ", c);
   if(dash) fprintf(fd, "stroke-dasharray=\"%g,%g\" ", 0.8*dash/xctx->zoom, 0.8*dash/xctx->zoom);
-  if(width >= 0.0 || fill == 0 || fill == 2) {
-    if(width > 0) fprintf(fd, "style=\"stroke-width:%g; ", width);
-    else          fprintf(fd, "style=\"");
+  if(width >= 0.0 || fill == 0 || fill == 2 || hi[0]) {
+    fprintf(fd, "style=\"%s", hi);
+    if(width > 0) fprintf(fd, "stroke-width:%g; ", width);
     if(bus > 0.0) {
       fprintf(fd, " stroke-linecap:square;\n");
       fprintf(fd, " stroke-linejoin:miter;\n");
@@ -187,6 +228,7 @@ static void svg_drawpolygon(int c, int what, double *x, double *y, int points,
     } else {
       fprintf(fd, "\" ");
     }
+  }
   }
   bezier = flags && (points > 2);
   if(bezier) {
@@ -285,7 +327,7 @@ static void svg_drawcircle(int gc, int fillarc, double x,double y,double r,doubl
 
   if( rectclip(xctx->areax1,xctx->areay1,xctx->areax2,xctx->areay2,&x1,&y1,&x2,&y2) )
   {
-    fprintf(fd, "<circle class=\"l%d\" cx=\"%g\" cy=\"%g\" r=\"%g\"/>\n", gc, xx, yy, rr);
+    fprintf(fd, "<circle class=\"l%d\" %scx=\"%g\" cy=\"%g\" r=\"%g\"/>\n", gc, svg_hi_attr(), xx, yy, rr);
   }
 }
 
@@ -1154,10 +1196,14 @@ void svg_draw(void)
                      xctx->poly[c][i].fill, xctx->poly[c][i].dash, bezier, xctx->poly[c][i].bus);
    }
    for(i=0;i<xctx->instances; ++i) {
+     /* a highlighted symbol (label/pin) drawn with a custom-RGB style takes the style's color, not
+      * the fallback layer get_color() maps it to inside svg_draw_symbol (0044) */
+     if(xctx->inst[i].color != -10000) svg_set_hilight(xctx->inst[i].color);
      svg_draw_symbol(c,i,c,0,0,0.0,0.0);
      if(c == cadlayers - 1) {
        svg_draw_symbol(c + 1 , i, c + 1, 0, 0, 0.0, 0.0); /* ... draw texts */
      }
+     svg_clr_hilight();
    }
   }
   prepare_netlist_structs(0); /* NEEDED: data was cleared by trim_wires() */
@@ -1166,9 +1212,11 @@ void svg_draw(void)
     color = WIRELAYER;
     if(xctx->hilight_nets && (entry=bus_hilight_hash_lookup( xctx->wire[i].node, 0, XLOOKUP))) {
       color = get_color(entry->value);
+      svg_set_hilight(entry->value);   /* a custom-RGB hilight style overrides the class color (0044) */
     }
     svg_drawline(color, xctx->wire[i].bus, xctx->wire[i].x1,
      xctx->wire[i].y1,xctx->wire[i].x2,xctx->wire[i].y2, 0);
+    svg_clr_hilight();
   }
 
   {
@@ -1187,6 +1235,7 @@ void svg_draw(void)
       color = WIRELAYER;
       if(xctx->hilight_nets && (entry=bus_hilight_hash_lookup( xctx->wire[i].node, 0, XLOOKUP))) {
         color = get_color(entry->value);
+        svg_set_hilight(entry->value);   /* dots match the wire's custom-RGB hilight color (0044) */
       }
       if( xctx->wire[i].end1 >1 ) {
         svg_drawcircle(color, 1, xctx->wire[i].x1, xctx->wire[i].y1, xctx->cadhalfdotsize, 0, 360);
@@ -1194,6 +1243,7 @@ void svg_draw(void)
       if( xctx->wire[i].end2 >1 ) {
         svg_drawcircle(color, 1, xctx->wire[i].x2, xctx->wire[i].y2, xctx->cadhalfdotsize, 0, 360);
       }
+      svg_clr_hilight();
     }
   }
 

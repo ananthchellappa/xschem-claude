@@ -8,7 +8,7 @@
 # shipped commands already do — including the §2c cold-start coherence quirk and
 # the §2d derived-name trap (tcl_introspection_wire.md). No `net*` command is
 # tested here yet; those land RED-first in Phase C only after the identity model
-# (code_analysis/net_identity_decision.md) is ratified.
+# (doc/claude/code_analysis/net_identity_decision.md) is ratified.
 #
 # Run from the source tree (needs an X display, no rebuild for Tcl changes):
 #

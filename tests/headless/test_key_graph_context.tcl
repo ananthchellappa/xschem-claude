@@ -247,7 +247,7 @@ check "over-graph Alt-h still runs schpins (canvas-only)" [expr {$::schpins_call
 
 # ---- Phase 3d.2 batch 2: clean canvas-only command keys (y, T, O). The g/G snap
 #      defaults were REMOVED -- snap/grid/highlight ops now ship UNBOUND and are
-#      user-bound (specs/keybind_snap_grid_actions.md). They remain registered
+#      user-bound (doc/claude/specs/keybind_snap_grid_actions.md). They remain registered
 #      actions, tested by binding them explicitly in the round-trip below. ----
 check "batch-2 canvas rows present" [expr {
   [lsearch -exact $dump {key 121 0 canvas edit.toggle_stretch}] >= 0 &&

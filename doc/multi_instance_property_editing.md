@@ -5,8 +5,8 @@
 **name** protection, and the **"values differ"** warning.*
 
 This is the hands-on manual. For the design rationale see
-`specs/multi_instance_property_editing.md`; for how it was built (a tutorial for
-developers) see `code_analysis/multi_instance_editing_tutorial.md`.
+`doc/claude/specs/multi_instance_property_editing.md`; for how it was built (a tutorial for
+developers) see `doc/claude/code_analysis/multi_instance_editing_tutorial.md`.
 
 ---
 
@@ -264,6 +264,6 @@ xschem apply_properties all $id $new $old
 
 ---
 
-*Reference: design + decisions in `specs/multi_instance_property_editing.md`;
+*Reference: design + decisions in `doc/claude/specs/multi_instance_property_editing.md`;
 implementation walkthrough in
-`code_analysis/multi_instance_editing_tutorial.md`.*
+`doc/claude/code_analysis/multi_instance_editing_tutorial.md`.*

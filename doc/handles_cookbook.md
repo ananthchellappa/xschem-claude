@@ -278,4 +278,4 @@ me" bugs into a non-event.
 
 All of these are read-only except `select`; none of them modify identity. See the
 per-type manuals for the full surface, and
-`code_analysis/introspection_probes/probe6.tcl` for a runnable tour.
+`doc/claude/code_analysis/introspection_probes/probe6.tcl` for a runnable tour.

@@ -11,7 +11,7 @@ jobs:
 
     steps:
     - name: Install dependencies
-      run: sudo apt-get install -y flex bison gawk tcl tcl-dev tk tk-dev libcairo2 libcairo2-dev xcb libxcb1 libxcb1-dev libxrender-dev libxpm-dev libxcb-render0-dev libx11-xcb1 libx11-xcb-dev
+      run: sudo apt-get install -y flex bison gawk tcl tcl-dev tk tk-dev libcairo2 libcairo2-dev xcb libxcb1 libxcb1-dev libxrender-dev libxpm-dev libxcb-render0-dev libx11-xcb1 libx11-xcb-dev xvfb
     - name: Checkout source
       uses: actions/checkout@v4
     - name: configure
@@ -23,3 +23,21 @@ jobs:
       with:
         name: xschem
         path: src/xschem
+    # Hard gate: the true-headless tests (no X). test_sweep_diff round-trips every
+    # cell in tests/test_sweep_diff/; a load/save regression or parser crash fails CI.
+    - name: Headless gate
+      run: tests/headless/full_audit.sh test_sweep_diff test_nogui
+    # Informational: the whole tests/headless/ suite under a virtual X. Non-blocking
+    # (|| true) because several GUI/library-migration cases are environment-sensitive;
+    # the log is uploaded so results are visible without flaking the build.
+    - name: Full headless audit (informational)
+      run: |
+        xvfb-run -a tests/headless/full_audit.sh > full_audit.log 2>&1 || true
+        grep -E '^(PASS|FAIL|SKIP|CRASH|TIMEOUT) ' full_audit.log || true
+        grep -E '^SUMMARY' full_audit.log || true
+    - name: Archive headless audit log
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: headless-audit-log
+        path: full_audit.log

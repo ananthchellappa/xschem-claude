@@ -1,5 +1,5 @@
-# Data-driven snap / grid / highlight key actions  (specs/keybind_snap_grid_actions.md,
-# plan claude_suggs/plan_keybind_snap_grid_actions.md).
+# Data-driven snap / grid / highlight key actions  (doc/claude/specs/keybind_snap_grid_actions.md,
+# plan doc/claude/suggestions/plan_keybind_snap_grid_actions.md).
 #
 # End state: the five operations -- halve snap, double snap, set snap value,
 # highlight-net-and-send-to-waveform, toggle grid -- are registered ACTIONS with NO

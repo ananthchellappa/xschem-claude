@@ -95,7 +95,7 @@ proc slickprop::apply {orig changes} {
 
 # ===========================================================================
 # Slick enter_text core — discoverable text-appearance attributes.
-# Spec: specs/slick_text_dialog.md. A text object's visual attributes all live as
+# Spec: doc/claude/specs/slick_text_dialog.md. A text object's visual attributes all live as
 # tokens in its property string (read by C's set_text_flags() into cached fields,
 # then drawn). So the panel is pure Tcl: parse the owned tokens out of the prop
 # string into per-field widgets, and on OK substitute the edited ones back via
@@ -453,6 +453,7 @@ proc slickprop::do_apply {} {
   variable cur
   variable nav
   global symbol prev_symbol copy_cell user_wants_copy_cell
+  if {[xschem get readonly]} { return 0 }  ;# read-only viewer: never commit (issue 0051)
   slickprop::lcv_compose_symbol     ;# fold any Library/Cell/View edit into the ref
   set symbol [.dialog.f1.e2 get]
   set abssymbol [abs_sym_path $symbol]
@@ -484,7 +485,7 @@ proc slickprop::do_apply {} {
       # command itself, so sourcing the log re-applies the edit. Logged here at
       # the interactive layer — NOT in the C engine, which the replay command and
       # CIW-typed commands reuse and would double-log (see
-      # code_analysis/apply_properties_logging_decision.md).
+      # doc/claude/code_analysis/apply_properties_logging_decision.md).
       slickprop::log_apply [list xschem apply_properties \
         $::slickprop_apply_scope $nav(disp_id) $::tctx::retval $cur(orig)]
     }
@@ -572,7 +573,7 @@ proc slickprop::update_highlight {} {
 # which adopts the new selection into the nav set and refreshes the form (scope,
 # warning, highlight). A selection change with unapplied edits asks first,
 # Cadence-style: Apply / Discard / Cancel (Cancel restores the prior selection).
-# Decision doc: code_analysis/modeless_property_form_decision.md.
+# Decision doc: doc/claude/code_analysis/modeless_property_form_decision.md.
 # ===========================================================================
 
 # True iff the active Library/Cell/View rows differ from what they loaded with —
@@ -622,6 +623,9 @@ proc slickprop::disp_name {} {
 # <action>) or <cancelaction> (Cancel: stay put / restore). Not dirty -> just
 # <action>. Next/Prev and selection changes both route through here.
 proc slickprop::maybe_apply_then {action cancelaction} {
+  # Read-only viewer (issue 0051): there is nothing to apply, so never prompt —
+  # just proceed (adopt the new selection / move to the next instance).
+  if {[xschem get readonly]} { uplevel #0 $action; return }
   if {![slickprop::is_dirty]} { uplevel #0 $action; return }
   set ans [tk_messageBox -parent .dialog -icon question -type yesnocancel \
     -title "Edit Properties" \
@@ -955,6 +959,8 @@ proc slickprop::edit_form {txtlabel} {
   global symbol prev_symbol no_change_attrs preserve_unchanged_attrs copy_cell
   global user_wants_copy_cell edit_prop_size edit_prop_pos edit_symbol_prop_new_sel
   variable nav
+  variable cur   ;# link to ::slickprop::cur — a relative $slickprop::cur read in this proc body
+                 ;# resolves to ::slickprop::slickprop::cur on Tcl 9 (TIP 278, no global fallback)
   set user_wants_copy_cell 0
   set ::tctx::rcode {}
   set ::tctx::retval_orig $::tctx::retval
@@ -1137,20 +1143,34 @@ proc slickprop::edit_form {txtlabel} {
   bind .dialog <Alt-Left>   {slickprop::nav -1}
   wm protocol .dialog WM_DELETE_WINDOW {slickprop::cancel}
 
+  # Read-only view (issue 0051): the form is a VIEWER, not an editor. It opens so
+  # the user can read — and even experiment with — the values (fields stay
+  # editable), but OK/Apply are greyed and Enter behaves like Esc (Cancel) so
+  # nothing is ever written back. do_apply/maybe_apply_then are also guarded, so
+  # no other path (selection-change prompt, a stray binding) can commit either.
+  if {[xschem get readonly]} {
+    .dialog.fb.ok     configure -state disabled -default normal
+    .dialog.fb.apply  configure -state disabled
+    .dialog.fb.cancel configure -default active
+    .dialog.fb.hint   configure -text "Read-only view — changes cannot be applied (Enter/Esc: close)"
+    bind .dialog <Return>   {slickprop::cancel}
+    bind .dialog <KP_Enter> {slickprop::cancel}
+  }
+
   # focus + select the most-likely-to-edit field (the symbol's `select` attr,
   # else value/lab/name), mirroring the legacy dialog's cursor placement.
   set sel_attr [xschem get_tok $::tctx::retval select]
   if {$sel_attr eq {}} { catch {set sel_attr [xschem getprop symbol $symbol select]} }
   set focused 0
   foreach a [list $sel_attr value lab name] {
-    if {$a ne {} && [info exists slickprop::cur(entry,$a)]} {
-      set e $slickprop::cur(entry,$a)
+    if {$a ne {} && [info exists cur(entry,$a)]} {
+      set e $cur(entry,$a)
       focus $e; $e selection range 0 end; $e icursor end
       set focused 1; break
     }
   }
-  if {!$focused && [llength $slickprop::cur(tokens)]} {
-    focus $slickprop::cur(entry,[lindex $slickprop::cur(tokens) 0])
+  if {!$focused && [llength $cur(tokens)]} {
+    focus $cur(entry,[lindex $cur(tokens) 0])
   }
 
   raise .dialog                 ;# M2: float in front initially (no transient), non-capturing

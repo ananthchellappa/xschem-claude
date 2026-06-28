@@ -44,7 +44,7 @@ proc pick {col txt} {
 
 # AL1 — a Library Manager open is logged with the replayable command. With the
 # "New window" checkbox set, the open is routed through `load_new_window -window`
-# so it lands in a real top-level window (specs/multi_window_detach.md).
+# so it lands in a real top-level window (doc/claude/specs/multi_window_detach.md).
 pick lib tlib;  libmgr::on_lib
 pick cell foo;  libmgr::on_cell
 set libmgr::new_window 1
@@ -115,7 +115,7 @@ check "AL11 launch logs replayable 'xschem create_instance'" \
   [expr {[regexp -all -line {^xschem create_instance$} [logtext]] >= 1}] {}
 
 # AL12 — closing a schematic window/tab is logged with a replayable command, so a
-# close shows in the CIW / Xschem.log (specs/multi_window_detach.md). Open a throwaway
+# close shows in the CIW / Xschem.log (doc/claude/specs/multi_window_detach.md). Open a throwaway
 # window and close it; the destroy must appear.
 xschem new_schematic create_window .x9 {}
 update

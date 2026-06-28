@@ -1,5 +1,5 @@
 # B2: autosave hooked into the edit funnel (set_modify).
-# Spec: specs/descend_hierarchy_in_memory.md
+# Spec: doc/claude/specs/descend_hierarchy_in_memory.md
 #
 # A genuine edit (set_modify(1)) immediately writes cellName~.sch; a real save
 # removes it; loading and highlighting do NOT touch it. Works in a /tmp copy so a

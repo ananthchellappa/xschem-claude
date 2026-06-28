@@ -1861,7 +1861,7 @@ void draw_crosshair(int what, int state)
  * none is drawn. <force> redraws even if the hovered object is unchanged (used to
  * re-establish the outline after a full redraw). Focus-independent: it runs on
  * MotionNotify, which X11 delivers to the window under the pointer regardless of
- * keyboard focus. See code_analysis/hover_highlight_decision.md. */
+ * keyboard focus. See doc/claude/code_analysis/hover_highlight_decision.md. */
 
 /* Is the object (type, n, layer c) currently selected? Used to suppress the
  * hover outline on an already-selected object — the dashed-yellow cue and the
@@ -2418,11 +2418,14 @@ static void context_menu_action(double mx, double my)
   if(!status) return;
   ret = atoi(status);
   /* read-only: refuse the object-mutating context-menu picks (place sym/wire/line/
-   * rect/poly/text/arc/circle, cut, paste, edit attrs, move, duplicate, delete).
-   * Navigation picks (descend/pop/load/copy-to-clipboard) fall through. */
+   * rect/poly/text/arc/circle, cut, paste, move, duplicate, delete, edit-in-editor).
+   * Navigation picks (descend/pop/load/copy-to-clipboard) fall through -- and so does
+   * "Edit attributes" (case 10), which opens the property form as a read-only VIEWER
+   * (issue 0051): viewing properties is not an edit. (case 11 = edit-in-editor stays
+   * blocked, the right-click twin of the 'Q' key.) */
   switch(ret) {
     case 1: case 2: case 3: case 4: case 5: case 6: case 7: case 8:
-    case 10: case 11: case 16: case 17: case 18: case 19: case 20:
+    case 11: case 16: case 17: case 18: case 19: case 20:
       if(readonly_block()) return;
       break;
     default: break;
@@ -2480,11 +2483,11 @@ static void context_menu_action(double mx, double my)
     case 8: /* paste from clipboard */
       merge_file(2,".sch");
       break;
-    case 9: /* load most recent file */
+    case 9: /* load most recent file (read-only, like the File menu's Open Most Recent) */
       /* action-log: the resolved filename is recorded by the scheduler load
        * branch's -gui hook (file-menu logging), shared with the File menu's
        * recent/last-closed picks -- nothing to log here anymore. */
-      tclvareval("xschem load -gui [lindex $tctx::recentfile 0]", NULL);
+      tclvareval("xschem load -gui -readonly [lindex $tctx::recentfile 0]", NULL);
       break;
     case 10: /* edit attributes */
       edit_property(0);
@@ -2558,7 +2561,7 @@ static void context_menu_action(double mx, double my)
 
 /* ===========================================================================
  * Phase 3a: data-driven input-action dispatch (mouse wheel).
- * See claude_suggs/refactor_plan_action_registry_phase3.md.
+ * See doc/claude/suggestions/refactor_plan_action_registry_phase3.md.
  *
  * Separates *binding* (which physical input maps to which action -- held as
  * data in input_bindings[], remappable at runtime via `xschem bind`) from
@@ -2716,7 +2719,7 @@ static int act_toggle_orthogonal_wiring(const ActionEvent *e) { (void)e; toggle_
 static int act_toggle_draw_pixmap(const ActionEvent *e) { (void)e; toggle_draw_pixmap_cmd(); return 1; }
 
 /* "Highlight net and send to waveform viewer" — verbatim body of the old Alt-g
- * (EQUAL_MODMASK) branch of the hardcoded case 'g' (specs/keybind_snap_grid_actions.md).
+ * (EQUAL_MODMASK) branch of the hardcoded case 'g' (doc/claude/specs/keybind_snap_grid_actions.md).
  * No-op while busy: returns 0 so the dispatch falls through exactly as the old `break`. */
 static int act_highlight_send_waveform(const ActionEvent *e)
 {
@@ -2835,7 +2838,7 @@ static ActionDef action_registry[] = {
   /* keybind_snap_grid_actions: snap / grid / highlight ops made bindable; they ship
    * UNBOUND (no default chord) — the user binds them via `xschem bind` / their rc.
    * Two Tcl-backed (reuse the View/Options menu commands), one C-backed (sim-tool
-   * detection). specs/keybind_snap_grid_actions.md. */
+   * detection). doc/claude/specs/keybind_snap_grid_actions.md. */
   { "view.set_snap_value", NULL,
     "input_line {Enter snap value (float):} {xschem set cadsnap} $cadsnap", "Set snap value (dialog)" },
   { "view.toggle_draw_grid", NULL,
@@ -3004,7 +3007,7 @@ static void init_input_bindings(void)
   /* Phase 3d.2 batch 2: plain-chord command keys (the cases' Ctrl/Alt branches stay in C). */
   set_input_binding(DEV_KEY, 'y', 0, ACTX_CANVAS, "edit.toggle_stretch");
   /* snap/grid/highlight ops ship UNBOUND — no default chord; the user binds them via
-   * `xschem bind` / their rc (specs/keybind_snap_grid_actions.md). The old 'g'/'G'
+   * `xschem bind` / their rc (doc/claude/specs/keybind_snap_grid_actions.md). The old 'g'/'G'
    * snap defaults were removed here (keybindings.csv regenerated to match). */
   set_input_binding(DEV_KEY, 'T', 0, ACTX_CANVAS, "prop.toggle_ignore_attribute_on_selected_instances");
   set_input_binding(DEV_KEY, 'O', 0, ACTX_CANVAS, "view.toggle_colorscheme");
@@ -3583,7 +3586,26 @@ static void handle_motion_notify(int event, KeySym key, int state, int rstate, i
     /* no Tk under true headless (--nogui, has_x==0): skip the `tk scaling` query so it
      * doesn't error; keep the default. */
     if(has_x) tk_scaling = atof(tcleval("tk scaling"));
-    if(!tabbed_interface && strcmp(win_path, xctx->current_win_path)) return;
+    /* Ignore motion that belongs to a DIFFERENT window's canvas, so the crosshair/hover
+     * is drawn in the window under the pointer, not in the focused one (issue 0036).
+     * Non-tabbed mode: any path mismatch qualifies (unchanged). Tabbed mode: only with
+     * mouse_follows_focus on, and only when a REAL (detached, own canvas) window is
+     * involved on either side -- the matching EnterNotify switch (handle_window_switching)
+     * makes the hovered window the context, so its own motion still draws; background tabs
+     * share .drw and match the active tab's current_win_path. When mouse_follows_focus is
+     * OFF there is no compensating switch, so fall back to the pre-0036 behavior (don't
+     * drop in tabbed mode) -- the opt-out keeps the old background-tab motion. */
+    if(strcmp(win_path, xctx->current_win_path)) {
+      int drop = !tabbed_interface;
+      if(tabbed_interface && tclgetboolvar("mouse_follows_focus")) {
+        int wn = get_tab_or_window_number(win_path);
+        Xschem_ctx **sx = get_save_xctx();
+        int win_is_real = (wn > 0 && sx[wn] && sx[wn]->top_path && sx[wn]->top_path[0]);
+        int cur_is_real = (xctx->top_path && xctx->top_path[0]);
+        drop = (win_is_real || cur_is_real);
+      }
+      if(drop) return;
+    }
     /* A motion delivered to this canvas means the pointer is inside it. EnterNotify
      * is the only other setter, but with the shared tabbed canvas a tab switch
      * does not regenerate an Enter -- so without this the hover cue and crosshair
@@ -4045,7 +4067,7 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
     /* 'g'/'G' (halve/double snap), Ctrl-g (set snap value) and Alt-g (highlight net ->
      * waveform viewer) are fully data-driven now: registered actions view.snap_half /
      * view.snap_double / view.set_snap_value / hilight.send_to_waveform, shipped UNBOUND
-     * and user-bound via `xschem bind` (specs/keybind_snap_grid_actions.md). The hardcoded
+     * and user-bound via `xschem bind` (doc/claude/specs/keybind_snap_grid_actions.md). The hardcoded
      * case 'g' (incl. its Ctrl/Alt branches) and case 'G' are removed. */
 
     case 'h':
@@ -4411,7 +4433,12 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
       }
       else if(rstate==0) { /* edit attributes */
         if(xctx->semaphore >= 2) break;
-        if(readonly_block()) break;
+        /* Viewing properties is NOT an edit (issue 0051): open the form even on a
+         * read-only view. The form opens as a viewer there -- OK/Apply greyed,
+         * Enter == Esc (Cancel) -- so nothing can be committed (property_form.tcl
+         * + the gfx/legacy dialogs). The menu path (xschem edit_prop) was already
+         * unguarded; this makes the 'q' key match it. ('Q' = edit-with-editor
+         * stays an explicit edit and keeps its readonly_block below.) */
         edit_property(0);
       }
       else if(EQUAL_MODMASK) { /* edit .sch file (DANGER!!) */
@@ -4863,7 +4890,7 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
 
     /* '%' (toggle draw grid) is data-driven now: registered action view.toggle_draw_grid,
      * shipped UNBOUND and user-bound via `xschem bind` (cadence_style_rc binds CTRL-G to
-     * it by default). specs/keybind_snap_grid_actions.md. The hardcoded case is removed. */
+     * it by default). doc/claude/specs/keybind_snap_grid_actions.md. The hardcoded case is removed. */
 
     case '$':
       /* plain '$' (toggle pixmap saving) migrated to the binding table (Phase 3d.2
@@ -5310,7 +5337,7 @@ static void handle_button_press(int event, int state, int rstate, KeySym key, in
       * selection path below; the form is re-targeted from the relocated hook at the
       * end of handle_button_release(). The branches below remain for the LEGACY
       * blocking dialogs (edit_prop_legacy / text_line / enter_text), which still
-      * raise the semaphore. See code_analysis/modeless_form_M2_decision.md. */
+      * raise the semaphore. See doc/claude/code_analysis/modeless_form_M2_decision.md. */
      if(tcleval("winfo exists .dialog.f2.txt")[0] == '1') { /* proc enter_text */
        tcleval(".dialog.buttons.ok invoke");
        return;
@@ -5373,7 +5400,7 @@ static void handle_button_press(int event, int state, int rstate, KeySym key, in
        int prev_last_sel = xctx->lastsel;
        int no_shift_no_ctrl = !(state & (ShiftMask | ControlMask));
        /* cadence_compat forces the intuitive interface (Cadence-style direct
-        * click-drag to move/copy objects), spec specs/cadence_modifier_drag.md */
+        * click-drag to move/copy objects), spec doc/claude/specs/cadence_modifier_drag.md */
        int intuitive = xctx->intuitive_interface || cadence_compat;
 
        xctx->shape_point_selected = 0;
@@ -5472,7 +5499,7 @@ static void handle_button_press(int event, int state, int rstate, KeySym key, in
           !xctx->shape_point_selected) {
          xctx->drag_elements = 1;
          if(cadence_compat) {
-           /* Cadence-style modifier-drag (spec specs/cadence_modifier_drag.md),
+           /* Cadence-style modifier-drag (spec doc/claude/specs/cadence_modifier_drag.md),
             * INDEPENDENT of enable_stretch:
             *   plain  -> attached move (wires follow)
             *   Ctrl   -> detached move (wires left behind)
@@ -5543,7 +5570,7 @@ static void handle_button_release(int event, KeySym key, int state, int button, 
 {
    char str[PATH_MAX + 100];
    /* cadence_compat forces the intuitive interface (matches handle_button_press),
-    * spec specs/cadence_modifier_drag.md */
+    * spec doc/claude/specs/cadence_modifier_drag.md */
    int intuitive = xctx->intuitive_interface || cadence_compat;
    if(waves_selected(event, key, state, button)) {
      waves_callback(event, mx, my, key, button, aux, state);
@@ -5838,14 +5865,15 @@ static void handle_expose(int mx,int my,int button,int aux)
   XSetClipMask(display, xctx->gc[SELLAYER], None);
 }
 
-static int handle_window_switching(int event, int tabbed_interface, const char *win_path)
+static int handle_window_switching(int event, int tabbed_interface, const char *win_path,
+                                   char *restore_win)
 {
   int redraw_only = 0;
   int n = get_tab_or_window_number(win_path);
   Xschem_ctx **save_xctx = get_save_xctx();
   /* A real top-level window (non-empty top_path) owns its own X canvas, so focus/
    * expose/enter must switch xctx to it — even in tabbed mode, where windows and
-   * tabs now coexist (specs/multi_window_detach.md). Pure tabs share the main
+   * tabs now coexist (doc/claude/specs/multi_window_detach.md). Pure tabs share the main
    * canvas and switch via the tab bar, so they stay out of this path. The switch
    * runs when either the event window OR the current context is a real window. */
   int win_is_real = (n > 0 && save_xctx[n] && save_xctx[n]->top_path && save_xctx[n]->top_path[0]);
@@ -5875,20 +5903,30 @@ static int handle_window_switching(int event, int tabbed_interface, const char *
         dbg(1, "callback(): switching window context for copy : %s --> %s, semaphore=%d\n",
                 xctx->current_win_path, win_path, xctx->semaphore);
         redraw_only = 1;
-        my_strncpy(old_win_path, xctx->current_win_path, S(old_win_path));
+        my_strncpy(restore_win, xctx->current_win_path, PATH_MAX);
         new_schematic("switch_no_tcl_ctx", win_path, "", 1);
       /* This does a "temporary" switch just to redraw obscured window parts */
       } else if(event == Expose || xctx->semaphore >= 1 ) {
         dbg(1, "callback(): switching window context for redraw ONLY: %s --> %s\n",
                 xctx->current_win_path, win_path);
         redraw_only = 1;
-        my_strncpy(old_win_path, xctx->current_win_path, S(old_win_path));
+        my_strncpy(restore_win, xctx->current_win_path, PATH_MAX);
         new_schematic("switch_no_tcl_ctx", win_path, "", 1);
-      /* this is the regular context switch when window gets focused */
-      } else if(event == FocusIn && xctx->semaphore == 0) {
+      /* The regular context switch. mouse_follows_focus selects the SOURCE OF TRUTH for
+       * which window is active, and only one source drives it so the two can't fight:
+       *  - ON  (default): the POINTER. Switch on EnterNotify (pointer crossing) and sync
+       *    the Tk keyboard focus to it. A FocusIn is IGNORED here -- otherwise the WM
+       *    re-asserting focus on the previously-active window (e.g. during a Ctrl+wheel
+       *    zoom redraw) would bounce the context off the window the pointer is over.
+       *  - OFF: the WM FOCUS. Switch on FocusIn only (click to activate), as before.
+       * Idle only (semaphore==0): never steal context mid-gesture. */
+      } else if(((event == EnterNotify && tclgetboolvar("mouse_follows_focus")) ||
+                 (event == FocusIn && !tclgetboolvar("mouse_follows_focus"))) &&
+                xctx->semaphore == 0) {
         dbg(1, "callback(): switching window context: %s --> %s, semaphore=%d\n",
                 xctx->current_win_path, win_path, xctx->semaphore);
         new_schematic("switch", win_path, "", 1);
+        if(event == EnterNotify) tclvareval("focus ", win_path, NULL);
         dbg(1, "switching to %s\n", win_path);
       }
 
@@ -5906,6 +5944,11 @@ int callback(const char *win_path, int event, int mx, int my, KeySym key, int bu
 {
   char str[PATH_MAX + 100];
   int redraw_only;
+  /* Window to switch BACK to after a redraw-only (temporary) context borrow. Kept call-
+   * LOCAL (not the shared global old_win_path) so a nested cross-window redraw -- e.g. a
+   * zoom that exposes another window and reenters callback() -- cannot overwrite this
+   * call's restore target and strand the context on the wrong window (Ctrl+wheel bug). */
+  char restore_win[PATH_MAX];
   double c_snap;
   int tabbed_interface = tclgetboolvar("tabbed_interface");
   int enable_stretch = tclgetboolvar("enable_stretch");
@@ -5945,7 +5988,8 @@ int callback(const char *win_path, int event, int mx, int my, KeySym key, int bu
   #endif
 
   /* Schematic window context switch */
-  redraw_only = handle_window_switching(event, tabbed_interface, win_path);
+  restore_win[0] = '\0';
+  redraw_only = handle_window_switching(event, tabbed_interface, win_path, restore_win);
 
   /* artificially set semaphore to allow only redraw operations in switched schematic,
    * so we don't need  to switch tcl context which is costly performance-wise
@@ -5959,8 +6003,13 @@ int callback(const char *win_path, int event, int mx, int my, KeySym key, int bu
 
 
   /* file exists and modification time on disk has changed since file loaded ... */
-  if(!xctx->modified && !stat( xctx->sch[xctx->currsch], &buf) && xctx->time_last_modify &&
-     xctx->time_last_modify != buf.st_mtime) {
+  /* ... but NOT for a read-only window: set_modify(1) means "has unsaved local edits",
+   * which a read-only (browse) view can never have, so flagging it modified is wrong --
+   * it spuriously shows the '*' marker and prompts to save on close (issue 0035, seen
+   * on a freshly descended read-only window on the first mouse event). External on-disk
+   * changes for a read-only file are surfaced by the reload mechanism, not set_modify. */
+  if(!xctx->readonly && !xctx->modified && !stat( xctx->sch[xctx->currsch], &buf) &&
+     xctx->time_last_modify && xctx->time_last_modify != buf.st_mtime) {
      set_modify(1);
   }
 
@@ -6063,9 +6112,8 @@ int callback(const char *win_path, int event, int mx, int my, KeySym key, int bu
   if(xctx->semaphore > 0) xctx->semaphore--;
   if(redraw_only) {
     xctx->semaphore--; /* decrement articially incremented semaphore (see above) */
-    dbg(1, "callback(): semaphore >=2 restoring window context: %s <-- %s\n", old_win_path, win_path);
-    if(old_win_path[0]) new_schematic("switch_no_tcl_ctx", old_win_path, "", 1);
-    my_strncpy(old_win_path, xctx->current_win_path, S(old_win_path));
+    dbg(1, "callback(): semaphore >=2 restoring window context: %s <-- %s\n", restore_win, win_path);
+    if(restore_win[0]) new_schematic("switch_no_tcl_ctx", restore_win, "", 1);
   }
   return 0;
 }

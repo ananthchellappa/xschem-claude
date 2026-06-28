@@ -1,0 +1,154 @@
+QUESTION: Build the function-level dependency graph (who-calls-whom across files).
+
+================================================================================
+METHOD
+
+No cflow/ctags/cscope available, so a purpose-built heuristic extractor
+(doc/claude/code_analysis/callgraph/analyze.py, pure-Python, no deps):
+  1. strip comments + string/char literals;
+  2. detect top-level function definitions by anchoring on column-0 signatures
+     (function bodies are always indented here, so this sidesteps brace-depth
+     corruption from #if-0 dead-code blocks — the first naive version missed 76
+     of save.c's 78 functions until fixed);
+  3. resolve identifier-followed-by-'(' tokens in each body against the set of
+     known function names (static defs resolve to same-file, else the global).
+Generated parsers (parselabel.c, expandlabel.c, eval_expr.c) excluded.
+
+Validated: 754 functions detected (save.c 77 vs ~78 real; spot-checked edges out
+of the xschem() dispatcher are correct). 12,046 call-edges, 10,053 cross-file.
+
+================================================================================
+KEY FINDING 1 — 60% of cross-file calls are utility noise
+
+The memory/string/debug wrappers (my_malloc, my_free, my_strdup, my_snprintf,
+dbg, ...) are all defined in editprop.c, and the Tcl bridge (tcleval, tclgetvar,
+...) in scheduler.c. These are called from everywhere and say NOTHING about
+architecture. Excluding them:
+
+  cross-file calls: 10,053  ->  4,044 core   (60% was leaf-utility noise)
+  editprop.c incoming: 4,873 -> 177          (its "centrality" was the util lib)
+
+So the raw graph badly overstates coupling. The numbers below are the CORE graph
+(leaf utilities excluded) — the architecturally meaningful structure.
+
+================================================================================
+KEY FINDING 2 — the real hubs (high core fan-in = depended upon)
+
+  token.c     coreIn=969  fanIn=23   THE central dependency. get_tok_value /
+                                     subst_token: every module reads symbol &
+                                     instance attributes ("properties") through
+                                     it. This is the true backbone of the design.
+  actions.c   coreIn=598  fanIn=25   high-level edit ops, called from all entry pts
+  draw.c      coreIn=390  fanIn=17   rendering, called widely
+  save.c      coreIn=335  fanIn=23   object storage + .sch/.sym + raw-file I/O
+  netlist.c   coreIn=279  fanIn=20   shared hierarchy traversal
+  move.c      coreIn=258  fanIn=13
+  select.c    coreIn=265  fanIn=21
+
+KEY FINDING 3 — the drivers (high core fan-out, ~zero fan-in = top of call tree)
+
+  scheduler.c coreOut=733 coreIn=46  the xschem() command dispatcher — calls
+                                     everything, called by almost nothing.
+  callback.c  coreOut=561 coreIn=17  the GUI event handler — same shape.
+These two ARE the entry points; their position (sources, not sinks) is exactly
+what a clean layering predicts. Good sign.
+
+KEY FINDING 4 — clean leaves (fan-out=0 = pure sinks, well isolated)
+
+  clip.c (72 in / 0 out), hash_iterator.c (32/0), cairo_jpg.c, font.c, node_hash.c
+  — self-contained helpers with no outward dependencies. Easy to reason about.
+
+KEY FINDING 5 — netlist backends confirmed independent (from the orthogonality pass)
+
+  vhdl/verilog/spectre/tedax/spice_netlist.c each have coreOut ~100-142 but
+  coreIn ~6 and fanIn=6 — they CONSUME netlist.c + token.c and are consumed only
+  by scheduler.c/actions.c. They do NOT call each other. Each backend has only
+  3-18 functions because it delegates the heavy lifting to shared netlist.c.
+  This is the cleanest seam in the codebase: add/modify a format in isolation.
+
+================================================================================
+STRONGEST CORE DEPENDENCY EDGES (caller -> callee, call count)
+
+  159  scheduler.c     -> actions.c        81  save.c          -> token.c
+  125  draw.c          -> token.c          81  scheduler.c     -> save.c
+  123  callback.c      -> actions.c        75  scheduler.c     -> move.c
+  110  callback.c      -> move.c           73  scheduler.c     -> xinit.c
+  107  actions.c       -> token.c          71  actions.c       -> draw.c
+   96  callback.c      -> token.c          63  scheduler.c     -> draw.c
+   93  scheduler.c     -> token.c          61  vhdl_netlist.c  -> token.c
+   81  ... everyone    -> token.c          54  spice_netlist.c -> token.c
+
+The recurring right-hand side is token.c. If one file is the spine of xschem,
+it is the property/token subsystem, not the drawing or netlisting code.
+
+================================================================================
+INTERPRETATION (ties back to the orthogonality question)
+
+- Layering is real and correct: scheduler.c/callback.c (drivers) -> mid-level
+  actions/move/select/draw -> shared services token.c/save.c/netlist.c. Sources
+  are entry points, sinks are utilities. No backend-to-backend cycles.
+- The genuine coupling concentrator is token.c (property parsing), not editprop.c
+  (which only looked central because the allocator lives there). Any change to
+  attribute/property *semantics* is the highest-blast-radius edit in the tree.
+- This refines the earlier verdict: the code is well-layered by call structure;
+  the coupling that hurts orthogonality is the shared xctx STATE (14.6k refs),
+  not the call graph, which is mostly acyclic and entry-point-rooted.
+
+================================================================================
+KEY FINDING 6 — the core is ONE big cycle of thin edges, not a clean hierarchy
+
+Condensing the core graph into strongly-connected components (Tarjan) then
+topologically layering it (layered.py) shows that at the full edge set (>=5
+calls) 17 of the ~27 core files collapse into a SINGLE strongly-connected
+component — i.e. strict layering is impossible; everything mutually recurses.
+
+But that tangle is built from THIN back-edges. Raising the edge-weight floor
+peels it apart cleanly:
+
+  edge floor >=   biggest cycle (SCC) size
+        5         17  (actions callback check draw editprop findnet hilight move
+                       netlist node_hash save scheduler select spice_netlist
+                       store token xinit)
+       10         14
+       15         12
+       20          9
+       25          8
+       30          4   { actions, draw, save, select }
+       40          2   { spice_netlist, token }
+       50          0   -> fully acyclic (clean DAG)
+
+So the DOMINANT call flow is a clean top-down hierarchy; the SCC only exists
+because of many occasional back-calls. Two cycles are structural, not incidental:
+  - spice_netlist.c <-> token.c   (persists to >=40 calls): the netlister and the
+    property parser are genuinely co-recursive.
+  - { actions, draw, save, select } (>=30): the interactive-editing core — edit
+    ops draw, drawing reads/saves, selection drives edits — a tight knot.
+
+Layered view at floor>=30 (file_graph_layered.png), 5 tiers:
+  L0 drivers      scheduler, callback, check, paste, {vhdl,verilog,spectre}_netlist
+  L1 high-level   netlist, hilight, move, xinit
+  L2 mid services actions, draw, save, select        <- editing cycle here
+  L3              editprop (property-string editor, distinct from its util role)
+  L4 spine        token, spice_netlist                <- everything bottoms out here
+
+Practical reading: token.c is the floor of the architecture — the thing nearly
+every path eventually calls and nothing structurally sits "below". Combined with
+the xctx state coupling, edits to token/property semantics are the single
+riskiest change class; the interactive-editing quartet is the second.
+
+ARTIFACTS (doc/claude/code_analysis/callgraph/):
+  analyze.py              reproducible extractor (python3 analyze.py src OUTDIR)
+  functions.csv           754 definitions: name,file,line,static
+  edges_func.csv          12,046 function-level edges (caller,callee,count,cross)
+  file_matrix.txt         full per-file coupling (incl. utilities)
+  core_coupling.txt       core per-file coupling (utilities excluded)
+  hubs.txt                most-called functions, most depended-on/dependent files
+  file_graph.dot/.png/.svg          full core graph (>=8 calls) — dense
+  file_graph_backbone.dot/.png/.svg backbone (>=30 calls) — legible
+  layered.py                        SCC-condense + topological layering
+  layers.txt                        tier assignment + cycle list (run: layered.py . 30)
+  file_graph_layered.dot/.png/.svg  layered architecture diagram (drivers->spine)
+
+CAVEAT: heuristic extractor, not a compiler front-end. Function-pointer calls
+(e.g. xctx->push_undo()) and macro-generated calls are not resolved, so dynamic
+dispatch through xctx is under-counted. Directionally accurate; not exact.

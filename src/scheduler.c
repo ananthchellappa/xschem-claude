@@ -541,7 +541,7 @@ static int xschem_cmds_b(Tcl_Interp *interp, int argc, const char *argv[], int *
      * bindings dump
      *   List current input bindings as {device code mods ctx action_id} rows.
      * (the matching `unbind` lives under case 'u')
-     * See claude_suggs/refactor_plan_action_registry_phase3.md */
+     * See doc/claude/suggestions/refactor_plan_action_registry_phase3.md */
     /* backup write|remove|name
      * Autosave "~" backup file for the current cell:
      *   write  -> write cellName~.sch from the current (unsaved) buffer
@@ -597,7 +597,7 @@ static int xschem_cmds_c(Tcl_Interp *interp, int argc, const char *argv[], int *
      *   <lib> under the lib/cell/view layout (<libpath>/<cell>/<view>/<cell>.ext),
      *   or "" if the library/cell/view does not exist. <view> is "schematic" or
      *   "symbol". Read-only resolver (library-manager Phase 2); implemented in
-     *   Tcl (src/library_defs.tcl). See code_analysis/library_manager_design.md. */
+     *   Tcl (src/library_defs.tcl). See doc/claude/code_analysis/library_manager_design.md. */
     else if(!strcmp(argv[1], "cellview_path"))
     {
       if(argc > 3) tclvareval("cellview_path {", argv[2], "} {", argv[3], "}", NULL);
@@ -621,7 +621,7 @@ static int xschem_cmds_c(Tcl_Interp *interp, int argc, const char *argv[], int *
      *   {lib cell view [instname]} list that pre-fills the form (e.g.
      *   `xschem create_instance [libmgr::selection]`). Logs itself so the launch
      *   is replayable (CIW + Xschem.log) and bindable.
-     *   See specs/cadence_create_instance.md. */
+     *   See doc/claude/specs/cadence_create_instance.md. */
     else if(!strcmp(argv[1], "create_instance"))
     {
       if(has_x) {
@@ -1698,6 +1698,17 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
             Tcl_SetResult(interp, my_itoa(xctx->draw_window),TCL_VOLATILE);
           }
+          else if(!strcmp(argv[2], "drawwindowid")) { /* X Window id this context draws into; compare numerically to [winfo id <canvas>] */
+            char b[32];
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            my_snprintf(b, S(b), "%u", (unsigned int)xctx->window); /* XIDs fit in 32 bits; my_snprintf has no %lx */
+            Tcl_SetResult(interp, b, TCL_VOLATILE);
+          }
+          else if(!strcmp(argv[2], "drawcount")) { /* monotonic count of full draw() runs; a test seam to detect a (missing) redraw */
+            char b[32];
+            my_snprintf(b, S(b), "%u", draw_count);
+            Tcl_SetResult(interp, b, TCL_VOLATILE);
+          }
           break;
           case 'f':
           if(!strcmp(argv[2], "first_sel")) { /* get data about first selected object */
@@ -1898,6 +1909,10 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
           case 'p':
           if(!strcmp(argv[2], "pinlayer")) { /* layer number for pins */
             Tcl_SetResult(interp, my_itoa(PINLAYER),TCL_VOLATILE);
+          }
+          else if(!strcmp(argv[2], "pending_fullzoom")) { /* deferred full-zoom counter */
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            Tcl_SetResult(interp, my_itoa(xctx->pending_fullzoom),TCL_VOLATILE);
           }
           else if(!strcmp(argv[2], "polygons")) { /* (xschem get polygons n) number of polygons on layer 'n' */
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
@@ -3053,7 +3068,7 @@ static int xschem_cmds_i(Tcl_Interp *interp, int argc, const char *argv[], int *
      *   persisted in .sch files. Resolve back with `xschem instance_index id`.
      *   The id is the durable machine handle; the name is the human /
      *   cross-session form (reusable, renamable) — see
-     *   code_analysis/instance_identity_decision.md */
+     *   doc/claude/code_analysis/instance_identity_decision.md */
     else if(!strcmp(argv[1], "instance_id"))
     {
       int i;
@@ -3624,11 +3639,14 @@ static int xschem_cmds_l(Tcl_Interp *interp, int argc, const char *argv[], int *
      *   '-nofullzoom': do not do a full zoom on new schematic.
      *   '-nodraw': do not draw.
      *   '-keep_symbols': retain symbols that are already loaded.
+     *   '-readonly': open the loaded file in read mode (read-only) regardless of its writability
+     *       -- used by the reopen shortcuts (Open Most Recent / Last Closed / Recent menu) so
+     *       reopening defaults to a safe browse view; edit with Ctrl-2 / View > Toggle Read Only.
      */
     else if(!strcmp(argv[1], "load") )
     {
       int load_symbols = 1, force = 1, undo_reset = 1, nofullzoom = 0, nodraw = 0;
-      int keep_symbols = 0, first;
+      int keep_symbols = 0, first, readonly_open = 0;
       int lastclosed = 0, lastopened = 0;
       int first_loaded = 0;
       int i;
@@ -3652,12 +3670,20 @@ static int xschem_cmds_l(Tcl_Interp *interp, int argc, const char *argv[], int *
             nofullzoom = 1; nodraw = 1;
           } else if(!strcmp(argv[i], "-keep_symbols")) {
             keep_symbols = 1;
+          } else if(!strcmp(argv[i], "-readonly")) {
+            readonly_open = 1;
           }
         } else {
           break;
         }
       }
       first = i;
+      /* -lastopened/-lastclosed come ONLY from the reopen shortcuts (Open Most Recent Ctrl+Shift+O /
+       * Open Last Closed Ctrl+Shift+T / the Recent menu), which default to read mode. Treat them as
+       * -readonly so EVERY dispatch site gets it -- the keyboard handlers (callback.c case 'O'/'T')
+       * run `xschem load -gui -lastopened` directly, bypassing the actions.csv command, so threading
+       * the flag only through the menu rows is not enough. Edit with Ctrl-2 / View > Toggle Read Only. */
+      if(lastclosed || lastopened) readonly_open = 1;
       if(argc==first && !(lastclosed || lastopened)) {
         if(tclgetboolvar("new_file_browser")) {
           tcleval("file_chooser");
@@ -3764,13 +3790,20 @@ static int xschem_cmds_l(Tcl_Interp *interp, int argc, const char *argv[], int *
                * cellName~.sch autosave backup means the previous session ended without
                * saving (a clean discard/save removes the ~). Offer to restore it. Only
                * in GUI + interactive mode -- never on scripted/replay loads or headless.
-               * specs/descend_hierarchy_in_memory.md (B8) */
+               * doc/claude/specs/descend_hierarchy_in_memory.md (B8) */
               if(!force && has_x) {
                 tclvareval("xschem_recover_backup {", xctx->sch[xctx->currsch], "}", NULL);
               }
             }
           }
         }
+      }
+      /* -readonly (reopen shortcuts: Open Most Recent / Last Closed / Recent menu): force the freshly
+       * loaded buffer into read mode regardless of file writability, so reopening defaults to a safe
+       * browse view. Edit it with Ctrl-2 / View > Toggle Read Only (mirrors descend_readonly). */
+      if(readonly_open && first_loaded && !xctx->readonly) {
+        xctx->readonly = 1;
+        set_modify(-1); /* refresh window title to show the read-only marker */
       }
       Tcl_SetResult(interp, xctx->sch[xctx->currsch], TCL_STATIC);
     }
@@ -3802,6 +3835,7 @@ static int xschem_cmds_l(Tcl_Interp *interp, int argc, const char *argv[], int *
     {
       char f[PATH_MAX + 100];
       int cancel = 0;
+      int reopen = 0; /* -lastopened/-lastclosed: a reopen shortcut, open the new window read-only */
       int force_window = 0; /* -window: open a real top-level even in tabbed mode */
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
       if(argc > 2) {
@@ -3813,8 +3847,10 @@ static int xschem_cmds_l(Tcl_Interp *interp, int argc, const char *argv[], int *
             continue;
           } else if(!strcmp(argv[i], "-lastclosed")) {
             my_strncpy(f, tcleval("get_lastclosed"), S(f));
+            reopen = 1;
           } else if(!strcmp(argv[i], "-lastopened")) {
             my_strncpy(f, tcleval("get_lastopened"), S(f));
+            reopen = 1;
           } else if(!is_from_web(argv[i])) {
             my_snprintf(f, S(f),"regsub {^~/} {%s} {%s/}", argv[i], home_dir);
             tcleval(f);
@@ -3842,6 +3878,8 @@ static int xschem_cmds_l(Tcl_Interp *interp, int argc, const char *argv[], int *
            if(is_pristine_untitled() && tcl_braceable(f)) tclvareval("xschem load {", f, "}", NULL);
            else new_schematic(force_window ? "create_window" : "create", "noconfirm", f, 1);
            tclvareval("update_recent_file {", f, "}", NULL);
+           /* a reopen-shortcut new-window open is read mode by default, like the in-window reopen */
+           if(reopen && xctx && !xctx->readonly) { xctx->readonly = 1; set_modify(-1); }
           } else {
             new_schematic(force_window ? "create_window" : "create", NULL, NULL, 1);
           }
@@ -4030,7 +4068,7 @@ static int xschem_cmds_l(Tcl_Interp *interp, int argc, const char *argv[], int *
      *   Tcl list of {name path} pairs for every defined library. The registry =
      *   library.defs files listed in $XSCHEM_LIBRARY_DEFS plus auto-discovered
      *   dirs carrying a library.tag on the search path. Implemented in Tcl
-     *   (src/library_defs.tcl); see code_analysis/library_manager_design.md. */
+     *   (src/library_defs.tcl); see doc/claude/code_analysis/library_manager_design.md. */
     else if(!strcmp(argv[1], "libraries"))
     {
       tcleval("library_list");
@@ -4060,7 +4098,7 @@ static int xschem_cmds_l(Tcl_Interp *interp, int argc, const char *argv[], int *
      *   The optional argument is a list: a single element is a library name; a
      *   {lib cell} or {lib cell view} list pre-selects and scrolls to that
      *   entry -- handy for locating a cell (e.g. `xschem library_manager
-     *   [xschem get_inst_lcv]`). See specs/library_manager_launch.md. */
+     *   [xschem get_inst_lcv]`). See doc/claude/specs/library_manager_launch.md. */
     else if(!strcmp(argv[1], "library_manager"))
     {
       if(has_x) {
@@ -4231,7 +4269,7 @@ static int xschem_cmds_m(Tcl_Interp *interp, int argc, const char *argv[], int *
  * These helpers are READ-ONLY and assume the caller has already run
  * prepare_netlist_structs(0) (and rebuild_selected_array() if it reads the
  * selection) — the §2c coherence rule (tcl_introspection_wire.md, NC3).
- * See code_analysis/net_identity_decision.md (c2, ratified). */
+ * See doc/claude/code_analysis/net_identity_decision.md (c2, ratified). */
 
 /* Resolve a net selector to its current net token, or NULL if it does not
  * resolve (dangling anchor / unknown pin). 'base' is the argv index of the
@@ -4339,7 +4377,7 @@ static int xschem_cmds_n(Tcl_Interp *interp, int argc, const char *argv[], int *
      *     <token>             by current net name (the human form; may alias)
      *   The descriptor is {name {<tok>} nwires N npins M anchor {wire <id>} |
      *   {inst <id> <pin>} | {}}. Read-only. See `xschem nets` /
-     *   `xschem net_members`; code_analysis/net_identity_decision.md (c2). */
+     *   `xschem net_members`; doc/claude/code_analysis/net_identity_decision.md (c2). */
     if(!strcmp(argv[1], "net"))
     {
       const char *token;
@@ -6376,13 +6414,23 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
       Tcl_ResetResult(interp);
     }
 
-    /* resetwin create_pixmap clear_pixmap force w h
-     *   internal command: calls resetwin() */
+    /* resetwin create_pixmap clear_pixmap force w h   (full internal form)
+     * resetwin w h                                     (fit form, issue 0035/0037)
+     *   Recreate the backing pixmap from the window geometry and redraw -- like the
+     *   ConfigureNotify handler. The 2-arg form forces a refit to an explicit w/h (e.g. Tk's
+     *   `winfo width/height`), bypassing XGetWindowAttributes -- which on some WMs (WSLg) still
+     *   reports a transient 1x1 for a just-mapped window even though Tk knows the real size.
+     *   If a deferred full-zoom is armed (pending_fullzoom) resetwin() performs it against that
+     *   geometry, so a freshly-opened new window whose WM never delivered a settling Configure
+     *   still gets fit. */
     else if(!strcmp(argv[1], "resetwin"))
     {
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
       if(argc > 6) {
         resetwin(atoi(argv[2]), atoi(argv[3]), atoi(argv[4]), atoi(argv[5]), atoi(argv[6]));
+      } else if(argc > 3) {
+        resetwin(1, 1, 1, atoi(argv[2]), atoi(argv[3])); /* create, clear, force, w, h */
+        draw();
       }
       Tcl_ResetResult(interp);
     }
@@ -6582,7 +6630,7 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
      *   if 'new_process' is given start a new xschem process
      *   if 'nodraw' is given do not draw loaded schematic
      *   if 'window' is given force a real top-level window even in tabbed mode
-     *     (specs/multi_window_detach.md)
+     *     (doc/claude/specs/multi_window_detach.md)
      *   returns '1' if a new schematic was opened, 0 otherwise */
     else if(!strcmp(argv[1], "schematic_in_new_window"))
     {
@@ -7104,6 +7152,15 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
             int s = atoi(argv[3]);
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
             xctx->no_undo=s;
+          }
+          else if(!strcmp(argv[2], "pending_fullzoom")) {
+            /* arm a deferred full-zoom: the next ConfigureNotify with valid (mapped,
+             * >1x1) geometry performs zoom_full() in resetwin(). Used by the new-window
+             * descend paths, whose zoom_full() runs before the just-created window has
+             * settled to its real size, so the immediate view is computed for the wrong
+             * geometry (blank / off-screen until a manual F). See issue 0035/0037. */
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            xctx->pending_fullzoom = atoi(argv[3]);
           }
           else if(!strcmp(argv[2], "raw_level")) { /* set hierarchy level loaded raw file refers to */
             int n = atoi(argv[3]);
@@ -8159,7 +8216,7 @@ static int xschem_cmds_u(Tcl_Interp *interp, int argc, const char *argv[], int *
 {
     /* unbind <device> <code> <mods> <ctx>
      *   Remove an input binding (result = number removed). Pairs with `bind`
-     *   under case 'b'. See claude_suggs/refactor_plan_action_registry_phase3.md */
+     *   under case 'b'. See doc/claude/suggestions/refactor_plan_action_registry_phase3.md */
     if(!strcmp(argv[1], "unbind"))
     {
       return action_cmd_unbind(argc, argv);
@@ -8364,7 +8421,7 @@ static int xschem_cmds_w(Tcl_Interp *interp, int argc, const char *argv[], int *
      *     {win_path top_path group xwindow current_name}
      *   'group' is the owning top-level ("." for the main window). Read-only
      *   introspection seam for multi-window / detach
-     *   (specs/multi_window_detach.md). In Phase 0 group == top_path (the owning
+     *   (doc/claude/specs/multi_window_detach.md). In Phase 0 group == top_path (the owning
      *   toplevel); per-window tab grouping (Phase 1) refines it. */
     else if(!strcmp(argv[1], "windows"))
     {
@@ -8853,7 +8910,7 @@ int tclvareval(const char *script, ...)
     dbg(2, "tclvareval(): p=%s, str=%s, size=%d\n", p, str, size);
   }
   dbg(2, "tclvareval(): script=%s, str=%s, size=%d\n", script, str ? str : "<NULL>", size);
-  return_code = Tcl_EvalEx(interp, str, (int)size, TCL_EVAL_GLOBAL);
+  return_code = Tcl_EvalEx(interp, str, (Tcl_Size)size, TCL_EVAL_GLOBAL); /* Tcl_Size: no-op on 8.6 (=int), avoids >2GB truncation on Tcl 9 */
   va_end(args);
   if(return_code != TCL_OK) {
     dbg(0, "tclvareval(): error executing %s: %s\n", str, tclresult());

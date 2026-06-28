@@ -433,7 +433,8 @@ static void publish_net_hilight_styles_to_tcl(void)
  * Returns 1 if a non-empty table was built, 0 otherwise (caller falls back to default). */
 static int parse_net_hilight_styles(const char *tab)
 {
-  int nrows = 0, j;
+  Tcl_Size nrows = 0; /* Tcl_Size, NOT int: Tcl 9's Tcl_SplitList writes a ptrdiff_t count here (issue 0041) */
+  int j;
   const char **rows = NULL;
   if(!interp) return 0;
   if(Tcl_SplitList(interp, tab, &nrows, &rows) != TCL_OK) return 0;
@@ -442,7 +443,7 @@ static int parse_net_hilight_styles(const char *tab)
   xctx->n_net_hilight_styles = nrows;
   for(j = 0; j < nrows; ++j) {
     NetHilightStyle *s = &xctx->net_hilight_style[j]; /* my_calloc zeroed all fields */
-    int nf = 0; const char **f = NULL;
+    Tcl_Size nf = 0; const char **f = NULL; /* Tcl_Size: Tcl 9 ABI (issue 0041) */
     s->index = j;
     s->color_layer = cadlayers > 5 ? 5 : cadlayers - 1; /* sane default until parsed */
     s->width = 1;
@@ -463,7 +464,7 @@ static int parse_net_hilight_styles(const char *tab)
     }
     if(nf > 2) { s->width = atoi(f[2]); if(s->width < 1) s->width = 1; if(s->width > 100) s->width = 100; }
     if(nf > 3 && f[3][0]) { /* dash pattern: list of on/off run lengths */
-      int nd = 0, k; const char **dd = NULL;
+      Tcl_Size nd = 0; int k; const char **dd = NULL; /* Tcl_Size: Tcl 9 ABI (issue 0041) */
       if(Tcl_SplitList(interp, f[3], &nd, &dd) == TCL_OK) {
         for(k = 0; k < nd && s->dash_len < (int)sizeof(s->dash_arr); ++k) {
           int dv = atoi(dd[k]); if(dv < 1) dv = 1; if(dv > 255) dv = 255;
@@ -643,6 +644,27 @@ int get_color(int value)
    * exact pixel via get_hilight_pixel() instead. */
   if(s->color_layer >= 0) return s->color_layer;
   return cadlayers > 5 ? 5 : cadlayers - 1;
+}
+
+/* For the layer-indexed exporters (SVG/PS): get_color() collapses a custom-RGB hilight style
+ * (color_layer < 0) to a fallback layer, losing the color, so the exported wire/symbol would render
+ * in that fallback layer's color instead of the on-screen one. This fills 8-bit r/g/b with the style's
+ * actual color and returns 1 iff 'value' resolves to such a custom style AND its RGB could be resolved;
+ * the caller then paints the highlighted element in r/g/b (SVG: an inline style override of the class
+ * color; PS: a temporary palette repoint, mirroring the on-screen GC repoint). Returns 0 for a
+ * layer-index style, a sim logic level (value < 0), or when the pixel can't be resolved (no X). */
+int hilight_custom_rgb8(int value, unsigned char *r, unsigned char *g, unsigned char *b)
+{
+  NetHilightStyle *st;
+  if(value < 0) return 0;
+  st = get_hilight_style(value);
+  if(!st || st->color_layer >= 0) return 0;
+  resolve_hilight_style_rgb(st);
+  if(!st->rgb_resolved) return 0;
+  *r = (unsigned char)(st->cr >> 8);
+  *g = (unsigned char)(st->cg >> 8);
+  *b = (unsigned char)(st->cb >> 8);
+  return 1;
 }
 
 /* Pixel for a hilight value given its already-resolved style (st may be NULL when
@@ -2524,8 +2546,8 @@ char *resolved_net(const char *net)
  * blink_ms makes a highlighted net's highlight toggle on/off in real time. The shared
  * foundation here (wall-clock source + ON/OFF gate + regional redraw + start/stop
  * predicate) is reused by Pass 2b (marching ants), which additionally animates the
- * anim/rate_persec columns. See specs/net_hilight_styles.md §2 and
- * claude_suggs/plan_net_hilight_styles.md "Pass 2". */
+ * anim/rate_persec columns. See doc/claude/specs/net_hilight_styles.md §2 and
+ * doc/claude/suggestions/plan_net_hilight_styles.md "Pass 2". */
 
 /* ui_state bits meaning a drawing gesture is in progress: pause animation during these
  * (a regional redraw mid-gesture would fight the gesture's own rubber-band drawing). */
@@ -2818,12 +2840,23 @@ int net_hilight_ctx_gesturing(void)
 
 /* True iff the current window should be running the animation tick: animation globally
  * enabled, on-screen, not mid-gesture, and >=1 highlighted net/instance uses an animating
- * style. Drives `xschem get net_hilight_animated` and the Tcl start/stop logic. */
+ * style. Drives `xschem get net_hilight_animated` and the Tcl start/stop logic.
+ *
+ * Gating uses net_hilight_ctx_gesturing() (a real rubber-band gesture), NOT the semaphore-inclusive
+ * net_hilight_ctx_busy(): this is a "should the tick RUN?" question, not "is it safe to DRAW a frame
+ * right now?". net_hilight_anim_update() — the C re-arm called after every highlight/style change —
+ * almost always runs from INSIDE a GUI callback(), which holds xctx->semaphore for the whole event
+ * (callback.c). If this predicate counted that held semaphore as busy it would answer 0, so the Tcl
+ * net_hilight_anim_update would CANCEL the tick instead of arming it, and interactively highlighting a
+ * blinking/marching net (key 'k', or the verb-noun '9' click) would freeze the animation until a later
+ * semaphore-free re-arm on a schematic-level switch. The frame-draw safety (don't paint mid-callback)
+ * stays in draw_hilight_region, which keeps the semaphore-inclusive net_hilight_ctx_busy() and merely
+ * skips that frame (returns 2 = keep ticking) rather than stopping. */
 int net_hilight_has_animation(void)
 {
   if(!has_x || !xctx->hilight_nets) return 0;
   if(!tclgetboolvar("net_hilight_animate")) return 0;
-  if(net_hilight_ctx_busy()) return 0;
+  if(net_hilight_ctx_gesturing()) return 0;
   return scan_animating_hilights(0.0, NULL, NULL, NULL, NULL, NULL, NULL, NULL) > 0;
 }
 

@@ -57,7 +57,7 @@ eval_expr.c: eval_expr.y
 # CIW Tab-completion vocabulary: the `xschem` subcommand names, extracted from
 # the dispatcher (scheduler.c strcmp(argv[1], "...") branches). Regenerated
 # whenever scheduler.c changes so it can never drift from the real command set.
-# Shipped to XSHAREDIR and loaded by ciw.tcl (see specs/ciw_autocomplete.md).
+# Shipped to XSHAREDIR and loaded by ciw.tcl (see doc/claude/specs/ciw_autocomplete.md).
 xschem_subcommands.txt: scheduler.c
 	grep -oE 'strcmp\(argv\[1\], *"[A-Za-z0-9_]+"' scheduler.c | sed -E 's/.*"([A-Za-z0-9_]+)"/\1/' | sort -u > xschem_subcommands.txt
 

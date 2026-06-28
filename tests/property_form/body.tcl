@@ -796,7 +796,7 @@ check {PF39b clear empties the general overlay too} \
 # drive that Tcl reaction directly (selection changed via `xschem select`, then
 # the hook called) the same way the P3/H1 tests drive on_focus / nav — the C
 # event gate itself is a manual eyeball item (synthetic ButtonPress is WSLg-
-# flaky). Decision doc: code_analysis/modeless_property_form_decision.md.
+# flaky). Decision doc: doc/claude/code_analysis/modeless_property_form_decision.md.
 #
 # Pending-edit policy (D2, ratified = Cadence prompt): a selection change while
 # the form is dirty pops a 3-way tk_messageBox — Apply / Discard / Cancel (the
@@ -924,7 +924,7 @@ if {[gui2_ok]} {
 # Logged at the INTERACTIVE layer (slickprop::do_apply), NOT in the engine
 # apply_instance_properties() — logging the engine would double-log CIW-typed
 # applies and re-log on replay (the action-log invariant; see
-# code_analysis/apply_properties_logging_decision.md). The emit goes through a
+# doc/claude/code_analysis/apply_properties_logging_decision.md). The emit goes through a
 # thin seam slickprop::log_apply (wrapping `xschem log_action`); tests SPY on
 # that seam (same technique as the tk_messageBox stub) so the assertions cover
 # the decision logic (when + exact line) without depending on the log file path.
@@ -982,7 +982,7 @@ if {[gui2_ok]} {
 # slickprop::edit_form (the one point every launch route converges on); the test
 # spies on that seam. Read AFTER the run (the marker is emitted synchronously in
 # edit_form, before tkwait — so this is robust to the modal-build flake).
-# Decision doc §6: code_analysis/apply_properties_logging_decision.md.
+# Decision doc §6: doc/claude/code_analysis/apply_properties_logging_decision.md.
 # ===========================================================================
 
 if {[gui2_ok]} {
@@ -1069,7 +1069,7 @@ if {[gui2_ok]} {
 # (c) the completed per-type primitive renders every drawable type, including
 # TEXT (its bounding box), without error. Pixel correctness (colour on both
 # themes, halo thickness, distinct-from-selection, the text box shape) is a
-# manual eyeball item — see code_analysis/apply_scope_highlight_decision.md.
+# manual eyeball item — see doc/claude/code_analysis/apply_scope_highlight_decision.md.
 # ===========================================================================
 
 catch {xschem highlight_scope clear}
@@ -1101,7 +1101,7 @@ xschem set modified 0
 
 # ===========================================================================
 # Slick enter_text dialog — discoverable text attributes.
-# Spec: specs/slick_text_dialog.md. Scope: enter_text first, common visual
+# Spec: doc/claude/specs/slick_text_dialog.md. Scope: enter_text first, common visual
 # attrs. Widget-independent CORE under test:
 #   slickprop::text_schema          -> ordered static field descriptors for the
 #                                      tokens the Appearance panel OWNS.
@@ -1235,7 +1235,7 @@ check {TX10e unchanged-unticked keeps 'normal'}   {[f_bvalue weight normal 0 0] 
 
 # ===========================================================================
 # Slick text_line dialog — discoverable graphical-object attributes (L1: core +
-# Rectangle). Spec: specs/slick_text_line_dialog.md. Generalises the enter_text
+# Rectangle). Spec: doc/claude/specs/slick_text_line_dialog.md. Generalises the enter_text
 # core to a SCHEMA argument so both dialogs share the read/assemble helpers:
 #   slickprop::gfx_schema <type>            -> per-type ordered field descriptors
 #   slickprop::schema_fields <schema> <p>   -> descriptors + current value/present
@@ -1333,7 +1333,7 @@ check {RL8e poly no-edit identical}  {[f_sassemble $::PSC $::PP {} [f_sextra $::
 # selection hook moved off the `semaphore>=2` carve-out (callback.c:5002) onto
 # the normal selection-completion path (the relocation is a manual-eyeball item;
 # synthetic ButtonPress is WSLg-flaky). Decision doc:
-# code_analysis/modeless_form_M2_decision.md.
+# doc/claude/code_analysis/modeless_form_M2_decision.md.
 #
 # Capture trick: pre-impl edit_form BLOCKS in tkwait, so we read the form's state
 # from an `after` timer that fires DURING the open form (inside that event loop)

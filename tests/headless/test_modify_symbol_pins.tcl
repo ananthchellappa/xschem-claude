@@ -1,6 +1,6 @@
 # P3: Modify an existing symbol = add ONLY the pins missing vs the schematic, and
 # touch NO existing artwork (no box resize, no rewrite of existing records).
-# Spec: specs/create_symbol_view.md
+# Spec: doc/claude/specs/create_symbol_view.md
 #
 # Run TRUE HEADLESS from the repo root:
 #   src/xschem --nogui --pipe -q --nolog --script tests/headless/test_modify_symbol_pins.tcl

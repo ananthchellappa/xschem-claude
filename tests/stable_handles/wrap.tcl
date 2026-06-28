@@ -1,5 +1,5 @@
 # Characterization + handle test suite for the stable-object-handles work
-# (claude_suggs/plan_stable_handles_step1.md, Phase A onward).
+# (doc/claude/suggestions/plan_stable_handles_step1.md, Phase A onward).
 #
 # Run from the source tree (needs an X display, no rebuild for Tcl changes):
 #

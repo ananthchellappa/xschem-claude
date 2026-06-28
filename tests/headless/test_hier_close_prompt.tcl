@@ -1,6 +1,6 @@
 # B9 (deep-hierarchy edge audit, pulled forward): closing/quitting while descended
 # must account for unsaved edits in ANCESTOR hierarchy levels, not just the current
-# level. Spec: specs/descend_hierarchy_in_memory.md
+# level. Spec: doc/claude/specs/descend_hierarchy_in_memory.md
 #
 # Background: B5/B6 let you descend past an unsaved parent (its edits live in
 # cellName~.sch). xctx->modified only reflects the CURRENT level, so a deep

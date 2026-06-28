@@ -19,7 +19,7 @@ When you move a component and its attached wires rubber-band to follow (a *stret
 move), the route often leaves a pin by immediately turning 90°. Cadence-style routing
 instead keeps a **short stub jutting straight out of each pin along the pin's natural
 lead direction**, and only *then* bends. It is the most uniform, predictable exit rule —
-"Issue E / the dream" in the wire-editing spec (`code_analysis/wire_editing_spec_and_plan.md`,
+"Issue E / the dream" in the wire-editing spec (`doc/claude/code_analysis/wire_editing_spec_and_plan.md`,
 requirement **R13**). The user's golden `mos_power_ampli_desired1.sch` shows the target:
 a one-grid vertical stub `N 1360 -900 1360 -880` out of the pin before the route turns.
 
@@ -116,10 +116,10 @@ unaffected while it bakes.
 
 ## 7. References
 
-- Spec & plan: `code_analysis/wire_editing_spec_and_plan.md` — Issue E, requirement R13,
+- Spec & plan: `doc/claude/code_analysis/wire_editing_spec_and_plan.md` — Issue E, requirement R13,
   Phase 6, test case TC10.
 - Test: `tests/headless/wireedit/test_wireedit_10_exit_stub.tcl` (synthetic, green).
 - Implementation: `insert_exit_stubs()` in `src/move.c`; switch wiring in `src/xschem.tcl`
   (`set_ne wire_exit_stub 0`, `tctx::global_list`, Options menu entry).
 - Commit: `8ba5ddf7` (Phase 6 exit-stub behind the switch).
-- Related bug class write-up: `code_analysis/prop_dropped_on_move_tutorial.md`.
+- Related bug class write-up: `doc/claude/code_analysis/prop_dropped_on_move_tutorial.md`.

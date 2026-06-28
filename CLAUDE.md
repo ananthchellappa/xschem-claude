@@ -130,3 +130,10 @@ designs and generators. The library search path is configured in `Makefile.conf`
   `create_alloc_ids*.awk` / `get_malloc_id.awk` scripts rewrite those placeholders
   into unique numeric ids for leak tracing — write `_ALLOC_ID_`, don't hand-number.
   Debug logging via `dbg(level, ...)`.
+
+## AI / planning docs
+Design and working notes live under `doc/claude/` (not installed — `doc/Makefile`
+ships only `*.svg/*.html/*.css/*.png`): `doc/claude/specs/` (feature specs),
+`doc/claude/issues/` (numbered issue tracker, `NNNN-*.md`), `doc/claude/code_analysis/`
+(analysis & decision write-ups), `doc/claude/suggestions/` (session prompts, plans).
+Source comments reference these by their full path (e.g. `see doc/claude/specs/foo.md`).

@@ -1,4 +1,4 @@
-# Library Manager — bold for revision-controlled items (specs/library_git.md §4.3,
+# Library Manager — bold for revision-controlled items (doc/claude/specs/library_git.md §4.3,
 # Phase 3). The three panes migrate from Tk listbox to ttk::treeview so each row
 # can carry a per-row font; a library/cell/view whose datafile is git-TRACKED
 # renders bold (the `tracked` tag), untracked renders normal.

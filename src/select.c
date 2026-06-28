@@ -1902,7 +1902,7 @@ static int gfx_total(int *per_layer)
  * undos (create/delete/reorder change the per-type counts) skip re-selection —
  * the selection drops, exactly the prior behaviour. Backend-agnostic: wraps the
  * xctx->pop_undo function pointer, so it covers both backends from one place.
- * Plan: code_analysis/undo_keep_selection_decision.md. */
+ * Plan: doc/claude/code_analysis/undo_keep_selection_decision.md. */
 void pop_undo_keep_selection(int redo, int set_modify)
 {
   int nsel, i;

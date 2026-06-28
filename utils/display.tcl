@@ -7,14 +7,10 @@ set new_styles {
   {4  "purple"   3   {20 20}       0   1200    none        0 }
   {5  "cyan"   3   {20 20}       30   1500    none        0 }
   {6  "orange"   3   {20 20}       30   0    march_fwd 2 }
+  {7  "skyblue"   4   {16 20}       30   0    march_rev 3 }
 }
 
-# Which positions in the EXISTING table each new row should overwrite:
-set targets {0 1 2 3 4 5 6}
-
-foreach pos $targets row $new_styles {
-    lset net_hilight_style $pos $row   ;# replace element $pos, leave the rest intact
-}
+net_hilight_style_merge $new_styles
 
 xschem update_net_hilight_style       ;# REQUIRED — the variable alone has no effect
 

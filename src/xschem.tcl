@@ -516,7 +516,7 @@ proc net_hilight_animate_changed {args} {
 # run lengths ({} = solid) ; anim = none | march_fwd | march_rev. These helpers NORMALIZE every
 # row (filling defaults for any missing field, coercing out-of-range ones) and keep the invariant
 # that a row's index column equals its position, then recompile the C table via
-# 'xschem update_net_hilight_style'. See specs/net_hilight_styles.md.
+# 'xschem update_net_hilight_style'. See doc/claude/specs/net_hilight_styles.md.
 
 # canonical per-column defaults (the index column is supplied per call)
 proc net_hilight_style_default_row {idx} { return [list $idx 4 1 {} 0 0 none 0] }
@@ -549,19 +549,20 @@ proc net_hilight_style_current {} {
 }
 
 # MODE 1 -- replace: the table becomes EXACTLY the given rows (positions 0..n-1; given index
-# columns are ignored and renumbered to position).
-proc net_hilight_style_replace {rows} {
+# columns are ignored and renumbered to position). $apply=0 stages the table (set the var only,
+# no C recompile/redraw) -- the editor uses this to defer the live update until Apply/OK.
+proc net_hilight_style_replace {rows {apply 1}} {
   global net_hilight_style
   set t {} ; set i 0
   foreach row $rows { lappend t [net_hilight_style_norm $row $i] ; incr i }
   set net_hilight_style $t
-  xschem update_net_hilight_style
+  if {$apply} { xschem update_net_hilight_style }
   return $t
 }
 
 # MODE 2 -- merge: each row's index column selects the position to overwrite; every other row is
 # kept. An index past the current end extends the table, padding gaps with default rows.
-proc net_hilight_style_merge {rows} {
+proc net_hilight_style_merge {rows {apply 1}} {
   global net_hilight_style
   set t [net_hilight_style_current]
   foreach row $rows {
@@ -571,17 +572,17 @@ proc net_hilight_style_merge {rows} {
     lset t $idx [net_hilight_style_norm $row $idx]
   }
   set net_hilight_style $t
-  xschem update_net_hilight_style
+  if {$apply} { xschem update_net_hilight_style }
   return $t
 }
 
 # MODE 3 -- append: ignore each row's index column; add the styles as new rows at the end.
-proc net_hilight_style_append {rows} {
+proc net_hilight_style_append {rows {apply 1}} {
   global net_hilight_style
   set t [net_hilight_style_current]
   foreach row $rows { lappend t [net_hilight_style_norm $row [llength $t]] }
   set net_hilight_style $t
-  xschem update_net_hilight_style
+  if {$apply} { xschem update_net_hilight_style }
   return $t
 }
 
@@ -595,7 +596,7 @@ proc net_hilight_style_reset {} {
 }
 
 # Bonus -- remove rows by position; the survivors are renumbered to keep index == position.
-proc net_hilight_style_remove {indices} {
+proc net_hilight_style_remove {indices {apply 1}} {
   global net_hilight_style
   set t [net_hilight_style_current]
   foreach idx [lsort -integer -decreasing -unique $indices] {
@@ -604,7 +605,7 @@ proc net_hilight_style_remove {indices} {
   set re {} ; set i 0
   foreach row $t { lappend re [net_hilight_style_norm $row $i] ; incr i }
   set net_hilight_style $re
-  xschem update_net_hilight_style
+  if {$apply} { xschem update_net_hilight_style }
   return $re
 }
 
@@ -647,6 +648,959 @@ proc net_hilight_apply {styledef args} {
     set incr_hilight $save
   }
   return $idx
+}
+
+# ---- net_hilight_style persistence (plan slice 1) ---------------------------------------
+# Two SEPARATE files under USER_CONF_DIR, both Tcl-sourceable and loaded at startup
+# (load_net_hilight_conf), reflecting the rule that the gate is about POTENTIAL DAMAGE, not the
+# location:
+#   net_hilight_editor_seen  - a harmless UI breadcrumb (no style data); auto-written on first
+#                              open of the editor so "ever launched" persists across sessions.
+#   net_hilight_style        - the style table itself; could change highlight appearance in the
+#                              user's OTHER projects, so it is written ONLY by the editor's
+#                              explicit Save (write_net_hilight_style_conf), never automatically.
+
+# Auto-write the harmless "user has opened the net highlight style editor" breadcrumb.
+proc write_net_hilight_editor_seen {} {
+  global USER_CONF_DIR net_hilight_editor_seen
+  if {[catch {open $USER_CONF_DIR/net_hilight_editor_seen w} fd]} {
+    puts "write_net_hilight_editor_seen: $fd"
+    return
+  }
+  puts $fd "# xschem: user has opened the net highlight style editor (harmless UI breadcrumb)"
+  puts $fd "set net_hilight_editor_seen 1"
+  close $fd
+  # Mark seen only AFTER the breadcrumb is persisted: a failed write (read-only ~/.xschem) then
+  # leaves the flag 0 so the next open retries, instead of de-emphasizing without ever recording it.
+  set net_hilight_editor_seen 1
+}
+
+# Write the current style table to a Tcl-sourceable file at $path (the editor's explicit Save).
+# Sourcing it restores the table and recompiles it; also stamps the harmless seen flag. Returns
+# 1 on success, 0 on an I/O error. Row format = 8 cols {index color width dash angle blink_ms
+# anim rate_persec}. The table line is emitted via [list ...] so it is always a balanced,
+# source-able Tcl command even if a field ever carried an unbalanced brace/backslash.
+proc write_net_hilight_style_conf {path} {
+  global net_hilight_style
+  if {[catch {open $path w} fd]} {
+    puts "write_net_hilight_style_conf: $fd"
+    return 0
+  }
+  puts $fd "# xschem net highlight styles -- generated by the net highlight style editor."
+  puts $fd "# 8 columns per row: index color width dash angle blink_ms anim rate_persec"
+  puts $fd "# (color = layer index | X color name | #rrggbb ; anim = none|march_fwd|march_rev)."
+  puts $fd "set net_hilight_editor_seen 1"
+  puts $fd [list set net_hilight_style $net_hilight_style]
+  puts $fd "catch {xschem update_net_hilight_style}"
+  close $fd
+  return 1
+}
+
+# Startup: restore the persisted net-highlight state. The breadcrumb (if present) flips the seen
+# flag; the style table (only present when the user saved it to the auto-load location) is sourced
+# and recompiled by the file itself. A non-auto-load Save is loaded by the user via --script.
+proc load_net_hilight_conf {} {
+  global USER_CONF_DIR
+  foreach f {net_hilight_editor_seen net_hilight_style} {
+    if {[file exists $USER_CONF_DIR/$f]} {
+      if {[catch {source $USER_CONF_DIR/$f} err]} {
+        puts "load_net_hilight_conf: problem sourcing $f: $err"
+      }
+    }
+  }
+}
+
+# Net highlight style editor (Tools > Net highlight styles..., the command palette, or this proc).
+# Single-instance, non-modal dialog editing the global net_hilight_style table. Opening it records
+# that the user has seen the editor (clearing the palette's first-launch emphasis). SLICE 3: a
+# read-only, scrollable view of the current table -- one row per style, one column per field.
+# Editing widgets, the free-to-edit row, the live preview and Save/Cancel land in later slices.
+
+# Column layout for the fixed header row. Each entry: {header-text width-in-chars field-index}.
+# Body cells (slice 4) are heterogeneous editing widgets, so these widths only approximate the
+# body columns; the header is a guide, not pixel-aligned.
+proc nhse_columns {} {
+  return {
+    {Idx 4 0} {Color 14 1} {Width 6 2} {Pattern 13 3}
+    {Angle 9 4} {Blink(ms) 9 5} {March 9 6} {Speed 7 7}
+  }
+}
+
+# ---- per-cell value helpers (used by the widgets, all unit-testable) ---------------------
+# The single-token X11 color names from the same source the engine resolves names through
+# (/usr/share/X11/rgb.txt -> XAllocNamedColor). Multi-word names are skipped: they would split a
+# Tcl-list style row. Cached; a bundled fallback covers platforms without the file.
+proc nhse_rgb_names {} {
+  global nhse_rgb_names_cache
+  if {[info exists nhse_rgb_names_cache]} { return $nhse_rgb_names_cache }
+  set names {}
+  if {[file exists /usr/share/X11/rgb.txt] && ![catch {open /usr/share/X11/rgb.txt r} fp]} {
+    while {[gets $fp line] >= 0} {
+      if {[regexp {^[ \t]*[0-9]+[ \t]+[0-9]+[ \t]+[0-9]+[ \t]+(\S+)[ \t]*$} $line -> name]} {
+        lappend names $name
+      }
+    }
+    close $fp
+  }
+  if {![llength $names]} {
+    set names {black white red green blue yellow orange cyan magenta gray grey pink purple brown
+               gold violet navy teal maroon olive coral salmon turquoise khaki orchid tan}
+  }
+  set nhse_rgb_names_cache [lsort -unique $names]
+  return $nhse_rgb_names_cache
+}
+
+# Color combobox value list: Layer 0..N (the engine's own layer colors), then names, then Custom.
+proc nhse_color_values {} {
+  set vals {}
+  if {[info exists ::tctx::colors]} {
+    for {set i 0} {$i < [llength $::tctx::colors]} {incr i} { lappend vals "Layer $i" }
+  }
+  set vals [concat $vals [nhse_rgb_names]]
+  lappend vals "Custom..."
+  return $vals
+}
+
+# Resolve a stored color value (layer index | name | #rrggbb) to a Tk color for the swatch, or {}.
+proc nhse_color_to_tk {val} {
+  if {[string is integer -strict $val] && [info exists ::tctx::colors] \
+      && $val >= 0 && $val < [llength $::tctx::colors]} {
+    return [lindex $::tctx::colors $val]
+  }
+  if {![catch {winfo rgb . $val}]} { return $val }
+  return {}
+}
+
+# Friendly marching label <-> stored anim token.
+proc nhse_march_to_disp {raw}  { switch -- $raw  {march_fwd {return Forward} march_rev {return Reverse} default {return Off}} }
+proc nhse_march_to_raw  {disp} { switch -- $disp {Forward {return march_fwd} Reverse {return march_rev} default {return none}} }
+
+# Dash-pattern quick-pick values: the literal on/off run-length lists that fill the Pattern entry
+# (shown verbatim so the dropdown self-documents the "6 4" = 6 on / 4 off format), plus "Solid" (no
+# dash). Picking one fills the Pattern entry to its left -- see nhse_dash_apply_example.
+proc nhse_dash_examples {} { return {Solid {6 4} {2 3} {6 3 2 3} {12 4}} }
+
+# ---- the editing model: per-cell vars (::nhse_v(row,field)) <-> the table -----------------
+# Assemble the live edit table from the bound cell vars. Field 6 holds a FRIENDLY march label and
+# is converted back to its token; the angle (a slider) is coerced to an int so net_hilight_style_norm
+# does not clamp a "30.0" to 0.
+proc nhse_assemble_table {} {
+  set rows {}
+  set i 0
+  while {[info exists ::nhse_v($i,0)]} {
+    set angle $::nhse_v($i,4)
+    if {[string is double -strict $angle]} { set angle [expr {int(round($angle))}] }
+    lappend rows [list $i $::nhse_v($i,1) $::nhse_v($i,2) $::nhse_v($i,3) $angle \
+                       $::nhse_v($i,5) [nhse_march_to_raw $::nhse_v($i,6)] $::nhse_v($i,7)]
+    incr i
+  }
+  return $rows
+}
+
+# Stage the current cell vars into the table (net_hilight_style_replace with apply=0 -- updates the
+# staged var only, no live redraw; Apply/OK push it to the schematic), then re-sync the vars/swatch/
+# enable-state to the NORMALIZED result without rebuilding widgets.
+proc nhse_commit {} {
+  if {[info exists ::nhse_building] && $::nhse_building} return
+  if {![info exists ::nhse_v(0,0)]} return
+  set newtab [net_hilight_style_replace [nhse_assemble_table] 0]   ;# stage only; Apply/OK push to live
+  set i 0
+  foreach r $newtab {
+    set ::nhse_v($i,0) $i
+    set ::nhse_v($i,1) [lindex $r 1]
+    set ::nhse_v($i,2) [lindex $r 2]
+    set ::nhse_v($i,3) [lindex $r 3]
+    set ::nhse_v($i,4) [lindex $r 4]
+    set ::nhse_v($i,5) [lindex $r 5]
+    set ::nhse_v($i,6) [nhse_march_to_disp [lindex $r 6]]
+    set ::nhse_v($i,7) [lindex $r 7]
+    catch {nhse_update_swatch $i}
+    catch {nhse_row_enable_state $i}
+    incr i
+  }
+}
+
+# Commit a CELL edit to the live table -- but only for a real TABLE row (integer key). The free row
+# (key "new", slice 6) is composed-only: its edits never touch the table until Update is pressed.
+proc nhse_cell_commit {i} { if {[string is integer -strict $i]} { nhse_commit } }
+
+# The widget frame that holds row $i's cells. Set per row by nhse_build_row, so the same builder/
+# helpers serve both the scrollable table rows AND the pinned free row (which lives elsewhere).
+proc nhse_row_frame {i} {
+  if {[info exists ::nhse_rowpath($i)]} { return $::nhse_rowpath($i) }
+  return {}
+}
+
+# Angle/March/Speed only matter with a dash pattern: grey them out for a solid (empty-dash) row.
+proc nhse_row_enable_state {i} {
+  set rf [nhse_row_frame $i]
+  if {$rf eq {} || ![winfo exists $rf]} return
+  set on [expr {[string trim $::nhse_v($i,3)] ne {}}]
+  set st [expr {$on ? {normal} : {disabled}}]
+  catch { $rf.c4 configure -state $st }
+  catch { $rf.c6 configure -state [expr {$on ? {readonly} : {disabled}}] }
+  catch { $rf.c7 configure -state $st }
+}
+
+proc nhse_update_swatch {i} {
+  set rf [nhse_row_frame $i]
+  if {$rf eq {} || ![winfo exists $rf.c1.sw]} return
+  set sw $rf.c1.sw
+  set tk [nhse_color_to_tk $::nhse_v($i,1)]
+  if {$tk ne {}} { catch { $sw configure -background $tk } } else { catch { $sw configure -background [.nhse cget -background] } }
+}
+
+# Custom... -> a #rrggbb picker with the current color as the starting point.
+proc nhse_color_pick {i} {
+  set init [nhse_color_to_tk $::nhse_v($i,1)]
+  set opt {}
+  if {$init ne {}} { set opt [list -initialcolor $init] }
+  set c [eval tk_chooseColor -parent .nhse $opt]
+  if {$c ne {}} { set ::nhse_v($i,1) $c }
+  nhse_update_swatch $i
+}
+
+proc nhse_color_selected {i} {
+  set v $::nhse_v($i,1)
+  if {$v eq "Custom..."} {
+    nhse_color_pick $i
+  } elseif {[regexp {^Layer ([0-9]+)$} $v -> n]} {
+    set ::nhse_v($i,1) $n
+  }
+  nhse_update_swatch $i
+  nhse_cell_commit $i
+}
+
+proc nhse_dash_apply_example {i} {
+  if {![info exists ::nhse_ex($i)]} return
+  set v $::nhse_ex($i)
+  if {$v eq {Solid}} { set v {} }   ;# "Solid" is the no-dash sentinel; all others are literal patterns
+  set ::nhse_v($i,3) $v
+  nhse_row_enable_state $i
+  nhse_cell_commit $i
+}
+
+proc nhse_dash_changed {i} { nhse_row_enable_state $i ; nhse_cell_commit $i }
+
+# Build the editing widgets for one style row, each bound to ::nhse_v(row,field). $i is the row key
+# (an integer for a table row, the string "new" for the pinned free row); $idxlabel overrides the
+# read-only index cell text (the free row shows "NEW"). Edits commit only for table rows (the free
+# row composes a style that is applied only on Update) -- see nhse_cell_commit.
+proc nhse_build_row {body i row {idxlabel {}}} {
+  set rf $body.r$i
+  frame $rf
+  set ::nhse_rowpath($i) $rf
+  for {set f 0} {$f < 8} {incr f} { set ::nhse_v($i,$f) [lindex $row $f] }
+  set ::nhse_v($i,0) $i
+  set ::nhse_v($i,6) [nhse_march_to_disp [lindex $row 6]]
+  if {$idxlabel eq {}} { set idxlabel $i }
+
+  # cells are GRIDDED into columns 0..7 (sticky w); nhse_align_columns then sizes each column to the
+  # widest cell across the header + all rows, so the header labels sit exactly over their columns.
+  label $rf.c0 -width 4 -anchor w -relief flat -text $idxlabel
+  grid $rf.c0 -row 0 -column 0 -sticky w -padx 1
+
+  frame $rf.c1                                              ;# color: swatch + editable combobox
+  label $rf.c1.sw -width 2 -relief solid -borderwidth 1
+  ttk::combobox $rf.c1.cb -width 10 -textvariable ::nhse_v($i,1) -values [nhse_color_values]
+  pack $rf.c1.sw $rf.c1.cb -side left -padx 1
+  bind $rf.c1.cb <<ComboboxSelected>> [list nhse_color_selected $i]
+  bind $rf.c1.cb <Return> [list nhse_cell_commit $i] ; bind $rf.c1.cb <FocusOut> [list nhse_cell_commit $i]
+  grid $rf.c1 -row 0 -column 1 -sticky w -padx 1
+
+  spinbox $rf.c2 -width 5 -from 1 -to 100 -textvariable ::nhse_v($i,2) -command [list nhse_cell_commit $i]
+  bind $rf.c2 <Return> [list nhse_cell_commit $i] ; bind $rf.c2 <FocusOut> [list nhse_cell_commit $i]
+  grid $rf.c2 -row 0 -column 2 -sticky w -padx 1
+
+  frame $rf.c3                                              ;# dash: entry + examples dropdown
+  entry $rf.c3.e -width 7 -textvariable ::nhse_v($i,3)
+  ttk::combobox $rf.c3.ex -width 8 -state readonly -textvariable ::nhse_ex($i) -values [nhse_dash_examples]
+  pack $rf.c3.e $rf.c3.ex -side left -padx 1
+  bind $rf.c3.e <Return> [list nhse_dash_changed $i] ; bind $rf.c3.e <FocusOut> [list nhse_dash_changed $i]
+  bind $rf.c3.ex <<ComboboxSelected>> [list nhse_dash_apply_example $i]
+  grid $rf.c3 -row 0 -column 3 -sticky w -padx 1
+
+  scale $rf.c4 -from 0 -to 45 -orient horizontal -length 70 -showvalue 1 -resolution 1 -variable ::nhse_v($i,4)
+  bind $rf.c4 <ButtonRelease-1> [list nhse_cell_commit $i]
+  grid $rf.c4 -row 0 -column 4 -sticky w -padx 1
+
+  entry $rf.c5 -width 8 -textvariable ::nhse_v($i,5)
+  bind $rf.c5 <Return> [list nhse_cell_commit $i] ; bind $rf.c5 <FocusOut> [list nhse_cell_commit $i]
+  grid $rf.c5 -row 0 -column 5 -sticky w -padx 1
+
+  ttk::combobox $rf.c6 -width 8 -state readonly -textvariable ::nhse_v($i,6) -values {Off Forward Reverse}
+  bind $rf.c6 <<ComboboxSelected>> [list nhse_cell_commit $i]
+  grid $rf.c6 -row 0 -column 6 -sticky w -padx 1
+
+  entry $rf.c7 -width 6 -textvariable ::nhse_v($i,7)
+  bind $rf.c7 <Return> [list nhse_cell_commit $i] ; bind $rf.c7 <FocusOut> [list nhse_cell_commit $i]
+  grid $rf.c7 -row 0 -column 7 -sticky w -padx 1
+
+  pack $rf -side top -fill x -anchor w
+  nhse_update_swatch $i
+  nhse_row_enable_state $i
+  # field focus on any cell makes the shared preview (slice 5) mirror this row, live edits included
+  foreach cell [list $rf.c1.cb $rf.c2 $rf.c3.e $rf.c3.ex $rf.c4 $rf.c5 $rf.c6 $rf.c7] {
+    bind $cell <FocusIn> [list nhse_focus_set $i]
+  }
+}
+
+# Align the header, the pinned free row and every table row into one set of columns: size each grid
+# column to the widest cell across all of them (its reqwidth) and apply that as a fixed minsize on
+# every row's grid, so a header label always sits exactly over its column whatever heterogeneous
+# widget the body cell holds. Re-run after each rebuild (the table rows are recreated).
+proc nhse_align_columns {} {
+  set masters {}
+  foreach m {.nhse.tbl.head .nhse.tbl.free.rnew} { if {[winfo exists $m]} { lappend masters $m } }
+  if {[winfo exists .nhse.tbl.sf.body]} {
+    foreach r [winfo children .nhse.tbl.sf.body] { lappend masters $r }
+  }
+  if {![llength $masters]} return
+  # +2 for the cells' -padx 1 (each side): a column with the widest cell ends up reqwidth+2*padx wide,
+  # so the minsize must include that padx or the header column (whose label is narrower) falls short
+  # and the columns drift right by 2px each.
+  for {set c 0} {$c < 8} {incr c} {
+    set mx 1
+    foreach m $masters {
+      if {[winfo exists $m.c$c]} {
+        set rw [winfo reqwidth $m.c$c]
+        if {$rw > $mx} { set mx $rw }
+      }
+    }
+    incr mx 2
+    foreach m $masters { catch { grid columnconfigure $m $c -minsize $mx } }
+  }
+}
+
+# Forget every TABLE-row (integer-keyed) bound var/path, leaving the pinned free row ("new") intact.
+# Stale higher-index entries must go: nhse_assemble_table walks 0,1,2,... while ::nhse_v($i,0) exists,
+# so a leftover row N from a since-shrunk table would extend the assembled list past its real end.
+proc nhse_clear_table_rows {} {
+  foreach k [array names ::nhse_v]       { if {[string is integer -strict [lindex [split $k ,] 0]]} { unset ::nhse_v($k) } }
+  foreach k [array names ::nhse_ex]      { if {[string is integer -strict $k]} { unset ::nhse_ex($k) } }
+  foreach k [array names ::nhse_rowpath] { if {[string is integer -strict $k]} { unset ::nhse_rowpath($k) } }
+}
+
+# (Re)render the table body from the live table as EDITING rows. Destroys prior table rows + their
+# bound vars first (the free row is preserved), so this is also the refresh path when the dialog is
+# re-opened or an Update/external change alters the table.
+proc nhse_rebuild {} {
+  set body .nhse.tbl.sf.body
+  if {![winfo exists $body]} return
+  set ::nhse_focus_row 0    ;# rows are recreated below -> the preview follows row 0 by default
+  set ::nhse_building 1
+  foreach c [winfo children $body] { destroy $c }
+  nhse_clear_table_rows
+  set i 0
+  foreach row [net_hilight_style_current] {
+    nhse_build_row $body $i $row
+    incr i
+  }
+  set ::nhse_building 0
+  catch { nhse_refresh_over_range }
+  catch { nhse_ops_enable_state }
+  catch { nhse_bind_wheel_tree .nhse.tbl.sf }   ;# (re)bind wheel scroll on the recreated row widgets
+  update idletasks
+  catch { nhse_align_columns }                  ;# header labels over their columns (needs reqwidths)
+  update idletasks
+  catch { .nhse.tbl.sf configure -scrollregion [.nhse.tbl.sf bbox all] }
+  catch { nhse_preview_paint }
+}
+
+# ---- slice 5: one shared animated preview canvas, mirroring the focused row ----------------
+# Pure-Tcl reimplementations of the C timing (hilight.c) so the preview animates exactly like a
+# real highlighted net, but on the focused row's UNCOMMITTED widget values (a row that may not be
+# in the compiled C table yet). Display-only: NONE of these ever call nhse_commit.
+
+# Dash repeat period in dash-length units: sum of the run lengths, DOUBLED for an odd run count
+# (XSetDashes flips on/off roles each pass, so an odd pattern only truly repeats after two passes).
+# 0 for an empty / all-zero pattern. Mirrors net_hilight_compute_dash_period in hilight.c.
+proc nhse_dash_period {dash} {
+  set sum 0 ; set n 0
+  foreach run $dash { if {[string is integer -strict $run]} { incr sum $run ; incr n } }
+  if {$sum <= 0} { return 0.0 }
+  return [expr {($n & 1) ? 2.0 * $sum : double($sum)}]
+}
+
+# Blink + marching state for a raw 8-col style row {index color width dash angle blink_ms anim
+# rate_persec} (anim = none|march_fwd|march_rev) at wall-clock time now_ms. Returns {visible offset}:
+#   visible -- blink gate: 1 always, unless blink_ms>0 and now is in the second half of the 50% duty
+#              period (mirrors net_hilight_style_on_now).
+#   offset  -- marching dash shift in dash-length (pixel) units, in [0,P); 0 unless the style has a
+#              direction, a dash to scroll, and a positive rate (mirrors net_hilight_march_offset).
+proc nhse_preview_state {fields now_ms} {
+  set dash     [lindex $fields 3]
+  set blink_ms [lindex $fields 5]
+  set anim     [lindex $fields 6]
+  set rate     [lindex $fields 7]
+  set visible 1
+  if {[string is double -strict $blink_ms] && $blink_ms > 0} {
+    set half [expr {$blink_ms / 2.0}]
+    set visible [expr {fmod(floor($now_ms / $half), 2.0) < 0.5 ? 1 : 0}]
+  }
+  set offset 0.0
+  set P [nhse_dash_period $dash]
+  if {($anim eq {march_fwd} || $anim eq {march_rev}) && $P > 0 \
+      && [string is double -strict $rate] && $rate > 0} {
+    set turns [expr {double($rate) * ($now_ms / 1000.0)}]
+    set frac  [expr {$turns - floor($turns)}]
+    if {$anim eq {march_rev} && $frac > 0.0} { set frac [expr {1.0 - $frac}] }
+    set offset [expr {$P * $frac}]
+  }
+  return [list $visible $offset]
+}
+
+# The focused row's CURRENT widget values as a raw 8-col row (friendly march label -> token; the
+# float angle coerced to int -- same boundary conversion as nhse_assemble_table, for one row).
+# Falls back to row 0; {} if the table is empty.
+proc nhse_focus_fields {} {
+  set i 0
+  if {[info exists ::nhse_focus_row]} { set i $::nhse_focus_row }
+  if {![info exists ::nhse_v($i,0)]} { set i 0 }
+  if {![info exists ::nhse_v($i,0)]} { return {} }
+  set angle $::nhse_v($i,4)
+  if {[string is double -strict $angle]} { set angle [expr {int(round($angle))}] }
+  return [list $i $::nhse_v($i,1) $::nhse_v($i,2) $::nhse_v($i,3) $angle \
+               $::nhse_v($i,5) [nhse_march_to_raw $::nhse_v($i,6)] $::nhse_v($i,7)]
+}
+
+# Walk a dash pattern across x in [xs,xe], returning the clipped "on" bands {a b}. The pattern starts
+# "on" and alternates; an odd run count is doubled so on/off roles flip on the second pass (2*sum
+# period, matching nhse_dash_period). A positive march offset scrolls the bands toward +x.
+proc nhse_dash_bands {dash offset xs xe} {
+  set runs {}
+  foreach r $dash { if {[string is integer -strict $r] && $r > 0} { lappend runs $r } }
+  if {![llength $runs]} { return {} }
+  if {[llength $runs] & 1} { set runs [concat $runs $runs] }
+  set P 0 ; foreach r $runs { incr P $r }
+  if {$P <= 0} { return {} }
+  set x [expr {$xs - $P - fmod($offset, $P)}]
+  set bands {} ; set guard 0
+  while {$x < $xe && $guard < 10000} {
+    set on 1
+    foreach r $runs {
+      set a $x ; set b [expr {$x + $r}]
+      if {$on && $b > $xs && $a < $xe} {
+        set ca [expr {$a < $xs ? $xs : $a}] ; set cb [expr {$b > $xe ? $xe : $b}]
+        if {$cb > $ca} { lappend bands [list $ca $cb] }
+      }
+      set x $b ; set on [expr {!$on}] ; incr guard
+    }
+  }
+  return $bands
+}
+
+# Repaint the preview from the focused row's current values. A faint baseline shows "a wire is here"
+# even when the blink gate is OFF; the styled highlight (color/width/dash/angle, marching offset) is
+# overlaid only while visible. Honours angle by shearing the dash bands like the cairo stripe path.
+proc nhse_preview_paint {} {
+  set c .nhse.preview
+  if {![winfo exists $c]} return
+  $c delete all
+  set row [nhse_focus_fields]
+  if {$row eq {}} return
+  set color [nhse_color_to_tk [lindex $row 1]]
+  if {$color eq {}} { set color gray70 }
+  set w [lindex $row 2] ; if {![string is integer -strict $w] || $w < 1} { set w 1 }
+  set dash [lindex $row 3]
+  set angle [lindex $row 4] ; if {![string is integer -strict $angle]} { set angle 0 }
+  lassign [nhse_preview_state $row [clock milliseconds]] visible offset
+
+  set cw [winfo width $c]  ; if {$cw <= 1} { set cw 220 }
+  set ch [winfo height $c] ; if {$ch <= 1} { set ch 40 }
+  set cy [expr {$ch / 2}]
+  set xs 10 ; set xe [expr {$cw - 10}]
+  if {$xe <= $xs} return
+  $c create line $xs $cy $xe $cy -fill gray40 -width 1                 ;# bare-wire baseline
+  if {!$visible} return                                               ;# blink OFF -> baseline only
+  if {![llength $dash]} {
+    $c create line $xs $cy $xe $cy -fill $color -width $w -capstyle round
+    return
+  }
+  set half [expr {$w / 2.0}]
+  set shear [expr {$angle > 0 ? $half * tan($angle * 3.141592653589793 / 180.0) : 0}]
+  foreach band [nhse_dash_bands $dash $offset $xs $xe] {
+    lassign $band a b
+    if {$shear == 0} {
+      $c create line $a $cy $b $cy -fill $color -width $w
+    } else {
+      $c create polygon \
+        [expr {$a + $shear}] [expr {$cy - $half}] [expr {$b + $shear}] [expr {$cy - $half}] \
+        [expr {$b - $shear}] [expr {$cy + $half}] [expr {$a - $shear}] [expr {$cy + $half}] \
+        -fill $color -outline $color
+    }
+  }
+}
+
+# A table cell gained field focus: the preview now mirrors this row (incl. its uncommitted edits),
+# and the per-row ops (slice 7) enable/disable for this row.
+proc nhse_focus_set {i} { set ::nhse_focus_row $i ; catch { nhse_preview_paint } ; catch { nhse_ops_enable_state } }
+
+# One self-rescheduling animation tick. Repaints (which re-samples clock milliseconds, so blink and
+# marching advance) then re-arms. Self-terminates if the canvas is gone (belt-and-suspenders; the
+# <Destroy> bind on .nhse is the primary cancel) so no orphan after loop survives the dialog.
+proc nhse_preview_tick {} {
+  if {![winfo exists .nhse.preview]} { catch { unset ::nhse_preview_after } ; return }
+  catch { nhse_preview_paint }
+  set ::nhse_preview_after [after 40 nhse_preview_tick]
+}
+
+proc nhse_preview_start {} {
+  if {[info exists ::nhse_preview_after]} { after cancel $::nhse_preview_after }
+  if {![winfo exists .nhse.preview]} return
+  set ::nhse_preview_after [after 40 nhse_preview_tick]
+}
+
+# Cancel the tick when the dialog toplevel (not a child widget) is destroyed.
+proc nhse_preview_stop {win} {
+  if {$win ne {.nhse}} return
+  if {[info exists ::nhse_preview_after]} { after cancel $::nhse_preview_after ; unset ::nhse_preview_after }
+}
+
+# ---- slice 6: the free-to-edit row (compose a style, then Add / Overwrite via Update) ----------
+
+# The free row's CURRENT widget values as a raw 8-col row, index column a placeholder 0 (Add ignores
+# it; Overwrite replaces it with the chosen row #). Friendly march label -> token; float angle -> int.
+proc nhse_free_row {} {
+  set angle $::nhse_v(new,4)
+  if {[string is double -strict $angle]} { set angle [expr {int(round($angle))}] }
+  return [list 0 $::nhse_v(new,1) $::nhse_v(new,2) $::nhse_v(new,3) $angle \
+               $::nhse_v(new,5) [nhse_march_to_raw $::nhse_v(new,6)] $::nhse_v(new,7)]
+}
+
+# Keep the Overwrite row-# spinbox range in sync with the table size (0..N-1), clamping a stale value.
+proc nhse_refresh_over_range {} {
+  set sp .nhse.tbl.free.act.over
+  if {![winfo exists $sp]} return
+  set n [llength [net_hilight_style_current]]
+  set max [expr {$n > 0 ? $n - 1 : 0}]
+  $sp configure -from 0 -to $max
+  if {![string is integer -strict $::nhse_over_idx] || $::nhse_over_idx < 0 || $::nhse_over_idx > $max} {
+    set ::nhse_over_idx 0
+  }
+}
+
+# The row-# spinbox (which existing row Overwrite replaces) is always visible so the target field is
+# discoverable, but enabled only for Overwrite -- greyed for Add, where it has no meaning.
+proc nhse_action_changed {} {
+  set sp .nhse.tbl.free.act.over
+  if {![winfo exists $sp]} return
+  nhse_refresh_over_range
+  $sp configure -state [expr {$::nhse_action eq {Overwrite} ? {normal} : {disabled}}]
+}
+
+# Commit the free row: Add appends it as a new last row; Overwrite replaces the row whose number is in
+# the spinbox. Both route through the fault-tolerant procs (live apply + redraw), then the table view
+# is rebuilt; the free row keeps its values so several similar styles can be added quickly (spec §6).
+proc nhse_free_update {} {
+  if {![info exists ::nhse_v(new,0)]} return
+  set row [nhse_free_row]
+  if {$::nhse_action eq {Overwrite}} {
+    set n $::nhse_over_idx
+    if {![string is integer -strict $n] || $n < 0} { set n 0 }
+    net_hilight_style_merge [list [lreplace $row 0 0 $n]] 0
+  } else {
+    net_hilight_style_append [list $row] 0
+  }
+  nhse_rebuild
+}
+
+# A self-contained help window: the no-docs explanation of every column + the NEW-row workflow, so
+# the editor is usable without reading the spec (a read-only Text in its own toplevel).
+proc nhse_show_help {} {
+  set h .nhse_help
+  if {[winfo exists $h]} { raise $h ; focus $h ; return $h }
+  toplevel $h
+  wm title $h {Net highlight styles — Help}
+  text $h.t -wrap word -width 78 -height 28 -padx 8 -pady 8 -takefocus 0
+  scrollbar $h.sb -orient vertical -command "$h.t yview"
+  $h.t configure -yscrollcommand "$h.sb set"
+  button $h.close -text Close -command [list destroy $h]
+  pack $h.close -side bottom -pady 4
+  pack $h.sb -side right -fill y
+  pack $h.t -side top -fill both -expand 1
+  $h.t insert end \
+"Each row in the table is one highlight STYLE. Apply a style to a net with the 9 / 8 / 0\
+ keys (or net_hilight_apply). Your edits are STAGED here and only reach the open schematic when\
+ you press Apply or OK -- Cancel (or the window's close button) discards them.
+
+PREVIEW (top): an animated sample of the row your cursor is in -- including edits you have not\
+ applied yet, so you can see a style before committing it to the schematic.
+
+COLUMNS
+  Color    A layer color (Layer N), a named color (e.g. red), or Custom... for a custom RGB.
+  Width    Line thickness; 1 = thinnest.
+  Pattern  Dash pattern as on/off run lengths, e.g. \"6 4\" = 6 on then 4 off. Empty = solid.
+           The dropdown to its right fills this with a ready-made pattern (or Solid).
+  Angle    Tilt of the dash stripes, 0-45 degrees.
+  Blink    Blink period in milliseconds; 0 = steady (no blink).
+  March    Marching ants: Off / Forward / Reverse.
+  Speed    Marching speed in dash-periods per second.
+  (Angle, March and Speed only matter with a dash pattern, so they grey out for a solid row.)
+
+THE 'NEW' ROW (top, above the separator)
+  Compose a style in the NEW row, then choose an Action and press Update:
+    Add        -- append the composed style as a new row at the end of the table.
+    Overwrite  -- replace the existing row whose number you set in 'Row #'.
+  The NEW row keeps its values after Update, so you can add several similar styles quickly.
+
+ROW OPS (bottom): Move Up/Down, Delete and Duplicate act on the row your cursor is in
+  (greyed until a table row -- not the NEW row -- has focus). Scroll the table with the mouse
+  wheel anywhere over it.
+
+BUTTONS
+  Apply  -- push your staged edits to the schematic now; the dialog stays open.
+  OK     -- push your staged edits and close.
+  Save...-- write the table to a file (the only thing that touches disk). Saving to the
+            offered ~/.xschem/net_hilight_style makes it load automatically next session.
+  Cancel -- discard every change since you opened the dialog and close.
+  Reset to defaults -- replace the table with one style per layer (the legacy look)."
+  $h.t configure -state disabled
+  return $h
+}
+
+# ---- slice 7: per-row ops (Move Up/Down, Delete, Duplicate), gated on table-row focus ----------
+
+# The focused TABLE row index, or {} when focus is on the free row ("new") / nothing / out of range.
+proc nhse_op_target {} {
+  if {![info exists ::nhse_focus_row]} { return {} }
+  set i $::nhse_focus_row
+  if {![string is integer -strict $i]} { return {} }
+  if {$i < 0 || $i >= [llength [net_hilight_style_current]]} { return {} }
+  return $i
+}
+
+# Grey the ops unless a table row has field focus; also grey Move Up on the first row and Move Down
+# on the last (a boundary move is a no-op).
+proc nhse_ops_enable_state {} {
+  if {![winfo exists .nhse.ops]} return
+  set t [nhse_op_target]
+  set n [llength [net_hilight_style_current]]
+  set base [expr {$t ne {} ? {normal} : {disabled}}]
+  catch { .nhse.ops.up   configure -state [expr {$t ne {} && $t > 0       ? {normal} : {disabled}}] }
+  catch { .nhse.ops.down configure -state [expr {$t ne {} && $t < $n - 1  ? {normal} : {disabled}}] }
+  catch { .nhse.ops.del  configure -state $base }
+  catch { .nhse.ops.dup  configure -state $base }
+}
+
+# After an op, the table is rebuilt: move field focus to row $i (clamped) so the preview follows the
+# moved/duplicated row and repeated ops chain; refresh the ops enable-state.
+proc nhse_focus_after_op {i} {
+  set n [llength [net_hilight_style_current]]
+  if {$n <= 0} { set ::nhse_focus_row 0 ; catch { nhse_ops_enable_state } ; return }
+  if {$i < 0} { set i 0 } elseif {$i >= $n} { set i [expr {$n - 1}] }
+  set ::nhse_focus_row $i
+  set cell [nhse_row_frame $i].c1.cb
+  if {[winfo exists $cell]} { catch { focus $cell } }
+  catch { nhse_preview_paint }
+  catch { nhse_ops_enable_state }
+}
+
+# Swap the focused row with its neighbour ($dir = -1 up / +1 down); a boundary move is a no-op.
+proc nhse_op_move {dir} {
+  set i [nhse_op_target]
+  if {$i eq {}} return
+  nhse_flush
+  set rows [net_hilight_style_current]
+  set j [expr {$i + $dir}]
+  if {$j < 0 || $j >= [llength $rows]} return
+  set ri [lindex $rows $i] ; set rj [lindex $rows $j]
+  set rows [lreplace $rows $i $i $rj]
+  set rows [lreplace $rows $j $j $ri]
+  net_hilight_style_replace $rows 0
+  nhse_rebuild
+  nhse_focus_after_op $j
+}
+
+proc nhse_op_delete {} {
+  set i [nhse_op_target]
+  if {$i eq {}} return
+  nhse_flush
+  net_hilight_style_remove [list $i] 0
+  nhse_rebuild
+  nhse_focus_after_op $i   ;# clamps to the new last row if we removed it
+}
+
+# Insert a copy of the focused row immediately below it; replace renumbers everything after.
+proc nhse_op_duplicate {} {
+  set i [nhse_op_target]
+  if {$i eq {}} return
+  nhse_flush
+  set rows [net_hilight_style_current]
+  set rows [linsert $rows [expr {$i + 1}] [lindex $rows $i]]
+  net_hilight_style_replace $rows 0
+  nhse_rebuild
+  nhse_focus_after_op [expr {$i + 1}]
+}
+
+# ---- slice 8: OK / Apply / Save... / Cancel, snapshot-revert, located save + warning + CIW echo --
+
+# Is $path the file sourced automatically at startup ($USER_CONF_DIR/net_hilight_style)? Pure, so the
+# located-save warn/echo branch is unit-testable.
+proc nhse_is_autoload_path {path} {
+  global USER_CONF_DIR
+  return [expr {[file normalize $path] eq [file normalize [file join $USER_CONF_DIR net_hilight_style]]}]
+}
+
+# After a Save to $path, announce via the CIW (see [[ciw-feedback-channels]] -- use ciw_echo). The
+# auto-load file loads next session (quiet confirm, returns 0); any other path will NOT, so echo the
+# exact load command and return 1 (the caller then pops the warning dialog). Factored out so the
+# branch + the exact echoed line are testable without driving tk_getSaveFile/tk_messageBox.
+proc nhse_save_announce {path} {
+  if {[nhse_is_autoload_path $path]} {
+    catch { ciw_echo "# net highlight styles saved to {$path} -- loads automatically next session" }
+    return 0
+  }
+  catch { ciw_echo "# to load these highlight styles next session: xschem --script {$path}" }
+  return 1
+}
+
+# Flush a field edit that is typed-but-not-yet-committed (no <FocusOut>/<Return> has fired) into the
+# live table, so Apply/OK/Save and the row ops act on what the user currently sees -- not the value as
+# of the last focus change. Each entry's -textvariable keeps ::nhse_v live, so nhse_commit captures
+# the in-progress edit. (A clicked button does not reliably fire the entry's <FocusOut> first.)
+proc nhse_flush {} { catch { nhse_commit } }
+
+# Save... -- the ONLY path that writes the style table to disk (everything else is live-only).
+proc nhse_save {} {
+  global USER_CONF_DIR
+  nhse_flush
+  set path [tk_getSaveFile -parent .nhse -initialdir $USER_CONF_DIR -initialfile net_hilight_style \
+              -title {Save net highlight styles}]
+  if {$path eq {}} return
+  if {![write_net_hilight_style_conf $path]} {
+    catch { tk_messageBox -parent .nhse -type ok -icon error -title {Save failed} \
+              -message "Could not write {$path}." }
+    return
+  }
+  if {[nhse_save_announce $path]} {
+    catch { tk_messageBox -parent .nhse -type ok -icon info -title {Saved} \
+      -message "Saved to:\n$path\n\nThis file will NOT be loaded automatically next session. To use\
+ it, start xschem with:\n    xschem --script {$path}\nor add  source {$path}  to your\
+ ~/.xschem/xschemrc. (The load command was also printed to the CIW log.)" }
+  }
+}
+
+# Push the STAGED table (the net_hilight_style global, kept current by the editor's apply=0 edits) to
+# the running session: recompile the C table + redraw. The single point where edits become live, so
+# the dialog follows a staged model -- typing/moving/deleting only restage; nothing reaches the
+# schematic until Apply/OK (or a Cancel revert).
+proc nhse_apply_live {} { catch { xschem update_net_hilight_style } }
+
+# Apply -- flush any in-progress field edit into the staged table, then push it live; stay open.
+proc nhse_apply {} { nhse_flush ; nhse_apply_live }
+
+# OK -- flush + push live, then close.
+proc nhse_ok {} { nhse_flush ; nhse_apply_live ; catch { destroy .nhse } }
+
+# Cancel / WM-close -- discard every staged edit by restoring the open-time snapshot, push that live
+# (so any earlier Apply is also undone), then close. (A Save... already written to disk is untouched.)
+proc nhse_cancel {} {
+  global net_hilight_style
+  if {[info exists ::nhse_snapshot]} { set net_hilight_style $::nhse_snapshot }
+  nhse_apply_live
+  catch { destroy .nhse }
+}
+
+# Reset to defaults -- discard customization, re-derive the layer default (itself a savable state).
+proc nhse_reset {} { net_hilight_style_reset ; nhse_rebuild }
+
+# ---- slice 9: Load... -- read a saved/similar styles file INTO the editor (Replace / Add) ----------
+# Companion to Save... Save... writes a stand-alone, *sourceable* file; Load... brings such a file (the
+# same one, or a similar saved/shared/hand-edited one) back into the editor for review. It must NOT
+# source the file: sourcing would run the file's `catch {xschem update_net_hilight_style}` (a LIVE
+# apply, bypassing the staged review) and any other -- possibly dangerous -- lines. So Load PARSES the
+# file for just the style table value and STAGES it (apply=0); nothing reaches the schematic until
+# Apply/OK (and Cancel/x discards it, since Load is a staged edit like any other). See spec §8.5.
+
+# Master no-op aliased to `xschem` inside the safe child interp, so the Save file's
+# `catch {xschem update_net_hilight_style}` (or a bare `xschem ...`) does nothing.
+proc nhse_load_noop {args} {}
+
+# Extract ONLY the net_hilight_style table value from $path, with ZERO side effects on the live tool.
+# Mechanism: evaluate the file in a safe child interp (interp create -safe) -- which has no
+# open/exec/source/socket/file/glob/cd/load/exit (those commands are hidden, so any dangerous line is
+# INERT: it errors instead of acting) while the harmless builtins a Save file needs (set/catch/list/
+# lappend/lset/expr) remain -- with `xschem` aliased to a no-op. Then read back the child's
+# net_hilight_style and delete the child. Returns the RAW list of rows (the staged mutators normalize
+# on stage), or {} if the file had no net_hilight_style assignment / could not be read.
+proc nhse_parse_style_file {path} {
+  if {[catch {open $path r} fd]} { return {} }
+  set contents [read $fd]
+  close $fd
+  set ip [interp create -safe]
+  $ip alias xschem nhse_load_noop          ;# the file's `xschem ...` calls become no-ops in the child
+  catch { $ip eval $contents }             ;# dangerous lines error harmlessly; the table `set` survives
+  set rows {}
+  catch { set rows [$ip eval {set net_hilight_style}] }
+  interp delete $ip
+  return $rows
+}
+
+# Stage the loaded rows into the editor, factored out so a test can pass the mode directly (rather than
+# driving a modal). mode = replace (the table BECOMES the rows) | add (rows appended at the end,
+# renumbered). Both go through the SAME staged (apply=0) mutators every other edit uses; nothing reaches
+# the schematic until Apply/OK. Reports the loaded count on the CIW.
+proc nhse_load_apply {rows mode} {
+  if {$mode eq {replace}} {
+    net_hilight_style_replace $rows 0
+  } else {
+    net_hilight_style_append $rows 0
+  }
+  nhse_rebuild
+  catch { ciw_echo "# net highlight styles loaded ([string totitle $mode]): [llength $rows] row(s)" }
+}
+
+# Ask Replace vs Add (a small 3-button chooser). Returns replace | add | {} (Cancel). Factored out so
+# tests can stub it and pass the mode deterministically (nhse_load drives only the file pick + chooser).
+proc nhse_load_chooser {} {
+  set r [tk_dialog .nhse_loadmode {Load net highlight styles} \
+           "Replace the current table with the loaded styles, or add them to the end of it?" \
+           question 0 Replace Add Cancel]
+  switch -- $r { 0 { return replace } 1 { return add } default { return {} } }
+}
+
+# Load... button: pick a file, parse the table out (never source it), choose Replace/Add, stage it.
+proc nhse_load {} {
+  global USER_CONF_DIR
+  set path [tk_getOpenFile -parent .nhse -initialdir $USER_CONF_DIR -title {Load net highlight styles}]
+  if {$path eq {}} return
+  set rows [nhse_parse_style_file $path]
+  if {[llength $rows] == 0} {
+    catch { ciw_echo "# no net highlight styles found in {$path}" }
+    catch { tk_messageBox -parent .nhse -type ok -icon warning -title {No styles} \
+              -message "No net highlight styles found in:\n$path\n\n(The file was parsed, not sourced,\
+ so nothing was applied.)" }
+    return
+  }
+  set mode [nhse_load_chooser]
+  if {$mode eq {}} return       ;# Cancel
+  nhse_load_apply $rows $mode
+}
+
+# ---- mouse-wheel scrolling: the table scrolls on a wheel ANYWHERE over it, not only on the scrollbar
+# (user feedback), except over a combobox so an open dropdown keeps its own wheel scroll.
+proc nhse_wheel {n} { if {[winfo exists .nhse.tbl.sf]} { .nhse.tbl.sf yview scroll $n units } }
+
+proc nhse_bind_wheel {w} {
+  bind $w <MouseWheel> { nhse_wheel [expr {%D > 0 ? -1 : 1}] ; break }   ;# Windows / macOS
+  bind $w <Button-4>   { nhse_wheel -1 ; break }                          ;# X11 wheel up
+  bind $w <Button-5>   { nhse_wheel  1 ; break }                          ;# X11 wheel down
+}
+
+# Bind the wheel on $w and all its descendants, skipping comboboxes (TCombobox) so their dropdown
+# scroll is preserved. Re-run after each rebuild since the row widgets are recreated.
+proc nhse_bind_wheel_tree {w} {
+  if {![winfo exists $w]} return
+  if {[winfo class $w] ne {TCombobox}} { nhse_bind_wheel $w }
+  foreach c [winfo children $w] { nhse_bind_wheel_tree $c }
+}
+
+proc net_hilight_style_editor { {topwin {}} } {
+  global net_hilight_editor_seen net_hilight_style
+  # record "seen" once, on the first open only (no redundant rewrite every open)
+  if {!$net_hilight_editor_seen} { write_net_hilight_editor_seen }
+  set w .nhse
+  if {[winfo exists $w]} { raise $w ; focus $w ; nhse_rebuild ; return $w }
+  toplevel $w
+  wm title $w {Net highlight styles}
+  # snapshot the table as it is now, so Cancel / WM-close can revert the live session (slice 8)
+  set ::nhse_snapshot $net_hilight_style
+  wm protocol $w WM_DELETE_WINDOW nhse_cancel
+
+  # top bar: a Help button (top-right) explaining every column without leaving the dialog.
+  frame $w.topbar
+  pack $w.topbar -side top -fill x -padx 4 -pady {4 0}
+  button $w.topbar.help -text {Help} -command nhse_show_help
+  pack $w.topbar.help -side right
+
+  # one shared animated preview (slice 5), pinned ABOVE the table; mirrors the focused row, live.
+  set ::nhse_focus_row 0
+  canvas $w.preview -height 40 -highlightthickness 1 -background black
+  pack $w.preview -side top -fill x -padx 4 -pady {6 0}
+  bind $w.preview <Configure> { catch { nhse_preview_paint } }
+
+  # per-row ops bar (slice 7), pinned at the bottom; enabled only when a TABLE row has field focus.
+  frame $w.ops
+  pack $w.ops -side bottom -fill x -padx 4 -pady {2 2}
+  label  $w.ops.lbl  -text {Row ops:}
+  button $w.ops.up   -text {Move Up}   -command {nhse_op_move -1}
+  button $w.ops.down -text {Move Down} -command {nhse_op_move 1}
+  button $w.ops.del  -text {Delete}    -command nhse_op_delete
+  button $w.ops.dup  -text {Duplicate} -command nhse_op_duplicate
+  pack $w.ops.lbl $w.ops.up $w.ops.down $w.ops.del $w.ops.dup -side left -padx 2
+
+  # commit/persist bar (slice 8), pinned BELOW the ops bar: Reset (left); OK/Apply/Save.../Cancel
+  # (right). Live-apply means edits already show; Save... is the only path that writes to disk.
+  frame $w.btns
+  pack $w.btns -side bottom -fill x -padx 4 -pady {2 4} -before $w.ops
+  button $w.btns.reset  -text {Reset to defaults} -command nhse_reset
+  button $w.btns.ok     -text {OK}       -command nhse_ok
+  button $w.btns.apply  -text {Apply}    -command nhse_apply
+  button $w.btns.load   -text {Load...}  -command nhse_load
+  button $w.btns.save   -text {Save...}  -command nhse_save
+  button $w.btns.cancel -text {Cancel}   -command nhse_cancel
+  pack $w.btns.reset -side left -padx 4
+  # right side packs in reverse, so the visible L->R order is: OK Apply Load... Save... Cancel
+  pack $w.btns.cancel $w.btns.save $w.btns.load $w.btns.apply $w.btns.ok -side right -padx 4
+
+  set t $w.tbl
+  frame $t
+  pack $t -side top -fill both -expand 1 -padx 4 -pady 4
+
+  # fixed header row, gridded into the same columns as the body rows; nhse_align_columns sizes each
+  # column to its widest cell so every header label sits directly over its column.
+  frame $t.head
+  pack $t.head -side top -fill x -anchor w
+  foreach col [nhse_columns] {
+    lassign $col hdr wdt fld
+    label $t.head.c$fld -anchor w -relief flat -text $hdr
+    grid $t.head.c$fld -row 0 -column $fld -sticky w -padx 1
+  }
+
+  # free-to-edit row (NEW): compose a style with the same widgets, then Add/Overwrite it via Update.
+  set ::nhse_action Add
+  set ::nhse_over_idx 0
+  frame $t.free
+  pack $t.free -side top -fill x -anchor w
+  nhse_build_row $t.free new [net_hilight_style_default_row 0] NEW
+  frame $t.free.act
+  pack $t.free.act -side top -fill x -anchor w -pady {2 0}
+  label $t.free.act.lbl -text {Action:}
+  ttk::combobox $t.free.act.action -width 10 -state readonly -textvariable ::nhse_action -values {Add Overwrite}
+  bind $t.free.act.action <<ComboboxSelected>> nhse_action_changed
+  label $t.free.act.overlbl -text {Row #:}
+  spinbox $t.free.act.over -width 4 -from 0 -to 0 -textvariable ::nhse_over_idx
+  button $t.free.act.update -text {Update} -command nhse_free_update
+  # the Row # field is always visible (so the Overwrite target is discoverable) but greyed for Add
+  pack $t.free.act.lbl $t.free.act.action $t.free.act.overlbl $t.free.act.over -side left -padx 2
+  pack $t.free.act.update -side left -padx 6
+  nhse_action_changed   ;# set the initial Row # enabled state (Add -> disabled)
+
+  # separator between the free row and the table (spec §5.1 divider)
+  ttk::separator $t.sep -orient horizontal
+  pack $t.sep -side top -fill x -pady 3
+
+  # scrollable body: a canvas hosting an inner frame, plus a vertical scrollbar. A fixed
+  # -yscrollincrement makes each mouse-wheel notch scroll a consistent ~one-row step.
+  canvas $t.sf -highlightthickness 0 -height 240 -yscrollincrement 24
+  scrollbar $t.vsb -orient vertical -command "$t.sf yview"
+  $t.sf configure -yscrollcommand "$t.vsb set"
+  pack $t.vsb -side right -fill y
+  pack $t.sf -side left -fill both -expand 1
+  frame $t.sf.body
+  $t.sf create window 0 0 -anchor nw -window $t.sf.body -tags body
+  bind $t.sf.body <Configure> "$t.sf configure -scrollregion \[$t.sf bbox all\]"
+
+  nhse_rebuild
+  # animate the preview; cancel the tick when the dialog is destroyed (no orphan after loop).
+  bind $w <Destroy> [list nhse_preview_stop %W]
+  nhse_preview_start
+  # Stop the resizable dialog from being narrowed past the fixed-width columns (which has only a
+  # vertical scrollbar): clamp the minimum width to the natural content width. Height stays free.
+  update idletasks
+  catch { wm minsize $w [winfo reqwidth $w] 200 }
+  return $w
 }
 
 proc update_process_status {lb} {
@@ -1540,7 +2494,7 @@ proc setup_recent_menu { { topwin {} } } {
   if { [info exists tctx::recentfile] } {
     foreach i $tctx::recentfile {
       $topwin.menubar.file.recent add command \
-        -command "xschem load -gui {$i}" \
+        -command "xschem load -gui -readonly {$i}" \
         -label [file tail $i]
     }
   }
@@ -1592,7 +2546,7 @@ proc ngspice::get_current {n} {
     set n $currname\($n\)
   }
   # puts "ngspice::get_current --> $n"
-  set err [catch {set ngspice::ngspice_data($n)} res]
+  set err [catch {set ::ngspice::ngspice_data($n)} res]
   if { $err } {
     set res {?}
   }
@@ -1615,15 +2569,15 @@ proc ngspice::get_diff_voltage {n m} {
   set m [string tolower $m]
   set nn $path$n
   set mm $path$m
-  set errn [catch {set ngspice::ngspice_data($nn)} resn]
+  set errn [catch {set ::ngspice::ngspice_data($nn)} resn]
   if {$errn} {
     set nn v(${path}${n})
-    set errn [catch {set ngspice::ngspice_data($nn)} resn]
+    set errn [catch {set ::ngspice::ngspice_data($nn)} resn]
   }
-  set errm [catch {set ngspice::ngspice_data($mm)} resm]
+  set errm [catch {set ::ngspice::ngspice_data($mm)} resm]
   if {$errm} {
     set mm v(${path}${m})
-    set errm [catch {set ngspice::ngspice_data($mm)} resm]
+    set errm [catch {set ::ngspice::ngspice_data($mm)} resm]
   }
   if { $errn  || $errm} {
     set res {?}
@@ -1647,11 +2601,11 @@ proc ngspice::get_voltage {n} {
   # puts "ngspice::get_voltage: path=$path n=$n"
   set node $path$n
   # puts "ngspice::get_voltage: trying $node"
-  set err [catch {set ngspice::ngspice_data($node)} res]
+  set err [catch {set ::ngspice::ngspice_data($node)} res]
   if {$err} {
     set node v(${path}${n})
     # puts "ngspice::get_voltage: trying $node"
-    set err [catch {set ngspice::ngspice_data($node)} res]
+    set err [catch {set ::ngspice::ngspice_data($node)} res]
   }
   if { $err } {
     set res {?}
@@ -1681,7 +2635,7 @@ proc ngspice::get_node {n} {
   set n [string tolower $n]
   # n may contain $path, so substitute its value
   set n [ subst -nocommand $n ]
-  set err [catch {set ngspice::ngspice_data($n)} res]
+  set err [catch {set ::ngspice::ngspice_data($n)} res]
   if { $err } {
     set res {?}
   }
@@ -4360,6 +5314,115 @@ proc save_file_dialog { msg ext global_initdir {initialf {}} {overwrt 1} } {
   return $r
 }
 
+# Make a freshly-opened NEW top-level WINDOW full-zoom correctly once it has settled to its
+# real on-screen size. A descend draws into the new window before it has processed its queued
+# Map/Configure events, so that draw used a transient geometry -- the window comes up blank /
+# grid-only / off-screen until a manual zoom-full (F). issue 0035/0037. Two parts:
+#  1. Arm pending_fullzoom: if the WM delivers a settling ConfigureNotify, resetwin() performs
+#     the zoom_full() against the real size immediately (the fast path on a normal X server).
+#  2. A deferred backstop: some WMs (notably WSLg) do NOT send a settling Configure on open --
+#     the window just stays blank until the user resizes it (which the reporter confirmed
+#     fixes it). So once the window is realized at a sane size, force the same work the
+#     Configure path / a manual resize would do (`xschem resetwin` -> re-read geometry +
+#     deferred zoom_full). Retries until the window is mapped, then self-terminates; if a real
+#     Configure already fit it (pending cleared) it is a no-op, so it never fights the WM or
+#     overrides a later user zoom.
+# Only for real WINDOWS: a new TAB shares the already-sized main canvas and has no race (and
+# arming it would cause a spurious full-zoom on the next user resize).
+proc newwin_defer_fullzoom {win} {
+  global has_x
+  if { ![info exists has_x] || !$has_x } return   ;# no geometry race without X
+  xschem set pending_fullzoom 1
+  after 120 [list _newwin_fit_fullzoom $win 0]
+}
+proc _newwin_fit_fullzoom {win tries} {
+  if {![winfo exists $win]} return
+  # Act only while this window is still the armed, active context. If a real Configure already
+  # fit it (pending cleared), or the user has moved on, there is nothing to do.
+  if {[xschem get current_win_path] ne $win} return
+  if {[xschem get pending_fullzoom] == 0} return
+  # Wait until the window is actually realized with a real size, else our zoom_full would use
+  # the same transient geometry the descend already did. Retry briefly, then give up (the
+  # pending arm still rides any eventual Configure).
+  if {[winfo ismapped $win] && [winfo width $win] > 1 && [winfo height $win] > 1} {
+    # Pass Tk's known canvas size through: a just-mapped window can still report a transient
+    # 1x1 via XGetWindowAttributes, which would defeat resetwin's deferred-zoom gate.
+    xschem resetwin [winfo width $win] [winfo height $win]
+  } elseif {$tries < 25} {
+    after 120 [list _newwin_fit_fullzoom $win [expr {$tries + 1}]]
+  }
+}
+
+# Force a window to repaint after a load that was initiated while the window did NOT
+# have focus -- e.g. opened from the persistent Library Manager dialog. WSLg repaints
+# a window only after it processes an X event for it, so such a load leaves the canvas
+# blank (and its renamed tab stale) until the user moves the pointer in / activates it,
+# even though the data, draw(), tab name and title are all already correct (issue 0052).
+# Do the same work a resize/expose would do -- xschem resetwin: recreate the backing
+# pixmap + redraw (performing the armed full-zoom if one is pending) -- from a timer, so
+# it runs in the event loop (which is what makes WSLg flush). Retries until the window is
+# realized, then stops. Unlike _newwin_fit_fullzoom this does NOT require a pending
+# full-zoom, so it also repaints an in-place reuse load (untitled-reuse) where nothing is
+# zoom-pending and the load already fit the view. Cheap, invisible no-op on a normal X
+# server (the window already painted).
+proc force_window_repaint {win {tries 0}} {
+  global has_x
+  if { ![info exists has_x] || !$has_x } return
+  if {![winfo exists $win]} return
+  # only act while this window is still the active context (the user may have moved on)
+  if {[xschem get current_win_path] ne $win} return
+  if {[winfo ismapped $win] && [winfo width $win] > 1 && [winfo height $win] > 1} {
+    xschem resetwin [winfo width $win] [winfo height $win]
+  } elseif {$tries < 25} {
+    after 120 [list force_window_repaint $win [expr {$tries + 1}]]
+  }
+}
+
+# Raise + activate an already-open top-level reliably, WITHOUT it drifting.
+#
+# On WSLg (X11 -> Windows) the cheaper tricks each fail one half of the goal:
+#  - a plain `raise` is ignored by focus-stealing prevention (window does not come forward);
+#  - the `-topmost` stacking toggle also fails to raise it here (clearing it drops it back);
+#  - the withdraw/deiconify re-map DOES raise it but lets the WM re-PLACE the window, so it
+#    crept North-West on every raise (it drifts even with `wm geometry` set while withdrawn:
+#    the reported geometry stays put while the real rootx/rooty walk NW).
+#
+# wm iconify + wm deiconify maps to a Windows MINIMIZE + RESTORE: restoring brings the
+# window to the front and active (as if its taskbar button were clicked) AND restores it to
+# its REMEMBERED position, so it raises without drifting -- verified position-stable
+# (rootx/rooty byte-identical) across cycles on both a dialog and the main window. The cost
+# is a brief minimize/restore flash. The `update` between lets the WM register the iconify
+# before the deiconify. Callers add their own keyboard focus afterward. (issue 0054)
+proc raise_activate_toplevel {top} {
+  global has_x
+  if { ![info exists has_x] || !$has_x } return
+  if {![winfo exists $top]} return
+  catch {
+    wm iconify $top
+    update
+    wm deiconify $top
+  }
+}
+
+# A new-window descend reloads the parent from DISK, so any UNSAVED edits in the source window
+# (e.g. an instance just added but not saved) are missing from the new window -- and a descend
+# into such a freshly-added instance then no-ops, leaving the new window on the stale parent
+# (wrong title + wrong schematic). issue 0037. Bridge the edits through the cell's "~" autosave
+# backup: persist them from the source here (returns the source cell path, or "" if nothing to
+# carry), ...
+proc newwin_capture_unsaved {} {
+  if { ![xschem get modified] } { return {} }
+  xschem backup write          ;# write <cell>~.sch with the current in-memory content
+  return [xschem get schname]
+}
+# ... then reload them into the just-opened new window (same cell -> same backup file) so the
+# descend target is present. Best-effort: if no backup exists the new window keeps the disk
+# parent (no worse than before).
+proc newwin_restore_unsaved {src} {
+  if { $src eq {} } return
+  catch { xschem load_backup $src }
+}
+
 # opens indicated instance (or selected one) into a separate tab/window
 # keeping the hierarchy path, as it was descended into (as with 'e' key).
 proc open_sub_schematic {{inst {}} {inst_number 0}} {
@@ -4367,6 +5430,9 @@ proc open_sub_schematic {{inst {}} {inst_number 0}} {
   set rawfile {}
   set n_sel [xschem get lastsel]
   set current_win_path [xschem get current_win_path] ;# .drw or .x1.drw or .x2.drw ...
+  # carry the source window's unsaved edits across to the new window (issue 0037) -- capture
+  # BEFORE unselect_all / opening the new window, while the source is still the active context
+  set src_unsaved [newwin_capture_unsaved]
 
   if { $inst eq {} && $n_sel == 0} {
     if {$search_schematic == 1} {
@@ -4399,6 +5465,7 @@ proc open_sub_schematic {{inst {}} {inst_number 0}} {
   if {$res} {
     xschem copy_hilights
     xschem new_schematic switch $new_window_path
+    newwin_restore_unsaved $src_unsaved   ;# pull source's unsaved edits into the new window
     if { $rawfile ne {}} {
       if {$sim_type eq {op}} {
         xschem annotate_op $rawfile
@@ -4409,9 +5476,448 @@ proc open_sub_schematic {{inst {}} {inst_number 0}} {
     }
     xschem select instance $inst fast
     xschem descend
+    # In window mode the just-created window has not settled to its real size, so the
+    # descend's zoom_full used a transient geometry (blank / off-screen until F). A new tab
+    # shares the already-sized main canvas, so skip it there. issue 0035/0037.
+    if {!([info exists ::tabbed_interface] && $::tabbed_interface)} {
+      newwin_defer_fullzoom $new_window_path
+    }
     return 1
   }
   return 0
+}
+
+# ===========================================================================
+#  hi_descend  --  human-interface descend with view + destination choice
+#  doc/claude/specs/hi_descend.md
+#
+#  hi_descend ?view? ?key=value ...?
+#    - no args            -> open the modal chooser dialog (this is what 'E' runs)
+#    - view (positional)  -> the named view to descend into (schematic, symbol,
+#                            schematic_old, ...); default = the cell's default
+#                            schematic view
+#    - view=<name>        -> explicit form of the positional view
+#    - type=schematic|symbol  -> disambiguate the view kind
+#    - target=current|new_window|new_tab   -> destination (default current)
+#    - inst=<instname>    -> operate on a named instance instead of the selection
+#
+#  The default 'E' binding is installed in set_bindings; remap it from Tcl with
+#  hi_descend_set_key (e.g. `hi_descend_set_key d`) or a raw
+#  `bind <canvas> <Key-X> {hi_descend; break}`.
+# ===========================================================================
+
+# transient one-shot view override consumed by get_sch_from_sym() in C (see
+# doc/claude/specs/hi_descend.md). Keep it defined so tclgetvar() never errors.
+if {![info exists hi_descend_view_path]} { set hi_descend_view_path {} }
+# the key that runs the interactive hi_descend dialog (default E). A user rc may
+# pre-set it before this file is sourced.
+if {![info exists hi_descend_key]} { set hi_descend_key e }
+
+# Resolve which instance hi_descend should act on: an explicit name, else the
+# single selected instance. Returns the instance name, or {} (after a ciw_echo)
+# when there is nothing usable / the selection is ambiguous.
+# The symbol reference behind a named instance (e.g. "devices/nmos4" or "lib/cell"),
+# or {} if not found. Single place that walks `xschem instance_list`.
+proc hi_descend_inst_sym {instname} {
+  foreach {i s t} [xschem instance_list] { if {$i eq $instname} { return $s } }
+  return {}
+}
+
+proc hi_descend_target_inst {inst} {
+  if {$inst ne {}} {
+    if {[hi_descend_inst_sym $inst] eq {}} {
+      ciw_echo "hi_descend: no such instance: $inst" error
+      return {}
+    }
+    return $inst
+  }
+  # Use the selected INSTANCES only (selected_set returns ELEMENT selections), so a
+  # mixed rubber-band selection (instance + wires/text) still descends into the
+  # instance, matching the old C descend's sel_array[0] behaviour. Descend into the
+  # first selected instance when several are selected.
+  set sel [xschem selected_set]
+  if {[llength $sel] == 0} { ciw_echo "hi_descend: select an instance to descend into" error; return {} }
+  return [lindex $sel 0]
+}
+
+# Enumerate the views available for the cell behind instance $instname.
+# Returns a list of {viewname type abspath} rows, type in {schematic symbol}.
+# Covers both the OpenAccess lib/cell/view layout (alternates like schematic_old)
+# and the legacy flat layout (default schematic + symbol).
+proc hi_descend_enum_views {instname} {
+  set sym [hi_descend_inst_sym $instname]
+  if {$sym eq {}} { return {} }
+
+  set rows {}                 ;# {name type abspath}
+  set seen {}                 ;# abspath dedup
+
+  # OpenAccess lib/cell/view layout: rel_sym_path yields "lib/cell" only for a
+  # cell physically organized as <lib>/<cell>/<view>/<cell>.<ext>.
+  set symabs [abs_sym_path $sym]
+  set rel [rel_sym_path $symabs]
+  if {[regexp {^([^/]+)/([^/]+)$} $rel -> lib cell]} {
+    foreach v [cell_views $lib $cell] {
+      set p [cellview_resolve $lib $cell $v]
+      if {$p eq {} || [lsearch -exact $seen $p] >= 0} { continue }
+      set ty [expr {[file extension $p] eq {.sch} ? "schematic" : "symbol"}]
+      lappend rows [list $v $ty $p]
+      lappend seen $p
+    }
+  }
+
+  # Always make sure the default schematic view and the symbol view are present
+  # (covers legacy flat cells, and OA cells whose default sits outside cell_views).
+  set defsch {}
+  catch { set defsch [xschem get_sch_from_sym -1 $sym] }
+  if {$defsch ne {} && ![xschem is_generator $defsch] && [lsearch -exact $seen $defsch] < 0} {
+    lappend rows [list schematic schematic $defsch]
+    lappend seen $defsch
+  }
+  if {[lsearch -exact $seen $symabs] < 0} {
+    lappend rows [list symbol symbol $symabs]
+    lappend seen $symabs
+  }
+  return $rows
+}
+
+# Pick the view row to descend into from the enumerated $rows, honoring an
+# explicit $view name and/or $type. Returns the {name type abspath} row, or {}.
+proc hi_descend_pick_view {rows view type} {
+  if {$view eq {}} {
+    # no view name: honor an explicit type (e.g. type=symbol -> first symbol view);
+    # otherwise default to the view named "schematic", else the first schematic-type row.
+    if {$type ne {}} {
+      foreach r $rows { if {[lindex $r 1] eq $type} { return $r } }
+      return {}
+    }
+    foreach r $rows { if {[lindex $r 0] eq {schematic} && [lindex $r 1] eq {schematic}} { return $r } }
+    foreach r $rows { if {[lindex $r 1] eq {schematic}} { return $r } }
+    return [lindex $rows 0]
+  }
+  foreach r $rows {
+    if {[lindex $r 0] eq $view && ($type eq {} || [lindex $r 1] eq $type)} { return $r }
+  }
+  return {}
+}
+
+# Is $abspath the instance's effective DEFAULT schematic? (If so we use a plain
+# `xschem descend` and avoid the C view override -- keeps generators / web symbols
+# resolving the normal way.) Resolved for THIS instance (the inst form of
+# get_sch_from_sym honors an instance-level schematic= attribute), not the bare symbol.
+proc hi_descend_is_default_sch {instname abspath} {
+  set defsch {}
+  catch { set defsch [xschem get_sch_from_sym $instname] }
+  return [expr {$defsch ne {} && $defsch eq $abspath}]
+}
+
+# Expanded iteration labels of a (possibly bussed) instance, e.g. x1[3:0] ->
+# {x1[3] x1[2] x1[1] x1[0]}. Returns {} when the instance is not bussed (mult 1).
+# Bus notation is whatever `xschem expandlabel` recognizes (the same expansion
+# descend_schematic uses), so the dialog and the descend always agree.
+proc hi_descend_iters {instname} {
+  set res [xschem expandlabel $instname]
+  set mult [lindex $res end]
+  if {![string is integer -strict $mult] || $mult <= 1} { return {} }
+  return [split [join [lrange $res 0 end-1]] ,]
+}
+
+# Do the actual descend into the chosen view + iteration, then apply the edit mode.
+# vtype: schematic|symbol; iter: 1-based bit (leftmost=1), 1 for a plain instance;
+# mode: readonly|edit (read-only browse is the default).
+proc hi_descend_finish {instname vtype vpath iter mode} {
+  set lvl [xschem get currsch]
+  if {$vtype eq {symbol}} {
+    # descend_symbol has no return value; detect success by the hierarchy level rising,
+    # so a no-op symbol descend does not falsely report success and then mislabel /
+    # clear the modified flag of the CURRENT (un-descended) schematic.
+    xschem descend_symbol
+    set ok [expr {[xschem get currsch] > $lvl}]
+  } else {
+    if {![hi_descend_is_default_sch $instname $vpath]} {
+      set ::hi_descend_view_path $vpath        ;# one-shot, consumed by get_sch_from_sym
+    }
+    set ok [xschem descend $iter]
+    set ::hi_descend_view_path {}              ;# belt-and-suspenders if descend bailed early
+  }
+  if {$ok} {
+    # browse-friendly default: the descended view opens read-only unless Edit was asked.
+    # Explicit per-descend control, independent of the global descend_readonly flag.
+    if {$mode eq {edit}} {
+      xschem set readonly 0
+    } else {
+      xschem set readonly 1
+      # A fresh read-only browse view has no user edits; clear any 'modified' that the
+      # LOAD itself set (e.g. on-load auto-normalization, which happens before read-only
+      # is applied), so the browse window shows no bogus '*' and never prompts to save on
+      # close (issue 0035). set_modify 0 does not delete the crash-recovery ~ backup.
+      xschem set_modify 0
+    }
+  }
+  return $ok
+}
+
+# Descend in the CURRENT window into the chosen view.
+proc hi_descend_current {instname row iter mode} {
+  lassign $row vname vtype vpath
+  xschem unselect_all
+  if {[catch {xschem select instance $instname fast}]} {
+    ciw_echo "hi_descend: cannot select $instname" error; return 0
+  }
+  return [hi_descend_finish $instname $vtype $vpath $iter $mode]
+}
+
+# Descend into the chosen view in a NEW window ($dest==window) or NEW tab
+# ($dest==tab), keeping the hierarchy path and copying highlights -- generalizes
+# open_sub_schematic to honor the view + iteration + window/tab + edit mode.
+proc hi_descend_newwin {instname row dest iter mode} {
+  lassign $row vname vtype vpath
+  set current_win_path [xschem get current_win_path]
+  # carry the source window's unsaved edits across (issue 0037) -- capture BEFORE unselect_all
+  # / opening the new window, while the source is still the active context
+  set src_unsaved [newwin_capture_unsaved]
+
+  # Open the CURRENT (parent) schematic in the new window, then descend -- NOT the
+  # instance's schematic directly. With the instance still selected,
+  # schematic_in_new_window takes its lastsel==1 branch and loads solar_ctl as a fresh
+  # top level; copy_hierarchy then clobbers it with the parent and the later descend
+  # finds no such instance, leaving a desynced window (schname=parent, currsch=0,
+  # read-only not applied). Unselecting first (as open_sub_schematic does) makes
+  # schematic_in_new_window open the parent, so the descend below is a real descend that
+  # preserves the hierarchy path. The target instance is re-selected after the switch.
+  xschem unselect_all
+
+  # preserve an annotated raw waveform across the new window (as open_sub_schematic does)
+  set rawfile {}
+  if {[xschem raw loaded] >= 0} {
+    set rawfile [xschem raw_query rawfile]
+    set sim_type [xschem raw_query sim_type]
+    set raw_level [xschem get raw_level]
+  }
+
+  if {$dest eq {window}} {
+    set res [xschem schematic_in_new_window force window]
+  } else {
+    set res [xschem schematic_in_new_window force]   ;# a tab in tabbed mode, else a window
+  }
+  # Check the open result BEFORE touching last_created_window: on failure it is a stale
+  # prior window, and copy_hierarchy into it would clobber that window's hierarchy path.
+  if {!$res} { ciw_echo "hi_descend: could not open a new window/tab" error; return 0 }
+  set new_window_path [xschem get last_created_window]
+  xschem copy_hierarchy $current_win_path $new_window_path
+
+  xschem copy_hilights
+  xschem new_schematic switch $new_window_path
+  newwin_restore_unsaved $src_unsaved   ;# pull source's unsaved edits into the new window
+  if {$rawfile ne {}} {
+    if {$sim_type eq {op}} { xschem annotate_op $rawfile } else { xschem raw_read $rawfile $sim_type }
+    xschem set raw_level $raw_level
+  }
+  xschem select instance $instname fast
+  set ok [hi_descend_finish $instname $vtype $vpath $iter $mode]
+  # Cross-window descend chain (issue 0053): link the new window/tab to the window it
+  # was descended FROM, and remember the level it was born at (its "entry level"), so the
+  # Cadence return (Ctrl-E) / return-to-top (Alt-E) can step back to the PARENT window
+  # instead of ascending this child in place. Recorded for both window and tab dests; the
+  # Cadence nav reads ::descend_parent_win()/::descend_entry_level() (harmless when unused).
+  if {$ok} {
+    set ::descend_parent_win($new_window_path)  $current_win_path
+    set ::descend_entry_level($new_window_path) [xschem get currsch]
+  }
+  # A real new window has not yet settled to its on-screen size when descend runs (its
+  # Map/Configure events are still queued), so the descend's zoom_full used a transient
+  # geometry and the window comes up blank / grid-only / off-screen until a manual zoom-full
+  # (F). A new TAB shares the already-sized main canvas and has no such race. issue 0035/0037.
+  if {$ok && $dest eq {window}} { newwin_defer_fullzoom $new_window_path }
+  return $ok
+}
+
+# Headless entry point shared by the dialog and by scripted calls.
+proc hi_descend_do {instname view type target iter mode} {
+  set rows [hi_descend_enum_views $instname]
+  if {![llength $rows]} { ciw_echo "hi_descend: no views found for $instname" error; return 0 }
+  set row [hi_descend_pick_view $rows $view $type]
+  if {$row eq {}} {
+    set names {}
+    foreach r $rows { lappend names [lindex $r 0] }
+    ciw_echo "hi_descend: no view \"$view\" for $instname (have: [join $names {, }])" error
+    return 0
+  }
+  if {$iter eq {} || ![string is integer -strict $iter]} { set iter 1 }
+  switch -- $target {
+    current     { return [hi_descend_current $instname $row $iter $mode] }
+    new_window  { return [hi_descend_newwin  $instname $row window $iter $mode] }
+    new_tab     { return [hi_descend_newwin  $instname $row tab $iter $mode] }
+    default     { ciw_echo "hi_descend: bad target \"$target\" (current|new_window|new_tab)" error; return 0 }
+  }
+}
+
+# Public command. No args -> dialog; else scripted.
+proc hi_descend {args} {
+  if {[xschem get semaphore] >= 2} return
+  if {![llength $args]} { return [hi_descend_dialog] }
+
+  set view {}; set type {}; set target current; set inst {}; set iter 1; set mode readonly
+  foreach a $args {
+    if {[regexp {^([a-zA-Z_]+)=(.*)$} $a -> k v]} {
+      switch -- $k {
+        view   { set view $v }
+        type   { set type $v }
+        target { set target $v }
+        inst   { set inst $v }
+        iter   { set iter $v }
+        mode   { set mode $v }
+        default { ciw_echo "hi_descend: unknown option $k" error; return 0 }
+      }
+    } elseif {$view eq {}} {
+      set view $a
+    } else {
+      ciw_echo "hi_descend: unexpected argument \"$a\"" error; return 0
+    }
+  }
+  if {$mode ni {readonly edit}} { ciw_echo "hi_descend: mode must be readonly|edit" error; return 0 }
+  set instname [hi_descend_target_inst $inst]
+  if {$instname eq {}} { return 0 }
+  return [hi_descend_do $instname $view $type $target $iter $mode]
+}
+
+# Keep the dialog's view-path label in sync with the selected view (a trace on
+# ::hi_descend_dlg_view). Greys a missing file.
+proc hi_descend_dlg_pathupd {args} {
+  if {![winfo exists .hi_descend.view.path]} return
+  foreach r $::hi_descend_dlg_rows {
+    if {[lindex $r 0] eq $::hi_descend_dlg_view} {
+      set p [lindex $r 2]
+      .hi_descend.view.path configure -text [expr {[file exists $p] ? $p : "$p  (missing)"}]
+      return
+    }
+  }
+  .hi_descend.view.path configure -text {}
+}
+
+# The modal chooser dialog (bare `hi_descend`). Drop-downs for the view (and, for a
+# bussed instance, the iteration), plus Mode (read-only browse default / edit) and
+# Destination radios; then runs the shared hi_descend_do path.
+proc hi_descend_dialog {} {
+  set instname [hi_descend_target_inst {}]
+  if {$instname eq {}} { return 0 }
+  set rows [hi_descend_enum_views $instname]
+  if {![llength $rows]} { ciw_echo "hi_descend: no views found for $instname" error; return 0 }
+
+  set w .hi_descend
+  catch {destroy $w}
+  toplevel $w -class Dialog
+  wm title $w "Descend into $instname"
+  wm transient $w [xschem get topwindow]
+
+  label $w.title -text "Instance $instname" -anchor w
+  pack $w.title -side top -fill x -padx 6 -pady {6 2}
+
+  # --- View drop-down ---
+  set ::hi_descend_dlg_rows $rows
+  set viewnames {}; set default_view {}
+  foreach r $rows {
+    lassign $r vname vtype vpath
+    lappend viewnames $vname
+    if {$default_view eq {} && $vname eq {schematic} && $vtype eq {schematic}} { set default_view $vname }
+  }
+  if {$default_view eq {}} { set default_view [lindex $viewnames 0] }
+  set ::hi_descend_dlg_view $default_view
+  frame $w.view
+  pack $w.view -side top -fill x -padx 6 -pady 3
+  label $w.view.l -text "View:" -width 10 -anchor w
+  eval tk_optionMenu $w.view.om ::hi_descend_dlg_view $viewnames
+  label $w.view.path -text {} -anchor w -fg gray40
+  pack $w.view.l $w.view.om -side left
+  pack $w.view.path -side left -padx 8
+  trace add variable ::hi_descend_dlg_view write hi_descend_dlg_pathupd
+  hi_descend_dlg_pathupd
+
+  # --- Iteration drop-down (only for a bussed instance, e.g. x1[3:0]) ---
+  set iters [hi_descend_iters $instname]
+  catch {unset ::hi_descend_dlg_iterlabel}
+  if {[llength $iters] > 1} {
+    set ::hi_descend_dlg_iterlabel [lindex $iters 0]
+    frame $w.iter
+    pack $w.iter -side top -fill x -padx 6 -pady 3
+    label $w.iter.l -text "Iteration:" -width 10 -anchor w
+    eval tk_optionMenu $w.iter.om ::hi_descend_dlg_iterlabel $iters
+    pack $w.iter.l $w.iter.om -side left
+  }
+
+  # --- Mode radios (read-only browse is the default) ---
+  labelframe $w.mode -text "Mode"
+  pack $w.mode -side top -fill x -padx 6 -pady 3
+  set ::hi_descend_dlg_mode readonly
+  radiobutton $w.mode.ro -text "Read only" -variable ::hi_descend_dlg_mode -value readonly
+  radiobutton $w.mode.ed -text "Edit"      -variable ::hi_descend_dlg_mode -value edit
+  pack $w.mode.ro $w.mode.ed -side left -padx 6 -pady 2
+
+  # --- Destination radios ---
+  labelframe $w.dest -text "Destination"
+  pack $w.dest -side top -fill x -padx 6 -pady 3
+  set ::hi_descend_dlg_target current
+  radiobutton $w.dest.cur -text "Current window" -variable ::hi_descend_dlg_target -value current
+  radiobutton $w.dest.win -text "New window"     -variable ::hi_descend_dlg_target -value new_window
+  radiobutton $w.dest.tab -text "New tab"        -variable ::hi_descend_dlg_target -value new_tab
+  pack $w.dest.cur $w.dest.win $w.dest.tab -side left -padx 6 -pady 2
+  if {!([info exists ::tabbed_interface] && $::tabbed_interface)} { $w.dest.tab configure -state disabled }
+
+  # --- buttons --- (wait on window destruction, the idiom of the other modal dialogs)
+  frame $w.b
+  pack $w.b -side top -fill x -padx 6 -pady {3 6}
+  set ::hi_descend_dlg_done 0
+  button $w.b.ok -text OK -width 8 -command "set ::hi_descend_dlg_done 1; destroy $w"
+  button $w.b.cancel -text Cancel -width 8 -command "set ::hi_descend_dlg_done -1; destroy $w"
+  pack $w.b.ok $w.b.cancel -side left -padx 4
+  bind $w <Return> "set ::hi_descend_dlg_done 1; destroy $w"
+  bind $w <Escape> "set ::hi_descend_dlg_done -1; destroy $w"
+
+  catch {grab $w}
+  tkwait window $w
+  catch {trace remove variable ::hi_descend_dlg_view write hi_descend_dlg_pathupd}
+  if {$::hi_descend_dlg_done != 1} { return 0 }
+
+  set iter 1
+  if {[info exists ::hi_descend_dlg_iterlabel] && [llength $iters] > 1} {
+    set idx [lsearch -exact $iters $::hi_descend_dlg_iterlabel]
+    if {$idx >= 0} { set iter [expr {$idx + 1}] }
+  }
+  return [hi_descend_do $instname $::hi_descend_dlg_view {} \
+            $::hi_descend_dlg_target $iter $::hi_descend_dlg_mode]
+}
+
+# The script bound to the hi_descend key. Only a PLAIN press opens the dialog; a press
+# with Ctrl / Alt / Super held is forwarded verbatim to the C input dispatcher exactly
+# as the generic <KeyPress> binding would (so Ctrl-E still pops up one level,
+# Alt/Super-E still does descend-in-new-window, etc.). A bare <Key-x> binding is greedy
+# -- with no more-specific <Control-Key-x> on the tag it swallows the modified presses
+# too -- so we discriminate on the modifier mask here. 0x4c = Control|Mod1(Alt)|Mod4
+# (Super); Lock/NumLock are ignored (a plain key + NumLock must still open the dialog).
+proc hi_descend_keybind_script {} {
+  return {if {[expr {%s & 0x4c}]} {xschem callback %W %T %x %y %N 0 0 %s} else {hi_descend}; break}
+}
+
+# Remap the interactive hi_descend key (default E) to $newkey on every open
+# canvas and for future windows. Pass a bare keysym, e.g. `hi_descend_set_key d`.
+# Restores the previous key to the normal C dispatch.
+proc hi_descend_set_key {newkey} {
+  global hi_descend_key
+  foreach win [hi_descend_canvases] {
+    if {$hi_descend_key ne {} && [winfo exists $win]} { bind $win <Key-$hi_descend_key> {} }
+    if {[winfo exists $win]} { bind $win <Key-$newkey> [hi_descend_keybind_script] }
+  }
+  set hi_descend_key $newkey
+}
+
+# All open drawing canvases (.drw plus detached/tab .x<n>.drw).
+proc hi_descend_canvases {} {
+  set res {}
+  if {[winfo exists .drw]} { lappend res .drw }
+  foreach win [xschem windows] {
+    set c [lindex $win 0]
+    if {$c ne {} && $c ne {.drw} && [winfo exists $c]} { lappend res $c }
+  }
+  return $res
 }
 
 
@@ -4700,7 +6206,7 @@ proc file_dialog_set_home {dir} {
 # save.c) are internal crash-recovery artifacts, not cells. They must never be
 # listed as cells in the file dialog, the library browser, or directory scans.
 # (Symbol->schematic resolution never looks for a "~" name, so hiding them here is
-# both safe and complete.) specs/descend_hierarchy_in_memory.md (B7)
+# both safe and complete.) doc/claude/specs/descend_hierarchy_in_memory.md (B7)
 proc is_backup_file {name} {
   set t [file tail $name]
   return [expr {[string match {*~.sch} $t] || [string match {*~.sym} $t]}]
@@ -4717,7 +6223,7 @@ proc filter_backup_files {names} {
 # ended without committing -- i.e. a crash. Offer to restore it. A backup OLDER than
 # the on-disk cell is stale junk (the cell was saved more recently) and is removed
 # without asking. Returns 1 if the backup was restored, 0 otherwise.
-# specs/descend_hierarchy_in_memory.md
+# doc/claude/specs/descend_hierarchy_in_memory.md
 proc xschem_recover_backup {cellfile} {
   set bak [xschem backup name]
   if {$bak eq {} || ![file exists $bak]} { return 0 }
@@ -6730,7 +8236,7 @@ proc create_symbol {name {in {}} {out {}} {inout {}}} {
 # Target .sym path for a schematic's symbol view. In an OA/nested library the symbol
 # is the cell's <view> view: <libpath>/<cell>/<view>/<cell>.sym (view defaults to
 # "symbol"). In a flat/unregistered layout it is the legacy same-dir <cell>.sym.
-# specs/create_symbol_view.md
+# doc/claude/specs/create_symbol_view.md
 proc symbol_view_path {schpath {view symbol}} {
   set cv [schematic_cellview $schpath]
   if {$cv ne {} && [lindex $cv 3] eq {nested}} {
@@ -6759,7 +8265,7 @@ proc make_symbol {name {ask {no}} {view symbol}} {
 # Interactive, library-aware "Make symbol from schematic" (the Symbol menu entry).
 # Asks for the view (name + action) via the adaptive dialog, generates the symbol
 # into the proper view dir (OA symbol view, or legacy same-dir for flat), and opens
-# the new view in a new window for editing. specs/create_symbol_view.md
+# the new view in a new window for editing. doc/claude/specs/create_symbol_view.md
 proc make_symbol_dialog {schpath} {
   if {$schpath eq {} || [string match {*untitled*} [file tail $schpath]]} {
     catch {ciw_echo "Save the schematic to a real file before making a symbol." error}
@@ -6852,7 +8358,7 @@ proc ask_symbol_view {schpath} {
 # but missing from the symbol. Existing artwork and pins are left untouched (records
 # are appended, never rewritten); new inputs go on the left column, new outputs/inouts
 # on the right, stacked below the existing pins. The symbol box is NOT resized -- a
-# new pin may sit below it, by design. specs/create_symbol_view.md
+# new pin may sit below it, by design. doc/claude/specs/create_symbol_view.md
 proc modify_symbol_pins {schpath sympath} {
   global XSCHEM_SHAREDIR symbol_width
   if {![file exists $sympath]} { return [make_symbol $schpath yes] } ;# nothing to merge into
@@ -7025,7 +8531,7 @@ proc set_netlist_dir { what {dir {} }} {
 
 # Floor a modal dialog's minimum size to its natural requested size so a
 # remembered-too-short (or WM-placed-short) geometry can never clip the
-# packed-at-bottom action button row (OK/Cancel/Load/Del). See issues/0006.
+# packed-at-bottom action button row (OK/Cancel/Load/Del). See doc/claude/issues/0006.
 # Call AFTER all widgets are packed and BEFORE the modal tkwait.
 #
 # Gridded caveat: dialogs whose text widget uses -setgrid 1 (text_line,
@@ -7051,7 +8557,7 @@ proc dialog_minsize_floor {w} {
 # box. The widget-independent core (parse/assemble/bool-safety) lives in
 # src/property_form.tcl (slickprop::text_*); this namespace is the thin Tk view
 # that binds widgets to it. The previous raw-box dialog is preserved verbatim as
-# enter_text_legacy for rollback. Spec: specs/slick_text_dialog.md.
+# enter_text_legacy for rollback. Spec: doc/claude/specs/slick_text_dialog.md.
 # ---------------------------------------------------------------------------
 namespace eval slicktext {
   variable orig {}     ;# the property string the dialog opened with
@@ -7256,6 +8762,15 @@ proc enter_text {textlabel {preserve_disabled disabled}} {
   bind .dialog.f2.txt <Tab>          {focus [tk_focusNext %W]; break}
   bind .dialog.f2.txt <Shift-Tab>    {focus [tk_focusPrev %W]; break}
   bind .dialog.f2.txt <ISO_Left_Tab> {focus [tk_focusPrev %W]; break}
+  # Read-only view (issue 0051): a property VIEWER — disable OK and make every
+  # commit chord (Enter / keypad Enter / Shift-Enter in the text box) Cancel
+  # instead, so the text can be read but not written back.
+  if {[xschem get readonly]} {
+    .dialog.buttons.ok configure -state disabled
+    bind .dialog <Return>              {.dialog.buttons.cancel invoke}
+    bind .dialog <KP_Enter>            {.dialog.buttons.cancel invoke}
+    bind .dialog.f2.txt <Shift-Return> {.dialog.buttons.cancel invoke; break}
+  }
   .dialog.f2.txt tag add sel 1.0 {end - 1 chars}
   .dialog.f2.txt mark set insert 1.0
   focus .dialog.f2.txt
@@ -8373,7 +9888,7 @@ proc write_data {data f} {
 # first selected object's type (`xschem selection`): whenever this graphical path
 # is reached the primary selection is sel_array[0] (an instance primary routes to
 # the slick instance form instead), so that type is exactly what C edits.
-# Spec: specs/slick_text_line_dialog.md. Legacy preserved as text_line_legacy.
+# Spec: doc/claude/specs/slick_text_line_dialog.md. Legacy preserved as text_line_legacy.
 # ---------------------------------------------------------------------------
 namespace eval gfxform {
   variable orig {}      ;# property string the dialog opened with (tctx::retval)
@@ -8566,6 +10081,12 @@ proc text_line_slick {txtlabel clear preserve_disabled type} {
   bind .dialog <Return>   {.dialog.buttons.ok invoke}
   bind .dialog <KP_Enter> {.dialog.buttons.ok invoke}
   bind .dialog <Escape>   {.dialog.buttons.cancel invoke}
+  # Read-only view (issue 0051): a property VIEWER — disable OK, Enter == Esc (Cancel).
+  if {[xschem get readonly]} {
+    .dialog.buttons.ok configure -state disabled
+    bind .dialog <Return>   {.dialog.buttons.cancel invoke}
+    bind .dialog <KP_Enter> {.dialog.buttons.cancel invoke}
+  }
   dialog_minsize_floor .dialog
   tkwait window .dialog
   return $tctx::rcode
@@ -8823,6 +10344,15 @@ proc text_line_legacy {txtlabel clear {preserve_disabled disabled} } {
   }
 
   bind .dialog.textinput <Shift-KeyRelease-Return> {return_release %W; .dialog.f1.b1 invoke}
+  # Read-only view (issue 0051): a property VIEWER — disable OK (the global-props
+  # path below also self-guards), force Esc to always cancel, and disable the Mode
+  # selector (changing it commits via set_global_mode). The text stays readable/
+  # editable, but nothing is written back.
+  if {[xschem get readonly]} {
+    catch {.dialog.f1.b1 configure -state disabled}
+    catch {.dialog.f1.r7 configure -state disabled}
+    bind .dialog <Escape> {.dialog.f1.b2 invoke}
+  }
   #tkwait visibility .dialog
   #grab set .dialog
   #focus .dialog.textinput
@@ -8830,7 +10360,7 @@ proc text_line_legacy {txtlabel clear {preserve_disabled disabled} } {
   dialog_minsize_floor .dialog
   tkwait window .dialog
 
-  if {$preserve_disabled eq {disabled}} {
+  if {$preserve_disabled eq {disabled} && ![xschem get readonly]} {
     if {$tctx::retval ne $tctx::retval_orig} {
       xschem push_undo
       xschem set_modify 1
@@ -9395,7 +10925,7 @@ proc rel_sym_path {symbol {paths {}} } {
   regsub {^~/} $symbol ${env(HOME)}/ symbol
   ## rule 2 (library-manager): a symbol-view path inside a registered library
   ## relativizes to the portable "lib/cell" reference. On a miss fall through to
-  ## the legacy prefix stripping below. See code_analysis/library_manager_design.md.
+  ## the legacy prefix stripping below. See doc/claude/code_analysis/library_manager_design.md.
   set q [lib_qualified_rel $symbol]
   if {$q ne {}} { return $q }
   # if {$OS eq "Windows"} {
@@ -9509,7 +11039,7 @@ proc abs_sym_path {fname {ext {} } {paths {}}} {
   ## rule 2 (library-manager): a lib-qualified reference "lib/cell[.ext]" whose
   ## library is registered resolves under the lib/cell/view layout. On any miss
   ## fall through to the legacy search below (rule 3) so flat libraries and old
-  ## references keep working. See code_analysis/library_manager_design.md.
+  ## references keep working. See doc/claude/code_analysis/library_manager_design.md.
   set libabs [lib_qualified_abs $fname]
   if {$libabs ne {}} { return $libabs }
   ## if fname is present in one of the paths paths get the absolute path
@@ -9967,7 +11497,7 @@ proc tab_ctx_cmd {tab_but what} {
       }
     } elseif {$what eq {detach}} {
       # tear this tab off into its own top-level window (draggable to another
-      # monitor). specs/multi_window_detach.md
+      # monitor). doc/claude/specs/multi_window_detach.md
       xschem new_schematic detach $win_path
       xschem log_action "xschem new_schematic detach $win_path"
     } elseif {[regexp {^open } $what]} {
@@ -10205,7 +11735,11 @@ proc toolbar_show { { topwin {} } } {
     }
     if {[winfo ismapped $topwin.toolbar]} {return}
     if { $toolbar_horiz } {
-        if {$tabbed_interface} {
+        # Secondary windows (.x1, .x2 …) never have their own $topwin.tabs widget;
+        # that only exists on the main window as the global .tabs frame.  Falling back
+        # to $topwin.drw as the "before" anchor keeps the toolbar visible and avoids
+        # "bad window path name .x1.tabs" every time a secondary window opens. (issue 0042)
+        if {$tabbed_interface && [winfo exists $topwin.tabs]} {
           pack $topwin.toolbar -fill x -before $topwin.tabs
         } else {
           pack $topwin.toolbar -fill x -before $topwin.drw
@@ -10328,6 +11862,16 @@ proc toggle_readonly {} {
   set v [expr {[xschem get readonly] ? 0 : 1}]
   xschem set readonly $v
   xschem log_action "xschem set readonly $v"
+}
+
+# Modal "this view is read-only" notice — the Tcl twin of callback.c readonly_block(),
+# for edit actions driven from Tcl (e.g. Create Instance, issue 0051) that the C
+# keyboard guard never sees. Same wording so the two surfaces stay identical.
+proc readonly_notice {} {
+  if {![info exists ::has_x] || !$::has_x} return
+  tk_messageBox -type ok -icon info -parent [xschem get topwindow] \
+    -title {Read-only view} \
+    -message "View is Read Only.\n\nUse Edit > Make Editable to enable editing."
 }
 
 # -postcommand for each window's Edit menu. Read-only is per-window, so this runs
@@ -10543,11 +12087,20 @@ proc set_tab_names {{mod {}}} {
     set currsch [xschem get schname]
     regsub {\.drw} $currwin {} tabname
     if {$tabname eq {}} { set tabname .x0}
-    .tabs$tabname configure -text [file tail $currsch]$mod -background $tab_color
-    # puts ".tabs$tabname --> name=[file tail $currsch]$mod"
-    balloon .tabs$tabname $currsch
+    # A detached window (.x1, .x2 …) removes its tab button from .tabs on detach;
+    # set_tab_names is still called (e.g. via set_modify) while that window is current,
+    # so guard to avoid "invalid command name .tabs.x1". (issue 0042)
+    if {[winfo exists .tabs$tabname]} {
+      .tabs$tabname configure -text [file tail $currsch]$mod -background $tab_color
+      # puts ".tabs$tabname --> name=[file tail $currsch]$mod"
+      balloon .tabs$tabname $currsch
+    }
     for { set i 0} { $i < $tctx::max_new_windows} { incr i} {
-      if { [winfo exists .tabs.x$i] && ($tabname ne ".x$i")} {
+      # tctx::tab_bg is set by C when the first extra tab button is created
+      # (scheduler.c).  If only real windows (no tab buttons) have been opened
+      # yet, the variable is unset.  Guard so set_tab_names never throws a
+      # "can't read tctx::tab_bg" error in that scenario. (issue 0043)
+      if { [info exists tctx::tab_bg] && [winfo exists .tabs.x$i] && ($tabname ne ".x$i")} {
          .tabs.x$i configure -background $tctx::tab_bg
       }
     }
@@ -10612,16 +12165,18 @@ proc store_geom {win filename} {
     if { [file exists $geom_file]} {
       set fd [ open $geom_file]
       while {[gets $fd line] >= 0} {
-        if { [llength $line] == 2} {
-          lassign $line f g
-          set d {0}
-        } elseif {[llength $line] == 3} {
-          lassign $line f g d
-        } else {
-          continue
-        }
-        set f [rel_sym_path $f]
-        set geom_array($f) [list $g $d]
+        if {[catch {
+          if { [llength $line] == 2} {
+            lassign $line f g
+            set d {0}
+          } elseif {[llength $line] == 3} {
+            lassign $line f g d
+          } else {
+            continue
+          }
+          set f [rel_sym_path $f]
+          set geom_array($f) [list $g $d]
+        }]} continue
       }
       close $fd
     }
@@ -10629,32 +12184,19 @@ proc store_geom {win filename} {
 
     set geom_data {}
     foreach i [array names geom_array] {
-      append geom_data "{" $i  "}" { } $geom_array($i) \n
+      append geom_data [list $i {*}$geom_array($i)] \n
     }
-    # puts $geom_data
-    # puts [llength $geom_data]
-    # puts ---
+    # sort newest-first (field 2 = timestamp) so the cap below keeps the most recent entries
     set geom_data2 [lsort -stride 3 -decreasing -index 2 -integer $geom_data]
-    # puts $geom_data2
-    # puts [llength $geom_data2]
-    # puts ---
+
     set geom_data3 {}
     set j 0
-    foreach i $geom_data2 {
-      if {$geom_data3 ne {}} {
-        if {$j % 3 == 0} {
-          append geom_data3 \n
-        } else {
-          append geom_data3 { }
-        }
-      }
-      append geom_data3 "{" $i  "}"
+    foreach {f g d} $geom_data2 {
+      if {$j >= 100} break   ;# cap the geometry history at the 100 most-recent files (bounds file growth)
+      append geom_data3 [list $f $g $d] \n
       incr j
     }
 
-    # puts $geom_data3
-    # puts [llength $geom_data3]
-    # puts ===
     set geom_data $geom_data3
     write_data $geom_data\n $geom_file
   }
@@ -10750,7 +12292,7 @@ proc get_lastopened {} {
 # attention (go_back's own per-level Save/No/Cancel dialog), then handle the top
 # level. $action is "close" or "quit" (only affects wording). Returns 1 if the caller
 # should proceed with the actual teardown, 0 if the user cancelled (abort, stay put).
-# specs/descend_hierarchy_in_memory.md
+# doc/claude/specs/descend_hierarchy_in_memory.md
 proc hierarchy_close {action} {
   # Walk up: each dirty intermediate level gets go_back's Save/No/Cancel prompt,
   # which saves (removes ~) or discards (removes ~) that cell, then ascends. A clean
@@ -11140,7 +12682,7 @@ proc show_bindkeys {} {
 # any sequence $dst already binds, or we clobber those correct per-window bindings
 # with $src's (the guards would never match; the palette would target $src). Only the
 # user's EXTRA bindings — sequences set_bindings never touched — are carried over.
-# (issue 0020) specs/multi_window_detach.md
+# (issue 0020) doc/claude/specs/multi_window_detach.md
 proc clone_canvas_bindings {src dst} {
   if {![winfo exists $src] || ![winfo exists $dst] || $src eq $dst} return
   foreach seq [bind $src] {
@@ -11155,7 +12697,7 @@ proc clone_canvas_bindings {src dst} {
 # already a reasonable size is left exactly as set_geom placed it. Detects the
 # actual display from $win's screen; the width is capped so the window can't span a
 # multi-monitor X screen. Tunable via ::new_window_size_frac (fraction of screen
-# width, default 0.5 = "half the display"). specs/multi_window_detach.md
+# width, default 0.5 = "half the display"). doc/claude/specs/multi_window_detach.md
 proc size_new_window {win} {
   if {![winfo exists $win]} return
   # Try now, and once more after the window is actually mapped. Some WMs maximize a
@@ -11187,7 +12729,7 @@ proc _size_new_window_apply {win} {
 }
 
 proc set_bindings {topwin} {
-global env has_x OS autofocus_mainwindow
+global env has_x OS autofocus_mainwindow hi_descend_key
   ###
   ### Tk event handling
   ###
@@ -11251,6 +12793,12 @@ global env has_x OS autofocus_mainwindow
     # Command palette (UI layer): more-specific binding pre-empts the generic
     # <KeyPress> above, so this never reaches the C keysym dispatcher.
     bind $topwin <Control-Shift-Key-P> "command_palette $parent; break"
+    # hi_descend on the default key (E): a more-specific binding pre-empts the generic
+    # <KeyPress>, so plain E opens the human-interface descend dialog instead of the C
+    # descend. The body is window-agnostic (acts on the focused context) so it is correct
+    # on every canvas and survives clone_canvas_bindings. Remap via hi_descend_set_key.
+    # doc/claude/specs/hi_descend.md
+    if {$hi_descend_key ne {}} { bind $topwin <Key-$hi_descend_key> [hi_descend_keybind_script] }
     # (Phase-2 per-key Tcl accelerators were retired at 3d.5a/b: every key goes
     # through the generic <KeyPress> -> C input-binding table; remap via
     # `xschem bind` or keybindings.csv.)
@@ -11434,11 +12982,11 @@ if {![info exists library_registry_defs_only]} { set library_registry_defs_only 
 # style (inferred from its cells); this only sets the default for empty ones.
 if {![info exists library_default_layout]} { set library_default_layout nested }
 source $XSCHEM_SHAREDIR/library_defs.tcl
-# Library Manager git revision-control backend (specs/library_git.md)
+# Library Manager git revision-control backend (doc/claude/specs/library_git.md)
 source $XSCHEM_SHAREDIR/library_git.tcl
 # Library Manager GUI (Cadence-style Library/Cell/View browser)
 source $XSCHEM_SHAREDIR/library_manager.tcl
-# Create Instance browser (Cadence-style Add Instance; specs/cadence_create_instance.md)
+# Create Instance browser (Cadence-style Add Instance; doc/claude/specs/cadence_create_instance.md)
 source $XSCHEM_SHAREDIR/create_instance.tcl
 # Slick per-field "Edit Properties" form (replaces the legacy raw-text dialog)
 source $XSCHEM_SHAREDIR/property_form.tcl
@@ -11468,7 +13016,7 @@ foreach row $action_table {
 }
 
 # CIW (Command Interpreter Window): live action-log pane + command entry
-# (specs/action_logging.md section 3). Auto-opened for interactive sessions
+# (doc/claude/specs/action_logging.md section 3). Auto-opened for interactive sessions
 # in the build-widgets block below.
 source $XSCHEM_SHAREDIR/ciw.tcl
 
@@ -11601,7 +13149,7 @@ proc build_widgets { {topwin {} } } {
   $topwin.menubar.option add checkbutton \
     -selectcolor $selectcolor -label "Group bus slices in Verilog instances" -variable verilog_bitblast
   # accelerators blanked: these ops ship UNBOUND (no built-in key); they are
-  # user-bound via `xschem bind` (specs/keybind_snap_grid_actions.md). The live
+  # user-bound via `xschem bind` (doc/claude/specs/keybind_snap_grid_actions.md). The live
   # cheat-sheet (show_bindkeys) reflects whatever the user actually bound.
   $topwin.menubar.option add checkbutton -label "Draw grid" -variable draw_grid \
      -selectcolor $selectcolor -accelerator {} \
@@ -11701,7 +13249,7 @@ proc build_widgets { {topwin {} } } {
      -selectcolor $selectcolor -background grey60 -value 1 -accelerator H -command {xschem set constr_mv 1}
   $topwin.menubar.edit add radiobutton -label "Constrained Vertical move" -variable constr_mv \
      -selectcolor $selectcolor -background grey60 -value 2 -accelerator V -command {xschem set constr_mv 2}
-  $topwin.menubar.edit add command -label "Push schematic" -command "xschem descend" -accelerator E
+  $topwin.menubar.edit add command -label "Push schematic" -command "hi_descend" -accelerator E
   $topwin.menubar.edit add command -label "Push symbol" -command "xschem descend_symbol" -accelerator I
   $topwin.menubar.edit add command -label "Pop" -command "xschem go_back" -accelerator Ctrl+E
   $topwin.menubar.edit add separator
@@ -11897,6 +13445,7 @@ proc build_widgets { {topwin {} } } {
   $topwin.menubar.sym add checkbutton -label "Allow duplicated instance names (refdes)" \
       -selectcolor $selectcolor -variable disable_unique_names
   $topwin.menubar.tools add command -label "Library Manager" -command "xschem library_manager"
+  $topwin.menubar.tools add command -label "Net highlight styles..." -command {net_hilight_style_editor}
   $topwin.menubar.tools add separator
   $topwin.menubar.tools add command -label "Insert text" -command "xschem place_text" -accelerator T
   $topwin.menubar.tools add command -label "Insert wire" -command "xschem wire" -accelerator W
@@ -12176,7 +13725,7 @@ proc trace_set_vars {varname idxname op} {
         }
       }
     }
-  } elseif {$varname eq {file_chooser} && idxname eq {dirs}} {
+  } elseif {$varname eq {file_chooser} && $idxname eq {dirs}} {
     uplevel #0 {
       if {![info exists file_chooser(old_dirs)] ||
            $file_chooser(old_dirs) ne $file_chooser(dirs)} {
@@ -12553,6 +14102,12 @@ proc listbox:handle {W offset maxChars} {
 # focus the schematic window if mouse goes over it, even if a dialog box is displayed,
 # without needing to click. This allows to move/zoom/pan the schematic while editing attributes.
 set_ne autofocus_mainwindow 0
+
+# Focus-follows-mouse for the drawing CANVAS across windows/tabs: when the pointer
+# enters a different (visible) schematic window, switch the drawing context to it so its
+# crosshair + hover-highlight track the pointer there, without requiring a click to make
+# it the active window. Default on. Set to 0 to require a click/FocusIn to switch.
+set_ne mouse_follows_focus 1
 if {$OS == "Windows"} {
   set_ne XSCHEM_TMP_DIR [xschem get temp_dir]
 } else {
@@ -12665,11 +14220,11 @@ set_ne autotrim_wires 0
 set_ne auto_set_wire_bus 0
 # autosave: every genuine edit immediately writes a cellName~.sch backup; saving
 # the real file removes it. Persists unsaved edits across descend and crashes
-# (specs/descend_hierarchy_in_memory.md). Off => no backup files.
+# (doc/claude/specs/descend_hierarchy_in_memory.md). Off => no backup files.
 set_ne autosave_backup 1
 set_ne cadence_compat 0
 set_ne infix_interface 1
-# autostart the Library Manager window at launch (specs/library_manager_launch.md)
+# autostart the Library Manager window at launch (doc/claude/specs/library_manager_launch.md)
 set_ne launch_library_manager 0
 set_ne snap_cursor 0
 set_ne orthogonal_wiring 0
@@ -12881,6 +14436,12 @@ if {!$rainbow_colors} {
 # set; net_hilight_style_reset (or set it to {} + update) re-derives the default.
 set_ne net_hilight_style {}
 
+# Has the user ever opened the net highlight style editor (Tools > Net highlight styles...)?
+# 0 until the first open; while 0 the command palette shows the editor's entry in an attention
+# color (see palette_refilter). Persisted as a harmless breadcrumb in
+# USER_CONF_DIR/net_hilight_editor_seen (write_net_hilight_editor_seen), sourced at startup.
+set_ne net_hilight_editor_seen 0
+
 # Net-highlight animation (Pass 2a, blink). Global kill-switch: set to 0 to freeze all
 # net-highlight animation (highlights render steady). When 1 (default), a highlighted net
 # whose style has blink_ms>0 blinks at that period via a per-window self-rescheduling timer.
@@ -13013,6 +14574,7 @@ if {$OS == "Windows"} {
 set_ne copy_cell 0
 
 load_recent_file
+load_net_hilight_conf
 # schematic to preload in new windows 20090708
 set_ne XSCHEM_START_WINDOW {}
 
@@ -13049,7 +14611,7 @@ if { ( $OS== "Windows" || [string length [lindex [array get env DISPLAY] 1] ] > 
   set_replace_key_binding
 
   # CIW auto-opens for every interactive session unless --nolog was given
-  # (specs/action_logging.md decision 8; issue 0002 -- test runs pass --nolog
+  # (doc/claude/specs/action_logging.md decision 8; issue 0002 -- test runs pass --nolog
   # so short-lived windows don't leak WSLg ghost frames); closing it merely
   # withdraws the window
   if {![info exists cli_opt_nolog] || !$cli_opt_nolog} { ciw_create }

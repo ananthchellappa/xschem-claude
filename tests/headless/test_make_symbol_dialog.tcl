@@ -1,5 +1,5 @@
 # P2: make_symbol_dialog orchestrator (adaptive View-name / Create / Replace).
-# Spec: specs/create_symbol_view.md
+# Spec: doc/claude/specs/create_symbol_view.md
 #
 # Run TRUE HEADLESS from the repo root:
 #   src/xschem --nogui --pipe -q --nolog --script tests/headless/test_make_symbol_dialog.tcl

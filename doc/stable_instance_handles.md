@@ -14,7 +14,7 @@ that an instance already has a name, and **the name is not a safe handle**.
 
 Everything in the code blocks below was run against
 `xschem_library/examples/mos_power_ampli.sch` (117 instances); the outputs are
-real (`code_analysis/introspection_probes/probe4.tcl` reproduces them).
+real (`doc/claude/code_analysis/introspection_probes/probe4.tcl` reproduces them).
 
 ---
 
@@ -116,7 +116,7 @@ both exist.
 
 The full rationale (why "both", the safety/consistency/ergonomics analysis, the
 reference-convention sub-decision) is in
-[`../code_analysis/instance_identity_decision.md`](../code_analysis/instance_identity_decision.md).
+[`claude/code_analysis/instance_identity_decision.md`](claude/code_analysis/instance_identity_decision.md).
 
 ## 5. Undo semantics (identical to wires)
 
@@ -156,5 +156,5 @@ survives `clear`/`load`, so ids are never reused within a context's lifetime.
 
 *See also: [`stable_wire_handles.md`](stable_wire_handles.md) for the shared
 mechanics and the full developer walkthrough;
-[`../code_analysis/instance_identity_decision.md`](../code_analysis/instance_identity_decision.md)
+[`claude/code_analysis/instance_identity_decision.md`](claude/code_analysis/instance_identity_decision.md)
 for the design decision.*

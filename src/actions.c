@@ -154,12 +154,24 @@ const char *get_text_floater(int i)
 int set_modify(int mod)
 {
   int i, floaters = 0;
+  int ro_suppress;
 
   dbg(1, "set_modify(): %d, prev_set_modify=%d\n", mod, xctx->prev_set_modify);
 
+  /* A read-only buffer cannot hold unsaved edits, so never flag it modified: the '*'
+   * title marker and the save-on-close prompt would be bogus (issue 0035 -- e.g. a
+   * read-only browse window whose child auto-normalizes on load, or an on-disk mtime
+   * change). Suppress only the modified flag (and the autosave backup), while keeping the
+   * rest of a mod==1 call's side effects (Netlist/Simulate/Waves button refresh, floater
+   * cache flush, title refresh) so a read-only window's UI does not go stale. External
+   * on-disk changes are surfaced by the reload mechanism, not by faking modified. Genuine
+   * edits can't reach here while read-only (blocked upstream); a pre-existing modified
+   * flag from before the buffer was made read-only is left as-is. */
+  ro_suppress = ((mod == 1 || mod == 3) && xctx->readonly);
+
   /* set modify state */
   if(mod == 0 || mod == 1 || mod == 2 || mod == 3) {
-    xctx->modified = (mod & 1);
+    xctx->modified = ro_suppress ? 0 : (mod & 1);
   }
   /* Autosave: a genuine edit (mod 1/3 -> modified) immediately persists the buffer
    * to its cellName~.sch backup, so descend never has to save and edits survive a
@@ -168,7 +180,7 @@ int set_modify(int mod)
    * net-resolution never call set_modify(1), so they correctly do not write.
    * Removal of the ~ is handled by save_schematic on a real save, not here (clearing
    * modified on load must not delete a recovery backup). */
-  if(mod == 1 || mod == 3) write_backup();
+  if((mod == 1 || mod == 3) && !ro_suppress) write_backup();
   if(mod == 1 || (mod == 0  && xctx->prev_set_modify) || mod == -2) {
     /*                Do not configure buttons if displaying in preview window */
     if(has_x && (xctx->top_path[0] == '\0' || strstr(xctx->top_path, ".x") == xctx->top_path)) {
@@ -1865,7 +1877,7 @@ int copy_hierarchy_data(const char *from_win_path, const char *to_win_path)
 /*  20111007 duplicate current schematic if no inst selected */
 /* if force set to 1 force opening another new schematic even if already open */
 /* win: when set, force a real top-level window (create_window) instead of letting
- * the global tabbed_interface decide tab-vs-window (specs/multi_window_detach.md).
+ * the global tabbed_interface decide tab-vs-window (doc/claude/specs/multi_window_detach.md).
  * Used by the cadence "open instance schematic read-only in a new window" flow. */
 int schematic_in_new_window(int new_process, int dr, int force, int win)
 {
@@ -2349,7 +2361,7 @@ void get_additional_symbols(int what)
  * (<libpath>/<cell>/schematic/<cell>.sch), return its absolute path, else "".
  * Thin wrapper over the Tcl resolver (library-manager Phase 4). Lets descend and
  * the schematic= override target the cell's schematic VIEW rather than ext-swap
- * the symbol-view path. See code_analysis/library_manager_design.md. */
+ * the symbol-view path. See doc/claude/code_analysis/library_manager_design.md. */
 static const char *cellview_sch_path(const char *ref)
 {
   char c[PATH_MAX + 100];
@@ -2388,10 +2400,22 @@ void get_sch_from_sym(char *filename, xSymbol *sym, int inst, int fallback)
   dbg(1, "get_sch_from_sym(): symbol %s inst=%d web_url=%d\n", sym->name, inst, web_url);
   /* resolve schematic=generator.tcl( @n ) where n=11 is defined in instance attrs */
   if(inst >=0 ) {
-
-    /* instance based symbol selection */
-    /* resolve schematic=generator.tcl( @n ) where n=11 is defined in instance attrs */
-    my_strdup2(_ALLOC_ID_, &str_tmp, get_tok_value(xctx->inst[inst].prop_ptr,"schematic", 6));
+    /* hi_descend: one-shot transient view override (doc/claude/specs/hi_descend.md). When the Tcl
+     * global hi_descend_view_path is non-empty, resolve THIS one descend into that exact
+     * view file instead of the instance/symbol 'schematic' attribute -- so choosing a
+     * non-default named view does not rewrite (and dirty) the instance. Single-use: it is
+     * cleared immediately, and descend_schematic resolves the target instance before any
+     * other get_sch_from_sym call, so netlisting / cellview / go_back callers are
+     * unaffected. */
+    const char *hi_ov = tclgetvar("hi_descend_view_path");
+    if(hi_ov && hi_ov[0]) {
+      my_strdup2(_ALLOC_ID_, &str_tmp, hi_ov);
+      Tcl_SetVar(interp, "hi_descend_view_path", "", TCL_GLOBAL_ONLY);
+    } else {
+      /* instance based symbol selection */
+      /* resolve schematic=generator.tcl( @n ) where n=11 is defined in instance attrs */
+      my_strdup2(_ALLOC_ID_, &str_tmp, get_tok_value(xctx->inst[inst].prop_ptr,"schematic", 6));
+    }
     if(str_tmp[0])
       my_strdup2(_ALLOC_ID_, &str_tmp, translate3(str_tmp, 1, xctx->inst[inst].prop_ptr, NULL, NULL, NULL));
     /*
@@ -2577,7 +2601,7 @@ int descend_schematic(int instnumber, int fallback, int alert, int set_title)
     * and go_back() reloads that backup, restoring the unsaved edits and the
     * modified flag. Descending is not a save point and never loses data, so it
     * must not prompt. Prompts remain at go_back and window-close, where edits
-    * are actually at risk. specs/descend_hierarchy_in_memory.md (B5) */
+    * are actually at risk. doc/claude/specs/descend_hierarchy_in_memory.md (B5) */
    /*  build up current hierarchy path */
    dbg(1, "descend_schematic(): selected instname=%s\n", xctx->inst[n].instname);
 
@@ -2712,6 +2736,13 @@ int descend_schematic(int instnumber, int fallback, int alert, int set_title)
      xctx->readonly = 1;
      set_modify(-1); /* refresh window title to show the read-only marker */
    }
+   /* Re-arm the animated-highlight tick (issue 0034): the child reloaded into a fresh
+    * context whose per-window animation tick is unarmed, and descend is not a highlight
+    * MUTATION (the only thing that otherwise calls net_hilight_anim_update), so without
+    * this a blink/marching-ants highlight freezes after descend. Cheap: the function
+    * short-circuits to one boolean read when nothing animates. Arms every open window,
+    * so the new-window descend path (open_sub_schematic) is covered too. */
+   if(descend_ok) net_hilight_anim_update();
    zoom_full(1, 0, 1 + 2 * tclgetboolvar("zoom_full_center"), 0.97);
  }
  return descend_ok;
@@ -2788,7 +2819,7 @@ void go_back(int what)
    * stays cellName and it returns flagged modified, so descending neither lost
    * edits nor required a save (load_backup_as does the content/identity split). A
    * clean parent (no ~) loads normally. Embedded-symbol returns keep the plain disk
-   * path (deferred). specs/descend_hierarchy_in_memory.md */
+   * path (deferred). doc/claude/specs/descend_hierarchy_in_memory.md */
   if(from_embedded_sym || !load_backup_as(filename, set_title)) {
     load_schematic(1, filename, set_title, 1);
   }
@@ -2809,6 +2840,10 @@ void go_back(int what)
 
   change_linewidth(-1.);
   draw();
+  /* Re-arm the animated-highlight tick after ascending (issue 0034): the parent reloaded
+   * into a fresh context whose tick is unarmed; like descend, go_back is not a highlight
+   * mutation, so a blink/marching-ants highlight would otherwise freeze on pop. */
+  net_hilight_anim_update();
 
   dbg(1, "go_back(): current path: %s\n", xctx->sch_path[xctx->currsch]);
  }
@@ -2824,7 +2859,7 @@ void clear_schematic(int cancel, int symbol)
         /* The current buffer is being discarded (saved above, or the user declined
          * to save). Drop its cellName~.sch autosave backup so a leftover ~ on the
          * next open unambiguously means a crash, not an intentional discard. (A real
-         * save already removed it; this no-ops then.) specs/...in_memory.md (B8) */
+         * save already removed it; this no-ops then.) doc/claude/specs/...in_memory.md (B8) */
         remove_backup();
         xctx->currsch = 0;
         unselect_all(1);

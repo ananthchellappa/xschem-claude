@@ -264,7 +264,7 @@ void mem_delete_undo(void)
  * texts, rects/lines/polys/arcs and all prop strings) into undo slot *s. The
  * slot's per-layer count/pointer arrays must already be allocated by
  * mem_init_undo(). Shared by the undo stack (mem_push_undo) and the hierarchy
- * snapshot store (specs/descend_hierarchy_in_memory.md). */
+ * snapshot store (doc/claude/specs/descend_hierarchy_in_memory.md). */
 void mem_serialize_slot(Undo_slot *s)
 {
   int i, c;
@@ -403,7 +403,7 @@ void mem_push_undo(void)
 /* Rebuild the current schematic drawing state from snapshot slot *s, replacing
  * whatever is loaded. Clears the existing drawing first. If set_modify_status is
  * nonzero the schematic is flagged modified afterwards. Shared by the undo stack
- * (mem_pop_undo) and the hierarchy restore (specs/descend_hierarchy_in_memory.md).
+ * (mem_pop_undo) and the hierarchy restore (doc/claude/specs/descend_hierarchy_in_memory.md).
  * Caller owns undo-stack pointer bookkeeping. */
 void mem_restore_slot(Undo_slot *s, int set_modify_status)
 {

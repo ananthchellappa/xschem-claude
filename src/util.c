@@ -291,13 +291,15 @@ static void actionlog_name(char *out, size_t sz, const char *dir, int n)
  * with debug output.
  *
  * Location: the directory given by --logdir (created if absent; if it cannot be
- * created this is fatal, per spec), else the current working directory.
+ * created this is fatal, per spec), else the temp dir ($TMPDIR, else /tmp) since
+ * the log is a disposable artifact (issue 0038); the cwd is used only as a last
+ * resort when no temp dir exists.
  * Name: the first free name in the sequence Xschem.log, Xschem.log.1, ...
  * (same idiom as the untitled.sch namer in save.c).
  *
  * Phase-0 policy: only open the log for an interactive session (has_x) or when
  * --logdir was given explicitly. This keeps headless/script/test runs from
- * littering the cwd, while letting automation opt in by passing --logdir.
+ * creating a log at all, while letting automation opt in by passing --logdir.
  * --nolog disables logging entirely (and, on the Tcl side, the CIW auto-open;
  * see issue 0002): combining it with --logdir is contradictory and fatal. */
 void init_action_log(void)
@@ -328,7 +330,15 @@ void init_action_log(void)
       exit(EXIT_FAILURE);
     }
   } else {
-    my_strncpy(dir, ".", S(dir));
+    /* No --logdir: the action log is a disposable test/replay artifact, so
+     * default it to the temp dir ($TMPDIR, else /tmp) rather than the cwd. This
+     * stops interactive runs launched from the source tree (repo root or src/)
+     * from littering it with Xschem.log[.N] files (issue 0038). Fall back to the
+     * cwd only when no temp dir is usable (e.g. a platform without /tmp). */
+    const char *tmp = getenv("TMPDIR");
+    if(!tmp || !tmp[0]) tmp = "/tmp";
+    if(!stat(tmp, &buf) && S_ISDIR(buf.st_mode)) my_strncpy(dir, tmp, S(dir));
+    else my_strncpy(dir, ".", S(dir));
   }
 
   /* Pick a slot in [0, ACTIONLOG_KEEP): reuse the first free one; if all are taken,

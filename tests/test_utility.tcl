@@ -24,7 +24,7 @@ set OS [lindex $tcl_platform(os) 0]
 set xschem_cmd "xschem"
 
 # ---------------------------------------------------------------------------
-# Parallel-dispatch helpers (see claude_suggs/parallel_regression_tests.md).
+# Parallel-dispatch helpers (see doc/claude/suggestions/parallel_regression_tests.md).
 #
 # The regression cases are thousands of independent, short xschem spawns. We run
 # them through a bounded xargs pool instead of a sequential foreach. Each job is a

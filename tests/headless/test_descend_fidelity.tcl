@@ -1,7 +1,7 @@
 # Step 6: restore fidelity. A descend/go_back round trip through the in-memory
 # snapshot must reproduce the (unmodified) parent EXACTLY as a fresh disk load --
 # every object type and property, plus the restored zoom and a clean modified flag.
-# Spec: specs/descend_hierarchy_in_memory.md
+# Spec: doc/claude/specs/descend_hierarchy_in_memory.md
 #
 # Strategy: save the schematic to a file after a fresh load and again after a
 # memory round trip, and compare the files byte-for-byte (the .sch text captures

@@ -1,6 +1,6 @@
 # Cadence-style hierarchy navigation helpers for XSchem.
 # Loaded from cadence_style_rc. Pure Tcl, no C changes. See
-# specs/cadence_bindkey_plan.md.
+# doc/claude/specs/cadence_bindkey_plan.md.
 
 namespace eval cadence {
   variable last_loc       ;# per-window: last_loc(<win_path>) = {inst1 inst2 ...}
@@ -35,6 +35,101 @@ proc cadence::ascend_to_top {} {
     if {[xschem get currsch] >= $before} { return 0 }
   }
   return 1
+}
+
+# --- cross-window descend chain (issue 0053) ------------------------------
+# A descend into a NEW window/tab links the child to the window it was opened
+# from. hi_descend_newwin records ::descend_parent_win()/::descend_entry_level()
+# keyed by the child's win_path; these helpers read them so a "return" can walk
+# back to the PARENT window instead of ascending the child in place.
+
+# The window this one was descended from ("" if it is not a descend-child).
+proc cadence::parent_window {win} {
+  if {[info exists ::descend_parent_win($win)]} { return $::descend_parent_win($win) }
+  return {}
+}
+# The level this window was born at (0 if it is not a descend-child). Acts as the
+# floor for in-place ascend: at this level the next return steps out to the parent.
+proc cadence::entry_level {win} {
+  if {[info exists ::descend_entry_level($win)]} { return $::descend_entry_level($win) }
+  return 0
+}
+# Drop a (now stale) link, e.g. when the parent window was closed.
+proc cadence::forget_window {win} {
+  catch {unset ::descend_parent_win($win)}
+  catch {unset ::descend_entry_level($win)}
+}
+# Is win_path still a live tab/window?
+proc cadence::win_live {win} {
+  foreach w [xschem windows] { if {[lindex $w 0] eq $win} { return 1 } }
+  return 0
+}
+# Make win the active context AND bring the user's pointer/focus to it. The engine
+# context is switched synchronously (so return_to_top's loop sees it); then the pointer
+# is WARPED into the target canvas.
+#
+# Why the warp (issue 0054): with mouse_follows_focus on (the default) the engine
+# context follows the POINTER and only switches on EnterNotify. Switching the context
+# to $win while the pointer is still over the OLD window desyncs them -- the old
+# window's clicks/hover keep acting on $win's context, and hover highlighting in the
+# old window stops, until the pointer next crosses a window boundary. Warping the
+# pointer into $win makes pointer, Tk focus and context all agree immediately, which is
+# the honest meaning of "this window is now active" under focus-follows-mouse. (The WM
+# title-bar "active" tint is the window manager's own call -- on WSLg it only updates on
+# a click -- so that cosmetic may lag; the schematic itself is fully live.)
+proc cadence::focus_window {win} {
+  set cur [xschem get current_win_path]
+  if {$win eq $cur} return
+  xschem new_schematic switch $win
+  catch {
+    set top [winfo toplevel $win]
+    set curtop {}
+    if {[winfo exists $cur]} { set curtop [winfo toplevel $cur] }
+    # Bring the target's TOP-LEVEL to the front via the shared helper (raises reliably on
+    # WSLg without the creep the old re-map caused -- issue 0054). Only when the target is a
+    # DIFFERENT OS window (no point raising the window we are already on).
+    if {[winfo exists $top] && $top ne $curtop} {
+      raise_activate_toplevel $top
+      update idletasks
+    }
+    if {[winfo exists $win]} {
+      # mouse_follows_focus (default) ties the engine context to the POINTER, switching
+      # only on EnterNotify; warp the pointer into the target canvas so pointer, Tk focus
+      # and context agree (else the old window's clicks/hover keep acting on the new
+      # context, and the old window's hover stops, until the pointer crosses a boundary).
+      # When the windows overlap (the "under another window" case) the raise above already
+      # slides the now-top canvas under the stationary pointer, firing a real EnterNotify;
+      # the warp additionally covers side-by-side / multi-monitor layouts.
+      event generate $win <Motion> -warp 1 \
+        -x [expr {[winfo width $win] / 2}] -y [expr {[winfo height $win] / 2}]
+      focus -force $win
+    }
+  }
+}
+
+# Ctrl-E: return one level. Inside a window, ascend in place until it is back at the
+# level it was descended-into-new-window at (its entry level); then the next return
+# moves focus to the PARENT window (the child stays open). A window with no descend
+# link ascends in place, exactly like the default xschem go_back. (issue 0053)
+proc cadence::return_one_level {} {
+  set win    [xschem get current_win_path]
+  set cur    [xschem get currsch]
+  set entry  [cadence::entry_level $win]
+  set parent [cadence::parent_window $win]
+  if {$cur > $entry} {
+    xschem go_back            ;# unwind in-place descents made within this window
+    return
+  }
+  if {$parent ne {} && [cadence::win_live $parent]} {
+    cadence::focus_window $parent   ;# step out to the parent window; leave this child open
+    return
+  }
+  if {$parent ne {}} { cadence::forget_window $win }   ;# stale link: parent gone -> fall back
+  if {$cur > 0} {
+    xschem go_back            ;# root / plain window: ascend in place
+  } else {
+    ciw_echo "already at top level"
+  }
 }
 
 # --- actions --------------------------------------------------------------
@@ -85,17 +180,38 @@ proc cadence::make_readonly {} {
   ciw_echo "[xschem get current_name]: now READ-ONLY"
 }
 
-# Alt-E: return to top (with save warnings) and remember where we were.
+# Alt-E: return to the TOP of the descend chain. Repeatedly return one level --
+# unwinding in-place descents within a window, then hopping to its parent window --
+# until the ROOT window (no live parent) is at its top, and leave focus there. The
+# intermediate child windows stay open (return is a focus move, not a close, issue
+# 0053). Remembers the deepest location for Alt-X (descend_to_last) on the root window.
 proc cadence::return_to_top {} {
-  set win [xschem get current_win_path]
+  set start [xschem get current_win_path]
+  if {[xschem get currsch] == 0 && [cadence::parent_window $start] eq {}} {
+    ciw_echo "already at top level" error ; return
+  }
+  # the deepest window carries the full top->here hierarchy path (copy_hierarchy),
+  # so capture it here for Alt-X before we start walking back up.
   set loc [cadence::hier_instnames]
-  if {[llength $loc] == 0} { ciw_echo "already at top level" error ; return }
-  if {![cadence::ascend_to_top]} {
+  set guard 0
+  while {1} {
+    set win [xschem get current_win_path]
+    set cur [xschem get currsch]
+    set parent [cadence::parent_window $win]
+    set live [expr {$parent ne {} && [cadence::win_live $parent]}]
+    if {!$live && $cur == 0} break               ;# root window at its top -> done
+    if {[incr guard] > 500} break                ;# safety net
+    cadence::return_one_level
+    # nothing moved (e.g. a save prompt was cancelled in go_back) -> stop
+    if {[xschem get current_win_path] eq $win && [xschem get currsch] == $cur} break
+  }
+  set root [xschem get current_win_path]
+  if {[xschem get currsch] != 0} {
     ciw_echo "return-to-top stopped at [xschem get sch_path] (unsaved edits)" error
     return
   }
-  set cadence::last_loc($win) $loc
-  ciw_echo "at top; remembered: $loc  (Alt-X to return)"
+  set cadence::last_loc($root) $loc
+  ciw_echo "at top in $root; remembered: $loc  (Alt-X to return)"
 }
 
 # Alt-X: descend back into the location remembered by the last Alt-E for this window.

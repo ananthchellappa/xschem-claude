@@ -1,4 +1,4 @@
-# Library Manager — Maintain menu GUI (specs/library_git.md §4.1, Phase 2).
+# Library Manager — Maintain menu GUI (doc/claude/specs/library_git.md §4.1, Phase 2).
 # Drives the real Tk surface added in library_manager.tcl: the Maintain menubar
 # cascade, the multi-select library picker, and Show Status / History rendered
 # into the read-only `viewdata` window. The modal picker (vwait) is driven

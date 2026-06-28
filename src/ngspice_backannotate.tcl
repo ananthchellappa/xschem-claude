@@ -62,7 +62,11 @@ proc ngspice::read_raw_dataset {arr fp} {
 }
 
 proc ngspice::read_raw {{f {}}} {
-  upvar ngspice::ngspice_data arr
+  # Absolute names (::ngspice::…): inside this ngspice:: proc a relative ngspice::op_point_read
+  # resolves to ::ngspice::ngspice::op_point_read on Tcl 9 (TIP 278, no global fallback), which
+  # would error/miss the real var. op_point_read is declared in `namespace eval ngspice` (xschem.tcl).
+  upvar ::ngspice::ngspice_data arr
+  variable op_point_read
 
   if { $f eq {}} {
     set rawfile "$::netlist_dir/[file rootname [file tail [xschem get schname 0]]].raw"
@@ -75,20 +79,20 @@ proc ngspice::read_raw {{f {}}} {
   }
   set fp [open $rawfile r]
   fconfigure $fp -translation binary
-  set ngspice::op_point_read 0
+  set op_point_read 0
   ## not needed: done in ngspice::read_ngspice_raw
   # array unset ngspice::ngspice_data
   while 1 {
     ngspice::read_raw_dataset arr $fp
     if { [info exists arr(n\ points)] } {
       if { $arr(n\ points) == 1 } {
-        set ngspice::op_point_read 1; break
+        set op_point_read 1; break
       }
     } else break;
   }
   close $fp
   puts {Raw file read ...}
-  if { !$ngspice::op_point_read } {
+  if { !$op_point_read } {
     puts "no operating point found!"
   }
 }

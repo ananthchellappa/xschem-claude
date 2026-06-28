@@ -1,5 +1,5 @@
 # Integration smoke for CIW puts-capture (src/ciw.tcl ciw_capture_puts + ciw_exec scoping).
-# Spec: specs/ciw_puts_capture.md. Run under X with --pipe (the CIW only exists with has_x):
+# Spec: doc/claude/specs/ciw_puts_capture.md. Run under X with --pipe (the CIW only exists with has_x):
 #   DISPLAY=:0 ./src/xschem --pipe -q --logdir $(mktemp -d) \
 #       --preinit "set XSCHEM_SHAREDIR [pwd]/src" \
 #       --script tests/headless/test_ciw_puts_capture.tcl

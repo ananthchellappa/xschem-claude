@@ -60,7 +60,7 @@ proc create_save_plan {} {
           set idx [llength $jobs]
           set status "$cwd/$workroot/$idx.status"
           # Private XSCHEM_TMP_DIR per job (see open_close.tcl / the design note in
-          # claude_suggs/parallel_regression_tests.md) to avoid same-second tmp-dir
+          # doc/claude/suggestions/parallel_regression_tests.md) to avoid same-second tmp-dir
           # name collisions between sibling xschem processes.
           set tmpdir "$cwd/$workroot/$idx.tmp"
           set cmd "mkdir -p '$tmpdir' && $xschem_cmd '$cwd/$results_dir/$fn_sch' --nogui --pipe -d 1 --script '$cwd/$testname/tests/$f' --preinit 'set XSCHEM_TMP_DIR {$tmpdir}' 2> '$cwd/$results_dir/$output'; echo \$? > '$status'"

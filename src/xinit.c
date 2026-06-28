@@ -1280,11 +1280,11 @@ static int source_tcl_file(char *s)
 
     fprintf(errfp, "Tcl_AppInit() error: can not execute %s, please fix:\n", s);
     fprintf(errfp, "%s", tclresult());
-    #if TCL_MAJOR_VERSION >= 8 && TCL_MINOR_VERSION >=6
+    #if TCL_MAJOR_VERSION > 8 || (TCL_MAJOR_VERSION == 8 && TCL_MINOR_VERSION >= 6) /* Tcl_GetErrorLine: 8.6+ (incl. Tcl 9; old `&& MINOR>=6` was false on 9.0) */
     fprintf(errfp, "\nLine No: %d\n", Tcl_GetErrorLine(interp));
     #endif
     fprintf(errfp, "\n");
-    #if TCL_MAJOR_VERSION >= 8 && TCL_MINOR_VERSION >=6
+    #if TCL_MAJOR_VERSION > 8 || (TCL_MAJOR_VERSION == 8 && TCL_MINOR_VERSION >= 6) /* Tcl_GetErrorLine: 8.6+ (incl. Tcl 9; old `&& MINOR>=6` was false on 9.0) */
     my_snprintf(tmp, S(tmp), "tk_messageBox -icon error -type ok -message \
        {Tcl_AppInit() err 1: can not execute %s, please fix:\n%s\nLine No: %d\n}",
        s, tclresult(), Tcl_GetErrorLine(interp));
@@ -1440,6 +1440,7 @@ void swap_tabs(void)
   if(wc) {
     Xschem_ctx *ctx;
     char *tmp;
+    Window window;
     int i = 0;
     int j;
     for(j = 1; j < MAX_NEW_WINDOWS; j++) {
@@ -1461,6 +1462,14 @@ void swap_tabs(void)
     tmp = save_xctx[i]->current_win_path;
     save_xctx[i]->current_win_path = save_xctx[j]->current_win_path;
     save_xctx[j]->current_win_path = tmp;
+
+    /* Swap the X Window id too (as swap_windows does). For genuine tabs both slots share the .drw
+     * X window, so this is a no-op; but a FORCE-WINDOW (schematic_in_new_window ... window) has its
+     * OWN X window, and without this swap the surviving primary context would keep the sub-window's
+     * id -- which is then DESTROYED below -- and draw into a dead drawable (frozen main window). */
+    window = save_xctx[i]->window;
+    save_xctx[i]->window = save_xctx[j]->window;
+    save_xctx[j]->window = window;
 
     ctx = save_xctx[i];
     save_xctx[i] = save_xctx[j];
@@ -1679,7 +1688,7 @@ static int switch_tab(int *window_count, const char *win_path, int dr)
 
       if(has_x) tclvareval("reconfigure_layers_button {}", NULL);
       /* tabs share the main canvas; a detached window (non-empty top_path) keeps
-       * its own X window (specs/multi_window_detach.md) */
+       * its own X window (doc/claude/specs/multi_window_detach.md) */
       if(!xctx->top_path || !xctx->top_path[0]) xctx->window = save_xctx[0]->window;
       if(dr) resetwin(1, 1, 1, 0, 0);
       set_modify(-1); /* sets window title */
@@ -1821,7 +1830,7 @@ static void create_new_window(int *window_count, const char *win_path, const cha
   if(has_x) {
     windowid(toppath);
     /* bring the new window to the front so it is not lost behind the launcher /
-     * on another monitor (specs/multi_window_detach.md) */
+     * on another monitor (doc/claude/specs/multi_window_detach.md) */
     tclvareval("wm deiconify ", toppath, "; raise ", toppath, NULL);
     /* paint now rather than waiting for an Expose event — some window managers
      * (e.g. WSLg) drop the first Expose, leaving the window blank until the mouse
@@ -1965,7 +1974,7 @@ static void create_new_tab(int *window_count, const char *noconfirm, const char 
  * context's X window is repointed to it, its GCs and pixmap are recreated against
  * it, and the tab button + tab-queue entry are dropped. Done in the background
  * (operating on the detached context, restoring the active one) so the active tab
- * and the main strip are left untouched. specs/multi_window_detach.md. */
+ * and the main strip are left untouched. doc/claude/specs/multi_window_detach.md. */
 static void detach_tab(int *window_count, const char *win_path)
 {
   int n;
@@ -2031,7 +2040,7 @@ static void detach_tab(int *window_count, const char *win_path)
   xctx = cur;                /* restore the active context */
 }
 
-static void destroy_window(int *window_count, const char *win_path)
+static void destroy_window(int *window_count, const char *win_path, int dr)
 {
   int i, n;
   Xschem_ctx *savectx;
@@ -2109,6 +2118,13 @@ static void destroy_window(int *window_count, const char *win_path)
     if(xctx->current_win_path)
       tclvareval("restore_ctx ", xctx->current_win_path, " ; housekeeping_ctx", NULL);
     set_modify(-1); /* sets window title */
+    /* Redraw the surviving window when the caller asked for it (dr). destroy_tab() always
+     * draws at its tail, but destroy_window() historically dropped the dr flag, so closing
+     * the main .drw while a detached force-window was open (swap_tabs() then this destroy)
+     * left the absorbed schematic's title correct but the canvas stale until a manual
+     * resize/zoom/pan — issue 0049 follow-up. The non-tabbed close path passes dr=0 and
+     * issues its own draw(), so it is unaffected. */
+    if(dr && close) draw();
   } else {
     dbg(0, "new_schematic() destroy_window: there are no additional windows\n");
   }
@@ -2306,7 +2322,7 @@ static void destroy_all_tabs(int *window_count, int force)
  * detach), so destroy/switch must route by the TARGET context's kind, not by the
  * global flag — else a real window gets handled by the tab path (which deletes the
  * context but never destroys the toplevel → a zombie window).
- * specs/multi_window_detach.md. */
+ * doc/claude/specs/multi_window_detach.md. */
 static int is_window_context(const char *win_path)
 {
   int n;
@@ -2338,17 +2354,17 @@ int new_schematic(const char *what, const char *win_path, const char *fname, int
     }
   } else if(!strcmp(what, "create_window")) {
     /* force a real top-level window regardless of tabbed_interface, so a tab and a
-     * detached window can coexist (specs/multi_window_detach.md, Phase 0) */
+     * detached window can coexist (doc/claude/specs/multi_window_detach.md, Phase 0) */
     create_new_window(&window_count, win_path, fname, dr);
   } else if(!strcmp(what, "detach")) {
     /* tear an existing tab off into its own top-level window
-     * (specs/multi_window_detach.md, detach-first reorder) */
+     * (doc/claude/specs/multi_window_detach.md, detach-first reorder) */
     detach_tab(&window_count, win_path);
   } else if(!strcmp(what, "destroy")) {
     /* a real window is always closed by destroy_window (which destroys the
      * toplevel); only true tabs go to destroy_tab — even in tabbed mode */
     if(!tabbed_interface || is_window_context(win_path)) {
-      destroy_window(&window_count, win_path);
+      destroy_window(&window_count, win_path, dr);
     } else {
       destroy_tab(&window_count, win_path);
     }
@@ -2361,7 +2377,7 @@ int new_schematic(const char *what, const char *win_path, const char *fname, int
   } else if(!strcmp(what, "switch")) {
     /* a real window switches like windowed mode (keeps its own X canvas); only pure
      * tabs use switch_tab (shared canvas). Holds even in tabbed mode so windows and
-     * tabs can coexist (specs/multi_window_detach.md) */
+     * tabs can coexist (doc/claude/specs/multi_window_detach.md) */
     int ret;
     if(is_window_context(win_path)) ret = switch_window(&window_count, win_path, 1);
     else if(tabbed_interface) ret = switch_tab(&window_count, win_path, dr);
@@ -3518,7 +3534,7 @@ int Tcl_AppInit(Tcl_Interp *inter)
  }
 
  /* autostart the Library Manager if the rc / --script asked for it (after the
-  * main window and any --script exist). See specs/library_manager_launch.md. */
+  * main window and any --script exist). See doc/claude/specs/library_manager_launch.md. */
  if(has_x && !cli_opt_quit && tclgetboolvar("launch_library_manager")) {
    tcleval("xschem library_manager");
  }

@@ -1,4 +1,4 @@
-# Library Manager — git Maintain reports (specs/library_git.md §2.1, §4.1).
+# Library Manager — git Maintain reports (doc/claude/specs/library_git.md §2.1, §4.1).
 # Phase 2 backend seam: the multi-library Show-Status / History report builders
 # and the bucket-by-root grouping that makes them safe across topologies. This is
 # the GUI-free, fully headless half of Phase 2 (the menubar + multi-select picker

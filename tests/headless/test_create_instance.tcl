@@ -1,4 +1,4 @@
-# Create Instance (Cadence-style Add Instance; specs/cadence_create_instance.md).
+# Create Instance (Cadence-style Add Instance; doc/claude/specs/cadence_create_instance.md).
 # New two-dialog design:
 #   - `xschem create_instance` opens the .ciform FORM (Edit > Create Instance);
 #     Tools > Insert symbol is gone. The form has Library/Cell/View/Instance-name

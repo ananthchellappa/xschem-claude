@@ -1,5 +1,5 @@
 # Phase 0.1 self-test: proves the fixtures.tcl helpers work before any TC relies
-# on them. Spec: code_analysis/wire_editing_spec_and_plan.md, Phase 0.
+# on them. Spec: doc/claude/code_analysis/wire_editing_spec_and_plan.md, Phase 0.
 #   DISPLAY=:0 src/xschem --pipe -q --nolog --script tests/headless/wireedit/test_wireedit_00_selftest.tcl
 source [file join [file dirname [info script]] fixtures.tcl]
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """xschem_libmigrate — migrate flat xschem libraries to the lib/cell/view layout.
 
-Part of the library-manager work (see code_analysis/library_manager_design.md).
+Part of the library-manager work (see doc/claude/code_analysis/library_manager_design.md).
 Converts one or more FLAT libraries (a directory of `<cell>.sym` / `<cell>.sch`
 files) into the Cadence/OpenAccess-style layout:
 
