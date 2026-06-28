@@ -11,3 +11,4 @@ DEFINE rom8k rom8k
 DEFINE analyses analyses
 DEFINE xTAG xTAG
 DEFINE rulz-r8c33 rulz-r8c33
+DEFINE SANDBOX SANDBOX
