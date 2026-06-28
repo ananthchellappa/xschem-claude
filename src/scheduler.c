@@ -4147,10 +4147,14 @@ static int xschem_cmds_l(Tcl_Interp *interp, int argc, const char *argv[], int *
     else if(!strcmp(argv[1], "library_manager"))
     {
       if(has_x) {
-        log_action("xschem library_manager");
+        /* Log the argument-bearing form so the CIW / action-log line reproduces the
+         * located cell (issue 0055), not just "open the manager". The lcv is one Tcl
+         * list arg -- brace it, matching the adjacent libmgr::open call. */
         if(argc > 2) {
+          log_action("xschem library_manager {%s}", argv[2]);
           tclvareval("libmgr::open {", argv[2], "}", NULL);
         } else {
+          log_action("xschem library_manager");
           tcleval("libmgr::open");
         }
       }
