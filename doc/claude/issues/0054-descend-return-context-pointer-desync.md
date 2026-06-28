@@ -94,14 +94,25 @@ drift (`rootx`/`rooty` byte-stable across cycles) but on WSLg it did **not raise
 clearing the attribute drops it back, so the window stayed behind. (Context still switched, so e.g.
 Ctrl-A after a return correctly acted on the now-current window; only the visual raise was missing.)
 
-**Actual fix:** `wm iconify` + `wm deiconify`. On WSLg (X11 → Windows) that maps to a **minimize +
-restore**: restoring brings the window to the front and active (as if its taskbar button were
-clicked) **and** restores it to its *remembered* position — so it raises **and** does not drift.
-Verified position-stable (`rootx`/`rooty` byte-identical across cycles) on both a dialog and the main
-window. The `update` between iconify and deiconify lets the WM register the minimize. Trade-off: a
-brief minimize/restore flash on each raise. The shared helper `raise_activate_toplevel`
-(`src/xschem.tcl`) does this; `cadence::focus_window`, `libmgr::raise_to_front` and
-`ciform::raise_to_front` all route through it and add their own keyboard focus afterward.
+Third attempt — `wm iconify` + `wm deiconify` (Windows minimize+restore): **rejected**. On WSLg the
+deiconify did not undo the minimize — the window got stuck minimized in the tray and had to be
+restored by hand. Worse than the drift.
+
+**Conclusion — no single method gives BOTH raise and no-drift on WSLg** (all empirically tested):
+re-map (`withdraw`/`deiconify`) raises but the WM re-places it NW; `-topmost` toggle never moves it
+but doesn't raise; `iconify` gets stuck minimized; geometry restore / measured correction don't hold.
+So the shared helper `raise_activate_toplevel` (`src/xschem.tcl`) exposes the trade-off via a flag
+`::raise_no_drift`:
+- **default** — `withdraw`/`deiconify` re-map: the window **raises** (the reported, working
+  behavior) but drifts a little NW each time.
+- **`set raise_no_drift 1`** — `-topmost` toggle: never drifts, but does **not** raise on WSLg (the
+  engine context still switches — Ctrl-A acts on the right window — you just may need to click it
+  forward).
+
+`cadence::focus_window`, `libmgr::raise_to_front` and `ciform::raise_to_front` all route through the
+helper and add their own keyboard focus. (A WSLg WM that honored either `_NET_ACTIVE_WINDOW` or a
+real `SetWindowPos` topmost toggle would let us have both, but Tk on this XWayland→Windows path
+exposes neither.)
 
 ## 4. Acceptance
 

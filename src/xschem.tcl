@@ -5378,30 +5378,37 @@ proc force_window_repaint {win {tries 0}} {
   }
 }
 
-# Raise + activate an already-open top-level reliably, WITHOUT it drifting.
-#
-# On WSLg (X11 -> Windows) the cheaper tricks each fail one half of the goal:
-#  - a plain `raise` is ignored by focus-stealing prevention (window does not come forward);
-#  - the `-topmost` stacking toggle also fails to raise it here (clearing it drops it back);
-#  - the withdraw/deiconify re-map DOES raise it but lets the WM re-PLACE the window, so it
-#    crept North-West on every raise (it drifts even with `wm geometry` set while withdrawn:
-#    the reported geometry stays put while the real rootx/rooty walk NW).
-#
-# wm iconify + wm deiconify maps to a Windows MINIMIZE + RESTORE: restoring brings the
-# window to the front and active (as if its taskbar button were clicked) AND restores it to
-# its REMEMBERED position, so it raises without drifting -- verified position-stable
-# (rootx/rooty byte-identical) across cycles on both a dialog and the main window. The cost
-# is a brief minimize/restore flash. The `update` between lets the WM register the iconify
-# before the deiconify. Callers add their own keyboard focus afterward. (issue 0054)
+# Raise + activate an already-open top-level on WMs (notably WSLg) whose focus-stealing
+# prevention ignores a plain `raise`. The freshly-MAPPED window IS granted focus, so re-map
+# it (withdraw + deiconify). Whether ::raise_no_drift is set picks the trade-off, because no
+# single method gives both raise AND no-drift on WSLg (all empirically tested, issue 0054):
+#  - DEFAULT (raise): withdraw + deiconify brings the window forward, but WSLg's WM re-places
+#    it a little North-West on every map (geometry restore does NOT hold -- the reported
+#    `wm geometry` stays put while the real rootx/rooty creep; a measured correction does not
+#    stick either). So the window raises but drifts a little each time.
+#  - ::raise_no_drift on: do NOT re-map; just `wm attributes -topmost` toggle. Never touches
+#    geometry so it cannot drift, but on WSLg it does NOT actually raise (clearing the
+#    attribute drops the window back) -- the engine context still switches, you just may need
+#    to click the window to bring it forward.
+# (`wm iconify`+`deiconify` was tried and REJECTED: on WSLg the deiconify did not undo the
+# minimize, leaving the window stuck in the system tray.) Callers add their own focus.
 proc raise_activate_toplevel {top} {
-  global has_x
+  global has_x raise_no_drift
   if { ![info exists has_x] || !$has_x } return
   if {![winfo exists $top]} return
-  catch {
-    wm iconify $top
-    update
-    wm deiconify $top
+  if {[info exists raise_no_drift] && $raise_no_drift} {
+    catch { wm attributes $top -topmost 1; update idletasks; wm attributes $top -topmost 0 }
+    return
   }
+  if {[winfo ismapped $top]} {
+    set geo [wm geometry $top]
+    wm withdraw $top
+    wm deiconify $top
+    catch {wm geometry $top $geo}
+  } else {
+    catch {wm deiconify $top}
+  }
+  raise $top
 }
 
 # A new-window descend reloads the parent from DISK, so any UNSAVED edits in the source window
