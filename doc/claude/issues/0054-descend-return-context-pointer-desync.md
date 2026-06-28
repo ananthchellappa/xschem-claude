@@ -19,6 +19,8 @@ Hierarchy A→B→C, open A read-only, descend into an instance of B in a **new 
 press **Ctrl-E** (return one level). Expected: the first window (W1, showing A) becomes active.
 Instead, with the pointer still physically in W2:
 
+- W1 is **not raised** — it stays under W2 (a plain `raise` is refused by WSLg/WM focus-stealing
+  prevention on an already-open window);
 - the WM shell does not show W1 as active;
 - the schematic "stops responding" — clicking in W2 selects an instance in **W1** (by W2's
   coordinates); **Ctrl-A** selects in W1; **hover highlighting stops** in W2;
@@ -39,23 +41,40 @@ moves the pointer nor reliably moves WM focus on WSLg.
 
 ## 3. Fix
 
-`cadence::focus_window` now **warps the pointer into the target canvas** after switching the context:
+`cadence::focus_window` does three things after switching the engine context (kept synchronous so
+`return_to_top`'s loop still sees each hop):
 
 ```tcl
-xschem new_schematic switch $win            ;# synchronous: return_to_top's loop sees it
-raise [winfo toplevel $win]
-event generate $win <Motion> -warp 1 -x <w/2> -y <h/2>   ;# pointer -> target, re-syncs context/focus
+xschem new_schematic switch $win                    ;# 1. engine context (authoritative)
+# 2. RAISE+ACTIVATE the target's toplevel via the freshly-mapped trick (only across toplevels):
+if {[winfo ismapped $top]} { set geo [wm geometry $top]; wm withdraw $top; wm deiconify $top
+                             catch {wm geometry $top $geo} } else { catch {wm deiconify $top} }
+raise $top; update idletasks
+# 3. WARP the pointer into the target canvas:
+event generate $win <Motion> -warp 1 -x <w/2> -y <h/2>
 focus -force $win
 ```
 
-Warping makes pointer, Tk focus and engine context agree immediately — the honest meaning of "this
-window is now active" under focus-follows-mouse. The context switch stays synchronous so
-`return_to_top`'s loop still sees each hop. Verified: after Ctrl-E from W2, both `current_win_path`
-**and** `winfo containing` the pointer are W1 (`.drw`).
+1. **Re-map raise (the proven Library-Manager trick, `library_manager_launch.md`).** WSLg/WM
+   focus-stealing prevention refuses `raise`/`focus` on an already-open window but grants it to a
+   freshly **mapped** one, so re-map the target toplevel (`wm withdraw` + `wm deiconify`, geometry
+   preserved). This is what reliably brings W1 forward and active when it is under W2 — the thing a
+   plain `raise` failed to do. Verified safe on the main window `.`. Skipped when the target shares
+   the current toplevel (tab switches need no re-map).
+2. **Pointer warp.** With `mouse_follows_focus` on (default) the engine context follows the
+   **pointer** (it switches only on `EnterNotify`, not on Motion/Button). When the windows overlap
+   (the reported "under another window" case) the raise already slides the now-top canvas under the
+   stationary pointer and X fires a real `EnterNotify` that syncs context+focus; the warp
+   additionally covers side-by-side / multi-monitor layouts. Together: pointer, Tk focus and context
+   all agree, so the old window's clicks/hover no longer act on the new context.
 
-Not fixed (WM limitation): the WM title-bar "active" tint. On WSLg the title bar only re-tints on a
-real click, not on focus-follows-mouse focus; the app cannot synthesize that without a disruptive
-withdraw/deiconify of the main window. The schematic itself is fully live after the warp.
+WM title-bar "active" tint: the re-map (a fresh map) is exactly what grants the window focus, so on
+WSLg it should now also update the title tint — unlike the earlier plain `raise`/`focus`.
+
+**Validation note:** the headless GUI environment has no real pointer (warps land the pointer at
+0,0; `winfo pointerxy` is unreliable), so the raise/warp/title behavior must be confirmed on real
+WSLg. The context-switch logic IS verified headless (`test_descend_newwin_return.tcl`,
+`current_win_path`/`currsch`/`schname` after each return).
 
 ## 4. Acceptance
 

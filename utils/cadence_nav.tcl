@@ -78,12 +78,40 @@ proc cadence::win_live {win} {
 # title-bar "active" tint is the window manager's own call -- on WSLg it only updates on
 # a click -- so that cosmetic may lag; the schematic itself is fully live.)
 proc cadence::focus_window {win} {
-  if {$win eq [xschem get current_win_path]} return
+  set cur [xschem get current_win_path]
+  if {$win eq $cur} return
   xschem new_schematic switch $win
   catch {
     set top [winfo toplevel $win]
-    if {[winfo exists $top]} { raise $top }
+    set curtop {}
+    if {[winfo exists $cur]} { set curtop [winfo toplevel $cur] }
+    # Raise + activate the target's TOP-LEVEL. A plain `raise` is refused by WSLg/WM
+    # focus-stealing prevention on an already-open window (the reported "doesn't even
+    # get raised when under another window"), but focus IS granted to a freshly MAPPED
+    # one -- so re-map it (withdraw + deiconify, preserving geometry), the same trick
+    # the Library Manager launch uses (doc/claude/specs/library_manager_launch.md). Only
+    # when the target is a DIFFERENT OS window (tabs share one toplevel; switching tabs
+    # needs no re-map). Verified safe on the main window '.'.
+    if {[winfo exists $top] && $top ne $curtop} {
+      if {[winfo ismapped $top]} {
+        set geo [wm geometry $top]
+        wm withdraw $top
+        wm deiconify $top
+        catch {wm geometry $top $geo}
+      } else {
+        catch {wm deiconify $top}
+      }
+      raise $top
+      update idletasks   ;# let the re-map/raise settle before we measure + warp into it
+    }
     if {[winfo exists $win]} {
+      # mouse_follows_focus (default) ties the engine context to the POINTER, switching
+      # only on EnterNotify; warp the pointer into the target canvas so pointer, Tk focus
+      # and context agree (else the old window's clicks/hover keep acting on the new
+      # context, and the old window's hover stops, until the pointer crosses a boundary).
+      # When the windows overlap (the "under another window" case) the raise above already
+      # slides the now-top canvas under the stationary pointer, firing a real EnterNotify;
+      # the warp additionally covers side-by-side / multi-monitor layouts.
       event generate $win <Motion> -warp 1 \
         -x [expr {[winfo width $win] / 2}] -y [expr {[winfo height $win] / 2}]
       focus -force $win
