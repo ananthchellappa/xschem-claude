@@ -869,8 +869,13 @@ int scope_targets(int displayed_inst, const char *scope, int *targets)
   return n;
 }
 
+/* keep_name: when nonzero, do NOT rewrite the instance name's first character to the
+ * new symbol's template prefix on a symbol change (the slick Edit Properties form treats
+ * the dedicated Name field as authoritative -- an instance name is arbitrary and a source
+ * change must not re-prefix it; issue 0058). All other behavior (re-point master, name
+ * uniqueness, bbox) is unchanged. */
 static int apply_symbol_prop(const char *new_prop, const char *old_prop,
-                             int displayed_inst, const char *scope)
+                             int displayed_inst, const char *scope, int keep_name)
 {
   int k, sym_number;
   int no_change_props=0;
@@ -977,8 +982,9 @@ static int apply_symbol_prop(const char *new_prop, const char *old_prop,
     if(name && name[0] ) {
       char *old_name = NULL;
       dbg(1, "apply_symbol_prop(): prefix!='\\0', name=%s\n", name);
-      /* change prefix if changing symbol type; */
-      if(prefix && old_prefix && old_prefix != prefix) {
+      /* change prefix if changing symbol type (unless the caller asked to keep the
+       * instance name verbatim -- slick form, issue 0058) */
+      if(!keep_name && prefix && old_prefix && old_prefix != prefix) {
         name[0]=(char)prefix;
         my_strdup(_ALLOC_ID_, &ptr, subst_token(xctx->inst[*ii].prop_ptr, "name", name) );
       } else {
@@ -1031,14 +1037,15 @@ static int apply_symbol_prop(const char *new_prop, const char *old_prop,
 /* Mid-session apply for the slick form's Apply / OK (P2): resolve the displayed
  * instance by its session-stable id (so it survives any reindexing between
  * applies) and fan the change set to <scope>. Exposed as the Tcl command
- * `xschem apply_properties <scope> <displayed_id> <new_prop> <old_prop>`. */
+ * `xschem apply_properties <scope> <displayed_id> <new_prop> <old_prop> [keep_name]`.
+ * keep_name (default 0): preserve the instance name across a source change (issue 0058). */
 int apply_instance_properties(const char *scope, unsigned int displayed_id,
-                              const char *new_prop, const char *old_prop)
+                              const char *new_prop, const char *old_prop, int keep_name)
 {
   int idx = inst_index_from_id(displayed_id);
   int modified;
   if(idx < 0) return 0;
-  modified = apply_symbol_prop(new_prop, old_prop, idx, scope);
+  modified = apply_symbol_prop(new_prop, old_prop, idx, scope, keep_name);
   if(modified) set_modify(1);
   return modified;
 }
@@ -1069,7 +1076,7 @@ static int update_symbol(const char *result, int x, int selected_inst)
   }
   /* legacy/vim path keeps the prior "all selected" semantics, which combined
    * with changed-fields-only reproduces the old behavior. */
-  modified = apply_symbol_prop(new_prop, xctx->old_prop, selected_inst, "selected");
+  modified = apply_symbol_prop(new_prop, xctx->old_prop, selected_inst, "selected", 0);
   my_free(_ALLOC_ID_, &new_prop);
   my_free(_ALLOC_ID_, &xctx->old_prop);
   return modified;
