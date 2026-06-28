@@ -1561,6 +1561,7 @@ extern void draw_hilight_wire(unsigned int fg, NetHilightStyle *st, double dash_
                               double linex1, double liney1, double linex2, double liney2, double bus);
 extern void draw_hilight_dot(unsigned int fg, double x, double y, double r);
 extern void incr_hilight_color(void);
+extern void decr_hilight_color(void);
 extern void get_inst_pin_coord(int i, int j, double *x, double *y);
 
 extern void del_inst_table(void);

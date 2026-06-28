@@ -722,6 +722,17 @@ void incr_hilight_color(void)
   dbg(1, "incr_hilight_color(): xctx->hilight_color=%d\n", xctx->hilight_color);
 }
 
+/* Step the style cursor back one (wrapping), the manual counterpart of the
+ * automatic incr_hilight_color() so a user can re-apply a recently used style to
+ * the next highlight. Bound to ALT-minus via cadence_style_rc.
+ * See doc/claude/specs/hilight_style_decrement.md */
+void decr_hilight_color(void)
+{
+  int n = xctx->n_net_hilight_styles > 0 ? xctx->n_net_hilight_styles : 1;
+  xctx->hilight_color = (xctx->hilight_color - 1 + n) % n;
+  dbg(1, "decr_hilight_color(): xctx->hilight_color=%d\n", xctx->hilight_color);
+}
+
 static void set_rawfile_for_bespice()
 {
   char raw_file[PATH_MAX];

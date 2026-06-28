@@ -82,6 +82,13 @@ bind .drw <Key-9> {xschem hilight_net_interactive;   break}
 bind .drw <Key-8> {xschem unhilight_net_interactive; break}
 bind .drw <Key-0> {xschem unhilight_all;             break}
 
+# Alt-minus : step the highlight STYLE cursor back one (wrapping). The cursor
+# auto-advances after each highlight; this re-applies a recently used style to the
+# next highlight. Bound for both the main-row minus and the numeric-keypad minus.
+# See doc/claude/specs/hilight_style_decrement.md.
+bind .drw <Alt-Key-minus>       {cadence::prev_hilight_style; break}
+bind .drw <Alt-Key-KP_Subtract> {cadence::prev_hilight_style; break}
+
 # --------------------------------------------------------------------------
 # Cadence-style key bindings (library navigation + hierarchy).
 # See doc/claude/specs/cadence_bindkey_plan.md. Pure Tcl, no C changes: each bind lives on
@@ -97,6 +104,7 @@ set _ut [file join [file dirname [file normalize [info script]]] .. utils]
 source [file join $_ut lib_mgr_helpers.tcl]
 source [file join $_ut cadence_nav.tcl]
 source [file join $_ut cadence_clip.tcl]
+source [file join $_ut hilight_style_nav.tcl]
 # moved unset _ut
 
 # Ctrl-Alt-S : locate a cell in the Library Manager. Acts on the selected instance's

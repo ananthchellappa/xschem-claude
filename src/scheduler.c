@@ -1029,6 +1029,21 @@ static int xschem_cmds_d(Tcl_Interp *interp, int argc, const char *argv[], int *
       Tcl_ResetResult(interp);
     }
 
+    /* decr_hilight_color
+     *   Step the net-highlight style cursor back one (wrapping modulo the number of
+     *   styles) and return the resulting style index. Increment happens automatically
+     *   per highlight; this decrement (ALT-minus) lets a user re-apply a recently used
+     *   style to the next highlight. See doc/claude/specs/hilight_style_decrement.md */
+    else if(!strcmp(argv[1], "decr_hilight_color"))
+    {
+      char res[30];
+      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(!xctx->net_hilight_style || xctx->n_net_hilight_styles <= 0) build_net_hilight_styles();
+      decr_hilight_color();
+      my_snprintf(res, S(res), "%d", xctx->hilight_color);
+      Tcl_SetResult(interp, res, TCL_VOLATILE);
+    }
+
     /* delete
      *   Delete selection */
     else if(!strcmp(argv[1], "delete"))
@@ -3002,7 +3017,21 @@ static int xschem_cmds_i(Tcl_Interp *interp, int argc, const char *argv[], int *
      *   blend_black:  blend with black background and remove alpha
      *   write_back:   write resulting image back into `image_data` attribute
      */
-    if(!strcmp(argv[1], "image"))
+    /* incr_hilight_color
+     *   Step the net-highlight style cursor forward one (wrapping modulo the number
+     *   of styles) and return the resulting style index. This normally happens
+     *   automatically per highlight; exposed for symmetry with decr_hilight_color.
+     *   See doc/claude/specs/hilight_style_decrement.md */
+    if(!strcmp(argv[1], "incr_hilight_color"))
+    {
+      char res[30];
+      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(!xctx->net_hilight_style || xctx->n_net_hilight_styles <= 0) build_net_hilight_styles();
+      incr_hilight_color();
+      my_snprintf(res, S(res), "%d", xctx->hilight_color);
+      Tcl_SetResult(interp, res, TCL_VOLATILE);
+    }
+    else if(!strcmp(argv[1], "image"))
     {
       int n, i, c;
       int what = 0;
