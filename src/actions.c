@@ -2854,8 +2854,6 @@ void clear_schematic(int cancel, int symbol)
       if(cancel == 1) cancel=save(1, 0);
       if(cancel != -1) { /* -1 means user cancel save request */
         char name[PATH_MAX];
-        struct stat buf;
-        int i;
         /* The current buffer is being discarded (saved above, or the user declined
          * to save). Drop its cellName~.sch autosave backup so a leftover ~ on the
          * next open unambiguously means a crash, not an intentional discard. (A real
@@ -2865,29 +2863,20 @@ void clear_schematic(int cancel, int symbol)
         unselect_all(1);
         remove_symbols();
         clear_drawing();
+        /* next free untitled[-n] name, avoiding both on-disk files and names already open
+         * in other windows so a blank window does not collide (issue 0056) */
         if(symbol == 1) {
           xctx->netlist_type = CAD_SYMBOL_ATTRS;
           set_tcl_netlist_type();
-          for(i=0;; ++i) { /* find a non-existent untitled[-n].sym */
-            if(i == 0) my_snprintf(name, S(name), "%s.sym", "untitled");
-            else my_snprintf(name, S(name), "%s-%d.sym", "untitled", i);
-            if(stat(name, &buf)) break;
-          }
-          my_free(_ALLOC_ID_, &xctx->sch[xctx->currsch]);
-          my_mstrcat(_ALLOC_ID_, &xctx->sch[xctx->currsch], pwd_dir, "/", name, NULL);
-          my_strncpy(xctx->current_name, name, S(xctx->current_name));
+          get_unused_untitled_name(1, name, S(name));
         } else {
           xctx->netlist_type = CAD_SPICE_NETLIST;
           set_tcl_netlist_type();
-          for(i=0;; ++i) {
-            if(i == 0) my_snprintf(name, S(name), "%s.sch", "untitled");
-            else my_snprintf(name, S(name), "%s-%d.sch", "untitled", i);
-            if(stat(name, &buf)) break;
-          }
-          my_free(_ALLOC_ID_, &xctx->sch[xctx->currsch]);
-          my_mstrcat(_ALLOC_ID_, &xctx->sch[xctx->currsch], pwd_dir, "/", name, NULL);
-          my_strncpy(xctx->current_name, name, S(xctx->current_name));
+          get_unused_untitled_name(0, name, S(name));
         }
+        my_free(_ALLOC_ID_, &xctx->sch[xctx->currsch]);
+        my_mstrcat(_ALLOC_ID_, &xctx->sch[xctx->currsch], pwd_dir, "/", name, NULL);
+        my_strncpy(xctx->current_name, name, S(xctx->current_name));
         draw();
         set_modify(0);
         /* a fresh blank untitled buffer is always editable -- there is no file to

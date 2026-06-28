@@ -130,6 +130,44 @@ Xschem_ctx *get_window_ctx(int i, const char **win_path)
   return ctx;
 }
 
+/* True if any OPEN window/tab OTHER than the live `xctx` already holds a buffer whose
+ * basename equals `base`. The untitled namer uses this so a second blank window (Cadence
+ * Ctrl-N) does not collide with an unsaved untitled.sch already being edited elsewhere --
+ * such a buffer is not on disk, so a stat()-only check would miss it. See issue 0056. */
+static int untitled_basename_open(const char *base)
+{
+  int i;
+  for(i = 0; i < MAX_NEW_WINDOWS; ++i) {
+    const char *path, *b;
+    Xschem_ctx *ctx = get_window_ctx(i, NULL);
+    if(!ctx || ctx == xctx) continue;
+    path = ctx->sch[ctx->currsch];
+    if(!path) continue;
+    b = strrchr(path, '/');
+    b = b ? b + 1 : path;
+    if(!strcmp(b, base)) return 1;
+  }
+  return 0;
+}
+
+/* Pick the next free "untitled[-n].sch" (or .sym when `symbol`) BASENAME into `name`.
+ * A candidate is taken if a file with it exists in the current directory OR an open
+ * window/tab already edits a buffer with that basename (issue 0056). Callers prepend the
+ * directory themselves. Shared by save.c (empty-filename load) and actions.c (discard). */
+void get_unused_untitled_name(int symbol, char *name, int namesize)
+{
+  int n;
+  struct stat buf;
+  const char *ext = symbol ? "sym" : "sch";
+  for(n = 0;; ++n) {
+    if(n == 0) my_snprintf(name, namesize, "untitled.%s", ext);
+    else my_snprintf(name, namesize, "untitled-%d.%s", n, ext);
+    if(!stat(name, &buf)) continue;            /* exists on disk */
+    if(untitled_basename_open(name)) continue; /* open in another window */
+    break;
+  }
+}
+
 Xschem_ctx *get_old_xctx(void)
 {
   return old_xctx;

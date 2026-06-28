@@ -3661,7 +3661,7 @@ int load_schematic(int load_symbols, const char *fname, int reset_undo, int aler
   char *ffname = NULL; /*copy of fname so I can change it */
   char msg[PATH_MAX+100];
   struct stat buf;
-  int i, ret = 1; /* success */
+  int ret = 1; /* success */
   int save_no_autosave = xctx->no_autosave;
 
   /* Loading is not a user edit: suppress the autosave "~" write so opening a file
@@ -3804,16 +3804,9 @@ int load_schematic(int load_symbols, const char *fname, int reset_undo, int aler
     /* if(reset_undo) xctx->time_last_modify = time(NULL); */ /* no file given, set mtime to current time */
     if(reset_undo) xctx->time_last_modify = 0; /* no file given, set mtime to 0 (undefined) */
     clear_drawing();
-    for(i=0;; ++i) {
-      if(xctx->netlist_type == CAD_SYMBOL_ATTRS) {
-        if(i == 0) my_snprintf(name, S(name), "%s.sym", "untitled");
-        else my_snprintf(name, S(name), "%s-%d.sym", "untitled", i);
-      } else {
-        if(i == 0) my_snprintf(name, S(name), "%s.sch", "untitled");
-        else my_snprintf(name, S(name), "%s-%d.sch", "untitled", i);
-      }
-      if(stat(name, &buf)) break;
-    }
+    /* next free untitled[-n] name, avoiding both on-disk files and names already open in
+     * other windows so a second blank window does not collide (issue 0056) */
+    get_unused_untitled_name(xctx->netlist_type == CAD_SYMBOL_ATTRS, name, S(name));
     my_strncpy(xctx->current_name, name, S(xctx->current_name));
     if(getenv("PWD")) {
       /* $env(PWD) better than pwd_dir as it does not dereference symlinks */
