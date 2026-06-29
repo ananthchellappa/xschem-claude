@@ -282,6 +282,17 @@ typedef int Tcl_Size;
 #define xTEXT 16
 #define POLYGON 32
 #define ARC 64
+#define INST_PIN 128 /* sel_array pseudo-type: a single pin of a placed instance.
+                      * Carried as Selected.type=INST_PIN, Selected.n=instance index,
+                      * Selected.col=pin index (index into the symbol's PINLAYER rects).
+                      * Pin selection is transient + INERT: it never lives in
+                      * xInstance.sel and never participates in edits; only the
+                      * per-instance pin_sel[] array (below) and this sel_array entry
+                      * carry it. See doc/claude/specs/pin_selection.md */
+/* half-size (user units) of the selected-pin marker; ~constant on screen because it
+ * scales with zoom. Used by select_pin/draw_selection/unselect_all so the draw and
+ * erase always agree. Needs xctx + tk_scaling in scope. */
+#define PIN_SEL_HANDLE_H (0.6 * CADWIREMINDIST * xctx->zoom * tk_scaling)
 
 /*  for netlist.c */
 #define BOXSIZE 400
@@ -651,6 +662,15 @@ typedef struct
   short rot;
   short flip;
   short sel;
+  unsigned char *pin_sel; /* NULL, or a lazily-allocated array of length pin_sel_size:
+                           * pin_sel[j]!=0 => pin j of this instance is selected.
+                           * Transient selection state, NOT saved, NOT in .sch. Mirrors
+                           * xPoly.selected_point but is deliberately INDEPENDENT of the
+                           * .sel field (pins are inert in edits). See
+                           * doc/claude/specs/pin_selection.md */
+  int pin_sel_size;       /* allocated length of pin_sel (== symbol PINLAYER pin count
+                           * at alloc time). Lets every consumer bound its scan so a
+                           * later symbol pin-count change can never OOB-read pin_sel. */
   short embed; /* cache embed=true|false attribute in prop_ptr */
   int color; /* hilight color */
   int buried_hilight; /* style index of a highlighted net buried in this instance's
@@ -1055,6 +1075,19 @@ typedef struct {
   int need_reb_sel_arr;
   int lastsel;
   int maxsel;
+  int pin_sel_active; /* hint: 1 once any instance pin has been selected (pin_selection.md).
+                       * Lets unselect_all() clear stale pin selections even when lastsel/
+                       * SELECTION were reset out from under them (e.g. after delete()).
+                       * A false positive only costs one harmless instance scan. */
+  int pin_pending;    /* pin_selection.md D3: a Button1 press landed on a pin and armed a
+                       * wire; the release decides click(select pin) vs drag(draw wire).
+                       * 0 = none. pin_pending_n/c hold the armed instance/pin index. */
+  int pin_pending_n;
+  int pin_pending_c;
+  int pin_press_x;    /* press-time screen coords of the armed pin gesture, used at
+                       * release to measure click-vs-drag (mouse_moved is suppressed
+                       * while STARTWIRE is active, so it cannot be relied on here). */
+  int pin_press_y;
   Selected *sel_array;
   Selected first_sel; /* first selected instance (used as master when editing multiple objects) */
   int prep_net_structs;
@@ -1308,6 +1341,7 @@ typedef struct {
   void (*clear_undo)(void);
   int case_insensitive; /* for case insensitive compare where needed MIRRORED IN TCL*/
   int show_hidden_texts; /* force show texts that have hide=true attribute set MIRRORED IN TCL*/
+  int en_pin_select; /* enable selecting individual instance pins (click on pin) MIRRORED IN TCL*/
   int (*x_strcmp)(const char *, const char *);
   Lcc hier_attr[CADMAXHIER]; /* hierarchical recursive attribute substitution when descending */
 } Xschem_ctx;
@@ -1627,6 +1661,9 @@ extern int action_cmd_unbind(int argc, const char **argv);
 extern int action_cmd_bindings(int argc, const char **argv);
 extern void resetwin(int create_pixmap, int clear_pixmap, int force, int w, int h);
 extern Selected find_closest_obj(double mx,double my, int override_lock);
+/* find the instance pin within a tight radius of (mx,my); returns 1 and fills *r
+ * (type=INST_PIN, n=instance, col=pin) on hit, 0 otherwise. See pin_selection.md */
+extern int find_closest_pin(double mx, double my, Selected *r);
 /*extern void find_closest_net_or_symbol_pin(double mx,double my, double *x, double *y);*/
 extern int find_closest_net_or_symbol_pin(double mx,double my, double *x, double *y);
 
@@ -1929,6 +1966,7 @@ extern void clear_expandlabel_data(void);
 extern void merge_file(int selection_load, const char ext[]);
 extern void select_wire(int i, unsigned short select_mode, int fast, int override_lock);
 extern void select_element(int i, unsigned short select_mode, int fast, int override_lock);
+extern void select_pin(int i, int j, unsigned short select_mode, int fast);
 extern void select_text(int i, unsigned short select_mode, int fast, int override_lock);
 extern void select_box(int c, int i, unsigned short select_mode, int fast, int override_lock);
 extern void select_arc(int c, int i, unsigned short select_mode, int fast, int override_lock);

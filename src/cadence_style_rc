@@ -39,6 +39,10 @@ set snap_cursor_size 4
 set persistent_command 1
 set use_cursor_for_selection 1
 set enable_stretch 1
+# Click a symbol pin (of a placed instance) to select it; drag from a pin draws a
+# wire; Q on a selected pin shows its name/dir/net read-only. See
+# doc/claude/specs/pin_selection.md
+set en_pin_select 1
 
 # to get around not being able to zoom in with CTRL-scrollwheel, suggestion from SS:
 # didn't work :( Claude explained why

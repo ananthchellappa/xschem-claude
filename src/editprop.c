@@ -1377,6 +1377,28 @@ void edit_property(int x)
    return;
  } /* if((xctx->lastsel==0 ) */
 
+ /* Single instance pin selected: open a READ-ONLY viewer of its name, direction and
+  * connected net (a pin on an instance is not editable). pin_selection.md D5 */
+ if(xctx->lastsel == 1 && xctx->sel_array[0].type == INST_PIN) {
+   int n = xctx->sel_array[0].n, p = xctx->sel_array[0].col;
+   if(n >= 0 && n < xctx->instances && xctx->inst[n].ptr >= 0) {
+     xSymbol *sym = xctx->inst[n].ptr + xctx->sym;
+     if(p >= 0 && p < sym->rects[PINLAYER]) {
+       const char *pname = get_tok_value(sym->rect[PINLAYER][p].prop_ptr, "name", 0);
+       const char *pdir  = get_tok_value(sym->rect[PINLAYER][p].prop_ptr, "dir", 0);
+       const char *net;
+       prepare_netlist_structs(0);
+       net = (xctx->inst[n].node && xctx->inst[n].node[p]) ? xctx->inst[n].node[p] : "";
+       tclsetvar("pin_view(inst)", xctx->inst[n].instname ? xctx->inst[n].instname : "");
+       tclsetvar("pin_view(name)", pname[0] ? pname : "(unnamed)");
+       tclsetvar("pin_view(dir)",  pdir[0]  ? pdir  : "inout");
+       tclsetvar("pin_view(net)",  net[0]   ? net   : "(unconnected)");
+       tcleval("pin_property_viewer");
+     }
+   }
+   return;
+ }
+
  /* The old "force preserve_unchanged_attrs when multi-selected" default is gone:
   * selecting N instances no longer implies editing N. Changed-fields-only is now
   * the unconditional contract (forced in update_symbol) and the slick form's

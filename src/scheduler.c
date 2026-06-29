@@ -1740,6 +1740,12 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
             Tcl_SetResult(interp, b, TCL_VOLATILE);
           }
           break;
+          case 'e':
+          if(!strcmp(argv[2], "en_pin_select")) { /* 1 if clicking a pin selects it (pin_selection.md) */
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            Tcl_SetResult(interp, my_itoa(xctx->en_pin_select),TCL_VOLATILE);
+          }
+          break;
           case 'f':
           if(!strcmp(argv[2], "first_sel")) { /* get data about first selected object */
             char res[40];
@@ -6875,7 +6881,8 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
         Tcl_SetResult(interp, "xschem select: missing arguments.", TCL_STATIC);
         return TCL_ERROR;
       } else if(argc < 5 && (!strcmp(argv[2], "rect") || !strcmp(argv[2], "line") ||
-                     !strcmp(argv[2], "poly") || !strcmp(argv[2], "arc"))) {
+                     !strcmp(argv[2], "poly") || !strcmp(argv[2], "arc") ||
+                     !strcmp(argv[2], "pin"))) {
         Tcl_SetResult(interp, "xschem select: missing arguments.", TCL_STATIC);
         return TCL_ERROR;
       } else if(argc < 4) {
@@ -6899,6 +6906,23 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
            xctx->ui_state |= SELECTION;
         }
         Tcl_SetResult(interp, (n >= 0) ? "1" : "0" , TCL_STATIC);
+      }
+      /* xschem select pin <inst> <pinidx> [clear|nodraw] : select/deselect one pin of
+       * an instance. <inst> is a name or index (get_instance), <pinidx> indexes the
+       * symbol's PINLAYER pins. Primarily a headless hook for tests + future pin ops.
+       * See doc/claude/specs/pin_selection.md */
+      else if(!strcmp(argv[2], "pin") && argc > 4) {
+        int n = get_instance(argv[3]);
+        int p = atoi(argv[4]);
+        int rects = (n >= 0 && xctx->inst[n].ptr >= 0) ?
+                    (xctx->inst[n].ptr + xctx->sym)->rects[PINLAYER] : 0;
+        int valid = (n >= 0 && p >= 0 && p < rects);
+        if(valid) {
+          select_pin(n, p, sel, fast);
+          if(sel) xctx->ui_state |= SELECTION;
+          rebuild_selected_array();
+        }
+        Tcl_SetResult(interp, valid ? "1" : "0" , TCL_STATIC);
       }
       else if(!strcmp(argv[2], "wire") && argc > 3) {
         int n=atoi(argv[3]);
@@ -7106,6 +7130,7 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
           case xTEXT:   tname = "text";     id = (int)xctx->text[i].id; break;
           case POLYGON: tname = "poly";     id = (int)xctx->poly[c][i].id; break;
           case ARC:     tname = "arc";      id = (int)xctx->arc[c][i].id; break;
+          case INST_PIN: tname = "pin";     id = (int)xctx->inst[i].id; break; /* i=inst, c=pin */
           default:      tname = "unknown";  break;
         }
         my_snprintf(row, S(row), "{%s %d %d %d}", tname, i, c, id);
@@ -7229,6 +7254,14 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
               set_modify(1); xctx->push_undo();
               my_strdup2(_ALLOC_ID_, &xctx->header_text, argv[3]);
             }
+          }
+          else if(!strcmp(argv[2], "en_pin_select")) { /* enable selecting individual instance pins */
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            xctx->en_pin_select = atoi(argv[3]);
+            /* keep the mirrored Tcl var in sync so a CIW 'xschem set en_pin_select 1'
+             * is not later clobbered by housekeeping_ctx pushing the (stale) Tcl var
+             * back to C on a window/tab focus change (pin_selection.md). */
+            tclsetboolvar("en_pin_select", xctx->en_pin_select);
           }
           else if(!strcmp(argv[2], "hide_symbols")) { /* set to 0,1,2 for various hiding level of symbols */
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}

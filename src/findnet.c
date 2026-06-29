@@ -519,4 +519,40 @@ Selected find_closest_obj(double mx, double my, int override_lock)
  return sel;    /*sel.type = 0 if nothing found */
 }
 
+/* Pin selection (doc/claude/specs/pin_selection.md): find the instance pin whose
+ * point is within a tight pick radius of (mx,my). On hit, fill *r with
+ * type=INST_PIN, n=instance index, col=pin index and return 1; else return 0.
+ *
+ * Deliberately NOT part of the find_closest_obj() cascade: it is invoked only from
+ * the en_pin_select-gated click gesture (callback.c), so the other find_closest_obj
+ * callers (hover, move-start, net-highlight) are unaffected. The radius equals the
+ * ordinary wire/box pick distance (CADWIREMINDIST), scaled by zoom so it stays a
+ * fixed on-screen tolerance; because a pin is a point, the cursor must sit
+ * essentially on the pin for it to win. */
+int find_closest_pin(double mx, double my, Selected *r)
+{
+  double t, threshold, d, best = DBL_MAX, xx, yy;
+  int i, j, rects, bestn = -1, bestp = -1;
+  t = CADWIREMINDIST * xctx->zoom * tk_scaling;  /* linear tolerance (user units) */
+  threshold = t * t;                             /* squared, to compare with d     */
+  for(i = 0; i < xctx->instances; ++i) {
+    if(xctx->inst[i].ptr < 0) continue;
+    /* cheap reject: pin lies within the instance bbox; widen it by the tolerance
+     * so a pin sitting on the bbox edge is not missed */
+    if(!POINTINSIDE(mx, my, xctx->inst[i].x1 - t, xctx->inst[i].y1 - t,
+                            xctx->inst[i].x2 + t, xctx->inst[i].y2 + t)) continue;
+    rects = (xctx->inst[i].ptr + xctx->sym)->rects[PINLAYER];
+    for(j = 0; j < rects; ++j) {
+      get_inst_pin_coord(i, j, &xx, &yy);
+      d = (mx - xx) * (mx - xx) + (my - yy) * (my - yy);
+      if(d <= threshold && d < best) { best = d; bestn = i; bestp = j; }
+    }
+  }
+  if(bestn >= 0) {
+    r->type = INST_PIN; r->n = bestn; r->col = (unsigned int)bestp;
+    return 1;
+  }
+  return 0;
+}
+
 

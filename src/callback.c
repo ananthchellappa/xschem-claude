@@ -173,6 +173,7 @@ void redraw_w_a_l_r_p_z_rubbers(int force)
 void abort_operation(void)
 {
   xctx->no_draw = 0;
+  xctx->pin_pending = 0; /* drop any armed pin-click gesture (pin_selection.md D3) */
   tcleval("set constr_mv 0" );
   dbg(1, "abort_operation(): Escape: ui_state=%d, last_command=%d\n", xctx->ui_state, xctx->last_command);
   xctx->constr_mv=0;
@@ -5487,6 +5488,49 @@ static void handle_button_press(int event, int state, int rstate, KeySym key, in
          default: break;
        } /*end switch */
 
+       /* Pin selection (en_pin_select, doc/claude/specs/pin_selection.md D3/D5): when the
+        * cursor is within the tight radius of an instance pin, pick that pin. Pin
+        * selection is INERT (no edit), so it works even in a READ-ONLY view -- that is
+        * exactly the browse/probe use case. Two paths:
+        *   - read-only: select the pin immediately (NO wire is possible; importantly do
+        *     NOT call start_wire(), whose readonly_block() pops a modal dialog).
+        *   - editable: ARM a wire from the pin and record it; the release handler then
+        *     decides click(select pin) vs drag(draw wire). Runs BEFORE add_wire_from_inst.
+        * Read the GLOBAL Tcl var, not xctx->en_pin_select: the C field is per-context and
+        * gets reset to the (stale) Tcl var by housekeeping_ctx on every window/tab focus
+        * change (close/open/paste), which made the feature flaky. The Tcl global is the
+        * single source of truth (set by the menu, the rc, and the setter). */
+       if(tclgetboolvar("en_pin_select") && !already_selected && intuitive &&
+          !(state & (ShiftMask | ControlMask))) {
+         Selected psel;
+         /* Detect the pin from the RAW cursor position (not the snapped one): a pin
+          * may not sit on the snap grid, and find_closest_pin already applies a
+          * zoom-scaled radius, so the raw cursor is both more accurate and forgiving. */
+         if(find_closest_pin(xctx->mousex, xctx->mousey, &psel)) {
+           if(xctx->readonly) {
+             /* inert select, no wire (and no readonly_block dialog) */
+             unselect_all(1);
+             select_pin((int)psel.n, (int)psel.col, SELECTED, 0);
+             rebuild_selected_array();
+             draw_selection(xctx->gc[SELLAYER], 0);
+             xctx->ui_state |= SELECTION;
+           } else {
+             double pinx, piny;
+             int prev_state = xctx->ui_state;
+             get_inst_pin_coord((int)psel.n, (int)psel.col, &pinx, &piny);
+             xctx->pin_pending   = 1;
+             xctx->pin_pending_n = (int)psel.n;
+             xctx->pin_pending_c = (int)psel.col;
+             xctx->pin_press_x   = mx;   /* screen anchor for click-vs-drag at release */
+             xctx->pin_press_y   = my;
+             unselect_all(1);
+             start_wire(pinx, piny);          /* wire emanates from the pin if dragged */
+             if(prev_state == STARTWIRE) { tcleval("set constr_mv 0"); xctx->constr_mv = 0; }
+           }
+           return;
+         }
+       }
+
        /* Clicking and drag on an instance pin -> drag a new wire */
        if(!xctx->readonly && intuitive && !already_selected) {
          if(add_wire_from_inst(&sel, xctx->mousex_snap, xctx->mousey_snap)) return;
@@ -5623,6 +5667,36 @@ static void handle_button_release(int event, KeySym key, int state, int button, 
    }
    xctx->ui_state &= ~DESEL_CLICK;
    dbg(1, "release: shape_point_selected=%d\n", xctx->shape_point_selected);
+
+   /* Pin-selection gesture (pin_selection.md D3): a press on a pin armed a wire from
+    * that pin and recorded the pin. Decide click vs drag now by how far the pointer
+    * travelled from the press anchor (mouse_moved is NOT set while STARTWIRE is
+    * active, so it cannot be used here):
+    *   no drag -> it was a click: abort the armed wire and select the pin.
+    *   drag    -> the user wants a wire: leave STARTWIRE active (wire-drawing mode,
+    *              rubber follows the cursor) and consume the release without placing,
+    *              so a plain click is the ONLY way to select and any movement means
+    *              "draw a wire". */
+   if(xctx->pin_pending) {
+     int pn = xctx->pin_pending_n, pc = xctx->pin_pending_c;
+     int moved = (abs(mx - xctx->pin_press_x) > (int)(tk_scaling * 3) ||
+                  abs(my - xctx->pin_press_y) > (int)(tk_scaling * 3));
+     xctx->pin_pending = 0;
+     if(!moved) {
+       if(xctx->ui_state & STARTWIRE) {
+         new_wire(RUBBER | CLEAR, xctx->mousex_snap, xctx->mousey_snap);
+         xctx->ui_state &= ~STARTWIRE;
+         xctx->last_command = 0;
+       }
+       unselect_all(1);
+       select_pin(pn, pc, SELECTED, 0);
+       rebuild_selected_array();
+       draw_selection(xctx->gc[SELLAYER], 0);
+       xctx->ui_state |= SELECTION;
+     }
+     return; /* consume the release: click selected the pin, drag stays in wire mode */
+   }
+
    /* bring up context menu if no pending operation */
    if(state == Button3Mask && xctx->semaphore <2) {
      if(!end_place_move_copy_zoom()) {

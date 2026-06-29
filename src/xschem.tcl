@@ -9573,6 +9573,35 @@ proc change_color {} {
   xschem set semaphore [expr {[xschem get semaphore] -1}]
 }
 
+# Read-only "Pin properties" viewer (pin_selection.md D5). Invoked from C
+# edit_property() when the selection is a single instance pin. All fields are
+# disabled (greyed) because a pin on an instance is not editable; this is a
+# reference/probe aid (e.g. to confirm the pin and its attached net before
+# saving terminal currents). Values arrive in the pin_view(...) Tcl array.
+proc pin_property_viewer {} {
+  global pin_view
+  set w .pinpropview
+  catch {destroy $w}
+  toplevel $w
+  wm title $w {Pin properties (read-only)}
+  set r 0
+  foreach {lbl key} {Instance inst {Pin name} name Direction dir Net net} {
+    label $w.l$r -text $lbl -anchor e
+    entry $w.e$r -width 32
+    $w.e$r insert 0 [expr {[info exists pin_view($key)] ? $pin_view($key) : {}}]
+    $w.e$r configure -state disabled -disabledforeground black
+    grid $w.l$r $w.e$r -sticky ew -padx 4 -pady 2
+    incr r
+  }
+  grid columnconfigure $w 1 -weight 1
+  button $w.close -text Close -command [list destroy $w]
+  grid $w.close -columnspan 2 -pady 6
+  bind $w <Escape> [list destroy $w]
+  bind $w <Return> [list destroy $w]
+  catch {wm transient $w [winfo toplevel [focus]]}
+  focus $w.close
+}
+
 # The "Edit Properties" dialog. v1 (slick-property-forms) delegates to the
 # structured per-field form (src/property_form.tcl); the legacy raw-text-box
 # implementation is preserved below as edit_prop_legacy for rollback/reference.
@@ -12562,13 +12591,14 @@ proc save_ctx {context} {
 
 proc housekeeping_ctx {} {
   global has_x simulate_bg show_hidden_texts case_insensitive draw_window hide_symbols
-  global netlist_type intuitive_interface file_chooser
+  global netlist_type intuitive_interface file_chooser en_pin_select
   if {![info exists has_x]} {return}
   uplevel #0 {
   }
   # puts "housekeeping_ctx, path: [xschem get current_win_path]"
   xschem set hide_symbols $hide_symbols
   xschem set draw_window $draw_window
+  xschem set en_pin_select $en_pin_select
   xschem set intuitive_interface  $intuitive_interface
   xschem case_insensitive $case_insensitive
   set_sim_netlist_waves_buttons
@@ -13124,6 +13154,9 @@ proc build_widgets { {topwin {} } } {
      -onvalue disk -offvalue memory -command {switch_undo}
   $topwin.menubar.option add checkbutton -label "Enable stretch" -variable enable_stretch \
      -selectcolor $selectcolor  -accelerator Y
+  $topwin.menubar.option add checkbutton -label "Enable pin selection (click a pin to select it)" \
+     -variable en_pin_select -selectcolor $selectcolor \
+     -command {xschem set en_pin_select $en_pin_select}
   $topwin.menubar.option add checkbutton -label "Enable infix-interface" -variable infix_interface \
      -selectcolor $selectcolor
   $topwin.menubar.option add checkbutton -label "Enable orthogonal wiring" -variable orthogonal_wiring \
@@ -14218,6 +14251,7 @@ set_ne live_cursor2_backannotate 1
 set_ne cursor_2_hook {}
 set_ne draw_window 0
 set_ne show_hidden_texts 0
+set_ne en_pin_select 0
 set_ne incr_hilight 1
 set_ne enable_stretch 0
 set_ne constr_mv 0

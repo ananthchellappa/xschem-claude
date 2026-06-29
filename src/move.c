@@ -73,6 +73,23 @@ void rebuild_selected_array() /* can be used only if new selected set is lower *
    xctx->sel_array[xctx->lastsel].n = i;
    xctx->sel_array[xctx->lastsel++].col = WIRELAYER;
   }
+ /* emit one INST_PIN entry per selected pin (pin_selection.md). This is independent
+  * of inst.sel, so a pins-only instance contributes pin entries but no ELEMENT entry.
+  * Scan is bounded by min(pin count, pin_sel_size) so a symbol pin-count change can
+  * never read past the allocation. */
+ for(i=0;i<xctx->instances; ++i)
+  if(xctx->inst[i].pin_sel && xctx->inst[i].ptr >= 0)
+  {
+   int p, rects = (xctx->inst[i].ptr + xctx->sym)->rects[PINLAYER];
+   int lim = rects < xctx->inst[i].pin_sel_size ? rects : xctx->inst[i].pin_sel_size;
+   for(p = 0; p < lim; ++p) if(xctx->inst[i].pin_sel[p])
+   {
+    check_selected_storage();
+    xctx->sel_array[xctx->lastsel].type = INST_PIN;
+    xctx->sel_array[xctx->lastsel].n = i;
+    xctx->sel_array[xctx->lastsel++].col = (unsigned int)p;
+   }
+  }
  for(i=0;i<xctx->wires; ++i)
   if(xctx->wire[i].sel)
   {
@@ -494,6 +511,25 @@ void draw_selection(GC g, int interruptable)
          xctx->rx1-xctx->inst[n].x0+xctx->deltax,xctx->ry1-xctx->inst[n].y0+xctx->deltay);
      }
      break;
+    case INST_PIN: {
+      /* selected instance pin (pin_selection.md D4): a box + diagonal cross centered on
+       * the pin point, stroked in the SELECTION colour (SELLAYER). MUST NOT use the
+       * pin's own layer colour -- pins are usually drawn in PINLAYER (often red), so a
+       * PINLAYER marker is invisible on the pin. The box+X *shape* is what distinguishes
+       * it from the whole-instance outline. Pins are inert, so it ignores any
+       * in-progress move offset and sits on the true pin. NOW mode -> uses its own GC,
+       * independent of the ADD/END batch flushed with g. Erase pass (g==gctiled)
+       * restores the box region, which also covers the cross. */
+      double px, py, h = PIN_SEL_HANDLE_H;
+      GC mg = (g == xctx->gctiled) ? xctx->gctiled : xctx->gc[SELLAYER];
+      get_inst_pin_coord(n, (int)c, &px, &py);
+      drawtemprect(mg, NOW, px - h, py - h, px + h, py + h);
+      if(g != xctx->gctiled) {
+        drawtempline(mg, NOW, px - h, py - h, px + h, py + h);
+        drawtempline(mg, NOW, px - h, py + h, px + h, py - h);
+      }
+      break;
+    }
    }
 #ifdef __unix__
    if(interruptable && pending_events())
