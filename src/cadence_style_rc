@@ -120,6 +120,7 @@ source [file join $_ut hilight_style_nav.tcl]
 source [file join $_ut bus_resize.tcl]
 source [file join $_ut bus_transpose.tcl]
 source [file join $_ut text_resize.tcl]
+source [file join $_ut apply_hilight.tcl]
 # moved unset _ut
 
 # Ctrl-Alt-S : locate a cell in the Library Manager. Acts on the selected instance's
@@ -213,5 +214,12 @@ xschem bind key 65453 ctrl canvas edit.text_shrink    ;# Ctrl+KP_Subtract (keypa
 
 # net highlighting tweaks - just testing..
 source [file join $_ut display.tcl]
+
+# One shortcut to apply YOUR favourite net-highlight style at any time (apply_hilight,
+# doc/claude/specs/apply_hilight.md). With a net/pin/label selected it styles it at once;
+# with nothing selected it prompts you to click or drag-select net(s), applies, and ends
+# (Esc cancels). Edit the style (named fields, any order, omitted -> default) and the key
+# to taste -- e.g. {color blue thickness 3 pattern {20 20} angle 30 march march_fwd rate 2}.
+bind .drw <Key-F5> {apply_hilight {color purple thickness 3 pattern {20 20}}; break}
 unset _ut
 
