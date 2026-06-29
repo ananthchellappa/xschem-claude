@@ -1060,6 +1060,19 @@ static int xschem_cmds_d(Tcl_Interp *interp, int argc, const char *argv[], int *
       delete_files();
     }
 
+    /* deselect_mode
+     *   Enter the persistent deselect-one-at-a-time mode: each subsequent click on a
+     *   selected object removes it from the selection (clicks on unselected objects or
+     *   empty space do nothing); ESC ends the mode, keeping whatever is still selected.
+     *   No-op if nothing is selected. This is the engine behind the rebindable `d`
+     *   action edit.deselect_mode. See doc/claude/specs/deselect_one_mode.md */
+    else if(!strcmp(argv[1], "deselect_mode"))
+    {
+      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      enter_deselect_mode();
+      Tcl_ResetResult(interp);
+    }
+
     /* descend [n] [notitle]
      *   Descend into selected component instance. Optional number 'n' specifies the
      *   instance number to descend into for vector instances (default: 0).

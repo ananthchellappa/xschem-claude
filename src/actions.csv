@@ -77,6 +77,7 @@ edit.cut,command,edit,Cut,Ctrl+X,xschem cut,,,Cut,
 edit.paste,command,edit,Paste,Ctrl+V,xschem paste,,,Paste,
 edit.delete,command,edit,Delete,Del,xschem delete,,,Delete,
 edit.select_all,command,edit,Select all,Ctrl+A,xschem select_all,,,Select all,
+edit.deselect_mode,command,edit,Deselect one object at a time,d,xschem deselect_mode,,,Deselect one object at a time (click a selected object; ESC to end),1,1
 edit.duplicate_objects,command,edit,Duplicate objects,C,xschem copy_objects,,,Duplicate objects,,1
 edit.move_objects,command,edit,Move objects,M,xschem move_objects,,,Move objects,,1
 edit.move_objects_stretching_attached_wires,command,edit,Move objects stretching attached wires,Control+M,xschem move_objects stretch,,,Move objects stretching attached wires,,1

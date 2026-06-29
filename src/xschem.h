@@ -248,10 +248,12 @@ typedef int Tcl_Size;
 #define GRAPHPAN 32768U     /* bit 15 */
 #define MENUSTART 65536U    /* bit 16 */
 #define GRABSCREEN 131072U  /* bit 17 */
-#define DESEL_CLICK 262144U /* bit 18 */
+/* bit 18 (was DESEL_CLICK) is free: the old single-shot 'd' deselect was replaced by
+ * the persistent DESEL_MODE below (doc/claude/specs/deselect_one_mode.md) */
 #define DESEL_AREA 524288U  /* bit 19 */
 #define NET_HILIGHT 1048576U   /* bit 20: interactive net-highlight mode (click to hilight) */
 #define NET_UNHILIGHT 2097152U /* bit 21: interactive net-unhighlight mode (click to remove) */
+#define DESEL_MODE 4194304U    /* bit 22: persistent deselect-one-at-a-time mode (click to deselect, ESC to end) */
 
 #define SELECTED 1U         /*  used in the .sel field for selected objs. */
 #define SELECTED1 2U        /*  first point selected... */
@@ -1631,6 +1633,7 @@ extern int select_dangling_nets(void);
 extern void tclmainloop(void);
 extern int Tcl_AppInit(Tcl_Interp *interp);
 extern void abort_operation(void);
+extern void enter_deselect_mode(void);
 extern void draw_crosshair(int what, int state);
 extern void start_line(double mx, double my);
 extern void start_wire(double mx, double my);

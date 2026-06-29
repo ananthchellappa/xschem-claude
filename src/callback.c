@@ -183,6 +183,16 @@ void abort_operation(void)
   if(xctx->ui_state & (NET_HILIGHT | NET_UNHILIGHT))
     tclvareval(xctx->top_path, ".statusbar.10 configure -state normal -text { }", NULL);
 
+  /* leaving deselect-one-at-a-time mode (doc/claude/specs/deselect_one_mode.md): ESC
+   * just exits the mode and KEEPS whatever is still selected (unlike the net-(un)hilight
+   * modes above, which fall through to unselect_all). Clear the prompt and return. */
+  if(xctx->ui_state & DESEL_MODE) {
+    xctx->ui_state &= ~DESEL_MODE;
+    if(has_x)
+      tclvareval(xctx->top_path, ".statusbar.10 configure -state normal -text { }", NULL);
+    return;
+  }
+
   if(xctx->ui_state & STARTPOLYGON) new_polygon(END, xctx->mousex_snap, xctx->mousey_snap);
   if(xctx->last_command && xctx->ui_state & (STARTWIRE | STARTLINE)) {
     if(xctx->ui_state & STARTWIRE) new_wire(RUBBER|CLEAR, xctx->mousex_snap, xctx->mousey_snap);
@@ -1941,6 +1951,43 @@ static void unselect_at_mouse_pos(int mx, int my)
        rebuild_selected_array(); /* sets or clears xctx->ui_state SELECTION flag */
 }
 
+/* Enter the persistent deselect-one-at-a-time mode (doc/claude/specs/deselect_one_mode.md).
+ * Shared by the bound key (act_deselect_mode) and the `xschem deselect_mode` subcommand.
+ * Modelled on the net-(un)highlight pick modes: a resting ui_state bit, exited by ESC.
+ * Gated on a non-empty selection (the mode only makes sense when there is something to
+ * deselect): with nothing selected it is a no-op with a hint, matching the spec's
+ * "if there are objects selected, ... goes into deselect mode". Non-mutating, so it is
+ * allowed in a read-only view (deselecting changes no schematic content). */
+void enter_deselect_mode(void)
+{
+  rebuild_selected_array();
+  if(xctx->lastsel <= 0) {
+    if(has_x)
+      tcleval("if {[info procs ciw_echo] ne {}} {ciw_echo {Deselect mode: nothing is selected.}}");
+    return;
+  }
+  xctx->ui_state |= DESEL_MODE;
+  if(has_x) {
+    tclvareval(xctx->top_path, ".statusbar.10 configure -state active -text {",
+      "DESELECT! (click a selected object to deselect it, ESC to end) }", NULL);
+    tcleval("if {[info procs ciw_echo] ne {}} {ciw_echo "
+            "{Deselect mode: click a selected object to remove it from the selection; press ESC to end.}}");
+  }
+}
+
+/* One click while in deselect-one-at-a-time mode: deselect the object under the cursor
+ * if it is selected, and STAY in the mode (preserve the bit). unselect_at_mouse_pos()
+ * uses select_object(..., select_mode=0, ...), which deselects the hit object and can
+ * never select one, so a click on an unselected object or on empty space is a no-op.
+ * Save/restore the mode bit like net_hilight_mode_click(), in case the selection-array
+ * path clears ui_state. */
+static void deselect_mode_click(int mx, int my)
+{
+  unsigned int mode = xctx->ui_state & DESEL_MODE;
+  unselect_at_mouse_pos(mx, my);
+  xctx->ui_state |= mode;
+}
+
 static void snapped_wire(double c_snap)
 {
   double x, y;
@@ -1968,14 +2015,13 @@ static int check_menu_start_commands(int state, double c_snap, int mx, int my)
       xctx->ui_state, xctx->ui_state2, xctx->last_command);
 
   if((xctx->ui_state & MENUSTART) && (xctx->ui_state2 & MENUSTARTDESEL) ) {
-    if(xctx->ui_state & DESEL_CLICK) {
-      unselect_at_mouse_pos(mx, my);
-    } else { /* unselect by area */
-      xctx->mx_save = mx; xctx->my_save = my;
-      xctx->mx_double_save=xctx->mousex;
-      xctx->my_double_save=xctx->mousey;
-      xctx->ui_state |= DESEL_AREA;
-    }
+    /* unselect by area (the 'D' / Shift+D area-deselect). The old single-shot 'd'
+     * click-deselect path was removed when 'd' became the persistent deselect mode
+     * (doc/claude/specs/deselect_one_mode.md). */
+    xctx->mx_save = mx; xctx->my_save = my;
+    xctx->mx_double_save=xctx->mousex;
+    xctx->my_double_save=xctx->mousey;
+    xctx->ui_state |= DESEL_AREA;
     return 1;
   }
   /* read-only backstop: any armed object-mutating command is refused here (the
@@ -2763,6 +2809,10 @@ static int act_highlight_send_waveform(const ActionEvent *e)
   return 1;
 }
 
+/* Enter the persistent deselect-one-at-a-time mode (doc/claude/specs/deselect_one_mode.md).
+ * Canvas-only; the click loop + ESC exit live in handle_button_press / abort_operation. */
+static int act_deselect_mode(const ActionEvent *e) { (void)e; enter_deselect_mode(); return 1; }
+
 /* --- action registry: stable id -> behavior --- */
 /* An action is backed by EITHER a C function (fn) OR a Tcl command (tcl); exactly
  * one is non-NULL. Tcl-backing (Phase 3d) lets the ~60 tcleval keysym branches
@@ -2874,6 +2924,11 @@ static ActionDef action_registry[] = {
     "Grow displayed text size of selected notes / pin-label names" },
   { "edit.text_shrink", NULL, "textsize_apply shrink",
     "Shrink displayed text size of selected notes / pin-label names" },
+  /* deselect-one-at-a-time mode (doc/claude/specs/deselect_one_mode.md): default key 'd'.
+   * C-backed; the csv command `xschem deselect_mode` is behavior-equivalent but nolog'd
+   * (mode entry is a UI affordance; its effect — the deselect clicks — is not logged). */
+  { "edit.deselect_mode", act_deselect_mode, NULL,
+    "Deselect one object at a time (click a selected object; ESC to end)" },
 };
 static const int num_action_defs = (int)(sizeof(action_registry)/sizeof(action_registry[0]));
 
@@ -3095,6 +3150,10 @@ static void init_input_bindings(void)
   set_input_binding_idle(DEV_KEY, 'j', ControlMask, ACTX_CANVAS, "sym.list.create_pins_from_highlight_nets");
   set_input_binding_idle(DEV_KEY, 'j', Mod1Mask,    ACTX_CANVAS, "sym.list.create_labels_from_highlight_nets"); /* Alt */
   set_input_binding_idle(DEV_KEY, 'j', Mod4Mask,    ACTX_CANVAS, "sym.list.create_labels_from_highlight_nets"); /* Super */
+  /* deselect-one-at-a-time mode (doc/claude/specs/deselect_one_mode.md): default key 'd'.
+   * Canvas-only (never forwarded to a graph); idle-gated so the mode is not entered while
+   * a modal dialog is up (semaphore>=2). Replaces the old hardcoded `case 'd'` deselect. */
+  set_input_binding_idle(DEV_KEY, 'd', 0,           ACTX_CANVAS, "edit.deselect_mode");
   input_bindings_initialized = 1;
 }
 
@@ -4008,15 +4067,10 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
       break;
 
     case 'd':
-      if(rstate == 0) { /* unselect object under the mouse */
-        if(infix_interface) {
-          unselect_at_mouse_pos(mx, my);
-        } else {
-          xctx->ui_state |= (MENUSTART | DESEL_CLICK);
-          xctx->ui_state2 = MENUSTARTDESEL;
-        }
-      }
-      else if(rstate == ControlMask) { /* delete files */
+      /* plain 'd' (unselect-under-mouse) is now the data-driven action
+       * edit.deselect_mode (default key 'd', remappable); see
+       * doc/claude/specs/deselect_one_mode.md. Only Ctrl+d stays here. */
+      if(rstate == ControlMask) { /* delete files */
         if(xctx->semaphore >= 2) break;
         delete_files();
       }
@@ -5416,6 +5470,15 @@ static void handle_button_press(int event, int state, int rstate, KeySym key, in
        return;
      }
 
+     /* deselect-one-at-a-time mode (doc/claude/specs/deselect_one_mode.md): a click
+      * deselects the object under the cursor if it is selected and stays in the mode
+      * until ESC. Placed before pin-select / persistent-wire / normal-select so the
+      * mode owns plain Button1 clicks; empty / unselected clicks are no-ops. */
+     if(xctx->ui_state & DESEL_MODE) {
+       deselect_mode_click(mx, my);
+       return;
+     }
+
      /* start another wire or line in persistent mode */
      if(!xctx->readonly && tclgetboolvar("persistent_command") && xctx->last_command) {
        if(xctx->last_command == STARTLINE)  start_line(xctx->mousex_snap, xctx->mousey_snap);
@@ -5665,7 +5728,6 @@ static void handle_button_release(int event, KeySym key, int state, int button, 
      waves_callback(event, mx, my, key, button, aux, state);
      return;
    }
-   xctx->ui_state &= ~DESEL_CLICK;
    dbg(1, "release: shape_point_selected=%d\n", xctx->shape_point_selected);
 
    /* Pin-selection gesture (pin_selection.md D3): a press on a pin armed a wire from
