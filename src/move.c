@@ -983,6 +983,10 @@ void copy_objects(int what)
         xctx->inst[xctx->instances].lab=NULL;
         xctx->inst[xctx->instances].node=NULL;
         xctx->inst[xctx->instances].name=NULL;
+        xctx->inst[xctx->instances].pin_sel=NULL;      /* transient pin selection: the copy
+                                                        * must NOT alias the source's heap
+                                                        * pin_sel buffer (pin_selection.md) */
+        xctx->inst[xctx->instances].pin_sel_size=0;
         my_strdup2(_ALLOC_ID_, &xctx->inst[xctx->instances].name, xctx->inst[n].name);
         my_strdup2(_ALLOC_ID_, &xctx->inst[xctx->instances].prop_ptr, xctx->inst[n].prop_ptr);
         my_strdup2(_ALLOC_ID_, &xctx->inst[xctx->instances].lab, xctx->inst[n].lab);

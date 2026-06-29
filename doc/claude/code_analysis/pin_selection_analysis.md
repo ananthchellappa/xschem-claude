@@ -80,6 +80,24 @@ improvement — rationale in the plan doc §0.1):**
    hint (one bool test when idle). Regression-caught: select pin → delete →
    unselect_all → next pin-select previously reported 2 selected instead of 1.
 
+**Lifecycle correction (code review, 2026-06-28).** The first cut freed `pin_sel`
+only at the two instance-death sites (`store.c`) — but `pin_sel` is a heap pointer in
+`xInstance`, and the codebase has SIX sites that struct-copy an instance and re-NULL
+its other heap pointers (`prop_ptr`/`node`/`name`/`instname`/`lab`) while leaving
+`pin_sel` ALIASED or garbage: `move.c` copy (`:980`), `actions.c` `place_symbol`
+(`:1674`, reused slot), `save.c` `load_inst` (`:2889`), `paste.c` (`:299`),
+`in_memory_undo.c` snapshot (`:344`) and restore (`:483`). Each was a double-free /
+use-after-free. Fix: set `pin_sel=NULL; pin_sel_size=0;` at every such site (a
+copied/loaded/restored/placed instance is never pin-selected — selection is transient).
+The *travel* sites (compaction shift `store.c:502`, insert shift `actions.c:1652`,
+`change_elem_order` swap `editprop.c:1199`) need nothing — `pin_sel` rides with its
+instance. **Rule for any future `xInstance` field that owns heap memory: handle it at
+ALL of these sites, not just the death doors.** Also fixed in review: `find_closest_pin`
+now honours the instance `lock` and `enable_layer[PINLAYER]` (like its siblings); the
+`Q` viewer reads `name`/`dir` one at a time (they share `get_tok_value`'s static
+buffer); the drag-release falls through to the legacy wire-commit; and a pins-only
+`delete()` no longer pushes a no-op undo slot.
+
 Everything else (the polygon-vertex precedent, `get_inst_pin_coord` for the
 transform, the `SELLAYER` temp primitives, the toggle plumbing) is used as the
 original analysis describes.

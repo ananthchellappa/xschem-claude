@@ -533,10 +533,16 @@ int find_closest_pin(double mx, double my, Selected *r)
 {
   double t, threshold, d, best = DBL_MAX, xx, yy;
   int i, j, rects, bestn = -1, bestp = -1;
+  /* pins live on PINLAYER: if that layer is disabled the pins are not drawn, so
+   * (like find_closest_box/find_closest_arc) do not hit-test invisible pins */
+  if(!xctx->enable_layer[PINLAYER]) return 0;
   t = CADWIREMINDIST * xctx->zoom * tk_scaling;  /* linear tolerance (user units) */
   threshold = t * t;                             /* squared, to compare with d     */
   for(i = 0; i < xctx->instances; ++i) {
     if(xctx->inst[i].ptr < 0) continue;
+    /* honour the instance lock (as find_closest_element does): a lock=true device
+     * must not be grabbed for pin selection / wire-start either */
+    if(!strboolcmp(get_tok_value(xctx->inst[i].prop_ptr, "lock", 0), "true")) continue;
     /* cheap reject: pin lies within the instance bbox; widen it by the tolerance
      * so a pin sitting on the bbox edge is not missed */
     if(!POINTINSIDE(mx, my, xctx->inst[i].x1 - t, xctx->inst[i].y1 - t,

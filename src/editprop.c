@@ -1384,15 +1384,21 @@ void edit_property(int x)
    if(n >= 0 && n < xctx->instances && xctx->inst[n].ptr >= 0) {
      xSymbol *sym = xctx->inst[n].ptr + xctx->sym;
      if(p >= 0 && p < sym->rects[PINLAYER]) {
-       const char *pname = get_tok_value(sym->rect[PINLAYER][p].prop_ptr, "name", 0);
-       const char *pdir  = get_tok_value(sym->rect[PINLAYER][p].prop_ptr, "dir", 0);
+       const char *t;
        const char *net;
+       /* get_tok_value() returns a SINGLE shared static buffer, and
+        * prepare_netlist_structs() calls it many times, so do the heavy work FIRST,
+        * then read name/dir one at a time, copying each into Tcl (tclsetvar) before
+        * the next get_tok_value() call clobbers the buffer. net is the instance's own
+        * node[] heap string, not the shared buffer, so it is read after prepare. */
        prepare_netlist_structs(0);
        net = (xctx->inst[n].node && xctx->inst[n].node[p]) ? xctx->inst[n].node[p] : "";
        tclsetvar("pin_view(inst)", xctx->inst[n].instname ? xctx->inst[n].instname : "");
-       tclsetvar("pin_view(name)", pname[0] ? pname : "(unnamed)");
-       tclsetvar("pin_view(dir)",  pdir[0]  ? pdir  : "inout");
-       tclsetvar("pin_view(net)",  net[0]   ? net   : "(unconnected)");
+       tclsetvar("pin_view(net)",  net[0] ? net : "(unconnected)");
+       t = get_tok_value(sym->rect[PINLAYER][p].prop_ptr, "name", 0);
+       tclsetvar("pin_view(name)", t[0] ? t : "(unnamed)");
+       t = get_tok_value(sym->rect[PINLAYER][p].prop_ptr, "dir", 0);
+       tclsetvar("pin_view(dir)",  t[0] ? t : "inout");
        tcleval("pin_property_viewer");
      }
    }

@@ -532,6 +532,15 @@ void delete(int to_push_undo)
   dbg(3, "delete(): start\n");
   j = 0;
   rebuild_selected_array();
+  /* pins are inert (pin_selection.md D1): a pins-only selection (only INST_PIN
+   * entries) has nothing to delete -- bail out before push_undo so a no-op delete
+   * does not leave a spurious undo slot. */
+  {
+    int has_deletable = 0;
+    for(i = 0; i < xctx->lastsel; ++i)
+      if(xctx->sel_array[i].type != INST_PIN) { has_deletable = 1; break; }
+    if(!has_deletable) return;
+  }
   if(to_push_undo && xctx->lastsel) xctx->push_undo();
   del_rect_line_arc_poly();
 

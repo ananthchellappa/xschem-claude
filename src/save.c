@@ -2890,6 +2890,9 @@ static void load_inst(int k, FILE *fd)
       xctx->inst[i].prop_ptr=NULL;
       xctx->inst[i].lab=NULL; /* assigned in link_symbols_to_instances */
       xctx->inst[i].node=NULL;
+      xctx->inst[i].pin_sel=NULL;     /* transient pin selection, not loaded; realloc'd
+                                       * slots are not zeroed (pin_selection.md) */
+      xctx->inst[i].pin_sel_size=0;
       load_ascii_string(&prop_ptr,fd);
       my_strdup(_ALLOC_ID_, &xctx->inst[i].prop_ptr, prop_ptr);
 

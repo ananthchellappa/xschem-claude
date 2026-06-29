@@ -5693,8 +5693,13 @@ static void handle_button_release(int event, KeySym key, int state, int button, 
        rebuild_selected_array();
        draw_selection(xctx->gc[SELLAYER], 0);
        xctx->ui_state |= SELECTION;
+       return; /* click: pin selected, done */
      }
-     return; /* consume the release: click selected the pin, drag stays in wire mode */
+     /* drag: leave STARTWIRE armed and FALL THROUGH to the normal release handling so
+      * the legacy wire-commit still runs -- end_place_move_copy_zoom() at the
+      * STARTWIRE branch below (intuitive && !persistent_command) places the wire on
+      * release; with persistent_command on (or cadence's deselect branch) STARTWIRE
+      * stays active and the wire keeps drawing, as before. */
    }
 
    /* bring up context menu if no pending operation */
