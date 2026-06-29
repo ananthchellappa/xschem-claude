@@ -2908,14 +2908,14 @@ static ActionDef action_registry[] = {
     "Grow selected: wire thickness / bus width [N:M]" },
   { "edit.shrink_selection", NULL, "busresize_apply shrink",
     "Shrink selected: wire thickness / bus width [N:M]" },
-  /* bus_transpose_scroll: step the single [N] bus index on a pin/netlabel `lab` or an
-   * instance `name` (wires/text tolerated). Tcl-backed: utils/bus_transpose.tcl. Ship
-   * UNBOUND; cadence_style_rc binds them to Alt+Shift-wheel.
-   * doc/claude/specs/bus_transpose_scroll.md. */
-  { "edit.transpose_grow_selection",   NULL, "bustranspose_apply grow",
-    "Transpose selected up: bus index [N] -> [N+1]" },
-  { "edit.transpose_shrink_selection", NULL, "bustranspose_apply shrink",
-    "Transpose selected down: bus index [N] -> [N-1]" },
+  /* bus_transpose_scroll: SHIFT the bus index/range up/down by 1 on a pin/netlabel `lab`
+   * or an instance `name` (wires/text tolerated) -- moves the index, does not widen the
+   * bus (that is busresize). Tcl-backed: utils/bus_transpose.tcl. Ship UNBOUND;
+   * cadence_style_rc binds them to Alt+Shift-wheel. doc/claude/specs/bus_transpose_scroll.md. */
+  { "edit.transpose_up_selection",   NULL, "bustranspose_apply up",
+    "Transpose selected up: bus index/range +1 (e.g. [N:M] -> [N+1:M+1])" },
+  { "edit.transpose_down_selection", NULL, "bustranspose_apply down",
+    "Transpose selected down: bus index/range -1, floored at 0" },
   /* text_size_scroll: grow/shrink displayed text size of selected text notes and
    * pin/netlabel names (~10%, min step, per-type floor). Tcl-backed:
    * utils/text_resize.tcl. Ship UNBOUND; cadence_style_rc binds Ctrl+Plus/Minus.
@@ -3202,7 +3202,7 @@ static int action_id_mutates(const char *id)
     "sym.list.create_labels_from_highlight_nets",
     "file.clear_schematic",
     "edit.grow_selection", "edit.shrink_selection",
-    "edit.transpose_grow_selection", "edit.transpose_shrink_selection",
+    "edit.transpose_up_selection", "edit.transpose_down_selection",
     "edit.text_grow", "edit.text_shrink"
   };
   int i;
