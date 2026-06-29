@@ -174,6 +174,7 @@ void abort_operation(void)
 {
   xctx->no_draw = 0;
   xctx->pin_pending = 0; /* drop any armed pin-click gesture (pin_selection.md D3) */
+  xctx->pin_pending_add = 0; /* and any armed SHIFT+pin additive gesture (D6) */
   tcleval("set constr_mv 0" );
   dbg(1, "abort_operation(): Escape: ui_state=%d, last_command=%d\n", xctx->ui_state, xctx->last_command);
   xctx->constr_mv=0;
@@ -1984,6 +1985,22 @@ void enter_deselect_mode(void)
 static void deselect_mode_click(int mx, int my)
 {
   unsigned int mode = xctx->ui_state & DESEL_MODE;
+  /* D7 (pin_selection.md §3.2): if a SELECTED pin is under the cursor, deselect just
+   * that pin (leave other selected pins/objects intact), mirroring the select-side pin
+   * priority. Otherwise fall through to the object deselect. Gated on en_pin_select
+   * (GLOBAL Tcl var, not the per-context field). Inert -> read-only safe. */
+  if(tclgetboolvar("en_pin_select")) {
+    Selected psel;
+    if(find_closest_pin(xctx->mousex, xctx->mousey, &psel)) {
+      int i = (int)psel.n, j = (int)psel.col;
+      if(xctx->inst[i].pin_sel && j < xctx->inst[i].pin_sel_size && xctx->inst[i].pin_sel[j]) {
+        select_pin(i, j, 0, 0);          /* deselect just this pin */
+        rebuild_selected_array();
+        xctx->ui_state |= mode;
+        return;
+      }
+    }
+  }
   unselect_at_mouse_pos(mx, my);
   xctx->ui_state |= mode;
 }
@@ -5594,6 +5611,28 @@ static void handle_button_press(int event, int state, int rstate, KeySym key, in
          }
        }
 
+       /* Pin multi-select (pin_selection.md D6): SHIFT+click on a pin ADDS it to the
+        * selection. This is a pure selection gesture -- no unselect_all, no wire arming,
+        * and crucially it is intercepted BEFORE the SHIFT cadence-copy path below so the
+        * underlying instance is not copied. Click-vs-drag is decided at release (like D3)
+        * via pin_pending_add: click -> add the pin; drag -> ignore (pins are inert, so a
+        * SHIFT+drag starting on a pin copies/moves nothing). A SHIFT press that misses
+        * every pin falls through untouched, so SHIFT+drag-copy on objects is preserved.
+        * Read the GLOBAL Tcl var (per-context field is reset by housekeeping_ctx). */
+       if(tclgetboolvar("en_pin_select") && intuitive &&
+          (state & ShiftMask) && !(state & ControlMask)) {
+         Selected psel;
+         if(find_closest_pin(xctx->mousex, xctx->mousey, &psel)) {
+           xctx->pin_pending     = 1;
+           xctx->pin_pending_add = 1;     /* additive: select on click, no wire, no copy */
+           xctx->pin_pending_n   = (int)psel.n;
+           xctx->pin_pending_c   = (int)psel.col;
+           xctx->pin_press_x     = mx;    /* screen anchor for click-vs-drag at release */
+           xctx->pin_press_y     = my;
+           return;                        /* consume the press; release decides */
+         }
+       }
+
        /* Clicking and drag on an instance pin -> drag a new wire */
        if(!xctx->readonly && intuitive && !already_selected) {
          if(add_wire_from_inst(&sel, xctx->mousex_snap, xctx->mousey_snap)) return;
@@ -5741,9 +5780,22 @@ static void handle_button_release(int event, KeySym key, int state, int button, 
     *              "draw a wire". */
    if(xctx->pin_pending) {
      int pn = xctx->pin_pending_n, pc = xctx->pin_pending_c;
+     int add = xctx->pin_pending_add;
      int moved = (abs(mx - xctx->pin_press_x) > (int)(tk_scaling * 3) ||
                   abs(my - xctx->pin_press_y) > (int)(tk_scaling * 3));
      xctx->pin_pending = 0;
+     xctx->pin_pending_add = 0;
+     if(add) {
+       /* D6 SHIFT+pin: click -> ADD the pin (additive, NO unselect_all, no wire armed);
+        * drag -> ignore (pins are inert; nothing was armed at press, so just return). */
+       if(!moved) {
+         select_pin(pn, pc, SELECTED, 0);
+         rebuild_selected_array();
+         draw_selection(xctx->gc[SELLAYER], 0);
+         xctx->ui_state |= SELECTION;
+       }
+       return;
+     }
      if(!moved) {
        if(xctx->ui_state & STARTWIRE) {
          new_wire(RUBBER | CLEAR, xctx->mousex_snap, xctx->mousey_snap);

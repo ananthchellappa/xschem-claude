@@ -321,3 +321,49 @@ Compare against a golden file as the other cases do.
 - **Erase correctness.** If the pin handle ever draws outside the instance bbox,
   the `gctiled` restore in `select_element`-style deselect won't cover it; the
   simple fallback is a `draw()` on pin deselect. Acceptable for v1.
+
+---
+
+## v2 plan (2026-06-29) — multi-pin SHIFT+click (D6) + pin-aware deselect (D7)
+
+Spec: `../specs/pin_selection.md` §3.2. RED-first. Step-1 feasibility is already
+proven (deselect-one is the shipped registered action `edit.deselect_mode`, commit
+`3b9199b5`) — this revision adds gesture + pin-awareness only. No new heap state.
+
+### Phase 0 — RED
+- `tests/pin_select.tcl` (--nogui, scriptable): keep the 19 checks; add multi-instance
+  pin data-model checks (two pins on two instances selected at once; clear one leaves the
+  other) — these already pass (data model is done), they guard it.
+- `tests/pin_gestures.tcl` (NEW, DISPLAY only — `xschem callback` SEGFAULTs under --nogui):
+  inject the real gestures. RED before the change:
+  - SHIFT+click on a 2nd pin ADDS it (lastsel 1→2), doesn't replace.
+  - plain click still REPLACES (lastsel stays 1).
+  - SHIFT+drag on a pin is IGNORED (no copy: instances unchanged; pin not added).
+  - SHIFT+drag on instance BODY still COPIES (instances+1) — cadence guard.
+  - in `edit.deselect_mode`, click on a selected pin deselects just it (2→1, the OTHER
+    pin remains).
+
+### Phase 1 — D6 SHIFT+click multi-pin (callback.c + xschem.h)
+- `xschem.h`: add scalar `int pin_pending_add;` next to `pin_pending` (NOT heap, NOT
+  per-instance — the heap-field tutorial does not apply).
+- `handle_button_press`, a new branch beside the plain pin block (~5566): if
+  `tclgetboolvar("en_pin_select") && intuitive && (state&ShiftMask) && !(state&ControlMask)`
+  and `find_closest_pin` hits → record `pin_pending` + `pin_pending_add=1` + press_x/y and
+  `return` (consume the press BEFORE the SHIFT cadence-copy path; no unselect, no wire,
+  no copy). Not gated on `!already_selected`.
+- `handle_button_release` pin_pending block (~5742): if `pin_pending_add`, decide by the
+  same `pin_press_x/y` drag test — no motion → `select_pin(pn,pc,SELECTED,0)` additively
+  (NO unselect_all) + rebuild + draw + SELECTION; motion → ignore. Always clear the flag.
+- `abort_operation`: also clear `pin_pending_add`.
+
+### Phase 2 — D7 deselect-mode click clears a pin (callback.c)
+- `deselect_mode_click`: before `unselect_at_mouse_pos`, if `tclgetboolvar("en_pin_select")`
+  and `find_closest_pin` hits AND that pin is selected (`inst[i].pin_sel[j]`), call
+  `select_pin(i,j,0,0)` + `rebuild_selected_array()`, preserve the mode bit, return. Else
+  fall through to the existing object deselect. (Pin priority mirrors the select side.)
+
+### Phase 3 — GREEN + regression
+- `make` in `src/`. `pin_gestures.tcl` GREEN under DISPLAY=:0; `pin_select.tcl` 19+ still
+  PASS under --nogui; `test_deselect_mode.tcl` still 18/18; engine 6/6; binding smokes.
+
+### Phase 4 — docs/memory; commit only on the user's say-so.

@@ -308,3 +308,39 @@ is wiring it into five well-understood call sites: `find_closest_obj`,
 entries, per scope decision D1.
 
 See `claude_suggs/pin_selection_plan.md` for the step-by-step.
+
+---
+
+## §0.1 v2 update (2026-06-29) — multi-pin select (D6) + pin-aware deselect (D7)
+
+Re-verified anchors against the live tree (post `3b9199b5` deselect-mode migration):
+
+| symbol | file:line (2026-06-29) |
+|---|---|
+| `select_pin(i,j,mode,fast)` | `select.c:1088` (mode!=0 set / 0 clear `pin_sel[j]`) |
+| `rebuild_selected_array` INST_PIN emit (one per set bit, ++lastsel) | `move.c:76` |
+| `find_closest_pin` (honors lock + `enable_layer[PINLAYER]`) | `findnet.c:532` |
+| plain pin press gesture (D3) | `callback.c:5566` (gated `!(state&(Shift|Ctrl))`) |
+| SHIFT cadence-copy (`copy_objects(START)`) | `callback.c:5664` |
+| release `pin_pending` click-vs-drag | `callback.c:5742` |
+| `deselect_mode_click` / `enter_deselect_mode` / DESEL_MODE bit | `callback.c` (3b9199b5) |
+| `pin_pending*` scalars | `xschem.h:1084` |
+
+Key findings:
+- **Data model already multi-pin.** `pin_sel[]` holds N bits; `rebuild_selected_array`
+  emits one `INST_PIN` per set bit and increments `lastsel`; `xschem select pin` is
+  already additive (pin_select.tcl proves lastsel 1→2). So D6 is GESTURE-ONLY.
+- **SHIFT routing.** A SHIFT+Button1 press reaches the `!excl && !STARTSELECT` select
+  block; the plain pin block is skipped (it requires no modifiers); SHIFT cadence-copy
+  fires later at `:5664` only after `select_object` picks something with `lastsel>=1`.
+  Intercepting SHIFT+pin BEFORE `:5623` (record pending + return) gives additive-on-click
+  / ignore-on-drag and prevents the underlying instance from being copied. A SHIFT press
+  that MISSES every pin never enters the new branch → cadence copy on objects is intact.
+- **`pin_pending_add` is a scalar**, parallel to `pin_pending_n/c/press_x/y` — no heap, so
+  the heap-field lifecycle tutorial does not apply (only `abort_operation`'s reset is
+  extended for tidiness).
+- **D7 priority.** In deselect mode, check `find_closest_pin` first; deselect the pin iff
+  its `pin_sel[j]` bit is set, else deselect the object. Mirrors the select-side priority
+  (pin beats object within the tight radius).
+- **GUI-only tests.** `xschem callback` SEGFAULTs under `--nogui` (no window); gesture
+  checks must run under DISPLAY (gate on `winfo exists .drw`).

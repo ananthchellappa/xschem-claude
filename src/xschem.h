@@ -1084,6 +1084,9 @@ typedef struct {
   int pin_pending;    /* pin_selection.md D3: a Button1 press landed on a pin and armed a
                        * wire; the release decides click(select pin) vs drag(draw wire).
                        * 0 = none. pin_pending_n/c hold the armed instance/pin index. */
+  int pin_pending_add; /* pin_selection.md D6: the pending press was SHIFT+click on a pin
+                       * (additive multi-select). Release: click -> add the pin (no
+                       * unselect_all, no wire); drag -> ignore. Scalar, not heap. */
   int pin_pending_n;
   int pin_pending_c;
   int pin_press_x;    /* press-time screen coords of the armed pin gesture, used at

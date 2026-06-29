@@ -71,5 +71,24 @@ check "script pin-select still works"  [xschem get lastsel] 1
 xschem unselect_all
 check "final selection empty"          [xschem get lastsel] 0
 
+# --- v2 (D6) data-model guard: pins on TWO instances selected at once ------
+# The multi-pin gesture (SHIFT+click, GUI) rests on this: pin_sel[] holds N pins
+# across instances and rebuild_selected_array emits one INST_PIN row each. Clearing
+# one instance's pin must leave the other's intact.
+xschem set en_pin_select 1
+xschem instance devices/res.sym 300 100 0 0 {name=R2}
+xschem unselect_all
+xschem select pin R1 0
+xschem select pin R2 1
+check "two pins on two instances selected" [xschem get lastsel] 2
+set pins [lsearch -all -inline -index 0 [xschem selection] pin]
+check "selection has 2 pin rows"           [llength $pins] 2
+xschem select pin R1 0 clear
+check "clearing R1's pin leaves R2's"      [xschem get lastsel] 1
+set row [lindex [lsearch -all -inline -index 0 [xschem selection] pin] 0]
+check "remaining pin is on R2 pin 1"       [list [lindex $row 2]] 1
+xschem unselect_all
+check "multi-instance cleanup empty"       [xschem get lastsel] 0
+
 if {$nfail} { puts "pin_select: $nfail check(s): FAIL" } \
 else        { puts "pin_select: all checks PASS" }

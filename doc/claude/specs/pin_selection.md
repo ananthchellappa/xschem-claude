@@ -69,6 +69,51 @@ Manual GUI testing of the first cut surfaced three follow-ups, now ratified:
   editable. Consistent with the read-only Properties viewer pattern already used for
   read-only schematics (issue 0051).
 
+### 3.2 Revision (2026-06-29) — multi-pin select + pin-aware deselect
+
+Enhancement: (A) SHIFT+Click multi-pin selection, and (B) the deselect-one action also
+clears a pin under the cursor.
+
+- **STEP-1 FEASIBILITY — RATIFIED (already proven).** The keybind approach for a
+  remappable "deselect one" action is **already shipped**: commit `3b9199b5` pulled the
+  hardcoded `case 'd'` deselect OUT of the C key switch into the registered, remappable
+  action **`edit.deselect_mode`** (C-backed `act_deselect_mode` → `enter_deselect_mode`;
+  also the `xschem deselect_mode` subcommand), default-bound `key 100 0 canvas` in
+  `keybindings.csv`, rebindable with `xschem bind key <keysym> <mods> canvas
+  edit.deselect_mode`. The C `case 'd'` plain-deselect branch is **deleted** (only
+  `Ctrl+d` = delete_files remains); the data-driven `DEV_KEY` dispatch runs at the TOP of
+  `handle_key_press` and a bound chord short-circuits before the switch, so there is no
+  C-vs-registry conflict. It is a **persistent mode** (press → click-loop → ESC), as the
+  user specified originally (`doc/claude/specs/deselect_one_mode.md`). So Step 1's
+  question — "can `d`/any key be assigned a deselect action through the bind command?" —
+  is answered **YES, end-to-end, in shipped code**. This revision therefore does NOT
+  re-migrate `d`; it only adds pin-awareness to that action's click (D7).
+
+- **D6 — SHIFT+Click on a pin ADDS it to the selection (multi-pin).** With the toggle
+  ON, a SHIFT+plain-click on a pin calls `select_pin(...)` **additively** — no
+  `unselect_all`, no wire arming (it is a pure selection gesture). A plain (no-modifier)
+  click still REPLACES (D3, unchanged). The data model already supports N selected pins
+  (`xInstance.pin_sel[]`; `rebuild_selected_array` emits one `INST_PIN` per set bit;
+  `lastsel` counts them) — verified — so this is a **gesture-only** change, no new
+  per-instance heap state. Click-vs-drag is decided at release by `pin_press_x/y` (like
+  D3), via a new scalar `xctx->pin_pending_add` flag (not heap, not per-instance):
+  - **SHIFT+click** (no motion) on a pin → add that pin.
+  - **SHIFT+drag** starting on a pin → **IGNORED** (pins are inert; nothing is
+    copied/moved, no wire). The press is intercepted before the SHIFT cadence-copy path,
+    so the underlying instance is NOT copied either.
+  - **SHIFT+click-drag on a non-pin object** → still COPY (existing cadence_modifier_drag
+    behavior, preserved — `find_closest_pin` misses, so the gesture falls through
+    untouched).
+
+- **D7 — the deselect-one action (D-mode click) also deselects a PIN under the cursor.**
+  In `edit.deselect_mode`, a click whose cursor is within a pin's tight radius (toggle ON)
+  AND that pin is currently selected → `select_pin(..., 0)` to clear **just that pin**,
+  leaving other selected pins/objects intact; the mode persists. If no selected pin is
+  under the cursor, the click falls through to the existing object deselect
+  (`unselect_at_mouse_pos`). Pin takes priority over object (matching the select side).
+  Read-only safe (deselect is inert; never calls `start_wire`). SHIFT+D area-deselect is
+  untouched.
+
 ## 4. User-facing behavior (requirements)
 
 ### 4.1 The toggle
