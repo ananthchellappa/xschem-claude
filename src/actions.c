@@ -1118,7 +1118,7 @@ void synth_pin_views(void)
 int create_pin(double x, double y, const char *name, const char *dir, unsigned short sel)
 {
   char *prop = NULL;
-  char buf[512];
+  char nums[160];
   const char *sz;
   int ri, flip;
   double cx, cy, dx, dy, size;
@@ -1131,10 +1131,12 @@ int create_pin(double x, double y, const char *name, const char *dir, unsigned s
   if(size <= 0.0) size = 0.2;
   dx = flip ? -25.0 : 25.0;
   dy = -5.0;
-  my_snprintf(buf, S(buf),
-    "name=%s dir=%s show_pinname=true name_dx=%g name_dy=%g name_size=%g%s",
-    name, dir, dx, dy, size, flip ? " name_flip=1" : "");
-  my_strdup(_ALLOC_ID_, &prop, buf);
+  /* numeric/bounded tokens into a small fixed buffer; the (unbounded) name and dir are
+   * concatenated separately so a long pin name is never truncated (cf. old my_mstrcat) */
+  my_snprintf(nums, S(nums),
+    " show_pinname=true name_dx=%g name_dy=%g name_size=%g%s",
+    dx, dy, size, flip ? " name_flip=1" : "");
+  my_mstrcat(_ALLOC_ID_, &prop, "name=", name, " dir=", dir, nums, NULL);
   storeobject(-1, x - 2.5, y - 2.5, x + 2.5, y + 2.5, xRECT, PINLAYER, sel, prop);
   my_free(_ALLOC_ID_, &prop);
   ri = xctx->rects[PINLAYER] - 1;

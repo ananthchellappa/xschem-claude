@@ -128,6 +128,19 @@ xschem clear force
 xschem add_symbol_pin 0 0 OUT out 0
 check "create out: name_flip token"      [xschem getprop rect 5 0 name_flip] 1
 
+# ---------------------------------------------------------------------------
+# 8. DISK undo must regenerate views (pop_undo -> read_xschem_file has no synth of its
+#    own). Load an owned-pin symbol (1 view), add a second pin (push_undo), undo, and
+#    the first pin's view must reappear. Before the fix, disk-undo left texts at 0.
+# ---------------------------------------------------------------------------
+catch {xschem undo_type disk}
+xschem load $f1
+check "disk-undo: baseline one view"     [xschem get texts] 1
+xschem add_symbol_pin 0 40 B in 0
+check "disk-undo: two views after add"   [xschem get texts] 2
+xschem undo
+check "disk-undo: view regenerated"      [xschem get texts] 1
+
 file delete -force $wd
 
 if {$nfail == 0} { puts "ALL PASS (pin_name_text)" } else { puts "$nfail FAILURES (pin_name_text)" }

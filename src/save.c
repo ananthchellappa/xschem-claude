@@ -4069,6 +4069,11 @@ void pop_undo(int redo, int set_modify_status)
   xctx->prep_net_structs=0;
   xctx->prep_hi_structs=0;
   link_symbols_to_instances(-1);
+  /* disk undo serializes via write_xschem_file (save_text skips synthesized pin-name
+   * views) and restores via read_xschem_file (which does not synth), so regenerate the
+   * views here — mirroring load_schematic. (In-memory undo needs nothing: it snapshots
+   * xctx->text wholesale, carrying owner_pin_id.) */
+  synth_pin_views();
   update_conn_cues(WIRELAYER, 0, 0);
   if(xctx->hilight_nets) {
     propagate_hilights(1, 1, XINSERT_NOREPLACE);
@@ -4859,6 +4864,7 @@ int load_sym_def(const char *name, FILE *embed_fd)
         i=lastt;
         my_realloc(_ALLOC_ID_, &tt,(i+1)*sizeof(xText));
         tt[i].font=NULL;
+        tt[i].owner_pin_id=0; /* symbol-def texts are real, never synthesized pin views */
         tt[i].txt_ptr = tmptext.txt_ptr;
         tt[i].x0 = tmptext.x0;
         tt[i].y0 = tmptext.y0;
