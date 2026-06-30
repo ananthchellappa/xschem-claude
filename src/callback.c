@@ -2830,6 +2830,18 @@ static int act_highlight_send_waveform(const ActionEvent *e)
  * Canvas-only; the click loop + ESC exit live in handle_button_press / abort_operation. */
 static int act_deselect_mode(const ActionEvent *e) { (void)e; enter_deselect_mode(); return 1; }
 
+/* Center the view so the current cursor position becomes the screen center (the old
+ * Shift+P pan). Shipped UNBOUND (bind a key in keybindings.csv). */
+static int act_view_center_at_cursor(const ActionEvent *e)
+{
+  (void)e;
+  xctx->xorigin = -xctx->mousex_snap + xctx->areaw * xctx->zoom / 2.0;
+  xctx->yorigin = -xctx->mousey_snap + xctx->areah * xctx->zoom / 2.0;
+  draw();
+  redraw_w_a_l_r_p_z_rubbers(1);
+  return 1;
+}
+
 /* --- action registry: stable id -> behavior --- */
 /* An action is backed by EITHER a C function (fn) OR a Tcl command (tcl); exactly
  * one is non-NULL. Tcl-backing (Phase 3d) lets the ~60 tcleval keysym branches
@@ -2874,6 +2886,11 @@ static ActionDef action_registry[] = {
     "Make schematic and symbol from selected components" },
   { "sym.create_symbol_pins_from_selected_schematic_pins", NULL, "schpins_to_sympins",
     "Create symbol pins from selected schematic pins" },
+  { "sym.place_symbol_pin", NULL, "xschem add_symbol_pin",
+    "Add a symbol pin (Name + Direction dialog)" },
+  { "tools.insert_polygon", NULL, "xschem polygon gui", "Start drawing a polygon" },
+  { "view.center_at_cursor", act_view_center_at_cursor, NULL,
+    "Center the view on the cursor position" },
   /* Phase 3d.2 batch 2 — clean canvas-only command keys (C-backed). All ids below
    * have actions.csv rows (label/help metadata) since d4a. */
   { "edit.toggle_stretch", act_toggle_stretch, NULL, "Toggle stretching of attached wires" },
@@ -3105,6 +3122,9 @@ static void init_input_bindings(void)
   /* Alt-h (EQUAL_MODMASK = Alt OR Super in the switch) -> two rows */
   set_input_binding(DEV_KEY, 'h', Mod1Mask,    ACTX_CANVAS, "sym.create_symbol_pins_from_selected_schematic_pins");
   set_input_binding(DEV_KEY, 'h', Mod4Mask,    ACTX_CANVAS, "sym.create_symbol_pins_from_selected_schematic_pins");
+  set_input_binding_idle(DEV_KEY, 'p', 0,      ACTX_CANVAS, "sym.place_symbol_pin");  /* P -> add pin dialog */
+  set_input_binding_idle(DEV_KEY, 'P', 0,      ACTX_CANVAS, "tools.insert_polygon");  /* Shift+P -> polygon */
+  /* view.center_at_cursor ships UNBOUND (old Shift+P pan); bind a key in keybindings.csv */
   /* Phase 3d.2 batch 2: plain-chord command keys (the cases' Ctrl/Alt branches stay in C). */
   set_input_binding(DEV_KEY, 'y', 0, ACTX_CANVAS, "edit.toggle_stretch");
   /* snap/grid/highlight ops ship UNBOUND — no default chord; the user binds them via
@@ -4496,40 +4516,18 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
       break;
 
     case 'p':
-      if(EQUAL_MODMASK) { /* add symbol pin: open the Add-pin dialog (Name + Direction),
-                           * which places via `xschem add_symbol_pin -place` (the dialog
-                           * checks read-only itself). Routes through create_pin so the
-                           * pin owns its name text, same as the menu. */
-        tcleval("addpin::open");
-      }
-      else if(rstate == ControlMask) {
+      /* plain p -> sym.place_symbol_pin (add-pin dialog); Shift+P -> tools.insert_polygon:
+       * both are registry actions (init_input_bindings), dispatched before this switch. */
+      if(rstate == ControlMask) { /* Ctrl+P: place input port label */
          if(readonly_block()) break;
          place_net_label(2);
-      }
-      else if( !(xctx->ui_state & STARTPOLYGON) && rstate==0) { /* start polygon */
-        if(xctx->semaphore >= 2) break;
-        if(readonly_block()) break;
-        dbg(1, "callback(): start polygon\n");
-        if(infix_interface) {
-          xctx->mx_double_save=xctx->mousex_snap;
-          xctx->my_double_save=xctx->mousey_snap;
-          xctx->last_command = 0;
-          new_polygon(PLACE, xctx->mousex_snap, xctx->mousey_snap);
-        } else {
-          xctx->ui_state |= MENUSTART;
-          xctx->ui_state2 = MENUSTARTPOLYGON;
-        }
       }
       break;
 
     case 'P':
-      if(rstate == 0) { /* pan, other way to. */
-        xctx->xorigin=-xctx->mousex_snap+xctx->areaw*xctx->zoom/2.0;
-        xctx->yorigin=-xctx->mousey_snap+xctx->areah*xctx->zoom/2.0;
-        draw();
-        redraw_w_a_l_r_p_z_rubbers(1);
-      }
-      else if(rstate == ControlMask) {
+      /* old Shift+P pan is now view.center_at_cursor (registry action, shipped unbound);
+       * Shift+P now starts a polygon via the registry. */
+      if(rstate == ControlMask) { /* Ctrl+Shift+P: place output port label */
          if(readonly_block()) break;
          place_net_label(3);
       }

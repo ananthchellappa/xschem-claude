@@ -13549,7 +13549,7 @@ proc build_widgets { {topwin {} } } {
   $topwin.menubar.sym add command -label "Create symbol pins from selected schematic pins" \
           -command "schpins_to_sympins" -accelerator Alt+H
   $topwin.menubar.sym add command -label "Place symbol pin" \
-          -command "xschem add_symbol_pin" -accelerator Alt+P
+          -command "xschem add_symbol_pin" -accelerator P
   $topwin.menubar.sym add command -label "Place schematic input port" \
           -command "xschem net_label 2" -accelerator Ctrl+P
   $topwin.menubar.sym add command -label "Place schematic output port" \

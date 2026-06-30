@@ -28,6 +28,8 @@ key,72,0,canvas,sym.attach_net_labels_to_component_instance,
 key,72,ctrl,canvas,sym.make_schematic_and_symbol_from_selected_components,
 key,104,alt,canvas,sym.create_symbol_pins_from_selected_schematic_pins,
 key,104,super,canvas,sym.create_symbol_pins_from_selected_schematic_pins,
+key,112,0,canvas,sym.place_symbol_pin,1
+key,80,0,canvas,tools.insert_polygon,1
 key,121,0,canvas,edit.toggle_stretch,
 key,84,0,canvas,prop.toggle_ignore_attribute_on_selected_instances,
 key,79,0,canvas,view.toggle_colorscheme,
