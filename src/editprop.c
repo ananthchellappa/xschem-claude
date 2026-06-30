@@ -259,6 +259,8 @@ static int edit_rect_property(int x)
 {
   int i, c, n;
   int drw = 0;
+  int pin_full_redraw = 0; /* a pin's name view is a separate object -> full redraw */
+  char olddir[40];         /* pin direction before the edit (to detect re-orient) */
   const char *attr;
   int preserve, modified = 0;
   char *oldprop=NULL;
@@ -289,6 +291,9 @@ static int edit_rect_property(int x)
       if(xctx->sel_array[i].type != xRECT) continue;
       c = xctx->sel_array[i].col;
       n = xctx->sel_array[i].n;
+      olddir[0] = '\0';
+      if(c == PINLAYER) /* capture old dir (own prop) before it is overwritten below */
+        my_snprintf(olddir, S(olddir), "%s", get_tok_value(xctx->rect[c][n].prop_ptr, "dir", 0));
       oldbus = xctx->rect[c][n].bus;
       if(oldprop && preserve == 1) {
         set_different_token(&xctx->rect[c][n].prop_ptr, (char *) tclgetvar("tctx::retval"), oldprop);
@@ -304,8 +309,13 @@ static int edit_rect_property(int x)
 
       set_rect_flags(&xctx->rect[c][n]); /* set cached .flags bitmask from attributes */
 
-      /* P3 write-through: editing a pin's props (e.g. name=) refreshes its name view */
-      if(c == PINLAYER) pin_view_refresh(n);
+      /* Pin edit write-through: if the direction changed, re-orient the name label to
+       * the conventional side; then sync the name view (content/pos/size) from tokens. */
+      if(c == PINLAYER) {
+        if(strcmp(olddir, get_tok_value(xctx->rect[c][n].prop_ptr, "dir", 0))) pin_reorient(n);
+        pin_view_refresh(n);
+        pin_full_redraw = 1;
+      }
 
       set_rect_extraptr(0, &xctx->rect[c][n]);
 
@@ -339,22 +349,28 @@ static int edit_rect_property(int x)
       if( (oldprop &&  xctx->rect[c][n].prop_ptr && strcmp(oldprop, xctx->rect[c][n].prop_ptr)) ||
           (!oldprop && xctx->rect[c][n].prop_ptr) || (oldprop && !xctx->rect[c][n].prop_ptr)) {
          modified = 1;
-         if(!drw) {
-           bbox(START, 0.0 , 0.0 , 0.0 , 0.0);
+         /* pins full-redraw (their name view is a separate object); other rects use the
+          * partial-bbox path below */
+         if(c != PINLAYER) {
+           if(!drw) {
+             bbox(START, 0.0 , 0.0 , 0.0 , 0.0);
+           }
+           drw = 1;
+           if( xctx->rect[c][n].flags & 1024) {
+             draw_image(0, &xctx->rect[c][n], &xctx->rect[c][n].x1, &xctx->rect[c][n].y1,
+                           &xctx->rect[c][n].x2, &xctx->rect[c][n].y2, 0, 0);
+           }
+           bbox(ADD, xctx->rect[c][n].x1 - width, xctx->rect[c][n].y1 - width,
+                     xctx->rect[c][n].x2 + width, xctx->rect[c][n].y2 + width);
          }
-         drw = 1;
-         if( xctx->rect[c][n].flags & 1024) {
-           draw_image(0, &xctx->rect[c][n], &xctx->rect[c][n].x1, &xctx->rect[c][n].y1,
-                         &xctx->rect[c][n].x2, &xctx->rect[c][n].y2, 0, 0);
-         }
-         bbox(ADD, xctx->rect[c][n].x1 - width, xctx->rect[c][n].y1 - width,
-                   xctx->rect[c][n].x2 + width, xctx->rect[c][n].y2 + width);
       }
     }
     if(drw) {
       bbox(SET , 0.0 , 0.0 , 0.0 , 0.0);
       draw();
       bbox(END , 0.0 , 0.0 , 0.0 , 0.0);
+    } else if(pin_full_redraw) {
+      draw(); /* repaint the moved/renamed pin name view (separate object, not in a bbox) */
     }
   }
   my_free(_ALLOC_ID_, &oldprop);
@@ -1421,6 +1437,20 @@ void edit_property(int x)
 
  j = set_first_sel(0, -2, 0);
  type = xctx->sel_array[j].type;
+
+ /* Q on an owned pin-name view edits its PIN via the single-line per-field pin form,
+  * not the multiline text editor: retarget the selection to the owning pin rect. */
+ if(type == xTEXT && xctx->text[xctx->sel_array[j].n].owner_pin_id) {
+   int pi = pin_idx_by_id(xctx->text[xctx->sel_array[j].n].owner_pin_id);
+   if(pi >= 0) {
+     unselect_all(0);
+     select_box(PINLAYER, pi, SELECTED, 0, 0);
+     xctx->ui_state |= SELECTION;
+     rebuild_selected_array();
+     j = set_first_sel(0, -2, 0);
+     type = xctx->sel_array[j].type;
+   }
+ }
 
  switch(type)
  {

@@ -136,7 +136,15 @@ proc slickprop::gfx_schema {type} {
   set bus     [dict create tok bus     label {Width} widget num]
   set bezier  [dict create tok bezier  label {Smooth (bezier)} widget bool on true]
   set ellipse [dict create tok ellipse label {Ellipse} widget ellipse]
+  # Symbol pin (PINLAYER rect): a per-field form with the name as a single-line entry
+  # and the direction as a dropdown. See doc/claude/specs/cadence_pin_name_text.md.
+  set pname   [dict create tok name         label {Name}      widget string]
+  set pdir    [dict create tok dir          label {Direction} widget enum \
+                 choices [dict create in in out out inout inout]]
+  set pshow   [dict create tok show_pinname label {Show name} widget bool on true]
+  set psize   [dict create tok name_size    label {Text size} widget num]
   switch -- $type {
+    pin                      { return [list $pname $pdir $pshow $psize] }
     rect - rectangle - xRECT { return [list $dash $fill $ellipse] }
     line - LINE              { return [list $dash $bus] }
     poly - polygon - POLYGON { return [list $dash $fill $bezier $bus] }

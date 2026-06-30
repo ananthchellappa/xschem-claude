@@ -9960,7 +9960,11 @@ namespace eval gfxform {
 proc gfxform::selected_type {} {
   set sel [xschem selection]
   if {[llength $sel] == 0} { return {} }
-  return [lindex [lindex $sel 0] 0]
+  set first [lindex $sel 0]
+  # selection row = {tname n col id}; a rect on the pin layer (5) is a symbol PIN,
+  # which gets the dedicated per-field pin form instead of the generic rect form.
+  if {[lindex $first 0] eq {rect} && [lindex $first 2] == 5} { return pin }
+  return [lindex $first 0]
 }
 
 # The choice label whose mapped value == <v>; falls back to the empty-mapped
@@ -9986,7 +9990,7 @@ proc gfxform::init {prop type} {
     set v   [dict get $row value]
     set loaded($tok) $v
     switch -- [dict get $row widget] {
-      int - num { set val($tok) $v }
+      int - num - string { set val($tok) $v }
       bool {
         set chk0($tok) [slickprop::bool_checked $tok $v]
         set chk($tok)  $chk0($tok)
@@ -10020,6 +10024,10 @@ proc gfxform::desired {} {
       int - num {
         set v [string trim $val($tok)]
         if {$v eq {} || $v eq "0"} { lappend d $tok {} } else { lappend d $tok $v }
+      }
+      string {
+        # write verbatim (a name may legitimately be "0"); empty removes the token
+        lappend d $tok $val($tok)
       }
       bool {
         lappend d $tok [slickprop::bool_value [dict get $row on] $loaded($tok) $chk0($tok) $chk($tok)]
@@ -10079,6 +10087,11 @@ proc text_line_slick {txtlabel clear preserve_disabled type} {
       int - num {
         label $f.l -text "$lab:"
         entry $f.e -textvariable gfxform::val($tok) -width 6
+        pack $f.l $f.e -side left
+      }
+      string {
+        label $f.l -text "$lab:"
+        entry $f.e -textvariable gfxform::val($tok) -width 24
         pack $f.l $f.e -side left
       }
       bool {

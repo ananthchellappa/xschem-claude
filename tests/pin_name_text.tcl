@@ -163,6 +163,23 @@ set o9b $wd/moved_both.sym
 xschem saveas $o9b symbol
 check "move both: name_dx unchanged"    [xschem getprop rect 5 0 name_dx] 20
 
+# ---------------------------------------------------------------------------
+# 10. Pin property form schema + dispatch (headless Tcl; the dialog is GUI-manual).
+# ---------------------------------------------------------------------------
+set sch [slickprop::gfx_schema pin]
+set toks {}
+foreach row $sch { lappend toks [dict get $row tok] }
+check "pin form fields"        $toks {name dir show_pinname name_size}
+check "pin dir is a dropdown"  [dict get [lindex $sch 1] widget] enum
+check "pin dir choices"        [dict keys [dict get [lindex $sch 1] choices]] {in out inout}
+check "pin name is single-line" [dict get [lindex $sch 0] widget] string
+# a selected PINLAYER (layer 5) rect routes to the pin form, not the generic rect form
+xschem clear force
+xschem add_symbol_pin 0 0 IN in 0
+xschem unselect_all
+xschem select rect 5 0
+check "selected_type = pin"    [gfxform::selected_type] pin
+
 file delete -force $wd
 
 if {$nfail == 0} { puts "ALL PASS (pin_name_text)" } else { puts "$nfail FAILURES (pin_name_text)" }

@@ -1195,15 +1195,43 @@ void pin_rename_from_view(int ti)
             subst_token(xctx->rect[PINLAYER][pi].prop_ptr, "name", v->txt_ptr));
 }
 
-/* pin[pi]'s name= -> its synthesized view content (renaming via the pin dialog updates
- * the displayed label). No-op if the pin has no view. */
+/* Sync a pin's name view (content + position + size + rot + flip) from its tokens, so
+ * the displayed label tracks the name and name_dx/dy/size after a pin property edit.
+ * No-op if the pin has no view (e.g. show_pinname false). */
 void pin_view_refresh(int pi)
 {
-  unsigned int id = xctx->rect[PINLAYER][pi].id;
-  int ti = pin_name_view_of(id);
+  xRect *p = &xctx->rect[PINLAYER][pi];
+  int ti = pin_name_view_of(p->id);
+  double cx, cy, s;
   if(ti < 0) return;
-  my_strdup2(_ALLOC_ID_, &xctx->text[ti].txt_ptr,
-             get_tok_value(xctx->rect[PINLAYER][pi].prop_ptr, "name", 0));
+  cx = (p->x1 + p->x2) / 2.0;
+  cy = (p->y1 + p->y2) / 2.0;
+  /* copy the name first: get_tok_value's static buffer is clobbered by pin_dtok below */
+  my_strdup2(_ALLOC_ID_, &xctx->text[ti].txt_ptr, get_tok_value(p->prop_ptr, "name", 0));
+  xctx->text[ti].x0 = cx + pin_dtok(p->prop_ptr, "name_dx", 20.0);
+  xctx->text[ti].y0 = cy + pin_dtok(p->prop_ptr, "name_dy", -5.0);
+  s = pin_dtok(p->prop_ptr, "name_size", 0.2);
+  xctx->text[ti].xscale = s;
+  xctx->text[ti].yscale = s;
+  xctx->text[ti].rot  = (short)pin_dtok(p->prop_ptr, "name_rot", 0.0);
+  xctx->text[ti].flip = (short)pin_dtok(p->prop_ptr, "name_flip", 0.0);
+}
+
+/* Recompute a pin's name-label side from its current dir= (in -> right/no-flip,
+ * out|inout -> left/flip), writing name_dx/name_flip. Called when the direction
+ * changes so the label re-orients to the conventional side. */
+void pin_reorient(int pi)
+{
+  xRect *p = &xctx->rect[PINLAYER][pi];
+  const char *dir = get_tok_value(p->prop_ptr, "dir", 0);
+  int flip = (!strcmp(dir, "out") || !strcmp(dir, "inout")) ? 1 : 0;
+  char b[32];
+  char *pr = NULL;
+  my_strdup(_ALLOC_ID_, &pr, p->prop_ptr);
+  my_snprintf(b, S(b), "%g", flip ? -25.0 : 25.0); my_strdup(_ALLOC_ID_, &pr, subst_token(pr, "name_dx", b));
+  my_snprintf(b, S(b), "%d", flip);                my_strdup(_ALLOC_ID_, &pr, subst_token(pr, "name_flip", b));
+  my_strdup(_ALLOC_ID_, &p->prop_ptr, pr);
+  my_free(_ALLOC_ID_, &pr);
 }
 
 /* After a move/rotate/flip commit, reconcile every name view with its pin:
