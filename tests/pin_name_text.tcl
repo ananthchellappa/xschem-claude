@@ -218,6 +218,30 @@ xschem undo                                ;# the aborted preview must stay gone
 check "preview abort: undo keeps it gone" [xschem get rects 5] 0
 
 # ---------------------------------------------------------------------------
+# 11c. Desync guard: the modeless form can stay OPEN across a file load / clear / new,
+#      which resets ui_state (and frees the preview pin) out from under sympin_preview.
+#      clear_drawing must drop the flag so the NEXT arm pushes a FRESH undo baseline; a
+#      stale flag would skip the push and the arm's undo would roll back to the WRONG
+#      (pre-clear) document. We make the pre-clear state non-empty (load owned.sym, 1 pin)
+#      so a lost baseline reveals itself by resurrecting that pin instead of undoing P2.
+#      (Sabotage: drop clear_drawing's `sympin_preview = 0` AND revert the -place
+#      START_SYMPIN gate -> "desync: undo did not resurrect the cleared pin" sees 1.)
+# ---------------------------------------------------------------------------
+xschem load $f1                            ;# pre-clear state S0 = a symbol with one pin
+check "desync: loaded one pin"           [xschem get rects 5] 1
+set ::pin_new_dir in
+set ::pin_new_name P1
+xschem add_symbol_pin -place              ;# arm: baseline snapshots S0 (the loaded pin)
+xschem clear force                         ;# load/new-equivalent: must invalidate the flag
+check "desync: doc cleared"              [xschem get rects 5] 0
+set ::pin_new_name P2
+xschem add_symbol_pin -place              ;# stale flag must NOT skip the fresh (empty) baseline
+xschem abort_operation                      ;# remove the undropped preview (undo-free)
+check "desync: aborted to empty"         [xschem get rects 5] 0
+xschem undo                                ;# fresh baseline = the CLEARED doc, NOT stale S0
+check "desync: undo did not resurrect the cleared pin" [xschem get rects 5] 0
+
+# ---------------------------------------------------------------------------
 # 12. The name view is OWNED by its pin: deleting the view alone is refused; deleting
 #     the pin takes the view with it.
 # ---------------------------------------------------------------------------

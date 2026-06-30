@@ -1337,6 +1337,11 @@ int set_rect_extraptr(int what, xRect *drptr)
 void clear_drawing(void)
 {
  int i,j;
+ /* the document is being torn down (load / clear / new / undo reload): any in-flight
+  * Add-Pin cursor preview is now invalid, so drop the flag (cadence_pin_name_text.md
+  * item #3) -- otherwise it would survive into the next document and mislead the next
+  * -place re-arm / abort_operation. */
+ xctx->sympin_preview = 0;
  xctx->graph_lastsel = -1;
  del_inst_table();
  del_wire_table();

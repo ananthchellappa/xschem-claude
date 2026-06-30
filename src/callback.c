@@ -213,9 +213,11 @@ void abort_operation(void)
      /* An Add-Pin cursor preview pushed its undo baseline at arm and must be torn down
       * undo-free: delete(1) here would snapshot the (about-to-be-removed) preview pin and a
       * later undo would resurrect it (cadence_pin_name_text.md item #3). delete(0) keeps the
-      * baseline as the single rollback point. Normal placements (sympin_preview==0) are
-      * unchanged: delete(1) as before. */
-     delete(xctx->sympin_preview ? 0 : 1/* to_push_undo */);
+      * baseline as the single rollback point. A live preview always has START_SYMPIN set, so
+      * require it -> a STALE sympin_preview cannot make an UNRELATED placement abort
+      * (PLACE_SYMBOL/PLACE_TEXT/graph) drop its undo snapshot. Normal placements use
+      * delete(1) as before. */
+     delete((xctx->sympin_preview && (xctx->ui_state & START_SYMPIN)) ? 0 : 1/* to_push_undo */);
      set_modify(save); /* aborted placement: no change, so reset modify flag set by delete() */
      xctx->ui_state &= ~START_SYMPIN;
      xctx->ui_state &= ~PLACE_SYMBOL;

@@ -269,7 +269,11 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
         const char *dr = tclgetvar("pin_new_dir");
         if(!nm || !nm[0]) nm = "XXX";
         if(!dr || !dr[0]) dr = "inout";
-        if(xctx->sympin_preview) {
+        /* A live preview ALWAYS has START_SYMPIN set; require it so a STALE sympin_preview
+         * (the modeless form stayed open while a file load / clear / unselect reset ui_state
+         * out from under it) is not mistaken for an armed preview -> we must still push a
+         * fresh baseline, else the placed pin would have no undo entry. */
+        if(xctx->sympin_preview && (xctx->ui_state & START_SYMPIN)) {
           /* re-arm: discard the previous preview pin WITHOUT pushing undo */
           if(xctx->ui_state & STARTMOVE) {
             int save = xctx->modified;

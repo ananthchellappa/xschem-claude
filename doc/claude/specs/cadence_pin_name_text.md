@@ -536,6 +536,21 @@ pin tokens, no separate persisted object.
   got 1 want 0). Netlist golden + property_form + 3 binding tests + a real-Tk GUI smoke
   (dialog widgets, arm/re-arm/disarm-on-empty/escape) all PASS. **GUI-MANUAL pending:** the
   actual cursor-follow render + click-to-drop + keep-placing loop on the live canvas.
+  - **P3.7 review fixes (high code-review, 2026-06-30):** (F1, critical) `sympin_preview`
+    could go STALE when the modeless form stayed open across a file load/clear/new (ui_state
+    reset out from under it) → the next re-arm skipped `push_undo` and Undo silently lost the
+    pin. Fixed three ways: `-place` re-arm now requires `(ui_state & START_SYMPIN)` (a live
+    preview always has it) else pushes a fresh baseline; `clear_drawing()` resets the flag;
+    `abort_operation`'s `delete(0)` is likewise gated on START_SYMPIN. Regression test 11c
+    (load pinned sym → arm → clear → re-arm → abort → undo must NOT resurrect the cleared
+    pin) sabotage-verified (got 1 want 0). (F2) the canvas `<Key-Escape>` binding now only
+    swallows Esc *while actually placing* (`if {[addpin::placing]}`), so Esc still cancels an
+    unrelated in-progress wire/move when the form is open but idle. (F5) `addpin::arm` caches
+    the last-armed `{name dir}` and early-returns when unchanged AND still placing, so
+    non-editing keystrokes (arrows/Shift/Ctrl/Tab) no longer tear down + rebuild the preview.
+    DEFERRED (user call): F3 the redundant no-op undo baseline after closing the form (extra
+    Ctrl-Z; only safe fix is pop_undo which risks redo-resurrect) and the ciform/addpin
+    lifecycle duplication (factor into a shared modeless-placement helper).
 - **DEFERRED from the 2026-06-30 GUI eyeball (user chose "preview only" this round):**
   - **(D-sel) Pin rect is hard to click-select.** `find_closest_box` (findnet.c:411) uses a
     border-RING test (inside `rect+threshold`, outside `rect−threshold`); a 5×5 pin's CENTER

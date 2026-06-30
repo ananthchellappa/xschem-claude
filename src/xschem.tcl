@@ -10207,6 +10207,9 @@ namespace eval addpin {
   # a preview is armed; after each drop it re-arms so placement continues until Esc.
   variable armed          0
   variable hook_installed 0
+  # last {name dir} actually armed -- lets arm() skip a redundant rebuild when a keystroke
+  # (arrows, Shift/Ctrl/Tab, ...) did not change the pin, avoiding canvas flicker.
+  variable last           {}
 }
 
 proc addpin::status {msg} { catch {.addpin.status configure -text $msg} }
@@ -10245,15 +10248,19 @@ proc addpin::after_drop {b} {
 # (there is nothing to place yet), aborting any attached one. `-place` re-issues are
 # undo-safe (see the C side), so calling this on every keystroke is fine.
 proc addpin::arm {} {
-  variable name; variable armed
+  variable name; variable armed; variable last
   if {![winfo exists .addpin]} { set armed 0; return }
   if {[string trim $name] eq {}} {
-    set armed 0
+    set armed 0; set last {}
     addpin::abort_if_placing
     addpin::status "type a Pin Name, then move onto the canvas to place it"
     return
   }
   set d [addpin::dirtok]
+  # nothing changed AND a preview is still attached -> don't rebuild it (a non-editing key
+  # fired KeyRelease). After a drop, placing is 0, so the next pin still arms (keep-placing).
+  if {[list $name $d] eq $last && [addpin::placing]} return
+  set last [list $name $d]
   set ::pin_new_name $name
   set ::pin_new_dir  $d
   xschem add_symbol_pin -place    ;# self-aborts the previous preview (no undo) and re-arms
@@ -10272,8 +10279,8 @@ proc addpin::escape {} {
 }
 # Form destroyed by any means: abort an armed preview and restore the default canvas Esc.
 proc addpin::on_destroy {} {
-  variable armed
-  set armed 0
+  variable armed; variable last
+  set armed 0; set last {}
   catch {bind .drw <Key-Escape> {}}
   addpin::abort_if_placing
 }
@@ -10320,9 +10327,11 @@ proc addpin::open {} {
   # editing the name or picking a direction re-arms the preview live
   bind $w.f.ename <KeyRelease>        {+addpin::on_change}
   bind $w.f.edir  <<ComboboxSelected>> {+addpin::on_change}
-  # Esc ends placement AND dismisses the form, whether the canvas or the form has focus;
-  # `break` on the canvas pre-empts the generic <KeyPress> -> C dispatcher.
-  bind .drw <Key-Escape> {addpin::escape; break}
+  # Esc ends placement AND dismisses the form. On the CANVAS only swallow Esc while a
+  # preview is actually armed (`break` pre-empts the generic <KeyPress> -> C dispatcher);
+  # when nothing is being placed, fall through so Esc still cancels an unrelated in-progress
+  # gesture (wire/move/...) the user may have started while this form is open.
+  bind .drw <Key-Escape> {if {[addpin::placing]} {addpin::escape; break}}
   bind $w   <Key-Escape> {addpin::escape}
   bind $w   <Destroy>    {if {{%W} eq {.addpin}} {addpin::on_destroy}}
 
