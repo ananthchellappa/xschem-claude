@@ -504,8 +504,26 @@ pin tokens, no separate persisted object.
   (callback.c) — which had been inline-creating a LEGACY pin, bypassing create_pin — now
   also opens the dialog. Tests +9 (now 35): pin schema/dropdown/single-line/`selected_type`
   + `-place` creation. GUI-manual: the actual dialog rendering, re-orient, redraw.
-- **P4 — delete + copy/paste.** `delete()` skips lone SYNTH views, drops a deleted pin's
-  view; `copy_objects`/paste skip view objects and regenerate after name-uniquify.
+- **P3.6 — GUI-feedback round 2. [DONE 2026-06-30, commits `d6cadc81` `(cycle)` `8c4ead6f`]**
+  (a) `name_dx/dy/rot/flip` are own rows in the pin form (string widget, width 8; 0
+  preserved). (b) Direction shows input/output/inout (token still in/out/inout) via the
+  enum label→value map + addpin map; readonly combobox letter-cycle (`combo_letter_cycle`)
+  on both the dialog and edit-form dropdowns. (c) Show-name uncheck now hides: new
+  `pin_view_apply()` creates/deletes the view per `show_pinname` (called from
+  `edit_rect_property`). (d) The name view can't be deleted alone — `delete()` reconciles
+  selection first (cascade view of a deleted pin; deselect a lone-selected view whose pin
+  survives); `pin_name_view_of` de-static'd. (e) KEYS migrated to the registry
+  (rebindable via keybindings.csv): **P→sym.place_symbol_pin** (was Alt+P; opens dialog),
+  **Shift+P→tools.insert_polygon** (was plain p), and the old Shift+P pan →
+  **view.center_at_cursor** (C-backed, SHIPPED UNBOUND so Shift+V=Vertical-Flip survives).
+  `case 'p'/'P'` keep only Ctrl/Ctrl+Shift port-label branches; keybindings.csv
+  regenerated; actions.csv accels updated. Tests 39/39 (incl. delete-guard, sabotage-
+  verified) + headless test_bindings_file/keybindings_help/key_graph_context PASS.
+  **STILL OPEN (item 3): live cursor PREVIEW while the Add-Pin form is open** (modeless
+  arm-on-name-change like ciform: `arm`/`after_drop`/`install_drop_hook`/`escape`/
+  `abort_if_placing`; needs care re: per-arm undo + aborting the preview pin on re-arm).
+- **P4 — delete + copy/paste.** Delete-of-lone-view DONE in P3.6(d); remaining:
+  `copy_objects`/paste skip view objects and regenerate after name-uniquify.
 - **P5 — show/hide.** Global tri-state `show_pin_names` (wins) + per-pin `show_pinname` +
   pin-dialog checkbox; visibility rule in the draw gate.
 - **P6 — instance display.** `draw_symbol` pass rendering pin names from symbol pin tokens.
