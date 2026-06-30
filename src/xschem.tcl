@@ -9943,6 +9943,7 @@ proc write_data {data f} {
 # ---------------------------------------------------------------------------
 namespace eval gfxform {
   variable orig {}      ;# property string the dialog opened with (tctx::retval)
+  variable type {}      ;# the edited object type (pin/pinname/rect/...) -> Apply routing
   variable schema {}    ;# the per-type slickprop::gfx_schema
   variable val          ;# array: int/num-field tok -> current value (dash, bus)
   variable loaded       ;# array: tok -> value it opened with
@@ -9961,9 +9962,14 @@ proc gfxform::selected_type {} {
   set sel [xschem selection]
   if {[llength $sel] == 0} { return {} }
   set first [lindex $sel 0]
-  # selection row = {tname n col id}; a rect on the pin layer (5) is a symbol PIN,
-  # which gets the dedicated per-field pin form instead of the generic rect form.
-  if {[lindex $first 0] eq {rect} && [lindex $first 2] == 5} { return pin }
+  # selection row = {tname n col id}; a rect on the pin layer (5) is a symbol PIN. It has
+  # TWO editors (doc/claude/specs/cadence_pin_name_text.md D-split): `pin` (Q on the pin
+  # body) edits identity; `pinname` (Q on the displayed name text -- C retargets the
+  # selection to the pin and sets ::gfxform_via_name) edits the name-text appearance.
+  if {[lindex $first 0] eq {rect} && [lindex $first 2] == 5} {
+    if {[info exists ::gfxform_via_name] && $::gfxform_via_name} { return pinname }
+    return pin
+  }
   return [lindex $first 0]
 }
 
@@ -9983,9 +9989,11 @@ proc gfxform::init {prop type} {
   variable ell_on; variable ell_on0; variable ell_start; variable ell_end
   array unset val; array unset loaded; array unset chk; array unset chk0
   set orig $prop
+  set ::gfxform::type $type   ;# remembered for the OK/Apply routing (param shadows the var)
   set schema [slickprop::gfx_schema $type]
   set ell_on 0; set ell_on0 0; set ell_start 0; set ell_end 360
   foreach row [slickprop::schema_fields $schema $prop] {
+    if {[dict exists $row hide] && [dict get $row hide]} continue ;# preserved, not a field
     set tok [dict get $row tok]
     set v   [dict get $row value]
     set loaded($tok) $v
@@ -10019,6 +10027,7 @@ proc gfxform::desired {} {
   variable ell_on; variable ell_start; variable ell_end
   set d {}
   foreach row $schema {
+    if {[dict exists $row hide] && [dict get $row hide]} continue ;# preserved via orig, not edited
     set tok [dict get $row tok]
     switch -- [dict get $row widget] {
       int - num {
@@ -10060,6 +10069,30 @@ proc gfxform::collect {} {
   return [slickprop::schema_assemble $schema $orig [gfxform::desired] $extra]
 }
 
+# Apply the current form state to the selected pin(s) and redraw, WITHOUT closing the
+# dialog -- the live "Apply" for the pin/pinname editors so a change (e.g. font) is visible
+# at once (cadence_pin_name_text.md). xschem apply_pin_prop is a no-op (no undo) when
+# nothing changed, so repeated Apply / Apply-then-OK does not spam the undo stack.
+proc gfxform::apply {} {
+  if {[xschem get readonly]} return
+  catch {xschem apply_pin_prop [gfxform::collect]}
+}
+
+# OK: for pin/pinname, apply HERE (same path as Apply) and tell C not to re-apply
+# (rcode {}), so OK-after-Apply never double-commits. Other graphical types keep the
+# legacy C round-trip (rcode {ok} -> C applies tctx::retval after tkwait).
+proc gfxform::ok {} {
+  variable type
+  set ::tctx::retval [gfxform::collect]
+  if {$type eq {pin} || $type eq {pinname}} {
+    if {![xschem get readonly]} { catch {xschem apply_pin_prop $::tctx::retval} }
+    set ::tctx::rcode {}
+  } else {
+    set ::tctx::rcode {ok}
+  }
+  destroy .dialog
+}
+
 # The slick graphical-object property dialog (rect in L1). Reads/writes tctx::retval
 # (the property string C passes in and applies to every selected same-type object);
 # sets tctx::rcode ({ok}|{}) and returns it — same contract as text_line_legacy.
@@ -10069,7 +10102,8 @@ proc text_line_slick {txtlabel clear preserve_disabled type} {
   if { [winfo exists .dialog] } return
   gfxform::init $tctx::retval $type
   toplevel .dialog -class Dialog
-  wm title .dialog "Edit [string totitle $type] properties"
+  set title [expr {$type eq {pinname} ? {Pin Name Text} : [string totitle $type]}]
+  wm title .dialog "Edit $title properties"
   wm transient .dialog [xschem get topwindow]
   set X [expr {[winfo pointerx .dialog] - 60}]
   set Y [expr {[winfo pointery .dialog] - 35}]
@@ -10079,6 +10113,7 @@ proc text_line_slick {txtlabel clear preserve_disabled type} {
   labelframe .dialog.appear -text "Appearance"
   set ltk [expr {[info tclversion] > 8.4}]
   foreach row $gfxform::schema {
+    if {[dict exists $row hide] && [dict get $row hide]} continue ;# hidden: preserved, no widget
     set tok [dict get $row tok]
     set lab [dict get $row label]
     set f .dialog.appear.$tok
@@ -10132,24 +10167,30 @@ proc text_line_slick {txtlabel clear preserve_disabled type} {
   pack .dialog.other -side top -fill x -padx 4 -pady 2
 
   frame .dialog.buttons
-  button .dialog.buttons.ok -text OK -command {
-    set tctx::retval [gfxform::collect]
-    set tctx::rcode {ok}
-    destroy .dialog
+  button .dialog.buttons.ok -text OK -command gfxform::ok
+  # Live Apply for the pin / pin-name-text editors: commit + redraw, keep the form open so
+  # the effect (e.g. a font change) is visible without dismissing (cadence_pin_name_text.md).
+  if {$type eq {pin} || $type eq {pinname}} {
+    button .dialog.buttons.apply -text Apply -command gfxform::apply
   }
   button .dialog.buttons.cancel -text Cancel -command {
-    set tctx::rcode {}
+    set ::tctx::rcode {}
     destroy .dialog
   }
-  pack .dialog.buttons.ok .dialog.buttons.cancel -side left -fill x -expand yes
+  if {[winfo exists .dialog.buttons.apply]} {
+    pack .dialog.buttons.ok .dialog.buttons.apply .dialog.buttons.cancel -side left -fill x -expand yes
+  } else {
+    pack .dialog.buttons.ok .dialog.buttons.cancel -side left -fill x -expand yes
+  }
   pack .dialog.buttons -side bottom -fill x
   # No multi-line text box here, so Enter = OK from anywhere; Escape = Cancel.
   bind .dialog <Return>   {.dialog.buttons.ok invoke}
   bind .dialog <KP_Enter> {.dialog.buttons.ok invoke}
   bind .dialog <Escape>   {.dialog.buttons.cancel invoke}
-  # Read-only view (issue 0051): a property VIEWER — disable OK, Enter == Esc (Cancel).
+  # Read-only view (issue 0051): a property VIEWER — disable OK + Apply, Enter == Esc (Cancel).
   if {[xschem get readonly]} {
     .dialog.buttons.ok configure -state disabled
+    catch {.dialog.buttons.apply configure -state disabled}
     bind .dialog <Return>   {.dialog.buttons.cancel invoke}
     bind .dialog <KP_Enter> {.dialog.buttons.cancel invoke}
   }
@@ -10164,6 +10205,7 @@ proc text_line {txtlabel clear {preserve_disabled disabled}} {
   # keeps the legacy raw-token editor.
   if {$preserve_disabled eq {normal}} {
     set t [gfxform::selected_type]
+    set ::gfxform_via_name 0  ;# consume the pin/pinname marker: it applies to this one dialog
     if {$t ne {} && [llength [slickprop::gfx_schema $t]] > 0} {
       return [text_line_slick $txtlabel $clear $preserve_disabled $t]
     }

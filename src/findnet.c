@@ -408,10 +408,18 @@ static void find_closest_box(double mx ,double my, int override_lock)
   if(!xctx->enable_layer[c]) continue;
   for(i=0;i<xctx->rects[c]; ++i)
   {
-   if( POINTINSIDE(mx, my, xctx->rect[c][i].x1 - threshold, xctx->rect[c][i].y1 - threshold,
-                         xctx->rect[c][i].x2 + threshold, xctx->rect[c][i].y2 + threshold) &&
-      !POINTINSIDE(mx, my, xctx->rect[c][i].x1 + threshold, xctx->rect[c][i].y1 + threshold,
-                         xctx->rect[c][i].x2 - threshold, xctx->rect[c][i].y2 - threshold))
+   /* Hit test: inside the box grown by the pick threshold. Ordinary rects select on their
+    * BORDER ring only (also outside the box SHRUNK by threshold), so a click in open
+    * interior misses. Symbol PINS (PINLAYER) are tiny 5x5 filled handles, so select them
+    * on the whole BODY -- otherwise, once zoomed in enough that threshold < the pin
+    * half-size, the inner box reappears and the pin centre becomes an unselectable dead
+    * zone (cadence_pin_name_text.md D-sel). */
+   int hit = POINTINSIDE(mx, my, xctx->rect[c][i].x1 - threshold, xctx->rect[c][i].y1 - threshold,
+                         xctx->rect[c][i].x2 + threshold, xctx->rect[c][i].y2 + threshold);
+   if(c != PINLAYER)
+     hit = hit && !POINTINSIDE(mx, my, xctx->rect[c][i].x1 + threshold, xctx->rect[c][i].y1 + threshold,
+                         xctx->rect[c][i].x2 - threshold, xctx->rect[c][i].y2 - threshold);
+   if(hit)
    {
     tmp=dist_from_rect(mx, my, xctx->rect[c][i].x1, xctx->rect[c][i].y1,
                                   xctx->rect[c][i].x2, xctx->rect[c][i].y2);

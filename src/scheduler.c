@@ -210,6 +210,73 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
       Tcl_SetResult(interp, modified ? "1" : "0", TCL_STATIC);
     }
 
+    /* apply_pin_prop <prop>
+     *   Apply <prop> to every SELECTED symbol pin (PINLAYER rect), mirroring the pin branch
+     *   of edit_rect_property but WITHOUT a dialog round-trip, so the pin/pinname property
+     *   forms can offer a live "Apply" that updates the canvas while staying open
+     *   (cadence_pin_name_text.md). Changed-fields-only: the primary pin's prop is the diff
+     *   baseline, so multi-selected pins keep their own unchanged tokens (e.g. their names).
+     *   No-op (no undo slot) when nothing would change. Pushes one undo; returns 1/0. */
+    else if(!strcmp(argv[1], "apply_pin_prop"))
+    {
+      int i, c, n, preserve, change = 0, anypin = 0;
+      const char *newprop;
+      char *base = NULL;          /* primary pin's prop: the changed-fields baseline */
+      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(argc < 3) {
+        Tcl_SetResult(interp, "xschem apply_pin_prop needs: new_prop", TCL_STATIC);
+        return TCL_ERROR;
+      }
+      newprop = argv[2];
+      preserve = tclgetboolvar("preserve_unchanged_attrs");
+      rebuild_selected_array();
+      if(xctx->lastsel > 0 && xctx->sel_array[0].type == xRECT &&
+         xctx->sel_array[0].col == PINLAYER) {
+        my_strdup(_ALLOC_ID_, &base, xctx->rect[PINLAYER][xctx->sel_array[0].n].prop_ptr);
+      }
+      /* guard pass: would applying change any selected pin? avoid an empty undo slot */
+      for(i = 0; i < xctx->lastsel && !change; i++) {
+        char *cand = NULL;
+        if(xctx->sel_array[i].type != xRECT) continue;
+        c = xctx->sel_array[i].col; n = xctx->sel_array[i].n;
+        if(c != PINLAYER) continue;
+        anypin = 1;
+        my_strdup(_ALLOC_ID_, &cand, xctx->rect[c][n].prop_ptr);
+        if(preserve && base) {
+          if(set_different_token(&cand, newprop, base)) change = 1;
+        } else {
+          my_strdup(_ALLOC_ID_, &cand, newprop);
+          if(!cand || !xctx->rect[c][n].prop_ptr || strcmp(cand, xctx->rect[c][n].prop_ptr)) change = 1;
+        }
+        my_free(_ALLOC_ID_, &cand);
+      }
+      if(!anypin || !change) {
+        if(base) my_free(_ALLOC_ID_, &base);
+        Tcl_SetResult(interp, "0", TCL_STATIC);
+        return TCL_OK;
+      }
+      xctx->push_undo();
+      for(i = 0; i < xctx->lastsel; i++) {
+        char olddir[40];
+        if(xctx->sel_array[i].type != xRECT) continue;
+        c = xctx->sel_array[i].col; n = xctx->sel_array[i].n;
+        if(c != PINLAYER) continue;
+        my_snprintf(olddir, S(olddir), "%s", get_tok_value(xctx->rect[c][n].prop_ptr, "dir", 0));
+        if(preserve && base) {
+          set_different_token(&xctx->rect[c][n].prop_ptr, newprop, base);
+        } else {
+          my_strdup(_ALLOC_ID_, &xctx->rect[c][n].prop_ptr, newprop);
+        }
+        set_rect_flags(&xctx->rect[c][n]);
+        if(strcmp(olddir, get_tok_value(xctx->rect[c][n].prop_ptr, "dir", 0))) pin_reorient(n);
+        pin_view_apply(n);   /* create/delete the name view per show_pinname, then sync it */
+      }
+      if(base) my_free(_ALLOC_ID_, &base);
+      set_modify(1);
+      draw();               /* a pin's name view is a separate object -> full redraw */
+      Tcl_SetResult(interp, "1", TCL_STATIC);
+    }
+
     /* add_symbol_pin [x y name dir [draw]]
      *   place a symbol pin.
      *   x,y : pin coordinates

@@ -136,21 +136,38 @@ proc slickprop::gfx_schema {type} {
   set bus     [dict create tok bus     label {Width} widget num]
   set bezier  [dict create tok bezier  label {Smooth (bezier)} widget bool on true]
   set ellipse [dict create tok ellipse label {Ellipse} widget ellipse]
-  # Symbol pin (PINLAYER rect): a per-field form with the name as a single-line entry
-  # and the direction as a dropdown. See doc/claude/specs/cadence_pin_name_text.md.
+  # Symbol pin (PINLAYER rect): TWO editors over the same B-record tokens
+  # (doc/claude/specs/cadence_pin_name_text.md D-split). `pin` (Q on the pin body) edits the
+  # pin IDENTITY -- Name, Direction, Show name. `pinname` (Q on the displayed name text,
+  # which retargets to the pin) edits the name TEXT appearance -- size, font, offset, rot,
+  # flip. Each editor HIDES the other's tokens: a `hide 1` row is stripped from "Other
+  # properties" and preserved verbatim, but not shown as a field, so neither editor leaks
+  # or clobbers the other's fields.
   set pname   [dict create tok name         label {Name}      widget string]
   set pdir    [dict create tok dir          label {Direction} widget enum \
                  choices [dict create input in output out inout inout]]
   set pshow   [dict create tok show_pinname label {Show name} widget bool on true]
   set psize   [dict create tok name_size    label {Text size} widget num]
-  # name_* layout as their own rows (not dumped in "Other properties"); string widget so
-  # an explicit 0 is preserved verbatim (num would treat 0 as "unset" -> default).
-  set pdx     [dict create tok name_dx      label {Name dx}   widget string width 8]
-  set pdy     [dict create tok name_dy      label {Name dy}   widget string width 8]
-  set prot    [dict create tok name_rot     label {Name rot}  widget string width 8]
-  set pflip   [dict create tok name_flip    label {Name flip} widget string width 8]
+  set pfont   [dict create tok name_font    label {Font}      widget string width 16]
+  # offset/rot/flip use the string widget so an explicit 0 is preserved verbatim (num would
+  # treat 0 as "unset" -> default).
+  set pdx     [dict create tok name_dx      label {Offset x}  widget string width 8]
+  set pdy     [dict create tok name_dy      label {Offset y}  widget string width 8]
+  set prot    [dict create tok name_rot     label {Rotation}  widget string width 8]
+  set pflip   [dict create tok name_flip    label {Flip}      widget string width 8]
+  # hidden mirrors (same token, hide 1): preserved across the OTHER editor, never shown.
+  set hname   [dict create tok name         hide 1 widget string]
+  set hdir    [dict create tok dir          hide 1 widget string]
+  set hshow   [dict create tok show_pinname hide 1 widget string]
+  set hsize   [dict create tok name_size    hide 1 widget string]
+  set hfont   [dict create tok name_font    hide 1 widget string]
+  set hdx     [dict create tok name_dx      hide 1 widget string]
+  set hdy     [dict create tok name_dy      hide 1 widget string]
+  set hrot    [dict create tok name_rot     hide 1 widget string]
+  set hflip   [dict create tok name_flip    hide 1 widget string]
   switch -- $type {
-    pin                      { return [list $pname $pdir $pshow $psize $pdx $pdy $prot $pflip] }
+    pin     { return [list $pname $pdir $pshow  $hsize $hfont $hdx $hdy $hrot $hflip] }
+    pinname { return [list $psize $pfont $pdx $pdy $prot $pflip  $hname $hdir $hshow] }
     rect - rectangle - xRECT { return [list $dash $fill $ellipse] }
     line - LINE              { return [list $dash $bus] }
     poly - polygon - POLYGON { return [list $dash $fill $bezier $bus] }
@@ -216,6 +233,14 @@ proc slickprop::schema_assemble {schema orig desired extra} {
   set changes {}
   foreach {tok val} $desired {
     if {$val ne {}} { lappend changes $tok $val }
+  }
+  # hidden rows (hide 1) were stripped from the "Other" box and are NOT in <desired>; when
+  # the user edits "Other" we rebuild from it, so re-overlay each present hidden token from
+  # <orig> -- otherwise the other editor's fields (e.g. a pin's name/dir) would be lost.
+  foreach row [slickprop::schema_fields $schema $orig] {
+    if {[dict exists $row hide] && [dict get $row hide] && [dict get $row present]} {
+      lappend changes [dict get $row tok] [dict get $row value]
+    }
   }
   return [slickprop::apply $extra $changes]
 }

@@ -1100,12 +1100,19 @@ void synth_pin_views(void)
     size = pin_dtok(p->prop_ptr, "name_size", 0.2);
     rot  = pin_dtok(p->prop_ptr, "name_rot",  0.0);
     flip = pin_dtok(p->prop_ptr, "name_flip", 0.0);
-    /* fetch name LAST: get_tok_value() uses one volatile static buffer that the
-     * pin_dtok() calls above clobber; create_text() copies 'name' immediately. */
-    name = get_tok_value(p->prop_ptr, "name", 0);
-    if(!name[0]) continue;                            /* nameless pin: nothing to show */
-    create_text(0 /* no draw */, cx + dx, cy + dy, (int)rot, (int)flip, name, NULL, size, size);
-    xctx->text[xctx->texts - 1].owner_pin_id = p->id;
+    /* fetch name_font then name LAST: get_tok_value() uses one volatile static buffer the
+     * pin_dtok() calls above clobber, so build the view's font-only prop (which copies the
+     * value) before reading name; create_text() then copies 'name' immediately. */
+    {
+      const char *nf = get_tok_value(p->prop_ptr, "name_font", 0);
+      char *vp = NULL;
+      if(nf[0]) my_mstrcat(_ALLOC_ID_, &vp, "font=", nf, NULL);
+      name = get_tok_value(p->prop_ptr, "name", 0);
+      if(!name[0]) { my_free(_ALLOC_ID_, &vp); continue; } /* nameless pin: nothing to show */
+      create_text(0 /* no draw */, cx + dx, cy + dy, (int)rot, (int)flip, name, vp, size, size);
+      my_free(_ALLOC_ID_, &vp);
+      xctx->text[xctx->texts - 1].owner_pin_id = p->id;
+    }
   }
 }
 
@@ -1215,6 +1222,16 @@ void pin_view_refresh(int pi)
   xctx->text[ti].yscale = s;
   xctx->text[ti].rot  = (short)pin_dtok(p->prop_ptr, "name_rot", 0.0);
   xctx->text[ti].flip = (short)pin_dtok(p->prop_ptr, "name_flip", 0.0);
+  /* font (name_font): set the view's font + keep its font-only prop in sync. Read LAST --
+   * the pin_dtok() calls above clobber get_tok_value()'s shared static buffer. */
+  {
+    const char *nf = get_tok_value(p->prop_ptr, "name_font", 0);
+    char *vp = NULL;
+    if(nf[0]) my_mstrcat(_ALLOC_ID_, &vp, "font=", nf, NULL);
+    my_strdup(_ALLOC_ID_, &xctx->text[ti].prop_ptr, vp);  /* view prop carries only the font */
+    my_strdup(_ALLOC_ID_, &xctx->text[ti].font, nf);      /* "" when absent: no custom font */
+    my_free(_ALLOC_ID_, &vp);
+  }
 }
 
 /* Recompute a pin's name-label side from its current dir= (in -> right/no-flip,

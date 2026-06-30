@@ -551,19 +551,44 @@ pin tokens, no separate persisted object.
     DEFERRED (user call): F3 the redundant no-op undo baseline after closing the form (extra
     Ctrl-Z; only safe fix is pop_undo which risks redo-resurrect) and the ciform/addpin
     lifecycle duplication (factor into a shared modeless-placement helper).
-- **DEFERRED from the 2026-06-30 GUI eyeball (user chose "preview only" this round):**
-  - **(D-sel) Pin rect is hard to click-select.** `find_closest_box` (findnet.c:411) uses a
-    border-RING test (inside `rect+threshold`, outside `rect−threshold`); a 5×5 pin's CENTER
-    is a dead zone when zoomed in (`threshold = 12·zoom·tk_scaling < 2.5`), so clicking the
-    body selects nothing while the offset name-text does. Fix = make PINLAYER pins
-    fill-selectable (treat a click anywhere inside the pin rect as distance 0).
-  - **(D-split) Two editors, not one (reverses the P3.5 retarget).** Today `Q` on the name
-    view RETARGETS to the pin form (editprop.c:1443) and the `"pin"` schema
-    (property_form.tcl:153) carries everything. User wants: **Pin editor** (`Q` on pin) =
-    Name, Direction, Show name ONLY; **new Pin-name-text editor** (`Q` on name view) = Text
-    size, Font, Offset dx/dy, Rotation, Flip (writes through to `name_*`; content edit still
-    renames the pin). So: drop the retarget, split the schema, add a `"pinname"` (or similar)
-    schema for the view. CONFIRMED field split: text editor gets size/font/offset/rot/flip.
+- **D-sel — pin rect fill-selectable. [DONE 2026-06-30, UNCOMMITTED]** `find_closest_box`
+  (findnet.c) gated the inner-box (border-ring) exclusion on `c != PINLAYER`: a PINLAYER pin
+  now selects on its whole BODY, so a click anywhere inside the 5×5 pin picks it even when
+  zoomed in (threshold < half-size previously left the centre a dead zone). Other rects keep
+  the ring test unchanged. GUI smoke (click pin centre → selects `rect …5…`) PASS,
+  sabotage-verified (ring-test-for-pins → centre selects nothing). NOTE: the pin's stub LINE
+  runs through the centre and ties at distance 0; clicking exactly on the stub still selects
+  the line (find_closest_line runs first) — click elsewhere on the body for the pin.
+- **D-split — two editors for the pin. [DONE 2026-06-30, UNCOMMITTED]** `Q` on the pin BODY
+  opens the pin-IDENTITY editor (`pin` schema: Name, Direction, Show name); `Q` on the name
+  TEXT opens the pin-NAME-TEXT editor (`pinname` schema: Text size, Font, Offset x/y,
+  Rotation, Flip), both editing the same B-record tokens. Mechanism: editprop.c `edit_property`
+  keeps the name-view→pin-rect retarget but now sets `gfxform_via_name=1`; `gfxform::selected_type`
+  returns `pinname` when that marker is set (else `pin`); `text_line` consumes the marker.
+  Each schema HIDES the other's tokens via a new `hide 1` row flag (stripped from "Other
+  properties" + preserved, never shown) — `schema_extra` strips them, `gfxform::init/desired`
+  + the `text_line_slick` widget loop skip them, and `schema_assemble` re-overlays present
+  hidden tokens from `orig` so an edited "Other" box never drops the other editor's fields.
+  `name_font` is NEW and now honored: `synth_pin_views`/`pin_view_refresh` carry it onto the
+  view (`font=` token + `t->font`). Tests: pin_name_text +12 (now 58) — visible-field lists,
+  both `selected_type` modes, hidden-token preservation, font round-trip; GUI smoke confirms
+  both dialog titles ("Edit Pin properties" / "Edit Pin Name Text properties"). property_form
+  39/39 graphical-path PASS, netlist golden PASS.
+- **D-split Apply button. [DONE 2026-06-30, UNCOMMITTED]** Both pin/pinname editors gained a
+  live **Apply** (OK / Apply / Cancel) so a change (e.g. font) shows on the canvas without
+  dismissing the form. The gfxform dialog is C-modal (`tkwait` inside `edit_rect_property`),
+  so Apply commits via a new `xschem apply_pin_prop <prop>` (scheduler.c) that mirrors the
+  pin branch of `edit_rect_property` (changed-fields-only off the primary pin's prop →
+  multi-select keeps each pin's own tokens; `pin_reorient` on dir change; `pin_view_apply`)
+  but with NO dialog round-trip. It is a no-op (no undo slot) when nothing changed
+  (`set_different_token` return). `gfxform::ok` routes pin/pinname OK through the SAME
+  `apply_pin_prop` and sets `rcode {}` so C does not re-apply → OK-after-Apply never
+  double-commits (ONE undo per distinct change); other graphical types keep the legacy
+  `rcode {ok}` C round-trip and show no Apply button. Tests: pin_name_text +7 (now 65) —
+  apply/size/font/view-sync/no-op-guard/undo/hide; GUI smoke (12) — Apply present on both,
+  dialog stays open, live font on the view, one-undo-reverts, Cancel-after-Apply keeps the
+  applied change; a generic-rect smoke confirms the non-pin path is unchanged (no Apply, OK
+  via C). GUI-MANUAL: the live look of both forms + font rendering.
 - **P4 — delete + copy/paste.** Delete-of-lone-view DONE in P3.6(d); remaining:
   `copy_objects`/paste skip view objects and regenerate after name-uniquify.
 - **P5 — show/hide.** Global tri-state `show_pin_names` (wins) + per-pin `show_pinname` +

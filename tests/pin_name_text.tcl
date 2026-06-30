@@ -164,21 +164,74 @@ xschem saveas $o9b symbol
 check "move both: name_dx unchanged"    [xschem getprop rect 5 0 name_dx] 20
 
 # ---------------------------------------------------------------------------
-# 10. Pin property form schema + dispatch (headless Tcl; the dialog is GUI-manual).
+# 10. Two property editors over the pin's tokens (D-split, headless Tcl; dialogs GUI-manual):
+#     `pin` (Q on the pin body) edits identity; `pinname` (Q on the name text) edits the
+#     name-text appearance. Each shows only its own fields and HIDES (preserves) the rest.
 # ---------------------------------------------------------------------------
+proc visible_toks {schema} {
+  set t {}
+  foreach row $schema {
+    if {!([dict exists $row hide] && [dict get $row hide])} { lappend t [dict get $row tok] }
+  }
+  return $t
+}
 set sch [slickprop::gfx_schema pin]
-set toks {}
-foreach row $sch { lappend toks [dict get $row tok] }
-check "pin form fields"        $toks {name dir show_pinname name_size name_dx name_dy name_rot name_flip}
-check "pin dir is a dropdown"  [dict get [lindex $sch 1] widget] enum
-check "pin dir choices"        [dict keys [dict get [lindex $sch 1] choices]] {input output inout}
-check "pin name is single-line" [dict get [lindex $sch 0] widget] string
-# a selected PINLAYER (layer 5) rect routes to the pin form, not the generic rect form
+check "pin form visible fields"  [visible_toks $sch] {name dir show_pinname}
+check "pin dir is a dropdown"    [dict get [lindex $sch 1] widget] enum
+check "pin dir choices"          [dict keys [dict get [lindex $sch 1] choices]] {input output inout}
+check "pin name is single-line"  [dict get [lindex $sch 0] widget] string
+set scn [slickprop::gfx_schema pinname]
+check "pinname form visible fields" [visible_toks $scn] {name_size name_font name_dx name_dy name_rot name_flip}
+# schema_assemble must preserve each editor's HIDDEN tokens (so editing one editor never
+# drops the other's fields). orig carries both identity and layout tokens.
+set orig {name=A dir=in show_pinname=true name_dx=25 name_size=0.2}
+set pinx  [slickprop::schema_extra $sch $orig]
+set pinres [slickprop::schema_assemble $sch $orig {name B dir in show_pinname true} $pinx]
+check "pin edit keeps name_dx"   [xschem get_tok $pinres name_dx 2] 25
+check "pin edit sets name"       [xschem get_tok $pinres name 2] B
+set pnx   [slickprop::schema_extra $scn $orig]
+set pnres [slickprop::schema_assemble $scn $orig {name_size 0.5 name_font {} name_dx 25 name_dy {} name_rot {} name_flip {}} $pnx]
+check "pinname edit keeps name"  [xschem get_tok $pnres name 2] A
+check "pinname edit keeps dir"   [xschem get_tok $pnres dir 2] in
+check "pinname edit sets size"   [xschem get_tok $pnres name_size 2] 0.5
+# a selected PINLAYER (layer 5) rect routes to the pin form; the via-name marker -> pinname
 xschem clear force
 xschem add_symbol_pin 0 0 IN in 0
 xschem unselect_all
 xschem select rect 5 0
-check "selected_type = pin"    [gfxform::selected_type] pin
+set ::gfxform_via_name 0
+check "selected_type = pin"           [gfxform::selected_type] pin
+set ::gfxform_via_name 1
+check "selected_type = pinname (name)" [gfxform::selected_type] pinname
+set ::gfxform_via_name 0
+# name_font (the pinname editor's Font field) carries onto the synthesized view: set it on
+# the pin, round-trip, and the regenerated view must wear the font.
+xschem setprop rect 5 0 name_font Courier
+set off $wd/pinfont.sym
+xschem saveas $off symbol
+xschem load $off
+check "font: token persisted"    [xschem getprop rect 5 0 name_font] Courier
+check "font: view wears it"      [xschem getprop text 0 font] Courier
+
+# ---------------------------------------------------------------------------
+# 10b. Live Apply (xschem apply_pin_prop): the pin/pinname forms' Apply commits to the
+#      selected pin(s) + redraws without closing. Idempotent (no-op -> no undo slot).
+# ---------------------------------------------------------------------------
+xschem clear force symbol
+xschem add_symbol_pin 0 0 NN in 0
+xschem unselect_all; xschem select rect 5 0
+set base "name=NN dir=in show_pinname=true name_dx=25 name_dy=-5 name_size=0.2"
+set changed "name=NN dir=in show_pinname=true name_dx=25 name_dy=-5 name_size=0.4 name_font=Courier"
+check "apply: changed -> 1"      [xschem apply_pin_prop $changed] 1
+check "apply: size on pin"       [xschem getprop rect 5 0 name_size] 0.4
+check "apply: font on pin"       [xschem getprop rect 5 0 name_font] Courier
+check "apply: view wears font"   [xschem getprop text 0 font] Courier
+check "apply: re-apply -> 0"     [xschem apply_pin_prop $changed] 0
+xschem undo
+check "apply: undo reverts size" [xschem getprop rect 5 0 name_size] 0.2
+# show_pinname=false via Apply removes the name view
+xschem apply_pin_prop "name=NN dir=in show_pinname=false name_dx=25 name_dy=-5 name_size=0.2"
+check "apply: hide removes view" [xschem get texts] 0
 
 # ---------------------------------------------------------------------------
 # 11. Creation via the Add-pin dialog: addpin::place sets ::pin_new_name/::pin_new_dir,

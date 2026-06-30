@@ -1283,6 +1283,9 @@ void edit_property(int x)
 
  if(!has_x) return;
  rebuild_selected_array(); /* from the .sel field in objects build */
+ /* D-split (cadence_pin_name_text.md): default to the pin-IDENTITY editor; the name-text
+  * retarget below flips this so gfxform::selected_type picks the pin-NAME-TEXT editor. */
+ tclsetvar("gfxform_via_name", "0");
  if(xctx->lastsel==0 )      /* the array of selected objs */
  {
    char *new_prop = NULL;
@@ -1438,8 +1441,10 @@ void edit_property(int x)
  j = set_first_sel(0, -2, 0);
  type = xctx->sel_array[j].type;
 
- /* Q on an owned pin-name view edits its PIN via the single-line per-field pin form,
-  * not the multiline text editor: retarget the selection to the owning pin rect. */
+ /* Q on an owned pin-name view edits the pin's NAME TEXT (size/font/offset/rot/flip): the
+  * name lives in the pin rect's tokens, so retarget the selection to the owning pin rect,
+  * and flag it so gfxform picks the `pinname` editor (not the pin-identity `pin` editor).
+  * D-split, doc/claude/specs/cadence_pin_name_text.md. */
  if(type == xTEXT && xctx->text[xctx->sel_array[j].n].owner_pin_id) {
    int pi = pin_idx_by_id(xctx->text[xctx->sel_array[j].n].owner_pin_id);
    if(pi >= 0) {
@@ -1449,6 +1454,7 @@ void edit_property(int x)
      rebuild_selected_array();
      j = set_first_sel(0, -2, 0);
      type = xctx->sel_array[j].type;
+     tclsetvar("gfxform_via_name", "1");
    }
  }
 
