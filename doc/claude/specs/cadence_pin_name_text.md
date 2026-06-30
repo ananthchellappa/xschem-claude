@@ -489,6 +489,21 @@ pin tokens, no separate persisted object.
   property-dialog content/size paths (Tcl dialogs) — build+shared-helper verified, manual
   GUI smoke pending. Also still GUI-pending: "view follows pin" live display (reposition
   branch is correct but only the token side is headless-observable).
+- **P3.5 — pin editing/creation UX. [DONE 2026-06-30, committed `80f8a0e0` + `335fa284`]**
+  From GUI feedback. (a) Per-field PIN FORM: new `"pin"` schema in `slickprop::gfx_schema`
+  (Name=string widget, Direction=enum→combobox in/out/inout, Show name=bool, Text size);
+  `gfxform` gained a `string` widget; `gfxform::selected_type` returns `pin` for a layer-5
+  rect → `Q` on a pin uses the per-field form (not the raw rect box). (b) `Q` on the name
+  VIEW retargets to its pin rect in `edit_property` → single-line form (no multiline
+  `enter_text`). (c) Re-orient on dir change: `edit_rect_property` captures old dir, calls
+  `pin_reorient()` (in→right, out/inout→left); `pin_view_refresh()` now full-syncs
+  content+pos+size+rot+flip. (d) Redraw fix: pin edit does a full `draw()` (the view is a
+  separate object outside the rect bbox). (e) CREATE dialog: `add_symbol_pin` no-arg opens
+  `addpin::open` (Name + Direction dropdown, ciform-styled); new `-place` form does
+  interactive placement reading `::pin_new_name`/`::pin_new_dir`; the Alt+P KEY
+  (callback.c) — which had been inline-creating a LEGACY pin, bypassing create_pin — now
+  also opens the dialog. Tests +9 (now 35): pin schema/dropdown/single-line/`selected_type`
+  + `-place` creation. GUI-manual: the actual dialog rendering, re-orient, redraw.
 - **P4 — delete + copy/paste.** `delete()` skips lone SYNTH views, drops a deleted pin's
   view; `copy_objects`/paste skip view objects and regenerate after name-uniquify.
 - **P5 — show/hide.** Global tri-state `show_pin_names` (wins) + per-pin `show_pinname` +
