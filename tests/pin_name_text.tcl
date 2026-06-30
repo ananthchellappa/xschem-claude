@@ -311,6 +311,43 @@ xschem delete
 check "del pin: pin gone"         [xschem get rects 5] 0
 check "del pin: view gone"        [xschem get texts]   0
 
+# ---------------------------------------------------------------------------
+# 13. P4 copy/paste. A pin's name view is a derived object: copying/pasting a pin must
+#     REGENERATE the view for the copy (bound to its fresh id), never duplicate the view as
+#     a stray real text. (Sabotage: drop the synth_pin_views() in copy_objects/merge_file
+#     and "... two views" drops to 1; drop the copy_objects view-skip and a stray T survives
+#     the round-trip -> "copy roundtrip: no stray" sees 3.)
+# ---------------------------------------------------------------------------
+# 13a. In-session copy of a PIN ONLY -> the copy gets its own regenerated view.
+xschem clear force symbol
+xschem add_symbol_pin 0 0 AA in 0
+xschem unselect_all; xschem select rect 5 0
+xschem copy_objects 0 40
+check "copy pin: two pins"         [xschem get rects 5] 2
+check "copy pin: two views"        [xschem get texts]   2
+# 13b. Copy PIN+VIEW -> the view is not duplicated as a stray persisted text. Save skips
+#      synth views, so a round-trip stays at 2 pins / 2 views (a stray would make it 3).
+xschem clear force symbol
+xschem add_symbol_pin 0 0 BB in 0
+xschem unselect_all; xschem select rect 5 0; xschem select text 0
+xschem copy_objects 0 40
+check "copy pin+view: two pins"    [xschem get rects 5] 2
+check "copy pin+view: two views"   [xschem get texts]   2
+set ocp $wd/copied.sym
+xschem saveas $ocp symbol
+xschem load $ocp
+check "copy roundtrip: two pins"   [xschem get rects 5] 2
+check "copy roundtrip: no stray"   [xschem get texts]   2
+# 13c. Clipboard copy/paste -> the pasted pin gets a regenerated view (clipboard has none).
+xschem clear force symbol
+xschem add_symbol_pin 0 0 CC in 0
+xschem unselect_all; xschem select rect 5 0
+xschem copy
+xschem paste
+check "paste: two pins"            [xschem get rects 5] 2
+check "paste: two views"           [xschem get texts]   2
+xschem abort_operation               ;# end the merge drag (cleanup)
+
 file delete -force $wd
 
 if {$nfail == 0} { puts "ALL PASS (pin_name_text)" } else { puts "$nfail FAILURES (pin_name_text)" }

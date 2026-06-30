@@ -589,8 +589,24 @@ pin tokens, no separate persisted object.
   dialog stays open, live font on the view, one-undo-reverts, Cancel-after-Apply keeps the
   applied change; a generic-rect smoke confirms the non-pin path is unchanged (no Apply, OK
   via C). GUI-MANUAL: the live look of both forms + font rendering.
-- **P4 — delete + copy/paste.** Delete-of-lone-view DONE in P3.6(d); remaining:
-  `copy_objects`/paste skip view objects and regenerate after name-uniquify.
+- **P4 — delete + copy/paste. [DONE 2026-06-30, UNCOMMITTED]** Delete-of-lone-view was done
+  in P3.6(d). Copy/paste now treats the name view as the DERIVED object it is — never
+  duplicated, always regenerated for the copy (bound to its fresh `xRect.id`):
+  - **In-session copy** (`copy_objects` END, move.c): before the copy loop, drop any selected
+    synth views from the copy set (`owner_pin_id && sel` → `sel=0`); after the loop +
+    rebuild, `synth_pin_views()` regenerates a view for each copied pin (each got a fresh id
+    via `storeobject`). Without this a copied pin either had NO view (pin-only selection) or
+    duplicated the view as a STRAY real text (owner_pin_id=0) still bound to the original pin.
+  - **Clipboard paste** (`merge_file`, paste.c): the clipboard has no views (save_text skips
+    them), so after the merge loop `synth_pin_views()` regenerates a view per pasted shown
+    pin and the views are added to the merge selection (`select_text` of each selected pin's
+    view) so they drag with their pin; `merge_file`'s `unselect_all(1)` means only the PASTED
+    pins are selected, so original pins/views are untouched.
+  Both hooks are symbol-mode-gated (synth) so schematic copy/paste is unaffected. Tests:
+  pin_name_text +8 (now 73) — copy regen (pin-only + pin+view), no-stray round-trip, clipboard
+  paste regen — all sabotage-verified (drop synth → views=1; drop view-skip → stray makes
+  round-trip=3). Generic schematic copy/paste sanity + netlist golden pass; GUI smoke confirms
+  the interactive paste→drag→drop keeps 2 pins/2 views and clears STARTMERGE.
 - **P5 — show/hide.** Global tri-state `show_pin_names` (wins) + per-pin `show_pinname` +
   pin-dialog checkbox; visibility rule in the draw gate.
 - **P6 — instance display.** `draw_symbol` pass rendering pin names from symbol pin tokens.

@@ -464,6 +464,23 @@ void merge_file(int selection_load, const char ext[])
      if(generator) pclose(fd);
      else fclose(fd);
 
+     /* P4 (cadence_pin_name_text.md): pasted pins arrive WITHOUT their name views (save
+      * skips synthesized views), so regenerate a view per pasted shown pin and add it to
+      * the merge selection so it drags with its pin. Each pasted pin got a fresh xRect.id
+      * (gfx_register), so synth binds a new view to it. Symbol-edit only (synth is gated). */
+     synth_pin_views();
+     {
+       int r, vt;
+       for(r = 0; r < xctx->rects[PINLAYER]; ++r) {
+         if(xctx->rect[PINLAYER][r].sel == SELECTED &&
+            (vt = pin_name_view_of(xctx->rect[PINLAYER][r].id)) >= 0) {
+           select_text(vt, SELECTED, 1, 1);
+         }
+       }
+       xctx->need_reb_sel_arr = 1;
+       rebuild_selected_array();
+     }
+
      xctx->ui_state |= STARTMERGE;
      dbg(1, "End merge_file(): loaded file %s: wire=%d inst=%d ui_state=%ld\n",
              name, xctx->wires , xctx->instances, xctx->ui_state);

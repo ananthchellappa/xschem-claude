@@ -727,6 +727,17 @@ void copy_objects(int what)
     draw_selection(xctx->gctiled,0);
     update_symbol_bboxes(0, 0);
 
+    /* P4 (cadence_pin_name_text.md): a pin's name view is a DERIVED object, never copied.
+     * Drop any selected name views from the copy set; each copied pin regenerates its own
+     * view below (synth_pin_views), bound to the copy's fresh id -- otherwise the view would
+     * be duplicated as a stray real text still bound to the ORIGINAL pin. */
+    {
+      int t, dropped = 0;
+      for(t = 0; t < xctx->texts; ++t)
+        if(xctx->text[t].owner_pin_id && xctx->text[t].sel) { xctx->text[t].sel = 0; dropped = 1; }
+      if(dropped) { xctx->need_reb_sel_arr = 1; rebuild_selected_array(); }
+    }
+
     for(i=0;i<xctx->lastsel; ++i)
     {
       n = xctx->sel_array[i].n;
@@ -1021,6 +1032,10 @@ void copy_objects(int what)
     }  /* for(i = 0; i < xctx->lastsel; ++i) */
     xctx->need_reb_sel_arr=1;
     rebuild_selected_array();
+    /* P4: regenerate name views for the just-copied pins. Each copy got a fresh xRect.id
+     * (storeobject), so synth_pin_views() binds a NEW view to it; idempotent + symbol-mode
+     * gated, so the original pins' existing views are left alone. */
+    synth_pin_views();
     if(!firsti || !firstw) {
       xctx->prep_net_structs=0;
       xctx->prep_hi_structs=0;
