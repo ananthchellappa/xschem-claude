@@ -1039,6 +1039,9 @@ static int xschem_cmds_c(Tcl_Interp *interp, int argc, const char *argv[], int *
         xctx->deltay = atof(argv[3]);
         copy_objects(END);
       } else {
+        /* The MENU "Duplicate objects" arms a DEFERRED copy: the mouse is over the menu, not
+         * the canvas, so the next canvas click starts it (check_menu_start_commands). The C
+         * KEY is made immediate (Cadence noun-verb) separately in callback.c case 'c'. */
         xctx->ui_state |= MENUSTART;
         xctx->ui_state2 = MENUSTARTCOPY;
       }
@@ -4472,6 +4475,8 @@ static int xschem_cmds_m(Tcl_Interp *interp, int argc, const char *argv[], int *
         move_objects( END,0,atof(argv[2]), atof(argv[3]));
       }
       else {
+        /* MENU "Move objects" arms a DEFERRED move (mouse over the menu); the canvas click
+         * starts it. The M KEY is made immediate separately in callback.c case 'm'. */
         xctx->ui_state |= MENUSTART;
         xctx->ui_state2 = MENUSTARTMOVE;
       }

@@ -4049,17 +4049,22 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
      * See init_input_bindings. */
 
     case 'c':
-      /* duplicate selection */
+      /* duplicate selection (Cadence-style copy command, cadence_pin_name_text.md copy/move
+       * UX): noun-verb (something selected) starts the copy IMMEDIATELY so the ghost follows
+       * the cursor at once; verb-noun (nothing selected) arms copy mode + a prompt so the
+       * next canvas click selects the object under the cursor and starts the copy. This
+       * overrides the infix_interface preference for the copy/move keys -- otherwise with
+       * infix_interface off 'c' only armed MENUSTART and nothing followed until a click. */
       if(rstate==0 && !(xctx->ui_state & (STARTMOVE | STARTCOPY))) {
         if(xctx->semaphore >= 2) break;
         if(readonly_block()) break;
-        if(infix_interface) {
+        rebuild_selected_array();
+        if(xctx->lastsel > 0) {
           xctx->mx_double_save=xctx->mousex_snap;
           xctx->my_double_save=xctx->mousey_snap;
           copy_objects(START);
         } else {
-          xctx->ui_state |= MENUSTART;
-          xctx->ui_state2 = MENUSTARTCOPY;
+          statusmsg("Copy: select object(s) first, then press the copy key", 1);
         }
       }
       /* copy selection into clipboard */
@@ -4359,7 +4364,10 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
       break;
 
     case 'm':
-      /* Move selection */
+      /* Move selection (Cadence-style move command, mirror of 'c'): noun-verb (selected)
+       * starts the move immediately so it follows the cursor; verb-noun (nothing selected)
+       * arms move mode + a prompt so the next click selects + starts. Overrides
+       * infix_interface for this key (see case 'c'). */
       if(rstate==0 && !(xctx->ui_state & (STARTMOVE | STARTCOPY))) {
         if(waves_selected(event, key, state, button)) {
           waves_callback(event, mx, my, key, button, aux, state);
@@ -4367,13 +4375,13 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
         }
         if(readonly_block()) break;
         if(enable_stretch) select_attached_nets(); /* stretch nets that land on selected instance pins */
-        if(infix_interface) {
+        rebuild_selected_array();
+        if(xctx->lastsel > 0) {
           xctx->mx_double_save=xctx->mousex_snap;
           xctx->my_double_save=xctx->mousey_snap;
           move_objects(START,0,0,0);
         } else {
-          xctx->ui_state |= MENUSTART;
-          xctx->ui_state2 = MENUSTARTMOVE;
+          statusmsg("Move: select object(s) first, then press the move key", 1);
         }
       }
       /* move selection stretching attached nets */

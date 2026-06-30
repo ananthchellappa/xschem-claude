@@ -123,6 +123,8 @@ if {$i >= 0} {
 }
 
 # --- 6. duplicate drop => xschem copy_objects dx dy -------------------------
+# `xschem copy_objects` (the MENU command) arms a deferred copy: click-to-start, move,
+# click-to-drop. (The C KEY is immediate, handled in callback.c case 'c', not this command.)
 set n0 [llength [loglines]]
 set i0 [xschem get instances]
 xschem unselect_all
