@@ -1149,6 +1149,88 @@ int create_pin(double x, double y, const char *name, const char *dir, unsigned s
   return ri;
 }
 
+/* ---- P3 write-through (Option B): keep pin tokens <-> name view in sync. ---------- */
+
+/* index of the PINLAYER rect whose id == 'id', or -1 */
+int pin_idx_by_id(unsigned int id)
+{
+  int j, rects;
+  if(!id) return -1;
+  rects = xctx->rects[PINLAYER];
+  for(j = 0; j < rects; ++j) if(xctx->rect[PINLAYER][j].id == id) return j;
+  return -1;
+}
+
+/* write view text[ti]'s current geometry/size back into its owning pin's name_* tokens
+ * (offset is relative to the pin center, so it is invariant under joint translation) */
+void pin_view_writeback(int ti)
+{
+  xText *v = &xctx->text[ti];
+  int pi = pin_idx_by_id(v->owner_pin_id);
+  xRect *p;
+  double cx, cy;
+  char b[80];
+  char *pr = NULL;
+  if(pi < 0) return;
+  p = &xctx->rect[PINLAYER][pi];
+  cx = (p->x1 + p->x2) / 2.0;
+  cy = (p->y1 + p->y2) / 2.0;
+  my_strdup(_ALLOC_ID_, &pr, p->prop_ptr);
+  my_snprintf(b, S(b), "%g", v->x0 - cx);   my_strdup(_ALLOC_ID_, &pr, subst_token(pr, "name_dx", b));
+  my_snprintf(b, S(b), "%g", v->y0 - cy);   my_strdup(_ALLOC_ID_, &pr, subst_token(pr, "name_dy", b));
+  my_snprintf(b, S(b), "%d", (int)v->rot);  my_strdup(_ALLOC_ID_, &pr, subst_token(pr, "name_rot", b));
+  my_snprintf(b, S(b), "%d", (int)v->flip); my_strdup(_ALLOC_ID_, &pr, subst_token(pr, "name_flip", b));
+  my_snprintf(b, S(b), "%g", v->yscale);    my_strdup(_ALLOC_ID_, &pr, subst_token(pr, "name_size", b));
+  my_strdup(_ALLOC_ID_, &p->prop_ptr, pr);
+  my_free(_ALLOC_ID_, &pr);
+}
+
+/* view text[ti]'s content -> owning pin's name= (editing the label renames the pin) */
+void pin_rename_from_view(int ti)
+{
+  xText *v = &xctx->text[ti];
+  int pi = pin_idx_by_id(v->owner_pin_id);
+  if(pi < 0 || !v->txt_ptr) return;
+  my_strdup(_ALLOC_ID_, &xctx->rect[PINLAYER][pi].prop_ptr,
+            subst_token(xctx->rect[PINLAYER][pi].prop_ptr, "name", v->txt_ptr));
+}
+
+/* pin[pi]'s name= -> its synthesized view content (renaming via the pin dialog updates
+ * the displayed label). No-op if the pin has no view. */
+void pin_view_refresh(int pi)
+{
+  unsigned int id = xctx->rect[PINLAYER][pi].id;
+  int ti = pin_name_view_of(id);
+  if(ti < 0) return;
+  my_strdup2(_ALLOC_ID_, &xctx->text[ti].txt_ptr,
+             get_tok_value(xctx->rect[PINLAYER][pi].prop_ptr, "name", 0));
+}
+
+/* After a move/rotate/flip commit, reconcile every name view with its pin:
+ *  - VIEW was in the move -> record its new offset/rot/flip/size on the pin;
+ *  - else only the PIN moved -> reposition the view from the pin tokens (label follows).
+ * Keyed on .sel (still set right after the move commit). Symbol-edit only. */
+void pin_views_reconcile_after_move(void)
+{
+  int i;
+  if(xctx->netlist_type != CAD_SYMBOL_ATTRS) return;
+  for(i = 0; i < xctx->texts; ++i) {
+    xText *v = &xctx->text[i];
+    int pi;
+    if(!v->owner_pin_id) continue;
+    pi = pin_idx_by_id(v->owner_pin_id);
+    if(pi < 0) continue;
+    if(v->sel == SELECTED) {
+      pin_view_writeback(i);
+    } else if(xctx->rect[PINLAYER][pi].sel == SELECTED) {
+      xRect *p = &xctx->rect[PINLAYER][pi];
+      double cx = (p->x1 + p->x2) / 2.0, cy = (p->y1 + p->y2) / 2.0;
+      v->x0 = cx + pin_dtok(p->prop_ptr, "name_dx", 20.0);
+      v->y0 = cy + pin_dtok(p->prop_ptr, "name_dy", -5.0);
+    }
+  }
+}
+
 
 void reset_caches(void)
 {

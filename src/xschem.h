@@ -1895,6 +1895,11 @@ extern int create_text(int draw_text, double x, double y, int rot, int flip, con
        const char *props, double hsize, double vsize);
 extern void synth_pin_views(void);
 extern int create_pin(double x, double y, const char *name, const char *dir, unsigned short sel);
+extern int pin_idx_by_id(unsigned int id);
+extern void pin_view_writeback(int ti);
+extern void pin_rename_from_view(int ti);
+extern void pin_view_refresh(int pi);
+extern void pin_views_reconcile_after_move(void);
 extern void init_inst_iterator(Iterator_ctx *ctx, double x1, double y1, double x2, double y2);
 extern Instentry *inst_iterator_next(Iterator_ctx *ctx);
 

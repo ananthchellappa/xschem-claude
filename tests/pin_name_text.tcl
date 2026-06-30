@@ -141,6 +141,28 @@ check "disk-undo: two views after add"   [xschem get texts] 2
 xschem undo
 check "disk-undo: view regenerated"      [xschem get texts] 1
 
+# ---------------------------------------------------------------------------
+# 9. P3 move write-through. owned.sym pin center is (0,0) with name_dx=20.
+#    (a) Moving the VIEW alone records the new offset on the pin (name_dx -> 40).
+#    (b) Moving pin+view together (translation) leaves the offset unchanged.
+# ---------------------------------------------------------------------------
+xschem load $f1
+xschem unselect_all
+xschem select text 0                  ;# the synthesized name view
+xschem move_objects 20 0              ;# drag the label +20 in x
+set o9 $wd/moved_view.sym
+xschem saveas $o9 symbol
+check "move view: name_dx written back" [xschem getprop rect 5 0 name_dx] 40
+
+xschem load $f1                       ;# fresh: name_dx back to 20
+xschem unselect_all
+xschem select rect 5 0                ;# the pin
+xschem select text 0                  ;# and its view -> move together
+xschem move_objects 20 0
+set o9b $wd/moved_both.sym
+xschem saveas $o9b symbol
+check "move both: name_dx unchanged"    [xschem getprop rect 5 0 name_dx] 20
+
 file delete -force $wd
 
 if {$nfail == 0} { puts "ALL PASS (pin_name_text)" } else { puts "$nfail FAILURES (pin_name_text)" }

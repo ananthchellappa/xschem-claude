@@ -304,6 +304,9 @@ static int edit_rect_property(int x)
 
       set_rect_flags(&xctx->rect[c][n]); /* set cached .flags bitmask from attributes */
 
+      /* P3 write-through: editing a pin's props (e.g. name=) refreshes its name view */
+      if(c == PINLAYER) pin_view_refresh(n);
+
       set_rect_extraptr(0, &xctx->rect[c][n]);
 
       attr = get_tok_value(xctx->rect[c][n].prop_ptr,"dash",0);
@@ -728,31 +731,30 @@ static int edit_text_property(int x)
       #endif
       /* dbg(1, "edit_property(): text props=%s text=%s\n", tclgetvar("props"), tclgetvar("tctx::retval")); */
       if(text_changed) {
-        double cg;
         my_free(_ALLOC_ID_, &xctx->text[sel].floater_ptr);
-        cg = tclgetdoublevar("cadgrid");
-        c = xctx->rects[PINLAYER];
-        for(l=0;l<c; ++l) {
-          if(xctx->text[sel].txt_ptr &&
-              !strcmp( (get_tok_value(xctx->rect[PINLAYER][l].prop_ptr, "name",0)), xctx->text[sel].txt_ptr) ) {
-            pcx = (xctx->rect[PINLAYER][l].x1+xctx->rect[PINLAYER][l].x2)/2.0;
-            pcy = (xctx->rect[PINLAYER][l].y1+xctx->rect[PINLAYER][l].y2)/2.0;
-            if(
-                /* 20171206 20171221 */
-                (fabs( (yy1+yy2)/2 - pcy) < cg/2 &&
-                (fabs(xx1 - pcx) < cg*3 || fabs(xx2 - pcx) < cg*3) )
-                ||
-                (fabs( (xx1+xx2)/2 - pcx) < cg/2 &&
-                (fabs(yy1 - pcy) < cg*3 || fabs(yy2 - pcy) < cg*3) )
-            ) {
-              if(x==0)
+        /* Owned pin-name view (Option B): renaming the label renames its pin via the
+         * robust owner_pin_id link (handled after txt_ptr is updated, below). For an
+         * ordinary text keep the legacy name-match+proximity pin-rename heuristic. */
+        if(!xctx->text[sel].owner_pin_id) {
+          double cg = tclgetdoublevar("cadgrid");
+          c = xctx->rects[PINLAYER];
+          for(l=0;l<c; ++l) {
+            if(xctx->text[sel].txt_ptr &&
+                !strcmp( (get_tok_value(xctx->rect[PINLAYER][l].prop_ptr, "name",0)), xctx->text[sel].txt_ptr) ) {
+              pcx = (xctx->rect[PINLAYER][l].x1+xctx->rect[PINLAYER][l].x2)/2.0;
+              pcy = (xctx->rect[PINLAYER][l].y1+xctx->rect[PINLAYER][l].y2)/2.0;
+              if(
+                  /* 20171206 20171221 */
+                  (fabs( (yy1+yy2)/2 - pcy) < cg/2 &&
+                  (fabs(xx1 - pcx) < cg*3 || fabs(xx2 - pcx) < cg*3) )
+                  ||
+                  (fabs( (xx1+xx2)/2 - pcx) < cg/2 &&
+                  (fabs(yy1 - pcy) < cg*3 || fabs(yy2 - pcy) < cg*3) )
+              ) {
                 my_strdup(_ALLOC_ID_, &xctx->rect[PINLAYER][l].prop_ptr,
                   subst_token(xctx->rect[PINLAYER][l].prop_ptr, "name",
                   (char *) tclgetvar("tctx::retval")) );
-              else
-                my_strdup(_ALLOC_ID_, &xctx->rect[PINLAYER][l].prop_ptr,
-                  subst_token(xctx->rect[PINLAYER][l].prop_ptr, "name",
-                  (char *) tclgetvar("tctx::retval")) );
+              }
             }
           }
         }
@@ -773,6 +775,12 @@ static int edit_text_property(int x)
       if(size_changed) {
         xctx->text[sel].xscale=hsize;
         xctx->text[sel].yscale=vsize;
+      }
+      /* P3 write-through: if this text is an owned pin-name view, fold edits back into
+       * the pin tokens (content -> name=, size -> name_size). */
+      if(xctx->text[sel].owner_pin_id) {
+        if(text_changed) pin_rename_from_view(sel);
+        if(size_changed) pin_view_writeback(sel);
       }
     } /* for(k=0;k<xctx->lastsel; ++k) */
     draw();

@@ -1971,6 +1971,9 @@ void move_objects(int what, int merge, double dx, double dy)
    xctx->ui_state &= ~STARTMERGE;
    xctx->move_rot=xctx->move_flip=0;
    xctx->x1=xctx->y1=xctx->x2=xctx->y2=xctx->deltax=xctx->deltay=0.;
+   /* P3 write-through: a moved pin-name view records its new offset on the owning pin;
+    * a pin moved without its view makes the view follow (Option B). */
+   pin_views_reconcile_after_move();
    set_modify(1); /* must be done before draw() if floaters are present to force cached values update */
    draw();
    xctx->rotatelocal=0;
