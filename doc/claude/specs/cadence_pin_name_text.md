@@ -476,8 +476,19 @@ pin tokens, no separate persisted object.
   regression clean. NOTE: other pin-creation entry points (raw `xschem rect` on PINLAYER,
   `place_sym_pins.tcl`, make_sym_from_* generators) are NOT yet routed through `create_pin`
   → they make legacy pins (no tokens), handled later by migration (P8).
-- **P3 — write-through (S2).** View move/resize/rotate/flip/content-edit → pin tokens
-  (`move_objects` END + `editprop.c`); pin rename (`edit_rect_property`) → regenerate view.
+- **P3 — write-through (S2). [DONE 2026-06-30, uncommitted→committed `7ea4e84b`]** Helpers
+  in actions.c: `pin_idx_by_id`, `pin_view_writeback` (view geom/size → pin
+  name_dx/dy/rot/flip/size; offset is pin-center-relative so joint translation is a
+  no-op), `pin_rename_from_view` (view content → name=), `pin_view_refresh` (name= → view
+  content), `pin_views_reconcile_after_move` (post-move: moved view records offset; pin
+  moved w/o view → view follows; keyed on `.sel`). Hooks: `move_objects(END)` before
+  set_modify; `edit_text_property` (owned views rename via owner_pin_id link — legacy
+  name+proximity kept for ordinary texts; size→name_size); `edit_rect_property` (PINLAYER
+  edit → refresh view content). Tests +2 (now 26): drag-view writes name_dx back;
+  move-both leaves it unchanged; sabotage-verified. **GUI-only (untested headless):** the
+  property-dialog content/size paths (Tcl dialogs) — build+shared-helper verified, manual
+  GUI smoke pending. Also still GUI-pending: "view follows pin" live display (reposition
+  branch is correct but only the token side is headless-observable).
 - **P4 — delete + copy/paste.** `delete()` skips lone SYNTH views, drops a deleted pin's
   view; `copy_objects`/paste skip view objects and regenerate after name-uniquify.
 - **P5 — show/hide.** Global tri-state `show_pin_names` (wins) + per-pin `show_pinname` +
