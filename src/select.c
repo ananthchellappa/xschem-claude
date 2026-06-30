@@ -542,6 +542,25 @@ void delete(int to_push_undo)
     if(!has_deletable) return;
   }
   if(to_push_undo && xctx->lastsel) xctx->push_undo();
+  /* Pin name views are owned by their pin (Option B): a view is deleted only WITH its
+   * pin, never on its own. Reconcile selection BEFORE rects are removed below:
+   *  (a) cascade: select the view of every pin being deleted, so it goes too;
+   *  (b) protect: deselect any lone-selected view whose pin is NOT being deleted. */
+  {
+    int t, r;
+    for(r = 0; r < xctx->rects[PINLAYER]; ++r) {
+      if(xctx->rect[PINLAYER][r].sel == SELECTED) {
+        int vt = pin_name_view_of(xctx->rect[PINLAYER][r].id);
+        if(vt >= 0) xctx->text[vt].sel = SELECTED;
+      }
+    }
+    for(t = 0; t < xctx->texts; ++t) {
+      if(xctx->text[t].sel == SELECTED && xctx->text[t].owner_pin_id) {
+        int pr = pin_idx_by_id(xctx->text[t].owner_pin_id);
+        if(pr < 0 || xctx->rect[PINLAYER][pr].sel != SELECTED) xctx->text[t].sel = 0;
+      }
+    }
+  }
   del_rect_line_arc_poly();
 
   for(i=0;i<xctx->texts; ++i)

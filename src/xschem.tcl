@@ -10091,7 +10091,8 @@ proc text_line_slick {txtlabel clear preserve_disabled type} {
       }
       string {
         label $f.l -text "$lab:"
-        entry $f.e -textvariable gfxform::val($tok) -width 24
+        set ww [expr {[dict exists $row width] ? [dict get $row width] : 24}]
+        entry $f.e -textvariable gfxform::val($tok) -width $ww
         pack $f.l $f.e -side left
       }
       bool {
@@ -10177,8 +10178,9 @@ namespace eval addpin { variable name {} ; variable dir inout }
 
 proc addpin::place {} {
   variable name; variable dir
+  set map {input in output out inout inout}
   set ::pin_new_name [expr {$name eq {} ? {XXX} : $name}]
-  set ::pin_new_dir  [expr {$dir  eq {} ? {inout} : $dir}]
+  set ::pin_new_dir  [expr {[dict exists $map $dir] ? [dict get $map $dir] : {inout}}]
   destroy .addpin
   xschem add_symbol_pin -place
 }
@@ -10196,7 +10198,7 @@ proc addpin::open {} {
   ttk::entry $w.f.ename -textvariable addpin::name -width 28
   ttk::label $w.f.ldir  -text "Direction" -anchor w
   ttk::combobox $w.f.edir -textvariable addpin::dir -state readonly \
-     -values {in out inout} -width 26
+     -values {input output inout} -width 26
   catch {$w.f.lname configure -font slickPropLabel}
   catch {$w.f.ename configure -font slickPropValue}
   catch {$w.f.ldir  configure -font slickPropLabel}

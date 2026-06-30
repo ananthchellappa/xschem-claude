@@ -140,11 +140,17 @@ proc slickprop::gfx_schema {type} {
   # and the direction as a dropdown. See doc/claude/specs/cadence_pin_name_text.md.
   set pname   [dict create tok name         label {Name}      widget string]
   set pdir    [dict create tok dir          label {Direction} widget enum \
-                 choices [dict create in in out out inout inout]]
+                 choices [dict create input in output out inout inout]]
   set pshow   [dict create tok show_pinname label {Show name} widget bool on true]
   set psize   [dict create tok name_size    label {Text size} widget num]
+  # name_* layout as their own rows (not dumped in "Other properties"); string widget so
+  # an explicit 0 is preserved verbatim (num would treat 0 as "unset" -> default).
+  set pdx     [dict create tok name_dx      label {Name dx}   widget string width 8]
+  set pdy     [dict create tok name_dy      label {Name dy}   widget string width 8]
+  set prot    [dict create tok name_rot     label {Name rot}  widget string width 8]
+  set pflip   [dict create tok name_flip    label {Name flip} widget string width 8]
   switch -- $type {
-    pin                      { return [list $pname $pdir $pshow $psize] }
+    pin                      { return [list $pname $pdir $pshow $psize $pdx $pdy $prot $pflip] }
     rect - rectangle - xRECT { return [list $dash $fill $ellipse] }
     line - LINE              { return [list $dash $bus] }
     poly - polygon - POLYGON { return [list $dash $fill $bezier $bus] }

@@ -169,9 +169,9 @@ check "move both: name_dx unchanged"    [xschem getprop rect 5 0 name_dx] 20
 set sch [slickprop::gfx_schema pin]
 set toks {}
 foreach row $sch { lappend toks [dict get $row tok] }
-check "pin form fields"        $toks {name dir show_pinname name_size}
+check "pin form fields"        $toks {name dir show_pinname name_size name_dx name_dy name_rot name_flip}
 check "pin dir is a dropdown"  [dict get [lindex $sch 1] widget] enum
-check "pin dir choices"        [dict keys [dict get [lindex $sch 1] choices]] {in out inout}
+check "pin dir choices"        [dict keys [dict get [lindex $sch 1] choices]] {input output inout}
 check "pin name is single-line" [dict get [lindex $sch 0] widget] string
 # a selected PINLAYER (layer 5) rect routes to the pin form, not the generic rect form
 xschem clear force
@@ -192,6 +192,23 @@ check "dialog place: one pin"   [xschem get rects 5] 1
 check "dialog place: name set"  [xschem getprop rect 5 0 name] CK
 check "dialog place: dir set"   [xschem getprop rect 5 0 dir] out
 check "dialog place: view made" [xschem get texts] 1
+
+# ---------------------------------------------------------------------------
+# 12. The name view is OWNED by its pin: deleting the view alone is refused; deleting
+#     the pin takes the view with it.
+# ---------------------------------------------------------------------------
+xschem clear force
+xschem add_symbol_pin 0 0 IN in 0
+xschem unselect_all
+xschem select text 0                  ;# select just the name view
+xschem delete
+check "del view alone: view kept" [xschem get texts]   1
+check "del view alone: pin kept"  [xschem get rects 5] 1
+xschem unselect_all
+xschem select rect 5 0                ;# select the pin -> cascades to its view
+xschem delete
+check "del pin: pin gone"         [xschem get rects 5] 0
+check "del pin: view gone"        [xschem get texts]   0
 
 file delete -force $wd
 

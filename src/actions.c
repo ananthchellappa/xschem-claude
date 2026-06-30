@@ -1069,7 +1069,7 @@ static int pin_name_shown(xRect *p)
 }
 
 /* index of the synthesized name view owned by pin id 'pin_id', or -1 if none */
-static int pin_name_view_of(unsigned int pin_id)
+int pin_name_view_of(unsigned int pin_id)
 {
   int i;
   if(!pin_id) return -1;
@@ -1232,6 +1232,34 @@ void pin_reorient(int pi)
   my_snprintf(b, S(b), "%d", flip);                my_strdup(_ALLOC_ID_, &pr, subst_token(pr, "name_flip", b));
   my_strdup(_ALLOC_ID_, &p->prop_ptr, pr);
   my_free(_ALLOC_ID_, &pr);
+}
+
+/* remove a synthesized name-view text at index ti and compact the text array */
+static void pin_view_delete(int ti)
+{
+  int k;
+  my_free(_ALLOC_ID_, &xctx->text[ti].txt_ptr);
+  my_free(_ALLOC_ID_, &xctx->text[ti].prop_ptr);
+  my_free(_ALLOC_ID_, &xctx->text[ti].font);
+  my_free(_ALLOC_ID_, &xctx->text[ti].floater_ptr);
+  my_free(_ALLOC_ID_, &xctx->text[ti].floater_instname);
+  for(k = ti; k < xctx->texts - 1; ++k) xctx->text[k] = xctx->text[k + 1];
+  xctx->texts--;
+}
+
+/* Reconcile a pin's name view with show_pinname after a property edit: create the view
+ * if now shown and missing, delete it if now hidden, then sync its content/geometry.
+ * (show_pinname uncheck must actually hide the label.) */
+void pin_view_apply(int pi)
+{
+  xRect *p = &xctx->rect[PINLAYER][pi];
+  int ti = pin_name_view_of(p->id);
+  if(!pin_name_shown(p)) {
+    if(ti >= 0) pin_view_delete(ti);   /* hidden -> remove the view */
+    return;
+  }
+  if(ti < 0) synth_pin_views();        /* shown but no view -> create it (idempotent) */
+  pin_view_refresh(pi);                /* sync content/pos/size/rot/flip from tokens */
 }
 
 /* After a move/rotate/flip commit, reconcile every name view with its pin:

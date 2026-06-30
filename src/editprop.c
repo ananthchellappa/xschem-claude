@@ -313,7 +313,7 @@ static int edit_rect_property(int x)
        * the conventional side; then sync the name view (content/pos/size) from tokens. */
       if(c == PINLAYER) {
         if(strcmp(olddir, get_tok_value(xctx->rect[c][n].prop_ptr, "dir", 0))) pin_reorient(n);
-        pin_view_refresh(n);
+        pin_view_apply(n); /* create/delete the view per show_pinname, then sync it */
         pin_full_redraw = 1;
       }
 
