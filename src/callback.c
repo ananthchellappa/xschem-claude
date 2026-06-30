@@ -4496,16 +4496,11 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
       break;
 
     case 'p':
-      if(EQUAL_MODMASK) { /* add symbol pin */
-        if(readonly_block()) break;
-        xctx->push_undo();
-        unselect_all(1);
-        storeobject(-1, xctx->mousex_snap-2.5, xctx->mousey_snap-2.5, xctx->mousex_snap+2.5, xctx->mousey_snap+2.5,
-                    xRECT, PINLAYER, SELECTED, "name=XXX\ndir=inout");
-        xctx->need_reb_sel_arr=1;
-        rebuild_selected_array();
-        move_objects(START,0,0,0);
-        xctx->ui_state |= START_SYMPIN;
+      if(EQUAL_MODMASK) { /* add symbol pin: open the Add-pin dialog (Name + Direction),
+                           * which places via `xschem add_symbol_pin -place` (the dialog
+                           * checks read-only itself). Routes through create_pin so the
+                           * pin owns its name text, same as the menu. */
+        tcleval("addpin::open");
       }
       else if(rstate == ControlMask) {
          if(readonly_block()) break;

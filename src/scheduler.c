@@ -225,10 +225,10 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
       const char *name = NULL;
       const char *dir = NULL;
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
-      xctx->push_undo();
       if(argc > 6) draw = atoi(argv[6]);
       if(argc > 5) {
         int flip = 0;
+        xctx->push_undo();
         x = atof(argv[2]);
         y = atof(argv[3]);
         name = argv[4];
@@ -254,15 +254,25 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
           }
           xctx->draw_window = save;
         }
-      } else {
+      } else if(argc == 3 && !strcmp(argv[2], "-place")) {
+        /* interactive placement using the Name/Direction chosen in the Add-pin dialog
+         * (addpin::open sets ::pin_new_name / ::pin_new_dir). The pin rect + owned name
+         * view are both selected so they translate together with the cursor. */
+        const char *nm = tclgetvar("pin_new_name");
+        const char *dr = tclgetvar("pin_new_dir");
+        if(!nm || !nm[0]) nm = "XXX";
+        if(!dr || !dr[0]) dr = "inout";
+        xctx->push_undo();
         unselect_all(1);
-        /* interactive placement: pin rect + owned name view, both selected so they move
-         * together with the cursor (a pure translation preserves the name_* offsets) */
-        create_pin(x, y, "XXX", "inout", SELECTED);
+        create_pin(x, y, nm, dr, SELECTED);
         xctx->need_reb_sel_arr=1;
         rebuild_selected_array();
         move_objects(START,0,0,0);
         xctx->ui_state |= START_SYMPIN;
+      } else {
+        /* no args: open the Add-pin dialog (Name + Direction); its Place button
+         * re-invokes this command as `add_symbol_pin -place`. */
+        tcleval("addpin::open");
       }
       Tcl_ResetResult(interp);
     }

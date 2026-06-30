@@ -10169,6 +10169,55 @@ proc text_line {txtlabel clear {preserve_disabled disabled}} {
   return [text_line_legacy $txtlabel $clear $preserve_disabled]
 }
 
+# Add-pin dialog (symbol editor): choose Name + Direction like the Create Instance form
+# (one name/value pair per row), then place the pin interactively. The chosen values are
+# handed to C via ::pin_new_name / ::pin_new_dir; `xschem add_symbol_pin -place` reads
+# them and arms the cursor placement (routes through create_pin so the pin owns its name).
+namespace eval addpin { variable name {} ; variable dir inout }
+
+proc addpin::place {} {
+  variable name; variable dir
+  set ::pin_new_name [expr {$name eq {} ? {XXX} : $name}]
+  set ::pin_new_dir  [expr {$dir  eq {} ? {inout} : $dir}]
+  destroy .addpin
+  xschem add_symbol_pin -place
+}
+
+proc addpin::open {} {
+  if {[xschem get readonly]} { readonly_notice; return }
+  set w .addpin
+  if {[winfo exists $w]} { raise $w; focus $w.f.ename; return }
+  catch {slickprop::init_fonts}   ;# reuse the slick property-form fonts for the look
+  toplevel $w
+  wm title $w "Add Pin"
+  ttk::frame $w.f -padding 8
+  pack $w.f -side top -fill both -expand 1
+  ttk::label $w.f.lname -text "Pin Name" -anchor w
+  ttk::entry $w.f.ename -textvariable addpin::name -width 28
+  ttk::label $w.f.ldir  -text "Direction" -anchor w
+  ttk::combobox $w.f.edir -textvariable addpin::dir -state readonly \
+     -values {in out inout} -width 26
+  catch {$w.f.lname configure -font slickPropLabel}
+  catch {$w.f.ename configure -font slickPropValue}
+  catch {$w.f.ldir  configure -font slickPropLabel}
+  grid $w.f.lname -row 0 -column 0 -sticky w  -padx {0 10} -pady 3
+  grid $w.f.ename -row 0 -column 1 -sticky we -pady 3
+  grid $w.f.ldir  -row 1 -column 0 -sticky w  -padx {0 10} -pady 3
+  grid $w.f.edir  -row 1 -column 1 -sticky we -pady 3
+  grid columnconfigure $w.f 1 -weight 1
+  ttk::frame $w.b
+  ttk::button $w.b.ok     -text "Place"  -command addpin::place
+  ttk::button $w.b.cancel -text "Cancel" -command "destroy $w"
+  pack $w.b.ok -side left -padx 4 -pady 4
+  pack $w.b.cancel -side right -padx 4 -pady 4
+  pack $w.b -side bottom -fill x
+  bind $w <Return>   addpin::place
+  bind $w <KP_Enter> addpin::place
+  bind $w <Escape>   "destroy $w"
+  raise $w
+  focus $w.f.ename
+}
+
 proc text_line_legacy {txtlabel clear {preserve_disabled disabled} } {
   global text_line_default_geometry preserve_unchanged_attrs wm_fix tabstop
   global debug_var text_tabs_setting

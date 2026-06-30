@@ -180,6 +180,19 @@ xschem unselect_all
 xschem select rect 5 0
 check "selected_type = pin"    [gfxform::selected_type] pin
 
+# ---------------------------------------------------------------------------
+# 11. Creation via the Add-pin dialog: addpin::place sets ::pin_new_name/::pin_new_dir,
+#     then `xschem add_symbol_pin -place` creates the pin (rect + owned name view).
+# ---------------------------------------------------------------------------
+xschem clear force
+set ::pin_new_name CK
+set ::pin_new_dir out
+xschem add_symbol_pin -place
+check "dialog place: one pin"   [xschem get rects 5] 1
+check "dialog place: name set"  [xschem getprop rect 5 0 name] CK
+check "dialog place: dir set"   [xschem getprop rect 5 0 dir] out
+check "dialog place: view made" [xschem get texts] 1
+
 file delete -force $wd
 
 if {$nfail == 0} { puts "ALL PASS (pin_name_text)" } else { puts "$nfail FAILURES (pin_name_text)" }
