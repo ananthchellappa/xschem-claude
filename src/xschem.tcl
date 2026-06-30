@@ -10104,6 +10104,7 @@ proc text_line_slick {txtlabel clear preserve_disabled type} {
         if {$ltk} {
           ttk::combobox $f.cb -state readonly -width 10 \
             -textvariable gfxform::fill_label -values [dict keys $gfxform::fillchoices]
+          bind $f.cb <KeyPress> {combo_letter_cycle %W %A; break}
         } else {
           entry $f.cb -textvariable gfxform::fill_label -width 10
         }
@@ -10174,6 +10175,24 @@ proc text_line {txtlabel clear {preserve_disabled disabled}} {
 # (one name/value pair per row), then place the pin interactively. The chosen values are
 # handed to C via ::pin_new_name / ::pin_new_dir; `xschem add_symbol_pin -place` reads
 # them and arms the cursor placement (routes through create_pin so the pin owns its name).
+# Type a letter in a readonly combobox -> advance to the NEXT value whose first char
+# matches (case-insensitive), wrapping. Readonly ttk::comboboxes don't cycle by default.
+proc combo_letter_cycle {w ch} {
+  if {[string length $ch] != 1} return
+  set vals [$w cget -values]
+  set n [llength $vals]
+  if {$n == 0} return
+  set start [lsearch -exact $vals [$w get]]
+  for {set k 1} {$k <= $n} {incr k} {
+    set v [lindex $vals [expr {($start + $k) % $n}]]
+    if {[string equal -nocase [string index $v 0] $ch]} {
+      $w set $v
+      event generate $w <<ComboboxSelected>>
+      return
+    }
+  }
+}
+
 namespace eval addpin { variable name {} ; variable dir inout }
 
 proc addpin::place {} {
@@ -10199,6 +10218,7 @@ proc addpin::open {} {
   ttk::label $w.f.ldir  -text "Direction" -anchor w
   ttk::combobox $w.f.edir -textvariable addpin::dir -state readonly \
      -values {input output inout} -width 26
+  bind $w.f.edir <KeyPress> {combo_letter_cycle %W %A; break}
   catch {$w.f.lname configure -font slickPropLabel}
   catch {$w.f.ename configure -font slickPropValue}
   catch {$w.f.ldir  configure -font slickPropLabel}
