@@ -2671,6 +2671,7 @@ static void save_text(FILE *fd, int select_only)
  for(i=0;i<xctx->texts; ++i)
  {
    if (select_only && ptr[i].sel != SELECTED) continue;
+   if (ptr[i].owner_pin_id) continue; /* P1 S3: synthesized pin-name views never persist */
   fprintf(fd, "T ");
   save_ascii_string(ptr[i].txt_ptr,fd, 0);
   fprintf(fd, " %.16g %.16g %hd %hd %.16g %.16g ",
@@ -2830,6 +2831,7 @@ static void load_text(FILE *fd)
   xctx->text[i].floater_instname=NULL;
   xctx->text[i].floater_ptr=NULL;
   xctx->text[i].sel=0;
+  xctx->text[i].owner_pin_id=0; /* loaded texts are real, never synthesized pin views */
   load_ascii_string(&xctx->text[i].prop_ptr,fd);
   set_text_flags(&xctx->text[i]);
   text_register(i);
@@ -3801,6 +3803,7 @@ int load_schematic(int load_symbols, const char *fname, int reset_undo, int aler
           xctx->loaded_symbol = 0;
         }
       }
+      synth_pin_views(); /* P1 S1: materialize editable pin-name views (symbol-edit only) */
     }
     dbg(1, "load_schematic(): %s, returning\n", xctx->sch[xctx->currsch]);
   } else { /* ffname == NULL or empty */

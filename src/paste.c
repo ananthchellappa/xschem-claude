@@ -46,6 +46,7 @@ static void merge_text(FILE *fd)
      xctx->text[i].floater_instname=NULL;
      xctx->text[i].floater_ptr=NULL;
      xctx->text[i].sel=0;
+     xctx->text[i].owner_pin_id=0; /* pasted texts are real, never synthesized pin views */
      load_ascii_string(&xctx->text[i].prop_ptr,fd);
      set_text_flags(&xctx->text[i]);
      select_text(i,SELECTED, 1, 1);

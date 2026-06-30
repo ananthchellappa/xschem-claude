@@ -927,6 +927,7 @@ void copy_objects(int what)
         xctx->text[xctx->texts].font=NULL;
         xctx->text[xctx->texts].floater_instname=NULL;
         xctx->text[xctx->texts].floater_ptr=NULL;
+        xctx->text[xctx->texts].owner_pin_id=0; /* copied text is real; P4 handles view-aware copy */
         my_strdup2(_ALLOC_ID_, &xctx->text[xctx->texts].prop_ptr, xctx->text[n].prop_ptr);
         my_strdup2(_ALLOC_ID_, &xctx->text[xctx->texts].floater_ptr, xctx->text[n].floater_ptr);
         my_strdup2(_ALLOC_ID_, &xctx->text[xctx->texts].floater_instname, xctx->text[n].floater_instname);

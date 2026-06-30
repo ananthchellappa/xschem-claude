@@ -605,6 +605,12 @@ typedef struct
                     * (text_register), never reused within a context's lifetime,
                     * not persisted in .sch files. 0 = never stamped. text is
                     * pure annotation — the id is only a handle, no role change. */
+  unsigned int owner_pin_id; /* 0 = ordinary text. !=0 => this is a SYNTHESIZED, transient
+                    * "pin name view": an editable in-memory text materialized from a
+                    * symbol PINLAYER pin's name + name_* layout tokens (Option B; see
+                    * doc/claude/specs/cadence_pin_name_text.md). Value = the owning pin's
+                    * xRect.id. NOT persisted (save_text() skips it) and regenerated on
+                    * load by synth_pin_views(); rides struct-copy through undo/copy. */
 } xText;
 
 typedef struct
@@ -1887,6 +1893,7 @@ extern void statusmsg(char str[],int n);
 extern int place_text(int draw_text, double mx, double my);
 extern int create_text(int draw_text, double x, double y, int rot, int flip, const char *txt,
        const char *props, double hsize, double vsize);
+extern void synth_pin_views(void);
 extern void init_inst_iterator(Iterator_ctx *ctx, double x1, double y1, double x2, double y2);
 extern Instentry *inst_iterator_next(Iterator_ctx *ctx);
 

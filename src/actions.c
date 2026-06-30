@@ -1040,6 +1040,75 @@ int set_text_flags(xText *t)
   return 0;
 }
 
+/* ----------------------------------------------------------------------------
+ * Cadence-style pin-owned name text (Option B). A symbol PINLAYER pin carries its
+ * displayed name as tokens on its B-record prop_ptr (name=, show_pinname=, and
+ * name_dx/name_dy/name_size/name_rot/name_flip layout). There is NO standalone name
+ * T record on disk. While EDITING a symbol, the name shown next to each pin is a
+ * SYNTHESIZED, transient xText "view" (owner_pin_id = owning pin's xRect.id) so the
+ * normal select/move/resize/edit machinery applies. Views are never saved
+ * (save_text() skips them) and are regenerated here on load.
+ * See doc/claude/specs/cadence_pin_name_text.md (P0/P1).
+ * ------------------------------------------------------------------------- */
+
+/* read a double-valued token from a prop string, returning dflt if absent/empty */
+static double pin_dtok(const char *prop, const char *tok, double dflt)
+{
+  const char *s = get_tok_value(prop, tok, 0);
+  return s[0] ? atof(s) : dflt;
+}
+
+/* is pin p's name to be shown? "owned" == it has a show_pinname token at all (legacy
+ * pins have none and are never auto-shown); effective show == owned && token is true.
+ * (Global show_pin_names toggle precedence is added in P5.) */
+static int pin_name_shown(xRect *p)
+{
+  const char *s = get_tok_value(p->prop_ptr, "show_pinname", 0);
+  if(!s[0]) return 0;
+  return strboolcmp(s, "true") ? 0 : 1;
+}
+
+/* index of the synthesized name view owned by pin id 'pin_id', or -1 if none */
+static int pin_name_view_of(unsigned int pin_id)
+{
+  int i;
+  if(!pin_id) return -1;
+  for(i = 0; i < xctx->texts; ++i)
+    if(xctx->text[i].owner_pin_id == pin_id) return i;
+  return -1;
+}
+
+/* (Re)materialize editable pin-name views for the symbol being edited. Way A: only the
+ * live edited document gets views; placed instances draw their names directly from pin
+ * tokens in draw_symbol (P6). Idempotent: pins that already have a view are skipped. */
+void synth_pin_views(void)
+{
+  int j, rects;
+  if(!xctx) return;
+  if(xctx->netlist_type != CAD_SYMBOL_ATTRS) return;  /* only while editing a symbol */
+  rects = xctx->rects[PINLAYER];
+  for(j = 0; j < rects; ++j) {
+    xRect *p = &xctx->rect[PINLAYER][j];
+    const char *name;
+    double cx, cy, dx, dy, size, rot, flip;
+    if(!pin_name_shown(p)) continue;                  /* legacy/un-owned or hidden */
+    if(pin_name_view_of(p->id) >= 0) continue;        /* already materialized */
+    cx = (p->x1 + p->x2) / 2.0;
+    cy = (p->y1 + p->y2) / 2.0;
+    dx   = pin_dtok(p->prop_ptr, "name_dx",   20.0);
+    dy   = pin_dtok(p->prop_ptr, "name_dy",   -5.0);
+    size = pin_dtok(p->prop_ptr, "name_size", 0.2);
+    rot  = pin_dtok(p->prop_ptr, "name_rot",  0.0);
+    flip = pin_dtok(p->prop_ptr, "name_flip", 0.0);
+    /* fetch name LAST: get_tok_value() uses one volatile static buffer that the
+     * pin_dtok() calls above clobber; create_text() copies 'name' immediately. */
+    name = get_tok_value(p->prop_ptr, "name", 0);
+    if(!name[0]) continue;                            /* nameless pin: nothing to show */
+    create_text(0 /* no draw */, cx + dx, cy + dy, (int)rot, (int)flip, name, NULL, size, size);
+    xctx->text[xctx->texts - 1].owner_pin_id = p->id;
+  }
+}
+
 
 void reset_caches(void)
 {
@@ -3982,6 +4051,7 @@ int create_text(int draw_text, double x, double y, int rot, int flip, const char
   t->floater_ptr = NULL;
   t->font=NULL;
   t->floater_instname=NULL;
+  t->owner_pin_id=0; /* ordinary text by default; synth_pin_views() stamps views */
   my_strdup2(_ALLOC_ID_, &t->txt_ptr, txt);
   t->x0=x;
   t->y0=y;
