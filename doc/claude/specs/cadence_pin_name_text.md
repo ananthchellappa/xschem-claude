@@ -1,11 +1,31 @@
 # Cadence-style pin-owned name text (symbol pins)
 
-Status: **SPEC / PLAN — not started.** Written 2026-06-29 on branch `fluid-editing`.
-This is **Thread A**, the prerequisite for `doc/claude/specs/wire_stub_netlabel.md` (Thread B):
-once a pin owns its name text, "the pin's text size" is well-defined and wire-stub
-labels can read it. Pick-up-here handoff doc.
+Status: **IN PROGRESS — P0-P2 done + code-review fixes; branch `cadence-pin-name-text`.**
+Written 2026-06-29. This is **Thread A**, the prerequisite for
+`doc/claude/specs/wire_stub_netlabel.md` (Thread B): once a pin owns its name text, "the
+pin's text size" is well-defined and wire-stub labels can read it. Pick-up-here handoff doc.
 
 Related: `[[pin-selection]]`, `doc/claude/specs/pin_selection.md`, `[[wire-stub-netlabel]]`.
+
+### Code review (high, workflow, 2026-06-30) — dispositions
+Commits 35cd449a (P0-P1), 9e3dd1e8 (P2). Verified findings and how each is handled:
+- **FIXED now `91848aed`:** (1) disk undo dropped views — `pop_undo` lacked the
+  `synth_pin_views()` that `load_schematic` has (both call `read_xschem_file`); undo_type
+  defaults to disk, so this hit the common case. (2) `load_sym_def` didn't init the new
+  `owner_pin_id` on `xSymbol.text` (missed birth site). (3) `create_pin` truncated long
+  pin names via a fixed `buf[512]` (now unbounded `my_mstrcat`). Disk-undo regression
+  test added + sabotage-verified.
+- **DEFERRED — by design, tracked to later phases:** instances show NO pin names yet
+  (no draw-from-tokens path) → **P6**; copying a pin yields a stray persisted text +
+  duplicate label → **P4**; clipboard copy/paste of a pin loses its name view → **P4**.
+- **Known-minor (open):** `add_symbol_pin` invoked while editing a *schematic*
+  (netlist_type != CAD_SYMBOL_ATTRS) makes a view that synth won't regenerate on reload
+  (tokens persist; name just not shown in schematic mode) — gate or accept; the pin
+  name isn't drawn immediately in the scripted draw=1 path (shows on next redraw);
+  `synth_pin_views` is O(pins²) per load and re-parses each prop ~6× (fine at real sizes).
+- **REFUTED:** tclgetdoublevar-instead-of-tclgetvar (SPICE-suffix premise false);
+  create_pin "re-implements" synth (it persists tokens, synth reads them — not redundant);
+  dy/size default duplication (minor, not a bug).
 
 ---
 
