@@ -519,9 +519,36 @@ pin tokens, no separate persisted object.
   `case 'p'/'P'` keep only Ctrl/Ctrl+Shift port-label branches; keybindings.csv
   regenerated; actions.csv accels updated. Tests 39/39 (incl. delete-guard, sabotage-
   verified) + headless test_bindings_file/keybindings_help/key_graph_context PASS.
-  **STILL OPEN (item 3): live cursor PREVIEW while the Add-Pin form is open** (modeless
-  arm-on-name-change like ciform: `arm`/`after_drop`/`install_drop_hook`/`escape`/
-  `abort_if_placing`; needs care re: per-arm undo + aborting the preview pin on re-arm).
+- **P3.7 — Add-Pin live cursor PREVIEW (item #3). [DONE 2026-06-30, UNCOMMITTED]** The
+  `addpin` dialog (xschem.tcl) is now MODELESS, mirroring `ciform`: a non-empty Pin Name
+  arms a cursor preview (`arm`/`on_change` on KeyRelease/<<ComboboxSelected>>); click drops;
+  `install_drop_hook`/`after_drop` re-arm for the next pin; `escape`/`on_destroy` finish;
+  `placing` gates on START_SYMPIN (16384). **No "Place" button** (placement is a canvas
+  click). Undo kept clean across per-keystroke re-arms by a new transient field
+  **`xctx->sympin_preview`** (xschem.h): `add_symbol_pin -place` (scheduler.c) now pushes
+  ONE undo baseline at the FIRST arm and SELF-RE-ARMS (on re-arm: `move_objects(ABORT)` +
+  `delete(0)` — drop the old preview WITH NO undo — then re-create); the drop (`move END`,
+  START_SYMPIN → no push) keeps that baseline and clears the flag (callback.c, so the
+  drop-hook's next arm starts a fresh baseline per committed pin); `abort_operation`
+  (callback.c) tears down an undropped preview with `delete(sympin_preview?0:1)` so a later
+  undo cannot RESURRECT it. Tests +6 (now 45): arm/re-arm-in-place/name-update/abort-no-pin/
+  abort-no-view/**undo-keeps-it-gone** — last one SABOTAGE-verified (delete(1) → resurrects,
+  got 1 want 0). Netlist golden + property_form + 3 binding tests + a real-Tk GUI smoke
+  (dialog widgets, arm/re-arm/disarm-on-empty/escape) all PASS. **GUI-MANUAL pending:** the
+  actual cursor-follow render + click-to-drop + keep-placing loop on the live canvas.
+- **DEFERRED from the 2026-06-30 GUI eyeball (user chose "preview only" this round):**
+  - **(D-sel) Pin rect is hard to click-select.** `find_closest_box` (findnet.c:411) uses a
+    border-RING test (inside `rect+threshold`, outside `rect−threshold`); a 5×5 pin's CENTER
+    is a dead zone when zoomed in (`threshold = 12·zoom·tk_scaling < 2.5`), so clicking the
+    body selects nothing while the offset name-text does. Fix = make PINLAYER pins
+    fill-selectable (treat a click anywhere inside the pin rect as distance 0).
+  - **(D-split) Two editors, not one (reverses the P3.5 retarget).** Today `Q` on the name
+    view RETARGETS to the pin form (editprop.c:1443) and the `"pin"` schema
+    (property_form.tcl:153) carries everything. User wants: **Pin editor** (`Q` on pin) =
+    Name, Direction, Show name ONLY; **new Pin-name-text editor** (`Q` on name view) = Text
+    size, Font, Offset dx/dy, Rotation, Flip (writes through to `name_*`; content edit still
+    renames the pin). So: drop the retarget, split the schema, add a `"pinname"` (or similar)
+    schema for the view. CONFIRMED field split: text editor gets size/font/offset/rot/flip.
 - **P4 — delete + copy/paste.** Delete-of-lone-view DONE in P3.6(d); remaining:
   `copy_objects`/paste skip view objects and regenerate after name-uniquify.
 - **P5 — show/hide.** Global tri-state `show_pin_names` (wins) + per-pin `show_pinname` +

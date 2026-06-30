@@ -1099,6 +1099,12 @@ typedef struct {
                        * release to measure click-vs-drag (mouse_moved is suppressed
                        * while STARTWIRE is active, so it cannot be relied on here). */
   int pin_press_y;
+  int sympin_preview; /* cadence_pin_name_text.md item #3: the current START_SYMPIN move is a
+                       * non-committal Add-Pin cursor PREVIEW. One undo baseline is pushed at
+                       * the first arm; re-arms (per keystroke) drop the old preview with NO
+                       * undo (so typing a name does not spam/corrupt the undo stack); the drop
+                       * keeps the baseline; an aborted preview is removed undo-free. 0 = a
+                       * normal placement (add_graph/add_image/scripted pin), undo as usual. */
   Selected *sel_array;
   Selected first_sel; /* first selected instance (used as master when editing multiple objects) */
   int prep_net_structs;

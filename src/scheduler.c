@@ -255,14 +255,33 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
           xctx->draw_window = save;
         }
       } else if(argc == 3 && !strcmp(argv[2], "-place")) {
-        /* interactive placement using the Name/Direction chosen in the Add-pin dialog
-         * (addpin::open sets ::pin_new_name / ::pin_new_dir). The pin rect + owned name
-         * view are both selected so they translate together with the cursor. */
+        /* Interactive, MODELESS placement driven by the Add-Pin dialog (addpin:: in
+         * xschem.tcl): the dialog re-issues this command on every Name/Direction change so
+         * the cursor preview tracks what the user typed. To keep undo clean across those
+         * per-keystroke re-arms (cadence_pin_name_text.md item #3): push ONE baseline at the
+         * first arm of a gesture (xctx->sympin_preview marks it active); each subsequent
+         * re-arm drops the previous, undropped preview pin with NO undo, so the single
+         * baseline is exactly what a later undo rolls back to. The drop (move_objects END,
+         * START_SYMPIN -> no push) keeps that baseline; abort_operation removes an undropped
+         * preview undo-free. The pin rect + its owned name view are both selected so they
+         * translate together with the cursor. */
         const char *nm = tclgetvar("pin_new_name");
         const char *dr = tclgetvar("pin_new_dir");
         if(!nm || !nm[0]) nm = "XXX";
         if(!dr || !dr[0]) dr = "inout";
-        xctx->push_undo();
+        if(xctx->sympin_preview) {
+          /* re-arm: discard the previous preview pin WITHOUT pushing undo */
+          if(xctx->ui_state & STARTMOVE) {
+            int save = xctx->modified;
+            move_objects(ABORT,0,0,0);
+            delete(0 /* to_push_undo: no, keep the single baseline */);
+            set_modify(save);
+          }
+          xctx->ui_state &= ~START_SYMPIN;
+        } else {
+          xctx->push_undo();        /* one undo baseline (no preview pin) per gesture */
+          xctx->sympin_preview = 1;
+        }
         unselect_all(1);
         create_pin(x, y, nm, dr, SELECTED);
         xctx->need_reb_sel_arr=1;

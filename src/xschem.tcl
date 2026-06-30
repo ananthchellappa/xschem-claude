@@ -10193,21 +10193,101 @@ proc combo_letter_cycle {w ch} {
   }
 }
 
-namespace eval addpin { variable name {} ; variable dir inout }
+# addpin -- the Cadence-style "Add Pin" form (doc/claude/specs/cadence_pin_name_text.md
+# item #3). MODELESS, mirroring ciform (Create Instance): a non-empty Pin Name arms a
+# cursor PREVIEW of the pin on the canvas; click drops it; the form re-arms so you can
+# place more until Esc. There is NO "Place" button -- placement is a canvas click.
+#
+# The C `xschem add_symbol_pin -place` self-manages undo across the per-keystroke re-arms
+# (pushes ONE baseline at the first arm, drops the previous preview pin undo-free); the
+# drop keeps the baseline; abort_operation tears down an undropped preview undo-free.
+namespace eval addpin {
+  variable name {}
+  variable dir  inout
+  # a preview is armed; after each drop it re-arms so placement continues until Esc.
+  variable armed          0
+  variable hook_installed 0
+}
 
-proc addpin::place {} {
-  variable name; variable dir
+proc addpin::status {msg} { catch {.addpin.status configure -text $msg} }
+
+# START_SYMPIN (xschem.h) = 16384: an Add-Pin preview is attached to the cursor.
+proc addpin::placing {} { return [expr {[xschem get ui_state] & 16384}] }
+proc addpin::abort_if_placing {} { if {[addpin::placing]} { catch {xschem abort_operation} } }
+
+# map the human Direction label to the stored dir token (in/out/inout)
+proc addpin::dirtok {} {
+  variable dir
   set map {input in output out inout inout}
-  set ::pin_new_name [expr {$name eq {} ? {XXX} : $name}]
-  set ::pin_new_dir  [expr {[dict exists $map $dir] ? [dict get $map $dir] : {inout}}]
-  destroy .addpin
-  xschem add_symbol_pin -place
+  return [expr {[dict exists $map $dir] ? [dict get $map $dir] : {inout}}]
+}
+
+# Re-arm the next pin after each canvas drop, so placement continues until Esc. Appended
+# (+) to the canvas ButtonRelease so it runs AFTER xschem handled the drop; a no-op unless
+# a preview is armed and a drop just completed (mirror of ciform::after_drop).
+proc addpin::install_drop_hook {} {
+  variable hook_installed
+  if {$hook_installed} return
+  if {![winfo exists .drw]} return
+  bind .drw <ButtonRelease> {+addpin::after_drop %b}
+  set hook_installed 1
+}
+proc addpin::after_drop {b} {
+  variable armed
+  if {$b != 1} return
+  if {!$armed} return
+  if {![winfo exists .addpin]} { set armed 0; return }
+  if {[addpin::placing]} return   ;# preview still attached -> no drop happened
+  addpin::arm                     ;# a drop completed -> re-arm for the next pin
+}
+
+# (Re)arm the cursor preview from the current Name/Direction. Empty name -> no preview
+# (there is nothing to place yet), aborting any attached one. `-place` re-issues are
+# undo-safe (see the C side), so calling this on every keystroke is fine.
+proc addpin::arm {} {
+  variable name; variable armed
+  if {![winfo exists .addpin]} { set armed 0; return }
+  if {[string trim $name] eq {}} {
+    set armed 0
+    addpin::abort_if_placing
+    addpin::status "type a Pin Name, then move onto the canvas to place it"
+    return
+  }
+  set d [addpin::dirtok]
+  set ::pin_new_name $name
+  set ::pin_new_dir  $d
+  xschem add_symbol_pin -place    ;# self-aborts the previous preview (no undo) and re-arms
+  set armed 1
+  addpin::status "placing pin '$name' ($d) -- click the canvas to place; Esc to finish"
+}
+
+proc addpin::on_change {} { addpin::arm }
+
+# Esc / Close: end placement and dismiss the form.
+proc addpin::escape {} {
+  variable armed
+  set armed 0
+  addpin::abort_if_placing
+  catch {destroy .addpin}
+}
+# Form destroyed by any means: abort an armed preview and restore the default canvas Esc.
+proc addpin::on_destroy {} {
+  variable armed
+  set armed 0
+  catch {bind .drw <Key-Escape> {}}
+  addpin::abort_if_placing
 }
 
 proc addpin::open {} {
   if {[xschem get readonly]} { readonly_notice; return }
   set w .addpin
-  if {[winfo exists $w]} { raise $w; focus $w.f.ename; return }
+  addpin::install_drop_hook
+  if {[winfo exists $w]} {
+    raise_activate_toplevel $w
+    focus $w.f.ename
+    addpin::arm
+    return
+  }
   catch {slickprop::init_fonts}   ;# reuse the slick property-form fonts for the look
   toplevel $w
   wm title $w "Add Pin"
@@ -10227,17 +10307,28 @@ proc addpin::open {} {
   grid $w.f.ldir  -row 1 -column 0 -sticky w  -padx {0 10} -pady 3
   grid $w.f.edir  -row 1 -column 1 -sticky we -pady 3
   grid columnconfigure $w.f 1 -weight 1
+
+  ttk::label $w.status -anchor w -relief sunken -padding {4 2} \
+    -text "type a Pin Name, then move onto the canvas to place it; Esc finishes"
+  pack $w.status -side bottom -fill x
+
   ttk::frame $w.b
-  ttk::button $w.b.ok     -text "Place"  -command addpin::place
-  ttk::button $w.b.cancel -text "Cancel" -command "destroy $w"
-  pack $w.b.ok -side left -padx 4 -pady 4
-  pack $w.b.cancel -side right -padx 4 -pady 4
+  ttk::button $w.b.close -text "Close" -command addpin::escape
+  pack $w.b.close -side right -padx 4 -pady 4
   pack $w.b -side bottom -fill x
-  bind $w <Return>   addpin::place
-  bind $w <KP_Enter> addpin::place
-  bind $w <Escape>   "destroy $w"
-  raise $w
+
+  # editing the name or picking a direction re-arms the preview live
+  bind $w.f.ename <KeyRelease>        {+addpin::on_change}
+  bind $w.f.edir  <<ComboboxSelected>> {+addpin::on_change}
+  # Esc ends placement AND dismisses the form, whether the canvas or the form has focus;
+  # `break` on the canvas pre-empts the generic <KeyPress> -> C dispatcher.
+  bind .drw <Key-Escape> {addpin::escape; break}
+  bind $w   <Key-Escape> {addpin::escape}
+  bind $w   <Destroy>    {if {{%W} eq {.addpin}} {addpin::on_destroy}}
+
+  raise_activate_toplevel $w
   focus $w.f.ename
+  addpin::arm   ;# a reopened singleton may already hold a name -> arm immediately
 }
 
 proc text_line_legacy {txtlabel clear {preserve_disabled disabled} } {

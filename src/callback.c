@@ -210,11 +210,17 @@ void abort_operation(void)
    if(xctx->ui_state & (START_SYMPIN | PLACE_SYMBOL | PLACE_TEXT)) {
      int save;
      save =  xctx->modified;
-     delete(1/* to_push_undo */);
+     /* An Add-Pin cursor preview pushed its undo baseline at arm and must be torn down
+      * undo-free: delete(1) here would snapshot the (about-to-be-removed) preview pin and a
+      * later undo would resurrect it (cadence_pin_name_text.md item #3). delete(0) keeps the
+      * baseline as the single rollback point. Normal placements (sympin_preview==0) are
+      * unchanged: delete(1) as before. */
+     delete(xctx->sympin_preview ? 0 : 1/* to_push_undo */);
      set_modify(save); /* aborted placement: no change, so reset modify flag set by delete() */
      xctx->ui_state &= ~START_SYMPIN;
      xctx->ui_state &= ~PLACE_SYMBOL;
      xctx->ui_state &= ~PLACE_TEXT;
+     xctx->sympin_preview = 0;
    }
    if(xctx->ui_state & STARTMERGE) {
      delete(1/* to_push_undo */);
@@ -1660,6 +1666,10 @@ static int end_place_move_copy_zoom()
   else if(xctx->ui_state & STARTMOVE) {
     end_move_copy_logged(0);
     xctx->ui_state &=~START_SYMPIN;
+    /* an Add-Pin preview pin was just dropped (committed): the gesture's undo baseline is
+     * on the stack already, so clear the preview flag -> the drop-hook's next arm starts a
+     * fresh baseline for the next pin (cadence_pin_name_text.md item #3). */
+    xctx->sympin_preview = 0;
     xctx->constr_mv=0;
     tcleval("set constr_mv 0" );
     return 1;

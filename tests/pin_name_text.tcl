@@ -194,6 +194,30 @@ check "dialog place: dir set"   [xschem getprop rect 5 0 dir] out
 check "dialog place: view made" [xschem get texts] 1
 
 # ---------------------------------------------------------------------------
+# 11b. Add-Pin live cursor PREVIEW (item #3). The modeless dialog re-issues `-place`
+#      on every Name/Direction keystroke. Re-arming must (a) replace the previous
+#      preview pin in place (not stack a second one), and (b) do so WITHOUT polluting
+#      undo; aborting an undropped preview must remove it undo-free, so a later undo
+#      must NOT resurrect it. (Sabotage: revert abort_operation's delete(0) -> delete(1)
+#      and "preview abort: undo keeps it gone" fails; revert -place's self-abort and
+#      "preview rearm: still one pin" fails.)
+# ---------------------------------------------------------------------------
+xschem clear force
+set ::pin_new_dir in
+set ::pin_new_name VD
+xschem add_symbol_pin -place              ;# first arm: ONE undo baseline + preview pin
+check "preview arm: one pin"             [xschem get rects 5] 1
+set ::pin_new_name VDD
+xschem add_symbol_pin -place              ;# re-arm: drop old preview (no undo), new preview
+check "preview rearm: still one pin"     [xschem get rects 5] 1
+check "preview rearm: name updated"      [xschem getprop rect 5 0 name] VDD
+xschem abort_operation                     ;# undropped preview torn down undo-free
+check "preview abort: no pin"            [xschem get rects 5] 0
+check "preview abort: no view"           [xschem get texts]   0
+xschem undo                                ;# the aborted preview must stay gone
+check "preview abort: undo keeps it gone" [xschem get rects 5] 0
+
+# ---------------------------------------------------------------------------
 # 12. The name view is OWNED by its pin: deleting the view alone is refused; deleting
 #     the pin takes the view with it.
 # ---------------------------------------------------------------------------
