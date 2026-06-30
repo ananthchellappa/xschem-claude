@@ -1894,6 +1894,7 @@ extern int place_text(int draw_text, double mx, double my);
 extern int create_text(int draw_text, double x, double y, int rot, int flip, const char *txt,
        const char *props, double hsize, double vsize);
 extern void synth_pin_views(void);
+extern int create_pin(double x, double y, const char *name, const char *dir, unsigned short sel);
 extern void init_inst_iterator(Iterator_ctx *ctx, double x1, double y1, double x2, double y2);
 extern Instentry *inst_iterator_next(Iterator_ctx *ctx);
 

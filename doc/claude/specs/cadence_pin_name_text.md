@@ -445,8 +445,17 @@ pin tokens, no separate persisted object.
   `pin_select.tcl`): synth-on-load count, save-skip (0 `T`), byte-identical round-trip,
   legacy/hidden negatives, mixed stray-`T`+view. ALL PASS; core regression
   (create_save/open_close/netlisting) clean.
-- **P2 — creation.** Route BOTH `add_symbol_pin` paths through `create_pin` (tokens + view,
-  no standalone `T`); default placement/size (`sym_pin_name_size`).
+- **P2 — creation. [DONE 2026-06-30, uncommitted]** `create_pin(x,y,name,dir,sel)` in
+  actions.c: stores the PINLAYER rect with `name= dir= show_pinname=true` + default
+  `name_dx/dy/size[/flip]` tokens (in-pins name on the right dx=+25; out/inout on the left
+  dx=-25 name_flip=1; size = `sym_pin_name_size` Tcl var, fallback 0.2) and materializes
+  the view. BOTH `add_symbol_pin` paths route through it (`scheduler.c`) — no more
+  standalone name `T`; the interactive path selects rect+view so they move together (pure
+  translation preserves the offset). `set_ne sym_pin_name_size 0.2` added to xschem.tcl.
+  Tests +9 (now 21/21); generated `.sym` verified by eye (tokens correct, 0 `T`); core
+  regression clean. NOTE: other pin-creation entry points (raw `xschem rect` on PINLAYER,
+  `place_sym_pins.tcl`, make_sym_from_* generators) are NOT yet routed through `create_pin`
+  → they make legacy pins (no tokens), handled later by migration (P8).
 - **P3 — write-through (S2).** View move/resize/rotate/flip/content-edit → pin tokens
   (`move_objects` END + `editprop.c`); pin rename (`edit_rect_property`) → regenerate view.
 - **P4 — delete + copy/paste.** `delete()` skips lone SYNTH views, drops a deleted pin's

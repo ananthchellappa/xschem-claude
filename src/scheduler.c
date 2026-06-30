@@ -228,7 +228,6 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
       xctx->push_undo();
       if(argc > 6) draw = atoi(argv[6]);
       if(argc > 5) {
-        char *prop = NULL;
         int flip = 0;
         x = atof(argv[2]);
         y = atof(argv[3]);
@@ -236,13 +235,11 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
         dir = argv[5];
         if(!strcmp(dir, "inout") || !strcmp(dir, "out") ) flip = 1;
         if(!strcmp(dir, "inout")) linecol = 7;
-        my_mstrcat(_ALLOC_ID_, &prop, "name=", name, " dir=", dir, NULL);
-        storeobject(-1, x - 2.5, y - 2.5, x + 2.5, y + 2.5, xRECT, PINLAYER, 0, prop);
+        /* pin rect + owned name view (Option B); replaces the old rect + standalone T */
+        create_pin(x, y, name, dir, 0);
         if(flip) {
-          create_text(draw, x - 25, y - 5, 0, 1, name, NULL, 0.2, 0.2);
           storeobject(-1, x - 20, y, x, y, LINE, linecol, 0, NULL);
         } else {
-          create_text(draw, x + 25, y - 5, 0, 0, name, NULL, 0.2, 0.2);
           storeobject(-1, x, y, x + 20, y, LINE, linecol, 0, NULL);
         }
 
@@ -257,10 +254,11 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
           }
           xctx->draw_window = save;
         }
-        my_free(_ALLOC_ID_, &prop);
       } else {
         unselect_all(1);
-        storeobject(-1, x - 2.5, y - 2.5, x + 2.5, y + 2.5, xRECT, PINLAYER, SELECTED, "name=XXX\ndir=inout");
+        /* interactive placement: pin rect + owned name view, both selected so they move
+         * together with the cursor (a pure translation preserves the name_* offsets) */
+        create_pin(x, y, "XXX", "inout", SELECTED);
         xctx->need_reb_sel_arr=1;
         rebuild_selected_array();
         move_objects(START,0,0,0);

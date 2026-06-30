@@ -14099,6 +14099,7 @@ set_ne add_all_windows_drives 1
 set_paths
 print_help_and_exit
 set_ne text_replace_selection 1
+set_ne sym_pin_name_size 0.2 ;# default text size for a symbol pin's owned name label (Option B)
 if {$text_replace_selection && $OS != "Windows"} {
   # deletes selected text when pasting in text widgets, courtesy Wolf-Dieter Busch
   proc tk_textPaste w {

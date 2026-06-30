@@ -104,6 +104,30 @@ xschem saveas $o4 symbol
 check "mixed save: only stray T persists" [count_lines $o4 "T *"]   1
 check "mixed save: two pins kept"         [count_lines $o4 "B 5 *"] 2
 
+# ---------------------------------------------------------------------------
+# 7. P2 creation: add_symbol_pin makes an OWNED pin (tokens) + a view; the view is
+#    not persisted, but the name_* / show_pinname tokens are, so reload reproduces it.
+#    (draw=0 to stay headless; scripted path = exact placement.)
+# ---------------------------------------------------------------------------
+xschem clear force
+xschem add_symbol_pin 0 0 IN in 0
+check "create: one PINLAYER rect"        [xschem get rects 5] 1
+check "create: one synth view"           [xschem get texts]  1
+check "create: show_pinname token"       [xschem getprop rect 5 0 show_pinname] true
+check "create: name_size token"          [xschem getprop rect 5 0 name_size] 0.2
+set oc $wd/created.sym
+xschem saveas $oc symbol
+check "create save: view not persisted"  [count_lines $oc "T *"]   0
+check "create save: pin persisted"       [count_lines $oc "B 5 *"] 1
+check "create save: layout token persisted" [expr {[count_lines $oc "*name_dx=*"] >= 1}] 1
+xschem load $oc
+check "create reload: view re-synth"     [xschem get texts] 1
+
+# out/inout pin: name placed on the left (name_flip=1)
+xschem clear force
+xschem add_symbol_pin 0 0 OUT out 0
+check "create out: name_flip token"      [xschem getprop rect 5 0 name_flip] 1
+
 file delete -force $wd
 
 if {$nfail == 0} { puts "ALL PASS (pin_name_text)" } else { puts "$nfail FAILURES (pin_name_text)" }

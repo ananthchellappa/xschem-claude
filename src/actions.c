@@ -1109,6 +1109,44 @@ void synth_pin_views(void)
   }
 }
 
+/* Create a symbol pin that OWNS its name text (Option B, P2). Stores a PINLAYER rect at
+ * (x,y) carrying name=/dir=/show_pinname=true + default name_* layout tokens, then
+ * materializes the editable name view (owner_pin_id = the rect's id). 'sel' selects both
+ * rect and view (used for interactive placement so they move together; a pure
+ * translation preserves the name_dx/name_dy offsets). Returns the new pin index in
+ * rect[PINLAYER], or -1. Default name size = sym_pin_name_size Tcl var (fallback 0.2). */
+int create_pin(double x, double y, const char *name, const char *dir, unsigned short sel)
+{
+  char *prop = NULL;
+  char buf[512];
+  const char *sz;
+  int ri, flip;
+  double cx, cy, dx, dy, size;
+  if(!xctx) return -1;
+  if(!name) name = "";
+  if(!dir || !dir[0]) dir = "inout";
+  flip = (!strcmp(dir, "out") || !strcmp(dir, "inout")) ? 1 : 0;   /* name on the left */
+  sz = tclgetvar("sym_pin_name_size");
+  size = (sz && sz[0]) ? atof(sz) : 0.2;
+  if(size <= 0.0) size = 0.2;
+  dx = flip ? -25.0 : 25.0;
+  dy = -5.0;
+  my_snprintf(buf, S(buf),
+    "name=%s dir=%s show_pinname=true name_dx=%g name_dy=%g name_size=%g%s",
+    name, dir, dx, dy, size, flip ? " name_flip=1" : "");
+  my_strdup(_ALLOC_ID_, &prop, buf);
+  storeobject(-1, x - 2.5, y - 2.5, x + 2.5, y + 2.5, xRECT, PINLAYER, sel, prop);
+  my_free(_ALLOC_ID_, &prop);
+  ri = xctx->rects[PINLAYER] - 1;
+  if(ri < 0) return -1;
+  cx = (xctx->rect[PINLAYER][ri].x1 + xctx->rect[PINLAYER][ri].x2) / 2.0;
+  cy = (xctx->rect[PINLAYER][ri].y1 + xctx->rect[PINLAYER][ri].y2) / 2.0;
+  create_text(0 /* no draw */, cx + dx, cy + dy, 0, flip, name, NULL, size, size);
+  xctx->text[xctx->texts - 1].owner_pin_id = xctx->rect[PINLAYER][ri].id;
+  if(sel) xctx->text[xctx->texts - 1].sel = SELECTED;
+  return ri;
+}
+
 
 void reset_caches(void)
 {
