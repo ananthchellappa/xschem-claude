@@ -324,6 +324,6 @@ Strip away XSCHEM and here is what remains — a checklist you can apply anywher
 
 *Companion reading in this repo: `doc/claude/specs/keybind_snap_grid_actions.md` (the spec),
 `doc/claude/suggestions/plan_keybind_snap_grid_actions.md` (the phased plan),
-`doc/claude/code_analysis/FAQ.md` Q17–Q18 (the user-facing view),
+`doc/claude/FAQ.md` Q17–Q18 (the user-facing view),
 `doc/claude/suggestions/green_but_hollow_tests.md` (why a green suite can prove nothing),
 and `objects_in_c_vs_cpp.md` (the same "C makes conventions you must keep by hand" theme).*

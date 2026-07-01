@@ -14,6 +14,51 @@ Newest entries on top.
 
 ---
 
+## Q21. I migrated my old-style libraries (pins whose name text is *not* owned by the pin) into new libraries with the pin-name migration tool. How do I make the Library Manager load the *migrated* libraries when xschem starts?
+
+- **Asked:** 2026-06-30
+- **Project state:** branch `cadence-pin-name-text` @ `6b8e6f93`. Pin-owned-name-text P0–P8
+  done; migration tool `tools/migrate/migrate_pin_names.py` shipped; user-facing docs
+  `doc/pin_name_migration.md` (the tool) and `doc/library_defs.md` (library registration)
+  written. Example run: `xschem_libraries_oa` → `xschem_libs_newsym` (342 `.sym`, 239 migrated,
+  0 errors), verified all load in xschem + netlist byte-identical.
+
+**Short version:** it is *only* a startup-path question, because the migration is a drop-in.
+The migrated tree keeps the same Library/Cell/View names, the same pin `name=`/`dir=`, and the
+same connectivity — only display tokens (`show_pinname`, `name_*`) changed and adopted `T`
+labels were folded in, so **netlists are identical**. The tool even copied the original tree's
+`library.defs` (same `DEFINE` lines). So making xschem "load the correct libraries" means
+pointing its startup search at the migrated tree instead of the old one — nothing needs
+re-registering by hand.
+
+xschem's startup library set comes from your `xschemrc`: whichever `library.defs` it loads —
+explicitly via `XSCHEM_LIBRARY_DEFS`, or **auto-discovered** on `XSCHEM_LIBRARY_PATH` — is what
+the Library Manager shows. Two clean ways:
+
+- **Swap the tree on the path (recommended):** in `xschemrc`, put the migrated tree on
+  `XSCHEM_LIBRARY_PATH` and drop the old one —
+  `append XSCHEM_LIBRARY_PATH :/path/xschem_libs_newsym` (and remove the
+  `…/xschem_libraries_oa` line). The migrated tree carries its own `library.defs`, so xschem
+  auto-discovers it and the same library names reappear, now with owned pin names.
+- **Or point `XSCHEM_LIBRARY_DEFS` at the migrated defs file:**
+  `export XSCHEM_LIBRARY_DEFS=/path/xschem_libs_newsym/library.defs` (explicit defs take
+  precedence over auto-discovered ones).
+
+**The one trap:** do *not* leave *both* trees on the path with the *same* library names — two
+`DEFINE devices …` are deduped by name and precedence/search-order decides the winner, so you
+may silently get the old, un-migrated cells. Remove the old tree, or rename its libraries.
+
+**Simplest of all:** because the migration is display-only, netlist-invariant, and idempotent,
+you can migrate the *original* tree **in place** (its `.bak`/git is the backup) and skip the
+two-tree problem entirely — every `library.defs` entry and schematic reference stays as-is and
+each cell just gains owned pin names. Existing schematics never need editing: `C {devices/nmos4}`
+resolves through whichever `devices` is registered, so once the migrated one is on the path they
+pick up the owned-name symbols automatically.
+
+**Verify at startup:** Tools ▸ Library Manager → pick a migrated cell → **Symbol ▸ Pin names ▸
+Show all pin names** shows its names; `xschem get_inst_lcv` on a placed instance reports the
+Library/Cell/View it resolved from. Full step-by-step: `doc/library_defs.md` §7.
+
 ## Q20. What would it take to animate net highlights (blink + marching ants) in *multiple* open windows at once, not just the front one?
 
 - **Asked:** 2026-06-25

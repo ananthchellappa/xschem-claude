@@ -3,7 +3,7 @@
 Status: PLANNED (2026-06-25), after net-highlight Pass 1/1.5/2a/2b all shipped on
 `fluid-editing` (single-window animation works; HEAD `c2162eeb`). Goal: let blink AND
 marching highlights animate in **every visible window simultaneously**, not just the front one.
-See FAQ Q20 (`doc/claude/code_analysis/FAQ.md`) for the architectural summary and `doc/claude/specs/net_hilight_styles.md`
+See FAQ Q20 (`doc/claude/FAQ.md`) for the architectural summary and `doc/claude/specs/net_hilight_styles.md`
 / `doc/claude/specs/multi_window_detach.md` for context.
 
 Guiding principle: this is **not a new subsystem** — the per-window contexts (`save_xctx[]`) and a

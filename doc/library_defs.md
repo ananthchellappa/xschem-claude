@@ -128,7 +128,60 @@ because it is not `DEFINE`d anywhere. Two fixes, either works:
 Reload, and `SANDBOX` is in the browser. That hand-edit is precisely what "New library…"
 does.
 
-## 7. Naming a directory — `library.tag`
+## 7. Loading *migrated* libraries at startup (old → new)
+
+If you converted an old-style library to owned pin-name text with
+`tools/migrate/migrate_pin_names.py` (see `doc/pin_name_migration.md`) and produced a
+**new tree** (e.g. `xschem_libraries_oa` → `xschem_libs_newsym`), you now have two copies
+and need xschem to load the migrated one at startup.
+
+**The key fact:** migration is a drop-in. The migrated tree keeps the same
+Library/Cell/View names, the same pin `name=`/`dir=`, and the same connectivity — only
+display tokens changed, so **netlists are identical**. It even copied the original's
+`library.defs` (same `DEFINE` lines). So "load the correct libraries" is purely a matter of
+pointing xschem's startup search at the migrated tree instead of the old one.
+
+xschem's startup library set comes from your `xschemrc` (§4–§5): whichever `library.defs` it
+loads — explicitly via `XSCHEM_LIBRARY_DEFS`, or auto-discovered on `XSCHEM_LIBRARY_PATH` —
+is what the Library Manager shows. Pick one:
+
+- **A — swap the tree on the path (recommended).** In your `xschemrc`, put the migrated tree
+  on `XSCHEM_LIBRARY_PATH` and drop the old one:
+  ```tcl
+  # was: append XSCHEM_LIBRARY_PATH :/path/xschem_libraries_oa
+  append XSCHEM_LIBRARY_PATH :/path/xschem_libs_newsym
+  ```
+  The migrated tree carries its own `library.defs`, so xschem auto-discovers it and the same
+  library names reappear — now with owned pin names.
+- **B — point `XSCHEM_LIBRARY_DEFS` at the migrated defs file.**
+  ```sh
+  export XSCHEM_LIBRARY_DEFS=/path/xschem_libs_newsym/library.defs
+  ```
+  Explicit defs take precedence over auto-discovered ones (§4).
+
+**Avoid the collision trap.** Do **not** leave *both* trees on the path/defs with the *same*
+library names. Two `DEFINE devices …` entries are deduped by name, and which one wins depends
+on precedence (explicit before discovered) and search order — you may silently get the old,
+un-migrated cells. Remove the old tree from the path, or rename its libraries.
+
+**Simplest of all — migrate in place.** Because migration is display-only, netlist-invariant,
+and idempotent, converting the *original* tree in place (its `.bak` files, or git, are your
+backup) sidesteps the two-tree question entirely: every `library.defs` entry, schematic
+reference, and Library-Manager library stays exactly as it was, and each cell simply gains
+owned pin names. If you already made a separate tree, you can instead just replace the old
+tree's contents with the migrated ones.
+
+Existing schematics need no edits either way: a reference like `C {devices/nmos4}` resolves
+through whichever `devices` library is registered, so once the migrated `devices` is the one
+on the path, your schematics pick up the owned-pin-name symbols automatically (and, again,
+the netlist is unchanged).
+
+**Verify after (re)starting xschem:** open **Tools ▸ Library Manager**, pick a migrated cell,
+and confirm its pin names show (**Symbol ▸ Pin names ▸ Show all pin names**), or that its
+`.sym` carries `show_pinname` tokens. On a placed instance, `xschem get_inst_lcv` reports the
+Library/Cell/View it resolved from — a quick way to confirm you are on the migrated tree.
+
+## 8. Naming a directory — `library.tag`
 
 Independently of `library.defs`, a library directory may carry a `library.tag` file whose
 `NAME` line sets the display name:
@@ -141,7 +194,7 @@ NAME MyStdCells
 With no `library.tag`, the name defaults to the directory's basename. (`library.tag` names
 the directory; `library.defs` is what actually registers it for the browser.)
 
-## 8. Troubleshooting — "my library still isn't showing"
+## 9. Troubleshooting — "my library still isn't showing"
 
 - **Is it `DEFINE`d?** Grep your `library.defs` files for the name. No `DEFINE` → it won't
   show (being on the search path alone is not enough).
@@ -156,7 +209,7 @@ the directory; `library.defs` is what actually registers it for the browser.)
   "not in a Cadence library" for such symbols — a quick way to check.)
 - Changed a `library.defs`? Reopen the Library Manager (or restart xschem) so it re-reads.
 
-## 9. Quick reference
+## 10. Quick reference
 
 | Task | How |
 |---|---|
@@ -166,4 +219,5 @@ the directory; `library.defs` is what actually registers it for the browser.)
 | Unregister | right-click ▸ Remove from list |
 | Point at extra defs files | `XSCHEM_LIBRARY_DEFS=/a/library.defs:/b/library.defs` |
 | Put a tree on the search path | `append XSCHEM_LIBRARY_PATH :<dir>` in `xschemrc` |
+| Load migrated libs (old → new) | repoint `XSCHEM_LIBRARY_PATH`/`XSCHEM_LIBRARY_DEFS` at the migrated tree (§7); don't keep both |
 | Name a directory | `NAME <name>` in `<libdir>/library.tag` |

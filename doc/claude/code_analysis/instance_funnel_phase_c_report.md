@@ -16,7 +16,7 @@ behavior change was demonstrated rather than asserted.
 
 Companion docs: `instance_lifecycle_census.md` (the authoritative site list),
 `wire_lifecycle_census.md` + the wire funnel (the proven precedent),
-`green_but_hollow_tests.md` (the verification discipline), `FAQ.md` Q7
+`green_but_hollow_tests.md` (the verification discipline), `../FAQ.md` Q7
 (why the funnel comes before the handle).
 
 ---
