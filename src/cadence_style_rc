@@ -2,8 +2,13 @@
 
 # --- Libraries: use ONLY the OA (lib/cell/view) registry --------------------
 # Anchor on this rc's own location (repo/src/cadence_style_rc) to find the
-# sibling repo/xschem_libraries_oa/ tree.
-set _cad_oa [file normalize [file join [file dirname [info script]] .. xschem_libraries_oa]]
+# sibling repo/xschem_libs_newsym/ tree -- the pin-name-migrated OA libraries
+# (tools/migrate/migrate_pin_names.py; see doc/pin_name_migration.md and
+# doc/library_defs.md §7). It is a drop-in replacement for repo/xschem_libraries_oa/:
+# same Library/Cell/View names, same library.defs, netlist-identical, but its symbol
+# pins own their name text. To fall back to the un-migrated tree, point this at
+# xschem_libraries_oa instead.
+set _cad_oa [file normalize [file join [file dirname [info script]] .. xschem_libs_newsym]]
 
 # The registry to use is the library.defs that ships inside that tree (the
 # Cadence cds.lib analog). Making it the EXPLICIT $XSCHEM_LIBRARY_DEFS gives its
