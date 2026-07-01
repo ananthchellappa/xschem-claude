@@ -465,6 +465,89 @@ check "p6 on: LEG still hidden"    [svgcount $wd/p6_on.svg LEG]    0
 set ::show_pin_names auto
 set ::text_svg 0
 
+# ---------------------------------------------------------------------------
+# 16. P7 ERC: `xschem check_pin_names` scans the edited symbol's PINLAYER pins and returns a
+#     machine-readable Tcl list of "{type idx {name}}" issue elements (type = dup|nameless|
+#     legacy). Non-blocking, display/report only. Sub-tests exercise each check in isolation,
+#     a clean symbol (empty result), and a combined symbol (one of each), plus the human
+#     ERC-info-window channel. §4.9.
+# ---------------------------------------------------------------------------
+# count list elements whose first field equals 'type'
+proc count_type {lst type} {
+  set n 0
+  foreach el $lst { if {[lindex $el 0] eq $type} { incr n } }
+  return $n
+}
+
+# 16a. Duplicate pin names: two un-owned pins both name=A -> exactly one dup issue, no others.
+set p7dup $wd/p7_dup.sym
+write_sym $p7dup [join {
+  "B 5 -2.5 -2.5 2.5 2.5 {name=A dir=in}"
+  "B 5 -2.5 17.5 2.5 22.5 {name=A dir=out}"
+} "\n"]\n
+xschem load $p7dup
+set r [xschem check_pin_names]
+check "p7 dup: total issues"       [llength $r]            1
+check "p7 dup: one dup element"    [count_type $r dup]     1
+check "p7 dup: names/nameless=0"   [count_type $r nameless] 0
+check "p7 dup: legacy=0"           [count_type $r legacy]  0
+check "p7 dup: issue names later pin (idx 1)" [lindex [lindex $r 0] 1] 1
+
+# 16b. Owned but nameless: show_pinname token present but empty name= -> one nameless issue.
+# (An empty value must be written name="" -- xschem's tokenizer reads a bare `name= <tok>`
+#  as taking the next token as the value.)
+set p7nm $wd/p7_nameless.sym
+write_sym $p7nm "B 5 -2.5 -2.5 2.5 2.5 {name=\"\" dir=in show_pinname=true name_size=0.2}\n"
+xschem load $p7nm
+set r [xschem check_pin_names]
+check "p7 nameless: total issues"  [llength $r]            1
+check "p7 nameless: one nameless"  [count_type $r nameless] 1
+check "p7 nameless: dup=0"         [count_type $r dup]     0
+check "p7 nameless: no synth view (nameless pin not shown)" [xschem get texts] 0
+
+# 16c. Legacy adoption gap: an un-owned pin with a literal T {name} label next to it.
+set p7leg $wd/p7_legacy.sym
+write_sym $p7leg [join {
+  "B 5 -2.5 -2.5 2.5 2.5 {name=LEG dir=in}"
+  "T {LEG} 22 -5 0 0 0.2 0.2 {}"
+} "\n"]\n
+xschem load $p7leg
+check "p7 legacy: legacy T is a real text (no synth view)" [xschem get texts] 1
+set r [xschem check_pin_names]
+check "p7 legacy: total issues"    [llength $r]            1
+check "p7 legacy: one legacy"      [count_type $r legacy]  1
+check "p7 legacy: element name"    [lindex [lindex $r 0] 2] LEG
+
+# 16d. Clean symbol: two distinct owned names, no legacy label -> empty result.
+set p7ok $wd/p7_ok.sym
+write_sym $p7ok [join {
+  "B 5 -2.5 -2.5 2.5 2.5 {name=IN dir=in show_pinname=true name_dx=20 name_size=0.2}"
+  "B 5 -2.5 17.5 2.5 22.5 {name=OUT dir=out show_pinname=true name_dx=-20 name_size=0.2 name_flip=1}"
+} "\n"]\n
+xschem load $p7ok
+set r [xschem check_pin_names]
+check "p7 clean: no issues"        [llength $r]            0
+check "p7 clean: info window text says clean" \
+  [expr {[string match "*no issues found*" [xschem get infowindow_text]] ? 1 : 0}] 1
+
+# 16e. Combined: dup (pins 0/1) + nameless (pin 2) + legacy (pin 3, T {LEG} nearby).
+set p7all $wd/p7_all.sym
+write_sym $p7all [join {
+  "B 5 -2.5 -2.5 2.5 2.5 {name=A dir=in}"
+  "B 5 -2.5 17.5 2.5 22.5 {name=A dir=out}"
+  "B 5 -2.5 37.5 2.5 42.5 {name=\"\" dir=in show_pinname=true}"
+  "B 5 -2.5 57.5 2.5 62.5 {name=LEG dir=in}"
+  "T {LEG} 22 55 0 0 0.2 0.2 {}"
+} "\n"]\n
+xschem load $p7all
+set r [xschem check_pin_names]
+check "p7 all: total issues"       [llength $r]            3
+check "p7 all: one dup"            [count_type $r dup]     1
+check "p7 all: one nameless"       [count_type $r nameless] 1
+check "p7 all: one legacy"         [count_type $r legacy]  1
+check "p7 all: info window lists a warning" \
+  [expr {[string match "*Warning:*" [xschem get infowindow_text]] ? 1 : 0}] 1
+
 file delete -force $wd
 
 if {$nfail == 0} { puts "ALL PASS (pin_name_text)" } else { puts "$nfail FAILURES (pin_name_text)" }

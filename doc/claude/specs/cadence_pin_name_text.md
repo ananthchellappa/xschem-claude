@@ -1,6 +1,8 @@
 # Cadence-style pin-owned name text (symbol pins)
 
-Status: **IN PROGRESS — P0-P2 done + code-review fixes; branch `cadence-pin-name-text`.**
+Status: **IN PROGRESS — P0–P7 done (foundation → creation → write-through → forms → copy/paste
+→ show/hide → instance display → ERC/check); branch `cadence-pin-name-text`. NEXT: P8 migration,
+P9 wire-stub getter.**
 Written 2026-06-29. This is **Thread A**, the prerequisite for
 `doc/claude/specs/wire_stub_netlabel.md` (Thread B): once a pin owns its name text, "the
 pin's text size" is well-defined and wire-stub labels can read it. Pick-up-here handoff doc.
@@ -659,7 +661,28 @@ pin tokens, no separate persisted object.
   shows every owned pin (wins over `show=false`), legacy never shown — sabotage-verified
   (neuter the SVG pass → the "shown" checks collapse to 0). Screen draw + PS export smoke:
   no crash, names present. Netlist golden unchanged.
-- **P7 — ERC/check + netlist invariance + docs/tutorial.**
+- **P7 — ERC/check + netlist invariance + docs. [DONE 2026-06-30]** New non-blocking pin-name
+  integrity check `check_pin_names(char **result)` (actions.c, next to the pin helpers), exposed
+  as `xschem check_pin_names` (scheduler.c, by the other `check_*` commands) and wired to a
+  **Symbol ▸ Check pin names** menu entry (xschem.tcl, under the P5 "Pin names" cascade). It
+  scans the PINLAYER pins of the *current drawing* (populated in symbol-edit mode) and flags:
+  - **dup** — two pins share the same non-empty `name=` (ambiguous pin↔view binding + netlist
+    pin order). Detected with an `Int_hashtable` + `XINSERT_NOREPLACE` (first index kept as the
+    entry value, so a hit reports the *later* pin as duplicating the earlier).
+  - **nameless** — an *owned* pin (has a `show_pinname` token) whose `name=` is empty.
+  - **legacy** — an *un-owned* pin (no `show_pinname` token) that still has a real, literal `T`
+    label (`owner_pin_id==0`, content == pin name) within cadgrid-scaled proximity: a pre-model
+    label the P8 migration must adopt/resolve (adoption gap).
+  Display/report only — never edits objects, so **netlists stay byte-identical** (golden suite
+  `tests/headless/run.sh` PASS). Human warnings go to the ERC **Info window** via
+  `statusmsg(...,2)` (surfaced with `show_infotext`); the command **returns a machine-readable
+  Tcl list** of `{type idx {name}}` issue elements (`type` = `dup|nameless|legacy`), empty when
+  clean, so tests assert without scraping the log. Tests: pin_name_text +20 (now **128**) —
+  each check in isolation, a clean symbol (empty list), a combined symbol (one of each), and the
+  Info-window channel; **all three checks sabotage-verified** (neuter each → only its assertions
+  flip; the combined total drops by exactly one). GOTCHA discovered writing the fixtures: an
+  empty pin-name must be written `name=""` — xschem's tokenizer reads a bare `name= <tok>` as
+  taking the *next* token as the value.
 - **P8 — migration script** + fixtures (the §5 representative files) + idempotency/dry-run/
   backup tests; supervised run over `xschem_library` (+ the user's `xschem_libraries_oa`).
 - **P9 — Thread B getter** `get_pin_name_size` reads `name_size`; unblock wire-stubs.

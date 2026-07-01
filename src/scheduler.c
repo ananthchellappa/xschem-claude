@@ -853,6 +853,29 @@ static int xschem_cmds_c(Tcl_Interp *interp, int argc, const char *argv[], int *
       }
       Tcl_ResetResult(interp);
     }
+
+    /* check_pin_names
+     *   P7 ERC for Cadence pin-owned name text (doc/claude/specs/cadence_pin_name_text.md
+     *   §4.9). Scans the PINLAYER pins of the current drawing (symbol-edit) for duplicate
+     *   pin names, owned-but-nameless pins, and un-adopted legacy name labels. Non-blocking,
+     *   display/report only (never edits objects or netlists). Human warnings go to the ERC
+     *   info window; the RETURN value is a machine-readable Tcl list of "{type idx {name}}"
+     *   issue elements (type = dup|nameless|legacy), empty when the pins are clean. */
+    else if(!strcmp(argv[1], "check_pin_names"))
+    {
+      char *res = NULL;
+      int nissues;
+      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      statusmsg("", 2);                 /* clear the ERC info window for a fresh check */
+      statusmsg("Pin name check:", 3);
+      nissues = check_pin_names(&res);
+      if(nissues == 0) statusmsg("  no issues found", 2);
+      /* surface in the GUI info window on issues (headless: logs the text) */
+      tcleval(nissues ? "if {[info procs show_infotext] ne {}} {show_infotext 1}"
+                      : "if {[info procs show_infotext] ne {}} {show_infotext 0}");
+      Tcl_SetResult(interp, res ? res : "", TCL_VOLATILE);
+      my_free(_ALLOC_ID_, &res);
+    }
     /* closest_object
      *   returns index of closest object to mouse coordinates
      *   index = type layer n

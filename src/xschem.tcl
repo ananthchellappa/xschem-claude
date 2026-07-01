@@ -13693,6 +13693,12 @@ proc build_widgets { {topwin {} } } {
      -selectcolor $selectcolor -background grey60 -variable show_pin_names -value off \
      -command {xschem pin_names off}
 
+  # P7 pin-name ERC (doc/claude/specs/cadence_pin_name_text.md §4.9): report duplicate pin
+  # names, owned-but-nameless pins, and un-adopted legacy name labels of the edited symbol.
+  # Non-blocking, display only; warnings land in the Info window.
+  $topwin.menubar.sym add command -label "Check pin names" \
+     -command {xschem check_pin_names}
+
   $topwin.menubar.sym add command -label "Set symbol width" \
      -command {
         input_line "Enter Symbol width ($symbol_width)" "set symbol_width" $symbol_width

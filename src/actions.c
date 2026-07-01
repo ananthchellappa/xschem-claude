@@ -1363,6 +1363,106 @@ void pin_views_reconcile_after_move(void)
   }
 }
 
+/* Append one machine-readable issue element "{type idx {name}}" to the Tcl list *res
+ * (unbounded, so a long/bus pin name is never truncated). */
+static void add_pin_issue(char **res, const char *type, int idx, const char *name)
+{
+  char idxbuf[32];
+  my_snprintf(idxbuf, S(idxbuf), "%d", idx);
+  if(*res) my_strcat(_ALLOC_ID_, res, " ");
+  my_mstrcat(_ALLOC_ID_, res, "{", type, " ", idxbuf, " {", name ? name : "", "}}", NULL);
+}
+
+/* P7 ERC: pin-name integrity check (doc/claude/specs/cadence_pin_name_text.md §4.9).
+ * Non-blocking, display/report only -- never changes objects or netlists. Scans the
+ * PINLAYER pins of the CURRENT drawing (populated in symbol-edit mode) and flags:
+ *   dup       two pins carry the same non-empty name= -- the pin<->view binding and the
+ *             netlist pin order are ambiguous (highest value check).
+ *   nameless  an OWNED pin (has a show_pinname token) whose name= is empty: it is meant
+ *             to display a name but has none.
+ *   legacy    an UN-owned pin (no show_pinname token) that still has a real, literal T
+ *             name label next to it (owner_pin_id==0, content == pin name): a pre-model
+ *             label the P8 migration must adopt/resolve (adoption gap).
+ * Appends one "{type idx {name}}" element per issue to the Tcl list *result and emits a
+ * human-readable warning per issue via statusmsg(...,2) (the ERC info window). Returns
+ * the number of issues found. *result is left NULL when there are none. */
+int check_pin_names(char **result)
+{
+  int i, t, np, n = 0;
+  Int_hashtable name_table = {NULL, 0};
+  double cg, tol;
+  char msg[1024];
+  if(!xctx) return 0;
+  np = xctx->rects[PINLAYER];
+
+  /* 1. Duplicate pin names. XINSERT_NOREPLACE keeps the FIRST index as the entry value, so
+   *    a non-NULL return means this name is already present -> report the later pin. */
+  int_hash_init(&name_table, HASHSIZE);
+  for(i = 0; i < np; ++i) {
+    char *nm = NULL;
+    Int_hashentry *e;
+    my_strdup(_ALLOC_ID_, &nm, get_tok_value(xctx->rect[PINLAYER][i].prop_ptr, "name", 0));
+    if(!nm || !nm[0]) { my_free(_ALLOC_ID_, &nm); continue; } /* empty -> handled by check 2 */
+    e = int_hash_lookup(&name_table, nm, i, XINSERT_NOREPLACE);
+    if(e) {
+      add_pin_issue(result, "dup", i, nm);
+      my_snprintf(msg, S(msg),
+        "Warning: duplicate pin name '%s' (pin %d duplicates pin %d)", nm, i, e->value);
+      statusmsg(msg, 2);
+      ++n;
+    }
+    my_free(_ALLOC_ID_, &nm);
+  }
+  int_hash_free(&name_table);
+
+  /* 2. Owned but nameless: a show_pinname token present but an empty name=. */
+  for(i = 0; i < np; ++i) {
+    const char *prop = xctx->rect[PINLAYER][i].prop_ptr;
+    if(!get_tok_value(prop, "show_pinname", 0)[0]) continue;     /* un-owned: outside model */
+    if(get_tok_value(prop, "name", 0)[0]) continue;             /* has a name: ok */
+    add_pin_issue(result, "nameless", i, "");
+    my_snprintf(msg, S(msg),
+      "Warning: pin %d has show_pinname set but an empty name", i);
+    statusmsg(msg, 2);
+    ++n;
+  }
+
+  /* 3. Legacy adoption gap: an un-owned pin (no show_pinname token) that still has a real,
+   *    literal T label (owner_pin_id==0, i.e. NOT a synth view) near it whose content equals
+   *    the pin name. Migration (P8) must adopt/resolve it. Proximity mirrors the editprop.c
+   *    legacy bind (cadgrid-scaled), floored so a small cadgrid does not miss the default
+   *    ~25-unit label offset. */
+  cg = tclgetdoublevar("cadgrid");
+  tol = cg * 3.0;
+  if(tol < 60.0) tol = 60.0;
+  for(i = 0; i < np; ++i) {
+    xRect *p = &xctx->rect[PINLAYER][i];
+    char *nm = NULL;
+    double cx, cy;
+    if(get_tok_value(p->prop_ptr, "show_pinname", 0)[0]) continue; /* owned: no legacy T */
+    my_strdup(_ALLOC_ID_, &nm, get_tok_value(p->prop_ptr, "name", 0));
+    if(!nm || !nm[0]) { my_free(_ALLOC_ID_, &nm); continue; }
+    cx = (p->x1 + p->x2) / 2.0;
+    cy = (p->y1 + p->y2) / 2.0;
+    for(t = 0; t < xctx->texts; ++t) {
+      xText *tx = &xctx->text[t];
+      if(tx->owner_pin_id) continue;                    /* skip synthesized name views */
+      if(!tx->txt_ptr || strcmp(tx->txt_ptr, nm)) continue;
+      if(fabs(tx->x0 - cx) < tol && fabs(tx->y0 - cy) < tol) {
+        add_pin_issue(result, "legacy", i, nm);
+        my_snprintf(msg, S(msg),
+          "Warning: pin %d ('%s') has an un-adopted legacy name label "
+          "(run pin-name migration)", i, nm);
+        statusmsg(msg, 2);
+        ++n;
+        break;
+      }
+    }
+    my_free(_ALLOC_ID_, &nm);
+  }
+  return n;
+}
+
 
 void reset_caches(void)
 {
