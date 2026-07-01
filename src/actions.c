@@ -1171,6 +1171,97 @@ double median_double(const double *a, int n)
   return med;
 }
 
+/* B2: is instance i's pin j already connected? Two ways count as connected (both skipped in
+ * whole-instance mode):
+ *   1. a WIRE -- a wire endpoint AT the pin OR a wire passing THROUGH it, via touch() (the exact
+ *      on-segment test the netlister uses in name_attached_inst_to_net), so this agrees with real
+ *      netlist connectivity;
+ *   2. a COINCIDENT pin of ANOTHER instance (abutment / pin-to-pin placement) -- exact coord
+ *      match, since get_inst_pin_coord is exact for on-grid instances (user: treat a coincident
+ *      instance pin the same as a wired one).
+ * Caller must have built BOTH spatial hashes (hash_wires + hash_instances). See
+ * doc/claude/specs/wire_stub_netlabel.md §4.1/§4.5. */
+static int pin_is_connected(int i, int j)
+{
+  double x0, y0, xx, yy;
+  Iterator_ctx ctx;
+  Wireentry *wp;
+  Instentry *ep;
+  xWire * const wire = xctx->wire;
+  xInstance * const inst = xctx->inst;
+  get_inst_pin_coord(i, j, &x0, &y0);
+  init_wire_iterator(&ctx, x0 - CADWIREMINDIST, y0 - CADWIREMINDIST,
+                           x0 + CADWIREMINDIST, y0 + CADWIREMINDIST);
+  while((wp = wire_iterator_next(&ctx)))
+    if(touch(wire[wp->n].x1, wire[wp->n].y1, wire[wp->n].x2, wire[wp->n].y2, x0, y0)) return 1;
+  init_inst_iterator(&ctx, x0 - CADWIREMINDIST, y0 - CADWIREMINDIST,
+                           x0 + CADWIREMINDIST, y0 + CADWIREMINDIST);
+  while((ep = inst_iterator_next(&ctx))) {
+    int m = ep->n, p, rects;
+    if(m == i || inst[m].ptr < 0) continue;    /* skip this instance and symbol-less instances */
+    rects = (inst[m].ptr + xctx->sym)->rects[PINLAYER];
+    for(p = 0; p < rects; p++) {
+      get_inst_pin_coord(m, p, &xx, &yy);
+      if(xx == x0 && yy == y0) return 1;        /* another instance's pin lands on this one */
+    }
+  }
+  return 0;
+}
+
+/* append (inst,pin) to a growable Pin_stub_target array (doubling; caller frees *list). */
+static void stub_target_append(Pin_stub_target **list, int *cnt, int *cap, int inst, int pin)
+{
+  if(*cnt >= *cap) {
+    *cap = *cap ? *cap * 2 : 8;
+    my_realloc(_ALLOC_ID_, list, (size_t)*cap * sizeof(Pin_stub_target));
+  }
+  (*list)[*cnt].inst = inst;
+  (*list)[*cnt].pin  = pin;
+  ++*cnt;
+}
+
+/* B2: build the list of (instance, pin) targets a wire-stub invocation should process
+ * (doc/claude/specs/wire_stub_netlabel.md §4.1). Two modes, individually-selected pins WIN:
+ *   - any INST_PIN in the selection -> exactly those (instance, pin) pairs (user model: stub the
+ *     pins the user picked);
+ *   - else every whole instance selected (ELEMENT) -> each of ITS pins not already connected
+ *     (user model: stub the instance's UNCONNECTED pins). "connected" == pin_is_connected()
+ *     (a wire, or a coincident pin of another instance).
+ * Returns the count; *out is a my_malloc'd Pin_stub_target[] the caller frees (NULL/0 when there
+ * is nothing to do). Schematic-mode only -- a symbol being edited has no placed instances; a
+ * symbol-less instance (ptr<0) and stale/generic pin indices are skipped. */
+int collect_pin_stub_targets(Pin_stub_target **out)
+{
+  int i, j, n, rects, cnt = 0, cap = 0, have_pins = 0;
+  Pin_stub_target *list = NULL;
+  *out = NULL;
+  if(!xctx || xctx->netlist_type == CAD_SYMBOL_ATTRS) return 0;
+  rebuild_selected_array();
+  for(i = 0; i < xctx->lastsel; ++i)
+    if(xctx->sel_array[i].type == INST_PIN) { have_pins = 1; break; }
+  hash_wires();       /* pin_is_connected() queries the wire ... */
+  hash_instances();   /* ... and the instance spatial hash */
+  for(i = 0; i < xctx->lastsel; ++i) {
+    Selected sel = xctx->sel_array[i];
+    if(have_pins) {
+      if(sel.type != INST_PIN) continue;                       /* pins win: ignore whole-inst sels */
+      n = sel.n;
+      if(n < 0 || n >= xctx->instances || xctx->inst[n].ptr < 0) continue;
+      rects = (xctx->inst[n].ptr + xctx->sym)->rects[PINLAYER];
+      if((int)sel.col < rects) stub_target_append(&list, &cnt, &cap, n, (int)sel.col);
+    } else {
+      if(sel.type != ELEMENT) continue;
+      n = sel.n;
+      if(n < 0 || n >= xctx->instances || xctx->inst[n].ptr < 0) continue;
+      rects = (xctx->inst[n].ptr + xctx->sym)->rects[PINLAYER];
+      for(j = 0; j < rects; ++j)
+        if(!pin_is_connected(n, j)) stub_target_append(&list, &cnt, &cap, n, j);
+    }
+  }
+  *out = list;
+  return cnt;
+}
+
 /* [6] Fast global short-circuit for the per-frame draw_symbol pin-name pass: when the
  * show_pin_names tri-state is OFF no owned pin can show, so the whole per-instance pin loop
  * is skippable without a get_tok_value per pin. Reads the cached mode (pin_names_sync_cache

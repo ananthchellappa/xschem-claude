@@ -1924,6 +1924,11 @@ extern double get_pin_name_size(xSymbol *sym, int pin);
 /* B1 (wire-stubs): median of n doubles (copy+sort+middle); reduces the processed pins' name
  * sizes to the one size that drives every stub+label. See actions.c median_double. */
 extern double median_double(const double *a, int n);
+/* B2 (wire-stubs): one (instance, pin) the stubber should process. */
+typedef struct { int inst, pin; } Pin_stub_target;
+/* B2: scan the selection into the (instance, pin) targets to stub -- selected pins win, else a
+ * whole instance's not-already-wired pins. *out my_malloc'd, caller frees. See actions.c. */
+extern int collect_pin_stub_targets(Pin_stub_target **out);
 extern int pin_names_all_off(void);
 extern void init_inst_iterator(Iterator_ctx *ctx, double x1, double y1, double x2, double y2);
 extern Instentry *inst_iterator_next(Iterator_ctx *ctx);

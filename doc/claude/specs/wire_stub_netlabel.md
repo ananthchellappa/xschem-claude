@@ -328,7 +328,23 @@ headless-testable). Confirm the exact default key (user does heavy Cadence-key w
   positional-middle≠median). Sabotage-verified: mean-of-all flips the skewed checks, skipping
   the sort flips the unsorted checks.
 - B2. Selection scan → list of (inst, pin) to process (§4.1), incl. the connected-pin
-  filter for whole-instance selection (§4.5).
+  filter for whole-instance selection (§4.5). **DONE 2026-07-01.** `int
+  collect_pin_stub_targets(Pin_stub_target **out)` in `src/actions.c` (struct + decl
+  `src/xschem.h`): `rebuild_selected_array()`, then if any `INST_PIN` is selected → exactly
+  those (inst, pin) pairs (individually-selected pins WIN, honored even if already connected);
+  else each selected `ELEMENT` → its pins where `!pin_is_connected(i,j)`. `pin_is_connected`
+  counts a pin connected if (1) a wire touches it — `touch()`, the netlister's on-segment
+  primitive: an endpoint AT **or** a wire passing THROUGH the pin coord (over the wire spatial
+  hash) — **or** (2) a pin of ANOTHER instance is coincident with it (abutment / pin-to-pin
+  placement; exact coord match over the instance spatial hash — the user's rule: treat a
+  coincident instance pin the same as a wired one). Schematic-mode only; skips `ptr<0` / stale
+  pin indices. Test seam **`xschem pin_stub_targets`** (`scheduler.c` `xschem_cmds_p`) returns a
+  Tcl list of `{inst pin}` pairs (read-only dry-run). Coverage: `tests/wire_stub_netlabel.tcl`
+  B2 (11 checks, incl. abutment). Sabotage-verified: neutering the wire filter flips the two
+  wire-exclusion checks, neutering the coincident-pin scan flips the two abutment checks, and
+  neutering pins-win flips the three pin-select checks. **OPEN for the user (B5/B6): does
+  individual-pin mode intentionally stub an already-connected selected pin? Current behavior =
+  yes (honor the explicit selection).**
 - B3. Sizing: per-pin size via A2 → median `S` → text height `H` (§4.4) → stub length `L`
   (§4.2).
 - B4. Geometry: outward direction (§4.3), stub endpoints (grid-snapped), label rot/flip.

@@ -5494,6 +5494,27 @@ static int xschem_cmds_p(Tcl_Interp *interp, int argc, const char *argv[], int *
       Tcl_SetResult(interp, (char *)cur, TCL_VOLATILE);
     }
 
+    /* pin_stub_targets: (xschem pin_stub_targets) the (instance, pin) pairs the wire-stubber
+     * would process for the current selection, as a Tcl list of {inst pin} pairs -- selected
+     * pins win, else a whole instance's not-already-wired pins. B2, wire_stub_netlabel.md §4.1.
+     * Read-only dry-run of the selection scan (the mutating `add_pin_stubs` lands at B6). */
+    else if(!strcmp(argv[1], "pin_stub_targets"))
+    {
+      Pin_stub_target *t = NULL;
+      int nt, k;
+      char *res = NULL;
+      char b[64];
+      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      nt = collect_pin_stub_targets(&t);
+      for(k = 0; k < nt; ++k) {
+        my_snprintf(b, S(b), "%s{%d %d}", k ? " " : "", t[k].inst, t[k].pin);
+        my_mstrcat(_ALLOC_ID_, &res, b, NULL);
+      }
+      if(t) my_free(_ALLOC_ID_, &t);
+      Tcl_SetResult(interp, res ? res : "", TCL_VOLATILE);
+      my_free(_ALLOC_ID_, &res);
+    }
+
     else if(!strcmp(argv[1], "pinlist"))
     {
       int i, p, no_of_pins, first = 1;
