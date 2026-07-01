@@ -1119,19 +1119,56 @@ int get_pin_name_layout(const char *prop, Pin_name_layout *lay, char **name, cha
 
 /* Thread-A deliverable (P9): the single source of truth for "a pin's own name-text size",
  * consumed by the wire-stub / net-label feature (doc/claude/specs/wire_stub_netlabel.md
- * §3.4, §4.2). Returns the yscale of pin 'pin' of symbol 'sym': the pin rect's name_size
- * token when present, else the global default (the sym_pin_name_size Tcl var, fallback 0.2 --
- * the SAME default create_pin stamps, so a pin relying on the fallback and a freshly created
- * one agree). Legacy / un-owned pins carry no name_size and therefore get that global default.
- * An out-of-range pin (or a NULL symbol) also yields the default rather than erroring, so a
- * caller can median a mixed pin set without special-casing missing pins. */
+ * §3.4, §4.2). Returns the yscale of pin 'pin' of symbol 'sym': the pin rect's name_size token
+ * when present, else 0.2 -- the SAME fallback get_pin_name_layout() uses when it renders the pin
+ * name, so the size reported here always matches what draw_symbol actually draws (a divergent
+ * fallback -- e.g. the create-time sym_pin_name_size var -- would size the stub/label differently
+ * from the on-screen pin text). Legacy / un-owned pins carry no name_size and get that 0.2. A
+ * NULL symbol or an out-of-range/negative pin also yields 0.2 rather than erroring, so a caller
+ * can median a mixed pin set without special-casing missing pins. KEEP THE DEFAULT IN SYNC WITH
+ * get_pin_name_layout(). */
 double get_pin_name_size(xSymbol *sym, int pin)
 {
-  const char *sz = tclgetvar("sym_pin_name_size");
-  double dflt = (sz && sz[0]) ? atof(sz) : 0.2;
-  if(dflt <= 0.0) dflt = 0.2;
-  if(!sym || pin < 0 || pin >= sym->rects[PINLAYER]) return dflt;
-  return pin_dtok(sym->rect[PINLAYER][pin].prop_ptr, "name_size", dflt);
+  if(!sym || pin < 0 || pin >= sym->rects[PINLAYER]) return 0.2;
+  return pin_dtok(sym->rect[PINLAYER][pin].prop_ptr, "name_size", 0.2);
+}
+
+/* -------------------------------------------------------------------------
+ * Thread B (wire-stubs + auto net-labels on instance pins). B1 = the median
+ * sizing primitive. See doc/claude/specs/wire_stub_netlabel.md.
+ * ------------------------------------------------------------------------- */
+
+/* qsort comparator for doubles, ascending. NaN is ordered after every non-NaN (and equal to
+ * itself) so the comparator is a strict weak ordering even for a corrupt name_size=nan token: a
+ * plain `x<y?-1:x>y?1:0` returns 0 for EVERY comparison involving NaN, which violates qsort's
+ * contract and leaves the sort (hence the median) undefined. `x != x` is true iff x is NaN. */
+static int cmp_double(const void *a, const void *b)
+{
+  double x = *(const double *)a, y = *(const double *)b;
+  if(x < y) return -1;
+  if(x > y) return 1;
+  if(x == y) return 0;
+  return (x != x) ? ((y != y) ? 0 : 1) : -1;   /* NaN present: sort it last, consistently */
+}
+
+/* B1: median of n doubles. Copies the input (so the caller's array is NOT reordered), sorts the
+ * copy, and returns the middle element for odd n or the mean of the two middle elements for even
+ * n (the textbook median; for n==2 that mean is the only sensible "middle"). n==1 returns a[0];
+ * n<=0 returns 0.0. The wire-stub op (§4.2) uses this to reduce the processed pins' name sizes to
+ * the ONE size that drives every label + stub in an invocation -- the median resists a minority
+ * of outlier pins in a way a plain mean does not. */
+double median_double(const double *a, int n)
+{
+  double *tmp, med;
+  int i;
+  if(n <= 0) return 0.0;
+  if(n == 1) return a[0];
+  tmp = my_malloc(_ALLOC_ID_, (size_t)n * sizeof(double));
+  for(i = 0; i < n; ++i) tmp[i] = a[i];
+  qsort(tmp, (size_t)n, sizeof(double), cmp_double);
+  med = (n & 1) ? tmp[n / 2] : (tmp[n / 2 - 1] + tmp[n / 2]) / 2.0;
+  my_free(_ALLOC_ID_, &tmp);
+  return med;
 }
 
 /* [6] Fast global short-circuit for the per-frame draw_symbol pin-name pass: when the

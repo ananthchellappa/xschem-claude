@@ -1917,9 +1917,13 @@ extern int check_pin_names(char **result);
  * get_pin_name_layout(); shared by draw_symbol / svg_draw_symbol / ps_draw_symbol. */
 typedef struct { double dx, dy, size, rot, flip; } Pin_name_layout;
 extern int get_pin_name_layout(const char *prop, Pin_name_layout *lay, char **name, char **font);
-/* the yscale of pin 'pin' of symbol 'sym' (its name_size token, else the sym_pin_name_size
- * default); single source of truth for the wire-stub feature, see actions.c get_pin_name_size. */
+/* the yscale of pin 'pin' of symbol 'sym' (its name_size token, else 0.2 to match the
+ * get_pin_name_layout render default); single source of truth for the wire-stub feature,
+ * see actions.c get_pin_name_size. */
 extern double get_pin_name_size(xSymbol *sym, int pin);
+/* B1 (wire-stubs): median of n doubles (copy+sort+middle); reduces the processed pins' name
+ * sizes to the one size that drives every stub+label. See actions.c median_double. */
+extern double median_double(const double *a, int n);
 extern int pin_names_all_off(void);
 extern void init_inst_iterator(Iterator_ctx *ctx, double x1, double y1, double x2, double y2);
 extern Instentry *inst_iterator_next(Iterator_ctx *ctx);

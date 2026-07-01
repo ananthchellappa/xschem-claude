@@ -1988,6 +1988,20 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
           }
           break;
           case 'm':
+          if(!strcmp(argv[2], "median")) { /* (xschem get median v1 v2 ...) median of the given doubles; B1 test seam (wire_stub_netlabel.md §4.2) */
+            int n = argc - 3, k;
+            double *v;
+            char s[64];
+            if(n <= 0) {
+              Tcl_SetResult(interp, "xschem get median: give one or more numbers", TCL_STATIC);
+              return TCL_ERROR;
+            }
+            v = my_malloc(_ALLOC_ID_, (size_t)n * sizeof(double));
+            for(k = 0; k < n; ++k) v[k] = atof(argv[k + 3]);
+            my_snprintf(s, S(s), "%g", median_double(v, n));
+            my_free(_ALLOC_ID_, &v);
+            Tcl_SetResult(interp, s, TCL_VOLATILE);
+          }
           if(!strcmp(argv[2], "min_lw")) { /* minimum line width */
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
             Tcl_SetResult(interp, dtoa(xctx->min_lw),TCL_VOLATILE);
@@ -2118,19 +2132,27 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
             }
             /* optional <win>: read that window's context via the context-borrow primitive (no GUI
              * side effects) so the query is not bound to whatever window is front -- e.g. reading a
-             * schematic's instance pins while a symbol window has focus. An explicit win that names
-             * no open window errors rather than silently degrading to the front context (which would
-             * reintroduce the wrong-window bug this arg exists to fix; borrow -> NULL cannot tell
-             * "unknown" from "already current"). Restore before EVERY later return so the
-             * borrow/restore stack stays balanced. */
-            if(argc > 5 && !net_hilight_win_known(argv[5])) {
-              Tcl_SetResult(interp, "xschem get pin_name_size: unknown window path", TCL_STATIC);
-              return TCL_ERROR;
-            }
+             * schematic's instance pins while a symbol window has focus. borrow -> NULL means EITHER
+             * <win> is the current window (fine -- answer about it) OR it names no borrowable window
+             * (unknown/typo, or a known path whose context slot is momentarily unallocated mid
+             * create/teardown); a NULL borrow for a NON-current <win> is a failed borrow, so error
+             * rather than silently reading the FRONT window (which would reintroduce the wrong-window
+             * bug this arg prevents -- and which net_hilight_win_known alone would miss on the
+             * known-but-unallocated slot). Same idiom as `get net_hilight_animated`. Restore before
+             * EVERY later return so the borrow/restore stack stays balanced. */
             if(argc > 5) borrowed = net_hilight_borrow_ctx(argv[5]);
+            if(argc > 5 && !borrowed && xctx->current_win_path && strcmp(argv[5], xctx->current_win_path)) {
+              Tcl_SetResult(interp, "xschem get pin_name_size: unknown or unavailable window path", TCL_STATIC);
+              return TCL_ERROR;   /* borrowed == NULL here: nothing to restore */
+            }
             inst = atoi(argv[3]);
             if(inst < 0 || inst >= xctx->instances) {
               Tcl_SetResult(interp, "xschem get pin_name_size: instance index out of range", TCL_STATIC);
+              net_hilight_restore_ctx(borrowed);
+              return TCL_ERROR;
+            }
+            if(xctx->inst[inst].ptr < 0) {   /* instance whose symbol failed to load: no pins to read */
+              Tcl_SetResult(interp, "xschem get pin_name_size: instance has no symbol", TCL_STATIC);
               net_hilight_restore_ctx(borrowed);
               return TCL_ERROR;
             }

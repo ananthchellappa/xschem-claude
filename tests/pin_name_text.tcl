@@ -553,8 +553,10 @@ check "p7 all: info window lists a warning" \
 #     text size", consumed by the wire-stub / net-label feature
 #     (doc/claude/specs/wire_stub_netlabel.md §3.4/§4.2). Exposed for headless
 #     coverage as `xschem get pin_name_size <inst> <pin>`: returns pin `pin`'s
-#     name_size token, else the global sym_pin_name_size default (fallback 0.2 --
-#     the SAME default create_pin stamps, so a legacy pin and a created one agree).
+#     name_size token, else 0.2 -- the SAME fallback get_pin_name_layout() uses to
+#     RENDER the name, so the reported size matches what draw_symbol draws (the
+#     getter deliberately does NOT track the create-time sym_pin_name_size var,
+#     which would diverge from the render default -- code-review 2026-07-01).
 #     Runs in SCHEMATIC mode against a placed instance (Thread B's actual context).
 # ---------------------------------------------------------------------------
 set p9 $wd/p9_sizes.sym
@@ -565,30 +567,40 @@ write_sym $p9 [join {
 } "\n"]\n
 
 # place an instance in a fresh schematic; the getter reads the instance's symbol pins
-set save_sz [expr {[info exists ::sym_pin_name_size] ? $::sym_pin_name_size : ""}]
-set ::sym_pin_name_size 0.2
 xschem clear force
 xschem instance $p9 0 0 0 0 {name=x1}
 set ip [expr {[xschem get instances]-1}]
 
 check "p9: pin 0 reads its name_size"       [xschem get pin_name_size $ip 0]  0.35
 check "p9: pin 1 reads its name_size"       [xschem get pin_name_size $ip 1]  0.15
-check "p9: legacy pin -> global default"    [xschem get pin_name_size $ip 2]  0.2
+check "p9: legacy pin -> render default 0.2" [xschem get pin_name_size $ip 2]  0.2
 check "p9: out-of-range pin -> default"     [xschem get pin_name_size $ip 99] 0.2
 check "p9: negative pin -> default"         [xschem get pin_name_size $ip -1] 0.2
 
-# the fallback tracks the global sym_pin_name_size var (exactly what create_pin stamps);
-# an OWNED pin keeps its own token regardless of the global default
+# the fallback is FIXED at the render default (0.2) and is independent of the create-time
+# sym_pin_name_size var -- so the size the getter reports for a pin equals what is drawn, not
+# what a freshly created pin would be stamped with (code-review: the two must not diverge).
+# An OWNED pin keeps its own token regardless.
+set save_sz [expr {[info exists ::sym_pin_name_size] ? $::sym_pin_name_size : ""}]
 set ::sym_pin_name_size 0.27
-check "p9: legacy default follows sym_pin_name_size" [xschem get pin_name_size $ip 2] 0.27
-check "p9: owned pin ignores global (has token)"     [xschem get pin_name_size $ip 0] 0.35
-set ::sym_pin_name_size ""
-check "p9: empty global var falls back to 0.2"       [xschem get pin_name_size $ip 2] 0.2
+check "p9: legacy fallback stays render default, ignores sym_pin_name_size" \
+  [xschem get pin_name_size $ip 2] 0.2
+check "p9: owned pin keeps its own token"    [xschem get pin_name_size $ip 0] 0.35
 set ::sym_pin_name_size $save_sz
 
 # argument validation: too few args and a bad instance index both error out
 check "p9: missing args errors"    [catch {xschem get pin_name_size}]         1
 check "p9: bad inst index errors"  [catch {xschem get pin_name_size 99999 0}] 1
+
+# an instance whose symbol is MISSING gets a placeholder symbol (ptr>=0, 0 pins); the getter
+# must handle it gracefully -- out-of-range pin -> the 0.2 default, never a crash. (The explicit
+# ptr<0 guard added alongside is defensive parity with the ~15 other `inst.ptr<0` sites before a
+# `xctx->sym + ptr` deref; ptr<0 is a transient internal state, not reachable from a steady-state
+# scripted query, so it cannot be asserted directly here.)
+xschem instance $wd/does_not_exist.sym 200 200 0 0 {name=xmissing}
+set ibad [expr {[xschem get instances]-1}]
+check "p9: missing-sym instance placed"                 [expr {$ibad > $ip}] 1
+check "p9: missing-symbol instance handled gracefully"  [xschem get pin_name_size $ibad 0] 0.2
 
 # optional <win> context-borrow arg: the query need not be bound to the front window.
 # Single-window headless coverage here; the true 2-window cross-borrow (symbol window

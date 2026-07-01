@@ -140,24 +140,27 @@ wire-stub feature depends only on it, not on the drawing.
 
 > **DONE (P9, 2026-07-01).** `double get_pin_name_size(xSymbol *sym, int pin)` in
 > `src/actions.c` (declared `src/xschem.h`): returns the pin rect's `name_size` token,
-> else the global `sym_pin_name_size` Tcl var (fallback `0.2` — the exact default
-> `create_pin` stamps, so a legacy/fallback pin and a natively-created one agree). A
-> NULL symbol or out-of-range/negative pin returns the default rather than erroring, so
-> §4.2 can `median` a mixed pin set without special-casing missing pins. Exposed
-> headless as **`xschem get pin_name_size <inst> <pin> ?<win>?`** (`src/scheduler.c`,
-> resolves `xctx->sym + xctx->inst[inst].ptr`) — that command is Thread B's read path AND
-> the unit hook. The optional `<win>` is a window-path (`xschem get current_win_path`,
-> e.g. `.drw` / `.x1.drw`): every `xschem` command binds to the *current* window's `xctx`,
-> so with a symbol/other window front `[xschem get instances]-1` and the query read the
-> wrong context ("instance index out of range"); `<win>` borrows the addressed window's
-> context for the one command (`net_hilight_borrow_ctx`, no focus change, balanced
-> restore), and an unknown path errors rather than silently degrading to the front window
-> (`net_hilight_win_known` guard). Coverage: `tests/pin_name_text.tcl` §17 (14 checks incl.
-> the single-window `<win>` passthrough/unknown-path/restore-balance) + the two-window GUI
-> test `tests/headless/test_pin_name_size_win.tcl` (9 checks, reproduces the wrong-window
-> bug then fixes it via `<win>`). Sabotage-verified: neutering the token read flips the
-> per-pin checks; neutering the borrow flips the cross-window check; neutering the guard
-> flips the unknown-path check. **This unblocks Thread B (§4): start at B1.**
+> else **`0.2` — the SAME fallback `get_pin_name_layout()` uses to RENDER the name**, so the
+> size reported here always matches what `draw_symbol` draws. (It deliberately does NOT track
+> the create-time `sym_pin_name_size` Tcl var: that var is the initial size stamped on a NEW
+> pin, but the read-fallback must equal the render fallback or the stub/label would be sized
+> differently from the on-screen pin text — code-review fix, 2026-07-01.) A NULL symbol or
+> out-of-range/negative pin also returns `0.2` rather than erroring, so §4.2 can `median` a
+> mixed pin set without special-casing missing pins. Exposed headless as
+> **`xschem get pin_name_size <inst> <pin> ?<win>?`** (`src/scheduler.c`, resolves
+> `xctx->sym + xctx->inst[inst].ptr`, guarded on `inst.ptr>=0` for a symbol-less instance) —
+> that command is Thread B's read path AND the unit hook. The optional `<win>` is a
+> window-path (`xschem get current_win_path`, e.g. `.drw` / `.x1.drw`): every `xschem` command
+> binds to the *current* window's `xctx`, so with a symbol/other window front
+> `[xschem get instances]-1` and the query read the wrong context ("instance index out of
+> range"); `<win>` borrows the addressed window's context for the one command
+> (`net_hilight_borrow_ctx`, no focus change, balanced restore). A `borrow -> NULL` for a
+> NON-current `<win>` (unknown path, or a known-but-unallocated slot) errors rather than
+> silently reading the front window — same idiom as `get net_hilight_animated` (this catches
+> the known-but-unallocated case a bare `net_hilight_win_known` guard would miss). Coverage:
+> `tests/pin_name_text.tcl` §17 + the two-window GUI test
+> `tests/headless/test_pin_name_size_win.tcl` (9 checks, reproduces the wrong-window bug then
+> fixes it via `<win>`). Sabotage-verified. **This unblocks Thread B (§4): start at B1.**
 
 ---
 
@@ -316,7 +319,14 @@ headless-testable). Confirm the exact default key (user does heavy Cadence-key w
 - A4. GUI verify on a few stock symbols (nmos4, an opamp, a generic block).
 
 **Thread B (feature):**
-- B1. `median_double()` helper (qsort middle).
+- B1. `median_double()` helper (qsort middle). **DONE 2026-07-01.** `double
+  median_double(const double *a, int n)` in `src/actions.c` (decl `src/xschem.h`): copies the
+  input (caller's array not reordered), `qsort`s the copy via `cmp_double`, returns the middle
+  for odd n / mean of the two middle for even n; n==1→a[0], n<=0→0.0. Test seam `xschem get
+  median <v...>` (`scheduler.c` `case 'm'`). Coverage: `tests/wire_stub_netlabel.tcl` (Thread
+  B's test file, 10 checks incl. skewed inputs where median≠mean and unsorted inputs whose
+  positional-middle≠median). Sabotage-verified: mean-of-all flips the skewed checks, skipping
+  the sort flips the unsorted checks.
 - B2. Selection scan → list of (inst, pin) to process (§4.1), incl. the connected-pin
   filter for whole-instance selection (§4.5).
 - B3. Sizing: per-pin size via A2 → median `S` → text height `H` (§4.4) → stub length `L`
@@ -367,4 +377,4 @@ headless-testable). Confirm the exact default key (user does heavy Cadence-key w
 | Edit a token in prop | `subst_token()` `token.c:1234`; finalize `new_prop_string()` (`editprop.c`) |
 | Connectivity hash | `wire_spatial_table` `xschem.h:1115`; `hash_wires()` `netlist.c:555`; iterators `hash_iterator.c`; pattern `findnet.c:201-271` |
 | Grid snap | `my_round()` `actions.c:3936`; `grid=tclgetdoublevar("cadgrid")`; `CADWIREMINDIST=12.0` `xschem.h:185` |
-| Median helper | NONE exists — implement; `qsort` precedent `save.c:3386` |
+| Median helper | `median_double(a,n)` `actions.c` (B1 DONE); test seam `xschem get median` |
