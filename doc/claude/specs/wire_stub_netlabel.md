@@ -346,7 +346,19 @@ headless-testable). Confirm the exact default key (user does heavy Cadence-key w
   individual-pin mode intentionally stub an already-connected selected pin? Current behavior =
   yes (honor the explicit selection).**
 - B3. Sizing: per-pin size via A2 → median `S` → text height `H` (§4.4) → stub length `L`
-  (§4.2).
+  (§4.2). **DONE 2026-07-01.** `int compute_pin_stub_sizing(const Pin_stub_target *t, int n,
+  Pin_stub_sizing *out)` in `src/actions.c` (struct `{double size, text_h, stub_len}` + decl
+  `src/xschem.h`): `size` = `median_double` of the targets' `get_pin_name_size` (defensive
+  ptr<0 → 0.2); `text_h` = a label line's height at that size via `text_bbox("Mg", S, S, …)`
+  (per-line height is ~content-independent, so a representative string stands in for the
+  not-yet-known net name; `text_bbox` uses its nocairo path headless); `stub_len` = the smallest
+  `cadgrid` multiple STRICTLY greater than `2*text_h` (`(floor(2H/grid)+1)*grid`), so every stub
+  clears 2× its label height and lands on grid (Req 1). Test seam **`xschem pin_stub_sizing`**
+  (`scheduler.c` `xschem_cmds_p`) returns `"S H L"` for the current selection's targets (empty
+  when none). Coverage: `tests/wire_stub_netlabel.tcl` B3 (8 checks, relational so they're robust
+  to font metrics: `S`=median-not-min/max/mean, `H>0`, `L>2H`, `L` on grid, `L` the smallest such
+  multiple, single-pin size, bigger-size→longer-stub, empty). Sabotage-verified: median→first
+  flips the median check; `L=2H` flips the `>2H` and on-grid checks.
 - B4. Geometry: outward direction (§4.3), stub endpoints (grid-snapped), label rot/flip.
 - B5. Mutate: one `push_undo`; per pin add stub wire (§4.6) + lab_pin with
   `text_size_0=S` and chosen `lab` (§4.7); batch bbox/redraw; `set_modify(1)`.

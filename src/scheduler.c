@@ -5494,6 +5494,25 @@ static int xschem_cmds_p(Tcl_Interp *interp, int argc, const char *argv[], int *
       Tcl_SetResult(interp, (char *)cur, TCL_VOLATILE);
     }
 
+    /* pin_stub_sizing: (xschem pin_stub_sizing) "size textheight stublen" the wire-stubber would
+     * use for the current selection's targets -- median pin-name size, label line height, and the
+     * grid-snapped stub length (>2*height). Empty when nothing is selected. B3, §4.2. */
+    else if(!strcmp(argv[1], "pin_stub_sizing"))
+    {
+      Pin_stub_target *t = NULL;
+      Pin_stub_sizing sz;
+      int nt;
+      char b[96];
+      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      nt = collect_pin_stub_targets(&t);
+      if(nt > 0 && compute_pin_stub_sizing(t, nt, &sz)) {
+        my_snprintf(b, S(b), "%g %g %g", sz.size, sz.text_h, sz.stub_len);
+        Tcl_SetResult(interp, b, TCL_VOLATILE);
+      } else {
+        Tcl_SetResult(interp, "", TCL_STATIC);
+      }
+      if(t) my_free(_ALLOC_ID_, &t);
+    }
     /* pin_stub_targets: (xschem pin_stub_targets) the (instance, pin) pairs the wire-stubber
      * would process for the current selection, as a Tcl list of {inst pin} pairs -- selected
      * pins win, else a whole instance's not-already-wired pins. B2, wire_stub_netlabel.md §4.1.

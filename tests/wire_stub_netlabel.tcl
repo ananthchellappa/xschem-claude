@@ -116,4 +116,47 @@ check "B2 symbol-edit mode -> empty (schematic-only)" [xschem pin_stub_targets] 
 
 file delete -force $wd
 
+# ---------------------------------------------------------------------------
+# B3. Sizing: reduce the targets to ONE size S (the MEDIAN of their pin-name
+#     sizes), the label line height H at S, and the grid-snapped stub length
+#     L > 2H. Exposed as `xschem pin_stub_sizing` -> "S H L". §4.2. Assertions
+#     are RELATIONAL (robust to font metrics): the contract is S=median, H>0,
+#     L>2H, L on grid, and L the SMALLEST such grid multiple.
+# ---------------------------------------------------------------------------
+set wd3 [file normalize ./wire_stub_work3]
+file delete -force $wd3 ; file mkdir $wd3
+set sym3 $wd3/blk3.sym
+set fp [open $sym3 w]
+puts $fp "v {xschem version=3.4.8RC file_version=1.3}"
+puts $fp "G {}\nK {type=subcircuit}\nV {}\nS {}\nE {}"
+puts $fp "B 5 -2.5 -2.5 2.5 2.5 {name=A dir=in show_pinname=true name_size=0.15}"
+puts $fp "B 5 -2.5 37.5 2.5 42.5 {name=B dir=in show_pinname=true name_size=0.30}"
+puts $fp "B 5 -2.5 77.5 2.5 82.5 {name=C dir=in show_pinname=true name_size=0.60}"
+close $fp
+
+xschem clear force
+xschem instance $sym3 0 0 0 0 {name=x1}
+set grid [set ::cadgrid]
+
+xschem unselect_all ; xschem select instance x1
+lassign [xschem pin_stub_sizing] S H L
+# S is the MEDIAN (0.15/0.30/0.60 -> 0.30) -- discriminates median from min/max/mean(0.35)
+check "B3 size = median of the pins' sizes" $S [xschem get median 0.15 0.30 0.60]
+check "B3 label height positive"            [expr {$H > 0}] 1
+check "B3 stub length > 2*height (Req 1)"   [expr {$L > 2*$H}] 1
+check "B3 stub length lands on grid"        [expr {abs($L - $grid*round($L/$grid)) < 1e-9}] 1
+check "B3 stub length is the SMALLEST such grid multiple" [expr {($L - $grid) <= 2*$H}] 1
+
+# a single pin -> S is exactly that pin's size (median of one); bigger size -> longer stub
+xschem unselect_all ; xschem select pin x1 2
+lassign [xschem pin_stub_sizing] S1 H1 L1
+check "B3 single pin size = that pin's size" $S1 0.6
+check "B3 bigger size -> longer stub"        [expr {$L1 > $L}] 1
+
+# nothing selected -> empty sizing string
+xschem unselect_all
+check "B3 nothing selected -> empty" [xschem pin_stub_sizing] {}
+
+file delete -force $wd3
+
 if {$nfail == 0} { puts "ALL PASS (wire_stub_netlabel)" } else { puts "$nfail FAILURES (wire_stub_netlabel)" }

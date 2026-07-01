@@ -1929,6 +1929,11 @@ typedef struct { int inst, pin; } Pin_stub_target;
 /* B2: scan the selection into the (instance, pin) targets to stub -- selected pins win, else a
  * whole instance's not-already-wired pins. *out my_malloc'd, caller frees. See actions.c. */
 extern int collect_pin_stub_targets(Pin_stub_target **out);
+/* B3 (wire-stubs): the one size that drives an invocation + the derived label height and stub
+ * length. size = median of the targets' pin-name sizes; text_h = label height at that size;
+ * stub_len = smallest cadgrid multiple > 2*text_h. See actions.c compute_pin_stub_sizing. */
+typedef struct { double size, text_h, stub_len; } Pin_stub_sizing;
+extern int compute_pin_stub_sizing(const Pin_stub_target *t, int n, Pin_stub_sizing *out);
 extern int pin_names_all_off(void);
 extern void init_inst_iterator(Iterator_ctx *ctx, double x1, double y1, double x2, double y2);
 extern Instentry *inst_iterator_next(Iterator_ctx *ctx);

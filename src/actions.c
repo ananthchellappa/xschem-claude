@@ -1262,6 +1262,39 @@ int collect_pin_stub_targets(Pin_stub_target **out)
   return cnt;
 }
 
+/* B3: reduce the targets to the ONE size + derived geometry an invocation uses
+ * (doc/claude/specs/wire_stub_netlabel.md §4.2). size = median of the targets' pin-name sizes
+ * (get_pin_name_size, robust to an outlier pin -- §4.2 step 2); text_h = a label line's height
+ * at that size via text_bbox() (per-line height is ~content-independent, so a representative
+ * "Mg" stands in for the not-yet-known net name -- §4.4); stub_len = the smallest cadgrid
+ * multiple STRICTLY greater than 2*text_h, so every stub clears 2x its label height AND lands on
+ * grid (Req 1 / §4.2 step 4). Returns 0 (leaving *out untouched) when n<=0. Each target's symbol
+ * is resolved defensively (ptr<0 -> the 0.2 default) though B2 already filters symbol-less ones. */
+int compute_pin_stub_sizing(const Pin_stub_target *t, int n, Pin_stub_sizing *out)
+{
+  double *sizes, S, H, grid, twoH;
+  double rx1, ry1, rx2, ry2, longest;
+  int k, cairo_lines;
+  if(n <= 0) return 0;
+  sizes = my_malloc(_ALLOC_ID_, (size_t)n * sizeof(double));
+  for(k = 0; k < n; ++k) {
+    int inst = t[k].inst;
+    xSymbol *sym = (inst >= 0 && inst < xctx->instances && xctx->inst[inst].ptr >= 0)
+                   ? xctx->sym + xctx->inst[inst].ptr : NULL;
+    sizes[k] = get_pin_name_size(sym, t[k].pin);
+  }
+  S = median_double(sizes, n);
+  my_free(_ALLOC_ID_, &sizes);
+  text_bbox("Mg", S, S, 0, 0, 0, 0, 0.0, 0.0, &rx1, &ry1, &rx2, &ry2, &cairo_lines, &longest);
+  H = ry2 - ry1;
+  grid = tclgetdoublevar("cadgrid");
+  twoH = 2.0 * H;
+  out->size = S;
+  out->text_h = H;
+  out->stub_len = (grid > 0.0) ? (floor(twoH / grid) + 1.0) * grid : twoH + 1.0;
+  return 1;
+}
+
 /* [6] Fast global short-circuit for the per-frame draw_symbol pin-name pass: when the
  * show_pin_names tri-state is OFF no owned pin can show, so the whole per-instance pin loop
  * is skippable without a get_tok_value per pin. Reads the cached mode (pin_names_sync_cache
