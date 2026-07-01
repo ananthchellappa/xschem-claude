@@ -1,8 +1,9 @@
 # Cadence-style pin-owned name text (symbol pins)
 
-Status: **IN PROGRESS — P0–P7 done (foundation → creation → write-through → forms → copy/paste
-→ show/hide → instance display → ERC/check); branch `cadence-pin-name-text`. NEXT: P8 migration,
-P9 wire-stub getter.**
+Status: **IN PROGRESS — P0–P8 done (foundation → creation → write-through → forms → copy/paste
+→ show/hide → instance display → ERC/check → Python migration tool); branch
+`cadence-pin-name-text`. NEXT: P9 wire-stub `get_pin_name_size` getter (the original Thread-B
+goal, [[wire-stub-netlabel]]).**
 Written 2026-06-29. This is **Thread A**, the prerequisite for
 `doc/claude/specs/wire_stub_netlabel.md` (Thread B): once a pin owns its name text, "the
 pin's text size" is well-defined and wire-stub labels can read it. Pick-up-here handoff doc.
@@ -683,8 +684,30 @@ pin tokens, no separate persisted object.
   flip; the combined total drops by exactly one). GOTCHA discovered writing the fixtures: an
   empty pin-name must be written `name=""` — xschem's tokenizer reads a bare `name= <tok>` as
   taking the *next* token as the value.
-- **P8 — migration script** + fixtures (the §5 representative files) + idempotency/dry-run/
-  backup tests; supervised run over `xschem_library` (+ the user's `xschem_libraries_oa`).
+- **P8 — migration script. [DONE 2026-06-30]** `tools/migrate/migrate_pin_names.py` (stdlib
+  Python 3, executable): an escape-aware `.sym` record scanner (mirrors save.c
+  save/load_ascii_string — `\`,`{`,`}` backslash-escaped, first unescaped `}` closes a field;
+  handles multi-line `v`/`T` braced fields and the polygon `P` variable arity; raises on any
+  unknown tag so a surprising file is SKIPPED, never corrupted) + the §5.2 Option-B algorithm:
+  skip 0-pin / label-type / already-owned (has `show_pinname`) / empty-or-`@` names; **adopt** an
+  exact-name non-`@` label within `--adopt-radius` (fold its geometry into `name_dx/dy/size[/rot/
+  flip/font]`, `show_pinname=true`, drop the `T` — bound nearest so duplicate names split
+  correctly + WARN); else **create** default `name_*` matching `create_pin` (in→`name_dx=25`;
+  out/inout→`name_dx=-25 name_flip=1`) with `show_pinname=false` (hidden). Minimal-diff token
+  APPEND (untouched records byte-identical) + a per-file self-check (re-parse, pin-count
+  invariant) that aborts the write on mismatch. CLI: file/dir, `-r --dry-run --no-backup
+  --no-adopt --default-size --show-created --adopt-radius --exclude --report(JSON) -v`;
+  non-destructive (`.bak`) and idempotent (re-run = no-op). Tests: `test_migrate_pin_names.py`
+  (26 unit — scanner/escape/polygon, adopt/create/bus/dup/case-mismatch/@-skip/idempotency/
+  dry-run/backup/exclude/format-preservation; sabotage-verified) + headless
+  `tests/headless/test_migrate_pin_names.tcl` (12 — the migrated `.sym` LOADS in xschem, its
+  tokens drive the synth views auto/on/off, and a schematic's SPICE netlist is **byte-identical**
+  before/after migration; idempotent re-run leaves the file unchanged). Supervised dry-run over
+  the stock `xschem_library` (1712 `.sym`): **0 parse errors**, 1415 migrate / 297 skip, 523 pins
+  adopted / 19257 created hidden; a real-migrate of a 178-`.sym` subset then loaded + re-saved in
+  xschem with 0 failures. Docs: `tools/migrate/README_pin_names.md`. (The user's
+  `xschem_libraries_oa` run is a supervised operator step — the tool + `--dry-run`/`--report` are
+  ready.)
 - **P9 — Thread B getter** `get_pin_name_size` reads `name_size`; unblock wire-stubs.
 
 ## 9. Test plan
