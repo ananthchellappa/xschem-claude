@@ -592,6 +592,22 @@ def iter_sym_paths(paths, recursive, excludes):
             sys.stderr.write("skip (not found): %s\n" % p)
 
 
+def _library_defs_near(paths):
+    """library.defs files at the top of any directory argument, so the post-run hint can
+    name the exact registry file to point xschem at. Best-effort, deduped, order-preserved."""
+    out = []
+    seen = set()
+    for p in paths:
+        if os.path.isdir(p):
+            cand = os.path.join(p, 'library.defs')
+            if os.path.isfile(cand):
+                ap = os.path.abspath(cand)
+                if ap not in seen:
+                    seen.add(ap)
+                    out.append(ap)
+    return out
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(
         description='Migrate xschem symbol pins to Cadence-style owned name text.')
@@ -646,6 +662,19 @@ def main(argv=None):
     print('\n%d migrated, %d skipped, %d errors; %d names created, %d adopted'
           % (tot['migrated'] + tot['would-migrate'], tot['skip'], tot['error'],
              tot['created'], tot['adopted']))
+
+    # the "next step" hook: migration only edits the symbols; making xschem USE them is a
+    # one-line library-registry change (or nothing, for an in-place migration). Remind the
+    # user, naming the tree's library.defs when there is one, so they do not have to hunt.
+    if tot['migrated'] + tot['would-migrate'] > 0:
+        print('\nNext -- point xschem at these libraries:')
+        print('  * migrated your active library IN PLACE?  nothing to do; its cells just '
+              'gained owned pin names.')
+        print('  * a NEW or copied tree?  set XSCHEM_LIBRARY_DEFS (or XSCHEM_LIBRARY_PATH) in '
+              'your xschemrc to point at it.')
+        for d in _library_defs_near(args.paths):
+            print('      e.g.  set XSCHEM_LIBRARY_DEFS %s' % d)
+        print('  See doc/library_defs.md (sections 7-8).')
 
     if args.report:
         with open(args.report, 'w', encoding='utf-8') as fp:

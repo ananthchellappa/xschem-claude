@@ -5,6 +5,8 @@ Run:  python3 -m pytest tools/migrate/test_migrate_pin_names.py
   or: python3 tools/migrate/test_migrate_pin_names.py
 """
 
+import contextlib
+import io
 import os
 import sys
 import tempfile
@@ -355,6 +357,34 @@ class TestReviewFixes(unittest.TestCase):
                 fp.write(sym("Z 1 2 3\n"))              # unknown tag -> skip, not error
             rc = M.main(['-r', '--dry-run', d])
             self.assertEqual(rc, 0)
+
+
+class TestNextStepHint(unittest.TestCase):
+    def _run_main(self, argv):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = M.main(argv)
+        return rc, buf.getvalue()
+
+    def test_hint_names_the_library_defs(self):
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, 'library.defs'), 'w') as fp:
+                fp.write('DEFINE devices devices\n')
+            with open(os.path.join(d, 'a.sym'), 'w') as fp:
+                fp.write(sym('B 5 -2.5 -2.5 2.5 2.5 {name=A dir=in}\n'))
+            rc, out = self._run_main(['-r', '--dry-run', d])
+            self.assertEqual(rc, 0)
+            self.assertIn('XSCHEM_LIBRARY_DEFS', out)
+            self.assertIn('doc/library_defs.md', out)
+            self.assertIn(os.path.join(d, 'library.defs'), out)   # the exact registry file
+
+    def test_no_hint_when_nothing_migrated(self):
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, 'a.sym'), 'w') as fp:   # already owned -> skipped
+                fp.write(sym('B 5 -2.5 -2.5 2.5 2.5 '
+                             '{name=A dir=in show_pinname=false name_dx=25}\n'))
+            _rc, out = self._run_main(['-r', '--dry-run', d])
+            self.assertNotIn('XSCHEM_LIBRARY_DEFS', out)
 
 
 if __name__ == '__main__':
