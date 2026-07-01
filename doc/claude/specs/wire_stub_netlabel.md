@@ -1,6 +1,8 @@
 # Wire-stubs + auto net-labels on instance pins
 
-Status: **SPEC / PLAN — not started.** Written 2026-06-29 on branch `fluid-editing`.
+Status: **Thread A DONE; Thread B B1–B6 DONE** on branch `cadence-pin-name-text`
+(functional: `xschem add_pin_stubs`, SPACE key, Symbol-menu item). Only B7 (final
+test / GUI-smoke polish) remains. Written 2026-06-29 on branch `fluid-editing`.
 Author handoff doc: a future Claude Code session can pick up this thread from here.
 
 Related specs/notes:
@@ -297,12 +299,20 @@ Identical label names on different instances **short** those nets. Options (pick
 
 The user redirected to Thread A before answering — revisit when starting Thread B.
 
-### 4.8 Invocation — OPEN QUESTION (proposed default)
+### 4.8 Invocation — DONE (B6, 2026-07-01)
 
 Follow the action-registry house style (`[[action-registry]]`, cadence-modifier-drag):
-register an action (e.g. `edit.add_pin_stubs`) with a rebindable key + an Edit-menu item
-+ a scriptable `xschem add_pin_stubs [...]` subcommand in `scheduler.c` (so it is
-headless-testable). Confirm the exact default key (user does heavy Cadence-key work).
+register an action (e.g. `edit.add_pin_stubs`) with a rebindable key + a menu item + a
+scriptable `xschem add_pin_stubs [...]` subcommand in `scheduler.c` (so it is
+headless-testable).
+
+**Resolved.** Default key = **SPACE**, via the self-gating action decomposition (see §5 B6):
+SPACE was released from the hardcoded C `case ' '` and now defaults to
+`edit.add_pin_stubs`, a registered action that self-gates and falls through (dispatch
+declines → shrunk `case ' '`) to the extracted `edit.cycle_manhattan` (mid-gesture) /
+`view.pan` (idle) cores — the latter two ship UNBOUND so the user can rebind the
+manhattan-corner cycle. Plus the Symbol-menu item "Add pin stubs + labels" and the
+scriptable `xschem add_pin_stubs [-prefix <s>] [-suffix <s>] [-inst-prefix]`.
 
 ---
 
@@ -395,7 +405,43 @@ headless-testable). Confirm the exact default key (user does heavy Cadence-key w
   the 4 extremes reading outward (verticals rotated).
 - B6. Wire up invocation (§4.8): action registry + key + menu (the `xschem add_pin_stubs`
   subcommand is DONE at B5). **USER (2026-07-01) wants all three: subcommand ✓, registered
-  action + keybinding, menu item.** Default key still to choose.
+  action + keybinding, menu item.** **DONE 2026-07-01** via the SELF-GATING ACTION
+  DECOMPOSITION. SPACE was released from the hardcoded C `case ' '` (which multiplexed 3
+  behaviors) by extracting them into two cores + three registered actions in `src/callback.c`:
+  `cycle_manhattan_lines()` (rotate `manhattan_lines` 0..2 refreshing the rubber; returns 0 when
+  no move/wire/line gesture is active) backs **`edit.cycle_manhattan`**; `start_pan_at(mx,my)`
+  (rebuild_selected_array when idle, then `start_pan_logged`) backs **`view.pan`**; and
+  **`edit.add_pin_stubs`** (`act_add_pin_stubs`) which SELF-GATES — `if(ui_state &
+  (STARTMOVE|STARTWIRE|STARTLINE)) return 0` (decline mid-gesture); `rebuild_selected_array();
+  if(lastsel==0) return 0` (decline with an empty selection); `if(readonly_block()) return 1`;
+  else `add_pin_stubs("","",0)` (self-contained: one undo + set_modify + draw). **SPACE default =
+  edit.add_pin_stubs** (`set_input_binding(DEV_KEY,' ',0,ACTX_CANVAS,...)` at the end of
+  `init_input_bindings`; NOT idle_only so it dispatches even mid-gesture and can self-gate). The
+  dispatch's decline→fall-through (`callback.c` `if(dispatch_input_action(&ae)) return;`) routes a
+  DECLINED SPACE to the shrunk `case ' '`, now just
+  `if(!cycle_manhattan_lines()) start_pan_at(mx,my);` (same cores — no logic dup; also the graceful
+  degrade if SPACE is un-bound). So mid-gesture SPACE → cycle, idle+no-sel SPACE → pan, idle+sel
+  SPACE → add stubs — verified live. `edit.cycle_manhattan` + `view.pan` ship UNBOUND so the user
+  can move the manhattan-corner cycle onto another key (the user's stated motivation). NO
+  binding-schema change: `idle_only` gates on `semaphore>=2`, NOT gesture mode, which is why the
+  handler self-gates; a `when`/`mode` CSV column stays a possible follow-up. Registry rows:
+  `actions.csv` (`edit.add_pin_stubs` cmd `xschem add_pin_stubs`, menu sym, accel Space;
+  `edit.cycle_manhattan` + `view.pan` empty-command/unbound like `view.center_at_cursor`) +
+  `keybindings.csv` (regenerated, byte-identical to the builtin table — drift guard passes). Symbol
+  menu item **"Add pin stubs + labels"** → `xschem add_pin_stubs` (`xschem.tcl`, right after
+  "Check pin names", accel Space); naming options stay CLI-only. Tests: `tests/wire_stub_netlabel.tcl`
+  B6 (+7 headless: SPACE-default-bound & not-idle, both fall-through actions registered but
+  unbound, unknown-id rejected) + NEW real-Tk `tests/headless/test_wire_stub_bindings.tcl` (14
+  checks driving `xschem callback`: SPACE+sel→4 stubs+4 labels & no pan & one-undo; SPACE+no-sel→
+  pan & no stubs; SPACE mid-wire-gesture→gesture intact & no pan & no stubs; unbind SPACE→no stubs
+  = proof the binding drove it; rebind restores). SABOTAGE-verified: neuter `cycle_manhattan_lines`
+  (always 0) flips only "mid-gesture SPACE did NOT pan" (ui_state 513=STARTWIRE|STARTPAN); neuter
+  the empty-selection gate flips only "SPACE no-selection starts a pan". Netlist invariance +
+  test_bindings_file (drift) + keybindings_help + gesture_bindings + accelerators + palette all
+  green. KNOWN-MINOR: in a read-only window SPACE+selection shows the read-only dialog and is
+  consumed (return 1); with action-logging on this could log a `xschem add_pin_stubs` line that the
+  read-only view didn't actually execute (the command path bypasses readonly) — negligible (readonly
+  views are rarely logged-for-replay).
 - B7. Tests: headless `tests/*.tcl` (build a tiny sch with one instance; run the
   subcommand; assert N new wires + N lab_pin instances at expected coords/sizes; assert
   connected pins are skipped; assert pins-selected path processes only selected). GUI

@@ -13699,6 +13699,13 @@ proc build_widgets { {topwin {} } } {
   $topwin.menubar.sym add command -label "Check pin names" \
      -command {xschem check_pin_names}
 
+  # B6 wire-stubs (doc/claude/specs/wire_stub_netlabel.md §4.8): draw a wire stub +
+  # outward-reading net-label out of each selected pin (or each unconnected pin of a
+  # selected instance). Also the default SPACE key (edit.add_pin_stubs). Net-name
+  # options (prefix/suffix/inst-prefix) are CLI-only via `xschem add_pin_stubs`.
+  $topwin.menubar.sym add command -label "Add pin stubs + labels" -accelerator {Space} \
+     -command {xschem add_pin_stubs}
+
   $topwin.menubar.sym add command -label "Set symbol width" \
      -command {
         input_line "Enter Symbol width ($symbol_width)" "set symbol_width" $symbol_width

@@ -2870,6 +2870,75 @@ static int act_view_center_at_cursor(const ActionEvent *e)
   return 1;
 }
 
+/* --- SPACE's three behaviors, extracted so they are separately rebindable actions
+ * (B6, doc/claude/specs/wire_stub_netlabel.md). The default SPACE binding is
+ * edit.add_pin_stubs; it SELF-GATES and declines (returns 0 -> dispatch falls
+ * through to the legacy `case ' '`), so mid-gesture SPACE still cycles the manhattan
+ * corner and idle/empty-selection SPACE still pans -- both run from the same cores
+ * below, whether reached via a rebound action or the case ' ' fallback. */
+
+/* Cycle the manhattan corner-mode of an in-progress move/wire/line gesture (rotate
+ * xctx->manhattan_lines through 0..2, refreshing the rubber). Self-gating: does
+ * nothing and returns 0 unless a STARTMOVE/STARTWIRE/STARTLINE gesture is active. */
+static int cycle_manhattan_lines(void)
+{
+  if(xctx->ui_state & STARTMOVE) {
+    draw_selection(xctx->gctiled, 0);
+    xctx->manhattan_lines++;
+    xctx->manhattan_lines %= 3;
+    draw_selection(xctx->gc[SELLAYER], 0);
+  } else if(xctx->ui_state & STARTWIRE) { /*  & instead of == 20190409 */
+    new_wire(RUBBER | CLEAR, xctx->mousex_snap, xctx->mousey_snap);
+    xctx->manhattan_lines++;
+    xctx->manhattan_lines %= 3;
+    new_wire(RUBBER, xctx->mousex_snap, xctx->mousey_snap);
+  } else if(xctx->ui_state & STARTLINE) {
+    new_line(RUBBER | CLEAR, xctx->mousex_snap, xctx->mousey_snap);
+    xctx->manhattan_lines++;
+    xctx->manhattan_lines %= 3;
+    new_line(RUBBER, xctx->mousex_snap, xctx->mousey_snap);
+  } else {
+    return 0;
+  }
+  return 1;
+}
+
+/* Start a drag-pan of the canvas at (mx,my). Off a modal/busy state it first
+ * refreshes the selected-object array so the SELECTION ui_state flag reflects
+ * reality, exactly as the old `case ' '` pan branch did. */
+static void start_pan_at(int mx, int my)
+{
+  if(xctx->semaphore < 2) {
+    rebuild_selected_array(); /* sets or clears the SELECTION ui_state flag */
+  }
+  start_pan_logged(mx, my);
+}
+
+/* edit.cycle_manhattan: cycle the active gesture's manhattan corner. Returns 0
+ * (declines -> dispatch falls through) when no gesture is active. */
+static int act_cycle_manhattan(const ActionEvent *e) { (void)e; return cycle_manhattan_lines(); }
+
+/* view.pan: start a drag-pan of the canvas from the event position. */
+static int act_pan(const ActionEvent *e) { start_pan_at(e->mx, e->my); return 1; }
+
+/* edit.add_pin_stubs (SPACE default): draw a wire stub + outward net-label out of
+ * each selected pin / each unconnected pin of a selected instance. Self-gates so a
+ * declined SPACE falls through (dispatch returns 0) to the legacy `case ' '`:
+ *   - during a move/wire/line gesture -> decline (SPACE cycles the manhattan corner)
+ *   - with an empty selection          -> decline (SPACE starts a pan)
+ *   - a read-only view                 -> refuse the edit (consumed, no pan)
+ *   - otherwise run add_pin_stubs (self-contained: one undo + set_modify + draw). */
+static int act_add_pin_stubs(const ActionEvent *e)
+{
+  (void)e;
+  if(xctx->ui_state & (STARTMOVE | STARTWIRE | STARTLINE)) return 0;
+  rebuild_selected_array();
+  if(xctx->lastsel == 0) return 0;
+  if(readonly_block()) return 1;
+  add_pin_stubs("", "", 0);
+  return 1;
+}
+
 /* --- action registry: stable id -> behavior --- */
 /* An action is backed by EITHER a C function (fn) OR a Tcl command (tcl); exactly
  * one is non-NULL. Tcl-backing (Phase 3d) lets the ~60 tcleval keysym branches
@@ -2991,6 +3060,17 @@ static ActionDef action_registry[] = {
    * (mode entry is a UI affordance; its effect — the deselect clicks — is not logged). */
   { "edit.deselect_mode", act_deselect_mode, NULL,
     "Deselect one object at a time (click a selected object; ESC to end)" },
+  /* B6 wire-stubs (doc/claude/specs/wire_stub_netlabel.md): SPACE's three behaviors,
+   * now separately rebindable actions. edit.add_pin_stubs is the SPACE default; it
+   * self-gates and declines (dispatch falls through to case ' ') during a gesture or
+   * with no selection, so cycle_manhattan (mid-gesture) and pan (idle) still run from
+   * the same extracted cores. cycle_manhattan + pan ship UNBOUND (bind via
+   * keybindings.csv) so the user can move the manhattan-corner cycle onto another key. */
+  { "edit.add_pin_stubs", act_add_pin_stubs, NULL,
+    "Add wire stubs + net-labels to selected pins / instance pins" },
+  { "edit.cycle_manhattan", act_cycle_manhattan, NULL,
+    "Cycle the manhattan corner of an in-progress move/wire/line" },
+  { "view.pan", act_pan, NULL, "Drag-pan the canvas" },
 };
 static const int num_action_defs = (int)(sizeof(action_registry)/sizeof(action_registry[0]));
 
@@ -3219,6 +3299,11 @@ static void init_input_bindings(void)
    * Canvas-only (never forwarded to a graph); idle-gated so the mode is not entered while
    * a modal dialog is up (semaphore>=2). Replaces the old hardcoded `case 'd'` deselect. */
   set_input_binding_idle(DEV_KEY, 'd', 0,           ACTX_CANVAS, "edit.deselect_mode");
+  /* B6 wire-stubs (doc/claude/specs/wire_stub_netlabel.md): SPACE -> edit.add_pin_stubs.
+   * Canvas-only and NOT idle_only: the action must dispatch even mid-gesture so it can
+   * self-gate (decline -> dispatch returns 0 -> falls to case ' ') and let the fallback
+   * cycle the manhattan corner; with no selection it likewise declines and case ' ' pans. */
+  set_input_binding(DEV_KEY, ' ', 0, ACTX_CANVAS, "edit.add_pin_stubs");
   input_bindings_initialized = 1;
 }
 
@@ -5006,27 +5091,13 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
      * matches them, and there is no case to fall back to). */
 
     case ' ':
-      if(xctx->ui_state & STARTMOVE) {
-        draw_selection(xctx->gctiled,0);
-        xctx->manhattan_lines++;
-        xctx->manhattan_lines %=3;
-        draw_selection(xctx->gc[SELLAYER], 0);
-      } else if(xctx->ui_state & STARTWIRE) { /*  & instead of == 20190409 */
-        new_wire(RUBBER|CLEAR, xctx->mousex_snap, xctx->mousey_snap);
-        xctx->manhattan_lines++;
-        xctx->manhattan_lines %=3;
-        new_wire(RUBBER, xctx->mousex_snap, xctx->mousey_snap);
-      } else if(xctx->ui_state & STARTLINE) {
-        new_line(RUBBER|CLEAR, xctx->mousex_snap, xctx->mousey_snap);
-        xctx->manhattan_lines++;
-        xctx->manhattan_lines %=3;
-        new_line(RUBBER, xctx->mousex_snap, xctx->mousey_snap);
-      } else {
-        if(xctx->semaphore<2) {
-          rebuild_selected_array(); /* sets or clears xctx->ui_state SELECTION flag */
-        }
-        start_pan_logged(mx, my);
-      }
+      /* SPACE's default action is edit.add_pin_stubs (binding table). It self-gates and
+       * declines (dispatch returns 0 -> here) during a move/wire/line gesture or with an
+       * empty selection, so this fallback reproduces the historical SPACE behavior from
+       * the SAME extracted cores: cycle the gesture's manhattan corner, else drag-pan.
+       * Also the graceful degrade if SPACE is un-bound in keybindings.csv.
+       * (B6, doc/claude/specs/wire_stub_netlabel.md.) */
+      if(!cycle_manhattan_lines()) start_pan_at(mx, my);
       break;
 
     case '_':                                         /* toggle change line width */

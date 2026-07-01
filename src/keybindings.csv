@@ -60,3 +60,4 @@ key,106,ctrl,canvas,sym.list.create_pins_from_highlight_nets,1
 key,106,alt,canvas,sym.list.create_labels_from_highlight_nets,1
 key,106,super,canvas,sym.list.create_labels_from_highlight_nets,1
 key,100,0,canvas,edit.deselect_mode,1
+key,32,0,canvas,edit.add_pin_stubs,

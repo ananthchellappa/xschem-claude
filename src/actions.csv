@@ -131,6 +131,7 @@ sym.place_net_pin_label,command,sym,Place net pin label,Alt+L,xschem net_label 1
 sym.place_net_wire_label,command,sym,Place net wire label,Alt+Shift+L,xschem net_label 0,,,Place net wire label,
 sym.change_selected_inst_texts_to_floaters,command,sym,Change selected inst. texts to floaters,,xschem floaters_from_selected_inst,,,Change selected inst. texts to floaters,
 sym.unselect_attached_floaters,command,sym,Unselect attached floaters,,xschem unselect_attached_floaters,,,Unselect attached floaters,
+edit.add_pin_stubs,command,sym,Add pin stubs + labels,Space,xschem add_pin_stubs,,,Add a wire stub + outward net-label to each selected pin / each unconnected pin of a selected instance,
 sym.list.print_list_of_highlight_nets,command,sym.list,Print list of highlight nets,J,xschem print_hilight_net 1,,,Print list of highlight nets,1
 sym.list.print_list_of_highlight_nets_with_buses_expanded,command,sym.list,"Print list of highlight nets, with buses expanded",Alt-Ctrl-J,xschem print_hilight_net 3,,,"Print list of highlight nets, with buses expanded",
 sym.list.create_labels_from_highlight_nets,command,sym.list,Create labels from highlight nets,Alt-J,xschem print_hilight_net 4,,,Create labels from highlight nets,1
@@ -184,6 +185,8 @@ waves.spectrum,command,waves,Spectrum,,waves ac,,,Spectrum,
 # command -> skipped by the palette, shown with these labels by the cheat-sheet).
 # Default chords live in the binding table; see `xschem bindings dump`.
 view.center_at_cursor,command,view,Center view on cursor,,,,,Center the view on the cursor position (ship unbound; bind a key in keybindings.csv),
+view.pan,command,view,Drag-pan canvas,,,,,Drag-pan the canvas from the pointer (ship unbound; bind a key in keybindings.csv),
+edit.cycle_manhattan,command,edit,Cycle manhattan corner,,,,,Cycle the corner mode of an in-progress move/wire/line gesture (ship unbound; bind a key in keybindings.csv),
 view.scroll_up,command,view,Scroll up,,xschem scroll up,,,Scroll the viewport up one step,
 view.scroll_down,command,view,Scroll down,,xschem scroll down,,,Scroll the viewport down one step,
 view.scroll_left,command,view,Scroll left,,xschem scroll left,,,Scroll the viewport left one step,

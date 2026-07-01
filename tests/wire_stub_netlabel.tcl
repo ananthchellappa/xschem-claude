@@ -301,4 +301,32 @@ check "B5 symbol-edit mode -> 0"        [xschem add_pin_stubs] 0
 
 file delete -force $wd5
 
+# ---------------------------------------------------------------------------
+# B6. Invocation wiring (doc/claude/specs/wire_stub_netlabel.md §4.8). SPACE is
+#     released from the hardcoded C `case ' '` into three rebindable actions;
+#     SPACE now defaults to edit.add_pin_stubs, which self-gates and falls through
+#     to the case ' ' fallback (cycle_manhattan / pan) when it declines. The live
+#     key ROUTING is a real-Tk test (tests/headless/test_wire_stub_bindings.tcl,
+#     needs a canvas); here we assert the data-model wiring, which is headless.
+# ---------------------------------------------------------------------------
+set dump [xschem bindings dump]
+check "B6 SPACE defaults to edit.add_pin_stubs" \
+  [expr {[lsearch -exact $dump {key 32 0 canvas edit.add_pin_stubs}] >= 0}] 1
+# SPACE is NOT idle_only: the action must dispatch mid-gesture so it can self-gate
+check "B6 SPACE binding is not idle-gated" \
+  [expr {[lsearch -exact $dump {key 32 0 canvas edit.add_pin_stubs idle}] < 0}] 1
+# the two fall-through behaviors are registered actions (bind validates the id) ...
+check "B6 edit.cycle_manhattan is a registered action" \
+  [catch {xschem bind key 96 0 canvas edit.cycle_manhattan}] 0
+check "B6 view.pan is a registered action" \
+  [catch {xschem bind key 96 alt canvas view.pan}] 0
+xschem unbind key 96 0 canvas ; xschem unbind key 96 alt canvas
+# ... but ship UNBOUND (no default chord — user can move the manhattan cycle onto a key)
+check "B6 cycle_manhattan ships unbound" \
+  [expr {[lsearch -glob $dump {* edit.cycle_manhattan*}] < 0}] 1
+check "B6 view.pan ships unbound" \
+  [expr {[lsearch -glob $dump {* view.pan}] < 0}] 1
+# an unknown action id is rejected (guards against typos silently binding nothing)
+check "B6 unknown action id rejected" [catch {xschem bind key 96 0 canvas edit.nope}] 1
+
 if {$nfail == 0} { puts "ALL PASS (wire_stub_netlabel)" } else { puts "$nfail FAILURES (wire_stub_netlabel)" }
