@@ -417,6 +417,54 @@ check "p5 selview: 0 views"         [xschem get texts]   0
 check "p5 selview: selection rebuilt" [xschem get lastsel] 0
 set ::show_pin_names auto             ;# restore default for any later cases
 
+# ---------------------------------------------------------------------------
+# 15. P6 instance display: a PLACED instance renders its symbol's pin names directly from the
+#     pin tokens (draw_symbol / svg_draw_symbol), gated by the same tri-state -- no synth view
+#     on instances (Way A). Verified via SVG export (text_svg=1 emits <text>NAME</text>): auto
+#     shows show_pinname=true pins only, off hides all, on shows every owned pin (global wins
+#     over a per-pin show_pinname=false). A LEGACY pin (no token) is never shown.
+# ---------------------------------------------------------------------------
+set p6sym $wd/p6.sym
+write_sym $p6sym [join {
+  "L 4 -20 -10 20 50 {}"
+  "B 5 -2.5 -2.5 2.5 2.5 {name=INP dir=in show_pinname=true name_dx=8 name_dy=0 name_size=0.4}"
+  "B 5 -2.5 17.5 2.5 22.5 {name=HID dir=in show_pinname=false name_size=0.4}"
+  "B 5 -2.5 37.5 2.5 42.5 {name=OUTP dir=out show_pinname=true name_dx=-8 name_size=0.4 name_flip=1}"
+  "B 5 -2.5 57.5 2.5 62.5 {name=LEG dir=in}"
+} "\n"]\n
+set p6sch $wd/p6.sch
+set fp [open $p6sch w]
+foreach ln {"v {xschem version=3.4.8RC file_version=1.3}" "G {}" "K {}" "V {}" "S {}" "E {}"} { puts $fp $ln }
+puts $fp "C {$p6sym} 0 0 0 0 {name=x1}"
+close $fp
+# count <text>PAT</text> occurrences in an SVG (text_svg emits the literal name as content)
+proc svgcount {f pat} {
+  if {![file exists $f]} { return -1 }
+  set fd [open $f r]; set b [read $fd]; close $fd
+  return [regexp -all ">$pat<" $b]
+}
+set ::text_svg 1
+xschem load $p6sch
+check "p6: instance placed"        [xschem get instances] 1
+xschem pin_names auto
+xschem print svg $wd/p6_auto.svg 0 0
+check "p6 auto: INP shown"         [svgcount $wd/p6_auto.svg INP]  1
+check "p6 auto: OUTP shown"        [svgcount $wd/p6_auto.svg OUTP] 1
+check "p6 auto: HID hidden"        [svgcount $wd/p6_auto.svg HID]  0
+check "p6 auto: LEG (legacy) hidden" [svgcount $wd/p6_auto.svg LEG] 0
+xschem pin_names off
+xschem print svg $wd/p6_off.svg 0 0
+check "p6 off: INP hidden"         [svgcount $wd/p6_off.svg INP]   0
+check "p6 off: OUTP hidden"        [svgcount $wd/p6_off.svg OUTP]  0
+xschem pin_names on
+xschem print svg $wd/p6_on.svg 0 0
+check "p6 on: INP shown"           [svgcount $wd/p6_on.svg INP]    1
+check "p6 on: OUTP shown"          [svgcount $wd/p6_on.svg OUTP]   1
+check "p6 on: HID shown (wins)"    [svgcount $wd/p6_on.svg HID]    1
+check "p6 on: LEG still hidden"    [svgcount $wd/p6_on.svg LEG]    0
+set ::show_pin_names auto
+set ::text_svg 0
+
 file delete -force $wd
 
 if {$nfail == 0} { puts "ALL PASS (pin_name_text)" } else { puts "$nfail FAILURES (pin_name_text)" }

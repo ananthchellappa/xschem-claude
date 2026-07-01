@@ -640,7 +640,25 @@ pin tokens, no separate persisted object.
     reconcile — always go through `xschem pin_names` (no var trace, to avoid re-entrancy). (c)
     When global is on/off the per-pin "Show name" checkbox has no visible effect (global WINS,
     §4.8) though it still writes the token — intended.
-- **P6 — instance display.** `draw_symbol` pass rendering pin names from symbol pin tokens.
+- **P6 — instance display. [DONE 2026-06-30]** Placed instances render each pin's name
+  directly from the symbol's pin tokens (`name=`, `name_dx/dy/size/rot/flip`, `name_font`) in
+  a new pass appended to the symbol-text loop of ALL THREE draw paths: `draw_symbol` (draw.c,
+  screen/cairo), `svg_draw_symbol` (svgdraw.c), `ps_draw_symbol` (psprint.c). Way A — the
+  shared `sym[]` cache is never augmented with synth views; instances draw from tokens. The
+  gate is the shared `pin_name_visible(prop)` (actions.c) = the P5 tri-state, so instance
+  visibility tracks `show_pin_names` + per-pin `show_pinname` identically to symbol-edit;
+  legacy pins (no token) never show. Position/rotation/flip mirror the view: label at pin
+  centre + `name_dx/dy`, `hcenter=vcenter=0`, instance rot/flip composed exactly as the
+  symbol-text loop; honors zoom-cull (screen), the text-layer enable / `draw_single_layer`
+  gates, `hide`(bbox)/`HIDE_SYMBOL_TEXTS`/`sym_txt`. **Perf:** `pin_name_visible` reads a
+  cached C mirror of `show_pin_names` (`pin_names_sync_cache`), refreshed once per pass —
+  `draw()`, the `xschem print` handler (svg/ps don't call draw()), the `pin_names` command
+  (which also syncs directly, since `reconcile_all` is symbol-edit-gated), and
+  synth/reconcile — so NO per-pin `tclgetvar`. Tests: pin_name_text +11 (now 108) via SVG
+  export (`text_svg=1` → `<text>NAME</text>`): auto shows show=true pins, off hides all, on
+  shows every owned pin (wins over `show=false`), legacy never shown — sabotage-verified
+  (neuter the SVG pass → the "shown" checks collapse to 0). Screen draw + PS export smoke:
+  no crash, names present. Netlist golden unchanged.
 - **P7 — ERC/check + netlist invariance + docs/tutorial.**
 - **P8 — migration script** + fixtures (the §5 representative files) + idempotency/dry-run/
   backup tests; supervised run over `xschem_library` (+ the user's `xschem_libraries_oa`).

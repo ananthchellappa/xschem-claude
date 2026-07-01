@@ -1910,6 +1910,8 @@ extern void pin_view_apply(int pi);
 extern void pin_reorient(int pi);
 extern void pin_views_reconcile_after_move(void);
 extern void pin_views_reconcile_all(void);
+extern int pin_name_visible(const char *prop);
+extern void pin_names_sync_cache(void);
 extern void init_inst_iterator(Iterator_ctx *ctx, double x1, double y1, double x2, double y2);
 extern Instentry *inst_iterator_next(Iterator_ctx *ctx);
 

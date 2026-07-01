@@ -898,6 +898,68 @@ void draw_symbol(int what,int c, int n,int layer,short tmp_flip, short rot,
         #endif
       }
     }
+
+    /* P6 (doc/claude/specs/cadence_pin_name_text.md §4.2): render each pin's name directly
+     * from the symbol's pin tokens (name=, name_dx/dy/size/rot/flip, name_font), gated by the
+     * show_pin_names tri-state + per-pin show_pinname (pin_name_visible). Way A: the shared
+     * sym[] cache is never augmented with synthetic view texts, so an instance draws the name
+     * here from tokens (mirroring the symbol-edit view). Not drawn on a bbox-hidden symbol;
+     * honors zoom-cull and the text-layer enable / single-layer gates like the loop above. */
+    if(!hide) for(j = 0; j < symptr->rects[PINLAYER]; ++j) {
+      xRect *pin = &(symptr->rect[PINLAYER])[j];
+      const char *s;
+      char *pnm = NULL, *pfont = NULL;
+      double pcx, pcy, ndx, ndy, nsz, nrot, nflip, tx, ty;
+      int plw;
+      if(!pin_name_visible(pin->prop_ptr)) continue;
+      /* each numeric read is atof'd before the next get_tok_value clobbers its static buffer */
+      s = get_tok_value(pin->prop_ptr, "name_dx",   0); ndx   = s[0] ? atof(s) : 20.0;
+      s = get_tok_value(pin->prop_ptr, "name_dy",   0); ndy   = s[0] ? atof(s) : -5.0;
+      s = get_tok_value(pin->prop_ptr, "name_size", 0); nsz   = s[0] ? atof(s) : 0.2;
+      s = get_tok_value(pin->prop_ptr, "name_rot",  0); nrot  = s[0] ? atof(s) : 0.0;
+      s = get_tok_value(pin->prop_ptr, "name_flip", 0); nflip = s[0] ? atof(s) : 0.0;
+      if(nsz * FONTWIDTH * xctx->mooz < 1) continue;                /* zoom-cull, as texts */
+      s = get_tok_value(pin->prop_ptr, "name_font", 0);
+      if(s[0]) my_strdup(_ALLOC_ID_, &pfont, s);
+      s = get_tok_value(pin->prop_ptr, "name", 0);                  /* read name LAST */
+      if(!s[0]) { my_free(_ALLOC_ID_, &pfont); continue; }
+      my_strdup2(_ALLOC_ID_, &pnm, s);
+      plw = c_for_text;
+      if(disabled == 1) plw = GRIDLAYER;
+      else if(disabled == 2) plw = PINLAYER;
+      if(plw < 0 || plw >= cadlayers) plw = c_for_text;
+      if((xctx->draw_single_layer == -1 || plw == xctx->draw_single_layer) &&
+         (xctx->inst[n].color == -PINLAYER || xctx->enable_layer[plw])) {
+        pcx = (pin->x1 + pin->x2) / 2.0;
+        pcy = (pin->y1 + pin->y2) / 2.0;
+        tx = pcx + ndx; ty = pcy + ndy;
+        ROTATION(rot, flip, 0.0, 0.0, tx, ty, x1, y1);
+        #if HAS_CAIRO==1
+        if(pfont && pfont[0]) {
+          xctx->cairo_font = cairo_toy_font_face_create(pfont,
+            CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
+          cairo_save(xctx->cairo_ctx); cairo_save(xctx->cairo_save_ctx);
+          cairo_set_font_face(xctx->cairo_ctx, xctx->cairo_font);
+          cairo_set_font_face(xctx->cairo_save_ctx, xctx->cairo_font);
+          cairo_font_face_destroy(xctx->cairo_font);
+        }
+        #endif
+        draw_string(plw, what, pnm,
+          ((short)nrot + ((flip && ((short)nrot & 1)) ? rot + 2 : rot)) & 0x3,
+          flip ^ (short)nflip, 0, 0, x0 + x1, y0 + y1, nsz, nsz);
+        #if HAS_CAIRO!=1
+        drawrect(plw, END, 0.0, 0.0, 0.0, 0.0, 0.0, 0, -1, -1);
+        drawline(plw, END, 0.0, 0.0, 0.0, 0.0, 0.0, 0, NULL);
+        #endif
+        #if HAS_CAIRO==1
+        if(pfont && pfont[0]) {
+          cairo_restore(xctx->cairo_ctx); cairo_restore(xctx->cairo_save_ctx);
+        }
+        #endif
+      }
+      my_free(_ALLOC_ID_, &pnm);
+      my_free(_ALLOC_ID_, &pfont);
+    }
   }
 }
 
@@ -5843,6 +5905,7 @@ void draw(void)
   dbg(1, "draw()\n");
   if(!xctx || xctx->no_draw) return;
   draw_count++; /* test/introspection seam: a full draw is about to run (xschem get drawcount) */
+  pin_names_sync_cache(); /* P6: refresh the show_pin_names cache read by the draw_symbol pin pass */
   /* `tk scaling` is a Tk command; under true headless (--nogui, has_x==0) there is no Tk
    * interpreter, so calling it errors ("invalid command name tk"). Skip it and keep the
    * global default (1.0) -- headless runs that still reach draw() (e.g. scripted

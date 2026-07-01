@@ -5408,6 +5408,8 @@ static int xschem_cmds_p(Tcl_Interp *interp, int argc, const char *argv[], int *
         }
         if(strcmp(mode, cur)) {             /* only reconcile+redraw on an actual change */
           tclsetvar("show_pin_names", mode);
+          pin_names_sync_cache();           /* keep the cache correct even in schematic mode,
+                                             * where reconcile_all early-returns (symbol-only) */
           pin_views_reconcile_all();
           draw();
           cur = mode;
@@ -5639,6 +5641,9 @@ static int xschem_cmds_p(Tcl_Interp *interp, int argc, const char *argv[], int *
         Tcl_SetResult(interp, "xschem print needs at least 1 more arguments: plot_type", TCL_STATIC);
         return TCL_ERROR;
       }
+      /* P6: the svg/ps export paths (svg_draw_symbol/ps_draw_symbol) don't go through draw(),
+       * so refresh the pin-name visibility cache here (png uses the screen draw() path). */
+      pin_names_sync_cache();
       if(argc > 3) {
         tclvareval("file normalize {", argv[3], "}", NULL);
         my_strncpy(xctx->plotfile, Tcl_GetStringResult(interp), S(xctx->plotfile));

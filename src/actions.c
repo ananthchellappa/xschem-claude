@@ -1063,27 +1063,36 @@ static double pin_dtok(const char *prop, const char *tok, double dflt)
  * defers to each pin's show_pinname token. The global setting WINS over per-pin when
  * on/off (spec doc/claude/specs/cadence_pin_name_text.md §4.8). */
 enum { PIN_NAMES_AUTO = 0, PIN_NAMES_ON, PIN_NAMES_OFF };
-static int pin_names_global_mode(void)
+
+/* Cached mirror of the show_pin_names Tcl var. pin_name_visible() is evaluated per pin per
+ * frame in the draw_symbol instance pass (P6), so a tclgetvar per call is too costly. The
+ * cache is refreshed by pin_names_sync_cache() at each BULK visibility evaluation -- draw()
+ * (once per frame), synth_pin_views() and pin_views_reconcile_all() (once per pass) -- which
+ * covers every path that changes the mode (the `xschem pin_names` command routes through
+ * reconcile). A direct `set ::show_pin_names` is picked up on the next such pass. */
+static int pin_names_mode = PIN_NAMES_AUTO;
+void pin_names_sync_cache(void)
 {
   const char *m = tclgetvar("show_pin_names");
-  if(m && !strcmp(m, "on"))  return PIN_NAMES_ON;
-  if(m && !strcmp(m, "off")) return PIN_NAMES_OFF;
-  return PIN_NAMES_AUTO;
+  pin_names_mode = (m && !strcmp(m, "on"))  ? PIN_NAMES_ON  :
+                   (m && !strcmp(m, "off")) ? PIN_NAMES_OFF : PIN_NAMES_AUTO;
 }
 
-/* is pin p's name to be shown? "owned" == it has a show_pinname token at all (legacy
- * pins have none and are never auto-shown, so their appearance is preserved). Effective
- * show = global==on ? shown : global==off ? hidden : per-pin show_pinname (§4.8). */
-static int pin_name_shown(xRect *p)
+/* Effective pin-name visibility from a pin's prop tokens + the global tri-state (§4.8).
+ * "owned" == it has a show_pinname token at all (legacy pins have none and are never shown,
+ * so their appearance is preserved). Effective show = global==on ? shown : global==off ?
+ * hidden : per-pin show_pinname. Reads the cached global (pin_names_sync_cache). Shared by
+ * the symbol-edit views (pin_name_shown) and the draw_symbol instance pass (P6). */
+int pin_name_visible(const char *prop)
 {
-  const char *s = get_tok_value(p->prop_ptr, "show_pinname", 0);
-  int g;
-  if(!s[0]) return 0;                      /* legacy / un-owned pin: not in the model */
-  g = pin_names_global_mode();
-  if(g == PIN_NAMES_ON)  return 1;         /* global ON wins: show every owned pin */
-  if(g == PIN_NAMES_OFF) return 0;         /* global OFF wins: hide every owned pin */
-  return strboolcmp(s, "true") ? 0 : 1;    /* AUTO: defer to the per-pin token */
+  const char *s = get_tok_value(prop, "show_pinname", 0);
+  if(!s[0]) return 0;                           /* legacy / un-owned pin: not in the model */
+  if(pin_names_mode == PIN_NAMES_ON)  return 1; /* global ON wins: show every owned pin */
+  if(pin_names_mode == PIN_NAMES_OFF) return 0; /* global OFF wins: hide every owned pin */
+  return strboolcmp(s, "true") ? 0 : 1;         /* AUTO: defer to the per-pin token */
 }
+
+static int pin_name_shown(xRect *p) { return pin_name_visible(p->prop_ptr); }
 
 /* index of the synthesized name view owned by pin id 'pin_id', or -1 if none */
 int pin_name_view_of(unsigned int pin_id)
@@ -1103,6 +1112,7 @@ void synth_pin_views(void)
   int j, rects;
   if(!xctx) return;
   if(xctx->netlist_type != CAD_SYMBOL_ATTRS) return;  /* only while editing a symbol */
+  pin_names_sync_cache();                             /* freshen the global tri-state gate */
   rects = xctx->rects[PINLAYER];
   for(j = 0; j < rects; ++j) {
     xRect *p = &xctx->rect[PINLAYER][j];
@@ -1312,6 +1322,7 @@ void pin_views_reconcile_all(void)
 {
   int j, rects, deleted = 0;
   if(!xctx || xctx->netlist_type != CAD_SYMBOL_ATTRS) return;
+  pin_names_sync_cache();                             /* freshen the global tri-state gate */
   rects = xctx->rects[PINLAYER];
   for(j = 0; j < rects; ++j) {
     xRect *p = &xctx->rect[PINLAYER][j];

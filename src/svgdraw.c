@@ -963,6 +963,51 @@ static void svg_draw_symbol(int c, int n,int layer,short tmp_flip, short rot,
             x0+x1, y0+y1, xscale, yscale);
       }
     }
+
+    /* P6 (doc/claude/specs/cadence_pin_name_text.md §4.2): pin names from the symbol's pin
+     * tokens -- SVG export mirror of the draw.c draw_symbol pass. Same visibility gate and
+     * position/rotation math; no zoom-cull (SVG exports at full detail). */
+    if(!hide) for(j = 0; j < symptr->rects[PINLAYER]; ++j) {
+      xRect *pin = &(symptr->rect[PINLAYER])[j];
+      const char *s;
+      char *pnm = NULL, *pfont = NULL;
+      double pcx, pcy, ndx, ndy, nsz, nrot, nflip, tx, ty;
+      int plw;
+      if(!pin_name_visible(pin->prop_ptr)) continue;
+      s = get_tok_value(pin->prop_ptr, "name_dx",   0); ndx   = s[0] ? atof(s) : 20.0;
+      s = get_tok_value(pin->prop_ptr, "name_dy",   0); ndy   = s[0] ? atof(s) : -5.0;
+      s = get_tok_value(pin->prop_ptr, "name_size", 0); nsz   = s[0] ? atof(s) : 0.2;
+      s = get_tok_value(pin->prop_ptr, "name_rot",  0); nrot  = s[0] ? atof(s) : 0.0;
+      s = get_tok_value(pin->prop_ptr, "name_flip", 0); nflip = s[0] ? atof(s) : 0.0;
+      s = get_tok_value(pin->prop_ptr, "name_font", 0); if(s[0]) my_strdup(_ALLOC_ID_, &pfont, s);
+      s = get_tok_value(pin->prop_ptr, "name", 0);                  /* read name LAST */
+      if(!s[0]) { my_free(_ALLOC_ID_, &pfont); continue; }
+      my_strdup2(_ALLOC_ID_, &pnm, s);
+      plw = c_for_text;
+      if(disabled == 1) plw = GRIDLAYER;
+      else if(disabled == 2) plw = PINLAYER;
+      if(plw < 0 || plw >= cadlayers) plw = c_for_text;
+      if(xctx->inst[n].color == PINLAYER || xctx->enable_layer[plw]) {
+        pcx = (pin->x1 + pin->x2) / 2.0;
+        pcy = (pin->y1 + pin->y2) / 2.0;
+        tx = pcx + ndx; ty = pcy + ndy;
+        ROTATION(rot, flip, 0.0, 0.0, tx, ty, x1, y1);
+        my_snprintf(svg_font_family, S(svg_font_family), "%s",
+          (pfont && pfont[0]) ? pfont : tclgetvar("svg_font_name"));
+        my_snprintf(svg_font_style,  S(svg_font_style),  "normal");
+        my_snprintf(svg_font_weight, S(svg_font_weight), "normal");
+        if(text_svg)
+          svg_draw_string(plw, pnm,
+            ((short)nrot + ((flip && ((short)nrot & 1)) ? rot+2 : rot)) & 0x3,
+            flip ^ (short)nflip, 0, 0, x0+x1, y0+y1, nsz, nsz);
+        else
+          old_svg_draw_string(plw, pnm,
+            ((short)nrot + ((flip && ((short)nrot & 1)) ? rot+2 : rot)) & 0x3,
+            flip ^ (short)nflip, 0, 0, x0+x1, y0+y1, nsz, nsz);
+      }
+      my_free(_ALLOC_ID_, &pnm);
+      my_free(_ALLOC_ID_, &pfont);
+    }
   }
 }
 
