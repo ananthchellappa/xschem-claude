@@ -442,6 +442,36 @@ scriptable `xschem add_pin_stubs [-prefix <s>] [-suffix <s>] [-inst-prefix]`.
   consumed (return 1); with action-logging on this could log a `xschem add_pin_stubs` line that the
   read-only view didn't actually execute (the command path bypasses readonly) — negligible (readonly
   views are rarely logged-for-replay).
+
+  **HIGH code-review (workflow, 22 agents, 2026-07-01) → 3 fixes applied on top of `8194d669`.**
+  (1, most important) The SPACE binding was NOT idle_only, so at `semaphore>=2` (busy / under a modal
+  dialog) SPACE fired the MUTATING add_pin_stubs re-entrantly — a regression from the old `case ' '`,
+  which at sem>=2 only ever panned. Fixed: bind SPACE **idle_only** (`set_input_binding_idle`), so
+  while busy the dispatch skips it and SPACE falls through to case ' ' → the historical safe pan/cycle
+  with no edit; at idle it dispatches + self-gates as before (the mid-gesture manhattan cycle works
+  either way — via the gesture self-gate at sem<2, or the skip→fallthrough at sem>=2). GOTCHA: the
+  builtin `init_input_bindings` idle flag is OVERRIDDEN at startup by keybindings.csv's replay through
+  `xschem bind` — the file MUST carry the `,1` idle column (`key,32,0,canvas,edit.add_pin_stubs,1`) or
+  the load resets idle_only back to 0; regenerating from a binary that loaded the non-idle file just
+  reproduces non-idle (hand-set the file's `,1` to break the cycle, then it is stable). actions.csv
+  idle column set to 1 to mirror. (2) add_pin_stubs placed a lab_pin with an empty `lab=` for a
+  NAMELESS pin (no name token, empty prefix/suffix) — worse than blank: the empty value swallowed the
+  next token (`text_size_0=…`) via the empty-value tokenizer quirk. Fixed: skip a pin whose assembled
+  net name is empty (`if(!netname||!netname[0]) continue;`). (3) stale test comment
+  (wire_stub_netlabel.tcl §B2) said selected pins are "honored even if wired", contradicting the code +
+  its own asserts — corrected. Tests updated (idle-marker assertions flipped; +2 nameless-pin checks,
+  SABOTAGE-verified: neuter the guard → 2 stubs + corrupted `P text_size_0=0.2` label). All suites +
+  drift guard + keybindings_help/gesture/accelerators + netlist invariance green.
+  DECLINED (rationale): [0] menu/`xschem add_pin_stubs` command bypasses readonly — the peer command
+  `attach_labels` (and every scriptable mutating command) behaves identically; readonly is enforced at
+  the INTERACTIVE layer (the SPACE path via `readonly_block`), scriptable commands bypass by design, so
+  a guard here would make add_pin_stubs inconsistent with its peers. [3] name=l0 + `disable_unique_names`
+  → duplicate names is systemic to every `place_symbol` caller, not add_pin_stubs-specific. [4] the
+  attach_labels_to_inst duplication is an intentional separate path (median sizing + outward stub +
+  connectivity filter differ); a merge is a larger B7-era refactor (the missing `propagate_hilights()`
+  step noted as a follow-up). [7] `added++`/`first=0` on a place_symbol failure is effectively
+  unreachable (lab_pin.sym is validated before the loop). [8] the read-only dry-run commands rebuilding
+  spatial hashes is by the lazy prep-flag design.
 - B7. Tests: headless `tests/*.tcl` (build a tiny sch with one instance; run the
   subcommand; assert N new wires + N lab_pin instances at expected coords/sizes; assert
   connected pins are skipped; assert pins-selected path processes only selected). GUI

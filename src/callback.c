@@ -3300,10 +3300,14 @@ static void init_input_bindings(void)
    * a modal dialog is up (semaphore>=2). Replaces the old hardcoded `case 'd'` deselect. */
   set_input_binding_idle(DEV_KEY, 'd', 0,           ACTX_CANVAS, "edit.deselect_mode");
   /* B6 wire-stubs (doc/claude/specs/wire_stub_netlabel.md): SPACE -> edit.add_pin_stubs.
-   * Canvas-only and NOT idle_only: the action must dispatch even mid-gesture so it can
-   * self-gate (decline -> dispatch returns 0 -> falls to case ' ') and let the fallback
-   * cycle the manhattan corner; with no selection it likewise declines and case ' ' pans. */
-  set_input_binding(DEV_KEY, ' ', 0, ACTX_CANVAS, "edit.add_pin_stubs");
+   * Canvas-only, idle_only: SPACE now triggers a MUTATING edit (add_pin_stubs), which must
+   * not run re-entrantly while the editor is busy (semaphore>=2, e.g. under a modal dialog).
+   * When busy the dispatch skips this chord and SPACE falls through to case ' ', reproducing
+   * the historical SAFE behavior (cycle an in-progress gesture's manhattan corner, else
+   * drag-pan) with no edit -- exactly what the old hardcoded case ' ' did at semaphore>=2.
+   * When idle it dispatches and self-gates (decline mid-gesture / empty selection -> dispatch
+   * returns 0 -> case ' ' fallback runs the SAME cores). */
+  set_input_binding_idle(DEV_KEY, ' ', 0, ACTX_CANVAS, "edit.add_pin_stubs");
   input_bindings_initialized = 1;
 }
 
@@ -5091,10 +5095,11 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
      * matches them, and there is no case to fall back to). */
 
     case ' ':
-      /* SPACE's default action is edit.add_pin_stubs (binding table). It self-gates and
-       * declines (dispatch returns 0 -> here) during a move/wire/line gesture or with an
-       * empty selection, so this fallback reproduces the historical SPACE behavior from
-       * the SAME extracted cores: cycle the gesture's manhattan corner, else drag-pan.
+      /* SPACE's default action is edit.add_pin_stubs (binding table). It is idle_only, so the
+       * dispatch skips it while busy (semaphore>=2) -- and act_add_pin_stubs also declines
+       * (returns 0) during a move/wire/line gesture or with an empty selection. In all those
+       * cases SPACE reaches here and this fallback reproduces the historical SPACE behavior
+       * from the SAME extracted cores: cycle the gesture's manhattan corner, else drag-pan.
        * Also the graceful degrade if SPACE is un-bound in keybindings.csv.
        * (B6, doc/claude/specs/wire_stub_netlabel.md.) */
       if(!cycle_manhattan_lines()) start_pan_at(mx, my);

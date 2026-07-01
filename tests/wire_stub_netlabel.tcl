@@ -43,7 +43,8 @@ check "B1 no args errors" [catch {xschem get median}] 1
 # ---------------------------------------------------------------------------
 # B2. Selection scan -> the (instance, pin) targets to stub, exposed as
 #     `xschem pin_stub_targets` (a Tcl list of {inst pin} pairs). User model:
-#       - individual pins selected -> exactly THOSE pins (honored even if wired);
+#       - individual pins selected -> exactly THOSE pins, still SKIPPING any already wired
+#         (user decision 2026-07-01: the connectivity filter applies in BOTH modes);
 #       - whole instance selected  -> its pins NOT already wired.
 #     "wired" = a wire endpoint AT the pin OR a wire passing THROUGH it (touch()).
 #     Schematic-mode only. See doc/claude/specs/wire_stub_netlabel.md §4.1.
@@ -296,6 +297,22 @@ check "B5 selected labels"          [labels] {B R}
 fresh $symc ; xschem unselect_all
 check "B5 nothing selected -> 0"        [xschem add_pin_stubs] 0
 check "B5 no change when nothing to do" [list [xschem get wires] [expr {[xschem get instances]-1}]] {0 0}
+
+# a nameless pin (name="") yields an empty net name with no prefix/suffix -> skip it rather
+# than drop a blank lab= net-label (high code-review 2026-07-01). Only the named pin stubs.
+set symn $wd5/nn.sym
+set fp [open $symn w]
+puts $fp "v {xschem version=3.4.8RC file_version=1.3}"
+puts $fp "G {}\nK {type=subcircuit}\nV {}\nS {}\nE {}"
+puts $fp {B 5 -22.5 -2.5 -17.5 2.5 {name=P dir=in show_pinname=true}}
+puts $fp {B 5 17.5 -2.5 22.5 2.5 {name="" dir=in show_pinname=true}}
+close $fp
+xschem clear force
+xschem instance $symn 100 100 0 0 {name=xn}
+xschem unselect_all ; xschem select instance xn
+check "B5 nameless pin skipped -> 1 stub" [xschem add_pin_stubs] 1
+check "B5 only the named pin's label placed (no empty lab)" [labels] P
+
 xschem clear force symbol
 check "B5 symbol-edit mode -> 0"        [xschem add_pin_stubs] 0
 
@@ -311,10 +328,11 @@ file delete -force $wd5
 # ---------------------------------------------------------------------------
 set dump [xschem bindings dump]
 check "B6 SPACE defaults to edit.add_pin_stubs" \
-  [expr {[lsearch -exact $dump {key 32 0 canvas edit.add_pin_stubs}] >= 0}] 1
-# SPACE is NOT idle_only: the action must dispatch mid-gesture so it can self-gate
-check "B6 SPACE binding is not idle-gated" \
-  [expr {[lsearch -exact $dump {key 32 0 canvas edit.add_pin_stubs idle}] < 0}] 1
+  [expr {[lsearch -glob $dump {key 32 0 canvas edit.add_pin_stubs*}] >= 0}] 1
+# SPACE IS idle_only: add_pin_stubs mutates, so while busy (semaphore>=2) the dispatch skips
+# it and SPACE falls through to case ' ' (the safe historical pan/cycle) with no edit.
+check "B6 SPACE binding is idle-gated (skipped while busy)" \
+  [expr {[lsearch -exact $dump {key 32 0 canvas edit.add_pin_stubs idle}] >= 0}] 1
 # the two fall-through behaviors are registered actions (bind validates the id) ...
 check "B6 edit.cycle_manhattan is a registered action" \
   [catch {xschem bind key 96 0 canvas edit.cycle_manhattan}] 0

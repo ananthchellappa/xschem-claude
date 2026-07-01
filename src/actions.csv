@@ -131,7 +131,7 @@ sym.place_net_pin_label,command,sym,Place net pin label,Alt+L,xschem net_label 1
 sym.place_net_wire_label,command,sym,Place net wire label,Alt+Shift+L,xschem net_label 0,,,Place net wire label,
 sym.change_selected_inst_texts_to_floaters,command,sym,Change selected inst. texts to floaters,,xschem floaters_from_selected_inst,,,Change selected inst. texts to floaters,
 sym.unselect_attached_floaters,command,sym,Unselect attached floaters,,xschem unselect_attached_floaters,,,Unselect attached floaters,
-edit.add_pin_stubs,command,sym,Add pin stubs + labels,Space,xschem add_pin_stubs,,,Add a wire stub + outward net-label to each selected pin / each unconnected pin of a selected instance,
+edit.add_pin_stubs,command,sym,Add pin stubs + labels,Space,xschem add_pin_stubs,,,Add a wire stub + outward net-label to each selected pin / each unconnected pin of a selected instance,1
 sym.list.print_list_of_highlight_nets,command,sym.list,Print list of highlight nets,J,xschem print_hilight_net 1,,,Print list of highlight nets,1
 sym.list.print_list_of_highlight_nets_with_buses_expanded,command,sym.list,"Print list of highlight nets, with buses expanded",Alt-Ctrl-J,xschem print_hilight_net 3,,,"Print list of highlight nets, with buses expanded",
 sym.list.create_labels_from_highlight_nets,command,sym.list,Create labels from highlight nets,Alt-J,xschem print_hilight_net 4,,,Create labels from highlight nets,1

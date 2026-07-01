@@ -1385,6 +1385,9 @@ int add_pin_stubs(const char *prefix, const char *suffix, int inst_prefix)
     instname = xctx->inst[inst].instname ? xctx->inst[inst].instname : "";
     if(inst_prefix && instname[0]) my_mstrcat(_ALLOC_ID_, &netname, instname, "_", NULL);
     my_mstrcat(_ALLOC_ID_, &netname, prefix, pinname, suffix, NULL); /* empty parts are skipped */
+    /* a nameless pin with no prefix/suffix yields an empty net name: skip it rather than drop
+     * a blank lab= net-label (which would name the empty net / error at netlist time). */
+    if(!netname || !netname[0]) { my_free(_ALLOC_ID_, &netname); continue; }
     /* stub wire: pin (start) -> stub end */
     storeobject(-1, g.x1, g.y1, g.x2, g.y2, WIRE, 0, 0, NULL);
     /* lab_pin at the stub end, oriented so the text reads outward; unique name via uniquify */

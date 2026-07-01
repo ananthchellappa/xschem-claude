@@ -66,9 +66,9 @@ proc fresh {} {
   xschem zoom_full; update idletasks
 }
 
-# --- 1. default binding present ---
-check "SPACE defaults to edit.add_pin_stubs" \
-  [expr {[lsearch -exact [xschem bindings dump] {key 32 0 canvas edit.add_pin_stubs}] >= 0}] {}
+# --- 1. default binding present (idle_only: skipped while busy, so it dumps with " idle") ---
+check "SPACE defaults to edit.add_pin_stubs (idle)" \
+  [expr {[lsearch -exact [xschem bindings dump] {key 32 0 canvas edit.add_pin_stubs idle}] >= 0}] {}
 
 # --- 2. SPACE with a selection (idle) runs add_pin_stubs (stubs + labels), not a pan ---
 fresh
