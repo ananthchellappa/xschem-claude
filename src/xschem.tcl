@@ -13676,6 +13676,23 @@ proc build_widgets { {topwin {} } } {
      -selectcolor $selectcolor -background grey60 -variable hide_symbols -value 2 \
      -command {xschem set hide_symbols $hide_symbols; xschem redraw} -accelerator Alt+B
 
+  # P5 global pin-name visibility tri-state (doc/claude/specs/cadence_pin_name_text.md §4.8).
+  # This is a SESSION-GLOBAL view preference (show_pin_names): it governs the pin-name views
+  # of every symbol opened for edit, not just the current one, applied via pin_name_shown()
+  # on each load. It does NOT affect pin names on placed instances (that is P6). The command
+  # sets the var, reconciles the current symbol's name views and redraws.
+  $topwin.menubar.sym add cascade -label "Pin names" -menu $topwin.menubar.sym.pinnames
+  menu $topwin.menubar.sym.pinnames -tearoff 0 -takefocus 0
+  $topwin.menubar.sym.pinnames add radiobutton -label "Auto (per-pin Show name)" \
+     -selectcolor $selectcolor -background grey60 -variable show_pin_names -value auto \
+     -command {xschem pin_names auto}
+  $topwin.menubar.sym.pinnames add radiobutton -label "Show all pin names" \
+     -selectcolor $selectcolor -background grey60 -variable show_pin_names -value on \
+     -command {xschem pin_names on}
+  $topwin.menubar.sym.pinnames add radiobutton -label "Hide all pin names" \
+     -selectcolor $selectcolor -background grey60 -variable show_pin_names -value off \
+     -command {xschem pin_names off}
+
   $topwin.menubar.sym add command -label "Set symbol width" \
      -command {
         input_line "Enter Symbol width ($symbol_width)" "set symbol_width" $symbol_width
@@ -14625,6 +14642,10 @@ set_ne keep_symbols 0 ;# if set loaded symbols will not be purged when descendin
 
 # hide instance details (show only bbox)
 set_ne hide_symbols 0
+# P5 global pin-name visibility (cadence_pin_name_text.md §4.8): on=force-show all owned
+# symbol pins, off=force-hide, auto=defer to each pin's show_pinname. Set via
+# `xschem pin_names on|off|auto|cycle` (which reconciles views + redraws).
+set_ne show_pin_names auto
 # gaw tcp {host port}
 set_ne gaw_tcp_address {localhost 2020}
 

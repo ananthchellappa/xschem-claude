@@ -1058,14 +1058,31 @@ static double pin_dtok(const char *prop, const char *tok, double dflt)
   return s[0] ? atof(s) : dflt;
 }
 
+/* P5 global pin-name visibility (tri-state, mirrored in the show_pin_names Tcl var):
+ * "on" force-shows every owned pin, "off" force-hides all, "auto" (default / unset)
+ * defers to each pin's show_pinname token. The global setting WINS over per-pin when
+ * on/off (spec doc/claude/specs/cadence_pin_name_text.md §4.8). */
+enum { PIN_NAMES_AUTO = 0, PIN_NAMES_ON, PIN_NAMES_OFF };
+static int pin_names_global_mode(void)
+{
+  const char *m = tclgetvar("show_pin_names");
+  if(m && !strcmp(m, "on"))  return PIN_NAMES_ON;
+  if(m && !strcmp(m, "off")) return PIN_NAMES_OFF;
+  return PIN_NAMES_AUTO;
+}
+
 /* is pin p's name to be shown? "owned" == it has a show_pinname token at all (legacy
- * pins have none and are never auto-shown); effective show == owned && token is true.
- * (Global show_pin_names toggle precedence is added in P5.) */
+ * pins have none and are never auto-shown, so their appearance is preserved). Effective
+ * show = global==on ? shown : global==off ? hidden : per-pin show_pinname (§4.8). */
 static int pin_name_shown(xRect *p)
 {
   const char *s = get_tok_value(p->prop_ptr, "show_pinname", 0);
-  if(!s[0]) return 0;
-  return strboolcmp(s, "true") ? 0 : 1;
+  int g;
+  if(!s[0]) return 0;                      /* legacy / un-owned pin: not in the model */
+  g = pin_names_global_mode();
+  if(g == PIN_NAMES_ON)  return 1;         /* global ON wins: show every owned pin */
+  if(g == PIN_NAMES_OFF) return 0;         /* global OFF wins: hide every owned pin */
+  return strboolcmp(s, "true") ? 0 : 1;    /* AUTO: defer to the per-pin token */
 }
 
 /* index of the synthesized name view owned by pin id 'pin_id', or -1 if none */
@@ -1150,9 +1167,14 @@ int create_pin(double x, double y, const char *name, const char *dir, unsigned s
   if(ri < 0) return -1;
   cx = (xctx->rect[PINLAYER][ri].x1 + xctx->rect[PINLAYER][ri].x2) / 2.0;
   cy = (xctx->rect[PINLAYER][ri].y1 + xctx->rect[PINLAYER][ri].y2) / 2.0;
-  create_text(0 /* no draw */, cx + dx, cy + dy, 0, flip, name, NULL, size, size);
-  xctx->text[xctx->texts - 1].owner_pin_id = xctx->rect[PINLAYER][ri].id;
-  if(sel) xctx->text[xctx->texts - 1].sel = SELECTED;
+  /* Materialize the name view only if effectively shown -- respect the global tri-state so
+   * a pin added while show_pin_names=off does not display its name against the setting
+   * (P5). When later toggled to auto/on, synth_pin_views/reconcile creates the view. */
+  if(pin_name_shown(&xctx->rect[PINLAYER][ri])) {
+    create_text(0 /* no draw */, cx + dx, cy + dy, 0, flip, name, NULL, size, size);
+    xctx->text[xctx->texts - 1].owner_pin_id = xctx->rect[PINLAYER][ri].id;
+    if(sel) xctx->text[xctx->texts - 1].sel = SELECTED;
+  }
   return ri;
 }
 
@@ -1277,6 +1299,32 @@ void pin_view_apply(int pi)
   }
   if(ti < 0) synth_pin_views();        /* shown but no view -> create it (idempotent) */
   pin_view_refresh(pi);                /* sync content/pos/size/rot/flip from tokens */
+}
+
+/* P5 show/hide: bring EVERY owned pin's name view into line with the effective
+ * visibility (global show_pin_names tri-state, then per-pin show_pinname). Deletes
+ * views that are now hidden, then (re)creates views that are now shown. Called when the
+ * global toggle changes. Symbol-edit only; views are derived so this alters no
+ * persistent state and needs no undo -- caller redraws. Deleting a view shifts text
+ * indices, but we iterate PINLAYER rects and re-look-up each view by pin id, so it is
+ * safe. */
+void pin_views_reconcile_all(void)
+{
+  int j, rects, deleted = 0;
+  if(!xctx || xctx->netlist_type != CAD_SYMBOL_ATTRS) return;
+  rects = xctx->rects[PINLAYER];
+  for(j = 0; j < rects; ++j) {
+    xRect *p = &xctx->rect[PINLAYER][j];
+    if(!pin_name_shown(p)) {
+      int ti = pin_name_view_of(p->id);
+      if(ti >= 0) { pin_view_delete(ti); deleted = 1; }
+    }
+  }
+  /* pin_view_delete() compacts xctx->text, so a still-selected (now deleted or shifted)
+   * view would leave sel_array/sel_index dangling -- rebuild it, as the P4 view-drop path
+   * does (move.c). */
+  if(deleted) { xctx->need_reb_sel_arr = 1; rebuild_selected_array(); }
+  synth_pin_views();                   /* create views for pins now shown but missing */
 }
 
 /* After a move/rotate/flip commit, reconcile every name view with its pin:

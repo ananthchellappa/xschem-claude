@@ -348,6 +348,75 @@ check "paste: two pins"            [xschem get rects 5] 2
 check "paste: two views"           [xschem get texts]   2
 xschem abort_operation               ;# end the merge drag (cleanup)
 
+# ---------------------------------------------------------------------------
+# 14. P5 global show/hide tri-state (show_pin_names, §4.8). The global toggle WINS over
+#     the per-pin show_pinname: on -> every OWNED pin shows, off -> all hide, auto ->
+#     defer to each pin. A LEGACY pin (no show_pinname token) is never revealed by 'on'
+#     (its appearance is preserved). Visibility == existence of the synth view, so we
+#     count [xschem get texts].
+# ---------------------------------------------------------------------------
+set fp5 $wd/p5.sym
+write_sym $fp5 [join {
+  "B 5 -2.5 -2.5 2.5 2.5 {name=A dir=in show_pinname=true name_size=0.2}"
+  "B 5 -2.5 17.5 2.5 22.5 {name=B dir=in show_pinname=false name_size=0.2}"
+  "B 5 -2.5 37.5 2.5 42.5 {name=C dir=in show_pinname=true name_size=0.2}"
+  "B 5 -2.5 57.5 2.5 62.5 {name=D dir=in}"
+} "\n"]\n
+set ::show_pin_names auto
+xschem load $fp5
+check "p5: 4 pins loaded"           [xschem get rects 5] 4
+check "p5 auto: 2 shown (A,C)"      [xschem get texts]   2
+# global ON wins: every owned pin (A,B,C) shows; legacy D stays hidden.
+check "p5 on: returns on"           [xschem pin_names on]  on
+check "p5 on: 3 shown (A,B,C)"      [xschem get texts]   3
+check "p5 on: var set"              $::show_pin_names      on
+# global OFF wins: all owned pins hide.
+check "p5 off: returns off"         [xschem pin_names off] off
+check "p5 off: 0 shown"             [xschem get texts]   0
+# back to AUTO: per-pin flags decide again (A,C shown; B hidden).
+xschem pin_names auto
+check "p5 auto again: 2 shown"      [xschem get texts]   2
+# query with no arg returns current mode without changing it.
+check "p5 query: auto"              [xschem pin_names]     auto
+check "p5 query: unchanged"         [xschem get texts]   2
+# cycle: auto -> on -> off -> auto.
+check "p5 cycle1: on"               [xschem pin_names cycle] on
+check "p5 cycle1: 3 shown"          [xschem get texts]   3
+check "p5 cycle2: off"              [xschem pin_names cycle] off
+check "p5 cycle2: 0 shown"          [xschem get texts]   0
+check "p5 cycle3: auto"             [xschem pin_names cycle] auto
+check "p5 cycle3: 2 shown"          [xschem get texts]   2
+# toggling visibility is display-only: saving still persists the per-pin tokens intact
+# and never leaks a view (S3), regardless of the global mode.
+xschem pin_names on
+set op5 $wd/p5_out.sym
+xschem saveas $op5 symbol
+check "p5 save: 0 T (no view leak)"        [count_lines $op5 "T *"] 0
+check "p5 save: show_pinname=false kept"   [expr {[count_lines $op5 "*show_pinname=false*"] >= 1}] 1
+
+# 14b. (review fix) create_pin honors the global tri-state: a pin ADDED while global=off
+#      must not show its name; flipping to auto then reveals it (reconcile creates the view).
+xschem clear force symbol
+xschem pin_names off
+xschem add_symbol_pin 0 0 AA in 0
+check "p5 add-under-off: 1 pin"     [xschem get rects 5] 1
+check "p5 add-under-off: 0 views"   [xschem get texts]   0
+xschem pin_names auto
+check "p5 add-under-off->auto: view" [xschem get texts]  1
+
+# 14c. (review fix) hiding while a name view is SELECTED must rebuild the selection, not
+#      leave sel_array dangling at a deleted/shifted text slot. After 'off' deletes the
+#      selected view, lastsel must drop to 0 (stale-cache bug would leave it at 1).
+xschem clear force symbol
+xschem pin_names auto
+xschem add_symbol_pin 0 0 BB in 0
+xschem unselect_all; xschem select text 0
+check "p5 selview: 1 selected"      [xschem get lastsel] 1
+xschem pin_names off
+check "p5 selview: 0 views"         [xschem get texts]   0
+check "p5 selview: selection rebuilt" [xschem get lastsel] 0
+set ::show_pin_names auto             ;# restore default for any later cases
+
 file delete -force $wd
 
 if {$nfail == 0} { puts "ALL PASS (pin_name_text)" } else { puts "$nfail FAILURES (pin_name_text)" }

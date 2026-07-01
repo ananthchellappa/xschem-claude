@@ -607,8 +607,39 @@ pin tokens, no separate persisted object.
   paste regen — all sabotage-verified (drop synth → views=1; drop view-skip → stray makes
   round-trip=3). Generic schematic copy/paste sanity + netlist golden pass; GUI smoke confirms
   the interactive paste→drag→drop keeps 2 pins/2 views and clears STARTMERGE.
-- **P5 — show/hide.** Global tri-state `show_pin_names` (wins) + per-pin `show_pinname` +
-  pin-dialog checkbox; visibility rule in the draw gate.
+- **P5 — show/hide. [DONE 2026-06-30]** Global tri-state `show_pin_names` (`auto`/`on`/`off`,
+  default `auto`; `set_ne` in xschem.tcl) that WINS over per-pin `show_pinname` (§4.8). The
+  gate is `pin_name_shown()` (actions.c): a pin is *owned* iff it carries a `show_pinname`
+  token (legacy pins have none → never shown, appearance preserved); effective show =
+  `on ? owned : off ? 0 : per-pin token`. `pin_names_global_mode()` reads the Tcl var.
+  Since a symbol-edit pin name is a synthesized *view* (its existence == its visibility),
+  toggling the global does not touch the draw loop — it calls `pin_views_reconcile_all()`
+  (actions.c: delete now-hidden views, then `synth_pin_views()` to create now-shown ones)
+  and redraws. Command `xschem pin_names [on|off|auto|cycle]` (scheduler.c) sets the var +
+  reconciles + draws + returns the mode; wired to a Symbol▸Pin names radiobutton cascade
+  (xschem.tcl). Per-pin "Show name" checkbox already existed (P3.6). Display-only: netlist
+  golden unchanged; per-pin tokens persist; no view leak on save; no undo/modify. Tests:
+  pin_name_text +18 (now 91) — auto/on/off/cycle counts, legacy pin NOT revealed by `on`,
+  no-arg query, save-integrity — sabotage-verified (neuter the global gate → on/off/cycle
+  counts collapse to the per-pin value). NOTE: this governs the symbol-editor views only;
+  placed-instance pin-name display arrives with P6 (the same tri-state will gate the
+  `draw_symbol` pass, where a cached C mirror of `show_pin_names` avoids a per-frame
+  `tclgetvar`).
+  - **High code-review (2026-06-30) → fixes applied:** (1) `pin_views_reconcile_all` deleted
+    views without rebuilding the selection → dangling `sel_array` after a hide-while-selected
+    (crash/corruption); now `need_reb_sel_arr`+`rebuild_selected_array` after the delete pass
+    (as the P4 view-drop does). (2) `create_pin` synthesized a view unconditionally → a pin
+    added while global=off showed its name; now gated on `pin_name_shown`. (3) `pin_names`
+    command normalizes a bogus var on query and skips reconcile+draw on a no-op set.
+    pin_name_text +6 (now 97), both behavioral fixes sabotage-verified. **Deferred / by
+    design:** (a) the global is session-wide (menu comment corrected) — a change is NOT
+    re-reconciled in OTHER open symbol tabs, nor re-applied when in-memory undo restores a
+    pre-toggle `xctx->text` snapshot (same "load-equivalent paths must re-synth" class as the
+    disk-undo fix; both self-heal on the next edit/reload; deferred pending multi-context +
+    undo-hook work, likely folded into P6). (b) A direct `set ::show_pin_names` bypasses
+    reconcile — always go through `xschem pin_names` (no var trace, to avoid re-entrancy). (c)
+    When global is on/off the per-pin "Show name" checkbox has no visible effect (global WINS,
+    §4.8) though it still writes the token — intended.
 - **P6 — instance display.** `draw_symbol` pass rendering pin names from symbol pin tokens.
 - **P7 — ERC/check + netlist invariance + docs/tutorial.**
 - **P8 — migration script** + fixtures (the §5 representative files) + idempotency/dry-run/

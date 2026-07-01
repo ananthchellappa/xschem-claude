@@ -5382,6 +5382,40 @@ static int xschem_cmds_p(Tcl_Interp *interp, int argc, const char *argv[], int *
      *   --> { {0} {name=PLUS dir=in } } { {1} {name=OUT dir=out } }
      *       { {2} {name=MINUS dir=in } }
      */
+    /* pin_names [on|off|auto|cycle]
+     *   P5 global pin-name visibility tri-state (doc/claude/specs/cadence_pin_name_text.md
+     *   §4.8). Sets the show_pin_names Tcl var (on=force-show all owned pins, off=force-hide,
+     *   auto=defer to each pin's show_pinname), reconciles the symbol's name views and
+     *   redraws. "cycle" advances auto->on->off->auto. With no arg just returns the
+     *   current mode. Pure view op: no undo, no modify. */
+    else if(!strcmp(argv[1], "pin_names"))
+    {
+      const char *cur;
+      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      cur = tclgetvar("show_pin_names");
+      if(!cur || (strcmp(cur, "on") && strcmp(cur, "off") && strcmp(cur, "auto"))) {
+        cur = "auto";
+        tclsetvar("show_pin_names", cur);   /* normalize an unset/bogus value so the var,
+                                             * the menu radios and pin_name_shown() agree */
+      }
+      if(argc > 2) {
+        const char *mode = argv[2];
+        if(!strcmp(mode, "cycle"))
+          mode = !strcmp(cur, "auto") ? "on" : !strcmp(cur, "on") ? "off" : "auto";
+        if(strcmp(mode, "on") && strcmp(mode, "off") && strcmp(mode, "auto")) {
+          Tcl_SetResult(interp, "xschem pin_names: expected on|off|auto|cycle", TCL_STATIC);
+          return TCL_ERROR;
+        }
+        if(strcmp(mode, cur)) {             /* only reconcile+redraw on an actual change */
+          tclsetvar("show_pin_names", mode);
+          pin_views_reconcile_all();
+          draw();
+          cur = mode;
+        }
+      }
+      Tcl_SetResult(interp, (char *)cur, TCL_VOLATILE);
+    }
+
     else if(!strcmp(argv[1], "pinlist"))
     {
       int i, p, no_of_pins, first = 1;
