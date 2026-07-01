@@ -1,0 +1,26 @@
+v {xschem version=3.4.8RC file_version=1.3}
+G {}
+K {type=subcircuit
+format="@name @pinlist @symname"
+spectre_format="@name ( @pinlist ) @symname"
+template="name=x1"
+}
+V {}
+S {}
+F {}
+E {}
+L 4 40 -10 60 -10 {}
+L 4 -150 -10 -130 -10 {}
+L 4 -150 10 -130 10 {}
+B 5 57.5 -12.5 62.5 -7.5 {show_pinname=false name_dx=-25 name_dy=-5 name_size=0.2 name_flip=1 name="CTRL1" dir=out}
+B 5 -152.5 -12.5 -147.5 -7.5 {show_pinname=false name_dx=25 name_dy=-5 name_size=0.2 name="LED" dir=in}
+B 5 -152.5 7.5 -147.5 12.5 {show_pinname=false name_dx=25 name_dy=-5 name_size=0.2 name="REF" dir=in}
+P 4 5 40 -20 -130 -20 -130 20 40 20 40 -20 {}
+T {@symname} -82.5 -6 0 0 0.3 0.3 {}
+T {@name} -5 -32 0 0 0.2 0.2 {}
+T {"CTRL1"} 35 -14 0 1 0.2 0.2 {}
+T {"LED"} -125 -14 0 0 0.2 0.2 {}
+T {"REF"} -125 6 0 0 0.2 0.2 {}
+B 5 57.5 27.5 62.5 32.5 {show_pinname=false name_dx=-25 name_dy=-5 name_size=0.2 name_flip=1 name="TRIANG" dir=out}
+L 4 40 30 60 30 {}
+T {"TRIANG"} 35 26 0 1 0.2 0.2 {}
