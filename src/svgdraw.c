@@ -937,7 +937,7 @@ static void svg_draw_symbol(int c, int n,int layer,short tmp_flip, short rot,
       if(textlayer < 0 || textlayer >= cadlayers) textlayer = c_for_text;
 
       /* display PINLAYER colored instance texts even if PINLAYER disabled */
-      if(xctx->inst[n].color == PINLAYER ||  xctx->enable_layer[textlayer]) {
+      if(xctx->inst[n].color == -PINLAYER ||  xctx->enable_layer[textlayer]) {
         my_snprintf(svg_font_family, S(svg_font_family), tclgetvar("svg_font_name"));
         my_snprintf(svg_font_style, S(svg_font_style), "normal");
         my_snprintf(svg_font_weight, S(svg_font_weight), "normal");
@@ -987,7 +987,7 @@ static void svg_draw_symbol(int c, int n,int layer,short tmp_flip, short rot,
       if(disabled == 1) plw = GRIDLAYER;
       else if(disabled == 2) plw = PINLAYER;
       if(plw < 0 || plw >= cadlayers) plw = c_for_text;
-      if(xctx->inst[n].color == PINLAYER || xctx->enable_layer[plw]) {
+      if(xctx->inst[n].color == -PINLAYER || xctx->enable_layer[plw]) {
         pcx = (pin->x1 + pin->x2) / 2.0;
         pcy = (pin->y1 + pin->y2) / 2.0;
         tx = pcx + ndx; ty = pcy + ndy;

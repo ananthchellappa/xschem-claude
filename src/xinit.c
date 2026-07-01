@@ -3523,6 +3523,10 @@ int Tcl_AppInit(Tcl_Interp *inter)
      dbg(0, "xschem: can't do a print without a filename\n");
      tcleval("exit 1");
    }
+   /* P6: batch PS/PDF/SVG export calls ps_draw()/svg_draw() directly (not via draw() or the
+    * `xschem print` handler), so the show_pin_names visibility cache is never refreshed here;
+    * sync it so a show_pin_names on/off set in xschemrc is honored (png uses the draw() path). */
+   pin_names_sync_cache();
    if(cli_opt_do_print==1) {
 
      xctx->xrect[0].x = 0;
