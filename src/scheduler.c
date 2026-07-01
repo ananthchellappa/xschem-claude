@@ -2107,6 +2107,37 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
             Tcl_SetResult(interp, my_itoa(xctx->pending_fullzoom),TCL_VOLATILE);
           }
+          else if(!strcmp(argv[2], "pin_name_size")) { /* (xschem get pin_name_size inst pin ?win?) name-text yscale of an instance pin (P9, wire_stub_netlabel.md §3.4) */
+            char s[64];
+            int inst;
+            Xschem_ctx *borrowed = NULL;
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            if(argc <= 4) {
+              Tcl_SetResult(interp, "xschem get pin_name_size: give an instance index and a pin index", TCL_STATIC);
+              return TCL_ERROR;
+            }
+            /* optional <win>: read that window's context via the context-borrow primitive (no GUI
+             * side effects) so the query is not bound to whatever window is front -- e.g. reading a
+             * schematic's instance pins while a symbol window has focus. An explicit win that names
+             * no open window errors rather than silently degrading to the front context (which would
+             * reintroduce the wrong-window bug this arg exists to fix; borrow -> NULL cannot tell
+             * "unknown" from "already current"). Restore before EVERY later return so the
+             * borrow/restore stack stays balanced. */
+            if(argc > 5 && !net_hilight_win_known(argv[5])) {
+              Tcl_SetResult(interp, "xschem get pin_name_size: unknown window path", TCL_STATIC);
+              return TCL_ERROR;
+            }
+            if(argc > 5) borrowed = net_hilight_borrow_ctx(argv[5]);
+            inst = atoi(argv[3]);
+            if(inst < 0 || inst >= xctx->instances) {
+              Tcl_SetResult(interp, "xschem get pin_name_size: instance index out of range", TCL_STATIC);
+              net_hilight_restore_ctx(borrowed);
+              return TCL_ERROR;
+            }
+            my_snprintf(s, S(s), "%g", get_pin_name_size(xctx->sym + xctx->inst[inst].ptr, atoi(argv[4])));
+            Tcl_SetResult(interp, s, TCL_VOLATILE);
+            net_hilight_restore_ctx(borrowed);
+          }
           else if(!strcmp(argv[2], "polygons")) { /* (xschem get polygons n) number of polygons on layer 'n' */
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
             if(argc > 3) {

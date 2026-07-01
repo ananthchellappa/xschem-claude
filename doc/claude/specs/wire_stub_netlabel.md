@@ -138,6 +138,27 @@ the symbol (e.g. `get_pin_name_size(sym_or_inst, j) -> double yscale`). That is 
 single source of truth §4 consumes. Implement and unit-test this getter first; the
 wire-stub feature depends only on it, not on the drawing.
 
+> **DONE (P9, 2026-07-01).** `double get_pin_name_size(xSymbol *sym, int pin)` in
+> `src/actions.c` (declared `src/xschem.h`): returns the pin rect's `name_size` token,
+> else the global `sym_pin_name_size` Tcl var (fallback `0.2` — the exact default
+> `create_pin` stamps, so a legacy/fallback pin and a natively-created one agree). A
+> NULL symbol or out-of-range/negative pin returns the default rather than erroring, so
+> §4.2 can `median` a mixed pin set without special-casing missing pins. Exposed
+> headless as **`xschem get pin_name_size <inst> <pin> ?<win>?`** (`src/scheduler.c`,
+> resolves `xctx->sym + xctx->inst[inst].ptr`) — that command is Thread B's read path AND
+> the unit hook. The optional `<win>` is a window-path (`xschem get current_win_path`,
+> e.g. `.drw` / `.x1.drw`): every `xschem` command binds to the *current* window's `xctx`,
+> so with a symbol/other window front `[xschem get instances]-1` and the query read the
+> wrong context ("instance index out of range"); `<win>` borrows the addressed window's
+> context for the one command (`net_hilight_borrow_ctx`, no focus change, balanced
+> restore), and an unknown path errors rather than silently degrading to the front window
+> (`net_hilight_win_known` guard). Coverage: `tests/pin_name_text.tcl` §17 (14 checks incl.
+> the single-window `<win>` passthrough/unknown-path/restore-balance) + the two-window GUI
+> test `tests/headless/test_pin_name_size_win.tcl` (9 checks, reproduces the wrong-window
+> bug then fixes it via `<win>`). Sabotage-verified: neutering the token read flips the
+> per-pin checks; neutering the borrow flips the cross-window check; neutering the guard
+> flips the unknown-path check. **This unblocks Thread B (§4): start at B1.**
+
 ---
 
 ## 4. Thread B — wire-stub + net-label feature
@@ -288,7 +309,7 @@ headless-testable). Confirm the exact default key (user does heavy Cadence-key w
 - A1. Decide storage for pin text size (`name_size=` on pin rect, + global default) and
   the opt-in toggle (`show_pin_names`, default OFF, mirrored C↔Tcl). §3.3.
 - A2. Implement `get_pin_name_size(...)` getter (the §3.4 single source of truth) +
-  headless unit coverage. **Thread B depends only on this.**
+  headless unit coverage. **Thread B depends only on this. DONE — P9, see §3.4.**
 - A3. Auto-draw pin name text in `draw_symbol()` (hook by `draw.c:780-821`), gated on the
   toggle, sized by A2, positioned/oriented by pin facing (reuse §4.3 outward logic),
   colored on PINLAYER. Ensure legacy hand-placed pin-name `T {}` symbols don't double.

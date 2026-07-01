@@ -548,6 +548,61 @@ check "p7 all: one legacy"         [count_type $r legacy]  1
 check "p7 all: info window lists a warning" \
   [expr {[string match "*Warning:*" [xschem get infowindow_text]] ? 1 : 0}] 1
 
+# ---------------------------------------------------------------------------
+# 17. P9 get_pin_name_size getter -- the single source of truth for "a pin's own
+#     text size", consumed by the wire-stub / net-label feature
+#     (doc/claude/specs/wire_stub_netlabel.md §3.4/§4.2). Exposed for headless
+#     coverage as `xschem get pin_name_size <inst> <pin>`: returns pin `pin`'s
+#     name_size token, else the global sym_pin_name_size default (fallback 0.2 --
+#     the SAME default create_pin stamps, so a legacy pin and a created one agree).
+#     Runs in SCHEMATIC mode against a placed instance (Thread B's actual context).
+# ---------------------------------------------------------------------------
+set p9 $wd/p9_sizes.sym
+write_sym $p9 [join {
+  "B 5 -2.5 -2.5 2.5 2.5 {name=A dir=in show_pinname=true name_dx=20 name_dy=-5 name_size=0.35}"
+  "B 5 -2.5 17.5 2.5 22.5 {name=B dir=in show_pinname=true name_dx=20 name_dy=-5 name_size=0.15}"
+  "B 5 -2.5 37.5 2.5 42.5 {name=C dir=in}"
+} "\n"]\n
+
+# place an instance in a fresh schematic; the getter reads the instance's symbol pins
+set save_sz [expr {[info exists ::sym_pin_name_size] ? $::sym_pin_name_size : ""}]
+set ::sym_pin_name_size 0.2
+xschem clear force
+xschem instance $p9 0 0 0 0 {name=x1}
+set ip [expr {[xschem get instances]-1}]
+
+check "p9: pin 0 reads its name_size"       [xschem get pin_name_size $ip 0]  0.35
+check "p9: pin 1 reads its name_size"       [xschem get pin_name_size $ip 1]  0.15
+check "p9: legacy pin -> global default"    [xschem get pin_name_size $ip 2]  0.2
+check "p9: out-of-range pin -> default"     [xschem get pin_name_size $ip 99] 0.2
+check "p9: negative pin -> default"         [xschem get pin_name_size $ip -1] 0.2
+
+# the fallback tracks the global sym_pin_name_size var (exactly what create_pin stamps);
+# an OWNED pin keeps its own token regardless of the global default
+set ::sym_pin_name_size 0.27
+check "p9: legacy default follows sym_pin_name_size" [xschem get pin_name_size $ip 2] 0.27
+check "p9: owned pin ignores global (has token)"     [xschem get pin_name_size $ip 0] 0.35
+set ::sym_pin_name_size ""
+check "p9: empty global var falls back to 0.2"       [xschem get pin_name_size $ip 2] 0.2
+set ::sym_pin_name_size $save_sz
+
+# argument validation: too few args and a bad instance index both error out
+check "p9: missing args errors"    [catch {xschem get pin_name_size}]         1
+check "p9: bad inst index errors"  [catch {xschem get pin_name_size 99999 0}] 1
+
+# optional <win> context-borrow arg: the query need not be bound to the front window.
+# Single-window headless coverage here; the true 2-window cross-borrow (symbol window
+# front, schematic addressed by path) is the GUI test tests/headless/test_pin_name_size_win.tcl.
+# Passing the CURRENT window's own path borrows-to-current (a no-op) and returns the same
+# value; a bogus path errors instead of silently using the front window; and a plain query
+# still works afterward with current_win_path unchanged (borrow/restore left it intact).
+set cwp [xschem get current_win_path]
+check "p9 win: own-path passthrough == plain" \
+  [xschem get pin_name_size $ip 0 $cwp] [xschem get pin_name_size $ip 0]
+check "p9 win: unknown window errors"          [catch {xschem get pin_name_size $ip 0 .nope.drw}] 1
+check "p9 win: front context intact after borrow"     [xschem get pin_name_size $ip 1] 0.15
+check "p9 win: current window unchanged after borrow" [xschem get current_win_path]    $cwp
+
 file delete -force $wd
 
 if {$nfail == 0} { puts "ALL PASS (pin_name_text)" } else { puts "$nfail FAILURES (pin_name_text)" }

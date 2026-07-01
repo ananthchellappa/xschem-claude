@@ -1117,6 +1117,23 @@ int get_pin_name_layout(const char *prop, Pin_name_layout *lay, char **name, cha
   return 1;
 }
 
+/* Thread-A deliverable (P9): the single source of truth for "a pin's own name-text size",
+ * consumed by the wire-stub / net-label feature (doc/claude/specs/wire_stub_netlabel.md
+ * §3.4, §4.2). Returns the yscale of pin 'pin' of symbol 'sym': the pin rect's name_size
+ * token when present, else the global default (the sym_pin_name_size Tcl var, fallback 0.2 --
+ * the SAME default create_pin stamps, so a pin relying on the fallback and a freshly created
+ * one agree). Legacy / un-owned pins carry no name_size and therefore get that global default.
+ * An out-of-range pin (or a NULL symbol) also yields the default rather than erroring, so a
+ * caller can median a mixed pin set without special-casing missing pins. */
+double get_pin_name_size(xSymbol *sym, int pin)
+{
+  const char *sz = tclgetvar("sym_pin_name_size");
+  double dflt = (sz && sz[0]) ? atof(sz) : 0.2;
+  if(dflt <= 0.0) dflt = 0.2;
+  if(!sym || pin < 0 || pin >= sym->rects[PINLAYER]) return dflt;
+  return pin_dtok(sym->rect[PINLAYER][pin].prop_ptr, "name_size", dflt);
+}
+
 /* [6] Fast global short-circuit for the per-frame draw_symbol pin-name pass: when the
  * show_pin_names tri-state is OFF no owned pin can show, so the whole per-instance pin loop
  * is skippable without a get_tok_value per pin. Reads the cached mode (pin_names_sync_cache
