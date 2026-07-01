@@ -2921,22 +2921,23 @@ static int act_cycle_manhattan(const ActionEvent *e) { (void)e; return cycle_man
 /* view.pan: start a drag-pan of the canvas from the event position. */
 static int act_pan(const ActionEvent *e) { start_pan_at(e->mx, e->my); return 1; }
 
-/* edit.add_pin_stubs (SPACE default): draw a wire stub + outward net-label out of
- * each selected pin / each unconnected pin of a selected instance. Self-gates so a
- * declined SPACE falls through (dispatch returns 0) to the legacy `case ' '`:
+/* edit.add_pin_stubs (SPACE default): draw a wire stub + outward net-label out of each
+ * selected pin / each unconnected pin of a selected instance. Declines (returns 0 ->
+ * dispatch falls through to the legacy `case ' '`) whenever it does NOT stub, so SPACE
+ * keeps its historical fallbacks in every non-stub case:
  *   - during a move/wire/line gesture -> decline (SPACE cycles the manhattan corner)
  *   - with an empty selection          -> decline (SPACE starts a pan)
- *   - a read-only view                 -> refuse the edit (consumed, no pan)
- *   - otherwise run add_pin_stubs (self-contained: one undo + set_modify + draw). */
+ *   - a selection with nothing stubbable (e.g. only a wire, or all pins already wired),
+ *     a read-only view, or symbol mode  -> add_pin_stubs returns 0 without mutating, so
+ *     decline (SPACE pans -- no dead key, no modal read-only dialog)
+ *   - otherwise it stubbed -> consume (add_pin_stubs already did the one undo + draw). */
 static int act_add_pin_stubs(const ActionEvent *e)
 {
   (void)e;
   if(xctx->ui_state & (STARTMOVE | STARTWIRE | STARTLINE)) return 0;
   rebuild_selected_array();
   if(xctx->lastsel == 0) return 0;
-  if(readonly_block()) return 1;
-  add_pin_stubs("", "", 0);
-  return 1;
+  return add_pin_stubs("", "", 0) > 0 ? 1 : 0;
 }
 
 /* --- action registry: stable id -> behavior --- */
@@ -5097,11 +5098,11 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
     case ' ':
       /* SPACE's default action is edit.add_pin_stubs (binding table). It is idle_only, so the
        * dispatch skips it while busy (semaphore>=2) -- and act_add_pin_stubs also declines
-       * (returns 0) during a move/wire/line gesture or with an empty selection. In all those
-       * cases SPACE reaches here and this fallback reproduces the historical SPACE behavior
-       * from the SAME extracted cores: cycle the gesture's manhattan corner, else drag-pan.
-       * Also the graceful degrade if SPACE is un-bound in keybindings.csv.
-       * (B6, doc/claude/specs/wire_stub_netlabel.md.) */
+       * (returns 0) during a move/wire/line gesture, with an empty selection, or whenever it
+       * did not stub (nothing stubbable / read-only view). In all those cases SPACE reaches
+       * here and this fallback reproduces the historical SPACE behavior from the SAME extracted
+       * cores: cycle the gesture's manhattan corner, else drag-pan. Also the graceful degrade
+       * if SPACE is un-bound in keybindings.csv. (B6, doc/claude/specs/wire_stub_netlabel.md.) */
       if(!cycle_manhattan_lines()) start_pan_at(mx, my);
       break;
 

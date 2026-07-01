@@ -1361,6 +1361,7 @@ int add_pin_stubs(const char *prefix, const char *suffix, int inst_prefix)
   char szbuf[64];
   int nt, k, added = 0, first = 1;
   if(!xctx || xctx->netlist_type == CAD_SYMBOL_ATTRS) return 0;
+  if(xctx->readonly) return 0;  /* read-only view: refuse via EVERY entry point (SPACE key, Sym menu, command) */
   if(!prefix) prefix = "";
   if(!suffix) suffix = "";
   nt = collect_pin_stub_targets(&t);

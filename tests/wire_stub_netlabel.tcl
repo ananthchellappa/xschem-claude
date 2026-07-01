@@ -313,6 +313,17 @@ xschem unselect_all ; xschem select instance xn
 check "B5 nameless pin skipped -> 1 stub" [xschem add_pin_stubs] 1
 check "B5 only the named pin's label placed (no empty lab)" [labels] P
 
+# read-only view refuses the mutation via EVERY entry point (the command/menu path too, not
+# just the SPACE key) -- high code-review 2026-07-01.
+xschem clear force
+xschem instance $symc 100 100 0 0 {name=xr}
+xschem unselect_all ; xschem select instance xr
+xschem set readonly 1
+check "B5 read-only view -> add_pin_stubs refuses"  [xschem add_pin_stubs] 0
+check "B5 read-only view -> no mutation" [list [xschem get wires] [expr {[xschem get instances]-1}]] {0 0}
+xschem set readonly 0
+check "B5 editable again -> stubs added"            [xschem add_pin_stubs] 4
+
 xschem clear force symbol
 check "B5 symbol-edit mode -> 0"        [xschem add_pin_stubs] 0
 

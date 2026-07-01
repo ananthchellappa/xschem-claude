@@ -463,16 +463,40 @@ scriptable `xschem add_pin_stubs [-prefix <s>] [-suffix <s>] [-inst-prefix]`.
   its own asserts — corrected. Tests updated (idle-marker assertions flipped; +2 nameless-pin checks,
   SABOTAGE-verified: neuter the guard → 2 stubs + corrupted `P text_size_0=0.2` label). All suites +
   drift guard + keybindings_help/gesture/accelerators + netlist invariance green.
-  DECLINED (rationale): [0] menu/`xschem add_pin_stubs` command bypasses readonly — the peer command
-  `attach_labels` (and every scriptable mutating command) behaves identically; readonly is enforced at
-  the INTERACTIVE layer (the SPACE path via `readonly_block`), scriptable commands bypass by design, so
-  a guard here would make add_pin_stubs inconsistent with its peers. [3] name=l0 + `disable_unique_names`
+  DECLINED (rationale): [0] menu/`xschem add_pin_stubs` command bypasses readonly — **REVERSED by the
+  second review below (now fixed).** [3] name=l0 + `disable_unique_names`
   → duplicate names is systemic to every `place_symbol` caller, not add_pin_stubs-specific. [4] the
   attach_labels_to_inst duplication is an intentional separate path (median sizing + outward stub +
   connectivity filter differ); a merge is a larger B7-era refactor (the missing `propagate_hilights()`
   step noted as a follow-up). [7] `added++`/`first=0` on a place_symbol failure is effectively
   unreachable (lab_pin.sym is validated before the loop). [8] the read-only dry-run commands rebuilding
   spatial hashes is by the lazy prep-flag design.
+
+  **SECOND HIGH code-review (workflow, 15 agents, 2026-07-01) → readonly + SPACE-fallthrough cluster
+  FIXED (superseded my earlier decline).** Two real problems: (a, the new insight) `act_add_pin_stubs`
+  consumed SPACE (returned 1) whenever ANY selection existed — so on a NON-stubbable selection (a wire /
+  text / rect) SPACE became a DEAD KEY (added nothing AND didn't pan), a regression from the old
+  always-pan-when-idle; and in a read-only view it popped a modal `readonly_block()` dialog and lost the
+  pan on every press. (b) `add_pin_stubs` was only read-only-guarded on the SPACE key path — the Sym menu
+  item and the `xschem add_pin_stubs` command both bypassed it (the Sym menu is never greyed, only Edit).
+  Fix, clean + airtight: (1) `add_pin_stubs` core gets `if(xctx->readonly) return 0;` right after the
+  symbol-mode check — refuses via EVERY entry point (key/menu/command); this is stricter than the
+  scriptable-command norm on purpose (a menu click mutating a read-only view is a real enforcement
+  violation, peer `attach_labels`'s identical gap notwithstanding). (2) `act_add_pin_stubs` simplifies to
+  `return add_pin_stubs("","",0) > 0 ? 1 : 0;` (readonly_block removed) — it now DECLINES (→ case ' '
+  fallback pans) whenever it did not stub: non-stubbable selection, all-pins-wired, read-only, or symbol
+  mode. So SPACE pans in every non-stub case (no dead key, no modal dialog), stubs only when it actually
+  stubs. NOT added to `action_id_mutates` on purpose — that dispatcher guard would re-introduce the
+  dialog + no-pan; the core guard is the right layer and covers any future dispatch path too.
+  Tests: wire_stub_netlabel.tcl +3 (read-only command refuses + no mutation + editable-again works) and
+  test_wire_stub_bindings.tcl +4 (non-stubbable-wire selection PANS; read-only SPACE PANS with no
+  dialog — guarded by a `tk_messageBox` stub so a regression fails cleanly instead of hanging).
+  SABOTAGE-verified: dropping the core guard → read-only checks flip (command mutates, SPACE consumes
+  ui_state 8 not 520); reverting the act to always-consume → the two PAN checks flip. All suites (76
+  headless + 18 real-Tk) + netlist invariance + drift guard green. DECLINED this round: [4] quadratic
+  pin-connectivity scan is spatially-hash-bounded + per-action (not per-frame), fine at realistic sizes;
+  [5] the `get median` bare-`if` fall-through (4 wasted strcmps) is harmless and matches case 'm''s
+  existing bare-`if` style — it is a test seam, not a hot path.
 - B7. Tests: headless `tests/*.tcl` (build a tiny sch with one instance; run the
   subcommand; assert N new wires + N lab_pin instances at expected coords/sizes; assert
   connected pins are skipped; assert pins-selected path processes only selected). GUI

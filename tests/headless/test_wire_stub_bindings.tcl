@@ -34,6 +34,11 @@ proc st {} { xschem get ui_state }
 # press SPACE (no modifiers) at screen-ish coords (mx,my only matter for the pan path)
 proc space {{x 300} {y 300}} { global KP SPACE; xschem callback .drw $KP $x $y $SPACE 0 0 0; update idletasks }
 
+# A read-only SPACE must PAN, not pop a modal dialog. Stub tk_messageBox so that if a
+# regression re-introduces the old readonly_block() dialog the test FAILS cleanly (the pan
+# assertion goes false) instead of hanging the headless run on a blocking messagebox.
+catch {rename tk_messageBox {}} ; proc tk_messageBox {args} { return ok }
+
 # wait for a real, mapped canvas (WSLg can be slow to map the window)
 proc ready {} {
   catch {wm geometry . 1000x800}
@@ -91,6 +96,30 @@ check "SPACE no-selection adds no stubs"   [expr {[xschem get wires] == $w0 && [
 check "SPACE no-selection starts a pan"    [expr {([st] & $STARTPAN) != 0}] "(ui_state [st])"
 catch {xschem abort_operation}; update idletasks
 check "pan cleaned up"                      [expr {([st] & $STARTPAN) == 0}] "(ui_state [st])"
+
+# --- 3b. SPACE on a NON-STUBBABLE selection (only a wire) still PANS (not a dead key) ---
+xschem clear force
+xschem wire 500 500 560 500
+xschem zoom_full; update idletasks
+xschem unselect_all; xschem select_all; update idletasks    ;# selects the lone wire
+set w0 [xschem get wires]; set n0 [xschem get instances]
+space 400 400
+check "non-stubbable (wire) selection adds no stubs" \
+  [expr {[xschem get wires] == $w0 && [xschem get instances] == $n0}] {}
+check "non-stubbable selection still PANS (not a dead key)" [expr {([st] & $STARTPAN) != 0}] "(ui_state [st])"
+catch {xschem abort_operation}; update idletasks
+
+# --- 3c. SPACE in a READ-ONLY view PANS (no stubs, no modal dialog) ---
+fresh
+xschem unselect_all; xschem select instance x1; update idletasks
+xschem set readonly 1
+set w0 [xschem get wires]; set n0 [xschem get instances]
+space 400 400
+check "read-only SPACE adds no stubs" \
+  [expr {[xschem get wires] == $w0 && [xschem get instances] == $n0}] {}
+check "read-only SPACE PANS (no dialog, no dead key)" [expr {([st] & $STARTPAN) != 0}] "(ui_state [st])"
+xschem set readonly 0
+catch {xschem abort_operation}; update idletasks
 
 # --- 4. SPACE mid wire-gesture cycles the manhattan corner: gesture intact, no pan, no stubs ---
 fresh
