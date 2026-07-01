@@ -1835,7 +1835,19 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
           }
           break;
           case 'd':
-          if(!strcmp(argv[2], "debug_var")) { /* debug level (0 = no debug, 1, 2, 3,...) */
+          if(!strcmp(argv[2], "deltax")) { /* current move/copy gesture x delta (diagnostic) */
+            char s[128];
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            my_snprintf(s, S(s), "%.16g", xctx->deltax);
+            Tcl_SetResult(interp, s, TCL_VOLATILE);
+          }
+          else if(!strcmp(argv[2], "deltay")) { /* current move/copy gesture y delta (diagnostic) */
+            char s[128];
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            my_snprintf(s, S(s), "%.16g", xctx->deltay);
+            Tcl_SetResult(interp, s, TCL_VOLATILE);
+          }
+          else if(!strcmp(argv[2], "debug_var")) { /* debug level (0 = no debug, 1, 2, 3,...) */
             Tcl_SetResult(interp, my_itoa(debug_var),TCL_VOLATILE);
           }
           else if(!strcmp(argv[2], "draw_window")) { /* direct draw into window */
@@ -2288,6 +2300,16 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
             my_snprintf(s, S(s), "%.16g", xctx->xorigin);
             Tcl_SetResult(interp, s,TCL_VOLATILE);
+          } else if(!strcmp(argv[2], "x1")) { /* move/copy gesture anchor x (diagnostic) */
+            char s[128];
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            my_snprintf(s, S(s), "%.16g", xctx->x1);
+            Tcl_SetResult(interp, s,TCL_VOLATILE);
+          } else if(!strcmp(argv[2], "x2")) { /* move/copy gesture current x (diagnostic) */
+            char s[128];
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            my_snprintf(s, S(s), "%.16g", xctx->x2);
+            Tcl_SetResult(interp, s,TCL_VOLATILE);
           }
           break;
           case 'y':
@@ -2295,6 +2317,16 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
             char s[128];
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
             my_snprintf(s, S(s), "%.16g", xctx->yorigin);
+            Tcl_SetResult(interp, s,TCL_VOLATILE);
+          } else if(!strcmp(argv[2], "y1")) { /* move/copy gesture anchor y (diagnostic) */
+            char s[128];
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            my_snprintf(s, S(s), "%.16g", xctx->y1);
+            Tcl_SetResult(interp, s,TCL_VOLATILE);
+          } else if(!strcmp(argv[2], "y2")) { /* move/copy gesture current y (diagnostic) */
+            char s[128];
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            my_snprintf(s, S(s), "%.16g", xctx->y2);
             Tcl_SetResult(interp, s,TCL_VOLATILE);
           }
           break;
