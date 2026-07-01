@@ -159,4 +159,59 @@ check "B3 nothing selected -> empty" [xschem pin_stub_sizing] {}
 
 file delete -force $wd3
 
+# ---------------------------------------------------------------------------
+# B4. Stub geometry: `xschem pin_stub_geom <inst> <pin> <L>` -> "x1 y1 x2 y2 dx dy".
+#     Outward = (pin center - BODY center) snapped to the dominant axis, then
+#     transformed through the instance rot/flip; start = pin abs coord, end =
+#     start + outward*L. Deterministic -> assert exact values. §4.3.
+# ---------------------------------------------------------------------------
+set wd4 [file normalize ./wire_stub_work4]
+file delete -force $wd4 ; file mkdir $wd4
+# cross.sym: body center (0,0); 4 pins on 4 sides at (-20,0)/(20,0)/(0,-20)/(0,20)
+set symx $wd4/cross.sym
+set fp [open $symx w]
+puts $fp "v {xschem version=3.4.8RC file_version=1.3}"
+puts $fp "G {}\nK {type=subcircuit}\nV {}\nS {}\nE {}"
+puts $fp "B 5 -22.5 -2.5 -17.5 2.5 {name=L dir=in show_pinname=true}"
+puts $fp "B 5 17.5 -2.5 22.5 2.5 {name=R dir=in show_pinname=true}"
+puts $fp "B 5 -2.5 -22.5 2.5 -17.5 {name=T dir=in show_pinname=true}"
+puts $fp "B 5 -2.5 17.5 2.5 22.5 {name=B dir=in show_pinname=true}"
+close $fp
+
+xschem clear force
+xschem instance $symx 100 100 0 0 {name=x1}
+# each pin points AWAY from the body along its own axis; stub end = start + outward*40
+check "B4 left  pin -> -x" [xschem pin_stub_geom 0 0 40] {80 100 40 100 -1 0}
+check "B4 right pin -> +x" [xschem pin_stub_geom 0 1 40] {120 100 160 100 1 0}
+check "B4 top   pin -> -y" [xschem pin_stub_geom 0 2 40] {100 80 100 40 0 -1}
+check "B4 bot   pin -> +y" [xschem pin_stub_geom 0 3 40] {100 120 100 160 0 1}
+
+# rot=1 rotates the outward direction (+x -> +y here) and the pin position with it
+xschem clear force ; xschem instance $symx 100 100 1 0 {name=x1}
+check "B4 rot=1: right pin outward rotates to +y" [xschem pin_stub_geom 0 1 40] {100 120 100 160 0 1}
+# flip mirrors x: the right pin now points -x
+xschem clear force ; xschem instance $symx 100 100 0 1 {name=x1}
+check "B4 flip: right pin outward mirrors to -x" [xschem pin_stub_geom 0 1 40] {80 100 40 100 -1 0}
+
+# OFFSET body: both pins at +x, but the body center is BETWEEN them, so pin0 must point -x
+# (toward lower x, away from the body) -- discriminates "pin - body center" from "sign of pin".
+set symo $wd4/offset.sym
+set fp [open $symo w]
+puts $fp "v {xschem version=3.4.8RC file_version=1.3}"
+puts $fp "G {}\nK {type=subcircuit}\nV {}\nS {}\nE {}"
+puts $fp "B 5 7.5 -2.5 12.5 2.5 {name=A dir=in show_pinname=true}"
+puts $fp "B 5 47.5 -2.5 52.5 2.5 {name=B dir=in show_pinname=true}"
+close $fp
+xschem clear force ; xschem instance $symo 0 0 0 0 {name=x1}
+check "B4 offset body: inner +x pin still points -x (uses body center)" \
+  [xschem pin_stub_geom 0 0 40] {10 0 -30 0 -1 0}
+check "B4 offset body: outer pin points +x" [xschem pin_stub_geom 0 1 40] {50 0 90 0 1 0}
+
+# bad instance / pin -> empty; missing args -> error
+check "B4 bad instance -> empty" [xschem pin_stub_geom 99 0 40] {}
+check "B4 bad pin -> empty"      [xschem pin_stub_geom 0 99 40] {}
+check "B4 missing args errors"   [catch {xschem pin_stub_geom 0 0}] 1
+
+file delete -force $wd4
+
 if {$nfail == 0} { puts "ALL PASS (wire_stub_netlabel)" } else { puts "$nfail FAILURES (wire_stub_netlabel)" }

@@ -1934,6 +1934,11 @@ extern int collect_pin_stub_targets(Pin_stub_target **out);
  * stub_len = smallest cadgrid multiple > 2*text_h. See actions.c compute_pin_stub_sizing. */
 typedef struct { double size, text_h, stub_len; } Pin_stub_sizing;
 extern int compute_pin_stub_sizing(const Pin_stub_target *t, int n, Pin_stub_sizing *out);
+/* B4 (wire-stubs): the stub segment for one instance pin -- start = the pin's abs coord, end =
+ * start + outward*stub_len, (dx,dy) = the absolute outward unit direction (one of +/-x, +/-y).
+ * See actions.c compute_pin_stub_geom. */
+typedef struct { double x1, y1, x2, y2, dx, dy; } Pin_stub_geom;
+extern int compute_pin_stub_geom(int inst, int pin, double stub_len, Pin_stub_geom *out);
 extern int pin_names_all_off(void);
 extern void init_inst_iterator(Iterator_ctx *ctx, double x1, double y1, double x2, double y2);
 extern Instentry *inst_iterator_next(Iterator_ctx *ctx);

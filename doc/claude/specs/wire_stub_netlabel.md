@@ -359,9 +359,27 @@ headless-testable). Confirm the exact default key (user does heavy Cadence-key w
   to font metrics: `S`=median-not-min/max/mean, `H>0`, `L>2H`, `L` on grid, `L` the smallest such
   multiple, single-pin size, bigger-size→longer-stub, empty). Sabotage-verified: median→first
   flips the median check; `L=2H` flips the `>2H` and on-grid checks.
-- B4. Geometry: outward direction (§4.3), stub endpoints (grid-snapped), label rot/flip.
+- B4. Geometry: outward direction (§4.3), stub endpoints. **STUB GEOMETRY DONE 2026-07-01;
+  label rot/flip MOVED to B5** (it is intrinsically tied to placing the actual lab_pin symbol
+  and verifying the text reads outward, so it belongs with the mutation). `int
+  compute_pin_stub_geom(int inst, int pin, double stub_len, Pin_stub_geom *out)` in
+  `src/actions.c` (struct `{double x1,y1,x2,y2,dx,dy}` + decl `src/xschem.h`): outward = (pin
+  center − body center) snapped to the dominant axis (Manhattan → orthogonal stub), transformed
+  through the instance rot/flip via the `ROTATION` macro; body center uses `sym->minx/maxx/
+  miny/maxy`, which already EXCLUDE symbol text (`save.c` omits text from the symbol bbox = the
+  no-text body box §4.3 wants). start = `get_inst_pin_coord`; end = start + outward·`stub_len`
+  (no separate grid-snap: real pins are on-grid so end is on-grid, and snapping could erode the
+  L>2H guarantee for an off-grid pin). Test seam **`xschem pin_stub_geom <inst> <pin> <L>`**
+  (`scheduler.c` `xschem_cmds_p`) → `"x1 y1 x2 y2 dx dy"`. Coverage:
+  `tests/wire_stub_netlabel.tcl` B4 (11 checks, exact values): the 4 sides → ±x/±y, rot=1 and
+  flip transform outward + position, an OFFSET-body symbol (both pins at +x, inner one points −x)
+  that discriminates the body-center subtraction, bad inst/pin, arg error. Sabotage-verified:
+  body-center→0 flips the offset check, skipping ROTATION flips the rot/flip checks, forcing the
+  x-axis flips the top/bot checks.
 - B5. Mutate: one `push_undo`; per pin add stub wire (§4.6) + lab_pin with
-  `text_size_0=S` and chosen `lab` (§4.7); batch bbox/redraw; `set_modify(1)`.
+  `text_size_0=S` and chosen `lab` (§4.7); **choose the lab_pin rot/flip so the text reads
+  outward (moved from B4 — determine empirically against `lab_pin.sym`'s `@lab` anchor, verify
+  the rendered text extends along (dx,dy))**; batch bbox/redraw; `set_modify(1)`.
 - B6. Wire up invocation (§4.8): action registry + key + menu + `xschem` subcommand.
 - B7. Tests: headless `tests/*.tcl` (build a tiny sch with one instance; run the
   subcommand; assert N new wires + N lab_pin instances at expected coords/sizes; assert

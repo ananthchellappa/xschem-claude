@@ -5494,6 +5494,25 @@ static int xschem_cmds_p(Tcl_Interp *interp, int argc, const char *argv[], int *
       Tcl_SetResult(interp, (char *)cur, TCL_VOLATILE);
     }
 
+    /* pin_stub_geom: (xschem pin_stub_geom inst pin stublen) "x1 y1 x2 y2 dx dy" -- the stub
+     * segment for that instance pin extended outward by stublen: start = pin abs coord, end =
+     * start + outward*stublen, (dx dy) = the absolute outward unit direction. B4, §4.3. */
+    else if(!strcmp(argv[1], "pin_stub_geom"))
+    {
+      Pin_stub_geom g;
+      char b[160];
+      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(argc <= 4) {
+        Tcl_SetResult(interp, "xschem pin_stub_geom: give an instance index, pin index and stub length", TCL_STATIC);
+        return TCL_ERROR;
+      }
+      if(compute_pin_stub_geom(atoi(argv[2]), atoi(argv[3]), atof(argv[4]), &g)) {
+        my_snprintf(b, S(b), "%g %g %g %g %g %g", g.x1, g.y1, g.x2, g.y2, g.dx, g.dy);
+        Tcl_SetResult(interp, b, TCL_VOLATILE);
+      } else {
+        Tcl_SetResult(interp, "", TCL_STATIC);
+      }
+    }
     /* pin_stub_sizing: (xschem pin_stub_sizing) "size textheight stublen" the wire-stubber would
      * use for the current selection's targets -- median pin-name size, label line height, and the
      * grid-snapped stub length (>2*height). Empty when nothing is selected. B3, §4.2. */

@@ -1295,6 +1295,45 @@ int compute_pin_stub_sizing(const Pin_stub_target *t, int n, Pin_stub_sizing *ou
   return 1;
 }
 
+/* B4: the stub segment for instance 'inst' pin 'pin', extended outward by 'stub_len'
+ * (doc/claude/specs/wire_stub_netlabel.md §4.3). The OUTWARD direction is, in symbol-local
+ * coords, (pin center - body center) snapped to the dominant axis (Manhattan, so the stub is
+ * orthogonal) then transformed through the instance's rot/flip (ROTATION). Body center uses the
+ * symbol's minx/maxx/miny/maxy, which EXCLUDE symbol text (save.c leaves text out of the symbol
+ * bbox), i.e. the no-text body box §4.3 asks for. Start = the pin's absolute coord
+ * (get_inst_pin_coord); end = start + outward*stub_len. Real pins sit on-grid so end lands on
+ * grid without a separate snap (which could otherwise erode the L>2H guarantee for an off-grid
+ * pin). Returns 0 for a bad instance/pin. */
+int compute_pin_stub_geom(int inst, int pin, double stub_len, Pin_stub_geom *out)
+{
+  xSymbol *sym;
+  double px, py, bcx, bcy, ldx, ldy, lox, loy, adx, ady, sx, sy;
+  int rot, flip;
+  if(!xctx || inst < 0 || inst >= xctx->instances || xctx->inst[inst].ptr < 0) return 0;
+  sym = xctx->sym + xctx->inst[inst].ptr;
+  if(pin < 0 || pin >= sym->rects[PINLAYER]) return 0;
+  px = (sym->rect[PINLAYER][pin].x1 + sym->rect[PINLAYER][pin].x2) / 2.0;
+  py = (sym->rect[PINLAYER][pin].y1 + sym->rect[PINLAYER][pin].y2) / 2.0;
+  bcx = (sym->minx + sym->maxx) / 2.0;
+  bcy = (sym->miny + sym->maxy) / 2.0;
+  ldx = px - bcx;
+  ldy = py - bcy;
+  /* dominant axis; a pin exactly at the body centre (ldx==ldy==0) defaults to +x */
+  if(fabs(ldx) >= fabs(ldy)) { lox = (ldx < 0.0) ? -1.0 : 1.0; loy = 0.0; }
+  else                       { lox = 0.0; loy = (ldy < 0.0) ? -1.0 : 1.0; }
+  rot = xctx->inst[inst].rot;
+  flip = xctx->inst[inst].flip;
+  ROTATION(rot, flip, 0.0, 0.0, lox, loy, adx, ady);   /* local outward -> absolute outward */
+  get_inst_pin_coord(inst, pin, &sx, &sy);
+  out->x1 = sx;
+  out->y1 = sy;
+  out->x2 = sx + adx * stub_len;
+  out->y2 = sy + ady * stub_len;
+  out->dx = adx;
+  out->dy = ady;
+  return 1;
+}
+
 /* [6] Fast global short-circuit for the per-frame draw_symbol pin-name pass: when the
  * show_pin_names tri-state is OFF no owned pin can show, so the whole per-instance pin loop
  * is skippable without a get_tok_value per pin. Reads the cached mode (pin_names_sync_cache
