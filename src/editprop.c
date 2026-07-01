@@ -1458,6 +1458,17 @@ void edit_property(int x)
    }
  }
 
+ /* Master forced preserve_unchanged_attrs=1 for any multi-selection so a shared property edit
+  * does not overwrite each object's distinct attributes with the first object's string. That
+  * force was intentionally dropped for INSTANCE edits (the slick form's "Apply to" scope +
+  * changed-fields-only in update_symbol govern those), but the wire/rect/line/arc/poly/text
+  * dialogs have no such scope and still honor this flag -- their apply loops fall back to a
+  * whole-string overwrite when preserve != 1. Re-force it for a multi-selected NON-instance
+  * edit to avoid clobbering per-object props (data-loss regression vs master, code review). */
+ if(xctx->lastsel > 1 && type != ELEMENT) {
+   tclsetvar("preserve_unchanged_attrs", "1");
+ }
+
  switch(type)
  {
   case ELEMENT:
