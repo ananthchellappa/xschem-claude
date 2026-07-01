@@ -181,7 +181,65 @@ and confirm its pin names show (**Symbol ▸ Pin names ▸ Show all pin names**)
 `.sym` carries `show_pinname` tokens. On a placed instance, `xschem get_inst_lcv` reports the
 Library/Cell/View it resolved from — a quick way to confirm you are on the migrated tree.
 
-## 8. Naming a directory — `library.tag`
+## 8. Per-project library setups (a different `library.defs` per project)
+
+If you work on several projects that each need different libraries, don't keep editing one
+global config — give each project its own `xschemrc`. `XSCHEM_LIBRARY_DEFS` and
+`XSCHEM_LIBRARY_PATH` are **Tcl variables set inside an `xschemrc`** (not OS environment
+variables xschem reads on its own), and xschem selects an `xschemrc` per project.
+
+**How xschem chooses an `xschemrc`.** At startup it sources, in order:
+
+1. any `--preinit '<tcl>'` snippet (before every rc);
+2. the **system** `xschemrc` (`$XSCHEM_SHAREDIR/xschemrc`) — always;
+3. then **exactly one** of, highest priority first:
+   - **`--rcfile <file>`** if given (a missing file is a fatal error), else
+   - **`./xschemrc`** in the **directory you launched xschem from** (`getcwd()`), else
+   - **`~/.xschem/xschemrc`** (the personal one).
+
+The system rc always runs first, so a project rc *layers on top* — `set` to replace a value,
+`append XSCHEM_LIBRARY_PATH :…` to extend it. Pick whichever launch style fits:
+
+**A — one directory per project, each with its own `./xschemrc` (idiomatic).**
+```tcl
+# ~/proj/chipA/xschemrc
+set XSCHEM_LIBRARY_DEFS /home/me/proj/chipA/library.defs
+# or build XSCHEM_LIBRARY_PATH so the project tree's library.defs is auto-discovered (§5)
+```
+`cd ~/proj/chipA && xschem` loads the system rc, then this project's `./xschemrc`. Ten
+project directories → ten setups, no flags.
+
+**B — `--rcfile` (explicit, cwd-independent; best for launchers / menu items).**
+```sh
+xschem --rcfile ~/proj/chipA/xschemrc
+```
+Takes precedence over the cwd/personal rc. Make one tiny launcher per project, or a wrapper
+that takes a project name.
+
+**C — environment-driven (direnv / modules) — needs a one-line bridge.**
+A bare `export XSCHEM_LIBRARY_DEFS=…` does **nothing** by itself: xschem reads the Tcl
+variable, not the OS env var. Bridge it once in your **personal** `~/.xschem/xschemrc`:
+```tcl
+if {[info exists env(XSCHEM_LIBRARY_DEFS)]} { set XSCHEM_LIBRARY_DEFS $env(XSCHEM_LIBRARY_DEFS) }
+if {[info exists env(XSCHEM_LIBRARY_PATH)]} { set XSCHEM_LIBRARY_PATH $env(XSCHEM_LIBRARY_PATH) }
+```
+Then set the variable per project — e.g. a direnv `.envrc` in each project directory:
+```sh
+# ~/proj/chipA/.envrc
+export XSCHEM_LIBRARY_DEFS=/home/me/proj/chipA/library.defs
+```
+`cd` into a project and its libraries switch automatically.
+
+Notes:
+
+- `XSCHEM_LIBRARY_DEFS` is a `:`-separated list, so a project rc can pull in a shared/common
+  `library.defs` *and* a project-specific one.
+- `--preinit 'set XSCHEM_LIBRARY_DEFS …'` also works, but it runs *before* the system/cwd/
+  personal rc, so those can override it — prefer `--rcfile`.
+- Because `xschemrc` is just Tcl, a single shared rc can even branch on `$env(PROJECT)` or the
+  cwd to choose the defs — but a per-directory rc (A) or `--rcfile` (B) is cleaner.
+
+## 9. Naming a directory — `library.tag`
 
 Independently of `library.defs`, a library directory may carry a `library.tag` file whose
 `NAME` line sets the display name:
@@ -194,7 +252,7 @@ NAME MyStdCells
 With no `library.tag`, the name defaults to the directory's basename. (`library.tag` names
 the directory; `library.defs` is what actually registers it for the browser.)
 
-## 9. Troubleshooting — "my library still isn't showing"
+## 10. Troubleshooting — "my library still isn't showing"
 
 - **Is it `DEFINE`d?** Grep your `library.defs` files for the name. No `DEFINE` → it won't
   show (being on the search path alone is not enough).
@@ -209,7 +267,7 @@ the directory; `library.defs` is what actually registers it for the browser.)
   "not in a Cadence library" for such symbols — a quick way to check.)
 - Changed a `library.defs`? Reopen the Library Manager (or restart xschem) so it re-reads.
 
-## 10. Quick reference
+## 11. Quick reference
 
 | Task | How |
 |---|---|
@@ -220,4 +278,5 @@ the directory; `library.defs` is what actually registers it for the browser.)
 | Point at extra defs files | `XSCHEM_LIBRARY_DEFS=/a/library.defs:/b/library.defs` |
 | Put a tree on the search path | `append XSCHEM_LIBRARY_PATH :<dir>` in `xschemrc` |
 | Load migrated libs (old → new) | repoint `XSCHEM_LIBRARY_PATH`/`XSCHEM_LIBRARY_DEFS` at the migrated tree (§7); don't keep both |
+| Per-project libraries | a `./xschemrc` per project dir, or `xschem --rcfile <proj>/xschemrc` (§8) |
 | Name a directory | `NAME <name>` in `<libdir>/library.tag` |

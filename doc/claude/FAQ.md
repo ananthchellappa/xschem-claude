@@ -14,6 +14,40 @@ Newest entries on top.
 
 ---
 
+## Q22. I work on ~10 projects that each need a *different* library setup. How do I set `XSCHEM_LIBRARY_DEFS` (and the library path) on a per-project basis?
+
+- **Asked:** 2026-06-30
+- **Project state:** branch `cadence-pin-name-text` @ `8e70fb1b` (follow-up to Q21 and the
+  library docs). Full write-up: `doc/library_defs.md` §8.
+
+**Key fact:** `XSCHEM_LIBRARY_DEFS` and `XSCHEM_LIBRARY_PATH` are **Tcl variables set inside an
+`xschemrc`**, *not* OS environment variables xschem reads on its own (nothing bridges
+`$env(XSCHEM_LIBRARY_DEFS)` → the Tcl global by default — see option C). And xschem selects an
+`xschemrc` **per project**. At startup it sources, in order: any `--preinit '<tcl>'` → the
+**system** `xschemrc` (always) → then **exactly one** of `--rcfile <file>` (if given) /
+`./xschemrc` in the **launch directory** (`getcwd()`, `xinit.c:3059-3072`) / `~/.xschem/xschemrc`.
+The system rc runs first, so a project rc *layers on top*.
+
+So there is no single global to keep editing — give each project its own rc. Three styles:
+
+- **A — a directory per project with its own `./xschemrc` (idiomatic).** Put
+  `set XSCHEM_LIBRARY_DEFS /path/proj/library.defs` (or build `XSCHEM_LIBRARY_PATH`) in
+  `~/proj/chipA/xschemrc`; `cd ~/proj/chipA && xschem` picks it up. Ten dirs → ten setups, no
+  flags.
+- **B — `--rcfile <proj>/xschemrc`** — explicit, cwd-independent; ideal for a per-project
+  launcher or a `xschem-proj <name>` wrapper. Highest precedence over the cwd/personal rc.
+- **C — environment-driven (direnv / modules).** A bare `export XSCHEM_LIBRARY_DEFS=…` does
+  **nothing** by itself (xschem reads the Tcl var). Add a one-line bridge once to the personal
+  `~/.xschem/xschemrc` —
+  `if {[info exists env(XSCHEM_LIBRARY_DEFS)]} { set XSCHEM_LIBRARY_DEFS $env(XSCHEM_LIBRARY_DEFS) }`
+  — then a per-project `.envrc` (`export XSCHEM_LIBRARY_DEFS=…`) switches libraries on `cd`.
+
+Notes: `XSCHEM_LIBRARY_DEFS` is a `:`-separated list (mix a shared + a project defs file);
+`--preinit` runs *before* the rc chain so those can override it (prefer `--rcfile`); and since
+`xschemrc` is Tcl, one shared rc could branch on `$env(PROJECT)`/cwd — but a per-dir rc (A) or
+`--rcfile` (B) is cleaner. Recommendation: **A** as the baseline, **C** if you already use
+direnv/modules.
+
 ## Q21. I migrated my old-style libraries (pins whose name text is *not* owned by the pin) into new libraries with the pin-name migration tool. How do I make the Library Manager load the *migrated* libraries when xschem starts?
 
 - **Asked:** 2026-06-30
