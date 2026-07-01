@@ -437,6 +437,27 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
       Tcl_ResetResult(interp);
     }
 
+    /* add_pin_stubs [-prefix <s>] [-suffix <s>] [-inst-prefix]
+     *   For the current selection (individual pins, else whole instances' unconnected pins),
+     *   draw a wire stub out of each pin + a lab_pin net-label at the far end. The net name is
+     *   [instname_ if -inst-prefix][-prefix]<pinname>[-suffix]. Returns the number of stubs added.
+     *   One undo. B5, doc/claude/specs/wire_stub_netlabel.md §4. */
+    else if(!strcmp(argv[1], "add_pin_stubs"))
+    {
+      const char *prefix = "", *suffix = "";
+      int inst_prefix = 0, i, added;
+      char b[32];
+      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      for(i = 2; i < argc; ++i) {
+        if(!strcmp(argv[i], "-prefix") && i + 1 < argc) prefix = argv[++i];
+        else if(!strcmp(argv[i], "-suffix") && i + 1 < argc) suffix = argv[++i];
+        else if(!strcmp(argv[i], "-inst-prefix") || !strcmp(argv[i], "-inst_prefix")) inst_prefix = 1;
+      }
+      added = add_pin_stubs(prefix, suffix, inst_prefix);
+      my_snprintf(b, S(b), "%d", added);
+      Tcl_SetResult(interp, b, TCL_VOLATILE);
+    }
+
     /* align
      *   Align currently selected objects to current snap setting */
     else if(!strcmp(argv[1], "align"))

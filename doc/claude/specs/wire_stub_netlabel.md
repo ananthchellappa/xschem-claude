@@ -376,11 +376,26 @@ headless-testable). Confirm the exact default key (user does heavy Cadence-key w
   that discriminates the body-center subtraction, bad inst/pin, arg error. Sabotage-verified:
   body-center→0 flips the offset check, skipping ROTATION flips the rot/flip checks, forcing the
   x-axis flips the top/bot checks.
-- B5. Mutate: one `push_undo`; per pin add stub wire (§4.6) + lab_pin with
-  `text_size_0=S` and chosen `lab` (§4.7); **choose the lab_pin rot/flip so the text reads
-  outward (moved from B4 — determine empirically against `lab_pin.sym`'s `@lab` anchor, verify
-  the rendered text extends along (dx,dy))**; batch bbox/redraw; `set_modify(1)`.
-- B6. Wire up invocation (§4.8): action registry + key + menu + `xschem` subcommand.
+- B5. Mutate. **DONE 2026-07-01.** `int add_pin_stubs(const char *prefix, const char *suffix,
+  int inst_prefix)` in `src/actions.c` (decl `src/xschem.h`), exposed as **`xschem add_pin_stubs
+  [-prefix <s>] [-suffix <s>] [-inst-prefix]`** (`scheduler.c` `xschem_cmds_a`). Runs
+  `collect_pin_stub_targets` → `compute_pin_stub_sizing` (one S + L), then ONE `push_undo()` and,
+  per target, `storeobject(…WIRE…)` for the stub (`compute_pin_stub_geom` start→end) + a
+  `place_symbol(lab_pin.sym, end, lrot, lflip, "name=l0 lab=<net> text_size_0=<S>", …,
+  to_push_undo=0)` at the far end (`place_symbol` auto-uniquifies the l0/l1/… names). The net
+  name = `[instname_ if inst_prefix][prefix]<pinname>[suffix]` (default = pin name). Label
+  orientation via `lab_orient(dx,dy)`: **rot=0 horizontal (flip picks −x/+x), rot=1 vertical
+  (flip picks −y/+y)** — determined empirically against `lab_pin.sym`'s `@lab` anchor via the
+  text-bbox-centre offset. One batch `set_modify(1)` + `draw()`; a single undo removes every
+  wire + label. Coverage: `tests/wire_stub_netlabel.tcl` B5 (18 checks): counts, default + all
+  naming-option combos, **every label reads outward** (dot of the placed lab_pin's
+  `bbox_selected` centre with the B4 outward dir > 0), one-undo-removes-all, already-connected
+  pins skipped, selected-pins mode, nothing/symbol-mode → 0. Sabotage-verified: fixing the
+  lab_pin orientation flips the reads-outward check. SVG render eyeballed: the 4 labels sit at
+  the 4 extremes reading outward (verticals rotated).
+- B6. Wire up invocation (§4.8): action registry + key + menu (the `xschem add_pin_stubs`
+  subcommand is DONE at B5). **USER (2026-07-01) wants all three: subcommand ✓, registered
+  action + keybinding, menu item.** Default key still to choose.
 - B7. Tests: headless `tests/*.tcl` (build a tiny sch with one instance; run the
   subcommand; assert N new wires + N lab_pin instances at expected coords/sizes; assert
   connected pins are skipped; assert pins-selected path processes only selected). GUI

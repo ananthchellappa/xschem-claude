@@ -1221,12 +1221,11 @@ static void stub_target_append(Pin_stub_target **list, int *cnt, int *cap, int i
 }
 
 /* B2: build the list of (instance, pin) targets a wire-stub invocation should process
- * (doc/claude/specs/wire_stub_netlabel.md §4.1). Two modes, individually-selected pins WIN:
- *   - any INST_PIN in the selection -> exactly those (instance, pin) pairs (user model: stub the
- *     pins the user picked);
- *   - else every whole instance selected (ELEMENT) -> each of ITS pins not already connected
- *     (user model: stub the instance's UNCONNECTED pins). "connected" == pin_is_connected()
- *     (a wire, or a coincident pin of another instance).
+ * (doc/claude/specs/wire_stub_netlabel.md §4.1). Two modes, individually-selected pins WIN; an
+ * already-connected pin is skipped in BOTH modes (never double a connection):
+ *   - any INST_PIN in the selection -> those (instance, pin) pairs, minus any already connected;
+ *   - else every whole instance selected (ELEMENT) -> each of ITS pins not already connected.
+ * "connected" == pin_is_connected() (a wire, or a coincident pin of another instance).
  * Returns the count; *out is a my_malloc'd Pin_stub_target[] the caller frees (NULL/0 when there
  * is nothing to do). Schematic-mode only -- a symbol being edited has no placed instances; a
  * symbol-less instance (ptr<0) and stale/generic pin indices are skipped. */
@@ -1248,7 +1247,10 @@ int collect_pin_stub_targets(Pin_stub_target **out)
       n = sel.n;
       if(n < 0 || n >= xctx->instances || xctx->inst[n].ptr < 0) continue;
       rects = (xctx->inst[n].ptr + xctx->sym)->rects[PINLAYER];
-      if((int)sel.col < rects) stub_target_append(&list, &cnt, &cap, n, (int)sel.col);
+      /* an already-connected pin is skipped even when explicitly selected -- never double a
+       * connection (user decision 2026-07-01) */
+      if((int)sel.col < rects && !pin_is_connected(n, (int)sel.col))
+        stub_target_append(&list, &cnt, &cap, n, (int)sel.col);
     } else {
       if(sel.type != ELEMENT) continue;
       n = sel.n;
@@ -1332,6 +1334,77 @@ int compute_pin_stub_geom(int inst, int pin, double stub_len, Pin_stub_geom *out
   out->dx = adx;
   out->dy = ady;
   return 1;
+}
+
+/* B5: lab_pin (rot,flip) so its @lab text reads OUTWARD along (dx,dy) -- away from the instance,
+ * "flag in the wind" (§4.3). Determined empirically against lab_pin.sym's `T {@lab} -7.5 -8.125
+ * 0 1 ...` anchor (text-bbox-centre offset from the connection point): rot=0 draws the text
+ * horizontally (flip picks -x vs +x), rot=1 vertically (flip picks -y vs +y). (dx,dy) is one of
+ * the four cardinals from compute_pin_stub_geom. */
+static void lab_orient(double dx, double dy, short *rot, short *flip)
+{
+  if(dy == 0.0) { *rot = 0; *flip = (dx > 0.0) ? 1 : 0; }   /* horizontal: text along -x / +x */
+  else          { *rot = 1; *flip = (dy > 0.0) ? 1 : 0; }   /* vertical:   text along -y / +y */
+}
+
+/* B5: draw a wire stub out of every stub target (collect_pin_stub_targets) and drop a lab_pin
+ * net-label "flag" at the far end, oriented so its text reads outward (§4). All targets share one
+ * size S + stub length L (compute_pin_stub_sizing). The label net name is
+ * [instname_ if inst_prefix][prefix]<pinname>[suffix] (prefix/suffix may be "" ). ONE undo covers
+ * the whole operation. Returns the number of stubs added. See doc/claude/specs/wire_stub_netlabel.md. */
+int add_pin_stubs(const char *prefix, const char *suffix, int inst_prefix)
+{
+  Pin_stub_target *t = NULL;
+  Pin_stub_sizing sz;
+  char *lab_sym = NULL;
+  const char *lp;
+  char szbuf[64];
+  int nt, k, added = 0, first = 1;
+  if(!xctx || xctx->netlist_type == CAD_SYMBOL_ATTRS) return 0;
+  if(!prefix) prefix = "";
+  if(!suffix) suffix = "";
+  nt = collect_pin_stub_targets(&t);
+  if(nt <= 0) { my_free(_ALLOC_ID_, &t); return 0; }
+  if(!compute_pin_stub_sizing(t, nt, &sz)) { my_free(_ALLOC_ID_, &t); return 0; }
+  lp = tcleval("find_file_first lab_pin.sym");           /* copy before place_symbol's tcleval */
+  if(!lp || !lp[0]) { my_free(_ALLOC_ID_, &t); return 0; }
+  my_strdup(_ALLOC_ID_, &lab_sym, lp);
+  my_snprintf(szbuf, S(szbuf), "%g", sz.size);
+  xctx->push_undo();
+  for(k = 0; k < nt; ++k) {
+    Pin_stub_geom g;
+    xSymbol *sym;
+    const char *pinname, *instname;
+    char *netname = NULL, *prop = NULL;
+    short lrot, lflip;
+    int inst = t[k].inst, pin = t[k].pin;
+    if(!compute_pin_stub_geom(inst, pin, sz.stub_len, &g)) continue;
+    sym = xctx->sym + xctx->inst[inst].ptr;
+    /* net name pieces read BEFORE place_symbol (which may realloc xctx->sym via match_symbol) */
+    pinname = get_tok_value(sym->rect[PINLAYER][pin].prop_ptr, "name", 0);
+    instname = xctx->inst[inst].instname ? xctx->inst[inst].instname : "";
+    if(inst_prefix && instname[0]) my_mstrcat(_ALLOC_ID_, &netname, instname, "_", NULL);
+    my_mstrcat(_ALLOC_ID_, &netname, prefix, pinname, suffix, NULL); /* empty parts are skipped */
+    /* stub wire: pin (start) -> stub end */
+    storeobject(-1, g.x1, g.y1, g.x2, g.y2, WIRE, 0, 0, NULL);
+    /* lab_pin at the stub end, oriented so the text reads outward; unique name via uniquify */
+    lab_orient(g.dx, g.dy, &lrot, &lflip);
+    my_mstrcat(_ALLOC_ID_, &prop, "name=l0 lab=", netname ? netname : "", " text_size_0=", szbuf, NULL);
+    place_symbol(-1, lab_sym, g.x2, g.y2, lrot, lflip, prop, 0 /*draw*/, first /*first_call*/, 0 /*push_undo*/);
+    first = 0;
+    my_free(_ALLOC_ID_, &netname);
+    my_free(_ALLOC_ID_, &prop);
+    ++added;
+  }
+  my_free(_ALLOC_ID_, &t);
+  my_free(_ALLOC_ID_, &lab_sym);
+  /* one batch rebuild + redraw */
+  xctx->prep_hi_structs = 0;
+  xctx->prep_net_structs = 0;
+  xctx->prep_hash_wires = 0;
+  xctx->prep_hash_inst = 0;
+  if(added) { set_modify(1); draw(); }
+  return added;
 }
 
 /* [6] Fast global short-circuit for the per-frame draw_symbol pin-name pass: when the

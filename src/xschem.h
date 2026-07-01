@@ -1939,6 +1939,9 @@ extern int compute_pin_stub_sizing(const Pin_stub_target *t, int n, Pin_stub_siz
  * See actions.c compute_pin_stub_geom. */
 typedef struct { double x1, y1, x2, y2, dx, dy; } Pin_stub_geom;
 extern int compute_pin_stub_geom(int inst, int pin, double stub_len, Pin_stub_geom *out);
+/* B5 (wire-stubs): draw a wire stub + a lab_pin net-label out of every selection stub target;
+ * label net name = [instname_ if inst_prefix][prefix]<pinname>[suffix]. Returns stubs added. */
+extern int add_pin_stubs(const char *prefix, const char *suffix, int inst_prefix);
 extern int pin_names_all_off(void);
 extern void init_inst_iterator(Iterator_ctx *ctx, double x1, double y1, double x2, double y2);
 extern Instentry *inst_iterator_next(Iterator_ctx *ctx);

@@ -81,16 +81,19 @@ xschem wire 0 20 0 60
 xschem unselect_all ; xschem select instance x1
 same_targets "B2 wire THROUGH pin1 excludes it too" [xschem pin_stub_targets] {{0 2}}
 
-# individual pin selection WINS over connectivity + whole-instance:
+# individual pin selection restricts to those pins (pins WIN over a whole-instance selection);
+# an already-connected pin is SKIPPED even when explicitly selected (user decision 2026-07-01).
+xschem unselect_all ; xschem select pin x1 2
+same_targets "B2 selected UNCONNECTED pin -> stubbed" [xschem pin_stub_targets] {{0 2}}
 xschem unselect_all ; xschem select pin x1 0
-same_targets "B2 selected pin0 returned even though wired" [xschem pin_stub_targets] {{0 0}}
+same_targets "B2 selected but already-wired pin -> skipped" [xschem pin_stub_targets] {}
 xschem unselect_all ; xschem select pin x1 1 ; xschem select pin x1 2
-same_targets "B2 two pins selected -> exactly those" [xschem pin_stub_targets] {{0 1} {0 2}}
-# select a WIRED pin (pin0) + the whole instance: pins-win yields {0 0} (the selected pin),
-# whereas whole-instance mode would yield the UNCONNECTED set {0 2} -- so this discriminates.
+same_targets "B2 two pins selected, the wired one filtered out" [xschem pin_stub_targets] {{0 2}}
+# pins WIN over a co-selected whole instance (scope): selecting the WIRED pin0 + the instance
+# yields {} (only pin0 is considered, and it is wired), NOT the whole-instance set {0 2}.
 xschem unselect_all ; xschem select instance x1 ; xschem select pin x1 0
-same_targets "B2 wired pin + whole-instance -> only that pin (pins win, not the unconnected set)" \
-  [xschem pin_stub_targets] {{0 0}}
+same_targets "B2 wired pin0 + whole-instance -> {} (pins win; pin0 wired)" \
+  [xschem pin_stub_targets] {}
 
 # a SECOND instance: whole-instance mode enumerates only the selected instance's pins
 xschem instance $sym 100 0 0 0 {name=x2}
@@ -213,5 +216,89 @@ check "B4 bad pin -> empty"      [xschem pin_stub_geom 0 99 40] {}
 check "B4 missing args errors"   [catch {xschem pin_stub_geom 0 0}] 1
 
 file delete -force $wd4
+
+# ---------------------------------------------------------------------------
+# B5. Mutation: `xschem add_pin_stubs [-prefix s] [-suffix s] [-inst-prefix]`
+#     draws a wire stub + a lab_pin net-label out of each stub target, oriented
+#     so the text reads outward. One undo. Label = [instname_][prefix]pin[suffix].
+# ---------------------------------------------------------------------------
+set wd5 [file normalize ./wire_stub_work5]
+file delete -force $wd5 ; file mkdir $wd5
+set symc $wd5/cross.sym
+set fp [open $symc w]
+puts $fp "v {xschem version=3.4.8RC file_version=1.3}"
+puts $fp "G {}\nK {type=subcircuit}\nV {}\nS {}\nE {}"
+puts $fp "B 5 -22.5 -2.5 -17.5 2.5 {name=L dir=in show_pinname=true}"
+puts $fp "B 5 17.5 -2.5 22.5 2.5 {name=R dir=in show_pinname=true}"
+puts $fp "B 5 -2.5 -22.5 2.5 -17.5 {name=T dir=in show_pinname=true}"
+puts $fp "B 5 -2.5 17.5 2.5 22.5 {name=B dir=in show_pinname=true}"
+close $fp
+
+# sorted list of lab= over the lab_pins (all instances except the source at index 0)
+proc labels {} {
+  set out {}
+  for {set i 1} {$i < [xschem get instances]} {incr i} { lappend out [xschem getprop instance $i lab] }
+  return [lsort $out]
+}
+proc fresh {sym} {
+  xschem clear force
+  xschem instance $sym 100 100 0 0 {name=x1}
+  xschem unselect_all ; xschem select instance x1
+}
+
+fresh $symc
+set L [lindex [xschem pin_stub_sizing] 2]
+check "B5 whole instance -> 4 stubs" [xschem add_pin_stubs] 4
+check "B5 4 wires created"           [xschem get wires] 4
+check "B5 4 lab_pins placed"         [expr {[xschem get instances]-1}] 4
+check "B5 default net names = pin names" [labels] {B L R T}
+
+# every label's text extends OUTWARD from its stub end (flag in the wind): targets are processed
+# in pin order 0..3, so lab instances 1..4 correspond to pins 0..3. Use the B4 seam for the stub
+# end + outward dir, then check the placed lab_pin's bbox centre points outward from that end.
+set okdir 1
+for {set k 0} {$k < 4} {incr k} {
+  lassign [xschem pin_stub_geom 0 $k $L] px py ex ey dx dy
+  xschem unselect_all ; xschem select instance [expr {$k+1}]
+  lassign [xschem get bbox_selected] bx1 by1 bx2 by2
+  set cx [expr {($bx1+$bx2)/2.0}] ; set cy [expr {($by1+$by2)/2.0}]
+  if {($cx-$ex)*$dx + ($cy-$ey)*$dy <= 0} { set okdir 0 }
+}
+check "B5 every label reads outward (flag in the wind)" $okdir 1
+
+# ONE undo removes every wire + label
+xschem undo
+check "B5 one undo removes all stubs+labels" \
+  [list [xschem get wires] [xschem get instances]] {0 1}
+
+# naming options (default = pin name; prefix/suffix/inst-prefix combine)
+fresh $symc ; xschem add_pin_stubs -prefix pre_
+check "B5 -prefix"        [labels] {pre_B pre_L pre_R pre_T}
+fresh $symc ; xschem add_pin_stubs -suffix _s
+check "B5 -suffix"        [labels] {B_s L_s R_s T_s}
+fresh $symc ; xschem add_pin_stubs -inst-prefix
+check "B5 -inst-prefix"   [labels] {x1_B x1_L x1_R x1_T}
+fresh $symc ; xschem add_pin_stubs -inst-prefix -prefix p_ -suffix _s
+check "B5 combined"       [labels] {x1_p_B_s x1_p_L_s x1_p_R_s x1_p_T_s}
+
+# already-connected pins are skipped (wire the L pin at its abs coord (80,100))
+fresh $symc ; xschem unselect_all ; xschem wire 80 100 80 140
+xschem unselect_all ; xschem select instance x1
+check "B5 already-wired pin skipped -> 3 stubs" [xschem add_pin_stubs] 3
+check "B5 skipped label set (no L)"             [labels] {B R T}
+
+# selected-pins mode: only those pins
+fresh $symc ; xschem unselect_all ; xschem select pin x1 1 ; xschem select pin x1 3
+check "B5 selected pins -> 2 stubs" [xschem add_pin_stubs] 2
+check "B5 selected labels"          [labels] {B R}
+
+# nothing to do -> 0, no change
+fresh $symc ; xschem unselect_all
+check "B5 nothing selected -> 0"        [xschem add_pin_stubs] 0
+check "B5 no change when nothing to do" [list [xschem get wires] [expr {[xschem get instances]-1}]] {0 0}
+xschem clear force symbol
+check "B5 symbol-edit mode -> 0"        [xschem add_pin_stubs] 0
+
+file delete -force $wd5
 
 if {$nfail == 0} { puts "ALL PASS (wire_stub_netlabel)" } else { puts "$nfail FAILURES (wire_stub_netlabel)" }
