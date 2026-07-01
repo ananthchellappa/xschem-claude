@@ -423,7 +423,19 @@ static void find_closest_box(double mx ,double my, int override_lock)
    {
     tmp=dist_from_rect(mx, my, xctx->rect[c][i].x1, xctx->rect[c][i].y1,
                                   xctx->rect[c][i].x2, xctx->rect[c][i].y2);
-    if(tmp < d)
+    /* A symbol PIN is a tiny solid handle whose stub line crosses its centre at distance 0.
+     * dist_from_rect measures distance to the nearest EDGE, so a centre click scores the pin
+     * FARTHER than the line and the line wins. Treat a click anywhere INSIDE the pin body as
+     * distance 0, and let pins win distance TIES (<=) against the equidistant stub line found
+     * earlier in the cascade -- so clicking anywhere on the pin body grabs the PIN, needed for
+     * verb-noun copy/move and noun-verb pin selection (cadence_pin_name_text.md D-sel). The
+     * stub line stays selectable on the portion that lies outside the pin body. */
+    if(c == PINLAYER &&
+       POINTINSIDE(mx, my, xctx->rect[c][i].x1, xctx->rect[c][i].y1,
+                           xctx->rect[c][i].x2, xctx->rect[c][i].y2)) {
+      tmp = 0.0;
+    }
+    if(tmp < d || (c == PINLAYER && tmp <= d))
     {
      r = i; d = tmp;col = c;
     }

@@ -2074,6 +2074,15 @@ static int check_menu_start_commands(int state, double c_snap, int mx, int my)
     return 1;
   }
   else if((xctx->ui_state & MENUSTART) && (xctx->ui_state2 & MENUSTARTMOVE)) {
+    /* verb-noun (cadence_pin_name_text.md copy/move UX): 'm' on an empty selection arms
+     * MENUSTARTMOVE, so this click SELECTS the object under the cursor and picks it up in
+     * one gesture. With something already selected (Edit>Move menu path) the existing
+     * selection is moved and the click is just the pick-up point. */
+    rebuild_selected_array();
+    if(xctx->lastsel == 0) {
+      select_object(xctx->mousex, xctx->mousey, SELECTED, 0, NULL);
+      rebuild_selected_array();
+    }
     xctx->mx_double_save=xctx->mousex_snap;
     xctx->my_double_save=xctx->mousey_snap;
     /* stretch nets that land on selected instance pins if connect_by_kissing == 2 */
@@ -2082,6 +2091,13 @@ static int check_menu_start_commands(int state, double c_snap, int mx, int my)
     return 1;
   }
   else if((xctx->ui_state & MENUSTART) && (xctx->ui_state2 & MENUSTARTCOPY)) {
+    /* verb-noun mirror of MENUSTARTMOVE: 'c' on an empty selection selects the object
+     * under this click and starts the copy in one gesture (see comment above). */
+    rebuild_selected_array();
+    if(xctx->lastsel == 0) {
+      select_object(xctx->mousex, xctx->mousey, SELECTED, 0, NULL);
+      rebuild_selected_array();
+    }
     xctx->mx_double_save=xctx->mousex_snap;
     xctx->my_double_save=xctx->mousey_snap;
     copy_objects(START);
@@ -4064,7 +4080,11 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
           xctx->my_double_save=xctx->mousey_snap;
           copy_objects(START);
         } else {
-          statusmsg("Copy: select object(s) first, then press the copy key", 1);
+          /* verb-noun: arm copy mode so the NEXT canvas click selects the object under the
+           * cursor AND starts the copy in one gesture (check_menu_start_commands). */
+          xctx->ui_state |= MENUSTART;
+          xctx->ui_state2 = MENUSTARTCOPY;
+          statusmsg("Copy: click an object to copy it", 1);
         }
       }
       /* copy selection into clipboard */
@@ -4381,7 +4401,11 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
           xctx->my_double_save=xctx->mousey_snap;
           move_objects(START,0,0,0);
         } else {
-          statusmsg("Move: select object(s) first, then press the move key", 1);
+          /* verb-noun: arm move mode so the NEXT canvas click selects the object under the
+           * cursor AND starts the move in one gesture (check_menu_start_commands). */
+          xctx->ui_state |= MENUSTART;
+          xctx->ui_state2 = MENUSTARTMOVE;
+          statusmsg("Move: click an object to move it", 1);
         }
       }
       /* move selection stretching attached nets */
