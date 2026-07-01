@@ -347,4 +347,89 @@ check "B6 view.pan ships unbound" \
 # an unknown action id is rejected (guards against typos silently binding nothing)
 check "B6 unknown action id rejected" [catch {xschem bind key 96 0 canvas edit.nope}] 1
 
+# ---------------------------------------------------------------------------
+# B7. End-to-end + render polish. B3/B4 verified the sizing/geometry SEAMS in
+#     isolation; here we assert those actually flow through the B5 mutation:
+#     the stored stub wires and placed lab_pins land at the B4 geometry, and the
+#     labels carry the B3 MEDIAN size. Plus a headless render smoke that the
+#     labels really draw as text on the canvas (the "flag in the wind" GUI item).
+# ---------------------------------------------------------------------------
+set wd7 [file normalize ./wire_stub_work7]
+file delete -force $wd7 ; file mkdir $wd7
+
+# a 4-facing symbol (one pin per side), all pins unconnected
+set sym7 $wd7/cross.sym
+set fp [open $sym7 w]
+puts $fp "v {xschem version=3.4.8RC file_version=1.3}"
+puts $fp "G {}\nK {type=subcircuit}\nV {}\nS {}\nE {}"
+puts $fp "B 5 -22.5 -2.5 -17.5 2.5 {name=L dir=in show_pinname=true}"
+puts $fp "B 5 17.5 -2.5 22.5 2.5 {name=R dir=in show_pinname=true}"
+puts $fp "B 5 -2.5 -22.5 2.5 -17.5 {name=T dir=in show_pinname=true}"
+puts $fp "B 5 -2.5 17.5 2.5 22.5 {name=B dir=in show_pinname=true}"
+close $fp
+
+# pin_stub_geom uses %g, wire_coord uses dtoa -> compare VALUES, not strings
+proc coords_eq {got want} {
+  if {[llength $got] != [llength $want]} { return 0 }
+  foreach a $got b $want { if {abs($a-$b) > 1e-6} { return 0 } }
+  return 1
+}
+
+xschem clear force
+xschem instance $sym7 100 100 0 0 {name=x1}
+xschem unselect_all ; xschem select instance x1
+set L [lindex [xschem pin_stub_sizing] 2]
+# expected geometry per pin BEFORE mutating (compute_pin_stub_geom is connectivity-independent)
+set expgeom {}
+for {set k 0} {$k < 4} {incr k} { lappend expgeom [xschem pin_stub_geom 0 $k $L] }
+check "B7 end-to-end -> 4 stubs" [xschem add_pin_stubs] 4
+# targets are processed in pin order 0..3, so wire k and lab_pin (k+1) correspond to pin k
+set okw 1 ; set oki 1
+for {set k 0} {$k < 4} {incr k} {
+  lassign [lindex $expgeom $k] ex1 ey1 ex2 ey2 edx edy
+  if {![coords_eq [xschem wire_coord $k] [list $ex1 $ey1 $ex2 $ey2]]} { set okw 0 }
+  set ic [xschem instance_coord [expr {$k+1}]]
+  if {![coords_eq [list [lindex $ic 2] [lindex $ic 3]] [list $ex2 $ey2]]} { set oki 0 }
+}
+check "B7 each stub wire == B4 geometry"       $okw 1
+check "B7 each lab_pin placed at its stub end" $oki 1
+
+# median SIZE (B3) flows through to the placed labels' text_size_0 override
+set symm $wd7/mixed.sym
+set fp [open $symm w]
+puts $fp "v {xschem version=3.4.8RC file_version=1.3}"
+puts $fp "G {}\nK {type=subcircuit}\nV {}\nS {}\nE {}"
+puts $fp "B 5 -22.5 -2.5 -17.5 2.5 {name=A dir=in show_pinname=true name_size=0.15}"
+puts $fp "B 5 17.5 -2.5 22.5 2.5 {name=B dir=in show_pinname=true name_size=0.6}"
+puts $fp "B 5 -2.5 -22.5 2.5 -17.5 {name=C dir=in show_pinname=true name_size=0.3}"
+close $fp
+xschem clear force
+xschem instance $symm 100 100 0 0 {name=xm}
+xschem unselect_all ; xschem select instance xm
+check "B7 mixed-size instance -> 3 stubs" [xschem add_pin_stubs] 3
+# median(0.15,0.6,0.3)=0.3 -> every label carries text_size_0=0.3 (NOT min 0.15 / max 0.6 / mean 0.35)
+set sizes {}
+for {set i 1} {$i <= 3} {incr i} { lappend sizes [xschem getprop instance $i text_size_0] }
+check "B7 labels sized at the MEDIAN pin-name size" [lsort -unique $sizes] 0.3
+
+# GUI render smoke: the placed net-labels actually DRAW as text (text_svg emits the lab= value
+# as <text> content). Distinctive prefix so the count is not confused with the pins' own names.
+proc svgcount {f pat} {
+  set fp [open $f r] ; set d [read $fp] ; close $fp
+  set n 0 ; set i 0
+  while {[set i [string first $pat $d $i]] >= 0} { incr n ; incr i }
+  return $n
+}
+set ::text_svg 1
+xschem clear force
+xschem instance $sym7 100 100 0 0 {name=x1}
+xschem unselect_all ; xschem select instance x1
+xschem add_pin_stubs -prefix STUB_
+xschem unselect_all
+set svg $wd7/stubs.svg
+xschem print svg $svg 0 0
+check "B7 render smoke: 4 stub labels drawn (STUB_ x4)" [svgcount $svg STUB_] 4
+
+file delete -force $wd7
+
 if {$nfail == 0} { puts "ALL PASS (wire_stub_netlabel)" } else { puts "$nfail FAILURES (wire_stub_netlabel)" }

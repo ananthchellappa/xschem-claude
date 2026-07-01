@@ -1,9 +1,10 @@
 # Wire-stubs + auto net-labels on instance pins
 
-Status: **Thread A DONE; Thread B B1–B6 DONE** on branch `cadence-pin-name-text`
-(functional: `xschem add_pin_stubs`, SPACE key, Symbol-menu item). Only B7 (final
-test / GUI-smoke polish) remains. Written 2026-06-29 on branch `fluid-editing`.
-Author handoff doc: a future Claude Code session can pick up this thread from here.
+Status: **COMPLETE — Thread A DONE; Thread B B1–B7 DONE** on branch `cadence-pin-name-text`
+(functional: `xschem add_pin_stubs`, idle-gated SPACE key, Symbol-menu item; fully tested +
+GUI-smoke). Optional follow-ups only (propagate_hilights, attach_labels merge, when/mode
+binding-schema column). Written 2026-06-29 on branch `fluid-editing`. Author handoff doc: a
+future Claude Code session can pick up this thread from here.
 
 Related specs/notes:
 - `doc/claude/specs/pin_selection.md` — individual pin selection (the input layer this
@@ -476,6 +477,23 @@ scriptable `xschem add_pin_stubs [-prefix <s>] [-suffix <s>] [-inst-prefix]`.
   subcommand; assert N new wires + N lab_pin instances at expected coords/sizes; assert
   connected pins are skipped; assert pins-selected path processes only selected). GUI
   smoke for the "flag in the wind" orientation across the 4 facings + median sizing.
+  **DONE 2026-07-01.** Most of the count/skip/selected-mode assertions already landed in
+  B5; B7 closes the remaining END-TO-END gaps that tie the isolated B3/B4 seams to the real
+  B5 mutation output, plus a render smoke (all in `tests/wire_stub_netlabel.tcl`, now 73
+  checks total, headless): (1) each stored stub wire's coords == `pin_stub_geom` (B4) for
+  its pin, and each placed lab_pin sits exactly at that stub's far end (`wire_coord` /
+  `instance_coord`, compared numerically since `%g` vs `dtoa`); (2) a mixed-size instance
+  (pins 0.15/0.6/0.3) produces labels whose `text_size_0` == the MEDIAN 0.3 (not min/max/
+  mean) — proving B3's median flows through to the label; (3) a render smoke exporting SVG
+  (`text_svg=1`, `xschem print svg`) confirms all four net-labels actually DRAW as `<text>`
+  on the canvas (distinctive `-prefix STUB_` isolates them from the instance's own pin
+  names). SABOTAGE-verified: median→first flips the size check (0.15 not 0.3); shifting the
+  stored wire end by a grid step flips the coord check. Live-canvas render (real Tk,
+  DISPLAY) eyeballed: 4 stubs, labels render outward across all 4 facings (each net name
+  appears twice in the SVG = the pin name on the source instance + the stub's net-label).
+  DECLINED for B7 (documented at the review block above): the `propagate_hilights()` add +
+  the attach_labels_to_inst merge stay optional follow-ups (rare-scenario polish; a merge
+  risks regressing the well-tested feature). **Thread B COMPLETE (B1–B7).**
 
 ---
 
