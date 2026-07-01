@@ -1913,6 +1913,11 @@ extern void pin_views_reconcile_all(void);
 extern int pin_name_visible(const char *prop);
 extern void pin_names_sync_cache(void);
 extern int check_pin_names(char **result);
+/* pin name-label layout (offset/size/rot/flip) read from a pin's prop tokens by
+ * get_pin_name_layout(); shared by draw_symbol / svg_draw_symbol / ps_draw_symbol. */
+typedef struct { double dx, dy, size, rot, flip; } Pin_name_layout;
+extern int get_pin_name_layout(const char *prop, Pin_name_layout *lay, char **name, char **font);
+extern int pin_names_all_off(void);
 extern void init_inst_iterator(Iterator_ctx *ctx, double x1, double y1, double x2, double y2);
 extern Instentry *inst_iterator_next(Iterator_ctx *ctx);
 

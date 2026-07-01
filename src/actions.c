@@ -1094,6 +1094,35 @@ int pin_name_visible(const char *prop)
 
 static int pin_name_shown(xRect *p) { return pin_name_visible(p->prop_ptr); }
 
+/* [5] Shared reader for a pin's name-label layout + name/font, used by every render backend
+ * (draw_symbol / svg_draw_symbol / ps_draw_symbol) so the token set, the defaults
+ * (20/-5/0.2/0/0) and the "read name LAST because get_tok_value shares one static buffer"
+ * ordering live in ONE place and cannot drift between the screen/SVG/PS outputs. Fills *lay
+ * from the numeric tokens and copies the name into *name and, when present, the font into
+ * *font (caller frees both). Returns 0 -- and frees *font -- when the pin has no name (nothing
+ * to draw). pin_dtok's calls clobber get_tok_value's static buffer, so name/font are read (and
+ * copied) after all the numeric reads. */
+int get_pin_name_layout(const char *prop, Pin_name_layout *lay, char **name, char **font)
+{
+  const char *s;
+  lay->dx   = pin_dtok(prop, "name_dx",   20.0);
+  lay->dy   = pin_dtok(prop, "name_dy",   -5.0);
+  lay->size = pin_dtok(prop, "name_size", 0.2);
+  lay->rot  = pin_dtok(prop, "name_rot",  0.0);
+  lay->flip = pin_dtok(prop, "name_flip", 0.0);
+  if(font) { s = get_tok_value(prop, "name_font", 0); if(s[0]) my_strdup(_ALLOC_ID_, font, s); }
+  s = get_tok_value(prop, "name", 0);
+  if(!s[0]) { if(font) my_free(_ALLOC_ID_, font); return 0; }
+  my_strdup2(_ALLOC_ID_, name, s);
+  return 1;
+}
+
+/* [6] Fast global short-circuit for the per-frame draw_symbol pin-name pass: when the
+ * show_pin_names tri-state is OFF no owned pin can show, so the whole per-instance pin loop
+ * is skippable without a get_tok_value per pin. Reads the cached mode (pin_names_sync_cache
+ * runs once per draw()/export, before this is consulted). */
+int pin_names_all_off(void) { return pin_names_mode == PIN_NAMES_OFF; }
+
 /* index of the synthesized name view owned by pin id 'pin_id', or -1 if none */
 int pin_name_view_of(unsigned int pin_id)
 {
