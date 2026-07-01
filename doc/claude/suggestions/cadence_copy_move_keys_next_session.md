@@ -4,6 +4,18 @@ Paste this to resume. **First read:** memory `cadence-pin-name-text` (and `wire-
 and spec `doc/claude/specs/cadence_pin_name_text.md`. Branch **`cadence-pin-name-text`** (off
 `fluid-editing`).
 
+> **STATUS 2026-06-30: DONE + COMMITTED.** Noun-verb C/M committed `374bf826`; P4 committed
+> `d54e0e92`. **True verb-noun is now SOLVED** (user GUI-confirmed working). The "deltax==0 on
+> drop" theory below was a RED HERRING — new `xschem get deltax|x1|x2|...` getters proved the
+> gesture completes fine; the real bug was that a pin's stub LINE (SYMLAYER) sits at distance 0
+> through the pin centre and `find_closest_line` wins ties, so a centre click selected the LINE
+> not the pin. Fix: empty c/m arm MENUSTART (callback.c); check_menu_start_commands selects the
+> object under the click when nothing is selected; find_closest_box scores a click inside a
+> PINLAYER body as distance 0 and lets pins win ties. Test `tests/headless/
+> test_verb_noun_copy_move.tcl` (13 checks). Full write-up of the debugging saga:
+> `doc/claude/code_analysis/observable_debugging_tutorial.md`. The rest of this doc is the
+> historical resume note (kept for the root-cause archaeology).
+
 ## Where we are
 The Cadence-pin-owned-name-text feature is largely done and committed (P0–P3.6 `35cd449a…8c4ead6f`,
 P3.7 preview `81fa73d9`, review fixes `93a54f76`, D-sel/D-split/Apply `d1f1d53a`). On top of
