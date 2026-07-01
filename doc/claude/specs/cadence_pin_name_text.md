@@ -694,20 +694,37 @@ pin tokens, no separate persisted object.
   flip/font]`, `show_pinname=true`, drop the `T` — bound nearest so duplicate names split
   correctly + WARN); else **create** default `name_*` matching `create_pin` (in→`name_dx=25`;
   out/inout→`name_dx=-25 name_flip=1`) with `show_pinname=false` (hidden). Minimal-diff token
-  APPEND (untouched records byte-identical) + a per-file self-check (re-parse, pin-count
-  invariant) that aborts the write on mismatch. CLI: file/dir, `-r --dry-run --no-backup
-  --no-adopt --default-size --show-created --adopt-radius --exclude --report(JSON) -v`;
-  non-destructive (`.bak`) and idempotent (re-run = no-op). Tests: `test_migrate_pin_names.py`
-  (26 unit — scanner/escape/polygon, adopt/create/bus/dup/case-mismatch/@-skip/idempotency/
-  dry-run/backup/exclude/format-preservation; sabotage-verified) + headless
+  PREPEND (right after the props `{` — see the review fix below; untouched records byte-identical)
+  + a per-file self-check (re-parse, pin-count invariant, one `show_pinname` per touched pin) that
+  aborts the write on mismatch. CLI: file/dir, `-r --dry-run --no-backup --no-adopt --default-size
+  --show-created --adopt-radius --exclude --report(JSON) -v`; non-destructive (`.bak`) and
+  idempotent (re-run = no-op). Tests: `test_migrate_pin_names.py` (36 unit) + headless
   `tests/headless/test_migrate_pin_names.tcl` (12 — the migrated `.sym` LOADS in xschem, its
   tokens drive the synth views auto/on/off, and a schematic's SPICE netlist is **byte-identical**
   before/after migration; idempotent re-run leaves the file unchanged). Supervised dry-run over
-  the stock `xschem_library` (1712 `.sym`): **0 parse errors**, 1415 migrate / 297 skip, 523 pins
-  adopted / 19257 created hidden; a real-migrate of a 178-`.sym` subset then loaded + re-saved in
-  xschem with 0 failures. Docs: `tools/migrate/README_pin_names.md`. (The user's
-  `xschem_libraries_oa` run is a supervised operator step — the tool + `--dry-run`/`--report` are
-  ready.)
+  the stock `xschem_library` (1712 `.sym`): **0 parse errors**, 1415 migrate / 297 skip, ~521 pins
+  adopted / ~19259 created hidden; a real-migrate of a 1545-`.sym` subset (incl. gschem/viewdraw
+  imports) then loaded + re-saved in xschem with 0 failures. Docs: `tools/migrate/README_pin_names.md`.
+  (The user's `xschem_libraries_oa` run is a supervised operator step — the tool + `--dry-run`/
+  `--report` are ready.)
+  - **P8 high code-review (workflow, 2026-06-30) → fixes (commit pending):** the strengthened
+    self-check surfaced a real corruption the original commit would have written for
+    gschem/viewdraw-import symbols. **(1) empty-value swallow [CRITICAL]** — those pins end
+    `... dir=` (empty value); APPENDING `show_pinname=…` after it made xschem's tokenizer read the
+    first appended token as `dir`'s value (empty value takes the next token) → the pin was neither
+    owned nor correctly-directed. Fix: **prepend** tokens after the `{` so they precede any trailing
+    empty token; the self-check now verifies one `show_pinname` per touched pin (caught 4 real
+    library files). **(2)** binary-safe I/O — read/write `errors='surrogateescape', newline=''` so
+    a non-UTF8 byte or CRLF file round-trips byte-identically and the `.bak` is the original bytes
+    (was: text-mode rewrote CRLF + backed up the translated buffer, and a non-UTF8 byte aborted the
+    run with exit 1). **(3)** an unknown/embedded (`[...]`) record → **skip** not error, so a bulk
+    `-r` run doesn't fail its exit code. **(4)** `name_font` with whitespace is quoted. **(5)** empty
+    `dir=` → `inout` (matches create_pin side). **(6)** idempotency skips a pin with ANY `name_*`
+    token (not just `show_pinname`) → no duplicate tokens. **(7)+(8)** conservative adoption — adopt
+    ONLY a plain square label whose props are `⊆ {font}`; a non-square or styled (`layer=`/`hide=`)
+    label is left as a stray note (appearance preserved) and the pin gets a hidden created name.
+    (9) `--default-size` help documents matching `sym_pin_name_size`. Tests +10 (now 36 unit)
+    including the empty-`dir=` readability + CRLF/non-UTF8 `.bak`-verbatim cases.
 - **P9 — Thread B getter** `get_pin_name_size` reads `name_size`; unblock wire-stubs.
 
 ## 9. Test plan

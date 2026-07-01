@@ -52,7 +52,7 @@ set rc [catch {exec python3 $py --no-backup $mysym} out]
 check "migrate exit ok" $rc 0
 check "migrate created 2 hidden names" [expr {[regexp {2 created} $out] ? 1 : 0}] 1
 check "myres pin P now owned (token)" \
-  [expr {[regexp {name=P[^\n]*show_pinname=false} [slurp $mysym]] ? 1 : 0}] 1
+  [expr {[regexp {show_pinname=false[^\n]*name=P} [slurp $mysym]] ? 1 : 0}] 1
 
 # --- netlist AGAIN (AFTER migration) and compare ----------------------------
 xschem load $sch

@@ -229,6 +229,8 @@ def get_tok(props, tok):
                     i += 1
             else:
                 while i < n and not props[i].isspace():
+                    if props[i] == '\\' and i + 1 < n:   # unescape like get_tok_value
+                        i += 1
                     val.append(props[i])
                     i += 1
             if name == tok:
@@ -266,19 +268,70 @@ def _pin_info(rec):
     props = rec.fields[5].content
     found_name, name = get_tok(props, 'name')
     found_dir, direction = get_tok(props, 'dir')
-    has_show, _ = get_tok(props, 'show_pinname')
+    # "owned" == carries any pin-name token, not just show_pinname: a hand-authored or
+    # partially-migrated pin with a stray name_* must be skipped, not have a second set
+    # of tokens appended (which would leave contradictory duplicates in the prop).
+    has_owned = any(get_tok(props, t)[0] for t in
+                    ('show_pinname', 'name_dx', 'name_dy', 'name_size',
+                     'name_rot', 'name_flip', 'name_font'))
     return {
         'rec': rec,
         'cx': (x1 + x2) / 2.0,
         'cy': (y1 + y2) / 2.0,
         'name': name if found_name else '',
-        'dir': direction if found_dir else 'inout',
-        'has_show': has_show,
-        'cend': rec.fields[5].cend,   # insertion point (before the props '}')
+        # match create_pin: an absent OR empty dir defaults to inout (left-side name)
+        'dir': direction if (found_dir and direction) else 'inout',
+        'has_owned': has_owned,
+        # Insertion point = just AFTER the props '{' (prepend), NOT before the '}'. A pin
+        # prop may END with an empty-valued token (e.g. `dir=` in gschem/viewdraw imports);
+        # appending after it makes xschem's tokenizer read the first appended token as that
+        # token's value (get_tok_value: an empty value takes the next token). Prepending puts
+        # our tokens ahead of any such trailing empty token so they are always read whole.
+        'cstart': rec.fields[5].cstart,
     }
 
 
+def _prop_token_names(props):
+    """The set of token NAMES (the part before '=') present in a prop string."""
+    names = set()
+    i = 0
+    n = len(props)
+    while i < n:
+        while i < n and props[i].isspace():
+            i += 1
+        s = i
+        while i < n and not props[i].isspace() and props[i] != '=':
+            i += 1
+        if i > s:
+            names.add(props[s:i])
+        if i < n and props[i] == '=':          # consume the value (respecting quotes)
+            i += 1
+            while i < n and props[i].isspace():
+                i += 1
+            if i < n and props[i] == '"':
+                i += 1
+                while i < n and props[i] != '"':
+                    if props[i] == '\\' and i + 1 < n:
+                        i += 1
+                    i += 1
+                if i < n:
+                    i += 1
+            else:
+                while i < n and not props[i].isspace():
+                    i += 1
+    return names
+
+
 def _label_info(rec):
+    hsize = float(rec.fields[5].text)
+    vsize = float(rec.fields[6].text)
+    props = rec.fields[7].content
+    # Only adopt a PLAIN label: square scale + no props the name_* model cannot represent
+    # (the model carries size/offset/rot/flip/font only). A label on a custom layer, with
+    # hide=, a color/style, or a non-square scale is left untouched as a stray note so the
+    # symbol's appearance is preserved exactly; the pin then gets a hidden created name.
+    adoptable = (abs(hsize - vsize) <= 1e-9
+                 and _prop_token_names(props) <= {'font'})
     return {
         'rec': rec,
         'content': rec.fields[0].content,
@@ -286,9 +339,10 @@ def _label_info(rec):
         'ty': float(rec.fields[2].text),
         'rot': int(round(float(rec.fields[3].text))),
         'flip': int(round(float(rec.fields[4].text))),
-        'hsize': float(rec.fields[5].text),
-        'vsize': float(rec.fields[6].text),
-        'props': rec.fields[7].content,
+        'hsize': hsize,
+        'vsize': vsize,
+        'props': props,
+        'adoptable': adoptable,
         'adopted': False,
     }
 
@@ -306,9 +360,18 @@ def _create_tokens(pin, opts):
     return ' '.join(parts)
 
 
-def _adopt_tokens(pin, label, warnings):
-    """Fold a matched literal label's geometry into name_* tokens (offset relative to
-    the pin center; size/rot/flip/font from the label)."""
+def _tokval(name, value):
+    """A `name=value` token, quoting the value if it contains whitespace so a multi-word
+    value (e.g. a font 'Courier New') stays a single token that get_tok_value reads whole."""
+    if value and any(c.isspace() for c in value):
+        return '%s="%s"' % (name, value.replace('\\', '\\\\').replace('"', '\\"'))
+    return '%s=%s' % (name, value)
+
+
+def _adopt_tokens(pin, label):
+    """Fold a matched PLAIN literal label's geometry into name_* tokens (offset relative to
+    the pin center; size/rot/flip/font from the label). Only square, style-free labels reach
+    here (see _label_info.adoptable), so hsize==vsize and there are no props but font=."""
     dx = label['tx'] - pin['cx']
     dy = label['ty'] - pin['cy']
     parts = ['show_pinname=true', 'name_dx=' + fmt(dx), 'name_dy=' + fmt(dy),
@@ -319,18 +382,16 @@ def _adopt_tokens(pin, label, warnings):
         parts.append('name_flip=' + str(label['flip']))
     found_font, font = get_tok(label['props'], 'font')
     if found_font and font:
-        parts.append('name_font=' + font)
-    if abs(label['vsize'] - label['hsize']) > 1e-9:
-        warnings.append("pin '%s': label has non-square size %g x %g -> using %g"
-                        % (pin['name'], label['hsize'], label['vsize'], label['hsize']))
+        parts.append(_tokval('name_font', font))
     return ' '.join(parts)
 
 
 def _delete_line_edit(text, rec):
-    """An edit tuple that removes a whole record line (its trailing spaces + newline)."""
+    """An edit tuple that removes a whole record line (its trailing spaces + newline,
+    tolerating a CRLF '\\r\\n' line ending)."""
     j = rec.end
     n = len(text)
-    while j < n and text[j] in ' \t':
+    while j < n and text[j] in ' \t\r':
         j += 1
     if j < n and text[j] == '\n':
         j += 1
@@ -351,8 +412,10 @@ def migrate_text(text, opts, fname='<mem>'):
     try:
         recs = scan_records(text)
     except ParseError as e:
-        st['reason'] = 'parse error: %s' % e
-        st['status'] = 'error'
+        # an unknown/unsupported record (e.g. an LCC/embedded-symbol '[...]' block) or a
+        # malformed field: leave the file untouched and SKIP it -- not an error, so a bulk
+        # --recursive run does not fail its exit code over files it correctly declines.
+        st['reason'] = 'unparseable (left untouched): %s' % e
         return None, st
 
     ktype = None
@@ -377,10 +440,12 @@ def migrate_text(text, opts, fname='<mem>'):
         st['warnings'].append('duplicate pin names (bound to nearest label): '
                               + ', '.join(dups))
 
+    already_owned = 0
     edits = []
     for p in pins:
-        if p['has_show']:                          # already owned -> idempotent skip
+        if p['has_owned']:                         # already carries pin-name tokens -> skip
             st['skipped_pins'] += 1
+            already_owned += 1
             continue
         name = p['name']
         if not name or '@' in name:                # @-templated / empty -> leave legacy
@@ -393,7 +458,8 @@ def migrate_text(text, opts, fname='<mem>'):
             best = None
             bestd = None
             for L in labels:
-                if L['adopted'] or '@' in L['content'] or L['content'] != name:
+                if (L['adopted'] or not L['adoptable']
+                        or '@' in L['content'] or L['content'] != name):
                     continue
                 d = math.hypot(L['tx'] - p['cx'], L['ty'] - p['cy'])
                 if d <= opts.adopt_radius and (bestd is None or d < bestd):
@@ -401,15 +467,15 @@ def migrate_text(text, opts, fname='<mem>'):
             chosen = best
         if chosen is not None:
             chosen['adopted'] = True
-            toks = _adopt_tokens(p, chosen, st['warnings'])
-            edits.append((p['cend'], p['cend'], ' ' + toks))
+            toks = _adopt_tokens(p, chosen)
+            edits.append((p['cstart'], p['cstart'], toks + ' '))
             edits.append(_delete_line_edit(text, chosen['rec']))
             st['adopted'] += 1
             if opts.verbose:
                 st['warnings'].append("adopt '%s' <- label" % name)
         else:
             toks = _create_tokens(p, opts)
-            edits.append((p['cend'], p['cend'], ' ' + toks))
+            edits.append((p['cstart'], p['cstart'], toks + ' '))
             st['created'] += 1
             if opts.verbose:
                 st['warnings'].append("create '%s' (hidden)" % name)
@@ -420,8 +486,9 @@ def migrate_text(text, opts, fname='<mem>'):
 
     new_text = _apply_edits(text, edits)
 
-    # self-check: the result must still parse, keep the same pin count, and every
-    # eligible pin must now be owned with no adopted label left behind.
+    # self-check: the result must still parse, keep the same pin count, and carry exactly
+    # one show_pinname token per (already-owned + created + adopted) pin -- i.e. every pin
+    # we touched is now owned, with no token duplicated. Abort the write on any mismatch.
     try:
         vrecs = scan_records(new_text)
     except ParseError as e:
@@ -434,6 +501,22 @@ def migrate_text(text, opts, fname='<mem>'):
         st['reason'] = ('self-check pin-count mismatch (%d -> %d)'
                         % (len(pins), len(vpins)))
         return None, st
+    want_owned = already_owned + st['created'] + st['adopted']
+    got_owned = 0
+    for r in vpins:
+        props = r.fields[5].content
+        if get_tok(props, 'show_pinname')[0]:
+            got_owned += 1
+        # a created/adopted pin must not have ended up with duplicate name_size tokens
+        if props.count('name_size=') > 1 or props.count('show_pinname=') > 1:
+            st['status'] = 'error'
+            st['reason'] = 'self-check found duplicate name tokens'
+            return None, st
+    if got_owned != want_owned:
+        st['status'] = 'error'
+        st['reason'] = ('self-check show_pinname count %d != expected %d'
+                        % (got_owned, want_owned))
+        return None, st
 
     st['status'] = 'migrated'
     return new_text, st
@@ -443,13 +526,21 @@ def migrate_text(text, opts, fname='<mem>'):
 # file / tree driver
 # --------------------------------------------------------------------------- #
 
+# Byte-faithful text I/O: surrogateescape lets any non-UTF8 byte round-trip through a str
+# losslessly (xschem itself reads such files fine), and newline='' disables universal-newline
+# translation so a CRLF file's line endings are preserved -- both required for the
+# "untouched records byte-identical" / non-destructive (.bak) guarantees.
+_ENC = 'utf-8'
+_ERRS = 'surrogateescape'
+
+
 def migrate_file(path, opts, dry_run=False, backup=True):
     st = {'file': path, 'status': 'skip', 'reason': '', 'created': 0, 'adopted': 0,
           'skipped_pins': 0, 'warnings': []}
     try:
-        with open(path, 'r', encoding='utf-8') as fp:
+        with open(path, 'r', encoding=_ENC, errors=_ERRS, newline='') as fp:
             text = fp.read()
-    except (IOError, OSError, UnicodeDecodeError) as e:
+    except (IOError, OSError) as e:
         st['status'] = 'error'
         st['reason'] = 'read failed: %s' % e
         return st
@@ -461,11 +552,11 @@ def migrate_file(path, opts, dry_run=False, backup=True):
         st['status'] = 'would-migrate'
         return st
     try:
-        if backup:
-            with open(path + '.bak', 'w', encoding='utf-8') as fp:
+        if backup:                                       # back up the ORIGINAL bytes verbatim
+            with open(path + '.bak', 'w', encoding=_ENC, errors=_ERRS, newline='') as fp:
                 fp.write(text)
         tmp = path + '.tmp'
-        with open(tmp, 'w', encoding='utf-8') as fp:
+        with open(tmp, 'w', encoding=_ENC, errors=_ERRS, newline='') as fp:
             fp.write(new_text)
         os.replace(tmp, path)
     except (IOError, OSError) as e:
@@ -514,7 +605,9 @@ def main(argv=None):
     ap.add_argument('--no-adopt', dest='adopt', action='store_false',
                     help='never adopt existing literal labels; always create hidden names')
     ap.add_argument('--default-size', type=float, default=0.2,
-                    help='name_size for created (non-adopted) names (default 0.2)')
+                    help='name_size for created (non-adopted) names (default 0.2). Set this '
+                         'to your xschemrc sym_pin_name_size if you changed it, so migrated '
+                         'names match ones the editor creates.')
     ap.add_argument('--show-created', action='store_true',
                     help='make created (non-adopted) names visible (default: hidden)')
     ap.add_argument('--adopt-radius', type=float, default=100.0,

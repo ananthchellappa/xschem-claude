@@ -14,14 +14,6 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import migrate_pin_names as M
 
 
-HEADER = ("v {xschem version=3.4.8RC file_version=1.3}\n"
-          "G {}\n"
-          "K {type=subcircuit}\n"
-          "V {}\n"
-          "S {}\n"
-          "E {}\n")
-
-
 def sym(body, ktype='subcircuit'):
     head = ("v {xschem version=3.4.8RC file_version=1.3}\n"
             "G {}\n"
@@ -129,9 +121,12 @@ class TestCreate(unittest.TestCase):
         out, st = mig(body)
         self.assertEqual((st['created'], st['adopted']), (2, 0))
         # in-pin: dx=+25 no flip; out-pin: dx=-25 flip=1  (matches create_pin). Tokens are
-        # appended before the closing brace with a single separating space.
-        self.assertIn('name=IN dir=in show_pinname=false name_dx=25 name_dy=-5 name_size=0.2', out)
-        self.assertIn('name=OUT dir=out show_pinname=false name_dx=-25 name_dy=-5 name_size=0.2 name_flip=1', out)
+        # prepended (just after '{') so a trailing empty-valued token can't swallow them;
+        # name=/dir= are preserved unchanged.
+        self.assertIn('show_pinname=false name_dx=25 name_dy=-5 name_size=0.2', out)
+        self.assertIn('name=IN dir=in', out)
+        self.assertIn('show_pinname=false name_dx=-25 name_dy=-5 name_size=0.2 name_flip=1', out)
+        self.assertIn('name=OUT dir=out', out)
 
     def test_show_created_flag(self):
         out, st = mig("B 5 -2.5 -2.5 2.5 2.5 {name=A dir=in}\n", show_created=True)
@@ -265,6 +260,101 @@ class TestFormatting(unittest.TestCase):
         # every line that is not the edited pin must survive verbatim
         for line in ("L 4 -20 -10 20 50 {}", "A 4 0 0 5 0 360 {}", "T {a note} 5 5 0 0 0.2 0.2 {}"):
             self.assertIn(line, out)
+
+
+class TestReviewFixes(unittest.TestCase):
+    """Regressions for the high code-review findings on this tool."""
+
+    def test_multiword_font_quoted(self):   # [0]
+        body = ('B 5 -2.5 -2.5 2.5 2.5 {name=A dir=in}\n'
+                'T {A} 10 0 0 0 0.2 0.2 {font="Courier New"}\n')
+        out, st = mig(body)
+        self.assertEqual(st['adopted'], 1)
+        self.assertIn('name_font="Courier New"', out)
+        pin = [r for r in M.scan_records(out) if r.tag == 'B'][0]
+        self.assertEqual(M.get_tok(pin.fields[5].content, 'name_font'), (True, 'Courier New'))
+
+    def test_partial_migration_not_double_tokened(self):   # [1]
+        # a stray name_dx without show_pinname -> pin is already "owned", skip (no duplicate)
+        out, st = mig("B 5 -2.5 -2.5 2.5 2.5 {name=A dir=in name_dx=30}\n")
+        self.assertIsNone(out)
+        self.assertEqual(st['skipped_pins'], 1)
+
+    def test_empty_dir_defaults_inout(self):   # [3]
+        out, st = mig('B 5 -2.5 -2.5 2.5 2.5 {name=A dir=""}\n')
+        self.assertEqual(st['created'], 1)
+        self.assertIn('name_dx=-25', out)     # inout -> left side, matches create_pin
+        self.assertIn('name_flip=1', out)
+
+    def test_empty_dir_token_does_not_swallow_show_pinname(self):
+        # gschem/viewdraw imports have pins ending `... dir=`; tokens must be PREPENDED so the
+        # empty dir= value does not eat show_pinname (xschem's tokenizer takes the next token
+        # as an empty value's value). The strengthened self-check catches a regression here.
+        out, st = mig("B 5 29.9 -0.1 30.1 0.1 {name=NG dir=}\n")
+        self.assertEqual(st['status'], 'migrated')
+        self.assertEqual(st['created'], 1)
+        pin = [r for r in M.scan_records(out) if r.tag == 'B'][0]
+        props = pin.fields[5].content
+        self.assertEqual(M.get_tok(props, 'show_pinname'), (True, 'false'))
+        self.assertEqual(M.get_tok(props, 'dir'), (True, ''))     # dir preserved empty
+        self.assertEqual(M.get_tok(props, 'name'), (True, 'NG'))
+
+    def test_unknown_tag_skips_not_errors(self):   # [4]
+        out, st = M.migrate_text(
+            sym("Z 1 2 3\nB 5 -2.5 -2.5 2.5 2.5 {name=A dir=in}\n"), M.Opts())
+        self.assertIsNone(out)
+        self.assertEqual(st['status'], 'skip')
+        self.assertIn('unparseable', st['reason'])
+
+    def test_anisotropic_label_not_adopted(self):   # [7]
+        body = ("B 5 -2.5 -2.5 2.5 2.5 {name=A dir=in}\n"
+                "T {A} 10 0 0 0 0.3 0.15 {}\n")
+        out, st = mig(body)
+        self.assertEqual((st['adopted'], st['created']), (0, 1))
+        self.assertIn('T {A}', out)           # non-square label preserved verbatim
+
+    def test_styled_label_not_adopted(self):   # [8]
+        body = ("B 5 -2.5 -2.5 2.5 2.5 {name=A dir=in}\n"
+                "T {A} 10 0 0 0 0.2 0.2 {layer=6 hide=instance}\n")
+        out, st = mig(body)
+        self.assertEqual((st['adopted'], st['created']), (0, 1))
+        self.assertIn('layer=6 hide=instance', out)   # styled label kept as a stray note
+
+    def test_font_only_label_is_adopted(self):
+        body = ("B 5 -2.5 -2.5 2.5 2.5 {name=A dir=in}\n"
+                "T {A} 10 0 0 0 0.2 0.2 {font=Sans}\n")
+        _out, st = mig(body)
+        self.assertEqual(st['adopted'], 1)    # font-only + square IS adoptable
+
+    def test_crlf_and_non_utf8_byte_preserved(self):   # [2][5]
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, 'a.sym')
+            raw = (b"v {xschem version=3.4.8RC file_version=1.3}\r\n"
+                   b"G {author \xb0C}\r\n"          # 0xB0: a lone non-UTF8 byte
+                   b"K {type=subcircuit}\r\n"
+                   b"V {}\r\nS {}\r\nE {}\r\n"
+                   b"B 5 -2.5 -2.5 2.5 2.5 {name=A dir=in}\r\n")
+            with open(p, 'wb') as fp:
+                fp.write(raw)
+            st = M.migrate_file(p, M.Opts())
+            self.assertEqual(st['status'], 'migrated')
+            with open(p, 'rb') as fp:
+                got = fp.read()
+            self.assertIn(b'\r\n', got)                 # CRLF line endings preserved
+            self.assertIn(b'\xb0', got)                 # non-UTF8 byte round-tripped
+            self.assertIn(b'show_pinname=false', got)   # the pin was migrated
+            self.assertNotIn(b'\r\r', got)              # no doubled CR from the edit
+            with open(p + '.bak', 'rb') as fp:
+                self.assertEqual(fp.read(), raw)        # .bak is the ORIGINAL bytes verbatim
+
+    def test_bulk_run_exit_zero_with_unparseable(self):   # [4] end-to-end
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, 'ok.sym'), 'w') as fp:
+                fp.write(sym("B 5 -2.5 -2.5 2.5 2.5 {name=A dir=in}\n"))
+            with open(os.path.join(d, 'weird.sym'), 'w') as fp:
+                fp.write(sym("Z 1 2 3\n"))              # unknown tag -> skip, not error
+            rc = M.main(['-r', '--dry-run', d])
+            self.assertEqual(rc, 0)
 
 
 if __name__ == '__main__':
