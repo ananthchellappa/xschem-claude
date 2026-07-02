@@ -641,15 +641,19 @@ void saveas(const char *f, int type) /*  changed name from ask_save_file to save
     char *p;
     if(!f && has_x) {
       my_strncpy(filename , xctx->sch[xctx->currsch], S(filename));
+      /* Library/Cell/View Save-As form (doc/claude/specs/save_as_cellview.md): returns
+       * the chosen <cell>.<ext> datafile path (dir already created), or "" to abort; its
+       * Legacy button falls back to the old save_file_dialog. One hook covers every
+       * Save/Save-As chooser -- they all funnel through saveas(NULL, type). save_schematic
+       * below then rebinds identity exactly as it did for the old dialog's path. */
       if(type == SYMBOL) {
         if( (p = strrchr(filename, '.')) && !strcmp(p, ".sch") ) {
           my_strncpy(filename, add_ext(filename, ".sym"), S(filename));
         }
-        my_snprintf(name, S(name), "save_file_dialog {Save file} * INITIALLOADDIR {%s}", filename);
+        my_snprintf(name, S(name), "save_as_cellview_dialog {%s} symbol", filename);
       } else {
-        my_snprintf(name, S(name), "save_file_dialog {Save file} * INITIALLOADDIR {%s}", filename);
+        my_snprintf(name, S(name), "save_as_cellview_dialog {%s} schematic", filename);
       }
-
       tcleval(name);
       my_strncpy(res, tclresult(), S(res));
     }

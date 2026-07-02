@@ -13276,6 +13276,8 @@ source $XSCHEM_SHAREDIR/library_git.tcl
 source $XSCHEM_SHAREDIR/library_manager.tcl
 # Create Instance browser (Cadence-style Add Instance; doc/claude/specs/cadence_create_instance.md)
 source $XSCHEM_SHAREDIR/create_instance.tcl
+# Library/Cell/View Save-As form (doc/claude/specs/save_as_cellview.md)
+source $XSCHEM_SHAREDIR/save_as_form.tcl
 # Slick per-field "Edit Properties" form (replaces the legacy raw-text dialog)
 source $XSCHEM_SHAREDIR/property_form.tcl
 # Replay keybindings.csv / mousebindings.csv (share-dir defaults, then the user's

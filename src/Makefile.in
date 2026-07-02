@@ -19,6 +19,7 @@ put /local/install_shares {
  place_sym_pins.tcl place_pins.tcl make_sch_from_spice.awk make_sym_from_spice.awk
  action_registry.tcl actions.csv keybindings.csv mousebindings.csv ciw.tcl
  property_form.tcl library_defs.tcl library_git.tcl library_manager.tcl xschem_subcommands.txt
+ create_instance.tcl save_as_form.tcl
 }
 
 # generate a list of objects from the list of source files
