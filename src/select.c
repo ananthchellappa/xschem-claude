@@ -530,6 +530,10 @@ void delete(int to_push_undo)
   #endif
 
   dbg(3, "delete(): start\n");
+  /* read-only backstop (issue 0041): refuse a genuine user delete below the entry
+   * guards. Gated on to_push_undo -- internal/undo-free cleanups (delete(0), e.g. the
+   * transient pin-name preview) are not user edits and must still run. */
+  if(to_push_undo && begin_edit("delete")) return;
   j = 0;
   rebuild_selected_array();
   /* pins are inert (pin_selection.md D1): a pins-only selection (only INST_PIN

@@ -1,7 +1,7 @@
 # Issue 0041 — Read-only enforcement lives at keyboard-dispatch altitude and is bypassable via Tcl edit paths
 
 **Opened:** 2026-06-26
-**Status:** 🚧 PARTIALLY FIXED 2026-07-02 (Tcl command surface closed; branch `fluid-editing`, uncommitted). Triaged 2026-07-01: was STILL PRESENT. Real severity **MEDIUM-HIGH** (keyboard/menu paths *are* guarded; exposure is Tcl scripts / command-server / unlisted action-ids, aggravated by the silent no-`*` save via `set_modify()` `ro_suppress` at `actions.c:170-174`). **Priority P1 — pragmatic fix only.** ⚠ The §3 fix-sketch is partly **WRONG**: gating the `store` funnels or `push_undo()` on `xctx->readonly` would break *loading* the read-only file itself (load routes through the store funnels) and break *netlisting* a read-only view (all six backends call `push_undo`). Do the **S–M** fix instead: add `if(xctx->readonly){ciw_echo(...);return;}` to the ~6 unguarded edit subcommands in `scheduler.c` (delete/paste/rotate/flip/move_objects/copy_objects) or their shared cores. A true chokepoint needs a new `begin_edit()` helper threaded only through genuine edit ops (**L**).
+**Status:** ✅ FIXED 2026-07-02 (branch `fluid-editing`) — layered enforcement: keyboard/menu `readonly_block()` + 29 `scheduler_readonly_reject()` Tcl-subcommand guards + action-registry `mutates` flag + `begin_edit()` core backstops (delete/move/copy). A universal store/`push_undo` funnel is infeasible (load/undo-restore/netlist-flatten share it), so the hybrid is the final design. Triaged 2026-07-01: was STILL PRESENT. Real severity **MEDIUM-HIGH** (keyboard/menu paths *are* guarded; exposure is Tcl scripts / command-server / unlisted action-ids, aggravated by the silent no-`*` save via `set_modify()` `ro_suppress` at `actions.c:170-174`). **Priority P1 — pragmatic fix only.** ⚠ The §3 fix-sketch is partly **WRONG**: gating the `store` funnels or `push_undo()` on `xctx->readonly` would break *loading* the read-only file itself (load routes through the store funnels) and break *netlisting* a read-only view (all six backends call `push_undo`). Do the **S–M** fix instead: add `if(xctx->readonly){ciw_echo(...);return;}` to the ~6 unguarded edit subcommands in `scheduler.c` (delete/paste/rotate/flip/move_objects/copy_objects) or their shared cores. A true chokepoint needs a new `begin_edit()` helper threaded only through genuine edit ops (**L**).
 **Severity:** HIGH — protection bypass / data integrity; a file-protected schematic can be mutated and
 saved with no modified marker.
 **Branch:** `fluid-editing`.
@@ -83,9 +83,34 @@ needs X): the C-backed mutators `prop.toggle_ignore` (Shift+T) and `sym.attach_n
 mutate a writable buffer (control) but are refused on read-only, while a non-mutating action (zoom)
 still runs.
 
-**Remaining (issue kept open):**
-- The single architectural chokepoint (a `begin_edit()` helper threaded only through genuine edit ops)
-  remains the **L**-effort follow-up; the current guards make that a robustness refactor, not a
-  functional gap.
+**Also done (2026-07-02, follow-up commit) — `begin_edit()` core backstops.** Added the canonical
+read-only gate `begin_edit(op)` (`actions.c`, declared in `xschem.h`): returns 1 (refuse, with one
+dbg/CIW notice) on a read-only buffer, else 0. Woven into the genuine-edit CORES below the entry
+guards, so those operations are refused by construction on ANY path that reaches the core, not only the
+ones with an entry guard:
+- `delete()` (`select.c`) — gated on `to_push_undo` so internal/undo-free cleanups (`delete(0)`, e.g.
+  the transient pin-name preview) still run;
+- `move_objects()` / `copy_objects()` START (`move.c`) — placed alongside the existing `lastsel==0`
+  early return, so a refused START leaves the same clean state (a follow-on END is a no-op).
+
+Why not the "universal store/`push_undo` funnel" from §3: that is **architecturally infeasible here** —
+`storeobject`/the store funnels and `push_undo()` also run during load, undo-restore (`pop_undo` →
+`read_xschem_file`) and netlist-flatten (all five backends bracket flatten with push/pop on a possibly
+read-only view), and there is no single reliable "internal vs user edit" flag at that level
+(`no_autosave` covers load but not `pop_undo`/netlist). So enforcement is a **hybrid**: entry-point
+guards + core backstops on the geometric-mutation cores; object creation and property edits stay
+entry-guarded (their funnels are load-shared). `begin_edit()` is the one primitive to extend for future
+enforcement (locked layers, VCS checkout, …).
+
+Verified by **fault injection**: with the scheduler `delete`/`move_objects` entry guards temporarily
+removed and rebuilt, the `begin_edit()` core backstops still refuse the edit on read-only (delete: 16
+instances unchanged; move: `modified` stays 0, no crash from the START-bails/END-runs path), while a
+writable delete still mutates (16→0). Headless 29-subcommand test, GUI action-dispatch test, and the
+core regression suite all remain green.
+
+**Enforcement layers now in place (issue resolved):** (1) keyboard/menu `readonly_block()`;
+(2) 29 `scheduler_readonly_reject()` Tcl-subcommand guards; (3) action-registry `mutates` flag;
+(4) `begin_edit()` core backstops on delete/move/copy. A universal single funnel is infeasible by the
+load/netlist sharing above, so the hybrid is the accepted final design rather than an open gap.
 - `set_modify()`'s `ro_suppress` is now correct-by-construction (edits can no longer reach it on a
   read-only buffer via any Tcl path); left as defense-in-depth.

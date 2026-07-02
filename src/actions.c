@@ -141,6 +141,25 @@ const char *get_text_floater(int i)
   return txt_ptr;
 }
 
+/* Canonical read-only edit gate (issue 0041). Returns 1 -- refusing the edit, with a
+ * single dbg/CIW notice -- when the current buffer is read-only, else 0. Woven into the
+ * genuine-edit CORES (delete(), move_objects()/copy_objects() START) as a backstop BELOW
+ * the scattered entry-point guards (readonly_block() for keyboard/menu, the 29
+ * scheduler_readonly_reject() subcommand guards, the action-registry `mutates` flag), so
+ * a mutation reaching a guarded core is refused by construction on ANY path -- the entry
+ * guards become the fast-path UX, not the sole defense. Deliberately NOT applied at the
+ * store/push_undo funnels: those also run during load / undo-restore / netlist-flatten,
+ * which must not be blocked (there is no reliable "internal vs user edit" flag at that
+ * level -- see doc/claude/issues/0041). `op` names the operation for the notice. */
+int begin_edit(const char *op)
+{
+  if(!xctx || !xctx->readonly) return 0;
+  dbg(1, "begin_edit(): read-only buffer, refused: %s\n", op ? op : "edit");
+  if(has_x) tclvareval("if {[info procs ciw_echo] ne {}} {ciw_echo {read-only: ",
+                       op ? op : "edit", " ignored}}", NULL);
+  return 1;
+}
+
 /* mod:
  *   0 : clear modified flag, update title and tab names, upd. simulation button colors.
  *   1 : set modified flag, update title and tab names, upd. simulation button colors, rst floater caches.

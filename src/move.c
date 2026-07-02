@@ -650,6 +650,10 @@ void copy_objects(int what)
    xctx->rotatelocal=0;
    dbg(1, "copy_objects(): START copy\n");
    rebuild_selected_array();
+   /* read-only backstop (issue 0041): refuse to begin a copy-place below the entry
+    * guards; placed with the lastsel==0 early return so a refused START leaves the same
+    * clean state (see move_objects START). */
+   if(begin_edit("copy")) return;
    if(xctx->lastsel==0) return;
    update_symbol_bboxes(0, 0);
    if(xctx->connect_by_kissing == 2) xctx->kissing = connect_by_kissing();
@@ -1539,6 +1543,12 @@ void move_objects(int what, int merge, double dx, double dy)
    xctx->rotatelocal=0;
    xctx->deltax = xctx->deltay = 0.0;
    rebuild_selected_array();
+   /* read-only backstop (issue 0041): refuse to begin a move below the entry guards.
+    * Placed alongside the lastsel==0 early return so a refused START leaves the same
+    * clean state an empty-selection START does (deltas zeroed, selection rebuilt), which
+    * keeps a follow-on END (the scheduler calls START then END) a no-op. ABORT/RUBBER/END
+    * of an already-started gesture are left alone (none can start on a read-only buffer). */
+   if(begin_edit("move")) return;
    if(xctx->lastsel==0) return;
    update_symbol_bboxes(0, 0);
    /* if connect_by_kissing==2 it was set in callback.c ('M' command) */

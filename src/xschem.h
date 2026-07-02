@@ -1507,6 +1507,7 @@ extern void set_snap(double);
 extern void set_grid(double);
 extern void create_plot_cmd(void);
 extern int set_modify(int mod); /* return number of floaters */
+extern int begin_edit(const char *op); /* read-only edit gate: 1 = refuse (issue 0041) */
 extern int file_writable(const char *name); /* 1 if path is writable (or check unsupported) */
 extern int there_are_floaters(void);
 #include "util.h" /* memory/string/file/debug utilities (extracted from editprop.c) */
