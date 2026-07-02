@@ -1394,8 +1394,12 @@ static void remove_move_orphan_wires(void)
     /* ... and that pin must be redundantly served by another wire, else the stub is
      * the sole link to the pin and must stay */
     if(!point_on_other_wire(kx, ky, i)) continue;
+    /* never auto-drop a wire that carries its own net name (lab=...): the moved pin stays
+     * connected via the other wire, but deleting this stub would silently rename/lose the
+     * node it labels (issue 0040). Only anonymous redundant stubs are removable. */
+    if(get_tok_value(xctx->wire[i].prop_ptr, "lab", 0)[0]) continue;
     doomed[i] = 1;
-    removed = 1;
+    removed++;
   }
   if(removed) {
     wire_delete_compact(wire_doomed_flag, doomed);
@@ -1404,6 +1408,14 @@ static void remove_move_orphan_wires(void)
     xctx->prep_hi_structs = 0;
     xctx->need_reb_sel_arr = 1;
     set_modify(1);
+    /* the trim is otherwise invisible -- tell the user a redundant wire was auto-removed
+     * so a post-move connectivity change is never silent (issue 0040) */
+    if(has_x) {
+      char msg[80];
+      my_snprintf(msg, S(msg), "auto-removed %d redundant wire%s after move",
+                  removed, removed == 1 ? "" : "s");
+      tclvareval("if {[info procs ciw_echo] ne {}} {ciw_echo {", msg, "}}", NULL);
+    }
   }
   my_free(_ALLOC_ID_, &doomed);
 }
@@ -1443,6 +1455,8 @@ static void insert_exit_stubs(void)
 {
   int inst, r, rects, n, m;
   double grid = tclgetdoublevar("cadsnap");
+  int nwires0 = xctx->wires;   /* snapshot: stubs stored below (index >= nwires0) must NOT re-enter
+                                * the pin/corner scans of later pins/instances (issue 0047) */
   if(grid <= 0.0) grid = 1.0;
   for(inst = 0; inst < xctx->instances; inst++) {
     double bx1, by1, bx2, by2, cx, cy;
@@ -1461,7 +1475,7 @@ static void insert_exit_stubs(void)
       if(fabs(ddx) >= fabs(ddy)) { nx = (ddx > 0) ? 1.0 : -1.0; ny = 0.0; }
       else                       { nx = 0.0; ny = (ddy > 0) ? 1.0 : -1.0; }
       /* exactly one wire endpoint exactly on the pin = the route's first leg */
-      for(n = 0; n < xctx->wires; n++) {
+      for(n = 0; n < nwires0; n++) {
         if(xctx->wire[n].x1 == px && xctx->wire[n].y1 == py)      { cnt++; wfound = n; endsel = 1; }
         else if(xctx->wire[n].x2 == px && xctx->wire[n].y2 == py) { cnt++; wfound = n; endsel = 2; }
       }
@@ -1477,7 +1491,7 @@ static void insert_exit_stubs(void)
       /* never pull the far end off a fixed (non-moving) pin -> would disconnect it */
       if(point_on_fixed_pin(fx, fy)) continue;
       /* require a real corner/route at the far end (another wire endpoint there) */
-      for(m = 0; m < xctx->wires; m++) {
+      for(m = 0; m < nwires0; m++) {
         if(m == n) continue;
         if((xctx->wire[m].x1 == fx && xctx->wire[m].y1 == fy) ||
            (xctx->wire[m].x2 == fx && xctx->wire[m].y2 == fy)) { has_corner = 1; break; }
@@ -1487,7 +1501,7 @@ static void insert_exit_stubs(void)
       /* slide the first leg one grid out along the normal; drag the corner with it */
       sx  = px + grid * nx; sy  = py + grid * ny;   /* stub tip = leg's new pin end  */
       nfx = fx + grid * nx; nfy = fy + grid * ny;   /* leg's new far (corner) end     */
-      for(m = 0; m < xctx->wires; m++) {            /* drag every neighbour at the corner */
+      for(m = 0; m < nwires0; m++) {                /* drag every neighbour at the corner */
         if(m == n) continue;
         if(xctx->wire[m].x1 == fx && xctx->wire[m].y1 == fy) { xctx->wire[m].x1 = nfx; xctx->wire[m].y1 = nfy; }
         if(xctx->wire[m].x2 == fx && xctx->wire[m].y2 == fy) { xctx->wire[m].x2 = nfx; xctx->wire[m].y2 = nfy; }

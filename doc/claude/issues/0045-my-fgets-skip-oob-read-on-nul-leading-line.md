@@ -1,7 +1,7 @@
 # Issue 0045 — `my_fgets_skip()` out-of-bounds read `buf[-1]` on a NUL-leading line
 
 **Opened:** 2026-06-26
-**Status:** OPEN
+**Status:** ✅ FIXED 2026-07-02 (implemented on branch `fluid-editing`, uncommitted). Triaged 2026-07-01: was STILL PRESENT (`src/util.c:103-105`). Confirmed **LOW** (1-byte stack OOB read, only on a NUL-leading line in corrupt/hostile input; `.sch/.sym` are text). **Priority P1 (trivial, S, zero-risk).** ⚠ The sibling `my_fgets()` at `src/util.c:120-122` has the IDENTICAL unguarded `buf[len-1]` read — fix BOTH with `if(len>0 && buf[len-1]=='\n')`.
 **Severity:** LOW — out-of-bounds read; typically benign, but can mis-count skipped lines on hostile/
 corrupt input (and is UB).
 **Branch:** `fluid-editing`.
@@ -28,3 +28,11 @@ Guard the access: `if(len > 0 && buf[len-1] == '\n') ...`. Add a unit test feedi
 ## 4. Acceptance
 
 `my_fgets_skip()` never reads `buf[-1]`; a NUL-leading line is handled without an OOB access.
+
+## Resolution (2026-07-02)
+
+Guarded both `my_fgets_skip()` (`src/util.c:105`) **and** its sibling `my_fgets()` (`src/util.c:122`)
+— the finding named only the former, but both had the identical unguarded read. Both now use
+`if(len > 0 && buf[len - 1] == '\n') break;`. Zero behavioral change on normal lines; only the
+`len==0` path (the bug itself) is affected. Builds clean; core regression suite (create_save /
+open_close / netlisting) green.

@@ -102,7 +102,7 @@ size_t my_fgets_skip(FILE *fd)
   while(fgets(buf, SIZE, fd)) {
     len = strlen(buf);
     line_len += len;
-    if(buf[len - 1] == '\n') break;
+    if(len > 0 && buf[len - 1] == '\n') break;   /* guard len==0 (NUL-leading line) -> buf[-1] OOB */
   }
   return line_len;
 }
@@ -119,7 +119,7 @@ char *my_fgets(FILE *fd, size_t *line_len)
     my_strcat(_ALLOC_ID_, &s, buf);
     len = strlen(buf);
     if(line_len) *line_len += len;
-    if(buf[len - 1] == '\n') break;
+    if(len > 0 && buf[len - 1] == '\n') break;   /* guard len==0 (NUL-leading line) -> buf[-1] OOB */
   }
   return s;
 }

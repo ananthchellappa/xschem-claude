@@ -1,7 +1,7 @@
 # Issue 0047 — `insert_exit_stubs()` stores wires mid-scan, so freshly inserted stubs re-enter later pin scans
 
 **Opened:** 2026-06-26
-**Status:** OPEN
+**Status:** ✅ FIXED 2026-07-02 (implemented on branch `fluid-editing`, uncommitted). Triaged 2026-07-01: was STILL PRESENT (`move.c:1442-1506`; inner scans use live `xctx->wires`, `storeobject` bumps it at `store.c:344/371`). Geometry-gated AND behind the default-OFF `wire_exit_stub` flag, so no user hits it today. Real severity **MEDIUM**, low urgency. **Priority P3.** Fix **S**: snapshot `int nwires0=xctx->wires;` before the loops and bound the three inner scans (`:1464/:1480/:1490`) by it, or defer stub insertion to a second pass.
 **Severity:** MEDIUM (verifier verdict: **PLAUSIBLE**) — only with `wire_exit_stub` enabled, on
 multi-pin component moves.
 **Branch:** `fluid-editing`.
@@ -37,3 +37,14 @@ in a temp list, then `storeobject()` them). Add a regression: moving a multi-pin
 
 A multi-pin move with exit-stubs enabled inserts exactly the intended stubs; previously-inserted stubs do
 not perturb later pins' corner/attachment detection.
+
+## Resolution (2026-07-02)
+
+`insert_exit_stubs()` (`src/move.c`) now snapshots `int nwires0 = xctx->wires;` at entry and bounds all
+three inner scans (pin-endpoint count, corner detection, corner-neighbour drag) by `nwires0` instead of
+the live `xctx->wires`. Stubs appended via `storeobject()` land at index >= `nwires0`, so they can no
+longer re-enter a later pin's / instance's scans. Still behind the default-OFF `wire_exit_stub` flag.
+Builds clean; core regression suite green.
+
+Test coverage TODO (from acceptance): a scripted multi-pin move with `wire_exit_stub` on, asserting
+exactly one stub per exiting pin.
