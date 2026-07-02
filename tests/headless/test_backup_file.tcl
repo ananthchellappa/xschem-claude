@@ -8,7 +8,7 @@
 # - the ~ content matches a normal save of the same buffer,
 # - remove deletes it,
 # - autosave_backup=0 suppresses writing,
-# - an untitled buffer (no real on-disk file) is skipped.
+# - an untitled buffer (no on-disk file yet) IS backed up too (issue 0060 -- descend needs it).
 #
 # Run: src/xschem --nogui --pipe -q --nolog --script tests/headless/test_backup_file.tcl
 
@@ -59,12 +59,16 @@ xschem backup write
 ck "autosave_backup=0 suppresses the write" [expr {![file exists $bak]}]
 set autosave_backup 1
 
-# untitled buffer (no real on-disk file) is skipped
+# untitled buffer (no real on-disk file) IS backed up too (issue 0060): descend relies on
+# the ~ backup to restore an unsaved top level, so write_backup must not skip a never-saved
+# buffer -- skipping it lost the whole top level on descend+ascend from a new/pasted canvas.
 xschem clear force
+xschem instance $fixdir/descend_child.sym 0 0 0 0 {name=x1}   ;# give the untitled buffer content
 set ubak [xschem backup name]
 file delete -force $ubak
 xschem backup write
-ck "untitled buffer is skipped (no ~ written)" [expr {![file exists $ubak]}]
+ck "untitled buffer IS backed up (issue 0060)" [file exists $ubak]
+file delete -force $ubak   ;# don't leave untitled~.sch in the run cwd
 
 puts [expr {$::f == 0 ? "RESULT: ALL PASS" : "RESULT: $::f FAILED"}]
 exit [expr {$::f != 0}]

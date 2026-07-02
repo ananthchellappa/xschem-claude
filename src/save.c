@@ -3472,14 +3472,16 @@ void write_backup(void)
 {
   char bak[PATH_MAX];
   FILE *fd;
-  struct stat buf;
   const char *name;
 
   if(xctx->no_autosave) return; /* e.g. during load: not a user edit */
   if(!tclgetboolvar("autosave_backup")) return;
   name = xctx->sch[xctx->currsch];
   if(!name || !name[0]) return;
-  if(stat(name, &buf)) return; /* no real on-disk file (untitled): nothing to back up */
+  /* Back up even when 'name' has no on-disk file yet (an untitled buffer): the backup
+   * holds UNSAVED content, so whether the base file exists is irrelevant -- and descend
+   * relies on it (go_back restores the parent from cellName~.sch). Skipping untitled here
+   * lost the whole top level on descend+ascend from a new/pasted-into canvas (issue 0060). */
   if(!backup_file_name(bak, S(bak), name)) return;
   if(!(fd = fopen(bak, "w"))) {
     dbg(0, "write_backup(): cannot open %s for write\n", bak);
