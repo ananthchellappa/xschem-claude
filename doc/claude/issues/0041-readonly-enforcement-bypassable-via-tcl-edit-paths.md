@@ -70,11 +70,20 @@ the instance/wire counts and the `modified` flag are unchanged; non-mutating `se
 `translate` still work (no over-block). `translate` was deliberately left unguarded — it is a
 `@`-token expansion *query* that returns a string, not an object mutation. Core regression suite green.
 
-**Remaining (smaller residual — issue kept open):**
-- `action_id_mutates()` (`callback.c`) is still a **default-allow** allowlist for the C-backed
-  (`d->fn`) action path. All currently-registered mutating actions are listed, but a future C-backed
-  mutating action added without updating the list would leak. The Tcl-backed action path is already
-  covered by the subcommand guards above.
+**Also done (2026-07-02, follow-up commit) — action-registry mutation flag.** The C-backed action path
+no longer relies on a hand-maintained allowlist: `ActionDef` gained a `mutates` column and
+`action_id_mutates()` (`callback.c`) now returns `find_action_def(id)->mutates`. The 15 previously
+allow-listed ids are flagged, plus two that were leaking via the binding path (`sym.place_symbol_pin`,
+`tools.insert_polygon` — both Tcl-backed, so also caught by the subcommand guards). A newly-added
+mutating action is now covered by construction; dual-use self-gating actions (`edit.add_pin_stubs`,
+which also pans on read-only) stay `mutates=0` and are guarded at their core so the shared key still
+pans. Verified with a GUI end-to-end test (`tests/headless/test_readonly_action_dispatch.{tcl,sh}`,
+needs X): the C-backed mutators `prop.toggle_ignore` (Shift+T) and `sym.attach_net_labels` (Shift+H)
+— which have **no** scheduler-guard backup, so their read-only safety depends solely on the flag —
+mutate a writable buffer (control) but are refused on read-only, while a non-mutating action (zoom)
+still runs.
+
+**Remaining (issue kept open):**
 - The single architectural chokepoint (a `begin_edit()` helper threaded only through genuine edit ops)
   remains the **L**-effort follow-up; the current guards make that a robustness refactor, not a
   functional gap.

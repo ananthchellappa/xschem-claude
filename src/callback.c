@@ -2976,7 +2976,13 @@ static int act_add_pin_stubs(const ActionEvent *e)
  * log is sourced. An aborted gesture thus leaves no trace, which matches the
  * spec's granularity rule (log the effect; an abort has none). */
 typedef struct { const char *id; action_fn fn; const char *tcl; const char *help;
-                 char *log_cmd; int nolog; } ActionDef;
+                 int mutates; char *log_cmd; int nolog; } ActionDef;
+/* mutates (issue 0041): 1 if this action changes the current schematic/symbol contents,
+ * so a read-only window refuses it (see action_id_mutates / readonly_block). Declared per
+ * row below (the positional 5th field; omitted rows default to 0) instead of a separate
+ * hand-maintained allowlist, so a new mutating action is covered by construction. Dual-use
+ * self-gating actions (e.g. edit.add_pin_stubs, which also pans on read-only) stay 0 and
+ * are guarded at their core so the shared key still works. */
 
 static ActionDef action_registry[] = {
   { "view.zoom_in",   act_zoom_in,   NULL, "Zoom in"   },
@@ -2994,17 +3000,17 @@ static ActionDef action_registry[] = {
   { "graph.forward",  act_graph_forward,   NULL, "Forward event to the waveform graph" },
   /* Tcl-backed (Phase 3d.1): fn is NULL, the dispatch runs `tcl` via tcleval.
    * (id renamed at d4a to the pre-existing actions.csv id for the same command.) */
-  { "prop.edit_header_license_text", NULL, "update_schematic_header", "Edit schematic header/license" },
+  { "prop.edit_header_license_text", NULL, "update_schematic_header", "Edit schematic header/license", 1 },
   /* Phase 3d.2 — canvas-only symbol commands (C-backed and Tcl-backed). */
   { "sym.attach_net_labels_to_component_instance", act_attach_labels, NULL,
-    "Attach net labels to selected instances" },
+    "Attach net labels to selected instances", 1 },
   { "sym.make_schematic_and_symbol_from_selected_components", act_make_sch_sym_from_sel, NULL,
     "Make schematic and symbol from selected components" },
   { "sym.create_symbol_pins_from_selected_schematic_pins", NULL, "schpins_to_sympins",
-    "Create symbol pins from selected schematic pins" },
+    "Create symbol pins from selected schematic pins", 1 },
   { "sym.place_symbol_pin", NULL, "xschem add_symbol_pin",
-    "Add a symbol pin (Name + Direction dialog)" },
-  { "tools.insert_polygon", NULL, "xschem polygon gui", "Start drawing a polygon" },
+    "Add a symbol pin (Name + Direction dialog)", 1 },
+  { "tools.insert_polygon", NULL, "xschem polygon gui", "Start drawing a polygon", 1 },
   { "view.center_at_cursor", act_view_center_at_cursor, NULL,
     "Center the view on the cursor position" },
   /* Phase 3d.2 batch 2 — clean canvas-only command keys (C-backed). All ids below
@@ -3013,7 +3019,7 @@ static ActionDef action_registry[] = {
   { "view.snap_half",   act_snap_half,   NULL, "Halve the snap factor" },
   { "view.snap_double", act_snap_double, NULL, "Double the snap factor" },
   { "prop.toggle_ignore_attribute_on_selected_instances", act_toggle_ignore, NULL,
-    "Toggle *_ignore attribute on selected instances" },
+    "Toggle *_ignore attribute on selected instances", 1 },
   { "view.toggle_colorscheme", act_toggle_colorscheme, NULL, "Toggle light/dark colorscheme" },
   /* Phase 3d.2 batch 3 — three C-backed plus `=` reusing the csv id
    * tools.execute_tcl_command (Tcl-backed -> "tclcmd"). */
@@ -3024,9 +3030,9 @@ static ActionDef action_registry[] = {
   /* Phase 3d.2 sem-gated batch 1 — Tcl-backed, reusing actions.csv ids whose commands
    * are verified identical to the switch branches' C calls (idle_only-bound below). */
   { "toolbar.netlist",      NULL, "xschem netlist -erc",      "Netlist (hierarchical) + ERC" },
-  { "file.clear_schematic", NULL, "xschem clear schematic",   "Clear the current schematic" },
-  { "edit.redo",            NULL, "xschem redo; xschem redraw", "Redo" },
-  { "edit.undo",            NULL, "xschem undo; xschem redraw", "Undo" },
+  { "file.clear_schematic", NULL, "xschem clear schematic",   "Clear the current schematic", 1 },
+  { "edit.redo",            NULL, "xschem redo; xschem redraw", "Redo", 1 },
+  { "edit.undo",            NULL, "xschem undo; xschem redraw", "Undo", 1 },
   /* Phase 3d.2 sem-gated batch 2 — the hilight cluster (k, K). Tcl commands verified
    * byte-identical to the switch C branches (incl. the redraw_hilights/draw calls). */
   { "hilight.highlight_selected_net_pins",           NULL, "xschem hilight",            "Highlight selected net/pins" },
@@ -3037,8 +3043,8 @@ static ActionDef action_registry[] = {
   /* Phase 3d.2 sem-gated batch 3 — `j` hilight-list (branch migration). Tcl commands
    * are `xschem print_hilight_net N` = print_hilight_net(N), identical to the switch. */
   { "sym.list.print_list_of_highlight_nets",    NULL, "xschem print_hilight_net 1", "Print list of highlight nets" },
-  { "sym.list.create_pins_from_highlight_nets", NULL, "xschem print_hilight_net 0", "Create pins from highlight nets" },
-  { "sym.list.create_labels_from_highlight_nets", NULL, "xschem print_hilight_net 4", "Create labels from highlight nets" },
+  { "sym.list.create_pins_from_highlight_nets", NULL, "xschem print_hilight_net 0", "Create pins from highlight nets", 1 },
+  { "sym.list.create_labels_from_highlight_nets", NULL, "xschem print_hilight_net 4", "Create labels from highlight nets", 1 },
   /* keybind_snap_grid_actions: snap / grid / highlight ops made bindable; they ship
    * UNBOUND (no default chord) — the user binds them via `xschem bind` / their rc.
    * Two Tcl-backed (reuse the View/Options menu commands), one C-backed (sim-tool
@@ -3055,25 +3061,25 @@ static ActionDef action_registry[] = {
    * UNBOUND; cadence_style_rc binds them to Alt-wheel, any user can rebind via
    * `xschem bind`. doc/claude/specs/bus_thickness_scroll.md. */
   { "edit.grow_selection",   NULL, "busresize_apply grow",
-    "Grow selected: wire thickness / bus width [N:M]" },
+    "Grow selected: wire thickness / bus width [N:M]", 1 },
   { "edit.shrink_selection", NULL, "busresize_apply shrink",
-    "Shrink selected: wire thickness / bus width [N:M]" },
+    "Shrink selected: wire thickness / bus width [N:M]", 1 },
   /* bus_transpose_scroll: SHIFT the bus index/range up/down by 1 on a pin/netlabel `lab`
    * or an instance `name` (wires/text tolerated) -- moves the index, does not widen the
    * bus (that is busresize). Tcl-backed: utils/bus_transpose.tcl. Ship UNBOUND;
    * cadence_style_rc binds them to Alt+Shift-wheel. doc/claude/specs/bus_transpose_scroll.md. */
   { "edit.transpose_up_selection",   NULL, "bustranspose_apply up",
-    "Transpose selected up: bus index/range +1 (e.g. [N:M] -> [N+1:M+1])" },
+    "Transpose selected up: bus index/range +1 (e.g. [N:M] -> [N+1:M+1])", 1 },
   { "edit.transpose_down_selection", NULL, "bustranspose_apply down",
-    "Transpose selected down: bus index/range -1, floored at 0" },
+    "Transpose selected down: bus index/range -1, floored at 0", 1 },
   /* text_size_scroll: grow/shrink displayed text size of selected text notes and
    * pin/netlabel names (~10%, min step, per-type floor). Tcl-backed:
    * utils/text_resize.tcl. Ship UNBOUND; cadence_style_rc binds Ctrl+Plus/Minus.
    * doc/claude/specs/text_size_scroll.md. */
   { "edit.text_grow",   NULL, "textsize_apply grow",
-    "Grow displayed text size of selected notes / pin-label names" },
+    "Grow displayed text size of selected notes / pin-label names", 1 },
   { "edit.text_shrink", NULL, "textsize_apply shrink",
-    "Shrink displayed text size of selected notes / pin-label names" },
+    "Shrink displayed text size of selected notes / pin-label names", 1 },
   /* deselect-one-at-a-time mode (doc/claude/specs/deselect_one_mode.md): default key 'd'.
    * C-backed; the csv command `xschem deselect_mode` is behavior-equivalent but nolog'd
    * (mode entry is a UI affordance; its effect — the deselect clicks — is not logged). */
@@ -3359,30 +3365,17 @@ static int current_input_ctx(int event, KeySym key, int state, int button)
   return waves_selected(event, key, state, button) ? ACTX_OVER_GRAPH : ACTX_CANVAS;
 }
 
-/* registered (data-driven) actions that modify the current schematic/symbol; used
- * to refuse them in a read-only window (see readonly_block). Navigation, view,
- * highlight, netlist and make-symbol/create-schematic actions are intentionally
- * NOT listed -- they do not change the current view's contents. */
+/* Whether a registered (data-driven) action modifies the current schematic/symbol; used
+ * to refuse it in a read-only window (see readonly_block). The classification now lives
+ * with each action as the `mutates` column of action_registry[] (single source of truth),
+ * so a newly-added mutating action is covered by construction rather than depending on a
+ * separate allowlist being kept in sync here. Navigation/view/highlight/netlist and
+ * make-symbol/create-schematic actions declare mutates=0 -- they do not change the current
+ * view's contents. Unknown ids default to non-mutating. */
 static int action_id_mutates(const char *id)
 {
-  static const char * const ids[] = {
-    "edit.undo", "edit.redo",
-    "prop.toggle_ignore_attribute_on_selected_instances",
-    "prop.edit_header_license_text",
-    "sym.attach_net_labels_to_component_instance",
-    "sym.create_symbol_pins_from_selected_schematic_pins",
-    "sym.list.create_pins_from_highlight_nets",
-    "sym.list.create_labels_from_highlight_nets",
-    "file.clear_schematic",
-    "edit.grow_selection", "edit.shrink_selection",
-    "edit.transpose_up_selection", "edit.transpose_down_selection",
-    "edit.text_grow", "edit.text_shrink"
-  };
-  int i;
-  if(!id) return 0;
-  for(i = 0; i < (int)(sizeof(ids) / sizeof(ids[0])); ++i)
-    if(!strcmp(id, ids[i])) return 1;
-  return 0;
+  const ActionDef *d = find_action_def(id);
+  return d ? d->mutates : 0;
 }
 
 /* look up and run the action bound to an event signature; returns 1 if a binding
