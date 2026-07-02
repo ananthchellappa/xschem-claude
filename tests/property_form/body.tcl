@@ -1100,6 +1100,41 @@ catch {xschem highlight_scope clear}
 xschem set modified 0
 
 # ===========================================================================
+# PF52 — issue 0042: a staged apply whose target instance VANISHED (regenerated,
+# deleted, or undone between form-open and Apply) must report the dropped edit
+# with a DISTINCT code (-1), not silently no-op as a legit 0. The engine command
+# `xschem apply_properties` carries the contract; the slick form surfaces -1 to
+# the user and keeps the form open instead of closing as if it succeeded. Driven
+# headless (pixel-free) — the C return code IS the seam. See the issue file.
+# ===========================================================================
+
+pf_setup_insts
+set ::pf52_id  [xschem instance_id R1]
+set ::pf52_idx [xschem instance_index $::pf52_id]
+set ::pf52_old [xschem getprop instance $::pf52_idx]
+
+### PF52a — a real change to a live target returns 1 (baseline: the happy path).
+check {PF52a apply of a changed value to a live target returns 1} \
+  {[xschem apply_properties current $::pf52_id \
+      [xschem subst_tok $::pf52_old value 7k] $::pf52_old 1] == 1}
+
+### PF52b — a no-op (new == old) against a live target returns 0 (distinct from -1).
+set ::pf52_now [xschem getprop instance [xschem instance_index $::pf52_id]]
+check {PF52b a no-op apply to a live target returns 0} \
+  {[xschem apply_properties current $::pf52_id $::pf52_now $::pf52_now 1] == 0}
+
+### PF52c — a never-existed id returns -1, not a silent 0.
+check {PF52c apply against a non-existent id returns -1 (vanished, issue 0042)} \
+  {[xschem apply_properties current 999999999 {value=1k} {value=2k} 1] == -1}
+
+### PF52d — the real 0042 scenario: capture the id, DELETE the instance (its id no
+### longer resolves), then Apply -> -1 (the edit is reported dropped, not lost).
+xschem unselect_all; xschem select instance R1; xschem delete
+check {PF52d apply after the captured target is deleted returns -1} \
+  {[xschem apply_properties current $::pf52_id {value=1k} {value=2k} 1] == -1}
+xschem set modified 0
+
+# ===========================================================================
 # Slick enter_text dialog — discoverable text attributes.
 # Spec: doc/claude/specs/slick_text_dialog.md. Scope: enter_text first, common visual
 # attrs. Widget-independent CORE under test:
@@ -1373,21 +1408,24 @@ if {[gui2_ok]} {
   check {PF61 the form does not inflate the re-entrancy semaphore (0 while open)} {$::m2_sem == 0}
   check {PF62 the form is a plain toplevel (no wm transient focus capture)} {$::m2_trans eq ""}
 
-  # PF63 — D2: deleting the edited instance out from under the form must leave
-  # Apply a graceful no-op (the stable id stops resolving), no crash, no write.
+  # PF63 — D2 + issue 0042: deleting the edited instance out from under the form
+  # must not crash and must not write — AND the drop must be REPORTED, not silently
+  # swallowed. do_apply now returns -1 (the id stopped resolving) so the caller can
+  # surface it (ciw_echo + tk_messageBox, stubbed here) and keep the form open,
+  # instead of the pre-0042 silent 0 no-op that read as success.
   pf_setup_insts
   xschem select instance R1
   set ::slickprop_apply_scope current
-  set ::m2_did -99
+  set ::m2_rc -99; set ::m2_ret -99
   m2_open_capture {
     xschem unselect_all
     xschem select instance R1
     xschem delete                          ;# the edited instance vanishes
     catch {pf_setfield value 9k}
-    set rc [catch {slickprop::do_apply} ret]
-    set ::m2_did [expr {($rc == 0 && $ret == 0) ? 0 : ($rc ? 2 : 1)}]
+    set ::m2_rc [catch {slickprop::do_apply} ::m2_ret]
   }
-  check {PF63a deleting the edited instance + Apply is a graceful no-op (0, no crash)} {$::m2_did == 0}
+  check {PF63a deleting the edited instance + Apply reports the drop (-1), no crash (issue 0042)} \
+    {$::m2_rc == 0 && $::m2_ret == -1}
   check {PF63b no instance carries the un-applied value} {[pf_count_value 9k] == 0}
 
   # PF64 — the relocated C selection hook actually fires: with the form open, a

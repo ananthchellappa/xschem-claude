@@ -1062,13 +1062,18 @@ static int apply_symbol_prop(const char *new_prop, const char *old_prop,
  * instance by its session-stable id (so it survives any reindexing between
  * applies) and fan the change set to <scope>. Exposed as the Tcl command
  * `xschem apply_properties <scope> <displayed_id> <new_prop> <old_prop> [keep_name]`.
- * keep_name (default 0): preserve the instance name across a source change (issue 0058). */
+ * keep_name (default 0): preserve the instance name across a source change (issue 0058).
+ * Returns 1 if anything changed, 0 for a legit no-op, -1 if the displayed instance no
+ * longer exists (regenerated/undone since the form opened -- issue 0042). */
 int apply_instance_properties(const char *scope, unsigned int displayed_id,
                               const char *new_prop, const char *old_prop, int keep_name)
 {
   int idx = inst_index_from_id(displayed_id);
   int modified;
-  if(idx < 0) return 0;
+  /* Target vanished/regenerated between form-open and Apply (intervening undo, symbol
+   * reload, regenerate-abstract): return a DISTINCT code (-1) so the caller can surface
+   * the dropped edit instead of mistaking it for a legit 0 no-op (issue 0042). */
+  if(idx < 0) return -1;
   modified = apply_symbol_prop(new_prop, old_prop, idx, scope, keep_name);
   if(modified) set_modify(1);
   return modified;

@@ -768,6 +768,24 @@ typedef struct
   xSymbol *symptr;
 } Undo_slot;
 
+/* Side-channel snapshot of the session-stable object ids for ONE disk-undo slot.
+ * Disk undo serializes via write_xschem_file / read_xschem_file, and the store
+ * funnels re-stamp FRESH ids on the read -- which would silently break the
+ * net-hilight apply-scope overlay and every live `xschem object` handle (issue
+ * 0043; the in-memory undo path preserves ids because it struct-copies .id).
+ * push_undo captures the live ids here in canonical save-order; pop_undo re-stamps
+ * them onto the restored objects, so ids survive the disk round-trip. Ids are NOT
+ * baked into the .sch/.sym format (that would bump XSCHEM_FILE_VERSION and touch
+ * every reader). Positional: the k-th object written to a slot is the k-th read
+ * back (read_xschem_file appends verbatim, no merge/reorder). */
+typedef struct {
+  unsigned int *wire_id;  int n_wire;
+  unsigned int *inst_id;  int n_inst;
+  unsigned int *text_id;  int n_text;   /* non-synthesized texts only, in save-order */
+  unsigned int *gfx_id;   int n_gfx;    /* rect+line+poly+arc, canonical type/layer/index order */
+  int valid;                            /* 1 once captured by push_undo */
+} Undo_ids;
+
 typedef struct
 { /* used for symbols containing schematics as instances (LCC, Local Custom Cell) */
   double x0;
@@ -1171,6 +1189,7 @@ typedef struct {
   double net_hilight_test_ms;         /* forced "now" (ms) when net_hilight_test_active */
   int crosshair_layer;
   char *undo_dirname;
+  Undo_ids *undo_ids;    /* disk-undo id side-channel ring [MAX_UNDO], lazily allocated (issue 0043) */
   char *infowindow_text; /* ERC messages */
   int intuitive_interface;
   int cur_undo_ptr;

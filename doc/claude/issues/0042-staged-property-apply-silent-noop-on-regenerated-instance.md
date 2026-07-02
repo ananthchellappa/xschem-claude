@@ -1,7 +1,15 @@
 # Issue 0042 — Staged property Apply silently no-ops when the target instance was regenerated/invalidated
 
 **Opened:** 2026-06-26
-**Status:** OPEN — triaged 2026-07-01: verified STILL PRESENT (`src/editprop.c:1069-1071` returns a bare `0`; `scheduler.c:208-210` sets result `"0"`/`TCL_OK`; `property_form.tcl` only branches on `did`). Real severity **MEDIUM** (narrow trigger: modeless form left open across an intervening undo/reload). **Priority P2 (cheap win, S).** Note `0` is ambiguous (legit no-op vs vanished target) — surface the vanished case with a distinct return code + `ciw_echo`/messagebox, keep the form open, and make action-log replay tolerate the new code.
+**Status:** FIXED 2026-07-02 (`fluid-editing`). `apply_instance_properties()` now returns a
+DISTINCT `-1` when the displayed id no longer resolves (vs `0` for a legit no-op);
+`scheduler.c apply_properties` propagates it as `"-1"`; `slickprop::do_apply` branches on
+`-1` to `ciw_echo` + `tk_messageBox` ("object no longer exists — changes NOT applied"),
+`slickprop::ok` returns early so the form STAYS OPEN, and the apply is not logged. Action-log
+replay is tolerant (a top-level `xschem apply_properties` that returns `-1` is still `TCL_OK`).
+Tests: PF52a-d (new return-code contract, headless) + PF63a rewritten to assert the drop is
+reported (`-1`) instead of the pre-fix silent `0`. Full property_form suite green (264 checks).
+**Prior triage** (2026-07-01): verified STILL PRESENT (`src/editprop.c:1069-1071` returned a bare `0`; `scheduler.c:208-210` set result `"0"`/`TCL_OK`; `property_form.tcl` only branched on `did`). Real severity **MEDIUM** (narrow trigger: modeless form left open across an intervening undo/reload). **Priority P2 (cheap win, S).** `0` was ambiguous (legit no-op vs vanished target).
 **Severity:** MEDIUM-HIGH — silent edit loss; the user believes the property edit applied but it did not.
 **Branch:** `fluid-editing`.
 **Source:** `/code-review high` this session (workflow `wf_1a6ce6c4-0d9`), finding #4 (CONFIRMED).

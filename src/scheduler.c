@@ -212,7 +212,8 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
      *   instance, given by its session-stable id (see `xschem instance_id`).
      *   keep_name (optional, default 0): preserve the instance name across a source
      *   change instead of re-prefixing it (issue 0058) -- passed in the logged command
-     *   so replay is faithful. Pushes one undo; returns 1 if anything changed, else 0. */
+     *   so replay is faithful. Pushes one undo; returns 1 if anything changed, 0 for a
+     *   legit no-op, -1 if the displayed instance no longer exists (issue 0042). */
     else if(!strcmp(argv[1], "apply_properties"))
     {
       int modified, keep_name = 0;
@@ -225,7 +226,8 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
       if(argc > 6) keep_name = atoi(argv[6]);
       modified = apply_instance_properties(argv[2],
                    (unsigned int)strtoul(argv[3], NULL, 10), argv[4], argv[5], keep_name);
-      Tcl_SetResult(interp, modified ? "1" : "0", TCL_STATIC);
+      /* -1 = target vanished (issue 0042); the Tcl form surfaces it instead of closing. */
+      Tcl_SetResult(interp, modified < 0 ? "-1" : (modified ? "1" : "0"), TCL_STATIC);
     }
 
     /* apply_pin_prop <prop>

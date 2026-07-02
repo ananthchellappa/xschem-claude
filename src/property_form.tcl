@@ -568,7 +568,17 @@ proc slickprop::do_apply {} {
     # logged/replayed command reproduces the same name behavior.
     set did [xschem apply_properties $::slickprop_apply_scope $nav(disp_id) \
                $::tctx::retval $oldprop 1]
-    if {$did} {
+    if {$did == -1} {
+      # The edited instance was regenerated/deleted (intervening undo, symbol reload,
+      # regenerate-abstract) between opening the form and Apply. Surface the dropped edit
+      # instead of silently "succeeding" and closing; the caller keeps the form open so
+      # the user can retry or cancel (issue 0042). NOTE: -1 is truthy in Tcl, so this must
+      # be an explicit compare — a bare `if {$did}` would treat vanish as success.
+      catch {ciw_echo "property edit not applied: the object being edited no longer exists" error}
+      catch {tk_messageBox -parent .dialog -icon warning -type ok -title "Edit not applied" \
+        -message "The object being edited no longer exists (it was regenerated or undone).\
+\nYour changes were NOT applied."}
+    } elseif {$did == 1} {
       set ::tctx::applied 1
       # action-log the EFFECT (only when something changed): the replayable
       # command itself, so sourcing the log re-applies the edit. Logged here at
@@ -613,7 +623,7 @@ proc slickprop::apply_now {} {
 
 # The OK action: apply the current change set to the scope, then close.
 proc slickprop::ok {} {
-  slickprop::do_apply
+  if {[slickprop::do_apply] == -1} { return }  ;# vanished target (0042): keep form open, don't close
   set ::tctx::rcode {ok}
   set ::slickprop_form_open 0
   catch {set ::slickprop_geometry [wm geometry .dialog]} ;# remember size+pos

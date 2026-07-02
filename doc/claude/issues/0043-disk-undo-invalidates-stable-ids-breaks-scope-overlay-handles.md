@@ -1,7 +1,21 @@
 # Issue 0043 — Disk-based undo invalidates session-stable ids, breaking the apply-scope overlay and `xschem object` handles
 
 **Opened:** 2026-06-26
-**Status:** OPEN — triaged 2026-07-01: verified STILL PRESENT; in-memory undo preserves ids (`in_memory_undo.c` struct-copies `.id`), disk undo re-stamps them via the store funnels (asymmetry confirmed). ⚠ On-disk undo is the DEFAULT (`xschem.tcl:14613`), so this bites out-of-the-box. Real severity **MEDIUM.** **Priority P2.** Fix effort **M–L**: per-slot side-channel id snapshot restored on pop — do NOT bake ids into the `.sch/.sym` format (bumps `XSCHEM_FILE_VERSION`, touches every reader); a positional re-key is unsafe (undo changes the object set). Cheapest mitigation (**S**): default `undo_type=memory` when the overlay/handle APIs are in use.
+**Status:** FIXED 2026-07-02 (`fluid-editing`). Per-slot **side-channel id snapshot**, exactly the
+M–L option: a new `Undo_ids undo_ids[MAX_UNDO]` ring (lazily allocated, `xschem.h`) captures the live
+session-stable ids (wire/inst/text/gfx) in canonical save-order at `push_undo` (on the same ring index
+the disk slot uses), and `pop_undo` re-stamps them onto the restored objects right after
+`read_xschem_file` (before `synth_pin_views`). Positional correspondence is exact — `read_xschem_file`
+appends verbatim with no merge/reorder, so the k-th object written to a slot is the k-th read back;
+synthesized pin-name texts are skipped at both capture and restore (they never persist). A shape guard
+bails (keeps fresh ids, no mis-assign) if counts ever disagree. Ids are NOT baked into the `.sch/.sym`
+format (no `XSCHEM_FILE_VERSION` bump). Restored ids are ≤ the monotonic counters, so future births
+never collide. Freed in `delete_undo`. Test: `tests/undo_stable_ids.tcl` (26 checks, both undo modes) —
+a captured instance/wire/text/rect handle still resolves to the SAME object with the SAME id value after
+a disk undo AND redo, disk now matches memory; sabotage-verified (neutering the re-stamp fails exactly
+the 8 disk id checks, memory stays green). Full property_form suite (264) + create_save/open_close/
+netlisting green.
+**Prior triage** (2026-07-01): verified STILL PRESENT; in-memory undo preserves ids (`in_memory_undo.c` struct-copies `.id`), disk undo re-stamps them via the store funnels (asymmetry confirmed). ⚠ On-disk undo is the DEFAULT (`xschem.tcl:14613`), so this bit out-of-the-box. Real severity **MEDIUM.** **Priority P2.** Fix effort **M–L**. (Cheapest mitigation considered but rejected in favor of the real fix: default `undo_type=memory` when the overlay/handle APIs are in use.)
 **Severity:** MEDIUM — silent loss of the white-outline scope overlay and stale/dangling object handles
 after an undo (only when on-disk undo is in effect).
 **Branch:** `fluid-editing`.

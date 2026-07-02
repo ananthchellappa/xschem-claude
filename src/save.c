@@ -3857,6 +3857,8 @@ void clear_undo(void)
   xctx->head_undo_ptr = 0;
 }
 
+static void free_undo_ids_slot(Undo_ids *s);   /* defined below, near push_undo (issue 0043) */
+
 void delete_undo(void)
 {
   int i;
@@ -3871,6 +3873,11 @@ void delete_undo(void)
   }
   rmdir(xctx->undo_dirname);
   my_free(_ALLOC_ID_, &xctx->undo_dirname);
+  /* free the disk-undo id side-channel ring (issue 0043) */
+  if(xctx->undo_ids) {
+    for(i=0; i<MAX_UNDO; ++i) free_undo_ids_slot(&xctx->undo_ids[i]);
+    my_free(_ALLOC_ID_, &xctx->undo_ids);
+  }
   xctx->undo_initialized = 0;
 }
 
@@ -3886,6 +3893,114 @@ static void init_undo(void)
     }
     xctx->undo_initialized = 1;
   }
+}
+
+/* ---- disk-undo id side-channel (issue 0043) -----------------------------
+ * Preserve session-stable object ids across a disk-based undo round-trip. The
+ * store funnels re-stamp fresh ids on read_xschem_file, which would break the
+ * net-hilight apply-scope overlay and live `xschem object` handles. We snapshot
+ * the live ids at push and re-stamp them at pop, positionally (the k-th object
+ * written to a slot is the k-th read back). See the Undo_ids doc in xschem.h. */
+
+/* total number of id-bearing gfx objects (rect+line+poly+arc) across all layers */
+static int count_gfx_objs(void)
+{
+  int c, n = 0;
+  for(c = 0; c < cadlayers; ++c)
+    n += xctx->rects[c] + xctx->lines[c] + xctx->polygons[c] + xctx->arcs[c];
+  return n;
+}
+
+/* number of NON-synthesized texts (synthesized pin-name views never persist to
+ * an undo slot -- save_text skips them, synth_pin_views() regenerates them). */
+static int count_user_texts(void)
+{
+  int i, n = 0;
+  for(i = 0; i < xctx->texts; ++i) if(!xctx->text[i].owner_pin_id) ++n;
+  return n;
+}
+
+/* Walk every gfx object's id in a FIXED type/layer/index order -- the same order
+ * at capture and restore, so the k-th visited slot is identical across the disk
+ * round-trip. mode 0 = capture (buf[k] = id), mode 1 = restore (id = buf[k]). */
+static void walk_gfx_ids(unsigned int *buf, int mode)
+{
+  int c, i, k = 0;
+  for(c = 0; c < cadlayers; ++c) for(i = 0; i < xctx->rects[c]; ++i) {
+    if(mode) xctx->rect[c][i].id = buf[k]; else buf[k] = xctx->rect[c][i].id; ++k; }
+  for(c = 0; c < cadlayers; ++c) for(i = 0; i < xctx->lines[c]; ++i) {
+    if(mode) xctx->line[c][i].id = buf[k]; else buf[k] = xctx->line[c][i].id; ++k; }
+  for(c = 0; c < cadlayers; ++c) for(i = 0; i < xctx->polygons[c]; ++i) {
+    if(mode) xctx->poly[c][i].id = buf[k]; else buf[k] = xctx->poly[c][i].id; ++k; }
+  for(c = 0; c < cadlayers; ++c) for(i = 0; i < xctx->arcs[c]; ++i) {
+    if(mode) xctx->arc[c][i].id = buf[k]; else buf[k] = xctx->arc[c][i].id; ++k; }
+}
+
+/* Walk NON-synthesized text ids in array order (synth texts are skipped so the
+ * sequence matches the save-order; synth views are appended after and excluded). */
+static void walk_user_text_ids(unsigned int *buf, int mode)
+{
+  int i, k = 0;
+  for(i = 0; i < xctx->texts; ++i) {
+    if(xctx->text[i].owner_pin_id) continue;
+    if(mode) xctx->text[i].id = buf[k]; else buf[k] = xctx->text[i].id; ++k;
+  }
+}
+
+static void free_undo_ids_slot(Undo_ids *s)
+{
+  my_free(_ALLOC_ID_, &s->wire_id);
+  my_free(_ALLOC_ID_, &s->inst_id);
+  my_free(_ALLOC_ID_, &s->text_id);
+  my_free(_ALLOC_ID_, &s->gfx_id);
+  s->n_wire = s->n_inst = s->n_text = s->n_gfx = 0;
+  s->valid = 0;
+}
+
+/* Snapshot the current live ids into slot *s (called by push_undo, on the same
+ * ring index the disk slot uses). */
+static void capture_undo_ids(Undo_ids *s)
+{
+  int i;
+  free_undo_ids_slot(s);
+  s->n_wire = xctx->wires;
+  s->n_inst = xctx->instances;
+  s->n_text = count_user_texts();
+  s->n_gfx  = count_gfx_objs();
+  if(s->n_wire) s->wire_id = my_malloc(_ALLOC_ID_, s->n_wire * sizeof(unsigned int));
+  if(s->n_inst) s->inst_id = my_malloc(_ALLOC_ID_, s->n_inst * sizeof(unsigned int));
+  if(s->n_text) s->text_id = my_malloc(_ALLOC_ID_, s->n_text * sizeof(unsigned int));
+  if(s->n_gfx)  s->gfx_id  = my_malloc(_ALLOC_ID_, s->n_gfx  * sizeof(unsigned int));
+  for(i = 0; i < xctx->wires; ++i)     s->wire_id[i] = xctx->wire[i].id;
+  for(i = 0; i < xctx->instances; ++i) s->inst_id[i] = xctx->inst[i].id;
+  walk_user_text_ids(s->text_id, 0);
+  walk_gfx_ids(s->gfx_id, 0);
+  s->valid = 1;
+}
+
+/* Re-stamp the ids captured in slot *s onto the just-restored objects (called by
+ * pop_undo after read_xschem_file, BEFORE synth_pin_views). Bails without touching
+ * ids if the restored shape does not match the captured shape -- for a matched
+ * push/pop of the same serialized slot it always does; a mismatch means the
+ * positional assumption is void, so keep the freshly-stamped ids rather than
+ * mis-assign. Restored ids are all <= the current (monotonic) id counters, so
+ * future births never collide. */
+static void restore_undo_ids(Undo_ids *s)
+{
+  if(!s || !s->valid) return;   /* nothing captured for this slot: keep fresh ids */
+  if(xctx->wires != s->n_wire || xctx->instances != s->n_inst ||
+     count_user_texts() != s->n_text || count_gfx_objs() != s->n_gfx) {
+    dbg(0, "restore_undo_ids(): slot shape mismatch (w %d/%d i %d/%d t %d/%d g %d/%d), keeping fresh ids\n",
+        xctx->wires, s->n_wire, xctx->instances, s->n_inst,
+        count_user_texts(), s->n_text, count_gfx_objs(), s->n_gfx);
+    return;
+  }
+  { int i;
+    for(i = 0; i < xctx->wires; ++i)     xctx->wire[i].id = s->wire_id[i];
+    for(i = 0; i < xctx->instances; ++i) xctx->inst[i].id = s->inst_id[i];
+  }
+  walk_user_text_ids(s->text_id, 1);
+  walk_gfx_ids(s->gfx_id, 1);
 }
 
 void push_undo(void)
@@ -3949,6 +4064,10 @@ void push_undo(void)
     }
     #endif
     write_xschem_file(fd);
+    /* snapshot the live ids for this slot, on the SAME ring index the disk file
+     * used above, before cur_undo_ptr advances (issue 0043) */
+    if(!xctx->undo_ids) xctx->undo_ids = my_calloc(_ALLOC_ID_, MAX_UNDO, sizeof(Undo_ids));
+    capture_undo_ids(&xctx->undo_ids[xctx->cur_undo_ptr % MAX_UNDO]);
     xctx->cur_undo_ptr++;
     xctx->head_undo_ptr = xctx->cur_undo_ptr;
     xctx->tail_undo_ptr = xctx->head_undo_ptr <= MAX_UNDO? 0: xctx->head_undo_ptr-MAX_UNDO;
@@ -3972,6 +4091,7 @@ void pop_undo(int redo, int set_modify_status)
 {
   FILE *fd;
   char diff_name[PATH_MAX+12];
+  int id_restore_slot = -1;   /* disk-undo id side-channel slot to restore (issue 0043) */
   #if HAS_PIPE==1
   int pd[2];
   pid_t pid;
@@ -4008,6 +4128,9 @@ void pop_undo(int redo, int set_modify_status)
   }
   clear_drawing();
   unselect_all(1);
+  /* the id side-channel slot to restore is the SAME ring index the disk file uses
+   * below (cur_undo_ptr is settled here; the redo==2 ++ happens after the read) */
+  id_restore_slot = xctx->cur_undo_ptr % MAX_UNDO;
 
   #if HAS_POPEN==1
   my_snprintf(diff_name, S(diff_name), "gzip -d -c %s/undo%d", xctx->undo_dirname, xctx->cur_undo_ptr%MAX_UNDO);
@@ -4052,6 +4175,11 @@ void pop_undo(int redo, int set_modify_status)
   }
   #endif
   read_xschem_file(fd);
+  /* re-stamp the pre-undo session-stable ids the store funnels just overwrote with
+   * fresh ones, so the apply-scope overlay and `xschem object` handles keep resolving
+   * across a disk undo (issue 0043). Done here -- after the load, before synth_pin_views
+   * appends transient pin-name texts -- so the non-synth text sequence matches capture. */
+  if(xctx->undo_ids && id_restore_slot >= 0) restore_undo_ids(&xctx->undo_ids[id_restore_slot]);
   if(redo == 2) xctx->cur_undo_ptr++; /* restore undo stack pointer */
 
   #if HAS_POPEN==1
