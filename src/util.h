@@ -45,6 +45,7 @@ extern void dbg(int level, char *fmt, ...);
 extern void init_action_log(void);
 extern void log_action(const char *fmt, ...);
 extern void log_action_noecho(const char *fmt, ...);
+extern void log_output(int iserr, const char *text);
 extern void my_realloc(int id, void *ptr,size_t size);
 extern void my_strndup(int id, char **dest, const char *src, size_t n);
 

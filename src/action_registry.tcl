@@ -188,11 +188,16 @@ proc action_reload {} {
 # after evaluation -- a failed pick becomes a '#' comment so the log file
 # stays source-able (same rule as CIW-typed commands and Layer A).
 proc menu_action_logged {cmd} {
+  # self-log-at-core dedup: reset the flag, run the pick, and record the menu
+  # command only if the mutating subcommand did not already self-log it.
+  xschem log_action -reset
   if {[catch {uplevel #0 $cmd} err]} {
-    xschem log_action "# failed: $cmd"
+    if {![xschem log_action -emitted]} { xschem log_action "# failed: $cmd" }
     error $err
   }
-  xschem log_action $cmd
+  if {![xschem log_action -emitted]} { xschem log_action $cmd }
+  # D1 (issue 0070): mirror the pick's OUTPUT to the CIW pane + transcript file.
+  if {$err ne {}} { ciw_echo $err result ; xschem log_action -result $err }
 }
 
 # --- (removed) Phase-2 Tcl-intercept accelerators ------------------------------

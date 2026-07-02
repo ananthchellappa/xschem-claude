@@ -2568,6 +2568,7 @@ static void context_menu_action(double mx, double my)
       break;
     default: break;
   }
+  actionlog_cmd_logged = 0;   /* dedup: skip the Layer B line if the pick's core self-logs */
   switch(ret) {
     case 1:
       start_place_symbol();
@@ -2694,7 +2695,7 @@ static void context_menu_action(double mx, double my)
    * # marker, or NULL = nothing). */
   if(!logcmd && ret > 0 && ret < (int)(sizeof(ctxmenu_log_cmd)/sizeof(ctxmenu_log_cmd[0])))
     logcmd = ctxmenu_log_cmd[ret];
-  if(logcmd) log_action("%s", logcmd);
+  if(logcmd && !actionlog_cmd_logged) log_action("%s", logcmd);
 }
 
 /* ===========================================================================
@@ -3052,6 +3053,13 @@ static ActionDef action_registry[] = {
   { "edit.toggle_orthogonal_wiring", act_toggle_orthogonal_wiring, NULL, "Toggle orthogonal (manhattan) wiring" },
   { "view.toggle_draw_pixmap", act_toggle_draw_pixmap, NULL, "Toggle pixmap (off-screen) drawing" },
   { "tools.execute_tcl_command", NULL, "tclcmd", "Open the Tcl command console" },
+  /* tools.raise_ciw: raise (or open) the CIW command window. Tcl-backed -- ciw_create
+   * builds the CIW, or deiconifies + raises it if it already exists. Default chord
+   * Alt-F5 (seeded in init_input_bindings below, mirrored in keybindings.csv). Rebind
+   * or un-bind from a custom rc / --script with e.g.
+   *   xschem bind key 65474 alt canvas tools.raise_ciw   ;# move to another chord
+   *   xschem unbind key 65474 alt canvas                 ;# un-bind Alt-F5 */
+  { "tools.raise_ciw", NULL, "ciw_create", "Raise/open the CIW (Command Interpreter Window)" },
   /* Phase 3d.2 sem-gated batch 1 — Tcl-backed, reusing actions.csv ids whose commands
    * are verified identical to the switch branches' C calls (idle_only-bound below). */
   { "toolbar.netlist",      NULL, "xschem netlist -erc",      "Netlist (hierarchical) + ERC" },
@@ -3358,6 +3366,12 @@ static void init_input_bindings(void)
    * When idle it dispatches and self-gates (decline mid-gesture / empty selection -> dispatch
    * returns 0 -> case ' ' fallback runs the SAME cores). */
   set_input_binding_idle(DEV_KEY, ' ', 0, ACTX_CANVAS, "edit.add_pin_stubs");
+  /* Alt-F5 raises (or opens) the CIW command window. Shipped default; mirrored in
+   * keybindings.csv. A user overrides it by editing their USER_CONF_DIR
+   * keybindings.csv, or at runtime from a custom rc/--script via `xschem bind key
+   * 65474 alt canvas <action>` (or `xschem unbind key 65474 alt canvas`). Alt =
+   * Mod1Mask, matching the other Alt chords above ('h', the j-cluster). */
+  set_input_binding(DEV_KEY, XK_F5, Mod1Mask, ACTX_CANVAS, "tools.raise_ciw");
   input_bindings_initialized = 1;
 }
 
@@ -3424,22 +3438,27 @@ static int dispatch_input_action(const ActionEvent *e)
      * after the fn reports it handled the event (record-after-evaluation, as
      * for the Tcl branch below). No log_cmd pushed -> silent: gesture starts,
      * graph routing and the not-yet-mintable view actions (spec: Phase 3). */
-    int ret = d->fn(e);
-    if(ret && d->log_cmd) log_action("%s", d->log_cmd);
+    int ret;
+    actionlog_cmd_logged = 0;          /* dedup: skip log_cmd if the core self-logged */
+    ret = d->fn(e);
+    if(ret && d->log_cmd && !actionlog_cmd_logged) log_action("%s", d->log_cmd);
     return ret;
   }
   if(d->tcl) {                         /* Tcl-backed: run the command (Phase 3d.1) */
     /* Action log Layer A (spec §2): record the canonical command verbatim, AFTER
      * evaluation so a failed one becomes a '#' comment and the log stays
      * source-able (same rule as CIW-typed commands). Tcl_GlobalEval instead of
-     * tcleval because the latter swallows the return code. */
+     * tcleval because the latter swallows the return code. A mutating subcommand
+     * that self-logs at its core sets actionlog_cmd_logged; skip the wrapper line
+     * then so the action is recorded exactly once (self-log-at-core dedup). */
+    actionlog_cmd_logged = 0;
     if(Tcl_GlobalEval(interp, d->tcl) != TCL_OK) {
       fprintf(errfp, "dispatch_input_action(): evaluation of script: %s failed\n", d->tcl);
       fprintf(errfp, "         : %s\n", Tcl_GetStringResult(interp));
+      if(!d->nolog && !actionlog_cmd_logged) log_action("# failed: %s", d->tcl);
       Tcl_ResetResult(interp);
-      if(!d->nolog) log_action("# failed: %s", d->tcl);
     } else {
-      if(!d->nolog) log_action("%s", d->tcl);
+      if(!d->nolog && !actionlog_cmd_logged) log_action("%s", d->tcl);
     }
     return 1;
   }

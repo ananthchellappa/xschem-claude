@@ -179,17 +179,25 @@ proc ciw_exec {} {
   ## (spec: ciw_puts_capture.md). Redefine puts around the eval and restore it right after; the
   ## rename pair is balanced and the catch keeps an error from skipping the restore. puts still
   ## returns "" so the result-echo below does not print captured text a second time.
+  ## Dedup + echo-suppress (self-log-at-core): reset the flag, and while the command runs tell a
+  ## core self-log to write the FILE but skip the CIW mirror (we already echoed the input line).
+  xschem log_action -reset
+  xschem log_action -suppressecho 1
   rename ::puts ::ciw_saved_puts
   proc ::puts {args} {ciw_capture_puts $args}
   set code [catch {uplevel #0 $cmd} res]
   rename ::puts {}
   rename ::ciw_saved_puts ::puts
+  xschem log_action -suppressecho 0
   if {$code} {
     ciw_echo $res error
-    xschem log_action -noecho "# failed: $cmd"
+    ## D1 (issue 0070): record the error OUTPUT as a source-able comment in the file.
+    xschem log_action -error $res
+    ## record the command itself only if the core did not already self-log it.
+    if {![xschem log_action -emitted]} { xschem log_action -noecho "# failed: $cmd" }
   } else {
-    if {$res ne {}} {ciw_echo $res result}
-    xschem log_action -noecho $cmd
+    if {$res ne {}} {ciw_echo $res result ; xschem log_action -result $res}
+    if {![xschem log_action -emitted]} { xschem log_action -noecho $cmd }
   }
 }
 

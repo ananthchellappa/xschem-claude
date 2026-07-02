@@ -32,7 +32,8 @@ fi
 # Tests that need the action log / CIW open -> run with --logdir <tmp>
 logdir_tests=" test_ciw test_ciw_autocomplete test_ciw_puts_capture test_hi_descend \
   test_action_log_dispatch test_action_log_libmgr test_context_menu_log \
-  test_gesture_end_log test_phase3_mints test_lib_roundtrip "
+  test_gesture_end_log test_phase3_mints test_lib_roundtrip test_selflog_output \
+  test_altf5_ciw "
 # Tests that must run true-headless (no X needed) -> --nogui
 nogui_tests=" test_nogui test_sweep_diff "
 # test_nolog exercises --nolog mode explicitly

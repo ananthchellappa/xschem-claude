@@ -202,3 +202,4 @@ view.toggle_show_netlist,command,view,Toggle show netlist window,,xschem toggle_
 view.toggle_draw_pixmap,command,view,Toggle pixmap drawing,,xschem toggle_draw_pixmap,,,Toggle off-screen pixmap (double buffered) drawing,
 edit.toggle_stretch,command,edit,Toggle wire stretching,,xschem toggle_stretch,,,Toggle stretching of wires attached to moved objects,
 edit.toggle_orthogonal_wiring,command,edit,Toggle orthogonal wiring,,xschem toggle_orthogonal_wiring,,,Toggle orthogonal (manhattan) wire drawing,
+tools.raise_ciw,command,tools,Raise CIW window,Alt+F5,ciw_create,,,Raise or open the CIW (Command Interpreter Window),

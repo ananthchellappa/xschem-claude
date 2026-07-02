@@ -1178,6 +1178,7 @@ static int xschem_cmds_c(Tcl_Interp *interp, int argc, const char *argv[], int *
       rebuild_selected_array();
       save_selection(2);
       delete(1/*to_push_undo*/);
+      log_action("xschem cut"); /* self-log at core: covers menu/toolbar/key/ctx-menu */
       Tcl_ResetResult(interp);
     }
     else { *cmd_found = 0;}
@@ -1223,7 +1224,10 @@ static int xschem_cmds_d(Tcl_Interp *interp, int argc, const char *argv[], int *
     {
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
       if(scheduler_readonly_reject(interp, "delete")) return TCL_ERROR;
-      if(argc==2) delete(1/*to_push_undo*/);
+      if(argc==2) {
+        delete(1/*to_push_undo*/);
+        log_action("xschem delete"); /* self-log at core */
+      }
       Tcl_ResetResult(interp);
     }
 
@@ -4338,7 +4342,22 @@ static int xschem_cmds_l(Tcl_Interp *interp, int argc, const char *argv[], int *
      *   No-op when action logging is disabled. */
     else if(!strcmp(argv[1], "log_action"))
     {
+      /* -emitted: report whether the core self-logged the just-run command, so a
+       * Tcl wrapper can skip its own duplicate line (self-log-at-core dedup). */
+      if(argc > 2 && !strcmp(argv[2], "-emitted")) {
+        Tcl_SetResult(interp, actionlog_cmd_logged ? "1" : "0", TCL_STATIC);
+        return TCL_OK;
+      }
       if(argc > 3 && !strcmp(argv[2], "-noecho")) log_action_noecho("%s", argv[3]);
+      /* -result/-error TEXT: record command OUTPUT as source-able comment lines
+       * (D1, issue 0070); the pane echo is done by the Tcl caller. */
+      else if(argc > 3 && !strcmp(argv[2], "-result")) log_output(0, argv[3]);
+      else if(argc > 3 && !strcmp(argv[2], "-error"))  log_output(1, argv[3]);
+      /* -suppressecho 0|1: while 1, a core self-log writes the file but not the
+       * CIW mirror (the CIW entry already echoed the typed input line). */
+      else if(argc > 3 && !strcmp(argv[2], "-suppressecho")) actionlog_suppress_echo = atoi(argv[3]);
+      /* -reset: clear the dedup flag before a wrapper evaluates a command. */
+      else if(argc > 2 && !strcmp(argv[2], "-reset")) actionlog_cmd_logged = 0;
       else if(argc > 2) log_action("%s", argv[2]);
       Tcl_ResetResult(interp);
     }
@@ -6702,6 +6721,7 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
       if(scheduler_readonly_reject(interp, "redo")) return TCL_ERROR;
       pop_undo_keep_selection(1, 1); /* issue 0007: keep selection across redo */
+      log_action("xschem redo"); /* self-log at core */
       Tcl_ResetResult(interp);
     }
 
@@ -8817,6 +8837,10 @@ static int xschem_cmds_u(Tcl_Interp *interp, int argc, const char *argv[], int *
         set_modify = atoi(argv[3]);
       }
       pop_undo_keep_selection(redo, set_modify); /* issue 0007: keep selection across undo */
+      /* self-log at core: bare form for the interactive case, explicit args when
+       * a caller passed the redo/set_modify variant, so replay is faithful. */
+      if(argc == 2) log_action("xschem undo");
+      else          log_action("xschem undo %d %d", redo, set_modify);
       Tcl_ResetResult(interp);
     }
 

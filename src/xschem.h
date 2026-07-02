@@ -1423,6 +1423,9 @@ extern char *cad_icon[];
 extern FILE *errfp;
 extern FILE *actionlog_fp;
 extern char actionlog_filename[PATH_MAX];
+extern int actionlog_cmd_logged;    /* core self-log dedup flag (see globals.c) */
+extern int actionlog_suppress_echo; /* skip CIW mirror while set (CIW-typed cmds) */
+extern int actionlog_suppress;      /* full log no-op while set (replay guard) */
 extern int exit_code;
 extern const char *xschem_library_path[];
 extern char home_dir[PATH_MAX]; /* home dir obtained via getpwuid */

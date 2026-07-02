@@ -61,3 +61,7 @@ key,106,alt,canvas,sym.list.create_labels_from_highlight_nets,1
 key,106,super,canvas,sym.list.create_labels_from_highlight_nets,1
 key,100,0,canvas,edit.deselect_mode,1
 key,32,0,canvas,edit.add_pin_stubs,1
+# Alt-F5 raises/opens the CIW command window. Edit this row (or your USER_CONF_DIR
+# copy, which wins) to remap; set the action to '-' to un-bind. Runtime equivalent
+# from a custom rc/--script: xschem bind key 65474 alt canvas tools.raise_ciw
+key,65474,alt,canvas,tools.raise_ciw,
