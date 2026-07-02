@@ -154,6 +154,35 @@ check "key & logs trim_wires"          [expr {[keydelta 38  0     count_lines {x
 check "key ! logs break_wires"         [expr {[keydelta 33  0     count_lines {xschem break_wires}] >= 1}]
 check "key Ctrl-! logs break_wires 1"  [expr {[keydelta 33  $Ctrl count_lines {xschem break_wires 1}] >= 1}]
 
+# --- 3f. arg-carrying mutators: setprop / change_layer / change_elem_order -----
+# Reload a clean nand2 first: the earlier sections leave the buffer heavily mutated
+# (repeated delete/undo/cut + transforms), and setprop on that churned state is
+# unrelated to what we exercise here.
+xschem load xschem_library/examples/nand2.sch
+# setprop self-logs the exact arg-carrying line (Tcl_Merge fidelity) for undoable
+# commits, but NOT the -fast/-fastundo internal forms (backannotate / live graph).
+xschem setprop instance 0 selflogtok selflogval
+check "setprop (non-fast) self-logs" [has_line "xschem setprop instance 0 selflogtok selflogval"]
+set sp_before [count_pfx "xschem setprop"]
+xschem setprop -fast instance 0 selflogtok selflogval2
+check "setprop -fast does NOT log" [expr {[count_pfx "xschem setprop"] == $sp_before}]
+
+# change_elem_order: scheduler form + inline Shift-S key (issue 0068)
+xschem change_elem_order -1
+check "change_elem_order self-logs"  [has_line "xschem change_elem_order -1"]
+check "key Shift-S logs change_elem_order" \
+  [expr {[keydelta 83 0 count_lines {xschem change_elem_order -1}] >= 1}]
+
+# change_layer (`set rectcolor`): logs ONLY when a selection makes it a content
+# edit; a bare layer-cursor pick with no selection stays unlogged (issue 0066).
+xschem select_all
+xschem set rectcolor 5
+check "set rectcolor w/ selection logs"  [has_line "xschem set rectcolor 5"]
+xschem unselect_all
+set rc_before [count_pfx "xschem set rectcolor"]
+xschem set rectcolor 3
+check "set rectcolor w/o selection is nolog" [expr {[count_pfx "xschem set rectcolor"] == $rc_before}]
+
 # --- 4. -result / -error output comments (source-able) ------------------------
 xschem log_action -result "hello world"
 check "result -> '#= ' comment"   [has_line "#= hello world"]

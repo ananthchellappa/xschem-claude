@@ -1530,7 +1530,11 @@ int tcl_braceable(const char *s)
  * round-trips and the placement stays replayable, instead of being dropped to a
  * '#' comment by the tcl_braceable brace-wrap guard (issue 0048). Guarantees the
  * Layer B "log always source-able" invariant rather than merely preserving it. */
-static void log_action_argv(int argc, const char *const *argv)
+/* Log one already-parsed command as a faithfully-quoted replayable line:
+ * Tcl_Merge re-quotes each argv element so braces/spaces/backslashes round-trip.
+ * Exposed (non-static) so scheduler.c self-logs arg-carrying subcommands (setprop)
+ * with the same fidelity as the gesture read-back paths here. */
+void log_action_argv(int argc, const char *const *argv)
 {
   char *line = Tcl_Merge(argc, argv);
   log_action("%s", line);
@@ -4899,6 +4903,7 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
         if(xctx->semaphore >= 2) break;
         if(readonly_block()) break;
         change_elem_order(-1);
+        log_action("xschem change_elem_order -1"); /* self-log Shift-S shortcut (issue 0068) */
       }
       else if(rstate == ControlMask) { /* save as schematic */
         if(xctx->semaphore >= 2) break;

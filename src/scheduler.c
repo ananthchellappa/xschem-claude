@@ -830,6 +830,9 @@ static int xschem_cmds_c(Tcl_Interp *interp, int argc, const char *argv[], int *
         int n = atoi(argv[2]);
         if(n >= 0 || n == -1) {
           change_elem_order(n);
+          /* self-log at core: covers the Prop menu + scripted form. The Shift+S key
+           * is handled inline in callback.c (case 'S') and logs there too (0068). */
+          log_action("xschem change_elem_order %d", n);
         }
       }
     }
@@ -7804,8 +7807,17 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
             if(xctx->rectcolor < 0 ) xctx->rectcolor = 0;
             if(xctx->rectcolor >= cadlayers ) xctx->rectcolor = cadlayers - 1;
             rebuild_selected_array();
+            /* A bare layer-cursor pick (no selection) is pure display state and stays
+             * unlogged (issue 0066: pure-display sets are nolog). Only when there is a
+             * selection does this become a content edit -- change_layer() recolors the
+             * selected objects -- so log THAT, and refuse it on a read-only view. */
             if(xctx->lastsel) {
-              change_layer();
+              if(xctx->readonly) {
+                Tcl_SetResult(interp, "read-only: change layer ignored", TCL_STATIC);
+              } else {
+                change_layer();
+                log_action("xschem set rectcolor %d", xctx->rectcolor);
+              }
             }
           }
           else if(!strcmp(argv[2], "sch_to_compare")) { /* set name of schematic to compare current window with */
@@ -8253,6 +8265,13 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
         }
         Tcl_ResetResult(interp);
       }
+      /* self-log at core: only the undoable (non -fast/-fastundo) commits. The
+       * -fast forms are internal machinery (backannotate op-point values, live
+       * graph color/node drags) that skip push_undo and are not user edits -- their
+       * flood would drown the transcript. Reconstruct the exact arg-carrying line
+       * with Tcl_Merge fidelity. Property-dialog edits take a different path
+       * (apply_instance_properties), so this does not double-log them. */
+      if(!fast) log_action_argv(argc, (const char *const *)argv);
     }
     /* show_unconnected_pins
      *   Add a "lab_show.sym" to all instance pins that are not connected to anything */

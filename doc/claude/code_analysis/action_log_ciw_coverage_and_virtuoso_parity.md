@@ -428,3 +428,33 @@ emitting the same canonical form the scheduler does:
 With this, the transform/surgery verbs are logged from **every** live entry point —
 menu, toolbar, context menu, keyboard, and script. `wire_cut` (mouse-position break)
 remains the only wire-edit key still deferred (coordinate/gesture form, 0069).
+
+**2026-07-02 — slice 5 (arg-carrying mutators: setprop, change_layer, change_elem_order).**
+Extends self-log to the property/layer/order edits (issues 0063-adjacent, 0066).
+
+- **`setprop`** self-logs the exact arg-carrying line via `log_action_argv`
+  (`Tcl_Merge` fidelity, so braces/spaces round-trip) — but **only the undoable
+  non-`-fast` commits**. The `-fast`/`-fastundo` forms skip `push_undo` and are pure
+  machinery (op-point backannotation, live graph colour/node drags); logging them
+  would flood the transcript, so the tail log is gated on `!fast`. Property-*dialog*
+  edits go through `apply_instance_properties` (a different path), so this does not
+  double-log them — the dialog itself (0063) is still a separate to-do.
+  `log_action_argv` was promoted from `static` in callback.c to an exported helper
+  (prototype in `util.h`) — the generalization §5.1 step 1 called for.
+- **`change_layer`** = `xschem set rectcolor <n>`. This is dual-purpose: with no
+  selection it just moves the layer *cursor* (pure display, stays **nolog** per 0066);
+  with a selection it recolours the selected objects (`change_layer()`), which is a
+  content edit — so it logs `xschem set rectcolor <n>` in that case only, and now
+  **refuses** on a read-only view (the path previously had no read-only guard).
+- **`change_elem_order`** self-logs `xschem change_elem_order <n>` at the scheduler
+  core (Prop menu + script) and at its inline `case 'S'` handler for the Shift-S key
+  (issue 0068), mirroring the transform-key closure.
+- **Test** `test_selflog_output.tcl` §3f: setprop non-fast logs / `-fast` does not /
+  change_elem_order core + Shift-S key / rectcolor-with-selection logs /
+  rectcolor-without-selection is nolog. Sabotage-verified (removing the `!fast` gate
+  fails exactly the `-fast does NOT log` check). 45 checks total, all pass.
+- **Observation (not fixed, pre-existing):** `xschem setprop instance 0 …` *hangs*
+  when run against the buffer left by this test's earlier churn (many delete/undo/cut
+  + transforms) — a setprop robustness edge unrelated to logging (my tail log runs
+  after the hang point). The test reloads a clean nand2 before §3f, exercising the
+  real-world path; the churned-state hang is worth a separate look.
