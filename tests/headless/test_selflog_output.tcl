@@ -126,6 +126,34 @@ foreach v {flipv flip_in_place flipv_in_place rotate_in_place break_wires} {
 }
 xschem set readonly 0
 
+# --- 3e. keyboard shortcuts self-log at their inline callback.c handlers (0068) -
+# The transform/surgery keys are handled inline in callback.c and never reach the
+# scheduler branch, so they carry their own log_action. Drive them via
+# `xschem callback` (headless `event generate` is unreliable). rstate strips
+# ShiftMask, so an uppercase keysym alone selects the Shift-<K> branch (state 0);
+# Alt-<k> = lowercase keysym + Mod1Mask. Assert a NEW matching line appears (count
+# delta >= 1) so a line left by an earlier section cannot make this pass falsely.
+proc count_pfx {pfx} {
+  set n 0 ; foreach l [loglines] { if {[string match "$pfx*" $l]} { incr n } } ; return $n
+}
+proc keydelta {ks st matcher pat} {
+  xschem select_all
+  set b [$matcher $pat]
+  xschem callback .drw 2 400 300 $ks 0 0 $st ; update idletasks
+  return [expr {[$matcher $pat] - $b}]
+}
+set Ctrl 4 ; set Alt 8   ;# ShiftMask is stripped from rstate, so Shift-<K> uses state 0
+check "key Shift-F logs flip"          [expr {[keydelta 70  0     count_pfx   {xschem flip }] >= 1}]
+check "key Alt-F logs flip_in_place"   [expr {[keydelta 102 $Alt  count_lines {xschem flip_in_place}] >= 1}]
+check "key Shift-R logs rotate"        [expr {[keydelta 82  0     count_pfx   {xschem rotate }] >= 1}]
+check "key Alt-R logs rotate_in_place" [expr {[keydelta 114 $Alt  count_lines {xschem rotate_in_place}] >= 1}]
+check "key Shift-V logs flipv"         [expr {[keydelta 86  0     count_pfx   {xschem flipv }] >= 1}]
+check "key Alt-V logs flipv_in_place"  [expr {[keydelta 118 $Alt  count_lines {xschem flipv_in_place}] >= 1}]
+check "key Alt-U logs align"           [expr {[keydelta 117 $Alt  count_lines {xschem align}] >= 1}]
+check "key & logs trim_wires"          [expr {[keydelta 38  0     count_lines {xschem trim_wires}] >= 1}]
+check "key ! logs break_wires"         [expr {[keydelta 33  0     count_lines {xschem break_wires}] >= 1}]
+check "key Ctrl-! logs break_wires 1"  [expr {[keydelta 33  $Ctrl count_lines {xschem break_wires 1}] >= 1}]
+
 # --- 4. -result / -error output comments (source-able) ------------------------
 xschem log_action -result "hello world"
 check "result -> '#= ' comment"   [has_line "#= hello world"]

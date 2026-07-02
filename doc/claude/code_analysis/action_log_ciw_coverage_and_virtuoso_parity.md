@@ -396,3 +396,35 @@ pre-existing bugs the diff touched. Addressed:
 - **Accepted as-is:** transforms/surgery self-log even on an empty selection (a
   replayable no-op line). Consistent with slice-1 `cut`/`delete` and with Virtuoso's
   narrate-every-action model; not gated.
+
+**2026-07-02 — slice 4 (keyboard shortcuts closed, issue 0068 for these verbs).**
+The F4 gap above is now closed for the transform/surgery family. Each inline handler
+in callback.c's legacy key switch got a `log_action` in its **standalone branch**,
+emitting the same canonical form the scheduler does:
+
+  Shift-F `case 'F'` → `xschem flip x0 y0`      Alt-F `case 'f'`/EQUAL_MODMASK → `xschem flip_in_place`
+  Shift-R `case 'R'` → `xschem rotate x0 y0`    Alt-R `case 'r'`/EQUAL_MODMASK → `xschem rotate_in_place`
+  Shift-V `case 'V'` → `xschem flipv x0 y0`     Alt-V `case 'v'`/EQUAL_MODMASK → `xschem flipv_in_place`
+  Alt-U   `case 'u'`/EQUAL_MODMASK → `xschem align`
+  `&` `case '&'` → `xschem trim_wires`          `!` `case '!'` → `xschem break_wires` (Ctrl-`!` → `... 1`)
+
+- **Pivot** = `xctx->mx_double_save`/`my_double_save` — the anchor `move_objects`
+  actually uses, identical to the scheduler's `x0`/`y0`.
+- **No double-log:** a live keypress reaches *only* the inline handler (these chords
+  have no entry in the input-binding table, so `dispatch_input_action` returns 0 and
+  the legacy switch runs); the scheduler branch is reached only by a text
+  `xschem <verb>` command (menu/toolbar/script/replay). The two paths are disjoint,
+  so exactly one line is written per action regardless of how it was invoked.
+- **Read-only safe:** each handler already `break`s on `readonly_block()` before the
+  edit, so the log fires only for an edit that actually happened.
+- **Gesture-safe:** logging sits in the standalone `else` only; rotate/flip-*during-
+  move* stays unlogged (gesture, 0069).
+- **Test** `test_selflog_output.tcl` §3e drives all ten chords via `xschem callback`
+  (headless `event generate` is unreliable) and asserts a *new* matching line per
+  chord (count-delta ≥ 1, so a line from an earlier section can't mask a dead
+  handler). Sabotage-verified: neutralizing one handler's `log_action` fails exactly
+  its check and no other. 39 checks total, all pass.
+
+With this, the transform/surgery verbs are logged from **every** live entry point —
+menu, toolbar, context menu, keyboard, and script. `wire_cut` (mouse-position break)
+remains the only wire-edit key still deferred (coordinate/gesture form, 0069).

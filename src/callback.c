@@ -4358,6 +4358,12 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
           move_objects(START,0,0,0);
           move_objects(FLIP|ROTATELOCAL,0,0,0);
           move_objects(END,0,0,0);
+          /* self-log the keyboard shortcut at its inline handler (issue 0068): Alt-F
+           * flip-in-place. Standalone branch only -- readonly already rejected above,
+           * and the during-move/copy variants are gesture-logged by the move END
+           * (0069). Live keypress reaches only here (never the scheduler branch), so
+           * no double-log; replay sources `xschem flip_in_place` into the scheduler. */
+          log_action("xschem flip_in_place");
         }
       }
       break;
@@ -4374,6 +4380,9 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
           move_objects(START,0,0,0);
           move_objects(FLIP,0,0,0);
           move_objects(END,0,0,0);
+          /* self-log Shift-F flip keyboard shortcut (issue 0068); pivot = the anchor
+           * move_objects used, matching the scheduler `xschem flip x0 y0` form. */
+          log_action("xschem flip %.16g %.16g", xctx->mx_double_save, xctx->my_double_save);
         }
       }
       else if(rstate == ControlMask ) { /* full zoom selection */
@@ -4808,6 +4817,7 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
           move_objects(START,0,0,0);
           move_objects(ROTATE|ROTATELOCAL,0,0,0);
           move_objects(END,0,0,0);
+          log_action("xschem rotate_in_place"); /* self-log Alt-R shortcut (issue 0068) */
         }
       }
       break;
@@ -4824,6 +4834,7 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
           move_objects(START,0,0,0);
           move_objects(ROTATE,0,0,0);
           move_objects(END,0,0,0);
+          log_action("xschem rotate %.16g %.16g", xctx->mx_double_save, xctx->my_double_save);
         }
 
       }
@@ -4958,6 +4969,7 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
         xctx->prep_hi_structs=0;
 
         draw();
+        log_action("xschem align"); /* self-log Alt-U align keyboard shortcut (issue 0068) */
       }
       else if(rstate==ControlMask) { /* Unselect floater texts */
         unselect_attached_floaters();
@@ -5015,6 +5027,7 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
           move_objects(ROTATE|ROTATELOCAL,0,0,0);
           move_objects(FLIP|ROTATELOCAL,0,0,0);
           move_objects(END,0,0,0);
+          log_action("xschem flipv_in_place"); /* self-log Alt-V shortcut (issue 0068) */
         }
       }
       break;
@@ -5041,6 +5054,7 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
           move_objects(ROTATE,0,0,0);
           move_objects(FLIP,0,0,0);
           move_objects(END,0,0,0);
+          log_action("xschem flipv %.16g %.16g", xctx->mx_double_save, xctx->my_double_save);
         }
       }
       else if(rstate == ControlMask) { /* toggle spice/vhdl netlist */
@@ -5446,6 +5460,7 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
       xctx->push_undo();
       trim_wires();
       draw();
+      log_action("xschem trim_wires"); /* self-log '&' keyboard shortcut (issue 0068) */
       break;
 
     case '\\':
@@ -5517,11 +5532,13 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
         if(xctx->semaphore >= 2) break;
         if(readonly_block()) break;
         break_wires_at_pins(1);
+        log_action("xschem break_wires 1"); /* self-log Ctrl-! shortcut (issue 0068) */
       }
       else {
         if(xctx->semaphore >= 2) break;
         if(readonly_block()) break;
         break_wires_at_pins(0);
+        log_action("xschem break_wires"); /* self-log '!' shortcut (issue 0068) */
       }
       break;
 
