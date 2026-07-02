@@ -32,8 +32,11 @@ set ::ciw_subcommands {}
 ## resize (the log pane takes the extra space).
 proc ciw_create {} {
   if {[winfo exists .ciw]} {
-    wm deiconify .ciw
-    raise .ciw
+    ## a bare `raise` is a no-op under Weston/WSLg (issue 0054): use the shared
+    ## withdraw+deiconify+activate helper that the Library Manager uses, then put
+    ## the keyboard focus on the command entry so the user can type immediately.
+    raise_activate_toplevel .ciw
+    catch {focus -force .ciw.c.e}
     return
   }
   toplevel .ciw
