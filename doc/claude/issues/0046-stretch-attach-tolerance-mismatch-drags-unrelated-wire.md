@@ -1,7 +1,15 @@
 # Issue 0046 — Stretch attach uses `endpoint_near()` while the rest of the pipeline uses exact `==`, dragging an unrelated wire
 
 **Opened:** 2026-06-26
-**Status:** OPEN — triaged 2026-07-01: verified STILL PRESENT (`select.c:1445-1475` uses `endpoint_near` tol=`cadsnap/2`; `move.c:1216/1236` use exact `==`). Inert on grid-snapped designs; diverges only on sub-grid/fractional coords. Real severity **MEDIUM** (rare). **Priority P3.** Fix **S–M**: make both ends use one predicate — since `endpoint_near` was added deliberately for sub-grid attach, make `point_on_moving_pin`/`point_on_fixed_pin` tolerance-based on the same `cadsnap/2`; needs a sub-grid regression + a check that grid-aligned behavior is unchanged.
+**Status:** FIXED 2026-07-02 (`fluid-editing`). Added a shared `point_near_pin(px,py,x,y)` in
+`src/move.c` using the SAME `cadsnap/2` tolerance as `select.c`'s `endpoint_near`, and routed both
+`point_on_fixed_pin()` and `point_on_moving_pin()` through it (was exact `==`). Now a wire grabbed for
+stretching at a sub-grid-near pin is recognized by the corner-slide pin tests too, so it slides instead
+of jogging; grid-aligned behavior is unchanged (exact-on-pin still matches; adjacent pins are `cadsnap`
+apart > `cadsnap/2`, no false neighbour match). Test: `tests/headless/wireedit/test_wireedit_18_subgrid_corner.tcl`
+(sub-grid pin, corner-slide must fire) — sabotage-verified RED (4 fails) on the pre-fix exact test,
+GREEN after; the full wireedit suite is otherwise unchanged (pre-existing `test_09` failure is
+unrelated). **Prior triage** (2026-07-01): verified STILL PRESENT (`select.c` `endpoint_near` tol=`cadsnap/2` vs `move.c` exact `==`); inert on grid-snapped designs, diverges only on sub-grid/fractional coords. Real severity **MEDIUM** (rare). **Priority P3.**
 **Severity:** MEDIUM (verifier verdict: **PLAUSIBLE**) — only on schematics with fractional / sub-grid
 coordinates.
 **Branch:** `fluid-editing`.

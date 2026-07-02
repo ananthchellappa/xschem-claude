@@ -1206,6 +1206,20 @@ static void place_moved_wire(int n, int orthogonal_wiring)
   }
 }
 
+/* Does (x,y) coincide with instance pin (px,py)? Tolerance = cadsnap/2, the SAME
+ * predicate select_attached_nets()'s endpoint_near() (select.c) uses to grab wires
+ * for stretching -- so the two ends of the stretch pipeline agree on "on the pin":
+ * a wire grabbed at a sub-grid-near pin is recognized by the corner-slide pin tests
+ * too, instead of the corner-slide silently failing its exact `==` test and letting
+ * the wire jog (issue 0046). Exact on grid-aligned designs (endpoints sit on pins,
+ * and adjacent pins are cadsnap apart > cadsnap/2, so no false neighbour match). */
+static int point_near_pin(double px, double py, double x, double y)
+{
+  double tol = tclgetdoublevar("cadsnap") / 2.0;
+  if(tol < 1e-6) tol = 1e-6;
+  return fabs(px - x) <= tol && fabs(py - y) <= tol;
+}
+
 /* is (x,y) on a pin of a FIXED (non-selected, i.e. non-moving) instance? */
 static int point_on_fixed_pin(double x, double y)
 {
@@ -1217,7 +1231,7 @@ static int point_on_fixed_pin(double x, double y)
     rects = (xctx->inst[inst].ptr + xctx->sym)->rects[PINLAYER];
     for(r = 0; r < rects; r++) {
       get_inst_pin_coord(inst, r, &px, &py);
-      if(px == x && py == y) return 1;
+      if(point_near_pin(px, py, x, y)) return 1;
     }
   }
   return 0;
@@ -1237,7 +1251,7 @@ static int point_on_moving_pin(double x, double y)
     rects = (xctx->inst[inst].ptr + xctx->sym)->rects[PINLAYER];
     for(r = 0; r < rects; r++) {
       get_inst_pin_coord(inst, r, &px, &py);
-      if(px == x && py == y) return 1;
+      if(point_near_pin(px, py, x, y)) return 1;
     }
   }
   return 0;

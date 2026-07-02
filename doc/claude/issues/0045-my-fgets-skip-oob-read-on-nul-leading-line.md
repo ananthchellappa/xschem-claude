@@ -1,7 +1,7 @@
 # Issue 0045 — `my_fgets_skip()` out-of-bounds read `buf[-1]` on a NUL-leading line
 
 **Opened:** 2026-06-26
-**Status:** ✅ FIXED 2026-07-02 (implemented on branch `fluid-editing`, uncommitted). Triaged 2026-07-01: was STILL PRESENT (`src/util.c:103-105`). Confirmed **LOW** (1-byte stack OOB read, only on a NUL-leading line in corrupt/hostile input; `.sch/.sym` are text). **Priority P1 (trivial, S, zero-risk).** ⚠ The sibling `my_fgets()` at `src/util.c:120-122` has the IDENTICAL unguarded `buf[len-1]` read — fix BOTH with `if(len>0 && buf[len-1]=='\n')`.
+**Status:** ✅ FIXED 2026-07-02 (`fluid-editing`, committed in `c4a44172`). Triaged 2026-07-01: was STILL PRESENT (`src/util.c:103-105`). Confirmed **LOW** (1-byte stack OOB read, only on a NUL-leading line in corrupt/hostile input; `.sch/.sym` are text). **Priority P1 (trivial, S, zero-risk).** ⚠ The sibling `my_fgets()` at `src/util.c:120-122` has the IDENTICAL unguarded `buf[len-1]` read — fix BOTH with `if(len>0 && buf[len-1]=='\n')`.
 **Severity:** LOW — out-of-bounds read; typically benign, but can mis-count skipped lines on hostile/
 corrupt input (and is UB).
 **Branch:** `fluid-editing`.

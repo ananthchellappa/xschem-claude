@@ -1,7 +1,18 @@
 # Issue 0048 — `tcl_braceable()` hand-rolls list quoting and drops the replayable action-log line for brace/backslash names
 
 **Opened:** 2026-06-26
-**Status:** OPEN — triaged 2026-07-01: verified STILL PRESENT (`callback.c:1520-1584`; `Tcl_Merge`/`Tcl_ConvertElement` used nowhere yet). Confirmed **LOW** (action-log replay fidelity only; brace/backslash in a name/prop; degrades to a `#` comment — no corruption). **Priority P3.** Fix **S–M**: emit each field via `Tcl_ConvertElement` (per-field, since numeric x/y/rot/flip are interleaved) and drop the `tcl_braceable` guard on the PLACE_SYMBOL + PLACE_TEXT emit paths; the same latent limit exists at 8 `tcl_braceable` call sites if a full sweep is wanted. Note: `Tcl_ConvertElement` *guarantees* the "log always source-able" invariant, so the switch is safer, not riskier.
+**Status:** FIXED 2026-07-02 (`fluid-editing`). Added a `log_action_argv(argc, argv)` helper in
+`src/callback.c` that emits a replayable command via `Tcl_Merge` (quotes EVERY element into a valid,
+re-parsable list), and rebuilt the `PLACE_SYMBOL` and `PLACE_TEXT` emit paths on it with the numeric
+fields pre-formatted — dropping the `tcl_braceable` guard on those two paths (the function stays for the
+6 load-path callers, a possible later sweep). A name/prop with braces/backslashes now stays replayable
+instead of degrading to a `# place symbol …` comment. **Log-format change**: emit now uses Tcl_Merge
+MINIMAL quoting, so a plain sym name / text is no longer always brace-wrapped (`xschem instance
+lab_pin.sym …`, not `{lab_pin.sym}`) — two existing gesture-log assertions were updated to match.
+Test: `tests/headless/test_gesture_end_log.tcl` §7b (place a symbol with `lab=A\{B\}C\\D` prop, assert
+the line is logged, not a comment, and replays to the EXACT prop) — sabotage-verified RED on the old
+`tcl_braceable` path (placement dropped to a comment), GREEN after. (Pre-existing rect-gesture flakiness
+under WSLg is unrelated.) **Prior triage** (2026-07-01): verified STILL PRESENT (`callback.c`; `Tcl_Merge` used nowhere yet). Confirmed **LOW** (replay fidelity only; degrades to a `#` comment — no corruption). **Priority P3.**
 **Severity:** LOW — action-log replay fidelity (a placement is silently dropped on replay), no live-edit
 effect.
 **Branch:** `fluid-editing`.

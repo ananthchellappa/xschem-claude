@@ -138,7 +138,10 @@ check "duplicate drop logs xschem copy_objects dx dy" \
   [expr {[lsearch -glob [newlines $n0] {xschem copy_objects *}] >= 0}]
 check "duplicate created an instance" [expr {[xschem get instances] == $i0 + 1}]
 
-# --- 7. symbol placement drop => xschem instance {sym} x y rot flip {prop} --
+# --- 7. symbol placement drop => xschem instance sym x y rot flip prop -------
+# NOTE: the emit now goes through Tcl_Merge (issue 0048), which quotes each field
+# MINIMALLY -- a plain sym name like lab_pin.sym is NOT brace-wrapped -- so the
+# match is `xschem instance lab_pin.sym *`, not the old always-`{lab_pin.sym}`.
 set n0 [llength [loglines]]
 set i0 [xschem get instances]
 xschem unselect_all
@@ -147,7 +150,7 @@ xschem place_symbol lab_pin.sym
 motion 180 140
 click1 180 140
 set lines [newlines $n0]
-set i [lsearch -glob $lines {xschem instance {lab_pin.sym} *}]
+set i [lsearch -glob $lines {xschem instance lab_pin.sym *}]
 check "symbol drop logs xschem instance" [expr {$i >= 0}]
 check "symbol drop placed an instance" [expr {[xschem get instances] == $i0 + 1}]
 # replay the logged line: it must place a second, identical instance
@@ -158,7 +161,36 @@ if {$i >= 0} {
     [expr {[xschem get instances] == $i0 + 2}]
 }
 
+# --- 7b. symbol drop whose PROP has braces/backslashes stays replayable ------
+# (issue 0048: Tcl_Merge quotes any legal string, so the placement is NOT dropped
+# to a '# place symbol ...' comment the way the old tcl_braceable brace-wrap did.)
+set n0 [llength [loglines]]
+set i0 [xschem get instances]
+xschem unselect_all
+motion 140 260
+xschem place_symbol lab_pin.sym {name=P1 lab=A\{B\}C\\D}
+motion 200 280
+click1 200 280
+set lines [newlines $n0]
+set i [lsearch -glob $lines {xschem instance lab_pin.sym *}]
+check "brace/backslash prop still logs a replayable instance line (0048)" [expr {$i >= 0}]
+check "brace-prop placement NOT dropped to a comment" \
+  [expr {[lsearch -glob $lines {# place symbol*}] < 0}]
+check "brace-prop placement placed an instance" [expr {[xschem get instances] == $i0 + 1}]
+# the logged element round-trips to the EXACT prop (Tcl_Merge quoting is lossless)
+if {$i >= 0} {
+  set before [xschem get instances]
+  set err [catch {uplevel #0 [list eval [lindex $lines $i]]} m]
+  check "brace-prop logged line replays cleanly (no source error)" [expr {$err == 0}]
+  check "brace-prop replay placed another instance" \
+    [expr {[xschem get instances] == $before + 1}]
+  set n [expr {[xschem get instances] - 1}]
+  check "replayed instance carries the exact brace/backslash prop" \
+    [expr {[string first {lab=A\{B\}C\\D} [xschem getprop instance $n]] >= 0}]
+}
+
 # --- 8. text placement drop => xschem text ... (dialog stubbed) -------------
+# Tcl_Merge minimal quoting again: a plain "HELLO" is NOT brace-wrapped (issue 0048).
 proc enter_text {label mode} { set ::tctx::retval "HELLO" }
 set n0 [llength [loglines]]
 xschem unselect_all
@@ -166,8 +198,8 @@ motion 220 220
 xschem place_text
 motion 260 240
 click1 260 240
-check "text drop logs xschem text ... {HELLO} ..." \
-  [expr {[lsearch -glob [newlines $n0] {xschem text * {HELLO} *}] >= 0}]
+check "text drop logs xschem text ... HELLO ..." \
+  [expr {[lsearch -glob [newlines $n0] {xschem text * HELLO *}] >= 0}]
 
 # --- 9. polygon close => xschem polygon x1 y1 ... (Phase 3 slice B) ---------
 set n0 [llength [loglines]]

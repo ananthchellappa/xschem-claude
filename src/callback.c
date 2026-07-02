@@ -1523,6 +1523,20 @@ int tcl_braceable(const char *s)
   return 1;
 }
 
+/* action-log Layer C: emit one replayable command whose argv is already fully
+ * stringified (numeric fields pre-formatted). Tcl_Merge quotes EVERY element
+ * into a valid, re-parsable list, so ANY legal instance name / property string --
+ * including one with braces or backslashes (Windows paths, escaped tokens) --
+ * round-trips and the placement stays replayable, instead of being dropped to a
+ * '#' comment by the tcl_braceable brace-wrap guard (issue 0048). Guarantees the
+ * Layer B "log always source-able" invariant rather than merely preserving it. */
+static void log_action_argv(int argc, const char *const *argv)
+{
+  char *line = Tcl_Merge(argc, argv);
+  log_action("%s", line);
+  Tcl_Free(line);
+}
+
 /* action-log Layer C (spec section 2): complete a move/copy drag and record
  * the single command reproducing its effect. The two callback completion
  * paths (end_place_move_copy_zoom and the intuitive-interface release) both
@@ -1558,13 +1572,20 @@ static void end_move_copy_logged(int is_copy)
   else if(ui & PLACE_SYMBOL) {
     int n = (xctx->lastsel == 1 && xctx->sel_array[0].type == ELEMENT) ? xctx->sel_array[0].n : -1;
     if(n >= 0 && n < xctx->instances) {
+      const char *name = xctx->inst[n].name ? xctx->inst[n].name : "";
       const char *prop = xctx->inst[n].prop_ptr ? xctx->inst[n].prop_ptr : "";
-      if(tcl_braceable(xctx->inst[n].name) && tcl_braceable(prop)) {
-        log_action("xschem instance {%s} %.16g %.16g %d %d {%s}",
-          xctx->inst[n].name, xctx->inst[n].x0, xctx->inst[n].y0,
-          (int)xctx->inst[n].rot, (int)xctx->inst[n].flip, prop);
-        return;
-      }
+      char xb[64], yb[64], rb[16], fb[16];
+      const char *av[8];
+      /* Tcl_Merge quotes name/prop safely -> replayable for any legal string,
+       * incl. braces/backslashes the old tcl_braceable guard rejected (issue 0048). */
+      my_snprintf(xb, S(xb), "%.16g", xctx->inst[n].x0);
+      my_snprintf(yb, S(yb), "%.16g", xctx->inst[n].y0);
+      my_snprintf(rb, S(rb), "%d", (int)xctx->inst[n].rot);
+      my_snprintf(fb, S(fb), "%d", (int)xctx->inst[n].flip);
+      av[0] = "xschem"; av[1] = "instance"; av[2] = name; av[3] = xb;
+      av[4] = yb; av[5] = rb; av[6] = fb; av[7] = prop;
+      log_action_argv(8, av);
+      return;
     }
     log_action("# place symbol (instance not cleanly recordable)");
   }
@@ -1573,13 +1594,17 @@ static void end_move_copy_logged(int is_copy)
     if(n >= 0 && n < xctx->texts) {
       const char *txt = xctx->text[n].txt_ptr ? xctx->text[n].txt_ptr : "";
       const char *prop = xctx->text[n].prop_ptr ? xctx->text[n].prop_ptr : "";
-      if(tcl_braceable(txt) && tcl_braceable(prop)) {
-        log_action("xschem text %.16g %.16g %d %d {%s} {%s} %.16g 1",
-          xctx->text[n].x0, xctx->text[n].y0,
-          (int)xctx->text[n].rot, (int)xctx->text[n].flip, txt, prop,
-          xctx->text[n].xscale);
-        return;
-      }
+      char xb[64], yb[64], rb[16], fb[16], sb[64];
+      const char *av[10];
+      my_snprintf(xb, S(xb), "%.16g", xctx->text[n].x0);
+      my_snprintf(yb, S(yb), "%.16g", xctx->text[n].y0);
+      my_snprintf(rb, S(rb), "%d", (int)xctx->text[n].rot);
+      my_snprintf(fb, S(fb), "%d", (int)xctx->text[n].flip);
+      my_snprintf(sb, S(sb), "%.16g", xctx->text[n].xscale);
+      av[0] = "xschem"; av[1] = "text"; av[2] = xb; av[3] = yb; av[4] = rb;
+      av[5] = fb; av[6] = txt; av[7] = prop; av[8] = sb; av[9] = "1";
+      log_action_argv(10, av);
+      return;
     }
     log_action("# place text (text not cleanly recordable)");
   }
