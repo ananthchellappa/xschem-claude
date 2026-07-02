@@ -496,7 +496,8 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
       xctx->prep_net_structs=0;
       xctx->prep_hi_structs=0;
       draw();
-      log_action("xschem align"); /* self-log at core: covers Tools menu + Alt-U key */
+      log_action("xschem align"); /* self-log at core: Tools menu + toolbar (Alt-U key is inline) */
+      Tcl_ResetResult(interp); /* don't leak a sub-call's stale interp result as align's return */
     }
 
     /* annotate_op [raw_file] [level] [sim_type]
@@ -682,11 +683,14 @@ static int xschem_cmds_b(Tcl_Interp *interp, int argc, const char *argv[], int *
     {
       int remove = 0;
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(scheduler_readonly_reject(interp, "break_wires")) return TCL_ERROR;
       if(argc > 2) remove = atoi(argv[2]);
       break_wires_at_pins(remove);
-      /* self-log at core: Tools menu + toolbar + '!'/Ctrl-'!' keys. Emit the exact
-       * canonical form (bare vs "1") so the arg-carrying variant replays faithfully. */
-      if(remove) log_action("xschem break_wires %d", remove);
+      /* self-log at core: Tools menu + toolbar path (the '!'/Ctrl-'!' keys are handled
+       * inline in callback.c and log nothing -- issue 0068). break_wires_at_pins()
+       * reads `remove` as a boolean (!remove / if(remove)), so canonicalize to bare vs
+       * "1" -- the only two forms the UI emits -- for a faithful, deterministic replay. */
+      if(remove) log_action("xschem break_wires 1");
       else       log_action("xschem break_wires");
       Tcl_ResetResult(interp);
     }
@@ -1708,9 +1712,12 @@ static int xschem_cmds_f(Tcl_Interp *interp, int argc, const char *argv[], int *
         move_objects(START,0,0,0);
         move_objects(FLIP,0, 0, 0);
         move_objects(END,0,0,0);
-        /* self-log at core (standalone, non-gesture): covers Edit menu, toolbar,
-         * context menu and the Shift-F key alike. During-move/copy flips are part
-         * of an unfinished gesture logged by the move END (issue 0069), not here. */
+        /* self-log at core (standalone, non-gesture): covers the Edit-menu item,
+         * toolbar, context menu and any scripted `xschem flip` -- all of which
+         * funnel through here. The Shift-F key does NOT: it is handled inline in
+         * callback.c's legacy switch (case 'F') and logs nothing (issue 0068,
+         * un-migrated keys). During-move/copy flips are part of an unfinished
+         * gesture logged by the move END (issue 0069), not here. */
         log_action("xschem flip %.16g %.16g", x0, y0);
       }
       Tcl_ResetResult(interp);
@@ -1721,6 +1728,7 @@ static int xschem_cmds_f(Tcl_Interp *interp, int argc, const char *argv[], int *
     else if(!strcmp(argv[1], "flip_in_place"))
     {
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(scheduler_readonly_reject(interp, "flip_in_place")) return TCL_ERROR;
       if(xctx->ui_state & STARTMOVE) move_objects(FLIP|ROTATELOCAL,0,0,0);
       else if(xctx->ui_state & STARTCOPY) copy_objects(FLIP|ROTATELOCAL);
       else {
@@ -1741,6 +1749,7 @@ static int xschem_cmds_f(Tcl_Interp *interp, int argc, const char *argv[], int *
       double x0 = xctx->mousex_snap;
       double y0 = xctx->mousey_snap;
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(scheduler_readonly_reject(interp, "flipv")) return TCL_ERROR;
       if(argc > 3) {
         x0 = atof(argv[2]);
         y0 = atof(argv[3]);
@@ -1774,6 +1783,7 @@ static int xschem_cmds_f(Tcl_Interp *interp, int argc, const char *argv[], int *
     else if(!strcmp(argv[1], "flipv_in_place"))
     {
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(scheduler_readonly_reject(interp, "flipv_in_place")) return TCL_ERROR;
       if(xctx->ui_state & STARTMOVE) {
         move_objects(ROTATE|ROTATELOCAL,0,0,0);
         move_objects(ROTATE|ROTATELOCAL,0,0,0);
@@ -7067,9 +7077,11 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
         move_objects(START,0,0,0);
         move_objects(ROTATE,0,0,0);
         move_objects(END,0,0,0);
-        /* self-log at core (standalone, non-gesture): covers Edit menu, toolbar,
-         * context menu and the Shift-R key alike. Rotate-during-move is a gesture
-         * logged by the move END (issue 0069), not here. */
+        /* self-log at core (standalone, non-gesture): covers the Edit-menu item,
+         * toolbar, context menu and any scripted `xschem rotate`. The Shift-R key
+         * does NOT reach here -- it is handled inline in callback.c (case 'R') and
+         * logs nothing (issue 0068). Rotate-during-move is a gesture logged by the
+         * move END (issue 0069), not here. */
         log_action("xschem rotate %.16g %.16g", x0, y0);
       }
       Tcl_ResetResult(interp);
@@ -7080,8 +7092,13 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
     else if(!strcmp(argv[1], "rotate_in_place"))
     {
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
-      if(xctx->ui_state & STARTMOVE) move_objects(FLIP|ROTATELOCAL,0,0,0);
-      else if(xctx->ui_state & STARTCOPY) copy_objects(FLIP|ROTATELOCAL);
+      if(scheduler_readonly_reject(interp, "rotate_in_place")) return TCL_ERROR;
+      /* rotate-during-move/copy: rotate each object about its own center. The
+       * standalone branch below and callback.c's inline Alt-R both use ROTATE|
+       * ROTATELOCAL; these two lines had FLIP by copy-paste from flip_in_place,
+       * so a rotate-in-place mid-gesture mirror-flipped instead of rotating. */
+      if(xctx->ui_state & STARTMOVE) move_objects(ROTATE|ROTATELOCAL,0,0,0);
+      else if(xctx->ui_state & STARTCOPY) copy_objects(ROTATE|ROTATELOCAL);
       else {
         rebuild_selected_array();
         move_objects(START,0,0,0);
@@ -8821,7 +8838,8 @@ static int xschem_cmds_t(Tcl_Interp *interp, int argc, const char *argv[], int *
       xctx->push_undo();
       trim_wires();
       draw();
-      log_action("xschem trim_wires"); /* self-log at core: Tools menu + toolbar + '&' key */
+      log_action("xschem trim_wires"); /* self-log at core: Tools menu + toolbar (the '&'
+                                        * key is handled inline in callback.c, issue 0068) */
       Tcl_ResetResult(interp);
     }
     else { *cmd_found = 0;}

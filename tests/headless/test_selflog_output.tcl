@@ -112,6 +112,20 @@ menu_action_logged {xschem trim_wires}
 set after [count_lines "xschem trim_wires"]
 check "menu wrapper logs trim_wires exactly once" [expr {$after - $before == 1}]
 
+# --- 3d. read-only rejects mutating transform/surgery AND logs nothing (0041) -
+# flipv / *_in_place / break_wires previously mutated a read-only design (only
+# flip and rotate carried scheduler_readonly_reject). With the guard added they
+# must reject -- and, crucially for the action log, emit NO line for an edit that
+# never happened.
+xschem set readonly 1
+foreach v {flipv flip_in_place flipv_in_place rotate_in_place break_wires} {
+  set before [llength [loglines]]
+  catch {xschem $v}
+  set after [llength [loglines]]
+  check "read-only rejects $v with no log line" [expr {$after == $before}]
+}
+xschem set readonly 0
+
 # --- 4. -result / -error output comments (source-able) ------------------------
 xschem log_action -result "hello world"
 check "result -> '#= ' comment"   [has_line "#= hello world"]

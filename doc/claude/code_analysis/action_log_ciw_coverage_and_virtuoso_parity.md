@@ -363,3 +363,36 @@ pattern, wire-surgery verbs:
 
 (`wire_cut` — the mouse-position break at `Alt-Right`/`Alt-Shift-Right` — is deferred
 with the other coordinate/gesture forms, 0069.)
+
+**2026-07-02 — slice 2/3 review remediation (high-effort code review).** A workflow
+review of the two self-log commits surfaced a correctness-of-claims problem and two
+pre-existing bugs the diff touched. Addressed:
+
+- **Keyboard shortcuts are NOT covered — claims corrected.** The Shift-F/V/R and
+  Alt-F/V/R/U keys (and `&`/`!` for trim/break) are handled by callback.c's *inline
+  legacy switch* (`case 'F'/'R'/'v'/'V'/'u'/'&'/'!'`), which calls `move_objects`/
+  `trim_wires`/`break_wires_at_pins` directly and never enters the scheduler branch —
+  so the self-log does **not** fire for them. This is not a regression (those keys
+  were never logged) but the slice-2/3 comments, commit messages and test overstated
+  it. The self-log genuinely covers the **menu item, toolbar, context menu and any
+  scripted `xschem <verb>`** — real, previously-unlogged gains. The keys are the
+  un-migrated-legacy-key gap (issue 0068); closing them means teaching those inline
+  handlers to log (or routing them through the dispatcher).
+- **Read-only holes closed (0041).** `flip`/`rotate`/`trim_wires` had
+  `scheduler_readonly_reject`; `flipv`, `flip_in_place`, `flipv_in_place`,
+  `rotate_in_place` and `break_wires` did **not** — so via menu/script they mutated a
+  read-only design, and the diff made it worse by *logging* the illegal edit. Added
+  the guard to all five (the inline key handlers already had `readonly_block()`).
+  Test §3d asserts each rejects with no log line. (`break_wires_at_pins` does its own
+  conditional `push_undo`, so no undo bug — that review sub-claim was refuted.)
+- **`rotate_in_place` gesture geometry bug fixed.** Its `STARTMOVE`/`STARTCOPY`
+  branch used `FLIP|ROTATELOCAL` (copy-pasted from `flip_in_place`), so a rotate-in-
+  place *during a move/copy* mirror-flipped instead of rotating. Both the standalone
+  branch and callback.c's inline Alt-R use `ROTATE|ROTATELOCAL`; corrected to match.
+  Pre-existing, unrelated to logging, but confirmed and trivial so fixed here.
+- **Minor:** `break_wires` self-log canonicalized to bare vs `1` (the function reads
+  `remove` as a boolean, so `%d` of e.g. `2` was misleading); `align` gained a
+  trailing `Tcl_ResetResult` so it doesn't leak a sub-call's stale interp result.
+- **Accepted as-is:** transforms/surgery self-log even on an empty selection (a
+  replayable no-op line). Consistent with slice-1 `cut`/`delete` and with Virtuoso's
+  narrate-every-action model; not gated.
