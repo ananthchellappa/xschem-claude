@@ -453,8 +453,11 @@ Extends self-log to the property/layer/order edits (issues 0063-adjacent, 0066).
   change_elem_order core + Shift-S key / rectcolor-with-selection logs /
   rectcolor-without-selection is nolog. Sabotage-verified (removing the `!fast` gate
   fails exactly the `-fast does NOT log` check). 45 checks total, all pass.
-- **Observation (not fixed, pre-existing):** `xschem setprop instance 0 …` *hangs*
-  when run against the buffer left by this test's earlier churn (many delete/undo/cut
-  + transforms) — a setprop robustness edge unrelated to logging (my tail log runs
-  after the hang point). The test reloads a clean nand2 before §3f, exercising the
-  real-world path; the churned-state hang is worth a separate look.
+- **Observation (not fixed, pre-existing) — filed as issue 0072:** `xschem setprop
+  instance 0 …` *hangs* (infinite loop) when run against the buffer left by this test's
+  earlier churn (delete/undo/redo/cut + explicit + keyboard transforms). Unrelated to
+  logging — the tail log runs after the hang point; narrowed (via a `-fast` probe) to
+  the setprop-instance *common commit path* (`hash_names`/`new_prop_string`/`translate`/
+  `match_symbol`), reached even with `-fast`. Only the full accumulation reproduces it
+  (progressive state corruption). The test reloads a clean nand2 before §3f. See
+  `doc/claude/issues/0072-setprop-instance-hangs-on-churned-buffer.md`.
