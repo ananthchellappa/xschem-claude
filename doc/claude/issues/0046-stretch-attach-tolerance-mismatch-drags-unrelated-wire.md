@@ -1,7 +1,7 @@
 # Issue 0046 — Stretch attach uses `endpoint_near()` while the rest of the pipeline uses exact `==`, dragging an unrelated wire
 
 **Opened:** 2026-06-26
-**Status:** OPEN
+**Status:** OPEN — triaged 2026-07-01: verified STILL PRESENT (`select.c:1445-1475` uses `endpoint_near` tol=`cadsnap/2`; `move.c:1216/1236` use exact `==`). Inert on grid-snapped designs; diverges only on sub-grid/fractional coords. Real severity **MEDIUM** (rare). **Priority P3.** Fix **S–M**: make both ends use one predicate — since `endpoint_near` was added deliberately for sub-grid attach, make `point_on_moving_pin`/`point_on_fixed_pin` tolerance-based on the same `cadsnap/2`; needs a sub-grid regression + a check that grid-aligned behavior is unchanged.
 **Severity:** MEDIUM (verifier verdict: **PLAUSIBLE**) — only on schematics with fractional / sub-grid
 coordinates.
 **Branch:** `fluid-editing`.

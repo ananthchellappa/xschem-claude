@@ -1,7 +1,7 @@
 # Issue 0041 — Read-only enforcement lives at keyboard-dispatch altitude and is bypassable via Tcl edit paths
 
 **Opened:** 2026-06-26
-**Status:** OPEN
+**Status:** OPEN — triaged 2026-07-01: verified STILL PRESENT. Real severity **MEDIUM-HIGH** (keyboard/menu paths *are* guarded; exposure is Tcl scripts / command-server / unlisted action-ids, aggravated by the silent no-`*` save via `set_modify()` `ro_suppress` at `actions.c:170-174`). **Priority P1 — pragmatic fix only.** ⚠ The §3 fix-sketch is partly **WRONG**: gating the `store` funnels or `push_undo()` on `xctx->readonly` would break *loading* the read-only file itself (load routes through the store funnels) and break *netlisting* a read-only view (all six backends call `push_undo`). Do the **S–M** fix instead: add `if(xctx->readonly){ciw_echo(...);return;}` to the ~6 unguarded edit subcommands in `scheduler.c` (delete/paste/rotate/flip/move_objects/copy_objects) or their shared cores. A true chokepoint needs a new `begin_edit()` helper threaded only through genuine edit ops (**L**).
 **Severity:** HIGH — protection bypass / data integrity; a file-protected schematic can be mutated and
 saved with no modified marker.
 **Branch:** `fluid-editing`.

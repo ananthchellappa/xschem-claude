@@ -1,7 +1,7 @@
 # Issue 0043 — Disk-based undo invalidates session-stable ids, breaking the apply-scope overlay and `xschem object` handles
 
 **Opened:** 2026-06-26
-**Status:** OPEN
+**Status:** OPEN — triaged 2026-07-01: verified STILL PRESENT; in-memory undo preserves ids (`in_memory_undo.c` struct-copies `.id`), disk undo re-stamps them via the store funnels (asymmetry confirmed). ⚠ On-disk undo is the DEFAULT (`xschem.tcl:14613`), so this bites out-of-the-box. Real severity **MEDIUM.** **Priority P2.** Fix effort **M–L**: per-slot side-channel id snapshot restored on pop — do NOT bake ids into the `.sch/.sym` format (bumps `XSCHEM_FILE_VERSION`, touches every reader); a positional re-key is unsafe (undo changes the object set). Cheapest mitigation (**S**): default `undo_type=memory` when the overlay/handle APIs are in use.
 **Severity:** MEDIUM — silent loss of the white-outline scope overlay and stale/dangling object handles
 after an undo (only when on-disk undo is in effect).
 **Branch:** `fluid-editing`.

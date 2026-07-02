@@ -1,7 +1,7 @@
 # Issue 0048 — `tcl_braceable()` hand-rolls list quoting and drops the replayable action-log line for brace/backslash names
 
 **Opened:** 2026-06-26
-**Status:** OPEN
+**Status:** OPEN — triaged 2026-07-01: verified STILL PRESENT (`callback.c:1520-1584`; `Tcl_Merge`/`Tcl_ConvertElement` used nowhere yet). Confirmed **LOW** (action-log replay fidelity only; brace/backslash in a name/prop; degrades to a `#` comment — no corruption). **Priority P3.** Fix **S–M**: emit each field via `Tcl_ConvertElement` (per-field, since numeric x/y/rot/flip are interleaved) and drop the `tcl_braceable` guard on the PLACE_SYMBOL + PLACE_TEXT emit paths; the same latent limit exists at 8 `tcl_braceable` call sites if a full sweep is wanted. Note: `Tcl_ConvertElement` *guarantees* the "log always source-able" invariant, so the switch is safer, not riskier.
 **Severity:** LOW — action-log replay fidelity (a placement is silently dropped on replay), no live-edit
 effect.
 **Branch:** `fluid-editing`.

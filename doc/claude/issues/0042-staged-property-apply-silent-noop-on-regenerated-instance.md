@@ -1,7 +1,7 @@
 # Issue 0042 — Staged property Apply silently no-ops when the target instance was regenerated/invalidated
 
 **Opened:** 2026-06-26
-**Status:** OPEN
+**Status:** OPEN — triaged 2026-07-01: verified STILL PRESENT (`src/editprop.c:1069-1071` returns a bare `0`; `scheduler.c:208-210` sets result `"0"`/`TCL_OK`; `property_form.tcl` only branches on `did`). Real severity **MEDIUM** (narrow trigger: modeless form left open across an intervening undo/reload). **Priority P2 (cheap win, S).** Note `0` is ambiguous (legit no-op vs vanished target) — surface the vanished case with a distinct return code + `ciw_echo`/messagebox, keep the form open, and make action-log replay tolerate the new code.
 **Severity:** MEDIUM-HIGH — silent edit loss; the user believes the property edit applied but it did not.
 **Branch:** `fluid-editing`.
 **Source:** `/code-review high` this session (workflow `wf_1a6ce6c4-0d9`), finding #4 (CONFIRMED).

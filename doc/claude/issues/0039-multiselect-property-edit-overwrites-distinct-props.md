@@ -1,7 +1,7 @@
 # Issue 0039 — Multi-select Edit Properties silently overwrites each object's distinct properties
 
 **Opened:** 2026-06-26
-**Status:** OPEN
+**Status:** ✅ FIXED 2026-06-30 (commit a5df8d83) — verified 2026-07-01. `editprop.c:1468-1470` now forces `preserve_unchanged_attrs=1` when `xctx->lastsel>1 && type!=ELEMENT`, before the `switch(type)`, so all six non-instance branches take the per-token preserve path; regression at `tests/headless/test_editprop_preserve.tcl` (DISPLAY-gated). No further action.
 **Severity:** HIGH — silent data loss (user-entered net labels / attributes destroyed with no cue).
 **Branch:** `fluid-editing`.
 **Source:** `/code-review high` this session (workflow `wf_1a6ce6c4-0d9`), finding #1 (CONFIRMED).
