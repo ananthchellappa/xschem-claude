@@ -344,3 +344,22 @@ roadmap §7 step 2 with the geometry-transform verbs. Landed:
 Next mutators (same pattern): `paste`/`merge` (needs the gesture `paste_at` form,
 0069), `trim_wires`/`break_wires`, `setprop`/`change_layer`/`change_elem_order`
 (arg-carrying — log the parsed form), symbol generators (`make_symbol`).
+
+**2026-07-02 — slice 3 (wire surgery self-log, part of 0061/0062).** Same one-line
+pattern, wire-surgery verbs:
+
+- `trim_wires` → `xschem trim_wires` (no args, unconditional). Its core calls the
+  `trim_wires()` *C function*, which is also reached internally by `align` and
+  gesture autotrim — those do **not** hit the subcommand case, so no double-log.
+- `break_wires` → emits the **exact canonical form**: bare `xschem break_wires`
+  when `remove==0`, else `xschem break_wires <n>` (the `Ctrl-!` "remove running-
+  through" variant is `xschem break_wires 1`). Preserving the arg keeps replay
+  faithful.
+- Both were driven raw from the Tools menu (`-command "xschem trim_wires"`) and the
+  toolbar (`toolbar_add ToolJoinTrim "xschem trim_wires"`) — previously unlogged
+  (0061/0062) — plus the registered `&` / `!` / `Ctrl-!` keys (wrapper → now dedup).
+- `test_selflog_output.tcl` gains a wire-surgery section (4 checks: trim/break bare/
+  break-with-arg + trim wrapper dedup) — all pass (24 total in the file now).
+
+(`wire_cut` — the mouse-position break at `Alt-Right`/`Alt-Shift-Right` — is deferred
+with the other coordinate/gesture forms, 0069.)

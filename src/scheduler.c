@@ -684,6 +684,10 @@ static int xschem_cmds_b(Tcl_Interp *interp, int argc, const char *argv[], int *
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
       if(argc > 2) remove = atoi(argv[2]);
       break_wires_at_pins(remove);
+      /* self-log at core: Tools menu + toolbar + '!'/Ctrl-'!' keys. Emit the exact
+       * canonical form (bare vs "1") so the arg-carrying variant replays faithfully. */
+      if(remove) log_action("xschem break_wires %d", remove);
+      else       log_action("xschem break_wires");
       Tcl_ResetResult(interp);
     }
 
@@ -8817,6 +8821,7 @@ static int xschem_cmds_t(Tcl_Interp *interp, int argc, const char *argv[], int *
       xctx->push_undo();
       trim_wires();
       draw();
+      log_action("xschem trim_wires"); /* self-log at core: Tools menu + toolbar + '&' key */
       Tcl_ResetResult(interp);
     }
     else { *cmd_found = 0;}

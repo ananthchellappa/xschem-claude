@@ -96,6 +96,22 @@ menu_action_logged {xschem rotate 10 20}
 set after [count_lines "xschem rotate 10 20"]
 check "menu wrapper logs rotate exactly once" [expr {$after - $before == 1}]
 
+# --- 3c. wire-surgery self-logs at core (0061 Tools menu, 0062 toolbar) --------
+# trim_wires / break_wires were driven raw from the Tools menu and the toolbar
+# (`toolbar_add ... "xschem trim_wires"`) -- previously unlogged. break_wires
+# carries an optional `remove` arg; the exact canonical form must be preserved.
+xschem trim_wires
+check "trim_wires self-logs"             [has_line "xschem trim_wires"]
+xschem break_wires
+check "break_wires (bare) self-logs"     [has_line "xschem break_wires"]
+xschem break_wires 1
+check "break_wires 1 self-logs with arg" [has_line "xschem break_wires 1"]
+# wrapper dedup for a wire-surgery verb: exactly one line, not two.
+set before [count_lines "xschem trim_wires"]
+menu_action_logged {xschem trim_wires}
+set after [count_lines "xschem trim_wires"]
+check "menu wrapper logs trim_wires exactly once" [expr {$after - $before == 1}]
+
 # --- 4. -result / -error output comments (source-able) ------------------------
 xschem log_action -result "hello world"
 check "result -> '#= ' comment"   [has_line "#= hello world"]
