@@ -64,6 +64,38 @@ xschem log_action -reset
 xschem get xorigin                         ;# a query: no self-log
 check "non-mutating cmd leaves -emitted 0" [expr {[xschem log_action -emitted] == 0}]
 
+# --- 3b. transform family self-logs at core (0061 Edit/Tools menu, 0062 toolbar) --
+# Standalone (non-gesture) flip/rotate/align must self-log from ANY entry point --
+# the hand-written Edit-menu `-command {xschem flip}` items and the toolbar were
+# previously unlogged. Explicit-coord forms are deterministic and replayable.
+xschem select_all
+xschem flip 10 20
+check "flip self-logs with pivot"        [expr {[count_lines "xschem flip 10 20"] == 1}]
+xschem select_all
+xschem flipv 10 20
+check "flipv self-logs with pivot"       [expr {[count_lines "xschem flipv 10 20"] == 1}]
+xschem select_all
+xschem rotate 10 20
+check "rotate self-logs with pivot"      [expr {[count_lines "xschem rotate 10 20"] == 1}]
+xschem select_all
+xschem flip_in_place
+check "flip_in_place self-logs"          [has_line "xschem flip_in_place"]
+xschem select_all
+xschem flipv_in_place
+check "flipv_in_place self-logs"         [has_line "xschem flipv_in_place"]
+xschem select_all
+xschem rotate_in_place
+check "rotate_in_place self-logs"        [has_line "xschem rotate_in_place"]
+xschem select_all
+xschem align
+check "align self-logs"                  [has_line "xschem align"]
+# wrapper dedup for a transform verb: exactly one line, not two.
+xschem select_all
+set before [count_lines "xschem rotate 10 20"]
+menu_action_logged {xschem rotate 10 20}
+set after [count_lines "xschem rotate 10 20"]
+check "menu wrapper logs rotate exactly once" [expr {$after - $before == 1}]
+
 # --- 4. -result / -error output comments (source-able) ------------------------
 xschem log_action -result "hello world"
 check "result -> '#= ' comment"   [has_line "#= hello world"]

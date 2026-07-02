@@ -496,6 +496,7 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
       xctx->prep_net_structs=0;
       xctx->prep_hi_structs=0;
       draw();
+      log_action("xschem align"); /* self-log at core: covers Tools menu + Alt-U key */
     }
 
     /* annotate_op [raw_file] [level] [sim_type]
@@ -1703,6 +1704,10 @@ static int xschem_cmds_f(Tcl_Interp *interp, int argc, const char *argv[], int *
         move_objects(START,0,0,0);
         move_objects(FLIP,0, 0, 0);
         move_objects(END,0,0,0);
+        /* self-log at core (standalone, non-gesture): covers Edit menu, toolbar,
+         * context menu and the Shift-F key alike. During-move/copy flips are part
+         * of an unfinished gesture logged by the move END (issue 0069), not here. */
+        log_action("xschem flip %.16g %.16g", x0, y0);
       }
       Tcl_ResetResult(interp);
     }
@@ -1719,6 +1724,7 @@ static int xschem_cmds_f(Tcl_Interp *interp, int argc, const char *argv[], int *
         move_objects(START,0,0,0);
         move_objects(FLIP|ROTATELOCAL,0,0,0);
         move_objects(END,0,0,0);
+        log_action("xschem flip_in_place"); /* self-log at core (standalone only) */
       }
       Tcl_ResetResult(interp);
     }
@@ -1754,6 +1760,7 @@ static int xschem_cmds_f(Tcl_Interp *interp, int argc, const char *argv[], int *
         move_objects(ROTATE,0, 0, 0);
         move_objects(FLIP,0, 0, 0);
         move_objects(END,0,0,0);
+        log_action("xschem flipv %.16g %.16g", x0, y0); /* self-log at core (standalone only) */
       }
       Tcl_ResetResult(interp);
     }
@@ -1780,6 +1787,7 @@ static int xschem_cmds_f(Tcl_Interp *interp, int argc, const char *argv[], int *
         move_objects(ROTATE|ROTATELOCAL,0,0,0);
         move_objects(FLIP|ROTATELOCAL,0,0,0);
         move_objects(END,0,0,0);
+        log_action("xschem flipv_in_place"); /* self-log at core (standalone only) */
       }
       Tcl_ResetResult(interp);
     }
@@ -7055,6 +7063,10 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
         move_objects(START,0,0,0);
         move_objects(ROTATE,0,0,0);
         move_objects(END,0,0,0);
+        /* self-log at core (standalone, non-gesture): covers Edit menu, toolbar,
+         * context menu and the Shift-R key alike. Rotate-during-move is a gesture
+         * logged by the move END (issue 0069), not here. */
+        log_action("xschem rotate %.16g %.16g", x0, y0);
       }
       Tcl_ResetResult(interp);
     }
@@ -7071,6 +7083,7 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
         move_objects(START,0,0,0);
         move_objects(ROTATE|ROTATELOCAL,0,0,0);
         move_objects(END,0,0,0);
+        log_action("xschem rotate_in_place"); /* self-log at core (standalone only) */
       }
       Tcl_ResetResult(interp);
     }

@@ -318,3 +318,29 @@ D1 (comment-lines) and D2 (self-log at core + guard). Landed:
 This proves the thesis: adding one guarded `log_action` line at a command's core
 closed that command across *all* its entry points at once, with no per-edge
 wrapper. Remaining mutators follow the same one-line pattern (roadmap §7 step 2).
+
+**2026-07-02 — slice 2 (transform family self-log, part of 0061/0062).** Continued
+roadmap §7 step 2 with the geometry-transform verbs. Landed:
+
+- **Seven mutators self-log** at their `scheduler.c` cores: `flip`, `flipv`,
+  `rotate` (each logs `xschem <v> x0 y0` with the pivot, so replay is
+  deterministic), `flip_in_place`, `flipv_in_place`, `rotate_in_place` (per-object
+  pivot, bare form), and `align`. The flip/rotate cores self-log **only in the
+  standalone `else` branch** — the `STARTMOVE`/`STARTCOPY` branches are flip/rotate-
+  *during-move*, an unfinished gesture logged by the move END (issue 0069), so
+  logging there would double-count.
+- **Closed by construction across every edge at once:** these verbs were driven by
+  hand-written Edit-menu items (`-command {xschem flip}`, `xschem.tcl`), the
+  context menu, the toolbar, and the registered Shift-F/V/R · Alt-F/V/R/U keys.
+  The menu/ctx/toolbar paths were previously **unlogged** (0061/0062); the key path
+  logged via its wrapper. One core line covers all of them, and the existing
+  `actionlog_cmd_logged` dedup makes the key-wrapper skip its now-redundant copy.
+- **Test** `test_selflog_output.tcl` extended with a transform-family section
+  (8 checks: each verb self-logs exactly once + wrapper dedup for `rotate`) — all
+  pass. `test_action_log_dispatch` / `test_gesture_end_log` still green;
+  `test_phase3_mints`' two `snap` failures are pre-existing (verified on baseline),
+  unrelated.
+
+Next mutators (same pattern): `paste`/`merge` (needs the gesture `paste_at` form,
+0069), `trim_wires`/`break_wires`, `setprop`/`change_layer`/`change_elem_order`
+(arg-carrying — log the parsed form), symbol generators (`make_symbol`).
