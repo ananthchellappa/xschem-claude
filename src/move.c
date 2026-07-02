@@ -1354,6 +1354,23 @@ static int point_on_other_wire(double x, double y, int self)
   return 0;
 }
 
+/* does any wire other than `self` that touches (x,y) carry net name `lab`? Used to
+ * confirm the moved pin STAYS on the stub's net once the stub is dropped -- the
+ * connectivity-preserving condition for removing a named stub (issue 0040). Compares
+ * the `lab` prop token, which prepare_netlist_structs() has baked with the wire's
+ * derived net name; `lab` is the caller's own COPY of the stub's token (get_tok_value
+ * returns a shared buffer the loop below reuses). */
+static int other_wire_same_lab(double x, double y, int self, const char *lab)
+{
+  int m;
+  for(m = 0; m < xctx->wires; m++) {
+    if(m == self) continue;
+    if(!touch(xctx->wire[m].x1, xctx->wire[m].y1, xctx->wire[m].x2, xctx->wire[m].y2, x, y)) continue;
+    if(!strcmp(lab, get_tok_value(xctx->wire[m].prop_ptr, "lab", 0))) return 1;
+  }
+  return 0;
+}
+
 /* predicate for wire_delete_compact(): delete wires flagged in the arg array */
 static int wire_doomed_flag(int n, void *arg) { return ((unsigned short *)arg)[n]; }
 
@@ -1412,10 +1429,21 @@ static void remove_move_orphan_wires(void)
     /* ... and that pin must be redundantly served by another wire, else the stub is
      * the sole link to the pin and must stay */
     if(!point_on_other_wire(kx, ky, i)) continue;
-    /* never auto-drop a wire that carries its own net name (lab=...): the moved pin stays
-     * connected via the other wire, but deleting this stub would silently rename/lose the
-     * node it labels (issue 0040). Only anonymous redundant stubs are removable. */
-    if(get_tok_value(xctx->wire[i].prop_ptr, "lab", 0)[0]) continue;
+    /* A named stub is dropped only when the moved pin STAYS on that same net via another
+     * wire; otherwise deleting it would silently rename/lose the node (issue 0040). Compare
+     * the net name against the serving wires -- NOT merely test lab non-empty:
+     * prepare_netlist_structs() bakes the derived net name into EVERY named-net wire's
+     * prop_ptr lab=, so a non-empty test wrongly protected ordinary same-net stubs (it
+     * broke the redundant-stub cleanup, TC9). An anonymous stub (empty lab) stays removable
+     * on the geometric point_on_other_wire redundancy above, as before. */
+    {
+      char *stublab = NULL;
+      int keep;
+      my_strdup(_ALLOC_ID_, &stublab, get_tok_value(xctx->wire[i].prop_ptr, "lab", 0));
+      keep = (stublab && stublab[0] && !other_wire_same_lab(kx, ky, i, stublab));
+      my_free(_ALLOC_ID_, &stublab);
+      if(keep) continue;
+    }
     doomed[i] = 1;
     removed++;
   }
