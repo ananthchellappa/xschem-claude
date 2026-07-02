@@ -829,10 +829,15 @@ static int xschem_cmds_c(Tcl_Interp *interp, int argc, const char *argv[], int *
       if(argc > 2) {
         int n = atoi(argv[2]);
         if(n >= 0 || n == -1) {
+          int had_sel;
+          rebuild_selected_array();
+          had_sel = xctx->lastsel;   /* selection BEFORE the op (which may clear it) */
           change_elem_order(n);
           /* self-log at core: covers the Prop menu + scripted form. The Shift+S key
-           * is handled inline in callback.c (case 'S') and logs there too (0068). */
-          log_action("xschem change_elem_order %d", n);
+           * is handled inline in callback.c (case 'S') and logs there too (0068).
+           * change_elem_order reorders the SELECTED objects; with nothing selected
+           * it is a no-op, so don't record a phantom edit (matches set rectcolor). */
+          if(had_sel) log_action("xschem change_elem_order %d", n);
         }
       }
     }
@@ -7812,12 +7817,11 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
              * selection does this become a content edit -- change_layer() recolors the
              * selected objects -- so log THAT, and refuse it on a read-only view. */
             if(xctx->lastsel) {
-              if(xctx->readonly) {
-                Tcl_SetResult(interp, "read-only: change layer ignored", TCL_STATIC);
-              } else {
-                change_layer();
-                log_action("xschem set rectcolor %d", xctx->rectcolor);
-              }
+              /* Reject on a read-only view like the other mutators -- and return
+               * TCL_ERROR (not a silent TCL_OK) so a caller/replay `catch`es it. */
+              if(scheduler_readonly_reject(interp, "set rectcolor")) return TCL_ERROR;
+              change_layer();
+              log_action("xschem set rectcolor %d", xctx->rectcolor);
             }
           }
           else if(!strcmp(argv[2], "sch_to_compare")) { /* set name of schematic to compare current window with */
@@ -8265,13 +8269,20 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
         }
         Tcl_ResetResult(interp);
       }
-      /* self-log at core: only the undoable (non -fast/-fastundo) commits. The
-       * -fast forms are internal machinery (backannotate op-point values, live
-       * graph color/node drags) that skip push_undo and are not user edits -- their
-       * flood would drown the transcript. Reconstruct the exact arg-carrying line
-       * with Tcl_Merge fidelity. Property-dialog edits take a different path
-       * (apply_instance_properties), so this does not double-log them. */
-      if(!fast) log_action_argv(argc, (const char *const *)argv);
+      /* self-log at core, narrowly: only an *instance* property edit that pushed
+       * undo. Two axes, both needed:
+       *   - subtype == "instance": `setprop rect ...` is graph machinery
+       *     (create_graph.tcl, the graph-properties dialog) issued with layer/rect
+       *     indices that would not match on replay -- logging it both floods the
+       *     transcript and produces non-replayable lines; text/wire props reach the
+       *     log via their own dialogs. So only instance edits are recorded here.
+       *   - fast != 1: `-fast` (fast==1) skips push_undo -- it is pure machinery
+       *     (op-point backannotation) -- so it is excluded; `-fastundo` (fast==3)
+       *     and the plain form (fast==0) DO push_undo and ARE logged.
+       * Property-*dialog* edits take a different path (apply_instance_properties),
+       * so this does not double-log them. Tcl_Merge keeps braces/spaces faithful. */
+      if(fast != 1 && argc > 2 && !strcmp(argv[2], "instance"))
+        log_action_argv(argc, (const char *const *)argv);
     }
     /* show_unconnected_pins
      *   Add a "lab_show.sym" to all instance pins that are not connected to anything */

@@ -461,3 +461,31 @@ Extends self-log to the property/layer/order edits (issues 0063-adjacent, 0066).
   `match_symbol`), reached even with `-fast`. Only the full accumulation reproduces it
   (progressive state corruption). The test reloads a clean nand2 before §3f. See
   `doc/claude/issues/0072-setprop-instance-hangs-on-churned-buffer.md`.
+
+**2026-07-02 — slice 5 review remediation (high-effort code review).** The first-cut
+setprop gate was the wrong axis; five findings, all confirmed, all fixed:
+
+- **The `!fast` setprop gate was doubly wrong.** (a) `create_graph.tcl` and the graph-
+  properties dialog issue **plain (non-fast)** `setprop rect 2 <idx> …`, so `!fast`
+  did *not* exclude the graph machinery it claimed to — it flooded the log with
+  non-replayable rect-index lines. (b) `-fastundo` (`fast==3`) **does** push undo
+  (`if(fast==3||fast==0) push_undo()`), so `!fast` wrongly dropped genuinely undoable
+  edits; the old comment's "`-fast`/`-fastundo` skip push_undo" was factually false.
+  **Fix:** gate on `fast != 1 && argv[2]=="instance"` — log an *undoable instance*
+  property edit only. That excludes all `rect`/graph machinery and the no-subtype
+  case, excludes `-fast` backannotation, and correctly includes `-fastundo`. (`symbol`/
+  `text`/`wire` setprop is left unlogged — those reach the log via their dialogs; a
+  follow-up if a direct-script case ever needs them.)
+- **`set rectcolor` read-only guard leaked as success.** It set a Tcl result but fell
+  through `TCL_OK`, so a `catch`/replay couldn't detect the rejection. **Fix:** route
+  through `scheduler_readonly_reject` and `return TCL_ERROR`, like the other mutators.
+- **Phantom `change_elem_order` on empty selection.** Shift-S (and the scheduler form)
+  logged `xschem change_elem_order -1` even with nothing selected (a no-op). **Fix:**
+  gate the log on the selection captured *before* the op (`rebuild_selected_array` →
+  `lastsel`), in both the scheduler core and the inline `case 'S'`. This makes the
+  slice's three verbs internally consistent (all log only a real edit); the slice-2
+  transform verbs still log unconditionally by their earlier accepted decision.
+- **Test** §3f extended: `-fastundo` logs / `-fast` doesn't / `rect` (graph) is nolog /
+  change_elem_order with-vs-without selection / read-only rectcolor rejects
+  (`TCL_ERROR`). Sabotage-verified — reverting to the `!fast` gate fails exactly the
+  `rect`-nolog and `-fastundo`-logs checks. 49 checks total, all pass.

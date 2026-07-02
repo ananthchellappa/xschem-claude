@@ -4900,10 +4900,13 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
 
     case 'S':
       if(rstate == 0) { /* change element order */
+        int had_sel;
         if(xctx->semaphore >= 2) break;
         if(readonly_block()) break;
+        rebuild_selected_array();
+        had_sel = xctx->lastsel;   /* nothing selected -> no-op; don't log a phantom edit */
         change_elem_order(-1);
-        log_action("xschem change_elem_order -1"); /* self-log Shift-S shortcut (issue 0068) */
+        if(had_sel) log_action("xschem change_elem_order -1"); /* self-log Shift-S (issue 0068) */
       }
       else if(rstate == ControlMask) { /* save as schematic */
         if(xctx->semaphore >= 2) break;

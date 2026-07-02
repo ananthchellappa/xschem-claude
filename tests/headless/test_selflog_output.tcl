@@ -159,22 +159,39 @@ check "key Ctrl-! logs break_wires 1"  [expr {[keydelta 33  $Ctrl count_lines {x
 # (repeated delete/undo/cut + transforms), and setprop on that churned state is
 # unrelated to what we exercise here.
 xschem load xschem_library/examples/nand2.sch
-# setprop self-logs the exact arg-carrying line (Tcl_Merge fidelity) for undoable
-# commits, but NOT the -fast/-fastundo internal forms (backannotate / live graph).
+# setprop self-logs the exact arg-carrying line (Tcl_Merge fidelity) but ONLY for an
+# undoable *instance* edit: instance subtype AND not -fast. (Gate rationale below.)
 xschem setprop instance 0 selflogtok selflogval
-check "setprop (non-fast) self-logs" [has_line "xschem setprop instance 0 selflogtok selflogval"]
+check "setprop instance (non-fast) self-logs" [has_line "xschem setprop instance 0 selflogtok selflogval"]
+# -fast (fast==1) skips push_undo = backannotate machinery -> NOT logged.
 set sp_before [count_pfx "xschem setprop"]
 xschem setprop -fast instance 0 selflogtok selflogval2
 check "setprop -fast does NOT log" [expr {[count_pfx "xschem setprop"] == $sp_before}]
+# -fastundo (fast==3) DOES push undo -> it MUST log (the old !fast gate wrongly dropped it).
+set fu_before [count_pfx "xschem setprop"]
+xschem setprop -fastundo instance 0 selflogtok selflogval3
+check "setprop -fastundo (undoable) self-logs" [expr {[count_pfx "xschem setprop"] > $fu_before}]
+# a rect setprop is graph machinery (create_graph / graph dialog), non-replayable -> nolog.
+xschem set rectcolor 2
+xschem rect -100 -100 100 100
+set rsp_before [count_pfx "xschem setprop"]
+xschem setprop rect 2 0 flags graph
+check "setprop rect (graph) is nolog" [expr {[count_pfx "xschem setprop"] == $rsp_before}]
 
-# change_elem_order: scheduler form + inline Shift-S key (issue 0068)
+# change_elem_order: logs only with a selection (no-op otherwise); scheduler + Shift-S key.
+xschem select_all
 xschem change_elem_order -1
-check "change_elem_order self-logs"  [has_line "xschem change_elem_order -1"]
+check "change_elem_order (w/ sel) self-logs" [has_line "xschem change_elem_order -1"]
 check "key Shift-S logs change_elem_order" \
   [expr {[keydelta 83 0 count_lines {xschem change_elem_order -1}] >= 1}]
+xschem unselect_all
+set ceo_before [count_lines "xschem change_elem_order -1"]
+xschem change_elem_order -1
+check "change_elem_order (no sel) is nolog" [expr {[count_lines "xschem change_elem_order -1"] == $ceo_before}]
 
-# change_layer (`set rectcolor`): logs ONLY when a selection makes it a content
-# edit; a bare layer-cursor pick with no selection stays unlogged (issue 0066).
+# change_layer (`set rectcolor`): logs ONLY when a selection makes it a content edit;
+# a bare layer-cursor pick with no selection stays unlogged (0066); and it REJECTS
+# (TCL_ERROR, not a silent success) on a read-only view.
 xschem select_all
 xschem set rectcolor 5
 check "set rectcolor w/ selection logs"  [has_line "xschem set rectcolor 5"]
@@ -182,6 +199,10 @@ xschem unselect_all
 set rc_before [count_pfx "xschem set rectcolor"]
 xschem set rectcolor 3
 check "set rectcolor w/o selection is nolog" [expr {[count_pfx "xschem set rectcolor"] == $rc_before}]
+xschem select_all
+xschem set readonly 1
+check "set rectcolor on read-only rejects (TCL_ERROR)" [expr {[catch {xschem set rectcolor 4}] == 1}]
+xschem set readonly 0
 
 # --- 4. -result / -error output comments (source-able) ------------------------
 xschem log_action -result "hello world"
