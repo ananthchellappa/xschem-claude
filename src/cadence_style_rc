@@ -230,6 +230,14 @@ source [file join $_ut display.tcl]
 # with nothing selected it prompts you to click or drag-select net(s), applies, and ends
 # (Esc cancels). Edit the style (named fields, any order, omitted -> default) and the key
 # to taste -- e.g. {color blue thickness 3 pattern {20 20} angle 30 march march_fwd rate 2}.
-bind .drw <Key-F5> {apply_hilight {color purple thickness 3 pattern {20 20}}; break}
+# Plain F5 styles nets. Tk's <Key-F5> also matches a *modified* F5, and it lives on
+# the SAME bindtag (.drw) as the generic <Key> -> C dispatch, so Tk runs only this
+# (more specific) binding for any F5 -- a plain fall-through can't reach the registry.
+# So forward Alt-F5 (%s & 8 = Mod1) into the C dispatch ourselves, where the default
+# action registry maps it to tools.raise_ciw (raise the CIW); rebind via
+# `xschem bind key 65474 alt canvas <action>` still takes effect through this forward.
+# Non-Alt F5 applies the highlight as before.
+bind .drw <Key-F5> {if {%s & 8} {xschem callback %W %T %x %y %N 0 0 %s} \
+                    else {apply_hilight {color purple thickness 3 pattern {20 20}}}; break}
 unset _ut
 

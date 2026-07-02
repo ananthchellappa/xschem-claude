@@ -39,4 +39,23 @@ xschem bind key $F5 alt canvas tools.raise_ciw
 key $F5 $ALT
 check "rebound Alt-F5 raises CIW again" [expr {[wm state .ciw] eq "normal"}]
 
+# --- cadence_style_rc coexistence -------------------------------------------
+# cadence_style_rc binds plain F5 to a net-highlight on .drw. That binding and the
+# generic .drw <Key> -> C dispatch share the same bindtag, so Tk runs only the more
+# specific <Key-F5> for ANY F5 -- it must forward modified F5 to the dispatch itself,
+# or Alt-F5 never reaches tools.raise_ciw. Assert the shipped rc does that. (Driven
+# by inspecting the installed binding: headless `event generate` of compound key
+# chords is unreliable, so key routing is asserted structurally + via the direct
+# `xschem callback` dispatch checks above -- the same pattern the other key tests use.)
+if {[catch {source src/cadence_style_rc} err] && \
+    [catch {source ../../src/cadence_style_rc} err]} {
+  check "cadence_style_rc sources" 0
+} else {
+  check "cadence_style_rc sources" 1
+  set b [bind .drw <Key-F5>]
+  check "cadence F5 forwards Alt-F5 to the C dispatch" \
+    [string match {*if {%s & 8}*xschem callback*} $b]
+  check "cadence F5 keeps plain-F5 highlight" [string match {*apply_hilight*} $b]
+}
+
 if {$::fail} { puts "RESULT: FAIL" } else { puts "RESULT: ALL PASS" }
