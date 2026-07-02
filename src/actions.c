@@ -2338,6 +2338,24 @@ void place_net_label(int type)
   xctx->ui_state |= START_SYMPIN;
 }
 
+/* True when the top-level view currently being edited is a symbol (.sym). Symbol
+ * views hold only pins + artwork -- never instances of other symbols -- so instance
+ * creation is refused there (see place_symbol). This is deliberately a filename test,
+ * NOT netlist_type==CAD_SYMBOL_ATTRS: a freshly loaded EMPTY schematic also carries
+ * that netlist_type (load_schematic sets it when instances==0), yet placing the first
+ * instance into a blank schematic must be allowed. The ".sym" extension is exactly the
+ * signal load_schematic() itself uses to decide symbol-ness. */
+int editing_symbol_view(void)
+{
+  const char *s;
+  size_t len;
+  if(!xctx) return 0;
+  s = xctx->sch[xctx->currsch];
+  if(!s) return 0;
+  len = strlen(s);
+  return (len >= 4 && !strcmp(s + len - 4, ".sym"));
+}
+
 /*  draw_sym==4 select element after placing */
 /*  draw_sym==2 begin bbox if(first_call), add bbox */
 /*  draw_sym==1 begin bbox if(first_call), add bbox, end bbox, draw placed symbols  */
@@ -2354,6 +2372,14 @@ int place_symbol(int pos, const char *symbol_name, double x, double y, short rot
  char name[PATH_MAX];
  char name1[PATH_MAX];
  char tclev = 0;
+
+ /* Render instance creation impotent in a symbol view, from EVERY route: the Cadence
+  * `i` form, native `I`, the Insert-symbol dialog, menus, the Library Manager, and the
+  * `xschem instance` / `xschem place_symbol` commands all funnel through here, so this
+  * single guard covers them all regardless of what they are bound to. Refuse before the
+  * file dialog / undo push so nothing is created and no undo slot is spent. The friendly
+  * modal lives at the ciform chokepoint; here we just do nothing. */
+ if(editing_symbol_view()) return 0;
 
  if(symbol_name==NULL) {
    tcleval("load_file_dialog {Choose symbol} *.\\{sym,tcl\\} INITIALINSTDIR");

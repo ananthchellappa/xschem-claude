@@ -12151,6 +12151,16 @@ proc readonly_notice {} {
     -message "View is Read Only.\n\nUse Edit > Make Editable to enable editing."
 }
 
+# Shown when instance creation is attempted on a symbol view (single source of the
+# message: used by the C symbol_view_block() early-exit for the insert-symbol keys and
+# by the Create Instance form's ciform::open guard). A symbol holds only pins + artwork.
+proc symbol_view_notice {} {
+  if {![info exists ::has_x] || !$::has_x} return
+  tk_messageBox -type ok -icon info -parent [xschem get topwindow] \
+    -title {Symbol view} \
+    -message "This is a symbol view — it holds only pins and artwork.\n\nInstances can only be placed in a schematic."
+}
+
 # -postcommand for each window's Edit menu. Read-only is per-window, so this runs
 # every time the Edit menu is posted and reflects the CURRENT window's state:
 #  - greys out the object-mutating entries when the view is read-only (navigation,

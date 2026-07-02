@@ -45,6 +45,23 @@ static int readonly_block(void)
   return 1;
 }
 
+/* Symbol-view twin of readonly_block(): a symbol holds only pins + artwork, never
+ * instances of other symbols, so instance creation is meaningless there. Returns 1
+ * (with a notice) when the current view is a symbol, letting the interactive insert-
+ * symbol entry points bail out BEFORE opening a file picker. place_symbol()'s own
+ * guard (editing_symbol_view) is the hard backstop that covers every route; this is
+ * the friendly early exit so the symbol editor never even shows a chooser. */
+static int symbol_view_block(void)
+{
+  if(!editing_symbol_view()) return 0;
+  if(has_x) {
+    tcleval("symbol_view_notice");
+  } else {
+    dbg(0, "symbol_view_block(): symbol view, instance creation ignored\n");
+  }
+  return 1;
+}
+
 static int waves_selected(int event, KeySym key, int state, int button)
 {
   int rstate; /* state without ShiftMask */
@@ -279,6 +296,7 @@ static void net_hilight_mode_click(int add)
 static void start_place_symbol(void)
 {
     if(readonly_block()) return;
+    if(symbol_view_block()) return;   /* no instances in a symbol view (ctx-menu / native insert) */
     xctx->last_command = 0;
     rebuild_selected_array();
     if(xctx->lastsel && xctx->sel_array[0].type==ELEMENT) {
@@ -4375,6 +4393,7 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
       }
       else if(rstate == ControlMask) { /* insert sym */
         if(readonly_block()) break;
+        if(symbol_view_block()) break;   /* no instances in a symbol view: refuse before the chooser opens */
         if(tclgetboolvar("new_file_browser")) {
           tcleval("file_chooser");
         } else {
@@ -4393,6 +4412,7 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
       if(rstate == 0) { /* insert sym */
         if(xctx->semaphore >= 2) break;
         if(readonly_block()) break;
+        if(symbol_view_block()) break;   /* no instances in a symbol view: refuse before the chooser opens */
         if(tclgetboolvar("new_file_browser")) {
           tcleval("file_chooser");
         } else {
@@ -5349,6 +5369,7 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
     case XK_Insert:
       if(state == ShiftMask) { /* insert sym */
         if(readonly_block()) break;
+        if(symbol_view_block()) break;   /* no instances in a symbol view: refuse before the chooser opens */
         if(tclgetboolvar("new_file_browser")) {
           tcleval("file_chooser");
         } else {
@@ -5358,6 +5379,7 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
       else {
         if(xctx->semaphore >= 2) break;
         if(readonly_block()) break;
+        if(symbol_view_block()) break;   /* no instances in a symbol view: refuse before the chooser opens */
         if(tclgetboolvar("new_file_browser")) {
           tcleval("file_chooser");
         } else {

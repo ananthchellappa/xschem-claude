@@ -1793,6 +1793,7 @@ extern int load_sym_def(const char name[], FILE *embed_fd);
 extern int descend_symbol(void);
 extern int place_symbol(int pos, const char *symbol_name, double x, double y, short rot, short flip,
                          const char *inst_props, int draw_sym, int first_call, int to_push_undo);
+extern int editing_symbol_view(void);
 extern void place_net_label(int type);
 extern void attach_labels_to_inst(int interactive);
 extern void clear_partial_selected_wires(void);
