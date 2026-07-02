@@ -4193,7 +4193,6 @@ void pop_undo(int redo, int set_modify_status)
   fclose(fd);
   #endif
   dbg(2, "pop_undo(): loaded file:wire=%d inst=%d\n",xctx->wires , xctx->instances);
-  if(set_modify_status) set_modify(1);
   xctx->prep_hash_inst=0;
   xctx->prep_hash_wires=0;
   xctx->prep_net_structs=0;
@@ -4204,6 +4203,12 @@ void pop_undo(int redo, int set_modify_status)
    * views here — mirroring load_schematic. (In-memory undo needs nothing: it snapshots
    * xctx->text wholesale, carrying owner_pin_id.) */
   synth_pin_views();
+  /* set_modify(1) MUST run AFTER link_symbols_to_instances(): read_xschem_file loads
+   * instances with .ptr = -1 (unresolved symbol), and set_modify(1) triggers write_backup()
+   * (the autosave "~"), which would otherwise serialize an unresolved buffer — a corrupt
+   * backup + save_inst() ".ptr = -1" warnings, and the state a crash-recovery/descend reload
+   * would restore (issue 0072). link_symbols_to_instances() resolves every .ptr first. */
+  if(set_modify_status) set_modify(1);
   update_conn_cues(WIRELAYER, 0, 0);
   if(xctx->hilight_nets) {
     propagate_hilights(1, 1, XINSERT_NOREPLACE);
