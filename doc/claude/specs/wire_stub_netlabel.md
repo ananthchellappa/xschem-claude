@@ -7,6 +7,8 @@ binding-schema column). Written 2026-06-29 on branch `fluid-editing`. Author han
 future Claude Code session can pick up this thread from here.
 
 Related specs/notes:
+- **User guide / demo:** `doc/using_wire_stubs.md` — hands-on tutorial for the finished
+  `add_pin_stubs` operation (SPACE key / Symbol menu / command), for end users.
 - `doc/claude/specs/pin_selection.md` — individual pin selection (the input layer this
   feature consumes). Pin selection explicitly names "create a wire-stub for a specific
   pin" as its planned next step. See also the `[[pin-selection]]` memory.
