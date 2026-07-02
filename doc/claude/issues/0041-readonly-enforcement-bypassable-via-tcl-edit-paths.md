@@ -1,7 +1,7 @@
 # Issue 0041 — Read-only enforcement lives at keyboard-dispatch altitude and is bypassable via Tcl edit paths
 
 **Opened:** 2026-06-26
-**Status:** OPEN — triaged 2026-07-01: verified STILL PRESENT. Real severity **MEDIUM-HIGH** (keyboard/menu paths *are* guarded; exposure is Tcl scripts / command-server / unlisted action-ids, aggravated by the silent no-`*` save via `set_modify()` `ro_suppress` at `actions.c:170-174`). **Priority P1 — pragmatic fix only.** ⚠ The §3 fix-sketch is partly **WRONG**: gating the `store` funnels or `push_undo()` on `xctx->readonly` would break *loading* the read-only file itself (load routes through the store funnels) and break *netlisting* a read-only view (all six backends call `push_undo`). Do the **S–M** fix instead: add `if(xctx->readonly){ciw_echo(...);return;}` to the ~6 unguarded edit subcommands in `scheduler.c` (delete/paste/rotate/flip/move_objects/copy_objects) or their shared cores. A true chokepoint needs a new `begin_edit()` helper threaded only through genuine edit ops (**L**).
+**Status:** 🚧 PARTIALLY FIXED 2026-07-02 (Tcl command surface closed; branch `fluid-editing`, uncommitted). Triaged 2026-07-01: was STILL PRESENT. Real severity **MEDIUM-HIGH** (keyboard/menu paths *are* guarded; exposure is Tcl scripts / command-server / unlisted action-ids, aggravated by the silent no-`*` save via `set_modify()` `ro_suppress` at `actions.c:170-174`). **Priority P1 — pragmatic fix only.** ⚠ The §3 fix-sketch is partly **WRONG**: gating the `store` funnels or `push_undo()` on `xctx->readonly` would break *loading* the read-only file itself (load routes through the store funnels) and break *netlisting* a read-only view (all six backends call `push_undo`). Do the **S–M** fix instead: add `if(xctx->readonly){ciw_echo(...);return;}` to the ~6 unguarded edit subcommands in `scheduler.c` (delete/paste/rotate/flip/move_objects/copy_objects) or their shared cores. A true chokepoint needs a new `begin_edit()` helper threaded only through genuine edit ops (**L**).
 **Severity:** HIGH — protection bypass / data integrity; a file-protected schematic can be mutated and
 saved with no modified marker.
 **Branch:** `fluid-editing`.
@@ -46,3 +46,37 @@ no-op and leaves the buffer unmodified.
 
 No edit path can mutate a read-only schematic; the modified marker and save-prompt behavior are
 consistent regardless of how the edit was attempted.
+
+## Progress (2026-07-02)
+
+**Done — Tcl command surface closed (the primary documented bypass).** Added a shared
+`scheduler_readonly_reject()` helper in `src/scheduler.c` and guarded all **29** mutating `xschem`
+subcommands at entry (mirroring the existing `xschem save` guard): copy_objects, cut, delete, flip,
+merge, move_objects, paste, rotate, add_graph, add_image, add_symbol_pin, arc, change_elem_order,
+instance, line, move_instance, net_label, place_symbol, polygon, rect, reset_inst_prop, text,
+trim_wires, wire, undo, redo, align, setprop, replace_symbol. This covers every path that reaches the
+dispatcher — Tcl scripts, the persistent/TCP command server, and action-log replay (Tcl-backed action
+bindings emit `xschem …` commands, so they are covered too).
+
+Why subcommand-level and not the store funnels / `push_undo()` chokepoint: those cores also run during
+legitimate load / descend / undo-restore and netlisting, so gating them would break *loading* the
+read-only file and *netlisting* a read-only view (see the §Status triage note). The subcommand guard is
+safe precisely because internal machinery calls the C cores directly and never routes through the
+`xschem` dispatcher; only user scripts / GUI / command-server / replay do.
+
+Verified headless (`tests/headless/test_readonly_guard.{tcl,sh}`): control proves delete + wire-creation
+mutate a *writable* buffer; treatment proves all 29 subcommands are refused with a read-only error and
+the instance/wire counts and the `modified` flag are unchanged; non-mutating `select_all`/`get`/
+`translate` still work (no over-block). `translate` was deliberately left unguarded — it is a
+`@`-token expansion *query* that returns a string, not an object mutation. Core regression suite green.
+
+**Remaining (smaller residual — issue kept open):**
+- `action_id_mutates()` (`callback.c`) is still a **default-allow** allowlist for the C-backed
+  (`d->fn`) action path. All currently-registered mutating actions are listed, but a future C-backed
+  mutating action added without updating the list would leak. The Tcl-backed action path is already
+  covered by the subcommand guards above.
+- The single architectural chokepoint (a `begin_edit()` helper threaded only through genuine edit ops)
+  remains the **L**-effort follow-up; the current guards make that a robustness refactor, not a
+  functional gap.
+- `set_modify()`'s `ro_suppress` is now correct-by-construction (edits can no longer reach it on a
+  read-only buffer via any Tcl path); left as defense-in-depth.

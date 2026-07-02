@@ -163,6 +163,24 @@ static void xschem_cmd_help(int argc, const char **argv)
 /* can be used to reach C functions from the Tk shell. */
 static char *not_avail = "Not available in this context. If using --tcl consider using --command";
 
+/* Refuse a mutating `xschem` subcommand on a read-only buffer (issue 0041). The
+ * interactive keyboard/menu paths are guarded by readonly_block() (callback.c); this
+ * closes the Tcl command surface -- scripts, the persistent/TCP command server and
+ * action-log replay -- so a file-protected schematic cannot be mutated by any route.
+ * Returns 1 (with the interp error result set + a CIW note) when the edit must be
+ * refused, 0 when it may proceed. Call at an edit subcommand's top, AFTER its !xctx
+ * check (it dereferences xctx->readonly). Mirrors the existing `xschem save` guard. */
+static int scheduler_readonly_reject(Tcl_Interp *interp, const char *subcmd)
+{
+  if(!xctx || !xctx->readonly) return 0;
+  Tcl_ResetResult(interp);
+  Tcl_AppendResult(interp, "xschem ", subcmd, ": schematic is read-only "
+                   "(use Edit > Make Editable to enable editing)", NULL);
+  if(has_x) tclvareval("if {[info procs ciw_echo] ne {}} {ciw_echo {read-only: ",
+                       subcmd, " ignored}}", NULL);
+  return 1;
+}
+
 /* `xschem a...` commands, moved verbatim from the xschem() dispatcher
  * (dispatcher decomposition batch 1). Sets *cmd_found = 0 when argv[1]
  * matches no command in this group; early returns propagate unchanged. */
@@ -292,6 +310,7 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
       const char *name = NULL;
       const char *dir = NULL;
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(scheduler_readonly_reject(interp, "add_symbol_pin")) return TCL_ERROR;
       if(argc > 6) draw = atoi(argv[6]);
       if(argc > 5) {
         int flip = 0;
@@ -372,6 +391,7 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
     else if(!strcmp(argv[1], "add_graph"))
     {
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(scheduler_readonly_reject(interp, "add_graph")) return TCL_ERROR;
       unselect_all(1);
       xctx->graph_lastsel = xctx->rects[GRIDLAYER];
       storeobject(-1, xctx->mousex_snap-400, xctx->mousey_snap-200, xctx->mousex_snap+400, xctx->mousey_snap+200,
@@ -411,6 +431,7 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
     {
       char *f = NULL;
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(scheduler_readonly_reject(interp, "add_image")) return TCL_ERROR;
       unselect_all(1);
       tcleval("tk_getOpenFile -filetypes {{{Images} {.jpg .jpeg .png .svg}} {{All files} *} }");
 
@@ -463,6 +484,7 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
     else if(!strcmp(argv[1], "align"))
     {
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(scheduler_readonly_reject(interp, "align")) return TCL_ERROR;
       xctx->push_undo();
       round_schematic_to_grid(tclgetdoublevar("cadsnap"));
       if(tclgetboolvar("autotrim_wires")) trim_wires();
@@ -582,6 +604,7 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
     {
       const char *prop = NULL;
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(scheduler_readonly_reject(interp, "arc")) return TCL_ERROR;
       if(argc > 8) {
         prop = argv[8];
       }
@@ -791,6 +814,7 @@ static int xschem_cmds_c(Tcl_Interp *interp, int argc, const char *argv[], int *
     else if(!strcmp(argv[1], "change_elem_order"))
     {
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(scheduler_readonly_reject(interp, "change_elem_order")) return TCL_ERROR;
       if(argc > 2) {
         int n = atoi(argv[2]);
         if(n >= 0 || n == -1) {
@@ -1068,6 +1092,7 @@ static int xschem_cmds_c(Tcl_Interp *interp, int argc, const char *argv[], int *
       int kissing= 0;
       int stretch = 0;
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(scheduler_readonly_reject(interp, "copy_objects")) return TCL_ERROR;
       if(argc > 2) {
         int i;
         for(i = 2; i < argc; i++) {
@@ -1147,6 +1172,7 @@ static int xschem_cmds_c(Tcl_Interp *interp, int argc, const char *argv[], int *
     else if(!strcmp(argv[1], "cut"))
     {
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(scheduler_readonly_reject(interp, "cut")) return TCL_ERROR;
       rebuild_selected_array();
       save_selection(2);
       delete(1/*to_push_undo*/);
@@ -1194,6 +1220,7 @@ static int xschem_cmds_d(Tcl_Interp *interp, int argc, const char *argv[], int *
     else if(!strcmp(argv[1], "delete"))
     {
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(scheduler_readonly_reject(interp, "delete")) return TCL_ERROR;
       if(argc==2) delete(1/*to_push_undo*/);
       Tcl_ResetResult(interp);
     }
@@ -1656,6 +1683,7 @@ static int xschem_cmds_f(Tcl_Interp *interp, int argc, const char *argv[], int *
       double x0 = xctx->mousex_snap;
       double y0 = xctx->mousey_snap;
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(scheduler_readonly_reject(interp, "flip")) return TCL_ERROR;
       if(argc > 3) {
         x0 = atof(argv[2]);
         y0 = atof(argv[3]);
@@ -3384,6 +3412,7 @@ static int xschem_cmds_i(Tcl_Interp *interp, int argc, const char *argv[], int *
     if(!strcmp(argv[1], "instance"))
     {
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(scheduler_readonly_reject(interp, "instance")) return TCL_ERROR;
       if(argc==7) {
        /*           pos sym_name      x                y             rot       */
         place_symbol(-1, argv[2], atof(argv[3]), atof(argv[4]), (short)atoi(argv[5]),
@@ -3842,6 +3871,7 @@ static int xschem_cmds_l(Tcl_Interp *interp, int argc, const char *argv[], int *
       int draw = 1;
       const char *prop_str = NULL;
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(scheduler_readonly_reject(interp, "line")) return TCL_ERROR;
       if(argc > 5) {
         x1=atof(argv[2]);
         y1=atof(argv[3]);
@@ -4532,6 +4562,7 @@ static int xschem_cmds_m(Tcl_Interp *interp, int argc, const char *argv[], int *
     {
       char f[PATH_MAX + 100];
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(scheduler_readonly_reject(interp, "merge")) return TCL_ERROR;
       if(argc < 3) {
         merge_file(0, "");  /* 2nd param not used for merge 25122002 */
       }
@@ -4552,6 +4583,7 @@ static int xschem_cmds_m(Tcl_Interp *interp, int argc, const char *argv[], int *
     {
       int undo = 1, dr = 1;
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(scheduler_readonly_reject(interp, "move_instance")) return TCL_ERROR;
       if(argc > 7) {
         int i;
         for(i = 7; i < argc; i++) {
@@ -4590,6 +4622,7 @@ static int xschem_cmds_m(Tcl_Interp *interp, int argc, const char *argv[], int *
       int kissing= 0;
       int stretch = 0;
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(scheduler_readonly_reject(interp, "move_objects")) return TCL_ERROR;
       if(argc > 2) {
         int i;
         for(i = 2; i < argc; i++) {
@@ -4994,6 +5027,7 @@ static int xschem_cmds_n(Tcl_Interp *interp, int argc, const char *argv[], int *
      *   User should complete the placement in the GUI. */
     else if(!strcmp(argv[1], "net_label"))
     {
+      if(scheduler_readonly_reject(interp, "net_label")) return TCL_ERROR;
       if(argc > 2) {
         place_net_label(atoi(argv[2]));
       }
@@ -5456,6 +5490,7 @@ static int xschem_cmds_p(Tcl_Interp *interp, int argc, const char *argv[], int *
     else if(!strcmp(argv[1], "paste"))
     {
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(scheduler_readonly_reject(interp, "paste")) return TCL_ERROR;
       if(argc > 3) {
         merge_file(10, ".sch"); /* set bit 3 to avoid doing move_objects(RUBBER,...) */
         xctx->deltax = atof(argv[2]);
@@ -5609,6 +5644,7 @@ static int xschem_cmds_p(Tcl_Interp *interp, int argc, const char *argv[], int *
     {
       int ret;
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(scheduler_readonly_reject(interp, "place_symbol")) return TCL_ERROR;
       xctx->semaphore++;
       rebuild_selected_array();
       if(xctx->lastsel && xctx->sel_array[0].type==ELEMENT) {
@@ -5704,6 +5740,7 @@ static int xschem_cmds_p(Tcl_Interp *interp, int argc, const char *argv[], int *
     {
       char *endp;
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(scheduler_readonly_reject(interp, "polygon")) return TCL_ERROR;
       if(argc > 7 && (strtod(argv[2], &endp), endp != argv[2])) {
         int i, points = 0, save;
         const char *prop = NULL;
@@ -6616,6 +6653,7 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
       int draw = 1;
       const char *prop_str = NULL;
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(scheduler_readonly_reject(interp, "rect")) return TCL_ERROR;
       if(argc > 5) {
         x1=atof(argv[2]);
         y1=atof(argv[3]);
@@ -6660,6 +6698,7 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
     else if(!strcmp(argv[1], "redo"))
     {
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(scheduler_readonly_reject(interp, "redo")) return TCL_ERROR;
       pop_undo_keep_selection(1, 1); /* issue 0007: keep selection across redo */
       Tcl_ResetResult(interp);
     }
@@ -6778,6 +6817,7 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
     {
       int inst, fast = 0;
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(scheduler_readonly_reject(interp, "replace_symbol")) return TCL_ERROR;
       if(argc > 4) {
         argc = 4;
         if(!strcmp(argv[4], "fast")) {
@@ -6857,6 +6897,7 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
       int inst;
 
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(scheduler_readonly_reject(interp, "reset_inst_prop")) return TCL_ERROR;
       if(argc < 3) {
         Tcl_SetResult(interp, "xschem reset_inst_prop needs 1 more argument", TCL_STATIC);
         return TCL_ERROR;
@@ -6977,6 +7018,7 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
       double x0 = xctx->mousex_snap;
       double y0 = xctx->mousey_snap;
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(scheduler_readonly_reject(interp, "rotate")) return TCL_ERROR;
       if(argc > 3) {
         x0 = atof(argv[2]);
         y0 = atof(argv[3]);
@@ -7854,6 +7896,7 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
     {
       int i, fast = 0, shift = 0;
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(scheduler_readonly_reject(interp, "setprop")) return TCL_ERROR;
 
       for(i = 2; i < argc; i++) {
         if(argv[i][0] == '-') {
@@ -8566,6 +8609,7 @@ static int xschem_cmds_t(Tcl_Interp *interp, int argc, const char *argv[], int *
     else if(!strcmp(argv[1], "text") )
     {
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(scheduler_readonly_reject(interp, "text")) return TCL_ERROR;
       if(argc < 10) {Tcl_SetResult(interp,
           "xschem text requires 8 additional arguments", TCL_STATIC); return TCL_ERROR;}
 
@@ -8734,6 +8778,7 @@ static int xschem_cmds_t(Tcl_Interp *interp, int argc, const char *argv[], int *
     else if(!strcmp(argv[1], "trim_wires"))
     {
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(scheduler_readonly_reject(interp, "trim_wires")) return TCL_ERROR;
       xctx->push_undo();
       trim_wires();
       draw();
@@ -8762,6 +8807,7 @@ static int xschem_cmds_u(Tcl_Interp *interp, int argc, const char *argv[], int *
     {
       int redo = 0, set_modify = 1;
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(scheduler_readonly_reject(interp, "undo")) return TCL_ERROR;
       if(argc > 2) {
         redo = atoi(argv[2]);
       }
@@ -9047,6 +9093,7 @@ static int xschem_cmds_w(Tcl_Interp *interp, int argc, const char *argv[], int *
       int pos = -1, save, sel = 0;
       const char *prop=NULL;
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(scheduler_readonly_reject(interp, "wire")) return TCL_ERROR;
       if(argc > 5) {
         x1=atof(argv[2]);
         y1=atof(argv[3]);
