@@ -7646,17 +7646,33 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
      *   Set C variable 'var' to 'value' */
     else if(!strcmp(argv[1], "set"))
     {
+      /* Action-log policy (issue 0066): only three kinds of `set` self-log here --
+       * (a) saved-content mutations (header_text below; rectcolor+selection ->
+       * change_layer) log a replayable command + read-only-guard; (b) edit-geometry
+       * state the log must reproduce (cadsnap/cadgrid) logs its resolved value. Every
+       * other `set <var>` is pure session-config/display preference and stays UNLOGGED
+       * by design -- that is full-session config replay, explicitly out of v1 (action
+       * logging spec §6). Do not add blanket logging here; re-flagging them is expected. */
       if(argc > 3) {
         if(argv[2][0] < 'n') {
           if(!strcmp(argv[2], "cadgrid")) { /* set cad grid (default: 20) */
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
             set_grid( atof(argv[3]) );
+            /* self-log the RESOLVED grid (0066): set_grid maps 0 -> the default, so
+             * log cadgrid read back, not argv[3] -- one replayable line for every
+             * entry point (View-menu dialog / statusbar entry / script). Edit-geometry
+             * state, not saved content -> no read-only guard. */
+            log_action("xschem set cadgrid %.10g", tclgetdoublevar("cadgrid"));
           }
           else if(!strcmp(argv[2], "cadsnap")) { /* set mouse snap (default: 10) */
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
             set_snap( atof(argv[3]) );
             change_linewidth(-1.);
             draw();
+            /* self-log the RESOLVED snap (0066): see cadgrid above. The bindable
+             * view.set_snap_value dialog action is nolog'd (callback.c) so the async
+             * input_line prompt does not also log -- the value logs here at the core. */
+            log_action("xschem set cadsnap %.10g", tclgetdoublevar("cadsnap"));
           }
           else if(!strcmp(argv[2], "change_lw")) { /* allow change line width when zooming */
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
@@ -7723,8 +7739,16 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
           else if(!strcmp(argv[2], "header_text")) { /* set header metadata (used for license info) */
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
             if(!xctx->header_text || strcmp(xctx->header_text, argv[3])) {
+              /* header/license text is saved schematic metadata -> a content edit
+               * (0066). Refuse on a read-only view like the sibling set rectcolor
+               * (0041) -- return TCL_ERROR so a caller/replay `catch`es it -- then
+               * self-log the replayable command. Gated inside the "value changed"
+               * guard so a no-op set logs nothing and pushes no undo. log_action_argv
+               * (Tcl_Merge) keeps arbitrary/multi-line license text source-able. */
+              if(scheduler_readonly_reject(interp, "set header_text")) return TCL_ERROR;
               set_modify(1); xctx->push_undo();
               my_strdup2(_ALLOC_ID_, &xctx->header_text, argv[3]);
+              log_action_argv(argc, (const char *const *)argv);
             }
           }
           else if(!strcmp(argv[2], "en_pin_select")) { /* enable selecting individual instance pins */

@@ -236,10 +236,12 @@ Window. Not full-featured for v1.
 deferred-by-design: click-select marker/replay (row 17, issue 0005),
 stdin-REPL + TCP logging (issue 0003), non-File menus and un-migrated
 C-switch keys (log only where a Layer B/C/file-menu effect hook covers
-them), rectcolor/layer
-switches not logged (line/rect replay layer = replay-time rectcolor),
+them),
 rotate/flip-during-move single-command replay (needs an anchor-preserving
-subcommand).
+subcommand). `xschem set` coverage was resolved (issue 0066): content
+mutations (change-layer, header_text) and edit-geometry (cadsnap/cadgrid,
+resolved value) self-log at their cores; pure session-config/display sets stay
+unlogged by design (no full-session config replay in v1, §6).
 - **Acceptance test (the real one) — DONE** (`tests/headless/test_action_replay.sh`):
   record → replay → diff across two processes. Process A loads a fixture, is
   driven through bound actions via `xschem callback …`, snapshots state; process

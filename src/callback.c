@@ -3086,8 +3086,14 @@ static ActionDef action_registry[] = {
    * UNBOUND (no default chord) — the user binds them via `xschem bind` / their rc.
    * Two Tcl-backed (reuse the View/Options menu commands), one C-backed (sim-tool
    * detection). doc/claude/specs/keybind_snap_grid_actions.md. */
+  /* nolog (0066): input_line is async -- it returns before the user types, so the
+   * dispatcher would log this dialog-OPEN prompt string as a bogus line while the
+   * resolved value logs later at the `set cadsnap` core. Suppress the prompt; the
+   * core self-log emits the one replayable `xschem set cadsnap <value>` line.
+   * (fn, tcl, help, mutates=0, log_cmd=NULL, nolog=1) */
   { "view.set_snap_value", NULL,
-    "input_line {Enter snap value (float):} {xschem set cadsnap} $cadsnap", "Set snap value (dialog)" },
+    "input_line {Enter snap value (float):} {xschem set cadsnap} $cadsnap", "Set snap value (dialog)",
+    0, NULL, 1 },
   { "view.toggle_draw_grid", NULL,
     "set draw_grid [expr {!$draw_grid}]; xschem redraw", "Toggle grid display" },
   { "hilight.send_to_waveform", act_highlight_send_waveform, NULL,

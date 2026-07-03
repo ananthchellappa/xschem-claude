@@ -361,6 +361,49 @@ set b [count_pfx "xschem add_pin_stubs"]
 xschem add_pin_stubs
 check "add_pin_stubs no-op logs nothing (added==0)" [expr {[count_pfx "xschem add_pin_stubs"] == $b}]
 
+# --- 3j. `xschem set` config/content sets (issue 0066) -----------------------
+# The set branch splits three ways (issue 0066 §5): saved-content mutations MUST
+# log + read-only-guard (header_text; rectcolor covered in §3f); edit-geometry
+# state logs its RESOLVED value (cadsnap/cadgrid); pure session-config/display
+# sets stay unlogged by design. Load a clean schematic (earlier sections leave
+# the buffer in an edited/generator state).
+xschem load xschem_library/examples/nand2.sch
+
+# header_text: saved license metadata -> content edit. Logs a replayable command
+# ONLY when the value actually changes; refuses on a read-only view.
+set hb [count_pfx "xschem set header_text"]
+xschem set header_text {selflog header text}
+check "set header_text self-logs replayable" \
+      [has_line "xschem set header_text {selflog header text}"]
+set hb1 [count_pfx "xschem set header_text"]
+xschem set header_text {selflog header text}   ;# same value -> no change -> no log
+check "set header_text no-op logs nothing" [expr {[count_pfx "xschem set header_text"] == $hb1}]
+xschem set readonly 1
+check "set header_text read-only rejects (TCL_ERROR)" \
+      [expr {[catch {xschem set header_text {ro attempt}}] == 1}]
+set hb2 [count_pfx "xschem set header_text"]
+catch {xschem set header_text {ro attempt2}}
+check "set header_text read-only logs nothing" [expr {[count_pfx "xschem set header_text"] == $hb2}]
+xschem set readonly 0
+
+# cadsnap/cadgrid: log the RESOLVED value (not the dialog-open prompt), so any
+# entry point (menu dialog OK / statusbar entry / Options half-double / script)
+# yields one replayable line. Not a content edit -> allowed on read-only.
+xschem set cadsnap 8
+check "set cadsnap self-logs resolved value"  [has_line "xschem set cadsnap 8"]
+xschem set cadgrid 40
+check "set cadgrid self-logs resolved value"  [has_line "xschem set cadgrid 40"]
+# RESOLVED, not raw: `set cadsnap 0` maps to the default snap -- the log must show
+# that default (read back), never a literal `0`. Guards against logging argv[3].
+xschem set cadsnap 0
+check "set cadsnap 0 logs the RESOLVED default (not 0)" \
+      [expr {[has_line "xschem set cadsnap [format %.10g $cadsnap]"] \
+             && ![has_line "xschem set cadsnap 0"]}]
+
+# pure session-config/display set stays unlogged by design (issue 0066 §5.3).
+xschem set color_ps 0
+check "pure-display set (color_ps) is nolog" [expr {[count_pfx "xschem set color_ps"] == 0}]
+
 # --- 4. -result / -error output comments (source-able) ------------------------
 xschem log_action -result "hello world"
 check "result -> '#= ' comment"   [has_line "#= hello world"]

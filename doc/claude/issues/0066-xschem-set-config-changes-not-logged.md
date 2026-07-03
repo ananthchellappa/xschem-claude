@@ -1,7 +1,9 @@
 # Issue 0066 — config / display / layer changes via `xschem set` are not logged
 
 **Opened:** 2026-07-02
-**Status:** OPEN — identified by the action-log coverage audit; not yet fixed.
+**Status:** RESOLVED 2026-07-02 — change-layer (`83419d64`) + header_text +
+cadsnap/cadgrid resolved-value self-log; pure session-config sets unlogged by
+policy (see §5). Tests: `test_selflog_output.tcl` §3j.
 **Severity:** MED — the `set` branch is a broad hole. Most cases are session
 config/display (lower priority), but **change-layer of a selection**
 (`set rectcolor` → `change_layer`) is a genuine schematic mutation and must log.
@@ -59,3 +61,59 @@ minted four toggle commands — extend that pattern, or mark the pure-display on
 chosen logger. Snap/grid should log the resolved *value*, not the dialog-open
 string (the bindable `view.set_snap_value` action currently logs only the
 `input_line …` prompt).
+
+---
+
+## 5. Resolution — RESOLVED 2026-07-02 (branch `fluid-editing`)
+
+**Policy decided.** The `xschem set` branch is not one thing; it splits three
+ways, and the action log's contract (spec §6: *replay-where-possible per-action
+log, NOT full-session config replay in v1*) draws the line:
+
+1. **Saved-schematic mutations** (push_undo / written to the `.sch`/`.sym`) —
+   **MUST log**, replayable, read-only-guarded.
+   - `set rectcolor` + a selection → `change_layer()` — **already done**
+     (commit `83419d64`): logs `xschem set rectcolor N`, rejects on read-only,
+     bare layer-cursor pick (no selection) stays unlogged.
+   - `set header_text` — **done here**: license/header metadata is saved,
+     undo-pushed content. Self-logs the replayable command via
+     `log_action_argv` (Tcl_Merge quotes arbitrary/multi-line license text so it
+     stays source-able), gated *inside* the existing "value actually changed"
+     guard (a no-op set logs nothing and pushes no undo), and now rejects on a
+     read-only view via `scheduler_readonly_reject` exactly like `rectcolor`
+     (previously it mutated a read-only schematic — a latent 0041 hole).
+
+2. **Edit-geometry state the log must reproduce for faithful coordinate replay**
+   — **log the resolved value** at the C core.
+   - `set cadsnap` / `set cadgrid` → self-log `xschem set cadsnap <value>` /
+     `xschem set cadgrid <value>` reading the *resolved* `cadsnap`/`cadgrid` back
+     (so `set cadsnap 0` → the default is logged, not `0`). This covers every
+     active path by construction — the View-menu dialog OK button, the statusbar
+     `<Leave>` entry, the Options half/double items, and raw script — all funnel
+     through the same core. Snap is not a content edit (no undo, allowed on a
+     read-only view), so it is **not** read-only-guarded.
+   - The `view.set_snap_value` ActionDef (ships unbound) is flagged `nolog`:
+     `input_line` is async (returns before the user types), so the dispatcher
+     would otherwise log the *dialog-open prompt string* as a bogus line while
+     the resolved value logs later at the core. `nolog` + core self-log = one
+     clean `xschem set cadsnap <value>` line whenever a user binds the key.
+     Mirrors the Phase-3 gesture-START rule (suppress the start, log the effect).
+
+3. **Pure session config / display preference** — everything else in the branch
+   (`color_ps`, `draw_window`, `change_lw`, `crosshair_layer`, `line_width`,
+   `netlist_type`, `hide_symbols`, transparent/color SVG, draw model, Cadence
+   compat, debug, grid-point size, dim colors, bus-replacement chars, …).
+   **Unlogged by design.** These do not alter saved content or replayable edit
+   geometry; logging them is *full-session config replay*, explicitly out of v1
+   (spec §6). Left bare with a one-line policy comment at the branch head so a
+   future coverage audit does not re-flag them. (Deliberately-logged display
+   toggles like `toggle_colorscheme` are Phase-3 minted subcommands with a stable
+   replayable form — a different, already-handled path, not `xschem set`.)
+
+**Tests:** `tests/headless/test_selflog_output.tcl` §3j (7 checks) — header_text
+logs / no-op silent / read-only rejects + logs nothing; cadsnap + cadgrid log the
+resolved value; a pure-display `set` (`color_ps`) logs nothing. Sabotage-verified.
+
+**Not in scope (unchanged, by policy above):** the netlist-format radios, the
+Options/View preference toggles, the palette editor (`change_color`/
+`reset_colors` → `build_colors`, a separate path noted in §3).
