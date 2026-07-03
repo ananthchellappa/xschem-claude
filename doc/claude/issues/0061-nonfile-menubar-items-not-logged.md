@@ -1,9 +1,24 @@
 # Issue 0061 — non-File menubar items are not logged to the action log / CIW
 
 **Opened:** 2026-07-02
-**Status:** OPEN — partially fixed 2026-07-02: `cut`/`delete`/`undo`/`redo` now
-self-log at their C core (issue 0071 §4b), so Edit-menu Cut/Delete/Undo/Redo are
-covered. Remaining menu mutators await the same one-line core self-log pass.
+**Status:** OPEN — largely fixed 2026-07-02 by successive C-core self-log passes; a
+handful of items remain. COVERED so far:
+- Edit: Cut/Delete/Undo/Redo (0071 §4b); Flip/Flipv/Rotate ±in-place + Align (transform
+  slice); Join/Trim + Break wires (surgery slice).
+- Properties: Edit / Edit-with-editor commit → `# property-edit` marker (0063); Change
+  insertion order = `change_elem_order` (transform slice).
+- Symbol: Make symbol / Make sch / Make sch+sym (generator slice); Attach net labels
+  (`attach_labels`); Add pin stubs (`add_pin_stubs`, gated added>0); Change texts to
+  floaters (`floaters_from_selected_inst`); Create labels/pins from highlight nets
+  (`print_hilight_net 4|2|0`, this pass).
+- Highlight: Highlight/Rename duplicate names (`check_unique_names 0|1`).
+- sym.list: Print highlight nets (`print_hilight_net 1|3`).
+All self-log at their scheduler cores → the hand-written menu picks + `xschem <sub>`
+scripts are covered; Tcl-backed registered keys eval the same command and dedup.
+STILL OPEN: Create symbol pins from sch pins (`schpins_to_sympins`, a Tcl proc — needs
+Tcl-side self-log); net-label placement (`net_label`, 0069); annotate op-point
+(`annotate_op`); ERC export (`netlist -erc`); Edit header/license, Edit file, Toggle
+*_ignore; and the inline legacy keyboard duplicates (`#`, some J-chords) = 0068.
 **Severity:** HIGH — largest single coverage hole. Many are genuine schematic
 mutations (cut/delete/undo/redo, flip/rotate, wire surgery, symbol generators),
 so replay/CIW records the session incompletely.

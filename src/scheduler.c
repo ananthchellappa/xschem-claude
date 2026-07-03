@@ -478,6 +478,10 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
       }
       added = add_pin_stubs(prefix, suffix, inst_prefix);
       my_snprintf(b, S(b), "%d", added);
+      /* self-log at core (0061): the Symbol menu item + script. Gate on added>0 --
+       * add_pin_stubs self-declines (read-only / nothing to stub) returning 0, so a
+       * no-op leaves no line. The SPACE key logs via its own registered action. */
+      if(added > 0) log_action_argv(argc, (const char *const *)argv);
       Tcl_SetResult(interp, b, TCL_VOLATILE);
     }
 
@@ -645,6 +649,9 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
 
       if(argc > 2) interactive = atoi(argv[2]);
       attach_labels_to_inst(interactive);
+      log_action_argv(argc, (const char *const *)argv); /* self-log at core (0061):
+        Symbol menu + script. The Shift+H key runs the interactive dialog variant via
+        its registered action (csv-nolog), a separate non-equivalent path. */
       Tcl_ResetResult(interp);
     }
     else { *cmd_found = 0;}
@@ -915,6 +922,10 @@ static int xschem_cmds_c(Tcl_Interp *interp, int argc, const char *argv[], int *
       } else {
         check_unique_names(0);
       }
+      /* self-log at core (0061): Highlight menu + script. The mode arg (0 highlight /
+       * 1 rename) is deterministic, so both forms replay faithfully. The `#`/Ctrl+#
+       * keys are handled inline in callback.c (0068), a disjoint path. */
+      log_action("xschem check_unique_names %s", (argc > 2 && !strcmp(argv[2], "1")) ? "1" : "0");
       Tcl_ResetResult(interp);
     }
 
@@ -1820,6 +1831,7 @@ static int xschem_cmds_f(Tcl_Interp *interp, int argc, const char *argv[], int *
     {
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
       floaters_from_selected_inst();
+      log_action("xschem floaters_from_selected_inst"); /* self-log at core (0061): Symbol menu + script */
       Tcl_ResetResult(interp);
     }
 
@@ -6121,6 +6133,10 @@ static int xschem_cmds_p(Tcl_Interp *interp, int argc, const char *argv[], int *
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
       if(argc > 2) {
         print_hilight_net(atoi(argv[2]));
+        /* self-log at core (0061): the sym.list menu items + script. Modes 0/2/4
+         * create pins/labels (mutate), 1/3 print; all are deterministic + replayable.
+         * Tcl-backed registered keys eval this same command -> deduped here. */
+        log_action("xschem print_hilight_net %d", atoi(argv[2]));
       }
     }
 

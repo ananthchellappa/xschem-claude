@@ -324,6 +324,43 @@ set b [count_pfx "# property-edit"]
 xschem edit_prop
 check "cancelled property edit logs nothing" [expr {[count_pfx "# property-edit"] == $b}]
 
+# --- 3i. non-File menubar mutators self-log at their scheduler cores (issue 0061) --
+# The Symbol/Highlight/sym.list menus are hand-written `-command "xschem <sub>"` (not
+# csv-built), so their picks logged nothing until the subcommand self-logs. Cover the
+# terminal mutators; the menu path hits the scheduler branch directly (keys go via the
+# registered actions / inline handlers -> disjoint or deduped).
+xschem load xschem_library/examples/nand2.sch
+
+xschem unselect_all; xschem select instance 0
+set b [count_pfx "xschem attach_labels"]
+xschem attach_labels
+check "attach_labels self-logs" [expr {[count_pfx "xschem attach_labels"] > $b}]
+
+xschem select_all
+set b [count_pfx "xschem floaters_from_selected_inst"]
+xschem floaters_from_selected_inst
+check "floaters_from_selected_inst self-logs" [expr {[count_pfx "xschem floaters_from_selected_inst"] > $b}]
+
+set b [count_lines "xschem check_unique_names 1"]
+xschem check_unique_names 1
+check "check_unique_names 1 (rename) self-logs" [expr {[count_lines "xschem check_unique_names 1"] > $b}]
+set b [count_lines "xschem check_unique_names 0"]
+xschem check_unique_names 0
+check "check_unique_names 0 (highlight) self-logs" [expr {[count_lines "xschem check_unique_names 0"] > $b}]
+
+set b [count_lines "xschem print_hilight_net 4"]
+xschem print_hilight_net 4
+check "print_hilight_net 4 (create labels) self-logs" [expr {[count_lines "xschem print_hilight_net 4"] > $b}]
+set b [count_lines "xschem print_hilight_net 1"]
+xschem print_hilight_net 1
+check "print_hilight_net 1 (print) self-logs" [expr {[count_lines "xschem print_hilight_net 1"] > $b}]
+
+# add_pin_stubs is gated on added>0: nothing selected -> declines -> no line.
+xschem unselect_all
+set b [count_pfx "xschem add_pin_stubs"]
+xschem add_pin_stubs
+check "add_pin_stubs no-op logs nothing (added==0)" [expr {[count_pfx "xschem add_pin_stubs"] == $b}]
+
 # --- 4. -result / -error output comments (source-able) ------------------------
 xschem log_action -result "hello world"
 check "result -> '#= ' comment"   [has_line "#= hello world"]
