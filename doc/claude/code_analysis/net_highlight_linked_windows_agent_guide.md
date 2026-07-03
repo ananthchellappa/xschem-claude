@@ -320,7 +320,31 @@ separately deferred.
 
 ---
 
-## 8. WORK PACKAGE B — headless‑test plan
+## 8. WORK PACKAGE B — headless‑test plan  ✅ TIERS A/B/C LANDED
+
+> **Status: shipped** on `fluid-editing`. All three headless tiers are live and green
+> under `--nogui`, plus the GUI end‑to‑end test (Tier D) is retained:
+> - **Tier A** — `tests/hilight_hier_oracle.tcl` (zero new C): single‑window
+>   descend/ascend oracle; asserts the byte‑targets the sync/relay must match (FOO
+>   surfaces 1 level, CTRL surfaces 2, BAR buried 2 → validated cue).
+> - **Tier B** — `tests/hilight_hier_dump_replay.tcl` + new getter
+>   `xschem get sch_inst_number [n]` (scheduler.c): dumps the hierarchy
+>   representation to a file, then replays the two engine rules (per‑hop
+>   up‑translation R1; ancestor‑or‑self filter R2) purely from the file — proves the
+>   mapping is a pure function of serialized state.
+> - **Tier C** — `tests/hilight_xwin_sync_headless.tcl` + bypass seam
+>   `xschem net_hilight_sync_force_headless 1` (flag `net_hilight_sync_force_headless`
+>   in hilight.c; the one outer `has_x` guard on `net_hilight_sync_descend_windows`
+>   now reads `if(!has_x && !net_hilight_sync_force_headless) return;`): runs the REAL
+>   sync engine + relay over two logical contexts headless (draws self‑skip via
+>   `net_hilight_ctx_visible` — no pixmap). A second context is created under
+>   `--nogui` via the existing `schematic_in_new_window` path (emits harmless swallowed
+>   Tcl warnings). Covers surfacing, buried, clear‑through both ways, ±1 adjacent, and
+>   a relay‑off sabotage.
+> - **Tier D** — `tests/hilight_xwin_sync.tcl` (44 checks) retained for real Tk
+>   windows + animation; the bypass flag defaults off, so it is unaffected.
+> The plan below is the design record.
+
 
 The translation math is PURE over `inst.node[]`, symbol `PINLAYER` pin names,
 `sch_inst_number`, path strings, and `hilight_table`. The sync CORE is

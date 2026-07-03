@@ -4978,6 +4978,16 @@ static int xschem_cmds_n(Tcl_Interp *interp, int argc, const char *argv[], int *
       Tcl_SetResult(interp, net_hilight_get_relay_enable() ? "1" : "0", TCL_STATIC);
     }
 
+    /* net_hilight_sync_force_headless <0|1>
+     *   TEST-ONLY (issue 0073 §8 Tier C): force the cross-window highlight sync + deep-gap relay to
+     *   run under --nogui (has_x==0) over logical contexts, so it can be exercised in the fast headless
+     *   suite. The sync's draws self-skip (no save_pixmap headless). Never set in production. */
+    else if(!strcmp(argv[1], "net_hilight_sync_force_headless"))
+    {
+      if(argc >= 3) net_hilight_set_sync_force_headless(atoi(argv[2]));
+      Tcl_ResetResult(interp);
+    }
+
     /* net_hilight_dump_pixmap <file> [<win>]
      *   TEST HOOK (Pass 2-multiwin, Phase C): write the LIVE backing pixmap (save_pixmap) of
      *   <win> (default: current window) to a PNG, WITHOUT re-rendering. Unlike `xschem print

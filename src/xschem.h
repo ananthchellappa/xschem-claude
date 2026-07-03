@@ -1630,6 +1630,7 @@ extern void net_hilight_sync_suspend(void);              /* bracket a bulk-highl
 extern void net_hilight_sync_resume(void);               /* ... then run ONE sync at the end (issue 0073 §9d / review perf) */
 extern void net_hilight_set_relay_enable(int v);         /* toggle the deep-gap relay (issue 0073 §9c fix); test/kill switch */
 extern int  net_hilight_get_relay_enable(void);          /* read the deep-gap relay enable flag */
+extern void net_hilight_set_sync_force_headless(int v);  /* TEST: run cross-window sync under --nogui (issue 0073 §8 Tier C) */
 extern Xschem_ctx *alloc_scratch_xschem_ctx(void);       /* windowless scratch ctx for the deep-gap relay's transient loads */
 extern void free_scratch_xschem_ctx(void);               /* tear down alloc_scratch_xschem_ctx()'s ctx (delete_schematic_data(0)) */
 extern const char *get_drw_front_win(void);              /* win-path of the tab currently shown on the shared .drw canvas (issue 0073) */

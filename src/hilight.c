@@ -3290,6 +3290,15 @@ static int net_hilight_relay_enable = 1;
 void net_hilight_set_relay_enable(int v) { net_hilight_relay_enable = v ? 1 : 0; }
 int  net_hilight_get_relay_enable(void) { return net_hilight_relay_enable; }
 
+/* TEST-ONLY: force net_hilight_sync_descend_windows() to run under --nogui (has_x==0), so the whole
+ * cross-window sync + deep-gap relay can be exercised HEADLESS over logical contexts (Tier C of
+ * doc/claude/code_analysis/net_highlight_linked_windows_agent_guide.md §8). The sync's only draw() is
+ * separately gated by net_hilight_ctx_visible() (needs a save_pixmap, which no headless context has),
+ * so bypassing the outer guard runs the TABLE reconciliation while every draw self-skips -- no
+ * BadDrawable risk. Never set in production; mirrors net_hilight_test_active. Default off. */
+static int net_hilight_sync_force_headless = 0;
+void net_hilight_set_sync_force_headless(int v) { net_hilight_sync_force_headless = v ? 1 : 0; }
+
 /* Extract the single hierarchy component of child_path immediately below parent_path (e.g. parent
  * ".x1." child ".x1.x4." -> "x4"). Mirrors the extraction in net_hilight_sync_children_rec(). Returns
  * 1 on success (buf filled, NUL-terminated), 0 otherwise. */
@@ -3829,7 +3838,7 @@ void net_hilight_sync_descend_windows(void)
 {
   Xschem_ctx *src;
   int i;
-  if(!has_x) return;
+  if(!has_x && !net_hilight_sync_force_headless) return; /* headless: skip, unless a test forces it */
   if(net_hilight_sync_suspend_count) return; /* inside a bulk-highlight batch: defer to resume() */
   if(net_hilight_ctx_gesturing()) return;
   src = xctx;                                          /* the window that just changed */
