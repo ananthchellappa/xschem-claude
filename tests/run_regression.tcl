@@ -21,6 +21,11 @@
 #  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
 
 set tcases [list "create_save" "open_close" "netlisting"]
+# Headless (--nogui) xschem-script self-checks: no gold folder needed; each prints
+# "ok - ..." per pass and "... : FAIL" per failure and exits nonzero on any failure.
+# summarize_all greps FAIL$, so failures are counted like the golden cases.
+set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
+                 "hilight_xwin_sync_headless" "buried_hilight"]
 set log_fn "results.log"
 
 proc summarize_all {fn fd} {
@@ -41,6 +46,8 @@ proc summarize_all {fn fd} {
   }
 }
 
+source test_utility.tcl  ;# defines $xschem_cmd (used by the headless cases below) + helpers
+
 set a [catch "open \"$log_fn\" w" fd]
 if {!$a} {
 foreach tc $tcases {
@@ -51,10 +58,31 @@ foreach tc $tcases {
     summarize_all ${tc}.log $fd
     puts "Finish source ${tc}.tcl"
   }
+  # Headless hilight self-checks driven directly through the built binary (needs xschem to
+  # resolve its share dir: installed, or a source-tree run with XSCHEM_SHAREDIR set). Each case
+  # prints "... : FAIL" per failed check (counted by summarize_all's FAIL$ grep) and EXITS
+  # nonzero on any failure OR a startup crash (verified: a missing share dir exits 1). The child
+  # exit code is therefore the authoritative pass/fail; keying on it also avoids a "hollow pass"
+  # where a crash writes an empty log that would summarize as 0 fails. On nonzero exit we
+  # synthesize a FAIL line so summarize_all counts the case as failed regardless of log contents.
+  foreach hc $hcases {
+    puts "Start ${hc}.tcl (headless)"
+    set childcode 0
+    if {[catch {eval exec {$xschem_cmd --nogui --pipe -q --script ${hc}.tcl} > ${hc}.log 2>@1} msg opt]} {
+      set ec [dict get $opt -errorcode]
+      set childcode [expr {[lindex $ec 0] eq "CHILDSTATUS" ? [lindex $ec 2] : 1}]
+    }
+    if {$childcode != 0} {
+      set af [open ${hc}.log a]
+      puts $af "HARNESS: ${hc} exited nonzero ($childcode) -- crashed or a check failed: FAIL"
+      close $af
+    }
+    summarize_all ${hc}.log $fd
+    puts "Finish ${hc}.tcl (headless)"
+  }
   close $fd
 } else {
   puts "Couldn't open $log_fn to write.  Investigate please."
 }
 
-source test_utility.tcl
 exec $xschem_cmd --nogui --pipe -q --script xschemtest.tcl > stefan_xschemtest.log 2>@1
