@@ -1,5 +1,7 @@
 # 0059 — Net-highlight style editor: angle slider doesn't update the preview live
 
+**Status:** ✅ RESOLVED 2026-07-02 — fix implemented and confirmed by user eyeball testing.
+
 ## Summary
 
 In the Net highlight styles editor, dragging a row's **Angle** slider does not change

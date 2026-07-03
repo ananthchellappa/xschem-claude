@@ -1,5 +1,7 @@
 # 0058 — Edit Properties: move the Name field up + preserve it across an identity change
 
+**Status:** ✅ RESOLVED 2026-07-02 — fix implemented and confirmed by user eyeball testing.
+
 ## Summary
 
 Two changes to the slick Edit Properties form, requested by the user:

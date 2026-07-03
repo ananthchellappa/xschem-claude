@@ -1,5 +1,7 @@
 # 0057 — Edit Properties: changing the cell identity keeps the old cell's attributes
 
+**Status:** ✅ RESOLVED 2026-07-02 — fix implemented and confirmed by user eyeball testing.
+
 ## Summary
 
 In the slick Edit Properties form (`src/property_form.tcl`), the per-field grid is
