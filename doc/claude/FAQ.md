@@ -14,6 +14,67 @@ Newest entries on top.
 
 ---
 
+## Q23. From Tcl in the CIW, can I name a *hierarchical* net (`x1.x2.x3.net`) plus a highlight style (a `net_hilight_style` row index, or an F5-style literal styledef) and have that possibly-buried net highlighted — with every ancestor along the path cued in the most-recent style, Cadence-style?
+
+- **Asked:** 2026-07-02
+- **Project state:** branch `fluid-editing` @ `5d4b7e7f`. Net-hilight-styles feature complete
+  (style table + `-style N` + `net_hilight_apply` + blink/marching-ants + the `.nhse` editor);
+  buried-net cue feature landed (`compute_buried_hilights`). See
+  `doc/claude/specs/net_hilight_styles.md` and `doc/claude/specs/buried_net_hilight.md`.
+
+**Short version:** **partial.** Applying a style *by row index* or *by literal styledef* works, and
+highlighting a *buried* net with ancestor cues works — but the two do **not** yet compose in a
+single call. There is no `hilight <hier-net> -style N` today.
+
+**How styles get applied (all Tcl-drivable, all resolve the net at the *current* level only).**
+- By **row index:** `xschem hilight_netname -style N <net>` — sets `hilight_color=N` for this one
+  apply, does **not** advance the style cursor (`scheduler.c:3324`).
+- By **literal styledef** (the F5-key kind — an 8-col row `{index color width dash angle blink_ms
+  anim rate}`): `net_hilight_apply {styledef} ?net…?` (`xschem.tcl:642`) installs the literal row
+  (dedups by content) then loops `hilight_netname -style $idx` over the named nets.
+- The GUI keys `9`/`8`/`0` (highlight / remove / clear-all) and the `.nhse` style editor ride the
+  same core. **Every** path funnels through `hilight_netname()`, which looks the name up in the
+  **current** hierarchy level's node hash (`bus_node_hash_lookup` at `currsch`) and stamps the new
+  `hilight_table` entry with `sch_path[currsch]` — so the *level you are viewing* decides both
+  what resolves and how deep the entry is recorded.
+
+**The hierarchical part.** `hilight_netname` does **not** parse a dotted path: feed
+`x1.x2.x3.net` at the top and it is not a top-level net name → lookup fails → returns `0`, nothing
+highlights. The working hierarchical route is **`probe_net {fullnet}`** (`xschem.tcl:3778`): it
+calls `descend_hierarchy` (walks the dots, descending `x1`→`x2`→`x3`), then `hilight_netname net`
+at the leaf level. Because it is now descended, the entry is stamped with the deep path
+`.x1.x2.x3.`, which is exactly what drives the buried cue. **Gap:** `probe_net` takes **no**
+`-style` — it uses the current style cursor, so "hierarchical net *and* an explicit style" is not
+one call. Workarounds: script the pieces yourself
+(`descend_hierarchy x1.x2.x3.net 0; xschem hilight_netname -style N net; <ascend>`), or the raw
+debug primitive `xschem test 2 <path> <net> <col>` → `hier_hilight_hash_lookup` inserts a
+deep-path entry *without* descending — but that is a test hook whose `col` is a raw (negative)
+color index on the sim-logic path, **not** a style-table row.
+
+**How robust is the buried cue vs. the Cadence model?** `compute_buried_hilights`
+(`hilight.c:1830`, run inside `propagate_hilights` on every highlight change / descend / ascend)
+matches the model, with one structural caveat:
+
+- **Per-level, not simultaneous.** A net buried in `x3` flags `x1`'s bbox when you view the top,
+  `x2`'s when descended into `x1`, `x3`'s when in `x2` — a recursive prefix-match against the
+  current path alone (`hilight.c:1826-1829`). You cannot see `x3`'s rectangle *at the top*: `x3`'s
+  bbox does not exist there. Each ancestor is cued at **its own** level.
+- **Most-recent style wins:** yes. A monotonic `seq` is stamped per apply and carried across
+  descend; the cue takes the most-recently-applied buried net's style (`e->seq >= bseq[k]`,
+  `hilight.c:1860`) — so the last highlight action's style is what ancestors show.
+- **Rectangle in that exact style:** yes — the four bbox edges draw through `draw_hilight_wire`,
+  so color/width/dash **and** blink/marching apply.
+- **Other caveats:** `probe_net` leaves you *descended* on success (no auto-ascend), so you must
+  ascend to *see* the ancestor cues; an instance that exposes the net at a **pin** shows the pin
+  color and gets **no** cue (`buried_inst_pin_hilighted`, `hilight.c:1858`); vector instances are
+  matched by base name before `[` (not per-slice); only `unhilight_all` (key `0`) clears the cue
+  from above.
+
+**Recommendation / how to fully match Cadence.** To get "name a hierarchical net + pick a style +
+have the ancestors cued in that style" in one shot, add a `-style N` passthrough to `probe_net`
+(thread it into the wrapped `hilight_netname` call) — the buried-cue machinery already stores and
+renders the style, so nothing downstream needs to change.
+
 ## Q22. I work on ~10 projects that each need a *different* library setup. How do I set `XSCHEM_LIBRARY_DEFS` (and the library path) on a per-project basis?
 
 - **Asked:** 2026-06-30
