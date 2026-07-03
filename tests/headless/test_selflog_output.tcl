@@ -404,6 +404,45 @@ check "set cadsnap 0 logs the RESOLVED default (not 0)" \
 xschem set color_ps 0
 check "pure-display set (color_ps) is nolog" [expr {[count_pfx "xschem set color_ps"] == 0}]
 
+# --- 3k. raw Tk-bind subcommands self-log at their cores (issue 0067) ---------
+# The Cadence-rc keys 9/8/0 are raw `bind .drw <Key> {xschem <sub>}` -- they never
+# reach dispatch_input_action, so the sub must self-log. Deterministic unhilight_all
+# logs the real command; the interactive hilight/unhilight log the real command ONLY
+# in the noun-verb (a net/element is selected) branch, and stay silent when they enter
+# interactive click-mode (a gesture START -- per-click effect is 0005/0069).
+xschem load xschem_library/examples/nand2.sch
+
+xschem unhilight_all
+check "unhilight_all self-logs (key 0)"        [has_line "xschem unhilight_all"]
+
+xschem unselect_all; xschem select instance 0
+xschem hilight_net_interactive
+check "hilight_net_interactive noun-verb self-logs (key 9)" \
+      [has_line "xschem hilight_net_interactive"]
+xschem select instance 0
+xschem unhilight_net_interactive
+check "unhilight_net_interactive noun-verb self-logs (key 8)" \
+      [has_line "xschem unhilight_net_interactive"]
+
+# no selection -> enters interactive click-mode = gesture start -> logs nothing.
+xschem unselect_all
+set hi_b [count_pfx "xschem hilight_net_interactive"]
+xschem hilight_net_interactive
+check "hilight_net_interactive interactive-mode logs nothing (gesture start)" \
+      [expr {[count_pfx "xschem hilight_net_interactive"] == $hi_b}]
+
+# +/- bus-index (change_index.tcl raw binds) mutate only via `xschem setprop instance
+# $i lab …` (non-fast) -> already covered by the slice-5 setprop self-log. Confirm the
+# actual path: set a bussed lab, run change_index, the incremented setprop must log.
+# change_index iterates `xschem selected_set` which yields instance NAMES, so the
+# logged line addresses the instance by name (p1), not index.
+source [file join $XSCHEM_SHAREDIR change_index.tcl]
+xschem unselect_all; xschem select instance 0
+xschem setprop instance 0 lab {selfbus[3]}
+change_index 1
+check "change_index (+/-) routes through logged setprop" \
+      [has_line "xschem setprop instance p1 lab {selfbus\[4\]}"]
+
 # --- 4. -result / -error output comments (source-able) ------------------------
 xschem log_action -result "hello world"
 check "result -> '#= ' comment"   [has_line "#= hello world"]

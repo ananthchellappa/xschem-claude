@@ -3035,6 +3035,14 @@ static void net_hilight_interactive(int add)
     } else {
       unhilight_net(1); /* noun-verb: remove highlight but keep the selection (like key 9) */
     }
+    /* self-log at core (0067): the Cadence-rc keys 9/8 are raw `bind .drw <Key> {xschem
+     * <sub>}` -- they bypass dispatch_input_action, so only this core self-log records
+     * them. Log the real command (like the registered `xschem hilight` on K); it replays
+     * against the replay-time selection (the same accepted selection-dependency, 0005).
+     * ONLY the noun-verb branch acts immediately -- the verb-noun branch below merely
+     * ENTERS interactive click-mode (a gesture start; each click's effect is 0005/0069),
+     * so it stays silent, matching the Phase-3 log-the-effect-not-the-start rule. */
+    log_action(add ? "xschem hilight_net_interactive" : "xschem unhilight_net_interactive");
   } else {      /* verb-noun: enter interactive mode */
     if(add) { xctx->ui_state &= ~NET_UNHILIGHT; xctx->ui_state |= NET_HILIGHT; }
     else    { xctx->ui_state &= ~NET_HILIGHT;   xctx->ui_state |= NET_UNHILIGHT; }
@@ -9002,6 +9010,11 @@ static int xschem_cmds_u(Tcl_Interp *interp, int argc, const char *argv[], int *
       /* undraw_hilight_net(1); */
       if(!fast) draw();
       net_hilight_anim_update(); /* Pass 2a: clearing all highlights stops the tick */
+      /* self-log at core (0067): deterministic + replayable. Covers the raw Cadence-rc
+       * `bind .drw <Key-0>` and the mouse binding (both call `xschem unhilight_all`
+       * directly, bypassing dispatch). The registered Shift+K action carries the same
+       * csv command -> its Layer A copy is deduped here via actionlog_cmd_logged. */
+      log_action("xschem unhilight_all");
       Tcl_ResetResult(interp);
     }
 
