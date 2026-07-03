@@ -1281,6 +1281,21 @@ char *str_chars_replace(const char *str, const char *replace_set, const char wit
   return res;
 }
 
+/* 0063: a property-dialog commit edits the whole prop string of the *selected*
+ * object(s). No faithful replayable subcommand exists (setprop is token-level only;
+ * line/arc/poly have none; the target is the live selection, not a stable id), so we
+ * emit a source-able `#` audit marker (skipped on replay, per the D1 comment-line
+ * decision) instead of a bogus command -- otherwise these mutating, undo-pushing edits
+ * leave no CIW/log trace at all. Newlines are flattened so the marker stays one
+ * source-able line. The slick INSTANCE form (edit_prop, x==0) already logs a real
+ * replayable `xschem apply_properties`, so that path is excluded by the caller. */
+static void log_prop_edit_marker(const char *what, const char *prop)
+{
+  char *flat = str_chars_replace(prop ? prop : "", "\n\r", ' ');
+  log_action("# property-edit %s: %s", what, flat);
+  my_free(_ALLOC_ID_, &flat);
+}
+
 /* x=0 use tcl text widget  x=1 use vim editor  x=2 only view data */
 void edit_property(int x)
 {
@@ -1406,6 +1421,7 @@ void edit_property(int x)
     }
    } /* end for(j...) */
    if(modified) set_modify(1);
+   if(modified) log_prop_edit_marker("global", tclgetvar("tctx::retval")); /* 0063 */
    return;
  } /* if((xctx->lastsel==0 ) */
 
@@ -1519,6 +1535,17 @@ void edit_property(int x)
    break;
  }
  if(modified) set_modify(1);
+ /* 0063: audit-log the commit once per dialog session (not per selected object).
+  * Exclude x==2 (view-only) and the instance slick form (ELEMENT && x==0), which
+  * self-logs `xschem apply_properties`; every other path (wire/rect/line/arc/poly/
+  * text + instance-via-external-editor) is otherwise silent. */
+ if(modified && x != 2 && !(type == ELEMENT && x == 0)) {
+   const char *tn = type == ELEMENT ? "instance" : type == ARC     ? "arc"  :
+                    type == xRECT   ? "rect"     : type == WIRE     ? "wire" :
+                    type == POLYGON ? "polygon"  : type == LINE     ? "line" :
+                    type == xTEXT   ? "text"     : "object";
+   log_prop_edit_marker(tn, tclgetvar("tctx::retval"));
+ }
 }
 
 

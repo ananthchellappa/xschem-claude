@@ -277,6 +277,53 @@ check "make_sch_from_sel read-only logs nothing" \
   [expr {[count_lines "xschem make_sch_from_sel"] == $msf_before}]
 xschem set readonly 0
 
+# --- 3h. property-edit dialogs self-log a source-able marker (issue 0063) ----------
+# editprop.c commits (wire/rect/line/arc/poly/text + global attrs + instance-via-vi)
+# had ZERO log_action -> silent. They edit the whole prop of the *selection*, which no
+# subcommand can faithfully replay, so edit_property() now emits a `#` audit marker
+# (skipped on replay) at its commit tail. Drive the dialogs by stubbing the Tcl dialog
+# procs to confirm + mutate tctx::retval; assert one marker per commit, none on cancel.
+xschem load xschem_library/examples/nand2.sch
+proc text_line {args}    { set ::tctx::rcode ok; append ::tctx::retval " tsttok=1" }
+proc edit_vi_prop {args} { set ::tctx::rcode ok; append ::tctx::retval " tsttok=1"; return $::tctx::retval }
+
+# WIRE (x=0 text widget): nand2 has 20 wires.
+xschem unselect_all; xschem select wire 0
+set b [count_pfx "# property-edit wire:"]
+xschem edit_prop
+check "edit wire property logs a marker" [expr {[count_pfx "# property-edit wire:"] > $b}]
+
+# RECT (x=0): create one on a fresh layer, select it by index.
+xschem set rectcolor 6
+set rb [xschem get rects 6]
+xschem rect 500 500 600 600
+xschem unselect_all; xschem select rect 6 $rb
+set b [count_pfx "# property-edit rect:"]
+xschem edit_prop
+check "edit rect property logs a marker" [expr {[count_pfx "# property-edit rect:"] > $b}]
+
+# INSTANCE via external editor (x=1): edit_symbol_property x==1 -> update_symbol. The
+# slick text-widget instance form (x=0) is excluded because it self-logs apply_properties.
+xschem unselect_all; xschem select instance 0
+set b [count_pfx "# property-edit instance:"]
+xschem edit_vi_prop
+check "edit instance property (vi editor) logs a marker" \
+  [expr {[count_pfx "# property-edit instance:"] > $b}]
+
+# GLOBAL schematic attributes (lastsel==0, x==1).
+xschem unselect_all
+set b [count_pfx "# property-edit global:"]
+xschem edit_vi_prop
+check "edit global schematic property logs a marker" \
+  [expr {[count_pfx "# property-edit global:"] > $b}]
+
+# CANCEL (empty rcode) commits nothing -> no marker.
+proc text_line {args} { set ::tctx::rcode {} }
+xschem unselect_all; xschem select wire 1
+set b [count_pfx "# property-edit"]
+xschem edit_prop
+check "cancelled property edit logs nothing" [expr {[count_pfx "# property-edit"] == $b}]
+
 # --- 4. -result / -error output comments (source-able) ------------------------
 xschem log_action -result "hello world"
 check "result -> '#= ' comment"   [has_line "#= hello world"]

@@ -1,7 +1,24 @@
 # Issue 0063 — property-edit dialogs (editprop.c) commit silently
 
 **Opened:** 2026-07-02
-**Status:** OPEN — identified by the action-log coverage audit; not yet fixed.
+**Status:** ✅ FIXED 2026-07-02 (`fluid-editing`) — `edit_property()` (the single core
+all commit paths funnel through: scheduler `edit_prop`/`edit_vi_prop`, callback keys/
+actions) now emits a source-able `#`-marker `# property-edit <type>: <flat-prop>` at both
+commit tails (global-attrs path + the per-type dispatch tail), gated on `modified`.
+Chosen over a replayable command because these dialogs edit the **whole prop string of
+the live selection** and no faithful subcommand exists (`setprop` is token-level only;
+line/arc/poly have no setprop; the target is the selection, not a stable id) — so per the
+audit's D1 comment-line decision, a marker (skipped on replay) is logged instead of a
+bogus command. Newlines are flattened (`str_chars_replace`) so the line stays one
+source-able comment. Excluded: `x==2` view-only, and the slick **instance** form
+(`ELEMENT && x==0`) which self-logs a real `xschem apply_properties`. `change_elem_order`
+was already covered by slice-5 (logged `xschem change_elem_order -1` at scheduler + Shift-S).
+Test: `test_selflog_output.tcl` §3h (5 checks: wire/rect/instance-vi/global markers +
+cancel-logs-nothing), sabotage-verified. Follow-up (optional): a true replayable path
+needs `setprop … allprops` for the shape types + stable selection referents (0005).
+_Original triage below._
+
+**Status (original):** OPEN — identified by the action-log coverage audit; not yet fixed.
 **Severity:** HIGH — these dialogs mutate real schematic/symbol content and
 `push_undo`, yet leave no action-log / CIW trace. The only property path that
 logs is the "slick" instance form.
