@@ -570,6 +570,12 @@ and is actually on screen.
 
 ## 7. The reported bug, traced line by line
 
+> **Note.** This section traces the behaviour of the orphan mop-up *before* the §10
+> relay fix — it is the mechanism of the reported bug, kept because it is the
+> clearest way to understand the engine. With the relay in place (§10), the
+> populate cases below now succeed; the clear cases are unchanged. Read this to
+> understand *why* the gap was hard, then §10 for how it is bridged.
+
 Now the payoff. Set up the reported topology precisely:
 
 - **Primary window P** is the main window on the shared `.drw` canvas:
@@ -791,7 +797,15 @@ flips on purpose.
 
 ---
 
-## 10. The path to a real fix (summary)
+## 10. The fix (implemented)
+
+> **Status: implemented** on `fluid-editing` — `net_hilight_relay_reconcile()` in
+> `src/hilight.c`, wired into `net_hilight_sync_orphans()`. The reported scenario
+> now works: a surfacing deep net lights the real net in the far window, and a
+> genuinely buried deep net shows a *validated* buried cue instead of nothing;
+> clear-through is unchanged. Regression: `tests/hilight_xwin_sync.tcl` (44 checks,
+> including a surfacing-net case and a relay-off sabotage guard). What follows is
+> the design as built.
 
 The one thing that makes the gap untranslatable is a missing schematic — and that
 schematic's filename is *not* missing: it sits in the orphan window's own descent

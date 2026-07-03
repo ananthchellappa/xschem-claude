@@ -96,11 +96,11 @@ check "parent cleared through (up)"      [xschem display_hilights] {}
 
 # --- DEEP ASCEND RE-SYNC (issue 0073 child->parent via go_back): descend the secondary a
 #     SECOND level in place (into xg, at .xi.xg.) and highlight the grandchild-internal net BAR.
-#     Across the 2-level gap POPULATING must NOT cross (the exact cross-level net needs the
-#     unloaded intermediate netlist, and a verbatim deep-entry copy would paint a bogus buried
-#     cue on xi -- wrong when a deep net actually SURFACES higher up, §9c). So the primary stays
-#     EMPTY here. Only when the secondary ASCENDS to .xi. (depth-1) does the go_back hook run the
-#     FULL translation. Byte-target (single-window deep ascend): the .xi. table is {xi.xg.BAR} {xi.BAR}. ---
+#     Across the 2-level gap the deep-gap RELAY (issue 0073 §9c fix) transiently loads the
+#     intermediate netlist and validates surface-vs-buried: BAR is genuinely buried (no pin path to
+#     the top), so the relay lights a CORRECT buried cue on xi in the primary (its table gets the deep
+#     entry {xi.xg.BAR}); it does NOT invent a false net. When the secondary then ASCENDS to .xi.
+#     (depth-1) the go_back hook runs the ±1 translation. Byte-target: .xi. table is {xi.xg.BAR} {xi.BAR}. ---
 xschem new_schematic switch $nw
 xschem unselect_all
 xschem select instance xg fast
@@ -110,7 +110,8 @@ xschem unselect_all
 xschem hilight_netname BAR
 check "grandchild highlights BAR"        [has [xschem display_hilights] xi.xg.BAR] 1
 xschem new_schematic switch $cur
-check "primary not populated across 2-level gap (no false cue)" [xschem display_hilights] {}
+check "primary shows deep buried net via relay"     [has [xschem display_hilights] xi.xg.BAR] 1
+check "primary buried cue on xi (validated buried)" [expr {[xschem hilight_buried xi] >= 0}] 1
 # ascend the secondary one level: the go_back hook must now re-sync the primary (full translation)
 xschem new_schematic switch $nw
 xschem go_back
@@ -122,12 +123,12 @@ check "primary mirrors deep-ascend table" [lsort [xschem display_hilights]] [lso
 xschem new_schematic switch $nw ; xschem unhilight_all
 xschem new_schematic switch $cur ; xschem unhilight_all
 
-# --- DEEP-GAP CLEAR-THROUGH, NO FALSE CUE (issue 0073 §9c): the secondary sits TWO levels below
-#     the primary (.xi.xg.), with NO window at the intermediate .xi.. Across such a gap POPULATING
-#     must not cross (can't validate whether the deep net surfaces -> must NOT paint a buried cue),
-#     but CLEARING must (else a highlight the user cleared everywhere lingers -> stale). Assert:
-#     (a) a deep highlight does NOT populate the primary; (b) clearing the primary clears the deep
-#     secondary (the orphan mop-up's clear-through). ---
+# --- DEEP-GAP BURIED NET + CLEAR-THROUGH (issue 0073 §9c relay fix): the secondary sits TWO levels
+#     below the primary (.xi.xg.), with NO window at the intermediate .xi.. The relay loads the
+#     intermediate netlist, VALIDATES that BAR is genuinely buried, and lights a correct buried cue on
+#     xi in the primary. Clearing must still cross the gap (no stale). Assert: (a) a deep buried
+#     highlight lights the validated buried cue in the primary; (b) clearing the primary clears the
+#     deep secondary (the orphan mop-up's clear-through). ---
 xschem new_schematic switch $nw
 xschem unselect_all
 xschem select instance xg fast
@@ -136,9 +137,10 @@ check "secondary re-descended to .xi.xg." [xschem get sch_path] {.xi.xg.}
 xschem unselect_all
 xschem hilight_netname BAR
 check "deep secondary highlights BAR"     [has [xschem display_hilights] xi.xg.BAR] 1
-# (a) a deep highlight must NOT populate the primary across the 2-level gap (no bogus buried cue)
+# (a) a deep BURIED highlight lights a CORRECT (validated) buried cue on xi in the primary via the relay
 xschem new_schematic switch $cur
-check "primary not populated by deep highlight" [xschem display_hilights] {}
+check "primary shows deep buried net via relay (BAR)" [has [xschem display_hilights] xi.xg.BAR] 1
+check "primary buried cue on xi (validated buried)"   [expr {[xschem hilight_buried xi] >= 0}] 1
 # (b) clearing the primary must still clear the deep secondary (orphan clear-through, no stale)
 xschem unhilight_all
 check "primary cleared (deep)"            [xschem display_hilights] {}
@@ -147,6 +149,51 @@ check "deep secondary cleared through (no stale)" [xschem display_hilights] {}
 # leave the secondary back at .xi. and both clear for the animation block
 xschem go_back
 xschem unhilight_all
+xschem new_schematic switch $cur ; xschem unhilight_all
+
+# --- DEEP-GAP SURFACING NET (issue 0073 §9c relay fix -- the USER'S reported scenario): the secondary
+#     sits TWO levels below the primary (.xi.xg.), NO window at the intermediate .xi.. Highlight a net
+#     there that is NOT buried and SURFACES up through pins to a net visible in the primary (grandchild
+#     port CTRL -> xg.CTRL pin -> child CTRL net -> xi.CTRL pin -> top CTRL). The relay must load the
+#     intermediate netlist, translate CTRL up, and light the REAL net CTRL in the primary WITH NO false
+#     buried cue on xi (buried_inst_pin_hilighted suppresses it because CTRL surfaces to xi's pin). ---
+xschem new_schematic switch $nw
+xschem unselect_all
+xschem select instance xg fast
+xschem descend 1
+check "secondary descended to .xi.xg. (surfacing)"   [xschem get sch_path] {.xi.xg.}
+xschem unselect_all
+xschem hilight_netname CTRL
+check "deep secondary highlights CTRL"               [has [xschem display_hilights] xi.xg.CTRL] 1
+xschem new_schematic switch $cur
+check "primary lit REAL surfacing net CTRL (relay)"  [has [xschem display_hilights] CTRL] 1
+check "primary: NO false buried cue on xi (surfacing)" [xschem hilight_buried xi] -1
+# clear-through from the primary must still clear the deep secondary
+xschem unhilight_all
+check "primary cleared (surfacing)"                  [xschem display_hilights] {}
+xschem new_schematic switch $nw
+check "deep secondary cleared through (surfacing)"   [xschem display_hilights] {}
+xschem go_back
+xschem unhilight_all
+xschem new_schematic switch $cur ; xschem unhilight_all
+
+# --- SABOTAGE (green-but-hollow guard): with the deep-gap relay DISABLED, the surfacing net must NOT
+#     light the primary (the sync falls back to clear-through-only). This pins the relay -- not some
+#     other path -- as the mechanism that lights the surfacing net across the 2-level gap. ---
+xschem net_hilight_relay_enable 0
+xschem new_schematic switch $nw
+xschem unselect_all
+xschem select instance xg fast
+xschem descend 1
+xschem unselect_all
+xschem hilight_netname CTRL
+xschem new_schematic switch $cur
+check "SABOTAGE relay off: primary NOT lit by surfacing net" [has [xschem display_hilights] CTRL] 0
+xschem unhilight_all
+xschem new_schematic switch $nw
+xschem go_back
+xschem unhilight_all
+xschem net_hilight_relay_enable 1
 xschem new_schematic switch $cur ; xschem unhilight_all
 
 # --- ANIMATION (issue 0073 animated-highlight): a BLINK style applied in the parent must

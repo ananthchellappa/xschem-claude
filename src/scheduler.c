@@ -4953,6 +4953,17 @@ static int xschem_cmds_n(Tcl_Interp *interp, int argc, const char *argv[], int *
       Tcl_ResetResult(interp);
     }
 
+    /* net_hilight_relay_enable [<0|1>]
+     *   Toggle (or query) the deep-gap net-highlight relay (issue 0073 §9c fix): translating an
+     *   EXACT highlight across a linked-window gap of more than one hierarchy level by transiently
+     *   loading the intermediate schematics. With no arg, returns the current 0/1 state. Also the
+     *   test sabotage seam: setting it 0 forces the clear-through-only fallback. */
+    else if(!strcmp(argv[1], "net_hilight_relay_enable"))
+    {
+      if(argc >= 3) net_hilight_set_relay_enable(atoi(argv[2]));
+      Tcl_SetResult(interp, net_hilight_get_relay_enable() ? "1" : "0", TCL_STATIC);
+    }
+
     /* net_hilight_dump_pixmap <file> [<win>]
      *   TEST HOOK (Pass 2-multiwin, Phase C): write the LIVE backing pixmap (save_pixmap) of
      *   <win> (default: current window) to a PNG, WITHOUT re-rendering. Unlike `xschem print

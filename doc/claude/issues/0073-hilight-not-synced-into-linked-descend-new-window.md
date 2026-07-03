@@ -427,3 +427,47 @@ read-only-guard gaps
 (`check_unique_names`/`attach_labels`/`floaters_from_selected_inst`) and the uncaught `set header_text`
 TCL_ERROR belong to the companion action-log / read-only threads, not this feature — **split out to issue
 0074** for the read-only thread to own.
+
+## 10. Deep-gap deferral RESOLVED — the transient-netlist relay (2026-07-03)
+
+The last deferred piece (§7/§9c: lighting the EXACT net across a >1-level gap with no intermediate
+window loaded) is now implemented. The user re-reported the exact topology — primary at top, secondary
+descended into `x1` (new window) then IN PLACE into `x4` (`.x1.x4.`), highlight a net there that
+SURFACES up to a net visible in the primary — and it did not light (only clear-through crossed the gap,
+exactly the §9c behaviour).
+
+**Fix:** `net_hilight_relay_reconcile()` (src/hilight.c), invoked from `net_hilight_sync_orphans` when a
+prefix-related linked window is ≥2 levels from the source. It loads each intermediate schematic
+transiently into a **windowless scratch context** (`alloc_scratch_xschem_ctx`/`free_scratch_xschem_ctx`
+in xinit.c — thin wrappers over the file-static `alloc_xschem_data`/`delete_schematic_data(0)`, the same
+lifecycle `compare_schematics` uses; `has_x` is forced 0 around the loads so no GC/pixmap path is taken)
+and translates the highlight one hop at a time via `nh_hop()` — the SAME pin/bus mapping
+`hilight_child_pins`/`hilight_parent_pins` and `net_hilight_sync_one_child`/`_one_parent` use. It then
+reconciles the target with the verbatim source table PLUS the translated net.
+
+**Why this RESOLVES the §9c hazard rather than reviving it:** loading the intermediate netlist *is* the
+computation that decides surface-vs-buried. A surfacing deep net now yields its real shallow net (so
+`buried_inst_pin_hilighted` suppresses the would-be false cue on the containing instance); a genuinely
+buried net yields an empty translation and keeps its correct buried cue. So the verbatim deep-entry copy
+is safe again (it always rides alongside the real translated net), byte-matching a fully-open descend
+chain. On any failure (an intermediate schematic can't be loaded / an instance doesn't resolve / the
+source is empty) the relay returns 0 and the caller falls back to the clear-through-only
+`net_hilight_reconcile_verbatim`, so clear-through never regresses and no unvalidatable cue is drawn.
+
+**Kill switch / test seam:** `xschem net_hilight_relay_enable [0|1]` (default 1).
+
+**Verified:** `tests/hilight_xwin_sync.tcl` (44 checks). Fixture extended with an independent `CTRL`
+chain that surfaces two levels (grandchild port → `xg.CTRL` → child `CTRL` net → `xi.CTRL` → top `CTRL`).
+The two former "primary NOT populated across the 2-level gap" asserts were flipped to the new correct
+behaviour: a SURFACING deep net lights the REAL net `CTRL` in the primary with NO false buried cue on
+`xi`; a genuinely BURIED deep net (`BAR`) lights a validated buried cue on `xi` (`hilight_buried xi` ≥ 0);
+clear-through still clears both ways. A SABOTAGE check (`net_hilight_relay_enable 0` → surfacing net does
+NOT light the primary) pins the relay as the mechanism. Headless `tests/buried_hilight.tcl` still 9/9
+(the relay is `has_x`-gated, so `--nogui` paths are untouched). Analysis + roadmap:
+`doc/claude/code_analysis/net_highlight_hierarchy_and_linked_windows.md` §10 and
+`net_highlight_linked_windows_agent_guide.md` §7.
+
+**Still deferred (unchanged):** sibling cross-sync (two windows descended into the SAME instance —
+`net_hilight_prefix_related` rejects equal `currsch`); a per-hop scratch-context cache (each ≥2-level
+relay currently allocs/frees one scratch ctx per intermediate level — fine for the reported depth, a
+possible optimization for deep chains).

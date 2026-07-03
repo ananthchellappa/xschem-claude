@@ -887,6 +887,26 @@ static void delete_schematic_data(int delete_pixmap)
   free_xschem_data(); /* delete the xctx struct */
 }
 
+/* issue 0073 deep-gap net-highlight relay (see doc/claude/code_analysis/
+ * net_highlight_linked_windows_agent_guide.md and net_hilight_relay_reconcile() in hilight.c):
+ * allocate a WINDOWLESS scratch context for transiently loading an intermediate schematic, so a
+ * highlight can be translated across a hierarchy gap of more than one level whose intermediate
+ * netlist is loaded in no window. alloc_xschem_data()/delete_schematic_data() are file-static; these
+ * thin wrappers expose the same scratch lifecycle compare_schematics() uses (alloc + ... +
+ * delete_schematic_data(0), which does NOT touch a gc/pixmap). The caller saves the previous xctx and
+ * forces has_x=0 around the scratch so no GC/pixmap code path is taken, then restores both. */
+Xschem_ctx *alloc_scratch_xschem_ctx(void)
+{
+  xctx = NULL;
+  alloc_xschem_data("", ".drw");   /* window==save_pixmap==0; no gc created */
+  return xctx;
+}
+
+void free_scratch_xschem_ctx(void)
+{
+  delete_schematic_data(0);        /* frees the scratch xctx; delete_pixmap=0 => no resetwin/free_gc */
+}
+
 int compare_schematics(const char *f)
 {
   Int_hashtable table1 = {NULL, 0},  table2 = {NULL, 0};

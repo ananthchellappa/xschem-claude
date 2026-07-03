@@ -199,7 +199,19 @@ surfacing net, §3, §7‑correctness).
 
 ---
 
-## 7. WORK PACKAGE A — deep‑gap fix roadmap
+## 7. WORK PACKAGE A — deep‑gap fix roadmap  ✅ IMPLEMENTED
+
+> **Status: shipped** on `fluid-editing`. Approach 2 (transient relay) was built as
+> `net_hilight_relay_reconcile()` (+ helpers `nh_hop`, `nh_path_component`) in
+> `src/hilight.c`, wired into `net_hilight_sync_orphans` (gap≥2 → relay, else
+> verbatim fallback). Scratch lifecycle via `alloc_scratch_xschem_ctx()` /
+> `free_scratch_xschem_ctx()` (xinit.c) with `has_x` forced 0 around the loads. Kill
+> switch / test seam: `xschem net_hilight_relay_enable [0|1]` (`net_hilight_set/get_relay_enable`).
+> Verified: `tests/hilight_xwin_sync.tcl` (44 checks — surfacing-net lights the real
+> net, buried-net shows a validated cue, clear-through both ways, relay-off sabotage).
+> The roadmap below is retained as the design record; the pin-walk extraction
+> (§7.3) was implemented as the shared `nh_hop` (the ±1 `sync_one_child/_parent`
+> were left as-is — a further DRY cleanup opportunity, not required).
 
 Goal: light the EXACT internal net across a >1‑level gap with no intermediate
 window. Wire‑up point: **inside `net_hilight_sync_orphans` `src/hilight.c:3568`** —
