@@ -212,6 +212,21 @@ surfacing net, §3, §7‑correctness).
 > The roadmap below is retained as the design record; the pin-walk extraction
 > (§7.3) was implemented as the shared `nh_hop` (the ±1 `sync_one_child/_parent`
 > were left as-is — a further DRY cleanup opportunity, not required).
+>
+> **xhigh review follow-ups (applied).** (1) *Endpoint-live*: the shallow-end hop
+> (`L == dS`) reads the LIVE window that already holds that schematic (`src` for a
+> down relay, borrowed `tgt` for an up relay) instead of reloading `sch[dS]` from
+> disk — the on-disk copy is stale after unsaved connectivity edits, and it saved a
+> load. Sabotage-verified by a `setprop`-based unsaved-rename test
+> (`tests/hilight_xwin_sync_headless.tcl`). (2) The `sch_inst_number` getter's no-arg
+> default was off by one (returned the leaf's unset forward-slice); now returns the
+> slice that *entered* the current level (`sch_inst_number[currsch-1]`). (3) The
+> headless harness guard now requires BOTH exit 0 AND an `OVERALL: ok` sentinel
+> (`xschem --nogui` exits 0 on a mid-script Tcl error, so exit code alone was a
+> hollow-green hole); `buried_hilight.tcl` gained the sentinel + an `exit`. (4)
+> Fixture hygiene: tests delete stray `~`-backing files before loading (an unsaved
+> edit leaves `parent~.sch`, which loads in place of the `.sch`). Still open: the
+> intermediate-load scratch-context cache (perf), and the `nh_hop`/±1 DRY merge.
 
 Goal: light the EXACT internal net across a >1‑level gap with no intermediate
 window. Wire‑up point: **inside `net_hilight_sync_orphans` `src/hilight.c:3568`** —

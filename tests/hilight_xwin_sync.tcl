@@ -23,6 +23,9 @@
 
 set here [file normalize [file dirname [info script]]]
 cd [file join $here hilight_xwin_sync]
+# fixture hygiene: drop any ~-backing file a prior unsaved-edit test left (it would load in
+# place of the .sch and silently change the fixture).
+foreach f [glob -nocomplain *~.sch] { catch {file delete -force $f} }
 
 # GUI --script swallows stdout, so mirror results to a log file too (override with
 # env XWIN_SYNC_LOG). The process exit code is the authoritative pass/fail signal.

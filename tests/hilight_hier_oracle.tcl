@@ -25,6 +25,10 @@
 
 set here [file normalize [file dirname [info script]]]
 cd [file join $here hilight_xwin_sync]
+# fixture hygiene: a prior test that made an unsaved edit may have left a ~-backing file
+# (e.g. parent~.sch, from descend-autosave) that xschem would load INSTEAD of the .sch,
+# silently changing the fixture; delete any before loading.
+foreach f [glob -nocomplain *~.sch] { catch {file delete -force $f} }
 
 set nfail 0
 proc check {desc got want} {

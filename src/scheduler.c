@@ -2359,19 +2359,23 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
               Tcl_SetResult(interp, xctx->sch_path[x], TCL_VOLATILE);
             }
           }
-          else if(!strcmp(argv[2], "sch_inst_number")) /* vector-instance slice descended into to reach level 'n'
-                          * (default: current level). The slice entering level L is sch_inst_number[L-1]; 1 for
-                          * scalar instances. Exposed for the headless hierarchy-representation dump test
-                          * (doc/claude/code_analysis/net_highlight_linked_windows_agent_guide.md §8 Tier B). */
+          else if(!strcmp(argv[2], "sch_inst_number")) /* vector-instance slice descended into to REACH
+                          * level 'n' (default: current level) = sch_inst_number[n-1], since descend_schematic
+                          * records the slice at the PARENT level (sch_inst_number[currsch] before currsch++).
+                          * 1 for a scalar instance; 1 for the top level (n==0, no descent). Exposed for the
+                          * headless hierarchy-representation dump test (agent_guide §8 Tier B). NOTE: the
+                          * raw array element sch_inst_number[currsch] at the deepest level is unset -- do NOT
+                          * default to it (that was an off-by-one copy of the sch_path getter). */
           {
             int x;
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
             if(argc > 3) x = atoi(argv[3]);
             else x = xctx->currsch;
             if(x < 0 ) x = xctx->currsch + x;
-            if(x <= xctx->currsch && x >= 0) {
-              Tcl_SetResult(interp, my_itoa(xctx->sch_inst_number[x]), TCL_VOLATILE);
-            }
+            if(x >= 1 && x <= xctx->currsch)
+              Tcl_SetResult(interp, my_itoa(xctx->sch_inst_number[x - 1]), TCL_VOLATILE);
+            else if(x == 0)
+              Tcl_SetResult(interp, "1", TCL_VOLATILE); /* top level has no entering slice */
           }
           else if(!strcmp(argv[2], "sch_to_compare")) /* if set return schematic current design is compared with */
           {

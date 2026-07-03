@@ -3437,16 +3437,35 @@ static int net_hilight_relay_reconcile(Xschem_ctx *src, Xschem_ctx *tgt, const c
        !nh_path_component(deep->sch_path[L], deep->sch_path[L + 1], instname, (int)sizeof(instname))) {
       ok = 0; break;
     }
-    alloc_scratch_xschem_ctx();                 /* xctx := fresh windowless scratch */
-    lok = load_schematic(1, fn, 0, 0);          /* load symbols, keep undo, silent (no alert popup) */
-    if(lok) {
-      prepare_netlist_structs(0);
-      inst_idx = get_instance(instname);        /* resolves against the scratch's inst[] */
-      if(inst_idx >= 0) nh_hop(inst_idx, slice, down, W, Wv, nW, &nt, &nv, &nn);
-      else ok = 0;
-    } else ok = 0;
-    free_scratch_xschem_ctx();                  /* frees the scratch xctx */
-    xctx = saved;                               /* back to src between hops */
+    if(L == dS) {
+      /* The shallow-end schematic (level dS) is loaded LIVE in a window -- the source for a down
+       * relay (already the current xctx), the target for an up relay. Read that live context instead
+       * of reloading sch[dS] from disk: the on-disk copy is STALE after unsaved connectivity edits
+       * (rewire / net rename / pin remap) in that window, which would mistranslate the highlight; and
+       * it saves a redundant load. (prepare_netlist_structs is idempotent; the borrow is a pure
+       * pointer swap, valid with has_x forced 0.) */
+      Xschem_ctx *lb = NULL;                    /* down: use saved(=src, current); up: borrow tgt */
+      if(!down) { lb = net_hilight_borrow_ctx(tgt_wp); if(!lb) ok = 0; }
+      if(ok) {
+        prepare_netlist_structs(0);
+        inst_idx = get_instance(instname);      /* resolves against the live shallow window */
+        if(inst_idx >= 0) nh_hop(inst_idx, slice, down, W, Wv, nW, &nt, &nv, &nn);
+        else ok = 0;
+      }
+      if(lb) net_hilight_restore_ctx(lb);
+      xctx = saved;                             /* down: no-op; up: restore already did it */
+    } else {
+      alloc_scratch_xschem_ctx();               /* xctx := fresh windowless scratch */
+      lok = load_schematic(1, fn, 0, 0);        /* load symbols, keep undo, silent (no alert popup) */
+      if(lok) {
+        prepare_netlist_structs(0);
+        inst_idx = get_instance(instname);      /* resolves against the scratch's inst[] */
+        if(inst_idx >= 0) nh_hop(inst_idx, slice, down, W, Wv, nW, &nt, &nv, &nn);
+        else ok = 0;
+      } else ok = 0;
+      free_scratch_xschem_ctx();                /* frees the scratch xctx */
+      xctx = saved;                             /* back to src between hops */
+    }
     if(!ok) {
       for(m = 0; m < nn; ++m) my_free(_ALLOC_ID_, &nt[m]);
       if(nt) my_free(_ALLOC_ID_, &nt);

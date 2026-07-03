@@ -60,11 +60,13 @@ foreach tc $tcases {
   }
   # Headless hilight self-checks driven directly through the built binary (needs xschem to
   # resolve its share dir: installed, or a source-tree run with XSCHEM_SHAREDIR set). Each case
-  # prints "... : FAIL" per failed check (counted by summarize_all's FAIL$ grep) and EXITS
-  # nonzero on any failure OR a startup crash (verified: a missing share dir exits 1). The child
-  # exit code is therefore the authoritative pass/fail; keying on it also avoids a "hollow pass"
-  # where a crash writes an empty log that would summarize as 0 fails. On nonzero exit we
-  # synthesize a FAIL line so summarize_all counts the case as failed regardless of log contents.
+  # prints "... : FAIL" per failed check (counted by summarize_all's FAIL$ grep), exits 0 only on
+  # success, and prints a final "OVERALL: ok" sentinel. A pass requires BOTH: exit code 0 AND the
+  # sentinel present. The exit code alone is NOT enough -- xschem --nogui --pipe exits 0 on an
+  # uncaught MID-SCRIPT Tcl error, so a case that aborts after printing only "ok" lines would
+  # otherwise be a hollow pass; the missing sentinel catches it. A startup crash (missing share
+  # dir) exits nonzero and also lacks the sentinel. On either miss we synthesize a FAIL line so
+  # summarize_all counts the case as failed regardless of log contents.
   foreach hc $hcases {
     puts "Start ${hc}.tcl (headless)"
     set childcode 0
@@ -72,9 +74,11 @@ foreach tc $tcases {
       set ec [dict get $opt -errorcode]
       set childcode [expr {[lindex $ec 0] eq "CHILDSTATUS" ? [lindex $ec 2] : 1}]
     }
-    if {$childcode != 0} {
+    set sentinel 0
+    if {![catch {open ${hc}.log r} rf]} { set body [read $rf]; close $rf; set sentinel [regexp -line {^OVERALL: ok$} $body] }
+    if {$childcode != 0 || !$sentinel} {
       set af [open ${hc}.log a]
-      puts $af "HARNESS: ${hc} exited nonzero ($childcode) -- crashed or a check failed: FAIL"
+      puts $af "HARNESS: ${hc} did not complete cleanly (exit=$childcode, OVERALL_ok=$sentinel) -- crashed, aborted mid-script, or a check failed: FAIL"
       close $af
     }
     summarize_all ${hc}.log $fd

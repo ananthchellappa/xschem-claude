@@ -22,6 +22,10 @@
 
 set here [file normalize [file dirname [info script]]]
 cd [file join $here hilight_xwin_sync]
+# fixture hygiene: this test makes an unsaved edit (setprop) that can leave a ~-backing file
+# (parent~.sch, descend-autosave) which xschem would load INSTEAD of the .sch on a later run,
+# silently changing the fixture. Delete any leftover before loading, and again at the end.
+foreach f [glob -nocomplain *~.sch] { catch {file delete -force $f} }
 
 set nfail 0
 proc check {desc got want} {
@@ -108,7 +112,31 @@ xschem new_schematic switch $cur
 check "PRIMARY +/-1 up-sync surfaced FOO"    [has [xschem display_hilights] FOO] 1
 check "PRIMARY +/-1 byte-matches go_back"    [lsort [xschem display_hilights]] [lsort {FOO xi.FOO}]
 
+# ===========================================================================
+# ENDPOINT-LIVE topology (xhigh code-review fix): the relay must translate the
+# shallow-end hop through the LIVE window, not a fresh disk reload of the schematic
+# that window already shows. Make an UNSAVED net rename in the primary (top CTRL net
+# -> CTRL2, by editing lab_pin l3), re-descend the secondary to the 2-level gap, and
+# highlight CTRL deep: the surfacing net in the primary must be the LIVE name CTRL2,
+# NOT the stale on-disk name CTRL (the pre-fix code reloaded parent.sch and showed CTRL).
+# ===========================================================================
+xschem new_schematic switch $nw ; xschem unhilight_all
+xschem unselect_all ; xschem select instance xg fast ; xschem descend 1
+check "secondary re-descended to .xi.xg. (stale-edit)" [xschem get sch_path] {.xi.xg.}
+xschem new_schematic switch $cur
+xschem unhilight_all
+xschem setprop instance l3 lab CTRL2         ;# UNSAVED connectivity edit: top CTRL net -> CTRL2
+xschem new_schematic switch $nw
+xschem unselect_all
+xschem hilight_netname CTRL
+xschem new_schematic switch $cur
+check "endpoint-live: primary surfaces the LIVE net CTRL2"     [has [xschem display_hilights] CTRL2] 1
+check "endpoint-live: primary does NOT show the stale disk CTRL" [has [xschem display_hilights] CTRL] 0
+xschem unhilight_all
+
 xschem net_hilight_sync_force_headless 0
+# leave the tree clean: drop the ~-backing file the unsaved setprop edit created
+foreach f [glob -nocomplain *~.sch] { catch {file delete -force $f} }
 set summary [expr {$nfail ? "OVERALL: FAIL ($nfail)" : "OVERALL: ok"}]
 puts $summary
 exit [expr {$nfail ? 1 : 0}]

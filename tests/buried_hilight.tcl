@@ -39,9 +39,10 @@ proc check {desc got want} {
 }
 
 proc godown {inst} {
+  global nfail
   xschem unselect_all
-  if {[xschem select instance $inst] ne "1"} { puts "select $inst: FAIL" }
-  if {[xschem descend] ne "1"} { puts "descend $inst: FAIL" }
+  if {[xschem select instance $inst] ne "1"} { puts "select $inst: FAIL" ; incr nfail }
+  if {[xschem descend] ne "1"} { puts "descend $inst: FAIL" ; incr nfail }
 }
 
 xschem load {a.sch}
@@ -108,6 +109,12 @@ xschem unhilight_all
 
 if {$nfail} {
   puts "buried_hilight: $nfail check(s): FAIL"
+  puts "OVERALL: FAIL ($nfail)"
 } else {
   puts "buried_hilight: all checks PASS"
+  puts "OVERALL: ok"
 }
+# Exit code is the harness's authoritative pass/fail backstop: a mid-script Tcl error aborts
+# before this runs, so the "OVERALL: ok" sentinel is absent AND (if the abort maps to a nonzero
+# exit) the code is nonzero; run_regression.tcl requires BOTH exit 0 and the sentinel.
+exit [expr {$nfail ? 1 : 0}]

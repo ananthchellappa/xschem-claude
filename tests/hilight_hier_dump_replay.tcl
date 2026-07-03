@@ -45,6 +45,9 @@ proc check {desc got want} {
 # highlight-independent; we also capture a live deep highlight table line.
 # ===========================================================================
 cd $fx
+# fixture hygiene: drop any ~-backing file a prior unsaved-edit test may have left (it would
+# load in place of the .sch and silently change the fixture).
+foreach f [glob -nocomplain *~.sch] { catch {file delete -force $f} }
 xschem load [file join [pwd] parent.sch]
 
 set fd [open $repfile w]
@@ -52,12 +55,12 @@ set fd [open $repfile w]
 puts $fd "CURRSCH_TOP 0"
 puts $fd "PATH 0 [xschem get sch_path 0]"
 puts $fd "HOP 0 [xschem instance_nodemap xi]"          ;# xi viewed at top: top-net <-> xi-pin
-puts $fd "INSTN 0 [xschem get sch_inst_number 0]"      ;# slice entering level 1
 xschem select instance xi fast ; xschem descend 1
 puts $fd "PATH 1 [xschem get sch_path 1]"
+puts $fd "INSTN 0 [xschem get sch_inst_number 1]"      ;# slice entering level 1 (hop 0's crossed slice)
 puts $fd "HOP 1 [xschem instance_nodemap xg]"          ;# xg viewed at .xi.: .xi.-net <-> xg-pin
-puts $fd "INSTN 1 [xschem get sch_inst_number 1]"      ;# slice entering level 2
 xschem select instance xg fast ; xschem descend 1
+puts $fd "INSTN 1 [xschem get sch_inst_number 2]"      ;# slice entering level 2 (hop 1's crossed slice)
 puts $fd "PATH 2 [xschem get sch_path 2]"
 # a real deep highlight, serialized via list_hilights all -> "path  token  value"
 xschem unselect_all
