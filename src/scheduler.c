@@ -4577,7 +4577,7 @@ static int xschem_cmds_m(Tcl_Interp *interp, int argc, const char *argv[], int *
     if(!strcmp(argv[1], "make_sch")) /* make schematic from selected symbol 20171004 */
     {
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
-      create_sch_from_sym();
+      create_sch_from_sym(); /* self-logs `xschem make_sch` at its core on success */
       Tcl_ResetResult(interp);
     }
 
@@ -4587,7 +4587,11 @@ static int xschem_cmds_m(Tcl_Interp *interp, int argc, const char *argv[], int *
     else if(!strcmp(argv[1], "make_sch_from_sel"))
     {
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
-      make_schematic_symbol_from_sel();
+      /* mutates current buffer (delete selection + place LCC symbol) -> refuse on
+       * read-only (issue 0041 hole; the Ctrl+H registered action now also carries
+       * mutates=1). */
+      if(scheduler_readonly_reject(interp, "make_sch_from_sel")) return TCL_ERROR;
+      make_schematic_symbol_from_sel(); /* self-logs at its core on the real edit only */
       Tcl_ResetResult(interp);
     }
 
@@ -4601,7 +4605,10 @@ static int xschem_cmds_m(Tcl_Interp *interp, int argc, const char *argv[], int *
       if(has_x) tcleval("tk_messageBox -type okcancel -parent [xschem get topwindow] "
                         "-message {do you want to make symbol view ?}");
       if(!has_x || strcmp(tclresult(), "ok")==0) {
-        save_schematic(xctx->sch[xctx->currsch], 0);
+        /* don't overwrite a read-only schematic on disk (0041 sibling hole): the
+         * on-disk file already matches the buffer since read-only blocks edits, so
+         * the symbol still generates from it. make_symbol() self-logs. */
+        if(!xctx->readonly) save_schematic(xctx->sch[xctx->currsch], 0);
         make_symbol();
       }
       Tcl_ResetResult(interp);

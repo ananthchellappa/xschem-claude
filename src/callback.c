@@ -3035,7 +3035,7 @@ static ActionDef action_registry[] = {
   { "sym.attach_net_labels_to_component_instance", act_attach_labels, NULL,
     "Attach net labels to selected instances", 1 },
   { "sym.make_schematic_and_symbol_from_selected_components", act_make_sch_sym_from_sel, NULL,
-    "Make schematic and symbol from selected components" },
+    "Make schematic and symbol from selected components", 1 /* mutates: delete sel + place LCC (0041) */ },
   { "sym.create_symbol_pins_from_selected_schematic_pins", NULL, "schpins_to_sympins",
     "Create symbol pins from selected schematic pins", 1 },
   { "sym.place_symbol_pin", NULL, "xschem add_symbol_pin",
@@ -4166,7 +4166,9 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
                 "-message {do you want to make symbol view ?}");
         if(strcmp(tclresult(),"ok")==0)
         {
-         save_schematic(xctx->sch[xctx->currsch], 0);
+         /* keyboard 'a' (no canvas binding entry -> legacy switch). Don't overwrite a
+          * read-only schematic on disk (0041); make_symbol() self-logs at its core. */
+         if(!xctx->readonly) save_schematic(xctx->sch[xctx->currsch], 0);
          make_symbol();
         }
       }

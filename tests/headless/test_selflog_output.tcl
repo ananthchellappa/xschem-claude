@@ -204,6 +204,79 @@ xschem set readonly 1
 check "set rectcolor on read-only rejects (TCL_ERROR)" [expr {[catch {xschem set rectcolor 4}] == 1}]
 xschem set readonly 0
 
+# --- 3g. symbol/schematic generators: make_symbol / make_sch / make_sch_from_sel --
+# These self-log at their C cores (save.c) on the REAL operation only, so every entry
+# point (menu/script subcommand, the keyboard 'a'/Ctrl+L inline handlers, the Ctrl+H
+# registered action) yields exactly one line and an early-return/cancel yields none.
+# They write files + make_symbol re-saves the current .sch, so redirect the buffer to a
+# scratch file and stub the disk-writing Tcl helpers + dialogs (which also block under X).
+xschem load xschem_library/examples/nand2.sch
+set scratch [file join [file dirname [xschem get actionlog_filename]] selflog_gen.sch]
+set lccpath [file join [file dirname [xschem get actionlog_filename]] selflog_lcc.sch]
+xschem saveas $scratch schematic
+proc tk_messageBox {args} {return ok}
+proc make_symbol {args} {return {}}        ;# shadow the awk generator (no .sym write)
+proc make_symbol_lcc {args} {return {}}
+set ::sfd_ret {}
+proc save_file_dialog {args} {return $::sfd_ret}
+
+# finding-1 (0041): make_symbol must NOT overwrite a read-only .sch on disk. Put a
+# distinctive wire in the buffer (disk still holds the as-saved copy), mark read-only,
+# make the symbol -> the save_schematic must be skipped so the wire never reaches disk.
+xschem wire 12345 6789 12399 6789
+xschem set readonly 1
+xschem make_symbol
+xschem set readonly 0
+set fp [open $scratch r]; set disktxt [read $fp]; close $fp
+check "make_symbol read-only does NOT overwrite .sch" \
+  [expr {![string match {*12345 6789 12399 6789*} $disktxt]}]
+
+# reload a clean copy (drop the unsaved wire) for the positive logging checks.
+xschem load $scratch
+# make_symbol: subcommand (the sym menu's make_symbol_dialog Tcl path is deferred, 0061)
+# and the keyboard 'a' inline handler (keysym 97, state 0). Both call make_symbol().
+set mk_before [count_lines "xschem make_symbol"]
+xschem make_symbol
+check "make_symbol self-logs" [expr {[count_lines "xschem make_symbol"] > $mk_before}]
+set mk_before [count_lines "xschem make_symbol"]
+xschem callback .drw 2 400 300 97 0 0 0 ; update idletasks
+check "key 'a' logs make_symbol" [expr {[count_lines "xschem make_symbol"] > $mk_before}]
+
+# make_sch: gated on a real write. A multi-selection makes create_sch_from_sym()
+# early-return -> NO phantom line (the fix for the old unconditional-log path).
+xschem select_all
+set ms_before [count_lines "xschem make_sch"]
+xschem make_sch
+check "make_sch multi-select logs nothing (no phantom)" \
+  [expr {[count_lines "xschem make_sch"] == $ms_before}]
+
+# make_sch_from_sel: gated on the real edit. A cancelled Save dialog (empty name) is a
+# no-op -> no line; a real filename writes the LCC pair -> exactly one line.
+set ::sfd_ret {}
+xschem select_all
+set msf_before [count_lines "xschem make_sch_from_sel"]
+xschem make_sch_from_sel
+check "make_sch_from_sel cancel logs nothing (no phantom)" \
+  [expr {[count_lines "xschem make_sch_from_sel"] == $msf_before}]
+set ::sfd_ret $lccpath
+xschem select_all
+set msf_before [count_lines "xschem make_sch_from_sel"]
+xschem make_sch_from_sel
+check "make_sch_from_sel (real edit) self-logs" \
+  [expr {[count_lines "xschem make_sch_from_sel"] > $msf_before}]
+
+# make_sch_from_sel REJECTS on read-only (TCL_ERROR, no line) -- it mutates the buffer
+# (delete selection + place LCC), issue 0041; the Ctrl+H action now also carries mutates=1.
+xschem load $scratch
+xschem select_all
+xschem set readonly 1
+set msf_before [count_lines "xschem make_sch_from_sel"]
+check "make_sch_from_sel read-only rejects (TCL_ERROR)" \
+  [expr {[catch {xschem make_sch_from_sel}] == 1}]
+check "make_sch_from_sel read-only logs nothing" \
+  [expr {[count_lines "xschem make_sch_from_sel"] == $msf_before}]
+xschem set readonly 0
+
 # --- 4. -result / -error output comments (source-able) ------------------------
 xschem log_action -result "hello world"
 check "result -> '#= ' comment"   [has_line "#= hello world"]

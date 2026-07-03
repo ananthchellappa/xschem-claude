@@ -3302,6 +3302,12 @@ void make_symbol(void)
   my_snprintf(name, S(name), "make_symbol {%s}", xctx->sch[xctx->currsch] );
   dbg(1, "make_symbol(): making symbol: name=%s\n", name);
   tcleval(name);
+  /* self-log at the shared core: covers `xschem make_symbol` (menu/toolbar/script)
+   * and the keyboard 'a' inline handler, both of which call make_symbol() after a
+   * save+confirm. One line, no double-log (neither caller logs separately). The sym
+   * menu's "Make symbol from schematic" uses the make_symbol_dialog Tcl proc instead
+   * (custom view / modify), a still-unlogged non-File-menu path -- deferred (0061). */
+  log_action("xschem make_symbol");
  }
 
 }
@@ -5348,6 +5354,11 @@ void make_schematic_symbol_from_sel(void)
       tcleval(name);
     }
     draw();
+    /* self-log only on the real edit: a cancelled Save dialog (empty filename) or a
+     * name equal to the current schematic skips this whole block -> no phantom line.
+     * Covers menu/script; the Ctrl+H registered action logs `xschem make_sch_from_sel`
+     * via Layer A on success (deduped by this line via actionlog_cmd_logged). */
+    log_action("xschem make_sch_from_sel");
   }
 }
 
@@ -5455,6 +5466,11 @@ void create_sch_from_sym(void)
         } /* for(i) */
       }  /* for(j) */
       fclose(fd);
+      /* self-log only after the schematic file is actually written -- the many early
+       * returns (multi-select, non-element selection, declined overwrite, fopen
+       * failure, pins-not-found) leave no line. Covers `xschem make_sch` (menu/script)
+       * and the Ctrl+L inline keyboard handler; both call create_sch_from_sym(). */
+      log_action("xschem make_sch");
     } /* if(xctx->lastsel...) */
     my_free(_ALLOC_ID_, &dir);
     my_free(_ALLOC_ID_, &prop);
