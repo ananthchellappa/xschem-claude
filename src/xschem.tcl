@@ -639,7 +639,14 @@ proc net_hilight_apply {styledef args} {
     xschem update_net_hilight_style
   }
   if {[llength $args]} {
-    foreach net $args { xschem hilight_netname -style $idx $net }
+    # Batch the cross-window descend-child sync: without this each net would rebuild+repaint every
+    # linked descend window (M nets -> M child repaints, a visible stall). Suspend the per-net sync,
+    # run one sync at resume. catch so a bad net name still resumes (else the counter stays >0 and
+    # suppresses all later syncs). issue 0073 §9d / code-review perf.
+    xschem net_hilight_sync_suspend
+    set _bshe [catch { foreach net $args { xschem hilight_netname -style $idx $net } } _bsmsg _bsopts]
+    xschem net_hilight_sync_resume
+    if {$_bshe} { return -options $_bsopts $_bsmsg }
   } else {
     set save $incr_hilight
     set incr_hilight 0

@@ -3211,6 +3211,7 @@ static int xschem_cmds_h(Tcl_Interp *interp, int argc, const char *argv[], int *
       hilight_net(0);
       redraw_hilights(0);
       net_hilight_anim_update(); /* Pass 2a: the standard highlight path may add a blink style */
+      net_hilight_sync_descend_windows(); /* issue 0073: push into linked descend children */
       Tcl_ResetResult(interp);
     }
     /* hilight_net_interactive
@@ -3273,6 +3274,7 @@ static int xschem_cmds_h(Tcl_Interp *interp, int argc, const char *argv[], int *
           if(!fast) {
             if(xctx->hilight_nets) propagate_hilights(1, 0, XINSERT_NOREPLACE);
             redraw_hilights(0);
+            net_hilight_sync_descend_windows(); /* issue 0073: push into linked descend children */
           }
         }
       }
@@ -4930,6 +4932,24 @@ static int xschem_cmds_n(Tcl_Interp *interp, int argc, const char *argv[], int *
     {
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
       net_hilight_anim_update();
+      Tcl_ResetResult(interp);
+    }
+
+    /* net_hilight_sync_suspend / net_hilight_sync_resume
+     *   Bracket a bulk-highlight loop (many `xschem hilight_netname` in a row) so the expensive
+     *   cross-window descend-child sync runs ONCE at the end instead of per net (issue 0073 §9d /
+     *   review perf). Nestable (counter). The Tcl caller MUST pair them with a catch so a mid-loop
+     *   error still resumes (else the counter stays >0 and suppresses all later syncs). */
+    else if(!strcmp(argv[1], "net_hilight_sync_suspend"))
+    {
+      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      net_hilight_sync_suspend();
+      Tcl_ResetResult(interp);
+    }
+    else if(!strcmp(argv[1], "net_hilight_sync_resume"))
+    {
+      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      net_hilight_sync_resume();
       Tcl_ResetResult(interp);
     }
 
@@ -6843,8 +6863,10 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
          * but narrowed to TABS: a detached window (non-empty top_path) owns its own canvas and
          * DOES draw, which is the whole multi-window feature. (.drw's path is always
          * `winfo viewable`, so the Tcl-side visibility gate cannot catch this.) */
-        if(borrowed && (!xctx->top_path || !xctx->top_path[0]))
-          r = 0;
+        if(borrowed && (!xctx->top_path || !xctx->top_path[0]) && strcmp(argv[2], get_drw_front_win()))
+          r = 0; /* a HIDDEN background tab (empty top_path, and not the tab currently shown on .drw).
+                  * The main window / front tab (== get_drw_front_win()) IS visible on .drw even when a
+                  * DETACHED window has focus, so it must keep animating -- issue 0073 animated-highlight. */
         else
           r = draw_hilight_region(&next); /* guards save_pixmap==0 (unexposed bg window) internally */
         net_hilight_restore_ctx(borrowed);
@@ -7647,6 +7669,7 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
           hilight_net(viewer);
           redraw_hilights(0);
           net_hilight_anim_update(); /* Pass 2a: waveform-viewer highlight may add a blink style */
+          net_hilight_sync_descend_windows(); /* issue 0073: push into linked descend children */
         }
         my_free(_ALLOC_ID_, &viewer_name);
       }
@@ -9013,6 +9036,7 @@ static int xschem_cmds_u(Tcl_Interp *interp, int argc, const char *argv[], int *
       /* undraw_hilight_net(1); */
       if(!fast) draw();
       net_hilight_anim_update(); /* Pass 2a: clearing all highlights stops the tick */
+      net_hilight_sync_descend_windows(); /* issue 0073: clear-through into linked descend children */
       /* self-log at core (0067): deterministic + replayable. Covers the raw Cadence-rc
        * `bind .drw <Key-0>` and the mouse binding (both call `xschem unhilight_all`
        * directly, bypassing dispatch). The registered Shift+K action carries the same

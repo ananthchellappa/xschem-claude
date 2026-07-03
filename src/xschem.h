@@ -1625,6 +1625,10 @@ extern void net_hilight_restore_ctx(Xschem_ctx *saved);  /* undo net_hilight_bor
 extern int net_hilight_win_known(const char *win_path);  /* is win an open window? (vs borrow NULL) */
 extern int net_hilight_ctx_busy(void);                   /* current window busy (gesture OR semaphore)? */
 extern int net_hilight_ctx_gesturing(void);              /* current window mid-GESTURE? (anim E1 guard) */
+extern void net_hilight_sync_descend_windows(void);      /* push a highlight change into linked descend-new-window children (issue 0073) */
+extern void net_hilight_sync_suspend(void);              /* bracket a bulk-highlight loop: suppress the per-net cross-window sync ... */
+extern void net_hilight_sync_resume(void);               /* ... then run ONE sync at the end (issue 0073 §9d / review perf) */
+extern const char *get_drw_front_win(void);              /* win-path of the tab currently shown on the shared .drw canvas (issue 0073) */
 /* Adaptive net-highlight tick bounds (ms): floor caps the wake rate near a blink edge; the
  * ceiling bounds reconcile lag after an external full draw; BUSY = paused-retry cadence. Shared
  * with scheduler.c's redraw_hilight_region busy path so the two retry cadences can't drift. */

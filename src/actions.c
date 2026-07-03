@@ -3554,6 +3554,10 @@ int descend_schematic(int instnumber, int fallback, int alert, int set_title)
     * short-circuits to one boolean read when nothing animates. Arms every open window,
     * so the new-window descend path (open_sub_schematic) is covered too. */
    if(descend_ok) net_hilight_anim_update();
+   /* Descending changes this window's current level, so a LINKED window one level away must be
+    * re-synced from the new state (mirror of the go_back sync). Idempotent + cheap when no
+    * linked window exists. issue 0073 child->parent. */
+   if(descend_ok) net_hilight_sync_descend_windows();
    zoom_full(1, 0, 1 + 2 * tclgetboolvar("zoom_full_center"), 0.97);
  }
  return descend_ok;
@@ -3655,6 +3659,12 @@ void go_back(int what)
    * into a fresh context whose tick is unarmed; like descend, go_back is not a highlight
    * mutation, so a blink/marching-ants highlight would otherwise freeze on pop. */
   net_hilight_anim_update();
+  /* Ascending re-maps this window's highlights to a new current level (hilight_parent_pins
+   * above), so a LINKED window one level away must be re-synced from the new state -- e.g. a
+   * secondary window that ascends back to depth-1 of the primary must now light the primary's
+   * buried-net cue. go_back is not a highlight-mutation hook, so sync explicitly here. Cheap
+   * (a no-op when no linked window exists). issue 0073 child->parent. */
+  net_hilight_sync_descend_windows();
 
   dbg(1, "go_back(): current path: %s\n", xctx->sch_path[xctx->currsch]);
  }

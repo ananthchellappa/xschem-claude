@@ -40,6 +40,15 @@ typedef int myproc(
 /* variables for handling multiple windows/tabs */
 static Xschem_ctx *save_xctx[MAX_NEW_WINDOWS]; /* save pointer to current schematic context structure */
 static char window_path[MAX_NEW_WINDOWS][WINDOW_PATH_SIZE];
+/* Win-path of the tab whose content is currently shown on the SHARED .drw canvas (issue 0073
+ * animated-highlight). Tabs (empty top_path) all render to the one .drw X window (see the
+ * xctx->window = save_xctx[0]->window assignment below), so exactly ONE of them is visible at a
+ * time; a detached window (non-empty top_path) owns its own canvas and is unaffected. When a
+ * detached window has focus, `xctx` is that window but .drw still shows this tab -- so the
+ * multi-window highlight redraw/animation guards must treat THIS tab as visible (animate it) and
+ * every OTHER empty-top_path context as a hidden background tab (skip it). Updated on each switch
+ * to a tab; defaults to the main window's canvas. */
+static char drw_front_win[WINDOW_PATH_SIZE] = ".drw";
 /* ==0 if no additional windows/tabs, ==1 if one additional window/tab, ... */
 static int window_count = 0;
 static int last_created_window = -1;
@@ -195,6 +204,21 @@ char *get_last_created_window_path(void)
 int get_window_count(void)
 {
   return window_count;
+}
+
+/* Win-path of the tab currently shown on the shared .drw canvas (issue 0073). */
+const char *get_drw_front_win(void)
+{
+  return drw_front_win;
+}
+
+/* Record which tab now owns the .drw canvas. Called after a switch sets `xctx`: only a tab
+ * (empty top_path) becomes the visible .drw content; switching to a DETACHED window leaves the
+ * previously-shown tab on .drw, so this is a no-op for detached windows. */
+static void note_drw_front(void)
+{
+  if((!xctx->top_path || !xctx->top_path[0]) && xctx->current_win_path && xctx->current_win_path[0])
+    my_strncpy(drw_front_win, xctx->current_win_path, S(drw_front_win));
 }
 
 static int window_state (Display *disp, Window win, char *arg) {/*{{{*/
@@ -1706,6 +1730,7 @@ static int switch_window(int *window_count, const char *win_path, int tcl_ctx)
       }
       if(tcl_ctx && has_x) tclvareval("reconfigure_layers_button {}", NULL);
       set_modify(-1); /* sets window title */
+      note_drw_front(); /* issue 0073: track the tab now shown on .drw */
       return 0;
     } else return 1;
   }
@@ -1773,6 +1798,7 @@ static int switch_tab(int *window_count, const char *win_path, int dr)
         tcleval(nwcmd);
       }
       tcleval("tab_queue STORE");
+      note_drw_front(); /* issue 0073: track the tab now shown on .drw */
       return 0;
     } else return 1;
   }
@@ -2043,6 +2069,7 @@ static void create_new_tab(int *window_count, const char *noconfirm, const char 
   }
   load_schematic(1,fname, 1, confirm);
   if(dr & 1) {
+    note_drw_front(); /* issue 0073: this new tab now owns the shared .drw canvas */
     if(!loaded && !(dr & 2) ) zoom_full(1, 0, 1 + 2 * tclgetboolvar("zoom_full_center"), 0.97); /* draw */
     else draw();
   }
@@ -2278,6 +2305,7 @@ static void destroy_tab(int *window_count, const char *win_path)
       resetwin(1, 1, 1, 0, 0);
       set_modify(-1); /* sets window title */
       tcleval("tab_queue STORE");
+      note_drw_front(); /* issue 0073: the surviving tab now owns the shared .drw canvas */
       draw();
     }
   } else {
