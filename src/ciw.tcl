@@ -99,6 +99,11 @@ proc ciw_create {} {
     .ciw.p paneconfigure .ciw.c -stretch never  -minsize 34
   }
   pack .ciw.p -side top -fill both -expand yes
+
+  ## Window-activation logging (doc/claude/specs/window_numbering.md): the CIW is
+  ## window 1. Fire on FocusIn to the toplevel or any of its descendants; the '+'
+  ## keeps any other binding and notify_window_active dedupes the repeats.
+  bind .ciw <FocusIn> {+notify_window_active 1 CIW}
 }
 
 ## Append one line to the CIW log pane. 'tag' selects the style: {} for
@@ -112,6 +117,21 @@ proc ciw_echo {line {tag {}}} {
   .ciw.l.t insert end $line\n $tag
   .ciw.l.t configure -state disabled
   .ciw.l.t see end
+}
+
+## Cadence-style window-activation log: print "window N activated: <cell>" to the CIW
+## when a window becomes the active one. The CIW is window 1, the Library Manager is
+## window 2, and editor contexts are 3,4,5,... For an editor window the caller omits
+## 'name' and it is filled in from the active schematic's cell. Deduped on
+## ::last_active_window so repeated FocusIn events (and WSLg focus thrash) log only on an
+## actual change of the active window. Safe no-op when the CIW is closed (ciw_echo
+## no-ops). Spec: doc/claude/specs/window_numbering.md.
+proc notify_window_active {num {name {}}} {
+  global last_active_window
+  if {[info exists last_active_window] && $last_active_window eq $num} return
+  set last_active_window $num
+  if {$name eq {}} { catch {set name [file tail [xschem get schname]]} }
+  ciw_echo "window $num activated: $name" result
 }
 
 ## Run the command in the entry: echo it (visually distinct), evaluate at

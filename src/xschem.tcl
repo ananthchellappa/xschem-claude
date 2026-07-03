@@ -12928,11 +12928,18 @@ proc switch_window {parent topwin event window} {
   if { $parent eq {.}} {
     if { $window eq $parent} {
       xschem callback .drw $event 0 0 0 0 0 0
+      # Cadence-style window-activation log: this editor window is now active. Runs on
+      # every FocusIn (so it also fires when focus RETURNS here after a CIW/LibMgr visit,
+      # which the C switch_window's "already there" early-return would skip); the callback
+      # above has switched xctx, so window_number is this window's. notify_window_active
+      # dedupes. doc/claude/specs/window_numbering.md
+      catch {notify_window_active [xschem get window_number]}
     }
   } else {
     if {$window eq $parent} {
       # send a fake event just to force context switching in callback()
       xschem callback $parent.drw $event 0 0 0 0 0 0
+      catch {notify_window_active [xschem get window_number]}
     }
   }
 }

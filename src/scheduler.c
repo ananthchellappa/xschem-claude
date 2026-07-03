@@ -2463,6 +2463,9 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
           } else if(!strcmp(argv[2], "wires")) { /* number of wires */
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
             Tcl_SetResult(interp, my_itoa(xctx->wires), TCL_VOLATILE);
+          } else if(!strcmp(argv[2], "window_number")) { /* Cadence-style stable window number of current context */
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            Tcl_SetResult(interp, my_itoa(xctx->window_number), TCL_VOLATILE);
           }
           break;
           case 'x':
@@ -9150,8 +9153,9 @@ static int xschem_cmds_w(Tcl_Interp *interp, int argc, const char *argv[], int *
     }
     /* windows
      *   List open schematic contexts, one Tcl sublist each:
-     *     {win_path top_path group xwindow current_name}
-     *   'group' is the owning top-level ("." for the main window). Read-only
+     *     {win_path top_path group xwindow current_name number}
+     *   'group' is the owning top-level ("." for the main window). 'number' is the
+     *   Cadence-style stable window number (doc/claude/specs/window_numbering.md). Read-only
      *   introspection seam for multi-window / detach
      *   (doc/claude/specs/multi_window_detach.md). In Phase 0 group == top_path (the owning
      *   toplevel); per-window tab grouping (Phase 1) refines it. */
@@ -9165,20 +9169,24 @@ static int xschem_cmds_w(Tcl_Interp *interp, int argc, const char *argv[], int *
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
       for(i = 0; i < MAX_NEW_WINDOWS; ++i) {
         const char *wp, *tp, *nm;
-        char xwin[32];
+        char xwin[32], wnum[16];
         Tcl_Obj *entry;
         ctx = get_window_ctx(i, &wp);
         if(!ctx) continue;
         tp = (ctx->top_path && ctx->top_path[0]) ? ctx->top_path : ".";
         nm = ctx->sch[ctx->currsch] ? ctx->sch[ctx->currsch] : "";
         my_snprintf(xwin, S(xwin), "%lu", (unsigned long)ctx->window);
-        /* {win_path top_path group xwindow current_name}; group == tp for now (Phase 0) */
+        my_snprintf(wnum, S(wnum), "%d", ctx->window_number);
+        /* {win_path top_path group xwindow current_name number}; group == tp for now
+         * (Phase 0). 'number' is the Cadence-style stable window number
+         * (doc/claude/specs/window_numbering.md) appended as a 6th trailing field. */
         entry = Tcl_NewListObj(0, NULL);
         Tcl_ListObjAppendElement(interp, entry, Tcl_NewStringObj(wp, -1));
         Tcl_ListObjAppendElement(interp, entry, Tcl_NewStringObj(tp, -1));
         Tcl_ListObjAppendElement(interp, entry, Tcl_NewStringObj(tp, -1));
         Tcl_ListObjAppendElement(interp, entry, Tcl_NewStringObj(xwin, -1));
         Tcl_ListObjAppendElement(interp, entry, Tcl_NewStringObj(nm, -1));
+        Tcl_ListObjAppendElement(interp, entry, Tcl_NewStringObj(wnum, -1));
         Tcl_ListObjAppendElement(interp, result, entry);
       }
       Tcl_SetObjResult(interp, result);

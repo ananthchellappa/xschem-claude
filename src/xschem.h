@@ -1362,6 +1362,9 @@ typedef struct {
    *    ".x1.drw"         ".x1"
    */
   char *current_win_path; /* .drw or .x1.drw, .... ; always .drw in tabbed interface */
+  int window_number; /* Cadence-style stable window number: CIW=1, LibMgr=2, editor
+                      * contexts 3,4,5,...; monotonic, never reused; 0 = scratch/preview/
+                      * compare ctx (doc/claude/specs/window_numbering.md) */
   int *fill_type; /* for every layer: 0: no fill, 1, solid fill, 2: stipple fill */
   int fill_pattern;
   int draw_pixmap; /* pixmap used as 2nd buffer */

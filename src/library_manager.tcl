@@ -73,6 +73,11 @@ proc libmgr::open {{lcv {}}} {
   wm title $w "Library Manager"
   wm geometry $w 760x460
 
+  ## Window-activation logging (doc/claude/specs/window_numbering.md): the Library
+  ## Manager is window 2. Fire on FocusIn to the toplevel or any descendant; the '+'
+  ## preserves any other binding and notify_window_active dedupes the repeats.
+  bind $w <FocusIn> {+notify_window_active 2 {Library Manager}}
+
   ttk::panedwindow $w.pw -orient horizontal
   # NOTE: $w.pw is packed LAST (after the bottom status/button bars below) — the
   # treeview's -height 20 makes the pane request more than the 460px window, so if

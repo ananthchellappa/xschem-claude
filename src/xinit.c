@@ -44,6 +44,10 @@ static char window_path[MAX_NEW_WINDOWS][WINDOW_PATH_SIZE];
 static int window_count = 0;
 static int last_created_window = -1;
 static Xschem_ctx *old_xctx;
+/* Cadence-style window numbering (doc/claude/specs/window_numbering.md): 1 and 2 are
+ * reserved for the CIW and the Library Manager, so editor contexts start at 3 and the
+ * counter only ever increments (numbers are never reused when a window closes). */
+static int window_number_counter = 3;
 
 /* ----------------------------------------------------------------------- */
 /* EWMH message handling routines 20071027... borrowed from wmctrl code */
@@ -550,6 +554,17 @@ void free_gc()
   XFreeGC(display,xctx->gc_scope);
   XFreeGC(display,xctx->gc_hover);
   XFreeGC(display,xctx->gc_hilight);
+}
+
+/* Stamp the just-allocated context (global xctx) with the next Cadence-style window
+ * number. Call ONLY at the three editor-context birth sites (startup main context,
+ * create_new_window, create_new_tab) immediately after alloc_xschem_data(); NOT inside
+ * alloc_xschem_data itself (it is shared by the schematic-compare and symbol-preview
+ * scratch contexts, which must keep window_number == 0), and NOT on detach (the number
+ * rides along with the moved context). See doc/claude/specs/window_numbering.md. */
+static void assign_window_number(void)
+{
+  xctx->window_number = window_number_counter++;
 }
 
 static void alloc_xschem_data(const char *top_path, const char *win_path)
@@ -1748,6 +1763,15 @@ static int switch_tab(int *window_count, const char *win_path, int dr)
       if(dr) resetwin(1, 1, 1, 0, 0);
       set_modify(-1); /* sets window title */
       if(dr) draw();
+      /* A user-visible tab switch (dr!=0) changed the active context; log the activation
+       * to the CIW. Internal reshuffles (swap_tabs passes dr==0) are excluded so they do
+       * not spam the log. Window activation is logged Tcl-side in the switch_window proc
+       * (doc/claude/specs/window_numbering.md). */
+      if(dr && has_x) {
+        char nwcmd[64];
+        my_snprintf(nwcmd, S(nwcmd), "notify_window_active %d", xctx->window_number);
+        tcleval(nwcmd);
+      }
       tcleval("tab_queue STORE");
       return 0;
     } else return 1;
@@ -1837,6 +1861,7 @@ static void create_new_window(int *window_count, const char *win_path, const cha
   old_xctx = xctx;
   xctx = NULL;
   alloc_xschem_data(toppath, window_path[n]); /* alloc data into xctx */
+  assign_window_number(); /* new editor window: next Cadence-style number */
   xctx->netlist_type = CAD_SPICE_NETLIST; /* for new windows start with spice netlist mode */
   tclsetvar("netlist_type","spice");
   init_pixdata();/* populate xctx->fill_type array that is used in create_gc() to set fill styles */
@@ -1989,6 +2014,7 @@ static void create_new_tab(int *window_count, const char *noconfirm, const char 
   old_xctx = xctx;
   xctx = NULL;
   alloc_xschem_data("", win_path); /* alloc data into xctx */
+  assign_window_number(); /* new editor tab: next Cadence-style number */
   xctx->netlist_type = CAD_SPICE_NETLIST; /* for new windows start with spice netlist mode */
   tclsetvar("netlist_type","spice");
   init_pixdata();/* populate xctx->fill_type array that is used in create_gc() to set fill styles */
@@ -3197,6 +3223,7 @@ int Tcl_AppInit(Tcl_Interp *inter)
  /*  [m]allocate dynamic memory */
  /*                             */
  alloc_xschem_data("", ".drw");
+ assign_window_number(); /* startup main context: the launch untitled.sch is window 3 */
 
  /* create /tmp/xschem_web_xxx directory for remote objects */
  tmp_ptr = create_tmpdir("xschem_web_");

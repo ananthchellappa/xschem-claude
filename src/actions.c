@@ -246,12 +246,19 @@ int set_modify(int mod)
       ) {
       char *top_path =  xctx->top_path[0] ? xctx->top_path : ".";
       const char *ro = xctx->readonly ? " (read-only)" : "";
+      /* Cadence-style window number in the title bar (doc/claude/specs/window_numbering.md):
+       * "xschem [3] - cell". Omitted for unnumbered scratch/preview ctxs (window_number 0). */
+      /* Backslash-escape the brackets: this string is spliced into a double-quoted Tcl
+       * "wm title" argument, where a bare [N] would be command substitution (Tcl would
+       * run the command "N"). \[ \] make them literal. */
+      char wn[20] = "";
+      if(xctx->window_number > 0) my_snprintf(wn, S(wn), " \\[%d\\]", xctx->window_number);
       if(xctx->modified == 1) {
-        tclvareval("wm title ", top_path, " \"xschem - [file tail [xschem get schname]]*", ro, "\"", NULL);
-        tclvareval("wm iconname ", top_path, " \"xschem - [file tail [xschem get schname]]*", ro, "\"", NULL);
+        tclvareval("wm title ", top_path, " \"xschem", wn, " - [file tail [xschem get schname]]*", ro, "\"", NULL);
+        tclvareval("wm iconname ", top_path, " \"xschem", wn, " - [file tail [xschem get schname]]*", ro, "\"", NULL);
       } else {
-        tclvareval("wm title ", top_path, " \"xschem - [file tail [xschem get schname]]", ro, "\"", NULL);
-        tclvareval("wm iconname ", top_path, " \"xschem - [file tail [xschem get schname]]", ro, "\"", NULL);
+        tclvareval("wm title ", top_path, " \"xschem", wn, " - [file tail [xschem get schname]]", ro, "\"", NULL);
+        tclvareval("wm iconname ", top_path, " \"xschem", wn, " - [file tail [xschem get schname]]", ro, "\"", NULL);
       }
       dbg(1, "modified=%d, schname=%s\n", xctx->modified, xctx->current_name);
       if(xctx->modified) tcleval("set_tab_names *");
