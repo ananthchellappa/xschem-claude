@@ -228,6 +228,19 @@ proc cadence::descend_into_inst_edit {} {
   cadence::make_editable
 }
 
+# Ctrl-Shift-X: descend into the ONE selected instance's schematic view in a NEW
+# top-level window, read-only -- the exact flow of E -> [x] New Window -> OK (the
+# hi_descend dialog's new-window destination, read-only mode default). No-op unless
+# exactly one instance is selected. Unlike Ctrl-Shift-N (open_inst_sch_readonly),
+# which opens the child as a fresh top-level, this is a REAL descend: hi_descend_newwin
+# preserves the parent hierarchy path (copy_hierarchy), links the child back to its
+# parent window for the Ctrl-E/Alt-E return chain (issue 0053), and copies highlights.
+# See doc/claude/specs/cadence_descend_newwin_ro.md.
+proc cadence::descend_into_inst_newwin_ro {} {
+  if {![cadence::one_instance_selected]} { return }
+  hi_descend target=new_window mode=readonly
+}
+
 # Ctrl-2 / Ctrl-Shift-2: flip the CURRENT view's edit mode (Cadence "Make Editable"
 # / "Make Read Only"). A read-only view becomes editable even if its file is
 # write-protected (in-memory edits; saving may still be blocked). The action is

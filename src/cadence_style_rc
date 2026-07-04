@@ -151,6 +151,12 @@ bind .drw <Control-Key-n>       {cadence::new_blank_window;       break}
 bind .drw <Control-Shift-Key-N> {cadence::open_inst_sch_readonly; break}
 # Ctrl-X : descend into selected instance's schematic (no-op if none selected)
 bind .drw <Control-Key-x>       {cadence::descend_into_inst;      break}
+# Ctrl-Shift-X : descend into the selected instance's schematic in a NEW window,
+# read-only -- the E-dialog "New Window" path (a REAL descend that keeps the parent
+# hierarchy, vs Ctrl-Shift-N which opens the child as a fresh top-level). No-op unless
+# exactly one instance is selected. GOTCHA (same as Ctrl-Shift-N above): with Shift held
+# the "x" key emits the capital "X" keysym, so bind Key-X.
+bind .drw <Control-Shift-Key-X> {cadence::descend_into_inst_newwin_ro; break}
 # Ctrl-E : return one level. Overrides the C default (go_back / ascend in place) with
 # the window-chain-aware version: a window descended-into-new-window returns focus to
 # the PARENT window instead of ascending the child in place (issue 0053). Cloned to
