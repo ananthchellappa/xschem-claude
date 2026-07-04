@@ -237,7 +237,7 @@ ids are *not persisted*, so nothing is identity-anchored across geometry change 
 
 | # | Severity | Defect | Site |
 |---|---|---|---|
-| D1 | **bug** | `getprop wire` / `getprop rect` index with **unchecked** `atoi` → OOB read on bad index (setprop/select DO bounds-check) | `scheduler.c:2810`, `2780` |
+| D1 | ~~bug~~ **FIXED** (issue 0077) | `getprop wire` / `getprop rect` indexed with **unchecked** `atoi` → OOB read on bad index; now bounds-checked against `xctx->wires`/`cadlayers`/`xctx->rects[c]`. (`text` was already safe via `get_text`.) | `scheduler.c` getprop `wire`/`rect` arms |
 | D2 | gap | No whole-prop read for wire/text/rect/line/poly/arc → can't enumerate their keys from Tcl | `scheduler.c:2685-2813` |
 | D3 | gap | `getprop` has **no line/poly/arc branch** at all — their attrs opaque to Tcl | `scheduler.c:2685-2813` |
 | D4 | gap | No `select … @id` (id-based selection); `@id` only on read-only query | `scheduler.c:7480-7592` |

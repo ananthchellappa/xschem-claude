@@ -1,14 +1,17 @@
 # Issue 0077 — `getprop wire` / `getprop rect` index the object arrays with an UNCHECKED index (out-of-bounds read)
 
 **Opened:** 2026-07-04
-**Status:** OPEN — problem statement only. No fix in this document.
+**Status:** FIXED (2026-07-04) — bounds checks added to the `wire` and `rect` arms
+(`src/scheduler.c`), mirroring the `object #layer,index` range-check; see **§6 Resolution**.
+The `text` arm needed no change (see §2 correction). RED→GREEN sabotage-verified; regression
+`tests/headless/test_getprop_index_bounds.tcl` added.
 **Severity:** HIGH — memory-safety: a plain scripted/CIW command reads out of bounds off a
 caller-supplied index, which can crash the editor or disclose arbitrary heap memory.
 **Class:** value-range OOB — DISTINCT from the `argc`/NULL-deref crash class of 0075/0076
 (here `argc` IS guarded; the bad value is the `atoi` result used as a subscript).
 **Branch:** `fluid-editing`.
 **Affects:** the `getprop` reader in `src/scheduler.c` (`getprop` branch at `:2686`),
-specifically the `wire` and `rect` arms (and the upper bound of the `text` arm).
+specifically the `wire` and `rect` arms (the `text` arm is safe — see §2).
 **Origin:** object-model analysis `doc/claude/code_analysis/object_model_agent_reference.md`
 §9 defect D1. The P2/P3 items originally filed alongside this are a capability enhancement,
 now tracked separately at `doc/claude/specs/property_introspection.md`.
@@ -57,9 +60,11 @@ The sibling read/resolve commands on the SAME kind of index already bounds-check
 - `xschem select …` validates before selecting.
 - `setprop` validates.
 
-`getprop wire`/`getprop rect` are the ones that don't. The `getprop text` arm guards only
-the **lower** bound (`if(n < 0)`) and not the upper bound (`n >= xctx->texts`), so it is a
-partial instance of the same defect.
+`getprop wire`/`getprop rect` are the ones that don't. **Correction to the original
+write-up:** the `getprop text` arm is NOT affected — it resolves its index through
+`get_text()` (`scheduler.c:54`), which upper-bounds (`i >= xctx->texts → -1`) as well as
+guarding negatives, so `text` is already safe. Only `wire` and `rect` (which use a raw
+`atoi` subscript) carry the defect.
 
 ## 3. Impact
 
@@ -68,13 +73,33 @@ passes an out-of-range index to `getprop wire`/`getprop rect`/`getprop text`. No
 intent required — a stale index from an edited schematic (indices shift on delete/insert,
 see the object-model analysis) can land out of range and read wrong/OOB memory silently.
 
-## 4. Out of scope for this document
+## 4. Resolution (FIXED)
 
-Fix design (where to bounds-check, whether to error vs return `""`, whether to share the
-`object #index` validation helper) is deliberately not included — problem statement only.
-The natural fix mirrors 0075/0076: validate `n`/`c` against `xctx->wires` /
-`cadlayers` / `xctx->rects[c]` (and `xctx->texts`) before subscripting, matching the
-`object #index` range-check, returning an error or empty result on miss.
+Added bounds checks before the subscript in both affected arms, mirroring the
+`object #layer,index` range-check, returning a Tcl error on an out-of-range reference:
+
+```c
+/* getprop rect — src/scheduler.c */
+if(c < 0 || c >= cadlayers || n < 0 || n >= xctx->rects[c]) {
+  Tcl_AppendResult(interp, "xschem getprop: rect not found: ", argv[3], " ", argv[4], NULL);
+  return TCL_ERROR;
+}
+/* getprop wire — src/scheduler.c */
+if(n < 0 || n >= xctx->wires) {
+  Tcl_AppendResult(interp, "xschem getprop: wire not found: ", argv[3], NULL);
+  return TCL_ERROR;
+}
+```
+
+`text` was left unchanged (already bounded via `get_text()`, §2).
+
+Verified RED→GREEN with sabotage: reverting the checks and rebuilding reproduced
+`EMERGENCY SAVE DIR: /tmp/xschem_emergencysave_untitled_*` on `xschem getprop wire 999999`;
+with the checks the same command returns `xschem getprop: wire not found: 999999` and the
+process survives. Regression `tests/headless/test_getprop_index_bounds.tcl` (registered in
+`run_regression.tcl` `hcases`, 8 checks): creates a real wire + rect, asserts valid in-range
+reads still succeed, and asserts every out-of-range form (wire/rect, negative and too-large)
+errors instead of crashing.
 
 ## 5. Related
 - `doc/claude/specs/property_introspection.md` — the P2/P3 ENHANCEMENT (whole-prop read +

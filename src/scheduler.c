@@ -2787,6 +2787,13 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
           int with_quotes = 0;
           int c = atoi(argv[3]);
           int n = atoi(argv[4]);
+          /* issue 0077: bounds-check the caller-supplied layer/index before subscripting,
+           * mirroring the `object #layer,index` range-check. Without this an out-of-range
+           * c/n does an OOB read of xctx->rect[c][n].prop_ptr (crash / memory disclosure). */
+          if(c < 0 || c >= cadlayers || n < 0 || n >= xctx->rects[c]) {
+            Tcl_AppendResult(interp, "xschem getprop: rect not found: ", argv[3], " ", argv[4], NULL);
+            return TCL_ERROR;
+          }
           if(argc > 6) with_quotes = atoi(argv[6]);
           Tcl_SetResult(interp, (char *)get_tok_value(xctx->rect[c][n].prop_ptr, argv[5], with_quotes), TCL_VOLATILE);
         }
@@ -2816,6 +2823,11 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
           return TCL_ERROR;
         } else {
           int n = atoi(argv[3]);
+          /* issue 0077: bounds-check before subscripting (OOB read otherwise). */
+          if(n < 0 || n >= xctx->wires) {
+            Tcl_AppendResult(interp, "xschem getprop: wire not found: ", argv[3], NULL);
+            return TCL_ERROR;
+          }
           Tcl_SetResult(interp, (char *)get_tok_value(xctx->wire[n].prop_ptr, argv[4], 2), TCL_VOLATILE);
         }
       }
