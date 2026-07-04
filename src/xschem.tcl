@@ -9951,6 +9951,7 @@ proc write_data {data f} {
 namespace eval gfxform {
   variable orig {}      ;# property string the dialog opened with (tctx::retval)
   variable type {}      ;# the edited object type (pin/pinname/rect/...) -> Apply routing
+  variable scope_label {} ;# pin editor "Apply to" combobox label (Only Current/All Selected/All)
   variable schema {}    ;# the per-type slickprop::gfx_schema
   variable val          ;# array: int/num-field tok -> current value (dash, bus)
   variable loaded       ;# array: tok -> value it opened with
@@ -10076,13 +10077,66 @@ proc gfxform::collect {} {
   return [slickprop::schema_assemble $schema $orig [gfxform::desired] $extra]
 }
 
+# ---- "Apply to" scope for the pin body editor (doc/claude/specs/symbol_editor_apply_scope.md)
+# Cadence-style scope selector: Only Current / All Selected / All. dir + show_pinname fan to
+# the chosen set of pins (apply_pin_prop <scope> ...); the Name is per-pin identity, greyed
+# when the set is >1 pin with DIFFERING names. Default Only Current (matches the instance
+# editor); sticky across opens via ::gfxform_pin_scope. Pin editor only (D9): pinname / other
+# graphical types keep the default (selected) routing.
+proc gfxform::scope_label_for {v} {
+  switch -- $v {
+    selected { return {All Selected} }
+    all      { return {All} }
+    default  { return {Only Current} }
+  }
+}
+proc gfxform::scope_value_for {lab} {
+  switch -- $lab {
+    {All Selected} { return selected }
+    {All}          { return all }
+    default        { return current }
+  }
+}
+# Is the Name field editable under <scope>? Editable iff the in-scope pins' names are uniform
+# (a single pin, or all already the same); greyed otherwise so a rename can't silently fan
+# across differently-named pins (§4.2). The uniformity test is the same resolver an Apply
+# uses. On any error default to editable.
+proc gfxform::name_editable {scope} {
+  if {[catch {xschem pin_scope_prop_uniform $scope name} u]} { return 1 }
+  return $u
+}
+# Re-grey the Name entry for the current scope (called on open + on every scope change).
+proc gfxform::pin_scope_greying {} {
+  variable type
+  if {$type ne {pin}} return
+  if {![winfo exists .dialog.appear.name.e]} return
+  .dialog.appear.name.e configure -state \
+    [expr {[gfxform::name_editable $::gfxform_pin_scope] ? {normal} : {disabled}}]
+}
+# Combobox change -> update the canonical scope var + re-grey. (SP3 adds live re-highlight.)
+proc gfxform::on_scope_change {} {
+  variable scope_label
+  set ::gfxform_pin_scope [gfxform::scope_value_for $scope_label]
+  gfxform::pin_scope_greying
+}
+# Commit <prop> to the pins. The pin editor passes its scope; pinname (a single retargeted
+# pin) and other types keep the default (selected) routing.
+proc gfxform::do_apply {prop} {
+  variable type
+  if {$type eq {pin}} {
+    xschem apply_pin_prop $::gfxform_pin_scope $prop
+  } else {
+    xschem apply_pin_prop $prop
+  }
+}
+
 # Apply the current form state to the selected pin(s) and redraw, WITHOUT closing the
 # dialog -- the live "Apply" for the pin/pinname editors so a change (e.g. font) is visible
 # at once (cadence_pin_name_text.md). xschem apply_pin_prop is a no-op (no undo) when
 # nothing changed, so repeated Apply / Apply-then-OK does not spam the undo stack.
 proc gfxform::apply {} {
   if {[xschem get readonly]} return
-  catch {xschem apply_pin_prop [gfxform::collect]}
+  catch {gfxform::do_apply [gfxform::collect]}
 }
 
 # OK: for pin/pinname, apply HERE (same path as Apply) and tell C not to re-apply
@@ -10092,7 +10146,7 @@ proc gfxform::ok {} {
   variable type
   set ::tctx::retval [gfxform::collect]
   if {$type eq {pin} || $type eq {pinname}} {
-    if {![xschem get readonly]} { catch {xschem apply_pin_prop $::tctx::retval} }
+    if {![xschem get readonly]} { catch {gfxform::do_apply $::tctx::retval} }
     set ::tctx::rcode {}
   } else {
     set ::tctx::rcode {ok}
@@ -10116,6 +10170,23 @@ proc text_line_slick {txtlabel clear preserve_disabled type} {
   set Y [expr {[winfo pointery .dialog] - 35}]
   if { $wm_fix } { tkwait visibility .dialog }
   wm geometry .dialog "+$X+$Y" ;# position only, size to content
+
+  # "Apply to" scope selector -- pin body editor only (symbol_editor_apply_scope.md D9).
+  if {$type eq {pin}} {
+    if {![info exists ::gfxform_pin_scope]} { set ::gfxform_pin_scope current } ;# sticky, default Only Current
+    set gfxform::scope_label [gfxform::scope_label_for $::gfxform_pin_scope]
+    frame .dialog.scope
+    label .dialog.scope.l -text "Apply to:"
+    if {[info tclversion] > 8.4} {
+      ttk::combobox .dialog.scope.cb -state readonly -width 12 \
+        -textvariable gfxform::scope_label -values {{Only Current} {All Selected} {All}}
+      bind .dialog.scope.cb <<ComboboxSelected>> {gfxform::on_scope_change}
+    } else {
+      entry .dialog.scope.cb -textvariable gfxform::scope_label -width 12
+    }
+    pack .dialog.scope.l .dialog.scope.cb -side left
+    pack .dialog.scope -side top -fill x -padx 4 -pady 4
+  }
 
   labelframe .dialog.appear -text "Appearance"
   set ltk [expr {[info tclversion] > 8.4}]
@@ -10202,6 +10273,7 @@ proc text_line_slick {txtlabel clear preserve_disabled type} {
     bind .dialog <KP_Enter> {.dialog.buttons.cancel invoke}
   }
   dialog_minsize_floor .dialog
+  if {$type eq {pin}} { gfxform::pin_scope_greying } ;# initial Name greying for the sticky scope
   tkwait window .dialog
   return $tctx::rcode
 }
