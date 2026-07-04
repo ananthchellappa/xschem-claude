@@ -14,6 +14,33 @@ Newest entries on top.
 
 ---
 
+## Q25. Which `xschem` Tcl commands exist in this fork but not in upstream XSCHEM — and where is the list?
+
+- **Asked:** 2026-07-04
+- **Project state:** branch `fluid-editing` @ `6effc201`.
+
+**Short version:** there is a maintained reference doc — **[`doc/new_tcl_commands.md`](../new_tcl_commands.md)**
+(at the `doc/` root, not under `doc/claude/`, because it is useful to any user, not just
+the internals work). It inventories every `xschem` subcommand added on this branch that was
+not present at the upstream fork point.
+
+**At the time of writing:** 220 subcommands upstream → 295 here — **75 new, 0 removed**,
+grouped by feature (stable object handles & the `object`/`objects` query API; replayable
+interaction `select_at`/`hover`; action logging & input `bind`ings; net-highlight styles /
+scope / cross-window sync; the OpenAccess Library/Cell/View manager; pins & wire-stubs;
+windows/tabs; backup; property forms; view & wiring toggles).
+
+**How the list is derived (and how to refresh it).** It is the set difference of the
+`xschem` subcommands in `src/scheduler.c` between this branch and the fork point
+(`f276d0cf`), using the same `grep 'strcmp(argv[1], "…")'` extraction the build uses for
+`src/xschem_subcommands.txt`. The doc's final section has the exact regenerate command (and
+note: diffing against the *latest* upstream `origin/master` instead of the fork point may
+show a few as also-present-upstream if added independently there). **Scope:** top-level
+subcommands only — new `xschem get`/`set` sub-targets, object selectors (`@id`, `#index`),
+and standalone Tcl procs in `*.tcl` files also grew and are not in that count.
+
+---
+
 ## Q24. Why are descend/return (Ctrl-E / Ctrl-X), the E-key descend-options form, and the act of selecting an instance NOT logged to the CIW log pane and the log file, when other actions are?
 
 - **Asked:** 2026-07-03
