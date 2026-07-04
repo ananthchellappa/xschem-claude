@@ -191,6 +191,10 @@ int actionlog_suppress = 0;
  * (the `xschem select_at` command logs its own, with the optional `add` flag).
  * doc/claude/specs/select_at.md */
 int select_at_suppress_log = 0;
+/* one-shot: when set by a shift-click site around a select_object() call, the
+ * funnel logs `xschem select_at x y add` (augment) instead of the replace form.
+ * The caller resets it right after the call. doc/claude/specs/select_at.md */
+int select_at_add = 0;
 int exit_code = 0; /* success */
 const char *xschem_library_path[] = XSCHEM_LIBRARY_PATH;
 char home_dir[PATH_MAX]; /* home dir obtained via getpwuid */

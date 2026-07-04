@@ -1430,6 +1430,7 @@ extern int actionlog_cmd_logged;    /* core self-log dedup flag (see globals.c) 
 extern int actionlog_suppress_echo; /* skip CIW mirror while set (CIW-typed cmds) */
 extern int actionlog_suppress;      /* full log no-op while set (replay guard) */
 extern int select_at_suppress_log;  /* skip select_object()'s auto select_at log line */
+extern int select_at_add;           /* funnel logs the ` add` (augment) marker while set */
 extern int exit_code;
 extern const char *xschem_library_path[];
 extern char home_dir[PATH_MAX]; /* home dir obtained via getpwuid */

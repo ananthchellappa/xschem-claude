@@ -5864,8 +5864,15 @@ static void handle_button_press(int event, int state, int rstate, KeySym key, in
         *  unselect everything... we do it here */
        if(intuitive && !already_selected && no_shift_no_ctrl )  unselect_all(1);
 
-       /* select the object under the mouse and rebuild the selected array */
-       if(!already_selected) select_object(xctx->mousex, xctx->mousey, SELECTED, 0, &sel);
+       /* select the object under the mouse and rebuild the selected array.
+        * Shift held = augment (unselect_all above was skipped) -> tell the
+        * select_at funnel to log the ` add` marker so replay augments too
+        * (doc/claude/specs/select_at.md). One-shot: reset right after. */
+       if(!already_selected) {
+         select_at_add = (state & ShiftMask) ? 1 : 0;
+         select_object(xctx->mousex, xctx->mousey, SELECTED, 0, &sel);
+         select_at_add = 0;
+       }
        rebuild_selected_array();
        dbg(1, "Button1Press to select objects, lastsel = %d\n", xctx->lastsel);
 

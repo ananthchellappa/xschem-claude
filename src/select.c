@@ -1419,7 +1419,7 @@ Selected select_object(double mx,double my, unsigned short select_mode,
     * select_at_suppress_log and logs its own line (so it can carry the `add` flag
     * and record exactly once). */
    if(!select_at_suppress_log && select_mode == SELECTED && sel.type) {
-     log_action("xschem select_at %.16g %.16g", mx, my);
+     log_action("xschem select_at %.16g %.16g%s", mx, my, select_at_add ? " add" : "");
    }
 
    return sel;

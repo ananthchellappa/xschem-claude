@@ -65,6 +65,14 @@ The `xschem select_at` **command** sets `select_at_suppress_log` around its own
 and it is recorded exactly once). `log_action` is a no-op when logging is off, so
 the funnel adds ~zero cost.
 
+**Interactive shift-click** (`add`): the plain-click select site
+(`callback.c:5865-5868`) skips `unselect_all` when Shift is held — i.e. it
+augments. It sets the one-shot `select_at_add` global (= `state & ShiftMask`)
+around its `select_object()` call so the funnel logs `xschem select_at x y add`,
+and resets it right after. Replay of that line augments instead of replacing. The
+other click-select sites (plain click, cadence isolate, move/copy pickup) leave
+`select_at_add` at its default 0 → the replace form.
+
 ## Replay
 
 The logged file is source-able Tcl. Replaying `xschem select_at 120.5 340` re-runs
@@ -75,9 +83,6 @@ what replaying that click means.
 
 ## Scope / v1 gaps (documented, deferred)
 
-- `add` (shift) marker is emitted only by the **command**; an interactive
-  shift-click currently funnels through `select_object` and logs the plain form
-  (replay replaces instead of adds). Follow-on: thread the modifier to the funnel.
 - Empty-click **deselect-all** is not logged (no object hit). Follow-on.
 - `selptr != NULL` select paths (wire-point edit, some cadence-compat isolates)
   log their own gesture, not `select_at`.
@@ -101,3 +106,5 @@ completes.
   same object reselected (assert via `xschem selection`).
 - SA7 **interactive**: a real click driven through `xschem callback` logs
   `xschem select_at x y` at the funnel.
+- SA8 **interactive shift-click**: a Shift-click augments the selection and logs
+  `xschem select_at x y add`.

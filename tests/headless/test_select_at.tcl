@@ -106,6 +106,23 @@ check "SA7a interactive click selected the instance" \
   [expr {[llength [xschem selection]] >= 1}] "(sel=[xschem selection] screen=$mx,$my)"
 check "SA7b interactive click logged select_at" [has_select_at $n0] "(new=[newlines $n0])"
 
-puts "RESULT: [expr {$::fails ? \"$::fails FAILED\" : {ALL PASS}}]"
+# --- SA8: interactive SHIFT-click AUGMENTS and logs the ` add` marker ----------
+xschem unselect_all
+xschem redraw; update idletasks
+lassign [sch_to_screen $AX $AY] amx amy
+xschem callback .drw 4 $amx $amy 0 1 0 0        ;# plain press on wire A
+xschem callback .drw 5 $amx $amy 0 1 0 256      ;# release -> A selected
+update idletasks
+set n0 [llength [loglines]]
+lassign [sch_to_screen $BX $BY] bmx bmy
+xschem callback .drw 4 $bmx $bmy 0 1 0 1        ;# ShiftMask (1) on press -> augment
+xschem callback .drw 5 $bmx $bmy 0 1 0 257      ;# Button1Mask|ShiftMask on release
+update idletasks
+check "SA8a shift-click augments selection (2 selected)" \
+  [expr {[llength [xschem selection]] == 2}] "(sel=[xschem selection])"
+check "SA8b shift-click logs 'select_at ... add'" \
+  [expr {[lsearch -glob [newlines $n0] {xschem select_at * add}] >= 0}] "(new=[newlines $n0])"
+
+if {$::fails} { puts "RESULT: $::fails FAILED" } else { puts "RESULT: ALL PASS" }
 puts "OVERALL: [expr {$::fails ? {notok} : {ok}}]"
 exit [expr {$::fails ? 1 : 0}]
