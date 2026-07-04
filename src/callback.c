@@ -3139,6 +3139,11 @@ static ActionDef action_registry[] = {
   { "edit.cycle_manhattan", act_cycle_manhattan, NULL,
     "Cycle the manhattan corner of an in-progress move/wire/line" },
   { "view.pan", act_pan, NULL, "Drag-pan the canvas" },
+  /* Alt-2: toggle the current window's view TYPE (schematic <-> symbol) of the same
+   * cell. Tcl-backed (src/alt2_toggle_view.tcl). mutates=0 -- the toggle changes no
+   * schematic content. See doc/claude/specs/alt2_toggle_view.md. */
+  { "view.toggle_view_type", NULL, "alt2_toggle_view",
+    "Open the alternate view (schematic<->symbol) of the current cell" },
 };
 static const int num_action_defs = (int)(sizeof(action_registry)/sizeof(action_registry[0]));
 
@@ -3382,6 +3387,12 @@ static void init_input_bindings(void)
    * 65474 alt canvas <action>` (or `xschem unbind key 65474 alt canvas`). Alt =
    * Mod1Mask, matching the other Alt chords above ('h', the j-cluster). */
   set_input_binding(DEV_KEY, XK_F5, Mod1Mask, ACTX_CANVAS, "tools.raise_ciw");
+  /* Alt-2 toggles the current window between the schematic-type and symbol-type view
+   * of the same cell (doc/claude/specs/alt2_toggle_view.md). Tcl-backed
+   * (alt2_toggle_view). '2' == keysym 50; Alt = Mod1Mask. Plain '2' (logic level) and
+   * Ctrl-2 (choose layer) still fall through to the C switch (exact code+mods match).
+   * Kept LAST so it is the last key row when keybindings.csv is regenerated. */
+  set_input_binding(DEV_KEY, '2', Mod1Mask, ACTX_CANVAS, "view.toggle_view_type");
   input_bindings_initialized = 1;
 }
 

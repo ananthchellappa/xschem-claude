@@ -13294,6 +13294,10 @@ source $XSCHEM_SHAREDIR/create_instance.tcl
 source $XSCHEM_SHAREDIR/save_as_form.tcl
 # Slick per-field "Edit Properties" form (replaces the legacy raw-text dialog)
 source $XSCHEM_SHAREDIR/property_form.tcl
+# Alt-2 schematic<->symbol view toggle (action view.toggle_view_type;
+# doc/claude/specs/alt2_toggle_view.md). Sourced unconditionally so the default keymap
+# binding works without cadence_style_rc; depends on library_defs.tcl above.
+source $XSCHEM_SHAREDIR/alt2_toggle_view.tcl
 # Replay keybindings.csv / mousebindings.csv (share-dir defaults, then the user's
 # USER_CONF_DIR copies) through `xschem bind` -- file-editable input remapping.
 # The shipped defaults mirror the built-in C table, so this is a no-op until a

@@ -203,3 +203,4 @@ view.toggle_draw_pixmap,command,view,Toggle pixmap drawing,,xschem toggle_draw_p
 edit.toggle_stretch,command,edit,Toggle wire stretching,,xschem toggle_stretch,,,Toggle stretching of wires attached to moved objects,
 edit.toggle_orthogonal_wiring,command,edit,Toggle orthogonal wiring,,xschem toggle_orthogonal_wiring,,,Toggle orthogonal (manhattan) wire drawing,
 tools.raise_ciw,command,tools,Raise CIW window,Alt+F5,ciw_create,,,Raise or open the CIW (Command Interpreter Window),
+view.toggle_view_type,command,view,Toggle schematic/symbol view,Alt+2,alt2_toggle_view,,,Open the alternate view (schematic<->symbol) of the current cell,
