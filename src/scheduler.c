@@ -7694,6 +7694,14 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
       int sel = SELECTED;
       double x1, y1, x2, y2;
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      /* issue 0075: guard argc BEFORE the atof(argv[2..5]) reads. Without this a short
+       * command (e.g. the `xschem select_inside x1` typo for `select instance x1`) reaches
+       * atof(argv[3]) == atof(NULL) -> SIGSEGV -> emergency-save -> whole editor dies. */
+      if(argc < 6) {
+        Tcl_SetResult(interp,
+          "xschem select_inside: usage: select_inside x1 y1 x2 y2 [0]", TCL_STATIC);
+        return TCL_ERROR;
+      }
       if(argc > 6 && argv[6][0] == '0') sel = 0;
       x1 = atof(argv[2]);
       y1 = atof(argv[3]);
