@@ -187,6 +187,10 @@ char actionlog_filename[PATH_MAX] = ""; /* resolved path of the open action log,
 int actionlog_cmd_logged = 0;
 int actionlog_suppress_echo = 0;
 int actionlog_suppress = 0;
+/* while set, select_object() skips its automatic `xschem select_at` log line
+ * (the `xschem select_at` command logs its own, with the optional `add` flag).
+ * doc/claude/specs/select_at.md */
+int select_at_suppress_log = 0;
 int exit_code = 0; /* success */
 const char *xschem_library_path[] = XSCHEM_LIBRARY_PATH;
 char home_dir[PATH_MAX]; /* home dir obtained via getpwuid */

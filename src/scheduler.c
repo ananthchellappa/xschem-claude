@@ -7592,6 +7592,72 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
       drawtempline(xctx->gc[SELLAYER], END, 0.0, 0.0, 0.0, 0.0);
     }
 
+    /* select_at <x> <y> [add] [nodraw]
+     *   Select the closest object at SCHEMATIC coordinate (x,y) -- the replayable
+     *   form of a mouse click (doc/claude/specs/select_at.md). Default replaces the
+     *   current selection (plain click); `add` augments it (shift-click); `nodraw`
+     *   skips the redraw. Returns the hit object as one `{type index col id}` row
+     *   (== an `xschem selection` row), or "" on a miss. Self-logs
+     *   `xschem select_at x y [add]`; the interactive click logs the same line at
+     *   the select_object() funnel. */
+    else if(!strcmp(argv[1], "select_at"))
+    {
+      double x, y;
+      int add = 0, draw = 1, i;
+      Selected s;
+      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(argc < 4) {
+        Tcl_SetResult(interp, "xschem select_at: need <x> <y>.", TCL_STATIC);
+        return TCL_ERROR;
+      }
+      x = atof(argv[2]);
+      y = atof(argv[3]);
+      for(i = 4; i < argc; i++) {
+        if(!strcmp(argv[i], "add")) add = 1;
+        else if(!strcmp(argv[i], "nodraw")) draw = 0;
+      }
+      if(!add) unselect_all(1);
+      select_at_suppress_log = 1;        /* the command logs its own line (with `add`) below */
+      s = select_object(x, y, SELECTED, 0, NULL);
+      select_at_suppress_log = 0;
+      rebuild_selected_array();
+      if(draw && has_x) draw_selection(xctx->gc[SELLAYER], 0);
+      if(s.type) {
+        const char *tname;
+        int id = -1, n = s.n, c = s.col, k;
+        char row[100];
+        /* take col from sel_array so the returned row is byte-identical to an
+         * `xschem selection` row: find_closest_obj returns col=0 for the flat
+         * types (wire/instance/text) whereas the selection enumerator reports the
+         * stored col. Match by (type,n); for the per-layer types also match col. */
+        for(k = 0; k < xctx->lastsel; k++) {
+          if(xctx->sel_array[k].type == s.type && xctx->sel_array[k].n == n &&
+             (s.type == WIRE || s.type == ELEMENT || s.type == xTEXT ||
+              xctx->sel_array[k].col == s.col)) {
+            c = xctx->sel_array[k].col;
+            break;
+          }
+        }
+        switch(s.type) {
+          case WIRE:    tname = "wire";     id = (int)xctx->wire[n].id; break;
+          case xRECT:   tname = "rect";     id = (int)xctx->rect[c][n].id; break;
+          case LINE:    tname = "line";     id = (int)xctx->line[c][n].id; break;
+          case ELEMENT: tname = "instance"; id = (int)xctx->inst[n].id; break;
+          case xTEXT:   tname = "text";     id = (int)xctx->text[n].id; break;
+          case POLYGON: tname = "poly";     id = (int)xctx->poly[c][n].id; break;
+          case ARC:     tname = "arc";      id = (int)xctx->arc[c][n].id; break;
+          default:      tname = "unknown";  break;
+        }
+        log_action("xschem select_at %.16g %.16g%s", x, y, add ? " add" : "");
+        /* one object -> a BARE `type index col id` row (mirrors `xschem object`'s
+         * bare single vs `xschem objects`'/`selection`'s brace-wrapped list rows) */
+        my_snprintf(row, S(row), "%s %d %d %d", tname, n, c, id);
+        Tcl_SetResult(interp, row, TCL_VOLATILE);
+      } else {
+        Tcl_ResetResult(interp);
+      }
+    }
+
     /* select_all
      *   Selects all objects in schematic */
     else if(!strcmp(argv[1], "select_all"))

@@ -1407,6 +1407,21 @@ Selected select_object(double mx,double my, unsigned short select_mode,
      draw_selection(xctx->gc[SELLAYER], 0);
    }
 
+   /* action-log (issue 0005, doc/claude/specs/select_at.md): a coordinate hit-
+    * select IS the replayable form of a mouse click. Log it once here at the
+    * selection funnel -- every interactive click-select (plain click at
+    * callback.c:5868, verb-noun move/copy pickup, launcher) reaches this point.
+    * select_object() is only ever called with a click coordinate (mx,my) --
+    * programmatic selects go through select_element/select_wire/... directly --
+    * so the log is gated only on `select_mode == SELECTED` (excludes the deselect
+    * calls) and `sel.type` (something was hit); selptr callers ARE the plain-click
+    * select, so they are not excluded. The `xschem select_at` command sets
+    * select_at_suppress_log and logs its own line (so it can carry the `add` flag
+    * and record exactly once). */
+   if(!select_at_suppress_log && select_mode == SELECTED && sel.type) {
+     log_action("xschem select_at %.16g %.16g", mx, my);
+   }
+
    return sel;
 }
 
