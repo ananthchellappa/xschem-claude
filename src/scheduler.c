@@ -4126,6 +4126,8 @@ static int xschem_cmds_l(Tcl_Interp *interp, int argc, const char *argv[], int *
       int keep_symbols = 0, first, readonly_open = 0;
       int lastclosed = 0, lastopened = 0;
       int first_loaded = 0;
+      int inplace = 0;              /* -inplace: force legacy in-place load (opt out of routing) */
+      const char *target_win = NULL; /* -window <winpath>: reuse a specific existing window */
       int i;
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
 
@@ -4149,6 +4151,12 @@ static int xschem_cmds_l(Tcl_Interp *interp, int argc, const char *argv[], int *
             keep_symbols = 1;
           } else if(!strcmp(argv[i], "-readonly")) {
             readonly_open = 1;
+          } else if(!strcmp(argv[i], "-inplace")) {
+            inplace = 1;
+          } else if(!strcmp(argv[i], "-window")) {
+            /* -window <winpath>: consume the next arg as the target window path
+             * (a .drw / .x1.drw Tk path, not a filename) */
+            if(i + 1 < argc) target_win = argv[++i];
           }
         } else {
           break;
@@ -4168,7 +4176,52 @@ static int xschem_cmds_l(Tcl_Interp *interp, int argc, const char *argv[], int *
           ask_new_file(0, NULL);
           tcleval("load_additional_files");
         }
-      } else
+      } else {
+      /* Window routing (doc/claude/specs/load_window_routing.md): a user-facing
+       * open must not clobber an occupied editor window. Scripted / internal
+       * in-place loads always carry a hint flag (-nodraw / -nofullzoom /
+       * -keep_symbols / -noundoreset / -nosymbols / -inplace) and are exempt. */
+      int inplace_hint = inplace || !load_symbols || nodraw || nofullzoom ||
+                         keep_symbols || !undo_reset;
+      int route_newwin = 0;
+      int target_done = 0;
+
+      if(has_x && target_win && target_win[0]) {
+        /* -window <winpath>: reuse the named existing window. Switch to it and,
+         * if its cellview is modified, pop "Save changes?" (ask_save). Cancel
+         * aborts the load and leaves the target untouched. */
+        int n = get_tab_or_window_number(target_win);
+        char *tgt_path = (n >= 0) ? get_window_path(n) : NULL;
+        Xschem_ctx *tctx = (n >= 0) ? get_window_ctx(n, NULL) : NULL;
+        char orig_win[WINDOW_PATH_SIZE];
+        orig_win[0] = '\0';
+        if(xctx->current_win_path) my_strncpy(orig_win, xctx->current_win_path, S(orig_win));
+        if(!tctx || !tgt_path || !tgt_path[0]) {
+          Tcl_SetResult(interp, "xschem load -window: no such window", TCL_STATIC);
+          return TCL_ERROR;
+        }
+        if(orig_win[0] && strcmp(tgt_path, orig_win)) {
+          new_schematic("switch", tgt_path, "", 0);
+        }
+        if(xctx->modified && save(1, 0) == -1) { /* user clicked Cancel: abort, restore focus */
+          if(orig_win[0] && strcmp(tgt_path, orig_win)) new_schematic("switch", orig_win, "", 0);
+          Tcl_ResetResult(interp);
+          return TCL_OK;
+        }
+        target_done = 1; /* save prompt already handled; don't re-prompt below */
+      } else {
+        /* Route only INTERACTIVE opens (-gui, so force==0): the File>Open / recent /
+         * Library-Manager paths. Bare `xschem load <f>` (force==1) and scripted loads
+         * stay in place -- the whole regression suite drives repeated bare loads into
+         * one window and relies on that. A -gui open reuses the current window only
+         * when it is a pristine empty untitled scratch; otherwise it opens a new one. */
+        route_newwin = has_x && !force && !inplace_hint && !is_pristine_untitled();
+        /* preset first_loaded so the FIRST file opens via new_schematic (a new
+         * window/tab), exactly like the 2nd..Nth file already does today, instead
+         * of loading in place over the occupied current window */
+        if(route_newwin) first_loaded = 1;
+      }
+
       for(i = first; i < argc || lastclosed || lastopened; i++) {
         char f[PATH_MAX + 100];
 
@@ -4185,7 +4238,10 @@ static int xschem_cmds_l(Tcl_Interp *interp, int argc, const char *argv[], int *
           tcleval(f);
           my_strncpy(f, tclresult(), S(f));
         }
-        if(force || !has_x || !xctx->modified  || save(1, 0) != -1 ) { /* save(1)==-1 --> user cancel */
+        /* route_newwin: not clobbering the current window, so never prompt to save it.
+         * target_done: the -window target's save prompt was already handled above. */
+        if(route_newwin || target_done || force || !has_x || !xctx->modified  ||
+           save(1, 0) != -1 ) { /* save(1)==-1 --> user cancel */
           char win_path[WINDOW_PATH_SIZE];
           int skip = 0;
           if(has_x) tcleval("store_geom [xschem get topwindow] [xschem get current_name]");
@@ -4221,8 +4277,12 @@ static int xschem_cmds_l(Tcl_Interp *interp, int argc, const char *argv[], int *
           }
           if(!skip) {
             int ret;
-            clear_all_hilights();
-            unselect_all(1);
+            /* when routing to a new window the current window is left as-is;
+             * its hilights/selection must not be touched */
+            if(!route_newwin) {
+              clear_all_hilights();
+              unselect_all(1);
+            }
             /* no implicit undo: if needed do it before loading */
             /* if(!undo_reset) xctx->push_undo(); */
             if(!first_loaded) {
@@ -4274,7 +4334,8 @@ static int xschem_cmds_l(Tcl_Interp *interp, int argc, const char *argv[], int *
             }
           }
         }
-      }
+      } /* for(i = first ...) */
+      } /* else (routing branch) */
       /* -readonly (reopen shortcuts: Open Most Recent / Last Closed / Recent menu): force the freshly
        * loaded buffer into read mode regardless of file writability, so reopening defaults to a safe
        * browse view. Edit it with Ctrl-2 / View > Toggle Read Only (mirrors descend_readonly). */

@@ -25,7 +25,8 @@ set tcases [list "create_save" "open_close" "netlisting"]
 # "ok - ..." per pass and "... : FAIL" per failure and exits nonzero on any failure.
 # summarize_all greps FAIL$, so failures are counted like the golden cases.
 set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
-                 "hilight_xwin_sync_headless" "buried_hilight"]
+                 "hilight_xwin_sync_headless" "buried_hilight" \
+                 "headless/test_ciw_interactive_load"]
 set log_fn "results.log"
 
 proc summarize_all {fn fd} {

@@ -188,9 +188,29 @@ proc ciw_capture_puts {argl} {
   }
 }
 
+## A command TYPED here by a human is an interactive open, so a bare
+## `xschem load <file>` should behave like File>Open: reuse the current window
+## only if it is a pristine empty untitled scratch, otherwise open a new window
+## (doc/claude/specs/load_window_routing.md). The scheduler routes only when the
+## `-gui` flag is present, so inject it. Menu/keybinding opens already pass -gui;
+## scripts, --script files and action-log replays do NOT go through here, so they
+## keep the in-place behavior the regression suite relies on.
+## Only a plain `xschem load ...` is rewritten -- never load_new_window /
+## load_backup (no space after "load"), and never when the user already gave a
+## routing/scripted flag. The regsub touches only the "xschem load" prefix, so
+## braces / spaces / backslashes in the file path are untouched.
+proc ciw_interactive_load {cmd} {
+  if {[regexp {^xschem[ \t]+load[ \t]} $cmd] &&
+      ![regexp -- {[ \t](-gui|-inplace|-window|-nodraw|-keep_symbols|-nofullzoom|-noundoreset|-nosymbols)([ \t]|$)} $cmd]} {
+    regsub {^(xschem[ \t]+load)[ \t]} $cmd {\1 -gui } cmd
+  }
+  return $cmd
+}
+
 proc ciw_exec {} {
   set cmd [string trim [.ciw.c.e get 1.0 end-1c]]
   if {$cmd eq {}} return
+  set cmd [ciw_interactive_load $cmd]
   ## record into history (failed commands too, bash-style; consecutive
   ## duplicates collapse) and reset the cursor to the live line
   if {$cmd ne [lindex $::ciw_history end]} { lappend ::ciw_history $cmd }

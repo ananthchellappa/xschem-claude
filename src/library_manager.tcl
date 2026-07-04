@@ -446,8 +446,11 @@ proc libmgr::open_view {args} {
     xschem load_new_window -window $f
     xschem log_action "xschem load_new_window -window {$f}"
   } else {
-    xschem load $f
-    xschem log_action "xschem load {$f}"
+    # -gui: interactive open. Reuse THIS window only if it is a pristine empty
+    # untitled scratch; if it already holds a cellview (or has objects), open a
+    # new window instead of clobbering it (doc/claude/specs/load_window_routing.md).
+    xschem load -gui $f
+    xschem log_action "xschem load -gui {$f}"
   }
   # WSLg leaves the target window blank (and its renamed tab stale) when a load is
   # driven from this persistent dialog: the window never gets the focus/expose that
