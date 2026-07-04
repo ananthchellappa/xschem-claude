@@ -230,68 +230,74 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
       Tcl_SetResult(interp, modified < 0 ? "-1" : (modified ? "1" : "0"), TCL_STATIC);
     }
 
-    /* apply_pin_prop <prop>
-     *   Apply <prop> to every SELECTED symbol pin (PINLAYER rect), mirroring the pin branch
-     *   of edit_rect_property but WITHOUT a dialog round-trip, so the pin/pinname property
-     *   forms can offer a live "Apply" that updates the canvas while staying open
-     *   (cadence_pin_name_text.md). Changed-fields-only: the primary pin's prop is the diff
-     *   baseline, so multi-selected pins keep their own unchanged tokens (e.g. their names).
-     *   No-op (no undo slot) when nothing would change. Pushes one undo; returns 1/0. */
+    /* apply_pin_prop [<scope>] <prop>
+     *   Apply <prop> to the symbol pins (PINLAYER rects) named by <scope>, mirroring the pin
+     *   branch of edit_rect_property but WITHOUT a dialog round-trip, so the pin/pinname
+     *   property forms can offer a live "Apply" that updates the canvas while staying open
+     *   (cadence_pin_name_text.md; scope = symbol_editor_apply_scope.md).
+     *   <scope> = current (primary pin only) | selected (all selected pins) | all (every pin
+     *   of the symbol), resolved by the shared pin_scope_targets(). If <scope> is omitted the
+     *   default is "selected" (back-compat with the pre-scope command and any replay logs).
+     *   Changed-fields-only is UNCONDITIONAL when a primary pin exists: the primary pin's prop
+     *   (sel_array[0]) is the diff baseline, so fanned pins keep their own unchanged tokens
+     *   (notably their distinct name=). No-op (no undo slot) when nothing would change; pushes
+     *   one undo; returns 1/0. */
     else if(!strcmp(argv[1], "apply_pin_prop"))
     {
-      int i, c, n, preserve, change = 0, anypin = 0;
-      const char *newprop;
+      int i, n, change = 0, primary = -1, ntargets;
+      int *targets;
+      const char *scope, *newprop;
       char *base = NULL;          /* primary pin's prop: the changed-fields baseline */
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
       if(argc < 3) {
-        Tcl_SetResult(interp, "xschem apply_pin_prop needs: new_prop", TCL_STATIC);
+        Tcl_SetResult(interp, "xschem apply_pin_prop needs: [scope] new_prop", TCL_STATIC);
         return TCL_ERROR;
       }
-      newprop = argv[2];
-      preserve = tclgetboolvar("preserve_unchanged_attrs");
+      if(argc >= 4) { scope = argv[2]; newprop = argv[3]; }   /* apply_pin_prop <scope> <prop> */
+      else          { scope = "selected"; newprop = argv[2]; } /* apply_pin_prop <prop> (back-compat) */
       rebuild_selected_array();
       if(xctx->lastsel > 0 && xctx->sel_array[0].type == xRECT &&
          xctx->sel_array[0].col == PINLAYER) {
-        my_strdup(_ALLOC_ID_, &base, xctx->rect[PINLAYER][xctx->sel_array[0].n].prop_ptr);
+        primary = xctx->sel_array[0].n;
+        my_strdup(_ALLOC_ID_, &base, xctx->rect[PINLAYER][primary].prop_ptr);
       }
-      /* guard pass: would applying change any selected pin? avoid an empty undo slot */
-      for(i = 0; i < xctx->lastsel && !change; i++) {
+      targets = my_malloc(_ALLOC_ID_, (xctx->rects[PINLAYER] + 1) * sizeof(int));
+      ntargets = pin_scope_targets(primary, scope, targets);
+      /* guard pass: would applying change any target pin? avoid an empty undo slot */
+      for(i = 0; i < ntargets && !change; i++) {
         char *cand = NULL;
-        if(xctx->sel_array[i].type != xRECT) continue;
-        c = xctx->sel_array[i].col; n = xctx->sel_array[i].n;
-        if(c != PINLAYER) continue;
-        anypin = 1;
-        my_strdup(_ALLOC_ID_, &cand, xctx->rect[c][n].prop_ptr);
-        if(preserve && base) {
+        n = targets[i];
+        my_strdup(_ALLOC_ID_, &cand, xctx->rect[PINLAYER][n].prop_ptr);
+        if(base) {
           if(set_different_token(&cand, newprop, base)) change = 1;
         } else {
           my_strdup(_ALLOC_ID_, &cand, newprop);
-          if(!cand || !xctx->rect[c][n].prop_ptr || strcmp(cand, xctx->rect[c][n].prop_ptr)) change = 1;
+          if(!cand || !xctx->rect[PINLAYER][n].prop_ptr || strcmp(cand, xctx->rect[PINLAYER][n].prop_ptr)) change = 1;
         }
         my_free(_ALLOC_ID_, &cand);
       }
-      if(!anypin || !change) {
+      if(!ntargets || !change) {
         if(base) my_free(_ALLOC_ID_, &base);
+        my_free(_ALLOC_ID_, &targets);
         Tcl_SetResult(interp, "0", TCL_STATIC);
         return TCL_OK;
       }
       xctx->push_undo();
-      for(i = 0; i < xctx->lastsel; i++) {
+      for(i = 0; i < ntargets; i++) {
         char olddir[40];
-        if(xctx->sel_array[i].type != xRECT) continue;
-        c = xctx->sel_array[i].col; n = xctx->sel_array[i].n;
-        if(c != PINLAYER) continue;
-        my_snprintf(olddir, S(olddir), "%s", get_tok_value(xctx->rect[c][n].prop_ptr, "dir", 0));
-        if(preserve && base) {
-          set_different_token(&xctx->rect[c][n].prop_ptr, newprop, base);
+        n = targets[i];
+        my_snprintf(olddir, S(olddir), "%s", get_tok_value(xctx->rect[PINLAYER][n].prop_ptr, "dir", 0));
+        if(base) {
+          set_different_token(&xctx->rect[PINLAYER][n].prop_ptr, newprop, base);
         } else {
-          my_strdup(_ALLOC_ID_, &xctx->rect[c][n].prop_ptr, newprop);
+          my_strdup(_ALLOC_ID_, &xctx->rect[PINLAYER][n].prop_ptr, newprop);
         }
-        set_rect_flags(&xctx->rect[c][n]);
-        if(strcmp(olddir, get_tok_value(xctx->rect[c][n].prop_ptr, "dir", 0))) pin_reorient(n);
+        set_rect_flags(&xctx->rect[PINLAYER][n]);
+        if(strcmp(olddir, get_tok_value(xctx->rect[PINLAYER][n].prop_ptr, "dir", 0))) pin_reorient(n);
         pin_view_apply(n);   /* create/delete the name view per show_pinname, then sync it */
       }
       if(base) my_free(_ALLOC_ID_, &base);
+      my_free(_ALLOC_ID_, &targets);
       set_modify(1);
       draw();               /* a pin's name view is a separate object -> full redraw */
       Tcl_SetResult(interp, "1", TCL_STATIC);
@@ -5769,6 +5775,41 @@ static int xschem_cmds_p(Tcl_Interp *interp, int argc, const char *argv[], int *
         }
       }
       Tcl_SetResult(interp, (char *)cur, TCL_VOLATILE);
+    }
+
+    /* pin_scope_prop_uniform <scope> <token>
+     *   Returns "1" if <token>'s value is identical across every pin in <scope>
+     *   (current|selected|all), else "0". An empty or single-pin scope is "1" (uniform by
+     *   construction). Drives the pin form's Name-greying rule: the Name entry is disabled iff
+     *   NOT uniform (a >1-pin scope with differing names), editable otherwise
+     *   (symbol_editor_apply_scope.md §4.2/§5.3). Uses the same pin_scope_targets() resolver as
+     *   apply_pin_prop so the decision matches what an Apply would touch. Read-only. */
+    else if(!strcmp(argv[1], "pin_scope_prop_uniform"))
+    {
+      int i, n, ntargets, primary = -1, uniform = 1;
+      int *targets;
+      const char *scope, *tok, *val;
+      char *first = NULL;
+      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(argc < 4) {
+        Tcl_SetResult(interp, "xschem pin_scope_prop_uniform needs: scope token", TCL_STATIC);
+        return TCL_ERROR;
+      }
+      scope = argv[2]; tok = argv[3];
+      rebuild_selected_array();
+      if(xctx->lastsel > 0 && xctx->sel_array[0].type == xRECT &&
+         xctx->sel_array[0].col == PINLAYER) primary = xctx->sel_array[0].n;
+      targets = my_malloc(_ALLOC_ID_, (xctx->rects[PINLAYER] + 1) * sizeof(int));
+      ntargets = pin_scope_targets(primary, scope, targets);
+      for(i = 0; i < ntargets; i++) {
+        n = targets[i];
+        val = get_tok_value(xctx->rect[PINLAYER][n].prop_ptr, tok, 0);
+        if(i == 0) my_strdup(_ALLOC_ID_, &first, val);   /* copy: get_tok_value's buffer is reused */
+        else if(!first || strcmp(first, val)) { uniform = 0; break; }
+      }
+      if(first) my_free(_ALLOC_ID_, &first);
+      my_free(_ALLOC_ID_, &targets);
+      Tcl_SetResult(interp, uniform ? "1" : "0", TCL_STATIC);
     }
 
     /* pin_stub_geom: (xschem pin_stub_geom inst pin stublen) "x1 y1 x2 y2 dx dy" -- the stub

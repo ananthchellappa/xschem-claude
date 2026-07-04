@@ -1919,6 +1919,7 @@ extern void edit_property(int x);
 extern int apply_instance_properties(const char *scope, unsigned int displayed_id,
                               const char *new_prop, const char *old_prop, int keep_name);
 extern int scope_targets(int displayed_inst, const char *scope, int *targets);
+extern int pin_scope_targets(int primary_n, const char *scope, int *targets);
 extern int xschem(ClientData clientdata, Tcl_Interp *interp,
            int argc, const char * argv[]);
 extern const char *tcleval(const char str[]);

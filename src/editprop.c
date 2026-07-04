@@ -893,6 +893,32 @@ int scope_targets(int displayed_inst, const char *scope, int *targets)
   return n;
 }
 
+/* Pin analog of scope_targets(): resolve <scope> (current|selected|all) for the
+ * SYMBOL editor's pins (rects on PINLAYER) into a list of rect[PINLAYER][] indices
+ * written into targets[] (sized at least xctx->rects[PINLAYER]+1); returns the count.
+ * The single source of truth for "what a pin Apply/OK touches", shared by the
+ * apply_pin_prop command and the highlight_pin_scope overlay so outlined==applied
+ * (spec doc/claude/specs/symbol_editor_apply_scope.md §5.1).
+ *   current  -> { primary_n }  (the pin the form displayed; sel_array[0])
+ *   selected -> every selected xRECT on PINLAYER (sel_array order)
+ *   all      -> every PINLAYER rect of this symbol
+ * A pin has no instance-master, so 'all' == all pins of the current symbol. */
+int pin_scope_targets(int primary_n, const char *scope, int *targets)
+{
+  int i, k, n = 0;
+  if(!strcmp(scope, "all")) {
+    for(i = 0; i < xctx->rects[PINLAYER]; ++i) targets[n++] = i;
+  } else if(!strcmp(scope, "selected")) {
+    for(k = 0; k < xctx->lastsel; ++k) {
+      if(xctx->sel_array[k].type == xRECT && xctx->sel_array[k].col == PINLAYER)
+        targets[n++] = xctx->sel_array[k].n;
+    }
+  } else { /* current */
+    if(primary_n >= 0 && primary_n < xctx->rects[PINLAYER]) targets[n++] = primary_n;
+  }
+  return n;
+}
+
 /* keep_name: when nonzero, do NOT rewrite the instance name's first character to the
  * new symbol's template prefix on a symbol change (the slick Edit Properties form treats
  * the dedicated Name field as authoritative -- an instance name is arbitrary and a source
