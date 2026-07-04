@@ -131,6 +131,7 @@ source [file join $_ut bus_resize.tcl]
 source [file join $_ut bus_transpose.tcl]
 source [file join $_ut text_resize.tcl]
 source [file join $_ut apply_hilight.tcl]
+source [file join $_ut select_same_cell.tcl]
 # moved unset _ut
 
 # Ctrl-Alt-S : locate a cell in the Library Manager. Acts on the selected instance's
@@ -138,6 +139,10 @@ source [file join $_ut apply_hilight.tcl]
 bind .drw <Control-Alt-Key-s>   {locate_selected_in_libmgr;       break}
 # Ctrl-Alt-N : place the current Library-Manager selection
 bind .drw <Control-Alt-Key-n>   {place_libmgr_selection;          break}
+# Ctrl-Alt-H : select every instance in the schematic sharing a cell/view with the
+# reference -- a selected instance (same view), a "lib/cell[/view]" text note, or the
+# Library-Manager selection (library / cell / symbol-view). Inverse of Ctrl-Alt-S.
+bind .drw <Control-Alt-Key-h>   {select_same_cell;                break}
 # Ctrl-N : open a NEW blank editor window (untitled.sch scratchpad), leaving the current
 # schematic untouched. Overrides the default Ctrl-N = Clear Schematic (still on File menu).
 bind .drw <Control-Key-n>       {cadence::new_blank_window;       break}
