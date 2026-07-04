@@ -27,11 +27,27 @@ check "grow scalar"        [busresize::grow_name clk]        {clk[1:0]}
 check "grow 1:0 -> 2:0"    [busresize::grow_name {clk[1:0]}] {clk[2:0]}
 check "grow 5:2 -> 6:2"    [busresize::grow_name {d[5:2]}]   {d[6:2]}
 
+# single existing index [N] widens by adding the next-higher bit -> [N+1:N]
+check {grow [5] -> [6:5]}  [busresize::grow_name {x1[5]}]    {x1[6:5]}
+check {grow [0] -> [1:0]}  [busresize::grow_name {x1[0]}]    {x1[1:0]}
+check {grow [5:5] -> [6:5]} [busresize::grow_name {x1[5:5]}] {x1[6:5]}
+check {grow non-int idx}   [busresize::grow_name {mem[a]}]   {mem[a][1:0]}
+
 check "shrink 2:0 -> 1:0"  [busresize::shrink_name {clk[2:0]}] {clk[1:0]}
-check "shrink 1:0 collapse" [busresize::shrink_name {clk[1:0]}] {clk}
 check "shrink scalar floor" [busresize::shrink_name clk]        {clk}
 check "shrink 6:2 -> 5:2"  [busresize::shrink_name {d[6:2]}]   {d[5:2]}
-check "shrink 3:2 collapse" [busresize::shrink_name {d[3:2]}]   {d}
+# shrinking a range down to one bit parks at the single index (NOT the bare base)...
+check {shrink [6:5] -> [5]} [busresize::shrink_name {x1[6:5]}] {x1[5]}
+check {shrink [3:2] -> [2]} [busresize::shrink_name {d[3:2]}]  {d[2]}
+check {shrink [5:5] -> [5]} [busresize::shrink_name {x1[5:5]}] {x1[5]}
+# ...except a landed bit 0, the special case that collapses to the bare base
+check "shrink 1:0 collapse" [busresize::shrink_name {clk[1:0]}] {clk}
+check {shrink [1:0] collapse} [busresize::shrink_name {x1[1:0]}] {x1}
+# a lone [N] parks at itself (floor); a lone [0] is the collapse special case
+check {shrink [5] floor}    [busresize::shrink_name {x1[5]}]   {x1[5]}
+check {shrink [0] collapse} [busresize::shrink_name {x1[0]}]   {x1}
+# round-trip: grow then shrink returns to the single index
+check {roundtrip [5]}      [busresize::shrink_name [busresize::grow_name {x1[5]}]] {x1[5]}
 
 # round-trip
 check "roundtrip scalar"   [busresize::shrink_name [busresize::grow_name clk]]        {clk}

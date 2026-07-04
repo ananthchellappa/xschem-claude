@@ -23,6 +23,9 @@ namespace eval busresize {
 # ---- bus-name transform (pure; delimiter-agnostic, no regex metachar pitfalls) ----
 
 # If $n ends with <open><int><sep><int><close>, return {base a b}; else {}.
+# Range-only by design: a single index base[N] does NOT match here. This proc is
+# shared with bustranspose, where a lone [N] must read as a single index (shift to
+# [N+1]), not as a range — so single-index handling stays in _split1 below.
 proc busresize::_split {n} {
   variable open ; variable close ; variable sep
   if {[string index $n end] ne $close} { return {} }
@@ -37,32 +40,70 @@ proc busresize::_split {n} {
   return [list $base $a $b]
 }
 
-# scalar -> base[1:0]; base[N:M] -> widen by extending the larger end.
+# If $n ends with <open><int><close> (a single-index bus like base[N]), return
+# {base N}; else {}. Not shared with bustranspose (which has its own single-index
+# split); used only to widen/collapse a lone [N] in grow/shrink below.
+proc busresize::_split1 {n} {
+  variable open ; variable close
+  if {[string index $n end] ne $close} { return {} }
+  set body [string range $n 0 end-1]
+  set op [string last $open $body]
+  if {$op < 0} { return {} }
+  set idx [string range $body [expr {$op+1}] end]
+  if {![string is integer -strict $idx]} { return {} }
+  return [list [string range $body 0 [expr {$op-1}]] $idx]
+}
+
+# A shrink that lands on a single bit at index $i: index 0 collapses to the bare
+# base (the [1:0] -> base special case), any other index stays as the single-index
+# bus base[N] (the floor for that bit -- shrinking [6:5] parks at [5], not at base).
+proc busresize::_collapse1 {base i} {
+  variable open ; variable close
+  if {$i == 0} { return $base }
+  return "$base$open$i$close"
+}
+
+# scalar        -> base[1:0]
+# base[N:M]     -> widen by extending the larger end
+# base[N]       -> base[N+1:N]  (a lone [N] is bit N; growing adds the next-higher bit)
 proc busresize::grow_name {n} {
   variable open ; variable close ; variable sep
   set p [_split $n]
-  if {$p eq {}} { return "$n${open}1${sep}0${close}" }
-  lassign $p base a b
-  if {$a >= $b} { incr a } else { incr b }
-  return "$base$open$a$sep$b$close"
+  if {$p ne {}} {
+    lassign $p base a b
+    if {$a >= $b} { incr a } else { incr b }
+    return "$base$open$a$sep$b$close"
+  }
+  set s [_split1 $n]
+  if {$s ne {}} {
+    lassign $s base i
+    return "$base$open[expr {$i+1}]$sep$i$close"
+  }
+  return "$n${open}1${sep}0${close}"
 }
 
-# base[N:M] -> shrink the larger end by 1; collapse a 2-bit bus to the bare base;
-# a scalar is the floor (unchanged, never negative).
+# base[N:M] -> drop the high bit (shrink the larger end by 1). When that lands on a
+# single bit the result parks at base[N] -- except a landed bit 0, which collapses
+# to the bare base (so [6:5]->[5] but [1:0]->base). A lone base[N] parks at itself
+# (bit 0 -> base); a scalar is the floor (unchanged).
 proc busresize::shrink_name {n} {
   variable open ; variable close ; variable sep
   set p [_split $n]
-  if {$p eq {}} { return $n }
-  lassign $p base a b
-  if {$a >= $b} {
-    set na [expr {$a-1}]
-    if {$na <= $b} { return $base }
-    return "$base$open$na$sep$b$close"
-  } else {
-    set nb [expr {$b-1}]
-    if {$nb <= $a} { return $base }
-    return "$base$open$a$sep$nb$close"
+  if {$p ne {}} {
+    lassign $p base a b
+    if {$a >= $b} {
+      set na [expr {$a-1}]
+      if {$na <= $b} { return [_collapse1 $base $b] }
+      return "$base$open$na$sep$b$close"
+    } else {
+      set nb [expr {$b-1}]
+      if {$nb <= $a} { return [_collapse1 $base $a] }
+      return "$base$open$a$sep$nb$close"
+    }
   }
+  set s [_split1 $n]
+  if {$s ne {}} { lassign $s base i ; return [_collapse1 $base $i] }
+  return $n
 }
 
 # ---- wire thickness model (stored in the numeric `bus` property) ----
