@@ -760,6 +760,14 @@ static int xschem_cmds_c(Tcl_Interp *interp, int argc, const char *argv[], int *
     if(!strcmp(argv[1], "callback") )
     {
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      /* issue 0076: guard argc BEFORE reading argv[2..9]. Without this `xschem callback`
+       * (argc<10) passes argv[2]==NULL as win_path into callback() -> NULL deref -> SIGSEGV
+       * -> emergency-save -> editor dies (same class as select_inside / issue 0075). */
+      if(argc < 10) {
+        Tcl_SetResult(interp,
+          "xschem callback: usage: callback win_path event mx my key button aux state", TCL_STATIC);
+        return TCL_ERROR;
+      }
       callback( argv[2], atoi(argv[3]), atoi(argv[4]), atoi(argv[5]), (KeySym)atol(argv[6]),
                atoi(argv[7]), atoi(argv[8]), atoi(argv[9]) );
       dbg(2, "callback %s %s %s %s %s %s %s %s\n",
