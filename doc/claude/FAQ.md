@@ -14,6 +14,72 @@ Newest entries on top.
 
 ---
 
+## Q24. Why are descend/return (Ctrl-E / Ctrl-X), the E-key descend-options form, and the act of selecting an instance NOT logged to the CIW log pane and the log file, when other actions are?
+
+- **Asked:** 2026-07-03
+- **Project state:** branch `fluid-editing` @ `9b854d54`. Action-logging + CIW landed
+  (spec `doc/claude/specs/action_logging.md`, checklist `action_logging_checklist.md`);
+  hi_descend dialog landed (`doc/claude/specs/hi_descend.md`).
+
+**Short version:** two independent reasons. **(A)** those keys are served by the *legacy
+inline key switch* in `callback.c`, which bypasses the only paths that log; and **(B)**
+descend-to-schematic and click-select are *non-replayable by design* (the object-reference
+gap, issue 0005), so even where a wrapper runs they get at most a `#` marker.
+
+**The logging funnel.** Everything that reaches the file + the CIW pane goes through one C
+function, `log_action()` (`util.c:394` — it writes the file line AND mirrors to the pane via
+`ciw_echo`). Exactly three callers feed it:
+- `dispatch_input_action()` (`callback.c:3454`/`3471`) — the binding-table path; runs the
+  action's canonical command then logs it (unless `nolog`, or the core already self-logged).
+- `menu_action_logged` (`action_registry.tcl:190`) — menu picks.
+- self-log-at-core — specific scheduler commands calling `log_action()` themselves
+  (`wire`, `cut`, `copy`, `delete`, `move_objects`, place…).
+
+**Reason A — the keys miss all three.** The default `E`/`Ctrl+E`/`I` descend keys are NOT in
+`keybindings.csv`, so `dispatch_input_action()` finds no binding, returns 0, and the event
+falls through to the hard-coded switch in `callback.c`, which calls the C functions **directly**:
+`descend_schematic()` (`callback.c:4330`), `go_back()` (`4334`, `5425`), `descend_symbol()`
+(`4450`). And the underlying scheduler commands `xschem descend` / `go_back` / `descend_symbol`
+do **not** self-log at the core (`scheduler.c:1288`/`3014`/`1310` — no `log_action`). So nothing
+records them. The **E-key form** is the same story: `E` is a raw Tk `bind … {hi_descend; break}`
+(`xschem.tcl:5535`/`5543`) opening the `hi_descend` dialog; the proc does not `log_action`, and a
+dialog is not a replayable command anyway — then it descends inline. Neither launch nor result
+logs.
+
+**Reason B — descend-to-schematic and click-select are non-replayable by design.** A descend
+depends on *which instance* is selected; a click-select depends on *which object* is under the
+cursor. The v1 log has no stable object handle to reconstruct that on replay. The spec accepts
+the gap: `action_logging.md` principle 4 ("Object-reference gap accepted for v1: click-select
+cannot be faithfully [replayed]"); checklist row 17 (click-select "still silent"), row 51
+(replayable `xschem select_at x y` **deferred**), row 53 (full causal replay of
+selections+descend/go_back **deferred**). So even the right-click context-menu pick for
+descend-to-schematic logs only `# … not replayable: needs object reference, issue 0005`
+(`callback.c:2538`), and `select.c` has no `log_action` at all.
+
+**Per item:**
+
+| Action | Logs? | Why |
+|---|---|---|
+| Select instance (click) | no | Reason B — non-replayable by design, deliberately silent |
+| `E` → descend-options form | no | Reason A — raw Tk bind to `hi_descend`; dialog, no `log_action` |
+| Descend to schematic (E/X) | no | Reason A (inline path) **+** Reason B (object-ref gap) |
+| Return / `go_back` (Ctrl-E, Ctrl-X) | no | Reason A only — `go_back` **is** replayable, just misses the log |
+| `descend_symbol` (I) | no | Reason A only — also replayable |
+
+**Proof it's the path, not policy (for go_back/descend_symbol):** fire the same actions from the
+**Edit menu** (Push schematic / Pop) and they DO log — `menu_action_logged` records
+`xschem descend` / `xschem go_back`. Right-click → Pop / Descend-into-symbol logs too
+(context table, `callback.c:2539-2540`).
+
+**Fixable subset.** `go_back` and `descend_symbol` are replayable and miss logging only from
+Reason A — fix = self-log at the core (add `log_action("xschem go_back")` in the scheduler block,
+as `cut`/`delete` do), or bind the keys through `keybindings.csv` to `edit.pop`/`edit.push_symbol`
+so `dispatch_input_action()` logs them. Descend-to-schematic, the E-form, and click-select need
+Reason B solved first (stable object handles / the deferred `xschem select_at x y`, rows 51/53)
+before they can be *replayable*; until then the most they can get is a `#` marker.
+
+---
+
 ## Q23. From Tcl in the CIW, can I name a *hierarchical* net (`x1.x2.x3.net`) plus a highlight style (a `net_hilight_style` row index, or an F5-style literal styledef) and have that possibly-buried net highlighted — with every ancestor along the path cued in the most-recent style, Cadence-style?
 
 - **Asked:** 2026-07-02
