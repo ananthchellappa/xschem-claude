@@ -181,6 +181,23 @@ static int scheduler_readonly_reject(Tcl_Interp *interp, const char *subcmd)
   return 1;
 }
 
+/* Shared setup for the symbol-editor pin-scope commands (apply_pin_prop /
+ * pin_scope_prop_uniform): rebuild the selection, find the primary pin (sel_array[0] iff it
+ * is a PINLAYER rect, else -1), and resolve <scope> into a freshly my_malloc'd targets[]
+ * (caller frees). Returns the target count; *primary_out and *targets_out are always written.
+ * Keeps the two commands' resolver in lockstep so the greyed set == the applied set. */
+static int pin_scope_resolve(const char *scope, int *primary_out, int **targets_out)
+{
+  int primary = -1, *targets;
+  rebuild_selected_array();
+  if(xctx->lastsel > 0 && xctx->sel_array[0].type == xRECT &&
+     xctx->sel_array[0].col == PINLAYER) primary = xctx->sel_array[0].n;
+  targets = my_malloc(_ALLOC_ID_, (xctx->rects[PINLAYER] + 1) * sizeof(int));
+  *primary_out = primary;
+  *targets_out = targets;
+  return pin_scope_targets(primary, scope, targets);
+}
+
 /* `xschem a...` commands, moved verbatim from the xschem() dispatcher
  * (dispatcher decomposition batch 1). Sets *cmd_found = 0 when argv[1]
  * matches no command in this group; early returns propagate unchanged. */
@@ -255,14 +272,13 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
       }
       if(argc >= 4) { scope = argv[2]; newprop = argv[3]; }   /* apply_pin_prop <scope> <prop> */
       else          { scope = "selected"; newprop = argv[2]; } /* apply_pin_prop <prop> (back-compat) */
-      rebuild_selected_array();
-      if(xctx->lastsel > 0 && xctx->sel_array[0].type == xRECT &&
-         xctx->sel_array[0].col == PINLAYER) {
-        primary = xctx->sel_array[0].n;
-        my_strdup(_ALLOC_ID_, &base, xctx->rect[PINLAYER][primary].prop_ptr);
-      }
-      targets = my_malloc(_ALLOC_ID_, (xctx->rects[PINLAYER] + 1) * sizeof(int));
-      ntargets = pin_scope_targets(primary, scope, targets);
+      ntargets = pin_scope_resolve(scope, &primary, &targets);
+      if(primary >= 0) my_strdup(_ALLOC_ID_, &base, xctx->rect[PINLAYER][primary].prop_ptr);
+      /* No pin primary (sel_array[0] is not a pin) but a scope like "all" still resolves
+       * targets: use the FIRST target as the changed-fields baseline so a fan can NEVER
+       * degenerate into a whole-prop overwrite that mass-renames every pin to the same
+       * string (the base==NULL else branch below). */
+      if(!base && ntargets > 0) my_strdup(_ALLOC_ID_, &base, xctx->rect[PINLAYER][targets[0]].prop_ptr);
       /* guard pass: would applying change any target pin? avoid an empty undo slot */
       for(i = 0; i < ntargets && !change; i++) {
         char *cand = NULL;
@@ -5796,11 +5812,7 @@ static int xschem_cmds_p(Tcl_Interp *interp, int argc, const char *argv[], int *
         return TCL_ERROR;
       }
       scope = argv[2]; tok = argv[3];
-      rebuild_selected_array();
-      if(xctx->lastsel > 0 && xctx->sel_array[0].type == xRECT &&
-         xctx->sel_array[0].col == PINLAYER) primary = xctx->sel_array[0].n;
-      targets = my_malloc(_ALLOC_ID_, (xctx->rects[PINLAYER] + 1) * sizeof(int));
-      ntargets = pin_scope_targets(primary, scope, targets);
+      ntargets = pin_scope_resolve(scope, &primary, &targets);
       for(i = 0; i < ntargets; i++) {
         n = targets[i];
         val = get_tok_value(xctx->rect[PINLAYER][n].prop_ptr, tok, 0);

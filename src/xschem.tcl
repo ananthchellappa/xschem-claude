@@ -10105,13 +10105,24 @@ proc gfxform::name_editable {scope} {
   if {[catch {xschem pin_scope_prop_uniform $scope name} u]} { return 1 }
   return $u
 }
+# Discard any pending edit in the Name field, restoring the value the form opened with.
+# Called when the scope greys the Name entry so a name typed under a narrower (uniform)
+# scope can't leak and fan across pins once the scope is widened (spec §4.2).
+proc gfxform::revert_name {} {
+  variable val; variable loaded
+  if {[info exists loaded(name)]} { set val(name) $loaded(name) }
+}
 # Re-grey the Name entry for the current scope (called on open + on every scope change).
+# When the scope makes Name non-editable, ALSO revert its value -- disabling the widget
+# alone leaves a previously-typed value in gfxform::val(name), which collect would still fan.
 proc gfxform::pin_scope_greying {} {
   variable type
   if {$type ne {pin}} return
-  if {![winfo exists .dialog.appear.name.e]} return
-  .dialog.appear.name.e configure -state \
-    [expr {[gfxform::name_editable $::gfxform_pin_scope] ? {normal} : {disabled}}]
+  set editable [gfxform::name_editable $::gfxform_pin_scope]
+  if {!$editable} { gfxform::revert_name }
+  # widget restyle only when the dialog is up (winfo is absent under --nogui)
+  if {[catch {winfo exists .dialog.appear.name.e} ex] || !$ex} return
+  .dialog.appear.name.e configure -state [expr {$editable ? {normal} : {disabled}}]
 }
 # Combobox change -> update the canonical scope var + re-grey. (SP3 adds live re-highlight.)
 proc gfxform::on_scope_change {} {
@@ -10182,7 +10193,12 @@ proc text_line_slick {txtlabel clear preserve_disabled type} {
         -textvariable gfxform::scope_label -values {{Only Current} {All Selected} {All}}
       bind .dialog.scope.cb <<ComboboxSelected>> {gfxform::on_scope_change}
     } else {
+      # Tcl 8.4 has no ttk::combobox: a plain entry, but still wire the change back to the
+      # canonical scope var (a bare -textvariable would leave ::gfxform_pin_scope stale, so
+      # Apply/OK would ignore the typed scope).
       entry .dialog.scope.cb -textvariable gfxform::scope_label -width 12
+      bind .dialog.scope.cb <KeyRelease> {gfxform::on_scope_change}
+      bind .dialog.scope.cb <FocusOut>   {gfxform::on_scope_change}
     }
     pack .dialog.scope.l .dialog.scope.cb -side left
     pack .dialog.scope -side top -fill x -padx 4 -pady 4

@@ -896,9 +896,9 @@ int scope_targets(int displayed_inst, const char *scope, int *targets)
 /* Pin analog of scope_targets(): resolve <scope> (current|selected|all) for the
  * SYMBOL editor's pins (rects on PINLAYER) into a list of rect[PINLAYER][] indices
  * written into targets[] (sized at least xctx->rects[PINLAYER]+1); returns the count.
- * The single source of truth for "what a pin Apply/OK touches", shared by the
- * apply_pin_prop command and the highlight_pin_scope overlay so outlined==applied
- * (spec doc/claude/specs/symbol_editor_apply_scope.md §5.1).
+ * The single source of truth for "what a pin Apply/OK touches", used by the
+ * apply_pin_prop command (and, once SP3 lands, the highlight_pin_scope overlay, so the
+ * outlined set == the applied set); spec doc/claude/specs/symbol_editor_apply_scope.md §5.1.
  *   current  -> { primary_n }  (the pin the form displayed; sel_array[0])
  *   selected -> every selected xRECT on PINLAYER (sel_array order)
  *   all      -> every PINLAYER rect of this symbol

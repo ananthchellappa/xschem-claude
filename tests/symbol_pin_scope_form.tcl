@@ -99,19 +99,46 @@ check "route pinname ignores scope: C untouched" [showv 2] true
 set ::gfxform::type pin
 
 # ---------------------------------------------------------------------------
-# D. DISPLAY-gated smoke: real dialog has the scope combobox + greys Name live
+# D. greying discards a pending Name edit so it can't fan when the scope widens (review [2])
+# ---------------------------------------------------------------------------
+set pinprop "name=A dir=in show_pinname=true name_dx=20 name_dy=-5 name_size=0.2"
+xschem load $sym ; selAB
+gfxform::init $pinprop pin
+set gfxform::val(name) Z              ;# user typed a new name
+set ::gfxform_pin_scope selected     ;# widen to a scope where names differ -> Name greyed
+gfxform::pin_scope_greying
+check "revert: greyed scope discards typed name" $gfxform::val(name) A
+xschem load $sym ; xschem unselect_all ; xschem select rect 5 0
+gfxform::init $pinprop pin
+set gfxform::val(name) Z
+set ::gfxform_pin_scope current       ;# editable scope keeps the pending edit
+gfxform::pin_scope_greying
+check "revert: editable scope keeps typed name"  $gfxform::val(name) Z
+
+# ---------------------------------------------------------------------------
+# E. DISPLAY-gated smoke: real dialog has the scope combobox + greys Name live
 # ---------------------------------------------------------------------------
 if {![catch {winfo exists .}] && [info exists ::env(DISPLAY)]} {
   xschem load $sym ; selAB
-  set ::tctx::retval "name=A dir=in show_pinname=true name_dx=20 name_dy=-5 name_size=0.2"
+  set ::tctx::retval $pinprop
   set ::gfxform_via_name 0
   set ::gfxform_pin_scope selected
-  set ::smoke_cb 0 ; set ::smoke_name {}
-  after 400 {
-    set ::smoke_cb [expr {[winfo exists .dialog.scope.cb] ? 1 : 0}]
-    catch {set ::smoke_name [.dialog.appear.name.e cget -state]}
-    catch {destroy .dialog}
+  set ::smoke_cb 0 ; set ::smoke_name {} ; set ::smoke_tries 0
+  # POLL for the built widgets, don't race text_line_slick's `tkwait visibility` with a
+  # fixed delay (review [5]): .dialog.appear.name.e is built last, so it is the "ready"
+  # sentinel; the scope combobox is built before it.
+  proc ::smoke_poll {} {
+    if {[winfo exists .dialog.appear.name.e]} {
+      set ::smoke_cb [expr {[winfo exists .dialog.scope.cb] ? 1 : 0}]
+      catch {set ::smoke_name [.dialog.appear.name.e cget -state]}
+      catch {destroy .dialog}
+    } elseif {[incr ::smoke_tries] < 100} {
+      after 40 ::smoke_poll
+    } else {
+      catch {destroy .dialog}
+    }
   }
+  after 40 ::smoke_poll
   catch {text_line_slick "Text:" 0 normal pin}
   check "gui: scope combobox present"        $::smoke_cb 1
   check "gui: Name greyed under selected"    $::smoke_name disabled

@@ -118,5 +118,20 @@ check "dir: A dir=out"                 [dirv 0] out
 check "dir: B dir=out"                 [dirv 1] out
 check "dir: A reoriented name_flip=1"  [xschem getprop rect 5 0 name_flip] 1
 
+# ---------------------------------------------------------------------------
+# 7. scope 'all' with NO pin as the primary (nothing selected) must NOT full-overwrite
+#    every pin with an identical prop: the fan uses the first pin as the changed-fields
+#    baseline, so distinct names + untouched dirs survive. (code-review finding [1])
+# ---------------------------------------------------------------------------
+xschem load $sym ; xschem unselect_all
+check "noprimary all: reports change" [xschem apply_pin_prop all $showoff] 1
+check "noprimary all: A hidden"       [showv 0] false
+check "noprimary all: B hidden"       [showv 1] false
+check "noprimary all: C hidden"       [showv 2] false
+check "noprimary all: A name kept"    [xschem getprop rect 5 0 name] A
+check "noprimary all: B name kept"    [xschem getprop rect 5 1 name] B
+check "noprimary all: C name kept"    [xschem getprop rect 5 2 name] C
+check "noprimary all: B dir untouched" [xschem getprop rect 5 1 dir] out
+
 puts "===================="
 if {$nfail == 0} { puts "symbol_pin_scope: ALL PASS" } else { puts "symbol_pin_scope: $nfail FAIL" ; exit 1 }
