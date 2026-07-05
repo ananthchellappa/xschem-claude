@@ -1,12 +1,29 @@
 # Wire segment splitting: independent click regions between attachment points
 
-Status: **SPEC drafted 2026-07-05; W0-W4 done** (W5, W6 pending). Branch
+Status: **SPEC drafted 2026-07-05; W0-W5 done** (W6 pending). Branch
 `fluid-editing` (sibling of `doc/claude/specs/fluid_editing.md`; the natural next
 Cadence-UX increment). Design grounded by a 7-reader + 3-critique understanding workflow
 (2 adversarial critiques survived; findings folded into §7 Hazards). `select_at` replay
 fidelity for split wires (Hazard H8) is deferred as **issue 0078**.
 
 ## Built
+
+- **W5 — hazard guards (H2 near-miss, H3 X-crossing). Test-only** (`test_wire_split.tcl`).
+  `break_wires_at_attach_points` already satisfies both by construction (pin-only sweep at the
+  exact `get_inst_pin_coord`, gated on true `touch()` + strict-interior — never a projected
+  point, never a bare wire crossing), so like W2 this phase LOCKS the invariant rather than
+  adding code (zero `src/` change). **T3 (H3):** two wires that merely cross (no endpoint/pin at
+  the cross) stay **2** wires on **2 distinct nets** — a split there would make four stubs share
+  the cross and short the nets. Confirmed xschem does not connect a bare crossing. **T3b positive
+  control:** a net-label pin placed AT the crossing is interior to both wires → splits them 2→**4**
+  and connects all four to **one** net — i.e. the exact short-on-split signature T3 guards against,
+  so T3's assertion is not vacuous. **T8 (H2):** an instance pin 5 units OFF the wire does **not**
+  split it (`get wires==1`) and does **not** connect (wire net ≠ the label net); **T8b control:**
+  the SAME label EXACTLY on the wire splits (→2) and connects (wire net == label net). A probe that
+  force-projected the near pin onto the wire found **defense in depth** — `break` split at the
+  projected point but `trim_wires`' pin-aware merge re-welded it (no real pin at the joint) and the
+  off-wire pin stayed unconnected, so the observable stayed correct. `test_wire_split.tcl` now 54
+  checks. Not yet committed.
 
 - **W3 — edit-time re-split / rejoin via `maintain_wire_segments()` (§6.2).** The
   autotrim-gated edit-time `trim_wires()` sites now call `maintain_wire_segments()` so an edit
@@ -403,11 +420,13 @@ Phases:
   default-mode verbatim. RED→GREEN + sabotage-verified twice (no-coalesce; prop-blind). The
   live `xctx->wire[]` is untouched by save (scratch copy), so segments survive a save.
 
-- **W5 — hazard guards.** T3 — X-crossing fixture (two wires crossing, no pin/endpoint at
-  the cross): assert `get wires` stays 2 **and** netlist shows 2 distinct nets (NOT
-  shorted) — guards H3. T8 — a rotated symbol whose pin is *near but not exactly on* the
-  wire: assert **no** split and **no** micro-stub (`get wires==1`), matching today's
-  no-connect — guards H2.
+- **W5 — hazard guards. ✅ BUILT (test-only).** T3 — X-crossing (two wires cross, no
+  pin/endpoint at the cross): `get wires`==2 **and** 2 distinct nets (no short) — guards H3;
+  T3b control (pin AT the cross → 4 segments, 1 net) makes it non-vacuous. T8 — a pin 5 units
+  *off* the wire: **no** split (`get wires`==1) and **no** connect; T8b control (same label
+  exactly on the wire → split + connect). Held by construction (exact `touch()`, pin-only
+  sweep); a forced-projection probe confirmed defense-in-depth (break splits at the projected
+  point but the pin-aware merge re-welds it). No `src/` change.
 
 - **W6 — integration.** Load the real `test_wire_splits.sch` with `cadence_compat 1`;
   assert 3 clickable segments; netlist unchanged vs default mode; saveas → 1 `N` record

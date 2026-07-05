@@ -350,4 +350,103 @@ check "W3 T4c: drawing a wire under the label splits at the pin (1 -> 2)" [xsche
 xschem undo
 check "W3 T4c: undo removes the drawn wire (-> 0)" [xschem get wires] 0
 
+# ===========================================================================
+# Phase W5 -- hazard guards. Auto-split must split ONLY at an exact instance-pin coordinate
+# (never a projected/snapped near point -- H2) and ONLY at pins, never at a bare wire-wire
+# crossing (H3). W1's break_wires_at_attach_points already respects both by construction
+# (get_inst_pin_coord + exact touch(), pin-only sweep); these lock it against a regression.
+# Each guard is paired with a positive control so the "no split / distinct nets" assertions
+# are not vacuous.
+# ===========================================================================
+
+# --- T3 (H3): two wires that merely CROSS (neither has an endpoint or a pin at the cross)
+#     must NOT split and must stay on TWO distinct nets (splitting there would make 4 stubs
+#     meet at the cross and wirecheck would short the two nets). Labels sit at wire ENDPOINTS
+#     (not interior) so they name each net without themselves splitting. ---
+set ::autotrim_wires 1
+set f6 [file join $wdir cross.sch]
+write_sch $f6 {v {xschem version=3.4.8RC file_version=1.3}
+G {}
+K {}
+V {}
+S {}
+F {}
+E {}
+N -100 0 100 0 {}
+N 0 -100 0 100 {}
+C {devices/lab_wire} -100 0 0 0 {name=lh lab=HH}
+C {devices/lab_wire} 0 -100 0 0 {name=lv lab=VV}
+}
+xschem load $f6
+check "W5 T3: bare X-crossing does NOT split (stays 2 wires)" [xschem get wires] 2
+if {[xschem get wires] == 2} {
+  set netH [xschem net @wire [xschem wire_id 0]]
+  set netV [xschem net @wire [xschem wire_id 1]]
+  check "W5 T3: crossing wires stay on DISTINCT nets (H3: no false short)" [expr {$netH ne $netV}] 1
+}
+
+# --- T3b positive control: a net-label pin placed AT the crossing (0,0) is interior to BOTH
+#     wires -> both split (2 -> 4) AND the pin connects all four stubs to one net. Proves the
+#     machinery WOULD split+short at (0,0) if there were a real attachment there, so T3's
+#     "2 wires / 2 nets" is a genuine no-op, not a dead assertion. ---
+set f7 [file join $wdir cross_junction.sch]
+write_sch $f7 {v {xschem version=3.4.8RC file_version=1.3}
+G {}
+K {}
+V {}
+S {}
+F {}
+E {}
+N -100 0 100 0 {}
+N 0 -100 0 100 {}
+C {devices/lab_wire} 0 0 0 0 {name=lc lab=CC}
+}
+xschem load $f7
+check "W5 T3b: a pin AT the crossing splits BOTH wires (2 -> 4 segments)" [xschem get wires] 4
+if {[xschem get wires] == 4} {
+  set nets {}
+  for {set i 0} {$i < 4} {incr i} { lappend nets [xschem net @wire [xschem wire_id $i]] }
+  check "W5 T3b: all 4 segments now share ONE net (the pin connects the junction)" \
+        [llength [lsort -unique $nets]] 1
+}
+
+# --- T8 (H2): an instance pin NEAR but not exactly on the wire (off by 5) must NOT split it
+#     and must NOT connect (a projected/snapped split would silently create a stub + a false
+#     connection). Compared against T8b where the SAME label sits EXACTLY on the wire. ---
+catch {xschem clear force}
+set ::autotrim_wires 1
+set f8 [file join $wdir nearmiss.sch]
+write_sch $f8 {v {xschem version=3.4.8RC file_version=1.3}
+G {}
+K {}
+V {}
+S {}
+F {}
+E {}
+N -100 0 100 0 {}
+C {devices/lab_wire} 0 5 0 0 {name=ln lab=NEAR}
+}
+set f8b [file join $wdir exacthit.sch]
+write_sch $f8b {v {xschem version=3.4.8RC file_version=1.3}
+G {}
+K {}
+V {}
+S {}
+F {}
+E {}
+N -100 0 100 0 {}
+C {devices/lab_wire} 0 0 0 0 {name=le lab=NEAR}
+}
+xschem load $f8
+set w_near [xschem get wires]
+set net_near [xschem net @wire [xschem wire_id 0]]
+xschem load $f8b
+set w_exact [xschem get wires]
+set net_exact [xschem net @wire [xschem wire_id 0]]
+set net_label [xschem net NEAR]
+check "W5 T8: near pin -> NO split; exact pin -> split (H2: exact-touch only)" \
+      [list $w_near $w_exact] {1 2}
+check "W5 T8: near pin does NOT connect (wire net != the NEAR label net)" [expr {$net_near ne $net_label}] 1
+check "W5 T8b: exact pin DOES connect (wire net == the NEAR label net)" [expr {$net_exact eq $net_label}] 1
+
 if {$fail == 0} { puts "OVERALL: ok"; exit 0 } else { puts "OVERALL: notok"; exit 1 }
