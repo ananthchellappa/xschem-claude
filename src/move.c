@@ -1613,23 +1613,96 @@ static void insert_exit_stubs(void)
   set_modify(1);
 }
 
-/* Fluid-editing Phase 1 (doc/claude/specs/nice_drag_rerouting.md §8): runtime invariant guard
- * at move END. Non-fatal, log-only, gated on fluid_editing (default off => never runs => every
- * move byte-identical). Brings the Phase-0 golden predicates P1/P2 into the interactive runtime
- * so any fast-path reroute that shorts/merges a net is caught the moment it happens.
+/* Fluid-editing Phase 1 (doc/claude/specs/nice_drag_rerouting.md §8): runtime invariant guards
+ * at move END. Non-fatal, log-only, gated on fluid_editing (default off => never run => every
+ * move byte-identical). Bring the Phase-0 golden predicates P1/P2 into the interactive runtime
+ * so a fast-path reroute that shorts/merges/disconnects a net is caught the moment it happens.
+ * Two complementary checks, because a net-label's own pin node echoes its intended name and so
+ * cannot see a merge, while the wire-level resolved names cannot cheaply see a disconnect:
+ *   - no-short (P2): every net label still sits on a wire whose resolved node equals the
+ *     label's own net (uses WIRE nodes; the merge the echo hides -- F5.P2).
+ *   - connectivity (P1): the partition of instance pins into nets is unchanged across the move
+ *     (uses instance pin nodes; catches a pin torn off its net -- a disconnect).
  *
- * Check: every net label must still sit on a wire whose resolved net name equals the label's
- * own net. A mismatch means the label's intended net merged into (or was renamed by) another
- * net -- the silent short the golden matrix records as F5.P2 RED. Uses the wire's resolved
- * node (baked by prepare_netlist_structs), because a label instance's own pin node echoes its
- * intended name and cannot see the merge (see predicates.tcl p2 for the same reasoning).
- * Publishes the violation count to the Tcl var fluid_last_move_violations for the headless
- * regression (tests/headless/wireedit). */
-static void fluid_check_move_invariants(void)
+ * The partition compare uses a CANONICAL first-seen relabeling: walking instance pins in a
+ * fixed order, each new net name gets the next integer id. Ids are therefore keyed to pin
+ * POSITION, not net name, so a pure #net rename (same groups, different auto-name) yields an
+ * identical id vector (no false positive), while a real regrouping shifts it. The per-pin diff
+ * COUNT is approximate (one real change can cascade later ids), but "any difference" is an
+ * exact detector of a partition change. Snapshot taken at move START (pre-motion geometry). */
+
+static int *fluid_snap_id = NULL;    /* canonical partition id per instance pin, captured at START */
+static int  fluid_snap_npins = 0;    /* 0 => no valid snapshot */
+
+/* total number of instance pins in the current schematic */
+static int fluid_count_pins(void)
 {
-  int i, w, violations = 0;
+  int i, tot = 0;
+  for(i = 0; i < xctx->instances; ++i) {
+    if(xctx->inst[i].ptr < 0) continue;                  /* unlinked symbol (see move.c:1274) */
+    tot += (xctx->inst[i].ptr + xctx->sym)->rects[PINLAYER];
+  }
+  return tot;
+}
+
+/* fill out[] (sized >= maxpins) with the canonical first-seen partition id of each instance
+ * pin; return the number written. prepare_netlist_structs() must have run. */
+static int fluid_build_partition(int *out, int maxpins)
+{
+  int i, p, j, k = 0, nextid = 0, nnames = 0;
+  const char **names;
+  int *nameid;
+  if(maxpins <= 0) return 0;
+  names  = my_malloc(_ALLOC_ID_, maxpins * sizeof(char *)); /* net name -> id, first-seen list */
+  nameid = my_malloc(_ALLOC_ID_, maxpins * sizeof(int));    /* (upper bound: one per pin) */
+  for(i = 0; i < xctx->instances && k < maxpins; ++i) {
+    int npins;
+    if(xctx->inst[i].ptr < 0) continue;                  /* skip identically to fluid_count_pins */
+    npins = (xctx->inst[i].ptr + xctx->sym)->rects[PINLAYER];
+    for(p = 0; p < npins && k < maxpins; ++p) {
+      const char *nm = xctx->inst[i].node ? xctx->inst[i].node[p] : NULL;
+      int id = -1;
+      if(nm && nm[0]) {
+        for(j = 0; j < nnames; ++j) if(!strcmp(names[j], nm)) { id = nameid[j]; break; }
+        if(id < 0) { names[nnames] = nm; nameid[nnames] = nextid; ++nnames; id = nextid++; }
+      } else {
+        id = nextid++;                                   /* unconnected pin -> unique singleton */
+      }
+      out[k++] = id;
+    }
+  }
+  my_free(_ALLOC_ID_, &names);
+  my_free(_ALLOC_ID_, &nameid);
+  return k;
+}
+
+/* capture the pre-move connectivity partition (called at move START) */
+static void fluid_snapshot_partition(void)
+{
+  int tot;
+  my_free(_ALLOC_ID_, &fluid_snap_id);
+  fluid_snap_npins = 0;
   if(!tclgetboolvar("fluid_editing")) return;
   prepare_netlist_structs(0);
+  tot = fluid_count_pins();
+  if(tot <= 0) return;
+  fluid_snap_id = my_malloc(_ALLOC_ID_, tot * sizeof(int));
+  fluid_snap_npins = fluid_build_partition(fluid_snap_id, tot);
+}
+
+/* free the snapshot without comparing (called on move ABORT) */
+static void fluid_discard_snapshot(void)
+{
+  my_free(_ALLOC_ID_, &fluid_snap_id);
+  fluid_snap_npins = 0;
+}
+
+static void fluid_check_move_invariants(void)
+{
+  int i, w, shorts = 0, disconnects = 0;
+  if(!tclgetboolvar("fluid_editing")) { fluid_discard_snapshot(); return; }
+  prepare_netlist_structs(0);
+  /* --- P2: no-short/merge (wire-level, see comment above) --- */
   for(i = 0; i < xctx->instances; ++i) {
     const char *type = xctx->sym[xctx->inst[i].ptr].type;
     const char *intended;
@@ -1642,15 +1715,31 @@ static void fluid_check_move_invariants(void)
       if(touch(xctx->wire[w].x1, xctx->wire[w].y1, xctx->wire[w].x2, xctx->wire[w].y2, px, py)) {
         const char *phys = xctx->wire[w].node;
         if(phys && strcmp(intended, phys)) {
-          ++violations;
-          dbg(0, "fluid_editing INVARIANT (P1/P2): net label '%s' (%s) now on net '%s' after "
+          ++shorts;
+          dbg(0, "fluid_editing INVARIANT (P2): net label '%s' (%s) now on net '%s' after "
                  "move -- possible short/merge\n", intended, xctx->inst[i].instname, phys);
         }
         break;                                           /* first wire at the pin is enough */
       }
     }
   }
-  tclsetvar("fluid_last_move_violations", my_itoa(violations));
+  /* --- P1: connectivity partition unchanged (pin-level, vs START snapshot) --- */
+  if(fluid_snap_id && fluid_snap_npins > 0) {
+    int tot = fluid_count_pins();
+    if(tot == fluid_snap_npins) {                        /* structure comparable (no inst added/removed) */
+      int *now = my_malloc(_ALLOC_ID_, tot * sizeof(int));
+      int m = fluid_build_partition(now, tot), k;
+      if(m == fluid_snap_npins)
+        for(k = 0; k < m; ++k) if(now[k] != fluid_snap_id[k]) ++disconnects;
+      my_free(_ALLOC_ID_, &now);
+    }
+    if(disconnects)
+      dbg(0, "fluid_editing INVARIANT (P1): %d instance pin(s) changed net partition after "
+             "move -- possible disconnect\n", disconnects);
+  }
+  fluid_discard_snapshot();
+  tclsetvar("fluid_last_move_violations", my_itoa(shorts));
+  tclsetvar("fluid_last_move_disconnects", my_itoa(disconnects));
 }
 
 /* merge param unused, RFU */
@@ -1692,6 +1781,7 @@ void move_objects(int what, int merge, double dx, double dy)
    } else {xctx->x1=xctx->mousex_snap;xctx->y1=xctx->mousey_snap;}
    xctx->move_flip = 0;xctx->move_rot = 0;
    xctx->ui_state|=STARTMOVE;
+   fluid_snapshot_partition(); /* Phase 1 P1 guard: capture pre-move connectivity partition */
   }
   if(what & ABORT)  /* abort operation */
   {
@@ -1721,6 +1811,7 @@ void move_objects(int what, int merge, double dx, double dy)
    xctx->move_rot=xctx->move_flip=0;
    xctx->deltax=xctx->deltay=0.;
    xctx->ui_state &= ~STARTMOVE;
+   fluid_discard_snapshot(); /* Phase 1: aborted gesture -> drop the START snapshot */
    update_symbol_bboxes(0, 0);
   }
   if(what & RUBBER)  /* draw objects while moving */
