@@ -161,4 +161,127 @@ if {[file exists $realf]} {
   puts "ok:   W2 integration skipped (real fixture absent; self-contained fixture covers it)"
 }
 
+# ===========================================================================
+# Phase W4 -- coalesce-on-save (D1: the on-disk .sch stays the minimal, byte-stable form).
+# With autotrim on, a wire tapped mid-span is split into N clickable segments IN MEMORY
+# (W1), but the .sch must round-trip as the ORIGINAL single N record: save re-joins the
+# collinear, same-prop, pin-free-abutting runs on a private scratch copy WITHOUT disturbing
+# the live segmented array (the user keeps clickable segments after saving). Strictly gated
+# on autotrim_wires: default mode saves are verbatim -- a default user's deliberately
+# abutting collinear wires must never be silently merged.
+# ===========================================================================
+proc slurp {p} { set fd [open $p r]; set d [read $fd]; close $fd; return $d }
+proc count_N {p} {
+  set n 0
+  foreach ln [split [slurp $p] \n] { if {[string match "N *" $ln]} { incr n } }
+  return $n
+}
+
+# Canonical baseline: render f1 (1 wire -100..100 + 2 labels) with split OFF -> exactly 1 N
+# record, in xschem's precise on-disk form. This is the byte target D1 must reproduce.
+set base [file join $wdir w4_base.sch]
+set ::autotrim_wires 0
+xschem load $f1
+xschem saveas $base schematic
+check "W4 baseline: split-off canonical file has exactly 1 N record" [count_N $base] 1
+check "W4 baseline: split-off load keeps 1 wire" [xschem get wires] 1
+
+# T6 -- open the canonical file WITH split on: 3 segments in RAM, but saveas must coalesce
+# back to the identical single-N file (round-trip byte-stable). RED without W4: no coalesce
+# => 3 N records => files differ.
+set ::autotrim_wires 1
+xschem load $base
+check "W4 T6: split-on load re-splits to 3 segments in memory" [xschem get wires] 3
+set out [file join $wdir w4_out.sch]
+xschem saveas $out schematic
+check "W4 T6: coalesce-on-save writes exactly 1 N record" [count_N $out] 1
+check "W4 T6: saved .sch byte-identical to split-off canonical form (D1)" [slurp $out] [slurp $base]
+check "W4 T6: coalesce did NOT disturb the live segmented array (still 3)" [xschem get wires] 3
+xschem load $out
+check "W4 T6: reload of coalesced file re-splits to 3 (round-trip)" [xschem get wires] 3
+
+# T6 INV-1: the split+coalesce round-trip must not change connectivity (res+label fixture).
+set ::autotrim_wires 0
+xschem load $f2
+set nmap_base [xschem instance_nodemap R7]
+set rbase [file join $wdir w4_rbase.sch]
+xschem saveas $rbase schematic
+set ::autotrim_wires 1
+xschem load $rbase
+set rout [file join $wdir w4_rout.sch]
+xschem saveas $rout schematic
+check "W4 T6 INV-1: coalesced round-trip file has 1 N record" [count_N $rout] 1
+xschem load $rout
+check "W4 T6 INV-1: R7 node map unchanged across split+coalesce round-trip" \
+      [xschem instance_nodemap R7] $nmap_base
+
+# T7 -- default mode (autotrim off): no split, saveas VERBATIM, byte-stable open->save->open->save.
+set ::autotrim_wires 0
+xschem load $f1
+check "W4 T7: default-mode load keeps 1 wire (no split)" [xschem get wires] 1
+set a [file join $wdir w4_a.sch]; set b [file join $wdir w4_b.sch]
+xschem saveas $a schematic
+xschem load $a
+xschem saveas $b schematic
+check "W4 T7: default-mode save is byte-stable (verbatim, no coalesce)" [slurp $a] [slurp $b]
+
+# T7b -- default mode must NOT coalesce two abutting collinear same-prop wires the user built
+# on purpose (guards over-eager coalesce leaking into default mode).
+catch {xschem clear force}
+set ::autotrim_wires 0
+xschem wire -100 40 0 40
+xschem wire 0 40 100 40
+set c [file join $wdir w4_c.sch]
+xschem saveas $c schematic
+check "W4 T7b: default mode keeps 2 deliberately-abutting collinear wires on disk" [count_N $c] 2
+
+# T6b -- prop divergence: split a wire at a label pin (2 segments), diverge ONE segment's
+# prop; coalesce must REFUSE to merge across the real difference -> 2 records persist (H7).
+set f3 [file join $wdir one_label.sch]
+write_sch $f3 {v {xschem version=3.4.8RC file_version=1.3}
+G {}
+K {}
+V {}
+S {}
+F {}
+E {}
+N -100 20 100 20 {}
+C {devices/lab_wire} 0 20 0 0 {name=l9 lab=GB}
+}
+set ::autotrim_wires 1
+xschem load $f3
+check "W4 T6b: one wire + mid-span label -> 2 segments" [xschem get wires] 2
+xschem setprop wire 0 lab XX
+set d3 [file join $wdir w4_diverge.sch]
+xschem saveas $d3 schematic
+check "W4 T6b: divergent-prop segments NOT coalesced (2 N records persist)" [count_N $d3] 2
+# control (non-vacuous): same fixture, NO divergence -> coalesces to 1.
+xschem load $f3
+set d3b [file join $wdir w4_conv.sch]
+xschem saveas $d3b schematic
+check "W4 T6b control: same fixture, no divergence -> coalesces to 1 N" [count_N $d3b] 1
+
+# T6c -- a genuine T-junction (a 3rd wire's ENDPOINT lands mid-span) is a real connection
+# node: coalesce must NOT weld the two collinear halves across it (spec 6.3: "no 3rd-wire
+# endpoint at the joint"). This preserves trim_wires' in-memory split and matches pre-W4
+# autotrim save behaviour -- W4 only re-joins ITS OWN attachment-pin splits, not T-splits.
+set f4 [file join $wdir tee.sch]
+write_sch $f4 {v {xschem version=3.4.8RC file_version=1.3}
+G {}
+K {}
+V {}
+S {}
+F {}
+E {}
+N -100 -20 100 -20 {}
+N 0 -80 0 -20 {}
+}
+set ::autotrim_wires 1
+xschem load $f4
+check "W4 T6c: autotrim load splits the horizontal at the T (3 wires)" [xschem get wires] 3
+set t4 [file join $wdir w4_tee.sch]
+xschem saveas $t4 schematic
+check "W4 T6c: coalesce keeps the T split (3 N records; no weld across a 3rd-wire endpoint)" \
+      [count_N $t4] 3
+
 if {$fail == 0} { puts "OVERALL: ok"; exit 0 } else { puts "OVERALL: notok"; exit 1 }

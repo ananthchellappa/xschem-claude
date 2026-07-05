@@ -1,6 +1,6 @@
 # Wire segment splitting: independent click regions between attachment points
 
-Status: **SPEC drafted 2026-07-05; W0-W2 done** (W3-W6 pending). Branch
+Status: **SPEC drafted 2026-07-05; W0-W2 + W4 done** (W3, W5, W6 pending). Branch
 `fluid-editing` (sibling of `doc/claude/specs/fluid_editing.md`; the natural next
 Cadence-UX increment). Design grounded by a 7-reader + 3-critique understanding workflow
 (2 adversarial critiques survived; findings folded into §7 Hazards). `select_at` replay
@@ -67,10 +67,23 @@ fidelity for split wires (Hazard H8) is deferred as **issue 0078**.
   `break_wires_at_pins` (larger refactor); off-grid ULP pin match is theoretical
   (xschem's connectivity is exact-equality too, so a near-but-off pin is not connected).
 
-  > ⚠ **W4 is now the priority.** With `autotrim_wires`/`cadence_compat` on, W1 splits at
-  > load but there is no coalesce-on-save yet, so opening + saving a mid-span-tapped wire
-  > rewrites 1 `N` record as N — D1 (byte-stable `.sch`) is violated for those users until
-  > W4 lands. Default users (`autotrim_wires` off) are unaffected.
+- **W4 — coalesce-on-save (§6.3, D1).** New `merge_collinear_wires(list, n, ignore_pins)`
+  (`check.c`) coalesces a wire array in place: re-joins every maximal run of collinear,
+  same-`prop_ptr`, abutting segments whose shared joint carries **no other (non-collinear)
+  wire endpoint** (a real T-junction stays split — spec §6.3). `save_wire()` (`save.c`), on a
+  full save with `autotrim_wires` on, runs it **pin-blind** (`ignore_pins=1`) on a *private
+  scratch copy* (shallow `memcpy`; `prop_ptr`/`node` borrowed, only read/geometry-rewritten)
+  so the on-disk `.sch` is the minimal coalesced form while `xctx->wire[]` — the user's live
+  clickable segments — is never disturbed. Strictly gated on `autotrim_wires`: default-mode
+  saves stay byte-for-byte verbatim (`select_only`/clipboard also verbatim). Prop-equality is
+  **always** required before welding (unlike `trim_wires`' pin-blind merge) so a user who
+  diverges one segment's attributes keeps that boundary on disk (H7). Tests (T6/T6b/T6c/T7):
+  split-on load→saveas is **byte-identical** to the split-off canonical file and re-splits on
+  reload (round-trip); INV-1 node map invariant across the round-trip; divergent-prop segments
+  persist as 2 records (+ non-vacuous control); a T-junction stays 3 records (no weld across a
+  3rd-wire endpoint); default-mode save verbatim + deliberately-abutting wires not merged.
+  RED→GREEN + sabotage-verified twice (no-coalesce flips the D1 checks; prop-blind flips only
+  the divergence check). `test_wire_split.tcl` now 34 checks. Not yet committed.
 
 - **W2 — connectivity / netlist invariance (INV-1). Test-only** (`test_wire_split.tcl`).
   W1's code already satisfies it; T2 locks it: load the real `test_wire_splits.sch` split
@@ -349,13 +362,14 @@ Phases:
   `maintain_wire_segments()` with `push_undo` before mutation; assert undo restores the
   pre-edit segment state.
 
-- **W4 — coalesce-on-save (§6.3, D1).** *RED:* T6 — with split active, load fixture (3
-  segments in RAM), `xschem saveas $tmp schematic`, grep `^N ` in `$tmp`; assert **1**
-  record whose endpoints/prop equal the original; reload `$tmp` and assert it re-splits to
-  3 (round-trip). *RED:* T7 — with `autotrim_wires 0`, load fixture, assert `get wires==1`
-  and saveas reproduces the input `.sch` **verbatim** (default-mode untouched). *Build:*
-  `merge_collinear_wires(list,n,ignore_pins)` + scratch-copy coalesce in the save path,
-  gated on `autotrim_wires`.
+- **W4 — coalesce-on-save (§6.3, D1). ✅ BUILT.** *RED (was):* T6 — split-on load→saveas
+  wrote 3 `N` records (byte-differs from the split-off canonical file); T6b control —
+  no-divergence fixture wrote 2 records. *Built:* `merge_collinear_wires(list,n,ignore_pins)`
+  (`check.c`) + pin-blind scratch-copy coalesce in `save_wire` (`save.c`), gated on
+  `autotrim_wires`. T6 now byte-identical + round-trips; T6b divergent-prop persists 2 records
+  (prop-equality gate, H7); T6c T-junction stays 3 (no weld across a 3rd-wire endpoint); T7/T7b
+  default-mode verbatim. RED→GREEN + sabotage-verified twice (no-coalesce; prop-blind). The
+  live `xctx->wire[]` is untouched by save (scratch copy), so segments survive a save.
 
 - **W5 — hazard guards.** T3 — X-crossing fixture (two wires crossing, no pin/endpoint at
   the cross): assert `get wires` stays 2 **and** netlist shows 2 distinct nets (NOT

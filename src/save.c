@@ -2650,17 +2650,35 @@ static void save_inst(FILE *fd, int select_only)
 
 static void save_wire(FILE *fd, int select_only)
 {
- int i;
- xWire *ptr;
+ int i, nw;
+ xWire *ptr, *coalesced = NULL;
 
- ptr=xctx->wire;
- for(i=0;i<xctx->wires; ++i)
+ ptr = xctx->wire;
+ nw = xctx->wires;
+ /* D1 / W4: on a full save with wire auto-splitting active, write the COALESCED (byte-stable)
+  * form -- re-join the in-memory inter-attachment segments on a PRIVATE scratch copy so the
+  * on-disk .sch matches the pre-split single record, WITHOUT disturbing the live segmented
+  * array (the user keeps clickable segments after saving). Strictly gated on autotrim_wires:
+  * default-mode saves stay verbatim (a default user's deliberately abutting collinear wires
+  * must not be silently merged). Never on select_only (clipboard/paste keeps exactly what is
+  * selected). See doc/claude/specs/wire_segment_splitting.md (section 6.3).
+  * The scratch copy is shallow: prop_ptr/node are borrowed from xctx->wire[] and only READ
+  * (save_ascii_string) / geometry-rewritten (merge_collinear_wires), so freeing the array is
+  * enough -- the borrowed strings stay owned by xctx->wire[]. */
+ if(!select_only && xctx->wires > 1 && tclgetboolvar("autotrim_wires")) {
+   coalesced = my_malloc(_ALLOC_ID_, xctx->wires * sizeof(xWire));
+   memcpy(coalesced, xctx->wire, xctx->wires * sizeof(xWire));
+   nw = merge_collinear_wires(coalesced, xctx->wires, 1 /* pin-blind */);
+   ptr = coalesced;
+ }
+ for(i=0;i<nw; ++i)
  {
    if (select_only && ptr[i].sel != SELECTED) continue;
   fprintf(fd, "N %.16g %.16g %.16g %.16g ",ptr[i].x1, ptr[i].y1, ptr[i].x2,
      ptr[i].y2);
   save_ascii_string(ptr[i].prop_ptr,fd, 1);
  }
+ if(coalesced) my_free(_ALLOC_ID_, &coalesced);
 }
 
 static void save_text(FILE *fd, int select_only)
@@ -3843,11 +3861,9 @@ int load_schematic(int load_symbols, const char *fname, int reset_undo, int aler
     /* Wire-segment maintenance: split each wire at its interior attachment points into
      * independent clickable segments, then trim/merge (pin-aware). Runs inside the
      * mod_before_norm revert so a freshly-opened file is not flagged modified, and under
-     * no_autosave.
-     * NOTE: intended to be in-memory only, but coalesce-on-save (W4) is NOT YET BUILT, so
-     * with autotrim_wires on a save currently persists the split as multiple N records
-     * (byte-stability / D1 not yet honoured). See doc/claude/specs/wire_segment_splitting.md
-     * (W1 done; W4 pending). */
+     * no_autosave. In-memory only: coalesce-on-save (W4, save_wire -> merge_collinear_wires)
+     * re-joins these splits on save, so the on-disk .sch stays byte-stable (D1).
+     * See doc/claude/specs/wire_segment_splitting.md (W1, W4). */
     if(reset_undo && tclgetboolvar("autotrim_wires")) maintain_wire_segments();
     if(reset_undo && !mod_before_norm && xctx->modified) set_modify(0);
   }

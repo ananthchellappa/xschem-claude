@@ -1785,6 +1785,7 @@ extern void break_wires_at_point(double x0, double y0, int align);
 extern void break_wires_at_pins(int remove);
 extern int break_wires_at_attach_points(void);
 extern void maintain_wire_segments(void);
+extern int merge_collinear_wires(xWire *list, int n, int ignore_pins);
 
 extern void check_touch(int i, int j,
          unsigned short *parallel,unsigned short *breaks,
