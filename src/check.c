@@ -158,6 +158,31 @@ double timer(int start)
   }
 }
 
+/* Return 1 if any instance PIN coincides EXACTLY with (x, y). Net-labels, pin-labels
+ * and bus_taps are just instances carrying PINLAYER pins, so they are covered too.
+ * Used by trim_wires' collinear-rejoin to REFUSE welding two segments across an
+ * attachment point (a net-label / instance pin between them is a meaningful segment
+ * boundary for click-selection). Exact double compare is correct here: pin coords and
+ * wire endpoints are on-grid, so a genuine attachment matches exactly; a pin merely
+ * NEAR the wire is not an attachment (and is not connected either -- see
+ * doc/claude/specs/wire_segment_splitting.md, W0 + Hazard H2).
+ * Only called from the merge branch after the cheap end1/end2==0 test, i.e. for the
+ * rare degree-2 collinear joints trim would otherwise collapse. */
+static int any_inst_pin_at(double x, double y)
+{
+  int i, r, rects;
+  double x0, y0;
+  for(i = 0; i < xctx->instances; ++i) {
+    if(xctx->inst[i].ptr < 0) continue;
+    rects = (xctx->inst[i].ptr + xctx->sym)->rects[PINLAYER];
+    for(r = 0; r < rects; ++r) {
+      get_inst_pin_coord(i, r, &x0, &y0);
+      if(x == x0 && y == y0) return 1;
+    }
+  }
+  return 0;
+}
+
 void trim_wires(void)
 {
   int k, sqx, sqy, doloops;
@@ -350,7 +375,12 @@ void trim_wires(void)
             /* touch in wire[j].x1, wire[j].y1 */
             xctx->wire[j].x1 == x0 && xctx->wire[j].y1 == y0 &&
             /* no other connecting wires */
-            xctx->wire[i].end2 == 0 && xctx->wire[j].end1 == 0 ) {
+            xctx->wire[i].end2 == 0 && xctx->wire[j].end1 == 0 &&
+            /* and no instance pin / net-label at the joint: an attachment there is a
+             * meaningful segment boundary, do not weld across it (W0 -- pin-aware merge,
+             * doc/claude/specs/wire_segment_splitting.md). Also gives free auto-rejoin
+             * when the pin is later removed. */
+            !any_inst_pin_at(x0, y0) ) {
           dbg(2, "trim_wires(): i=%d merged with j=%d\n", i, j);
           xctx->wire[i].x2 = xctx->wire[j].x2;
           xctx->wire[i].y2 = xctx->wire[j].y2;
