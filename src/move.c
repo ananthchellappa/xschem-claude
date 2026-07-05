@@ -1613,6 +1613,46 @@ static void insert_exit_stubs(void)
   set_modify(1);
 }
 
+/* Fluid-editing Phase 1 (doc/claude/specs/nice_drag_rerouting.md §8): runtime invariant guard
+ * at move END. Non-fatal, log-only, gated on fluid_editing (default off => never runs => every
+ * move byte-identical). Brings the Phase-0 golden predicates P1/P2 into the interactive runtime
+ * so any fast-path reroute that shorts/merges a net is caught the moment it happens.
+ *
+ * Check: every net label must still sit on a wire whose resolved net name equals the label's
+ * own net. A mismatch means the label's intended net merged into (or was renamed by) another
+ * net -- the silent short the golden matrix records as F5.P2 RED. Uses the wire's resolved
+ * node (baked by prepare_netlist_structs), because a label instance's own pin node echoes its
+ * intended name and cannot see the merge (see predicates.tcl p2 for the same reasoning).
+ * Publishes the violation count to the Tcl var fluid_last_move_violations for the headless
+ * regression (tests/headless/wireedit). */
+static void fluid_check_move_invariants(void)
+{
+  int i, w, violations = 0;
+  if(!tclgetboolvar("fluid_editing")) return;
+  prepare_netlist_structs(0);
+  for(i = 0; i < xctx->instances; ++i) {
+    const char *type = xctx->sym[xctx->inst[i].ptr].type;
+    const char *intended;
+    double px, py;
+    if(!type || strcmp(type, "label")) continue;         /* only net labels */
+    if(!xctx->inst[i].node || !xctx->inst[i].node[0]) continue;
+    intended = xctx->inst[i].node[0];                    /* the net this label names */
+    get_inst_pin_coord(i, 0, &px, &py);                  /* a net label has a single pin (0) */
+    for(w = 0; w < xctx->wires; ++w) {
+      if(touch(xctx->wire[w].x1, xctx->wire[w].y1, xctx->wire[w].x2, xctx->wire[w].y2, px, py)) {
+        const char *phys = xctx->wire[w].node;
+        if(phys && strcmp(intended, phys)) {
+          ++violations;
+          dbg(0, "fluid_editing INVARIANT (P1/P2): net label '%s' (%s) now on net '%s' after "
+                 "move -- possible short/merge\n", intended, xctx->inst[i].instname, phys);
+        }
+        break;                                           /* first wire at the pin is enough */
+      }
+    }
+  }
+  tclsetvar("fluid_last_move_violations", my_itoa(violations));
+}
+
 /* merge param unused, RFU */
 void move_objects(int what, int merge, double dx, double dy)
 {
@@ -2108,6 +2148,7 @@ void move_objects(int what, int merge, double dx, double dy)
    /* P3 write-through: a moved pin-name view records its new offset on the owning pin;
     * a pin moved without its view makes the view follow (Option B). */
    pin_views_reconcile_after_move();
+   fluid_check_move_invariants(); /* Phase 1 runtime P1/P2 guard (log-only, gated on fluid_editing) */
    set_modify(1); /* must be done before draw() if floaters are present to force cached values update */
    draw();
    xctx->rotatelocal=0;
