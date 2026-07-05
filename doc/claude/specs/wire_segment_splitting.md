@@ -1,12 +1,25 @@
 # Wire segment splitting: independent click regions between attachment points
 
-Status: **SPEC drafted 2026-07-05; W0-W5 done** (W6 pending). Branch
+Status: **SPEC drafted 2026-07-05; W0-W6 ALL DONE — feature complete.** Branch
 `fluid-editing` (sibling of `doc/claude/specs/fluid_editing.md`; the natural next
 Cadence-UX increment). Design grounded by a 7-reader + 3-critique understanding workflow
 (2 adversarial critiques survived; findings folded into §7 Hazards). `select_at` replay
 fidelity for split wires (Hazard H8) is deferred as **issue 0078**.
 
 ## Built
+
+- **W6 — end-to-end integration through the real cadence path. Test-only** (`test_wire_split.tcl`).
+  Exercises the whole feature the way a user actually gets it: `set cadence_compat 1` (which
+  auto-enables `autotrim_wires` via the `cadence_compat_sync` write-trace — verified, NOT set
+  directly as W1-W5 do). On the exact `test_wire_splits.sch` geometry (wire `-100..110` tapped by
+  a net-label at −80 and a resistor pin at 0): asserts **3 clickable segments** (per-region
+  `select_at` → 3 distinct `wire_id`s), the split is real (default 1 wire vs cadence 3), the R7
+  **node map is identical** to default mode (INV-1 end-to-end), `saveas` **coalesces to a single
+  `N` record byte-identical** to the default-mode canonical file (D1), and a reload **re-splits to
+  3** (round-trip). Self-contained (embeds the fixture, so it runs on a clean checkout) plus an
+  extra skip-if-absent pass on the actual untracked SANDBOX artifact (present here: 3 segments,
+  netlist invariant, coalesces to 1 `N`). `test_wire_split.tcl` now **66 checks**. No `src/`
+  change. **This closes the feature — W0-W6 all done.**
 
 - **W5 — hazard guards (H2 near-miss, H3 X-crossing). Test-only** (`test_wire_split.tcl`).
   `break_wires_at_attach_points` already satisfies both by construction (pin-only sweep at the
@@ -428,9 +441,11 @@ Phases:
   sweep); a forced-projection probe confirmed defense-in-depth (break splits at the projected
   point but the pin-aware merge re-welds it). No `src/` change.
 
-- **W6 — integration.** Load the real `test_wire_splits.sch` with `cadence_compat 1`;
-  assert 3 clickable segments; netlist unchanged vs default mode; saveas → 1 `N` record
-  identical to the committed fixture.
+- **W6 — integration. ✅ BUILT (test-only).** Real cadence path (`cadence_compat 1` →
+  autotrim via write-trace) on the `test_wire_splits.sch` geometry: 3 clickable distinct
+  `wire_id`s; R7 node map identical to default (INV-1); saveas → 1 `N` byte-identical to the
+  canonical file (D1); reload re-splits to 3. Self-contained + skip-if-absent pass on the real
+  SANDBOX file. No `src/` change.
 
 ### Test matrix
 

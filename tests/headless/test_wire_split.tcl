@@ -449,4 +449,79 @@ check "W5 T8: near pin -> NO split; exact pin -> split (H2: exact-touch only)" \
 check "W5 T8: near pin does NOT connect (wire net != the NEAR label net)" [expr {$net_near ne $net_label}] 1
 check "W5 T8b: exact pin DOES connect (wire net == the NEAR label net)" [expr {$net_exact eq $net_label}] 1
 
+# ===========================================================================
+# Phase W6 -- end-to-end integration through the REAL user path: cadence_compat (which
+# force-enables autotrim_wires via the cadence_compat_sync write-trace, NOT set directly as the
+# earlier phases do). Uses the exact test_wire_splits.sch geometry (wire -100..110 tapped by a
+# net-label at -80 and a resistor pin at 0). Asserts the full loop at once: 3 CLICKABLE segments,
+# netlist identical to default mode (INV-1), and saveas byte-identical to the coalesced form (D1),
+# re-splitting on reload. Self-contained (does not depend on the untracked SANDBOX file); the real
+# file is an extra skip-if-absent check.
+# ===========================================================================
+proc N_line {p} { foreach ln [split [slurp $p] \n] { if {[string match "N *" $ln]} { return $ln } }; return "" }
+
+set f9 [file join $wdir wsplit_real.sch]
+write_sch $f9 {v {xschem version=3.4.8RC file_version=1.3}
+G {}
+K {}
+V {}
+S {}
+F {}
+E {}
+N -100 -60 110 -60 {lab=GB}
+C {devices/res} 0 -30 0 1 {name=R7 m=1 value=320}
+C {devices/lab_wire} -80 -60 0 0 {name=l8 lab=GB}
+}
+
+# Default-mode baseline FIRST (both flags off), before enabling cadence (the cadence->autotrim
+# trace is one-directional, so autotrim would otherwise stay latched on).
+set ::cadence_compat 0
+set ::autotrim_wires 0
+xschem load $f9
+set nmap_def [xschem instance_nodemap R7]
+set nw_def [xschem get wires]
+set canon [file join $wdir w6_canon.sch]
+xschem saveas $canon schematic          ;# canonical single-N form
+
+# Real user path: flip cadence_compat -> the write-trace must auto-enable autotrim_wires.
+set ::cadence_compat 1
+check "W6: cadence_compat=1 auto-enables autotrim_wires (write-trace)" [set ::autotrim_wires] 1
+xschem load $canon
+check "W6: real fixture geometry -> 3 clickable segments under cadence_compat" [xschem get wires] 3
+check "W6: split is real vs default mode (1 wire -> 3 segments)" [list $nw_def [xschem get wires]] {1 3}
+if {[xschem get wires] == 3} {
+  set ids {}
+  foreach x {-90 -40 55} { set row [xschem select_at $x -60]; lappend ids [lindex $row 3] }
+  check "W6: the 3 inter-attachment regions are 3 distinct clickable wire_ids" \
+        [llength [lsort -unique $ids]] 3
+}
+check "W6: netlist invariant -- R7 node map identical cadence vs default (INV-1)" \
+      [xschem instance_nodemap R7] $nmap_def
+
+# D1 round-trip: saveas under cadence must coalesce back to the byte-identical single-N file.
+set out [file join $wdir w6_out.sch]
+xschem saveas $out schematic
+check "W6: coalesce-on-save writes exactly 1 N record" [count_N $out] 1
+check "W6: saved N record == the canonical single wire (D1)" [N_line $out] {N -100 -60 110 -60 {lab=GB}}
+check "W6: saved .sch byte-identical to the default-mode canonical file (D1)" [slurp $out] [slurp $canon]
+xschem load $out
+check "W6: round-trip reload re-splits to 3 clickable segments" [xschem get wires] 3
+
+# Extra: the actual untracked SANDBOX artifact, if present (integration on the shipped file).
+if {[file exists $realf]} {
+  set ::cadence_compat 0; set ::autotrim_wires 0
+  xschem load $realf
+  set rmap_def [xschem instance_nodemap R7]
+  set ::cadence_compat 1
+  xschem load $realf
+  check "W6 real: SANDBOX test_wire_splits.sch -> 3 segments under cadence" [xschem get wires] 3
+  check "W6 real: SANDBOX netlist invariant (R7 nodemap)" [xschem instance_nodemap R7] $rmap_def
+  set rout [file join $wdir w6_real_out.sch]
+  xschem saveas $rout schematic
+  check "W6 real: SANDBOX saveas coalesces to 1 N record" [count_N $rout] 1
+} else {
+  puts "ok:   W6 real SANDBOX fixture skipped (untracked file absent; self-contained W6 covers it)"
+}
+set ::cadence_compat 0
+
 if {$fail == 0} { puts "OVERALL: ok"; exit 0 } else { puts "OVERALL: notok"; exit 1 }
