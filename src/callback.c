@@ -5893,7 +5893,15 @@ static void handle_button_press(int event, int state, int rstate, KeySym key, in
          if(edit_polygon_point(state)) return; /* sets xctx->shape_point_selected */
        }
        if(!xctx->readonly && xctx->lastsel == 1 && intuitive) {
-         int cond = already_selected;
+         /* Fluid editing (C1, doc/claude/specs/fluid_editing.md): under cadence_compat a
+          * FIRST click on a rect corner / line end grabs that sub-part for a stretch, with
+          * no prior select step -- matching the polygon-vertex (@edit_polygon_point) and
+          * free-wire-vertex (@grab_free_wire_vertex) paths that already do first-click grab.
+          * A click on the object BODY (outside the cadhalfdotsize handle zones) returns 0
+          * from the editor and falls through to the normal whole-object move, so ungating is
+          * safe. Stock behaviour (cadence_compat=0) is unchanged: it stays the two-step
+          * (first click selects + moves-whole, a second click on the handle stretches). */
+         int cond = already_selected || cadence_compat;
 
          if(cond && xctx->sel_array[0].type==xRECT) {
            if(edit_rect_point(state)) return; /* sets xctx->shape_point_selected */
