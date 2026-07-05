@@ -64,4 +64,47 @@ if {[xschem get wires] == 2} {
   check "W0: the two segments are distinct wire_ids" [expr {$id0 ne $id1}] 1
 }
 
+# ===========================================================================
+# Phase W1 -- read-time split at attachment points.
+# Loading a .sch with autotrim_wires on must split each wire at every interior
+# attachment point (instance pin / net-label) into independent in-memory segments.
+# Fixture: one wire -100..100 (y=0) with two lab_wire net-labels tapping it at x=-50 and
+# x=+50 (same lab=GB, so one net, no ERC short). Expect 3 segments after load.
+# ===========================================================================
+proc write_sch {path body} { set fd [open $path w]; puts -nonewline $fd $body; close $fd }
+set wdir [file join /tmp ws_w1_[pid]]
+file mkdir $wdir
+set f1 [file join $wdir two_labels.sch]
+write_sch $f1 {v {xschem version=3.4.8RC file_version=1.3}
+G {}
+K {}
+V {}
+S {}
+F {}
+E {}
+N -100 0 100 0 {}
+C {devices/lab_wire} -50 0 0 0 {name=l1 lab=GB}
+C {devices/lab_wire} 50 0 0 0 {name=l2 lab=GB}
+}
+set ::autotrim_wires 1
+if {[catch {xschem load $f1} e]} { bail "W1 load fixture: $e" }
+check "W1 T1: 1 wire + 2 mid-span labels -> 3 segments" [xschem get wires] 3
+if {[xschem get wires] == 3} {
+  # UX: each inter-attachment region is an independent click target resolving to ONE
+  # distinct segment (the whole point of the feature).
+  set ids {}
+  foreach x {-75 0 75} {
+    set row [xschem select_at $x 0]
+    check "W1 T1: select_at $x 0 hits a wire" [lindex $row 0] wire
+    lappend ids [lindex $row 3]
+  }
+  check "W1 T1: 3 regions -> 3 distinct wire_ids" [llength [lsort -unique $ids]] 3
+  # geometry preserved exactly: boundaries at the two taps, full span -100..100, no gaps.
+  set xs {}
+  for {set i 0} {$i < 3} {incr i} { lassign [xschem wire_coord $i] a b c d; lappend xs $a $c }
+  check "W1 T1: segment endpoints = {-100 -50 50 100} (taps exact, span intact)" \
+        [lsort -real -unique $xs] {-100 -50 50 100}
+}
+# (connectivity invariance across the split is asserted in W2.)
+
 if {$fail == 0} { puts "OVERALL: ok"; exit 0 } else { puts "OVERALL: notok"; exit 1 }

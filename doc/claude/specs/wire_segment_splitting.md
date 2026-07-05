@@ -1,6 +1,6 @@
 # Wire segment splitting: independent click regions between attachment points
 
-Status: **SPEC drafted 2026-07-05; W0 BUILT + tested** (W1-W6 pending). Branch
+Status: **SPEC drafted 2026-07-05; W0-W1 BUILT + tested** (W2-W6 pending). Branch
 `fluid-editing` (sibling of `doc/claude/specs/fluid_editing.md`; the natural next
 Cadence-UX increment). Design grounded by a 7-reader + 3-critique understanding workflow
 (2 adversarial critiques survived; findings folded into §7 Hazards). `select_at` replay
@@ -17,7 +17,21 @@ fidelity for split wires (Hazard H8) is deferred as **issue 0078**.
   across a label pin, distinct-`wire_id` check), registered in `run_regression.tcl` hcases.
   RED→GREEN + sabotage-verified (neutering `any_inst_pin_at` to `return 0` flips the RED
   check back to FAIL). `test_fluid_editing` (drives `trim_wires` via the stretch-select
-  path) and all other headless cases stay green. Not yet committed.
+  path) and all other headless cases stay green. Committed @ `b5d4bc13`.
+
+- **W1 — read-time split at attachment points (`check.c`, `save.c`).** New
+  `break_wires_at_attach_points()` sweeps every instance's PINLAYER pins (covers
+  net-labels/pins/bus_taps) and `wire_store_split`s each wire at the **exact** interior pin
+  coord (no projection — Hazard H2; interior guard excludes endpoints and X-crossings —
+  H3); no `push_undo` (caller owns undo). New `maintain_wire_segments()` =
+  `break_wires_at_attach_points()` then `trim_wires()` (T-splits + W0 pin-aware merge +
+  degenerate cull). Load hook: the `save.c` normalize block now calls
+  `maintain_wire_segments()` instead of the bare `trim_wires()`, inside the
+  `mod_before_norm` revert + `no_autosave` (H6 — freshly-opened file not dirtied).
+  Prototypes in `xschem.h`. Test T1 (load 1 wire + 2 mid-span labels → 3 segments; each of
+  3 region `select_at`s hits one distinct `wire_id`; endpoints `{-100 -50 50 100}` exact).
+  RED→GREEN + sabotage-verified. Integration: the real `test_wire_splits.sch` loads as
+  **3** segments under autotrim. All headless cases green. Not yet committed.
 
 ## 1. Problem
 
@@ -268,12 +282,12 @@ Phases:
   *Built:* `any_inst_pin_at` + the `&& !any_inst_pin_at(...)` guard in the `trim_wires`
   merge condition. RED→GREEN + sabotage-verified. Foundation for W1-W4.
 
-- **W1 — `break_wires_at_attach_points` + `maintain_wire_segments` at load (§6.1-6.2).**
-  *RED anchor:* T1 — load a fixture (one wire + a mid-span `lab_wire` + a mid-span pin) with
-  `autotrim_wires 1`; assert `xschem get wires == 1 + (#interior attach points)` (e.g. 3
-  for the §1 fixture). Fails today (== 1). *Build:* the new sweep, called from the
-  `save.c:3834-3845` guard. Verify T1 GREEN and the three segments have distinct
-  `wire_id`s; a `select_at` at each region midpoint selects exactly one segment.
+- **W1 — `break_wires_at_attach_points` + `maintain_wire_segments` at load (§6.1-6.2).
+  ✅ BUILT.** *RED anchor (was):* T1 — load a fixture (one wire + 2 mid-span labels) with
+  `autotrim_wires 1`; asserted `xschem get wires == 3` (was 1). *Built:* the new sweep +
+  `maintain_wire_segments`, called from the `save.c` normalize guard. T1 GREEN: 3 distinct
+  `wire_id`s, per-region `select_at` selects exactly one, endpoints exact. Sabotage-verified;
+  real `test_wire_splits.sch` → 3 segments.
 
 - **W2 — connectivity invariance (INV-1, §4).** *RED-guard:* T2 — netlist the fixture with
   split off and on; assert identical node assignment (label net `GB` on all three segments;

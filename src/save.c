@@ -3840,7 +3840,12 @@ int load_schematic(int load_symbols, const char *fname, int reset_undo, int aler
      * change came from this normalization. */
     int mod_before_norm = xctx->modified;
     check_collapsing_objects();
-    if(reset_undo && tclgetboolvar("autotrim_wires")) trim_wires();
+    /* Wire-segment maintenance: split each wire at its interior attachment points into
+     * independent clickable segments, then trim/merge (pin-aware). In-memory only; the
+     * .sch is re-joined by coalesce-on-save. Runs inside the mod_before_norm revert so a
+     * freshly-opened file is not flagged modified, and under no_autosave.
+     * See doc/claude/specs/wire_segment_splitting.md (W1). */
+    if(reset_undo && tclgetboolvar("autotrim_wires")) maintain_wire_segments();
     if(reset_undo && !mod_before_norm && xctx->modified) set_modify(0);
   }
   update_conn_cues(WIRELAYER, 0, 0);

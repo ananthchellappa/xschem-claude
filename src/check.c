@@ -657,3 +657,59 @@ void break_wires_at_pins(int remove)
   }
 
 }
+
+/* Split every wire at every interior instance-pin / net-label attachment point, so each
+ * inter-attachment span becomes an independent (clickable) wire object. In-memory only:
+ * connectivity is coordinate-based and unchanged (INV-1); the on-disk form is re-joined by
+ * coalesce-on-save. Uses the EXACT stored pin coordinate (get_inst_pin_coord) and requires
+ * a true touch(), so a pin merely NEAR the wire neither splits nor connects (Hazard H2);
+ * splits only where a pin coincides with a wire's interior, never at a bare X-crossing
+ * (Hazard H3). Does NOT push_undo -- the caller owns undo (load: no push; edit: caller
+ * pushes). Returns the number of splits performed.
+ * See doc/claude/specs/wire_segment_splitting.md (W1). */
+int break_wires_at_attach_points(void)
+{
+  int k, i, r, rects, sqx, sqy;
+  Wireentry *wptr;
+  double x0, y0;
+  int nsplit = 0;
+
+  hash_wires();
+  for(k = 0; k < xctx->instances; ++k) {
+    if(xctx->inst[k].ptr < 0) continue;
+    rects = (xctx->inst[k].ptr + xctx->sym)->rects[PINLAYER];
+    for(r = 0; r < rects; ++r) {
+      get_inst_pin_coord(k, r, &x0, &y0);
+      get_square(x0, y0, &sqx, &sqy);
+      for(wptr = xctx->wire_spatial_table[sqx][sqy]; wptr; wptr = wptr->next) {
+        i = wptr->n;
+        if( touch(xctx->wire[i].x1, xctx->wire[i].y1,
+                  xctx->wire[i].x2, xctx->wire[i].y2, x0, y0) ) {
+          /* strictly interior: (x0,y0) not coincident with either endpoint */
+          if( (x0 != xctx->wire[i].x1 && x0 != xctx->wire[i].x2) ||
+              (y0 != xctx->wire[i].y1 && y0 != xctx->wire[i].y2) ) {
+            wire_store_split(i, x0, y0, xctx->wire[i].sel); /* head [old x1..x0], keeps prop/node */
+            xctx->wire[i].x1 = x0;                          /* tail becomes [x0..old x2] */
+            xctx->wire[i].y1 = y0;
+            xctx->wire[i].end1 = 1;
+            xctx->need_reb_sel_arr = 1;
+            ++nsplit;
+          }
+        }
+      }
+    }
+  }
+  if(nsplit) xctx->prep_hash_wires = 0;
+  return nsplit;
+}
+
+/* Canonical read/edit-time wire-segment maintenance (the caller gates this on
+ * autotrim_wires): first split at attachment points, then trim_wires() performs
+ * T-junction splits, the PIN-AWARE collinear merge (W0) and the degenerate cull. The order
+ * matters -- splitting first, then a pin-aware merge that cannot undo the pin-splits.
+ * See doc/claude/specs/wire_segment_splitting.md (W1/W3). */
+void maintain_wire_segments(void)
+{
+  break_wires_at_attach_points();
+  trim_wires();
+}

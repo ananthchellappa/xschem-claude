@@ -1783,6 +1783,8 @@ extern void trim_wires(void);
 extern void update_conn_cues(int layer, int draw_cues, int dr_win);
 extern void break_wires_at_point(double x0, double y0, int align);
 extern void break_wires_at_pins(int remove);
+extern int break_wires_at_attach_points(void);
+extern void maintain_wire_segments(void);
 
 extern void check_touch(int i, int j,
          unsigned short *parallel,unsigned short *breaks,
