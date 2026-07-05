@@ -2430,6 +2430,56 @@ static int edit_rect_point(int state)
   return 0;
 }
 
+/* Fluid editing (C2, doc/claude/specs/fluid_editing.md) -- grab an arc control point.
+ * Mirrors edit_rect_point: a cadhalfdotsize-scaled tolerance zone on each of the arc's
+ * three handles. The point->SELECTED mapping matches the area-stretch path in select.c
+ * (select_inside, arc branch) so the same move.c commit code applies:
+ *   center (x,y)         -> SELECTED1  (radius: move.c grows/shrinks r by deltax)
+ *   end endpoint (xb,yb) -> SELECTED3  (arc sweep b)
+ *   start endpoint (xa,ya) -> SELECTED2 (start angle a)
+ * Center is tested first, then the end endpoint, then the start endpoint (select.c's
+ * priority), so a full-circle arc where xa==xb resolves to the end handle. A click on the
+ * arc BODY (outside every zone) returns 0 and falls through to the whole-object move.
+ * sets xctx->shape_point_selected */
+static int edit_arc_point(int state)
+{
+   int arc_n = -1, arc_c = -1;
+   dbg(1, "1 Arc selected\n");
+   arc_n = xctx->sel_array[0].n;
+   arc_c = xctx->sel_array[0].col;
+  if(arc_n >= 0) {
+    double ds = xctx->cadhalfdotsize * 2 * xctx->zoom;
+    xArc *p = &xctx->arc[arc_c][arc_n];
+    double xa = p->x + p->r * cos(p->a * XSCH_PI / 180.);
+    double ya = p->y - p->r * sin(p->a * XSCH_PI / 180.);
+    double xb = p->x + p->r * cos((p->a + p->b) * XSCH_PI / 180.);
+    double yb = p->y - p->r * sin((p->a + p->b) * XSCH_PI / 180.);
+
+    xctx->need_reb_sel_arr=1;
+    if(POINTINSIDE(xctx->mousex, xctx->mousey, p->x - ds, p->y - ds, p->x + ds, p->y + ds)) {
+      xctx->shape_point_selected = 1;
+      p->sel = SELECTED1;
+    }
+    else if(POINTINSIDE(xctx->mousex, xctx->mousey, xb - ds, yb - ds, xb + ds, yb + ds)) {
+      xctx->shape_point_selected = 1;
+      p->sel = SELECTED3;
+    }
+    else if(POINTINSIDE(xctx->mousex, xctx->mousey, xa - ds, ya - ds, xa + ds, ya + ds)) {
+      xctx->shape_point_selected = 1;
+      p->sel = SELECTED2;
+    }
+    if(xctx->shape_point_selected) {
+      /* move one arc control point */
+      if(!(state & (ControlMask | ShiftMask))){
+        /* xctx->push_undo(); -- move_objects(START) owns the undo push */
+        move_objects(START,0,0,0);
+        return 1;
+      }
+    } /* if(xctx->shape_point_selected) */
+  } /* if(arc_n >= 0) */
+  return 0;
+}
+
 /* sets xctx->shape_point_selected */
 static int edit_polygon_point(int state)
 {
@@ -3811,6 +3861,17 @@ static void end_shape_point_edit(double c_snap)
         xctx->constr_mv=0;
         tcleval("set constr_mv 0" );
         xctx->wire[n].sel = SELECTED;
+        xctx->shape_point_selected = 0;
+        xctx->need_reb_sel_arr=1;
+     }
+     else if(xctx->lastsel == 1 && xctx->sel_array[0].type==ARC) {
+        int n = xctx->sel_array[0].n;
+        int c = xctx->sel_array[0].col;
+        move_objects(END,0,0,0);
+        edited = 1;
+        xctx->constr_mv=0;
+        tcleval("set constr_mv 0" );
+        xctx->arc[c][n].sel = SELECTED;
         xctx->shape_point_selected = 0;
         xctx->need_reb_sel_arr=1;
      }
@@ -5913,6 +5974,10 @@ static void handle_button_press(int event, int state, int rstate, KeySym key, in
 
          if(cond && xctx->sel_array[0].type==WIRE) {
           if(edit_wire_point(state)) return; /* sets xctx->shape_point_selected */
+         }
+
+         if(cond && xctx->sel_array[0].type==ARC) {
+           if(edit_arc_point(state)) return; /* sets xctx->shape_point_selected */
          }
        }
        dbg(1, "shape_point_selected=%d, lastsel=%d\n", xctx->shape_point_selected, xctx->lastsel);

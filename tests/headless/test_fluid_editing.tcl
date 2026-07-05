@@ -154,6 +154,42 @@ lassign [rect_bbox] x1 y1 x2 y2
 check "FE1b stock: opposite corner MOVED (whole-object move preserved)" \
   [expr {!([feq $x2 200] && [feq $y2 200])}] "(bbox=[rect_bbox])"
 
+# ===========================================================================
+# PHASE 2 -- C2: arc angular-endpoint grab (edit_arc_point)
+# ===========================================================================
+
+# ---- FE3: arc endpoint grab (cadence_compat=1) ----------------------------
+# Grab the start-angle endpoint (xa,ya) = (1300,0); drag it. The center must stay
+# put and the start angle `a` must change. Today (no edit_arc_point) the press
+# falls through to a WHOLE-object move: the center translates and `a` is unchanged.
+setup_fixture
+set ::cadence_compat 1
+lassign [arc_geom] ax ay ar aa ab
+check "FE3 pre: arc center (1200,0) r=100 a=0 b=90" \
+  [expr {[feq $ax 1200] && [feq $ay 0] && [feq $ar 100] && [feq $aa 0] && [feq $ab 90]}] \
+  "(arc=[arc_geom])"
+# press on the start endpoint (1300,0), drag toward (1300,-50)
+lassign [sch2scr 1300 0]   ex ey
+lassign [sch2scr 1300 -50] tx ty
+grab_drag $ex $ey $tx $ty
+lassign [arc_geom] ax ay ar aa ab
+check "FE3 arc center FIXED at (1200,0)" \
+  [expr {[feq $ax 1200] && [feq $ay 0]}] "(arc=[arc_geom])"
+check "FE3 arc start angle a CHANGED off 0" \
+  [expr {![feq $aa 0]}] "(arc=[arc_geom])"
+
+# ---- FE3c: arc stretch is UNDOABLE (move_objects owns the undo push) -------
+setup_fixture
+set ::cadence_compat 1
+lassign [sch2scr 1300 0]   ex ey
+lassign [sch2scr 1300 -50] tx ty
+grab_drag $ex $ey $tx $ty
+set after_stretch [arc_geom]
+catch { xschem undo }
+catch { update idletasks }
+check "FE3c undo restores the arc to (1200,0) r=100 a=0 b=90" \
+  [expr {[arc_geom] eq {1200 0 100 0 90}}] "(after_stretch=$after_stretch undone=[arc_geom])"
+
 # ---------------------------------------------------------------------------
 file delete -force -- $::RBTMP
 if {$::fails} { puts "RESULT: $::fails FAILED ($::npass passed)" } \
