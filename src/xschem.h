@@ -1431,6 +1431,8 @@ extern int actionlog_suppress_echo; /* skip CIW mirror while set (CIW-typed cmds
 extern int actionlog_suppress;      /* full log no-op while set (replay guard) */
 extern int select_at_suppress_log;  /* skip select_object()'s auto select_at log line */
 extern int select_at_add;           /* funnel logs the ` add` (augment) marker while set */
+extern char actionlog_pending[300]; /* held select_at line awaiting flush/absorb (action_log_absorb.md) */
+extern int actionlog_pending_inst;  /* instance the held select_at selected, or -1 */
 extern int exit_code;
 extern const char *xschem_library_path[];
 extern char home_dir[PATH_MAX]; /* home dir obtained via getpwuid */

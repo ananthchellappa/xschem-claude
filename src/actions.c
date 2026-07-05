@@ -3366,6 +3366,7 @@ int descend_schematic(int instnumber, int fallback, int alert, int set_title)
 {
  char *str = NULL;
  char filename[PATH_MAX];
+ char descend_logname[256] = ""; /* raw instname captured for the outcome-level action log */
  int inst_mult, inst_number;
  int save_ok = 0;
  int i, n = 0;
@@ -3397,6 +3398,10 @@ int descend_schematic(int instnumber, int fallback, int alert, int set_title)
      if(save_ok==0) return 0;
    }
    n = xctx->sel_array[0].n;
+   /* capture the raw instname NOW: after load_schematic() below, xctx->inst[]
+    * is the CHILD's array and n no longer names this instance. Used for the
+    * `xschem descend -inst <name>` action-log line. action_log_absorb.md */
+   my_strncpy(descend_logname, xctx->inst[n].instname ? xctx->inst[n].instname : "", S(descend_logname));
    get_sch_from_sym(filename, xctx->inst[n].ptr+ xctx->sym, n, fallback);
 
    if(!filename[0]) return 0; /* no filename returned from get_sch_from_sym() --> abort */
@@ -3521,6 +3526,13 @@ int descend_schematic(int instnumber, int fallback, int alert, int set_title)
    if(!tclgetboolvar("keep_symbols")) remove_symbols();
    descend_ok = load_schematic(1, filename, (set_title & 1), alert);
    if(descend_ok) {
+     /* Outcome-level action log: record the coordinate-free, replay-stable form
+      * `xschem descend -inst <name>`, absorbing the provisional select_at the
+      * selecting click stashed (n = the parent instance it selected). Empty name
+      * (rare, unnamed instance) falls back to the plain form + a flushed
+      * select_at. doc/claude/specs/action_log_absorb.md */
+     if(descend_logname[0]) log_action_descend(n, descend_logname);
+     else log_action("xschem descend");
      if(xctx->hilight_nets) {
        prepare_netlist_structs(0);
        propagate_hilights(1, 0, XINSERT_NOREPLACE);

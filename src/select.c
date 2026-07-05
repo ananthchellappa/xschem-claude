@@ -1419,7 +1419,10 @@ Selected select_object(double mx,double my, unsigned short select_mode,
     * select_at_suppress_log and logs its own line (so it can carry the `add` flag
     * and record exactly once). */
    if(!select_at_suppress_log && select_mode == SELECTED && sel.type) {
-     log_action("xschem select_at %.16g %.16g%s", mx, my, select_at_add ? " add" : "");
+     /* Stash (not write): a following outcome command (descend) may absorb this
+      * click into one stable line; else the next action flushes it verbatim.
+      * doc/claude/specs/action_log_absorb.md */
+     log_action_stash_select_at(mx, my, select_at_add, sel.type == ELEMENT ? sel.n : -1);
    }
 
    return sel;

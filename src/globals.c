@@ -195,6 +195,15 @@ int select_at_suppress_log = 0;
  * funnel logs `xschem select_at x y add` (augment) instead of the replace form.
  * The caller resets it right after the call. doc/claude/specs/select_at.md */
 int select_at_add = 0;
+/* Outcome-level action logging (doc/claude/specs/action_log_absorb.md): the
+ * interactive select_object() funnel stashes its `xschem select_at x y` line
+ * HERE instead of writing it immediately, so a following outcome command
+ * (currently only `descend`) can ABSORB it into one stable, coordinate-free
+ * line. Any other logged action flushes the held line first (order preserved).
+ * actionlog_pending_inst = the instance the held click selected, or -1 if the
+ * hit was not a single instance (only an instance target is absorbable). */
+char actionlog_pending[300] = "";
+int  actionlog_pending_inst = -1;
 int exit_code = 0; /* success */
 const char *xschem_library_path[] = XSCHEM_LIBRARY_PATH;
 char home_dir[PATH_MAX]; /* home dir obtained via getpwuid */

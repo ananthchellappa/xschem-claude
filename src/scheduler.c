@@ -1314,22 +1314,47 @@ static int xschem_cmds_d(Tcl_Interp *interp, int argc, const char *argv[], int *
      *   instance number to descend into for vector instances (default: 0).
      *   0 or 1: leftmost instance, 2: second leftmost instance, ...
      *  -1: rightmost instance,-2: second rightmost instance, ...
-     *  if integer 'notitle' is given pass it to descend_schematic() */
+     *  if integer 'notitle' is given pass it to descend_schematic()
+     * descend -inst <name> [notitle]
+     *   name-addressed form: descend into the instance called <name> regardless of
+     *   the current selection (selects it first). This is the replay-stable form
+     *   the action log records. doc/claude/specs/action_log_absorb.md */
     else if(!strcmp(argv[1], "descend"))
     {
       int ret=0;
       int set_title = 1;
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
       if(xctx->semaphore == 0) {
-
-        if(argc > 3 ) {
-          set_title = atoi(argv[3]);
-        }
-        if(argc > 2) {
-          int n = atoi(argv[2]);
-          ret = descend_schematic(n, 0, 0, set_title);
-        } else {
+        if(argc > 2 && !strcmp(argv[2], "-inst")) {
+          /* descend -inst <name> [notitle]
+           *   name-addressed, self-contained descend: resolve the instance by
+           *   its instname, select it, then descend. This IS the coordinate-free
+           *   replay form the action log emits (doc/claude/specs/action_log_absorb.md).
+           *   Note: descend_schematic() logs its own outcome line, so no log here. */
+          int inst;
+          if(argc < 4) {
+            Tcl_SetResult(interp, "xschem descend -inst: instance name required", TCL_STATIC);
+            return TCL_ERROR;
+          }
+          if(argc > 4) set_title = atoi(argv[4]);
+          inst = get_instance(argv[3]);
+          if(inst < 0) {
+            Tcl_SetResult(interp, "xschem descend -inst: instance not found", TCL_STATIC);
+            return TCL_ERROR;
+          }
+          unselect_all(1);
+          select_element(inst, SELECTED, 1, 1);
           ret = descend_schematic(0, 0, 0, set_title);
+        } else {
+          if(argc > 3 ) {
+            set_title = atoi(argv[3]);
+          }
+          if(argc > 2) {
+            int n = atoi(argv[2]);
+            ret = descend_schematic(n, 0, 0, set_title);
+          } else {
+            ret = descend_schematic(0, 0, 0, set_title);
+          }
         }
       }
       Tcl_SetResult(interp, dtoa(ret), TCL_VOLATILE);
@@ -7710,9 +7735,10 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
      *   form of a mouse click (doc/claude/specs/select_at.md). Default replaces the
      *   current selection (plain click); `add` augments it (shift-click); `nodraw`
      *   skips the redraw. Returns the hit object as one `{type index col id}` row
-     *   (== an `xschem selection` row), or "" on a miss. Self-logs
-     *   `xschem select_at x y [add]`; the interactive click logs the same line at
-     *   the select_object() funnel. */
+     *   (== an `xschem selection` row), or "" on a miss. Logs `xschem select_at
+     *   x y [add]` via the holding area (like the interactive click): deferred one
+     *   action, and a following `descend` absorbs it into a single coordinate-free
+     *   line. doc/claude/specs/action_log_absorb.md */
     else if(!strcmp(argv[1], "select_at"))
     {
       double x, y;
@@ -7761,7 +7787,10 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
           case ARC:     tname = "arc";      id = (int)xctx->arc[c][n].id; break;
           default:      tname = "unknown";  break;
         }
-        log_action("xschem select_at %.16g %.16g%s", x, y, add ? " add" : "");
+        /* Stash (not write): identical to the interactive funnel, so a following
+         * `descend` absorbs this into one stable line; else the next action flushes
+         * it verbatim. Deferred by one action. doc/claude/specs/action_log_absorb.md */
+        log_action_stash_select_at(x, y, add, s.type == ELEMENT ? s.n : -1);
         /* one object -> a BARE `type index col id` row (mirrors `xschem object`'s
          * bare single vs `xschem objects`'/`selection`'s brace-wrapped list rows) */
         my_snprintf(row, S(row), "%s %d %d %d", tname, n, c, id);

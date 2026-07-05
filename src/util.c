@@ -388,6 +388,52 @@ static void log_action_echo(const char *str)
   tcleval("if {[info procs ciw_echo] ne {}} {ciw_echo $ciw_line}");
 }
 
+/* --- Outcome-level logging: the select_at holding area -------------------
+ * See doc/claude/specs/action_log_absorb.md. A single-slot buffer lets an
+ * interactive `select_at` be ABSORBED by a following outcome command
+ * (descend) so the log records the stable result, not the coordinate gesture.
+ * `descend` is the only consumer today; delete/copy/move can be wired the same
+ * way later (add a log_action_<verb>() that absorbs then logs its own line). */
+
+/* Commit any held select_at line to the log + CIW, then clear the slot.
+ * Called at the top of log_action() so a held click always precedes the next
+ * action; a no-op when nothing is held. */
+void log_action_flush_pending(void)
+{
+  char line[300];
+  if(!actionlog_pending[0]) return;
+  my_strncpy(line, actionlog_pending, S(line));
+  actionlog_pending[0] = '\0';       /* clear BEFORE re-logging (breaks recursion) */
+  actionlog_pending_inst = -1;
+  log_action("%s", line);            /* now a real write + CIW echo */
+}
+
+/* Stash a provisional select_at from the interactive selection funnel instead
+ * of writing it immediately. `inst` is the instance the click selected, or -1
+ * if the hit was not a single instance (only instance targets are absorbable).
+ * A prior held line (a click with no follow-up) is flushed first, so at most
+ * one select_at is ever pending. */
+void log_action_stash_select_at(double x, double y, int add, int inst)
+{
+  if(!actionlog_fp || actionlog_suppress) return;
+  log_action_flush_pending();
+  my_snprintf(actionlog_pending, S(actionlog_pending),
+              "xschem select_at %.16g %.16g%s", x, y, add ? " add" : "");
+  actionlog_pending_inst = inst;
+}
+
+/* Log a descend at the outcome level: `xschem descend -inst <name>`. If a held
+ * select_at selected this same instance, ABSORB it (drop it) so the descend
+ * line stands alone; otherwise the held line flushes normally ahead of it. */
+void log_action_descend(int inst_n, const char *instname)
+{
+  if(actionlog_pending[0] && actionlog_pending_inst == inst_n) {
+    actionlog_pending[0] = '\0';     /* absorb: the select_at is subsumed by the descend */
+    actionlog_pending_inst = -1;
+  }
+  log_action("xschem descend -inst %s", instname);
+}
+
 /* Append one action to the log as a single line and mirror it to the CIW
  * log pane. No-op when logging is disabled. Each call is one line; the
  * trailing newline is added here. */
@@ -396,6 +442,9 @@ void log_action(const char *fmt, ...)
   char buf[4096]; /* pane copy only; the file write below is unbounded */
   va_list args;
   if(!actionlog_fp || actionlog_suppress) return;
+  /* commit any provisional select_at first, so it precedes this line in order.
+   * flush clears the buffer BEFORE re-entering here, so no recursion. */
+  log_action_flush_pending();
   va_start(args, fmt);
   vfprintf(actionlog_fp, fmt, args);
   va_end(args);
