@@ -675,6 +675,11 @@ int break_wires_at_attach_points(void)
   double x0, y0;
   int nsplit = 0;
 
+  /* Force a fresh spatial table: hash_wires() no-ops when prep_hash_wires==1 (netlist.c),
+   * and an earlier prepare_netlist_structs / check_collapsing_objects in the load path may
+   * have built it (or left it stale after a wire deletion). Walking a stale table would
+   * read reindexed / out-of-range wire slots. trim_wires() takes the same precaution. */
+  xctx->prep_hash_wires = 0;
   hash_wires();
   for(k = 0; k < xctx->instances; ++k) {
     if(xctx->inst[k].ptr < 0) continue;
