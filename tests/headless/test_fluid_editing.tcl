@@ -222,6 +222,92 @@ lassign [rect_bbox] x1 y1 x2 y2
 check "FE4b quarter-point on top edge still grabs the edge (bottom fixed)" \
   [expr {[feq $y2 200] && ![feq $y1 0] && [feq $x1 0] && [feq $x2 200]}] "(bbox=[rect_bbox])"
 
+# ===========================================================================
+# REVIEW FIXES -- regressions guarding the adversarial-review findings
+# ===========================================================================
+proc rects_all {} { set o {}; foreach l [records] { if {[string match "B *" $l]} {lappend o $l} }; return $o }
+
+# ---- FE5 (findings #4/#5): a modifier-held press near a handle is a Cadence copy(Shift)/
+# detach(Ctrl) gesture, NOT a stretch. The shape-point editors must bail before setting
+# shape_point_selected, else the copy/detach path (gated on !shape_point_selected) is
+# skipped and the gesture silently no-ops. Shift+drag from near a rect corner must COPY.
+setup_fixture
+set ::cadence_compat 1
+check "FE5 pre: one rect present" [expr {[llength [rects_all]] == 1}] "(n=[llength [rects_all]])"
+lassign [sch2scr 0 0]     cx cy
+lassign [sch2scr 400 400] tx ty
+grab_drag [expr {$cx+3}] [expr {$cy+3}] $tx $ty 1     ;# shift=1 -> Cadence copy
+check "FE5 Shift+drag near a corner COPIES the rect (2 rects, not a stuck no-op)" \
+  [expr {[llength [rects_all]] == 2}] "(n=[llength [rects_all]])"
+
+# ---- FE6 (finding #1): arc grab is cadence-gated (a NEW handle, like the C3 rect edges).
+# With cadence_compat=0 the stock two-step (arc already selected, then click-drag its
+# endpoint) must MOVE THE WHOLE ARC, not stretch it -- preserving pre-change stock UX.
+setup_fixture
+set ::cadence_compat 0
+xschem set intuitive_interface 1
+lassign [sch2scr 1300 0]  ex ey
+gpress $ex $ey; grelease $ex $ey; catch {update idletasks}   ;# click 1: select the arc
+check "FE6 pre: arc selected by first click" [expr {[llength [xschem selection]] == 1}] \
+  "(sel=[xschem selection])"
+lassign [sch2scr 1300 -60] tx ty
+grab_drag $ex $ey $tx $ty                                    ;# click 2: press+drag endpoint
+lassign [arc_geom] ax ay ar aa ab
+check "FE6 stock two-step MOVES the whole arc (center shifts), not a stretch" \
+  [expr {!([feq $ax 1200] && [feq $ay 0])}] "(arc=[arc_geom])"
+
+# ---- FE7 (finding #2): edge bands are enabled only when the rect is thicker than 2*ds in
+# that direction, so a rect THIN in one dimension keeps a movable interior. Use a wide-but-
+# short bar: W (=20*Z) >> 2*ds so its center is clear of the left/right corner+edge zones,
+# but H (=8*Z) < 2*ds. Pressing the bar's CENTER must MOVE THE WHOLE bar (all 4 coords
+# change). On the pre-fix code the full-span top band covers the whole interior-y, so the
+# center press grabs the top edge and only deforms y1 (a bar that cannot be moved, only
+# reshaped). ds = cadhalfdotsize*2*zoom = 7.4*Z (cadsnap=10 => cadhalfdotsize=3.7).
+xschem clear force
+xschem set intuitive_interface 1
+set ::cadence_compat 1
+xschem zoom_box -6000 -6000 6000 6000
+set Z [xschem get zoom]
+set W [expr {20.0 * $Z}]        ;# >> 2*ds (=14.8*Z): center is clear of corner/left/right zones
+set H [expr {8.0 * $Z}]         ;# <  2*ds: top+bottom bands would blanket the interior-y
+xschem rect 0 0 $W $H
+xschem unselect_all; catch {xschem redraw}; catch {update idletasks}
+set orig [rect_bbox]
+lassign [sch2scr [expr {$W/2.0}] [expr {$H/2.0}]] cx cy
+grab_drag $cx $cy [expr {$cx+25}] [expr {$cy+25}]            ;# 25px screen drag, both axes
+lassign [rect_bbox] x1 y1 x2 y2
+lassign $orig ox1 oy1 ox2 oy2
+check "FE7 thin bar: body drag MOVES WHOLE bar (all 4 coords change, not an edge deform)" \
+  [expr {![feq $x1 $ox1] && ![feq $y1 $oy1] && ![feq $x2 $ox2] && ![feq $y2 $oy2]}] \
+  "(orig=$orig now=[rect_bbox] Z=$Z W=$W H=$H)"
+
+# ---- FE8 (finding #3): an arc control-point drag that changes geometry must leave the
+# buffer MODIFIED even when the release snaps to the press cell. The arc move reference is
+# its CENTER (not the mouse), so the old "release-cell==press-cell" no-op test wrongly reset
+# the modified flag to clean after a real change (a lost edit on close-without-save).
+xschem clear force
+xschem set intuitive_interface 1
+set ::cadence_compat 1
+xschem arc 1200 0 100 30 90 4                                ;# start angle a=30 (nonzero)
+xschem unselect_all
+xschem saveas $::RBTMP schematic                             ;# named + clean: modified -> 0
+catch {update idletasks}
+check "FE8 pre: buffer clean (modified=0), arc a=30" \
+  [expr {[xschem get modified] == 0 && [feq [lindex [arc_geom] 3] 30]}] \
+  "(mod=[xschem get modified] arc=[arc_geom])"
+# start endpoint of the a=30 arc: (1200+100cos30, -100sin30) = (1286.6,-50)
+lassign [sch2scr 1286.6 -50]  ex ey
+lassign [sch2scr 1286.6 -160] fx fy
+gpress   $ex $ey
+gmotion  $fx $fy                                             ;# drag away (angle changes)
+gmotion  $ex $ey                                             ;# drag BACK to the press cell
+grelease $ex $ey                                             ;# release in the press cell
+catch {update idletasks}
+set fe8_mod [xschem get modified]                            ;# capture BEFORE arc_geom (saveas clears it)
+set fe8_a   [lindex [arc_geom] 3]
+check "FE8 drag-and-return changed the arc AND left buffer MODIFIED (no false-clean)" \
+  [expr {$fe8_mod == 1 && ![feq $fe8_a 30]}] "(mod=$fe8_mod a=$fe8_a)"
+
 # ---------------------------------------------------------------------------
 file delete -force -- $::RBTMP
 if {$::fails} { puts "RESULT: $::fails FAILED ($::npass passed)" } \

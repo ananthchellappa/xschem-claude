@@ -2283,6 +2283,12 @@ static int edit_line_point(int state)
 {
    int line_n = -1, line_c = -1;
    dbg(1, "1 Line selected\n");
+   /* Fluid editing: a modifier-held press is a Cadence copy (Shift) / detach (Ctrl)
+    * gesture, not a stretch. Bail BEFORE setting shape_point_selected so the press falls
+    * through cleanly to the whole-object modifier-drag path (which is gated on
+    * !shape_point_selected); otherwise the flag stays stuck and the copy/detach silently
+    * no-ops with a spurious commit on release. */
+   if(state & (ControlMask | ShiftMask)) return 0;
    line_n = xctx->sel_array[0].n;
    line_c = xctx->sel_array[0].col;
   /* lineangle point: Check is user is clicking a control point of a lineangle */
@@ -2299,12 +2305,9 @@ static int edit_line_point(int state)
       p->sel = SELECTED2;
     }
     if(xctx->shape_point_selected) {
-      /* move one line selected point */
-      if(!(state & (ControlMask | ShiftMask))){
-        /* xctx->push_undo(); */
-        move_objects(START,0,0,0);
-        return 1;
-      }
+      /* move one line selected point (undo push owned by move_objects START) */
+      move_objects(START,0,0,0);
+      return 1;
     } /* if(xctx->shape_point_selected) */
   } /* if(line_n >= 0) */
   return 0;
@@ -2315,6 +2318,9 @@ static int edit_wire_point(int state)
 {
    int wire_n = -1;
    dbg(1, "edit_wire_point, ds = %g\n", xctx->cadhalfdotsize);
+   /* Fluid editing: modifier-held press = copy/detach gesture, not a stretch (see
+    * edit_line_point). Bail before setting shape_point_selected. */
+   if(state & (ControlMask | ShiftMask)) return 0;
    wire_n = xctx->sel_array[0].n;
   /* wire point: Check is user is clicking a control point of a wire */
   if(wire_n >= 0) {
@@ -2330,12 +2336,9 @@ static int edit_wire_point(int state)
       p->sel = SELECTED2;
     }
     if(xctx->shape_point_selected) {
-      /* move one wire selected point */
-      if(!(state & (ControlMask | ShiftMask))){
-        /* xctx->push_undo(); */
-        move_objects(START,0,0,0);
-        return 1;
-      }
+      /* move one wire selected point (undo push owned by move_objects START) */
+      move_objects(START,0,0,0);
+      return 1;
     } /* if(xctx->shape_point_selected) */
   } /* if(wire_n >= 0) */
   return 0;
@@ -2395,6 +2398,9 @@ static int edit_rect_point(int state)
    int rect_n = -1, rect_c = -1;
    int cadence_compat = tclgetboolvar("cadence_compat");
    dbg(1, "1 Rectangle selected\n");
+   /* Fluid editing: modifier-held press = Cadence copy/detach gesture, not a stretch
+    * (see edit_line_point). Bail before setting shape_point_selected. */
+   if(state & (ControlMask | ShiftMask)) return 0;
    rect_n = xctx->sel_array[0].n;
    rect_c = xctx->sel_array[0].col;
   /* rectangle point: Check is user is clicking a control point of a rectangle */
@@ -2428,53 +2434,63 @@ static int edit_rect_point(int state)
      *   left   (x1) -> SELECTED1|SELECTED3   right  (x2) -> SELECTED2|SELECTED4
      * Gated on cadence_compat so stock behaviour (the two-step, corners only) is unchanged;
      * the whole feature is otherwise reachable via the C1 first-click dispatch. */
-    else if(cadence_compat &&
+    /* An edge band is only enabled when the rect is thicker than 2*ds in the
+     * perpendicular direction. That keeps the two opposite bands DISJOINT (so the far
+     * edge stays grabbable) and always leaves an interior dead zone wider than the two
+     * bands, so a body click still falls through to the whole-object move. Without this
+     * guard a thin (or zoomed-out) rect has its whole interior covered by the bands and
+     * can never be moved, only deformed. */
+    else if(cadence_compat && (p->y2 - p->y1) > 2 * ds &&
             POINTINSIDE(xctx->mousex, xctx->mousey, p->x1, p->y1 - ds, p->x2, p->y1 + ds)) {
       xctx->shape_point_selected = 1;
       p->sel = SELECTED1 | SELECTED2;              /* top edge (y1) */
     }
-    else if(cadence_compat &&
+    else if(cadence_compat && (p->y2 - p->y1) > 2 * ds &&
             POINTINSIDE(xctx->mousex, xctx->mousey, p->x1, p->y2 - ds, p->x2, p->y2 + ds)) {
       xctx->shape_point_selected = 1;
       p->sel = SELECTED3 | SELECTED4;              /* bottom edge (y2) */
     }
-    else if(cadence_compat &&
+    else if(cadence_compat && (p->x2 - p->x1) > 2 * ds &&
             POINTINSIDE(xctx->mousex, xctx->mousey, p->x1 - ds, p->y1, p->x1 + ds, p->y2)) {
       xctx->shape_point_selected = 1;
       p->sel = SELECTED1 | SELECTED3;              /* left edge (x1) */
     }
-    else if(cadence_compat &&
+    else if(cadence_compat && (p->x2 - p->x1) > 2 * ds &&
             POINTINSIDE(xctx->mousex, xctx->mousey, p->x2 - ds, p->y1, p->x2 + ds, p->y2)) {
       xctx->shape_point_selected = 1;
       p->sel = SELECTED2 | SELECTED4;              /* right edge (x2) */
     }
     if(xctx->shape_point_selected) {
-      /* move one rectangle selected point */
-      if(!(state & (ControlMask | ShiftMask))){
-        /* xctx->push_undo(); */
-        move_objects(START,0,0,0);
-        return 1;
-      }
+      /* move one rectangle control point / edge (undo push owned by move_objects START) */
+      move_objects(START,0,0,0);
+      return 1;
     } /* if(xctx->shape_point_selected) */
   } /* if(rect_n >= 0) */
   return 0;
 }
 
-/* Fluid editing (C2, doc/claude/specs/fluid_editing.md) -- grab an arc control point.
- * Mirrors edit_rect_point: a cadhalfdotsize-scaled tolerance zone on each of the arc's
- * three handles. The point->SELECTED mapping matches the area-stretch path in select.c
+/* Fluid editing (C2, doc/claude/specs/fluid_editing.md) -- grab an arc angular endpoint.
+ * Mirrors edit_rect_point: a cadhalfdotsize-scaled tolerance zone on each grabbable arc
+ * handle. The point->SELECTED mapping matches the area-stretch path in select.c
  * (select_inside, arc branch) so the same move.c commit code applies:
- *   center (x,y)         -> SELECTED1  (radius: move.c grows/shrinks r by deltax)
- *   end endpoint (xb,yb) -> SELECTED3  (arc sweep b)
- *   start endpoint (xa,ya) -> SELECTED2 (start angle a)
- * Center is tested first, then the end endpoint, then the start endpoint (select.c's
- * priority), so a full-circle arc where xa==xb resolves to the end handle. A click on the
- * arc BODY (outside every zone) returns 0 and falls through to the whole-object move.
- * sets xctx->shape_point_selected */
+ *   end endpoint (xb,yb)   -> SELECTED3  (arc sweep b)
+ *   start endpoint (xa,ya) -> SELECTED2  (start angle a)
+ * The end endpoint is tested first, so a full-circle arc where xa==xb resolves to it.
+ * NOTE: the arc CENTER (radius handle, SELECTED1 in select.c/move.c) is intentionally NOT
+ * offered here: the center is not on the curve, so a click there never hits/selects the
+ * arc (find_closest_arc measures distance to the ring), which means the arc is never
+ * sel_array[0] for a center press -- a center zone would be dead code. Radius editing
+ * stays available via the area-stretch (rubber-band) path. A click on the arc BODY away
+ * from the endpoints returns 0 and falls through to the whole-object move.
+ * Gated on cadence_compat (a NEW handle with no prior editor, like the C3 rect edges) so
+ * the stock two-step keeps moving the whole arc. sets xctx->shape_point_selected */
 static int edit_arc_point(int state)
 {
    int arc_n = -1, arc_c = -1;
    dbg(1, "1 Arc selected\n");
+   if(!tclgetboolvar("cadence_compat")) return 0;
+   /* modifier-held press = copy/detach gesture, not a stretch (see edit_line_point) */
+   if(state & (ControlMask | ShiftMask)) return 0;
    arc_n = xctx->sel_array[0].n;
    arc_c = xctx->sel_array[0].col;
   if(arc_n >= 0) {
@@ -2486,11 +2502,7 @@ static int edit_arc_point(int state)
     double yb = p->y - p->r * sin((p->a + p->b) * XSCH_PI / 180.);
 
     xctx->need_reb_sel_arr=1;
-    if(POINTINSIDE(xctx->mousex, xctx->mousey, p->x - ds, p->y - ds, p->x + ds, p->y + ds)) {
-      xctx->shape_point_selected = 1;
-      p->sel = SELECTED1;
-    }
-    else if(POINTINSIDE(xctx->mousex, xctx->mousey, xb - ds, yb - ds, xb + ds, yb + ds)) {
+    if(POINTINSIDE(xctx->mousex, xctx->mousey, xb - ds, yb - ds, xb + ds, yb + ds)) {
       xctx->shape_point_selected = 1;
       p->sel = SELECTED3;
     }
@@ -2499,12 +2511,9 @@ static int edit_arc_point(int state)
       p->sel = SELECTED2;
     }
     if(xctx->shape_point_selected) {
-      /* move one arc control point */
-      if(!(state & (ControlMask | ShiftMask))){
-        /* xctx->push_undo(); -- move_objects(START) owns the undo push */
-        move_objects(START,0,0,0);
-        return 1;
-      }
+      /* move one arc endpoint (undo push owned by move_objects START) */
+      move_objects(START,0,0,0);
+      return 1;
     } /* if(xctx->shape_point_selected) */
   } /* if(arc_n >= 0) */
   return 0;
@@ -3840,11 +3849,17 @@ static int handle_mouse_wheel(int event, int mx, int my, KeySym key, int button,
    return (ctx == ACTX_OVER_GRAPH);
 }
 
-static void end_shape_point_edit(double c_snap)
+static void end_shape_point_edit(void)
 {
      int save = xctx->modified;
      int edited = 0;
-     double sx, sy;
+     /* Did the gesture actually move anything? move_objects(END) commits the accumulated
+      * xctx->deltax/deltay (set by the last RUBBER) and zeroes them, so capture the net
+      * move HERE, before any END below. This replaces an older "release cell == press cell"
+      * test that assumed the move reference is the mouse -- false for an arc, whose START
+      * reference is the arc CENTER (move.c:1600), so a drag-and-return would silently change
+      * the arc yet reset the modified flag to clean (a lost edit on close-without-save). */
+     int moved = (xctx->deltax != 0.0 || xctx->deltay != 0.0);
      dbg(1, "%g %g %g %g\n",
          xctx->mx_double_save, xctx->my_double_save, xctx->mousex_snap, xctx->mousey_snap);
      if(xctx->lastsel == 1 && xctx->sel_array[0].type==POLYGON) {
@@ -3905,10 +3920,9 @@ static void end_shape_point_edit(double c_snap)
         xctx->shape_point_selected = 0;
         xctx->need_reb_sel_arr=1;
      }
-     sx = my_round(xctx->mx_double_save / c_snap) * c_snap;
-     sy = my_round(xctx->my_double_save / c_snap) * c_snap;
-
-     if(sx == xctx->mousex_snap && sy == xctx->mousey_snap) {
+     if(!moved) {
+       /* no net move: restore the pre-gesture modified flag so a click that did not drag
+        * (or dragged back to the start) does not leave the buffer spuriously dirty. */
        set_modify(save);
      }
      /* action-log Layer C: a control-point drag has no replayable form yet
@@ -6256,7 +6270,7 @@ static void handle_button_release(int event, KeySym key, int state, int button, 
    /* if a polygon/bezier/rectangle control point was clicked, end point move operation
     * and set polygon state back to SELECTED from SELECTED1 */
    else if((xctx->ui_state & (STARTMOVE | SELECTION)) && xctx->shape_point_selected) {
-     end_shape_point_edit(c_snap);
+     end_shape_point_edit();
    }
 
    if(xctx->ui_state & STARTPAN) {
