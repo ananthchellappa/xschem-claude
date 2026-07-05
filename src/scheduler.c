@@ -3234,6 +3234,46 @@ static int xschem_cmds_h(Tcl_Interp *interp, int argc, const char *argv[], int *
       }
     }
 
+    /* highlight_pin_scope [clear | ids | <scope>]
+     *   Pin analog of highlight_scope: outline the symbol pins an Apply with <scope>
+     *   (current|selected|all) would touch, resolved by the SHARED pin_scope_resolve() so the
+     *   outlined set == the applied set by construction. Stores the pins' rect[PINLAYER] stable
+     *   ids in the same overlay store (draw_scope_highlight's xRECT case renders them), redraws,
+     *   and returns the resolved id list. No args: overlay count. 'ids': stored ids. 'clear':
+     *   empty + redraw. (doc/claude/specs/symbol_editor_apply_scope.md §5.4) */
+    else if(!strcmp(argv[1], "highlight_pin_scope"))
+    {
+      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(argc == 2) {
+        Tcl_SetResult(interp, my_itoa(xctx->scope_hi_n), TCL_VOLATILE);
+      } else if(!strcmp(argv[2], "clear")) {
+        clear_scope_highlight();
+        draw();
+        Tcl_ResetResult(interp); /* draw() leaves a stale tcleval result */
+      } else if(!strcmp(argv[2], "ids")) {
+        int k;
+        for(k = 0; k < xctx->scope_hi_n; ++k)
+          Tcl_AppendElement(interp, my_itoa((int)xctx->scope_hi_id[k]));
+      } else if(argc == 3) {
+        int *targets, n, k, primary;
+        n = pin_scope_resolve(argv[2], &primary, &targets);
+        clear_scope_highlight();
+        for(k = 0; k < n; ++k)
+          add_scope_highlight(xRECT, xctx->rect[PINLAYER][targets[k]].id);
+        my_free(_ALLOC_ID_, &targets);
+        draw();
+        /* build the result AFTER draw() (its internal tcleval()s clobber the interp
+         * result); report from the stored overlay = the resolved set. */
+        Tcl_ResetResult(interp);
+        for(k = 0; k < xctx->scope_hi_n; ++k)
+          Tcl_AppendElement(interp, my_itoa((int)xctx->scope_hi_id[k]));
+      } else {
+        Tcl_SetResult(interp,
+          "xschem highlight_pin_scope needs: [clear | ids | <scope>]", TCL_STATIC);
+        return TCL_ERROR;
+      }
+    }
+
     /* highlight_objects <type> <id> [<type> <id> ...]
      *   The GENERAL overlay primitive: outline an explicit list of drawable
      *   objects (any of wire|instance|rect|line|poly|arc), each by its stable id,

@@ -10124,11 +10124,25 @@ proc gfxform::pin_scope_greying {} {
   if {[catch {winfo exists .dialog.appear.name.e} ex] || !$ex} return
   .dialog.appear.name.e configure -state [expr {$editable ? {normal} : {disabled}}]
 }
-# Combobox change -> update the canonical scope var + re-grey. (SP3 adds live re-highlight.)
+# Outline the pins the current scope would touch, on the symbol canvas (the apply-set
+# overlay, distinct from the selection outline). Same resolver as the apply, so
+# outlined == applied. No-op for non-pin editors. (symbol_editor_apply_scope.md §4.4/SP3)
+proc gfxform::update_pin_highlight {} {
+  variable type
+  if {$type ne {pin}} return
+  catch {xschem highlight_pin_scope $::gfxform_pin_scope}
+}
+proc gfxform::clear_pin_highlight {} {
+  variable type
+  if {$type ne {pin}} return   ;# only the pin editor sets the overlay
+  catch {xschem highlight_pin_scope clear}
+}
+# Combobox change -> update the canonical scope var + re-grey + re-highlight the apply set.
 proc gfxform::on_scope_change {} {
   variable scope_label
   set ::gfxform_pin_scope [gfxform::scope_value_for $scope_label]
   gfxform::pin_scope_greying
+  gfxform::update_pin_highlight
 }
 # Commit <prop> to the pins. The pin editor passes its scope; pinname (a single retargeted
 # pin) and other types keep the default (selected) routing.
@@ -10162,6 +10176,7 @@ proc gfxform::ok {} {
   } else {
     set ::tctx::rcode {ok}
   }
+  gfxform::clear_pin_highlight
   destroy .dialog
 }
 
@@ -10269,8 +10284,11 @@ proc text_line_slick {txtlabel clear preserve_disabled type} {
   }
   button .dialog.buttons.cancel -text Cancel -command {
     set ::tctx::rcode {}
+    gfxform::clear_pin_highlight
     destroy .dialog
   }
+  # route the WM close button through Cancel so the apply-set overlay is always cleared
+  catch {wm protocol .dialog WM_DELETE_WINDOW {.dialog.buttons.cancel invoke}}
   if {[winfo exists .dialog.buttons.apply]} {
     pack .dialog.buttons.ok .dialog.buttons.apply .dialog.buttons.cancel -side left -fill x -expand yes
   } else {
@@ -10289,7 +10307,7 @@ proc text_line_slick {txtlabel clear preserve_disabled type} {
     bind .dialog <KP_Enter> {.dialog.buttons.cancel invoke}
   }
   dialog_minsize_floor .dialog
-  if {$type eq {pin}} { gfxform::pin_scope_greying } ;# initial Name greying for the sticky scope
+  if {$type eq {pin}} { gfxform::pin_scope_greying; gfxform::update_pin_highlight } ;# initial greying + apply-set overlay
   tkwait window .dialog
   return $tctx::rcode
 }
