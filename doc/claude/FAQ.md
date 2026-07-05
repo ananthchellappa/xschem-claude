@@ -14,6 +14,97 @@ Newest entries on top.
 
 ---
 
+## Q27. When I drag a net-label that taps the *middle* of a wire, why did the whole wire jog into a U-detour instead of leaving the wire in place and dropping a single stub?
+
+- **Asked:** 2026-07-05
+- **Project state:** branch `fluid-editing` @ `670ad255` (wire-segment-splitting W0–W6 landed).
+
+**Symptom.** Fixture `SANDBOX/test_wire_splits/`: wire `N -100 -60 110 -60`, a `lab_wire`
+net-label tapping it mid-span at `(-80,-60)`, a resistor tap at `0`. Grab the label and drag
+it up. Desired (`sch_desired`): the horizontal run stays put, one clean vertical stub joins
+the label's new position back to the tap. Actual (`sch_after`): the left half of the run got
+rubber-banded into a 4-segment U-detour.
+
+**Root cause — a two-feature interaction.** The **wire-segment-splitting** feature (W1)
+breaks the wire at every attachment point into abutting **collinear segments**, so the label
+tap at `(-80,-60)` — which used to be *mid-span* on one wire — becomes a shared **endpoint**
+of two segments (`-100→-80` and `-80→0`). The **wire-follow-on-move** machinery then grabs
+those segments through *two* paths:
+
+1. `select_attached_nets()` (select.c) grabs wires by **endpoint coincidence** with the
+   moving pin → it grabs *both* through-segments.
+2. Even after (1) is suppressed, `connect_by_kissing()` drops a stub at the tap and
+   `compute_wire_slide()` (move.c) **promotes** that stub — its far end (the tap) has
+   coincident neighbours, so it looks like a slidable *corner* — and drags the run.
+
+Before the split, the tap was mid-span (not an endpoint) so `select_attached_nets` never
+fired and `connect_by_kissing` alone dropped one clean stub. **The split defeated the
+correct tap-move semantics.** (Diagnostic lever: with `orthogonal_wiring=0`, kissing already
+produced the desired result, which isolated `compute_wire_slide` as the second culprit.)
+
+**Fix (both gated inside the stretch path only).** Two predicates that recognise a *straight
+run passing through a point* (two wire endpoints there that are collinear **and**
+opposite-direction: `cross==0 && dot<0`, exact because split coords are grid-aligned):
+
+- `select.c wire_through_tap_arm()` — in `select_attached_nets`, **skip** grabbing a wire
+  that is one arm of a through-run at the moving pin. Gated on `connect_by_kissing` being
+  armed, so a stub always *replaces* the skipped grab (otherwise a stretch-without-kissing
+  move would leave the tap disconnected); the arming was reordered before
+  `select_attached_nets` at the move/copy/drag sites.
+- `move.c point_is_collinear_pass()` — in `compute_wire_slide`, **jog instead of slide**
+  when a wire's far end is a straight pass-through of *stationary* wires (so the kiss stub at
+  a tap stays a single clean stub, never dragging the run).
+
+A perpendicular L-arm or a lone wire-end has no collinear-opposite partner, so it still
+follows normally. Regression coverage: `tests/headless/test_wire_split.tcl` W7/W7b/W7c
+(run-intact + single stub; stretch-without-kissing stays connected; 4-way cross stays
+connected). See `doc/claude/specs/wire_segment_splitting.md`.
+
+---
+
+## Q26. When I rubber-band a selection box, why does a partially-crossed *line* (or pin/wire endpoint) get grabbed but a partially-crossed *instance* does not — and is `enable_stretch` the reason?
+
+- **Asked:** 2026-07-04
+- **Project state:** branch `fluid-editing` @ `8f7e621b`.
+
+**Short version:** two *different* features are in play, and neither is "partial overlap
+selects the whole object" the way it first looks. **`enable_stretch`** grabs individual
+**sub-parts** (endpoints / corners / vertices) of *decomposable* objects as stretch
+handles — it does **nothing** to an instance, which is atomic. The behavior that selects a
+**whole** object on partial overlap is a *separate* variable, **`select_touch`** (an
+AutoCAD-style crossing-window), and it is gated on the **drag direction**, not on
+`enable_stretch`.
+
+**The area-select funnel** is `select_inside()` (`select.c:1524`). Per object type:
+
+| Object | Selected by area when… | Extra when `stretch` on |
+|---|---|---|
+| instance | **fully enclosed** (`RECT_INSIDE`) only | *nothing* — the partial branch is `#if 0` (select.c:1601) |
+| wire / line | both endpoints enclosed | one endpoint inside → that end grabbed (`SELECTED1/2`) |
+| rectangle | all 4 corners enclosed | a corner inside → that corner grabbed (`SELECTED1..4`) |
+| arc | bbox enclosed | center/endpoint inside → grabbed (`SELECTED1/2/3`) |
+| polygon | all vertices enclosed | a vertex inside → that vertex grabbed |
+
+So an instance is **all-or-nothing**: `enable_stretch` cannot make it partial-selectable
+because it has no grabbable sub-points. A line looked "partially selected" only because its
+*endpoint* (a sub-part) fell in the box while `stretch` was on.
+
+**Window vs crossing is drag direction.** `select_rect()` (`actions.c:4956`) dispatches on
+`xctx->nl_dir`, set at press time from the drag direction
+(`callback.c:3986`: `mx >= mx_save ? nl_dir=0 : nl_dir=1`):
+- **left → right** (`nl_dir=0`) → `select_inside()` — **window**, full enclosure.
+- **right → left** (`nl_dir=1`) *and* `select_touch=1` → `select_touch()` — **crossing**,
+  partial overlap selects **whole** objects, instances included.
+
+`select_touch` defaults **on** (`xschem.tcl:14669`); `enable_stretch` defaults **off**
+(`xschem.tcl:14659`). So: to grab a partially-crossed *instance*, drag **right-to-left**
+(that is `select_touch`, not `enable_stretch`). `enable_stretch` is only about grabbing
+endpoints/corners for a subsequent stretch-move, and (non-cadence) about instance-move
+net-follow. See the fluid-editing spec `doc/claude/specs/fluid_editing.md`, which builds on
+this to give first-click tip/edge grab.
+
+---
+
 ## Q25. Which `xschem` Tcl commands exist in this fork but not in upstream XSCHEM — and where is the list?
 
 - **Asked:** 2026-07-04
