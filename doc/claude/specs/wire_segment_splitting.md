@@ -1,6 +1,6 @@
 # Wire segment splitting: independent click regions between attachment points
 
-Status: **SPEC drafted 2026-07-05; W0-W1 BUILT + tested** (W2-W6 pending). Branch
+Status: **SPEC drafted 2026-07-05; W0-W2 done** (W3-W6 pending). Branch
 `fluid-editing` (sibling of `doc/claude/specs/fluid_editing.md`; the natural next
 Cadence-UX increment). Design grounded by a 7-reader + 3-critique understanding workflow
 (2 adversarial critiques survived; findings folded into §7 Hazards). `select_at` replay
@@ -31,7 +31,16 @@ fidelity for split wires (Hazard H8) is deferred as **issue 0078**.
   Prototypes in `xschem.h`. Test T1 (load 1 wire + 2 mid-span labels → 3 segments; each of
   3 region `select_at`s hits one distinct `wire_id`; endpoints `{-100 -50 50 100}` exact).
   RED→GREEN + sabotage-verified. Integration: the real `test_wire_splits.sch` loads as
-  **3** segments under autotrim. All headless cases green. Not yet committed.
+  **3** segments under autotrim. All headless cases green. Committed @ `1cbd05bb`.
+
+- **W2 — connectivity / netlist invariance (INV-1). Test-only** (`test_wire_split.tcl`).
+  W1's code already satisfies it; T2 locks it: load the real `test_wire_splits.sch` split
+  OFF vs ON and assert `xschem instance_nodemap R7` is byte-identical (`R7 P GB M #net1` —
+  same node names, same pin membership, same auto `#netN` numbering, so Hazard H4 is not
+  triggered here) while proving the split really happened (1 wire vs 3 segments, so the
+  invariance is not vacuous). Sabotage-verified with real teeth: perturbing the split point
+  off the wire line orphans `R7.P` (GB → `#net1`) and flips all three T2 checks RED. Not
+  yet committed.
 
 ## 1. Problem
 
@@ -289,10 +298,10 @@ Phases:
   `wire_id`s, per-region `select_at` selects exactly one, endpoints exact. Sabotage-verified;
   real `test_wire_splits.sch` → 3 segments.
 
-- **W2 — connectivity invariance (INV-1, §4).** *RED-guard:* T2 — netlist the fixture with
-  split off and on; assert identical node assignment (label net `GB` on all three segments;
-  no new nets; resistor pin on `GB`). Must already pass after W1 if H2/H3 are respected —
-  T2 is the guard that proves it and catches regressions.
+- **W2 — connectivity invariance (INV-1, §4). ✅ DONE (test-only).** T2 — `instance_nodemap
+  R7` on the real fixture byte-identical split-off vs split-on (`R7 P GB M #net1`), plus a
+  not-vacuous guard (1 wire vs 3). Passes after W1 (H2/H3 respected); sabotage-verified that
+  a connectivity break flips it RED.
 
 - **W3 — edit-time maintenance (§6.2).** *RED:* T4 — after W1 splits the fixture, delete
   the `lab_wire`; assert the two segments around it **rejoin to one** (via the free W0

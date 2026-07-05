@@ -105,6 +105,30 @@ if {[xschem get wires] == 3} {
   check "W1 T1: segment endpoints = {-100 -50 50 100} (taps exact, span intact)" \
         [lsort -real -unique $xs] {-100 -50 50 100}
 }
-# (connectivity invariance across the split is asserted in W2.)
+
+# ===========================================================================
+# Phase W2 -- connectivity / netlist invariance (INV-1).
+# Splitting a wire into collinear touching segments must NOT change which nodes exist,
+# which pins are on which node, or the auto #netN numbering. Probe the real fixture
+# (test_wire_splits.sch: a resistor R7 tapping a GB-labelled wire) with the split OFF
+# then ON and assert the instance node map is byte-identical -- while proving the split
+# actually happened (1 wire vs 3), so the invariance is not vacuous.
+# ===========================================================================
+set here [file normalize [file dirname [info script]]]
+set root [file normalize [file join $here .. ..]]
+set realf [file join $root xschem_libs_newsym SANDBOX test_wire_splits schematic test_wire_splits.sch]
+if {![file exists $realf]} { bail "W2 real fixture missing: $realf" }
+proc load_at {file at} { set ::autotrim_wires $at; xschem load $file }
+
+load_at $realf 0
+set nmap_off [xschem instance_nodemap R7]
+set nwire_off [xschem get wires]
+load_at $realf 1
+set nmap_on [xschem instance_nodemap R7]
+set nwire_on [xschem get wires]
+
+check "W2 T2: split actually happened (1 wire -> 3 segments)" [list $nwire_off $nwire_on] {1 3}
+check "W2 T2: R7 node map byte-identical split OFF vs ON (INV-1)" $nmap_on $nmap_off
+check "W2 T2: R7.P taps net GB through the split" [lindex $nmap_on 2] GB
 
 if {$fail == 0} { puts "OVERALL: ok"; exit 0 } else { puts "OVERALL: notok"; exit 1 }
