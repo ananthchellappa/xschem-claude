@@ -5820,6 +5820,40 @@ static int xschem_cmds_p(Tcl_Interp *interp, int argc, const char *argv[], int *
       Tcl_ResetResult(interp);
     }
 
+    /* pin_escape_normal inst attr value
+     *   Return the outward escape normal (a unit axis vector "nx ny") of the pin whose
+     *   attribute 'attr' equals 'value' on instance 'inst' (nice_drag_rerouting §6,
+     *   geometry-only). Example: xschem pin_escape_normal m1 name d --> 0 -1
+     *   Empty string if the instance or pin is not found. */
+    else if(!strcmp(argv[1], "pin_escape_normal"))
+    {
+      xSymbol *symbol;
+      xRect *rct;
+      double nx, ny;
+      char num[60];
+      int p, i, no_of_pins;
+      const char *pin;
+      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(argc < 5) {
+        Tcl_SetResult(interp,
+          "xschem pin_escape_normal requires an instance, a pin attribute and a value", TCL_STATIC);
+        return TCL_ERROR;
+      }
+      i = get_instance(argv[2]);
+      if(i < 0) { Tcl_SetResult(interp, "", TCL_STATIC); return TCL_OK; }
+      symbol = xctx->sym + xctx->inst[i].ptr;
+      no_of_pins = symbol->rects[PINLAYER];
+      rct = symbol->rect[PINLAYER];
+      for(p = 0; p < no_of_pins; p++) {
+        pin = get_tok_value(rct[p].prop_ptr, argv[3], 0);
+        if(!strcmp(pin, argv[4])) break;
+      }
+      if(p >= no_of_pins) { Tcl_SetResult(interp, "", TCL_STATIC); return TCL_OK; }
+      get_pin_escape_normal(i, p, &nx, &ny);
+      my_snprintf(num, S(num), "%g %g", nx, ny);
+      Tcl_SetResult(interp, num, TCL_VOLATILE);
+    }
+
     /* pinlist inst [attr]
      *   List all pins of instance 'inst'
      *   if no 'attr' is given return full attribute string,

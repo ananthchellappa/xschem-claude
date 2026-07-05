@@ -1613,6 +1613,36 @@ static void insert_exit_stubs(void)
   set_modify(1);
 }
 
+/* Phase 2 (doc/claude/specs/nice_drag_rerouting.md §6; geometry-only per the resolved §10.1):
+ * outward escape normal of pin r of instance i -- the axis direction a wire should leave the
+ * pin, perpendicular to the pin's edge. Nearest-edge geometry: the pin's WORLD coordinate vs
+ * the instance's WORLD bounding box (already rotated/translated), so a rotated/flipped instance
+ * yields the correctly rotated normal for free. Ties broken L,R,B,T -- identical to the Tcl
+ * reference predicates.tcl pin_escape_normal, which this ports. Crude by design on ambiguous
+ * pins (corner, near-centre/bulk, text-skewed bbox); accepted per the geometry-only decision (no
+ * per-pin dir= symbol property). Returns a unit axis vector in (*nx,*ny), or (0,0) if invalid. */
+void get_pin_escape_normal(int i, int r, double *nx, double *ny)
+{
+  double px, py, x1, y1, x2, y2, dl, dr, db, dt, m, t;
+  *nx = 0.0; *ny = 0.0;
+  if(i < 0 || i >= xctx->instances || xctx->inst[i].ptr < 0) return;
+  get_inst_pin_coord(i, r, &px, &py);          /* pin world coord */
+  x1 = xctx->inst[i].x1; y1 = xctx->inst[i].y1;    /* instance world bbox */
+  x2 = xctx->inst[i].x2; y2 = xctx->inst[i].y2;
+  if(x1 > x2) { t = x1; x1 = x2; x2 = t; }
+  if(y1 > y2) { t = y1; y1 = y2; y2 = t; }
+  dl = fabs(px - x1); dr = fabs(px - x2);
+  db = fabs(py - y1); dt = fabs(py - y2);
+  m = dl;
+  if(dr < m) m = dr;
+  if(db < m) m = db;
+  if(dt < m) m = dt;
+  if(m == dl)      { *nx = -1.0; *ny =  0.0; } /* nearest edge -> outward normal (tie: L,R,B,T) */
+  else if(m == dr) { *nx =  1.0; *ny =  0.0; }
+  else if(m == db) { *nx =  0.0; *ny = -1.0; }
+  else             { *nx =  0.0; *ny =  1.0; }
+}
+
 /* Fluid-editing Phase 1 (doc/claude/specs/nice_drag_rerouting.md §8): runtime invariant guards
  * at move END. Non-fatal, log-only, gated on fluid_editing (default off => never run => every
  * move byte-identical). Bring the Phase-0 golden predicates P1/P2 into the interactive runtime

@@ -1653,6 +1653,7 @@ extern void draw_hilight_dot(unsigned int fg, double x, double y, double r);
 extern void incr_hilight_color(void);
 extern void decr_hilight_color(void);
 extern void get_inst_pin_coord(int i, int j, double *x, double *y);
+extern void get_pin_escape_normal(int i, int r, double *nx, double *ny);
 
 extern void del_inst_table(void);
 extern void hash_inst(int what, int n);
