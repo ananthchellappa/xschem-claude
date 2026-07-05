@@ -1046,7 +1046,10 @@ void copy_objects(int what)
     }
     /* build after copying and after recalculating prepare_netlist_structs() */
     check_collapsing_objects();
-    if(tclgetboolvar("autotrim_wires")) trim_wires();
+    /* W3: a moved/copied instance may drop a pin onto a wire (split) or lift one off (rejoin);
+     * maintain re-splits at attachment points then pin-aware-merges. Gated on autotrim_wires;
+     * undo owned by the enclosing move. See doc/claude/specs/wire_segment_splitting.md (W3). */
+    if(tclgetboolvar("autotrim_wires")) maintain_wire_segments();
     if(xctx->hilight_nets) {
       propagate_hilights(1, 1, XINSERT_NOREPLACE);
     }
@@ -2027,7 +2030,12 @@ void move_objects(int what, int merge, double dx, double dy)
     *   2. remove_move_orphan_wires() on the cleaned geometry: drop redundant dangling
     *      stubs this move produced (TC9). It must see post-trim geometry, else an
     *      overlapping colinear pair would look like a stub-on-a-wire. */
-   if(xctx->stretch_select || tclgetboolvar("autotrim_wires")) trim_wires();
+   /* W3: when autotrim is on a stretch/move can create or remove an attachment, so run the
+    * full re-split/rejoin (maintain). When autotrim is OFF, a stretch still needs the plain
+    * trim cleanup (merge colinear degree-2 fragments, drop dups) but must NOT split at pins
+    * (D2 -- default users get no auto-split). See doc/claude/specs/wire_segment_splitting.md. */
+   if(tclgetboolvar("autotrim_wires")) maintain_wire_segments();
+   else if(xctx->stretch_select) trim_wires();
    if(xctx->stretch_select) remove_move_orphan_wires();
    /* Exit-stub preservation (wire-editing Phase 6, Issue E -> R13). After the cleanup
     * above, ensure each moved pin's route leaves the pin along the pin's outward normal

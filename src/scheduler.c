@@ -515,7 +515,9 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
       if(scheduler_readonly_reject(interp, "align")) return TCL_ERROR;
       xctx->push_undo();
       round_schematic_to_grid(tclgetdoublevar("cadsnap"));
-      if(tclgetboolvar("autotrim_wires")) trim_wires();
+      /* W3: align-to-grid can snap a pin onto/off a wire -> re-split/rejoin (maintain).
+       * Gated on autotrim_wires; undo pushed above. See wire_segment_splitting.md (W3). */
+      if(tclgetboolvar("autotrim_wires")) maintain_wire_segments();
       set_modify(1);
       xctx->prep_hash_inst=0;
       xctx->prep_hash_wires=0;
@@ -3599,22 +3601,28 @@ static int xschem_cmds_i(Tcl_Interp *interp, int argc, const char *argv[], int *
     {
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
       if(scheduler_readonly_reject(interp, "instance")) return TCL_ERROR;
+      int placed = 0;
       if(argc==7) {
        /*           pos sym_name      x                y             rot       */
         place_symbol(-1, argv[2], atof(argv[3]), atof(argv[4]), (short)atoi(argv[5]),
                /* flip              prop draw first to_push_undo */
                (short)atoi(argv[6]),NULL,  3,   1,      1);
-        set_modify(1);
+        set_modify(1); placed = 1;
       } else if(argc==8) {
         place_symbol(-1, argv[2], atof(argv[3]), atof(argv[4]), (short)atoi(argv[5]),
                (short)atoi(argv[6]), argv[7], 3, 1, 1);
-        set_modify(1);
+        set_modify(1); placed = 1;
       } else if(argc==9) {
         int x = !(atoi(argv[8]));
         place_symbol(-1, argv[2], atof(argv[3]), atof(argv[4]), (short)atoi(argv[5]),
                (short)atoi(argv[6]), argv[7], 0, x, 1);
-        set_modify(1);
+        set_modify(1); placed = 1;
       }
+      /* W3: a placed instance may drop a pin / net-label onto a wire -> split it into
+       * inter-attachment segments (maintain = split + pin-aware merge); if it lands off any
+       * wire nothing changes. Gated on autotrim_wires; place_symbol already pushed undo, so
+       * this rides the same transaction. See doc/claude/specs/wire_segment_splitting.md (W3). */
+      if(placed && tclgetboolvar("autotrim_wires")) maintain_wire_segments();
     }
 
     /* instance_bbox inst
@@ -9612,7 +9620,10 @@ static int xschem_cmds_w(Tcl_Interp *interp, int argc, const char *argv[], int *
         save = xctx->draw_window; xctx->draw_window = 1;
         drawline(WIRELAYER,NOW, x1,y1,x2,y2, 0.0, 0, NULL);
         xctx->draw_window = save;
-        if(tclgetboolvar("autotrim_wires")) trim_wires();
+        /* W3: a scripted wire may pass under existing pins/net-labels -> split it into
+         * inter-attachment segments (maintain = split + pin-aware merge). Gated on
+         * autotrim_wires; undo pushed by the wire command above. See wire_segment_splitting.md. */
+        if(tclgetboolvar("autotrim_wires")) maintain_wire_segments();
         set_modify(1);
       }
       else if(argc > 2 && !strcmp(argv[2], "gui")) {

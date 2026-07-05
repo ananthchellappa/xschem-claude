@@ -2648,6 +2648,13 @@ static void save_inst(FILE *fd, int select_only)
  my_free(_ALLOC_ID_, &embedded_saved);
 }
 
+/* Coalesce split wire segments back to their minimal form only when writing the PERSISTENT
+ * .sch artifact (save_schematic sets this around write_xschem_file). It stays 0 for undo/redo
+ * snapshots (push_undo) and autosave ~ backups (write_backup), which must preserve the EXACT
+ * in-memory segmented array so an undo/restore round-trips bit-for-bit (W4 must not collapse
+ * the user's clickable segments on undo). See doc/claude/specs/wire_segment_splitting.md (W4). */
+static int coalesce_wires_on_save = 0;
+
 static void save_wire(FILE *fd, int select_only)
 {
  int i, nw;
@@ -2655,17 +2662,18 @@ static void save_wire(FILE *fd, int select_only)
 
  ptr = xctx->wire;
  nw = xctx->wires;
- /* D1 / W4: on a full save with wire auto-splitting active, write the COALESCED (byte-stable)
-  * form -- re-join the in-memory inter-attachment segments on a PRIVATE scratch copy so the
-  * on-disk .sch matches the pre-split single record, WITHOUT disturbing the live segmented
-  * array (the user keeps clickable segments after saving). Strictly gated on autotrim_wires:
-  * default-mode saves stay verbatim (a default user's deliberately abutting collinear wires
-  * must not be silently merged). Never on select_only (clipboard/paste keeps exactly what is
-  * selected). See doc/claude/specs/wire_segment_splitting.md (section 6.3).
+ /* D1 / W4: on a persistent full save with wire auto-splitting active, write the COALESCED
+  * (byte-stable) form -- re-join the in-memory inter-attachment segments on a PRIVATE scratch
+  * copy so the on-disk .sch matches the pre-split single record, WITHOUT disturbing the live
+  * segmented array (the user keeps clickable segments after saving). Gated on
+  * coalesce_wires_on_save (persistent .sch only, NOT undo/autosave -- see above) AND
+  * autotrim_wires: default-mode saves stay verbatim (a default user's deliberately abutting
+  * collinear wires must not be silently merged). Never on select_only (clipboard/paste keeps
+  * exactly what is selected). See doc/claude/specs/wire_segment_splitting.md (section 6.3).
   * The scratch copy is shallow: prop_ptr/node are borrowed from xctx->wire[] and only READ
   * (save_ascii_string) / geometry-rewritten (merge_collinear_wires), so freeing the array is
   * enough -- the borrowed strings stay owned by xctx->wire[]. */
- if(!select_only && xctx->wires > 1 && tclgetboolvar("autotrim_wires")) {
+ if(!select_only && coalesce_wires_on_save && xctx->wires > 1 && tclgetboolvar("autotrim_wires")) {
    coalesced = my_malloc(_ALLOC_ID_, xctx->wires * sizeof(xWire));
    memcpy(coalesced, xctx->wire, xctx->wires * sizeof(xWire));
    nw = merge_collinear_wires(coalesced, xctx->wires, 1 /* pin-blind */);
@@ -3617,7 +3625,11 @@ int save_schematic(const char *schname, int fast) /* 20171020 added return value
   rects = xctx->rects[PINLAYER];
   rect = xctx->rect[PINLAYER];
   sort_symbol_pins(rect, rects, schname);
+  /* This is the persistent .sch artifact: coalesce split wire segments to the byte-stable form
+   * (W4 / D1). Undo snapshots and autosave backups deliberately do NOT set this. */
+  coalesce_wires_on_save = 1;
   write_xschem_file(fd);
+  coalesce_wires_on_save = 0;
   fclose(fd);
   /* update time stamp */
   if(!stat(schname, &buf)) {

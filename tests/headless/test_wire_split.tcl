@@ -284,4 +284,70 @@ xschem saveas $t4 schematic
 check "W4 T6c: coalesce keeps the T split (3 N records; no weld across a 3rd-wire endpoint)" \
       [count_N $t4] 3
 
+# ===========================================================================
+# Phase W3 -- edit-time re-split / rejoin, routed through maintain_wire_segments() with the
+# enclosing edit's undo. Deleting the net-label that caused a split must REJOIN the two
+# collinear stubs (free, via the W0 pin-aware merge once the pin is gone); placing or drawing
+# a new attachment must SPLIT; and undo must restore the pre-edit segment state in one step.
+# ===========================================================================
+
+# --- T4: delete a mid-span label -> its two segments rejoin (3 -> 2); undo restores 3. ---
+set ::autotrim_wires 1
+xschem load $f1
+check "W3 T4: load -> 3 segments" [xschem get wires] 3
+xschem unselect_all
+xschem select instance 0                 ;# l1, the label at x=-50
+xschem delete
+check "W3 T4: deleting the -50 label rejoins its stubs (3 -> 2)" [xschem get wires] 2
+xschem undo
+check "W3 T4: undo restores the pre-delete 3 segments" [xschem get wires] 3
+check "W3 T4: undo restored the deleted label instance" [xschem get instances] 2
+
+# --- T4 net-invariance: the rejoin must not change connectivity. Fixture keeps the net named
+#     (two GB labels), so deleting ONE still leaves the net GB; a resistor R7 taps mid-span. ---
+set f5 [file join $wdir res_two_labels.sch]
+write_sch $f5 {v {xschem version=3.4.8RC file_version=1.3}
+G {}
+K {}
+V {}
+S {}
+F {}
+E {}
+N -100 -60 110 -60 {}
+C {devices/lab_wire} -80 -60 0 0 {name=l1 lab=GB}
+C {devices/lab_wire} 80 -60 0 0 {name=l2 lab=GB}
+C {devices/res} 0 -30 0 1 {name=R7 m=1 value=320}
+}
+xschem load $f5
+set nmap_pre [xschem instance_nodemap R7]
+set nw_pre [xschem get wires]
+xschem unselect_all
+xschem select instance 0                 ;# l1, the label at x=-80
+xschem delete
+check "W3 T4: res fixture rejoin drops one segment (l2 still names the net)" \
+      [list $nw_pre [xschem get wires]] {4 3}
+check "W3 T4: R7 node map unchanged after label delete + rejoin (INV-1)" \
+      [xschem instance_nodemap R7] $nmap_pre
+
+# --- T4b: placing a net-label mid-span SPLITS the wire (1 -> 2); undo restores 1. ---
+catch {xschem clear force}
+set ::autotrim_wires 1
+xschem wire -100 0 100 0
+check "W3 T4b: one plain wire" [xschem get wires] 1
+xschem instance devices/lab_wire 0 0 0 0 {name=lp lab=GB}
+check "W3 T4b: placing a mid-span label splits the wire (1 -> 2)" [xschem get wires] 2
+xschem undo
+check "W3 T4b: undo removes the label and rejoins (2 -> 1)" [xschem get wires] 1
+check "W3 T4b: undo removed the placed label" [xschem get instances] 0
+
+# --- T4c: drawing a wire UNDER an existing label splits it at the pin (1 -> 2); undo -> 0. ---
+catch {xschem clear force}
+set ::autotrim_wires 1
+xschem instance devices/lab_wire 0 0 0 0 {name=lp lab=GB}
+check "W3 T4c: label placed, no wire yet" [xschem get wires] 0
+xschem wire -100 0 100 0
+check "W3 T4c: drawing a wire under the label splits at the pin (1 -> 2)" [xschem get wires] 2
+xschem undo
+check "W3 T4c: undo removes the drawn wire (-> 0)" [xschem get wires] 0
+
 if {$fail == 0} { puts "OVERALL: ok"; exit 0 } else { puts "OVERALL: notok"; exit 1 }

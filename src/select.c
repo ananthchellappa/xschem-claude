@@ -606,10 +606,22 @@ void delete(int to_push_undo)
     xctx->prep_hi_structs=0;
   }
 
-  if(delete_wires(SELECTED)) {
-    deleted = 1;
-    if(tclgetboolvar("autotrim_wires")) trim_wires();
-    update_conn_cues(WIRELAYER, 0, 0);
+  {
+    int wires_deleted = delete_wires(SELECTED);
+    if(wires_deleted) deleted = 1;
+    /* W3 edit-time maintenance: after ANY deletion re-run wire-segment maintenance so the two
+     * collinear stubs left by a removed net-label / instance pin REJOIN (free, via the W0
+     * pin-aware merge once the pin is gone). The old code trimmed only when a WIRE was deleted,
+     * so a lone label delete never rejoined its stubs. push_undo already happened at entry, so
+     * this is one undo transaction. Gated on autotrim_wires (D2); trim_wires inside maintain
+     * refreshes the connection cues, so only the default (verbatim) path needs the explicit
+     * update_conn_cues -- kept identical to before. See doc/claude/specs/wire_segment_splitting.md
+     * (W3). */
+    if(tclgetboolvar("autotrim_wires")) {
+      if(deleted) maintain_wire_segments();
+    } else if(wires_deleted) {
+      update_conn_cues(WIRELAYER, 0, 0);
+    }
   }
   if(xctx->hilight_nets) {
     propagate_hilights(1, 1, XINSERT_NOREPLACE);

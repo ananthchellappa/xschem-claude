@@ -1,12 +1,41 @@
 # Wire segment splitting: independent click regions between attachment points
 
-Status: **SPEC drafted 2026-07-05; W0-W2 + W4 done** (W3, W5, W6 pending). Branch
+Status: **SPEC drafted 2026-07-05; W0-W4 done** (W5, W6 pending). Branch
 `fluid-editing` (sibling of `doc/claude/specs/fluid_editing.md`; the natural next
 Cadence-UX increment). Design grounded by a 7-reader + 3-critique understanding workflow
 (2 adversarial critiques survived; findings folded into §7 Hazards). `select_at` replay
 fidelity for split wires (Hazard H8) is deferred as **issue 0078**.
 
 ## Built
+
+- **W3 — edit-time re-split / rejoin via `maintain_wire_segments()` (§6.2).** The
+  autotrim-gated edit-time `trim_wires()` sites now call `maintain_wire_segments()` so an edit
+  that creates an attachment SPLITS the wire and one that removes an attachment REJOINS the
+  stubs (free, via the W0 pin-aware merge): draw wire (`actions.c` interactive + `scheduler.c`
+  `xschem wire`), move/copy END (`move.c:1049`), stretch/move END (`move.c:2030`, re-gated so an
+  autotrim-off stretch still gets plain `trim_wires` and NOT a pin-split — D2), align
+  (`scheduler.c` align + `callback.c` Alt-U), and instance place (`scheduler.c` `xschem
+  instance`, a new hook — `place_symbol` had none). **The real fix: `delete()` (`select.c`)
+  previously ran `trim_wires()` only when a WIRE was deleted, so deleting a lone net-label
+  never rejoined its two collinear stubs; now any deletion re-runs maintenance (autotrim-gated).**
+  All sites are undo-safe (the enclosing edit already `push_undo`s; maintenance rides the same
+  transaction) and strictly gated on `autotrim_wires`, so default mode is byte-for-byte
+  unchanged. Left as pure `trim_wires` (the low-level primitive, not an attachment-changing
+  edit): `&` Join/Trim key, `xschem trim_wires`, `select.c:98` stop-at-junction, and
+  `break_wires_at_pins`' internal trim.
+  **W4↔undo interaction fixed:** disk `push_undo` serialises via the same `write_xschem_file`
+  as a real save, so W4's coalesce was collapsing the segmented array *inside undo snapshots* —
+  an undo then restored the coalesced single wire, losing the user's clickable segments (caught
+  by the T4 undo check). Coalesce is now **opt-in** (`coalesce_wires_on_save`, set only by
+  `save_schematic` around the persistent `.sch` write); undo snapshots and autosave `~` backups
+  preserve the EXACT in-memory segmented array. Tests (T4/T4b/T4c, +6): delete-label→rejoin
+  (3→2) with node-map invariance (INV-1) and undo restoring the 3-segment state; place-label→
+  split (1→2) + undo; draw-wire-under-label→split (1→2) + undo. `test_wire_split.tcl` now 47
+  checks. RED→GREEN + sabotage-verified (neutering the delete-path maintenance flips only the
+  T4 rejoin/count checks; place/draw stay green). Not yet committed. *Deferred:* GUI
+  interactive place/paste split (only the scripted `xschem instance` path is hooked; paste of N
+  instances would want a single post-batch sweep, not per-`place_symbol`); localised
+  attachment sweep for perf on large sheets (review finding #6).
 
 - **W0 — pin-aware `trim_wires` merge (`check.c`)** — the linchpin (§5). Added
   `any_inst_pin_at(x,y)` (static, before `trim_wires`) and extended the merge guard
@@ -355,12 +384,15 @@ Phases:
   not-vacuous guard (1 wire vs 3). Passes after W1 (H2/H3 respected); sabotage-verified that
   a connectivity break flips it RED.
 
-- **W3 — edit-time maintenance (§6.2).** *RED:* T4 — after W1 splits the fixture, delete
-  the `lab_wire`; assert the two segments around it **rejoin to one** (via the free W0
-  auto-rejoin) and the net is still correct. *RED:* T5 already covers "keep the split at a
-  surviving pin." *Build:* route the delete/move/place edit paths through
-  `maintain_wire_segments()` with `push_undo` before mutation; assert undo restores the
-  pre-edit segment state.
+- **W3 — edit-time maintenance (§6.2). ✅ BUILT.** *RED (was):* T4 — deleting a mid-span
+  `lab_wire` left the two collinear stubs split (3 wires, no rejoin) because `delete()` only
+  trimmed on wire-deletion; T4b/T4c — placing/drawing a mid-span attachment did not split
+  (1 wire). *Built:* the autotrim-gated edit-time `trim_wires()` sites route through
+  `maintain_wire_segments()` (draw/move/copy/stretch/align/place), and `delete()` re-runs
+  maintenance after ANY deletion so a removed label rejoins its stubs. Undo rides the enclosing
+  edit's `push_undo`; T4 asserts undo restores the 3-segment state. **Undo fix:** coalesce made
+  opt-in (`coalesce_wires_on_save`, persistent `.sch` only) so disk-undo snapshots keep the
+  exact segmented array. RED→GREEN + sabotage-verified.
 
 - **W4 — coalesce-on-save (§6.3, D1). ✅ BUILT.** *RED (was):* T6 — split-on load→saveas
   wrote 3 `N` records (byte-differs from the split-off canonical file); T6b control —

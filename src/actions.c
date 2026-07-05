@@ -4252,7 +4252,10 @@ void new_wire(int what, double mx_snap, double my_snap)
         drawline(WIRELAYER,NOW, nl_xx1,nl_yy1,nl_xx2,nl_yy2, 0.0, 0, NULL);
       }
       xctx->prep_hi_structs = 0;
-      if(tclgetboolvar("autotrim_wires")) trim_wires();
+      /* W3: a freshly drawn wire may pass under existing pins/net-labels -> split it into
+       * inter-attachment segments (maintain = split + pin-aware merge). Gated on autotrim_wires.
+       * See doc/claude/specs/wire_segment_splitting.md (W3). */
+      if(tclgetboolvar("autotrim_wires")) maintain_wire_segments();
       prepare_netlist_structs(0); /* since xctx->prep_hi_structs==0, do a delete_netlist_structs() first,
                                    * this clears both xctx->prep_hi_structs and xctx->prep_net_structs. */
       if(xctx->hilight_nets) {
