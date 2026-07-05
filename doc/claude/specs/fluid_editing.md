@@ -1,8 +1,8 @@
 # Fluid editing: first-click tip/edge grab (Cadence direct manipulation)
 
-Status: **C1-C3 BUILT + reviewed + committed** (2026-07-04). Branch `fluid-editing`.
+Status: **C1-C4 BUILT + reviewed + committed** (2026-07-04). Branch `fluid-editing`.
 Drafted @ `8f7e621b`; implemented @ `3c2959e3` (C1) `f03c05fd` (C2) `615b2442` (C3)
-`2afe5d29` (adversarial-review fixes). C4 = deferred (Phase-4 gate).
+`2afe5d29` (adversarial-review fixes) `ddc70a75` (C4 polish).
 Plan + next-session prompt: `doc/claude/suggestions/fluid_editing_session.md`.
 
 ## Built (2026-07-04)
@@ -22,17 +22,28 @@ Plan + next-session prompt: `doc/claude/suggestions/fluid_editing_session.md`.
      mismatch) → restore now keys on the net `deltax/deltay`.
   5. arc CENTER/radius (`SELECTED1`) handle removed as dead code — the center is not on the
      curve, so a click there never selects the arc; radius editing stays area-stretch-only.
-- **Test**: `tests/headless/test_fluid_editing.tcl` (22 checks, drives real press/motion/
+- **C4 polish** (`ddc70a75`):
+  - **C4.3** dedicated `fluid_editing` Tcl var (default 0; `cadence_style_rc` sets it 1) +
+    Options-menu checkbutton. The first-click grab (C1-C3) + the issue-0017 free-wire-vertex
+    grab now gate on `fluid_editing` instead of `cadence_compat`, so it toggles independently.
+    `edit_rect_point`/`edit_arc_point` take the flag as a param. `cadence_compat` still gates
+    the separate modifier-drag copy/detach.
+  - **C4.1** line/wire endpoint grab uses a `cadhalfdotsize` tolerance zone (was exact
+    snap-match) — off-grid endpoints grabbable, consistent with rect/arc.
+  - **C4.2** dispatch collapsed into `try_grab_shape_point(state, intuitive, already_selected,
+    fluid)`.
+- **Test**: `tests/headless/test_fluid_editing.tcl` (26 checks, drives real press/motion/
   release via `xschem callback`, reads geometry via `saveas`+B/L/A parse; self-skips under
   `--nogui`; registered in `run_regression` hcases). RED-first + sabotage-verified per phase.
+  Gesture tests run at the pristine default zoom; the two zoom-out tests (FE7 thin-bar edge,
+  FE8 arc modified-flag) run LAST because `clear force` does not reset zoom.
 
-### Open design decision (Phase-4 gate)
+### Closed design decision: arc radius handle (user call 2026-07-04)
 The spec's third arc handle — **grab center → change radius** — is NOT deliverable via
-first-click: the geometric center is not on the arc, so a click there never hits/selects the
-arc. Delivered the two angular-endpoint handles (start angle, sweep). Making radius
-first-click-grabbable would need a *new* gesture (e.g. grab the arc body at the mid-angle),
-which changes the mid-curve click from whole-move to radius-stretch — a UX choice deferred
-to C4 / user sign-off.
+first-click (the geometric center is not on the arc, so a click there never selects it).
+Delivered the two angular-endpoint handles (start angle, sweep); the dead center branch was
+removed. Radius editing stays available via the area-stretch (rubber-band) path. User chose
+to leave it area-stretch-only rather than invent a new mid-curve gesture.
 
 ## Goal
 
