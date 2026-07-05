@@ -158,27 +158,23 @@ double timer(int start)
   }
 }
 
+static int touches_inst_pin(double x, double y, int inst); /* defined below; reused here */
+
 /* Return 1 if any instance PIN coincides EXACTLY with (x, y). Net-labels, pin-labels
  * and bus_taps are just instances carrying PINLAYER pins, so they are covered too.
  * Used by trim_wires' collinear-rejoin to REFUSE welding two segments across an
  * attachment point (a net-label / instance pin between them is a meaningful segment
- * boundary for click-selection). Exact double compare is correct here: pin coords and
- * wire endpoints are on-grid, so a genuine attachment matches exactly; a pin merely
- * NEAR the wire is not an attachment (and is not connected either -- see
- * doc/claude/specs/wire_segment_splitting.md, W0 + Hazard H2).
- * Only called from the merge branch after the cheap end1/end2==0 test, i.e. for the
- * rare degree-2 collinear joints trim would otherwise collapse. */
+ * boundary for click-selection). Exact double compare (delegated to touches_inst_pin) is
+ * correct here: pin coords and wire endpoints are on-grid, so a genuine attachment matches
+ * exactly; a pin merely NEAR the wire is not an attachment (and is not connected either --
+ * see doc/claude/specs/wire_segment_splitting.md, W0 + Hazard H2).
+ * Only called (when splitting is active) from the merge branch after the cheap
+ * end1/end2==0 test, i.e. for the rare degree-2 collinear joints trim would collapse. */
 static int any_inst_pin_at(double x, double y)
 {
-  int i, r, rects;
-  double x0, y0;
+  int i;
   for(i = 0; i < xctx->instances; ++i) {
-    if(xctx->inst[i].ptr < 0) continue;
-    rects = (xctx->inst[i].ptr + xctx->sym)->rects[PINLAYER];
-    for(r = 0; r < rects; ++r) {
-      get_inst_pin_coord(i, r, &x0, &y0);
-      if(x == x0 && y == y0) return 1;
-    }
+    if(touches_inst_pin(x, y, i)) return 1;
   }
   return 0;
 }
@@ -191,6 +187,11 @@ void trim_wires(void)
   int includes, breaks;
   Wireentry *wptr;
   unsigned short *wireflag=NULL;
+  /* The pin-aware-merge guard (below) only matters when wire auto-splitting is active, and
+   * gating it here keeps default (autotrim off) trim/join behaviour byte-for-byte unchanged
+   * -- spec D2. It also short-circuits the O(inst*pins) any_inst_pin_at() away entirely on
+   * the default path. See doc/claude/specs/wire_segment_splitting.md. */
+  int split_active = tclgetboolvar("autotrim_wires");
 
   doloops = 0;
   xctx->prep_hash_wires = 0;
@@ -376,11 +377,11 @@ void trim_wires(void)
             xctx->wire[j].x1 == x0 && xctx->wire[j].y1 == y0 &&
             /* no other connecting wires */
             xctx->wire[i].end2 == 0 && xctx->wire[j].end1 == 0 &&
-            /* and no instance pin / net-label at the joint: an attachment there is a
-             * meaningful segment boundary, do not weld across it (W0 -- pin-aware merge,
-             * doc/claude/specs/wire_segment_splitting.md). Also gives free auto-rejoin
-             * when the pin is later removed. */
-            !any_inst_pin_at(x0, y0) ) {
+            /* and (when splitting is active) no instance pin / net-label at the joint: an
+             * attachment there is a meaningful segment boundary, do not weld across it
+             * (W0 -- pin-aware merge). Also gives free auto-rejoin when the pin is later
+             * removed. Gated on split_active so default trim/join is unchanged (D2). */
+            (!split_active || !any_inst_pin_at(x0, y0)) ) {
           dbg(2, "trim_wires(): i=%d merged with j=%d\n", i, j);
           xctx->wire[i].x2 = xctx->wire[j].x2;
           xctx->wire[i].y2 = xctx->wire[j].y2;
@@ -659,9 +660,9 @@ void break_wires_at_pins(int remove)
 }
 
 /* Split every wire at every interior instance-pin / net-label attachment point, so each
- * inter-attachment span becomes an independent (clickable) wire object. In-memory only:
- * connectivity is coordinate-based and unchanged (INV-1); the on-disk form is re-joined by
- * coalesce-on-save. Uses the EXACT stored pin coordinate (get_inst_pin_coord) and requires
+ * inter-attachment span becomes an independent (clickable) wire object. Connectivity is
+ * coordinate-based and unchanged (INV-1). Intended to be in-memory only (coalesce-on-save,
+ * W4, is not yet built). Uses the EXACT stored pin coordinate (get_inst_pin_coord) and requires
  * a true touch(), so a pin merely NEAR the wire neither splits nor connects (Hazard H2);
  * splits only where a pin coincides with a wire's interior, never at a bare X-crossing
  * (Hazard H3). Does NOT push_undo -- the caller owns undo (load: no push; edit: caller
@@ -699,7 +700,14 @@ int break_wires_at_attach_points(void)
       }
     }
   }
-  if(nsplit) xctx->prep_hash_wires = 0;
+  if(nsplit) {
+    /* the wire array changed: invalidate every derived cache (matching
+     * break_wires_at_pins), so a later netlist/hilight rebuilds against the new geometry.
+     * Harmless at load (both already 0) but required when called from edit paths (W3). */
+    xctx->prep_hash_wires = 0;
+    xctx->prep_net_structs = 0;
+    xctx->prep_hi_structs = 0;
+  }
   return nsplit;
 }
 

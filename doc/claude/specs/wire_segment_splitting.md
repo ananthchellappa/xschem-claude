@@ -33,6 +33,38 @@ fidelity for split wires (Hazard H8) is deferred as **issue 0078**.
   RED→GREEN + sabotage-verified. Integration: the real `test_wire_splits.sch` loads as
   **3** segments under autotrim. All headless cases green. Committed @ `1cbd05bb`.
 
+- **Review (xhigh, workflow-backed) + fixes** — an adversarial review of W0-W2 confirmed
+  five actionable items; fixed in a follow-up:
+  1. **D2 leak (MED):** the W0 pin-aware merge guard ran inside `trim_wires`
+     *unconditionally*, so non-autotrim callers (`&` Join/Trim key, `xschem trim_wires`,
+     stretch-move) changed default behaviour (contradicting D2). → Gated the guard on a
+     `split_active = tclgetboolvar("autotrim_wires")` flag computed once at `trim_wires`
+     top; added regression `W0/D2` (autotrim off still merges across a pin → 1; on → 2),
+     sabotage-verified. This also short-circuits the `any_inst_pin_at` cost off the default
+     path (addresses the O(inst·pins) perf finding).
+  2. **Test depended on an untracked fixture (HIGH):** T2 loaded the SANDBOX
+     `test_wire_splits.sch` (not in the commit range) and `bail`ed if absent → the
+     regression fails on a clean checkout. → T2 now builds a **self-contained** res+label
+     fixture; the real file is an optional skip-if-absent integration check.
+  3. **Stale derived caches (latent):** `break_wires_at_attach_points` cleared only
+     `prep_hash_wires`; now also clears `prep_net_structs`/`prep_hi_structs` (matching
+     `break_wires_at_pins`) so edit-time callers (W3) rebuild correctly.
+  4. **Duplication:** `any_inst_pin_at` reused the exact-match rule from `touches_inst_pin`
+     via a forward decl instead of a copied loop body.
+  5. **Over-promising comment (F2):** the load-hook / sweep comments claimed
+     "re-joined by coalesce-on-save" as if built. Corrected to state W4 is **pending** and
+     that, until then, an autotrim/cadence save persists the split as multiple `N` records
+     (D1 not yet honoured) — see the ⚠ below.
+  Deferred (documented, not bugs in the current call graph): edit-time paths still call bare
+  `trim_wires` (that is W3); `break_wires_at_attach_points` duplicates the split core of
+  `break_wires_at_pins` (larger refactor); off-grid ULP pin match is theoretical
+  (xschem's connectivity is exact-equality too, so a near-but-off pin is not connected).
+
+  > ⚠ **W4 is now the priority.** With `autotrim_wires`/`cadence_compat` on, W1 splits at
+  > load but there is no coalesce-on-save yet, so opening + saving a mid-span-tapped wire
+  > rewrites 1 `N` record as N — D1 (byte-stable `.sch`) is violated for those users until
+  > W4 lands. Default users (`autotrim_wires` off) are unaffected.
+
 - **W2 — connectivity / netlist invariance (INV-1). Test-only** (`test_wire_split.tcl`).
   W1's code already satisfies it; T2 locks it: load the real `test_wire_splits.sch` split
   OFF vs ON and assert `xschem instance_nodemap R7` is byte-identical (`R7 P GB M #net1` —

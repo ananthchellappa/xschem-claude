@@ -64,6 +64,15 @@ if {[xschem get wires] == 2} {
   check "W0: the two segments are distinct wire_ids" [expr {$id0 ne $id1}] 1
 }
 
+# --- W0/D2 gate: with the feature OFF (autotrim_wires 0) trim_wires keeps its ORIGINAL
+#     behavior and DOES merge across a pin -- default mode is byte-for-byte unchanged. The
+#     pin-aware guard is gated on autotrim_wires; this catches a regression that would let
+#     the guard alter default trim/join. (Same fixture: OFF -> 1, ON -> 2 above.) ---
+build_two_segments 0 1
+set ::autotrim_wires 0
+xschem trim_wires
+check "W0/D2: default mode (autotrim off) still merges across a pin" [xschem get wires] 1
+
 # ===========================================================================
 # Phase W1 -- read-time split at attachment points.
 # Loading a .sch with autotrim_wires on must split each wire at every interior
@@ -109,26 +118,47 @@ if {[xschem get wires] == 3} {
 # ===========================================================================
 # Phase W2 -- connectivity / netlist invariance (INV-1).
 # Splitting a wire into collinear touching segments must NOT change which nodes exist,
-# which pins are on which node, or the auto #netN numbering. Probe the real fixture
-# (test_wire_splits.sch: a resistor R7 tapping a GB-labelled wire) with the split OFF
-# then ON and assert the instance node map is byte-identical -- while proving the split
-# actually happened (1 wire vs 3), so the invariance is not vacuous.
+# which pins are on which node, or the auto #netN numbering. Build a SELF-CONTAINED
+# fixture (so the test does not depend on any untracked library file): a resistor R7
+# whose P pin taps a GB-labelled wire mid-span. Load split OFF then ON and assert the
+# instance node map is byte-identical -- while proving the split actually happened
+# (1 wire vs 3), so the invariance is not vacuous.
 # ===========================================================================
-set here [file normalize [file dirname [info script]]]
-set root [file normalize [file join $here .. ..]]
-set realf [file join $root xschem_libs_newsym SANDBOX test_wire_splits schematic test_wire_splits.sch]
-if {![file exists $realf]} { bail "W2 real fixture missing: $realf" }
+set f2 [file join $wdir res_label.sch]
+write_sch $f2 {v {xschem version=3.4.8RC file_version=1.3}
+G {}
+K {}
+V {}
+S {}
+F {}
+E {}
+N -100 -60 110 -60 {}
+C {devices/lab_wire} -80 -60 0 0 {name=l8 lab=GB}
+C {devices/res} 0 -30 0 1 {name=R7 m=1 value=320}
+}
 proc load_at {file at} { set ::autotrim_wires $at; xschem load $file }
 
-load_at $realf 0
+load_at $f2 0
 set nmap_off [xschem instance_nodemap R7]
 set nwire_off [xschem get wires]
-load_at $realf 1
+load_at $f2 1
 set nmap_on [xschem instance_nodemap R7]
 set nwire_on [xschem get wires]
 
 check "W2 T2: split actually happened (1 wire -> 3 segments)" [list $nwire_off $nwire_on] {1 3}
 check "W2 T2: R7 node map byte-identical split OFF vs ON (INV-1)" $nmap_on $nmap_off
 check "W2 T2: R7.P taps net GB through the split" [lindex $nmap_on 2] GB
+
+# Optional integration on the real sandbox fixture -- SKIP (not fail) if it is absent,
+# since it is an untracked SANDBOX file not shipped with these commits.
+set here [file normalize [file dirname [info script]]]
+set root [file normalize [file join $here .. ..]]
+set realf [file join $root xschem_libs_newsym SANDBOX test_wire_splits schematic test_wire_splits.sch]
+if {[file exists $realf]} {
+  load_at $realf 1
+  check "W2 integration: real test_wire_splits.sch -> 3 segments" [xschem get wires] 3
+} else {
+  puts "ok:   W2 integration skipped (real fixture absent; self-contained fixture covers it)"
+}
 
 if {$fail == 0} { puts "OVERALL: ok"; exit 0 } else { puts "OVERALL: notok"; exit 1 }

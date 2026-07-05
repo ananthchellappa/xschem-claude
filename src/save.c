@@ -3841,10 +3841,13 @@ int load_schematic(int load_symbols, const char *fname, int reset_undo, int aler
     int mod_before_norm = xctx->modified;
     check_collapsing_objects();
     /* Wire-segment maintenance: split each wire at its interior attachment points into
-     * independent clickable segments, then trim/merge (pin-aware). In-memory only; the
-     * .sch is re-joined by coalesce-on-save. Runs inside the mod_before_norm revert so a
-     * freshly-opened file is not flagged modified, and under no_autosave.
-     * See doc/claude/specs/wire_segment_splitting.md (W1). */
+     * independent clickable segments, then trim/merge (pin-aware). Runs inside the
+     * mod_before_norm revert so a freshly-opened file is not flagged modified, and under
+     * no_autosave.
+     * NOTE: intended to be in-memory only, but coalesce-on-save (W4) is NOT YET BUILT, so
+     * with autotrim_wires on a save currently persists the split as multiple N records
+     * (byte-stability / D1 not yet honoured). See doc/claude/specs/wire_segment_splitting.md
+     * (W1 done; W4 pending). */
     if(reset_undo && tclgetboolvar("autotrim_wires")) maintain_wire_segments();
     if(reset_undo && !mod_before_norm && xctx->modified) set_modify(0);
   }
