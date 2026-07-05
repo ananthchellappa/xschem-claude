@@ -107,6 +107,24 @@ check "p4 holds for axis-aligned wires" [p4_orthogonal]
 we_wire 0 0 50 100                             ;# a diagonal leg
 check "p4 detects a diagonal (has teeth)" [expr {![p4_orthogonal]}]
 
+# P3 -- pin escape. Escape normal = nearest body edge; every wire off a pin must leave along
+# it, len >= Lmin. res pins P(0,-30)/M(0,30) escape down/up.
+we_reset 0 0
+xschem instance devices/res 0 0 0 0 {name=RA}
+xschem wire 0 30 0 130                            ;# M escapes up (+Y)
+xschem wire 0 -30 0 -130                          ;# P escapes down (-Y)
+check "escape normal of top pin M is +Y"    [expr {[pin_escape_normal RA M] eq {0 1}}]
+check "escape normal of bottom pin P is -Y" [expr {[pin_escape_normal RA P] eq {0 -1}}]
+check "p3 holds: both pins escape perpendicular-outward" [p3_escape_perp RA 10]
+we_reset 0 0
+xschem instance devices/res 0 0 0 0 {name=RA}
+xschem wire 0 30 60 30                             ;# M leaves sideways -- not perpendicular
+check "p3 detects a non-perpendicular escape (has teeth)" [expr {![p3_escape_perp RA 10]}]
+we_reset 0 0
+xschem instance devices/res 0 0 0 0 {name=RA}
+xschem wire 0 30 0 35                              ;# M escapes up but only 5 < Lmin 10
+check "p3 detects a too-short stub (has teeth)" [expr {![p3_escape_perp RA 10]}]
+
 # P5 -- no body crossing. Pin stubs (endpoint ON a pin) are exempt though they dip into the
 # bbox; a wire ploughing straight through the body with neither endpoint on a pin is flagged.
 we_reset 0 0

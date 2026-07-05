@@ -10,10 +10,8 @@
 # fixtures.tcl: fixtures.tcl runs `set ::fails 0` at load, so a second source would reset
 # the check counter and hide failures.
 #
-# Landed so far (Phase 0, per spec §8): P1, P2, P4, P5, P6, P7 (+ seg_touch primitive).
-# Remaining, authored in a later Phase-0 step:
-#   p3_escape_perp   -- first leg leaves the pin perpendicular (normal derived in Tcl from
-#                       instance_bbox + instance_pin_coord, spec §6 option 1)
+# Predicate library COMPLETE (Phase 0, per spec §8): P1, P2, P3, P4, P5, P6, P7
+# (+ seg_touch primitive, pin_escape_normal getter, pred_verdict recorder).
 #
 # Hard invariants (a violation is a bug -> block/undo the move): p1, p2.
 # Quality objectives (optimize; may trade off): p3 > p5 > p4 > p7 > p6 (spec §4 order).
@@ -181,6 +179,61 @@ proc p5_no_body_cross {} {
         if {($x1 == $px && $y1 == $py) || ($x2 == $px && $y2 == $py)} { set exempt 1; break }
       }
       if {!$exempt} { return 0 }
+    }
+  }
+  return 1
+}
+
+# --- P3: pin escape (first leg perpendicular to the pin edge) ----------------
+# Spec §4 P3 + §6: the first leg of every wire leaving a pin must be PERPENDICULAR to the
+# pin's edge (the outward escape normal), length >= Lmin, and must not re-enter the body.
+#
+# Escape normal via §6 OPTION 1 (pin nearest-edge geometry), the option the spec prefers over
+# the crude centroid heuristic (option 3). The pin sits on/near one edge of the instance body
+# box; the outward normal is that edge's direction. This is the Tcl stand-in for the Phase-2
+# C getter get_pin_escape_normal(). Caveat: it uses the world `Instance:` box (includes attr
+# text); that is safe here because a pin sits near the body outline and FAR from the text
+# side, so the nearest edge is the correct body edge. DEVICE pins only -- a net label has zero
+# body extent and no meaningful escape direction (spec §2), so p3 is not applied to labels.
+#
+# outward escape normal of pin `pin` on instance `inst` -> {nx ny}, a unit axis vector
+proc pin_escape_normal {inst pin} {
+  set pc [xschem instance_pin_coord $inst name $pin]     ;# "{pin} x y"
+  set px [lindex $pc 1]; set py [lindex $pc 2]
+  lassign [_seg_bounds [_inst_body_box $inst]] x1 y1 x2 y2   ;# normalized xlo ylo xhi yhi
+  set dl [expr {abs($px - $x1)}]                          ;# distance to each edge
+  set dr [expr {abs($px - $x2)}]
+  set db [expr {abs($py - $y1)}]
+  set dt [expr {abs($py - $y2)}]
+  set m [expr {min($dl, $dr, $db, $dt)}]
+  if {$m == $dl} { return {-1 0} }
+  if {$m == $dr} { return {1 0} }
+  if {$m == $db} { return {0 -1} }
+  return {0 1}
+}
+# P3: for instance `inst`, every wire leaving one of its pins escapes along that pin's
+# outward normal, length >= Lmin, and its far end clears the body interior (no re-entry).
+proc p3_escape_perp {inst {Lmin 0}} {
+  set map [xschem instance_nodemap $inst]
+  lassign [_seg_bounds [_inst_body_box $inst]] rx1 ry1 rx2 ry2
+  set nw [xschem get wires]
+  foreach {pin node} [lrange $map 1 end] {
+    set pc [xschem instance_pin_coord $inst name $pin]
+    if {[llength $pc] < 3} continue
+    set px [lindex $pc 1]; set py [lindex $pc 2]
+    lassign [pin_escape_normal $inst $pin] nx ny
+    for {set i 0} {$i < $nw} {incr i} {
+      lassign [xschem wire_coord $i] x1 y1 x2 y2
+      set ox {}; set oy {}
+      if {$x1 == $px && $y1 == $py} { set ox $x2; set oy $y2 } \
+      elseif {$x2 == $px && $y2 == $py} { set ox $x1; set oy $y1 }
+      if {$ox eq {}} continue                              ;# wire not incident to this pin
+      set dx [expr {$ox - $px}]; set dy [expr {$oy - $py}]
+      set sx [expr {$dx > 0 ? 1 : ($dx < 0 ? -1 : 0)}]
+      set sy [expr {$dy > 0 ? 1 : ($dy < 0 ? -1 : 0)}]
+      if {$sx != $nx || $sy != $ny} { return 0 }           ;# not perpendicular-outward
+      if {[expr {abs($dx) + abs($dy)}] < $Lmin} { return 0 }  ;# stub too short
+      if {$ox > $rx1 && $ox < $rx2 && $oy > $ry1 && $oy < $ry2} { return 0 }  ;# re-enters body
     }
   }
   return 1
