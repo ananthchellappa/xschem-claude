@@ -1451,6 +1451,56 @@ static int endpoint_near(double ax, double ay, double bx, double by, double tol)
   return fabs(ax - bx) <= tol && fabs(ay - by) <= tol;
 }
 
+/* Is wire i (which has an endpoint at the moving pin (px,py)) merely one arm of a
+ * straight wire run passing THROUGH the pin -- i.e. a mid-span TAP? A net-label or
+ * instance pin that taps the interior of a wire is stored as ONE wire, but the
+ * wire-segment-splitting feature (see doc/claude/specs/wire_segment_splitting.md)
+ * breaks that wire at the tap into abutting collinear segments, each of which then
+ * has an ENDPOINT at the pin. select_attached_nets() would grab BOTH through-segments
+ * by endpoint coincidence and place_moved_wire()/compute_wire_slide() would jog the
+ * whole run into an ugly detour -- when the Cadence-correct behavior is to leave the
+ * through-wire in place and let connect_by_kissing() drop a SINGLE stub from the pin's
+ * new position back to the tap point (the pre-split, mid-span-tap behavior).
+ *
+ * Returns 1 iff there is ANOTHER wire j (!= i) with an endpoint at (px,py) that is
+ * COLLINEAR with i and extends in the OPPOSITE direction -- so i and j together form a
+ * straight line through (px,py). A perpendicular arm (real L-corner) or a lone wire
+ * end (true endpoint connection) has no such partner and is still grabbed to follow.
+ * The caller only acts on this when connect_by_kissing is armed (so a stub replaces the
+ * skipped grab and connectivity is preserved). */
+static int wire_through_tap_arm(int i, double px, double py, double tol)
+{
+  double ix, iy, jx, jy, cross, dot;
+  int j, sqx, sqy;
+  Wireentry *wptr;
+  /* direction from the tap toward wire i's FAR endpoint */
+  if(endpoint_near(xctx->wire[i].x1, xctx->wire[i].y1, px, py, tol)) {
+    ix = xctx->wire[i].x2 - px; iy = xctx->wire[i].y2 - py;
+  } else {
+    ix = xctx->wire[i].x1 - px; iy = xctx->wire[i].y1 - py;
+  }
+  if(ix == 0 && iy == 0) return 0; /* degenerate zero-length wire */
+  get_square(px, py, &sqx, &sqy);
+  for(wptr = xctx->wire_spatial_table[sqx][sqy]; wptr; wptr = wptr->next) {
+    j = wptr->n;
+    if(j == i) continue;
+    if(endpoint_near(xctx->wire[j].x1, xctx->wire[j].y1, px, py, tol)) {
+      jx = xctx->wire[j].x2 - px; jy = xctx->wire[j].y2 - py;
+    } else if(endpoint_near(xctx->wire[j].x2, xctx->wire[j].y2, px, py, tol)) {
+      jx = xctx->wire[j].x1 - px; jy = xctx->wire[j].y1 - py;
+    } else {
+      continue; /* wire j does not touch the tap */
+    }
+    if(jx == 0 && jy == 0) continue;
+    cross = ix * jy - iy * jx;      /* ==0 => EXACTLY collinear. cross is an AREA, so it
+                                     * must NOT be compared to the length tol; split points
+                                     * sit on exact grid-aligned coords -> cross is 0. */
+    dot   = ix * jx + iy * jy;      /* <0  => opposite sense */
+    if(cross == 0 && dot < 0) return 1; /* straight run through pin */
+  }
+  return 0;
+}
+
 void select_attached_nets(void)
 {
   int wire, inst, j, i, rects, r, sqx, sqy;
@@ -1476,6 +1526,12 @@ void select_attached_nets(void)
           get_square(x0, y0, &sqx, &sqy);
           for(wptr=xctx->wire_spatial_table[sqx][sqy]; wptr; wptr=wptr->next) {
             i = wptr->n;
+            /* A pin tapping the interior of a straight wire run (split into abutting
+             * collinear segments) must NOT drag the run: leave it and let
+             * connect_by_kissing() drop a single stub. Gated on kissing being armed so a
+             * stub WILL replace the skipped grab -- otherwise (stretch without kissing)
+             * skipping would leave the moved pin disconnected. See wire_through_tap_arm(). */
+            if(xctx->connect_by_kissing && wire_through_tap_arm(i, x0, y0, tol)) continue;
             if(endpoint_near(xctx->wire[i].x1, xctx->wire[i].y1, x0, y0, tol)) {
                select_wire(i,SELECTED1, 1, 0);
             }

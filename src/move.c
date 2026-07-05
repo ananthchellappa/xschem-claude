@@ -1223,6 +1223,38 @@ static int point_near_pin(double px, double py, double x, double y)
   return fabs(px - x) <= tol && fabs(py - y) <= tol;
 }
 
+/* Is (px,py) a point where a straight wire run passes THROUGH -- two collinear,
+ * oppositely-directed wire endpoints meeting there? This is the signature of a
+ * mid-span TAP that the wire-segment-splitting feature broke into abutting collinear
+ * segments (doc/claude/specs/wire_segment_splitting.md). Such a point is NOT a
+ * slidable corner: a stub anchored there (or a perpendicular wire whose far end lands
+ * there) must JOG/stay put, never drag the straight run into a detour. Mirrors
+ * select.c wire_through_tap_arm(). Exact == compare like compute_wire_slide's own
+ * corner test -- split points sit on exact grid-aligned pin coords. */
+static int point_is_collinear_pass(double px, double py)
+{
+  int a, b;
+  double ax, ay, bx, by, cross, dot;
+  for(a = 0; a < xctx->wires; a++) {
+    if(xctx->wire[a].sel) continue; /* only STATIONARY wires form a "staying-put" run */
+    if(xctx->wire[a].x1 == px && xctx->wire[a].y1 == py)      { ax = xctx->wire[a].x2 - px; ay = xctx->wire[a].y2 - py; }
+    else if(xctx->wire[a].x2 == px && xctx->wire[a].y2 == py) { ax = xctx->wire[a].x1 - px; ay = xctx->wire[a].y1 - py; }
+    else continue;
+    if(ax == 0 && ay == 0) continue;
+    for(b = a + 1; b < xctx->wires; b++) {
+      if(xctx->wire[b].sel) continue;
+      if(xctx->wire[b].x1 == px && xctx->wire[b].y1 == py)      { bx = xctx->wire[b].x2 - px; by = xctx->wire[b].y2 - py; }
+      else if(xctx->wire[b].x2 == px && xctx->wire[b].y2 == py) { bx = xctx->wire[b].x1 - px; by = xctx->wire[b].y1 - py; }
+      else continue;
+      if(bx == 0 && by == 0) continue;
+      cross = ax * by - ay * bx;   /* 0  => collinear      */
+      dot   = ax * bx + ay * by;   /* <0 => opposite sense */
+      if(cross == 0 && dot < 0) return 1;
+    }
+  }
+  return 0;
+}
+
 /* is (x,y) on a pin of a FIXED (non-selected, i.e. non-moving) instance? */
 static int point_on_fixed_pin(double x, double y)
 {
@@ -1313,6 +1345,10 @@ static void compute_wire_slide(void)
       if(!point_on_moving_pin(mx, my)) continue;
       /* never slide a wire off a fixed pin -> let it jog (keeps the connection) */
       if(point_on_fixed_pin(fx, fy)) continue;
+      /* far end where a straight run passes through (a split mid-span tap) is not a
+       * corner: jog/stay so moving a tap never drags the through-wire (the kiss stub
+       * dropped at such a tap stays a clean single stub). */
+      if(point_is_collinear_pass(fx, fy)) continue;
       /* a corner needs another wire endpoint coincident with the far end */
       for(m = 0; m < xctx->wires; m++) {
         if(m == n) continue;

@@ -1162,8 +1162,8 @@ static int xschem_cmds_c(Tcl_Interp *interp, int argc, const char *argv[], int *
           if(!strcmp(argv[i], "stretch")) {stretch = 1; nparam++;}
         }
       }
-      if(stretch) select_attached_nets();
       if(kissing) xctx->connect_by_kissing = 2;
+      if(stretch) select_attached_nets();
       if(argc > 3 + nparam) {
         copy_objects(START);
         xctx->deltax = atof(argv[2]);
@@ -4907,8 +4907,10 @@ static int xschem_cmds_m(Tcl_Interp *interp, int argc, const char *argv[], int *
           if(!strcmp(argv[i], "stretch")) {stretch = 1; nparam++;}
         }
       }
-      if(stretch) select_attached_nets();
+      /* arm kissing BEFORE select_attached_nets so the latter can see it and skip
+       * grabbing a through-run tap arm (a stub will replace it). See wire_through_tap_arm(). */
       if(kissing) xctx->connect_by_kissing = 2;
+      if(stretch) select_attached_nets();
       if(argc > 3 + nparam) {
         move_objects(START,0,0,0);
         move_objects( END,0,atof(argv[2]), atof(argv[3]));

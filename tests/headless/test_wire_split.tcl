@@ -524,4 +524,87 @@ if {[file exists $realf]} {
 }
 set ::cadence_compat 0
 
+# Phase W7 -- moving a mid-span TAP must not drag the through-wire.
+# A net-label taps the interior of a wire; the split feature breaks that wire into two
+# abutting COLLINEAR segments, each with an endpoint at the tap. Moving the label (the
+# cadence stretch+kissing drag) must LEAVE the through-run in place and drop a SINGLE stub
+# from the label's new position back to the tap -- not jog the whole run into a U-detour.
+# Fix: select.c wire_through_tap_arm() (don't grab a through-run arm) + move.c
+# point_is_collinear_pass() (don't slide a wire whose far end is a straight pass-through).
+# See doc/claude/specs/wire_segment_splitting.md and doc/claude/FAQ.md.
+proc nwire {c} {  ;# canonicalize a wire's endpoint order so {a b x y} == {x y a b}
+  lassign $c a b x y
+  if {$a > $x || ($a == $x && $b > $y)} { return [list $x $y $a $b] } else { return [list $a $b $x $y] }
+}
+proc segset {} {
+  set n [xschem get wires]; set L {}
+  for {set i 0} {$i < $n} {incr i} { lappend L [nwire [xschem wire_coord $i]] }
+  return [lsort $L]
+}
+proc all_wire_nets {} {  ;# resolved net of every wire, deduped -> a single connected net stays {GB}
+  xschem resolved_net 0
+  set n [xschem get wires]; set S {}
+  for {set i 0} {$i < $n} {incr i} { lappend S [xschem getprop wire $i lab] }
+  return [lsort -unique $S]
+}
+proc lab_inst_index {} {
+  set ni [xschem get instances]
+  for {set i 0} {$i < $ni} {incr i} { if {[xschem getprop instance $i name] eq "l8"} { return $i } }
+  return -1
+}
+
+set ::cadence_compat 1   ;# arms autotrim_wires (split), orthogonal_wiring not needed for the grab guard
+set ::autotrim_wires 1; set ::orthogonal_wiring 1; set ::fluid_editing 1; set ::enable_stretch 0
+
+# Fixture = the exact user case: through-wire -100..110, resistor tap at 0 (fixed pin),
+# net-label l8 tapping mid-span at -80. Splits into 3 clickable segments at -80 and 0.
+catch {xschem clear force}
+xschem wire -100 -60 110 -60
+xschem instance devices/res 0 -30 0 1 {name=R7 m=1 value=320}
+xschem instance devices/lab_wire -80 -60 0 0 {name=l8 lab=GB}
+check "W7: mid-span tap splits the run into 3 clickable segments" [xschem get wires] 3
+set w7_net_before [xschem instance_nodemap R7]
+
+# Move the label up (0,-50) via the faithful cadence drag path (stretch + kissing).
+set li [lab_inst_index]
+check "W7: label instance located" [expr {$li >= 0}] 1
+xschem unselect_all
+xschem select instance $li
+xschem move_objects 0 -50 stretch kissing
+
+# DESIRED: the through-run stays at y=-60 (3 pieces, split at -80 and 0) + ONE vertical
+# stub -80,-110 -> -80,-60. The pre-fix bug jogged the left arm into a 5-wire U-detour.
+check "W7: run intact + single stub (no through-wire drag)" [segset] \
+  [lsort [list [nwire {0 -60 110 -60}] [nwire {-80 -60 0 -60}] [nwire {-100 -60 -80 -60}] [nwire {-80 -110 -80 -60}]]]
+check "W7: exactly 4 wires (pre-fix bug produced 5 = U-detour)" [xschem get wires] 4
+check "W7: connectivity preserved -- every wire still on net GB" [all_wire_nets] GB
+check "W7: netlist invariant -- R7 node map unchanged by the move (INV-1)" [xschem instance_nodemap R7] $w7_net_before
+
+# Guard: exactly ONE new stub segment sits off the y=-60 run (endpoint at the label's new pos).
+set w7_off 0
+foreach w [segset] { lassign $w a b x y; if {$b != -60 || $y != -60} { incr w7_off } }
+check "W7: exactly one stub leaves the run" $w7_off 1
+
+# W7b -- the skip is gated on kissing: a stretch move WITHOUT kissing must NOT leave the
+# moved tap disconnected. Without the gate, skipping both through-arms with no stub dropped
+# would orphan the label's net. Here the arms are NOT skipped (no kissing) -> they follow ->
+# the net stays whole. (Review finding: stretch-without-kissing disconnect.)
+catch {xschem clear force}
+xschem wire -100 -60 110 -60
+xschem instance devices/lab_wire -80 -60 0 0 {name=l8 lab=GB}
+xschem unselect_all; xschem select instance [lab_inst_index]
+xschem move_objects 0 -50 stretch   ;# NO kissing keyword
+check "W7b: stretch without kissing keeps the tap connected (single net GB)" [all_wire_nets] GB
+
+# W7c -- 4-way (+) cross tapped by a moving pin stays connected (no orphan/short).
+catch {xschem clear force}
+xschem wire -100 -60 110 -60
+xschem wire -80 -160 -80 40
+xschem instance devices/lab_wire -80 -60 0 0 {name=l8 lab=GB}
+xschem unselect_all; xschem select instance [lab_inst_index]
+xschem move_objects 0 -50 stretch kissing
+check "W7c: moving a pin at a 4-way cross stays a single connected net" [all_wire_nets] GB
+
+set ::cadence_compat 0
+
 if {$fail == 0} { puts "OVERALL: ok"; exit 0 } else { puts "OVERALL: notok"; exit 1 }

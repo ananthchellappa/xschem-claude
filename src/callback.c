@@ -4774,8 +4774,8 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
       /* move selection, stretch attached nets, create new wires on pin-to-moved-pin connections */
       else if(rstate == ControlMask && !(xctx->ui_state & (STARTMOVE | STARTCOPY))) {
         if(readonly_block()) break;
+        xctx->connect_by_kissing = 2; /* armed before select_attached_nets (through-run tap skip) */
         if(!enable_stretch) select_attached_nets(); /* stretch nets that land on selected instance pins */
-        xctx->connect_by_kissing = 2; /* 2 will be used to reset var to 0 at end of move */
         if(infix_interface) {
           xctx->mx_double_save=xctx->mousex_snap;
           xctx->my_double_save=xctx->mousey_snap;
@@ -6058,8 +6058,9 @@ static void handle_button_press(int event, int state, int rstate, KeySym key, in
            } else if(state & ControlMask) {
              move_objects(START,0,0,0);
            } else {
+             xctx->connect_by_kissing = 2; /* armed BEFORE select_attached_nets so a through-run
+                                            * tap arm is skipped (stub replaces it); reset at move end */
              select_attached_nets(); /* nets that land on selected instance pins follow */
-             xctx->connect_by_kissing = 2; /* 2 will be used to reset var to 0 at end of move */
              move_objects(START,0,0,0);
            }
          } else {
@@ -6070,12 +6071,13 @@ static void handle_button_press(int event, int state, int rstate, KeySym key, in
            int stretch = (state & ControlMask ? 1 : 0) ^ enable_stretch;
            /* select attached nets depending on ControlMask and enable_stretch */
            if(stretch && !(state & ShiftMask)) {
-             select_attached_nets(); /* stretch nets that land on selected instance pins */
              /* plain stretch drag also follows abutments and T-junctions
               * (wire-follow spec Phase 3); kissing only adds wires where a pin
               * abuts a pin or touches a wire, so non-stretch (default) moves are
-              * unaffected. */
+              * unaffected. Armed BEFORE select_attached_nets so a through-run tap arm
+              * is skipped (a stub replaces it). */
              xctx->connect_by_kissing = 2; /* 2 will be used to reset var to 0 at end of move */
+             select_attached_nets(); /* stretch nets that land on selected instance pins */
            }
            /* if dragging instances with stretch enabled and Shift down add wires to pins
             * attached to something */
