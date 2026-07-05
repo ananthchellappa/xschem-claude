@@ -38,12 +38,17 @@ set draw_crosshair 1
 set crosshair_size 2
 set infix_interface 0
 set cadence_compat 1
+# Fluid editing: first-click grab of any object tip/edge (rect corner+edge, line/wire
+# end, arc endpoint) -> drag stretches, no pre-select, independent of enable_stretch.
+# Defaults off (stock); enable it here for Cadence-style direct manipulation. Toggle live
+# via Options > "Fluid editing". See doc/claude/specs/fluid_editing.md.
+set fluid_editing 1
 set orthogonal_wiring 1
 set snap_cursor 1
 set snap_cursor_size 4
 set persistent_command 1
 set use_cursor_for_selection 1
-set enable_stretch 1
+# set enable_stretch 1; # bad - this is what causes line touching sym pin to get selected when you want to select only the pin by enclosing with sel rect
 # Click a symbol pin (of a placed instance) to select it; drag from a pin draws a
 # wire; Q on a selected pin shows its name/dir/net read-only. See
 # doc/claude/specs/pin_selection.md

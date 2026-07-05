@@ -13555,6 +13555,12 @@ proc build_widgets { {topwin {} } } {
   # Wires via the cadence_compat write-trace (see cadence_compat_sync).
   $topwin.menubar.option add checkbutton -label "Cadence Compatible" \
     -variable cadence_compat -selectcolor $selectcolor
+  # Fluid editing: first-click grab of an object tip/edge (rect corner+edge, line/wire
+  # end, arc endpoint) -> drag stretches, no pre-select, independent of enable_stretch.
+  # Read fresh from this Tcl variable by the C side (doc/claude/specs/fluid_editing.md);
+  # no notify needed. Independent of Cadence Compatible so it can be toggled on its own.
+  $topwin.menubar.option add checkbutton -label "Fluid editing (first-click tip/edge grab)" \
+    -variable fluid_editing -selectcolor $selectcolor
 
   $topwin.menubar.option add cascade -label "Crosshair" \
        -menu $topwin.menubar.option.crosshair
@@ -14682,6 +14688,9 @@ set_ne auto_set_wire_bus 0
 # (doc/claude/specs/descend_hierarchy_in_memory.md). Off => no backup files.
 set_ne autosave_backup 1
 set_ne cadence_compat 0
+# Fluid editing: first-click tip/edge grab (doc/claude/specs/fluid_editing.md). Default
+# off; cadence_style_rc turns it on. Read fresh from C (tclgetboolvar) each button press.
+set_ne fluid_editing 0
 set_ne infix_interface 1
 # autostart the Library Manager window at launch (doc/claude/specs/library_manager_launch.md)
 set_ne launch_library_manager 0

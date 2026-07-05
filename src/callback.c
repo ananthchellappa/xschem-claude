@@ -2293,14 +2293,17 @@ static int edit_line_point(int state)
    line_c = xctx->sel_array[0].col;
   /* lineangle point: Check is user is clicking a control point of a lineangle */
   if(line_n >= 0) {
+    double ds = xctx->cadhalfdotsize * 2 * xctx->zoom;
     xLine *p = &xctx->line[line_c][line_n];
 
     xctx->need_reb_sel_arr=1;
-    if(xctx->mousex_snap == p->x1 && xctx->mousey_snap == p->y1) {
+    /* C4: a cadhalfdotsize tolerance zone around each endpoint (was an exact snap-match),
+     * matching rect corners / arc endpoints for a forgiving, consistent grab. */
+    if(POINTINSIDE(xctx->mousex, xctx->mousey, p->x1 - ds, p->y1 - ds, p->x1 + ds, p->y1 + ds)) {
       xctx->shape_point_selected = 1;
       p->sel = SELECTED1;
     }
-    else if(xctx->mousex_snap == p->x2 && xctx->mousey_snap == p->y2) {
+    else if(POINTINSIDE(xctx->mousex, xctx->mousey, p->x2 - ds, p->y2 - ds, p->x2 + ds, p->y2 + ds)) {
       xctx->shape_point_selected = 1;
       p->sel = SELECTED2;
     }
@@ -2324,14 +2327,19 @@ static int edit_wire_point(int state)
    wire_n = xctx->sel_array[0].n;
   /* wire point: Check is user is clicking a control point of a wire */
   if(wire_n >= 0) {
+    double ds = xctx->cadhalfdotsize * 2 * xctx->zoom;
     xWire *p = &xctx->wire[wire_n];
 
     xctx->need_reb_sel_arr=1;
-    if(xctx->mousex_snap == p->x1 && xctx->mousey_snap == p->y1) {
+    /* C4: tolerance zone around each endpoint (was exact snap-match). Free/connected wire
+     * endpoints are still consumed earlier by grab_free_wire_vertex / add_wire_from_wire;
+     * this forgiving zone applies when the wire reaches edit_wire_point (already selected,
+     * or a near-endpoint click that missed those paths). */
+    if(POINTINSIDE(xctx->mousex, xctx->mousey, p->x1 - ds, p->y1 - ds, p->x1 + ds, p->y1 + ds)) {
       xctx->shape_point_selected = 1;
       p->sel = SELECTED1;
     }
-    else if(xctx->mousex_snap == p->x2 && xctx->mousey_snap == p->y2) {
+    else if(POINTINSIDE(xctx->mousex, xctx->mousey, p->x2 - ds, p->y2 - ds, p->x2 + ds, p->y2 + ds)) {
       xctx->shape_point_selected = 1;
       p->sel = SELECTED2;
     }
@@ -2392,11 +2400,12 @@ static int grab_free_wire_vertex(Selected *sel, double mx, double my, int state)
   return edit_wire_point(state); /* sets shape_point_selected + move_objects(START); commit-on-release */
 }
 
-/* sets xctx->shape_point_selected */
-static int edit_rect_point(int state)
+/* `fluid` = fluid_editing (C4). Corners grab whenever this editor is reached (the caller
+ * already applied the two-step/fluid gate); the side EDGES are fluid-only. sets
+ * xctx->shape_point_selected */
+static int edit_rect_point(int state, int fluid)
 {
    int rect_n = -1, rect_c = -1;
-   int cadence_compat = tclgetboolvar("cadence_compat");
    dbg(1, "1 Rectangle selected\n");
    /* Fluid editing: modifier-held press = Cadence copy/detach gesture, not a stretch
     * (see edit_line_point). Bail before setting shape_point_selected. */
@@ -2432,30 +2441,29 @@ static int edit_rect_point(int state)
      * edge line. The two-corner SELECTED pairs match move.c's edge-stretch commit cases:
      *   top    (y1) -> SELECTED1|SELECTED2   bottom (y2) -> SELECTED3|SELECTED4
      *   left   (x1) -> SELECTED1|SELECTED3   right  (x2) -> SELECTED2|SELECTED4
-     * Gated on cadence_compat so stock behaviour (the two-step, corners only) is unchanged;
-     * the whole feature is otherwise reachable via the C1 first-click dispatch. */
-    /* An edge band is only enabled when the rect is thicker than 2*ds in the
+     * Gated on `fluid` (fluid_editing) so stock behaviour (the two-step, corners only) is
+     * unchanged. An edge band is only enabled when the rect is thicker than 2*ds in the
      * perpendicular direction. That keeps the two opposite bands DISJOINT (so the far
      * edge stays grabbable) and always leaves an interior dead zone wider than the two
      * bands, so a body click still falls through to the whole-object move. Without this
      * guard a thin (or zoomed-out) rect has its whole interior covered by the bands and
      * can never be moved, only deformed. */
-    else if(cadence_compat && (p->y2 - p->y1) > 2 * ds &&
+    else if(fluid && (p->y2 - p->y1) > 2 * ds &&
             POINTINSIDE(xctx->mousex, xctx->mousey, p->x1, p->y1 - ds, p->x2, p->y1 + ds)) {
       xctx->shape_point_selected = 1;
       p->sel = SELECTED1 | SELECTED2;              /* top edge (y1) */
     }
-    else if(cadence_compat && (p->y2 - p->y1) > 2 * ds &&
+    else if(fluid && (p->y2 - p->y1) > 2 * ds &&
             POINTINSIDE(xctx->mousex, xctx->mousey, p->x1, p->y2 - ds, p->x2, p->y2 + ds)) {
       xctx->shape_point_selected = 1;
       p->sel = SELECTED3 | SELECTED4;              /* bottom edge (y2) */
     }
-    else if(cadence_compat && (p->x2 - p->x1) > 2 * ds &&
+    else if(fluid && (p->x2 - p->x1) > 2 * ds &&
             POINTINSIDE(xctx->mousex, xctx->mousey, p->x1 - ds, p->y1, p->x1 + ds, p->y2)) {
       xctx->shape_point_selected = 1;
       p->sel = SELECTED1 | SELECTED3;              /* left edge (x1) */
     }
-    else if(cadence_compat && (p->x2 - p->x1) > 2 * ds &&
+    else if(fluid && (p->x2 - p->x1) > 2 * ds &&
             POINTINSIDE(xctx->mousex, xctx->mousey, p->x2 - ds, p->y1, p->x2 + ds, p->y2)) {
       xctx->shape_point_selected = 1;
       p->sel = SELECTED2 | SELECTED4;              /* right edge (x2) */
@@ -2482,13 +2490,13 @@ static int edit_rect_point(int state)
  * sel_array[0] for a center press -- a center zone would be dead code. Radius editing
  * stays available via the area-stretch (rubber-band) path. A click on the arc BODY away
  * from the endpoints returns 0 and falls through to the whole-object move.
- * Gated on cadence_compat (a NEW handle with no prior editor, like the C3 rect edges) so
- * the stock two-step keeps moving the whole arc. sets xctx->shape_point_selected */
-static int edit_arc_point(int state)
+ * Gated on `fluid` (fluid_editing) -- a NEW handle with no prior editor, like the C3 rect
+ * edges -- so the stock two-step keeps moving the whole arc. sets xctx->shape_point_selected */
+static int edit_arc_point(int state, int fluid)
 {
    int arc_n = -1, arc_c = -1;
    dbg(1, "1 Arc selected\n");
-   if(!tclgetboolvar("cadence_compat")) return 0;
+   if(!fluid) return 0;
    /* modifier-held press = copy/detach gesture, not a stretch (see edit_line_point) */
    if(state & (ControlMask | ShiftMask)) return 0;
    arc_n = xctx->sel_array[0].n;
@@ -2596,6 +2604,29 @@ static int edit_polygon_point(int state)
     } /* if(xctx->shape_point_selected) */
   } /* if(poly_n >= 0) */
   return 0;
+}
+
+/* Fluid editing (C4, doc/claude/specs/fluid_editing.md): try to start a first-click
+ * control-point grab on the single selected object under the cursor. Returns 1 if a grab
+ * started (move_objects(START) called) so the caller returns, skipping the whole-object
+ * move; 0 to fall through. Gating, preserved from the per-type if-chain it replaces:
+ *   - polygon vertex: grabs unconditionally (legacy; intuitive-independent).
+ *   - rect corner / line end / wire end: grabs when already-selected (the stock two-step)
+ *     OR `fluid` (fluid_editing) -- and only in the intuitive interface.
+ *   - rect side EDGE and arc endpoint: NEW handles, fluid-only (enforced inside the
+ *     editors), so the stock two-step is unchanged. */
+static int try_grab_shape_point(int state, int intuitive, int already_selected, int fluid)
+{
+  if(xctx->readonly || xctx->lastsel != 1) return 0;
+  if(xctx->sel_array[0].type == POLYGON) return edit_polygon_point(state);
+  if(!intuitive || !(already_selected || fluid)) return 0;
+  switch(xctx->sel_array[0].type) {
+    case xRECT: return edit_rect_point(state, fluid);
+    case LINE:  return edit_line_point(state);
+    case WIRE:  return edit_wire_point(state);
+    case ARC:   return edit_arc_point(state, fluid);
+    default:    return 0;
+  }
 }
 
 /* Action-log Layer B (spec section 2): the replayable command recorded when a
@@ -5850,6 +5881,9 @@ static void handle_button_press(int event, int state, int rstate, KeySym key, in
        /* cadence_compat forces the intuitive interface (Cadence-style direct
         * click-drag to move/copy objects), spec doc/claude/specs/cadence_modifier_drag.md */
        int intuitive = xctx->intuitive_interface || cadence_compat;
+       /* fluid_editing (C4): gates first-click tip/edge grab independently of cadence_compat.
+        * Default 0; cadence_style_rc sets it 1. See doc/claude/specs/fluid_editing.md. */
+       int fluid_editing = tclgetboolvar("fluid_editing");
 
        xctx->shape_point_selected = 0;
        xctx->mx_save = mx; xctx->my_save = my;
@@ -5964,9 +5998,10 @@ static void handle_button_press(int event, int state, int rstate, KeySym key, in
         * grabs that vertex and moves it (toward the other end = shorten, away = grow),
         * committing on release -- instead of starting a new wire (and getting stuck in
         * wire-draw mode). Plain drag only; connected ends fall through to
-        * add_wire_from_wire() below (draw a new branch wire). Gated on cadence_compat so
-        * stock behavior is unchanged. Must run BEFORE add_wire_from_wire. */
-       if(!xctx->readonly && cadence_compat && intuitive && !already_selected &&
+        * add_wire_from_wire() below (draw a new branch wire). Gated on fluid_editing (C4:
+        * this is first-click tip grab of a wire end) so it toggles with the rest of fluid
+        * editing; stock behavior is unchanged. Must run BEFORE add_wire_from_wire. */
+       if(!xctx->readonly && fluid_editing && intuitive && !already_selected &&
           !(state & (ControlMask | ShiftMask))) {
          if(grab_free_wire_vertex(&sel, xctx->mousex_snap, xctx->mousey_snap, state)) return;
        }
@@ -5992,38 +6027,13 @@ static void handle_button_press(int event, int state, int rstate, KeySym key, in
        rebuild_selected_array();
        dbg(1, "Button1Press to select objects, lastsel = %d\n", xctx->lastsel);
 
-       /* if clicking on some object endpoints or vertices set shape_point_selected
-        * this information will be used in Motion events to draw the stretched vertices */
-       if(!xctx->readonly && xctx->lastsel == 1 && xctx->sel_array[0].type==POLYGON) {
-         if(edit_polygon_point(state)) return; /* sets xctx->shape_point_selected */
-       }
-       if(!xctx->readonly && xctx->lastsel == 1 && intuitive) {
-         /* Fluid editing (C1, doc/claude/specs/fluid_editing.md): under cadence_compat a
-          * FIRST click on a rect corner / line end grabs that sub-part for a stretch, with
-          * no prior select step -- matching the polygon-vertex (@edit_polygon_point) and
-          * free-wire-vertex (@grab_free_wire_vertex) paths that already do first-click grab.
-          * A click on the object BODY (outside the cadhalfdotsize handle zones) returns 0
-          * from the editor and falls through to the normal whole-object move, so ungating is
-          * safe. Stock behaviour (cadence_compat=0) is unchanged: it stays the two-step
-          * (first click selects + moves-whole, a second click on the handle stretches). */
-         int cond = already_selected || cadence_compat;
-
-         if(cond && xctx->sel_array[0].type==xRECT) {
-           if(edit_rect_point(state)) return; /* sets xctx->shape_point_selected */
-         }
-
-         if(cond && xctx->sel_array[0].type==LINE) {
-           if(edit_line_point(state)) return; /* sets xctx->shape_point_selected */
-         }
-
-         if(cond && xctx->sel_array[0].type==WIRE) {
-          if(edit_wire_point(state)) return; /* sets xctx->shape_point_selected */
-         }
-
-         if(cond && xctx->sel_array[0].type==ARC) {
-           if(edit_arc_point(state)) return; /* sets xctx->shape_point_selected */
-         }
-       }
+       /* If the click landed on a grabbable control point (rect corner/edge, line/wire end,
+        * arc endpoint, polygon vertex) start a first-click stretch and return -- the drag
+        * then stretches that sub-part and commits on release (Motion draws the preview).
+        * A body click returns 0 here and falls through to the whole-object move. The whole
+        * feature (rect/line/wire/arc) is gated on fluid_editing (doc/claude/specs/
+        * fluid_editing.md); polygon vertices grab regardless (legacy). */
+       if(try_grab_shape_point(state, intuitive, already_selected, fluid_editing)) return;
        dbg(1, "shape_point_selected=%d, lastsel=%d\n", xctx->shape_point_selected, xctx->lastsel);
 
        /* intuitive interface: directly drag elements */
