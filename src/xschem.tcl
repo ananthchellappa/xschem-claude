@@ -10130,7 +10130,13 @@ proc gfxform::pin_scope_greying {} {
 proc gfxform::update_pin_highlight {} {
   variable type
   if {$type ne {pin}} return
+  if {[catch {winfo exists .dialog} ex] || !$ex} return ;# a deferred call may fire after close
   catch {xschem highlight_pin_scope $::gfxform_pin_scope}
+  # WSLg does not flush the draw() above while the dialog is (re)mapping, so the overlay only
+  # appeared after a later interaction. The overlay persists in the C scope_hi store, so a
+  # deferred force_window_repaint (xschem resetwin from a timer = an event the WM flushes,
+  # retrying until the canvas is viewable) re-strokes it. See wslg-dialog-open-repaint.
+  catch {after 120 [list force_window_repaint [xschem get current_win_path] 0]}
 }
 proc gfxform::clear_pin_highlight {} {
   variable type
@@ -10307,7 +10313,11 @@ proc text_line_slick {txtlabel clear preserve_disabled type} {
     bind .dialog <KP_Enter> {.dialog.buttons.cancel invoke}
   }
   dialog_minsize_floor .dialog
-  if {$type eq {pin}} { gfxform::pin_scope_greying; gfxform::update_pin_highlight } ;# initial greying + apply-set overlay
+  # Initial Name greying + apply-set overlay. update_pin_highlight sets the overlay and schedules
+  # a deferred force_window_repaint so it is flushed once the dialog has mapped (a synchronous
+  # draw before tkwait is not flushed under WSLg -> the outline used to appear only after the
+  # first scope change; see wslg-dialog-open-repaint).
+  if {$type eq {pin}} { gfxform::pin_scope_greying; gfxform::update_pin_highlight }
   tkwait window .dialog
   return $tctx::rcode
 }
