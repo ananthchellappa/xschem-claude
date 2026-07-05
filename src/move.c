@@ -1223,14 +1223,19 @@ static int point_near_pin(double px, double py, double x, double y)
   return fabs(px - x) <= tol && fabs(py - y) <= tol;
 }
 
-/* Is (px,py) a point where a straight wire run passes THROUGH -- two collinear,
- * oppositely-directed wire endpoints meeting there? This is the signature of a
- * mid-span TAP that the wire-segment-splitting feature broke into abutting collinear
- * segments (doc/claude/specs/wire_segment_splitting.md). Such a point is NOT a
- * slidable corner: a stub anchored there (or a perpendicular wire whose far end lands
- * there) must JOG/stay put, never drag the straight run into a detour. Mirrors
- * select.c wire_through_tap_arm(). Exact == compare like compute_wire_slide's own
- * corner test -- split points sit on exact grid-aligned pin coords. */
+/* Is (px,py) a point where a straight STATIONARY wire run -- PERPENDICULAR to the current
+ * move axis -- passes THROUGH? Two collinear, oppositely-directed stationary wire endpoints
+ * meeting there is the signature of a mid-span TAP that the wire-segment-splitting feature
+ * broke into abutting collinear segments (doc/claude/specs/wire_segment_splitting.md).
+ * Dragging the shared endpoint of such a PERPENDICULAR run bends it off-axis -> a detour;
+ * so a stub anchored there (or a perpendicular slide candidate whose far end lands there)
+ * must JOG/stay put instead of sliding.
+ *
+ * The run must be PERPENDICULAR to the move: a run PARALLEL to the move slides cleanly ALONG
+ * itself (a device tapping a rail/bus and dragged along it -- the corner-slide we must NOT
+ * suppress), so those are deliberately NOT reported. Uses xctx->deltax/deltay (the move axis,
+ * valid inside compute_wire_slide, the sole caller). Mirrors select.c wire_through_tap_arm();
+ * exact == compare -- split points sit on exact grid-aligned pin coords. */
 static int point_is_collinear_pass(double px, double py)
 {
   int a, b;
@@ -1241,6 +1246,10 @@ static int point_is_collinear_pass(double px, double py)
     else if(xctx->wire[a].x2 == px && xctx->wire[a].y2 == py) { ax = xctx->wire[a].x1 - px; ay = xctx->wire[a].y1 - py; }
     else continue;
     if(ax == 0 && ay == 0) continue;
+    /* keep only runs PERPENDICULAR to the move (vertical move -> horizontal run ay==0, and
+     * vice-versa); a run parallel to the move slides cleanly and must not be blocked. */
+    if(xctx->deltay != 0.0 && ay != 0.0) continue;
+    if(xctx->deltax != 0.0 && ax != 0.0) continue;
     for(b = a + 1; b < xctx->wires; b++) {
       if(xctx->wire[b].sel) continue;
       if(xctx->wire[b].x1 == px && xctx->wire[b].y1 == py)      { bx = xctx->wire[b].x2 - px; by = xctx->wire[b].y2 - py; }

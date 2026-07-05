@@ -605,6 +605,22 @@ xschem unselect_all; xschem select instance [lab_inst_index]
 xschem move_objects 0 -50 stretch kissing
 check "W7c: moving a pin at a 4-way cross stays a single connected net" [all_wire_nets] GB
 
+# W7d -- the through-wire guard must be PERPENDICULAR-only: a tap dragged ALONG a rail
+# parallel to the move must still SLIDE cleanly (rail stays straight, split point slides),
+# not jog. Vertical rail split at (0,0); horizontal wire to a moving label at (200,0); drag
+# the label DOWN (parallel to the rail). point_is_collinear_pass must NOT block this slide.
+# (Review finding: orientation-blind guard re-introduced the corner-slide jog.)
+catch {xschem clear force}
+xschem wire 0 -500 0 500
+xschem wire 0 0 200 0
+xschem instance devices/lab_wire 200 0 0 0 {name=l8 lab=R}
+xschem unselect_all; xschem select instance [lab_inst_index]
+xschem move_objects 0 -30 stretch kissing
+proc segset_norm {} { set n [xschem get wires]; set L {}; for {set i 0} {$i<$n} {incr i} { lappend L [nwire [xschem wire_coord $i]] }; return [lsort $L] }
+check "W7d: tap dragged along a parallel rail SLIDES (rail straight, wire follows)" [segset_norm] \
+  [lsort [list [nwire {0 -500 0 -30}] [nwire {0 -30 0 500}] [nwire {0 -30 200 -30}]]]
+check "W7d: no jog residue -- exactly 3 wires" [xschem get wires] 3
+
 set ::cadence_compat 0
 
 if {$fail == 0} { puts "OVERALL: ok"; exit 0 } else { puts "OVERALL: notok"; exit 1 }
