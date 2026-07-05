@@ -259,6 +259,8 @@ static int edit_rect_property(int x)
 {
   int i, c, n;
   int drw = 0;
+  int pin_full_redraw = 0; /* a pin's name view is a separate object -> full redraw */
+  char olddir[40];         /* pin direction before the edit (to detect re-orient) */
   const char *attr;
   int preserve, modified = 0;
   char *oldprop=NULL;
@@ -289,6 +291,9 @@ static int edit_rect_property(int x)
       if(xctx->sel_array[i].type != xRECT) continue;
       c = xctx->sel_array[i].col;
       n = xctx->sel_array[i].n;
+      olddir[0] = '\0';
+      if(c == PINLAYER) /* capture old dir (own prop) before it is overwritten below */
+        my_snprintf(olddir, S(olddir), "%s", get_tok_value(xctx->rect[c][n].prop_ptr, "dir", 0));
       oldbus = xctx->rect[c][n].bus;
       if(oldprop && preserve == 1) {
         set_different_token(&xctx->rect[c][n].prop_ptr, (char *) tclgetvar("tctx::retval"), oldprop);
@@ -303,6 +308,14 @@ static int edit_rect_property(int x)
       if(oldbus / 2.0 > width) width = XLINEWIDTH(oldbus) / 2.0;
 
       set_rect_flags(&xctx->rect[c][n]); /* set cached .flags bitmask from attributes */
+
+      /* Pin edit write-through: if the direction changed, re-orient the name label to
+       * the conventional side; then sync the name view (content/pos/size) from tokens. */
+      if(c == PINLAYER) {
+        if(strcmp(olddir, get_tok_value(xctx->rect[c][n].prop_ptr, "dir", 0))) pin_reorient(n);
+        pin_view_apply(n); /* create/delete the view per show_pinname, then sync it */
+        pin_full_redraw = 1;
+      }
 
       set_rect_extraptr(0, &xctx->rect[c][n]);
 
@@ -336,22 +349,28 @@ static int edit_rect_property(int x)
       if( (oldprop &&  xctx->rect[c][n].prop_ptr && strcmp(oldprop, xctx->rect[c][n].prop_ptr)) ||
           (!oldprop && xctx->rect[c][n].prop_ptr) || (oldprop && !xctx->rect[c][n].prop_ptr)) {
          modified = 1;
-         if(!drw) {
-           bbox(START, 0.0 , 0.0 , 0.0 , 0.0);
+         /* pins full-redraw (their name view is a separate object); other rects use the
+          * partial-bbox path below */
+         if(c != PINLAYER) {
+           if(!drw) {
+             bbox(START, 0.0 , 0.0 , 0.0 , 0.0);
+           }
+           drw = 1;
+           if( xctx->rect[c][n].flags & 1024) {
+             draw_image(0, &xctx->rect[c][n], &xctx->rect[c][n].x1, &xctx->rect[c][n].y1,
+                           &xctx->rect[c][n].x2, &xctx->rect[c][n].y2, 0, 0);
+           }
+           bbox(ADD, xctx->rect[c][n].x1 - width, xctx->rect[c][n].y1 - width,
+                     xctx->rect[c][n].x2 + width, xctx->rect[c][n].y2 + width);
          }
-         drw = 1;
-         if( xctx->rect[c][n].flags & 1024) {
-           draw_image(0, &xctx->rect[c][n], &xctx->rect[c][n].x1, &xctx->rect[c][n].y1,
-                         &xctx->rect[c][n].x2, &xctx->rect[c][n].y2, 0, 0);
-         }
-         bbox(ADD, xctx->rect[c][n].x1 - width, xctx->rect[c][n].y1 - width,
-                   xctx->rect[c][n].x2 + width, xctx->rect[c][n].y2 + width);
       }
     }
     if(drw) {
       bbox(SET , 0.0 , 0.0 , 0.0 , 0.0);
       draw();
       bbox(END , 0.0 , 0.0 , 0.0 , 0.0);
+    } else if(pin_full_redraw) {
+      draw(); /* repaint the moved/renamed pin name view (separate object, not in a bbox) */
     }
   }
   my_free(_ALLOC_ID_, &oldprop);
@@ -728,31 +747,30 @@ static int edit_text_property(int x)
       #endif
       /* dbg(1, "edit_property(): text props=%s text=%s\n", tclgetvar("props"), tclgetvar("tctx::retval")); */
       if(text_changed) {
-        double cg;
         my_free(_ALLOC_ID_, &xctx->text[sel].floater_ptr);
-        cg = tclgetdoublevar("cadgrid");
-        c = xctx->rects[PINLAYER];
-        for(l=0;l<c; ++l) {
-          if(xctx->text[sel].txt_ptr &&
-              !strcmp( (get_tok_value(xctx->rect[PINLAYER][l].prop_ptr, "name",0)), xctx->text[sel].txt_ptr) ) {
-            pcx = (xctx->rect[PINLAYER][l].x1+xctx->rect[PINLAYER][l].x2)/2.0;
-            pcy = (xctx->rect[PINLAYER][l].y1+xctx->rect[PINLAYER][l].y2)/2.0;
-            if(
-                /* 20171206 20171221 */
-                (fabs( (yy1+yy2)/2 - pcy) < cg/2 &&
-                (fabs(xx1 - pcx) < cg*3 || fabs(xx2 - pcx) < cg*3) )
-                ||
-                (fabs( (xx1+xx2)/2 - pcx) < cg/2 &&
-                (fabs(yy1 - pcy) < cg*3 || fabs(yy2 - pcy) < cg*3) )
-            ) {
-              if(x==0)
+        /* Owned pin-name view (Option B): renaming the label renames its pin via the
+         * robust owner_pin_id link (handled after txt_ptr is updated, below). For an
+         * ordinary text keep the legacy name-match+proximity pin-rename heuristic. */
+        if(!xctx->text[sel].owner_pin_id) {
+          double cg = tclgetdoublevar("cadgrid");
+          c = xctx->rects[PINLAYER];
+          for(l=0;l<c; ++l) {
+            if(xctx->text[sel].txt_ptr &&
+                !strcmp( (get_tok_value(xctx->rect[PINLAYER][l].prop_ptr, "name",0)), xctx->text[sel].txt_ptr) ) {
+              pcx = (xctx->rect[PINLAYER][l].x1+xctx->rect[PINLAYER][l].x2)/2.0;
+              pcy = (xctx->rect[PINLAYER][l].y1+xctx->rect[PINLAYER][l].y2)/2.0;
+              if(
+                  /* 20171206 20171221 */
+                  (fabs( (yy1+yy2)/2 - pcy) < cg/2 &&
+                  (fabs(xx1 - pcx) < cg*3 || fabs(xx2 - pcx) < cg*3) )
+                  ||
+                  (fabs( (xx1+xx2)/2 - pcx) < cg/2 &&
+                  (fabs(yy1 - pcy) < cg*3 || fabs(yy2 - pcy) < cg*3) )
+              ) {
                 my_strdup(_ALLOC_ID_, &xctx->rect[PINLAYER][l].prop_ptr,
                   subst_token(xctx->rect[PINLAYER][l].prop_ptr, "name",
                   (char *) tclgetvar("tctx::retval")) );
-              else
-                my_strdup(_ALLOC_ID_, &xctx->rect[PINLAYER][l].prop_ptr,
-                  subst_token(xctx->rect[PINLAYER][l].prop_ptr, "name",
-                  (char *) tclgetvar("tctx::retval")) );
+              }
             }
           }
         }
@@ -773,6 +791,12 @@ static int edit_text_property(int x)
       if(size_changed) {
         xctx->text[sel].xscale=hsize;
         xctx->text[sel].yscale=vsize;
+      }
+      /* P3 write-through: if this text is an owned pin-name view, fold edits back into
+       * the pin tokens (content -> name=, size -> name_size). */
+      if(xctx->text[sel].owner_pin_id) {
+        if(text_changed) pin_rename_from_view(sel);
+        if(size_changed) pin_view_writeback(sel);
       }
     } /* for(k=0;k<xctx->lastsel; ++k) */
     draw();
@@ -869,8 +893,39 @@ int scope_targets(int displayed_inst, const char *scope, int *targets)
   return n;
 }
 
+/* Pin analog of scope_targets(): resolve <scope> (current|selected|all) for the
+ * SYMBOL editor's pins (rects on PINLAYER) into a list of rect[PINLAYER][] indices
+ * written into targets[] (sized at least xctx->rects[PINLAYER]+1); returns the count.
+ * The single source of truth for "what a pin Apply/OK touches", used by the
+ * apply_pin_prop command (and, once SP3 lands, the highlight_pin_scope overlay, so the
+ * outlined set == the applied set); spec doc/claude/specs/symbol_editor_apply_scope.md §5.1.
+ *   current  -> { primary_n }  (the pin the form displayed; sel_array[0])
+ *   selected -> every selected xRECT on PINLAYER (sel_array order)
+ *   all      -> every PINLAYER rect of this symbol
+ * A pin has no instance-master, so 'all' == all pins of the current symbol. */
+int pin_scope_targets(int primary_n, const char *scope, int *targets)
+{
+  int i, k, n = 0;
+  if(!strcmp(scope, "all")) {
+    for(i = 0; i < xctx->rects[PINLAYER]; ++i) targets[n++] = i;
+  } else if(!strcmp(scope, "selected")) {
+    for(k = 0; k < xctx->lastsel; ++k) {
+      if(xctx->sel_array[k].type == xRECT && xctx->sel_array[k].col == PINLAYER)
+        targets[n++] = xctx->sel_array[k].n;
+    }
+  } else { /* current */
+    if(primary_n >= 0 && primary_n < xctx->rects[PINLAYER]) targets[n++] = primary_n;
+  }
+  return n;
+}
+
+/* keep_name: when nonzero, do NOT rewrite the instance name's first character to the
+ * new symbol's template prefix on a symbol change (the slick Edit Properties form treats
+ * the dedicated Name field as authoritative -- an instance name is arbitrary and a source
+ * change must not re-prefix it; issue 0058). All other behavior (re-point master, name
+ * uniqueness, bbox) is unchanged. */
 static int apply_symbol_prop(const char *new_prop, const char *old_prop,
-                             int displayed_inst, const char *scope)
+                             int displayed_inst, const char *scope, int keep_name)
 {
   int k, sym_number;
   int no_change_props=0;
@@ -977,8 +1032,9 @@ static int apply_symbol_prop(const char *new_prop, const char *old_prop,
     if(name && name[0] ) {
       char *old_name = NULL;
       dbg(1, "apply_symbol_prop(): prefix!='\\0', name=%s\n", name);
-      /* change prefix if changing symbol type; */
-      if(prefix && old_prefix && old_prefix != prefix) {
+      /* change prefix if changing symbol type (unless the caller asked to keep the
+       * instance name verbatim -- slick form, issue 0058) */
+      if(!keep_name && prefix && old_prefix && old_prefix != prefix) {
         name[0]=(char)prefix;
         my_strdup(_ALLOC_ID_, &ptr, subst_token(xctx->inst[*ii].prop_ptr, "name", name) );
       } else {
@@ -1031,14 +1087,20 @@ static int apply_symbol_prop(const char *new_prop, const char *old_prop,
 /* Mid-session apply for the slick form's Apply / OK (P2): resolve the displayed
  * instance by its session-stable id (so it survives any reindexing between
  * applies) and fan the change set to <scope>. Exposed as the Tcl command
- * `xschem apply_properties <scope> <displayed_id> <new_prop> <old_prop>`. */
+ * `xschem apply_properties <scope> <displayed_id> <new_prop> <old_prop> [keep_name]`.
+ * keep_name (default 0): preserve the instance name across a source change (issue 0058).
+ * Returns 1 if anything changed, 0 for a legit no-op, -1 if the displayed instance no
+ * longer exists (regenerated/undone since the form opened -- issue 0042). */
 int apply_instance_properties(const char *scope, unsigned int displayed_id,
-                              const char *new_prop, const char *old_prop)
+                              const char *new_prop, const char *old_prop, int keep_name)
 {
   int idx = inst_index_from_id(displayed_id);
   int modified;
-  if(idx < 0) return 0;
-  modified = apply_symbol_prop(new_prop, old_prop, idx, scope);
+  /* Target vanished/regenerated between form-open and Apply (intervening undo, symbol
+   * reload, regenerate-abstract): return a DISTINCT code (-1) so the caller can surface
+   * the dropped edit instead of mistaking it for a legit 0 no-op (issue 0042). */
+  if(idx < 0) return -1;
+  modified = apply_symbol_prop(new_prop, old_prop, idx, scope, keep_name);
   if(modified) set_modify(1);
   return modified;
 }
@@ -1069,7 +1131,7 @@ static int update_symbol(const char *result, int x, int selected_inst)
   }
   /* legacy/vim path keeps the prior "all selected" semantics, which combined
    * with changed-fields-only reproduces the old behavior. */
-  modified = apply_symbol_prop(new_prop, xctx->old_prop, selected_inst, "selected");
+  modified = apply_symbol_prop(new_prop, xctx->old_prop, selected_inst, "selected", 0);
   my_free(_ALLOC_ID_, &new_prop);
   my_free(_ALLOC_ID_, &xctx->old_prop);
   return modified;
@@ -1245,6 +1307,21 @@ char *str_chars_replace(const char *str, const char *replace_set, const char wit
   return res;
 }
 
+/* 0063: a property-dialog commit edits the whole prop string of the *selected*
+ * object(s). No faithful replayable subcommand exists (setprop is token-level only;
+ * line/arc/poly have none; the target is the live selection, not a stable id), so we
+ * emit a source-able `#` audit marker (skipped on replay, per the D1 comment-line
+ * decision) instead of a bogus command -- otherwise these mutating, undo-pushing edits
+ * leave no CIW/log trace at all. Newlines are flattened so the marker stays one
+ * source-able line. The slick INSTANCE form (edit_prop, x==0) already logs a real
+ * replayable `xschem apply_properties`, so that path is excluded by the caller. */
+static void log_prop_edit_marker(const char *what, const char *prop)
+{
+  char *flat = str_chars_replace(prop ? prop : "", "\n\r", ' ');
+  log_action("# property-edit %s: %s", what, flat);
+  my_free(_ALLOC_ID_, &flat);
+}
+
 /* x=0 use tcl text widget  x=1 use vim editor  x=2 only view data */
 void edit_property(int x)
 {
@@ -1252,6 +1329,9 @@ void edit_property(int x)
 
  if(!has_x) return;
  rebuild_selected_array(); /* from the .sel field in objects build */
+ /* D-split (cadence_pin_name_text.md): default to the pin-IDENTITY editor; the name-text
+  * retarget below flips this so gfxform::selected_type picks the pin-NAME-TEXT editor. */
+ tclsetvar("gfxform_via_name", "0");
  if(xctx->lastsel==0 )      /* the array of selected objs */
  {
    char *new_prop = NULL;
@@ -1367,8 +1447,37 @@ void edit_property(int x)
     }
    } /* end for(j...) */
    if(modified) set_modify(1);
+   if(modified) log_prop_edit_marker("global", tclgetvar("tctx::retval")); /* 0063 */
    return;
  } /* if((xctx->lastsel==0 ) */
+
+ /* Single instance pin selected: open a READ-ONLY viewer of its name, direction and
+  * connected net (a pin on an instance is not editable). pin_selection.md D5 */
+ if(xctx->lastsel == 1 && xctx->sel_array[0].type == INST_PIN) {
+   int n = xctx->sel_array[0].n, p = xctx->sel_array[0].col;
+   if(n >= 0 && n < xctx->instances && xctx->inst[n].ptr >= 0) {
+     xSymbol *sym = xctx->inst[n].ptr + xctx->sym;
+     if(p >= 0 && p < sym->rects[PINLAYER]) {
+       const char *t;
+       const char *net;
+       /* get_tok_value() returns a SINGLE shared static buffer, and
+        * prepare_netlist_structs() calls it many times, so do the heavy work FIRST,
+        * then read name/dir one at a time, copying each into Tcl (tclsetvar) before
+        * the next get_tok_value() call clobbers the buffer. net is the instance's own
+        * node[] heap string, not the shared buffer, so it is read after prepare. */
+       prepare_netlist_structs(0);
+       net = (xctx->inst[n].node && xctx->inst[n].node[p]) ? xctx->inst[n].node[p] : "";
+       tclsetvar("pin_view(inst)", xctx->inst[n].instname ? xctx->inst[n].instname : "");
+       tclsetvar("pin_view(net)",  net[0] ? net : "(unconnected)");
+       t = get_tok_value(sym->rect[PINLAYER][p].prop_ptr, "name", 0);
+       tclsetvar("pin_view(name)", t[0] ? t : "(unnamed)");
+       t = get_tok_value(sym->rect[PINLAYER][p].prop_ptr, "dir", 0);
+       tclsetvar("pin_view(dir)",  t[0] ? t : "inout");
+       tcleval("pin_property_viewer");
+     }
+   }
+   return;
+ }
 
  /* The old "force preserve_unchanged_attrs when multi-selected" default is gone:
   * selecting N instances no longer implies editing N. Changed-fields-only is now
@@ -1378,6 +1487,34 @@ void edit_property(int x)
 
  j = set_first_sel(0, -2, 0);
  type = xctx->sel_array[j].type;
+
+ /* Q on an owned pin-name view edits the pin's NAME TEXT (size/font/offset/rot/flip): the
+  * name lives in the pin rect's tokens, so retarget the selection to the owning pin rect,
+  * and flag it so gfxform picks the `pinname` editor (not the pin-identity `pin` editor).
+  * D-split, doc/claude/specs/cadence_pin_name_text.md. */
+ if(type == xTEXT && xctx->text[xctx->sel_array[j].n].owner_pin_id) {
+   int pi = pin_idx_by_id(xctx->text[xctx->sel_array[j].n].owner_pin_id);
+   if(pi >= 0) {
+     unselect_all(0);
+     select_box(PINLAYER, pi, SELECTED, 0, 0);
+     xctx->ui_state |= SELECTION;
+     rebuild_selected_array();
+     j = set_first_sel(0, -2, 0);
+     type = xctx->sel_array[j].type;
+     tclsetvar("gfxform_via_name", "1");
+   }
+ }
+
+ /* Master forced preserve_unchanged_attrs=1 for any multi-selection so a shared property edit
+  * does not overwrite each object's distinct attributes with the first object's string. That
+  * force was intentionally dropped for INSTANCE edits (the slick form's "Apply to" scope +
+  * changed-fields-only in update_symbol govern those), but the wire/rect/line/arc/poly/text
+  * dialogs have no such scope and still honor this flag -- their apply loops fall back to a
+  * whole-string overwrite when preserve != 1. Re-force it for a multi-selected NON-instance
+  * edit to avoid clobbering per-object props (data-loss regression vs master, code review). */
+ if(xctx->lastsel > 1 && type != ELEMENT) {
+   tclsetvar("preserve_unchanged_attrs", "1");
+ }
 
  switch(type)
  {
@@ -1424,6 +1561,17 @@ void edit_property(int x)
    break;
  }
  if(modified) set_modify(1);
+ /* 0063: audit-log the commit once per dialog session (not per selected object).
+  * Exclude x==2 (view-only) and the instance slick form (ELEMENT && x==0), which
+  * self-logs `xschem apply_properties`; every other path (wire/rect/line/arc/poly/
+  * text + instance-via-external-editor) is otherwise silent. */
+ if(modified && x != 2 && !(type == ELEMENT && x == 0)) {
+   const char *tn = type == ELEMENT ? "instance" : type == ARC     ? "arc"  :
+                    type == xRECT   ? "rect"     : type == WIRE     ? "wire" :
+                    type == POLYGON ? "polygon"  : type == LINE     ? "line" :
+                    type == xTEXT   ? "text"     : "object";
+   log_prop_edit_marker(tn, tclgetvar("tctx::retval"));
+ }
 }
 
 

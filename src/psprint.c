@@ -1253,6 +1253,42 @@ static void ps_draw_symbol(int c, int n,int layer, int what, short tmp_flip, sho
       }
       if(textlayer != c) set_ps_colors(c);
     }
+
+    /* P6 (doc/claude/specs/cadence_pin_name_text.md §4.2): pin names from the symbol's pin
+     * tokens -- PostScript/PDF export mirror of the draw.c draw_symbol pass. */
+    if(!hide) for(j = 0; j < symptr->rects[PINLAYER]; ++j) {
+      xRect *pin = &(symptr->rect[PINLAYER])[j];
+      Pin_name_layout lay;
+      char *pnm = NULL, *pfont = NULL;
+      double pcx, pcy, tx, ty;
+      int plw;
+      if(!pin_name_visible(pin->prop_ptr)) continue;
+      if(!get_pin_name_layout(pin->prop_ptr, &lay, &pnm, &pfont)) continue;
+      plw = c_for_text;
+      if(disabled == 1) plw = GRIDLAYER;
+      else if(disabled == 2) plw = PINLAYER;
+      if(plw < 0 || plw >= cadlayers) plw = c_for_text;
+      if(plw != c_for_text) set_ps_colors(plw);
+      if(xctx->inst[n].color == -PINLAYER || xctx->enable_layer[plw]) {
+        pcx = (pin->x1 + pin->x2) / 2.0;
+        pcy = (pin->y1 + pin->y2) / 2.0;
+        tx = pcx + lay.dx; ty = pcy + lay.dy;
+        ROTATION(rot, flip, 0.0, 0.0, tx, ty, x1, y1);
+        my_snprintf(ps_font_family, S(ps_font_family), "%s", (pfont && pfont[0]) ? pfont : "Helvetica");
+        my_snprintf(ps_font_name,   S(ps_font_name),   "%s", (pfont && pfont[0]) ? pfont : "Helvetica");
+        if(text_ps)
+          ps_draw_string(plw, pnm,
+            ((short)lay.rot + ((flip && ((short)lay.rot & 1)) ? rot+2 : rot)) & 0x3,
+            flip ^ (short)lay.flip, 0, 0, x0+x1, y0+y1, lay.size, lay.size);
+        else
+          old_ps_draw_string(plw, pnm,
+            ((short)lay.rot + ((flip && ((short)lay.rot & 1)) ? rot+2 : rot)) & 0x3,
+            flip ^ (short)lay.flip, 0, 0, x0+x1, y0+y1, lay.size, lay.size);
+      }
+      if(plw != c) set_ps_colors(c);
+      my_free(_ALLOC_ID_, &pnm);
+      my_free(_ALLOC_ID_, &pfont);
+    }
   }
 }
 

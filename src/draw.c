@@ -898,6 +898,60 @@ void draw_symbol(int what,int c, int n,int layer,short tmp_flip, short rot,
         #endif
       }
     }
+
+    /* P6 (doc/claude/specs/cadence_pin_name_text.md §4.2): render each pin's name directly
+     * from the symbol's pin tokens (name=, name_dx/dy/size/rot/flip, name_font), gated by the
+     * show_pin_names tri-state + per-pin show_pinname (pin_name_visible). Way A: the shared
+     * sym[] cache is never augmented with synthetic view texts, so an instance draws the name
+     * here from tokens (mirroring the symbol-edit view). Not drawn on a bbox-hidden symbol;
+     * honors zoom-cull and the text-layer enable / single-layer gates like the loop above. */
+    if(!hide && !pin_names_all_off()) for(j = 0; j < symptr->rects[PINLAYER]; ++j) {
+      xRect *pin = &(symptr->rect[PINLAYER])[j];
+      Pin_name_layout lay;
+      char *pnm = NULL, *pfont = NULL;
+      double pcx, pcy, tx, ty;
+      int plw;
+      if(!pin_name_visible(pin->prop_ptr)) continue;
+      if(!get_pin_name_layout(pin->prop_ptr, &lay, &pnm, &pfont)) continue;
+      if(lay.size * FONTWIDTH * xctx->mooz < 1) {                   /* zoom-cull, as texts */
+        my_free(_ALLOC_ID_, &pnm); my_free(_ALLOC_ID_, &pfont); continue;
+      }
+      plw = c_for_text;
+      if(disabled == 1) plw = GRIDLAYER;
+      else if(disabled == 2) plw = PINLAYER;
+      if(plw < 0 || plw >= cadlayers) plw = c_for_text;
+      if((xctx->draw_single_layer == -1 || plw == xctx->draw_single_layer) &&
+         (xctx->inst[n].color == -PINLAYER || xctx->enable_layer[plw])) {
+        pcx = (pin->x1 + pin->x2) / 2.0;
+        pcy = (pin->y1 + pin->y2) / 2.0;
+        tx = pcx + lay.dx; ty = pcy + lay.dy;
+        ROTATION(rot, flip, 0.0, 0.0, tx, ty, x1, y1);
+        #if HAS_CAIRO==1
+        if(pfont && pfont[0]) {
+          xctx->cairo_font = cairo_toy_font_face_create(pfont,
+            CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
+          cairo_save(xctx->cairo_ctx); cairo_save(xctx->cairo_save_ctx);
+          cairo_set_font_face(xctx->cairo_ctx, xctx->cairo_font);
+          cairo_set_font_face(xctx->cairo_save_ctx, xctx->cairo_font);
+          cairo_font_face_destroy(xctx->cairo_font);
+        }
+        #endif
+        draw_string(plw, what, pnm,
+          ((short)lay.rot + ((flip && ((short)lay.rot & 1)) ? rot + 2 : rot)) & 0x3,
+          flip ^ (short)lay.flip, 0, 0, x0 + x1, y0 + y1, lay.size, lay.size);
+        #if HAS_CAIRO!=1
+        drawrect(plw, END, 0.0, 0.0, 0.0, 0.0, 0.0, 0, -1, -1);
+        drawline(plw, END, 0.0, 0.0, 0.0, 0.0, 0.0, 0, NULL);
+        #endif
+        #if HAS_CAIRO==1
+        if(pfont && pfont[0]) {
+          cairo_restore(xctx->cairo_ctx); cairo_restore(xctx->cairo_save_ctx);
+        }
+        #endif
+      }
+      my_free(_ALLOC_ID_, &pnm);
+      my_free(_ALLOC_ID_, &pfont);
+    }
   }
 }
 
@@ -1478,7 +1532,7 @@ static void hilight_cairo_set_source(cairo_t *ct, NetHilightStyle *st, unsigned 
 }
 
 /* Pass 1.5 tilted-stripe rendering. Render a highlighted thick wire's dash pattern as
- * "stripes" sheared by st->angle (0..45 deg) instead of perpendicular dash bands (which
+ * "stripes" sheared by st->angle (-45..45 deg; sign picks the tilt direction) instead of perpendicular dash bands (which
  * is all native XSetDashes can do). Works in a wire-local frame (translate to the start,
  * rotate so the wire lies along +x) and fills one parallelogram per dash "on" run with
  * its edges tilted by `half_width * tan(angle)`. Resolution-independent. x1,y1,x2,y2 are
@@ -1532,13 +1586,15 @@ static int draw_hilight_wire_striped(unsigned int fg, NetHilightStyle *st,
   if(period <= 0.0) return 0;          /* no "on" runs: let the flat path draw it */
 
   theta = atan2(dy, dx);
-  shear = half * tan(st->angle * (XSCH_PI / 180.0));   /* angle <= 45 -> |shear| <= half */
+  shear = half * tan(st->angle * (XSCH_PI / 180.0));   /* |angle| <= 45 -> |shear| <= half; sign = tilt dir */
   /* start a whole number of periods before the wire start so a band begins at x=0 (phase
    * parity with XSetDashes), far enough back that the sheared back edge AND the cap
-   * overhang at x=-ext are still covered regardless of the width/period ratio. The Pass-2b
-   * marching offset (dash_offset, in [0,period)) then shifts the whole pattern along +x so
-   * the stripes crawl; it is absorbed by the +period slack above, so x=-ext stays covered. */
-  cstart = -ceil((ext + shear + period) / period) * period + dash_offset;
+   * overhang at x=-ext are still covered regardless of the width/period ratio. Use |shear|
+   * so the slack covers EITHER tilt direction (a negative angle leans the bands the other
+   * way, reaching |shear| past the axis on the opposite side). The Pass-2b marching offset
+   * (dash_offset, in [0,period)) then shifts the whole pattern along +x so the stripes
+   * crawl; it is absorbed by the +period slack above, so x=-ext stays covered. */
+  cstart = -ceil((ext + fabs(shear) + period) / period) * period + dash_offset;
 
   for(t = 0; t < nt; ++t) {
     cairo_t *ct = targets[t];
@@ -1551,7 +1607,7 @@ static int draw_hilight_wire_striped(unsigned int fg, NetHilightStyle *st,
     cairo_clip(ct);
     hilight_cairo_set_source(ct, st, fg);
     pos = cstart; idx = 0; on = 1;
-    while(pos < len + ext + shear + 1.0) {
+    while(pos < len + ext + fabs(shear) + 1.0) {   /* |shear|: cover the far end for either tilt */
       seg = (unsigned char)st->dash_arr[idx % st->dash_len];
       if(on) {
         /* parallelogram for the "on" run [pos, pos+seg], top/bottom edges sheared so the
@@ -1612,7 +1668,7 @@ void draw_hilight_wire(unsigned int fg, NetHilightStyle *st, double dash_offset,
   /* nonzero stripe angle on a dashed style: render tilted stripes via cairo (native Xlib
    * dashes are perpendicular-only). Falls through to the flat dash path if cairo can't
    * handle this wire (thin/degenerate) or has no usable context for the active target. */
-  if(st && st->angle > 0 && st->dash_len > 0) {
+  if(st && st->angle != 0 && st->dash_len > 0) {   /* angle<0 tilts the other way (sign of tan) */
     if(draw_hilight_wire_striped(fg, st, x1, y1, x2, y2, width, dash_offset)) return;
   }
 #endif
@@ -1625,7 +1681,7 @@ void draw_hilight_wire(unsigned int fg, NetHilightStyle *st, double dash_offset,
      *  - DIRECTION: XSetDashes' phase advances the pattern toward the wire START (-x) as it
      *    grows -- the OPPOSITE of the cairo striped path (cstart += offset -> +x). Negate it
      *    (period - offset, reduced into [0,period)) so a march_fwd style scrolls the SAME
-     *    visual direction at angle 0 and angle>0. period = net_hilight_dash_period(st) (doubled
+     *    visual direction at angle 0 and any nonzero angle. period = net_hilight_dash_period(st) (doubled
      *    for odd dash_len; the X server honors that doubled period -- verified by render).
      *  - PRECISION: the phase arg is an int, so the flat Xlib path steps in whole pixels (no
      *    sub-pixel glide like cairo); fine for marching ants, but slow scrolls advance coarsely.
@@ -5691,13 +5747,72 @@ void draw_scope_highlight(void)
  * Called with g = gc_hover to draw, or g = gctiled to erase (re-stamp the
  * background pixmap over the old outline). type 0 = nothing -> no-op.
  * =========================================================================== */
+/* Union bounding box of an instance's *visible* symbol texts (the rendered net name
+ * for a label/pin), mirroring the text loop of symbol_bbox() in select.c: translate
+ * @-vars, skip @spice annotator texts, honor hidden-text flags, account for per-text
+ * size and Cairo custom fonts. Returns 1 and fills *x1..*y2 if at least one text was
+ * found, else 0. Used by draw_hover_shape() so hovering a net label outlines its name
+ * text rather than the tiny pin stub. See doc/claude/specs/hover_netlabel_text.md */
+static int inst_text_bbox(int n, double *x1, double *y1, double *x2, double *y2)
+{
+  xSymbol *symptr = xctx->inst[n].ptr + xctx->sym;
+  short flip = xctx->inst[n].flip, rot = xctx->inst[n].rot;
+  double x0 = xctx->inst[n].x0, y0 = xctx->inst[n].y0;
+  int j, found = 0, tmp;
+  double dtmp;
+  for(j = 0; j < symptr->texts; ++j) {
+    double xscale, yscale, text_x0, text_y0, tx1, ty1, tx2, ty2;
+    const char *tmp_txt;
+    char *estr;
+    xText text = symptr->text[j];
+    #if HAS_CAIRO==1
+    int customfont;
+    #endif
+    if(!xctx->show_hidden_texts && (text.flags & (HIDE_TEXT | HIDE_TEXT_INSTANTIATED))) continue;
+    get_sym_text_size(n, j, &xscale, &yscale);
+    tmp_txt = translate(n, text.txt_ptr);
+    if(!tmp_txt || !tmp_txt[0]) continue;
+    if(!strncmp(tmp_txt, "@spice", 6)) continue; /* annotator texts not part of the visible name */
+    ROTATION(rot, flip, 0.0, 0.0, text.x0, text.y0, text_x0, text_y0);
+    #if HAS_CAIRO==1
+    customfont = set_text_custom_font(&text);
+    #endif
+    estr = my_expand(tmp_txt, tclgetintvar("tabstop"));
+    if(text_bbox(estr, xscale, yscale,
+       (text.rot + ((flip && (text.rot & 1)) ? rot+2 : rot)) & 0x3,
+       flip ^ text.flip, text.hcenter, text.vcenter,
+       x0+text_x0, y0+text_y0, &tx1, &ty1, &tx2, &ty2, &tmp, &dtmp)) {
+      if(!found) { *x1 = tx1; *y1 = ty1; *x2 = tx2; *y2 = ty2; found = 1; }
+      else {
+        if(tx1 < *x1) *x1 = tx1;
+        if(ty1 < *y1) *y1 = ty1;
+        if(tx2 > *x2) *x2 = tx2;
+        if(ty2 > *y2) *y2 = ty2;
+      }
+    }
+    my_free(_ALLOC_ID_, &estr);
+    #if HAS_CAIRO==1
+    if(customfont) cairo_restore(xctx->cairo_ctx);
+    #endif
+  }
+  return found;
+}
+
 void draw_hover_shape(GC g, int type, int n, int c)
 {
   switch(type) {
     case ELEMENT:
       if(n >= 0 && n < xctx->instances) {
-        double x1 = xctx->inst[n].xx1, y1 = xctx->inst[n].yy1;
-        double x2 = xctx->inst[n].xx2, y2 = xctx->inst[n].yy2;
+        double x1, y1, x2, y2;
+        const char *symtype = (xctx->inst[n].ptr + xctx->sym)->type;
+        /* for net labels/pins the body is a tiny stub at the attachment point; outline
+         * the visible net-name text the user is actually pointing at instead */
+        if(symtype && IS_LABEL_SH_OR_PIN(symtype) && inst_text_bbox(n, &x1, &y1, &x2, &y2)) {
+          /* x1..y2 already hold the text union bbox */
+        } else {
+          x1 = xctx->inst[n].xx1; y1 = xctx->inst[n].yy1;
+          x2 = xctx->inst[n].xx2; y2 = xctx->inst[n].yy2;
+        }
         RECTORDER(x1, y1, x2, y2);
         drawtemprect(g, ADD, x1, y1, x2, y2);
       }
@@ -5782,6 +5897,7 @@ void draw(void)
   dbg(1, "draw()\n");
   if(!xctx || xctx->no_draw) return;
   draw_count++; /* test/introspection seam: a full draw is about to run (xschem get drawcount) */
+  pin_names_sync_cache(); /* P6: refresh the show_pin_names cache read by the draw_symbol pin pass */
   /* `tk scaling` is a Tk command; under true headless (--nogui, has_x==0) there is no Tk
    * interpreter, so calling it errors ("invalid command name tk"). Skip it and keep the
    * global default (1.0) -- headless runs that still reach draw() (e.g. scripted

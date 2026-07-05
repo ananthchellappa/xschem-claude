@@ -40,10 +40,23 @@ typedef int myproc(
 /* variables for handling multiple windows/tabs */
 static Xschem_ctx *save_xctx[MAX_NEW_WINDOWS]; /* save pointer to current schematic context structure */
 static char window_path[MAX_NEW_WINDOWS][WINDOW_PATH_SIZE];
+/* Win-path of the tab whose content is currently shown on the SHARED .drw canvas (issue 0073
+ * animated-highlight). Tabs (empty top_path) all render to the one .drw X window (see the
+ * xctx->window = save_xctx[0]->window assignment below), so exactly ONE of them is visible at a
+ * time; a detached window (non-empty top_path) owns its own canvas and is unaffected. When a
+ * detached window has focus, `xctx` is that window but .drw still shows this tab -- so the
+ * multi-window highlight redraw/animation guards must treat THIS tab as visible (animate it) and
+ * every OTHER empty-top_path context as a hidden background tab (skip it). Updated on each switch
+ * to a tab; defaults to the main window's canvas. */
+static char drw_front_win[WINDOW_PATH_SIZE] = ".drw";
 /* ==0 if no additional windows/tabs, ==1 if one additional window/tab, ... */
 static int window_count = 0;
 static int last_created_window = -1;
 static Xschem_ctx *old_xctx;
+/* Cadence-style window numbering (doc/claude/specs/window_numbering.md): 1 and 2 are
+ * reserved for the CIW and the Library Manager, so editor contexts start at 3 and the
+ * counter only ever increments (numbers are never reused when a window closes). */
+static int window_number_counter = 3;
 
 /* ----------------------------------------------------------------------- */
 /* EWMH message handling routines 20071027... borrowed from wmctrl code */
@@ -80,6 +93,23 @@ static int client_msg(Display *disp, Window win, char *msg, /* {{{ */
     }
 }/*}}}*/
 
+/* Ask the window manager to ACTIVATE (raise to the front + give focus to) the top-level
+ * X window 'win' via the EWMH _NET_ACTIVE_WINDOW client message. Unlike a withdraw/
+ * deiconify re-map this neither unmaps nor moves the window, so it cannot drift; honored
+ * by EWMH window managers that advertise _NET_ACTIVE_WINDOW (e.g. Weston on WSLg). Source
+ * indication 2 = "pager / direct user action", which WMs honor in spite of focus-stealing
+ * prevention. Used by raise_activate_toplevel (Tcl) for the Library Manager / Create
+ * Instance / descend-return raises. (issue 0054) */
+int net_active_window(Window win)
+{
+  int r;
+  if(!display || !win) return EXIT_FAILURE;
+  r = client_msg(display, win, "_NET_ACTIVE_WINDOW",
+                 2 /* source: pager / direct user action */, CurrentTime, 0, 0, 0);
+  XFlush(display);
+  return r;
+}
+
 Xschem_ctx **get_save_xctx(void)
 {
   return save_xctx;
@@ -113,6 +143,44 @@ Xschem_ctx *get_window_ctx(int i, const char **win_path)
   return ctx;
 }
 
+/* True if any OPEN window/tab OTHER than the live `xctx` already holds a buffer whose
+ * basename equals `base`. The untitled namer uses this so a second blank window (Cadence
+ * Ctrl-N) does not collide with an unsaved untitled.sch already being edited elsewhere --
+ * such a buffer is not on disk, so a stat()-only check would miss it. See issue 0056. */
+static int untitled_basename_open(const char *base)
+{
+  int i;
+  for(i = 0; i < MAX_NEW_WINDOWS; ++i) {
+    const char *path, *b;
+    Xschem_ctx *ctx = get_window_ctx(i, NULL);
+    if(!ctx || ctx == xctx) continue;
+    path = ctx->sch[ctx->currsch];
+    if(!path) continue;
+    b = strrchr(path, '/');
+    b = b ? b + 1 : path;
+    if(!strcmp(b, base)) return 1;
+  }
+  return 0;
+}
+
+/* Pick the next free "untitled[-n].sch" (or .sym when `symbol`) BASENAME into `name`.
+ * A candidate is taken if a file with it exists in the current directory OR an open
+ * window/tab already edits a buffer with that basename (issue 0056). Callers prepend the
+ * directory themselves. Shared by save.c (empty-filename load) and actions.c (discard). */
+void get_unused_untitled_name(int symbol, char *name, int namesize)
+{
+  int n;
+  struct stat buf;
+  const char *ext = symbol ? "sym" : "sch";
+  for(n = 0;; ++n) {
+    if(n == 0) my_snprintf(name, namesize, "untitled.%s", ext);
+    else my_snprintf(name, namesize, "untitled-%d.%s", n, ext);
+    if(!stat(name, &buf)) continue;            /* exists on disk */
+    if(untitled_basename_open(name)) continue; /* open in another window */
+    break;
+  }
+}
+
 Xschem_ctx *get_old_xctx(void)
 {
   return old_xctx;
@@ -136,6 +204,21 @@ char *get_last_created_window_path(void)
 int get_window_count(void)
 {
   return window_count;
+}
+
+/* Win-path of the tab currently shown on the shared .drw canvas (issue 0073). */
+const char *get_drw_front_win(void)
+{
+  return drw_front_win;
+}
+
+/* Record which tab now owns the .drw canvas. Called after a switch sets `xctx`: only a tab
+ * (empty top_path) becomes the visible .drw content; switching to a DETACHED window leaves the
+ * previously-shown tab on .drw, so this is a no-op for detached windows. */
+static void note_drw_front(void)
+{
+  if((!xctx->top_path || !xctx->top_path[0]) && xctx->current_win_path && xctx->current_win_path[0])
+    my_strncpy(drw_front_win, xctx->current_win_path, S(drw_front_win));
 }
 
 static int window_state (Display *disp, Window win, char *arg) {/*{{{*/
@@ -497,6 +580,17 @@ void free_gc()
   XFreeGC(display,xctx->gc_hilight);
 }
 
+/* Stamp the just-allocated context (global xctx) with the next Cadence-style window
+ * number. Call ONLY at the three editor-context birth sites (startup main context,
+ * create_new_window, create_new_tab) immediately after alloc_xschem_data(); NOT inside
+ * alloc_xschem_data itself (it is shared by the schematic-compare and symbol-preview
+ * scratch contexts, which must keep window_number == 0), and NOT on detach (the number
+ * rides along with the moved context). See doc/claude/specs/window_numbering.md. */
+static void assign_window_number(void)
+{
+  xctx->window_number = window_number_counter++;
+}
+
 static void alloc_xschem_data(const char *top_path, const char *win_path)
 {
   int i, j;
@@ -791,6 +885,26 @@ static void delete_schematic_data(int delete_pixmap)
   statusmsg("", 1); /* clear allocated string */
   record_global_node(2, NULL, NULL); /* delete global node array */
   free_xschem_data(); /* delete the xctx struct */
+}
+
+/* issue 0073 deep-gap net-highlight relay (see doc/claude/code_analysis/
+ * net_highlight_linked_windows_agent_guide.md and net_hilight_relay_reconcile() in hilight.c):
+ * allocate a WINDOWLESS scratch context for transiently loading an intermediate schematic, so a
+ * highlight can be translated across a hierarchy gap of more than one level whose intermediate
+ * netlist is loaded in no window. alloc_xschem_data()/delete_schematic_data() are file-static; these
+ * thin wrappers expose the same scratch lifecycle compare_schematics() uses (alloc + ... +
+ * delete_schematic_data(0), which does NOT touch a gc/pixmap). The caller saves the previous xctx and
+ * forces has_x=0 around the scratch so no GC/pixmap code path is taken, then restores both. */
+Xschem_ctx *alloc_scratch_xschem_ctx(void)
+{
+  xctx = NULL;
+  alloc_xschem_data("", ".drw");   /* window==save_pixmap==0; no gc created */
+  return xctx;
+}
+
+void free_scratch_xschem_ctx(void)
+{
+  delete_schematic_data(0);        /* frees the scratch xctx; delete_pixmap=0 => no resetwin/free_gc */
 }
 
 int compare_schematics(const char *f)
@@ -1636,6 +1750,7 @@ static int switch_window(int *window_count, const char *win_path, int tcl_ctx)
       }
       if(tcl_ctx && has_x) tclvareval("reconfigure_layers_button {}", NULL);
       set_modify(-1); /* sets window title */
+      note_drw_front(); /* issue 0073: track the tab now shown on .drw */
       return 0;
     } else return 1;
   }
@@ -1693,7 +1808,17 @@ static int switch_tab(int *window_count, const char *win_path, int dr)
       if(dr) resetwin(1, 1, 1, 0, 0);
       set_modify(-1); /* sets window title */
       if(dr) draw();
+      /* A user-visible tab switch (dr!=0) changed the active context; log the activation
+       * to the CIW. Internal reshuffles (swap_tabs passes dr==0) are excluded so they do
+       * not spam the log. Window activation is logged Tcl-side in the switch_window proc
+       * (doc/claude/specs/window_numbering.md). */
+      if(dr && has_x) {
+        char nwcmd[64];
+        my_snprintf(nwcmd, S(nwcmd), "notify_window_active %d", xctx->window_number);
+        tcleval(nwcmd);
+      }
       tcleval("tab_queue STORE");
+      note_drw_front(); /* issue 0073: track the tab now shown on .drw */
       return 0;
     } else return 1;
   }
@@ -1782,6 +1907,7 @@ static void create_new_window(int *window_count, const char *win_path, const cha
   old_xctx = xctx;
   xctx = NULL;
   alloc_xschem_data(toppath, window_path[n]); /* alloc data into xctx */
+  assign_window_number(); /* new editor window: next Cadence-style number */
   xctx->netlist_type = CAD_SPICE_NETLIST; /* for new windows start with spice netlist mode */
   tclsetvar("netlist_type","spice");
   init_pixdata();/* populate xctx->fill_type array that is used in create_gc() to set fill styles */
@@ -1934,6 +2060,7 @@ static void create_new_tab(int *window_count, const char *noconfirm, const char 
   old_xctx = xctx;
   xctx = NULL;
   alloc_xschem_data("", win_path); /* alloc data into xctx */
+  assign_window_number(); /* new editor tab: next Cadence-style number */
   xctx->netlist_type = CAD_SPICE_NETLIST; /* for new windows start with spice netlist mode */
   tclsetvar("netlist_type","spice");
   init_pixdata();/* populate xctx->fill_type array that is used in create_gc() to set fill styles */
@@ -1962,6 +2089,7 @@ static void create_new_tab(int *window_count, const char *noconfirm, const char 
   }
   load_schematic(1,fname, 1, confirm);
   if(dr & 1) {
+    note_drw_front(); /* issue 0073: this new tab now owns the shared .drw canvas */
     if(!loaded && !(dr & 2) ) zoom_full(1, 0, 1 + 2 * tclgetboolvar("zoom_full_center"), 0.97); /* draw */
     else draw();
   }
@@ -2197,6 +2325,7 @@ static void destroy_tab(int *window_count, const char *win_path)
       resetwin(1, 1, 1, 0, 0);
       set_modify(-1); /* sets window title */
       tcleval("tab_queue STORE");
+      note_drw_front(); /* issue 0073: the surviving tab now owns the shared .drw canvas */
       draw();
     }
   } else {
@@ -3142,6 +3271,7 @@ int Tcl_AppInit(Tcl_Interp *inter)
  /*  [m]allocate dynamic memory */
  /*                             */
  alloc_xschem_data("", ".drw");
+ assign_window_number(); /* startup main context: the launch untitled.sch is window 3 */
 
  /* create /tmp/xschem_web_xxx directory for remote objects */
  tmp_ptr = create_tmpdir("xschem_web_");
@@ -3468,6 +3598,10 @@ int Tcl_AppInit(Tcl_Interp *inter)
      dbg(0, "xschem: can't do a print without a filename\n");
      tcleval("exit 1");
    }
+   /* P6: batch PS/PDF/SVG export calls ps_draw()/svg_draw() directly (not via draw() or the
+    * `xschem print` handler), so the show_pin_names visibility cache is never refreshed here;
+    * sync it so a show_pin_names on/off set in xschemrc is honored (png uses the draw() path). */
+   pin_names_sync_cache();
    if(cli_opt_do_print==1) {
 
      xctx->xrect[0].x = 0;

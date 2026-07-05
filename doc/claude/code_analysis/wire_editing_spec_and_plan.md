@@ -9,7 +9,7 @@ smallest testable pieces. It supersedes the *priority-order* sketch in
 - `wire_follow_stretch_move.md` — the deep dive on *how* `select_attached_nets()` /
   `place_moved_wire()` / `recompute_orthogonal_manhattanline()` work today, with code
   line references. Read it for the mechanism; read this for the work breakdown.
-- `FAQ.md` Q14 — verb-noun vs noun-verb (a separate interaction-grammar gap).
+- `../FAQ.md` Q14 — verb-noun vs noun-verb (a separate interaction-grammar gap).
 
 > **Scope note.** "Wire-follow on move" is governed by two TCL switches, **both off
 > by default**: `enable_stretch` (does an attached wire follow at all?) and

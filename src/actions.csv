@@ -77,6 +77,7 @@ edit.cut,command,edit,Cut,Ctrl+X,xschem cut,,,Cut,
 edit.paste,command,edit,Paste,Ctrl+V,xschem paste,,,Paste,
 edit.delete,command,edit,Delete,Del,xschem delete,,,Delete,
 edit.select_all,command,edit,Select all,Ctrl+A,xschem select_all,,,Select all,
+edit.deselect_mode,command,edit,Deselect one object at a time,d,xschem deselect_mode,,,Deselect one object at a time (click a selected object; ESC to end),1,1
 edit.duplicate_objects,command,edit,Duplicate objects,C,xschem copy_objects,,,Duplicate objects,,1
 edit.move_objects,command,edit,Move objects,M,xschem move_objects,,,Move objects,,1
 edit.move_objects_stretching_attached_wires,command,edit,Move objects stretching attached wires,Control+M,xschem move_objects stretch,,,Move objects stretching attached wires,,1
@@ -123,13 +124,14 @@ sym.make_schematic_from_symbol,command,sym,Make schematic from symbol,Ctrl+L,xsc
 sym.make_schematic_and_symbol_from_selected_components,command,sym,Make schematic and symbol from selected components,Ctrl+Shift+H,xschem make_sch_from_sel,,,Make schematic and symbol from selected components,
 sym.attach_net_labels_to_component_instance,command,sym,Attach net labels to component instance,Shift+H,xschem attach_labels,,,Attach net labels to component instance,,1
 sym.create_symbol_pins_from_selected_schematic_pins,command,sym,Create symbol pins from selected schematic pins,Alt+H,schpins_to_sympins,,,Create symbol pins from selected schematic pins,
-sym.place_symbol_pin,command,sym,Place symbol pin,Alt+P,xschem add_symbol_pin,,,Place symbol pin,
+sym.place_symbol_pin,command,sym,Place symbol pin,P,xschem add_symbol_pin,,,Place symbol pin,
 sym.place_schematic_input_port,command,sym,Place schematic input port,Ctrl+P,xschem net_label 2,,,Place schematic input port,
 sym.place_schematic_output_port,command,sym,Place schematic output port,Ctrl+Shift+P,xschem net_label 3,,,Place schematic output port,
 sym.place_net_pin_label,command,sym,Place net pin label,Alt+L,xschem net_label 1,,,Place net pin label,
 sym.place_net_wire_label,command,sym,Place net wire label,Alt+Shift+L,xschem net_label 0,,,Place net wire label,
 sym.change_selected_inst_texts_to_floaters,command,sym,Change selected inst. texts to floaters,,xschem floaters_from_selected_inst,,,Change selected inst. texts to floaters,
 sym.unselect_attached_floaters,command,sym,Unselect attached floaters,,xschem unselect_attached_floaters,,,Unselect attached floaters,
+edit.add_pin_stubs,command,sym,Add pin stubs + labels,Space,xschem add_pin_stubs,,,Add a wire stub + outward net-label to each selected pin / each unconnected pin of a selected instance,1
 sym.list.print_list_of_highlight_nets,command,sym.list,Print list of highlight nets,J,xschem print_hilight_net 1,,,Print list of highlight nets,1
 sym.list.print_list_of_highlight_nets_with_buses_expanded,command,sym.list,"Print list of highlight nets, with buses expanded",Alt-Ctrl-J,xschem print_hilight_net 3,,,"Print list of highlight nets, with buses expanded",
 sym.list.create_labels_from_highlight_nets,command,sym.list,Create labels from highlight nets,Alt-J,xschem print_hilight_net 4,,,Create labels from highlight nets,1
@@ -141,7 +143,7 @@ tools.insert_wire,command,tools,Insert wire,W,xschem wire,,,Insert wire,,1
 tools.insert_snap_wire,command,tools,Insert snap wire,Shift+W,xschem snap_wire,,,Insert snap wire,,1
 tools.insert_line,command,tools,Insert line,L,xschem line,,,Insert line,,1
 tools.insert_rect,command,tools,Insert rect,R,xschem rect,,,Insert rect,,1
-tools.insert_polygon,command,tools,Insert polygon,P,xschem polygon,,,Insert polygon,,1
+tools.insert_polygon,command,tools,Insert polygon,Shift+P,xschem polygon,,,Insert polygon,,1
 tools.insert_arc,command,tools,Insert arc,Shift+C,xschem arc,,,Insert arc,,1
 tools.insert_circle,command,tools,Insert circle,Ctrl+Shift+C,xschem circle,,,Insert circle,,1
 tools.insert_jpg_png_svg_image,command,tools,Insert JPG/PNG/SVG image,,xschem add_image,,,Insert JPG/PNG/SVG image,
@@ -182,6 +184,9 @@ waves.spectrum,command,waves,Spectrum,,waves ac,,,Spectrum,
 # with no verified-identical Tcl command: label/help metadata only (empty
 # command -> skipped by the palette, shown with these labels by the cheat-sheet).
 # Default chords live in the binding table; see `xschem bindings dump`.
+view.center_at_cursor,command,view,Center view on cursor,,,,,Center the view on the cursor position (ship unbound; bind a key in keybindings.csv),
+view.pan,command,view,Drag-pan canvas,,,,,Drag-pan the canvas from the pointer (ship unbound; bind a key in keybindings.csv),
+edit.cycle_manhattan,command,edit,Cycle manhattan corner,,,,,Cycle the corner mode of an in-progress move/wire/line gesture (ship unbound; bind a key in keybindings.csv),
 view.scroll_up,command,view,Scroll up,,xschem scroll up,,,Scroll the viewport up one step,
 view.scroll_down,command,view,Scroll down,,xschem scroll down,,,Scroll the viewport down one step,
 view.scroll_left,command,view,Scroll left,,xschem scroll left,,,Scroll the viewport left one step,
@@ -197,3 +202,5 @@ view.toggle_show_netlist,command,view,Toggle show netlist window,,xschem toggle_
 view.toggle_draw_pixmap,command,view,Toggle pixmap drawing,,xschem toggle_draw_pixmap,,,Toggle off-screen pixmap (double buffered) drawing,
 edit.toggle_stretch,command,edit,Toggle wire stretching,,xschem toggle_stretch,,,Toggle stretching of wires attached to moved objects,
 edit.toggle_orthogonal_wiring,command,edit,Toggle orthogonal wiring,,xschem toggle_orthogonal_wiring,,,Toggle orthogonal (manhattan) wire drawing,
+tools.raise_ciw,command,tools,Raise CIW window,Alt+F5,ciw_create,,,Raise or open the CIW (Command Interpreter Window),
+view.toggle_view_type,command,view,Toggle schematic/symbol view,Alt+2,alt2_toggle_view,,,Open the alternate view (schematic<->symbol) of the current cell,

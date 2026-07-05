@@ -1,0 +1,20 @@
+v {xschem version=3.4.7RC file_version=1.2}
+K {type=subcircuit
+format="@name @pinlist @symname"
+template="name=x1"
+}
+T {@symname} -49.5 -6 0 0 0.3 0.3 {}
+T {@name} 135 -52 0 0 0.2 0.2 {}
+P 4 5 130 -40 -130 -40 -130 40 130 40 130 -40 {}
+B 5 -152.5 -32.5 -147.5 -27.5 {show_pinname=true name_dx=25 name_dy=-4 name_size=0.2 name=INPUT dir=in}
+L 4 -150 -30 -130 -30 {}
+B 5 -152.5 -12.5 -147.5 -7.5 {show_pinname=true name_dx=25 name_dy=-4 name_size=0.2 name=VREF dir=in}
+L 4 -150 -10 -130 -10 {}
+B 5 -152.5 7.5 -147.5 12.5 {show_pinname=true name_dx=25 name_dy=-4 name_size=0.2 name=START dir=in}
+L 4 -150 10 -130 10 {}
+B 5 147.5 -32.5 152.5 -27.5 {show_pinname=true name_dx=-25 name_dy=-4 name_size=0.2 name_flip=1 name=VALID dir=out}
+L 4 130 -30 150 -30 {}
+B 5 147.5 -12.5 152.5 -7.5 {show_pinname=true name_dx=-25 name_dy=-4 name_size=0.2 name_flip=1 name=D[5..0] dir=out}
+L 4 130 -10 150 -10 {}
+B 5 -152.5 27.5 -147.5 32.5 {show_pinname=true name_dx=25 name_dy=-4 name_size=0.2 name=CLK dir=in}
+L 4 -150 30 -130 30 {}

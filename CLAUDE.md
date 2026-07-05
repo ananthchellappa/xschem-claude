@@ -135,5 +135,6 @@ designs and generators. The library search path is configured in `Makefile.conf`
 Design and working notes live under `doc/claude/` (not installed — `doc/Makefile`
 ships only `*.svg/*.html/*.css/*.png`): `doc/claude/specs/` (feature specs),
 `doc/claude/issues/` (numbered issue tracker, `NNNN-*.md`), `doc/claude/code_analysis/`
-(analysis & decision write-ups), `doc/claude/suggestions/` (session prompts, plans).
+(analysis & decision write-ups), `doc/claude/suggestions/` (session prompts, plans), and
+`doc/claude/FAQ.md` (a running design Q&A, newest entries on top).
 Source comments reference these by their full path (e.g. `see doc/claude/specs/foo.md`).

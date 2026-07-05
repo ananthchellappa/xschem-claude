@@ -32,8 +32,11 @@ set ::ciw_subcommands {}
 ## resize (the log pane takes the extra space).
 proc ciw_create {} {
   if {[winfo exists .ciw]} {
-    wm deiconify .ciw
-    raise .ciw
+    ## a bare `raise` is a no-op under Weston/WSLg (issue 0054): use the shared
+    ## withdraw+deiconify+activate helper that the Library Manager uses, then put
+    ## the keyboard focus on the command entry so the user can type immediately.
+    raise_activate_toplevel .ciw
+    catch {focus -force .ciw.c.e}
     return
   }
   toplevel .ciw
@@ -96,6 +99,11 @@ proc ciw_create {} {
     .ciw.p paneconfigure .ciw.c -stretch never  -minsize 34
   }
   pack .ciw.p -side top -fill both -expand yes
+
+  ## Window-activation logging (doc/claude/specs/window_numbering.md): the CIW is
+  ## window 1. Fire on FocusIn to the toplevel or any of its descendants; the '+'
+  ## keeps any other binding and notify_window_active dedupes the repeats.
+  bind .ciw <FocusIn> {+notify_window_active 1 CIW}
 }
 
 ## Append one line to the CIW log pane. 'tag' selects the style: {} for
@@ -109,6 +117,21 @@ proc ciw_echo {line {tag {}}} {
   .ciw.l.t insert end $line\n $tag
   .ciw.l.t configure -state disabled
   .ciw.l.t see end
+}
+
+## Cadence-style window-activation log: print "window N activated: <cell>" to the CIW
+## when a window becomes the active one. The CIW is window 1, the Library Manager is
+## window 2, and editor contexts are 3,4,5,... For an editor window the caller omits
+## 'name' and it is filled in from the active schematic's cell. Deduped on
+## ::last_active_window so repeated FocusIn events (and WSLg focus thrash) log only on an
+## actual change of the active window. Safe no-op when the CIW is closed (ciw_echo
+## no-ops). Spec: doc/claude/specs/window_numbering.md.
+proc notify_window_active {num {name {}}} {
+  global last_active_window
+  if {[info exists last_active_window] && $last_active_window eq $num} return
+  set last_active_window $num
+  if {$name eq {}} { catch {set name [file tail [xschem get schname]]} }
+  ciw_echo "window $num activated: $name" result
 }
 
 ## Run the command in the entry: echo it (visually distinct), evaluate at
@@ -165,9 +188,29 @@ proc ciw_capture_puts {argl} {
   }
 }
 
+## A command TYPED here by a human is an interactive open, so a bare
+## `xschem load <file>` should behave like File>Open: reuse the current window
+## only if it is a pristine empty untitled scratch, otherwise open a new window
+## (doc/claude/specs/load_window_routing.md). The scheduler routes only when the
+## `-gui` flag is present, so inject it. Menu/keybinding opens already pass -gui;
+## scripts, --script files and action-log replays do NOT go through here, so they
+## keep the in-place behavior the regression suite relies on.
+## Only a plain `xschem load ...` is rewritten -- never load_new_window /
+## load_backup (no space after "load"), and never when the user already gave a
+## routing/scripted flag. The regsub touches only the "xschem load" prefix, so
+## braces / spaces / backslashes in the file path are untouched.
+proc ciw_interactive_load {cmd} {
+  if {[regexp {^xschem[ \t]+load[ \t]} $cmd] &&
+      ![regexp -- {[ \t](-gui|-inplace|-window|-nodraw|-keep_symbols|-nofullzoom|-noundoreset|-nosymbols)([ \t]|$)} $cmd]} {
+    regsub {^(xschem[ \t]+load)[ \t]} $cmd {\1 -gui } cmd
+  }
+  return $cmd
+}
+
 proc ciw_exec {} {
   set cmd [string trim [.ciw.c.e get 1.0 end-1c]]
   if {$cmd eq {}} return
+  set cmd [ciw_interactive_load $cmd]
   ## record into history (failed commands too, bash-style; consecutive
   ## duplicates collapse) and reset the cursor to the live line
   if {$cmd ne [lindex $::ciw_history end]} { lappend ::ciw_history $cmd }
@@ -179,17 +222,25 @@ proc ciw_exec {} {
   ## (spec: ciw_puts_capture.md). Redefine puts around the eval and restore it right after; the
   ## rename pair is balanced and the catch keeps an error from skipping the restore. puts still
   ## returns "" so the result-echo below does not print captured text a second time.
+  ## Dedup + echo-suppress (self-log-at-core): reset the flag, and while the command runs tell a
+  ## core self-log to write the FILE but skip the CIW mirror (we already echoed the input line).
+  xschem log_action -reset
+  xschem log_action -suppressecho 1
   rename ::puts ::ciw_saved_puts
   proc ::puts {args} {ciw_capture_puts $args}
   set code [catch {uplevel #0 $cmd} res]
   rename ::puts {}
   rename ::ciw_saved_puts ::puts
+  xschem log_action -suppressecho 0
   if {$code} {
     ciw_echo $res error
-    xschem log_action -noecho "# failed: $cmd"
+    ## D1 (issue 0070): record the error OUTPUT as a source-able comment in the file.
+    xschem log_action -error $res
+    ## record the command itself only if the core did not already self-log it.
+    if {![xschem log_action -emitted]} { xschem log_action -noecho "# failed: $cmd" }
   } else {
-    if {$res ne {}} {ciw_echo $res result}
-    xschem log_action -noecho $cmd
+    if {$res ne {}} {ciw_echo $res result ; xschem log_action -result $res}
+    if {![xschem log_action -emitted]} { xschem log_action -noecho $cmd }
   }
 }
 

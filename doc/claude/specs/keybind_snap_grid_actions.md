@@ -7,7 +7,7 @@ snap defaults removed; dead `case 'g'`/`case '%'` deleted; `cadence_style_rc` bi
 grid (others commented); menu accelerators blanked. Tests: `tests/headless/test_keybind_snap_grid.tcl`.
 Related: `src/callback.c` (action registry + `handle_key_press`), `src/action_registry.tcl`
 (binding-file loader), `src/keybindings.csv` (shipped defaults), `src/cadence_style_rc`,
-`src/xschem.tcl` (menus). FAQ background: `doc/claude/code_analysis/FAQ.md` Q17, Q1–Q4.
+`src/xschem.tcl` (menus). FAQ background: `doc/claude/FAQ.md` Q17, Q1–Q4.
 
 ## 1. Goal
 

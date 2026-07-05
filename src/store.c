@@ -491,6 +491,8 @@ int inst_delete_compact(int (*doomed)(int n, void *arg), void *arg)
      ++j;
      my_free(_ALLOC_ID_, &xctx->inst[i].prop_ptr);
      delete_inst_node(i);
+     my_free(_ALLOC_ID_, &xctx->inst[i].pin_sel); /* transient pin selection (pin_selection.md) */
+     xctx->inst[i].pin_sel_size = 0;
      my_free(_ALLOC_ID_, &xctx->inst[i].name);
      my_free(_ALLOC_ID_, &xctx->inst[i].instname);
      my_free(_ALLOC_ID_, &xctx->inst[i].lab);
@@ -516,6 +518,8 @@ void inst_storage_reset(void)
   my_free(_ALLOC_ID_, &xctx->inst[i].name);
   my_free(_ALLOC_ID_, &xctx->inst[i].instname);
   my_free(_ALLOC_ID_, &xctx->inst[i].lab);
+  my_free(_ALLOC_ID_, &xctx->inst[i].pin_sel); /* transient pin selection (pin_selection.md) */
+  xctx->inst[i].pin_sel_size = 0;
   delete_inst_node(i);
  }
  xctx->instances = 0;
@@ -536,6 +540,10 @@ void inst_register(int n)
  xctx->inst[n].id = ++xctx->inst_id_counter; /* session-stable identity, stamped
    * here at the one birth chokepoint the Phase C funnel created — never reused
    * within a context's lifetime, not persisted (step-2 Phase D). */
+ xctx->inst[n].buried_hilight = -1; /* derived buried-net-highlight cue, none at birth;
+   * recomputed in propagate_hilights(). memset() at slot growth zeroes this field, and
+   * 0 is a valid style index, so it MUST be stamped here, not left to memset.
+   * See doc/claude/specs/buried_net_hilight.md */
  xctx->instances++;
 }
 

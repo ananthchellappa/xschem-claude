@@ -141,6 +141,25 @@ const char *get_text_floater(int i)
   return txt_ptr;
 }
 
+/* Canonical read-only edit gate (issue 0041). Returns 1 -- refusing the edit, with a
+ * single dbg/CIW notice -- when the current buffer is read-only, else 0. Woven into the
+ * genuine-edit CORES (delete(), move_objects()/copy_objects() START) as a backstop BELOW
+ * the scattered entry-point guards (readonly_block() for keyboard/menu, the 29
+ * scheduler_readonly_reject() subcommand guards, the action-registry `mutates` flag), so
+ * a mutation reaching a guarded core is refused by construction on ANY path -- the entry
+ * guards become the fast-path UX, not the sole defense. Deliberately NOT applied at the
+ * store/push_undo funnels: those also run during load / undo-restore / netlist-flatten,
+ * which must not be blocked (there is no reliable "internal vs user edit" flag at that
+ * level -- see doc/claude/issues/0041). `op` names the operation for the notice. */
+int begin_edit(const char *op)
+{
+  if(!xctx || !xctx->readonly) return 0;
+  dbg(1, "begin_edit(): read-only buffer, refused: %s\n", op ? op : "edit");
+  if(has_x) tclvareval("if {[info procs ciw_echo] ne {}} {ciw_echo {read-only: ",
+                       op ? op : "edit", " ignored}}", NULL);
+  return 1;
+}
+
 /* mod:
  *   0 : clear modified flag, update title and tab names, upd. simulation button colors.
  *   1 : set modified flag, update title and tab names, upd. simulation button colors, rst floater caches.
@@ -227,12 +246,19 @@ int set_modify(int mod)
       ) {
       char *top_path =  xctx->top_path[0] ? xctx->top_path : ".";
       const char *ro = xctx->readonly ? " (read-only)" : "";
+      /* Cadence-style window number in the title bar (doc/claude/specs/window_numbering.md):
+       * "xschem [3] - cell". Omitted for unnumbered scratch/preview ctxs (window_number 0). */
+      /* Backslash-escape the brackets: this string is spliced into a double-quoted Tcl
+       * "wm title" argument, where a bare [N] would be command substitution (Tcl would
+       * run the command "N"). \[ \] make them literal. */
+      char wn[20] = "";
+      if(xctx->window_number > 0) my_snprintf(wn, S(wn), " \\[%d\\]", xctx->window_number);
       if(xctx->modified == 1) {
-        tclvareval("wm title ", top_path, " \"xschem - [file tail [xschem get schname]]*", ro, "\"", NULL);
-        tclvareval("wm iconname ", top_path, " \"xschem - [file tail [xschem get schname]]*", ro, "\"", NULL);
+        tclvareval("wm title ", top_path, " \"xschem", wn, " - [file tail [xschem get schname]]*", ro, "\"", NULL);
+        tclvareval("wm iconname ", top_path, " \"xschem", wn, " - [file tail [xschem get schname]]*", ro, "\"", NULL);
       } else {
-        tclvareval("wm title ", top_path, " \"xschem - [file tail [xschem get schname]]", ro, "\"", NULL);
-        tclvareval("wm iconname ", top_path, " \"xschem - [file tail [xschem get schname]]", ro, "\"", NULL);
+        tclvareval("wm title ", top_path, " \"xschem", wn, " - [file tail [xschem get schname]]", ro, "\"", NULL);
+        tclvareval("wm iconname ", top_path, " \"xschem", wn, " - [file tail [xschem get schname]]", ro, "\"", NULL);
       }
       dbg(1, "modified=%d, schname=%s\n", xctx->modified, xctx->current_name);
       if(xctx->modified) tcleval("set_tab_names *");
@@ -622,15 +648,19 @@ void saveas(const char *f, int type) /*  changed name from ask_save_file to save
     char *p;
     if(!f && has_x) {
       my_strncpy(filename , xctx->sch[xctx->currsch], S(filename));
+      /* Library/Cell/View Save-As form (doc/claude/specs/save_as_cellview.md): returns
+       * the chosen <cell>.<ext> datafile path (dir already created), or "" to abort; its
+       * Legacy button falls back to the old save_file_dialog. One hook covers every
+       * Save/Save-As chooser -- they all funnel through saveas(NULL, type). save_schematic
+       * below then rebinds identity exactly as it did for the old dialog's path. */
       if(type == SYMBOL) {
         if( (p = strrchr(filename, '.')) && !strcmp(p, ".sch") ) {
           my_strncpy(filename, add_ext(filename, ".sym"), S(filename));
         }
-        my_snprintf(name, S(name), "save_file_dialog {Save file} * INITIALLOADDIR {%s}", filename);
+        my_snprintf(name, S(name), "save_as_cellview_dialog {%s} symbol", filename);
       } else {
-        my_snprintf(name, S(name), "save_file_dialog {Save file} * INITIALLOADDIR {%s}", filename);
+        my_snprintf(name, S(name), "save_as_cellview_dialog {%s} schematic", filename);
       }
-
       tcleval(name);
       my_strncpy(res, tclresult(), S(res));
     }
@@ -1040,6 +1070,752 @@ int set_text_flags(xText *t)
   return 0;
 }
 
+/* ----------------------------------------------------------------------------
+ * Cadence-style pin-owned name text (Option B). A symbol PINLAYER pin carries its
+ * displayed name as tokens on its B-record prop_ptr (name=, show_pinname=, and
+ * name_dx/name_dy/name_size/name_rot/name_flip layout). There is NO standalone name
+ * T record on disk. While EDITING a symbol, the name shown next to each pin is a
+ * SYNTHESIZED, transient xText "view" (owner_pin_id = owning pin's xRect.id) so the
+ * normal select/move/resize/edit machinery applies. Views are never saved
+ * (save_text() skips them) and are regenerated here on load.
+ * See doc/claude/specs/cadence_pin_name_text.md (P0/P1).
+ * ------------------------------------------------------------------------- */
+
+/* read a double-valued token from a prop string, returning dflt if absent/empty */
+static double pin_dtok(const char *prop, const char *tok, double dflt)
+{
+  const char *s = get_tok_value(prop, tok, 0);
+  return s[0] ? atof(s) : dflt;
+}
+
+/* P5 global pin-name visibility (tri-state, mirrored in the show_pin_names Tcl var):
+ * "on" force-shows every owned pin, "off" force-hides all, "auto" (default / unset)
+ * defers to each pin's show_pinname token. The global setting WINS over per-pin when
+ * on/off (spec doc/claude/specs/cadence_pin_name_text.md §4.8). */
+enum { PIN_NAMES_AUTO = 0, PIN_NAMES_ON, PIN_NAMES_OFF };
+
+/* Cached mirror of the show_pin_names Tcl var. pin_name_visible() is evaluated per pin per
+ * frame in the draw_symbol instance pass (P6), so a tclgetvar per call is too costly. The
+ * cache is refreshed by pin_names_sync_cache() at each BULK visibility evaluation -- draw()
+ * (once per frame), synth_pin_views() and pin_views_reconcile_all() (once per pass) -- which
+ * covers every path that changes the mode (the `xschem pin_names` command routes through
+ * reconcile). A direct `set ::show_pin_names` is picked up on the next such pass. */
+static int pin_names_mode = PIN_NAMES_AUTO;
+void pin_names_sync_cache(void)
+{
+  const char *m = tclgetvar("show_pin_names");
+  pin_names_mode = (m && !strcmp(m, "on"))  ? PIN_NAMES_ON  :
+                   (m && !strcmp(m, "off")) ? PIN_NAMES_OFF : PIN_NAMES_AUTO;
+}
+
+/* Effective pin-name visibility from a pin's prop tokens + the global tri-state (§4.8).
+ * "owned" == it has a show_pinname token at all (legacy pins have none and are never shown,
+ * so their appearance is preserved). Effective show = global==on ? shown : global==off ?
+ * hidden : per-pin show_pinname. Reads the cached global (pin_names_sync_cache). Shared by
+ * the symbol-edit views (pin_name_shown) and the draw_symbol instance pass (P6). */
+int pin_name_visible(const char *prop)
+{
+  const char *s = get_tok_value(prop, "show_pinname", 0);
+  if(!s[0]) return 0;                           /* legacy / un-owned pin: not in the model */
+  if(pin_names_mode == PIN_NAMES_ON)  return 1; /* global ON wins: show every owned pin */
+  if(pin_names_mode == PIN_NAMES_OFF) return 0; /* global OFF wins: hide every owned pin */
+  return strboolcmp(s, "true") ? 0 : 1;         /* AUTO: defer to the per-pin token */
+}
+
+static int pin_name_shown(xRect *p) { return pin_name_visible(p->prop_ptr); }
+
+/* [5] Shared reader for a pin's name-label layout + name/font, used by every render backend
+ * (draw_symbol / svg_draw_symbol / ps_draw_symbol) so the token set, the defaults
+ * (20/-5/0.2/0/0) and the "read name LAST because get_tok_value shares one static buffer"
+ * ordering live in ONE place and cannot drift between the screen/SVG/PS outputs. Fills *lay
+ * from the numeric tokens and copies the name into *name and, when present, the font into
+ * *font (caller frees both). Returns 0 -- and frees *font -- when the pin has no name (nothing
+ * to draw). pin_dtok's calls clobber get_tok_value's static buffer, so name/font are read (and
+ * copied) after all the numeric reads. */
+int get_pin_name_layout(const char *prop, Pin_name_layout *lay, char **name, char **font)
+{
+  const char *s;
+  lay->dx   = pin_dtok(prop, "name_dx",   20.0);
+  lay->dy   = pin_dtok(prop, "name_dy",   -5.0);
+  lay->size = pin_dtok(prop, "name_size", 0.2);
+  lay->rot  = pin_dtok(prop, "name_rot",  0.0);
+  lay->flip = pin_dtok(prop, "name_flip", 0.0);
+  if(font) { s = get_tok_value(prop, "name_font", 0); if(s[0]) my_strdup(_ALLOC_ID_, font, s); }
+  s = get_tok_value(prop, "name", 0);
+  if(!s[0]) { if(font) my_free(_ALLOC_ID_, font); return 0; }
+  my_strdup2(_ALLOC_ID_, name, s);
+  return 1;
+}
+
+/* Thread-A deliverable (P9): the single source of truth for "a pin's own name-text size",
+ * consumed by the wire-stub / net-label feature (doc/claude/specs/wire_stub_netlabel.md
+ * §3.4, §4.2). Returns the yscale of pin 'pin' of symbol 'sym': the pin rect's name_size token
+ * when present, else 0.2 -- the SAME fallback get_pin_name_layout() uses when it renders the pin
+ * name, so the size reported here always matches what draw_symbol actually draws (a divergent
+ * fallback -- e.g. the create-time sym_pin_name_size var -- would size the stub/label differently
+ * from the on-screen pin text). Legacy / un-owned pins carry no name_size and get that 0.2. A
+ * NULL symbol or an out-of-range/negative pin also yields 0.2 rather than erroring, so a caller
+ * can median a mixed pin set without special-casing missing pins. KEEP THE DEFAULT IN SYNC WITH
+ * get_pin_name_layout(). */
+double get_pin_name_size(xSymbol *sym, int pin)
+{
+  if(!sym || pin < 0 || pin >= sym->rects[PINLAYER]) return 0.2;
+  return pin_dtok(sym->rect[PINLAYER][pin].prop_ptr, "name_size", 0.2);
+}
+
+/* -------------------------------------------------------------------------
+ * Thread B (wire-stubs + auto net-labels on instance pins). B1 = the median
+ * sizing primitive. See doc/claude/specs/wire_stub_netlabel.md.
+ * ------------------------------------------------------------------------- */
+
+/* qsort comparator for doubles, ascending. NaN is ordered after every non-NaN (and equal to
+ * itself) so the comparator is a strict weak ordering even for a corrupt name_size=nan token: a
+ * plain `x<y?-1:x>y?1:0` returns 0 for EVERY comparison involving NaN, which violates qsort's
+ * contract and leaves the sort (hence the median) undefined. `x != x` is true iff x is NaN. */
+static int cmp_double(const void *a, const void *b)
+{
+  double x = *(const double *)a, y = *(const double *)b;
+  if(x < y) return -1;
+  if(x > y) return 1;
+  if(x == y) return 0;
+  return (x != x) ? ((y != y) ? 0 : 1) : -1;   /* NaN present: sort it last, consistently */
+}
+
+/* B1: median of n doubles. Copies the input (so the caller's array is NOT reordered), sorts the
+ * copy, and returns the middle element for odd n or the mean of the two middle elements for even
+ * n (the textbook median; for n==2 that mean is the only sensible "middle"). n==1 returns a[0];
+ * n<=0 returns 0.0. The wire-stub op (§4.2) uses this to reduce the processed pins' name sizes to
+ * the ONE size that drives every label + stub in an invocation -- the median resists a minority
+ * of outlier pins in a way a plain mean does not. */
+double median_double(const double *a, int n)
+{
+  double *tmp, med;
+  int i;
+  if(n <= 0) return 0.0;
+  if(n == 1) return a[0];
+  tmp = my_malloc(_ALLOC_ID_, (size_t)n * sizeof(double));
+  for(i = 0; i < n; ++i) tmp[i] = a[i];
+  qsort(tmp, (size_t)n, sizeof(double), cmp_double);
+  med = (n & 1) ? tmp[n / 2] : (tmp[n / 2 - 1] + tmp[n / 2]) / 2.0;
+  my_free(_ALLOC_ID_, &tmp);
+  return med;
+}
+
+/* B2: is instance i's pin j already connected? Two ways count as connected (both skipped in
+ * whole-instance mode):
+ *   1. a WIRE -- a wire endpoint AT the pin OR a wire passing THROUGH it, via touch() (the exact
+ *      on-segment test the netlister uses in name_attached_inst_to_net), so this agrees with real
+ *      netlist connectivity;
+ *   2. a COINCIDENT pin of ANOTHER instance (abutment / pin-to-pin placement) -- exact coord
+ *      match, since get_inst_pin_coord is exact for on-grid instances (user: treat a coincident
+ *      instance pin the same as a wired one).
+ * Caller must have built BOTH spatial hashes (hash_wires + hash_instances). See
+ * doc/claude/specs/wire_stub_netlabel.md §4.1/§4.5. */
+static int pin_is_connected(int i, int j)
+{
+  double x0, y0, xx, yy;
+  Iterator_ctx ctx;
+  Wireentry *wp;
+  Instentry *ep;
+  xWire * const wire = xctx->wire;
+  xInstance * const inst = xctx->inst;
+  get_inst_pin_coord(i, j, &x0, &y0);
+  init_wire_iterator(&ctx, x0 - CADWIREMINDIST, y0 - CADWIREMINDIST,
+                           x0 + CADWIREMINDIST, y0 + CADWIREMINDIST);
+  while((wp = wire_iterator_next(&ctx)))
+    if(touch(wire[wp->n].x1, wire[wp->n].y1, wire[wp->n].x2, wire[wp->n].y2, x0, y0)) return 1;
+  init_inst_iterator(&ctx, x0 - CADWIREMINDIST, y0 - CADWIREMINDIST,
+                           x0 + CADWIREMINDIST, y0 + CADWIREMINDIST);
+  while((ep = inst_iterator_next(&ctx))) {
+    int m = ep->n, p, rects;
+    if(m == i || inst[m].ptr < 0) continue;    /* skip this instance and symbol-less instances */
+    rects = (inst[m].ptr + xctx->sym)->rects[PINLAYER];
+    for(p = 0; p < rects; p++) {
+      get_inst_pin_coord(m, p, &xx, &yy);
+      if(xx == x0 && yy == y0) return 1;        /* another instance's pin lands on this one */
+    }
+  }
+  return 0;
+}
+
+/* append (inst,pin) to a growable Pin_stub_target array (doubling; caller frees *list). */
+static void stub_target_append(Pin_stub_target **list, int *cnt, int *cap, int inst, int pin)
+{
+  if(*cnt >= *cap) {
+    *cap = *cap ? *cap * 2 : 8;
+    my_realloc(_ALLOC_ID_, list, (size_t)*cap * sizeof(Pin_stub_target));
+  }
+  (*list)[*cnt].inst = inst;
+  (*list)[*cnt].pin  = pin;
+  ++*cnt;
+}
+
+/* B2: build the list of (instance, pin) targets a wire-stub invocation should process
+ * (doc/claude/specs/wire_stub_netlabel.md §4.1). Two modes, individually-selected pins WIN; an
+ * already-connected pin is skipped in BOTH modes (never double a connection):
+ *   - any INST_PIN in the selection -> those (instance, pin) pairs, minus any already connected;
+ *   - else every whole instance selected (ELEMENT) -> each of ITS pins not already connected.
+ * "connected" == pin_is_connected() (a wire, or a coincident pin of another instance).
+ * Returns the count; *out is a my_malloc'd Pin_stub_target[] the caller frees (NULL/0 when there
+ * is nothing to do). Schematic-mode only -- a symbol being edited has no placed instances; a
+ * symbol-less instance (ptr<0) and stale/generic pin indices are skipped. */
+int collect_pin_stub_targets(Pin_stub_target **out)
+{
+  int i, j, n, rects, cnt = 0, cap = 0, have_pins = 0;
+  Pin_stub_target *list = NULL;
+  *out = NULL;
+  if(!xctx || xctx->netlist_type == CAD_SYMBOL_ATTRS) return 0;
+  rebuild_selected_array();
+  for(i = 0; i < xctx->lastsel; ++i)
+    if(xctx->sel_array[i].type == INST_PIN) { have_pins = 1; break; }
+  hash_wires();       /* pin_is_connected() queries the wire ... */
+  hash_instances();   /* ... and the instance spatial hash */
+  for(i = 0; i < xctx->lastsel; ++i) {
+    Selected sel = xctx->sel_array[i];
+    if(have_pins) {
+      if(sel.type != INST_PIN) continue;                       /* pins win: ignore whole-inst sels */
+      n = sel.n;
+      if(n < 0 || n >= xctx->instances || xctx->inst[n].ptr < 0) continue;
+      rects = (xctx->inst[n].ptr + xctx->sym)->rects[PINLAYER];
+      /* an already-connected pin is skipped even when explicitly selected -- never double a
+       * connection (user decision 2026-07-01) */
+      if((int)sel.col < rects && !pin_is_connected(n, (int)sel.col))
+        stub_target_append(&list, &cnt, &cap, n, (int)sel.col);
+    } else {
+      if(sel.type != ELEMENT) continue;
+      n = sel.n;
+      if(n < 0 || n >= xctx->instances || xctx->inst[n].ptr < 0) continue;
+      rects = (xctx->inst[n].ptr + xctx->sym)->rects[PINLAYER];
+      for(j = 0; j < rects; ++j)
+        if(!pin_is_connected(n, j)) stub_target_append(&list, &cnt, &cap, n, j);
+    }
+  }
+  *out = list;
+  return cnt;
+}
+
+/* B3: reduce the targets to the ONE size + derived geometry an invocation uses
+ * (doc/claude/specs/wire_stub_netlabel.md §4.2). size = median of the targets' pin-name sizes
+ * (get_pin_name_size, robust to an outlier pin -- §4.2 step 2); text_h = a label line's height
+ * at that size via text_bbox() (per-line height is ~content-independent, so a representative
+ * "Mg" stands in for the not-yet-known net name -- §4.4); stub_len = the smallest cadgrid
+ * multiple STRICTLY greater than 2*text_h, so every stub clears 2x its label height AND lands on
+ * grid (Req 1 / §4.2 step 4). Returns 0 (leaving *out untouched) when n<=0. Each target's symbol
+ * is resolved defensively (ptr<0 -> the 0.2 default) though B2 already filters symbol-less ones. */
+int compute_pin_stub_sizing(const Pin_stub_target *t, int n, Pin_stub_sizing *out)
+{
+  double *sizes, S, H, grid, twoH;
+  double rx1, ry1, rx2, ry2, longest;
+  int k, cairo_lines;
+  if(n <= 0) return 0;
+  sizes = my_malloc(_ALLOC_ID_, (size_t)n * sizeof(double));
+  for(k = 0; k < n; ++k) {
+    int inst = t[k].inst;
+    xSymbol *sym = (inst >= 0 && inst < xctx->instances && xctx->inst[inst].ptr >= 0)
+                   ? xctx->sym + xctx->inst[inst].ptr : NULL;
+    sizes[k] = get_pin_name_size(sym, t[k].pin);
+  }
+  S = median_double(sizes, n);
+  my_free(_ALLOC_ID_, &sizes);
+  text_bbox("Mg", S, S, 0, 0, 0, 0, 0.0, 0.0, &rx1, &ry1, &rx2, &ry2, &cairo_lines, &longest);
+  H = ry2 - ry1;
+  grid = tclgetdoublevar("cadgrid");
+  twoH = 2.0 * H;
+  out->size = S;
+  out->text_h = H;
+  out->stub_len = (grid > 0.0) ? (floor(twoH / grid) + 1.0) * grid : twoH + 1.0;
+  return 1;
+}
+
+/* B4: the stub segment for instance 'inst' pin 'pin', extended outward by 'stub_len'
+ * (doc/claude/specs/wire_stub_netlabel.md §4.3). The OUTWARD direction is, in symbol-local
+ * coords, (pin center - body center) snapped to the dominant axis (Manhattan, so the stub is
+ * orthogonal) then transformed through the instance's rot/flip (ROTATION). Body center uses the
+ * symbol's minx/maxx/miny/maxy, which EXCLUDE symbol text (save.c leaves text out of the symbol
+ * bbox), i.e. the no-text body box §4.3 asks for. Start = the pin's absolute coord
+ * (get_inst_pin_coord); end = start + outward*stub_len. Real pins sit on-grid so end lands on
+ * grid without a separate snap (which could otherwise erode the L>2H guarantee for an off-grid
+ * pin). Returns 0 for a bad instance/pin. */
+int compute_pin_stub_geom(int inst, int pin, double stub_len, Pin_stub_geom *out)
+{
+  xSymbol *sym;
+  double px, py, bcx, bcy, ldx, ldy, lox, loy, adx, ady, sx, sy;
+  int rot, flip;
+  if(!xctx || inst < 0 || inst >= xctx->instances || xctx->inst[inst].ptr < 0) return 0;
+  sym = xctx->sym + xctx->inst[inst].ptr;
+  if(pin < 0 || pin >= sym->rects[PINLAYER]) return 0;
+  px = (sym->rect[PINLAYER][pin].x1 + sym->rect[PINLAYER][pin].x2) / 2.0;
+  py = (sym->rect[PINLAYER][pin].y1 + sym->rect[PINLAYER][pin].y2) / 2.0;
+  bcx = (sym->minx + sym->maxx) / 2.0;
+  bcy = (sym->miny + sym->maxy) / 2.0;
+  ldx = px - bcx;
+  ldy = py - bcy;
+  /* dominant axis; a pin exactly at the body centre (ldx==ldy==0) defaults to +x */
+  if(fabs(ldx) >= fabs(ldy)) { lox = (ldx < 0.0) ? -1.0 : 1.0; loy = 0.0; }
+  else                       { lox = 0.0; loy = (ldy < 0.0) ? -1.0 : 1.0; }
+  rot = xctx->inst[inst].rot;
+  flip = xctx->inst[inst].flip;
+  ROTATION(rot, flip, 0.0, 0.0, lox, loy, adx, ady);   /* local outward -> absolute outward */
+  get_inst_pin_coord(inst, pin, &sx, &sy);
+  out->x1 = sx;
+  out->y1 = sy;
+  out->x2 = sx + adx * stub_len;
+  out->y2 = sy + ady * stub_len;
+  out->dx = adx;
+  out->dy = ady;
+  return 1;
+}
+
+/* B5: lab_pin (rot,flip) so its @lab text reads OUTWARD along (dx,dy) -- away from the instance,
+ * "flag in the wind" (§4.3). Determined empirically against lab_pin.sym's `T {@lab} -7.5 -8.125
+ * 0 1 ...` anchor (text-bbox-centre offset from the connection point): rot=0 draws the text
+ * horizontally (flip picks -x vs +x), rot=1 vertically (flip picks -y vs +y). (dx,dy) is one of
+ * the four cardinals from compute_pin_stub_geom. */
+static void lab_orient(double dx, double dy, short *rot, short *flip)
+{
+  if(dy == 0.0) { *rot = 0; *flip = (dx > 0.0) ? 1 : 0; }   /* horizontal: text along -x / +x */
+  else          { *rot = 1; *flip = (dy > 0.0) ? 1 : 0; }   /* vertical:   text along -y / +y */
+}
+
+/* B5: draw a wire stub out of every stub target (collect_pin_stub_targets) and drop a lab_pin
+ * net-label "flag" at the far end, oriented so its text reads outward (§4). All targets share one
+ * size S + stub length L (compute_pin_stub_sizing). The label net name is
+ * [instname_ if inst_prefix][prefix]<pinname>[suffix] (prefix/suffix may be "" ). ONE undo covers
+ * the whole operation. Returns the number of stubs added. See doc/claude/specs/wire_stub_netlabel.md. */
+int add_pin_stubs(const char *prefix, const char *suffix, int inst_prefix)
+{
+  Pin_stub_target *t = NULL;
+  Pin_stub_sizing sz;
+  char *lab_sym = NULL;
+  const char *lp;
+  char szbuf[64];
+  int nt, k, added = 0, first = 1;
+  if(!xctx || xctx->netlist_type == CAD_SYMBOL_ATTRS) return 0;
+  if(xctx->readonly) return 0;  /* read-only view: refuse via EVERY entry point (SPACE key, Sym menu, command) */
+  if(!prefix) prefix = "";
+  if(!suffix) suffix = "";
+  nt = collect_pin_stub_targets(&t);
+  if(nt <= 0) { my_free(_ALLOC_ID_, &t); return 0; }
+  if(!compute_pin_stub_sizing(t, nt, &sz)) { my_free(_ALLOC_ID_, &t); return 0; }
+  lp = tcleval("find_file_first lab_pin.sym");           /* copy before place_symbol's tcleval */
+  if(!lp || !lp[0]) { my_free(_ALLOC_ID_, &t); return 0; }
+  my_strdup(_ALLOC_ID_, &lab_sym, lp);
+  my_snprintf(szbuf, S(szbuf), "%g", sz.size);
+  xctx->push_undo();
+  for(k = 0; k < nt; ++k) {
+    Pin_stub_geom g;
+    xSymbol *sym;
+    const char *pinname, *instname;
+    char *netname = NULL, *prop = NULL;
+    short lrot, lflip;
+    int inst = t[k].inst, pin = t[k].pin;
+    if(!compute_pin_stub_geom(inst, pin, sz.stub_len, &g)) continue;
+    sym = xctx->sym + xctx->inst[inst].ptr;
+    /* net name pieces read BEFORE place_symbol (which may realloc xctx->sym via match_symbol) */
+    pinname = get_tok_value(sym->rect[PINLAYER][pin].prop_ptr, "name", 0);
+    instname = xctx->inst[inst].instname ? xctx->inst[inst].instname : "";
+    if(inst_prefix && instname[0]) my_mstrcat(_ALLOC_ID_, &netname, instname, "_", NULL);
+    my_mstrcat(_ALLOC_ID_, &netname, prefix, pinname, suffix, NULL); /* empty parts are skipped */
+    /* a nameless pin with no prefix/suffix yields an empty net name: skip it rather than drop
+     * a blank lab= net-label (which would name the empty net / error at netlist time). */
+    if(!netname || !netname[0]) { my_free(_ALLOC_ID_, &netname); continue; }
+    /* stub wire: pin (start) -> stub end */
+    storeobject(-1, g.x1, g.y1, g.x2, g.y2, WIRE, 0, 0, NULL);
+    /* lab_pin at the stub end, oriented so the text reads outward; unique name via uniquify */
+    lab_orient(g.dx, g.dy, &lrot, &lflip);
+    my_mstrcat(_ALLOC_ID_, &prop, "name=l0 lab=", netname ? netname : "", " text_size_0=", szbuf, NULL);
+    place_symbol(-1, lab_sym, g.x2, g.y2, lrot, lflip, prop, 0 /*draw*/, first /*first_call*/, 0 /*push_undo*/);
+    first = 0;
+    my_free(_ALLOC_ID_, &netname);
+    my_free(_ALLOC_ID_, &prop);
+    ++added;
+  }
+  my_free(_ALLOC_ID_, &t);
+  my_free(_ALLOC_ID_, &lab_sym);
+  /* one batch rebuild + redraw */
+  xctx->prep_hi_structs = 0;
+  xctx->prep_net_structs = 0;
+  xctx->prep_hash_wires = 0;
+  xctx->prep_hash_inst = 0;
+  if(added) { set_modify(1); draw(); }
+  return added;
+}
+
+/* [6] Fast global short-circuit for the per-frame draw_symbol pin-name pass: when the
+ * show_pin_names tri-state is OFF no owned pin can show, so the whole per-instance pin loop
+ * is skippable without a get_tok_value per pin. Reads the cached mode (pin_names_sync_cache
+ * runs once per draw()/export, before this is consulted). */
+int pin_names_all_off(void) { return pin_names_mode == PIN_NAMES_OFF; }
+
+/* index of the synthesized name view owned by pin id 'pin_id', or -1 if none */
+int pin_name_view_of(unsigned int pin_id)
+{
+  int i;
+  if(!pin_id) return -1;
+  for(i = 0; i < xctx->texts; ++i)
+    if(xctx->text[i].owner_pin_id == pin_id) return i;
+  return -1;
+}
+
+/* (Re)materialize editable pin-name views for the symbol being edited. Way A: only the
+ * live edited document gets views; placed instances draw their names directly from pin
+ * tokens in draw_symbol (P6). Idempotent: pins that already have a view are skipped. */
+void synth_pin_views(void)
+{
+  int j, rects;
+  if(!xctx) return;
+  if(xctx->netlist_type != CAD_SYMBOL_ATTRS) return;  /* only while editing a symbol */
+  pin_names_sync_cache();                             /* freshen the global tri-state gate */
+  rects = xctx->rects[PINLAYER];
+  for(j = 0; j < rects; ++j) {
+    xRect *p = &xctx->rect[PINLAYER][j];
+    const char *name;
+    double cx, cy, dx, dy, size, rot, flip;
+    if(!pin_name_shown(p)) continue;                  /* legacy/un-owned or hidden */
+    if(pin_name_view_of(p->id) >= 0) continue;        /* already materialized */
+    cx = (p->x1 + p->x2) / 2.0;
+    cy = (p->y1 + p->y2) / 2.0;
+    dx   = pin_dtok(p->prop_ptr, "name_dx",   20.0);
+    dy   = pin_dtok(p->prop_ptr, "name_dy",   -5.0);
+    size = pin_dtok(p->prop_ptr, "name_size", 0.2);
+    rot  = pin_dtok(p->prop_ptr, "name_rot",  0.0);
+    flip = pin_dtok(p->prop_ptr, "name_flip", 0.0);
+    /* fetch name_font then name LAST: get_tok_value() uses one volatile static buffer the
+     * pin_dtok() calls above clobber, so build the view's font-only prop (which copies the
+     * value) before reading name; create_text() then copies 'name' immediately. */
+    {
+      const char *nf = get_tok_value(p->prop_ptr, "name_font", 0);
+      char *vp = NULL;
+      if(nf[0]) my_mstrcat(_ALLOC_ID_, &vp, "font=", nf, NULL);
+      name = get_tok_value(p->prop_ptr, "name", 0);
+      if(!name[0]) { my_free(_ALLOC_ID_, &vp); continue; } /* nameless pin: nothing to show */
+      create_text(0 /* no draw */, cx + dx, cy + dy, (int)rot, (int)flip, name, vp, size, size);
+      my_free(_ALLOC_ID_, &vp);
+      xctx->text[xctx->texts - 1].owner_pin_id = p->id;
+    }
+  }
+}
+
+/* Create a symbol pin that OWNS its name text (Option B, P2). Stores a PINLAYER rect at
+ * (x,y) carrying name=/dir=/show_pinname=true + default name_* layout tokens, then
+ * materializes the editable name view (owner_pin_id = the rect's id). 'sel' selects both
+ * rect and view (used for interactive placement so they move together; a pure
+ * translation preserves the name_dx/name_dy offsets). Returns the new pin index in
+ * rect[PINLAYER], or -1. Default name size = sym_pin_name_size Tcl var (fallback 0.2). */
+int create_pin(double x, double y, const char *name, const char *dir, unsigned short sel)
+{
+  char *prop = NULL;
+  char nums[160];
+  const char *sz;
+  int ri, flip;
+  double cx, cy, dx, dy, size;
+  if(!xctx) return -1;
+  if(!name) name = "";
+  if(!dir || !dir[0]) dir = "inout";
+  flip = (!strcmp(dir, "out") || !strcmp(dir, "inout")) ? 1 : 0;   /* name on the left */
+  sz = tclgetvar("sym_pin_name_size");
+  size = (sz && sz[0]) ? atof(sz) : 0.2;
+  if(size <= 0.0) size = 0.2;
+  dx = flip ? -25.0 : 25.0;
+  dy = -5.0;
+  /* numeric/bounded tokens into a small fixed buffer; the (unbounded) name and dir are
+   * concatenated separately so a long pin name is never truncated (cf. old my_mstrcat) */
+  my_snprintf(nums, S(nums),
+    " show_pinname=true name_dx=%g name_dy=%g name_size=%g%s",
+    dx, dy, size, flip ? " name_flip=1" : "");
+  my_mstrcat(_ALLOC_ID_, &prop, "name=", name, " dir=", dir, nums, NULL);
+  storeobject(-1, x - 2.5, y - 2.5, x + 2.5, y + 2.5, xRECT, PINLAYER, sel, prop);
+  my_free(_ALLOC_ID_, &prop);
+  ri = xctx->rects[PINLAYER] - 1;
+  if(ri < 0) return -1;
+  cx = (xctx->rect[PINLAYER][ri].x1 + xctx->rect[PINLAYER][ri].x2) / 2.0;
+  cy = (xctx->rect[PINLAYER][ri].y1 + xctx->rect[PINLAYER][ri].y2) / 2.0;
+  /* Materialize the name view only if effectively shown -- respect the global tri-state so
+   * a pin added while show_pin_names=off does not display its name against the setting
+   * (P5). When later toggled to auto/on, synth_pin_views/reconcile creates the view. */
+  if(pin_name_shown(&xctx->rect[PINLAYER][ri])) {
+    create_text(0 /* no draw */, cx + dx, cy + dy, 0, flip, name, NULL, size, size);
+    xctx->text[xctx->texts - 1].owner_pin_id = xctx->rect[PINLAYER][ri].id;
+    if(sel) xctx->text[xctx->texts - 1].sel = SELECTED;
+  }
+  return ri;
+}
+
+/* ---- P3 write-through (Option B): keep pin tokens <-> name view in sync. ---------- */
+
+/* index of the PINLAYER rect whose id == 'id', or -1 */
+int pin_idx_by_id(unsigned int id)
+{
+  int j, rects;
+  if(!id) return -1;
+  rects = xctx->rects[PINLAYER];
+  for(j = 0; j < rects; ++j) if(xctx->rect[PINLAYER][j].id == id) return j;
+  return -1;
+}
+
+/* write view text[ti]'s current geometry/size back into its owning pin's name_* tokens
+ * (offset is relative to the pin center, so it is invariant under joint translation) */
+void pin_view_writeback(int ti)
+{
+  xText *v = &xctx->text[ti];
+  int pi = pin_idx_by_id(v->owner_pin_id);
+  xRect *p;
+  double cx, cy;
+  char b[80];
+  char *pr = NULL;
+  if(pi < 0) return;
+  p = &xctx->rect[PINLAYER][pi];
+  cx = (p->x1 + p->x2) / 2.0;
+  cy = (p->y1 + p->y2) / 2.0;
+  my_strdup(_ALLOC_ID_, &pr, p->prop_ptr);
+  my_snprintf(b, S(b), "%g", v->x0 - cx);   my_strdup(_ALLOC_ID_, &pr, subst_token(pr, "name_dx", b));
+  my_snprintf(b, S(b), "%g", v->y0 - cy);   my_strdup(_ALLOC_ID_, &pr, subst_token(pr, "name_dy", b));
+  my_snprintf(b, S(b), "%d", (int)v->rot);  my_strdup(_ALLOC_ID_, &pr, subst_token(pr, "name_rot", b));
+  my_snprintf(b, S(b), "%d", (int)v->flip); my_strdup(_ALLOC_ID_, &pr, subst_token(pr, "name_flip", b));
+  my_snprintf(b, S(b), "%g", v->yscale);    my_strdup(_ALLOC_ID_, &pr, subst_token(pr, "name_size", b));
+  my_strdup(_ALLOC_ID_, &p->prop_ptr, pr);
+  my_free(_ALLOC_ID_, &pr);
+}
+
+/* view text[ti]'s content -> owning pin's name= (editing the label renames the pin) */
+void pin_rename_from_view(int ti)
+{
+  xText *v = &xctx->text[ti];
+  int pi = pin_idx_by_id(v->owner_pin_id);
+  if(pi < 0 || !v->txt_ptr) return;
+  my_strdup(_ALLOC_ID_, &xctx->rect[PINLAYER][pi].prop_ptr,
+            subst_token(xctx->rect[PINLAYER][pi].prop_ptr, "name", v->txt_ptr));
+}
+
+/* Sync a pin's name view (content + position + size + rot + flip) from its tokens, so
+ * the displayed label tracks the name and name_dx/dy/size after a pin property edit.
+ * No-op if the pin has no view (e.g. show_pinname false). */
+void pin_view_refresh(int pi)
+{
+  xRect *p = &xctx->rect[PINLAYER][pi];
+  int ti = pin_name_view_of(p->id);
+  double cx, cy, s;
+  if(ti < 0) return;
+  cx = (p->x1 + p->x2) / 2.0;
+  cy = (p->y1 + p->y2) / 2.0;
+  /* copy the name first: get_tok_value's static buffer is clobbered by pin_dtok below */
+  my_strdup2(_ALLOC_ID_, &xctx->text[ti].txt_ptr, get_tok_value(p->prop_ptr, "name", 0));
+  xctx->text[ti].x0 = cx + pin_dtok(p->prop_ptr, "name_dx", 20.0);
+  xctx->text[ti].y0 = cy + pin_dtok(p->prop_ptr, "name_dy", -5.0);
+  s = pin_dtok(p->prop_ptr, "name_size", 0.2);
+  xctx->text[ti].xscale = s;
+  xctx->text[ti].yscale = s;
+  xctx->text[ti].rot  = (short)pin_dtok(p->prop_ptr, "name_rot", 0.0);
+  xctx->text[ti].flip = (short)pin_dtok(p->prop_ptr, "name_flip", 0.0);
+  /* font (name_font): set the view's font + keep its font-only prop in sync. Read LAST --
+   * the pin_dtok() calls above clobber get_tok_value()'s shared static buffer. */
+  {
+    const char *nf = get_tok_value(p->prop_ptr, "name_font", 0);
+    char *vp = NULL;
+    if(nf[0]) my_mstrcat(_ALLOC_ID_, &vp, "font=", nf, NULL);
+    my_strdup(_ALLOC_ID_, &xctx->text[ti].prop_ptr, vp);  /* view prop carries only the font */
+    my_strdup(_ALLOC_ID_, &xctx->text[ti].font, nf);      /* "" when absent: no custom font */
+    my_free(_ALLOC_ID_, &vp);
+  }
+}
+
+/* Recompute a pin's name-label side from its current dir= (in -> right/no-flip,
+ * out|inout -> left/flip), writing name_dx/name_flip. Called when the direction
+ * changes so the label re-orients to the conventional side. */
+void pin_reorient(int pi)
+{
+  xRect *p = &xctx->rect[PINLAYER][pi];
+  const char *dir = get_tok_value(p->prop_ptr, "dir", 0);
+  int flip = (!strcmp(dir, "out") || !strcmp(dir, "inout")) ? 1 : 0;
+  char b[32];
+  char *pr = NULL;
+  my_strdup(_ALLOC_ID_, &pr, p->prop_ptr);
+  my_snprintf(b, S(b), "%g", flip ? -25.0 : 25.0); my_strdup(_ALLOC_ID_, &pr, subst_token(pr, "name_dx", b));
+  my_snprintf(b, S(b), "%d", flip);                my_strdup(_ALLOC_ID_, &pr, subst_token(pr, "name_flip", b));
+  my_strdup(_ALLOC_ID_, &p->prop_ptr, pr);
+  my_free(_ALLOC_ID_, &pr);
+}
+
+/* remove a synthesized name-view text at index ti and compact the text array */
+static void pin_view_delete(int ti)
+{
+  int k;
+  my_free(_ALLOC_ID_, &xctx->text[ti].txt_ptr);
+  my_free(_ALLOC_ID_, &xctx->text[ti].prop_ptr);
+  my_free(_ALLOC_ID_, &xctx->text[ti].font);
+  my_free(_ALLOC_ID_, &xctx->text[ti].floater_ptr);
+  my_free(_ALLOC_ID_, &xctx->text[ti].floater_instname);
+  for(k = ti; k < xctx->texts - 1; ++k) xctx->text[k] = xctx->text[k + 1];
+  xctx->texts--;
+}
+
+/* Reconcile a pin's name view with show_pinname after a property edit: create the view
+ * if now shown and missing, delete it if now hidden, then sync its content/geometry.
+ * (show_pinname uncheck must actually hide the label.) */
+void pin_view_apply(int pi)
+{
+  xRect *p = &xctx->rect[PINLAYER][pi];
+  int ti = pin_name_view_of(p->id);
+  if(!pin_name_shown(p)) {
+    if(ti >= 0) pin_view_delete(ti);   /* hidden -> remove the view */
+    return;
+  }
+  if(ti < 0) synth_pin_views();        /* shown but no view -> create it (idempotent) */
+  pin_view_refresh(pi);                /* sync content/pos/size/rot/flip from tokens */
+}
+
+/* P5 show/hide: bring EVERY owned pin's name view into line with the effective
+ * visibility (global show_pin_names tri-state, then per-pin show_pinname). Deletes
+ * views that are now hidden, then (re)creates views that are now shown. Called when the
+ * global toggle changes. Symbol-edit only; views are derived so this alters no
+ * persistent state and needs no undo -- caller redraws. Deleting a view shifts text
+ * indices, but we iterate PINLAYER rects and re-look-up each view by pin id, so it is
+ * safe. */
+void pin_views_reconcile_all(void)
+{
+  int j, rects, deleted = 0;
+  if(!xctx || xctx->netlist_type != CAD_SYMBOL_ATTRS) return;
+  pin_names_sync_cache();                             /* freshen the global tri-state gate */
+  rects = xctx->rects[PINLAYER];
+  for(j = 0; j < rects; ++j) {
+    xRect *p = &xctx->rect[PINLAYER][j];
+    if(!pin_name_shown(p)) {
+      int ti = pin_name_view_of(p->id);
+      if(ti >= 0) { pin_view_delete(ti); deleted = 1; }
+    }
+  }
+  /* pin_view_delete() compacts xctx->text, so a still-selected (now deleted or shifted)
+   * view would leave sel_array/sel_index dangling -- rebuild it, as the P4 view-drop path
+   * does (move.c). */
+  if(deleted) { xctx->need_reb_sel_arr = 1; rebuild_selected_array(); }
+  synth_pin_views();                   /* create views for pins now shown but missing */
+}
+
+/* After a move/rotate/flip commit, reconcile every name view with its pin:
+ *  - VIEW was in the move -> record its new offset/rot/flip/size on the pin;
+ *  - else only the PIN moved -> reposition the view from the pin tokens (label follows).
+ * Keyed on .sel (still set right after the move commit). Symbol-edit only. */
+void pin_views_reconcile_after_move(void)
+{
+  int i;
+  if(xctx->netlist_type != CAD_SYMBOL_ATTRS) return;
+  for(i = 0; i < xctx->texts; ++i) {
+    xText *v = &xctx->text[i];
+    int pi;
+    if(!v->owner_pin_id) continue;
+    pi = pin_idx_by_id(v->owner_pin_id);
+    if(pi < 0) continue;
+    if(v->sel == SELECTED) {
+      pin_view_writeback(i);
+    } else if(xctx->rect[PINLAYER][pi].sel == SELECTED) {
+      xRect *p = &xctx->rect[PINLAYER][pi];
+      double cx = (p->x1 + p->x2) / 2.0, cy = (p->y1 + p->y2) / 2.0;
+      v->x0 = cx + pin_dtok(p->prop_ptr, "name_dx", 20.0);
+      v->y0 = cy + pin_dtok(p->prop_ptr, "name_dy", -5.0);
+    }
+  }
+}
+
+/* Append one machine-readable issue element "{type idx {name}}" to the Tcl list *res
+ * (unbounded, so a long/bus pin name is never truncated). */
+static void add_pin_issue(char **res, const char *type, int idx, const char *name)
+{
+  char idxbuf[32];
+  my_snprintf(idxbuf, S(idxbuf), "%d", idx);
+  if(*res) my_strcat(_ALLOC_ID_, res, " ");
+  my_mstrcat(_ALLOC_ID_, res, "{", type, " ", idxbuf, " {", name ? name : "", "}}", NULL);
+}
+
+/* P7 ERC: pin-name integrity check (doc/claude/specs/cadence_pin_name_text.md §4.9).
+ * Non-blocking, display/report only -- never changes objects or netlists. Scans the
+ * PINLAYER pins of the CURRENT drawing (populated in symbol-edit mode) and flags:
+ *   dup       two pins carry the same non-empty name= -- the pin<->view binding and the
+ *             netlist pin order are ambiguous (highest value check).
+ *   nameless  an OWNED pin (has a show_pinname token) whose name= is empty: it is meant
+ *             to display a name but has none.
+ *   legacy    an UN-owned pin (no show_pinname token) that still has a real, literal T
+ *             name label next to it (owner_pin_id==0, content == pin name): a pre-model
+ *             label the P8 migration must adopt/resolve (adoption gap).
+ * Appends one "{type idx {name}}" element per issue to the Tcl list *result and emits a
+ * human-readable warning per issue via statusmsg(...,2) (the ERC info window). Returns
+ * the number of issues found. *result is left NULL when there are none. */
+int check_pin_names(char **result)
+{
+  int i, t, np, n = 0;
+  Int_hashtable name_table = {NULL, 0};
+  double cg, tol;
+  char msg[1024];
+  if(!xctx) return 0;
+  np = xctx->rects[PINLAYER];
+
+  /* 1. Duplicate pin names. XINSERT_NOREPLACE keeps the FIRST index as the entry value, so
+   *    a non-NULL return means this name is already present -> report the later pin. */
+  int_hash_init(&name_table, HASHSIZE);
+  for(i = 0; i < np; ++i) {
+    char *nm = NULL;
+    Int_hashentry *e;
+    my_strdup(_ALLOC_ID_, &nm, get_tok_value(xctx->rect[PINLAYER][i].prop_ptr, "name", 0));
+    if(!nm || !nm[0]) { my_free(_ALLOC_ID_, &nm); continue; } /* empty -> handled by check 2 */
+    e = int_hash_lookup(&name_table, nm, i, XINSERT_NOREPLACE);
+    if(e) {
+      add_pin_issue(result, "dup", i, nm);
+      my_snprintf(msg, S(msg),
+        "Warning: duplicate pin name '%s' (pin %d duplicates pin %d)", nm, i, e->value);
+      statusmsg(msg, 2);
+      ++n;
+    }
+    my_free(_ALLOC_ID_, &nm);
+  }
+  int_hash_free(&name_table);
+
+  /* 2. Owned but nameless: a show_pinname token present but an empty name=. */
+  for(i = 0; i < np; ++i) {
+    const char *prop = xctx->rect[PINLAYER][i].prop_ptr;
+    if(!get_tok_value(prop, "show_pinname", 0)[0]) continue;     /* un-owned: outside model */
+    if(get_tok_value(prop, "name", 0)[0]) continue;             /* has a name: ok */
+    add_pin_issue(result, "nameless", i, "");
+    my_snprintf(msg, S(msg),
+      "Warning: pin %d has show_pinname set but an empty name", i);
+    statusmsg(msg, 2);
+    ++n;
+  }
+
+  /* 3. Legacy adoption gap: an un-owned pin (no show_pinname token) that still has a real,
+   *    literal T label (owner_pin_id==0, i.e. NOT a synth view) near it whose content equals
+   *    the pin name. Migration (P8) must adopt/resolve it. Proximity mirrors the editprop.c
+   *    legacy bind (cadgrid-scaled), floored so a small cadgrid does not miss the default
+   *    ~25-unit label offset. */
+  cg = tclgetdoublevar("cadgrid");
+  tol = cg * 3.0;
+  if(tol < 60.0) tol = 60.0;
+  for(i = 0; i < np; ++i) {
+    xRect *p = &xctx->rect[PINLAYER][i];
+    char *nm = NULL;
+    double cx, cy;
+    if(get_tok_value(p->prop_ptr, "show_pinname", 0)[0]) continue; /* owned: no legacy T */
+    my_strdup(_ALLOC_ID_, &nm, get_tok_value(p->prop_ptr, "name", 0));
+    if(!nm || !nm[0]) { my_free(_ALLOC_ID_, &nm); continue; }
+    cx = (p->x1 + p->x2) / 2.0;
+    cy = (p->y1 + p->y2) / 2.0;
+    for(t = 0; t < xctx->texts; ++t) {
+      xText *tx = &xctx->text[t];
+      if(tx->owner_pin_id) continue;                    /* skip synthesized name views */
+      if(!tx->txt_ptr || strcmp(tx->txt_ptr, nm)) continue;
+      if(fabs(tx->x0 - cx) < tol && fabs(tx->y0 - cy) < tol) {
+        add_pin_issue(result, "legacy", i, nm);
+        my_snprintf(msg, S(msg),
+          "Warning: pin %d ('%s') has an un-adopted legacy name label "
+          "(run pin-name migration)", i, nm);
+        statusmsg(msg, 2);
+        ++n;
+        break;
+      }
+    }
+    my_free(_ALLOC_ID_, &nm);
+  }
+  return n;
+}
+
 
 void reset_caches(void)
 {
@@ -1090,6 +1866,11 @@ int set_rect_extraptr(int what, xRect *drptr)
 void clear_drawing(void)
 {
  int i,j;
+ /* the document is being torn down (load / clear / new / undo reload): any in-flight
+  * Add-Pin cursor preview is now invalid, so drop the flag (cadence_pin_name_text.md
+  * item #3) -- otherwise it would survive into the next document and mislead the next
+  * -place re-arm / abort_operation. */
+ xctx->sympin_preview = 0;
  xctx->graph_lastsel = -1;
  del_inst_table();
  del_wire_table();
@@ -1587,6 +2368,24 @@ void place_net_label(int type)
   xctx->ui_state |= START_SYMPIN;
 }
 
+/* True when the top-level view currently being edited is a symbol (.sym). Symbol
+ * views hold only pins + artwork -- never instances of other symbols -- so instance
+ * creation is refused there (see place_symbol). This is deliberately a filename test,
+ * NOT netlist_type==CAD_SYMBOL_ATTRS: a freshly loaded EMPTY schematic also carries
+ * that netlist_type (load_schematic sets it when instances==0), yet placing the first
+ * instance into a blank schematic must be allowed. The ".sym" extension is exactly the
+ * signal load_schematic() itself uses to decide symbol-ness. */
+int editing_symbol_view(void)
+{
+  const char *s;
+  size_t len;
+  if(!xctx) return 0;
+  s = xctx->sch[xctx->currsch];
+  if(!s) return 0;
+  len = strlen(s);
+  return (len >= 4 && !strcmp(s + len - 4, ".sym"));
+}
+
 /*  draw_sym==4 select element after placing */
 /*  draw_sym==2 begin bbox if(first_call), add bbox */
 /*  draw_sym==1 begin bbox if(first_call), add bbox, end bbox, draw placed symbols  */
@@ -1603,6 +2402,14 @@ int place_symbol(int pos, const char *symbol_name, double x, double y, short rot
  char name[PATH_MAX];
  char name1[PATH_MAX];
  char tclev = 0;
+
+ /* Render instance creation impotent in a symbol view, from EVERY route: the Cadence
+  * `i` form, native `I`, the Insert-symbol dialog, menus, the Library Manager, and the
+  * `xschem instance` / `xschem place_symbol` commands all funnel through here, so this
+  * single guard covers them all regardless of what they are bound to. Refuse before the
+  * file dialog / undo push so nothing is created and no undo slot is spent. The friendly
+  * modal lives at the ciform chokepoint; here we just do nothing. */
+ if(editing_symbol_view()) return 0;
 
  if(symbol_name==NULL) {
    tcleval("load_file_dialog {Choose symbol} *.\\{sym,tcl\\} INITIALINSTDIR");
@@ -1674,6 +2481,10 @@ int place_symbol(int pos, const char *symbol_name, double x, double y, short rot
   xctx->inst[n].node=NULL;
   xctx->inst[n].prop_ptr=NULL;
   xctx->inst[n].instname=NULL;
+  xctx->inst[n].pin_sel=NULL;       /* transient pin selection: a reused slot (after
+                                     * inst_delete_compact) may carry a stale/aliased
+                                     * pin_sel pointer; clear it (pin_selection.md) */
+  xctx->inst[n].pin_sel_size=0;
   dbg(1, "place_symbol() :all inst_ptr members set\n");  /*  03-02-2000 */
   if(inst_props) {
     new_prop_string(n, inst_props, tclgetboolvar("disable_unique_names")); /*  20171214 first_call */
@@ -2743,6 +3554,10 @@ int descend_schematic(int instnumber, int fallback, int alert, int set_title)
     * short-circuits to one boolean read when nothing animates. Arms every open window,
     * so the new-window descend path (open_sub_schematic) is covered too. */
    if(descend_ok) net_hilight_anim_update();
+   /* Descending changes this window's current level, so a LINKED window one level away must be
+    * re-synced from the new state (mirror of the go_back sync). Idempotent + cheap when no
+    * linked window exists. issue 0073 child->parent. */
+   if(descend_ok) net_hilight_sync_descend_windows();
    zoom_full(1, 0, 1 + 2 * tclgetboolvar("zoom_full_center"), 0.97);
  }
  return descend_ok;
@@ -2844,6 +3659,12 @@ void go_back(int what)
    * into a fresh context whose tick is unarmed; like descend, go_back is not a highlight
    * mutation, so a blink/marching-ants highlight would otherwise freeze on pop. */
   net_hilight_anim_update();
+  /* Ascending re-maps this window's highlights to a new current level (hilight_parent_pins
+   * above), so a LINKED window one level away must be re-synced from the new state -- e.g. a
+   * secondary window that ascends back to depth-1 of the primary must now light the primary's
+   * buried-net cue. go_back is not a highlight-mutation hook, so sync explicitly here. Cheap
+   * (a no-op when no linked window exists). issue 0073 child->parent. */
+  net_hilight_sync_descend_windows();
 
   dbg(1, "go_back(): current path: %s\n", xctx->sch_path[xctx->currsch]);
  }
@@ -2854,8 +3675,6 @@ void clear_schematic(int cancel, int symbol)
       if(cancel == 1) cancel=save(1, 0);
       if(cancel != -1) { /* -1 means user cancel save request */
         char name[PATH_MAX];
-        struct stat buf;
-        int i;
         /* The current buffer is being discarded (saved above, or the user declined
          * to save). Drop its cellName~.sch autosave backup so a leftover ~ on the
          * next open unambiguously means a crash, not an intentional discard. (A real
@@ -2865,29 +3684,20 @@ void clear_schematic(int cancel, int symbol)
         unselect_all(1);
         remove_symbols();
         clear_drawing();
+        /* next free untitled[-n] name, avoiding both on-disk files and names already open
+         * in other windows so a blank window does not collide (issue 0056) */
         if(symbol == 1) {
           xctx->netlist_type = CAD_SYMBOL_ATTRS;
           set_tcl_netlist_type();
-          for(i=0;; ++i) { /* find a non-existent untitled[-n].sym */
-            if(i == 0) my_snprintf(name, S(name), "%s.sym", "untitled");
-            else my_snprintf(name, S(name), "%s-%d.sym", "untitled", i);
-            if(stat(name, &buf)) break;
-          }
-          my_free(_ALLOC_ID_, &xctx->sch[xctx->currsch]);
-          my_mstrcat(_ALLOC_ID_, &xctx->sch[xctx->currsch], pwd_dir, "/", name, NULL);
-          my_strncpy(xctx->current_name, name, S(xctx->current_name));
+          get_unused_untitled_name(1, name, S(name));
         } else {
           xctx->netlist_type = CAD_SPICE_NETLIST;
           set_tcl_netlist_type();
-          for(i=0;; ++i) {
-            if(i == 0) my_snprintf(name, S(name), "%s.sch", "untitled");
-            else my_snprintf(name, S(name), "%s-%d.sch", "untitled", i);
-            if(stat(name, &buf)) break;
-          }
-          my_free(_ALLOC_ID_, &xctx->sch[xctx->currsch]);
-          my_mstrcat(_ALLOC_ID_, &xctx->sch[xctx->currsch], pwd_dir, "/", name, NULL);
-          my_strncpy(xctx->current_name, name, S(xctx->current_name));
+          get_unused_untitled_name(0, name, S(name));
         }
+        my_free(_ALLOC_ID_, &xctx->sch[xctx->currsch]);
+        my_mstrcat(_ALLOC_ID_, &xctx->sch[xctx->currsch], pwd_dir, "/", name, NULL);
+        my_strncpy(xctx->current_name, name, S(xctx->current_name));
         draw();
         set_modify(0);
         /* a fresh blank untitled buffer is always editable -- there is no file to
@@ -3989,6 +4799,7 @@ int create_text(int draw_text, double x, double y, int rot, int flip, const char
   t->floater_ptr = NULL;
   t->font=NULL;
   t->floater_instname=NULL;
+  t->owner_pin_id=0; /* ordinary text by default; synth_pin_views() stamps views */
   my_strdup2(_ALLOC_ID_, &t->txt_ptr, txt);
   t->x0=x;
   t->y0=y;

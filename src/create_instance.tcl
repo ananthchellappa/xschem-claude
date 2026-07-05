@@ -86,10 +86,19 @@ proc ciform::set_fields {lcv} {
 # pre-fills the form (overwriting the current fields) and re-arms. With no arg the
 # singleton keeps whatever it last held.
 proc ciform::open {{lcv {}}} {
-  # Creating an instance IS an edit: refuse it on a read-only view (issue 0051).
   # This is the single chokepoint every route funnels through — the Cadence `i`
   # key (bind .drw <Key-i> {xschem create_instance}), Edit > Create Instance, and
-  # any scripted `xschem create_instance [lcv]` — so one guard covers them all.
+  # any scripted `xschem create_instance [lcv]` — so the guards here cover them all.
+  #
+  # A symbol view holds only pins + artwork, never instances of other symbols, so
+  # Create Instance is meaningless there. The `i` binding is global to the drawing
+  # canvas, which is reused for symbol editing, so it reaches here in symbol mode
+  # too. Test the current design's extension, NOT netlist_type: an empty schematic
+  # also reports netlist_type "symbol" (save.c: instances==0 -> CAD_SYMBOL_ATTRS),
+  # so guarding on that would wrongly block placing the first instance on a blank
+  # sheet.
+  if {[string match {*.sym} [xschem get schname]]} { symbol_view_notice; return }
+  # Creating an instance IS an edit: refuse it on a read-only view (issue 0051).
   if {[xschem get readonly]} { readonly_notice; return }
   set w .ciform
   ciform::install_drop_hook

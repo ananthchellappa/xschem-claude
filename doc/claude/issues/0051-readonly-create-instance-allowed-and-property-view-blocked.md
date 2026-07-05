@@ -1,7 +1,7 @@
 # Issue 0051 — Read-only view: Create Instance is wrongly allowed, viewing Properties is wrongly blocked
 
 **Opened:** 2026-06-27
-**Status:** OPEN
+**Status:** ✅ RESOLVED 2026-07-02 — fix implemented and confirmed by user eyeball testing.
 **Severity:** MEDIUM — read-only semantics are inverted on two paths: an edit slips through, a
 non-edit is refused. Annoyance + a latent data-integrity hole (see §2.1).
 **Branch:** `fluid-editing`.

@@ -136,7 +136,38 @@ proc slickprop::gfx_schema {type} {
   set bus     [dict create tok bus     label {Width} widget num]
   set bezier  [dict create tok bezier  label {Smooth (bezier)} widget bool on true]
   set ellipse [dict create tok ellipse label {Ellipse} widget ellipse]
+  # Symbol pin (PINLAYER rect): TWO editors over the same B-record tokens
+  # (doc/claude/specs/cadence_pin_name_text.md D-split). `pin` (Q on the pin body) edits the
+  # pin IDENTITY -- Name, Direction, Show name. `pinname` (Q on the displayed name text,
+  # which retargets to the pin) edits the name TEXT appearance -- size, font, offset, rot,
+  # flip. Each editor HIDES the other's tokens: a `hide 1` row is stripped from "Other
+  # properties" and preserved verbatim, but not shown as a field, so neither editor leaks
+  # or clobbers the other's fields.
+  set pname   [dict create tok name         label {Name}      widget string]
+  set pdir    [dict create tok dir          label {Direction} widget enum \
+                 choices [dict create input in output out inout inout]]
+  set pshow   [dict create tok show_pinname label {Show name} widget bool on true]
+  set psize   [dict create tok name_size    label {Text size} widget num]
+  set pfont   [dict create tok name_font    label {Font}      widget string width 16]
+  # offset/rot/flip use the string widget so an explicit 0 is preserved verbatim (num would
+  # treat 0 as "unset" -> default).
+  set pdx     [dict create tok name_dx      label {Offset x}  widget string width 8]
+  set pdy     [dict create tok name_dy      label {Offset y}  widget string width 8]
+  set prot    [dict create tok name_rot     label {Rotation}  widget string width 8]
+  set pflip   [dict create tok name_flip    label {Flip}      widget string width 8]
+  # hidden mirrors (same token, hide 1): preserved across the OTHER editor, never shown.
+  set hname   [dict create tok name         hide 1 widget string]
+  set hdir    [dict create tok dir          hide 1 widget string]
+  set hshow   [dict create tok show_pinname hide 1 widget string]
+  set hsize   [dict create tok name_size    hide 1 widget string]
+  set hfont   [dict create tok name_font    hide 1 widget string]
+  set hdx     [dict create tok name_dx      hide 1 widget string]
+  set hdy     [dict create tok name_dy      hide 1 widget string]
+  set hrot    [dict create tok name_rot     hide 1 widget string]
+  set hflip   [dict create tok name_flip    hide 1 widget string]
   switch -- $type {
+    pin     { return [list $pname $pdir $pshow  $hsize $hfont $hdx $hdy $hrot $hflip] }
+    pinname { return [list $psize $pfont $pdx $pdy $prot $pflip  $hname $hdir $hshow] }
     rect - rectangle - xRECT { return [list $dash $fill $ellipse] }
     line - LINE              { return [list $dash $bus] }
     poly - polygon - POLYGON { return [list $dash $fill $bezier $bus] }
@@ -202,6 +233,14 @@ proc slickprop::schema_assemble {schema orig desired extra} {
   set changes {}
   foreach {tok val} $desired {
     if {$val ne {}} { lappend changes $tok $val }
+  }
+  # hidden rows (hide 1) were stripped from the "Other" box and are NOT in <desired>; when
+  # the user edits "Other" we rebuild from it, so re-overlay each present hidden token from
+  # <orig> -- otherwise the other editor's fields (e.g. a pin's name/dir) would be lost.
+  foreach row [slickprop::schema_fields $schema $orig] {
+    if {[dict exists $row hide] && [dict get $row hide] && [dict get $row present]} {
+      lappend changes [dict get $row tok] [dict get $row value]
+    }
   }
   return [slickprop::apply $extra $changes]
 }
@@ -317,10 +356,25 @@ proc slickprop::update_dirty {tok} {
   }
 }
 
-# Get the symbol's template (declared attributes), or "" if unavailable.
+# Get the symbol's template (declared attributes), or "" if unavailable. If the
+# symbol is not in the table yet (e.g. an identity change to a cell that has not
+# been placed/loaded this session — issue 0057), load its definition on demand
+# from the resolved absolute path and retry, so changing the cell can read the new
+# cell's defaults before anything is applied.
 proc slickprop::template_of {symbol} {
-  if {[catch {xschem getprop symbol $symbol template} t]} { return "" }
-  return $t
+  if {![catch {xschem getprop symbol $symbol template} t]} { return $t }
+  set abs $symbol
+  catch {set abs [abs_sym_path $symbol]}
+  catch {xschem load_symbol $abs}
+  # load_symbol stores the definition under its rel_sym_path (lib-qualified) name,
+  # so a lib/cell/view symbol loaded from an ABSOLUTE path is keyed as e.g.
+  # "devices/res" — query every name form, not just the absolute one (issue 0057).
+  set rel $abs
+  catch {set rel [rel_sym_path $abs]}
+  foreach ref [list $symbol $abs $rel] {
+    if {$ref ne {} && ![catch {xschem getprop symbol $ref template} t]} { return $t }
+  }
+  return ""
 }
 
 # Build the per-field rows for <prop>+<template> into the frame <parent>,
@@ -329,6 +383,7 @@ proc slickprop::template_of {symbol} {
 # (not part of the value). Returns the list of token names placed.
 proc slickprop::build_fields {parent prop template} {
   variable cur
+  variable has_name_field
   slickprop::init_fonts
   set ew $::slickprop_entry_width
   array unset cur
@@ -340,11 +395,33 @@ proc slickprop::build_fields {parent prop template} {
   set fields [slickprop::to_fields $prop $template]
   set r 0
   set extras_started 0
+  set has_name_field 0
   foreach f $fields {
     set tok      [dict get $f name]
     set val      [dict get $f value]
     set declared [dict get $f declared]
     set default  [dict get $f default]
+    # The instance name lives in the dedicated row below the identity block (issue
+    # 0058) when the real dialog is up; wire it into cur there and skip the grid row.
+    # Without the dialog (the .pf.f core tests) fall through to a normal grid row.
+    if {$tok eq "name" && [winfo exists .dialog.fname.e]} {
+      set has_name_field 1
+      set e .dialog.fname.e
+      set cur(ind,name)         .dialog.fname.i
+      set cur(entry,name)       $e
+      set cur(loaded,name)      $val
+      set cur(placeholder,name) 0
+      set cur(normalfg,name)    [$e cget -foreground]
+      lappend cur(tokens) name
+      $e delete 0 end
+      if {$val ne {}} { $e insert 0 $val }
+      $cur(ind,name) configure -text " "
+      bind $e <KeyRelease> [list slickprop::update_dirty name]
+      bind $e <<Paste>>    [list after idle [list slickprop::update_dirty name]]
+      bind $e <<Cut>>      [list after idle [list slickprop::update_dirty name]]
+      bind $e <FocusIn> +[list slickprop::on_focus name]
+      continue
+    }
     # a themed divider before the first undeclared "Extra" token (fixed widget
     # names — there is only one Extra section; tying them to $r broke because the
     # widgets are created before the row counter is advanced)
@@ -385,6 +462,7 @@ proc slickprop::build_fields {parent prop template} {
     incr r
   }
   grid columnconfigure $parent 1 -minsize 90   ;# fixed label column so labels align
+  slickprop::update_name_row   ;# show/hide the dedicated Name row per has_name_field (0058)
   return $cur(tokens)
 }
 
@@ -452,6 +530,8 @@ proc slickprop::result {} {
 proc slickprop::do_apply {} {
   variable cur
   variable nav
+  variable loaded_prop
+  variable identity_pending
   global symbol prev_symbol copy_cell user_wants_copy_cell
   if {[xschem get readonly]} { return 0 }  ;# read-only viewer: never commit (issue 0051)
   slickprop::lcv_compose_symbol     ;# fold any Library/Cell/View edit into the ref
@@ -475,11 +555,30 @@ proc slickprop::do_apply {} {
     }
   }
   set ::tctx::retval [slickprop::result]   ;# keep the legacy C contract populated
+  # old_prop baseline for the C diff (set_different_token). Normally this equals
+  # cur(orig); after an identity change cur(orig) is the NEW cell's template (the
+  # new_prop), while loaded_prop is still the instance's REAL old prop — exactly the
+  # pair the diff needs to drop the old cell's tokens and adopt the new ones (0057).
+  set oldprop $cur(orig)
+  if {[info exists loaded_prop]} { set oldprop $loaded_prop }
   set did 0
   if {[info exists nav(disp_id)] && $nav(disp_id) ne {} && $nav(disp_id) >= 0} {
+    # keep_name=1: the dedicated Name field is authoritative, so a source change does
+    # NOT re-prefix the instance name (issue 0058). Passed as the 5th arg so the
+    # logged/replayed command reproduces the same name behavior.
     set did [xschem apply_properties $::slickprop_apply_scope $nav(disp_id) \
-               $::tctx::retval $cur(orig)]
-    if {$did} {
+               $::tctx::retval $oldprop 1]
+    if {$did == -1} {
+      # The edited instance was regenerated/deleted (intervening undo, symbol reload,
+      # regenerate-abstract) between opening the form and Apply. Surface the dropped edit
+      # instead of silently "succeeding" and closing; the caller keeps the form open so
+      # the user can retry or cancel (issue 0042). NOTE: -1 is truthy in Tcl, so this must
+      # be an explicit compare — a bare `if {$did}` would treat vanish as success.
+      catch {ciw_echo "property edit not applied: the object being edited no longer exists" error}
+      catch {tk_messageBox -parent .dialog -icon warning -type ok -title "Edit not applied" \
+        -message "The object being edited no longer exists (it was regenerated or undone).\
+\nYour changes were NOT applied."}
+    } elseif {$did == 1} {
       set ::tctx::applied 1
       # action-log the EFFECT (only when something changed): the replayable
       # command itself, so sourcing the log re-applies the edit. Logged here at
@@ -487,11 +586,12 @@ proc slickprop::do_apply {} {
       # CIW-typed commands reuse and would double-log (see
       # doc/claude/code_analysis/apply_properties_logging_decision.md).
       slickprop::log_apply [list xschem apply_properties \
-        $::slickprop_apply_scope $nav(disp_id) $::tctx::retval $cur(orig)]
+        $::slickprop_apply_scope $nav(disp_id) $::tctx::retval $oldprop 1]
     }
   }
   set copy_cell 0
   set prev_symbol $symbol
+  set identity_pending 0   ;# applied: identity change consumed
   return $did
 }
 
@@ -523,7 +623,7 @@ proc slickprop::apply_now {} {
 
 # The OK action: apply the current change set to the scope, then close.
 proc slickprop::ok {} {
-  slickprop::do_apply
+  if {[slickprop::do_apply] == -1} { return }  ;# vanished target (0042): keep form open, don't close
   set ::tctx::rcode {ok}
   set ::slickprop_form_open 0
   catch {set ::slickprop_geometry [wm geometry .dialog]} ;# remember size+pos
@@ -593,6 +693,8 @@ proc slickprop::lcv_dirty {} {
 # with (gates the Apply/Discard prompt on Next/Prev and selection changes).
 proc slickprop::is_dirty {} {
   variable cur
+  variable identity_pending
+  if {[info exists identity_pending] && $identity_pending} { return 1 }
   if {[slickprop::lcv_dirty]} { return 1 }
   if {![info exists cur(tokens)]} { return 0 }
   return [expr {[llength [slickprop::collect_changes]] > 0}]
@@ -831,6 +933,8 @@ proc slickprop::update_warning {} {
 proc slickprop::load_pos {pos} {
   variable cur
   variable nav
+  variable loaded_prop
+  variable identity_pending
   global symbol prev_symbol
   set n [llength $nav(ids)]
   if {$n == 0} return
@@ -845,6 +949,8 @@ proc slickprop::load_pos {pos} {
   set sym  [xschem getprop instance $idx cell::name]
   set symbol $sym
   set prev_symbol $sym
+  set loaded_prop $prop          ;# apply baseline (old_prop); survives an identity rebuild
+  set identity_pending 0         ;# fresh instance: no pending identity change yet
   if {[winfo exists .dialog.f1.e2]} {
     .dialog.f1.e2 delete 0 end
     .dialog.f1.e2 insert 0 $sym
@@ -915,6 +1021,25 @@ proc slickprop::update_lcv {sym} {
     pack forget .dialog.flcv
     catch {pack .dialog.f1 -side top -fill x -pady {4 0} -after .dialog.fscope}
   }
+  # the dedicated Name row sits directly below the identity block (issue 0058),
+  # tracking whichever of flcv/f1 is currently shown.
+  slickprop::update_name_row
+}
+
+# Pack (or hide) the dedicated Name row directly below the visible identity block.
+# Hidden when the current field set has no `name` token (has_name_field, set by
+# build_fields). Called from both update_lcv and build_fields so it stays correct
+# regardless of their call order (load_pos runs update_lcv before build_fields).
+proc slickprop::update_name_row {} {
+  variable lcv_active
+  variable has_name_field
+  if {![winfo exists .dialog.fname]} return
+  if {[info exists has_name_field] && !$has_name_field} {
+    pack forget .dialog.fname
+    return
+  }
+  set anchor [expr {([info exists lcv_active] && $lcv_active) ? ".dialog.flcv" : ".dialog.f1"}]
+  catch {pack .dialog.fname -side top -fill x -after $anchor}
 }
 
 # If the Library/Cell/View rows are active (a library instance) AND the user
@@ -945,6 +1070,94 @@ proc slickprop::lcv_compose_symbol {} {
   if {[winfo exists .dialog.f1.e2]} {
     .dialog.f1.e2 delete 0 end
     .dialog.f1.e2 insert 0 $f
+  }
+}
+
+# ===========================================================================
+# Identity change -> re-read the new cell and repopulate with defaults (0057).
+# Changing the master (Library/Cell/View rows, or the raw Symbol entry) makes the
+# displayed instance a DIFFERENT cell; the old cell's attributes do not apply to
+# it, so the field grid must be rebuilt from the NEW symbol's template defaults —
+# exactly as if a fresh instance of that cell had just been placed.
+# ===========================================================================
+
+# The symbol reference currently entered in the identity rows. With the L/C/V form
+# active, compose lib/cell/view via cellview_path (same resolution as
+# lcv_compose_symbol); otherwise read the raw Symbol entry. Returns {} when the
+# combination is incomplete or does not resolve to a .sym, so a half-typed edit
+# never triggers a reset.
+proc slickprop::current_symbol_ref {} {
+  variable lcv_active
+  if {[info exists lcv_active] && $lcv_active && [winfo exists .dialog.flcv]} {
+    set lib  [string trim [.dialog.flcv.e0 get]]
+    set cell [string trim [.dialog.flcv.e1 get]]
+    set view [string trim [.dialog.flcv.e2 get]]
+    if {$lib eq {} || $cell eq {} || $view eq {}} { return {} }
+    set f {}
+    catch {set f [xschem cellview_path "$lib/$cell" $view]}
+    if {$f eq {} || ![string match *.sym $f]} { return {} }
+    return $f
+  } elseif {[winfo exists .dialog.f1.e2]} {
+    return [string trim [.dialog.f1.e2 get]]
+  }
+  return {}
+}
+
+# Commit handler for the identity rows. If the entered reference now names a
+# DIFFERENT, resolvable symbol than the one displayed (compared by absolute path)
+# AND that symbol has a readable template, adopt the new identity and rebuild the
+# field grid from the new template's defaults. Unchanged / unresolvable / template-
+# less references are a no-op, so a typo or a partial edit never wipes the fields.
+proc slickprop::on_identity_changed {} {
+  global symbol
+  variable identity_pending
+  if {![winfo exists .dialog]} return
+  set newref [slickprop::current_symbol_ref]
+  if {$newref eq {}} return                                  ;# incomplete / unresolvable
+  if {[abs_sym_path $newref] eq [abs_sym_path $symbol]} return ;# same master: nothing to do
+  set template [slickprop::template_of $newref]
+  if {$template eq {}} return                                ;# unknown symbol: keep fields
+  # PRESERVE the instance name across the source change (issue 0058): the name is
+  # arbitrary, so re-pointing to a new cell resets only the OTHER props to the new
+  # cell's defaults. Capture the current Name (the dedicated field's value, edits
+  # included) and fold it into the new template so the rebuilt grid + Name field keep
+  # it verbatim and result/cur(orig) carry it (no spurious dirty cue).
+  set keepname {}
+  catch {set keepname [slickprop::field_value name]}
+  set newprop $template
+  if {$keepname ne {}} {
+    catch {set newprop [xschem subst_tok $template name [slickprop::requote $keepname]]}
+  }
+  # adopt the new master for the rest of the form + apply machinery (prev_symbol is
+  # intentionally left at the ORIGINAL so do_apply still sees a symbol change and the
+  # copy-cell path keys off the real previous master)
+  set symbol $newref
+  if {[winfo exists .dialog.f1.e2]} {
+    .dialog.f1.e2 delete 0 end
+    .dialog.f1.e2 insert 0 $newref
+  }
+  set hdr $newref
+  if {$keepname ne {}} { set hdr "$keepname  —  $newref" }
+  if {[winfo exists .dialog.hdr]} { .dialog.hdr configure -text "  $hdr" }
+  slickprop::update_lcv $newref                              ;# resync L/C/V rows + loaded_lcv
+  # the heart of the fix: the new cell's defaults (prop == template, with the name
+  # preserved) -> declared tokens shown with their defaults, like a freshly placed
+  # instance, but keeping the user's instance name
+  slickprop::build_fields .dialog.fa.c.inner $newprop $template
+  set identity_pending 1                                     ;# a real pending change (gates is_dirty)
+  catch {slickprop::apply_scope_greying}
+  catch {slickprop::update_warning}
+}
+
+# Wire the identity-change handler onto the L/C/V entries and the raw Symbol entry,
+# firing when an edit is committed (focus leaves the field or Return is pressed).
+proc slickprop::bind_identity_rows {} {
+  foreach e {.dialog.flcv.e0 .dialog.flcv.e1 .dialog.flcv.e2 .dialog.f1.e2} {
+    if {[winfo exists $e]} {
+      bind $e <FocusOut>      +[list slickprop::on_identity_changed]
+      bind $e <Key-Return>    +[list slickprop::on_identity_changed]
+      bind $e <Key-KP_Enter>  +[list slickprop::on_identity_changed]
+    }
   }
 }
 
@@ -1006,6 +1219,21 @@ proc slickprop::edit_form {txtlabel} {
     grid  .dialog.flcv.l$i .dialog.flcv.e$i -sticky we -padx {4 6} -pady 1
   }
   grid columnconfigure .dialog.flcv 1 -weight 1
+
+  # --- dedicated instance Name row (issue 0058) -----------------------------
+  # The instance name is the user's primary handle, so it lives in its OWN row
+  # directly below the identity block (packed by update_lcv) rather than buried in
+  # the scrollable grid. Built here once; build_fields wires the `name` token to it
+  # (and is_dirty/result/the modified-cue all flow through cur as for any field).
+  # Layout mirrors a grid row: dot | "Name" label | entry.
+  frame .dialog.fname
+  label .dialog.fname.i -text " " -width 2 -anchor center -font slickPropLabel -fg [slickprop::accent]
+  label .dialog.fname.l -text "Name" -anchor e -font slickPropLabel
+  entry .dialog.fname.e -font slickPropValue -relief sunken -borderwidth 1
+  grid .dialog.fname.i -row 0 -column 0 -padx {2 0} -pady 4
+  grid .dialog.fname.l -row 0 -column 1 -sticky e -padx {2 8} -pady 4
+  grid .dialog.fname.e -row 0 -column 2 -sticky we -padx {0 8} -pady 4 -ipady 3 -ipadx 2
+  grid columnconfigure .dialog.fname 2 -weight 1
 
   # --- "Apply to" scope selector (sticky; the C side reads the canonical var) -
   frame .dialog.fscope
@@ -1105,11 +1333,16 @@ proc slickprop::edit_form {txtlabel} {
     slickprop::load_pos $nav(pos)
   } else {
     slickprop::build_fields .dialog.fa.c.inner $::tctx::retval [slickprop::template_of $symbol]
+    set slickprop::loaded_prop $::tctx::retval   ;# apply baseline for the single-shot path
+    set slickprop::identity_pending 0
     slickprop::update_nav_ui
   }
   # show/populate the Library/Cell/View rows for the displayed instance (the nav
   # path already did this via load_pos; this covers the single-shot else path).
   slickprop::update_lcv $symbol
+  # react to an identity (Library/Cell/View or Symbol) change: re-read the new cell
+  # and repopulate the fields with its defaults (issue 0057)
+  slickprop::bind_identity_rows
 
   # grey the name field live with the scope (and apply the initial state)
   trace add variable ::slickprop_apply_scope write slickprop::apply_scope_greying

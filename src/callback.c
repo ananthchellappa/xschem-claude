@@ -45,6 +45,23 @@ static int readonly_block(void)
   return 1;
 }
 
+/* Symbol-view twin of readonly_block(): a symbol holds only pins + artwork, never
+ * instances of other symbols, so instance creation is meaningless there. Returns 1
+ * (with a notice) when the current view is a symbol, letting the interactive insert-
+ * symbol entry points bail out BEFORE opening a file picker. place_symbol()'s own
+ * guard (editing_symbol_view) is the hard backstop that covers every route; this is
+ * the friendly early exit so the symbol editor never even shows a chooser. */
+static int symbol_view_block(void)
+{
+  if(!editing_symbol_view()) return 0;
+  if(has_x) {
+    tcleval("symbol_view_notice");
+  } else {
+    dbg(0, "symbol_view_block(): symbol view, instance creation ignored\n");
+  }
+  return 1;
+}
+
 static int waves_selected(int event, KeySym key, int state, int button)
 {
   int rstate; /* state without ShiftMask */
@@ -173,6 +190,8 @@ void redraw_w_a_l_r_p_z_rubbers(int force)
 void abort_operation(void)
 {
   xctx->no_draw = 0;
+  xctx->pin_pending = 0; /* drop any armed pin-click gesture (pin_selection.md D3) */
+  xctx->pin_pending_add = 0; /* and any armed SHIFT+pin additive gesture (D6) */
   tcleval("set constr_mv 0" );
   dbg(1, "abort_operation(): Escape: ui_state=%d, last_command=%d\n", xctx->ui_state, xctx->last_command);
   xctx->constr_mv=0;
@@ -181,6 +200,16 @@ void abort_operation(void)
    * (abort_operation does not otherwise refresh the statusbar) */
   if(xctx->ui_state & (NET_HILIGHT | NET_UNHILIGHT))
     tclvareval(xctx->top_path, ".statusbar.10 configure -state normal -text { }", NULL);
+
+  /* leaving deselect-one-at-a-time mode (doc/claude/specs/deselect_one_mode.md): ESC
+   * just exits the mode and KEEPS whatever is still selected (unlike the net-(un)hilight
+   * modes above, which fall through to unselect_all). Clear the prompt and return. */
+  if(xctx->ui_state & DESEL_MODE) {
+    xctx->ui_state &= ~DESEL_MODE;
+    if(has_x)
+      tclvareval(xctx->top_path, ".statusbar.10 configure -state normal -text { }", NULL);
+    return;
+  }
 
   if(xctx->ui_state & STARTPOLYGON) new_polygon(END, xctx->mousex_snap, xctx->mousey_snap);
   if(xctx->last_command && xctx->ui_state & (STARTWIRE | STARTLINE)) {
@@ -198,11 +227,19 @@ void abort_operation(void)
    if(xctx->ui_state & (START_SYMPIN | PLACE_SYMBOL | PLACE_TEXT)) {
      int save;
      save =  xctx->modified;
-     delete(1/* to_push_undo */);
+     /* An Add-Pin cursor preview pushed its undo baseline at arm and must be torn down
+      * undo-free: delete(1) here would snapshot the (about-to-be-removed) preview pin and a
+      * later undo would resurrect it (cadence_pin_name_text.md item #3). delete(0) keeps the
+      * baseline as the single rollback point. A live preview always has START_SYMPIN set, so
+      * require it -> a STALE sympin_preview cannot make an UNRELATED placement abort
+      * (PLACE_SYMBOL/PLACE_TEXT/graph) drop its undo snapshot. Normal placements use
+      * delete(1) as before. */
+     delete((xctx->sympin_preview && (xctx->ui_state & START_SYMPIN)) ? 0 : 1/* to_push_undo */);
      set_modify(save); /* aborted placement: no change, so reset modify flag set by delete() */
      xctx->ui_state &= ~START_SYMPIN;
      xctx->ui_state &= ~PLACE_SYMBOL;
      xctx->ui_state &= ~PLACE_TEXT;
+     xctx->sympin_preview = 0;
    }
    if(xctx->ui_state & STARTMERGE) {
      delete(1/* to_push_undo */);
@@ -259,6 +296,7 @@ static void net_hilight_mode_click(int add)
 static void start_place_symbol(void)
 {
     if(readonly_block()) return;
+    if(symbol_view_block()) return;   /* no instances in a symbol view (ctx-menu / native insert) */
     xctx->last_command = 0;
     rebuild_selected_array();
     if(xctx->lastsel && xctx->sel_array[0].type==ELEMENT) {
@@ -1485,6 +1523,24 @@ int tcl_braceable(const char *s)
   return 1;
 }
 
+/* action-log Layer C: emit one replayable command whose argv is already fully
+ * stringified (numeric fields pre-formatted). Tcl_Merge quotes EVERY element
+ * into a valid, re-parsable list, so ANY legal instance name / property string --
+ * including one with braces or backslashes (Windows paths, escaped tokens) --
+ * round-trips and the placement stays replayable, instead of being dropped to a
+ * '#' comment by the tcl_braceable brace-wrap guard (issue 0048). Guarantees the
+ * Layer B "log always source-able" invariant rather than merely preserving it. */
+/* Log one already-parsed command as a faithfully-quoted replayable line:
+ * Tcl_Merge re-quotes each argv element so braces/spaces/backslashes round-trip.
+ * Exposed (non-static) so scheduler.c self-logs arg-carrying subcommands (setprop)
+ * with the same fidelity as the gesture read-back paths here. */
+void log_action_argv(int argc, const char *const *argv)
+{
+  char *line = Tcl_Merge(argc, argv);
+  log_action("%s", line);
+  Tcl_Free(line);
+}
+
 /* action-log Layer C (spec section 2): complete a move/copy drag and record
  * the single command reproducing its effect. The two callback completion
  * paths (end_place_move_copy_zoom and the intuitive-interface release) both
@@ -1520,13 +1576,20 @@ static void end_move_copy_logged(int is_copy)
   else if(ui & PLACE_SYMBOL) {
     int n = (xctx->lastsel == 1 && xctx->sel_array[0].type == ELEMENT) ? xctx->sel_array[0].n : -1;
     if(n >= 0 && n < xctx->instances) {
+      const char *name = xctx->inst[n].name ? xctx->inst[n].name : "";
       const char *prop = xctx->inst[n].prop_ptr ? xctx->inst[n].prop_ptr : "";
-      if(tcl_braceable(xctx->inst[n].name) && tcl_braceable(prop)) {
-        log_action("xschem instance {%s} %.16g %.16g %d %d {%s}",
-          xctx->inst[n].name, xctx->inst[n].x0, xctx->inst[n].y0,
-          (int)xctx->inst[n].rot, (int)xctx->inst[n].flip, prop);
-        return;
-      }
+      char xb[64], yb[64], rb[16], fb[16];
+      const char *av[8];
+      /* Tcl_Merge quotes name/prop safely -> replayable for any legal string,
+       * incl. braces/backslashes the old tcl_braceable guard rejected (issue 0048). */
+      my_snprintf(xb, S(xb), "%.16g", xctx->inst[n].x0);
+      my_snprintf(yb, S(yb), "%.16g", xctx->inst[n].y0);
+      my_snprintf(rb, S(rb), "%d", (int)xctx->inst[n].rot);
+      my_snprintf(fb, S(fb), "%d", (int)xctx->inst[n].flip);
+      av[0] = "xschem"; av[1] = "instance"; av[2] = name; av[3] = xb;
+      av[4] = yb; av[5] = rb; av[6] = fb; av[7] = prop;
+      log_action_argv(8, av);
+      return;
     }
     log_action("# place symbol (instance not cleanly recordable)");
   }
@@ -1535,13 +1598,17 @@ static void end_move_copy_logged(int is_copy)
     if(n >= 0 && n < xctx->texts) {
       const char *txt = xctx->text[n].txt_ptr ? xctx->text[n].txt_ptr : "";
       const char *prop = xctx->text[n].prop_ptr ? xctx->text[n].prop_ptr : "";
-      if(tcl_braceable(txt) && tcl_braceable(prop)) {
-        log_action("xschem text %.16g %.16g %d %d {%s} {%s} %.16g 1",
-          xctx->text[n].x0, xctx->text[n].y0,
-          (int)xctx->text[n].rot, (int)xctx->text[n].flip, txt, prop,
-          xctx->text[n].xscale);
-        return;
-      }
+      char xb[64], yb[64], rb[16], fb[16], sb[64];
+      const char *av[10];
+      my_snprintf(xb, S(xb), "%.16g", xctx->text[n].x0);
+      my_snprintf(yb, S(yb), "%.16g", xctx->text[n].y0);
+      my_snprintf(rb, S(rb), "%d", (int)xctx->text[n].rot);
+      my_snprintf(fb, S(fb), "%d", (int)xctx->text[n].flip);
+      my_snprintf(sb, S(sb), "%.16g", xctx->text[n].xscale);
+      av[0] = "xschem"; av[1] = "text"; av[2] = xb; av[3] = yb; av[4] = rb;
+      av[5] = fb; av[6] = txt; av[7] = prop; av[8] = sb; av[9] = "1";
+      log_action_argv(10, av);
+      return;
     }
     log_action("# place text (text not cleanly recordable)");
   }
@@ -1648,6 +1715,10 @@ static int end_place_move_copy_zoom()
   else if(xctx->ui_state & STARTMOVE) {
     end_move_copy_logged(0);
     xctx->ui_state &=~START_SYMPIN;
+    /* an Add-Pin preview pin was just dropped (committed): the gesture's undo baseline is
+     * on the stack already, so clear the preview flag -> the drop-hook's next arm starts a
+     * fresh baseline for the next pin (cadence_pin_name_text.md item #3). */
+    xctx->sympin_preview = 0;
     xctx->constr_mv=0;
     tcleval("set constr_mv 0" );
     return 1;
@@ -1887,11 +1958,14 @@ void draw_hover(int force)
   Selected newsel;
 
   if(!has_x) return;
-  /* A resting SELECTION (ui_state&SELECTION) is not a transient gesture, so it
-   * must not suppress the hover cue — mask it off before the idle check. The
-   * remaining ui_state bits (STARTMOVE, STARTWIRE, panning, ...) still gate it. */
+  /* SELECTION and the interactive net-(un)highlight pick modes (NET_HILIGHT/NET_UNHILIGHT,
+   * the verb-noun "press 9/8 then click a net" states) are RESTING ui_state bits, not
+   * transient gestures, so they must NOT suppress the hover cue — during a pick mode the
+   * hover outline is exactly what tells the user which net/label they are about to click.
+   * Mask them off before the idle check; the remaining bits (STARTMOVE, STARTWIRE, panning,
+   * ...) still gate it, so a real gesture started mid-pick still suppresses hover. */
   if(tclgetboolvar("hover_highlight") && xctx->mouse_inside &&
-     (xctx->ui_state & ~SELECTION) == 0 && xctx->semaphore < 2) {
+     (xctx->ui_state & ~(SELECTION | NET_HILIGHT | NET_UNHILIGHT)) == 0 && xctx->semaphore < 2) {
     newsel = find_closest_obj(xctx->mousex, xctx->mousey, 0);
     /* don't outline an object that is already selected (overlays would fight) */
     if(newsel.type && hover_obj_selected(newsel.type, (int)newsel.n, newsel.col)) {
@@ -1937,6 +2011,59 @@ static void unselect_at_mouse_pos(int mx, int my)
        rebuild_selected_array(); /* sets or clears xctx->ui_state SELECTION flag */
 }
 
+/* Enter the persistent deselect-one-at-a-time mode (doc/claude/specs/deselect_one_mode.md).
+ * Shared by the bound key (act_deselect_mode) and the `xschem deselect_mode` subcommand.
+ * Modelled on the net-(un)highlight pick modes: a resting ui_state bit, exited by ESC.
+ * Gated on a non-empty selection (the mode only makes sense when there is something to
+ * deselect): with nothing selected it is a no-op with a hint, matching the spec's
+ * "if there are objects selected, ... goes into deselect mode". Non-mutating, so it is
+ * allowed in a read-only view (deselecting changes no schematic content). */
+void enter_deselect_mode(void)
+{
+  rebuild_selected_array();
+  if(xctx->lastsel <= 0) {
+    if(has_x)
+      tcleval("if {[info procs ciw_echo] ne {}} {ciw_echo {Deselect mode: nothing is selected.}}");
+    return;
+  }
+  xctx->ui_state |= DESEL_MODE;
+  if(has_x) {
+    tclvareval(xctx->top_path, ".statusbar.10 configure -state active -text {",
+      "DESELECT! (click a selected object to deselect it, ESC to end) }", NULL);
+    tcleval("if {[info procs ciw_echo] ne {}} {ciw_echo "
+            "{Deselect mode: click a selected object to remove it from the selection; press ESC to end.}}");
+  }
+}
+
+/* One click while in deselect-one-at-a-time mode: deselect the object under the cursor
+ * if it is selected, and STAY in the mode (preserve the bit). unselect_at_mouse_pos()
+ * uses select_object(..., select_mode=0, ...), which deselects the hit object and can
+ * never select one, so a click on an unselected object or on empty space is a no-op.
+ * Save/restore the mode bit like net_hilight_mode_click(), in case the selection-array
+ * path clears ui_state. */
+static void deselect_mode_click(int mx, int my)
+{
+  unsigned int mode = xctx->ui_state & DESEL_MODE;
+  /* D7 (pin_selection.md §3.2): if a SELECTED pin is under the cursor, deselect just
+   * that pin (leave other selected pins/objects intact), mirroring the select-side pin
+   * priority. Otherwise fall through to the object deselect. Gated on en_pin_select
+   * (GLOBAL Tcl var, not the per-context field). Inert -> read-only safe. */
+  if(tclgetboolvar("en_pin_select")) {
+    Selected psel;
+    if(find_closest_pin(xctx->mousex, xctx->mousey, &psel)) {
+      int i = (int)psel.n, j = (int)psel.col;
+      if(xctx->inst[i].pin_sel && j < xctx->inst[i].pin_sel_size && xctx->inst[i].pin_sel[j]) {
+        select_pin(i, j, 0, 0);          /* deselect just this pin */
+        rebuild_selected_array();
+        xctx->ui_state |= mode;
+        return;
+      }
+    }
+  }
+  unselect_at_mouse_pos(mx, my);
+  xctx->ui_state |= mode;
+}
+
 static void snapped_wire(double c_snap)
 {
   double x, y;
@@ -1964,14 +2091,13 @@ static int check_menu_start_commands(int state, double c_snap, int mx, int my)
       xctx->ui_state, xctx->ui_state2, xctx->last_command);
 
   if((xctx->ui_state & MENUSTART) && (xctx->ui_state2 & MENUSTARTDESEL) ) {
-    if(xctx->ui_state & DESEL_CLICK) {
-      unselect_at_mouse_pos(mx, my);
-    } else { /* unselect by area */
-      xctx->mx_save = mx; xctx->my_save = my;
-      xctx->mx_double_save=xctx->mousex;
-      xctx->my_double_save=xctx->mousey;
-      xctx->ui_state |= DESEL_AREA;
-    }
+    /* unselect by area (the 'D' / Shift+D area-deselect). The old single-shot 'd'
+     * click-deselect path was removed when 'd' became the persistent deselect mode
+     * (doc/claude/specs/deselect_one_mode.md). */
+    xctx->mx_save = mx; xctx->my_save = my;
+    xctx->mx_double_save=xctx->mousex;
+    xctx->my_double_save=xctx->mousey;
+    xctx->ui_state |= DESEL_AREA;
     return 1;
   }
   /* read-only backstop: any armed object-mutating command is refused here (the
@@ -1995,6 +2121,15 @@ static int check_menu_start_commands(int state, double c_snap, int mx, int my)
     return 1;
   }
   else if((xctx->ui_state & MENUSTART) && (xctx->ui_state2 & MENUSTARTMOVE)) {
+    /* verb-noun (cadence_pin_name_text.md copy/move UX): 'm' on an empty selection arms
+     * MENUSTARTMOVE, so this click SELECTS the object under the cursor and picks it up in
+     * one gesture. With something already selected (Edit>Move menu path) the existing
+     * selection is moved and the click is just the pick-up point. */
+    rebuild_selected_array();
+    if(xctx->lastsel == 0) {
+      select_object(xctx->mousex, xctx->mousey, SELECTED, 0, NULL);
+      rebuild_selected_array();
+    }
     xctx->mx_double_save=xctx->mousex_snap;
     xctx->my_double_save=xctx->mousey_snap;
     /* stretch nets that land on selected instance pins if connect_by_kissing == 2 */
@@ -2003,6 +2138,13 @@ static int check_menu_start_commands(int state, double c_snap, int mx, int my)
     return 1;
   }
   else if((xctx->ui_state & MENUSTART) && (xctx->ui_state2 & MENUSTARTCOPY)) {
+    /* verb-noun mirror of MENUSTARTMOVE: 'c' on an empty selection selects the object
+     * under this click and starts the copy in one gesture (see comment above). */
+    rebuild_selected_array();
+    if(xctx->lastsel == 0) {
+      select_object(xctx->mousex, xctx->mousey, SELECTED, 0, NULL);
+      rebuild_selected_array();
+    }
     xctx->mx_double_save=xctx->mousex_snap;
     xctx->my_double_save=xctx->mousey_snap;
     copy_objects(START);
@@ -2430,6 +2572,7 @@ static void context_menu_action(double mx, double my)
       break;
     default: break;
   }
+  actionlog_cmd_logged = 0;   /* dedup: skip the Layer B line if the pick's core self-logs */
   switch(ret) {
     case 1:
       start_place_symbol();
@@ -2556,7 +2699,7 @@ static void context_menu_action(double mx, double my)
    * # marker, or NULL = nothing). */
   if(!logcmd && ret > 0 && ret < (int)(sizeof(ctxmenu_log_cmd)/sizeof(ctxmenu_log_cmd[0])))
     logcmd = ctxmenu_log_cmd[ret];
-  if(logcmd) log_action("%s", logcmd);
+  if(logcmd && !actionlog_cmd_logged) log_action("%s", logcmd);
 }
 
 /* ===========================================================================
@@ -2759,6 +2902,92 @@ static int act_highlight_send_waveform(const ActionEvent *e)
   return 1;
 }
 
+/* Enter the persistent deselect-one-at-a-time mode (doc/claude/specs/deselect_one_mode.md).
+ * Canvas-only; the click loop + ESC exit live in handle_button_press / abort_operation. */
+static int act_deselect_mode(const ActionEvent *e) { (void)e; enter_deselect_mode(); return 1; }
+
+/* Center the view so the current cursor position becomes the screen center (the old
+ * Shift+P pan). Shipped UNBOUND (bind a key in keybindings.csv). */
+static int act_view_center_at_cursor(const ActionEvent *e)
+{
+  (void)e;
+  xctx->xorigin = -xctx->mousex_snap + xctx->areaw * xctx->zoom / 2.0;
+  xctx->yorigin = -xctx->mousey_snap + xctx->areah * xctx->zoom / 2.0;
+  draw();
+  redraw_w_a_l_r_p_z_rubbers(1);
+  return 1;
+}
+
+/* --- SPACE's three behaviors, extracted so they are separately rebindable actions
+ * (B6, doc/claude/specs/wire_stub_netlabel.md). The default SPACE binding is
+ * edit.add_pin_stubs; it SELF-GATES and declines (returns 0 -> dispatch falls
+ * through to the legacy `case ' '`), so mid-gesture SPACE still cycles the manhattan
+ * corner and idle/empty-selection SPACE still pans -- both run from the same cores
+ * below, whether reached via a rebound action or the case ' ' fallback. */
+
+/* Cycle the manhattan corner-mode of an in-progress move/wire/line gesture (rotate
+ * xctx->manhattan_lines through 0..2, refreshing the rubber). Self-gating: does
+ * nothing and returns 0 unless a STARTMOVE/STARTWIRE/STARTLINE gesture is active. */
+static int cycle_manhattan_lines(void)
+{
+  if(xctx->ui_state & STARTMOVE) {
+    draw_selection(xctx->gctiled, 0);
+    xctx->manhattan_lines++;
+    xctx->manhattan_lines %= 3;
+    draw_selection(xctx->gc[SELLAYER], 0);
+  } else if(xctx->ui_state & STARTWIRE) { /*  & instead of == 20190409 */
+    new_wire(RUBBER | CLEAR, xctx->mousex_snap, xctx->mousey_snap);
+    xctx->manhattan_lines++;
+    xctx->manhattan_lines %= 3;
+    new_wire(RUBBER, xctx->mousex_snap, xctx->mousey_snap);
+  } else if(xctx->ui_state & STARTLINE) {
+    new_line(RUBBER | CLEAR, xctx->mousex_snap, xctx->mousey_snap);
+    xctx->manhattan_lines++;
+    xctx->manhattan_lines %= 3;
+    new_line(RUBBER, xctx->mousex_snap, xctx->mousey_snap);
+  } else {
+    return 0;
+  }
+  return 1;
+}
+
+/* Start a drag-pan of the canvas at (mx,my). Off a modal/busy state it first
+ * refreshes the selected-object array so the SELECTION ui_state flag reflects
+ * reality, exactly as the old `case ' '` pan branch did. */
+static void start_pan_at(int mx, int my)
+{
+  if(xctx->semaphore < 2) {
+    rebuild_selected_array(); /* sets or clears the SELECTION ui_state flag */
+  }
+  start_pan_logged(mx, my);
+}
+
+/* edit.cycle_manhattan: cycle the active gesture's manhattan corner. Returns 0
+ * (declines -> dispatch falls through) when no gesture is active. */
+static int act_cycle_manhattan(const ActionEvent *e) { (void)e; return cycle_manhattan_lines(); }
+
+/* view.pan: start a drag-pan of the canvas from the event position. */
+static int act_pan(const ActionEvent *e) { start_pan_at(e->mx, e->my); return 1; }
+
+/* edit.add_pin_stubs (SPACE default): draw a wire stub + outward net-label out of each
+ * selected pin / each unconnected pin of a selected instance. Declines (returns 0 ->
+ * dispatch falls through to the legacy `case ' '`) whenever it does NOT stub, so SPACE
+ * keeps its historical fallbacks in every non-stub case:
+ *   - during a move/wire/line gesture -> decline (SPACE cycles the manhattan corner)
+ *   - with an empty selection          -> decline (SPACE starts a pan)
+ *   - a selection with nothing stubbable (e.g. only a wire, or all pins already wired),
+ *     a read-only view, or symbol mode  -> add_pin_stubs returns 0 without mutating, so
+ *     decline (SPACE pans -- no dead key, no modal read-only dialog)
+ *   - otherwise it stubbed -> consume (add_pin_stubs already did the one undo + draw). */
+static int act_add_pin_stubs(const ActionEvent *e)
+{
+  (void)e;
+  if(xctx->ui_state & (STARTMOVE | STARTWIRE | STARTLINE)) return 0;
+  rebuild_selected_array();
+  if(xctx->lastsel == 0) return 0;
+  return add_pin_stubs("", "", 0) > 0 ? 1 : 0;
+}
+
 /* --- action registry: stable id -> behavior --- */
 /* An action is backed by EITHER a C function (fn) OR a Tcl command (tcl); exactly
  * one is non-NULL. Tcl-backing (Phase 3d) lets the ~60 tcleval keysym branches
@@ -2777,7 +3006,13 @@ static int act_highlight_send_waveform(const ActionEvent *e)
  * log is sourced. An aborted gesture thus leaves no trace, which matches the
  * spec's granularity rule (log the effect; an abort has none). */
 typedef struct { const char *id; action_fn fn; const char *tcl; const char *help;
-                 char *log_cmd; int nolog; } ActionDef;
+                 int mutates; char *log_cmd; int nolog; } ActionDef;
+/* mutates (issue 0041): 1 if this action changes the current schematic/symbol contents,
+ * so a read-only window refuses it (see action_id_mutates / readonly_block). Declared per
+ * row below (the positional 5th field; omitted rows default to 0) instead of a separate
+ * hand-maintained allowlist, so a new mutating action is covered by construction. Dual-use
+ * self-gating actions (e.g. edit.add_pin_stubs, which also pans on read-only) stay 0 and
+ * are guarded at their core so the shared key still works. */
 
 static ActionDef action_registry[] = {
   { "view.zoom_in",   act_zoom_in,   NULL, "Zoom in"   },
@@ -2795,21 +3030,26 @@ static ActionDef action_registry[] = {
   { "graph.forward",  act_graph_forward,   NULL, "Forward event to the waveform graph" },
   /* Tcl-backed (Phase 3d.1): fn is NULL, the dispatch runs `tcl` via tcleval.
    * (id renamed at d4a to the pre-existing actions.csv id for the same command.) */
-  { "prop.edit_header_license_text", NULL, "update_schematic_header", "Edit schematic header/license" },
+  { "prop.edit_header_license_text", NULL, "update_schematic_header", "Edit schematic header/license", 1 },
   /* Phase 3d.2 — canvas-only symbol commands (C-backed and Tcl-backed). */
   { "sym.attach_net_labels_to_component_instance", act_attach_labels, NULL,
-    "Attach net labels to selected instances" },
+    "Attach net labels to selected instances", 1 },
   { "sym.make_schematic_and_symbol_from_selected_components", act_make_sch_sym_from_sel, NULL,
-    "Make schematic and symbol from selected components" },
+    "Make schematic and symbol from selected components", 1 /* mutates: delete sel + place LCC (0041) */ },
   { "sym.create_symbol_pins_from_selected_schematic_pins", NULL, "schpins_to_sympins",
-    "Create symbol pins from selected schematic pins" },
+    "Create symbol pins from selected schematic pins", 1 },
+  { "sym.place_symbol_pin", NULL, "xschem add_symbol_pin",
+    "Add a symbol pin (Name + Direction dialog)", 1 },
+  { "tools.insert_polygon", NULL, "xschem polygon gui", "Start drawing a polygon", 1 },
+  { "view.center_at_cursor", act_view_center_at_cursor, NULL,
+    "Center the view on the cursor position" },
   /* Phase 3d.2 batch 2 — clean canvas-only command keys (C-backed). All ids below
    * have actions.csv rows (label/help metadata) since d4a. */
   { "edit.toggle_stretch", act_toggle_stretch, NULL, "Toggle stretching of attached wires" },
   { "view.snap_half",   act_snap_half,   NULL, "Halve the snap factor" },
   { "view.snap_double", act_snap_double, NULL, "Double the snap factor" },
   { "prop.toggle_ignore_attribute_on_selected_instances", act_toggle_ignore, NULL,
-    "Toggle *_ignore attribute on selected instances" },
+    "Toggle *_ignore attribute on selected instances", 1 },
   { "view.toggle_colorscheme", act_toggle_colorscheme, NULL, "Toggle light/dark colorscheme" },
   /* Phase 3d.2 batch 3 — three C-backed plus `=` reusing the csv id
    * tools.execute_tcl_command (Tcl-backed -> "tclcmd"). */
@@ -2817,12 +3057,19 @@ static ActionDef action_registry[] = {
   { "edit.toggle_orthogonal_wiring", act_toggle_orthogonal_wiring, NULL, "Toggle orthogonal (manhattan) wiring" },
   { "view.toggle_draw_pixmap", act_toggle_draw_pixmap, NULL, "Toggle pixmap (off-screen) drawing" },
   { "tools.execute_tcl_command", NULL, "tclcmd", "Open the Tcl command console" },
+  /* tools.raise_ciw: raise (or open) the CIW command window. Tcl-backed -- ciw_create
+   * builds the CIW, or deiconifies + raises it if it already exists. Default chord
+   * Alt-F5 (seeded in init_input_bindings below, mirrored in keybindings.csv). Rebind
+   * or un-bind from a custom rc / --script with e.g.
+   *   xschem bind key 65474 alt canvas tools.raise_ciw   ;# move to another chord
+   *   xschem unbind key 65474 alt canvas                 ;# un-bind Alt-F5 */
+  { "tools.raise_ciw", NULL, "ciw_create", "Raise/open the CIW (Command Interpreter Window)" },
   /* Phase 3d.2 sem-gated batch 1 — Tcl-backed, reusing actions.csv ids whose commands
    * are verified identical to the switch branches' C calls (idle_only-bound below). */
   { "toolbar.netlist",      NULL, "xschem netlist -erc",      "Netlist (hierarchical) + ERC" },
-  { "file.clear_schematic", NULL, "xschem clear schematic",   "Clear the current schematic" },
-  { "edit.redo",            NULL, "xschem redo; xschem redraw", "Redo" },
-  { "edit.undo",            NULL, "xschem undo; xschem redraw", "Undo" },
+  { "file.clear_schematic", NULL, "xschem clear schematic",   "Clear the current schematic", 1 },
+  { "edit.redo",            NULL, "xschem redo; xschem redraw", "Redo", 1 },
+  { "edit.undo",            NULL, "xschem undo; xschem redraw", "Undo", 1 },
   /* Phase 3d.2 sem-gated batch 2 — the hilight cluster (k, K). Tcl commands verified
    * byte-identical to the switch C branches (incl. the redraw_hilights/draw calls). */
   { "hilight.highlight_selected_net_pins",           NULL, "xschem hilight",            "Highlight selected net/pins" },
@@ -2833,18 +3080,70 @@ static ActionDef action_registry[] = {
   /* Phase 3d.2 sem-gated batch 3 — `j` hilight-list (branch migration). Tcl commands
    * are `xschem print_hilight_net N` = print_hilight_net(N), identical to the switch. */
   { "sym.list.print_list_of_highlight_nets",    NULL, "xschem print_hilight_net 1", "Print list of highlight nets" },
-  { "sym.list.create_pins_from_highlight_nets", NULL, "xschem print_hilight_net 0", "Create pins from highlight nets" },
-  { "sym.list.create_labels_from_highlight_nets", NULL, "xschem print_hilight_net 4", "Create labels from highlight nets" },
+  { "sym.list.create_pins_from_highlight_nets", NULL, "xschem print_hilight_net 0", "Create pins from highlight nets", 1 },
+  { "sym.list.create_labels_from_highlight_nets", NULL, "xschem print_hilight_net 4", "Create labels from highlight nets", 1 },
   /* keybind_snap_grid_actions: snap / grid / highlight ops made bindable; they ship
    * UNBOUND (no default chord) — the user binds them via `xschem bind` / their rc.
    * Two Tcl-backed (reuse the View/Options menu commands), one C-backed (sim-tool
    * detection). doc/claude/specs/keybind_snap_grid_actions.md. */
+  /* nolog (0066): input_line is async -- it returns before the user types, so the
+   * dispatcher would log this dialog-OPEN prompt string as a bogus line while the
+   * resolved value logs later at the `set cadsnap` core. Suppress the prompt; the
+   * core self-log emits the one replayable `xschem set cadsnap <value>` line.
+   * (fn, tcl, help, mutates=0, log_cmd=NULL, nolog=1) */
   { "view.set_snap_value", NULL,
-    "input_line {Enter snap value (float):} {xschem set cadsnap} $cadsnap", "Set snap value (dialog)" },
+    "input_line {Enter snap value (float):} {xschem set cadsnap} $cadsnap", "Set snap value (dialog)",
+    0, NULL, 1 },
   { "view.toggle_draw_grid", NULL,
     "set draw_grid [expr {!$draw_grid}]; xschem redraw", "Toggle grid display" },
   { "hilight.send_to_waveform", act_highlight_send_waveform, NULL,
     "Highlight net and send to waveform viewer" },
+  /* bus_thickness_scroll: grow/shrink every selected object (wire thickness, and the
+   * [N:M] bus suffix on pin/netlabel `lab` or instance `name`). Tcl-backed: the logic
+   * lives in utils/bus_resize.tcl (busresize_apply), sourced by cadence_style_rc. Ship
+   * UNBOUND; cadence_style_rc binds them to Alt-wheel, any user can rebind via
+   * `xschem bind`. doc/claude/specs/bus_thickness_scroll.md. */
+  { "edit.grow_selection",   NULL, "busresize_apply grow",
+    "Grow selected: wire thickness / bus width [N:M]", 1 },
+  { "edit.shrink_selection", NULL, "busresize_apply shrink",
+    "Shrink selected: wire thickness / bus width [N:M]", 1 },
+  /* bus_transpose_scroll: SHIFT the bus index/range up/down by 1 on a pin/netlabel `lab`
+   * or an instance `name` (wires/text tolerated) -- moves the index, does not widen the
+   * bus (that is busresize). Tcl-backed: utils/bus_transpose.tcl. Ship UNBOUND;
+   * cadence_style_rc binds them to Alt+Shift-wheel. doc/claude/specs/bus_transpose_scroll.md. */
+  { "edit.transpose_up_selection",   NULL, "bustranspose_apply up",
+    "Transpose selected up: bus index/range +1 (e.g. [N:M] -> [N+1:M+1])", 1 },
+  { "edit.transpose_down_selection", NULL, "bustranspose_apply down",
+    "Transpose selected down: bus index/range -1, floored at 0", 1 },
+  /* text_size_scroll: grow/shrink displayed text size of selected text notes and
+   * pin/netlabel names (~10%, min step, per-type floor). Tcl-backed:
+   * utils/text_resize.tcl. Ship UNBOUND; cadence_style_rc binds Ctrl+Plus/Minus.
+   * doc/claude/specs/text_size_scroll.md. */
+  { "edit.text_grow",   NULL, "textsize_apply grow",
+    "Grow displayed text size of selected notes / pin-label names", 1 },
+  { "edit.text_shrink", NULL, "textsize_apply shrink",
+    "Shrink displayed text size of selected notes / pin-label names", 1 },
+  /* deselect-one-at-a-time mode (doc/claude/specs/deselect_one_mode.md): default key 'd'.
+   * C-backed; the csv command `xschem deselect_mode` is behavior-equivalent but nolog'd
+   * (mode entry is a UI affordance; its effect — the deselect clicks — is not logged). */
+  { "edit.deselect_mode", act_deselect_mode, NULL,
+    "Deselect one object at a time (click a selected object; ESC to end)" },
+  /* B6 wire-stubs (doc/claude/specs/wire_stub_netlabel.md): SPACE's three behaviors,
+   * now separately rebindable actions. edit.add_pin_stubs is the SPACE default; it
+   * self-gates and declines (dispatch falls through to case ' ') during a gesture or
+   * with no selection, so cycle_manhattan (mid-gesture) and pan (idle) still run from
+   * the same extracted cores. cycle_manhattan + pan ship UNBOUND (bind via
+   * keybindings.csv) so the user can move the manhattan-corner cycle onto another key. */
+  { "edit.add_pin_stubs", act_add_pin_stubs, NULL,
+    "Add wire stubs + net-labels to selected pins / instance pins" },
+  { "edit.cycle_manhattan", act_cycle_manhattan, NULL,
+    "Cycle the manhattan corner of an in-progress move/wire/line" },
+  { "view.pan", act_pan, NULL, "Drag-pan the canvas" },
+  /* Alt-2: toggle the current window's view TYPE (schematic <-> symbol) of the same
+   * cell. Tcl-backed (src/alt2_toggle_view.tcl). mutates=0 -- the toggle changes no
+   * schematic content. See doc/claude/specs/alt2_toggle_view.md. */
+  { "view.toggle_view_type", NULL, "alt2_toggle_view",
+    "Open the alternate view (schematic<->symbol) of the current cell" },
 };
 static const int num_action_defs = (int)(sizeof(action_registry)/sizeof(action_registry[0]));
 
@@ -3004,6 +3303,9 @@ static void init_input_bindings(void)
   /* Alt-h (EQUAL_MODMASK = Alt OR Super in the switch) -> two rows */
   set_input_binding(DEV_KEY, 'h', Mod1Mask,    ACTX_CANVAS, "sym.create_symbol_pins_from_selected_schematic_pins");
   set_input_binding(DEV_KEY, 'h', Mod4Mask,    ACTX_CANVAS, "sym.create_symbol_pins_from_selected_schematic_pins");
+  set_input_binding_idle(DEV_KEY, 'p', 0,      ACTX_CANVAS, "sym.place_symbol_pin");  /* P -> add pin dialog */
+  set_input_binding_idle(DEV_KEY, 'P', 0,      ACTX_CANVAS, "tools.insert_polygon");  /* Shift+P -> polygon */
+  /* view.center_at_cursor ships UNBOUND (old Shift+P pan); bind a key in keybindings.csv */
   /* Phase 3d.2 batch 2: plain-chord command keys (the cases' Ctrl/Alt branches stay in C). */
   set_input_binding(DEV_KEY, 'y', 0, ACTX_CANVAS, "edit.toggle_stretch");
   /* snap/grid/highlight ops ship UNBOUND — no default chord; the user binds them via
@@ -3066,6 +3368,31 @@ static void init_input_bindings(void)
   set_input_binding_idle(DEV_KEY, 'j', ControlMask, ACTX_CANVAS, "sym.list.create_pins_from_highlight_nets");
   set_input_binding_idle(DEV_KEY, 'j', Mod1Mask,    ACTX_CANVAS, "sym.list.create_labels_from_highlight_nets"); /* Alt */
   set_input_binding_idle(DEV_KEY, 'j', Mod4Mask,    ACTX_CANVAS, "sym.list.create_labels_from_highlight_nets"); /* Super */
+  /* deselect-one-at-a-time mode (doc/claude/specs/deselect_one_mode.md): default key 'd'.
+   * Canvas-only (never forwarded to a graph); idle-gated so the mode is not entered while
+   * a modal dialog is up (semaphore>=2). Replaces the old hardcoded `case 'd'` deselect. */
+  set_input_binding_idle(DEV_KEY, 'd', 0,           ACTX_CANVAS, "edit.deselect_mode");
+  /* B6 wire-stubs (doc/claude/specs/wire_stub_netlabel.md): SPACE -> edit.add_pin_stubs.
+   * Canvas-only, idle_only: SPACE now triggers a MUTATING edit (add_pin_stubs), which must
+   * not run re-entrantly while the editor is busy (semaphore>=2, e.g. under a modal dialog).
+   * When busy the dispatch skips this chord and SPACE falls through to case ' ', reproducing
+   * the historical SAFE behavior (cycle an in-progress gesture's manhattan corner, else
+   * drag-pan) with no edit -- exactly what the old hardcoded case ' ' did at semaphore>=2.
+   * When idle it dispatches and self-gates (decline mid-gesture / empty selection -> dispatch
+   * returns 0 -> case ' ' fallback runs the SAME cores). */
+  set_input_binding_idle(DEV_KEY, ' ', 0, ACTX_CANVAS, "edit.add_pin_stubs");
+  /* Alt-F5 raises (or opens) the CIW command window. Shipped default; mirrored in
+   * keybindings.csv. A user overrides it by editing their USER_CONF_DIR
+   * keybindings.csv, or at runtime from a custom rc/--script via `xschem bind key
+   * 65474 alt canvas <action>` (or `xschem unbind key 65474 alt canvas`). Alt =
+   * Mod1Mask, matching the other Alt chords above ('h', the j-cluster). */
+  set_input_binding(DEV_KEY, XK_F5, Mod1Mask, ACTX_CANVAS, "tools.raise_ciw");
+  /* Alt-2 toggles the current window between the schematic-type and symbol-type view
+   * of the same cell (doc/claude/specs/alt2_toggle_view.md). Tcl-backed
+   * (alt2_toggle_view). '2' == keysym 50; Alt = Mod1Mask. Plain '2' (logic level) and
+   * Ctrl-2 (choose layer) still fall through to the C switch (exact code+mods match).
+   * Kept LAST so it is the last key row when keybindings.csv is regenerated. */
+  set_input_binding(DEV_KEY, '2', Mod1Mask, ACTX_CANVAS, "view.toggle_view_type");
   input_bindings_initialized = 1;
 }
 
@@ -3098,27 +3425,17 @@ static int current_input_ctx(int event, KeySym key, int state, int button)
   return waves_selected(event, key, state, button) ? ACTX_OVER_GRAPH : ACTX_CANVAS;
 }
 
-/* registered (data-driven) actions that modify the current schematic/symbol; used
- * to refuse them in a read-only window (see readonly_block). Navigation, view,
- * highlight, netlist and make-symbol/create-schematic actions are intentionally
- * NOT listed -- they do not change the current view's contents. */
+/* Whether a registered (data-driven) action modifies the current schematic/symbol; used
+ * to refuse it in a read-only window (see readonly_block). The classification now lives
+ * with each action as the `mutates` column of action_registry[] (single source of truth),
+ * so a newly-added mutating action is covered by construction rather than depending on a
+ * separate allowlist being kept in sync here. Navigation/view/highlight/netlist and
+ * make-symbol/create-schematic actions declare mutates=0 -- they do not change the current
+ * view's contents. Unknown ids default to non-mutating. */
 static int action_id_mutates(const char *id)
 {
-  static const char * const ids[] = {
-    "edit.undo", "edit.redo",
-    "prop.toggle_ignore_attribute_on_selected_instances",
-    "prop.edit_header_license_text",
-    "sym.attach_net_labels_to_component_instance",
-    "sym.create_symbol_pins_from_selected_schematic_pins",
-    "sym.list.create_pins_from_highlight_nets",
-    "sym.list.create_labels_from_highlight_nets",
-    "file.clear_schematic"
-  };
-  int i;
-  if(!id) return 0;
-  for(i = 0; i < (int)(sizeof(ids) / sizeof(ids[0])); ++i)
-    if(!strcmp(id, ids[i])) return 1;
-  return 0;
+  const ActionDef *d = find_action_def(id);
+  return d ? d->mutates : 0;
 }
 
 /* look up and run the action bound to an event signature; returns 1 if a binding
@@ -3142,22 +3459,27 @@ static int dispatch_input_action(const ActionEvent *e)
      * after the fn reports it handled the event (record-after-evaluation, as
      * for the Tcl branch below). No log_cmd pushed -> silent: gesture starts,
      * graph routing and the not-yet-mintable view actions (spec: Phase 3). */
-    int ret = d->fn(e);
-    if(ret && d->log_cmd) log_action("%s", d->log_cmd);
+    int ret;
+    actionlog_cmd_logged = 0;          /* dedup: skip log_cmd if the core self-logged */
+    ret = d->fn(e);
+    if(ret && d->log_cmd && !actionlog_cmd_logged) log_action("%s", d->log_cmd);
     return ret;
   }
   if(d->tcl) {                         /* Tcl-backed: run the command (Phase 3d.1) */
     /* Action log Layer A (spec §2): record the canonical command verbatim, AFTER
      * evaluation so a failed one becomes a '#' comment and the log stays
      * source-able (same rule as CIW-typed commands). Tcl_GlobalEval instead of
-     * tcleval because the latter swallows the return code. */
+     * tcleval because the latter swallows the return code. A mutating subcommand
+     * that self-logs at its core sets actionlog_cmd_logged; skip the wrapper line
+     * then so the action is recorded exactly once (self-log-at-core dedup). */
+    actionlog_cmd_logged = 0;
     if(Tcl_GlobalEval(interp, d->tcl) != TCL_OK) {
       fprintf(errfp, "dispatch_input_action(): evaluation of script: %s failed\n", d->tcl);
       fprintf(errfp, "         : %s\n", Tcl_GetStringResult(interp));
+      if(!d->nolog && !actionlog_cmd_logged) log_action("# failed: %s", d->tcl);
       Tcl_ResetResult(interp);
-      if(!d->nolog) log_action("# failed: %s", d->tcl);
     } else {
-      if(!d->nolog) log_action("%s", d->tcl);
+      if(!d->nolog && !actionlog_cmd_logged) log_action("%s", d->tcl);
     }
     return 1;
   }
@@ -3393,10 +3715,14 @@ static int handle_mouse_wheel(int event, int mx, int my, KeySym key, int button,
    int graph_use_ctrl_key = tclgetboolvar("graph_use_ctrl_key");
    ActionEvent ae;
    int wheel, mods, ctx;
+   /* normalized modifier mask (the bits the bind table uses), lock/button bits dropped */
+   int m;
 
    if(button == Button4)      wheel = WHEEL_UP;
    else if(button == Button5) wheel = WHEEL_DOWN;
    else return 0;
+
+   m = state & (ShiftMask | ControlMask | Mod1Mask | Mod4Mask);
 
    /* The graph-vs-canvas routing that used to be a hardcoded
     * waves_selected/waves_callback block is now data: over_graph wheel rows map
@@ -3405,14 +3731,24 @@ static int handle_mouse_wheel(int event, int mx, int my, KeySym key, int button,
    if(state == 0) {
      mods = 0; ctx = current_input_ctx(event, key, state, button);
    }
-   else if(!graph_use_ctrl_key && (state & ShiftMask) && !(state & Button2Mask)) {
+   else if(!graph_use_ctrl_key && m == ShiftMask && !(state & Button2Mask)) {
      mods = ShiftMask; ctx = current_input_ctx(event, key, state, button);
    }
-   else if(!graph_use_ctrl_key && (state & ControlMask) && !(state & Button2Mask)) {
+   else if(!graph_use_ctrl_key && m == ControlMask && !(state & Button2Mask)) {
      mods = ControlMask; ctx = ACTX_CANVAS;
    }
    else {
-     return 0;             /* no built-in handling for other modifier combos */
+     /* Any OTHER modifier combo (Alt, Super, multi-mod like Ctrl+Shift or Alt+Shift):
+      * consult the binding table on the canvas, so users can map e.g. Alt-wheel or
+      * Alt+Shift-wheel to an action (doc/claude/specs/bus_thickness_scroll.md,
+      * bus_transpose_scroll.md). The Shift / Ctrl branches above match the LONE
+      * modifier EXACTLY (m == ...), so a combo containing Shift/Ctrl falls through here
+      * instead of being mistaken for plain Shift/Ctrl. Lone Shift / lone Ctrl / no-mod
+      * keep their routing (incl. the graph_use_ctrl_key reservation). No matching
+      * binding -> dispatch_input_action() is a harmless no-op. */
+     mods = m;
+     if(mods == 0 || mods == ShiftMask || mods == ControlMask) return 0;
+     ctx = ACTX_CANVAS;
    }
 
    ae.device = DEV_WHEEL; ae.code = wheel; ae.mods = mods; ae.ctx = ctx;
@@ -3847,7 +4183,9 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
                 "-message {do you want to make symbol view ?}");
         if(strcmp(tclresult(),"ok")==0)
         {
-         save_schematic(xctx->sch[xctx->currsch], 0);
+         /* keyboard 'a' (no canvas binding entry -> legacy switch). Don't overwrite a
+          * read-only schematic on disk (0041); make_symbol() self-logs at its core. */
+         if(!xctx->readonly) save_schematic(xctx->sch[xctx->currsch], 0);
          make_symbol();
         }
       }
@@ -3895,17 +4233,26 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
      * See init_input_bindings. */
 
     case 'c':
-      /* duplicate selection */
+      /* duplicate selection (Cadence-style copy command, cadence_pin_name_text.md copy/move
+       * UX): noun-verb (something selected) starts the copy IMMEDIATELY so the ghost follows
+       * the cursor at once; verb-noun (nothing selected) arms copy mode + a prompt so the
+       * next canvas click selects the object under the cursor and starts the copy. This
+       * overrides the infix_interface preference for the copy/move keys -- otherwise with
+       * infix_interface off 'c' only armed MENUSTART and nothing followed until a click. */
       if(rstate==0 && !(xctx->ui_state & (STARTMOVE | STARTCOPY))) {
         if(xctx->semaphore >= 2) break;
         if(readonly_block()) break;
-        if(infix_interface) {
+        rebuild_selected_array();
+        if(xctx->lastsel > 0) {
           xctx->mx_double_save=xctx->mousex_snap;
           xctx->my_double_save=xctx->mousey_snap;
           copy_objects(START);
         } else {
+          /* verb-noun: arm copy mode so the NEXT canvas click selects the object under the
+           * cursor AND starts the copy in one gesture (check_menu_start_commands). */
           xctx->ui_state |= MENUSTART;
           xctx->ui_state2 = MENUSTARTCOPY;
+          statusmsg("Copy: click an object to copy it", 1);
         }
       }
       /* copy selection into clipboard */
@@ -3962,15 +4309,10 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
       break;
 
     case 'd':
-      if(rstate == 0) { /* unselect object under the mouse */
-        if(infix_interface) {
-          unselect_at_mouse_pos(mx, my);
-        } else {
-          xctx->ui_state |= (MENUSTART | DESEL_CLICK);
-          xctx->ui_state2 = MENUSTARTDESEL;
-        }
-      }
-      else if(rstate == ControlMask) { /* delete files */
+      /* plain 'd' (unselect-under-mouse) is now the data-driven action
+       * edit.deselect_mode (default key 'd', remappable); see
+       * doc/claude/specs/deselect_one_mode.md. Only Ctrl+d stays here. */
+      if(rstate == ControlMask) { /* delete files */
         if(xctx->semaphore >= 2) break;
         delete_files();
       }
@@ -4039,6 +4381,12 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
           move_objects(START,0,0,0);
           move_objects(FLIP|ROTATELOCAL,0,0,0);
           move_objects(END,0,0,0);
+          /* self-log the keyboard shortcut at its inline handler (issue 0068): Alt-F
+           * flip-in-place. Standalone branch only -- readonly already rejected above,
+           * and the during-move/copy variants are gesture-logged by the move END
+           * (0069). Live keypress reaches only here (never the scheduler branch), so
+           * no double-log; replay sources `xschem flip_in_place` into the scheduler. */
+          log_action("xschem flip_in_place");
         }
       }
       break;
@@ -4055,6 +4403,9 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
           move_objects(START,0,0,0);
           move_objects(FLIP,0,0,0);
           move_objects(END,0,0,0);
+          /* self-log Shift-F flip keyboard shortcut (issue 0068); pivot = the anchor
+           * move_objects used, matching the scheduler `xschem flip x0 y0` form. */
+          log_action("xschem flip %.16g %.16g", xctx->mx_double_save, xctx->my_double_save);
         }
       }
       else if(rstate == ControlMask ) { /* full zoom selection */
@@ -4111,6 +4462,7 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
       }
       else if(rstate == ControlMask) { /* insert sym */
         if(readonly_block()) break;
+        if(symbol_view_block()) break;   /* no instances in a symbol view: refuse before the chooser opens */
         if(tclgetboolvar("new_file_browser")) {
           tcleval("file_chooser");
         } else {
@@ -4129,6 +4481,7 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
       if(rstate == 0) { /* insert sym */
         if(xctx->semaphore >= 2) break;
         if(readonly_block()) break;
+        if(symbol_view_block()) break;   /* no instances in a symbol view: refuse before the chooser opens */
         if(tclgetboolvar("new_file_browser")) {
           tcleval("file_chooser");
         } else {
@@ -4210,7 +4563,10 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
       break;
 
     case 'm':
-      /* Move selection */
+      /* Move selection (Cadence-style move command, mirror of 'c'): noun-verb (selected)
+       * starts the move immediately so it follows the cursor; verb-noun (nothing selected)
+       * arms move mode + a prompt so the next click selects + starts. Overrides
+       * infix_interface for this key (see case 'c'). */
       if(rstate==0 && !(xctx->ui_state & (STARTMOVE | STARTCOPY))) {
         if(waves_selected(event, key, state, button)) {
           waves_callback(event, mx, my, key, button, aux, state);
@@ -4218,13 +4574,17 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
         }
         if(readonly_block()) break;
         if(enable_stretch) select_attached_nets(); /* stretch nets that land on selected instance pins */
-        if(infix_interface) {
+        rebuild_selected_array();
+        if(xctx->lastsel > 0) {
           xctx->mx_double_save=xctx->mousex_snap;
           xctx->my_double_save=xctx->mousey_snap;
           move_objects(START,0,0,0);
         } else {
+          /* verb-noun: arm move mode so the NEXT canvas click selects the object under the
+           * cursor AND starts the move in one gesture (check_menu_start_commands). */
           xctx->ui_state |= MENUSTART;
           xctx->ui_state2 = MENUSTARTMOVE;
+          statusmsg("Move: click an object to move it", 1);
         }
       }
       /* move selection stretching attached nets */
@@ -4379,45 +4739,18 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
       break;
 
     case 'p':
-      if(EQUAL_MODMASK) { /* add symbol pin */
-        if(readonly_block()) break;
-        xctx->push_undo();
-        unselect_all(1);
-        storeobject(-1, xctx->mousex_snap-2.5, xctx->mousey_snap-2.5, xctx->mousex_snap+2.5, xctx->mousey_snap+2.5,
-                    xRECT, PINLAYER, SELECTED, "name=XXX\ndir=inout");
-        xctx->need_reb_sel_arr=1;
-        rebuild_selected_array();
-        move_objects(START,0,0,0);
-        xctx->ui_state |= START_SYMPIN;
-      }
-      else if(rstate == ControlMask) {
+      /* plain p -> sym.place_symbol_pin (add-pin dialog); Shift+P -> tools.insert_polygon:
+       * both are registry actions (init_input_bindings), dispatched before this switch. */
+      if(rstate == ControlMask) { /* Ctrl+P: place input port label */
          if(readonly_block()) break;
          place_net_label(2);
-      }
-      else if( !(xctx->ui_state & STARTPOLYGON) && rstate==0) { /* start polygon */
-        if(xctx->semaphore >= 2) break;
-        if(readonly_block()) break;
-        dbg(1, "callback(): start polygon\n");
-        if(infix_interface) {
-          xctx->mx_double_save=xctx->mousex_snap;
-          xctx->my_double_save=xctx->mousey_snap;
-          xctx->last_command = 0;
-          new_polygon(PLACE, xctx->mousex_snap, xctx->mousey_snap);
-        } else {
-          xctx->ui_state |= MENUSTART;
-          xctx->ui_state2 = MENUSTARTPOLYGON;
-        }
       }
       break;
 
     case 'P':
-      if(rstate == 0) { /* pan, other way to. */
-        xctx->xorigin=-xctx->mousex_snap+xctx->areaw*xctx->zoom/2.0;
-        xctx->yorigin=-xctx->mousey_snap+xctx->areah*xctx->zoom/2.0;
-        draw();
-        redraw_w_a_l_r_p_z_rubbers(1);
-      }
-      else if(rstate == ControlMask) {
+      /* old Shift+P pan is now view.center_at_cursor (registry action, shipped unbound);
+       * Shift+P now starts a polygon via the registry. */
+      if(rstate == ControlMask) { /* Ctrl+Shift+P: place output port label */
          if(readonly_block()) break;
          place_net_label(3);
       }
@@ -4507,6 +4840,7 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
           move_objects(START,0,0,0);
           move_objects(ROTATE|ROTATELOCAL,0,0,0);
           move_objects(END,0,0,0);
+          log_action("xschem rotate_in_place"); /* self-log Alt-R shortcut (issue 0068) */
         }
       }
       break;
@@ -4523,6 +4857,7 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
           move_objects(START,0,0,0);
           move_objects(ROTATE,0,0,0);
           move_objects(END,0,0,0);
+          log_action("xschem rotate %.16g %.16g", xctx->mx_double_save, xctx->my_double_save);
         }
 
       }
@@ -4584,9 +4919,13 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
 
     case 'S':
       if(rstate == 0) { /* change element order */
+        int had_sel;
         if(xctx->semaphore >= 2) break;
         if(readonly_block()) break;
+        rebuild_selected_array();
+        had_sel = xctx->lastsel;   /* nothing selected -> no-op; don't log a phantom edit */
         change_elem_order(-1);
+        if(had_sel) log_action("xschem change_elem_order -1"); /* self-log Shift-S (issue 0068) */
       }
       else if(rstate == ControlMask) { /* save as schematic */
         if(xctx->semaphore >= 2) break;
@@ -4657,6 +4996,7 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
         xctx->prep_hi_structs=0;
 
         draw();
+        log_action("xschem align"); /* self-log Alt-U align keyboard shortcut (issue 0068) */
       }
       else if(rstate==ControlMask) { /* Unselect floater texts */
         unselect_attached_floaters();
@@ -4714,6 +5054,7 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
           move_objects(ROTATE|ROTATELOCAL,0,0,0);
           move_objects(FLIP|ROTATELOCAL,0,0,0);
           move_objects(END,0,0,0);
+          log_action("xschem flipv_in_place"); /* self-log Alt-V shortcut (issue 0068) */
         }
       }
       break;
@@ -4740,6 +5081,7 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
           move_objects(ROTATE,0,0,0);
           move_objects(FLIP,0,0,0);
           move_objects(END,0,0,0);
+          log_action("xschem flipv %.16g %.16g", xctx->mx_double_save, xctx->my_double_save);
         }
       }
       else if(rstate == ControlMask) { /* toggle spice/vhdl netlist */
@@ -4852,27 +5194,14 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
      * matches them, and there is no case to fall back to). */
 
     case ' ':
-      if(xctx->ui_state & STARTMOVE) {
-        draw_selection(xctx->gctiled,0);
-        xctx->manhattan_lines++;
-        xctx->manhattan_lines %=3;
-        draw_selection(xctx->gc[SELLAYER], 0);
-      } else if(xctx->ui_state & STARTWIRE) { /*  & instead of == 20190409 */
-        new_wire(RUBBER|CLEAR, xctx->mousex_snap, xctx->mousey_snap);
-        xctx->manhattan_lines++;
-        xctx->manhattan_lines %=3;
-        new_wire(RUBBER, xctx->mousex_snap, xctx->mousey_snap);
-      } else if(xctx->ui_state & STARTLINE) {
-        new_line(RUBBER|CLEAR, xctx->mousex_snap, xctx->mousey_snap);
-        xctx->manhattan_lines++;
-        xctx->manhattan_lines %=3;
-        new_line(RUBBER, xctx->mousex_snap, xctx->mousey_snap);
-      } else {
-        if(xctx->semaphore<2) {
-          rebuild_selected_array(); /* sets or clears xctx->ui_state SELECTION flag */
-        }
-        start_pan_logged(mx, my);
-      }
+      /* SPACE's default action is edit.add_pin_stubs (binding table). It is idle_only, so the
+       * dispatch skips it while busy (semaphore>=2) -- and act_add_pin_stubs also declines
+       * (returns 0) during a move/wire/line gesture, with an empty selection, or whenever it
+       * did not stub (nothing stubbable / read-only view). In all those cases SPACE reaches
+       * here and this fallback reproduces the historical SPACE behavior from the SAME extracted
+       * cores: cycle the gesture's manhattan corner, else drag-pan. Also the graceful degrade
+       * if SPACE is un-bound in keybindings.csv. (B6, doc/claude/specs/wire_stub_netlabel.md.) */
+      if(!cycle_manhattan_lines()) start_pan_at(mx, my);
       break;
 
     case '_':                                         /* toggle change line width */
@@ -5118,6 +5447,7 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
     case XK_Insert:
       if(state == ShiftMask) { /* insert sym */
         if(readonly_block()) break;
+        if(symbol_view_block()) break;   /* no instances in a symbol view: refuse before the chooser opens */
         if(tclgetboolvar("new_file_browser")) {
           tcleval("file_chooser");
         } else {
@@ -5127,6 +5457,7 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
       else {
         if(xctx->semaphore >= 2) break;
         if(readonly_block()) break;
+        if(symbol_view_block()) break;   /* no instances in a symbol view: refuse before the chooser opens */
         if(tclgetboolvar("new_file_browser")) {
           tcleval("file_chooser");
         } else {
@@ -5156,6 +5487,7 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
       xctx->push_undo();
       trim_wires();
       draw();
+      log_action("xschem trim_wires"); /* self-log '&' keyboard shortcut (issue 0068) */
       break;
 
     case '\\':
@@ -5227,11 +5559,13 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
         if(xctx->semaphore >= 2) break;
         if(readonly_block()) break;
         break_wires_at_pins(1);
+        log_action("xschem break_wires 1"); /* self-log Ctrl-! shortcut (issue 0068) */
       }
       else {
         if(xctx->semaphore >= 2) break;
         if(readonly_block()) break;
         break_wires_at_pins(0);
+        log_action("xschem break_wires"); /* self-log '!' shortcut (issue 0068) */
       }
       break;
 
@@ -5370,6 +5704,15 @@ static void handle_button_press(int event, int state, int rstate, KeySym key, in
        return;
      }
 
+     /* deselect-one-at-a-time mode (doc/claude/specs/deselect_one_mode.md): a click
+      * deselects the object under the cursor if it is selected and stays in the mode
+      * until ESC. Placed before pin-select / persistent-wire / normal-select so the
+      * mode owns plain Button1 clicks; empty / unselected clicks are no-ops. */
+     if(xctx->ui_state & DESEL_MODE) {
+       deselect_mode_click(mx, my);
+       return;
+     }
+
      /* start another wire or line in persistent mode */
      if(!xctx->readonly && tclgetboolvar("persistent_command") && xctx->last_command) {
        if(xctx->last_command == STARTLINE)  start_line(xctx->mousex_snap, xctx->mousey_snap);
@@ -5442,6 +5785,71 @@ static void handle_button_press(int event, int state, int rstate, KeySym key, in
          default: break;
        } /*end switch */
 
+       /* Pin selection (en_pin_select, doc/claude/specs/pin_selection.md D3/D5): when the
+        * cursor is within the tight radius of an instance pin, pick that pin. Pin
+        * selection is INERT (no edit), so it works even in a READ-ONLY view -- that is
+        * exactly the browse/probe use case. Two paths:
+        *   - read-only: select the pin immediately (NO wire is possible; importantly do
+        *     NOT call start_wire(), whose readonly_block() pops a modal dialog).
+        *   - editable: ARM a wire from the pin and record it; the release handler then
+        *     decides click(select pin) vs drag(draw wire). Runs BEFORE add_wire_from_inst.
+        * Read the GLOBAL Tcl var, not xctx->en_pin_select: the C field is per-context and
+        * gets reset to the (stale) Tcl var by housekeeping_ctx on every window/tab focus
+        * change (close/open/paste), which made the feature flaky. The Tcl global is the
+        * single source of truth (set by the menu, the rc, and the setter). */
+       if(tclgetboolvar("en_pin_select") && !already_selected && intuitive &&
+          !(state & (ShiftMask | ControlMask))) {
+         Selected psel;
+         /* Detect the pin from the RAW cursor position (not the snapped one): a pin
+          * may not sit on the snap grid, and find_closest_pin already applies a
+          * zoom-scaled radius, so the raw cursor is both more accurate and forgiving. */
+         if(find_closest_pin(xctx->mousex, xctx->mousey, &psel)) {
+           if(xctx->readonly) {
+             /* inert select, no wire (and no readonly_block dialog) */
+             unselect_all(1);
+             select_pin((int)psel.n, (int)psel.col, SELECTED, 0);
+             rebuild_selected_array();
+             draw_selection(xctx->gc[SELLAYER], 0);
+             xctx->ui_state |= SELECTION;
+           } else {
+             double pinx, piny;
+             int prev_state = xctx->ui_state;
+             get_inst_pin_coord((int)psel.n, (int)psel.col, &pinx, &piny);
+             xctx->pin_pending   = 1;
+             xctx->pin_pending_n = (int)psel.n;
+             xctx->pin_pending_c = (int)psel.col;
+             xctx->pin_press_x   = mx;   /* screen anchor for click-vs-drag at release */
+             xctx->pin_press_y   = my;
+             unselect_all(1);
+             start_wire(pinx, piny);          /* wire emanates from the pin if dragged */
+             if(prev_state == STARTWIRE) { tcleval("set constr_mv 0"); xctx->constr_mv = 0; }
+           }
+           return;
+         }
+       }
+
+       /* Pin multi-select (pin_selection.md D6): SHIFT+click on a pin ADDS it to the
+        * selection. This is a pure selection gesture -- no unselect_all, no wire arming,
+        * and crucially it is intercepted BEFORE the SHIFT cadence-copy path below so the
+        * underlying instance is not copied. Click-vs-drag is decided at release (like D3)
+        * via pin_pending_add: click -> add the pin; drag -> ignore (pins are inert, so a
+        * SHIFT+drag starting on a pin copies/moves nothing). A SHIFT press that misses
+        * every pin falls through untouched, so SHIFT+drag-copy on objects is preserved.
+        * Read the GLOBAL Tcl var (per-context field is reset by housekeeping_ctx). */
+       if(tclgetboolvar("en_pin_select") && intuitive &&
+          (state & ShiftMask) && !(state & ControlMask)) {
+         Selected psel;
+         if(find_closest_pin(xctx->mousex, xctx->mousey, &psel)) {
+           xctx->pin_pending     = 1;
+           xctx->pin_pending_add = 1;     /* additive: select on click, no wire, no copy */
+           xctx->pin_pending_n   = (int)psel.n;
+           xctx->pin_pending_c   = (int)psel.col;
+           xctx->pin_press_x     = mx;    /* screen anchor for click-vs-drag at release */
+           xctx->pin_press_y     = my;
+           return;                        /* consume the press; release decides */
+         }
+       }
+
        /* Clicking and drag on an instance pin -> drag a new wire */
        if(!xctx->readonly && intuitive && !already_selected) {
          if(add_wire_from_inst(&sel, xctx->mousex_snap, xctx->mousey_snap)) return;
@@ -5467,8 +5875,15 @@ static void handle_button_press(int event, int state, int rstate, KeySym key, in
         *  unselect everything... we do it here */
        if(intuitive && !already_selected && no_shift_no_ctrl )  unselect_all(1);
 
-       /* select the object under the mouse and rebuild the selected array */
-       if(!already_selected) select_object(xctx->mousex, xctx->mousey, SELECTED, 0, &sel);
+       /* select the object under the mouse and rebuild the selected array.
+        * Shift held = augment (unselect_all above was skipped) -> tell the
+        * select_at funnel to log the ` add` marker so replay augments too
+        * (doc/claude/specs/select_at.md). One-shot: reset right after. */
+       if(!already_selected) {
+         select_at_add = (state & ShiftMask) ? 1 : 0;
+         select_object(xctx->mousex, xctx->mousey, SELECTED, 0, &sel);
+         select_at_add = 0;
+       }
        rebuild_selected_array();
        dbg(1, "Button1Press to select objects, lastsel = %d\n", xctx->lastsel);
 
@@ -5576,8 +5991,55 @@ static void handle_button_release(int event, KeySym key, int state, int button, 
      waves_callback(event, mx, my, key, button, aux, state);
      return;
    }
-   xctx->ui_state &= ~DESEL_CLICK;
    dbg(1, "release: shape_point_selected=%d\n", xctx->shape_point_selected);
+
+   /* Pin-selection gesture (pin_selection.md D3): a press on a pin armed a wire from
+    * that pin and recorded the pin. Decide click vs drag now by how far the pointer
+    * travelled from the press anchor (mouse_moved is NOT set while STARTWIRE is
+    * active, so it cannot be used here):
+    *   no drag -> it was a click: abort the armed wire and select the pin.
+    *   drag    -> the user wants a wire: leave STARTWIRE active (wire-drawing mode,
+    *              rubber follows the cursor) and consume the release without placing,
+    *              so a plain click is the ONLY way to select and any movement means
+    *              "draw a wire". */
+   if(xctx->pin_pending) {
+     int pn = xctx->pin_pending_n, pc = xctx->pin_pending_c;
+     int add = xctx->pin_pending_add;
+     int moved = (abs(mx - xctx->pin_press_x) > (int)(tk_scaling * 3) ||
+                  abs(my - xctx->pin_press_y) > (int)(tk_scaling * 3));
+     xctx->pin_pending = 0;
+     xctx->pin_pending_add = 0;
+     if(add) {
+       /* D6 SHIFT+pin: click -> ADD the pin (additive, NO unselect_all, no wire armed);
+        * drag -> ignore (pins are inert; nothing was armed at press, so just return). */
+       if(!moved) {
+         select_pin(pn, pc, SELECTED, 0);
+         rebuild_selected_array();
+         draw_selection(xctx->gc[SELLAYER], 0);
+         xctx->ui_state |= SELECTION;
+       }
+       return;
+     }
+     if(!moved) {
+       if(xctx->ui_state & STARTWIRE) {
+         new_wire(RUBBER | CLEAR, xctx->mousex_snap, xctx->mousey_snap);
+         xctx->ui_state &= ~STARTWIRE;
+         xctx->last_command = 0;
+       }
+       unselect_all(1);
+       select_pin(pn, pc, SELECTED, 0);
+       rebuild_selected_array();
+       draw_selection(xctx->gc[SELLAYER], 0);
+       xctx->ui_state |= SELECTION;
+       return; /* click: pin selected, done */
+     }
+     /* drag: leave STARTWIRE armed and FALL THROUGH to the normal release handling so
+      * the legacy wire-commit still runs -- end_place_move_copy_zoom() at the
+      * STARTWIRE branch below (intuitive && !persistent_command) places the wire on
+      * release; with persistent_command on (or cadence's deselect branch) STARTWIRE
+      * stays active and the wire keeps drawing, as before. */
+   }
+
    /* bring up context menu if no pending operation */
    if(state == Button3Mask && xctx->semaphore <2) {
      if(!end_place_move_copy_zoom()) {

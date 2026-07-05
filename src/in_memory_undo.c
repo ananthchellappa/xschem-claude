@@ -347,6 +347,9 @@ void mem_serialize_slot(Undo_slot *s)
     s->iptr[i].instname = NULL;
     s->iptr[i].lab = NULL;
     s->iptr[i].node = NULL;
+    s->iptr[i].pin_sel = NULL;    /* transient pin selection is not part of the undo
+                                   * snapshot; never alias the live buffer (pin_selection.md) */
+    s->iptr[i].pin_sel_size = 0;
     my_strdup2(_ALLOC_ID_, &s->iptr[i].lab, xctx->inst[i].lab);
     my_strdup2(_ALLOC_ID_, &s->iptr[i].instname, xctx->inst[i].instname);
     my_strdup2(_ALLOC_ID_, &s->iptr[i].prop_ptr, xctx->inst[i].prop_ptr);
@@ -485,6 +488,9 @@ void mem_restore_slot(Undo_slot *s, int set_modify_status)
     xctx->inst[i].name = NULL;
     xctx->inst[i].instname = NULL;
     xctx->inst[i].lab = NULL;
+    xctx->inst[i].pin_sel = NULL;   /* restored instance starts with no pin selection;
+                                     * never alias the snapshot buffer (pin_selection.md) */
+    xctx->inst[i].pin_sel_size = 0;
     my_strdup2(_ALLOC_ID_, &xctx->inst[i].prop_ptr, s->iptr[i].prop_ptr);
     my_strdup2(_ALLOC_ID_, &xctx->inst[i].name, s->iptr[i].name);
     my_strdup2(_ALLOC_ID_, &xctx->inst[i].instname, s->iptr[i].instname);

@@ -530,9 +530,41 @@ void delete(int to_push_undo)
   #endif
 
   dbg(3, "delete(): start\n");
+  /* read-only backstop (issue 0041): refuse a genuine user delete below the entry
+   * guards. Gated on to_push_undo -- internal/undo-free cleanups (delete(0), e.g. the
+   * transient pin-name preview) are not user edits and must still run. */
+  if(to_push_undo && begin_edit("delete")) return;
   j = 0;
   rebuild_selected_array();
+  /* pins are inert (pin_selection.md D1): a pins-only selection (only INST_PIN
+   * entries) has nothing to delete -- bail out before push_undo so a no-op delete
+   * does not leave a spurious undo slot. */
+  {
+    int has_deletable = 0;
+    for(i = 0; i < xctx->lastsel; ++i)
+      if(xctx->sel_array[i].type != INST_PIN) { has_deletable = 1; break; }
+    if(!has_deletable) return;
+  }
   if(to_push_undo && xctx->lastsel) xctx->push_undo();
+  /* Pin name views are owned by their pin (Option B): a view is deleted only WITH its
+   * pin, never on its own. Reconcile selection BEFORE rects are removed below:
+   *  (a) cascade: select the view of every pin being deleted, so it goes too;
+   *  (b) protect: deselect any lone-selected view whose pin is NOT being deleted. */
+  {
+    int t, r;
+    for(r = 0; r < xctx->rects[PINLAYER]; ++r) {
+      if(xctx->rect[PINLAYER][r].sel == SELECTED) {
+        int vt = pin_name_view_of(xctx->rect[PINLAYER][r].id);
+        if(vt >= 0) xctx->text[vt].sel = SELECTED;
+      }
+    }
+    for(t = 0; t < xctx->texts; ++t) {
+      if(xctx->text[t].sel == SELECTED && xctx->text[t].owner_pin_id) {
+        int pr = pin_idx_by_id(xctx->text[t].owner_pin_id);
+        if(pr < 0 || xctx->rect[PINLAYER][pr].sel != SELECTED) xctx->text[t].sel = 0;
+      }
+    }
+  }
   del_rect_line_arc_poly();
 
   for(i=0;i<xctx->texts; ++i)
@@ -763,6 +795,28 @@ void unselect_all(int dr)
  int customfont;
  #endif
   set_first_sel(0, -1, 0);
+  /* Transient pin selections (pin_selection.md) are independent of ui_state/lastsel
+   * and can outlive them — delete() resets those while leaving inert pins selected.
+   * Clear them here, OUTSIDE the SELECTION/lastsel guard, so a later unselect_all
+   * always cleans up. Gated by pin_sel_active so an idle call costs one bool test. */
+  if(xctx->pin_sel_active) {
+    for(i = 0; i < xctx->instances; ++i) {
+      if(!xctx->inst[i].pin_sel) continue;
+      if(dr && xctx->inst[i].ptr >= 0) {
+        int p, rects = (xctx->inst[i].ptr + xctx->sym)->rects[PINLAYER];
+        int lim = rects < xctx->inst[i].pin_sel_size ? rects : xctx->inst[i].pin_sel_size;
+        double px, py, h = PIN_SEL_HANDLE_H;
+        for(p = 0; p < lim; ++p) if(xctx->inst[i].pin_sel[p]) {
+          get_inst_pin_coord(i, p, &px, &py);
+          drawtemprect(xctx->gctiled, ADD, px - h, py - h, px + h, py + h);
+        }
+      }
+      my_free(_ALLOC_ID_, &xctx->inst[i].pin_sel);
+      xctx->inst[i].pin_sel_size = 0;
+    }
+    if(dr) drawtemprect(xctx->gctiled, END, 0.0, 0.0, 0.0, 0.0); /* flush pin-handle erases */
+    xctx->pin_sel_active = 0;
+  }
   if((xctx->ui_state & SELECTION) || xctx->lastsel) {
     dbg(1, "unselect_all(%d): start\n", dr);
     xctx->ui_state = 0;
@@ -1047,6 +1101,49 @@ void select_element(int i,unsigned short select_mode, int fast, int override_loc
   xctx->need_reb_sel_arr=1;
 }
 
+/* Select (select_mode!=0) or deselect (0) a single pin j of instance i.
+ * doc/claude/specs/pin_selection.md. Pin selection is transient and INERT: it lives
+ * only in inst.pin_sel[] (lazily allocated to the current pin count), never in
+ * inst.sel, so no move/copy/delete/stretch op ever acts on it. The visible cue is a
+ * small handle centered on the pin point in the SELLAYER GC, redrawn from
+ * sel_array by draw_selection() on every redraw. fast bit 2 => skip the draw/undraw
+ * (the caller will repaint). */
+void select_pin(int i, int j, unsigned short select_mode, int fast)
+{
+  int rects;
+  double px, py, h;
+  if(i < 0 || i >= xctx->instances || xctx->inst[i].ptr < 0) return;
+  rects = (xctx->inst[i].ptr + xctx->sym)->rects[PINLAYER];
+  if(j < 0 || j >= rects) return;
+  /* (re)allocate pin_sel to the current pin count. A stale-size array (the symbol's
+   * pin count changed under a live selection) is discarded and rebuilt, so we never
+   * index past the allocation. */
+  if(xctx->inst[i].pin_sel && xctx->inst[i].pin_sel_size != rects) {
+    my_free(_ALLOC_ID_, &xctx->inst[i].pin_sel);
+    xctx->inst[i].pin_sel_size = 0;
+  }
+  if(!xctx->inst[i].pin_sel) {
+    xctx->inst[i].pin_sel = my_calloc(_ALLOC_ID_, rects, sizeof(unsigned char));
+    xctx->inst[i].pin_sel_size = rects;
+  }
+  h = PIN_SEL_HANDLE_H;
+  get_inst_pin_coord(i, j, &px, &py);
+  if(select_mode) {
+    xctx->inst[i].pin_sel[j] = 1;
+    xctx->pin_sel_active = 1; /* hint for unselect_all() (see its top-of-function note) */
+    if(!(fast & 2)) { /* box + cross in the SELECTION colour (D4): NOT the pin's own
+                       * red PINLAYER colour, which would be invisible on the pin */
+      drawtemprect(xctx->gc[SELLAYER], NOW, px - h, py - h, px + h, py + h);
+      drawtempline(xctx->gc[SELLAYER], NOW, px - h, py - h, px + h, py + h);
+      drawtempline(xctx->gc[SELLAYER], NOW, px - h, py + h, px + h, py - h);
+    }
+  } else {
+    xctx->inst[i].pin_sel[j] = 0;
+    if(!(fast & 2)) drawtemprect(xctx->gctiled, NOW, px - h, py - h, px + h, py + h);
+  }
+  xctx->need_reb_sel_arr = 1;
+}
+
 /* fast == 1: do not update status line
  * fast == 2: do not draw / undraw selected elements
  * fast == 3: 1 + 2
@@ -1308,6 +1405,21 @@ Selected select_object(double mx,double my, unsigned short select_mode,
    if(!select_mode) {
      rebuild_selected_array();
      draw_selection(xctx->gc[SELLAYER], 0);
+   }
+
+   /* action-log (issue 0005, doc/claude/specs/select_at.md): a coordinate hit-
+    * select IS the replayable form of a mouse click. Log it once here at the
+    * selection funnel -- every interactive click-select (plain click at
+    * callback.c:5868, verb-noun move/copy pickup, launcher) reaches this point.
+    * select_object() is only ever called with a click coordinate (mx,my) --
+    * programmatic selects go through select_element/select_wire/... directly --
+    * so the log is gated only on `select_mode == SELECTED` (excludes the deselect
+    * calls) and `sel.type` (something was hit); selptr callers ARE the plain-click
+    * select, so they are not excluded. The `xschem select_at` command sets
+    * select_at_suppress_log and logs its own line (so it can carry the `add` flag
+    * and record exactly once). */
+   if(!select_at_suppress_log && select_mode == SELECTED && sel.type) {
+     log_action("xschem select_at %.16g %.16g%s", mx, my, select_at_add ? " add" : "");
    }
 
    return sel;

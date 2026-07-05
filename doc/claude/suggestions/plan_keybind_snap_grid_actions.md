@@ -174,7 +174,7 @@ line → the rc-loaded dump no longer has the grid row → KB2-via-rc RED.
 ## Phase 7 — docs
 
 - Flip `doc/claude/specs/keybind_snap_grid_actions.md` Status → **implemented**.
-- Add a short "Update (implemented): …" note to `doc/claude/code_analysis/FAQ.md` Q17, pointing at the
+- Add a short "Update (implemented): …" note to `doc/claude/FAQ.md` Q17, pointing at the
   spec + the new action ids; correct Q17's "Tier B default binding" framing to "no default;
   user-bound in cadence_style_rc".
 - Memory: update/extend the `action-registry` memory with the new action ids and the

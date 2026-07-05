@@ -140,6 +140,23 @@ update idletasks
 motion_to 200 100                        ;# a motion, WITHOUT a preceding Enter
 check "HV9b motion re-establishes hover after leave" [expr {[hov_type] eq "wire"}] "(=> [hov_type])"
 
+# --- HV10 — the verb-noun net-(un)highlight PICK modes must NOT kill the hover cue
+# Pressing 9 (or 8) with nothing selected enters interactive "click a net/label" mode:
+# ui_state |= NET_HILIGHT (or NET_UNHILIGHT). Those are RESTING pick states (like SELECTION),
+# during which the hover outline is exactly what shows the user which net the click will hit.
+# Before the fix the gate masked only SELECTION, so the pick modes suppressed hover entirely
+# (user report: "hover doesn't work after pressing 9; ESC restores it").
+xschem unselect_all
+set ::hover_highlight 1
+xschem hilight_net_interactive            ;# nothing selected -> NET_HILIGHT pick mode (key 9)
+motion_to 200 100
+check "HV10a hover works during interactive net-highlight (key 9)" \
+  [expr {[hov_type] eq "wire"}] "(=> [hov_type], ui_state=[xschem get ui_state])"
+xschem unhilight_net_interactive          ;# nothing selected -> NET_UNHILIGHT pick mode (key 8)
+motion_to 200 100
+check "HV10b hover works during interactive net-unhighlight (key 8)" \
+  [expr {[hov_type] eq "wire"}] "(=> [hov_type], ui_state=[xschem get ui_state])"
+
 if {$fail == 0} { puts "RESULT: ALL PASS" } else { puts "RESULT: $fail FAILED" }
 flush stdout
 exit [expr {$fail == 0 ? 0 : 1}]

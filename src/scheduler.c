@@ -163,6 +163,41 @@ static void xschem_cmd_help(int argc, const char **argv)
 /* can be used to reach C functions from the Tk shell. */
 static char *not_avail = "Not available in this context. If using --tcl consider using --command";
 
+/* Refuse a mutating `xschem` subcommand on a read-only buffer (issue 0041). The
+ * interactive keyboard/menu paths are guarded by readonly_block() (callback.c); this
+ * closes the Tcl command surface -- scripts, the persistent/TCP command server and
+ * action-log replay -- so a file-protected schematic cannot be mutated by any route.
+ * Returns 1 (with the interp error result set + a CIW note) when the edit must be
+ * refused, 0 when it may proceed. Call at an edit subcommand's top, AFTER its !xctx
+ * check (it dereferences xctx->readonly). Mirrors the existing `xschem save` guard. */
+static int scheduler_readonly_reject(Tcl_Interp *interp, const char *subcmd)
+{
+  if(!xctx || !xctx->readonly) return 0;
+  Tcl_ResetResult(interp);
+  Tcl_AppendResult(interp, "xschem ", subcmd, ": schematic is read-only "
+                   "(use Edit > Make Editable to enable editing)", NULL);
+  if(has_x) tclvareval("if {[info procs ciw_echo] ne {}} {ciw_echo {read-only: ",
+                       subcmd, " ignored}}", NULL);
+  return 1;
+}
+
+/* Shared setup for the symbol-editor pin-scope commands (apply_pin_prop /
+ * pin_scope_prop_uniform): rebuild the selection, find the primary pin (sel_array[0] iff it
+ * is a PINLAYER rect, else -1), and resolve <scope> into a freshly my_malloc'd targets[]
+ * (caller frees). Returns the target count; *primary_out and *targets_out are always written.
+ * Keeps the two commands' resolver in lockstep so the greyed set == the applied set. */
+static int pin_scope_resolve(const char *scope, int *primary_out, int **targets_out)
+{
+  int primary = -1, *targets;
+  rebuild_selected_array();
+  if(xctx->lastsel > 0 && xctx->sel_array[0].type == xRECT &&
+     xctx->sel_array[0].col == PINLAYER) primary = xctx->sel_array[0].n;
+  targets = my_malloc(_ALLOC_ID_, (xctx->rects[PINLAYER] + 1) * sizeof(int));
+  *primary_out = primary;
+  *targets_out = targets;
+  return pin_scope_targets(primary, scope, targets);
+}
+
 /* `xschem a...` commands, moved verbatim from the xschem() dispatcher
  * (dispatcher decomposition batch 1). Sets *cmd_found = 0 when argv[1]
  * matches no command in this group; early returns propagate unchanged. */
@@ -175,24 +210,113 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
       abort_operation();
     }
 
-    /* apply_properties scope displayed_id new_prop old_prop
+    /* activate_window <xid>
+     *   Ask the WM to raise to the front + focus the top-level X window 'xid' (a hex id
+     *   from Tcl `winfo id`) via EWMH _NET_ACTIVE_WINDOW. Raises WITHOUT re-mapping or
+     *   moving the window, so there is no position drift (issue 0054). A no-op without X
+     *   or on a WM that does not honor the hint. */
+    else if(!strcmp(argv[1], "activate_window"))
+    {
+      if(has_x && argc > 2) {
+        net_active_window((Window) strtoul(argv[2], NULL, 0));
+      }
+    }
+
+    /* apply_properties scope displayed_id new_prop old_prop [keep_name]
      *   Mid-session apply for the slick property form (P2 Apply / OK). Fans the
      *   change set (new_prop vs old_prop, changed-fields-only) to the instances
      *   named by 'scope' (current|selected|all) relative to the displayed
      *   instance, given by its session-stable id (see `xschem instance_id`).
-     *   Pushes one undo; returns 1 if anything changed, else 0. */
+     *   keep_name (optional, default 0): preserve the instance name across a source
+     *   change instead of re-prefixing it (issue 0058) -- passed in the logged command
+     *   so replay is faithful. Pushes one undo; returns 1 if anything changed, 0 for a
+     *   legit no-op, -1 if the displayed instance no longer exists (issue 0042). */
     else if(!strcmp(argv[1], "apply_properties"))
     {
-      int modified;
+      int modified, keep_name = 0;
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
       if(argc < 6) {
         Tcl_SetResult(interp,
-          "xschem apply_properties needs: scope displayed_id new_prop old_prop", TCL_STATIC);
+          "xschem apply_properties needs: scope displayed_id new_prop old_prop [keep_name]", TCL_STATIC);
         return TCL_ERROR;
       }
+      if(argc > 6) keep_name = atoi(argv[6]);
       modified = apply_instance_properties(argv[2],
-                   (unsigned int)strtoul(argv[3], NULL, 10), argv[4], argv[5]);
-      Tcl_SetResult(interp, modified ? "1" : "0", TCL_STATIC);
+                   (unsigned int)strtoul(argv[3], NULL, 10), argv[4], argv[5], keep_name);
+      /* -1 = target vanished (issue 0042); the Tcl form surfaces it instead of closing. */
+      Tcl_SetResult(interp, modified < 0 ? "-1" : (modified ? "1" : "0"), TCL_STATIC);
+    }
+
+    /* apply_pin_prop [<scope>] <prop>
+     *   Apply <prop> to the symbol pins (PINLAYER rects) named by <scope>, mirroring the pin
+     *   branch of edit_rect_property but WITHOUT a dialog round-trip, so the pin/pinname
+     *   property forms can offer a live "Apply" that updates the canvas while staying open
+     *   (cadence_pin_name_text.md; scope = symbol_editor_apply_scope.md).
+     *   <scope> = current (primary pin only) | selected (all selected pins) | all (every pin
+     *   of the symbol), resolved by the shared pin_scope_targets(). If <scope> is omitted the
+     *   default is "selected" (back-compat with the pre-scope command and any replay logs).
+     *   Changed-fields-only is UNCONDITIONAL when a primary pin exists: the primary pin's prop
+     *   (sel_array[0]) is the diff baseline, so fanned pins keep their own unchanged tokens
+     *   (notably their distinct name=). No-op (no undo slot) when nothing would change; pushes
+     *   one undo; returns 1/0. */
+    else if(!strcmp(argv[1], "apply_pin_prop"))
+    {
+      int i, n, change = 0, primary = -1, ntargets;
+      int *targets;
+      const char *scope, *newprop;
+      char *base = NULL;          /* primary pin's prop: the changed-fields baseline */
+      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(argc < 3) {
+        Tcl_SetResult(interp, "xschem apply_pin_prop needs: [scope] new_prop", TCL_STATIC);
+        return TCL_ERROR;
+      }
+      if(argc >= 4) { scope = argv[2]; newprop = argv[3]; }   /* apply_pin_prop <scope> <prop> */
+      else          { scope = "selected"; newprop = argv[2]; } /* apply_pin_prop <prop> (back-compat) */
+      ntargets = pin_scope_resolve(scope, &primary, &targets);
+      if(primary >= 0) my_strdup(_ALLOC_ID_, &base, xctx->rect[PINLAYER][primary].prop_ptr);
+      /* No pin primary (sel_array[0] is not a pin) but a scope like "all" still resolves
+       * targets: use the FIRST target as the changed-fields baseline so a fan can NEVER
+       * degenerate into a whole-prop overwrite that mass-renames every pin to the same
+       * string (the base==NULL else branch below). */
+      if(!base && ntargets > 0) my_strdup(_ALLOC_ID_, &base, xctx->rect[PINLAYER][targets[0]].prop_ptr);
+      /* guard pass: would applying change any target pin? avoid an empty undo slot */
+      for(i = 0; i < ntargets && !change; i++) {
+        char *cand = NULL;
+        n = targets[i];
+        my_strdup(_ALLOC_ID_, &cand, xctx->rect[PINLAYER][n].prop_ptr);
+        if(base) {
+          if(set_different_token(&cand, newprop, base)) change = 1;
+        } else {
+          my_strdup(_ALLOC_ID_, &cand, newprop);
+          if(!cand || !xctx->rect[PINLAYER][n].prop_ptr || strcmp(cand, xctx->rect[PINLAYER][n].prop_ptr)) change = 1;
+        }
+        my_free(_ALLOC_ID_, &cand);
+      }
+      if(!ntargets || !change) {
+        if(base) my_free(_ALLOC_ID_, &base);
+        my_free(_ALLOC_ID_, &targets);
+        Tcl_SetResult(interp, "0", TCL_STATIC);
+        return TCL_OK;
+      }
+      xctx->push_undo();
+      for(i = 0; i < ntargets; i++) {
+        char olddir[40];
+        n = targets[i];
+        my_snprintf(olddir, S(olddir), "%s", get_tok_value(xctx->rect[PINLAYER][n].prop_ptr, "dir", 0));
+        if(base) {
+          set_different_token(&xctx->rect[PINLAYER][n].prop_ptr, newprop, base);
+        } else {
+          my_strdup(_ALLOC_ID_, &xctx->rect[PINLAYER][n].prop_ptr, newprop);
+        }
+        set_rect_flags(&xctx->rect[PINLAYER][n]);
+        if(strcmp(olddir, get_tok_value(xctx->rect[PINLAYER][n].prop_ptr, "dir", 0))) pin_reorient(n);
+        pin_view_apply(n);   /* create/delete the name view per show_pinname, then sync it */
+      }
+      if(base) my_free(_ALLOC_ID_, &base);
+      my_free(_ALLOC_ID_, &targets);
+      set_modify(1);
+      draw();               /* a pin's name view is a separate object -> full redraw */
+      Tcl_SetResult(interp, "1", TCL_STATIC);
     }
 
     /* add_symbol_pin [x y name dir [draw]]
@@ -210,24 +334,22 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
       const char *name = NULL;
       const char *dir = NULL;
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
-      xctx->push_undo();
+      if(scheduler_readonly_reject(interp, "add_symbol_pin")) return TCL_ERROR;
       if(argc > 6) draw = atoi(argv[6]);
       if(argc > 5) {
-        char *prop = NULL;
         int flip = 0;
+        xctx->push_undo();
         x = atof(argv[2]);
         y = atof(argv[3]);
         name = argv[4];
         dir = argv[5];
         if(!strcmp(dir, "inout") || !strcmp(dir, "out") ) flip = 1;
         if(!strcmp(dir, "inout")) linecol = 7;
-        my_mstrcat(_ALLOC_ID_, &prop, "name=", name, " dir=", dir, NULL);
-        storeobject(-1, x - 2.5, y - 2.5, x + 2.5, y + 2.5, xRECT, PINLAYER, 0, prop);
+        /* pin rect + owned name view (Option B); replaces the old rect + standalone T */
+        create_pin(x, y, name, dir, 0);
         if(flip) {
-          create_text(draw, x - 25, y - 5, 0, 1, name, NULL, 0.2, 0.2);
           storeobject(-1, x - 20, y, x, y, LINE, linecol, 0, NULL);
         } else {
-          create_text(draw, x + 25, y - 5, 0, 0, name, NULL, 0.2, 0.2);
           storeobject(-1, x, y, x + 20, y, LINE, linecol, 0, NULL);
         }
 
@@ -242,14 +364,48 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
           }
           xctx->draw_window = save;
         }
-        my_free(_ALLOC_ID_, &prop);
-      } else {
+      } else if(argc == 3 && !strcmp(argv[2], "-place")) {
+        /* Interactive, MODELESS placement driven by the Add-Pin dialog (addpin:: in
+         * xschem.tcl): the dialog re-issues this command on every Name/Direction change so
+         * the cursor preview tracks what the user typed. To keep undo clean across those
+         * per-keystroke re-arms (cadence_pin_name_text.md item #3): push ONE baseline at the
+         * first arm of a gesture (xctx->sympin_preview marks it active); each subsequent
+         * re-arm drops the previous, undropped preview pin with NO undo, so the single
+         * baseline is exactly what a later undo rolls back to. The drop (move_objects END,
+         * START_SYMPIN -> no push) keeps that baseline; abort_operation removes an undropped
+         * preview undo-free. The pin rect + its owned name view are both selected so they
+         * translate together with the cursor. */
+        const char *nm = tclgetvar("pin_new_name");
+        const char *dr = tclgetvar("pin_new_dir");
+        if(!nm || !nm[0]) nm = "XXX";
+        if(!dr || !dr[0]) dr = "inout";
+        /* A live preview ALWAYS has START_SYMPIN set; require it so a STALE sympin_preview
+         * (the modeless form stayed open while a file load / clear / unselect reset ui_state
+         * out from under it) is not mistaken for an armed preview -> we must still push a
+         * fresh baseline, else the placed pin would have no undo entry. */
+        if(xctx->sympin_preview && (xctx->ui_state & START_SYMPIN)) {
+          /* re-arm: discard the previous preview pin WITHOUT pushing undo */
+          if(xctx->ui_state & STARTMOVE) {
+            int save = xctx->modified;
+            move_objects(ABORT,0,0,0);
+            delete(0 /* to_push_undo: no, keep the single baseline */);
+            set_modify(save);
+          }
+          xctx->ui_state &= ~START_SYMPIN;
+        } else {
+          xctx->push_undo();        /* one undo baseline (no preview pin) per gesture */
+          xctx->sympin_preview = 1;
+        }
         unselect_all(1);
-        storeobject(-1, x - 2.5, y - 2.5, x + 2.5, y + 2.5, xRECT, PINLAYER, SELECTED, "name=XXX\ndir=inout");
+        create_pin(x, y, nm, dr, SELECTED);
         xctx->need_reb_sel_arr=1;
         rebuild_selected_array();
         move_objects(START,0,0,0);
         xctx->ui_state |= START_SYMPIN;
+      } else {
+        /* no args: open the Add-pin dialog (Name + Direction); its Place button
+         * re-invokes this command as `add_symbol_pin -place`. */
+        tcleval("addpin::open");
       }
       Tcl_ResetResult(interp);
     }
@@ -259,6 +415,7 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
     else if(!strcmp(argv[1], "add_graph"))
     {
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(scheduler_readonly_reject(interp, "add_graph")) return TCL_ERROR;
       unselect_all(1);
       xctx->graph_lastsel = xctx->rects[GRIDLAYER];
       storeobject(-1, xctx->mousex_snap-400, xctx->mousey_snap-200, xctx->mousex_snap+400, xctx->mousey_snap+200,
@@ -298,6 +455,7 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
     {
       char *f = NULL;
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(scheduler_readonly_reject(interp, "add_image")) return TCL_ERROR;
       unselect_all(1);
       tcleval("tk_getOpenFile -filetypes {{{Images} {.jpg .jpeg .png .svg}} {{All files} *} }");
 
@@ -324,11 +482,37 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
       Tcl_ResetResult(interp);
     }
 
+    /* add_pin_stubs [-prefix <s>] [-suffix <s>] [-inst-prefix]
+     *   For the current selection (individual pins, else whole instances' unconnected pins),
+     *   draw a wire stub out of each pin + a lab_pin net-label at the far end. The net name is
+     *   [instname_ if -inst-prefix][-prefix]<pinname>[-suffix]. Returns the number of stubs added.
+     *   One undo. B5, doc/claude/specs/wire_stub_netlabel.md §4. */
+    else if(!strcmp(argv[1], "add_pin_stubs"))
+    {
+      const char *prefix = "", *suffix = "";
+      int inst_prefix = 0, i, added;
+      char b[32];
+      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      for(i = 2; i < argc; ++i) {
+        if(!strcmp(argv[i], "-prefix") && i + 1 < argc) prefix = argv[++i];
+        else if(!strcmp(argv[i], "-suffix") && i + 1 < argc) suffix = argv[++i];
+        else if(!strcmp(argv[i], "-inst-prefix") || !strcmp(argv[i], "-inst_prefix")) inst_prefix = 1;
+      }
+      added = add_pin_stubs(prefix, suffix, inst_prefix);
+      my_snprintf(b, S(b), "%d", added);
+      /* self-log at core (0061): the Symbol menu item + script. Gate on added>0 --
+       * add_pin_stubs self-declines (read-only / nothing to stub) returning 0, so a
+       * no-op leaves no line. The SPACE key logs via its own registered action. */
+      if(added > 0) log_action_argv(argc, (const char *const *)argv);
+      Tcl_SetResult(interp, b, TCL_VOLATILE);
+    }
+
     /* align
      *   Align currently selected objects to current snap setting */
     else if(!strcmp(argv[1], "align"))
     {
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(scheduler_readonly_reject(interp, "align")) return TCL_ERROR;
       xctx->push_undo();
       round_schematic_to_grid(tclgetdoublevar("cadsnap"));
       if(tclgetboolvar("autotrim_wires")) trim_wires();
@@ -338,6 +522,8 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
       xctx->prep_net_structs=0;
       xctx->prep_hi_structs=0;
       draw();
+      log_action("xschem align"); /* self-log at core: Tools menu + toolbar (Alt-U key is inline) */
+      Tcl_ResetResult(interp); /* don't leak a sub-call's stale interp result as align's return */
     }
 
     /* annotate_op [raw_file] [level] [sim_type]
@@ -448,6 +634,7 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
     {
       const char *prop = NULL;
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(scheduler_readonly_reject(interp, "arc")) return TCL_ERROR;
       if(argc > 8) {
         prop = argv[8];
       }
@@ -484,6 +671,9 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
 
       if(argc > 2) interactive = atoi(argv[2]);
       attach_labels_to_inst(interactive);
+      log_action_argv(argc, (const char *const *)argv); /* self-log at core (0061):
+        Symbol menu + script. The Shift+H key runs the interactive dialog variant via
+        its registered action (csv-nolog), a separate non-equivalent path. */
       Tcl_ResetResult(interp);
     }
     else { *cmd_found = 0;}
@@ -522,8 +712,15 @@ static int xschem_cmds_b(Tcl_Interp *interp, int argc, const char *argv[], int *
     {
       int remove = 0;
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(scheduler_readonly_reject(interp, "break_wires")) return TCL_ERROR;
       if(argc > 2) remove = atoi(argv[2]);
       break_wires_at_pins(remove);
+      /* self-log at core: Tools menu + toolbar path (the '!'/Ctrl-'!' keys are handled
+       * inline in callback.c and log nothing -- issue 0068). break_wires_at_pins()
+       * reads `remove` as a boolean (!remove / if(remove)), so canonicalize to bare vs
+       * "1" -- the only two forms the UI emits -- for a faithful, deterministic replay. */
+      if(remove) log_action("xschem break_wires 1");
+      else       log_action("xschem break_wires");
       Tcl_ResetResult(interp);
     }
 
@@ -585,6 +782,14 @@ static int xschem_cmds_c(Tcl_Interp *interp, int argc, const char *argv[], int *
     if(!strcmp(argv[1], "callback") )
     {
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      /* issue 0076: guard argc BEFORE reading argv[2..9]. Without this `xschem callback`
+       * (argc<10) passes argv[2]==NULL as win_path into callback() -> NULL deref -> SIGSEGV
+       * -> emergency-save -> editor dies (same class as select_inside / issue 0075). */
+      if(argc < 10) {
+        Tcl_SetResult(interp,
+          "xschem callback: usage: callback win_path event mx my key button aux state", TCL_STATIC);
+        return TCL_ERROR;
+      }
       callback( argv[2], atoi(argv[3]), atoi(argv[4]), atoi(argv[5]), (KeySym)atol(argv[6]),
                atoi(argv[7]), atoi(argv[8]), atoi(argv[9]) );
       dbg(2, "callback %s %s %s %s %s %s %s %s\n",
@@ -657,10 +862,19 @@ static int xschem_cmds_c(Tcl_Interp *interp, int argc, const char *argv[], int *
     else if(!strcmp(argv[1], "change_elem_order"))
     {
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(scheduler_readonly_reject(interp, "change_elem_order")) return TCL_ERROR;
       if(argc > 2) {
         int n = atoi(argv[2]);
         if(n >= 0 || n == -1) {
+          int had_sel;
+          rebuild_selected_array();
+          had_sel = xctx->lastsel;   /* selection BEFORE the op (which may clear it) */
           change_elem_order(n);
+          /* self-log at core: covers the Prop menu + scripted form. The Shift+S key
+           * is handled inline in callback.c (case 'S') and logs there too (0068).
+           * change_elem_order reorders the SELECTED objects; with nothing selected
+           * it is a no-op, so don't record a phantom edit (matches set rectcolor). */
+          if(had_sel) log_action("xschem change_elem_order %d", n);
         }
       }
     }
@@ -738,7 +952,34 @@ static int xschem_cmds_c(Tcl_Interp *interp, int argc, const char *argv[], int *
       } else {
         check_unique_names(0);
       }
+      /* self-log at core (0061): Highlight menu + script. The mode arg (0 highlight /
+       * 1 rename) is deterministic, so both forms replay faithfully. The `#`/Ctrl+#
+       * keys are handled inline in callback.c (0068), a disjoint path. */
+      log_action("xschem check_unique_names %s", (argc > 2 && !strcmp(argv[2], "1")) ? "1" : "0");
       Tcl_ResetResult(interp);
+    }
+
+    /* check_pin_names
+     *   P7 ERC for Cadence pin-owned name text (doc/claude/specs/cadence_pin_name_text.md
+     *   §4.9). Scans the PINLAYER pins of the current drawing (symbol-edit) for duplicate
+     *   pin names, owned-but-nameless pins, and un-adopted legacy name labels. Non-blocking,
+     *   display/report only (never edits objects or netlists). Human warnings go to the ERC
+     *   info window; the RETURN value is a machine-readable Tcl list of "{type idx {name}}"
+     *   issue elements (type = dup|nameless|legacy), empty when the pins are clean. */
+    else if(!strcmp(argv[1], "check_pin_names"))
+    {
+      char *res = NULL;
+      int nissues;
+      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      statusmsg("", 2);                 /* clear the ERC info window for a fresh check */
+      statusmsg("Pin name check:", 3);
+      nissues = check_pin_names(&res);
+      if(nissues == 0) statusmsg("  no issues found", 2);
+      /* surface in the GUI info window on issues (headless: logs the text) */
+      tcleval(nissues ? "if {[info procs show_infotext] ne {}} {show_infotext 1}"
+                      : "if {[info procs show_infotext] ne {}} {show_infotext 0}");
+      Tcl_SetResult(interp, res ? res : "", TCL_VOLATILE);
+      my_free(_ALLOC_ID_, &res);
     }
     /* closest_object
      *   returns index of closest object to mouse coordinates
@@ -911,6 +1152,7 @@ static int xschem_cmds_c(Tcl_Interp *interp, int argc, const char *argv[], int *
       int kissing= 0;
       int stretch = 0;
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(scheduler_readonly_reject(interp, "copy_objects")) return TCL_ERROR;
       if(argc > 2) {
         int i;
         for(i = 2; i < argc; i++) {
@@ -926,6 +1168,9 @@ static int xschem_cmds_c(Tcl_Interp *interp, int argc, const char *argv[], int *
         xctx->deltay = atof(argv[3]);
         copy_objects(END);
       } else {
+        /* The MENU "Duplicate objects" arms a DEFERRED copy: the mouse is over the menu, not
+         * the canvas, so the next canvas click starts it (check_menu_start_commands). The C
+         * KEY is made immediate (Cadence noun-verb) separately in callback.c case 'c'. */
         xctx->ui_state |= MENUSTART;
         xctx->ui_state2 = MENUSTARTCOPY;
       }
@@ -987,9 +1232,11 @@ static int xschem_cmds_c(Tcl_Interp *interp, int argc, const char *argv[], int *
     else if(!strcmp(argv[1], "cut"))
     {
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(scheduler_readonly_reject(interp, "cut")) return TCL_ERROR;
       rebuild_selected_array();
       save_selection(2);
       delete(1/*to_push_undo*/);
+      log_action("xschem cut"); /* self-log at core: covers menu/toolbar/key/ctx-menu */
       Tcl_ResetResult(interp);
     }
     else { *cmd_found = 0;}
@@ -1014,12 +1261,31 @@ static int xschem_cmds_d(Tcl_Interp *interp, int argc, const char *argv[], int *
       Tcl_ResetResult(interp);
     }
 
+    /* decr_hilight_color
+     *   Step the net-highlight style cursor back one (wrapping modulo the number of
+     *   styles) and return the resulting style index. Increment happens automatically
+     *   per highlight; this decrement (ALT-minus) lets a user re-apply a recently used
+     *   style to the next highlight. See doc/claude/specs/hilight_style_decrement.md */
+    else if(!strcmp(argv[1], "decr_hilight_color"))
+    {
+      char res[30];
+      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(!xctx->net_hilight_style || xctx->n_net_hilight_styles <= 0) build_net_hilight_styles();
+      decr_hilight_color();
+      my_snprintf(res, S(res), "%d", xctx->hilight_color);
+      Tcl_SetResult(interp, res, TCL_VOLATILE);
+    }
+
     /* delete
      *   Delete selection */
     else if(!strcmp(argv[1], "delete"))
     {
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
-      if(argc==2) delete(1/*to_push_undo*/);
+      if(scheduler_readonly_reject(interp, "delete")) return TCL_ERROR;
+      if(argc==2) {
+        delete(1/*to_push_undo*/);
+        log_action("xschem delete"); /* self-log at core */
+      }
       Tcl_ResetResult(interp);
     }
 
@@ -1028,6 +1294,19 @@ static int xschem_cmds_d(Tcl_Interp *interp, int argc, const char *argv[], int *
     else if(!strcmp(argv[1], "delete_files"))
     {
       delete_files();
+    }
+
+    /* deselect_mode
+     *   Enter the persistent deselect-one-at-a-time mode: each subsequent click on a
+     *   selected object removes it from the selection (clicks on unselected objects or
+     *   empty space do nothing); ESC ends the mode, keeping whatever is still selected.
+     *   No-op if nothing is selected. This is the engine behind the rebindable `d`
+     *   action edit.deselect_mode. See doc/claude/specs/deselect_one_mode.md */
+    else if(!strcmp(argv[1], "deselect_mode"))
+    {
+      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      enter_deselect_mode();
+      Tcl_ResetResult(interp);
     }
 
     /* descend [n] [notitle]
@@ -1468,6 +1747,7 @@ static int xschem_cmds_f(Tcl_Interp *interp, int argc, const char *argv[], int *
       double x0 = xctx->mousex_snap;
       double y0 = xctx->mousey_snap;
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(scheduler_readonly_reject(interp, "flip")) return TCL_ERROR;
       if(argc > 3) {
         x0 = atof(argv[2]);
         y0 = atof(argv[3]);
@@ -1481,6 +1761,13 @@ static int xschem_cmds_f(Tcl_Interp *interp, int argc, const char *argv[], int *
         move_objects(START,0,0,0);
         move_objects(FLIP,0, 0, 0);
         move_objects(END,0,0,0);
+        /* self-log at core (standalone, non-gesture): covers the Edit-menu item,
+         * toolbar, context menu and any scripted `xschem flip` -- all of which
+         * funnel through here. The Shift-F key does NOT: it is handled inline in
+         * callback.c's legacy switch (case 'F') and logs nothing (issue 0068,
+         * un-migrated keys). During-move/copy flips are part of an unfinished
+         * gesture logged by the move END (issue 0069), not here. */
+        log_action("xschem flip %.16g %.16g", x0, y0);
       }
       Tcl_ResetResult(interp);
     }
@@ -1490,6 +1777,7 @@ static int xschem_cmds_f(Tcl_Interp *interp, int argc, const char *argv[], int *
     else if(!strcmp(argv[1], "flip_in_place"))
     {
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(scheduler_readonly_reject(interp, "flip_in_place")) return TCL_ERROR;
       if(xctx->ui_state & STARTMOVE) move_objects(FLIP|ROTATELOCAL,0,0,0);
       else if(xctx->ui_state & STARTCOPY) copy_objects(FLIP|ROTATELOCAL);
       else {
@@ -1497,6 +1785,7 @@ static int xschem_cmds_f(Tcl_Interp *interp, int argc, const char *argv[], int *
         move_objects(START,0,0,0);
         move_objects(FLIP|ROTATELOCAL,0,0,0);
         move_objects(END,0,0,0);
+        log_action("xschem flip_in_place"); /* self-log at core (standalone only) */
       }
       Tcl_ResetResult(interp);
     }
@@ -1509,6 +1798,7 @@ static int xschem_cmds_f(Tcl_Interp *interp, int argc, const char *argv[], int *
       double x0 = xctx->mousex_snap;
       double y0 = xctx->mousey_snap;
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(scheduler_readonly_reject(interp, "flipv")) return TCL_ERROR;
       if(argc > 3) {
         x0 = atof(argv[2]);
         y0 = atof(argv[3]);
@@ -1532,6 +1822,7 @@ static int xschem_cmds_f(Tcl_Interp *interp, int argc, const char *argv[], int *
         move_objects(ROTATE,0, 0, 0);
         move_objects(FLIP,0, 0, 0);
         move_objects(END,0,0,0);
+        log_action("xschem flipv %.16g %.16g", x0, y0); /* self-log at core (standalone only) */
       }
       Tcl_ResetResult(interp);
     }
@@ -1541,6 +1832,7 @@ static int xschem_cmds_f(Tcl_Interp *interp, int argc, const char *argv[], int *
     else if(!strcmp(argv[1], "flipv_in_place"))
     {
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(scheduler_readonly_reject(interp, "flipv_in_place")) return TCL_ERROR;
       if(xctx->ui_state & STARTMOVE) {
         move_objects(ROTATE|ROTATELOCAL,0,0,0);
         move_objects(ROTATE|ROTATELOCAL,0,0,0);
@@ -1558,6 +1850,7 @@ static int xschem_cmds_f(Tcl_Interp *interp, int argc, const char *argv[], int *
         move_objects(ROTATE|ROTATELOCAL,0,0,0);
         move_objects(FLIP|ROTATELOCAL,0,0,0);
         move_objects(END,0,0,0);
+        log_action("xschem flipv_in_place"); /* self-log at core (standalone only) */
       }
       Tcl_ResetResult(interp);
     }
@@ -1568,6 +1861,7 @@ static int xschem_cmds_f(Tcl_Interp *interp, int argc, const char *argv[], int *
     {
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
       floaters_from_selected_inst();
+      log_action("xschem floaters_from_selected_inst"); /* self-log at core (0061): Symbol menu + script */
       Tcl_ResetResult(interp);
     }
 
@@ -1691,7 +1985,19 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
           }
           break;
           case 'd':
-          if(!strcmp(argv[2], "debug_var")) { /* debug level (0 = no debug, 1, 2, 3,...) */
+          if(!strcmp(argv[2], "deltax")) { /* current move/copy gesture x delta (diagnostic) */
+            char s[128];
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            my_snprintf(s, S(s), "%.16g", xctx->deltax);
+            Tcl_SetResult(interp, s, TCL_VOLATILE);
+          }
+          else if(!strcmp(argv[2], "deltay")) { /* current move/copy gesture y delta (diagnostic) */
+            char s[128];
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            my_snprintf(s, S(s), "%.16g", xctx->deltay);
+            Tcl_SetResult(interp, s, TCL_VOLATILE);
+          }
+          else if(!strcmp(argv[2], "debug_var")) { /* debug level (0 = no debug, 1, 2, 3,...) */
             Tcl_SetResult(interp, my_itoa(debug_var),TCL_VOLATILE);
           }
           else if(!strcmp(argv[2], "draw_window")) { /* direct draw into window */
@@ -1708,6 +2014,12 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
             char b[32];
             my_snprintf(b, S(b), "%u", draw_count);
             Tcl_SetResult(interp, b, TCL_VOLATILE);
+          }
+          break;
+          case 'e':
+          if(!strcmp(argv[2], "en_pin_select")) { /* 1 if clicking a pin selects it (pin_selection.md) */
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            Tcl_SetResult(interp, my_itoa(xctx->en_pin_select),TCL_VOLATILE);
           }
           break;
           case 'f':
@@ -1803,6 +2115,20 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
           }
           break;
           case 'm':
+          if(!strcmp(argv[2], "median")) { /* (xschem get median v1 v2 ...) median of the given doubles; B1 test seam (wire_stub_netlabel.md §4.2) */
+            int n = argc - 3, k;
+            double *v;
+            char s[64];
+            if(n <= 0) {
+              Tcl_SetResult(interp, "xschem get median: give one or more numbers", TCL_STATIC);
+              return TCL_ERROR;
+            }
+            v = my_malloc(_ALLOC_ID_, (size_t)n * sizeof(double));
+            for(k = 0; k < n; ++k) v[k] = atof(argv[k + 3]);
+            my_snprintf(s, S(s), "%g", median_double(v, n));
+            my_free(_ALLOC_ID_, &v);
+            Tcl_SetResult(interp, s, TCL_VOLATILE);
+          }
           if(!strcmp(argv[2], "min_lw")) { /* minimum line width */
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
             Tcl_SetResult(interp, dtoa(xctx->min_lw),TCL_VOLATILE);
@@ -1810,6 +2136,14 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
           if(!strcmp(argv[2], "modified")) { /* schematic is in modified state (needs a save) */
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
             Tcl_SetResult(interp, my_itoa(xctx->modified),TCL_VOLATILE);
+          }
+          if(!strcmp(argv[2], "mousex_snap")) { /* last snapped mouse x, schematic coords */
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            Tcl_SetResult(interp, dtoa(xctx->mousex_snap),TCL_VOLATILE);
+          }
+          if(!strcmp(argv[2], "mousey_snap")) { /* last snapped mouse y, schematic coords */
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            Tcl_SetResult(interp, dtoa(xctx->mousey_snap),TCL_VOLATILE);
           }
           break;
           case 'n':
@@ -1914,6 +2248,45 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
             Tcl_SetResult(interp, my_itoa(xctx->pending_fullzoom),TCL_VOLATILE);
           }
+          else if(!strcmp(argv[2], "pin_name_size")) { /* (xschem get pin_name_size inst pin ?win?) name-text yscale of an instance pin (P9, wire_stub_netlabel.md §3.4) */
+            char s[64];
+            int inst;
+            Xschem_ctx *borrowed = NULL;
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            if(argc <= 4) {
+              Tcl_SetResult(interp, "xschem get pin_name_size: give an instance index and a pin index", TCL_STATIC);
+              return TCL_ERROR;
+            }
+            /* optional <win>: read that window's context via the context-borrow primitive (no GUI
+             * side effects) so the query is not bound to whatever window is front -- e.g. reading a
+             * schematic's instance pins while a symbol window has focus. borrow -> NULL means EITHER
+             * <win> is the current window (fine -- answer about it) OR it names no borrowable window
+             * (unknown/typo, or a known path whose context slot is momentarily unallocated mid
+             * create/teardown); a NULL borrow for a NON-current <win> is a failed borrow, so error
+             * rather than silently reading the FRONT window (which would reintroduce the wrong-window
+             * bug this arg prevents -- and which net_hilight_win_known alone would miss on the
+             * known-but-unallocated slot). Same idiom as `get net_hilight_animated`. Restore before
+             * EVERY later return so the borrow/restore stack stays balanced. */
+            if(argc > 5) borrowed = net_hilight_borrow_ctx(argv[5]);
+            if(argc > 5 && !borrowed && xctx->current_win_path && strcmp(argv[5], xctx->current_win_path)) {
+              Tcl_SetResult(interp, "xschem get pin_name_size: unknown or unavailable window path", TCL_STATIC);
+              return TCL_ERROR;   /* borrowed == NULL here: nothing to restore */
+            }
+            inst = atoi(argv[3]);
+            if(inst < 0 || inst >= xctx->instances) {
+              Tcl_SetResult(interp, "xschem get pin_name_size: instance index out of range", TCL_STATIC);
+              net_hilight_restore_ctx(borrowed);
+              return TCL_ERROR;
+            }
+            if(xctx->inst[inst].ptr < 0) {   /* instance whose symbol failed to load: no pins to read */
+              Tcl_SetResult(interp, "xschem get pin_name_size: instance has no symbol", TCL_STATIC);
+              net_hilight_restore_ctx(borrowed);
+              return TCL_ERROR;
+            }
+            my_snprintf(s, S(s), "%g", get_pin_name_size(xctx->sym + xctx->inst[inst].ptr, atoi(argv[4])));
+            Tcl_SetResult(interp, s, TCL_VOLATILE);
+            net_hilight_restore_ctx(borrowed);
+          }
           else if(!strcmp(argv[2], "polygons")) { /* (xschem get polygons n) number of polygons on layer 'n' */
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
             if(argc > 3) {
@@ -2016,6 +2389,24 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
               Tcl_SetResult(interp, xctx->sch_path[x], TCL_VOLATILE);
             }
           }
+          else if(!strcmp(argv[2], "sch_inst_number")) /* vector-instance slice descended into to REACH
+                          * level 'n' (default: current level) = sch_inst_number[n-1], since descend_schematic
+                          * records the slice at the PARENT level (sch_inst_number[currsch] before currsch++).
+                          * 1 for a scalar instance; 1 for the top level (n==0, no descent). Exposed for the
+                          * headless hierarchy-representation dump test (agent_guide §8 Tier B). NOTE: the
+                          * raw array element sch_inst_number[currsch] at the deepest level is unset -- do NOT
+                          * default to it (that was an off-by-one copy of the sch_path getter). */
+          {
+            int x;
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            if(argc > 3) x = atoi(argv[3]);
+            else x = xctx->currsch;
+            if(x < 0 ) x = xctx->currsch + x;
+            if(x >= 1 && x <= xctx->currsch)
+              Tcl_SetResult(interp, my_itoa(xctx->sch_inst_number[x - 1]), TCL_VOLATILE);
+            else if(x == 0)
+              Tcl_SetResult(interp, "1", TCL_VOLATILE); /* top level has no entering slice */
+          }
           else if(!strcmp(argv[2], "sch_to_compare")) /* if set return schematic current design is compared with */
           {
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
@@ -2082,6 +2473,10 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
             else
               Tcl_SetResult(interp, "0",TCL_STATIC);
           }
+          else if(!strcmp(argv[2], "texts")) { /* number of text objects in schematic */
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            Tcl_SetResult(interp, my_itoa(xctx->texts), TCL_VOLATILE);
+          }
           else if(!strcmp(argv[2], "textlayer")) { /* layer number for texts */
             Tcl_SetResult(interp, my_itoa(TEXTLAYER), TCL_VOLATILE);
           }
@@ -2116,6 +2511,9 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
           } else if(!strcmp(argv[2], "wires")) { /* number of wires */
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
             Tcl_SetResult(interp, my_itoa(xctx->wires), TCL_VOLATILE);
+          } else if(!strcmp(argv[2], "window_number")) { /* Cadence-style stable window number of current context */
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            Tcl_SetResult(interp, my_itoa(xctx->window_number), TCL_VOLATILE);
           }
           break;
           case 'x':
@@ -2126,6 +2524,16 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
             my_snprintf(s, S(s), "%.16g", xctx->xorigin);
             Tcl_SetResult(interp, s,TCL_VOLATILE);
+          } else if(!strcmp(argv[2], "x1")) { /* move/copy gesture anchor x (diagnostic) */
+            char s[128];
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            my_snprintf(s, S(s), "%.16g", xctx->x1);
+            Tcl_SetResult(interp, s,TCL_VOLATILE);
+          } else if(!strcmp(argv[2], "x2")) { /* move/copy gesture current x (diagnostic) */
+            char s[128];
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            my_snprintf(s, S(s), "%.16g", xctx->x2);
+            Tcl_SetResult(interp, s,TCL_VOLATILE);
           }
           break;
           case 'y':
@@ -2133,6 +2541,16 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
             char s[128];
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
             my_snprintf(s, S(s), "%.16g", xctx->yorigin);
+            Tcl_SetResult(interp, s,TCL_VOLATILE);
+          } else if(!strcmp(argv[2], "y1")) { /* move/copy gesture anchor y (diagnostic) */
+            char s[128];
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            my_snprintf(s, S(s), "%.16g", xctx->y1);
+            Tcl_SetResult(interp, s,TCL_VOLATILE);
+          } else if(!strcmp(argv[2], "y2")) { /* move/copy gesture current y (diagnostic) */
+            char s[128];
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            my_snprintf(s, S(s), "%.16g", xctx->y2);
             Tcl_SetResult(interp, s,TCL_VOLATILE);
           }
           break;
@@ -2391,6 +2809,13 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
           int with_quotes = 0;
           int c = atoi(argv[3]);
           int n = atoi(argv[4]);
+          /* issue 0077: bounds-check the caller-supplied layer/index before subscripting,
+           * mirroring the `object #layer,index` range-check. Without this an out-of-range
+           * c/n does an OOB read of xctx->rect[c][n].prop_ptr (crash / memory disclosure). */
+          if(c < 0 || c >= cadlayers || n < 0 || n >= xctx->rects[c]) {
+            Tcl_AppendResult(interp, "xschem getprop: rect not found: ", argv[3], " ", argv[4], NULL);
+            return TCL_ERROR;
+          }
           if(argc > 6) with_quotes = atoi(argv[6]);
           Tcl_SetResult(interp, (char *)get_tok_value(xctx->rect[c][n].prop_ptr, argv[5], with_quotes), TCL_VOLATILE);
         }
@@ -2406,6 +2831,11 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
           }
           if(!strcmp(argv[4], "txt_ptr"))
             Tcl_SetResult(interp, xctx->text[n].txt_ptr, TCL_VOLATILE);
+          else if(!strcmp(argv[4], "size")) { /* pseudo-token: the text's xscale (display size) */
+            char buf[40];
+            my_snprintf(buf, S(buf), "%.10g", xctx->text[n].xscale);
+            Tcl_SetResult(interp, buf, TCL_VOLATILE);
+          }
           else
             Tcl_SetResult(interp, (char *)get_tok_value(xctx->text[n].prop_ptr, argv[4], 2), TCL_VOLATILE);
         }
@@ -2415,6 +2845,11 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
           return TCL_ERROR;
         } else {
           int n = atoi(argv[3]);
+          /* issue 0077: bounds-check before subscripting (OOB read otherwise). */
+          if(n < 0 || n >= xctx->wires) {
+            Tcl_AppendResult(interp, "xschem getprop: wire not found: ", argv[3], NULL);
+            return TCL_ERROR;
+          }
           Tcl_SetResult(interp, (char *)get_tok_value(xctx->wire[n].prop_ptr, argv[4], 2), TCL_VOLATILE);
         }
       }
@@ -2663,6 +3098,14 @@ static void net_hilight_interactive(int add)
     } else {
       unhilight_net(1); /* noun-verb: remove highlight but keep the selection (like key 9) */
     }
+    /* self-log at core (0067): the Cadence-rc keys 9/8 are raw `bind .drw <Key> {xschem
+     * <sub>}` -- they bypass dispatch_input_action, so only this core self-log records
+     * them. Log the real command (like the registered `xschem hilight` on K); it replays
+     * against the replay-time selection (the same accepted selection-dependency, 0005).
+     * ONLY the noun-verb branch acts immediately -- the verb-noun branch below merely
+     * ENTERS interactive click-mode (a gesture start; each click's effect is 0005/0069),
+     * so it stays silent, matching the Phase-3 log-the-effect-not-the-start rule. */
+    log_action(add ? "xschem hilight_net_interactive" : "xschem unhilight_net_interactive");
   } else {      /* verb-noun: enter interactive mode */
     if(add) { xctx->ui_state &= ~NET_UNHILIGHT; xctx->ui_state |= NET_HILIGHT; }
     else    { xctx->ui_state &= ~NET_HILIGHT;   xctx->ui_state |= NET_UNHILIGHT; }
@@ -2791,6 +3234,46 @@ static int xschem_cmds_h(Tcl_Interp *interp, int argc, const char *argv[], int *
       }
     }
 
+    /* highlight_pin_scope [clear | ids | <scope>]
+     *   Pin analog of highlight_scope: outline the symbol pins an Apply with <scope>
+     *   (current|selected|all) would touch, resolved by the SHARED pin_scope_resolve() so the
+     *   outlined set == the applied set by construction. Stores the pins' rect[PINLAYER] stable
+     *   ids in the same overlay store (draw_scope_highlight's xRECT case renders them), redraws,
+     *   and returns the resolved id list. No args: overlay count. 'ids': stored ids. 'clear':
+     *   empty + redraw. (doc/claude/specs/symbol_editor_apply_scope.md §5.4) */
+    else if(!strcmp(argv[1], "highlight_pin_scope"))
+    {
+      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(argc == 2) {
+        Tcl_SetResult(interp, my_itoa(xctx->scope_hi_n), TCL_VOLATILE);
+      } else if(!strcmp(argv[2], "clear")) {
+        clear_scope_highlight();
+        draw();
+        Tcl_ResetResult(interp); /* draw() leaves a stale tcleval result */
+      } else if(!strcmp(argv[2], "ids")) {
+        int k;
+        for(k = 0; k < xctx->scope_hi_n; ++k)
+          Tcl_AppendElement(interp, my_itoa((int)xctx->scope_hi_id[k]));
+      } else if(argc == 3) {
+        int *targets, n, k, primary;
+        n = pin_scope_resolve(argv[2], &primary, &targets);
+        clear_scope_highlight();
+        for(k = 0; k < n; ++k)
+          add_scope_highlight(xRECT, xctx->rect[PINLAYER][targets[k]].id);
+        my_free(_ALLOC_ID_, &targets);
+        draw();
+        /* build the result AFTER draw() (its internal tcleval()s clobber the interp
+         * result); report from the stored overlay = the resolved set. */
+        Tcl_ResetResult(interp);
+        for(k = 0; k < xctx->scope_hi_n; ++k)
+          Tcl_AppendElement(interp, my_itoa((int)xctx->scope_hi_id[k]));
+      } else {
+        Tcl_SetResult(interp,
+          "xschem highlight_pin_scope needs: [clear | ids | <scope>]", TCL_STATIC);
+        return TCL_ERROR;
+      }
+    }
+
     /* highlight_objects <type> <id> [<type> <id> ...]
      *   The GENERAL overlay primitive: outline an explicit list of drawable
      *   objects (any of wire|instance|rect|line|poly|arc), each by its stable id,
@@ -2828,6 +3311,7 @@ static int xschem_cmds_h(Tcl_Interp *interp, int argc, const char *argv[], int *
       hilight_net(0);
       redraw_hilights(0);
       net_hilight_anim_update(); /* Pass 2a: the standard highlight path may add a blink style */
+      net_hilight_sync_descend_windows(); /* issue 0073: push into linked descend children */
       Tcl_ResetResult(interp);
     }
     /* hilight_net_interactive
@@ -2890,11 +3374,33 @@ static int xschem_cmds_h(Tcl_Interp *interp, int argc, const char *argv[], int *
           if(!fast) {
             if(xctx->hilight_nets) propagate_hilights(1, 0, XINSERT_NOREPLACE);
             redraw_hilights(0);
+            net_hilight_sync_descend_windows(); /* issue 0073: push into linked descend children */
           }
         }
       }
       Tcl_ResetResult(interp);
     }
+
+    /* hilight_buried <instname>
+     *   Read-only query: return the style index of a highlighted net buried in the
+     *   named instance's subtree (a net not exposed at the instance's pins), or -1 if
+     *   none. Derived state recomputed in propagate_hilights(); this only reads
+     *   inst[i].buried_hilight. See doc/claude/specs/buried_net_hilight.md */
+    else if(!strcmp(argv[1], "hilight_buried"))
+    {
+      int inst, val = -1;
+      char res[30];
+      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(argc < 3) {
+        Tcl_SetResult(interp, "xschem hilight_buried: missing instance name", TCL_STATIC);
+        return TCL_ERROR;
+      }
+      prepare_netlist_structs(0);
+      if((inst = get_instance(argv[2])) >= 0) val = xctx->inst[inst].buried_hilight;
+      my_snprintf(res, S(res), "%d", val);
+      Tcl_SetResult(interp, res, TCL_VOLATILE);
+    }
+
     /* hilight_netname [-fast] net
      *   Highlight net name 'net'
      *   if '-fast' is given do not redraw hilights after operation */
@@ -2954,7 +3460,58 @@ static int xschem_cmds_i(Tcl_Interp *interp, int argc, const char *argv[], int *
      *   blend_black:  blend with black background and remove alpha
      *   write_back:   write resulting image back into `image_data` attribute
      */
-    if(!strcmp(argv[1], "image"))
+    /* incr_hilight_color
+     *   Step the net-highlight style cursor forward one (wrapping modulo the number
+     *   of styles) and return the resulting style index. This normally happens
+     *   automatically per highlight; exposed for symmetry with decr_hilight_color.
+     *   See doc/claude/specs/hilight_style_decrement.md */
+    if(!strcmp(argv[1], "incr_hilight_color"))
+    {
+      char res[30];
+      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(!xctx->net_hilight_style || xctx->n_net_hilight_styles <= 0) build_net_hilight_styles();
+      incr_hilight_color();
+      my_snprintf(res, S(res), "%d", xctx->hilight_color);
+      Tcl_SetResult(interp, res, TCL_VOLATILE);
+    }
+    /* inst_name_text inst
+     *   For the named/indexed instance, find the symbol text that displays the net/pin
+     *   NAME (the "@lab" text of a pin / net label) and return "<index> <size>", where
+     *   size is its current effective display size -- the per-instance text_size_<n>
+     *   override if present, else the symbol's default text xscale (via
+     *   get_sym_text_size). Returns "" when the symbol has no @lab text (e.g. a normal
+     *   component), so callers skip non-label instances. Read-only.
+     *   Used by the CTRL+Plus/Minus text-size feature, doc/claude/specs/text_size_scroll.md */
+    else if(!strcmp(argv[1], "inst_name_text"))
+    {
+      int i, j, symn, idx = -1;
+      double xs, ys;
+      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(argc < 3) {
+        Tcl_SetResult(interp, "xschem inst_name_text needs <inst>", TCL_STATIC); return TCL_ERROR;
+      }
+      i = get_instance(argv[2]);
+      if(i < 0) {
+        Tcl_AppendResult(interp, "xschem inst_name_text: instance not found: ", argv[2], NULL);
+        return TCL_ERROR;
+      }
+      symn = xctx->inst[i].ptr;
+      if(symn >= 0) {
+        for(j = 0; j < xctx->sym[symn].texts; ++j) {
+          const char *tp = xctx->sym[symn].text[j].txt_ptr;
+          if(tp && !strcmp(tp, "@lab")) { idx = j; break; }
+        }
+      }
+      if(idx < 0) {
+        Tcl_ResetResult(interp);
+      } else {
+        char buf[60];
+        get_sym_text_size(i, idx, &xs, &ys);
+        my_snprintf(buf, S(buf), "%d %.10g", idx, xs);
+        Tcl_SetResult(interp, buf, TCL_VOLATILE);
+      }
+    }
+    else if(!strcmp(argv[1], "image"))
     {
       int n, i, c;
       int what = 0;
@@ -3016,6 +3573,7 @@ static int xschem_cmds_i(Tcl_Interp *interp, int argc, const char *argv[], int *
     if(!strcmp(argv[1], "instance"))
     {
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(scheduler_readonly_reject(interp, "instance")) return TCL_ERROR;
       if(argc==7) {
        /*           pos sym_name      x                y             rot       */
         place_symbol(-1, argv[2], atof(argv[3]), atof(argv[4]), (short)atoi(argv[5]),
@@ -3474,6 +4032,7 @@ static int xschem_cmds_l(Tcl_Interp *interp, int argc, const char *argv[], int *
       int draw = 1;
       const char *prop_str = NULL;
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(scheduler_readonly_reject(interp, "line")) return TCL_ERROR;
       if(argc > 5) {
         x1=atof(argv[2]);
         y1=atof(argv[3]);
@@ -3649,6 +4208,8 @@ static int xschem_cmds_l(Tcl_Interp *interp, int argc, const char *argv[], int *
       int keep_symbols = 0, first, readonly_open = 0;
       int lastclosed = 0, lastopened = 0;
       int first_loaded = 0;
+      int inplace = 0;              /* -inplace: force legacy in-place load (opt out of routing) */
+      const char *target_win = NULL; /* -window <winpath>: reuse a specific existing window */
       int i;
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
 
@@ -3672,6 +4233,12 @@ static int xschem_cmds_l(Tcl_Interp *interp, int argc, const char *argv[], int *
             keep_symbols = 1;
           } else if(!strcmp(argv[i], "-readonly")) {
             readonly_open = 1;
+          } else if(!strcmp(argv[i], "-inplace")) {
+            inplace = 1;
+          } else if(!strcmp(argv[i], "-window")) {
+            /* -window <winpath>: consume the next arg as the target window path
+             * (a .drw / .x1.drw Tk path, not a filename) */
+            if(i + 1 < argc) target_win = argv[++i];
           }
         } else {
           break;
@@ -3691,7 +4258,52 @@ static int xschem_cmds_l(Tcl_Interp *interp, int argc, const char *argv[], int *
           ask_new_file(0, NULL);
           tcleval("load_additional_files");
         }
-      } else
+      } else {
+      /* Window routing (doc/claude/specs/load_window_routing.md): a user-facing
+       * open must not clobber an occupied editor window. Scripted / internal
+       * in-place loads always carry a hint flag (-nodraw / -nofullzoom /
+       * -keep_symbols / -noundoreset / -nosymbols / -inplace) and are exempt. */
+      int inplace_hint = inplace || !load_symbols || nodraw || nofullzoom ||
+                         keep_symbols || !undo_reset;
+      int route_newwin = 0;
+      int target_done = 0;
+
+      if(has_x && target_win && target_win[0]) {
+        /* -window <winpath>: reuse the named existing window. Switch to it and,
+         * if its cellview is modified, pop "Save changes?" (ask_save). Cancel
+         * aborts the load and leaves the target untouched. */
+        int n = get_tab_or_window_number(target_win);
+        char *tgt_path = (n >= 0) ? get_window_path(n) : NULL;
+        Xschem_ctx *tctx = (n >= 0) ? get_window_ctx(n, NULL) : NULL;
+        char orig_win[WINDOW_PATH_SIZE];
+        orig_win[0] = '\0';
+        if(xctx->current_win_path) my_strncpy(orig_win, xctx->current_win_path, S(orig_win));
+        if(!tctx || !tgt_path || !tgt_path[0]) {
+          Tcl_SetResult(interp, "xschem load -window: no such window", TCL_STATIC);
+          return TCL_ERROR;
+        }
+        if(orig_win[0] && strcmp(tgt_path, orig_win)) {
+          new_schematic("switch", tgt_path, "", 0);
+        }
+        if(xctx->modified && save(1, 0) == -1) { /* user clicked Cancel: abort, restore focus */
+          if(orig_win[0] && strcmp(tgt_path, orig_win)) new_schematic("switch", orig_win, "", 0);
+          Tcl_ResetResult(interp);
+          return TCL_OK;
+        }
+        target_done = 1; /* save prompt already handled; don't re-prompt below */
+      } else {
+        /* Route only INTERACTIVE opens (-gui, so force==0): the File>Open / recent /
+         * Library-Manager paths. Bare `xschem load <f>` (force==1) and scripted loads
+         * stay in place -- the whole regression suite drives repeated bare loads into
+         * one window and relies on that. A -gui open reuses the current window only
+         * when it is a pristine empty untitled scratch; otherwise it opens a new one. */
+        route_newwin = has_x && !force && !inplace_hint && !is_pristine_untitled();
+        /* preset first_loaded so the FIRST file opens via new_schematic (a new
+         * window/tab), exactly like the 2nd..Nth file already does today, instead
+         * of loading in place over the occupied current window */
+        if(route_newwin) first_loaded = 1;
+      }
+
       for(i = first; i < argc || lastclosed || lastopened; i++) {
         char f[PATH_MAX + 100];
 
@@ -3708,7 +4320,10 @@ static int xschem_cmds_l(Tcl_Interp *interp, int argc, const char *argv[], int *
           tcleval(f);
           my_strncpy(f, tclresult(), S(f));
         }
-        if(force || !has_x || !xctx->modified  || save(1, 0) != -1 ) { /* save(1)==-1 --> user cancel */
+        /* route_newwin: not clobbering the current window, so never prompt to save it.
+         * target_done: the -window target's save prompt was already handled above. */
+        if(route_newwin || target_done || force || !has_x || !xctx->modified  ||
+           save(1, 0) != -1 ) { /* save(1)==-1 --> user cancel */
           char win_path[WINDOW_PATH_SIZE];
           int skip = 0;
           if(has_x) tcleval("store_geom [xschem get topwindow] [xschem get current_name]");
@@ -3744,8 +4359,12 @@ static int xschem_cmds_l(Tcl_Interp *interp, int argc, const char *argv[], int *
           }
           if(!skip) {
             int ret;
-            clear_all_hilights();
-            unselect_all(1);
+            /* when routing to a new window the current window is left as-is;
+             * its hilights/selection must not be touched */
+            if(!route_newwin) {
+              clear_all_hilights();
+              unselect_all(1);
+            }
             /* no implicit undo: if needed do it before loading */
             /* if(!undo_reset) xctx->push_undo(); */
             if(!first_loaded) {
@@ -3797,7 +4416,8 @@ static int xschem_cmds_l(Tcl_Interp *interp, int argc, const char *argv[], int *
             }
           }
         }
-      }
+      } /* for(i = first ...) */
+      } /* else (routing branch) */
       /* -readonly (reopen shortcuts: Open Most Recent / Last Closed / Recent menu): force the freshly
        * loaded buffer into read mode regardless of file writability, so reopening defaults to a safe
        * browse view. Edit it with Ctrl-2 / View > Toggle Read Only (mirrors descend_readonly). */
@@ -3938,7 +4558,22 @@ static int xschem_cmds_l(Tcl_Interp *interp, int argc, const char *argv[], int *
      *   No-op when action logging is disabled. */
     else if(!strcmp(argv[1], "log_action"))
     {
+      /* -emitted: report whether the core self-logged the just-run command, so a
+       * Tcl wrapper can skip its own duplicate line (self-log-at-core dedup). */
+      if(argc > 2 && !strcmp(argv[2], "-emitted")) {
+        Tcl_SetResult(interp, actionlog_cmd_logged ? "1" : "0", TCL_STATIC);
+        return TCL_OK;
+      }
       if(argc > 3 && !strcmp(argv[2], "-noecho")) log_action_noecho("%s", argv[3]);
+      /* -result/-error TEXT: record command OUTPUT as source-able comment lines
+       * (D1, issue 0070); the pane echo is done by the Tcl caller. */
+      else if(argc > 3 && !strcmp(argv[2], "-result")) log_output(0, argv[3]);
+      else if(argc > 3 && !strcmp(argv[2], "-error"))  log_output(1, argv[3]);
+      /* -suppressecho 0|1: while 1, a core self-log writes the file but not the
+       * CIW mirror (the CIW entry already echoed the typed input line). */
+      else if(argc > 3 && !strcmp(argv[2], "-suppressecho")) actionlog_suppress_echo = atoi(argv[3]);
+      /* -reset: clear the dedup flag before a wrapper evaluates a command. */
+      else if(argc > 2 && !strcmp(argv[2], "-reset")) actionlog_cmd_logged = 0;
       else if(argc > 2) log_action("%s", argv[2]);
       Tcl_ResetResult(interp);
     }
@@ -4102,10 +4737,14 @@ static int xschem_cmds_l(Tcl_Interp *interp, int argc, const char *argv[], int *
     else if(!strcmp(argv[1], "library_manager"))
     {
       if(has_x) {
-        log_action("xschem library_manager");
+        /* Log the argument-bearing form so the CIW / action-log line reproduces the
+         * located cell (issue 0055), not just "open the manager". The lcv is one Tcl
+         * list arg -- brace it, matching the adjacent libmgr::open call. */
         if(argc > 2) {
+          log_action("xschem library_manager {%s}", argv[2]);
           tclvareval("libmgr::open {", argv[2], "}", NULL);
         } else {
+          log_action("xschem library_manager");
           tcleval("libmgr::open");
         }
       }
@@ -4124,7 +4763,7 @@ static int xschem_cmds_m(Tcl_Interp *interp, int argc, const char *argv[], int *
     if(!strcmp(argv[1], "make_sch")) /* make schematic from selected symbol 20171004 */
     {
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
-      create_sch_from_sym();
+      create_sch_from_sym(); /* self-logs `xschem make_sch` at its core on success */
       Tcl_ResetResult(interp);
     }
 
@@ -4134,7 +4773,11 @@ static int xschem_cmds_m(Tcl_Interp *interp, int argc, const char *argv[], int *
     else if(!strcmp(argv[1], "make_sch_from_sel"))
     {
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
-      make_schematic_symbol_from_sel();
+      /* mutates current buffer (delete selection + place LCC symbol) -> refuse on
+       * read-only (issue 0041 hole; the Ctrl+H registered action now also carries
+       * mutates=1). */
+      if(scheduler_readonly_reject(interp, "make_sch_from_sel")) return TCL_ERROR;
+      make_schematic_symbol_from_sel(); /* self-logs at its core on the real edit only */
       Tcl_ResetResult(interp);
     }
 
@@ -4148,7 +4791,10 @@ static int xschem_cmds_m(Tcl_Interp *interp, int argc, const char *argv[], int *
       if(has_x) tcleval("tk_messageBox -type okcancel -parent [xschem get topwindow] "
                         "-message {do you want to make symbol view ?}");
       if(!has_x || strcmp(tclresult(), "ok")==0) {
-        save_schematic(xctx->sch[xctx->currsch], 0);
+        /* don't overwrite a read-only schematic on disk (0041 sibling hole): the
+         * on-disk file already matches the buffer since read-only blocks edits, so
+         * the symbol still generates from it. make_symbol() self-logs. */
+        if(!xctx->readonly) save_schematic(xctx->sch[xctx->currsch], 0);
         make_symbol();
       }
       Tcl_ResetResult(interp);
@@ -4160,6 +4806,7 @@ static int xschem_cmds_m(Tcl_Interp *interp, int argc, const char *argv[], int *
     {
       char f[PATH_MAX + 100];
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(scheduler_readonly_reject(interp, "merge")) return TCL_ERROR;
       if(argc < 3) {
         merge_file(0, "");  /* 2nd param not used for merge 25122002 */
       }
@@ -4180,6 +4827,7 @@ static int xschem_cmds_m(Tcl_Interp *interp, int argc, const char *argv[], int *
     {
       int undo = 1, dr = 1;
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(scheduler_readonly_reject(interp, "move_instance")) return TCL_ERROR;
       if(argc > 7) {
         int i;
         for(i = 7; i < argc; i++) {
@@ -4218,6 +4866,7 @@ static int xschem_cmds_m(Tcl_Interp *interp, int argc, const char *argv[], int *
       int kissing= 0;
       int stretch = 0;
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(scheduler_readonly_reject(interp, "move_objects")) return TCL_ERROR;
       if(argc > 2) {
         int i;
         for(i = 2; i < argc; i++) {
@@ -4232,6 +4881,8 @@ static int xschem_cmds_m(Tcl_Interp *interp, int argc, const char *argv[], int *
         move_objects( END,0,atof(argv[2]), atof(argv[3]));
       }
       else {
+        /* MENU "Move objects" arms a DEFERRED move (mouse over the menu); the canvas click
+         * starts it. The M KEY is made immediate separately in callback.c case 'm'. */
         xctx->ui_state |= MENUSTART;
         xctx->ui_state2 = MENUSTARTMOVE;
       }
@@ -4445,6 +5096,45 @@ static int xschem_cmds_n(Tcl_Interp *interp, int argc, const char *argv[], int *
       Tcl_ResetResult(interp);
     }
 
+    /* net_hilight_sync_suspend / net_hilight_sync_resume
+     *   Bracket a bulk-highlight loop (many `xschem hilight_netname` in a row) so the expensive
+     *   cross-window descend-child sync runs ONCE at the end instead of per net (issue 0073 §9d /
+     *   review perf). Nestable (counter). The Tcl caller MUST pair them with a catch so a mid-loop
+     *   error still resumes (else the counter stays >0 and suppresses all later syncs). */
+    else if(!strcmp(argv[1], "net_hilight_sync_suspend"))
+    {
+      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      net_hilight_sync_suspend();
+      Tcl_ResetResult(interp);
+    }
+    else if(!strcmp(argv[1], "net_hilight_sync_resume"))
+    {
+      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      net_hilight_sync_resume();
+      Tcl_ResetResult(interp);
+    }
+
+    /* net_hilight_relay_enable [<0|1>]
+     *   Toggle (or query) the deep-gap net-highlight relay (issue 0073 §9c fix): translating an
+     *   EXACT highlight across a linked-window gap of more than one hierarchy level by transiently
+     *   loading the intermediate schematics. With no arg, returns the current 0/1 state. Also the
+     *   test sabotage seam: setting it 0 forces the clear-through-only fallback. */
+    else if(!strcmp(argv[1], "net_hilight_relay_enable"))
+    {
+      if(argc >= 3) net_hilight_set_relay_enable(atoi(argv[2]));
+      Tcl_SetResult(interp, net_hilight_get_relay_enable() ? "1" : "0", TCL_STATIC);
+    }
+
+    /* net_hilight_sync_force_headless <0|1>
+     *   TEST-ONLY (issue 0073 §8 Tier C): force the cross-window highlight sync + deep-gap relay to
+     *   run under --nogui (has_x==0) over logical contexts, so it can be exercised in the fast headless
+     *   suite. The sync's draws self-skip (no save_pixmap headless). Never set in production. */
+    else if(!strcmp(argv[1], "net_hilight_sync_force_headless"))
+    {
+      if(argc >= 3) net_hilight_set_sync_force_headless(atoi(argv[2]));
+      Tcl_ResetResult(interp);
+    }
+
     /* net_hilight_dump_pixmap <file> [<win>]
      *   TEST HOOK (Pass 2-multiwin, Phase C): write the LIVE backing pixmap (save_pixmap) of
      *   <win> (default: current window) to a PNG, WITHOUT re-rendering. Unlike `xschem print
@@ -4620,6 +5310,7 @@ static int xschem_cmds_n(Tcl_Interp *interp, int argc, const char *argv[], int *
      *   User should complete the placement in the GUI. */
     else if(!strcmp(argv[1], "net_label"))
     {
+      if(scheduler_readonly_reject(interp, "net_label")) return TCL_ERROR;
       if(argc > 2) {
         place_net_label(atoi(argv[2]));
       }
@@ -5082,6 +5773,7 @@ static int xschem_cmds_p(Tcl_Interp *interp, int argc, const char *argv[], int *
     else if(!strcmp(argv[1], "paste"))
     {
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(scheduler_readonly_reject(interp, "paste")) return TCL_ERROR;
       if(argc > 3) {
         merge_file(10, ".sch"); /* set bit 3 to avoid doing move_objects(RUBBER,...) */
         xctx->deltax = atof(argv[2]);
@@ -5105,6 +5797,132 @@ static int xschem_cmds_p(Tcl_Interp *interp, int argc, const char *argv[], int *
      *   --> { {0} {name=PLUS dir=in } } { {1} {name=OUT dir=out } }
      *       { {2} {name=MINUS dir=in } }
      */
+    /* pin_names [on|off|auto|cycle]
+     *   P5 global pin-name visibility tri-state (doc/claude/specs/cadence_pin_name_text.md
+     *   §4.8). Sets the show_pin_names Tcl var (on=force-show all owned pins, off=force-hide,
+     *   auto=defer to each pin's show_pinname), reconciles the symbol's name views and
+     *   redraws. "cycle" advances auto->on->off->auto. With no arg just returns the
+     *   current mode. Pure view op: no undo, no modify. */
+    else if(!strcmp(argv[1], "pin_names"))
+    {
+      const char *cur;
+      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      cur = tclgetvar("show_pin_names");
+      if(!cur || (strcmp(cur, "on") && strcmp(cur, "off") && strcmp(cur, "auto"))) {
+        cur = "auto";
+        tclsetvar("show_pin_names", cur);   /* normalize an unset/bogus value so the var,
+                                             * the menu radios and pin_name_shown() agree */
+      }
+      if(argc > 2) {
+        const char *mode = argv[2];
+        if(!strcmp(mode, "cycle"))
+          mode = !strcmp(cur, "auto") ? "on" : !strcmp(cur, "on") ? "off" : "auto";
+        if(strcmp(mode, "on") && strcmp(mode, "off") && strcmp(mode, "auto")) {
+          Tcl_SetResult(interp, "xschem pin_names: expected on|off|auto|cycle", TCL_STATIC);
+          return TCL_ERROR;
+        }
+        if(strcmp(mode, cur)) {             /* only reconcile+redraw on an actual change */
+          tclsetvar("show_pin_names", mode);
+          pin_names_sync_cache();           /* keep the cache correct even in schematic mode,
+                                             * where reconcile_all early-returns (symbol-only) */
+          pin_views_reconcile_all();
+          draw();
+          cur = mode;
+        }
+      }
+      Tcl_SetResult(interp, (char *)cur, TCL_VOLATILE);
+    }
+
+    /* pin_scope_prop_uniform <scope> <token>
+     *   Returns "1" if <token>'s value is identical across every pin in <scope>
+     *   (current|selected|all), else "0". An empty or single-pin scope is "1" (uniform by
+     *   construction). Drives the pin form's Name-greying rule: the Name entry is disabled iff
+     *   NOT uniform (a >1-pin scope with differing names), editable otherwise
+     *   (symbol_editor_apply_scope.md §4.2/§5.3). Uses the same pin_scope_targets() resolver as
+     *   apply_pin_prop so the decision matches what an Apply would touch. Read-only. */
+    else if(!strcmp(argv[1], "pin_scope_prop_uniform"))
+    {
+      int i, n, ntargets, primary = -1, uniform = 1;
+      int *targets;
+      const char *scope, *tok, *val;
+      char *first = NULL;
+      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(argc < 4) {
+        Tcl_SetResult(interp, "xschem pin_scope_prop_uniform needs: scope token", TCL_STATIC);
+        return TCL_ERROR;
+      }
+      scope = argv[2]; tok = argv[3];
+      ntargets = pin_scope_resolve(scope, &primary, &targets);
+      for(i = 0; i < ntargets; i++) {
+        n = targets[i];
+        val = get_tok_value(xctx->rect[PINLAYER][n].prop_ptr, tok, 0);
+        if(i == 0) my_strdup(_ALLOC_ID_, &first, val);   /* copy: get_tok_value's buffer is reused */
+        else if(!first || strcmp(first, val)) { uniform = 0; break; }
+      }
+      if(first) my_free(_ALLOC_ID_, &first);
+      my_free(_ALLOC_ID_, &targets);
+      Tcl_SetResult(interp, uniform ? "1" : "0", TCL_STATIC);
+    }
+
+    /* pin_stub_geom: (xschem pin_stub_geom inst pin stublen) "x1 y1 x2 y2 dx dy" -- the stub
+     * segment for that instance pin extended outward by stublen: start = pin abs coord, end =
+     * start + outward*stublen, (dx dy) = the absolute outward unit direction. B4, §4.3. */
+    else if(!strcmp(argv[1], "pin_stub_geom"))
+    {
+      Pin_stub_geom g;
+      char b[160];
+      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(argc <= 4) {
+        Tcl_SetResult(interp, "xschem pin_stub_geom: give an instance index, pin index and stub length", TCL_STATIC);
+        return TCL_ERROR;
+      }
+      if(compute_pin_stub_geom(atoi(argv[2]), atoi(argv[3]), atof(argv[4]), &g)) {
+        my_snprintf(b, S(b), "%g %g %g %g %g %g", g.x1, g.y1, g.x2, g.y2, g.dx, g.dy);
+        Tcl_SetResult(interp, b, TCL_VOLATILE);
+      } else {
+        Tcl_SetResult(interp, "", TCL_STATIC);
+      }
+    }
+    /* pin_stub_sizing: (xschem pin_stub_sizing) "size textheight stublen" the wire-stubber would
+     * use for the current selection's targets -- median pin-name size, label line height, and the
+     * grid-snapped stub length (>2*height). Empty when nothing is selected. B3, §4.2. */
+    else if(!strcmp(argv[1], "pin_stub_sizing"))
+    {
+      Pin_stub_target *t = NULL;
+      Pin_stub_sizing sz;
+      int nt;
+      char b[96];
+      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      nt = collect_pin_stub_targets(&t);
+      if(nt > 0 && compute_pin_stub_sizing(t, nt, &sz)) {
+        my_snprintf(b, S(b), "%g %g %g", sz.size, sz.text_h, sz.stub_len);
+        Tcl_SetResult(interp, b, TCL_VOLATILE);
+      } else {
+        Tcl_SetResult(interp, "", TCL_STATIC);
+      }
+      if(t) my_free(_ALLOC_ID_, &t);
+    }
+    /* pin_stub_targets: (xschem pin_stub_targets) the (instance, pin) pairs the wire-stubber
+     * would process for the current selection, as a Tcl list of {inst pin} pairs -- selected
+     * pins win, else a whole instance's not-already-wired pins. B2, wire_stub_netlabel.md §4.1.
+     * Read-only dry-run of the selection scan (the mutating `add_pin_stubs` lands at B6). */
+    else if(!strcmp(argv[1], "pin_stub_targets"))
+    {
+      Pin_stub_target *t = NULL;
+      int nt, k;
+      char *res = NULL;
+      char b[64];
+      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      nt = collect_pin_stub_targets(&t);
+      for(k = 0; k < nt; ++k) {
+        my_snprintf(b, S(b), "%s{%d %d}", k ? " " : "", t[k].inst, t[k].pin);
+        my_mstrcat(_ALLOC_ID_, &res, b, NULL);
+      }
+      if(t) my_free(_ALLOC_ID_, &t);
+      Tcl_SetResult(interp, res ? res : "", TCL_VOLATILE);
+      my_free(_ALLOC_ID_, &res);
+    }
+
     else if(!strcmp(argv[1], "pinlist"))
     {
       int i, p, no_of_pins, first = 1;
@@ -5140,6 +5958,7 @@ static int xschem_cmds_p(Tcl_Interp *interp, int argc, const char *argv[], int *
     {
       int ret;
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(scheduler_readonly_reject(interp, "place_symbol")) return TCL_ERROR;
       xctx->semaphore++;
       rebuild_selected_array();
       if(xctx->lastsel && xctx->sel_array[0].type==ELEMENT) {
@@ -5235,6 +6054,7 @@ static int xschem_cmds_p(Tcl_Interp *interp, int argc, const char *argv[], int *
     {
       char *endp;
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(scheduler_readonly_reject(interp, "polygon")) return TCL_ERROR;
       if(argc > 7 && (strtod(argv[2], &endp), endp != argv[2])) {
         int i, points = 0, save;
         const char *prop = NULL;
@@ -5328,6 +6148,9 @@ static int xschem_cmds_p(Tcl_Interp *interp, int argc, const char *argv[], int *
         Tcl_SetResult(interp, "xschem print needs at least 1 more arguments: plot_type", TCL_STATIC);
         return TCL_ERROR;
       }
+      /* P6: the svg/ps export paths (svg_draw_symbol/ps_draw_symbol) don't go through draw(),
+       * so refresh the pin-name visibility cache here (png uses the screen draw() path). */
+      pin_names_sync_cache();
       if(argc > 3) {
         tclvareval("file normalize {", argv[3], "}", NULL);
         my_strncpy(xctx->plotfile, Tcl_GetStringResult(interp), S(xctx->plotfile));
@@ -5554,6 +6377,10 @@ static int xschem_cmds_p(Tcl_Interp *interp, int argc, const char *argv[], int *
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
       if(argc > 2) {
         print_hilight_net(atoi(argv[2]));
+        /* self-log at core (0061): the sym.list menu items + script. Modes 0/2/4
+         * create pins/labels (mutate), 1/3 print; all are deterministic + replayable.
+         * Tcl-backed registered keys eval this same command -> deduped here. */
+        log_action("xschem print_hilight_net %d", atoi(argv[2]));
       }
     }
 
@@ -5723,7 +6550,35 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
      *     Example: xschem raw add power {outm outp - i(@r1[i]) *}
      *
      */
-    if(!strcmp(argv[1], "raw") || !strcmp(argv[1], "raw_query"))
+    /* recompute_inst_bbox [inst]
+     *   Recompute the cached bounding box (x1/y1/x2/y2, which includes the instance's
+     *   texts) of one instance (by name or index) or, with no arg, of every currently
+     *   SELECTED instance. Does NOT push undo or redraw — it just refreshes the bbox
+     *   the hit-test/selection/redraw machinery relies on. Needed after a batch of
+     *   `setprop -fast instance` edits (the fast path skips symbol_bbox) so a single
+     *   undo can cover a multi-object gesture while hit-testing stays correct.
+     *   See doc/claude/specs/bus_thickness_scroll.md / its undo update. */
+    if(!strcmp(argv[1], "recompute_inst_bbox"))
+    {
+      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(argc > 2) {
+        int i = get_instance(argv[2]);
+        if(i < 0) { Tcl_SetResult(interp, "xschem recompute_inst_bbox: instance not found",
+                                   TCL_STATIC); return TCL_ERROR; }
+        symbol_bbox(i, &xctx->inst[i].x1, &xctx->inst[i].y1, &xctx->inst[i].x2, &xctx->inst[i].y2);
+      } else {
+        int i;
+        rebuild_selected_array();
+        for(i = 0; i < xctx->lastsel; ++i) {
+          if(xctx->sel_array[i].type == ELEMENT) {
+            int n = xctx->sel_array[i].n;
+            symbol_bbox(n, &xctx->inst[n].x1, &xctx->inst[n].y1, &xctx->inst[n].x2, &xctx->inst[n].y2);
+          }
+        }
+      }
+      Tcl_ResetResult(interp);
+    }
+    else if(!strcmp(argv[1], "raw") || !strcmp(argv[1], "raw_query"))
     {
       double sweep1 = -1.0, sweep2 = -1.0;
       int err = 0;
@@ -6116,6 +6971,7 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
       int draw = 1;
       const char *prop_str = NULL;
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(scheduler_readonly_reject(interp, "rect")) return TCL_ERROR;
       if(argc > 5) {
         x1=atof(argv[2]);
         y1=atof(argv[3]);
@@ -6160,7 +7016,9 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
     else if(!strcmp(argv[1], "redo"))
     {
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(scheduler_readonly_reject(interp, "redo")) return TCL_ERROR;
       pop_undo_keep_selection(1, 1); /* issue 0007: keep selection across redo */
+      log_action("xschem redo"); /* self-log at core */
       Tcl_ResetResult(interp);
     }
 
@@ -6218,8 +7076,10 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
          * but narrowed to TABS: a detached window (non-empty top_path) owns its own canvas and
          * DOES draw, which is the whole multi-window feature. (.drw's path is always
          * `winfo viewable`, so the Tcl-side visibility gate cannot catch this.) */
-        if(borrowed && (!xctx->top_path || !xctx->top_path[0]))
-          r = 0;
+        if(borrowed && (!xctx->top_path || !xctx->top_path[0]) && strcmp(argv[2], get_drw_front_win()))
+          r = 0; /* a HIDDEN background tab (empty top_path, and not the tab currently shown on .drw).
+                  * The main window / front tab (== get_drw_front_win()) IS visible on .drw even when a
+                  * DETACHED window has focus, so it must keep animating -- issue 0073 animated-highlight. */
         else
           r = draw_hilight_region(&next); /* guards save_pixmap==0 (unexposed bg window) internally */
         net_hilight_restore_ctx(borrowed);
@@ -6278,6 +7138,7 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
     {
       int inst, fast = 0;
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(scheduler_readonly_reject(interp, "replace_symbol")) return TCL_ERROR;
       if(argc > 4) {
         argc = 4;
         if(!strcmp(argv[4], "fast")) {
@@ -6357,6 +7218,7 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
       int inst;
 
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(scheduler_readonly_reject(interp, "reset_inst_prop")) return TCL_ERROR;
       if(argc < 3) {
         Tcl_SetResult(interp, "xschem reset_inst_prop needs 1 more argument", TCL_STATIC);
         return TCL_ERROR;
@@ -6477,6 +7339,7 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
       double x0 = xctx->mousex_snap;
       double y0 = xctx->mousey_snap;
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(scheduler_readonly_reject(interp, "rotate")) return TCL_ERROR;
       if(argc > 3) {
         x0 = atof(argv[2]);
         y0 = atof(argv[3]);
@@ -6491,6 +7354,12 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
         move_objects(START,0,0,0);
         move_objects(ROTATE,0,0,0);
         move_objects(END,0,0,0);
+        /* self-log at core (standalone, non-gesture): covers the Edit-menu item,
+         * toolbar, context menu and any scripted `xschem rotate`. The Shift-R key
+         * does NOT reach here -- it is handled inline in callback.c (case 'R') and
+         * logs nothing (issue 0068). Rotate-during-move is a gesture logged by the
+         * move END (issue 0069), not here. */
+        log_action("xschem rotate %.16g %.16g", x0, y0);
       }
       Tcl_ResetResult(interp);
     }
@@ -6500,13 +7369,19 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
     else if(!strcmp(argv[1], "rotate_in_place"))
     {
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
-      if(xctx->ui_state & STARTMOVE) move_objects(FLIP|ROTATELOCAL,0,0,0);
-      else if(xctx->ui_state & STARTCOPY) copy_objects(FLIP|ROTATELOCAL);
+      if(scheduler_readonly_reject(interp, "rotate_in_place")) return TCL_ERROR;
+      /* rotate-during-move/copy: rotate each object about its own center. The
+       * standalone branch below and callback.c's inline Alt-R both use ROTATE|
+       * ROTATELOCAL; these two lines had FLIP by copy-paste from flip_in_place,
+       * so a rotate-in-place mid-gesture mirror-flipped instead of rotating. */
+      if(xctx->ui_state & STARTMOVE) move_objects(ROTATE|ROTATELOCAL,0,0,0);
+      else if(xctx->ui_state & STARTCOPY) copy_objects(ROTATE|ROTATELOCAL);
       else {
         rebuild_selected_array();
         move_objects(START,0,0,0);
         move_objects(ROTATE|ROTATELOCAL,0,0,0);
         move_objects(END,0,0,0);
+        log_action("xschem rotate_in_place"); /* self-log at core (standalone only) */
       }
       Tcl_ResetResult(interp);
     }
@@ -6724,7 +7599,8 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
         Tcl_SetResult(interp, "xschem select: missing arguments.", TCL_STATIC);
         return TCL_ERROR;
       } else if(argc < 5 && (!strcmp(argv[2], "rect") || !strcmp(argv[2], "line") ||
-                     !strcmp(argv[2], "poly") || !strcmp(argv[2], "arc"))) {
+                     !strcmp(argv[2], "poly") || !strcmp(argv[2], "arc") ||
+                     !strcmp(argv[2], "pin"))) {
         Tcl_SetResult(interp, "xschem select: missing arguments.", TCL_STATIC);
         return TCL_ERROR;
       } else if(argc < 4) {
@@ -6748,6 +7624,23 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
            xctx->ui_state |= SELECTION;
         }
         Tcl_SetResult(interp, (n >= 0) ? "1" : "0" , TCL_STATIC);
+      }
+      /* xschem select pin <inst> <pinidx> [clear|nodraw] : select/deselect one pin of
+       * an instance. <inst> is a name or index (get_instance), <pinidx> indexes the
+       * symbol's PINLAYER pins. Primarily a headless hook for tests + future pin ops.
+       * See doc/claude/specs/pin_selection.md */
+      else if(!strcmp(argv[2], "pin") && argc > 4) {
+        int n = get_instance(argv[3]);
+        int p = atoi(argv[4]);
+        int rects = (n >= 0 && xctx->inst[n].ptr >= 0) ?
+                    (xctx->inst[n].ptr + xctx->sym)->rects[PINLAYER] : 0;
+        int valid = (n >= 0 && p >= 0 && p < rects);
+        if(valid) {
+          select_pin(n, p, sel, fast);
+          if(sel) xctx->ui_state |= SELECTION;
+          rebuild_selected_array();
+        }
+        Tcl_SetResult(interp, valid ? "1" : "0" , TCL_STATIC);
       }
       else if(!strcmp(argv[2], "wire") && argc > 3) {
         int n=atoi(argv[3]);
@@ -6812,6 +7705,72 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
       drawtempline(xctx->gc[SELLAYER], END, 0.0, 0.0, 0.0, 0.0);
     }
 
+    /* select_at <x> <y> [add] [nodraw]
+     *   Select the closest object at SCHEMATIC coordinate (x,y) -- the replayable
+     *   form of a mouse click (doc/claude/specs/select_at.md). Default replaces the
+     *   current selection (plain click); `add` augments it (shift-click); `nodraw`
+     *   skips the redraw. Returns the hit object as one `{type index col id}` row
+     *   (== an `xschem selection` row), or "" on a miss. Self-logs
+     *   `xschem select_at x y [add]`; the interactive click logs the same line at
+     *   the select_object() funnel. */
+    else if(!strcmp(argv[1], "select_at"))
+    {
+      double x, y;
+      int add = 0, draw = 1, i;
+      Selected s;
+      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(argc < 4) {
+        Tcl_SetResult(interp, "xschem select_at: need <x> <y>.", TCL_STATIC);
+        return TCL_ERROR;
+      }
+      x = atof(argv[2]);
+      y = atof(argv[3]);
+      for(i = 4; i < argc; i++) {
+        if(!strcmp(argv[i], "add")) add = 1;
+        else if(!strcmp(argv[i], "nodraw")) draw = 0;
+      }
+      if(!add) unselect_all(1);
+      select_at_suppress_log = 1;        /* the command logs its own line (with `add`) below */
+      s = select_object(x, y, SELECTED, 0, NULL);
+      select_at_suppress_log = 0;
+      rebuild_selected_array();
+      if(draw && has_x) draw_selection(xctx->gc[SELLAYER], 0);
+      if(s.type) {
+        const char *tname;
+        int id = -1, n = s.n, c = s.col, k;
+        char row[100];
+        /* take col from sel_array so the returned row is byte-identical to an
+         * `xschem selection` row: find_closest_obj returns col=0 for the flat
+         * types (wire/instance/text) whereas the selection enumerator reports the
+         * stored col. Match by (type,n); for the per-layer types also match col. */
+        for(k = 0; k < xctx->lastsel; k++) {
+          if(xctx->sel_array[k].type == s.type && xctx->sel_array[k].n == n &&
+             (s.type == WIRE || s.type == ELEMENT || s.type == xTEXT ||
+              xctx->sel_array[k].col == s.col)) {
+            c = xctx->sel_array[k].col;
+            break;
+          }
+        }
+        switch(s.type) {
+          case WIRE:    tname = "wire";     id = (int)xctx->wire[n].id; break;
+          case xRECT:   tname = "rect";     id = (int)xctx->rect[c][n].id; break;
+          case LINE:    tname = "line";     id = (int)xctx->line[c][n].id; break;
+          case ELEMENT: tname = "instance"; id = (int)xctx->inst[n].id; break;
+          case xTEXT:   tname = "text";     id = (int)xctx->text[n].id; break;
+          case POLYGON: tname = "poly";     id = (int)xctx->poly[c][n].id; break;
+          case ARC:     tname = "arc";      id = (int)xctx->arc[c][n].id; break;
+          default:      tname = "unknown";  break;
+        }
+        log_action("xschem select_at %.16g %.16g%s", x, y, add ? " add" : "");
+        /* one object -> a BARE `type index col id` row (mirrors `xschem object`'s
+         * bare single vs `xschem objects`'/`selection`'s brace-wrapped list rows) */
+        my_snprintf(row, S(row), "%s %d %d %d", tname, n, c, id);
+        Tcl_SetResult(interp, row, TCL_VOLATILE);
+      } else {
+        Tcl_ResetResult(interp);
+      }
+    }
+
     /* select_all
      *   Selects all objects in schematic */
     else if(!strcmp(argv[1], "select_all"))
@@ -6848,6 +7807,14 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
       int sel = SELECTED;
       double x1, y1, x2, y2;
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      /* issue 0075: guard argc BEFORE the atof(argv[2..5]) reads. Without this a short
+       * command (e.g. the `xschem select_inside x1` typo for `select instance x1`) reaches
+       * atof(argv[3]) == atof(NULL) -> SIGSEGV -> emergency-save -> whole editor dies. */
+      if(argc < 6) {
+        Tcl_SetResult(interp,
+          "xschem select_inside: usage: select_inside x1 y1 x2 y2 [0]", TCL_STATIC);
+        return TCL_ERROR;
+      }
       if(argc > 6 && argv[6][0] == '0') sel = 0;
       x1 = atof(argv[2]);
       y1 = atof(argv[3]);
@@ -6955,6 +7922,7 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
           case xTEXT:   tname = "text";     id = (int)xctx->text[i].id; break;
           case POLYGON: tname = "poly";     id = (int)xctx->poly[c][i].id; break;
           case ARC:     tname = "arc";      id = (int)xctx->arc[c][i].id; break;
+          case INST_PIN: tname = "pin";     id = (int)xctx->inst[i].id; break; /* i=inst, c=pin */
           default:      tname = "unknown";  break;
         }
         my_snprintf(row, S(row), "{%s %d %d %d}", tname, i, c, id);
@@ -6988,6 +7956,7 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
           hilight_net(viewer);
           redraw_hilights(0);
           net_hilight_anim_update(); /* Pass 2a: waveform-viewer highlight may add a blink style */
+          net_hilight_sync_descend_windows(); /* issue 0073: push into linked descend children */
         }
         my_free(_ALLOC_ID_, &viewer_name);
       }
@@ -6998,17 +7967,33 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
      *   Set C variable 'var' to 'value' */
     else if(!strcmp(argv[1], "set"))
     {
+      /* Action-log policy (issue 0066): only three kinds of `set` self-log here --
+       * (a) saved-content mutations (header_text below; rectcolor+selection ->
+       * change_layer) log a replayable command + read-only-guard; (b) edit-geometry
+       * state the log must reproduce (cadsnap/cadgrid) logs its resolved value. Every
+       * other `set <var>` is pure session-config/display preference and stays UNLOGGED
+       * by design -- that is full-session config replay, explicitly out of v1 (action
+       * logging spec §6). Do not add blanket logging here; re-flagging them is expected. */
       if(argc > 3) {
         if(argv[2][0] < 'n') {
           if(!strcmp(argv[2], "cadgrid")) { /* set cad grid (default: 20) */
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
             set_grid( atof(argv[3]) );
+            /* self-log the RESOLVED grid (0066): set_grid maps 0 -> the default, so
+             * log cadgrid read back, not argv[3] -- one replayable line for every
+             * entry point (View-menu dialog / statusbar entry / script). Edit-geometry
+             * state, not saved content -> no read-only guard. */
+            log_action("xschem set cadgrid %.10g", tclgetdoublevar("cadgrid"));
           }
           else if(!strcmp(argv[2], "cadsnap")) { /* set mouse snap (default: 10) */
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
             set_snap( atof(argv[3]) );
             change_linewidth(-1.);
             draw();
+            /* self-log the RESOLVED snap (0066): see cadgrid above. The bindable
+             * view.set_snap_value dialog action is nolog'd (callback.c) so the async
+             * input_line prompt does not also log -- the value logs here at the core. */
+            log_action("xschem set cadsnap %.10g", tclgetdoublevar("cadsnap"));
           }
           else if(!strcmp(argv[2], "change_lw")) { /* allow change line width when zooming */
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
@@ -7075,9 +8060,25 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
           else if(!strcmp(argv[2], "header_text")) { /* set header metadata (used for license info) */
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
             if(!xctx->header_text || strcmp(xctx->header_text, argv[3])) {
+              /* header/license text is saved schematic metadata -> a content edit
+               * (0066). Refuse on a read-only view like the sibling set rectcolor
+               * (0041) -- return TCL_ERROR so a caller/replay `catch`es it -- then
+               * self-log the replayable command. Gated inside the "value changed"
+               * guard so a no-op set logs nothing and pushes no undo. log_action_argv
+               * (Tcl_Merge) keeps arbitrary/multi-line license text source-able. */
+              if(scheduler_readonly_reject(interp, "set header_text")) return TCL_ERROR;
               set_modify(1); xctx->push_undo();
               my_strdup2(_ALLOC_ID_, &xctx->header_text, argv[3]);
+              log_action_argv(argc, (const char *const *)argv);
             }
+          }
+          else if(!strcmp(argv[2], "en_pin_select")) { /* enable selecting individual instance pins */
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            xctx->en_pin_select = atoi(argv[3]);
+            /* keep the mirrored Tcl var in sync so a CIW 'xschem set en_pin_select 1'
+             * is not later clobbered by housekeeping_ctx pushing the (stale) Tcl var
+             * back to C on a window/tab focus change (pin_selection.md). */
+            tclsetboolvar("en_pin_select", xctx->en_pin_select);
           }
           else if(!strcmp(argv[2], "hide_symbols")) { /* set to 0,1,2 for various hiding level of symbols */
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
@@ -7179,8 +8180,16 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
             if(xctx->rectcolor < 0 ) xctx->rectcolor = 0;
             if(xctx->rectcolor >= cadlayers ) xctx->rectcolor = cadlayers - 1;
             rebuild_selected_array();
+            /* A bare layer-cursor pick (no selection) is pure display state and stays
+             * unlogged (issue 0066: pure-display sets are nolog). Only when there is a
+             * selection does this become a content edit -- change_layer() recolors the
+             * selected objects -- so log THAT, and refuse it on a read-only view. */
             if(xctx->lastsel) {
+              /* Reject on a read-only view like the other mutators -- and return
+               * TCL_ERROR (not a silent TCL_OK) so a caller/replay `catch`es it. */
+              if(scheduler_readonly_reject(interp, "set rectcolor")) return TCL_ERROR;
               change_layer();
+              log_action("xschem set rectcolor %d", xctx->rectcolor);
             }
           }
           else if(!strcmp(argv[2], "sch_to_compare")) { /* set name of schematic to compare current window with */
@@ -7327,6 +8336,7 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
     {
       int i, fast = 0, shift = 0;
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(scheduler_readonly_reject(interp, "setprop")) return TCL_ERROR;
 
       for(i = 2; i < argc; i++) {
         if(argv[i][0] == '-') {
@@ -7587,6 +8597,13 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
               if(fast == 3 || fast == 0) xctx->push_undo();
               my_strdup2(_ALLOC_ID_, &t->txt_ptr, argv[5]);
             }
+          } else if(!strcmp(argv[4], "size")) { /* pseudo-token: set display size (xscale=yscale) */
+            double v = atof(argv[5]);
+            if(v != t->xscale || v != t->yscale) {
+              change_done = 1;
+              if(fast == 3 || fast == 0) xctx->push_undo();
+              t->xscale = t->yscale = v;
+            }
           } else if(strcmp(argv[5], get_tok_value(t->prop_ptr, argv[4], 0))) {
             change_done = 1;
             if(fast == 3 || fast == 0) xctx->push_undo();
@@ -7620,6 +8637,20 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
         }
         Tcl_ResetResult(interp);
       }
+      /* self-log at core, narrowly: only an *instance* property edit that pushed
+       * undo. Two axes, both needed:
+       *   - subtype == "instance": `setprop rect ...` is graph machinery
+       *     (create_graph.tcl, the graph-properties dialog) issued with layer/rect
+       *     indices that would not match on replay -- logging it both floods the
+       *     transcript and produces non-replayable lines; text/wire props reach the
+       *     log via their own dialogs. So only instance edits are recorded here.
+       *   - fast != 1: `-fast` (fast==1) skips push_undo -- it is pure machinery
+       *     (op-point backannotation) -- so it is excluded; `-fastundo` (fast==3)
+       *     and the plain form (fast==0) DO push_undo and ARE logged.
+       * Property-*dialog* edits take a different path (apply_instance_properties),
+       * so this does not double-log them. Tcl_Merge keeps braces/spaces faithful. */
+      if(fast != 1 && argc > 2 && !strcmp(argv[2], "instance"))
+        log_action_argv(argc, (const char *const *)argv);
     }
     /* show_unconnected_pins
      *   Add a "lab_show.sym" to all instance pins that are not connected to anything */
@@ -8032,6 +9063,7 @@ static int xschem_cmds_t(Tcl_Interp *interp, int argc, const char *argv[], int *
     else if(!strcmp(argv[1], "text") )
     {
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(scheduler_readonly_reject(interp, "text")) return TCL_ERROR;
       if(argc < 10) {Tcl_SetResult(interp,
           "xschem text requires 8 additional arguments", TCL_STATIC); return TCL_ERROR;}
 
@@ -8200,9 +9232,12 @@ static int xschem_cmds_t(Tcl_Interp *interp, int argc, const char *argv[], int *
     else if(!strcmp(argv[1], "trim_wires"))
     {
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(scheduler_readonly_reject(interp, "trim_wires")) return TCL_ERROR;
       xctx->push_undo();
       trim_wires();
       draw();
+      log_action("xschem trim_wires"); /* self-log at core: Tools menu + toolbar (the '&'
+                                        * key is handled inline in callback.c, issue 0068) */
       Tcl_ResetResult(interp);
     }
     else { *cmd_found = 0;}
@@ -8228,6 +9263,7 @@ static int xschem_cmds_u(Tcl_Interp *interp, int argc, const char *argv[], int *
     {
       int redo = 0, set_modify = 1;
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(scheduler_readonly_reject(interp, "undo")) return TCL_ERROR;
       if(argc > 2) {
         redo = atoi(argv[2]);
       }
@@ -8235,6 +9271,10 @@ static int xschem_cmds_u(Tcl_Interp *interp, int argc, const char *argv[], int *
         set_modify = atoi(argv[3]);
       }
       pop_undo_keep_selection(redo, set_modify); /* issue 0007: keep selection across undo */
+      /* self-log at core: bare form for the interactive case, explicit args when
+       * a caller passed the redo/set_modify variant, so replay is faithful. */
+      if(argc == 2) log_action("xschem undo");
+      else          log_action("xschem undo %d %d", redo, set_modify);
       Tcl_ResetResult(interp);
     }
 
@@ -8283,6 +9323,12 @@ static int xschem_cmds_u(Tcl_Interp *interp, int argc, const char *argv[], int *
       /* undraw_hilight_net(1); */
       if(!fast) draw();
       net_hilight_anim_update(); /* Pass 2a: clearing all highlights stops the tick */
+      net_hilight_sync_descend_windows(); /* issue 0073: clear-through into linked descend children */
+      /* self-log at core (0067): deterministic + replayable. Covers the raw Cadence-rc
+       * `bind .drw <Key-0>` and the mouse binding (both call `xschem unhilight_all`
+       * directly, bypassing dispatch). The registered Shift+K action carries the same
+       * csv command -> its Layer A copy is deduped here via actionlog_cmd_logged. */
+      log_action("xschem unhilight_all");
       Tcl_ResetResult(interp);
     }
 
@@ -8327,7 +9373,7 @@ static int xschem_cmds_u(Tcl_Interp *interp, int argc, const char *argv[], int *
      *   Recompile the net highlight style table from the 'net_hilight_style' Tcl
      *   variable (after editing it) and redraw. Required: changing the variable
      *   alone has no effect, since styles are compiled into the C table.
-     *   Out-of-range stripe angles are clamped to [0,45] with a warning.
+     *   Out-of-range stripe angles are clamped to [-45,45] with a warning.
      *   An empty variable resets to the layer-derived default (re-materialized into
      *   the variable). */
     else if(!strcmp(argv[1], "update_net_hilight_style"))
@@ -8418,8 +9464,9 @@ static int xschem_cmds_w(Tcl_Interp *interp, int argc, const char *argv[], int *
     }
     /* windows
      *   List open schematic contexts, one Tcl sublist each:
-     *     {win_path top_path group xwindow current_name}
-     *   'group' is the owning top-level ("." for the main window). Read-only
+     *     {win_path top_path group xwindow current_name number}
+     *   'group' is the owning top-level ("." for the main window). 'number' is the
+     *   Cadence-style stable window number (doc/claude/specs/window_numbering.md). Read-only
      *   introspection seam for multi-window / detach
      *   (doc/claude/specs/multi_window_detach.md). In Phase 0 group == top_path (the owning
      *   toplevel); per-window tab grouping (Phase 1) refines it. */
@@ -8433,20 +9480,24 @@ static int xschem_cmds_w(Tcl_Interp *interp, int argc, const char *argv[], int *
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
       for(i = 0; i < MAX_NEW_WINDOWS; ++i) {
         const char *wp, *tp, *nm;
-        char xwin[32];
+        char xwin[32], wnum[16];
         Tcl_Obj *entry;
         ctx = get_window_ctx(i, &wp);
         if(!ctx) continue;
         tp = (ctx->top_path && ctx->top_path[0]) ? ctx->top_path : ".";
         nm = ctx->sch[ctx->currsch] ? ctx->sch[ctx->currsch] : "";
         my_snprintf(xwin, S(xwin), "%lu", (unsigned long)ctx->window);
-        /* {win_path top_path group xwindow current_name}; group == tp for now (Phase 0) */
+        my_snprintf(wnum, S(wnum), "%d", ctx->window_number);
+        /* {win_path top_path group xwindow current_name number}; group == tp for now
+         * (Phase 0). 'number' is the Cadence-style stable window number
+         * (doc/claude/specs/window_numbering.md) appended as a 6th trailing field. */
         entry = Tcl_NewListObj(0, NULL);
         Tcl_ListObjAppendElement(interp, entry, Tcl_NewStringObj(wp, -1));
         Tcl_ListObjAppendElement(interp, entry, Tcl_NewStringObj(tp, -1));
         Tcl_ListObjAppendElement(interp, entry, Tcl_NewStringObj(tp, -1));
         Tcl_ListObjAppendElement(interp, entry, Tcl_NewStringObj(xwin, -1));
         Tcl_ListObjAppendElement(interp, entry, Tcl_NewStringObj(nm, -1));
+        Tcl_ListObjAppendElement(interp, entry, Tcl_NewStringObj(wnum, -1));
         Tcl_ListObjAppendElement(interp, result, entry);
       }
       Tcl_SetObjResult(interp, result);
@@ -8513,6 +9564,7 @@ static int xschem_cmds_w(Tcl_Interp *interp, int argc, const char *argv[], int *
       int pos = -1, save, sel = 0;
       const char *prop=NULL;
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(scheduler_readonly_reject(interp, "wire")) return TCL_ERROR;
       if(argc > 5) {
         x1=atof(argv[2]);
         y1=atof(argv[3]);

@@ -73,6 +73,23 @@ void rebuild_selected_array() /* can be used only if new selected set is lower *
    xctx->sel_array[xctx->lastsel].n = i;
    xctx->sel_array[xctx->lastsel++].col = WIRELAYER;
   }
+ /* emit one INST_PIN entry per selected pin (pin_selection.md). This is independent
+  * of inst.sel, so a pins-only instance contributes pin entries but no ELEMENT entry.
+  * Scan is bounded by min(pin count, pin_sel_size) so a symbol pin-count change can
+  * never read past the allocation. */
+ for(i=0;i<xctx->instances; ++i)
+  if(xctx->inst[i].pin_sel && xctx->inst[i].ptr >= 0)
+  {
+   int p, rects = (xctx->inst[i].ptr + xctx->sym)->rects[PINLAYER];
+   int lim = rects < xctx->inst[i].pin_sel_size ? rects : xctx->inst[i].pin_sel_size;
+   for(p = 0; p < lim; ++p) if(xctx->inst[i].pin_sel[p])
+   {
+    check_selected_storage();
+    xctx->sel_array[xctx->lastsel].type = INST_PIN;
+    xctx->sel_array[xctx->lastsel].n = i;
+    xctx->sel_array[xctx->lastsel++].col = (unsigned int)p;
+   }
+  }
  for(i=0;i<xctx->wires; ++i)
   if(xctx->wire[i].sel)
   {
@@ -494,6 +511,25 @@ void draw_selection(GC g, int interruptable)
          xctx->rx1-xctx->inst[n].x0+xctx->deltax,xctx->ry1-xctx->inst[n].y0+xctx->deltay);
      }
      break;
+    case INST_PIN: {
+      /* selected instance pin (pin_selection.md D4): a box + diagonal cross centered on
+       * the pin point, stroked in the SELECTION colour (SELLAYER). MUST NOT use the
+       * pin's own layer colour -- pins are usually drawn in PINLAYER (often red), so a
+       * PINLAYER marker is invisible on the pin. The box+X *shape* is what distinguishes
+       * it from the whole-instance outline. Pins are inert, so it ignores any
+       * in-progress move offset and sits on the true pin. NOW mode -> uses its own GC,
+       * independent of the ADD/END batch flushed with g. Erase pass (g==gctiled)
+       * restores the box region, which also covers the cross. */
+      double px, py, h = PIN_SEL_HANDLE_H;
+      GC mg = (g == xctx->gctiled) ? xctx->gctiled : xctx->gc[SELLAYER];
+      get_inst_pin_coord(n, (int)c, &px, &py);
+      drawtemprect(mg, NOW, px - h, py - h, px + h, py + h);
+      if(g != xctx->gctiled) {
+        drawtempline(mg, NOW, px - h, py - h, px + h, py + h);
+        drawtempline(mg, NOW, px - h, py + h, px + h, py - h);
+      }
+      break;
+    }
    }
 #ifdef __unix__
    if(interruptable && pending_events())
@@ -614,6 +650,10 @@ void copy_objects(int what)
    xctx->rotatelocal=0;
    dbg(1, "copy_objects(): START copy\n");
    rebuild_selected_array();
+   /* read-only backstop (issue 0041): refuse to begin a copy-place below the entry
+    * guards; placed with the lastsel==0 early return so a refused START leaves the same
+    * clean state (see move_objects START). */
+   if(begin_edit("copy")) return;
    if(xctx->lastsel==0) return;
    update_symbol_bboxes(0, 0);
    if(xctx->connect_by_kissing == 2) xctx->kissing = connect_by_kissing();
@@ -690,6 +730,17 @@ void copy_objects(int what)
     firstw = firsti = 1;
     draw_selection(xctx->gctiled,0);
     update_symbol_bboxes(0, 0);
+
+    /* P4 (cadence_pin_name_text.md): a pin's name view is a DERIVED object, never copied.
+     * Drop any selected name views from the copy set; each copied pin regenerates its own
+     * view below (synth_pin_views), bound to the copy's fresh id -- otherwise the view would
+     * be duplicated as a stray real text still bound to the ORIGINAL pin. */
+    {
+      int t, dropped = 0;
+      for(t = 0; t < xctx->texts; ++t)
+        if(xctx->text[t].owner_pin_id && xctx->text[t].sel) { xctx->text[t].sel = 0; dropped = 1; }
+      if(dropped) { xctx->need_reb_sel_arr = 1; rebuild_selected_array(); }
+    }
 
     for(i=0;i<xctx->lastsel; ++i)
     {
@@ -891,6 +942,7 @@ void copy_objects(int what)
         xctx->text[xctx->texts].font=NULL;
         xctx->text[xctx->texts].floater_instname=NULL;
         xctx->text[xctx->texts].floater_ptr=NULL;
+        xctx->text[xctx->texts].owner_pin_id=0; /* copied text is real; P4 handles view-aware copy */
         my_strdup2(_ALLOC_ID_, &xctx->text[xctx->texts].prop_ptr, xctx->text[n].prop_ptr);
         my_strdup2(_ALLOC_ID_, &xctx->text[xctx->texts].floater_ptr, xctx->text[n].floater_ptr);
         my_strdup2(_ALLOC_ID_, &xctx->text[xctx->texts].floater_instname, xctx->text[n].floater_instname);
@@ -947,6 +999,10 @@ void copy_objects(int what)
         xctx->inst[xctx->instances].lab=NULL;
         xctx->inst[xctx->instances].node=NULL;
         xctx->inst[xctx->instances].name=NULL;
+        xctx->inst[xctx->instances].pin_sel=NULL;      /* transient pin selection: the copy
+                                                        * must NOT alias the source's heap
+                                                        * pin_sel buffer (pin_selection.md) */
+        xctx->inst[xctx->instances].pin_sel_size=0;
         my_strdup2(_ALLOC_ID_, &xctx->inst[xctx->instances].name, xctx->inst[n].name);
         my_strdup2(_ALLOC_ID_, &xctx->inst[xctx->instances].prop_ptr, xctx->inst[n].prop_ptr);
         my_strdup2(_ALLOC_ID_, &xctx->inst[xctx->instances].lab, xctx->inst[n].lab);
@@ -980,6 +1036,10 @@ void copy_objects(int what)
     }  /* for(i = 0; i < xctx->lastsel; ++i) */
     xctx->need_reb_sel_arr=1;
     rebuild_selected_array();
+    /* P4: regenerate name views for the just-copied pins. Each copy got a fresh xRect.id
+     * (storeobject), so synth_pin_views() binds a NEW view to it; idempotent + symbol-mode
+     * gated, so the original pins' existing views are left alone. */
+    synth_pin_views();
     if(!firsti || !firstw) {
       xctx->prep_net_structs=0;
       xctx->prep_hi_structs=0;
@@ -1146,6 +1206,20 @@ static void place_moved_wire(int n, int orthogonal_wiring)
   }
 }
 
+/* Does (x,y) coincide with instance pin (px,py)? Tolerance = cadsnap/2, the SAME
+ * predicate select_attached_nets()'s endpoint_near() (select.c) uses to grab wires
+ * for stretching -- so the two ends of the stretch pipeline agree on "on the pin":
+ * a wire grabbed at a sub-grid-near pin is recognized by the corner-slide pin tests
+ * too, instead of the corner-slide silently failing its exact `==` test and letting
+ * the wire jog (issue 0046). Exact on grid-aligned designs (endpoints sit on pins,
+ * and adjacent pins are cadsnap apart > cadsnap/2, so no false neighbour match). */
+static int point_near_pin(double px, double py, double x, double y)
+{
+  double tol = tclgetdoublevar("cadsnap") / 2.0;
+  if(tol < 1e-6) tol = 1e-6;
+  return fabs(px - x) <= tol && fabs(py - y) <= tol;
+}
+
 /* is (x,y) on a pin of a FIXED (non-selected, i.e. non-moving) instance? */
 static int point_on_fixed_pin(double x, double y)
 {
@@ -1157,7 +1231,7 @@ static int point_on_fixed_pin(double x, double y)
     rects = (xctx->inst[inst].ptr + xctx->sym)->rects[PINLAYER];
     for(r = 0; r < rects; r++) {
       get_inst_pin_coord(inst, r, &px, &py);
-      if(px == x && py == y) return 1;
+      if(point_near_pin(px, py, x, y)) return 1;
     }
   }
   return 0;
@@ -1177,7 +1251,7 @@ static int point_on_moving_pin(double x, double y)
     rects = (xctx->inst[inst].ptr + xctx->sym)->rects[PINLAYER];
     for(r = 0; r < rects; r++) {
       get_inst_pin_coord(inst, r, &px, &py);
-      if(px == x && py == y) return 1;
+      if(point_near_pin(px, py, x, y)) return 1;
     }
   }
   return 0;
@@ -1280,6 +1354,23 @@ static int point_on_other_wire(double x, double y, int self)
   return 0;
 }
 
+/* does any wire other than `self` that touches (x,y) carry net name `lab`? Used to
+ * confirm the moved pin STAYS on the stub's net once the stub is dropped -- the
+ * connectivity-preserving condition for removing a named stub (issue 0040). Compares
+ * the `lab` prop token, which prepare_netlist_structs() has baked with the wire's
+ * derived net name; `lab` is the caller's own COPY of the stub's token (get_tok_value
+ * returns a shared buffer the loop below reuses). */
+static int other_wire_same_lab(double x, double y, int self, const char *lab)
+{
+  int m;
+  for(m = 0; m < xctx->wires; m++) {
+    if(m == self) continue;
+    if(!touch(xctx->wire[m].x1, xctx->wire[m].y1, xctx->wire[m].x2, xctx->wire[m].y2, x, y)) continue;
+    if(!strcmp(lab, get_tok_value(xctx->wire[m].prop_ptr, "lab", 0))) return 1;
+  }
+  return 0;
+}
+
 /* predicate for wire_delete_compact(): delete wires flagged in the arg array */
 static int wire_doomed_flag(int n, void *arg) { return ((unsigned short *)arg)[n]; }
 
@@ -1338,8 +1429,23 @@ static void remove_move_orphan_wires(void)
     /* ... and that pin must be redundantly served by another wire, else the stub is
      * the sole link to the pin and must stay */
     if(!point_on_other_wire(kx, ky, i)) continue;
+    /* A named stub is dropped only when the moved pin STAYS on that same net via another
+     * wire; otherwise deleting it would silently rename/lose the node (issue 0040). Compare
+     * the net name against the serving wires -- NOT merely test lab non-empty:
+     * prepare_netlist_structs() bakes the derived net name into EVERY named-net wire's
+     * prop_ptr lab=, so a non-empty test wrongly protected ordinary same-net stubs (it
+     * broke the redundant-stub cleanup, TC9). An anonymous stub (empty lab) stays removable
+     * on the geometric point_on_other_wire redundancy above, as before. */
+    {
+      char *stublab = NULL;
+      int keep;
+      my_strdup(_ALLOC_ID_, &stublab, get_tok_value(xctx->wire[i].prop_ptr, "lab", 0));
+      keep = (stublab && stublab[0] && !other_wire_same_lab(kx, ky, i, stublab));
+      my_free(_ALLOC_ID_, &stublab);
+      if(keep) continue;
+    }
     doomed[i] = 1;
-    removed = 1;
+    removed++;
   }
   if(removed) {
     wire_delete_compact(wire_doomed_flag, doomed);
@@ -1348,6 +1454,14 @@ static void remove_move_orphan_wires(void)
     xctx->prep_hi_structs = 0;
     xctx->need_reb_sel_arr = 1;
     set_modify(1);
+    /* the trim is otherwise invisible -- tell the user a redundant wire was auto-removed
+     * so a post-move connectivity change is never silent (issue 0040) */
+    if(has_x) {
+      char msg[80];
+      my_snprintf(msg, S(msg), "auto-removed %d redundant wire%s after move",
+                  removed, removed == 1 ? "" : "s");
+      tclvareval("if {[info procs ciw_echo] ne {}} {ciw_echo {", msg, "}}", NULL);
+    }
   }
   my_free(_ALLOC_ID_, &doomed);
 }
@@ -1387,6 +1501,8 @@ static void insert_exit_stubs(void)
 {
   int inst, r, rects, n, m;
   double grid = tclgetdoublevar("cadsnap");
+  int nwires0 = xctx->wires;   /* snapshot: stubs stored below (index >= nwires0) must NOT re-enter
+                                * the pin/corner scans of later pins/instances (issue 0047) */
   if(grid <= 0.0) grid = 1.0;
   for(inst = 0; inst < xctx->instances; inst++) {
     double bx1, by1, bx2, by2, cx, cy;
@@ -1405,7 +1521,7 @@ static void insert_exit_stubs(void)
       if(fabs(ddx) >= fabs(ddy)) { nx = (ddx > 0) ? 1.0 : -1.0; ny = 0.0; }
       else                       { nx = 0.0; ny = (ddy > 0) ? 1.0 : -1.0; }
       /* exactly one wire endpoint exactly on the pin = the route's first leg */
-      for(n = 0; n < xctx->wires; n++) {
+      for(n = 0; n < nwires0; n++) {
         if(xctx->wire[n].x1 == px && xctx->wire[n].y1 == py)      { cnt++; wfound = n; endsel = 1; }
         else if(xctx->wire[n].x2 == px && xctx->wire[n].y2 == py) { cnt++; wfound = n; endsel = 2; }
       }
@@ -1421,7 +1537,7 @@ static void insert_exit_stubs(void)
       /* never pull the far end off a fixed (non-moving) pin -> would disconnect it */
       if(point_on_fixed_pin(fx, fy)) continue;
       /* require a real corner/route at the far end (another wire endpoint there) */
-      for(m = 0; m < xctx->wires; m++) {
+      for(m = 0; m < nwires0; m++) {
         if(m == n) continue;
         if((xctx->wire[m].x1 == fx && xctx->wire[m].y1 == fy) ||
            (xctx->wire[m].x2 == fx && xctx->wire[m].y2 == fy)) { has_corner = 1; break; }
@@ -1431,7 +1547,7 @@ static void insert_exit_stubs(void)
       /* slide the first leg one grid out along the normal; drag the corner with it */
       sx  = px + grid * nx; sy  = py + grid * ny;   /* stub tip = leg's new pin end  */
       nfx = fx + grid * nx; nfy = fy + grid * ny;   /* leg's new far (corner) end     */
-      for(m = 0; m < xctx->wires; m++) {            /* drag every neighbour at the corner */
+      for(m = 0; m < nwires0; m++) {                /* drag every neighbour at the corner */
         if(m == n) continue;
         if(xctx->wire[m].x1 == fx && xctx->wire[m].y1 == fy) { xctx->wire[m].x1 = nfx; xctx->wire[m].y1 = nfy; }
         if(xctx->wire[m].x2 == fx && xctx->wire[m].y2 == fy) { xctx->wire[m].x2 = nfx; xctx->wire[m].y2 = nfy; }
@@ -1469,6 +1585,12 @@ void move_objects(int what, int merge, double dx, double dy)
    xctx->rotatelocal=0;
    xctx->deltax = xctx->deltay = 0.0;
    rebuild_selected_array();
+   /* read-only backstop (issue 0041): refuse to begin a move below the entry guards.
+    * Placed alongside the lastsel==0 early return so a refused START leaves the same
+    * clean state an empty-selection START does (deltas zeroed, selection rebuilt), which
+    * keeps a follow-on END (the scheduler calls START then END) a no-op. ABORT/RUBBER/END
+    * of an already-started gesture are left alone (none can start on a read-only buffer). */
+   if(begin_edit("move")) return;
    if(xctx->lastsel==0) return;
    update_symbol_bboxes(0, 0);
    /* if connect_by_kissing==2 it was set in callback.c ('M' command) */
@@ -1930,6 +2052,9 @@ void move_objects(int what, int merge, double dx, double dy)
    xctx->ui_state &= ~STARTMERGE;
    xctx->move_rot=xctx->move_flip=0;
    xctx->x1=xctx->y1=xctx->x2=xctx->y2=xctx->deltax=xctx->deltay=0.;
+   /* P3 write-through: a moved pin-name view records its new offset on the owning pin;
+    * a pin moved without its view makes the view follow (Option B). */
+   pin_views_reconcile_after_move();
    set_modify(1); /* must be done before draw() if floaters are present to force cached values update */
    draw();
    xctx->rotatelocal=0;

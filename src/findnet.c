@@ -408,14 +408,34 @@ static void find_closest_box(double mx ,double my, int override_lock)
   if(!xctx->enable_layer[c]) continue;
   for(i=0;i<xctx->rects[c]; ++i)
   {
-   if( POINTINSIDE(mx, my, xctx->rect[c][i].x1 - threshold, xctx->rect[c][i].y1 - threshold,
-                         xctx->rect[c][i].x2 + threshold, xctx->rect[c][i].y2 + threshold) &&
-      !POINTINSIDE(mx, my, xctx->rect[c][i].x1 + threshold, xctx->rect[c][i].y1 + threshold,
-                         xctx->rect[c][i].x2 - threshold, xctx->rect[c][i].y2 - threshold))
+   /* Hit test: inside the box grown by the pick threshold. Ordinary rects select on their
+    * BORDER ring only (also outside the box SHRUNK by threshold), so a click in open
+    * interior misses. Symbol PINS (PINLAYER) are tiny 5x5 filled handles, so select them
+    * on the whole BODY -- otherwise, once zoomed in enough that threshold < the pin
+    * half-size, the inner box reappears and the pin centre becomes an unselectable dead
+    * zone (cadence_pin_name_text.md D-sel). */
+   int hit = POINTINSIDE(mx, my, xctx->rect[c][i].x1 - threshold, xctx->rect[c][i].y1 - threshold,
+                         xctx->rect[c][i].x2 + threshold, xctx->rect[c][i].y2 + threshold);
+   if(c != PINLAYER)
+     hit = hit && !POINTINSIDE(mx, my, xctx->rect[c][i].x1 + threshold, xctx->rect[c][i].y1 + threshold,
+                         xctx->rect[c][i].x2 - threshold, xctx->rect[c][i].y2 - threshold);
+   if(hit)
    {
     tmp=dist_from_rect(mx, my, xctx->rect[c][i].x1, xctx->rect[c][i].y1,
                                   xctx->rect[c][i].x2, xctx->rect[c][i].y2);
-    if(tmp < d)
+    /* A symbol PIN is a tiny solid handle whose stub line crosses its centre at distance 0.
+     * dist_from_rect measures distance to the nearest EDGE, so a centre click scores the pin
+     * FARTHER than the line and the line wins. Treat a click anywhere INSIDE the pin body as
+     * distance 0, and let pins win distance TIES (<=) against the equidistant stub line found
+     * earlier in the cascade -- so clicking anywhere on the pin body grabs the PIN, needed for
+     * verb-noun copy/move and noun-verb pin selection (cadence_pin_name_text.md D-sel). The
+     * stub line stays selectable on the portion that lies outside the pin body. */
+    if(c == PINLAYER &&
+       POINTINSIDE(mx, my, xctx->rect[c][i].x1, xctx->rect[c][i].y1,
+                           xctx->rect[c][i].x2, xctx->rect[c][i].y2)) {
+      tmp = 0.0;
+    }
+    if(tmp < d || (c == PINLAYER && tmp <= d))
     {
      r = i; d = tmp;col = c;
     }
@@ -517,6 +537,48 @@ Selected find_closest_obj(double mx, double my, int override_lock)
  find_closest_wire(mx, my, override_lock);
  find_closest_element(mx, my, override_lock);
  return sel;    /*sel.type = 0 if nothing found */
+}
+
+/* Pin selection (doc/claude/specs/pin_selection.md): find the instance pin whose
+ * point is within a tight pick radius of (mx,my). On hit, fill *r with
+ * type=INST_PIN, n=instance index, col=pin index and return 1; else return 0.
+ *
+ * Deliberately NOT part of the find_closest_obj() cascade: it is invoked only from
+ * the en_pin_select-gated click gesture (callback.c), so the other find_closest_obj
+ * callers (hover, move-start, net-highlight) are unaffected. The radius equals the
+ * ordinary wire/box pick distance (CADWIREMINDIST), scaled by zoom so it stays a
+ * fixed on-screen tolerance; because a pin is a point, the cursor must sit
+ * essentially on the pin for it to win. */
+int find_closest_pin(double mx, double my, Selected *r)
+{
+  double t, threshold, d, best = DBL_MAX, xx, yy;
+  int i, j, rects, bestn = -1, bestp = -1;
+  /* pins live on PINLAYER: if that layer is disabled the pins are not drawn, so
+   * (like find_closest_box/find_closest_arc) do not hit-test invisible pins */
+  if(!xctx->enable_layer[PINLAYER]) return 0;
+  t = CADWIREMINDIST * xctx->zoom * tk_scaling;  /* linear tolerance (user units) */
+  threshold = t * t;                             /* squared, to compare with d     */
+  for(i = 0; i < xctx->instances; ++i) {
+    if(xctx->inst[i].ptr < 0) continue;
+    /* honour the instance lock (as find_closest_element does): a lock=true device
+     * must not be grabbed for pin selection / wire-start either */
+    if(!strboolcmp(get_tok_value(xctx->inst[i].prop_ptr, "lock", 0), "true")) continue;
+    /* cheap reject: pin lies within the instance bbox; widen it by the tolerance
+     * so a pin sitting on the bbox edge is not missed */
+    if(!POINTINSIDE(mx, my, xctx->inst[i].x1 - t, xctx->inst[i].y1 - t,
+                            xctx->inst[i].x2 + t, xctx->inst[i].y2 + t)) continue;
+    rects = (xctx->inst[i].ptr + xctx->sym)->rects[PINLAYER];
+    for(j = 0; j < rects; ++j) {
+      get_inst_pin_coord(i, j, &xx, &yy);
+      d = (mx - xx) * (mx - xx) + (my - yy) * (my - yy);
+      if(d <= threshold && d < best) { best = d; bestn = i; bestp = j; }
+    }
+  }
+  if(bestn >= 0) {
+    r->type = INST_PIN; r->n = bestn; r->col = (unsigned int)bestp;
+    return 1;
+  }
+  return 0;
 }
 
 

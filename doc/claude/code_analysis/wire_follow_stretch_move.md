@@ -4,7 +4,7 @@
 diagnosing "grab a component, move it, and the attached wires don't follow the way
 Cadence does." Work to be scheduled later.
 
-**Related:** `doc/claude/code_analysis/FAQ.md` Q14 (verb-noun vs noun-verb, the broader
+**Related:** `doc/claude/FAQ.md` Q14 (verb-noun vs noun-verb, the broader
 interaction-grammar gap). This doc is the deep-dive on the *wire-follow* half.
 
 ---

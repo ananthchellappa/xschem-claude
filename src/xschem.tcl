@@ -532,7 +532,7 @@ proc net_hilight_style_norm {row idx} {
   lset out 0 $idx                                            ;# index column == position
   if {![string is integer -strict [lindex $out 2]] || [lindex $out 2] < 1} { lset out 2 1 }
   set a [lindex $out 4]
-  if {![string is integer -strict $a]} { set a 0 } elseif {$a < 0} { set a 0 } elseif {$a > 45} { set a 45 }
+  if {![string is integer -strict $a]} { set a 0 } elseif {$a < -45} { set a -45 } elseif {$a > 45} { set a 45 }
   lset out 4 $a
   if {![string is integer -strict [lindex $out 5]] || [lindex $out 5] < 0} { lset out 5 0 }
   if {[lsearch -exact {none march_fwd march_rev} [lindex $out 6]] < 0} { lset out 6 none }
@@ -639,7 +639,14 @@ proc net_hilight_apply {styledef args} {
     xschem update_net_hilight_style
   }
   if {[llength $args]} {
-    foreach net $args { xschem hilight_netname -style $idx $net }
+    # Batch the cross-window descend-child sync: without this each net would rebuild+repaint every
+    # linked descend window (M nets -> M child repaints, a visible stall). Suspend the per-net sync,
+    # run one sync at resume. catch so a bad net name still resumes (else the counter stays >0 and
+    # suppresses all later syncs). issue 0073 §9d / code-review perf.
+    xschem net_hilight_sync_suspend
+    set _bshe [catch { foreach net $args { xschem hilight_netname -style $idx $net } } _bsmsg _bsopts]
+    xschem net_hilight_sync_resume
+    if {$_bshe} { return -options $_bsopts $_bsmsg }
   } else {
     set save $incr_hilight
     set incr_hilight 0
@@ -920,7 +927,8 @@ proc nhse_build_row {body i row {idxlabel {}}} {
   bind $rf.c3.ex <<ComboboxSelected>> [list nhse_dash_apply_example $i]
   grid $rf.c3 -row 0 -column 3 -sticky w -padx 1
 
-  scale $rf.c4 -from 0 -to 45 -orient horizontal -length 70 -showvalue 1 -resolution 1 -variable ::nhse_v($i,4)
+  scale $rf.c4 -from -45 -to 45 -orient horizontal -length 90 -showvalue 1 -resolution 1 \
+      -variable ::nhse_v($i,4) -command [list nhse_scale_changed $i]
   bind $rf.c4 <ButtonRelease-1> [list nhse_cell_commit $i]
   grid $rf.c4 -row 0 -column 4 -sticky w -padx 1
 
@@ -1118,7 +1126,7 @@ proc nhse_preview_paint {} {
     return
   }
   set half [expr {$w / 2.0}]
-  set shear [expr {$angle > 0 ? $half * tan($angle * 3.141592653589793 / 180.0) : 0}]
+  set shear [expr {$angle != 0 ? $half * tan($angle * 3.141592653589793 / 180.0) : 0}]
   foreach band [nhse_dash_bands $dash $offset $xs $xe] {
     lassign $band a b
     if {$shear == 0} {
@@ -1135,6 +1143,19 @@ proc nhse_preview_paint {} {
 # A table cell gained field focus: the preview now mirrors this row (incl. its uncommitted edits),
 # and the per-row ops (slice 7) enable/disable for this row.
 proc nhse_focus_set {i} { set ::nhse_focus_row $i ; catch { nhse_preview_paint } ; catch { nhse_ops_enable_state } }
+
+# A row's Angle slider moved (issue 0059). A Tk scale does not take keyboard focus on
+# click, so dragging it never fires <FocusIn> and the preview would keep mirroring the
+# previously focused row. The scale's -command fires on every value change (only on real
+# user interaction -- not at creation or on a programmatic var-set), AFTER the linked
+# ::nhse_v var is updated, so make this row the focused row and repaint the preview live
+# with no lag. Works for both table rows ($i integer) and the free/new row ($i "new").
+# Commit to the C styles still happens only on ButtonRelease (one rebuild per drag, not
+# per pixel).
+proc nhse_scale_changed {i val} {
+  set ::nhse_focus_row $i
+  catch { nhse_preview_paint }
+}
 
 # One self-rescheduling animation tick. Repaints (which re-samples clock milliseconds, so blink and
 # marching advance) then re-arms. Self-terminates if the canvas is gone (belt-and-suspenders; the
@@ -5378,30 +5399,38 @@ proc force_window_repaint {win {tries 0}} {
   }
 }
 
-# Raise + activate an already-open top-level reliably, WITHOUT it drifting.
+# Raise an already-open top-level to the front. On WSLg/Weston this is genuinely hard: that WM
+# applies stacking ONLY at map time, so a plain `raise`, the EWMH `_NET_ACTIVE_WINDOW` message
+# (every source indication + a real timestamp) and `_NET_WM_STATE_ABOVE` are ALL ignored once a
+# window is mapped (exhaustively verified -- see doc/claude/issues/0054 and its probes). The one
+# thing that brings a mapped window forward is to re-MAP it (withdraw + deiconify): a fresh map
+# re-runs the WM's stacking.
 #
-# On WSLg (X11 -> Windows) the cheaper tricks each fail one half of the goal:
-#  - a plain `raise` is ignored by focus-stealing prevention (window does not come forward);
-#  - the `-topmost` stacking toggle also fails to raise it here (clearing it drops it back);
-#  - the withdraw/deiconify re-map DOES raise it but lets the WM re-PLACE the window, so it
-#    crept North-West on every raise (it drifts even with `wm geometry` set while withdrawn:
-#    the reported geometry stays put while the real rootx/rooty walk NW).
-#
-# wm iconify + wm deiconify maps to a Windows MINIMIZE + RESTORE: restoring brings the
-# window to the front and active (as if its taskbar button were clicked) AND restores it to
-# its REMEMBERED position, so it raises without drifting -- verified position-stable
-# (rootx/rooty byte-identical) across cycles on both a dialog and the main window. The cost
-# is a brief minimize/restore flash. The `update` between lets the WM register the iconify
-# before the deiconify. Callers add their own keyboard focus afterward. (issue 0054)
+# The unavoidable cost is a ~32px North-West CREEP per raise: on each map this WM computes the
+# new client position as (previous position - 32) and IGNORES any geometry we request -- proven
+# by re-mapping to a fixed +X+Y every cycle and watching winfo rootx still sink -32 while
+# `wm geometry` falsely echoed the requested value. No Tk- or X-level trick stops it
+# (`positionfrom user`, pre-compensation, post-map geometry set, measure-and-correct -- all
+# failed). The user chose raise-with-creep over no-raise. Keep it to a SINGLE re-map: the
+# earlier measure/double-remap variant fired a second map on alternating raises, which read as
+# the Library Manager "disappearing and reappearing every other time". Dead ends that must NOT
+# come back: `-topmost` toggle (no drift but no raise), `wm iconify` (stuck minimized in tray),
+# a user-set flag. The trailing `xschem activate_window` (_NET_ACTIVE_WINDOW) is a no-op on
+# Weston but helps real EWMH WMs / the title-bar active tint. Callers add their own focus. (0054)
 proc raise_activate_toplevel {top} {
   global has_x
   if { ![info exists has_x] || !$has_x } return
   if {![winfo exists $top]} return
-  catch {
-    wm iconify $top
-    update
+  if {[winfo ismapped $top]} {
+    set geo [wm geometry $top]
+    wm withdraw $top
     wm deiconify $top
+    catch { wm geometry $top $geo }   ;# best-effort; this WM ignores it for client placement
+  } else {
+    catch { wm deiconify $top }       ;# never mapped / withdrawn: a deiconify maps + raises it
   }
+  raise $top
+  catch { xschem activate_window [winfo id $top] }
 }
 
 # A new-window descend reloads the parent from DISK, so any UNSAVED edits in the source window
@@ -9551,6 +9580,35 @@ proc change_color {} {
   xschem set semaphore [expr {[xschem get semaphore] -1}]
 }
 
+# Read-only "Pin properties" viewer (pin_selection.md D5). Invoked from C
+# edit_property() when the selection is a single instance pin. All fields are
+# disabled (greyed) because a pin on an instance is not editable; this is a
+# reference/probe aid (e.g. to confirm the pin and its attached net before
+# saving terminal currents). Values arrive in the pin_view(...) Tcl array.
+proc pin_property_viewer {} {
+  global pin_view
+  set w .pinpropview
+  catch {destroy $w}
+  toplevel $w
+  wm title $w {Pin properties (read-only)}
+  set r 0
+  foreach {lbl key} {Instance inst {Pin name} name Direction dir Net net} {
+    label $w.l$r -text $lbl -anchor e
+    entry $w.e$r -width 32
+    $w.e$r insert 0 [expr {[info exists pin_view($key)] ? $pin_view($key) : {}}]
+    $w.e$r configure -state disabled -disabledforeground black
+    grid $w.l$r $w.e$r -sticky ew -padx 4 -pady 2
+    incr r
+  }
+  grid columnconfigure $w 1 -weight 1
+  button $w.close -text Close -command [list destroy $w]
+  grid $w.close -columnspan 2 -pady 6
+  bind $w <Escape> [list destroy $w]
+  bind $w <Return> [list destroy $w]
+  catch {wm transient $w [winfo toplevel [focus]]}
+  focus $w.close
+}
+
 # The "Edit Properties" dialog. v1 (slick-property-forms) delegates to the
 # structured per-field form (src/property_form.tcl); the legacy raw-text-box
 # implementation is preserved below as edit_prop_legacy for rollback/reference.
@@ -9892,6 +9950,8 @@ proc write_data {data f} {
 # ---------------------------------------------------------------------------
 namespace eval gfxform {
   variable orig {}      ;# property string the dialog opened with (tctx::retval)
+  variable type {}      ;# the edited object type (pin/pinname/rect/...) -> Apply routing
+  variable scope_label {} ;# pin editor "Apply to" combobox label (Only Current/All Selected/All)
   variable schema {}    ;# the per-type slickprop::gfx_schema
   variable val          ;# array: int/num-field tok -> current value (dash, bus)
   variable loaded       ;# array: tok -> value it opened with
@@ -9909,7 +9969,16 @@ namespace eval gfxform {
 proc gfxform::selected_type {} {
   set sel [xschem selection]
   if {[llength $sel] == 0} { return {} }
-  return [lindex [lindex $sel 0] 0]
+  set first [lindex $sel 0]
+  # selection row = {tname n col id}; a rect on the pin layer (5) is a symbol PIN. It has
+  # TWO editors (doc/claude/specs/cadence_pin_name_text.md D-split): `pin` (Q on the pin
+  # body) edits identity; `pinname` (Q on the displayed name text -- C retargets the
+  # selection to the pin and sets ::gfxform_via_name) edits the name-text appearance.
+  if {[lindex $first 0] eq {rect} && [lindex $first 2] == 5} {
+    if {[info exists ::gfxform_via_name] && $::gfxform_via_name} { return pinname }
+    return pin
+  }
+  return [lindex $first 0]
 }
 
 # The choice label whose mapped value == <v>; falls back to the empty-mapped
@@ -9928,14 +9997,16 @@ proc gfxform::init {prop type} {
   variable ell_on; variable ell_on0; variable ell_start; variable ell_end
   array unset val; array unset loaded; array unset chk; array unset chk0
   set orig $prop
+  set ::gfxform::type $type   ;# remembered for the OK/Apply routing (param shadows the var)
   set schema [slickprop::gfx_schema $type]
   set ell_on 0; set ell_on0 0; set ell_start 0; set ell_end 360
   foreach row [slickprop::schema_fields $schema $prop] {
+    if {[dict exists $row hide] && [dict get $row hide]} continue ;# preserved, not a field
     set tok [dict get $row tok]
     set v   [dict get $row value]
     set loaded($tok) $v
     switch -- [dict get $row widget] {
-      int - num { set val($tok) $v }
+      int - num - string { set val($tok) $v }
       bool {
         set chk0($tok) [slickprop::bool_checked $tok $v]
         set chk($tok)  $chk0($tok)
@@ -9964,11 +10035,16 @@ proc gfxform::desired {} {
   variable ell_on; variable ell_start; variable ell_end
   set d {}
   foreach row $schema {
+    if {[dict exists $row hide] && [dict get $row hide]} continue ;# preserved via orig, not edited
     set tok [dict get $row tok]
     switch -- [dict get $row widget] {
       int - num {
         set v [string trim $val($tok)]
         if {$v eq {} || $v eq "0"} { lappend d $tok {} } else { lappend d $tok $v }
+      }
+      string {
+        # write verbatim (a name may legitimately be "0"); empty removes the token
+        lappend d $tok $val($tok)
       }
       bool {
         lappend d $tok [slickprop::bool_value [dict get $row on] $loaded($tok) $chk0($tok) $chk($tok)]
@@ -10001,6 +10077,115 @@ proc gfxform::collect {} {
   return [slickprop::schema_assemble $schema $orig [gfxform::desired] $extra]
 }
 
+# ---- "Apply to" scope for the pin body editor (doc/claude/specs/symbol_editor_apply_scope.md)
+# Cadence-style scope selector: Only Current / All Selected / All. dir + show_pinname fan to
+# the chosen set of pins (apply_pin_prop <scope> ...); the Name is per-pin identity, greyed
+# when the set is >1 pin with DIFFERING names. Default Only Current (matches the instance
+# editor); sticky across opens via ::gfxform_pin_scope. Pin editor only (D9): pinname / other
+# graphical types keep the default (selected) routing.
+proc gfxform::scope_label_for {v} {
+  switch -- $v {
+    selected { return {All Selected} }
+    all      { return {All} }
+    default  { return {Only Current} }
+  }
+}
+proc gfxform::scope_value_for {lab} {
+  switch -- $lab {
+    {All Selected} { return selected }
+    {All}          { return all }
+    default        { return current }
+  }
+}
+# Is the Name field editable under <scope>? Editable iff the in-scope pins' names are uniform
+# (a single pin, or all already the same); greyed otherwise so a rename can't silently fan
+# across differently-named pins (§4.2). The uniformity test is the same resolver an Apply
+# uses. On any error default to editable.
+proc gfxform::name_editable {scope} {
+  if {[catch {xschem pin_scope_prop_uniform $scope name} u]} { return 1 }
+  return $u
+}
+# Discard any pending edit in the Name field, restoring the value the form opened with.
+# Called when the scope greys the Name entry so a name typed under a narrower (uniform)
+# scope can't leak and fan across pins once the scope is widened (spec §4.2).
+proc gfxform::revert_name {} {
+  variable val; variable loaded
+  if {[info exists loaded(name)]} { set val(name) $loaded(name) }
+}
+# Re-grey the Name entry for the current scope (called on open + on every scope change).
+# When the scope makes Name non-editable, ALSO revert its value -- disabling the widget
+# alone leaves a previously-typed value in gfxform::val(name), which collect would still fan.
+proc gfxform::pin_scope_greying {} {
+  variable type
+  if {$type ne {pin}} return
+  set editable [gfxform::name_editable $::gfxform_pin_scope]
+  if {!$editable} { gfxform::revert_name }
+  # widget restyle only when the dialog is up (winfo is absent under --nogui)
+  if {[catch {winfo exists .dialog.appear.name.e} ex] || !$ex} return
+  .dialog.appear.name.e configure -state [expr {$editable ? {normal} : {disabled}}]
+}
+# Outline the pins the current scope would touch, on the symbol canvas (the apply-set
+# overlay, distinct from the selection outline). Same resolver as the apply, so
+# outlined == applied. No-op for non-pin editors. (symbol_editor_apply_scope.md §4.4/SP3)
+proc gfxform::update_pin_highlight {} {
+  variable type
+  if {$type ne {pin}} return
+  if {[catch {winfo exists .dialog} ex] || !$ex} return ;# a deferred call may fire after close
+  catch {xschem highlight_pin_scope $::gfxform_pin_scope}
+  # WSLg does not flush the draw() above while the dialog is (re)mapping, so the overlay only
+  # appeared after a later interaction. The overlay persists in the C scope_hi store, so a
+  # deferred force_window_repaint (xschem resetwin from a timer = an event the WM flushes,
+  # retrying until the canvas is viewable) re-strokes it. See wslg-dialog-open-repaint.
+  catch {after 120 [list force_window_repaint [xschem get current_win_path] 0]}
+}
+proc gfxform::clear_pin_highlight {} {
+  variable type
+  if {$type ne {pin}} return   ;# only the pin editor sets the overlay
+  catch {xschem highlight_pin_scope clear}
+}
+# Combobox change -> update the canonical scope var + re-grey + re-highlight the apply set.
+proc gfxform::on_scope_change {} {
+  variable scope_label
+  set ::gfxform_pin_scope [gfxform::scope_value_for $scope_label]
+  gfxform::pin_scope_greying
+  gfxform::update_pin_highlight
+}
+# Commit <prop> to the pins. The pin editor passes its scope; pinname (a single retargeted
+# pin) and other types keep the default (selected) routing.
+proc gfxform::do_apply {prop} {
+  variable type
+  if {$type eq {pin}} {
+    xschem apply_pin_prop $::gfxform_pin_scope $prop
+  } else {
+    xschem apply_pin_prop $prop
+  }
+}
+
+# Apply the current form state to the selected pin(s) and redraw, WITHOUT closing the
+# dialog -- the live "Apply" for the pin/pinname editors so a change (e.g. font) is visible
+# at once (cadence_pin_name_text.md). xschem apply_pin_prop is a no-op (no undo) when
+# nothing changed, so repeated Apply / Apply-then-OK does not spam the undo stack.
+proc gfxform::apply {} {
+  if {[xschem get readonly]} return
+  catch {gfxform::do_apply [gfxform::collect]}
+}
+
+# OK: for pin/pinname, apply HERE (same path as Apply) and tell C not to re-apply
+# (rcode {}), so OK-after-Apply never double-commits. Other graphical types keep the
+# legacy C round-trip (rcode {ok} -> C applies tctx::retval after tkwait).
+proc gfxform::ok {} {
+  variable type
+  set ::tctx::retval [gfxform::collect]
+  if {$type eq {pin} || $type eq {pinname}} {
+    if {![xschem get readonly]} { catch {gfxform::do_apply $::tctx::retval} }
+    set ::tctx::rcode {}
+  } else {
+    set ::tctx::rcode {ok}
+  }
+  gfxform::clear_pin_highlight
+  destroy .dialog
+}
+
 # The slick graphical-object property dialog (rect in L1). Reads/writes tctx::retval
 # (the property string C passes in and applies to every selected same-type object);
 # sets tctx::rcode ({ok}|{}) and returns it — same contract as text_line_legacy.
@@ -10010,16 +10195,40 @@ proc text_line_slick {txtlabel clear preserve_disabled type} {
   if { [winfo exists .dialog] } return
   gfxform::init $tctx::retval $type
   toplevel .dialog -class Dialog
-  wm title .dialog "Edit [string totitle $type] properties"
+  set title [expr {$type eq {pinname} ? {Pin Name Text} : [string totitle $type]}]
+  wm title .dialog "Edit $title properties"
   wm transient .dialog [xschem get topwindow]
   set X [expr {[winfo pointerx .dialog] - 60}]
   set Y [expr {[winfo pointery .dialog] - 35}]
   if { $wm_fix } { tkwait visibility .dialog }
   wm geometry .dialog "+$X+$Y" ;# position only, size to content
 
+  # "Apply to" scope selector -- pin body editor only (symbol_editor_apply_scope.md D9).
+  if {$type eq {pin}} {
+    if {![info exists ::gfxform_pin_scope]} { set ::gfxform_pin_scope current } ;# sticky, default Only Current
+    set gfxform::scope_label [gfxform::scope_label_for $::gfxform_pin_scope]
+    frame .dialog.scope
+    label .dialog.scope.l -text "Apply to:"
+    if {[info tclversion] > 8.4} {
+      ttk::combobox .dialog.scope.cb -state readonly -width 12 \
+        -textvariable gfxform::scope_label -values {{Only Current} {All Selected} {All}}
+      bind .dialog.scope.cb <<ComboboxSelected>> {gfxform::on_scope_change}
+    } else {
+      # Tcl 8.4 has no ttk::combobox: a plain entry, but still wire the change back to the
+      # canonical scope var (a bare -textvariable would leave ::gfxform_pin_scope stale, so
+      # Apply/OK would ignore the typed scope).
+      entry .dialog.scope.cb -textvariable gfxform::scope_label -width 12
+      bind .dialog.scope.cb <KeyRelease> {gfxform::on_scope_change}
+      bind .dialog.scope.cb <FocusOut>   {gfxform::on_scope_change}
+    }
+    pack .dialog.scope.l .dialog.scope.cb -side left
+    pack .dialog.scope -side top -fill x -padx 4 -pady 4
+  }
+
   labelframe .dialog.appear -text "Appearance"
   set ltk [expr {[info tclversion] > 8.4}]
   foreach row $gfxform::schema {
+    if {[dict exists $row hide] && [dict get $row hide]} continue ;# hidden: preserved, no widget
     set tok [dict get $row tok]
     set lab [dict get $row label]
     set f .dialog.appear.$tok
@@ -10028,6 +10237,12 @@ proc text_line_slick {txtlabel clear preserve_disabled type} {
       int - num {
         label $f.l -text "$lab:"
         entry $f.e -textvariable gfxform::val($tok) -width 6
+        pack $f.l $f.e -side left
+      }
+      string {
+        label $f.l -text "$lab:"
+        set ww [expr {[dict exists $row width] ? [dict get $row width] : 24}]
+        entry $f.e -textvariable gfxform::val($tok) -width $ww
         pack $f.l $f.e -side left
       }
       bool {
@@ -10039,6 +10254,7 @@ proc text_line_slick {txtlabel clear preserve_disabled type} {
         if {$ltk} {
           ttk::combobox $f.cb -state readonly -width 10 \
             -textvariable gfxform::fill_label -values [dict keys $gfxform::fillchoices]
+          bind $f.cb <KeyPress> {combo_letter_cycle %W %A; break}
         } else {
           entry $f.cb -textvariable gfxform::fill_label -width 10
         }
@@ -10066,28 +10282,42 @@ proc text_line_slick {txtlabel clear preserve_disabled type} {
   pack .dialog.other -side top -fill x -padx 4 -pady 2
 
   frame .dialog.buttons
-  button .dialog.buttons.ok -text OK -command {
-    set tctx::retval [gfxform::collect]
-    set tctx::rcode {ok}
-    destroy .dialog
+  button .dialog.buttons.ok -text OK -command gfxform::ok
+  # Live Apply for the pin / pin-name-text editors: commit + redraw, keep the form open so
+  # the effect (e.g. a font change) is visible without dismissing (cadence_pin_name_text.md).
+  if {$type eq {pin} || $type eq {pinname}} {
+    button .dialog.buttons.apply -text Apply -command gfxform::apply
   }
   button .dialog.buttons.cancel -text Cancel -command {
-    set tctx::rcode {}
+    set ::tctx::rcode {}
+    gfxform::clear_pin_highlight
     destroy .dialog
   }
-  pack .dialog.buttons.ok .dialog.buttons.cancel -side left -fill x -expand yes
+  # route the WM close button through Cancel so the apply-set overlay is always cleared
+  catch {wm protocol .dialog WM_DELETE_WINDOW {.dialog.buttons.cancel invoke}}
+  if {[winfo exists .dialog.buttons.apply]} {
+    pack .dialog.buttons.ok .dialog.buttons.apply .dialog.buttons.cancel -side left -fill x -expand yes
+  } else {
+    pack .dialog.buttons.ok .dialog.buttons.cancel -side left -fill x -expand yes
+  }
   pack .dialog.buttons -side bottom -fill x
   # No multi-line text box here, so Enter = OK from anywhere; Escape = Cancel.
   bind .dialog <Return>   {.dialog.buttons.ok invoke}
   bind .dialog <KP_Enter> {.dialog.buttons.ok invoke}
   bind .dialog <Escape>   {.dialog.buttons.cancel invoke}
-  # Read-only view (issue 0051): a property VIEWER — disable OK, Enter == Esc (Cancel).
+  # Read-only view (issue 0051): a property VIEWER — disable OK + Apply, Enter == Esc (Cancel).
   if {[xschem get readonly]} {
     .dialog.buttons.ok configure -state disabled
+    catch {.dialog.buttons.apply configure -state disabled}
     bind .dialog <Return>   {.dialog.buttons.cancel invoke}
     bind .dialog <KP_Enter> {.dialog.buttons.cancel invoke}
   }
   dialog_minsize_floor .dialog
+  # Initial Name greying + apply-set overlay. update_pin_highlight sets the overlay and schedules
+  # a deferred force_window_repaint so it is flushed once the dialog has mapped (a synchronous
+  # draw before tkwait is not flushed under WSLg -> the outline used to appear only after the
+  # first scope change; see wslg-dialog-open-repaint).
+  if {$type eq {pin}} { gfxform::pin_scope_greying; gfxform::update_pin_highlight }
   tkwait window .dialog
   return $tctx::rcode
 }
@@ -10098,11 +10328,181 @@ proc text_line {txtlabel clear {preserve_disabled disabled}} {
   # keeps the legacy raw-token editor.
   if {$preserve_disabled eq {normal}} {
     set t [gfxform::selected_type]
+    set ::gfxform_via_name 0  ;# consume the pin/pinname marker: it applies to this one dialog
     if {$t ne {} && [llength [slickprop::gfx_schema $t]] > 0} {
       return [text_line_slick $txtlabel $clear $preserve_disabled $t]
     }
   }
   return [text_line_legacy $txtlabel $clear $preserve_disabled]
+}
+
+# Add-pin dialog (symbol editor): choose Name + Direction like the Create Instance form
+# (one name/value pair per row), then place the pin interactively. The chosen values are
+# handed to C via ::pin_new_name / ::pin_new_dir; `xschem add_symbol_pin -place` reads
+# them and arms the cursor placement (routes through create_pin so the pin owns its name).
+# Type a letter in a readonly combobox -> advance to the NEXT value whose first char
+# matches (case-insensitive), wrapping. Readonly ttk::comboboxes don't cycle by default.
+proc combo_letter_cycle {w ch} {
+  if {[string length $ch] != 1} return
+  set vals [$w cget -values]
+  set n [llength $vals]
+  if {$n == 0} return
+  set start [lsearch -exact $vals [$w get]]
+  for {set k 1} {$k <= $n} {incr k} {
+    set v [lindex $vals [expr {($start + $k) % $n}]]
+    if {[string equal -nocase [string index $v 0] $ch]} {
+      $w set $v
+      event generate $w <<ComboboxSelected>>
+      return
+    }
+  }
+}
+
+# addpin -- the Cadence-style "Add Pin" form (doc/claude/specs/cadence_pin_name_text.md
+# item #3). MODELESS, mirroring ciform (Create Instance): a non-empty Pin Name arms a
+# cursor PREVIEW of the pin on the canvas; click drops it; the form re-arms so you can
+# place more until Esc. There is NO "Place" button -- placement is a canvas click.
+#
+# The C `xschem add_symbol_pin -place` self-manages undo across the per-keystroke re-arms
+# (pushes ONE baseline at the first arm, drops the previous preview pin undo-free); the
+# drop keeps the baseline; abort_operation tears down an undropped preview undo-free.
+namespace eval addpin {
+  variable name {}
+  variable dir  inout
+  # a preview is armed; after each drop it re-arms so placement continues until Esc.
+  variable armed          0
+  variable hook_installed 0
+  # last {name dir} actually armed -- lets arm() skip a redundant rebuild when a keystroke
+  # (arrows, Shift/Ctrl/Tab, ...) did not change the pin, avoiding canvas flicker.
+  variable last           {}
+}
+
+proc addpin::status {msg} { catch {.addpin.status configure -text $msg} }
+
+# START_SYMPIN (xschem.h) = 16384: an Add-Pin preview is attached to the cursor.
+proc addpin::placing {} { return [expr {[xschem get ui_state] & 16384}] }
+proc addpin::abort_if_placing {} { if {[addpin::placing]} { catch {xschem abort_operation} } }
+
+# map the human Direction label to the stored dir token (in/out/inout)
+proc addpin::dirtok {} {
+  variable dir
+  set map {input in output out inout inout}
+  return [expr {[dict exists $map $dir] ? [dict get $map $dir] : {inout}}]
+}
+
+# Re-arm the next pin after each canvas drop, so placement continues until Esc. Appended
+# (+) to the canvas ButtonRelease so it runs AFTER xschem handled the drop; a no-op unless
+# a preview is armed and a drop just completed (mirror of ciform::after_drop).
+proc addpin::install_drop_hook {} {
+  variable hook_installed
+  if {$hook_installed} return
+  if {![winfo exists .drw]} return
+  bind .drw <ButtonRelease> {+addpin::after_drop %b}
+  set hook_installed 1
+}
+proc addpin::after_drop {b} {
+  variable armed
+  if {$b != 1} return
+  if {!$armed} return
+  if {![winfo exists .addpin]} { set armed 0; return }
+  if {[addpin::placing]} return   ;# preview still attached -> no drop happened
+  addpin::arm                     ;# a drop completed -> re-arm for the next pin
+}
+
+# (Re)arm the cursor preview from the current Name/Direction. Empty name -> no preview
+# (there is nothing to place yet), aborting any attached one. `-place` re-issues are
+# undo-safe (see the C side), so calling this on every keystroke is fine.
+proc addpin::arm {} {
+  variable name; variable armed; variable last
+  if {![winfo exists .addpin]} { set armed 0; return }
+  if {[string trim $name] eq {}} {
+    set armed 0; set last {}
+    addpin::abort_if_placing
+    addpin::status "type a Pin Name, then move onto the canvas to place it"
+    return
+  }
+  set d [addpin::dirtok]
+  # nothing changed AND a preview is still attached -> don't rebuild it (a non-editing key
+  # fired KeyRelease). After a drop, placing is 0, so the next pin still arms (keep-placing).
+  if {[list $name $d] eq $last && [addpin::placing]} return
+  set last [list $name $d]
+  set ::pin_new_name $name
+  set ::pin_new_dir  $d
+  xschem add_symbol_pin -place    ;# self-aborts the previous preview (no undo) and re-arms
+  set armed 1
+  addpin::status "placing pin '$name' ($d) -- click the canvas to place; Esc to finish"
+}
+
+proc addpin::on_change {} { addpin::arm }
+
+# Esc / Close: end placement and dismiss the form.
+proc addpin::escape {} {
+  variable armed
+  set armed 0
+  addpin::abort_if_placing
+  catch {destroy .addpin}
+}
+# Form destroyed by any means: abort an armed preview and restore the default canvas Esc.
+proc addpin::on_destroy {} {
+  variable armed; variable last
+  set armed 0; set last {}
+  catch {bind .drw <Key-Escape> {}}
+  addpin::abort_if_placing
+}
+
+proc addpin::open {} {
+  if {[xschem get readonly]} { readonly_notice; return }
+  set w .addpin
+  addpin::install_drop_hook
+  if {[winfo exists $w]} {
+    raise_activate_toplevel $w
+    focus $w.f.ename
+    addpin::arm
+    return
+  }
+  catch {slickprop::init_fonts}   ;# reuse the slick property-form fonts for the look
+  toplevel $w
+  wm title $w "Add Pin"
+  ttk::frame $w.f -padding 8
+  pack $w.f -side top -fill both -expand 1
+  ttk::label $w.f.lname -text "Pin Name" -anchor w
+  ttk::entry $w.f.ename -textvariable addpin::name -width 28
+  ttk::label $w.f.ldir  -text "Direction" -anchor w
+  ttk::combobox $w.f.edir -textvariable addpin::dir -state readonly \
+     -values {input output inout} -width 26
+  bind $w.f.edir <KeyPress> {combo_letter_cycle %W %A; break}
+  catch {$w.f.lname configure -font slickPropLabel}
+  catch {$w.f.ename configure -font slickPropValue}
+  catch {$w.f.ldir  configure -font slickPropLabel}
+  grid $w.f.lname -row 0 -column 0 -sticky w  -padx {0 10} -pady 3
+  grid $w.f.ename -row 0 -column 1 -sticky we -pady 3
+  grid $w.f.ldir  -row 1 -column 0 -sticky w  -padx {0 10} -pady 3
+  grid $w.f.edir  -row 1 -column 1 -sticky we -pady 3
+  grid columnconfigure $w.f 1 -weight 1
+
+  ttk::label $w.status -anchor w -relief sunken -padding {4 2} \
+    -text "type a Pin Name, then move onto the canvas to place it; Esc finishes"
+  pack $w.status -side bottom -fill x
+
+  ttk::frame $w.b
+  ttk::button $w.b.close -text "Close" -command addpin::escape
+  pack $w.b.close -side right -padx 4 -pady 4
+  pack $w.b -side bottom -fill x
+
+  # editing the name or picking a direction re-arms the preview live
+  bind $w.f.ename <KeyRelease>        {+addpin::on_change}
+  bind $w.f.edir  <<ComboboxSelected>> {+addpin::on_change}
+  # Esc ends placement AND dismisses the form. On the CANVAS only swallow Esc while a
+  # preview is actually armed (`break` pre-empts the generic <KeyPress> -> C dispatcher);
+  # when nothing is being placed, fall through so Esc still cancels an unrelated in-progress
+  # gesture (wire/move/...) the user may have started while this form is open.
+  bind .drw <Key-Escape> {if {[addpin::placing]} {addpin::escape; break}}
+  bind $w   <Key-Escape> {addpin::escape}
+  bind $w   <Destroy>    {if {{%W} eq {.addpin}} {addpin::on_destroy}}
+
+  raise_activate_toplevel $w
+  focus $w.f.ename
+  addpin::arm   ;# a reopened singleton may already hold a name -> arm immediately
 }
 
 proc text_line_legacy {txtlabel clear {preserve_disabled disabled} } {
@@ -11874,6 +12274,16 @@ proc readonly_notice {} {
     -message "View is Read Only.\n\nUse Edit > Make Editable to enable editing."
 }
 
+# Shown when instance creation is attempted on a symbol view (single source of the
+# message: used by the C symbol_view_block() early-exit for the insert-symbol keys and
+# by the Create Instance form's ciform::open guard). A symbol holds only pins + artwork.
+proc symbol_view_notice {} {
+  if {![info exists ::has_x] || !$::has_x} return
+  tk_messageBox -type ok -icon info -parent [xschem get topwindow] \
+    -title {Symbol view} \
+    -message "This is a symbol view — it holds only pins and artwork.\n\nInstances can only be placed in a schematic."
+}
+
 # -postcommand for each window's Edit menu. Read-only is per-window, so this runs
 # every time the Edit menu is posted and reflects the CURRENT window's state:
 #  - greys out the object-mutating entries when the view is read-only (navigation,
@@ -12540,13 +12950,14 @@ proc save_ctx {context} {
 
 proc housekeeping_ctx {} {
   global has_x simulate_bg show_hidden_texts case_insensitive draw_window hide_symbols
-  global netlist_type intuitive_interface file_chooser
+  global netlist_type intuitive_interface file_chooser en_pin_select
   if {![info exists has_x]} {return}
   uplevel #0 {
   }
   # puts "housekeeping_ctx, path: [xschem get current_win_path]"
   xschem set hide_symbols $hide_symbols
   xschem set draw_window $draw_window
+  xschem set en_pin_select $en_pin_select
   xschem set intuitive_interface  $intuitive_interface
   xschem case_insensitive $case_insensitive
   set_sim_netlist_waves_buttons
@@ -12640,11 +13051,18 @@ proc switch_window {parent topwin event window} {
   if { $parent eq {.}} {
     if { $window eq $parent} {
       xschem callback .drw $event 0 0 0 0 0 0
+      # Cadence-style window-activation log: this editor window is now active. Runs on
+      # every FocusIn (so it also fires when focus RETURNS here after a CIW/LibMgr visit,
+      # which the C switch_window's "already there" early-return would skip); the callback
+      # above has switched xctx, so window_number is this window's. notify_window_active
+      # dedupes. doc/claude/specs/window_numbering.md
+      catch {notify_window_active [xschem get window_number]}
     }
   } else {
     if {$window eq $parent} {
       # send a fake event just to force context switching in callback()
       xschem callback $parent.drw $event 0 0 0 0 0 0
+      catch {notify_window_active [xschem get window_number]}
     }
   }
 }
@@ -12988,8 +13406,14 @@ source $XSCHEM_SHAREDIR/library_git.tcl
 source $XSCHEM_SHAREDIR/library_manager.tcl
 # Create Instance browser (Cadence-style Add Instance; doc/claude/specs/cadence_create_instance.md)
 source $XSCHEM_SHAREDIR/create_instance.tcl
+# Library/Cell/View Save-As form (doc/claude/specs/save_as_cellview.md)
+source $XSCHEM_SHAREDIR/save_as_form.tcl
 # Slick per-field "Edit Properties" form (replaces the legacy raw-text dialog)
 source $XSCHEM_SHAREDIR/property_form.tcl
+# Alt-2 schematic<->symbol view toggle (action view.toggle_view_type;
+# doc/claude/specs/alt2_toggle_view.md). Sourced unconditionally so the default keymap
+# binding works without cadence_style_rc; depends on library_defs.tcl above.
+source $XSCHEM_SHAREDIR/alt2_toggle_view.tcl
 # Replay keybindings.csv / mousebindings.csv (share-dir defaults, then the user's
 # USER_CONF_DIR copies) through `xschem bind` -- file-editable input remapping.
 # The shipped defaults mirror the built-in C table, so this is a no-op until a
@@ -13102,6 +13526,9 @@ proc build_widgets { {topwin {} } } {
      -onvalue disk -offvalue memory -command {switch_undo}
   $topwin.menubar.option add checkbutton -label "Enable stretch" -variable enable_stretch \
      -selectcolor $selectcolor  -accelerator Y
+  $topwin.menubar.option add checkbutton -label "Enable pin selection (click a pin to select it)" \
+     -variable en_pin_select -selectcolor $selectcolor \
+     -command {xschem set en_pin_select $en_pin_select}
   $topwin.menubar.option add checkbutton -label "Enable infix-interface" -variable infix_interface \
      -selectcolor $selectcolor
   $topwin.menubar.option add checkbutton -label "Enable orthogonal wiring" -variable orthogonal_wiring \
@@ -13395,6 +13822,36 @@ proc build_widgets { {topwin {} } } {
      -selectcolor $selectcolor -background grey60 -variable hide_symbols -value 2 \
      -command {xschem set hide_symbols $hide_symbols; xschem redraw} -accelerator Alt+B
 
+  # P5 global pin-name visibility tri-state (doc/claude/specs/cadence_pin_name_text.md §4.8).
+  # This is a SESSION-GLOBAL view preference (show_pin_names): it governs the pin-name views
+  # of every symbol opened for edit, not just the current one, applied via pin_name_shown()
+  # on each load. It does NOT affect pin names on placed instances (that is P6). The command
+  # sets the var, reconciles the current symbol's name views and redraws.
+  $topwin.menubar.sym add cascade -label "Pin names" -menu $topwin.menubar.sym.pinnames
+  menu $topwin.menubar.sym.pinnames -tearoff 0 -takefocus 0
+  $topwin.menubar.sym.pinnames add radiobutton -label "Auto (per-pin Show name)" \
+     -selectcolor $selectcolor -background grey60 -variable show_pin_names -value auto \
+     -command {xschem pin_names auto}
+  $topwin.menubar.sym.pinnames add radiobutton -label "Show all pin names" \
+     -selectcolor $selectcolor -background grey60 -variable show_pin_names -value on \
+     -command {xschem pin_names on}
+  $topwin.menubar.sym.pinnames add radiobutton -label "Hide all pin names" \
+     -selectcolor $selectcolor -background grey60 -variable show_pin_names -value off \
+     -command {xschem pin_names off}
+
+  # P7 pin-name ERC (doc/claude/specs/cadence_pin_name_text.md §4.9): report duplicate pin
+  # names, owned-but-nameless pins, and un-adopted legacy name labels of the edited symbol.
+  # Non-blocking, display only; warnings land in the Info window.
+  $topwin.menubar.sym add command -label "Check pin names" \
+     -command {xschem check_pin_names}
+
+  # B6 wire-stubs (doc/claude/specs/wire_stub_netlabel.md §4.8): draw a wire stub +
+  # outward-reading net-label out of each selected pin (or each unconnected pin of a
+  # selected instance). Also the default SPACE key (edit.add_pin_stubs). Net-name
+  # options (prefix/suffix/inst-prefix) are CLI-only via `xschem add_pin_stubs`.
+  $topwin.menubar.sym add command -label "Add pin stubs + labels" -accelerator {Space} \
+     -command {xschem add_pin_stubs}
+
   $topwin.menubar.sym add command -label "Set symbol width" \
      -command {
         input_line "Enter Symbol width ($symbol_width)" "set symbol_width" $symbol_width
@@ -13410,7 +13867,7 @@ proc build_widgets { {topwin {} } } {
   $topwin.menubar.sym add command -label "Create symbol pins from selected schematic pins" \
           -command "schpins_to_sympins" -accelerator Alt+H
   $topwin.menubar.sym add command -label "Place symbol pin" \
-          -command "xschem add_symbol_pin" -accelerator Alt+P
+          -command "xschem add_symbol_pin" -accelerator P
   $topwin.menubar.sym add command -label "Place schematic input port" \
           -command "xschem net_label 2" -accelerator Ctrl+P
   $topwin.menubar.sym add command -label "Place schematic output port" \
@@ -14044,6 +14501,7 @@ set_ne add_all_windows_drives 1
 set_paths
 print_help_and_exit
 set_ne text_replace_selection 1
+set_ne sym_pin_name_size 0.2 ;# default text size for a symbol pin's owned name label (Option B)
 if {$text_replace_selection && $OS != "Windows"} {
   # deletes selected text when pasting in text widgets, courtesy Wolf-Dieter Busch
   proc tk_textPaste w {
@@ -14196,6 +14654,7 @@ set_ne live_cursor2_backannotate 1
 set_ne cursor_2_hook {}
 set_ne draw_window 0
 set_ne show_hidden_texts 0
+set_ne en_pin_select 0
 set_ne incr_hilight 1
 set_ne enable_stretch 0
 set_ne constr_mv 0
@@ -14342,6 +14801,10 @@ set_ne keep_symbols 0 ;# if set loaded symbols will not be purged when descendin
 
 # hide instance details (show only bbox)
 set_ne hide_symbols 0
+# P5 global pin-name visibility (cadence_pin_name_text.md §4.8): on=force-show all owned
+# symbol pins, off=force-hide, auto=defer to each pin's show_pinname. Set via
+# `xschem pin_names on|off|auto|cycle` (which reconciles views + redraws).
+set_ne show_pin_names auto
 # gaw tcp {host port}
 set_ne gaw_tcp_address {localhost 2020}
 
@@ -14417,7 +14880,7 @@ if {!$rainbow_colors} {
 # Each row is:
 #   {index  color  width  dash-pattern  stripe-angle-deg  blink_ms  anim  rate_persec}
 # color: a layer index (0..cadlayers-1) or an X color name / #rrggbb. dash-pattern: a list of
-# on/off run lengths ({} = solid). stripe-angle-deg clamps to [0,45]. blink_ms drives blink
+# on/off run lengths ({} = solid). stripe-angle-deg clamps to [-45,45]. blink_ms drives blink
 # animation (period ms, 0 = steady); anim (none|march_fwd|march_rev) + rate_persec (periods/sec)
 # drive marching ants on a dashed style. There is no 10-style limit.
 #

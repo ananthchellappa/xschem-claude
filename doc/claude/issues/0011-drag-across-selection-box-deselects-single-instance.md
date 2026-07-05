@@ -21,7 +21,7 @@ A teaching note follows in §8.
 re-select; no data loss — the object is in fact still selected).
 **Branch:** the implicated code (`draw_hover`, the hover-awareness cue) landed on
 this lineage; see [[hover-highlight]]. Suggest a small branch when picked up.
-**Related:** `doc/claude/code_analysis/FAQ.md` Q14, `doc/claude/code_analysis/wire_follow_stretch_move.md`.
+**Related:** `doc/claude/FAQ.md` Q14, `doc/claude/code_analysis/wire_follow_stretch_move.md`.
 
 ---
 

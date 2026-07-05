@@ -2,8 +2,13 @@
 
 # --- Libraries: use ONLY the OA (lib/cell/view) registry --------------------
 # Anchor on this rc's own location (repo/src/cadence_style_rc) to find the
-# sibling repo/xschem_libraries_oa/ tree.
-set _cad_oa [file normalize [file join [file dirname [info script]] .. xschem_libraries_oa]]
+# sibling repo/xschem_libs_newsym/ tree -- the pin-name-migrated OA libraries
+# (tools/migrate/migrate_pin_names.py; see doc/pin_name_migration.md and
+# doc/library_defs.md §7). It is a drop-in replacement for repo/xschem_libraries_oa/:
+# same Library/Cell/View names, same library.defs, netlist-identical, but its symbol
+# pins own their name text. To fall back to the un-migrated tree, point this at
+# xschem_libraries_oa instead.
+set _cad_oa [file normalize [file join [file dirname [info script]] .. xschem_libs_newsym]]
 
 # The registry to use is the library.defs that ships inside that tree (the
 # Cadence cds.lib analog). Making it the EXPLICIT $XSCHEM_LIBRARY_DEFS gives its
@@ -39,6 +44,10 @@ set snap_cursor_size 4
 set persistent_command 1
 set use_cursor_for_selection 1
 set enable_stretch 1
+# Click a symbol pin (of a placed instance) to select it; drag from a pin draws a
+# wire; Q on a selected pin shows its name/dir/net read-only. See
+# doc/claude/specs/pin_selection.md
+set en_pin_select 1
 
 # to get around not being able to zoom in with CTRL-scrollwheel, suggestion from SS:
 # didn't work :( Claude explained why
@@ -64,6 +73,19 @@ xschem bind wheel down ctrl canvas view.zoom_out
 xschem bind wheel up   0    canvas view.pan_up
 xschem bind wheel down 0    canvas view.pan_down
 # (Shift+wheel already pans horizontally — view.pan_left/right — by default, no change needed)
+# Alt+wheel : grow / shrink every selected object -- wire thickness, and the [N:M] bus
+# suffix on a pin/netlabel net name or an instance name. The actions are registered in
+# C (edit.grow_selection / edit.shrink_selection -> busresize_apply, utils/bus_resize.tcl);
+# rebind to any chord, e.g. `xschem bind wheel up ctrl+shift canvas edit.grow_selection`.
+# See doc/claude/specs/bus_thickness_scroll.md.
+xschem bind wheel up   alt canvas edit.grow_selection
+xschem bind wheel down alt canvas edit.shrink_selection
+# Alt+Shift+wheel : SHIFT the bus index/range up/down by 1 on a selected pin/netlabel
+# name or instance name (wires/text tolerated, no effect). up: something -> something[0]
+# -> something[1], something[N:M] -> something[N+1:M+1]. down steps back ([0] -> something),
+# floored at 0 (something[N:0] stays). See bus_transpose_scroll.md.
+xschem bind wheel up   alt+shift canvas edit.transpose_up_selection
+xschem bind wheel down alt+shift canvas edit.transpose_down_selection
 
 # Cadence-style instantiation: the "i" key opens the Create Instance browser
 # (Edit > Create Instance). `break` stops the event reaching the generic <KeyPress>
@@ -82,6 +104,13 @@ bind .drw <Key-9> {xschem hilight_net_interactive;   break}
 bind .drw <Key-8> {xschem unhilight_net_interactive; break}
 bind .drw <Key-0> {xschem unhilight_all;             break}
 
+# Alt-minus : step the highlight STYLE cursor back one (wrapping). The cursor
+# auto-advances after each highlight; this re-applies a recently used style to the
+# next highlight. Bound for both the main-row minus and the numeric-keypad minus.
+# See doc/claude/specs/hilight_style_decrement.md.
+bind .drw <Alt-Key-minus>       {cadence::prev_hilight_style; break}
+bind .drw <Alt-Key-KP_Subtract> {cadence::prev_hilight_style; break}
+
 # --------------------------------------------------------------------------
 # Cadence-style key bindings (library navigation + hierarchy).
 # See doc/claude/specs/cadence_bindkey_plan.md. Pure Tcl, no C changes: each bind lives on
@@ -96,16 +125,38 @@ bind .drw <Key-0> {xschem unhilight_all;             break}
 set _ut [file join [file dirname [file normalize [info script]]] .. utils]
 source [file join $_ut lib_mgr_helpers.tcl]
 source [file join $_ut cadence_nav.tcl]
+source [file join $_ut cadence_clip.tcl]
+source [file join $_ut hilight_style_nav.tcl]
+source [file join $_ut bus_resize.tcl]
+source [file join $_ut bus_transpose.tcl]
+source [file join $_ut text_resize.tcl]
+source [file join $_ut apply_hilight.tcl]
+source [file join $_ut select_same_cell.tcl]
 # moved unset _ut
 
-# Ctrl-Alt-S : show the selected instance in the Library Manager
+# Ctrl-Alt-S : locate a cell in the Library Manager. Acts on the selected instance's
+# master, or (nothing selected) the cell being viewed, or a "lib/cell" text note.
 bind .drw <Control-Alt-Key-s>   {locate_selected_in_libmgr;       break}
 # Ctrl-Alt-N : place the current Library-Manager selection
 bind .drw <Control-Alt-Key-n>   {place_libmgr_selection;          break}
-# Ctrl-Shift-N : selected instance's schematic in a NEW, read-only window
+# Ctrl-Alt-H : select every instance in the schematic sharing a cell/view with the
+# reference -- a selected instance (same view), a "lib/cell[/view]" text note, or the
+# Library-Manager selection (library / cell / symbol-view). Inverse of Ctrl-Alt-S.
+bind .drw <Control-Alt-Key-h>   {select_same_cell;                break}
+# Ctrl-N : open a NEW blank editor window (untitled.sch scratchpad), leaving the current
+# schematic untouched. Overrides the default Ctrl-N = Clear Schematic (still on File menu).
+bind .drw <Control-Key-n>       {cadence::new_blank_window;       break}
+# Ctrl-Shift-N : open a schematic read-only in a NEW window -- the selected instance's,
+# or the cell named by a "lib/cell" text note.
 bind .drw <Control-Shift-Key-N> {cadence::open_inst_sch_readonly; break}
 # Ctrl-X : descend into selected instance's schematic (no-op if none selected)
 bind .drw <Control-Key-x>       {cadence::descend_into_inst;      break}
+# Ctrl-Shift-X : descend into the selected instance's schematic in a NEW window,
+# read-only -- the E-dialog "New Window" path (a REAL descend that keeps the parent
+# hierarchy, vs Ctrl-Shift-N which opens the child as a fresh top-level). No-op unless
+# exactly one instance is selected. GOTCHA (same as Ctrl-Shift-N above): with Shift held
+# the "x" key emits the capital "X" keysym, so bind Key-X.
+bind .drw <Control-Shift-Key-X> {cadence::descend_into_inst_newwin_ro; break}
 # Ctrl-E : return one level. Overrides the C default (go_back / ascend in place) with
 # the window-chain-aware version: a window descended-into-new-window returns focus to
 # the PARENT window instead of ascending the child in place (issue 0053). Cloned to
@@ -115,6 +166,15 @@ bind .drw <Control-Key-e>       {cadence::return_one_level;       break}
 bind .drw <Alt-Key-e>           {cadence::return_to_top;          break}
 # Alt-X : descend back into the location remembered by the last Alt-E
 bind .drw <Alt-Key-x>           {cadence::descend_to_last;        break}
+# Alt-Shift-C : capture lib/cell/view to the clipboard + CIW. Selected instance ->
+# its master's L/C/V; selected text note -> the first "a/b/c" slash path in it;
+# nothing selected -> the current cellview's L/C/V. GOTCHA (same as Ctrl-Shift-2/N
+# above): with Shift held the "c" key emits the capital "C" keysym, so bind Key-C.
+bind .drw <Alt-Shift-Key-C>     {cadence::capture_lcv;            break}
+# Ctrl-Alt-D : round-trip a deep location through a text note. Nothing selected ->
+# write the last Alt-E location as a "inst/inst/..." note you place; a note that starts
+# with such a path -> descend there (same engine as Alt-X).
+bind .drw <Control-Alt-Key-d>   {cadence::deeploc_note;           break}
 # Ctrl-2 / Ctrl-Shift-2 : make the current view Editable / Read Only.
 # GOTCHA: with Shift held, the number-row "2" key emits its SHIFTED keysym, not
 # "2" -- so <Control-Shift-Key-2> never matches. On a US layout Shift-2 is "@"
@@ -153,6 +213,17 @@ set descend_readonly 1
 # CTRL-G toggles grid visibility (active):
 xschem bind key 103 ctrl canvas view.toggle_draw_grid
 
+# CTRL+Plus / CTRL+Minus : grow / shrink the DISPLAYED text size of selected text notes
+# and pin/net-label names (~10%, min step, per-type floor). Other objects ignored.
+# Four keysyms cover both the main row and the numeric keypad; the C key path strips
+# Shift for printable keys, so Ctrl+Shift+= (main-row '+') arrives as keysym 43 (plus)
+# with mods=ctrl. 43=plus  45=minus  65451=KP_Add  65453=KP_Subtract. Rebind freely.
+# See doc/claude/specs/text_size_scroll.md.
+xschem bind key 43    ctrl canvas edit.text_grow      ;# Ctrl+Shift+=  (main-row +)
+xschem bind key 65451 ctrl canvas edit.text_grow      ;# Ctrl+KP_Add  (keypad +)
+xschem bind key 45    ctrl canvas edit.text_shrink    ;# Ctrl+-       (main-row -)
+xschem bind key 65453 ctrl canvas edit.text_shrink    ;# Ctrl+KP_Subtract (keypad -)
+
 # Optional -- uncomment to give the others a key again:
 # xschem bind key 103 0   canvas view.snap_half               ;# halve snap    (old 'g')
 # xschem bind key 71  0   canvas view.snap_double             ;# double snap   (old Shift-g)
@@ -164,5 +235,20 @@ xschem bind key 103 ctrl canvas view.toggle_draw_grid
 
 # net highlighting tweaks - just testing..
 source [file join $_ut display.tcl]
+
+# One shortcut to apply YOUR favourite net-highlight style at any time (apply_hilight,
+# doc/claude/specs/apply_hilight.md). With a net/pin/label selected it styles it at once;
+# with nothing selected it prompts you to click or drag-select net(s), applies, and ends
+# (Esc cancels). Edit the style (named fields, any order, omitted -> default) and the key
+# to taste -- e.g. {color blue thickness 3 pattern {20 20} angle 30 march march_fwd rate 2}.
+# Plain F5 styles nets. Tk's <Key-F5> also matches a *modified* F5, and it lives on
+# the SAME bindtag (.drw) as the generic <Key> -> C dispatch, so Tk runs only this
+# (more specific) binding for any F5 -- a plain fall-through can't reach the registry.
+# So forward Alt-F5 (%s & 8 = Mod1) into the C dispatch ourselves, where the default
+# action registry maps it to tools.raise_ciw (raise the CIW); rebind via
+# `xschem bind key 65474 alt canvas <action>` still takes effect through this forward.
+# Non-Alt F5 applies the highlight as before.
+bind .drw <Key-F5> {if {%s & 8} {xschem callback %W %T %x %y %N 0 0 %s} \
+                    else {apply_hilight {color purple thickness 3 pattern {20 20}}}; break}
 unset _ut
 

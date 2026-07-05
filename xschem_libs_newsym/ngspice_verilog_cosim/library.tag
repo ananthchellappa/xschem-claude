@@ -1,0 +1,1 @@
+NAME ngspice_verilog_cosim

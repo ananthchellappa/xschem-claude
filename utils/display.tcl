@@ -7,7 +7,7 @@ set new_styles {
   {4  "purple"   3   {20 20}       0   1200    none        0 }
   {5  "cyan"   3   {20 20}       30   1500    none        0 }
   {6  "orange"   3   {20 20}       30   0    march_fwd 2 }
-  {7  "skyblue"   4   {16 20}       30   0    march_rev 3 }
+  {7  "skyblue"   4   {16 20}       -30   0    march_rev 3 }
 }
 
 net_hilight_style_merge $new_styles

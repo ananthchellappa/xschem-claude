@@ -67,6 +67,17 @@ static void hilight_hash_free(void) /* remove the whole hash table  */
  }
 }
 
+/* Monotonic apply-order counter for the buried-net cue (see compute_buried_hilights).
+ * Bumped each time a highlight entry's value is set, so the most recently applied
+ * buried net can be identified by max seq. Process-global ordering is sufficient;
+ * copy_hilights() carries the stamp across descend so recency survives. */
+static unsigned int hilight_apply_seq = 0;
+
+/* Screen-px outset of the buried-net cue rectangle beyond the symbol bbox. Shared by the
+ * draw (draw_hilight_net) and the animation redraw-region scan (scan_animating_hilights) so
+ * the region always fully covers what's drawn. See doc/claude/specs/buried_net_hilight.md */
+#define BURIED_CUE_OUTSET_PX 4.0
+
 static Hilight_hashentry *hilight_hash_lookup(const char *token, int value, int what)
 /*    token           what       ... what ...
  * --------------------------------------------------------------------------
@@ -98,6 +109,7 @@ static Hilight_hashentry *hilight_hash_lookup(const char *token, int value, int 
         entry->oldvalue = value-1000; /* no old value, set different value anyway*/
         entry->value = value;
         entry->time = xctx->hilight_time;
+        entry->seq = ++hilight_apply_seq; /* recency stamp for the buried-net cue */
         entry->hash = hashcode;
         *preventry = entry;
         xctx->hilight_nets = 1; /* some nets should be hilighted ....  07122002 */
@@ -117,6 +129,7 @@ static Hilight_hashentry *hilight_hash_lookup(const char *token, int value, int 
         (*preventry)->oldvalue =(*preventry)->value;
         (*preventry)->value = value;
         (*preventry)->time=xctx->hilight_time;
+        (*preventry)->seq = ++hilight_apply_seq; /* re-applied: refresh recency */
       }
       return (*preventry); /* found matching entry, return the address */
     }
@@ -228,6 +241,7 @@ void copy_hilights(void)
       new->oldvalue = (*entry)->oldvalue;
       new->value = (*entry)->value;
       new->time = (*entry)->time;
+      new->seq = (*entry)->seq; /* preserve buried-cue recency across descend copy */
       new->next = NULL;
 
       *new_entry = new;
@@ -428,8 +442,8 @@ static void publish_net_hilight_styles_to_tcl(void)
 /* Parse the user 'net_hilight_style' Tcl table: a list of rows, each row a list
  *   {index  color  width  dash-pattern  stripe-angle-deg  blink_ms  anim  rate_persec}
  * color: a layer index in [0,cadlayers) OR an X color name / #rrggbb (resolved to a pixel).
- * dash-pattern: a list of on/off run lengths ({} = solid). stripe-angle clamped to [0,45]
- * (warned). blink_ms/anim/rate_persec stored for Pass 2 animation (inert in Pass 1).
+ * dash-pattern: a list of on/off run lengths ({} = solid). stripe-angle clamped to [-45,45]
+ * (warned; negative tilts the opposite way). blink_ms/anim/rate_persec stored for Pass 2 (inert in Pass 1).
  * Returns 1 if a non-empty table was built, 0 otherwise (caller falls back to default). */
 static int parse_net_hilight_styles(const char *tab)
 {
@@ -473,13 +487,14 @@ static int parse_net_hilight_styles(const char *tab)
         Tcl_Free((char *)dd);
       }
     }
-    if(nf > 4) { /* stripe-angle-deg: clamp to [0,45] with a warning (render: Pass 1.5) */
+    if(nf > 4) { /* stripe-angle-deg: clamp to [-45,45] with a warning (render: Pass 1.5).
+                  * Negative tilts the stripes the opposite way from positive; 0 = perpendicular. */
       int ang = atoi(f[4]);
-      if(ang < 0 || ang > 45) {
-        int cl = ang < 0 ? 0 : 45;
+      if(ang < -45 || ang > 45) {
+        int cl = ang < -45 ? -45 : 45;
         char msg[200];
         my_snprintf(msg, S(msg),
-          "net_hilight_style: style %d stripe-angle %d out of range [0,45], clamped to %d",
+          "net_hilight_style: style %d stripe-angle %d out of range [-45,45], clamped to %d",
           s->index, ang, cl);
         hilight_style_warn(msg);
         ang = cl;
@@ -507,7 +522,7 @@ static int parse_net_hilight_styles(const char *tab)
     }
     /* a stripe angle only manifests through dash bands; with no dash pattern there is
      * nothing to tilt, so warn that the angle has no effect (rather than silently ignore) */
-    if(s->angle > 0 && s->dash_len == 0) {
+    if(s->angle != 0 && s->dash_len == 0) {
       char msg[200];
       my_snprintf(msg, S(msg),
         "net_hilight_style: style %d has stripe-angle %d but no dash pattern; angle has no "
@@ -579,7 +594,7 @@ void build_net_hilight_styles(void)
     static int warned = 0;
     int i;
     for(i = 0; !warned && i < xctx->n_net_hilight_styles; ++i) {
-      if(xctx->net_hilight_style[i].angle > 0) {
+      if(xctx->net_hilight_style[i].angle != 0) {
         hilight_style_warn("net_hilight_style: nonzero stripe angle needs a cairo build; "
                            "rendering as perpendicular dashes");
         /* only latch once the message actually reached the CIW; if styles are (re)built
@@ -705,6 +720,17 @@ void incr_hilight_color(void)
   int n = xctx->n_net_hilight_styles > 0 ? xctx->n_net_hilight_styles : 1;
   xctx->hilight_color = (xctx->hilight_color + 1) % n;
   dbg(1, "incr_hilight_color(): xctx->hilight_color=%d\n", xctx->hilight_color);
+}
+
+/* Step the style cursor back one (wrapping), the manual counterpart of the
+ * automatic incr_hilight_color() so a user can re-apply a recently used style to
+ * the next highlight. Bound to ALT-minus via cadence_style_rc.
+ * See doc/claude/specs/hilight_style_decrement.md */
+void decr_hilight_color(void)
+{
+  int n = xctx->n_net_hilight_styles > 0 ? xctx->n_net_hilight_styles : 1;
+  xctx->hilight_color = (xctx->hilight_color - 1 + n) % n;
+  dbg(1, "decr_hilight_color(): xctx->hilight_color=%d\n", xctx->hilight_color);
 }
 
 static void set_rawfile_for_bespice()
@@ -876,6 +902,8 @@ void clear_all_hilights(void)
   xctx->hilight_nets=0;
   for(i=0;i<xctx->instances; ++i) {
     xctx->inst[i].color = -10000 ;
+    xctx->inst[i].buried_hilight = -1; /* derived buried-net cue: cleared with the table.
+      * This path does not call propagate_hilights(), so reset it directly here. */
   }
   dbg(1, "clear_all_hilights(): clearing\n");
 }
@@ -1509,6 +1537,7 @@ int hilight_netname(const char *name, int fast)
       if(tclgetboolvar("incr_hilight")) incr_hilight_color();
       redraw_hilights(0);
       net_hilight_anim_update(); /* Pass 2a: a blinking style may have just been applied */
+      net_hilight_sync_descend_windows(); /* issue 0073: push into linked descend children */
     }
   }
   return node_entry ? 1 : 0;
@@ -1749,6 +1778,96 @@ static void send_current_to_gaw(int simtype, const char *node)
   my_free(_ALLOC_ID_, &t);
 }
 
+/* Compare instance name 'inst' (which may carry a [..] vector suffix, e.g. x_d[1:0])
+ * against a hierarchy-path component 'comp' of length 'clen' (which, for a vector
+ * instance, is an EXPANDED slice name like x_d[1]). Match on the base name, i.e. the
+ * text before any '['. See doc/claude/specs/buried_net_hilight.md §8.4 — exact
+ * per-slice matching for vector instances is a documented v1 approximation. */
+static int buried_name_match(const char *inst, const char *comp, int clen)
+{
+  int a, b;
+  if(!inst) return 0;
+  for(a = 0; inst[a] && inst[a] != '['; ++a);
+  for(b = 0; b < clen && comp[b] != '['; ++b);
+  return a == b && !strncmp(inst, comp, (size_t)a);
+}
+
+/* Is instance i shown as highlighted at the CURRENT level through one of its pins?
+ * Mirrors the pin scan in propagate_hilights() but read-only and independent of
+ * inst[].color, so the buried-cue exclusion is robust on every code path. */
+static int buried_inst_pin_hilighted(int i)
+{
+  xSymbol *sym;
+  const char *type;
+  int j, rects;
+  if(xctx->inst[i].ptr < 0) return 0;
+  sym = xctx->inst[i].ptr + xctx->sym;
+  type = sym->type;
+  if(!type || !xctx->inst[i].node) return 0;
+  if(IS_LABEL_SH_OR_PIN(type)) {
+    return xctx->inst[i].node[0] &&
+           bus_hilight_hash_lookup(xctx->inst[i].node[0], 0, XLOOKUP) != NULL;
+  }
+  rects = sym->rects[PINLAYER];
+  for(j = 0; j < rects; ++j) {
+    if(xctx->inst[i].node[j] &&
+       bus_hilight_hash_lookup(xctx->inst[i].node[j], 0, XLOOKUP)) return 1;
+  }
+  return 0;
+}
+
+/* Buried-net highlight cue (see doc/claude/specs/buried_net_hilight.md).
+ * Mark each instance at the current level whose subtree contains a highlighted net
+ * that is NOT exposed at the instance's pins, so a highlight buried below survives
+ * ascending. inst[i].buried_hilight holds the style index of such a net (the lowest
+ * among several), or -1 for none.
+ *
+ * Derived state recomputed from xctx->hilight_table here (in propagate_hilights, on
+ * every highlight change / descend / ascend) — NEVER per draw or per animation frame.
+ * A buried net is identified by its hierarchy path being STRICTLY deeper than the
+ * current path through some child instance; this is inherently recursive over depth
+ * (the same deep net flags x_d at C, x_c at B, x_b at A) via prefix matching against
+ * the current path alone. */
+static void compute_buried_hilights(void)
+{
+  int i, k;
+  const char *P = xctx->sch_path[xctx->currsch];
+  int lp = (int) strlen(P);
+  Hilight_hashentry *e;
+  unsigned int *bseq; /* per-instance apply-seq of the winning (most recent) buried net */
+
+  for(i = 0; i < xctx->instances; ++i) xctx->inst[i].buried_hilight = -1;
+  if(xctx->instances <= 0) return;
+  bseq = my_calloc(_ALLOC_ID_, xctx->instances, sizeof(unsigned int));
+
+  for(i = 0; i < HASHSIZE; ++i) {
+    for(e = xctx->hilight_table[i]; e; e = e->next) {
+      const char *rest, *dot;
+      int clen, style;
+      if(e->value < 0) continue;                  /* sim logic level, not a style cue */
+      if(!e->token || e->token[0] == ' ') continue; /* skip instance/label entries (derived
+                                                     * from nets; the net entry carries style) */
+      if(!e->path || (int) strlen(e->path) <= lp) continue; /* at/above level: not buried */
+      if(strncmp(e->path, P, (size_t)lp)) continue;         /* not under current level */
+      rest = e->path + lp;                        /* immediate child component + tail */
+      dot = strchr(rest, '.');
+      clen = dot ? (int)(dot - rest) : (int) strlen(rest);
+      if(clen <= 0) continue;
+      style = e->value;
+      for(k = 0; k < xctx->instances; ++k) {
+        if(!buried_name_match(xctx->inst[k].instname, rest, clen)) continue;
+        if(buried_inst_pin_hilighted(k)) continue; /* visible here via a pin: no cue */
+        /* most-recently-applied buried net wins the cue style (per the spec); -1 = unset */
+        if(xctx->inst[k].buried_hilight == -1 || e->seq >= bseq[k]) {
+          xctx->inst[k].buried_hilight = style;
+          bseq[k] = e->seq;
+        }
+      }
+    }
+  }
+  my_free(_ALLOC_ID_, &bseq);
+}
+
 /* hilight/clear pin/label instances attached to hilight nets, or instances with "highlight=true"
  * attr if en_hilight_conn_inst option is set
  */
@@ -1813,6 +1932,8 @@ void propagate_hilights(int set, int clear, int mode)
   }
   xctx->hilight_nets = there_are_hilights();
   if(xctx->hilight_nets && xctx->enable_drill && set) drill_hilight(mode);
+  /* recompute the buried-net cue from the (now final, post-drill) highlight table */
+  compute_buried_hilights();
 }
 
 /* use negative values to bypass the normal hilight color enumeration */
@@ -2347,6 +2468,7 @@ void hilight_net_styled(void)
   xctx->hilight_replace = 0;
   tclsetboolvar("incr_hilight", save);
   net_hilight_anim_update(); /* Pass 2a: a blinking style may have just been applied */
+  net_hilight_sync_descend_windows(); /* issue 0073: push into linked descend children */
 }
 
 void unhilight_net(int keep_sel)
@@ -2381,6 +2503,7 @@ void unhilight_net(int keep_sel)
   propagate_hilights(0, 1, XINSERT_NOREPLACE); /* will also clear xctx->hilight_nets if nothing left hilighted */
   draw();
   net_hilight_anim_update(); /* Pass 2a: removing the last blinking net must stop the tick */
+  net_hilight_sync_descend_windows(); /* issue 0073: clear-through into linked descend children */
 
   if(!keep_sel) unselect_all(1); /* keep_sel: leave the selection intact (Cadence key 8) */
 }
@@ -2741,6 +2864,35 @@ static int scan_animating_hilights(double now, unsigned int *sig, int *maxw, dou
     }
     found = 1;
   }
+  /* Buried-net cue (doc/claude/specs/buried_net_hilight.md): the ancestor-instance rectangle is
+   * drawn as styled wire edges (draw_hilight_net), so unlike a colored symbol it can BOTH blink
+   * AND march. The wire/instance scans above never see it — the animated net is buried in a child,
+   * not a wire at this level — so without this a window whose ONLY animated element is a buried cue
+   * would report "no animation", never arm the tick, and the rectangle would stay static. */
+  for(i = 0; i < xctx->instances; ++i) {
+    NetHilightStyle *st;
+    int val = xctx->inst[i].buried_hilight;
+    double m;
+    if(val < 0) continue;
+    st = get_hilight_style(val);
+    if(!net_hilight_style_animates(st)) continue;   /* blink OR march (cue is wire-drawn) */
+    if(predicate) return 1;
+    if(sig) {
+      unsigned int term = (unsigned int)(st->index * 2 + net_hilight_style_on_now(st, now));
+      term = term * 31u + (unsigned int)(int)net_hilight_march_offset(st, now);
+      *sig = *sig * 1000003u + term;
+    }
+    if(maxw && st->width > *maxw) *maxw = st->width;
+    if(next_ms) { double d = net_hilight_next_edge_ms(st, now); if(d < *next_ms) *next_ms = d; }
+    if(bx1) { /* the outset cue rectangle, matching draw_hilight_net's BURIED_CUE_OUTSET_PX */
+      m = (xctx->mooz > 0.0) ? BURIED_CUE_OUTSET_PX / xctx->mooz : 0.0;
+      if(!found || xctx->inst[i].xx1 - m < *bx1) *bx1 = xctx->inst[i].xx1 - m;
+      if(!found || xctx->inst[i].yy1 - m < *by1) *by1 = xctx->inst[i].yy1 - m;
+      if(!found || xctx->inst[i].xx2 + m > *bx2) *bx2 = xctx->inst[i].xx2 + m;
+      if(!found || xctx->inst[i].yy2 + m > *by2) *by2 = xctx->inst[i].yy2 + m;
+    }
+    found = 1;
+  }
   return found;
 }
 
@@ -2955,10 +3107,13 @@ void net_hilight_anim_update(void)
      * ".drw", which is always `winfo viewable`, so the Tcl-side gate can't catch it. The front
      * context (ctx==xctx) and every detached window (own top_path/canvas) DO animate (LOCKED:
      * tabs stay front-only). */
-    if(ctx != xctx && (!ctx->top_path || !ctx->top_path[0])) continue;
     /* a NULL/empty win path would truncate tclvareval's va_arg list and run the unbalanced
      * fragment "net_hilight_anim_update {"; skip such a slot. */
     if(!wp || !wp[0]) continue;
+    /* Skip only a HIDDEN background tab: empty top_path AND not the tab currently shown on .drw.
+     * The main window / front tab (get_drw_front_win()) stays visible on .drw even when a DETACHED
+     * window has focus, so it must be (re)armed too -- issue 0073 animated-highlight. */
+    if(ctx != xctx && (!ctx->top_path || !ctx->top_path[0]) && strcmp(wp, get_drw_front_win())) continue;
     tclvareval("net_hilight_anim_update {", wp, "}", NULL);
   }
 }
@@ -2987,13 +3142,736 @@ void net_hilight_redraw_other_windows(void)
     const char *wp;
     Xschem_ctx *saved, *ctx = get_window_ctx(i, &wp);
     if(!ctx || ctx == xctx) continue;                 /* empty slot, or the current window */
-    if(!ctx->top_path || !ctx->top_path[0]) continue; /* background tab: shares the front canvas */
     if(!wp || !wp[0]) continue;
+    /* skip only a HIDDEN background tab (empty top_path AND not the tab shown on .drw); the main
+     * window / front tab stays visible and must be repainted -- issue 0073 animated-highlight */
+    if((!ctx->top_path || !ctx->top_path[0]) && strcmp(wp, get_drw_front_win())) continue;
     saved = net_hilight_borrow_ctx(wp);
     if(!saved) continue;                              /* couldn't borrow (already current / unknown) */
     if(xctx->save_pixmap) draw();                     /* skip an unexposed window (no backing pixmap) */
     net_hilight_restore_ctx(saved);
   }
+}
+
+/* ---------------------------------------------------------------------------
+ * issue 0073: keep a linked descend-NEW-WINDOW child in sync with a highlight
+ * applied LATER in an ancestor window.
+ *
+ * Highlights live per window context (xctx->hilight_table). A descend-new-window
+ * child receives a ONE-TIME copy at descend time (xschem copy_hilights) plus the
+ * descend's hilight_child_pins()/propagate_hilights(); a highlight applied to the
+ * parent AFTERWARDS never reaches the child. These helpers re-run that same
+ * translation on every highlight change: for each open window that sits exactly one
+ * hierarchy level below the changed (source) window through a subcircuit instance,
+ * rebuild the child's table from the source's table plus the source instance's
+ * highlighted pin nets — computable entirely from the SOURCE context (inst.node[] +
+ * the symbol pin names), exactly as hilight_child_pins() does, so the child schematic
+ * need not be reloaded — then propagate + redraw the child. Recurses down consecutive
+ * -level chains, so a whole descend-window chain updates from a single change.
+ * The parent<-child (ascend) direction is not yet handled (see issue 0073 §5). */
+
+/* Copy the hilight_table of `src` into the CURRENT context (the current table must have been
+ * cleared by the caller). If `tp` is NULL, copy every entry verbatim (all paths). If `tp` is a
+ * path, copy only entries whose path is an ANCESTOR-OR-SELF of `tp` -- entries at `tp`'s level or
+ * shallower -- and DROP every deeper (sub-`tp`) entry. Dropping sub-target entries is what the
+ * orphan mop-up needs (§9c): reproducing a deep entry in a shallower window would manufacture a
+ * buried-net cue on the containing instance that we cannot validate without the intermediate
+ * netlist -- and it is wrong exactly when the deep net actually SURFACES to a real net higher up
+ * (a deep OUT that connects to CTRL1 at the top: the top should light CTRL1, not slap a "buried"
+ * rectangle on the instance). Paths are '.'-terminated, so a component-aligned prefix test is
+ * ancestor-or-self. */
+static void net_hilight_copy_table_from(Xschem_ctx *src, const char *tp)
+{
+  int i;
+  size_t tplen = tp ? strlen(tp) : 0;
+  Hilight_hashentry *e;
+  for(i = 0; i < HASHSIZE; ++i) {
+    for(e = src->hilight_table[i]; e; e = e->next) {
+      Hilight_hashentry *n;
+      if(tp) { /* ancestor-or-self filter: keep only entries at tp's level or shallower */
+        size_t plen = e->path ? strlen(e->path) : 0;
+        if(!e->path || plen > tplen || strncmp(tp, e->path, plen)) continue;
+      }
+      n = (Hilight_hashentry *)my_calloc(_ALLOC_ID_, 1, sizeof(Hilight_hashentry));
+      my_strdup2(_ALLOC_ID_, &n->token, e->token);
+      my_strdup2(_ALLOC_ID_, &n->path, e->path);
+      n->hash = e->hash;
+      n->oldvalue = e->oldvalue;
+      n->value = e->value;
+      n->time = e->time;
+      n->seq = e->seq;
+      n->next = xctx->hilight_table[i];
+      xctx->hilight_table[i] = n;
+    }
+  }
+  /* hilight_nets is recomputed by the propagate_hilights() the caller runs next. */
+}
+
+/* True iff the CURRENT (borrowed) context should actually repaint now: it must own a pixmap
+ * AND be visible -- either a DETACHED window (its own canvas) or the FRONT TAB of the shared
+ * .drw canvas. The main window / front tab has an EMPTY top_path but IS visible, so an
+ * empty-top_path context repaints ONLY when it is the front-of-.drw. Without the front-of-.drw
+ * arm, syncing a highlight UP into the main window (the usual parent) would update its table
+ * but skip the draw(), leaving the buried-net cue invisible until an unrelated expose (mouse
+ * move) repainted it (issue 0073 child->parent bug; same root as the §8b anim-freeze fix). */
+static int net_hilight_ctx_visible(const char *wp)
+{
+  if(!xctx->save_pixmap) return 0;
+  if(xctx->top_path && xctx->top_path[0]) return 1;  /* detached window: its own canvas */
+  return !strcmp(wp, get_drw_front_win());           /* tab: only when it is the front tab */
+}
+
+/* Windows reconciled by the full ±1-level translation this pass, keyed by save_xctx[] slot, so
+ * the orphan mop-up (net_hilight_sync_orphans) does NOT re-touch them with the coarser verbatim
+ * copy. Reset at the top of every net_hilight_sync_descend_windows(); safe as file-scope static
+ * because the whole sync runs to completion synchronously in the single-threaded Tcl loop. */
+static char nh_sync_visited[MAX_NEW_WINDOWS];
+
+/* 1 iff windows `a` and `b` sit on the SAME hierarchy branch at DIFFERENT depths -- one's
+ * current sch_path is a (component-aligned) prefix of the other's, AND they show the same
+ * schematic at their shared (shallower) level. This is the ancestor/descendant test the orphan
+ * mop-up uses to decide "these two windows are linked views of one hierarchy". */
+static int net_hilight_prefix_related(Xschem_ctx *a, Xschem_ctx *b)
+{
+  const char *ap, *bp, *shortp, *longp;
+  int al, bl, shl, minc;
+  if(a->currsch < 0 || b->currsch < 0) return 0;
+  if(a->currsch == b->currsch) return 0;              /* same depth -> not ancestor/descendant */
+  ap = a->sch_path[a->currsch]; bp = b->sch_path[b->currsch];
+  if(!ap || !bp) return 0;
+  al = (int)strlen(ap); bl = (int)strlen(bp);
+  if(al < bl) { shortp = ap; shl = al; longp = bp; } else { shortp = bp; shl = bl; longp = ap; }
+  if(strncmp(longp, shortp, (size_t)shl)) return 0;   /* shorter is a prefix (paths end in '.') */
+  minc = a->currsch < b->currsch ? a->currsch : b->currsch; /* the shared (shallower) level */
+  if(!a->sch[minc] || !b->sch[minc]) return 0;
+  return !strcmp(a->sch[minc], b->sch[minc]);         /* same design on the shared branch */
+}
+
+/* Direction/depth-agnostic reconcile for a linked window `wp` MORE than one level from `src` with
+ * no intermediate window to relay through: clear it, then copy only `src`'s ancestor-or-self
+ * entries (net_hilight_copy_table_from with the target path as filter), propagate, guarded redraw.
+ * The exact cross-level net
+ * cannot be re-derived (needs the unloaded intermediate netlist -- deferred), so populating never
+ * crosses the gap; but CLEARING does (an emptied `src` clears the target at any depth -> no stale
+ * highlight), which is the property that must hold. Dropping the sub-target entries is what keeps
+ * a surfacing deep net from painting a bogus buried cue on the ancestor instance. issue 0073 §9c. */
+static void net_hilight_reconcile_verbatim(Xschem_ctx *src, const char *wp)
+{
+  Xschem_ctx *saved = net_hilight_borrow_ctx(wp);
+  if(saved) {
+    const char *tp = xctx->sch_path[xctx->currsch]; /* the borrowed target's current-level path */
+    clear_all_hilights();                           /* drop the target's own table + inst cues */
+    net_hilight_copy_table_from(src, tp);           /* re-add only ancestor-or-self src entries */
+    propagate_hilights(1, 1, XINSERT_NOREPLACE);
+    if(net_hilight_ctx_visible(wp)) draw();
+    net_hilight_restore_ctx(saved);
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * issue 0073 §9c FIX: the deep-gap relay. Light the EXACT cross-level net in a linked window that is
+ * MORE than one hierarchy level from the changed (source) window, where the intermediate netlist is
+ * loaded in NO window (e.g. primary at ".", secondary descended into x1 in a new window then IN PLACE
+ * into x4 -> ".x1.x4.", with nothing loaded at ".x1."). The ±1 relay cannot reach it and the orphan
+ * mop-up (net_hilight_reconcile_verbatim) only clears through / drops deep entries (missing-not-wrong).
+ * This relay loads each intermediate schematic transiently into a windowless scratch context and
+ * translates the highlight one hop at a time -- the SAME per-pin/bus mapping hilight_child_pins() /
+ * hilight_parent_pins() and net_hilight_sync_one_child()/_one_parent() use -- then reconciles the
+ * target with the translated net PLUS the verbatim source table. Loading the intermediate netlist is
+ * exactly the computation that decides surface-vs-buried, so this RESOLVES the §9c hazard instead of
+ * reviving it: a surfacing deep net now supplies its real shallow net (buried_inst_pin_hilighted()
+ * suppresses the would-be false cue on the containing instance), and a genuinely buried net produces
+ * an empty translation and keeps its correct buried cue. See
+ * doc/claude/code_analysis/net_highlight_linked_windows_agent_guide.md §7.
+ * -------------------------------------------------------------------------- */
+
+/* issue 0073 deep-gap relay enable / kill-switch (also the test sabotage seam). Default on. */
+static int net_hilight_relay_enable = 1;
+void net_hilight_set_relay_enable(int v) { net_hilight_relay_enable = v ? 1 : 0; }
+int  net_hilight_get_relay_enable(void) { return net_hilight_relay_enable; }
+
+/* TEST-ONLY: force net_hilight_sync_descend_windows() to run under --nogui (has_x==0), so the whole
+ * cross-window sync + deep-gap relay can be exercised HEADLESS over logical contexts (Tier C of
+ * doc/claude/code_analysis/net_highlight_linked_windows_agent_guide.md §8). The sync's only draw() is
+ * separately gated by net_hilight_ctx_visible() (needs a save_pixmap, which no headless context has),
+ * so bypassing the outer guard runs the TABLE reconciliation while every draw self-skips -- no
+ * BadDrawable risk. Never set in production; mirrors net_hilight_test_active. Default off. */
+static int net_hilight_sync_force_headless = 0;
+void net_hilight_set_sync_force_headless(int v) { net_hilight_sync_force_headless = v ? 1 : 0; }
+
+/* Extract the single hierarchy component of child_path immediately below parent_path (e.g. parent
+ * ".x1." child ".x1.x4." -> "x4"). Mirrors the extraction in net_hilight_sync_children_rec(). Returns
+ * 1 on success (buf filled, NUL-terminated), 0 otherwise. */
+static int nh_path_component(const char *parent_path, const char *child_path, char *buf, int bufsize)
+{
+  int plen, complen;
+  const char *rest, *dot;
+  if(!parent_path || !child_path) return 0;
+  plen = (int)strlen(parent_path);
+  if(strncmp(child_path, parent_path, (size_t)plen)) return 0;
+  rest = child_path + plen;
+  dot = strchr(rest, '.');
+  if(!dot) return 0;
+  complen = (int)(dot - rest);
+  if(complen <= 0 || complen >= bufsize) return 0;
+  memcpy(buf, rest, (size_t)complen);
+  buf[complen] = '\0';
+  return 1;
+}
+
+/* One hierarchy hop of the relay. The CURRENT xctx must have the PARENT schematic (the one CONTAINING
+ * inst_idx) loaded and prepare_netlist_structs() run. Translate the working set of highlighted net
+ * bits (in_tok/in_val, n_in) across the boundary of instance inst_idx (vector slice inst_number):
+ * down!=0 maps parent-net bits -> child pin-net bits; down==0 maps child pin-net bits -> parent-net
+ * bits. Same pin/bus arithmetic as net_hilight_sync_one_child()/_one_parent(). The output arrays are
+ * freshly allocated (caller frees them). */
+static void nh_hop(int inst_idx, int inst_number, int down,
+                   char **in_tok, int *in_val, int n_in,
+                   char ***out_tok, int **out_val, int *n_out)
+{
+  int j, k, rects, mult, net_mult, n = 0, cap = 0, c;
+  const char *pin_name;
+  char *pin_node = NULL, *net_node = NULL, *p_n_s1, *p_n_s2;
+  char **ot = NULL;
+  int *ov = NULL;
+  xSymbol *sym;
+
+  *out_tok = NULL; *out_val = NULL; *n_out = 0;
+  if(inst_idx < 0 || inst_idx >= xctx->instances || xctx->inst[inst_idx].ptr < 0) return;
+  sym = xctx->inst[inst_idx].ptr + xctx->sym;
+  rects = sym->rects[PINLAYER];
+  if(inst_number <= 0) inst_number = 1;
+
+  for(j = 0; j < rects; ++j) {
+    if(!xctx->inst[inst_idx].node || !xctx->inst[inst_idx].node[j]) continue;
+    my_strdup(_ALLOC_ID_, &net_node, expandlabel(xctx->inst[inst_idx].node[j], &net_mult));
+    if(net_mult <= 0) continue;
+    pin_name = get_tok_value(sym->rect[PINLAYER][j].prop_ptr, "name", 0);
+    if(!pin_name[0]) continue;
+    my_strdup(_ALLOC_ID_, &pin_node, expandlabel(pin_name, &mult));
+    p_n_s1 = pin_node;
+    for(k = 1; k <= mult; ++k) {
+      char *childbit = my_strtok_r(p_n_s1, ",", "", 0, &p_n_s2); /* advance every k */
+      char *parentbit = find_nth(net_node, ",", "", 0, ((inst_number - 1) * mult + k - 1) % net_mult + 1);
+      const char *key, *produced;
+      p_n_s1 = NULL;
+      if(!childbit || !childbit[0] || !parentbit || !parentbit[0]) continue;
+      if(down) { key = parentbit; produced = childbit; } /* parent bit in set -> child pin net */
+      else     { key = childbit;  produced = parentbit; } /* child pin net in set -> parent net */
+      for(c = 0; c < n_in; ++c) if(!strcmp(in_tok[c], key)) break;
+      if(c >= n_in) continue;                             /* this bit is not in the working set */
+      if(n >= cap) {
+        cap = cap ? cap * 2 : 16;
+        my_realloc(_ALLOC_ID_, &ot, cap * sizeof(char *));
+        my_realloc(_ALLOC_ID_, &ov, cap * sizeof(int));
+      }
+      ot[n] = NULL;
+      my_strdup2(_ALLOC_ID_, &ot[n], produced); /* find_nth/strtok reuse static buffers: copy now */
+      ov[n] = in_val[c];
+      ++n;
+    }
+  }
+  my_free(_ALLOC_ID_, &net_node);
+  my_free(_ALLOC_ID_, &pin_node);
+  *out_tok = ot; *out_val = ov; *n_out = n;
+}
+
+/* Relay the highlight from `src` to the orphan window `tgt` (window path tgt_wp) across a gap of
+ * more than one hierarchy level, translating hop by hop through transiently-loaded intermediate
+ * schematics. Returns 1 if the target was reconciled with the translated net, 0 to tell the caller
+ * to fall back to net_hilight_reconcile_verbatim (clear-through-only) -- e.g. an intermediate
+ * schematic could not be loaded or an instance did not resolve. On return xctx == the entry context
+ * (== src) and has_x is restored. */
+static int net_hilight_relay_reconcile(Xschem_ctx *src, Xschem_ctx *tgt, const char *tgt_wp)
+{
+  Xschem_ctx *entry = xctx;                     /* == src at call time */
+  Xschem_ctx *deep, *shallow, *saved, *b;
+  int down, dS, dD, L, ok = 1, hi, m, save_has_x;
+  char **W = NULL;
+  int *Wv = NULL, nW = 0;
+  const char *lvlpath;
+  Hilight_hashentry *e;
+
+  if(src->currsch == tgt->currsch) return 0;
+  if(src->currsch < tgt->currsch) { down = 1; shallow = src; deep = tgt; }
+  else                            { down = 0; shallow = tgt; deep = src; }
+  dS = shallow->currsch; dD = deep->currsch;
+  if(dD - dS < 2) return 0;                      /* ±1 is handled elsewhere; nothing to relay */
+  if(dS < 0 || dD >= CADMAXHIER) return 0;
+
+  /* Initial working set W = the SOURCE's highlighted net bits at its own current level. */
+  lvlpath = src->sch_path[src->currsch];
+  if(!lvlpath) return 0;
+  for(hi = 0; hi < HASHSIZE; ++hi) {
+    for(e = src->hilight_table[hi]; e; e = e->next) {
+      if(!e->token || e->token[0] == ' ') continue;      /* nets only (skip instance/label entries) */
+      if(!e->path || strcmp(e->path, lvlpath)) continue; /* the source's own level only */
+      my_realloc(_ALLOC_ID_, &W,  (nW + 1) * sizeof(char *));
+      my_realloc(_ALLOC_ID_, &Wv, (nW + 1) * sizeof(int));
+      W[nW] = NULL;
+      my_strdup2(_ALLOC_ID_, &W[nW], e->token);
+      Wv[nW] = e->value;
+      ++nW;
+    }
+  }
+  if(nW == 0) return 0; /* nothing to populate (e.g. a clear): let the caller clear-through verbatim
+                         * (no scratch load needed -- reconcile_verbatim empties the target) */
+
+  /* Translate hop by hop through the intermediate schematics, loaded transiently into a windowless
+   * scratch context with has_x forced 0 (so no GC/pixmap path is taken -- the headless netlist path). */
+  saved = xctx;                                 /* == src / entry */
+  save_has_x = has_x;
+  has_x = 0;
+  L = down ? dS : (dD - 1);
+  while(ok) {
+    char instname[256];
+    const char *fn;
+    int slice, inst_idx, lok;
+    char **nt = NULL;
+    int *nv = NULL, nn = 0;
+
+    if(down) { if(L > dD - 1) break; } else { if(L < dS) break; }
+    fn = deep->sch[L];
+    slice = deep->sch_inst_number[L];
+    if(!fn || !fn[0] ||
+       !nh_path_component(deep->sch_path[L], deep->sch_path[L + 1], instname, (int)sizeof(instname))) {
+      ok = 0; break;
+    }
+    if(L == dS) {
+      /* The shallow-end schematic (level dS) is loaded LIVE in a window -- the source for a down
+       * relay (already the current xctx), the target for an up relay. Read that live context instead
+       * of reloading sch[dS] from disk: the on-disk copy is STALE after unsaved connectivity edits
+       * (rewire / net rename / pin remap) in that window, which would mistranslate the highlight; and
+       * it saves a redundant load. (prepare_netlist_structs is idempotent; the borrow is a pure
+       * pointer swap, valid with has_x forced 0.) */
+      Xschem_ctx *lb = NULL;                    /* down: use saved(=src, current); up: borrow tgt */
+      if(!down) { lb = net_hilight_borrow_ctx(tgt_wp); if(!lb) ok = 0; }
+      if(ok) {
+        prepare_netlist_structs(0);
+        inst_idx = get_instance(instname);      /* resolves against the live shallow window */
+        if(inst_idx >= 0) nh_hop(inst_idx, slice, down, W, Wv, nW, &nt, &nv, &nn);
+        else ok = 0;
+      }
+      if(lb) net_hilight_restore_ctx(lb);
+      xctx = saved;                             /* down: no-op; up: restore already did it */
+    } else {
+      alloc_scratch_xschem_ctx();               /* xctx := fresh windowless scratch */
+      lok = load_schematic(1, fn, 0, 0);        /* load symbols, keep undo, silent (no alert popup) */
+      if(lok) {
+        prepare_netlist_structs(0);
+        inst_idx = get_instance(instname);      /* resolves against the scratch's inst[] */
+        if(inst_idx >= 0) nh_hop(inst_idx, slice, down, W, Wv, nW, &nt, &nv, &nn);
+        else ok = 0;
+      } else ok = 0;
+      free_scratch_xschem_ctx();                /* frees the scratch xctx */
+      xctx = saved;                             /* back to src between hops */
+    }
+    if(!ok) {
+      for(m = 0; m < nn; ++m) my_free(_ALLOC_ID_, &nt[m]);
+      if(nt) my_free(_ALLOC_ID_, &nt);
+      if(nv) my_free(_ALLOC_ID_, &nv);
+      break;
+    }
+    for(m = 0; m < nW; ++m) my_free(_ALLOC_ID_, &W[m]); /* adopt the translated set */
+    if(W) my_free(_ALLOC_ID_, &W);
+    if(Wv) my_free(_ALLOC_ID_, &Wv);
+    W = nt; Wv = nv; nW = nn;
+    if(nW == 0) break;                          /* net does not propagate further: stop (target clears
+                                                 * / keeps its correct buried cue on the verbatim copy) */
+    L += down ? 1 : -1;
+  }
+  has_x = save_has_x;
+  xctx = entry;                                 /* == src */
+
+  if(!ok) {                                     /* caller falls back to clear-through verbatim */
+    for(m = 0; m < nW; ++m) my_free(_ALLOC_ID_, &W[m]);
+    if(W) my_free(_ALLOC_ID_, &W);
+    if(Wv) my_free(_ALLOC_ID_, &Wv);
+    return 0;
+  }
+
+  /* Reconcile the target: the verbatim source table (safe now -- the translated net accompanies any
+   * deep entry, so a surfacing net suppresses the would-be false buried cue) + the translated nets at
+   * the target's own level. Byte-matches a fully-open descend chain. */
+  b = net_hilight_borrow_ctx(tgt_wp);
+  if(!b) {                                        /* target unknown/stale: could not reconcile it here.
+                                                   * Return 0 so the caller falls back to the verbatim
+                                                   * reconcile (honors the contract; harmless either way
+                                                   * -- that path also borrows and no-ops on a dead win). */
+    for(m = 0; m < nW; ++m) my_free(_ALLOC_ID_, &W[m]);
+    if(W) my_free(_ALLOC_ID_, &W);
+    if(Wv) my_free(_ALLOC_ID_, &Wv);
+    return 0;
+  }
+  clear_all_hilights();
+  net_hilight_copy_table_from(src, NULL);
+  for(m = 0; m < nW; ++m) bus_hilight_hash_lookup(W[m], Wv[m], XINSERT_NOREPLACE);
+  propagate_hilights(1, 1, XINSERT_NOREPLACE);
+  if(net_hilight_ctx_visible(tgt_wp)) draw();
+  net_hilight_restore_ctx(b);
+  for(m = 0; m < nW; ++m) my_free(_ALLOC_ID_, &W[m]);
+  if(W) my_free(_ALLOC_ID_, &W);
+  if(Wv) my_free(_ALLOC_ID_, &Wv);
+  return 1;
+}
+
+/* In the SOURCE (current) context, rebuild the highlight table of the child window
+ * `child_wp` that descended into instance `inst_idx` (vector slice `inst_number`):
+ * source table (ancestor-level + global entries) + the child-level nets of that
+ * instance whose parent-side net is highlighted, then propagate + (guarded) redraw. */
+static void net_hilight_sync_one_child(Xschem_ctx *src, int inst_idx, int inst_number,
+                                       const char *child_wp)
+{
+  int j, k, rects, mult, net_mult, npairs = 0, cap = 0, m;
+  const char *pin_name;
+  char *pin_node = NULL, *net_node = NULL, *p_n_s1, *p_n_s2;
+  char **pairnet = NULL;
+  int *pairval = NULL;
+  Hilight_hashentry *entry;
+  xSymbol *sym;
+  Xschem_ctx *saved;
+
+  if(inst_idx < 0 || inst_idx >= xctx->instances || xctx->inst[inst_idx].ptr < 0) return;
+  prepare_netlist_structs(0);
+  sym = xctx->inst[inst_idx].ptr + xctx->sym;
+  rects = sym->rects[PINLAYER];
+  if(inst_number <= 0) inst_number = 1;
+
+  /* Phase A: collect (child-net-bit, value) for highlighted pins, reading the SOURCE. */
+  for(j = 0; j < rects; ++j) {
+    if(!xctx->inst[inst_idx].node || !xctx->inst[inst_idx].node[j]) continue;
+    my_strdup(_ALLOC_ID_, &net_node, expandlabel(xctx->inst[inst_idx].node[j], &net_mult));
+    if(net_mult <= 0) continue;
+    pin_name = get_tok_value(sym->rect[PINLAYER][j].prop_ptr, "name", 0);
+    if(!pin_name[0]) continue;
+    my_strdup(_ALLOC_ID_, &pin_node, expandlabel(pin_name, &mult));
+    p_n_s1 = pin_node;
+    for(k = 1; k <= mult; ++k) {
+      char *childbit = my_strtok_r(p_n_s1, ",", "", 0, &p_n_s2); /* advance every k, like hilight_child_pins */
+      char *parentbit = find_nth(net_node, ",", "", 0, ((inst_number - 1) * mult + k - 1) % net_mult + 1);
+      p_n_s1 = NULL;
+      if(!childbit || !childbit[0]) continue;
+      entry = bus_hilight_hash_lookup(parentbit, 0, XLOOKUP); /* source table, source level */
+      if(entry) {
+        if(npairs >= cap) {
+          cap = cap ? cap * 2 : 16;
+          my_realloc(_ALLOC_ID_, &pairnet, cap * sizeof(char *));
+          my_realloc(_ALLOC_ID_, &pairval, cap * sizeof(int));
+        }
+        pairnet[npairs] = NULL;
+        my_strdup2(_ALLOC_ID_, &pairnet[npairs], childbit);
+        pairval[npairs] = entry->value;
+        ++npairs;
+      }
+    }
+  }
+  my_free(_ALLOC_ID_, &net_node);
+  my_free(_ALLOC_ID_, &pin_node);
+
+  /* Phase B: borrow the child, rebuild its table, propagate, redraw. */
+  saved = net_hilight_borrow_ctx(child_wp);
+  if(saved) { /* borrowed a real, different, known window */
+    clear_all_hilights();             /* free child table + reset inst colors/buried cue */
+    net_hilight_copy_table_from(src, NULL); /* whole parent table verbatim (ancestor-level + global) */
+    for(m = 0; m < npairs; ++m)
+      bus_hilight_hash_lookup(pairnet[m], pairval[m], XINSERT_NOREPLACE); /* at child level */
+    propagate_hilights(1, 1, XINSERT_NOREPLACE); /* colors pins/labels, buried cue, sets hilight_nets */
+    /* redraw only a real, exposed, front window (skip a hidden background tab, and an unexposed
+     * window with no pixmap); the front tab / main window draws too (net_hilight_ctx_visible) */
+    if(net_hilight_ctx_visible(child_wp)) draw();
+    net_hilight_restore_ctx(saved);
+  }
+  for(m = 0; m < npairs; ++m) my_free(_ALLOC_ID_, &pairnet[m]);
+  if(pairnet) my_free(_ALLOC_ID_, &pairnet);
+  if(pairval) my_free(_ALLOC_ID_, &pairval);
+}
+
+/* Sync the current window's highlights into every window exactly one level below it
+ * through an instance, then recurse so a consecutive-level chain fully updates. */
+static void net_hilight_sync_children_rec(int depth)
+{
+  int i;
+  Xschem_ctx *src = xctx;
+  const char *Spath;
+  int Slen;
+
+  if(depth >= CADMAXHIER) return;
+  if(!src->sch_path[src->currsch]) return;
+  Spath = src->sch_path[src->currsch];
+  Slen = (int)strlen(Spath);
+
+  for(i = 0; i < MAX_NEW_WINDOWS; ++i) {
+    const char *wp = NULL;
+    Xschem_ctx *C = get_window_ctx(i, &wp);
+    const char *cpath, *rest, *dot;
+    char instname[256];
+    int inst_idx, inst_number, complen;
+
+    if(!C || C == src) continue;
+    if(!wp || !wp[0]) continue;
+    if(C->currsch != src->currsch + 1) continue;      /* exactly one level below the source */
+    if(!C->sch_path[C->currsch]) continue;
+    cpath = C->sch_path[C->currsch];
+    if(strncmp(cpath, Spath, (size_t)Slen)) continue; /* child path is under the source path */
+    rest = cpath + Slen;                              /* the extra component, e.g. "x1." */
+    dot = strchr(rest, '.');
+    if(!dot || dot[1] != '\0') continue;              /* exactly one trailing '.'-terminated component */
+    complen = (int)(dot - rest);
+    if(complen <= 0 || complen >= (int)sizeof(instname)) continue;
+    memcpy(instname, rest, (size_t)complen);
+    instname[complen] = '\0';
+    /* the source must currently show the child's parent schematic, so the instance
+     * name resolves against the SOURCE's loaded inst[] array */
+    if(!src->sch[src->currsch] || !C->sch[C->currsch - 1]) continue;
+    if(strcmp(src->sch[src->currsch], C->sch[C->currsch - 1])) continue;
+    inst_idx = get_instance(instname);                /* resolves against the current (source) xctx */
+    if(inst_idx < 0) continue;
+    inst_number = C->sch_inst_number[C->currsch - 1];
+
+    net_hilight_sync_one_child(src, inst_idx, inst_number, wp);
+    nh_sync_visited[i] = 1;                            /* full-translation; exclude from mop-up */
+
+    /* the just-updated child becomes a source for ITS one-level children */
+    {
+      Xschem_ctx *sv = net_hilight_borrow_ctx(wp);
+      if(sv) { net_hilight_sync_children_rec(depth + 1); net_hilight_restore_ctx(sv); }
+    }
+  }
+}
+
+/* Reverse of net_hilight_sync_one_child (issue 0073 child->parent / ascend). The changed
+ * (source) window `src` sits exactly one level BELOW the parent window `parent_wp`, reached
+ * through subcircuit instance `instname` (vector slice `inst_number`). Rebuild the parent's
+ * table so it mirrors the child: the child table VERBATIM (which already carries the parent's
+ * own ancestor-level highlights that the down-sync copied down, plus the child's internal
+ * entries) PLUS, for every pin of `instname` whose child-side net is highlighted in `src` at
+ * `src_level_path`, the PARENT net that pin connects to. That is the same translation
+ * hilight_parent_pins() runs on go_back, but spanning two window contexts: the instance
+ * node[] map + symbol pins live only in the PARENT (target) context, while the highlighted
+ * child nets live only in the SOURCE (child) table. So collect the child's highlighted nets
+ * from `src` directly (a plain read, no borrow), then borrow the parent to resolve the
+ * instance, map pins up, and rebuild + (guarded) redraw. Byte-matches the single-window
+ * "highlight-inside then go_back" table. */
+static void net_hilight_sync_one_parent(Xschem_ctx *src, const char *src_level_path,
+                                        const char *instname, int inst_number,
+                                        const char *parent_wp)
+{
+  int j, k, rects, mult, net_mult, npairs = 0, cap = 0, m;
+  int nchild = 0, ccap = 0, inst_idx;
+  const char *pin_name;
+  char *pin_node = NULL, *net_node = NULL, *p_n_s1, *p_n_s2;
+  char **pairnet = NULL, **childtok = NULL;
+  int *pairval = NULL, *childval = NULL;
+  xSymbol *sym;
+  Xschem_ctx *saved;
+
+  /* Phase A0: snapshot the SOURCE (child) highlighted NET tokens at its own current level
+   * path. Read src->hilight_table directly -- src need not be the current xctx. */
+  {
+    int hi;
+    Hilight_hashentry *e;
+    for(hi = 0; hi < HASHSIZE; ++hi) {
+      for(e = src->hilight_table[hi]; e; e = e->next) {
+        if(e->token[0] == ' ') continue;                          /* skip instances, nets only */
+        if(!e->path || strcmp(e->path, src_level_path)) continue; /* only the child's own level */
+        if(nchild >= ccap) {
+          ccap = ccap ? ccap * 2 : 16;
+          my_realloc(_ALLOC_ID_, &childtok, ccap * sizeof(char *));
+          my_realloc(_ALLOC_ID_, &childval, ccap * sizeof(int));
+        }
+        childtok[nchild] = NULL;
+        my_strdup2(_ALLOC_ID_, &childtok[nchild], e->token);
+        childval[nchild] = e->value;
+        ++nchild;
+      }
+    }
+  }
+
+  /* Phase B: borrow the parent; resolve the instance THERE, map its highlighted child pins up. */
+  saved = net_hilight_borrow_ctx(parent_wp);
+  if(saved) {
+    inst_idx = get_instance(instname);                            /* resolves against the parent xctx */
+    if(inst_idx >= 0 && inst_idx < xctx->instances && xctx->inst[inst_idx].ptr >= 0) {
+      prepare_netlist_structs(0);
+      sym = xctx->inst[inst_idx].ptr + xctx->sym;
+      rects = sym->rects[PINLAYER];
+      if(inst_number <= 0) inst_number = 1;
+
+      /* Phase A: collect (parent-net-bit, value) for each pin whose child net is highlighted. */
+      for(j = 0; j < rects; ++j) {
+        if(!xctx->inst[inst_idx].node || !xctx->inst[inst_idx].node[j]) continue;
+        my_strdup(_ALLOC_ID_, &net_node, expandlabel(xctx->inst[inst_idx].node[j], &net_mult));
+        if(net_mult <= 0) continue;
+        pin_name = get_tok_value(sym->rect[PINLAYER][j].prop_ptr, "name", 0);
+        if(!pin_name[0]) continue;
+        my_strdup(_ALLOC_ID_, &pin_node, expandlabel(pin_name, &mult));
+        p_n_s1 = pin_node;
+        for(k = 1; k <= mult; ++k) {
+          char *childbit = my_strtok_r(p_n_s1, ",", "", 0, &p_n_s2); /* advance every k, like hilight_parent_pins */
+          char *parentbit = find_nth(net_node, ",", "", 0, ((inst_number - 1) * mult + k - 1) % net_mult + 1);
+          int found = -1, c;
+          p_n_s1 = NULL;
+          if(!childbit || !childbit[0]) continue;
+          for(c = 0; c < nchild; ++c) if(!strcmp(childtok[c], childbit)) { found = c; break; }
+          if(found < 0) continue;                                 /* this pin's child net not highlighted */
+          if(npairs >= cap) {
+            cap = cap ? cap * 2 : 16;
+            my_realloc(_ALLOC_ID_, &pairnet, cap * sizeof(char *));
+            my_realloc(_ALLOC_ID_, &pairval, cap * sizeof(int));
+          }
+          pairnet[npairs] = NULL;
+          my_strdup2(_ALLOC_ID_, &pairnet[npairs], parentbit); /* find_nth may reuse a static buffer: copy now */
+          pairval[npairs] = childval[found];
+          ++npairs;
+        }
+      }
+      my_free(_ALLOC_ID_, &net_node);
+      my_free(_ALLOC_ID_, &pin_node);
+
+      /* Phase B write: rebuild the parent table from the child, add the mapped-up parent nets. */
+      clear_all_hilights();              /* free parent table + reset inst colors/buried cue */
+      net_hilight_copy_table_from(src, NULL);  /* child table verbatim (ancestor-level + child entries) */
+      for(m = 0; m < npairs; ++m)
+        bus_hilight_hash_lookup(pairnet[m], pairval[m], XINSERT_NOREPLACE); /* at the parent level */
+      propagate_hilights(1, 1, XINSERT_NOREPLACE); /* colors pins/labels, buried cue, sets hilight_nets */
+      /* redraw only a real, exposed, front window; the front tab / main window (empty top_path
+       * but visible) draws too -- the parent synced UP is usually the main window (§8b root) */
+      if(net_hilight_ctx_visible(parent_wp)) draw();
+    }
+    net_hilight_restore_ctx(saved);
+  }
+  for(m = 0; m < npairs; ++m) my_free(_ALLOC_ID_, &pairnet[m]);
+  if(pairnet) my_free(_ALLOC_ID_, &pairnet);
+  if(pairval) my_free(_ALLOC_ID_, &pairval);
+  for(m = 0; m < nchild; ++m) my_free(_ALLOC_ID_, &childtok[m]);
+  if(childtok) my_free(_ALLOC_ID_, &childtok);
+  if(childval) my_free(_ALLOC_ID_, &childval);
+}
+
+/* Sync the current window's highlights UP into every window exactly one level ABOVE it through
+ * the instance this one descended from, then recurse so a consecutive-level chain fully updates
+ * (mirror of net_hilight_sync_children_rec, reversed). Only sibling-less up-chains are followed;
+ * pushing back DOWN to a common parent's OTHER children is out of scope (not the reported
+ * topology -- issue 0073 §5). */
+static void net_hilight_sync_parents_rec(int depth)
+{
+  int i;
+  Xschem_ctx *src = xctx;
+  const char *Cpath;
+  int Ccurr, inst_number;
+
+  if(depth >= CADMAXHIER) return;
+  if(src->currsch <= 0) return;                     /* top level has no parent window above it */
+  if(!src->sch_path[src->currsch]) return;
+  Cpath = src->sch_path[src->currsch];
+  Ccurr = src->currsch;
+  inst_number = src->sch_inst_number[Ccurr - 1];    /* which slice of the instance we descended */
+
+  for(i = 0; i < MAX_NEW_WINDOWS; ++i) {
+    const char *wp = NULL;
+    Xschem_ctx *P = get_window_ctx(i, &wp);
+    const char *ppath, *rest, *dot;
+    char instname[256];
+    int complen, plen;
+
+    if(!P || P == src) continue;
+    if(!wp || !wp[0]) continue;
+    if(P->currsch != Ccurr - 1) continue;           /* exactly one level above the source */
+    if(!P->sch_path[P->currsch]) continue;
+    ppath = P->sch_path[P->currsch];
+    plen = (int)strlen(ppath);
+    if(strncmp(Cpath, ppath, (size_t)plen)) continue; /* child path is under the parent path */
+    rest = Cpath + plen;                            /* the extra component, e.g. "xi." */
+    dot = strchr(rest, '.');
+    if(!dot || dot[1] != '\0') continue;            /* exactly one trailing '.'-terminated component */
+    complen = (int)(dot - rest);
+    if(complen <= 0 || complen >= (int)sizeof(instname)) continue;
+    memcpy(instname, rest, (size_t)complen);
+    instname[complen] = '\0';
+    /* the parent must currently show the schematic that CONTAINS the instance -- the child's
+     * recorded parent-level schematic (mirror of net_hilight_sync_children_rec, reversed) */
+    if(!P->sch[P->currsch] || !src->sch[Ccurr - 1]) continue;
+    if(strcmp(P->sch[P->currsch], src->sch[Ccurr - 1])) continue;
+
+    net_hilight_sync_one_parent(src, Cpath, instname, inst_number, wp);
+    nh_sync_visited[i] = 1;                            /* full-translation; exclude from mop-up */
+
+    /* the just-updated parent becomes a source for ITS one-level parent (up-chain) */
+    {
+      Xschem_ctx *sv = net_hilight_borrow_ctx(wp);
+      if(sv) { net_hilight_sync_parents_rec(depth + 1); net_hilight_restore_ctx(sv); }
+    }
+  }
+}
+
+/* Mop-up pass (issue 0073 §9b): reconcile every linked window the ±1-level recursion did NOT
+ * reach -- i.e. an ancestor/descendant window MORE than one level from `src` with no intermediate
+ * window to relay through (the reported "descend the secondary a second level in place" topology).
+ * The exact cross-level net cannot be re-derived without the unloaded intermediate netlist (that
+ * stays deferred), but a VERBATIM reconcile keeps the pair consistent: clear-through reaches any
+ * depth (no stale highlight) and buried-net cues on ancestor instances stay correct. Skips windows
+ * already given the full translation (nh_sync_visited) so a fully-open descend chain still uses the
+ * precise per-level relay. */
+static void net_hilight_sync_orphans(Xschem_ctx *src)
+{
+  int i;
+  for(i = 0; i < MAX_NEW_WINDOWS; ++i) {
+    const char *wp = NULL;
+    Xschem_ctx *C = get_window_ctx(i, &wp);
+    if(!C || C == src) continue;
+    if(nh_sync_visited[i]) continue;                  /* already reconciled with full translation */
+    if(!wp || !wp[0]) continue;
+    if(!net_hilight_prefix_related(src, C)) continue; /* same branch, different (non-adjacent) depth */
+    /* issue 0073 §9c fix: for a gap of more than one level, relay the EXACT net through the
+     * intermediate netlists (loaded transiently). On any failure fall back to the clear-through-only
+     * verbatim reconcile, so clear-through never regresses and no unvalidatable cue is drawn. */
+    if(net_hilight_relay_enable &&
+       (src->currsch - C->currsch >= 2 || C->currsch - src->currsch >= 2)) {
+      if(net_hilight_relay_reconcile(src, C, wp)) continue;
+    }
+    net_hilight_reconcile_verbatim(src, wp);
+  }
+}
+
+/* Batch guard (issue 0073 §9d / review perf): a bulk-highlight loop (e.g. applying a style to a whole
+ * bus, net_hilight_apply_style at xschem.tcl) calls hilight_netname once per net, and each call
+ * would otherwise sync -- borrow + clear + copy + propagate + draw() -- every linked descend window,
+ * so M nets repaint each child M times (a visible stall). Bracketing the loop with
+ * net_hilight_sync_suspend()/net_hilight_sync_resume() suppresses the per-net sync and runs ONE sync
+ * at the end (the child's final state is identical -- the sync is a full rebuild, not incremental,
+ * so only the last one matters). A counter (not a bool) so nested brackets compose. */
+static int net_hilight_sync_suspend_count = 0;
+
+void net_hilight_sync_suspend(void) { net_hilight_sync_suspend_count++; }
+
+void net_hilight_sync_resume(void)
+{
+  if(net_hilight_sync_suspend_count > 0) net_hilight_sync_suspend_count--;
+  if(net_hilight_sync_suspend_count == 0) net_hilight_sync_descend_windows(); /* one sync for the batch */
+}
+
+/* Called after a highlight set/clear in the current window (issue 0073). Cheap when no
+ * descendant window exists. Skipped mid rubber-band gesture (borrow/draw would swap the
+ * context out from under an in-flight draw), mirroring net_hilight_redraw_other_windows. */
+void net_hilight_sync_descend_windows(void)
+{
+  Xschem_ctx *src;
+  int i;
+  if(!has_x && !net_hilight_sync_force_headless) return; /* headless: skip, unless a test forces it */
+  if(net_hilight_sync_suspend_count) return; /* inside a bulk-highlight batch: defer to resume() */
+  if(net_hilight_ctx_gesturing()) return;
+  src = xctx;                                          /* the window that just changed */
+  for(i = 0; i < MAX_NEW_WINDOWS; ++i) nh_sync_visited[i] = 0;
+  net_hilight_sync_children_rec(0);
+  net_hilight_sync_parents_rec(0); /* issue 0073: also push UP into a linked ancestor window */
+  net_hilight_sync_orphans(src);   /* issue 0073 §9b: verbatim-reconcile deeper/higher orphans */
+  /* Re-arm every window's animation tick NOW THAT the children's tables are populated.
+   * The caller's own net_hilight_anim_update() ran BEFORE this sync, when the child tables
+   * were still empty, so a child with a freshly-synced blink/march highlight would have been
+   * left un-armed (drawn once, then static) until the next highlight change happened to re-arm
+   * it. Re-running the fan-out here arms each child on its own now-current animation state.
+   * Cheap (one boolean read) when no compiled style animates. (issue 0073 animated-highlight) */
+  net_hilight_anim_update();
 }
 
 void draw_hilight_net(int on_window)
@@ -3138,6 +4016,39 @@ void draw_hilight_net(int on_window)
      }
    }
  }
+ /* Buried-net highlight cue: a styled rectangle around each instance whose subtree
+  * holds a highlighted net NOT exposed at its pins (set by compute_buried_hilights();
+  * see doc/claude/specs/buried_net_hilight.md). Drawn here, in the highlight pass, so it
+  * inherits the SAME blink/march gates as the highlighted wires above. The four bbox
+  * edges are drawn as styled "wires" so color/width/dash/march match the buried net
+  * exactly. inst[].xx1..yy2 is the schematic-coord symbol bbox (without text); off-screen
+  * edges are dropped by draw_hilight_wire()'s clip(). Iterates all instances (the flagged
+  * few are sparse), independent of the spatial-hash visibility iterator above. */
+ for(i = 0; i < xctx->instances; ++i) {
+   int val = xctx->inst[i].buried_hilight;
+   NetHilightStyle *st;
+   unsigned int fg;
+   double dash_off, bx1, by1, bx2, by2;
+   if(val < 0) continue;
+   st = get_hilight_style(val);
+   if(anim_on && !net_hilight_style_on_now(st, anim_now)) continue; /* blink OFF: skip cue */
+   fg = hilight_pixel_of(val, st);
+   dash_off = anim_on ? net_hilight_march_offset(st, anim_now) : 0.0;
+   /* outset a few screen px (mooz = px/schematic-unit) so the cue clearly SURROUNDS the
+    * instance rather than tracing its outline; xx1<=xx2, yy1<=yy2 (symbol_bbox order). */
+   { double m = (xctx->mooz > 0.0) ? BURIED_CUE_OUTSET_PX / xctx->mooz : 0.0;
+     bx1 = xctx->inst[i].xx1 - m; by1 = xctx->inst[i].yy1 - m;
+     bx2 = xctx->inst[i].xx2 + m; by2 = xctx->inst[i].yy2 + m; }
+   draw_hilight_wire(fg, st, dash_off, bx1, by1, bx2, by1, 0.0); /* top    */
+   draw_hilight_wire(fg, st, dash_off, bx1, by2, bx2, by2, 0.0); /* bottom */
+   draw_hilight_wire(fg, st, dash_off, bx1, by1, bx1, by2, 0.0); /* left   */
+   draw_hilight_wire(fg, st, dash_off, bx2, by1, bx2, by2, 0.0); /* right  */
+ }
+#if HAS_CAIRO==1
+ /* commit any tilted-stripe cairo fills produced by angled-style cue edges */
+ if(xctx->draw_window && xctx->cairo_ctx) cairo_surface_flush(xctx->cairo_sfc);
+ if(xctx->draw_pixmap && xctx->cairo_save_ctx) cairo_surface_flush(xctx->cairo_save_sfc);
+#endif
  xctx->draw_window = save_draw;
 }
 

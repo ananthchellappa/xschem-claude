@@ -102,7 +102,7 @@ size_t my_fgets_skip(FILE *fd)
   while(fgets(buf, SIZE, fd)) {
     len = strlen(buf);
     line_len += len;
-    if(buf[len - 1] == '\n') break;
+    if(len > 0 && buf[len - 1] == '\n') break;   /* guard len==0 (NUL-leading line) -> buf[-1] OOB */
   }
   return line_len;
 }
@@ -119,7 +119,7 @@ char *my_fgets(FILE *fd, size_t *line_len)
     my_strcat(_ALLOC_ID_, &s, buf);
     len = strlen(buf);
     if(line_len) *line_len += len;
-    if(buf[len - 1] == '\n') break;
+    if(len > 0 && buf[len - 1] == '\n') break;   /* guard len==0 (NUL-leading line) -> buf[-1] OOB */
   }
   return s;
 }
@@ -395,11 +395,14 @@ void log_action(const char *fmt, ...)
 {
   char buf[4096]; /* pane copy only; the file write below is unbounded */
   va_list args;
-  if(!actionlog_fp) return;
+  if(!actionlog_fp || actionlog_suppress) return;
   va_start(args, fmt);
   vfprintf(actionlog_fp, fmt, args);
   va_end(args);
   fputc('\n', actionlog_fp);
+  /* a command line was recorded: let a wrapper (dispatch/context-menu/CIW/menu)
+   * skip its own duplicate of the same command (self-log-at-core dedup). */
+  actionlog_cmd_logged = 1;
   va_start(args, fmt);
 #ifdef HAS_SNPRINTF
   vsnprintf(buf, S(buf), fmt, args);
@@ -407,7 +410,8 @@ void log_action(const char *fmt, ...)
   vsprintf(buf, fmt, args); /* action lines are short xschem commands */
 #endif
   va_end(args);
-  log_action_echo(buf);
+  /* the CIW entry already echoed the typed line; suppress the mirror then */
+  if(!actionlog_suppress_echo) log_action_echo(buf);
 }
 
 /* log_action without the CIW mirror: used for commands typed INTO the CIW
@@ -416,11 +420,32 @@ void log_action(const char *fmt, ...)
 void log_action_noecho(const char *fmt, ...)
 {
   va_list args;
-  if(!actionlog_fp) return;
+  if(!actionlog_fp || actionlog_suppress) return;
   va_start(args, fmt);
   vfprintf(actionlog_fp, fmt, args);
   va_end(args);
   fputc('\n', actionlog_fp);
+  actionlog_cmd_logged = 1;
+}
+
+/* Record command OUTPUT/results in the action log as COMMENT lines, so the file
+ * stays source-able (a replay `source`s it and comments are ignored) while still
+ * carrying the transcript (D1, issue 0070). Each physical line of 'text' gets its
+ * own prefix -- '#= ' for normal output, '#! ' for an error -- because an
+ * un-prefixed embedded newline would turn a continuation line into live Tcl on
+ * replay. The CIW pane echo is done by the Tcl caller (ciw_exec / menu wrapper)
+ * with the result/error style tag, so this writes to the file only. */
+void log_output(int iserr, const char *text)
+{
+  const char *pfx = iserr ? "#! " : "#= ";
+  const char *p = text;
+  if(!actionlog_fp || actionlog_suppress || !text) return;
+  fputs(pfx, actionlog_fp);
+  for(; *p; ++p) {
+    fputc(*p, actionlog_fp);
+    if(*p == '\n' && p[1]) fputs(pfx, actionlog_fp);  /* prefix each further line */
+  }
+  if(p == text || p[-1] != '\n') fputc('\n', actionlog_fp);
 }
 #ifdef HAS_SNPRINTF
 size_t my_snprintf(char *str, size_t size, const char *fmt, ...)

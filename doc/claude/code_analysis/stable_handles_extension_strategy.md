@@ -9,7 +9,7 @@ answers those two questions. It is the forward-looking companion to:
   (§3 the per-type asymmetry, §5 the defect list, §6 the direction sketch);
 - `wire_lifecycle_census.md` — the lifecycle-scatter census for wires;
 - `plan_stable_handles_step1.md` — the executed step-1 plan (wires);
-- `FAQ.md` Q7–Q12 — the running design Q&A;
+- `../FAQ.md` Q7–Q12 — the running design Q&A;
 - `green_but_hollow_tests.md` — the testing discipline this strategy leans on.
 
 **Bottom line up front:** do **not** refactor-first with a big-bang. Keep

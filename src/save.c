@@ -2671,6 +2671,7 @@ static void save_text(FILE *fd, int select_only)
  for(i=0;i<xctx->texts; ++i)
  {
    if (select_only && ptr[i].sel != SELECTED) continue;
+   if (ptr[i].owner_pin_id) continue; /* P1 S3: synthesized pin-name views never persist */
   fprintf(fd, "T ");
   save_ascii_string(ptr[i].txt_ptr,fd, 0);
   fprintf(fd, " %.16g %.16g %hd %hd %.16g %.16g ",
@@ -2830,6 +2831,7 @@ static void load_text(FILE *fd)
   xctx->text[i].floater_instname=NULL;
   xctx->text[i].floater_ptr=NULL;
   xctx->text[i].sel=0;
+  xctx->text[i].owner_pin_id=0; /* loaded texts are real, never synthesized pin views */
   load_ascii_string(&xctx->text[i].prop_ptr,fd);
   set_text_flags(&xctx->text[i]);
   text_register(i);
@@ -2890,6 +2892,9 @@ static void load_inst(int k, FILE *fd)
       xctx->inst[i].prop_ptr=NULL;
       xctx->inst[i].lab=NULL; /* assigned in link_symbols_to_instances */
       xctx->inst[i].node=NULL;
+      xctx->inst[i].pin_sel=NULL;     /* transient pin selection, not loaded; realloc'd
+                                       * slots are not zeroed (pin_selection.md) */
+      xctx->inst[i].pin_sel_size=0;
       load_ascii_string(&prop_ptr,fd);
       my_strdup(_ALLOC_ID_, &xctx->inst[i].prop_ptr, prop_ptr);
 
@@ -3297,6 +3302,12 @@ void make_symbol(void)
   my_snprintf(name, S(name), "make_symbol {%s}", xctx->sch[xctx->currsch] );
   dbg(1, "make_symbol(): making symbol: name=%s\n", name);
   tcleval(name);
+  /* self-log at the shared core: covers `xschem make_symbol` (menu/toolbar/script)
+   * and the keyboard 'a' inline handler, both of which call make_symbol() after a
+   * save+confirm. One line, no double-log (neither caller logs separately). The sym
+   * menu's "Make symbol from schematic" uses the make_symbol_dialog Tcl proc instead
+   * (custom view / modify), a still-unlogged non-File-menu path -- deferred (0061). */
+  log_action("xschem make_symbol");
  }
 
 }
@@ -3467,14 +3478,16 @@ void write_backup(void)
 {
   char bak[PATH_MAX];
   FILE *fd;
-  struct stat buf;
   const char *name;
 
   if(xctx->no_autosave) return; /* e.g. during load: not a user edit */
   if(!tclgetboolvar("autosave_backup")) return;
   name = xctx->sch[xctx->currsch];
   if(!name || !name[0]) return;
-  if(stat(name, &buf)) return; /* no real on-disk file (untitled): nothing to back up */
+  /* Back up even when 'name' has no on-disk file yet (an untitled buffer): the backup
+   * holds UNSAVED content, so whether the base file exists is irrelevant -- and descend
+   * relies on it (go_back restores the parent from cellName~.sch). Skipping untitled here
+   * lost the whole top level on descend+ascend from a new/pasted-into canvas (issue 0060). */
   if(!backup_file_name(bak, S(bak), name)) return;
   if(!(fd = fopen(bak, "w"))) {
     dbg(0, "write_backup(): cannot open %s for write\n", bak);
@@ -3661,7 +3674,7 @@ int load_schematic(int load_symbols, const char *fname, int reset_undo, int aler
   char *ffname = NULL; /*copy of fname so I can change it */
   char msg[PATH_MAX+100];
   struct stat buf;
-  int i, ret = 1; /* success */
+  int ret = 1; /* success */
   int save_no_autosave = xctx->no_autosave;
 
   /* Loading is not a user edit: suppress the autosave "~" write so opening a file
@@ -3798,22 +3811,16 @@ int load_schematic(int load_symbols, const char *fname, int reset_undo, int aler
           xctx->loaded_symbol = 0;
         }
       }
+      synth_pin_views(); /* P1 S1: materialize editable pin-name views (symbol-edit only) */
     }
     dbg(1, "load_schematic(): %s, returning\n", xctx->sch[xctx->currsch]);
   } else { /* ffname == NULL or empty */
     /* if(reset_undo) xctx->time_last_modify = time(NULL); */ /* no file given, set mtime to current time */
     if(reset_undo) xctx->time_last_modify = 0; /* no file given, set mtime to 0 (undefined) */
     clear_drawing();
-    for(i=0;; ++i) {
-      if(xctx->netlist_type == CAD_SYMBOL_ATTRS) {
-        if(i == 0) my_snprintf(name, S(name), "%s.sym", "untitled");
-        else my_snprintf(name, S(name), "%s-%d.sym", "untitled", i);
-      } else {
-        if(i == 0) my_snprintf(name, S(name), "%s.sch", "untitled");
-        else my_snprintf(name, S(name), "%s-%d.sch", "untitled", i);
-      }
-      if(stat(name, &buf)) break;
-    }
+    /* next free untitled[-n] name, avoiding both on-disk files and names already open in
+     * other windows so a second blank window does not collide (issue 0056) */
+    get_unused_untitled_name(xctx->netlist_type == CAD_SYMBOL_ATTRS, name, S(name));
     my_strncpy(xctx->current_name, name, S(xctx->current_name));
     if(getenv("PWD")) {
       /* $env(PWD) better than pwd_dir as it does not dereference symlinks */
@@ -3858,6 +3865,8 @@ void clear_undo(void)
   xctx->head_undo_ptr = 0;
 }
 
+static void free_undo_ids_slot(Undo_ids *s);   /* defined below, near push_undo (issue 0043) */
+
 void delete_undo(void)
 {
   int i;
@@ -3872,6 +3881,11 @@ void delete_undo(void)
   }
   rmdir(xctx->undo_dirname);
   my_free(_ALLOC_ID_, &xctx->undo_dirname);
+  /* free the disk-undo id side-channel ring (issue 0043) */
+  if(xctx->undo_ids) {
+    for(i=0; i<MAX_UNDO; ++i) free_undo_ids_slot(&xctx->undo_ids[i]);
+    my_free(_ALLOC_ID_, &xctx->undo_ids);
+  }
   xctx->undo_initialized = 0;
 }
 
@@ -3887,6 +3901,114 @@ static void init_undo(void)
     }
     xctx->undo_initialized = 1;
   }
+}
+
+/* ---- disk-undo id side-channel (issue 0043) -----------------------------
+ * Preserve session-stable object ids across a disk-based undo round-trip. The
+ * store funnels re-stamp fresh ids on read_xschem_file, which would break the
+ * net-hilight apply-scope overlay and live `xschem object` handles. We snapshot
+ * the live ids at push and re-stamp them at pop, positionally (the k-th object
+ * written to a slot is the k-th read back). See the Undo_ids doc in xschem.h. */
+
+/* total number of id-bearing gfx objects (rect+line+poly+arc) across all layers */
+static int count_gfx_objs(void)
+{
+  int c, n = 0;
+  for(c = 0; c < cadlayers; ++c)
+    n += xctx->rects[c] + xctx->lines[c] + xctx->polygons[c] + xctx->arcs[c];
+  return n;
+}
+
+/* number of NON-synthesized texts (synthesized pin-name views never persist to
+ * an undo slot -- save_text skips them, synth_pin_views() regenerates them). */
+static int count_user_texts(void)
+{
+  int i, n = 0;
+  for(i = 0; i < xctx->texts; ++i) if(!xctx->text[i].owner_pin_id) ++n;
+  return n;
+}
+
+/* Walk every gfx object's id in a FIXED type/layer/index order -- the same order
+ * at capture and restore, so the k-th visited slot is identical across the disk
+ * round-trip. mode 0 = capture (buf[k] = id), mode 1 = restore (id = buf[k]). */
+static void walk_gfx_ids(unsigned int *buf, int mode)
+{
+  int c, i, k = 0;
+  for(c = 0; c < cadlayers; ++c) for(i = 0; i < xctx->rects[c]; ++i) {
+    if(mode) xctx->rect[c][i].id = buf[k]; else buf[k] = xctx->rect[c][i].id; ++k; }
+  for(c = 0; c < cadlayers; ++c) for(i = 0; i < xctx->lines[c]; ++i) {
+    if(mode) xctx->line[c][i].id = buf[k]; else buf[k] = xctx->line[c][i].id; ++k; }
+  for(c = 0; c < cadlayers; ++c) for(i = 0; i < xctx->polygons[c]; ++i) {
+    if(mode) xctx->poly[c][i].id = buf[k]; else buf[k] = xctx->poly[c][i].id; ++k; }
+  for(c = 0; c < cadlayers; ++c) for(i = 0; i < xctx->arcs[c]; ++i) {
+    if(mode) xctx->arc[c][i].id = buf[k]; else buf[k] = xctx->arc[c][i].id; ++k; }
+}
+
+/* Walk NON-synthesized text ids in array order (synth texts are skipped so the
+ * sequence matches the save-order; synth views are appended after and excluded). */
+static void walk_user_text_ids(unsigned int *buf, int mode)
+{
+  int i, k = 0;
+  for(i = 0; i < xctx->texts; ++i) {
+    if(xctx->text[i].owner_pin_id) continue;
+    if(mode) xctx->text[i].id = buf[k]; else buf[k] = xctx->text[i].id; ++k;
+  }
+}
+
+static void free_undo_ids_slot(Undo_ids *s)
+{
+  my_free(_ALLOC_ID_, &s->wire_id);
+  my_free(_ALLOC_ID_, &s->inst_id);
+  my_free(_ALLOC_ID_, &s->text_id);
+  my_free(_ALLOC_ID_, &s->gfx_id);
+  s->n_wire = s->n_inst = s->n_text = s->n_gfx = 0;
+  s->valid = 0;
+}
+
+/* Snapshot the current live ids into slot *s (called by push_undo, on the same
+ * ring index the disk slot uses). */
+static void capture_undo_ids(Undo_ids *s)
+{
+  int i;
+  free_undo_ids_slot(s);
+  s->n_wire = xctx->wires;
+  s->n_inst = xctx->instances;
+  s->n_text = count_user_texts();
+  s->n_gfx  = count_gfx_objs();
+  if(s->n_wire) s->wire_id = my_malloc(_ALLOC_ID_, s->n_wire * sizeof(unsigned int));
+  if(s->n_inst) s->inst_id = my_malloc(_ALLOC_ID_, s->n_inst * sizeof(unsigned int));
+  if(s->n_text) s->text_id = my_malloc(_ALLOC_ID_, s->n_text * sizeof(unsigned int));
+  if(s->n_gfx)  s->gfx_id  = my_malloc(_ALLOC_ID_, s->n_gfx  * sizeof(unsigned int));
+  for(i = 0; i < xctx->wires; ++i)     s->wire_id[i] = xctx->wire[i].id;
+  for(i = 0; i < xctx->instances; ++i) s->inst_id[i] = xctx->inst[i].id;
+  walk_user_text_ids(s->text_id, 0);
+  walk_gfx_ids(s->gfx_id, 0);
+  s->valid = 1;
+}
+
+/* Re-stamp the ids captured in slot *s onto the just-restored objects (called by
+ * pop_undo after read_xschem_file, BEFORE synth_pin_views). Bails without touching
+ * ids if the restored shape does not match the captured shape -- for a matched
+ * push/pop of the same serialized slot it always does; a mismatch means the
+ * positional assumption is void, so keep the freshly-stamped ids rather than
+ * mis-assign. Restored ids are all <= the current (monotonic) id counters, so
+ * future births never collide. */
+static void restore_undo_ids(Undo_ids *s)
+{
+  if(!s || !s->valid) return;   /* nothing captured for this slot: keep fresh ids */
+  if(xctx->wires != s->n_wire || xctx->instances != s->n_inst ||
+     count_user_texts() != s->n_text || count_gfx_objs() != s->n_gfx) {
+    dbg(0, "restore_undo_ids(): slot shape mismatch (w %d/%d i %d/%d t %d/%d g %d/%d), keeping fresh ids\n",
+        xctx->wires, s->n_wire, xctx->instances, s->n_inst,
+        count_user_texts(), s->n_text, count_gfx_objs(), s->n_gfx);
+    return;
+  }
+  { int i;
+    for(i = 0; i < xctx->wires; ++i)     xctx->wire[i].id = s->wire_id[i];
+    for(i = 0; i < xctx->instances; ++i) xctx->inst[i].id = s->inst_id[i];
+  }
+  walk_user_text_ids(s->text_id, 1);
+  walk_gfx_ids(s->gfx_id, 1);
 }
 
 void push_undo(void)
@@ -3950,6 +4072,10 @@ void push_undo(void)
     }
     #endif
     write_xschem_file(fd);
+    /* snapshot the live ids for this slot, on the SAME ring index the disk file
+     * used above, before cur_undo_ptr advances (issue 0043) */
+    if(!xctx->undo_ids) xctx->undo_ids = my_calloc(_ALLOC_ID_, MAX_UNDO, sizeof(Undo_ids));
+    capture_undo_ids(&xctx->undo_ids[xctx->cur_undo_ptr % MAX_UNDO]);
     xctx->cur_undo_ptr++;
     xctx->head_undo_ptr = xctx->cur_undo_ptr;
     xctx->tail_undo_ptr = xctx->head_undo_ptr <= MAX_UNDO? 0: xctx->head_undo_ptr-MAX_UNDO;
@@ -3973,6 +4099,7 @@ void pop_undo(int redo, int set_modify_status)
 {
   FILE *fd;
   char diff_name[PATH_MAX+12];
+  int id_restore_slot = -1;   /* disk-undo id side-channel slot to restore (issue 0043) */
   #if HAS_PIPE==1
   int pd[2];
   pid_t pid;
@@ -4009,6 +4136,9 @@ void pop_undo(int redo, int set_modify_status)
   }
   clear_drawing();
   unselect_all(1);
+  /* the id side-channel slot to restore is the SAME ring index the disk file uses
+   * below (cur_undo_ptr is settled here; the redo==2 ++ happens after the read) */
+  id_restore_slot = xctx->cur_undo_ptr % MAX_UNDO;
 
   #if HAS_POPEN==1
   my_snprintf(diff_name, S(diff_name), "gzip -d -c %s/undo%d", xctx->undo_dirname, xctx->cur_undo_ptr%MAX_UNDO);
@@ -4053,6 +4183,11 @@ void pop_undo(int redo, int set_modify_status)
   }
   #endif
   read_xschem_file(fd);
+  /* re-stamp the pre-undo session-stable ids the store funnels just overwrote with
+   * fresh ones, so the apply-scope overlay and `xschem object` handles keep resolving
+   * across a disk undo (issue 0043). Done here -- after the load, before synth_pin_views
+   * appends transient pin-name texts -- so the non-synth text sequence matches capture. */
+  if(xctx->undo_ids && id_restore_slot >= 0) restore_undo_ids(&xctx->undo_ids[id_restore_slot]);
   if(redo == 2) xctx->cur_undo_ptr++; /* restore undo stack pointer */
 
   #if HAS_POPEN==1
@@ -4064,12 +4199,22 @@ void pop_undo(int redo, int set_modify_status)
   fclose(fd);
   #endif
   dbg(2, "pop_undo(): loaded file:wire=%d inst=%d\n",xctx->wires , xctx->instances);
-  if(set_modify_status) set_modify(1);
   xctx->prep_hash_inst=0;
   xctx->prep_hash_wires=0;
   xctx->prep_net_structs=0;
   xctx->prep_hi_structs=0;
   link_symbols_to_instances(-1);
+  /* disk undo serializes via write_xschem_file (save_text skips synthesized pin-name
+   * views) and restores via read_xschem_file (which does not synth), so regenerate the
+   * views here — mirroring load_schematic. (In-memory undo needs nothing: it snapshots
+   * xctx->text wholesale, carrying owner_pin_id.) */
+  synth_pin_views();
+  /* set_modify(1) MUST run AFTER link_symbols_to_instances(): read_xschem_file loads
+   * instances with .ptr = -1 (unresolved symbol), and set_modify(1) triggers write_backup()
+   * (the autosave "~"), which would otherwise serialize an unresolved buffer — a corrupt
+   * backup + save_inst() ".ptr = -1" warnings, and the state a crash-recovery/descend reload
+   * would restore (issue 0072). link_symbols_to_instances() resolves every .ptr first. */
+  if(set_modify_status) set_modify(1);
   update_conn_cues(WIRELAYER, 0, 0);
   if(xctx->hilight_nets) {
     propagate_hilights(1, 1, XINSERT_NOREPLACE);
@@ -4860,6 +5005,7 @@ int load_sym_def(const char *name, FILE *embed_fd)
         i=lastt;
         my_realloc(_ALLOC_ID_, &tt,(i+1)*sizeof(xText));
         tt[i].font=NULL;
+        tt[i].owner_pin_id=0; /* symbol-def texts are real, never synthesized pin views */
         tt[i].txt_ptr = tmptext.txt_ptr;
         tt[i].x0 = tmptext.x0;
         tt[i].y0 = tmptext.y0;
@@ -5208,6 +5354,11 @@ void make_schematic_symbol_from_sel(void)
       tcleval(name);
     }
     draw();
+    /* self-log only on the real edit: a cancelled Save dialog (empty filename) or a
+     * name equal to the current schematic skips this whole block -> no phantom line.
+     * Covers menu/script; the Ctrl+H registered action logs `xschem make_sch_from_sel`
+     * via Layer A on success (deduped by this line via actionlog_cmd_logged). */
+    log_action("xschem make_sch_from_sel");
   }
 }
 
@@ -5315,6 +5466,11 @@ void create_sch_from_sym(void)
         } /* for(i) */
       }  /* for(j) */
       fclose(fd);
+      /* self-log only after the schematic file is actually written -- the many early
+       * returns (multi-select, non-element selection, declined overwrite, fopen
+       * failure, pins-not-found) leave no line. Covers `xschem make_sch` (menu/script)
+       * and the Ctrl+L inline keyboard handler; both call create_sch_from_sym(). */
+      log_action("xschem make_sch");
     } /* if(xctx->lastsel...) */
     my_free(_ALLOC_ID_, &dir);
     my_free(_ALLOC_ID_, &prop);

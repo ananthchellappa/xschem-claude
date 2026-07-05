@@ -174,6 +174,27 @@ int help=0; /* help option set to global scope, printing help is deferred */
 FILE *errfp = NULL;
 FILE *actionlog_fp = NULL; /* action log stream (replayable xschem commands), NULL = disabled */
 char actionlog_filename[PATH_MAX] = ""; /* resolved path of the open action log, "" = none */
+/* Action-log coverage plumbing (self-log-at-core model, see
+ * doc/claude/code_analysis/action_log_ciw_coverage_and_virtuoso_parity.md):
+ *  - actionlog_cmd_logged: set by log_action(); a wrapper that also records the
+ *    same command (dispatch, context menu, CIW entry, menu_action_logged) resets
+ *    it before eval and logs only if it is still 0, so a core self-log is not
+ *    duplicated by the wrapper.
+ *  - actionlog_suppress_echo: while set, log_action() writes the file but skips
+ *    the CIW mirror (the CIW entry already echoed the typed input line).
+ *  - actionlog_suppress: while set, log_action()/log_action_noecho()/log_output()
+ *    are full no-ops (replay/programmatic-bulk guard). */
+int actionlog_cmd_logged = 0;
+int actionlog_suppress_echo = 0;
+int actionlog_suppress = 0;
+/* while set, select_object() skips its automatic `xschem select_at` log line
+ * (the `xschem select_at` command logs its own, with the optional `add` flag).
+ * doc/claude/specs/select_at.md */
+int select_at_suppress_log = 0;
+/* one-shot: when set by a shift-click site around a select_object() call, the
+ * funnel logs `xschem select_at x y add` (augment) instead of the replace form.
+ * The caller resets it right after the call. doc/claude/specs/select_at.md */
+int select_at_add = 0;
 int exit_code = 0; /* success */
 const char *xschem_library_path[] = XSCHEM_LIBRARY_PATH;
 char home_dir[PATH_MAX]; /* home dir obtained via getpwuid */

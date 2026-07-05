@@ -248,10 +248,12 @@ typedef int Tcl_Size;
 #define GRAPHPAN 32768U     /* bit 15 */
 #define MENUSTART 65536U    /* bit 16 */
 #define GRABSCREEN 131072U  /* bit 17 */
-#define DESEL_CLICK 262144U /* bit 18 */
+/* bit 18 (was DESEL_CLICK) is free: the old single-shot 'd' deselect was replaced by
+ * the persistent DESEL_MODE below (doc/claude/specs/deselect_one_mode.md) */
 #define DESEL_AREA 524288U  /* bit 19 */
 #define NET_HILIGHT 1048576U   /* bit 20: interactive net-highlight mode (click to hilight) */
 #define NET_UNHILIGHT 2097152U /* bit 21: interactive net-unhighlight mode (click to remove) */
+#define DESEL_MODE 4194304U    /* bit 22: persistent deselect-one-at-a-time mode (click to deselect, ESC to end) */
 
 #define SELECTED 1U         /*  used in the .sel field for selected objs. */
 #define SELECTED1 2U        /*  first point selected... */
@@ -282,6 +284,17 @@ typedef int Tcl_Size;
 #define xTEXT 16
 #define POLYGON 32
 #define ARC 64
+#define INST_PIN 128 /* sel_array pseudo-type: a single pin of a placed instance.
+                      * Carried as Selected.type=INST_PIN, Selected.n=instance index,
+                      * Selected.col=pin index (index into the symbol's PINLAYER rects).
+                      * Pin selection is transient + INERT: it never lives in
+                      * xInstance.sel and never participates in edits; only the
+                      * per-instance pin_sel[] array (below) and this sel_array entry
+                      * carry it. See doc/claude/specs/pin_selection.md */
+/* half-size (user units) of the selected-pin marker; ~constant on screen because it
+ * scales with zoom. Used by select_pin/draw_selection/unselect_all so the draw and
+ * erase always agree. Needs xctx + tk_scaling in scope. */
+#define PIN_SEL_HANDLE_H (0.6 * CADWIREMINDIST * xctx->zoom * tk_scaling)
 
 /*  for netlist.c */
 #define BOXSIZE 400
@@ -592,6 +605,12 @@ typedef struct
                     * (text_register), never reused within a context's lifetime,
                     * not persisted in .sch files. 0 = never stamped. text is
                     * pure annotation — the id is only a handle, no role change. */
+  unsigned int owner_pin_id; /* 0 = ordinary text. !=0 => this is a SYNTHESIZED, transient
+                    * "pin name view": an editable in-memory text materialized from a
+                    * symbol PINLAYER pin's name + name_* layout tokens (Option B; see
+                    * doc/claude/specs/cadence_pin_name_text.md). Value = the owning pin's
+                    * xRect.id. NOT persisted (save_text() skips it) and regenerated on
+                    * load by synth_pin_views(); rides struct-copy through undo/copy. */
 } xText;
 
 typedef struct
@@ -651,8 +670,22 @@ typedef struct
   short rot;
   short flip;
   short sel;
+  unsigned char *pin_sel; /* NULL, or a lazily-allocated array of length pin_sel_size:
+                           * pin_sel[j]!=0 => pin j of this instance is selected.
+                           * Transient selection state, NOT saved, NOT in .sch. Mirrors
+                           * xPoly.selected_point but is deliberately INDEPENDENT of the
+                           * .sel field (pins are inert in edits). See
+                           * doc/claude/specs/pin_selection.md */
+  int pin_sel_size;       /* allocated length of pin_sel (== symbol PINLAYER pin count
+                           * at alloc time). Lets every consumer bound its scan so a
+                           * later symbol pin-count change can never OOB-read pin_sel. */
   short embed; /* cache embed=true|false attribute in prop_ptr */
   int color; /* hilight color */
+  int buried_hilight; /* style index of a highlighted net buried in this instance's
+                       * subtree (a net not exposed at this instance's pins), -1 = none.
+                       * Derived state: recomputed from xctx->hilight_table in
+                       * propagate_hilights(); read-only at draw time. Stamped to -1 at
+                       * birth in inst_register(). See doc/claude/specs/buried_net_hilight.md */
   int flags;   /* bit 0: skip field, set to 1 while drawing layer 0 if symbol is outside bbox
                 *        to avoid doing the evaluation again.
                 * bit 1: flag for different textlayer for pin/labels,
@@ -734,6 +767,24 @@ typedef struct
   xInstance *iptr;
   xSymbol *symptr;
 } Undo_slot;
+
+/* Side-channel snapshot of the session-stable object ids for ONE disk-undo slot.
+ * Disk undo serializes via write_xschem_file / read_xschem_file, and the store
+ * funnels re-stamp FRESH ids on the read -- which would silently break the
+ * net-hilight apply-scope overlay and every live `xschem object` handle (issue
+ * 0043; the in-memory undo path preserves ids because it struct-copies .id).
+ * push_undo captures the live ids here in canonical save-order; pop_undo re-stamps
+ * them onto the restored objects, so ids survive the disk round-trip. Ids are NOT
+ * baked into the .sch/.sym format (that would bump XSCHEM_FILE_VERSION and touch
+ * every reader). Positional: the k-th object written to a slot is the k-th read
+ * back (read_xschem_file appends verbatim, no merge/reorder). */
+typedef struct {
+  unsigned int *wire_id;  int n_wire;
+  unsigned int *inst_id;  int n_inst;
+  unsigned int *text_id;  int n_text;   /* non-synthesized texts only, in save-order */
+  unsigned int *gfx_id;   int n_gfx;    /* rect+line+poly+arc, canonical type/layer/index order */
+  int valid;                            /* 1 once captured by push_undo */
+} Undo_ids;
 
 typedef struct
 { /* used for symbols containing schematics as instances (LCC, Local Custom Cell) */
@@ -827,6 +878,10 @@ struct hilight_hashentry
   int oldvalue;  /* used for FF simulation */
   int value;  /* >=0: net highlight style index (see NetHilightStyle); <0: sim logic level */
   int time; /*delta-time for sims */
+  unsigned int seq; /* monotonic apply-order stamp, bumped each time this entry's highlight
+                     * is (re)applied. Used by compute_buried_hilights() to pick the MOST
+                     * RECENTLY applied buried net's style for the ancestor-instance cue.
+                     * See doc/claude/specs/buried_net_hilight.md */
 };
 
 /* A user-customizable net highlight style (Cadence display.drf-like "packet").
@@ -1046,6 +1101,28 @@ typedef struct {
   int need_reb_sel_arr;
   int lastsel;
   int maxsel;
+  int pin_sel_active; /* hint: 1 once any instance pin has been selected (pin_selection.md).
+                       * Lets unselect_all() clear stale pin selections even when lastsel/
+                       * SELECTION were reset out from under them (e.g. after delete()).
+                       * A false positive only costs one harmless instance scan. */
+  int pin_pending;    /* pin_selection.md D3: a Button1 press landed on a pin and armed a
+                       * wire; the release decides click(select pin) vs drag(draw wire).
+                       * 0 = none. pin_pending_n/c hold the armed instance/pin index. */
+  int pin_pending_add; /* pin_selection.md D6: the pending press was SHIFT+click on a pin
+                       * (additive multi-select). Release: click -> add the pin (no
+                       * unselect_all, no wire); drag -> ignore. Scalar, not heap. */
+  int pin_pending_n;
+  int pin_pending_c;
+  int pin_press_x;    /* press-time screen coords of the armed pin gesture, used at
+                       * release to measure click-vs-drag (mouse_moved is suppressed
+                       * while STARTWIRE is active, so it cannot be relied on here). */
+  int pin_press_y;
+  int sympin_preview; /* cadence_pin_name_text.md item #3: the current START_SYMPIN move is a
+                       * non-committal Add-Pin cursor PREVIEW. One undo baseline is pushed at
+                       * the first arm; re-arms (per keystroke) drop the old preview with NO
+                       * undo (so typing a name does not spam/corrupt the undo stack); the drop
+                       * keeps the baseline; an aborted preview is removed undo-free. 0 = a
+                       * normal placement (add_graph/add_image/scripted pin), undo as usual. */
   Selected *sel_array;
   Selected first_sel; /* first selected instance (used as master when editing multiple objects) */
   int prep_net_structs;
@@ -1112,6 +1189,7 @@ typedef struct {
   double net_hilight_test_ms;         /* forced "now" (ms) when net_hilight_test_active */
   int crosshair_layer;
   char *undo_dirname;
+  Undo_ids *undo_ids;    /* disk-undo id side-channel ring [MAX_UNDO], lazily allocated (issue 0043) */
   char *infowindow_text; /* ERC messages */
   int intuitive_interface;
   int cur_undo_ptr;
@@ -1284,6 +1362,9 @@ typedef struct {
    *    ".x1.drw"         ".x1"
    */
   char *current_win_path; /* .drw or .x1.drw, .... ; always .drw in tabbed interface */
+  int window_number; /* Cadence-style stable window number: CIW=1, LibMgr=2, editor
+                      * contexts 3,4,5,...; monotonic, never reused; 0 = scratch/preview/
+                      * compare ctx (doc/claude/specs/window_numbering.md) */
   int *fill_type; /* for every layer: 0: no fill, 1, solid fill, 2: stipple fill */
   int fill_pattern;
   int draw_pixmap; /* pixmap used as 2nd buffer */
@@ -1299,6 +1380,7 @@ typedef struct {
   void (*clear_undo)(void);
   int case_insensitive; /* for case insensitive compare where needed MIRRORED IN TCL*/
   int show_hidden_texts; /* force show texts that have hide=true attribute set MIRRORED IN TCL*/
+  int en_pin_select; /* enable selecting individual instance pins (click on pin) MIRRORED IN TCL*/
   int (*x_strcmp)(const char *, const char *);
   Lcc hier_attr[CADMAXHIER]; /* hierarchical recursive attribute substitution when descending */
 } Xschem_ctx;
@@ -1344,6 +1426,11 @@ extern char *cad_icon[];
 extern FILE *errfp;
 extern FILE *actionlog_fp;
 extern char actionlog_filename[PATH_MAX];
+extern int actionlog_cmd_logged;    /* core self-log dedup flag (see globals.c) */
+extern int actionlog_suppress_echo; /* skip CIW mirror while set (CIW-typed cmds) */
+extern int actionlog_suppress;      /* full log no-op while set (replay guard) */
+extern int select_at_suppress_log;  /* skip select_object()'s auto select_at log line */
+extern int select_at_add;           /* funnel logs the ` add` (augment) marker while set */
 extern int exit_code;
 extern const char *xschem_library_path[];
 extern char home_dir[PATH_MAX]; /* home dir obtained via getpwuid */
@@ -1447,6 +1534,7 @@ extern void set_snap(double);
 extern void set_grid(double);
 extern void create_plot_cmd(void);
 extern int set_modify(int mod); /* return number of floaters */
+extern int begin_edit(const char *op); /* read-only edit gate: 1 = refuse (issue 0041) */
 extern int file_writable(const char *name); /* 1 if path is writable (or check unsupported) */
 extern int there_are_floaters(void);
 #include "util.h" /* memory/string/file/debug utilities (extracted from editprop.c) */
@@ -1539,6 +1627,15 @@ extern void net_hilight_restore_ctx(Xschem_ctx *saved);  /* undo net_hilight_bor
 extern int net_hilight_win_known(const char *win_path);  /* is win an open window? (vs borrow NULL) */
 extern int net_hilight_ctx_busy(void);                   /* current window busy (gesture OR semaphore)? */
 extern int net_hilight_ctx_gesturing(void);              /* current window mid-GESTURE? (anim E1 guard) */
+extern void net_hilight_sync_descend_windows(void);      /* push a highlight change into linked descend-new-window children (issue 0073) */
+extern void net_hilight_sync_suspend(void);              /* bracket a bulk-highlight loop: suppress the per-net cross-window sync ... */
+extern void net_hilight_sync_resume(void);               /* ... then run ONE sync at the end (issue 0073 §9d / review perf) */
+extern void net_hilight_set_relay_enable(int v);         /* toggle the deep-gap relay (issue 0073 §9c fix); test/kill switch */
+extern int  net_hilight_get_relay_enable(void);          /* read the deep-gap relay enable flag */
+extern void net_hilight_set_sync_force_headless(int v);  /* TEST: run cross-window sync under --nogui (issue 0073 §8 Tier C) */
+extern Xschem_ctx *alloc_scratch_xschem_ctx(void);       /* windowless scratch ctx for the deep-gap relay's transient loads */
+extern void free_scratch_xschem_ctx(void);               /* tear down alloc_scratch_xschem_ctx()'s ctx (delete_schematic_data(0)) */
+extern const char *get_drw_front_win(void);              /* win-path of the tab currently shown on the shared .drw canvas (issue 0073) */
 /* Adaptive net-highlight tick bounds (ms): floor caps the wake rate near a blink edge; the
  * ceiling bounds reconcile lag after an external full draw; BUSY = paused-retry cadence. Shared
  * with scheduler.c's redraw_hilight_region busy path so the two retry cadences can't drift. */
@@ -1552,6 +1649,7 @@ extern void draw_hilight_wire(unsigned int fg, NetHilightStyle *st, double dash_
                               double linex1, double liney1, double linex2, double liney2, double bus);
 extern void draw_hilight_dot(unsigned int fg, double x, double y, double r);
 extern void incr_hilight_color(void);
+extern void decr_hilight_color(void);
 extern void get_inst_pin_coord(int i, int j, double *x, double *y);
 
 extern void del_inst_table(void);
@@ -1587,6 +1685,7 @@ extern int select_dangling_nets(void);
 extern void tclmainloop(void);
 extern int Tcl_AppInit(Tcl_Interp *interp);
 extern void abort_operation(void);
+extern void enter_deselect_mode(void);
 extern void draw_crosshair(int what, int state);
 extern void start_line(double mx, double my);
 extern void start_wire(double mx, double my);
@@ -1617,6 +1716,9 @@ extern int action_cmd_unbind(int argc, const char **argv);
 extern int action_cmd_bindings(int argc, const char **argv);
 extern void resetwin(int create_pixmap, int clear_pixmap, int force, int w, int h);
 extern Selected find_closest_obj(double mx,double my, int override_lock);
+/* find the instance pin within a tight radius of (mx,my); returns 1 and fills *r
+ * (type=INST_PIN, n=instance, col=pin) on hit, 0 otherwise. See pin_selection.md */
+extern int find_closest_pin(double mx, double my, Selected *r);
 /*extern void find_closest_net_or_symbol_pin(double mx,double my, double *x, double *y);*/
 extern int find_closest_net_or_symbol_pin(double mx,double my, double *x, double *y);
 
@@ -1728,6 +1830,7 @@ extern int load_sym_def(const char name[], FILE *embed_fd);
 extern int descend_symbol(void);
 extern int place_symbol(int pos, const char *symbol_name, double x, double y, short rot, short flip,
                          const char *inst_props, int draw_sym, int first_call, int to_push_undo);
+extern int editing_symbol_view(void);
 extern void place_net_label(int type);
 extern void attach_labels_to_inst(int interactive);
 extern void clear_partial_selected_wires(void);
@@ -1765,6 +1868,7 @@ extern char *get_last_created_window_path(void);
 extern int get_last_created_window(void);
 extern char *get_window_path(int i);
 extern int get_window_count(void);
+extern void get_unused_untitled_name(int symbol, char *name, int namesize);
 extern Xschem_ctx **get_save_xctx(void);
 /* resolve open-window slot i -> its Xschem_ctx (NULL if empty) and, if win_path!=NULL, its window
  * path (".drw" for slot 0). Centralizes the single-schematic/save_xctx[0] invariant (see xinit.c). */
@@ -1813,8 +1917,9 @@ extern void pop_undo_keep_selection(int redo, int set_modify); /* undo/redo, kee
 extern int get_instance(const char *s);
 extern void edit_property(int x);
 extern int apply_instance_properties(const char *scope, unsigned int displayed_id,
-                              const char *new_prop, const char *old_prop);
+                              const char *new_prop, const char *old_prop, int keep_name);
 extern int scope_targets(int displayed_inst, const char *scope, int *targets);
+extern int pin_scope_targets(int primary_n, const char *scope, int *targets);
 extern int xschem(ClientData clientdata, Tcl_Interp *interp,
            int argc, const char * argv[]);
 extern const char *tcleval(const char str[]);
@@ -1833,6 +1938,50 @@ extern void statusmsg(char str[],int n);
 extern int place_text(int draw_text, double mx, double my);
 extern int create_text(int draw_text, double x, double y, int rot, int flip, const char *txt,
        const char *props, double hsize, double vsize);
+extern void synth_pin_views(void);
+extern int create_pin(double x, double y, const char *name, const char *dir, unsigned short sel);
+extern int pin_idx_by_id(unsigned int id);
+extern int pin_name_view_of(unsigned int pin_id);
+extern void pin_view_writeback(int ti);
+extern void pin_rename_from_view(int ti);
+extern void pin_view_refresh(int pi);
+extern void pin_view_apply(int pi);
+extern void pin_reorient(int pi);
+extern void pin_views_reconcile_after_move(void);
+extern void pin_views_reconcile_all(void);
+extern int pin_name_visible(const char *prop);
+extern void pin_names_sync_cache(void);
+extern int check_pin_names(char **result);
+/* pin name-label layout (offset/size/rot/flip) read from a pin's prop tokens by
+ * get_pin_name_layout(); shared by draw_symbol / svg_draw_symbol / ps_draw_symbol. */
+typedef struct { double dx, dy, size, rot, flip; } Pin_name_layout;
+extern int get_pin_name_layout(const char *prop, Pin_name_layout *lay, char **name, char **font);
+/* the yscale of pin 'pin' of symbol 'sym' (its name_size token, else 0.2 to match the
+ * get_pin_name_layout render default); single source of truth for the wire-stub feature,
+ * see actions.c get_pin_name_size. */
+extern double get_pin_name_size(xSymbol *sym, int pin);
+/* B1 (wire-stubs): median of n doubles (copy+sort+middle); reduces the processed pins' name
+ * sizes to the one size that drives every stub+label. See actions.c median_double. */
+extern double median_double(const double *a, int n);
+/* B2 (wire-stubs): one (instance, pin) the stubber should process. */
+typedef struct { int inst, pin; } Pin_stub_target;
+/* B2: scan the selection into the (instance, pin) targets to stub -- selected pins win, else a
+ * whole instance's not-already-wired pins. *out my_malloc'd, caller frees. See actions.c. */
+extern int collect_pin_stub_targets(Pin_stub_target **out);
+/* B3 (wire-stubs): the one size that drives an invocation + the derived label height and stub
+ * length. size = median of the targets' pin-name sizes; text_h = label height at that size;
+ * stub_len = smallest cadgrid multiple > 2*text_h. See actions.c compute_pin_stub_sizing. */
+typedef struct { double size, text_h, stub_len; } Pin_stub_sizing;
+extern int compute_pin_stub_sizing(const Pin_stub_target *t, int n, Pin_stub_sizing *out);
+/* B4 (wire-stubs): the stub segment for one instance pin -- start = the pin's abs coord, end =
+ * start + outward*stub_len, (dx,dy) = the absolute outward unit direction (one of +/-x, +/-y).
+ * See actions.c compute_pin_stub_geom. */
+typedef struct { double x1, y1, x2, y2, dx, dy; } Pin_stub_geom;
+extern int compute_pin_stub_geom(int inst, int pin, double stub_len, Pin_stub_geom *out);
+/* B5 (wire-stubs): draw a wire stub + a lab_pin net-label out of every selection stub target;
+ * label net name = [instname_ if inst_prefix][prefix]<pinname>[suffix]. Returns stubs added. */
+extern int add_pin_stubs(const char *prefix, const char *suffix, int inst_prefix);
+extern int pin_names_all_off(void);
 extern void init_inst_iterator(Iterator_ctx *ctx, double x1, double y1, double x2, double y2);
 extern Instentry *inst_iterator_next(Iterator_ctx *ctx);
 
@@ -1918,6 +2067,7 @@ extern void clear_expandlabel_data(void);
 extern void merge_file(int selection_load, const char ext[]);
 extern void select_wire(int i, unsigned short select_mode, int fast, int override_lock);
 extern void select_element(int i, unsigned short select_mode, int fast, int override_lock);
+extern void select_pin(int i, int j, unsigned short select_mode, int fast);
 extern void select_text(int i, unsigned short select_mode, int fast, int override_lock);
 extern void select_box(int c, int i, unsigned short select_mode, int fast, int override_lock);
 extern void select_arc(int c, int i, unsigned short select_mode, int fast, int override_lock);
@@ -1986,6 +2136,7 @@ extern void windowid(const char *win_path);
 extern int preview_window(const char *what, const char *tk_win_path, const char *fname);
 extern int new_schematic(const char *what, const char *win_path, const char *fname, int dr);
 extern void toggle_fullscreen(const char *topwin);
+extern int net_active_window(Window win); /* EWMH raise+focus, no re-map/drift (issue 0054) */
 extern void toggle_only_probes();
 extern int build_colors(double dim, double dim_bg); /*  reparse the TCL 'colors' list and reassign colors 20171113 */
 extern void set_clip_mask(int what);
