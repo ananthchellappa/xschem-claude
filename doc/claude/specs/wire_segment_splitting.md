@@ -33,8 +33,15 @@ fidelity for split wires (Hazard H8) is deferred as **issue 0078**.
   RED→GREEN + sabotage-verified. Integration: the real `test_wire_splits.sch` loads as
   **3** segments under autotrim. All headless cases green. Committed @ `1cbd05bb`.
 
-- **Review (xhigh, workflow-backed) + fixes** — an adversarial review of W0-W2 confirmed
-  five actionable items; fixed in a follow-up:
+- **Review (xhigh, workflow-backed) + fixes** — a 24-agent adversarial review of W0-W2
+  produced 10 ranked findings; the actionable ones fixed in follow-ups (`0992065a`,
+  `1e22d97b`):
+  0. **Stale spatial table (HIGH, #1):** `break_wires_at_attach_points` called a bare
+     `hash_wires()`, which no-ops when `prep_hash_wires==1`; a load-path
+     `prepare_netlist_structs` (via an `@`-param net-name) + a `check_collapsing_objects`
+     wire deletion can leave the table stale, so the sweep would index reindexed/OOB wire
+     slots. → Set `prep_hash_wires=0` before `hash_wires()` (as `trim_wires` does). Fixed
+     `1e22d97b`.
   1. **D2 leak (MED):** the W0 pin-aware merge guard ran inside `trim_wires`
      *unconditionally*, so non-autotrim callers (`&` Join/Trim key, `xschem trim_wires`,
      stretch-move) changed default behaviour (contradicting D2). → Gated the guard on a
