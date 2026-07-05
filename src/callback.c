@@ -2393,6 +2393,7 @@ static int grab_free_wire_vertex(Selected *sel, double mx, double my, int state)
 static int edit_rect_point(int state)
 {
    int rect_n = -1, rect_c = -1;
+   int cadence_compat = tclgetboolvar("cadence_compat");
    dbg(1, "1 Rectangle selected\n");
    rect_n = xctx->sel_array[0].n;
    rect_c = xctx->sel_array[0].col;
@@ -2417,6 +2418,35 @@ static int edit_rect_point(int state)
     else if(POINTINSIDE(xctx->mousex, xctx->mousey, p->x2 - ds, p->y2 - ds, p->x2, p->y2)) {
       xctx->shape_point_selected = 1;
       p->sel = SELECTED4;
+    }
+    /* Fluid editing (C3, doc/claude/specs/fluid_editing.md): a click near a SIDE (not a
+     * corner) grabs that whole edge -- both of its corners -- so the drag stretches the
+     * side. The four corner zones are tested first (else-if), so an edge branch only fires
+     * away from the corners; each side is a full-span band +/- ds perpendicular to the
+     * edge line. The two-corner SELECTED pairs match move.c's edge-stretch commit cases:
+     *   top    (y1) -> SELECTED1|SELECTED2   bottom (y2) -> SELECTED3|SELECTED4
+     *   left   (x1) -> SELECTED1|SELECTED3   right  (x2) -> SELECTED2|SELECTED4
+     * Gated on cadence_compat so stock behaviour (the two-step, corners only) is unchanged;
+     * the whole feature is otherwise reachable via the C1 first-click dispatch. */
+    else if(cadence_compat &&
+            POINTINSIDE(xctx->mousex, xctx->mousey, p->x1, p->y1 - ds, p->x2, p->y1 + ds)) {
+      xctx->shape_point_selected = 1;
+      p->sel = SELECTED1 | SELECTED2;              /* top edge (y1) */
+    }
+    else if(cadence_compat &&
+            POINTINSIDE(xctx->mousex, xctx->mousey, p->x1, p->y2 - ds, p->x2, p->y2 + ds)) {
+      xctx->shape_point_selected = 1;
+      p->sel = SELECTED3 | SELECTED4;              /* bottom edge (y2) */
+    }
+    else if(cadence_compat &&
+            POINTINSIDE(xctx->mousex, xctx->mousey, p->x1 - ds, p->y1, p->x1 + ds, p->y2)) {
+      xctx->shape_point_selected = 1;
+      p->sel = SELECTED1 | SELECTED3;              /* left edge (x1) */
+    }
+    else if(cadence_compat &&
+            POINTINSIDE(xctx->mousex, xctx->mousey, p->x2 - ds, p->y1, p->x2 + ds, p->y2)) {
+      xctx->shape_point_selected = 1;
+      p->sel = SELECTED2 | SELECTED4;              /* right edge (x2) */
     }
     if(xctx->shape_point_selected) {
       /* move one rectangle selected point */

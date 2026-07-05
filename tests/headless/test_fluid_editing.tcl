@@ -190,6 +190,38 @@ catch { update idletasks }
 check "FE3c undo restores the arc to (1200,0) r=100 a=0 b=90" \
   [expr {[arc_geom] eq {1200 0 100 0 90}}] "(after_stretch=$after_stretch undone=[arc_geom])"
 
+# ===========================================================================
+# PHASE 3 -- C3: rect edge (side) grab
+# ===========================================================================
+
+# ---- FE4: grab the TOP side at its midpoint, drag perpendicular ------------
+# Pressing on a side (not a corner) grabs that side's TWO corners, so the drag
+# stretches the whole edge: the top corners move in y, the bottom edge stays put
+# and the left/right x extents are unchanged. Today (corners only) the press falls
+# through to a WHOLE move and the bottom edge translates too.
+setup_fixture
+set ::cadence_compat 1
+lassign [sch2scr 100 0]   ex ey
+lassign [sch2scr 100 -40] tx ty
+grab_drag $ex $ey $tx $ty
+lassign [rect_bbox] x1 y1 x2 y2
+check "FE4 bottom edge FIXED at y2=200" [feq $y2 200] "(bbox=[rect_bbox])"
+check "FE4 top edge MOVED off y1=0"     [expr {![feq $y1 0]}] "(bbox=[rect_bbox])"
+check "FE4 left/right x extents UNCHANGED (0,200)" \
+  [expr {[feq $x1 0] && [feq $x2 200]}] "(bbox=[rect_bbox])"
+
+# ---- FE4b: the grab works ANYWHERE along the side, not only the midpoint ----
+# (press at 1/4 of the top edge). This distinguishes a full-edge grab from a
+# midpoint-only zone.
+setup_fixture
+set ::cadence_compat 1
+lassign [sch2scr 50 0]   ex ey
+lassign [sch2scr 50 -40] tx ty
+grab_drag $ex $ey $tx $ty
+lassign [rect_bbox] x1 y1 x2 y2
+check "FE4b quarter-point on top edge still grabs the edge (bottom fixed)" \
+  [expr {[feq $y2 200] && ![feq $y1 0] && [feq $x1 0] && [feq $x2 200]}] "(bbox=[rect_bbox])"
+
 # ---------------------------------------------------------------------------
 file delete -force -- $::RBTMP
 if {$::fails} { puts "RESULT: $::fails FAILED ($::npass passed)" } \
