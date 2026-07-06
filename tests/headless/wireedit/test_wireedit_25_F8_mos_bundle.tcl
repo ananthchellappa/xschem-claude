@@ -1,7 +1,11 @@
 # F8 (nice_drag_rerouting §7 fixture matrix) -- 4-pin device, mixed edges: full bundle, lane
-# assignment, P6. Spec §8 predicts RED. Assert-only: pred_verdict records the OBSERVED verdict
-# per predicate (baseline pinned to reality). This is the integration fixture -- a rigid group
-# of pins moving together whose escapes interact.
+# assignment, P6. Assert-only: pred_verdict records the OBSERVED verdict per predicate (baseline
+# pinned to reality). This is the integration fixture -- a rigid group of pins moving together
+# whose escapes interact. With the Phase-3 fluid nice escape enabled, P5 flipped RED->GREEN (no
+# leg crosses the body). P3 stays RED: pin b is a near-centre bulk pin with an ambiguous escape
+# normal (the crude-normal case, §6) so its leg does not escape perpendicular -- a Phase-5/6
+# concern, not a regression. Critically P1 stays GREEN across the whole bundle (the +y/-y AND -x
+# escape stubs all bind now -- the order_wire_coords disconnect fix in move.c).
 #
 # devices/nmos4 at origin: d(20,-30) escapes down, g(-20,0) escapes left, s(20,30) escapes up,
 # b(20,0) is a near-centre bulk pin (ambiguous normal -- the crude-normal case, §6). Each pin
@@ -48,6 +52,6 @@ pred_verdict "F8.P1 connectivity invariant" [p1_netlist_invariant $snap] GREEN
 pred_verdict "F8.P2 no-short"               [p2_no_short]                GREEN
 pred_verdict "F8.P3 escape perpendicular"   [p3_escape_perp M1 10]       RED
 pred_verdict "F8.P4 orthogonality"          [p4_orthogonal]              GREEN
-pred_verdict "F8.P5 no body cross"          [p5_no_body_cross]           RED
+pred_verdict "F8.P5 no body cross"          [p5_no_body_cross]           GREEN
 
 we_result

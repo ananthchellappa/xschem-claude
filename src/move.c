@@ -1545,6 +1545,23 @@ static void remove_move_orphan_wires(void)
  * eats the freshly inserted stub (and the perpendicular bend just past it keeps it from
  * looking like a colinear degree-2 merge candidate anyway). Gated on wire_exit_stub
  * (default OFF): the biggest behavior change in the plan, shipped dark. */
+/* Stored wires MUST be coordinate-ordered (x1<x2, or x1==x2 && y1<y2). touch() (clip.c) --
+ * used by the netlister's name_attached_inst_to_net() to bind an instance pin to the wire that
+ * reaches it -- documents this as its precondition ("works if segments are given left to
+ * right") and returns 0 on an unordered wire. An exit stub is stored pin->tip, so a -x/-y
+ * escape normal (tip below/left of the pin) yields an UNORDERED wire whose touch() then fails,
+ * silently dropping the pin onto a fresh #net (the Phase-3 disconnect: a +y stub was ordered
+ * by luck and bound, a -y stub was not). Normalize every wire this function rewrites. */
+static void order_wire_coords(int n)
+{
+  xWire *w = &xctx->wire[n];
+  if(w->x1 > w->x2 || (w->x1 == w->x2 && w->y1 > w->y2)) {
+    double t;
+    t = w->x1; w->x1 = w->x2; w->x2 = t;
+    t = w->y1; w->y1 = w->y2; w->y2 = t;
+  }
+}
+
 static void insert_exit_stubs(void)
 {
   int inst, r, rects, n, m;
@@ -1597,13 +1614,17 @@ static void insert_exit_stubs(void)
       nfx = fx + grid * nx; nfy = fy + grid * ny;   /* leg's new far (corner) end     */
       for(m = 0; m < nwires0; m++) {                /* drag every neighbour at the corner */
         if(m == n) continue;
-        if(xctx->wire[m].x1 == fx && xctx->wire[m].y1 == fy) { xctx->wire[m].x1 = nfx; xctx->wire[m].y1 = nfy; }
-        if(xctx->wire[m].x2 == fx && xctx->wire[m].y2 == fy) { xctx->wire[m].x2 = nfx; xctx->wire[m].y2 = nfy; }
+        if(xctx->wire[m].x1 == fx && xctx->wire[m].y1 == fy) { xctx->wire[m].x1 = nfx; xctx->wire[m].y1 = nfy; order_wire_coords(m); }
+        if(xctx->wire[m].x2 == fx && xctx->wire[m].y2 == fy) { xctx->wire[m].x2 = nfx; xctx->wire[m].y2 = nfy; order_wire_coords(m); }
       }
       if(endsel == 1) { xctx->wire[n].x1 = sx; xctx->wire[n].y1 = sy; xctx->wire[n].x2 = nfx; xctx->wire[n].y2 = nfy; }
       else            { xctx->wire[n].x2 = sx; xctx->wire[n].y2 = sy; xctx->wire[n].x1 = nfx; xctx->wire[n].y1 = nfy; }
-      /* fill the gap at the pin with the short exit stub (inherits the leg's net prop) */
+      order_wire_coords(n);                          /* keep the slid leg ordered (touch() precond) */
+      /* fill the gap at the pin with the short exit stub (inherits the leg's net prop); stored
+       * pin->tip, so ORDER it -- a -x/-y escape normal would otherwise store it unordered and
+       * touch() would fail to bind the pin (the disconnect). */
       storeobject(-1, px, py, sx, sy, WIRE, 0, 0, xctx->wire[n].prop_ptr);
+      order_wire_coords(xctx->wires - 1);            /* the just-appended stub is the last wire */
     }
   }
   xctx->prep_hash_wires = 0;
@@ -2247,11 +2268,19 @@ void move_objects(int what, int merge, double dx, double dy)
     * ensure each moved DEVICE pin's route leaves the pin along the pin's outward escape normal
     * (get_pin_escape_normal, geometry nearest-edge -- nice_drag_rerouting Phase 3 §6/§8) with a
     * short stub before the first bend. Runs AFTER trim_wires() so the stub is never merged
-    * back. Gated on wire_exit_stub (default OFF) => byte-identical when off. NOTE: wiring this
-    * into fluid_editing mode is DEFERRED -- firing insert_exit_stubs on a plain fluid drag
-    * disconnects a net even for a 2-pin res (caught by the Phase-1 P1 guard); the exit-stub
-    * slide must be made connectivity-safe first. See doc/claude/specs/nice_drag_rerouting.md. */
-   if(xctx->stretch_select && tclgetboolvar("wire_exit_stub") && orthogonal_wiring &&
+    * back. Gated on wire_exit_stub || fluid_editing (both default OFF) => byte-identical when
+    * off. The fluid gate was previously DEFERRED because insert_exit_stubs disconnected a net
+    * on a plain fluid drag (a -x/-y escape stub stored unordered -> touch() failed to bind the
+    * pin, caught by the Phase-1 P1 guard). order_wire_coords() now normalizes every wire the
+    * function writes, closing that (endpoint-ordering) disconnect class, so the fluid gate is
+    * enabled. P1/connectivity is preserved for the tap cases too: a pin tap on the slid leg is
+    * skipped by the point_on_fixed_pin guard, and a wire tap is a split junction the has_corner
+    * neighbour-drag carries along (tests test_wireedit_29..31). NOT yet handled: the SLIDE can
+    * still shift the leg/stub one grid onto a DIFFERENT net's wire -> a no-short (P2) hazard,
+    * which is nice_drag_rerouting Phase 4 (no-short guard + rip-up) and is caught log-only by
+    * fluid_check_move_invariants until then. See doc/claude/specs/nice_drag_rerouting.md. */
+   if(xctx->stretch_select &&
+      (tclgetboolvar("wire_exit_stub") || tclgetboolvar("fluid_editing")) && orthogonal_wiring &&
       xctx->move_rot == 0 && xctx->move_flip == 0) {
      insert_exit_stubs();
    }
