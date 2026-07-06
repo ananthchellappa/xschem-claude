@@ -212,6 +212,7 @@ static void update_symbol_bboxes(short rot, short flip)
     n = xctx->sel_array[i].n;
     dbg(1, "update_symbol_bboxes(): i=%d, movelastsel=%d, n=%d\n", i, xctx->movelastsel, n);
     if(xctx->sel_array[i].type == ELEMENT) {
+      if(n < 0 || n >= xctx->instances || xctx->inst[n].ptr < 0) continue; /* stale/unlinked: symbol_bbox would read sym[ptr<0] */
       dbg(1, "update_symbol_bboxes(): symbol flip=%d, rot=%d\n",  xctx->inst[n].flip, xctx->inst[n].rot);
       save_flip = xctx->inst[n].flip;
       save_rot = xctx->inst[n].rot;
@@ -1820,6 +1821,14 @@ void move_objects(int what, int merge, double dx, double dy)
     * of an already-started gesture are left alone (none can start on a read-only buffer). */
    if(begin_edit("move")) return;
    if(xctx->lastsel==0) return;
+   /* movelastsel must be refreshed to the CURRENT selection BEFORE update_symbol_bboxes(), which
+    * iterates sel_array[0..movelastsel-1]. Otherwise it uses the STALE count from the previous move:
+    * if that count exceeds the current selection (e.g. the last gesture selected more, then objects
+    * were cleared/deleted), the loop reads stale sel_array entries that may index an instance with
+    * ptr<0 (unlinked), and symbol_bbox() then dereferences (ptr + xctx->sym) BEFORE the sym array --
+    * a heap-buffer-overflow read (found via AddressSanitizer). It is re-snapshotted below after
+    * connect_by_kissing() so kissed stubs are still included in the move. */
+   xctx->movelastsel = xctx->lastsel;
    update_symbol_bboxes(0, 0);
    /* if connect_by_kissing==2 it was set in callback.c ('M' command) */
    if(xctx->connect_by_kissing == 2) xctx->kissing = connect_by_kissing();
