@@ -114,6 +114,49 @@ proc p2_no_short {} {
   return 1
 }
 
+# --- P2 (general): device-pin-merge no-short --------------------------------
+# The label-centric p2_no_short above MISSES a DEVICE short: when a reroute lays a leg across
+# a foreign device between two of its pins, the two nets merge, but neither pin carries a lab=
+# (they are device pins, not net labels), so neither pass of p2_no_short sees it -- the merge
+# just silently renames a #net. This is exactly the R18/v8 short (spec incremental_wire_reroute.md
+# §9): v8.plus was on #net1, v8.minus on OUT; the swept leg bridges them -> both become OUT.
+#
+# GENERAL rule: no instance may have two pins that were on DISTINCT nets before the move end up
+# on ONE net after. Capture dev_pin_map() BEFORE the move; assert p2_no_device_merge with that
+# snapshot AFTER. instance_nodemap is reliable for DEVICE pins -- it echoes only a net-LABEL's own
+# lab= (the P1/P2 echo trap), so label instances are skipped. Unconnected pins (empty net) are
+# ignored (a floating pin joining a net is a connect, caught by P1, not a device short).
+proc dev_pin_map {} {
+  xschem resolved_net 0                          ;# refresh resolved per-pin nets (side effect)
+  set ni [xschem get instances]
+  set res [dict create]
+  for {set i 0} {$i < $ni} {incr i} {
+    if {[xschem getprop instance $i lab] ne {}} continue   ;# net label: nodemap echoes intent, skip
+    set nm [xschem getprop instance $i name]
+    dict set res $nm [lrange [xschem instance_nodemap $nm] 1 end]   ;# {pin net pin net ...}
+  }
+  return $res
+}
+# does any device have two pins DISTINCT (both named) before but MERGED (same non-empty net) after?
+proc p2_no_device_merge {before} {
+  set after [dev_pin_map]
+  dict for {nm ap} $after {
+    if {![dict exists $before $nm]} continue
+    array unset B; array set B [dict get $before $nm]
+    array unset A; array set A $ap
+    set pins [array names A]
+    foreach p1 $pins {
+      foreach p2 $pins {
+        if {$p1 eq $p2} continue
+        if {![info exists B($p1)] || ![info exists B($p2)]} continue
+        set b1 $B($p1); set b2 $B($p2); set a1 $A($p1); set a2 $A($p2)
+        if {$b1 ne {} && $b2 ne {} && $b1 ne $b2 && $a1 ne {} && $a1 eq $a2} { return 0 }
+      }
+    }
+  }
+  return 1
+}
+
 # --- P4: orthogonality -----------------------------------------------------
 # Every wire leg is axis-aligned (horizontal or vertical). Named alias of the fixtures.tcl
 # helper so the predicate library is uniform (spec §4 P4).

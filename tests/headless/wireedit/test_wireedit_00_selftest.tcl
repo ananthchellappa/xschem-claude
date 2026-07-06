@@ -80,6 +80,39 @@ check "seg_touch: collinear abutting touch"  [seg_touch {0 0 50 0} {50 0 100 0}]
 check "seg_touch: parallel-but-apart do not" [expr {![seg_touch {0 0 100 0} {0 40 100 40}]}]
 check "seg_touch: disjoint do not"           [expr {![seg_touch {0 0 10 0} {90 0 100 0}]}]
 
+# P2 (general) -- device-pin-merge. Two DEVICE pins on distinct nets that merge onto one net =
+# a short with NO net label involved (the R18/v8 class the label-centric p2 misses). Teeth:
+# distinct-stays-distinct holds; bridging the two pins (one net) is detected; and a device whose
+# pins were ALREADY on one net pre-move must NOT false-flag (they were never distinct).
+we_reset 0 0
+xschem instance devices/res 0 0 0 0 {name=RA}   ;# pins P(0,-30) M(0,30)
+we_wire 0 -30 0 -130 ;  we_label 0 -130 NETP    ;# P -> NETP
+we_wire 0  30 0  130 ;  we_label 0  130 NETM     ;# M -> NETM
+set devsnap [dev_pin_map]
+check "p2_dev holds when device pins stay on distinct nets" [p2_no_device_merge $devsnap]
+we_wire 0 -30 0 30                               ;# bridge P<->M directly: NETP and NETM merge
+check "p2_dev detects a device short (two distinct pins merged, has teeth)" \
+  [expr {![p2_no_device_merge $devsnap]}]
+# no-false-positive control: a device whose two pins were the SAME net before and after
+we_reset 0 0
+xschem instance devices/res 0 0 0 0 {name=RB}
+we_wire 0 -30 0 -130 ; we_wire 0 30 0 130 ; we_wire 0 -130 0 130  ;# both pins one net
+we_label 0 -130 NETX
+set devsnap2 [dev_pin_map]
+check "p2_dev no false positive when pins were already one net" [p2_no_device_merge $devsnap2]
+# MULTI-PIN (>2) generality: a 4-pin device (nmos4 d,g,s,b) -- the detector is pin-pair based, so a
+# merge of ANY two distinct-net pins must be caught even among 4 pins.
+we_reset 0 0
+xschem instance devices/nmos4 0 0 0 0 {name=MN}   ;# d(20,-30) g(-20,0) s(20,30) b(20,0)
+we_wire 20 -30 20 -130 ; we_label 20 -130 ND      ;# d -> ND
+we_wire -20 0 -120 0   ; we_label -120 0 NG        ;# g -> NG
+we_wire 20 30 20 130   ; we_label 20 130 NS        ;# s -> NS
+set mn4 [dev_pin_map]
+check "p2_dev holds for a 4-pin device with distinct pin nets" [p2_no_device_merge $mn4]
+we_wire 20 -30 20 30                               ;# bridge d..b..s (x=20): ND,NB,NS merge
+check "p2_dev detects a merge among 4 pins (d,s were distinct, has teeth)" \
+  [expr {![p2_no_device_merge $mn4]}]
+
 # P6 -- minimality metrics. route_length sums legs; route_bends counts perpendicular corner
 # vertices only (not collinear splits, not T-junctions); p6_bends_len compares lexicographically.
 we_reset 0 0

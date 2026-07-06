@@ -1082,6 +1082,9 @@ static void order_wire_points(int n)
   }
 }
 
+/* Phase III obstacle-aware L-orientation flip (defined below, next to the fluid snapshot code). */
+static int fluid_ml_blocked(int ml, int sel1);
+
 /* xctx->{rx1, ry1} and xctx->{rx2, ry2} are the two line points after the move.
  * they are not guaranteed to be ordered (since only one of the two points may have changed)
  * so this must be taken care for */
@@ -1094,6 +1097,24 @@ static void place_moved_wire(int n, int orthogonal_wiring)
    * `manhattan_lines` value gets forced on all wires connected to a moved object*/
   if(orthogonal_wiring) {
     recompute_orthogonal_manhattanline(xctx->rx1, xctx->ry1, xctx->rx2, xctx->ry2);
+    /* incremental_wire_reroute.md Phase III (§5/§6): obstacle-aware L-orientation selection. The
+     * naive manhattan L can lay one of its two legs straight across a STATIONARY device between two
+     * of its distinct-net pins -- a P2 short (R18's M-riser leg sweeping through ammeter v8). If the
+     * orientation recompute chose is blocked and the OTHER orientation is clear, flip
+     * manhattan_lines: the four placement branches below then lay the clean L between the SAME two
+     * endpoints (rx1,ry1)-(rx2,ry2), so connectivity (P1) is unchanged by construction. Gated on
+     * fluid_editing (default off => never flips => byte-identical), a valid START name snapshot, a
+     * non-rotating move, and a stretching (single-endpoint) wire. Pure function of (snapshot,
+     * rx1..ry2) => deterministic and release==stepwise (recompute yields only ml 1 or 2). */
+    if(tclgetboolvar("fluid_editing") && xctx->move_rot == 0 && xctx->move_flip == 0 &&
+       (wire[n].sel == SELECTED1 || wire[n].sel == SELECTED2)) {
+      int sel1 = (wire[n].sel == SELECTED1);
+      int ml0 = xctx->manhattan_lines, ml1 = (ml0 == 1) ? 2 : 1;
+      /* fluid_ml_blocked() returns 0 when there is no START name snapshot, so no flip fires unless a
+       * fluid stretch armed one -- the snapshot-presence gate lives inside the helper (its statics
+       * are declared below this function). */
+      if(fluid_ml_blocked(ml0, sel1) && !fluid_ml_blocked(ml1, sel1)) xctx->manhattan_lines = ml1;
+    }
   }
 
   /* wire x1,y1 point was moved
@@ -1685,6 +1706,9 @@ void get_pin_escape_normal(int i, int r, double *nx, double *ny)
 
 static int *fluid_snap_id = NULL;    /* canonical partition id per instance pin, captured at START */
 static int  fluid_snap_npins = 0;    /* 0 => no valid snapshot */
+static char **fluid_snap_pinnet = NULL; /* strdup'd resolved net name (or NULL) per instance pin at
+                                         * START -- for the device-merge P2 check (spec §9) */
+static void fluid_discard_snapshot(void);
 
 /* total number of instance pins in the current schematic */
 static int fluid_count_pins(void)
@@ -1731,27 +1755,168 @@ static int fluid_build_partition(int *out, int maxpins)
 /* capture the pre-move connectivity partition (called at move START) */
 static void fluid_snapshot_partition(void)
 {
-  int tot;
-  my_free(_ALLOC_ID_, &fluid_snap_id);
-  fluid_snap_npins = 0;
+  int tot, p, k, i;
+  fluid_discard_snapshot();                 /* free any prior snapshot (id + pin-name arrays) */
   if(!tclgetboolvar("fluid_editing")) return;
   prepare_netlist_structs(0);
   tot = fluid_count_pins();
   if(tot <= 0) return;
   fluid_snap_id = my_malloc(_ALLOC_ID_, tot * sizeof(int));
   fluid_snap_npins = fluid_build_partition(fluid_snap_id, tot);
+  /* Parallel capture of each pin's resolved net NAME (strdup -- node[] is freed/rebuilt across the
+   * move). The device-merge P2 check (spec §9) needs both pins be NAMED pre-move: an unconnected
+   * pin joining a net is a connect (P1's job), not a device short. Same walk order + skip rule as
+   * fluid_build_partition, so index k lines up with fluid_snap_id. */
+  fluid_snap_pinnet = my_malloc(_ALLOC_ID_, fluid_snap_npins * sizeof(char *));
+  k = 0;
+  for(i = 0; i < xctx->instances && k < fluid_snap_npins; ++i) {
+    int npins;
+    if(xctx->inst[i].ptr < 0) continue;
+    npins = (xctx->inst[i].ptr + xctx->sym)->rects[PINLAYER];
+    for(p = 0; p < npins && k < fluid_snap_npins; ++p) {
+      const char *nm = xctx->inst[i].node ? xctx->inst[i].node[p] : NULL;
+      fluid_snap_pinnet[k] = NULL;
+      if(nm && nm[0]) my_strdup(_ALLOC_ID_, &fluid_snap_pinnet[k], nm);
+      ++k;
+    }
+  }
 }
 
-/* free the snapshot without comparing (called on move ABORT) */
+/* free the snapshot without comparing (called on move ABORT, at each new START, and after each
+ * END compare). Frees both the partition-id array and the strdup'd per-pin net-name array. */
 static void fluid_discard_snapshot(void)
 {
+  int k;
+  if(fluid_snap_pinnet) {
+    for(k = 0; k < fluid_snap_npins; ++k) my_free(_ALLOC_ID_, &fluid_snap_pinnet[k]);
+    my_free(_ALLOC_ID_, &fluid_snap_pinnet);
+  }
   my_free(_ALLOC_ID_, &fluid_snap_id);
   fluid_snap_npins = 0;
 }
 
+/* incremental_wire_reroute.md §9 -- general device-pin-merge no-short (P2). The label-centric P2
+ * pass below only sees a net-LABEL merge; a DEVICE short (a reroute laying a leg across a foreign
+ * device between two of its pins) merges two nets with no label involved. Detect it directly: any
+ * instance (skip net labels -- node[] echoes lab=) with two pins that were on DISTINCT named nets
+ * at START and now resolve to the SAME net = a merge. Requires the START name snapshot; both pins
+ * must be named at both times (an unconnected pin is P1's concern). Returns the merge count. */
+static int fluid_check_device_merge(void)
+{
+  int i, p, q, k = 0, merges = 0;
+  if(!fluid_snap_pinnet || fluid_snap_npins <= 0) return 0;
+  if(fluid_count_pins() != fluid_snap_npins) return 0;   /* instance set changed: not comparable */
+  for(i = 0; i < xctx->instances; ++i) {
+    int npins, base;
+    const char *type;
+    if(xctx->inst[i].ptr < 0) continue;                  /* skip identically to the snapshot walk */
+    npins = (xctx->inst[i].ptr + xctx->sym)->rects[PINLAYER];
+    base = k; k += npins;                                /* advance k for EVERY instance incl. labels */
+    if(k > fluid_snap_npins) break;                      /* structure drift guard */
+    type = xctx->sym[xctx->inst[i].ptr].type;
+    if(type && !strcmp(type, "label")) continue;         /* net label pins echo lab=; not a device */
+    for(p = 0; p < npins; ++p) {
+      const char *bp = fluid_snap_pinnet[base + p];
+      const char *ap = (xctx->inst[i].node && xctx->inst[i].node[p]) ? xctx->inst[i].node[p] : NULL;
+      if(!bp || !bp[0] || !ap || !ap[0]) continue;
+      for(q = p + 1; q < npins; ++q) {
+        const char *bq = fluid_snap_pinnet[base + q];
+        const char *aq = (xctx->inst[i].node && xctx->inst[i].node[q]) ? xctx->inst[i].node[q] : NULL;
+        if(!bq || !bq[0] || !aq || !aq[0]) continue;
+        if(strcmp(bp, bq) && !strcmp(ap, aq)) {          /* distinct before, one net now => merged */
+          ++merges;
+          dbg(0, "fluid_editing INVARIANT (P2 device): instance '%s' pins %d,%d were on distinct "
+                 "nets ('%s','%s'), now both on '%s' after move -- device short/merge\n",
+                 xctx->inst[i].instname, p, q, bp, bq, ap);
+        }
+      }
+    }
+  }
+  return merges;
+}
+
+/* Phase III helper: is foreign pin (px,py) on the axis-aligned segment (x1,y1)-(x2,y2)? cadsnap/2
+ * tolerance on the CONSTANT axis (mirrors point_near_pin, move.c:1220); inclusive span on the
+ * varying axis. A degenerate (point) or diagonal leg carries no two-pin bridge. */
+static int fluid_pin_on_seg(double px, double py, double x1, double y1, double x2, double y2)
+{
+  double tol = tclgetdoublevar("cadsnap") / 2.0, lo, hi;
+  if(tol < 1e-6) tol = 1e-6;
+  if(y1 == y2 && x1 != x2) {                       /* horizontal leg */
+    if(fabs(py - y1) > tol) return 0;
+    lo = x1 < x2 ? x1 : x2; hi = x1 < x2 ? x2 : x1;
+    return px >= lo - tol && px <= hi + tol;
+  }
+  if(x1 == x2 && y1 != y2) {                        /* vertical leg */
+    if(fabs(px - x1) > tol) return 0;
+    lo = y1 < y2 ? y1 : y2; hi = y1 < y2 ? y2 : y1;
+    return py >= lo - tol && py <= hi + tol;
+  }
+  return 0;
+}
+
+/* incremental_wire_reroute.md Phase III (§5/§6): would the manhattan L formed by the horizontal
+ * leg (hx1,hy)-(hx2,hy) and the vertical leg (vx,vy1)-(vx,vy2) lay across a STATIONARY (foreign)
+ * device between two of its pins that were on DISTINCT nets pre-move? That is the P2 short the naive
+ * jog creates (R18's riser leg sweeping through v8). The L is tested AS A WHOLE (union of both
+ * legs), NOT leg-by-leg: an L bridges its two legs through the shared corner, so a device with one
+ * distinct-net pin on the horizontal leg and another on the vertical leg is shorted through the
+ * corner -- a per-leg test misses it (adversarial review, cross-leg hole). A pin counts if it is on
+ * EITHER leg. Uses the START name snapshot (fluid_snap_pinnet), so it is a pure function of
+ * (snapshot, geometry) -- no live node[], deterministic. Same base-walk as fluid_check_device_merge,
+ * plus a sel==0 (stationary) filter: a moving/partially-selected device's pins travel WITH the drag,
+ * so it is not a fixed obstacle. Cost O(fixed_inst * pins^2), pins 2..4. */
+static int fluid_L_bridges_device(double hx1, double hy, double hx2, double vx, double vy1, double vy2)
+{
+  int i, p, q, k = 0;
+  if(!fluid_snap_pinnet || fluid_snap_npins <= 0) return 0;
+  for(i = 0; i < xctx->instances; ++i) {
+    int npins, base;
+    const char *type;
+    if(xctx->inst[i].ptr < 0) continue;
+    npins = (xctx->inst[i].ptr + xctx->sym)->rects[PINLAYER];
+    base = k; k += npins;
+    if(k > fluid_snap_npins) break;                /* structure drift guard */
+    if(xctx->inst[i].sel) continue;                /* only STATIONARY devices are obstacles */
+    type = xctx->sym[xctx->inst[i].ptr].type;
+    if(type && !strcmp(type, "label")) continue;   /* net labels are not devices */
+    for(p = 0; p < npins; ++p) {
+      const char *bp = fluid_snap_pinnet[base + p];
+      double px, py;
+      if(!bp || !bp[0]) continue;
+      get_inst_pin_coord(i, p, &px, &py);
+      /* pin p anywhere on the L (either leg; the corner is shared -> a corner-straddle counts) */
+      if(!(fluid_pin_on_seg(px, py, hx1, hy, hx2, hy) ||
+           fluid_pin_on_seg(px, py, vx, vy1, vx, vy2))) continue;
+      for(q = p + 1; q < npins; ++q) {
+        const char *bq = fluid_snap_pinnet[base + q];
+        double qx, qy;
+        if(!bq || !bq[0] || !strcmp(bp, bq)) continue;   /* need distinct pre-move named nets */
+        get_inst_pin_coord(i, q, &qx, &qy);
+        if(fluid_pin_on_seg(qx, qy, hx1, hy, hx2, hy) ||
+           fluid_pin_on_seg(qx, qy, vx, vy1, vx, vy2)) return 1;
+      }
+    }
+  }
+  return 0;
+}
+
+/* incremental_wire_reroute.md Phase III: is the L-route implied by orientation `ml` blocked -- does
+ * it lay across a stationary device between two distinct-net pins (either leg, or straddling the
+ * corner)? sel1 = the wire's moving endpoint is endpoint 1 (SELECTED1). The leg geometry mirrors the
+ * four place_moved_wire branches EXACTLY (verified): horizontal leg spans rx1..rx2 at hy, vertical
+ * leg spans ry1..ry2 at vx, meeting at the corner (vx,hy). */
+static int fluid_ml_blocked(int ml, int sel1)
+{
+  double rx1 = xctx->rx1, ry1 = xctx->ry1, rx2 = xctx->rx2, ry2 = xctx->ry2;
+  double hy = sel1 ? ((ml & 1) ? ry2 : ry1) : ((ml & 1) ? ry1 : ry2);   /* horizontal leg y */
+  double vx = sel1 ? ((ml & 1) ? rx1 : rx2) : ((ml & 1) ? rx2 : rx1);   /* vertical leg x */
+  return fluid_L_bridges_device(rx1, hy, rx2, vx, ry1, ry2);
+}
+
 static void fluid_check_move_invariants(void)
 {
-  int i, w, shorts = 0, disconnects = 0;
+  int i, w, shorts = 0, disconnects = 0, dev_merges = 0;
   if(!tclgetboolvar("fluid_editing")) { fluid_discard_snapshot(); return; }
   prepare_netlist_structs(0);
   /* --- P2: no-short/merge (wire-level, see comment above) --- */
@@ -1789,9 +1954,13 @@ static void fluid_check_move_invariants(void)
       dbg(0, "fluid_editing INVARIANT (P1): %d instance pin(s) changed net partition after "
              "move -- possible disconnect\n", disconnects);
   }
+  /* --- P2 (general): device-pin-merge -- catches a DEVICE short (no net label), the R18/v8 class
+   * the label pass above misses. Runs BEFORE the snapshot is freed. --- */
+  dev_merges = fluid_check_device_merge();
   fluid_discard_snapshot();
   tclsetvar("fluid_last_move_violations", my_itoa(shorts));
   tclsetvar("fluid_last_move_disconnects", my_itoa(disconnects));
+  tclsetvar("fluid_last_move_dev_merges", my_itoa(dev_merges));
 }
 
 /* incremental_wire_reroute.md Phase II: restore the live schematic to the pristine (post-kiss,
@@ -2110,6 +2279,12 @@ void move_objects(int what, int merge, double dx, double dy)
          }
 
          place_moved_wire(n, orthogonal_wiring);
+         /* place_moved_wire() -> storeobject() may my_realloc(xctx->wire), leaving the loop-local
+          * `wire` alias dangling. Refresh it so a LATER sel_array WIRE entry (e.g. the second of a
+          * two-follow-wire fluid drag -- R18's M and P risers) does not read freed memory. This
+          * pre-existing k-loop staleness was previously latent (only single-follow-wire stretches
+          * were exercised); test_wireedit_34 exposes it. (line[] is untouched by place_moved_wire.) */
+         wire = xctx->wire;
 
        }
        break;
