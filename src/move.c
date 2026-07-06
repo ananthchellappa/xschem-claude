@@ -1842,6 +1842,11 @@ void move_objects(int what, int merge, double dx, double dy)
    xctx->move_flip = 0;xctx->move_rot = 0;
    xctx->ui_state|=STARTMOVE;
    fluid_snapshot_partition(); /* Phase 1 P1 guard: capture pre-move connectivity partition */
+   /* incremental_wire_reroute Phase I (ownership decoupling): xctx->fluid_startsel_wires (the count
+    * of the user's own selected wires) is captured in select_attached_nets(), which runs BEFORE this
+    * START -- it must be taken before follow-wires are grabbed/folded, so it cannot be recomputed
+    * here. The END deselect is gated on stretch_select, set only by select_attached_nets alongside
+    * that count, so the two are always consistent (a non-stretch move never consumes it). */
   }
   if(what & ABORT)  /* abort operation */
   {
@@ -2294,6 +2299,25 @@ void move_objects(int what, int merge, double dx, double dy)
      insert_exit_stubs();
    }
    unselect_partial_sel_wires();
+   /* incremental_wire_reroute Phase I (ownership decoupling, spec §4). A fluid stretch grabs the
+    * wires attached to the moving selection into the SELECTION (select_attached_nets marks them
+    * SELECTED1/2; compute_wire_slide promotes corner wires to full SELECTED), so with the cadence
+    * default unselect_partial_sel_wires=0 they PERSIST as user selection after the drag -- the
+    * user's complaint ("wires get selected when I only move an instance"). When the user selected
+    * NO wires of her own (fluid_startsel_wires==0), every wire selected at END is a tool-owned
+    * follow-wire: deselect them all so they are transient, not persistent user selection. This runs
+    * AFTER all reroute/cleanup, touching only sel-flags => wire GEOMETRY is byte-identical (the
+    * route is unchanged; Phase I is bookkeeping only). Gated on fluid_editing => default off is
+    * byte-identical. The mixed case (user also selected wires, fluid_startsel_wires>0) is deferred
+    * to a later phase: stand down and leave the selection as the stretch left it. */
+   if(tclgetboolvar("fluid_editing") && xctx->stretch_select && xctx->fluid_startsel_wires == 0) {
+     int wi, any = 0;
+     /* direct clear (not select_wire(...,0,...)): a wire grabbed at BOTH ends is sel==
+      * (SELECTED1|SELECTED2), which select_wire would fold to SELECTED instead of deselecting
+      * (select.c:965). The following draw() repaints, so the un-highlight is handled there. */
+     for(wi = 0; wi < xctx->wires; ++wi) if(xctx->wire[wi].sel) { xctx->wire[wi].sel = 0; any = 1; }
+     if(any) { xctx->need_reb_sel_arr = 1; rebuild_selected_array(); }
+   }
    xctx->stretch_select = 0;
    xctx->stretch_grabbed_n = 0;
    my_free(_ALLOC_ID_, &xctx->stretch_grabbed_xy);

@@ -1512,6 +1512,16 @@ void select_attached_nets(void)
   /* mark this move as a stretch move so move_objects(END) runs the Phase-5
    * release-time cleanup even when autotrim_wires is off (wire-editing Phase 5). */
   xctx->stretch_select = 1;
+  /* incremental_wire_reroute Phase I (ownership decoupling, spec §4a): snapshot how many wires the
+   * USER had selected, captured HERE -- before the grab loop below marks any follow-wire. Count ANY
+   * selection state (sel != 0), not just full SELECTED: a stretch box-select marks a user's own wire
+   * SELECTED1/SELECTED2 (partial), which is a genuine user selection that must count. Taking the
+   * count after the grab is wrong two ways -- user-partial and tool-partial wires become
+   * indistinguishable, and a follow-wire grabbed at BOTH ends is folded to full SELECTED
+   * (select.c select_wire ~965) -- so it is done here instead. move_objects(END) consumes it: when
+   * this count is 0, every wire selected at END is a tool-owned follow-wire and is deselected. */
+  { int wi; xctx->fluid_startsel_wires = 0;
+    for(wi = 0; wi < xctx->wires; ++wi) if(xctx->wire[wi].sel) ++xctx->fluid_startsel_wires; }
   tol = tclgetdoublevar("cadsnap") / 2.0;
   if(tol < 1e-6) tol = 1e-6;
 

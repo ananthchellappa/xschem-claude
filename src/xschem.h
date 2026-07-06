@@ -1239,6 +1239,12 @@ typedef struct {
    * 2*stretch_grabbed_n doubles (n points). */
   double *stretch_grabbed_xy;
   int stretch_grabbed_n;
+  /* incremental_wire_reroute.md Phase I (ownership decoupling): number of wires the USER had
+   * selected (ANY selection state -- full SELECTED or partial SELECTED1/2 from a stretch box-select),
+   * captured at the TOP of select_attached_nets() BEFORE it grabs any follow-wire. Consumed at move
+   * END: if 0, every selected wire at END is a tool-owned follow-wire and is deselected (transient,
+   * not persistent user selection). Only meaningful under fluid_editing. */
+  int fluid_startsel_wires;
   short move_flip;
   int manhattan_lines;
   int movelastsel;
