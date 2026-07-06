@@ -284,4 +284,134 @@ check "i P1: RM.M still on NA" [expr {[pinnet RM M] eq {NA}}]
 check "i never-worse: no device short beyond v8's baseline (RM's own pins stay distinct)" \
   [expr {[pinnet RM M] ne [pinnet RM P]}]
 
+# ---- shape (j): BOTH one-grid detour rows blocked, but a FURTHER-OUT row is clear (Layer 3) --------
+# Layer 2 tried exactly one grid outside v8's body on each side (below y=110, above y=150) and, when a
+# foreign pin blocks BOTH, DECLINED -> v8 stayed shorted (RED @ 0cab79b5). Layer 3 keeps stepping the
+# detour row one grid further out until a clear side is found: here two stationary res blockers put a
+# FOREIGN pin on the immediate below row (RBLO.P at (-350,110), net NC) and the immediate above row
+# (RBHI.P at (-370,150), net NE) -- with their bodies pointing AWAY from the step-out row -- so the
+# reroute must step out to the below-STEP-2 row y=100 (a multi-bend detour), landing on v8.plus's net
+# with a visible offset junction and never crossing v8. Both blockers straddle a single pin each (their
+# other pin is an isolated #net), so they are not themselves reroute targets. Driven stepwise + release.
+proc setup_j {} {
+  setup_a
+  xschem instance devices/res -350 140 0 0 {name=RBLO}     ;# P=(-350,110) on the below row, body UP
+  xschem wire -350 110 -350 60; xschem instance devices/lab_pin -350 60 0 0 {lab=NC name=lnc}
+  xschem instance devices/res -370 180 0 0 {name=RBHI}     ;# P=(-370,150) on the above row, body UP
+  xschem wire -370 150 -370 120; xschem instance devices/lab_pin -370 120 0 0 {lab=NE name=lne}
+}
+proc assert_j {tag before} {
+  check "$tag P2: v8.plus(NA) != v8.minus(NB) -- ammeter NOT shorted (step-out detour)" \
+    [expr {[pinnet v8 plus] ne [pinnet v8 minus]}]
+  check "$tag P2: device-pin-merge detector passes" [p2_no_device_merge $before]
+  check "$tag P1: RM.M reaches NA (same net as v8.plus)" [expr {[pinnet RM M] eq {NA}}]
+  check "$tag P1: v8.minus restored to NB" [expr {[pinnet v8 minus] eq {NB}}]
+  check "$tag route: detour STEPPED OUT to the below-step-2 row (a leg passes (-360,100))" \
+    [point_on_any_wire -360 100]
+  check "$tag route: nothing on the blocked one-grid row inside the span (-360,110)" \
+    [expr {![point_on_any_wire -360 110]}]
+  check "$tag never-worse: blocker NC (below) not merged into NA" \
+    [expr {[net_of_wire_at -350 60] ne [net_of_wire_at -390 140]}]
+  check "$tag never-worse: blocker NE (above) not merged into NA" \
+    [expr {[net_of_wire_at -370 120] ne [net_of_wire_at -390 140]}]
+  check "$tag style: no wire crosses v8 body centre (-360,140)" [expr {![point_on_any_wire -360 140]}]
+}
+# Drive 1: one-shot release
+setup_j
+set beforeJ [dev_pin_map]
+xschem unselect_all; xschem select instance [inst_by_name RM]
+we_move_stretch 110 60
+set segReleaseJ [segset]
+assert_j "j/release:" $beforeJ
+# Drive 2: stepwise (per-snap RUBBER; the multi-bend detour runs in the shared commit block)
+setup_j
+set beforeJ2 [dev_pin_map]
+xschem unselect_all; xschem select instance [inst_by_name RM]
+xschem move_objects start 0 0 kissing stretch
+foreach {sx sy} {20 10  40 25  60 35  80 45  100 55  110 60} { xschem move_objects step $sx $sy }
+xschem move_objects end 110 60
+set segStepJ [segset]
+assert_j "j/stepwise:" $beforeJ2
+check "j: release == stepwise (multi-bend route identical both ways)" [expr {$segStepJ eq $segReleaseJ}]
+
+# ---- shape (k): M's riser COLUMN permanently blocked both sides -> STILL cleanly DECLINE ------------
+# The outward search is not unbounded: two stationary res blockers plant a FOREIGN pin directly on the
+# moving pin's riser column x=-310 -- one below M (RB1.P at (-310,130), net NP) and one above M
+# (RB2.M at (-310,150), net NQ). EVERY below detour's riser (x=-310, from y=140 down) passes (-310,130)
+# and every above detour's riser (from y=140 up) passes (-310,150), at ANY distance. So no clear row
+# exists on either side however far out we step, and Layer 3 declines cleanly to the baseline (the
+# pre-existing v8 short, present with fluid OFF too) -- introducing NO new merge. "Never worse than
+# fluid-off" is the invariant: the foreign blocker nets stay distinct from the follow net and each other.
+xschem clear force
+gates
+xschem instance devices/ammeter -360 140 3 0 {name=v8}
+xschem wire -550 140 -420 140; xschem wire -420 140 -390 140
+xschem instance devices/lab_pin -550 140 0 0 {lab=NA name=lna}
+xschem wire -330 140 -330 80; xschem instance devices/lab_pin -330 80 0 0 {lab=NB name=lnb}
+xschem instance devices/res -420 50 0 0 {name=RM m=1 value=100}
+xschem wire -420 80 -420 140
+xschem instance devices/res -310 160 0 0 {name=RB1}         ;# P=(-310,130): blocks EVERY below riser
+xschem wire -310 130 -310 125; xschem instance devices/lab_pin -310 125 0 0 {lab=NP name=lnp}
+xschem instance devices/res -310 120 0 0 {name=RB2}         ;# M=(-310,150): blocks EVERY above riser
+xschem wire -310 150 -310 155; xschem instance devices/lab_pin -310 155 0 0 {lab=NQ name=lnq}
+set beforeK [dev_pin_map]
+xschem unselect_all; xschem select instance [inst_by_name RM]
+we_move_stretch 110 60
+check "k never-worse: blocker NP (below column) stays distinct from the follow net NA" \
+  [expr {[net_of_wire_at -310 125] ne [net_of_wire_at -390 140]}]
+check "k never-worse: blocker NQ (above column) stays distinct from the follow net NA" \
+  [expr {[net_of_wire_at -310 155] ne [net_of_wire_at -390 140]}]
+check "k never-worse: the two blocker nets are not merged to each other" \
+  [expr {[net_of_wire_at -310 125] ne [net_of_wire_at -310 155]}]
+check "k P1: RM.M still connected to the follow net (baseline, not floated)" \
+  [expr {[pinnet RM M] eq {NA}}]
+
+# ---- shape (l): OFF-GRID obstacle forces the search PAST the guard tolerance band (cap fix) --------
+# The outward-search cap must clear the along-leg guards' cadsnap/2 tolerance. An OFF-GRID obstacle
+# blocks its own grid row AND the adjacent one (fluid_pin_on_seg matches within +/-5), so the first
+# clear row is TWO grids out. Here M's riser column x=-310 is permanently blocked below (NP wire on
+# it), and an off-grid NE wire endpoint at (-350,155) blocks the above rows 150 AND 160 (155 +/- 5);
+# the reroute must step out to row 170. A cap that stopped at grid_above(155)=160 would decline (170
+# never tried); Layer 3 extends the cap one grid past the perp-axis extent so row 170 is reached and
+# the detour routes cleanly. RED @ 0cab79b5 AND @ the pre-cap-fix Layer 3 (adversarial review wf_afb2b1af).
+setup_a
+xschem wire -310 120 -310 100; xschem instance devices/lab_pin -310 100 0 0 {lab=NP name=lnp}
+xschem wire -350 155 -350 120; xschem instance devices/lab_pin -350 120 0 0 {lab=NE name=lne}
+set beforeL [dev_pin_map]
+xschem unselect_all; xschem select instance [inst_by_name RM]
+we_move_stretch 110 60
+check "l P2: v8 NOT shorted -- search stepped past the off-grid tolerance band" \
+  [expr {[pinnet v8 plus] ne [pinnet v8 minus]}]
+check "l route: detour landed on the row two grids out (a leg passes (-360,170))" \
+  [point_on_any_wire -360 170]
+check "l route: nothing on the tolerance-blocked rows 150/160 inside the span" \
+  [expr {![point_on_any_wire -360 150] && ![point_on_any_wire -360 160]}]
+check "l P1: RM.M reaches NA" [expr {[pinnet RM M] eq {NA}}]
+check "l P2: device-pin-merge detector passes" [p2_no_device_merge $beforeL]
+check "l never-worse: off-grid blocker NE stays distinct from NA" \
+  [expr {[net_of_wire_at -350 120] ne [net_of_wire_at -390 140]}]
+check "l style: no wire crosses v8 body centre (-360,140)" [expr {![point_on_any_wire -360 140]}]
+
+# ---- shape (m): a COLLINEAR foreign wire on a detour row is ROUTED AROUND, never merged ------------
+# The stray-contact guard must reject a detour leg that would collinear-OVERLAP a foreign wire
+# (autotrim merges collinear overlapping wires -> a short). Shape (j)'s blockers already force a
+# step-out; adding a foreign FOO wire lying ON the below step-2 row y=100, inside leg2's span, makes
+# that side unsafe too, so the reroute must take the ABOVE side (y=160) and leave FOO distinct. With
+# fluid OFF the base stretch shorts v8 but leaves FOO alone; Layer 3 un-shorts v8 AND leaves FOO alone
+# -- i.e. it never merges the collinear foreign net (adversarial review wf_afb2b1af, collinear lens).
+setup_j
+xschem wire -385 100 -355 100                       ;# FOO collinear on the below step-2 row, in leg2's span
+xschem wire -355 100 -355 40; xschem instance devices/lab_pin -355 40 0 0 {lab=FOO name=lfoo}
+set beforeM [dev_pin_map]
+xschem unselect_all; xschem select instance [inst_by_name RM]
+we_move_stretch 110 60
+check "m P2: v8 NOT shorted (reroute stepped out around the collinear wire)" \
+  [expr {[pinnet v8 plus] ne [pinnet v8 minus]}]
+check "m P2: collinear foreign FOO NOT merged into NA (stray-contact rejected the overlapping row)" \
+  [expr {[net_of_wire_at -355 40] ne [net_of_wire_at -390 140]}]
+check "m route: detour avoided the FOO row and took the ABOVE side (a leg passes (-360,160))" \
+  [point_on_any_wire -360 160]
+check "m P1: RM.M reaches NA" [expr {[pinnet RM M] eq {NA}}]
+check "m P2: device-pin-merge detector passes" [p2_no_device_merge $beforeM]
+
 we_result

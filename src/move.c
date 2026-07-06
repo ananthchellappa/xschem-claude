@@ -1929,6 +1929,35 @@ static double fluid_grid_above(double v, double grid)
   return q;
 }
 
+/* incremental_wire_reroute.md Layer 3: perp-axis (horiz? y : x) min/max over ALL obstacle geometry
+ * -- every instance world bbox and every wire endpoint -- so the outward detour-row search (below)
+ * has a finite, geometry-derived cap. One grid beyond this extent on a side, a detour's along-leg
+ * (leg2) can meet no obstacle, so a side still blocked out there is a permanently-blocked riser
+ * (a foreign/co-moving pin fixed on M's or the landing column) => stop searching that side and
+ * decline cleanly, never widening into a never-terminating scan. */
+static void fluid_perp_extent(int horiz, double *plo, double *phi)
+{
+  double lo = 0, hi = 0;
+  int seen = 0, i, w;
+  for(w = 0; w < xctx->wires; ++w) {
+    double a = horiz ? xctx->wire[w].y1 : xctx->wire[w].x1;
+    double b = horiz ? xctx->wire[w].y2 : xctx->wire[w].x2;
+    if(!seen) { lo = hi = a; seen = 1; }
+    if(a < lo) lo = a; if(a > hi) hi = a;
+    if(b < lo) lo = b; if(b > hi) hi = b;
+  }
+  for(i = 0; i < xctx->instances; ++i) {
+    double a, b;
+    if(xctx->inst[i].ptr < 0) continue;
+    a = horiz ? xctx->inst[i].y1 : xctx->inst[i].x1;
+    b = horiz ? xctx->inst[i].y2 : xctx->inst[i].x2;
+    if(!seen) { lo = hi = a; seen = 1; }
+    if(a < lo) lo = a; if(a > hi) hi = a;
+    if(b < lo) lo = b; if(b > hi) hi = b;
+  }
+  *plo = lo; *phi = hi;
+}
+
 /* Layer 2: pristine (START-snapshot) net name of the MOVING instance pin at (x,y), or NULL if none.
  * Same instance/pin walk order as fluid_build_partition (skip ptr<0), so the snapshot index lines up
  * with fluid_snap_pinnet. */
@@ -2168,8 +2197,9 @@ static void fluid_reroute_around_obstacles(int orthogonal_wiring)
       double a_m, a_p = horiz ? px_s : py_s, a_q = horiz ? px_f : py_f;
       double a_same, a_for, a_C, dir, t;
       double bx1, by1, bx2, by2, body_p_lo, body_p_hi;
-      double Vb = 0, cand[2];
-      int have = 0, ci;
+      double Vb = 0;
+      double plo_ext = 0, phi_ext = 0, below_stop = 0, above_stop = 0, vb_lo = 0, vb_hi = 0;
+      int have = 0, ci, lo_done = 0, hi_done = 0, guard_steps = 0;
       char *prop = NULL;
 
       if(e1mov == e2mov) break;                      /* need exactly one moving-pin endpoint (=M) */
@@ -2212,34 +2242,61 @@ static void fluid_reroute_around_obstacles(int orthogonal_wiring)
       }
       if(a_C == a_m) break;                           /* degenerate landing (M already at the pin col) */
 
-      /* pick the FIRST detour side (perpendicular, one grid outside the body) whose three legs
-       * touch no foreign pin -- below/left first, then above/right */
-      cand[0] = fluid_grid_below(body_p_lo, grid);
-      cand[1] = fluid_grid_above(body_p_hi, grid);
-      for(ci = 0; ci < 2 && !have; ++ci) {
-        double vb = cand[ci];
-        /* leg endpoints in (x,y): along a -> x if horiz else y; perp -> y if horiz else x */
-        double l1x1 = horiz ? a_m : perp0, l1y1 = horiz ? perp0 : a_m;
-        double l1x2 = horiz ? a_m : vb,    l1y2 = horiz ? vb    : a_m;
-        double l2x2 = horiz ? a_C : vb,    l2y2 = horiz ? vb    : a_C;
-        double l3x2 = horiz ? a_C : perp0, l3y2 = horiz ? perp0 : a_C;
-        double cx = l3x2, cy = l3y2, mx = l1x1, my = l1y1; /* landing C (up-leg top), moving pin M */
-        if(fluid_seg_hits_foreign_pin(l1x1, l1y1, l1x2, l1y2, nf)) continue; /* M riser        */
-        if(fluid_seg_hits_foreign_pin(l1x2, l1y2, l2x2, l2y2, nf)) continue; /* detour along    */
-        if(fluid_seg_hits_foreign_pin(l2x2, l2y2, l3x2, l3y2, nf)) continue; /* up leg to NF row */
-        /* also reject a side whose legs would T onto some OTHER wire (foreign-net short) anywhere
-         * but the intended NF landing C or the moving pin M -- pick the other side, or decline */
-        if(fluid_seg_stray_contact(l1x1, l1y1, l1x2, l1y2, cx, cy, mx, my, w)) continue;
-        if(fluid_seg_stray_contact(l1x2, l1y2, l2x2, l2y2, cx, cy, mx, my, w)) continue;
-        if(fluid_seg_stray_contact(l2x2, l2y2, l3x2, l3y2, cx, cy, mx, my, w)) continue;
-        /* and reject a side whose legs plow through the MOVING device's OTHER (co-dragged) pins,
-         * which travel to fixed post-move offsets near M -- soldering one onto NF is a new short */
-        if(fluid_seg_hits_moving_pin(l1x1, l1y1, l1x2, l1y2, nf, mx, my)) continue;
-        if(fluid_seg_hits_moving_pin(l1x2, l1y2, l2x2, l2y2, nf, mx, my)) continue;
-        if(fluid_seg_hits_moving_pin(l2x2, l2y2, l3x2, l3y2, nf, mx, my)) continue;
-        Vb = vb; have = 1;
+      /* Layer 3 (incremental_wire_reroute.md sec 5/6 -- multi-bend detour): OUTWARD-STEPPING
+       * detour-row search. Layer 2 tried exactly one grid outside the body on each side and declined
+       * if both were blocked; Layer 3 keeps stepping the detour row one grid further out until a
+       * clear side is found, or both sides pass the schematic's perp-axis obstacle extent (then a
+       * still-blocked side is a permanently-blocked riser -> decline cleanly). Step 1 tries below
+       * then above at the body edge -- BYTE-IDENTICAL to Layer 2's pick, so every case Layer 2
+       * already routed at step 1 is unchanged; only both-blocked cases search further. The 3-leg
+       * construction + 9 obstacle guards are UNCHANGED (just evaluated at more candidate rows), so
+       * P1/P2 hold exactly as in Layer 2 and any over-rejection still degrades to baseline. */
+      fluid_perp_extent(horiz, &plo_ext, &phi_ext);
+      /* Cap = the outermost obstacle's grid row, plus ONE more grid so the search reaches the first
+       * row genuinely OUTSIDE that obstacle's guard tolerance: the along-leg guards match a pin/wire
+       * within cadsnap/2 (fluid_pin_on_seg), so an OFF-GRID extent obstacle blocks its own grid row
+       * AND the adjacent one -- without the extra grid the loop would stop inside the tolerance band
+       * and decline while a provably-clear row sits one grid beyond it (adversarial review wf_afb2b1af,
+       * off-grid decline-regression). Still finite + monotonic-safe: a truly boxed device declines. */
+      below_stop = fluid_grid_below(plo_ext, grid) - grid;
+      above_stop = fluid_grid_above(phi_ext, grid) + grid;
+      vb_lo = fluid_grid_below(body_p_lo, grid);       /* nearest below/left detour row (step 1)      */
+      vb_hi = fluid_grid_above(body_p_hi, grid);       /* nearest above/right detour row (step 1)     */
+      while(!have && !(lo_done && hi_done)) {
+        if(++guard_steps > 100000) break;              /* runaway backstop (geometry cap already bounds) */
+        for(ci = 0; ci < 2 && !have; ++ci) {
+          double vb;
+          if(ci == 0) { if(lo_done) continue; vb = vb_lo; }   /* below/left first (Layer-2 order) */
+          else        { if(hi_done) continue; vb = vb_hi; }   /* then above/right                 */
+          {
+          /* leg endpoints in (x,y): along a -> x if horiz else y; perp -> y if horiz else x */
+          double l1x1 = horiz ? a_m : perp0, l1y1 = horiz ? perp0 : a_m;
+          double l1x2 = horiz ? a_m : vb,    l1y2 = horiz ? vb    : a_m;
+          double l2x2 = horiz ? a_C : vb,    l2y2 = horiz ? vb    : a_C;
+          double l3x2 = horiz ? a_C : perp0, l3y2 = horiz ? perp0 : a_C;
+          double cx = l3x2, cy = l3y2, mx = l1x1, my = l1y1; /* landing C (up-leg top), moving pin M */
+          if(fluid_seg_hits_foreign_pin(l1x1, l1y1, l1x2, l1y2, nf)) continue; /* M riser        */
+          if(fluid_seg_hits_foreign_pin(l1x2, l1y2, l2x2, l2y2, nf)) continue; /* detour along    */
+          if(fluid_seg_hits_foreign_pin(l2x2, l2y2, l3x2, l3y2, nf)) continue; /* up leg to NF row */
+          /* also reject a side whose legs would T onto some OTHER wire (foreign-net short) anywhere
+           * but the intended NF landing C or the moving pin M -- pick the other side, or decline */
+          if(fluid_seg_stray_contact(l1x1, l1y1, l1x2, l1y2, cx, cy, mx, my, w)) continue;
+          if(fluid_seg_stray_contact(l1x2, l1y2, l2x2, l2y2, cx, cy, mx, my, w)) continue;
+          if(fluid_seg_stray_contact(l2x2, l2y2, l3x2, l3y2, cx, cy, mx, my, w)) continue;
+          /* and reject a side whose legs plow through the MOVING device's OTHER (co-dragged) pins,
+           * which travel to fixed post-move offsets near M -- soldering one onto NF is a new short */
+          if(fluid_seg_hits_moving_pin(l1x1, l1y1, l1x2, l1y2, nf, mx, my)) continue;
+          if(fluid_seg_hits_moving_pin(l1x2, l1y2, l2x2, l2y2, nf, mx, my)) continue;
+          if(fluid_seg_hits_moving_pin(l2x2, l2y2, l3x2, l3y2, nf, mx, my)) continue;
+          Vb = vb; have = 1;
+          }
+        }
+        if(!have) {                                    /* both sides blocked this far out: step further */
+          vb_lo -= grid; if(vb_lo < below_stop) lo_done = 1;
+          vb_hi += grid; if(vb_hi > above_stop) hi_done = 1;
+        }
       }
-      if(!have) break;                               /* no clear detour side: degrade to baseline */
+      if(!have) break;                               /* no clear detour row at any distance: baseline */
 
       /* --- commit the detour: reuse W as the M riser, store the along + up legs, all on NF's prop.
        *     storeobject() reallocs xctx->wire, so index (never a cached pointer) across it. --- */
