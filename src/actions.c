@@ -3694,6 +3694,15 @@ void clear_schematic(int cancel, int symbol)
         remove_backup();
         xctx->currsch = 0;
         unselect_all(1);
+        /* incremental_wire_reroute Phase II: if a fluid stretch gesture is still armed, tearing down
+         * the buffer here must drop its move-scoped state -- else a later move_objects(RUBBER) could
+         * restore the pre-clear geometry onto the cleared buffer (resurrecting deleted content), and
+         * the deep copy / grabbed-coord array would leak. Frees the reroute snapshot (fluid_reroute_
+         * discard) and the stretch scope (stretch_grabbed_xy, allocated by select_attached_nets). */
+        fluid_reroute_discard();
+        xctx->stretch_select = 0;
+        xctx->stretch_grabbed_n = 0;
+        my_free(_ALLOC_ID_, &xctx->stretch_grabbed_xy);
         remove_symbols();
         clear_drawing();
         /* next free untitled[-n] name, avoiding both on-disk files and names already open

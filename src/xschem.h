@@ -1245,6 +1245,20 @@ typedef struct {
    * END: if 0, every selected wire at END is a tool-owned follow-wire and is deselected (transient,
    * not persistent user selection). Only meaningful under fluid_editing. */
   int fluid_startsel_wires;
+  /* incremental_wire_reroute.md Phase II (per-snap-step reroute, restore-and-reapply). A fluid
+   * stretch drag snapshots the whole pristine (post-kiss, pre-delta) schematic here at move START;
+   * each qualifying move_objects(RUBBER) step restores it and re-applies the current TOTAL drag
+   * delta through the unchanged reroute pipeline, so the live route tracks the cursor and the
+   * committed result on release is byte-identical to the release-only path. Uses the same
+   * mem_serialize_slot/mem_restore_slot machinery as the undo stack but with an independent
+   * lifetime (a scratch slot, NOT in uslot[]), so it is unaffected by the disk-vs-memory undo
+   * backend. See doc/claude/suggestions/incremental_reroute_phase2_decision.md. */
+  Undo_slot fluid_reroute_snap;   /* pristine geometry+selection snapshot for the active gesture */
+  int fluid_reroute_active;       /* 1 while a fluid stretch gesture owns fluid_reroute_snap */
+  int fluid_reroute_dirty;        /* 1 once a RUBBER step has committed geometry (END must restore) */
+  /* the four session-stable id counters at gesture START -- restored after every per-step
+   * mem_restore_slot so tool-created wires re-stamp identical ids each step (determinism, P8). */
+  unsigned int fluid_reroute_wid, fluid_reroute_iid, fluid_reroute_gid, fluid_reroute_tid;
   short move_flip;
   int manhattan_lines;
   int movelastsel;
@@ -1868,6 +1882,12 @@ extern void mem_push_undo(void);
 extern void mem_pop_undo(int redo, int set_modify_status);
 extern void mem_serialize_slot(Undo_slot *s);
 extern void mem_restore_slot(Undo_slot *s, int set_modify_status);
+/* incremental_wire_reroute Phase II: alloc/free a STANDALONE snapshot slot (not in uslot[]).
+ * mem_snapshot_alloc must run before mem_serialize_slot on a scratch slot (mem_serialize_slot
+ * frees prior contents first, dereferencing the per-layer arrays). mem_snapshot_free releases the
+ * deep copy AND the per-layer arrays and re-zeroes the slot. */
+extern void mem_snapshot_alloc(Undo_slot *s);
+extern void mem_snapshot_free(Undo_slot *s);
 extern void mem_delete_undo(void);
 extern void mem_clear_undo(void);
 extern int load_schematic(int load_symbol, const char *fname, int reset_undo, int alert);
@@ -1910,6 +1930,9 @@ extern void arc_3_points(double x1, double y1, double x2, double y2, double x3, 
 /* sel: if set to 1 change references only on selected items, like in a copy operation */
 extern void update_attached_floaters(const char *from_name, int inst, int sel);
 extern void move_objects(int what,int merge, double dx, double dy);
+/* incremental_wire_reroute Phase II: free any armed fluid-reroute snapshot + clear its flags.
+ * Called by clear_schematic() so a buffer teardown/reload mid-gesture can't resurrect/leak it. */
+extern void fluid_reroute_discard(void);
 extern void check_collapsing_objects();
 extern void redraw_w_a_l_r_p_z_rubbers(int force); /* redraw wire, arcs, line, polygon rubbers */
 extern void copy_objects(int what);

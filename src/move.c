@@ -1794,6 +1794,50 @@ static void fluid_check_move_invariants(void)
   tclsetvar("fluid_last_move_disconnects", my_itoa(disconnects));
 }
 
+/* incremental_wire_reroute.md Phase II: restore the live schematic to the pristine (post-kiss,
+ * pre-delta) snapshot taken at move START, then re-establish the move-scoped state that
+ * mem_restore_slot() resets. Called before each per-step reroute (RUBBER) and before the final
+ * commit at a dirty END.
+ *
+ * mem_restore_slot() clears the drawing, frees+reallocs every object array, and (via
+ * unselect_all(1)) ZEROES xctx->ui_state and lastsel. Everything else the reroute pipeline needs
+ * (x1/y1 anchor, deltax/deltay, stretch_select, stretch_grabbed_xy/n, connect_by_kissing/kissing,
+ * fluid_startsel_wires, the Phase-1 partition snapshot) lives in xctx scalars/side-arrays that
+ * restore does NOT touch, so it survives. What we must put back here:
+ *   - ui_state: preserve the whole word (STARTMOVE + any gesture bits) across the restore;
+ *   - the four session-stable id counters: reset to their START values so tool-created wires
+ *     (exit stubs, split fragments, kiss stubs) re-stamp IDENTICAL ids every step (determinism);
+ *   - sel_array/lastsel: rebuilt from the restored per-object .sel bits;
+ *   - movelastsel = lastsel: so update_symbol_bboxes()'s [0,movelastsel) bound tracks the
+ *     restored selection (a stale movelastsel > lastsel re-fires the dce0bea6 symbol_bbox
+ *     heap-overflow). */
+static void fluid_reroute_restore(void)
+{
+  unsigned int saved_ui = xctx->ui_state;
+  mem_restore_slot(&xctx->fluid_reroute_snap, 0);
+  xctx->ui_state = saved_ui;
+  xctx->wire_id_counter = xctx->fluid_reroute_wid;
+  xctx->inst_id_counter = xctx->fluid_reroute_iid;
+  xctx->gfx_id_counter  = xctx->fluid_reroute_gid;
+  xctx->text_id_counter = xctx->fluid_reroute_tid;
+  xctx->need_reb_sel_arr = 1;
+  rebuild_selected_array();
+  xctx->movelastsel = xctx->lastsel;
+}
+
+/* incremental_wire_reroute.md Phase II: drop the active gesture's snapshot (free the deep copy +
+ * the per-layer arrays) and clear the ownership flags. Runs on EVERY move END and ABORT exit so a
+ * leaked fluid_reroute_active can never make an unrelated later gesture restore a stale/freed
+ * snapshot. Also called from clear_schematic() (actions.c) so tearing down / reloading the buffer
+ * while a fluid stretch is armed cannot resurrect the pre-clear geometry or leak the deep copy.
+ * NOT static (clear_schematic calls it). Idempotent (mem_snapshot_free no-ops on a zeroed slot). */
+void fluid_reroute_discard(void)
+{
+  mem_snapshot_free(&xctx->fluid_reroute_snap);
+  xctx->fluid_reroute_active = 0;
+  xctx->fluid_reroute_dirty = 0;
+}
+
 /* merge param unused, RFU */
 void move_objects(int what, int merge, double dx, double dy)
 {
@@ -1805,8 +1849,17 @@ void move_objects(int what, int merge, double dx, double dy)
   #if HAS_CAIRO==1
   int customfont;
   #endif
-  xLine ** const line = xctx->line;
-  xWire * const wire = xctx->wire;
+  /* incremental_wire_reroute.md Phase II: when a fluid stretch RUBBER step wants to commit the
+   * reroute live, it restores the pristine snapshot, sets commit_now, and FALLS THROUGH to the END
+   * geometry-commit block below (which is guarded by `(what & END) || commit_now`). commit_now then
+   * gates OUT every END-only finalizer (undo push, ui_state teardown, hilight, the final draw) so
+   * the SAME commit code runs, but the gesture stays live. */
+  int commit_now = 0;
+  /* NOT const: a mem_restore_slot() inside a RUBBER step or a dirty END frees+reallocs xctx->wire /
+   * xctx->line, so these are re-fetched just before the commit block (using the stale capture would
+   * be a heap use-after-free). */
+  xLine **line = xctx->line;
+  xWire *wire = xctx->wire;
 
   dbg(1, "move_objects: what=%d, dx=%g, dy=%g\n", what, dx, dy);
   if(what & START)
@@ -1847,9 +1900,36 @@ void move_objects(int what, int merge, double dx, double dy)
     * START -- it must be taken before follow-wires are grabbed/folded, so it cannot be recomputed
     * here. The END deselect is gated on stretch_select, set only by select_attached_nets alongside
     * that count, so the two are always consistent (a non-stretch move never consumes it). */
+   /* incremental_wire_reroute.md Phase II: snapshot the pristine (post-kiss, pre-delta) schematic so
+    * each RUBBER step can restore-and-reapply the total delta. Taken HERE -- after connect_by_kissing
+    * and after movelastsel was refreshed to lastsel above -- so the snapshot's selection count equals
+    * movelastsel. Only for a fluid stretch (the sole path that reroutes follow-wires). fluid_reroute_
+    * discard() first clears any snapshot a prior gesture failed to release (defensive; END/ABORT
+    * always discard, so normally a no-op). */
+   fluid_reroute_discard();
+   if(tclgetboolvar("fluid_editing") && xctx->stretch_select) {
+     mem_snapshot_alloc(&xctx->fluid_reroute_snap);
+     mem_serialize_slot(&xctx->fluid_reroute_snap);
+     xctx->fluid_reroute_wid = xctx->wire_id_counter;
+     xctx->fluid_reroute_iid = xctx->inst_id_counter;
+     xctx->fluid_reroute_gid = xctx->gfx_id_counter;
+     xctx->fluid_reroute_tid = xctx->text_id_counter;
+     xctx->fluid_reroute_active = 1;
+     xctx->fluid_reroute_dirty = 0;
+   }
   }
   if(what & ABORT)  /* abort operation */
   {
+   /* incremental_wire_reroute.md Phase II: a fluid stretch that committed >=1 live RUBBER step has
+    * mutated the live geometry. Roll it back to the pristine snapshot FIRST, so the rest of this
+    * ABORT block (and the kissing pop_undo below) sees exactly the post-kiss/pre-move state a
+    * preview-only drag would present; then drop the snapshot. Repaint at the block end because the
+    * committed intermediate route was baked into the canvas. */
+   int fluid_was_dirty = xctx->fluid_reroute_active && xctx->fluid_reroute_dirty;
+   if(xctx->fluid_reroute_active) {
+     if(xctx->fluid_reroute_dirty) fluid_reroute_restore();
+     fluid_reroute_discard();
+   }
    xctx->paste_from = 0;
    draw_selection(xctx->gctiled,0);
    if(xctx->kissing) {
@@ -1878,13 +1958,31 @@ void move_objects(int what, int merge, double dx, double dy)
    xctx->ui_state &= ~STARTMOVE;
    fluid_discard_snapshot(); /* Phase 1: aborted gesture -> drop the START snapshot */
    update_symbol_bboxes(0, 0);
+   /* the rolled-back pristine geometry replaces the committed intermediate route on screen. No
+    * set_modify(): the RUBBER steps never set it (see the live-step branch), so an aborted fluid
+    * drag leaves the buffer's modified flag exactly as it was pre-drag. */
+   if(fluid_was_dirty) draw();
   }
   if(what & RUBBER)  /* draw objects while moving */
   {
    if(xctx->mousex_snap == xctx->x2 && xctx->mousey_snap == xctx->y2) return;
-   xctx->x2=xctx->mousex_snap;xctx->y2=xctx->mousey_snap;
-   draw_selection(xctx->gctiled,0);
-   xctx->deltax = xctx->x2-xctx->x1; xctx->deltay = xctx->y2 - xctx->y1;
+   /* incremental_wire_reroute.md Phase II: when a fluid stretch owns a snapshot, reroute LIVE on
+    * every snap-grid step -- restore the pristine geometry and re-apply the CURRENT TOTAL delta
+    * through the reroute pipeline (the shared geometry-commit block below, reached via commit_now).
+    * mousex/y_snap is already cadsnap-quantized, so passing the no-motion guard above == a move of
+    * >= one cadsnap. Pure translation only (RUBBER never rotates; the rot/flip==0 test is a guard). */
+   if(tclgetboolvar("fluid_editing") && (xctx->ui_state & STARTMOVE) && xctx->stretch_select &&
+      xctx->fluid_reroute_active && xctx->move_rot == 0 && xctx->move_flip == 0) {
+     xctx->x2 = xctx->mousex_snap; xctx->y2 = xctx->mousey_snap;
+     xctx->deltax = xctx->x2 - xctx->x1; xctx->deltay = xctx->y2 - xctx->y1;
+     fluid_reroute_restore();   /* live geometry+selection -> pristine (frees+reallocs the arrays) */
+     commit_now = 1;            /* fall through to the shared END geometry-commit block */
+   } else {
+     /* default / non-fluid: rubber-band preview only (bottom draw_selection paints it) */
+     xctx->x2=xctx->mousex_snap;xctx->y2=xctx->mousey_snap;
+     draw_selection(xctx->gctiled,0);
+     xctx->deltax = xctx->x2-xctx->x1; xctx->deltay = xctx->y2 - xctx->y1;
+   }
   }
   if(what & ROTATELOCAL) {
    xctx->rotatelocal=1;
@@ -1900,9 +1998,24 @@ void move_objects(int what, int merge, double dx, double dy)
    xctx->move_flip = !xctx->move_flip;
    update_symbol_bboxes(xctx->move_rot, xctx->move_flip);
   }
-  if(what & END)                                 /* move selected objects */
+  if((what & END) || commit_now)     /* commit the move: real END, or a live fluid RUBBER step */
   {
    int firsti, firstw;
+
+   /* --- END-only pre-commit finalizers; a live fluid RUBBER step (commit_now) skips them and
+    * jumps straight to the shared geometry commit below. --- */
+   if(!commit_now) {
+   int end_was_dirty = xctx->fluid_reroute_active && xctx->fluid_reroute_dirty;
+   /* incremental_wire_reroute.md Phase II: on a fluid stretch, RUBBER steps committed intermediate
+    * routes into the live geometry. Roll back to the pristine snapshot BEFORE push_undo, so the undo
+    * baseline (and capture_undo_ids' object-shape guard) is the true pre-move state, not the last
+    * intermediate route; then drop the snapshot. Unconditional on active (a release-only fluid
+    * gesture frees its unused snapshot here too), and ABOVE the no-motion early return so a
+    * zero-delta release still frees + rolls back. */
+   if(xctx->fluid_reroute_active) {
+     if(xctx->fluid_reroute_dirty) fluid_reroute_restore();
+     fluid_reroute_discard();
+   }
 
    dbg(1, "end move: unlink sel_file\n");
    xunlink(sel_file);
@@ -1912,6 +2025,18 @@ void move_objects(int what, int merge, double dx, double dy)
    /* button released after clicking elements, without moving... do nothing */
    if(xctx->drag_elements && xctx->deltax==0 && xctx->deltay == 0) {
       xctx->ui_state &= ~STARTMOVE;
+      /* Clear the stretch scope, like the normal END tail (2321-2323) and ABORT do: this early
+       * return skips those, so otherwise stretch_select / stretch_grabbed_xy bleed into the NEXT
+       * gesture -- a plain move would then run the stretch cleanup with stale grabbed coords, and
+       * (Phase II) the START/RUBBER reroute gates key on stretch_select so a plain move would
+       * spuriously reroute. Pre-existing leak on HEAD; closed here as Phase II makes this a
+       * first-class path (a fluid drag out and back to the origin snap). */
+      xctx->stretch_select = 0;
+      xctx->stretch_grabbed_n = 0;
+      my_free(_ALLOC_ID_, &xctx->stretch_grabbed_xy);
+      /* a dirty fluid drag committed live steps that the roll-back above reverted to pristine --
+       * repaint so the stale committed route is cleared from the canvas. */
+      if(end_was_dirty) draw();
       return;
    }
 
@@ -1932,9 +2057,16 @@ void move_objects(int what, int merge, double dx, double dy)
      xctx->deltax = dx;
      xctx->deltay = dy;
    }
+   } /* end if(!commit_now): END-only pre-commit finalizers */
+
+   /* --- shared geometry commit: byte-for-byte identical for a real END and a fluid RUBBER step.
+    * Re-fetch wire/line -- a fluid_reroute_restore() (in the RUBBER branch, or the dirty-END block
+    * above) reallocated xctx->wire / xctx->line, so the function-entry captures are stale. --- */
+   wire = xctx->wire;
+   line = xctx->line;
    /* calculate moving symbols bboxes before actually doing the move */
    firsti = firstw = 1;
-   draw_selection(xctx->gctiled,0);
+   if(!commit_now) draw_selection(xctx->gctiled,0);  /* END: erase the last rubber-band preview */
    update_symbol_bboxes(0, 0);
    /* corner-slide rubber-band (wire-editing Phase 4): on an orthogonal, axis-aligned,
     * non-rotating move, let perpendicular attached wires forming a corner SLIDE with
@@ -2318,27 +2450,55 @@ void move_objects(int what, int merge, double dx, double dy)
      for(wi = 0; wi < xctx->wires; ++wi) if(xctx->wire[wi].sel) { xctx->wire[wi].sel = 0; any = 1; }
      if(any) { xctx->need_reb_sel_arr = 1; rebuild_selected_array(); }
    }
-   xctx->stretch_select = 0;
-   xctx->stretch_grabbed_n = 0;
-   my_free(_ALLOC_ID_, &xctx->stretch_grabbed_xy);
+   /* --- END-only post-commit finalizers. A live fluid RUBBER step (commit_now) keeps the gesture
+    * state and only repaints. stretch_select / stretch_grabbed_xy MUST be cleared/freed HERE, not
+    * inside the shared commit above -- they scope the reroute (remove_move_orphan_wires reads
+    * stretch_grabbed_xy) and must survive every per-step commit, to be freed exactly once at the
+    * real END/ABORT (folding them into the shared commit would UAF on step 2 and double-free). --- */
+   if(!commit_now) {
+     xctx->stretch_select = 0;
+     xctx->stretch_grabbed_n = 0;
+     my_free(_ALLOC_ID_, &xctx->stretch_grabbed_xy);
 
-   if(xctx->hilight_nets) {
-     propagate_hilights(1, 1, XINSERT_NOREPLACE);
+     if(xctx->hilight_nets) {
+       propagate_hilights(1, 1, XINSERT_NOREPLACE);
+     }
+
+     xctx->ui_state &= ~STARTMOVE;
+     if(xctx->ui_state & STARTMERGE) xctx->ui_state |= SELECTION; /* leave selection state so objects can be deleted */
+     xctx->ui_state &= ~STARTMERGE;
+     xctx->move_rot=xctx->move_flip=0;
+     xctx->x1=xctx->y1=xctx->x2=xctx->y2=xctx->deltax=xctx->deltay=0.;
+     /* P3 write-through: a moved pin-name view records its new offset on the owning pin;
+      * a pin moved without its view makes the view follow (Option B). */
+     pin_views_reconcile_after_move();
+     fluid_check_move_invariants(); /* Phase 1 runtime P1/P2 guard (log-only, gated on fluid_editing) */
+     set_modify(1); /* must be done before draw() if floaters are present to force cached values update */
+     draw();
+     xctx->rotatelocal=0;
+   } else {
+     /* incremental_wire_reroute.md Phase II live step: the reroute is committed into the live
+      * geometry but the gesture stays open. Mark dirty (END must roll back to pristine before its
+      * push_undo), then repaint. The committed geometry ALREADY includes the delta, so zero delta
+      * around the redraw (draw_selection paints at coord+delta -> would double-offset) and RESTORE
+      * it after: the interactive END is move_objects(END,0,0,0) and consumes xctx->deltax/deltay as
+      * the accumulated total, so leaving it zeroed would snap the whole move back to the origin. */
+     double sdx = xctx->deltax, sdy = xctx->deltay;
+     xctx->fluid_reroute_dirty = 1;
+     /* Deliberately NO set_modify() here: like a non-fluid drag preview, the buffer's modified flag
+      * is set only at the REAL END, so a fluid drag that is aborted or returns to the origin stays
+      * clean (no spurious modified/save-prompt). Floater caches still refresh live -- each step's
+      * fluid_reroute_restore() -> mem_restore_slot() invalidates floater_inst_table, so the draw()
+      * below recomputes them from the current geometry. */
+     xctx->deltax = xctx->deltay = 0.0;
+     draw();
+     draw_selection(xctx->gc[SELLAYER], 0);
+     if(tclgetboolvar("draw_crosshair")) draw_crosshair(3, 0);
+     xctx->deltax = sdx; xctx->deltay = sdy;
    }
-
-   xctx->ui_state &= ~STARTMOVE;
-   if(xctx->ui_state & STARTMERGE) xctx->ui_state |= SELECTION; /* leave selection state so objects can be deleted */
-   xctx->ui_state &= ~STARTMERGE;
-   xctx->move_rot=xctx->move_flip=0;
-   xctx->x1=xctx->y1=xctx->x2=xctx->y2=xctx->deltax=xctx->deltay=0.;
-   /* P3 write-through: a moved pin-name view records its new offset on the owning pin;
-    * a pin moved without its view makes the view follow (Option B). */
-   pin_views_reconcile_after_move();
-   fluid_check_move_invariants(); /* Phase 1 runtime P1/P2 guard (log-only, gated on fluid_editing) */
-   set_modify(1); /* must be done before draw() if floaters are present to force cached values update */
-   draw();
-   xctx->rotatelocal=0;
-  } /* what & end */
-  draw_selection(xctx->gc[SELLAYER], 0);
-  if(tclgetboolvar("draw_crosshair")) draw_crosshair(3, 0); /* what = 1(clear) + 2(draw) */
+  } /* what & end (or a live fluid commit_now step) */
+  if(!commit_now) {
+    draw_selection(xctx->gc[SELLAYER], 0);
+    if(tclgetboolvar("draw_crosshair")) draw_crosshair(3, 0); /* what = 1(clear) + 2(draw) */
+  }
 }

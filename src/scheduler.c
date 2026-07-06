@@ -4895,31 +4895,63 @@ static int xschem_cmds_m(Tcl_Interp *interp, int argc, const char *argv[], int *
      *   if dx and dy are given move by that amount. */
     else if(!strcmp(argv[1], "move_objects"))
     {
-      int nparam = 0;
-      int kissing= 0;
-      int stretch = 0;
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
       if(scheduler_readonly_reject(interp, "move_objects")) return TCL_ERROR;
-      if(argc > 2) {
-        int i;
-        for(i = 2; i < argc; i++) {
-          if(!strcmp(argv[i], "kissing")) {kissing = 1; nparam++;}
-          if(!strcmp(argv[i], "stretch")) {stretch = 1; nparam++;}
+      /* Headless incremental-drag seam (incremental_wire_reroute.md Phase II). Drive a stretch
+       * drag one snap step at a time -- the way the GUI does on each Motion event -- so a test can
+       * commit the SAME gesture BOTH stepwise (a move_objects(RUBBER) per snap grid) and one-shot
+       * at release, and assert the resulting .sch is byte-identical. Sub-verbs:
+       *   move_objects start <ax> <ay> [kissing] [stretch]  arm + move_objects(START) at anchor
+       *   move_objects step  <x>  <y>                        one move_objects(RUBBER) at (x,y)
+       *   move_objects end   [<dx> <dy>]                     move_objects(END) (explicit delta if given)
+       * The one-shot release form `move_objects <dx> <dy> [kissing] [stretch]` is the final else. */
+      if(argc > 2 && !strcmp(argv[2], "start")) {
+        int i, k2 = 0, s2 = 0;
+        for(i = 5; i < argc; i++) {                 /* flags after the two anchor coords */
+          if(!strcmp(argv[i], "kissing")) k2 = 1;
+          else if(!strcmp(argv[i], "stretch")) s2 = 1;
         }
+        if(argc > 4) { xctx->mousex_snap = atof(argv[3]); xctx->mousey_snap = atof(argv[4]); }
+        if(k2) xctx->connect_by_kissing = 2;        /* arm BEFORE select_attached_nets (tap-arm skip) */
+        if(s2) select_attached_nets();
+        move_objects(START, 0, 0, 0);
+        /* START does not initialise x2/y2; seed them to the anchor so the first `step`
+         * (necessarily a different snap) always passes the RUBBER no-motion guard. */
+        xctx->x2 = xctx->x1; xctx->y2 = xctx->y1;
       }
-      /* arm kissing BEFORE select_attached_nets so the latter can see it and skip
-       * grabbing a through-run tap arm (a stub will replace it). See wire_through_tap_arm(). */
-      if(kissing) xctx->connect_by_kissing = 2;
-      if(stretch) select_attached_nets();
-      if(argc > 3 + nparam) {
-        move_objects(START,0,0,0);
-        move_objects( END,0,atof(argv[2]), atof(argv[3]));
+      else if(argc > 2 && !strcmp(argv[2], "step")) {
+        if(argc > 4) { xctx->mousex_snap = atof(argv[3]); xctx->mousey_snap = atof(argv[4]); }
+        move_objects(RUBBER, 0, 0, 0);
+      }
+      else if(argc > 2 && !strcmp(argv[2], "end")) {
+        if(argc > 4) move_objects(END, 0, atof(argv[3]), atof(argv[4]));
+        else         move_objects(END, 0, 0, 0);
+      }
+      else if(argc > 2 && !strcmp(argv[2], "abort")) {
+        move_objects(ABORT, 0, 0, 0);
       }
       else {
-        /* MENU "Move objects" arms a DEFERRED move (mouse over the menu); the canvas click
-         * starts it. The M KEY is made immediate separately in callback.c case 'm'. */
-        xctx->ui_state |= MENUSTART;
-        xctx->ui_state2 = MENUSTARTMOVE;
+        int nparam = 0, kissing = 0, stretch = 0, i;
+        if(argc > 2) {
+          for(i = 2; i < argc; i++) {
+            if(!strcmp(argv[i], "kissing")) {kissing = 1; nparam++;}
+            if(!strcmp(argv[i], "stretch")) {stretch = 1; nparam++;}
+          }
+        }
+        /* arm kissing BEFORE select_attached_nets so the latter can see it and skip
+         * grabbing a through-run tap arm (a stub will replace it). See wire_through_tap_arm(). */
+        if(kissing) xctx->connect_by_kissing = 2;
+        if(stretch) select_attached_nets();
+        if(argc > 3 + nparam) {
+          move_objects(START,0,0,0);
+          move_objects( END,0,atof(argv[2]), atof(argv[3]));
+        }
+        else {
+          /* MENU "Move objects" arms a DEFERRED move (mouse over the menu); the canvas click
+           * starts it. The M KEY is made immediate separately in callback.c case 'm'. */
+          xctx->ui_state |= MENUSTART;
+          xctx->ui_state2 = MENUSTARTMOVE;
+        }
       }
       Tcl_ResetResult(interp);
     }
