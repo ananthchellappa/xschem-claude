@@ -1514,18 +1514,18 @@ static void remove_move_orphan_wires(void)
   my_free(_ALLOC_ID_, &doomed);
 }
 
-/* Exit-stub preservation (wire-editing Phase 6, Issue E -> R13, TC10). The "dream":
- * after a stretch move, a short stub leaves each moved pin along the pin's OUTWARD
- * NORMAL (its natural lead direction) before the route's first bend, so the wire
- * physically exits the pin the way the symbol draws its lead rather than turning
+/* Exit-stub preservation (wire-editing Phase 6, Issue E -> R13, TC10; nice_drag_rerouting
+ * Phase 3 §8). The "dream": after a stretch move, a short stub leaves each moved pin along
+ * the pin's OUTWARD NORMAL (its natural lead direction) before the route's first bend, so the
+ * wire physically exits the pin the way the symbol draws its lead rather than turning
  * immediately. A uniform, symbol-driven rule (the most predictable one -- Issue E).
  *
  * For each MOVING (selected) instance pin carrying exactly one attached wire (the
  * route's first leg):
- *   - the pin's outward normal = the dominant axis of (pin - symbol-bbox-center); e.g.
- *     res.sym pin M sits at the top of a +y lead (body below it) so it exits +y. (The
- *     bbox can be skewed a little by pin-number text, but for real symbols the pin's
- *     outward offset dwarfs that skew, so the dominant axis is the lead direction.)
+ *   - the pin's outward normal comes from get_pin_escape_normal() (nice_drag_rerouting §6:
+ *     nearest body edge; e.g. res.sym pin M sits at the top edge so it exits +y). This
+ *     replaced the earlier crude centroid dominant-axis heuristic; the two agree on
+ *     symmetric symbols and the getter is better on asymmetric/corner pins.
  *   - if the first leg already runs ALONG that normal (a straight exit) leave it: a
  *     colinear stub would just be merged back by trim_wires, and a straight exit can't
  *     cross the symbol body, so no stub is needed;
@@ -1553,21 +1553,21 @@ static void insert_exit_stubs(void)
                                 * the pin/corner scans of later pins/instances (issue 0047) */
   if(grid <= 0.0) grid = 1.0;
   for(inst = 0; inst < xctx->instances; inst++) {
-    double bx1, by1, bx2, by2, cx, cy;
+    const char *itype;
     if(!xctx->inst[inst].sel) continue;        /* only MOVING instances */
     if(xctx->inst[inst].ptr < 0) continue;
-    symbol_bbox(inst, &bx1, &by1, &bx2, &by2);
-    cx = (bx1 + bx2) / 2.0; cy = (by1 + by2) / 2.0;
+    itype = xctx->sym[xctx->inst[inst].ptr].type;
+    if(itype && !strcmp(itype, "label")) continue;  /* net labels have no body/escape (§2) */
     rects = (xctx->inst[inst].ptr + xctx->sym)->rects[PINLAYER];
     for(r = 0; r < rects; r++) {
-      double px, py, ddx, ddy, nx, ny, sx, sy, fx, fy, nfx, nfy;
+      double px, py, nx, ny, sx, sy, fx, fy, nfx, nfy;
       int wfound = -1, endsel = 0, cnt = 0, has_corner = 0;
       get_inst_pin_coord(inst, r, &px, &py);
-      /* outward normal = dominant axis of (pin - symbol center) */
-      ddx = px - cx; ddy = py - cy;
-      if(ddx == 0.0 && ddy == 0.0) continue;
-      if(fabs(ddx) >= fabs(ddy)) { nx = (ddx > 0) ? 1.0 : -1.0; ny = 0.0; }
-      else                       { nx = 0.0; ny = (ddy > 0) ? 1.0 : -1.0; }
+      /* outward escape normal (nice_drag_rerouting §6, geometry nearest-edge -- replaces the
+       * old crude centroid dominant-axis heuristic; agrees with it on symmetric symbols like
+       * res, better on asymmetric/corner pins). */
+      get_pin_escape_normal(inst, r, &nx, &ny);
+      if(nx == 0.0 && ny == 0.0) continue;
       /* exactly one wire endpoint exactly on the pin = the route's first leg */
       for(n = 0; n < nwires0; n++) {
         if(xctx->wire[n].x1 == px && xctx->wire[n].y1 == py)      { cnt++; wfound = n; endsel = 1; }
@@ -2243,11 +2243,14 @@ void move_objects(int what, int merge, double dx, double dy)
    if(tclgetboolvar("autotrim_wires")) maintain_wire_segments();
    else if(xctx->stretch_select) trim_wires();
    if(xctx->stretch_select) remove_move_orphan_wires();
-   /* Exit-stub preservation (wire-editing Phase 6, Issue E -> R13). After the cleanup
-    * above, ensure each moved pin's route leaves the pin along the pin's outward normal
-    * (a short stub before the first bend). Runs AFTER trim_wires() so the stub it inserts
-    * is never merged back. Gated on wire_exit_stub (default OFF) -- the biggest behavior
-    * change, so it ships dark and leaves every existing move byte-identical when off. */
+   /* Exit-stub preservation (wire-editing Phase 6, Issue E -> R13). After the cleanup above,
+    * ensure each moved DEVICE pin's route leaves the pin along the pin's outward escape normal
+    * (get_pin_escape_normal, geometry nearest-edge -- nice_drag_rerouting Phase 3 §6/§8) with a
+    * short stub before the first bend. Runs AFTER trim_wires() so the stub is never merged
+    * back. Gated on wire_exit_stub (default OFF) => byte-identical when off. NOTE: wiring this
+    * into fluid_editing mode is DEFERRED -- firing insert_exit_stubs on a plain fluid drag
+    * disconnects a net even for a 2-pin res (caught by the Phase-1 P1 guard); the exit-stub
+    * slide must be made connectivity-safe first. See doc/claude/specs/nice_drag_rerouting.md. */
    if(xctx->stretch_select && tclgetboolvar("wire_exit_stub") && orthogonal_wiring &&
       xctx->move_rot == 0 && xctx->move_flip == 0) {
      insert_exit_stubs();
