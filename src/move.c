@@ -1914,6 +1914,361 @@ static int fluid_ml_blocked(int ml, int sel1)
   return fluid_L_bridges_device(rx1, hy, rx2, vx, ry1, ry2);
 }
 
+/* incremental_wire_reroute.md Layer 2 helpers (below). Largest on-grid value strictly LESS than v /
+ * strictly GREATER than v -- used to pick a detour row one grid OUTSIDE a device body edge. */
+static double fluid_grid_below(double v, double grid)
+{
+  double q = floor(v / grid) * grid;
+  if(q >= v) q -= grid;
+  return q;
+}
+static double fluid_grid_above(double v, double grid)
+{
+  double q = ceil(v / grid) * grid;
+  if(q <= v) q += grid;
+  return q;
+}
+
+/* Layer 2: pristine (START-snapshot) net name of the MOVING instance pin at (x,y), or NULL if none.
+ * Same instance/pin walk order as fluid_build_partition (skip ptr<0), so the snapshot index lines up
+ * with fluid_snap_pinnet. */
+static const char *fluid_moving_pin_net(double x, double y)
+{
+  int i, p, k = 0, npins, base;
+  if(!fluid_snap_pinnet || fluid_snap_npins <= 0) return NULL;
+  for(i = 0; i < xctx->instances; ++i) {
+    if(xctx->inst[i].ptr < 0) continue;
+    npins = (xctx->inst[i].ptr + xctx->sym)->rects[PINLAYER];
+    base = k; k += npins;
+    if(base + npins > fluid_snap_npins) break;
+    if(!xctx->inst[i].sel) continue;                 /* only MOVING instances */
+    for(p = 0; p < npins; ++p) {
+      double px, py;
+      get_inst_pin_coord(i, p, &px, &py);
+      if(point_near_pin(px, py, x, y)) return fluid_snap_pinnet[base + p];
+    }
+  }
+  return NULL;
+}
+
+/* Layer 2: does segment (x1,y1)-(x2,y2) pass over any STATIONARY device pin that was on a net OTHER
+ * than `nf` at START? Such a pin on a detour leg would merge nf with that foreign net -- a NEW short.
+ * A same-net (== nf) pin or an unconnected (empty) pin is fine to touch. */
+static int fluid_seg_hits_foreign_pin(double x1, double y1, double x2, double y2, const char *nf)
+{
+  int i, p, k = 0, npins, base;
+  if(!fluid_snap_pinnet || fluid_snap_npins <= 0) return 0;
+  for(i = 0; i < xctx->instances; ++i) {
+    const char *type;
+    if(xctx->inst[i].ptr < 0) continue;
+    npins = (xctx->inst[i].ptr + xctx->sym)->rects[PINLAYER];
+    base = k; k += npins;
+    if(base + npins > fluid_snap_npins) break;
+    if(xctx->inst[i].sel) continue;                  /* only STATIONARY devices are obstacles */
+    type = xctx->sym[xctx->inst[i].ptr].type;
+    if(type && !strcmp(type, "label")) continue;
+    for(p = 0; p < npins; ++p) {
+      const char *pn = fluid_snap_pinnet[base + p];
+      double px, py;
+      if(!pn || !pn[0]) continue;
+      if(nf && !strcmp(pn, nf)) continue;            /* same net: not a short */
+      get_inst_pin_coord(i, p, &px, &py);
+      if(fluid_pin_on_seg(px, py, x1, y1, x2, y2)) return 1;
+    }
+  }
+  return 0;
+}
+
+/* Layer 2: does a detour leg (x1,y1)-(x2,y2) pass over a pin of a MOVING (co-dragged) instance that
+ * is NOT the follow pin M (mx,my) and is on a net OTHER than NF? A rigidly-dragged multi-terminal
+ * device carries its OTHER pins to fixed post-move offsets near M; a detour leg plowing through one
+ * solders it onto NF -- a NEW device short (e.g. a MOS gate/bulk merged onto the source it was routed
+ * for). fluid_seg_hits_foreign_pin() deliberately skips sel!=0 instances (stationary obstacles only),
+ * so this is its moving-instance counterpart (adversarial re-review wf_582991bf). Uses the pristine
+ * (START) net -- a moving pin whose net == NF, or the follow pin M itself, is fine to touch. */
+static int fluid_seg_hits_moving_pin(double x1, double y1, double x2, double y2,
+                                     const char *nf, double mx, double my)
+{
+  int i, p, k = 0, npins, base;
+  if(!fluid_snap_pinnet || fluid_snap_npins <= 0) return 0;
+  for(i = 0; i < xctx->instances; ++i) {
+    if(xctx->inst[i].ptr < 0) continue;
+    npins = (xctx->inst[i].ptr + xctx->sym)->rects[PINLAYER];
+    base = k; k += npins;
+    if(base + npins > fluid_snap_npins) break;
+    if(!xctx->inst[i].sel) continue;                 /* only MOVING (co-dragged) instances */
+    for(p = 0; p < npins; ++p) {
+      const char *pn = fluid_snap_pinnet[base + p];
+      double px, py;
+      get_inst_pin_coord(i, p, &px, &py);            /* live POST-move coord */
+      /* exempt the follow pin M itself (its riser legitimately starts at M) by EXACT coincidence,
+       * not point_near_pin's cadsnap/2 tolerance -- a DISTINCT co-dragged pin landing 1..cadsnap/2 from
+       * M must NOT be treated as M (adversarial re-review wf_eade2790: it was soldered onto NF). M is
+       * on NF anyway, so the net check below is the real exemption; this is a belt-and-suspenders. */
+      if(px == mx && py == my) continue;             /* the follow pin M itself */
+      if(pn && pn[0] && nf && !strcmp(pn, nf)) continue;  /* already on NF (incl. M): no new merge */
+      if(fluid_pin_on_seg(px, py, x1, y1, x2, y2)) return 1;
+    }
+  }
+  return 0;
+}
+
+/* Layer 2: would a detour leg (sx1,sy1)-(sx2,sy2) make a STRAY connection to some existing wire --
+ * i.e. a T-junction at a point that is NOT the intended NF landing (cx,cy) nor the moving pin M
+ * (mx,my)? A wire whose endpoint lands on the leg's span, or a leg endpoint that lands on another
+ * wire, connects the two nets -- and unlike a foreign PIN (fluid_seg_hits_foreign_pin) the wire's net
+ * is not cheaply known here, so ANY stray contact is treated as unsafe and makes the reroute pick the
+ * OTHER detour side (or decline). Pure geometric crossings where both wires are mid-span do NOT
+ * connect in xschem, so they are intentionally not flagged. `selfw` (the straddle wire being reused)
+ * is excluded. */
+static int fluid_seg_stray_contact(double sx1, double sy1, double sx2, double sy2,
+                                   double cx, double cy, double mx, double my, int selfw)
+{
+  int m;
+  for(m = 0; m < xctx->wires; ++m) {
+    double ax, ay, bx, by;
+    if(m == selfw) continue;
+    ax = xctx->wire[m].x1; ay = xctx->wire[m].y1;
+    bx = xctx->wire[m].x2; by = xctx->wire[m].y2;
+    /* (1) wire m's endpoint lands on this leg (a T onto the detour) -- allowed only at C or M */
+    if(fluid_pin_on_seg(ax, ay, sx1, sy1, sx2, sy2) &&
+       !(ax == cx && ay == cy) && !(ax == mx && ay == my)) return 1;
+    if(fluid_pin_on_seg(bx, by, sx1, sy1, sx2, sy2) &&
+       !(bx == cx && by == cy) && !(bx == mx && by == my)) return 1;
+    /* (2) a leg endpoint lands on wire m (a T onto m) -- allowed only at C or M */
+    if(fluid_pin_on_seg(sx1, sy1, ax, ay, bx, by) &&
+       !(sx1 == cx && sy1 == cy) && !(sx1 == mx && sy1 == my)) return 1;
+    if(fluid_pin_on_seg(sx2, sy2, ax, ay, bx, by) &&
+       !(sx2 == cx && sy2 == cy) && !(sx2 == mx && sy2 == my)) return 1;
+  }
+  return 0;
+}
+
+/* Layer 2: is there a NON-DEGENERATE wire (other than selfw), lying on the straddle line (y==perp if
+ * horiz, else x==perp), that fully COVERS the along-span [u1,u2]? Used to confirm the NF bus extends
+ * from the same-net pin one grid outward before landing the up-leg there. "Covers a span" (not merely
+ * "touches a point") is deliberate: it rejects (a) a foreign wire that merely ends AT the offset
+ * point, and (b) a degenerate zero-length wire, both of which a bare touch()/point_on_other_wire test
+ * wrongly accepted at the pre-trim seam -- tearing the moving pin off its net (adversarial review
+ * wf_838ec39f). Because the span starts at the same-net pin (u1==a_same), any covering wire also
+ * carries NF, so no separate (cache-fragile) net lookup is needed. */
+static int fluid_wire_covers_on_line(double u1, double u2, double perp, int horiz, int selfw)
+{
+  double lo = u1 < u2 ? u1 : u2, hi = u1 < u2 ? u2 : u1;
+  int m;
+  for(m = 0; m < xctx->wires; ++m) {
+    double x1, y1, x2, y2, wlo, whi;
+    if(m == selfw) continue;
+    x1 = xctx->wire[m].x1; y1 = xctx->wire[m].y1;
+    x2 = xctx->wire[m].x2; y2 = xctx->wire[m].y2;
+    if(horiz) {
+      if(y1 != y2 || x1 == x2 || y1 != perp) continue;   /* need a horizontal wire on the perp row */
+      wlo = x1 < x2 ? x1 : x2; whi = x1 < x2 ? x2 : x1;
+    } else {
+      if(x1 != x2 || y1 == y2 || x1 != perp) continue;    /* need a vertical wire on the perp column */
+      wlo = y1 < y2 ? y1 : y2; whi = y1 < y2 ? y2 : y1;
+    }
+    if(wlo <= lo && whi >= hi) return 1;                  /* covers the whole [lo,hi] span */
+  }
+  return 0;
+}
+
+/* incremental_wire_reroute.md Layer 2 (spec sec 5 step 2-3, sec 6): resolve a residual
+ * both-orientations-blocked device short by ripping up the straddling follow leg and routing a
+ * detour AROUND the device. Runs at the pre-trim seam (after the per-object commit loop, before
+ * check_collapsing_objects), so -- like every pass in the shared geometry-commit block -- it is a
+ * pure function of (pristine snapshot, total delta, obstacles): release == stepwise for free (Phase
+ * II already reapplies the total delta each step). Gated identically to the Layer-1 flip
+ * (fluid_editing && stretch_select && orthogonal_wiring && rot==flip==0) => default off byte-identical.
+ *
+ * Layer 1 (place_moved_wire flip) already avoids the short whenever ONE L orientation is clear; this
+ * fires only when the naive route STILL lays a single leg straight across a stationary device between
+ * two of its distinct-pre-move-net pins (both orientations blocked, or a degenerate straight-through
+ * where the moved pin lands on the device pin row). The presence of that residual single-wire
+ * straddle IS the trigger -- no separate both-blocked test needed.
+ *
+ * Conservative: DECLINES to the baseline (never makes it worse) unless every safety condition holds.
+ * The straddling wire W has the moving pin M at one end and an anchor (on the follow net NF) at the
+ * other, with device D between them. Of D's two straddled pins, one resolves to NF at START (the
+ * same-net pin, legitimately connected) and the other is FOREIGN (the short). W is ripped up and
+ * replaced by three legs:  M -> perpendicular to a detour row one grid OUTSIDE D's body -> along,
+ * past D -> back up to the row, landing AT the same-net device pin (on NF and connected by
+ * construction), shifted one grid outward to a visible offset solder-joint (spec sec 6) only when a
+ * real NF wire demonstrably extends there. It never continues across D. The detour side (below/above;
+ * left/right for a vertical W) is the FIRST whose three legs hit NO obstacle: a stationary foreign
+ * pin (fluid_seg_hits_foreign_pin), a stray wire T-junction off the intended NF landing
+ * (fluid_seg_stray_contact), or a co-dragged MOVING pin on a net != NF (fluid_seg_hits_moving_pin) --
+ * so the "boxed between two devices" case takes the clear side, else it declines. Two adversarial
+ * review rounds (wf_838ec39f landing net-blindness, wf_582991bf/wf_eade2790 moving-pin plow-through)
+ * hardened these guards; each is conservative (over-reject => decline => baseline, never a short). */
+static void fluid_reroute_around_obstacles(int orthogonal_wiring)
+{
+  double grid = tclgetdoublevar("cadsnap");
+  int iter;
+  if(!orthogonal_wiring) return;
+  if(!fluid_snap_pinnet || fluid_snap_npins <= 0) return;
+  if(fluid_count_pins() != fluid_snap_npins) return; /* instance set changed: snapshot walk unreliable */
+  if(grid <= 0.0) grid = 1.0;
+
+  /* one reroute per straddled device; cap the loop at instance count as a runaway backstop */
+  for(iter = 0; iter < xctx->instances + 1; ++iter) {
+    int D, p, q, w, k = 0, npins, base;
+    int wfound = -1, Dfound = -1, horiz = 0;
+    double px_s = 0, py_s = 0, px_f = 0, py_f = 0;   /* the two straddled pins' coords */
+    const char *nf = NULL, *net_p = NULL, *net_q = NULL; /* their pristine (START) nets */
+
+    /* --- find one residual single-wire straddle: a stationary device D with two distinct-net pins
+     *     that both lie on ONE wire W, where W has exactly one moving-pin endpoint (=M) --- */
+    for(D = 0; D < xctx->instances && wfound < 0; ++D) {
+      const char *type;
+      if(xctx->inst[D].ptr < 0) continue;
+      npins = (xctx->inst[D].ptr + xctx->sym)->rects[PINLAYER];
+      base = k; k += npins;
+      if(base + npins > fluid_snap_npins) break;
+      if(xctx->inst[D].sel) continue;                /* only STATIONARY devices */
+      type = xctx->sym[xctx->inst[D].ptr].type;
+      if(type && !strcmp(type, "label")) continue;
+      for(p = 0; p < npins && wfound < 0; ++p) {
+        const char *np = fluid_snap_pinnet[base + p];
+        double pax, pay;
+        if(!np || !np[0]) continue;
+        get_inst_pin_coord(D, p, &pax, &pay);
+        for(q = p + 1; q < npins && wfound < 0; ++q) {
+          const char *nq = fluid_snap_pinnet[base + q];
+          double qbx, qby;
+          if(!nq || !nq[0] || !strcmp(np, nq)) continue;   /* need distinct pre-move nets */
+          get_inst_pin_coord(D, q, &qbx, &qby);
+          for(w = 0; w < xctx->wires; ++w) {
+            double x1 = xctx->wire[w].x1, y1 = xctx->wire[w].y1;
+            double x2 = xctx->wire[w].x2, y2 = xctx->wire[w].y2;
+            int h = (y1 == y2 && x1 != x2), v = (x1 == x2 && y1 != y2);
+            if(!h && !v) continue;
+            if(!(fluid_pin_on_seg(pax, pay, x1, y1, x2, y2) &&
+                 fluid_pin_on_seg(qbx, qby, x1, y1, x2, y2))) continue;
+            wfound = w; Dfound = D; horiz = h;
+            px_s = pax; py_s = pay; net_p = np;    /* pin p and its pristine net */
+            px_f = qbx; py_f = qby; net_q = nq;    /* pin q and its pristine net */
+            break;
+          }
+        }
+      }
+    }
+    if(wfound < 0) break;                            /* no straddle left */
+
+    /* --- classify + build the detour; any failed safety condition DECLINES (leave baseline) --- */
+    {
+      w = wfound; D = Dfound;
+      {
+      double x1 = xctx->wire[w].x1, y1 = xctx->wire[w].y1;
+      double x2 = xctx->wire[w].x2, y2 = xctx->wire[w].y2;
+      double perp0 = horiz ? y1 : x1;                /* the straddle row/col */
+      double e1a = horiz ? x1 : y1, e2a = horiz ? x2 : y2;    /* endpoint along-coords */
+      int e1mov = point_on_moving_pin(x1, y1);
+      int e2mov = point_on_moving_pin(x2, y2);
+      double a_m, a_p = horiz ? px_s : py_s, a_q = horiz ? px_f : py_f;
+      double a_same, a_for, a_C, dir, t;
+      double bx1, by1, bx2, by2, body_p_lo, body_p_hi;
+      double Vb = 0, cand[2];
+      int have = 0, ci;
+      char *prop = NULL;
+
+      if(e1mov == e2mov) break;                      /* need exactly one moving-pin endpoint (=M) */
+      a_m      = e1mov ? e1a : e2a;
+      nf = fluid_moving_pin_net(e1mov ? x1 : x2, e1mov ? y1 : y2);
+      if(!nf || !nf[0]) break;
+      /* of the two straddled pins (nets net_p/net_q captured in detection), the same-net pin
+       * resolves to NF at START and the other is foreign; require EXACTLY one to match NF */
+      {
+        if(net_p && net_p[0] && !strcmp(net_p, nf) && !(net_q && net_q[0] && !strcmp(net_q, nf))) {
+          a_same = a_p; a_for = a_q;
+        } else if(net_q && net_q[0] && !strcmp(net_q, nf) && !(net_p && net_p[0] && !strcmp(net_p, nf))) {
+          a_same = a_q; a_for = a_p;
+        } else break;                                /* cannot classify same/foreign vs NF */
+      }
+      /* the foreign pin must lie strictly between M and the same-net pin, so a detour landing one
+       * grid outside the same-net pin (away from M) never has to pass the foreign pin */
+      if(!((a_for - a_m) * (a_same - a_for) > 0.0)) break;
+      dir = (a_same > a_m) ? 1.0 : -1.0;             /* M -> same-net pin (= anchor) direction */
+
+      /* device world bbox (valid for stationary D after update_symbol_bboxes) */
+      bx1 = xctx->inst[D].x1; by1 = xctx->inst[D].y1; bx2 = xctx->inst[D].x2; by2 = xctx->inst[D].y2;
+      if(bx1 > bx2) { t = bx1; bx1 = bx2; bx2 = t; }
+      if(by1 > by2) { t = by1; by1 = by2; by2 = t; }
+      body_p_lo = horiz ? by1 : bx1; body_p_hi = horiz ? by2 : bx2;
+
+      /* Landing column. Land AT the same-net device pin a_same: it is on NF and connected by
+       * construction (a real pin the netlister binds the up-leg endpoint to), so P1/P2 hold with NO
+       * fragile "is a wire here" search -- the earlier point_on_other_wire test matched transient jog
+       * geometry / degenerate zero-length kiss stubs / a foreign wire ending at C and tore the moving
+       * pin off its net (adversarial review wf_838ec39f, 8 confirmed P1 disconnects). As a pure
+       * aesthetic upgrade, shift ONE grid outward (away from M) to a visible offset solder-joint only
+       * when a real NF wire demonstrably extends there -- a non-degenerate wire COVERING the whole
+       * pin->offset span on the straddle line (so it is the NF bus continuing, not a foreign wire
+       * merely ending at C, nor a spurious degenerate match). */
+      a_C = a_same;
+      {
+        double aC_off = a_same + dir * grid;
+        if(fluid_wire_covers_on_line(a_same, aC_off, perp0, horiz, w)) a_C = aC_off;
+      }
+      if(a_C == a_m) break;                           /* degenerate landing (M already at the pin col) */
+
+      /* pick the FIRST detour side (perpendicular, one grid outside the body) whose three legs
+       * touch no foreign pin -- below/left first, then above/right */
+      cand[0] = fluid_grid_below(body_p_lo, grid);
+      cand[1] = fluid_grid_above(body_p_hi, grid);
+      for(ci = 0; ci < 2 && !have; ++ci) {
+        double vb = cand[ci];
+        /* leg endpoints in (x,y): along a -> x if horiz else y; perp -> y if horiz else x */
+        double l1x1 = horiz ? a_m : perp0, l1y1 = horiz ? perp0 : a_m;
+        double l1x2 = horiz ? a_m : vb,    l1y2 = horiz ? vb    : a_m;
+        double l2x2 = horiz ? a_C : vb,    l2y2 = horiz ? vb    : a_C;
+        double l3x2 = horiz ? a_C : perp0, l3y2 = horiz ? perp0 : a_C;
+        double cx = l3x2, cy = l3y2, mx = l1x1, my = l1y1; /* landing C (up-leg top), moving pin M */
+        if(fluid_seg_hits_foreign_pin(l1x1, l1y1, l1x2, l1y2, nf)) continue; /* M riser        */
+        if(fluid_seg_hits_foreign_pin(l1x2, l1y2, l2x2, l2y2, nf)) continue; /* detour along    */
+        if(fluid_seg_hits_foreign_pin(l2x2, l2y2, l3x2, l3y2, nf)) continue; /* up leg to NF row */
+        /* also reject a side whose legs would T onto some OTHER wire (foreign-net short) anywhere
+         * but the intended NF landing C or the moving pin M -- pick the other side, or decline */
+        if(fluid_seg_stray_contact(l1x1, l1y1, l1x2, l1y2, cx, cy, mx, my, w)) continue;
+        if(fluid_seg_stray_contact(l1x2, l1y2, l2x2, l2y2, cx, cy, mx, my, w)) continue;
+        if(fluid_seg_stray_contact(l2x2, l2y2, l3x2, l3y2, cx, cy, mx, my, w)) continue;
+        /* and reject a side whose legs plow through the MOVING device's OTHER (co-dragged) pins,
+         * which travel to fixed post-move offsets near M -- soldering one onto NF is a new short */
+        if(fluid_seg_hits_moving_pin(l1x1, l1y1, l1x2, l1y2, nf, mx, my)) continue;
+        if(fluid_seg_hits_moving_pin(l1x2, l1y2, l2x2, l2y2, nf, mx, my)) continue;
+        if(fluid_seg_hits_moving_pin(l2x2, l2y2, l3x2, l3y2, nf, mx, my)) continue;
+        Vb = vb; have = 1;
+      }
+      if(!have) break;                               /* no clear detour side: degrade to baseline */
+
+      /* --- commit the detour: reuse W as the M riser, store the along + up legs, all on NF's prop.
+       *     storeobject() reallocs xctx->wire, so index (never a cached pointer) across it. --- */
+      my_strdup(_ALLOC_ID_, &prop, xctx->wire[w].prop_ptr);
+      {
+        double l1x1 = horiz ? a_m : perp0, l1y1 = horiz ? perp0 : a_m;
+        double l1x2 = horiz ? a_m : Vb,    l1y2 = horiz ? Vb    : a_m;
+        double l2x2 = horiz ? a_C : Vb,    l2y2 = horiz ? Vb    : a_C;
+        double l3x2 = horiz ? a_C : perp0, l3y2 = horiz ? perp0 : a_C;
+        xctx->wire[w].x1 = l1x1; xctx->wire[w].y1 = l1y1;
+        xctx->wire[w].x2 = l1x2; xctx->wire[w].y2 = l1y2;
+        order_wire_coords(w);
+        storeobject(-1, l1x2, l1y2, l2x2, l2y2, WIRE, 0, 0, prop);
+        order_wire_coords(xctx->wires - 1);
+        storeobject(-1, l2x2, l2y2, l3x2, l3y2, WIRE, 0, 0, prop);
+        order_wire_coords(xctx->wires - 1);
+      }
+      my_free(_ALLOC_ID_, &prop);
+      xctx->prep_hash_wires = 0;
+      xctx->prep_net_structs = 0;
+      xctx->prep_hi_structs = 0;
+      xctx->need_reb_sel_arr = 1;
+      set_modify(1);
+      /* rerouted this device; loop to catch any further straddle (a fixed device won't re-match) */
+      }
+    }
+  }
+}
+
 static void fluid_check_move_invariants(void)
 {
   int i, w, shorts = 0, disconnects = 0, dev_merges = 0;
@@ -2566,6 +2921,18 @@ void move_objects(int what, int merge, double dx, double dy)
    if(!firsti || !firstw) {
      xctx->prep_net_structs=0;
      xctx->prep_hi_structs=0;
+   }
+   /* incremental_wire_reroute.md Layer 2 (spec sec 5/6): pre-trim rip-up-and-reroute detour. When
+    * both L orientations were blocked (place_moved_wire could not flip away the short) the naive
+    * route still lays a leg straight across a stationary device between two of its distinct-net pins.
+    * Re-detect that residual straddle and route the moving pin AROUND the device with a stop-short
+    * junction. Runs on the SAME shared commit block as a real END and a live fluid RUBBER step, so
+    * release == stepwise for free. Gated identically to the Layer-1 flip; default off => byte-
+    * identical (the whole function early-returns without a fluid START name snapshot). Placed before
+    * check_collapsing_objects/trim so the existing cleanup normalises the new geometry once. */
+   if(tclgetboolvar("fluid_editing") && xctx->stretch_select &&
+      xctx->move_rot == 0 && xctx->move_flip == 0) {
+     fluid_reroute_around_obstacles(orthogonal_wiring);
    }
    /* build after copying and after recalculating prepare_netlist_structs() */
    check_collapsing_objects();
