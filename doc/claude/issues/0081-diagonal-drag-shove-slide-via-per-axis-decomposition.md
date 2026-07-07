@@ -1,7 +1,58 @@
 # Issue 0081 — support diagonal (non-axis-aligned) drags for the slide/shove family via per-axis decomposition
 
 **Opened:** 2026-07-06
-**Status:** OPEN — feature. Design sketch below; not implemented.
+**Status:** IMPLEMENTED 2026-07-07 (branch `fluid-editing`, uncommitted at time of writing).
+Design sketch below is the original plan; see **Implementation** for what actually shipped and the
+one design correction (a P2 safety net the "P1/P2 by construction" sketch missed).
+
+---
+
+## Implementation (2026-07-07)
+
+**Mechanism (design workflow `wf_05c05cc1` — 3 proposals converged + judge):** a fixed **X-then-Y
+two-leg loop** wrapping the shared geometry-commit region in `move_objects()` (`move.c`), with the
+follow set **re-derived between legs** via `select_attached_nets()` (new `move_regrab_follow_set()`).
+Each leg feeds a pure-axis delta, so `compute_wire_slide()` / `fluid_shove_connected_wire()` fire
+naturally (their `dxnz==dynz` bail is never reached) with NO edit to their internals. The region is
+left **byte-for-byte in place** (only wrapped + per-leg delta set), matching the Phase-II discipline.
+Gated: `fluid_editing && stretch_select && orthogonal_wiring && rot==flip==0 &&
+fluid_startsel_wires==0 && Dx!=0 && Dy!=0` ⇒ `nlegs=2`, else `nlegs=1` (single pass, byte-identical
+to HEAD). Fixed X-then-Y (not magnitude-derived) ⇒ deterministic ⇒ release==stepwise. Grafts folded
+in from the review-of-proposals: `orthogonal_wiring` in the gate; `movelastsel=lastsel` after the
+re-grab (else the dce0bea6 `symbol_bbox` heap-overflow); `fluid_startsel_wires` save/restore.
+
+**DESIGN CORRECTION — the sketch's "P1/P2 by construction" (Open Q3) was WRONG.** The obstacle detour
+(`fluid_reroute_around_obstacles`) only fires on the DIAGONAL sweep (the crossing is moving-pin-
+incident); a per-axis leg can lay the same stationary-device straddle as a **non-pin-incident** wire
+the detour misses. Concretely, R18 → ammeter v8 (`test_wireedit_34`): the one-shot diagonal detours
+the riser below v8 (no short), but the X-leg alone already shorts v8 (a pre-existing pure-axis
+limitation the diagonal never exposed), and the Y-leg cannot recover it. So P2 does NOT hold by
+construction. **Fix = a P2 safety net** (an `attempt` loop): snapshot pristine (`mem_snapshot_*`),
+run the two legs, and if they CHANGE CONNECTIVITY the one-shot would not (`fluid_partition_changed()
+>0`), roll back to pristine and re-run as a SINGLE diagonal pass (the proven no-short Layers 1–3).
+The trigger is the **partition-change** signal (canonical first-seen pin ids vs START) — the COMPLETE
+P1/P2 test: device merge, merge onto a single-pin net LABEL, AND disconnect. (An earlier version
+triggered on the two-pin `fluid_check_device_merge()` alone; the adversarial review `wf_99e41f72`
+found it MISSED a merge onto a net label — R18's net silently merged onto a stationary GND `lab_pin`
+on the shoved-V corridor — so the trigger was broadened. `test_wireedit_40` Drive 3 locks it,
+sabotage-verified.) Decomposition is lowest in the conflict order (`P1=P2 > … > P6`) and must yield
+to P2. R18 falls back and is **byte-identical to the HEAD one-shot** (verified). before_1's shove
+(no obstacle) preserves the partition ⇒ keeps the two-leg aesthetic.
+
+**Tests:** `test_wireedit_40_diagonal_shove` (before_1 diagonal `we_move_stretch 20 20`; RED-first @
+HEAD — reversed stub + no shove — GREEN after; release==stepwise). `test_wireedit_34`/`36` (R18-class
+diagonal) now doubly serve as the **fallback sabotage test** — remove the safety net ⇒ they go RED
+(v8 short). Full wireedit suite ALL PASS (40) + `--memcheck` clean; default-off + axis-aligned +
+R18-fallback all byte-identical vs the pre-change binary. **NOT yet done:** user real-window eyeball
+(the acceptance gate). Deferred/limitations: the between-leg re-grab does not re-arm
+`connect_by_kissing`, so a mid-span tap on a follow wire follows rigidly (P1-safe, possibly less
+pretty); seam artifacts (P4/P7 quality) from the X-only intermediate are possible (P2 stays safe via
+the net + END invariants).
+
+---
+&nbsp;
+
+<details><summary>Original design sketch (pre-implementation)</summary>
 **Affects:** interactive fluid stretch-move of an instance with `fluid_editing` on,
 when the drag vector is **diagonal** (both Δx and Δy nonzero).
 **Severity:** medium (ergonomics/aesthetics + a re-appearing P5 own-body intrusion on
@@ -105,3 +156,5 @@ the diagonal.
 while also moving in X). Assert the shove fired (no reversed stub in body, wire pushed
 ahead) — RED at HEAD (the `dxnz==dynz` gate bails), GREEN after decomposition. Drive
 release + stepwise; assert identical.
+
+</details>

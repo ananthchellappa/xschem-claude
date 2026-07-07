@@ -2050,6 +2050,28 @@ static int fluid_check_device_merge(void)
   return merges;
 }
 
+/* Count instance pins whose connectivity partition changed vs the START snapshot -- the COMPLETE
+ * P1/P2 signal for the diagonal-decomposition fallback: a device merge, a merge onto a single-pin
+ * net LABEL (invisible to the two-pin fluid_check_device_merge above), AND a disconnect all show up
+ * as a changed canonical partition id. No net-rename false positive: the ids are canonical first-seen
+ * keyed to pin POSITION order, so a #net rename yields an identical vector (same as the Phase-1
+ * disconnect guard in fluid_check_move_invariants). A merge onto a pin-LESS wire net is correctly
+ * NOT counted (no device pin changed net). Requires node[] fresh (prepare_netlist_structs) + the
+ * START id snapshot. Same body as the P1 block of fluid_check_move_invariants, factored for reuse. */
+static int fluid_partition_changed(void)
+{
+  int tot, m, k, changed = 0, *now;
+  if(!fluid_snap_id || fluid_snap_npins <= 0) return 0;
+  tot = fluid_count_pins();
+  if(tot != fluid_snap_npins) return 0;              /* instance set changed: not comparable */
+  now = my_malloc(_ALLOC_ID_, tot * sizeof(int));
+  m = fluid_build_partition(now, tot);
+  if(m == fluid_snap_npins)
+    for(k = 0; k < m; ++k) if(now[k] != fluid_snap_id[k]) ++changed;
+  my_free(_ALLOC_ID_, &now);
+  return changed;
+}
+
 /* Phase III helper: is foreign pin (px,py) on the axis-aligned segment (x1,y1)-(x2,y2)? cadsnap/2
  * tolerance on the CONSTANT axis (mirrors point_near_pin, move.c:1220); inclusive span on the
  * varying axis. A degenerate (point) or diagonal leg carries no two-pin bridge. */
@@ -2845,6 +2867,27 @@ void fluid_reroute_discard(void)
   xctx->fluid_reroute_dirty = 0;
 }
 
+/* incremental_wire_reroute.md §10.10 / issue 0081: between the X and Y legs of a diagonal fluid
+ * stretch, re-derive the tool-owned follow set from the (X-moved, cleaned) leg-A geometry so the
+ * Y leg is a fresh pure-axis stretch. Leg A's deselect tail (the Phase-I follow-wire deselect,
+ * gated on fluid_startsel_wires==0) has zeroed every wire.sel, so select_attached_nets re-grabs a
+ * FRESH single-endpoint (SELECTED1/2) follow set at the X-moved pins -- place_moved_wire then
+ * relays each pin-incident segment exactly ONCE per leg (never an L-of-an-L; the M2 failure mode).
+ *   - fluid_startsel_wires: select_attached_nets recounts it (select.c) by scanning wire.sel; the
+ *     recount is 0 here (leg A deselected all follow wires), which is also its START value on this
+ *     path (the two-leg gate required ==0), so save/restore is a no-op belt-and-suspenders that
+ *     keeps the deselect-tail gate correct for leg B regardless.
+ *   - movelastsel: select_attached_nets -> rebuild_selected_array updates lastsel but NOT
+ *     movelastsel; leg B's update_symbol_bboxes(0,0) iterates sel_array[0,movelastsel), and a stale
+ *     movelastsel > lastsel re-fires the dce0bea6 symbol_bbox heap-buffer-overflow read. */
+static void move_regrab_follow_set(void)
+{
+  int saved = xctx->fluid_startsel_wires;
+  select_attached_nets();
+  xctx->fluid_startsel_wires = saved;
+  xctx->movelastsel = xctx->lastsel;
+}
+
 /* merge param unused, RFU */
 void move_objects(int what, int merge, double dx, double dy)
 {
@@ -3008,6 +3051,10 @@ void move_objects(int what, int merge, double dx, double dy)
   if((what & END) || commit_now)     /* commit the move: real END, or a live fluid RUBBER step */
   {
    int firsti, firstw;
+   /* issue 0081: diagonal X-then-Y decomposition (nlegs==2) + P2 safety net (attempt loop). */
+   int nlegs = 1, leg, attempt, leg_snapped = 0;
+   double totdx = 0.0, totdy = 0.0;
+   Undo_slot leg_snap;
 
    /* --- END-only pre-commit finalizers; a live fluid RUBBER step (commit_now) skips them and
     * jumps straight to the shared geometry commit below. --- */
@@ -3066,6 +3113,55 @@ void move_objects(int what, int merge, double dx, double dy)
    }
    } /* end if(!commit_now): END-only pre-commit finalizers */
 
+   /* incremental_wire_reroute.md §10.10 / issue 0081: DIAGONAL fluid stretch decomposition.
+    * A diagonal drag (both Dx,Dy != 0) gets NO aesthetic slide/shove -- compute_wire_slide() and
+    * fluid_shove_connected_wire() both bail on `dxnz == dynz`, so place_moved_wire relays the pin's
+    * follow-wire as a reversed leg through the moving instance's own body (P5) and the escape
+    * staircase reappears. Decompose the TOTAL delta into a fixed X-leg then a Y-leg -- each a pure
+    * axis move the existing machinery handles -- by running the shared geometry-commit region below
+    * TWICE, re-deriving the follow set between legs (move_regrab_follow_set). Fixed X-then-Y (NOT
+    * magnitude-derived): the split depends only on the total delta, never on the drag path or a
+    * |Dx|==|Dy| crossing, so it is deterministic => release==stepwise (the Phase-II invariant).
+    * Gated so nlegs stays 1 (single pass, byte-identical to HEAD) unless a fluid, orthogonal,
+    * non-rotating stretch with a TOOL-OWNED-ONLY follow set (fluid_startsel_wires==0 -- the
+    * deselect-tail's own gate, so leg A always clears its follow wires for the re-grab) moves
+    * diagonally. P1 (connectivity) holds by construction -- the obstacle ml-flip + fluid_reroute_
+    * around_obstacles run inside EACH leg. P2 (no-short) is NOT automatic: the obstacle detour only
+    * fires on the diagonal SWEEP, so a per-axis leg can lay a stationary-device straddle as a
+    * non-pin-incident wire the detour misses (R18 into ammeter v8). It is enforced by the P2 safety
+    * net below (the attempt loop) -- decomposition is lowest in the conflict order and must yield to
+    * P2. The index-keyed START snapshot is REUSED (never re-taken, which would bake a possibly-
+    * shorted intermediate's nets). The region below is left BYTE-FOR-BYTE
+    * in place (only wrapped + per-leg delta set) -- the strongest byte-identical guarantee, matching
+    * the Phase-II commit_now fall-through discipline; the body indentation is intentionally not
+    * re-flowed to keep this a minimal, auditable diff (`git diff -w` shows only the scaffolding). */
+   totdx = xctx->deltax; totdy = xctx->deltay;
+   if(tclgetboolvar("fluid_editing") && xctx->stretch_select && orthogonal_wiring &&
+      xctx->move_rot == 0 && xctx->move_flip == 0 && xctx->fluid_startsel_wires == 0 &&
+      totdx != 0.0 && totdy != 0.0) {
+     nlegs = 2;
+     /* snapshot pristine (current geometry+selection, pre-delta) for the P2 fallback below.
+      * mem_snapshot_alloc only sets up the per-layer arrays and ASSUMES a zeroed slot (xctx's own
+      * snapshot is calloc'd; this stack slot is not) -- zero it first or serialize free()s garbage. */
+     memset(&leg_snap, 0, sizeof(leg_snap));
+     mem_snapshot_alloc(&leg_snap); mem_serialize_slot(&leg_snap); leg_snapped = 1;
+   }
+   /* P2 safety net (P1=P2 outrank the decomposition, which is quality-only). attempt 0 runs the
+    * nlegs==2 decomposed legs; if they CHANGE CONNECTIVITY the one-shot diagonal pass would not --
+    * the obstacle detour (fluid_reroute_around_obstacles) only fires on the diagonal SWEEP, so a
+    * per-axis leg can route a wire across a stationary-device straddle (R18 into ammeter v8, a device
+    * merge) or through a stationary net LABEL (a foreign-net merge) the detour misses -- attempt 1
+    * rolls back to pristine and re-runs as a SINGLE diagonal pass (the proven no-short Layers-1-3
+    * path). The trigger is fluid_partition_changed() (the full P1/P2 signal: device merge, net-label
+    * merge, AND disconnect), not the two-pin device check alone. A clean two-leg result (partition
+    * preserved), or nlegs==1 from the start, breaks after attempt 0. */
+   for(attempt = 0; attempt < 2; ++attempt) {
+   for(leg = 0; leg < nlegs; ++leg) {
+   if(nlegs == 2) {                    /* leg 0 = (Dx,0) X move; leg 1 = (0,Dy) Y move */
+     xctx->deltax = (leg == 0) ? totdx : 0.0;
+     xctx->deltay = (leg == 0) ? 0.0 : totdy;
+   }
+
    /* --- shared geometry commit: byte-for-byte identical for a real END and a fluid RUBBER step.
     * Re-fetch wire/line -- a fluid_reroute_restore() (in the RUBBER branch, or the dirty-END block
     * above) reallocated xctx->wire / xctx->line, so the function-entry captures are stale. --- */
@@ -3073,7 +3169,7 @@ void move_objects(int what, int merge, double dx, double dy)
    line = xctx->line;
    /* calculate moving symbols bboxes before actually doing the move */
    firsti = firstw = 1;
-   if(!commit_now) draw_selection(xctx->gctiled,0);  /* END: erase the last rubber-band preview */
+   if(!commit_now && leg == 0) draw_selection(xctx->gctiled,0);  /* END: erase last rubber-band (once) */
    update_symbol_bboxes(0, 0);
    /* corner-slide rubber-band (wire-editing Phase 4): on an orthogonal, axis-aligned,
     * non-rotating move, let perpendicular attached wires forming a corner SLIDE with
@@ -3478,6 +3574,36 @@ void move_objects(int what, int merge, double dx, double dy)
      for(wi = 0; wi < xctx->wires; ++wi) if(xctx->wire[wi].sel) { xctx->wire[wi].sel = 0; any = 1; }
      if(any) { xctx->need_reb_sel_arr = 1; rebuild_selected_array(); }
    }
+   /* issue 0081: end of one X-then-Y decomposition leg. After leg 0 (the X move + its cleanup + the
+    * follow-wire deselect above) re-derive a fresh SELECTED1/2 follow set at the X-moved pins, so
+    * leg 1 (the Y move) is a clean pure-axis stretch that relays each stub exactly once. */
+   if(nlegs == 2 && leg == 0) move_regrab_follow_set();
+   } /* end for(leg): issue 0081 diagonal X-then-Y decomposition */
+   if(nlegs == 1) break;              /* single pass (nlegs==1 from the start, or the attempt-1 fallback) */
+   /* two-leg attempt done: restore the accumulated total delta, then P2-check the composite route. */
+   xctx->deltax = totdx; xctx->deltay = totdy;
+   prepare_netlist_structs(0);        /* refresh inst[].node[] for the partition test */
+   if(fluid_partition_changed() == 0) break;   /* connectivity preserved (no merge/disconnect): accept */
+   /* the two legs changed connectivity the one-shot pass would not (a device OR net-label merge, or a
+    * disconnect): roll back to pristine + retry single-
+    * pass. Mirror fluid_reroute_restore(): mem_restore_slot zeroes ui_state/lastsel and reallocs the
+    * arrays, so put back ui_state, the START id counters (determinism), sel_array, and movelastsel. */
+   { unsigned int saved_ui = xctx->ui_state;
+     mem_restore_slot(&leg_snap, 0);
+     xctx->ui_state = saved_ui;
+     xctx->wire_id_counter = xctx->fluid_reroute_wid;
+     xctx->inst_id_counter = xctx->fluid_reroute_iid;
+     xctx->gfx_id_counter  = xctx->fluid_reroute_gid;
+     xctx->text_id_counter = xctx->fluid_reroute_tid;
+     xctx->need_reb_sel_arr = 1; rebuild_selected_array();
+     xctx->movelastsel = xctx->lastsel;
+   }
+   nlegs = 1;                          /* attempt 1: single diagonal pass from the restored pristine */
+   xctx->deltax = totdx; xctx->deltay = totdy;
+   } /* end for(attempt): P2 safety net */
+   if(leg_snapped) mem_snapshot_free(&leg_snap);
+   /* the END delta-zeroing (below) and the commit_now redraw save/restore consume xctx->deltax/deltay
+    * as the true accumulated total (not the last leg's split); it is set to (totdx,totdy) above. */
    /* --- END-only post-commit finalizers. A live fluid RUBBER step (commit_now) keeps the gesture
     * state and only repaints. stretch_select / stretch_grabbed_xy MUST be cleared/freed HERE, not
     * inside the shared commit above -- they scope the reroute (remove_move_orphan_wires reads
