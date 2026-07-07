@@ -1110,6 +1110,9 @@ static void order_wire_points(int n)
 
 /* Phase III obstacle-aware L-orientation flip (defined below, next to the fluid snapshot code). */
 static int fluid_ml_blocked(int ml, int sel1);
+/* Phase IV P6 (min-bend): bias the fluid L orientation to a straight along-normal pin exit so the
+ * P3 escape stub is unnecessary (defined below, after the fluid snapshot statics). */
+static int fluid_p6_bias_ml(int sel1);
 
 /* xctx->{rx1, ry1} and xctx->{rx2, ry2} are the two line points after the move.
  * they are not guaranteed to be ordered (since only one of the two points may have changed)
@@ -1139,7 +1142,21 @@ static void place_moved_wire(int n, int orthogonal_wiring)
       /* fluid_ml_blocked() returns 0 when there is no START name snapshot, so no flip fires unless a
        * fluid stretch armed one -- the snapshot-presence gate lives inside the helper (its statics
        * are declared below this function). */
-      if(fluid_ml_blocked(ml0, sel1) && !fluid_ml_blocked(ml1, sel1)) xctx->manhattan_lines = ml1;
+      int b0 = fluid_ml_blocked(ml0, sel1);
+      int b1 = fluid_ml_blocked(ml1, sel1);
+      if(b0 && !b1) {
+        xctx->manhattan_lines = ml1;                 /* P2 obstacle flip (Phase III) -- unchanged */
+      } else if(!b0 && !b1) {
+        /* Phase IV P6 (min-bend): both orientations are P2-clear, so the choice is free BELOW P2 in
+         * the conflict order (P1=P2 > P3 > P5 > P4 > P7 > P6). Prefer the orientation whose pin leg
+         * exits ALONG the moving pin's escape normal -- a straight P3 exit that insert_exit_stubs then
+         * SKIPS (move.c:1648-1649), removing the redundant escape-stub staircase bend at IDENTICAL
+         * length. Returns 0 (keep ml0) unless the along-normal orientation is a proven, strict win. */
+        int p6 = fluid_p6_bias_ml(sel1);
+        if(p6) xctx->manhattan_lines = p6;
+      }
+      /* (!b0 && b1): keep ml0, already the clear orientation. (b0 && b1): keep ml0 -- both orientations
+       * short a device; the Layer-2 fluid_reroute_around_obstacles owns the stop-short detour. */
     }
   }
 
@@ -1735,6 +1752,95 @@ static int  fluid_snap_npins = 0;    /* 0 => no valid snapshot */
 static char **fluid_snap_pinnet = NULL; /* strdup'd resolved net name (or NULL) per instance pin at
                                          * START -- for the device-merge P2 check (spec §9) */
 static void fluid_discard_snapshot(void);
+
+/* Phase IV P6 (min-bend): outward escape normal of the MOVING, non-label instance pin coincident
+ * with (x,y). Same pin walk + tolerance (point_near_pin) as insert_exit_stubs, and reads the SAME
+ * get_pin_escape_normal the P3 stub layer uses, so P6 and P3 can never disagree about "along the
+ * normal" (even when the normal is a crude nearest-edge axis on a bulk/corner pin). Returns 1 with a
+ * clean single-axis (*nx,*ny); 0 if (x,y) is not on a moving pin or the normal is zero/ambiguous. */
+static int fluid_moving_pin_normal(double x, double y, double *nx, double *ny)
+{
+  int inst, r, rects;
+  double px, py;
+  *nx = 0.0; *ny = 0.0;
+  for(inst = 0; inst < xctx->instances; inst++) {
+    const char *itype;
+    if(!xctx->inst[inst].sel || xctx->inst[inst].ptr < 0) continue;   /* only MOVING instances */
+    itype = xctx->sym[xctx->inst[inst].ptr].type;
+    if(itype && !strcmp(itype, "label")) continue;                    /* labels have no body (§2) */
+    rects = (xctx->inst[inst].ptr + xctx->sym)->rects[PINLAYER];
+    for(r = 0; r < rects; r++) {
+      get_inst_pin_coord(inst, r, &px, &py);
+      if(point_near_pin(px, py, x, y)) {
+        get_pin_escape_normal(inst, r, nx, ny);
+        return (*nx != 0.0) ^ (*ny != 0.0);          /* exactly one axis nonzero, else decline */
+      }
+    }
+  }
+  return 0;
+}
+
+/* Phase IV P6 length veto: is there a STATIONARY wire incident at the anchor (fx,fy) running ALONG
+ * the escape-normal axis? If so, the baseline PERPENDICULAR arrival leg is colinear with it and trim
+ * absorbs that leg (no corner), so biasing to the along-normal orientation would only ADD length
+ * (the cont=down/cont=up loser in the empirical sweep). Decline in that case. The follow wire itself
+ * (always .sel here) is skipped by the .sel filter, so it is never mistaken for a continuation. */
+static int fluid_anchor_absorbs_along_normal(double fx, double fy, double nx, double ny)
+{
+  int m;
+  for(m = 0; m < xctx->wires; m++) {
+    int at, vert, horiz;
+    if(xctx->wire[m].sel) continue;                  /* only stationary (non-moving) continuations */
+    at = (xctx->wire[m].x1 == fx && xctx->wire[m].y1 == fy) ||
+         (xctx->wire[m].x2 == fx && xctx->wire[m].y2 == fy);
+    if(!at) continue;
+    vert  = (xctx->wire[m].x1 == xctx->wire[m].x2) && (xctx->wire[m].y1 != xctx->wire[m].y2);
+    horiz = (xctx->wire[m].y1 == xctx->wire[m].y2) && (xctx->wire[m].x1 != xctx->wire[m].x2);
+    if(ny != 0.0 && vert)  return 1;                 /* vertical normal, vertical continuation */
+    if(nx != 0.0 && horiz) return 1;                 /* horizontal normal, horizontal continuation */
+  }
+  return 0;
+}
+
+/* Phase IV P6 (min-bend, doc/claude/specs/incremental_wire_reroute.md §8 / nice_drag_rerouting §4):
+ * among the two equal-length manhattan L orientations for a fluid follow wire, return the one whose
+ * pin-incident leg exits ALONG the moving pin's escape normal (a straight P3 exit), or 0 to keep the
+ * caller's baseline. Called ONLY from the both-P2-clear arm of place_moved_wire, so P2 > P6 holds by
+ * construction (a P2-mandated flip already dominates; a both-blocked case is left to the Layer-2
+ * reroute). Pure function of (START snapshot, xctx->rx1..ry2, moving-instance geometry) => determin-
+ * istic and release==stepwise. DECLINES (returns 0) when: no armed START snapshot (P2 not verifi-
+ * able); the moved endpoint is not on a moving non-label pin, or its normal is ambiguous/zero; the
+ * anchor is NOT strictly on the outward-normal side (an away escape is a genuine P3-mandated stub --
+ * biasing inward would make insert_exit_stubs skip a leg that actually enters the body, silently
+ * breaking P3/P5); or a stationary along-normal continuation at the anchor would make the route
+ * LONGER (length veto). sel1 selects which endpoint moved (SELECTED1 => rx1,ry1 is the pin). */
+static int fluid_p6_bias_ml(int sel1)
+{
+  double px, py, fx, fy, nx, ny;
+  int along;
+  if(!fluid_snap_pinnet) return 0;                   /* P2-clear must be PROVEN, not merely unqueried */
+  /* If the user EXPLICITLY forces literal exit stubs (wire_exit_stub, a user-facing Options toggle,
+   * default OFF and NOT set by cadence_style_rc), respect that and stand down: P6's along-normal
+   * straight exit would optimize the requested stub away. The normal fluid flow (wire_exit_stub off)
+   * still gets the min-bend straight exit. */
+  if(tclgetboolvar("wire_exit_stub")) return 0;
+  px = sel1 ? xctx->rx1 : xctx->rx2;                 /* moved (post-move) pin endpoint */
+  py = sel1 ? xctx->ry1 : xctx->ry2;
+  fx = sel1 ? xctx->rx2 : xctx->rx1;                 /* fixed anchor endpoint */
+  fy = sel1 ? xctx->ry2 : xctx->ry1;
+  /* The moving instance coords are NOT yet committed when place_moved_wire runs (inst.x0 is written
+   * later, move.c:3302), so get_inst_pin_coord() still reports the PRE-move pin. The wire endpoint
+   * (px,py) is already delta-applied, so match the pin at the PRE-move point (px-delta). The escape
+   * normal is translation-invariant, so the pre-move normal equals the post-move one. */
+  if(!fluid_moving_pin_normal(px - xctx->deltax, py - xctx->deltay, &nx, &ny)) return 0;
+  along = (ny != 0.0) ? 1 : 2;                       /* ny!=0 -> vertical pin-leg (ml=1); else ml=2 */
+  /* toward gate: anchor strictly on the OUTWARD-normal side of the moved pin (else it is a real, */
+  /* P3-mandated away-escape -- leave it to insert_exit_stubs). */
+  if(ny != 0.0) { if(ny * (fy - py) <= 0.0) return 0; }
+  else          { if(nx * (fx - px) <= 0.0) return 0; }
+  if(fluid_anchor_absorbs_along_normal(fx, fy, nx, ny)) return 0;   /* length veto */
+  return along;
+}
 
 /* total number of instance pins in the current schematic */
 static int fluid_count_pins(void)
