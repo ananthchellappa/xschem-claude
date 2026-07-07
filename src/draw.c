@@ -1135,6 +1135,17 @@ static void drawgrid()
 
   psize_ptr = tclgetvar("grid_point_size");
   if(psize_ptr[0]) grid_point_size = atoi(psize_ptr);
+  #endif
+  dbg(1, "drawgrid(): draw grid\n");
+  /* GRIDLAYER shares its GC with SELLAYER (both == layer 2, see xschem.h). The axes dash
+   * setup below mutates that shared GC's line style. It MUST come after this early-out:
+   * running it first left the GC LineOnOffDash on a grid-OFF redraw (the reset at the tail
+   * of this function is only reached on the grid-ON path), so draw_selection() then stroked
+   * the grey selection overlay dashed/broken -- the CTRL-G bug. The axis lines this sets up
+   * are all drawn below the guard too, so nothing is lost on the grid-OFF path.
+   * See doc/claude/issues/0082-grid-toggle-corrupts-selection-gc.md */
+  if( !tclgetboolvar("draw_grid") || !has_x) return;
+  #if DRAW_ALL_CAIRO==0
   if(axes) {
     dash_arr[0] = dash_arr[1] = (char) 3;
     XSetDashes(display, xctx->gc[GRIDLAYER], 0, dash_arr, 1);
@@ -1147,8 +1158,6 @@ static void drawgrid()
     }
   }
   #endif
-  dbg(1, "drawgrid(): draw grid\n");
-  if( !tclgetboolvar("draw_grid") || !has_x) return;
   delta=tclgetdoublevar("cadgrid")*xctx->mooz;
   #if DRAW_ALL_CAIRO==1
   set_cairo_color(GRIDLAYER);

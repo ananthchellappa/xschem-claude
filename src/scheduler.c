@@ -2076,6 +2076,23 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
           else if(!strcmp(argv[2], "gridlayer")) { /* layer number for grid */
             Tcl_SetResult(interp, my_itoa(GRIDLAYER),TCL_VOLATILE);
           }
+          else if(!strcmp(argv[2], "gc_line_style")) {
+            /* Cached X line_style of a layer GC (0=LineSolid, 1=LineOnOffDash,
+             * 2=LineDoubleDash; -1 = no X / bad layer). Test seam: draw_selection() strokes
+             * the grey selection overlay with gc[SELLAYER], which aliases gc[GRIDLAYER]
+             * (both == layer 2). A grid toggle must leave it LineSolid; see
+             * doc/claude/issues/0082-grid-toggle-corrupts-selection-gc.md.
+             * Usage: xschem get gc_line_style [<layer>]  (default SELLAYER) */
+            int ly = (argc > 3) ? atoi(argv[3]) : SELLAYER;
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            if(!has_x || ly < 0 || ly >= cadlayers) {
+              Tcl_SetResult(interp, "-1", TCL_STATIC);
+            } else {
+              XGCValues gcv;
+              XGetGCValues(display, xctx->gc[ly], GCLineStyle, &gcv);
+              Tcl_SetResult(interp, my_itoa(gcv.line_style), TCL_VOLATILE);
+            }
+          }
           break;
           case 'h':
           if(!strcmp(argv[2], "help")) { /* command help */
