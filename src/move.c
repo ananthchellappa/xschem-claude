@@ -225,7 +225,33 @@ static void update_symbol_bboxes(short rot, short flip)
   }
 }
 
+static void draw_selection_impl(GC g, int interruptable);
+
+/* incremental_wire_reroute.md Phase II: while a fluid stretch RUBBER step has LIVE-COMMITTED the
+ * moved geometry (xctx->fluid_reroute_dirty), the inst/wire/text coords ALREADY include the move
+ * delta. xctx->deltax/deltay are deliberately kept equal to the accumulated total so the eventual
+ * interactive END (move_objects(END,0,0,0)) can consume them (move.c live-commit tail), but the
+ * selection OVERLAY must NOT re-add that delta: an external full redraw (window Expose, hover,
+ * `xschem redraw`, crosshair) firing BETWEEN RUBBER frames -- when delta has been restored to the
+ * total but the geometry is already committed -- would otherwise paint the ghost at origin+2*delta,
+ * a greyed duplicate one full displacement beyond the real instance. Zero the move-delta for the
+ * duration of the overlay draw and restore it after, so END still sees the accumulated total. The
+ * wrapper (vs an inline zero) guarantees the restore on every early-return path inside the body
+ * (interruptable resume, tiled-fill fast path). Gated on fluid_reroute_dirty, which is only ever set
+ * when fluid_editing was on at START => default-off is byte-identical. */
 void draw_selection(GC g, int interruptable)
+{
+  if(xctx->fluid_reroute_dirty) {
+    double sv_dx = xctx->deltax, sv_dy = xctx->deltay;
+    xctx->deltax = 0.0; xctx->deltay = 0.0;
+    draw_selection_impl(g, interruptable);
+    xctx->deltax = sv_dx; xctx->deltay = sv_dy;
+  } else {
+    draw_selection_impl(g, interruptable);
+  }
+}
+
+static void draw_selection_impl(GC g, int interruptable)
 {
   int i, c, k, n;
   double  angle; /* arc */
