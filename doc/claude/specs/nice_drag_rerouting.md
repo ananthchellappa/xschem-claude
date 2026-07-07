@@ -236,6 +236,10 @@ non-regression guards, and the golden netlist harness for INV-1.
    full local solver. Cost vs polish.
 3. **Shove vs stretch** on drag-toward (issue 0015): does a moved instance push a perpendicular
    wire ahead, or cross through it? (Occupancy model.) Affects P5.
+   → **DECIDED 2026-07-06: SHOVE** (connected wire yields; unconnected = obstacle). Anchored
+   to the occupancy model; resolves the `before_1` own-body intrusion. Implement as a new layer
+   in the per-snap-step fluid reroute pipeline (not a release-only pass). Full resolution +
+   5 sub-decisions in issue 0015 §7.
 4. **Interactive preview** (Phase 8): worth it, or commit-on-release only?
 5. **Default on?** Or keep behind `fluid_editing` indefinitely (Phase 6 exit-stub was deferred
    after eyeballing — real-schematic feel is the acceptance gate, not headless green).
