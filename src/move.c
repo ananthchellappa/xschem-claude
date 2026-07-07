@@ -2352,6 +2352,217 @@ static void fluid_reroute_around_obstacles(int orthogonal_wiring)
   }
 }
 
+/* incremental_wire_reroute.md / issue 0015 §7 -- CONNECTED-WIRE SHOVE (drag-toward, the occupancy
+ * model). A moving instance that drives its pin ALONG its own stub PAST a CONNECTED perpendicular
+ * wire V must PUSH V ahead (a solid body cannot occupy the wire's location) instead of letting the
+ * naive place_moved_wire relay the stub as a REVERSED leg back through the instance's own body
+ * (the P5 own-body intrusion of after_1.sch). Away = pure stretch (untouched). This is the structural
+ * inverse of compute_wire_slide (which slides a PERPENDICULAR cornered wire; here the stub is PARALLEL
+ * to the move, so compute_wire_slide skips it and never sees V).
+ *
+ * Post-detection sibling of Layers 2/3: runs at the shared pre-trim commit seam for BOTH a real END
+ * and a live fluid RUBBER step => release==stepwise for free; a pure function of (pristine snapshot +
+ * total delta). Gated identically to the obstacle layers (caller: fluid_editing && stretch_select &&
+ * rot==flip==0) plus a valid START name snapshot => default off byte-identical. Every relocated piece
+ * (S, V, arm) stays on the moving pin's net NF (V is electrically one net with the stub at J), so P1
+ * is preserved BY CONSTRUCTION for anything attached at J or C; a wire tapping V's INTERIOR, or a
+ * COLLINEAR continuation at C (e.g. an autotrim split of V), would be stranded/bent, so those are
+ * DECLINED (leave baseline) via the clean-span/clean-corner guards below. P2: the new S, new V and
+ * each dragged arm are checked against stationary foreign device pins (fluid_seg_hits_foreign_pin),
+ * co-moving distinct-net pins (fluid_seg_hits_moving_pin) and stationary foreign-net wires
+ * (fluid_seg_hits_foreign_wire); any hit DECLINES => baseline, never worse. No transitive chain: only
+ * V and the one level of arm endpoints coincident with V's far corner follow. NOTE it post-detects the
+ * reversed stub place_moved_wire just laid (a parallel single-endpoint stub is always relaid as one
+ * straight degenerate wire), so it is coupled to that relay shape.
+ * See doc/claude/issues/0015-component-shove-push-connected-wire-when-moving-into-it.md §7. */
+static int fluid_seg_hits_foreign_wire(double x1, double y1, double x2, double y2,
+                                       const char *nf, int selfa, int selfb, int selfc)
+{
+  /* Does axis-aligned seg (x1,y1)-(x2,y2) touch a STATIONARY (unselected) wire that is NOT part of the
+   * shove's own group {selfa=S, selfb=V, selfc=arm} and resolves to a net OTHER than nf? Uses the
+   * pre-move net cache in xctx->wire[].node (prepare_netlist_structs(0) ran at the commit seam before
+   * the shove); a NULL/empty node or an == nf node is same-net and fine to touch. Manhattan-only, so a
+   * closed-bbox overlap is the exact seg-seg touch test. Conservative: an unresolved (NULL) node is
+   * treated as same-net (skip) so we never DECLINE on a legitimate same-net landing (arm on its rail). */
+  int m;
+  double alo = x1 < x2 ? x1 : x2, ahi = x1 < x2 ? x2 : x1;
+  double blo = y1 < y2 ? y1 : y2, bhi = y1 < y2 ? y2 : y1;
+  for(m = 0; m < xctx->wires; ++m) {
+    double wx1, wy1, wx2, wy2, clo, chi, dlo, dhi;
+    const char *wn;
+    if(m == selfa || m == selfb || m == selfc) continue;
+    if(xctx->wire[m].sel) continue;                       /* moving wires ride rigidly, not obstacles */
+    wn = xctx->wire[m].node;
+    if(!wn || !wn[0]) continue;                           /* unresolved -> treat as same-net (skip) */
+    if(nf && nf[0] && !strcmp(wn, nf)) continue;          /* same net -> a legitimate touch */
+    wx1 = xctx->wire[m].x1; wy1 = xctx->wire[m].y1; wx2 = xctx->wire[m].x2; wy2 = xctx->wire[m].y2;
+    clo = wx1 < wx2 ? wx1 : wx2; chi = wx1 < wx2 ? wx2 : wx1;
+    dlo = wy1 < wy2 ? wy1 : wy2; dhi = wy1 < wy2 ? wy2 : wy1;
+    if(alo <= chi && clo <= ahi && blo <= dhi && dlo <= bhi) return 1;   /* closed-bbox overlap = touch */
+  }
+  return 0;
+}
+
+static void fluid_shove_connected_wire(int orthogonal_wiring)
+{
+  double grid = tclgetdoublevar("cadsnap");
+  int dxnz, dynz, s, iter;
+
+  if(!orthogonal_wiring) return;
+  if(!fluid_snap_pinnet || fluid_snap_npins <= 0) return;
+  if(fluid_count_pins() != fluid_snap_npins) return;   /* instance set changed: snapshot unreliable */
+  if(grid <= 0.0) grid = 1.0;
+  dxnz = (xctx->deltax != 0.0);
+  dynz = (xctx->deltay != 0.0);
+  if(dxnz == dynz) return;                              /* pure axis-aligned moves only */
+  s = dynz ? (xctx->deltay > 0.0 ? 1 : -1) : (xctx->deltax > 0.0 ? 1 : -1);
+
+  /* refresh the pre-move net cache (xctx->wire[].node) so fluid_seg_hits_foreign_wire can tell a
+   * distinct-net wire from a same-net one; the shove has not mutated geometry yet. */
+  prepare_netlist_structs(0);
+
+  /* one shove per crossed stub; cap at wire count as a runaway backstop (a shoved stub stops matching
+   * the reached/passed test, so the loop terminates well before the cap). */
+  for(iter = 0; iter < xctx->wires + 1; ++iter) {
+    int n, found = -1, endpin = 0, m, V = -1, perpcount = 0, others = 0;
+    double ex = 0, ey = 0, ox = 0, oy = 0;             /* stub S: pin end / junction (far) end */
+    double cx = 0, cy = 0;                             /* V's far corner */
+    double pm0, jc, pmc, jpx, jpy, dsx, dsy, ncx, ncy;
+    double vlo, vhi, vperp;                            /* V span + line, for the clean-span guard */
+    int unclean = 0;
+    const char *nf;
+
+    /* --- find the crossed stub S: a wire PARALLEL to the move with EXACTLY ONE moving-pin endpoint,
+     *     driven TOWARD its fixed far end J and REACHED/PASSED it, whose J is a CLEAN corner carrying
+     *     exactly one connected perpendicular wire V --- */
+    for(n = 0; n < xctx->wires && found < 0; ++n) {
+      double x1 = xctx->wire[n].x1, y1 = xctx->wire[n].y1;
+      double x2 = xctx->wire[n].x2, y2 = xctx->wire[n].y2;
+      int e1, e2;
+      if(dynz && x1 != x2) continue;                   /* vertical move -> parallel stub is vertical */
+      if(dxnz && y1 != y2) continue;
+      if(x1 == x2 && y1 == y2) continue;               /* degenerate */
+      e1 = point_on_moving_pin(x1, y1);
+      e2 = point_on_moving_pin(x2, y2);
+      if(e1 == e2) continue;                           /* need exactly one moving-pin endpoint */
+      endpin = e1;
+      ex = e1 ? x1 : x2;  ey = e1 ? y1 : y2;           /* moving pin end (post-move) */
+      ox = e1 ? x2 : x1;  oy = e1 ? y2 : y1;           /* junction / far end (unchanged by the move) */
+      if(point_on_fixed_pin(ox, oy)) continue;         /* never shove a wire off a fixed pin */
+      pm0 = dynz ? (ey - xctx->deltay) : (ex - xctx->deltax);   /* pre-move pin along-coord */
+      jc  = dynz ? oy : ox;                            /* junction along-coord */
+      pmc = dynz ? ey : ex;                            /* post-move pin along-coord */
+      if((jc - pm0) * s <= 0.0) continue;              /* must have been moving TOWARD J */
+      if((pmc - jc) * s <  0.0) continue;              /* must have REACHED/PASSED J (overrun >= 0) */
+
+      /* J must be a CLEAN corner: exactly one perpendicular UNSELECTED wire (=V), nothing else */
+      perpcount = 0; others = 0; V = -1;
+      for(m = 0; m < xctx->wires; ++m) {
+        double mx1, my1, mx2, my2;
+        int perp;
+        if(m == n) continue;
+        mx1 = xctx->wire[m].x1; my1 = xctx->wire[m].y1;
+        mx2 = xctx->wire[m].x2; my2 = xctx->wire[m].y2;
+        if(!((mx1 == ox && my1 == oy) || (mx2 == ox && my2 == oy))) continue;   /* not at J */
+        perp = dynz ? (my1 == my2 && mx1 != mx2) : (mx1 == mx2 && my1 != my2);
+        if(perp && xctx->wire[m].sel == 0) { V = m; ++perpcount; }
+        else ++others;
+      }
+      if(perpcount != 1 || others != 0) continue;      /* T-tap / ambiguous -> leave to baseline */
+      found = n;
+    }
+    if(found < 0) break;
+    n = found;
+
+    /* V's far corner C (the endpoint that is not J) */
+    if(xctx->wire[V].x1 == ox && xctx->wire[V].y1 == oy) { cx = xctx->wire[V].x2; cy = xctx->wire[V].y2; }
+    else                                                { cx = xctx->wire[V].x1; cy = xctx->wire[V].y1; }
+    if(point_on_fixed_pin(cx, cy)) break;              /* can't tear V's far end off a fixed pin */
+
+    /* V must be a CLEAN isolated segment J..C: (1) no wire endpoint STRICTLY inside its span (a
+     * mid-span tap would be stranded when V translates -> P1 disconnect), and (2) no COLLINEAR wire
+     * at C (a continuation / autotrim split of V; the one-level arm drag would bend it into a diagonal
+     * -> P4). Perpendicular arms at C are fine (they are what legitimately follow). Else DECLINE. */
+    vperp = dynz ? oy : ox;                             /* V's constant coord (its line) */
+    vlo = (dynz ? ox : oy) < (dynz ? cx : cy) ? (dynz ? ox : oy) : (dynz ? cx : cy);
+    vhi = (dynz ? ox : oy) < (dynz ? cx : cy) ? (dynz ? cx : cy) : (dynz ? ox : oy);
+    for(m = 0; m < xctx->wires && !unclean; ++m) {
+      double mx1, my1, mx2, my2;
+      int e_at_c, coll;
+      if(m == n || m == V) continue;
+      mx1 = xctx->wire[m].x1; my1 = xctx->wire[m].y1;
+      mx2 = xctx->wire[m].x2; my2 = xctx->wire[m].y2;
+      /* (1) endpoint strictly inside V's open span, on V's line */
+      if(dynz) {
+        if(my1 == vperp && mx1 > vlo && mx1 < vhi) unclean = 1;
+        if(my2 == vperp && mx2 > vlo && mx2 < vhi) unclean = 1;
+      } else {
+        if(mx1 == vperp && my1 > vlo && my1 < vhi) unclean = 1;
+        if(mx2 == vperp && my2 > vlo && my2 < vhi) unclean = 1;
+      }
+      /* (2) a wire COLLINEAR with V that has an endpoint at C = a continuation, not an arm */
+      e_at_c = (mx1 == cx && my1 == cy) || (mx2 == cx && my2 == cy);
+      coll = dynz ? (my1 == my2 && my1 == vperp) : (mx1 == mx2 && mx1 == vperp);
+      if(e_at_c && coll) unclean = 1;
+    }
+    if(unclean) break;                                 /* messy V -> decline, leave baseline */
+
+    /* J' = pin one grid OUTWARD along the drive axis; ds = J' - J; C' = C + ds */
+    jpx = dxnz ? ex + grid * s : ex;
+    jpy = dynz ? ey + grid * s : ey;
+    dsx = jpx - ox;  dsy = jpy - oy;
+    ncx = cx + dsx;  ncy = cy + dsy;
+
+    /* P2: decline (=> baseline) if the new stub, the shoved V, or a dragged arm would land on a
+     * stationary distinct-net pin, a co-moving distinct-net pin, or a stationary foreign-net wire.
+     * nf = the moving pin's pristine (START) net (S and V are on nf by construction). */
+    nf = fluid_moving_pin_net(ex, ey);
+    if(nf && nf[0]) {
+      if(fluid_seg_hits_foreign_pin(ex, ey, jpx, jpy, nf)) break;           /* new S vs foreign pin */
+      if(fluid_seg_hits_foreign_pin(jpx, jpy, ncx, ncy, nf)) break;         /* new V vs foreign pin */
+      if(fluid_seg_hits_moving_pin(ex, ey, jpx, jpy, nf, ex, ey)) break;    /* new S vs co-moving pin */
+      if(fluid_seg_hits_moving_pin(jpx, jpy, ncx, ncy, nf, ex, ey)) break;  /* new V vs co-moving pin */
+      if(fluid_seg_hits_foreign_wire(ex, ey, jpx, jpy, nf, n, V, -1)) break;    /* new S vs foreign wire */
+      if(fluid_seg_hits_foreign_wire(jpx, jpy, ncx, ncy, nf, n, V, -1)) break;  /* new V vs foreign wire */
+      /* each arm (a wire with an endpoint at C, other than V/S) checked over its NEW span (far end->C') */
+      for(m = 0; m < xctx->wires; ++m) {
+        double af, ag;   /* arm's fixed far end */
+        int at1, at2;
+        if(m == n || m == V) continue;
+        at1 = (xctx->wire[m].x1 == cx && xctx->wire[m].y1 == cy);
+        at2 = (xctx->wire[m].x2 == cx && xctx->wire[m].y2 == cy);
+        if(!at1 && !at2) continue;
+        af = at1 ? xctx->wire[m].x2 : xctx->wire[m].x1;
+        ag = at1 ? xctx->wire[m].y2 : xctx->wire[m].y1;
+        if(fluid_seg_hits_foreign_pin(af, ag, ncx, ncy, nf)) { unclean = 1; break; }
+        if(fluid_seg_hits_moving_pin(af, ag, ncx, ncy, nf, ex, ey)) { unclean = 1; break; }
+        if(fluid_seg_hits_foreign_wire(af, ag, ncx, ncy, nf, n, V, m)) { unclean = 1; break; }
+      }
+      if(unclean) break;
+    }
+
+    /* commit: (1) one-level arm drag at C -> C' (skip V and S), (2) translate V wholesale,
+     * (3) collapse S to the one-grid OUTWARD stub pin -> J'. (cx,cy captured before any mutation.) */
+    for(m = 0; m < xctx->wires; ++m) {
+      int touched = 0;
+      if(m == n || m == V) continue;
+      if(xctx->wire[m].x1 == cx && xctx->wire[m].y1 == cy) { xctx->wire[m].x1 = ncx; xctx->wire[m].y1 = ncy; touched = 1; }
+      if(xctx->wire[m].x2 == cx && xctx->wire[m].y2 == cy) { xctx->wire[m].x2 = ncx; xctx->wire[m].y2 = ncy; touched = 1; }
+      if(touched) order_wire_coords(m);
+    }
+    xctx->wire[V].x1 += dsx; xctx->wire[V].y1 += dsy;
+    xctx->wire[V].x2 += dsx; xctx->wire[V].y2 += dsy;
+    order_wire_coords(V);
+    if(endpin) { xctx->wire[n].x2 = jpx; xctx->wire[n].y2 = jpy; }
+    else       { xctx->wire[n].x1 = jpx; xctx->wire[n].y1 = jpy; }
+    order_wire_coords(n);
+
+    xctx->prep_hash_wires = 0; xctx->prep_net_structs = 0; xctx->prep_hi_structs = 0;
+    xctx->need_reb_sel_arr = 1;
+    set_modify(1);
+  }
+}
+
 static void fluid_check_move_invariants(void)
 {
   int i, w, shorts = 0, disconnects = 0, dev_merges = 0;
@@ -3015,6 +3226,9 @@ void move_objects(int what, int merge, double dx, double dy)
     * check_collapsing_objects/trim so the existing cleanup normalises the new geometry once. */
    if(tclgetboolvar("fluid_editing") && xctx->stretch_select &&
       xctx->move_rot == 0 && xctx->move_flip == 0) {
+     /* issue 0015 §7: shove a connected wire the moving pin drove past (serves P5), THEN the obstacle
+      * layer gets the last word on P2 for anything with a moving-pin endpoint. */
+     fluid_shove_connected_wire(orthogonal_wiring);
      fluid_reroute_around_obstacles(orthogonal_wiring);
    }
    /* build after copying and after recalculating prepare_netlist_structs() */
