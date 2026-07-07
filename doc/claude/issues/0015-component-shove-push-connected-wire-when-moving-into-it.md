@@ -1,9 +1,11 @@
 # Issue 0015 — moving a component toward a connected perpendicular wire should PUSH the wire, not cross it
 
 **Opened:** 2026-06-19
-**Status:** DECIDED 2026-07-06 → **SHOVE** (occupancy model). Not yet implemented;
-now the accepted design, no longer an open question. See §7. Was OPEN/deferred,
-scoped out of issue 0014 deliberately.
+**Status:** IMPLEMENTED 2026-07-06 (commit `897b3133`, branch `fluid-editing`) →
+**SHOVE** (occupancy model), behind `fluid_editing`. `fluid_shove_connected_wire()`
+in `move.c` at the pre-trim commit seam; tests `test_wireedit_37` (positive) +
+`test_wireedit_38` (decline guards). See §7 for the design; §8 for the build notes.
+Was DECIDED 2026-07-06, before that OPEN/deferred (scoped out of issue 0014).
 **Affects:** interactive use with `cadence_compat` / `enable_stretch` /
 `orthogonal_wiring` (stretch-move of an instance).
 **Severity:** low — current behavior keeps connectivity correct; this is an
@@ -180,3 +182,35 @@ connected same-net wire; arm collisions defer to the obstacle layers).
 **Deferred within the shove** (predicted by the occupancy model, not built now):
 component-toward-*parallel* wire, and two-abutted-components. Placeholder cross-through
 stays until the shove layer lands.
+
+---
+
+## 8. Implementation notes (commit `897b3133`)
+
+Approach **B** (design workflow `wf_7c208608` + judge): a new sibling pass
+`fluid_shove_connected_wire()` at the shared pre-trim commit seam next to
+`fluid_reroute_around_obstacles` — **zero shipped-function-body edits**, one call
+line. Runs for both a real END and a live RUBBER step ⇒ release==stepwise; gated on
+`fluid_editing && stretch_select && rot==flip==0` ⇒ default-off byte-identical.
+
+It **post-detects** the reversed stub `place_moved_wire` just laid (a parallel
+single-endpoint stub is always relaid as one straight wire), finds the connected
+perpendicular V at a clean corner J, sets `J' = pin + one grid outward`, translates
+V wholesale by `J'-J`, drags one level of arm endpoints at V's far corner C, and
+relays the stub as the one-grid outward exit stub.
+
+**Adversarial review** (`wf_44288957`, 6 lenses) found the naive shove shorted/
+disconnected on messy topologies. Guards added, each **collective-sabotage verified**
+(with all guards off the review scenes fail 5 checks; with them, green):
+- **clean SPAN of V** — decline if a wire taps V's interior (would strand → P1) or a
+  collinear wire sits at C (an autotrim split of V; the arm-drag would bend it → P4);
+- **P2 on new S / new V / each dragged arm** vs stationary foreign device pins
+  (`fluid_seg_hits_foreign_pin`), co-moving distinct-net pins
+  (`fluid_seg_hits_moving_pin`, mirroring Layer 3), and stationary foreign-net WIRES
+  (new `fluid_seg_hits_foreign_wire`, closing the pin-only P2 gap).
+Every guard **declines to baseline** (never worse). `prepare_netlist_structs(0)` is
+called once at entry so the wire-level P2 guard sees pre-move net names.
+
+**Process note:** a review subagent ran `git reset --hard` in the shared worktree
+mid-run and wiped the then-uncommitted implementation; it was restored from context.
+Lesson: commit before spawning tree-mutating subagents, or isolate them in a worktree.
