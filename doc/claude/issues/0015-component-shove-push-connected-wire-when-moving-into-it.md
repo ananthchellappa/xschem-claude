@@ -181,7 +181,9 @@ connected same-net wire; arm collisions defer to the obstacle layers).
 
 **Deferred within the shove** (predicted by the occupancy model, not built now):
 component-toward-*parallel* wire, and two-abutted-components. Placeholder cross-through
-stays until the shove layer lands.
+stays until the shove layer lands. **Diagonal (non-axis-aligned) drag-toward is gated
+out** (`dxnz == dynz` bail, mirroring `compute_wire_slide`) and tracked separately in
+**issue 0081** (per-axis X-then-Y decomposition).
 
 ---
 

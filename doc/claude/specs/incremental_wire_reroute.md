@@ -296,6 +296,11 @@ Between phases: golden `wireedit` suite (31 tests) + `test_wire_split` + `test_f
 9. **Terminal discovery cost** — recomputing terminals + `F` only at START (then translating them)
    vs re-deriving each step. START-once is cheaper but must survive topology changes the reroute
    itself makes (a stop-short junction adds a wire); decide when `F` is refreshed.
+10. **Diagonal (non-axis-aligned) drags for slide/shove** (issue 0081) — `compute_wire_slide` and
+    `fluid_shove_connected_wire` bail on `dxnz == dynz`, so a diagonal drag-toward gets no shove
+    (the reversed-stub-through-body re-appears). Obstacle Layers 1–3 already handle diagonal (R18 is
+    diagonal). Proposed: decompose the total delta into an X-leg then a Y-leg (each a pure axis move
+    the existing machinery handles) — deterministic ⇒ release==stepwise. Cadence has no such limit.
 
 ## 11. References
 
