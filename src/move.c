@@ -1771,7 +1771,13 @@ static int fluid_moving_pin_normal(double x, double y, double *nx, double *ny)
     rects = (xctx->inst[inst].ptr + xctx->sym)->rects[PINLAYER];
     for(r = 0; r < rects; r++) {
       get_inst_pin_coord(inst, r, &px, &py);
-      if(point_near_pin(px, py, x, y)) {
+      /* EXACT match, not point_near_pin's cadsnap/2 tolerance: insert_exit_stubs binds the pin-leg by
+       * exact endpoint == (move.c:1655), so P6 must use the same equality or a NON-incident neighbour
+       * pin within tolerance (dense/corner symbol, declared earlier) would supply the wrong normal and
+       * P6 and P3 would disagree -- biasing the wrong axis (adversarial review wf_6e97238b, pin-binding
+       * finding). On grid-aligned designs the endpoint sits exactly on its pin; a sub-grid-near endpoint
+       * simply declines (P6 is a bonus), which is safe. */
+      if(px == x && py == y) {
         get_pin_escape_normal(inst, r, nx, ny);
         return (*nx != 0.0) ^ (*ny != 0.0);          /* exactly one axis nonzero, else decline */
       }
@@ -1798,6 +1804,71 @@ static int fluid_anchor_absorbs_along_normal(double fx, double fy, double nx, do
     horiz = (xctx->wire[m].y1 == xctx->wire[m].y2) && (xctx->wire[m].x1 != xctx->wire[m].x2);
     if(ny != 0.0 && vert)  return 1;                 /* vertical normal, vertical continuation */
     if(nx != 0.0 && horiz) return 1;                 /* horizontal normal, horizontal continuation */
+  }
+  return 0;
+}
+
+/* Phase IV P6 P5-guard (adversarial review wf_6e97238b): does the axis-aligned segment (x1,y1)-(x2,y2)
+ * pass through the STRICT interior of any STATIONARY, non-label instance body? The both-P2-clear arm
+ * only proved no device SHORT (fluid_ml_blocked tests two-distinct-pin straddle, not a body crossing),
+ * so a foreign device whose pins lie OFF the along-normal axis has b=0 yet its body sits on the leg --
+ * P6 would drive the straight exit through it (a P5 break, and P5 > P6). Box = inst world bbox
+ * (symbol_bbox, move.c:221, the same box the reroute layers use). Stationary only: the moving
+ * instance's own body is excluded by the sel test, so the pin's own leg root is never flagged. */
+static int fluid_seg_crosses_stationary_body(double x1, double y1, double x2, double y2)
+{
+  int i;
+  for(i = 0; i < xctx->instances; i++) {
+    double bx1, by1, bx2, by2, t, slo, shi;
+    const char *itype;
+    if(xctx->inst[i].sel || xctx->inst[i].ptr < 0) continue;         /* stationary obstacles only */
+    itype = xctx->sym[xctx->inst[i].ptr].type;
+    if(itype && !strcmp(itype, "label")) continue;                   /* labels have no body (§2) */
+    bx1 = xctx->inst[i].x1; by1 = xctx->inst[i].y1;
+    bx2 = xctx->inst[i].x2; by2 = xctx->inst[i].y2;
+    if(bx1 > bx2) { t = bx1; bx1 = bx2; bx2 = t; }
+    if(by1 > by2) { t = by1; by1 = by2; by2 = t; }
+    if(x1 == x2) {                                                    /* vertical segment at x1 */
+      if(x1 <= bx1 || x1 >= bx2) continue;                            /* not strictly inside x-span */
+      slo = y1 < y2 ? y1 : y2; shi = y1 < y2 ? y2 : y1;
+      if(slo < by2 && shi > by1) return 1;                           /* overlaps the open y-interior */
+    } else if(y1 == y2) {                                             /* horizontal segment at y1 */
+      if(y1 <= by1 || y1 >= by2) continue;
+      slo = x1 < x2 ? x1 : x2; shi = x1 < x2 ? x2 : x1;
+      if(slo < bx2 && shi > bx1) return 1;
+    }
+  }
+  return 0;
+}
+
+/* Phase IV P6 length veto (pin end; adversarial review wf_6e97238b, length finding). Complements
+ * fluid_anchor_absorbs_along_normal (anchor end): decline if a STATIONARY wire lies colinear with and
+ * overlaps the BASELINE perpendicular pin-leg -- the pin's ROW for a vertical normal, its COLUMN for a
+ * horizontal normal, spanning from the pin toward the anchor. autotrim dedups that overlap in the
+ * baseline route but NOT in the along-normal route, so biasing would only ADD copper (and saves 0
+ * bends: with a wire already on the pin row, insert_exit_stubs does not staircase). px,py = moved pin;
+ * fx,fy = anchor. BLIND SPOT (pre-existing, non-correctness, re-review wf_3d079dd2): a corridor wire
+ * that CROSSES the pin is grabbed by connect_by_kissing as a MOVING (.sel) follow wire, so the
+ * stationary-only scan below skips it and P6 may add bends+length in that narrow case (reproduces on
+ * the guard-free binary too; all predicates hold). Left as a documented quality limitation. */
+static int fluid_perp_pinleg_absorbs(double px, double py, double fx, double fy, double nx, double ny)
+{
+  int m;
+  double lo, hi, wlo, whi;
+  for(m = 0; m < xctx->wires; m++) {
+    if(xctx->wire[m].sel) continue;                                  /* stationary wires only */
+    if(ny != 0.0) {                                                  /* vertical normal: baseline leg is horizontal at y=py */
+      if(xctx->wire[m].y1 != py || xctx->wire[m].y2 != py) continue; /* stationary horizontal wire on the pin row */
+      lo = px < fx ? px : fx; hi = px < fx ? fx : px;
+      wlo = xctx->wire[m].x1 < xctx->wire[m].x2 ? xctx->wire[m].x1 : xctx->wire[m].x2;
+      whi = xctx->wire[m].x1 < xctx->wire[m].x2 ? xctx->wire[m].x2 : xctx->wire[m].x1;
+    } else {                                                         /* horizontal normal: baseline leg is vertical at x=px */
+      if(xctx->wire[m].x1 != px || xctx->wire[m].x2 != px) continue;
+      lo = py < fy ? py : fy; hi = py < fy ? fy : py;
+      wlo = xctx->wire[m].y1 < xctx->wire[m].y2 ? xctx->wire[m].y1 : xctx->wire[m].y2;
+      whi = xctx->wire[m].y1 < xctx->wire[m].y2 ? xctx->wire[m].y2 : xctx->wire[m].y1;
+    }
+    if((lo > wlo ? lo : wlo) < (hi < whi ? hi : whi)) return 1;      /* positive-length overlap */
   }
   return 0;
 }
@@ -1838,7 +1909,19 @@ static int fluid_p6_bias_ml(int sel1)
   /* P3-mandated away-escape -- leave it to insert_exit_stubs). */
   if(ny != 0.0) { if(ny * (fy - py) <= 0.0) return 0; }
   else          { if(nx * (fx - px) <= 0.0) return 0; }
-  if(fluid_anchor_absorbs_along_normal(fx, fy, nx, ny)) return 0;   /* length veto */
+  if(fluid_anchor_absorbs_along_normal(fx, fy, nx, ny)) return 0;   /* length veto (anchor end) */
+  if(fluid_perp_pinleg_absorbs(px, py, fx, fy, nx, ny)) return 0;   /* length veto (pin end, Finding 3) */
+  /* P5 (P5 > P6): the along-normal L must not drive either leg through a stationary foreign device
+   * body -- the both-P2-clear arm proved no short, not no body cross (Finding 1). L legs by orientation
+   * (place_moved_wire branches): along==1 => vertical pin-leg then horizontal arrival; along==2 =>
+   * horizontal pin-leg then vertical arrival. Both legs run between the SAME (px,py) and (fx,fy). */
+  if(along == 1) {
+    if(fluid_seg_crosses_stationary_body(px, py, px, fy)) return 0;  /* vertical pin-leg   */
+    if(fluid_seg_crosses_stationary_body(px, fy, fx, fy)) return 0;  /* horizontal arrival */
+  } else {
+    if(fluid_seg_crosses_stationary_body(px, py, fx, py)) return 0;  /* horizontal pin-leg */
+    if(fluid_seg_crosses_stationary_body(fx, py, fx, fy)) return 0;  /* vertical arrival   */
+  }
   return along;
 }
 

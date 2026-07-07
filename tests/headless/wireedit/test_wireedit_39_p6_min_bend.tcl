@@ -12,8 +12,13 @@
 # Conflict order P1=P2 > P3 > P5 > P4 > P7 > P6: P6 acts ONLY in the both-orientations-P2-clear arm
 # (a P2 obstacle flip dominates; a both-blocked case is left to the Layer-2 reroute), only when the
 # anchor is on the OUTWARD-normal side (an away escape is a genuine P3-mandated stub -- kept), and
-# stands down for an explicit wire_exit_stub preference. Length can never increase (both L orient-
-# ations have identical |dx|+|dy|; merges preserve length), so this is a pure bend reduction.
+# stands down for an explicit wire_exit_stub preference. In the perpendicular, non-kissed case length
+# does not increase (both L orientations have identical |dx|+|dy|; the anchor + pin-corridor vetoes
+# decline the cases where one orientation dedups a stationary wire the other does not). Two pre-existing
+# quality exceptions are OUT OF SCOPE -- they reproduce on the guard-free and pre-P6 binaries and break
+# NO correctness predicate (P1/P2/P4/P5 all hold): a stationary corridor wire that CROSSES the pin
+# becomes a kissed (.sel) follow wire the stationary-only veto cannot see; and diagonal drags (issue
+# 0081, per-axis decomposition).
 #
 # RED-first: the Group-A bend counts are the pre-fix STAIRCASE + 1 (fluid @ HEAD lays 2/3 bends where
 # P6 now lays 1/0). GROUP B are the decline/no-regression anchors (byte-identical off, veto, away,
@@ -150,5 +155,56 @@ we_move_stretch 60 0
 set segRelease [segset]
 check "release == stepwise: cont=none P6 route identical both ways" [expr {$segStep eq $segRelease}]
 check "release == stepwise: is the 1-bend route" [expr {[route_bends] == 1}]
+
+# ============ GROUP C -- adversarial review regressions (wf_6e97238b, all RED @ 503189ff) ============
+
+# C1 -- P5 body cross (P5 > P6): a STATIONARY foreign device (res RX, rot1) sits on the along-normal
+# leg's column x=60; RX's pins lie OFF x=60 so the P2-clear gate sees no short, but the straight exit
+# would drive through RX's body. The fix (fluid_seg_crosses_stationary_body) must DECLINE -> keep the
+# P5-clean baseline. RED @ 503189ff: fluid=1 laid {60 30 60 130} through RX, p5_no_body_cross -> 0.
+G 1
+xschem clear force
+xschem instance devices/res 0 0 0 0 {name=RA}
+xschem wire 0 30 0 130
+xschem instance devices/lab_pin 0 130 0 0 {name=LA lab=NA}
+xschem instance devices/res 60 80 1 0 {name=RX}            ;# stationary body straddling x=60
+set snap [net_snapshot]
+xschem unselect_all; xschem select instance [ix RA]
+we_move_stretch 60 0
+check "C1:P5 no body cross (declined the body-crossing straight exit)" [p5_no_body_cross]
+check "C1:P5 the along-normal leg through RX is NOT present"           [expr {![has_seg 60 30 60 130]}]
+check "C1:P1"                                                          [p1_netlist_invariant $snap]
+check "C1:P2"                                                          [p2_no_short]
+
+# C2 -- length: a STATIONARY wire lies along the BASELINE perpendicular pin-leg (pin row y=30); the
+# baseline horizontal leg dedups its overlap, the along-normal route does not, so biasing only adds
+# copper for 0 bend gain. fluid_perp_pinleg_absorbs must DECLINE. RED @ 503189ff: fluid=1 len 480.
+G 1
+xschem clear force
+xschem instance devices/res 0 0 0 0 {name=RA}
+xschem wire 0 30 0 130
+xschem instance devices/lab_pin 0 130 0 0 {name=LA lab=NA}
+xschem wire 20 30 300 30                                   ;# stationary wire on the pin's escape row
+xschem unselect_all; xschem select instance [ix RA]
+we_move_stretch 100 0
+# (no P1-invariant assert: dragging pin M onto the stationary wire legitimately kisses/merges it, a
+#  connectivity change that both baseline and P6 share -- the point here is length + no short.)
+check "C2:length not inflated (declined the 0-bend-gain bias)" [expr {[route_length] == 400}]
+check "C2:P2 no-short" [p2_no_short]
+
+# C3 -- pin binding: cornerpin.sym has two pins on PERPENDICULAR edges within cadsnap/2 at cadsnap=30
+# (a(30,40) normal +y declared 2nd, b(40,30) normal +x declared 1st, ~14 apart). The follow wire is on
+# pin a; the fix's EXACT pin match must read a's +y normal (not b's +x, the tolerance/first-match bug),
+# so the route stays the clean 1-bend baseline. RED @ 503189ff: fluid=1 -> 220/2-bend (wrong normal).
+G 1
+uplevel #0 {set cadsnap 30}                                ;# AFTER G (which sets cadsnap 10); pins a,b ~14 apart < cadsnap/2=15
+xschem clear force
+xschem instance [file join [file dirname [info script]] cornerpin.sym] 0 0 0 0 {name=X1}
+xschem wire 30 40 130 40
+xschem unselect_all; xschem select instance 0
+we_move_stretch 0 60
+check "C3:pin-binding exact match -> clean 1-bend route (not the wrong-normal staircase)" \
+  [expr {[route_bends] == 1 && [route_length] == 160}]
+uplevel #0 {set cadsnap 10}
 
 we_result
