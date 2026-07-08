@@ -87,6 +87,44 @@ if grep -v '^#' "$LOG" | grep -q '^[^x[:space:]]' ; then
   bad "non-comment junk line in log (replay would break)"
 else ok "log body still only comments / xschem commands"; fi
 
+# 7) the header must record the PRE-parse argv: process_options permutes argv in place
+#    (compacts non-option args over flag slots, NUL-splits --opt=val), so a post-parse dump
+#    drops flags, duplicates the file arg and amputates =values (review wf_a23dea5b)
+LD7="$TMP/logs7"
+( cd "$TMP" && HOME="$TMP/home7" timeout 30 "$XSCHEM" --nogui --pipe -q --logdir "$LD7" --norecent "$SCH" --script "$TMP/load_quit.tcl" >/dev/null 2>&1 )
+L7="$LD7/Xschem.log"
+LAUNCH7=$(grep '^# launch:' "$L7" 2>/dev/null)
+if echo "$LAUNCH7" | grep -q -- '--nogui'; then
+  ok "launch header keeps --nogui despite argv compaction"
+else bad "launch header lost --nogui (post-permutation argv dumped)"; fi
+n=$(echo "$LAUNCH7" | grep -o "before_3.sch" | wc -l)
+if [ "$n" = "1" ]; then ok "file argument appears exactly once in the launch header"
+else bad "file argument duplicated/missing in launch header (count=$n)"; fi
+
+# 8) --opt=val form survives intact (parser NUL-splits the '=' in place)
+LD8="$TMP/logs8"
+HOME="$TMP/home8" timeout 30 "$XSCHEM" --nogui --pipe -q "--logdir=$LD8" --script "$TMP/load_quit.tcl" >/dev/null 2>&1
+if grep -q -- "--logdir=$LD8" "$LD8/Xschem.log" 2>/dev/null; then
+  ok "launch header keeps --logdir=VALUE intact"
+else bad "launch header amputated the =value of --logdir"; fi
+
+# 9) an argv with an embedded NEWLINE must not break out of the comment line: a raw
+#    newline would put executable text on its own line and RUN on replay (source)
+LD9="$TMP/logs9"
+NL_ARG=$(printf 'set junk 1\nputs INJECTED_FROM_ARGV')
+HOME="$TMP/home9" timeout 30 "$XSCHEM" --nogui --pipe -q --logdir "$LD9" --tcl "$NL_ARG" --script "$TMP/load_quit.tcl" >/dev/null 2>&1
+L9="$LD9/Xschem.log"
+if grep -q '^puts INJECTED_FROM_ARGV' "$L9" 2>/dev/null; then
+  bad "newline in argv escaped the comment (injected line would execute on replay)"
+else ok "newline in argv stays inside the # launch: comment (escaped)"; fi
+if grep '^# launch:' "$L9" 2>/dev/null | grep -q 'INJECTED_FROM_ARGV'; then
+  ok "the multi-line arg is still recorded (escaped) in the header"
+else bad "multi-line arg lost from the header"; fi
+# whitespace-containing args are brace-wrapped for unambiguous reading
+if grep '^# launch:' "$L9" 2>/dev/null | grep -q '{set junk 1\\nputs INJECTED_FROM_ARGV}'; then
+  ok "multi-word arg brace-wrapped + newline escaped"
+else bad "multi-word arg not brace-wrapped/escaped as expected"; fi
+
 rm -rf "$TMP"
 if [ $fail -eq 0 ]; then echo "RESULT: ALL PASS"; exit 0
 else echo "RESULT: $fail FAILED"; exit 1; fi

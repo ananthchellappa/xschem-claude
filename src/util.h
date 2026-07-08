@@ -42,7 +42,8 @@ extern size_t my_strncat(int id, char **str, size_t n, const char *append_str);
 extern void *my_calloc(int id, size_t nmemb, size_t size);
 extern void *my_malloc(int id, size_t size);
 extern void dbg(int level, char *fmt, ...);
-extern void init_action_log(int largc, char **largv);
+extern void snapshot_launch_line(int lc, char **lv);
+extern void init_action_log(void);
 extern void log_action(const char *fmt, ...);
 extern void log_action_noecho(const char *fmt, ...);
 /* Outcome-level logging (action_log_absorb.md): stash a provisional select_at,

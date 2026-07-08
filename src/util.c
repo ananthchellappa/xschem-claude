@@ -283,6 +283,38 @@ static void actionlog_name(char *out, size_t sz, const char *dir, int n)
   else       my_snprintf(out, sz, "%s/Xschem.log.%d", dir, n);
 }
 
+/* Snapshot of the launch command line, taken BEFORE process_options() runs: that parser permutes
+ * argv in place (it compacts non-option arguments forward over consumed flag slots and NUL-splits
+ * "--opt=val" at the '='), so a post-parse dump silently drops flags, duplicates file arguments and
+ * amputates =values (adversarial review wf_a23dea5b). Newlines/CRs are escaped and whitespace-
+ * containing or empty args are brace-wrapped, so the "# launch:" header stays ONE Tcl comment line
+ * -- a raw newline inside an argument would break out of the comment and EXECUTE on replay. */
+static char *launch_line = NULL;
+void snapshot_launch_line(int lc, char **lv)
+{
+  size_t need = 1;
+  int i;
+  const char *p;
+  char *o;
+  for(i = 0; i < lc; ++i) need += (lv[i] ? strlen(lv[i]) : 0) * 2 + 4;
+  launch_line = my_malloc(_ALLOC_ID_, need);
+  o = launch_line;
+  for(i = 0; i < lc; ++i) {
+    int wrap;
+    if(!lv[i]) continue;
+    wrap = (lv[i][0] == '\0' || strpbrk(lv[i], " \t") != NULL);
+    if(i) *o++ = ' ';
+    if(wrap) *o++ = '{';
+    for(p = lv[i]; *p; ++p) {
+      if(*p == '\n')      { *o++ = '\\'; *o++ = 'n'; }
+      else if(*p == '\r') { *o++ = '\\'; *o++ = 'r'; }
+      else *o++ = *p;
+    }
+    if(wrap) *o++ = '}';
+  }
+  *o = '\0';
+}
+
 /* Action log (Phase 0).
  *
  * Opens a per-session log of user actions, each line a replayable `xschem ...`
@@ -302,7 +334,7 @@ static void actionlog_name(char *out, size_t sz, const char *dir, int n)
  * creating a log at all, while letting automation opt in by passing --logdir.
  * --nolog disables logging entirely (and, on the Tcl side, the CIW auto-open;
  * see issue 0002): combining it with --logdir is contradictory and fatal. */
-void init_action_log(int largc, char **largv)
+void init_action_log(void)
 {
   char dir[PATH_MAX];
   char fname[PATH_MAX];
@@ -374,11 +406,10 @@ void init_action_log(int largc, char **largv)
   my_strncpy(actionlog_filename, fname, S(actionlog_filename));
   /* header is a Tcl comment so the log stays source-able for replay */
   fprintf(actionlog_fp, "# xschem action log\n");
-  /* record the exact launch (full command line + cwd) so a log found later can be
-   * traced back to the invocation that produced it; still Tcl comments => replay-safe */
-  fprintf(actionlog_fp, "# launch:");
-  for(i = 0; i < largc; ++i) fprintf(actionlog_fp, " %s", largv[i] ? largv[i] : "");
-  fprintf(actionlog_fp, "\n");
+  /* record the exact launch (full command line + cwd) so a log found later can be traced
+   * back to the invocation that produced it. launch_line is the PRE-process_options snapshot
+   * (see snapshot_launch_line above), newline-escaped => still one Tcl comment, replay-safe */
+  if(launch_line) fprintf(actionlog_fp, "# launch: %s\n", launch_line);
   {
     char cwdbuf[PATH_MAX];
     if(getcwd(cwdbuf, sizeof(cwdbuf))) fprintf(actionlog_fp, "# cwd: %s\n", cwdbuf);

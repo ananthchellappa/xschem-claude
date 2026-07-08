@@ -94,11 +94,13 @@ int main(int argc, char **argv)
   has_x = xserver_ok();
 #endif
   cli_argc = argc;
+  /* snapshot the launch line BEFORE process_options: it permutes/mutates argv in place
+   * (flag slots compacted over, --opt=val NUL-split), so a later dump would lie */
+  snapshot_launch_line(argc, argv);
   cli_opt_argc = process_options(argc, argv);
   /* open the action log (cwd or --logdir) while cwd and stderr are still intact
-   * and before any detach redirects stderr (so a fatal logdir error is seen);
-   * argc/argv let it record the full launch command line in the header */
-  init_action_log(argc, argv);
+   * and before any detach redirects stderr (so a fatal logdir error is seen) */
+  init_action_log();
   #ifdef __unix__
   /* if invoked in background (and not invoked from a command pipeline) detach from console */
   if(!fstat(0, &statbuf)) {
