@@ -1114,6 +1114,18 @@ static int fluid_ml_blocked(int ml, int sel1);
 /* Phase IV P6 (min-bend): bias the fluid L orientation to a straight along-normal pin exit so the
  * P3 escape stub is unnecessary (defined below, after the fluid snapshot statics). */
 static int fluid_p6_bias_ml(int sel1);
+/* issue 0085 (blind-elbow diagonal fallback): full hazard classification of an L orientation --
+ * superset of fluid_ml_blocked -- and its severity ranking (defined below, after the Layer-2
+ * segment-test helpers they reuse). */
+static int fluid_ml_hazards(int ml, int sel1);
+static int fluid_mlh_sev(int h);
+/* issue 0086 (future-blind elbow tie-break): does the L implied by `ml` lay copper on a co-moving
+ * foreign-net pin's FINAL (post-remaining-legs) landing point? Tie-break input only (defined below,
+ * after fluid_ml_hazards). */
+static int fluid_ml_future_covers(int ml, int sel1);
+/* issue 0086 companion: future-aware corner-slide decline (defined next to fluid_ml_future_covers) */
+static int fluid_slide_future_hazard(int n, double fx, double fy, double mx, double my);
+static void fltrace(const char *fmt, ...);
 
 /* xctx->{rx1, ry1} and xctx->{rx2, ry2} are the two line points after the move.
  * they are not guaranteed to be ordered (since only one of the two points may have changed)
@@ -1140,24 +1152,57 @@ static void place_moved_wire(int n, int orthogonal_wiring)
        (wire[n].sel == SELECTED1 || wire[n].sel == SELECTED2)) {
       int sel1 = (wire[n].sel == SELECTED1);
       int ml0 = xctx->manhattan_lines, ml1 = (ml0 == 1) ? 2 : 1;
-      /* fluid_ml_blocked() returns 0 when there is no START name snapshot, so no flip fires unless a
+      /* fluid_ml_hazards() returns 0 when there is no START name snapshot, so no flip fires unless a
        * fluid stretch armed one -- the snapshot-presence gate lives inside the helper (its statics
-       * are declared below this function). */
-      int b0 = fluid_ml_blocked(ml0, sel1);
-      int b1 = fluid_ml_blocked(ml1, sel1);
-      if(b0 && !b1) {
-        xctx->manhattan_lines = ml1;                 /* P2 obstacle flip (Phase III) -- unchanged */
-      } else if(!b0 && !b1) {
+       * are declared below this function). issue 0085: the old fluid_ml_blocked test (stationary
+       * device two-pin bridge only) was blind to the L plowing a CO-MOVING pin (the moved device's
+       * own far pin) and to a T-contact with a stationary wire's endpoint (C12's stub, after_5.sch),
+       * so it picked "clean" orientations that shorted. fluid_ml_hazards classifies all four classes;
+       * pick the orientation with the strictly LOWER severity (fluid_mlh_sev: pristine-net-verified
+       * classes outrank the heuristic stray-contact class, so a proven device bridge still flips to a
+       * merely stray-flagged orientation exactly as the old code did). Ties keep ml0 -- when both are
+       * hazardous the 0085 partition re-check + rigid-relay fallback in move_objects owns P2. */
+      int h0 = fluid_ml_hazards(ml0, sel1);
+      int h1 = fluid_ml_hazards(ml1, sel1);
+      int s0 = fluid_mlh_sev(h0), s1 = fluid_mlh_sev(h1);
+      if(h0 || h1)
+        fltrace("FLTRACE elbow: wire=%d sel1=%d ml0=%d h0=0x%x h1=0x%x -> ml=%d r1=(%g,%g) r2=(%g,%g)\n",
+                n, sel1, ml0, h0, h1, (s1 < s0) ? ml1 : ml0,
+                xctx->rx1, xctx->ry1, xctx->rx2, xctx->ry2);
+      if(s1 < s0) {
+        xctx->manhattan_lines = ml1;                 /* P2 obstacle flip (Phase III + 0085 classes) */
+      } else if(!s0 && !s1) {
+        /* issue 0086: future-aware tie-break, BEFORE the P6 bias. Both orientations are P2-clear
+         * for THIS leg, but during leg 0 of the 0081 X-then-Y decomposition one of them can paint
+         * the corridor a co-moving pin lands in after leg 1 -- where the follow stretch is
+         * degenerate (a straight extension, no elbow freedom) so the short is unavoidable and the
+         * whole attempt collapses to the rigid diagonal relay (before_3.sch -> after_6.sch: leg-0's
+         * H-first corner at (-250,-90) == R18.M's final landing). If exactly one orientation avoids
+         * every future landing, pick it; on a tie (both clear / both covered) fall through to P6
+         * exactly as before. fluid_leg_future_* are zero outside decomposed legs => inert there. */
+        int f0 = fluid_ml_future_covers(ml0, sel1);
+        int f1 = fluid_ml_future_covers(ml1, sel1);
+        if(f0 && !f1) {
+          xctx->manhattan_lines = ml1;               /* only ml1 avoids the future landing */
+        } else if(f0 == f1) {
         /* Phase IV P6 (min-bend): both orientations are P2-clear, so the choice is free BELOW P2 in
          * the conflict order (P1=P2 > P3 > P5 > P4 > P7 > P6). Prefer the orientation whose pin leg
          * exits ALONG the moving pin's escape normal -- a straight P3 exit that insert_exit_stubs then
          * SKIPS (move.c:1648-1649), removing the redundant escape-stub staircase bend at IDENTICAL
          * length. Returns 0 (keep ml0) unless the along-normal orientation is a proven, strict win. */
-        int p6 = fluid_p6_bias_ml(sel1);
-        if(p6) xctx->manhattan_lines = p6;
+          int p6 = fluid_p6_bias_ml(sel1);
+          if(p6) xctx->manhattan_lines = p6;
+        }
+        /* (!f0 && f1): keep ml0; P6 must not flip INTO the future-covered orientation */
+        /* trace AFTER the whole decision (incl. P6) so `-> ml=` is the COMMITTED orientation --
+         * review wf_b333bd95: printing the pre-P6 guess misreported the f0==f1 case */
+        if(f0 || f1)
+          fltrace("FLTRACE elbow-future: wire=%d sel1=%d ml0=%d f0=%d f1=%d -> ml=%d\n",
+                  n, sel1, ml0, f0, f1, xctx->manhattan_lines);
       }
-      /* (!b0 && b1): keep ml0, already the clear orientation. (b0 && b1): keep ml0 -- both orientations
-       * short a device; the Layer-2 fluid_reroute_around_obstacles owns the stop-short detour. */
+      /* (s0 <= s1, either hazardous): keep ml0 -- no strictly better orientation exists; the Layer-2
+       * stop-short detour (pin-incident device straddles) and the 0085 attempt-2 rigid relay (all
+       * remaining classes) own P2 downstream. */
     }
   }
 
@@ -1431,6 +1476,41 @@ static void compute_wire_slide(void)
            (wire[m].x2 == fx && wire[m].y2 == fy)) { has_corner = 1; break; }
       }
       if(!has_corner) continue;        /* free dangling far end -> jog (TC3) */
+      /* issue 0086: the corner slide is a P4 aesthetic -- decline it when the slid copper (or a
+       * dragged neighbour's stretched run) would park on a co-moving foreign-net pin's FINAL
+       * landing point, because the later decomposition leg then has NO elbow freedom left and the
+       * short is guaranteed. Declining falls back to the ordinary jog relay, whose hazard-aware
+       * elbow (fluid_ml_hazards + fluid_ml_future_covers) picks a clean L. Inert outside
+       * decomposed fluid legs (fluid_leg_future_* zero => helper returns 0). */
+      if(fluid_slide_future_hazard(n, fx, fy, mx, my)) {
+        fltrace("FLTRACE slide: wire=%d corner=(%g,%g) DECLINE (future pin landing on slid copper)\n",
+                n, fx, fy);
+        continue;
+      }
+      /* issue 0086 review (wf_b333bd95 F1): the corner is SHARED. Accepting THIS slide promotes
+       * every co-candidate wire at the corner whose OTHER end is already pin-grabbed to full
+       * SELECTED (the loop below adds the second flag; select_wire folds SELECTED1|SELECTED2 to
+       * SELECTED, select.c:965) -- a RIGID translate of exactly the copper that co-candidate's own
+       * hazard test would (or did) decline, bypassing the 0086 decline entirely and, order-
+       * dependently, even skipping its candidacy test (line 1465 skips SELECTED). So veto the
+       * whole corner group: if any co-candidate that would fold to full SELECTED is itself
+       * future-hazardous as a rigid slide, this wire must jog too. Inert outside decomposed
+       * fluid legs (fluid_slide_future_hazard returns 0). */
+      {
+        int hz = 0;
+        for(m = 0; m < xctx->wires && !hz; m++) {
+          if(m == n) continue;
+          if(wire[m].x1 == fx && wire[m].y1 == fy && (wire[m].sel & SELECTED2) &&
+             fluid_slide_future_hazard(m, fx, fy, wire[m].x2, wire[m].y2)) hz = 1;
+          if(wire[m].x2 == fx && wire[m].y2 == fy && (wire[m].sel & SELECTED1) &&
+             fluid_slide_future_hazard(m, fx, fy, wire[m].x1, wire[m].y1)) hz = 1;
+        }
+        if(hz) {
+          fltrace("FLTRACE slide: wire=%d corner=(%g,%g) DECLINE (co-candidate at corner is future-hazardous)\n",
+                  n, fx, fy);
+          continue;
+        }
+      }
 
       /* slide: translate this wire, drag the neighbour endpoints at the corner */
       wire[n].sel = SELECTED;
@@ -1750,6 +1830,11 @@ void get_pin_escape_normal(int i, int r, double *nx, double *ny)
 
 static int *fluid_snap_id = NULL;    /* canonical partition id per instance pin, captured at START */
 static int  fluid_snap_npins = 0;    /* 0 => no valid snapshot */
+/* issue 0086: remaining (not-yet-applied) delta of the LATER decomposition legs while a decomposed
+ * (0081) leg is committing -- read by fluid_ml_future_covers so the leg-0 elbow tie-break sees each
+ * co-moving pin's FINAL landing point. Zero outside decomposed legs (single-pass moves, attempts
+ * 1/2), which makes the tie-break inert there. */
+static double fluid_leg_future_dx = 0.0, fluid_leg_future_dy = 0.0;
 static char **fluid_snap_pinnet = NULL; /* strdup'd resolved net name (or NULL) per instance pin at
                                          * START -- for the device-merge P2 check (spec §9) */
 static void fluid_discard_snapshot(void);
@@ -2105,6 +2190,28 @@ static int fluid_partition_changed(void)
   m = fluid_build_partition(now, tot);
   if(m == fluid_snap_npins)
     for(k = 0; k < m; ++k) if(now[k] != fluid_snap_id[k]) ++changed;
+  /* FLUID_TRACE forensics: name each changed pin (live net vs pristine snapshot net) so a
+   * partition rollback in the attempt loop is diagnosable from the trace alone. */
+  if(changed && fluid_trace_on()) {
+    int i, p, kk = 0;
+    for(i = 0; i < xctx->instances && kk < m; ++i) {
+      int npins;
+      if(xctx->inst[i].ptr < 0) continue;
+      npins = (xctx->inst[i].ptr + xctx->sym)->rects[PINLAYER];
+      for(p = 0; p < npins && kk < m; ++p, ++kk) {
+        if(now[kk] == fluid_snap_id[kk]) continue;
+        {
+          double px, py;
+          const char *nm = xctx->inst[i].node ? xctx->inst[i].node[p] : NULL;
+          const char *sn = (fluid_snap_pinnet && kk < fluid_snap_npins) ? fluid_snap_pinnet[kk] : NULL;
+          get_inst_pin_coord(i, p, &px, &py);
+          fltrace("FLTRACE pchg:   %s pin %d (%g,%g) snap=%s(id %d) now=%s(id %d)\n",
+                  xctx->inst[i].instname ? xctx->inst[i].instname : "?", p, px, py,
+                  sn ? sn : "-", fluid_snap_id[kk], nm ? nm : "-", now[kk]);
+        }
+      }
+    }
+  }
   my_free(_ALLOC_ID_, &now);
   return changed;
 }
@@ -2127,6 +2234,93 @@ static int fluid_pin_on_seg(double px, double py, double x1, double y1, double x
     return py >= lo - tol && py <= hi + tol;
   }
   return 0;
+}
+
+/* Do two AXIS-ALIGNED segments A(ax1,ay1)-(ax2,ay2) and B(bx1,by1)-(bx2,by2) share any point?
+ * (issue 0087) The future-aware hazard tests (fluid_ml_future_covers / fluid_slide_future_hazard)
+ * originally probed only a co-moving pin's FINAL landing POINT, but a co-moving pin is not a point:
+ * the remaining decomposition leg drags a RISER along the future axis from the pin's intermediate
+ * (post-current-leg) position to its final one, and foreign copper touching ANYWHERE on that riser
+ * shorts just as surely as copper on the pin itself. So those tests probe the whole corridor
+ * SEGMENT and need segment-vs-segment overlap, not point-on-segment. A degenerate (point) input
+ * (which the future=0 later legs always produce) falls back to fluid_pin_on_seg, so the later legs
+ * and every pure-axis / plain move stay byte-identical. Diagonal input returns 0 (callers only ever
+ * pass H/V copper and single-axis corridors), so it can never false-hit. Same cadsnap/2 tolerance
+ * as fluid_pin_on_seg. */
+static int fluid_seg_pair_touch(double ax1, double ay1, double ax2, double ay2,
+                                double bx1, double by1, double bx2, double by2)
+{
+  double tol = tclgetdoublevar("cadsnap") / 2.0;
+  int ah, av, bh, bv;
+  if(tol < 1e-6) tol = 1e-6;
+  if(ax1 == ax2 && ay1 == ay2) return fluid_pin_on_seg(ax1, ay1, bx1, by1, bx2, by2);  /* A is a point */
+  if(bx1 == bx2 && by1 == by2) return fluid_pin_on_seg(bx1, by1, ax1, ay1, ax2, ay2);  /* B is a point */
+  ah = (ay1 == ay2); av = (ax1 == ax2);
+  bh = (by1 == by2); bv = (bx1 == bx2);
+  if(!(ah || av) || !(bh || bv)) return 0;          /* diagonal: unsupported, never a false hit */
+  if(ah && bh) {                                    /* both horizontal: same row + overlapping x */
+    double alo, ahi, blo, bhi;
+    if(fabs(ay1 - by1) > tol) return 0;
+    alo = ax1 < ax2 ? ax1 : ax2; ahi = ax1 < ax2 ? ax2 : ax1;
+    blo = bx1 < bx2 ? bx1 : bx2; bhi = bx1 < bx2 ? bx2 : bx1;
+    return ahi >= blo - tol && bhi >= alo - tol;
+  }
+  if(av && bv) {                                    /* both vertical: same column + overlapping y */
+    double alo, ahi, blo, bhi;
+    if(fabs(ax1 - bx1) > tol) return 0;
+    alo = ay1 < ay2 ? ay1 : ay2; ahi = ay1 < ay2 ? ay2 : ay1;
+    blo = by1 < by2 ? by1 : by2; bhi = by1 < by2 ? by2 : by1;
+    return ahi >= blo - tol && bhi >= alo - tol;
+  }
+  {                                                 /* perpendicular: cross point inside both */
+    double hx1, hx2, hy, vx, vy1, vy2;
+    if(ah) { hx1 = ax1 < ax2 ? ax1 : ax2; hx2 = ax1 < ax2 ? ax2 : ax1; hy = ay1;
+             vx = bx1; vy1 = by1 < by2 ? by1 : by2; vy2 = by1 < by2 ? by2 : by1; }
+    else   { hx1 = bx1 < bx2 ? bx1 : bx2; hx2 = bx1 < bx2 ? bx2 : bx1; hy = by1;
+             vx = ax1; vy1 = ay1 < ay2 ? ay1 : ay2; vy2 = ay1 < ay2 ? ay2 : ay1; }
+    return vx >= hx1 - tol && vx <= hx2 + tol && hy >= vy1 - tol && hy <= vy2 + tol;
+  }
+}
+
+/* (issue 0087) Like fluid_seg_pair_touch, but a shared contact EXACTLY at (ex,ey) does not count:
+ * returns 1 iff A and B share some point OTHER than (ex,ey). The elbow future tie-break
+ * (fluid_ml_future_covers) uses this against a co-moving pin's riser corridor because the candidate
+ * L legitimately TERMINATES at its own moving pin (ex,ey) -- and that pin travels on in the next leg,
+ * so a contact there is not a future short; only copper crossing the corridor ELSEWHERE is. A/B are
+ * axis-aligned; a real (non-degenerate) collinear overlap always contains a non-(ex,ey) point => hit.
+ * Same cadsnap/2 span tolerance; the pin-exemption match uses a tight epsilon (on-grid coords). */
+static int fluid_seg_pair_touch_except(double ax1, double ay1, double ax2, double ay2,
+                                       double bx1, double by1, double bx2, double by2,
+                                       double ex, double ey)
+{
+  double tol = tclgetdoublevar("cadsnap") / 2.0;
+  double pe = 1e-6;                                  /* pin-identity epsilon */
+  int ah, av, bh, bv;
+  if(tol < 1e-6) tol = 1e-6;
+  if(!fluid_seg_pair_touch(ax1, ay1, ax2, ay2, bx1, by1, bx2, by2)) return 0;
+  ah = (ay1 == ay2); av = (ax1 == ax2);
+  bh = (by1 == by2); bv = (bx1 == bx2);
+  /* perpendicular (or either degenerate): the touch is a single point -- exempt iff it IS (ex,ey) */
+  if((ah && bv) || (av && bh) || (ax1 == ax2 && ay1 == ay2) || (bx1 == bx2 && by1 == by2)) {
+    double px, py;
+    if(ax1 == ax2 && ay1 == ay2)      { px = ax1; py = ay1; }   /* A is the point */
+    else if(bx1 == bx2 && by1 == by2) { px = bx1; py = by1; }   /* B is the point */
+    else if(ah)                       { px = bx1; py = ay1; }   /* A horiz, B vert -> (Bx, Ay) */
+    else                              { px = ax1; py = by1; }   /* A vert, B horiz -> (Ax, By) */
+    return !(fabs(px - ex) < pe && fabs(py - ey) < pe);
+  }
+  /* collinear (both horizontal same row, or both vertical same col): compute the overlap span */
+  {
+    double alo, ahi, blo, bhi, olo, ohi;
+    if(ah) { alo = ax1<ax2?ax1:ax2; ahi = ax1<ax2?ax2:ax1; blo = bx1<bx2?bx1:bx2; bhi = bx1<bx2?bx2:bx1; }
+    else   { alo = ay1<ay2?ay1:ay2; ahi = ay1<ay2?ay2:ay1; blo = by1<by2?by1:by2; bhi = by1<by2?by2:by1; }
+    olo = alo > blo ? alo : blo;                      /* overlap [olo,ohi] along the shared axis */
+    ohi = ahi < bhi ? ahi : bhi;
+    if(ohi - olo > pe) return 1;                      /* real sub-segment: has a non-(ex,ey) point */
+    /* single-point overlap: exempt iff it is (ex,ey) */
+    if(ah) return !(fabs(olo - ex) < pe && fabs(ay1 - ey) < pe);
+    return !(fabs(ax1 - ex) < pe && fabs(olo - ey) < pe);
+  }
 }
 
 /* incremental_wire_reroute.md Phase III (§5/§6): would the manhattan L formed by the horizontal
@@ -2311,6 +2505,360 @@ static int fluid_seg_hits_moving_pin(double x1, double y1, double x2, double y2,
       if(px == mx && py == my) continue;             /* the follow pin M itself */
       if(pn && pn[0] && nf && !strcmp(pn, nf)) continue;  /* already on NF (incl. M): no new merge */
       if(fluid_pin_on_seg(px, py, x1, y1, x2, y2)) return 1;
+    }
+  }
+  return 0;
+}
+
+/* issue 0085 (blind-elbow diagonal fallback, doc/claude/issues/0085-*.md): FULL hazard
+ * classification of the L orientation `ml` for the stretching wire (sel1: the moving endpoint is
+ * endpoint 1). fluid_ml_blocked tested only the stationary-device two-pin bridge, so the 0081
+ * single-diagonal-pass fallback picked "clean" L elbows that (a) ran the moved device's OWN far pin
+ * over (R18.P's riser plowing R18.M) and (b) T'd onto a stationary foreign wire's endpoint (C12's
+ * stub) -- both P2 shorts (tests/from_user/after_5.sch). Bitmask:
+ *   FLUID_MLH_BRIDGE  stationary device with two distinct-pristine-net pins on the L (Phase III class)
+ *   FLUID_MLH_MOVPIN  the L covers a CO-MOVING pin (at its POST-move position) on a different
+ *                     pristine net -- typically the moving device's own other pin
+ *   FLUID_MLH_FPIN    a lone stationary foreign-net pin under either leg (a merge without a bridge)
+ *   FLUID_MLH_STRAY   a wire-contact hazard whose foreignness cannot be pristine-net-verified: a
+ *                     stationary wire's endpoint lands on a leg (or the L's corner lands on a
+ *                     stationary wire), or a partially-selected SIBLING follow wire's FIXED
+ *                     endpoint lands on a leg (review wf_e348633c F1 -- its span is about to be
+ *                     relaid but its anchor stays put and is a real contact). Exemptions (one-hop
+ *                     same-net evidence, review F2): a wire touching the anchor A, touching M (the
+ *                     pin landing merges it in every orientation, test_wireedit_39 C2), touching
+ *                     M's PRE-move position, or tapping the stretched wire's own PRE-move span
+ *                     A..preM (already connected pre-move -- flipping away from re-covering that
+ *                     span would DISCONNECT the tap, worse than any flip could gain).
+ *   FLUID_MLH_SPANLOSS the wire's PRE-move span A..preM carries a stationary attachment strictly
+ *                     inside it (tap endpoint / mid-span-fed pin) that no leg of this orientation
+ *                     re-covers -- relocating the copper strands it, a P1 disconnect (review F2).
+ * BRIDGE/FPIN/MOVPIN/SPANLOSS are geometrically/pristine-net-verified; STRAY is heuristic, hence
+ * the severity split in fluid_mlh_sev(). When nf is unknown (M is not a moving-instance pin, e.g. a
+ * wire-junction grab) the MOVPIN/label classes cannot verify distinctness and degrade to the
+ * heuristic STRAY band instead of a false sev-2 (review F4). Stationary net-LABEL pins -- skipped
+ * by every shared helper -- are classified here explicitly (review F3): a label pin under a leg
+ * names the copper beneath it, so a distinct-pristine-net label is a merge (FPIN). Runs
+ * PRE-commit: the ELEMENT commit loop runs after the wire pass, so co-moving pins sit at live
+ * (pre-move) coords and are tested at coord+delta, and M's pristine net is looked up at M-delta
+ * (rot/flip==0 is gated by the caller). Pure function of (snapshot, geometry, delta) =>
+ * deterministic, release==stepwise. Returns 0 with no armed snapshot (same gate as before). */
+#define FLUID_MLH_BRIDGE   1
+#define FLUID_MLH_MOVPIN   2
+#define FLUID_MLH_FPIN     4
+#define FLUID_MLH_STRAY    8
+#define FLUID_MLH_SPANLOSS 16
+static int fluid_ml_hazards(int ml, int sel1)
+{
+  double rx1 = xctx->rx1, ry1 = xctx->ry1, rx2 = xctx->rx2, ry2 = xctx->ry2;
+  double hy = sel1 ? ((ml & 1) ? ry2 : ry1) : ((ml & 1) ? ry1 : ry2);   /* horizontal leg y */
+  double vx = sel1 ? ((ml & 1) ? rx1 : rx2) : ((ml & 1) ? rx2 : rx1);   /* vertical leg x */
+  double mx = sel1 ? rx1 : rx2, my = sel1 ? ry1 : ry2;                  /* moving endpoint M */
+  double ax = sel1 ? rx2 : rx1, ay = sel1 ? ry2 : ry1;                  /* fixed anchor A */
+  double cx = vx, cy = hy;                                              /* the L's corner */
+  double pmx, pmy;                                                      /* M's PRE-move position */
+  const char *nf;
+  int i, p, k, npins, base, h = 0, m;
+
+  if(!fluid_snap_pinnet || fluid_snap_npins <= 0) return 0;
+  pmx = mx - xctx->deltax; pmy = my - xctx->deltay;
+  nf = fluid_moving_pin_net(pmx, pmy);
+
+  /* (1) stationary device two-distinct-net-pin bridge (the original Phase III test) */
+  if(fluid_L_bridges_device(rx1, hy, rx2, vx, ry1, ry2)) h |= FLUID_MLH_BRIDGE;
+
+  /* (2) co-moving pin plow: a pin of a MOVING instance, at its POST-move position (live + delta),
+   * on a different pristine net, covered by either leg. The moving endpoint M itself is exempt. */
+  for(i = 0, k = 0; i < xctx->instances; ++i) {
+    if(xctx->inst[i].ptr < 0) continue;
+    npins = (xctx->inst[i].ptr + xctx->sym)->rects[PINLAYER];
+    base = k; k += npins;
+    if(base + npins > fluid_snap_npins) break;
+    if(!xctx->inst[i].sel) continue;                 /* only MOVING (co-dragged) instances */
+    for(p = 0; p < npins; ++p) {
+      const char *pn = fluid_snap_pinnet[base + p];
+      double px, py;
+      get_inst_pin_coord(i, p, &px, &py);            /* live == PRE-move here */
+      px += xctx->deltax; py += xctx->deltay;
+      if(px == mx && py == my) continue;             /* the follow pin M itself */
+      if(!pn || !pn[0]) continue;                    /* unconnected pin: no merge */
+      if(nf && !strcmp(pn, nf)) continue;            /* same pristine net: not a short */
+      if(fluid_pin_on_seg(px, py, rx1, hy, rx2, hy) ||
+         fluid_pin_on_seg(px, py, vx, ry1, vx, ry2)) {
+        /* nf unknown => distinctness unverifiable: heuristic band, not a false sev-2 (review F4) */
+        h |= nf ? FLUID_MLH_MOVPIN : FLUID_MLH_STRAY;
+        break;
+      }
+    }
+    if(h & (FLUID_MLH_MOVPIN | FLUID_MLH_STRAY)) break;
+  }
+
+  /* (3) lone stationary foreign-net pin under either leg (needs nf to tell foreign from own) */
+  if(nf && nf[0] &&
+     (fluid_seg_hits_foreign_pin(rx1, hy, rx2, hy, nf) ||
+      fluid_seg_hits_foreign_pin(vx, ry1, vx, ry2, nf))) h |= FLUID_MLH_FPIN;
+
+  /* (3b) stationary net-LABEL pin under either leg (review F3): every shared helper skips
+   * type=="label", but a label names the copper beneath its pin, so a distinct-pristine-net label
+   * under a leg is a merge. Labels exactly at A or M are orientation-independent contacts: skip. */
+  for(i = 0, k = 0; i < xctx->instances && !(h & (FLUID_MLH_FPIN | FLUID_MLH_STRAY)); ++i) {
+    const char *type;
+    if(xctx->inst[i].ptr < 0) continue;
+    npins = (xctx->inst[i].ptr + xctx->sym)->rects[PINLAYER];
+    base = k; k += npins;
+    if(base + npins > fluid_snap_npins) break;
+    if(xctx->inst[i].sel) continue;                  /* only STATIONARY labels */
+    type = xctx->sym[xctx->inst[i].ptr].type;
+    if(!type || strcmp(type, "label")) continue;
+    for(p = 0; p < npins; ++p) {
+      const char *pn = fluid_snap_pinnet[base + p];
+      double px, py;
+      if(!pn || !pn[0]) continue;
+      if(nf && !strcmp(pn, nf)) continue;            /* same pristine net: not a merge */
+      get_inst_pin_coord(i, p, &px, &py);
+      if((px == ax && py == ay) || (px == mx && py == my)) continue;
+      if(fluid_pin_on_seg(px, py, rx1, hy, rx2, hy) ||
+         fluid_pin_on_seg(px, py, vx, ry1, vx, ry2)) {
+        h |= nf ? FLUID_MLH_FPIN : FLUID_MLH_STRAY;  /* no nf: heuristic band (review F4) */
+        break;
+      }
+    }
+  }
+
+  /* (4) stray wire contact. Fully STATIONARY wires (sel==0): an endpoint on a leg, or the L's
+   * corner on the wire's span, at a point other than A or M. Wire-level exemptions (one-hop
+   * same-net evidence): a wire touching the anchor A (pre-connected), touching M (the pin landing
+   * merges it in every orientation, test_wireedit_39 C2), touching M's PRE-move position, or
+   * tapping the stretched wire's own PRE-move span A..preM (already connected; flipping away from
+   * re-covering that span would DISCONNECT the tap -- review wf_e348633c F2). Partially-selected
+   * SIBLING follow wires (SELECTED1/2): their span is about to be relaid, but the FIXED endpoint
+   * stays put and is a real contact (review F1) -- test just that point, with the same A/M/pre-span
+   * exemptions (the stretching wire n itself is exempted here: its fixed endpoint IS A).
+   * fluid_pin_on_seg / exact == compares, like fluid_seg_stray_contact. */
+  for(m = 0; m < xctx->wires && !(h & FLUID_MLH_STRAY); ++m) {
+    unsigned int msel = xctx->wire[m].sel;
+    double wx1, wy1, wx2, wy2;
+    if((msel & SELECTED) || ((msel & SELECTED1) && (msel & SELECTED2)))
+      continue;                                      /* rigid co-moving wire: both endpoints travel */
+    wx1 = xctx->wire[m].x1; wy1 = xctx->wire[m].y1;
+    wx2 = xctx->wire[m].x2; wy2 = xctx->wire[m].y2;
+    if(msel == 0) {
+      if(fluid_pin_on_seg(ax, ay, wx1, wy1, wx2, wy2)) continue;  /* touches the anchor: pre-connected */
+      if(fluid_pin_on_seg(mx, my, wx1, wy1, wx2, wy2)) continue;  /* touches M: merged by the landing */
+      if(fluid_pin_on_seg(pmx, pmy, wx1, wy1, wx2, wy2)) continue;/* sat under pre-move M */
+      if(fluid_pin_on_seg(wx1, wy1, ax, ay, pmx, pmy) ||
+         fluid_pin_on_seg(wx2, wy2, ax, ay, pmx, pmy)) continue;  /* taps our own pre-move span */
+      /* wire m's endpoint lands on a leg, away from A / M */
+      if((fluid_pin_on_seg(wx1, wy1, rx1, hy, rx2, hy) || fluid_pin_on_seg(wx1, wy1, vx, ry1, vx, ry2)) &&
+         !(wx1 == ax && wy1 == ay) && !(wx1 == mx && wy1 == my)) { h |= FLUID_MLH_STRAY; break; }
+      if((fluid_pin_on_seg(wx2, wy2, rx1, hy, rx2, hy) || fluid_pin_on_seg(wx2, wy2, vx, ry1, vx, ry2)) &&
+         !(wx2 == ax && wy2 == ay) && !(wx2 == mx && wy2 == my)) { h |= FLUID_MLH_STRAY; break; }
+      /* the L's corner lands on wire m's span (a T of the L onto m) */
+      if(fluid_pin_on_seg(cx, cy, wx1, wy1, wx2, wy2) &&
+         !(cx == ax && cy == ay) && !(cx == mx && cy == my)) { h |= FLUID_MLH_STRAY; break; }
+    } else {
+      /* partial sibling follow wire: only its FIXED (stationary) endpoint is a real contact.
+       * A sibling whose MOVING endpoint shares our junction (== preM, e.g. two follow wires
+       * grabbed at the same pin) is on our net by construction: exempt (round-2 wf_876b8a88). */
+      double fx = (msel & SELECTED1) ? wx2 : wx1;
+      double fy = (msel & SELECTED1) ? wy2 : wy1;
+      double sx = (msel & SELECTED1) ? wx1 : wx2;    /* sibling's MOVING endpoint (pre-move) */
+      double sy = (msel & SELECTED1) ? wy1 : wy2;
+      if(sx == pmx && sy == pmy) continue;           /* shares our junction: same net */
+      if((fx == ax && fy == ay) || (fx == mx && fy == my)) continue;
+      if(fluid_pin_on_seg(fx, fy, ax, ay, pmx, pmy)) continue;    /* on our own pre-move span */
+      if(fluid_pin_on_seg(fx, fy, rx1, hy, rx2, hy) ||
+         fluid_pin_on_seg(fx, fy, vx, ry1, vx, ry2)) { h |= FLUID_MLH_STRAY; break; }
+    }
+  }
+
+  /* (5) span-loss (review F2 / test 43 D4): the wire's PRE-move span A..preM carries an attachment
+   * STRICTLY inside it -- a stationary wire's endpoint (a tap), a partial SIBLING follow wire's
+   * FIXED anchor (the T onto our span is what joined the two nets; its own relay lands on a
+   * DIFFERENT pin -- round-2 wf_876b8a88), or a stationary instance pin fed mid-span -- and this
+   * orientation does NOT keep that attachment connected: relocating the copper strands it, a P1
+   * DISCONNECT. "Still connected" for a tap WIRE also counts its OTHER endpoint landing on a leg
+   * or the L's corner landing on its span (connectivity retained through the tap itself --
+   * round-2 false-positive fix); endpoint-on-wire IS connection in xschem, so this is
+   * geometrically verified => verified severity band; it ties against e.g. a MOVPIN on the
+   * covering orientation instead of losing to it (keep ml0 = the pre-fix outcome). */
+  for(m = 0; m < xctx->wires && !(h & FLUID_MLH_SPANLOSS); ++m) {
+    unsigned int msel = xctx->wire[m].sel;
+    double wx1, wy1, wx2, wy2;
+    int e, nend;
+    if((msel & SELECTED) || ((msel & SELECTED1) && (msel & SELECTED2)))
+      continue;                                      /* rigid co-moving: travels with the drag */
+    wx1 = xctx->wire[m].x1; wy1 = xctx->wire[m].y1;
+    wx2 = xctx->wire[m].x2; wy2 = xctx->wire[m].y2;
+    nend = (msel == 0) ? 2 : 1;                      /* partial sibling: only its FIXED endpoint */
+    for(e = 0; e < nend; ++e) {
+      double ex, ey, ox, oy;
+      if(msel == 0) {
+        ex = e ? wx2 : wx1; ey = e ? wy2 : wy1;
+        ox = e ? wx1 : wx2; oy = e ? wy1 : wy2;      /* the tap's other endpoint */
+      } else {
+        ex = (msel & SELECTED1) ? wx2 : wx1; ey = (msel & SELECTED1) ? wy2 : wy1;
+        ox = (msel & SELECTED1) ? wx1 : wx2; oy = (msel & SELECTED1) ? wy1 : wy2;
+        if(ox == pmx && oy == pmy) continue;         /* shares our junction: relays with us */
+      }
+      if(!fluid_pin_on_seg(ex, ey, ax, ay, pmx, pmy)) continue;   /* not on the pre-move span */
+      if((ex == ax && ey == ay) || (ex == pmx && ey == pmy)) continue;  /* span end, not inside */
+      if(fluid_pin_on_seg(ex, ey, rx1, hy, rx2, hy) ||
+         fluid_pin_on_seg(ex, ey, vx, ry1, vx, ry2)) continue;    /* a leg still covers it */
+      if(msel == 0) {
+        /* connectivity retained through the tap itself? (other endpoint on a leg / corner on it) */
+        if(fluid_pin_on_seg(ox, oy, rx1, hy, rx2, hy) ||
+           fluid_pin_on_seg(ox, oy, vx, ry1, vx, ry2)) continue;
+        if(fluid_pin_on_seg(cx, cy, wx1, wy1, wx2, wy2)) continue;
+      }
+      h |= FLUID_MLH_SPANLOSS; break;
+    }
+  }
+  for(i = 0, k = 0; i < xctx->instances && !(h & FLUID_MLH_SPANLOSS); ++i) {
+    if(xctx->inst[i].ptr < 0) continue;
+    npins = (xctx->inst[i].ptr + xctx->sym)->rects[PINLAYER];
+    base = k; k += npins;
+    if(base + npins > fluid_snap_npins) break;
+    if(xctx->inst[i].sel) continue;                  /* only STATIONARY instances */
+    for(p = 0; p < npins; ++p) {
+      const char *pn = fluid_snap_pinnet[base + p];
+      double px, py;
+      if(!pn || !pn[0]) continue;                    /* was not connected: nothing to strand */
+      get_inst_pin_coord(i, p, &px, &py);
+      if(!fluid_pin_on_seg(px, py, ax, ay, pmx, pmy)) continue;
+      if((px == ax && py == ay) || (px == pmx && py == pmy)) continue;
+      if(fluid_pin_on_seg(px, py, rx1, hy, rx2, hy) ||
+         fluid_pin_on_seg(px, py, vx, ry1, vx, ry2)) continue;
+      h |= FLUID_MLH_SPANLOSS; break;
+    }
+  }
+  return h;
+}
+
+/* issue 0085: severity of a hazard mask for the orientation choice. Pristine-net-VERIFIED classes
+ * (bridge / co-moving pin / foreign pin) rank above the heuristic stray-wire-contact class, so a
+ * proven short still flips to a merely stray-flagged orientation (preserving the old flip behavior
+ * where the flip target's stray contact was invisible), while a stray-only orientation never steals
+ * the choice from a fully clean one. */
+static int fluid_mlh_sev(int h)
+{
+  return ((h & (FLUID_MLH_BRIDGE | FLUID_MLH_MOVPIN | FLUID_MLH_FPIN | FLUID_MLH_SPANLOSS)) ? 2 : 0)
+       + ((h & FLUID_MLH_STRAY) ? 1 : 0);
+}
+
+/* issue 0086 (future-blind elbow tie-break): during leg 0 of the 0081 X-then-Y decomposition, does
+ * the L implied by `ml` lay copper on the RISER a co-moving foreign-pristine-net instance pin drags
+ * as the remaining leg carries it to its final landing? Both orientations can be hazard-free at
+ * leg-0 sight while one of them paints the corridor the OTHER moving pin lands in after the Y leg --
+ * by then the follow stretch is degenerate (a straight extension through its own anchor, no elbow
+ * freedom) and the short is unavoidable, collapsing the whole gesture to the rigid diagonal relay
+ * although a clean Manhattan route exists (before_3.sch -> after_6.sch, R18 by (+150,-80)). Used ONLY
+ * as a tie-break between two P2-clean orientations, so a hit can never pick a hazardous L. Same walk,
+ * index lineup, M/same-net/unconnected exemptions and leg geometry as fluid_ml_hazards class (2).
+ * issue 0087: the co-moving pin is NOT just its final POINT -- the remaining leg drags a RISER from
+ * its intermediate (post-current-leg) position to the final one, so this tests the whole corridor
+ * SEGMENT (fluid_seg_pair_touch_except), exempting a contact AT the L's own moving pin (that pin
+ * travels on next leg; the L must legitimately end there). Leg 1's future=0 collapses the corridor
+ * to the old point test, so later legs / pure-axis / plain moves are byte-identical (fluid_leg_future_*
+ * zero outside decomposed legs => returns 0). Pure function of (snapshot, geometry, deltas) =>
+ * deterministic, release==stepwise. */
+static int fluid_ml_future_covers(int ml, int sel1)
+{
+  double rx1 = xctx->rx1, ry1 = xctx->ry1, rx2 = xctx->rx2, ry2 = xctx->ry2;
+  double hy = sel1 ? ((ml & 1) ? ry2 : ry1) : ((ml & 1) ? ry1 : ry2);   /* horizontal leg y */
+  double vx = sel1 ? ((ml & 1) ? rx1 : rx2) : ((ml & 1) ? rx2 : rx1);   /* vertical leg x */
+  double mx = sel1 ? rx1 : rx2, my = sel1 ? ry1 : ry2;                  /* moving endpoint M */
+  const char *nf;
+  int i, p, k, npins, base;
+
+  if(fluid_leg_future_dx == 0.0 && fluid_leg_future_dy == 0.0) return 0;
+  if(!fluid_snap_pinnet || fluid_snap_npins <= 0) return 0;
+  nf = fluid_moving_pin_net(mx - xctx->deltax, my - xctx->deltay);
+  for(i = 0, k = 0; i < xctx->instances; ++i) {
+    if(xctx->inst[i].ptr < 0) continue;
+    npins = (xctx->inst[i].ptr + xctx->sym)->rects[PINLAYER];
+    base = k; k += npins;
+    if(base + npins > fluid_snap_npins) break;
+    if(!xctx->inst[i].sel) continue;                 /* only MOVING (co-dragged) instances */
+    for(p = 0; p < npins; ++p) {
+      const char *pn = fluid_snap_pinnet[base + p];
+      double px, py;
+      get_inst_pin_coord(i, p, &px, &py);            /* live == PRE-leg here */
+      if(px + xctx->deltax == mx && py + xctx->deltay == my) continue;  /* the follow pin M itself */
+      if(!pn || !pn[0]) continue;                    /* unconnected pin: no merge (class-2 parity) */
+      if(nf && !strcmp(pn, nf)) continue;            /* same pristine net: own copper is fine */
+      /* issue 0087: the co-moving pin's RISER corridor -- from its intermediate (post-current-leg)
+       * position to its FINAL one -- not just the final point (leg 1's future=0 collapses this to
+       * the old point test, so later legs are byte-identical). */
+      {
+        double ix = px + xctx->deltax, iy = py + xctx->deltay;                       /* intermediate */
+        double fxc = ix + fluid_leg_future_dx, fyc = iy + fluid_leg_future_dy;        /* final       */
+        /* exempt a corridor contact AT this L's own moving pin (mx,my): the L must end there and
+         * that pin moves on in the next leg -- only copper crossing the corridor elsewhere shorts. */
+        if(fluid_seg_pair_touch_except(ix, iy, fxc, fyc, rx1, hy, rx2, hy, mx, my) ||
+           fluid_seg_pair_touch_except(ix, iy, fxc, fyc, vx, ry1, vx, ry2, mx, my)) return 1;
+      }
+    }
+  }
+  return 0;
+}
+
+/* issue 0086 (future-blind corner slide): would sliding wire n rigidly by the current leg's delta
+ * park its copper -- or drag the corner (fx,fy)'s collinear-neighbour endpoints -- into the RISER a
+ * co-moving foreign-pristine-net pin drags to its final landing? The corner slide is a P4 aesthetic;
+ * when it fires here it REMOVES the elbow freedom the later leg needs: the neighbour's stretched
+ * endpoint becomes a fixed anchor in the landing corridor, so the leg-1 follow stretch is a
+ * degenerate straight run into a guaranteed short (before_3.sch, R18 by (+150,-80): the C12 stub
+ * corner slides from (-400,-90) to (-250,-90) == R18.M's final landing). issue 0087: it is not just
+ * the final POINT -- a horizontal slid stub whose far end parks on the shared landing COLUMN but a
+ * grid off the final row still lands inside the riser (before_3.sch, R18 by (+250,-90)), so this
+ * tests the whole corridor SEGMENT (fluid_seg_pair_touch). (mx,my) = wire n's moving (pin-driven)
+ * endpoint at its PRE-leg position, used to resolve the wire's own pristine net. Same walk/exemptions
+ * as fluid_ml_future_covers. Inert (returns 0) outside decomposed fluid legs or without a snapshot
+ * => plain moves are byte-identical. */
+static int fluid_slide_future_hazard(int n, double fx, double fy, double mx, double my)
+{
+  const char *nf;
+  int i, p, k, m, npins, base;
+  double dx = xctx->deltax, dy = xctx->deltay;
+  if(fluid_leg_future_dx == 0.0 && fluid_leg_future_dy == 0.0) return 0;
+  if(!fluid_snap_pinnet || fluid_snap_npins <= 0) return 0;
+  nf = fluid_moving_pin_net(mx, my);
+  for(i = 0, k = 0; i < xctx->instances; ++i) {
+    if(xctx->inst[i].ptr < 0) continue;
+    npins = (xctx->inst[i].ptr + xctx->sym)->rects[PINLAYER];
+    base = k; k += npins;
+    if(base + npins > fluid_snap_npins) break;
+    if(!xctx->inst[i].sel) continue;                 /* only MOVING (co-dragged) instances */
+    for(p = 0; p < npins; ++p) {
+      const char *pn = fluid_snap_pinnet[base + p];
+      double px, py;
+      get_inst_pin_coord(i, p, &px, &py);            /* live == PRE-leg here */
+      if(px == mx && py == my) continue;             /* the driving pin M itself */
+      if(!pn || !pn[0]) continue;                    /* unconnected pin: no merge (class-2 parity) */
+      if(nf && !strcmp(pn, nf)) continue;            /* same pristine net: own copper is fine */
+      /* issue 0087: the co-moving pin's RISER corridor (intermediate post-slide position ..
+       * FINAL landing after the remaining legs), not just the final POINT. A horizontal slid stub
+       * that parks its far end on the shared landing COLUMN but a grid off the final row still lands
+       * inside the riser the later leg drags down that column -> short. Leg 1 (future=0) collapses
+       * the corridor to a point == old behavior, so single-axis / plain moves are byte-identical. */
+      {
+        double ix = px + dx, iy = py + dy;                                    /* intermediate */
+        double fxc = ix + fluid_leg_future_dx, fyc = iy + fluid_leg_future_dy; /* final        */
+        /* on the slid wire's post-slide span? */
+        if(fluid_seg_pair_touch(ix, iy, fxc, fyc, xctx->wire[n].x1 + dx, xctx->wire[n].y1 + dy,
+                                                   xctx->wire[n].x2 + dx, xctx->wire[n].y2 + dy)) return 1;
+        /* on a dragged collinear neighbour's post-stretch span (far end .. corner+delta)?
+         * (a non-axis-aligned candidate span returns 0 from fluid_seg_pair_touch: no false hit) */
+        for(m = 0; m < xctx->wires; ++m) {
+          double ox, oy;
+          if(m == n) continue;
+          if(xctx->wire[m].x1 == fx && xctx->wire[m].y1 == fy)      { ox = xctx->wire[m].x2; oy = xctx->wire[m].y2; }
+          else if(xctx->wire[m].x2 == fx && xctx->wire[m].y2 == fy) { ox = xctx->wire[m].x1; oy = xctx->wire[m].y1; }
+          else continue;
+          if(fluid_seg_pair_touch(ix, iy, fxc, fyc, ox, oy, fx + dx, fy + dy)) return 1;
+        }
+      }
     }
   }
   return 0;
@@ -3402,10 +3950,14 @@ void move_objects(int what, int merge, double dx, double dy)
   if((what & END) || commit_now)     /* commit the move: real END, or a live fluid RUBBER step */
   {
    int firsti, firstw;
-   /* issue 0081: diagonal X-then-Y decomposition (nlegs==2) + P2 safety net (attempt loop). */
+   /* issue 0081: diagonal X-then-Y decomposition (nlegs==2) + P2 safety net (attempt loop).
+    * issue 0085: attempt 2 = rigid diagonal relay (leg_ortho / diag_relay), alt_snap holds the
+    * ortho attempt-1 result for the never-worse compare. */
    int nlegs = 1, leg, attempt, leg_snapped = 0;
+   int leg_ortho, diag_relay = 0, alt_snapped = 0, alt_pchg = 0, saved_ml_lines = 0;
+   unsigned int alt_wid = 0, alt_iid = 0, alt_gid = 0, alt_tid = 0;
    double totdx = 0.0, totdy = 0.0;
-   Undo_slot leg_snap;
+   Undo_slot leg_snap, alt_snap;
 
    /* --- END-only pre-commit finalizers; a live fluid RUBBER step (commit_now) skips them and
     * jumps straight to the shared geometry commit below. --- */
@@ -3511,11 +4063,21 @@ void move_objects(int what, int merge, double dx, double dy)
     * path). The trigger is fluid_partition_changed() (the full P1/P2 signal: device merge, net-label
     * merge, AND disconnect), not the two-pin device check alone. A clean two-leg result (partition
     * preserved), or nlegs==1 from the start, breaks after attempt 0. */
-   for(attempt = 0; attempt < 2; ++attempt) {
+   for(attempt = 0; attempt < 3; ++attempt) {
    for(leg = 0; leg < nlegs; ++leg) {
+   /* issue 0085: attempt 2 runs the shared region with orthogonal relaying OFF (rigid diagonal
+    * relay): place_moved_wire's else-branch just translates the moved endpoint, laying NO new
+    * copper and NO elbow that could land on anything -- the true P2 last resort. */
+   leg_ortho = diag_relay ? 0 : orthogonal_wiring;
    if(nlegs == 2) {                    /* leg 0 = (Dx,0) X move; leg 1 = (0,Dy) Y move */
      xctx->deltax = (leg == 0) ? totdx : 0.0;
      xctx->deltay = (leg == 0) ? 0.0 : totdy;
+     /* issue 0086: expose the REMAINING legs' delta so the leg-0 elbow tie-break can avoid painting
+      * a co-moving pin's final landing point (fluid_ml_future_covers). Leg 1 has no remaining leg. */
+     fluid_leg_future_dx = 0.0;
+     fluid_leg_future_dy = (leg == 0) ? totdy : 0.0;
+   } else {
+     fluid_leg_future_dx = fluid_leg_future_dy = 0.0; /* single-pass attempts: tie-break inert */
    }
    if(what & (RUBBER | END))
      fltrace("FLTRACE move: attempt=%d leg=%d/%d deltax=%g deltay=%g\n", attempt, leg, nlegs,
@@ -3534,7 +4096,7 @@ void move_objects(int what, int merge, double dx, double dy)
     * non-rotating move, let perpendicular attached wires forming a corner SLIDE with
     * the pin instead of jogging at the moved end. Modifies/propagates the wire
     * selection and rebuilds sel_array, so it must run before the commit loop. */
-   if(orthogonal_wiring && xctx->move_rot == 0 && xctx->move_flip == 0 &&
+   if(leg_ortho && xctx->move_rot == 0 && xctx->move_flip == 0 &&
       ((xctx->deltax != 0.0) != (xctx->deltay != 0.0))) {
      compute_wire_slide();
    }
@@ -3571,7 +4133,7 @@ void move_objects(int what, int merge, double dx, double dy)
           xctx->ry2+=xctx->deltay;
          }
 
-         place_moved_wire(n, orthogonal_wiring);
+         place_moved_wire(n, leg_ortho);
          /* place_moved_wire() -> storeobject() may my_realloc(xctx->wire), leaving the loop-local
           * `wire` alias dangling. Refresh it so a LATER sel_array WIRE entry (e.g. the second of a
           * two-follow-wire fluid drag -- R18's M and P risers) does not read freed memory. This
@@ -3872,8 +4434,8 @@ void move_objects(int what, int merge, double dx, double dy)
       xctx->move_rot == 0 && xctx->move_flip == 0) {
      /* issue 0015 §7: shove a connected wire the moving pin drove past (serves P5), THEN the obstacle
       * layer gets the last word on P2 for anything with a moving-pin endpoint. */
-     fluid_shove_connected_wire(orthogonal_wiring);
-     fluid_reroute_around_obstacles(orthogonal_wiring);
+     fluid_shove_connected_wire(leg_ortho);
+     fluid_reroute_around_obstacles(leg_ortho);
      /* issue 0083: a NO-SHORT foreign-pin landing buries the offset solder-joint + grazes the body.
       * Restore the V-H-V + visible offset dot. Gated to a PURE-AXIS delta (one of deltax/deltay zero).
       * That fires it for a genuine pure-axis nlegs==1 move AND for EACH leg of the 0081 diagonal
@@ -3886,7 +4448,7 @@ void move_objects(int what, int merge, double dx, double dy)
      fltrace("FLTRACE offset-call: deltax=%g deltay=%g pure_axis_gate=%d\n",
              xctx->deltax, xctx->deltay, (xctx->deltax == 0.0 || xctx->deltay == 0.0));
      if(xctx->deltax == 0.0 || xctx->deltay == 0.0)
-       fluid_offset_foreign_pin_landing(orthogonal_wiring);
+       fluid_offset_foreign_pin_landing(leg_ortho);
    } else if(what & (RUBBER | END)) {
      fltrace("FLTRACE fluid-block: SKIPPED (fluid=%d stretch=%d rot=%d flip=%d)\n",
              tclgetboolvar("fluid_editing"), xctx->stretch_select, xctx->move_rot, xctx->move_flip);
@@ -3924,9 +4486,15 @@ void move_objects(int what, int merge, double dx, double dy)
     * still shift the leg/stub one grid onto a DIFFERENT net's wire -> a no-short (P2) hazard,
     * which is nice_drag_rerouting Phase 4 (no-short guard + rip-up) and is caught log-only by
     * fluid_check_move_invariants until then. See doc/claude/specs/nice_drag_rerouting.md. */
+   /* issue 0086: FINAL leg only (leg == nlegs-1; unchanged for single-pass moves, nlegs==1). The
+    * P3 exit stub is a final-state aesthetic: inserted at a leg-0 (intermediate) pin position it
+    * plants a stub anchored INSIDE the later leg's stretch corridor (before_3.sch, R18 (+150,-80):
+    * the (-250,-80)..(-250,-70) stub), and leg 1's follow stretch from that anchor is a degenerate
+    * straight run across the other pin's landing -- a guaranteed short no elbow can avoid. The
+    * final leg re-inserts stubs at the true (post-move) pin positions, so the P3 look is intact. */
    if(xctx->stretch_select &&
-      (tclgetboolvar("wire_exit_stub") || tclgetboolvar("fluid_editing")) && orthogonal_wiring &&
-      xctx->move_rot == 0 && xctx->move_flip == 0) {
+      (tclgetboolvar("wire_exit_stub") || tclgetboolvar("fluid_editing")) && leg_ortho &&
+      xctx->move_rot == 0 && xctx->move_flip == 0 && leg == nlegs - 1) {
      insert_exit_stubs();
    }
    unselect_partial_sel_wires();
@@ -3954,16 +4522,69 @@ void move_objects(int what, int merge, double dx, double dy)
     * leg 1 (the Y move) is a clean pure-axis stretch that relays each stub exactly once. */
    if(nlegs == 2 && leg == 0) move_regrab_follow_set();
    } /* end for(leg): issue 0081 diagonal X-then-Y decomposition */
-   if(nlegs == 1) break;              /* single pass (nlegs==1 from the start, or the attempt-1 fallback) */
-   /* two-leg attempt done: restore the accumulated total delta, then P2-check the composite route. */
+   if(!leg_snapped) break;            /* plain single-pass move (no decomposition snapshot): commit as-is */
+   /* attempt done: restore the accumulated total delta, then P2-check the composite route.
+    * issue 0085: this check now also covers the attempt-1 single diagonal pass -- its blind-elbow
+    * relays proved they CAN short (own-pin plow / stray wire-endpoint T, after_5.sch), so it is no
+    * longer accepted sight-unseen; attempt 2 is the rigid diagonal relay above. */
    xctx->deltax = totdx; xctx->deltay = totdy;
    prepare_netlist_structs(0);        /* refresh inst[].node[] for the partition test */
-   fltrace("FLTRACE move: two-leg attempt=%d done, partition_changed=%d %s\n", attempt,
-           fluid_partition_changed(), fluid_partition_changed() ? "-> ROLLBACK to single diagonal pass" : "-> ACCEPT");
-   if(fluid_partition_changed() == 0) break;   /* connectivity preserved (no merge/disconnect): accept */
-   /* the two legs changed connectivity the one-shot pass would not (a device OR net-label merge, or a
-    * disconnect): roll back to pristine + retry single-
-    * pass. Mirror fluid_reroute_restore(): mem_restore_slot zeroes ui_state/lastsel and reallocs the
+   {
+   int pchg;
+   if(fluid_trace_on()) {
+     int wi;
+     for(wi = 0; wi < xctx->wires; ++wi)
+       fltrace("FLTRACE wires:   attempt=%d w=%d [%g %g %g %g] sel=%u lab=%s\n", attempt, wi,
+               xctx->wire[wi].x1, xctx->wire[wi].y1, xctx->wire[wi].x2, xctx->wire[wi].y2,
+               xctx->wire[wi].sel, get_tok_value(xctx->wire[wi].prop_ptr, "lab", 0));
+   }
+   pchg = fluid_partition_changed();
+   fltrace("FLTRACE move: attempt=%d done (nlegs=%d diag_relay=%d), partition_changed=%d %s\n",
+           attempt, nlegs, diag_relay, pchg,
+           pchg == 0 ? "-> ACCEPT" : attempt == 0 ? "-> ROLLBACK to single diagonal pass" :
+           attempt == 1 ? "-> ROLLBACK to rigid diagonal relay" : "(last resort)");
+   if(pchg == 0) break;               /* connectivity preserved (no merge/disconnect): accept */
+   if(attempt == 2) {
+     /* the rigid relay STILL changed the partition: either an intentional landing (a pin dropped
+      * onto live copper -- every attempt shows it) or an unroutable scene. Keep the relay ONLY
+      * when fully clean (pchg==0, handled by the break above); otherwise put the ortho attempt-1
+      * result back. NOT `pchg < alt_pchg`: fluid_partition_changed()'s per-pin diff count is
+      * cascade-sensitive (first-seen relabeling inflates one early merge past two late ones --
+      * review wf_e348633c F5), so ordering two nonzero counts can prefer MORE real damage; the
+      * only trustworthy verdict is zero/nonzero. Restore alt's OWN id counters (not the START
+      * ones): they match the geometry being restored. */
+     if(alt_snapped) {
+       unsigned int saved_ui = xctx->ui_state;
+       mem_restore_slot(&alt_snap, 0);
+       xctx->ui_state = saved_ui;
+       xctx->wire_id_counter = alt_wid;
+       xctx->inst_id_counter = alt_iid;
+       xctx->gfx_id_counter  = alt_gid;
+       xctx->text_id_counter = alt_tid;
+       xctx->need_reb_sel_arr = 1; rebuild_selected_array();
+       xctx->movelastsel = xctx->lastsel;
+       fltrace("FLTRACE move: rigid relay not clean (%d, attempt-1 had %d): kept ortho attempt-1 result\n",
+               pchg, alt_pchg);
+     }
+     break;
+   }
+   if(attempt == 1) {
+     /* issue 0085: snapshot the shorted-but-orthogonal attempt-1 result for the never-worse compare,
+      * then arm the rigid relay: manhattan jogs off (place_moved_wire's else-branch translates the
+      * moved endpoint; the wire goes diagonal) and the fluid passes decline via leg_ortho==0. */
+     memset(&alt_snap, 0, sizeof(alt_snap));
+     mem_snapshot_alloc(&alt_snap); mem_serialize_slot(&alt_snap); alt_snapped = 1;
+     alt_pchg = pchg;
+     alt_wid = xctx->wire_id_counter;
+     alt_iid = xctx->inst_id_counter;
+     alt_gid = xctx->gfx_id_counter;
+     alt_tid = xctx->text_id_counter;
+     saved_ml_lines = xctx->manhattan_lines;
+     xctx->manhattan_lines = 0;
+     diag_relay = 1;
+   }
+   /* the attempt changed connectivity: roll back to pristine + retry the next fallback.
+    * Mirror fluid_reroute_restore(): mem_restore_slot zeroes ui_state/lastsel and reallocs the
     * arrays, so put back ui_state, the START id counters (determinism), sel_array, and movelastsel. */
    { unsigned int saved_ui = xctx->ui_state;
      mem_restore_slot(&leg_snap, 0);
@@ -3975,9 +4596,13 @@ void move_objects(int what, int merge, double dx, double dy)
      xctx->need_reb_sel_arr = 1; rebuild_selected_array();
      xctx->movelastsel = xctx->lastsel;
    }
-   nlegs = 1;                          /* attempt 1: single diagonal pass from the restored pristine */
+   nlegs = 1;                          /* attempts 1/2: single pass from the restored pristine */
    xctx->deltax = totdx; xctx->deltay = totdy;
+   } /* end pchg block */
    } /* end for(attempt): P2 safety net */
+   fluid_leg_future_dx = fluid_leg_future_dy = 0.0;  /* issue 0086: never leak past the gesture */
+   if(diag_relay) xctx->manhattan_lines = saved_ml_lines;
+   if(alt_snapped) mem_snapshot_free(&alt_snap);
    if(leg_snapped) mem_snapshot_free(&leg_snap);
    /* the END delta-zeroing (below) and the commit_now redraw save/restore consume xctx->deltax/deltay
     * as the true accumulated total (not the last leg's split); it is set to (totdx,totdy) above. */
