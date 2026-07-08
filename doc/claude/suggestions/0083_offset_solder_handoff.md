@@ -1,5 +1,13 @@
 # Handoff — issue 0083 (fluid no-short offset solder-joint), continue
 
+> **OUTCOME (2026-07-07, next session):** the user's failing gesture was diagnosed from the trace and
+> FIXED in commit `6bb9eaa4` (far-pin landing: unbounded pin-side trigger + foreign-pin-at-corner
+> classification ignore; test_36 j/l/m re-anchored to Layer 3 with an offset-column lab_pin blocker),
+> then HARDENED after adversarial review `wf_dfd3e463` found 3 P1 never-worse holes (exact-match
+> helper, removed-span scan, ambiguity rules; rails in test_wireedit_42). See the issue doc's
+> "BROADENED AGAIN" section and the `nice-drag-rerouting` memory tail. Still UNPUSHED pending the
+> user's real-window eyeball.
+
 Branch `fluid-editing`. Continue the issue-0083 work: a fluid follow-set wire, on a stretch drag,
 gets *translated* so its corner lands on / inside a stationary device body, burying the visible
 solder-dot and grazing the body. All correct electrically (no short) — a P5/beautify feel bug. This

@@ -2606,8 +2606,11 @@ static void fluid_reroute_around_obstacles(int orthogonal_wiring)
  * foreign net, never on nf -- so the V-H-V rebuild, which vacates the corner entirely, restores its
  * pristine contact set exactly (the accidental corner contact was the would-be short). Same
  * instance/pin walk order as fluid_moving_pin_net / fluid_seg_hits_foreign_pin (skip ptr<0, skip
- * labels) so the snapshot index lines up; point_near_pin tolerance is < grid, so an on-grid corner
- * matches only exact coincidence. */
+ * labels) so the snapshot index lines up. EXACT coordinate match, NOT point_near_pin: the soundness
+ * argument ("a wire ending there is pristinely attached to that pin") is an exact-contact property --
+ * xschem connectivity is exact -- while point_near_pin's cadsnap/2 box would also match an OFF-GRID
+ * pin the corner did NOT land on and exempt a wire that is NOT the pin's attachment (adversarial
+ * review wf_dfd3e463: tolerance-band false match -> P1 disconnect). */
 static int fluid_point_on_foreign_fixed_pin(double x, double y, const char *nf)
 {
   int i, p, k = 0, npins, base;
@@ -2627,7 +2630,55 @@ static int fluid_point_on_foreign_fixed_pin(double x, double y, const char *nf)
       if(!pn || !pn[0]) continue;
       if(nf && !strcmp(pn, nf)) continue;            /* same net: not foreign */
       get_inst_pin_coord(i, p, &px, &py);
-      if(point_near_pin(px, py, x, y)) return 1;
+      if(px == x && py == y) return 1;
+    }
+  }
+  return 0;
+}
+
+/* issue 0083 far-pin landing, removed-span safety (adversarial review wf_dfd3e463). The V-H-V rebuild
+ * leaves row copper [anchor..C'] U [C'..P] -- a strict subset of the naive [anchor..C] U [P..C] -- so
+ * the (P..C] span is REMOVED. That removal is exactly the short-repair when only the foreign pin /
+ * its attachments sit there, but anything ELSE attached STRICTLY INSIDE (P..C) on the row would be
+ * stranded by it: an nf tap-wire endpoint (a pristine in-body arm, reachable with autotrim_wires=0,
+ * the stock default) or a pin that was on NF at START (a second device fed mid-span by the bus).
+ * Return 1 (unsafe -> decline to baseline) unless every wire endpoint strictly inside coincides
+ * EXACTLY with a stationary START-foreign pin (that wire is the pin's own attachment and keeps it
+ * when we vacate) and no START-nf pin (stationary or co-moving, non-label) lies strictly inside.
+ * START-foreign pins strictly inside are fine: the naive route shorts them, the removal un-shorts. */
+static int fluid_removed_span_unsafe(double Px, double Cx, double Py, const char *nf,
+                                     int Rw, int wB, int wS)
+{
+  int rr, i, p, k = 0, npins, base;
+  for(rr = 0; rr < xctx->wires; ++rr) {
+    double ex[2], ey[2];
+    int e;
+    if(rr == Rw || rr == wB || rr == wS) continue;   /* the classified riser/bus/overshoot */
+    ex[0] = xctx->wire[rr].x1; ey[0] = xctx->wire[rr].y1;
+    ex[1] = xctx->wire[rr].x2; ey[1] = xctx->wire[rr].y2;
+    for(e = 0; e < 2; ++e) {
+      if(ey[e] != Py) continue;
+      if((ex[e] - Px) * (Cx - ex[e]) <= 0.0) continue;         /* not strictly inside (P..C) */
+      if(!fluid_point_on_foreign_fixed_pin(ex[e], ey[e], nf)) return 1;
+    }
+  }
+  if(!fluid_snap_pinnet || fluid_snap_npins <= 0) return 1;    /* no snapshot: cannot prove safe */
+  for(i = 0; i < xctx->instances; ++i) {
+    const char *type;
+    if(xctx->inst[i].ptr < 0) continue;
+    npins = (xctx->inst[i].ptr + xctx->sym)->rects[PINLAYER];
+    base = k; k += npins;
+    if(base + npins > fluid_snap_npins) break;
+    type = xctx->sym[xctx->inst[i].ptr].type;
+    if(type && !strcmp(type, "label")) continue;
+    for(p = 0; p < npins; ++p) {
+      const char *pn = fluid_snap_pinnet[base + p];
+      double px, py;
+      if(!pn || !pn[0]) continue;
+      if(!nf || strcmp(pn, nf) != 0) continue;       /* only START-nf pins block the removal */
+      get_inst_pin_coord(i, p, &px, &py);
+      if(py != Py) continue;
+      if((px - Px) * (Cx - px) > 0.0) return 1;      /* nf pin strictly inside the removed span */
     }
   }
   return 0;
@@ -2665,6 +2716,9 @@ static int fluid_point_on_foreign_fixed_pin(double x, double y, const char *nf)
  * REPAIRS the short (the rebuild vacates the corner); the classification tolerates STATIONARY wires
  * ending at a corner that sits exactly on a foreign stationary pin (fluid_point_on_foreign_fixed_pin)
  * -- they are pristinely on the foreign net and keep their own pin contact when the corner is vacated.
+ * fluid_removed_span_unsafe declines the firing when any OTHER attachment (an nf tap endpoint, a
+ * START-nf pin fed mid-span) sits strictly inside the removed (P..C] row span -- adversarial review
+ * wf_dfd3e463 (P1 never-worse holes, reachable with autotrim_wires=0, the stock default).
  * All deltas rebuild to the SAME canonical result (offset column one grid outside the body, pin side).
  * SCOPE (first increment): vertical-riser / horizontal-bus only, and pure-axis (the caller gates on
  * nlegs==1 so it never stacks on the issue-0081 diagonal decomposition); a horizontal riser, a rotated
@@ -2772,7 +2826,13 @@ static void fluid_offset_foreign_pin_landing(int orthogonal_wiring)
         }
         atC1 = (x1 == Cx); atC2 = (x2 == Cx);
         if(atC1 == atC2) continue;                      /* horizontal on the row but not ending at C: ignore */
+        fltrace("FLTRACE offset:   rowwire rr=%d sel=%d [%g %g %g %g]\n", rr, xctx->wire[rr].sel, x1, y1, x2, y2);
         far = atC1 ? x2 : x1;
+        /* NOTE sel cannot distinguish the tool's bus/overshoot from user copper here: place_moved_wire
+         * RE-LAYS the follow wires (the relaid bus/overshoot carry sel==0 at this seam), so the
+         * classification is purely geometric; ambiguity (two bus / two overshoot candidates, e.g. a
+         * stationary duplicate of the relaid overshoot) declines, and interior attachments of a
+         * candidate are protected by the removed-span scan below (wf_dfd3e463). */
         if((far - Px) * dir_off > 0.0) {                /* far end AWAY from body -> the bus */
           if(wB >= 0) { stranded = 1; break; } wB = rr;
         } else if(far == Px) {                          /* far end AT the pin -> the overshoot stub */
@@ -2784,6 +2844,14 @@ static void fluid_offset_foreign_pin_landing(int orthogonal_wiring)
       }
       if(stranded || wB < 0) { fltrace("FLTRACE offset:   decline (wB=%d wS=%d stranded=%d conF=%d)\n", wB, wS, stranded, c_on_foreign); continue; }
       fltrace("FLTRACE offset:   classified wB=%d wS=%d Cpx=%g JOGY=%g conF=%d\n", wB, wS, Cpx, JOGY, c_on_foreign);
+
+      /* --- removed-span safety: the rebuild deletes the naive (P..C] row copper; decline when any
+       *     OTHER attachment (an nf tap endpoint, a START-nf pin fed mid-span) sits strictly inside
+       *     -- vacating would strand it, a P1 disconnect naive does not have (wf_dfd3e463). --- */
+      if(fluid_removed_span_unsafe(Px, Cx, Py, nf, Rw, wB, wS)) {
+        fltrace("FLTRACE offset:   decline (removed-span attachment P=%g C=%g)\n", Px, Cx);
+        continue;
+      }
 
       /* --- the three new riser legs (candidate coords). Build the near-M column from R's OWN endpoint
        *     Mx (on-grid Mx==the riser column; off-grid this keeps leg1 anchored to the moving pin, no P1

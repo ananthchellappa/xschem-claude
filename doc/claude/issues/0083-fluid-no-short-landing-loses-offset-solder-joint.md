@@ -104,6 +104,31 @@ layers; electrically a no-op). **Tests:** test_41 drives 6–9 (+70 release+step
 the exact user gesture + release equality, own-body `(-330,-95)` discriminator) — 22 RED @ HEAD → GREEN.
 Suite ALL PASS; fluid=0 byte-identical vs `scratchpad/xschem.base0083` (9 deltas × release+stepwise).
 
+**Adversarial review `wf_dfd3e463` (4 worktree attack lenses + independent refute-verify per finding) →
+3 CONFIRMED P1 never-worse holes in the first cut (`6bb9eaa4`), all HARDENED in the follow-up commit
+(all reachable only with `autotrim_wires=0` — the STOCK default; the user's cadence rc autotrim=1
+pre-splits buses at taps/pins so classification already declined — or with off-grid pins):**
+1. *Tolerance-band `c_on_foreign`*: the helper matched pins within `point_near_pin`'s ±cadsnap/2 box
+   while classification compares exactly — an off-grid foreign pin NEAR (not at) C exempted an
+   unrelated stationary wire ending at C → vacated → disconnect. **Fix: exact coordinate match.**
+2. *Removed-span strand*: the rebuild deletes the naive `(P..C]` row copper; a tap-wire endpoint or a
+   START-nf pin strictly inside (pristine in-body arm; a second device fed mid-span) was stranded.
+   **Fix: `fluid_removed_span_unsafe` — decline unless everything strictly inside `(P..C)` is a
+   stationary START-foreign pin('s attachment).**
+3. *Stationary-wS reshape*: an unselected user wire spanning `[P..C]` could be taken as the overshoot
+   and reshaped. **Resolution: `sel` CANNOT distinguish tool copper (place_moved_wire re-lays the
+   follow wires with sel==0 at the pre-trim seam — a sel-based restriction broke every legit firing),
+   so classification stays geometric: a duplicate candidate declines by ambiguity, and interior taps
+   are protected by the removed-span scan.**
+Regression rails: `test_wireedit_42_farpin_never_worse` (T1–T4 + repair-must-still-fire rails,
+autotrim=0) — T1/T2/T3 RED at unhardened `6bb9eaa4` (sabotage-verified), GREEN after. Cleared by the
+review: mirror/leftward drags (dir_off=+1 symmetric), +10000 extreme drag, edge-grid unreachability,
+subset argument for kept row copper, test_36 blocker honesty (Layer 3 genuinely routes j/l/m; disabling
+it flips 17 checks RED). **Known limits (decline==naive, never-worse holds, next-increment candidates):**
+Y-axis transpose of the same gesture still shorts (horizontal-riser scope); a long instance name
+(text-inflated bbox) makes leg guards decline → naive short returns; corner exactly on a foreign WIRE
+endpoint (not a pin) declines while the mid-span landing repairs.
+
 ---
 
 <details><summary>Original write-up (pre-implementation)</summary>
