@@ -2442,7 +2442,9 @@ proc load_recent_file {} {
 }
 
 proc update_recent_file {f {topwin {} } } {
-  global has_x
+  global has_x update_recent_files
+  # the recent-views list belongs to the user: no-op in gated (test/automation) sessions
+  if {[info exists update_recent_files] && !$update_recent_files} return
   # puts "update recent file, f=$f, topwin=$topwin"
   set old $tctx::recentfile
   set tctx::recentfile {}
@@ -2464,6 +2466,9 @@ proc update_recent_file {f {topwin {} } } {
 # Recent drop-down (most recent first, deduped, capped like tctx::recentfile,
 # persisted in the same recent_files conf file)
 proc update_recent_dir {d} {
+  global update_recent_files
+  # the recent-views list belongs to the user: no-op in gated (test/automation) sessions
+  if {[info exists update_recent_files] && !$update_recent_files} return
   set d [file normalize $d]
   if { ![info exists tctx::recentdirs] } { set tctx::recentdirs {} }
   set old $tctx::recentdirs
@@ -2479,8 +2484,11 @@ proc update_recent_dir {d} {
 }
 
 proc write_recent_file {} {
-  global USER_CONF_DIR
+  global USER_CONF_DIR update_recent_files
 
+  # final safety: never rewrite the USER's recent_files from a gated (test/automation)
+  # session -- this also covers the c_toolbar recent-components writer (c_t arrays)
+  if {[info exists update_recent_files] && !$update_recent_files} return
   # puts "write recent file tctx::recentfile=$tctx::recentfile"
   set a [catch {open $USER_CONF_DIR/recent_files w} fd]
   if { $a } {
@@ -14688,6 +14696,16 @@ set_ne auto_set_wire_bus 0
 # (doc/claude/specs/descend_hierarchy_in_memory.md). Off => no backup files.
 set_ne autosave_backup 1
 set_ne cadence_compat 0
+# recent-files protection: the recent-views list ($USER_CONF_DIR/recent_files) belongs to the USER.
+# C sets no_recent_files=1 for a scripted/automation session (--nogui or --pipe -- all test
+# harnesses) or --norecent; those sessions must never create/rewrite the file, so the gate is
+# FORCED off (a test's rc cannot re-enable it by accident). A normal session defaults to on and
+# an xschemrc may pre-set it. Consumed by update_recent_file/update_recent_dir/write_recent_file.
+if {[info exists no_recent_files] && $no_recent_files} {
+  set update_recent_files 0
+} else {
+  set_ne update_recent_files 1
+}
 # Fluid editing: first-click tip/edge grab (doc/claude/specs/fluid_editing.md). Default
 # off; cadence_style_rc turns it on. Read fresh from C (tclgetboolvar) each button press.
 set_ne fluid_editing 0

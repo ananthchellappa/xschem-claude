@@ -302,7 +302,7 @@ static void actionlog_name(char *out, size_t sz, const char *dir, int n)
  * creating a log at all, while letting automation opt in by passing --logdir.
  * --nolog disables logging entirely (and, on the Tcl side, the CIW auto-open;
  * see issue 0002): combining it with --logdir is contradictory and fatal. */
-void init_action_log(void)
+void init_action_log(int largc, char **largv)
 {
   char dir[PATH_MAX];
   char fname[PATH_MAX];
@@ -374,6 +374,15 @@ void init_action_log(void)
   my_strncpy(actionlog_filename, fname, S(actionlog_filename));
   /* header is a Tcl comment so the log stays source-able for replay */
   fprintf(actionlog_fp, "# xschem action log\n");
+  /* record the exact launch (full command line + cwd) so a log found later can be
+   * traced back to the invocation that produced it; still Tcl comments => replay-safe */
+  fprintf(actionlog_fp, "# launch:");
+  for(i = 0; i < largc; ++i) fprintf(actionlog_fp, " %s", largv[i] ? largv[i] : "");
+  fprintf(actionlog_fp, "\n");
+  {
+    char cwdbuf[PATH_MAX];
+    if(getcwd(cwdbuf, sizeof(cwdbuf))) fprintf(actionlog_fp, "# cwd: %s\n", cwdbuf);
+  }
   dbg(1, "init_action_log(): logging actions to %s\n", fname);
 }
 

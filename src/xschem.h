@@ -1499,6 +1499,8 @@ extern int cli_opt_do_waves;
 extern int cli_opt_detach; /* no TCL console */
 extern int cli_opt_quit;
 extern int cli_opt_nogui; /* --nogui: true headless, never init Tk / map a window */
+extern int cli_opt_pipe;  /* --pipe given: a scripted/automation session */
+extern int cli_opt_norecent; /* --norecent: never create/rewrite the user's recent_files list */
 extern char cli_opt_tcl_script[PATH_MAX];
 extern char cli_opt_initial_netlist_name[PATH_MAX];
 extern char cli_opt_rcfile[PATH_MAX];

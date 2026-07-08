@@ -3159,6 +3159,12 @@ int Tcl_AppInit(Tcl_Interp *inter)
    running_in_src_dir = 1;
  }
  tclsetintvar("running_in_src_dir", running_in_src_dir);
+ /* recent-files protection: the recent-views list ($USER_CONF_DIR/recent_files) belongs to the
+  * USER; a scripted/automation session (--nogui or --pipe -- every test harness uses one of
+  * them) or an explicit --norecent must never create/rewrite it. xschem.tcl reads this flag
+  * when setting update_recent_files, and update_recent_file / update_recent_dir /
+  * write_recent_file are gated on that variable. See tests/headless/test_recent_launchlog.sh. */
+ tclsetintvar("no_recent_files", (cli_opt_nogui || cli_opt_pipe || cli_opt_norecent) ? 1 : 0);
 
  if(!sel_file[0]) {
    my_snprintf(sel_file, S(sel_file), "%s/%s", user_conf_dir, ".selection.sch");

@@ -96,8 +96,9 @@ int main(int argc, char **argv)
   cli_argc = argc;
   cli_opt_argc = process_options(argc, argv);
   /* open the action log (cwd or --logdir) while cwd and stderr are still intact
-   * and before any detach redirects stderr (so a fatal logdir error is seen) */
-  init_action_log();
+   * and before any detach redirects stderr (so a fatal logdir error is seen);
+   * argc/argv let it record the full launch command line in the header */
+  init_action_log(argc, argv);
   #ifdef __unix__
   /* if invoked in background (and not invoked from a command pipeline) detach from console */
   if(!fstat(0, &statbuf)) {
