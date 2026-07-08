@@ -1,6 +1,46 @@
 # Issue 0083 — fluid follow-set: a no-short landing onto a foreign pin loses the offset solder-joint and runs flush against the device body
 
 **Opened:** 2026-07-07
+**Status:** IMPLEMENTED 2026-07-07 (branch `fluid-editing`, first increment — vertical-riser/horizontal-bus,
+pure-axis). See **Implementation** below; the original write-up follows.
+
+---
+
+## Implementation (2026-07-07)
+
+**Mechanism (pre-code design-critique workflow `wf_0b98812c`: 3 proposals → judge → 2 critics).** A new
+stateless post-detection sibling pass `fluid_offset_foreign_pin_landing()` (`src/move.c`), called at the
+shared pre-trim commit seam immediately after `fluid_reroute_around_obstacles()`, gated `nlegs==1` (pure
+axis only — never stacks on the 0081 diagonal decomposition) inside the existing
+`fluid_editing && stretch_select && rot==flip==0` block. It reads the naive-committed geometry and, when
+it finds a **same-net** tool-owned riser whose far corner landed on a stationary device pin with a bus on
+the pin's row, rebuilds the riser into the user's **V-H-V**: pin escapes one grid, jogs one grid away from
+the body, drops a long clear leg landing one grid **outside** the body onto the bus at a restored
+**degree-3 solder-dot**, with a short stub reaching the pin. The bus is shrunk to the dot and the stub
+re-added, so the bus-row copper is **union-identical to baseline** (copper-neutral — only the three new
+riser legs are guarded). before_3 (`R18 +10 x`) → `leg1 -390 -10→0`, `leg2 -390→-400 @0`,
+`leg3 -400 0→140`, stub `-400→-390 @140`, bus `-550→-400`, degree-3 T at (-400,140).
+
+**Safety.** Pure fn of (pristine snapshot + total delta + geometry) ⇒ **release==stepwise** free; whole
+block gated on `fluid_editing` ⇒ **default-off byte-identical** (verified: fixed fluid=0 ≡ baseline
+fluid=0 segset). P5/beautify, lowest-but-one in the conflict order — every guard **declines to the naive
+baseline** (never worse): same-net-only (a distinct-net pin is a straddle owned by the earlier reroute);
+exactly-one riser / exactly-one bus / no other wire stranded at the corner; per-leg
+`fluid_seg_crosses_stationary_body` + `fluid_seg_hits_foreign_pin` + `fluid_seg_hits_moving_pin` +
+`fluid_seg_stray_contact`; offset column clear of pins. Critic fixes folded in: near-M legs built from the
+riser's OWN endpoint (off-grid P1 safety), the diagonal `nlegs==1` gate, per-leg body guard, autotrim=1 in
+the test. **First-increment limitations (all decline-safe):** vertical-riser/horizontal-bus only
+(rotated-bus / horizontal-riser decline); one landing per pass; a collinear-split riser/bus under autotrim
+declines (doesn't fire). **Tests:** `test_wireedit_41_no_short_offset_solder` (exact before_3, RED-first @
+HEAD 6 discriminators → GREEN; release==stepwise; P1/P2 rails). Full wireedit ALL PASS (41) + wire_split +
+fluid_editing OVERALL ok; `--memcheck` clean (test_41 + test_34). **NOT yet done:** user real-window
+eyeball (the acceptance gate); adversarial review.
+
+---
+
+<details><summary>Original write-up (pre-implementation)</summary>
+
+**Opened:** 2026-07-07
 **Status:** OPEN (branch `fluid-editing`).
 **Affects:** interactive fluid stretch-move of an instance with `fluid_editing` on, when a
 tool-owned follow wire's corner is translated to land **exactly on / flush against** a stationary
@@ -161,3 +201,5 @@ visible T at (-400,140), short hop to v8.`plus` at -390; v8 pins on distinct net
 - release == stepwise (identical segset). Sabotage-verify: disabling the new offset pass flips the
   discriminator RED; port the **exact** before_3 geometry (autotrim cleans simplified scenes —
   `green-but-hollow`).
+
+</details>
