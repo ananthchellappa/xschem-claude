@@ -2584,20 +2584,25 @@ static void fluid_reroute_around_obstacles(int orthogonal_wiring)
  * on the SAME shared commit block as a real END and a live fluid RUBBER step (pre-trim seam) so it is a
  * pure function of (pristine snapshot + total delta + geometry): release == stepwise for FREE. Gated
  * fluid_editing && stretch_select && rot==flip==0 (caller) plus a valid START name snapshot => default
- * off byte-identical. FIRST INCREMENT: vertical-riser / horizontal-bus only, and pure-axis (the caller
- * gates on nlegs==1 so it never stacks on the issue-0081 diagonal decomposition); a horizontal riser,
- * a rotated bus, or a diagonal drag DECLINE to baseline (documented limitations, all P1/P2-safe). */
+ * off byte-identical. TRIGGER (broadened): the riser corner landed INSIDE the device body x-span --
+ * catches both the exact-on-pin +1-grid case AND a continuous drag PAST the pin (+2/+3 grid), which
+ * lands the riser deeper in the body with an overshoot stub between the pin and the corner. All deltas
+ * rebuild to the SAME canonical result (offset column one grid outside the body, on the pin's side).
+ * SCOPE (first increment): vertical-riser / horizontal-bus only, and pure-axis (the caller gates on
+ * nlegs==1 so it never stacks on the issue-0081 diagonal decomposition); a horizontal riser, a rotated
+ * bus, or a diagonal drag DECLINE to baseline (documented limitations, all P1/P2-safe). */
 static void fluid_offset_foreign_pin_landing(int orthogonal_wiring)
 {
   double grid = tclgetdoublevar("cadsnap");
   int D, p, k = 0, npins, base;
   if(!orthogonal_wiring) return;
   if(!fluid_snap_pinnet || fluid_snap_npins <= 0) return;
-  if(fluid_count_pins() != fluid_snap_npins) return;    /* instance set changed: snapshot walk unreliable */
+  if(fluid_count_pins() != fluid_snap_npins) return;  /* instance set changed: snapshot walk unreliable */
   if(grid <= 0.0) grid = 1.0;
 
   for(D = 0; D < xctx->instances; ++D) {
     const char *type;
+    double bx1, by1, bx2, by2, t, xc;
     if(xctx->inst[D].ptr < 0) continue;
     npins = (xctx->inst[D].ptr + xctx->sym)->rects[PINLAYER];
     base = k; k += npins;
@@ -2605,102 +2610,97 @@ static void fluid_offset_foreign_pin_landing(int orthogonal_wiring)
     if(xctx->inst[D].sel) continue;                     /* only STATIONARY devices */
     type = xctx->sym[xctx->inst[D].ptr].type;
     if(type && !strcmp(type, "label")) continue;        /* labels have no body (§2) */
+    /* device world bbox (the text/pin-inflated symbol_bbox the P5 body test also uses) */
+    bx1 = xctx->inst[D].x1; by1 = xctx->inst[D].y1; bx2 = xctx->inst[D].x2; by2 = xctx->inst[D].y2;
+    if(bx1 > bx2) { t = bx1; bx1 = bx2; bx2 = t; }
+    if(by1 > by2) { t = by1; by1 = by2; by2 = t; }
+    xc = (bx1 + bx2) / 2.0;
     for(p = 0; p < npins; ++p) {
       const char *np = fluid_snap_pinnet[base + p];
       const char *nf;
-      double Px, Py;                                     /* the stationary device pin (the landing) */
-      double Mx = 0, My = 0, Cx = 0, Cy = 0;             /* riser: M = moving-pin end, C = corner on pin */
-      int Rw = -1, wB = -1, rr, ambiguous = 0;
-      double bx1, bx2, t, xc, dir_off, dir_mc, Cpx, JOGY, aother;
-      double l1x1, l1y1, l1x2, l1y2, l2x2, l2y2, l3x2, l3y2, sbx1, sbx2;
+      double Px, Py;                                     /* the stationary device pin (the anchor) */
+      double Mx = 0, My = 0, Cx = 0, Cy = 0;             /* riser: M = moving-pin end, C = corner in body */
+      int Rw = -1, wB = -1, wS = -1, rr, ambiguous = 0, stranded = 0;
+      double dir_off, dir_mc, Cpx, JOGY;
+      double l1x1, l1y1, l1x2, l1y2, l2x2, l2y2, l3x2, l3y2;
       char *prop = NULL;
 
       if(!np || !np[0]) continue;
       get_inst_pin_coord(D, p, &Px, &Py);               /* stationary D never moved: post == pre */
-
-      /* --- guard 1: EXACTLY ONE tool-owned landing riser R at this pin -- axis-aligned, one endpoint
-       *     on the pin (=corner C), the OTHER endpoint on a MOVING instance pin (=M, so R is a riser
-       *     the drag pulled, not an arbitrary follow wire). The degenerate collapsed stub is skipped. */
-      for(rr = 0; rr < xctx->wires && !ambiguous; ++rr) {
-        double x1 = xctx->wire[rr].x1, y1 = xctx->wire[rr].y1;
-        double x2 = xctx->wire[rr].x2, y2 = xctx->wire[rr].y2;
-        int e1, e2;
-        double ox, oy;
-        if(!xctx->wire[rr].sel) continue;               /* tool-owned follow wires only */
-        if(x1 == x2 && y1 == y2) continue;              /* degenerate (collapsing stub): skip */
-        if(!(x1 == x2 || y1 == y2)) continue;           /* axis-aligned only */
-        e1 = point_near_pin(x1, y1, Px, Py);
-        e2 = point_near_pin(x2, y2, Px, Py);
-        if(e1 == e2) continue;                          /* need EXACTLY one endpoint on the pin */
-        ox = e1 ? x2 : x1; oy = e1 ? y2 : y1;
-        if(!point_on_moving_pin(ox, oy)) continue;      /* other end must be a moving pin */
-        if(Rw >= 0) { ambiguous = 1; break; }
-        Rw = rr; Mx = ox; My = oy; Cx = e1 ? x1 : x2; Cy = e1 ? y1 : y2;
-      }
-      if(ambiguous || Rw < 0) continue;
-      if(Mx != Cx) continue;                            /* first increment: VERTICAL riser only */
-
-      /* --- guard 2: SAME-NET landing (no short). A distinct net at the pin is a straddle/short that
-       *     fluid_reroute_around_obstacles already owns -- decline here. --- */
-      nf = fluid_moving_pin_net(Mx, My);
-      if(!nf || !nf[0] || strcmp(nf, np) != 0) continue;
-
-      /* body-centre X on the bus axis (the text/pin-inflated symbol_bbox the P5 body test also uses) */
-      bx1 = xctx->inst[D].x1; bx2 = xctx->inst[D].x2;
-      if(bx1 > bx2) { t = bx1; bx1 = bx2; bx2 = t; }
-      xc = (bx1 + bx2) / 2.0;
       if(Px == xc) continue;                            /* pin on body centre: no offset direction */
       dir_off = (Px > xc) ? 1.0 : -1.0;                 /* away from the body, along the bus (X) axis */
       Cpx = Px + dir_off * grid;                        /* the restored solder-dot column (PIN-relative) */
 
-      /* --- guard 3: EXACTLY ONE bus wB on the pin's row, ending at C, running to the AWAY side.
-       *     Zero = a bare pin terminal (nothing to offset); >1 = ambiguous multi-tap; both decline. */
-      for(rr = 0; rr < xctx->wires; ++rr) {
+      /* --- guard 1: EXACTLY ONE tool-owned VERTICAL riser R whose corner (its endpoint on the pin's
+       *     row Py) landed INSIDE this device's body x-span -- i.e. the translated riser now grazes /
+       *     intrudes the body (issue 0083, broadened from "corner exactly on the pin" so a continuous
+       *     drag past the pin, +2/+3 grid, is caught too). The OTHER end M is on a MOVING pin (so R is a
+       *     riser the drag pulled). The degenerate collapsed stub is skipped. --- */
+      for(rr = 0; rr < xctx->wires && !ambiguous; ++rr) {
         double x1 = xctx->wire[rr].x1, y1 = xctx->wire[rr].y1;
         double x2 = xctx->wire[rr].x2, y2 = xctx->wire[rr].y2;
-        int e1, e2;
-        if(rr == Rw) continue;
-        if(x1 == x2 && y1 == y2) continue;              /* degenerate: skip */
-        if(y1 != Cy || y2 != Cy) continue;              /* horizontal wire on the bus row only */
-        e1 = (x1 == Cx && y1 == Cy); e2 = (x2 == Cx && y2 == Cy);
-        if(e1 == e2) continue;                          /* exactly one endpoint at C */
-        aother = e1 ? x2 : x1;                           /* the bus's far (anchor) end */
-        if((aother - Px) * dir_off <= 0.0) continue;    /* must extend to the AWAY-from-body side */
-        if(wB >= 0) { wB = -2; break; }
-        wB = rr;
+        double cxx, cyy, ox, oy;
+        if(!xctx->wire[rr].sel) continue;               /* tool-owned follow wires only */
+        if(x1 == x2 && y1 == y2) continue;              /* degenerate (collapsing stub): skip */
+        if(x1 != x2) continue;                          /* VERTICAL riser only (first increment) */
+        if(y1 == Py)      { cxx = x1; cyy = y1; ox = x2; oy = y2; }   /* corner on the bus row */
+        else if(y2 == Py) { cxx = x2; cyy = y2; ox = x1; oy = y1; }
+        else continue;
+        if(cxx <= bx1 || cxx >= bx2) continue;          /* corner must be strictly inside the body x-span */
+        if(!point_on_moving_pin(ox, oy)) continue;      /* other end must be a moving pin */
+        if(Rw >= 0) { ambiguous = 1; break; }
+        Rw = rr; Mx = ox; My = oy; Cx = cxx; Cy = cyy;
       }
-      if(wB < 0) continue;                              /* 0 or >1 bus: decline */
+      if(ambiguous || Rw < 0) continue;
 
-      /* --- guard: no OTHER non-degenerate wire ends at C (moving the junction could strand it) --- */
-      { int stranded = 0;
-        for(rr = 0; rr < xctx->wires; ++rr) {
-          double x1 = xctx->wire[rr].x1, y1 = xctx->wire[rr].y1;
-          double x2 = xctx->wire[rr].x2, y2 = xctx->wire[rr].y2;
-          if(rr == Rw || rr == wB) continue;
-          if(x1 == x2 && y1 == y2) continue;            /* degenerate collapsing stub is allowed */
-          if((x1 == Cx && y1 == Cy) || (x2 == Cx && y2 == Cy)) { stranded = 1; break; }
-        }
-        if(stranded) continue;
-      }
+      /* --- guard 2: SAME-NET (no short). A distinct net at the pin is a straddle/short that
+       *     fluid_reroute_around_obstacles already owns -- decline here. --- */
+      nf = fluid_moving_pin_net(Mx, My);
+      if(!nf || !nf[0] || strcmp(nf, np) != 0) continue;
 
-      /* --- guard: the restored solder-dot column must clear the body, and the jog row must give two
-       *     non-degenerate vertical legs. dir_mc = M -> C direction along the riser (Y) axis. --- */
+      /* --- jog row + non-degenerate legs; offset column clear of pins --- */
       dir_mc = (Cy > My) ? 1.0 : -1.0;
       JOGY = My + dir_mc * grid;
       if((JOGY - My) * (Cy - JOGY) <= 0.0) continue;    /* need |Cy-My| > grid (both legs non-degenerate) */
       if(point_on_any_pin(Cpx, Py)) continue;           /* offset column already occupied by a pin */
 
-      /* --- the three new riser legs (candidate coords). Build the near-M column from R's OWN endpoint
-       *     Mx (not Px): on-grid Mx==Px, off-grid this keeps leg1 anchored to the moving pin (no P1
-       *     tear). leg1 = M escape; leg2 = jog to the offset column; leg3 = long clear drop to C'. --- */
-      l1x1 = Mx;  l1y1 = My;   l1x2 = Mx;  l1y2 = JOGY;              /* reuse R */
-      l2x2 = Cpx; l2y2 = JOGY;                                       /* leg2: (Mx,JOGY)-(Cpx,JOGY) */
-      l3x2 = Cpx; l3y2 = Cy;                                         /* leg3: (Cpx,JOGY)-(Cpx,Cy)   */
+      /* --- classify the horizontal copper meeting the riser corner C on row Py. wB = the BUS (far end
+       *     on the AWAY-from-body side, i.e. the anchor). wS = the OPTIONAL overshoot stub (far end AT
+       *     the pin P) that a >1-grid drag leaves between the pin and the corner. Anything else touching
+       *     C, or a second bus / second overshoot, is unexpected -> decline (never worse). --- */
+      for(rr = 0; rr < xctx->wires; ++rr) {
+        double x1 = xctx->wire[rr].x1, y1 = xctx->wire[rr].y1;
+        double x2 = xctx->wire[rr].x2, y2 = xctx->wire[rr].y2;
+        int atC1, atC2;
+        double far;
+        if(rr == Rw) continue;
+        if(x1 == x2 && y1 == y2) continue;              /* degenerate collapsing stub: ignore */
+        if(y1 != Cy || y2 != Cy) {                      /* off the bus row: only a problem if it ends at C */
+          if((x1 == Cx && y1 == Cy) || (x2 == Cx && y2 == Cy)) { stranded = 1; break; }
+          continue;
+        }
+        atC1 = (x1 == Cx); atC2 = (x2 == Cx);
+        if(atC1 == atC2) continue;                      /* horizontal on the row but not ending at C: ignore */
+        far = atC1 ? x2 : x1;
+        if((far - Px) * dir_off > 0.0) {                /* far end AWAY from body -> the bus */
+          if(wB >= 0) { stranded = 1; break; } wB = rr;
+        } else if(far == Px) {                          /* far end AT the pin -> the overshoot stub */
+          if(wS >= 0) { stranded = 1; break; } wS = rr;
+        } else { stranded = 1; break; }                 /* toward body but not at the pin -> unexpected */
+      }
+      if(stranded || wB < 0) continue;                  /* need exactly the bus (+ optional overshoot) */
 
-      /* --- guards on the NEW legs (copper the baseline did not have). The stub + shrunk bus are
-       *     union-identical to the baseline bus (copper-neutral) so they need no guard, and the stub
-       *     legitimately ends ON the pin inside the inflated bbox so it is EXEMPT from the body test.
-       *     Any hit => decline to baseline (never worse). C' (=Cpx,Cy) and M are the exempt contacts. */
+      /* --- the three new riser legs (candidate coords). Build the near-M column from R's OWN endpoint
+       *     Mx (on-grid Mx==the riser column; off-grid this keeps leg1 anchored to the moving pin, no P1
+       *     tear). leg1 = M escape; leg2 = jog to the offset column; leg3 = long clear drop to C'. --- */
+      l1x1 = Mx;  l1y1 = My;   l1x2 = Mx;  l1y2 = JOGY;
+      l2x2 = Cpx; l2y2 = JOGY;
+      l3x2 = Cpx; l3y2 = Cy;
+
+      /* --- guards on the NEW legs. The bus+stub horizontal copper after the rebuild (anchor..C' + C'..P)
+       *     is a SUBSET of the baseline row copper (only re-segmented and the overshoot removed), so it
+       *     adds no crossing and needs no guard. Any leg hit => decline to baseline (never worse). C'
+       *     (=Cpx,Cy) and M are the exempt contacts for stray_contact. --- */
       if(fluid_seg_crosses_stationary_body(l1x1, l1y1, l1x2, l1y2)) continue;
       if(fluid_seg_crosses_stationary_body(l1x2, l1y2, l2x2, l2y2)) continue;
       if(fluid_seg_crosses_stationary_body(l2x2, l2y2, l3x2, l3y2)) continue;
@@ -2714,23 +2714,30 @@ static void fluid_offset_foreign_pin_landing(int orthogonal_wiring)
       if(fluid_seg_stray_contact(l1x2, l1y2, l2x2, l2y2, l3x2, l3y2, Mx, My, Rw)) continue;
       if(fluid_seg_stray_contact(l2x2, l2y2, l3x2, l3y2, l3x2, l3y2, Mx, My, Rw)) continue;
 
-      /* --- commit: reshape R into leg1, shrink the bus to the solder-dot, then storeobject the jog,
-       *     the drop, and the pin-reaching stub (storeobject reallocs xctx->wire, so index only). --- */
+      /* --- commit: reshape R into leg1; pull the bus's C-endpoint back to the solder-dot column C';
+       *     turn the overshoot stub into the pin-reaching stub C'->P (or store a fresh one if there was
+       *     no overshoot, e.g. an exact-on-pin +1-grid landing); storeobject the jog + drop. storeobject
+       *     reallocs xctx->wire, so all reshapes (index-only) happen first, appends last. --- */
       my_strdup(_ALLOC_ID_, &prop, xctx->wire[Rw].prop_ptr);       /* carries lab= (net) */
       xctx->wire[Rw].x1 = l1x1; xctx->wire[Rw].y1 = l1y1;
       xctx->wire[Rw].x2 = l1x2; xctx->wire[Rw].y2 = l1y2;
       order_wire_coords(Rw);
-      /* shrink the bus's C-endpoint to the solder-dot column C' */
       if(xctx->wire[wB].x1 == Cx && xctx->wire[wB].y1 == Cy) xctx->wire[wB].x1 = Cpx;
       else                                                   xctx->wire[wB].x2 = Cpx;
       order_wire_coords(wB);
-      sbx1 = Cpx; sbx2 = Px;                                        /* pin-reaching stub: C' -> pin */
+      if(wS >= 0) {                                                /* reshape overshoot C..P -> C'..P */
+        if(xctx->wire[wS].x1 == Cx && xctx->wire[wS].y1 == Cy) xctx->wire[wS].x1 = Cpx;
+        else                                                   xctx->wire[wS].x2 = Cpx;
+        order_wire_coords(wS);
+      }
       storeobject(-1, l1x2, l1y2, l2x2, l2y2, WIRE, 0, 0, prop);    /* leg2 (jog)  */
       order_wire_coords(xctx->wires - 1);
       storeobject(-1, l2x2, l2y2, l3x2, l3y2, WIRE, 0, 0, prop);    /* leg3 (drop) */
       order_wire_coords(xctx->wires - 1);
-      storeobject(-1, sbx1, Py, sbx2, Py, WIRE, 0, 0, prop);        /* stub -> pin */
-      order_wire_coords(xctx->wires - 1);
+      if(wS < 0) {                                                 /* exact-on-pin: no overshoot to reuse */
+        storeobject(-1, Cpx, Py, Px, Py, WIRE, 0, 0, prop);        /* fresh stub C' -> pin */
+        order_wire_coords(xctx->wires - 1);
+      }
       my_free(_ALLOC_ID_, &prop);
       xctx->prep_hash_wires = 0;
       xctx->prep_net_structs = 0;

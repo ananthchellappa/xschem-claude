@@ -78,13 +78,18 @@ proc wire_degree {x y} {
   return $d
 }
 
-# The acceptance assertions, applied after a drive (release or stepwise).
+# The acceptance assertions, applied after a drive (release or stepwise). The DESIRED result is the
+# SAME canonical geometry for every rightward delta (+10/+20/+30): riser lands at the -400 column with
+# the solder dot; only R18.M's x differs (absorbed by the V-H-V jog). So one assert fits all drives.
 proc assert_offset_solder {tag before} {
   # --- DISCRIMINATORS (RED @ baseline): the offset solder-joint is kept, riser clears the body ---
   check "$tag DISC solder-dot restored: visible T-junction at pre-move column (-400,140), degree>=3" \
     [expr {[wire_degree -400 140] >= 3}]
-  check "$tag DISC riser clears v8 body: no wire on the ammeter left-edge column at (-390,120)" \
-    [expr {![point_on_any_wire -390 120]}]
+  # riser must clear v8's body interior at EVERY naive landing column (-390/-380/-370 = +10/+20/+30)
+  foreach bx {-390 -380 -370 -360} {
+    check "$tag DISC riser clears v8 body: no wire in body interior at ($bx,120)" \
+      [expr {![point_on_any_wire $bx 120]}]
+  }
   check "$tag DISC short stub kept: wire -400 140 -390 140 reaches v8.plus from the offset dot" \
     [has_seg -400 140 -390 140]
   # --- connectivity that MUST still hold (reach the pin) ---
@@ -128,5 +133,39 @@ assert_offset_solder "stepwise:" $before2
 
 # ---- release == stepwise (Phase II invariant) ---------------------------------------------------
 check "release == stepwise: R18 committed route identical both ways" [expr {$segStep eq $segRelease}]
+
+# ---- Drive 3: +20 (the user's continuous drag: +10 then +10 more -> riser lands INSIDE the ammeter
+#      body, corner NOT on a pin). Broadened trigger must still rebuild to the SAME -400 solder-dot. --
+setup_r18_3
+set before3 [dev_pin_map]
+set r18 [inst_by_name R18]
+xschem unselect_all
+xschem select instance $r18
+we_move_stretch 20 0
+set seg20rel [segset]
+assert_offset_solder "release+20:" $before3
+
+# +20 STEPWISE = the true mid-drag (one grid, then another), must equal the +20 release (release==stepwise)
+setup_r18_3
+set before3b [dev_pin_map]
+set r18 [inst_by_name R18]
+xschem unselect_all
+xschem select instance $r18
+xschem move_objects start 0 0 kissing stretch
+xschem move_objects step 10 0
+xschem move_objects step 20 0
+xschem move_objects end 20 0
+set seg20step [segset]
+assert_offset_solder "stepwise+20:" $before3b
+check "release == stepwise (+20): mid-drag route == one-shot" [expr {$seg20step eq $seg20rel}]
+
+# ---- Drive 4: +30 (three grids in) -- still the canonical -400 solder-dot ------------------------
+setup_r18_3
+set before4 [dev_pin_map]
+set r18 [inst_by_name R18]
+xschem unselect_all
+xschem select instance $r18
+we_move_stretch 30 0
+assert_offset_solder "release+30:" $before4
 
 we_result
