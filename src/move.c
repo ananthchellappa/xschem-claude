@@ -21,6 +21,7 @@
  */
 
 #include "xschem.h"
+#include <stdarg.h>   /* fluid-reroute FLUID_TRACE diagnostic (issue 0083) */
 
 
 void flip_rotate_ellipse(xRect *r, int rot, int flip)
@@ -1765,6 +1766,29 @@ static int fluid_trace_on(void)
   if(v < 0) { const char *e = getenv("FLUID_TRACE"); v = (e && *e && *e != '0') ? 1 : 0; }
   return v;
 }
+/* Write a trace line to a DEDICATED file -- NOT stderr/dbg: a windowed (GUI) launch detaches and
+ * freopen()s stderr to /dev/null (main.c), and --logdir points the action log elsewhere, so a shell
+ * `2>file` capture is EMPTY for a real interactive drag. The file is $FLUID_TRACE when that looks like a
+ * path (contains '/'), else /tmp/xschem_fltrace.log. Opened once (truncated), flushed per line so a
+ * killed session still has the trace. OFF (env unset) => returns immediately, nothing opened/written. */
+static void fltrace(const char *fmt, ...)
+{
+  static FILE *fp = NULL;
+  static int tried = 0;
+  va_list ap;
+  if(!fluid_trace_on()) return;
+  if(!tried) {
+    const char *e = getenv("FLUID_TRACE");
+    const char *path = (e && strchr(e, '/')) ? e : "/tmp/xschem_fltrace.log";
+    fp = fopen(path, "w");
+    tried = 1;
+  }
+  if(!fp) return;
+  va_start(ap, fmt);
+  vfprintf(fp, fmt, ap);
+  va_end(ap);
+  fflush(fp);
+}
 
 /* Phase IV P6 (min-bend): outward escape normal of the MOVING, non-label instance pin coincident
  * with (x,y). Same pin walk + tolerance (point_near_pin) as insert_exit_stubs, and reads the SAME
@@ -2608,11 +2632,11 @@ static void fluid_offset_foreign_pin_landing(int orthogonal_wiring)
 {
   double grid = tclgetdoublevar("cadsnap");
   int D, p, k = 0, npins, base;
-  if(!orthogonal_wiring) { if(fluid_trace_on()) dbg(0, "FLTRACE offset: skip (not orthogonal)\n"); return; }
-  if(!fluid_snap_pinnet || fluid_snap_npins <= 0) { if(fluid_trace_on()) dbg(0, "FLTRACE offset: skip (no snapshot)\n"); return; }
-  if(fluid_count_pins() != fluid_snap_npins) { if(fluid_trace_on()) dbg(0, "FLTRACE offset: skip (pin count changed)\n"); return; }
+  if(!orthogonal_wiring) { fltrace("FLTRACE offset: skip (not orthogonal)\n"); return; }
+  if(!fluid_snap_pinnet || fluid_snap_npins <= 0) { fltrace("FLTRACE offset: skip (no snapshot)\n"); return; }
+  if(fluid_count_pins() != fluid_snap_npins) { fltrace("FLTRACE offset: skip (pin count changed)\n"); return; }
   if(grid <= 0.0) grid = 1.0;
-  if(fluid_trace_on()) dbg(0, "FLTRACE offset: ENTER wires=%d grid=%g\n", xctx->wires, grid);
+  fltrace("FLTRACE offset: ENTER wires=%d grid=%g\n", xctx->wires, grid);
 
   for(D = 0; D < xctx->instances; ++D) {
     const char *type;
@@ -2665,15 +2689,15 @@ static void fluid_offset_foreign_pin_landing(int orthogonal_wiring)
         if(Rw >= 0) { ambiguous = 1; break; }
         Rw = rr; Mx = ox; My = oy; Cx = cxx; Cy = cyy;
       }
-      if(ambiguous) { if(fluid_trace_on()) dbg(0, "FLTRACE offset: D=%d pin=%d ambiguous riser -> decline\n", D, p); continue; }
+      if(ambiguous) { fltrace("FLTRACE offset: D=%d pin=%d ambiguous riser -> decline\n", D, p); continue; }
       if(Rw < 0) continue;                              /* no intruding riser at this pin (silent: common) */
-      if(fluid_trace_on()) dbg(0, "FLTRACE offset: D=%d pin=%d riser Rw=%d M=(%g,%g) C=(%g,%g) P=(%g,%g) body_x=[%g,%g]\n",
+      fltrace("FLTRACE offset: D=%d pin=%d riser Rw=%d M=(%g,%g) C=(%g,%g) P=(%g,%g) body_x=[%g,%g]\n",
                                 D, p, Rw, Mx, My, Cx, Cy, Px, Py, bx1, bx2);
 
       /* --- guard 2: SAME-NET (no short). A distinct net at the pin is a straddle/short that
        *     fluid_reroute_around_obstacles already owns -- decline here. --- */
       nf = fluid_moving_pin_net(Mx, My);
-      if(!nf || !nf[0] || strcmp(nf, np) != 0) { if(fluid_trace_on()) dbg(0, "FLTRACE offset:   decline (net nf=%s np=%s)\n", nf?nf:"(null)", np); continue; }
+      if(!nf || !nf[0] || strcmp(nf, np) != 0) { fltrace("FLTRACE offset:   decline (net nf=%s np=%s)\n", nf?nf:"(null)", np); continue; }
 
       /* --- jog row + non-degenerate legs; offset column clear of pins --- */
       dir_mc = (Cy > My) ? 1.0 : -1.0;
@@ -2705,8 +2729,8 @@ static void fluid_offset_foreign_pin_landing(int orthogonal_wiring)
           if(wS >= 0) { stranded = 1; break; } wS = rr;
         } else { stranded = 1; break; }                 /* toward body but not at the pin -> unexpected */
       }
-      if(stranded || wB < 0) { if(fluid_trace_on()) dbg(0, "FLTRACE offset:   decline (wB=%d wS=%d stranded=%d)\n", wB, wS, stranded); continue; }
-      if(fluid_trace_on()) dbg(0, "FLTRACE offset:   classified wB=%d wS=%d Cpx=%g JOGY=%g\n", wB, wS, Cpx, JOGY);
+      if(stranded || wB < 0) { fltrace("FLTRACE offset:   decline (wB=%d wS=%d stranded=%d)\n", wB, wS, stranded); continue; }
+      fltrace("FLTRACE offset:   classified wB=%d wS=%d Cpx=%g JOGY=%g\n", wB, wS, Cpx, JOGY);
 
       /* --- the three new riser legs (candidate coords). Build the near-M column from R's OWN endpoint
        *     Mx (on-grid Mx==the riser column; off-grid this keeps leg1 anchored to the moving pin, no P1
@@ -2732,7 +2756,7 @@ static void fluid_offset_foreign_pin_landing(int orthogonal_wiring)
       if(fluid_seg_stray_contact(l1x2, l1y2, l2x2, l2y2, l3x2, l3y2, Mx, My, Rw)) continue;
       if(fluid_seg_stray_contact(l2x2, l2y2, l3x2, l3y2, l3x2, l3y2, Mx, My, Rw)) continue;
 
-      if(fluid_trace_on()) dbg(0, "FLTRACE offset:   FIRE! rebuild V-H-V: leg col Mx=%g, dot=(%g,%g), stub->pin=%g wS=%d\n",
+      fltrace("FLTRACE offset:   FIRE! rebuild V-H-V: leg col Mx=%g, dot=(%g,%g), stub->pin=%g wS=%d\n",
                                 Mx, Cpx, Cy, Px, wS);
       /* --- commit: reshape R into leg1; pull the bus's C-endpoint back to the solder-dot column C';
        *     turn the overshoot stub into the pin-reaching stub C'->P (or store a fresh one if there was
@@ -3352,8 +3376,8 @@ void move_objects(int what, int merge, double dx, double dy)
      memset(&leg_snap, 0, sizeof(leg_snap));
      mem_snapshot_alloc(&leg_snap); mem_serialize_slot(&leg_snap); leg_snapped = 1;
    }
-   if(fluid_trace_on() && (what & (RUBBER | END)))
-     dbg(0, "FLTRACE move: what=%s%s commit_now=%d totdx=%g totdy=%g fluid=%d stretch=%d ortho=%d rot=%d startsel_w=%d -> nlegs=%d\n",
+   if(what & (RUBBER | END))
+     fltrace("FLTRACE move: what=%s%s commit_now=%d totdx=%g totdy=%g fluid=%d stretch=%d ortho=%d rot=%d startsel_w=%d -> nlegs=%d\n",
          (what & END) ? "END" : "", (what & RUBBER) ? "RUBBER" : "", commit_now, totdx, totdy,
          tclgetboolvar("fluid_editing"), xctx->stretch_select, orthogonal_wiring, xctx->move_rot,
          xctx->fluid_startsel_wires, nlegs);
@@ -3372,8 +3396,8 @@ void move_objects(int what, int merge, double dx, double dy)
      xctx->deltax = (leg == 0) ? totdx : 0.0;
      xctx->deltay = (leg == 0) ? 0.0 : totdy;
    }
-   if(fluid_trace_on() && (what & (RUBBER | END)))
-     dbg(0, "FLTRACE move: attempt=%d leg=%d/%d deltax=%g deltay=%g\n", attempt, leg, nlegs,
+   if(what & (RUBBER | END))
+     fltrace("FLTRACE move: attempt=%d leg=%d/%d deltax=%g deltay=%g\n", attempt, leg, nlegs,
          xctx->deltax, xctx->deltay);
 
    /* --- shared geometry commit: byte-for-byte identical for a real END and a fluid RUBBER step.
@@ -3738,14 +3762,13 @@ void move_objects(int what, int merge, double dx, double dy)
       * follow wire keeping nlegs==1) leaves BOTH nonzero -> does NOT fire (that single diagonal pass is
       * fluid_reroute's job, not this one). The internal guards + the same-net-only rule keep every firing
       * decline-to-baseline safe regardless (adversarial reviews wf_3029984d / wf_e96154bf). */
-     if(fluid_trace_on())
-       dbg(0, "FLTRACE offset-call: deltax=%g deltay=%g pure_axis_gate=%d\n",
-           xctx->deltax, xctx->deltay, (xctx->deltax == 0.0 || xctx->deltay == 0.0));
+     fltrace("FLTRACE offset-call: deltax=%g deltay=%g pure_axis_gate=%d\n",
+             xctx->deltax, xctx->deltay, (xctx->deltax == 0.0 || xctx->deltay == 0.0));
      if(xctx->deltax == 0.0 || xctx->deltay == 0.0)
        fluid_offset_foreign_pin_landing(orthogonal_wiring);
-   } else if(fluid_trace_on() && (what & (RUBBER | END))) {
-     dbg(0, "FLTRACE fluid-block: SKIPPED (fluid=%d stretch=%d rot=%d flip=%d)\n",
-         tclgetboolvar("fluid_editing"), xctx->stretch_select, xctx->move_rot, xctx->move_flip);
+   } else if(what & (RUBBER | END)) {
+     fltrace("FLTRACE fluid-block: SKIPPED (fluid=%d stretch=%d rot=%d flip=%d)\n",
+             tclgetboolvar("fluid_editing"), xctx->stretch_select, xctx->move_rot, xctx->move_flip);
    }
    /* build after copying and after recalculating prepare_netlist_structs() */
    check_collapsing_objects();
@@ -3814,9 +3837,8 @@ void move_objects(int what, int merge, double dx, double dy)
    /* two-leg attempt done: restore the accumulated total delta, then P2-check the composite route. */
    xctx->deltax = totdx; xctx->deltay = totdy;
    prepare_netlist_structs(0);        /* refresh inst[].node[] for the partition test */
-   if(fluid_trace_on())
-     dbg(0, "FLTRACE move: two-leg attempt=%d done, partition_changed=%d %s\n", attempt,
-         fluid_partition_changed(), fluid_partition_changed() ? "-> ROLLBACK to single diagonal pass" : "-> ACCEPT");
+   fltrace("FLTRACE move: two-leg attempt=%d done, partition_changed=%d %s\n", attempt,
+           fluid_partition_changed(), fluid_partition_changed() ? "-> ROLLBACK to single diagonal pass" : "-> ACCEPT");
    if(fluid_partition_changed() == 0) break;   /* connectivity preserved (no merge/disconnect): accept */
    /* the two legs changed connectivity the one-shot pass would not (a device OR net-label merge, or a
     * disconnect): roll back to pristine + retry single-
