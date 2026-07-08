@@ -3695,9 +3695,15 @@ void move_objects(int what, int merge, double dx, double dy)
      fluid_shove_connected_wire(orthogonal_wiring);
      fluid_reroute_around_obstacles(orthogonal_wiring);
      /* issue 0083: a NO-SHORT foreign-pin landing buries the offset solder-joint + grazes the body.
-      * Restore the V-H-V + visible offset dot. First increment gated to pure-axis (nlegs==1) so it
-      * never stacks on the 0081 diagonal decomposition; before_3 is pure-X so nlegs==1 for the target. */
-     if(nlegs == 1) fluid_offset_foreign_pin_landing(orthogonal_wiring);
+      * Restore the V-H-V + visible offset dot. First increment gated to PURE-AXIS so it never stacks
+      * on the 0081 diagonal decomposition. nlegs==1 alone is NOT sufficient: the 0081 P2 fallback resets
+      * nlegs=1 with the full diagonal delta still set, and a diagonal drag with a user-preselected follow
+      * wire (fluid_startsel_wires!=0) skips decomposition and keeps nlegs==1 -- both leave deltax,deltay
+      * BOTH nonzero. Require one delta zero so the "pure-axis only" scope is gate-enforced, not merely
+      * relied upon to decline via the internal guards (adversarial review wf_3029984d). before_3 is
+      * pure-X (deltay==0) so it fires for the acceptance case. */
+     if(nlegs == 1 && (xctx->deltax == 0.0 || xctx->deltay == 0.0))
+       fluid_offset_foreign_pin_landing(orthogonal_wiring);
    }
    /* build after copying and after recalculating prepare_netlist_structs() */
    check_collapsing_objects();

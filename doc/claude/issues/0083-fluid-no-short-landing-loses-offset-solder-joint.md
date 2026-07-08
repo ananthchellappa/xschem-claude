@@ -33,8 +33,21 @@ the test. **First-increment limitations (all decline-safe):** vertical-riser/hor
 (rotated-bus / horizontal-riser decline); one landing per pass; a collinear-split riser/bus under autotrim
 declines (doesn't fire). **Tests:** `test_wireedit_41_no_short_offset_solder` (exact before_3, RED-first @
 HEAD 6 discriminators → GREEN; release==stepwise; P1/P2 rails). Full wireedit ALL PASS (41) + wire_split +
-fluid_editing OVERALL ok; `--memcheck` clean (test_41 + test_34). **NOT yet done:** user real-window
-eyeball (the acceptance gate); adversarial review.
+fluid_editing OVERALL ok; `--memcheck` clean (test_41 + test_34).
+
+**Adversarial review `wf_3029984d` (4 worktree-isolated lenses: P1/P2, invariants, detection, memory).**
+memory lens clean; P1/P2 lens **REFUTED** any short/disconnect (structural proof: the offset column
+`Cpx=Px±grid` is one grid from the baseline riser, so any on-grid distinct wire crossing it mid-span must
+also cross the baseline riser — same net-pair, not new — or end at `Cpx` and be caught by
+`fluid_seg_stray_contact`; the pass even converts a *baseline* short into a benign mid-span non-connection).
+**1 CONFIRMED minor** (invariants + detection both): the `nlegs==1` call gate did not *literally* enforce
+"pure-axis" — the 0081 P2 fallback resets `nlegs=1` with the full diagonal delta still set, and a diagonal
+drag with a user-preselected follow wire keeps `nlegs==1`; both leave `deltax,deltay` BOTH nonzero. Harm
+was **not reproducible** (the pass's internal guards declined on every diagonal — the vertical-riser-corner-
+on-pin + bus signature is effectively pure-axis), but the contract was guard-enforced not gate-enforced.
+**FIXED**: gate tightened to `if(nlegs==1 && (deltax==0 || deltay==0))` — makes "pure-axis only" literally
+true + defense-in-depth, zero cost, before_3 (deltay==0) still fires. Re-verified: suite ALL PASS (41),
+byte-identical fluid=0 ≡ baseline. **NOT yet done:** user real-window eyeball (the acceptance gate).
 
 ---
 
