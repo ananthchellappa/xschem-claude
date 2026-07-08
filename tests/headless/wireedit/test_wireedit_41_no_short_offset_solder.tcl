@@ -85,8 +85,8 @@ proc assert_offset_solder {tag before} {
   # --- DISCRIMINATORS (RED @ baseline): the offset solder-joint is kept, riser clears the body ---
   check "$tag DISC solder-dot restored: visible T-junction at pre-move column (-400,140), degree>=3" \
     [expr {[wire_degree -400 140] >= 3}]
-  # riser must clear v8's body interior at EVERY naive landing column (-390/-380/-370 = +10/+20/+30)
-  foreach bx {-390 -380 -370 -360} {
+  # riser must clear v8's body interior at EVERY naive landing column (-390..-330 = +10..+70)
+  foreach bx {-390 -380 -370 -360 -350 -340 -330} {
     check "$tag DISC riser clears v8 body: no wire in body interior at ($bx,120)" \
       [expr {![point_on_any_wire $bx 120]}]
   }
@@ -194,5 +194,95 @@ xschem move_objects end 20 10
 set segDiagStep [segset]
 assert_offset_solder "stepwise+diag:" $before5b
 check "release == stepwise (diagonal r,r,d): route identical" [expr {$segDiagStep eq $segDiagRel}]
+
+# ---- Drive 6: +70 -- the corner lands EXACTLY ON the FAR (distinct-net) pin v8.minus (-330,140).
+#      At HEAD this is a GENUINE SHORT, not a feel bug: the offset pass declines (the stationary OUT
+#      wire ends at the corner -> stranded), and fluid_reroute_around_obstacles cannot see the
+#      straddle either -- the straddling wire is the stretched BUS/overshoot, which has NO moving-pin
+#      endpoint (its e1mov==e2mov break), so the naive translate merges #net1 with OUT on release.
+#      The P2 rails inside assert_offset_solder are the discriminators here (RED @ HEAD), along with
+#      the -400 solder-dot. GREEN after the far-pin landing broadening of the offset pass. ----------
+setup_r18_3
+set before6 [dev_pin_map]
+set r18 [inst_by_name R18]
+xschem unselect_all
+xschem select instance $r18
+we_move_stretch 70 0
+set seg70rel [segset]
+assert_offset_solder "release+70:" $before6
+
+# +70 STEPWISE (grid-by-grid continuous drag through the whole body span); must equal the release
+setup_r18_3
+set before6b [dev_pin_map]
+set r18 [inst_by_name R18]
+xschem unselect_all
+xschem select instance $r18
+xschem move_objects start 0 0 kissing stretch
+foreach sx {10 20 30 40 50 60 70} { xschem move_objects step $sx 0 }
+xschem move_objects end 70 0
+set seg70step [segset]
+assert_offset_solder "stepwise+70:" $before6b
+check "release == stepwise (+70 far-pin landing): route identical" [expr {$seg70step eq $seg70rel}]
+
+# ---- Drive 7: +80 -- the corner lands PAST the far pin / past the body (naive bus covers BOTH v8
+#      pins mid-span: still a short @ HEAD). Same canonical -400 rebuild expected. -----------------
+setup_r18_3
+set before7 [dev_pin_map]
+set r18 [inst_by_name R18]
+xschem unselect_all
+xschem select instance $r18
+we_move_stretch 80 0
+assert_offset_solder "release+80:" $before7
+check "release+80: naive landing column (-320,120) clear (nothing left past the body)" \
+  [expr {![point_on_any_wire -320 120]}]
+
+# ---- Drive 8: +130 -- the corner lands EXACTLY ON p5's pin (-270,140) (a foreign pin of a SECOND
+#      device, and the OUT wire's far endpoint). Same canonical -400 rebuild; p5 must stay on OUT. --
+setup_r18_3
+set before8 [dev_pin_map]
+set r18 [inst_by_name R18]
+xschem unselect_all
+xschem select instance $r18
+we_move_stretch 130 0
+assert_offset_solder "release+130:" $before8
+check "release+130: R18.M NOT merged onto p5/OUT" [expr {[pinnet R18 M] ne [pinnet p5 p]}]
+
+# ---- Drive 9: the USER'S EXACT GESTURE (fltrace 2026-07-07): continuous drag right then up,
+#      commits at (10,0)(20,0)(30,0)(40,10)(50,10)(60,0)(60,-10)(60,-20)(70,-30)(70,-40), END (70,-40).
+#      before_3 -> after_4. At HEAD the (70,*) commits ROLLBACK (X-leg far-pin short kills the two-leg
+#      decomposition), so the pure-Y leg never runs and the 0015 shove cannot push the #net2 bus row
+#      (y=-90) ahead of R18's top pin -> the relay stub runs THROUGH R18's own body (after_4.sch,
+#      wire -330,-110..-330,-90 across body top). DISCRIMINATOR (RED @ HEAD): no wire through R18's
+#      post-move body interior at (-330,-95). GREEN after the fix: two-leg ACCEPTs, shove pushes the
+#      bus to y=-120, both nets canonical. --------------------------------------------------------
+setup_r18_3
+set before9 [dev_pin_map]
+set r18 [inst_by_name R18]
+xschem unselect_all
+xschem select instance $r18
+xschem move_objects start 0 0 kissing stretch
+foreach {gx gy} {10 0 20 0 30 0 40 10 50 10 60 0 60 -10 60 -20 70 -30 70 -40} {
+  xschem move_objects step $gx $gy
+}
+xschem move_objects end 70 -40
+set segGest [segset]
+assert_offset_solder "gesture(70,-40):" $before9
+check "gesture DISC: no wire through R18's own body at (-330,-95) (#net2 stub must not cross)" \
+  [expr {![point_on_any_wire -330 -95]}]
+check "gesture P1: R18.P still on C12's net after the shove" \
+  [expr {[pinnet R18 P] eq [pinnet C12 m]}]
+
+# one-shot release (70,-40) must equal the continuous gesture (release == stepwise)
+setup_r18_3
+set before9b [dev_pin_map]
+set r18 [inst_by_name R18]
+xschem unselect_all
+xschem select instance $r18
+we_move_stretch 70 -40
+set segGestRel [segset]
+assert_offset_solder "release(70,-40):" $before9b
+check "release(70,-40) DISC: no wire through R18's own body at (-330,-95)" \
+  [expr {![point_on_any_wire -330 -95]}]
+check "release == stepwise (user gesture 70,-40): route identical" [expr {$segGestRel eq $segGest}]
 
 we_result

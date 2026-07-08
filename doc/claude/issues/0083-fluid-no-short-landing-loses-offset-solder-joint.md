@@ -68,6 +68,42 @@ fluid=0 (+10/+20/+30); `--memcheck` clean. Commits `5fa69442`/`8bf415a4`/`614bd6
 user real-window eyeball of the +20 continuous drag (the acceptance gate); adversarial review of the
 broadening (`wf_e96154bf` running).
 
+**BROADENED AGAIN 2026-07-07 (user trace `/tmp/fltrace.log`, before_3 → after_4: drag right +70 then up
+-40).** The user's continuous gesture crossed the point where the riser corner lands **exactly ON the
+FAR (distinct-net) pin** (v8.minus, x=-330 at totdx=70). Three-stage failure, read straight off the
+FLUID_TRACE: (1) the offset pass **declined** — the stationary OUT wire ends at the corner →
+`stranded=1`; (2) the presumed owner `fluid_reroute_around_obstacles` **cannot see this straddle**: the
+straddling wire is the stretched BUS/overshoot whose endpoints are the anchor and the dragged corner —
+no moving-pin endpoint (`e1mov==e2mov` → detection breaks out). The known-limits assumption "the far-pin
+straddle is owned by the reroute" is FALSE for the translate topology (the moving pin rides the riser,
+never the straddling wire). So the naive X-leg **genuinely shorts** (`#net1`+`OUT` merge; on a pure-axis
++70/+80 release the short LANDS — a P2 bug at HEAD, not just feel); (3) on the diagonal gesture the
+two-leg P2 net catches it → `partition_changed=2` → ROLLBACK to the single diagonal pass, where neither
+the offset pass (`pure_axis_gate=0`) nor the 0015 §7 shove runs → the `#net2` relay stub buries through
+R18's **own body** (after_4.sch, wire `-330,-110..-330,-90`) — the defect the user saw.
+
+**Fix (same pass, two changes):** (a) guard-1 trigger: corner strictly past the **pin-side body edge,
+inward — unbounded far side** (was: strictly inside the body x-span) — catches on-far-pin (+70),
+past-body (+80), and far landings (+130 = ON p5's pin); (b) classification: a **STATIONARY (unselected)
+wire ending at C is ignored** (not `stranded`) **when C sits exactly on a stationary pin whose pristine
+net ≠ nf** (new helper `fluid_point_on_foreign_fixed_pin`, snapshot-net + `point_near_pin` walk) — such
+a wire is pristinely attached to THAT pin (foreign net by construction), and the V-H-V rebuild vacates
+the corner, restoring its pristine contact set exactly. Firing now **repairs the would-be short** (the
+rebuild removes the bus/overshoot copper past the dot column); every other decline is unchanged, and a
+SELECTED wire at C still declines. Cascade win: the X-leg no longer shorts → two-leg **ACCEPT** → the
+pure-Y leg runs → the 0015 shove pushes the `#net2` bus row ahead of the pin (y=-90 → -120) → both nets
+canonical; the user's exact gesture ends CLEANER than after_4 (offset dot at (-400,140) AND no own-body
+cross). release==stepwise holds (verified on the exact 10-commit gesture vs one-shot (70,-40)).
+
+**Layer-3 coverage preserved:** test_36 shapes j/l/m reached the Layer-3 step-out **via the rollback**
+(their X-legs short at HEAD the same way); post-fix the offset pass owns those diagonals with an equally
+clean route, which would have left the step-out/off-grid-cap/collinear machinery untested. Their scenes
+now place a same-net `lab_pin` on the offset column (-400,140) so `point_on_any_pin(Cpx,Py)` makes the
+offset pass decline → rollback → Layer 3 exercised as designed (labels are invisible to the reroute
+layers; electrically a no-op). **Tests:** test_41 drives 6–9 (+70 release+stepwise+equality, +80, +130,
+the exact user gesture + release equality, own-body `(-330,-95)` discriminator) — 22 RED @ HEAD → GREEN.
+Suite ALL PASS; fluid=0 byte-identical vs `scratchpad/xschem.base0083` (9 deltas × release+stepwise).
+
 ---
 
 <details><summary>Original write-up (pre-implementation)</summary>

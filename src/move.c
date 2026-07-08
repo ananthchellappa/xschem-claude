@@ -2600,6 +2600,39 @@ static void fluid_reroute_around_obstacles(int orthogonal_wiring)
   }
 }
 
+/* issue 0083 (far-pin landing): is (x,y) EXACTLY a STATIONARY device pin that was on a net OTHER
+ * than nf at START? That is the FAR (distinct-net) pin a long drag lands the riser corner on. A
+ * STATIONARY (unselected) wire ending there is pristinely attached to THAT pin -- pristinely on the
+ * foreign net, never on nf -- so the V-H-V rebuild, which vacates the corner entirely, restores its
+ * pristine contact set exactly (the accidental corner contact was the would-be short). Same
+ * instance/pin walk order as fluid_moving_pin_net / fluid_seg_hits_foreign_pin (skip ptr<0, skip
+ * labels) so the snapshot index lines up; point_near_pin tolerance is < grid, so an on-grid corner
+ * matches only exact coincidence. */
+static int fluid_point_on_foreign_fixed_pin(double x, double y, const char *nf)
+{
+  int i, p, k = 0, npins, base;
+  if(!fluid_snap_pinnet || fluid_snap_npins <= 0) return 0;
+  for(i = 0; i < xctx->instances; ++i) {
+    const char *type;
+    if(xctx->inst[i].ptr < 0) continue;
+    npins = (xctx->inst[i].ptr + xctx->sym)->rects[PINLAYER];
+    base = k; k += npins;
+    if(base + npins > fluid_snap_npins) break;
+    if(xctx->inst[i].sel) continue;                  /* only STATIONARY devices */
+    type = xctx->sym[xctx->inst[i].ptr].type;
+    if(type && !strcmp(type, "label")) continue;     /* net labels are not device pins */
+    for(p = 0; p < npins; ++p) {
+      const char *pn = fluid_snap_pinnet[base + p];
+      double px, py;
+      if(!pn || !pn[0]) continue;
+      if(nf && !strcmp(pn, nf)) continue;            /* same net: not foreign */
+      get_inst_pin_coord(i, p, &px, &py);
+      if(point_near_pin(px, py, x, y)) return 1;
+    }
+  }
+  return 0;
+}
+
 /* issue 0083 (incremental_wire_reroute.md §6 stop-short/solder-joint, GENERALIZED off the short
  * trigger): a NO-SHORT foreign-pin LANDING. On a small pure-axis nudge the base stretch-follow
  * (compute_wire_slide) promotes a tool-owned riser to a full selection and TRANSLATES it, so its far
@@ -2621,10 +2654,18 @@ static void fluid_reroute_around_obstacles(int orthogonal_wiring)
  * on the SAME shared commit block as a real END and a live fluid RUBBER step (pre-trim seam) so it is a
  * pure function of (pristine snapshot + total delta + geometry): release == stepwise for FREE. Gated
  * fluid_editing && stretch_select && rot==flip==0 (caller) plus a valid START name snapshot => default
- * off byte-identical. TRIGGER (broadened): the riser corner landed INSIDE the device body x-span --
- * catches both the exact-on-pin +1-grid case AND a continuous drag PAST the pin (+2/+3 grid), which
- * lands the riser deeper in the body with an overshoot stub between the pin and the corner. All deltas
- * rebuild to the SAME canonical result (offset column one grid outside the body, on the pin's side).
+ * off byte-identical. TRIGGER (broadened twice): the riser corner landed strictly PAST the pin-side
+ * body edge, inward -- unbounded on the far side. Catches the exact-on-pin +1-grid case, a continuous
+ * drag deeper into the body (+2/+3 grid, overshoot stub between pin and corner), AND a drag ON or PAST
+ * the FAR (distinct-net) pin / past the whole body. That far-pin landing is a GENUINE would-be SHORT
+ * (the stretched bus covers both device pins), and fluid_reroute_around_obstacles can NOT see it: its
+ * straddle needs a wire with exactly one moving-pin endpoint, but the straddling wire here is the
+ * stretched BUS/overshoot whose endpoints are the anchor and the dragged corner (e1mov==e2mov -> its
+ * detection breaks out). So for the far-pin landing this pass is the ONLY layer that fires, and firing
+ * REPAIRS the short (the rebuild vacates the corner); the classification tolerates STATIONARY wires
+ * ending at a corner that sits exactly on a foreign stationary pin (fluid_point_on_foreign_fixed_pin)
+ * -- they are pristinely on the foreign net and keep their own pin contact when the corner is vacated.
+ * All deltas rebuild to the SAME canonical result (offset column one grid outside the body, pin side).
  * SCOPE (first increment): vertical-riser / horizontal-bus only, and pure-axis (the caller gates on
  * nlegs==1 so it never stacks on the issue-0081 diagonal decomposition); a horizontal riser, a rotated
  * bus, or a diagonal drag DECLINE to baseline (documented limitations, all P1/P2-safe). */
@@ -2658,7 +2699,7 @@ static void fluid_offset_foreign_pin_landing(int orthogonal_wiring)
       const char *nf;
       double Px, Py;                                     /* the stationary device pin (the anchor) */
       double Mx = 0, My = 0, Cx = 0, Cy = 0;             /* riser: M = moving-pin end, C = corner in body */
-      int Rw = -1, wB = -1, wS = -1, rr, ambiguous = 0, stranded = 0;
+      int Rw = -1, wB = -1, wS = -1, rr, ambiguous = 0, stranded = 0, c_on_foreign = 0;
       double dir_off, dir_mc, Cpx, JOGY;
       double l1x1, l1y1, l1x2, l1y2, l2x2, l2y2, l3x2, l3y2;
       char *prop = NULL;
@@ -2670,9 +2711,10 @@ static void fluid_offset_foreign_pin_landing(int orthogonal_wiring)
       Cpx = Px + dir_off * grid;                        /* the restored solder-dot column (PIN-relative) */
 
       /* --- guard 1: EXACTLY ONE tool-owned VERTICAL riser R whose corner (its endpoint on the pin's
-       *     row Py) landed INSIDE this device's body x-span -- i.e. the translated riser now grazes /
-       *     intrudes the body (issue 0083, broadened from "corner exactly on the pin" so a continuous
-       *     drag past the pin, +2/+3 grid, is caught too). The OTHER end M is on a MOVING pin (so R is a
+       *     row Py) landed strictly PAST this device's pin-side body edge, inward (issue 0083,
+       *     broadened from "corner exactly on the pin", then from "inside the body x-span": the far
+       *     side is UNBOUNDED so a drag onto / past the FAR distinct-net pin -- a would-be short no
+       *     other layer can repair -- is caught too). The OTHER end M is on a MOVING pin (so R is a
        *     riser the drag pulled). The degenerate collapsed stub is skipped. --- */
       for(rr = 0; rr < xctx->wires && !ambiguous; ++rr) {
         double x1 = xctx->wire[rr].x1, y1 = xctx->wire[rr].y1;
@@ -2684,7 +2726,7 @@ static void fluid_offset_foreign_pin_landing(int orthogonal_wiring)
         if(y1 == Py)      { cxx = x1; cyy = y1; ox = x2; oy = y2; }   /* corner on the bus row */
         else if(y2 == Py) { cxx = x2; cyy = y2; ox = x1; oy = y1; }
         else continue;
-        if(cxx <= bx1 || cxx >= bx2) continue;          /* corner must be strictly inside the body x-span */
+        if(dir_off < 0.0 ? (cxx <= bx1) : (cxx >= bx2)) continue; /* strictly past the pin-side edge, inward */
         if(!point_on_moving_pin(ox, oy)) continue;      /* other end must be a moving pin */
         if(Rw >= 0) { ambiguous = 1; break; }
         Rw = rr; Mx = ox; My = oy; Cx = cxx; Cy = cyy;
@@ -2708,7 +2750,12 @@ static void fluid_offset_foreign_pin_landing(int orthogonal_wiring)
       /* --- classify the horizontal copper meeting the riser corner C on row Py. wB = the BUS (far end
        *     on the AWAY-from-body side, i.e. the anchor). wS = the OPTIONAL overshoot stub (far end AT
        *     the pin P) that a >1-grid drag leaves between the pin and the corner. Anything else touching
-       *     C, or a second bus / second overshoot, is unexpected -> decline (never worse). --- */
+       *     C, or a second bus / second overshoot, is unexpected -> decline (never worse) -- EXCEPT a
+       *     STATIONARY (unselected) wire ending at a C that sits exactly ON a foreign stationary pin
+       *     (the far-pin landing): that wire is the foreign pin's own attachment, pristinely on the
+       *     foreign net, and the rebuild vacates C so its pristine contact set is restored -- ignore it.
+       *     A SELECTED wire ending at C still declines (vacating C would tear a moving wire off). --- */
+      c_on_foreign = fluid_point_on_foreign_fixed_pin(Cx, Cy, nf);
       for(rr = 0; rr < xctx->wires; ++rr) {
         double x1 = xctx->wire[rr].x1, y1 = xctx->wire[rr].y1;
         double x2 = xctx->wire[rr].x2, y2 = xctx->wire[rr].y2;
@@ -2717,7 +2764,10 @@ static void fluid_offset_foreign_pin_landing(int orthogonal_wiring)
         if(rr == Rw) continue;
         if(x1 == x2 && y1 == y2) continue;              /* degenerate collapsing stub: ignore */
         if(y1 != Cy || y2 != Cy) {                      /* off the bus row: only a problem if it ends at C */
-          if((x1 == Cx && y1 == Cy) || (x2 == Cx && y2 == Cy)) { stranded = 1; break; }
+          if((x1 == Cx && y1 == Cy) || (x2 == Cx && y2 == Cy)) {
+            if(c_on_foreign && !xctx->wire[rr].sel) continue; /* the foreign pin's own attachment */
+            stranded = 1; break;
+          }
           continue;
         }
         atC1 = (x1 == Cx); atC2 = (x2 == Cx);
@@ -2727,10 +2777,13 @@ static void fluid_offset_foreign_pin_landing(int orthogonal_wiring)
           if(wB >= 0) { stranded = 1; break; } wB = rr;
         } else if(far == Px) {                          /* far end AT the pin -> the overshoot stub */
           if(wS >= 0) { stranded = 1; break; } wS = rr;
-        } else { stranded = 1; break; }                 /* toward body but not at the pin -> unexpected */
+        } else {                                        /* toward body but not at the pin -> unexpected */
+          if(c_on_foreign && !xctx->wire[rr].sel) continue; /* the foreign pin's own attachment */
+          stranded = 1; break;
+        }
       }
-      if(stranded || wB < 0) { fltrace("FLTRACE offset:   decline (wB=%d wS=%d stranded=%d)\n", wB, wS, stranded); continue; }
-      fltrace("FLTRACE offset:   classified wB=%d wS=%d Cpx=%g JOGY=%g\n", wB, wS, Cpx, JOGY);
+      if(stranded || wB < 0) { fltrace("FLTRACE offset:   decline (wB=%d wS=%d stranded=%d conF=%d)\n", wB, wS, stranded, c_on_foreign); continue; }
+      fltrace("FLTRACE offset:   classified wB=%d wS=%d Cpx=%g JOGY=%g conF=%d\n", wB, wS, Cpx, JOGY, c_on_foreign);
 
       /* --- the three new riser legs (candidate coords). Build the near-M column from R's OWN endpoint
        *     Mx (on-grid Mx==the riser column; off-grid this keeps leg1 anchored to the moving pin, no P1

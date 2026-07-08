@@ -299,6 +299,14 @@ proc setup_j {} {
   xschem wire -350 110 -350 60; xschem instance devices/lab_pin -350 60 0 0 {lab=NC name=lnc}
   xschem instance devices/res -370 180 0 0 {name=RBHI}     ;# P=(-370,150) on the above row, body UP
   xschem wire -370 150 -370 120; xschem instance devices/lab_pin -370 120 0 0 {lab=NE name=lne}
+  # Occupy the 0083 offset pass's canonical solder-dot column (Cpx = plus - 1 grid = -400,140) with a
+  # SAME-net (NA) lab_pin: point_on_any_pin(Cpx,Py) makes that pass DECLINE on the X leg, so the two-leg
+  # decomposition still shorts, rolls back, and the SINGLE DIAGONAL pass exercises the Layer-3 step-out
+  # this shape exists to pin down. (Without it the far-pin-landing broadening of the offset pass now
+  # repairs the X leg first and Layer 3 is never reached -- an equally clean route, covered by
+  # test_wireedit_41 drives 6-9, but it would leave the step-out machinery untested.) Electrically a
+  # no-op: NA on the NA bus; the reroute layers skip label-type instances entirely.
+  xschem instance devices/lab_pin -400 140 0 0 {lab=NA name=lblk}
 }
 proc assert_j {tag before} {
   check "$tag P2: v8.plus(NA) != v8.minus(NB) -- ammeter NOT shorted (step-out detour)" \
@@ -377,6 +385,9 @@ check "k P1: RM.M still connected to the follow net (baseline, not floated)" \
 setup_a
 xschem wire -310 120 -310 100; xschem instance devices/lab_pin -310 100 0 0 {lab=NP name=lnp}
 xschem wire -350 155 -350 120; xschem instance devices/lab_pin -350 120 0 0 {lab=NE name=lne}
+# same offset-column blocker as setup_j: keep the 0083 offset pass out so the diagonal fallback
+# exercises the Layer-3 off-grid-cap step-out this shape pins down (see setup_j comment)
+xschem instance devices/lab_pin -400 140 0 0 {lab=NA name=lblk}
 set beforeL [dev_pin_map]
 xschem unselect_all; xschem select instance [inst_by_name RM]
 we_move_stretch 110 60
