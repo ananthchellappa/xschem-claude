@@ -168,4 +168,31 @@ xschem select instance $r18
 we_move_stretch 30 0
 assert_offset_solder "release+30:" $before4
 
+# ---- Drive 5: DIAGONAL (+20,+10) -- the user's "right,right,DOWN" continuous drag. The diagonal total
+#      triggers the 0081 two-leg decomposition (nlegs=2); the offset pass must fire on the pure-X LEG
+#      (not be gated out by nlegs), so the riser still lands at the -400 dot clear of the body. --------
+setup_r18_3
+set before5 [dev_pin_map]
+set r18 [inst_by_name R18]
+xschem unselect_all
+xschem select instance $r18
+we_move_stretch 20 10
+set segDiagRel [segset]
+assert_offset_solder "release+diag:" $before5
+
+# +20,+10 STEPWISE = the true continuous gesture (step +10x, +20x, then +10y down); must equal release
+setup_r18_3
+set before5b [dev_pin_map]
+set r18 [inst_by_name R18]
+xschem unselect_all
+xschem select instance $r18
+xschem move_objects start 0 0 kissing stretch
+xschem move_objects step 10 0
+xschem move_objects step 20 0
+xschem move_objects step 20 10
+xschem move_objects end 20 10
+set segDiagStep [segset]
+assert_offset_solder "stepwise+diag:" $before5b
+check "release == stepwise (diagonal r,r,d): route identical" [expr {$segDiagStep eq $segDiagRel}]
+
 we_result
