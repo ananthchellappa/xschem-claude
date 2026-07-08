@@ -47,7 +47,26 @@ was **not reproducible** (the pass's internal guards declined on every diagonal 
 on-pin + bus signature is effectively pure-axis), but the contract was guard-enforced not gate-enforced.
 **FIXED**: gate tightened to `if(nlegs==1 && (deltax==0 || deltay==0))` — makes "pure-axis only" literally
 true + defense-in-depth, zero cost, before_3 (deltay==0) still fires. Re-verified: suite ALL PASS (41),
-byte-identical fluid=0 ≡ baseline. **NOT yet done:** user real-window eyeball (the acceptance gate).
+byte-identical fluid=0 ≡ baseline.
+
+**BROADENED 2026-07-07 (user real-window feedback → the actual gesture).** The user's move is a
+**continuous drag: +10 then +10 more** (LMB held). At +10 the fix fires (they confirmed a solder-dot
+appeared to the left — the interactive path WORKS); at total **+20** the riser lands *inside* the ammeter
+body with the corner **not on a pin**, so the narrow "corner exactly on pin" trigger declined → intrusion.
+Broadened the trigger to **"corner column strictly inside the device body x-span"** (`bx1<Cx<bx2` of the
+inflated symbol_bbox) — catches the exact-on-pin +1-grid case AND any drag past the pin. The same-net
+anchor pin is found by search; the **overshoot stub** (pin→corner, left by a >1-grid drag) is reshaped
+into the pin-reaching stub `C'→P` (or a fresh stub is stored for the exact-on-pin case where the overshoot
+is degenerate). **All rightward deltas +10/+20/+30/+40 rebuild to the SAME canonical result** (riser V-H-V
+to a degree-3 solder-dot at x=-400, one grid outside the body, stub to plus). Bus+stub row copper is a
+**subset of baseline** (re-segmented, overshoot removed) ⇒ no new crossing; only the 3 new legs guarded.
+Boundary: a drag so far the corner reaches the FAR (distinct-net) pin is a straddle `fluid_reroute_around_
+obstacles` handles first (this pass then sees a detour and declines). **release==stepwise** holds (Phase II
+re-solves each step from pristine+total delta, so +10-then-+10 == one-shot +20). test_41 gains +20
+(release+stepwise) + +30 drives + multi-column body-clearance checks. Suite ALL PASS (41); byte-identical
+fluid=0 (+10/+20/+30); `--memcheck` clean. Commits `5fa69442`/`8bf415a4`/`614bd6d5`. **NOT yet done:**
+user real-window eyeball of the +20 continuous drag (the acceptance gate); adversarial review of the
+broadening (`wf_e96154bf` running).
 
 ---
 
