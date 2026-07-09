@@ -5418,26 +5418,36 @@ void move_objects(int what, int merge, double dx, double dy)
        xctx->prep_hash_wires=0;
        firstw = 0;
        if(k == 0) {
-         if(xctx->rotatelocal) {
-           ROTATION(xctx->move_rot, xctx->move_flip, wire[n].x1, wire[n].y1,
+         /* Rotate ONLY the endpoint(s) that follow the move. A partial-select follow-wire
+          * (SELECTED1 xor SELECTED2) has one endpoint on a moving pin and the other anchored
+          * to a stationary object: rotating the anchored endpoint about the pivot would tear
+          * it off that object, so a rotating stretch must leave it at its pristine coordinate
+          * and let place_moved_wire() bend an L to the moved pin. The moving endpoint sits on
+          * the pin, and rigid rotation-about-pivot moves body+pins together, so
+          * ROTATION(pivot,endpoint)+delta lands it exactly on the pin's new position (crux (a),
+          * doc/claude/specs/rotate_keep_connected_stretch.md).
+          * For move_rot==0 && move_flip==0 ROTATION() is the identity, so a non-selected
+          * endpoint keeps its literal coords either way -- this is BYTE-IDENTICAL to the old
+          * "rotate both, translate the selected one" form on the pure-translation path, and a
+          * fully SELECTED wire (both bits) still rotates+translates both endpoints rigidly. */
+         double wpx, wpy; /* rotation pivot for this wire */
+         if(xctx->rotatelocal) { wpx = wire[n].x1; wpy = wire[n].y1; }
+         else                  { wpx = xctx->x1;   wpy = xctx->y1;   }
+         if( wire[n].sel & (SELECTED|SELECTED1) ) {
+           ROTATION(xctx->move_rot, xctx->move_flip, wpx, wpy,
               wire[n].x1, wire[n].y1, xctx->rx1,xctx->ry1);
-           ROTATION(xctx->move_rot, xctx->move_flip, wire[n].x1, wire[n].y1,
-              wire[n].x2, wire[n].y2, xctx->rx2,xctx->ry2);
+           xctx->rx1+=xctx->deltax;
+           xctx->ry1+=xctx->deltay;
          } else {
-           ROTATION(xctx->move_rot, xctx->move_flip, xctx->x1, xctx->y1,
-              wire[n].x1, wire[n].y1, xctx->rx1,xctx->ry1);
-           ROTATION(xctx->move_rot, xctx->move_flip, xctx->x1, xctx->y1,
+           xctx->rx1 = wire[n].x1; xctx->ry1 = wire[n].y1; /* anchored: pristine, not rotated */
+         }
+         if( wire[n].sel & (SELECTED|SELECTED2) ) {
+           ROTATION(xctx->move_rot, xctx->move_flip, wpx, wpy,
               wire[n].x2, wire[n].y2, xctx->rx2,xctx->ry2);
-         }
-         if( wire[n].sel & (SELECTED|SELECTED1) )
-         {
-          xctx->rx1+=xctx->deltax;
-          xctx->ry1+=xctx->deltay;
-         }
-         if( wire[n].sel & (SELECTED|SELECTED2) )
-         {
-          xctx->rx2+=xctx->deltax;
-          xctx->ry2+=xctx->deltay;
+           xctx->rx2+=xctx->deltax;
+           xctx->ry2+=xctx->deltay;
+         } else {
+           xctx->rx2 = wire[n].x2; xctx->ry2 = wire[n].y2; /* anchored: pristine, not rotated */
          }
 
          place_moved_wire(n, leg_ortho);

@@ -14,7 +14,25 @@ Branch `fluid-editing`. Written 2026-07-09.
   No regressions in adjacent tests (verb_noun_copy_move, drag_keeps_selection,
   undo_move_keep_selection, fluid_reversal_0096 all PASS). Pre-existing unrelated failures:
   cadence_drag ×2 (detached-drag wire asserts), select_at SA8b (shift-click add-logging).
-- **Case 4 — NOT started** (the connected-stretch rotate reroute; the hard part below).
+- **Case 4 Phase 4a — IMPLEMENTED + tested (UNCOMMITTED).** Rotate/flip during a connected
+  stretch now re-establishes wire connections *at drop*. The single fix is in the `move.c`
+  wire-commit block (crux (a)): a partial-select follow-wire's anchored (non-selected)
+  endpoint is held at its PRISTINE coordinate instead of being rotated about the pivot; only
+  the moving-pin endpoint gets `ROTATION(pivot,·)+delta`, which — by rigid rotation-about-pivot
+  — lands exactly on the pin's new position, so `place_moved_wire()` bends a connecting L to the
+  unchanged far end. Keyed off the same sel-bits already used for the delta, so it is
+  BYTE-IDENTICAL on the pure-translation path (`ROTATION` with `rot==0` is the identity).
+  Test `tests/headless/test_rotate_stretch_reconnect.tcl` — 11/11 PASS under X, crux-(a)
+  sabotage-verified (rotating the anchored endpoint flips T5b/T6b red). Full fluid/stretch
+  regression sweep green.
+- **Case 4 Phase 4b — NOT started.** Remaining: (i) pivot = grabbed pin (Decision 2; 4a uses
+  the snapped-mouse grab point `x1,y1`, which coincides with the pin when snap lands on it);
+  (ii) rotation-aware quality layers — P1..P8 elbow choice (`move.c:1167`), corner-slide
+  (`5406`), shove/obstacle detour (`5741`), END redundant-route cleanup (`5790`) are still
+  gated `move_rot==0 && move_flip==0`, so a rotated stretch uses a basic L that can short in
+  crowded layouts (crux (b)); (iii) live reroute *preview* during rotation (relax the RUBBER
+  gate `5228`); (iv) multi-instance rigid rotate; (v) LINE/POLY partial-select parity (4a fixed
+  WIRE only). 4a covers the core single-instance reconnect requirement.
 
 Scope note: prompt-for-object arming lives in the callback.c KEY handlers only (interactive
 "fire the rotate command"), NOT the scheduler subcommands — a menu `xschem rotate` with an
