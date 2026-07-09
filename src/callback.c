@@ -2116,10 +2116,11 @@ static int check_menu_start_commands(int state, double c_snap, int mx, int my)
   if((xctx->ui_state & MENUSTART) &&
      (xctx->ui_state2 & (MENUSTARTWIRECUT | MENUSTARTWIRECUT2 | MENUSTARTMOVE | MENUSTARTCOPY |
                          MENUSTARTWIRE | MENUSTARTSNAPWIRE | MENUSTARTLINE | MENUSTARTRECT |
-                         MENUSTARTPOLYGON | MENUSTARTARC | MENUSTARTCIRCLE)) &&
+                         MENUSTARTPOLYGON | MENUSTARTARC | MENUSTARTCIRCLE | MENUSTARTROTATE)) &&
      readonly_block()) {
     xctx->ui_state &= ~MENUSTART;
     xctx->ui_state2 = 0;
+    xctx->menu_pending_transform = PENDING_TR_NONE;
     return 1;
   }
   if((xctx->ui_state & MENUSTART) && (xctx->ui_state2 & MENUSTARTWIRECUT)) {
@@ -2168,6 +2169,62 @@ static int check_menu_start_commands(int state, double c_snap, int mx, int my)
     xctx->mx_double_save=xctx->mousex_snap;
     xctx->my_double_save=xctx->mousey_snap;
     copy_objects(START);
+    return 1;
+  }
+  else if((xctx->ui_state & MENUSTART) && (xctx->ui_state2 & MENUSTARTROTATE)) {
+    /* verb-noun prompt-for-object rotate/flip (Cases 1 & 3, rotate_keep_connected_stretch.md):
+     * a rotate/flip verb fired with nothing selected armed this; this click SELECTS the object
+     * under the cursor and applies the pending transform about the click point, in one shot.
+     * PLAIN transform -- no select_attached_nets(), so wires are NOT kept connected (Case 3
+     * deliberately abandoned any pending stretch). Unlike move/copy this is instantaneous, so
+     * it clears MENUSTART itself (the caller only clears MENUSTART for the fall-through click). */
+    int t = xctx->menu_pending_transform;
+    rebuild_selected_array();
+    if(xctx->lastsel == 0) {
+      select_object(xctx->mousex, xctx->mousey, SELECTED, 0, NULL);
+      rebuild_selected_array();
+    }
+    if(xctx->lastsel == 0) { /* clicked empty space: cancel the armed rotate cleanly */
+      xctx->ui_state &= ~MENUSTART;
+      xctx->ui_state2 = 0;
+      xctx->menu_pending_transform = PENDING_TR_NONE;
+      return 1;
+    }
+    xctx->mx_double_save = xctx->mousex_snap;
+    xctx->my_double_save = xctx->mousey_snap;
+    move_objects(START,0,0,0);
+    switch(t) {
+      case PENDING_TR_ROTATE_IP:
+        move_objects(ROTATE|ROTATELOCAL,0,0,0);
+        log_action("xschem rotate_in_place");
+        break;
+      case PENDING_TR_FLIP:
+        move_objects(FLIP,0,0,0);
+        log_action("xschem flip %.16g %.16g", xctx->mx_double_save, xctx->my_double_save);
+        break;
+      case PENDING_TR_FLIP_IP:
+        move_objects(FLIP|ROTATELOCAL,0,0,0);
+        log_action("xschem flip_in_place");
+        break;
+      case PENDING_TR_FLIPV:
+        move_objects(ROTATE,0,0,0); move_objects(ROTATE,0,0,0); move_objects(FLIP,0,0,0);
+        log_action("xschem flipv %.16g %.16g", xctx->mx_double_save, xctx->my_double_save);
+        break;
+      case PENDING_TR_FLIPV_IP:
+        move_objects(ROTATE|ROTATELOCAL,0,0,0); move_objects(ROTATE|ROTATELOCAL,0,0,0);
+        move_objects(FLIP|ROTATELOCAL,0,0,0);
+        log_action("xschem flipv_in_place");
+        break;
+      case PENDING_TR_ROTATE:
+      default:
+        move_objects(ROTATE,0,0,0);
+        log_action("xschem rotate %.16g %.16g", xctx->mx_double_save, xctx->my_double_save);
+        break;
+    }
+    move_objects(END,0,0,0);
+    xctx->ui_state &= ~MENUSTART;
+    xctx->ui_state2 = 0;
+    xctx->menu_pending_transform = PENDING_TR_NONE;
     return 1;
   }
   else if((xctx->ui_state & MENUSTART) && (xctx->ui_state2 & MENUSTARTWIRE)) {
@@ -4536,17 +4593,24 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
         else if(xctx->ui_state & STARTCOPY) copy_objects(FLIP|ROTATELOCAL);
         else {
           rebuild_selected_array();
-          xctx->mx_double_save=xctx->mousex_snap;
-          xctx->my_double_save=xctx->mousey_snap;
-          move_objects(START,0,0,0);
-          move_objects(FLIP|ROTATELOCAL,0,0,0);
-          move_objects(END,0,0,0);
-          /* self-log the keyboard shortcut at its inline handler (issue 0068): Alt-F
-           * flip-in-place. Standalone branch only -- readonly already rejected above,
-           * and the during-move/copy variants are gesture-logged by the move END
-           * (0069). Live keypress reaches only here (never the scheduler branch), so
-           * no double-log; replay sources `xschem flip_in_place` into the scheduler. */
-          log_action("xschem flip_in_place");
+          if(xctx->lastsel == 0) { /* Cases 1 & 3: arm prompt-for-object flip-in-place */
+            xctx->ui_state |= MENUSTART;
+            xctx->ui_state2 = MENUSTARTROTATE;
+            xctx->menu_pending_transform = PENDING_TR_FLIP_IP;
+            statusmsg("Flip in place: click an object to flip", 1);
+          } else {
+            xctx->mx_double_save=xctx->mousex_snap;
+            xctx->my_double_save=xctx->mousey_snap;
+            move_objects(START,0,0,0);
+            move_objects(FLIP|ROTATELOCAL,0,0,0);
+            move_objects(END,0,0,0);
+            /* self-log the keyboard shortcut at its inline handler (issue 0068): Alt-F
+             * flip-in-place. Standalone branch only -- readonly already rejected above,
+             * and the during-move/copy variants are gesture-logged by the move END
+             * (0069). Live keypress reaches only here (never the scheduler branch), so
+             * no double-log; replay sources `xschem flip_in_place` into the scheduler. */
+            log_action("xschem flip_in_place");
+          }
         }
       }
       break;
@@ -4558,14 +4622,21 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
         else if(xctx->ui_state & STARTCOPY) copy_objects(FLIP);
         else {
           rebuild_selected_array();
-          xctx->mx_double_save=xctx->mousex_snap;
-          xctx->my_double_save=xctx->mousey_snap;
-          move_objects(START,0,0,0);
-          move_objects(FLIP,0,0,0);
-          move_objects(END,0,0,0);
-          /* self-log Shift-F flip keyboard shortcut (issue 0068); pivot = the anchor
-           * move_objects used, matching the scheduler `xschem flip x0 y0` form. */
-          log_action("xschem flip %.16g %.16g", xctx->mx_double_save, xctx->my_double_save);
+          if(xctx->lastsel == 0) { /* Cases 1 & 3: arm prompt-for-object flip */
+            xctx->ui_state |= MENUSTART;
+            xctx->ui_state2 = MENUSTARTROTATE;
+            xctx->menu_pending_transform = PENDING_TR_FLIP;
+            statusmsg("Flip: click an object to flip", 1);
+          } else {
+            xctx->mx_double_save=xctx->mousex_snap;
+            xctx->my_double_save=xctx->mousey_snap;
+            move_objects(START,0,0,0);
+            move_objects(FLIP,0,0,0);
+            move_objects(END,0,0,0);
+            /* self-log Shift-F flip keyboard shortcut (issue 0068); pivot = the anchor
+             * move_objects used, matching the scheduler `xschem flip x0 y0` form. */
+            log_action("xschem flip %.16g %.16g", xctx->mx_double_save, xctx->my_double_save);
+          }
         }
       }
       else if(rstate == ControlMask ) { /* full zoom selection */
@@ -5030,12 +5101,19 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
         else if(xctx->ui_state & STARTCOPY) copy_objects(ROTATE|ROTATELOCAL);
         else {
           rebuild_selected_array();
-          xctx->mx_double_save=xctx->mousex_snap;
-          xctx->my_double_save=xctx->mousey_snap;
-          move_objects(START,0,0,0);
-          move_objects(ROTATE|ROTATELOCAL,0,0,0);
-          move_objects(END,0,0,0);
-          log_action("xschem rotate_in_place"); /* self-log Alt-R shortcut (issue 0068) */
+          if(xctx->lastsel == 0) { /* Cases 1 & 3: arm prompt-for-object rotate-in-place */
+            xctx->ui_state |= MENUSTART;
+            xctx->ui_state2 = MENUSTARTROTATE;
+            xctx->menu_pending_transform = PENDING_TR_ROTATE_IP;
+            statusmsg("Rotate in place: click an object to rotate", 1);
+          } else {
+            xctx->mx_double_save=xctx->mousex_snap;
+            xctx->my_double_save=xctx->mousey_snap;
+            move_objects(START,0,0,0);
+            move_objects(ROTATE|ROTATELOCAL,0,0,0);
+            move_objects(END,0,0,0);
+            log_action("xschem rotate_in_place"); /* self-log Alt-R shortcut (issue 0068) */
+          }
         }
       }
       break;
@@ -5047,12 +5125,22 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
         else if(xctx->ui_state & STARTCOPY) copy_objects(ROTATE);
         else {
           rebuild_selected_array();
-          xctx->mx_double_save=xctx->mousex_snap;
-          xctx->my_double_save=xctx->mousey_snap;
-          move_objects(START,0,0,0);
-          move_objects(ROTATE,0,0,0);
-          move_objects(END,0,0,0);
-          log_action("xschem rotate %.16g %.16g", xctx->mx_double_save, xctx->my_double_save);
+          if(xctx->lastsel == 0) {
+            /* Cases 1 & 3 (rotate_keep_connected_stretch.md): nothing selected -> arm a
+             * prompt-for-object rotate. Assigning ui_state2 abandons any pending verb-noun
+             * move/stretch (Case 3). Plain rotate; wires are NOT kept connected. */
+            xctx->ui_state |= MENUSTART;
+            xctx->ui_state2 = MENUSTARTROTATE;
+            xctx->menu_pending_transform = PENDING_TR_ROTATE;
+            statusmsg("Rotate: click an object to rotate", 1);
+          } else {
+            xctx->mx_double_save=xctx->mousex_snap;
+            xctx->my_double_save=xctx->mousey_snap;
+            move_objects(START,0,0,0);
+            move_objects(ROTATE,0,0,0);
+            move_objects(END,0,0,0);
+            log_action("xschem rotate %.16g %.16g", xctx->mx_double_save, xctx->my_double_save);
+          }
         }
 
       }
@@ -5244,14 +5332,21 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
         }
         else {
           rebuild_selected_array();
-          xctx->mx_double_save=xctx->mousex_snap;
-          xctx->my_double_save=xctx->mousey_snap;
-          move_objects(START,0,0,0);
-          move_objects(ROTATE|ROTATELOCAL,0,0,0);
-          move_objects(ROTATE|ROTATELOCAL,0,0,0);
-          move_objects(FLIP|ROTATELOCAL,0,0,0);
-          move_objects(END,0,0,0);
-          log_action("xschem flipv_in_place"); /* self-log Alt-V shortcut (issue 0068) */
+          if(xctx->lastsel == 0) { /* Cases 1 & 3: arm prompt-for-object vertical flip-in-place */
+            xctx->ui_state |= MENUSTART;
+            xctx->ui_state2 = MENUSTARTROTATE;
+            xctx->menu_pending_transform = PENDING_TR_FLIPV_IP;
+            statusmsg("Vertical flip in place: click an object to flip", 1);
+          } else {
+            xctx->mx_double_save=xctx->mousex_snap;
+            xctx->my_double_save=xctx->mousey_snap;
+            move_objects(START,0,0,0);
+            move_objects(ROTATE|ROTATELOCAL,0,0,0);
+            move_objects(ROTATE|ROTATELOCAL,0,0,0);
+            move_objects(FLIP|ROTATELOCAL,0,0,0);
+            move_objects(END,0,0,0);
+            log_action("xschem flipv_in_place"); /* self-log Alt-V shortcut (issue 0068) */
+          }
         }
       }
       break;
@@ -5271,14 +5366,21 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
         }
         else {
           rebuild_selected_array();
-          xctx->mx_double_save=xctx->mousex_snap;
-          xctx->my_double_save=xctx->mousey_snap;
-          move_objects(START,0,0,0);
-          move_objects(ROTATE,0,0,0);
-          move_objects(ROTATE,0,0,0);
-          move_objects(FLIP,0,0,0);
-          move_objects(END,0,0,0);
-          log_action("xschem flipv %.16g %.16g", xctx->mx_double_save, xctx->my_double_save);
+          if(xctx->lastsel == 0) { /* Cases 1 & 3: arm prompt-for-object vertical flip */
+            xctx->ui_state |= MENUSTART;
+            xctx->ui_state2 = MENUSTARTROTATE;
+            xctx->menu_pending_transform = PENDING_TR_FLIPV;
+            statusmsg("Vertical flip: click an object to flip", 1);
+          } else {
+            xctx->mx_double_save=xctx->mousex_snap;
+            xctx->my_double_save=xctx->mousey_snap;
+            move_objects(START,0,0,0);
+            move_objects(ROTATE,0,0,0);
+            move_objects(ROTATE,0,0,0);
+            move_objects(FLIP,0,0,0);
+            move_objects(END,0,0,0);
+            log_action("xschem flipv %.16g %.16g", xctx->mx_double_save, xctx->my_double_save);
+          }
         }
       }
       else if(rstate == ControlMask) { /* toggle spice/vhdl netlist */

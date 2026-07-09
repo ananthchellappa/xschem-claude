@@ -279,6 +279,21 @@ typedef int Tcl_Size;
 #define MENUSTARTSTRETCH 8192U /* a pending MENUSTARTMOVE is a connected stretch (cadence 'm').
                                 * Only ever set together with MENUSTARTMOVE.
                                 * see doc/claude/specs/cadence_stretch_move_keys.md */
+#define MENUSTARTROTATE 16384U /* a pending prompt-for-object rotate/flip (Cases 1 & 3): a
+                                * rotate/flip verb fired with nothing selected arms this, so the
+                                * next canvas click SELECTS the object under the cursor and applies
+                                * xctx->menu_pending_transform to it (plain: no attached-net grab,
+                                * wires are NOT kept connected).
+                                * see doc/claude/specs/rotate_keep_connected_stretch.md */
+
+/* xctx->menu_pending_transform codes: which transform a pending MENUSTARTROTATE applies */
+#define PENDING_TR_NONE      0
+#define PENDING_TR_ROTATE    1  /* rotate about click point            (Shift-R / xschem rotate) */
+#define PENDING_TR_ROTATE_IP 2  /* rotate about each object's anchor   (Alt-R   / rotate_in_place) */
+#define PENDING_TR_FLIP      3  /* flip horizontally about click point (Shift-F / xschem flip) */
+#define PENDING_TR_FLIP_IP   4  /* flip about each object's anchor     (Alt-F   / flip_in_place) */
+#define PENDING_TR_FLIPV     5  /* flip vertically about click point   (V       / xschem flipv) */
+#define PENDING_TR_FLIPV_IP  6  /* flip vertically about each anchor   (Alt-V   / flipv_in_place) */
 
 #define WIRE 1              /*  types of defined objects */
 #define xRECT  2
@@ -1286,6 +1301,10 @@ typedef struct {
   int manhattan_lines;
   int movelastsel;
   short rotatelocal;
+  /* prompt-for-object rotate/flip (Cases 1 & 3): which transform a pending MENUSTARTROTATE
+   * applies to the object clicked next (a PENDING_TR_* code). see
+   * doc/claude/specs/rotate_keep_connected_stretch.md */
+  short menu_pending_transform;
   /* new_wire, new_line, new_rect*/
   double nl_x1,nl_y1,nl_x2,nl_y2;
   double nl_xx1,nl_yy1,nl_xx2,nl_yy2;
