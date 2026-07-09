@@ -153,4 +153,29 @@ check "N no phantom stub at x=-490"                     [expr {![has_endpoint -4
 check "N manhattan"                                     [all_manhattan]
 check "N P1: #net1 staircase intact to top rail (-550,140)-(-470,140)" [r18_reaches -550 140 -470 140]
 
+# ================= Case V: VERTICAL-stub SHOVE (before_6 transposed x<->y) =========================
+# Exercises the svert==1 branch (perpendicular riser V is HORIZONTAL). A vertical rung between a
+# horizontal riser (far end on a vertical rail = shoveable) and a horizontal pin riser; dragging it
+# along its own (vertical) axis must shove the horizontal riser + rail junction to the stub tip -- the
+# exact transpose of case L / preferred_12.sch. res rot 1 puts RV's pin at (20,-360).
+xschem clear force
+foreach vv {cadence_compat fluid_editing orthogonal_wiring autotrim_wires enable_stretch} { uplevel #0 [list set $vv 1] }
+uplevel #0 {set unselect_partial_sel_wires 0}; uplevel #0 {set cadsnap 10}
+xschem instance devices/res -10 -360 1 0 {name=RV m=1 value=200}
+foreach w { {50 -470 50 -360} {50 -470 140 -470} {20 -360 50 -360}
+            {140 -550 140 -470} {140 -470 140 -390} } { xschem wire {*}$w }
+check "V pre: vertical rung selected" [expr {[sel_wire 50 -470 50 -360] >= 0}]
+we_move_stretch 10 -20
+check "V no vertical stub (60,-490)-(60,-470) GONE"      [expr {![wire_exists 60 -490 60 -470]}]
+check "V no solder-dot at (60,-470): degree<=1"          [expr {[deg_at 60 -470] <= 1}]
+check "V rung is a SINGLE wire (60,-490)-(60,-360)"      [wire_exists 60 -490 60 -360]
+check "V riser SHOVED to y=-490: (60,-490)-(140,-490)"   [wire_exists 60 -490 140 -490]
+check "V rail junction SHOVED to -490: (140,-550)-(140,-490)" [wire_exists 140 -550 140 -490]
+check "V rail far leg (140,-490)-(140,-390)"             [wire_exists 140 -490 140 -390]
+check "V pin riser intact (20,-360)-(60,-360)"           [wire_exists 20 -360 60 -360]
+check "V manhattan"                                      [all_manhattan]
+check "V P1: rung + rail carry ONE net (staircase intact)" \
+  [expr {[net_of_wire 60 -490 60 -360] ne "" && [net_of_wire 60 -490 60 -360] eq [net_of_wire 140 -550 140 -490]}]
+check "V P2: no short"                                   [p2_no_short]
+
 we_result

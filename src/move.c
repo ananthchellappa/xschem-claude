@@ -3192,30 +3192,34 @@ static void fluid_collapse_axis_overshoot_stub(void)
         double Cx = (V->x1 == Jx && V->y1 == Jy) ? V->x2 : V->x1;
         double Cy = (V->x1 == Jx && V->y1 == Jy) ? V->y2 : V->y1;
         double shx = Tx - Jx, shy = Ty - Jy;                /* shove vector (pure along-axis) */
-        double vperp = svert ? Jx : Jy;                     /* V's constant coord (its line) */
-        double vlo = (svert ? Cy : Cx) < (svert ? Jy : Jx) ? (svert ? Cy : Cx) : (svert ? Jy : Jx);
-        double vhi = (svert ? Cy : Cx) < (svert ? Jy : Jx) ? (svert ? Jy : Jx) : (svert ? Cy : Cx);
+        /* V is PERPENDICULAR to S, so an S-vertical stub has a HORIZONTAL riser V (and vice-versa).
+         * vline = V's constant-axis coord (its line); [vlo,vhi] = V's span along its RUNNING axis. */
+        int vhoriz = svert;                                 /* S vertical => perpendicular V horizontal */
+        double vline = vhoriz ? Jy : Jx;
+        double va = vhoriz ? Jx : Jy, vb = vhoriz ? Cx : Cy;
+        double vlo = va < vb ? va : vb, vhi = va < vb ? vb : va;
         int shoveable = !point_on_fixed_pin(Cx, Cy);
         int shoved = 0;
 
         /* V must be a CLEAN isolated segment J..C for a shove: no endpoint strictly inside its span (a
          * mid-span tap would strand), and no wire COLLINEAR with V ending at C (a continuation the arm
-         * drag would bend). Either => not shoveable (fall through to the trim). */
+         * drag would bend into a diagonal -- which the touch-based partition verify would NOT catch).
+         * Either => not shoveable (fall through to the trim). */
         for(m = 0; m < W && shoveable; ++m) {
           double mx1, my1, mx2, my2; int e_at_c, coll;
           if(m == ks || m == kV) continue;
           mx1 = xctx->wire[m].x1; my1 = xctx->wire[m].y1;
           mx2 = xctx->wire[m].x2; my2 = xctx->wire[m].y2;
           if(mx1 == mx2 && my1 == my2) continue;
-          if(svert) {                                       /* V vertical: line x==vperp, span in y */
-            if(mx1 == vperp && my1 > vlo && my1 < vhi) shoveable = 0;
-            if(mx2 == vperp && my2 > vlo && my2 < vhi) shoveable = 0;
-          } else {                                          /* V horizontal: line y==vperp, span in x */
-            if(my1 == vperp && mx1 > vlo && mx1 < vhi) shoveable = 0;
-            if(my2 == vperp && mx2 > vlo && mx2 < vhi) shoveable = 0;
+          if(vhoriz) {                                      /* V horizontal: on line y==vline, x-span */
+            if(my1 == vline && mx1 > vlo && mx1 < vhi) shoveable = 0;
+            if(my2 == vline && mx2 > vlo && mx2 < vhi) shoveable = 0;
+          } else {                                          /* V vertical: on line x==vline, y-span */
+            if(mx1 == vline && my1 > vlo && my1 < vhi) shoveable = 0;
+            if(mx2 == vline && my2 > vlo && my2 < vhi) shoveable = 0;
           }
           e_at_c = (mx1 == Cx && my1 == Cy) || (mx2 == Cx && my2 == Cy);
-          coll = svert ? (mx1 == mx2 && mx1 == vperp) : (my1 == my2 && my1 == vperp);
+          coll = vhoriz ? (my1 == my2 && my1 == vline) : (mx1 == mx2 && mx1 == vline);
           if(e_at_c && coll) shoveable = 0;
         }
 
