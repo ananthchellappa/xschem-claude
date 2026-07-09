@@ -2286,6 +2286,36 @@ static int fluid_wire_is_novel(int e)
   return 1;
 }
 
+/* is wire e's SPAN absent from the move-START wire set (endpoints only, lab-independent)? Two wires
+ * cannot share a span (trim dedups), so a span present at START IS the same physical wire -- pre-
+ * existing copper, never this-drag. Unlike fluid_wire_is_novel this ignores lab=, so an auto #net that
+ * merely RENUMBERED across the move (a ring added on its own net shifts every other #net's number) is
+ * still recognised as pre-existing. The straightener needs that: novelty is its PRIMARY scope gate
+ * (it mutates non-seed copper via the tail-retract), so a renumber false-positive would let it reshape
+ * an untouched user ring (test_wireedit_45 cases G/D). Fail-safe: no snapshot => 0 (not novel). */
+static int fluid_wire_is_novel_span(int e)
+{
+  double ax, ay, bx, by; int j;
+  if(fluid_start_nwire == 0 || !fluid_start_wire) return 0;
+  fluid_wire_norm_pts(xctx->wire[e].x1, xctx->wire[e].y1, xctx->wire[e].x2, xctx->wire[e].y2,
+                      &ax, &ay, &bx, &by);
+  for(j = 0; j < fluid_start_nwire; ++j)
+    if(fluid_start_wire[j].x1 == ax && fluid_start_wire[j].y1 == ay &&
+       fluid_start_wire[j].x2 == bx && fluid_start_wire[j].y2 == by) return 0;
+  return 1;
+}
+
+/* does wire k carry an EXPLICIT (user-meaningful) lab= -- a non-empty name that is not a bare auto
+ * #net, or any bus range? The straightener slides/deletes only tool-generated auto copper: reshaping a
+ * wire that solely carries an explicit name could silently RENAME its net (the geometric pin-partition
+ * is unchanged, so the partition verify would NOT catch it). Conservative -- declines the whole reshape
+ * rather than risk a rename. */
+static int fluid_wire_explicit_lab(int k)
+{
+  const char *lab = get_tok_value(xctx->wire[k].prop_ptr, "lab", 0);
+  return lab && lab[0] && (lab[0] != '#' || strpbrk(lab, "[:") != NULL);
+}
+
 /* touch-degree of point (x,y): number of wires whose segment covers it. `doomed` (if non-NULL) skips
  * doomed wires; `excl` (if >=0) skips that index. With doomed=NULL,excl=-1 => the pass-ENTRY degree. */
 static int fluid_deg_at(double x, double y, unsigned short *doomed, int excl)
@@ -2313,10 +2343,17 @@ static int fluid_loop_partition(unsigned short *doomed, int *rep)
   par  = my_malloc(_ALLOC_ID_, (W > 0 ? W : 1) * sizeof(int));
   comp = my_malloc(_ALLOC_ID_, (fluid_count_pins() > 0 ? fluid_count_pins() : 1) * sizeof(int));
   for(i = 0; i < W; ++i) par[i] = i;
+  /* a zero-length (point) wire carries no connectivity, but touch() mishandles a degenerate segment
+   * (its collinear test is trivially 0==0 and the axis branch ignores the off-axis coord), so a point
+   * on row y would spuriously union EVERY wire touching that row. Skip degenerate wires -- correct for
+   * all callers (check_collapsing_objects normally drops them; the straightener verifies mid-collapse
+   * geometry where one exists transiently). */
   for(i = 0; i < W; ++i) {
     if(doomed && doomed[i]) continue;
+    if(xctx->wire[i].x1 == xctx->wire[i].x2 && xctx->wire[i].y1 == xctx->wire[i].y2) continue;
     for(j = i + 1; j < W; ++j) {
       if(doomed && doomed[j]) continue;
+      if(xctx->wire[j].x1 == xctx->wire[j].x2 && xctx->wire[j].y1 == xctx->wire[j].y2) continue;
       if(touch(xctx->wire[i].x1, xctx->wire[i].y1, xctx->wire[i].x2, xctx->wire[i].y2, xctx->wire[j].x1, xctx->wire[j].y1) ||
          touch(xctx->wire[i].x1, xctx->wire[i].y1, xctx->wire[i].x2, xctx->wire[i].y2, xctx->wire[j].x2, xctx->wire[j].y2) ||
          touch(xctx->wire[j].x1, xctx->wire[j].y1, xctx->wire[j].x2, xctx->wire[j].y2, xctx->wire[i].x1, xctx->wire[i].y1) ||
@@ -2334,6 +2371,7 @@ static int fluid_loop_partition(unsigned short *doomed, int *rep)
       get_inst_pin_coord(inst, r, &px, &py);
       for(i = 0; i < W; ++i) {
         if(doomed && doomed[i]) continue;
+        if(xctx->wire[i].x1 == xctx->wire[i].x2 && xctx->wire[i].y1 == xctx->wire[i].y2) continue;
         if(touch(xctx->wire[i].x1, xctx->wire[i].y1, xctx->wire[i].x2, xctx->wire[i].y2, px, py)) { cc = fluid_uf_find(par, i); break; }
       }
       comp[np] = (cc >= 0) ? cc : (W + 1 + np);          /* floating pin => unique singleton */
@@ -2674,6 +2712,286 @@ done:
   my_free(_ALLOC_ID_, &now);
   my_free(_ALLOC_ID_, &predeg1);
   my_free(_ALLOC_ID_, &predeg2);
+}
+
+/* ==== issue 0089: straighten a redundant same-net U-TURN a fluid stretch left ======================
+ * doc/claude/issues/0089-fluid-reroute-redundant-samenet-detour.md. Sibling to
+ * fluid_remove_redundant_loops. When the moved pin's landing COLUMN differs from the stationary riser
+ * column, a declined corner-slide (0086 transient-short guard) leaves a same-net PATH (no cycle) that
+ * DOUBLES BACK: a jog wire whose two perpendicular same-net neighbours leave on the SAME side, so the
+ * route bulges out to an intermediate column and returns (before_3.sch, R18 (-80,-60) -> after_9.sch:
+ * #net2 rings out to x=-400 and back). A cycle-collapse (delete-only) cannot fix a tree; this SLIDES
+ * the jog to the nearer neighbour's far column, collapsing the overshoot, then retracts the riser tail
+ * the slide orphans -- yielding the clean L the router wanted.
+ *
+ * SAFETY: every mutation is pin-partition VERIFIED (fluid_loop_partition, pure touch() -- node[]
+ * independent) against the pass-entry BASE; a slide/retract/prune that changes ANY pin's partition is
+ * reverted, so no pin ever strands and no two nets ever merge (a foreign-pin short shows as a merge).
+ * SCOPE: the jog must be NOVEL (absent at move START), so a user's deliberate staircase is never
+ * rewritten; a retracted riser tail must have been a real junction at START (fluid_start_deg_at >= 2)
+ * that this drag orphaned, so a user's dangling stub is never pruned. Strict no-op unless a removable
+ * reversal exists. Caller-gated on fluid_editing (default off => never runs => byte-identical). */
+
+/* touch-degree of (x,y) over the move-START wire snapshot: how many START spans cover it. Used to tell
+ * a drag-ORPHANED junction (was >=2, now dangling) from a pre-existing user dangler tip (was <=1). */
+static int fluid_start_deg_at(double x, double y)
+{
+  int j, c = 0;
+  if(fluid_start_nwire == 0 || !fluid_start_wire) return 0;
+  for(j = 0; j < fluid_start_nwire; ++j) {
+    /* skip a zero-length START span: touch() mishandles a degenerate segment -- its collinear test is
+     * trivially 0==0 and the axis branch ignores the off-axis coord, so a point wire on row y matches
+     * EVERY query on that row, spuriously inflating the degree (a label-tap left one such point at
+     * START in test_wireedit_20, reading the run's free end as a junction). */
+    if(fluid_start_wire[j].x1 == fluid_start_wire[j].x2 &&
+       fluid_start_wire[j].y1 == fluid_start_wire[j].y2) continue;
+    if(touch(fluid_start_wire[j].x1, fluid_start_wire[j].y1,
+             fluid_start_wire[j].x2, fluid_start_wire[j].y2, x, y)) ++c;
+  }
+  return c;
+}
+
+/* Retract wire kw's ORPHANED dangling end back to its nearest interior junction, OR delete kw whole if
+ * it is a fully-orphaned stub whose far end stays connected. Partition-verified against base; reverts on
+ * any change. Returns 1 iff geometry changed. `ex,ey` is the dangling end (deg_now==1, verified by the
+ * caller). */
+static int fluid_retract_orphan_tail(int kw, double ex, double ey, int *base, int np, int *now)
+{
+  xWire *w = &xctx->wire[kw];
+  double ox = (w->x1 == ex && w->y1 == ey) ? w->x2 : w->x1;  /* the far (kept) end */
+  double oy = (w->x1 == ex && w->y1 == ey) ? w->y2 : w->y1;
+  double jx = ex, jy = ey, bestd = -1.0;
+  int m, inst, r, rects, found = 0;
+  double sx1 = w->x1, sy1 = w->y1, sx2 = w->x2, sy2 = w->y2;  /* revert snapshot */
+  /* nearest interior junction J on kw between (ex,ey) and the far end: an endpoint of another alive
+   * wire, or an instance pin, lying strictly interior to kw's span. */
+  for(m = 0; m < xctx->wires; ++m) {
+    int e2;
+    if(m == kw) continue;
+    for(e2 = 0; e2 < 2; ++e2) {
+      double px = e2 ? xctx->wire[m].x2 : xctx->wire[m].x1;
+      double py = e2 ? xctx->wire[m].y2 : xctx->wire[m].y1;
+      double d;
+      if(!touch(w->x1, w->y1, w->x2, w->y2, px, py)) continue;
+      if((px == ex && py == ey) || (px == ox && py == oy)) continue;  /* not kw's own ends */
+      d = (px - ex) * (px - ex) + (py - ey) * (py - ey);
+      if(bestd < 0 || d < bestd) { bestd = d; jx = px; jy = py; found = 1; }
+    }
+  }
+  for(inst = 0; inst < xctx->instances; ++inst) {            /* a pin interior to kw is a junction too */
+    if(xctx->inst[inst].ptr < 0) continue;
+    rects = (xctx->inst[inst].ptr + xctx->sym)->rects[PINLAYER];
+    for(r = 0; r < rects; ++r) {
+      double px, py, d;
+      get_inst_pin_coord(inst, r, &px, &py);
+      if(!touch(w->x1, w->y1, w->x2, w->y2, px, py)) continue;
+      if((px == ex && py == ey) || (px == ox && py == oy)) continue;
+      d = (px - ex) * (px - ex) + (py - ey) * (py - ey);
+      if(bestd < 0 || d < bestd) { bestd = d; jx = px; jy = py; found = 1; }
+    }
+  }
+  if(found) {                                                /* retract (ex,ey) -> (jx,jy) */
+    if(w->x1 == ex && w->y1 == ey) { w->x1 = jx; w->y1 = jy; } else { w->x2 = jx; w->y2 = jy; }
+    order_wire_coords(kw);
+    fluid_loop_partition(NULL, now);
+    if(fluid_part_equal(now, base, np)) {
+      fltrace("FLTRACE straighten: retracted orphan tail wire=%d (%g,%g)->(%g,%g)\n", kw, ex, ey, jx, jy);
+      check_collapsing_objects(); trim_wires();
+      return 1;
+    }
+    w->x1 = sx1; w->y1 = sy1; w->x2 = sx2; w->y2 = sy2;      /* revert */
+    return 0;
+  }
+  /* no interior junction: kw is a whole orphaned stub. Delete it iff its far end stays connected and the
+   * partition is preserved (delete-verify by tentatively degenerating it, then compacting on keep). */
+  {
+    unsigned short *doomed = my_malloc(_ALLOC_ID_, xctx->wires * sizeof(unsigned short));
+    int keep;
+    memset(doomed, 0, xctx->wires * sizeof(unsigned short));
+    doomed[kw] = 1;
+    fluid_loop_partition(doomed, now);
+    keep = fluid_part_equal(now, base, np) && !fluid_wire_explicit_lab(kw);  /* never delete named copper */
+    if(keep) {
+      fltrace("FLTRACE straighten: deleted orphan stub wire=%d [%g %g %g %g]\n", kw, sx1, sy1, sx2, sy2);
+      wire_delete_compact(wire_doomed_flag, doomed);
+    }
+    my_free(_ALLOC_ID_, &doomed);
+    return keep;
+  }
+}
+
+/* do wires a and b share a touch point (endpoint of one on the other's span -- the SAME connectivity
+ * model fluid_loop_partition / the netlister use: a bare crossing with no shared/on-span endpoint is
+ * NOT a connection)? Degenerate (point) wires carry no connectivity. */
+static int fluid_wires_touch(int a, int b)
+{
+  xWire *wa = &xctx->wire[a], *wb = &xctx->wire[b];
+  if((wa->x1 == wa->x2 && wa->y1 == wa->y2) || (wb->x1 == wb->x2 && wb->y1 == wb->y2)) return 0;
+  return touch(wa->x1, wa->y1, wa->x2, wa->y2, wb->x1, wb->y1) ||
+         touch(wa->x1, wa->y1, wa->x2, wa->y2, wb->x2, wb->y2) ||
+         touch(wb->x1, wb->y1, wb->x2, wb->y2, wa->x1, wa->y1) ||
+         touch(wb->x1, wb->y1, wb->x2, wb->y2, wa->x2, wa->y2);
+}
+
+/* mark (in reach[], size xctx->wires) every wire touch-reachable from wire kd -- i.e. kd's whole net
+ * copper component in the CURRENT geometry. Used to tell a slide's INTENDED new adjacency (a wire
+ * already in d's net) from a foreign SHORT (a wire the slide newly lands d on). */
+static void fluid_wire_reach_set(int kd, unsigned char *reach)
+{
+  int W = xctx->wires, i, changed;
+  memset(reach, 0, (W > 0 ? W : 1) * sizeof(unsigned char));
+  if(kd < 0 || kd >= W) return;
+  reach[kd] = 1;
+  do {
+    changed = 0;
+    for(i = 0; i < W; ++i) {
+      int j;
+      if(reach[i]) continue;
+      for(j = 0; j < W; ++j)
+        if(reach[j] && j != i && fluid_wires_touch(i, j)) { reach[i] = 1; changed = 1; break; }
+    }
+  } while(changed);
+}
+
+/* Would sliding the reversal unit (kd,kA,kC) to its new position merge d's net with FOREIGN copper the
+ * pin-partition cannot see? `reach` = d's PRE-slide net component (computed before the coord edit). Any
+ * wire NOT in reach that now touches the reshaped d/A/C is a different net -> a short. This closes the
+ * gap that fluid_loop_partition (instance-pin-indexed) misses for a pin-LESS foreign net (a lab= supply
+ * stub with no device pin) -- review wf_bacae8eb. */
+static int fluid_slide_merges_foreign(int kd, int kA, int kC, unsigned char *reach)
+{
+  int m, W = xctx->wires;
+  for(m = 0; m < W; ++m) {
+    if(m == kd || m == kA || m == kC || reach[m]) continue;   /* the unit, or already d's net */
+    if(fluid_wires_touch(m, kd) || fluid_wires_touch(m, kA) || fluid_wires_touch(m, kC)) return 1;
+  }
+  return 0;
+}
+
+static void fluid_straighten_reversals(void)
+{
+  int np, progress, guard = 0, changed_any = 0, npins;
+  int *base, *now;
+
+  fltrace("FLTRACE straighten: ENTER W=%d snap_npins=%d\n", xctx->wires, fluid_snap_npins);
+  if(xctx->wires < 3) return;
+  if(fluid_snap_npins <= 0) return;                          /* no START snapshot => cannot verify */
+  npins = fluid_count_pins() > 0 ? fluid_count_pins() : 1;
+  base = my_malloc(_ALLOC_ID_, npins * sizeof(int));
+  now  = my_malloc(_ALLOC_ID_, npins * sizeof(int));
+  np = fluid_loop_partition(NULL, base);                     /* invariant target */
+
+  progress = 1;
+  while(progress && guard++ < 8 * xctx->wires + 8) {
+    int kd, W = xctx->wires;
+    progress = 0;
+    /* --- pass 1: collapse a same-side (reversal) jog by sliding it to the nearer neighbour --- */
+    for(kd = 0; kd < W && !progress; ++kd) {
+      xWire *d = &xctx->wire[kd];
+      int vert, kA = -1, kC = -1, m, sa, sb;
+      double dx1, dy1, dx2, dy2, fa = 0, fb = 0, target;
+      const char *lab;
+      if(d->bus != 0.0) continue;
+      dx1 = d->x1; dy1 = d->y1; dx2 = d->x2; dy2 = d->y2;
+      vert = (dx1 == dx2 && dy1 != dy2);
+      if(!vert && !(dy1 == dy2 && dx1 != dx2)) continue;     /* diagonal or zero-length */
+      lab = get_tok_value(d->prop_ptr, "lab", 0);
+      if(lab && strpbrk(lab, "[:")) continue;                /* bus label: never reshape */
+      if(!fluid_wire_is_novel_span(kd)) continue;            /* only a jog THIS drag created (span-scoped) */
+      if(point_on_any_pin(dx1, dy1) || point_on_any_pin(dx2, dy2)) continue;
+      if(fluid_deg_at(dx1, dy1, NULL, kd) != 1) continue;    /* each end a clean corner (d + one wire) */
+      if(fluid_deg_at(dx2, dy2, NULL, kd) != 1) continue;
+      for(m = 0; m < W; ++m) {                               /* the cornered neighbour at each end */
+        if(m == kd) continue;
+        if((xctx->wire[m].x1 == dx1 && xctx->wire[m].y1 == dy1) ||
+           (xctx->wire[m].x2 == dx1 && xctx->wire[m].y2 == dy1)) kA = m;
+        if((xctx->wire[m].x1 == dx2 && xctx->wire[m].y1 == dy2) ||
+           (xctx->wire[m].x2 == dx2 && xctx->wire[m].y2 == dy2)) kC = m;
+      }
+      if(kA < 0 || kC < 0 || kA == kC) continue;             /* mid-span pass, or a parallel wire */
+      {
+        xWire *A = &xctx->wire[kA], *C = &xctx->wire[kC];
+        /* d/A/C are touch-connected (d shares an endpoint with each), so they are the SAME net by
+         * construction -- no net-token compare is needed (and the partition verify catches any short).
+         * Only decline when an EXPLICIT label is present: reshaping named copper could rename its net. */
+        if(A->bus != 0.0 || C->bus != 0.0) continue;
+        if(fluid_wire_explicit_lab(kd) || fluid_wire_explicit_lab(kA) || fluid_wire_explicit_lab(kC)) continue;
+        if(vert) {
+          if(A->y1 != A->y2 || C->y1 != C->y2) continue;     /* neighbours perpendicular = horizontal */
+          fa = (A->x1 == dx1 && A->y1 == dy1) ? A->x2 : A->x1;
+          fb = (C->x1 == dx2 && C->y1 == dy2) ? C->x2 : C->x1;
+          sa = (fa > dx1) - (fa < dx1); sb = (fb > dx1) - (fb < dx1);
+          if(sa == 0 || sb == 0 || sa != sb) continue;       /* not a same-side reversal */
+          target = (fabs(fa - dx1) <= fabs(fb - dx1)) ? fa : fb;
+        } else {
+          if(A->x1 != A->x2 || C->x1 != C->x2) continue;     /* neighbours perpendicular = vertical */
+          fa = (A->x1 == dx1 && A->y1 == dy1) ? A->y2 : A->y1;
+          fb = (C->x1 == dx2 && C->y1 == dy2) ? C->y2 : C->y1;
+          sa = (fa > dy1) - (fa < dy1); sb = (fb > dy1) - (fb < dy1);
+          if(sa == 0 || sb == 0 || sa != sb) continue;
+          target = (fabs(fa - dy1) <= fabs(fb - dy1)) ? fa : fb;
+        }
+        {
+          double sdx1=d->x1, sdy1=d->y1, sdx2=d->x2, sdy2=d->y2;
+          double sax1=A->x1, say1=A->y1, sax2=A->x2, say2=A->y2;
+          double scx1=C->x1, scy1=C->y1, scx2=C->x2, scy2=C->y2;
+          unsigned char *reach = my_malloc(_ALLOC_ID_, (W > 0 ? W : 1) * sizeof(unsigned char));
+          fluid_wire_reach_set(kd, reach);                   /* d's PRE-slide net component */
+          if(vert) {
+            d->x1 = d->x2 = target;
+            if(A->x1 == dx1 && A->y1 == dy1) A->x1 = target; else A->x2 = target;
+            if(C->x1 == dx2 && C->y1 == dy2) C->x1 = target; else C->x2 = target;
+          } else {
+            d->y1 = d->y2 = target;
+            if(A->x1 == dx1 && A->y1 == dy1) A->y1 = target; else A->y2 = target;
+            if(C->x1 == dx2 && C->y1 == dy2) C->y1 = target; else C->y2 = target;
+          }
+          order_wire_coords(kd); order_wire_coords(kA); order_wire_coords(kC);
+          /* KEEP iff the pin-partition is byte-preserved (no pinned-net short/disconnect) AND the slide
+           * did not newly land d/A/C on FOREIGN copper (a pin-LESS labeled net the pin-partition cannot
+           * see -- review wf_bacae8eb). */
+          fluid_loop_partition(NULL, now);
+          if(fluid_part_equal(now, base, np) && fluid_slide_merges_foreign(kd, kA, kC, reach))
+            fltrace("FLTRACE straighten: DECLINE slide wire=%d %s->%g (would short foreign copper)\n",
+                    kd, vert ? "x" : "y", target);
+          if(fluid_part_equal(now, base, np) && !fluid_slide_merges_foreign(kd, kA, kC, reach)) {
+            fltrace("FLTRACE straighten: slid jog wire=%d %s->%g (reversal collapse)\n",
+                    kd, vert ? "x" : "y", target);
+            changed_any = 1; progress = 1;
+            check_collapsing_objects(); trim_wires();        /* drop collapsed neighbour + merge collinear */
+          } else {
+            d->x1=sdx1; d->y1=sdy1; d->x2=sdx2; d->y2=sdy2;  /* revert */
+            A->x1=sax1; A->y1=say1; A->x2=sax2; A->y2=say2;
+            C->x1=scx1; C->y1=scy1; C->x2=scx2; C->y2=scy2;
+          }
+          my_free(_ALLOC_ID_, &reach);
+        }
+      }
+    }
+    if(progress) continue;                                   /* geometry changed: rescan from a fresh W */
+    /* --- pass 2: retract/prune a riser tail the slide orphaned (was a START junction, now dangling) --- */
+    W = xctx->wires;
+    for(kd = 0; kd < W && !progress; ++kd) {
+      int e;
+      for(e = 0; e < 2 && !progress; ++e) {
+        double ex = e ? xctx->wire[kd].x2 : xctx->wire[kd].x1;
+        double ey = e ? xctx->wire[kd].y2 : xctx->wire[kd].y1;
+        if(point_on_any_pin(ex, ey)) continue;               /* a pin end is never dangling */
+        if(fluid_deg_at(ex, ey, NULL, kd) != 0) continue;    /* still connected: not a dangling end */
+        if(fluid_start_deg_at(ex, ey) < 2) continue;         /* a pre-existing user dangler tip: leave */
+        if(fluid_retract_orphan_tail(kd, ex, ey, base, np, now)) { changed_any = 1; progress = 1; }
+      }
+    }
+  }
+
+  if(changed_any) {
+    xctx->prep_hash_wires = xctx->prep_net_structs = xctx->prep_hi_structs = 0;
+    prepare_netlist_structs(0);
+    xctx->need_reb_sel_arr = 1;
+    set_modify(1);
+  }
+  my_free(_ALLOC_ID_, &base);
+  my_free(_ALLOC_ID_, &now);
 }
 
 /* Phase III helper: is foreign pin (px,py) on the axis-aligned segment (x1,y1)-(x2,y2)? cadsnap/2
@@ -4942,8 +5260,14 @@ void move_objects(int what, int merge, double dx, double dy)
     * doc/claude/issues/0088-fluid-reroute-redundant-samenet-loop.md. */
    if(!commit_now && tclgetboolvar("fluid_editing") && xctx->stretch_select &&
       xctx->move_rot == 0 && xctx->move_flip == 0 &&
-      leg_ortho && leg == nlegs - 1 && xctx->fluid_startsel_wires == 0)
+      leg_ortho && leg == nlegs - 1 && xctx->fluid_startsel_wires == 0) {
      fluid_remove_redundant_loops();
+     /* issue 0089: the loop-remover only DELETES a redundant same-net CYCLE. A far move whose landing
+      * column differs from the stationary riser leaves a same-net PATH (no cycle) that doubles back --
+      * straighten that U-turn to a clean L (before_3.sch R18 (-80,-60) -> after_9.sch #net2). Slides +
+      * verified tail-retract; partition-invariant + novelty-scoped; strict no-op otherwise. */
+     fluid_straighten_reversals();
+   }
    /* Exit-stub preservation (wire-editing Phase 6, Issue E -> R13). After the cleanup above,
     * ensure each moved DEVICE pin's route leaves the pin along the pin's outward escape normal
     * (get_pin_escape_normal, geometry nearest-edge -- nice_drag_rerouting Phase 3 §6/§8) with a
