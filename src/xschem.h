@@ -276,6 +276,9 @@ typedef int Tcl_Size;
 #define MENUSTARTWIRECUT2 1024U /* do not align cut point to snap */
 #define MENUSTARTCOPY 2048U
 #define MENUSTARTDESEL 4096U
+#define MENUSTARTSTRETCH 8192U /* a pending MENUSTARTMOVE is a connected stretch (cadence 'm').
+                                * Only ever set together with MENUSTARTMOVE.
+                                * see doc/claude/specs/cadence_stretch_move_keys.md */
 
 #define WIRE 1              /*  types of defined objects */
 #define xRECT  2

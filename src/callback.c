@@ -2134,16 +2134,26 @@ static int check_menu_start_commands(int state, double c_snap, int mx, int my)
     /* verb-noun (cadence_pin_name_text.md copy/move UX): 'm' on an empty selection arms
      * MENUSTARTMOVE, so this click SELECTS the object under the cursor and picks it up in
      * one gesture. With something already selected (Edit>Move menu path) the existing
-     * selection is moved and the click is just the pick-up point. */
+     * selection is moved and the click is just the pick-up point.
+     * MENUSTARTSTRETCH (cadence 'm') additionally grabs attached nets so wires stay
+     * connected/reroute — see doc/claude/specs/cadence_stretch_move_keys.md */
+    int stretch_move = (xctx->ui_state2 & MENUSTARTSTRETCH) ? 1 : 0;
     rebuild_selected_array();
     if(xctx->lastsel == 0) {
       select_object(xctx->mousex, xctx->mousey, SELECTED, 0, NULL);
       rebuild_selected_array();
     }
+    if(xctx->lastsel == 0) { /* clicked empty space: cancel the armed move cleanly */
+      xctx->ui_state &= ~MENUSTART;
+      xctx->ui_state2 = 0;
+      return 1;
+    }
     xctx->mx_double_save=xctx->mousex_snap;
     xctx->my_double_save=xctx->mousey_snap;
-    /* stretch nets that land on selected instance pins if connect_by_kissing == 2 */
-    /* select_attached_nets(); */
+    if(stretch_move) { /* connected: kissing armed before select_attached_nets (through-run tap skip) */
+      xctx->connect_by_kissing = 2;
+      select_attached_nets();
+    }
     move_objects(START,0,0,0);
     return 1;
   }
@@ -4723,6 +4733,25 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
           break;
         }
         if(readonly_block()) break;
+        if(cadence_compat) {
+          /* Cadence 'm' = STRETCH (connectivity-preserving), mirror of the plain LMB drag.
+           * noun-verb: pick up the selection now with attached nets so wires reroute;
+           * verb-noun: arm a connected pickup (MENUSTARTSTRETCH) for the next click.
+           * see doc/claude/specs/cadence_stretch_move_keys.md */
+          rebuild_selected_array();
+          if(xctx->lastsel > 0) {
+            xctx->connect_by_kissing = 2; /* armed before select_attached_nets (through-run tap skip) */
+            select_attached_nets();
+            xctx->mx_double_save=xctx->mousex_snap;
+            xctx->my_double_save=xctx->mousey_snap;
+            move_objects(START,0,0,0);
+          } else {
+            xctx->ui_state |= MENUSTART;
+            xctx->ui_state2 = MENUSTARTMOVE | MENUSTARTSTRETCH;
+            statusmsg("Stretch: click an object to move it (wires stay connected)", 1);
+          }
+          break;
+        }
         if(enable_stretch) select_attached_nets(); /* stretch nets that land on selected instance pins */
         rebuild_selected_array();
         if(xctx->lastsel > 0) {
@@ -4774,6 +4803,22 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
       /* Move selection adding wires to moved pins */
       if((rstate == 0) && !(xctx->ui_state & (STARTMOVE | STARTCOPY))) {
         if(readonly_block()) break;
+        if(cadence_compat) {
+          /* Cadence Shift+M = MOVE (rigid / disconnected): move selected objects only,
+           * attached wires stay put (connections break). Mirror of Ctrl+LMB drag detach.
+           * see doc/claude/specs/cadence_stretch_move_keys.md */
+          rebuild_selected_array();
+          if(xctx->lastsel > 0) {
+            xctx->mx_double_save=xctx->mousex_snap;
+            xctx->my_double_save=xctx->mousey_snap;
+            move_objects(START,0,0,0);
+          } else {
+            xctx->ui_state |= MENUSTART;
+            xctx->ui_state2 = MENUSTARTMOVE;
+            statusmsg("Move: click an object to move it (disconnected)", 1);
+          }
+          break;
+        }
         xctx->connect_by_kissing = 2; /* 2 will be used to reset var to 0 at end of move */
         if(infix_interface) {
           xctx->mx_double_save=xctx->mousex_snap;
@@ -6261,8 +6306,12 @@ static void handle_button_release(int event, KeySym key, int state, int button, 
    }
 
    /* in cadence_compat mode a button release on a selected item will unselect everything
-    * but the item under the mouse. */
-   else if(cadence_compat && xctx->lastsel != 1 && state == Button1Mask && !xctx->mouse_moved) {
+    * but the item under the mouse. NOT while a move/copy is in flight: a verb-noun 'm'
+    * pickup starts a connected move whose selection includes the grabbed attached nets
+    * (lastsel > 1), and this collapse would drop them mid-gesture.
+    * see doc/claude/specs/cadence_stretch_move_keys.md */
+   else if(cadence_compat && xctx->lastsel != 1 && state == Button1Mask && !xctx->mouse_moved &&
+           !(xctx->ui_state & (STARTMOVE | STARTCOPY))) {
      Selected sel;
      int already_selected = 0;
 
