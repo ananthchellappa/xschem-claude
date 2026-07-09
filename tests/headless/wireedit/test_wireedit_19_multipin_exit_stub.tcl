@@ -12,6 +12,10 @@
 # land exactly on another moving pin); see issue 0047. res.sym: pin M=(X,Y+30) exits
 # +y, pin P=(X,Y-30) exits -y.
 source [file join [file dirname [info script]] fixtures.tcl]
+# fluid_editing now defaults ON (0091-0096 reroute chain). This test pins the BASE
+# (fluid-off) stretch mechanic it was written for; the fluid-on behavior for the same
+# scene is covered by test_wireedit_20..51. See doc/claude/issues/0096 re-baseline.
+uplevel #0 {set fluid_editing 0}
 we_reset 1 1
 uplevel #0 {set wire_exit_stub 1}
 we_device 1360 -930               ;# pin M (1360,-900), pin P (1360,-960)

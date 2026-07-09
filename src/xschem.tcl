@@ -14706,9 +14706,13 @@ if {[info exists no_recent_files] && $no_recent_files} {
 } else {
   set_ne update_recent_files 1
 }
-# Fluid editing: first-click tip/edge grab (doc/claude/specs/fluid_editing.md). Default
-# off; cadence_style_rc turns it on. Read fresh from C (tclgetboolvar) each button press.
-set_ne fluid_editing 0
+# Fluid editing: first-click tip/edge grab + incremental wire rip-up-reroute on drag
+# (doc/claude/specs/fluid_editing.md, nice_drag_rerouting.md). Default ON as of the
+# 0091-0096 reroute chain. The drag-to-move gesture itself still needs the intuitive/
+# cadence interface (cadence_compat or intuitive_interface); this only enables the
+# reroute + tip-grab once a stretch move is in flight. Read fresh from C (tclgetboolvar)
+# each button press.
+set_ne fluid_editing 1
 set_ne infix_interface 1
 # autostart the Library Manager window at launch (doc/claude/specs/library_manager_launch.md)
 set_ne launch_library_manager 0

@@ -5884,7 +5884,9 @@ static void handle_button_press(int event, int state, int rstate, KeySym key, in
         * click-drag to move/copy objects), spec doc/claude/specs/cadence_modifier_drag.md */
        int intuitive = xctx->intuitive_interface || cadence_compat;
        /* fluid_editing (C4): gates first-click tip/edge grab independently of cadence_compat.
-        * Default 0; cadence_style_rc sets it 1. See doc/claude/specs/fluid_editing.md. */
+        * Default ON as of the 0091-0096 reroute chain (dragging an INSTANCE body still needs the
+        * intuitive/cadence interface; this gates the tip-grab + reroute). See
+        * doc/claude/specs/fluid_editing.md. */
        int fluid_editing = tclgetboolvar("fluid_editing");
 
        xctx->shape_point_selected = 0;
