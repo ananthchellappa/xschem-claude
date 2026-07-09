@@ -91,3 +91,17 @@ never runs ⇒ byte-identical.
   (and fall through to TRIM only if a plain stub delete is partition-safe).
 * Only auto (`#net`) copper is reshaped; an explicit user label on `S`/`H`/`V` declines (never rename a
   named net).
+
+## Adversarial review (wf_1670d2b6, 4 lenses: connectivity / heap / misfire / geometry)
+
+* **HIGH (connectivity + misfire lenses, both CONFIRMED)** — the clean-`V` shoveability guard keyed its
+  axis off the STUB's orientation (`svert`) instead of the RISER's. Since `V` ⟂ `S`, an `S`-horizontal
+  stub has a *vertical* `V`, but the guard probed the horizontal axis, so a **collinear continuation above
+  `V`'s far corner `C`** (a "riser continues up past the rail" pattern) slipped through and the arm-drag
+  bent it into a DIAGONAL wire the touch-based partition verify can't catch. Verified: the pre-fix guard
+  emitted `(-490,140)-(-470,180)`; the fix (`vhoriz = svert`; `vline`/span/collinearity off `V`'s true
+  axis) emits none and instead DECLINES → plain stub trim. Regression: case C.
+* **LOW (geometry lens)** — the continuation-`H` test conflated "not perpendicular" with "collinear", so
+  a DIAGONAL wire ending at `J` was misclassified as `H` (or as `V`) and its endpoint shoved. Fix: every
+  wire at `J` must be axis-aligned (`mvert || mhoriz`); a diagonal at `J` declines the whole collapse.
+* **Heap lens: no findings** (idx/sav/reach bounds, post-trim index staleness, revert completeness all OK).
