@@ -1130,6 +1130,11 @@ static void fltrace(const char *fmt, ...);
  * wire so the END redundant-route cleanup leaves the user's own net(s) untouched (defined after
  * fluid_wire_reach_set, the flood it uses). */
 static void fluid_mark_user_protected(unsigned char *prot);
+/* issue 0092 (along-axis wire-drag overshoot): after a fluid stretch drags a same-net wire ALONG its own
+ * axis, a dangling overshoot stub + solder dot is left instead of the riser being shoved. This END pass
+ * shoves the riser column (or trims the stub) -- defined after fluid_straighten_reversals (shares its
+ * partition-verify helpers). */
+static void fluid_collapse_axis_overshoot_stub(void);
 
 /* xctx->{rx1, ry1} and xctx->{rx2, ry2} are the two line points after the move.
  * they are not guaranteed to be ordered (since only one of the two points may have changed)
@@ -3096,6 +3101,209 @@ static void fluid_straighten_reversals(void)
   my_free(_ALLOC_ID_, &base);
   my_free(_ALLOC_ID_, &now);
   my_free(_ALLOC_ID_, &prot);
+}
+
+/* issue 0092: collapse the DANGLING OVERSHOOT STUB an along-axis wire drag leaves (see
+ * doc/claude/issues/0092-fluid-axis-drag-overshoot-stub.md). A fluid stretch that drags a same-net wire
+ * ALONG its own axis (a horizontal rung pulled left/right, a vertical riser pulled up/down) overshoots
+ * its junction: place_moved_wire relays the along-axis component as a short stub S collinear with the
+ * wire, dangling past a drag-created solder-dot junction J, while the perpendicular riser V that meets J
+ * stays put. The pin-driven shove (fluid_shove_connected_wire) can NOT reach it -- its stub needs a
+ * moving-INSTANCE-PIN endpoint, but the user grabbed a WIRE -- and straighten/loop miss it (the tip is a
+ * brand-new deg-0 dangle, not a clean-corner jog; and it is on the user's own grabbed net, which 0091's
+ * prot[] shields THEM from). This pass repairs it:
+ *   SHOVE: if V's far corner C is not pinned, translate the riser column {V, the arms at C} by (T-J) and
+ *          pull H's and S's J-ends to the tip T -> S collapses, H absorbs it, the riser follows the drag
+ *          (preferred_12.sch);
+ *   TRIM:  else delete the dangling stub S (partition-verified) -- the safe fallback when the riser is
+ *          pin-anchored (a rightward drag past the pin) or a shove would short.
+ * Every mutation is pin-partition VERIFIED (pure touch(), node[]-independent) against the pass-entry base
+ * and reverted on any change; a foreign-wire touch by a shoved segment (the pin-less-net short the
+ * partition cannot see) also reverts. NOVELTY-scoped + strict-no-op otherwise. Deliberately does NOT
+ * consult prot[] (the target is always drag-created junk on the grabbed net). Caller-gated on
+ * fluid_editing (default off => never runs => byte-identical). */
+static void fluid_collapse_axis_overshoot_stub(void)
+{
+  int np, guard = 0, progress = 1, npins, changed_any = 0;
+  int *base, *now;
+
+  if(xctx->wires < 3) return;
+  if(fluid_snap_npins <= 0) return;                         /* no START snapshot => cannot verify */
+  npins = fluid_count_pins() > 0 ? fluid_count_pins() : 1;
+  base = my_malloc(_ALLOC_ID_, npins * sizeof(int));
+  now  = my_malloc(_ALLOC_ID_, npins * sizeof(int));
+  np = fluid_loop_partition(NULL, base);                    /* invariant target */
+
+  while(progress && guard++ < 4 * xctx->wires + 8) {
+    int W = xctx->wires, ks;
+    progress = 0;
+    for(ks = 0; ks < W && !progress; ++ks) {
+      xWire *S = &xctx->wire[ks];
+      double sx1 = S->x1, sy1 = S->y1, sx2 = S->x2, sy2 = S->y2;
+      int svert, m, kH = -1, kV = -1, bad = 0;
+      double Tx = 0, Ty = 0, Jx = 0, Jy = 0;                /* dangling tip T, junction J */
+      const char *lab;
+
+      if(S->bus != 0.0) continue;
+      svert = (sx1 == sx2 && sy1 != sy2);
+      if(!svert && !(sy1 == sy2 && sx1 != sx2)) continue;   /* diagonal / zero-length */
+      lab = get_tok_value(S->prop_ptr, "lab", 0);
+      if(lab && strpbrk(lab, "[:")) continue;               /* bus label: never reshape */
+      if(fluid_wire_explicit_lab(ks)) continue;             /* only tool-generated auto (#net) copper */
+      if(!fluid_wire_is_novel_span(ks)) continue;           /* only a stub THIS drag created */
+
+      /* exactly one end is a BRAND-NEW dangle (deg 0, no pin, absent at START); the other end = J */
+      {
+        int d1 = fluid_deg_at(sx1, sy1, NULL, ks) == 0 && !point_on_any_pin(sx1, sy1) &&
+                 fluid_start_deg_at(sx1, sy1) == 0;
+        int d2 = fluid_deg_at(sx2, sy2, NULL, ks) == 0 && !point_on_any_pin(sx2, sy2) &&
+                 fluid_start_deg_at(sx2, sy2) == 0;
+        if(d1 == d2) continue;                              /* need exactly one dangling brand-new tip */
+        if(d1) { Tx = sx1; Ty = sy1; Jx = sx2; Jy = sy2; } else { Tx = sx2; Ty = sy2; Jx = sx1; Jy = sy1; }
+      }
+
+      /* J must be a clean solder-dot: exactly one COLLINEAR same-axis continuation H (endpoint at J, its
+       * far end on the OPPOSITE side of J from T) + exactly one PERPENDICULAR riser V, nothing else. */
+      for(m = 0; m < W && !bad; ++m) {
+        double mx1, my1, mx2, my2; int at1, at2, mvert;
+        if(m == ks) continue;
+        mx1 = xctx->wire[m].x1; my1 = xctx->wire[m].y1;
+        mx2 = xctx->wire[m].x2; my2 = xctx->wire[m].y2;
+        if(mx1 == mx2 && my1 == my2) continue;              /* degenerate */
+        at1 = (mx1 == Jx && my1 == Jy); at2 = (mx2 == Jx && my2 == Jy);
+        if(!at1 && !at2) {
+          if(touch(mx1, my1, mx2, my2, Jx, Jy)) bad = 1;    /* copper PASSES THROUGH J: not a clean dot */
+          continue;
+        }
+        mvert = (mx1 == mx2 && my1 != my2);
+        if(mvert == svert) {                                /* collinear (same-axis) continuation H? */
+          double mfar = svert ? (at1 ? my2 : my1) : (at1 ? mx2 : mx1);
+          double jca  = svert ? Jy : Jx, tca = svert ? Ty : Tx;
+          if(kH < 0 && (mfar - jca) * (tca - jca) < 0.0 && !fluid_wire_explicit_lab(m)) kH = m;
+          else bad = 1;                                     /* 2nd collinear / same-side / labeled -> decline */
+        } else {                                            /* perpendicular riser V */
+          if(kV < 0 && !fluid_wire_explicit_lab(m)) kV = m; else bad = 1;
+        }
+      }
+      if(bad || kH < 0 || kV < 0) continue;
+
+      {
+        xWire *V = &xctx->wire[kV];
+        double Cx = (V->x1 == Jx && V->y1 == Jy) ? V->x2 : V->x1;
+        double Cy = (V->x1 == Jx && V->y1 == Jy) ? V->y2 : V->y1;
+        double shx = Tx - Jx, shy = Ty - Jy;                /* shove vector (pure along-axis) */
+        double vperp = svert ? Jx : Jy;                     /* V's constant coord (its line) */
+        double vlo = (svert ? Cy : Cx) < (svert ? Jy : Jx) ? (svert ? Cy : Cx) : (svert ? Jy : Jx);
+        double vhi = (svert ? Cy : Cx) < (svert ? Jy : Jx) ? (svert ? Jy : Jx) : (svert ? Cy : Cx);
+        int shoveable = !point_on_fixed_pin(Cx, Cy);
+        int shoved = 0;
+
+        /* V must be a CLEAN isolated segment J..C for a shove: no endpoint strictly inside its span (a
+         * mid-span tap would strand), and no wire COLLINEAR with V ending at C (a continuation the arm
+         * drag would bend). Either => not shoveable (fall through to the trim). */
+        for(m = 0; m < W && shoveable; ++m) {
+          double mx1, my1, mx2, my2; int e_at_c, coll;
+          if(m == ks || m == kV) continue;
+          mx1 = xctx->wire[m].x1; my1 = xctx->wire[m].y1;
+          mx2 = xctx->wire[m].x2; my2 = xctx->wire[m].y2;
+          if(mx1 == mx2 && my1 == my2) continue;
+          if(svert) {                                       /* V vertical: line x==vperp, span in y */
+            if(mx1 == vperp && my1 > vlo && my1 < vhi) shoveable = 0;
+            if(mx2 == vperp && my2 > vlo && my2 < vhi) shoveable = 0;
+          } else {                                          /* V horizontal: line y==vperp, span in x */
+            if(my1 == vperp && mx1 > vlo && mx1 < vhi) shoveable = 0;
+            if(my2 == vperp && mx2 > vlo && mx2 < vhi) shoveable = 0;
+          }
+          e_at_c = (mx1 == Cx && my1 == Cy) || (mx2 == Cx && my2 == Cy);
+          coll = svert ? (mx1 == mx2 && mx1 == vperp) : (my1 == my2 && my1 == vperp);
+          if(e_at_c && coll) shoveable = 0;
+        }
+
+        if(shoveable) {                                     /* --- try the SHOVE --- */
+          /* collect the wires to translate: S's J-end, H's J-end, V (both ends), each arm at C. Snapshot
+           * their coords so a failed partition/foreign check reverts exactly. */
+          int cap = W, cnt = 0, i, ok;
+          int *idx = my_malloc(_ALLOC_ID_, cap * sizeof(int));
+          double *sav = my_malloc(_ALLOC_ID_, 4 * cap * sizeof(double));
+          unsigned char *reach = my_malloc(_ALLOC_ID_, W * sizeof(unsigned char));
+          fluid_wire_reach_set(kH, reach);                  /* H's PRE-shove net component */
+          for(m = 0; m < W; ++m) {                          /* mutate list: S, H, V, arms at C */
+            int take = 0;
+            if(m == ks || m == kH || m == kV) take = 1;
+            else if((xctx->wire[m].x1 == Cx && xctx->wire[m].y1 == Cy) ||
+                    (xctx->wire[m].x2 == Cx && xctx->wire[m].y2 == Cy)) take = 1;
+            if(!take) continue;
+            idx[cnt] = m;
+            sav[4*cnt] = xctx->wire[m].x1; sav[4*cnt+1] = xctx->wire[m].y1;
+            sav[4*cnt+2] = xctx->wire[m].x2; sav[4*cnt+3] = xctx->wire[m].y2;
+            ++cnt;
+          }
+          /* apply: V translates whole; S/H move only their J-end; an arm moves only its C-end */
+          for(i = 0; i < cnt; ++i) {
+            xWire *w = &xctx->wire[idx[i]];
+            if(idx[i] == kV) { w->x1 += shx; w->y1 += shy; w->x2 += shx; w->y2 += shy; }
+            else if(idx[i] == ks || idx[i] == kH) {
+              if(w->x1 == Jx && w->y1 == Jy) { w->x1 += shx; w->y1 += shy; }
+              else                           { w->x2 += shx; w->y2 += shy; }
+            } else {                                        /* arm: only its endpoint at C */
+              if(w->x1 == Cx && w->y1 == Cy) { w->x1 += shx; w->y1 += shy; }
+              else                           { w->x2 += shx; w->y2 += shy; }
+            }
+            order_wire_coords(idx[i]);
+          }
+          /* verify: pin-partition preserved AND no shoved segment newly touches FOREIGN copper */
+          fluid_loop_partition(NULL, now);
+          ok = fluid_part_equal(now, base, np);
+          for(i = 0; i < cnt && ok; ++i) {
+            for(m = 0; m < W; ++m) {
+              int j, inmut = 0;
+              if(reach[m]) continue;                        /* already H's net: legitimate */
+              for(j = 0; j < cnt; ++j) if(idx[j] == m) { inmut = 1; break; }
+              if(inmut) continue;
+              if(fluid_wires_touch(m, idx[i])) { ok = 0; break; }
+            }
+          }
+          if(ok) {
+            check_collapsing_objects(); trim_wires();        /* drop the collapsed stub + merge collinear */
+            fltrace("FLTRACE overshoot: SHOVE stub=%d riser=%d cont=%d J=(%g,%g) T=(%g,%g)\n",
+                    ks, kV, kH, Jx, Jy, Tx, Ty);
+            progress = 1; shoved = 1; changed_any = 1;
+          } else {
+            for(i = 0; i < cnt; ++i) {                       /* revert */
+              xWire *w = &xctx->wire[idx[i]];
+              w->x1 = sav[4*i]; w->y1 = sav[4*i+1]; w->x2 = sav[4*i+2]; w->y2 = sav[4*i+3];
+            }
+          }
+          my_free(_ALLOC_ID_, &idx); my_free(_ALLOC_ID_, &sav); my_free(_ALLOC_ID_, &reach);
+        }
+
+        if(!shoved) {                                        /* --- TRIM fallback: delete the dangling stub --- */
+          unsigned short *doomed = my_malloc(_ALLOC_ID_, W * sizeof(unsigned short));
+          int keep;
+          memset(doomed, 0, W * sizeof(unsigned short));
+          doomed[ks] = 1;
+          fluid_loop_partition(doomed, now);
+          keep = fluid_part_equal(now, base, np);
+          if(keep) {
+            fltrace("FLTRACE overshoot: TRIM stub=%d [%g %g %g %g]\n", ks, sx1, sy1, sx2, sy2);
+            wire_delete_compact(wire_doomed_flag, doomed);
+            check_collapsing_objects(); trim_wires();
+            progress = 1; changed_any = 1;
+          }
+          my_free(_ALLOC_ID_, &doomed);
+        }
+      }
+    }
+  }
+
+  if(changed_any) {
+    xctx->prep_hash_wires = xctx->prep_net_structs = xctx->prep_hi_structs = 0;
+    prepare_netlist_structs(0);
+    xctx->need_reb_sel_arr = 1;
+    set_modify(1);
+  }
+  my_free(_ALLOC_ID_, &base);
+  my_free(_ALLOC_ID_, &now);
 }
 
 /* Phase III helper: is foreign pin (px,py) on the axis-aligned segment (x1,y1)-(x2,y2)? cadsnap/2
@@ -5388,6 +5596,14 @@ void move_objects(int what, int merge, double dx, double dy)
       * before_3 -> after_10 #net1). Straighten both to a clean L (slide + verified tail-retract;
       * partition-invariant + novelty-scoped; strict no-op otherwise). */
      fluid_straighten_reversals();
+     /* issue 0092: an along-axis wire drag (grab a rung, pull it along its own axis) overshoots its
+      * junction into a dangling stub + solder dot instead of SHOVING the perpendicular riser. Neither
+      * the pin-driven shove (no moving pin -- a WIRE was grabbed) nor straighten (brand-new deg-0 tip,
+      * user's own protected net) reaches it. Shove the riser column to the stub tip (preferred_12.sch),
+      * or trim the stub when the riser is pin-anchored. Partition-verified + novelty-scoped; NOT prot[]-
+      * gated (drag-created junk on the grabbed net is always removable). See
+      * doc/claude/issues/0092-fluid-axis-drag-overshoot-stub.md. */
+     fluid_collapse_axis_overshoot_stub();
    }
    /* Exit-stub preservation (wire-editing Phase 6, Issue E -> R13). After the cleanup above,
     * ensure each moved DEVICE pin's route leaves the pin along the pin's outward escape normal
