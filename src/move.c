@@ -1135,6 +1135,13 @@ static void fluid_mark_user_protected(unsigned char *prot);
  * shoves the riser column (or trims the stub) -- defined after fluid_straighten_reversals (shares its
  * partition-verify helpers). */
 static void fluid_collapse_axis_overshoot_stub(void);
+/* issue 0094 (group drag lands a moved device's off-net pin on a foreign backbone): a rip-up END pass that
+ * un-shorts a move-created DEVICE MERGE by sliding the foreign backbone off the invader pin onto its
+ * sibling's line, letting fluid_straighten_reversals prune the orphaned tails. */
+static int fluid_ripup_foreign_pin_short(void);
+/* issue 0094 tail: delete the fresh dangling backbone stub the rip-up + straighten can leave past the
+ * sibling pin (connectivity-verified). Only called when the rip-up fired => strict no-op otherwise. */
+static void fluid_prune_novel_orphan_stub(void);
 
 /* xctx->{rx1, ry1} and xctx->{rx2, ry2} are the two line points after the move.
  * they are not guaranteed to be ordered (since only one of the two points may have changed)
@@ -3307,6 +3314,195 @@ static void fluid_collapse_axis_overshoot_stub(void)
     prepare_netlist_structs(0);
     xctx->need_reb_sel_arr = 1;
     set_modify(1);
+  }
+  my_free(_ALLOC_ID_, &base);
+  my_free(_ALLOC_ID_, &now);
+}
+
+/* issue 0094: rip up a move-created DEVICE SHORT where a rigid group drag landed one of a moved device's
+ * pins exactly on a foreign net's backbone wire (before_5.sch C12+R18+#net2 dragged (-40,+70): R18's #net2
+ * top pin lands on the #net1 backbone at (-300,-10) -> #net1==#net2). The pin position is fixed by the
+ * rigid move, so only the foreign copper can move out of the way -- the deferred nice_drag_rerouting
+ * Phase-4 "no-short + rip-up". Detect the merge vs the START snapshot (two pins of one device on DISTINCT
+ * nets at START, one net now); the INVADER pin P sits on a backbone B perpendicular to the P->sibling(Q)
+ * axis, where Q is the pin whose START net is B's net. Slide B's whole touch-connected collinear span from
+ * P's line onto Q's line: P is un-shorted and Q is reached directly. The follow-riser/column tails this
+ * orphans are pruned by fluid_straighten_reversals, which runs next. Every slide is pin-partition VERIFIED
+ * to RESTORE the START partition (fluid_partition_changed()==0) and reverted otherwise; a fixpoint handles
+ * more than one merged device. Strict no-op unless a move-created merge exists (the common path is
+ * byte-identical). Caller-gated on fluid_editing (default off => never runs). See
+ * doc/claude/issues/0094-fluid-group-drag-offpin-lands-foreign-backbone-short-loop.md. */
+static int fluid_ripup_foreign_pin_short(void)
+{
+  int guard = 0, changed_any = 0;
+  if(xctx->wires < 3) return 0;
+  if(!fluid_snap_pinnet || fluid_snap_npins <= 0) return 0;
+  if(fluid_count_pins() != fluid_snap_npins) return 0;
+  for(;;) {
+    int i, p, q, k, fixed = 0;
+    if(guard++ > fluid_snap_npins + 4) break;              /* progress backstop */
+    xctx->prep_hash_wires = xctx->prep_net_structs = xctx->prep_hi_structs = 0;
+    prepare_netlist_structs(0);
+    if(fluid_count_pins() != fluid_snap_npins) break;
+    if(fluid_partition_changed() == 0) break;              /* no move-created merge/disconnect (common) */
+    k = 0;
+    for(i = 0; i < xctx->instances && !fixed; ++i) {
+      int base, npins;
+      const char *type;
+      if(xctx->inst[i].ptr < 0) continue;
+      npins = (xctx->inst[i].ptr + xctx->sym)->rects[PINLAYER];
+      base = k; k += npins;                                /* advance k for EVERY instance (mirror snapshot) */
+      if(k > fluid_snap_npins) break;                      /* structure drift guard */
+      type = xctx->sym[xctx->inst[i].ptr].type;
+      if(type && !strcmp(type, "label")) continue;         /* net-label pins echo lab=; not a device */
+      for(p = 0; p < npins && !fixed; ++p) {
+        const char *sp = fluid_snap_pinnet[base + p];
+        double px, py;
+        if(!sp || !sp[0]) continue;
+        get_inst_pin_coord(i, p, &px, &py);
+        for(q = 0; q < npins && !fixed; ++q) {
+          const char *sq = fluid_snap_pinnet[base + q];
+          /* Re-read BOTH live pin net names EACH q: a declined slide below calls
+           * prepare_netlist_structs(0), which frees+rebuilds inst[].node[] -- a pointer hoisted to
+           * the p-loop would DANGLE on the next q (use-after-free, review wf_fe8ba9a4). sp/sq are the
+           * START snapshot (stable until move END), only ap/aq are live node[]. */
+          const char *ap = (xctx->inst[i].node && xctx->inst[i].node[p]) ? xctx->inst[i].node[p] : NULL;
+          const char *aq = (xctx->inst[i].node && xctx->inst[i].node[q]) ? xctx->inst[i].node[q] : NULL;
+          double qx, qy, target;
+          int vertaxis, m, W = xctx->wires, nslid = 0, named = 0, ok;
+          int *slid;
+          double *sv;
+          unsigned char *reach;
+          if(q == p) continue;
+          if(!ap || !ap[0] || !sq || !sq[0] || !aq || !aq[0]) continue;
+          if(!strcmp(sp, sq)) continue;                    /* same net at START: not a merge pair */
+          if(strcmp(ap, aq)) continue;                     /* not merged now */
+          get_inst_pin_coord(i, q, &qx, &qy);
+          /* P and Q must be axis-aligned so the perpendicular backbone slides cleanly onto Q's line */
+          if(px == qx && py != qy) vertaxis = 1;           /* P->Q vertical => backbone horizontal */
+          else if(py == qy && px != qx) vertaxis = 0;      /* P->Q horizontal => backbone vertical */
+          else continue;
+          target = vertaxis ? qy : qx;
+          slid = my_malloc(_ALLOC_ID_, (W > 0 ? W : 1) * sizeof(int));
+          sv   = my_malloc(_ALLOC_ID_, (W > 0 ? W : 1) * 4 * sizeof(double));
+          /* seed: backbone = perpendicular wires on P's line that carry P on their span */
+          for(m = 0; m < W; ++m) {
+            xWire *w = &xctx->wire[m];
+            int perp = vertaxis ? (w->y1 == w->y2 && w->x1 != w->x2 && w->y1 == py)
+                                : (w->x1 == w->x2 && w->y1 != w->y2 && w->x1 == px);
+            if(perp && touch(w->x1, w->y1, w->x2, w->y2, px, py)) {
+              if(fluid_wire_explicit_lab(m)) named = 1;    /* never reshape explicitly-named copper */
+              slid[nslid++] = m;
+            }
+          }
+          /* flood: add touch-connected perpendicular wires on the same line (the full collinear span) */
+          if(!named) {
+            int added = 1;
+            while(added) {
+              added = 0;
+              for(m = 0; m < W; ++m) {
+                xWire *w = &xctx->wire[m];
+                int perp = vertaxis ? (w->y1 == w->y2 && w->x1 != w->x2 && w->y1 == py)
+                                    : (w->x1 == w->x2 && w->y1 != w->y2 && w->x1 == px);
+                int j, dup = 0;
+                if(!perp) continue;
+                for(j = 0; j < nslid; ++j) if(slid[j] == m) { dup = 1; break; }
+                if(dup) continue;
+                for(j = 0; j < nslid; ++j) if(fluid_wires_touch(m, slid[j])) {
+                  if(fluid_wire_explicit_lab(m)) named = 1;
+                  slid[nslid++] = m; added = 1; break;
+                }
+              }
+            }
+          }
+          if(named || nslid == 0) { my_free(_ALLOC_ID_, &slid); my_free(_ALLOC_ID_, &sv); continue; }
+          /* reach = the backbone's PRE-slide wire component, for the pin-less foreign-short guard below
+           * (fluid_partition_changed is pin-indexed and blind to a merge onto a labeled net with no
+           * device pin -- same gap fluid_slide_merges_foreign closes for the straighten slide). */
+          reach = my_malloc(_ALLOC_ID_, (W > 0 ? W : 1) * sizeof(unsigned char));
+          fluid_wire_reach_set(slid[0], reach);
+          for(m = 0; m < nslid; ++m) {                     /* save + slide the backbone onto Q's line */
+            xWire *w = &xctx->wire[slid[m]];
+            sv[4*m+0] = w->x1; sv[4*m+1] = w->y1; sv[4*m+2] = w->x2; sv[4*m+3] = w->y2;
+            if(vertaxis) { w->y1 = w->y2 = target; } else { w->x1 = w->x2 = target; }
+            order_wire_coords(slid[m]);
+          }
+          xctx->prep_hash_wires = xctx->prep_net_structs = xctx->prep_hi_structs = 0;
+          prepare_netlist_structs(0);
+          ok = (fluid_partition_changed() == 0);           /* slide must RESTORE the START partition */
+          if(ok) {                                         /* + no slid wire newly touches FOREIGN copper */
+            int a, b;
+            for(a = 0; a < nslid && ok; ++a)
+              for(b = 0; b < W; ++b)
+                if(!reach[b] && fluid_wires_touch(b, slid[a])) { ok = 0; break; }
+          }
+          /* NB: no P5 no-body-cross guard here (unlike the straighten staircase collapse). A slid
+           * backbone that grazes a stationary device body WITHOUT hitting its pins is electrically
+           * clean (a pin-hitting cross is a merge the partition-verify above already rejects), so
+           * declining it would re-introduce the HARD short this pass exists to remove -- and P2
+           * (no-short) OUTRANKS P5 (no-body-cross) in the conflict order. Route-around is deferred. */
+          if(ok) {
+            fltrace("FLTRACE ripup: '%s' pins %d(%s)/%d(%s) unshort; slid %d backbone wire(s) %s->%g\n",
+                    xctx->inst[i].instname ? xctx->inst[i].instname : "?", p, sp, q, sq, nslid,
+                    vertaxis ? "y" : "x", target);
+            fixed = 1; changed_any = 1;
+          } else {
+            for(m = 0; m < nslid; ++m) {                    /* revert */
+              xWire *w = &xctx->wire[slid[m]];
+              w->x1 = sv[4*m+0]; w->y1 = sv[4*m+1]; w->x2 = sv[4*m+2]; w->y2 = sv[4*m+3];
+              order_wire_coords(slid[m]);
+            }
+          }
+          my_free(_ALLOC_ID_, &reach);
+          my_free(_ALLOC_ID_, &slid); my_free(_ALLOC_ID_, &sv);
+        }
+      }
+    }
+    if(!fixed) break;                                      /* a merge we cannot rip up: leave to log-only */
+    trim_wires();
+    check_collapsing_objects();
+  }
+  if(changed_any) {
+    xctx->prep_hash_wires = xctx->prep_net_structs = xctx->prep_hi_structs = 0;
+    prepare_netlist_structs(0);
+    xctx->need_reb_sel_arr = 1;
+    set_modify(1);
+  }
+  return changed_any;
+}
+
+/* issue 0094 tail: after fluid_ripup_foreign_pin_short slides a backbone onto the sibling pin and
+ * fluid_straighten_reversals prunes the START-junction follow-riser, the slid backbone's far span can be
+ * left as a FRESH dangling stub past the sibling pin (before_5.sch (-40,+70): #net1 (-300,50)-(-260,50)) --
+ * an orphan whose free end touched NO START copper, so straighten's START-scoped retract leaves it. Delete
+ * such purely-novel dangling stubs, connectivity-VERIFIED (fluid_loop_partition preserved). Only called
+ * when the rip-up fired, so it is a strict no-op (byte-identical) on every non-shorting drag. */
+static void fluid_prune_novel_orphan_stub(void)
+{
+  int np, guard = 0, progress = 1, npins;
+  int *base, *now;
+  if(xctx->wires < 2 || fluid_snap_npins <= 0) return;
+  npins = fluid_count_pins() > 0 ? fluid_count_pins() : 1;
+  base = my_malloc(_ALLOC_ID_, npins * sizeof(int));
+  now  = my_malloc(_ALLOC_ID_, npins * sizeof(int));
+  xctx->prep_hash_wires = xctx->prep_net_structs = xctx->prep_hi_structs = 0;
+  prepare_netlist_structs(0);
+  np = fluid_loop_partition(NULL, base);
+  while(progress && guard++ < 4 * xctx->wires + 8) {
+    int kd, W = xctx->wires;
+    progress = 0;
+    for(kd = 0; kd < W && !progress; ++kd) {
+      int e;
+      for(e = 0; e < 2 && !progress; ++e) {
+        double ex = e ? xctx->wire[kd].x2 : xctx->wire[kd].x1;
+        double ey = e ? xctx->wire[kd].y2 : xctx->wire[kd].y1;
+        if(point_on_any_pin(ex, ey)) continue;             /* a pin end is never dangling */
+        if(fluid_wire_explicit_lab(kd)) continue;          /* never delete named copper */
+        if(fluid_deg_at(ex, ey, NULL, kd) != 0) continue;  /* still connected: not a dangling end */
+        if(fluid_start_deg_at(ex, ey) != 0) continue;      /* touched START copper: not a fresh orphan */
+        if(fluid_retract_orphan_tail(kd, ex, ey, base, np, now)) progress = 1;
+      }
+    }
   }
   my_free(_ALLOC_ID_, &base);
   my_free(_ALLOC_ID_, &now);
@@ -5595,6 +5791,13 @@ void move_objects(int what, int merge, double dx, double dy)
       * component, and both passes leave a protected component untouched ("selection wins" per net,
       * not wholesale). Default fluid_editing off => never runs => byte-identical. See
       * doc/claude/issues/0091-fluid-reroute-samenet-crosses-moved-body.md. */
+     /* issue 0094: a rigid group drag can land a moved device's OFF-net pin exactly on a foreign net's
+      * backbone (before_5.sch C12+R18+#net2 by (-40,+70): R18's #net2 pin on the #net1 backbone) -- a
+      * genuine device SHORT the reroute must RIP UP (the pin is fixed by the rigid move; only the foreign
+      * copper can move). Runs FIRST so the slide's orphaned column/riser tails are pruned by the
+      * straighten/retract pass below. Strict no-op unless a move-created merge exists => byte-identical
+      * for every non-shorting drag. See doc/claude/issues/0094-*.md. */
+     int ripped = fluid_ripup_foreign_pin_short();
      fluid_remove_redundant_loops();
      /* issues 0089 + 0090: the loop-remover only DELETES a redundant same-net CYCLE. A far / multi-
       * gesture move leaves a same-net PATH (no cycle) with a redundant jog -- a same-side U-turn
@@ -5610,6 +5813,10 @@ void move_objects(int what, int merge, double dx, double dy)
       * gated (drag-created junk on the grabbed net is always removable). See
       * doc/claude/issues/0092-fluid-axis-drag-overshoot-stub.md. */
      fluid_collapse_axis_overshoot_stub();
+     /* issue 0094 tail: the rip-up slide + straighten can leave a fresh dangling backbone stub past the
+      * sibling pin (the follow-riser it was joined to is only deleted by straighten just above). Prune it
+      * now, connectivity-verified. Gated on `ripped` so it never runs on a non-shorting drag. */
+     if(ripped) fluid_prune_novel_orphan_stub();
    }
    /* Exit-stub preservation (wire-editing Phase 6, Issue E -> R13). After the cleanup above,
     * ensure each moved DEVICE pin's route leaves the pin along the pin's outward escape normal
