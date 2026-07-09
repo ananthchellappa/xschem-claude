@@ -95,6 +95,28 @@ so a user's deliberate staircase is never rewritten; explicit-labeled / bus copp
 - fluid_editing=0: byte-identical (direct segset diff vs `d1464f08`).
 - `run_wireedit.sh --memcheck`: clean.
 
+## Known limitation (adversarial review `wf_f1ca6b3d`, 2026-07-08)
+
+One confirmed MEDIUM finding, kept as a documented limitation (correctness-safe, not a blocker): if a
+**floating net label sits in the collapsed corridor** (repro: before_3 + `lab_pin lF lab=FOO @(-300,30)`,
+same 2-gesture drag), the child produces a route with 2 **diagonal** wires where the parent `d1464f08`
+routes fully orthogonally. Both keep every net distinct (R18.M=#net1, R18.P=#net2, FOO floating — no
+short, no disconnect, verified with the real netlister). It is purely a P4 (orthogonality) difference.
+
+Mechanism: a **cross-gesture cascade**. Gesture 1's staircase collapse (correct, and nowhere near the
+label) changes gesture 1's committed geometry, so gesture 2 inherits a different pristine; from it,
+gesture 2's two-leg decomposition transiently merges FOO, the 0081 partition safety-net rolls back
+through the ortho attempts, and only the last-resort **rigid diagonal relay** (0085) preserves the
+partition. The parent, keeping gesture 1's staircase, routes gesture 2 without touching FOO.
+
+Why not fixed: gesture 1 cannot see gesture 2, and the collapse is not near the label, so no local guard
+distinguishes this scene. A clean fix needs cross-gesture lookahead (infeasible in the per-gesture
+restore-and-reapply architecture). Crucially, this is **not a regression against the feature's
+never-worse baseline**: on the SAME scene `fluid_editing=0` (naive) SELF-SHORTS R18 (M==P==#net1), so the
+child (correct, diagonal) is strictly better than naive; it is only *aesthetically* worse than the
+immediate parent's (also-ugly) staircase, and only in this contrived floating-label placement. It is the
+same multi-gesture-composition instability class as issue 0090 itself. Deferred.
+
 ## Deferred / out of scope
 
 The single-gesture path was already clean; this only cleans the multi-gesture accumulation at END. The
