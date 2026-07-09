@@ -1837,6 +1837,23 @@ static int  fluid_snap_npins = 0;    /* 0 => no valid snapshot */
 static double fluid_leg_future_dx = 0.0, fluid_leg_future_dy = 0.0;
 static char **fluid_snap_pinnet = NULL; /* strdup'd resolved net name (or NULL) per instance pin at
                                          * START -- for the device-merge P2 check (spec §9) */
+/* issue 0088: START-side wire set (order-normalized endpoints + raw lab= token), captured next to the
+ * partition snapshot. The redundant-loop cleanup (fluid_remove_redundant_loops) requires the collapsed
+ * cycle to contain >=1 edge THIS drag PRODUCED (absent from this set) -- the novelty scope (H3) that
+ * keeps the pass off pre-existing user copper / an untouched ring. Constant across the gesture => a
+ * pure geometric function => release==stepwise. */
+typedef struct { double x1, y1, x2, y2; char *lab; } fluid_startwire_t;
+static fluid_startwire_t *fluid_start_wire = NULL;
+static int fluid_start_nwire = 0;         /* 0 => no snapshot => wire_is_novel() fails safe (not novel) */
+
+/* order a wire's endpoints canonically ((x1,y1) <= (x2,y2), x-major) so two records of the SAME span
+ * (possibly stored reversed) normalize identically -- used by the 0088 START snapshot + novelty test. */
+static void fluid_wire_norm_pts(double x1, double y1, double x2, double y2,
+                                double *ax, double *ay, double *bx, double *by)
+{
+  if(x1 < x2 || (x1 == x2 && y1 <= y2)) { *ax = x1; *ay = y1; *bx = x2; *by = y2; }
+  else                                  { *ax = x2; *ay = y2; *bx = x1; *by = y1; }
+}
 static void fluid_discard_snapshot(void);
 
 /* Diagnostic trace of the fluid stretch/reroute path (issue 0083 debugging aid, requested by the user
@@ -2117,6 +2134,21 @@ static void fluid_snapshot_partition(void)
       ++k;
     }
   }
+  /* issue 0088: snapshot the START wire set for the novelty scope (H3). Order-normalize endpoints so
+   * a later re-created identical wire (same span, possibly reversed) is recognized as NOT novel. */
+  fluid_start_nwire = xctx->wires;
+  if(fluid_start_nwire > 0) {
+    fluid_start_wire = my_malloc(_ALLOC_ID_, fluid_start_nwire * sizeof(fluid_startwire_t));
+    for(i = 0; i < fluid_start_nwire; ++i) {
+      double ax, ay, bx, by;
+      fluid_wire_norm_pts(xctx->wire[i].x1, xctx->wire[i].y1, xctx->wire[i].x2, xctx->wire[i].y2,
+                          &ax, &ay, &bx, &by);
+      fluid_start_wire[i].x1 = ax; fluid_start_wire[i].y1 = ay;
+      fluid_start_wire[i].x2 = bx; fluid_start_wire[i].y2 = by;
+      fluid_start_wire[i].lab = NULL;
+      my_strdup(_ALLOC_ID_, &fluid_start_wire[i].lab, get_tok_value(xctx->wire[i].prop_ptr, "lab", 0));
+    }
+  }
 }
 
 /* free the snapshot without comparing (called on move ABORT, at each new START, and after each
@@ -2128,6 +2160,11 @@ static void fluid_discard_snapshot(void)
     for(k = 0; k < fluid_snap_npins; ++k) my_free(_ALLOC_ID_, &fluid_snap_pinnet[k]);
     my_free(_ALLOC_ID_, &fluid_snap_pinnet);
   }
+  if(fluid_start_wire) {                                  /* issue 0088 START wire snapshot */
+    for(k = 0; k < fluid_start_nwire; ++k) my_free(_ALLOC_ID_, &fluid_start_wire[k].lab);
+    my_free(_ALLOC_ID_, &fluid_start_wire);
+  }
+  fluid_start_nwire = 0;
   my_free(_ALLOC_ID_, &fluid_snap_id);
   fluid_snap_npins = 0;
 }
@@ -2214,6 +2251,429 @@ static int fluid_partition_changed(void)
   }
   my_free(_ALLOC_ID_, &now);
   return changed;
+}
+
+/* ==== issue 0088: collapse a redundant same-net wire loop left by a declined corner-slide ========
+ * doc/claude/issues/0088-fluid-reroute-redundant-samenet-loop.md. A fluid stretch can commit a
+ * CORRECT per-leg route (the 0086/0087 short guard declines a corner-slide, so a stale detour elbow
+ * survives) yet leave the moved pin back on its riser column, so the pristine wire + the stale detour
+ * join the SAME two rows by two parallel same-net paths -- a redundant rectangle on one net. It is not
+ * a short (all one net); it is junk copper no existing END pass removes (trim only merges/dedups;
+ * remove_move_orphan_wires only drops single-free-end stubs, never a fully-connected cycle).
+ *
+ * This pass is DELETE-ONLY and connectivity-VERIFIED: it greedily doo­ms candidate wires, keeping a
+ * doom only when the geometric pin-partition is byte-preserved (so no device/label pin is ever
+ * stranded and -- delete-only -- no two nets ever merge). Scoped to THIS drag's copper (novelty +
+ * seed) so pre-existing user rings/danglers are untouched, and it is a strict no-op unless an actual
+ * removable cycle exists. Gated by the caller (fluid_editing default off => byte-identical). */
+
+/* union-find find with path-halving over an int parent array */
+static int fluid_uf_find(int *par, int i) { while(par[i] != i) { par[i] = par[par[i]]; i = par[i]; } return i; }
+
+/* is wire e NOVEL -- absent (span+lab) from the move-START wire set? Fail-safe: no snapshot => 0. */
+static int fluid_wire_is_novel(int e)
+{
+  double ax, ay, bx, by; const char *lab; int j;
+  if(fluid_start_nwire == 0 || !fluid_start_wire) return 0;
+  fluid_wire_norm_pts(xctx->wire[e].x1, xctx->wire[e].y1, xctx->wire[e].x2, xctx->wire[e].y2,
+                      &ax, &ay, &bx, &by);
+  lab = get_tok_value(xctx->wire[e].prop_ptr, "lab", 0);
+  for(j = 0; j < fluid_start_nwire; ++j)
+    if(fluid_start_wire[j].x1 == ax && fluid_start_wire[j].y1 == ay &&
+       fluid_start_wire[j].x2 == bx && fluid_start_wire[j].y2 == by &&
+       !strcmp(fluid_start_wire[j].lab ? fluid_start_wire[j].lab : "", lab ? lab : ""))
+      return 0;                                          /* present at START => not this-drag copper */
+  return 1;
+}
+
+/* touch-degree of point (x,y): number of wires whose segment covers it. `doomed` (if non-NULL) skips
+ * doomed wires; `excl` (if >=0) skips that index. With doomed=NULL,excl=-1 => the pass-ENTRY degree. */
+static int fluid_deg_at(double x, double y, unsigned short *doomed, int excl)
+{
+  int m, c = 0;
+  for(m = 0; m < xctx->wires; ++m) {
+    if(m == excl) continue;
+    if(doomed && doomed[m]) continue;
+    if(touch(xctx->wire[m].x1, xctx->wire[m].y1, xctx->wire[m].x2, xctx->wire[m].y2, x, y)) ++c;
+  }
+  return c;
+}
+
+/* Canonical geometric pin-partition over ALIVE (!doomed) wires. rep[k] gets the smallest pin index
+ * sharing pin k's touch-connected wire component (or a unique id if pin k is on no alive wire), so
+ * two partitions are EQUAL iff they induce the same equivalence classes on the instance pins --
+ * independent of union-find numbering. Pure geometry (touch): reproduces the netlister's endpoint +
+ * mid-span-T connectivity, and is immune to a stale node[] lab. Pin walk mirrors fluid_build_partition
+ * (same skip rule / order). Returns the pin count. */
+static int fluid_loop_partition(unsigned short *doomed, int *rep)
+{
+  int W = xctx->wires, i, j, np = 0, inst, r, rects;
+  int *par, *comp;
+  double px, py;
+  par  = my_malloc(_ALLOC_ID_, (W > 0 ? W : 1) * sizeof(int));
+  comp = my_malloc(_ALLOC_ID_, (fluid_count_pins() > 0 ? fluid_count_pins() : 1) * sizeof(int));
+  for(i = 0; i < W; ++i) par[i] = i;
+  for(i = 0; i < W; ++i) {
+    if(doomed && doomed[i]) continue;
+    for(j = i + 1; j < W; ++j) {
+      if(doomed && doomed[j]) continue;
+      if(touch(xctx->wire[i].x1, xctx->wire[i].y1, xctx->wire[i].x2, xctx->wire[i].y2, xctx->wire[j].x1, xctx->wire[j].y1) ||
+         touch(xctx->wire[i].x1, xctx->wire[i].y1, xctx->wire[i].x2, xctx->wire[i].y2, xctx->wire[j].x2, xctx->wire[j].y2) ||
+         touch(xctx->wire[j].x1, xctx->wire[j].y1, xctx->wire[j].x2, xctx->wire[j].y2, xctx->wire[i].x1, xctx->wire[i].y1) ||
+         touch(xctx->wire[j].x1, xctx->wire[j].y1, xctx->wire[j].x2, xctx->wire[j].y2, xctx->wire[i].x2, xctx->wire[i].y2)) {
+        int ri = fluid_uf_find(par, i), rj = fluid_uf_find(par, j);
+        if(ri != rj) par[ri] = rj;
+      }
+    }
+  }
+  for(inst = 0; inst < xctx->instances; ++inst) {
+    if(xctx->inst[inst].ptr < 0) continue;
+    rects = (xctx->inst[inst].ptr + xctx->sym)->rects[PINLAYER];
+    for(r = 0; r < rects; ++r) {
+      int cc = -1;
+      get_inst_pin_coord(inst, r, &px, &py);
+      for(i = 0; i < W; ++i) {
+        if(doomed && doomed[i]) continue;
+        if(touch(xctx->wire[i].x1, xctx->wire[i].y1, xctx->wire[i].x2, xctx->wire[i].y2, px, py)) { cc = fluid_uf_find(par, i); break; }
+      }
+      comp[np] = (cc >= 0) ? cc : (W + 1 + np);          /* floating pin => unique singleton */
+      ++np;
+    }
+  }
+  for(i = 0; i < np; ++i) {                              /* canonicalize: first pin sharing this comp */
+    rep[i] = i;
+    for(j = 0; j < i; ++j) if(comp[j] == comp[i]) { rep[i] = rep[j]; break; }
+  }
+  my_free(_ALLOC_ID_, &par);
+  my_free(_ALLOC_ID_, &comp);
+  return np;
+}
+
+static int fluid_part_equal(int *a, int *b, int n) { int k; for(k = 0; k < n; ++k) if(a[k] != b[k]) return 0; return 1; }
+
+/* A3-f/g: refuse to seed the collapse on a wire that carries a mid-span TAP (another alive wire's
+ * endpoint or a pin strictly interior to it, or a split-through collinear pass at an endpoint) --
+ * collapsing such a run would surprise; the partition verify would revert an unsafe one anyway, this
+ * just declines early. */
+static int fluid_loop_interior_clean(int e, unsigned short *doomed)
+{
+  double ex1 = xctx->wire[e].x1, ey1 = xctx->wire[e].y1, ex2 = xctx->wire[e].x2, ey2 = xctx->wire[e].y2;
+  int m, inst, r, rects;
+  double qx, qy;
+  for(m = 0; m < xctx->wires; ++m) {
+    if(m == e) continue;
+    if(doomed && doomed[m]) continue;
+    /* an endpoint of m strictly interior to e => a T-tap on e */
+    if(touch(ex1, ey1, ex2, ey2, xctx->wire[m].x1, xctx->wire[m].y1) &&
+       !(xctx->wire[m].x1 == ex1 && xctx->wire[m].y1 == ey1) &&
+       !(xctx->wire[m].x1 == ex2 && xctx->wire[m].y1 == ey2)) return 0;
+    if(touch(ex1, ey1, ex2, ey2, xctx->wire[m].x2, xctx->wire[m].y2) &&
+       !(xctx->wire[m].x2 == ex1 && xctx->wire[m].y2 == ey1) &&
+       !(xctx->wire[m].x2 == ex2 && xctx->wire[m].y2 == ey2)) return 0;
+  }
+  for(inst = 0; inst < xctx->instances; ++inst) {         /* a pin strictly interior to e */
+    if(xctx->inst[inst].ptr < 0) continue;
+    rects = (xctx->inst[inst].ptr + xctx->sym)->rects[PINLAYER];
+    for(r = 0; r < rects; ++r) {
+      get_inst_pin_coord(inst, r, &qx, &qy);
+      if(touch(ex1, ey1, ex2, ey2, qx, qy) &&
+         !(qx == ex1 && qy == ey1) && !(qx == ex2 && qy == ey2)) return 0;
+    }
+  }
+  if(point_is_collinear_pass(ex1, ey1) || point_is_collinear_pass(ex2, ey2)) return 0; /* split through-tap */
+  return 1;
+}
+
+/* Is wire e a CHORD given the current `doomed` mask -- do its two endpoints stay connected to EACH
+ * OTHER through OTHER alive wires when e is removed? Only a chord is redundant (its removal cannot
+ * disconnect anything); a tree edge / dangling / sole-pin-net wire is NOT a chord, so this is the
+ * cycle-membership gate that stops the pass from deleting legitimate acyclic routing (a lone pin is a
+ * partition singleton with or without its wires, so the partition check alone would wrongly allow it). */
+static int fluid_is_chord(int e, unsigned short *doomed)
+{
+  int W = xctx->wires, i, j, ra = -1, rb = -1;
+  int *par;
+  double ax = xctx->wire[e].x1, ay = xctx->wire[e].y1, bx = xctx->wire[e].x2, by = xctx->wire[e].y2;
+  if(W < 2) return 0;
+  par = my_malloc(_ALLOC_ID_, W * sizeof(int));
+  for(i = 0; i < W; ++i) par[i] = i;
+  for(i = 0; i < W; ++i) {
+    if(i == e || (doomed && doomed[i])) continue;
+    for(j = i + 1; j < W; ++j) {
+      if(j == e || (doomed && doomed[j])) continue;
+      if(touch(xctx->wire[i].x1, xctx->wire[i].y1, xctx->wire[i].x2, xctx->wire[i].y2, xctx->wire[j].x1, xctx->wire[j].y1) ||
+         touch(xctx->wire[i].x1, xctx->wire[i].y1, xctx->wire[i].x2, xctx->wire[i].y2, xctx->wire[j].x2, xctx->wire[j].y2) ||
+         touch(xctx->wire[j].x1, xctx->wire[j].y1, xctx->wire[j].x2, xctx->wire[j].y2, xctx->wire[i].x1, xctx->wire[i].y1) ||
+         touch(xctx->wire[j].x1, xctx->wire[j].y1, xctx->wire[j].x2, xctx->wire[j].y2, xctx->wire[i].x2, xctx->wire[i].y2)) {
+        int ri = fluid_uf_find(par, i), rj = fluid_uf_find(par, j);
+        if(ri != rj) par[ri] = rj;
+      }
+    }
+  }
+  for(i = 0; i < W; ++i) {
+    if(i == e || (doomed && doomed[i])) continue;
+    if(ra < 0 && touch(xctx->wire[i].x1, xctx->wire[i].y1, xctx->wire[i].x2, xctx->wire[i].y2, ax, ay)) ra = fluid_uf_find(par, i);
+    if(rb < 0 && touch(xctx->wire[i].x1, xctx->wire[i].y1, xctx->wire[i].x2, xctx->wire[i].y2, bx, by)) rb = fluid_uf_find(par, i);
+  }
+  my_free(_ALLOC_ID_, &par);
+  return (ra >= 0 && ra == rb);
+}
+
+/* Did a wire component this drag REACHES already contain a CYCLE at move START? If so that net carries
+ * pre-existing USER-drawn loop copper, and the collapse is declined wholesale -- the pass only removes
+ * redundancy THIS drag created, never touches a net the user already looped (issue 0088 reviews
+ * wf_fce167ed / wf_257dddae: else the collapse eats an untouched user ring sharing a junction, a lone
+ * pin's own loop, or a loop the moved pin LANDS ON). Computed PURELY from START data -- the
+ * fluid_start_wire[] snapshot + coord_was_grabbed -- plus the live moving-pin positions, so it is
+ * immune to the trim_wires coordinate drift a live-geometry match suffers.
+ *
+ * The graph is TAP-AWARE: each START wire is split at every node lying on its span (endpoints AND
+ * mid-span T-taps of other wires), so a user loop closing through a tap is modelled as a cycle exactly
+ * as touch()/the netlister sees it -- an endpoint-only graph is tap-BLIND and reads such a loop as a
+ * tree (review wf_257dddae F1). A REACHED component is one whose node is grabbed (old-position net) OR
+ * on a live moving pin (the drag's destination). A reached component has a cycle iff, over its
+ * tap-split edges, edges >= nodes. Zero-length START wires are skipped (they add no sub-edge, so they
+ * cannot masquerade as a self-loop -- review F3). */
+static int fluid_start_grabbed_component_has_cycle(void)
+{
+  int nw = fluid_start_nwire, i, j, nn = 0, ne = 0, ecap = 0, result = 0;
+  double *nx, *ny, *onpos;
+  int *par, *ecount, *ncount, *reach, *onlist, *eu = NULL, *ev = NULL;
+  if(nw <= 1 || !fluid_start_wire) return 0;
+  nx = my_malloc(_ALLOC_ID_, 2 * nw * sizeof(double));
+  ny = my_malloc(_ALLOC_ID_, 2 * nw * sizeof(double));
+  for(i = 0; i < nw; ++i) {                               /* intern distinct endpoint coords -> nodes */
+    double px[2], py[2]; int e;
+    px[0] = fluid_start_wire[i].x1; py[0] = fluid_start_wire[i].y1;
+    px[1] = fluid_start_wire[i].x2; py[1] = fluid_start_wire[i].y2;
+    for(e = 0; e < 2; ++e) {
+      int found = -1;
+      for(j = 0; j < nn; ++j) if(nx[j] == px[e] && ny[j] == py[e]) { found = j; break; }
+      if(found < 0) { nx[nn] = px[e]; ny[nn] = py[e]; ++nn; }
+    }
+  }
+  par    = my_malloc(_ALLOC_ID_, (nn > 0 ? nn : 1) * sizeof(int));
+  onlist = my_malloc(_ALLOC_ID_, (nn > 0 ? nn : 1) * sizeof(int));
+  onpos  = my_malloc(_ALLOC_ID_, (nn > 0 ? nn : 1) * sizeof(double));
+  for(j = 0; j < nn; ++j) par[j] = j;
+  for(i = 0; i < nw; ++i) {                               /* split each wire at every node on its span */
+    double wx1 = fluid_start_wire[i].x1, wy1 = fluid_start_wire[i].y1;
+    double wx2 = fluid_start_wire[i].x2, wy2 = fluid_start_wire[i].y2;
+    int m = 0, a;
+    if(wx1 == wx2 && wy1 == wy2) continue;                /* zero-length: no sub-edge (review F3) */
+    for(j = 0; j < nn; ++j)
+      if(touch(wx1, wy1, wx2, wy2, nx[j], ny[j])) {
+        onlist[m] = j;
+        onpos[m]  = (wx2 != wx1) ? (nx[j] - wx1) / (wx2 - wx1) : (ny[j] - wy1) / (wy2 - wy1);
+        ++m;
+      }
+    for(a = 1; a < m; ++a) {                              /* insertion-sort nodes along the wire */
+      int t = onlist[a]; double tp = onpos[a]; int b = a - 1;
+      while(b >= 0 && onpos[b] > tp) { onlist[b+1] = onlist[b]; onpos[b+1] = onpos[b]; --b; }
+      onlist[b+1] = t; onpos[b+1] = tp;
+    }
+    for(a = 1; a < m; ++a) {                              /* consecutive sub-edges */
+      int u = onlist[a-1], v = onlist[a], ru, rv, t, dup = 0;
+      if(u == v) continue;
+      /* dedup: overlapping/duplicate collinear START wires would emit the SAME sub-edge twice, a
+       * multigraph that inflates the edge count and would over-decline (audit wf_d53bd986 nit). Count
+       * the SIMPLE graph so edges>=nodes is an exact cycle test. */
+      for(t = 0; t < ne; ++t)
+        if((eu[t] == u && ev[t] == v) || (eu[t] == v && ev[t] == u)) { dup = 1; break; }
+      if(dup) continue;
+      if(ne >= ecap) { ecap = ecap ? ecap * 2 : 32;
+        my_realloc(_ALLOC_ID_, &eu, ecap * sizeof(int)); my_realloc(_ALLOC_ID_, &ev, ecap * sizeof(int)); }
+      eu[ne] = u; ev[ne] = v; ++ne;
+      ru = fluid_uf_find(par, u); rv = fluid_uf_find(par, v);
+      if(ru != rv) par[ru] = rv;
+    }
+  }
+  ecount = my_malloc(_ALLOC_ID_, (nn > 0 ? nn : 1) * sizeof(int));
+  ncount = my_malloc(_ALLOC_ID_, (nn > 0 ? nn : 1) * sizeof(int));
+  reach  = my_malloc(_ALLOC_ID_, (nn > 0 ? nn : 1) * sizeof(int));
+  for(j = 0; j < nn; ++j) { ecount[j] = 0; ncount[j] = 0; reach[j] = 0; }
+  for(j = 0; j < nn; ++j) {
+    int r = fluid_uf_find(par, j);
+    ncount[r]++;                                          /* nodes per component root */
+    if(coord_was_grabbed(nx[j], ny[j]) || point_on_moving_pin(nx[j], ny[j])) reach[r] = 1;
+  }
+  for(i = 0; i < ne; ++i) ecount[fluid_uf_find(par, eu[i])]++;      /* sub-edges per component root */
+  for(j = 0; j < nn; ++j) {
+    int r = fluid_uf_find(par, j);
+    if(r == j && reach[r] && ecount[r] >= ncount[r]) { result = 1; break; }
+  }
+  my_free(_ALLOC_ID_, &nx);   my_free(_ALLOC_ID_, &ny);
+  my_free(_ALLOC_ID_, &par);  my_free(_ALLOC_ID_, &onlist); my_free(_ALLOC_ID_, &onpos);
+  my_free(_ALLOC_ID_, &ecount); my_free(_ALLOC_ID_, &ncount); my_free(_ALLOC_ID_, &reach);
+  if(eu) my_free(_ALLOC_ID_, &eu);
+  if(ev) my_free(_ALLOC_ID_, &ev);
+  return result;
+}
+
+/* Is wire kk a doomable candidate given the current `doomed` mask? A SEED (this drag grabbed an end,
+ * or it is incident to a MOVED pin) that is a CHORD with a clean interior, OR an exposed DEAD-END
+ * adjacent to an already-doomed wire (same component by construction) whose freed ends are former
+ * junctions -- never a bus, never the sole carrier of an explicit (non-#) label, never a born-free
+ * user dangler tip, never an acyclic (tree / dangling / sole-pin-net) wire. */
+static int fluid_loop_eligible(int kk, unsigned short *doomed, int *predeg1, int *predeg2)
+{
+  int W = xctx->wires, mm, seed, adj = 0, endbad = 0;
+  const char *lab;
+  if(doomed[kk]) return 0;
+  if(xctx->wire[kk].bus != 0.0) return 0;                  /* A3-d: no buses in v1 */
+  lab = get_tok_value(xctx->wire[kk].prop_ptr, "lab", 0);
+  if(lab && strpbrk(lab, "[:")) return 0;                  /* bus label */
+  /* H2 / issue 0040: never doom the SOLE carrier of an EXPLICIT (non-#) label (a #auto label
+   * regenerates, so it is exempt). get_tok_value returns a SHARED buffer, so copy this wire's lab
+   * before the inner get_tok_value calls overwrite it (else `lab` dangles -- valgrind invalid read). */
+  if(lab && lab[0] && lab[0] != '#') {
+    char *labcopy = NULL;
+    int keeps = 0;
+    my_strdup(_ALLOC_ID_, &labcopy, lab);
+    for(mm = 0; mm < W; ++mm) {
+      if(mm == kk || doomed[mm]) continue;
+      if(!strcmp(get_tok_value(xctx->wire[mm].prop_ptr, "lab", 0), labcopy)) { keeps = 1; break; }
+    }
+    my_free(_ALLOC_ID_, &labcopy);
+    if(!keeps) return 0;
+  }
+  seed = (coord_was_grabbed(xctx->wire[kk].x1, xctx->wire[kk].y1) ||
+          coord_was_grabbed(xctx->wire[kk].x2, xctx->wire[kk].y2) ||
+          point_on_moving_pin(xctx->wire[kk].x1, xctx->wire[kk].y1) ||
+          point_on_moving_pin(xctx->wire[kk].x2, xctx->wire[kk].y2)) &&
+         fluid_is_chord(kk, doomed) &&                    /* cycle-membership: only a chord is redundant */
+         fluid_loop_interior_clean(kk, doomed);
+  if(seed) return 1;
+  for(mm = 0; mm < W && !adj; ++mm) {                      /* DEAD-END: shares an endpoint with a doomed wire */
+    if(mm == kk || !doomed[mm]) continue;
+    if((xctx->wire[mm].x1 == xctx->wire[kk].x1 && xctx->wire[mm].y1 == xctx->wire[kk].y1) ||
+       (xctx->wire[mm].x2 == xctx->wire[kk].x1 && xctx->wire[mm].y2 == xctx->wire[kk].y1) ||
+       (xctx->wire[mm].x1 == xctx->wire[kk].x2 && xctx->wire[mm].y1 == xctx->wire[kk].y2) ||
+       (xctx->wire[mm].x2 == xctx->wire[kk].x2 && xctx->wire[mm].y2 == xctx->wire[kk].y2)) adj = 1;
+  }
+  if(!adj) return 0;
+  /* each endpoint must stay connected to another alive wire, OR be a former junction (predeg>=2) that
+   * is not a pin -- so a pre-existing user dangler tip (predeg<=1, no pin) is never pruned (A3-e), and
+   * a pin end that would strand is left to the partition verify to revert. */
+  if(fluid_deg_at(xctx->wire[kk].x1, xctx->wire[kk].y1, doomed, kk) == 0 &&
+     !point_on_any_pin(xctx->wire[kk].x1, xctx->wire[kk].y1) && predeg1[kk] <= 1) endbad = 1;
+  if(fluid_deg_at(xctx->wire[kk].x2, xctx->wire[kk].y2, doomed, kk) == 0 &&
+     !point_on_any_pin(xctx->wire[kk].x2, xctx->wire[kk].y2) && predeg2[kk] <= 1) endbad = 1;
+  return !endbad;
+}
+
+static void fluid_remove_redundant_loops(void)
+{
+  int W = xctx->wires, i, k, np, removed = 0, progress, novel = 0, ncand;
+  int *cand;
+  unsigned short *doomed;
+  int *base, *now;
+  int *predeg1, *predeg2;                                 /* pass-ENTRY touch-degree of each endpoint */
+  struct { double x1, y1, x2, y2; char *prop; } *sav = NULL;
+  int nsav = 0;
+
+  fltrace("FLTRACE loop: ENTER W=%d start_nwire=%d\n", W, fluid_start_nwire);
+  if(W < 3) return;                                       /* fewer than 3 wires => no simple cycle */
+  /* issue 0088 review wf_fce167ed: if the dragged net already carried a loop at START, that is
+   * pre-existing USER copper -- decline the whole collapse (never touch a net the user looped). */
+  if(fluid_start_grabbed_component_has_cycle()) {
+    fltrace("FLTRACE loop: DECLINE (grabbed net had a pre-existing START cycle)\n");
+    return;
+  }
+
+  doomed  = my_malloc(_ALLOC_ID_, W * sizeof(unsigned short)); memset(doomed, 0, W * sizeof(unsigned short));
+  cand    = my_malloc(_ALLOC_ID_, W * sizeof(int));
+  base    = my_malloc(_ALLOC_ID_, (fluid_count_pins() > 0 ? fluid_count_pins() : 1) * sizeof(int));
+  now     = my_malloc(_ALLOC_ID_, (fluid_count_pins() > 0 ? fluid_count_pins() : 1) * sizeof(int));
+  predeg1 = my_malloc(_ALLOC_ID_, W * sizeof(int));
+  predeg2 = my_malloc(_ALLOC_ID_, W * sizeof(int));
+  for(i = 0; i < W; ++i) {
+    predeg1[i] = fluid_deg_at(xctx->wire[i].x1, xctx->wire[i].y1, NULL, -1);
+    predeg2[i] = fluid_deg_at(xctx->wire[i].x2, xctx->wire[i].y2, NULL, -1);
+  }
+  np = fluid_loop_partition(NULL, base);                  /* BASE: nothing doomed */
+
+  /* Greedy: each round COLLECT every currently-eligible candidate, sort by canonical normalized span
+   * (H1 determinism -- independent of .sch record order), then TRY EACH ONCE: tentatively doom it
+   * (geometry UNCHANGED -- mask only) and keep the doom iff the pin-partition is byte-preserved. Trying
+   * each once (not re-picking the global min) is essential: a bridge like the riser reverts, and the
+   * loop must still go on to try the redundant chords. Dooming a chord exposes its former junctions as
+   * prunable dead-ends, so re-collect and repeat to a fixpoint. */
+  progress = 1;
+  while(progress) {
+    int c;
+    progress = 0;
+    ncand = 0;
+    for(k = 0; k < W; ++k) if(fluid_loop_eligible(k, doomed, predeg1, predeg2)) cand[ncand++] = k;
+    for(c = 0; c < ncand; ++c) {                          /* selection-sort cand[] by normalized span */
+      int best = c, j;
+      double bx1, by1, bx2, by2;
+      fluid_wire_norm_pts(xctx->wire[cand[c]].x1, xctx->wire[cand[c]].y1,
+                          xctx->wire[cand[c]].x2, xctx->wire[cand[c]].y2, &bx1, &by1, &bx2, &by2);
+      for(j = c + 1; j < ncand; ++j) {
+        double ax, ay, cx, cy;
+        fluid_wire_norm_pts(xctx->wire[cand[j]].x1, xctx->wire[cand[j]].y1,
+                            xctx->wire[cand[j]].x2, xctx->wire[cand[j]].y2, &ax, &ay, &cx, &cy);
+        if(ax < bx1 || (ax == bx1 && (ay < by1 || (ay == by1 && (cx < bx2 || (cx == bx2 && cy < by2)))))) {
+          best = j; bx1 = ax; by1 = ay; bx2 = cx; by2 = cy;
+        }
+      }
+      if(best != c) { int t = cand[c]; cand[c] = cand[best]; cand[best] = t; }
+    }
+    for(c = 0; c < ncand; ++c) {
+      int e = cand[c];
+      if(doomed[e]) continue;                              /* (stable: eligibility only shrinks) */
+      doomed[e] = 1;                                       /* tentative -- geometry UNCHANGED */
+      fluid_loop_partition(doomed, now);
+      if(fluid_part_equal(now, base, np)) progress = 1;    /* removal is invisible to every pin: keep */
+      else doomed[e] = 0;                                  /* it strands/splits an anchor: revert */
+    }
+  }
+
+  for(i = 0; i < W; ++i) if(doomed[i]) ++removed;
+  if(!removed) goto done;                                  /* strict no-op on a normal (acyclic) drag */
+
+  for(i = 0; i < W; ++i) if(doomed[i] && fluid_wire_is_novel(i)) { novel = 1; break; }
+  if(!novel) goto done;                                    /* H3: an untouched user ring => decline */
+
+  /* commit; snapshot doomed geometry for the H4 name-aware rollback */
+  sav = my_malloc(_ALLOC_ID_, removed * sizeof(*sav));
+  for(i = 0; i < W; ++i) if(doomed[i]) {
+    sav[nsav].x1 = xctx->wire[i].x1; sav[nsav].y1 = xctx->wire[i].y1;
+    sav[nsav].x2 = xctx->wire[i].x2; sav[nsav].y2 = xctx->wire[i].y2;
+    sav[nsav].prop = NULL;
+    my_strdup(_ALLOC_ID_, &sav[nsav].prop, xctx->wire[i].prop_ptr);
+    ++nsav;
+  }
+  wire_delete_compact(wire_doomed_flag, doomed);
+  xctx->prep_hash_wires = xctx->prep_net_structs = xctx->prep_hi_structs = 0;
+  prepare_netlist_structs(0);
+  /* H4 backstop (defense in depth; unreachable given the per-doom geometric verify): a same-named
+   * island split or device merge the geometric model cannot see. Fail CLOSED if the snapshot is not
+   * comparable. On a trip, re-create the removed wires and leave the loop (never-worse). */
+  if(!(fluid_snap_npins > 0 && fluid_count_pins() == fluid_snap_npins) ||
+     fluid_partition_changed() || fluid_check_device_merge()) {
+    for(i = 0; i < nsav; ++i)
+      storeobject(-1, sav[i].x1, sav[i].y1, sav[i].x2, sav[i].y2, WIRE, 0, 0, sav[i].prop);
+    xctx->prep_hash_wires = xctx->prep_net_structs = xctx->prep_hi_structs = 0;
+    xctx->need_reb_sel_arr = 1;                            /* wire array mutated (compact + re-store) */
+    prepare_netlist_structs(0);
+    fltrace("FLTRACE loop: H4 backstop tripped -- restored %d wire(s), loop kept\n", nsav);
+  } else {
+    xctx->need_reb_sel_arr = 1;
+    set_modify(1);
+    fltrace("FLTRACE loop: collapsed redundant same-net loop, removed %d wire(s)\n", removed);
+  }
+  for(i = 0; i < nsav; ++i) my_free(_ALLOC_ID_, &sav[i].prop);
+  my_free(_ALLOC_ID_, &sav);
+
+done:
+  my_free(_ALLOC_ID_, &doomed);
+  my_free(_ALLOC_ID_, &cand);
+  my_free(_ALLOC_ID_, &base);
+  my_free(_ALLOC_ID_, &now);
+  my_free(_ALLOC_ID_, &predeg1);
+  my_free(_ALLOC_ID_, &predeg2);
 }
 
 /* Phase III helper: is foreign pin (px,py) on the axis-aligned segment (x1,y1)-(x2,y2)? cadsnap/2
@@ -4471,6 +4931,19 @@ void move_objects(int what, int merge, double dx, double dy)
    if(tclgetboolvar("autotrim_wires")) maintain_wire_segments();
    else if(xctx->stretch_select) trim_wires();
    if(xctx->stretch_select) remove_move_orphan_wires();
+   /* issue 0088: collapse a redundant same-net cycle a fluid stretch closed (before_3.sch R18
+    * (-20,-60) -> the {w4,w5,w6,w9} #net2 rectangle) to its minimal connectivity-preserving tree
+    * (here just the riser). Delete-only, per-doom pin-partition-verified, scoped to THIS drag's
+    * copper. Runs after trim/orphan so it sees deduped geometry, before insert_exit_stubs so P3 is
+    * re-applied to the collapsed riser. END-only (!commit_now) -- deleting follow copper mid-drag
+    * could destabilise the next RUBBER step's follow set; the user's complaint is the SAVED result,
+    * which END owns. Gate mirrors the fluid block + leg_ortho + final-leg + startsel==0 (selection
+    * wins). Default fluid_editing off => never runs => byte-identical. See
+    * doc/claude/issues/0088-fluid-reroute-redundant-samenet-loop.md. */
+   if(!commit_now && tclgetboolvar("fluid_editing") && xctx->stretch_select &&
+      xctx->move_rot == 0 && xctx->move_flip == 0 &&
+      leg_ortho && leg == nlegs - 1 && xctx->fluid_startsel_wires == 0)
+     fluid_remove_redundant_loops();
    /* Exit-stub preservation (wire-editing Phase 6, Issue E -> R13). After the cleanup above,
     * ensure each moved DEVICE pin's route leaves the pin along the pin's outward escape normal
     * (get_pin_escape_normal, geometry nearest-edge -- nice_drag_rerouting Phase 3 §6/§8) with a
