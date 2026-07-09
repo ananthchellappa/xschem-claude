@@ -178,4 +178,21 @@ check "V P1: rung + rail carry ONE net (staircase intact)" \
   [expr {[net_of_wire 60 -490 60 -360] ne "" && [net_of_wire 60 -490 60 -360] eq [net_of_wire 140 -550 140 -490]}]
 check "V P2: no short"                                   [p2_no_short]
 
+# ================= Case C: a COLLINEAR CONTINUATION above the riser's far corner C must NOT be bent ==
+# (adversarial review, connectivity+misfire lenses, HIGH). If V continues straight PAST its far corner C
+# as a second collinear wire, the shove's arm-drag would bend that continuation into a DIAGONAL -- which
+# the touch-based partition verify cannot catch. The clean-V guard (keyed on V's OWN axis, not S's) must
+# detect it and DECLINE the shove, falling back to a plain stub trim: riser stays put, no diagonal.
+build_before6
+xschem wire -470 140 -470 180          ;# collinear continuation ABOVE C=(-470,140), pin-less tip
+sel_wire -470 50 -360 50
+we_move_stretch -20 10
+check "C NO diagonal wire emitted (continuation not bent)" [all_manhattan]
+check "C shove DECLINED: riser stays at x=-470 (-470,60)-(-470,140)" [wire_exists -470 60 -470 140]
+check "C collinear continuation intact & vertical (-470,140)-(-470,180)" [wire_exists -470 140 -470 180]
+check "C stub trimmed: no dangling tip at -490"           [expr {![has_endpoint -490 60]}]
+check "C rung (-470,60)-(-360,60)"                        [wire_exists -470 60 -360 60]
+check "C P1: #net1 staircase intact to top rail (-550,140)-(-470,140)" [r18_reaches -550 140 -470 140]
+check "C P2: no short"                                    [p2_no_short]
+
 we_result

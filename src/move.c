@@ -3165,7 +3165,7 @@ static void fluid_collapse_axis_overshoot_stub(void)
       /* J must be a clean solder-dot: exactly one COLLINEAR same-axis continuation H (endpoint at J, its
        * far end on the OPPOSITE side of J from T) + exactly one PERPENDICULAR riser V, nothing else. */
       for(m = 0; m < W && !bad; ++m) {
-        double mx1, my1, mx2, my2; int at1, at2, mvert;
+        double mx1, my1, mx2, my2; int at1, at2, mvert, mhoriz;
         if(m == ks) continue;
         mx1 = xctx->wire[m].x1; my1 = xctx->wire[m].y1;
         mx2 = xctx->wire[m].x2; my2 = xctx->wire[m].y2;
@@ -3175,7 +3175,9 @@ static void fluid_collapse_axis_overshoot_stub(void)
           if(touch(mx1, my1, mx2, my2, Jx, Jy)) bad = 1;    /* copper PASSES THROUGH J: not a clean dot */
           continue;
         }
-        mvert = (mx1 == mx2 && my1 != my2);
+        mvert  = (mx1 == mx2 && my1 != my2);
+        mhoriz = (my1 == my2 && mx1 != mx2);
+        if(!mvert && !mhoriz) { bad = 1; continue; }        /* DIAGONAL at J: not a clean dot -> decline */
         if(mvert == svert) {                                /* collinear (same-axis) continuation H? */
           double mfar = svert ? (at1 ? my2 : my1) : (at1 ? mx2 : mx1);
           double jca  = svert ? Jy : Jx, tca = svert ? Ty : Tx;
