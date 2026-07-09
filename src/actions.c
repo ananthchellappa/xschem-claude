@@ -3703,6 +3703,8 @@ void clear_schematic(int cancel, int symbol)
         xctx->stretch_select = 0;
         xctx->stretch_grabbed_n = 0;
         my_free(_ALLOC_ID_, &xctx->stretch_grabbed_xy);
+        xctx->fluid_startsel_nid = 0;                   /* issue 0091: drop the user-selected id set */
+        my_free(_ALLOC_ID_, &xctx->fluid_startsel_id);
         remove_symbols();
         clear_drawing();
         /* next free untitled[-n] name, avoiding both on-disk files and names already open

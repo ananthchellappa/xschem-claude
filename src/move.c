@@ -1126,6 +1126,10 @@ static int fluid_ml_future_covers(int ml, int sel1);
 /* issue 0086 companion: future-aware corner-slide decline (defined next to fluid_ml_future_covers) */
 static int fluid_slide_future_hazard(int n, double fx, double fy, double mx, double my);
 static void fltrace(const char *fmt, ...);
+/* issue 0091 (per-component "selection wins"): mark every wire touch-connected to a user-selected
+ * wire so the END redundant-route cleanup leaves the user's own net(s) untouched (defined after
+ * fluid_wire_reach_set, the flood it uses). */
+static void fluid_mark_user_protected(unsigned char *prot);
 
 /* xctx->{rx1, ry1} and xctx->{rx2, ry2} are the two line points after the move.
  * they are not guaranteed to be ordered (since only one of the two points may have changed)
@@ -2607,6 +2611,7 @@ static void fluid_remove_redundant_loops(void)
   unsigned short *doomed;
   int *base, *now;
   int *predeg1, *predeg2;                                 /* pass-ENTRY touch-degree of each endpoint */
+  unsigned char *prot;                                    /* issue 0091: user-selected components to leave */
   struct { double x1, y1, x2, y2; char *prop; } *sav = NULL;
   int nsav = 0;
 
@@ -2625,6 +2630,8 @@ static void fluid_remove_redundant_loops(void)
   now     = my_malloc(_ALLOC_ID_, (fluid_count_pins() > 0 ? fluid_count_pins() : 1) * sizeof(int));
   predeg1 = my_malloc(_ALLOC_ID_, W * sizeof(int));
   predeg2 = my_malloc(_ALLOC_ID_, W * sizeof(int));
+  prot    = my_malloc(_ALLOC_ID_, W * sizeof(unsigned char));
+  fluid_mark_user_protected(prot);                       /* issue 0091: never doom the user's own net */
   for(i = 0; i < W; ++i) {
     predeg1[i] = fluid_deg_at(xctx->wire[i].x1, xctx->wire[i].y1, NULL, -1);
     predeg2[i] = fluid_deg_at(xctx->wire[i].x2, xctx->wire[i].y2, NULL, -1);
@@ -2642,7 +2649,7 @@ static void fluid_remove_redundant_loops(void)
     int c;
     progress = 0;
     ncand = 0;
-    for(k = 0; k < W; ++k) if(fluid_loop_eligible(k, doomed, predeg1, predeg2)) cand[ncand++] = k;
+    for(k = 0; k < W; ++k) if(!prot[k] && fluid_loop_eligible(k, doomed, predeg1, predeg2)) cand[ncand++] = k;
     for(c = 0; c < ncand; ++c) {                          /* selection-sort cand[] by normalized span */
       int best = c, j;
       double bx1, by1, bx2, by2;
@@ -2712,6 +2719,7 @@ done:
   my_free(_ALLOC_ID_, &now);
   my_free(_ALLOC_ID_, &predeg1);
   my_free(_ALLOC_ID_, &predeg2);
+  my_free(_ALLOC_ID_, &prot);
 }
 
 /* ==== issues 0089 + 0090: straighten a redundant same-net jog a fluid stretch left =================
@@ -2873,10 +2881,50 @@ static int fluid_slide_merges_foreign(int kd, int kA, int kC, unsigned char *rea
   return 0;
 }
 
+/* issue 0091: does wire k carry the session-stable id of a wire the USER selected at drag START?
+ * Ids are preserved across an in-place move (place_moved_wire's SELECTED else-branch updates coords
+ * on the same struct) and are never reused, so an id match is a reliable "this is the user's wire"
+ * even after the follow reroute renumbered every #net. A wire merged away by trim loses its id from
+ * the live set (a benign miss -- the merged survivor is legitimately cleaner copper). */
+static int fluid_wire_is_user_selected(int k)
+{
+  int j;
+  unsigned int id;
+  if(k < 0 || k >= xctx->wires) return 0;
+  id = xctx->wire[k].id;
+  if(id == 0 || xctx->fluid_startsel_nid <= 0 || !xctx->fluid_startsel_id) return 0;
+  for(j = 0; j < xctx->fluid_startsel_nid; ++j) if(xctx->fluid_startsel_id[j] == id) return 1;
+  return 0;
+}
+
+/* issue 0091: flood-fill prot[] over the touch-component of every user-selected wire. The END
+ * redundant-route cleanup (0088-0090) declines any reshape/delete of a wire with prot[]=1, so it
+ * cleans tool-grabbed follow copper on OTHER nets (the reported R18.M #net1 body-cross) while leaving
+ * the user's own selected net intact -- the per-component refinement of the old wholesale
+ * fluid_startsel_wires==0 gate. Distinct nets never share a touch-component (that would be a short),
+ * so protecting the user's net never blocks a foreign-net cleanup. prot[] must be xctx->wires long. */
+static void fluid_mark_user_protected(unsigned char *prot)
+{
+  int k, W = xctx->wires;
+  unsigned char *reach;
+  memset(prot, 0, (W > 0 ? W : 1) * sizeof(unsigned char));
+  if(xctx->fluid_startsel_nid <= 0 || !xctx->fluid_startsel_id) return;
+  reach = my_malloc(_ALLOC_ID_, (W > 0 ? W : 1) * sizeof(unsigned char));
+  for(k = 0; k < W; ++k) {
+    int j;
+    if(prot[k]) continue;                              /* already covered by an earlier flood */
+    if(!fluid_wire_is_user_selected(k)) continue;
+    fluid_wire_reach_set(k, reach);
+    for(j = 0; j < W; ++j) if(reach[j]) prot[j] = 1;
+  }
+  my_free(_ALLOC_ID_, &reach);
+}
+
 static void fluid_straighten_reversals(void)
 {
   int np, progress, guard = 0, changed_any = 0, npins;
   int *base, *now;
+  unsigned char *prot;
 
   fltrace("FLTRACE straighten: ENTER W=%d snap_npins=%d\n", xctx->wires, fluid_snap_npins);
   if(xctx->wires < 3) return;
@@ -2884,12 +2932,20 @@ static void fluid_straighten_reversals(void)
   npins = fluid_count_pins() > 0 ? fluid_count_pins() : 1;
   base = my_malloc(_ALLOC_ID_, npins * sizeof(int));
   now  = my_malloc(_ALLOC_ID_, npins * sizeof(int));
+  /* issue 0091: prot[] guards the user's own selected net(s). REFILLED each iteration (indices
+   * renumber after a trim) and RESIZED to the current wire count first -- trim_wires' break phase
+   * (check.c wire_store_split) can SPLIT a wire and GROW xctx->wires when a kept slide lands an
+   * endpoint mid-span on same-net copper, so the count is NOT monotone (adversarial review
+   * wf_bbb1dcb1: a fixed entry-sized buffer overran here). Start NULL; the realloc below sizes it. */
+  prot = NULL;
   np = fluid_loop_partition(NULL, base);                     /* invariant target */
 
   progress = 1;
   while(progress && guard++ < 8 * xctx->wires + 8) {
     int kd, W = xctx->wires;
     progress = 0;
+    my_realloc(_ALLOC_ID_, &prot, (xctx->wires > 0 ? xctx->wires : 1) * sizeof(unsigned char));
+    fluid_mark_user_protected(prot);                          /* issue 0091: recompute over current geometry */
     /* --- pass 1: collapse a redundant jog by sliding it to the nearer neighbour. Two shapes:
      *   same-side  (sa==sb): a REVERSAL (U-turn) -- the route bulges out and doubles back (issue 0089);
      *   opposite-side (sa!=sb): a monotone STAIRCASE STEP -- the route steps out and keeps going the same
@@ -2909,6 +2965,7 @@ static void fluid_straighten_reversals(void)
       lab = get_tok_value(d->prop_ptr, "lab", 0);
       if(lab && strpbrk(lab, "[:")) continue;                /* bus label: never reshape */
       if(!fluid_wire_is_novel_span(kd)) continue;            /* only a jog THIS drag created (span-scoped) */
+      if(prot[kd]) continue;                                 /* issue 0091: user's own net component -- leave it */
       if(point_on_any_pin(dx1, dy1) || point_on_any_pin(dx2, dy2)) continue;
       if(fluid_deg_at(dx1, dy1, NULL, kd) != 1) continue;    /* each end a clean corner (d + one wire) */
       if(fluid_deg_at(dx2, dy2, NULL, kd) != 1) continue;
@@ -3016,6 +3073,7 @@ static void fluid_straighten_reversals(void)
       for(e = 0; e < 2 && !progress; ++e) {
         double ex = e ? xctx->wire[kd].x2 : xctx->wire[kd].x1;
         double ey = e ? xctx->wire[kd].y2 : xctx->wire[kd].y1;
+        if(prot[kd]) continue;                               /* issue 0091: user's own net component -- leave it */
         if(point_on_any_pin(ex, ey)) continue;               /* a pin end is never dangling */
         if(fluid_deg_at(ex, ey, NULL, kd) != 0) continue;    /* still connected: not a dangling end */
         if(fluid_start_deg_at(ex, ey) < 2) continue;         /* a pre-existing user dangler tip: leave */
@@ -3037,6 +3095,7 @@ static void fluid_straighten_reversals(void)
   }
   my_free(_ALLOC_ID_, &base);
   my_free(_ALLOC_ID_, &now);
+  my_free(_ALLOC_ID_, &prot);
 }
 
 /* Phase III helper: is foreign pin (px,py) on the axis-aligned segment (x1,y1)-(x2,y2)? cadsnap/2
@@ -4605,8 +4664,10 @@ void fluid_reroute_discard(void)
 static void move_regrab_follow_set(void)
 {
   int saved = xctx->fluid_startsel_wires;
+  int saved_nid = xctx->fluid_startsel_nid;           /* issue 0091: preserve the user-selected id set */
   select_attached_nets();
   xctx->fluid_startsel_wires = saved;
+  xctx->fluid_startsel_nid = saved_nid;               /* regrab (all sel==0) rebuilt an empty set */
   xctx->movelastsel = xctx->lastsel;
 }
 
@@ -4724,6 +4785,8 @@ void move_objects(int what, int merge, double dx, double dy)
    xctx->stretch_select = 0;
    xctx->stretch_grabbed_n = 0;
    my_free(_ALLOC_ID_, &xctx->stretch_grabbed_xy);
+   xctx->fluid_startsel_nid = 0;                       /* issue 0091: drop the user-selected id set */
+   my_free(_ALLOC_ID_, &xctx->fluid_startsel_id);
 
    xctx->move_rot=xctx->move_flip=0;
    xctx->deltax=xctx->deltay=0.;
@@ -4814,6 +4877,8 @@ void move_objects(int what, int merge, double dx, double dy)
       xctx->stretch_select = 0;
       xctx->stretch_grabbed_n = 0;
       my_free(_ALLOC_ID_, &xctx->stretch_grabbed_xy);
+      xctx->fluid_startsel_nid = 0;                    /* issue 0091: drop the user-selected id set */
+      my_free(_ALLOC_ID_, &xctx->fluid_startsel_id);
       /* a dirty fluid drag committed live steps that the roll-back above reverted to pristine --
        * repaint so the stale committed route is cleared from the canvas. */
       if(end_was_dirty) draw();
@@ -5305,7 +5370,17 @@ void move_objects(int what, int merge, double dx, double dy)
     * doc/claude/issues/0088-fluid-reroute-redundant-samenet-loop.md. */
    if(!commit_now && tclgetboolvar("fluid_editing") && xctx->stretch_select &&
       xctx->move_rot == 0 && xctx->move_flip == 0 &&
-      leg_ortho && leg == nlegs - 1 && xctx->fluid_startsel_wires == 0) {
+      leg_ortho && leg == nlegs - 1) {
+     /* issue 0091: the redundant-route cleanup is NO LONGER wholesale-gated on
+      * fluid_startsel_wires==0. When the user drags a selection that includes an instance PLUS some
+      * wire(s), a follow-wire on a DIFFERENT net (rubber-banded, never user-selected) can be left with
+      * a redundant route that crosses the moved instance's own body (before_5.sch -> after_11.sch:
+      * R18.M's #net1 riser). The wholesale gate suppressed the fix for that net just because the user
+      * selected #net2. The passes now run whenever a fluid stretch could have made redundant copper and
+      * decline PER-COMPONENT: fluid_mark_user_protected floods every user-selected wire's touch-
+      * component, and both passes leave a protected component untouched ("selection wins" per net,
+      * not wholesale). Default fluid_editing off => never runs => byte-identical. See
+      * doc/claude/issues/0091-fluid-reroute-samenet-crosses-moved-body.md. */
      fluid_remove_redundant_loops();
      /* issues 0089 + 0090: the loop-remover only DELETES a redundant same-net CYCLE. A far / multi-
       * gesture move leaves a same-net PATH (no cycle) with a redundant jog -- a same-side U-turn
@@ -5464,6 +5539,8 @@ void move_objects(int what, int merge, double dx, double dy)
      xctx->stretch_select = 0;
      xctx->stretch_grabbed_n = 0;
      my_free(_ALLOC_ID_, &xctx->stretch_grabbed_xy);
+     xctx->fluid_startsel_nid = 0;                     /* issue 0091: drop the user-selected id set */
+     my_free(_ALLOC_ID_, &xctx->fluid_startsel_id);
 
      if(xctx->hilight_nets) {
        propagate_hilights(1, 1, XINSERT_NOREPLACE);

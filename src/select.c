@@ -1522,6 +1522,20 @@ void select_attached_nets(void)
    * this count is 0, every wire selected at END is a tool-owned follow-wire and is deselected. */
   { int wi; xctx->fluid_startsel_wires = 0;
     for(wi = 0; wi < xctx->wires; ++wi) if(xctx->wire[wi].sel) ++xctx->fluid_startsel_wires; }
+  /* issue 0091: snapshot the ids of exactly those user-selected wires (here, before the grab loop
+   * marks any follow-wire) so the END redundant-route cleanup can decline PER-COMPONENT instead of
+   * being wholesale-gated off whenever the user selected any wire. Rebuilt every call; freed with the
+   * move. A regrab pass (move_regrab_follow_set, all sel==0) rebuilds an empty set -- its caller
+   * saves/restores the count and this set, so the real snapshot survives. */
+  { int wi, kk = 0; xctx->fluid_startsel_nid = 0;
+    if(tclgetboolvar("fluid_editing") && xctx->fluid_startsel_wires > 0) {
+      my_realloc(_ALLOC_ID_, &xctx->fluid_startsel_id,
+                 xctx->fluid_startsel_wires * sizeof(unsigned int));
+      for(wi = 0; wi < xctx->wires; ++wi) if(xctx->wire[wi].sel)
+        xctx->fluid_startsel_id[kk++] = xctx->wire[wi].id;
+      xctx->fluid_startsel_nid = kk;
+    }
+  }
   tol = tclgetdoublevar("cadsnap") / 2.0;
   if(tol < 1e-6) tol = 1e-6;
 

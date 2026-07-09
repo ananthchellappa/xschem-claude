@@ -1245,6 +1245,14 @@ typedef struct {
    * END: if 0, every selected wire at END is a tool-owned follow-wire and is deselected (transient,
    * not persistent user selection). Only meaningful under fluid_editing. */
   int fluid_startsel_wires;
+  /* issue 0091: session-stable ids (xWire.id) of exactly the wires the USER had selected at drag
+   * START, captured in select_attached_nets() alongside fluid_startsel_wires BEFORE follow-grab.
+   * The END redundant-route cleanup (0088-0090) uses these to decline PER-COMPONENT: it floods each
+   * user-selected wire's touch-component and never reshapes/deletes copper in a protected component,
+   * so it cleans tool-grabbed follow copper on OTHER nets while leaving the user's own selected net
+   * intact. Allocated in select_attached_nets, freed with the move (mirrors stretch_grabbed_xy). */
+  unsigned int *fluid_startsel_id;
+  int fluid_startsel_nid;
   /* incremental_wire_reroute.md Phase II (per-snap-step reroute, restore-and-reapply). A fluid
    * stretch drag snapshots the whole pristine (post-kiss, pre-delta) schematic here at move START;
    * each qualifying move_objects(RUBBER) step restores it and re-applies the current TOTAL drag
