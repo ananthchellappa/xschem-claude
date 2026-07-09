@@ -2093,28 +2093,37 @@ static int gfx_total(int *per_layer)
   return n;
 }
 
-/* Issue 0007: preserve the selection across an undo/redo restore.
+/* Issue 0007 + 0095: preserve the selection across an undo/redo restore.
  *
  * Both undo backends clear the selection during a restore (unselect_all), and
  * selection is NOT part of the undo snapshot, so undoing an edit used to silently
- * deselect the object. Here we snapshot the selected set by ARRAY POSITION
- * (type, layer, index) before the restore and re-apply it after — but only if the
- * object population is unchanged (a non-structural edit was undone): for a
- * property/geometry edit the restored objects keep their order in BOTH backends,
- * so the indices still point at the same objects.
+ * deselect the object. We snapshot the selected set BEFORE the restore and re-apply
+ * it AFTER, keyed on each object's session-stable id (xWire.id / xInstance.id / the
+ * gfx & text .id, stamped at birth in store.c).
  *
- * Array position (not stable id) is used deliberately: the default 'disk' backend
- * restores by reloading the slot file, which re-mints stable ids, so an id
- * snapshot would not survive it (memory keeps ids, disk does not). Structural
- * undos (create/delete/reorder change the per-type counts) skip re-selection —
- * the selection drops, exactly the prior behaviour. Backend-agnostic: wraps the
- * xctx->pop_undo function pointer, so it covers both backends from one place.
- * Plan: doc/claude/code_analysis/undo_keep_selection_decision.md. */
+ * Why id, not array position (issue 0095 corrects the original 0007 approach): a
+ * topology-changing move (fluid rip-up/reroute, kissing stubs, trim merges) adds or
+ * deletes WIRES, so the pre/post per-type counts differ. The original code re-selected
+ * by (type,layer,index) only when ALL seven per-type counts were unchanged — a single
+ * global fingerprint — so any wire-count change threw away the WHOLE selection,
+ * including the untouched moved instance. Ids sidestep this: they survive pop_undo in
+ * BOTH backends (memory keeps them verbatim; the disk backend re-mints on reload but
+ * re-stamps the pre-move ids via the issue-0043 side channel), and a moved instance
+ * keeps its id, so it is re-found no matter how the wire arrays changed. An id that no
+ * longer resolves (deleted by the undone op, or re-stored with a fresh id) is skipped.
+ *
+ * The count fingerprint is kept ONLY as a fallback: if nothing resolves by id but the
+ * population is unchanged (the disk restore_undo_ids side channel bailed on a per-type
+ * shape mismatch and left fresh ids — save.c:4035), fall back to the pre-0095
+ * array-position re-select. Backend-agnostic: wraps the xctx->pop_undo function pointer.
+ * Plan: doc/claude/code_analysis/undo_keep_selection_decision.md,
+ * doc/claude/issues/0095-undo-after-move-drops-selection.md. */
 void pop_undo_keep_selection(int redo, int set_modify)
 {
   int nsel, i;
-  int *sty = NULL, *scl = NULL, *sn = NULL;   /* snapshot: type, layer(col), index */
-  int b_inst, b_wire, b_text, b_rect, b_line, b_poly, b_arc; /* population, before */
+  int *sty = NULL, *scl = NULL, *sn = NULL;   /* snapshot: type, layer(col), index (fallback) */
+  unsigned int *sid = NULL;                   /* snapshot: session-stable id (primary key) */
+  int b_inst, b_wire, b_text, b_rect, b_line, b_poly, b_arc; /* population, before (fallback guard) */
 
   rebuild_selected_array();
   nsel = xctx->lastsel;
@@ -2122,13 +2131,23 @@ void pop_undo_keep_selection(int redo, int set_modify)
     sty = my_malloc(_ALLOC_ID_, nsel * sizeof(int));
     scl = my_malloc(_ALLOC_ID_, nsel * sizeof(int));
     sn  = my_malloc(_ALLOC_ID_, nsel * sizeof(int));
+    sid = my_malloc(_ALLOC_ID_, nsel * sizeof(unsigned int));
     for(i = 0; i < nsel; ++i) {
-      sty[i] = xctx->sel_array[i].type;
-      scl[i] = xctx->sel_array[i].col;
-      sn[i]  = xctx->sel_array[i].n;
+      int t = xctx->sel_array[i].type, c = xctx->sel_array[i].col, n = xctx->sel_array[i].n;
+      sty[i] = t; scl[i] = c; sn[i] = n;
+      switch(t) {
+        case ELEMENT: sid[i] = xctx->inst[n].id;    break;
+        case WIRE:    sid[i] = xctx->wire[n].id;    break;
+        case xTEXT:   sid[i] = xctx->text[n].id;    break;
+        case xRECT:   sid[i] = xctx->rect[c][n].id; break;
+        case LINE:    sid[i] = xctx->line[c][n].id; break;
+        case POLYGON: sid[i] = xctx->poly[c][n].id; break;
+        case ARC:     sid[i] = xctx->arc[c][n].id;  break;
+        default:      sid[i] = 0;                    break;
+      }
     }
   }
-  /* population fingerprint before the restore (per-type totals) */
+  /* population fingerprint before the restore (per-type totals) -- fallback guard only */
   b_inst = xctx->instances; b_wire = xctx->wires; b_text = xctx->texts;
   b_rect = gfx_total(xctx->rects); b_line = gfx_total(xctx->lines);
   b_poly = gfx_total(xctx->polygons); b_arc = gfx_total(xctx->arcs);
@@ -2136,24 +2155,56 @@ void pop_undo_keep_selection(int redo, int set_modify)
   /* the actual restore (clears the selection + reloads the object model) */
   xctx->pop_undo(redo, set_modify);
 
-  /* re-apply the selection only if the population is unchanged (non-structural
-   * undo). select_*(..., 3, 1): fast=3 = no status line + no draw (a redraw
-   * follows); override_lock=1 = faithfully reselect (these were selected). */
-  if(nsel > 0 &&
-     b_inst == xctx->instances && b_wire == xctx->wires && b_text == xctx->texts &&
-     b_rect == gfx_total(xctx->rects) && b_line == gfx_total(xctx->lines) &&
-     b_poly == gfx_total(xctx->polygons) && b_arc == gfx_total(xctx->arcs)) {
+  /* Normalize the post-restore selection to empty. The MEMORY backend restores the slot's
+   * stale .sel flags (the undo slot was serialized mid-gesture, when the follow-wires were
+   * still grabbed as SELECTED1/2), so without this an undone move re-adds tool-owned wires
+   * to the selection. This must run UNCONDITIONALLY (not under nsel>0): if nothing was
+   * selected before the undo (nsel==0) the memory backend would otherwise leak those stale
+   * bits as a ghost selection the user never made (review wf_579a8cff). mem_restore_slot
+   * leaves lastsel==0 while the stale per-object .sel bits are set, so unselect_all's
+   * `(SELECTION|lastsel)` guard would skip clearing; force a rebuild first to sync lastsel
+   * with the restored flags, then clear. The disk backend restores everything unselected,
+   * so this is a cheap no-op there. dr=0: the undo/redo command redraws. */
+  xctx->need_reb_sel_arr = 1;
+  rebuild_selected_array();
+  unselect_all(0);
+
+  if(nsel > 0) {
+    int reselected = 0, idx, layer;
+    /* PRIMARY: re-select by session-stable id (survives both backends, robust to a
+     * topology-changing move). select_*(..., 3, 1): fast=3 = no status line + no draw;
+     * override_lock=1 = faithfully reselect (these were selected). */
     for(i = 0; i < nsel; ++i) {
-      int c = scl[i], n = sn[i];
       switch(sty[i]) {
-        case ELEMENT: if(n < xctx->instances)                       select_element(n, SELECTED, 3, 1); break;
-        case WIRE:    if(n < xctx->wires)                           select_wire(n, SELECTED, 3, 1);    break;
-        case xTEXT:   if(n < xctx->texts)                           select_text(n, SELECTED, 3, 1);    break;
-        case xRECT:   if(c < cadlayers && n < xctx->rects[c])       select_box(c, n, SELECTED, 3, 1);  break;
-        case LINE:    if(c < cadlayers && n < xctx->lines[c])       select_line(c, n, SELECTED, 3, 1); break;
-        case POLYGON: if(c < cadlayers && n < xctx->polygons[c])    select_polygon(c, n, SELECTED, 3, 1); break;
-        case ARC:     if(c < cadlayers && n < xctx->arcs[c])        select_arc(c, n, SELECTED, 3, 1);  break;
+        case ELEMENT: idx = inst_index_from_id(sid[i]); if(idx >= 0) { select_element(idx, SELECTED, 3, 1); reselected++; } break;
+        case WIRE:    idx = wire_index_from_id(sid[i]); if(idx >= 0) { select_wire(idx, SELECTED, 3, 1);    reselected++; } break;
+        case xTEXT:   idx = text_index_from_id(sid[i]); if(idx >= 0) { select_text(idx, SELECTED, 3, 1);    reselected++; } break;
+        case xRECT:   idx = gfx_index_from_id(xRECT, sid[i], &layer);   if(idx >= 0) { select_box(layer, idx, SELECTED, 3, 1);     reselected++; } break;
+        case LINE:    idx = gfx_index_from_id(LINE, sid[i], &layer);    if(idx >= 0) { select_line(layer, idx, SELECTED, 3, 1);    reselected++; } break;
+        case POLYGON: idx = gfx_index_from_id(POLYGON, sid[i], &layer); if(idx >= 0) { select_polygon(layer, idx, SELECTED, 3, 1); reselected++; } break;
+        case ARC:     idx = gfx_index_from_id(ARC, sid[i], &layer);     if(idx >= 0) { select_arc(layer, idx, SELECTED, 3, 1);     reselected++; } break;
         default: break;
+      }
+    }
+    /* FALLBACK (rare): nothing resolved by id AND the population is unchanged -- the disk
+     * restore_undo_ids side channel bailed on a shape mismatch and left fresh ids. Re-select
+     * by array position under the strict count guard (the pre-0095 behaviour). */
+    if(reselected == 0 &&
+       b_inst == xctx->instances && b_wire == xctx->wires && b_text == xctx->texts &&
+       b_rect == gfx_total(xctx->rects) && b_line == gfx_total(xctx->lines) &&
+       b_poly == gfx_total(xctx->polygons) && b_arc == gfx_total(xctx->arcs)) {
+      for(i = 0; i < nsel; ++i) {
+        int c = scl[i], n = sn[i];
+        switch(sty[i]) {
+          case ELEMENT: if(n < xctx->instances)                       select_element(n, SELECTED, 3, 1); break;
+          case WIRE:    if(n < xctx->wires)                           select_wire(n, SELECTED, 3, 1);    break;
+          case xTEXT:   if(n < xctx->texts)                           select_text(n, SELECTED, 3, 1);    break;
+          case xRECT:   if(c < cadlayers && n < xctx->rects[c])       select_box(c, n, SELECTED, 3, 1);  break;
+          case LINE:    if(c < cadlayers && n < xctx->lines[c])       select_line(c, n, SELECTED, 3, 1); break;
+          case POLYGON: if(c < cadlayers && n < xctx->polygons[c])    select_polygon(c, n, SELECTED, 3, 1); break;
+          case ARC:     if(c < cadlayers && n < xctx->arcs[c])        select_arc(c, n, SELECTED, 3, 1);  break;
+          default: break;
+        }
       }
     }
     rebuild_selected_array();
@@ -2161,6 +2212,7 @@ void pop_undo_keep_selection(int redo, int set_modify)
   my_free(_ALLOC_ID_, &sty);
   my_free(_ALLOC_ID_, &scl);
   my_free(_ALLOC_ID_, &sn);
+  my_free(_ALLOC_ID_, &sid);
 }
 
 
