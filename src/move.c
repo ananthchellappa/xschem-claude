@@ -5653,14 +5653,35 @@ void move_objects(int what, int merge, double dx, double dy)
     * follow-wire: deselect them all so they are transient, not persistent user selection. This runs
     * AFTER all reroute/cleanup, touching only sel-flags => wire GEOMETRY is byte-identical (the
     * route is unchanged; Phase I is bookkeeping only). Gated on fluid_editing => default off is
-    * byte-identical. The mixed case (user also selected wires, fluid_startsel_wires>0) is deferred
-    * to a later phase: stand down and leave the selection as the stretch left it. */
+    * byte-identical. */
    if(tclgetboolvar("fluid_editing") && xctx->stretch_select && xctx->fluid_startsel_wires == 0) {
      int wi, any = 0;
      /* direct clear (not select_wire(...,0,...)): a wire grabbed at BOTH ends is sel==
       * (SELECTED1|SELECTED2), which select_wire would fold to SELECTED instead of deselecting
       * (select.c:965). The following draw() repaints, so the un-highlight is handled there. */
      for(wi = 0; wi < xctx->wires; ++wi) if(xctx->wire[wi].sel) { xctx->wire[wi].sel = 0; any = 1; }
+     if(any) { xctx->need_reb_sel_arr = 1; rebuild_selected_array(); }
+   }
+   /* issue 0093: the mixed case (user also selected wires, fluid_startsel_wires>0). Previously we
+    * "stood down" and left the selection AS THE STRETCH LEFT IT -- but a fluid stretch relays the
+    * user's own grabbed wire to a PARTIAL state (SELECTED1/2), and with the cadence default
+    * unselect_partial_sel_wires=0 that partial selection PERSISTS. On the NEXT gesture, an
+    * already-selected press skips the fresh select_object(), so select_attached_nets() sees the
+    * wire as SELECTED2 (not full SELECTED) and its `!= SELECTED` guard (select.c) SKIPS grabbing the
+    * connected follow-risers -- the wire then translates ALONE, orphaning a load-bearing riser, and
+    * fluid_straighten_reversals deletes the orphan => the net silently DISCONNECTS
+    * (tests/from_user/before_6.sch -> after_13.sch, R18.M dropped off #net1). Fix: normalize the
+    * post-stretch selection -- restore the USER's OWN wires (identified by the 0091 session-stable id
+    * snapshot, preserved across the in-place relay) to FULL SELECTED, and deselect every tool-owned
+    * follow-wire -- so a re-grab is a clean whole-object move that follows its risers. Direct sel
+    * writes (draw() repaints); id-less / merged-away follow copper simply drops from the selection. */
+   else if(tclgetboolvar("fluid_editing") && xctx->stretch_select && xctx->fluid_startsel_wires > 0) {
+     int wi, any = 0;
+     for(wi = 0; wi < xctx->wires; ++wi) {
+       if(fluid_wire_is_user_selected(wi)) {
+         if(xctx->wire[wi].sel != SELECTED) { xctx->wire[wi].sel = SELECTED; any = 1; }
+       } else if(xctx->wire[wi].sel) { xctx->wire[wi].sel = 0; any = 1; }
+     }
      if(any) { xctx->need_reb_sel_arr = 1; rebuild_selected_array(); }
    }
    /* issue 0081: end of one X-then-Y decomposition leg. After leg 0 (the X move + its cleanup + the
