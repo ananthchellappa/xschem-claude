@@ -3015,12 +3015,19 @@ static void fluid_straighten_reversals(void)
           near_t = (fabs(fa - dy1) <= fabs(fb - dy1)) ? fa : fb;
           far_t  = (near_t == fa) ? fb : fa;
         }
-        /* A reversal (same-side) only ever SHORTENS, so the nearer neighbour is the unique correct target
-         * and the reversal path stays byte-identical (ncand==1). A staircase (opposite-side) EXTENDS the
-         * far neighbour: the nearer target may drive the reshaped riser through the moving device's own
-         * body (declined below), while the farther target merges the jog into the existing riser and lets
-         * pass 2 retract the orphaned tail -- so try nearer first, then farther. */
-        ncand = oppo ? 2 : 1;
+        /* Try the NEARER neighbour first, then the FARTHER as a fallback (both shapes). A staircase
+         * (opposite-side) EXTENDS the far neighbour, so its nearer target may drive the reshaped riser
+         * through the moving device's own body (declined below) and the farther target is the way out. A
+         * reversal (same-side) near slide only ever SHORTENS -- so where it applies it wins on ci==0 and
+         * the path stays byte-identical (ci==1 never runs once progress is set). But the near reversal
+         * target is NOT always legal: a rigid group drag can leave the U-turn's near column landing on the
+         * MOVED device itself, so the near collapse would run the jog through the device between its two
+         * pins -- a short the partition verify declines (issue 0096: before_5.sch C12+R18+#net2 -> R18's
+         * #net1 riser reverses out to x=-260 and the near slide back to x=-320 shorts R18's pins). The far
+         * target then routes the same net cleanly PAST the device; it EXTENDS the near neighbour, so it is
+         * body-guarded exactly like a staircase (guard = oppo || ci==1). See
+         * doc/claude/issues/0096-fluid-reroute-reversal-near-shorts-moved-body.md */
+        ncand = 2;
         for(ci = 0; ci < ncand && !progress; ++ci) {
           double sdx1=d->x1, sdy1=d->y1, sdx2=d->x2, sdy2=d->y2;
           double sax1=A->x1, say1=A->y1, sax2=A->x2, say2=A->y2;
@@ -3040,15 +3047,17 @@ static void fluid_straighten_reversals(void)
           order_wire_coords(kd); order_wire_coords(kA); order_wire_coords(kC);
           /* KEEP iff the pin-partition is byte-preserved (no pinned-net short/disconnect) AND the slide
            * did not newly land d/A/C on FOREIGN copper (a pin-LESS labeled net the pin-partition cannot
-           * see -- review wf_bacae8eb). For a STAIRCASE (opposite-side) collapse the far neighbour is
-           * EXTENDED, so also require the reshaped legs to clear every stationary body -- a reversal only
-           * shortens, so it keeps its byte-identical no-body-guard path. */
+           * see -- review wf_bacae8eb). A collapse that EXTENDS a neighbour (a STAIRCASE either target, or
+           * a REVERSAL's far fallback ci==1) must additionally clear every stationary body -- only a
+           * reversal's near slide (ci==0) is a pure shorten that keeps its byte-identical no-body-guard
+           * path (issue 0096: the far reversal fallback is body-guarded like a staircase). */
           fluid_loop_partition(NULL, now);
           {
             int part_ok = fluid_part_equal(now, base, np);
             int foreign = fluid_slide_merges_foreign(kd, kA, kC, reach);
+            int extends = oppo || ci == 1;                   /* slide lengthens a neighbour => guard body */
             int body = 0;
-            if(oppo && part_ok && !foreign) {                /* extended leg must not plough a device body */
+            if(extends && part_ok && !foreign) {             /* extended leg must not plough a device body */
               int q; int idx[3]; idx[0] = kd; idx[1] = kA; idx[2] = kC;
               for(q = 0; q < 3 && !body; ++q) {
                 xWire *ww = &xctx->wire[idx[q]];
@@ -3059,9 +3068,9 @@ static void fluid_straighten_reversals(void)
             if(part_ok && foreign)
               fltrace("FLTRACE straighten: DECLINE slide wire=%d %s->%g (would short foreign copper)\n",
                       kd, vert ? "x" : "y", target);
-            if(oppo && part_ok && !foreign && body)
-              fltrace("FLTRACE straighten: DECLINE slide wire=%d %s->%g (staircase leg crosses body)\n",
-                      kd, vert ? "x" : "y", target);
+            if(extends && part_ok && !foreign && body)
+              fltrace("FLTRACE straighten: DECLINE slide wire=%d %s->%g (%s leg crosses body)\n",
+                      kd, vert ? "x" : "y", target, oppo ? "staircase" : "reversal");
             if(part_ok && !foreign && !body) {
               fltrace("FLTRACE straighten: slid jog wire=%d %s->%g (%s collapse)\n",
                       kd, vert ? "x" : "y", target, oppo ? "staircase" : "reversal");
