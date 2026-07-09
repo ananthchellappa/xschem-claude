@@ -82,7 +82,7 @@ proc build_scene {} {
 proc assert_manhattan_clean {tag} {
   set nP [pinnet R18 P]
   set nM [pinnet R18 M]
-  set nC [net_of_wire_at -420 -150]   ;# C12 riser (stationary vertical wire)
+  set nC [net_of_wire_at -420 -170]   ;# C12 pin (always covered by C12's net wire, whatever the route shape)
   set nR [net_of_wire_at -550 150]    ;# rail stub  (stationary vertical wire)
   check "$tag: all wires Manhattan (no diagonal fallback fired)" [all_manhattan]
   check "$tag: R18.P and R18.M both connected" [expr {$nP ne {} && $nM ne {}}]
@@ -101,7 +101,7 @@ proc assert_manhattan_clean {tag} {
 # baseline sanity: the pin-name assumption (P = C12 side, M = rail side) must hold pre-move,
 # otherwise every post-move assert would test the wrong pins
 build_scene
-check "baseline: R18.P on C12 riser's net" [expr {[pinnet R18 P] eq [net_of_wire_at -420 -150]}]
+check "baseline: R18.P on C12 riser's net" [expr {[pinnet R18 P] eq [net_of_wire_at -420 -170]}]
 check "baseline: R18.M on rail's net" [expr {[pinnet R18 M] eq [net_of_wire_at -550 150]}]
 check "baseline: nets distinct" [expr {[pinnet R18 P] ne [pinnet R18 M]}]
 
@@ -150,7 +150,7 @@ xschem select instance [inst_by_name R18]
 we_move_stretch 180 -90
 check "D5(+180,-90): R18 not self-shorted" [expr {[pinnet R18 P] ne [pinnet R18 M]}]
 check "D5(+180,-90): C12 net and rail net stay distinct" \
-  [expr {[net_of_wire_at -420 -150] ne [net_of_wire_at -550 150]}]
+  [expr {[net_of_wire_at -420 -170] ne [net_of_wire_at -550 150]}]
 
 # ---- Drive 6: issue 0087 -- the (+250,-90) razor-edge (before_3.sch -> after_7.sch). Both R18 pins
 # land STACKED on the shared column x=-150 (M at -100, P at -160), so the leg-0 corner slide / free

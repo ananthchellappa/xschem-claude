@@ -83,7 +83,7 @@ proc build_scene {} {
 proc assert_no_shorts {tag} {
   set nP [pinnet R18 P]
   set nM [pinnet R18 M]
-  set nC [net_of_wire_at -420 -150]   ;# C12 riser (stationary vertical wire)
+  set nC [net_of_wire_at -420 -170]   ;# C12 pin (always covered by C12's net wire, whatever the route shape)
   set nR [net_of_wire_at -550 150]    ;# rail stub  (stationary vertical wire)
   check "$tag: R18.P and R18.M both connected" [expr {$nP ne {} && $nM ne {}}]
   check "$tag: R18 not self-shorted (P net != M net)" [expr {$nP ne $nM}]
@@ -97,7 +97,7 @@ proc assert_no_shorts {tag} {
 # baseline sanity: the pin-name assumption (P = C12 side, M = rail side) must hold pre-move,
 # otherwise every post-move assert would test the wrong pins
 build_scene
-check "baseline: R18.P on C12 riser's net" [expr {[pinnet R18 P] eq [net_of_wire_at -420 -150]}]
+check "baseline: R18.P on C12 riser's net" [expr {[pinnet R18 P] eq [net_of_wire_at -420 -170]}]
 check "baseline: R18.M on rail's net" [expr {[pinnet R18 M] eq [net_of_wire_at -550 150]}]
 check "baseline: nets distinct" [expr {[pinnet R18 P] ne [pinnet R18 M]}]
 

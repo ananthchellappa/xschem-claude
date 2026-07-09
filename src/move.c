@@ -2714,15 +2714,20 @@ done:
   my_free(_ALLOC_ID_, &predeg2);
 }
 
-/* ==== issue 0089: straighten a redundant same-net U-TURN a fluid stretch left ======================
- * doc/claude/issues/0089-fluid-reroute-redundant-samenet-detour.md. Sibling to
- * fluid_remove_redundant_loops. When the moved pin's landing COLUMN differs from the stationary riser
- * column, a declined corner-slide (0086 transient-short guard) leaves a same-net PATH (no cycle) that
- * DOUBLES BACK: a jog wire whose two perpendicular same-net neighbours leave on the SAME side, so the
- * route bulges out to an intermediate column and returns (before_3.sch, R18 (-80,-60) -> after_9.sch:
- * #net2 rings out to x=-400 and back). A cycle-collapse (delete-only) cannot fix a tree; this SLIDES
- * the jog to the nearer neighbour's far column, collapsing the overshoot, then retracts the riser tail
- * the slide orphans -- yielding the clean L the router wanted.
+/* ==== issues 0089 + 0090: straighten a redundant same-net jog a fluid stretch left =================
+ * doc/claude/issues/0089-fluid-reroute-redundant-samenet-detour.md (reversal) +
+ * 0090-fluid-reroute-redundant-samenet-staircase.md (staircase). Sibling to
+ * fluid_remove_redundant_loops. A declined corner-slide (0086/0087 transient-short guard) leaves a
+ * same-net PATH (no cycle) with a redundant jog; delete-only (0088) cannot fix a tree, so this SLIDES
+ * the jog away. Two shapes, both collapsed by pass 1:
+ *   - REVERSAL (0089): the jog's two perpendicular same-net neighbours leave on the SAME side, so the
+ *     route bulges out to an intermediate column and RETURNS (before_3.sch, R18 (-80,-60) -> after_9:
+ *     #net2 rings out to x=-400 and back). Sliding to the nearer neighbour only SHORTENS copper.
+ *   - STAIRCASE (0090): neighbours leave on OPPOSITE sides -- a monotone step the route takes and keeps
+ *     going (a MULTI-GESTURE artifact: before_3 -> after_10, R18.M's #net1 riser steps at x=-250).
+ *     Collapsing it EXTENDS the far neighbour, so pass 1 additionally body-cross-guards the reshaped
+ *     legs and, when the nearer target would drive the riser through the moving device's own body,
+ *     tries the farther target (merge into the riser + pass-2 tail retract).
  *
  * SAFETY: every mutation is pin-partition VERIFIED (fluid_loop_partition, pure touch() -- node[]
  * independent) against the pass-entry BASE; a slide/retract/prune that changes ANY pin's partition is
@@ -2730,7 +2735,7 @@ done:
  * SCOPE: the jog must be NOVEL (absent at move START), so a user's deliberate staircase is never
  * rewritten; a retracted riser tail must have been a real junction at START (fluid_start_deg_at >= 2)
  * that this drag orphaned, so a user's dangling stub is never pruned. Strict no-op unless a removable
- * reversal exists. Caller-gated on fluid_editing (default off => never runs => byte-identical). */
+ * jog exists. Caller-gated on fluid_editing (default off => never runs => byte-identical). */
 
 /* touch-degree of (x,y) over the move-START wire snapshot: how many START spans cover it. Used to tell
  * a drag-ORPHANED junction (was >=2, now dangling) from a pre-existing user dangler tip (was <=1). */
@@ -2885,11 +2890,17 @@ static void fluid_straighten_reversals(void)
   while(progress && guard++ < 8 * xctx->wires + 8) {
     int kd, W = xctx->wires;
     progress = 0;
-    /* --- pass 1: collapse a same-side (reversal) jog by sliding it to the nearer neighbour --- */
+    /* --- pass 1: collapse a redundant jog by sliding it to the nearer neighbour. Two shapes:
+     *   same-side  (sa==sb): a REVERSAL (U-turn) -- the route bulges out and doubles back (issue 0089);
+     *   opposite-side (sa!=sb): a monotone STAIRCASE STEP -- the route steps out and keeps going the same
+     *     way (issue 0090). Both collapse by the same slide; the difference is that a reversal only ever
+     *     SHORTENS copper (safe by construction) while a staircase EXTENDS the far neighbour, so the
+     *     opposite-side case additionally guards the reshaped legs against crossing a stationary body. */
     for(kd = 0; kd < W && !progress; ++kd) {
       xWire *d = &xctx->wire[kd];
-      int vert, kA = -1, kC = -1, m, sa, sb;
-      double dx1, dy1, dx2, dy2, fa = 0, fb = 0, target;
+      int vert, kA = -1, kC = -1, m, sa, sb, oppo = 0;
+      double dx1, dy1, dx2, dy2, fa = 0, fb = 0, target, near_t = 0, far_t = 0;
+      int ci, ncand;
       const char *lab;
       if(d->bus != 0.0) continue;
       dx1 = d->x1; dy1 = d->y1; dx2 = d->x2; dy2 = d->y2;
@@ -2921,21 +2932,32 @@ static void fluid_straighten_reversals(void)
           fa = (A->x1 == dx1 && A->y1 == dy1) ? A->x2 : A->x1;
           fb = (C->x1 == dx2 && C->y1 == dy2) ? C->x2 : C->x1;
           sa = (fa > dx1) - (fa < dx1); sb = (fb > dx1) - (fb < dx1);
-          if(sa == 0 || sb == 0 || sa != sb) continue;       /* not a same-side reversal */
-          target = (fabs(fa - dx1) <= fabs(fb - dx1)) ? fa : fb;
+          if(sa == 0 || sb == 0) continue;                   /* a neighbour collinear with d: not a jog */
+          oppo = (sa != sb);                                 /* opposite side => monotone staircase step */
+          near_t = (fabs(fa - dx1) <= fabs(fb - dx1)) ? fa : fb;
+          far_t  = (near_t == fa) ? fb : fa;
         } else {
           if(A->x1 != A->x2 || C->x1 != C->x2) continue;     /* neighbours perpendicular = vertical */
           fa = (A->x1 == dx1 && A->y1 == dy1) ? A->y2 : A->y1;
           fb = (C->x1 == dx2 && C->y1 == dy2) ? C->y2 : C->y1;
           sa = (fa > dy1) - (fa < dy1); sb = (fb > dy1) - (fb < dy1);
-          if(sa == 0 || sb == 0 || sa != sb) continue;
-          target = (fabs(fa - dy1) <= fabs(fb - dy1)) ? fa : fb;
+          if(sa == 0 || sb == 0) continue;                   /* a neighbour collinear with d: not a jog */
+          oppo = (sa != sb);                                 /* opposite side => monotone staircase step */
+          near_t = (fabs(fa - dy1) <= fabs(fb - dy1)) ? fa : fb;
+          far_t  = (near_t == fa) ? fb : fa;
         }
-        {
+        /* A reversal (same-side) only ever SHORTENS, so the nearer neighbour is the unique correct target
+         * and the reversal path stays byte-identical (ncand==1). A staircase (opposite-side) EXTENDS the
+         * far neighbour: the nearer target may drive the reshaped riser through the moving device's own
+         * body (declined below), while the farther target merges the jog into the existing riser and lets
+         * pass 2 retract the orphaned tail -- so try nearer first, then farther. */
+        ncand = oppo ? 2 : 1;
+        for(ci = 0; ci < ncand && !progress; ++ci) {
           double sdx1=d->x1, sdy1=d->y1, sdx2=d->x2, sdy2=d->y2;
           double sax1=A->x1, say1=A->y1, sax2=A->x2, say2=A->y2;
           double scx1=C->x1, scy1=C->y1, scx2=C->x2, scy2=C->y2;
           unsigned char *reach = my_malloc(_ALLOC_ID_, (W > 0 ? W : 1) * sizeof(unsigned char));
+          target = ci == 0 ? near_t : far_t;
           fluid_wire_reach_set(kd, reach);                   /* d's PRE-slide net component */
           if(vert) {
             d->x1 = d->x2 = target;
@@ -2949,20 +2971,38 @@ static void fluid_straighten_reversals(void)
           order_wire_coords(kd); order_wire_coords(kA); order_wire_coords(kC);
           /* KEEP iff the pin-partition is byte-preserved (no pinned-net short/disconnect) AND the slide
            * did not newly land d/A/C on FOREIGN copper (a pin-LESS labeled net the pin-partition cannot
-           * see -- review wf_bacae8eb). */
+           * see -- review wf_bacae8eb). For a STAIRCASE (opposite-side) collapse the far neighbour is
+           * EXTENDED, so also require the reshaped legs to clear every stationary body -- a reversal only
+           * shortens, so it keeps its byte-identical no-body-guard path. */
           fluid_loop_partition(NULL, now);
-          if(fluid_part_equal(now, base, np) && fluid_slide_merges_foreign(kd, kA, kC, reach))
-            fltrace("FLTRACE straighten: DECLINE slide wire=%d %s->%g (would short foreign copper)\n",
-                    kd, vert ? "x" : "y", target);
-          if(fluid_part_equal(now, base, np) && !fluid_slide_merges_foreign(kd, kA, kC, reach)) {
-            fltrace("FLTRACE straighten: slid jog wire=%d %s->%g (reversal collapse)\n",
-                    kd, vert ? "x" : "y", target);
-            changed_any = 1; progress = 1;
-            check_collapsing_objects(); trim_wires();        /* drop collapsed neighbour + merge collinear */
-          } else {
-            d->x1=sdx1; d->y1=sdy1; d->x2=sdx2; d->y2=sdy2;  /* revert */
-            A->x1=sax1; A->y1=say1; A->x2=sax2; A->y2=say2;
-            C->x1=scx1; C->y1=scy1; C->x2=scx2; C->y2=scy2;
+          {
+            int part_ok = fluid_part_equal(now, base, np);
+            int foreign = fluid_slide_merges_foreign(kd, kA, kC, reach);
+            int body = 0;
+            if(oppo && part_ok && !foreign) {                /* extended leg must not plough a device body */
+              int q; int idx[3]; idx[0] = kd; idx[1] = kA; idx[2] = kC;
+              for(q = 0; q < 3 && !body; ++q) {
+                xWire *ww = &xctx->wire[idx[q]];
+                if(ww->x1 == ww->x2 && ww->y1 == ww->y2) continue;   /* collapsed neighbour */
+                if(fluid_seg_crosses_stationary_body(ww->x1, ww->y1, ww->x2, ww->y2)) body = 1;
+              }
+            }
+            if(part_ok && foreign)
+              fltrace("FLTRACE straighten: DECLINE slide wire=%d %s->%g (would short foreign copper)\n",
+                      kd, vert ? "x" : "y", target);
+            if(oppo && part_ok && !foreign && body)
+              fltrace("FLTRACE straighten: DECLINE slide wire=%d %s->%g (staircase leg crosses body)\n",
+                      kd, vert ? "x" : "y", target);
+            if(part_ok && !foreign && !body) {
+              fltrace("FLTRACE straighten: slid jog wire=%d %s->%g (%s collapse)\n",
+                      kd, vert ? "x" : "y", target, oppo ? "staircase" : "reversal");
+              changed_any = 1; progress = 1;
+              check_collapsing_objects(); trim_wires();      /* drop collapsed neighbour + merge collinear */
+            } else {
+              d->x1=sdx1; d->y1=sdy1; d->x2=sdx2; d->y2=sdy2;  /* revert */
+              A->x1=sax1; A->y1=say1; A->x2=sax2; A->y2=say2;
+              C->x1=scx1; C->y1=scy1; C->x2=scx2; C->y2=scy2;
+            }
           }
           my_free(_ALLOC_ID_, &reach);
         }
@@ -2985,6 +3025,11 @@ static void fluid_straighten_reversals(void)
   }
 
   if(changed_any) {
+    /* Normalise once more before publishing: the pass-2 delete branch (fluid_retract_orphan_tail)
+     * does not trim, and a fixpoint that ends on a delete can leave collinear fragments unmerged.
+     * trim_wires() merges/splits, then check_collapsing_objects() drops any zero-length residue. */
+    trim_wires();
+    check_collapsing_objects();
     xctx->prep_hash_wires = xctx->prep_net_structs = xctx->prep_hi_structs = 0;
     prepare_netlist_structs(0);
     xctx->need_reb_sel_arr = 1;
@@ -5262,10 +5307,11 @@ void move_objects(int what, int merge, double dx, double dy)
       xctx->move_rot == 0 && xctx->move_flip == 0 &&
       leg_ortho && leg == nlegs - 1 && xctx->fluid_startsel_wires == 0) {
      fluid_remove_redundant_loops();
-     /* issue 0089: the loop-remover only DELETES a redundant same-net CYCLE. A far move whose landing
-      * column differs from the stationary riser leaves a same-net PATH (no cycle) that doubles back --
-      * straighten that U-turn to a clean L (before_3.sch R18 (-80,-60) -> after_9.sch #net2). Slides +
-      * verified tail-retract; partition-invariant + novelty-scoped; strict no-op otherwise. */
+     /* issues 0089 + 0090: the loop-remover only DELETES a redundant same-net CYCLE. A far / multi-
+      * gesture move leaves a same-net PATH (no cycle) with a redundant jog -- a same-side U-turn
+      * (0089, before_3 R18 (-80,-60) -> after_9 #net2) or an opposite-side monotone STAIRCASE (0090,
+      * before_3 -> after_10 #net1). Straighten both to a clean L (slide + verified tail-retract;
+      * partition-invariant + novelty-scoped; strict no-op otherwise). */
      fluid_straighten_reversals();
    }
    /* Exit-stub preservation (wire-editing Phase 6, Issue E -> R13). After the cleanup above,
@@ -5293,6 +5339,12 @@ void move_objects(int what, int merge, double dx, double dy)
       (tclgetboolvar("wire_exit_stub") || tclgetboolvar("fluid_editing")) && leg_ortho &&
       xctx->move_rot == 0 && xctx->move_flip == 0 && leg == nlegs - 1) {
      insert_exit_stubs();
+     /* insert_exit_stubs stores a stub pin->tip and drags corner neighbours but does NOT trim; when a
+      * follow-wire already lands exactly on the stationary partner pin along its normal (the tidy route
+      * a staircase collapse produces) the slid/dragged leg can degenerate to a zero-length wire at that
+      * pin. Nothing runs trim after this point, so sweep the residue here. No-op (byte-identical) when the
+      * stub pass created none, e.g. the wire_exit_stub regression path. */
+     check_collapsing_objects();
    }
    unselect_partial_sel_wires();
    /* incremental_wire_reroute Phase I (ownership decoupling, spec §4). A fluid stretch grabs the
