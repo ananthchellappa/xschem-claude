@@ -799,6 +799,81 @@ int set_first_sel(unsigned short type, int n, unsigned int col)
   return 0;
 }
 
+/* ==== Cadence deferred-selection (doc/claude/specs/cadence_modifier_drag.md) ================
+ * A plain (no-modifier) press-drag-release of an object that was NOT already selected must MOVE it
+ * without changing the selection: if nothing was selected it ends unselected; a pre-existing
+ * selection is preserved untouched (the grabbed object is not added to it). A CLICK (no motion)
+ * still selects normally. The move engine is selection-based, so the press transiently selects the
+ * grabbed object to drag it; these helpers snapshot the pre-press selection by session-stable id
+ * and restore it at the move-completion funnel iff the gesture actually moved. */
+
+/* free/reset the drag-selection snapshot (idempotent) */
+void drag_sel_free(void)
+{
+  my_free(_ALLOC_ID_, &xctx->drag_sel_id);
+  my_free(_ALLOC_ID_, &xctx->drag_sel_type);
+  my_free(_ALLOC_ID_, &xctx->drag_sel_col);
+  xctx->drag_sel_n = 0;
+  xctx->drag_sel_restore = 0;
+}
+
+/* snapshot the CURRENT selection (session-stable ids) so a moved drag can restore it. Skips the
+ * INST_PIN pin-selection pseudo-entries (inert + transient). Does NOT arm drag_sel_restore -- the
+ * plain-move drag-start arms it (only when a move actually begins), so a captured-but-never-dragged
+ * press (read-only, etc.) leaves the flag clear and no unrelated later move spuriously restores. */
+void drag_sel_snapshot(void)
+{
+  int i, k = 0;
+  drag_sel_free();
+  rebuild_selected_array();
+  if(xctx->lastsel <= 0) { xctx->drag_sel_n = 0; return; }
+  xctx->drag_sel_id   = my_malloc(_ALLOC_ID_, xctx->lastsel * sizeof(unsigned int));
+  xctx->drag_sel_type = my_malloc(_ALLOC_ID_, xctx->lastsel * sizeof(short));
+  xctx->drag_sel_col  = my_malloc(_ALLOC_ID_, xctx->lastsel * sizeof(short));
+  for(i = 0; i < xctx->lastsel; ++i) {
+    int n = xctx->sel_array[i].n, c = xctx->sel_array[i].col, t = xctx->sel_array[i].type;
+    unsigned int id;
+    switch(t) {
+      case WIRE:    id = xctx->wire[n].id;    break;
+      case ELEMENT: id = xctx->inst[n].id;    break;
+      case xTEXT:   id = xctx->text[n].id;    break;
+      case xRECT:   id = xctx->rect[c][n].id; break;
+      case LINE:    id = xctx->line[c][n].id; break;
+      case POLYGON: id = xctx->poly[c][n].id; break;
+      case ARC:     id = xctx->arc[c][n].id;  break;
+      default: continue;                      /* INST_PIN pseudo-type etc.: not persistent selection */
+    }
+    xctx->drag_sel_id[k] = id; xctx->drag_sel_type[k] = (short)t; xctx->drag_sel_col[k] = (short)c; ++k;
+  }
+  xctx->drag_sel_n = k;
+}
+
+/* restore the snapshotted pre-press selection: clear everything, then re-select each saved object
+ * still present (matched by session-stable id, so a move that renumbered the arrays is handled).
+ * An id that no longer exists (e.g. a snapshot wire trimmed away) is silently dropped. */
+void drag_sel_restore_now(void)
+{
+  int j;
+  unselect_all(1);
+  for(j = 0; j < xctx->drag_sel_n; ++j) {
+    unsigned int id = xctx->drag_sel_id[j];
+    int t = xctx->drag_sel_type[j], c = xctx->drag_sel_col[j], i;
+    switch(t) {
+      case WIRE:    for(i=0;i<xctx->wires;      ++i) if(xctx->wire[i].id==id)   { xctx->wire[i].sel=SELECTED;    break; } break;
+      case ELEMENT: for(i=0;i<xctx->instances;  ++i) if(xctx->inst[i].id==id)   { xctx->inst[i].sel=SELECTED;    break; } break;
+      case xTEXT:   for(i=0;i<xctx->texts;      ++i) if(xctx->text[i].id==id)   { xctx->text[i].sel=SELECTED;    break; } break;
+      case xRECT:   for(i=0;i<xctx->rects[c];   ++i) if(xctx->rect[c][i].id==id){ xctx->rect[c][i].sel=SELECTED; break; } break;
+      case LINE:    for(i=0;i<xctx->lines[c];   ++i) if(xctx->line[c][i].id==id){ xctx->line[c][i].sel=SELECTED; break; } break;
+      case POLYGON: for(i=0;i<xctx->polygons[c];++i) if(xctx->poly[c][i].id==id){ xctx->poly[c][i].sel=SELECTED; break; } break;
+      case ARC:     for(i=0;i<xctx->arcs[c];    ++i) if(xctx->arc[c][i].id==id) { xctx->arc[c][i].sel=SELECTED;  break; } break;
+    }
+  }
+  xctx->need_reb_sel_arr = 1;
+  rebuild_selected_array();
+  if(has_x) draw_selection(xctx->gc[SELLAYER], 0);
+  drag_sel_free();
+}
+
 void unselect_all(int dr)
 {
  int i,c;

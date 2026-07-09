@@ -1253,6 +1253,18 @@ typedef struct {
    * intact. Allocated in select_attached_nets, freed with the move (mirrors stretch_grabbed_xy). */
   unsigned int *fluid_startsel_id;
   int fluid_startsel_nid;
+  /* Cadence deferred-selection: a plain (no-modifier) press-drag-release of an object that was NOT
+   * already selected must MOVE it without changing the selection membership -- if nothing was
+   * selected it ends unselected, and a pre-existing selection is preserved untouched. A CLICK (no
+   * motion) still selects normally. Snapshot the pre-press selection by session-stable id here
+   * (BEFORE the transient select that the drag needs), then at the move-completion funnel
+   * (end_move_copy_logged) restore it iff the gesture actually moved. Freed/reset each gesture.
+   * doc/claude/specs/cadence_modifier_drag.md (deferred-selection). */
+  int drag_sel_restore;           /* 1 => a transient drag-select is pending restore on a moved drag */
+  int drag_sel_n;                 /* snapshot length (0 => pre-press selection was empty) */
+  unsigned int *drag_sel_id;      /* session-stable ids of the pre-press selection */
+  short *drag_sel_type;           /* parallel: object type (WIRE/ELEMENT/xTEXT/xRECT/LINE/POLYGON/ARC) */
+  short *drag_sel_col;            /* parallel: layer col for per-layer types, else 0 */
   /* incremental_wire_reroute.md Phase II (per-snap-step reroute, restore-and-reapply). A fluid
    * stretch drag snapshots the whole pristine (post-kiss, pre-delta) schematic here at move START;
    * each qualifying move_objects(RUBBER) step restores it and re-applies the current TOTAL drag
@@ -1710,6 +1722,9 @@ extern Selected select_object(double mx,double my, unsigned short sel_mode,
                                     int override_lock, const Selected *selptr);
 extern int set_first_sel(unsigned short type, int n, unsigned int col);
 extern void unselect_all(int dr);
+extern void drag_sel_free(void);          /* cadence deferred-selection: reset the pre-press snapshot */
+extern void drag_sel_snapshot(void);      /* snapshot pre-press selection ids before a transient drag-select */
+extern void drag_sel_restore_now(void);   /* restore the pre-press selection after a moved drag */
 extern void select_attached_nets(void);
 extern void select_inside(int stretch, double x1,double y1, double x2, double y2, int sel);
 extern void select_touch(double x1,double y1, double x2, double y2, int sel);

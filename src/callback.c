@@ -1566,6 +1566,16 @@ static void end_move_copy_logged(int is_copy)
   if(is_copy) copy_objects(END);
   else        move_objects(END, 0, 0, 0);
 
+  /* cadence deferred-selection (doc/claude/specs/cadence_modifier_drag.md): a plain drag that
+   * transiently selected a previously-unselected object restores the pre-press selection -- so the
+   * grabbed object ends UNSELECTED (or a pre-existing selection is preserved untouched). Only when
+   * it actually MOVED: a click (nothing) keeps the normal click-select. Never on copy (the new copy
+   * stays selected). Armed only for a plain no-modifier move of a not-already-selected object. */
+  if(xctx->drag_sel_restore) {
+    if(!is_copy && !nothing) drag_sel_restore_now();  /* frees the snapshot internally */
+    else                     drag_sel_free();
+  }
+
   if(nothing) return;
   if(ui & STARTMERGE) {
     log_action("# paste/merge drop at delta %.16g %.16g (pending-merge replay, issue 0005)", dx, dy);
@@ -3962,6 +3972,10 @@ static void end_shape_point_edit(void)
      else if(edited) {
        log_action("# edit shape control point (drag; not replayable: needs object referent, issue 0005)");
      }
+     /* a shape-point (vertex/edge) grab captured a pre-press snapshot at press but never armed the
+      * deferred-selection restore (this precise edit keeps its shape selected). Free the unused
+      * snapshot so it does not linger to the next gesture. */
+     drag_sel_free();
 }
 
 void unselect_attached_floaters(void)
@@ -5878,6 +5892,7 @@ static void handle_button_press(int event, int state, int rstate, KeySym key, in
      if(!excl && !(xctx->ui_state & STARTSELECT)) {
        Selected sel;
        int already_selected = 0;
+       int did_snapshot = 0;   /* cadence deferred-selection: pre-press selection was captured */
        int prev_last_sel = xctx->lastsel;
        int no_shift_no_ctrl = !(state & (ShiftMask | ControlMask));
        /* cadence_compat forces the intuitive interface (Cadence-style direct
@@ -5890,6 +5905,7 @@ static void handle_button_press(int event, int state, int rstate, KeySym key, in
        int fluid_editing = tclgetboolvar("fluid_editing");
 
        xctx->shape_point_selected = 0;
+       drag_sel_free();   /* cadence deferred-selection: wipe any leaked pre-press snapshot */
        xctx->mx_save = mx; xctx->my_save = my;
        xctx->mx_double_save=xctx->mousex;
        xctx->my_double_save=xctx->mousey;
@@ -6017,7 +6033,13 @@ static void handle_button_press(int event, int state, int rstate, KeySym key, in
 
        /* In intuitive interface a button1 press with no modifiers will
         *  unselect everything... we do it here */
-       if(intuitive && !already_selected && no_shift_no_ctrl )  unselect_all(1);
+       if(intuitive && !already_selected && no_shift_no_ctrl ) {
+         /* cadence deferred-selection: snapshot the pre-press selection BEFORE clearing it, so a
+          * drag of this (not-yet-selected) object can restore it at release and leave the selection
+          * unchanged. Only when an object was actually hit (a drag candidate); armed at drag-start. */
+         if(sel.type) { drag_sel_snapshot(); did_snapshot = 1; }
+         unselect_all(1);
+       }
 
        /* select the object under the mouse and rebuild the selected array.
         * Shift held = augment (unselect_all above was skipped) -> tell the
@@ -6064,6 +6086,7 @@ static void handle_button_press(int event, int state, int rstate, KeySym key, in
                                             * tap arm is skipped (stub replaces it); reset at move end */
              select_attached_nets(); /* nets that land on selected instance pins follow */
              move_objects(START,0,0,0);
+             if(did_snapshot) xctx->drag_sel_restore = 1;  /* cadence deferred-selection: arm restore */
            }
          } else {
            /* enable_stretch (from TCL variable) reverses command if enabled:
@@ -6090,7 +6113,10 @@ static void handle_button_press(int event, int state, int rstate, KeySym key, in
            /* dragging away an object with Shift pressed is a copy (duplicate object) */
            else if(state & ShiftMask) copy_objects(START);
            /* else it is a normal move */
-           else move_objects(START,0,0,0);
+           else {
+             move_objects(START,0,0,0);
+             if(did_snapshot) xctx->drag_sel_restore = 1;  /* cadence deferred-selection: arm restore */
+           }
          }
        }
 

@@ -237,6 +237,23 @@ delete the `select_attached_nets()` call (Phase 3 reddens); force plain to
 - `tests/headless/test_cadence_drag.tcl` — new suite (Phases 0–5).
 - Docs: cross-link from `doc/claude/code_analysis/wire_editing_spec_and_plan.md`.
 
+## 5b. Deferred-selection (issue 0097)
+
+A press-hold-drag-release must NOT change the selection membership; only a CLICK (press+release,
+no motion) selects. Rules:
+- nothing selected + drag → object moves, ends UNSELECTED;
+- selection S + drag an object not in S → object moves, S preserved untouched (not added to);
+- object in S + drag → S moves, stays selected.
+
+Because the move engine is selection-based, the press still transiently selects the grabbed
+object. `handle_button_press` snapshots the pre-press selection by session-stable id
+(`drag_sel_snapshot`, before the press-time `unselect_all`), arms the restore at the plain move
+START (gated on `did_snapshot`), and the move-completion funnel `end_move_copy_logged` restores it
+(`drag_sel_restore_now`) iff the gesture actually moved — a click keeps its select, copy is
+excluded. Whole-object moves only (the shape-point vertex/edge grab keeps its precise-edit
+selection). Regression: `tests/headless/test_drag_keeps_selection.tcl`. See
+`doc/claude/issues/0097-drag-must-not-change-selection.md`.
+
 ## 6. Out of scope (explicitly)
 
 - Wire-follow *quality* (T-junctions, sub-grid endpoints, orthogonal re-routing) —
