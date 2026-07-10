@@ -3780,7 +3780,20 @@ static int fluid_ripup_foreign_pin_short(void)
               }
             }
           }
-          if(named || nslid == 0) { my_free(_ALLOC_ID_, &slid); my_free(_ALLOC_ID_, &sv); continue; }
+          if(named) { my_free(_ALLOC_ID_, &slid); my_free(_ALLOC_ID_, &sv); continue; }
+          if(nslid == 0) {
+            /* issue 0105: no perpendicular backbone carries P at all. The shorting copper can
+             * instead lie ALONG the P->Q axis: a connected move drops the device back onto the
+             * very backbone that fed Q, so ONE collinear wire now covers BOTH pins (before_8.sch
+             * R18 (-90,-40): both pins land on the old #net1 run at y=-40 -> bridged under the
+             * body). No slide can help (the backbone cannot slide along its own axis away from
+             * pins ON it) -- jog it one grid around P instead. Around-Q would gap Q off its own
+             * net and the jog's partition verify rejects it, so P is the only candidate; the
+             * mirrored (q,p) pair iteration covers the case where the invader roles are swapped. */
+            if(fluid_jog_pin_off_backbone(px, py, !vertaxis)) { fixed = 1; changed_any = 1; }
+            my_free(_ALLOC_ID_, &slid); my_free(_ALLOC_ID_, &sv);
+            continue;
+          }
           /* reach = the backbone's PRE-slide wire component, for the pin-less foreign-short guard below
            * (fluid_partition_changed is pin-indexed and blind to a merge onto a labeled net with no
            * device pin -- same gap fluid_slide_merges_foreign closes for the straighten slide). */
@@ -3821,6 +3834,11 @@ static int fluid_ripup_foreign_pin_short(void)
              * route-around jog (bump the backbone one grid AROUND Q's pin). Q is the pin that landed
              * on the foreign backbone (the merge sits on Q's line, perpendicular to Q's riser). */
             if(fluid_jog_pin_off_backbone(qx, qy, vertaxis)) { fixed = 1; changed_any = 1; }
+            /* issue 0105: the perpendicular copper the slide seeded was P's OWN follow riser, not
+             * the shorting backbone -- the short is a COLLINEAR backbone along the P->Q axis
+             * covering both pins (device dropped back onto the wire that fed Q). Jog it around P;
+             * the jog's partition verify makes a wrong-pin attempt a clean no-op. */
+            else if(fluid_jog_pin_off_backbone(px, py, !vertaxis)) { fixed = 1; changed_any = 1; }
           }
           my_free(_ALLOC_ID_, &reach);
           my_free(_ALLOC_ID_, &slid); my_free(_ALLOC_ID_, &sv);
