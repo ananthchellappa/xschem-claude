@@ -136,9 +136,48 @@ check "T7b translation stretch far anchor pristine"  [ep_present $fmx $fmy]
 lassign [pinM 0] nmx nmy
 check "T7c translation stretch reconnects pin M"     [ep_present $nmx $nmy]
 
+# === T8 — MULTI-INSTANCE connected stretch + rotate: group reconnects rigidly ==
+# Two res, each with a vertical wire to its own far anchor. Select BOTH, connected stretch,
+# rotate 90 about the shared grab pivot, drop. Each follow-wire must reconnect its own pin
+# and each far anchor stays pristine (item iv: 4a's shared-pivot rotation handles groups).
+proc setup_two {} {
+  xschem clear force
+  set ::persistent_command 0
+  set ::intuitive_interface 1; xschem set intuitive_interface 1
+  set ::enable_stretch 0
+  set ::cadence_compat 1
+  xschem set fluid_editing 1
+  xschem instance {res.sym} 0 0 0 0 {}
+  xschem instance {res.sym} 200 0 0 0 {}
+  lassign [pinM 0] a0x a0y
+  lassign [pinM 1] a1x a1y
+  xschem wire $a0x $a0y $a0x [expr {$a0y-300}]   ;# res0 pin M -> far anchor below
+  xschem wire $a1x $a1y $a1x [expr {$a1y-300}]   ;# res1 pin M -> far anchor below
+  xschem zoom_full; update idletasks
+}
+setup_two
+lassign [pinM 0] p0x p0y
+lassign [pinM 1] p1x p1y
+set f0x $p0x; set f0y [expr {$p0y-300}]
+set f1x $p1x; set f1y [expr {$p1y-300}]
+set r0 [inst_rot 0]; set r1 [inst_rot 1]
+# grab pivot = midpoint of the two instances (a body point between them)
+xschem unselect_all; xschem select instance 0; xschem select instance 1
+lassign [xschem get bbox_selected] bx1 by1 bx2 by2
+lassign [screen [expr {($bx1+$bx2)/2.0}] [expr {($by1+$by2)/2.0}]] gsx gsy
+kstretch_rotate $gsx $gsy 30 30 1
+check "T8  multi-inst stretch+rotate rotates res0"   [expr {[inst_rot 0] ne $r0}]
+check "T8b multi-inst stretch+rotate rotates res1"   [expr {[inst_rot 1] ne $r1}]
+check "T8c res0 far anchor pristine"                 [ep_present $f0x $f0y]
+check "T8d res1 far anchor pristine"                 [ep_present $f1x $f1y]
+lassign [pinM 0] n0x n0y
+lassign [pinM 1] n1x n1y
+check "T8e res0 follow-wire reconnects its pin M"    [ep_present $n0x $n0y]
+check "T8f res1 follow-wire reconnects its pin M"    [ep_present $n1x $n1y]
+
 puts ""
 if {$::fails == 0} {
-  puts "RESULT: ALL PASS (11 checks)"
+  puts "RESULT: ALL PASS (17 checks)"
   puts "OVERALL: ok"
 } else {
   puts "RESULT: $::fails FAIL"

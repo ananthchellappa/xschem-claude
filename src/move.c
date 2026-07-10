@@ -1161,10 +1161,16 @@ static void place_moved_wire(int n, int orthogonal_wiring)
      * orientation recompute chose is blocked and the OTHER orientation is clear, flip
      * manhattan_lines: the four placement branches below then lay the clean L between the SAME two
      * endpoints (rx1,ry1)-(rx2,ry2), so connectivity (P1) is unchanged by construction. Gated on
-     * fluid_editing (default off => never flips => byte-identical), a valid START name snapshot, a
-     * non-rotating move, and a stretching (single-endpoint) wire. Pure function of (snapshot,
-     * rx1..ry2) => deterministic and release==stepwise (recompute yields only ml 1 or 2). */
-    if(tclgetboolvar("fluid_editing") && xctx->move_rot == 0 && xctx->move_flip == 0 &&
+     * fluid_editing (default off => never flips => byte-identical), a valid START name snapshot,
+     * and a stretching (single-endpoint) wire. Pure function of (snapshot, rx1..ry2)
+     * => deterministic and release==stepwise (recompute yields only ml 1 or 2).
+     * rotate_keep_connected_stretch.md Case 4b: the old `move_rot==0 && move_flip==0` guard is
+     * lifted -- under a rotated/flipped stretch rx1..ry2 are the final rotated endpoints (crux (a)
+     * keeps the anchored end pristine), so this obstacle-aware orientation pick still avoids
+     * shorts on the SAME two endpoints. It only CHOOSES between two connecting L orientations, so
+     * even if a hazard helper misjudges a rotated layout the worst case is a suboptimal-but-
+     * connecting L (== the pre-4b basic L) -- it can never disconnect. */
+    if(tclgetboolvar("fluid_editing") &&
        (wire[n].sel == SELECTED1 || wire[n].sel == SELECTED2)) {
       int sel1 = (wire[n].sel == SELECTED1);
       int ml0 = xctx->manhattan_lines, ml1 = (ml0 == 1) ? 2 : 1;
@@ -5224,9 +5230,16 @@ void move_objects(int what, int merge, double dx, double dy)
     * every snap-grid step -- restore the pristine geometry and re-apply the CURRENT TOTAL delta
     * through the reroute pipeline (the shared geometry-commit block below, reached via commit_now).
     * mousex/y_snap is already cadsnap-quantized, so passing the no-motion guard above == a move of
-    * >= one cadsnap. Pure translation only (RUBBER never rotates; the rot/flip==0 test is a guard). */
+    * >= one cadsnap.
+    * rotate_keep_connected_stretch.md Case 4b: the old `move_rot==0 && move_flip==0` guard is
+    * LIFTED so a rotated/flipped stretch reroutes live too. The shared commit block is
+    * rotation-aware (ROTATION(pivot,.)+delta per object; the anchored follow-wire endpoint held
+    * pristine, crux (a)), so the live route on a MOTION after a rotate matches the drop result.
+    * The rot/flip-specific quality layers keep their own internal gates (diagonal decomposition,
+    * corner-slide, shove stay translation-only); only the elbow-orientation choice is enabled
+    * under rotation. */
    if(tclgetboolvar("fluid_editing") && (xctx->ui_state & STARTMOVE) && xctx->stretch_select &&
-      xctx->fluid_reroute_active && xctx->move_rot == 0 && xctx->move_flip == 0) {
+      xctx->fluid_reroute_active) {
      xctx->x2 = xctx->mousex_snap; xctx->y2 = xctx->mousey_snap;
      xctx->deltax = xctx->x2 - xctx->x1; xctx->deltay = xctx->y2 - xctx->y1;
      fluid_reroute_restore();   /* live geometry+selection -> pristine (frees+reallocs the arrays) */

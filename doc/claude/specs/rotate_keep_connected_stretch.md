@@ -25,14 +25,35 @@ Branch `fluid-editing`. Written 2026-07-09.
   Test `tests/headless/test_rotate_stretch_reconnect.tcl` — 11/11 PASS under X, crux-(a)
   sabotage-verified (rotating the anchored endpoint flips T5b/T6b red). Full fluid/stretch
   regression sweep green.
-- **Case 4 Phase 4b — NOT started.** Remaining: (i) pivot = grabbed pin (Decision 2; 4a uses
-  the snapped-mouse grab point `x1,y1`, which coincides with the pin when snap lands on it);
-  (ii) rotation-aware quality layers — P1..P8 elbow choice (`move.c:1167`), corner-slide
-  (`5406`), shove/obstacle detour (`5741`), END redundant-route cleanup (`5790`) are still
-  gated `move_rot==0 && move_flip==0`, so a rotated stretch uses a basic L that can short in
-  crowded layouts (crux (b)); (iii) live reroute *preview* during rotation (relax the RUBBER
-  gate `5228`); (iv) multi-instance rigid rotate; (v) LINE/POLY partial-select parity (4a fixed
-  WIRE only). 4a covers the core single-instance reconnect requirement.
+- **Case 4 Phase 4b — PARTIAL, IMPLEMENTED + tested (UNCOMMITTED).** Done:
+  - **(ii, safe part) rotation-aware elbow choice** — the P1..P8 obstacle-aware L-orientation
+    pick (`move.c:1167`) is now enabled under rotation. It only CHOOSES between two L
+    orientations that both connect the same two endpoints (crux (a) keeps them = rotated pin +
+    pristine anchor), so it can only avoid a short, never disconnect: worst case is the pre-4b
+    basic L. Connectivity-safe by construction.
+  - **(iii) live reroute preview under rotation** — the RUBBER live-reroute gate (`move.c:5228`)
+    no longer requires `move_rot==0 && move_flip==0`, so a MOTION after a mid-stretch rotate
+    reroutes live through the (rotation-aware) shared commit block, matching the drop result.
+  - **(iv) multi-instance rigid rotate** — already handled by 4a's shared-pivot commit; verified
+    by test (two instances, each follow-wire reconnects, each far anchor pristine).
+
+  Test `tests/headless/test_rotate_stretch_reconnect.tcl` — now 17/17 PASS (adds T8 multi-inst).
+  Full fluid/stretch/elbow regression (0088/0089/0096, cadence_stretch_move, drag/undo) green.
+
+  Deferred (with justification):
+  - **(i) pivot = grabbed pin** — 4a/4b use the snapped grab point `x1,y1`, which EQUALS the
+    grabbed pin whenever the grab snaps onto a pin (the dominant case); a body-grab "nearest
+    pin" pivot has ambiguous multi-pin semantics. Left as a follow-up.
+  - **shove / obstacle detour (`5741`) + END redundant-route cleanup (`5790`)** — these RESHAPE
+    or DELETE copper (not just choose an orientation), so enabling them under rotation is
+    higher-risk; kept translation-only. The elbow choice already gives a partial P2 under
+    rotation.
+  - **corner-slide (`5406`)** — semantically an axis-aligned-translation operation; not
+    meaningful under a 90° rotation.
+  - **(v) LINE/POLY partial-select parity** — lines/polys are non-electrical and are never
+    grabbed by `select_attached_nets` (the stretch follow mechanism); partial-select under
+    rotation is a rare box-select edge case. The `move.c` LINE case also has ORDER/sel-swap
+    logic that the WIRE fix does not. Left as WIRE-only.
 
 Scope note: prompt-for-object arming lives in the callback.c KEY handlers only (interactive
 "fire the rotate command"), NOT the scheduler subcommands — a menu `xschem rotate` with an
