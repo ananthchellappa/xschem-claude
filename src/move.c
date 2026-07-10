@@ -3334,6 +3334,105 @@ static void fluid_collapse_axis_overshoot_stub(void)
   my_free(_ALLOC_ID_, &now);
 }
 
+/* issue 0098: route-AROUND fallback for fluid_ripup_foreign_pin_short. When a connected stretch lands a
+ * device pin Q mid-line on a foreign net's backbone that the whole-backbone slide CANNOT move -- its far
+ * anchor pins it (before_7.sch: C12 pins #net3 at Q's row y=-160 and its OTHER pin one grid family away,
+ * so sliding the backbone to Q's sibling row just SWAPS the short onto C12.p) -- JOG the backbone one grid
+ * AROUND Q's pin instead: clip the backbone away from a one-grid gap centred on Q and bridge the gap with
+ * a 3-segment bump on whichever perpendicular side clears. Reshape/add-only + pin-partition VERIFIED to
+ * RESTORE the START partition (fluid_partition_changed()==0), so it can only de-short or decline (revert).
+ * vertaxis==1: backbone horizontal on Q's row (bump in y); vertaxis==0: vertical on Q's column (bump in x).
+ * Returns 1 iff a clean jog was committed. See doc/claude/issues/0098-fluid-stretch-pin-on-sibling-net-backbone-short.md */
+static int fluid_jog_doomed_from = -1;
+static int fluid_jog_is_doomed(int n, void *arg) { (void)arg; return n >= fluid_jog_doomed_from; }
+
+static int fluid_jog_pin_off_backbone(double qx, double qy, int vertaxis)
+{
+  double grid = tclgetdoublevar("cadsnap");
+  double qL, qR;                          /* one-grid gap [qL,qR] centred on Q along the backbone axis */
+  int W, m, ci, nbb = 0, left_ok = 0, right_ok = 0;
+  int bb[64];                             /* backbone wire indices on Q's line covering Q */
+  double sc[64][4], nc[64][4];            /* saved (revert) + clipped-primary coords */
+  double ex[64][4]; int nex = 0;          /* straddle-split right pieces to re-add */
+  char *bbprop = NULL;
+
+  if(grid <= 0.0) grid = 10.0;
+  qL = (vertaxis ? qx : qy) - grid;
+  qR = (vertaxis ? qx : qy) + grid;
+  W = xctx->wires;
+  for(m = 0; m < W; ++m) {
+    xWire *w = &xctx->wire[m];
+    double lo, hi, kl, kh;
+    int online = vertaxis ? (w->y1 == qy && w->y2 == qy && w->x1 != w->x2)   /* horizontal on Q's row */
+                          : (w->x1 == qx && w->x2 == qx && w->y1 != w->y2);   /* vertical on Q's column */
+    if(!online || w->bus != 0.0) continue;
+    if(!touch(w->x1, w->y1, w->x2, w->y2, qx, qy)) continue;                  /* must cover Q's pin */
+    if(fluid_wire_explicit_lab(m)) { my_free(_ALLOC_ID_, &bbprop); return 0; }/* never reshape named copper */
+    if(nbb >= 64 || nex >= 63) { my_free(_ALLOC_ID_, &bbprop); return 0; }
+    if(vertaxis) { lo = w->x1 < w->x2 ? w->x1 : w->x2; hi = w->x1 < w->x2 ? w->x2 : w->x1; }
+    else         { lo = w->y1 < w->y2 ? w->y1 : w->y2; hi = w->y1 < w->y2 ? w->y2 : w->y1; }
+    if(lo >= qL && hi <= qR) { my_free(_ALLOC_ID_, &bbprop); return 0; }      /* whole tiny wire in the gap */
+    if(lo < qL) left_ok = 1;
+    if(hi > qR) right_ok = 1;
+    bb[nbb] = m;
+    sc[nbb][0]=w->x1; sc[nbb][1]=w->y1; sc[nbb][2]=w->x2; sc[nbb][3]=w->y2;
+    /* clip away the OPEN gap (qL,qR): keep the left piece [lo,qL] as the primary (or the right piece
+     * [qR,hi] when the wire lies entirely to Q's right); a straddle keeps left primary + right extra. */
+    if(lo < qL) { kl = lo; kh = (hi < qL ? hi : qL); }
+    else        { kl = (lo > qR ? lo : qR); kh = hi; }
+    if(vertaxis) { nc[nbb][0]=kl; nc[nbb][1]=qy; nc[nbb][2]=kh; nc[nbb][3]=qy; }
+    else         { nc[nbb][0]=qx; nc[nbb][1]=kl; nc[nbb][2]=qx; nc[nbb][3]=kh; }
+    if(lo < qL && hi > qR) {                                                  /* straddle: re-add right */
+      if(vertaxis) { ex[nex][0]=qR; ex[nex][1]=qy; ex[nex][2]=hi; ex[nex][3]=qy; }
+      else         { ex[nex][0]=qx; ex[nex][1]=qR; ex[nex][2]=qx; ex[nex][3]=hi; }
+      ++nex;
+    }
+    if(!bbprop) my_strdup(_ALLOC_ID_, &bbprop, w->prop_ptr);                  /* bump inherits backbone lab */
+    ++nbb;
+  }
+  if(nbb == 0 || !left_ok || !right_ok) { my_free(_ALLOC_ID_, &bbprop); return 0; }  /* Q not mid-line */
+
+  for(ci = 0; ci < 2; ++ci) {                                    /* try both perpendicular bump sides */
+    double dir = (ci == 0) ? -grid : grid;
+    int i;
+    fluid_jog_doomed_from = xctx->wires;                         /* every wire added below is revertible */
+    for(i = 0; i < nbb; ++i) {                                   /* apply clipped primaries in place */
+      xctx->wire[bb[i]].x1 = nc[i][0]; xctx->wire[bb[i]].y1 = nc[i][1];
+      xctx->wire[bb[i]].x2 = nc[i][2]; xctx->wire[bb[i]].y2 = nc[i][3];
+      order_wire_coords(bb[i]);
+    }
+    for(i = 0; i < nex; ++i)                                     /* re-add straddle right pieces */
+      storeobject(-1, ex[i][0], ex[i][1], ex[i][2], ex[i][3], WIRE, 0, 0, bbprop);
+    if(vertaxis) {                                               /* 3-seg bump bridging (qL..qR) at +dir */
+      storeobject(-1, qL, qy,       qL, qy + dir, WIRE, 0, 0, bbprop);
+      storeobject(-1, qL, qy + dir, qR, qy + dir, WIRE, 0, 0, bbprop);
+      storeobject(-1, qR, qy + dir, qR, qy,       WIRE, 0, 0, bbprop);
+    } else {
+      storeobject(-1, qx,       qL, qx + dir, qL, WIRE, 0, 0, bbprop);
+      storeobject(-1, qx + dir, qL, qx + dir, qR, WIRE, 0, 0, bbprop);
+      storeobject(-1, qx + dir, qR, qx,       qR, WIRE, 0, 0, bbprop);
+    }
+    xctx->prep_hash_wires = xctx->prep_net_structs = xctx->prep_hi_structs = 0;
+    prepare_netlist_structs(0);
+    if(fluid_partition_changed() == 0) {                         /* START pin-partition RESTORED: keep */
+      fltrace("FLTRACE ripup: jogged backbone around pin (%g,%g) %s side=%g (%d bb,%d extra)\n",
+              qx, qy, vertaxis ? "vert" : "horiz", dir, nbb, nex);
+      my_free(_ALLOC_ID_, &bbprop);
+      return 1;
+    }
+    for(i = 0; i < nbb; ++i) {                                   /* revert: restore primaries ... */
+      xctx->wire[bb[i]].x1 = sc[i][0]; xctx->wire[bb[i]].y1 = sc[i][1];
+      xctx->wire[bb[i]].x2 = sc[i][2]; xctx->wire[bb[i]].y2 = sc[i][3];
+      order_wire_coords(bb[i]);
+    }
+    wire_delete_compact(fluid_jog_is_doomed, NULL);              /* ... and drop every added wire */
+    xctx->prep_hash_wires = xctx->prep_net_structs = xctx->prep_hi_structs = 0;
+    prepare_netlist_structs(0);
+  }
+  my_free(_ALLOC_ID_, &bbprop);
+  return 0;
+}
+
 /* issue 0094: rip up a move-created DEVICE SHORT where a rigid group drag landed one of a moved device's
  * pins exactly on a foreign net's backbone wire (before_5.sch C12+R18+#net2 dragged (-40,+70): R18's #net2
  * top pin lands on the #net1 backbone at (-300,-10) -> #net1==#net2). The pin position is fixed by the
@@ -3462,11 +3561,15 @@ static int fluid_ripup_foreign_pin_short(void)
                     vertaxis ? "y" : "x", target);
             fixed = 1; changed_any = 1;
           } else {
-            for(m = 0; m < nslid; ++m) {                    /* revert */
+            for(m = 0; m < nslid; ++m) {                    /* revert the whole-backbone slide */
               xWire *w = &xctx->wire[slid[m]];
               w->x1 = sv[4*m+0]; w->y1 = sv[4*m+1]; w->x2 = sv[4*m+2]; w->y2 = sv[4*m+3];
               order_wire_coords(slid[m]);
             }
+            /* issue 0098: the slide could not move the anchored backbone off Q -- try the local
+             * route-around jog (bump the backbone one grid AROUND Q's pin). Q is the pin that landed
+             * on the foreign backbone (the merge sits on Q's line, perpendicular to Q's riser). */
+            if(fluid_jog_pin_off_backbone(qx, qy, vertaxis)) { fixed = 1; changed_any = 1; }
           }
           my_free(_ALLOC_ID_, &reach);
           my_free(_ALLOC_ID_, &slid); my_free(_ALLOC_ID_, &sv);
@@ -5811,8 +5914,16 @@ void move_objects(int what, int merge, double dx, double dy)
     * wins). Default fluid_editing off => never runs => byte-identical. See
     * doc/claude/issues/0088-fluid-reroute-redundant-samenet-loop.md. */
    if(!commit_now && tclgetboolvar("fluid_editing") && xctx->stretch_select &&
-      xctx->move_rot == 0 && xctx->move_flip == 0 &&
       leg_ortho && leg == nlegs - 1) {
+     /* issue 0098 facet B (ALT-R during 'm'): the DE-SHORT passes (ripup foreign-pin short + its 0098
+      * route-around jog, and the redundant-loop remover) are add/reshape-and-partition-VERIFY -- they only
+      * commit a change that RESTORES the START pin-partition -- so they are safe to run under a rotated /
+      * flipped stretch too; their guards are geometric, not rotation-dependent. The old
+      * move_rot==0 && move_flip==0 gate suppressed all de-shorting the moment the user pressed ALT-R
+      * mid-stretch (trace: fluid-block SKIPPED rot=1). Only the AESTHETIC reshapers below (straighten
+      * reversal-collapse, axis-overshoot) stay pinned to the pure-translation path -- Phase 4b deferred
+      * them under rotation as they slide/extend copper to tidy, never to remove a short. */
+     int rotfree = (xctx->move_rot == 0 && xctx->move_flip == 0);
      /* issue 0091: the redundant-route cleanup is NO LONGER wholesale-gated on
       * fluid_startsel_wires==0. When the user drags a selection that includes an instance PLUS some
       * wire(s), a follow-wire on a DIFFERENT net (rubber-banded, never user-selected) can be left with
@@ -5831,6 +5942,7 @@ void move_objects(int what, int merge, double dx, double dy)
       * for every non-shorting drag. See doc/claude/issues/0094-*.md. */
      int ripped = fluid_ripup_foreign_pin_short();
      fluid_remove_redundant_loops();
+     if(rotfree) {
      /* issues 0089 + 0090: the loop-remover only DELETES a redundant same-net CYCLE. A far / multi-
       * gesture move leaves a same-net PATH (no cycle) with a redundant jog -- a same-side U-turn
       * (0089, before_3 R18 (-80,-60) -> after_9 #net2) or an opposite-side monotone STAIRCASE (0090,
@@ -5845,9 +5957,11 @@ void move_objects(int what, int merge, double dx, double dy)
       * gated (drag-created junk on the grabbed net is always removable). See
       * doc/claude/issues/0092-fluid-axis-drag-overshoot-stub.md. */
      fluid_collapse_axis_overshoot_stub();
+     }
      /* issue 0094 tail: the rip-up slide + straighten can leave a fresh dangling backbone stub past the
       * sibling pin (the follow-riser it was joined to is only deleted by straighten just above). Prune it
-      * now, connectivity-verified. Gated on `ripped` so it never runs on a non-shorting drag. */
+      * now, connectivity-verified. Gated on `ripped` so it never runs on a non-shorting drag. Runs under
+      * rotation too (0098 facet B): when ripup fired on a rotated stretch its orphan tail must still go. */
      if(ripped) fluid_prune_novel_orphan_stub();
    }
    /* Exit-stub preservation (wire-editing Phase 6, Issue E -> R13). After the cleanup above,
