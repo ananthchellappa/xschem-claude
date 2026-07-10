@@ -1852,11 +1852,27 @@ void get_pin_escape_normal(int i, int r, double *nx, double *ny)
 
 static int *fluid_snap_id = NULL;    /* canonical partition id per instance pin, captured at START */
 static int  fluid_snap_npins = 0;    /* 0 => no valid snapshot */
+/* issue 0104: GEOMETRIC pin partition at move START (a fluid_loop_partition rep[] over the pristine
+ * wire set). The de-short prune must compare like with like: the node[]-NAME snapshot above merges
+ * geometrically disjoint same-name islands (multi-island GND/VDD) and is blind to netlist-ignored
+ * wires (spice_ignore etc. skip prepare_netlist_structs' hashing), so a geometry-vs-name compare
+ * either never fires or -- worse -- blesses deleting pristine copper whose connectivity only the
+ * geometry sees (review wf_506236ef, confirmed live repro with a spice_ignore bridge). */
+static int *fluid_geo_snap_id = NULL;
+static int  fluid_geo_snap_npins = 0;    /* 0 => no valid geometric snapshot */
+static int fluid_loop_partition(unsigned short *doomed, int *rep); /* defined below (0088 block) */
 /* issue 0086: remaining (not-yet-applied) delta of the LATER decomposition legs while a decomposed
  * (0081) leg is committing -- read by fluid_ml_future_covers so the leg-0 elbow tie-break sees each
  * co-moving pin's FINAL landing point. Zero outside decomposed legs (single-pass moves, attempts
  * 1/2), which makes the tie-break inert there. */
 static double fluid_leg_future_dx = 0.0, fluid_leg_future_dy = 0.0;
+/* issue 0100: PRISTINE (pre-move) coords of the current follow wire's moving endpoint, handed by the
+ * move_objects commit block to fluid_ml_hazards so the pre-move pin lookup does not have to invert a
+ * rotation about an ASSUMED pivot -- wrong under ALT-R/ALT-F (ROTATELOCAL: each follow endpoint
+ * rotates about its owning instance's origin, not the global grab point). Valid only across the
+ * enclosing place_moved_wire() call; equal to the old inverse-about-{x1,y1} under plain ROTATE. */
+static double fluid_stretch_premove_x, fluid_stretch_premove_y;
+static int fluid_stretch_premove_valid = 0;
 static char **fluid_snap_pinnet = NULL; /* strdup'd resolved net name (or NULL) per instance pin at
                                          * START -- for the device-merge P2 check (spec §9) */
 /* issue 0088: START-side wire set (order-normalized endpoints + raw lab= token), captured next to the
@@ -2171,6 +2187,10 @@ static void fluid_snapshot_partition(void)
       my_strdup(_ALLOC_ID_, &fluid_start_wire[i].lab, get_tok_value(xctx->wire[i].prop_ptr, "lab", 0));
     }
   }
+  /* issue 0104: GEOMETRIC partition at START (see the fluid_geo_snap_id declaration). Captured on the
+   * same pristine geometry as the wire snapshot above; pure touch(), no netlist dependency. */
+  fluid_geo_snap_id = my_malloc(_ALLOC_ID_, tot * sizeof(int));
+  fluid_geo_snap_npins = fluid_loop_partition(NULL, fluid_geo_snap_id);
 }
 
 /* free the snapshot without comparing (called on move ABORT, at each new START, and after each
@@ -2187,6 +2207,8 @@ static void fluid_discard_snapshot(void)
     my_free(_ALLOC_ID_, &fluid_start_wire);
   }
   fluid_start_nwire = 0;
+  my_free(_ALLOC_ID_, &fluid_geo_snap_id);                /* issue 0104 geometric partition snapshot */
+  fluid_geo_snap_npins = 0;
   my_free(_ALLOC_ID_, &fluid_snap_id);
   fluid_snap_npins = 0;
 }
@@ -2716,8 +2738,10 @@ static void fluid_remove_redundant_loops(void)
    * comparable. On a trip, re-create the removed wires and leave the loop (never-worse). */
   if(!(fluid_snap_npins > 0 && fluid_count_pins() == fluid_snap_npins) ||
      fluid_partition_changed() || fluid_check_device_merge()) {
-    for(i = 0; i < nsav; ++i)
+    for(i = 0; i < nsav; ++i) {
       storeobject(-1, sav[i].x1, sav[i].y1, sav[i].x2, sav[i].y2, WIRE, 0, 0, sav[i].prop);
+      order_wire_coords(xctx->wires - 1);        /* touch() (pin attach) fails on an unordered wire */
+    }
     xctx->prep_hash_wires = xctx->prep_net_structs = xctx->prep_hi_structs = 0;
     xctx->need_reb_sel_arr = 1;                            /* wire array mutated (compact + re-store) */
     prepare_netlist_structs(0);
@@ -2762,6 +2786,20 @@ done:
  * rewritten; a retracted riser tail must have been a real junction at START (fluid_start_deg_at >= 2)
  * that this drag orphaned, so a user's dangling stub is never pruned. Strict no-op unless a removable
  * jog exists. Caller-gated on fluid_editing (default off => never runs => byte-identical). */
+
+/* was (x,y) an ENDPOINT of some wire at move START? The 0103 anchor-tail prune scopes its free end
+ * with this (a pristine attach point IS a START endpoint) -- NOT with coord_was_grabbed, whose
+ * stretch_grabbed_xy snapshot is re-taken by the mid-gesture follow-set regrabs and so holds the
+ * follow wires' MOVED coords, never the pristine anchors. */
+static int fluid_start_endpoint_at(double x, double y)
+{
+  int j;
+  if(fluid_start_nwire == 0 || !fluid_start_wire) return 0;
+  for(j = 0; j < fluid_start_nwire; ++j)
+    if((fluid_start_wire[j].x1 == x && fluid_start_wire[j].y1 == y) ||
+       (fluid_start_wire[j].x2 == x && fluid_start_wire[j].y2 == y)) return 1;
+  return 0;
+}
 
 /* touch-degree of (x,y) over the move-START wire snapshot: how many START spans cover it. Used to tell
  * a drag-ORPHANED junction (was >=2, now dangling) from a pre-existing user dangler tip (was <=1). */
@@ -3334,6 +3372,211 @@ static void fluid_collapse_axis_overshoot_stub(void)
   my_free(_ALLOC_ID_, &now);
 }
 
+/* issue 0103 (doc/claude/issues/0103-rotate-stretch-dangling-anchor-tails.md): a ROTATED/FLIPPED
+ * connected stretch leaves the follow-wire elbow's far leg reaching back to the pin's PRISTINE
+ * premove attach point: trim_wires() splits the stationary backbone at the elbow corner and dedups
+ * the overlap, so a same-net DANGLING TAIL survives from the corner junction to the now-bare anchor
+ * spot (before_7.sch + ALT-R, drop (-40,70) -> after_20.sch's N -190 -40 -120 -40 and
+ * N -130 -150 -120 -150). Same net => invisible to the partition accept ladder;
+ * remove_move_orphan_wires declines it (the kept end is a rail T, not a moving pin -- move.c:1644);
+ * and the tail-capable aesthetic passes (0089/0090/0092) are rotfree-gated. Delete-only, tightly
+ * scoped prune:
+ *   - novelty-span scoped + auto copper only (never an explicit user lab=, never a bus);
+ *   - exactly one FREE end (live touch-degree 0, on no pin) that was an ATTACH POINT at START: a
+ *     START wire ENDPOINT (fluid_start_endpoint_at -- pristine anchors are; coord_was_grabbed is
+ *     unusable here, its snapshot is re-taken by mid-gesture regrabs at MOVED coords) with START
+ *     touch-degree >= 2, so a pre-existing user dangler tip (START degree <= 1) is never pruned;
+ *   - the kept end must remain a junction WITHOUT this wire (touch-degree >= 2), so removal never
+ *     strands the junction and a bend continuation (degree 1) is never eaten;
+ *   - never a wire on a USER-selected wire's touch-component (fluid_mark_user_protected, the 0091
+ *     "selection wins" policy the sibling passes follow): novelty-SPAN alone would also match a
+ *     user-selected pin-free wire that RODE the rotation and happened to land its dangling tip on
+ *     a vacated anchor spot -- the partition verify is blind to pin-free copper, so prot[] is the
+ *     guard that keeps the user's own wire alive;
+ *   - per-doom pin-partition verify (fluid_loop_partition with the candidate doomed vs pass entry):
+ *     a pin lying anywhere ON the tail would lose copper and trips the verify, so the doom is
+ *     dropped rather than committed.
+ * Caller gates on the rotated/flipped fluid END path => byte-identical for pure translations. */
+static void fluid_prune_anchor_tails(void)
+{
+  int i, np, removed = 0;
+  unsigned short *doomed = NULL;
+  unsigned char *prot = NULL;
+  int *base = NULL, *now = NULL;
+  if(xctx->wires == 0 || fluid_start_nwire <= 0) return;   /* no START snapshot => cannot scope/verify */
+  np = fluid_count_pins();
+  if(np <= 0) return;
+  my_realloc(_ALLOC_ID_, &doomed, xctx->wires * sizeof(unsigned short));
+  memset(doomed, 0, xctx->wires * sizeof(unsigned short));
+  base = my_malloc(_ALLOC_ID_, np * sizeof(int));
+  now  = my_malloc(_ALLOC_ID_, np * sizeof(int));
+  prot = my_malloc(_ALLOC_ID_, xctx->wires * sizeof(unsigned char));
+  fluid_mark_user_protected(prot);                         /* issue 0091: never doom the user's own net */
+  fluid_loop_partition(NULL, base);                        /* pass-entry partition = invariant target */
+  for(i = 0; i < xctx->wires; i++) {
+    double ax = xctx->wire[i].x1, ay = xctx->wire[i].y1;
+    double bx = xctx->wire[i].x2, by = xctx->wire[i].y2;
+    double fx, fy, kx, ky;
+    int f1, f2;
+    if(ax == bx && ay == by) continue;                     /* degenerate: check_collapsing's job */
+    if(xctx->wire[i].bus != 0.0) continue;
+    if(prot[i]) continue;                                  /* 0091 "selection wins": user's own net */
+    if(fluid_wire_explicit_lab(i)) continue;               /* explicit name: deleting could rename */
+    if(!fluid_wire_is_novel_span(i)) continue;             /* only copper THIS drag produced */
+    f1 = fluid_deg_at(ax, ay, doomed, i) == 0 && !point_on_any_pin(ax, ay);
+    f2 = fluid_deg_at(bx, by, doomed, i) == 0 && !point_on_any_pin(bx, by);
+    if(f1 == f2) continue;                                 /* need exactly one free (dangling) end */
+    if(f1) { fx = ax; fy = ay; kx = bx; ky = by; }
+    else   { fx = bx; fy = by; kx = ax; ky = ay; }
+    fltrace("FLTRACE anchor-tail: cand w=%d [%g %g %g %g] free=(%g,%g) startep=%d startdeg=%d keptdeg=%d\n",
+            i, ax, ay, bx, by, fx, fy, fluid_start_endpoint_at(fx, fy),
+            fluid_start_deg_at(fx, fy), fluid_deg_at(kx, ky, doomed, i));
+    if(!fluid_start_endpoint_at(fx, fy)) continue;         /* free end must be a pristine attach spot */
+    if(fluid_start_deg_at(fx, fy) < 2) continue;           /* drag-orphaned junction, never a user tip */
+    if(fluid_deg_at(kx, ky, doomed, i) < 2) continue;      /* kept end must stay a real junction */
+    doomed[i] = 1;
+    fluid_loop_partition(doomed, now);
+    if(memcmp(base, now, np * sizeof(int))) { doomed[i] = 0; fltrace("FLTRACE anchor-tail: w=%d partition veto\n", i); continue; }
+    removed++;
+  }
+  if(removed) {
+    wire_delete_compact(wire_doomed_flag, doomed);
+    xctx->prep_hash_wires = xctx->prep_net_structs = xctx->prep_hi_structs = 0;
+    xctx->need_reb_sel_arr = 1;
+    set_modify(1);
+    fltrace("FLTRACE anchor-tail: pruned %d dangling pristine-anchor tail(s)\n", removed);
+  }
+  my_free(_ALLOC_ID_, &doomed);
+  my_free(_ALLOC_ID_, &prot);
+  my_free(_ALLOC_ID_, &base);
+  my_free(_ALLOC_ID_, &now);
+}
+
+/* issue 0104 helper: number of pin PAIRS whose together/apart relation in rep[] (a live
+ * fluid_loop_partition result) disagrees with the GEOMETRIC START snapshot fluid_geo_snap_id --
+ * 0 iff the two partitions are equivalent. Geometry-to-geometry on purpose: the node[]-NAME
+ * snapshot (fluid_snap_id) merges disjoint same-name islands and skips netlist-ignored wires, so
+ * comparing it against geometry either never reaches 0 (pass permanently inert in any multi-island
+ * GND/VDD schematic) or blesses a doom the names cannot see (review wf_506236ef). Both arrays are
+ * smallest-pin-index canonical, but compare class STRUCTURE anyway -- robust to id-scheme drift.
+ * Not comparable (no snapshot / pin-count drift) returns "maximally different": a 0 return is what
+ * COMMITS a doom, so the fail-safe direction is "don't commit". */
+static int fluid_part_diff_pairs(int *rep, int np)
+{
+  int i, j, d = 0;
+  if(!fluid_geo_snap_id || np != fluid_geo_snap_npins || np <= 0) return np * (np - 1) / 2 + 1;
+  for(i = 1; i < np; ++i)
+    for(j = 0; j < i; ++j)
+      if((rep[j] == rep[i]) != (fluid_geo_snap_id[j] == fluid_geo_snap_id[i])) ++d;
+  return d;
+}
+
+/* issue 0104 (doc/claude/issues/0104-rotate-stretch-sibling-routes-collide-at-stale-anchor.md): a
+ * ROTATED connected stretch can leave one moved pin's elbow far leg reaching back to that pin's
+ * PRISTINE premove attach point (the 0103 tail shape) while the SIBLING pin's follow wire -- a
+ * degenerate straight run with no elbow freedom -- passes exactly THROUGH that stale anchor
+ * coordinate (before_7.sch + ALT-R, drop (-30,70): pin0's x lands on the anchor's own column).
+ * The endpoint touch merges the two nets across the device; every accept-ladder attempt is equally
+ * shorted, so the shorted ortho result is kept and saved (after_21.sch).
+ *
+ * Why the neighbours don't own it: 0103's prune requires the tail end DANGLING (touch-deg 0) -- here
+ * the crossing route gives it degree 2 -- and its verify direction PRESERVES the (already shorted)
+ * pass-entry partition, while the fix must CHANGE it back to START. 0094/0098's rip-up keys on a
+ * device PIN sitting on foreign copper -- no pin sits at the anchor. The 0085/0086 elbow classifiers
+ * only choose BETWEEN two L orientations sharing the same endpoints; the anchor endpoint itself is
+ * the hazard, common to both.
+ *
+ * So: delete-only de-short. Strict no-op unless the GEOMETRIC pin-partition ALREADY differs from the
+ * geometric START snapshot (fluid_part_diff_pairs > 0; nothing to fix => byte-identical for every
+ * clean drag). Candidate = non-bus, unlabeled, non-user-protected (0091), novel-SPAN (a pristine
+ * backbone remnant split at the elbow corner tests novel too -- span-based, not id-based) wire with
+ * one end F on a pristine attach spot (a START wire endpoint, START touch-deg >= 2, on no pin) that
+ * is still touched by OTHER copper (deg >= 1 -- the crossing route; a deg-0 dangling tail is 0103's,
+ * keeping the domains disjoint), whose other end K stays a junction without it (deg >= 2), and with
+ * a clean interior (fluid_loop_interior_clean: no wire T-tap or pin mid-span -- deleting under a tap
+ * would silently sever a pin-less lab= branch the pin-partition verify cannot see, review
+ * wf_506236ef). Dooms accumulate GREEDILY to a fixpoint: a doom is kept only if it strictly reduces
+ * the pair-disagreement count vs START (fluid_part_diff_pairs), and the accumulated set is committed
+ * ONLY when the count reaches 0 -- the partition over the remaining wires is exactly the START one
+ * (the 0094/0098 "must RESTORE START" verify direction, computed geometrically so no netlist rebuild
+ * is needed mid-scan). Anything short of a full restore reverts every doom: the pass either de-shorts
+ * provably or leaves the scene byte-identical. Multi-short scenes (two devices, two stale-anchor
+ * tails) converge because each tail's doom removes its own disagreeing pairs independently. */
+static void fluid_prune_shorting_anchor_tails(void)
+{
+  int i, np, removed = 0, curdiff, progress;
+  unsigned short *doomed = NULL;
+  unsigned char *prot = NULL;
+  int *now = NULL;
+  if(xctx->wires == 0 || fluid_start_nwire <= 0) return;   /* no START snapshot => cannot scope/verify */
+  if(!fluid_geo_snap_id || fluid_geo_snap_npins <= 0) return;
+  np = fluid_count_pins();
+  if(np != fluid_geo_snap_npins) return;                   /* instance set changed: not comparable */
+  now = my_malloc(_ALLOC_ID_, np * sizeof(int));
+  if(fluid_loop_partition(NULL, now) != np) { my_free(_ALLOC_ID_, &now); return; }
+  curdiff = fluid_part_diff_pairs(now, np);
+  if(curdiff == 0) {
+    my_free(_ALLOC_ID_, &now);                             /* geometry matches START: clean drag */
+    return;
+  }
+  my_realloc(_ALLOC_ID_, &doomed, xctx->wires * sizeof(unsigned short));
+  memset(doomed, 0, xctx->wires * sizeof(unsigned short));
+  prot = my_malloc(_ALLOC_ID_, xctx->wires * sizeof(unsigned char));
+  fluid_mark_user_protected(prot);                         /* issue 0091: never doom the user's own net */
+  do {
+    progress = 0;
+    for(i = 0; i < xctx->wires && curdiff > 0; i++) {
+      double ax = xctx->wire[i].x1, ay = xctx->wire[i].y1;
+      double bx = xctx->wire[i].x2, by = xctx->wire[i].y2;
+      int e, nd, hit = 0;
+      if(doomed[i]) continue;
+      if(ax == bx && ay == by) continue;                   /* degenerate: check_collapsing's job */
+      if(xctx->wire[i].bus != 0.0) continue;
+      if(prot[i]) continue;                                /* 0091 "selection wins": user's own net */
+      if(fluid_wire_explicit_lab(i)) continue;             /* explicit name: deleting could rename */
+      if(!fluid_wire_is_novel_span(i)) continue;           /* only spans THIS drag produced */
+      for(e = 0; e < 2 && !hit; ++e) {                     /* either end may be the stale anchor F */
+        double fx = e ? bx : ax, fy = e ? by : ay;
+        double kx = e ? ax : bx, ky = e ? ay : by;
+        if(!fluid_start_endpoint_at(fx, fy)) continue;     /* F must be a pristine attach spot */
+        if(fluid_start_deg_at(fx, fy) < 2) continue;       /* ...that was a junction, not a user tip */
+        if(point_on_any_pin(fx, fy)) continue;             /* pin at F = 0098 rip-up territory */
+        if(fluid_deg_at(fx, fy, doomed, i) < 1) continue;  /* crossing copper present (deg 0 = 0103) */
+        if(fluid_deg_at(kx, ky, doomed, i) < 2) continue;  /* kept end must stay a real junction */
+        hit = 1;
+      }
+      if(!hit) continue;
+      if(!fluid_loop_interior_clean(i, doomed)) continue;  /* mid-span tap: severing risk, decline */
+      doomed[i] = 1;
+      if(fluid_loop_partition(doomed, now) == np &&
+         (nd = fluid_part_diff_pairs(now, np)) < curdiff) {
+        fltrace("FLTRACE short-tail: doomed w=%d [%g %g %g %g] diff %d -> %d\n",
+                i, ax, ay, bx, by, curdiff, nd);
+        curdiff = nd; removed++; progress = 1;
+        continue;
+      }
+      doomed[i] = 0;
+      fltrace("FLTRACE short-tail: cand w=%d [%g %g %g %g] doom does not approach START -> keep\n",
+              i, ax, ay, bx, by);
+    }
+  } while(progress && curdiff > 0);
+  if(removed && curdiff == 0) {                            /* full START restore proven: commit */
+    wire_delete_compact(wire_doomed_flag, doomed);
+    check_collapsing_objects(); trim_wires();              /* re-merge the route split at the anchor */
+    xctx->prep_hash_wires = xctx->prep_net_structs = xctx->prep_hi_structs = 0;
+    prepare_netlist_structs(0);
+    xctx->need_reb_sel_arr = 1;
+    set_modify(1);
+    fltrace("FLTRACE short-tail: pruned %d shorting tail(s), START partition restored\n", removed);
+  } else if(removed) {
+    fltrace("FLTRACE short-tail: partial improvement only (diff=%d), all %d doom(s) reverted\n",
+            curdiff, removed);
+  }
+  my_free(_ALLOC_ID_, &doomed);
+  my_free(_ALLOC_ID_, &prot);
+  my_free(_ALLOC_ID_, &now);
+}
+
 /* issue 0098: route-AROUND fallback for fluid_ripup_foreign_pin_short. When a connected stretch lands a
  * device pin Q mid-line on a foreign net's backbone that the whole-backbone slide CANNOT move -- its far
  * anchor pins it (before_7.sch: C12 pins #net3 at Q's row y=-160 and its OTHER pin one grid family away,
@@ -3401,16 +3644,24 @@ static int fluid_jog_pin_off_backbone(double qx, double qy, int vertaxis)
       xctx->wire[bb[i]].x2 = nc[i][2]; xctx->wire[bb[i]].y2 = nc[i][3];
       order_wire_coords(bb[i]);
     }
-    for(i = 0; i < nex; ++i)                                     /* re-add straddle right pieces */
+    for(i = 0; i < nex; ++i) {                                   /* re-add straddle right pieces */
       storeobject(-1, ex[i][0], ex[i][1], ex[i][2], ex[i][3], WIRE, 0, 0, bbprop);
+      order_wire_coords(xctx->wires - 1);
+    }
     if(vertaxis) {                                               /* 3-seg bump bridging (qL..qR) at +dir */
       storeobject(-1, qL, qy,       qL, qy + dir, WIRE, 0, 0, bbprop);
+      order_wire_coords(xctx->wires - 1);
       storeobject(-1, qL, qy + dir, qR, qy + dir, WIRE, 0, 0, bbprop);
+      order_wire_coords(xctx->wires - 1);
       storeobject(-1, qR, qy + dir, qR, qy,       WIRE, 0, 0, bbprop);
+      order_wire_coords(xctx->wires - 1);
     } else {
       storeobject(-1, qx,       qL, qx + dir, qL, WIRE, 0, 0, bbprop);
+      order_wire_coords(xctx->wires - 1);
       storeobject(-1, qx + dir, qL, qx + dir, qR, WIRE, 0, 0, bbprop);
+      order_wire_coords(xctx->wires - 1);
       storeobject(-1, qx + dir, qR, qx,       qR, WIRE, 0, 0, bbprop);
+      order_wire_coords(xctx->wires - 1);
     }
     xctx->prep_hash_wires = xctx->prep_net_structs = xctx->prep_hi_structs = 0;
     prepare_netlist_structs(0);
@@ -3971,7 +4222,28 @@ static int fluid_ml_hazards(int ml, int sel1)
   int i, p, k, npins, base, h = 0, m;
 
   if(!fluid_snap_pinnet || fluid_snap_npins <= 0) return 0;
-  pmx = mx - xctx->deltax; pmy = my - xctx->deltay;
+  /* rotate_keep_connected_stretch.md / issue 0099: under a rotated/flipped stretch the moving pin M
+   * did NOT merely translate -- it rotated about a pivot, THEN translated by delta. Recover M's true
+   * PRE-move position so the pristine-net lookup (nf) and the pre-move span A..preM tests below
+   * reference the REAL pin, not a rotated-back-by-delta phantom off the grid.
+   * issue 0100: mid-move ALT-R issues ROTATE|ROTATELOCAL (callback.c:5100), so the pivot is NOT
+   * always the global grab point xctx->{x1,y1} -- the commit block hands the pristine endpoint down
+   * directly (fluid_stretch_premove_*), exact under ANY pivot and equal to the old inverse-about-
+   * {x1,y1} under plain ROTATE. The inverse math stays as the fallback for a caller that did not arm
+   * the hand-down. For move_rot==0 && move_flip==0 this is BYTE-IDENTICAL to the old `mx-delta`
+   * (the branch is skipped). */
+  if(xctx->move_rot || xctx->move_flip) {
+    if(fluid_stretch_premove_valid) {
+      pmx = fluid_stretch_premove_x; pmy = fluid_stretch_premove_y;
+    } else {
+      double pvx = xctx->x1, pvy = xctx->y1, qx = mx - xctx->deltax, qy = my - xctx->deltay, fx, fy;
+      ROTATION((4 - xctx->move_rot) & 3, 0, pvx, pvy, qx, qy, fx, fy);
+      pmx = xctx->move_flip ? 2 * pvx - fx : fx;
+      pmy = fy;
+    }
+  } else {
+    pmx = mx - xctx->deltax; pmy = my - xctx->deltay;
+  }
   nf = fluid_moving_pin_net(pmx, pmy);
 
   /* (1) stationary device two-distinct-net-pin bridge (the original Phase III test) */
@@ -3989,6 +4261,20 @@ static int fluid_ml_hazards(int ml, int sel1)
       const char *pn = fluid_snap_pinnet[base + p];
       double px, py;
       get_inst_pin_coord(i, p, &px, &py);            /* live == PRE-move here */
+      /* issue 0099: a co-moving pin ROTATES about the pivot then translates -- it does not merely
+       * translate. Apply the SAME ROTATION(pivot)+delta the commit block applies to the instance, so a
+       * rotated sibling pin (e.g. R18's other pin landing where an elbow leg runs) is tested at its TRUE
+       * post-move position. move_rot==0 && move_flip==0 skips this => byte-identical translation path.
+       * issue 0100: under ALT-R/ALT-F (ROTATELOCAL) the ELEMENT commit rotates each instance about ITS
+       * OWN origin -- mirror that pivot here or the sibling pin is predicted at the wrong spot and the
+       * elbow can pick a shorting orientation. */
+      if(xctx->move_rot || xctx->move_flip) {
+        double rpx, rpy;
+        double pvx = xctx->rotatelocal ? xctx->inst[i].x0 : xctx->x1;
+        double pvy = xctx->rotatelocal ? xctx->inst[i].y0 : xctx->y1;
+        ROTATION(xctx->move_rot, xctx->move_flip, pvx, pvy, px, py, rpx, rpy);
+        px = rpx; py = rpy;
+      }
       px += xctx->deltax; py += xctx->deltay;
       if(px == mx && py == my) continue;             /* the follow pin M itself */
       if(!pn || !pn[0]) continue;                    /* unconnected pin: no merge */
@@ -5472,6 +5758,25 @@ void move_objects(int what, int merge, double dx, double dy)
      memset(&leg_snap, 0, sizeof(leg_snap));
      mem_snapshot_alloc(&leg_snap); mem_serialize_slot(&leg_snap); leg_snapped = 1;
    }
+   /* issue 0102: arm the SAME P2 safety net for a ROTATED/FLIPPED fluid stretch (nlegs stays 1).
+    * rot180/270 swap a device's pins so the two follow routes must CROSS -- the elbow hazard picker
+    * correctly flags BOTH orientations (one leg plows the rotated sibling pin, the other T-touches
+    * that pin's net backbone end) but has no clean L to pick, so attempt 0 can genuinely short
+    * (before_7.sch -> after_19.sch: R18.P + C12 merged onto #net1). With the snapshot armed, the
+    * existing attempt loop rolls the shorted route back and falls to the rigid diagonal relay:
+    * each follow endpoint lands exactly on its rotated pin (0100 pivots) and a true diagonal lays
+    * no new elbow copper, so it cannot merge; an AXIS-DEGENERATE relay (dx==0/dy==0 drop keeps
+    * anchor+pin collinear) that spans a swapped sibling pin is bent into two diagonals in the
+    * commit WIRE case below -- P1/P2 outrank route aesthetics (attempt 1 re-runs the
+    * same single ortho pass and fails identically; the flow then arms the relay exactly as the
+    * translation path does). A clean rotated route (the 0099/0100 rot90/flip cases) breaks after
+    * attempt 0 with zero behavior change. Translation path untouched (requires move_rot||move_flip;
+    * the branch above requires their absence). */
+   else if(tclgetboolvar("fluid_editing") && xctx->stretch_select && orthogonal_wiring &&
+      (xctx->move_rot || xctx->move_flip)) {
+     memset(&leg_snap, 0, sizeof(leg_snap));
+     mem_snapshot_alloc(&leg_snap); mem_serialize_slot(&leg_snap); leg_snapped = 1;
+   }
    if(what & (RUBBER | END))
      fltrace("FLTRACE move: what=%s%s commit_now=%d totdx=%g totdy=%g fluid=%d stretch=%d ortho=%d rot=%d startsel_w=%d -> nlegs=%d\n",
          (what & END) ? "END" : "", (what & RUBBER) ? "RUBBER" : "", commit_now, totdx, totdy,
@@ -5549,6 +5854,37 @@ void move_objects(int what, int merge, double dx, double dy)
          double wpx, wpy; /* rotation pivot for this wire */
          if(xctx->rotatelocal) { wpx = wire[n].x1; wpy = wire[n].y1; }
          else                  { wpx = xctx->x1;   wpy = xctx->y1;   }
+         /* issue 0100: ALT-R/ALT-F mid-stretch are ROTATE|ROTATELOCAL (callback.c:5100/:4592): the
+          * ELEMENT commit below rotates each instance about ITS OWN origin, so a partial-selected
+          * follow wire rotated about the WIRE's own (x1,y1) lands its moving endpoint off the pin --
+          * a P1 tear-off (before_7.sch -> after_18.sch: both R18 pins on fresh nets). Use the pivot
+          * of the selected instance whose PRISTINE pin the moving endpoint sits on: the pin moves by
+          * ROTATION(inst origin)+delta, so the endpoint lands ON it by construction. Instances are
+          * still pristine here (the ELEMENT loop runs after this one). No owning pin found (the
+          * endpoint follows a selected wire, not a pin) => old per-wire pivot, unchanged. Gated to
+          * the fluid stretch => byte-identical everywhere else. */
+         if(xctx->rotatelocal && (xctx->move_rot || xctx->move_flip) &&
+            xctx->stretch_select && tclgetboolvar("fluid_editing") &&
+            (wire[n].sel == SELECTED1 || wire[n].sel == SELECTED2)) {
+           double mvx = (wire[n].sel == SELECTED1) ? wire[n].x1 : wire[n].x2;
+           double mvy = (wire[n].sel == SELECTED1) ? wire[n].y1 : wire[n].y2;
+           int j, p, np, ii, found = 0;
+           for(j = 0; j < xctx->lastsel && !found; ++j) {
+             if(xctx->sel_array[j].type != ELEMENT) continue;
+             ii = xctx->sel_array[j].n;
+             if(xctx->inst[ii].ptr < 0) continue;
+             np = (xctx->inst[ii].ptr + xctx->sym)->rects[PINLAYER];
+             for(p = 0; p < np; ++p) {
+               double px, py;
+               get_inst_pin_coord(ii, p, &px, &py);
+               if(px == mvx && py == mvy) {
+                 wpx = xctx->inst[ii].x0; wpy = xctx->inst[ii].y0;
+                 found = 1;
+                 break;
+               }
+             }
+           }
+         }
          if( wire[n].sel & (SELECTED|SELECTED1) ) {
            ROTATION(xctx->move_rot, xctx->move_flip, wpx, wpy,
               wire[n].x1, wire[n].y1, xctx->rx1,xctx->ry1);
@@ -5566,13 +5902,83 @@ void move_objects(int what, int merge, double dx, double dy)
            xctx->rx2 = wire[n].x2; xctx->ry2 = wire[n].y2; /* anchored: pristine, not rotated */
          }
 
+         /* issue 0100: hand the PRISTINE moving-endpoint coords to fluid_ml_hazards -- exact under
+          * ANY pivot (see the statics' comment). wire[n] is still pristine here (place_moved_wire
+          * writes it). Cleared right after so no other caller sees stale data. */
+         {
+         int fluid_partial = (wire[n].sel == SELECTED1 || wire[n].sel == SELECTED2);
+         if((xctx->move_rot || xctx->move_flip) && fluid_partial) {
+           fluid_stretch_premove_x = (wire[n].sel == SELECTED1) ? wire[n].x1 : wire[n].x2;
+           fluid_stretch_premove_y = (wire[n].sel == SELECTED1) ? wire[n].y1 : wire[n].y2;
+           fluid_stretch_premove_valid = 1;
+         }
          place_moved_wire(n, leg_ortho);
+         fluid_stretch_premove_valid = 0;
          /* place_moved_wire() -> storeobject() may my_realloc(xctx->wire), leaving the loop-local
           * `wire` alias dangling. Refresh it so a LATER sel_array WIRE entry (e.g. the second of a
           * two-follow-wire fluid drag -- R18's M and P risers) does not read freed memory. This
           * pre-existing k-loop staleness was previously latent (only single-follow-wire stretches
           * were exercised); test_wireedit_34 exposes it. (line[] is untouched by place_moved_wire.) */
          wire = xctx->wire;
+         /* issue 0102 (review wf_49325abb F2): an AXIS-DEGENERATE rigid-relay wire -- a dx==0 (or
+          * dy==0) drop keeps the anchor and the rotated pin collinear (rot180 in-place: everything
+          * stays on the fixture's single column) -- can SPAN the swapped sibling pin; pin-on-span
+          * merges, every attempt stays dirty, and the never-worse fallback kept the shorted ortho
+          * route. When a pin actually lies strictly INSIDE the relayed span (moving pins tested at
+          * their rotatelocal-aware post-move position), bend the wire at an off-axis midpoint into
+          * two true diagonals, which cannot pin-on-span. The attempt-loop partition check remains
+          * the arbiter: a dirty bend is rolled back exactly like any dirty attempt => never worse. */
+         if(fluid_partial && diag_relay && (xctx->move_rot || xctx->move_flip) &&
+            xctx->stretch_select && tclgetboolvar("fluid_editing")) {
+           double wx1 = wire[n].x1, wy1 = wire[n].y1, wx2 = wire[n].x2, wy2 = wire[n].y2;
+           if((wx1 == wx2) != (wy1 == wy2)) {           /* axis-aligned, non-degenerate-point */
+             int ii, p, np, covered = 0;
+             for(ii = 0; ii < xctx->instances && !covered; ++ii) {
+               if(xctx->inst[ii].ptr < 0) continue;
+               np = (xctx->inst[ii].ptr + xctx->sym)->rects[PINLAYER];
+               for(p = 0; p < np; ++p) {
+                 double px, py;
+                 get_inst_pin_coord(ii, p, &px, &py);
+                 if(xctx->inst[ii].sel) {               /* co-moving: rotatelocal-aware post-move */
+                   double rpx, rpy;
+                   double pvx = xctx->rotatelocal ? xctx->inst[ii].x0 : xctx->x1;
+                   double pvy = xctx->rotatelocal ? xctx->inst[ii].y0 : xctx->y1;
+                   ROTATION(xctx->move_rot, xctx->move_flip, pvx, pvy, px, py, rpx, rpy);
+                   px = rpx + xctx->deltax; py = rpy + xctx->deltay;
+                 }
+                 if(wx1 == wx2) {
+                   if(px == wx1 && py > (wy1 < wy2 ? wy1 : wy2) && py < (wy1 < wy2 ? wy2 : wy1))
+                     covered = 1;
+                 } else {
+                   if(py == wy1 && px > (wx1 < wx2 ? wx1 : wx2) && px < (wx1 < wx2 ? wx2 : wx1))
+                     covered = 1;
+                 }
+                 if(covered) break;
+               }
+             }
+             if(covered) {
+               double gr = tclgetdoublevar("cadsnap");
+               double mxp, myp;
+               if(gr <= 0.0) gr = 10.0;
+               if(wx1 == wx2) {
+                 myp = floor((wy1 + wy2) / (2.0 * gr) + 0.5) * gr;
+                 mxp = wx1 + gr;
+               } else {
+                 mxp = floor((wx1 + wx2) / (2.0 * gr) + 0.5) * gr;
+                 myp = wy1 + gr;
+               }
+               wire[n].x2 = mxp; wire[n].y2 = myp;      /* first half: (x1,y1)-(mid) */
+               order_wire_points(n);
+               storeobject(-1, mxp, myp, wx2, wy2, WIRE, 0, 0, wire[n].prop_ptr);
+               wire = xctx->wire;                       /* storeobject may realloc */
+               /* order the new half too -- hash/pin-attach assume ordered endpoints (an unordered
+                * diagonal resolves in the wire graph but misses the instance-pin attach: pin ends
+                * on a fresh #net while the wire chain stays intact). */
+               order_wire_points(xctx->wires - 1);
+             }
+           }
+         }
+         }
 
        }
        break;
@@ -5941,6 +6347,10 @@ void move_objects(int what, int merge, double dx, double dy)
       * straighten/retract pass below. Strict no-op unless a move-created merge exists => byte-identical
       * for every non-shorting drag. See doc/claude/issues/0094-*.md. */
      int ripped = fluid_ripup_foreign_pin_short();
+     /* issue 0104: a rotated stretch can short two follow-wires at one pin's STALE pristine anchor
+      * (no pin on the contact point, so the rip-up above never fires). Delete-only, commits a doom
+      * only when it makes the pin-partition equivalent to START again -- strict no-op on clean drags. */
+     fluid_prune_shorting_anchor_tails();
      fluid_remove_redundant_loops();
      if(rotfree) {
      /* issues 0089 + 0090: the loop-remover only DELETES a redundant same-net CYCLE. A far / multi-
@@ -5958,6 +6368,11 @@ void move_objects(int what, int merge, double dx, double dy)
       * doc/claude/issues/0092-fluid-axis-drag-overshoot-stub.md. */
      fluid_collapse_axis_overshoot_stub();
      }
+     /* issue 0103: under rotation/flip the elbow's pristine-anchor far leg can survive trim as a
+      * same-net dangling tail (the aesthetic passes above that would retract it are rotfree-gated,
+      * remove_move_orphan_wires needs the kept end on a MOVING pin). Delete-only + per-doom
+      * partition-verified, so it can only remove drag-produced jetsam or decline. */
+     if(!rotfree) fluid_prune_anchor_tails();
      /* issue 0094 tail: the rip-up slide + straighten can leave a fresh dangling backbone stub past the
       * sibling pin (the follow-riser it was joined to is only deleted by straighten just above). Prune it
       * now, connectivity-verified. Gated on `ripped` so it never runs on a non-shorting drag. Runs under
