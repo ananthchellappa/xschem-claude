@@ -2069,19 +2069,24 @@ static int fluid_anchor_absorbs_along_normal(double fx, double fy, double nx, do
 }
 
 /* Phase IV P6 P5-guard (adversarial review wf_6e97238b): does the axis-aligned segment (x1,y1)-(x2,y2)
- * pass through the STRICT interior of any STATIONARY, non-label instance body? The both-P2-clear arm
- * only proved no device SHORT (fluid_ml_blocked tests two-distinct-pin straddle, not a body crossing),
- * so a foreign device whose pins lie OFF the along-normal axis has b=0 yet its body sits on the leg --
- * P6 would drive the straight exit through it (a P5 break, and P5 > P6). Box = inst world bbox
- * (symbol_bbox, move.c:221, the same box the reroute layers use). Stationary only: the moving
- * instance's own body is excluded by the sel test, so the pin's own leg root is never flagged. */
-static int fluid_seg_crosses_stationary_body(double x1, double y1, double x2, double y2)
+ * pass through the STRICT interior of any non-label instance body of the selected obstacle class --
+ * moved=0: STATIONARY bodies (the historical guard: the moving instance's own body is excluded, so
+ * the pin's own leg root is never flagged); moved=1: MOVING (selected) bodies only (issue 0111: the
+ * pin-landing FAR collapse is a brand-new route choice, so unlike the legacy slides it must also
+ * clear the moved device itself -- test_wireedit_48's A case drove the far-collapsed leg through the
+ * dragged body). The both-P2-clear arm only proved no device SHORT (fluid_ml_blocked tests
+ * two-distinct-pin straddle, not a body crossing), so a foreign device whose pins lie OFF the
+ * along-normal axis has b=0 yet its body sits on the leg -- P6 would drive the straight exit through
+ * it (a P5 break, and P5 > P6). Box = inst world bbox (symbol_bbox, move.c:221, the same box the
+ * reroute layers use). */
+static int fluid_seg_crosses_body(double x1, double y1, double x2, double y2, int moved)
 {
   int i;
   for(i = 0; i < xctx->instances; i++) {
     double bx1, by1, bx2, by2, t, slo, shi;
     const char *itype;
-    if(xctx->inst[i].sel || xctx->inst[i].ptr < 0) continue;         /* stationary obstacles only */
+    if(moved ? !xctx->inst[i].sel : (int)xctx->inst[i].sel) continue; /* obstacle class select */
+    if(xctx->inst[i].ptr < 0) continue;
     itype = xctx->sym[xctx->inst[i].ptr].type;
     if(itype && !strcmp(itype, "label")) continue;                   /* labels have no body (§2) */
     bx1 = xctx->inst[i].x1; by1 = xctx->inst[i].y1;
@@ -2091,14 +2096,40 @@ static int fluid_seg_crosses_stationary_body(double x1, double y1, double x2, do
     if(x1 == x2) {                                                    /* vertical segment at x1 */
       if(x1 <= bx1 || x1 >= bx2) continue;                            /* not strictly inside x-span */
       slo = y1 < y2 ? y1 : y2; shi = y1 < y2 ? y2 : y1;
-      if(slo < by2 && shi > by1) return 1;                           /* overlaps the open y-interior */
+      if(!(slo < by2 && shi > by1)) continue;                        /* misses the open y-interior */
     } else if(y1 == y2) {                                             /* horizontal segment at y1 */
       if(y1 <= by1 || y1 >= by2) continue;
       slo = x1 < x2 ? x1 : x2; shi = x1 < x2 ? x2 : x1;
-      if(slo < bx2 && shi > bx1) return 1;
+      if(!(slo < bx2 && shi > bx1)) continue;
+    } else continue;
+    if(moved) {
+      /* issue 0111 (mirrors predicates.tcl p5_no_body_cross, tightened per review
+       * wf_bb7bb60e): a wire that leaves one of THIS instance's pins along the pin's OUTWARD
+       * escape normal is its own feed leg, not a body crossing -- the world bbox is
+       * text-inflated, so such a leg routinely overlaps it (after_28.sch: the far collapse's
+       * extended lead run at y=-90 into R18's P pin). The outward-direction test (not a bare
+       * endpoint match) keeps a pin-anchored leg extended INWARD through the drawn body
+       * flagged. Stationary obstacles keep the historical no-exemption behavior. */
+      int r, rects = (xctx->inst[i].ptr + xctx->sym)->rects[PINLAYER], exempt = 0;
+      for(r = 0; r < rects && !exempt; r++) {
+        double px, py, nx, ny, fx, fy;
+        get_inst_pin_coord(i, r, &px, &py);
+        if(x1 == px && y1 == py)      { fx = x2; fy = y2; }
+        else if(x2 == px && y2 == py) { fx = x1; fy = y1; }
+        else continue;
+        get_pin_escape_normal(i, r, &nx, &ny);
+        if(nx * (fx - px) + ny * (fy - py) > 0.0) exempt = 1;
+      }
+      if(exempt) continue;
     }
+    return 1;
   }
   return 0;
+}
+
+static int fluid_seg_crosses_stationary_body(double x1, double y1, double x2, double y2)
+{
+  return fluid_seg_crosses_body(x1, y1, x2, y2, 0);
 }
 
 /* Phase IV P6 length veto (pin end; adversarial review wf_6e97238b, length finding). Complements
@@ -3095,7 +3126,8 @@ static void fluid_straighten_reversals(void)
       xWire *d = &xctx->wire[kd];
       int vert, kA = -1, kC = -1, m, sa, sb, oppo = 0;
       double dx1, dy1, dx2, dy2, fa = 0, fb = 0, target, near_t = 0, far_t = 0;
-      int ci, ncand;
+      double cand[2];
+      int ci, ncand, cext[2], call_body[2], near_pin;
       const char *lab;
       if(d->bus != 0.0) continue;
       dx1 = d->x1; dy1 = d->y1; dx2 = d->x2; dy2 = d->y2;
@@ -3152,15 +3184,74 @@ static void fluid_straighten_reversals(void)
          * pins -- a short the partition verify declines (issue 0096: before_5.sch C12+R18+#net2 -> R18's
          * #net1 riser reverses out to x=-260 and the near slide back to x=-320 shorts R18's pins). The far
          * target then routes the same net cleanly PAST the device; it EXTENDS the near neighbour, so it is
-         * body-guarded exactly like a staircase (guard = oppo || ci==1). See
+         * body-guarded exactly like a staircase (guard = oppo || far candidate). See
          * doc/claude/issues/0096-fluid-reroute-reversal-near-shorts-moved-body.md */
-        ncand = 2;
+        /* issue 0111: when the NEAR target sits ON a MOVING instance pin whose escape normal
+         * runs ALONG the slide axis (the near neighbour is the pin's P3 exit stub), do not
+         * collapse onto the pin. Pre-0111 that collapse was accepted and insert_exit_stubs
+         * then re-jogged the leg one grid back off the pin ALONG THE NORMAL -- an undo/redo
+         * pair whose net effect was only to NORMALIZE the jog to one grid on the outward
+         * side, EXCEPT when a decomposed drag had already left the jog exactly there: that
+         * round trip reproduced the same redundant staircase the collapse had just removed
+         * and the SAVE kept 4 segments where 3 suffice (before_8.sch, R18 dragged NW ->
+         * after_28.sch #net3). New schedule for such a pin-landing near target:
+         *   1. FAR target first -- where legal it removes the jog entirely and the route
+         *      arrives straight along the pin's lead (P3-perfect, minimum segments). A
+         *      brand-new route choice (pre-0111 it was never reached), so it must clear the
+         *      MOVED body too (call_body, test_wireedit_48 case A);
+         *   2. else NEAR moved to ONE GRID OUTWARD of the pin (pin + grid x normal) --
+         *      exactly the old collapse + re-stub round trip's result (the connected-wire
+         *      shove of test_wireedit_37/40 and the 0089/0090/0091 golden routes are this
+         *      shape), skipped when the jog already sits there (the no-op that used to
+         *      round-trip into the 0111 staircase).
+         * A STATIONARY pin landing, or a pin whose normal is perpendicular/ambiguous, keeps
+         * the plain near-first schedule: insert_exit_stubs never re-jogged those the same
+         * way (stationary pins are not scanned; a perpendicular normal re-jogs along the
+         * OTHER axis, which the unchanged insert pass still does), so plain collapse is the
+         * baseline there. See
+         * doc/claude/issues/0111-exit-stub-restaircases-straightened-pin-arrival.md */
+        near_pin = 0;
+        {
+          double npx, npy, nnx = 0.0, nny = 0.0;   /* collapsed neighbour's pin end + normal */
+          if(vert) { npx = near_t; npy = (near_t == fa) ? dy1 : dy2; }
+          else     { npy = near_t; npx = (near_t == fa) ? dx1 : dx2; }
+          /* rot/flip gate mirrors the insert_exit_stubs call-site gate (review wf_bb7bb60e):
+           * under a rotated/flipped stretch the re-stub pass never runs, so there is no round
+           * trip to normalize -- the pre-0111 plain collapse IS the (good, minimal) baseline. */
+          if(xctx->move_rot == 0 && xctx->move_flip == 0 &&
+             point_on_any_pin(npx, npy) && fluid_moving_pin_normal(npx, npy, &nnx, &nny)) {
+            double along = vert ? nnx : nny;     /* normal component along the slide axis */
+            if(along != 0.0) {
+              double grid = tclgetdoublevar("cadsnap");
+              double dpos = vert ? dx1 : dy1;
+              double outward;
+              if(grid <= 0.0) grid = 1.0;
+              outward = near_t + grid * along;   /* the old round trip's normalized jog */
+              near_pin = 1;
+              fltrace("FLTRACE straighten: near %g is a moving-pin landing -> far first, then outward %g\n",
+                      near_t, outward);
+              cand[0] = far_t; cext[0] = 1; call_body[0] = 1;
+              ncand = 1;
+              if(outward != dpos) {              /* already normalized: candidate is a no-op */
+                cand[1] = outward;
+                cext[1] = oppo;
+                call_body[1] = 0;                /* == the old collapse + re-stub round trip */
+                ncand = 2;
+              }
+            }
+          }
+        }
+        if(!near_pin) {
+          cand[0] = near_t; cext[0] = oppo; call_body[0] = 0;
+          cand[1] = far_t;  cext[1] = 1;    call_body[1] = 0;
+          ncand = 2;
+        }
         for(ci = 0; ci < ncand && !progress; ++ci) {
           double sdx1=d->x1, sdy1=d->y1, sdx2=d->x2, sdy2=d->y2;
           double sax1=A->x1, say1=A->y1, sax2=A->x2, say2=A->y2;
           double scx1=C->x1, scy1=C->y1, scx2=C->x2, scy2=C->y2;
           unsigned char *reach = my_malloc(_ALLOC_ID_, (W > 0 ? W : 1) * sizeof(unsigned char));
-          target = ci == 0 ? near_t : far_t;
+          target = cand[ci];
           fluid_wire_reach_set(kd, reach);                   /* d's PRE-slide net component */
           if(vert) {
             d->x1 = d->x2 = target;
@@ -3182,7 +3273,7 @@ static void fluid_straighten_reversals(void)
           {
             int part_ok = fluid_part_equal(now, base, np);
             int foreign = fluid_slide_merges_foreign(kd, kA, kC, reach);
-            int extends = oppo || ci == 1;                   /* slide lengthens a neighbour => guard body */
+            int extends = cext[ci];                          /* slide lengthens a neighbour => guard body */
             int body = 0;
             if(extends && part_ok && !foreign) {             /* extended leg must not plough a device body */
               int q; int idx[3]; idx[0] = kd; idx[1] = kA; idx[2] = kC;
@@ -3190,6 +3281,9 @@ static void fluid_straighten_reversals(void)
                 xWire *ww = &xctx->wire[idx[q]];
                 if(ww->x1 == ww->x2 && ww->y1 == ww->y2) continue;   /* collapsed neighbour */
                 if(fluid_seg_crosses_stationary_body(ww->x1, ww->y1, ww->x2, ww->y2)) body = 1;
+                /* issue 0111: the pin-landing far collapse must clear MOVED bodies too */
+                if(!body && call_body[ci] &&
+                   fluid_seg_crosses_body(ww->x1, ww->y1, ww->x2, ww->y2, 1)) body = 1;
               }
             }
             if(part_ok && foreign)
@@ -6787,9 +6881,11 @@ void move_objects(int what, int merge, double dx, double dy)
       * partition-invariant + novelty-scoped; strict no-op otherwise).
       * issue 0110: no longer rotfree-gated -- one ALT-R mid-drag left the stale-anchor staircase
       * and U-loop of after_27.sch in the save. Every slide/retract is pin-partition-verified,
-      * novelty-scoped, user-protected (0091) and body-guarded against STATIONARY instances only,
-      * so the guards are geometric, not rotation-dependent (the 0098 facet B argument); worst
-      * case they decline and the pre-0110 route is kept. */
+      * novelty-scoped, user-protected (0091) and body-guarded against STATIONARY instances
+      * (plus, for the 0111 pin-landing FAR candidate only, against MOVED bodies too), so the
+      * guards are geometric, not rotation-dependent (the 0098 facet B argument); worst case
+      * they decline and the pre-0110 route is kept. The 0111 pin-landing reschedule itself is
+      * rot/flip-gated off (no insert_exit_stubs round trip exists there to normalize). */
      fluid_straighten_reversals();
      /* issue 0092: an along-axis wire drag (grab a rung, pull it along its own axis) overshoots its
       * junction into a dangling stub + solder dot instead of SHOVING the perpendicular riser. Neither
@@ -6826,6 +6922,14 @@ void move_objects(int what, int merge, double dx, double dy)
     * the (-250,-80)..(-250,-70) stub), and leg 1's follow stretch from that anchor is a degenerate
     * straight run across the other pin's landing -- a guaranteed short no elbow can avoid. The
     * final leg re-inserts stubs at the true (post-move) pin positions, so the P3 look is intact. */
+   /* issue 0111 ORDERING INVARIANT: insert_exit_stubs must run AFTER the straighteners above
+    * and nothing that collapses jogs may run after it -- a P3 stub is itself a straighten-
+    * collapsible jog unit, so a later collapse pass would undo every stub (or oscillate).
+    * The converse antagonism (straighten collapsing a jog onto a pin, this pass re-jogging
+    * it one grid back off -- a round trip that used to re-create the saved staircase of
+    * after_28.sch) is resolved INSIDE straighten: a pin-landing near target defers to the
+    * far target, else collapses to one grid short of the pin, so no leg ever lands ON a
+    * moved pin for this pass to re-jog. */
    if(xctx->stretch_select &&
       (tclgetboolvar("wire_exit_stub") || tclgetboolvar("fluid_editing")) && leg_ortho &&
       xctx->move_rot == 0 && xctx->move_flip == 0 && leg == nlegs - 1) {
