@@ -3592,9 +3592,9 @@ static int fluid_jog_is_doomed(int n, void *arg) { (void)arg; return n >= fluid_
 static int fluid_jog_pin_off_backbone(double qx, double qy, int vertaxis)
 {
   double grid = tclgetdoublevar("cadsnap");
-  double qL, qR;                          /* one-grid gap [qL,qR] centred on Q along the backbone axis */
-  int W, m, ci, nbb = 0, left_ok = 0, right_ok = 0;
-  int bb[64];                             /* backbone wire indices on Q's line covering Q */
+  double qL, qR;                          /* gap [qL,qR] centred on Q along the backbone axis */
+  int W, m, ci, nbb = 0, left_ok = 0, right_ok = 0, covers_q = 0, guard;
+  int bb[64];                             /* backbone wire indices overlapping the gap, extending beyond */
   double sc[64][4], nc[64][4];            /* saved (revert) + clipped-primary coords */
   double ex[64][4]; int nex = 0;          /* straddle-split right pieces to re-add */
   char *bbprop = NULL;
@@ -3603,20 +3603,60 @@ static int fluid_jog_pin_off_backbone(double qx, double qy, int vertaxis)
   qL = (vertaxis ? qx : qy) - grid;
   qR = (vertaxis ? qx : qy) + grid;
   W = xctx->wires;
+  /* issue 0106: EXPAND the gap outward until both bump legs land on clean backbone interior.
+   * A plain attached drag can park the pin's whole follow cluster -- its stub, its riser's
+   * T-junction -- ON the backbone line right next to the pin (before_8.sch R18 dragged
+   * (0,-40): stub [-80,-70] and the capa riser T at -80 sit one grid left of the pin at -70).
+   * With the fixed one-grid gap a bump leg lands exactly on that copper and WELDS the two
+   * nets this jog must separate (or the old whole-tiny-wire-in-gap test bailed outright).
+   * A boundary is dirty when a perpendicular wire occupies that column across the bump band,
+   * when a row wire ends there without extending outward past the gap, or when two row wires
+   * meet there; push the dirty side out one grid and re-scan. Cluster copper swallowed
+   * strictly inside the gap is left untouched by the clip pass below. */
+  for(guard = 0; guard < 16; ++guard) {
+    int dirtyL = 0, dirtyR = 0, nendL = 0, nendR = 0;
+    for(m = 0; m < W; ++m) {
+      xWire *w = &xctx->wire[m];
+      double lo, hi, col, plo, phi;
+      int onrow = vertaxis ? (w->y1 == qy && w->y2 == qy && w->x1 != w->x2)
+                           : (w->x1 == qx && w->x2 == qx && w->y1 != w->y2);
+      int perp  = vertaxis ? (w->x1 == w->x2 && w->y1 != w->y2)
+                           : (w->y1 == w->y2 && w->x1 != w->x2);
+      if(onrow) {
+        if(vertaxis) { lo = w->x1 < w->x2 ? w->x1 : w->x2; hi = w->x1 < w->x2 ? w->x2 : w->x1; }
+        else         { lo = w->y1 < w->y2 ? w->y1 : w->y2; hi = w->y1 < w->y2 ? w->y2 : w->y1; }
+        if(lo == qL || hi == qL) { if(++nendL > 1) dirtyL = 1; if(lo == qL && hi <= qR) dirtyL = 1; }
+        if(lo == qR || hi == qR) { if(++nendR > 1) dirtyR = 1; if(hi == qR && lo >= qL) dirtyR = 1; }
+      } else if(perp) {
+        col = vertaxis ? w->x1 : w->y1;
+        if(vertaxis) { plo = w->y1 < w->y2 ? w->y1 : w->y2; phi = w->y1 < w->y2 ? w->y2 : w->y1; }
+        else         { plo = w->x1 < w->x2 ? w->x1 : w->x2; phi = w->x1 < w->x2 ? w->x2 : w->x1; }
+        if(plo <= (vertaxis ? qy : qx) + grid && phi >= (vertaxis ? qy : qx) - grid) {
+          if(col == qL) dirtyL = 1;
+          if(col == qR) dirtyR = 1;
+        }
+      }
+    }
+    if(!dirtyL && !dirtyR) break;
+    if(dirtyL) qL -= grid;
+    if(dirtyR) qR += grid;
+  }
+  if(guard >= 16) { my_free(_ALLOC_ID_, &bbprop); return 0; }                 /* no clean bump legs found */
   for(m = 0; m < W; ++m) {
     xWire *w = &xctx->wire[m];
     double lo, hi, kl, kh;
     int online = vertaxis ? (w->y1 == qy && w->y2 == qy && w->x1 != w->x2)   /* horizontal on Q's row */
                           : (w->x1 == qx && w->x2 == qx && w->y1 != w->y2);   /* vertical on Q's column */
     if(!online || w->bus != 0.0) continue;
-    if(!touch(w->x1, w->y1, w->x2, w->y2, qx, qy)) continue;                  /* must cover Q's pin */
-    if(fluid_wire_explicit_lab(m)) { my_free(_ALLOC_ID_, &bbprop); return 0; }/* never reshape named copper */
-    if(nbb >= 64 || nex >= 63) { my_free(_ALLOC_ID_, &bbprop); return 0; }
     if(vertaxis) { lo = w->x1 < w->x2 ? w->x1 : w->x2; hi = w->x1 < w->x2 ? w->x2 : w->x1; }
     else         { lo = w->y1 < w->y2 ? w->y1 : w->y2; hi = w->y1 < w->y2 ? w->y2 : w->y1; }
-    if(lo >= qL && hi <= qR) { my_free(_ALLOC_ID_, &bbprop); return 0; }      /* whole tiny wire in the gap */
+    if(hi < qL || lo > qR) continue;                                          /* clear of the gap */
+    if(lo >= qL && hi <= qR) continue;                                        /* 0106: swallowed cluster copper: keep intact */
+    if(fluid_wire_explicit_lab(m)) { my_free(_ALLOC_ID_, &bbprop); return 0; }/* never reshape named copper */
+    if(nbb >= 64 || nex >= 63) { my_free(_ALLOC_ID_, &bbprop); return 0; }
     if(lo < qL) left_ok = 1;
     if(hi > qR) right_ok = 1;
+    if(touch(w->x1, w->y1, w->x2, w->y2, qx, qy)) covers_q = 1;
     bb[nbb] = m;
     sc[nbb][0]=w->x1; sc[nbb][1]=w->y1; sc[nbb][2]=w->x2; sc[nbb][3]=w->y2;
     /* clip away the OPEN gap (qL,qR): keep the left piece [lo,qL] as the primary (or the right piece
@@ -3633,7 +3673,8 @@ static int fluid_jog_pin_off_backbone(double qx, double qy, int vertaxis)
     if(!bbprop) my_strdup(_ALLOC_ID_, &bbprop, w->prop_ptr);                  /* bump inherits backbone lab */
     ++nbb;
   }
-  if(nbb == 0 || !left_ok || !right_ok) { my_free(_ALLOC_ID_, &bbprop); return 0; }  /* Q not mid-line */
+  /* covers_q: some clipped wire must actually carry Q, else this is not Q's backbone at all */
+  if(nbb == 0 || !left_ok || !right_ok || !covers_q) { my_free(_ALLOC_ID_, &bbprop); return 0; }
 
   for(ci = 0; ci < 2; ++ci) {                                    /* try both perpendicular bump sides */
     double dir = (ci == 0) ? -grid : grid;
