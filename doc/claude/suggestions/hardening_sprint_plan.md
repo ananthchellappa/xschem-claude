@@ -408,10 +408,13 @@ fuzz self-tests (C1-C4 -- the C4 xfail tripwires fail the job loud if a pinned b
 flips, e.g. a repair landing); an informational full sweep (before_3/5/7/8 + the c4_* fixtures,
 enforce ON) that never reddens the build (a known xfail RED must not) and uploads every failure
 replay file + a summary (also written to `$GITHUB_STEP_SUMMARY`) as the `fuzz-replays` artifact.
-**Note:** GitHub runs `schedule` triggers only from the DEFAULT branch, so the nightly cron
-activates once `fluid-editing` merges to master; `workflow_dispatch` runs it on demand from any
-branch meanwhile. Validated locally: YAML parses, the gate exits 0 (all four self-tests ALL PASS),
-the sweep emits its matrix + replay files.
+**Note (verified against the live repo):** GitHub gates BOTH `schedule` and `workflow_dispatch`
+on the workflow existing on the DEFAULT branch (here `main`, not `master`) — a `gh workflow run`
+and a raw `POST .../dispatches?ref=fluid-editing` both 404 while the file lives only on
+`fluid-editing`. So the nightly (and any manual dispatch) becomes live in Actions once this branch
+merges to `main`; that merge is the user's call and out of this sprint's scope. Validated locally
+instead: YAML parses, the gate exits 0 (all four self-tests ALL PASS), the sweep emits its matrix
++ replay files. (`ci.yaml` is untouched, so the PR fluid gate is unaffected.)
 
 ---
 
