@@ -235,7 +235,7 @@ reverted → 7 again.
 
 ## Track C — Delta-sweep fuzzer. ~2-3 days. Finds the next 0105 before a user does.
 Run after B lands (enforcement reduces fuzzer noise to genuinely-unknown failures).
-**C1 DONE** 261ed06f · **C2 DONE** (this commit).
+**C1 DONE** 261ed06f · **C2 DONE** 57ac013f · **C3 DONE** (this commit).
 
 ### C1 — Single-drop harness proc — DONE
 **Do:** `tests/headless/fuzz/harness.tcl`: proc `fuzz_drop {fixture gesture}` — load
@@ -317,7 +317,7 @@ metric than the plan named (all documented in `harness.tcl`; sabotage-proven in
 `test_fuzz_c2_sabotage.tcl` proves teeth for all 7 sub-checks. C1 self-test still ALL PASS
 (0105/0104 drops GREEN under the full 5-check pack).
 
-### C3 — Sweep driver + failure capture
+### C3 — Sweep driver + failure capture — DONE
 **Do:** `fuzz_sweep.tcl`: fixtures {before_3, before_5, before_7, before_8} ×
 delta ∈ cadsnap·[-15..15]² (stride 1 near zero, 3 farther out) × gesture menu
 {plain drag, m-stretch, m+ALT-R, m+ALT-R×2, m+ALT-F, gesture split into two drops}.
@@ -327,6 +327,43 @@ failures auto-become regression skeletons. Shard by fixture for wall-clock; prin
 summary matrix.
 **Done when:** full sweep of one fixture completes < ~10 min; deliberately reverting the
 0111 fix makes the sweep produce a failing replay file. **Effort:** 1d.
+**Landed + corrections while landing (empirical):**
+  - **Speed:** the FULL 4-fixture × 5-gesture × 361-delta sweep (~7200 drops) runs in **62s**
+    headless (~15s/fixture) -- far under the 10-min/fixture bar. Baseline (enforce ON, the
+    shipped default): **0 RED**, 266 AMBER, 242 REFUSED, 6692 GREEN. The 0-RED is a real
+    result: across ~7200 drops the sweep finds NO escaped saved short -- B3 has no gap on these
+    fixtures. AMBER is dominated by rotation gestures (rot/rot2) -- the WIRING.md §11 risk #9
+    rotation route-quality gap (saved diagonals + extra bends), a known class, not noise.
+  - **The 0111-revert done-when is NOT achievable (premise WRONG).** The 0111 bug saves #net3 as
+    a 4-segment monotone STAIRCASE where a 2-segment L suffices -- but the staircase is
+    same-Manhattan-length (1180 == the L), leaves no dangling end, no body cross, and is even
+    GLOBAL-bend-neutral (pristine before_8 has 7 bends; the fixed drop *reduces* to 5 by
+    collapsing, the reverted staircase *keeps* 7 -- so "no bend INCREASE" passes both). Catching
+    it needs a per-net MIN-BEND oracle (predicates.tcl P6, which the spec says "needs a golden
+    oracle") -- out of the delta-sweep's reach. Verified by reverse-applying f1692607's move.c,
+    rebuilding, and diffing the fail-sets: reverting 0111 produces ZERO new replay files. The
+    0111 class stays covered by its dedicated gesture test test_fluid_exit_stub_staircase_0111.tcl.
+  - **Revert-teeth demonstrated the CATCHABLE way instead:** the sweep takes `FUZZ_ENFORCE`;
+    setting it 0 REVERTS the B3 fix (log-only), so the drops B3 was REFUSING SAVE their shorts ->
+    the sweep's P1/P2 electrical checks catch them as **RED**. On before_8: enforce ON = 0 RED /
+    113 REFUSED; enforce OFF = 113 RED / 0 REFUSED, the *same* drops (the enforce-ON REFUSED set
+    == the enforce-OFF RED set). So reverting a real fix (B3) DOES make the sweep produce failing
+    replay files -- the done-when's intent, with a regression the checks cover. (Bonus: this
+    revalidates all of Track B in one command, and fuzzes the raw router B3 normally masks.)
+  - **Two harness FPs the sweep surfaced and I fixed** (green-but-hollow discipline applied to
+    the fuzzer itself): (i) the `split` gesture halved the delta with `int(dx/2)`, landing a
+    5-unit SUB-GRID intermediate that FALSELY shorted (WIRING.md §1.2) -- now each half snaps to
+    cadsnap; (ii) the body-cross check false-flagged ~520 drops where the dragged device's OWN
+    follow routes clip its body (a 2-terminal device's pins are on the body axis) or a wire on a
+    device's OWN net clips that device -- fixed by excluding the dragged target and by a
+    NET-AWARE exemption (only FOREIGN copper through a body counts). AMBER 954 -> 266, all real.
+  - Replay files self-locate `harness.tcl` and bake the `FUZZ_ENFORCE` mode (else an enforce-off
+    RED replays as REFUSED); verified a replay round-trips. `tests/headless/fuzz/fails/` is
+    gitignored.
+**Landed:** `fuzz_sweep.tcl` (config via env, 4-way GREEN/AMBER/RED/REFUSED matrix, replay
+capture, FUZZ_ENFORCE toggle) + `test_fuzz_c3_sweep.tcl` (smoke test: enforce on/off RED
+contrast + split grid-snap + replay round-trip, ALL PASS) + harness split/body-cross/enforce
+fixes.
 
 ### C4 — Fixture variants targeting the known blind spots (parallel with B)
 **Do:** four new fixtures, each one edit away from before_8/before_3:

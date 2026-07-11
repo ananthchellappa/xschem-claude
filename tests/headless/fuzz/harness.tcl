@@ -48,7 +48,11 @@ proc fuzz_gates {} {
   uplevel #0 {set enable_stretch 0}
   uplevel #0 {set unselect_partial_sel_wires 0}
   uplevel #0 {set cadsnap 10}
-  uplevel #0 {set fluid_enforce_invariants 1}   ;# B3 enforcement is the shipped default
+  # B3 enforcement: the shipped default is 1. The sweep can set ::fuzz_enforce 0 to fuzz the
+  # LOG-ONLY path -- there, a short B3 would REFUSE instead SAVES, so the sweep sees the raw
+  # router's corruption (the historical 0094-0106 class) as RED, not REFUSED. (Toggling this
+  # is the cheapest "revert the B3 fix" experiment -- no rebuild.)
+  uplevel #0 [list set fluid_enforce_invariants [expr {[info exists ::fuzz_enforce] ? $::fuzz_enforce : 1}]]
 }
 
 # Load a tests/from_user fixture by bare name (e.g. before_8) TRUE HEADLESS.
@@ -97,7 +101,13 @@ proc fuzz_apply {gesture} {
     flip    { _fuzz_transform $inst $dx $dy {flip_in_place} }
     split {
       # deliver (dx,dy) as two half-drops, re-selecting between (a saved intermediate state).
-      set hx [expr {int($dx / 2)}]; set hy [expr {int($dy / 2)}]
+      # SNAP each half to cadsnap: a real user releases on the grid, and a sub-grid intermediate
+      # drop breaks touch()-connectivity (WIRING.md §1.2) -- a bare int($dx/2) lands 5-unit
+      # (half-grid) intermediates that FALSELY short. round(delta/2/grid)*grid keeps both halves
+      # grid-aligned (second half = total - first, also grid since the total is a grid multiple).
+      set grid [uplevel #0 {set cadsnap}]
+      set hx [expr {round(double($dx)/2.0/$grid)*$grid}]
+      set hy [expr {round(double($dy)/2.0/$grid)*$grid}]
       _fuzz_stretch $inst $hx $hy
       _fuzz_stretch $inst [expr {$dx - $hx}] [expr {$dy - $hy}]
     }
@@ -290,16 +300,34 @@ proc _inst_symbol_box_world {name} {
   foreach v $ys { if {$v < $ylo} {set ylo $v}; if {$v > $yhi} {set yhi $v} }
   return [list $xlo $ylo $xhi $yhi]
 }
-proc fuzz_no_novel_body_cross {pre_geo} {
+# skip_inst: the DRAGGED instance is NOT an obstacle for its own follow routes. A 2-terminal
+# device's pins sit on the body's central axis, so the pin LEADS and every approach route to
+# them run along the pin column THROUGH the symbol box -- the p5 pin-exemption only spares a
+# wire whose ENDPOINT is exactly on a pin, so a route corner one grid shy of the pin (inside
+# the body, on the pin column) false-flags. This is pervasive under rotation (the follow set
+# reconnects to the rotated pins along their column). A wire plowing the dragged device's OWN
+# body straight between two of its pins is a device short -- already caught by P2 electrical --
+# so excluding it here loses no real signal; the check still guards every STATIONARY body.
+proc fuzz_no_novel_body_cross {pre_geo {skip_inst ""}} {
+  xschem resolved_net 0                                      ;# current per-wire nets
   set nw [xschem get wires]; set ni [xschem get instances]
   for {set k 0} {$k < $ni} {incr k} {
     if {[xschem getprop instance $k lab] ne {}} continue     ;# label: not a body obstacle
     set nm [xschem getprop instance $k name]
+    if {$nm eq $skip_inst} continue                          ;# the dragged device: see above
     set box [_inst_symbol_box_world $nm]; set pins [_inst_pin_coords $nm]
+    # this instance's OWN nets: a wire on any of them is part of K's connections (its pins sit
+    # on/near the body outline, so its own approach routes legally clip the box). The real P5
+    # hazard is FOREIGN copper (a DIFFERENT net) plowing straight through the body.
+    set knets {}
+    foreach {pin net} [lrange [xschem instance_nodemap $nm] 1 end] {
+      if {$net ne {} && [lsearch -exact $knets $net] < 0} { lappend knets $net }
+    }
     for {set w 0} {$w < $nw} {incr w} {
       set s [we_norm [xschem wire_coord $w]]
       if {[lsearch -exact $pre_geo $s] >= 0} continue        ;# not novel
       if {![seg_in_rect_interior $s $box]} continue
+      if {[lsearch -exact $knets [xschem getprop wire $w lab]] >= 0} continue   ;# K's own net
       lassign $s x1 y1 x2 y2; set exempt 0
       foreach p $pins { lassign $p px py
         if {($x1 == $px && $y1 == $py) || ($x2 == $px && $y2 == $py)} { set exempt 1; break } }
@@ -350,7 +378,7 @@ proc fuzz_assert {snap gesture} {
   lappend r [list P2_labels_survive [fuzz_labels_survive [dict get $snap lab]]           hard]
   lappend r [list Q_manhattan       [fuzz_no_novel_diag [dict get $snap diag]]           quality]
   lappend r [list Q_no_dangling     [fuzz_no_novel_dangling [dict get $snap dang]]       quality]
-  lappend r [list Q_no_body_cross   [fuzz_no_novel_body_cross [dict get $snap geo]]      quality]
+  lappend r [list Q_no_body_cross   [fuzz_no_novel_body_cross [dict get $snap geo] [dict get $gesture target]] quality]
   lappend r [list Q_copper_budget   [fuzz_within_budget [dict get $snap len] $dx $dy]    quality]
   return $r
 }
