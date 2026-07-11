@@ -6407,6 +6407,26 @@ void move_objects(int what, int merge, double dx, double dy)
      memset(&leg_snap, 0, sizeof(leg_snap));
      mem_snapshot_alloc(&leg_snap); mem_serialize_slot(&leg_snap); leg_snapped = 1;
    }
+   /* B2 (hardening sprint Track B / WIRING.md risk #2 = issue 0093-D2): arm the SAME P2 safety
+    * net for a MIXED-selection rot-free fluid stretch (fluid_startsel_wires > 0 -- the user also
+    * selected wire(s) of her own). All three arms above require startsel==0, so a mixed selection
+    * used to run the whole attempt-free path and commit sight-unseen (`if(!leg_snapped) break;`):
+    * a drag whose follow stubs still stretch (tool-grabbed) but whose push-through slide is
+    * disabled (its own gate is startsel==0, compute_wire_slide :1530) re-exposes the pre-0109
+    * collinear plow with NO verification. Arming leg_snap makes the attempt ladder VERIFY the
+    * composite route (rollback-to-pristine is selection-agnostic) and fall to the diagonal /
+    * rigid-relay fallbacks when a mixed drag genuinely shorts; a clean attempt 0 breaks out at
+    * once. nlegs stays 1 -- the X-then-Y decomposition and the push-through slide remain
+    * tool-owned-only (their gates are unchanged); this adds ONLY the verify+fallback. Whether the
+    * fallback can REPAIR a given short is topology-dependent (a pure-axis collinear plow has a
+    * degenerate relay and is only REFUSED, by B3); this arm guarantees no mixed short commits
+    * unverified. */
+   else if(tclgetboolvar("fluid_editing") && xctx->stretch_select && orthogonal_wiring &&
+      xctx->move_rot == 0 && xctx->move_flip == 0 && xctx->fluid_startsel_wires > 0 &&
+      (totdx != 0.0 || totdy != 0.0)) {
+     memset(&leg_snap, 0, sizeof(leg_snap));
+     mem_snapshot_alloc(&leg_snap); mem_serialize_slot(&leg_snap); leg_snapped = 1;
+   }
    if(what & (RUBBER | END))
      fltrace("FLTRACE move: what=%s%s commit_now=%d totdx=%g totdy=%g fluid=%d stretch=%d ortho=%d rot=%d startsel_w=%d -> nlegs=%d\n",
          (what & END) ? "END" : "", (what & RUBBER) ? "RUBBER" : "", commit_now, totdx, totdy,

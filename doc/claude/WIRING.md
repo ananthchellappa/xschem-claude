@@ -168,11 +168,16 @@ inverse-ROTATION fallback assumes the global pivot and is wrong under rotateloca
 ## 3. Master END pipeline (`move_objects`, `(what&END)||commit_now`, move.c:6154-7137)
 
 Outer scaffold: `for(attempt=0..2)` × `for(leg=0..nlegs-1)`.
-- `leg_snap` P2 safety net armed on three branches (all fluid+stretch+ortho):
+- `leg_snap` P2 safety net armed on **four** branches (all fluid+stretch+ortho):
   diagonal decomposition (nlegs=2, rot-free, `fluid_startsel_wires==0`, issue 0081);
-  rotated/flipped stretch (0102); pure-axis tool-owned-only (0109).
-  **A gesture outside these arms commits sight-unseen** (`if(!leg_snapped) break`,
-  move.c:6990) — the known open hole is mixed selections rot-free (0093-D2, risk §11.2).
+  rotated/flipped stretch (0102); pure-axis tool-owned-only (0109); **mixed-selection
+  rot-free** (`fluid_startsel_wires>0`, nlegs=1, hardening B2 — closes the 0093-D2 hole).
+  The X-then-Y decomposition and the push-through slide stay tool-owned-only (their gates
+  are unchanged); the mixed arm only VERIFIES. **A gesture outside these arms commits
+  sight-unseen** (`if(!leg_snapped) break`) — with B2 the only rot-free stretch left
+  unarmed is a zero-delta one (no motion, cannot short). Caveat: arming a mixed drag makes
+  the ladder RUN, but a pure-axis collinear plow has a degenerate relay it cannot repair —
+  that residue is REFUSED by the B3 enforcement gate, not fixed here (risk §11.2).
 - Attempts: 0 = normal (push-through slide on); 1 = single-pass ortho diagonal;
   2 = rigid diagonal relay (`leg_ortho=0`, `manhattan_lines=0`, `diag_relay=1`).
   Verdict per attempt: `prepare_netlist_structs(0)` + `fluid_partition_changed()==0`
@@ -377,9 +382,16 @@ declaring any wiring feature done, convert to xfail tests when touching the area
    EVERY de-shorter → the whole 0094-0106 repair family is inert on real (labeled)
    schematics; shorts save with only the log-only backstop. All historical fixtures used
    auto `#net` copper. Jog could safely relax (bump inherits the lab).
-2. **Mixed-selection rot-free commits sight-unseen** (0093-D2): both diagonal and
-   pure-axis `leg_snap` arms require `fluid_startsel_wires==0` (:6249, :6287); only the
-   rotated arm doesn't. Fix: arm unconditionally for nlegs==1 rot-free.
+2. **Mixed-selection rot-free commits sight-unseen** (0093-D2): ~~both diagonal and
+   pure-axis `leg_snap` arms require `fluid_startsel_wires==0`; only the rotated arm
+   doesn't.~~ **PARTLY FIXED (hardening B2)**: a 4th arm now arms `leg_snap` for
+   nlegs==1 rot-free mixed selections, so no mixed drag commits UNVERIFIED
+   (test_wireedit_53). The attempt ladder REPAIRS a mixed short only when the relay is
+   non-degenerate (a diagonal drop lifts the plow off the row); a **pure-axis collinear**
+   mixed drag (after_26 topology, drag along the anchor row) has a degenerate relay the
+   ladder cannot repair — that residue is caught by the B3 enforcement gate (rollback-or-
+   refuse), not repaired. Push-through stays tool-owned-only, so a mixed pure-axis drag
+   still plows at attempt 0.
 3. **Multi-pin devices**: ripup's pair-axis derivation `else continue` (:3964-3968) skips
    any non-axis-aligned merged pin pair (transistor gate/drain) → short saved. Whole
    wireedit suite is transistor-free.
