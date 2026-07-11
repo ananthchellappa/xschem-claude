@@ -27,9 +27,26 @@ jobs:
     # cell in tests/test_sweep_diff/; a load/save regression or parser crash fails CI.
     - name: Headless gate
       run: tests/headless/full_audit.sh test_sweep_diff test_nogui
+    # Hard gate: the fluid-editing suites under a virtual X (hardening plan A5) --
+    # the 52-test wireedit scripted suite plus every fluid / rotate-stretch /
+    # cadence-gesture test (globbed, so new fluid tests are gated automatically).
+    # These are deterministic on GH runners (watched over 5 informational runs);
+    # the environment-sensitive GUI/libmgr cases (19 deterministic failures on GH
+    # runners as of 2026-07-11, test_cadence_drag among them) stay in the
+    # informational full audit below.
+    # AUDIT_MIN_PASS: fail on hollow green (all-skip under a broken xvfb). The gate list is
+    # built via an ASSIGNMENT so a renamed/deleted gated test fails the ls under bash -e
+    # instead of silently shrinking the gate (both from review wf_bfc3c5e4).
+    - name: Fluid suites gate (xvfb)
+      run: |
+        set -euo pipefail
+        cd tests/headless
+        gate_tests=$(ls test_fluid_*.tcl test_rotate_*.tcl test_cadence_stretch_move.tcl test_drag_keeps_selection.tcl | sed 's/\.tcl$//')
+        AUDIT_MIN_PASS=15 xvfb-run -a ./full_audit.sh wireedit $gate_tests
     # Informational: the whole tests/headless/ suite under a virtual X. Non-blocking
-    # (|| true) because several GUI/library-migration cases are environment-sensitive;
-    # the log is uploaded so results are visible without flaking the build.
+    # (|| true) because several GUI/library-migration cases are environment-sensitive
+    # (deterministically red on GH runners); the log is uploaded so results are
+    # visible without flaking the build. The fluid suites above are the hard gate.
     - name: Full headless audit (informational)
       run: |
         xvfb-run -a tests/headless/full_audit.sh > full_audit.log 2>&1 || true

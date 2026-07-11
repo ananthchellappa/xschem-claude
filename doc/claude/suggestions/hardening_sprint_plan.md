@@ -89,6 +89,17 @@ correct SKIP accounting per A2) under `xvfb-run -a` in CI and watch it for 2-3 r
 flakes (WSLg flake notes are local; GH runners under xvfb are typically stable — if a
 specific test flakes, mark it with a retry-twice wrapper, don't drop the gate).
 (b) Remove the `|| true`.
+**Adjusted while landing (2026-07-11):** the flake watch found the full audit is not
+flaky but deterministically RED on GH runners — 19 identical failures across runs
+(12 FAIL + 7 CRASH/TIMEOUT: ciw/libmgr/descend-view/readonly/select_at/wire_split
+class, plus `test_cadence_drag`; full list in the `headless-audit-log` artifacts).
+Removing `|| true` wholesale would leave CI permanently red, so per this step's title
+the hard gate is the FLUID suites: a new `Fluid suites gate (xvfb)` step runs
+`full_audit.sh wireedit test_fluid_* test_rotate_* test_cadence_stretch_move
+test_drag_keeps_selection` (glob → new fluid tests auto-gated; all deterministic-green
+across the watched runs — under xvfb every gesture test actually runs, 0 skips). The
+full audit stays informational with `|| true`; burning down the 19 env failures is
+follow-up work outside the sprint.
 **Done when:** a PR with a deliberately sabotaged wireedit test goes red in CI; revert
 commit goes green. **Effort:** 2-4h incl. flake watch.
 
