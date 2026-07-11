@@ -138,3 +138,8 @@ ships only `*.svg/*.html/*.css/*.png`): `doc/claude/specs/` (feature specs),
 (analysis & decision write-ups), `doc/claude/suggestions/` (session prompts, plans), and
 `doc/claude/FAQ.md` (a running design Q&A, newest entries on top).
 Source comments reference these by their full path (e.g. `see doc/claude/specs/foo.md`).
+
+**Wiring work**: before touching anything that creates, moves, deletes, or reroutes wires
+(move.c, the fluid passes, trim/break/merge, connected drag/rotate/flip), read
+`doc/claude/WIRING.md` — data model, END pipeline, pass contracts, landmines, open risks.
+Keep it updated when fixing wiring issues.
