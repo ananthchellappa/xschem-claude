@@ -235,7 +235,7 @@ reverted → 7 again.
 
 ## Track C — Delta-sweep fuzzer. ~2-3 days. Finds the next 0105 before a user does.
 Run after B lands (enforcement reduces fuzzer noise to genuinely-unknown failures).
-**C1 DONE** (this commit).
+**C1 DONE** 261ed06f · **C2 DONE** (this commit).
 
 ### C1 — Single-drop harness proc — DONE
 **Do:** `tests/headless/fuzz/harness.tcl`: proc `fuzz_drop {fixture gesture}` — load
@@ -282,7 +282,7 @@ wrong, one confirmed:
 fuzz_labels_survive, _fuzz_landed) + self-test `test_fuzz_harness_c1.tcl` (GREEN done-when +
 headless-rotate GREEN + REFUSED teeth + RED teeth, ALL PASS). Runs true headless, no X.
 
-### C2 — Assertion pack (each with a sabotage variant)
+### C2 — Assertion pack (each with a sabotage variant) — DONE
 **Do:** five checks per drop: (1) P1/P2 — `instance_nodemap` byte-compare +
 `p2_no_short` + `p2_no_device_merge`; (2) Manhattan — `count_diag_wires == 0`;
 (3) no novel dangling end — `dangling_eps` post ⊆ pre; (4) no novel copper through any
@@ -290,6 +290,32 @@ stationary instance bbox (p5 variant over wires absent from the pre-set); (5) co
 budget — total novel length ≤ k·(|dx|+|dy|) + slack (start k=3, tune).
 **Done when:** each check has a sabotage fixture proving teeth (e.g. hand-inject a
 diagonal wire → check 2 fires). **Effort:** 0.5d.
+**Corrections while landing (empirical):** three of the five checks needed a different
+metric than the plan named (all documented in `harness.tcl`; sabotage-proven in
+`test_fuzz_c2_sabotage.tcl`, 7 checks × {baseline passes, defect fires} = 14 asserts ALL PASS):
+  1. **Check (1) is MOVE-RELATIVE electrical, not `p2_no_short` byte-compare** (the C1 fix):
+     `instance_nodemap` byte-compare false-REDs on a benign `#netN` renumber (name-invariant
+     partition instead), and the absolute `p2_no_short` is 0 on the pristine before_8 (its
+     benign #net3×#net1 crossing). So (1) = partition-preserved (name-invariant) +
+     `p2_no_device_merge` (before-relative) + label-survival (before-relative). Severity: HARD.
+  2. **Check (4) uses the TIGHT symbol box, not the `Instance:` bbox.** `_inst_body_box`
+     (predicates.tcl) is inflated by attribute TEXT (documented caveat), so the 0105 backbone
+     bump at y=-50 -- which clears R18's real body by 2.5 units but clips its value-text region
+     -- false-flagged as a body cross (AMBER on a good drop). Fixed with `_inst_symbol_box_world`
+     (the `Symbol:` line from instance_bbox, transformed by a verbatim Tcl port of the ROTATION
+     macro). Scoped to NOVEL wires only.
+  3. **Check (5) budgets TOTAL-LENGTH GROWTH, not "novel length".** Segset-diff "novel length"
+     counts the whole TRANSLATED follow set (every follow wire lands at a novel coordinate) —
+     ratio 5-13× the Manhattan distance on CLEAN drops, so k=3 is unusable. Total-length growth
+     is the right metric (rigid translation preserves length): measured grow/|man| ∈ [-2,+2]
+     across fixtures, so `grow ≤ 3·|man| + 100` clears every clean landed drop with margin.
+     (Caveat: a same-length monotone staircase — extra bends, equal length — is a bend-count
+     axis this misses; revisit if C3's 0111 revert needs it.)
+  Severity model: checks 2-5 are QUALITY (a fail = AMBER route regression, never RED). Verdict
+  priority RED > REFUSED > AMBER > GREEN (see C1's 3-way + AMBER).
+**Landed:** the 4 quality procs + severity-tagged `fuzz_assert` in `harness.tcl`;
+`test_fuzz_c2_sabotage.tcl` proves teeth for all 7 sub-checks. C1 self-test still ALL PASS
+(0105/0104 drops GREEN under the full 5-check pack).
 
 ### C3 — Sweep driver + failure capture
 **Do:** `fuzz_sweep.tcl`: fixtures {before_3, before_5, before_7, before_8} ×
