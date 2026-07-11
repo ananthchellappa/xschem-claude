@@ -1,7 +1,8 @@
 # Hardening sprint — atomic step plan
 
 Status: **Track A DONE** (2026-07-11, commits d086a73d..3bdabf0c) · **Track B DONE**
-(2026-07-11, commits c5cb0685/a6ac2026/74cda8e0 + B4); Tracks C–D PROPOSED.
+(2026-07-11, commits c5cb0685/a6ac2026/74cda8e0 + B4) · **Track C DONE** (2026-07-11,
+C1 261ed06f · C2 57ac013f · C3 37052868 · C4 b9131d21 · C5 this commit); Track D PROPOSED.
 Track A yield beyond the planned steps: the A3 fold-in immediately caught a shipped
 engine regression (issue 0112, fixed af9075b9 + amnesty hole c2dc1848 — the sprint's
 thesis demonstrated on day one), an adversarial review hardened the runners
@@ -235,7 +236,10 @@ reverted → 7 again.
 
 ## Track C — Delta-sweep fuzzer. ~2-3 days. Finds the next 0105 before a user does.
 Run after B lands (enforcement reduces fuzzer noise to genuinely-unknown failures).
-**C1 DONE** 261ed06f · **C2 DONE** 57ac013f · **C3 DONE** 37052868 · **C4 DONE** (this commit).
+**C1 DONE** 261ed06f · **C2 DONE** 57ac013f · **C3 DONE** 37052868 · **C4 DONE** b9131d21 ·
+**C5 DONE** (this commit). **Track C COMPLETE** — machine-found bugs + replay files; the
+fuzzer's headline finds: 0 escaped RED across ~7200 enforced before_* drops (B3 has no gap
+there), and a multi-pin DISCONNECT that DOES escape B3 (risk #3, `c4_transistor`).
 
 ### C1 — Single-drop harness proc — DONE
 **Do:** `tests/headless/fuzz/harness.tcl`: proc `fuzz_drop {fixture gesture}` — load
@@ -393,11 +397,21 @@ loud with a "blind spot may be FIXED, re-baseline" note). ALL PASS.
     (`c4_transistor` target M1 (20,-80), and 1 escaped RED in the plain target-R18 sweep too).
     Pinned as an xfail RED under enf-on -- the headline C4 find, cross-referenced in WIRING §11.3.
 
-### C5 — Nightly CI job
+### C5 — Nightly CI job — DONE
 **Do:** GH workflow (schedule: nightly) running the sweep under xvfb-less scripted mode
 (fuzzer uses the headless path — no X needed), uploading failure replay files as
 artifacts. Keep PR CI fast (Track A suites only).
 **Done when:** nightly run visible in Actions with summary. **Effort:** 2h.
+**Landed:** `.github/workflows/fuzz-nightly.yaml` — `schedule: '0 6 * * *'` + `workflow_dispatch`,
+separate from `ci.yaml` (PR CI stays Track-A-only). Three steps: build; a GATE running the four
+fuzz self-tests (C1-C4 -- the C4 xfail tripwires fail the job loud if a pinned blind-spot verdict
+flips, e.g. a repair landing); an informational full sweep (before_3/5/7/8 + the c4_* fixtures,
+enforce ON) that never reddens the build (a known xfail RED must not) and uploads every failure
+replay file + a summary (also written to `$GITHUB_STEP_SUMMARY`) as the `fuzz-replays` artifact.
+**Note:** GitHub runs `schedule` triggers only from the DEFAULT branch, so the nightly cron
+activates once `fluid-editing` merges to master; `workflow_dispatch` runs it on demand from any
+branch meanwhile. Validated locally: YAML parses, the gate exits 0 (all four self-tests ALL PASS),
+the sweep emits its matrix + replay files.
 
 ---
 
