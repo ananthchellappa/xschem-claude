@@ -12,7 +12,7 @@
 set WIN .drw
 catch { set w [xschem get current_win_path]; if {$w ne {}} { set WIN $w } }
 if {[catch {winfo viewable $WIN} vv] || !$vv} {
-  puts "SKIP: no viewable X window ($WIN)"; puts "RESULT: ALL PASS (0 checks, skipped: no X)"; puts "OVERALL: ok"; exit 0
+  puts "SKIP: no viewable X window ($WIN)"; puts "RESULT: SKIP (no X)"; puts "OVERALL: ok"; exit 0
 }
 update idletasks; catch { focus -force $WIN }; update idletasks
 

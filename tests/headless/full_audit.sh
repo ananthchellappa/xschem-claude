@@ -50,10 +50,13 @@ is_pass() {
     test_ciw_puts_capture)     [[ "$out" == *"PASS: ciw puts-capture (0 failure(s))"* ]] ;;
     test_lib_new_discovered_defs) [[ "$out" == *"RESULT: all passed"* ]] ;;
     test_nogui)                [[ "$out" == *"NOGUI_TEST_PASS"* ]] ;;
-    *)                         [[ "$out" == *"RESULT: ALL PASS"* ]] ;;
+    *)                         [[ "$out" == *"RESULT: ALL PASS"* && "$out" != *"skipped: no X"* ]] ;;
   esac
 }
-is_skip() { [[ "$1" == *"RESULT: SKIP"* ]]; }
+# "skipped: no X" is the legacy self-skip banner ("RESULT: ALL PASS (0 checks,
+# skipped: no X)") -- classified as SKIP so an un-converted test can never count
+# as a hollow PASS on a display-less box.
+is_skip() { [[ "$1" == *"RESULT: SKIP"* || "$1" == *"skipped: no X"* ]]; }
 
 # Test selection: explicit args, else all test_*.tcl
 sel=("$@")

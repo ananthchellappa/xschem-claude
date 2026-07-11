@@ -25,7 +25,7 @@ set WIN .drw
 catch { set w [xschem get current_win_path]; if {$w ne {}} { set WIN $w } }
 if {[catch {winfo viewable $WIN} vv] || !$vv} {
   puts "SKIP: no viewable X window ($WIN) -- fluid drag test needs a real display"
-  puts "RESULT: ALL PASS (0 checks, skipped: no X)"
+  puts "RESULT: SKIP (no X)"
   puts "OVERALL: ok"
   exit 0
 }

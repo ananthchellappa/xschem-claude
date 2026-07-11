@@ -21,7 +21,7 @@ set HASX 1
 if {[catch {winfo viewable $WIN} vv] || !$vv} { set HASX 0 }
 if {!$HASX} {
   puts "SKIP: no viewable X window ($WIN) -- fluid loop test needs a real display"
-  puts "RESULT: ALL PASS (0 checks, skipped: no X)"
+  puts "RESULT: SKIP (no X)"
   puts "OVERALL: ok"
   exit 0
 }
