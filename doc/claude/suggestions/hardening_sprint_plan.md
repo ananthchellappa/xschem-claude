@@ -2,7 +2,8 @@
 
 Status: **Track A DONE** (2026-07-11, commits d086a73d..3bdabf0c) · **Track B DONE**
 (2026-07-11, commits c5cb0685/a6ac2026/74cda8e0 + B4) · **Track C DONE** (2026-07-11,
-C1 261ed06f · C2 57ac013f · C3 37052868 · C4 b9131d21 · C5 this commit); Track D PROPOSED.
+C1 261ed06f · C2 57ac013f · C3 37052868 · C4 b9131d21 · C5 c6f69e37); **Track D IN PROGRESS** —
+D1 DONE (this commit), D2 next (D3-D6 not started).
 Track A yield beyond the planned steps: the A3 fold-in immediately caught a shipped
 engine regression (issue 0112, fixed af9075b9 + amnesty hole c2dc1848 — the sprint's
 thesis demonstrated on day one), an adversarial review hardened the runners
@@ -421,7 +422,7 @@ instead: YAML parses, the gate exits 0 (all four self-tests ALL PASS), the sweep
 ## Track D — Gesture context + pass table (R2+R4). ~1 week. Makes fixes cheap.
 Pure refactor: every step must be byte-identical on the full suite (Track A is the net).
 
-### D1 — `Fluid_gesture` struct, snapshots first
+### D1 — `Fluid_gesture` struct, snapshots first — DONE
 **Do:** define `typedef struct {...} Fluid_gesture;` (in move.c initially) holding the
 four START snapshots + `npins` (`fluid_snap_pinnet/snap_id/geo_snap_id/start_wire`);
 one file-scope instance; mechanical rename of accesses. Add `fluid_gesture_arm()` /
@@ -429,6 +430,33 @@ one file-scope instance; mechanical rename of accesses. Add `fluid_gesture_arm()
 single-free (the 7084-7094 discipline becomes structural).
 **Done when:** full wireedit + gesture suites byte-identical; valgrind
 (`run_wireedit.sh --memcheck`) clean. **Effort:** 0.5-1d.
+**Landed (this commit):** `Fluid_gesture` struct — 7 fields (`snap_id`/`snap_npins`,
+`snap_pinnet`, `geo_snap_id`/`geo_snap_npins`, `start_wire`/`start_nwire`) + one file-scope
+instance `fluid_g` in move.c; mechanical rename of all ~177 accesses; `fluid_gesture_arm()`/
+`fluid_gesture_free()` wrap `fluid_snapshot_partition`/`fluid_discard_snapshot`. wireedit **55/55**
+and the full fuzz sweep (matrix + 216 replay files + 4 self-tests) are **byte-identical** to the
+pre-D1 baseline; `run_wireedit.sh --memcheck` reports **0 errors**.
+**Premise corrections while landing (as in A/B/C, ~3×):**
+  1. *Line numbers drifted* (WIRING/plan anchored at f1692607): snapshot fn is now `move.c:~2397`
+     (plan said :2262), discard `:~2447`, invariant check `:~6000` (plan :5869). Anchored by name.
+  2. *The single-free "assert" cannot be a hard abort* — the load-bearing correction. The plan assumed
+     arm/free pair strictly at START↔END. Reality: a gesture is ALSO legitimately closed by
+     `clear_schematic()` (buffer teardown / reload mid-gesture — `test_wireedit_33` case J), which the
+     plan didn't list; **wired `clear_schematic` → `fluid_gesture_free()`** (mirroring its existing
+     `fluid_reroute_discard` call, `fluid_gesture_free` made non-static + declared in xschem.h) so that
+     path closes the context too. FURTHER, two DEFERRED WIRING §11.10 paths (Delete / descend `e`
+     pressed mid-STARTMOVE) abandon a gesture without END/ABORT/clear, so a hard `assert(!armed)` would
+     turn those pre-existing, out-of-scope bugs into a SIGABRT — contrary to this sprint's
+     rollback-not-crash philosophy (cf. B3). So the single-free discipline is enforced as a
+     **RECOVER-AND-LOG** tripwire: `fluid_gesture_arm` detects an already-armed context, frees it, and
+     `dbg(0)`+`fltrace`s it — no abort. Byte-identical to pre-D1 (which already recovered the leak via
+     `fluid_snapshot_partition`'s own leading discard); the tripwire fires only on the leak path (never
+     on the clean suite) and is exactly what **D2's "deliberately skip a free" exercises** (grep the
+     `dbg`/`fltrace` line, not a crash). `<assert.h>` therefore not added.
+  3. *`fluid_startsel_id`/`nid` are NOT move.c statics* — they are `xctx` fields (xschem.h:1272-1273)
+     set in `select.c` (`select_attached_nets`, which runs BEFORE move START). D2 lists them to "fold
+     into the struct"; they can't move into a move.c-local `Fluid_gesture` without breaking select.c.
+     **D2 must treat them separately** (leave in xctx, or promote the struct to xschem.h). Flagged here.
 
 ### D2 — Fold the hidden-parameter statics into the struct
 **Do:** move `fluid_startsel_id/nid`, `fluid_stretch_premove_x/y`,

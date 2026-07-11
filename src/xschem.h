@@ -1980,6 +1980,10 @@ extern void move_objects(int what,int merge, double dx, double dy);
 /* incremental_wire_reroute Phase II: free any armed fluid-reroute snapshot + clear its flags.
  * Called by clear_schematic() so a buffer teardown/reload mid-gesture can't resurrect/leak it. */
 extern void fluid_reroute_discard(void);
+/* D1 (Track D): free the Fluid_gesture START-snapshot context + clear its armed flag. Called by
+ * clear_schematic() alongside fluid_reroute_discard() so a buffer teardown mid-gesture closes the
+ * gesture (else the next move START's arm assert would see a leaked-armed context). */
+extern void fluid_gesture_free(void);
 extern void check_collapsing_objects();
 extern void redraw_w_a_l_r_p_z_rubbers(int force); /* redraw wire, arcs, line, polygon rubbers */
 extern void copy_objects(int what);

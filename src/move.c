@@ -2050,8 +2050,37 @@ void get_pin_escape_normal(int i, int r, double *nx, double *ny)
  * COUNT is approximate (one real change can cascade later ids), but "any difference" is an
  * exact detector of a partition change. Snapshot taken at move START (pre-motion geometry). */
 
-static int *fluid_snap_id = NULL;    /* canonical partition id per instance pin, captured at START */
-static int  fluid_snap_npins = 0;    /* 0 => no valid snapshot */
+/* D1 (hardening sprint Track D -- WIRING.md §2.3 / backlog R2): the four START snapshots every fluid
+ * consumer reads, plus their counts, gathered into ONE gesture-lifetime context (previously seven
+ * scattered file-scope statics). Armed once at move START by fluid_gesture_arm(); freed once at the
+ * real END/ABORT (and at clear_schematic buffer teardown) by fluid_gesture_free(). The single-instance
+ * lifecycle is now structural: fluid_gesture_arm DETECTS a still-armed prior gesture (a leaked/skipped
+ * free) and recovers + logs it rather than silently re-arming. The instance x pin walk that
+ * position-indexes snap_id / snap_pinnet / geo_snap_id must be replicated byte-identically in every
+ * consumer (landmine §7.5). */
+typedef struct { double x1, y1, x2, y2; char *lab; } fluid_startwire_t;
+typedef struct {
+  int    *snap_id;         /* canonical NAME partition id per instance pin, captured at START. Keyed to
+                            * pin POSITION not net name (a pure #net rename yields an identical vector). */
+  int     snap_npins;      /* 0 => no valid snapshot */
+  char  **snap_pinnet;     /* strdup'd resolved net NAME (or NULL) per instance pin at START -- for the
+                            * device-merge P2 check (spec §9); node[] itself is freed/rebuilt per move. */
+  int    *geo_snap_id;     /* issue 0104: GEOMETRIC pin partition (fluid_loop_partition rep[] over the
+                            * pristine wires). The NAME snapshot above merges geometrically disjoint
+                            * same-name islands (multi-island GND/VDD) and is blind to netlist-ignored
+                            * wires (spice_ignore skips prepare_netlist_structs' hashing), so a
+                            * geometry-vs-name compare either never fires or blesses deleting pristine
+                            * copper only the geometry sees (review wf_506236ef). */
+  int     geo_snap_npins;  /* 0 => no valid geometric snapshot */
+  fluid_startwire_t *start_wire; /* issue 0088: START wire set (order-normalized endpoints + raw lab=
+                            * token). The redundant-loop cleanup requires the collapsed cycle to contain
+                            * >=1 edge THIS drag produced (absent from this set) -- the novelty scope (H3)
+                            * that keeps it off pre-existing user copper. Constant across the gesture. */
+  int     start_nwire;     /* 0 => no snapshot => fluid_wire_is_novel() fails safe (not novel) */
+} Fluid_gesture;
+static Fluid_gesture fluid_g;       /* the one gesture context; zero-init at rest => no snapshot */
+static int fluid_gesture_armed = 0; /* D1 lifecycle tripwire: 1 between arm and free (single-free) */
+
 static int  fluid_move_failsafes = 0; /* B4: per-gesture count of fluid helpers that fail-safe no-op'd */
 /* B4 (hardening sprint Track B): a fluid healer/placement pass that fail-safe bails because its START
  * snapshot is missing or the instance set changed mid-gesture has SILENTLY degraded to naive routing --
@@ -2059,14 +2088,6 @@ static int  fluid_move_failsafes = 0; /* B4: per-gesture count of fluid helpers 
  * surfaces (published to fluid_last_move_failsafes at END, fltraced). Byte-identical: only counts the
  * bail, never alters the condition or the control flow. */
 static int fluid_failsafe(int bail) { if(bail) ++fluid_move_failsafes; return bail; }
-/* issue 0104: GEOMETRIC pin partition at move START (a fluid_loop_partition rep[] over the pristine
- * wire set). The de-short prune must compare like with like: the node[]-NAME snapshot above merges
- * geometrically disjoint same-name islands (multi-island GND/VDD) and is blind to netlist-ignored
- * wires (spice_ignore etc. skip prepare_netlist_structs' hashing), so a geometry-vs-name compare
- * either never fires or -- worse -- blesses deleting pristine copper whose connectivity only the
- * geometry sees (review wf_506236ef, confirmed live repro with a spice_ignore bridge). */
-static int *fluid_geo_snap_id = NULL;
-static int  fluid_geo_snap_npins = 0;    /* 0 => no valid geometric snapshot */
 static int fluid_loop_partition(unsigned short *doomed, int *rep); /* defined below (0088 block) */
 /* issue 0086: remaining (not-yet-applied) delta of the LATER decomposition legs while a decomposed
  * (0081) leg is committing -- read by fluid_ml_future_covers so the leg-0 elbow tie-break sees each
@@ -2080,16 +2101,6 @@ static double fluid_leg_future_dx = 0.0, fluid_leg_future_dy = 0.0;
  * enclosing place_moved_wire() call; equal to the old inverse-about-{x1,y1} under plain ROTATE. */
 static double fluid_stretch_premove_x, fluid_stretch_premove_y;
 static int fluid_stretch_premove_valid = 0;
-static char **fluid_snap_pinnet = NULL; /* strdup'd resolved net name (or NULL) per instance pin at
-                                         * START -- for the device-merge P2 check (spec §9) */
-/* issue 0088: START-side wire set (order-normalized endpoints + raw lab= token), captured next to the
- * partition snapshot. The redundant-loop cleanup (fluid_remove_redundant_loops) requires the collapsed
- * cycle to contain >=1 edge THIS drag PRODUCED (absent from this set) -- the novelty scope (H3) that
- * keeps the pass off pre-existing user copper / an untouched ring. Constant across the gesture => a
- * pure geometric function => release==stepwise. */
-typedef struct { double x1, y1, x2, y2; char *lab; } fluid_startwire_t;
-static fluid_startwire_t *fluid_start_wire = NULL;
-static int fluid_start_nwire = 0;         /* 0 => no snapshot => wire_is_novel() fails safe (not novel) */
 
 /* order a wire's endpoints canonically ((x1,y1) <= (x2,y2), x-major) so two records of the SAME span
  * (possibly stored reversed) normalize identically -- used by the 0088 START snapshot + novelty test. */
@@ -2304,7 +2315,7 @@ static int fluid_p6_bias_ml(int sel1)
 {
   double px, py, fx, fy, nx, ny;
   int along;
-  if(!fluid_snap_pinnet) return 0;                   /* P2-clear must be PROVEN, not merely unqueried */
+  if(!fluid_g.snap_pinnet) return 0;                   /* P2-clear must be PROVEN, not merely unqueried */
   /* If the user EXPLICITLY forces literal exit stubs (wire_exit_stub, a user-facing Options toggle,
    * default OFF and NOT set by cadence_style_rc), respect that and stand down: P6's along-normal
    * straight exit would optimize the requested stub away. The normal fluid flow (wire_exit_stub off)
@@ -2391,44 +2402,44 @@ static void fluid_snapshot_partition(void)
   prepare_netlist_structs(0);
   tot = fluid_count_pins();
   if(tot <= 0) return;
-  fluid_snap_id = my_malloc(_ALLOC_ID_, tot * sizeof(int));
-  fluid_snap_npins = fluid_build_partition(fluid_snap_id, tot);
+  fluid_g.snap_id = my_malloc(_ALLOC_ID_, tot * sizeof(int));
+  fluid_g.snap_npins = fluid_build_partition(fluid_g.snap_id, tot);
   /* Parallel capture of each pin's resolved net NAME (strdup -- node[] is freed/rebuilt across the
    * move). The device-merge P2 check (spec §9) needs both pins be NAMED pre-move: an unconnected
    * pin joining a net is a connect (P1's job), not a device short. Same walk order + skip rule as
-   * fluid_build_partition, so index k lines up with fluid_snap_id. */
-  fluid_snap_pinnet = my_malloc(_ALLOC_ID_, fluid_snap_npins * sizeof(char *));
+   * fluid_build_partition, so index k lines up with fluid_g.snap_id. */
+  fluid_g.snap_pinnet = my_malloc(_ALLOC_ID_, fluid_g.snap_npins * sizeof(char *));
   k = 0;
-  for(i = 0; i < xctx->instances && k < fluid_snap_npins; ++i) {
+  for(i = 0; i < xctx->instances && k < fluid_g.snap_npins; ++i) {
     int npins;
     if(xctx->inst[i].ptr < 0) continue;
     npins = (xctx->inst[i].ptr + xctx->sym)->rects[PINLAYER];
-    for(p = 0; p < npins && k < fluid_snap_npins; ++p) {
+    for(p = 0; p < npins && k < fluid_g.snap_npins; ++p) {
       const char *nm = xctx->inst[i].node ? xctx->inst[i].node[p] : NULL;
-      fluid_snap_pinnet[k] = NULL;
-      if(nm && nm[0]) my_strdup(_ALLOC_ID_, &fluid_snap_pinnet[k], nm);
+      fluid_g.snap_pinnet[k] = NULL;
+      if(nm && nm[0]) my_strdup(_ALLOC_ID_, &fluid_g.snap_pinnet[k], nm);
       ++k;
     }
   }
   /* issue 0088: snapshot the START wire set for the novelty scope (H3). Order-normalize endpoints so
    * a later re-created identical wire (same span, possibly reversed) is recognized as NOT novel. */
-  fluid_start_nwire = xctx->wires;
-  if(fluid_start_nwire > 0) {
-    fluid_start_wire = my_malloc(_ALLOC_ID_, fluid_start_nwire * sizeof(fluid_startwire_t));
-    for(i = 0; i < fluid_start_nwire; ++i) {
+  fluid_g.start_nwire = xctx->wires;
+  if(fluid_g.start_nwire > 0) {
+    fluid_g.start_wire = my_malloc(_ALLOC_ID_, fluid_g.start_nwire * sizeof(fluid_startwire_t));
+    for(i = 0; i < fluid_g.start_nwire; ++i) {
       double ax, ay, bx, by;
       fluid_wire_norm_pts(xctx->wire[i].x1, xctx->wire[i].y1, xctx->wire[i].x2, xctx->wire[i].y2,
                           &ax, &ay, &bx, &by);
-      fluid_start_wire[i].x1 = ax; fluid_start_wire[i].y1 = ay;
-      fluid_start_wire[i].x2 = bx; fluid_start_wire[i].y2 = by;
-      fluid_start_wire[i].lab = NULL;
-      my_strdup(_ALLOC_ID_, &fluid_start_wire[i].lab, get_tok_value(xctx->wire[i].prop_ptr, "lab", 0));
+      fluid_g.start_wire[i].x1 = ax; fluid_g.start_wire[i].y1 = ay;
+      fluid_g.start_wire[i].x2 = bx; fluid_g.start_wire[i].y2 = by;
+      fluid_g.start_wire[i].lab = NULL;
+      my_strdup(_ALLOC_ID_, &fluid_g.start_wire[i].lab, get_tok_value(xctx->wire[i].prop_ptr, "lab", 0));
     }
   }
-  /* issue 0104: GEOMETRIC partition at START (see the fluid_geo_snap_id declaration). Captured on the
+  /* issue 0104: GEOMETRIC partition at START (see the fluid_g.geo_snap_id declaration). Captured on the
    * same pristine geometry as the wire snapshot above; pure touch(), no netlist dependency. */
-  fluid_geo_snap_id = my_malloc(_ALLOC_ID_, tot * sizeof(int));
-  fluid_geo_snap_npins = fluid_loop_partition(NULL, fluid_geo_snap_id);
+  fluid_g.geo_snap_id = my_malloc(_ALLOC_ID_, tot * sizeof(int));
+  fluid_g.geo_snap_npins = fluid_loop_partition(NULL, fluid_g.geo_snap_id);
 }
 
 /* free the snapshot without comparing (called on move ABORT, at each new START, and after each
@@ -2436,19 +2447,47 @@ static void fluid_snapshot_partition(void)
 static void fluid_discard_snapshot(void)
 {
   int k;
-  if(fluid_snap_pinnet) {
-    for(k = 0; k < fluid_snap_npins; ++k) my_free(_ALLOC_ID_, &fluid_snap_pinnet[k]);
-    my_free(_ALLOC_ID_, &fluid_snap_pinnet);
+  if(fluid_g.snap_pinnet) {
+    for(k = 0; k < fluid_g.snap_npins; ++k) my_free(_ALLOC_ID_, &fluid_g.snap_pinnet[k]);
+    my_free(_ALLOC_ID_, &fluid_g.snap_pinnet);
   }
-  if(fluid_start_wire) {                                  /* issue 0088 START wire snapshot */
-    for(k = 0; k < fluid_start_nwire; ++k) my_free(_ALLOC_ID_, &fluid_start_wire[k].lab);
-    my_free(_ALLOC_ID_, &fluid_start_wire);
+  if(fluid_g.start_wire) {                                  /* issue 0088 START wire snapshot */
+    for(k = 0; k < fluid_g.start_nwire; ++k) my_free(_ALLOC_ID_, &fluid_g.start_wire[k].lab);
+    my_free(_ALLOC_ID_, &fluid_g.start_wire);
   }
-  fluid_start_nwire = 0;
-  my_free(_ALLOC_ID_, &fluid_geo_snap_id);                /* issue 0104 geometric partition snapshot */
-  fluid_geo_snap_npins = 0;
-  my_free(_ALLOC_ID_, &fluid_snap_id);
-  fluid_snap_npins = 0;
+  fluid_g.start_nwire = 0;
+  my_free(_ALLOC_ID_, &fluid_g.geo_snap_id);                /* issue 0104 geometric partition snapshot */
+  fluid_g.geo_snap_npins = 0;
+  my_free(_ALLOC_ID_, &fluid_g.snap_id);
+  fluid_g.snap_npins = 0;
+}
+
+/* D1 (Track D): gesture-snapshot lifecycle wrappers. fluid_gesture_arm() takes the four START
+ * snapshots (fluid_snapshot_partition, itself a no-op when fluid_editing is off) at move START;
+ * fluid_gesture_free() releases them. A gesture is normally closed on one of three paths, each
+ * freeing once: real move END (via the invariant check), move ABORT, and buffer teardown
+ * (clear_schematic(), mirroring fluid_reroute_discard). A few DEFERRED WIRING §11.10 paths (Delete or
+ * descend 'e' pressed mid-STARTMOVE) abandon a gesture without reaching any of those, leaking the
+ * armed context; arm DETECTS that (armed at arm time), frees the leaked snapshot, and logs it -- it
+ * does NOT abort (this sprint rolls back / refuses corruption rather than crashing, and risk #10 is
+ * out of D1's scope). This stays byte-identical to the pre-D1 code, which recovered the same way
+ * (fluid_snapshot_partition's own leading discard); the dbg/fltrace only fires on the leak path (never
+ * on the clean suite) and is the single-free tripwire D2 exercises by deliberately skipping a free. */
+static void fluid_gesture_arm(void)
+{
+  if(fluid_gesture_armed) {
+    dbg(0, "fluid_editing: fluid_gesture_arm() re-armed while a prior gesture was still armed -- it "
+           "leaked its snapshot (WIRING risk #11.10 mid-STARTMOVE abandon); recovering\n");
+    fltrace("FLTRACE move: fluid_gesture_arm leaked-armed recover (single-free tripwire)\n");
+    fluid_gesture_free();
+  }
+  fluid_snapshot_partition();
+  fluid_gesture_armed = 1;
+}
+void fluid_gesture_free(void)   /* NOT static: clear_schematic() (actions.c) closes the gesture too */
+{
+  fluid_discard_snapshot();
+  fluid_gesture_armed = 0;
 }
 
 /* incremental_wire_reroute.md §9 -- general device-pin-merge no-short (P2). The label-centric P2
@@ -2460,23 +2499,23 @@ static void fluid_discard_snapshot(void)
 static int fluid_check_device_merge(void)
 {
   int i, p, q, k = 0, merges = 0;
-  if(!fluid_snap_pinnet || fluid_snap_npins <= 0) return 0;
-  if(fluid_count_pins() != fluid_snap_npins) return 0;   /* instance set changed: not comparable */
+  if(!fluid_g.snap_pinnet || fluid_g.snap_npins <= 0) return 0;
+  if(fluid_count_pins() != fluid_g.snap_npins) return 0;   /* instance set changed: not comparable */
   for(i = 0; i < xctx->instances; ++i) {
     int npins, base;
     const char *type;
     if(xctx->inst[i].ptr < 0) continue;                  /* skip identically to the snapshot walk */
     npins = (xctx->inst[i].ptr + xctx->sym)->rects[PINLAYER];
     base = k; k += npins;                                /* advance k for EVERY instance incl. labels */
-    if(k > fluid_snap_npins) break;                      /* structure drift guard */
+    if(k > fluid_g.snap_npins) break;                      /* structure drift guard */
     type = xctx->sym[xctx->inst[i].ptr].type;
     if(type && !strcmp(type, "label")) continue;         /* net label pins echo lab=; not a device */
     for(p = 0; p < npins; ++p) {
-      const char *bp = fluid_snap_pinnet[base + p];
+      const char *bp = fluid_g.snap_pinnet[base + p];
       const char *ap = (xctx->inst[i].node && xctx->inst[i].node[p]) ? xctx->inst[i].node[p] : NULL;
       if(!bp || !bp[0] || !ap || !ap[0]) continue;
       for(q = p + 1; q < npins; ++q) {
-        const char *bq = fluid_snap_pinnet[base + q];
+        const char *bq = fluid_g.snap_pinnet[base + q];
         const char *aq = (xctx->inst[i].node && xctx->inst[i].node[q]) ? xctx->inst[i].node[q] : NULL;
         if(!bq || !bq[0] || !aq || !aq[0]) continue;
         if(strcmp(bp, bq) && !strcmp(ap, aq)) {          /* distinct before, one net now => merged */
@@ -2502,13 +2541,13 @@ static int fluid_check_device_merge(void)
 static int fluid_partition_changed(void)
 {
   int tot, m, k, changed = 0, *now;
-  if(!fluid_snap_id || fluid_snap_npins <= 0) return 0;
+  if(!fluid_g.snap_id || fluid_g.snap_npins <= 0) return 0;
   tot = fluid_count_pins();
-  if(tot != fluid_snap_npins) return 0;              /* instance set changed: not comparable */
+  if(tot != fluid_g.snap_npins) return 0;              /* instance set changed: not comparable */
   now = my_malloc(_ALLOC_ID_, tot * sizeof(int));
   m = fluid_build_partition(now, tot);
-  if(m == fluid_snap_npins)
-    for(k = 0; k < m; ++k) if(now[k] != fluid_snap_id[k]) ++changed;
+  if(m == fluid_g.snap_npins)
+    for(k = 0; k < m; ++k) if(now[k] != fluid_g.snap_id[k]) ++changed;
   /* FLUID_TRACE forensics: name each changed pin (live net vs pristine snapshot net) so a
    * partition rollback in the attempt loop is diagnosable from the trace alone. */
   if(changed && fluid_trace_on()) {
@@ -2518,15 +2557,15 @@ static int fluid_partition_changed(void)
       if(xctx->inst[i].ptr < 0) continue;
       npins = (xctx->inst[i].ptr + xctx->sym)->rects[PINLAYER];
       for(p = 0; p < npins && kk < m; ++p, ++kk) {
-        if(now[kk] == fluid_snap_id[kk]) continue;
+        if(now[kk] == fluid_g.snap_id[kk]) continue;
         {
           double px, py;
           const char *nm = xctx->inst[i].node ? xctx->inst[i].node[p] : NULL;
-          const char *sn = (fluid_snap_pinnet && kk < fluid_snap_npins) ? fluid_snap_pinnet[kk] : NULL;
+          const char *sn = (fluid_g.snap_pinnet && kk < fluid_g.snap_npins) ? fluid_g.snap_pinnet[kk] : NULL;
           get_inst_pin_coord(i, p, &px, &py);
           fltrace("FLTRACE pchg:   %s pin %d (%g,%g) snap=%s(id %d) now=%s(id %d)\n",
                   xctx->inst[i].instname ? xctx->inst[i].instname : "?", p, px, py,
-                  sn ? sn : "-", fluid_snap_id[kk], nm ? nm : "-", now[kk]);
+                  sn ? sn : "-", fluid_g.snap_id[kk], nm ? nm : "-", now[kk]);
         }
       }
     }
@@ -2556,14 +2595,14 @@ static int fluid_uf_find(int *par, int i) { while(par[i] != i) { par[i] = par[pa
 static int fluid_wire_is_novel(int e)
 {
   double ax, ay, bx, by; const char *lab; int j;
-  if(fluid_start_nwire == 0 || !fluid_start_wire) return 0;
+  if(fluid_g.start_nwire == 0 || !fluid_g.start_wire) return 0;
   fluid_wire_norm_pts(xctx->wire[e].x1, xctx->wire[e].y1, xctx->wire[e].x2, xctx->wire[e].y2,
                       &ax, &ay, &bx, &by);
   lab = get_tok_value(xctx->wire[e].prop_ptr, "lab", 0);
-  for(j = 0; j < fluid_start_nwire; ++j)
-    if(fluid_start_wire[j].x1 == ax && fluid_start_wire[j].y1 == ay &&
-       fluid_start_wire[j].x2 == bx && fluid_start_wire[j].y2 == by &&
-       !strcmp(fluid_start_wire[j].lab ? fluid_start_wire[j].lab : "", lab ? lab : ""))
+  for(j = 0; j < fluid_g.start_nwire; ++j)
+    if(fluid_g.start_wire[j].x1 == ax && fluid_g.start_wire[j].y1 == ay &&
+       fluid_g.start_wire[j].x2 == bx && fluid_g.start_wire[j].y2 == by &&
+       !strcmp(fluid_g.start_wire[j].lab ? fluid_g.start_wire[j].lab : "", lab ? lab : ""))
       return 0;                                          /* present at START => not this-drag copper */
   return 1;
 }
@@ -2578,12 +2617,12 @@ static int fluid_wire_is_novel(int e)
 static int fluid_wire_is_novel_span(int e)
 {
   double ax, ay, bx, by; int j;
-  if(fluid_start_nwire == 0 || !fluid_start_wire) return 0;
+  if(fluid_g.start_nwire == 0 || !fluid_g.start_wire) return 0;
   fluid_wire_norm_pts(xctx->wire[e].x1, xctx->wire[e].y1, xctx->wire[e].x2, xctx->wire[e].y2,
                       &ax, &ay, &bx, &by);
-  for(j = 0; j < fluid_start_nwire; ++j)
-    if(fluid_start_wire[j].x1 == ax && fluid_start_wire[j].y1 == ay &&
-       fluid_start_wire[j].x2 == bx && fluid_start_wire[j].y2 == by) return 0;
+  for(j = 0; j < fluid_g.start_nwire; ++j)
+    if(fluid_g.start_wire[j].x1 == ax && fluid_g.start_wire[j].y1 == ay &&
+       fluid_g.start_wire[j].x2 == bx && fluid_g.start_wire[j].y2 == by) return 0;
   return 1;
 }
 
@@ -2744,7 +2783,7 @@ static int fluid_is_chord(int e, unsigned short *doomed)
  * redundancy THIS drag created, never touches a net the user already looped (issue 0088 reviews
  * wf_fce167ed / wf_257dddae: else the collapse eats an untouched user ring sharing a junction, a lone
  * pin's own loop, or a loop the moved pin LANDS ON). Computed PURELY from START data -- the
- * fluid_start_wire[] snapshot + coord_was_grabbed -- plus the live moving-pin positions, so it is
+ * fluid_g.start_wire[] snapshot + coord_was_grabbed -- plus the live moving-pin positions, so it is
  * immune to the trim_wires coordinate drift a live-geometry match suffers.
  *
  * The graph is TAP-AWARE: each START wire is split at every node lying on its span (endpoints AND
@@ -2756,16 +2795,16 @@ static int fluid_is_chord(int e, unsigned short *doomed)
  * cannot masquerade as a self-loop -- review F3). */
 static int fluid_start_grabbed_component_has_cycle(void)
 {
-  int nw = fluid_start_nwire, i, j, nn = 0, ne = 0, ecap = 0, result = 0;
+  int nw = fluid_g.start_nwire, i, j, nn = 0, ne = 0, ecap = 0, result = 0;
   double *nx, *ny, *onpos;
   int *par, *ecount, *ncount, *reach, *onlist, *eu = NULL, *ev = NULL;
-  if(nw <= 1 || !fluid_start_wire) return 0;
+  if(nw <= 1 || !fluid_g.start_wire) return 0;
   nx = my_malloc(_ALLOC_ID_, 2 * nw * sizeof(double));
   ny = my_malloc(_ALLOC_ID_, 2 * nw * sizeof(double));
   for(i = 0; i < nw; ++i) {                               /* intern distinct endpoint coords -> nodes */
     double px[2], py[2]; int e;
-    px[0] = fluid_start_wire[i].x1; py[0] = fluid_start_wire[i].y1;
-    px[1] = fluid_start_wire[i].x2; py[1] = fluid_start_wire[i].y2;
+    px[0] = fluid_g.start_wire[i].x1; py[0] = fluid_g.start_wire[i].y1;
+    px[1] = fluid_g.start_wire[i].x2; py[1] = fluid_g.start_wire[i].y2;
     for(e = 0; e < 2; ++e) {
       int found = -1;
       for(j = 0; j < nn; ++j) if(nx[j] == px[e] && ny[j] == py[e]) { found = j; break; }
@@ -2777,8 +2816,8 @@ static int fluid_start_grabbed_component_has_cycle(void)
   onpos  = my_malloc(_ALLOC_ID_, (nn > 0 ? nn : 1) * sizeof(double));
   for(j = 0; j < nn; ++j) par[j] = j;
   for(i = 0; i < nw; ++i) {                               /* split each wire at every node on its span */
-    double wx1 = fluid_start_wire[i].x1, wy1 = fluid_start_wire[i].y1;
-    double wx2 = fluid_start_wire[i].x2, wy2 = fluid_start_wire[i].y2;
+    double wx1 = fluid_g.start_wire[i].x1, wy1 = fluid_g.start_wire[i].y1;
+    double wx2 = fluid_g.start_wire[i].x2, wy2 = fluid_g.start_wire[i].y2;
     int m = 0, a;
     if(wx1 == wx2 && wy1 == wy2) continue;                /* zero-length: no sub-edge (review F3) */
     for(j = 0; j < nn; ++j)
@@ -2893,7 +2932,7 @@ static void fluid_remove_redundant_loops(void)
   struct { double x1, y1, x2, y2; char *prop; } *sav = NULL;
   int nsav = 0;
 
-  fltrace("FLTRACE loop: ENTER W=%d start_nwire=%d\n", W, fluid_start_nwire);
+  fltrace("FLTRACE loop: ENTER W=%d start_nwire=%d\n", W, fluid_g.start_nwire);
   if(W < 3) return;                                       /* fewer than 3 wires => no simple cycle */
   /* issue 0088 review wf_fce167ed: if the dragged net already carried a loop at START, that is
    * pre-existing USER copper -- decline the whole collapse (never touch a net the user looped). */
@@ -2974,7 +3013,7 @@ static void fluid_remove_redundant_loops(void)
   /* H4 backstop (defense in depth; unreachable given the per-doom geometric verify): a same-named
    * island split or device merge the geometric model cannot see. Fail CLOSED if the snapshot is not
    * comparable. On a trip, re-create the removed wires and leave the loop (never-worse). */
-  if(!(fluid_snap_npins > 0 && fluid_count_pins() == fluid_snap_npins) ||
+  if(!(fluid_g.snap_npins > 0 && fluid_count_pins() == fluid_g.snap_npins) ||
      fluid_partition_changed() || fluid_check_device_merge()) {
     for(i = 0; i < nsav; ++i) {
       storeobject(-1, sav[i].x1, sav[i].y1, sav[i].x2, sav[i].y2, WIRE, 0, 0, sav[i].prop);
@@ -3032,10 +3071,10 @@ done:
 static int fluid_start_endpoint_at(double x, double y)
 {
   int j;
-  if(fluid_start_nwire == 0 || !fluid_start_wire) return 0;
-  for(j = 0; j < fluid_start_nwire; ++j)
-    if((fluid_start_wire[j].x1 == x && fluid_start_wire[j].y1 == y) ||
-       (fluid_start_wire[j].x2 == x && fluid_start_wire[j].y2 == y)) return 1;
+  if(fluid_g.start_nwire == 0 || !fluid_g.start_wire) return 0;
+  for(j = 0; j < fluid_g.start_nwire; ++j)
+    if((fluid_g.start_wire[j].x1 == x && fluid_g.start_wire[j].y1 == y) ||
+       (fluid_g.start_wire[j].x2 == x && fluid_g.start_wire[j].y2 == y)) return 1;
   return 0;
 }
 
@@ -3044,16 +3083,16 @@ static int fluid_start_endpoint_at(double x, double y)
 static int fluid_start_deg_at(double x, double y)
 {
   int j, c = 0;
-  if(fluid_start_nwire == 0 || !fluid_start_wire) return 0;
-  for(j = 0; j < fluid_start_nwire; ++j) {
+  if(fluid_g.start_nwire == 0 || !fluid_g.start_wire) return 0;
+  for(j = 0; j < fluid_g.start_nwire; ++j) {
     /* skip a zero-length START span: touch() mishandles a degenerate segment -- its collinear test is
      * trivially 0==0 and the axis branch ignores the off-axis coord, so a point wire on row y matches
      * EVERY query on that row, spuriously inflating the degree (a label-tap left one such point at
      * START in test_wireedit_20, reading the run's free end as a junction). */
-    if(fluid_start_wire[j].x1 == fluid_start_wire[j].x2 &&
-       fluid_start_wire[j].y1 == fluid_start_wire[j].y2) continue;
-    if(touch(fluid_start_wire[j].x1, fluid_start_wire[j].y1,
-             fluid_start_wire[j].x2, fluid_start_wire[j].y2, x, y)) ++c;
+    if(fluid_g.start_wire[j].x1 == fluid_g.start_wire[j].x2 &&
+       fluid_g.start_wire[j].y1 == fluid_g.start_wire[j].y2) continue;
+    if(touch(fluid_g.start_wire[j].x1, fluid_g.start_wire[j].y1,
+             fluid_g.start_wire[j].x2, fluid_g.start_wire[j].y2, x, y)) ++c;
   }
   return c;
 }
@@ -3220,9 +3259,9 @@ static void fluid_straighten_reversals(void)
   int *base, *now;
   unsigned char *prot;
 
-  fltrace("FLTRACE straighten: ENTER W=%d snap_npins=%d\n", xctx->wires, fluid_snap_npins);
+  fltrace("FLTRACE straighten: ENTER W=%d snap_npins=%d\n", xctx->wires, fluid_g.snap_npins);
   if(xctx->wires < 3) return;
-  if(fluid_failsafe(fluid_snap_npins <= 0)) return;          /* no START snapshot => cannot verify */
+  if(fluid_failsafe(fluid_g.snap_npins <= 0)) return;          /* no START snapshot => cannot verify */
   npins = fluid_count_pins() > 0 ? fluid_count_pins() : 1;
   base = my_malloc(_ALLOC_ID_, npins * sizeof(int));
   now  = my_malloc(_ALLOC_ID_, npins * sizeof(int));
@@ -3489,7 +3528,7 @@ static void fluid_collapse_axis_overshoot_stub(void)
   int *base, *now;
 
   if(xctx->wires < 3) return;
-  if(fluid_snap_npins <= 0) return;                         /* no START snapshot => cannot verify */
+  if(fluid_g.snap_npins <= 0) return;                         /* no START snapshot => cannot verify */
   npins = fluid_count_pins() > 0 ? fluid_count_pins() : 1;
   base = my_malloc(_ALLOC_ID_, npins * sizeof(int));
   now  = my_malloc(_ALLOC_ID_, npins * sizeof(int));
@@ -3704,7 +3743,7 @@ static void fluid_prune_anchor_tails(void)
   unsigned short *doomed = NULL;
   unsigned char *prot = NULL;
   int *base = NULL, *now = NULL;
-  if(xctx->wires == 0 || fluid_start_nwire <= 0) return;   /* no START snapshot => cannot scope/verify */
+  if(xctx->wires == 0 || fluid_g.start_nwire <= 0) return;   /* no START snapshot => cannot scope/verify */
   np = fluid_count_pins();
   if(np <= 0) return;
   my_realloc(_ALLOC_ID_, &doomed, xctx->wires * sizeof(unsigned short));
@@ -3754,9 +3793,9 @@ static void fluid_prune_anchor_tails(void)
 }
 
 /* issue 0104 helper: number of pin PAIRS whose together/apart relation in rep[] (a live
- * fluid_loop_partition result) disagrees with the GEOMETRIC START snapshot fluid_geo_snap_id --
+ * fluid_loop_partition result) disagrees with the GEOMETRIC START snapshot fluid_g.geo_snap_id --
  * 0 iff the two partitions are equivalent. Geometry-to-geometry on purpose: the node[]-NAME
- * snapshot (fluid_snap_id) merges disjoint same-name islands and skips netlist-ignored wires, so
+ * snapshot (fluid_g.snap_id) merges disjoint same-name islands and skips netlist-ignored wires, so
  * comparing it against geometry either never reaches 0 (pass permanently inert in any multi-island
  * GND/VDD schematic) or blesses a doom the names cannot see (review wf_506236ef). Both arrays are
  * smallest-pin-index canonical, but compare class STRUCTURE anyway -- robust to id-scheme drift.
@@ -3765,10 +3804,10 @@ static void fluid_prune_anchor_tails(void)
 static int fluid_part_diff_pairs(int *rep, int np)
 {
   int i, j, d = 0;
-  if(!fluid_geo_snap_id || np != fluid_geo_snap_npins || np <= 0) return np * (np - 1) / 2 + 1;
+  if(!fluid_g.geo_snap_id || np != fluid_g.geo_snap_npins || np <= 0) return np * (np - 1) / 2 + 1;
   for(i = 1; i < np; ++i)
     for(j = 0; j < i; ++j)
-      if((rep[j] == rep[i]) != (fluid_geo_snap_id[j] == fluid_geo_snap_id[i])) ++d;
+      if((rep[j] == rep[i]) != (fluid_g.geo_snap_id[j] == fluid_g.geo_snap_id[i])) ++d;
   return d;
 }
 
@@ -3809,10 +3848,10 @@ static void fluid_prune_shorting_anchor_tails(void)
   unsigned short *doomed = NULL;
   unsigned char *prot = NULL;
   int *now = NULL;
-  if(xctx->wires == 0 || fluid_start_nwire <= 0) return;   /* no START snapshot => cannot scope/verify */
-  if(!fluid_geo_snap_id || fluid_geo_snap_npins <= 0) return;
+  if(xctx->wires == 0 || fluid_g.start_nwire <= 0) return;   /* no START snapshot => cannot scope/verify */
+  if(!fluid_g.geo_snap_id || fluid_g.geo_snap_npins <= 0) return;
   np = fluid_count_pins();
-  if(np != fluid_geo_snap_npins) return;                   /* instance set changed: not comparable */
+  if(np != fluid_g.geo_snap_npins) return;                   /* instance set changed: not comparable */
   now = my_malloc(_ALLOC_ID_, np * sizeof(int));
   if(fluid_loop_partition(NULL, now) != np) { my_free(_ALLOC_ID_, &now); return; }
   curdiff = fluid_part_diff_pairs(now, np);
@@ -4043,14 +4082,14 @@ static int fluid_ripup_foreign_pin_short(void)
 {
   int guard = 0, changed_any = 0;
   if(xctx->wires < 3) return 0;
-  if(fluid_failsafe(!fluid_snap_pinnet || fluid_snap_npins <= 0)) return 0;
-  if(fluid_failsafe(fluid_count_pins() != fluid_snap_npins)) return 0;
+  if(fluid_failsafe(!fluid_g.snap_pinnet || fluid_g.snap_npins <= 0)) return 0;
+  if(fluid_failsafe(fluid_count_pins() != fluid_g.snap_npins)) return 0;
   for(;;) {
     int i, p, q, k, fixed = 0;
-    if(guard++ > fluid_snap_npins + 4) break;              /* progress backstop */
+    if(guard++ > fluid_g.snap_npins + 4) break;              /* progress backstop */
     xctx->prep_hash_wires = xctx->prep_net_structs = xctx->prep_hi_structs = 0;
     prepare_netlist_structs(0);
-    if(fluid_count_pins() != fluid_snap_npins) break;
+    if(fluid_count_pins() != fluid_g.snap_npins) break;
     if(fluid_partition_changed() == 0) break;              /* no move-created merge/disconnect (common) */
     k = 0;
     for(i = 0; i < xctx->instances && !fixed; ++i) {
@@ -4059,16 +4098,16 @@ static int fluid_ripup_foreign_pin_short(void)
       if(xctx->inst[i].ptr < 0) continue;
       npins = (xctx->inst[i].ptr + xctx->sym)->rects[PINLAYER];
       base = k; k += npins;                                /* advance k for EVERY instance (mirror snapshot) */
-      if(k > fluid_snap_npins) break;                      /* structure drift guard */
+      if(k > fluid_g.snap_npins) break;                      /* structure drift guard */
       type = xctx->sym[xctx->inst[i].ptr].type;
       if(type && !strcmp(type, "label")) continue;         /* net-label pins echo lab=; not a device */
       for(p = 0; p < npins && !fixed; ++p) {
-        const char *sp = fluid_snap_pinnet[base + p];
+        const char *sp = fluid_g.snap_pinnet[base + p];
         double px, py;
         if(!sp || !sp[0]) continue;
         get_inst_pin_coord(i, p, &px, &py);
         for(q = 0; q < npins && !fixed; ++q) {
-          const char *sq = fluid_snap_pinnet[base + q];
+          const char *sq = fluid_g.snap_pinnet[base + q];
           /* Re-read BOTH live pin net names EACH q: a declined slide below calls
            * prepare_netlist_structs(0), which frees+rebuilds inst[].node[] -- a pointer hoisted to
            * the p-loop would DANGLE on the next q (use-after-free, review wf_fe8ba9a4). sp/sq are the
@@ -4210,7 +4249,7 @@ static void fluid_prune_novel_orphan_stub(void)
 {
   int np, guard = 0, progress = 1, npins;
   int *base, *now;
-  if(xctx->wires < 2 || fluid_snap_npins <= 0) return;
+  if(xctx->wires < 2 || fluid_g.snap_npins <= 0) return;
   npins = fluid_count_pins() > 0 ? fluid_count_pins() : 1;
   base = my_malloc(_ALLOC_ID_, npins * sizeof(int));
   now  = my_malloc(_ALLOC_ID_, npins * sizeof(int));
@@ -4338,7 +4377,7 @@ static int fluid_try_reanchor(int w, double px, double py, double ax, double ay,
 static void fluid_manhattanize_relay_diagonals(void)
 {
   int w, changed = 0;
-  if(!fluid_snap_pinnet || fluid_snap_npins <= 0) return;
+  if(!fluid_g.snap_pinnet || fluid_g.snap_npins <= 0) return;
   xctx->prep_hash_wires = xctx->prep_net_structs = xctx->prep_hi_structs = 0;
   prepare_netlist_structs(0);
   if(fluid_partition_changed() != 0) return;      /* relay not accepted clean (alt result restored) */
@@ -4612,26 +4651,26 @@ static int fluid_seg_pair_touch_except(double ax1, double ay1, double ax2, doubl
  * legs), NOT leg-by-leg: an L bridges its two legs through the shared corner, so a device with one
  * distinct-net pin on the horizontal leg and another on the vertical leg is shorted through the
  * corner -- a per-leg test misses it (adversarial review, cross-leg hole). A pin counts if it is on
- * EITHER leg. Uses the START name snapshot (fluid_snap_pinnet), so it is a pure function of
+ * EITHER leg. Uses the START name snapshot (fluid_g.snap_pinnet), so it is a pure function of
  * (snapshot, geometry) -- no live node[], deterministic. Same base-walk as fluid_check_device_merge,
  * plus a sel==0 (stationary) filter: a moving/partially-selected device's pins travel WITH the drag,
  * so it is not a fixed obstacle. Cost O(fixed_inst * pins^2), pins 2..4. */
 static int fluid_L_bridges_device(double hx1, double hy, double hx2, double vx, double vy1, double vy2)
 {
   int i, p, q, k = 0;
-  if(!fluid_snap_pinnet || fluid_snap_npins <= 0) return 0;
+  if(!fluid_g.snap_pinnet || fluid_g.snap_npins <= 0) return 0;
   for(i = 0; i < xctx->instances; ++i) {
     int npins, base;
     const char *type;
     if(xctx->inst[i].ptr < 0) continue;
     npins = (xctx->inst[i].ptr + xctx->sym)->rects[PINLAYER];
     base = k; k += npins;
-    if(k > fluid_snap_npins) break;                /* structure drift guard */
+    if(k > fluid_g.snap_npins) break;                /* structure drift guard */
     if(xctx->inst[i].sel) continue;                /* only STATIONARY devices are obstacles */
     type = xctx->sym[xctx->inst[i].ptr].type;
     if(type && !strcmp(type, "label")) continue;   /* net labels are not devices */
     for(p = 0; p < npins; ++p) {
-      const char *bp = fluid_snap_pinnet[base + p];
+      const char *bp = fluid_g.snap_pinnet[base + p];
       double px, py;
       if(!bp || !bp[0]) continue;
       get_inst_pin_coord(i, p, &px, &py);
@@ -4639,7 +4678,7 @@ static int fluid_L_bridges_device(double hx1, double hy, double hx2, double vx, 
       if(!(fluid_pin_on_seg(px, py, hx1, hy, hx2, hy) ||
            fluid_pin_on_seg(px, py, vx, vy1, vx, vy2))) continue;
       for(q = p + 1; q < npins; ++q) {
-        const char *bq = fluid_snap_pinnet[base + q];
+        const char *bq = fluid_g.snap_pinnet[base + q];
         double qx, qy;
         if(!bq || !bq[0] || !strcmp(bp, bq)) continue;   /* need distinct pre-move named nets */
         get_inst_pin_coord(i, q, &qx, &qy);
@@ -4710,21 +4749,21 @@ static void fluid_perp_extent(int horiz, double *plo, double *phi)
 
 /* Layer 2: pristine (START-snapshot) net name of the MOVING instance pin at (x,y), or NULL if none.
  * Same instance/pin walk order as fluid_build_partition (skip ptr<0), so the snapshot index lines up
- * with fluid_snap_pinnet. */
+ * with fluid_g.snap_pinnet. */
 static const char *fluid_moving_pin_net(double x, double y)
 {
   int i, p, k = 0, npins, base;
-  if(!fluid_snap_pinnet || fluid_snap_npins <= 0) return NULL;
+  if(!fluid_g.snap_pinnet || fluid_g.snap_npins <= 0) return NULL;
   for(i = 0; i < xctx->instances; ++i) {
     if(xctx->inst[i].ptr < 0) continue;
     npins = (xctx->inst[i].ptr + xctx->sym)->rects[PINLAYER];
     base = k; k += npins;
-    if(base + npins > fluid_snap_npins) break;
+    if(base + npins > fluid_g.snap_npins) break;
     if(!xctx->inst[i].sel) continue;                 /* only MOVING instances */
     for(p = 0; p < npins; ++p) {
       double px, py;
       get_inst_pin_coord(i, p, &px, &py);
-      if(point_near_pin(px, py, x, y)) return fluid_snap_pinnet[base + p];
+      if(point_near_pin(px, py, x, y)) return fluid_g.snap_pinnet[base + p];
     }
   }
   return NULL;
@@ -4736,18 +4775,18 @@ static const char *fluid_moving_pin_net(double x, double y)
 static int fluid_seg_hits_foreign_pin(double x1, double y1, double x2, double y2, const char *nf)
 {
   int i, p, k = 0, npins, base;
-  if(!fluid_snap_pinnet || fluid_snap_npins <= 0) return 0;
+  if(!fluid_g.snap_pinnet || fluid_g.snap_npins <= 0) return 0;
   for(i = 0; i < xctx->instances; ++i) {
     const char *type;
     if(xctx->inst[i].ptr < 0) continue;
     npins = (xctx->inst[i].ptr + xctx->sym)->rects[PINLAYER];
     base = k; k += npins;
-    if(base + npins > fluid_snap_npins) break;
+    if(base + npins > fluid_g.snap_npins) break;
     if(xctx->inst[i].sel) continue;                  /* only STATIONARY devices are obstacles */
     type = xctx->sym[xctx->inst[i].ptr].type;
     if(type && !strcmp(type, "label")) continue;
     for(p = 0; p < npins; ++p) {
-      const char *pn = fluid_snap_pinnet[base + p];
+      const char *pn = fluid_g.snap_pinnet[base + p];
       double px, py;
       if(!pn || !pn[0]) continue;
       if(nf && !strcmp(pn, nf)) continue;            /* same net: not a short */
@@ -4769,15 +4808,15 @@ static int fluid_seg_hits_moving_pin(double x1, double y1, double x2, double y2,
                                      const char *nf, double mx, double my)
 {
   int i, p, k = 0, npins, base;
-  if(!fluid_snap_pinnet || fluid_snap_npins <= 0) return 0;
+  if(!fluid_g.snap_pinnet || fluid_g.snap_npins <= 0) return 0;
   for(i = 0; i < xctx->instances; ++i) {
     if(xctx->inst[i].ptr < 0) continue;
     npins = (xctx->inst[i].ptr + xctx->sym)->rects[PINLAYER];
     base = k; k += npins;
-    if(base + npins > fluid_snap_npins) break;
+    if(base + npins > fluid_g.snap_npins) break;
     if(!xctx->inst[i].sel) continue;                 /* only MOVING (co-dragged) instances */
     for(p = 0; p < npins; ++p) {
-      const char *pn = fluid_snap_pinnet[base + p];
+      const char *pn = fluid_g.snap_pinnet[base + p];
       double px, py;
       get_inst_pin_coord(i, p, &px, &py);            /* live POST-move coord */
       /* exempt the follow pin M itself (its riser legitimately starts at M) by EXACT coincidence,
@@ -4842,7 +4881,7 @@ static int fluid_ml_hazards(int ml, int sel1)
   const char *nf;
   int i, p, k, npins, base, h = 0, m;
 
-  if(!fluid_snap_pinnet || fluid_snap_npins <= 0) return 0;
+  if(!fluid_g.snap_pinnet || fluid_g.snap_npins <= 0) return 0;
   /* rotate_keep_connected_stretch.md / issue 0099: under a rotated/flipped stretch the moving pin M
    * did NOT merely translate -- it rotated about a pivot, THEN translated by delta. Recover M's true
    * PRE-move position so the pristine-net lookup (nf) and the pre-move span A..preM tests below
@@ -4876,10 +4915,10 @@ static int fluid_ml_hazards(int ml, int sel1)
     if(xctx->inst[i].ptr < 0) continue;
     npins = (xctx->inst[i].ptr + xctx->sym)->rects[PINLAYER];
     base = k; k += npins;
-    if(base + npins > fluid_snap_npins) break;
+    if(base + npins > fluid_g.snap_npins) break;
     if(!xctx->inst[i].sel) continue;                 /* only MOVING (co-dragged) instances */
     for(p = 0; p < npins; ++p) {
-      const char *pn = fluid_snap_pinnet[base + p];
+      const char *pn = fluid_g.snap_pinnet[base + p];
       double px, py;
       get_inst_pin_coord(i, p, &px, &py);            /* live == PRE-move here */
       /* issue 0099: a co-moving pin ROTATES about the pivot then translates -- it does not merely
@@ -4923,12 +4962,12 @@ static int fluid_ml_hazards(int ml, int sel1)
     if(xctx->inst[i].ptr < 0) continue;
     npins = (xctx->inst[i].ptr + xctx->sym)->rects[PINLAYER];
     base = k; k += npins;
-    if(base + npins > fluid_snap_npins) break;
+    if(base + npins > fluid_g.snap_npins) break;
     if(xctx->inst[i].sel) continue;                  /* only STATIONARY labels */
     type = xctx->sym[xctx->inst[i].ptr].type;
     if(!type || strcmp(type, "label")) continue;
     for(p = 0; p < npins; ++p) {
-      const char *pn = fluid_snap_pinnet[base + p];
+      const char *pn = fluid_g.snap_pinnet[base + p];
       double px, py;
       if(!pn || !pn[0]) continue;
       if(nf && !strcmp(pn, nf)) continue;            /* same pristine net: not a merge */
@@ -5035,10 +5074,10 @@ static int fluid_ml_hazards(int ml, int sel1)
     if(xctx->inst[i].ptr < 0) continue;
     npins = (xctx->inst[i].ptr + xctx->sym)->rects[PINLAYER];
     base = k; k += npins;
-    if(base + npins > fluid_snap_npins) break;
+    if(base + npins > fluid_g.snap_npins) break;
     if(xctx->inst[i].sel) continue;                  /* only STATIONARY instances */
     for(p = 0; p < npins; ++p) {
-      const char *pn = fluid_snap_pinnet[base + p];
+      const char *pn = fluid_g.snap_pinnet[base + p];
       double px, py;
       if(!pn || !pn[0]) continue;                    /* was not connected: nothing to strand */
       get_inst_pin_coord(i, p, &px, &py);
@@ -5089,16 +5128,16 @@ static int fluid_ml_future_covers(int ml, int sel1)
   int i, p, k, npins, base;
 
   if(fluid_leg_future_dx == 0.0 && fluid_leg_future_dy == 0.0) return 0;
-  if(!fluid_snap_pinnet || fluid_snap_npins <= 0) return 0;
+  if(!fluid_g.snap_pinnet || fluid_g.snap_npins <= 0) return 0;
   nf = fluid_moving_pin_net(mx - xctx->deltax, my - xctx->deltay);
   for(i = 0, k = 0; i < xctx->instances; ++i) {
     if(xctx->inst[i].ptr < 0) continue;
     npins = (xctx->inst[i].ptr + xctx->sym)->rects[PINLAYER];
     base = k; k += npins;
-    if(base + npins > fluid_snap_npins) break;
+    if(base + npins > fluid_g.snap_npins) break;
     if(!xctx->inst[i].sel) continue;                 /* only MOVING (co-dragged) instances */
     for(p = 0; p < npins; ++p) {
-      const char *pn = fluid_snap_pinnet[base + p];
+      const char *pn = fluid_g.snap_pinnet[base + p];
       double px, py;
       get_inst_pin_coord(i, p, &px, &py);            /* live == PRE-leg here */
       if(px + xctx->deltax == mx && py + xctx->deltay == my) continue;  /* the follow pin M itself */
@@ -5139,16 +5178,16 @@ static int fluid_slide_future_hazard(int n, double fx, double fy, double mx, dou
   int i, p, k, m, npins, base;
   double dx = xctx->deltax, dy = xctx->deltay;
   if(fluid_leg_future_dx == 0.0 && fluid_leg_future_dy == 0.0) return 0;
-  if(!fluid_snap_pinnet || fluid_snap_npins <= 0) return 0;
+  if(!fluid_g.snap_pinnet || fluid_g.snap_npins <= 0) return 0;
   nf = fluid_moving_pin_net(mx, my);
   for(i = 0, k = 0; i < xctx->instances; ++i) {
     if(xctx->inst[i].ptr < 0) continue;
     npins = (xctx->inst[i].ptr + xctx->sym)->rects[PINLAYER];
     base = k; k += npins;
-    if(base + npins > fluid_snap_npins) break;
+    if(base + npins > fluid_g.snap_npins) break;
     if(!xctx->inst[i].sel) continue;                 /* only MOVING (co-dragged) instances */
     for(p = 0; p < npins; ++p) {
-      const char *pn = fluid_snap_pinnet[base + p];
+      const char *pn = fluid_g.snap_pinnet[base + p];
       double px, py;
       get_inst_pin_coord(i, p, &px, &py);            /* live == PRE-leg here */
       if(px == mx && py == my) continue;             /* the driving pin M itself */
@@ -5274,8 +5313,8 @@ static void fluid_reroute_around_obstacles(int orthogonal_wiring)
   double grid = tclgetdoublevar("cadsnap");
   int iter;
   if(!orthogonal_wiring) return;
-  if(fluid_failsafe(!fluid_snap_pinnet || fluid_snap_npins <= 0)) return;
-  if(fluid_failsafe(fluid_count_pins() != fluid_snap_npins)) return; /* instance set changed: snapshot walk unreliable */
+  if(fluid_failsafe(!fluid_g.snap_pinnet || fluid_g.snap_npins <= 0)) return;
+  if(fluid_failsafe(fluid_count_pins() != fluid_g.snap_npins)) return; /* instance set changed: snapshot walk unreliable */
   if(grid <= 0.0) grid = 1.0;
 
   /* one reroute per straddled device; cap the loop at instance count as a runaway backstop */
@@ -5292,17 +5331,17 @@ static void fluid_reroute_around_obstacles(int orthogonal_wiring)
       if(xctx->inst[D].ptr < 0) continue;
       npins = (xctx->inst[D].ptr + xctx->sym)->rects[PINLAYER];
       base = k; k += npins;
-      if(base + npins > fluid_snap_npins) break;
+      if(base + npins > fluid_g.snap_npins) break;
       if(xctx->inst[D].sel) continue;                /* only STATIONARY devices */
       type = xctx->sym[xctx->inst[D].ptr].type;
       if(type && !strcmp(type, "label")) continue;
       for(p = 0; p < npins && wfound < 0; ++p) {
-        const char *np = fluid_snap_pinnet[base + p];
+        const char *np = fluid_g.snap_pinnet[base + p];
         double pax, pay;
         if(!np || !np[0]) continue;
         get_inst_pin_coord(D, p, &pax, &pay);
         for(q = p + 1; q < npins && wfound < 0; ++q) {
-          const char *nq = fluid_snap_pinnet[base + q];
+          const char *nq = fluid_g.snap_pinnet[base + q];
           double qbx, qby;
           if(!nq || !nq[0] || !strcmp(np, nq)) continue;   /* need distinct pre-move nets */
           get_inst_pin_coord(D, q, &qbx, &qby);
@@ -5479,18 +5518,18 @@ static void fluid_reroute_around_obstacles(int orthogonal_wiring)
 static int fluid_point_on_foreign_fixed_pin(double x, double y, const char *nf)
 {
   int i, p, k = 0, npins, base;
-  if(!fluid_snap_pinnet || fluid_snap_npins <= 0) return 0;
+  if(!fluid_g.snap_pinnet || fluid_g.snap_npins <= 0) return 0;
   for(i = 0; i < xctx->instances; ++i) {
     const char *type;
     if(xctx->inst[i].ptr < 0) continue;
     npins = (xctx->inst[i].ptr + xctx->sym)->rects[PINLAYER];
     base = k; k += npins;
-    if(base + npins > fluid_snap_npins) break;
+    if(base + npins > fluid_g.snap_npins) break;
     if(xctx->inst[i].sel) continue;                  /* only STATIONARY devices */
     type = xctx->sym[xctx->inst[i].ptr].type;
     if(type && !strcmp(type, "label")) continue;     /* net labels are not device pins */
     for(p = 0; p < npins; ++p) {
-      const char *pn = fluid_snap_pinnet[base + p];
+      const char *pn = fluid_g.snap_pinnet[base + p];
       double px, py;
       if(!pn || !pn[0]) continue;
       if(nf && !strcmp(pn, nf)) continue;            /* same net: not foreign */
@@ -5527,17 +5566,17 @@ static int fluid_removed_span_unsafe(double Px, double Cx, double Py, const char
       if(!fluid_point_on_foreign_fixed_pin(ex[e], ey[e], nf)) return 1;
     }
   }
-  if(!fluid_snap_pinnet || fluid_snap_npins <= 0) return 1;    /* no snapshot: cannot prove safe */
+  if(!fluid_g.snap_pinnet || fluid_g.snap_npins <= 0) return 1;    /* no snapshot: cannot prove safe */
   for(i = 0; i < xctx->instances; ++i) {
     const char *type;
     if(xctx->inst[i].ptr < 0) continue;
     npins = (xctx->inst[i].ptr + xctx->sym)->rects[PINLAYER];
     base = k; k += npins;
-    if(base + npins > fluid_snap_npins) break;
+    if(base + npins > fluid_g.snap_npins) break;
     type = xctx->sym[xctx->inst[i].ptr].type;
     if(type && !strcmp(type, "label")) continue;
     for(p = 0; p < npins; ++p) {
-      const char *pn = fluid_snap_pinnet[base + p];
+      const char *pn = fluid_g.snap_pinnet[base + p];
       double px, py;
       if(!pn || !pn[0]) continue;
       if(!nf || strcmp(pn, nf) != 0) continue;       /* only START-nf pins block the removal */
@@ -5593,8 +5632,8 @@ static void fluid_offset_foreign_pin_landing(int orthogonal_wiring)
   double grid = tclgetdoublevar("cadsnap");
   int D, p, k = 0, npins, base;
   if(!orthogonal_wiring) { fltrace("FLTRACE offset: skip (not orthogonal)\n"); return; }
-  if(fluid_failsafe(!fluid_snap_pinnet || fluid_snap_npins <= 0)) { fltrace("FLTRACE offset: skip (no snapshot)\n"); return; }
-  if(fluid_failsafe(fluid_count_pins() != fluid_snap_npins)) { fltrace("FLTRACE offset: skip (pin count changed)\n"); return; }
+  if(fluid_failsafe(!fluid_g.snap_pinnet || fluid_g.snap_npins <= 0)) { fltrace("FLTRACE offset: skip (no snapshot)\n"); return; }
+  if(fluid_failsafe(fluid_count_pins() != fluid_g.snap_npins)) { fltrace("FLTRACE offset: skip (pin count changed)\n"); return; }
   if(grid <= 0.0) grid = 1.0;
   fltrace("FLTRACE offset: ENTER wires=%d grid=%g\n", xctx->wires, grid);
 
@@ -5604,7 +5643,7 @@ static void fluid_offset_foreign_pin_landing(int orthogonal_wiring)
     if(xctx->inst[D].ptr < 0) continue;
     npins = (xctx->inst[D].ptr + xctx->sym)->rects[PINLAYER];
     base = k; k += npins;
-    if(base + npins > fluid_snap_npins) break;
+    if(base + npins > fluid_g.snap_npins) break;
     if(xctx->inst[D].sel) continue;                     /* only STATIONARY devices */
     type = xctx->sym[xctx->inst[D].ptr].type;
     if(type && !strcmp(type, "label")) continue;        /* labels have no body (§2) */
@@ -5614,7 +5653,7 @@ static void fluid_offset_foreign_pin_landing(int orthogonal_wiring)
     if(by1 > by2) { t = by1; by1 = by2; by2 = t; }
     xc = (bx1 + bx2) / 2.0;
     for(p = 0; p < npins; ++p) {
-      const char *np = fluid_snap_pinnet[base + p];
+      const char *np = fluid_g.snap_pinnet[base + p];
       const char *nf;
       double Px, Py;                                     /* the stationary device pin (the anchor) */
       double Mx = 0, My = 0, Cx = 0, Cy = 0;             /* riser: M = moving-pin end, C = corner in body */
@@ -5836,8 +5875,8 @@ static void fluid_shove_connected_wire(int orthogonal_wiring)
   int dxnz, dynz, s, iter;
 
   if(!orthogonal_wiring) return;
-  if(fluid_failsafe(!fluid_snap_pinnet || fluid_snap_npins <= 0)) return;
-  if(fluid_failsafe(fluid_count_pins() != fluid_snap_npins)) return;   /* instance set changed: snapshot unreliable */
+  if(fluid_failsafe(!fluid_g.snap_pinnet || fluid_g.snap_npins <= 0)) return;
+  if(fluid_failsafe(fluid_count_pins() != fluid_g.snap_npins)) return;   /* instance set changed: snapshot unreliable */
   if(grid <= 0.0) grid = 1.0;
   dxnz = (xctx->deltax != 0.0);
   dynz = (xctx->deltay != 0.0);
@@ -6000,7 +6039,7 @@ static void fluid_shove_connected_wire(int orthogonal_wiring)
 static int fluid_check_move_invariants(void)
 {
   int i, w, shorts = 0, disconnects = 0, dev_merges = 0;
-  if(!tclgetboolvar("fluid_editing")) { fluid_discard_snapshot(); return 0; }
+  if(!tclgetboolvar("fluid_editing")) { fluid_gesture_free(); return 0; }
   prepare_netlist_structs(0);
   /* --- P2: no-short/merge (wire-level, see comment above) --- */
   for(i = 0; i < xctx->instances; ++i) {
@@ -6024,13 +6063,13 @@ static int fluid_check_move_invariants(void)
     }
   }
   /* --- P1: connectivity partition unchanged (pin-level, vs START snapshot) --- */
-  if(fluid_snap_id && fluid_snap_npins > 0) {
+  if(fluid_g.snap_id && fluid_g.snap_npins > 0) {
     int tot = fluid_count_pins();
-    if(tot == fluid_snap_npins) {                        /* structure comparable (no inst added/removed) */
+    if(tot == fluid_g.snap_npins) {                        /* structure comparable (no inst added/removed) */
       int *now = my_malloc(_ALLOC_ID_, tot * sizeof(int));
       int m = fluid_build_partition(now, tot), k;
-      if(m == fluid_snap_npins)
-        for(k = 0; k < m; ++k) if(now[k] != fluid_snap_id[k]) ++disconnects;
+      if(m == fluid_g.snap_npins)
+        for(k = 0; k < m; ++k) if(now[k] != fluid_g.snap_id[k]) ++disconnects;
       my_free(_ALLOC_ID_, &now);
     }
     if(disconnects)
@@ -6040,7 +6079,7 @@ static int fluid_check_move_invariants(void)
   /* --- P2 (general): device-pin-merge -- catches a DEVICE short (no net label), the R18/v8 class
    * the label pass above misses. Runs BEFORE the snapshot is freed. --- */
   dev_merges = fluid_check_device_merge();
-  fluid_discard_snapshot();
+  fluid_gesture_free();
   tclsetvar("fluid_last_move_violations", my_itoa(shorts));
   tclsetvar("fluid_last_move_disconnects", my_itoa(disconnects));
   tclsetvar("fluid_last_move_dev_merges", my_itoa(dev_merges));
@@ -6173,7 +6212,7 @@ void move_objects(int what, int merge, double dx, double dy)
    } else {xctx->x1=xctx->mousex_snap;xctx->y1=xctx->mousey_snap;}
    xctx->move_flip = 0;xctx->move_rot = 0;
    xctx->ui_state|=STARTMOVE;
-   fluid_snapshot_partition(); /* Phase 1 P1 guard: capture pre-move connectivity partition */
+   fluid_gesture_arm(); /* Phase 1 P1 guard: capture pre-move connectivity partition (D1: arm the Fluid_gesture) */
    fluid_move_failsafes = 0;   /* B4: reset the per-gesture fail-safe degradation counter at START */
    /* incremental_wire_reroute Phase I (ownership decoupling): xctx->fluid_startsel_wires (the count
     * of the user's own selected wires) is captured in select_attached_nets(), which runs BEFORE this
@@ -6238,7 +6277,7 @@ void move_objects(int what, int merge, double dx, double dy)
    xctx->move_rot=xctx->move_flip=0;
    xctx->deltax=xctx->deltay=0.;
    xctx->ui_state &= ~STARTMOVE;
-   fluid_discard_snapshot(); /* Phase 1: aborted gesture -> drop the START snapshot */
+   fluid_gesture_free(); /* Phase 1: aborted gesture -> drop the START snapshot (D1: free the Fluid_gesture) */
    update_symbol_bboxes(0, 0);
    /* the rolled-back pristine geometry replaces the committed intermediate route on screen. No
     * set_modify(): the RUBBER steps never set it (see the live-step branch), so an aborted fluid

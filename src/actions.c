@@ -3700,6 +3700,8 @@ void clear_schematic(int cancel, int symbol)
          * the deep copy / grabbed-coord array would leak. Frees the reroute snapshot (fluid_reroute_
          * discard) and the stretch scope (stretch_grabbed_xy, allocated by select_attached_nets). */
         fluid_reroute_discard();
+        fluid_gesture_free();  /* D1 (Track D): close the Fluid_gesture START snapshot too (clear
+                                * is a legitimate 3rd gesture-close point beside move END/ABORT) */
         xctx->stretch_select = 0;
         xctx->stretch_grabbed_n = 0;
         my_free(_ALLOC_ID_, &xctx->stretch_grabbed_xy);
