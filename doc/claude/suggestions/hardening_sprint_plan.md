@@ -3,7 +3,7 @@
 Status: **Track A DONE** (2026-07-11, commits d086a73d..3bdabf0c) · **Track B DONE**
 (2026-07-11, commits c5cb0685/a6ac2026/74cda8e0 + B4) · **Track C DONE** (2026-07-11,
 C1 261ed06f · C2 57ac013f · C3 37052868 · C4 b9131d21 · C5 c6f69e37); **Track D IN PROGRESS** —
-D1 DONE (this commit), D2 next (D3-D6 not started).
+D1 DONE (9d12a067), D2 DONE (this commit); D3-D6 NOT started.
 Track A yield beyond the planned steps: the A3 fold-in immediately caught a shipped
 engine regression (issue 0112, fixed af9075b9 + amnesty hole c2dc1848 — the sprint's
 thesis demonstrated on day one), an adversarial review hardened the runners
@@ -458,7 +458,7 @@ pre-D1 baseline; `run_wireedit.sh --memcheck` reports **0 errors**.
      into the struct"; they can't move into a move.c-local `Fluid_gesture` without breaking select.c.
      **D2 must treat them separately** (leave in xctx, or promote the struct to xschem.h). Flagged here.
 
-### D2 — Fold the hidden-parameter statics into the struct
+### D2 — Fold the hidden-parameter statics into the struct — DONE
 **Do:** move `fluid_startsel_id/nid`, `fluid_stretch_premove_x/y`,
 `fluid_leg_future_dx/dy`, `fluid_slide_pushthrough_on`, `fluid_jog_doomed_from`,
 `fluid_manh_doomed_from`, the saved id-counter quad — each with a one-line comment
@@ -466,6 +466,32 @@ stating its validity window (one place_moved_wire call / one leg / one attempt /
 one gesture). Reset points move into the lifecycle functions where the window allows.
 **Done when:** `grep -c '^static.*fluid' move.c` drops accordingly; suites byte-identical;
 deliberately skipping `fluid_gesture_free` trips the new assert. **Effort:** 1d.
+**Landed (this commit):** folded the five genuine move.c hand-down statics —
+`fluid_slide_pushthrough_on`, `fluid_leg_future_dx/dy`, `fluid_stretch_premove_x/y`(+`_valid`),
+`fluid_jog_doomed_from`, `fluid_manh_doomed_from` (8 vars, 6 decl lines) — into `Fluid_gesture` as
+fields, each with a one-line VALIDITY-WINDOW comment. The struct definition moved UP (ahead of
+`fluid_slide_push_through`, its first field consumer at ~:1528) so all fluid code sees `fluid_g`.
+`grep -c '^static.*fluid' src/move.c`: **99 → 93**. wireedit **55/55** + full fuzz sweep (matrix +
+216 replays + 4 self-tests) **byte-identical**; `run_wireedit.sh --memcheck` 0 errors. Tripwire proven:
+with the END `fluid_gesture_free()` temporarily commented out, a two-gesture no-reload probe fires the
+D1 recover tripwire (dbg) on the 2nd gesture's arm **exactly once** (reverted → 0).
+**Premise corrections while landing:**
+  1. *Two listed items are NOT move.c statics.* `fluid_startsel_id`/`nid` are `xctx` fields
+     (xschem.h:1272-1273) set in `select.c` (`select_attached_nets`); the "saved id-counter quad" is
+     `xctx->fluid_reroute_wid/iid/gid/tid` (also `xctx`, Phase-II reroute). Both are cross-file /
+     per-window `xctx` state — they can't fold into a move.c-local `Fluid_gesture` without promoting
+     the struct to xschem.h (a larger change). Left in `xctx`; only the five genuine move.c statics
+     folded. **Promoting `Fluid_gesture` to xschem.h so these + `fluid_startsel_*` join it is a clean
+     R2/R5 follow-up** (needed anyway for D6's `xschem fluid_pass`).
+  2. *No reset points needed relocating.* Per the reset-point map, all five statics have SUB-gesture
+     windows (one attempt / one leg / one place_moved_wire call / one ci-iteration), so none has a
+     whole-gesture window that "allows" moving its reset into arm/free. The fold is therefore a PURE
+     rename with every write/read/reset left in place — byte-identical by construction. The §7.9
+     early-return "leaks" (jog `:4053`, manh `:4367`/`:4472`) are HARMLESS: each watermark is
+     re-written before its next read, and the reader `n >= watermark` is equivalent for `-1` and `0`
+     over wire indices `>= 0`, so a zero-init `fluid_g` is byte-identical to the old `-1`/`1` inits
+     (documented in the struct header). "Skipping `fluid_gesture_free` trips the **assert**" is met by
+     the D1 **recover tripwire** (dbg/fltrace), per D1 correction #2 — not a hard abort.
 
 ### D3 — Pass table drives the END cleanup cluster
 **Do:** `static const Fluid_pass fluid_end_passes[] = {{name, fn, gates, verify_dir,

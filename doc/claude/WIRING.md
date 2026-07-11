@@ -321,6 +321,11 @@ move.c:3671-3672). Don't "unify" them without preserving the domains.
 9. File-scope statics as hidden parameters with validity windows: `fluid_stretch_premove_*`
    (one place_moved_wire call), `fluid_leg_future_dx/dy` (one leg), `fluid_slide_pushthrough_on`
    (one attempt), doom watermarks. An early return inside the attempt loop can leak them.
+   **As of Track D (D1/D2) these + the four START snapshots are fields of the one file-scope
+   `Fluid_gesture fluid_g` (armed at START by `fluid_gesture_arm`, freed at END/ABORT/clear by
+   `fluid_gesture_free`); each field carries its validity-window comment. The early-return leaks
+   above are byte-identically harmless — every watermark is re-written before its next read, and
+   `n >= watermark` is equal for -1 and 0 over wire indices ≥ 0 — but stay tidy when adding fields.**
 10. `leg_snap`/`alt_snap` stack slots must be memset before `mem_snapshot_alloc`.
 11. All fluid helpers fail-safe to no-op when `fluid_snap_pinnet==NULL` — a gesture that
     skipped the snapshot silently degrades to naive routing (log-only backstop only).
@@ -485,6 +490,10 @@ the historical issues pre-user.
 get_pin_escape_normal :1896, snapshots :2262-2328, novelty :2432-2478, partition/verify
 :2232/2378/2496/3641, healers (§4 table), obstacle router :5148, restore/discard
 :5935/5955, regrab :5975, invariant check :5869, FLTRACE :1986.
+Track-D gesture context: `typedef struct {...} Fluid_gesture` + the one instance `fluid_g`
+(declared ahead of the first consumer, ~:1437) hold the four START snapshots AND the folded
+hidden-parameter scratch (slide_pushthrough_on / leg_future_* / stretch_premove_* / *_doomed_from);
+lifecycle `fluid_gesture_arm` / `fluid_gesture_free` (the latter also called by clear_schematic).
 `select.c`: select_attached_nets :1579, select_wire fold :1040.
 `callback.c`: cadence drag :6213-6268, 'm'/'M' :4796-4891, mid-drag transforms
 :4592/:5100/:5124.

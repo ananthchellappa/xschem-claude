@@ -1434,9 +1434,58 @@ static int point_on_moving_pin(double x, double y)
   return 0;
 }
 
-/* issue 0109: attempts >= 1 of the P2 safety net re-run the commit with the push-through slide
- * OFF, so a push-through that damaged the pin-partition rolls back to the exact pre-0109 route. */
-static int fluid_slide_pushthrough_on = 1;
+/* D1/D2 (hardening sprint Track D -- WIRING.md §2.3, §7.9 / backlog R2): the single home for all fluid
+ * move state. The four START snapshots every consumer reads (armed once at move START by
+ * fluid_gesture_arm(); freed once at the real END/ABORT and at clear_schematic buffer teardown by
+ * fluid_gesture_free() -- the single-instance lifecycle is structural: arm DETECTS a still-armed prior
+ * gesture and recovers+logs it), PLUS the hand-down "hidden parameter" scratch fields (D2), each valid
+ * only inside a stated sub-gesture window. Zero-init at rest is safe: every scratch field is WRITTEN
+ * before it is READ within its window (the -1 doom watermarks feed n >= watermark over wire indices
+ * >= 0, for which -1 and 0 are equivalent). The instance x pin walk that position-indexes snap_id /
+ * snap_pinnet / geo_snap_id must be replicated byte-identically in every consumer (landmine §7.5).
+ * Declared HERE (ahead of fluid_slide_push_through, the first field consumer) so all fluid code sees it. */
+typedef struct { double x1, y1, x2, y2; char *lab; } fluid_startwire_t;
+typedef struct {
+  /* --- START snapshots (validity window: one whole gesture; armed/freed via arm/free) --- */
+  int    *snap_id;         /* canonical NAME partition id per instance pin, captured at START. Keyed to
+                            * pin POSITION not net name (a pure #net rename yields an identical vector). */
+  int     snap_npins;      /* 0 => no valid snapshot */
+  char  **snap_pinnet;     /* strdup'd resolved net NAME (or NULL) per instance pin at START -- for the
+                            * device-merge P2 check (spec §9); node[] itself is freed/rebuilt per move. */
+  int    *geo_snap_id;     /* issue 0104: GEOMETRIC pin partition (fluid_loop_partition rep[] over the
+                            * pristine wires). The NAME snapshot above merges geometrically disjoint
+                            * same-name islands (multi-island GND/VDD) and is blind to netlist-ignored
+                            * wires (spice_ignore skips prepare_netlist_structs' hashing), so a
+                            * geometry-vs-name compare either never fires or blesses deleting pristine
+                            * copper only the geometry sees (review wf_506236ef). */
+  int     geo_snap_npins;  /* 0 => no valid geometric snapshot */
+  fluid_startwire_t *start_wire; /* issue 0088: START wire set (order-normalized endpoints + raw lab=
+                            * token). The redundant-loop cleanup requires the collapsed cycle to contain
+                            * >=1 edge THIS drag produced (absent from this set) -- the novelty scope (H3)
+                            * that keeps it off pre-existing user copper. Constant across the gesture. */
+  int     start_nwire;     /* 0 => no snapshot => fluid_wire_is_novel() fails safe (not novel) */
+  /* --- D2: hand-down "hidden parameter" scratch (WIRING §7.9), each with its VALIDITY WINDOW.
+   *     Byte-identical fold: all are set-before-read within their window (see the header note). --- */
+  int     slide_pushthrough_on; /* window: one ATTEMPT. issue 0109: attempts >= 1 of the P2 safety net
+                            * re-run the commit with the push-through slide OFF (set = attempt==0 at each
+                            * attempt top; reset =1 at gesture END so a push-through that damaged the
+                            * pin-partition rolls back to the exact pre-0109 route). */
+  double  leg_future_dx, leg_future_dy; /* window: one LEG. issue 0086: unapplied delta of the LATER
+                            * decomposition legs, read by the leg-0 elbow tie-break (fluid_ml_future_covers);
+                            * 0 outside decomposed legs (single-pass moves / attempts 1-2). */
+  double  stretch_premove_x, stretch_premove_y; /* window: one place_moved_wire() call. issue 0100:
+                            * PRISTINE pre-move coords of the follow wire's moving endpoint, handed to
+                            * fluid_ml_hazards so the pre-move pin lookup need not invert a rotation about
+                            * an ASSUMED pivot (wrong under ALT-R/ALT-F rotatelocal). */
+  int     stretch_premove_valid; /* window: one place_moved_wire() call; gates the two _premove_ fields. */
+  int     jog_doomed_from; /* window: one fluid_jog_pin_off_backbone ci-iteration. Watermark for
+                            * fluid_jog_is_doomed (wire_delete_compact): wires with index >= this are doomed.
+                            * Set at each ci top before the delete; never read at its init value. */
+  int     manh_doomed_from;/* window: one fluid_try_reanchor call / one manhattanize ci-iteration. Watermark
+                            * for fluid_manh_is_doomed; set at each entry before the delete. */
+} Fluid_gesture;
+static Fluid_gesture fluid_g;       /* the one gesture context; zero-init at rest => no snapshot, neutral scratch */
+static int fluid_gesture_armed = 0; /* D1 lifecycle tripwire: 1 between arm and free (single-free) */
 
 /* Exact electrical touch of two closed axis-aligned (or degenerate) segments: an endpoint of one
  * lies on the other's span (covers T contacts and collinear overlap -- for 1-D intervals an
@@ -1516,7 +1565,7 @@ static int fluid_pushthrough_new_foreign_contact(double ox1, double oy1, double 
  * pass-through tap, dangles free, when a corner wire is itself part of the move, or on a
  * future-landing hazard. Gated on fluid_editing + tool-owned-only follow set; the pure-axis P2
  * safety net (leg_snap, armed for exactly this gate) partition-verifies the commit and retries
- * with fluid_slide_pushthrough_on cleared if the promoted route damaged connectivity.
+ * with fluid_g.slide_pushthrough_on cleared if the promoted route damaged connectivity.
  * See doc/claude/issues/0109-fluid-drag-through-anchor-collinear-short.md.
  * Returns 1 when it promoted (caller re-runs its fixpoint scan). */
 static int fluid_slide_push_through(int n)
@@ -1525,7 +1574,7 @@ static int fluid_slide_push_through(int n)
   double fx, fy, mx, my, a_m, a_f, d;
   xWire * const wire = xctx->wire;
 
-  if(!fluid_slide_pushthrough_on) return 0;
+  if(!fluid_g.slide_pushthrough_on) return 0;
   if(!tclgetboolvar("fluid_editing")) return 0;
   if(xctx->fluid_startsel_wires != 0) return 0;    /* tool-owned follow set only (matches the net's gate) */
   if(wire[n].sel == SELECTED1) { fx = wire[n].x2; fy = wire[n].y2; mx = wire[n].x1; my = wire[n].y1; }
@@ -2050,37 +2099,6 @@ void get_pin_escape_normal(int i, int r, double *nx, double *ny)
  * COUNT is approximate (one real change can cascade later ids), but "any difference" is an
  * exact detector of a partition change. Snapshot taken at move START (pre-motion geometry). */
 
-/* D1 (hardening sprint Track D -- WIRING.md §2.3 / backlog R2): the four START snapshots every fluid
- * consumer reads, plus their counts, gathered into ONE gesture-lifetime context (previously seven
- * scattered file-scope statics). Armed once at move START by fluid_gesture_arm(); freed once at the
- * real END/ABORT (and at clear_schematic buffer teardown) by fluid_gesture_free(). The single-instance
- * lifecycle is now structural: fluid_gesture_arm DETECTS a still-armed prior gesture (a leaked/skipped
- * free) and recovers + logs it rather than silently re-arming. The instance x pin walk that
- * position-indexes snap_id / snap_pinnet / geo_snap_id must be replicated byte-identically in every
- * consumer (landmine §7.5). */
-typedef struct { double x1, y1, x2, y2; char *lab; } fluid_startwire_t;
-typedef struct {
-  int    *snap_id;         /* canonical NAME partition id per instance pin, captured at START. Keyed to
-                            * pin POSITION not net name (a pure #net rename yields an identical vector). */
-  int     snap_npins;      /* 0 => no valid snapshot */
-  char  **snap_pinnet;     /* strdup'd resolved net NAME (or NULL) per instance pin at START -- for the
-                            * device-merge P2 check (spec §9); node[] itself is freed/rebuilt per move. */
-  int    *geo_snap_id;     /* issue 0104: GEOMETRIC pin partition (fluid_loop_partition rep[] over the
-                            * pristine wires). The NAME snapshot above merges geometrically disjoint
-                            * same-name islands (multi-island GND/VDD) and is blind to netlist-ignored
-                            * wires (spice_ignore skips prepare_netlist_structs' hashing), so a
-                            * geometry-vs-name compare either never fires or blesses deleting pristine
-                            * copper only the geometry sees (review wf_506236ef). */
-  int     geo_snap_npins;  /* 0 => no valid geometric snapshot */
-  fluid_startwire_t *start_wire; /* issue 0088: START wire set (order-normalized endpoints + raw lab=
-                            * token). The redundant-loop cleanup requires the collapsed cycle to contain
-                            * >=1 edge THIS drag produced (absent from this set) -- the novelty scope (H3)
-                            * that keeps it off pre-existing user copper. Constant across the gesture. */
-  int     start_nwire;     /* 0 => no snapshot => fluid_wire_is_novel() fails safe (not novel) */
-} Fluid_gesture;
-static Fluid_gesture fluid_g;       /* the one gesture context; zero-init at rest => no snapshot */
-static int fluid_gesture_armed = 0; /* D1 lifecycle tripwire: 1 between arm and free (single-free) */
-
 static int  fluid_move_failsafes = 0; /* B4: per-gesture count of fluid helpers that fail-safe no-op'd */
 /* B4 (hardening sprint Track B): a fluid healer/placement pass that fail-safe bails because its START
  * snapshot is missing or the instance set changed mid-gesture has SILENTLY degraded to naive routing --
@@ -2089,18 +2107,6 @@ static int  fluid_move_failsafes = 0; /* B4: per-gesture count of fluid helpers 
  * bail, never alters the condition or the control flow. */
 static int fluid_failsafe(int bail) { if(bail) ++fluid_move_failsafes; return bail; }
 static int fluid_loop_partition(unsigned short *doomed, int *rep); /* defined below (0088 block) */
-/* issue 0086: remaining (not-yet-applied) delta of the LATER decomposition legs while a decomposed
- * (0081) leg is committing -- read by fluid_ml_future_covers so the leg-0 elbow tie-break sees each
- * co-moving pin's FINAL landing point. Zero outside decomposed legs (single-pass moves, attempts
- * 1/2), which makes the tie-break inert there. */
-static double fluid_leg_future_dx = 0.0, fluid_leg_future_dy = 0.0;
-/* issue 0100: PRISTINE (pre-move) coords of the current follow wire's moving endpoint, handed by the
- * move_objects commit block to fluid_ml_hazards so the pre-move pin lookup does not have to invert a
- * rotation about an ASSUMED pivot -- wrong under ALT-R/ALT-F (ROTATELOCAL: each follow endpoint
- * rotates about its owning instance's origin, not the global grab point). Valid only across the
- * enclosing place_moved_wire() call; equal to the old inverse-about-{x1,y1} under plain ROTATE. */
-static double fluid_stretch_premove_x, fluid_stretch_premove_y;
-static int fluid_stretch_premove_valid = 0;
 
 /* order a wire's endpoints canonically ((x1,y1) <= (x2,y2), x-major) so two records of the SAME span
  * (possibly stored reversed) normalize identically -- used by the 0088 START snapshot + novelty test. */
@@ -3926,8 +3932,7 @@ static void fluid_prune_shorting_anchor_tails(void)
  * RESTORE the START partition (fluid_partition_changed()==0), so it can only de-short or decline (revert).
  * vertaxis==1: backbone horizontal on Q's row (bump in y); vertaxis==0: vertical on Q's column (bump in x).
  * Returns 1 iff a clean jog was committed. See doc/claude/issues/0098-fluid-stretch-pin-on-sibling-net-backbone-short.md */
-static int fluid_jog_doomed_from = -1;
-static int fluid_jog_is_doomed(int n, void *arg) { (void)arg; return n >= fluid_jog_doomed_from; }
+static int fluid_jog_is_doomed(int n, void *arg) { (void)arg; return n >= fluid_g.jog_doomed_from; }
 
 static int fluid_jog_pin_off_backbone(double qx, double qy, int vertaxis)
 {
@@ -4019,7 +4024,7 @@ static int fluid_jog_pin_off_backbone(double qx, double qy, int vertaxis)
   for(ci = 0; ci < 2; ++ci) {                                    /* try both perpendicular bump sides */
     double dir = (ci == 0) ? -grid : grid;
     int i;
-    fluid_jog_doomed_from = xctx->wires;                         /* every wire added below is revertible */
+    fluid_g.jog_doomed_from = xctx->wires;                         /* every wire added below is revertible */
     for(i = 0; i < nbb; ++i) {                                   /* apply clipped primaries in place */
       xctx->wire[bb[i]].x1 = nc[i][0]; xctx->wire[bb[i]].y1 = nc[i][1];
       xctx->wire[bb[i]].x2 = nc[i][2]; xctx->wire[bb[i]].y2 = nc[i][3];
@@ -4302,8 +4307,7 @@ static void fluid_prune_novel_orphan_stub(void)
  * orthogonal_wiring + fluid_editing.
  * See doc/claude/issues/0107-fluid-relay-saves-non-manhattan-wires.md and
  * doc/claude/issues/0108-fluid-relay-reanchors-to-stale-feet.md */
-static int fluid_manh_doomed_from = -1;
-static int fluid_manh_is_doomed(int n, void *arg) { (void)arg; return n >= fluid_manh_doomed_from; }
+static int fluid_manh_is_doomed(int n, void *arg) { (void)arg; return n >= fluid_g.manh_doomed_from; }
 
 /* 0108: closest point Q on the axis-aligned segment (sx1,sy1)-(sx2,sy2) to P (px,py) */
 static void fluid_seg_closest_point(double px, double py, double sx1, double sy1,
@@ -4351,7 +4355,7 @@ typedef struct { double qx, qy, cx, cy; int nbend; double cost; } Fluid_reanchor
 static int fluid_try_reanchor(int w, double px, double py, double ax, double ay,
                               const Fluid_reanchor_cand *c, const char *prp)
 {
-  fluid_manh_doomed_from = xctx->wires;            /* any added leg is revertible */
+  fluid_g.manh_doomed_from = xctx->wires;            /* any added leg is revertible */
   xctx->wire[w].x1 = px; xctx->wire[w].y1 = py;
   if(c->nbend) {
     xctx->wire[w].x2 = c->cx; xctx->wire[w].y2 = c->cy;
@@ -4457,7 +4461,7 @@ static void fluid_manhattanize_relay_diagonals(void)
     for(ci = 0; ci < 2 && !done; ++ci) {
       double cx = ci == 0 ? x1 : x2;               /* corner: V-first from the pin, then H-first */
       double cy = ci == 0 ? y2 : y1;
-      fluid_manh_doomed_from = xctx->wires;        /* the added far leg is revertible */
+      fluid_g.manh_doomed_from = xctx->wires;        /* the added far leg is revertible */
       xctx->wire[w].x1 = x1; xctx->wire[w].y1 = y1;
       xctx->wire[w].x2 = cx; xctx->wire[w].y2 = cy;
       order_wire_coords(w);
@@ -4893,8 +4897,8 @@ static int fluid_ml_hazards(int ml, int sel1)
    * the hand-down. For move_rot==0 && move_flip==0 this is BYTE-IDENTICAL to the old `mx-delta`
    * (the branch is skipped). */
   if(xctx->move_rot || xctx->move_flip) {
-    if(fluid_stretch_premove_valid) {
-      pmx = fluid_stretch_premove_x; pmy = fluid_stretch_premove_y;
+    if(fluid_g.stretch_premove_valid) {
+      pmx = fluid_g.stretch_premove_x; pmy = fluid_g.stretch_premove_y;
     } else {
       double pvx = xctx->x1, pvy = xctx->y1, qx = mx - xctx->deltax, qy = my - xctx->deltay, fx, fy;
       ROTATION((4 - xctx->move_rot) & 3, 0, pvx, pvy, qx, qy, fx, fy);
@@ -5127,7 +5131,7 @@ static int fluid_ml_future_covers(int ml, int sel1)
   const char *nf;
   int i, p, k, npins, base;
 
-  if(fluid_leg_future_dx == 0.0 && fluid_leg_future_dy == 0.0) return 0;
+  if(fluid_g.leg_future_dx == 0.0 && fluid_g.leg_future_dy == 0.0) return 0;
   if(!fluid_g.snap_pinnet || fluid_g.snap_npins <= 0) return 0;
   nf = fluid_moving_pin_net(mx - xctx->deltax, my - xctx->deltay);
   for(i = 0, k = 0; i < xctx->instances; ++i) {
@@ -5148,7 +5152,7 @@ static int fluid_ml_future_covers(int ml, int sel1)
        * the old point test, so later legs are byte-identical). */
       {
         double ix = px + xctx->deltax, iy = py + xctx->deltay;                       /* intermediate */
-        double fxc = ix + fluid_leg_future_dx, fyc = iy + fluid_leg_future_dy;        /* final       */
+        double fxc = ix + fluid_g.leg_future_dx, fyc = iy + fluid_g.leg_future_dy;        /* final       */
         /* exempt a corridor contact AT this L's own moving pin (mx,my): the L must end there and
          * that pin moves on in the next leg -- only copper crossing the corridor elsewhere shorts. */
         if(fluid_seg_pair_touch_except(ix, iy, fxc, fyc, rx1, hy, rx2, hy, mx, my) ||
@@ -5177,7 +5181,7 @@ static int fluid_slide_future_hazard(int n, double fx, double fy, double mx, dou
   const char *nf;
   int i, p, k, m, npins, base;
   double dx = xctx->deltax, dy = xctx->deltay;
-  if(fluid_leg_future_dx == 0.0 && fluid_leg_future_dy == 0.0) return 0;
+  if(fluid_g.leg_future_dx == 0.0 && fluid_g.leg_future_dy == 0.0) return 0;
   if(!fluid_g.snap_pinnet || fluid_g.snap_npins <= 0) return 0;
   nf = fluid_moving_pin_net(mx, my);
   for(i = 0, k = 0; i < xctx->instances; ++i) {
@@ -5200,7 +5204,7 @@ static int fluid_slide_future_hazard(int n, double fx, double fy, double mx, dou
        * the corridor to a point == old behavior, so single-axis / plain moves are byte-identical. */
       {
         double ix = px + dx, iy = py + dy;                                    /* intermediate */
-        double fxc = ix + fluid_leg_future_dx, fyc = iy + fluid_leg_future_dy; /* final        */
+        double fxc = ix + fluid_g.leg_future_dx, fyc = iy + fluid_g.leg_future_dy; /* final        */
         /* on the slid wire's post-slide span? */
         if(fluid_seg_pair_touch(ix, iy, fxc, fyc, xctx->wire[n].x1 + dx, xctx->wire[n].y1 + dy,
                                                    xctx->wire[n].x2 + dx, xctx->wire[n].y2 + dy)) return 1;
@@ -6527,7 +6531,7 @@ void move_objects(int what, int merge, double dx, double dy)
    for(attempt = 0; attempt < 3; ++attempt) {
    /* issue 0109: retry attempts run with the push-through slide OFF so a rolled-back promoted
     * route falls back to the exact pre-0109 geometry (then the rigid relay). */
-   fluid_slide_pushthrough_on = (attempt == 0);
+   fluid_g.slide_pushthrough_on = (attempt == 0);
    for(leg = 0; leg < nlegs; ++leg) {
    /* issue 0085: attempt 2 runs the shared region with orthogonal relaying OFF (rigid diagonal
     * relay): place_moved_wire's else-branch just translates the moved endpoint, laying NO new
@@ -6538,10 +6542,10 @@ void move_objects(int what, int merge, double dx, double dy)
      xctx->deltay = (leg == 0) ? 0.0 : totdy;
      /* issue 0086: expose the REMAINING legs' delta so the leg-0 elbow tie-break can avoid painting
       * a co-moving pin's final landing point (fluid_ml_future_covers). Leg 1 has no remaining leg. */
-     fluid_leg_future_dx = 0.0;
-     fluid_leg_future_dy = (leg == 0) ? totdy : 0.0;
+     fluid_g.leg_future_dx = 0.0;
+     fluid_g.leg_future_dy = (leg == 0) ? totdy : 0.0;
    } else {
-     fluid_leg_future_dx = fluid_leg_future_dy = 0.0; /* single-pass attempts: tie-break inert */
+     fluid_g.leg_future_dx = fluid_g.leg_future_dy = 0.0; /* single-pass attempts: tie-break inert */
    }
    if(what & (RUBBER | END))
      fltrace("FLTRACE move: attempt=%d leg=%d/%d deltax=%g deltay=%g\n", attempt, leg, nlegs,
@@ -6644,12 +6648,12 @@ void move_objects(int what, int merge, double dx, double dy)
          {
          int fluid_partial = (wire[n].sel == SELECTED1 || wire[n].sel == SELECTED2);
          if((xctx->move_rot || xctx->move_flip) && fluid_partial) {
-           fluid_stretch_premove_x = (wire[n].sel == SELECTED1) ? wire[n].x1 : wire[n].x2;
-           fluid_stretch_premove_y = (wire[n].sel == SELECTED1) ? wire[n].y1 : wire[n].y2;
-           fluid_stretch_premove_valid = 1;
+           fluid_g.stretch_premove_x = (wire[n].sel == SELECTED1) ? wire[n].x1 : wire[n].x2;
+           fluid_g.stretch_premove_y = (wire[n].sel == SELECTED1) ? wire[n].y1 : wire[n].y2;
+           fluid_g.stretch_premove_valid = 1;
          }
          place_moved_wire(n, leg_ortho);
-         fluid_stretch_premove_valid = 0;
+         fluid_g.stretch_premove_valid = 0;
          /* place_moved_wire() -> storeobject() may my_realloc(xctx->wire), leaving the loop-local
           * `wire` alias dangling. Refresh it so a LATER sel_array WIRE entry (e.g. the second of a
           * two-follow-wire fluid drag -- R18's M and P risers) does not read freed memory. This
@@ -7285,8 +7289,8 @@ void move_objects(int what, int merge, double dx, double dy)
    xctx->deltax = totdx; xctx->deltay = totdy;
    } /* end pchg block */
    } /* end for(attempt): P2 safety net */
-   fluid_leg_future_dx = fluid_leg_future_dy = 0.0;  /* issue 0086: never leak past the gesture */
-   fluid_slide_pushthrough_on = 1;                   /* issue 0109: never leak past the gesture */
+   fluid_g.leg_future_dx = fluid_g.leg_future_dy = 0.0;  /* issue 0086: never leak past the gesture */
+   fluid_g.slide_pushthrough_on = 1;                   /* issue 0109: never leak past the gesture */
    if(diag_relay) xctx->manhattan_lines = saved_ml_lines;
    if(alt_snapped) mem_snapshot_free(&alt_snap);
    if(leg_snapped) mem_snapshot_free(&leg_snap);
