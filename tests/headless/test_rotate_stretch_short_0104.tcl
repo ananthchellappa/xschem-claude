@@ -216,43 +216,11 @@ case "rot90-ip (-10,70)" 1 0 -10 70
 case "rot90+flip-ip (-30,70)" 1 1 -30 70
 
 # rot180 at this delta is only routable by the attempt-2 RIGID DIAGONAL RELAY (attempts 0/1 short,
-# trace: partition_changed=4/4 then relay ACCEPTs with 0) -- and the relay path (leg_ortho==0)
-# skips the whole END cleanup block, so the 0103-class stale-anchor tail it leaves at (-120,-40)
-# dangles. PRE-EXISTING (fails identically with fluid_prune_shorting_anchor_tails disabled;
-# sabotage-verified), same-net and electrically clean -- a known limitation, NOT 0104's short.
-# Assert the hard floors (partition + placement + no over-deletion) but expect the known tail:
-# if a later fix cleans the relay path this stops being expected and should be promoted back.
-proc case_known_tail {label nrot doflip dx dy} {
-  load_fixture
-  set pre [dangling_eps]
-  lassign [xschem instance_coord R18] - - prex prey prerot preflip
-  gesture_ip $nrot $doflip $dx $dy
-  set post [dangling_eps]
-  set novel {}
-  foreach e $post { lassign $e ex ey
-    if {![ep_in $pre $ex $ey]} { lappend novel $e } }
-  puts "info: $label known-limitation new dangles = $novel (0103-class relay tail)"
-  # bound the leak: ONLY the single known relay tail tip at (-120,-40) is tolerated; any other
-  # novel dangle is a real regression, not this limitation.
-  set confined 1
-  foreach e $novel { lassign $e ex ey
-    if {!(abs($ex+120)<0.6 && abs($ey+40)<0.6)} { set confined 0 } }
-  check "$label: novel dangles confined to the known relay tail (-120,-40)" $confined
-  # xfail-style promotion signal: when the rigid-relay path gains END cleanup this tail
-  # disappears -- this check then FAILS to say "promote case_known_tail back to a full case".
-  check "$label: known 0103-class relay tail still present (if this FAILS: relay path was fixed, promote to full case)" \
-        [ep_in $novel -120 -40]
-  set survive 1
-  foreach s {{-550 160} {-550 120} {-420 -300}} { lassign $s sx sy
-    if {![ep_in $post $sx $sy]} { set survive 0 } }
-  check "$label: pre-existing user stubs survive" $survive
-  lassign [xschem instance_coord R18] - - px py prot pflip
-  check "$label: R18 landed at delta ($dx,$dy)" \
-        [expr {$px == $prex+$dx && $py == $prey+$dy}]
-  check "$label: R18 rot == [expr {($prerot+$nrot)%4}]" [expr {$prot == ($prerot+$nrot)%4}]
-  check_partition $label
-}
-case_known_tail "rot180-ip (-30,70)" 2 0 -30 70
+# trace: partition_changed=4/4 then relay ACCEPTs with 0). The relay path used to skip the END
+# cleanup block, leaving a known 0103-class stale-anchor tail at (-120,-40) (this was a tolerated
+# xfail here). Issue 0108 gave the accepted relay a re-anchor + stale-feed prune pass, so the tail
+# is gone and this is a FULL case again (the xfail tripwire fired as designed and was promoted).
+case "rot180-ip (-30,70)" 2 0 -30 70
 case "rot270-ip (-30,70)"     3 0 -30 70
 
 puts ""

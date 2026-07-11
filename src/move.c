@@ -3936,6 +3936,267 @@ static void fluid_prune_novel_orphan_stub(void)
   my_free(_ALLOC_ID_, &now);
 }
 
+/* issue 0107: an ACCEPTED rigid diagonal relay (attempt 2, partition clean) is saved raw -- its
+ * follow wires run pin->anchor DIAGONALLY, violating orthogonal mode (before_8.sch, R18 dragged
+ * (-130,-90): both ortho attempts self-collide -- the two follow routes share the anchors' y=0
+ * row and one route's riser T-lands on the other's horizontal -- so the relay wins and after_24.sch
+ * keeps two non-Manhattan wires). Convert each relay diagonal that starts on a MOVED (selected)
+ * device pin into a Manhattan route, best candidate first:
+ *
+ *   issue 0108 (re-anchor): the diagonal's far endpoint is the pin's STALE pre-move foot -- a point
+ *   whose only purpose was serving the old pin position. Blindly L-ing pin->anchor keeps a detour
+ *   through the vacated location plus the stale feed copper behind it (after_25.sch: the [0,-40 0,0]
+ *   stub and the #net3 route around the old [-80,0] riser foot), and under rot180 the two anchor-Ls
+ *   must CROSS each other's route so BOTH orientations verify dirty and the diagonals survive.
+ *   So first try RE-ANCHORING: connect the pin to the closest point Q on each same-net wire
+ *   (distance-ordered; straight run when aligned, else the two L orientations), each candidate
+ *   partition-verified + guarded against welding foreign pin-less copper. Fallback: the 0107
+ *   pin->anchor L (two orientations); last resort: keep the diagonal (electrically correct is
+ *   better than pretty). After any change, the abandoned stale feed is pruned: dangling ends that
+ *   were junctions at START (live touch-deg 0, on no pin, START deg >= 2 -- never a user's own
+ *   pre-existing dangler) are retracted/deleted to fixpoint via fluid_retract_orphan_tail, each
+ *   action partition-verified, user-protected (0091) and explicit-lab copper excluded.
+ *
+ * Reshape/add/prune all per-action verified, so the pass can only improve or decline; pristine user
+ * diagonals not touching a moved pin are never candidates. Caller-gated on END + accepted relay +
+ * orthogonal_wiring + fluid_editing.
+ * See doc/claude/issues/0107-fluid-relay-saves-non-manhattan-wires.md and
+ * doc/claude/issues/0108-fluid-relay-reanchors-to-stale-feet.md */
+static int fluid_manh_doomed_from = -1;
+static int fluid_manh_is_doomed(int n, void *arg) { (void)arg; return n >= fluid_manh_doomed_from; }
+
+/* 0108: closest point Q on the axis-aligned segment (sx1,sy1)-(sx2,sy2) to P (px,py) */
+static void fluid_seg_closest_point(double px, double py, double sx1, double sy1,
+                                    double sx2, double sy2, double *qx, double *qy)
+{
+  if(sy1 == sy2) {                                 /* horizontal */
+    double lo = sx1 < sx2 ? sx1 : sx2, hi = sx1 < sx2 ? sx2 : sx1;
+    *qx = px < lo ? lo : px > hi ? hi : px; *qy = sy1;
+  } else {                                         /* vertical */
+    double lo = sy1 < sy2 ? sy1 : sy2, hi = sy1 < sy2 ? sy2 : sy1;
+    *qy = py < lo ? lo : py > hi ? hi : py; *qx = sx1;
+  }
+}
+
+/* 0108: would the axis-aligned segment (x1,y1)-(x2,y2) weld (endpoint-on-span, either direction --
+ * the netlister's touch model) to any wire whose node differs from `node`? The pin-indexed partition
+ * verify is blind to a pin-LESS foreign net (a lab= supply stub with no device pin); this geometric
+ * guard closes that hole for the re-anchor legs. Same-net copper is fine to touch -- welding to it
+ * is the point. Requires fresh prepare_netlist_structs (reads wire[].node). */
+static int fluid_seg_welds_foreign(double x1, double y1, double x2, double y2,
+                                   const char *node, int excl)
+{
+  int m;
+  for(m = 0; m < xctx->wires; ++m) {
+    const char *wn;
+    if(m == excl) continue;
+    if(xctx->wire[m].x1 == xctx->wire[m].x2 && xctx->wire[m].y1 == xctx->wire[m].y2) continue;
+    wn = xctx->wire[m].node;
+    if(node && wn && !strcmp(wn, node)) continue;  /* our own net */
+    if(touch(x1, y1, x2, y2, xctx->wire[m].x1, xctx->wire[m].y1) ||
+       touch(x1, y1, x2, y2, xctx->wire[m].x2, xctx->wire[m].y2) ||
+       touch(xctx->wire[m].x1, xctx->wire[m].y1, xctx->wire[m].x2, xctx->wire[m].y2, x1, y1) ||
+       touch(xctx->wire[m].x1, xctx->wire[m].y1, xctx->wire[m].x2, xctx->wire[m].y2, x2, y2))
+      return 1;
+  }
+  return 0;
+}
+
+/* 0108: one re-anchor candidate -- connect pin P to Q, optionally via corner C (nbend 1) */
+typedef struct { double qx, qy, cx, cy; int nbend; double cost; } Fluid_reanchor_cand;
+
+/* 0108: tentatively reshape relay wire w from P->(diag anchor) to P->Q (straight) or P->C->Q (L).
+ * Commits iff the pin-partition still equals START; else reverts geometry exactly. Returns 1 on
+ * commit. prp = w's saved prop string (for the added leg). */
+static int fluid_try_reanchor(int w, double px, double py, double ax, double ay,
+                              const Fluid_reanchor_cand *c, const char *prp)
+{
+  fluid_manh_doomed_from = xctx->wires;            /* any added leg is revertible */
+  xctx->wire[w].x1 = px; xctx->wire[w].y1 = py;
+  if(c->nbend) {
+    xctx->wire[w].x2 = c->cx; xctx->wire[w].y2 = c->cy;
+    order_wire_coords(w);
+    storeobject(-1, c->cx, c->cy, c->qx, c->qy, WIRE, 0, 0, prp);
+    order_wire_coords(xctx->wires - 1);
+  } else {
+    xctx->wire[w].x2 = c->qx; xctx->wire[w].y2 = c->qy;
+    order_wire_coords(w);
+  }
+  xctx->prep_hash_wires = xctx->prep_net_structs = xctx->prep_hi_structs = 0;
+  prepare_netlist_structs(0);
+  if(fluid_partition_changed() == 0) return 1;
+  xctx->wire[w].x1 = px; xctx->wire[w].y1 = py;    /* revert: restore the diagonal, drop the leg */
+  xctx->wire[w].x2 = ax; xctx->wire[w].y2 = ay;
+  order_wire_coords(w);
+  wire_delete_compact(fluid_manh_is_doomed, NULL);
+  xctx->prep_hash_wires = xctx->prep_net_structs = xctx->prep_hi_structs = 0;
+  prepare_netlist_structs(0);
+  return 0;
+}
+
+static void fluid_manhattanize_relay_diagonals(void)
+{
+  int w, changed = 0;
+  if(!fluid_snap_pinnet || fluid_snap_npins <= 0) return;
+  xctx->prep_hash_wires = xctx->prep_net_structs = xctx->prep_hi_structs = 0;
+  prepare_netlist_structs(0);
+  if(fluid_partition_changed() != 0) return;      /* relay not accepted clean (alt result restored) */
+  for(w = 0; w < xctx->wires; ++w) {
+    double x1, y1, x2, y2, px, py;
+    int i, p, hit = 0, ci, done = 0;
+    char *prp = NULL, *wnode = NULL;
+    if(xctx->wire[w].x1 == xctx->wire[w].x2 || xctx->wire[w].y1 == xctx->wire[w].y2) continue;
+    if(xctx->wire[w].bus != 0.0) continue;
+    x1 = xctx->wire[w].x1; y1 = xctx->wire[w].y1; x2 = xctx->wire[w].x2; y2 = xctx->wire[w].y2;
+    /* one endpoint must be a moved (selected) device pin: the relay translated that end */
+    for(i = 0; i < xctx->instances && !hit; ++i) {
+      int npins;
+      if(xctx->inst[i].sel != SELECTED || xctx->inst[i].ptr < 0) continue;
+      npins = (xctx->inst[i].ptr + xctx->sym)->rects[PINLAYER];
+      for(p = 0; p < npins && !hit; ++p) {
+        get_inst_pin_coord(i, p, &px, &py);
+        if(px == x1 && py == y1) hit = 1;
+        else if(px == x2 && py == y2) hit = 2;
+      }
+    }
+    if(!hit) continue;
+    if(hit == 2) { double t; t = x1; x1 = x2; x2 = t; t = y1; y1 = y2; y2 = t; }
+    my_strdup(_ALLOC_ID_, &prp, xctx->wire[w].prop_ptr);
+    my_strdup(_ALLOC_ID_, &wnode, xctx->wire[w].node);  /* preps below rewrite wire[].node */
+    /* --- 0108 phase 1: re-anchor to the closest same-net copper, distance-ordered --- */
+    if(wnode && wnode[0]) {
+      Fluid_reanchor_cand *cand = NULL;
+      int nc = 0, s, k;
+      cand = my_malloc(_ALLOC_ID_, (size_t)(2 * xctx->wires + 1) * sizeof(Fluid_reanchor_cand));
+      for(s = 0; s < xctx->wires; ++s) {
+        double qx, qy, d;
+        const char *sn = xctx->wire[s].node;
+        if(s == w || xctx->wire[s].bus != 0.0) continue;
+        if(xctx->wire[s].x1 != xctx->wire[s].x2 && xctx->wire[s].y1 != xctx->wire[s].y2) continue;
+        if(xctx->wire[s].x1 == xctx->wire[s].x2 && xctx->wire[s].y1 == xctx->wire[s].y2) continue;
+        if(!sn || strcmp(sn, wnode)) continue;     /* re-anchor only onto our own net */
+        fluid_seg_closest_point(x1, y1, xctx->wire[s].x1, xctx->wire[s].y1,
+                                xctx->wire[s].x2, xctx->wire[s].y2, &qx, &qy);
+        if(qx == x1 && qy == y1) continue;         /* pin already on this copper */
+        d = fabs(qx - x1) + fabs(qy - y1);
+        if(qx == x1 || qy == y1) {                 /* aligned: one straight wire */
+          cand[nc].qx = qx; cand[nc].qy = qy; cand[nc].cx = cand[nc].cy = 0.0;
+          cand[nc].nbend = 0; cand[nc].cost = d; ++nc;
+        } else {                                   /* two L orientations */
+          cand[nc].qx = qx; cand[nc].qy = qy; cand[nc].cx = x1; cand[nc].cy = qy;
+          cand[nc].nbend = 1; cand[nc].cost = d; ++nc;
+          cand[nc].qx = qx; cand[nc].qy = qy; cand[nc].cx = qx; cand[nc].cy = y1;
+          cand[nc].nbend = 1; cand[nc].cost = d; ++nc;
+        }
+      }
+      for(k = 1; k < nc; ++k) {                    /* insertion sort: distance, then fewer bends */
+        Fluid_reanchor_cand t = cand[k];
+        int j = k - 1;
+        while(j >= 0 && (cand[j].cost > t.cost ||
+              (cand[j].cost == t.cost && cand[j].nbend > t.nbend))) { cand[j + 1] = cand[j]; --j; }
+        cand[j + 1] = t;
+      }
+      for(k = 0; k < nc && !done; ++k) {
+        /* pre-check both legs against pin-less foreign copper (partition verify is blind to it) */
+        if(cand[k].nbend) {
+          if(fluid_seg_welds_foreign(x1, y1, cand[k].cx, cand[k].cy, wnode, w)) continue;
+          if(fluid_seg_welds_foreign(cand[k].cx, cand[k].cy, cand[k].qx, cand[k].qy, wnode, w))
+            continue;
+        } else {
+          if(fluid_seg_welds_foreign(x1, y1, cand[k].qx, cand[k].qy, wnode, w)) continue;
+        }
+        if(fluid_try_reanchor(w, x1, y1, x2, y2, &cand[k], prp)) {
+          fltrace("FLTRACE reanchor: wire=%d [%g %g %g %g] -> Q=(%g,%g) nbend=%d cost=%g\n",
+                  w, x1, y1, x2, y2, cand[k].qx, cand[k].qy, cand[k].nbend, cand[k].cost);
+          changed = 1; done = 1;
+        }
+      }
+      my_free(_ALLOC_ID_, &cand);
+    }
+    /* --- 0107 phase 2 (fallback): L to the stale anchor, V-first then H-first --- */
+    for(ci = 0; ci < 2 && !done; ++ci) {
+      double cx = ci == 0 ? x1 : x2;               /* corner: V-first from the pin, then H-first */
+      double cy = ci == 0 ? y2 : y1;
+      fluid_manh_doomed_from = xctx->wires;        /* the added far leg is revertible */
+      xctx->wire[w].x1 = x1; xctx->wire[w].y1 = y1;
+      xctx->wire[w].x2 = cx; xctx->wire[w].y2 = cy;
+      order_wire_coords(w);
+      storeobject(-1, cx, cy, x2, y2, WIRE, 0, 0, prp);
+      order_wire_coords(xctx->wires - 1);
+      xctx->prep_hash_wires = xctx->prep_net_structs = xctx->prep_hi_structs = 0;
+      prepare_netlist_structs(0);
+      if(fluid_partition_changed() == 0) {         /* START partition kept: L is as clean as the diagonal */
+        fltrace("FLTRACE manh: wire=%d [%g %g %g %g] -> L via (%g,%g)\n", w, x1, y1, x2, y2, cx, cy);
+        changed = 1;
+        done = 1;
+        break;
+      }
+      xctx->wire[w].x1 = x1; xctx->wire[w].y1 = y1; /* revert: restore the diagonal, drop the far leg */
+      xctx->wire[w].x2 = x2; xctx->wire[w].y2 = y2;
+      order_wire_coords(w);
+      wire_delete_compact(fluid_manh_is_doomed, NULL);
+      xctx->prep_hash_wires = xctx->prep_net_structs = xctx->prep_hi_structs = 0;
+      prepare_netlist_structs(0);
+    }
+    my_free(_ALLOC_ID_, &prp);
+    my_free(_ALLOC_ID_, &wnode);
+  }
+  if(changed) {
+    trim_wires();
+    check_collapsing_objects();
+    xctx->prep_hash_wires = xctx->prep_net_structs = xctx->prep_hi_structs = 0;
+    prepare_netlist_structs(0);
+    /* 0108: prune the abandoned stale feed. A re-anchored connection leaves its old copper hanging
+     * (the [0,-40 0,0] stub, the [-80,-150 -80,0] riser, the backbone overhang past the new T).
+     * Retract/delete dangling ends that were JUNCTIONS at START (live touch-deg 0, on no pin,
+     * START deg >= 2 -- a user's pre-existing dangler tip has START deg <= 1 and is never touched)
+     * to fixpoint. Each action is partition-verified by fluid_retract_orphan_tail; user-protected
+     * (0091) and explicit-lab copper excluded. Only follow-net copper can newly dangle (END re-applies
+     * the total delta from the pristine snapshot), so no extra net scoping is needed. */
+    {
+      int np = fluid_count_pins();
+      if(np > 0) {
+        int *base = my_malloc(_ALLOC_ID_, np * sizeof(int));
+        int *now  = my_malloc(_ALLOC_ID_, np * sizeof(int));
+        int progress = 1, rounds = 0;
+        fluid_loop_partition(NULL, base);
+        while(progress && ++rounds < 64) {
+          unsigned char *prot = my_malloc(_ALLOC_ID_,
+                                  (size_t)(xctx->wires > 0 ? xctx->wires : 1) * sizeof(unsigned char));
+          int i;
+          progress = 0;
+          fluid_mark_user_protected(prot);
+          for(i = 0; i < xctx->wires && !progress; ++i) {
+            int e;
+            if(prot[i]) continue;
+            if(xctx->wire[i].bus != 0.0) continue;
+            if(xctx->wire[i].x1 == xctx->wire[i].x2 && xctx->wire[i].y1 == xctx->wire[i].y2) continue;
+            if(fluid_wire_explicit_lab(i)) continue;
+            for(e = 0; e < 2 && !progress; ++e) {
+              double ex = e ? xctx->wire[i].x2 : xctx->wire[i].x1;
+              double ey = e ? xctx->wire[i].y2 : xctx->wire[i].y1;
+              if(fluid_deg_at(ex, ey, NULL, i) != 0) continue;
+              if(point_on_any_pin(ex, ey)) continue;
+              if(fluid_start_deg_at(ex, ey) < 2) continue;
+              if(fluid_retract_orphan_tail(i, ex, ey, base, np, now)) {
+                fltrace("FLTRACE reanchor: pruned stale feed at (%g,%g)\n", ex, ey);
+                progress = 1;             /* indices shifted: restart the scan */
+              }
+            }
+          }
+          my_free(_ALLOC_ID_, &prot);
+        }
+        my_free(_ALLOC_ID_, &base);
+        my_free(_ALLOC_ID_, &now);
+        xctx->prep_hash_wires = xctx->prep_net_structs = xctx->prep_hi_structs = 0;
+        prepare_netlist_structs(0);
+      }
+    }
+    xctx->need_reb_sel_arr = 1;
+    set_modify(1);
+  }
+}
+
 /* Phase III helper: is foreign pin (px,py) on the axis-aligned segment (x1,y1)-(x2,y2)? cadsnap/2
  * tolerance on the CONSTANT axis (mirrors point_near_pin, move.c:1220); inclusive span on the
  * varying axis. A degenerate (point) or diagonal leg carries no two-pin bridge. */
@@ -6598,6 +6859,15 @@ void move_objects(int what, int merge, double dx, double dy)
    if(diag_relay) xctx->manhattan_lines = saved_ml_lines;
    if(alt_snapped) mem_snapshot_free(&alt_snap);
    if(leg_snapped) mem_snapshot_free(&leg_snap);
+   /* issue 0107: an ACCEPTED rigid relay is partition-clean but its follow wires are DIAGONAL --
+    * geometry-illegal for orthogonal mode; the relay path skips the whole END cleanup block
+    * (leg_ortho==0), so nothing downstream re-Manhattanizes it. Convert each relay diagonal into a
+    * partition-verified L (keep the diagonal when neither orientation verifies). END only -- the
+    * saved result is what the user keeps; the live RUBBER relay preview stays as-is. When the relay
+    * was NOT accepted (attempt-1 alt restored) the function's partition-clean entry check declines. */
+   if(!commit_now && diag_relay && orthogonal_wiring && xctx->stretch_select &&
+      tclgetboolvar("fluid_editing"))
+     fluid_manhattanize_relay_diagonals();
    /* the END delta-zeroing (below) and the commit_now redraw save/restore consume xctx->deltax/deltay
     * as the true accumulated total (not the last leg's split); it is set to (totdx,totdy) above. */
    /* --- END-only post-commit finalizers. A live fluid RUBBER step (commit_now) keeps the gesture
