@@ -405,7 +405,12 @@ declaring any wiring feature done, convert to xfail tests when touching the area
    still plows at attempt 0.
 3. **Multi-pin devices**: ripup's pair-axis derivation `else continue` (:3964-3968) skips
    any non-axis-aligned merged pin pair (transistor gate/drain) → short saved. Whole
-   wireedit suite is transistor-free.
+   wireedit suite is transistor-free. **Delta-sweep evidence (hardening C4,
+   `c4_transistor`):** a leg-across-nmos short from an R18 drag is REFUSED by B3 (repair still
+   owed), but dragging the NMOS ITSELF DISCONNECTS its d/s pins (the 2-pin follow set doesn't
+   cover a 4-pin device) — a P1 partition change that B3 does NOT refuse (disconnect is
+   log-only, §9), so it SAVES **even under enforcement** (an enforcement gap). Pinned as an
+   xfail RED in `tests/headless/fuzz/test_fuzz_c4_blindspots.tcl`.
 4. **0101 rotatelocal tears** (documented OPEN): strap between co-selected instances (H1),
    wire-grab follower (H2), tolerant-grab vs exact-== owner match (H3) under ALT-R.
 5. **1-pin labels have no owner pass**: ripup skips label instances (:3940) and needs a

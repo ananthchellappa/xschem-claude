@@ -235,7 +235,7 @@ reverted → 7 again.
 
 ## Track C — Delta-sweep fuzzer. ~2-3 days. Finds the next 0105 before a user does.
 Run after B lands (enforcement reduces fuzzer noise to genuinely-unknown failures).
-**C1 DONE** 261ed06f · **C2 DONE** 57ac013f · **C3 DONE** (this commit).
+**C1 DONE** 261ed06f · **C2 DONE** 57ac013f · **C3 DONE** 37052868 · **C4 DONE** (this commit).
 
 ### C1 — Single-drop harness proc — DONE
 **Do:** `tests/headless/fuzz/harness.tcl`: proc `fuzz_drop {fixture gesture}` — load
@@ -365,7 +365,7 @@ capture, FUZZ_ENFORCE toggle) + `test_fuzz_c3_sweep.tcl` (smoke test: enforce on
 contrast + split grid-snap + replay round-trip, ALL PASS) + harness split/body-cross/enforce
 fixes.
 
-### C4 — Fixture variants targeting the known blind spots (parallel with B)
+### C4 — Fixture variants targeting the known blind spots (parallel with B) — DONE
 **Do:** four new fixtures, each one edit away from before_8/before_3:
 (a) **labeled rail** — `lab_pin VDD` on the backbone (risk #1: named-rail blackout);
 (b) **transistor** — nmos with non-axis-aligned pin pairs (risk #3);
@@ -376,6 +376,22 @@ xfail with the risk number so the sweep stays actionable (xfail flips = tripwire
 0104 mechanism).
 **Done when:** sweep runs all variants; REDs are xfail-classified, not noise.
 **Effort:** 0.5-1d.
+**Landed + corrections while landing:** the four variants are `c4_*` IN-MEMORY builders in
+`harness.tcl` (kept in code, not .sch, so the one-edit derivation is obvious), dispatched by
+`fuzz_load` and sweepable (`FUZZ_FIXTURES=c4_transistor`, `FUZZ_TARGET=lx`, the new `mixed`
+gesture). `test_fuzz_c4_blindspots.tcl` pins 8 xfail tripwires (risk-tagged; a mismatch FAILS
+loud with a "blind spot may be FIXED, re-baseline" note). ALL PASS.
+  - **"Expect RED" is only true with B3 OFF (premise refinement).** Under the shipped default
+    (B3 enforcement ON) most blind-spot shorts are REFUSED (rolled back to pristine), NOT saved
+    RED -- so the xfail baseline distinguishes REFUSED (B3 caught it, repair still owed) from RED
+    (an ENFORCEMENT GAP) from GREEN (repaired). risks #1/#3a/#5/#2a = REFUSED (enf-on) / RED
+    (enf-off); #2b = AMBER (a landing mixed drop keeps a route-quality flag).
+  - **The sweep surfaced a real ENFORCEMENT GAP (risk #3, multi-pin).** Dragging the nmos ITSELF
+    DISCONNECTS its d/s pins (the 2-pin follow set doesn't cover a 4-pin device) -- a P1
+    partition change the C engine itself logs. B3 does NOT refuse disconnects (WIRING.md §9:
+    disconnect is log-only, visible, cascade-sensitive), so it SAVES as RED *even under B3*
+    (`c4_transistor` target M1 (20,-80), and 1 escaped RED in the plain target-R18 sweep too).
+    Pinned as an xfail RED under enf-on -- the headline C4 find, cross-referenced in WIRING §11.3.
 
 ### C5 — Nightly CI job
 **Do:** GH workflow (schedule: nightly) running the sweep under xvfb-less scripted mode

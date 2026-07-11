@@ -55,12 +55,47 @@ proc fuzz_gates {} {
   uplevel #0 [list set fluid_enforce_invariants [expr {[info exists ::fuzz_enforce] ? $::fuzz_enforce : 1}]]
 }
 
-# Load a tests/from_user fixture by bare name (e.g. before_8) TRUE HEADLESS.
+# Load a fixture by bare name TRUE HEADLESS. A `before_*` name loads the tracked
+# tests/from_user/*.sch; a `c4_*` name builds an in-memory C4 blind-spot variant (below) --
+# kept in code, not .sch files, so the one-edit-from-before_8 derivation stays obvious and the
+# sweep can run them via FUZZ_FIXTURES=c4_transistor etc.
 proc fuzz_load {fixture} {
   fuzz_gates
-  xschem load [file join $::FUZZ_HERE .. .. from_user $fixture.sch]
+  if {[string match c4_* $fixture]} { xschem clear force; fuzz_$fixture } \
+  else { xschem load [file join $::FUZZ_HERE .. .. from_user $fixture.sch] }
   xschem resolved_net 0
 }
+
+# before_8's body, in memory (the 0105-0113 fixture; R18 is the 2-pin res drag target).
+proc _fuzz_before8_body {} {
+  xschem instance devices/capa    -320 -190 0 0 {name=C12 m=1 value="40u"}
+  xschem instance devices/res      -40    0 3 1 {name=R18 m=1 value=200}
+  xschem instance devices/ammeter -360  140 3 0 {name=v8}
+  xschem instance devices/opin    -270  140 0 0 {name=p5 lab=OUT}
+  foreach w {
+    {-550 140 -550 160} {-550 120 -550 140} {-330 140 -270 140} {-550 140 -400 140}
+    {-400 140 -390 140} {-400 -40 -400 140} {-320 -300 -320 -220} {-420 -300 -320 -300}
+    {-320 -160 -320 -150} {-320 -150 -80 -150} {-400 -40 0 -40} {-80 -150 -80 0}
+    {0 -40 0 0} {-80 0 -70 0} {-10 0 0 0}
+  } { xschem wire {*}$w }
+}
+# C4 blind-spot fixtures (each ONE edit from before_8; see WIRING.md §11 risk numbers):
+# (a) risk #1 -- named rail: a lab_pin VDD names the y=-40 backbone; every de-shorter blackouts
+#     on explicit-lab copper, so a short onto it is UNREPAIRABLE (B3 REFUSES it).
+proc fuzz_c4_labeled_rail {} { _fuzz_before8_body
+  xschem instance devices/lab_pin -200 -40 0 0 {name=lvdd lab=VDD} }
+# (b) risk #3 -- transistor: an nmos4 (non-axis pin pairs g/d, and 4 pins the 2-pin follow set
+#     doesn't fully cover) sitting in R18's drag corridor. Drag R18 -> a leg shorts M1's pins
+#     (REFUSED); drag M1 itself -> its d/s pins DISCONNECT (P1), which B3 does NOT refuse.
+proc fuzz_c4_transistor {} { _fuzz_before8_body
+  xschem instance devices/nmos4 -120 -40 0 0 {name=M1} }
+# (c) risk #5 -- net-label mover: a lab_pin sitting on #net3's riser (x=-80). Dragging the LABEL
+#     (FUZZ_TARGET=lx) onto the backbone bridges #net3 and #net1 (no owner pass for 1-pin labels).
+proc fuzz_c4_netlabel {} { _fuzz_before8_body
+  xschem instance devices/lab_pin -80 0 0 0 {name=lx lab=NX} }
+# (d) risk #2 -- mixed selection: before_8 + a far DECOY wire. The `mixed` gesture box-selects it
+#     alongside R18 so fluid_startsel_wires>0 (the 0093-D2 gate the B2 safety net now covers).
+proc fuzz_c4_mixed {} { _fuzz_before8_body; xschem wire 400 400 500 400 }
 
 # ---- gesture engine -------------------------------------------------------
 # A device's grab anchor = its body origin (what the user grabs). For a plain stretch the
@@ -99,6 +134,15 @@ proc fuzz_apply {gesture} {
     rot     { _fuzz_transform $inst $dx $dy {rotate_in_place} }
     rot2    { _fuzz_transform $inst $dx $dy {rotate_in_place rotate_in_place} }
     flip    { _fuzz_transform $inst $dx $dy {flip_in_place} }
+    mixed {
+      # risk #2: box-select the target AND the c4_mixed fixture's far decoy wire, so the
+      # selection is MIXED (fluid_startsel_wires>0) -- then one-shot stretch. Only meaningful
+      # on a fixture carrying that decoy (fuzz_c4_mixed).
+      xschem unselect_all
+      xschem select instance $inst
+      xschem select_inside 395 395 505 405
+      xschem move_objects $dx $dy stretch kissing
+    }
     split {
       # deliver (dx,dy) as two half-drops, re-selecting between (a saved intermediate state).
       # SNAP each half to cadsnap: a real user releases on the grid, and a sub-grid intermediate
