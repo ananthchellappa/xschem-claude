@@ -235,8 +235,9 @@ reverted → 7 again.
 
 ## Track C — Delta-sweep fuzzer. ~2-3 days. Finds the next 0105 before a user does.
 Run after B lands (enforcement reduces fuzzer noise to genuinely-unknown failures).
+**C1 DONE** (this commit).
 
-### C1 — Single-drop harness proc
+### C1 — Single-drop harness proc — DONE
 **Do:** `tests/headless/fuzz/harness.tcl`: proc `fuzz_drop {fixture gesture}` — load
 fixture, snapshot nets/geometry, apply gesture (scripted path: `xschem select_at` +
 `move_objects dx dy stretch`; transform steps via `xschem rotate/flip` equivalents of the
@@ -244,6 +245,42 @@ mid-drag verbs), then run the assertion pack (C2), return verdict + a replayable
 line. Reuse `wireedit/predicates.tcl`.
 **Done when:** one hand-written drop on before_8 reproduces the known-good 0105-fixed
 result GREEN. **Effort:** 0.5d.
+**Corrections while landing (empirical, `--nogui` headless):** three plan premises were
+wrong, one confirmed:
+  1. **Mid-drag rotate/flip IS headless-safe (premise CONFIRMED, was uncertain).** The
+     transform verbs are injected while `STARTMOVE` is live via the scripted seam
+     `move_objects start <ax> <ay> stretch kissing` → `xschem rotate_in_place`/
+     `flip_in_place` (each dispatches `move_objects(ROTATE|ROTATELOCAL / FLIP|ROTATELOCAL)`
+     when `ui_state&STARTMOVE`) → `move_objects end <dx> <dy>` (explicit total delta). With
+     `has_x==0` the `draw_selection` calls inside those branches are no-ops, so there is NO
+     SIGSEGV (the rotate-stretch GESTURE tests self-skip without X only because they drive
+     the real callback/draw path). Release==stepwise holds, so a mid-drag rotate is a
+     release-topology event the headless path reproduces. `ROTATELOCAL` pivots on the body
+     origin, so the start anchor is irrelevant to the drop; the harness anchors at the body
+     origin for faithfulness.
+  2. **`p2_no_short` (absolute) is UNUSABLE on before_8 (premise WRONG).** before_8 ships a
+     benign distinct-net CROSSING — its `#net3` riser (x=-80) crosses the `#net1` backbone
+     (y=-40) at (-80,-40) with NO shared endpoint, so `touch()` does not merge them (two
+     distinct nets, no electrical short), but `p2_no_short`'s geometric arm uses `seg_touch`
+     (bbox overlap), which flags a crossing exactly like a short → 0 on the PRISTINE fixture,
+     can never pass. The before_8 wireedit tests (53/54) already sidestep it for this reason.
+     So the fuzzer's electrical P2 is **move-relative**: `p2_no_device_merge` (the device
+     short) + a before-relative label-survival check (the arm-(b) named-net-merge concern).
+     A NEW crossing the *move* introduces is a C2 novelty-scoped QUALITY check, not the hard
+     electrical verdict. (This also fixes C2's check (1) — see there.)
+  3. **P1 must be name-INVARIANT (premise WRONG).** `instance_nodemap` byte-compare fails on
+     a benign `#netN` renumber (traversal-order-dependent, WIRING.md §5) that a reroute
+     causes even when the partition is identical — e.g. before_7 + R18 ALT-R (-30,70) (the
+     0104 gesture) renumbers but preserves grouping. The harness compares the pin-GROUPING
+     partition (set of pin-groups keyed by pin identity, not net name) instead.
+  4. **3-way verdict (added).** B3 enforcement REFUSES an unrepairable short, leaving geometry
+     pristine — which passes every electrical check (nothing saved) but did NOT route. So the
+     verdict is GREEN (landed + clean) / RED (a hard check failed = saved violation) / REFUSED
+     (clean but the device did not move by the requested delta). Landing = body origin moved
+     by exactly (dx,dy), transform-agnostic (`ROTATELOCAL` keeps origin + adds delta).
+**Landed:** `harness.tcl` (fuzz_load/snapshot/apply/assert/drop + fuzz_partition,
+fuzz_labels_survive, _fuzz_landed) + self-test `test_fuzz_harness_c1.tcl` (GREEN done-when +
+headless-rotate GREEN + REFUSED teeth + RED teeth, ALL PASS). Runs true headless, no X.
 
 ### C2 — Assertion pack (each with a sabotage variant)
 **Do:** five checks per drop: (1) P1/P2 — `instance_nodemap` byte-compare +
