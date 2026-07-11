@@ -1,6 +1,14 @@
 # Hardening sprint — atomic step plan
 
-Status: PROPOSED (2026-07-11, branch `fluid-editing`, HEAD 85e0c9c8).
+Status: **Track A DONE** (2026-07-11, commits d086a73d..3bdabf0c); Tracks B–D PROPOSED.
+Track A yield beyond the planned steps: the A3 fold-in immediately caught a shipped
+engine regression (issue 0112, fixed af9075b9 + amnesty hole c2dc1848 — the sprint's
+thesis demonstrated on day one), an adversarial review hardened the runners
+(0d21208e: $XSCHEM propagation, crash-before-skip, AUDIT_MIN_PASS, failure detail),
+and WIRING.md risk §11.13 (corner-slide foreign-landing, needs RED test) was recorded.
+A5 proof: sabotage commit a431e959 turned Actions red at the fluid gate with the exact
+failing check named in the log; revert 3bdabf0c went green.
+(Original baseline: PROPOSED 2026-07-11, branch `fluid-editing`, HEAD 85e0c9c8.)
 Source analysis: `doc/claude/WIRING.md` (§11 risks, §12 backlog),
 `doc/claude/code_analysis/wiring_support_assessment.md`.
 
@@ -29,6 +37,10 @@ Conventions that apply to every step:
 ---
 
 ## Track A — CI firewall (R1). ~1 day. Do first; nothing else is trustworthy without it.
+**DONE 2026-07-11.** A1 d086a73d · A2 18b159bc · A3 85f37198 (+0112 fix af9075b9,
+amnesty c2dc1848) · A4 ae50f70e · A5 d65591c5 (+runner hardening 0d21208e; proof
+a431e959 red → 3bdabf0c green). A2 note: the audit summary already printed separate
+counts — the step's remaining work was the banner conversion + is_skip/is_pass.
 
 ### A1 — Commit the untracked repro corpus
 **Problem:** most of the evidence base for issues 0090–0111 exists only in the working
