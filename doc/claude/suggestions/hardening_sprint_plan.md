@@ -3,7 +3,7 @@
 Status: **Track A DONE** (2026-07-11, commits d086a73d..3bdabf0c) · **Track B DONE**
 (2026-07-11, commits c5cb0685/a6ac2026/74cda8e0 + B4) · **Track C DONE** (2026-07-11,
 C1 261ed06f · C2 57ac013f · C3 37052868 · C4 b9131d21 · C5 c6f69e37); **Track D IN PROGRESS** —
-D1 DONE (9d12a067), D2 DONE (this commit); D3-D6 NOT started.
+D1 DONE (9d12a067), D2 DONE (0473d845), D3 DONE (this commit); D4-D6 NOT started.
 Track A yield beyond the planned steps: the A3 fold-in immediately caught a shipped
 engine regression (issue 0112, fixed af9075b9 + amnesty hole c2dc1848 — the sprint's
 thesis demonstrated on day one), an adversarial review hardened the runners
@@ -493,7 +493,7 @@ D1 recover tripwire (dbg) on the 2nd gesture's arm **exactly once** (reverted �
      (documented in the struct header). "Skipping `fluid_gesture_free` trips the **assert**" is met by
      the D1 **recover tripwire** (dbg/fltrace), per D1 correction #2 — not a hard abort.
 
-### D3 — Pass table drives the END cleanup cluster
+### D3 — Pass table drives the END cleanup cluster — DONE
 **Do:** `static const Fluid_pass fluid_end_passes[] = {{name, fn, gates, verify_dir,
 mutation_class}, ...}` with gate bits `END_ONLY | ORTHO | FINAL_LEG | ROTFREE_ONLY |
 NEEDS_RIPPED`; replace the hand-written block (move.c:6838-6903) with one driver loop.
@@ -503,6 +503,41 @@ loops, [!rotfree] anchor-tails, straighten, overshoot, [ripped] orphan-stub). Th
 gates) but get table entries with a `MANUAL_SITE` flag documenting why.
 **Done when:** suites byte-identical; fltrace shows identical pass firing sequence on the
 0105-0111 repros. **Effort:** 1d.
+**Landed (this commit):** 9-entry `fluid_end_passes[]` (7 driver-run + 2 MANUAL_SITE) +
+per-entry issue-history/contract comments (moved from the call site), `Fluid_verify_dir` /
+`Fluid_mut_class` enums (WIRING §5 taxonomy made structural; D3 driver does not consult
+them — they are the D5/D6 hooks), and one driver loop replacing the hand-written cluster.
+Heterogeneous signatures solved as planned-risk predicted: uniform `int (*fn)(void)`; the
+six void passes get one-line adapters (`fluid_pass_*`, exact old calls); ripup keeps its
+int return, threaded via a new `SETS_RIPPED` bit into the driver's `ripped` flag consumed
+by `NEEDS_RIPPED`. Driver re-checks END_ONLY/ORTHO/FINAL_LEG (guaranteed by the enclosing
+site gate — provably no-op, keeps the bits executable) + the per-pass bits, and fltraces
+`pass <name>: run (rotfree=%d ripped=%d)` per firing (the D3 firing-sequence proof; fuller
+SKIP/changed observability is D4). Verified: wireedit 55/55 + memcheck 0 errors; full fuzz
+sweep matrix (every per-fixture row) + 216 replay files byte-identical (re-baselined
+against a stashed pre-D3 build for the row-level compare); 4 fuzz self-tests ALL PASS;
+fltrace on the 0105 drag (`ripped=1` → orphan-stub fires, anchor-tails skipped rotfree)
+and the 0111 NW drag (`ripped=0` → orphan-stub skipped) byte-identical to pre-D3 after
+filtering the new `FLTRACE pass` lines.
+**Premise corrections while landing (~3×, as in every prior step):**
+  1. *Line numbers drifted again*: the hand-written block was at move.c:7062-7127 (plan
+     said 6838-6903); anchored by the step-9 cluster gate + issue comments. The table +
+     driver land after `fluid_manhattanize_relay_diagonals` (~:4544) / in the cluster.
+  2. *The plan's `ROTFREE_ONLY` bit matches NO driver-run pass.* Today's only inline
+     rotation gate in the cluster is `if(!rotfree) fluid_prune_anchor_tails()` — a
+     **rotated-only** pass (0110 un-gated straighten/overshoot from rotfree; the
+     translation path never strands 0103 tails). Encoding it as ROTFREE_ONLY would invert
+     the gate. Added **both** bits: `ROTATED_ONLY` (prune_anchor_tails) and
+     `ROTFREE_ONLY` (used only by the `insert_exit_stubs` MANUAL_SITE entry, whose real
+     site gate is rot==0&&flip==0).
+  3. *`insert_exit_stubs` differs from the cluster by MORE than the plan's "different
+     gates"*: it is **not END-only** (it also runs on every live RUBBER commit — each
+     step restores from pristine and re-inserts), fires for `wire_exit_stub` users with
+     fluid_editing OFF, and owns a trailing `check_collapsing_objects` sweep. Its entry
+     carries ORTHO|FINAL_LEG|ROTFREE_ONLY|MANUAL_SITE (no END_ONLY) and documents all
+     three. The jog (`fluid_jog_pin_off_backbone`) got **no** entry: it is an internal
+     per-pin subroutine of ripup with args (qx,qy,vertaxis) — documented on ripup's
+     entry, per "ripup (+jog)".
 
 ### D4 — Per-pass observability in the driver
 **Do:** driver emits (under FLUID_TRACE) one line per pass: `pass <name>: SKIP(<gate>)` /

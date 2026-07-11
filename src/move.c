@@ -4541,6 +4541,174 @@ static void fluid_manhattanize_relay_diagonals(void)
   }
 }
 
+/* ==== Track D (D3): the END cleanup pass table ====================================================
+ * One table drives the END cleanup cluster (WIRING.md §3 step 9, §4 pass catalog). ARRAY ORDER IS
+ * THE EXECUTION ORDER and encodes the hard ordering edges (WIRING §3), each discovered by a bug:
+ *   - ripup FIRST: straighten pass-2 is the designated pruner of ripup's orphaned riser tails;
+ *   - de-short (ripup, shorting-anchor-tails) before the aesthetics (loops, straighten, overshoot):
+ *     the aesthetic passes verify against PASS ENTRY -- an unfixed short entering them is frozen in
+ *     as the invariant they preserve;
+ *   - anchor-tails before straighten (0110): a dangling tail holds the stale-anchor jog's endpoint
+ *     at touch-degree 2, masking the staircase from the collapse;
+ *   - straighten before insert_exit_stubs (0111): a P3 stub is itself a straighten-collapsible jog
+ *     unit -- NOTHING that collapses jogs may run after the stub pass (or every stub is undone /
+ *     oscillates); the converse antagonism is resolved INSIDE straighten (0111 reschedule);
+ *   - orphan-stub after straighten: its target only becomes prunable once straighten deletes the
+ *     follow-riser it was joined to;
+ *   - manhattanize LAST (per gesture, after the attempt ladder): the accepted-relay path had
+ *     leg_ortho==0 and skipped this whole per-leg cluster.
+ * Never insert or reorder an entry without re-walking that list. */
+
+/* Gate bits. END_ONLY/ORTHO/FINAL_LEG are guaranteed by the enclosing call-site gate (the cluster
+ * runs inside move_objects' attempt x leg scaffold under `!commit_now && fluid_editing &&
+ * stretch_select && leg_ortho && leg == nlegs-1`); the driver re-checks them anyway so each entry
+ * is self-describing (and so a future one-pass harness can enforce them, D6). */
+#define FLUID_PASS_END_ONLY     0x01 /* real END only, never on a live RUBBER commit (commit_now) */
+#define FLUID_PASS_ORTHO        0x02 /* requires an orthogonal leg (leg_ortho) */
+#define FLUID_PASS_FINAL_LEG    0x04 /* final decomposition leg only (leg == nlegs-1) */
+#define FLUID_PASS_ROTFREE_ONLY 0x08 /* only when move_rot==0 && move_flip==0 */
+#define FLUID_PASS_ROTATED_ONLY 0x10 /* only when rotated/flipped -- the old `if(!rotfree)` gate */
+#define FLUID_PASS_NEEDS_RIPPED 0x20 /* only after ripup committed a change -- the old `if(ripped)` */
+#define FLUID_PASS_SETS_RIPPED  0x40 /* pass return value becomes the driver's `ripped` flag --
+                                        plain assignment (not OR), mirroring the old single
+                                        `int ripped = ripup()`; revisit before adding a 2nd one */
+#define FLUID_PASS_MANUAL_SITE  0x80 /* cataloged here for order/contract but CALLED AT ITS OWN
+                                        SITE (different gate set); the driver skips it -- see the
+                                        entry comment for why it cannot be driver-run yet */
+
+/* Verify direction (WIRING §5 taxonomy) + mutation class: per-pass contract made structural.
+ * The D3 driver does not consult them; they are the hooks for the D5 idempotence oracle and the
+ * D6 single-pass harness. */
+typedef enum {
+  FLUID_VERIFY_RESTORE_START_NAME, /* fluid_partition_changed()==0 vs fluid_g.snap_id */
+  FLUID_VERIFY_RESTORE_START_GEO,  /* fluid_part_diff_pairs()==0 vs fluid_g.geo_snap_id (0104) */
+  FLUID_VERIFY_PRESERVE_ENTRY,     /* geometric fluid_loop_partition base-vs-now */
+  FLUID_VERIFY_NONE                /* geometric construction, no partition verify */
+} Fluid_verify_dir;
+typedef enum {
+  FLUID_MUT_DELETE_ONLY,           /* can only remove copper (decline = keep) */
+  FLUID_MUT_RESHAPE,               /* slides/retracts/extends legs (may add copper, e.g. ripup's
+                                      jog); the partition state it must reach is its verify_dir */
+  FLUID_MUT_ADD                    /* constructs new copper (exit stubs) */
+} Fluid_mut_class;
+
+typedef struct {
+  const char *name;
+  int (*fn)(void);                 /* uniform driver signature: int-returning passes feed
+                                      SETS_RIPPED; void passes get a wrapper returning 0;
+                                      NULL for MANUAL_SITE entries (never driver-called) */
+  unsigned int gates;              /* FLUID_PASS_* bits */
+  Fluid_verify_dir verify_dir;
+  Fluid_mut_class mut_class;
+} Fluid_pass;
+
+/* Uniform-signature adapters for the void passes -- the exact old calls, no argument or gate
+ * change (D3 is a pure refactor; the table must transcribe, not clean up). */
+static int fluid_pass_prune_shorting_anchor_tails(void) { fluid_prune_shorting_anchor_tails(); return 0; }
+static int fluid_pass_remove_redundant_loops(void)      { fluid_remove_redundant_loops();      return 0; }
+static int fluid_pass_prune_anchor_tails(void)          { fluid_prune_anchor_tails();          return 0; }
+static int fluid_pass_straighten_reversals(void)        { fluid_straighten_reversals();        return 0; }
+static int fluid_pass_collapse_axis_overshoot_stub(void){ fluid_collapse_axis_overshoot_stub(); return 0; }
+static int fluid_pass_prune_novel_orphan_stub(void)     { fluid_prune_novel_orphan_stub();     return 0; }
+
+#define FLUID_PASS_CLUSTER (FLUID_PASS_END_ONLY | FLUID_PASS_ORTHO | FLUID_PASS_FINAL_LEG)
+
+static const Fluid_pass fluid_end_passes[] = {
+  /* issue 0094: a rigid group drag can land a moved device's OFF-net pin exactly on a foreign
+   * net's backbone (before_5.sch C12+R18+#net2 by (-40,+70): R18's #net2 pin on the #net1
+   * backbone) -- a genuine device SHORT the reroute must RIP UP (the pin is fixed by the rigid
+   * move; only the foreign copper can move). Runs FIRST so the slide's orphaned column/riser
+   * tails are pruned by the straighten/retract pass below. Strict no-op unless a move-created
+   * merge exists => byte-identical for every non-shorting drag. Its route-around fallback
+   * fluid_jog_pin_off_backbone (0098, 0106 gap expansion) is an INTERNAL per-pin subroutine
+   * (args qx,qy,vertaxis), invoked only from inside this pass -- not a standalone table entry.
+   * See doc/claude/issues/0094-*.md. */
+  { "ripup_foreign_pin_short", fluid_ripup_foreign_pin_short,
+    FLUID_PASS_CLUSTER | FLUID_PASS_SETS_RIPPED,
+    FLUID_VERIFY_RESTORE_START_NAME, FLUID_MUT_RESHAPE },
+  /* issue 0104: a rotated stretch can short two follow-wires at one pin's STALE pristine anchor
+   * (no pin on the contact point, so the rip-up above never fires). Delete-only, commits a doom
+   * only when it makes the pin-partition equivalent to START again -- strict no-op on clean
+   * drags. The one restore-START *geometric* verifier (same-name islands, WIRING §5). */
+  { "prune_shorting_anchor_tails", fluid_pass_prune_shorting_anchor_tails,
+    FLUID_PASS_CLUSTER,
+    FLUID_VERIFY_RESTORE_START_GEO, FLUID_MUT_DELETE_ONLY },
+  /* issue 0088: collapse a redundant same-net cycle a fluid stretch closed (before_3.sch R18
+   * (-20,-60) -> the {w4,w5,w6,w9} #net2 rectangle) to its minimal connectivity-preserving tree
+   * (here just the riser). Delete-only, per-doom pin-partition-verified, scoped to THIS drag's
+   * copper. Runs after trim/orphan (site order) so it sees deduped geometry, before
+   * insert_exit_stubs so P3 is re-applied to the collapsed riser.
+   * See doc/claude/issues/0088-fluid-reroute-redundant-samenet-loop.md. */
+  { "remove_redundant_loops", fluid_pass_remove_redundant_loops,
+    FLUID_PASS_CLUSTER,
+    FLUID_VERIFY_PRESERVE_ENTRY, FLUID_MUT_DELETE_ONLY },
+  /* issue 0103: under rotation/flip the elbow's pristine-anchor far leg can survive trim as a
+   * same-net dangling tail (remove_move_orphan_wires needs the kept end on a MOVING pin).
+   * Delete-only + per-doom partition-verified, so it can only remove drag-produced jetsam or
+   * decline. ROTATED_ONLY (the old `if(!rotfree)`): the translation path never strands these.
+   * Runs BEFORE the straighteners (issue 0110): the dangling tail holds the stale-anchor jog's
+   * endpoint at touch-degree 2, masking the staircase from the collapse below. */
+  { "prune_anchor_tails", fluid_pass_prune_anchor_tails,
+    FLUID_PASS_CLUSTER | FLUID_PASS_ROTATED_ONLY,
+    FLUID_VERIFY_PRESERVE_ENTRY, FLUID_MUT_DELETE_ONLY },
+  /* issues 0089 + 0090: the loop-remover only DELETES a redundant same-net CYCLE. A far / multi-
+   * gesture move leaves a same-net PATH (no cycle) with a redundant jog -- a same-side U-turn
+   * (0089, before_3 R18 (-80,-60) -> after_9 #net2) or an opposite-side monotone STAIRCASE
+   * (0090, before_3 -> after_10 #net1). Straighten both to a clean L (slide + verified
+   * tail-retract; partition-invariant + novelty-scoped; strict no-op otherwise).
+   * issue 0110: no longer rotfree-gated -- one ALT-R mid-drag left the stale-anchor staircase
+   * and U-loop of after_27.sch in the save. Every slide/retract is pin-partition-verified,
+   * novelty-scoped, user-protected (0091) and body-guarded against STATIONARY instances
+   * (plus, for the 0111 pin-landing FAR candidate only, against MOVED bodies too), so the
+   * guards are geometric, not rotation-dependent (the 0098 facet B argument); worst case
+   * they decline and the pre-0110 route is kept. The 0111 pin-landing reschedule itself is
+   * rot/flip-gated off INSIDE the pass (no insert_exit_stubs round trip exists there to
+   * normalize). */
+  { "straighten_reversals", fluid_pass_straighten_reversals,
+    FLUID_PASS_CLUSTER,
+    FLUID_VERIFY_PRESERVE_ENTRY, FLUID_MUT_RESHAPE },
+  /* issue 0092: an along-axis wire drag (grab a rung, pull it along its own axis) overshoots its
+   * junction into a dangling stub + solder dot instead of SHOVING the perpendicular riser.
+   * Neither the pin-driven shove (no moving pin -- a WIRE was grabbed) nor straighten
+   * (brand-new deg-0 tip, user's own protected net) reaches it. Shove the riser column to the
+   * stub tip (preferred_12.sch), or trim the stub when the riser is pin-anchored.
+   * Partition-verified + novelty-scoped; NOT prot[]-gated (drag-created junk on the grabbed net
+   * is always removable). Un-gated from rotfree with 0110.
+   * See doc/claude/issues/0092-fluid-axis-drag-overshoot-stub.md. */
+  { "collapse_axis_overshoot_stub", fluid_pass_collapse_axis_overshoot_stub,
+    FLUID_PASS_CLUSTER,
+    FLUID_VERIFY_PRESERVE_ENTRY, FLUID_MUT_RESHAPE },
+  /* issue 0094 tail: the rip-up slide + straighten can leave a fresh dangling backbone stub past
+   * the sibling pin (the follow-riser it was joined to is only deleted by straighten just
+   * above). Prune it now, connectivity-verified. NEEDS_RIPPED (the old `if(ripped)`) so it
+   * never runs on a non-shorting drag. Runs under rotation too (0098 facet B): when ripup fired
+   * on a rotated stretch its orphan tail must still go. */
+  { "prune_novel_orphan_stub", fluid_pass_prune_novel_orphan_stub,
+    FLUID_PASS_CLUSTER | FLUID_PASS_NEEDS_RIPPED,
+    FLUID_VERIFY_PRESERVE_ENTRY, FLUID_MUT_DELETE_ONLY },
+  /* MANUAL_SITE: insert_exit_stubs (P3 escape-normal stubs, wire-editing Phase 6 / R13) runs at
+   * its own call site just after this cluster because its gate set DIFFERS from the cluster's:
+   * it is NOT END-only (it also runs on every live RUBBER commit -- each step restores from
+   * pristine and re-inserts), it fires for `wire_exit_stub` users even with fluid_editing OFF,
+   * and it carries its own trailing check_collapsing_objects sweep (a stub landing exactly on
+   * the stationary pin degenerates a slid leg to zero length and nothing trims after it).
+   * Position in THIS array records the 0111 ordering invariant: after all straighteners,
+   * nothing jog-collapsing after it. */
+  { "insert_exit_stubs", NULL,
+    FLUID_PASS_ORTHO | FLUID_PASS_FINAL_LEG | FLUID_PASS_ROTFREE_ONLY | FLUID_PASS_MANUAL_SITE,
+    FLUID_VERIFY_NONE, FLUID_MUT_ADD },
+  /* MANUAL_SITE: fluid_manhattanize_relay_diagonals (0107/0108) runs PER GESTURE after the whole
+   * attempt ladder, not per leg -- an ACCEPTED rigid relay is partition-clean but diagonal, and
+   * that path had leg_ortho==0 so it skipped this cluster entirely. Its site gate is
+   * `!commit_now && diag_relay && orthogonal_wiring && stretch_select && fluid_editing`
+   * (diag_relay/orthogonal_wiring are not per-leg cluster state), and it must run after the
+   * relay's manhattan_lines=0 override is restored (WIRING §7.1). Self-gates on
+   * partition-clean entry; carries its own stale-feed prune (0108). */
+  { "manhattanize_relay_diagonals", NULL,
+    FLUID_PASS_END_ONLY | FLUID_PASS_MANUAL_SITE,
+    FLUID_VERIFY_RESTORE_START_NAME, FLUID_MUT_RESHAPE },
+};
+
 /* Phase III helper: is foreign pin (px,py) on the axis-aligned segment (x1,y1)-(x2,y2)? cadsnap/2
  * tolerance on the CONSTANT axis (mirrors point_near_pin, move.c:1220); inclusive span on the
  * varying axis. A degenerate (point) or diagonal leg carries no two-pin bridge. */
@@ -7050,80 +7218,47 @@ void move_objects(int what, int merge, double dx, double dy)
    if(tclgetboolvar("autotrim_wires")) maintain_wire_segments();
    else if(xctx->stretch_select) trim_wires();
    if(xctx->stretch_select) remove_move_orphan_wires();
-   /* issue 0088: collapse a redundant same-net cycle a fluid stretch closed (before_3.sch R18
-    * (-20,-60) -> the {w4,w5,w6,w9} #net2 rectangle) to its minimal connectivity-preserving tree
-    * (here just the riser). Delete-only, per-doom pin-partition-verified, scoped to THIS drag's
-    * copper. Runs after trim/orphan so it sees deduped geometry, before insert_exit_stubs so P3 is
-    * re-applied to the collapsed riser. END-only (!commit_now) -- deleting follow copper mid-drag
-    * could destabilise the next RUBBER step's follow set; the user's complaint is the SAVED result,
-    * which END owns. Gate mirrors the fluid block + leg_ortho + final-leg + startsel==0 (selection
-    * wins). Default fluid_editing off => never runs => byte-identical. See
-    * doc/claude/issues/0088-fluid-reroute-redundant-samenet-loop.md. */
+   /* ---- END cleanup cluster (WIRING §3 step 9), driven by the Track-D (D3) pass table
+    * fluid_end_passes[] above: array order = execution order; each entry carries its issue
+    * history, gates, verify direction and mutation class. END-only (!commit_now): deleting or
+    * reshaping follow copper mid-drag could destabilise the next RUBBER step's follow set; the
+    * user's complaint is the SAVED result, which END owns (issue 0088). NOT wholesale-gated on
+    * fluid_startsel_wires==0 (issue 0091,
+    * doc/claude/issues/0091-fluid-reroute-samenet-crosses-moved-body.md): the cluster runs
+    * whenever a fluid stretch could have made redundant copper; the prot[]-consulting passes
+    * (loops, straighten) decline PER-COMPONENT (fluid_mark_user_protected floods every
+    * user-selected wire's touch-component -- "selection wins" per net, not wholesale) and the
+    * rest carry their own scope gates (overshoot is deliberately NOT prot[]-gated -- see the
+    * entries). Default fluid_editing off => never runs => byte-identical. */
    if(!commit_now && tclgetboolvar("fluid_editing") && xctx->stretch_select &&
       leg_ortho && leg == nlegs - 1) {
-     /* issue 0098 facet B (ALT-R during 'm'): the DE-SHORT passes (ripup foreign-pin short + its 0098
-      * route-around jog, and the redundant-loop remover) are add/reshape-and-partition-VERIFY -- they only
-      * commit a change that RESTORES the START pin-partition -- so they are safe to run under a rotated /
-      * flipped stretch too; their guards are geometric, not rotation-dependent. The old
-      * move_rot==0 && move_flip==0 gate suppressed all de-shorting the moment the user pressed ALT-R
-      * mid-stretch (trace: fluid-block SKIPPED rot=1). Only the AESTHETIC reshapers below (straighten
-      * reversal-collapse, axis-overshoot) stay pinned to the pure-translation path -- Phase 4b deferred
-      * them under rotation as they slide/extend copper to tidy, never to remove a short. */
+     /* issue 0098 facet B (ALT-R during 'm'): the DE-SHORT passes (ripup foreign-pin short + its
+      * 0098 route-around jog, the 0104 shorting-anchor-tail prune) only commit a change that
+      * RESTORES the START pin-partition, and the delete-only loop remover verifies each doom
+      * against its pass-entry partition -- so all of them run under a rotated / flipped stretch
+      * too; their guards are geometric, not rotation-dependent. rotfree drives only the entries
+      * carrying a ROTFREE_ONLY / ROTATED_ONLY gate bit. */
      int rotfree = (xctx->move_rot == 0 && xctx->move_flip == 0);
-     /* issue 0091: the redundant-route cleanup is NO LONGER wholesale-gated on
-      * fluid_startsel_wires==0. When the user drags a selection that includes an instance PLUS some
-      * wire(s), a follow-wire on a DIFFERENT net (rubber-banded, never user-selected) can be left with
-      * a redundant route that crosses the moved instance's own body (before_5.sch -> after_11.sch:
-      * R18.M's #net1 riser). The wholesale gate suppressed the fix for that net just because the user
-      * selected #net2. The passes now run whenever a fluid stretch could have made redundant copper and
-      * decline PER-COMPONENT: fluid_mark_user_protected floods every user-selected wire's touch-
-      * component, and both passes leave a protected component untouched ("selection wins" per net,
-      * not wholesale). Default fluid_editing off => never runs => byte-identical. See
-      * doc/claude/issues/0091-fluid-reroute-samenet-crosses-moved-body.md. */
-     /* issue 0094: a rigid group drag can land a moved device's OFF-net pin exactly on a foreign net's
-      * backbone (before_5.sch C12+R18+#net2 by (-40,+70): R18's #net2 pin on the #net1 backbone) -- a
-      * genuine device SHORT the reroute must RIP UP (the pin is fixed by the rigid move; only the foreign
-      * copper can move). Runs FIRST so the slide's orphaned column/riser tails are pruned by the
-      * straighten/retract pass below. Strict no-op unless a move-created merge exists => byte-identical
-      * for every non-shorting drag. See doc/claude/issues/0094-*.md. */
-     int ripped = fluid_ripup_foreign_pin_short();
-     /* issue 0104: a rotated stretch can short two follow-wires at one pin's STALE pristine anchor
-      * (no pin on the contact point, so the rip-up above never fires). Delete-only, commits a doom
-      * only when it makes the pin-partition equivalent to START again -- strict no-op on clean drags. */
-     fluid_prune_shorting_anchor_tails();
-     fluid_remove_redundant_loops();
-     /* issue 0103: under rotation/flip the elbow's pristine-anchor far leg can survive trim as a
-      * same-net dangling tail (remove_move_orphan_wires needs the kept end on a MOVING pin).
-      * Delete-only + per-doom partition-verified, so it can only remove drag-produced jetsam or
-      * decline. Runs BEFORE the straighteners (issue 0110): the dangling tail holds the stale-
-      * anchor jog's endpoint at touch-degree 2, masking the staircase from the collapse below. */
-     if(!rotfree) fluid_prune_anchor_tails();
-     /* issues 0089 + 0090: the loop-remover only DELETES a redundant same-net CYCLE. A far / multi-
-      * gesture move leaves a same-net PATH (no cycle) with a redundant jog -- a same-side U-turn
-      * (0089, before_3 R18 (-80,-60) -> after_9 #net2) or an opposite-side monotone STAIRCASE (0090,
-      * before_3 -> after_10 #net1). Straighten both to a clean L (slide + verified tail-retract;
-      * partition-invariant + novelty-scoped; strict no-op otherwise).
-      * issue 0110: no longer rotfree-gated -- one ALT-R mid-drag left the stale-anchor staircase
-      * and U-loop of after_27.sch in the save. Every slide/retract is pin-partition-verified,
-      * novelty-scoped, user-protected (0091) and body-guarded against STATIONARY instances
-      * (plus, for the 0111 pin-landing FAR candidate only, against MOVED bodies too), so the
-      * guards are geometric, not rotation-dependent (the 0098 facet B argument); worst case
-      * they decline and the pre-0110 route is kept. The 0111 pin-landing reschedule itself is
-      * rot/flip-gated off (no insert_exit_stubs round trip exists there to normalize). */
-     fluid_straighten_reversals();
-     /* issue 0092: an along-axis wire drag (grab a rung, pull it along its own axis) overshoots its
-      * junction into a dangling stub + solder dot instead of SHOVING the perpendicular riser. Neither
-      * the pin-driven shove (no moving pin -- a WIRE was grabbed) nor straighten (brand-new deg-0 tip,
-      * user's own protected net) reaches it. Shove the riser column to the stub tip (preferred_12.sch),
-      * or trim the stub when the riser is pin-anchored. Partition-verified + novelty-scoped; NOT prot[]-
-      * gated (drag-created junk on the grabbed net is always removable). See
-      * doc/claude/issues/0092-fluid-axis-drag-overshoot-stub.md. Un-gated from rotfree with 0110. */
-     fluid_collapse_axis_overshoot_stub();
-     /* issue 0094 tail: the rip-up slide + straighten can leave a fresh dangling backbone stub past the
-      * sibling pin (the follow-riser it was joined to is only deleted by straighten just above). Prune it
-      * now, connectivity-verified. Gated on `ripped` so it never runs on a non-shorting drag. Runs under
-      * rotation too (0098 facet B): when ripup fired on a rotated stretch its orphan tail must still go. */
-     if(ripped) fluid_prune_novel_orphan_stub();
+     int ripped = 0;
+     int pi;
+     int npasses = (int)(sizeof(fluid_end_passes) / sizeof(fluid_end_passes[0]));
+     for(pi = 0; pi < npasses; ++pi) {
+       const Fluid_pass *p = &fluid_end_passes[pi];
+       /* exit stubs / manhattanize: cataloged for order + contract, called at their own sites */
+       if(p->gates & FLUID_PASS_MANUAL_SITE) continue;
+       /* END_ONLY / ORTHO / FINAL_LEG are guaranteed by the enclosing gate; re-checked so the
+        * table bits are executable contract, not just documentation. */
+       if((p->gates & FLUID_PASS_END_ONLY) && commit_now) continue;
+       if((p->gates & FLUID_PASS_ORTHO) && !leg_ortho) continue;
+       if((p->gates & FLUID_PASS_FINAL_LEG) && leg != nlegs - 1) continue;
+       if((p->gates & FLUID_PASS_ROTFREE_ONLY) && !rotfree) continue;
+       if((p->gates & FLUID_PASS_ROTATED_ONLY) && rotfree) continue;
+       if((p->gates & FLUID_PASS_NEEDS_RIPPED) && !ripped) continue;
+       /* D3 firing-sequence trace (fuller SKIP/changed=N observability is D4) */
+       fltrace("FLTRACE pass %s: run (rotfree=%d ripped=%d)\n", p->name, rotfree, ripped);
+       if(p->gates & FLUID_PASS_SETS_RIPPED) ripped = p->fn();
+       else p->fn();
+     }
    }
    /* Exit-stub preservation (wire-editing Phase 6, Issue E -> R13). After the cleanup above,
     * ensure each moved DEVICE pin's route leaves the pin along the pin's outward escape normal

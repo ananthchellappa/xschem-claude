@@ -200,7 +200,15 @@ Ordered passes per leg (gates in brackets):
  7. maintain_wire_segments | trim_wires                 [autotrim | stretch]
  8. remove_move_orphan_wires                            [stretch]
  9. END cleanup cluster [!commit_now, fluid+stretch+leg_ortho+final leg;
-    rotfree = rot==0&&flip==0]:
+    rotfree = rot==0&&flip==0] — as of Track D (D3) driven by the pass table
+    `fluid_end_passes[]` (move.c, after manhattanize): array order = execution order;
+    gate bits END_ONLY|ORTHO|FINAL_LEG|ROTFREE_ONLY|ROTATED_ONLY|NEEDS_RIPPED|
+    SETS_RIPPED|MANUAL_SITE replace the inline `if(!rotfree)`/`if(ripped)` checks
+    (ROTATED_ONLY = the old `if(!rotfree)`); ripup's int return threads via SETS_RIPPED.
+    The driver fltraces `pass <name>: run` per firing. insert_exit_stubs (step 10) and
+    manhattanize (step 13) are MANUAL_SITE entries — cataloged for order/contract,
+    still called at their own sites (different gate sets: the stub pass is NOT END-only
+    and fires for wire_exit_stub without fluid; manhattanize is per-gesture):
     a. fluid_ripup_foreign_pin_short  (+ fluid_jog_pin_off_backbone)   → ripped
     b. fluid_prune_shorting_anchor_tails
     c. fluid_remove_redundant_loops
@@ -494,6 +502,10 @@ Track-D gesture context: `typedef struct {...} Fluid_gesture` + the one instance
 (declared ahead of the first consumer, ~:1437) hold the four START snapshots AND the folded
 hidden-parameter scratch (slide_pushthrough_on / leg_future_* / stretch_premove_* / *_doomed_from);
 lifecycle `fluid_gesture_arm` / `fluid_gesture_free` (the latter also called by clear_schematic).
+Track-D pass table (D3): `Fluid_pass` typedef + FLUID_PASS_* gate bits + `Fluid_verify_dir`/
+`Fluid_mut_class` enums + `static const Fluid_pass fluid_end_passes[]` (all just after
+fluid_manhattanize_relay_diagonals); the END cluster driver loop lives at the old call site
+inside move_objects (§3 step 9).
 `select.c`: select_attached_nets :1579, select_wire fold :1040.
 `callback.c`: cadence drag :6213-6268, 'm'/'M' :4796-4891, mid-drag transforms
 :4592/:5100/:5124.
