@@ -42,8 +42,15 @@ short `tests/from_user/README.md` documenting the naming convention (currently i
 before_7 → 0099-0104, before_8 → 0105-0111); `after_M` = the buggy save (global monotone
 counter); `preferred_M` = hand-authored desired route (P6 oracle); `after_M_fixed` =
 post-fix reference. Exclude scratch logs (`*.log`, `_ctx_*`, `_nhangle_*` stay out).
-**Done when:** fresh clone + `grep -rl 'tests/from_user' tests/headless/ | xargs -n1
-tclsh` finds every fixture it loads. **Effort:** 1-2h.
+**Done when:** in a fresh clone, every `from_user/*.sch` referenced under
+`tests/headless/` exists —
+`grep -rhoE '[A-Za-z0-9_./]*from_user/[A-Za-z0-9_~]+\.sch' tests/headless/ --include='*.tcl' | sed 's|.*from_user/|tests/from_user/|' | sort -u | while read f; do [ -f "$f" ] || echo "MISSING $f"; done`
+prints nothing — and the fixture-loading gesture tests (0088/0096/0104) pass when run
+from the clone root under X. (The originally proposed `xargs -n1 tclsh` check is
+unusable: wireedit scripts need the xschem interpreter — bare tclsh dies with
+`invalid command name "xschem"` — and gesture tests self-skip before loading anything.
+Note a deleted fixture makes the loading test HANG under `--pipe`, not fail — the
+existence grep is the reliable red signal.) **Effort:** 1-2h.
 
 ### A2 — Make self-skips report as SKIP, not PASS
 **Problem:** gesture tests self-skip without X printing
