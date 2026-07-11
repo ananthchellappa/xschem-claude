@@ -1438,15 +1438,40 @@ static int point_on_moving_pin(double x, double y)
  * OFF, so a push-through that damaged the pin-partition rolls back to the exact pre-0109 route. */
 static int fluid_slide_pushthrough_on = 1;
 
+/* Exact electrical touch of two closed axis-aligned (or degenerate) segments: an endpoint of one
+ * lies on the other's span (covers T contacts and collinear overlap -- for 1-D intervals an
+ * overlap always contains an endpoint). Interior X crossings do NOT touch (WIRING.md §1.2).
+ * Returns 0 for diagonal inputs (pre-elbow follower spans): no exact claim is possible there,
+ * the bbox rule alone governs them. */
+static int fluid_seg_exact_touch(double ax1, double ay1, double ax2, double ay2,
+                                 double bx1, double by1, double bx2, double by2)
+{
+  double axlo = ax1 < ax2 ? ax1 : ax2, axhi = ax1 < ax2 ? ax2 : ax1;
+  double aylo = ay1 < ay2 ? ay1 : ay2, ayhi = ay1 < ay2 ? ay2 : ay1;
+  double bxlo = bx1 < bx2 ? bx1 : bx2, bxhi = bx1 < bx2 ? bx2 : bx1;
+  double bylo = by1 < by2 ? by1 : by2, byhi = by1 < by2 ? by2 : by1;
+  if(ax1 != ax2 && ay1 != ay2) return 0;               /* diagonal: bbox rule governs */
+  if(bx1 != bx2 && by1 != by2) return 0;
+  if(bxlo <= ax1 && ax1 <= bxhi && bylo <= ay1 && ay1 <= byhi) return 1;   /* A endpoints on B */
+  if(bxlo <= ax2 && ax2 <= bxhi && bylo <= ay2 && ay2 <= byhi) return 1;
+  if(axlo <= bx1 && bx1 <= axhi && aylo <= by1 && by1 <= ayhi) return 1;   /* B endpoints on A */
+  if(axlo <= bx2 && bx2 <= axhi && aylo <= by2 && by2 <= ayhi) return 1;
+  return 0;
+}
+
 /* 0109 landing-guard helper (bred by wireedit 36d/38B): would moving a wire from span
  * (ox1,oy1)-(ox2,oy2) to (nx1,ny1)-(nx2,ny2) introduce a NEW contact with a STATIONARY wire
- * resolved to a net other than nf? Closed-bbox overlap is the touch test (shove-grade
- * conservative: a new interior X crossing counts, matching fluid_seg_hits_foreign_wire's
- * contract), but a pair that ALREADY touched pre-move is grandfathered -- a long riser that
- * legitimately crosses a distant bus keeps crossing it wherever it lands (before_8: the #net3
- * riser x-crosses the #net1 feed row both before and after the vacating slide; declining on
- * that pre-existing crossing killed the 0109 repair). Requires a fresh wire[].node cache
- * (caller runs prepare_netlist_structs(0)); NULL/empty/same-net nodes are fine to touch. */
+ * resolved to a net other than nf? Two rules per obstacle wire:
+ * 1. NEW bbox overlap (shove-grade conservative: a new interior X crossing counts, matching
+ *    fluid_seg_hits_foreign_wire's contract). A pair that already bbox-touched pre-move is
+ *    grandfathered -- a long riser that legitimately crosses a distant bus keeps crossing it
+ *    wherever it lands (before_8: the #net3 riser x-crosses the #net1 feed row both before and
+ *    after the vacating slide; declining on that pre-existing crossing killed the 0109 repair).
+ * 2. NEW exact endpoint-on-span touch, checked REGARDLESS of the grandfather (wireedit 52,
+ *    review wf_bfc3c5e4): a pre-existing inert X crossing must not amnesty an electrically
+ *    REAL weld with the same wire -- kind-blind grandfathering re-opened the 36d class.
+ * Requires a fresh wire[].node cache (caller runs prepare_netlist_structs(0)); NULL/empty/
+ * same-net nodes are fine to touch. */
 static int fluid_pushthrough_new_foreign_contact(double ox1, double oy1, double ox2, double oy2,
                                                  double nx1, double ny1, double nx2, double ny2,
                                                  const char *nf)
@@ -1459,6 +1484,7 @@ static int fluid_pushthrough_new_foreign_contact(double ox1, double oy1, double 
   for(m = 0; m < xctx->wires; ++m) {
     double wx1, wy1, wx2, wy2, clo, chi, dlo, dhi;
     const char *wn;
+    int bbox_new, bbox_old;
     if(xctx->wire[m].sel) continue;                     /* moving wires are not obstacles */
     wn = xctx->wire[m].node;
     if(!wn || !wn[0]) continue;                         /* unresolved -> treat as same-net (skip) */
@@ -1466,9 +1492,14 @@ static int fluid_pushthrough_new_foreign_contact(double ox1, double oy1, double 
     wx1 = xctx->wire[m].x1; wy1 = xctx->wire[m].y1; wx2 = xctx->wire[m].x2; wy2 = xctx->wire[m].y2;
     clo = wx1 < wx2 ? wx1 : wx2; chi = wx1 < wx2 ? wx2 : wx1;
     dlo = wy1 < wy2 ? wy1 : wy2; dhi = wy1 < wy2 ? wy2 : wy1;
-    if(!(nxlo <= chi && clo <= nxhi && nylo <= dhi && dlo <= nyhi)) continue;  /* final: no touch */
-    if(oxlo <= chi && clo <= oxhi && oylo <= dhi && dlo <= oyhi) continue;     /* pre-existing */
-    return 1;
+    bbox_new = (nxlo <= chi && clo <= nxhi && nylo <= dhi && dlo <= nyhi);
+    if(!bbox_new) continue;                             /* final: no contact of any kind */
+    bbox_old = (oxlo <= chi && clo <= oxhi && oylo <= dhi && dlo <= oyhi);
+    if(!bbox_old) return 1;                             /* rule 1: brand-new bbox contact */
+    /* rule 2: grandfathered pair -- still decline if the final geometry makes an exact
+     * electrical touch the pristine geometry did not have */
+    if(fluid_seg_exact_touch(nx1, ny1, nx2, ny2, wx1, wy1, wx2, wy2) &&
+       !fluid_seg_exact_touch(ox1, oy1, ox2, oy2, wx1, wy1, wx2, wy2)) return 1;
   }
   return 0;
 }

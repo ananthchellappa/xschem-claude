@@ -49,8 +49,27 @@ wire (`fluid_pushthrough_new_foreign_contact`).
 - `test_fluid_editing` FE8 fails under X at 98869cbb too — pre-existing, unrelated
   (tracked for the A5 xvfb watch).
 
+## Amnesty hole (adversarial review wf_bfc3c5e4, second commit)
+
+The first guard's grandfather clause was contact-KIND-blind: any pre-existing bbox
+overlap with a foreign wire (an electrically-inert interior X crossing) amnestied ALL
+post-move contact with that same wire — including a NEW endpoint-on-span T weld, the
+exact class the guard was built to close. RED test `test_wireedit_52` (38B geometry +
+FOO pre-crossing V + a load-bearing far corner so delete-only de-shorters can't hide
+the weld by pruning V — the dangling-V variant self-heals that way). Fix: rule 2 in
+`fluid_pushthrough_new_foreign_contact` — a NEW exact endpoint-on-span touch declines
+regardless of the grandfather; diagonal (pre-elbow) spans stay bbox-governed.
+Note `p2_no_short`'s geometric arm is bbox-strict, so the test scene's deliberate
+pre-existing X crossing makes that predicate unusable there (weld-specific checks
+carry the assertions).
+
 ## Notes
 
 - The pin-partition's label-blindness (this bug's enabler) is WIRING.md §5's known
   foreign-copper blindness; risk §11.1 family. The guard patches this pass only — the
   fuzzer assertion pack (Track C2, check 1/3) is the systemic net.
+- **Open (same class, pre-existing)**: the perpendicular corner-slide promotion in
+  `compute_wire_slide` — one branch above the guarded push-through — rigidly translates
+  promoted copper with NO foreign-wire landing guard at all; a label-only foreign net
+  welded by a slid corner commits silently (review wf_bfc3c5e4, verified). Recorded as
+  WIRING.md risk §11.13; needs its own RED test + the same guard call.

@@ -411,6 +411,12 @@ declaring any wiring feature done, convert to xfail tests when touching the area
     half survives as a dangling saved diagonal (manhattanize gate needs an endpoint
     exactly on a SELECTED pin; stale-feed prune needs START-deg≥2; orphan-stub runs only
     `if(ripped)` in the block the relay skipped).
+13. **Corner-slide promotion has no foreign-wire landing guard** (0112 sibling, review
+    wf_bfc3c5e4 verified): the perpendicular corner-slide in `compute_wire_slide` rigidly
+    translates promoted copper with only pin-corridor vetoes; a slid corner landing its
+    span on a label-only foreign net's wire endpoint welds it silently (pin-indexed
+    verifies blind, backstop log-only). Same fix shape as the push-through's
+    `fluid_pushthrough_new_foreign_contact`; needs its own RED test first.
 
 Below-cut (quality, keep on radar): elbow legs through pin-less stationary bodies (no
 body class in `fluid_ml_hazards`); two moved devices sharing a channel (NULL node treated
