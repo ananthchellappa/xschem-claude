@@ -14713,6 +14713,12 @@ if {[info exists no_recent_files] && $no_recent_files} {
 # reroute + tip-grab once a stretch move is in flight. Read fresh from C (tclgetboolvar)
 # each button press.
 set_ne fluid_editing 1
+# Fluid enforcement (hardening sprint Track B, doc/claude/suggestions/hardening_sprint_plan.md):
+# promote the END P1/P2 invariant checker from log-only to rollback-or-refuse -- a connected
+# drag that would merge/disconnect nets is refused and the schematic left untouched (with a
+# ciw_echo notice), instead of silently saving the short. Read fresh from C (tclgetboolvar) at
+# move END. Default ON (enforcement is the point); set 0 as an emergency escape hatch.
+set_ne fluid_enforce_invariants 1
 set_ne infix_interface 1
 # autostart the Library Manager window at launch (doc/claude/specs/library_manager_launch.md)
 set_ne launch_library_manager 0

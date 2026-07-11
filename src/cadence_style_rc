@@ -43,6 +43,12 @@ set cadence_compat 1
 # Defaults off (stock); enable it here for Cadence-style direct manipulation. Toggle live
 # via Options > "Fluid editing". See doc/claude/specs/fluid_editing.md.
 set fluid_editing 1
+# Fluid enforcement: promote the END P1/P2 invariant checker from log-only to rollback-or-
+# refuse -- a connected drag that would short/merge or disconnect nets is refused and the
+# schematic left untouched (a ciw_echo notice names the offending nets), rather than silently
+# saving the corruption. Default on; set 0 as an emergency escape hatch. See
+# doc/claude/suggestions/hardening_sprint_plan.md (Track B).
+set fluid_enforce_invariants 1
 set orthogonal_wiring 1
 set snap_cursor 1
 set snap_cursor_size 4

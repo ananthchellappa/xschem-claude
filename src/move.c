@@ -7222,6 +7222,11 @@ void move_objects(int what, int merge, double dx, double dy)
      /* P3 write-through: a moved pin-name view records its new offset on the owning pin;
       * a pin moved without its view makes the view follow (Option B). */
      pin_views_reconcile_after_move();
+     /* hardening sprint Track B (doc/claude/suggestions/hardening_sprint_plan.md): the END
+      * enforcement switch. B1 plumbs it (readable from C, toggleable at runtime); B3 promotes
+      * fluid_check_move_invariants below from log-only to rollback-or-refuse when it is set. */
+     fltrace("FLTRACE move: fluid_enforce_invariants=%d (log-only backstop this build)\n",
+             tclgetboolvar("fluid_enforce_invariants"));
      fluid_check_move_invariants(); /* Phase 1 runtime P1/P2 guard (log-only, gated on fluid_editing) */
      set_modify(1); /* must be done before draw() if floaters are present to force cached values update */
      draw();
