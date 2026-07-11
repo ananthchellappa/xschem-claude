@@ -2052,6 +2052,13 @@ void get_pin_escape_normal(int i, int r, double *nx, double *ny)
 
 static int *fluid_snap_id = NULL;    /* canonical partition id per instance pin, captured at START */
 static int  fluid_snap_npins = 0;    /* 0 => no valid snapshot */
+static int  fluid_move_failsafes = 0; /* B4: per-gesture count of fluid helpers that fail-safe no-op'd */
+/* B4 (hardening sprint Track B): a fluid healer/placement pass that fail-safe bails because its START
+ * snapshot is missing or the instance set changed mid-gesture has SILENTLY degraded to naive routing --
+ * "engine gave up" then looks identical to "clean". Wrap each such bail's condition so the count
+ * surfaces (published to fluid_last_move_failsafes at END, fltraced). Byte-identical: only counts the
+ * bail, never alters the condition or the control flow. */
+static int fluid_failsafe(int bail) { if(bail) ++fluid_move_failsafes; return bail; }
 /* issue 0104: GEOMETRIC pin partition at move START (a fluid_loop_partition rep[] over the pristine
  * wire set). The de-short prune must compare like with like: the node[]-NAME snapshot above merges
  * geometrically disjoint same-name islands (multi-island GND/VDD) and is blind to netlist-ignored
@@ -3215,7 +3222,7 @@ static void fluid_straighten_reversals(void)
 
   fltrace("FLTRACE straighten: ENTER W=%d snap_npins=%d\n", xctx->wires, fluid_snap_npins);
   if(xctx->wires < 3) return;
-  if(fluid_snap_npins <= 0) return;                          /* no START snapshot => cannot verify */
+  if(fluid_failsafe(fluid_snap_npins <= 0)) return;          /* no START snapshot => cannot verify */
   npins = fluid_count_pins() > 0 ? fluid_count_pins() : 1;
   base = my_malloc(_ALLOC_ID_, npins * sizeof(int));
   now  = my_malloc(_ALLOC_ID_, npins * sizeof(int));
@@ -4036,8 +4043,8 @@ static int fluid_ripup_foreign_pin_short(void)
 {
   int guard = 0, changed_any = 0;
   if(xctx->wires < 3) return 0;
-  if(!fluid_snap_pinnet || fluid_snap_npins <= 0) return 0;
-  if(fluid_count_pins() != fluid_snap_npins) return 0;
+  if(fluid_failsafe(!fluid_snap_pinnet || fluid_snap_npins <= 0)) return 0;
+  if(fluid_failsafe(fluid_count_pins() != fluid_snap_npins)) return 0;
   for(;;) {
     int i, p, q, k, fixed = 0;
     if(guard++ > fluid_snap_npins + 4) break;              /* progress backstop */
@@ -5267,8 +5274,8 @@ static void fluid_reroute_around_obstacles(int orthogonal_wiring)
   double grid = tclgetdoublevar("cadsnap");
   int iter;
   if(!orthogonal_wiring) return;
-  if(!fluid_snap_pinnet || fluid_snap_npins <= 0) return;
-  if(fluid_count_pins() != fluid_snap_npins) return; /* instance set changed: snapshot walk unreliable */
+  if(fluid_failsafe(!fluid_snap_pinnet || fluid_snap_npins <= 0)) return;
+  if(fluid_failsafe(fluid_count_pins() != fluid_snap_npins)) return; /* instance set changed: snapshot walk unreliable */
   if(grid <= 0.0) grid = 1.0;
 
   /* one reroute per straddled device; cap the loop at instance count as a runaway backstop */
@@ -5586,8 +5593,8 @@ static void fluid_offset_foreign_pin_landing(int orthogonal_wiring)
   double grid = tclgetdoublevar("cadsnap");
   int D, p, k = 0, npins, base;
   if(!orthogonal_wiring) { fltrace("FLTRACE offset: skip (not orthogonal)\n"); return; }
-  if(!fluid_snap_pinnet || fluid_snap_npins <= 0) { fltrace("FLTRACE offset: skip (no snapshot)\n"); return; }
-  if(fluid_count_pins() != fluid_snap_npins) { fltrace("FLTRACE offset: skip (pin count changed)\n"); return; }
+  if(fluid_failsafe(!fluid_snap_pinnet || fluid_snap_npins <= 0)) { fltrace("FLTRACE offset: skip (no snapshot)\n"); return; }
+  if(fluid_failsafe(fluid_count_pins() != fluid_snap_npins)) { fltrace("FLTRACE offset: skip (pin count changed)\n"); return; }
   if(grid <= 0.0) grid = 1.0;
   fltrace("FLTRACE offset: ENTER wires=%d grid=%g\n", xctx->wires, grid);
 
@@ -5829,8 +5836,8 @@ static void fluid_shove_connected_wire(int orthogonal_wiring)
   int dxnz, dynz, s, iter;
 
   if(!orthogonal_wiring) return;
-  if(!fluid_snap_pinnet || fluid_snap_npins <= 0) return;
-  if(fluid_count_pins() != fluid_snap_npins) return;   /* instance set changed: snapshot unreliable */
+  if(fluid_failsafe(!fluid_snap_pinnet || fluid_snap_npins <= 0)) return;
+  if(fluid_failsafe(fluid_count_pins() != fluid_snap_npins)) return;   /* instance set changed: snapshot unreliable */
   if(grid <= 0.0) grid = 1.0;
   dxnz = (xctx->deltax != 0.0);
   dynz = (xctx->deltay != 0.0);
@@ -6037,6 +6044,9 @@ static int fluid_check_move_invariants(void)
   tclsetvar("fluid_last_move_violations", my_itoa(shorts));
   tclsetvar("fluid_last_move_disconnects", my_itoa(disconnects));
   tclsetvar("fluid_last_move_dev_merges", my_itoa(dev_merges));
+  tclsetvar("fluid_last_move_failsafes", my_itoa(fluid_move_failsafes));  /* B4: silent-degradation count */
+  fltrace("FLTRACE move: fluid_last_move_failsafes=%d (fluid helpers that fail-safe no-op'd)\n",
+          fluid_move_failsafes);
   return shorts + dev_merges;   /* P2 electrical-merge count = the enforcement refuse signal */
 }
 
@@ -6164,6 +6174,7 @@ void move_objects(int what, int merge, double dx, double dy)
    xctx->move_flip = 0;xctx->move_rot = 0;
    xctx->ui_state|=STARTMOVE;
    fluid_snapshot_partition(); /* Phase 1 P1 guard: capture pre-move connectivity partition */
+   fluid_move_failsafes = 0;   /* B4: reset the per-gesture fail-safe degradation counter at START */
    /* incremental_wire_reroute Phase I (ownership decoupling): xctx->fluid_startsel_wires (the count
     * of the user's own selected wires) is captured in select_attached_nets(), which runs BEFORE this
     * START -- it must be taken before follow-wires are grabbed/folded, so it cannot be recomputed

@@ -1,6 +1,7 @@
 # Hardening sprint — atomic step plan
 
-Status: **Track A DONE** (2026-07-11, commits d086a73d..3bdabf0c); Tracks B–D PROPOSED.
+Status: **Track A DONE** (2026-07-11, commits d086a73d..3bdabf0c) · **Track B DONE**
+(2026-07-11, commits c5cb0685/a6ac2026/74cda8e0 + B4); Tracks C–D PROPOSED.
 Track A yield beyond the planned steps: the A3 fold-in immediately caught a shipped
 engine regression (issue 0112, fixed af9075b9 + amnesty hole c2dc1848 — the sprint's
 thesis demonstrated on day one), an adversarial review hardened the runners
@@ -119,7 +120,9 @@ commit goes green. **Effort:** 2-4h incl. flake watch.
 
 ## Track B — Enforce invariants, stop logging them (P0 minimum). ~2-3 days.
 Changes the failure mode: silent saved corruption → immediate visible refusal.
-**B1 DONE** c5cb0685 · **B2 DONE** a6ac2026 · **B3 DONE** (this commit) · B4 next.
+**B1 DONE** c5cb0685 · **B2 DONE** a6ac2026 · **B3 DONE** 74cda8e0 · **B4 DONE** (this commit).
+**Track B COMPLETE** — enforcement now REFUSES silent P2 shorts; mixed selections verified;
+silent fail-safe degradations counted. Next recommended track: C (delta-sweep fuzzer).
 
 ### B1 — Enforcement switch — DONE c5cb0685
 **Do:** add Tcl var `fluid_enforce_invariants` (default **1** — enforcement is the point;
@@ -202,14 +205,31 @@ the pre-gesture modified flag. wireedit 54/54 ALL PASS; test 54 memcheck 0 error
 neuter `fluid_ripup_foreign_pin_short` → the plain-0105 short escapes → B3 refuses (R18 stays
 pristine); reverted → repaired again.
 
-### B4 — Count silent fail-safe degradations
+### B4 — Count silent fail-safe degradations — DONE
 **Problem:** every fluid helper silently no-ops when `fluid_snap_pinnet==NULL` or the
 pin count drifted — "engine gave up" is indistinguishable from "clean".
-**Do:** a per-gesture counter incremented at each fail-safe bail (the ~6 sites:
-move.c:2183, 2340, 2383, 5154, 5471, 5716), exported as Tcl var
+**Do:** a per-gesture counter incremented at each fail-safe bail, exported as Tcl var
 `fluid_last_move_failsafes` and printed by fltrace at END.
 **Done when:** a gesture that adds an instance mid-drag (scripted) reports nonzero;
 normal drags report 0. **Effort:** 2h.
+**Corrections while landing:**
+  - *Site count:* the plan's "~6 sites (move.c:2183/2340/2383/5154/5471/5716)" had drifted and
+    undercounted — the `!fluid_snap_pinnet || npins<=0` / `fluid_count_pins()!=npins` bail is
+    pervasive (~30 guards). Rather than one-off edits, added a `fluid_failsafe(cond)` wrapper
+    (counts iff the bail fires, condition unchanged → byte-identical) and wrapped the entry bails
+    of the five snapshot-consuming healer passes: `fluid_ripup_foreign_pin_short`,
+    `fluid_reroute_around_obstacles`, `fluid_offset_foreign_pin_landing`,
+    `fluid_shove_connected_wire`, `fluid_straighten_reversals`. Counter reset at START (next to
+    `fluid_snapshot_partition`), published in `fluid_check_move_invariants` at END.
+  - *Trigger:* "add an instance mid-drag" only drifts the pin count in the ONE-SHOT
+    (`move_objects start … end`) form. A STEPWISE drag's `fluid_reroute_restore` reverts the added
+    instance each RUBBER step, so the drift never reaches the healers and the count stays 0. The
+    one-shot form (no RUBBER step → END not dirty → no restore) lets the instance persist to the
+    healers → they bail (`offset: skip (pin count changed)`) → nonzero.
+**Landed:** test_wireedit_55 — clean one-shot AND stepwise drags report 0; a one-shot that adds an
+instance reports 7. wireedit 55/55 ALL PASS (byte-identical: the wrapper only counts). Sabotage:
+neuter the `++` in `fluid_failsafe` → the drift case drops to 0 (proves the counter is load-bearing);
+reverted → 7 again.
 
 ---
 
