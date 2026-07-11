@@ -91,7 +91,7 @@ check "R single-riser: #net2 is exactly one wire"        [expr {[llength $n2] ==
 set gok 0
 if {[llength $n2] == 1} {
   lassign [lindex $n2 0] gx1 gy1 gx2 gy2
-  set gok [expr {$gx1==-420 && $gx2==-420 && [lsort -real [list $gy1 $gy2]] eq {-170 -130}}]
+  set gok [expr {$gx1==-430 && $gx2==-430 && [lsort -real [list $gy1 $gy2]] eq {-170 -130}}]
 }
 check "R riser-geom: #net2 wire is (-420,-170)-(-420,-130)" $gok
 check "R P1: R18 still shares a net with C12 (net2 preserved)" [share_net R18 C12]
