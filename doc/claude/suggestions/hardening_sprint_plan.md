@@ -539,12 +539,32 @@ filtering the new `FLTRACE pass` lines.
      per-pin subroutine of ripup with args (qx,qy,vertaxis) — documented on ripup's
      entry, per "ripup (+jog)".
 
-### D4 — Per-pass observability in the driver
+### D4 — Per-pass observability in the driver — DONE
 **Do:** driver emits (under FLUID_TRACE) one line per pass: `pass <name>: SKIP(<gate>)` /
 `ran, changed=N` — the decline-reason record that would have surfaced 0110's masking
 instantly; env `FLUID_TRACE_DUMP=1` additionally dumps the wire array between passes.
 **Done when:** trace of a 0106 repro shows the jog's gap-expansion pass firing and each
 skip's named gate. **Effort:** 2-3h.
+**Landed (this commit):** three trace-only helpers after the pass table (nothing runs unless
+`fluid_trace_on()`, so byte-identical with tracing off — the D3 guarantee preserved): (1)
+`fluid_pass_skip_gate()` returns the gate-bit NAME of the first failing check in the driver's
+short-circuit order (or NULL) — now the SINGLE source of truth for both the driver's skip/run
+control flow AND the `SKIP(<gate>)` trace label, so they can't drift; (2) `fluid_wsig_snapshot`/
+`fluid_wsig_diff` — a per-wire geometry signature keyed by the session-stable `wire[].id`
+(endpoints ordered so a bare `order_wire_coords` swap isn't a change), diffed pre/post-pass into
+`changed=N` (adds+deletes+moves); (3) `fluid_dump_wires()` gated on BOTH FLUID_TRACE and the new
+`FLUID_TRACE_DUMP` (cached like `fluid_trace_on`). Driver: `traced = fluid_trace_on()` picks a
+fast path (no snapshot/malloc, byte-identical to D3) vs the measured path; emits
+`pass <name>: SKIP(<gate>)` or `ran, changed=N (rotfree ripped wires nb->na)`, and dumps the wire
+array at cluster entry + after each ran pass when FLUID_TRACE_DUMP=1. Done-when met — the 0106
+drag (0,-40) trace shows `ripup_foreign_pin_short: ran, changed=5 (... ripped=1 wires 15->18)`
+(the jog gap-expansion fired), `prune_anchor_tails: SKIP(ROTATED_ONLY)`,
+`straighten_reversals: ran, changed=10 (wires 18->13)`, and both MANUAL_SITE entries as
+`SKIP(MANUAL_SITE)`. Verified: wireedit 55/55 (+ memcheck 0 errors); full fuzz sweep matrix +
+216 replays byte-identical to D3; the trace-ON malloc path is memcheck-clean under the project
+policy (`--leak-check=no --track-origins`, rc=0, 0 errors) and appears in ZERO valgrind stacks
+(the only `definitely lost` block is identical trace-on/off, i.e. pre-existing — the reason the
+suite runner uses `--leak-check=no`).
 
 ### D5 — Idempotence oracle
 **Do:** debug mode (env `FLUID_IDEMPOTENT_CHECK=1`, used by tests): driver runs the

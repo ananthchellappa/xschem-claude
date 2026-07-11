@@ -4709,6 +4709,97 @@ static const Fluid_pass fluid_end_passes[] = {
     FLUID_VERIFY_RESTORE_START_NAME, FLUID_MUT_RESHAPE },
 };
 
+/* ==== Track D (D4): per-pass observability for the pass-table driver =============================
+ * EVERYTHING here is trace-only: nothing runs unless fluid_trace_on() (FLUID_TRACE set), so the
+ * driver stays byte-identical with tracing off (the D3 guarantee is preserved). D4 turns the D3
+ * one-line-per-firing trace into the decline-reason record that would have surfaced 0110's masking
+ * instantly: every SKIP names the gate bit that stopped the pass, every run reports changed=N, and
+ * FLUID_TRACE_DUMP=1 additionally dumps the wire array between passes. */
+
+/* Which gate bit, if any, makes this pass SKIP at the given driver state? Returns the bit's name
+ * for the FIRST failing check in the DRIVER'S short-circuit order (so the reported reason is the
+ * one that actually fired), or NULL if the pass runs. Pure function of its args -- the driver calls
+ * it unconditionally (tracing on or off) to decide skip vs run, so this is the single source of
+ * truth for both the control flow and the trace label (they cannot drift). */
+static const char *fluid_pass_skip_gate(const Fluid_pass *p, int commit_now, int leg_ortho,
+                                        int leg, int nlegs, int rotfree, int ripped)
+{
+  if(p->gates & FLUID_PASS_MANUAL_SITE)                       return "MANUAL_SITE";
+  if((p->gates & FLUID_PASS_END_ONLY) && commit_now)          return "END_ONLY";
+  if((p->gates & FLUID_PASS_ORTHO) && !leg_ortho)             return "ORTHO";
+  if((p->gates & FLUID_PASS_FINAL_LEG) && leg != nlegs - 1)   return "FINAL_LEG";
+  if((p->gates & FLUID_PASS_ROTFREE_ONLY) && !rotfree)        return "ROTFREE_ONLY";
+  if((p->gates & FLUID_PASS_ROTATED_ONLY) && rotfree)         return "ROTATED_ONLY";
+  if((p->gates & FLUID_PASS_NEEDS_RIPPED) && !ripped)         return "NEEDS_RIPPED";
+  return NULL;
+}
+
+/* Per-wire geometry signature keyed by the session-stable wire id (WIRING §1.1: only wire[].id is
+ * stable across trim/compact). Endpoints stored ORDERED so a bare order_wire_coords swap does not
+ * read as a change. Used only to count what a pass changed for the trace. */
+typedef struct { unsigned int id; double x1, y1, x2, y2; } Fluid_wsig;
+
+static Fluid_wsig *fluid_wsig_snapshot(int *np)
+{
+  int i, n = xctx->wires;
+  Fluid_wsig *s = NULL;
+  if(n > 0) s = my_malloc(_ALLOC_ID_, (size_t)n * sizeof(Fluid_wsig));
+  for(i = 0; i < n; ++i) {
+    double x1 = xctx->wire[i].x1, y1 = xctx->wire[i].y1;
+    double x2 = xctx->wire[i].x2, y2 = xctx->wire[i].y2;
+    if(x1 > x2 || (x1 == x2 && y1 > y2)) { double t;
+      t = x1; x1 = x2; x2 = t; t = y1; y1 = y2; y2 = t; }
+    s[i].id = xctx->wire[i].id;
+    s[i].x1 = x1; s[i].y1 = y1; s[i].x2 = x2; s[i].y2 = y2;
+  }
+  *np = n;
+  return s;
+}
+
+/* changed = wires added + wires deleted + wires moved, keyed by id (O(na*nb) -- trace-only, small
+ * W). A trim collinear-merge loses the absorbed id (WIRING §1.1) => counts as one delete; a split
+ * mints a fresh id => one add. Good enough as a "did this pass touch anything, how much" proxy. */
+static int fluid_wsig_diff(const Fluid_wsig *a, int na, const Fluid_wsig *b, int nb)
+{
+  int i, j, changed = 0;
+  for(j = 0; j < nb; ++j) {                 /* new or moved */
+    int found = 0;
+    for(i = 0; i < na; ++i) if(a[i].id == b[j].id) {
+      found = 1;
+      if(a[i].x1 != b[j].x1 || a[i].y1 != b[j].y1 || a[i].x2 != b[j].x2 || a[i].y2 != b[j].y2)
+        changed++;
+      break;
+    }
+    if(!found) changed++;
+  }
+  for(i = 0; i < na; ++i) {                 /* deleted */
+    int found = 0;
+    for(j = 0; j < nb; ++j) if(a[i].id == b[j].id) { found = 1; break; }
+    if(!found) changed++;
+  }
+  return changed;
+}
+
+static int fluid_trace_dump_on(void)
+{
+  static int v = -1;
+  if(v < 0) { const char *e = getenv("FLUID_TRACE_DUMP"); v = (e && *e && *e != '0') ? 1 : 0; }
+  return v;
+}
+
+/* Dump the whole wire array (id + ordered-as-stored coords + sel + lab) with a tag. Gated on BOTH
+ * fluid_trace_on() and FLUID_TRACE_DUMP so a plain FLUID_TRACE run stays compact. */
+static void fluid_dump_wires(const char *tag)
+{
+  int i;
+  if(!fluid_trace_on() || !fluid_trace_dump_on()) return;
+  fltrace("FLTRACE dump [%s]: %d wires\n", tag, xctx->wires);
+  for(i = 0; i < xctx->wires; ++i)
+    fltrace("FLTRACE   w%d id=%u [%g %g %g %g] sel=%u lab=%s\n", i, xctx->wire[i].id,
+            xctx->wire[i].x1, xctx->wire[i].y1, xctx->wire[i].x2, xctx->wire[i].y2,
+            xctx->wire[i].sel, get_tok_value(xctx->wire[i].prop_ptr, "lab", 0));
+}
+
 /* Phase III helper: is foreign pin (px,py) on the axis-aligned segment (x1,y1)-(x2,y2)? cadsnap/2
  * tolerance on the CONSTANT axis (mirrors point_near_pin, move.c:1220); inclusive span on the
  * varying axis. A degenerate (point) or diagonal leg carries no two-pin bridge. */
@@ -7242,22 +7333,35 @@ void move_objects(int what, int merge, double dx, double dy)
      int ripped = 0;
      int pi;
      int npasses = (int)(sizeof(fluid_end_passes) / sizeof(fluid_end_passes[0]));
+     int traced = fluid_trace_on();     /* D4: all observability is trace-only (byte-identical off) */
+     fluid_dump_wires("cluster entry");
      for(pi = 0; pi < npasses; ++pi) {
        const Fluid_pass *p = &fluid_end_passes[pi];
-       /* exit stubs / manhattanize: cataloged for order + contract, called at their own sites */
-       if(p->gates & FLUID_PASS_MANUAL_SITE) continue;
-       /* END_ONLY / ORTHO / FINAL_LEG are guaranteed by the enclosing gate; re-checked so the
-        * table bits are executable contract, not just documentation. */
-       if((p->gates & FLUID_PASS_END_ONLY) && commit_now) continue;
-       if((p->gates & FLUID_PASS_ORTHO) && !leg_ortho) continue;
-       if((p->gates & FLUID_PASS_FINAL_LEG) && leg != nlegs - 1) continue;
-       if((p->gates & FLUID_PASS_ROTFREE_ONLY) && !rotfree) continue;
-       if((p->gates & FLUID_PASS_ROTATED_ONLY) && rotfree) continue;
-       if((p->gates & FLUID_PASS_NEEDS_RIPPED) && !ripped) continue;
-       /* D3 firing-sequence trace (fuller SKIP/changed=N observability is D4) */
-       fltrace("FLTRACE pass %s: run (rotfree=%d ripped=%d)\n", p->name, rotfree, ripped);
-       if(p->gates & FLUID_PASS_SETS_RIPPED) ripped = p->fn();
-       else p->fn();
+       /* Single source of truth for skip vs run AND the trace label -- MANUAL_SITE (exit stubs /
+        * manhattanize, called at their own sites) + END_ONLY/ORTHO/FINAL_LEG (guaranteed by the
+        * enclosing gate, re-checked so the table bits are executable contract) + the per-pass bits
+        * (ROTFREE_ONLY/ROTATED_ONLY == old if(!rotfree); NEEDS_RIPPED == old if(ripped)). */
+       const char *skip = fluid_pass_skip_gate(p, commit_now, leg_ortho, leg, nlegs, rotfree, ripped);
+       if(skip) {
+         if(traced) fltrace("FLTRACE pass %s: SKIP(%s)\n", p->name, skip);
+         continue;
+       }
+       if(!traced) {                    /* fast path -- no snapshot/count when tracing is off */
+         if(p->gates & FLUID_PASS_SETS_RIPPED) ripped = p->fn();
+         else p->fn();
+       } else {                         /* D4: measure changed=N across the pass, keyed by wire id */
+         int nb = 0, na = 0, changed;
+         Fluid_wsig *before = fluid_wsig_snapshot(&nb), *after;
+         if(p->gates & FLUID_PASS_SETS_RIPPED) ripped = p->fn();
+         else p->fn();
+         after = fluid_wsig_snapshot(&na);
+         changed = fluid_wsig_diff(before, nb, after, na);
+         fltrace("FLTRACE pass %s: ran, changed=%d (rotfree=%d ripped=%d wires %d->%d)\n",
+                 p->name, changed, rotfree, ripped, nb, na);
+         if(before) my_free(_ALLOC_ID_, &before);
+         if(after)  my_free(_ALLOC_ID_, &after);
+         fluid_dump_wires(p->name);
+       }
      }
    }
    /* Exit-stub preservation (wire-editing Phase 6, Issue E -> R13). After the cleanup above,
