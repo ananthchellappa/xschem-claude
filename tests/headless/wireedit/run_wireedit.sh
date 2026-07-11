@@ -25,6 +25,11 @@
 root=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$root" || exit 2
 
+# Binary: honor the $XSCHEM override full_audit.sh documents (review wf_bfc3c5e4: this suite
+# silently tested the in-tree binary while the audit's tcl tests ran the override's).
+XSCHEM="${XSCHEM:-./src/xschem}"
+if [ ! -x "$XSCHEM" ]; then echo "WIREEDIT FATAL: xschem binary not found/executable at: $XSCHEM" >&2; exit 2; fi
+
 memcheck=0
 case "$1" in
   --memcheck|memcheck) memcheck=1 ;;
@@ -49,7 +54,7 @@ ran=0
 for t in tests/headless/wireedit/test_wireedit_*.tcl; do
   [ -e "$t" ] || continue
   ran=$((ran + 1))
-  out=$(env -u DISPLAY timeout "$TIMEOUT" $VG ./src/xschem --nogui --pipe -q --nolog --script "$t" 2>&1)
+  out=$(env -u DISPLAY timeout "$TIMEOUT" $VG "$XSCHEM" --nogui --pipe -q --nolog --script "$t" 2>&1)
   rc=$?
   line=$(printf '%s\n' "$out" | grep -E '^RESULT:' | tail -1)
   status="${line:-NO RESULT}"
@@ -67,7 +72,14 @@ for t in tests/headless/wireedit/test_wireedit_*.tcl; do
     fi
   fi
   echo "$(basename "$t"): $status"
-  [ "$ok" -eq 1 ] || fail=1
+  if [ "$ok" -ne 1 ]; then
+    fail=1
+    # Failure detail: the RESULT line alone doesn't say WHICH check regressed (review
+    # wf_bfc3c5e4) -- dump the failing test's full output so CI logs are actionable.
+    echo "------ full output: $(basename "$t") ------"
+    printf '%s\n' "$out"
+    echo "------ end output ------"
+  fi
 done
 if [ "$ran" -eq 0 ]; then echo "$LABEL: no tests found"; exit 2; fi
 if [ "$fail" -eq 0 ]; then echo "$LABEL: ALL PASS"; else echo "$LABEL: FAILURES"; fi

@@ -99,10 +99,13 @@ for testfile in "${files[@]}"; do
 
   if [ "$ec" -eq 124 ]; then
     STATUS[$name]=TIMEOUT; OUT[$name]="$out"; ((CRASH++))
+  elif [[ "$out" == *"FATAL: signal"* ]] || { [[ "$out" == *"Tcl_AppInit() error"* ]] && ! is_pass "$name" "$out" "$ec"; }; then
+    # crash detection BEFORE skip (review wf_bfc3c5e4): a test that prints its skip banner and
+    # then dies must count as CRASH, not SKIP (a clean self-skip exit 0's right after the banner,
+    # so it can never reach a FATAL/Tcl_AppInit line).
+    STATUS[$name]=CRASH; OUT[$name]="$out"; ((CRASH++))
   elif is_skip "$out"; then
     STATUS[$name]=SKIP; ((SKIP++))
-  elif [[ "$out" == *"FATAL: signal"* ]] || { [[ "$out" == *"Tcl_AppInit() error"* ]] && ! is_pass "$name" "$out" "$ec"; }; then
-    STATUS[$name]=CRASH; OUT[$name]="$out"; ((CRASH++))
   elif is_pass "$name" "$out" "$ec"; then
     STATUS[$name]=PASS; ((PASS++))
   else
@@ -135,4 +138,11 @@ if [ "$((FAIL+CRASH))" -gt 0 ]; then
   exit 1
 fi
 [ "$WIREEDIT_RC" -ne 0 ] && exit 1
+# Hollow-green guard (review wf_bfc3c5e4): a selection whose tests ALL self-skip (e.g. xvfb
+# broke and every gesture test skipped) exits 0 with zero coverage. CI sets AUDIT_MIN_PASS to
+# the expected pass floor; default 0 keeps local subset runs unchanged.
+if [ "$PASS" -lt "${AUDIT_MIN_PASS:-0}" ]; then
+  echo "AUDIT_MIN_PASS: only $PASS pass < required ${AUDIT_MIN_PASS} -- treating as failure (hollow green)"
+  exit 1
+fi
 exit 0
