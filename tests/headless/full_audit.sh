@@ -58,13 +58,18 @@ is_pass() {
 # as a hollow PASS on a display-less box.
 is_skip() { [[ "$1" == *"RESULT: SKIP"* || "$1" == *"skipped: no X"* ]]; }
 
-# Test selection: explicit args, else all test_*.tcl
+# Test selection: explicit args, else all test_*.tcl. The 52-test wireedit
+# suite (wireedit/run_wireedit.sh, true headless) is part of the full run and
+# can be selected explicitly with the pseudo-name "wireedit".
 sel=("$@")
+run_wireedit=0
 if [ "${#sel[@]}" -eq 0 ]; then
   mapfile -t files < <(ls "$HERE"/test_*.tcl | sort)
+  run_wireedit=1
 else
   files=()
   for s in "${sel[@]}"; do
+    case "$s" in wireedit) run_wireedit=1; continue ;; esac
     s="${s%.tcl}"; files+=("$HERE/$(basename "$s").tcl")
   done
 fi
@@ -106,8 +111,20 @@ for testfile in "${files[@]}"; do
   printf '%-8s | %s\n' "${STATUS[$name]}" "$name"
 done
 
+# Wireedit suite: run_wireedit.sh exits nonzero on any FAIL or missing RESULT
+# line; its verdict is merged into the audit exit code so a wireedit regression
+# fails the audit (hardening plan step A3).
+WIREEDIT_RC=0
+WIREEDIT_VERDICT="not run (subset selection)"
+if [ "$run_wireedit" -eq 1 ]; then
+  echo "--------- wireedit suite ---------"
+  "$HERE/wireedit/run_wireedit.sh"; WIREEDIT_RC=$?
+  if [ "$WIREEDIT_RC" -eq 0 ]; then WIREEDIT_VERDICT="PASS"; else WIREEDIT_VERDICT="FAIL (rc=$WIREEDIT_RC)"; fi
+fi
+
 echo "========================================"
 echo "SUMMARY: $PASS pass  $FAIL fail  $CRASH crash/timeout  $SKIP skip  (total $((PASS+FAIL+CRASH+SKIP)))"
+echo "WIREEDIT: $WIREEDIT_VERDICT"
 echo "========================================"
 
 if [ "$((FAIL+CRASH))" -gt 0 ]; then
@@ -117,4 +134,5 @@ if [ "$((FAIL+CRASH))" -gt 0 ]; then
   done
   exit 1
 fi
+[ "$WIREEDIT_RC" -ne 0 ] && exit 1
 exit 0
