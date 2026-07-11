@@ -1984,6 +1984,13 @@ extern void fluid_reroute_discard(void);
  * clear_schematic() alongside fluid_reroute_discard() so a buffer teardown mid-gesture closes the
  * gesture (else the next move START's arm assert would see a leaked-armed context). */
 extern void fluid_gesture_free(void);
+/* D6 single-pass harness (scheduler `xschem fluid_snapshot arm` / `xschem fluid_pass <name>`):
+ * run one END-cleanup pass in isolation, no gesture/X. arm returns 1 if a valid START snapshot was
+ * taken (needs fluid_editing on + >=1 instance pin), else 0; run_pass returns the pass's
+ * changed-count, 0 when it fail-safe-declines (no armed snapshot -- gate enforcement), or -1 for an
+ * unknown / MANUAL_SITE name. */
+extern int fluid_harness_snapshot_arm(void);
+extern int fluid_harness_run_pass(const char *name);
 extern void check_collapsing_objects();
 extern void redraw_w_a_l_r_p_z_rubbers(int force); /* redraw wire, arcs, line, polygon rubbers */
 extern void copy_objects(int what);

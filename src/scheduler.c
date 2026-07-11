@@ -1892,6 +1892,50 @@ static int xschem_cmds_f(Tcl_Interp *interp, int argc, const char *argv[], int *
       Tcl_ResetResult(interp);
     }
 
+    /* fluid_snapshot arm
+     *   Track-D (D6) single-pass harness: arm the fluid gesture START snapshot on the CURRENT
+     *   geometry (no drag), so a subsequent `xschem fluid_pass <name>` can run one END-cleanup
+     *   pass in isolation. Returns 1 if a valid snapshot was armed (needs fluid_editing on and
+     *   >=1 instance pin), else 0. Arm on the PRISTINE scene BEFORE creating the novel copper a
+     *   novelty-scoped pass (straighten, ...) is meant to reshape. */
+    else if(!strcmp(argv[1], "fluid_snapshot"))
+    {
+      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(argc > 2 && !strcmp(argv[2], "arm")) {
+        int armed = fluid_harness_snapshot_arm();
+        Tcl_SetResult(interp, armed ? "1" : "0", TCL_STATIC);
+      } else {
+        Tcl_SetResult(interp, "usage: xschem fluid_snapshot arm", TCL_STATIC);
+        return TCL_ERROR;
+      }
+    }
+
+    /* fluid_pass <name>
+     *   Track-D (D6) single-pass harness: run one END-cleanup pass (by table name: ripup_
+     *   foreign_pin_short, prune_shorting_anchor_tails, remove_redundant_loops, prune_anchor_
+     *   tails, straighten_reversals, collapse_axis_overshoot_stub, prune_novel_orphan_stub)
+     *   against the current schematic. Returns the pass's changed-count, 0 when it fail-safe-
+     *   declines (no armed snapshot -- gate enforcement), or errors for an unknown / MANUAL_SITE
+     *   name. */
+    else if(!strcmp(argv[1], "fluid_pass"))
+    {
+      int changed;
+      char buf[32];
+      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(argc <= 2) {
+        Tcl_SetResult(interp, "usage: xschem fluid_pass <name>", TCL_STATIC);
+        return TCL_ERROR;
+      }
+      changed = fluid_harness_run_pass(argv[2]);
+      if(changed < 0) {
+        Tcl_SetResult(interp, "xschem fluid_pass: unknown or non-driver (MANUAL_SITE) pass name",
+                      TCL_STATIC);
+        return TCL_ERROR;
+      }
+      my_snprintf(buf, S(buf), "%d", changed);
+      Tcl_SetResult(interp, buf, TCL_VOLATILE);
+    }
+
     /* fullscreen
      *   Toggle fullscreen modes: fullscreen with menu & status, fullscreen, normal */
     else if(!strcmp(argv[1], "fullscreen"))

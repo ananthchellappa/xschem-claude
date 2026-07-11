@@ -4876,6 +4876,49 @@ static void fluid_end_cluster_idempotence_probe(int commit_now, int leg_ortho, i
   }
 }
 
+/* ==== Track D (D6): single-pass harness ==========================================================
+ * Run one END-cleanup pass in isolation -- no gesture, no X, milliseconds -- so a pass can be unit-
+ * tested against a synthetic scene instead of a transcribed drag. Exposed to Tcl via the scheduler
+ * (`xschem fluid_snapshot arm`, `xschem fluid_pass <name>`). The gesture-state contract is the same
+ * as at a real END: the snapshot must be armed (fluid_gesture_arm) on the PRISTINE geometry BEFORE
+ * the novel copper exists -- straighten et al. are novelty-scoped against fluid_g.start_wire, so a
+ * pass run against geometry that was already present at arm time correctly declines. */
+
+/* Arm the START snapshot on the current geometry. Returns 1 iff a valid snapshot was taken --
+ * fluid_snapshot_partition no-ops when fluid_editing is off OR there are no instance pins
+ * (fluid_count_pins()<=0), leaving snap_pinnet NULL, which every pass fail-safes on. */
+int fluid_harness_snapshot_arm(void)
+{
+  fluid_gesture_arm();
+  return fluid_g.snap_pinnet != NULL;
+}
+
+/* Run the named driver-run pass against the current schematic; returns its changed-count (adds +
+ * deletes + moves, id-keyed -- the D4 metric), 0 when it fail-safe-declines with no armed snapshot
+ * (the gate-enforcement case), or -1 for an unknown name or a MANUAL_SITE entry (not driver-run). */
+int fluid_harness_run_pass(const char *name)
+{
+  int i, npasses = (int)(sizeof(fluid_end_passes) / sizeof(fluid_end_passes[0]));
+  int nb = 0, na = 0, changed;
+  Fluid_wsig *before, *after;
+  const Fluid_pass *p = NULL;
+  for(i = 0; i < npasses; ++i)
+    if(!strcmp(fluid_end_passes[i].name, name)) { p = &fluid_end_passes[i]; break; }
+  if(!p || (p->gates & FLUID_PASS_MANUAL_SITE) || !p->fn) return -1;
+  /* Establish the driver's precondition: in move_objects prepare_netlist_structs(0) runs before
+   * the cluster, so the pin table / node[] the passes read (point_on_any_pin, etc.) is current for
+   * the post-edit geometry. A cold harness call must refresh it or a stale table misleads the gate. */
+  xctx->prep_hash_wires = xctx->prep_net_structs = xctx->prep_hi_structs = 0;
+  prepare_netlist_structs(0);
+  before = fluid_wsig_snapshot(&nb);
+  p->fn();                                  /* SETS_RIPPED return is irrelevant for a lone pass */
+  after = fluid_wsig_snapshot(&na);
+  changed = fluid_wsig_diff(before, nb, after, na);
+  if(before) my_free(_ALLOC_ID_, &before);
+  if(after)  my_free(_ALLOC_ID_, &after);
+  return changed;
+}
+
 /* Phase III helper: is foreign pin (px,py) on the axis-aligned segment (x1,y1)-(x2,y2)? cadsnap/2
  * tolerance on the CONSTANT axis (mirrors point_near_pin, move.c:1220); inclusive span on the
  * varying axis. A degenerate (point) or diagonal leg carries no two-pin bridge. */

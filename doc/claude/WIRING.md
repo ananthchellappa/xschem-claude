@@ -505,7 +505,14 @@ lifecycle `fluid_gesture_arm` / `fluid_gesture_free` (the latter also called by 
 Track-D pass table (D3): `Fluid_pass` typedef + FLUID_PASS_* gate bits + `Fluid_verify_dir`/
 `Fluid_mut_class` enums + `static const Fluid_pass fluid_end_passes[]` (all just after
 fluid_manhattanize_relay_diagonals); the END cluster driver loop lives at the old call site
-inside move_objects (§3 step 9).
+inside move_objects (§3 step 9). Observability + oracles (D4/D5/D6, same region after the table):
+`fluid_pass_skip_gate` (SKIP-reason name), `fluid_wsig_*` (id-keyed changed-count / geom-set
+compare), `fluid_dump_wires` (FLUID_TRACE_DUMP), `fluid_end_cluster_idempotence_probe`
+(FLUID_IDEMPOTENT_CHECK, called after insert_exit_stubs), `fluid_harness_snapshot_arm` /
+`fluid_harness_run_pass` (the `xschem fluid_snapshot arm` / `xschem fluid_pass <name>` verbs in
+scheduler.c `xschem_cmds_f`). Env knobs: FLUID_TRACE (per-pass firing + changed=N),
+FLUID_TRACE_DUMP (wire-array dump), FLUID_IDEMPOTENT_CHECK (fixpoint oracle; `run_wireedit.sh
+--idempotent`). All default-off / byte-identical.
 `select.c`: select_attached_nets :1579, select_wire fold :1040.
 `callback.c`: cadence drag :6213-6268, 'm'/'M' :4796-4891, mid-drag transforms
 :4592/:5100/:5124.

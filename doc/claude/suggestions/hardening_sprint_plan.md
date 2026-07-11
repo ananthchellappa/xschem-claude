@@ -2,8 +2,9 @@
 
 Status: **Track A DONE** (2026-07-11, commits d086a73d..3bdabf0c) · **Track B DONE**
 (2026-07-11, commits c5cb0685/a6ac2026/74cda8e0 + B4) · **Track C DONE** (2026-07-11,
-C1 261ed06f · C2 57ac013f · C3 37052868 · C4 b9131d21 · C5 c6f69e37); **Track D IN PROGRESS** —
-D1 DONE (9d12a067), D2 DONE (0473d845), D3 DONE (this commit); D4-D6 NOT started.
+C1 261ed06f · C2 57ac013f · C3 37052868 · C4 b9131d21 · C5 c6f69e37); **Track D DONE** —
+D1 9d12a067 · D2 0473d845 · D3 98d5e209 · D4 5b2ec840 · D5 f40fd304 · D6 (this commit).
+**Sprint complete** (all four tracks A/B/C/D landed).
 Track A yield beyond the planned steps: the A3 fold-in immediately caught a shipped
 engine regression (issue 0112, fixed af9075b9 + amnesty hole c2dc1848 — the sprint's
 thesis demonstrated on day one), an adversarial review hardened the runners
@@ -596,7 +597,7 @@ called just after the `insert_exit_stubs` block (round 1 = full finalization; ro
 cluster over the finalized route and catches `straighten` re-collapsing the exit-stub's re-jog),
 gated identically to the cluster so it runs exactly when round 1 did.
 
-### D6 — Single-pass harness: `xschem fluid_pass <name>`
+### D6 — Single-pass harness: `xschem fluid_pass <name>` — DONE
 **Do:** scheduler branch (goes in the matching first-letter dispatch function —
 [[scheduler-letter-dispatch]], else silently unreachable): `xschem fluid_snapshot arm`
 (runs `fluid_gesture_arm` on current geometry) and `xschem fluid_pass <name>` (runs one
@@ -605,6 +606,31 @@ build a synthetic 3-wire staircase via `xschem wire`, arm, run `straighten`, ass
 2-segment result — no gesture, no X, milliseconds.
 **Done when:** unit test green headless; a second test proves gate enforcement (pass
 declines without an armed snapshot). **Effort:** 0.5d.
+**Landed (this commit):** two `xschem_cmds_f` branches — `xschem fluid_snapshot arm` →
+`fluid_harness_snapshot_arm()` (returns 1 if a valid START snapshot was taken), `xschem fluid_pass
+<name>` → `fluid_harness_run_pass()` (looks the name up in `fluid_end_passes[]`, runs its fn,
+returns the D4 changed-count; 0 on fail-safe decline; errors on an unknown or MANUAL_SITE name).
+Both declared in xschem.h. The harness re-establishes the driver's precondition
+(`prepare_netlist_structs(0)` before the pass) so a cold call sees a current pin table. New headless
+test `test_wireedit_56_fluid_pass_harness_d6.tcl` (8 checks ALL PASS): a synthetic 3-segment
+staircase (0,0)→(0,10)→(10,10)→(10,20) armed + `fluid_pass straighten_reversals` collapses to the
+2-segment L (0,0)-(10,0)-(10,20) [changed=3]; gate enforcement (no armed snapshot → declines,
+changed=0, geometry unchanged); arm on a pin-less scene → 0; unknown / MANUAL_SITE names error.
+Verified: wireedit 56/56 (plain + `--idempotent`, both ALL PASS); full fuzz sweep matrix + 216
+replays byte-identical to D3 (the harness adds verbs + functions, the move_objects driver is
+untouched); the new harness malloc/reshape path is memcheck-clean (0 errors).
+**Premise corrections while landing (2×):**
+  1. *The plan's arm-order is imprecise.* "build a staircase, arm, run straighten" declines: the
+     START wire snapshot must be NON-EMPTY for `fluid_wire_is_novel_span` to discriminate (a
+     zero-wire baseline returns "nothing is novel", a deliberate safety default), and the snapshot
+     needs ≥1 instance pin (`fluid_count_pins()>0`, else `fluid_snapshot_partition` no-ops). So the
+     scene arms on a pristine baseline (an off-to-the-side res for the pin + one baseline wire)
+     BEFORE adding the novel staircase — the correct gesture analogue (START snapshots the pre-drag
+     state; the drag makes the novel copper). The plan's arm/run order and the "no instance needed"
+     implication were both wrong.
+  2. *Cold passes need `prepare_netlist_structs(0)` first.* The driver runs it before the cluster;
+     a standalone `fluid_pass` call must refresh the pin table / node[] itself or `point_on_any_pin`
+     reads a stale table and the pass mis-declines. Folded into `fluid_harness_run_pass`.
 
 ---
 
