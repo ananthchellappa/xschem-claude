@@ -566,13 +566,35 @@ policy (`--leak-check=no --track-origins`, rc=0, 0 errors) and appears in ZERO v
 (the only `definitely lost` block is identical trace-on/off, i.e. pre-existing — the reason the
 suite runner uses `--leak-check=no`).
 
-### D5 — Idempotence oracle
+### D5 — Idempotence oracle — DONE
 **Do:** debug mode (env `FLUID_IDEMPOTENT_CHECK=1`, used by tests): driver runs the
 cleanup cluster twice; any second-round change = hard failure with the offending pass
 named. This is the 0111 oscillation class as a one-line property. Add to the wireedit
 runner for the whole suite.
 **Done when:** current suite passes with the check on; reverting the 0111 reschedule
 makes it fire on the after_28 repro. **Effort:** 2-3h.
+**Landed (this commit):** `fluid_end_cluster_idempotence_probe()` re-runs the cluster once and
+flags any pass that still changes the wire GEOMETRY SET (id-independent multiset compare via
+`fluid_wsig_geom_changed` + `fluid_wsig_cmp` — a delete+re-add of the same span is still a
+fixpoint, so an id churn is not a false violation), naming the first offender to stderr
+(`FLUID_IDEMPOTENCE_VIOLATION: pass <name> ...`, live in the --nogui path), fltrace, and the Tcl
+var `fluid_idempotence_violation`. `fluid_idempotent_check_on()` caches the env (off => the probe
+never runs => byte-identical to D4). `run_wireedit.sh --idempotent` runs the whole suite under the
+oracle and fails any test that emits the violation token. Done-when met both ways: (1) the current
+suite is a fixpoint — `run_wireedit.sh --idempotent` = 55/55 ALL PASS, "fixpoint clean"; (2) teeth
+demonstrated by temporarily reverting the 0111 reschedule (`if(0 && ...)` on the near-pin branch,
+straighten.c region) — the 0111 NW-drag repro then prints
+`FLUID_IDEMPOTENCE_VIOLATION: pass straighten_reversals ...` (reverted immediately; the fixed build
+is clean again). Verified: wireedit 55/55; full fuzz sweep matrix + 216 replays byte-identical to
+D3; the oracle-ON 2nd-run path is memcheck-clean (rc=0) on the 0106 and 0111 repros.
+**Premise correction while landing (1×):** *the plan's "runs the cleanup cluster twice" must
+re-run it AFTER `insert_exit_stubs`, not right after the cluster.* The 0111 oscillation is
+CROSS-pass (cluster `straighten` collapses onto the pin ⇄ MANUAL_SITE `insert_exit_stubs` re-jogs
+one grid off). A 2nd cluster run positioned INSIDE the cluster block (before exit stubs) sees the
+already-collapsed geometry and finds nothing to change — it MISSES 0111. The probe is therefore
+called just after the `insert_exit_stubs` block (round 1 = full finalization; round 2 re-runs the
+cluster over the finalized route and catches `straighten` re-collapsing the exit-stub's re-jog),
+gated identically to the cluster so it runs exactly when round 1 did.
 
 ### D6 — Single-pass harness: `xschem fluid_pass <name>`
 **Do:** scheduler branch (goes in the matching first-letter dispatch function —

@@ -31,10 +31,12 @@ XSCHEM="${XSCHEM:-./src/xschem}"
 if [ ! -x "$XSCHEM" ]; then echo "WIREEDIT FATAL: xschem binary not found/executable at: $XSCHEM" >&2; exit 2; fi
 
 memcheck=0
+idempotent=0
 case "$1" in
-  --memcheck|memcheck) memcheck=1 ;;
+  --memcheck|memcheck)     memcheck=1 ;;
+  --idempotent|idempotent) idempotent=1 ;;   # D5: run the whole suite under FLUID_IDEMPOTENT_CHECK
   "") ;;
-  *) echo "usage: $(basename "$0") [--memcheck]" >&2; exit 2 ;;
+  *) echo "usage: $(basename "$0") [--memcheck|--idempotent]" >&2; exit 2 ;;
 esac
 
 if [ "$memcheck" -eq 1 ]; then
@@ -43,6 +45,14 @@ if [ "$memcheck" -eq 1 ]; then
   # independent of the summary text). --track-origins: pinpoint uninitialised reads.
   VG="valgrind --error-exitcode=99 --leak-check=no --track-origins=yes"
   LABEL="WIREEDIT MEMCHECK"
+elif [ "$idempotent" -eq 1 ]; then
+  # D5 idempotence oracle: FLUID_IDEMPOTENT_CHECK=1 makes the END-cleanup driver re-run the cluster
+  # after finalization; any pass that changes the wire set on round 2 prints
+  # FLUID_IDEMPOTENCE_VIOLATION to stderr (the 0111 oscillation class as a property). A correct
+  # build is a fixpoint, so the suite must stay ALL PASS with no violation line.
+  TIMEOUT=60
+  VG=""
+  LABEL="WIREEDIT IDEMPOTENT"
 else
   TIMEOUT=60
   VG=""
@@ -54,12 +64,25 @@ ran=0
 for t in tests/headless/wireedit/test_wireedit_*.tcl; do
   [ -e "$t" ] || continue
   ran=$((ran + 1))
-  out=$(env -u DISPLAY timeout "$TIMEOUT" $VG "$XSCHEM" --nogui --pipe -q --nolog --script "$t" 2>&1)
+  if [ "$idempotent" -eq 1 ]; then
+    out=$(env -u DISPLAY FLUID_IDEMPOTENT_CHECK=1 timeout "$TIMEOUT" "$XSCHEM" --nogui --pipe -q --nolog --script "$t" 2>&1)
+  else
+    out=$(env -u DISPLAY timeout "$TIMEOUT" $VG "$XSCHEM" --nogui --pipe -q --nolog --script "$t" 2>&1)
+  fi
   rc=$?
   line=$(printf '%s\n' "$out" | grep -E '^RESULT:' | tail -1)
   status="${line:-NO RESULT}"
   ok=0
   case "$line" in "RESULT: ALL PASS") ok=1 ;; esac
+  if [ "$idempotent" -eq 1 ]; then
+    viol=$(printf '%s\n' "$out" | grep -E 'FLUID_IDEMPOTENCE_VIOLATION' | head -1)
+    if [ -n "$viol" ]; then
+      status="$status | IDEMPOTENCE FAIL ($viol)"
+      ok=0
+    else
+      status="$status | fixpoint clean"
+    fi
+  fi
   if [ "$memcheck" -eq 1 ]; then
     summary=$(printf '%s\n' "$out" | grep -oE 'ERROR SUMMARY: [0-9]+ errors( from [0-9]+ contexts)?' | tail -1)
     # rc==99 is valgrind's --error-exitcode (ANY memory error). rc==124 is a timeout. Either => fail.

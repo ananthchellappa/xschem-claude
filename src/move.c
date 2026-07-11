@@ -4800,6 +4800,82 @@ static void fluid_dump_wires(const char *tag)
             xctx->wire[i].sel, get_tok_value(xctx->wire[i].prop_ptr, "lab", 0));
 }
 
+/* ==== Track D (D5): idempotence oracle ==========================================================
+ * The END cleanup cluster is a FIXPOINT: a second pass over the same geometry must change nothing.
+ * The 0111 oscillation class (straighten collapses a jog onto a pin, insert_exit_stubs re-jogs it
+ * one grid back, forever) is exactly a broken fixpoint. FLUID_IDEMPOTENT_CHECK=1 (off by default,
+ * tests only) makes the driver run the cluster a SECOND time and flag any pass that still changes
+ * the wire SET -- naming the offending pass. Off => the 2nd round never runs => byte-identical to
+ * D4. On a CORRECT build the 2nd round is a no-op, so the schematic (and every test's assertions)
+ * is untouched even with the oracle ON; a violation means the build is already broken, so the
+ * 2nd-round mutation is acceptable (the oracle exists to make it LOUD). */
+static int fluid_idempotent_check_on(void)
+{
+  static int v = -1;
+  if(v < 0) { const char *e = getenv("FLUID_IDEMPOTENT_CHECK"); v = (e && *e && *e != '0') ? 1 : 0; }
+  return v;
+}
+
+static int fluid_wsig_cmp(const void *pa, const void *pb)
+{
+  const Fluid_wsig *a = pa, *b = pb;
+  if(a->x1 != b->x1) return a->x1 < b->x1 ? -1 : 1;
+  if(a->y1 != b->y1) return a->y1 < b->y1 ? -1 : 1;
+  if(a->x2 != b->x2) return a->x2 < b->x2 ? -1 : 1;
+  if(a->y2 != b->y2) return a->y2 < b->y2 ? -1 : 1;
+  return 0;
+}
+
+/* Did the wire GEOMETRY set change (id-independent: a delete + re-add of the same span is still a
+ * fixpoint)? Sorts both throwaway snapshots and compares the ordered coordinate multisets. */
+static int fluid_wsig_geom_changed(Fluid_wsig *a, int na, Fluid_wsig *b, int nb)
+{
+  int i;
+  if(na != nb) return 1;
+  if(na == 0) return 0;
+  qsort(a, (size_t)na, sizeof(Fluid_wsig), fluid_wsig_cmp);
+  qsort(b, (size_t)nb, sizeof(Fluid_wsig), fluid_wsig_cmp);
+  for(i = 0; i < na; ++i)
+    if(a[i].x1 != b[i].x1 || a[i].y1 != b[i].y1 || a[i].x2 != b[i].x2 || a[i].y2 != b[i].y2)
+      return 1;
+  return 0;
+}
+
+/* Round 2 of the idempotence oracle: re-run the END cleanup cluster once over the ALREADY-finalized
+ * geometry (called AFTER insert_exit_stubs so it also catches CROSS-pass oscillation -- the 0111
+ * straighten<->exit-stub antagonism, which a cluster-only re-run positioned before the stub pass
+ * would miss). Flags any pass that still changes the wire geometry SET (id-independent), naming the
+ * first offender to stderr (live in the --nogui headless path; the wireedit --idempotent runner
+ * greps the token), fltrace, and the Tcl var fluid_idempotence_violation. On a correct build this
+ * is a strict no-op (the finalization IS a fixpoint), so the schematic stays byte-identical. */
+static void fluid_end_cluster_idempotence_probe(int commit_now, int leg_ortho, int leg, int nlegs,
+                                                int rotfree)
+{
+  int npasses = (int)(sizeof(fluid_end_passes) / sizeof(fluid_end_passes[0]));
+  int ripped2 = 0, pj;
+  tclsetvar("fluid_idempotence_violation", "");
+  for(pj = 0; pj < npasses; ++pj) {
+    const Fluid_pass *p = &fluid_end_passes[pj];
+    int nb2 = 0, na2 = 0;
+    Fluid_wsig *b2, *a2;
+    const char *skip = fluid_pass_skip_gate(p, commit_now, leg_ortho, leg, nlegs, rotfree, ripped2);
+    if(skip) continue;
+    b2 = fluid_wsig_snapshot(&nb2);
+    if(p->gates & FLUID_PASS_SETS_RIPPED) ripped2 = p->fn();
+    else p->fn();
+    a2 = fluid_wsig_snapshot(&na2);
+    if(fluid_wsig_geom_changed(b2, nb2, a2, na2)) {
+      fprintf(stderr, "FLUID_IDEMPOTENCE_VIOLATION: pass %s changed the wire set on the 2nd "
+                      "cleanup round (not a fixpoint)\n", p->name);
+      fltrace("FLTRACE IDEMPOTENCE VIOLATION: pass %s changed on round 2\n", p->name);
+      if(tclgetvar("fluid_idempotence_violation")[0] == '\0')
+        tclsetvar("fluid_idempotence_violation", p->name);
+    }
+    if(b2) my_free(_ALLOC_ID_, &b2);
+    if(a2) my_free(_ALLOC_ID_, &a2);
+  }
+}
+
 /* Phase III helper: is foreign pin (px,py) on the axis-aligned segment (x1,y1)-(x2,y2)? cadsnap/2
  * tolerance on the CONSTANT axis (mirrors point_near_pin, move.c:1220); inclusive span on the
  * varying axis. A degenerate (point) or diagonal leg carries no two-pin bridge. */
@@ -7403,6 +7479,18 @@ void move_objects(int what, int merge, double dx, double dy)
       * pin. Nothing runs trim after this point, so sweep the residue here. No-op (byte-identical) when the
       * stub pass created none, e.g. the wire_exit_stub regression path. */
      check_collapsing_objects();
+   }
+   /* D5 idempotence oracle round 2 (off by default; tests set FLUID_IDEMPOTENT_CHECK=1). Placed
+    * HERE -- after both the cluster and insert_exit_stubs -- so re-running the cluster sees the
+    * finalized route and catches CROSS-pass oscillation (0111 straighten<->exit-stub). Same gate
+    * as the cluster block above, so round 2 runs exactly when round 1 did. Correct build => strict
+    * no-op (finalization is a fixpoint) => byte-identical; a broken build gets a loud named
+    * violation. Runs before unselect_partial_sel_wires so the passes see the cluster's own
+    * selection state. */
+   if(fluid_idempotent_check_on() && !commit_now && tclgetboolvar("fluid_editing") &&
+      xctx->stretch_select && leg_ortho && leg == nlegs - 1) {
+     int rotfree = (xctx->move_rot == 0 && xctx->move_flip == 0);
+     fluid_end_cluster_idempotence_probe(commit_now, leg_ortho, leg, nlegs, rotfree);
    }
    unselect_partial_sel_wires();
    /* incremental_wire_reroute Phase I (ownership decoupling, spec §4). A fluid stretch grabs the
