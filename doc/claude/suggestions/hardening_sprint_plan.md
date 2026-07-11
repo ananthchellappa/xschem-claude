@@ -119,7 +119,7 @@ commit goes green. **Effort:** 2-4h incl. flake watch.
 
 ## Track B — Enforce invariants, stop logging them (P0 minimum). ~2-3 days.
 Changes the failure mode: silent saved corruption → immediate visible refusal.
-**B1 DONE** c5cb0685 · **B2 DONE** (this commit).
+**B1 DONE** c5cb0685 · **B2 DONE** a6ac2026 · **B3 DONE** (this commit) · B4 next.
 
 ### B1 — Enforcement switch — DONE c5cb0685
 **Do:** add Tcl var `fluid_enforce_invariants` (default **1** — enforcement is the point;
@@ -164,20 +164,43 @@ costs one mem-serialize; clean attempt 0 breaks immediately). **Effort:** 0.5-1d
 **Landed:** 4th `leg_snap` arm (move.c, mixed rot-free nlegs==1). RED demonstrated by
 stashing the arm (pre-B2 → 2 FAILED). wireedit 53/53 ALL PASS; test 53 memcheck 0 errors.
 
-### B3 — Promote `fluid_check_move_invariants` to rollback-or-refuse
-**Problem:** the real P1/P2/device-merge checker (move.c:5869, called :7108) only sets
-Tcl vars and logs; violations shipped while it printed them (0094/0098/0099 traces).
-**Do:** at real END (not commit_now), when enforcement is on and the checker reports
-`violations || disconnects || dev_merges`: restore the gesture-pristine snapshot
-(`fluid_reroute_snap` / `leg_snap` machinery — follow the restore ritual: ui_state, 4 id
-counters, `rebuild_selected_array`, `movelastsel`), pop the gesture's undo push, notify
-via `ciw_echo` ("move refused: would merge nets N1/N2 — see FLUID_TRACE"), leave the
-schematic untouched. RED-first: use a repro the healers cannot yet fix — WIRING.md risk
-#1 (label the before_8 backbone `VDD`, run the 0105 gesture): pre-change the short is
-SAVED; post-change the gesture is refused and geometry is byte-identical to pre-gesture.
-**Done when:** RED test flips; every existing green gesture/wireedit test still green
-(enforcement must never fire on a clean drag — that is the regression criterion);
-sabotage: disable one de-shorter locally, confirm refusal fires. **Effort:** 1d.
+### B3 — Promote `fluid_check_move_invariants` to rollback-or-refuse — DONE
+**Problem:** the real P1/P2/device-merge checker only sets Tcl vars and logs; violations
+shipped while it printed them (0094/0098/0099 traces).
+**Do:** at real END (not commit_now), when enforcement is on and the checker reports a
+violation: restore the gesture-pristine snapshot (follow the restore ritual: ui_state, 4 id
+counters, `rebuild_selected_array`, `movelastsel`), pop the gesture's undo push, notify via
+`ciw_echo`, leave the schematic untouched. RED-first: WIRING.md risk #1 (label the before_8
+backbone `VDD`, run the 0105 gesture): pre-change the short is SAVED; post-change refused,
+geometry byte-identical.
+**Done when:** RED test flips; every existing green test still green (enforcement never fires
+on a clean drag); sabotage: disable one de-shorter, confirm refusal fires. **Effort:** 1d.
+**REFUSE SIGNAL CORRECTED while landing (empirical):** the plan said refuse on
+`violations || disconnects || dev_merges`, but that premise is wrong two ways:
+  1. **The checker fires on 7 PASSING wireedit tests** (00/22/26/27/36/42/43) — it is NOT
+     silent on the clean suite. Two (26/27) are the checker's OWN log-only tests; the rest
+     hit it on `never-worse` DECLINE sub-cases that legitimately leave a baseline short/
+     disconnect (36 d/i/k, 42), or an incidental device short the test ignores (43 D6). So
+     "enforcement must never fire on a clean drag" cannot mean "never fire where the checker
+     is nonzero" — those drags are dirty by the checker's own measure.
+  2. **Refuse on `disconnects` is wrong.** A P1 disconnect is VISIBLE (dangling pin), its
+     count is cascade-sensitive (WIRING §5), and the never-worse healers accept a baseline
+     disconnect (test_42). Refusing on it would over-refuse legitimate moves. The sprint's
+     target is the SILENT saved SHORT, so the gate refuses on **P2 electrical merges only**
+     (`shorts + dev_merges`, the checker's new return); disconnects stay log-only.
+This narrowing leaves the whole suite green EXCEPT test_wireedit_22 (F5), whose OWN header
+predicted "when the no-short guard lands, P2 flips GREEN → update the baseline": F5's short is
+a named-net (NETB) merge the de-shorters blackout on, so B3 refuses it and NETA/NETB stay
+distinct — baseline updated RED→GREEN as instructed. All the DECLINE sub-cases (36/42/43)
+stay green: their "no NEW foreign merge" assertions hold under refuse too (pristine adds
+nothing). RED-first proof is self-contained in test_wireedit_54 (drives BOTH switch states:
+enforce-0 SAVES the short, enforce-1 REFUSES byte-identical).
+**Landed:** `fluid_check_move_invariants` now returns shorts+dev_merges; `enf_snap` pristine
+snapshot armed at push_undo, restored on refuse (restore ritual + `cur/head_undo_ptr--` to
+drop the undo push, both backends share those counters); ciw_echo notice; set_modify restores
+the pre-gesture modified flag. wireedit 54/54 ALL PASS; test 54 memcheck 0 errors. Sabotage:
+neuter `fluid_ripup_foreign_pin_short` → the plain-0105 short escapes → B3 refuses (R18 stays
+pristine); reverted → repaired again.
 
 ### B4 — Count silent fail-safe degradations
 **Problem:** every fluid helper silently no-ops when `fluid_snap_pinnet==NULL` or the

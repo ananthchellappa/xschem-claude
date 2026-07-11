@@ -216,7 +216,10 @@ Ordered passes per leg (gates in brackets):
 13. fluid_manhattanize_relay_diagonals                  [accepted relay only —
     that path had leg_ortho==0 and SKIPPED steps 5-10 entirely]
 14. END finalizers: clear stretch state (exactly once — per-leg clearing = UAF),
-    fluid_check_move_invariants (LOG-ONLY backstop), set_modify, draw
+    fluid_check_move_invariants → ROLLBACK-OR-REFUSE on a residual P2 short/dev-merge when
+    `fluid_enforce_invariants` (hardening B3): restore the `enf_snap` pristine snapshot (taken at
+    push_undo), drop the undo push, ciw_echo, skip set_modify; else set_modify, draw. Disconnects
+    stay log-only (published to the Tcl vars).
 ```
 
 Hard ordering edges (all documented in-code, all discovered by bugs):
@@ -345,9 +348,14 @@ grep), **0101** (rotatelocal H1/H2/H3 tears).
 P1 connectivity = P2 no-short > P3 escape-perp > P5 no-body-cross > P4 Manhattan > P7
 stability > P6 min-bends (nice_drag_rerouting.md §4; merged 25-invariant checklist in the
 spec digest). Enforcement TODAY:
-- P1/P2: enforced ONLY on `leg_snap`-armed paths via the attempt ladder; the general check
-  `fluid_check_move_invariants` (:5869) is **log-only** (Tcl vars
-  `fluid_last_move_violations/disconnects/dev_merges`).
+- P2 no-short/merge: enforced on `leg_snap`-armed paths via the attempt ladder AND, as of
+  hardening B3, by the END gate `fluid_check_move_invariants` — its P2 return
+  (shorts + dev_merges) drives ROLLBACK-OR-REFUSE when `fluid_enforce_invariants` is set (the
+  default). A short no healer can repair (named-rail blackout, degenerate relay) is REFUSED,
+  not saved. Escape hatch: `set fluid_enforce_invariants 0` reverts to log-only.
+- P1 disconnect: still **log-only** (Tcl var `fluid_last_move_disconnects`). NOT part of the
+  refuse signal — a disconnect is visible (a dangling pin), the count is cascade-sensitive (§5),
+  and the never-worse healers legitimately accept a baseline disconnect (test_wireedit_42).
 - P4: never asserted; relay may legally save diagonals ("electrically correct beats pretty").
 - P3/P5/P6/no-dead-copper: produced procedurally by the healer ladder, never verified.
 - P7: approximated by prot[] + novelty; never asserted globally.
@@ -380,8 +388,11 @@ declaring any wiring feature done, convert to xfail tests when touching the area
 
 1. **Named-rail blackout**: `fluid_wire_explicit_lab` hard-declines VDD/GND/bus copper in
    EVERY de-shorter → the whole 0094-0106 repair family is inert on real (labeled)
-   schematics; shorts save with only the log-only backstop. All historical fixtures used
-   auto `#net` copper. Jog could safely relax (bump inherits the lab).
+   schematics. All historical fixtures used auto `#net` copper. **MITIGATED (hardening B3)**:
+   such a short no longer SAVES silently — the END enforcement gate REFUSES the whole move and
+   leaves the schematic byte-identical (test_wireedit_54). The REPAIR gap remains: the de-shorters
+   still can't reshape named copper (the jog could safely relax — bump inherits the lab), so the
+   user gets a refusal, not a routed result. Relaxing the jog for named rails is the open follow-up.
 2. **Mixed-selection rot-free commits sight-unseen** (0093-D2): ~~both diagonal and
    pure-axis `leg_snap` arms require `fluid_startsel_wires==0`; only the rotated arm
    doesn't.~~ **PARTLY FIXED (hardening B2)**: a 4th arm now arms `leg_snap` for

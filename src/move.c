@@ -5983,10 +5983,17 @@ static void fluid_shove_connected_wire(int orthogonal_wiring)
   }
 }
 
-static void fluid_check_move_invariants(void)
+/* Runtime P1/P2 no-short/disconnect/device-merge check at move END. Publishes per-class counts to
+ * the fluid_last_move_* Tcl vars AND returns the P2 ELECTRICAL-MERGE count (shorts + dev_merges,
+ * 0 == none) -- the signal the END enforcement gate (B3) refuses on. Disconnects are published but
+ * NOT part of the return: a P1 disconnect is VISIBLE (a dangling pin), its partition-diff count is
+ * cascade-sensitive (WIRING.md §5 -- trust zero/nonzero, not magnitude), and the "never-worse"
+ * healers legitimately accept a baseline disconnect (test_wireedit_42); the sprint's target is the
+ * SILENT saved short/merge, so enforcement refuses on P2 only and disconnects stay log-only. */
+static int fluid_check_move_invariants(void)
 {
   int i, w, shorts = 0, disconnects = 0, dev_merges = 0;
-  if(!tclgetboolvar("fluid_editing")) { fluid_discard_snapshot(); return; }
+  if(!tclgetboolvar("fluid_editing")) { fluid_discard_snapshot(); return 0; }
   prepare_netlist_structs(0);
   /* --- P2: no-short/merge (wire-level, see comment above) --- */
   for(i = 0; i < xctx->instances; ++i) {
@@ -6030,6 +6037,7 @@ static void fluid_check_move_invariants(void)
   tclsetvar("fluid_last_move_violations", my_itoa(shorts));
   tclsetvar("fluid_last_move_disconnects", my_itoa(disconnects));
   tclsetvar("fluid_last_move_dev_merges", my_itoa(dev_merges));
+  return shorts + dev_merges;   /* P2 electrical-merge count = the enforcement refuse signal */
 }
 
 /* incremental_wire_reroute.md Phase II: restore the live schematic to the pristine (post-kiss,
@@ -6279,6 +6287,13 @@ void move_objects(int what, int merge, double dx, double dy)
    unsigned int alt_wid = 0, alt_iid = 0, alt_gid = 0, alt_tid = 0;
    double totdx = 0.0, totdy = 0.0;
    Undo_slot leg_snap, alt_snap;
+   /* B3 (hardening sprint Track B): gesture-pristine snapshot for the END enforcement backstop.
+    * Armed after push_undo (geometry is pristine there) on a fluid stretch with enforcement on;
+    * a refused move restores it and drops the undo push. Freed exactly once below. */
+   Undo_slot enf_snap;
+   int enf_snapped = 0, enf_mod_before = 0;
+   int enf_cur = 0, enf_head = 0, enf_tail = 0;   /* pre-push undo counters, to exactly invert the push on refuse */
+   unsigned int enf_wid = 0, enf_iid = 0, enf_gid = 0, enf_tid = 0;
 
    /* --- END-only pre-commit finalizers; a live fluid RUBBER step (commit_now) skips them and
     * jumps straight to the shared geometry commit below. --- */
@@ -6323,8 +6338,26 @@ void move_objects(int what, int merge, double dx, double dy)
    /* no undo push for MERGE ad PLACE, already done before */
    if(!xctx->kissing &&
       !(xctx->ui_state & (START_SYMPIN | STARTMERGE | PLACE_SYMBOL | PLACE_TEXT)) ) {
+     /* B3: capture the pre-push undo counters so a refuse can EXACTLY invert this push
+      * (restoring all three is correct even when push_undo no-ops under no_undo, or when the
+      * ring is saturated and tail advanced -- a plain cur--/head=cur would mis-handle both). */
+     int pre_cur = xctx->cur_undo_ptr, pre_head = xctx->head_undo_ptr, pre_tail = xctx->tail_undo_ptr;
      dbg(1, "move_objects(END): push undo state\n");
      xctx->push_undo();
+     /* B3: with the undo just pushed and the geometry still PRISTINE (a fluid RUBBER rolled it
+      * back at :6294; a scripted release has not applied its delta yet), snapshot for the END
+      * enforcement backstop. Gated to a fluid stretch with enforcement on -- a plain/non-fluid
+      * move pays nothing. enf_snapped implies this undo push happened, so a refused move may
+      * drop it. */
+     if(tclgetboolvar("fluid_editing") && tclgetboolvar("fluid_enforce_invariants") &&
+        xctx->stretch_select) {
+       enf_mod_before = xctx->modified;
+       enf_cur = pre_cur; enf_head = pre_head; enf_tail = pre_tail;
+       memset(&enf_snap, 0, sizeof(enf_snap));
+       mem_snapshot_alloc(&enf_snap); mem_serialize_slot(&enf_snap); enf_snapped = 1;
+       enf_wid = xctx->wire_id_counter; enf_iid = xctx->inst_id_counter;
+       enf_gid = xctx->gfx_id_counter;  enf_tid = xctx->text_id_counter;
+     }
    }
    if((xctx->ui_state & PLACE_SYMBOL)) {
      int n = xctx->sel_array[0].n;
@@ -7242,14 +7275,49 @@ void move_objects(int what, int merge, double dx, double dy)
      /* P3 write-through: a moved pin-name view records its new offset on the owning pin;
       * a pin moved without its view makes the view follow (Option B). */
      pin_views_reconcile_after_move();
-     /* hardening sprint Track B (doc/claude/suggestions/hardening_sprint_plan.md): the END
-      * enforcement switch. B1 plumbs it (readable from C, toggleable at runtime); B3 promotes
-      * fluid_check_move_invariants below from log-only to rollback-or-refuse when it is set. */
-     fltrace("FLTRACE move: fluid_enforce_invariants=%d (log-only backstop this build)\n",
-             tclgetboolvar("fluid_enforce_invariants"));
-     fluid_check_move_invariants(); /* Phase 1 runtime P1/P2 guard (log-only, gated on fluid_editing) */
-     set_modify(1); /* must be done before draw() if floaters are present to force cached values update */
+     /* hardening sprint Track B / step B3 (doc/claude/suggestions/hardening_sprint_plan.md):
+      * promote the runtime P1/P2 checker from log-only to ROLLBACK-OR-REFUSE. The healer ladder
+      * (attempt loop, de-shorters, straighteners) has run every repair it has; if a short / merge /
+      * disconnect STILL survives and enforcement is on, refuse the whole gesture: restore the
+      * gesture-pristine snapshot, drop the undo push, tell the user, leave the schematic
+      * byte-identical to pre-gesture. Kills the "silent saved corruption" failure mode (the
+      * 0094/0098/0099 class the checker merely PRINTED while it shipped). */
+     {
+       int enforce = tclgetboolvar("fluid_enforce_invariants");
+       int p2bad = fluid_check_move_invariants();  /* sets fluid_last_move_* AND returns shorts+dev_merges */
+       fltrace("FLTRACE move: fluid_enforce_invariants=%d p2_merges=%d enf_snapped=%d\n",
+               enforce, p2bad, enf_snapped);
+       if(enforce && enf_snapped && p2bad) {
+         /* REFUSE. Restore ritual mirrors the leg_snap rollback (:7171): preserve ui_state across
+          * mem_restore_slot (which zeroes it via unselect_all), put the START id counters back
+          * (deterministic tool-wire ids), rebuild sel_array + movelastsel (dce0bea6 overflow guard). */
+         unsigned int saved_ui = xctx->ui_state;
+         mem_restore_slot(&enf_snap, 0);
+         xctx->ui_state = saved_ui;
+         xctx->wire_id_counter = enf_wid;
+         xctx->inst_id_counter = enf_iid;
+         xctx->gfx_id_counter  = enf_gid;
+         xctx->text_id_counter = enf_tid;
+         xctx->need_reb_sel_arr = 1; rebuild_selected_array();
+         xctx->movelastsel = xctx->lastsel;
+         /* drop the gesture's undo push: restore the pre-push counter triple (both undo backends
+          * key off these shared xctx counters), so the spurious pristine entry (and any redo) is
+          * discarded and a saturated-ring tail / a no_undo no-op push are both handled exactly --
+          * the refused move never happened as far as undo is concerned. */
+         xctx->cur_undo_ptr = enf_cur; xctx->head_undo_ptr = enf_head; xctx->tail_undo_ptr = enf_tail;
+         set_modify(enf_mod_before ? 1 : 0);  /* restore pre-gesture modified flag: refuse changed nothing */
+         if(has_x)
+           tclvareval("if {[info procs ciw_echo] ne {}} {ciw_echo {"
+                      "move refused: would short/merge nets -- schematic left unchanged "
+                      "(set fluid_enforce_invariants 0 to override; see FLUID_TRACE)}}", NULL);
+         fltrace("FLTRACE move: ENFORCE REFUSED (P2 shorts+dev_merges=%d) -- "
+                 "restored pristine, dropped undo push\n", p2bad);
+       } else {
+         set_modify(1); /* must be before draw() if floaters present, to force cached-value update */
+       }
+     }
      draw();
+     if(enf_snapped) mem_snapshot_free(&enf_snap);
      xctx->rotatelocal=0;
    } else {
      /* incremental_wire_reroute.md Phase II live step: the reroute is committed into the live

@@ -50,19 +50,21 @@ xschem select instance $ra
 we_move_stretch 40 0                                          ;# pin M 0,30 -> 40,30 (onto net B)
 
 # --- record the predicate verdicts (assert-only, baseline pinned to reality) ---
-# OBSERVED (2026-07-05, today's fast path): the drag DOES short -- pin M lands on net B's end
-# and the netlister merges NETA+NETB into one physical net (all wires resolve to NETA; NETB's
-# name vanishes). Recorded baseline:
-#   P2 = RED   -- p2_no_short catches it: the intended net NETB no longer appears as a wire net.
-#   P1 = GREEN -- and this is the point of having BOTH: instance_nodemap ECHOES each label's
-#                 own lab= (LB still reports NETB), so the node-map snapshot is unchanged and
-#                 P1 is BLIND to a merge. P1 catches disconnects; P2 catches merges. F5 is the
-#                 fixture that proves they are complementary, not redundant.
-#   P4 = GREEN -- every leg stays axis-aligned.
-# Spec §8 predicted F5 RED (on the no-short axis) -- CONFIRMED for P2. When Phase 4 lands the
-# no-short guard, P2 flips GREEN and this fixture fails on purpose -> update the baseline.
+# ORIGINAL baseline (2026-07-05, pre-enforcement fast path): the drag DID short -- pin M lands on
+# net B's end and the netlister merged NETA+NETB (P2 = RED). The comment predicted: "when the
+# no-short guard lands, P2 flips GREEN and this fixture fails on purpose -> update the baseline."
+# 2026-07-11 (hardening Track B, B3): that guard landed as the END enforcement gate. NETB is a
+# NAMED net (lab_pin), so every de-shorter blackouts on it (fluid_wire_explicit_lab) and the short
+# is unrepairable; the enforcement gate now REFUSES the whole move (fluid_check_move_invariants ->
+# rollback-or-refuse) and restores RA to its pristine position -- NETA and NETB stay distinct
+# because the merging move never commits. Baseline updated RED -> GREEN as instructed.
+#   P2 = GREEN -- p2_no_short: the move is refused, so NETB survives as its own wire net.
+#   P1 = GREEN -- geometry is byte-identical to pre-gesture (refuse restored pristine).
+#   P4 = GREEN -- pristine is axis-aligned.
+# (P1/P2 remain complementary in general -- P1 catches disconnects, P2 catches merges; here both
+# read GREEN because the refuse leaves the pristine, already-distinct scene.)
 pred_verdict "F5.P1 connectivity invariant" [p1_netlist_invariant $snap] GREEN
-pred_verdict "F5.P2 no-short (NETA vs NETB)" [p2_no_short]               RED
+pred_verdict "F5.P2 no-short (NETA vs NETB)" [p2_no_short]               GREEN
 pred_verdict "F5.P4 orthogonality"           [p4_orthogonal]             GREEN
 
 we_result
