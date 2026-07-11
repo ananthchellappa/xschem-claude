@@ -1434,6 +1434,83 @@ static int point_on_moving_pin(double x, double y)
   return 0;
 }
 
+/* issue 0109: attempts >= 1 of the P2 safety net re-run the commit with the push-through slide
+ * OFF, so a push-through that damaged the pin-partition rolls back to the exact pre-0109 route. */
+static int fluid_slide_pushthrough_on = 1;
+
+/* Push-through corner slide (issue 0109). A follow wire PARALLEL to a pure-axis move whose pin
+ * is dragged strictly PAST the far (anchored) end used to just stretch straight THROUGH the
+ * anchor -- across the perpendicular riser footed there and across the sibling pin travelling on
+ * the same row -- welding distinct nets (before_8.sch: R18 dragged (-110,0) -> after_26.sch, the
+ * device shorted out). When every other wire at the anchor is a stationary PERPENDICULAR corner
+ * leg, promote the stub AND those legs to full SELECTED so they TRANSLATE with the pin (the
+ * riser vacates the row), and partial-select the wires cornered at each promoted leg's far end
+ * so they stretch to follow -- the same neighbour-drag rule the perpendicular corner-slide uses.
+ * Declines (plain stretch, pre-0109 geometry) when the anchor sits on any pin, is a collinear
+ * pass-through tap, dangles free, when a corner wire is itself part of the move, or on a
+ * future-landing hazard. Gated on fluid_editing + tool-owned-only follow set; the pure-axis P2
+ * safety net (leg_snap, armed for exactly this gate) partition-verifies the commit and retries
+ * with fluid_slide_pushthrough_on cleared if the promoted route damaged connectivity.
+ * See doc/claude/issues/0109-fluid-drag-through-anchor-collinear-short.md.
+ * Returns 1 when it promoted (caller re-runs its fixpoint scan). */
+static int fluid_slide_push_through(int n)
+{
+  int m, nperp = 0, dxnz = (xctx->deltax != 0.0);
+  double fx, fy, mx, my, a_m, a_f, d;
+  xWire * const wire = xctx->wire;
+
+  if(!fluid_slide_pushthrough_on) return 0;
+  if(!tclgetboolvar("fluid_editing")) return 0;
+  if(xctx->fluid_startsel_wires != 0) return 0;    /* tool-owned follow set only (matches the net's gate) */
+  if(wire[n].sel == SELECTED1) { fx = wire[n].x2; fy = wire[n].y2; mx = wire[n].x1; my = wire[n].y1; }
+  else                         { fx = wire[n].x1; fy = wire[n].y1; mx = wire[n].x2; my = wire[n].y2; }
+  if(!point_on_moving_pin(mx, my)) return 0;       /* stretch must be driven by a dragged pin */
+  d   = dxnz ? xctx->deltax : xctx->deltay;
+  a_m = dxnz ? mx : my;
+  a_f = dxnz ? fx : fy;
+  if((a_f - a_m) * d <= 0.0) return 0;             /* pin moves AWAY from the anchor: plain stretch */
+  if(fabs(d) <= fabs(a_f - a_m)) return 0;         /* pin stops at/before the anchor: plain stretch */
+  if(point_on_fixed_pin(fx, fy)) return 0;         /* anchored on a fixed pin: must jog to keep it */
+  if(point_on_moving_pin(fx, fy)) return 0;        /* both ends pin-driven: not a slide corner */
+  if(point_is_collinear_pass(fx, fy)) return 0;    /* straight run passes through: a tap, not a corner */
+  if(fluid_slide_future_hazard(n, fx, fy, mx, my)) return 0;
+  for(m = 0; m < xctx->wires; m++) {
+    int at1, at2, perp;
+    if(m == n) continue;
+    at1 = (wire[m].x1 == fx && wire[m].y1 == fy);
+    at2 = (wire[m].x2 == fx && wire[m].y2 == fy);
+    if(!at1 && !at2) continue;
+    if(wire[m].sel) return 0;                      /* corner wire already part of the move: decline */
+    perp = dxnz ? (wire[m].x1 == wire[m].x2 && wire[m].y1 != wire[m].y2)
+                : (wire[m].y1 == wire[m].y2 && wire[m].x1 != wire[m].x2);
+    if(!perp) return 0;                            /* parallel/diagonal continuation: decline */
+    if(fluid_slide_future_hazard(m, at1 ? wire[m].x2 : wire[m].x1,
+                                    at1 ? wire[m].y2 : wire[m].y1, fx, fy)) return 0;
+    nperp++;
+  }
+  if(nperp == 0) return 0;                         /* free dangling anchor: keep the plain stretch */
+  fltrace("FLTRACE slide: wire=%d PUSH-THROUGH anchor=(%g,%g) pin=(%g,%g) d=%g (%d corner leg(s))\n",
+          n, fx, fy, mx, my, d, nperp);
+  wire[n].sel = SELECTED;                          /* the stub translates with the pin */
+  for(m = 0; m < xctx->wires; m++) {
+    double ox, oy;
+    int q;
+    if(m == n) continue;
+    if(wire[m].x1 == fx && wire[m].y1 == fy)      { ox = wire[m].x2; oy = wire[m].y2; }
+    else if(wire[m].x2 == fx && wire[m].y2 == fy) { ox = wire[m].x1; oy = wire[m].y1; }
+    else continue;
+    wire[m].sel = SELECTED;                        /* each corner leg translates too */
+    for(q = 0; q < xctx->wires; q++) {             /* wires cornered at its far end stretch to follow */
+      if(q == m || q == n) continue;
+      if(wire[q].x1 == ox && wire[q].y1 == oy && !(wire[q].sel & (SELECTED | SELECTED1)))
+        select_wire(q, SELECTED1, 3, 0);
+      if(wire[q].x2 == ox && wire[q].y2 == oy && !(wire[q].sel & (SELECTED | SELECTED2)))
+        select_wire(q, SELECTED2, 3, 0);
+    }
+  }
+  return 1;
+}
+
 /* Corner-slide (wire-editing Phase 4, Issues D1/D2/D4 -> R7/R8). After a stretch
  * move has partially selected the wires attached to the moved pins (one endpoint
  * each, via select_attached_nets()), a wire that runs PERPENDICULAR to the move
@@ -1476,9 +1553,15 @@ static void compute_wire_slide(void)
       int has_corner = 0;
       /* only single-endpoint (stretching) wires; SELECTED (full) and 0 are skipped */
       if(wire[n].sel != SELECTED1 && wire[n].sel != SELECTED2) continue;
-      /* perpendicular to the move? vertical move -> horizontal wire, and vice-versa */
-      if(dynz && wire[n].y1 != wire[n].y2) continue;
-      if(dxnz && wire[n].x1 != wire[n].x2) continue;
+      /* perpendicular to the move? vertical move -> horizontal wire, and vice-versa.
+       * A wire PARALLEL to the move gets the push-through slide check (issue 0109): the pin
+       * dragged strictly past its anchor promotes the anchor's corner legs to translate along. */
+      if((dynz && wire[n].y1 != wire[n].y2) || (dxnz && wire[n].x1 != wire[n].x2)) {
+        if((dynz ? (wire[n].x1 == wire[n].x2 && wire[n].y1 != wire[n].y2)
+                 : (wire[n].y1 == wire[n].y2 && wire[n].x1 != wire[n].x2)) &&
+           fluid_slide_push_through(n)) changed = 1;
+        continue;
+      }
       /* far endpoint = the one NOT selected; moving endpoint = the selected one */
       if(wire[n].sel == SELECTED1) { fx = wire[n].x2; fy = wire[n].y2; mx = wire[n].x1; my = wire[n].y1; }
       else                         { fx = wire[n].x1; fy = wire[n].y1; mx = wire[n].x2; my = wire[n].y2; }
@@ -6097,6 +6180,22 @@ void move_objects(int what, int merge, double dx, double dy)
      memset(&leg_snap, 0, sizeof(leg_snap));
      mem_snapshot_alloc(&leg_snap); mem_serialize_slot(&leg_snap); leg_snapped = 1;
    }
+   /* issue 0109: arm the SAME P2 safety net for a PURE-AXIS fluid stretch (nlegs stays 1).
+    * The pure-axis path used to commit sight-unseen (`if(!leg_snapped) break;`): dragging a
+    * device ALONG the row holding both follow anchors slides each stub straight through the
+    * other net's riser foot and the sibling pin -- a two-contact-point merge no END pass can
+    * de-short (short-tail sees only partial improvement and reverts). The push-through slide
+    * (fluid_slide_push_through) removes the collision; this snapshot makes it VERIFIED --
+    * attempt 1 re-runs the ortho pass with the push-through OFF (exact pre-0109 route),
+    * attempt 2 is the rigid relay, and an intentional landing keeps the attempt-1 result as the
+    * diagonal path always did. Same gate as the decomposition arm (tool-owned-only follow set);
+    * a clean attempt 0 breaks out immediately, so non-shorting drags only pay the snapshot. */
+   else if(tclgetboolvar("fluid_editing") && xctx->stretch_select && orthogonal_wiring &&
+      xctx->move_rot == 0 && xctx->move_flip == 0 && xctx->fluid_startsel_wires == 0 &&
+      (totdx != 0.0 || totdy != 0.0)) {
+     memset(&leg_snap, 0, sizeof(leg_snap));
+     mem_snapshot_alloc(&leg_snap); mem_serialize_slot(&leg_snap); leg_snapped = 1;
+   }
    if(what & (RUBBER | END))
      fltrace("FLTRACE move: what=%s%s commit_now=%d totdx=%g totdy=%g fluid=%d stretch=%d ortho=%d rot=%d startsel_w=%d -> nlegs=%d\n",
          (what & END) ? "END" : "", (what & RUBBER) ? "RUBBER" : "", commit_now, totdx, totdy,
@@ -6112,6 +6211,9 @@ void move_objects(int what, int merge, double dx, double dy)
     * merge, AND disconnect), not the two-pin device check alone. A clean two-leg result (partition
     * preserved), or nlegs==1 from the start, breaks after attempt 0. */
    for(attempt = 0; attempt < 3; ++attempt) {
+   /* issue 0109: retry attempts run with the push-through slide OFF so a rolled-back promoted
+    * route falls back to the exact pre-0109 geometry (then the rigid relay). */
+   fluid_slide_pushthrough_on = (attempt == 0);
    for(leg = 0; leg < nlegs; ++leg) {
    /* issue 0085: attempt 2 runs the shared region with orthogonal relaying OFF (rigid diagonal
     * relay): place_moved_wire's else-branch just translates the moved endpoint, laying NO new
@@ -6672,12 +6774,22 @@ void move_objects(int what, int merge, double dx, double dy)
       * only when it makes the pin-partition equivalent to START again -- strict no-op on clean drags. */
      fluid_prune_shorting_anchor_tails();
      fluid_remove_redundant_loops();
-     if(rotfree) {
+     /* issue 0103: under rotation/flip the elbow's pristine-anchor far leg can survive trim as a
+      * same-net dangling tail (remove_move_orphan_wires needs the kept end on a MOVING pin).
+      * Delete-only + per-doom partition-verified, so it can only remove drag-produced jetsam or
+      * decline. Runs BEFORE the straighteners (issue 0110): the dangling tail holds the stale-
+      * anchor jog's endpoint at touch-degree 2, masking the staircase from the collapse below. */
+     if(!rotfree) fluid_prune_anchor_tails();
      /* issues 0089 + 0090: the loop-remover only DELETES a redundant same-net CYCLE. A far / multi-
       * gesture move leaves a same-net PATH (no cycle) with a redundant jog -- a same-side U-turn
       * (0089, before_3 R18 (-80,-60) -> after_9 #net2) or an opposite-side monotone STAIRCASE (0090,
       * before_3 -> after_10 #net1). Straighten both to a clean L (slide + verified tail-retract;
-      * partition-invariant + novelty-scoped; strict no-op otherwise). */
+      * partition-invariant + novelty-scoped; strict no-op otherwise).
+      * issue 0110: no longer rotfree-gated -- one ALT-R mid-drag left the stale-anchor staircase
+      * and U-loop of after_27.sch in the save. Every slide/retract is pin-partition-verified,
+      * novelty-scoped, user-protected (0091) and body-guarded against STATIONARY instances only,
+      * so the guards are geometric, not rotation-dependent (the 0098 facet B argument); worst
+      * case they decline and the pre-0110 route is kept. */
      fluid_straighten_reversals();
      /* issue 0092: an along-axis wire drag (grab a rung, pull it along its own axis) overshoots its
       * junction into a dangling stub + solder dot instead of SHOVING the perpendicular riser. Neither
@@ -6685,14 +6797,8 @@ void move_objects(int what, int merge, double dx, double dy)
       * user's own protected net) reaches it. Shove the riser column to the stub tip (preferred_12.sch),
       * or trim the stub when the riser is pin-anchored. Partition-verified + novelty-scoped; NOT prot[]-
       * gated (drag-created junk on the grabbed net is always removable). See
-      * doc/claude/issues/0092-fluid-axis-drag-overshoot-stub.md. */
+      * doc/claude/issues/0092-fluid-axis-drag-overshoot-stub.md. Un-gated from rotfree with 0110. */
      fluid_collapse_axis_overshoot_stub();
-     }
-     /* issue 0103: under rotation/flip the elbow's pristine-anchor far leg can survive trim as a
-      * same-net dangling tail (the aesthetic passes above that would retract it are rotfree-gated,
-      * remove_move_orphan_wires needs the kept end on a MOVING pin). Delete-only + per-doom
-      * partition-verified, so it can only remove drag-produced jetsam or decline. */
-     if(!rotfree) fluid_prune_anchor_tails();
      /* issue 0094 tail: the rip-up slide + straighten can leave a fresh dangling backbone stub past the
       * sibling pin (the follow-riser it was joined to is only deleted by straighten just above). Prune it
       * now, connectivity-verified. Gated on `ripped` so it never runs on a non-shorting drag. Runs under
@@ -6856,6 +6962,7 @@ void move_objects(int what, int merge, double dx, double dy)
    } /* end pchg block */
    } /* end for(attempt): P2 safety net */
    fluid_leg_future_dx = fluid_leg_future_dy = 0.0;  /* issue 0086: never leak past the gesture */
+   fluid_slide_pushthrough_on = 1;                   /* issue 0109: never leak past the gesture */
    if(diag_relay) xctx->manhattan_lines = saved_ml_lines;
    if(alt_snapped) mem_snapshot_free(&alt_snap);
    if(leg_snapped) mem_snapshot_free(&leg_snap);
