@@ -51,8 +51,10 @@ proc find_inst {name} {
 }
 proc pinnet {inst pin} { lindex [xschem instance_nodemap $inst $pin] 2 }  ;# "R18 P <net>" -> <net>
 
+set ::HERE [file dirname [file normalize [info script]]]
+
 proc load_fixture {} {
-  xschem load [file normalize tests/from_user/before_7.sch]
+  xschem load [file join $::HERE .. from_user before_7.sch]
   set ::intuitive_interface 1; xschem set intuitive_interface 1
   set ::enable_stretch 0
   set ::cadence_compat 1
