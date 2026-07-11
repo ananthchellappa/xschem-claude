@@ -1438,6 +1438,41 @@ static int point_on_moving_pin(double x, double y)
  * OFF, so a push-through that damaged the pin-partition rolls back to the exact pre-0109 route. */
 static int fluid_slide_pushthrough_on = 1;
 
+/* 0109 landing-guard helper (bred by wireedit 36d/38B): would moving a wire from span
+ * (ox1,oy1)-(ox2,oy2) to (nx1,ny1)-(nx2,ny2) introduce a NEW contact with a STATIONARY wire
+ * resolved to a net other than nf? Closed-bbox overlap is the touch test (shove-grade
+ * conservative: a new interior X crossing counts, matching fluid_seg_hits_foreign_wire's
+ * contract), but a pair that ALREADY touched pre-move is grandfathered -- a long riser that
+ * legitimately crosses a distant bus keeps crossing it wherever it lands (before_8: the #net3
+ * riser x-crosses the #net1 feed row both before and after the vacating slide; declining on
+ * that pre-existing crossing killed the 0109 repair). Requires a fresh wire[].node cache
+ * (caller runs prepare_netlist_structs(0)); NULL/empty/same-net nodes are fine to touch. */
+static int fluid_pushthrough_new_foreign_contact(double ox1, double oy1, double ox2, double oy2,
+                                                 double nx1, double ny1, double nx2, double ny2,
+                                                 const char *nf)
+{
+  int m;
+  double oxlo = ox1 < ox2 ? ox1 : ox2, oxhi = ox1 < ox2 ? ox2 : ox1;
+  double oylo = oy1 < oy2 ? oy1 : oy2, oyhi = oy1 < oy2 ? oy2 : oy1;
+  double nxlo = nx1 < nx2 ? nx1 : nx2, nxhi = nx1 < nx2 ? nx2 : nx1;
+  double nylo = ny1 < ny2 ? ny1 : ny2, nyhi = ny1 < ny2 ? ny2 : ny1;
+  for(m = 0; m < xctx->wires; ++m) {
+    double wx1, wy1, wx2, wy2, clo, chi, dlo, dhi;
+    const char *wn;
+    if(xctx->wire[m].sel) continue;                     /* moving wires are not obstacles */
+    wn = xctx->wire[m].node;
+    if(!wn || !wn[0]) continue;                         /* unresolved -> treat as same-net (skip) */
+    if(nf && nf[0] && !strcmp(wn, nf)) continue;        /* same net -> a legitimate touch */
+    wx1 = xctx->wire[m].x1; wy1 = xctx->wire[m].y1; wx2 = xctx->wire[m].x2; wy2 = xctx->wire[m].y2;
+    clo = wx1 < wx2 ? wx1 : wx2; chi = wx1 < wx2 ? wx2 : wx1;
+    dlo = wy1 < wy2 ? wy1 : wy2; dhi = wy1 < wy2 ? wy2 : wy1;
+    if(!(nxlo <= chi && clo <= nxhi && nylo <= dhi && dlo <= nyhi)) continue;  /* final: no touch */
+    if(oxlo <= chi && clo <= oxhi && oylo <= dhi && dlo <= oyhi) continue;     /* pre-existing */
+    return 1;
+  }
+  return 0;
+}
+
 /* Push-through corner slide (issue 0109). A follow wire PARALLEL to a pure-axis move whose pin
  * is dragged strictly PAST the far (anchored) end used to just stretch straight THROUGH the
  * anchor -- across the perpendicular riser footed there and across the sibling pin travelling on
@@ -1489,6 +1524,57 @@ static int fluid_slide_push_through(int n)
     nperp++;
   }
   if(nperp == 0) return 0;                         /* free dangling anchor: keep the plain stretch */
+  /* Landing guard (wireedit 36d/38B regression of the first 0109 landing): no wire this
+   * promotion reshapes may make a NEW contact with stationary foreign-net copper. The leg_snap
+   * partition verify downstream is PIN-indexed -- it cannot see a pin-less or label-only net, so
+   * a promoted leg T-ing onto a foreign wire endpoint sails through it (test_wireedit_36 shape d
+   * welded NY into NA; only the log-only backstop noticed). Contact = closed-bbox overlap
+   * (shove-grade conservative: a new interior X crossing also declines, test_wireedit_38 B), but
+   * pre-existing pair contacts are grandfathered -- see fluid_pushthrough_new_foreign_contact.
+   * ANY new contact declines to the plain-stretch baseline (never worse; the attempt ladder still
+   * guards the pin-visible failure modes). The follower spans may be diagonal pre-elbow; their
+   * bbox is a conservative superset of the re-laid L. prepare_netlist_structs(0) is only paid
+   * AFTER every structural gate passed (rare), never on a plain drag. */
+  {
+    const char *nf;
+    double ddx = xctx->deltax, ddy = xctx->deltay;
+    prepare_netlist_structs(0);        /* fresh wire[].node cache; geometry is untouched so far */
+    nf = wire[n].node;
+    if(fluid_pushthrough_new_foreign_contact(wire[n].x1, wire[n].y1, wire[n].x2, wire[n].y2,
+                                             wire[n].x1 + ddx, wire[n].y1 + ddy,
+                                             wire[n].x2 + ddx, wire[n].y2 + ddy, nf)) {
+      fltrace("FLTRACE slide: wire=%d push-through DECLINE (stub lands on foreign wire)\n", n);
+      return 0;
+    }
+    for(m = 0; m < xctx->wires; m++) {
+      double ox, oy;
+      int q;
+      if(m == n) continue;
+      if(wire[m].x1 == fx && wire[m].y1 == fy)      { ox = wire[m].x2; oy = wire[m].y2; }
+      else if(wire[m].x2 == fx && wire[m].y2 == fy) { ox = wire[m].x1; oy = wire[m].y1; }
+      else continue;
+      if(fluid_pushthrough_new_foreign_contact(wire[m].x1, wire[m].y1, wire[m].x2, wire[m].y2,
+                                               wire[m].x1 + ddx, wire[m].y1 + ddy,
+                                               wire[m].x2 + ddx, wire[m].y2 + ddy, nf)) {
+        fltrace("FLTRACE slide: wire=%d push-through DECLINE (corner leg %d lands on foreign wire)\n",
+                n, m);
+        return 0;
+      }
+      for(q = 0; q < xctx->wires; q++) {           /* the stretch-followers' final spans too */
+        double qx, qy;
+        if(q == m || q == n) continue;
+        if(wire[q].x1 == ox && wire[q].y1 == oy)      { qx = wire[q].x2; qy = wire[q].y2; }
+        else if(wire[q].x2 == ox && wire[q].y2 == oy) { qx = wire[q].x1; qy = wire[q].y1; }
+        else continue;
+        if(fluid_pushthrough_new_foreign_contact(ox, oy, qx, qy,
+                                                 ox + ddx, oy + ddy, qx, qy, nf)) {
+          fltrace("FLTRACE slide: wire=%d push-through DECLINE (follower %d lands on foreign wire)\n",
+                  n, q);
+          return 0;
+        }
+      }
+    }
+  }
   fltrace("FLTRACE slide: wire=%d PUSH-THROUGH anchor=(%g,%g) pin=(%g,%g) d=%g (%d corner leg(s))\n",
           n, fx, fy, mx, my, d, nperp);
   wire[n].sel = SELECTED;                          /* the stub translates with the pin */

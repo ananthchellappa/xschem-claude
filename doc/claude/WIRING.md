@@ -238,7 +238,7 @@ Hard ordering edges (all documented in-code, all discovered by bugs):
 |---|---|---|---|---|
 | `place_moved_wire` elbow flip :1173 | Ph-III/0085 | partial-sel, snapshot present | pick less-hazardous L (BRIDGE/MOVPIN/FPIN/STRAY/SPANLOSS via `fluid_ml_hazards` :4709) | severity compare only |
 | P6 bias `fluid_p6_bias_ml` :2179 | P6 | many declines (see :2183-2215) | prefer along-normal exit L | veto-based |
-| `fluid_slide_push_through` :1456 | 0109 | pure-axis, pin dragged past anchor | promote stub+legs to translate | future-hazard decline |
+| `fluid_slide_push_through` :1456 | 0109/0112 | pure-axis, pin dragged past anchor | promote stub+legs to translate | future-hazard + NEW-foreign-wire-contact decline (0112: bbox touch, pre-existing pair contact grandfathered — the leg_snap verify is label-blind and cannot catch these) |
 | `fluid_shove_connected_wire` :5709 | shove decision | pure-axis, rot-free | shove perpendicular stub/riser | partition |
 | `fluid_reroute_around_obstacles` :5148 | 0083 | one moving-pin endpoint, straddle detected | 3-leg detour outside body, outward row search | 9 guards/candidate, declines to baseline |
 | `fluid_offset_foreign_pin_landing` :5467 | 0083 | pure-axis leg | V-H-V offset solder joint | partition |
@@ -324,7 +324,7 @@ move.c:3671-3672). Don't "unify" them without preserving the domains.
 A **Unverified commit path** (0085/0093/0102/0109) · B **Trigger-bound detection** — the
 contact matrix {endpoint-on-pin, pin-on-span, endpoint-on-span, collinear} × {own/foreign}
 × {moving/stationary} × {perp/parallel} was never enumerated; each cell found by a user
-(0083/0085/0094/0098/0105/0106/0109) · C **Stale anchor** — pristine-anchor-by-design +
+(0083/0085/0094/0098/0105/0106/0109; 0112 found by the A3 audit fold-in) · C **Stale anchor** — pristine-anchor-by-design +
 no liveness concept for vacated points (0103/0104/0108/0111) · D **Decline residue** —
 cleanup accreted shape-by-shape (0088/0089/0090/0092/0096/0111) · E **Transform
 blindness** — scattered `+delta` (0099/0100/0101/0102) · F **Selection/ownership debt** —
