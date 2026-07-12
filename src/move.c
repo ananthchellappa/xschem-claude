@@ -229,24 +229,34 @@ static void update_symbol_bboxes(short rot, short flip)
 static void draw_selection_impl(GC g, int interruptable);
 
 /* incremental_wire_reroute.md Phase II: while a fluid stretch RUBBER step has LIVE-COMMITTED the
- * moved geometry (xctx->fluid_reroute_dirty), the inst/wire/text coords ALREADY include the move
- * delta. xctx->deltax/deltay are deliberately kept equal to the accumulated total so the eventual
+ * moved geometry (xctx->fluid_reroute_dirty), the inst/wire/text coords ALREADY include the FULL
+ * move transform -- the translation delta AND (Case 4b: a rotated/flipped stretch reroutes live)
+ * the ROTATION(move_rot,move_flip) baked in by the shared commit block. xctx->deltax/deltay are
+ * deliberately kept equal to the accumulated total (and move_rot/move_flip kept set) so the eventual
  * interactive END (move_objects(END,0,0,0)) can consume them (move.c live-commit tail), but the
- * selection OVERLAY must NOT re-add that delta: an external full redraw (window Expose, hover,
- * `xschem redraw`, crosshair) firing BETWEEN RUBBER frames -- when delta has been restored to the
- * total but the geometry is already committed -- would otherwise paint the ghost at origin+2*delta,
- * a greyed duplicate one full displacement beyond the real instance. Zero the move-delta for the
- * duration of the overlay draw and restore it after, so END still sees the accumulated total. The
- * wrapper (vs an inline zero) guarantees the restore on every early-return path inside the body
+ * selection OVERLAY must NOT re-apply either: draw_selection_impl draws each object at
+ * ROTATION(move_rot,move_flip,pivot,coord)+delta, so on already-committed coords that re-adds the
+ * transform. An external full redraw (window Expose, hover, `xschem redraw`, crosshair) firing
+ * BETWEEN RUBBER frames -- or the live step's own repaint tail -- would otherwise paint a ghost one
+ * displacement beyond the real instance (translation: origin+2*delta, issue 0080) and, once a
+ * mid-drag ALT-R/F rotated the committed geometry, a SECOND rotation about the pivot lands the
+ * selection-highlight ghost in a wholly wrong place (issue 0115). Neutralize the WHOLE move
+ * transform (delta + rot + flip + rotatelocal) for the duration of the overlay draw so it paints the
+ * committed objects as-is, and restore after so END still sees the accumulated total. The wrapper
+ * (vs an inline zero) guarantees the restore on every early-return path inside the body
  * (interruptable resume, tiled-fill fast path). Gated on fluid_reroute_dirty, which is only ever set
- * when fluid_editing was on at START => default-off is byte-identical. */
+ * when fluid_editing was on at START => default-off is byte-identical (and the translation-only
+ * fluid path already has move_rot==move_flip==0, so it stays byte-identical to the 0080 fix). */
 void draw_selection(GC g, int interruptable)
 {
   if(xctx->fluid_reroute_dirty) {
     double sv_dx = xctx->deltax, sv_dy = xctx->deltay;
+    short sv_rot = xctx->move_rot, sv_flip = xctx->move_flip, sv_rotlocal = xctx->rotatelocal;
     xctx->deltax = 0.0; xctx->deltay = 0.0;
+    xctx->move_rot = 0; xctx->move_flip = 0; xctx->rotatelocal = 0;
     draw_selection_impl(g, interruptable);
     xctx->deltax = sv_dx; xctx->deltay = sv_dy;
+    xctx->move_rot = sv_rot; xctx->move_flip = sv_flip; xctx->rotatelocal = sv_rotlocal;
   } else {
     draw_selection_impl(g, interruptable);
   }
@@ -6697,16 +6707,35 @@ void move_objects(int what, int merge, double dx, double dy)
   if(what & ROTATELOCAL) {
    xctx->rotatelocal=1;
   }
-  if(what & ROTATE) {
-   draw_selection(xctx->gctiled,0);
-   xctx->move_rot= (xctx->move_rot+1) & 0x3;
-   update_symbol_bboxes(xctx->move_rot, xctx->move_flip);
-  }
-  if(what & FLIP)
   {
-   draw_selection(xctx->gctiled,0);
-   xctx->move_flip = !xctx->move_flip;
-   update_symbol_bboxes(xctx->move_rot, xctx->move_flip);
+   /* issue 0116 bug 1: during a LIVE fluid stretch the moved geometry is committed each RUBBER
+    * step, so a bare move_rot/move_flip bump repaints nothing until the NEXT motion re-commits --
+    * the user had to jiggle the mouse to see a mid-drag ALT-R/ALT-F. Detect the live-stretch case
+    * so ROTATE/FLIP can force an immediate re-commit + repaint below. (A non-fluid move keeps its
+    * overlay-XOR erase + bottom draw_selection redraw, which already shows the transform at once.) */
+   int fluid_live = tclgetboolvar("fluid_editing") && (xctx->ui_state & STARTMOVE) &&
+                    xctx->stretch_select && xctx->fluid_reroute_active;
+   if(what & ROTATE) {
+    if(!fluid_live) draw_selection(xctx->gctiled,0);
+    xctx->move_rot= (xctx->move_rot+1) & 0x3;
+    update_symbol_bboxes(xctx->move_rot, xctx->move_flip);
+   }
+   if(what & FLIP)
+   {
+    if(!fluid_live) draw_selection(xctx->gctiled,0);
+    xctx->move_flip = !xctx->move_flip;
+    update_symbol_bboxes(xctx->move_rot, xctx->move_flip);
+   }
+   if((what & (ROTATE | FLIP)) && fluid_live) {
+    /* Re-commit NOW: roll back to pristine and fall into the shared commit block via commit_now,
+     * which re-applies ROTATION(move_rot,move_flip)+delta and repaints. The END rolls back to
+     * pristine and re-applies (total delta + final move_rot/flip), so this extra intermediate
+     * commit does NOT change the dropped result (release==stepwise). Mirrors the RUBBER live step. */
+    xctx->x2 = xctx->mousex_snap; xctx->y2 = xctx->mousey_snap;
+    xctx->deltax = xctx->x2 - xctx->x1; xctx->deltay = xctx->y2 - xctx->y1;
+    if(xctx->fluid_reroute_dirty) fluid_reroute_restore();
+    commit_now = 1;
+   }
   }
   if((what & END) || commit_now)     /* commit the move: real END, or a live fluid RUBBER step */
   {

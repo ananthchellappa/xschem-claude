@@ -353,9 +353,18 @@ follow set lives in `wire.sel`; Phase-I decoupling never built (0079/0091/0093/0
 0113: keyboard-`m` placement commits on the PRESS, so the RELEASE's cadence deselect-others
 collapsed the moved multi-selection; latched `place_click_committed`) · G **Decomposition
 future-blindness** (0081/0086/0087) · H **Blanket gates / ordering** (0091/0098-B/0110/0103)
-· I one-offs (0080/0082/0084) · J **Transform altitude** — a per-object (`ROTATELOCAL`)
-mid-drag transform applied to a multi-object group instead of a rigid group op about the
-shared pivot (0114; coerce ALT-R/F/V to group ROTATE/FLIP when >1 user object selected).
+· I **Live-commit overlay must be identity** (0080/0082/0084/0115) — under
+`fluid_reroute_dirty` the geometry is ALREADY committed with the full move transform, so
+`draw_selection()` must paint it with NO extra transform. 0080 zeroed the delta (translation
+ghost at 2·δ); 0115 also zeroes `move_rot/move_flip/rotatelocal` (a mid-drag ALT-R re-rotated the
+committed overlay about the pivot → highlight ghost hundreds of units off). Any NEW move-preview
+state added to `draw_selection_impl` must be neutralized in the same wrapper. · J **Transform
+altitude** — a per-object (`ROTATELOCAL`) transform applied to a multi-object group instead of a
+rigid group op about a shared pivot (0114: in-drag ALT-R/F/V; 0116-bug2: standalone ALT-R/F, group
+pivot = grid-snapped selection bbox centre — coerce to group ROTATE/FLIP when >1 user object). Also
+**transform latency** — a mid-drag ALT-R/F during a LIVE fluid stretch must `commit_now` (re-run the
+RUBBER commit) so it repaints without a mouse jiggle; a bare move_rot/flip bump only shows on the
+next motion (0116-bug1; release==stepwise keeps the END result identical).
 
 Open issues as of f1692607: **0079** (follow-set drawn as selection), **0084** (replay
 grep), **0101** (rotatelocal H1/H2/H3 tears).

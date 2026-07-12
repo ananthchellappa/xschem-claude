@@ -4318,6 +4318,36 @@ static int connected_drag_group_transform(void)
   return (nonwire + userwires) > 1;
 }
 
+/* issue 0116 bug 2: standalone (non-drag) Alt-R / Alt-F on the CURRENT selection. With >1 object
+ * selected, transform the WHOLE selection as one rigid body about its grid-snapped bounding-box
+ * centre (Cadence "treat the selection as one object" -- an in-place group rotate/flip), NOT each
+ * object spun about its own origin (the old unconditional ROTATELOCAL). A single object keeps the
+ * per-object in-place transform about its own 0,0. `what` is ROTATE or FLIP. Self-logs the matching
+ * replay verb (group -> `xschem rotate|flip x y`; single -> `xschem rotate_in_place|flip_in_place`).
+ * Caller has ensured lastsel>0 and passed the readonly guard. */
+static void standalone_group_transform(int what, double c_snap)
+{
+  if(connected_drag_group_transform()) {
+    xRect bb; double px, py;
+    calc_drawing_bbox(&bb, 1);
+    px = my_round(((bb.x1 + bb.x2) * 0.5) / c_snap) * c_snap;
+    py = my_round(((bb.y1 + bb.y2) * 0.5) / c_snap) * c_snap;
+    xctx->mx_double_save = xctx->mousex_snap = px;
+    xctx->my_double_save = xctx->mousey_snap = py;
+    move_objects(START,0,0,0);
+    move_objects(what,0,0,0);           /* group form: ROTATELOCAL dropped -> shared pivot (x1,y1) */
+    move_objects(END,0,0,0);
+    log_action("xschem %s %.16g %.16g", (what & ROTATE) ? "rotate" : "flip", px, py);
+  } else {
+    xctx->mx_double_save = xctx->mousex_snap;
+    xctx->my_double_save = xctx->mousey_snap;
+    move_objects(START,0,0,0);
+    move_objects(what | ROTATELOCAL,0,0,0);
+    move_objects(END,0,0,0);
+    log_action((what & ROTATE) ? "xschem rotate_in_place" : "xschem flip_in_place");
+  }
+}
+
 static void handle_key_press(int event, KeySym key, int state, int rstate, int mx, int my,
                              int button, int aux, int infix_interface, int enable_stretch,
                              const char *win_path, double c_snap,
@@ -4627,17 +4657,11 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
             xctx->menu_pending_transform = PENDING_TR_FLIP_IP;
             statusmsg("Flip in place: click an object to flip", 1);
           } else {
-            xctx->mx_double_save=xctx->mousex_snap;
-            xctx->my_double_save=xctx->mousey_snap;
-            move_objects(START,0,0,0);
-            move_objects(FLIP|ROTATELOCAL,0,0,0);
-            move_objects(END,0,0,0);
-            /* self-log the keyboard shortcut at its inline handler (issue 0068): Alt-F
-             * flip-in-place. Standalone branch only -- readonly already rejected above,
-             * and the during-move/copy variants are gesture-logged by the move END
-             * (0069). Live keypress reaches only here (never the scheduler branch), so
-             * no double-log; replay sources `xschem flip_in_place` into the scheduler. */
-            log_action("xschem flip_in_place");
+            /* issue 0116 bug 2: multi-object selection flips as one rigid body (group, about the
+             * grid-snapped bbox centre); a single object keeps its own-origin in-place flip.
+             * Self-logs at the helper (issue 0068): standalone reaches only here, never the
+             * scheduler branch, so no double-log; replay sources the verb into the scheduler. */
+            standalone_group_transform(FLIP, c_snap);
           }
         }
       }
@@ -5140,12 +5164,9 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
             xctx->menu_pending_transform = PENDING_TR_ROTATE_IP;
             statusmsg("Rotate in place: click an object to rotate", 1);
           } else {
-            xctx->mx_double_save=xctx->mousex_snap;
-            xctx->my_double_save=xctx->mousey_snap;
-            move_objects(START,0,0,0);
-            move_objects(ROTATE|ROTATELOCAL,0,0,0);
-            move_objects(END,0,0,0);
-            log_action("xschem rotate_in_place"); /* self-log Alt-R shortcut (issue 0068) */
+            /* issue 0116 bug 2: multi-object selection rotates as one rigid body (group, about the
+             * grid-snapped bbox centre); a single object keeps its own-origin in-place rotate. */
+            standalone_group_transform(ROTATE, c_snap);
           }
         }
       }
