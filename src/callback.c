@@ -4294,6 +4294,30 @@ static void handle_motion_notify(int event, KeySym key, int state, int rstate, i
     return;
 }
 
+/* issue 0114: is the in-flight move/copy a MULTI-OBJECT selection? A rotate/flip during a
+ * connected drag must transform the WHOLE selection rigidly about a shared pivot (Cadence
+ * Stretch semantics, wires kept connected), NOT spin each object about its own origin
+ * (ROTATELOCAL). A follow-set (select_attached_nets) only ever adds WIREs, so every selected
+ * non-wire object is user-owned; the user's own wires are counted by fluid_startsel_wires during
+ * a fluid stretch, or are simply every selected wire for a rigid (non-stretch) move. Scans the
+ * object arrays directly (not sel_array) so it is correct even if need_reb_sel_arr is unset
+ * mid-gesture. >1 user object => coerce ROTATELOCAL to the group ROTATE/FLIP form. */
+static int connected_drag_group_transform(void)
+{
+  int i, c, nonwire = 0, wires = 0, userwires;
+  for(i = 0; i < xctx->instances; ++i) if(xctx->inst[i].sel) ++nonwire;
+  for(i = 0; i < xctx->texts;     ++i) if(xctx->text[i].sel) ++nonwire;
+  for(c = 0; c < cadlayers; ++c) {
+    for(i = 0; i < xctx->arcs[c];     ++i) if(xctx->arc[c][i].sel)  ++nonwire;
+    for(i = 0; i < xctx->rects[c];    ++i) if(xctx->rect[c][i].sel) ++nonwire;
+    for(i = 0; i < xctx->lines[c];    ++i) if(xctx->line[c][i].sel) ++nonwire;
+    for(i = 0; i < xctx->polygons[c]; ++i) if(xctx->poly[c][i].sel) ++nonwire;
+  }
+  for(i = 0; i < xctx->wires; ++i) if(xctx->wire[i].sel) ++wires;
+  userwires = xctx->stretch_select ? xctx->fluid_startsel_wires : wires;
+  return (nonwire + userwires) > 1;
+}
+
 static void handle_key_press(int event, KeySym key, int state, int rstate, int mx, int my,
                              int button, int aux, int infix_interface, int enable_stretch,
                              const char *win_path, double c_snap,
@@ -4589,8 +4613,12 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
       }
       else if(EQUAL_MODMASK) { /* flip objects around their anchor points 20171208 */
         if(readonly_block()) break;
-        if(xctx->ui_state & STARTMOVE) move_objects(FLIP|ROTATELOCAL,0,0,0);
-        else if(xctx->ui_state & STARTCOPY) copy_objects(FLIP|ROTATELOCAL);
+        /* issue 0114: multi-object connected drag flips the whole selection as a group
+         * (shared pivot); a single object keeps the per-object in-place flip. */
+        if(xctx->ui_state & STARTMOVE)
+          move_objects(FLIP | (connected_drag_group_transform() ? 0 : ROTATELOCAL),0,0,0);
+        else if(xctx->ui_state & STARTCOPY)
+          copy_objects(FLIP | (connected_drag_group_transform() ? 0 : ROTATELOCAL));
         else {
           rebuild_selected_array();
           if(xctx->lastsel == 0) { /* Cases 1 & 3: arm prompt-for-object flip-in-place */
@@ -5097,8 +5125,13 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
       }
       else if(EQUAL_MODMASK) { /* rotate objects around their anchor points 20171208 */
         if(readonly_block()) break;
-        if(xctx->ui_state & STARTMOVE) move_objects(ROTATE|ROTATELOCAL,0,0,0);
-        else if(xctx->ui_state & STARTCOPY) copy_objects(ROTATE|ROTATELOCAL);
+        /* issue 0114: a multi-object connected drag rotates the whole selection as a group
+         * (shared pivot, ROTATELOCAL dropped) so wires stay connected; a single object keeps
+         * the per-object in-place rotate (rotatelocal about its own origin). */
+        if(xctx->ui_state & STARTMOVE)
+          move_objects(ROTATE | (connected_drag_group_transform() ? 0 : ROTATELOCAL),0,0,0);
+        else if(xctx->ui_state & STARTCOPY)
+          copy_objects(ROTATE | (connected_drag_group_transform() ? 0 : ROTATELOCAL));
         else {
           rebuild_selected_array();
           if(xctx->lastsel == 0) { /* Cases 1 & 3: arm prompt-for-object rotate-in-place */
@@ -5320,15 +5353,19 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
       }
       else if(EQUAL_MODMASK) { /* vertical flip objects around their anchor points */
         if(readonly_block()) break;
+        /* issue 0114: multi-object connected drag = group vertical flip (shared pivot);
+         * single object keeps the per-object in-place flip. rl applied to all three steps. */
         if(xctx->ui_state & STARTMOVE) {
-          move_objects(ROTATE|ROTATELOCAL,0,0,0);
-          move_objects(ROTATE|ROTATELOCAL,0,0,0);
-          move_objects(FLIP|ROTATELOCAL,0,0,0);
+          int rl = connected_drag_group_transform() ? 0 : ROTATELOCAL;
+          move_objects(ROTATE|rl,0,0,0);
+          move_objects(ROTATE|rl,0,0,0);
+          move_objects(FLIP|rl,0,0,0);
         }
         else if(xctx->ui_state & STARTCOPY) {
-          copy_objects(ROTATE|ROTATELOCAL);
-          copy_objects(ROTATE|ROTATELOCAL);
-          copy_objects(FLIP|ROTATELOCAL);
+          int rl = connected_drag_group_transform() ? 0 : ROTATELOCAL;
+          copy_objects(ROTATE|rl);
+          copy_objects(ROTATE|rl);
+          copy_objects(FLIP|rl);
         }
         else {
           rebuild_selected_array();
@@ -6033,7 +6070,18 @@ static void handle_button_press(int event, int state, int rstate, KeySym key, in
      if(check_menu_start_commands(state, c_snap, mx, my)) return;
 
      /* complete the pending STARTWIRE, STARTRECT, STARTZOOM, STARTCOPY ... operations */
-     if(end_place_move_copy_zoom()) return;
+     {
+       /* issue 0113: a verb-noun / keyboard 'm' (or 'c') move started on a PRIOR event, so this
+        * press is the PLACEMENT click -- end_place_move_copy_zoom() commits it here (move END).
+        * Latch it so the matching RELEASE skips the cadence deselect-others (and every click-select)
+        * path: with STARTMOVE already cleared and mouse_moved reset to 0 at press, that path would
+        * otherwise collapse a moved multi-selection down to the single object under the cursor. */
+       int had_move = (xctx->ui_state & (STARTMOVE | STARTCOPY)) ? 1 : 0;
+       if(end_place_move_copy_zoom()) {
+         if(had_move) xctx->place_click_committed = 1;
+         return;
+       }
+     }
 
      /* Button1Press to select objects */
      if(!excl && !(xctx->ui_state & STARTSELECT)) {
@@ -6293,6 +6341,19 @@ static void handle_button_release(int event, KeySym key, int state, int button, 
    /* cadence_compat forces the intuitive interface (matches handle_button_press),
     * spec doc/claude/specs/cadence_modifier_drag.md */
    int intuitive = xctx->intuitive_interface || cadence_compat;
+   /* issue 0113: consume the "placement press committed a move/copy" latch exactly once, at the
+    * TOP of the release so it is cleared on EVERY exit path -- BEFORE the waves_selected early
+    * return below (a placement dropped over a waveform graph routes there; the press cleared
+    * STARTMOVE so waves_selected, skipped on the press, now fires -- review wf_fdd928d4). When set,
+    * this release ends a verb-noun / keyboard 'm' placement whose move already committed on the
+    * matching PRESS; force mouse_moved=1 so the cadence deselect-others path (guarded !mouse_moved)
+    * is suppressed and does not collapse the moved multi-selection. Cleared unconditionally so it
+    * can never leak to a later, unrelated click. */
+   {
+     int placed_committed = xctx->place_click_committed;
+     xctx->place_click_committed = 0;
+     if(placed_committed) xctx->mouse_moved = 1; /* mark as a completed gesture, not a bare click */
+   }
    if(waves_selected(event, key, state, button)) {
      waves_callback(event, mx, my, key, button, aux, state);
      return;

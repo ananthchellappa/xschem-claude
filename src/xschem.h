@@ -1283,6 +1283,11 @@ typedef struct {
   unsigned int *drag_sel_id;      /* session-stable ids of the pre-press selection */
   short *drag_sel_type;           /* parallel: object type (WIRE/ELEMENT/xTEXT/xRECT/LINE/POLYGON/ARC) */
   short *drag_sel_col;            /* parallel: layer col for per-layer types, else 0 */
+  int place_click_committed;      /* issue 0113: a Button1 PRESS completed an in-flight move/copy
+                                   * (verb-noun / keyboard 'm' placement). The matching RELEASE must
+                                   * NOT run the cadence deselect-others or any click-select logic --
+                                   * that would collapse the just-moved multi-selection. Latched at
+                                   * the press (end_place_move_copy_zoom), consumed once at release. */
   /* incremental_wire_reroute.md Phase II (per-snap-step reroute, restore-and-reapply). A fluid
    * stretch drag snapshots the whole pristine (post-kiss, pre-delta) schematic here at move START;
    * each qualifying move_objects(RUBBER) step restores it and re-applies the current TOTAL drag

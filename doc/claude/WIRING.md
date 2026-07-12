@@ -349,9 +349,13 @@ contact matrix {endpoint-on-pin, pin-on-span, endpoint-on-span, collinear} × {o
 no liveness concept for vacated points (0103/0104/0108/0111) · D **Decline residue** —
 cleanup accreted shape-by-shape (0088/0089/0090/0092/0096/0111) · E **Transform
 blindness** — scattered `+delta` (0099/0100/0101/0102) · F **Selection/ownership debt** —
-follow set lives in `wire.sel`; Phase-I decoupling never built (0079/0091/0093/0095/0097)
-· G **Decomposition future-blindness** (0081/0086/0087) · H **Blanket gates / ordering**
-(0091/0098-B/0110/0103) · I one-offs (0080/0082/0084).
+follow set lives in `wire.sel`; Phase-I decoupling never built (0079/0091/0093/0095/0097/0113 —
+0113: keyboard-`m` placement commits on the PRESS, so the RELEASE's cadence deselect-others
+collapsed the moved multi-selection; latched `place_click_committed`) · G **Decomposition
+future-blindness** (0081/0086/0087) · H **Blanket gates / ordering** (0091/0098-B/0110/0103)
+· I one-offs (0080/0082/0084) · J **Transform altitude** — a per-object (`ROTATELOCAL`)
+mid-drag transform applied to a multi-object group instead of a rigid group op about the
+shared pivot (0114; coerce ALT-R/F/V to group ROTATE/FLIP when >1 user object selected).
 
 Open issues as of f1692607: **0079** (follow-set drawn as selection), **0084** (replay
 grep), **0101** (rotatelocal H1/H2/H3 tears).
@@ -515,7 +519,10 @@ FLUID_TRACE_DUMP (wire-array dump), FLUID_IDEMPOTENT_CHECK (fixpoint oracle; `ru
 --idempotent`). All default-off / byte-identical.
 `select.c`: select_attached_nets :1579, select_wire fold :1040.
 `callback.c`: cadence drag :6213-6268, 'm'/'M' :4796-4891, mid-drag transforms
-:4592/:5100/:5124.
+:4592/:5100/:5124 (ALT-R/F/V coerce ROTATELOCAL→group via `connected_drag_group_transform`
+when >1 user object, issue 0114); placement-commit latch `place_click_committed`
+set at the end_place_move_copy_zoom press site, consumed at handle_button_release top
+(forces mouse_moved=1 to suppress the cadence deselect-others, issue 0113).
 `check.c`: trim_wires :182, maintain_wire_segments :725, break_wires_at_attach_points :672.
 `store.c`: wire funnel :339-468. `netlist.c`: prepare_netlist_structs :1663,
 get_inst_pin_coord :753, touch → clip.c:234. `xschem.h`: xWire :497, ROTATION :386,
