@@ -3341,6 +3341,15 @@ static ActionDef action_registry[] = {
    * schematic content. See doc/claude/specs/alt2_toggle_view.md. */
   { "view.toggle_view_type", NULL, "alt2_toggle_view",
     "Open the alternate view (schematic<->symbol) of the current cell" },
+  /* Schematic/symbol Add-Pin (doc/claude/specs/schematic_add_pin.md): while a pin preview is
+   * attached to the cursor, cycle its direction/type (input/output/inout, i.e.
+   * ipin<->opin<->iopin in a schematic) and re-arm the current name. Tcl-backed
+   * (addpin::cycle_type). Default chord Ctrl+Button2 (seeded in init_input_bindings, mirrored
+   * in mousebindings.csv); rebind with `xschem bind`. mutates=0: it only re-arms an
+   * undo-managed preview -- no standalone content change. */
+  { "edit.cycle_pin_type", NULL, "addpin::cycle_type",
+    "Cycle the direction/type (input/output/inout) of the pin being placed",
+    0 /* mutates */, NULL /* log_cmd */, 1 /* nolog: GUI-only chord, self-guards, not replayable */ },
 };
 static const int num_action_defs = (int)(sizeof(action_registry)/sizeof(action_registry[0]));
 
@@ -3446,6 +3455,9 @@ static void init_input_bindings(void)
   set_input_binding(DEV_WHEEL, WHEEL_UP,   ControlMask, ACTX_CANVAS, "view.pan_up");
   set_input_binding(DEV_WHEEL, WHEEL_DOWN, ControlMask, ACTX_CANVAS, "view.pan_down");
   set_input_binding(DEV_BUTTON, Button3,   0,           ACTX_CANVAS, "view.zoom_rect");
+  /* Ctrl+Middle-click cycles the pin direction/type while placing (schematic_add_pin.md).
+   * Button2-pan requires state==0, so this exact-Ctrl chord never collides with the pan. */
+  set_input_binding(DEV_BUTTON, Button2,   ControlMask, ACTX_CANVAS, "edit.cycle_pin_type");
   /* over a waveform graph, the no-modifier and Shift wheel drive the graph
    * (the old inline waves_selected routing, now data). Ctrl-wheel never did, so
    * it has no over_graph row and stays canvas pan. */

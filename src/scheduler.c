@@ -410,6 +410,57 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
       Tcl_ResetResult(interp);
     }
 
+    /* add_sch_pin -place
+     *   Schematic-editor Add-Pin: place an ipin/opin/iopin INSTANCE (the schematic twin of
+     *   add_symbol_pin, which places a symbol PINLAYER rect). Driven by the SAME modeless
+     *   addpin:: dialog (view-aware: it picks this verb when editing a schematic). Reads
+     *   ::pin_new_name / ::pin_new_dir and arms a cursor preview, reusing the sympin_preview +
+     *   START_SYMPIN undo-clean re-arm dance so per-keystroke re-issues stay under ONE undo
+     *   baseline. Refused in a symbol view (a schematic pin is an instance).
+     *   See doc/claude/specs/schematic_add_pin.md. */
+    else if(!strcmp(argv[1], "add_sch_pin"))
+    {
+      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(scheduler_readonly_reject(interp, "add_sch_pin")) return TCL_ERROR;
+      if(editing_symbol_view()) { Tcl_ResetResult(interp); return TCL_OK; }
+      if(argc == 3 && !strcmp(argv[2], "-place")) {
+        const char *nm = tclgetvar("pin_new_name");
+        const char *dr = tclgetvar("pin_new_dir");
+        if(!nm || !nm[0]) nm = "XXX";
+        if(!dr || !dr[0]) dr = "inout";
+        if(xctx->sympin_preview && (xctx->ui_state & START_SYMPIN)) {
+          /* re-arm: discard the previous preview instance WITHOUT pushing undo */
+          if(xctx->ui_state & STARTMOVE) {
+            int save = xctx->modified;
+            move_objects(ABORT,0,0,0);
+            delete(0 /* to_push_undo: no, keep the single baseline */);
+            set_modify(save);
+          }
+          xctx->ui_state &= ~START_SYMPIN;
+        } else {
+          xctx->push_undo();        /* one undo baseline per gesture */
+          xctx->sympin_preview = 1;
+        }
+        unselect_all(1);
+        if(place_sch_pin(nm, dr)) { /* selects the new instance (place_symbol draw&4) */
+          xctx->need_reb_sel_arr = 1;
+          rebuild_selected_array();
+          move_objects(START,0,0,0);
+          xctx->ui_state |= START_SYMPIN;
+        } else {
+          /* Pin symbol unresolvable (e.g. a misconfigured library path with no ipin.sym):
+           * place_symbol placed and selected NOTHING, so do NOT arm a phantom preview.
+           * Clear sympin_preview so this leaked flag cannot later make an UNRELATED
+           * add_graph/add_image abort drop its own undo baseline (callback.c:237). Unlike the
+           * mirrored add_symbol_pin, whose create_pin always stores a rect, place_symbol can
+           * fail -- so this guard is required here. START_SYMPIN was already cleared (re-arm)
+           * or never set (fresh arm); a fresh arm's one push_undo is left as a no-op undo. */
+          xctx->sympin_preview = 0;
+        }
+      }
+      Tcl_ResetResult(interp);
+    }
+
     /* add_graph
      *   Start a GUI placement of a graph object */
     else if(!strcmp(argv[1], "add_graph"))

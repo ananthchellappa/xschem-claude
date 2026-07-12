@@ -10366,23 +10366,32 @@ proc combo_letter_cycle {w ch} {
   }
 }
 
-# addpin -- the Cadence-style "Add Pin" form (doc/claude/specs/cadence_pin_name_text.md
-# item #3). MODELESS, mirroring ciform (Create Instance): a non-empty Pin Name arms a
-# cursor PREVIEW of the pin on the canvas; click drops it; the form re-arms so you can
-# place more until Esc. There is NO "Place" button -- placement is a canvas click.
+# addpin -- the Cadence-style "Add Pin" form (doc/claude/specs/schematic_add_pin.md,
+# cadence_pin_name_text.md item #3). MODELESS, VIEW-AWARE: in a SYMBOL view it places symbol
+# pins (`xschem add_symbol_pin -place` -> PINLAYER rects); in a SCHEMATIC view it places
+# ipin/opin/iopin INSTANCES (`xschem add_sch_pin -place`). The verb is chosen by place_verb.
 #
-# The C `xschem add_symbol_pin -place` self-manages undo across the per-keystroke re-arms
-# (pushes ONE baseline at the first arm, drops the previous preview pin undo-free); the
-# drop keeps the baseline; abort_operation tears down an undropped preview undo-free.
+# The Pin Name field takes ONE OR MORE names separated by spaces: they form a QUEUE. A cursor
+# PREVIEW of the current name follows the mouse; a canvas click drops it and the NEXT queued
+# name auto-arms. When the last name is placed, placement STOPS but the form stays open (type
+# more names, or Esc/Close to dismiss). Ctrl+MMB (edit.cycle_pin_type) cycles the direction/type
+# of the pin being placed and re-arms the current name. There is NO "Place" button.
+#
+# Both C `-place` verbs self-manage undo across the per-keystroke re-arms (push ONE baseline at
+# the first arm, drop the previous preview undo-free); the drop keeps the baseline;
+# abort_operation tears down an undropped preview undo-free.
 namespace eval addpin {
   variable name {}
   variable dir  inout
-  # a preview is armed; after each drop it re-arms so placement continues until Esc.
+  # a preview is armed; after each drop it advances the queue (or stops if drained).
   variable armed          0
   variable hook_installed 0
   # last {name dir} actually armed -- lets arm() skip a redundant rebuild when a keystroke
   # (arrows, Shift/Ctrl/Tab, ...) did not change the pin, avoiding canvas flicker.
   variable last           {}
+  # multi-name queue: pending = names not yet placed this pass; current = head (the armed one).
+  variable pending        {}
+  variable current        {}
 }
 
 proc addpin::status {msg} { catch {.addpin.status configure -text $msg} }
@@ -10398,6 +10407,24 @@ proc addpin::dirtok {} {
   return [expr {[dict exists $map $dir] ? [dict get $map $dir] : {inout}}]
 }
 
+# ---- pure helpers (no Tk; headless-testable, see tests/headless/test_sch_add_pin.tcl) ----
+# Split a Pin Name entry into a list of names on any run of whitespace (trims ends).
+proc addpin::names_from {s} { return [regexp -all -inline {\S+} $s] }
+
+# Cycle the Direction label input -> output -> inout -> input (Ctrl+MMB, Direction combobox).
+proc addpin::next_dir {d} {
+  set order {input output inout}
+  set i [lsearch -exact $order $d]
+  if {$i < 0} { return input }
+  return [lindex $order [expr {($i + 1) % 3}]]
+}
+
+# The C -place verb for the CURRENT view: schematic -> add_sch_pin (ipin/opin/iopin instances);
+# symbol (.sym) -> add_symbol_pin (PINLAYER pin rects). Filename test (editing_symbol_view()).
+proc addpin::place_verb {} {
+  return [expr {[string match {*.sym} [xschem get current_name]] ? "add_symbol_pin" : "add_sch_pin"}]
+}
+
 # Re-arm the next pin after each canvas drop, so placement continues until Esc. Appended
 # (+) to the canvas ButtonRelease so it runs AFTER xschem handled the drop; a no-op unless
 # a preview is armed and a drop just completed (mirror of ciform::after_drop).
@@ -10409,39 +10436,72 @@ proc addpin::install_drop_hook {} {
   set hook_installed 1
 }
 proc addpin::after_drop {b} {
-  variable armed
-  if {$b != 1} return
+  variable armed; variable pending; variable current
+  if {$b != 1} return             ;# only a LEFT-click drops (Ctrl+MMB must not count)
   if {!$armed} return
   if {![winfo exists .addpin]} { set armed 0; return }
   if {[addpin::placing]} return   ;# preview still attached -> no drop happened
-  addpin::arm                     ;# a drop completed -> re-arm for the next pin
+  # a drop completed -> advance the queue to the next typed name
+  set pending [lrange $pending 1 end]
+  set current [lindex $pending 0]
+  if {[string trim $current] ne {}} {
+    addpin::arm                   ;# arm the next queued name
+  } else {
+    set armed 0                   ;# all typed names placed -> stop; form stays open (D2)
+    addpin::status "all pins placed -- type more names, or Esc/Close to finish"
+  }
 }
 
-# (Re)arm the cursor preview from the current Name/Direction. Empty name -> no preview
-# (there is nothing to place yet), aborting any attached one. `-place` re-issues are
-# undo-safe (see the C side), so calling this on every keystroke is fine.
+# Recompute the queue from the Name entry and arm its head. Editing the Name field RESTARTS
+# the pass (fresh queue); called on every keystroke in the Name entry.
+proc addpin::start_pass {} {
+  variable name; variable pending; variable current
+  set pending [addpin::names_from $name]
+  set current [lindex $pending 0]
+  addpin::arm
+}
+
+# (Re)arm the cursor preview from the CURRENT queued name + Direction. Empty -> no preview
+# (nothing to place yet), aborting any attached one. `-place` re-issues are undo-safe (see the
+# C side), so calling this on every keystroke / dir change / Ctrl+MMB cycle is fine. The verb is
+# view-aware (add_sch_pin in a schematic, add_symbol_pin in a symbol view).
 proc addpin::arm {} {
-  variable name; variable armed; variable last
+  variable current; variable armed; variable last; variable pending
   if {![winfo exists .addpin]} { set armed 0; return }
-  if {[string trim $name] eq {}} {
+  if {[string trim $current] eq {}} {
     set armed 0; set last {}
     addpin::abort_if_placing
-    addpin::status "type a Pin Name, then move onto the canvas to place it"
+    addpin::status "type a Pin Name (space-separated for several), then move onto the canvas"
     return
   }
   set d [addpin::dirtok]
   # nothing changed AND a preview is still attached -> don't rebuild it (a non-editing key
-  # fired KeyRelease). After a drop, placing is 0, so the next pin still arms (keep-placing).
-  if {[list $name $d] eq $last && [addpin::placing]} return
-  set last [list $name $d]
-  set ::pin_new_name $name
+  # fired KeyRelease).
+  if {[list $current $d] eq $last && [addpin::placing]} return
+  set last [list $current $d]
+  set ::pin_new_name $current
   set ::pin_new_dir  $d
-  xschem add_symbol_pin -place    ;# self-aborts the previous preview (no undo) and re-arms
+  xschem [addpin::place_verb] -place ;# self-aborts the previous preview (no undo) and re-arms
   set armed 1
-  addpin::status "placing pin '$name' ($d) -- click the canvas to place; Esc to finish"
+  set nleft [llength $pending]
+  set more [expr {$nleft > 1 ? " (+[expr {$nleft-1}] queued)" : {}}]
+  addpin::status "placing '$current' ($d)$more -- click to place; Ctrl+MMB cycles type; Esc finishes"
 }
 
-proc addpin::on_change {} { addpin::arm }
+# Name entry edited -> rebuild the queue. Direction combobox picked -> re-arm current with new dir.
+proc addpin::on_name_change {} { addpin::start_pass }
+proc addpin::on_dir_change  {} { addpin::arm }
+
+# Ctrl+MMB while placing: advance the direction/type and re-arm the CURRENT name so the user
+# can place differently-typed pins from one queue without touching the Direction combobox.
+proc addpin::cycle_type {} {
+  variable dir; variable current
+  if {![winfo exists .addpin]} return
+  if {![addpin::placing]} return       ;# only meaningful with a preview attached
+  if {[string trim $current] eq {}} return
+  set dir [addpin::next_dir $dir]      ;# the Direction combobox updates via -textvariable
+  addpin::arm                          ;# re-arm current name with the new direction/type
+}
 
 # Esc / Close: end placement and dismiss the form.
 proc addpin::escape {} {
@@ -10452,8 +10512,8 @@ proc addpin::escape {} {
 }
 # Form destroyed by any means: abort an armed preview and restore the default canvas Esc.
 proc addpin::on_destroy {} {
-  variable armed; variable last
-  set armed 0; set last {}
+  variable armed; variable last; variable pending; variable current
+  set armed 0; set last {}; set pending {}; set current {}
   catch {bind .drw <Key-Escape> {}}
   addpin::abort_if_placing
 }
@@ -10465,7 +10525,7 @@ proc addpin::open {} {
   if {[winfo exists $w]} {
     raise_activate_toplevel $w
     focus $w.f.ename
-    addpin::arm
+    addpin::start_pass
     return
   }
   catch {slickprop::init_fonts}   ;# reuse the slick property-form fonts for the look
@@ -10489,7 +10549,7 @@ proc addpin::open {} {
   grid columnconfigure $w.f 1 -weight 1
 
   ttk::label $w.status -anchor w -relief sunken -padding {4 2} \
-    -text "type a Pin Name, then move onto the canvas to place it; Esc finishes"
+    -text "type Pin Name(s) (space-separated), then move onto the canvas; Ctrl+MMB cycles type; Esc finishes"
   pack $w.status -side bottom -fill x
 
   ttk::frame $w.b
@@ -10497,9 +10557,9 @@ proc addpin::open {} {
   pack $w.b.close -side right -padx 4 -pady 4
   pack $w.b -side bottom -fill x
 
-  # editing the name or picking a direction re-arms the preview live
-  bind $w.f.ename <KeyRelease>        {+addpin::on_change}
-  bind $w.f.edir  <<ComboboxSelected>> {+addpin::on_change}
+  # editing the name rebuilds the queue; picking a direction re-arms the current name
+  bind $w.f.ename <KeyRelease>         {+addpin::on_name_change}
+  bind $w.f.edir  <<ComboboxSelected>> {+addpin::on_dir_change}
   # Esc ends placement AND dismisses the form. On the CANVAS only swallow Esc while a
   # preview is actually armed (`break` pre-empts the generic <KeyPress> -> C dispatcher);
   # when nothing is being placed, fall through so Esc still cancels an unrelated in-progress
@@ -10510,7 +10570,7 @@ proc addpin::open {} {
 
   raise_activate_toplevel $w
   focus $w.f.ename
-  addpin::arm   ;# a reopened singleton may already hold a name -> arm immediately
+  addpin::start_pass   ;# a reopened singleton may already hold name(s) -> build the queue + arm
 }
 
 proc text_line_legacy {txtlabel clear {preserve_disabled disabled} } {

@@ -187,6 +187,7 @@ waves.spectrum,command,waves,Spectrum,,waves ac,,,Spectrum,
 view.center_at_cursor,command,view,Center view on cursor,,,,,Center the view on the cursor position (ship unbound; bind a key in keybindings.csv),
 view.pan,command,view,Drag-pan canvas,,,,,Drag-pan the canvas from the pointer (ship unbound; bind a key in keybindings.csv),
 edit.cycle_manhattan,command,edit,Cycle manhattan corner,,,,,Cycle the corner mode of an in-progress move/wire/line gesture (ship unbound; bind a key in keybindings.csv),
+edit.cycle_pin_type,command,edit,Cycle pin type (while placing),,,,,Cycle the direction/type (input/output/inout <-> ipin/opin/iopin) of the pin being placed (default Ctrl+MMB),,1
 view.scroll_up,command,view,Scroll up,,xschem scroll up,,,Scroll the viewport up one step,
 view.scroll_down,command,view,Scroll down,,xschem scroll down,,,Scroll the viewport down one step,
 view.scroll_left,command,view,Scroll left,,xschem scroll left,,,Scroll the viewport left one step,

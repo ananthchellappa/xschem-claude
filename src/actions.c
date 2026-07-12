@@ -2368,6 +2368,36 @@ void place_net_label(int type)
   xctx->ui_state |= START_SYMPIN;
 }
 
+/* Place one schematic port-pin INSTANCE named <name> at the cursor, SELECTED so it can be
+ * dragged as a placement preview -- the schematic analog of create_pin (which places a symbol
+ * PINLAYER rect). See doc/claude/specs/schematic_add_pin.md. Direction picks the device symbol:
+ *   in -> ipin.sym   out -> opin.sym   inout|other -> iopin.sym
+ * The port's net name is its lab= property; "name=p1" lets new_prop_string uniquify the refdes.
+ * to_push_undo is 0: the modeless `add_sch_pin -place` driver manages one undo baseline across
+ * the per-keystroke re-arms itself. Returns place_symbol()'s result (1 placed, 0 not). */
+int place_sch_pin(const char *name, const char *dir)
+{
+  char symbuf[PATH_MAX];
+  char *prop = NULL;
+  const char *symcmd;
+  int r;
+  if(!xctx) return 0;
+  if(!name) name = "";
+  if(!dir || !dir[0]) dir = "inout";
+  if(!strcmp(dir, "in"))       symcmd = "find_file_first ipin.sym";
+  else if(!strcmp(dir, "out")) symcmd = "find_file_first opin.sym";
+  else                         symcmd = "find_file_first iopin.sym";
+  /* copy the resolved path out of the volatile Tcl result BEFORE place_symbol runs its own
+   * tclevals (abs_sym_path/is_xschem_file), which would clobber it. */
+  my_strncpy(symbuf, tcleval(symcmd), S(symbuf));
+  my_mstrcat(_ALLOC_ID_, &prop, "name=p1 lab=", name, NULL);
+  r = place_symbol(-1, symbuf, xctx->mousex_snap, xctx->mousey_snap, 0, 0, prop,
+                   4 /* select the new instance */, 1 /* first_call */,
+                   0 /* to_push_undo: the -place driver owns the undo baseline */);
+  my_free(_ALLOC_ID_, &prop);
+  return r;
+}
+
 /* True when the top-level view currently being edited is a symbol (.sym). Symbol
  * views hold only pins + artwork -- never instances of other symbols -- so instance
  * creation is refused there (see place_symbol). This is deliberately a filename test,
