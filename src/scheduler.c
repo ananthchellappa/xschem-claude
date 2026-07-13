@@ -2132,6 +2132,7 @@ static int xschem_cmds_f(Tcl_Interp *interp, int argc, const char *argv[], int *
     else if(!strcmp(argv[1], "flylines"))
     {
       const char *netname = NULL;   /* points into xctx data; do not free */
+      Selected pick; int have_pick = 0;   /* the hovered object (at-form), used to pick the hub */
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
       if(argc < 3) {
         Tcl_SetResult(interp, "usage: xschem flylines net <name> | at <x> <y>", TCL_STATIC);
@@ -2150,8 +2151,9 @@ static int xschem_cmds_f(Tcl_Interp *interp, int argc, const char *argv[], int *
           Tcl_SetResult(interp, "usage: xschem flylines at <x> <y>", TCL_STATIC);
           return TCL_ERROR;
         } else {
-          Selected sel = find_closest_obj(atof(argv[3]), atof(argv[4]), 1);
-          netname = flyline_net_of(sel.type, sel.n, sel.col);
+          pick = find_closest_obj(atof(argv[3]), atof(argv[4]), 1);
+          have_pick = 1;
+          netname = flyline_net_of(pick.type, pick.n, pick.col);
         }
       } else {
         Tcl_SetResult(interp, "usage: xschem flylines net <name> | at <x> <y>", TCL_STATIC);
@@ -2167,10 +2169,12 @@ static int xschem_cmds_f(Tcl_Interp *interp, int argc, const char *argv[], int *
       {
         FlyMember *mem = NULL;
         int nmem = 0, mem_alloc = 0, a, b;
-        Tcl_DString memds, cluds;
+        int hub_member = -1;     /* member index of the hovered object (at-form), else -1 */
+        Tcl_DString memds, cluds, segds;
         char buf[128];
         Tcl_DStringInit(&memds);
         Tcl_DStringInit(&cluds);
+        Tcl_DStringInit(&segds);
         if(netname && netname[0]) {
           int i, p, rects;
           double x, y;
@@ -2181,6 +2185,7 @@ static int xschem_cmds_f(Tcl_Interp *interp, int argc, const char *argv[], int *
               mem[nmem].kind = 0; mem[nmem].idx = i; mem[nmem].pin = -1;
               mem[nmem].x = (xctx->wire[i].x1 + xctx->wire[i].x2) / 2.0;
               mem[nmem].y = (xctx->wire[i].y1 + xctx->wire[i].y2) / 2.0;
+              if(have_pick && pick.type == WIRE && pick.n == i) hub_member = nmem;
               ++nmem;
             }
           }
@@ -2194,6 +2199,9 @@ static int xschem_cmds_f(Tcl_Interp *interp, int argc, const char *argv[], int *
                 get_inst_pin_coord(i, p, &x, &y);
                 mem[nmem].kind = 1; mem[nmem].idx = i; mem[nmem].pin = p;
                 mem[nmem].x = x; mem[nmem].y = y;
+                if(have_pick && pick.n == i &&
+                   ((pick.type == ELEMENT && p == 0) || (pick.type == INST_PIN && (int)pick.col == p)))
+                  hub_member = nmem;
                 ++nmem;
               }
             }
@@ -2205,47 +2213,74 @@ static int xschem_cmds_f(Tcl_Interp *interp, int argc, const char *argv[], int *
                       mem[a].kind == 0 ? "wire" : "pin", mem[a].idx, mem[a].pin, mem[a].x, mem[a].y);
           Tcl_DStringAppend(&memds, buf, -1);
         }
-        /* A3: union-find physical clustering, then emit one cluster dict per component */
+        /* A3: union-find physical clustering. A4: per-cluster anchor. A5: star segments from
+         * the hub (hovered cluster for the at-form, cluster 0 otherwise) to every other cluster
+         * -- so N clusters yield N-1 segments and a single-cluster net (incl. an already-wired
+         * pair) yields none (the implicit-only rule). */
         if(nmem > 0) {
           int *parent = my_malloc(_ALLOC_ID_, nmem * sizeof(int));
-          int *seen = my_malloc(_ALLOC_ID_, nmem * sizeof(int));
-          int nseen = 0;
-          for(a = 0; a < nmem; ++a) parent[a] = a;
+          int *root2clu = my_malloc(_ALLOC_ID_, nmem * sizeof(int));
+          int *clu = my_malloc(_ALLOC_ID_, nmem * sizeof(int));
+          int nclu = 0, c, hub;
+          double *cx, *cy; int *cpin, *cany;
+          for(a = 0; a < nmem; ++a) { parent[a] = a; root2clu[a] = -1; }
           for(a = 0; a < nmem; ++a) for(b = a + 1; b < nmem; ++b) {
             if(flyline_members_touch(&mem[a], &mem[b])) {
               int ra = flyline_uf_find(parent, a), rb = flyline_uf_find(parent, b);
               if(ra != rb) parent[ra] = rb;
             }
           }
+          /* assign cluster ordinals in first-appearance order */
           for(a = 0; a < nmem; ++a) {
-            int r = flyline_uf_find(parent, a), j, first = 1, m, have_pin = 0, have_any = 0;
-            double ax = 0.0, ay = 0.0;
-            for(j = 0; j < nseen; ++j) if(seen[j] == r) break;
-            if(j < nseen) continue;               /* component already emitted */
-            seen[nseen++] = r;
-            Tcl_DStringAppend(&cluds, Tcl_DStringLength(&cluds) ? " {members {" : "{members {", -1);
+            int r = flyline_uf_find(parent, a);
+            if(root2clu[r] == -1) root2clu[r] = nclu++;
+            clu[a] = root2clu[r];
+          }
+          hub = (hub_member >= 0) ? clu[hub_member] : 0;
+          /* per-cluster anchor: prefer a pin member's coord, else the first member's point */
+          cx = my_malloc(_ALLOC_ID_, nclu * sizeof(double));
+          cy = my_malloc(_ALLOC_ID_, nclu * sizeof(double));
+          cpin = my_malloc(_ALLOC_ID_, nclu * sizeof(int));
+          cany = my_malloc(_ALLOC_ID_, nclu * sizeof(int));
+          for(c = 0; c < nclu; ++c) { cpin[c] = 0; cany[c] = 0; cx[c] = 0.0; cy[c] = 0.0; }
+          for(a = 0; a < nmem; ++a) {
+            c = clu[a];
+            if(!cany[c]) { cx[c] = mem[a].x; cy[c] = mem[a].y; cany[c] = 1; }
+            if(!cpin[c] && mem[a].kind == 1) { cx[c] = mem[a].x; cy[c] = mem[a].y; cpin[c] = 1; }
+          }
+          /* emit one {members {..} anchor {x y}} per cluster (in ordinal order) */
+          for(c = 0; c < nclu; ++c) {
+            int first = 1, m;
+            Tcl_DStringAppend(&cluds, c ? " {members {" : "{members {", -1);
             for(m = 0; m < nmem; ++m) {
-              if(flyline_uf_find(parent, m) != r) continue;
+              if(clu[m] != c) continue;
               my_snprintf(buf, S(buf), "%s%d", first ? "" : " ", m);
               Tcl_DStringAppend(&cluds, buf, -1);
               first = 0;
-              /* A4 anchor: prefer a pin member's coord (electrically exact), else fall back to
-               * the first member's point (a wire midpoint). Hub-relative refinement is A5. */
-              if(!have_any) { ax = mem[m].x; ay = mem[m].y; have_any = 1; }
-              if(!have_pin && mem[m].kind == 1) { ax = mem[m].x; ay = mem[m].y; have_pin = 1; }
             }
-            my_snprintf(buf, S(buf), "} anchor {%.16g %.16g}}", ax, ay);
+            my_snprintf(buf, S(buf), "} anchor {%.16g %.16g}}", cx[c], cy[c]);
             Tcl_DStringAppend(&cluds, buf, -1);
           }
-          my_free(_ALLOC_ID_, &seen);
+          /* emit star segments hub -> every other cluster */
+          for(c = 0; c < nclu; ++c) {
+            if(c == hub) continue;
+            my_snprintf(buf, S(buf), "%s{%.16g %.16g %.16g %.16g}", Tcl_DStringLength(&segds) ? " " : "",
+                        cx[hub], cy[hub], cx[c], cy[c]);
+            Tcl_DStringAppend(&segds, buf, -1);
+          }
+          my_free(_ALLOC_ID_, &cany); my_free(_ALLOC_ID_, &cpin);
+          my_free(_ALLOC_ID_, &cy);   my_free(_ALLOC_ID_, &cx);
+          my_free(_ALLOC_ID_, &clu);  my_free(_ALLOC_ID_, &root2clu);
           my_free(_ALLOC_ID_, &parent);
         }
         Tcl_ResetResult(interp);
         Tcl_AppendResult(interp, "net {", netname ? netname : "", "} members {",
                          Tcl_DStringValue(&memds), "} clusters {",
-                         Tcl_DStringValue(&cluds), "} segments {}", NULL);
+                         Tcl_DStringValue(&cluds), "} segments {",
+                         Tcl_DStringValue(&segds), "}", NULL);
         Tcl_DStringFree(&memds);
         Tcl_DStringFree(&cluds);
+        Tcl_DStringFree(&segds);
         if(mem) my_free(_ALLOC_ID_, &mem);
       }
     }

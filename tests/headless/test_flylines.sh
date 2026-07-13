@@ -113,6 +113,26 @@ r=$(probe a4_pinpref "$FIX/two_clk_wired.sch" \
   'dict get [lindex [dict get [xschem flylines net CLK] clusters] 0] anchor')
 [ "$r" = "0 0" ] && ok "A4 mixed cluster anchors on a pin, not wire midpoint" || bad "A4 pin-pref" "$r"
 
+# ---- A5: star segments + implicit-only rule -------------------------------
+# N clusters -> N-1 segments from the hub (cluster 0 for the `net` form)
+r=$(probe a5_three "$FIX/three_clusters.sch" 'llength [dict get [xschem flylines net CLK] segments]')
+[ "$r" = "2" ] && ok "A5 three clusters -> 2 star segments" || bad "A5 three segs" "$r"
+
+r=$(probe a5_nowire "$FIX/two_clk_no_wire.sch" 'dict get [xschem flylines net CLK] segments')
+[ "$r" = "{0 0 200 0}" ] && ok "A5 two clusters -> 1 segment hub->other" || bad "A5 nowire seg" "$r"
+
+# implicit-only rule: two labels joined by a wire are ONE cluster -> ZERO segments
+r=$(probe a5_wired "$FIX/two_clk_wired.sch" 'llength [dict get [xschem flylines net CLK] segments]')
+[ "$r" = "0" ] && ok "A5 wired pair (1 cluster) -> 0 segments (implicit-only)" || bad "A5 wired seg" "$r"
+
+# a single-cluster net -> no fly-lines
+r=$(probe a5_single "$FIX/one_label.sch" 'llength [dict get [xschem flylines net CLK] segments]')
+[ "$r" = "0" ] && ok "A5 single cluster -> 0 segments" || bad "A5 single seg" "$r"
+
+# `at` form: the hub is the cluster UNDER THE CURSOR -> segment starts at that anchor
+r=$(probe a5_hub_at "$FIX/two_clk_no_wire.sch" 'dict get [xschem flylines at 200 0] segments')
+[ "$r" = "{200 0 0 0}" ] && ok "A5 at-form hub is the hovered cluster" || bad "A5 hub-at" "$r"
+
 # ---------------------------------------------------------------------------
 rm -rf "$TMP"
 if [ "$fail" = 0 ]; then echo "RESULT: ALL PASS"; else echo "RESULT: $fail FAILED"; exit 1; fi
