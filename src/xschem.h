@@ -1243,6 +1243,7 @@ typedef struct {
   char *fly_shown_net;
   int fly_nseg;
   double fly_x1, fly_y1, fly_x2, fly_y2;
+  GC gc_flyline;        /* fly-line overlay: dashed thin colored GC (flylines_color/width/dash) */
   GC gc_hilight;        /* net highlight scratch GC: reconfigured per wire from the
                          * NetHilightStyle (color+width+dash) at draw time */
   char **color_array;

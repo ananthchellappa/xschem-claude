@@ -563,6 +563,9 @@ void create_gc(void)
    * style set in build_colors(). hover_type 0 = nothing currently outlined. */
   xctx->gc_hover = XCreateGC(display,xctx->window,0L,NULL);
   xctx->hover_type = 0;
+  /* dedicated GC for the hover fly-line overlay (doc/claude/specs/hover_flylines.md);
+   * foreground + dashed line style set in build_colors() from flylines_color/width/dash. */
+  xctx->gc_flyline = XCreateGC(display,xctx->window,0L,NULL);
   /* dedicated scratch GC for net highlights; foreground/width/dash are set per
    * wire at draw time from the active NetHilightStyle (see draw_hilight_wire). */
   xctx->gc_hilight = XCreateGC(display,xctx->window,0L,NULL);
@@ -577,6 +580,7 @@ void free_gc()
   }
   XFreeGC(display,xctx->gc_scope);
   XFreeGC(display,xctx->gc_hover);
+  XFreeGC(display,xctx->gc_flyline);
   XFreeGC(display,xctx->gc_hilight);
 }
 
@@ -1252,6 +1256,23 @@ int build_colors(double dim, double dim_bg)
       XSetLineAttributes(display, xctx->gc_hover, width, LineOnOffDash, LINECAP, LINEJOIN);
       dashes[0] = 4; dashes[1] = 4;
       XSetDashes(display, xctx->gc_hover, 0, dashes, 2);
+    }
+    /* hover fly-line overlay GC (doc/claude/specs/hover_flylines.md): a thin DASHED colored
+     * line from the hovered net to its implicitly-connected clusters. flylines_color is a
+     * layer-color index (not a name, unlike gc_hover), flylines_width the screen weight,
+     * flylines_dash the on/off dash length. Placeholder look (C2); soft-glow deferred (B4). */
+    if(has_x) {
+      int col = tclgetintvar("flylines_color");
+      int width = tclgetintvar("flylines_width");
+      int dash = tclgetintvar("flylines_dash");
+      char dashes[2];
+      if(col < 0 || col >= cadlayers) col = 4 % cadlayers;
+      if(width < 0) width = 0;
+      if(dash <= 0) dash = 4;
+      XSetForeground(display, xctx->gc_flyline, find_best_color(xctx->color_array[col]));
+      XSetLineAttributes(display, xctx->gc_flyline, width, LineOnOffDash, LINECAP, LINEJOIN);
+      dashes[0] = dash; dashes[1] = dash;
+      XSetDashes(display, xctx->gc_flyline, 0, dashes, 2);
     }
     if(has_x) for(i=0;i<cadlayers; ++i) {
 #ifdef __unix__
