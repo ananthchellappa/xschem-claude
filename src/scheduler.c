@@ -1861,6 +1861,41 @@ static const char *flyline_net_of(unsigned short type, int n, unsigned int col)
   return NULL;
 }
 
+/* One geometry member on a queried net: a wire (kind 0) or an instance pin (kind 1).
+ * idx = wire/instance index, pin = pin index (-1 for a wire), (x,y) = wire midpoint or
+ * pin coord. Used by the fly-line query to partition a net into physical clusters. */
+typedef struct { int kind; int idx; int pin; double x, y; } FlyMember;
+
+/* union-find with path halving */
+static int flyline_uf_find(int *parent, int a)
+{
+  while(parent[a] != a) { parent[a] = parent[parent[a]]; a = parent[a]; }
+  return a;
+}
+
+/* Physical touch between two members of the SAME net -- the edge relation whose connected
+ * components are the clusters fly-lines link. Mirrors check_connected_nets (select.c): wires
+ * touch at a shared point / T-junction, a pin touches a wire when its point lies on the wire,
+ * two bare pins touch when coincident. Read-only (invariant C1). */
+static int flyline_members_touch(const FlyMember *a, const FlyMember *b)
+{
+  if(a->kind == 0 && b->kind == 0) {
+    xWire *wa = &xctx->wire[a->idx], *wb = &xctx->wire[b->idx];
+    return touch(wa->x1, wa->y1, wa->x2, wa->y2, wb->x1, wb->y1) ||
+           touch(wa->x1, wa->y1, wa->x2, wa->y2, wb->x2, wb->y2) ||
+           touch(wb->x1, wb->y1, wb->x2, wb->y2, wa->x1, wa->y1) ||
+           touch(wb->x1, wb->y1, wb->x2, wb->y2, wa->x2, wa->y2);
+  } else if(a->kind == 0) {                 /* a wire, b pin */
+    xWire *wa = &xctx->wire[a->idx];
+    return touch(wa->x1, wa->y1, wa->x2, wa->y2, b->x, b->y);
+  } else if(b->kind == 0) {                 /* a pin, b wire */
+    xWire *wb = &xctx->wire[b->idx];
+    return touch(wb->x1, wb->y1, wb->x2, wb->y2, a->x, a->y);
+  } else {                                  /* both pins */
+    return a->x == b->x && a->y == b->y;
+  }
+}
+
 static int xschem_cmds_f(Tcl_Interp *interp, int argc, const char *argv[], int *cmd_found)
 {
     /* fill_reset [nodraw]
@@ -2122,24 +2157,31 @@ static int xschem_cmds_f(Tcl_Interp *interp, int argc, const char *argv[], int *
         Tcl_SetResult(interp, "usage: xschem flylines net <name> | at <x> <y>", TCL_STATIC);
         return TCL_ERROR;
       }
-      /* A2: enumerate the geometry on the net -- every wire whose .node matches and every
-       * instance pin whose .node[p] matches (bounded by rects[PINLAYER], as propagate_hilights
-       * does). Exact-string match: correct for scalar nets; bus-bit matching is A7. Member
-       * record = {kind index pin x y}, kind in {wire,pin}, pin=-1 for a wire. Read-only. */
+      /* A2 members + A3 clustering. Members: every wire whose .node matches and every instance
+       * pin whose .node[p] matches (bounded by rects[PINLAYER], as propagate_hilights does).
+       * Exact-string match: correct for scalar nets; bus-bit matching is A7. Member record =
+       * {kind index pin x y}, kind wire|pin, pin=-1 for a wire; the member list index is the
+       * handle used by clusters. A3: partition members into physical clusters (union-find over
+       * flyline_members_touch), each emitted as {members {idx...} anchor {}} -- anchor filled in
+       * A4. The whole pass is read-only (invariant C1). */
       {
-        Tcl_DString mem;
-        Tcl_DStringInit(&mem);
+        FlyMember *mem = NULL;
+        int nmem = 0, mem_alloc = 0, a, b;
+        Tcl_DString memds, cluds;
+        char buf[128];
+        Tcl_DStringInit(&memds);
+        Tcl_DStringInit(&cluds);
         if(netname && netname[0]) {
           int i, p, rects;
           double x, y;
-          char buf[128];
           for(i = 0; i < xctx->wires; ++i) {
             if(xctx->wire[i].node && !strcmp(xctx->wire[i].node, netname)) {
-              x = (xctx->wire[i].x1 + xctx->wire[i].x2) / 2.0;
-              y = (xctx->wire[i].y1 + xctx->wire[i].y2) / 2.0;
-              my_snprintf(buf, S(buf), "%s{wire %d -1 %.16g %.16g}",
-                          Tcl_DStringLength(&mem) ? " " : "", i, x, y);
-              Tcl_DStringAppend(&mem, buf, -1);
+              if(nmem >= mem_alloc) { mem_alloc = mem_alloc ? mem_alloc * 2 : 16;
+                my_realloc(_ALLOC_ID_, &mem, mem_alloc * sizeof(FlyMember)); }
+              mem[nmem].kind = 0; mem[nmem].idx = i; mem[nmem].pin = -1;
+              mem[nmem].x = (xctx->wire[i].x1 + xctx->wire[i].x2) / 2.0;
+              mem[nmem].y = (xctx->wire[i].y1 + xctx->wire[i].y2) / 2.0;
+              ++nmem;
             }
           }
           for(i = 0; i < xctx->instances; ++i) {
@@ -2147,18 +2189,59 @@ static int xschem_cmds_f(Tcl_Interp *interp, int argc, const char *argv[], int *
             rects = (xctx->inst[i].ptr + xctx->sym)->rects[PINLAYER];
             for(p = 0; p < rects; ++p) {
               if(xctx->inst[i].node[p] && !strcmp(xctx->inst[i].node[p], netname)) {
+                if(nmem >= mem_alloc) { mem_alloc = mem_alloc ? mem_alloc * 2 : 16;
+                  my_realloc(_ALLOC_ID_, &mem, mem_alloc * sizeof(FlyMember)); }
                 get_inst_pin_coord(i, p, &x, &y);
-                my_snprintf(buf, S(buf), "%s{pin %d %d %.16g %.16g}",
-                            Tcl_DStringLength(&mem) ? " " : "", i, p, x, y);
-                Tcl_DStringAppend(&mem, buf, -1);
+                mem[nmem].kind = 1; mem[nmem].idx = i; mem[nmem].pin = p;
+                mem[nmem].x = x; mem[nmem].y = y;
+                ++nmem;
               }
             }
           }
         }
+        /* emit members in build order (list index == member handle) */
+        for(a = 0; a < nmem; ++a) {
+          my_snprintf(buf, S(buf), "%s{%s %d %d %.16g %.16g}", Tcl_DStringLength(&memds) ? " " : "",
+                      mem[a].kind == 0 ? "wire" : "pin", mem[a].idx, mem[a].pin, mem[a].x, mem[a].y);
+          Tcl_DStringAppend(&memds, buf, -1);
+        }
+        /* A3: union-find physical clustering, then emit one cluster dict per component */
+        if(nmem > 0) {
+          int *parent = my_malloc(_ALLOC_ID_, nmem * sizeof(int));
+          int *seen = my_malloc(_ALLOC_ID_, nmem * sizeof(int));
+          int nseen = 0;
+          for(a = 0; a < nmem; ++a) parent[a] = a;
+          for(a = 0; a < nmem; ++a) for(b = a + 1; b < nmem; ++b) {
+            if(flyline_members_touch(&mem[a], &mem[b])) {
+              int ra = flyline_uf_find(parent, a), rb = flyline_uf_find(parent, b);
+              if(ra != rb) parent[ra] = rb;
+            }
+          }
+          for(a = 0; a < nmem; ++a) {
+            int r = flyline_uf_find(parent, a), j, first = 1, m;
+            for(j = 0; j < nseen; ++j) if(seen[j] == r) break;
+            if(j < nseen) continue;               /* component already emitted */
+            seen[nseen++] = r;
+            Tcl_DStringAppend(&cluds, Tcl_DStringLength(&cluds) ? " {members {" : "{members {", -1);
+            for(m = 0; m < nmem; ++m) {
+              if(flyline_uf_find(parent, m) == r) {
+                my_snprintf(buf, S(buf), "%s%d", first ? "" : " ", m);
+                Tcl_DStringAppend(&cluds, buf, -1);
+                first = 0;
+              }
+            }
+            Tcl_DStringAppend(&cluds, "} anchor {}}", -1);
+          }
+          my_free(_ALLOC_ID_, &seen);
+          my_free(_ALLOC_ID_, &parent);
+        }
         Tcl_ResetResult(interp);
         Tcl_AppendResult(interp, "net {", netname ? netname : "", "} members {",
-                         Tcl_DStringValue(&mem), "} clusters {} segments {}", NULL);
-        Tcl_DStringFree(&mem);
+                         Tcl_DStringValue(&memds), "} clusters {",
+                         Tcl_DStringValue(&cluds), "} segments {}", NULL);
+        Tcl_DStringFree(&memds);
+        Tcl_DStringFree(&cluds);
+        if(mem) my_free(_ALLOC_ID_, &mem);
       }
     }
 

@@ -69,6 +69,24 @@ r=$(probe a2_kinds "$FIX/clk_members4.sch" \
 r=$(probe a2_members_none "$FIX/clk_members4.sch" 'llength [dict get [xschem flylines net NOPE] members]')
 [ "$r" = "0" ] && ok "A2 unknown net -> 0 members" || bad "A2 members none" "$r"
 
+# ---- A3: physical clustering (the core; implicit-only distinction) --------
+# fixture-A: two CLK labels, NO wire between -> two disjoint clusters
+r=$(probe a3_nowire "$FIX/two_clk_no_wire.sch" 'llength [dict get [xschem flylines net CLK] clusters]')
+[ "$r" = "2" ] && ok "A3 two labels, no wire -> 2 clusters" || bad "A3 no-wire clusters" "$r"
+
+# fixture-B: same two labels joined by a drawn wire -> ONE cluster
+r=$(probe a3_wired "$FIX/two_clk_wired.sch" 'llength [dict get [xschem flylines net CLK] clusters]')
+[ "$r" = "1" ] && ok "A3 two labels joined by wire -> 1 cluster" || bad "A3 wired clusters" "$r"
+
+# clk_members4: wire1+label1 touch / wire2+label2 touch, the two groups gap-separated -> 2
+r=$(probe a3_two "$FIX/clk_members4.sch" 'llength [dict get [xschem flylines net CLK] clusters]')
+[ "$r" = "2" ] && ok "A3 members4 -> 2 clusters" || bad "A3 members4 clusters" "$r"
+
+# every member belongs to exactly one cluster (partition is complete + disjoint)
+r=$(probe a3_partition "$FIX/clk_members4.sch" \
+  'set d [xschem flylines net CLK]; set n [llength [dict get $d members]]; set s 0; foreach c [dict get $d clusters] {incr s [llength [dict get $c members]]}; list $n $s')
+[ "$r" = "4 4" ] && ok "A3 clusters partition all 4 members" || bad "A3 partition" "$r"
+
 # ---------------------------------------------------------------------------
 rm -rf "$TMP"
 if [ "$fail" = 0 ]; then echo "RESULT: ALL PASS"; else echo "RESULT: $fail FAILED"; exit 1; fi
