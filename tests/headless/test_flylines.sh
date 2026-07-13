@@ -192,6 +192,13 @@ r=$(probe a8_c1 "$FIX/gnd4.sch" \
   'xschem flylines net 0; set flylines_show_globals 1; xschem flylines net 0; xschem flylines at 0 0; xschem flylines net {A[1:0]}; set gl [xschem globals]; set m 0; set h 0; foreach l [split $gl "\n"] {if {[regexp {^modified=(\d+)} $l -> v]} {set m $v}; if {[regexp {^hilight_nets=(\d+)} $l -> v]} {set h $v}}; list $m $h')
 [ "$r" = "0 0" ] && ok "A8 C1: queries leave modified=0 and hilight_nets=0 (pure read-only)" || bad "A8 C1 invariant" "$r"
 
+# ---- B0: overlay-state introspection (`flylines shown`) -------------------
+# No fly-lines drawn in a headless (--nogui) run, so the shown-net is always empty.
+# The render path (B2) sets it; here we lock the read-only introspection hook + its
+# empty default (the draw path must never leave a stale net behind: invariant C1).
+r=$(probe b0_shown "$FIX/two_clk_no_wire.sch" 'xschem flylines shown')
+[ "$r" = "" ] && ok "B0 flylines shown -> empty (nothing drawn headless)" || bad "B0 shown-empty" "$r"
+
 # ---------------------------------------------------------------------------
 rm -rf "$TMP"
 if [ "$fail" = 0 ]; then echo "RESULT: ALL PASS"; else echo "RESULT: $fail FAILED"; exit 1; fi

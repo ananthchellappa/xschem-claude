@@ -2080,8 +2080,14 @@ static int xschem_cmds_f(Tcl_Interp *interp, int argc, const char *argv[], int *
       FlyResult res;
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
       if(argc < 3) {
-        Tcl_SetResult(interp, "usage: xschem flylines net <name> | at <x> <y>", TCL_STATIC);
+        Tcl_SetResult(interp, "usage: xschem flylines net <name> | at <x> <y> | shown", TCL_STATIC);
         return TCL_ERROR;
+      }
+      /* `flylines shown`: introspect the on-screen overlay (Track B) -- the net whose fly-line
+       * star is currently drawn, or "" if none. Read-only; no netlist needed. */
+      if(!strcmp(argv[2], "shown")) {
+        Tcl_SetResult(interp, xctx->fly_shown_net ? xctx->fly_shown_net : "", TCL_VOLATILE);
+        return TCL_OK;
       }
       prepare_netlist_structs(0);   /* populate wire[].node / inst[].node / node_table */
       if(!strcmp(argv[2], "net")) {

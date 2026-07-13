@@ -1235,6 +1235,14 @@ typedef struct {
   int hover_type;       /* hover highlight: currently-outlined object type (0 = none) */
   int hover_n;          /* hover highlight: its array index */
   int hover_col;        /* hover highlight: its layer (graphical types) */
+  /* Hover fly-line overlay (doc/claude/specs/hover_flylines.md, Track B). Pure read-only
+   * overlay state (invariant C1: draw_flylines writes ONLY the window + these fields, never
+   * wire/inst/hilight/modified state). fly_shown_net = net whose star is currently on screen
+   * (NULL/empty = none); fly_nseg = drawn segment count; fly_x1..y2 = world bbox of the star,
+   * used for erase / regional redraw. `xschem flylines shown` reports fly_shown_net. */
+  char *fly_shown_net;
+  int fly_nseg;
+  double fly_x1, fly_y1, fly_x2, fly_y2;
   GC gc_hilight;        /* net highlight scratch GC: reconfigured per wire from the
                          * NetHilightStyle (color+width+dash) at draw time */
   char **color_array;
