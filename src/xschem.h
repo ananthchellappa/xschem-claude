@@ -494,6 +494,29 @@ typedef struct
   unsigned int col;
 } Selected;
 
+/* Hover fly-line query result (doc/claude/specs/hover_flylines.md). One geometry member on a
+ * queried net: a wire (kind 0) or an instance pin (kind 1). idx = wire/instance index, pin =
+ * pin index (-1 for a wire), (x,y) = wire midpoint or pin coord. */
+typedef struct { int kind; int idx; int pin; double x, y; } FlyMember;
+
+/* Computed fly-line set for one net, produced by flyline_compute() (flyline.c) and consumed by
+ * both the `xschem flylines` query (scheduler.c) and the on-screen overlay (draw_flylines).
+ * Pure read-only product (invariant C1): describes geometry, never mutates it. Release with
+ * flyline_result_free(). */
+typedef struct {
+  char *net;                      /* net name (my_strdup'd), NULL when no net resolved */
+  int is_global;                  /* net is a global/bang net (vdd!/gnd!/0) */
+  int capped;                     /* star truncated to flylines_cap nearest clusters */
+  FlyMember *mem;                 /* member geometry, build order */
+  int nmem;
+  int *clu;                       /* nmem entries: cluster ordinal per member */
+  int nclu;                       /* number of physical clusters */
+  double *cx, *cy;                /* nclu entries: per-cluster anchor coords */
+  int hub;                        /* hub cluster ordinal (hovered cluster, else 0) */
+  double *sx1, *sy1, *sx2, *sy2;  /* nseg entries: star segment endpoints (world coords) */
+  int nseg;
+} FlyResult;
+
 typedef struct
 {
   double x1;
@@ -1822,6 +1845,10 @@ extern int action_cmd_unbind(int argc, const char **argv);
 extern int action_cmd_bindings(int argc, const char **argv);
 extern void resetwin(int create_pixmap, int clear_pixmap, int force, int w, int h);
 extern Selected find_closest_obj(double mx,double my, int override_lock);
+/* Hover fly-lines (flyline.c, doc/claude/specs/hover_flylines.md). Read-only (invariant C1). */
+extern const char *flyline_net_of(unsigned short type, int n, unsigned int col);
+extern void flyline_compute(const char *netname, int have_pick, const Selected *pick, FlyResult *res);
+extern void flyline_result_free(FlyResult *res);
 /* find the instance pin within a tight radius of (mx,my); returns 1 and fills *r
  * (type=INST_PIN, n=instance, col=pin) on hit, 0 otherwise. See pin_selection.md */
 extern int find_closest_pin(double mx, double my, Selected *r);

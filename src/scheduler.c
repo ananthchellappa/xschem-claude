@@ -1840,109 +1840,6 @@ static int xschem_cmds_e(Tcl_Interp *interp, int argc, const char *argv[], int *
 /* `xschem f...` commands, moved verbatim from the xschem() dispatcher
  * (dispatcher decomposition batch 2). Sets *cmd_found = 0 when argv[1]
  * matches no command in this group; early returns propagate unchanged. */
-/* Resolve the net-name token carried by a picked object, mirroring the switch in
- * hilight_net() (hilight.c): a wire carries its net in .node; a net-label / pin symbol
- * carries it in .node[0]; a picked instance pin carries it in .node[pin]. Returns a
- * pointer into xctx (do NOT free) or NULL when the object has no single net. Read-only
- * -- part of the fly-line query, which must not mutate any state (invariant C1). */
-static const char *flyline_net_of(unsigned short type, int n, unsigned int col)
-{
-  if(type == WIRE) {
-    if(n >= 0 && n < xctx->wires) return xctx->wire[n].node;
-  } else if(type == ELEMENT) {
-    if(n >= 0 && n < xctx->instances) {
-      char *symtype = (xctx->inst[n].ptr + xctx->sym)->type;
-      if(symtype && xctx->inst[n].node && IS_LABEL_SH_OR_PIN(symtype))
-        return xctx->inst[n].node[0];
-    }
-  } else if(type == INST_PIN) {
-    if(n >= 0 && n < xctx->instances && xctx->inst[n].node) return xctx->inst[n].node[col];
-  }
-  return NULL;
-}
-
-/* One geometry member on a queried net: a wire (kind 0) or an instance pin (kind 1).
- * idx = wire/instance index, pin = pin index (-1 for a wire), (x,y) = wire midpoint or
- * pin coord. Used by the fly-line query to partition a net into physical clusters. */
-typedef struct { int kind; int idx; int pin; double x, y; } FlyMember;
-
-/* union-find with path halving */
-static int flyline_uf_find(int *parent, int a)
-{
-  while(parent[a] != a) { parent[a] = parent[parent[a]]; a = parent[a]; }
-  return a;
-}
-
-/* Physical touch between two members of the SAME net -- the edge relation whose connected
- * components are the clusters fly-lines link. Mirrors check_connected_nets (select.c): wires
- * touch at a shared point / T-junction, a pin touches a wire when its point lies on the wire,
- * two bare pins touch when coincident. Read-only (invariant C1). */
-static int flyline_members_touch(const FlyMember *a, const FlyMember *b)
-{
-  if(a->kind == 0 && b->kind == 0) {
-    xWire *wa = &xctx->wire[a->idx], *wb = &xctx->wire[b->idx];
-    return touch(wa->x1, wa->y1, wa->x2, wa->y2, wb->x1, wb->y1) ||
-           touch(wa->x1, wa->y1, wa->x2, wa->y2, wb->x2, wb->y2) ||
-           touch(wb->x1, wb->y1, wb->x2, wb->y2, wa->x1, wa->y1) ||
-           touch(wb->x1, wb->y1, wb->x2, wb->y2, wa->x2, wa->y2);
-  } else if(a->kind == 0) {                 /* a wire, b pin */
-    xWire *wa = &xctx->wire[a->idx];
-    return touch(wa->x1, wa->y1, wa->x2, wa->y2, b->x, b->y);
-  } else if(b->kind == 0) {                 /* a pin, b wire */
-    xWire *wb = &xctx->wire[b->idx];
-    return touch(wb->x1, wb->y1, wb->x2, wb->y2, a->x, a->y);
-  } else {                                  /* both pins */
-    return a->x == b->x && a->y == b->y;
-  }
-}
-
-/* Is the single bit `needle` one of the comma-separated bits in `hay`? Exact, length-checked. */
-static int flyline_bit_in_list(const char *needle, const char *hay)
-{
-  size_t nl = strlen(needle);
-  const char *p = hay;
-  while(p && *p) {
-    const char *comma = strchr(p, ',');
-    size_t len = comma ? (size_t)(comma - p) : strlen(p);
-    if(len == nl && !strncmp(p, needle, nl)) return 1;
-    if(!comma) break;
-    p = comma + 1;
-  }
-  return 0;
-}
-
-/* Do two net-name tokens denote the same net on at least one bit? Fast path for identical
- * scalars/buses; otherwise expandlabel() both into comma-separated bit lists and test overlap.
- * This is the bus aggregate-per-label rule: a bus label matches every object sharing any of its
- * bits (e.g. A[1:0] links A[0]), yet stays bit-precise (A[1] does not match A[0]). Read-only. */
-static int flyline_same_net(const char *a, const char *b)
-{
-  int ma, mb, match = 0;
-  char *ea = NULL, *eb = NULL;
-  const char *p;
-  if(!a || !b) return 0;
-  if(!strcmp(a, b)) return 1;
-  /* expandlabel returns a shared buffer -- strdup each result before the next call clobbers it */
-  my_strdup(_ALLOC_ID_, &ea, expandlabel(a, &ma));
-  my_strdup(_ALLOC_ID_, &eb, expandlabel(b, &mb));
-  if(ea && eb) {
-    for(p = ea; p && *p && !match; ) {
-      const char *comma = strchr(p, ',');
-      size_t len = comma ? (size_t)(comma - p) : strlen(p);
-      char bit[256];
-      if(len < sizeof(bit)) {
-        memcpy(bit, p, len); bit[len] = '\0';
-        if(flyline_bit_in_list(bit, eb)) match = 1;
-      }
-      if(!comma) break;
-      p = comma + 1;
-    }
-  }
-  my_free(_ALLOC_ID_, &eb);
-  my_free(_ALLOC_ID_, &ea);
-  return match;
-}
-
 static int xschem_cmds_f(Tcl_Interp *interp, int argc, const char *argv[], int *cmd_found)
 {
     /* fill_reset [nodraw]
@@ -2180,6 +2077,7 @@ static int xschem_cmds_f(Tcl_Interp *interp, int argc, const char *argv[], int *
     {
       const char *netname = NULL;   /* points into xctx data; do not free */
       Selected pick; int have_pick = 0;   /* the hovered object (at-form), used to pick the hub */
+      FlyResult res;
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
       if(argc < 3) {
         Tcl_SetResult(interp, "usage: xschem flylines net <name> | at <x> <y>", TCL_STATIC);
@@ -2206,160 +2104,56 @@ static int xschem_cmds_f(Tcl_Interp *interp, int argc, const char *argv[], int *
         Tcl_SetResult(interp, "usage: xschem flylines net <name> | at <x> <y>", TCL_STATIC);
         return TCL_ERROR;
       }
-      /* A6: auto-named nets (get_unnamed_node -> "#netN", the node[0]=='#' marker) are unique
-       * per physical cluster and can never connect implicitly -- exclude them so a bare wire
-       * draws no fly-lines and yields the empty dict. */
-      if(netname && netname[0] == '#') netname = NULL;
-      /* A2 members + A3 clustering. Members: every wire whose .node matches and every instance
-       * pin whose .node[p] matches (bounded by rects[PINLAYER], as propagate_hilights does).
-       * Exact-string match: correct for scalar nets; bus-bit matching is A7. Member record =
-       * {kind index pin x y}, kind wire|pin, pin=-1 for a wire; the member list index is the
-       * handle used by clusters. A3: partition members into physical clusters (union-find over
-       * flyline_members_touch), each emitted as {members {idx...} anchor {}} -- anchor filled in
-       * A4. The whole pass is read-only (invariant C1). */
+      /* All connectivity / clustering / segment logic lives in flyline.c (shared verbatim with
+       * the on-screen overlay). flyline_compute() is pure read-only (invariant C1); here we only
+       * format its FlyResult into the query dict:
+       *   net {N} global 0|1 capped 0|1 members {{kind idx pin x y}...}
+       *   clusters {{members {idx...} anchor {x y}}...} segments {{x1 y1 x2 y2}...}. */
+      flyline_compute(netname, have_pick, have_pick ? &pick : NULL, &res);
       {
-        FlyMember *mem = NULL;
-        int nmem = 0, mem_alloc = 0, a, b;
-        int hub_member = -1;     /* member index of the hovered object (at-form), else -1 */
-        /* A8: global/bang-net policy. record_global_node(3,..) is a read-only lookup (2=ground/"0",
-         * 1=global). A global (vdd!/gnd!/0) touches the whole schematic, so it is suppressed unless
-         * flylines_show_globals; when shown, the star is capped at flylines_cap nearest clusters. */
-        int is_global = 0, capped = 0;
-        int show_globals = tclgetboolvar("flylines_show_globals");
-        int cap = tclgetintvar("flylines_cap");
         Tcl_DString memds, cluds, segds;
         char buf[128];
-        if(cap <= 0) cap = 32;   /* C fallback if the tcl default is unset */
-        if(netname && netname[0]) is_global = (record_global_node(3, NULL, netname) != 0);
+        int a, c, m;
         Tcl_DStringInit(&memds);
         Tcl_DStringInit(&cluds);
         Tcl_DStringInit(&segds);
-        if(netname && netname[0] && !(is_global && !show_globals)) {
-          int i, p, rects;
-          double x, y;
-          for(i = 0; i < xctx->wires; ++i) {
-            if(flyline_same_net(xctx->wire[i].node, netname)) {
-              if(nmem >= mem_alloc) { mem_alloc = mem_alloc ? mem_alloc * 2 : 16;
-                my_realloc(_ALLOC_ID_, &mem, mem_alloc * sizeof(FlyMember)); }
-              mem[nmem].kind = 0; mem[nmem].idx = i; mem[nmem].pin = -1;
-              mem[nmem].x = (xctx->wire[i].x1 + xctx->wire[i].x2) / 2.0;
-              mem[nmem].y = (xctx->wire[i].y1 + xctx->wire[i].y2) / 2.0;
-              if(have_pick && pick.type == WIRE && pick.n == i) hub_member = nmem;
-              ++nmem;
-            }
-          }
-          for(i = 0; i < xctx->instances; ++i) {
-            if(!xctx->inst[i].node) continue;
-            rects = (xctx->inst[i].ptr + xctx->sym)->rects[PINLAYER];
-            for(p = 0; p < rects; ++p) {
-              if(flyline_same_net(xctx->inst[i].node[p], netname)) {
-                if(nmem >= mem_alloc) { mem_alloc = mem_alloc ? mem_alloc * 2 : 16;
-                  my_realloc(_ALLOC_ID_, &mem, mem_alloc * sizeof(FlyMember)); }
-                get_inst_pin_coord(i, p, &x, &y);
-                mem[nmem].kind = 1; mem[nmem].idx = i; mem[nmem].pin = p;
-                mem[nmem].x = x; mem[nmem].y = y;
-                if(have_pick && pick.n == i &&
-                   ((pick.type == ELEMENT && p == 0) || (pick.type == INST_PIN && (int)pick.col == p)))
-                  hub_member = nmem;
-                ++nmem;
-              }
-            }
-          }
-        }
-        /* emit members in build order (list index == member handle) */
-        for(a = 0; a < nmem; ++a) {
+        /* members in build order (list index == member handle) */
+        for(a = 0; a < res.nmem; ++a) {
           my_snprintf(buf, S(buf), "%s{%s %d %d %.16g %.16g}", Tcl_DStringLength(&memds) ? " " : "",
-                      mem[a].kind == 0 ? "wire" : "pin", mem[a].idx, mem[a].pin, mem[a].x, mem[a].y);
+                      res.mem[a].kind == 0 ? "wire" : "pin", res.mem[a].idx, res.mem[a].pin,
+                      res.mem[a].x, res.mem[a].y);
           Tcl_DStringAppend(&memds, buf, -1);
         }
-        /* A3: union-find physical clustering. A4: per-cluster anchor. A5: star segments from
-         * the hub (hovered cluster for the at-form, cluster 0 otherwise) to every other cluster
-         * -- so N clusters yield N-1 segments and a single-cluster net (incl. an already-wired
-         * pair) yields none (the implicit-only rule). */
-        if(nmem > 0) {
-          int *parent = my_malloc(_ALLOC_ID_, nmem * sizeof(int));
-          int *root2clu = my_malloc(_ALLOC_ID_, nmem * sizeof(int));
-          int *clu = my_malloc(_ALLOC_ID_, nmem * sizeof(int));
-          int nclu = 0, c, hub;
-          double *cx, *cy; int *cpin, *cany;
-          for(a = 0; a < nmem; ++a) { parent[a] = a; root2clu[a] = -1; }
-          for(a = 0; a < nmem; ++a) for(b = a + 1; b < nmem; ++b) {
-            if(flyline_members_touch(&mem[a], &mem[b])) {
-              int ra = flyline_uf_find(parent, a), rb = flyline_uf_find(parent, b);
-              if(ra != rb) parent[ra] = rb;
-            }
-          }
-          /* assign cluster ordinals in first-appearance order */
-          for(a = 0; a < nmem; ++a) {
-            int r = flyline_uf_find(parent, a);
-            if(root2clu[r] == -1) root2clu[r] = nclu++;
-            clu[a] = root2clu[r];
-          }
-          hub = (hub_member >= 0) ? clu[hub_member] : 0;
-          /* per-cluster anchor: prefer a pin member's coord, else the first member's point */
-          cx = my_malloc(_ALLOC_ID_, nclu * sizeof(double));
-          cy = my_malloc(_ALLOC_ID_, nclu * sizeof(double));
-          cpin = my_malloc(_ALLOC_ID_, nclu * sizeof(int));
-          cany = my_malloc(_ALLOC_ID_, nclu * sizeof(int));
-          for(c = 0; c < nclu; ++c) { cpin[c] = 0; cany[c] = 0; cx[c] = 0.0; cy[c] = 0.0; }
-          for(a = 0; a < nmem; ++a) {
-            c = clu[a];
-            if(!cany[c]) { cx[c] = mem[a].x; cy[c] = mem[a].y; cany[c] = 1; }
-            if(!cpin[c] && mem[a].kind == 1) { cx[c] = mem[a].x; cy[c] = mem[a].y; cpin[c] = 1; }
-          }
-          /* emit one {members {..} anchor {x y}} per cluster (in ordinal order) */
-          for(c = 0; c < nclu; ++c) {
-            int first = 1, m;
-            Tcl_DStringAppend(&cluds, c ? " {members {" : "{members {", -1);
-            for(m = 0; m < nmem; ++m) {
-              if(clu[m] != c) continue;
-              my_snprintf(buf, S(buf), "%s%d", first ? "" : " ", m);
-              Tcl_DStringAppend(&cluds, buf, -1);
-              first = 0;
-            }
-            my_snprintf(buf, S(buf), "} anchor {%.16g %.16g}}", cx[c], cy[c]);
+        /* one {members {..} anchor {x y}} per cluster, in ordinal order */
+        for(c = 0; c < res.nclu; ++c) {
+          int first = 1;
+          Tcl_DStringAppend(&cluds, c ? " {members {" : "{members {", -1);
+          for(m = 0; m < res.nmem; ++m) {
+            if(res.clu[m] != c) continue;
+            my_snprintf(buf, S(buf), "%s%d", first ? "" : " ", m);
             Tcl_DStringAppend(&cluds, buf, -1);
+            first = 0;
           }
-          /* emit star segments hub -> the `cap` nearest other clusters (A8). If there are more
-           * other clusters than the cap, keep the nearest ones and flag capped. */
-          {
-            int others = nclu - 1, emit = others, e;
-            char *used = my_malloc(_ALLOC_ID_, nclu * sizeof(char));
-            if(others > cap) { emit = cap; capped = 1; }
-            for(c = 0; c < nclu; ++c) used[c] = 0;
-            used[hub] = 1;
-            for(e = 0; e < emit; ++e) {
-              int bestc = -1; double bestd = 0.0;
-              for(c = 0; c < nclu; ++c) {
-                double dx, dy, d2;
-                if(used[c]) continue;
-                dx = cx[c] - cx[hub]; dy = cy[c] - cy[hub]; d2 = dx * dx + dy * dy;
-                if(bestc < 0 || d2 < bestd) { bestc = c; bestd = d2; }
-              }
-              if(bestc < 0) break;
-              used[bestc] = 1;
-              my_snprintf(buf, S(buf), "%s{%.16g %.16g %.16g %.16g}", Tcl_DStringLength(&segds) ? " " : "",
-                          cx[hub], cy[hub], cx[bestc], cy[bestc]);
-              Tcl_DStringAppend(&segds, buf, -1);
-            }
-            my_free(_ALLOC_ID_, &used);
-          }
-          my_free(_ALLOC_ID_, &cany); my_free(_ALLOC_ID_, &cpin);
-          my_free(_ALLOC_ID_, &cy);   my_free(_ALLOC_ID_, &cx);
-          my_free(_ALLOC_ID_, &clu);  my_free(_ALLOC_ID_, &root2clu);
-          my_free(_ALLOC_ID_, &parent);
+          my_snprintf(buf, S(buf), "} anchor {%.16g %.16g}}", res.cx[c], res.cy[c]);
+          Tcl_DStringAppend(&cluds, buf, -1);
+        }
+        /* star segments hub -> nearest other clusters */
+        for(a = 0; a < res.nseg; ++a) {
+          my_snprintf(buf, S(buf), "%s{%.16g %.16g %.16g %.16g}", Tcl_DStringLength(&segds) ? " " : "",
+                      res.sx1[a], res.sy1[a], res.sx2[a], res.sy2[a]);
+          Tcl_DStringAppend(&segds, buf, -1);
         }
         Tcl_ResetResult(interp);
-        Tcl_AppendResult(interp, "net {", netname ? netname : "",
-                         "} global ", is_global ? "1" : "0", " capped ", capped ? "1" : "0",
+        Tcl_AppendResult(interp, "net {", res.net ? res.net : "",
+                         "} global ", res.is_global ? "1" : "0", " capped ", res.capped ? "1" : "0",
                          " members {", Tcl_DStringValue(&memds), "} clusters {",
                          Tcl_DStringValue(&cluds), "} segments {",
                          Tcl_DStringValue(&segds), "}", NULL);
         Tcl_DStringFree(&memds);
         Tcl_DStringFree(&cluds);
         Tcl_DStringFree(&segds);
-        if(mem) my_free(_ALLOC_ID_, &mem);
       }
+      flyline_result_free(&res);
     }
 
     /* fullscreen

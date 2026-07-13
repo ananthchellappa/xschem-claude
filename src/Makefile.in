@@ -1,7 +1,7 @@
 # list all .c files that need to be compiled into object and linked in xschem
 put /local/src {
  icon.c callback.c actions.c move.c check.c clip.c draw.c globals.c
- main.c netlist.c hash_iterator.c findnet.c scheduler.c store.c xinit.c
+ main.c netlist.c hash_iterator.c findnet.c flyline.c scheduler.c store.c xinit.c
  select.c font.c editprop.c util.c save.c paste.c token.c psprint.c node_hash.c
  hilight.c options.c vhdl_netlist.c svgdraw.c spice_netlist.c spectre_netlist.c
  tedax_netlist.c verilog_netlist.c parselabel.c expandlabel.c
