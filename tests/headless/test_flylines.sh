@@ -58,6 +58,17 @@ r=$(probe a1_atpoint "$FIX/two_clk_no_wire.sch" 'lindex [xschem flylines at 0 0]
 r=$(probe a1_unknown "$FIX/two_clk_no_wire.sch" 'lindex [xschem flylines net NOPE] 1')
 [ "$r" = "" ] && ok "A1 unknown net name -> empty" || bad "A1 unknown-net" "$r"
 
+# ---- A2: member enumeration ----------------------------------------------
+r=$(probe a2_members "$FIX/clk_members4.sch" 'llength [dict get [xschem flylines net CLK] members]')
+[ "$r" = "4" ] && ok "A2 net CLK has 4 members (2 wires + 2 label pins)" || bad "A2 member count" "$r"
+
+r=$(probe a2_kinds "$FIX/clk_members4.sch" \
+  'set m [dict get [xschem flylines net CLK] members]; list [llength [lsearch -all -inline -index 0 $m wire]] [llength [lsearch -all -inline -index 0 $m pin]]')
+[ "$r" = "2 2" ] && ok "A2 members split 2 wires + 2 pins" || bad "A2 member kinds" "$r"
+
+r=$(probe a2_members_none "$FIX/clk_members4.sch" 'llength [dict get [xschem flylines net NOPE] members]')
+[ "$r" = "0" ] && ok "A2 unknown net -> 0 members" || bad "A2 members none" "$r"
+
 # ---------------------------------------------------------------------------
 rm -rf "$TMP"
 if [ "$fail" = 0 ]; then echo "RESULT: ALL PASS"; else echo "RESULT: $fail FAILED"; exit 1; fi

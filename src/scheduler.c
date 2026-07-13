@@ -2122,9 +2122,44 @@ static int xschem_cmds_f(Tcl_Interp *interp, int argc, const char *argv[], int *
         Tcl_SetResult(interp, "usage: xschem flylines net <name> | at <x> <y>", TCL_STATIC);
         return TCL_ERROR;
       }
-      Tcl_ResetResult(interp);
-      Tcl_AppendResult(interp, "net {", netname ? netname : "",
-                       "} members {} clusters {} segments {}", NULL);
+      /* A2: enumerate the geometry on the net -- every wire whose .node matches and every
+       * instance pin whose .node[p] matches (bounded by rects[PINLAYER], as propagate_hilights
+       * does). Exact-string match: correct for scalar nets; bus-bit matching is A7. Member
+       * record = {kind index pin x y}, kind in {wire,pin}, pin=-1 for a wire. Read-only. */
+      {
+        Tcl_DString mem;
+        Tcl_DStringInit(&mem);
+        if(netname && netname[0]) {
+          int i, p, rects;
+          double x, y;
+          char buf[128];
+          for(i = 0; i < xctx->wires; ++i) {
+            if(xctx->wire[i].node && !strcmp(xctx->wire[i].node, netname)) {
+              x = (xctx->wire[i].x1 + xctx->wire[i].x2) / 2.0;
+              y = (xctx->wire[i].y1 + xctx->wire[i].y2) / 2.0;
+              my_snprintf(buf, S(buf), "%s{wire %d -1 %.16g %.16g}",
+                          Tcl_DStringLength(&mem) ? " " : "", i, x, y);
+              Tcl_DStringAppend(&mem, buf, -1);
+            }
+          }
+          for(i = 0; i < xctx->instances; ++i) {
+            if(!xctx->inst[i].node) continue;
+            rects = (xctx->inst[i].ptr + xctx->sym)->rects[PINLAYER];
+            for(p = 0; p < rects; ++p) {
+              if(xctx->inst[i].node[p] && !strcmp(xctx->inst[i].node[p], netname)) {
+                get_inst_pin_coord(i, p, &x, &y);
+                my_snprintf(buf, S(buf), "%s{pin %d %d %.16g %.16g}",
+                            Tcl_DStringLength(&mem) ? " " : "", i, p, x, y);
+                Tcl_DStringAppend(&mem, buf, -1);
+              }
+            }
+          }
+        }
+        Tcl_ResetResult(interp);
+        Tcl_AppendResult(interp, "net {", netname ? netname : "", "} members {",
+                         Tcl_DStringValue(&mem), "} clusters {} segments {}", NULL);
+        Tcl_DStringFree(&mem);
+      }
     }
 
     /* fullscreen
