@@ -9965,6 +9965,7 @@ namespace eval gfxform {
   variable loaded       ;# array: tok -> value it opened with
   variable chk          ;# array: bool-field tok -> current checkbox state
   variable chk0         ;# array: bool-field tok -> initial checkbox state
+  variable ind          ;# array: editable tok -> its modified-dot indicator widget path
   variable fillchoices {}
   variable fill_label {} ;# enum combobox var (a choice label)
   variable fill_label0 {}
@@ -10003,7 +10004,8 @@ proc gfxform::init {prop type} {
   variable orig; variable schema; variable val; variable loaded; variable chk; variable chk0
   variable fillchoices; variable fill_label; variable fill_label0
   variable ell_on; variable ell_on0; variable ell_start; variable ell_end
-  array unset val; array unset loaded; array unset chk; array unset chk0
+  variable ind
+  array unset val; array unset loaded; array unset chk; array unset chk0; array unset ind
   set orig $prop
   set ::gfxform::type $type   ;# remembered for the OK/Apply routing (param shadows the var)
   set schema [slickprop::gfx_schema $type]
@@ -10045,6 +10047,13 @@ proc gfxform::desired {} {
   foreach row $schema {
     if {[dict exists $row hide] && [dict get $row hide]} continue ;# preserved via orig, not edited
     set tok [dict get $row tok]
+    if {[dict exists $row readonly] && [dict get $row readonly]} {
+      # read-only field (e.g. a wire's Net name): never a user edit, so re-emit the
+      # value it loaded with -> the token round-trips byte-for-byte on both the
+      # "extra unchanged" and "extra edited" assemble paths.
+      lappend d $tok $loaded($tok)
+      continue
+    }
     switch -- [dict get $row widget] {
       int - num {
         set v [string trim $val($tok)]
@@ -10083,6 +10092,27 @@ proc gfxform::collect {} {
   variable orig; variable schema
   set extra [string trim [.dialog.other.e get]]
   return [slickprop::schema_assemble $schema $orig [gfxform::desired] $extra]
+}
+
+# Live modified-cue for an editable field: show an accent dot in its indicator
+# column when the current widget value differs from what it loaded with, blank when
+# it matches. Bound to the entry's <KeyRelease> (int/num/string) and the
+# checkbutton's -command (bool). Mirrors slickprop::update_dirty for the instance
+# form, over gfxform's val()/chk()/loaded() state model.
+proc gfxform::update_dirty {tok} {
+  variable val; variable chk; variable loaded; variable chk0; variable ind
+  if {![info exists ind($tok)] || ![winfo exists $ind($tok)]} return
+  set dirty 0
+  if {[info exists chk($tok)]} {
+    if {[info exists chk0($tok)] && $chk($tok) != $chk0($tok)} { set dirty 1 }
+  } elseif {[info exists val($tok)] && [info exists loaded($tok)]} {
+    if {$val($tok) ne $loaded($tok)} { set dirty 1 }
+  }
+  if {$dirty} {
+    $ind($tok) configure -text "●"
+  } else {
+    $ind($tok) configure -text " "
+  }
 }
 
 # ---- "Apply to" scope for the pin body editor (doc/claude/specs/symbol_editor_apply_scope.md)
@@ -10178,12 +10208,21 @@ proc gfxform::apply {} {
   catch {gfxform::do_apply [gfxform::collect]}
 }
 
+# Remember the dialog geometry per object type, so reopening the same editor restores
+# its size+position (mirrors the instance form's ::slickprop_geometry). Keyed by type
+# so a small wire form is not resized to a large pin form's remembered geometry.
+proc gfxform::save_geom {} {
+  variable type
+  if {[winfo exists .dialog]} { catch {set ::gfxform_geom($type) [wm geometry .dialog]} }
+}
+
 # OK: for pin/pinname, apply HERE (same path as Apply) and tell C not to re-apply
 # (rcode {}), so OK-after-Apply never double-commits. Other graphical types keep the
 # legacy C round-trip (rcode {ok} -> C applies tctx::retval after tkwait).
 proc gfxform::ok {} {
   variable type
   set ::tctx::retval [gfxform::collect]
+  gfxform::save_geom
   if {$type eq {pin} || $type eq {pinname}} {
     if {![xschem get readonly]} { catch {gfxform::do_apply $::tctx::retval} }
     set ::tctx::rcode {}
@@ -10202,6 +10241,7 @@ proc text_line_slick {txtlabel clear preserve_disabled type} {
   set tctx::rcode {}
   if { [winfo exists .dialog] } return
   gfxform::init $tctx::retval $type
+  slickprop::init_fonts ;# the 4 named fonts (slickPropLabel/Value/Header/Hint) shared with the instance form
   toplevel .dialog -class Dialog
   set title [expr {$type eq {pinname} ? {Pin Name Text} : [string totitle $type]}]
   wm title .dialog "Edit $title properties"
@@ -10209,7 +10249,19 @@ proc text_line_slick {txtlabel clear preserve_disabled type} {
   set X [expr {[winfo pointerx .dialog] - 60}]
   set Y [expr {[winfo pointery .dialog] - 35}]
   if { $wm_fix } { tkwait visibility .dialog }
-  wm geometry .dialog "+$X+$Y" ;# position only, size to content
+  wm geometry .dialog "+$X+$Y" ;# position only, size to content (may be overridden below)
+
+  # --- header bar: what is being edited (grey60 bold, xschem convention) --------
+  # For a wire the header names its NET (the lab token) -- "#net3  —  wire" -- mirroring
+  # the instance form's "R1  —  res"; other graphical types show the type title.
+  set hdrtxt $title
+  if {$type eq {wire}} {
+    set net {}
+    catch {set net [xschem get_tok $tctx::retval lab 2]}
+    if {$net ne {}} { set hdrtxt "$net  —  wire" }
+  }
+  label .dialog.hdr -text "  $hdrtxt" -bg grey60 -anchor w -font slickPropHeader
+  pack .dialog.hdr -side top -fill x
 
   # "Apply to" scope selector -- pin body editor only (symbol_editor_apply_scope.md D9).
   if {$type eq {pin}} {
@@ -10233,47 +10285,58 @@ proc text_line_slick {txtlabel clear preserve_disabled type} {
     pack .dialog.scope -side top -fill x -padx 4 -pady 4
   }
 
-  labelframe .dialog.appear -text "Appearance"
+  labelframe .dialog.appear -text "Appearance" -font slickPropLabel
   set ltk [expr {[info tclversion] > 8.4}]
   foreach row $gfxform::schema {
     if {[dict exists $row hide] && [dict get $row hide]} continue ;# hidden: preserved, no widget
     set tok [dict get $row tok]
     set lab [dict get $row label]
+    set ro  [expr {[dict exists $row readonly] && [dict get $row readonly]}]
     set f .dialog.appear.$tok
     frame $f
     switch -- [dict get $row widget] {
-      int - num {
-        label $f.l -text "$lab:"
-        entry $f.e -textvariable gfxform::val($tok) -width 6
-        pack $f.l $f.e -side left
-      }
-      string {
-        label $f.l -text "$lab:"
-        set ww [expr {[dict exists $row width] ? [dict get $row width] : 24}]
-        entry $f.e -textvariable gfxform::val($tok) -width $ww
-        pack $f.l $f.e -side left
+      int - num - string {
+        set ww [expr {[dict exists $row width] ? [dict get $row width] : \
+                     ([dict get $row widget] eq {string} ? 24 : 6)}]
+        # dot | right-aligned label | monospace value entry -- the instance form's row shape.
+        label $f.i -width 2 -anchor center -text " " -font slickPropLabel -fg [slickprop::accent]
+        label $f.l -text "$lab:" -width 12 -anchor e -font slickPropLabel
+        if {$ro} {
+          # read-only field (a wire's Net name): shown, not edited; no dirty dot.
+          entry $f.e -textvariable gfxform::val($tok) -width $ww -font slickPropValue \
+            -state readonly -relief flat
+        } else {
+          entry $f.e -textvariable gfxform::val($tok) -width $ww -font slickPropValue \
+            -relief sunken -borderwidth 1
+          set gfxform::ind($tok) $f.i
+          bind $f.e <KeyRelease> [list gfxform::update_dirty $tok]
+        }
+        pack $f.i $f.l $f.e -side left
       }
       bool {
-        checkbutton $f.ck -text "$lab" -variable gfxform::chk($tok)
-        pack $f.ck -side left
+        label $f.i -width 2 -anchor center -text " " -font slickPropLabel -fg [slickprop::accent]
+        checkbutton $f.ck -text "$lab" -variable gfxform::chk($tok) -font slickPropLabel \
+          -command [list gfxform::update_dirty $tok]
+        set gfxform::ind($tok) $f.i
+        pack $f.i $f.ck -side left
       }
       enum {
-        label $f.l -text "$lab:"
+        label $f.l -text "$lab:" -width 12 -anchor e -font slickPropLabel
         if {$ltk} {
           ttk::combobox $f.cb -state readonly -width 10 \
             -textvariable gfxform::fill_label -values [dict keys $gfxform::fillchoices]
           bind $f.cb <KeyPress> {combo_letter_cycle %W %A; break}
         } else {
-          entry $f.cb -textvariable gfxform::fill_label -width 10
+          entry $f.cb -textvariable gfxform::fill_label -width 10 -font slickPropValue
         }
         pack $f.l $f.cb -side left
       }
       ellipse {
-        checkbutton $f.ck -text "$lab" -variable gfxform::ell_on
-        label $f.sl -text "  Start:"
-        entry $f.se -textvariable gfxform::ell_start -width 5
-        label $f.el -text "End:"
-        entry $f.ee -textvariable gfxform::ell_end -width 5
+        checkbutton $f.ck -text "$lab" -variable gfxform::ell_on -font slickPropLabel
+        label $f.sl -text "  Start:" -font slickPropLabel
+        entry $f.se -textvariable gfxform::ell_start -width 5 -font slickPropValue
+        label $f.el -text "End:" -font slickPropLabel
+        entry $f.ee -textvariable gfxform::ell_end -width 5 -font slickPropValue
         pack $f.ck $f.sl $f.se $f.el $f.ee -side left
       }
     }
@@ -10282,22 +10345,23 @@ proc text_line_slick {txtlabel clear preserve_disabled type} {
   pack .dialog.appear -side top -fill x -padx 4 -pady 4
 
   frame .dialog.other
-  label .dialog.other.l -text "Other properties:"
-  entry .dialog.other.e -width 50
+  label .dialog.other.l -text "Other properties:" -font slickPropLabel
+  entry .dialog.other.e -width 50 -font slickPropValue
   .dialog.other.e insert 0 [slickprop::schema_extra $gfxform::schema $tctx::retval]
   pack .dialog.other.l -side left
   pack .dialog.other.e -side left -fill x -expand yes
   pack .dialog.other -side top -fill x -padx 4 -pady 2
 
   frame .dialog.buttons
-  button .dialog.buttons.ok -text OK -command gfxform::ok
+  button .dialog.buttons.ok -text OK -default active -font slickPropLabel -command gfxform::ok
   # Live Apply for the pin / pin-name-text editors: commit + redraw, keep the form open so
   # the effect (e.g. a font change) is visible without dismissing (cadence_pin_name_text.md).
   if {$type eq {pin} || $type eq {pinname}} {
-    button .dialog.buttons.apply -text Apply -command gfxform::apply
+    button .dialog.buttons.apply -text Apply -font slickPropLabel -command gfxform::apply
   }
-  button .dialog.buttons.cancel -text Cancel -command {
+  button .dialog.buttons.cancel -text Cancel -font slickPropLabel -command {
     set ::tctx::rcode {}
+    gfxform::save_geom
     gfxform::clear_pin_highlight
     destroy .dialog
   }
@@ -10309,6 +10373,9 @@ proc text_line_slick {txtlabel clear preserve_disabled type} {
     pack .dialog.buttons.ok .dialog.buttons.cancel -side left -fill x -expand yes
   }
   pack .dialog.buttons -side bottom -fill x
+  # footer hint (grey50, small) mirroring the instance form; rewritten under read-only.
+  label .dialog.hint -text "Enter: OK    Esc: Cancel" -font slickPropHint -fg grey50 -anchor center
+  pack .dialog.hint -side bottom -fill x -pady {0 2}
   # No multi-line text box here, so Enter = OK from anywhere; Escape = Cancel.
   bind .dialog <Return>   {.dialog.buttons.ok invoke}
   bind .dialog <KP_Enter> {.dialog.buttons.ok invoke}
@@ -10317,10 +10384,16 @@ proc text_line_slick {txtlabel clear preserve_disabled type} {
   if {[xschem get readonly]} {
     .dialog.buttons.ok configure -state disabled
     catch {.dialog.buttons.apply configure -state disabled}
+    .dialog.hint configure -text "Read-only view — changes cannot be applied"
     bind .dialog <Return>   {.dialog.buttons.cancel invoke}
     bind .dialog <KP_Enter> {.dialog.buttons.cancel invoke}
   }
   dialog_minsize_floor .dialog
+  # restore this editor type's remembered geometry (size+pos), overriding the initial
+  # pointer-relative position; first open falls back to that position + size-to-content.
+  if {[info exists ::gfxform_geom($type)] && $::gfxform_geom($type) ne {}} {
+    catch {wm geometry .dialog $::gfxform_geom($type)}
+  }
   # Initial Name greying + apply-set overlay. update_pin_highlight sets the overlay and schedules
   # a deferred force_window_repaint so it is flushed once the dialog has mapped (a synchronous
   # draw before tkwait is not flushed under WSLg -> the outline used to appear only after the

@@ -134,6 +134,12 @@ proc slickprop::gfx_schema {type} {
   set fill    [dict create tok fill    label {Fill} widget enum \
                  choices [dict create Default {} None false Full full]]
   set bus     [dict create tok bus     label {Width} widget num]
+  # Wire net name: READ-ONLY, info only. lab is a write-back cache the netlister
+  # recomputes from label INSTANCES each run (netlist.c), so it is shown for
+  # information, never edited here (renaming a net = placing a net label). Marked
+  # `readonly 1`: rendered as a disabled entry and fed its loaded value verbatim on
+  # assemble, so it round-trips byte-for-byte. See doc/claude/specs/wire_property_form_parity.md.
+  set wlab    [dict create tok lab     label {Net name} widget string readonly 1]
   set bezier  [dict create tok bezier  label {Smooth (bezier)} widget bool on true]
   set ellipse [dict create tok ellipse label {Ellipse} widget ellipse]
   # Symbol pin (PINLAYER rect): TWO editors over the same B-record tokens
@@ -172,7 +178,7 @@ proc slickprop::gfx_schema {type} {
     line - LINE              { return [list $dash $bus] }
     poly - polygon - POLYGON { return [list $dash $fill $bezier $bus] }
     arc  - ARC               { return [list $dash $fill $bus] }
-    wire - WIRE              { return [list $bus] }
+    wire - WIRE              { return [list $wlab $bus] }
     default { return {} }
   }
 }

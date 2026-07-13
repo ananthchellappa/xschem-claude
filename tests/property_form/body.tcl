@@ -1333,7 +1333,7 @@ check {RL5b text_extra still strips owned}   {[lsearch [xschem list_tokens [f_te
 check {RL6a line schema = dash bus}        {[tx_toks [f_gschema line]] eq {dash bus}}
 check {RL6b poly schema = dash fill bezier bus} {[tx_toks [f_gschema poly]] eq {dash fill bezier bus}}
 check {RL6c arc schema = dash fill bus}    {[tx_toks [f_gschema arc]] eq {dash fill bus}}
-check {RL6d wire schema = bus}             {[tx_toks [f_gschema wire]] eq {bus}}
+check {RL6d wire schema = lab bus}         {[tx_toks [f_gschema wire]] eq {lab bus}}
 check {RL6e poly bezier is a bool widget}  {[f_dg [f_trow [f_gschema poly] bezier] widget] eq "bool"}
 check {RL6f poly bezier on=true}           {[f_dg [f_trow [f_gschema poly] bezier] on] eq "true"}
 check {RL6g bus is a num widget}           {[f_dg [f_trow [f_gschema line] bus] widget] eq "num"}
@@ -1357,6 +1357,77 @@ check {RL8b poly bezier parsed}      {[f_dg [f_trow $::PF bezier] value] eq "tru
 check {RL8c poly bus parsed}         {[f_dg [f_trow $::PF bus] value] eq "3"}
 check {RL8d poly extra keeps name}   {[xschem get_tok [f_sextra $::PSC $::PP] name 2] eq "p1"}
 check {RL8e poly no-edit identical}  {[f_sassemble $::PSC $::PP {} [f_sextra $::PSC $::PP]] eq $::PP}
+
+# ===========================================================================
+# RL9 — wire schema promotes the NET NAME (lab) as a READ-ONLY row ahead of
+# Width (bus). Only Width is editable; lab is info-only (the netlister recomputes
+# it from label instances), so it is fed its loaded value verbatim and preserved
+# byte-for-byte. lock / *_ignore / foreign tokens stay in "Other properties" and
+# must round-trip untouched. Spec: doc/claude/specs/wire_property_form_parity.md,
+# issue 0118. RED first (wire schema is currently just {bus}).
+# ===========================================================================
+set ::WSC [f_gschema wire]
+set ::WP  {lab=#net3 bus=0.1 lock=true spice_ignore=true foo=bar}
+check {RL9a lab is a string widget}      {[f_dg [f_trow $::WSC lab] widget] eq "string"}
+check {RL9b lab row is readonly}         {[f_dg [f_trow $::WSC lab] readonly 0] == 1}
+check {RL9c lab label = Net name}        {[f_dg [f_trow $::WSC lab] label] eq {Net name}}
+set ::WX [f_sextra $::WSC $::WP]
+check {RL9d1 owned lab stripped from Other}  {[lsearch [xschem list_tokens $::WX 0] lab] < 0}
+check {RL9d2 owned bus stripped from Other}  {[lsearch [xschem list_tokens $::WX 0] bus] < 0}
+check {RL9d3 lock kept in Other}             {[xschem get_tok $::WX lock 2] eq "true"}
+check {RL9d4 spice_ignore kept in Other}     {[xschem get_tok $::WX spice_ignore 2] eq "true"}
+check {RL9d5 foreign foo kept in Other}      {[xschem get_tok $::WX foo 2] eq "bar"}
+# no-edit round trip is byte-identical (lab+bus owned, nothing changed)
+check {RL9e no-edit byte-identical}      {[f_sassemble $::WSC $::WP {} $::WX] eq $::WP}
+# edit ONLY Width; feed lab its loaded value (as the read-only form does) -> lab,
+# lock, spice_ignore, and the foreign token all survive, only bus changes.
+set ::WO [f_sassemble $::WSC $::WP {lab #net3 bus 0.2} $::WX]
+check {RL9f1 bus updated to 0.2}         {[xschem get_tok $::WO bus 2] eq "0.2"}
+check {RL9f2 lab preserved}              {[xschem get_tok $::WO lab 2] eq "#net3"}
+check {RL9f3 lock preserved}             {[xschem get_tok $::WO lock 2] eq "true"}
+check {RL9f4 spice_ignore preserved}     {[xschem get_tok $::WO spice_ignore 2] eq "true"}
+check {RL9f5 foreign foo preserved}      {[xschem get_tok $::WO foo 2] eq "bar"}
+
+# ---------------------------------------------------------------------------
+# RL10 (DISPLAY-gated smoke) — the wire form (text_line_slick, type wire) renders
+# the instance-form look: a grey60 header, a READ-ONLY Net name entry, an EDITABLE
+# Width entry in the monospace value font, a footer hint. Widget existence/state
+# only -- pixels/colour/theme are a MANUAL EYEBALL item (WSLg cannot verify them).
+# text_line_slick BLOCKS in tkwait, so capture from an `after` timer firing during
+# the open form, then destroy it (cannot hang). If WSLg fails to build the modal
+# (built=0) the checks are SKIPPED, never falsely failed. Skipped under --nogui.
+# ---------------------------------------------------------------------------
+proc gfx_wire_capture {} {
+  if {![winfo exists .dialog.appear.bus.e]} return  ;# not built (WSLg hiccup): leave built=0
+  set ::rl10(built)  1
+  set ::rl10(hdr)    [winfo exists .dialog.hdr]
+  set ::rl10(labe)   [winfo exists .dialog.appear.lab.e]
+  set ::rl10(labst)  [expr {[winfo exists .dialog.appear.lab.e] ? [.dialog.appear.lab.e cget -state] : {}}]
+  set ::rl10(busst)  [.dialog.appear.bus.e cget -state]
+  set ::rl10(busfnt) [.dialog.appear.bus.e cget -font]
+  set ::rl10(hint)   [winfo exists .dialog.hint]
+}
+proc gfx_wire_open_capture {prop} {
+  catch {while {[winfo exists .dialog]} {destroy .dialog; update}}
+  foreach id [after info] {catch {after cancel $id}}
+  set ::tctx::retval $prop
+  set safe [after 1500 {catch {gfx_wire_capture}; catch {destroy .dialog}}]
+  catch {text_line_slick {Input property:} 0 normal wire}
+  catch {after cancel $safe}
+  catch {if {[winfo exists .dialog]} {destroy .dialog}}
+}
+if {[gui2_ok]} {
+  array unset ::rl10; set ::rl10(built) 0
+  gfx_wire_open_capture {lab=#net3 bus=0.1 lock=true}
+  if {$::rl10(built)} {
+    check {RL10a wire form has a grey60 header}             {$::rl10(hdr) == 1}
+    check {RL10b Net name entry exists}                     {$::rl10(labe) == 1}
+    check {RL10c Net name entry is read-only}               {$::rl10(labst) eq "readonly"}
+    check {RL10d Width entry is editable}                   {$::rl10(busst) eq "normal"}
+    check {RL10e Width entry uses the monospace value font} {$::rl10(busfnt) eq "slickPropValue"}
+    check {RL10f footer hint present}                       {$::rl10(hint) == 1}
+  }
+}
 
 # ===========================================================================
 # PF60-PF63 — M2: the form is fully MODELESS (issue 0009). edit_form no longer
