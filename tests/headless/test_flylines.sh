@@ -145,6 +145,24 @@ r=$(probe a6_bare_full "$FIX/bare_wires.sch" 'xschem flylines at 50 0')
 r=$(probe a6_bare_byname "$FIX/bare_wires.sch" 'lindex [xschem flylines net #net1] 1')
 [ "$r" = "" ] && ok "A6 explicit net #net1 also excluded" || bad "A6 bare byname" "$r"
 
+# ---- A7: bus aggregate-per-label (per-bit overlap) ------------------------
+# bus_shared: two A[1:0] labels + one A[0] label, none wired.
+# hovering the bus A[1:0] aggregates every object sharing ANY bit -> all 3 labels
+r=$(probe a7_bus_members "$FIX/bus_shared.sch" 'llength [dict get [xschem flylines net {A[1:0]}] members]')
+[ "$r" = "3" ] && ok "A7 bus A[1:0] aggregates all bit-sharing labels (3)" || bad "A7 bus members" "$r"
+
+r=$(probe a7_bus_segs "$FIX/bus_shared.sch" \
+  'set d [xschem flylines net {A[1:0]}]; list [llength [dict get $d clusters]] [llength [dict get $d segments]]')
+[ "$r" = "3 2" ] && ok "A7 bus -> 3 clusters, 2 star segments" || bad "A7 bus segs" "$r"
+
+# scalar A[0] is a bit of the bus -> links to both A[1:0] labels too (symmetric) -> 3
+r=$(probe a7_bit_link "$FIX/bus_shared.sch" 'llength [dict get [xschem flylines net {A[0]}] members]')
+[ "$r" = "3" ] && ok "A7 scalar A[0] links the bus labels carrying that bit (3)" || bad "A7 bit link" "$r"
+
+# per-bit PRECISION: A[1] is carried only by the two bus labels, NOT the A[0] scalar -> 2
+r=$(probe a7_bit_precise "$FIX/bus_shared.sch" 'llength [dict get [xschem flylines net {A[1]}] members]')
+[ "$r" = "2" ] && ok "A7 A[1] matches only bus labels, not A[0] (precise)" || bad "A7 bit precise" "$r"
+
 # ---------------------------------------------------------------------------
 rm -rf "$TMP"
 if [ "$fail" = 0 ]; then echo "RESULT: ALL PASS"; else echo "RESULT: $fail FAILED"; exit 1; fi

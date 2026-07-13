@@ -1896,6 +1896,53 @@ static int flyline_members_touch(const FlyMember *a, const FlyMember *b)
   }
 }
 
+/* Is the single bit `needle` one of the comma-separated bits in `hay`? Exact, length-checked. */
+static int flyline_bit_in_list(const char *needle, const char *hay)
+{
+  size_t nl = strlen(needle);
+  const char *p = hay;
+  while(p && *p) {
+    const char *comma = strchr(p, ',');
+    size_t len = comma ? (size_t)(comma - p) : strlen(p);
+    if(len == nl && !strncmp(p, needle, nl)) return 1;
+    if(!comma) break;
+    p = comma + 1;
+  }
+  return 0;
+}
+
+/* Do two net-name tokens denote the same net on at least one bit? Fast path for identical
+ * scalars/buses; otherwise expandlabel() both into comma-separated bit lists and test overlap.
+ * This is the bus aggregate-per-label rule: a bus label matches every object sharing any of its
+ * bits (e.g. A[1:0] links A[0]), yet stays bit-precise (A[1] does not match A[0]). Read-only. */
+static int flyline_same_net(const char *a, const char *b)
+{
+  int ma, mb, match = 0;
+  char *ea = NULL, *eb = NULL;
+  const char *p;
+  if(!a || !b) return 0;
+  if(!strcmp(a, b)) return 1;
+  /* expandlabel returns a shared buffer -- strdup each result before the next call clobbers it */
+  my_strdup(_ALLOC_ID_, &ea, expandlabel(a, &ma));
+  my_strdup(_ALLOC_ID_, &eb, expandlabel(b, &mb));
+  if(ea && eb) {
+    for(p = ea; p && *p && !match; ) {
+      const char *comma = strchr(p, ',');
+      size_t len = comma ? (size_t)(comma - p) : strlen(p);
+      char bit[256];
+      if(len < sizeof(bit)) {
+        memcpy(bit, p, len); bit[len] = '\0';
+        if(flyline_bit_in_list(bit, eb)) match = 1;
+      }
+      if(!comma) break;
+      p = comma + 1;
+    }
+  }
+  my_free(_ALLOC_ID_, &eb);
+  my_free(_ALLOC_ID_, &ea);
+  return match;
+}
+
 static int xschem_cmds_f(Tcl_Interp *interp, int argc, const char *argv[], int *cmd_found)
 {
     /* fill_reset [nodraw]
@@ -2183,7 +2230,7 @@ static int xschem_cmds_f(Tcl_Interp *interp, int argc, const char *argv[], int *
           int i, p, rects;
           double x, y;
           for(i = 0; i < xctx->wires; ++i) {
-            if(xctx->wire[i].node && !strcmp(xctx->wire[i].node, netname)) {
+            if(flyline_same_net(xctx->wire[i].node, netname)) {
               if(nmem >= mem_alloc) { mem_alloc = mem_alloc ? mem_alloc * 2 : 16;
                 my_realloc(_ALLOC_ID_, &mem, mem_alloc * sizeof(FlyMember)); }
               mem[nmem].kind = 0; mem[nmem].idx = i; mem[nmem].pin = -1;
@@ -2197,7 +2244,7 @@ static int xschem_cmds_f(Tcl_Interp *interp, int argc, const char *argv[], int *
             if(!xctx->inst[i].node) continue;
             rects = (xctx->inst[i].ptr + xctx->sym)->rects[PINLAYER];
             for(p = 0; p < rects; ++p) {
-              if(xctx->inst[i].node[p] && !strcmp(xctx->inst[i].node[p], netname)) {
+              if(flyline_same_net(xctx->inst[i].node[p], netname)) {
                 if(nmem >= mem_alloc) { mem_alloc = mem_alloc ? mem_alloc * 2 : 16;
                   my_realloc(_ALLOC_ID_, &mem, mem_alloc * sizeof(FlyMember)); }
                 get_inst_pin_coord(i, p, &x, &y);
