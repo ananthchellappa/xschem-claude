@@ -87,6 +87,21 @@ r=$(probe a3_partition "$FIX/clk_members4.sch" \
   'set d [xschem flylines net CLK]; set n [llength [dict get $d members]]; set s 0; foreach c [dict get $d clusters] {incr s [llength [dict get $c members]]}; list $n $s')
 [ "$r" = "4 4" ] && ok "A3 clusters partition all 4 members" || bad "A3 partition" "$r"
 
+# A3 adversarial: a pin on a wire MIDDLE (T-junction) joins that wire (point-on-segment),
+# an isolated same-name label stays separate -> 2 clusters over 3 members
+r=$(probe a3_midwire "$FIX/pin_mid_wire.sch" \
+  'set d [xschem flylines net CLK]; list [llength [dict get $d clusters]] [llength [dict get $d members]]')
+[ "$r" = "2 3" ] && ok "A3 pin mid-wire (T) unions; isolated stays -> 2 clusters" || bad "A3 mid-wire" "$r"
+
+# A3 adversarial: 3 wires end-to-end + 1 label all propagate to CLK and union transitively -> 1
+r=$(probe a3_chain "$FIX/wire_chain.sch" \
+  'set d [xschem flylines net CLK]; list [llength [dict get $d clusters]] [llength [dict get $d members]]')
+[ "$r" = "1 4" ] && ok "A3 transitive wire chain -> 1 cluster (4 members)" || bad "A3 chain" "$r"
+
+# A3 adversarial: three isolated same-name labels -> 3 disjoint clusters
+r=$(probe a3_three "$FIX/three_clusters.sch" 'llength [dict get [xschem flylines net CLK] clusters]')
+[ "$r" = "3" ] && ok "A3 three isolated labels -> 3 clusters" || bad "A3 three" "$r"
+
 # ---- A4: cluster anchors --------------------------------------------------
 # each cluster reports an anchor at a member point; the two label clusters -> the two pins
 r=$(probe a4_anchors "$FIX/two_clk_no_wire.sch" \
