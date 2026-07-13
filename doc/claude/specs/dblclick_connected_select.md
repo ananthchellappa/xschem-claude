@@ -79,7 +79,8 @@ move-grab (`STARTMOVE`, on a wire or instance body) or a pin wire-arm (`STARTWIR
 "deselect everything but the object under the cursor" collapse (which would undo
 the grow). Both were found only by driving the *full* `press,release,press,-3,
 release` sequence — a bare `-3` event silently skips the whole problem, so tests
-MUST drive the real sequence.
+MUST drive the real sequence. Post-mortem:
+[`../code_analysis/lessons_gesture_test_full_event_sequence.md`].
 
 ## Trigger & bindability
 
