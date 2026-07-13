@@ -10441,6 +10441,9 @@ proc addpin::after_drop {b} {
   if {!$armed} return
   if {![winfo exists .addpin]} { set armed 0; return }
   if {[addpin::placing]} return   ;# preview still attached -> no drop happened
+  # if the Add-Wire-Label form is ALSO open and it (not us) armed the preview that just
+  # committed, do NOT drain the pin queue (add_wire_label.md #8: cross-form drop cross-talk).
+  if {[info exists ::sympin_place] && $::sympin_place ne {pin}} return
   # a drop completed -> advance the queue to the next typed name
   set pending [lrange $pending 1 end]
   set current [lindex $pending 0]
@@ -10482,6 +10485,7 @@ proc addpin::arm {} {
   set ::pin_new_name $current
   set ::pin_new_dir  $d
   xschem [addpin::place_verb] -place ;# self-aborts the previous preview (no undo) and re-arms
+  set ::sympin_place pin             ;# owner latch: this preview is a PIN (add_wire_label.md #8)
   set armed 1
   set nleft [llength $pending]
   set more [expr {$nleft > 1 ? " (+[expr {$nleft-1}] queued)" : {}}]
@@ -10571,6 +10575,199 @@ proc addpin::open {} {
   raise_activate_toplevel $w
   focus $w.f.ename
   addpin::start_pass   ;# a reopened singleton may already hold name(s) -> build the queue + arm
+}
+
+# addlabel -- the Cadence-style "Add Wire Label" form (doc/claude/specs/add_wire_label.md), a
+# close sibling of addpin::. MODELESS: the Label Name field takes one or more names (a QUEUE); a
+# cursor PREVIEW of the current name (a lab_pin.sym net-label INSTANCE) follows the mouse; a
+# canvas click DROPS it -- but only where its pin lands on copper (a wire or an instance pin),
+# else the drop is refused and the preview stays attached (no stray net-labels). "Split bus"
+# expands bus ranges (B[2:0] -> B[2] B[1] B[0]); "Place multiple labels at once" and "Vertically
+# justified" are reserved (inert) for later. Placement is driven by `xschem add_wire_label
+# -place` (arms) + the shared C drop gate (wire_label_try_commit); this form only manages the
+# name queue and re-arms after each committed drop.
+namespace eval addlabel {
+  variable name           {}
+  variable split_bus      1
+  variable place_multiple 0   ;# reserved (inert)
+  variable vjust          0   ;# reserved (inert)
+  variable armed          0
+  variable hook_installed 0
+  variable last           {}
+  variable pending        {}
+  variable current        {}
+}
+
+proc addlabel::status {msg} { catch {.addlabel.status configure -text $msg} }
+
+# START_SYMPIN (xschem.h) = 16384: a preview is attached to the cursor.
+proc addlabel::placing {} { return [expr {[xschem get ui_state] & 16384}] }
+proc addlabel::abort_if_placing {} { if {[addlabel::placing]} { catch {xschem abort_operation} } }
+
+# ---- pure helper (no Tk; headless-testable, see tests/headless/test_add_wire_label.tcl) ----
+# Split a Label Name entry into placement names. Tokens separate on any run of whitespace and/or
+# commas; each token's angle brackets normalise to square (B<2:0> -> B[2:0]). When split_bus is
+# true a bit RANGE token (base[hi:lo]) expands to one name per bit, walking hi->lo (or lo->hi for
+# an ascending range); non-range tokens and the split_bus=false case pass through verbatim (so a
+# vector like B[2:0] stays a single label).
+proc addlabel::expand_names {s split_bus} {
+  set out {}
+  foreach tok [regexp -all -inline {[^,\s]+} $s] {
+    set tok [string map {< \[ > \]} $tok]
+    if {$split_bus && [regexp {^(.+)\[\s*(\d+)\s*:\s*(\d+)\s*\]$} $tok -> base hi lo]} {
+      # Force DECIMAL parsing: Tcl treats a leading-zero integer as OCTAL, so `08`/`09` would
+      # throw and `010` would mis-expand (silent netlist corruption). scan %d fixes both.
+      scan $hi %d hi; scan $lo %d lo
+      if {abs($hi - $lo) + 1 > 4096} {
+        # pathological width (typo/paste like A[20000000:0]): do NOT build a multi-million
+        # element list on this keystroke -- keep the token as a single vector label.
+        lappend out $tok
+      } elseif {$hi >= $lo} {
+        for {set i $hi} {$i >= $lo} {incr i -1} { lappend out "${base}\[$i\]" }
+      } else {
+        for {set i $hi} {$i <= $lo} {incr i}    { lappend out "${base}\[$i\]" }
+      }
+    } else {
+      lappend out $tok
+    }
+  }
+  return $out
+}
+
+# Re-arm the next label after each committed canvas drop (mirror of addpin::after_drop). A no-op
+# unless a preview is armed and a drop just COMMITTED (a refused drop leaves the preview attached,
+# so placing==1 and we do not advance).
+proc addlabel::install_drop_hook {} {
+  variable hook_installed
+  if {$hook_installed} return
+  if {![winfo exists .drw]} return
+  bind .drw <ButtonRelease> {+addlabel::after_drop %b}
+  set hook_installed 1
+}
+proc addlabel::after_drop {b} {
+  variable armed; variable pending; variable current
+  if {$b != 1} return
+  if {!$armed} return
+  if {![winfo exists .addlabel]} { set armed 0; return }
+  if {[addlabel::placing]} return   ;# preview still attached (not committed, or refused) -> wait
+  # if the Add-Pin form is ALSO open and it (not us) armed the committed preview, don't drain the
+  # label queue (add_wire_label.md #8: cross-form drop cross-talk).
+  if {[info exists ::sympin_place] && $::sympin_place ne {label}} return
+  set pending [lrange $pending 1 end]
+  set current [lindex $pending 0]
+  if {[string trim $current] ne {}} {
+    addlabel::arm
+  } else {
+    set armed 0
+    addlabel::status "all labels placed -- type more names, or Esc/Close to finish"
+  }
+}
+
+# Recompute the queue from the Label Name entry + Split bus, and arm its head. Editing either
+# RESTARTS the pass (fresh queue).
+proc addlabel::start_pass {} {
+  variable name; variable split_bus; variable pending; variable current
+  set pending [addlabel::expand_names $name $split_bus]
+  set current [lindex $pending 0]
+  addlabel::arm
+}
+
+# (Re)arm the cursor preview from the CURRENT queued name. Empty -> no preview (abort any attached
+# one). `-place` re-issues are undo-safe (the C driver owns one baseline), so calling this on
+# every keystroke / Split-bus toggle is fine.
+proc addlabel::arm {} {
+  variable current; variable armed; variable last; variable pending
+  if {![winfo exists .addlabel]} { set armed 0; return }
+  if {[string trim $current] eq {}} {
+    set armed 0; set last {}
+    addlabel::abort_if_placing
+    addlabel::status "type a Label Name (space/comma-separated for several), then move onto the canvas"
+    return
+  }
+  if {$current eq $last && [addlabel::placing]} return
+  set last $current
+  set ::label_new_name $current
+  xschem add_wire_label -place   ;# self-aborts the previous preview (no undo) and re-arms
+  set ::sympin_place label        ;# owner latch: this preview is a LABEL (add_wire_label.md #8)
+  set armed 1
+  set nleft [llength $pending]
+  set more [expr {$nleft > 1 ? " (+[expr {$nleft-1}] queued)" : {}}]
+  addlabel::status "placing '$current'$more -- click ON a wire or pin to drop; Esc finishes"
+}
+
+proc addlabel::on_name_change  {} { addlabel::start_pass }
+proc addlabel::on_split_change {} { addlabel::start_pass }
+
+# Called from the C drop gate when a click lands OFF copper: keep the user informed.
+proc addlabel::on_reject {} {
+  variable current
+  addlabel::status "'$current' must land ON a wire or an instance pin -- move and click again"
+}
+
+# Esc / Close: end placement and dismiss the form.
+proc addlabel::escape {} {
+  variable armed
+  set armed 0
+  addlabel::abort_if_placing
+  catch {destroy .addlabel}
+}
+proc addlabel::on_destroy {} {
+  variable armed; variable last; variable pending; variable current
+  set armed 0; set last {}; set pending {}; set current {}
+  catch {bind .drw <Key-Escape> {}}
+  addlabel::abort_if_placing
+}
+
+proc addlabel::open {} {
+  if {[xschem get readonly]} { readonly_notice; return }
+  set w .addlabel
+  addlabel::install_drop_hook
+  if {[winfo exists $w]} {
+    raise_activate_toplevel $w
+    focus $w.f.ename
+    addlabel::start_pass
+    return
+  }
+  catch {slickprop::init_fonts}
+  toplevel $w
+  wm title $w "Add Wire Label"
+  ttk::frame $w.f -padding 8
+  pack $w.f -side top -fill both -expand 1
+  ttk::label $w.f.lname -text "Label Name" -anchor w
+  ttk::entry $w.f.ename -textvariable addlabel::name -width 28
+  ttk::checkbutton $w.f.split -text "Split bus" -variable addlabel::split_bus \
+     -command addlabel::on_split_change
+  # reserved for later work (add_wire_label.md) -- present but inert
+  ttk::checkbutton $w.f.multi -text "Place multiple labels at once" \
+     -variable addlabel::place_multiple -state disabled
+  ttk::checkbutton $w.f.vjust -text "Vertically justified" \
+     -variable addlabel::vjust -state disabled
+  catch {$w.f.lname configure -font slickPropLabel}
+  catch {$w.f.ename configure -font slickPropValue}
+  grid $w.f.lname -row 0 -column 0 -sticky w  -padx {0 10} -pady 3
+  grid $w.f.ename -row 0 -column 1 -sticky we -pady 3
+  grid $w.f.split -row 1 -column 0 -columnspan 2 -sticky w -pady {6 0}
+  grid $w.f.multi -row 2 -column 0 -columnspan 2 -sticky w
+  grid $w.f.vjust -row 3 -column 0 -columnspan 2 -sticky w
+  grid columnconfigure $w.f 1 -weight 1
+
+  ttk::label $w.status -anchor w -relief sunken -padding {4 2} \
+    -text "type Label Name(s), then move onto the canvas; click ON a wire or pin to drop; Esc finishes"
+  pack $w.status -side bottom -fill x
+
+  ttk::frame $w.b
+  ttk::button $w.b.close -text "Close" -command addlabel::escape
+  pack $w.b.close -side right -padx 4 -pady 4
+  pack $w.b -side bottom -fill x
+
+  bind $w.f.ename <KeyRelease> {+addlabel::on_name_change}
+  bind .drw <Key-Escape> {if {[addlabel::placing]} {addlabel::escape; break}}
+  bind $w   <Key-Escape> {addlabel::escape}
+  bind $w   <Destroy>    {if {{%W} eq {.addlabel}} {addlabel::on_destroy}}
+
+  raise_activate_toplevel $w
+  focus $w.f.ename
+  addlabel::start_pass
 }
 
 proc text_line_legacy {txtlabel clear {preserve_disabled disabled} } {
@@ -13946,8 +14143,8 @@ proc build_widgets { {topwin {} } } {
           -command "xschem net_label 2" -accelerator Ctrl+P
   $topwin.menubar.sym add command -label "Place schematic output port" \
           -command "xschem net_label 3" -accelerator Ctrl+Shift+P
-  $topwin.menubar.sym add command -label "Place net pin label" \
-          -command "xschem net_label 1" -accelerator Alt+L
+  $topwin.menubar.sym add command -label "Add Wire Label" \
+          -command "xschem add_wire_label" -accelerator l
   $topwin.menubar.sym add command -label "Place net wire label" \
           -command "xschem net_label 0" -accelerator Alt+Shift+L
   $topwin.menubar.sym add command -label "Change selected inst. texts to floaters" \
@@ -13981,7 +14178,7 @@ proc build_widgets { {topwin {} } } {
   $topwin.menubar.tools add command -label "Insert text" -command "xschem place_text" -accelerator T
   $topwin.menubar.tools add command -label "Insert wire" -command "xschem wire" -accelerator W
   $topwin.menubar.tools add command -label "Insert snap wire" -command "xschem snap_wire" -accelerator Shift+W
-  $topwin.menubar.tools add command -label "Insert line" -command "xschem line" -accelerator L
+  $topwin.menubar.tools add command -label "Insert line" -command "xschem line gui" -accelerator Shift+L
   $topwin.menubar.tools add command -label "Insert rect" -command "xschem rect" -accelerator R
   $topwin.menubar.tools add command -label "Insert polygon" -command "xschem polygon" -accelerator P
   $topwin.menubar.tools add command -label "Insert arc" -command "xschem arc" -accelerator Shift+C

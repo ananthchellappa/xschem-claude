@@ -179,6 +179,27 @@ static int any_inst_pin_at(double x, double y)
   return 0;
 }
 
+/* Cadence net-label drop constraint (doc/claude/specs/add_wire_label.md): return 1 if (x,y)
+ * lands on COPPER -- ON any wire segment (touch(), endpoints included) OR EXACTLY on an
+ * instance PINLAYER pin (touches_inst_pin(), exact on-grid compare, covers net-labels /
+ * pin-labels / bus_taps which are just instances carrying PINLAYER pins). SELECTED wires and
+ * instances are skipped so the label PREVIEW being placed (it is selected) never satisfies the
+ * rule against its own pin. Used by the add_wire_label drop gate. */
+int point_on_wire_or_pin(double x, double y)
+{
+  int i;
+  for(i = 0; i < xctx->wires; ++i) {
+    if(xctx->wire[i].sel == SELECTED) continue;
+    if(touch(xctx->wire[i].x1, xctx->wire[i].y1, xctx->wire[i].x2, xctx->wire[i].y2, x, y))
+      return 1;
+  }
+  for(i = 0; i < xctx->instances; ++i) {
+    if(xctx->inst[i].sel == SELECTED) continue;
+    if(touches_inst_pin(x, y, i)) return 1;
+  }
+  return 0;
+}
+
 void trim_wires(void)
 {
   int k, sqx, sqy, doloops;

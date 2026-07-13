@@ -240,6 +240,7 @@ void abort_operation(void)
      xctx->ui_state &= ~PLACE_SYMBOL;
      xctx->ui_state &= ~PLACE_TEXT;
      xctx->sympin_preview = 0;
+     xctx->wirelabel_preview = 0;   /* add_wire_label.md: torn-down label preview */
    }
    if(xctx->ui_state & STARTMERGE) {
      delete(1/* to_push_undo */);
@@ -1652,6 +1653,30 @@ static void log_pan_end(void)
   if(dx != 0. || dy != 0.) log_action("xschem pan %.16g %.16g", dx, dy);
 }
 
+/* Cadence net-label drop gate (doc/claude/specs/add_wire_label.md). The armed wire-label
+ * preview may be COMMITTED only where its pin lands on copper (a wire or a non-selected instance
+ * pin, point_on_wire_or_pin()). Returns 1 = committed (move END + preview flags cleared, undo
+ * baseline kept), 0 = refused (preview left attached to the cursor, queue not advanced). Shared
+ * by the GUI button drop (end_place_move_copy_zoom, below) and the headless `add_wire_label
+ * -drop` seam so both enforce the identical rule. Not our gesture -> 0 (caller must not treat
+ * that as a refusal of a real label drop). */
+int wire_label_try_commit(void)
+{
+  if(!xctx) return 0;
+  if(!(xctx->ui_state & START_SYMPIN) || !xctx->wirelabel_preview) return 0;
+  if(!point_on_wire_or_pin(xctx->mousex_snap, xctx->mousey_snap)) {
+    tcleval("if {[info procs addlabel::on_reject] ne {}} {addlabel::on_reject}");
+    return 0;  /* off copper: keep the preview live so the user can reposition */
+  }
+  end_move_copy_logged(0);
+  xctx->ui_state &= ~START_SYMPIN;
+  xctx->sympin_preview = 0;
+  xctx->wirelabel_preview = 0;
+  xctx->constr_mv = 0;
+  tcleval("set constr_mv 0");
+  return 1;
+}
+
 /* complete the STARTWIRE, STARTRECT, STARTZOOM, STARTCOPY ... operations */
 static int end_place_move_copy_zoom()
 {
@@ -1723,6 +1748,14 @@ static int end_place_move_copy_zoom()
     return 0;
   }
   else if(xctx->ui_state & STARTMOVE) {
+    /* add_wire_label.md: a Cadence net-label preview may only drop on copper. Route it through
+     * the shared gate; on REFUSAL swallow the click (return 1 -> the caller records the press as
+     * a committed placement click and does NOT fall through to click-select) but leave the
+     * preview attached so the next motion + click retries. */
+    if(xctx->wirelabel_preview) {
+      wire_label_try_commit();
+      return 1;
+    }
     end_move_copy_logged(0);
     xctx->ui_state &=~START_SYMPIN;
     /* an Add-Pin preview pin was just dropped (committed): the gesture's undo baseline is
@@ -3238,6 +3271,9 @@ static ActionDef action_registry[] = {
   { "sym.place_symbol_pin", NULL, "xschem add_symbol_pin",
     "Add a symbol pin (Name + Direction dialog)", 1 },
   { "tools.insert_polygon", NULL, "xschem polygon gui", "Start drawing a polygon", 1 },
+  /* graphic-line placement, migrated off the plain-'l' switch case so 'l' can host the
+   * Add-Wire-Label form (add_wire_label.md). Default chord Shift+L (see init_input_bindings). */
+  { "tools.insert_line", NULL, "xschem line gui", "Start drawing a line", 1 },
   { "view.center_at_cursor", act_view_center_at_cursor, NULL,
     "Center the view on the cursor position" },
   /* Phase 3d.2 batch 2 — clean canvas-only command keys (C-backed). All ids below
@@ -3350,6 +3386,12 @@ static ActionDef action_registry[] = {
   { "edit.cycle_pin_type", NULL, "addpin::cycle_type",
     "Cycle the direction/type (input/output/inout) of the pin being placed",
     0 /* mutates */, NULL /* log_cmd */, 1 /* nolog: GUI-only chord, self-guards, not replayable */ },
+  /* Cadence-style Add Wire Label form (add_wire_label.md): open the modeless net-label form
+   * (typed name queue -> lab_pin instances, bus split, drop-on-copper constraint). Tcl-backed;
+   * mutates=0 -- opening the dialog changes nothing; the -place/-drop verbs own their undo.
+   * Default key 'l' (init_input_bindings). Rebindable. */
+  { "edit.add_wire_label", NULL, "xschem add_wire_label",
+    "Open the Add Wire Label form (place net labels)" },
 };
 static const int num_action_defs = (int)(sizeof(action_registry)/sizeof(action_registry[0]));
 
@@ -3526,7 +3568,13 @@ static void init_input_bindings(void)
    * canvas row makes the whole case data. L/=/$ are canvas-only (no over_graph row),
    * so only their plain-chord switch branch is deleted (Ctrl/Alt branches stay in C). */
   set_input_binding(DEV_KEY, 'A', 0, ACTX_CANVAS, "view.toggle_show_netlist");
-  set_input_binding(DEV_KEY, 'L', 0, ACTX_CANVAS, "edit.toggle_orthogonal_wiring");
+  /* add_wire_label.md (user-ratified): plain 'l' opens the Add-Wire-Label form (was: start a
+   * graphic line -- that switch case is now shadowed and relocated to Shift+L below). Shift+L
+   * hosts the graphic line (was: edit.toggle_orthogonal_wiring, which now ships UNBOUND -- rebind
+   * via keybindings.csv / `xschem bind`, same pattern as view.center_at_cursor). Both are freely
+   * reconfigurable from a user rc/script. */
+  set_input_binding_idle(DEV_KEY, 'l', 0, ACTX_CANVAS, "edit.add_wire_label");
+  set_input_binding(DEV_KEY, 'L', 0, ACTX_CANVAS, "tools.insert_line");
   set_input_binding(DEV_KEY, '=', 0, ACTX_CANVAS, "tools.execute_tcl_command");
   set_input_binding(DEV_KEY, '$', 0, ACTX_CANVAS, "view.toggle_draw_pixmap");
   /* 't': plain (place text) is an EXACT chord -> its switch guard is deleted like
@@ -4821,7 +4869,10 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
      * hilight.propagate_highlight_selected_net_pins (drill, idle). See init_input_bindings. */
 
     case 'l':
-      if(/* !xctx->ui_state && */ rstate == 0) { /* start line */
+      /* plain 'l' is bound to edit.add_wire_label in the binding table (add_wire_label.md),
+       * dispatched BEFORE this switch, so the start-line branch below is a dormant fallback that
+       * only resurfaces if the user unbinds 'l' (graphic line now defaults to Shift+L). */
+      if(/* !xctx->ui_state && */ rstate == 0) { /* start line (shadowed by edit.add_wire_label) */
         int prev_state = xctx->ui_state;
         if(xctx->semaphore >= 2) break;
         if(readonly_block()) break;
@@ -4841,17 +4892,18 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
         if(xctx->semaphore >= 2) break;
         create_sch_from_sym();
       }
-      else if(EQUAL_MODMASK) { /* add pin label*/
+      else if(EQUAL_MODMASK) { /* Alt+L: open the Add-Wire-Label form (was place_net_label(1)) */
         if(readonly_block()) break;
-        place_net_label(1);
+        tcleval("addlabel::open");
       }
       break;
 
     case 'L':
-      /* plain 'L' (toggle orthogonal routing) migrated to the binding table
-       * (Phase 3d.2 batch 3): key 'L' 0 canvas -> edit.toggle_orthogonal_wiring.
-       * The Alt branch (add pin label) stays in C. See init_input_bindings. */
-      if(EQUAL_MODMASK ) { /* add pin label*/
+      /* plain 'L' (Shift+L) is bound in the binding table to tools.insert_line (graphic line),
+       * relocated here from 'l' so 'l' can host the Add-Wire-Label form (add_wire_label.md);
+       * edit.toggle_orthogonal_wiring now ships UNBOUND. The Alt branch (place lab_wire label)
+       * stays in C. See init_input_bindings. */
+      if(EQUAL_MODMASK ) { /* Alt+Shift+L: place a lab_wire net label */
         if(readonly_block()) break;
         place_net_label(0);
       }

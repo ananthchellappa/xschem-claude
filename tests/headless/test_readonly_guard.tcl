@@ -37,7 +37,7 @@ check "treatment: buffer starts unmodified" [expr {[xschem get modified] == 0}] 
 
 set cmds {
   copy_objects cut delete flip merge move_objects paste rotate
-  add_graph add_image add_symbol_pin add_sch_pin arc change_elem_order instance line
+  add_graph add_image add_symbol_pin add_sch_pin add_wire_label arc change_elem_order instance line
   move_instance net_label place_symbol polygon rect reset_inst_prop text
   trim_wires wire undo redo align setprop replace_symbol
 }

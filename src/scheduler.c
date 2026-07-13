@@ -379,6 +379,10 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
         const char *dr = tclgetvar("pin_new_dir");
         if(!nm || !nm[0]) nm = "XXX";
         if(!dr || !dr[0]) dr = "inout";
+        /* this arms a symbol PIN preview, never a net-label: clear wirelabel_preview so a
+         * still-live Add-Wire-Label preview (both modeless forms open) cannot leak its
+         * drop-on-copper gate onto this pin's drop (add_wire_label.md invariant). */
+        xctx->wirelabel_preview = 0;
         /* A live preview ALWAYS has START_SYMPIN set; require it so a STALE sympin_preview
          * (the modeless form stayed open while a file load / clear / unselect reset ui_state
          * out from under it) is not mistaken for an armed preview -> we must still push a
@@ -428,6 +432,10 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
         const char *dr = tclgetvar("pin_new_dir");
         if(!nm || !nm[0]) nm = "XXX";
         if(!dr || !dr[0]) dr = "inout";
+        /* arming a schematic PIN preview, never a net-label: clear wirelabel_preview so a
+         * still-live Add-Wire-Label preview cannot leak its drop-on-copper gate onto this
+         * pin's drop (add_wire_label.md invariant). */
+        xctx->wirelabel_preview = 0;
         if(xctx->sympin_preview && (xctx->ui_state & START_SYMPIN)) {
           /* re-arm: discard the previous preview instance WITHOUT pushing undo */
           if(xctx->ui_state & STARTMOVE) {
@@ -459,6 +467,74 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
         }
       }
       Tcl_ResetResult(interp);
+    }
+
+    /* add_wire_label [-place | -drop [x y]]
+     *   Cadence-style Add Wire Label (doc/claude/specs/add_wire_label.md). Places lab_pin
+     *   net-label INSTANCES (lab=<name>) under the SAME modeless addlabel:: dialog / sympin
+     *   preview machinery as add_sch_pin, PLUS a "must land on copper" drop constraint.
+     *     (bare)      -> open the form (addlabel::open).
+     *     -place      -> read ::label_new_name and arm a cursor preview (reusing the sympin
+     *                    undo-clean re-arm dance; sets wirelabel_preview so the gate applies).
+     *     -drop [x y] -> reposition the preview to (x,y) (snapped; current snap if omitted) then
+     *                    run the shared drop gate wire_label_try_commit(); result 1/0 = committed
+     *                    /refused. GUI drops go through the button path, which runs the same gate;
+     *                    -drop is the headless seam (tests) and a scriptable commit. */
+    else if(!strcmp(argv[1], "add_wire_label"))
+    {
+      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(scheduler_readonly_reject(interp, "add_wire_label")) return TCL_ERROR;
+      /* Net labels are schematic instances; a .sym view forbids instances (place_symbol fails).
+       * Short-circuit like add_sch_pin (scheduler.c ~425) BEFORE the -place body so a form left
+       * open over a symbol view does not push a no-op undo baseline + wipe the selection on every
+       * keystroke (add_wire_label.md). Also declines the bare form-open there. */
+      if(editing_symbol_view()) { Tcl_ResetResult(interp); return TCL_OK; }
+      if(argc >= 3 && !strcmp(argv[2], "-place")) {
+        const char *nm = tclgetvar("label_new_name");
+        if(!nm) nm = "";
+        if(xctx->sympin_preview && (xctx->ui_state & START_SYMPIN)) {
+          /* re-arm: discard the previous preview instance WITHOUT pushing undo */
+          if(xctx->ui_state & STARTMOVE) {
+            int save = xctx->modified;
+            move_objects(ABORT,0,0,0);
+            delete(0 /* to_push_undo: no, keep the single baseline */);
+            set_modify(save);
+          }
+          xctx->ui_state &= ~START_SYMPIN;
+        } else {
+          xctx->push_undo();        /* one undo baseline per gesture */
+          xctx->sympin_preview = 1;
+        }
+        xctx->wirelabel_preview = 1;  /* mark this preview as a constrained net-label */
+        unselect_all(1);
+        if(place_wire_label(nm)) {
+          xctx->need_reb_sel_arr = 1;
+          rebuild_selected_array();
+          move_objects(START,0,0,0);
+          /* seed x2/y2 = anchor so the first `-drop`/RUBBER reposition (a different snap) passes
+           * move_objects(RUBBER)'s no-motion guard (mirror of the move_objects headless seam). */
+          xctx->x2 = xctx->x1; xctx->y2 = xctx->y1;
+          xctx->ui_state |= START_SYMPIN;
+        } else {
+          /* lab_pin.sym unresolvable, or a .sym view forbids instances: nothing was placed, so do
+           * NOT arm a phantom preview (mirror of the add_sch_pin guard, callback.c:237). */
+          xctx->sympin_preview = 0;
+          xctx->wirelabel_preview = 0;
+        }
+        Tcl_ResetResult(interp);
+      }
+      else if(argc >= 3 && !strcmp(argv[2], "-drop")) {
+        if(argc > 4) {              /* reposition the preview to the requested snap point */
+          xctx->mousex_snap = atof(argv[3]);
+          xctx->mousey_snap = atof(argv[4]);
+          if(xctx->ui_state & STARTMOVE) move_objects(RUBBER,0,0,0);
+        }
+        Tcl_SetResult(interp, wire_label_try_commit() ? "1" : "0", TCL_STATIC);
+      }
+      else {
+        tcleval("addlabel::open");
+        Tcl_ResetResult(interp);
+      }
     }
 
     /* add_graph
@@ -5492,6 +5568,22 @@ static int xschem_cmds_n(Tcl_Interp *interp, int argc, const char *argv[], int *
       if(scheduler_readonly_reject(interp, "net_label")) return TCL_ERROR;
       if(argc > 2) {
         place_net_label(atoi(argv[2]));
+      }
+    }
+
+    /* net_at x y
+     *   Return 1 if (x,y) lands on copper -- ON a wire or EXACTLY on a (non-selected) instance
+     *   pin -- else 0. The predicate behind the Add-Wire-Label drop constraint
+     *   (doc/claude/specs/add_wire_label.md); exposed for tests/scripts. Read-only. */
+    else if(!strcmp(argv[1], "net_at"))
+    {
+      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(argc > 3) {
+        Tcl_SetResult(interp,
+          point_on_wire_or_pin(atof(argv[2]), atof(argv[3])) ? "1" : "0", TCL_STATIC);
+      } else {
+        Tcl_SetResult(interp, "usage: xschem net_at x y", TCL_STATIC);
+        return TCL_ERROR;
       }
     }
 

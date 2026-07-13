@@ -1141,6 +1141,10 @@ typedef struct {
                        * undo (so typing a name does not spam/corrupt the undo stack); the drop
                        * keeps the baseline; an aborted preview is removed undo-free. 0 = a
                        * normal placement (add_graph/add_image/scripted pin), undo as usual. */
+  int wirelabel_preview; /* add_wire_label.md: the current sympin PREVIEW is a Cadence net-label
+                       * (lab_pin) under the "must land on copper" drop constraint. Set together
+                       * with sympin_preview at arm; cleared alongside it. When set, the drop gate
+                       * (wire_label_try_commit) refuses a click that is not on a wire/inst pin. */
   Selected *sel_array;
   Selected first_sel; /* first selected instance (used as master when editing multiple objects) */
   int prep_net_structs;
@@ -1911,6 +1915,9 @@ extern int place_symbol(int pos, const char *symbol_name, double x, double y, sh
 extern int editing_symbol_view(void);
 extern void place_net_label(int type);
 extern int place_sch_pin(const char *name, const char *dir);
+extern int place_wire_label(const char *name);
+extern int point_on_wire_or_pin(double x, double y);
+extern int wire_label_try_commit(void);
 extern void attach_labels_to_inst(int interactive);
 extern void clear_partial_selected_wires(void);
 extern int connect_by_kissing(void);

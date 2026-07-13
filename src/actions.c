@@ -1869,8 +1869,11 @@ void clear_drawing(void)
  /* the document is being torn down (load / clear / new / undo reload): any in-flight
   * Add-Pin cursor preview is now invalid, so drop the flag (cadence_pin_name_text.md
   * item #3) -- otherwise it would survive into the next document and mislead the next
-  * -place re-arm / abort_operation. */
+  * -place re-arm / abort_operation. wirelabel_preview is cleared alongside it (must hold
+  * the "cleared everywhere sympin_preview is" invariant, add_wire_label.md) so a torn-down
+  * net-label preview cannot leak its drop-on-copper gate onto the next document's placements. */
  xctx->sympin_preview = 0;
+ xctx->wirelabel_preview = 0;
  xctx->graph_lastsel = -1;
  del_inst_table();
  del_wire_table();
@@ -2391,6 +2394,30 @@ int place_sch_pin(const char *name, const char *dir)
    * tclevals (abs_sym_path/is_xschem_file), which would clobber it. */
   my_strncpy(symbuf, tcleval(symcmd), S(symbuf));
   my_mstrcat(_ALLOC_ID_, &prop, "name=p1 lab=", name, NULL);
+  r = place_symbol(-1, symbuf, xctx->mousex_snap, xctx->mousey_snap, 0, 0, prop,
+                   4 /* select the new instance */, 1 /* first_call */,
+                   0 /* to_push_undo: the -place driver owns the undo baseline */);
+  my_free(_ALLOC_ID_, &prop);
+  return r;
+}
+
+/* Place one Cadence net-label INSTANCE (lab_pin.sym, lab=<name>) at the cursor, SELECTED as a
+ * placement preview -- the label twin of place_sch_pin (place_net_label(1) with a pre-filled
+ * name). See doc/claude/specs/add_wire_label.md. The net name is the lab= property; "name=l1"
+ * lets new_prop_string uniquify the (netlist-irrelevant) refdes. to_push_undo is 0: the modeless
+ * `add_wire_label -place` driver owns the single undo baseline across the per-keystroke re-arms.
+ * Returns place_symbol()'s result (1 placed, 0 not). */
+int place_wire_label(const char *name)
+{
+  char symbuf[PATH_MAX];
+  char *prop = NULL;
+  int r;
+  if(!xctx) return 0;
+  if(!name) name = "";
+  /* copy the resolved path out of the volatile Tcl result BEFORE place_symbol runs its own
+   * tclevals (abs_sym_path/is_xschem_file), which would clobber it. */
+  my_strncpy(symbuf, tcleval("find_file_first lab_pin.sym"), S(symbuf));
+  my_mstrcat(_ALLOC_ID_, &prop, "name=l1 lab=", name, NULL);
   r = place_symbol(-1, symbuf, xctx->mousex_snap, xctx->mousey_snap, 0, 0, prop,
                    4 /* select the new instance */, 1 /* first_call */,
                    0 /* to_push_undo: the -place driver owns the undo baseline */);

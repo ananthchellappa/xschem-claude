@@ -1,0 +1,139 @@
+# Add Wire Label (Cadence-style net-label form)
+
+Status: implemented (fluid-editing), adversarial-review-hardened. Author: session 2026-07-12.
+
+Review pass (workflow, 4 dimensions × adversarial verify): 10 confirmed / 2 refuted, all 8 distinct
+fixed — leading-zero octal bus parse (`scan %d`), `wirelabel_preview` invariant leaks
+(clear_drawing + add_sch_pin/add_symbol_pin arm both now zero it), `editing_symbol_view()` guard on
+`add_wire_label`, bus-range width cap (4096), cross-form drop cross-talk (`::sympin_place` owner
+latch), two stale binding-assertion tests (test_key_graph_context / test_phase3_mints), menu
+accelerator. Refuted: exact-double pin compare (pins are on-grid), `place_wire_label` name lifetime.
+Related: [schematic_add_pin.md](schematic_add_pin.md) (the sibling Add-Pin form this mirrors),
+`cadence_pin_name_text.md`, `wire_stub_netlabel.md`.
+
+## Goal
+
+A Cadence-style **Add Wire Label** modeless form, very close to the Add-Pin form, that places
+**net labels** (`lab_pin.sym` instances carrying `lab=<name>`) whose names the user types up
+front — instead of the old "drop an `XXX` label, then edit it" flow (Symbol ▸ Place net pin
+label / Alt+L, `xschem net_label 1`). That old place-anywhere flow is **removed** (its key/menu
+are repointed to this form).
+
+Two behaviours ship now; two checkboxes are reserved (inert) for later work.
+
+### The form
+
+```
+Add Wire Label
+  Label Name: [ A B C[2:0]        ]
+  [x] Split bus
+  [ ] Place multiple labels at once     (inert — deferred)
+  [ ] Vertically justified              (inert — deferred)
+  ------------------------------------------------
+  <status line>                         [ Close ]
+```
+
+- **Label Name** — one or more names. They form a placement **queue**, exactly like Add-Pin: a
+  cursor preview of the current name follows the mouse; a left-click drops it (if legal, see
+  *Placement constraint*) and the next queued name auto-arms. When the queue drains, placement
+  stops but the form stays open (type more, or Esc/Close). Modeless.
+- **Split bus** (functional now) — see *Name parsing* below.
+- **Place multiple labels at once** — reserved, disabled. (Semantics TBD by the user.)
+- **Vertically justified** — reserved, disabled. (Will later rotate/vcenter the label text.)
+
+### Name parsing (`addlabel::expand_names names split_bus`)
+
+Pure Tcl, headless-testable (mirrors `addpin::names_from`). Steps:
+
+1. Split the entry on any run of **whitespace and/or commas** (`[,\s]+`), trimming ends.
+   So `"A B C"`, `"A,B,C"`, and `"A, B  C"` all yield three tokens.
+2. **Normalise** each token's bus brackets: `<` → `[`, `>` → `]`. So `B<2:0>` → `B[2:0]`,
+   `B<3>` → `B[3]`. (Always — even with Split bus OFF; user intent for angle brackets is
+   unambiguous.)
+3. If **Split bus is ON** and a token matches `^(.+)\[\s*(\d+)\s*:\s*(\d+)\s*\]$` (a bit RANGE),
+   expand it to one name per bit, walking hi→lo (or lo→hi when the range ascends):
+   `B[2:0]` → `B[2] B[1] B[0]`; `B[0:2]` → `B[0] B[1] B[2]`.
+   Non-range tokens (`A`, `A[3]`) and the OFF case pass through **verbatim** (normalised):
+   Split bus OFF + `B[2:0]` → a single vector label named `B[2:0]`.
+
+Editing the Name field OR toggling Split bus rebuilds the queue.
+
+### Placement constraint — "no stray net-labels"
+
+Unlike the old `net_label` (drop anywhere), a label may only be **committed** where its pin
+(the `lab_pin` `B` box at the instance origin) actually connects:
+
+- **ON a wire** — the snap point lies on any wire segment (`touch()`), OR
+- **exactly ON an instance pin** — the snap point coincides with a non-selected instance's
+  PINLAYER pin (`touches_inst_pin()`).
+
+The label preview itself is SELECTED during placement, so selected wires/instances are skipped
+in the test (a label never satisfies the rule against itself). A click on empty canvas is
+**refused**: the preview stays attached to the cursor (nothing committed, queue not advanced),
+and the status line explains why. Predicate: `point_on_wire_or_pin(x, y)` (check.c).
+
+## Invocation / key bindings (user-ratified)
+
+- Default **`l`** opens the form (`edit.add_wire_label` → `xschem add_wire_label`), a rebindable
+  registry action (idle-gated, canvas). This **shadows** the old plain-`l` graphic-line default.
+- Graphic-line moves to default **Shift+L** (`tools.insert_line` → `xschem line gui`), also a
+  new rebindable registry action.
+- The former Shift+L action **`edit.toggle_orthogonal_wiring` ships UNBOUND** (rebind via
+  `keybindings.csv` / `xschem bind`), same pattern as `view.center_at_cursor`/`view.pan`.
+- The old **Alt+L** menu item (Place net pin label) and its C key branch are **repointed** to
+  open this form. `xschem net_label 1` still exists as a command but is no longer bound.
+- `net_label 0/2/3` (lab_wire / ipin / opin, Alt+Shift+L / Ctrl+P / Ctrl+Shift+P) are untouched.
+
+All defaults are reconfigurable from a user's loadable rc/script via `bind`/`keybindings.csv`.
+
+## Implementation map
+
+C:
+- `point_on_wire_or_pin(x,y)` — **check.c** (public; reuses static `touches_inst_pin`). Skips
+  SELECTED wires/instances. Declared in xschem.h.
+- `place_wire_label(name)` — **actions.c** (twin of `place_sch_pin`): `find_file_first
+  lab_pin.sym`, prop `name=l1 lab=<name>`, `place_symbol(...,4/*select*/,1,0/*undo owned by
+  driver*/)`.
+- `xctx->wirelabel_preview` — **xschem.h** flag: the current START_SYMPIN preview is a
+  constrained wire-label (triggers the drop gate). Set with `sympin_preview` at arm; cleared
+  wherever `sympin_preview` is (abort at callback.c ~242, commit at ~1731, and the gate).
+- `xschem add_wire_label` — **scheduler.c** ('a' letter-dispatch, beside `add_sch_pin`): bare →
+  `addlabel::open`; `-place` → reuse the sympin undo-clean re-arm dance, set both preview flags,
+  `place_wire_label(::label_new_name)`; `-drop [x y]` → reposition preview then
+  `wire_label_try_commit()` (headless seam + shared gate). On `place_wire_label` failure clear
+  both preview flags (mirrors the add_sch_pin guard).
+- `wire_label_try_commit()` — **callback.c** (public): the shared drop gate. Commits (move END +
+  clear flags) iff `point_on_wire_or_pin(snap)`, else refuses (keeps preview). Used by BOTH the
+  GUI button path (`end_place_move_copy_zoom` STARTMOVE branch: commit→return 1, refuse→**swallow**
+  the click, return 1) and `add_wire_label -drop`.
+- Registry + default binds — **callback.c**: add `edit.add_wire_label`, `tools.insert_line`;
+  `set_input_binding_idle('l', …add_wire_label)`, `('L', …insert_line)`; drop the `'L'`
+  toggle_orthogonal default. Repoint Alt+L branch (~4846) to `addlabel::open`.
+
+Tcl:
+- `addlabel::` namespace — **xschem.tcl** (modeled on `addpin::`): `expand_names`,
+  `open`/`start_pass`/`arm`/`after_drop`/`escape`/`on_destroy`, status. Arms via `xschem
+  add_wire_label -place` (`::label_new_name`). `on_reject` updates the status on a refused drop.
+- Menu — **xschem.tcl**: repoint the Place-net-pin-label item to `addlabel::open`, relabel
+  "Add Wire Label", accelerator `l`.
+
+Data files:
+- **actions.csv** — add `edit.add_wire_label` row; `tools.insert_line` row already exists.
+- **keybindings.csv** — regenerated from the live table (`save_input_bindings_file … {key}`) so
+  the drift guard (test_bindings_file) stays green by construction.
+
+## Tests
+
+`tests/headless/test_add_wire_label.tcl` (RED-first, run_regression hcases):
+- **Parsing**: every `expand_names` case above (both Split-bus states, `<>`/`[]`, ascending
+  ranges, mixed separators, single-bit, empty).
+- **Predicate**: fixture wire + instance-pin → `point_on_wire_or_pin`/`xschem net_at` true on
+  the wire and on the pin, false off-copper, false on the selected preview.
+- **Constrained drop**: `add_wire_label -place` then `-drop` ON copper commits a `lab_pin`
+  instance with `lab=<name>` (placing→0); `-drop` OFF copper refuses (placing→1, not committed).
+- **Binding**: `edit.add_wire_label` is a real bindable id, default-bound to `l`;
+  `tools.insert_line` bound to Shift+L.
+- Add `add_wire_label` to `test_readonly_guard.tcl`.
+
+Sabotage checks (green-but-hollow guard): breaking the range-expansion regex fails the bus
+cases; making the gate always-true fails the OFF-copper refuse case.
