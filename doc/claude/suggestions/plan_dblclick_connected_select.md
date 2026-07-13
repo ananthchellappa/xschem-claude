@@ -1,8 +1,9 @@
 # Plan: double-click incremental connected-selection
 
 *Spec:* `../specs/dblclick_connected_select.md`. Branch `fluid-editing`.
-Status: **Commit 1 DONE** 2026-07-13 (engine + subcommand + tests, 20/20 pass,
-sabotage-verified). Commit 2 (cadence binding) pending.
+Status: **Commit 1 + 2 DONE** 2026-07-13 (engine + subcommand + tests, then the
+cadence_compat double-click trigger; 22/22 pass, sabotage-verified). FEATURE
+COMPLETE.
 
 Commit 1 shipped: `select_grow_connected_step()` + `grow_one_ring_wires()`
 (`select.c`), xctx state `dblgrow_level/seed_type/seed_id/sel_sig` (`xschem.h`),
@@ -109,28 +110,31 @@ first-letter dispatch rule — see memory `scheduler-letter-dispatch`):
 This subcommand is also the Option-A trigger (Tcl rebinds `<Double-Button-1>` to
 it) and the headless test hook.
 
-## 5. Wire the trigger (Tcl, O1 = A)
+## 5. Wire the trigger — DONE (C branch, not a Tk rebind)
 
-Rebind `<Double-Button-1>` to the subcommand, gated on `cadence_compat`, and make
-it survive new/detached windows by folding into `set_bindings`
-(`xschem.tcl:13441`, right after the default `<Double-Button-1>` bind at
-`:13488`):
+**Implemented differently from the original Tk-rebind sketch below, on purpose.**
+The Tk `<Double-Button-1>` binding funnels to event `-3`, whose C handler ALSO
+terminates in-progress draw gestures (`callback.c:6682-6694`). A blind Tk rebind
+of `<Double-Button-1>` would drop that gesture-termination. So the trigger is a
+branch inside `handle_double_click` (`callback.c:6668+`):
 
-```tcl
-# in set_bindings {topwin}, after the default Double-Button bindings:
-if {[xschem get cadence_compat]} {
-  bind $topwin <Double-Button-1> "xschem select_grow_connected %x %y"
+```c
+if(cadence_compat && (xctx->ui_state == 0 || xctx->ui_state == SELECTION)) {
+  select_grow_connected_step(xctx->mousex, xctx->mousey, 1);
+  return;
 }
 ```
 
-Because it lives in `set_bindings`, all three call sites (`xinit.c:3512,1938,
-2154`) inherit it — no per-window reapply. Under `!cadence_compat` the default
-Edit-Properties `<Double-Button-1>` binding is left untouched.
+This keeps the `-3` funnel's screen→schematic conversion, `semaphore`/`ui_state`
+guards, and draw-gesture termination (an active gesture has ui_state != 0/
+SELECTION, so it falls through). Still O1=A: no registry change, `cadence_compat`-
+gated, subcommand available for scripting. `cadence_style_rc` gets only a doc
+comment (behavior is automatic under `cadence_compat`); no bind line.
 
-Load path: the Cadence profile (`cadence_style_rc`, sets `cadence_compat 1`) is
-what turns this on; a plain-profile user who wants it binds
-`<Double-Button-2>`/`<Double-Button-3>` (free slots) to `xschem
-select_grow_connected` themselves.
+Rejected original sketch (Tk rebind in `set_bindings`) — kept for the record:
+`bind $topwin <Double-Button-1> "xschem select_grow_connected %x %y"` gated on
+`[xschem get cadence_compat]`; would have needed manual screen→schematic math and
+lost gesture termination.
 
 ## 6. Tests
 

@@ -134,6 +134,29 @@ check "T5 after unselect_all -> reset to 1" [expr {$l == 1}] "level=$l"
 check "T5 reset yields ring1 (2 wires)"     [expr {[nsel_type wire] == 2}] "sel=[xschem selection]"
 
 # ---------------------------------------------------------------------------
+# T7 -- the REAL cadence_compat double-click gesture (event -3 -> C
+# handle_double_click) grows the selection, one ring per double-click. Screen
+# pixel -> schematic conversion mirrors callback()'s X_TO_XSCHEM.
+# ---------------------------------------------------------------------------
+proc screen {sx sy} {
+  set xo [xschem get xorigin]; set yo [xschem get yorigin]; set z [xschem get zoom]
+  list [expr {int(($sx + $xo)/$z)}] [expr {int(($sy + $yo)/$z)}]
+}
+set cc_save [set ::cadence_compat]
+set ::cadence_compat 1
+build_chain
+lassign [screen 50 0] SX SY
+xschem callback $WIN -3 $SX $SY 0 1 0 0        ;# LMB double-click at W0 mid
+update idletasks
+check "T7 cadence dblclick gesture -> ring1 (2 wires)" [expr {[nsel_type wire] == 2}] \
+  "sel=[xschem selection]"
+xschem callback $WIN -3 $SX $SY 0 1 0 0        ;# again -> ring2
+update idletasks
+check "T7 second cadence dblclick -> ring2 (3 wires)" [expr {[nsel_type wire] == 3}] \
+  "sel=[xschem selection]"
+set ::cadence_compat $cc_save
+
+# ---------------------------------------------------------------------------
 puts ""
 if {$::fails == 0} {
   puts "OVERALL: ok  (all checks passed)"

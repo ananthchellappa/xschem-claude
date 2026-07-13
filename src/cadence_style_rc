@@ -38,6 +38,11 @@ set draw_crosshair 1
 set crosshair_size 2
 set infix_interface 0
 set cadence_compat 1
+# With cadence_compat, a LMB double-click grows the selection outward along wire
+# connectivity, one ring of connected segments per double-click, the 3rd reaching
+# the whole net (doc/claude/specs/dblclick_connected_select.md). This replaces
+# double-click-to-Edit-Properties (reach properties via 'q'). The engine is also
+# scriptable/rebindable as `xschem select_grow_connected [x y]`.
 # Fluid editing: first-click grab of any object tip/edge (rect corner+edge, line/wire
 # end, arc endpoint) -> drag stretches, no pre-select, independent of enable_stretch.
 # Defaults off (stock); enable it here for Cadence-style direct manipulation. Toggle live

@@ -71,16 +71,27 @@ Today LMB double-click already = **Edit Properties** (`edit_property(0)`,
 `callback.c:6679`). `handle_double_click()` already receives `cadence_compat`
 (`callback.c:6659` / call site `7021`) — the natural gate.
 
-**RATIFIED path — Tcl rebind + new subcommand.** Add `xschem
-select_grow_connected <x> <y>` in `scheduler.c`; the shipped `cadence_style_rc`
-rebinds `<Double-Button-1>` to it. No registry-grammar change. Trade-offs
-accepted: not `bindings dump`-visible, and the Tk `<Double-Button-1>` binding must
-be reapplied at every `set_bindings` site (`xinit.c:3512,1938,2154`) — fold the
-rebind into `set_bindings` (`xschem.tcl:13441`) so all windows (main / new /
-detached) inherit it.
+**RATIFIED path — new subcommand + `cadence_compat`-gated trigger, no registry
+change.** `xschem select_grow_connected [x y]` in `scheduler.c` is the scriptable/
+rebindable engine entry. IMPLEMENTED (commit 2).
 
-(Rejected alternative: a first-class `dblclick` registry device — more C work,
-not needed for this feature.)
+**Trigger — C branch in `handle_double_click`, NOT a Tk rebind.** The plan's
+Step 5 first proposed a Tcl rebind of `<Double-Button-1>`. That was rejected in
+implementation: the Tk `<Double-Button-1>` binding funnels to synthetic event
+`-3` which ALSO terminates in-progress draw gestures (STARTWIRE/STARTLINE/
+STARTPOLYGON, `callback.c:6682-6694`); a blind Tk rebind would drop that. Instead
+the branch lives inside `handle_double_click` (`callback.c:6668+`): when
+`cadence_compat` and `ui_state` is idle/SELECTION, call
+`select_grow_connected_step(mousex, mousey, 1)` and return; an active draw gesture
+still falls through to the termination code below. This keeps the `-3` funnel's
+screen→schematic conversion, `semaphore>=2`/`ui_state` guards, and gesture
+termination — none of which a Tk rebind would have. Still honors O1=A: no
+registry-grammar change, gated by `cadence_compat`, subcommand available for
+scripting/user-rebind. No `cadence_style_rc` bind line needed (auto under
+`cadence_compat`).
+
+(Rejected alternatives: a first-class `dblclick` registry device — more C work;
+a Tk `<Double-Button-1>` rebind — loses draw-gesture termination.)
 
 ### Default binding
 - `cadence_compat=1`: LMB double-click = connected-grow. **Edit Properties on

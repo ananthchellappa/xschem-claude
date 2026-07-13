@@ -6667,6 +6667,19 @@ static void handle_double_click(int event, int state, KeySym key, int button,
      dbg(1, "callback(): DoubleClick  ui_state=%d state=%d\n",xctx->ui_state,state);
      if(button==Button1) {
        Selected sel;
+       /* Cadence double-click incremental connected-select
+        * (doc/claude/specs/dblclick_connected_select.md): under cadence_compat a
+        * LMB double-click grows the selection outward along wire connectivity, one
+        * ring per double-click (Edit Properties is reached via 'q' instead). Only
+        * in the idle/selection state -- an active draw gesture still falls through
+        * to the STARTWIRE/STARTLINE/STARTPOLYGON termination below. Seeds the
+        * object under the cursor itself, so the edit-properties pre-select is
+        * skipped. Keeps the -3 funnel (coord conversion, semaphore/ui_state guards,
+        * gesture termination) rather than a Tk rebind that would lose them. */
+       if(cadence_compat && (xctx->ui_state == 0 || xctx->ui_state == SELECTION)) {
+         select_grow_connected_step(xctx->mousex, xctx->mousey, 1);
+         return;
+       }
        if(!xctx->lastsel && xctx->ui_state ==  0) {
          /* Following 5 lines do again a selection overriding lock,
           * so locked instance attrs can be edited */
