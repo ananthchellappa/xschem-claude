@@ -1840,6 +1840,27 @@ static int xschem_cmds_e(Tcl_Interp *interp, int argc, const char *argv[], int *
 /* `xschem f...` commands, moved verbatim from the xschem() dispatcher
  * (dispatcher decomposition batch 2). Sets *cmd_found = 0 when argv[1]
  * matches no command in this group; early returns propagate unchanged. */
+/* Resolve the net-name token carried by a picked object, mirroring the switch in
+ * hilight_net() (hilight.c): a wire carries its net in .node; a net-label / pin symbol
+ * carries it in .node[0]; a picked instance pin carries it in .node[pin]. Returns a
+ * pointer into xctx (do NOT free) or NULL when the object has no single net. Read-only
+ * -- part of the fly-line query, which must not mutate any state (invariant C1). */
+static const char *flyline_net_of(unsigned short type, int n, unsigned int col)
+{
+  if(type == WIRE) {
+    if(n >= 0 && n < xctx->wires) return xctx->wire[n].node;
+  } else if(type == ELEMENT) {
+    if(n >= 0 && n < xctx->instances) {
+      char *symtype = (xctx->inst[n].ptr + xctx->sym)->type;
+      if(symtype && xctx->inst[n].node && IS_LABEL_SH_OR_PIN(symtype))
+        return xctx->inst[n].node[0];
+    }
+  } else if(type == INST_PIN) {
+    if(n >= 0 && n < xctx->instances && xctx->inst[n].node) return xctx->inst[n].node[col];
+  }
+  return NULL;
+}
+
 static int xschem_cmds_f(Tcl_Interp *interp, int argc, const char *argv[], int *cmd_found)
 {
     /* fill_reset [nodraw]
@@ -2075,13 +2096,35 @@ static int xschem_cmds_f(Tcl_Interp *interp, int argc, const char *argv[], int *
      *   the modify flag, or saved bytes. A0: skeleton (empty dict). */
     else if(!strcmp(argv[1], "flylines"))
     {
+      const char *netname = NULL;   /* points into xctx data; do not free */
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
       if(argc < 3) {
         Tcl_SetResult(interp, "usage: xschem flylines net <name> | at <x> <y>", TCL_STATIC);
         return TCL_ERROR;
       }
+      prepare_netlist_structs(0);   /* populate wire[].node / inst[].node / node_table */
+      if(!strcmp(argv[2], "net")) {
+        if(argc < 4) {
+          Tcl_SetResult(interp, "usage: xschem flylines net <name>", TCL_STATIC);
+          return TCL_ERROR;
+        }
+        /* validate the name is a real net in this schematic (same test hilight_netname uses) */
+        if(bus_node_hash_lookup(argv[3], "", XLOOKUP, 0, "", "", "", "")) netname = argv[3];
+      } else if(!strcmp(argv[2], "at")) {
+        if(argc < 5) {
+          Tcl_SetResult(interp, "usage: xschem flylines at <x> <y>", TCL_STATIC);
+          return TCL_ERROR;
+        } else {
+          Selected sel = find_closest_obj(atof(argv[3]), atof(argv[4]), 1);
+          netname = flyline_net_of(sel.type, sel.n, sel.col);
+        }
+      } else {
+        Tcl_SetResult(interp, "usage: xschem flylines net <name> | at <x> <y>", TCL_STATIC);
+        return TCL_ERROR;
+      }
       Tcl_ResetResult(interp);
-      Tcl_AppendResult(interp, "net {} members {} clusters {} segments {}", NULL);
+      Tcl_AppendResult(interp, "net {", netname ? netname : "",
+                       "} members {} clusters {} segments {}", NULL);
     }
 
     /* fullscreen

@@ -48,6 +48,16 @@ r=$(probe a0_empty "" 'xschem flylines net foo')
   && ok "A0 unknown net -> empty dict" \
   || bad "A0 empty-dict shape" "$r"
 
+# ---- A1: net resolution ---------------------------------------------------
+r=$(probe a1_byname "$FIX/two_clk_no_wire.sch" 'lindex [xschem flylines net CLK] 1')
+[ "$r" = "CLK" ] && ok "A1 net CLK resolves by name" || bad "A1 net-by-name" "$r"
+
+r=$(probe a1_atpoint "$FIX/two_clk_no_wire.sch" 'lindex [xschem flylines at 0 0] 1')
+[ "$r" = "CLK" ] && ok "A1 net resolves at a point on a label" || bad "A1 net-at-point" "$r"
+
+r=$(probe a1_unknown "$FIX/two_clk_no_wire.sch" 'lindex [xschem flylines net NOPE] 1')
+[ "$r" = "" ] && ok "A1 unknown net name -> empty" || bad "A1 unknown-net" "$r"
+
 # ---------------------------------------------------------------------------
 rm -rf "$TMP"
 if [ "$fail" = 0 ]; then echo "RESULT: ALL PASS"; else echo "RESULT: $fail FAILED"; exit 1; fi
