@@ -3160,11 +3160,20 @@ int Tcl_AppInit(Tcl_Interp *inter)
  }
  tclsetintvar("running_in_src_dir", running_in_src_dir);
  /* recent-files protection: the recent-views list ($USER_CONF_DIR/recent_files) belongs to the
-  * USER; a scripted/automation session (--nogui or --pipe -- every test harness uses one of
-  * them) or an explicit --norecent must never create/rewrite it. xschem.tcl reads this flag
-  * when setting update_recent_files, and update_recent_file / update_recent_dir /
-  * write_recent_file are gated on that variable. See tests/headless/test_recent_launchlog.sh. */
- tclsetintvar("no_recent_files", (cli_opt_nogui || cli_opt_pipe || cli_opt_norecent) ? 1 : 0);
+  * USER; a scripted/automation session must never create/rewrite it. Automation is any of:
+  *   --nogui / --pipe  (the headless test harnesses),
+  *   --norecent        (explicit opt-out),
+  *   --script <file>   (a canned startup Tcl script -- e.g. a real-GUI verify/repro run: every
+  *                      `xschem load` it performs is programmatic, NOT a human clicking File>Open).
+  * A genuine desktop launch uses none of these (it opens files via a positional arg or the GUI),
+  * so this stays off for real users. Without the --script guard, a scripted GUI session that
+  * omits --pipe (has a real X display) silently polluted the user's list with test/scratchpad
+  * files -- see doc/claude/issues/0119-recent-files-script-leak.md and
+  * tests/headless/test_recent_launchlog.sh. xschem.tcl
+  * reads this flag when setting update_recent_files, and update_recent_file / update_recent_dir /
+  * write_recent_file are all gated on that variable. */
+ tclsetintvar("no_recent_files",
+   (cli_opt_nogui || cli_opt_pipe || cli_opt_norecent || cli_opt_tcl_script[0]) ? 1 : 0);
 
  if(!sel_file[0]) {
    my_snprintf(sel_file, S(sel_file), "%s/%s", user_conf_dir, ".selection.sch");

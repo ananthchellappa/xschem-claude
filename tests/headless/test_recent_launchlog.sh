@@ -51,13 +51,32 @@ if [ -f "$H3/.xschem/recent_files" ]; then
   bad "--norecent run wrote recent_files"
 else ok "--norecent run leaves recent_files alone"; fi
 
-# 4) POSITIVE rail: a user-mode session (no --nogui/--pipe/--norecent) still records
-#    the loaded file -- protection must not kill the feature for real users
+# 4) POSITIVE rail: a genuine user-mode session (no --nogui/--pipe/--norecent/--script) still
+#    records the loaded file -- protection must not kill the feature for real users. A real user
+#    opens a file via a positional arg (or File>Open in the GUI), NOT via a canned --script (that
+#    is now treated as automation, see rail 4b). The startup load writes recent_files during init;
+#    the process then sits in the GUI event loop, so launch it in the background, wait for the
+#    write, then kill it. (-x is required, as in rails 2/3.)
 H4="$TMP/home4"; mkdir -p "$H4"
-HOME="$H4" timeout 30 "$XSCHEM" -q -r -x --nolog --script "$TMP/load_quit.tcl" >/dev/null 2>&1
+HOME="$H4" "$XSCHEM" -q -r -x --nolog "$SCH" >/dev/null 2>&1 &
+h4pid=$!
+for _ in $(seq 1 50); do [ -f "$H4/.xschem/recent_files" ] && break; sleep 0.2; done
+kill "$h4pid" 2>/dev/null; wait "$h4pid" 2>/dev/null
 if [ -f "$H4/.xschem/recent_files" ] && grep -q "before_3.sch" "$H4/.xschem/recent_files"; then
-  ok "user-mode run still records the file in recent_files"
+  ok "user-mode positional-arg run still records the file in recent_files"
 else bad "user-mode run did not update recent_files (feature broken)"; fi
+
+# 4b) REGRESSION rail: a --script startup file with a real X display (no --pipe) is automation
+#     and must NOT write recent_files. This is the exact leak that re-contaminated the user's
+#     list with test/scratchpad files (mos_power_ampli.sch, scratchpad/wirefix.sch) -- a real-GUI
+#     verify/repro run launches `xschem -x --script foo.tcl`, and foo.tcl's `xschem load` used to
+#     pollute the user list because only --pipe/--nogui/--norecent were gated.
+#     See doc/claude/issues/0119-recent-files-script-leak.md.
+H4B="$TMP/home4b"; mkdir -p "$H4B"
+HOME="$H4B" timeout 30 "$XSCHEM" -q -r -x --nolog --script "$TMP/load_quit.tcl" >/dev/null 2>&1
+if [ -f "$H4B/.xschem/recent_files" ]; then
+  bad "--script (real-GUI, no --pipe) run wrote recent_files (user list corrupted -- leak is back)"
+else ok "--script run leaves recent_files alone (automation, not a human opening a file)"; fi
 
 # 5) an existing user recent_files survives a test run byte-for-byte
 H5="$TMP/home5"; mkdir -p "$H5/.xschem"
