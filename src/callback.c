@@ -6670,15 +6670,33 @@ static void handle_double_click(int event, int state, KeySym key, int button,
        /* Cadence double-click incremental connected-select
         * (doc/claude/specs/dblclick_connected_select.md): under cadence_compat a
         * LMB double-click grows the selection outward along wire connectivity, one
-        * ring per double-click (Edit Properties is reached via 'q' instead). Only
-        * in the idle/selection state -- an active draw gesture still falls through
-        * to the STARTWIRE/STARTLINE/STARTPOLYGON termination below. Seeds the
-        * object under the cursor itself, so the edit-properties pre-select is
-        * skipped. Keeps the -3 funnel (coord conversion, semaphore/ui_state guards,
-        * gesture termination) rather than a Tk rebind that would lose them. */
-       if(cadence_compat && (xctx->ui_state == 0 || xctx->ui_state == SELECTION)) {
-         select_grow_connected_step(xctx->mousex, xctx->mousey, 1);
-         return;
+        * ring per double-click (Edit Properties is reached via 'q' instead).
+        *
+        * With the cadence profile (fluid_editing + en_pin_select) the 2nd press of
+        * the double-click ALWAYS arms a TRANSIENT press-gesture before -3 fires: a
+        * fluid move-grab (STARTMOVE) on a wire/instance body, or a pin wire-arm
+        * (STARTWIRE + pin_pending) on an instance pin. So ui_state at -3 is almost
+        * never a bare 0/SELECTION. Detect those transient arms and abort_operation()
+        * them first -- that also pops the move's undo, restoring the pre-press
+        * selection (which, on a 2nd/3rd double-click, IS the previously-grown set,
+        * so escalation survives). Then grow, and latch place_click_committed so the
+        * matching release2 does NOT collapse the grown multi-selection down to the
+        * object under the cursor (same latch issue 0113 uses). A genuine multi-point
+        * draw (STARTLINE/STARTPOLYGON, or a real STARTWIRE draw without pin_pending)
+        * is NOT transient and falls through to the termination code below. */
+       {
+         int transient_pin  = (xctx->ui_state & STARTWIRE) && xctx->pin_pending;
+         int transient_move = (xctx->ui_state & (STARTMOVE | STARTCOPY)) && !xctx->mouse_moved;
+         if(cadence_compat && (xctx->ui_state == 0 || xctx->ui_state == SELECTION ||
+                               transient_pin || transient_move)) {
+           if(transient_pin || transient_move) {
+             abort_operation();
+             xctx->drag_elements = 0;
+           }
+           select_grow_connected_step(xctx->mousex, xctx->mousey, 1);
+           xctx->place_click_committed = 1; /* release2: suppress cadence deselect-others */
+           return;
+         }
        }
        if(!xctx->lastsel && xctx->ui_state ==  0) {
          /* Following 5 lines do again a selection overriding lock,

@@ -1131,6 +1131,7 @@ typedef struct {
   unsigned short dblgrow_seed_type;
   unsigned int dblgrow_seed_id;
   int dblgrow_sel_sig;
+  double dblgrow_seed_x, dblgrow_seed_y;
   int pin_sel_active; /* hint: 1 once any instance pin has been selected (pin_selection.md).
                        * Lets unselect_all() clear stale pin selections even when lastsel/
                        * SELECTION were reset out from under them (e.g. after delete()).

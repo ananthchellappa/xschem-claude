@@ -39,24 +39,47 @@ double-click; see §"Trigger & bindability"). Successive double-clicks on the
   ring apart; they are only unified by the 3rd (whole-net) click if that click is
   defined name-wise (see Open question O3).
 
-### Escalation state & reset
+### Escalation state & reset — IMPLEMENTED as seed-driven recompute
 
-The gesture is a small state machine keyed on a **seed** (the object under the
-first double-click) and a **level** counter (0 → ring1, 1 → ring2, 2 → all).
-Reset level to 0 (start a fresh escalation) when:
+A small state machine keyed on a **seed** (object under the double-click) + a
+**level** counter (1 → ring1, 2 → ring2, 3 → whole net; capped at 3).
 
-1. the double-clicked object differs from the stored seed, OR
-2. the stored seed is no longer selected (selection was cleared/changed by any
-   other action), OR
-3. the current selection was mutated by anything other than this grower since the
-   last double-click (tracked via a selection-generation stamp).
+The interactive gesture / coordinate form **recomputes the selection from the
+seed** each call: `unselect_all`, re-select the seed, grow `level` rings (or flood
+to fixpoint at level 3). This is the key robustness decision — see "Interactive
+reality" below: the surrounding fluid gesture leaves an unpredictable transient
+selection, so growing the *live* selection incrementally is unreliable. Recompute
+sidesteps it entirely; the selection at level N is a pure function of (seed, N).
 
-After the 3rd click (whole net) further double-clicks on the same seed are no-ops
-(already fully selected).
+**Reset to level 0 (restart) when the double-clicked object differs from the
+stored seed** (compared by type + session-stable id). That is the *only* reset for
+the interactive/coord path — an external `unselect_all` between double-clicks does
+NOT restart it, because the gesture cannot observe that deselect: its own 2nd
+press re-selects the seed before `-3` fires. Repeated double-clicks on the same
+object therefore always escalate 1→2→3 regardless of intervening deselects. After
+level 3 (whole net) further double-clicks on the same seed are no-ops.
 
-There is **no timing window** of our own — we ride Tk's `<Double-Button-N>`
-detector. "Same seed" identity, not a timer, drives escalation, so a slow
-sequence of double-clicks on the same object still escalates correctly.
+The scriptable **coordless** form (`xschem select_grow_connected` with no coords)
+is instead *incremental* — it grows the current selection by one ring and DOES
+reset the level on an external selection change (a `sel_sig` snapshot of
+`lastsel`). This is the primitive scripts/tests use.
+
+No timing window of our own — we ride Tk's `<Double-Button-N>`; seed identity, not
+a timer, drives escalation.
+
+### Interactive reality — the fluid/pin gesture must be aborted at `-3`
+
+With the Cadence profile (`fluid_editing=1` + `en_pin_select=1`) the **2nd press
+of the double-click always arms a transient gesture BEFORE `-3` fires**: a fluid
+move-grab (`STARTMOVE`, on a wire or instance body) or a pin wire-arm (`STARTWIRE`
++ `pin_pending`, on an instance pin). So `ui_state` at `-3` is almost never a bare
+`0`/`SELECTION`. The trigger (below) detects these transient arms and
+`abort_operation()`s them first, then recomputes+grows. It also latches
+`place_click_committed` so the **release2** that follows does not run the cadence
+"deselect everything but the object under the cursor" collapse (which would undo
+the grow). Both were found only by driving the *full* `press,release,press,-3,
+release` sequence — a bare `-3` event silently skips the whole problem, so tests
+MUST drive the real sequence.
 
 ## Trigger & bindability
 

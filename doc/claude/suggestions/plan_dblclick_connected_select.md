@@ -1,9 +1,25 @@
 # Plan: double-click incremental connected-selection
 
 *Spec:* `../specs/dblclick_connected_select.md`. Branch `fluid-editing`.
-Status: **Commit 1 + 2 DONE** 2026-07-13 (engine + subcommand + tests, then the
-cadence_compat double-click trigger; 22/22 pass, sabotage-verified). FEATURE
-COMPLETE.
+Status: **Commit 1 + 2 + fix DONE** 2026-07-13. FEATURE COMPLETE, verified on a
+real schematic (`tests/from_user/before_8.sch`: 3→5→8-wire escalation to whole
+#net1). 26/26 headless checks, sabotage-verified.
+
+**Fix commit (interactive path).** Commit 2's first cut passed a hollow T7 (bare
+`-3`) but added NOTHING interactively. Root cause: with the cadence profile
+(`fluid_editing`+`en_pin_select`) the double-click's 2nd press arms a transient
+`STARTMOVE`/pin-`STARTWIRE` before `-3`, so `ui_state` was never `0`/`SELECTION`
+and the branch never ran; the following release also collapsed the selection. Two
+changes:
+1. `handle_double_click` (callback.c): detect the transient arm, `abort_operation()`
+   it, then grow, and latch `place_click_committed` so release2 doesn't collapse.
+2. Engine (select.c): the coord/interactive path now **recomputes from the seed**
+   at the target level (immune to the fluid gesture's leftover selection); reset
+   on seed change only. Coordless path stays incremental with `sel_sig` reset.
+   New state `dblgrow_seed_x/y`.
+T7 upgraded to drive the full `press,release,press,-3,release` sequence (+T5b for
+the coordless path). Lesson recorded: gesture tests MUST drive the real event
+sequence, not a bare synthetic `-3`.
 
 Commit 1 shipped: `select_grow_connected_step()` + `grow_one_ring_wires()`
 (`select.c`), xctx state `dblgrow_level/seed_type/seed_id/sel_sig` (`xschem.h`),

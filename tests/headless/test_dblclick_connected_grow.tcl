@@ -123,38 +123,73 @@ set l [grow 250 200]                        ;# seed W4 (mid at (250,200)) -> res
 check "T4 different seed resets to level 1" [expr {$l == 1}] "level=$l"
 
 # ---------------------------------------------------------------------------
-# T5 -- external selection change resets the escalation.
+# T5 -- coord-form escalation is SEED-driven: it recomputes the selection from
+# the seed each call, so it SURVIVES an external unselect_all (repeated
+# double-clicks on the same object keep escalating). Reset happens on SEED CHANGE
+# (T4), not on selection clearing. This is deliberate: the interactive gesture
+# cannot reliably observe an intervening deselect (its own press re-selects the
+# seed before -3 fires), so the coord path keys off seed identity, not selection.
 # ---------------------------------------------------------------------------
 build_chain
 set l [grow 50 0]
-check "T5 first grow -> level 1"            [expr {$l == 1}] "level=$l"
-xschem unselect_all                         ;# external change
+check "T5 first grow -> level 1"                     [expr {$l == 1}] "level=$l"
+xschem unselect_all
 set l [grow 50 0]
-check "T5 after unselect_all -> reset to 1" [expr {$l == 1}] "level=$l"
-check "T5 reset yields ring1 (2 wires)"     [expr {[nsel_type wire] == 2}] "sel=[xschem selection]"
+check "T5 same seed after unselect_all -> level 2"   [expr {$l == 2}] "level=$l"
+check "T5 recompute-from-seed yields ring2 (3 wires)" [expr {[nsel_type wire] == 3}] "sel=[xschem selection]"
 
 # ---------------------------------------------------------------------------
-# T7 -- the REAL cadence_compat double-click gesture (event -3 -> C
-# handle_double_click) grows the selection, one ring per double-click. Screen
-# pixel -> schematic conversion mirrors callback()'s X_TO_XSCHEM.
+# T5b -- the COORDLESS form is incremental and DOES reset on external selection
+# change (sel_sig). Used for scripting.
+# ---------------------------------------------------------------------------
+build_chain
+xschem select_at 50 0
+set l [xschem select_grow_connected]
+check "T5b coordless after fresh select -> level 1" [expr {$l == 1}] "level=$l"
+check "T5b coordless ring1 (2 wires)"               [expr {[nsel_type wire] == 2}] "sel=[xschem selection]"
+xschem unselect_all
+xschem select_at 50 0
+set l [xschem select_grow_connected]
+check "T5b coordless resets on external change -> level 1" [expr {$l == 1}] "level=$l"
+
+# ---------------------------------------------------------------------------
+# T7 -- the REAL cadence_compat double-click GESTURE, full Tk event sequence
+# (press, release, press, Double(-3), release). This is the case that a bare -3
+# misses: with the cadence profile (fluid_editing + en_pin_select) the 2nd press
+# arms a transient STARTMOVE / pin STARTWIRE, so -3 must abort it and the release
+# must not collapse the grown selection. Escalates ring1 -> ring2 -> whole chain.
 # ---------------------------------------------------------------------------
 proc screen {sx sy} {
   set xo [xschem get xorigin]; set yo [xschem get yorigin]; set z [xschem get zoom]
   list [expr {int(($sx + $xo)/$z)}] [expr {int(($sy + $yo)/$z)}]
 }
+proc real_dblclick {sx sy} {
+  global WIN
+  lassign [screen $sx $sy] SX SY
+  xschem callback $WIN 4 $SX $SY 0 1 0 0     ;# ButtonPress 1
+  xschem callback $WIN 5 $SX $SY 0 1 0 0     ;# ButtonRelease 1
+  xschem callback $WIN 4 $SX $SY 0 1 0 0     ;# ButtonPress 2
+  xschem callback $WIN -3 $SX $SY 0 1 0 0    ;# Double-Button-1
+  xschem callback $WIN 5 $SX $SY 0 1 0 0     ;# ButtonRelease 2
+  update idletasks
+}
 set cc_save [set ::cadence_compat]
+set fe_save [set ::fluid_editing]
+set ps_save [set ::en_pin_select]
 set ::cadence_compat 1
+set ::fluid_editing 1
+set ::en_pin_select 1
 build_chain
-lassign [screen 50 0] SX SY
-xschem callback $WIN -3 $SX $SY 0 1 0 0        ;# LMB double-click at W0 mid
-update idletasks
-check "T7 cadence dblclick gesture -> ring1 (2 wires)" [expr {[nsel_type wire] == 2}] \
-  "sel=[xschem selection]"
-xschem callback $WIN -3 $SX $SY 0 1 0 0        ;# again -> ring2
-update idletasks
-check "T7 second cadence dblclick -> ring2 (3 wires)" [expr {[nsel_type wire] == 3}] \
-  "sel=[xschem selection]"
+xschem unselect_all
+real_dblclick 50 0
+check "T7 real gesture dblclick1 -> ring1 (2 wires)" [expr {[nsel_type wire] == 2}] "sel=[xschem selection]"
+real_dblclick 50 0
+check "T7 real gesture dblclick2 -> ring2 (3 wires)" [expr {[nsel_type wire] == 3}] "sel=[xschem selection]"
+real_dblclick 50 0
+check "T7 real gesture dblclick3 -> whole chain (5 wires)" [expr {[nsel_type wire] == 5}] "sel=[xschem selection]"
 set ::cadence_compat $cc_save
+set ::fluid_editing $fe_save
+set ::en_pin_select $ps_save
 
 # ---------------------------------------------------------------------------
 puts ""

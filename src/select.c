@@ -232,33 +232,42 @@ static int grow_one_ring_wires(void)
   return added;
 }
 
+/* Apply level N to the current selection: level 1 -> ring1, 2 -> ring2, ...,
+ * >=3 -> whole-net geometric flood (wires only, O4 cap). */
+static void dblgrow_apply_level(int level)
+{
+  int i;
+  if(level >= 3) {
+    while(grow_one_ring_wires() > 0) ; /* whole net */
+  } else {
+    for(i = 0; i < level; i++) grow_one_ring_wires();
+  }
+}
+
 /* One escalation step of the Cadence double-click connected-select
- * (doc/claude/specs/dblclick_connected_select.md). If pick_seed, the object at
- * (mx,my) is first picked and added to the selection (additive -- other selected
- * objects are kept) and becomes/refreshes the seed. Then, based on the per-seed
- * level: level 0 -> ring1, 1 -> ring2, 2 -> whole-net geometric flood (wires
- * only), >=3 -> no-op. The level resets to 0 when the seed changes or the
- * selection was mutated externally since the last step. Returns the new level. */
+ * (doc/claude/specs/dblclick_connected_select.md). Two entry modes:
+ *
+ * - pick_seed (the interactive double-click / `xschem select_grow_connected x y`):
+ *   the object under (mx,my) is the SEED. The level advances 1->2->3(=whole) on
+ *   repeated calls with the same seed, resetting to 1 when the seed changes. The
+ *   selection is then RECOMPUTED FROM SCRATCH -- unselect_all, re-select the seed,
+ *   grow `level` rings -- so it is immune to whatever transient selection the
+ *   surrounding fluid gesture (STARTMOVE grab / pin wire-arm) left behind. Rings
+ *   are wires-only; the seed object of any type stays selected.
+ *
+ * - !pick_seed (`xschem select_grow_connected` with no coords): incremental grow
+ *   of the CURRENT selection by one ring, resetting the level when the selection
+ *   was changed externally since the last step (sel_sig). Used for scripting.
+ *
+ * Returns the new level (1, 2 or 3). */
 int select_grow_connected_step(double mx, double my, int pick_seed)
 {
-  int reset = 0, cur_before;
-
-  /* current selection count BEFORE we add the seed: detects an external
-   * selection change (plain click, unselect_all, delete, ...) since last step. */
-  if(xctx->need_reb_sel_arr) rebuild_selected_array();
-  cur_before = xctx->lastsel;
-  if(cur_before != xctx->dblgrow_sel_sig) reset = 1;
-
   if(pick_seed) {
     Selected sel;
     unsigned short seed_type;
     unsigned int seed_id;
-    /* additive pick (does NOT clear existing selection); override_lock so a
-     * locked instance still seeds, matching handle_double_click. The command
-     * self-logs, so suppress select_object()'s own select_at stash. */
-    select_at_suppress_log = 1;
-    sel = select_object(mx, my, SELECTED, 1, NULL);
-    select_at_suppress_log = 0;
+
+    sel = find_closest_obj(mx, my, 1); /* identify seed, no selection side effect */
     if(!sel.type) { /* clicked empty space: leave level/selection untouched */
       if(xctx->need_reb_sel_arr) rebuild_selected_array();
       return xctx->dblgrow_level;
@@ -267,23 +276,33 @@ int select_grow_connected_step(double mx, double my, int pick_seed)
     if(sel.type == WIRE) seed_id = xctx->wire[sel.n].id;
     else if(sel.type == ELEMENT) seed_id = xctx->inst[sel.n].id;
     else seed_id = 0;
-    if(seed_type != xctx->dblgrow_seed_type || seed_id != xctx->dblgrow_seed_id) reset = 1;
+    if(seed_type != xctx->dblgrow_seed_type || seed_id != xctx->dblgrow_seed_id)
+      xctx->dblgrow_level = 0; /* new seed: restart escalation */
     xctx->dblgrow_seed_type = seed_type;
     xctx->dblgrow_seed_id = seed_id;
-  }
+    xctx->dblgrow_seed_x = mx;
+    xctx->dblgrow_seed_y = my;
 
-  if(reset) xctx->dblgrow_level = 0;
+    if(xctx->dblgrow_level < 3) xctx->dblgrow_level++; /* advance, cap at 3 (whole net) */
 
-  switch(xctx->dblgrow_level) {
-    case 0: grow_one_ring_wires(); xctx->dblgrow_level = 1; break;
-    case 1: grow_one_ring_wires(); xctx->dblgrow_level = 2; break;
-    case 2: while(grow_one_ring_wires() > 0) ; xctx->dblgrow_level = 3; break; /* whole net (O4 cap) */
-    default: break;                                                            /* already whole */
+    /* recompute from the seed at the target level */
+    unselect_all(1);
+    select_at_suppress_log = 1; /* the command/gesture self-logs */
+    select_object(mx, my, SELECTED, 1, NULL);
+    select_at_suppress_log = 0;
+    dblgrow_apply_level(xctx->dblgrow_level);
+  } else {
+    int cur_before;
+    if(xctx->need_reb_sel_arr) rebuild_selected_array();
+    cur_before = xctx->lastsel;
+    if(cur_before != xctx->dblgrow_sel_sig) xctx->dblgrow_level = 0; /* external change */
+    if(xctx->dblgrow_level < 3) xctx->dblgrow_level++;
+    dblgrow_apply_level(xctx->dblgrow_level >= 3 ? 3 : 1); /* incremental: one more ring */
   }
 
   xctx->need_reb_sel_arr = 1;
   rebuild_selected_array();
-  xctx->dblgrow_sel_sig = xctx->lastsel; /* snapshot for next-call external-change check */
+  xctx->dblgrow_sel_sig = xctx->lastsel;
   if(has_x) draw_selection(xctx->gc[SELLAYER], 0);
   return xctx->dblgrow_level;
 }
