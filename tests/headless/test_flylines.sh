@@ -1,0 +1,53 @@
+#!/bin/sh
+# Hover fly-lines -- connectivity/clustering logic (Track A), headless.
+# See doc/claude/specs/hover_flylines.md and
+#     doc/claude/suggestions/flyline_implementation_plan.md
+#
+# Drives the read-only query command `xschem flylines net <name> | at <x> <y>` and asserts
+# on its returned dict. Runs --nogui (pure data, no display). --norecent belt-and-suspenders
+# (the session is already --script/--pipe gated, commit 3dc41ba2) so the user's recent list
+# is never touched.
+#
+#   sh tests/headless/test_flylines.sh
+# Prints "RESULT: ALL PASS" / "RESULT: N FAILED"; exits nonzero on failure.
+
+HERE=$(cd "$(dirname "$0")" && pwd)
+REPO=$(cd "$HERE/../.." && pwd)
+XSCHEM="$REPO/src/xschem"
+FIX="$HERE/flylines"
+TMP=$(mktemp -d /tmp/xschem_flylines.XXXXXX)
+fail=0
+
+ok()  { echo "ok:   $1"; }
+bad() { echo "FAIL: $1  [got: $2]"; fail=$((fail+1)); }
+
+if [ ! -x "$XSCHEM" ]; then echo "FATAL: $XSCHEM not built"; exit 3; fi
+
+# probe NAME FIXTURE EXPR  -- optionally load FIXTURE (or "" for none), eval EXPR, echo result.
+probe() {
+  _n=$1; _fx=$2; _expr=$3
+  {
+    echo "set fd [open {$TMP/$_n.out} w]"
+    [ -n "$_fx" ] && echo "if {[catch {xschem load {$_fx}} e]} {puts \$fd \"LOADERR: \$e\"; close \$fd; return}"
+    echo "if {[catch {$_expr} r]} {puts \$fd \"ERR: \$r\"} else {puts \$fd \$r}"
+    echo "close \$fd"
+  } > "$TMP/$_n.tcl"
+  HOME="$TMP" timeout 30 "$XSCHEM" --nogui --pipe -q --nolog --norecent --script "$TMP/$_n.tcl" >/dev/null 2>&1
+  cat "$TMP/$_n.out" 2>/dev/null
+}
+
+# ---- A0: command skeleton -------------------------------------------------
+r=$(probe a0_usage "" 'xschem flylines')
+case "$r" in
+  ERR:*) ok "A0 no-subcommand -> error" ;;
+  *)     bad "A0 no-subcommand should error" "$r" ;;
+esac
+
+r=$(probe a0_empty "" 'xschem flylines net foo')
+[ "$r" = "net {} members {} clusters {} segments {}" ] \
+  && ok "A0 unknown net -> empty dict" \
+  || bad "A0 empty-dict shape" "$r"
+
+# ---------------------------------------------------------------------------
+rm -rf "$TMP"
+if [ "$fail" = 0 ]; then echo "RESULT: ALL PASS"; else echo "RESULT: $fail FAILED"; exit 1; fi

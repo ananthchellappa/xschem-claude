@@ -2067,6 +2067,23 @@ static int xschem_cmds_f(Tcl_Interp *interp, int argc, const char *argv[], int *
       Tcl_SetResult(interp, buf, TCL_VOLATILE);
     }
 
+    /* flylines net <name> | at <x> <y>
+     *   Read-only net-connectivity query backing the hover fly-line overlay
+     *   (doc/claude/specs/hover_flylines.md, suggestions/flyline_implementation_plan.md).
+     *   Returns a Tcl dict: net {N} members {{type n pin x y}...} clusters {...} segments {...}.
+     *   INVARIANT (C1): pure read-only -- must NEVER write hilight_table, inst.color, .sel,
+     *   the modify flag, or saved bytes. A0: skeleton (empty dict). */
+    else if(!strcmp(argv[1], "flylines"))
+    {
+      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(argc < 3) {
+        Tcl_SetResult(interp, "usage: xschem flylines net <name> | at <x> <y>", TCL_STATIC);
+        return TCL_ERROR;
+      }
+      Tcl_ResetResult(interp);
+      Tcl_AppendResult(interp, "net {} members {} clusters {} segments {}", NULL);
+    }
+
     /* fullscreen
      *   Toggle fullscreen modes: fullscreen with menu & status, fullscreen, normal */
     else if(!strcmp(argv[1], "fullscreen"))
