@@ -6542,7 +6542,14 @@ static void move_regrab_follow_set(void)
 {
   int saved = xctx->fluid_startsel_wires;
   int saved_nid = xctx->fluid_startsel_nid;           /* issue 0091: preserve the user-selected id set */
+  /* issue 0117: this regrab runs BETWEEN the X and Y legs, when the geometry is the intermediate
+   * X-moved state. select_attached_nets() strokes the highlight of every grabbed wire; that
+   * intermediate stroke bakes a ghost segment into save_pixmap (at the leg-A pin row) that the
+   * final END redraw never erases. Re-derive the SET only -- the END draw repaints the real
+   * highlight at the committed geometry. */
+  xctx->select_attached_nodraw = 1;
   select_attached_nets();
+  xctx->select_attached_nodraw = 0;
   xctx->fluid_startsel_wires = saved;
   xctx->fluid_startsel_nid = saved_nid;               /* regrab (all sel==0) rebuilt an empty set */
   xctx->movelastsel = xctx->lastsel;

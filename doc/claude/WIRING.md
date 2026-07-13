@@ -364,7 +364,16 @@ rigid group op about a shared pivot (0114: in-drag ALT-R/F/V; 0116-bug2: standal
 pivot = grid-snapped selection bbox centre — coerce to group ROTATE/FLIP when >1 user object). Also
 **transform latency** — a mid-drag ALT-R/F during a LIVE fluid stretch must `commit_now` (re-run the
 RUBBER commit) so it repaints without a mouse jiggle; a bare move_rot/flip bump only shows on the
-next motion (0116-bug1; release==stepwise keeps the END result identical).
+next motion (0116-bug1; release==stepwise keeps the END result identical). · K **Intermediate-leg
+strokes bypass the overlay wrapper** (0117) — `select_wire(fast&2==0)` strokes the highlight
+DIRECTLY via `drawtempline`, NOT through `draw_selection()`, so landmine I's neutralization does not
+protect it. `move_regrab_follow_set()` (between the X and Y legs, `nlegs==2`) calls
+`select_attached_nets()` on the X-moved-not-yet-Y geometry; without suppression that strokes a ghost
+highlight into `save_pixmap` at the leg-A pin row that the END redraw never clears. Fix: the regrab
+sets `xctx->select_attached_nodraw` so those grabs pass `fast=3` (SET only, no stroke). Any new
+between-leg / intermediate-geometry SET re-derivation must likewise suppress drawing. NB: does NOT
+reproduce in the scripted/headless END (its full `draw()` flushes over the stroke) — interactive/WSLg
+blit timing only.
 
 Open issues as of f1692607: **0079** (follow-set drawn as selection), **0084** (replay
 grep), **0101** (rotatelocal H1/H2/H3 tears).

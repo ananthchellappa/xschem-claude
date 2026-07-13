@@ -1581,6 +1581,11 @@ void select_attached_nets(void)
   int wire, inst, j, i, rects, r, sqx, sqy;
   double x0, y0, tol;
   Wireentry *wptr;
+  /* fast bit 1 = quiet (no info popup); bit 2 = do NOT stroke the selection highlight.
+   * The between-legs regrab (move_regrab_follow_set) re-derives the follow SET off the
+   * intermediate X-moved geometry -- stroking it would bake a ghost segment at the leg-A
+   * position that the final redraw does not clear (issue 0117). Suppress the draw there. */
+  int fast = xctx->select_attached_nodraw ? 3 : 1;
 
   hash_wires();
   rebuild_selected_array();
@@ -1632,10 +1637,10 @@ void select_attached_nets(void)
              * skipping would leave the moved pin disconnected. See wire_through_tap_arm(). */
             if(xctx->connect_by_kissing && wire_through_tap_arm(i, x0, y0, tol)) continue;
             if(endpoint_near(xctx->wire[i].x1, xctx->wire[i].y1, x0, y0, tol)) {
-               select_wire(i,SELECTED1, 1, 0);
+               select_wire(i,SELECTED1, fast, 0);
             }
             if(endpoint_near(xctx->wire[i].x2, xctx->wire[i].y2, x0, y0, tol)) {
-               select_wire(i,SELECTED2, 1, 0);
+               select_wire(i,SELECTED2, fast, 0);
             }
           }
         }
@@ -1658,10 +1663,10 @@ void select_attached_nets(void)
           i = wptr->n;
           if(i == wire) continue;
           if(endpoint_near(xctx->wire[i].x1, xctx->wire[i].y1, x0, y0, tol)) {
-             select_wire(i,SELECTED1, 1, 0);
+             select_wire(i,SELECTED1, fast, 0);
           }
           if(endpoint_near(xctx->wire[i].x2, xctx->wire[i].y2, x0, y0, tol)) {
-             select_wire(i,SELECTED2, 1, 0);
+             select_wire(i,SELECTED2, fast, 0);
           }
         }
       }

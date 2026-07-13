@@ -1303,6 +1303,9 @@ typedef struct {
   Undo_slot fluid_reroute_snap;   /* pristine geometry+selection snapshot for the active gesture */
   int fluid_reroute_active;       /* 1 while a fluid stretch gesture owns fluid_reroute_snap */
   int fluid_reroute_dirty;        /* 1 once a RUBBER step has committed geometry (END must restore) */
+  int select_attached_nodraw;     /* 1 => select_attached_nets() re-derives the follow SET only, no
+                                     highlight draw (between-legs regrab: the intermediate leg-A
+                                     geometry must NOT be stroked into the pixmap -- issue 0117 ghost) */
   /* the four session-stable id counters at gesture START -- restored after every per-step
    * mem_restore_slot so tool-created wires re-stamp identical ids each step (determinism, P8). */
   unsigned int fluid_reroute_wid, fluid_reroute_iid, fluid_reroute_gid, fluid_reroute_tid;
