@@ -2159,6 +2159,10 @@ static int xschem_cmds_f(Tcl_Interp *interp, int argc, const char *argv[], int *
         Tcl_SetResult(interp, "usage: xschem flylines net <name> | at <x> <y>", TCL_STATIC);
         return TCL_ERROR;
       }
+      /* A6: auto-named nets (get_unnamed_node -> "#netN", the node[0]=='#' marker) are unique
+       * per physical cluster and can never connect implicitly -- exclude them so a bare wire
+       * draws no fly-lines and yields the empty dict. */
+      if(netname && netname[0] == '#') netname = NULL;
       /* A2 members + A3 clustering. Members: every wire whose .node matches and every instance
        * pin whose .node[p] matches (bounded by rects[PINLAYER], as propagate_hilights does).
        * Exact-string match: correct for scalar nets; bus-bit matching is A7. Member record =

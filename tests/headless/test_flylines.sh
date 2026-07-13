@@ -133,6 +133,18 @@ r=$(probe a5_single "$FIX/one_label.sch" 'llength [dict get [xschem flylines net
 r=$(probe a5_hub_at "$FIX/two_clk_no_wire.sch" 'dict get [xschem flylines at 200 0] segments')
 [ "$r" = "{200 0 0 0}" ] && ok "A5 at-form hub is the hovered cluster" || bad "A5 hub-at" "$r"
 
+# ---- A6: exclude auto-named (#net) nets -----------------------------------
+# a bare wire gets an auto name (#netN); it can never connect implicitly -> excluded entirely
+r=$(probe a6_bare_net "$FIX/bare_wires.sch" 'lindex [xschem flylines at 50 0] 1')
+[ "$r" = "" ] && ok "A6 hover on a #net wire -> net excluded (empty)" || bad "A6 bare net" "$r"
+
+r=$(probe a6_bare_full "$FIX/bare_wires.sch" 'xschem flylines at 50 0')
+[ "$r" = "net {} members {} clusters {} segments {}" ] \
+  && ok "A6 #net query yields the empty dict" || bad "A6 bare full" "$r"
+
+r=$(probe a6_bare_byname "$FIX/bare_wires.sch" 'lindex [xschem flylines net #net1] 1')
+[ "$r" = "" ] && ok "A6 explicit net #net1 also excluded" || bad "A6 bare byname" "$r"
+
 # ---------------------------------------------------------------------------
 rm -rf "$TMP"
 if [ "$fail" = 0 ]; then echo "RESULT: ALL PASS"; else echo "RESULT: $fail FAILED"; exit 1; fi
