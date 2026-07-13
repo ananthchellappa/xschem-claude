@@ -163,6 +163,10 @@ r=$(probe a7_bit_link "$FIX/bus_shared.sch" 'llength [dict get [xschem flylines 
 r=$(probe a7_bit_precise "$FIX/bus_shared.sch" 'llength [dict get [xschem flylines net {A[1]}] members]')
 [ "$r" = "2" ] && ok "A7 A[1] matches only bus labels, not A[0] (precise)" || bad "A7 bit precise" "$r"
 
+# ---- A9: config-var defaults ---------------------------------------------
+r=$(probe a9_defaults "" 'list $flylines $flylines_show_globals $flylines_cap $flylines_width $flylines_dash')
+[ "$r" = "0 0 32 1 4" ] && ok "A9 config-var defaults present" || bad "A9 defaults" "$r"
+
 # ---------------------------------------------------------------------------
 rm -rf "$TMP"
 if [ "$fail" = 0 ]; then echo "RESULT: ALL PASS"; else echo "RESULT: $fail FAILED"; exit 1; fi

@@ -15083,6 +15083,17 @@ set_ne fluid_editing 1
 # move END. Default ON (enforcement is the point); set 0 as an emergency escape hatch.
 set_ne fluid_enforce_invariants 1
 set_ne infix_interface 1
+# Hover fly-lines (doc/claude/specs/hover_flylines.md): on hover, draw transient flight lines
+# from the net under the cursor to its implicitly-connected clusters (labels/pins/global, no wire).
+# 'flylines' gates the whole feature (default OFF). Globals (vdd!/gnd!/0) are suppressed unless
+# flylines_show_globals; the star is capped at flylines_cap nearest clusters. color/width/dash
+# describe the placeholder dashed overlay (Track B, gc_flyline). Read in C via tclget*var.
+set_ne flylines 0
+set_ne flylines_show_globals 0
+set_ne flylines_cap 32
+set_ne flylines_color 4
+set_ne flylines_width 1
+set_ne flylines_dash 4
 # autostart the Library Manager window at launch (doc/claude/specs/library_manager_launch.md)
 set_ne launch_library_manager 0
 set_ne snap_cursor 0
