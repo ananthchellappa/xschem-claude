@@ -26,7 +26,7 @@ Two behaviours ship now; two checkboxes are reserved (inert) for later work.
 ```
 Add Wire Label
   Label Name: [ A B C[2:0]        ]
-  [x] Split bus
+  [ ] Split bus                         (unchecked by default)
   [ ] Place multiple labels at once     (inert — deferred)
   [ ] Vertically justified              (inert — deferred)
   ------------------------------------------------
@@ -35,9 +35,13 @@ Add Wire Label
 
 - **Label Name** — one or more names. They form a placement **queue**, exactly like Add-Pin: a
   cursor preview of the current name follows the mouse; a left-click drops it (if legal, see
-  *Placement constraint*) and the next queued name auto-arms. When the queue drains, placement
-  stops but the form stays open (type more, or Esc/Close). Modeless.
-- **Split bus** (functional now) — see *Name parsing* below.
+  *Placement constraint*) and the next queued name auto-arms. Each placed name is **consumed from
+  the Name field** as it commits, so the field always shows what is still queued (`A B[2:0]` →
+  `B[2:0]` after dropping `A`, → empty once all are placed). When the queue drains, placement
+  stops but the form stays open (type more, or Esc/Close). Modeless. **Esc** dismisses the form
+  from either the form or the canvas (focus lands on the canvas after a drop) — in any state, not
+  only while a preview is attached.
+- **Split bus** (functional now, **unchecked by default**) — see *Name parsing* below.
 - **Place multiple labels at once** — reserved, disabled. (Semantics TBD by the user.)
 - **Vertically justified** — reserved, disabled. (Will later rotate/vcenter the label text.)
 

@@ -10588,7 +10588,7 @@ proc addpin::open {} {
 # name queue and re-arms after each committed drop.
 namespace eval addlabel {
   variable name           {}
-  variable split_bus      1
+  variable split_bus      0   ;# Split bus unchecked by default (user request)
   variable place_multiple 0   ;# reserved (inert)
   variable vjust          0   ;# reserved (inert)
   variable armed          0
@@ -10645,7 +10645,7 @@ proc addlabel::install_drop_hook {} {
   set hook_installed 1
 }
 proc addlabel::after_drop {b} {
-  variable armed; variable pending; variable current
+  variable armed; variable pending; variable current; variable name
   if {$b != 1} return
   if {!$armed} return
   if {![winfo exists .addlabel]} { set armed 0; return }
@@ -10655,6 +10655,10 @@ proc addlabel::after_drop {b} {
   if {[info exists ::sympin_place] && $::sympin_place ne {label}} return
   set pending [lrange $pending 1 end]
   set current [lindex $pending 0]
+  # Consume the just-placed name from the Label Name entry so the field always shows what is still
+  # queued (e.g. "A B[2:0]" -> "B[2:0]" after dropping A). Setting the textvariable does not fire
+  # the entry's KeyRelease, so this does NOT re-trigger start_pass / rebuild the queue.
+  set name [join $pending " "]
   if {[string trim $current] ne {}} {
     addlabel::arm
   } else {
@@ -10761,7 +10765,9 @@ proc addlabel::open {} {
   pack $w.b -side bottom -fill x
 
   bind $w.f.ename <KeyRelease> {+addlabel::on_name_change}
-  bind .drw <Key-Escape> {if {[addlabel::placing]} {addlabel::escape; break}}
+  # Focus lands on the canvas after a drop, so Esc there must also close the form/command mode --
+  # dismiss whenever the form exists, not only while a preview is still attached (queue drained).
+  bind .drw <Key-Escape> {if {[winfo exists .addlabel]} {addlabel::escape; break}}
   bind $w   <Key-Escape> {addlabel::escape}
   bind $w   <Destroy>    {if {{%W} eq {.addlabel}} {addlabel::on_destroy}}
 

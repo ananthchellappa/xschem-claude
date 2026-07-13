@@ -55,6 +55,11 @@ check "wide range capped -> vector" [addlabel::expand_names "A\[20000000:0\]" 1]
 check "just-over-cap -> vector"     [addlabel::expand_names "A\[5000:0\]" 1] [list A\[5000:0\]]
 check "under-cap expands (4096)"    [llength [addlabel::expand_names "A\[4095:0\]" 1]] 4096
 
+# "Split bus" checkbox defaults OFF (unchecked) -- user request 2026-07-12. The form-layer name
+# consumption ("A B[2:0]" -> "B[2:0]" after dropping A) and canvas-Esc-dismisses-in-any-state
+# tweaks need Tk (winfo/entry) so they are covered by scratchpad/verify_label_tweaks.tcl, not here.
+check "split_bus default OFF"       $addlabel::split_bus 0
+
 # ---------------------------------------------------------------------------
 # B. Placement predicate: point_on_wire_or_pin -> `xschem net_at x y`.
 #    A wire 0,0-100,0 and a lab_pin instance-pin at 200,0.
