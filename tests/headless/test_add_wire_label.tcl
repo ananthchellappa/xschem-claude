@@ -60,6 +60,19 @@ check "under-cap expands (4096)"    [llength [addlabel::expand_names "A\[4095:0\
 # tweaks need Tk (winfo/entry) so they are covered by scratchpad/verify_label_tweaks.tcl, not here.
 check "split_bus default OFF"       $addlabel::split_bus 0
 
+# Placement-time name validity (entry stays permissive; enforced when a name is armed to place).
+check "name_ok plain"               [addlabel::name_ok A]            1
+check "name_ok hier-ish base"       [addlabel::name_ok a/b.c]        1
+check "name_ok vector \[\]"         [addlabel::name_ok "B\[2:0\]"]   1
+check "name_ok vector <>"           [addlabel::name_ok "B<2:0>"]     1
+check "name_ok single bit"          [addlabel::name_ok "B\[3\]"]     1
+check "name_bad curly brace"        [addlabel::name_ok "B{2:0\]"]    0
+check "name_bad semicolon"          [addlabel::name_ok "C\[2;0\]"]   0
+check "name_bad unclosed"           [addlabel::name_ok "B\[2:0"]     0
+check "name_bad stray close"        [addlabel::name_ok "B\]"]        0
+check "name_bad nameless range"     [addlabel::name_ok "\[2:0\]"]    0
+check "name_bad empty"              [addlabel::name_ok ""]           0
+
 # ---------------------------------------------------------------------------
 # B. Placement predicate: point_on_wire_or_pin -> `xschem net_at x y`.
 #    A wire 0,0-100,0 and a lab_pin instance-pin at 200,0.

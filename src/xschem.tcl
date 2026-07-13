@@ -10598,7 +10598,9 @@ namespace eval addlabel {
   variable current        {}
 }
 
-proc addlabel::status {msg} { catch {.addlabel.status configure -text $msg} }
+proc addlabel::status {msg} { catch {.addlabel.status configure -style TLabel -text $msg} }
+# Placement-time syntax error: red status line, keep the bad name so the user can fix it in place.
+proc addlabel::status_error {msg} { catch {.addlabel.status configure -style AddLabelErr.TLabel -text $msg} }
 
 # START_SYMPIN (xschem.h) = 16384: a preview is attached to the cursor.
 proc addlabel::placing {} { return [expr {[xschem get ui_state] & 16384}] }
@@ -10632,6 +10634,16 @@ proc addlabel::expand_names {s split_bus} {
     }
   }
   return $out
+}
+
+# Placement-time name validity (doc/claude/specs/add_wire_label.md "Name parsing"). The form ACCEPTS
+# any text at entry so paste-from-elsewhere is never fought; a name is validated only when it is
+# about to be placed (armed). Valid = a non-empty base of non-bracket chars, optionally followed by
+# ONE bus suffix `[i]` or `[hi:lo]` (digits, single colon). Angle brackets normalise to square first,
+# so `B<2:0>` is valid; `B{2:0]`, `C[2;0]`, `B[2:0` (unclosed) and a bare `[2:0]` are rejected.
+proc addlabel::name_ok {n} {
+  set n [string map {< \[ > \]} $n]
+  return [regexp {^[^][{}<>;:]+(\[[0-9]+(:[0-9]+)?\])?$} $n]
 }
 
 # Re-arm the next label after each committed canvas drop (mirror of addpin::after_drop). A no-op
@@ -10688,6 +10700,14 @@ proc addlabel::arm {} {
     addlabel::status "type a Label Name (space/comma-separated for several), then move onto the canvas"
     return
   }
+  # Enforce syntax at placement time: an invalid head does NOT arm a preview (nothing to drop) --
+  # red status prompts the user to fix the name; editing the field re-runs start_pass -> arm.
+  if {![addlabel::name_ok $current]} {
+    set armed 0; set last {}
+    addlabel::abort_if_placing   ;# never leave a stale preview attached to the cursor
+    addlabel::status_error "'$current' has a syntax error -- fix it to place (use \[\] or <> for buses)"
+    return
+  }
   if {$current eq $last && [addlabel::placing]} return
   set last $current
   set ::label_new_name $current
@@ -10733,6 +10753,7 @@ proc addlabel::open {} {
     return
   }
   catch {slickprop::init_fonts}
+  catch {ttk::style configure AddLabelErr.TLabel -background #c0392b -foreground white}
   toplevel $w
   wm title $w "Add Wire Label"
   ttk::frame $w.f -padding 8

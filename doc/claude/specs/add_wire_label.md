@@ -62,6 +62,23 @@ Pure Tcl, headless-testable (mirrors `addpin::names_from`). Steps:
 
 Editing the Name field OR toggling Split bus rebuilds the queue.
 
+### Name validity — enforced at placement, not at entry (`addlabel::name_ok name`)
+
+The entry field stays **permissive** — any text may be typed or **pasted** (from a netlist, a
+spreadsheet, etc.) without being fought character-by-character. A name is validated only when it is
+about to be placed (as it is *armed* to the cursor). A name is **valid** iff, after `<>`→`[]`
+normalisation, it is a non-empty base of non-bracket characters optionally followed by ONE bus
+suffix `[i]` or `[hi:lo]` (digits, single colon):
+
+- valid: `A`, `a/b.c`, `B[2:0]`, `B<2:0>`, `B[3]`
+- invalid: `B{2:0]` (curly), `C[2;0]` (`;` for `:`), `B[2:0` (unclosed), `B]`, bare `[2:0]`
+
+When the head of the queue is invalid, **no preview is armed** (nothing can be dropped) and the form
+status line turns **red** (`AddLabelErr.TLabel`): *"'…' has a syntax error — fix it to place"*. The
+user corrects that name in the field; editing re-runs the queue and the corrected name arms
+normally, clearing the red. Because names are consumed as they place, in `A B C[2;0]` the first two
+drop fine and the form only flags `C[2;0]` when its turn comes.
+
 ### Placement constraint — "no stray net-labels"
 
 Unlike the old `net_label` (drop anywhere), a label may only be **committed** where its pin
