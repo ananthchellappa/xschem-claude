@@ -161,6 +161,133 @@ void select_connected_nets(int stop_at_junction)
   draw_selection(xctx->gc[SELLAYER], 0);
 }
 
+/* Add exactly ONE ring of directly-touching WIRES to the current selection.
+ * doc/claude/specs/dblclick_connected_select.md (O2 = wires-only). Mirrors the
+ * one-ring core of select_connected_nets(2) but omits the instance/label
+ * selection loops, so growth never pulls in devices -- only wire segments. The
+ * seed object (of any type) is left as-is. sel_array is snapshotted before the
+ * walk, so wires added in THIS call are not themselves expanded here: exactly one
+ * ring per call. Newly-selected wires are drawn nowhere (select_wire fast bit2);
+ * the caller strokes the whole selection once. Grows from the WHOLE current
+ * selection (every selected wire/instance), so multi-object selections grow all
+ * their nets together. Returns the number of wires newly selected. */
+static int grow_one_ring_wires(void)
+{
+  int i, n, added = 0;
+  double x0, y0;
+  int sqx, sqy, p, rects;
+  Wireentry *wptr, *wireptr;
+  Iterator_ctx ctx;
+
+  hash_wires();
+  hash_instances();
+  rebuild_selected_array();
+  for(n = 0; n < xctx->lastsel; ++n) {
+    i = xctx->sel_array[n].n;
+    switch(xctx->sel_array[n].type) {
+      double x1, y1, x2, y2;
+      int k;
+
+      case WIRE:
+        x1 = xctx->wire[i].x1; y1 = xctx->wire[i].y1;
+        x2 = xctx->wire[i].x2; y2 = xctx->wire[i].y2;
+        RECTORDER(x1, y1, x2, y2);
+        for(init_wire_iterator(&ctx, x1, y1, x2, y2); (wireptr = wire_iterator_next(&ctx)) ;) {
+          k = wireptr->n;
+          if(k == i || xctx->wire[k].sel == SELECTED) continue;
+          if( touch(xctx->wire[i].x1, xctx->wire[i].y1, xctx->wire[i].x2, xctx->wire[i].y2,
+                    xctx->wire[k].x1, xctx->wire[k].y1) ||
+              touch(xctx->wire[i].x1, xctx->wire[i].y1, xctx->wire[i].x2, xctx->wire[i].y2,
+                    xctx->wire[k].x2, xctx->wire[k].y2) ||
+              touch(xctx->wire[k].x1, xctx->wire[k].y1, xctx->wire[k].x2, xctx->wire[k].y2,
+                    xctx->wire[i].x1, xctx->wire[i].y1) ||
+              touch(xctx->wire[k].x1, xctx->wire[k].y1, xctx->wire[k].x2, xctx->wire[k].y2,
+                    xctx->wire[i].x2, xctx->wire[i].y2) ) {
+            select_wire(k, SELECTED, 3, 1); /* fast: quiet + nodraw; override_lock (match connected_nets) */
+            added++;
+          }
+        }
+        break;
+      case ELEMENT:
+        rects = (xctx->inst[i].ptr + xctx->sym)->rects[PINLAYER];
+        for(p = 0; p < rects; p++) {
+          get_inst_pin_coord(i, p, &x0, &y0);
+          get_square(x0, y0, &sqx, &sqy);
+          for(wptr = xctx->wire_spatial_table[sqx][sqy]; wptr; wptr = wptr->next) {
+            k = wptr->n;
+            if(xctx->wire[k].sel == SELECTED) continue;
+            if(touch(xctx->wire[k].x1, xctx->wire[k].y1, xctx->wire[k].x2, xctx->wire[k].y2, x0, y0)) {
+              select_wire(k, SELECTED, 3, 1);
+              added++;
+            }
+          }
+        }
+        break;
+      default:
+        break;
+    }
+  }
+  xctx->need_reb_sel_arr = 1;
+  rebuild_selected_array();
+  return added;
+}
+
+/* One escalation step of the Cadence double-click connected-select
+ * (doc/claude/specs/dblclick_connected_select.md). If pick_seed, the object at
+ * (mx,my) is first picked and added to the selection (additive -- other selected
+ * objects are kept) and becomes/refreshes the seed. Then, based on the per-seed
+ * level: level 0 -> ring1, 1 -> ring2, 2 -> whole-net geometric flood (wires
+ * only), >=3 -> no-op. The level resets to 0 when the seed changes or the
+ * selection was mutated externally since the last step. Returns the new level. */
+int select_grow_connected_step(double mx, double my, int pick_seed)
+{
+  int reset = 0, cur_before;
+
+  /* current selection count BEFORE we add the seed: detects an external
+   * selection change (plain click, unselect_all, delete, ...) since last step. */
+  if(xctx->need_reb_sel_arr) rebuild_selected_array();
+  cur_before = xctx->lastsel;
+  if(cur_before != xctx->dblgrow_sel_sig) reset = 1;
+
+  if(pick_seed) {
+    Selected sel;
+    unsigned short seed_type;
+    unsigned int seed_id;
+    /* additive pick (does NOT clear existing selection); override_lock so a
+     * locked instance still seeds, matching handle_double_click. The command
+     * self-logs, so suppress select_object()'s own select_at stash. */
+    select_at_suppress_log = 1;
+    sel = select_object(mx, my, SELECTED, 1, NULL);
+    select_at_suppress_log = 0;
+    if(!sel.type) { /* clicked empty space: leave level/selection untouched */
+      if(xctx->need_reb_sel_arr) rebuild_selected_array();
+      return xctx->dblgrow_level;
+    }
+    seed_type = sel.type;
+    if(sel.type == WIRE) seed_id = xctx->wire[sel.n].id;
+    else if(sel.type == ELEMENT) seed_id = xctx->inst[sel.n].id;
+    else seed_id = 0;
+    if(seed_type != xctx->dblgrow_seed_type || seed_id != xctx->dblgrow_seed_id) reset = 1;
+    xctx->dblgrow_seed_type = seed_type;
+    xctx->dblgrow_seed_id = seed_id;
+  }
+
+  if(reset) xctx->dblgrow_level = 0;
+
+  switch(xctx->dblgrow_level) {
+    case 0: grow_one_ring_wires(); xctx->dblgrow_level = 1; break;
+    case 1: grow_one_ring_wires(); xctx->dblgrow_level = 2; break;
+    case 2: while(grow_one_ring_wires() > 0) ; xctx->dblgrow_level = 3; break; /* whole net (O4 cap) */
+    default: break;                                                            /* already whole */
+  }
+
+  xctx->need_reb_sel_arr = 1;
+  rebuild_selected_array();
+  xctx->dblgrow_sel_sig = xctx->lastsel; /* snapshot for next-call external-change check */
+  if(has_x) draw_selection(xctx->gc[SELLAYER], 0);
+  return xctx->dblgrow_level;
+}
+
 int select_dangling_nets(void)
 {
   int netlist_lvs_ignore=tclgetboolvar("lvs_ignore");

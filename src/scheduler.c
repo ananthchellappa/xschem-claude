@@ -8099,6 +8099,32 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
       Tcl_SetResult(interp, my_itoa(xctx->lastsel), TCL_VOLATILE);
     }
 
+    /* select_grow_connected [x y]
+     *   Cadence double-click incremental connected-select
+     *   (doc/claude/specs/dblclick_connected_select.md). One escalation step per
+     *   call, keyed on a seed:
+     *     1st call on a seed -> ring1 (seed + directly-touching wire segments)
+     *     2nd  -> ring2 (one more ring of touching segments)
+     *     3rd  -> whole net (geometric flood, wires only)
+     *     4th+ -> no-op (already whole)
+     *   Rings are WIRES ONLY; the seed object (of any type) stays selected. With
+     *   [x y] the object under that schematic coord becomes/refreshes the seed and
+     *   is added (additively) to the selection; without coords the step runs on the
+     *   current selection & seed. Returns the new level (1, 2 or 3). */
+    else if(!strcmp(argv[1], "select_grow_connected"))
+    {
+      int level;
+      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(argc >= 4) {
+        level = select_grow_connected_step(atof(argv[2]), atof(argv[3]), 1);
+        log_action("xschem select_grow_connected %s %s", argv[2], argv[3]);
+      } else {
+        level = select_grow_connected_step(0.0, 0.0, 0);
+        log_action("xschem select_grow_connected");
+      }
+      Tcl_SetResult(interp, my_itoa(level), TCL_VOLATILE);
+    }
+
     /* select_hilight_net
      *   Select all highlight objects (wires, labels, pins, instances) */
     else if(!strcmp(argv[1], "select_hilight_net"))

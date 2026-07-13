@@ -1119,6 +1119,18 @@ typedef struct {
   int need_reb_sel_arr;
   int lastsel;
   int maxsel;
+  /* Cadence double-click incremental connected-select escalation state.
+   * doc/claude/specs/dblclick_connected_select.md. Keyed on a seed (type + session-
+   * stable id): dblgrow_level is how many grow steps have run on this seed
+   * (0 -> next does ring1, 1 -> ring2, 2 -> whole-net flood, 3 -> saturated/no-op).
+   * A different seed, or a selection count that no longer matches dblgrow_sel_sig
+   * (an external selection change between double-clicks), resets the level to 0.
+   * Zero-init is correct: seed_type 0 never matches a real WIRE/ELEMENT seed, so
+   * the first call always resets. */
+  int dblgrow_level;
+  unsigned short dblgrow_seed_type;
+  unsigned int dblgrow_seed_id;
+  int dblgrow_sel_sig;
   int pin_sel_active; /* hint: 1 once any instance pin has been selected (pin_selection.md).
                        * Lets unselect_all() clear stale pin selections even when lastsel/
                        * SELECTION were reset out from under them (e.g. after delete()).
@@ -2206,6 +2218,7 @@ extern void unhilight_net(int keep_sel);
 extern void hilight_net_styled(void);
 extern void propagate_hilights(int set, int clear, int mode);
 extern void  select_connected_nets(int stop_at_junction);
+extern int   select_grow_connected_step(double mx, double my, int pick_seed);
 extern char *resolved_net(const char *net);
 extern void draw_hilight_net(int on_window);
 extern void copy_hilights(void);
