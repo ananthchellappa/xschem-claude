@@ -51,13 +51,48 @@ reality" below: the surrounding fluid gesture leaves an unpredictable transient
 selection, so growing the *live* selection incrementally is unreliable. Recompute
 sidesteps it entirely; the selection at level N is a pure function of (seed, N).
 
-**Reset to level 0 (restart) when the double-clicked object differs from the
-stored seed** (compared by type + session-stable id). That is the *only* reset for
-the interactive/coord path — an external `unselect_all` between double-clicks does
-NOT restart it, because the gesture cannot observe that deselect: its own 2nd
-press re-selects the seed before `-3` fires. Repeated double-clicks on the same
-object therefore always escalate 1→2→3 regardless of intervening deselects. After
-level 3 (whole net) further double-clicks on the same seed are no-ops.
+**Reset to level 0 (restart)** in two cases:
+
+1. The double-clicked object differs from the stored seed (compared by type +
+   session-stable id) — checked inside `select_grow_connected_step`.
+2. **ANY intervening non-double gesture** — a single click (anywhere, INCLUDING on
+   the seed itself), a drag, a wire draw, etc. The next double-click on the seed then
+   restarts at ring1 instead of jumping straight to whole-net.
+
+Case 2 is the subtle one. The live selection CANNOT detect it: a plain click on the
+already-selected seed leaves the selection visually unchanged (seed + ring stay
+selected), and the double-click's own press re-selects the seed anyway — so neither a
+selection-count check nor a seed-identity check can distinguish "continuation" from
+"fresh after an intervening click." The only reliable signal is the **event stream**,
+and it is read like this (all in `callback.c`):
+
+- A button-1 **RELEASE** that is not a double-click's release2 snapshots the current
+  level into `dblgrow_level_save` and **tentatively zeroes** `dblgrow_level`.
+- The double-click's **`-3`** handler, right before growing, **restores**
+  `dblgrow_level = dblgrow_level_save`. Reaching `-3` proves the preceding
+  press/release was the *first half of a double*, not a standalone click, so its
+  tentative reset is undone and escalation continues.
+- A standalone single click's tentative zero is **never restored** (no `-3` follows),
+  so it sticks → the next double restarts at ring1.
+- `dblgrow_last_press_was_grow` (set by `-3`, cleared by every non-`-3` button-1
+  press) guards the double's own **release2** — whose preceding "press" was the `-3`
+  grow — from tripping the reset.
+
+This is robust to the exact double-click event pattern. Ground truth (Tk
+`event generate`): a real double fires `P1, R1, <Double>(-3), R2` — the 2nd press
+emits ONLY `-3` (the specific `<Double-Button-1>` binding wins over the generic
+`<ButtonPress>`), NOT a second callback-4. Because the snapshot is taken at the
+*release* (not the press), the mechanism works whether or not a second press-4 is
+emitted (the headless test harness injects a synthetic extra press-4; real Tk does
+not — both pass). After level 3 (whole net) further double-clicks on the same seed
+are no-ops.
+
+Note the **coordinate command** `xschem select_grow_connected x y`, driven directly
+(not through a press/release), still escalates on repeated same-seed calls regardless
+of an `unselect_all` in between — it never rides the button event stream, so only
+case 1 applies. Tests: T5 (coord survives `unselect_all`), T8 (gesture resets on
+deselect / off-seed click), T9 (resets on a single click ON the seed — the
+selection-invisible case), T10 (escalation + reset under the real `4,5,-3,5` stream).
 
 The scriptable **coordless** form (`xschem select_grow_connected` with no coords)
 is instead *incremental* — it grows the current selection by one ring and DOES

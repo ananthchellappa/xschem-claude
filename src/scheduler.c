@@ -204,10 +204,14 @@ static int pin_scope_resolve(const char *scope, int *primary_out, int **targets_
 static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *cmd_found)
 {
     /* abort_operation
-     *   Resets UI state, unselect all and abort any pending operation */
+     *   Resets UI state, unselect all and abort any pending operation.
+     *   `xschem abort_operation [keepsel]`: with keepsel!=0 the current selection is
+     *   kept (redraw only); default (or 0) is legacy deselect-all. */
     if(!strcmp(argv[1], "abort_operation"))
     {
-      abort_operation();
+      int deselect = 1;
+      if(argc > 2) deselect = !atoi(argv[2]);
+      abort_operation(deselect);
     }
 
     /* activate_window <xid>

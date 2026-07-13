@@ -15044,6 +15044,11 @@ set_ne big_grid_points 0
 set_ne grid_point_size -1 ;# grid point size (>=0) or unspecified (-1)
 set_ne draw_grid_axes 1
 set_ne persistent_command 0
+# ESC key: 0 => abort pending command + redraw only, KEEP current selection;
+# 1 => also deselect all (legacy behavior). The standalone deselect-all command is
+# `xschem unselect_all`, so a user can bind ESC to redraw+deselect either by setting
+# this to 1 or by binding ESC to `xschem unselect_all` in a custom rc.
+set_ne escape_deselects 0
 set_ne intuitive_interface 1
 set_ne use_cursor_for_selection 0
 set_ne autotrim_wires 0

@@ -186,12 +186,21 @@ void redraw_w_a_l_r_p_z_rubbers(int force)
   xctx->prev_rubbery = xctx->mousey_snap;
 }
 
-/* resets UI state, unselect all and abort any pending operation */
-void abort_operation(void)
+/* resets UI state and aborts any pending operation. deselect!=0 also clears the
+ * selection when nothing was pending (the legacy ESC behavior); deselect==0 keeps the
+ * current selection and just redraws. ESC drives this via the `escape_deselects` var
+ * (see src/xschem.tcl); all other internal callers pass 1. */
+void abort_operation(int deselect)
 {
   xctx->no_draw = 0;
   xctx->pin_pending = 0; /* drop any armed pin-click gesture (pin_selection.md D3) */
   xctx->pin_pending_add = 0; /* and any armed SHIFT+pin additive gesture (D6) */
+  /* An aborted move never reaches end_move_copy_logged, which is the only place that
+   * consumes a pending cadence deferred-selection restore (drag_sel_restore, spec
+   * doc/claude/specs/cadence_modifier_drag.md). Free it here so it cannot leak past this
+   * gesture into a later keyboard 'm'/'c' move (which has no press-select to clear it) and
+   * spuriously restore a stale pre-press selection -- deselecting the just-moved object. */
+  drag_sel_free();
   tcleval("set constr_mv 0" );
   dbg(1, "abort_operation(): Escape: ui_state=%d, last_command=%d\n", xctx->ui_state, xctx->last_command);
   xctx->constr_mv=0;
@@ -259,7 +268,7 @@ void abort_operation(void)
     set_modify(0); /* aborted merge: no change, so reset modify flag set by delete() */
   }
   xctx->ui_state = 0;
-  unselect_all(1);
+  if(deselect) unselect_all(1);
   draw();
 }
 
@@ -2919,7 +2928,7 @@ static void context_menu_action(double mx, double my)
       new_arc(PLACE, 360., mx, my);
       break;
     case 21: /* abort & redraw */
-      abort_operation();
+      abort_operation(1);
       break;
     default:
       break;
@@ -4176,7 +4185,7 @@ static void handle_enter_notify(int draw_xhair, int crosshair_size)
     /* xschem window *receiving* selected objects selection cleared --> abort */
     else if(xctx->paste_from == 1 && stat(sel_file, &buf) && (xctx->ui_state & STARTMERGE)) {
       dbg(1, " xschem window *receiving* selected objects selection cleared: abort\n");
-      abort_operation();
+      abort_operation(1);
     }
     /*xschem window *receiving* selected objects
      * no selected objects and selection file exists --> start merge */
@@ -5717,7 +5726,9 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
 
     case XK_Escape:                                       /* abort & redraw */
       if(xctx->semaphore < 2) {
-        abort_operation();
+        /* escape_deselects gates the idle-case unselect: 0 => keep selection,
+         * only redraw; 1 => legacy deselect-all. Pending ops abort regardless. */
+        abort_operation(tclgetboolvar("escape_deselects"));
       }
       /* stuff that can be done reentrantly ... */
       tclsetvar("tclstop", "1"); /* stop simulation if any running */
@@ -6012,6 +6023,9 @@ static void handle_button_press(int event, int state, int rstate, KeySym key, in
      waves_callback(event, mx, my, key, button, aux, state);
      return;
    }
+   /* This press is not a double-click's `-3` grow: mark it so the matching release runs the
+    * escalation-reset (dblclick_connected_select.md). The grow sets the flag back to 1. */
+   if(button == Button1) xctx->dblgrow_last_press_was_grow = 0;
    /* terminate a schematic pan action */
    if(xctx->ui_state & STARTPAN) {
      xctx->ui_state &=~STARTPAN;
@@ -6439,6 +6453,16 @@ static void handle_button_release(int event, KeySym key, int state, int button, 
      xctx->place_click_committed = 0;
      if(placed_committed) xctx->mouse_moved = 1; /* mark as a completed gesture, not a bare click */
    }
+   /* End any double-click connected-select escalation on a button-1 release that is NOT the
+    * release of a double-click: snapshot the level (so a real double's following `-3` can
+    * restore it) and tentatively zero it. A standalone single click's zero is never restored
+    * and so sticks -> the next double-click on the seed restarts at ring1. The double's own
+    * release2 is skipped (its preceding press was the `-3` grow, which set the flag).
+    * doc/claude/specs/dblclick_connected_select.md. */
+   if(button == Button1 && !xctx->dblgrow_last_press_was_grow) {
+     xctx->dblgrow_level_save = xctx->dblgrow_level;
+     xctx->dblgrow_level = 0;
+   }
    if(waves_selected(event, key, state, button)) {
      waves_callback(event, mx, my, key, button, aux, state);
      return;
@@ -6520,6 +6544,14 @@ static void handle_button_release(int event, KeySym key, int state, int button, 
       !xctx->mouse_moved && !(state & (ShiftMask | ControlMask))) {
      move_objects(ABORT, 0, 0.0, 0.0);
      xctx->drag_elements = 0;
+     /* This is a plain CLICK (no drag) whose press armed a move + a cadence deferred-selection
+      * restore (drag_sel_restore, spec doc/claude/specs/cadence_modifier_drag.md §5b). A click
+      * keeps its click-select and must NOT restore the pre-press selection, so free the snapshot
+      * (mirrors end_move_copy_logged's no-motion `nothing` path). This ABORT bypasses
+      * end_move_copy_logged, so without freeing here the flag LEAKS past this gesture: a later
+      * keyboard 'm'/'c' move has no press-select to clear it (drag_sel_free at the press-select
+      * head), consumes the leak at its END, and deselects the just-moved object. */
+     drag_sel_free();
      /* When a kiss happened, ABORT's pop_undo cleared the selection; a click must
       * leave the clicked object selected, so re-select what is under the cursor.
       * When nothing was kissed the selection is intact, so leave it untouched
@@ -6690,9 +6722,15 @@ static void handle_double_click(int event, int state, KeySym key, int button,
          if(cadence_compat && (xctx->ui_state == 0 || xctx->ui_state == SELECTION ||
                                transient_pin || transient_move)) {
            if(transient_pin || transient_move) {
-             abort_operation();
+             abort_operation(1);
              xctx->drag_elements = 0;
            }
+           /* This -3 confirms the preceding press/release was the first half of a double,
+            * NOT a standalone click: undo the release's tentative escalation-reset before
+            * growing, and flag so the double's own release2 does not re-trigger the reset
+            * (dblclick_connected_select.md). */
+           xctx->dblgrow_level = xctx->dblgrow_level_save;
+           xctx->dblgrow_last_press_was_grow = 1;
            select_grow_connected_step(xctx->mousex, xctx->mousey, 1);
            xctx->place_click_committed = 1; /* release2: suppress cadence deselect-others */
            return;

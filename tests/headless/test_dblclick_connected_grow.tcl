@@ -192,6 +192,97 @@ set ::fluid_editing $fe_save
 set ::en_pin_select $ps_save
 
 # ---------------------------------------------------------------------------
+# T8 -- the GESTURE escalation RESETS on ANY intervening non-double gesture, so the
+# next double-click on the seed restarts at ring1 instead of jumping to whole-net.
+# This is the click-path counterpart to T5's coord-form (which deliberately survives
+# an explicit `unselect_all`). The reset is event-driven: a button-1 RELEASE that is
+# not a double-click's release2 snapshots+zeroes the level; the double's following -3
+# restores the snapshot. Here: empty-space click and different-object click.
+# ---------------------------------------------------------------------------
+proc real_click {sx sy} {
+  global WIN
+  lassign [screen $sx $sy] SX SY
+  xschem callback $WIN 4 $SX $SY 0 1 0 0     ;# ButtonPress 1
+  xschem callback $WIN 5 $SX $SY 0 1 0 0     ;# ButtonRelease 1
+  update idletasks
+}
+set ::cadence_compat 1
+set ::fluid_editing 1
+set ::en_pin_select 1
+build_chain
+xschem unselect_all
+real_dblclick 50 0 ; real_dblclick 50 0 ; real_dblclick 50 0
+check "T8 escalate to whole (5 wires)" [expr {[nsel_type wire] == 5}] "sel=[xschem selection]"
+real_click 400 400                          ;# empty space -> deselect
+check "T8 empty click deselects (0 wires)" [expr {[nsel_type wire] == 0}] "sel=[xschem selection]"
+real_dblclick 50 0
+check "T8 re-dblclick after deselect -> ring1 (2 wires), NOT whole" \
+  [expr {[nsel_type wire] == 2}] "sel=[xschem selection]"
+# and the full escalation works again from the restart
+real_dblclick 50 0
+check "T8 re-escalate ring2 (3 wires)" [expr {[nsel_type wire] == 3}] "sel=[xschem selection]"
+real_dblclick 50 0
+check "T8 re-escalate whole (5 wires)" [expr {[nsel_type wire] == 5}] "sel=[xschem selection]"
+# clicking a DIFFERENT object also resets: dblclick back to the seed -> ring1
+real_click 250 200                          ;# click W4 (a different segment)
+real_dblclick 50 0
+check "T8 different-object click then re-dblclick seed -> ring1 (2 wires)" \
+  [expr {[nsel_type wire] == 2}] "sel=[xschem selection]"
+
+# ---------------------------------------------------------------------------
+# T9 -- the hard case: a single click ON the seed itself. Under cadence deferred
+# selection this leaves the selection VISUALLY UNCHANGED (the seed stays selected,
+# the ring stays selected), so no selection- or seed-identity check can see it --
+# only the event stream (a non-double button-1 release) reveals it. It must still
+# reset the escalation: re-dblclick the seed -> ring1, not whole-net.
+# ---------------------------------------------------------------------------
+build_chain
+xschem unselect_all
+real_dblclick 50 0 ; real_dblclick 50 0 ; real_dblclick 50 0
+check "T9 escalate to whole (5 wires)" [expr {[nsel_type wire] == 5}] "sel=[xschem selection]"
+real_click 50 0                             ;# plain single click ON the seed W0
+real_dblclick 50 0
+check "T9 single-click ON seed then re-dblclick -> ring1 (2 wires)" \
+  [expr {[nsel_type wire] == 2}] "sel=[xschem selection]"
+real_dblclick 50 0
+check "T9 re-escalate after seed-click ring2 (3 wires)" \
+  [expr {[nsel_type wire] == 3}] "sel=[xschem selection]"
+
+# ---------------------------------------------------------------------------
+# T10 -- drive the REAL Tk double-click event stream. Ground truth (verified via
+# Tk `event generate`): a double-click fires  P1, R1, <Double>(-3), R2 -- the 2nd
+# press emits ONLY the -3 (Double-Button-1 is more specific than the generic
+# <ButtonPress> binding), NOT a second callback-4. The other procs here inject a
+# synthetic extra press2 (4,5,4,-3,5); this proc uses the real 4,5,-3,5 so the
+# escalation + reset are proven under actual dispatch, not just the synthetic model.
+# ---------------------------------------------------------------------------
+proc realtk_dbl {sx sy} {
+  global WIN
+  lassign [screen $sx $sy] SX SY
+  xschem callback $WIN 4 $SX $SY 0 1 0 0     ;# ButtonPress 1
+  xschem callback $WIN 5 $SX $SY 0 1 0 0     ;# ButtonRelease 1
+  xschem callback $WIN -3 $SX $SY 0 1 0 0    ;# Double-Button-1 (press2 == only this)
+  xschem callback $WIN 5 $SX $SY 0 1 0 0     ;# ButtonRelease 2
+  update idletasks
+}
+build_chain
+xschem unselect_all
+realtk_dbl 50 0
+check "T10 realTk dbl1 -> ring1 (2 wires)" [expr {[nsel_type wire] == 2}] "sel=[xschem selection]"
+realtk_dbl 50 0
+check "T10 realTk dbl2 -> ring2 (3 wires)" [expr {[nsel_type wire] == 3}] "sel=[xschem selection]"
+realtk_dbl 50 0
+check "T10 realTk dbl3 -> whole (5 wires)" [expr {[nsel_type wire] == 5}] "sel=[xschem selection]"
+real_click 50 0                             ;# single click on seed
+realtk_dbl 50 0
+check "T10 realTk single-click ON seed then re-dbl -> ring1 (2 wires)" \
+  [expr {[nsel_type wire] == 2}] "sel=[xschem selection]"
+
+set ::cadence_compat $cc_save
+set ::fluid_editing $fe_save
+set ::en_pin_select $ps_save
+
+# ---------------------------------------------------------------------------
 puts ""
 if {$::fails == 0} {
   puts "OVERALL: ok  (all checks passed)"

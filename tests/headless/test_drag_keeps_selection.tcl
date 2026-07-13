@@ -91,6 +91,68 @@ check "4a dragging a SELECTED R18 keeps it selected" \
   [expr {[lsearch [xschem selected_set] R18] >= 0}] "sel=[xschem selected_set]"
 check "4b selected R18 moved (dx~40)" [expr {abs([r18_cx]-$cx0-40) < 5}] "dx=[expr {[r18_cx]-$cx0}]"
 
+# ---------------------------------------------------------------------------
+# Keyboard verb-move (noun-verb 'm') must NOT inherit a leaked deferred-selection
+# restore. A plain CLICK that selects a not-yet-selected object arms drag_sel_restore
+# + snapshots the PRE-click selection, then its no-motion release ABORTs the move
+# (callback.c) WITHOUT going through end_move_copy_logged -- the flag is normally
+# cleared by drag_sel_free() at the NEXT button-press select, but a keyboard 'm' has
+# no such press, so the leak reaches the 'm' move's END and drag_sel_restore_now()
+# wipes the just-moved object down to the stale snapshot. The fix frees the snapshot
+# in the click's no-motion ABORT (and in abort_operation). Reported repro: dblclick
+# to grow a selection, click R18, press 'm' to connected-drag it, final click drops it.
+# ---------------------------------------------------------------------------
+proc key {k gx gy} { lassign [sch2scr $gx $gy] sx sy
+  xschem callback $::WIN 2 $sx $sy $k 0 0 0 ;# KeyPress (event=2), no button
+  catch { update idletasks } }
+proc mmove {gx gy dx dy} {  ;# object already selected: keyboard 'm' connected-move by (dx,dy)
+  key 109 $gx $gy                              ;# 'm' picks up the selection (follows cursor)
+  lassign [sch2scr [expr {$gx+$dx}] [expr {$gy+$dy}]] tsx tsy
+  gmotion $tsx $tsy 0                           ;# NO button held during a keyboard move
+  gpress   $tsx $tsy 0                          ;# placement press commits the move
+  grelease $tsx $tsy 0
+  catch { update idletasks } }
+
+# CASE 5: CLICK-select R18 (arms+leaks drag_sel_restore), keyboard-'m' drag it -> stays selected.
+reload
+click_sch -260 -50
+check "5a click selected R18" [expr {[lsearch [xschem selected_set] R18] >= 0}] "sel=[xschem selected_set]"
+set cx0 [r18_cx]
+mmove -260 -50 40 0
+check "5b keyboard-'m' move keeps R18 selected (drag_sel_restore leak guard)" \
+  [expr {[lsearch [xschem selected_set] R18] >= 0}] "sel=[xschem selected_set]"
+check "5c R18 moved (dx~40)" [expr {abs([r18_cx]-$cx0-40) < 5}] "dx=[expr {[r18_cx]-$cx0}]"
+
+# CASE 6: the reported flow -- selection on net A, CLICK a not-in-A object (snapshot={A}),
+# keyboard-'m' drag it -> the clicked object stays selected, NOT reverted to the snapshot.
+reload
+xschem select_at -320 -190 nodraw       ;# pre-select C12 (net A) via command (no leak arm)
+click_sch -260 -50                       ;# CLICK R18 (net B): snapshots {C12}, arms the leak
+check "6a click R18 (drops C12)" \
+  [expr {[lsearch [xschem selected_set] R18] >= 0}] "sel=[xschem selected_set]"
+set cx0 [r18_cx]
+mmove -260 -50 40 0
+check "6b keyboard-'m' keeps R18 (not restored to stale snapshot)" \
+  [expr {[lsearch [xschem selected_set] R18] >= 0}] "sel=[xschem selected_set]"
+check "6c R18 moved (dx~40)" [expr {abs([r18_cx]-$cx0-40) < 5}] "dx=[expr {[r18_cx]-$cx0}]"
+
+# CASE 7: abort_operation leak guard -- press-drag R18 (arms drag_sel_restore), ESC
+# mid-gesture (abort_operation), then keyboard-'m' move the (kept) selection. Without
+# freeing the snapshot in abort_operation the ESC-aborted drag's leak would deselect it.
+reload
+xschem unselect_all
+lassign [sch2scr -260 -50] psx psy
+gpress $psx $psy 0                        ;# press R18: selects it + arms drag_sel_restore
+gmotion [expr {$psx+30}] $psy 256         ;# begin dragging
+xschem callback $::WIN 2 $psx $psy 65307 0 0 0   ;# XK_Escape: abort the drag (keeps selection)
+catch { update idletasks }
+check "7a ESC keeps R18 selected (escape_deselects=0)" \
+  [expr {[lsearch [xschem selected_set] R18] >= 0}] "sel=[xschem selected_set]"
+set cx0 [r18_cx]
+mmove -260 -50 40 0
+check "7b keyboard-'m' after ESC-aborted drag keeps R18 (abort_operation leak guard)" \
+  [expr {[lsearch [xschem selected_set] R18] >= 0}] "sel=[xschem selected_set]"
+
 puts ""
 if {$::fails == 0} { puts "RESULT: ALL PASS ($::npass checks)"; puts "OVERALL: ok" } \
 else { puts "RESULT: $::fails FAILED, $::npass passed"; puts "OVERALL: fail" }

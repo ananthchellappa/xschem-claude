@@ -1132,6 +1132,17 @@ typedef struct {
   unsigned int dblgrow_seed_id;
   int dblgrow_sel_sig;
   double dblgrow_seed_x, dblgrow_seed_y;
+  /* Any single click (or other non-double gesture) ends the escalation, so the next
+   * double-click on the seed restarts at ring1. This can't be seen from the selection
+   * (a click on the already-selected seed changes nothing) so it is driven by the event
+   * stream: a button-1 RELEASE that is not the release of a double-click snapshots the
+   * level into dblgrow_level_save and zeroes it (tentative reset); the following `-3`
+   * double-click RESTORES the snapshot (proving that press/release was the first half of
+   * a double, not a standalone click) before advancing. A standalone click's zero is
+   * never restored, so it sticks. dblgrow_last_press_was_grow guards the double's own
+   * release2 (whose preceding "press" was the `-3` grow) from tripping the reset. */
+  int dblgrow_level_save;
+  int dblgrow_last_press_was_grow;
   int pin_sel_active; /* hint: 1 once any instance pin has been selected (pin_selection.md).
                        * Lets unselect_all() clear stale pin selections even when lastsel/
                        * SELECTION were reset out from under them (e.g. after delete()).
@@ -1779,7 +1790,7 @@ extern void select_touch(double x1,double y1, double x2, double y2, int sel);
 extern int select_dangling_nets(void);
 extern void tclmainloop(void);
 extern int Tcl_AppInit(Tcl_Interp *interp);
-extern void abort_operation(void);
+extern void abort_operation(int deselect);
 extern void enter_deselect_mode(void);
 extern void draw_crosshair(int what, int state);
 extern void start_line(double mx, double my);
