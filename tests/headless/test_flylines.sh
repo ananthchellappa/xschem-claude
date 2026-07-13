@@ -87,6 +87,17 @@ r=$(probe a3_partition "$FIX/clk_members4.sch" \
   'set d [xschem flylines net CLK]; set n [llength [dict get $d members]]; set s 0; foreach c [dict get $d clusters] {incr s [llength [dict get $c members]]}; list $n $s')
 [ "$r" = "4 4" ] && ok "A3 clusters partition all 4 members" || bad "A3 partition" "$r"
 
+# ---- A4: cluster anchors --------------------------------------------------
+# each cluster reports an anchor at a member point; the two label clusters -> the two pins
+r=$(probe a4_anchors "$FIX/two_clk_no_wire.sch" \
+  'set a [list]; foreach c [dict get [xschem flylines net CLK] clusters] {lappend a [dict get $c anchor]}; lsort $a')
+[ "$r" = "{0 0} {200 0}" ] && ok "A4 cluster anchors are the two label pins" || bad "A4 anchors" "$r"
+
+# a mixed cluster (wire + pins) anchors on a PIN (electrical), not the wire midpoint
+r=$(probe a4_pinpref "$FIX/two_clk_wired.sch" \
+  'dict get [lindex [dict get [xschem flylines net CLK] clusters] 0] anchor')
+[ "$r" = "0 0" ] && ok "A4 mixed cluster anchors on a pin, not wire midpoint" || bad "A4 pin-pref" "$r"
+
 # ---------------------------------------------------------------------------
 rm -rf "$TMP"
 if [ "$fail" = 0 ]; then echo "RESULT: ALL PASS"; else echo "RESULT: $fail FAILED"; exit 1; fi

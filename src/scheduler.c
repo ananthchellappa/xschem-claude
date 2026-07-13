@@ -2218,19 +2218,24 @@ static int xschem_cmds_f(Tcl_Interp *interp, int argc, const char *argv[], int *
             }
           }
           for(a = 0; a < nmem; ++a) {
-            int r = flyline_uf_find(parent, a), j, first = 1, m;
+            int r = flyline_uf_find(parent, a), j, first = 1, m, have_pin = 0, have_any = 0;
+            double ax = 0.0, ay = 0.0;
             for(j = 0; j < nseen; ++j) if(seen[j] == r) break;
             if(j < nseen) continue;               /* component already emitted */
             seen[nseen++] = r;
             Tcl_DStringAppend(&cluds, Tcl_DStringLength(&cluds) ? " {members {" : "{members {", -1);
             for(m = 0; m < nmem; ++m) {
-              if(flyline_uf_find(parent, m) == r) {
-                my_snprintf(buf, S(buf), "%s%d", first ? "" : " ", m);
-                Tcl_DStringAppend(&cluds, buf, -1);
-                first = 0;
-              }
+              if(flyline_uf_find(parent, m) != r) continue;
+              my_snprintf(buf, S(buf), "%s%d", first ? "" : " ", m);
+              Tcl_DStringAppend(&cluds, buf, -1);
+              first = 0;
+              /* A4 anchor: prefer a pin member's coord (electrically exact), else fall back to
+               * the first member's point (a wire midpoint). Hub-relative refinement is A5. */
+              if(!have_any) { ax = mem[m].x; ay = mem[m].y; have_any = 1; }
+              if(!have_pin && mem[m].kind == 1) { ax = mem[m].x; ay = mem[m].y; have_pin = 1; }
             }
-            Tcl_DStringAppend(&cluds, "} anchor {}}", -1);
+            my_snprintf(buf, S(buf), "} anchor {%.16g %.16g}}", ax, ay);
+            Tcl_DStringAppend(&cluds, buf, -1);
           }
           my_free(_ALLOC_ID_, &seen);
           my_free(_ALLOC_ID_, &parent);
