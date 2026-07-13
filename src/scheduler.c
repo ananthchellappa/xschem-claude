@@ -2221,12 +2221,20 @@ static int xschem_cmds_f(Tcl_Interp *interp, int argc, const char *argv[], int *
         FlyMember *mem = NULL;
         int nmem = 0, mem_alloc = 0, a, b;
         int hub_member = -1;     /* member index of the hovered object (at-form), else -1 */
+        /* A8: global/bang-net policy. record_global_node(3,..) is a read-only lookup (2=ground/"0",
+         * 1=global). A global (vdd!/gnd!/0) touches the whole schematic, so it is suppressed unless
+         * flylines_show_globals; when shown, the star is capped at flylines_cap nearest clusters. */
+        int is_global = 0, capped = 0;
+        int show_globals = tclgetboolvar("flylines_show_globals");
+        int cap = tclgetintvar("flylines_cap");
         Tcl_DString memds, cluds, segds;
         char buf[128];
+        if(cap <= 0) cap = 32;   /* C fallback if the tcl default is unset */
+        if(netname && netname[0]) is_global = (record_global_node(3, NULL, netname) != 0);
         Tcl_DStringInit(&memds);
         Tcl_DStringInit(&cluds);
         Tcl_DStringInit(&segds);
-        if(netname && netname[0]) {
+        if(netname && netname[0] && !(is_global && !show_globals)) {
           int i, p, rects;
           double x, y;
           for(i = 0; i < xctx->wires; ++i) {
@@ -2312,12 +2320,29 @@ static int xschem_cmds_f(Tcl_Interp *interp, int argc, const char *argv[], int *
             my_snprintf(buf, S(buf), "} anchor {%.16g %.16g}}", cx[c], cy[c]);
             Tcl_DStringAppend(&cluds, buf, -1);
           }
-          /* emit star segments hub -> every other cluster */
-          for(c = 0; c < nclu; ++c) {
-            if(c == hub) continue;
-            my_snprintf(buf, S(buf), "%s{%.16g %.16g %.16g %.16g}", Tcl_DStringLength(&segds) ? " " : "",
-                        cx[hub], cy[hub], cx[c], cy[c]);
-            Tcl_DStringAppend(&segds, buf, -1);
+          /* emit star segments hub -> the `cap` nearest other clusters (A8). If there are more
+           * other clusters than the cap, keep the nearest ones and flag capped. */
+          {
+            int others = nclu - 1, emit = others, e;
+            char *used = my_malloc(_ALLOC_ID_, nclu * sizeof(char));
+            if(others > cap) { emit = cap; capped = 1; }
+            for(c = 0; c < nclu; ++c) used[c] = 0;
+            used[hub] = 1;
+            for(e = 0; e < emit; ++e) {
+              int bestc = -1; double bestd = 0.0;
+              for(c = 0; c < nclu; ++c) {
+                double dx, dy, d2;
+                if(used[c]) continue;
+                dx = cx[c] - cx[hub]; dy = cy[c] - cy[hub]; d2 = dx * dx + dy * dy;
+                if(bestc < 0 || d2 < bestd) { bestc = c; bestd = d2; }
+              }
+              if(bestc < 0) break;
+              used[bestc] = 1;
+              my_snprintf(buf, S(buf), "%s{%.16g %.16g %.16g %.16g}", Tcl_DStringLength(&segds) ? " " : "",
+                          cx[hub], cy[hub], cx[bestc], cy[bestc]);
+              Tcl_DStringAppend(&segds, buf, -1);
+            }
+            my_free(_ALLOC_ID_, &used);
           }
           my_free(_ALLOC_ID_, &cany); my_free(_ALLOC_ID_, &cpin);
           my_free(_ALLOC_ID_, &cy);   my_free(_ALLOC_ID_, &cx);
@@ -2325,8 +2350,9 @@ static int xschem_cmds_f(Tcl_Interp *interp, int argc, const char *argv[], int *
           my_free(_ALLOC_ID_, &parent);
         }
         Tcl_ResetResult(interp);
-        Tcl_AppendResult(interp, "net {", netname ? netname : "", "} members {",
-                         Tcl_DStringValue(&memds), "} clusters {",
+        Tcl_AppendResult(interp, "net {", netname ? netname : "",
+                         "} global ", is_global ? "1" : "0", " capped ", capped ? "1" : "0",
+                         " members {", Tcl_DStringValue(&memds), "} clusters {",
                          Tcl_DStringValue(&cluds), "} segments {",
                          Tcl_DStringValue(&segds), "}", NULL);
         Tcl_DStringFree(&memds);

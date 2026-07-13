@@ -44,7 +44,7 @@ case "$r" in
 esac
 
 r=$(probe a0_empty "" 'xschem flylines net foo')
-[ "$r" = "net {} members {} clusters {} segments {}" ] \
+[ "$r" = "net {} global 0 capped 0 members {} clusters {} segments {}" ] \
   && ok "A0 unknown net -> empty dict" \
   || bad "A0 empty-dict shape" "$r"
 
@@ -139,7 +139,7 @@ r=$(probe a6_bare_net "$FIX/bare_wires.sch" 'lindex [xschem flylines at 50 0] 1'
 [ "$r" = "" ] && ok "A6 hover on a #net wire -> net excluded (empty)" || bad "A6 bare net" "$r"
 
 r=$(probe a6_bare_full "$FIX/bare_wires.sch" 'xschem flylines at 50 0')
-[ "$r" = "net {} members {} clusters {} segments {}" ] \
+[ "$r" = "net {} global 0 capped 0 members {} clusters {} segments {}" ] \
   && ok "A6 #net query yields the empty dict" || bad "A6 bare full" "$r"
 
 r=$(probe a6_bare_byname "$FIX/bare_wires.sch" 'lindex [xschem flylines net #net1] 1')
@@ -166,6 +166,31 @@ r=$(probe a7_bit_precise "$FIX/bus_shared.sch" 'llength [dict get [xschem flylin
 # ---- A9: config-var defaults ---------------------------------------------
 r=$(probe a9_defaults "" 'list $flylines $flylines_show_globals $flylines_cap $flylines_width $flylines_dash')
 [ "$r" = "0 0 32 1 4" ] && ok "A9 config-var defaults present" || bad "A9 defaults" "$r"
+
+# ---- A8: global nets (suppress by default, opt-in capped) + C1 invariant --
+# a normal net is not global
+r=$(probe a8_notglobal "$FIX/clk_members4.sch" 'dict get [xschem flylines net CLK] global')
+[ "$r" = "0" ] && ok "A8 ordinary net -> global 0" || bad "A8 not-global" "$r"
+
+# ground/global net "0": suppressed by default -> global 1 but no members/segments
+r=$(probe a8_suppress "$FIX/gnd3.sch" \
+  'set d [xschem flylines net 0]; list [dict get $d global] [llength [dict get $d members]] [llength [dict get $d segments]]')
+[ "$r" = "1 0 0" ] && ok "A8 global suppressed by default (global 1, empty)" || bad "A8 suppress" "$r"
+
+# opt in: flylines_show_globals=1 -> 3 clusters, 2 segments, not capped
+r=$(probe a8_show "$FIX/gnd3.sch" \
+  'set flylines_show_globals 1; set d [xschem flylines net 0]; list [dict get $d global] [llength [dict get $d clusters]] [llength [dict get $d segments]] [dict get $d capped]')
+[ "$r" = "1 3 2 0" ] && ok "A8 global shown when opted in (3 clusters, 2 segs)" || bad "A8 show" "$r"
+
+# cap: 4 clusters, flylines_cap=2 -> only 2 nearest segments, capped 1
+r=$(probe a8_cap "$FIX/gnd4.sch" \
+  'set flylines_show_globals 1; set flylines_cap 2; set d [xschem flylines net 0]; list [llength [dict get $d segments]] [dict get $d capped]')
+[ "$r" = "2 1" ] && ok "A8 star capped to flylines_cap nearest (2), capped 1" || bad "A8 cap" "$r"
+
+# C1 INVARIANT: after many queries (incl. a global), NOTHING is highlighted and nothing modified
+r=$(probe a8_c1 "$FIX/gnd4.sch" \
+  'xschem flylines net 0; set flylines_show_globals 1; xschem flylines net 0; xschem flylines at 0 0; xschem flylines net {A[1:0]}; set gl [xschem globals]; set m 0; set h 0; foreach l [split $gl "\n"] {if {[regexp {^modified=(\d+)} $l -> v]} {set m $v}; if {[regexp {^hilight_nets=(\d+)} $l -> v]} {set h $v}}; list $m $h')
+[ "$r" = "0 0" ] && ok "A8 C1: queries leave modified=0 and hilight_nets=0 (pure read-only)" || bad "A8 C1 invariant" "$r"
 
 # ---------------------------------------------------------------------------
 rm -rf "$TMP"
