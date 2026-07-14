@@ -2077,6 +2077,7 @@ static int xschem_cmds_f(Tcl_Interp *interp, int argc, const char *argv[], int *
     {
       const char *netname = NULL;   /* points into xctx data; do not free */
       Selected pick; int have_pick = 0;   /* the hovered object (at-form), used to pick the hub */
+      double mx = 0.0, my = 0.0;    /* at-form pointer coords (the cursor hub); unused by net-form */
       FlyResult res;
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
       if(argc < 3) {
@@ -2102,7 +2103,8 @@ static int xschem_cmds_f(Tcl_Interp *interp, int argc, const char *argv[], int *
           Tcl_SetResult(interp, "usage: xschem flylines at <x> <y>", TCL_STATIC);
           return TCL_ERROR;
         } else {
-          pick = find_closest_obj(atof(argv[3]), atof(argv[4]), 1);
+          mx = atof(argv[3]); my = atof(argv[4]);   /* the (x,y) IS the "mouse": cursor hub */
+          pick = find_closest_obj(mx, my, 1);
           have_pick = 1;
           netname = flyline_net_of(pick.type, pick.n, pick.col);
         }
@@ -2115,7 +2117,7 @@ static int xschem_cmds_f(Tcl_Interp *interp, int argc, const char *argv[], int *
        * format its FlyResult into the query dict:
        *   net {N} global 0|1 capped 0|1 members {{kind idx pin x y}...}
        *   clusters {{members {idx...} anchor {x y}}...} segments {{x1 y1 x2 y2}...}. */
-      flyline_compute(netname, have_pick, have_pick ? &pick : NULL, &res);
+      flyline_compute(netname, have_pick, have_pick ? &pick : NULL, mx, my, &res);
       {
         Tcl_DString memds, cluds, segds;
         char buf[128];

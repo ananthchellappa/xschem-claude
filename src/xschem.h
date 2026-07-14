@@ -1863,7 +1863,9 @@ extern void resetwin(int create_pixmap, int clear_pixmap, int force, int w, int 
 extern Selected find_closest_obj(double mx,double my, int override_lock);
 /* Hover fly-lines (flyline.c, doc/claude/specs/hover_flylines.md). Read-only (invariant C1). */
 extern const char *flyline_net_of(unsigned short type, int n, unsigned int col);
-extern void flyline_compute(const char *netname, int have_pick, const Selected *pick, FlyResult *res);
+extern void flyline_compute(const char *netname, int have_pick, const Selected *pick,
+                            double mx, double my, FlyResult *res);
+extern void flyline_hub_point(const Selected *pick, double mx, double my, double *hx, double *hy);
 extern void flyline_result_free(FlyResult *res);
 /* find the instance pin within a tight radius of (mx,my); returns 1 and fills *r
  * (type=INST_PIN, n=instance, col=pin) on hit, 0 otherwise. See pin_selection.md */

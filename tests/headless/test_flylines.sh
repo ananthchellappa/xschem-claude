@@ -199,6 +199,33 @@ r=$(probe a8_c1 "$FIX/gnd4.sch" \
 r=$(probe b0_shown "$FIX/two_clk_no_wire.sch" 'xschem flylines shown')
 [ "$r" = "" ] && ok "B0 flylines shown -> empty (nothing drawn headless)" || bad "B0 shown-empty" "$r"
 
+# ---- H0: cursor hub -- the at-form segment ORIGIN is the point on the hovered --
+#         object closest to the pointer (the (x,y) of `at` IS the mouse). Only the
+#         segment origin moves; destinations / clustering / anchors stay unchanged.
+#         See doc/claude/suggestions/flyline_hub_at_cursor_plan.md.
+# hub_wire: wire (0,0)-(200,0) named by a CLK label at its left end (cluster-0 anchor = pin 0,0)
+#           + a far CLK label at (500,0) (cluster 1). 2 clusters, 1 segment.
+
+# net form: origin unchanged = the hub cluster's canonical anchor (pin at 0,0)
+r=$(probe h0_netform "$FIX/hub_wire.sch" 'dict get [xschem flylines net CLK] segments')
+[ "$r" = "{0 0 500 0}" ] && ok "H0 net form origin = cluster anchor (unchanged)" || bad "H0 net form" "$r"
+
+# at form on the WIRE: origin is the clamp-projection of the cursor onto the wire, NOT the
+# cluster anchor (0,0) and NOT the wire midpoint (100,0). Cursor 5 units off-axis -> drops to y=0.
+r=$(probe h0_proj60 "$FIX/hub_wire.sch" 'dict get [xschem flylines at 60 5] segments')
+[ "$r" = "{60 0 500 0}" ] && ok "H0 wire hub origin = projection (60,0), not anchor/midpoint" || bad "H0 proj 60" "$r"
+
+r=$(probe h0_proj150 "$FIX/hub_wire.sch" 'dict get [xschem flylines at 150 5] segments')
+[ "$r" = "{150 0 500 0}" ] && ok "H0 wire hub origin tracks the cursor (150,0)" || bad "H0 proj 150" "$r"
+
+# clamp: hovering just past the wire end pins t to the endpoint (no extrapolation)
+r=$(probe h0_clamp "$FIX/hub_wire.sch" 'dict get [xschem flylines at 205 3] segments')
+[ "$r" = "{200 0 500 0}" ] && ok "H0 past-end hover clamps origin to the wire end (200,0)" || bad "H0 clamp" "$r"
+
+# a label/pin hub keeps the pin coord as origin (projection == the pin point); dest stays anchor
+r=$(probe h0_label "$FIX/hub_wire.sch" 'dict get [xschem flylines at 500 0] segments')
+[ "$r" = "{500 0 0 0}" ] && ok "H0 label hub origin = pin coord (500,0); dest = cluster anchor" || bad "H0 label hub" "$r"
+
 # ---------------------------------------------------------------------------
 rm -rf "$TMP"
 if [ "$fail" = 0 ]; then echo "RESULT: ALL PASS"; else echo "RESULT: $fail FAILED"; exit 1; fi

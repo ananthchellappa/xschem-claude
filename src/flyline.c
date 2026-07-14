@@ -51,6 +51,39 @@ const char *flyline_net_of(unsigned short type, int n, unsigned int col)
   return NULL;
 }
 
+/* Hub point: the point on the hovered object CLOSEST to the pointer (mx,my), used as the star's
+ * segment ORIGIN in the at/hover form (doc/claude/suggestions/flyline_hub_at_cursor_plan.md). So
+ * fly-lines emanate from exactly where the cursor is rather than from the cluster's canonical
+ * anchor (which for a wire is the midpoint). Pure read-only geometry over xctx->wire[] / pin
+ * coords -- no state writes (invariant C1). Falls back to (mx,my) when the pick has no geometry.
+ *  WIRE     : clamp-projection of (mx,my) onto segment wire[pick.n], t in [0,1]
+ *  INST_PIN : the picked pin coord (a point)
+ *  ELEMENT  : the label/pin symbol's pin 0 coord (a point) */
+void flyline_hub_point(const Selected *pick, double mx, double my, double *hx, double *hy)
+{
+  *hx = mx; *hy = my;                          /* fallback: the raw pointer */
+  if(!pick) return;
+  if(pick->type == WIRE) {
+    if(pick->n >= 0 && pick->n < xctx->wires) {
+      xWire *w = &xctx->wire[pick->n];
+      double dx = w->x2 - w->x1, dy = w->y2 - w->y1;
+      double len2 = dx * dx + dy * dy, t;
+      if(len2 <= 0.0) { *hx = w->x1; *hy = w->y1; return; }   /* zero-length wire guard */
+      t = ((mx - w->x1) * dx + (my - w->y1) * dy) / len2;
+      if(t < 0.0) t = 0.0; else if(t > 1.0) t = 1.0;          /* clamp to the segment */
+      *hx = w->x1 + t * dx; *hy = w->y1 + t * dy;
+    }
+  } else if(pick->type == INST_PIN) {
+    if(pick->n >= 0 && pick->n < xctx->instances &&
+       (xctx->inst[pick->n].ptr + xctx->sym)->rects[PINLAYER] > (int)pick->col)
+      get_inst_pin_coord(pick->n, (int)pick->col, hx, hy);
+  } else if(pick->type == ELEMENT) {
+    if(pick->n >= 0 && pick->n < xctx->instances &&
+       (xctx->inst[pick->n].ptr + xctx->sym)->rects[PINLAYER] > 0)
+      get_inst_pin_coord(pick->n, 0, hx, hy);
+  }
+}
+
 /* union-find with path halving */
 static int flyline_uf_find(int *parent, int a)
 {
@@ -130,11 +163,16 @@ static int flyline_same_net(const char *a, const char *b)
 
 /* Compute the fly-line set for a net (doc/claude/specs/hover_flylines.md §5). `netname` is the
  * already-resolved target net (net-form: user name; at-form: flyline_net_of() of the picked
- * object). When `have_pick`, `pick` is the hovered object and its cluster becomes the hub;
- * otherwise the hub is cluster 0. Fills *res (caller zero-inits nothing; free with
- * flyline_result_free()). PRECONDITION: prepare_netlist_structs(0) has run so wire[].node /
- * inst[].node are current. Pure read-only (invariant C1). */
-void flyline_compute(const char *netname, int have_pick, const Selected *pick, FlyResult *res)
+ * object). When `have_pick`, `pick` is the hovered object and its cluster becomes the hub, and
+ * (mx,my) is the pointer -- the star's segment ORIGIN is then the point on the hovered object
+ * closest to (mx,my) (flyline_hub_point), so lines emanate from the cursor rather than the
+ * cluster's canonical anchor (see suggestions/flyline_hub_at_cursor_plan.md). Otherwise the hub
+ * is cluster 0 and its anchor is the origin (mx,my ignored). Destinations, clustering, and the
+ * clusters{} anchors are unchanged either way. Fills *res (free with flyline_result_free()).
+ * PRECONDITION: prepare_netlist_structs(0) has run so wire[].node / inst[].node are current.
+ * Pure read-only (invariant C1). */
+void flyline_compute(const char *netname, int have_pick, const Selected *pick,
+                     double mx, double my, FlyResult *res)
 {
   FlyMember *mem = NULL;
   int nmem = 0, mem_alloc = 0, a, b;
@@ -242,7 +280,13 @@ void flyline_compute(const char *netname, int have_pick, const Selected *pick, F
      * clusters than the cap, keep the nearest ones and flag capped. */
     {
       int others = nclu - 1, emit = others, e;
+      /* Segment ORIGIN: the cursor hub point when hovering (at-form), else the hub cluster's
+       * canonical anchor (net-form). Nearest-cluster selection below still measures from the
+       * anchor cx[hub]/cy[hub] so the cap picks the SAME destinations as before -- only the
+       * emitted origin coordinate moves (plan H0). */
+      double ox = cx[hub], oy = cy[hub];
       char *used = my_malloc(_ALLOC_ID_, nclu * sizeof(char));
+      if(have_pick) flyline_hub_point(pick, mx, my, &ox, &oy);
       if(others > cap) { emit = cap; res->capped = 1; }
       if(emit > 0) {
         res->sx1 = my_malloc(_ALLOC_ID_, emit * sizeof(double));
@@ -262,7 +306,7 @@ void flyline_compute(const char *netname, int have_pick, const Selected *pick, F
         }
         if(bestc < 0) break;
         used[bestc] = 1;
-        res->sx1[res->nseg] = cx[hub]; res->sy1[res->nseg] = cy[hub];
+        res->sx1[res->nseg] = ox; res->sy1[res->nseg] = oy;
         res->sx2[res->nseg] = cx[bestc]; res->sy2[res->nseg] = cy[bestc];
         ++res->nseg;
       }

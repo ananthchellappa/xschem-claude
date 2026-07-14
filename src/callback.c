@@ -2157,7 +2157,8 @@ void draw_flylines(int force)
   if(!netname) return;   /* moved to empty / off-canvas: erased, nothing to draw */
   {
     FlyResult res;
-    flyline_compute(netname, 1, &pick, &res);     /* hub = hovered cluster */
+    /* hub = hovered cluster; origin = the point on the hovered object under the pointer */
+    flyline_compute(netname, 1, &pick, xctx->mousex, xctx->mousey, &res);
     if(res.nseg > 0) {
       int i;
       double x1 = res.sx1[0], y1 = res.sy1[0], x2 = res.sx1[0], y2 = res.sy1[0];
