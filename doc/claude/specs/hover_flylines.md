@@ -131,15 +131,42 @@ For each cluster pick one anchor point for its fly-line endpoint:
   (label name-text-bbox center is an alternative for visual aim — see
   `hover_netlabel_text.md`; pick pin coord for v1).
 - Wire-bearing cluster → nearest wire endpoint to the hub, or the wire midpoint.
-- The **hub** is the hovered cluster's anchor.
+- The **hub anchor** (used for the `net` form and as the destination-selection reference) is the
+  hovered cluster's canonical anchor as above; the **query API `clusters {…}` anchors stay these
+  canonical, stable points**.
+
+**Cursor hub (at/hover form).** The star's segment *origin* is not the hub cluster's anchor but the
+point on the *hovered object* closest to the pointer (`flyline_hub_point()` in `flyline.c`), so lines
+emanate from exactly under the cursor: a WIRE hub → the clamp-projection of the pointer onto the wire
+segment (t∈[0,1]); a pin/label hub → its pin coord. Only the origin moves — destinations, clustering,
+cap/global logic and the `clusters {…}` anchors are unchanged (nearest-cluster selection for the cap
+still measures from the cluster anchor). The `net <name>` form has no pointer, so its origin stays the
+cluster-0 anchor. See `doc/claude/suggestions/flyline_hub_at_cursor_plan.md` (H0). Observable headless
+via `xschem flylines at <x> <y>` (the (x,y) *is* the mouse) and, for the drawn star, `xschem flylines
+origin`.
 
 ### 5.4 Topology
 
-**Decision: star.** Draw one line from the hub anchor (the hovered cluster) to each other
+**Decision: star.** Draw one line from the hub (the hovered cluster) to each other
 cluster's anchor — reads clearly as "from the node under the mouse to all others". Keep the
 topology behind a small internal strategy hook so a minimum-spanning-tree variant (less ink
 on dense nets, but the drawn line no longer starts at the hovered node) can be swapped in
 later without touching the enumeration/render code.
+
+**Origin tracks the cursor within one net (per-motion, H2).** Same-net motion normally
+short-circuits (change-detect on `fly_last_net`). To let the origin follow the pointer, when the
+net is unchanged *and* a star is on screen *and* the cursor is still within the same **hub cluster**
+(`flyline_pick_in_hub_cluster()` tests the picked object against the cached hub-cluster member keys
+`fly_hub_mem[]` = `{kind,idx,pin}` per member, O(hub size), no re-clustering), `draw_flylines()`
+re-projects the hub point and slides the star's origins in place — `flyline_move_origin()` rebuilds
+`fly_seg` from the *cached destinations* (`fly_seg[4*i+2..3]`), does one regional erase over the old
+bbox, and re-strokes. This is O(dest) with **no member scan and no re-clustering** (the P2 review's
+full-rescan fix stays intact). Keying on the hub *cluster* (not just the hub *object*) keeps the
+cheap path even when the cursor crosses between objects of that cluster (a wire junction, a wire →
+its pin). A full recompute fires only on net change, hub-**cluster** change (moving to a different
+cluster of the same net), or a cleared `prep_hi_structs` epoch (an edit — `force=1` then bypasses the
+cheap path). The erase must zero `fly_nseg` before its `draw()` so the re-stamp hook does not redraw
+the old star (§5.6).
 
 ### 5.5 Rendering
 
@@ -234,8 +261,15 @@ Add a scheduler subcommand so the connectivity logic is testable headless, indep
 rendering (repo discipline — no eyeball-only features):
 
 - `xschem flylines at <x> <y>` — resolve the net at a point and return the computed fly-
-  line set: `{net {N} clusters {…} segments {{x1 y1 x2 y2} …} global 0|1 capped 0|1}`.
-- `xschem flylines net <name>` — same, given a net name directly.
+  line set: `{net {N} clusters {…} segments {{x1 y1 x2 y2} …} global 0|1 capped 0|1}`. The
+  `(x,y)` is treated as the pointer, so `segments` originate at the cursor hub point (§5.3).
+- `xschem flylines net <name>` — same, given a net name directly (no pointer → cluster-0 origin).
+- `xschem flylines shown` — net whose star is currently drawn on screen (Track B), "" if none.
+- `xschem flylines origin` — world-coord origin (hub point) of the drawn star, "" if none. Lets a
+  render test observe that the drawn origin tracks the cursor (the `shown` net name cannot).
+- `xschem flylines seg0` — the full first drawn segment `x1 y1 x2 y2` (origin → its destination),
+  "" if none. Exposes the destination too, so a render test catches a cheap-slide that kept a stale
+  destination (e.g. an over-broad hub-cluster match).
 - Extend `object_descriptor()` / `xschem hover` (`scheduler.c:3388`, `:5804`) to also
   surface the resolved net name (add a `net {N}` field) — small, independently useful.
 
@@ -325,7 +359,11 @@ Decisions locked 2026-07-13 (see §3–§6 for where each is applied):
 | 6 | Vs active highlight | **Coexist** (orthogonal; both draw) | — |
 
 Still genuinely open (do not block P0/P1; decide when reached):
-- Exact anchor for a wire-bearing cluster: nearest endpoint to hub vs wire midpoint (§5.3).
+- ~~Exact anchor for a wire-bearing cluster: nearest endpoint to hub vs wire midpoint (§5.3).~~
+  **Resolved for the hovered cluster's ORIGIN:** it is the cursor's clamp-projection onto the
+  hovered wire (`flyline_hub_point`, plan H0). DESTINATION wire clusters still use the canonical
+  anchor (midpoint/pin) — aiming a destination at its nearest point to the hub is a separate
+  enhancement, still open.
 - Label anchor: pin coord (electrical, v1 default) vs name-text-bbox center (visual aim).
 - Whether the "isolated net" cue (§3.4) is worth drawing at all.
 - Debounce interval / redraw strategy tuning (regional `draw()` vs strip re-stamp, §5.6).
