@@ -333,8 +333,9 @@ Delivered as two tracks (see `suggestions/flyline_implementation_plan.md`); v1 s
   in practice — same-net motion is already O(1).]**
 - **P3 polish** — pin hover-pick; bus policy; multi-tab gating; freeze key; optional
   marching-ants; (Cairo soft-glow only if later wanted). **[PARTIAL — bus aggregate-per-label
-  DONE (A7); soft-glow assessed + deferred (B4). Freeze key, marching-ants, explicit multi-tab
-  gating remain OPEN for a later pass.]**
+  DONE (A7); soft-glow assessed + deferred (B4); hub-at-cursor origin DONE (H0-H2). Freeze key,
+  marching-ants, explicit multi-tab gating and the rest remain OPEN — see the consolidated
+  §14 P3 backlog.]**
 
 ### v1 build (Track A logic + Track B render), what shipped
 - **Track A (headless):** `xschem flylines net <name> | at <x> <y>` returns
@@ -376,3 +377,66 @@ clustering** (new algorithm, must be correct or lines duplicate wired connection
 (2) **global-net blow-up** (policy + cap), (3) **hover-rate performance** (caching +
 staleness), (4) **whole-canvas overlay erase** (regional repaint ordering). Soft-glow is
 the only genuinely new plumbing and is deferred.
+
+## 14. P3 backlog (deferred, in rough priority order)
+
+v1 (Track A + B + the hub-at-cursor follow-up) shipped; the items below are the deferred
+polish/scope work, consolidated from §3, §5.4, §6, §7, §11 and §12. Each is independent —
+none blocks the others. Status: **OPEN** unless noted. Effort is a rough T-shirt size.
+
+### 14.1 Interaction / triggers
+- **Freeze / pin snapshot key** (S). Snapshot the current fly-lines so the cursor can move away
+  while they persist (a second key or `<Esc>` clears). §3.7, §11-P3. The overlay state
+  (`fly_shown_net`, `fly_seg`, `fly_nseg`, bbox) is already retained and re-stamped across redraw
+  (Track B), so "freeze" is mostly *not clearing on the next motion* + a bound key; add a
+  `fly_frozen` flag that gates the erase-on-move in `draw_flylines()`. Cheapest high-value item.
+- **Device-pin hover-pick in the live cascade** (S). A bare device pin under the cursor (not on a
+  wire/label) is resolved by `find_closest_pin()` (`findnet.c:552`), which is `en_pin_select`-gated
+  and *not* in the `find_closest_obj()` cascade the overlay uses — so hovering such a pin may not
+  start a star. §5.1, §11-P3. Wire `find_closest_pin` into `draw_flylines()`'s resolve step (and
+  the `flylines at` query) behind the same guard the pin-selection feature uses.
+
+### 14.2 Rendering fidelity
+- **Marching-ants animation** (M). Scroll a `dash_offset` on the fly-line dashes to draw the eye
+  along each connection. §7.2. Ride `net_hilight_anim_tick` (`xschem.tcl:455`) +
+  `redraw_hilight_region` (`scheduler.c:7354`) exactly like `draw_hilight_wire()`'s dash scroll
+  (`draw.c:1655`); gate on `flylines` + a `flylines_anim` var. Pure cosmetic; no connectivity change.
+- **Cairo soft-glow / translucency** (L). Cadence-style translucent glow. §7.3 + the B4 spike
+  (`code_analysis/flyline_softglow_spike.md`): DEFERRED because the Unix interactive line path is
+  Xlib `XDrawSegments` (solid, no alpha) and Cairo is wired only for text/fills here — needs a NEW
+  Cairo overlay surface (`cairo_set_source_rgba` + `cairo_stroke`). The only item with genuinely new
+  plumbing. Keep the dashed placeholder (C2) until this lands.
+
+### 14.3 Connectivity scope
+- **Explicit background-tab / multi-window gating** (S). §6.5. Overlay state is per-`Xschem_ctx`,
+  but background tabs share the single `.drw`; gate `draw_flylines()`/`flyline_restamp()` to the
+  front/visible context like the animation tick and `net_hilight_redraw_other_windows()`'s guard,
+  so a background context cannot scribble onto the wrong tab. Currently relies on implicit behavior.
+- **Cross-hierarchy fly-lines** (L). v1 non-goal (§4, single view). Follow off-sheet connectors /
+  net names across the descend/ascend stack (`sch[]`, `sch_path[]`). Node strings are leaf-local, so
+  this needs cross-level name resolution — a substantially larger feature; likely its own spec.
+- **Per-bit bus mode** (M). §6.4, §12-#3. v1 aggregates a bus label into one deduped set; a per-bit
+  mode would draw separate fly-lines per bit. `flyline_same_net()` already resolves per bit
+  (`expandlabel`), so this is a presentation/dedup toggle (`flylines_bus_mode`), not new connectivity.
+
+### 14.4 Anchor / geometry polish
+- **Destination anchor aiming** (M). §12. The hovered cluster's ORIGIN now tracks the cursor
+  (`flyline_hub_point`, H0); each DESTINATION cluster still terminates on its canonical anchor
+  (pin/midpoint). Aim each destination at *its* nearest point to the hub for straighter lines —
+  the mirror of the H0 origin work, reusing the same projection helper.
+- **MST topology** (M). §5.4, §12-#1. Swap the star for a minimum-spanning-tree over cluster anchors
+  (less ink on dense nets; the drawn line no longer starts at the hovered node). Keep it behind the
+  planned topology strategy hook so the enumeration/render code is untouched.
+- **Label anchor = name-text-bbox center** (S). §12. Aim a label cluster's fly-line at the visual
+  name-text center instead of the electrical pin coord (see `hover_netlabel_text.md`). Visual-only.
+- **"Isolated net" cue** (S). §3.4, §12. A subtle marker when the hovered net has a single cluster
+  (no implicit connections) so "nothing drawn" is distinguishable from "feature not firing". Decide
+  whether it is worth the ink at all before building.
+
+### 14.5 Performance tuning (measure first)
+- **Redraw-strategy swap** (M). §5.6, §12. The erase/slide uses a regional `draw()` over the star
+  bbox. If motion feels heavy on large sheets, swap for the `save_pixmap` strip re-stamp
+  (`MyXCopyAreaDouble`, `draw.c:6185`) + re-stroke of other window-only overlays. Only if measured —
+  same-net slide is already O(dest) with no re-cluster (§5.4).
+- **Motion debounce** (S). §6.3. Not needed in v1 (same-net motion is O(1)/O(dest)); revisit only if
+  a pathological sheet shows hover-rate cost after the strategy swap.
