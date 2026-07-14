@@ -158,11 +158,25 @@ This is the already-blessed D2 pattern, applied to completion. For each mutating
 core function:
 
 1. **Move the `log_action(...)` call out of the scheduler branch and into the core C
-   function**, formatting the canonical `xschem <verb> <args>` from the core's *own*
-   parameters (not the caller's argv). Because menu/toolbar/context/script/key/gesture all
-   funnel through the core, one site covers them all. This is precisely what slice-6 did for
-   `make_symbol` (moved branch → `save.c` core) and reported as "strictly better" — it closed
-   the Ctrl-L keyboard path for free.
+   function** — *when that core is 1:1 with the user verb* — formatting the canonical
+   `xschem <verb> <args>` from the core's *own* parameters (not the caller's argv). Because
+   menu/toolbar/context/script/key/gesture all funnel through the core, one site covers them
+   all. This is precisely what slice-6 did for `make_symbol` (moved branch → `save.c` core) and
+   reported as "strictly better", and what the `select_grow_connected` atom (`e3764a07`) did —
+   it closed the double-click gesture, whose only bypass path was the direct core call.
+
+   **The 1:1 test matters — verified the hard way on `delete()` (atom 2).** `delete()` is *not*
+   a clean core: it is a shared primitive called by ~three abort/merge/preview-teardown paths
+   (`abort_operation` tears down a placement or merge with `delete(1)`) and by the two cut paths,
+   in addition to the real user delete. Logging inside it would spuriously emit `xschem delete`
+   on an ESC-abort and mislabel a cut as a delete — the composite-operation hazard of §3.2. And
+   unlike the double-click, `delete` has **no hidden bypass**: its user verbs already live at the
+   scheduler `delete`/`cut` branches (which self-log) plus two inline legacy-switch keys
+   (`XK_Delete`, `Ctrl-X`) that were the *entire* gap. So the correct fix logged those two keys at
+   the handler (the 0068 keyboard pattern), leaving `delete()` silent — zero suppression, no risk
+   to the abort paths. **Rule of thumb: log at the core when the core *is* the verb; log at the
+   verb's entry sites when the core is a shared mechanism the verb is only one caller of.** Apply
+   the 1:1 test to each candidate (`go_back`, `descend_symbol` next) before choosing the site.
 2. **Wire the suppress guard properly.** Give `actionlog_suppress` a real setter, set it
    around the replay driver and inside composite operations, and have every core log through a
    single helper (`core_log_action(verb, argv…)`) that early-returns when suppressed. This

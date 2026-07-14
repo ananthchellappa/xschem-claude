@@ -5789,6 +5789,13 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
         if(xctx->lastsel) { /* 20071203 check if something selected */
           save_selection(2);
           delete(1/* to_push_undo */);
+          /* action-log (issue 0071): Ctrl-X is an inline legacy-switch key -- it never
+           * reaches the `xschem cut` scheduler branch, so it must self-log here. Logged as
+           * `xschem cut` (fills the clipboard), NOT `xschem delete`. delete() is a shared
+           * primitive (aborts/merges/preview teardown call it too) so it is deliberately not
+           * the log site -- the cut/delete VERBS live at the scheduler branch + these keys.
+           * See doc/claude/code_analysis/action_log_coverage_audit_and_core_selflog_refactor.md */
+          log_action("xschem cut");
         }
       }
       break;
@@ -5955,6 +5962,13 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
         if(xctx->semaphore >= 2) break;
         if(readonly_block()) break;
         delete(1/* to_push_undo */);
+        /* action-log (issue 0071): the Delete key is an inline legacy-switch handler that
+         * never reaches the `xschem delete` scheduler branch, so it self-logs here. Guarded
+         * by the SELECTION check above, so an empty-selection Delete logs nothing (no
+         * phantom). delete() itself is a shared primitive (aborts/merges call it) and is not
+         * the log site. See
+         * doc/claude/code_analysis/action_log_coverage_audit_and_core_selflog_refactor.md */
+        log_action("xschem delete");
       }
       break;
 
