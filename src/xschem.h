@@ -1248,6 +1248,13 @@ typedef struct {
   double *fly_seg;      /* 4*fly_nseg doubles (x1,y1,x2,y2 per drawn segment, world coords) so the
                          * draw() re-stamp can re-stroke the star after a full redraw with no recompute */
   int fly_seg_alloc;    /* allocated doubles in fly_seg */
+  /* Hub object that produced the drawn star (H2, flyline_hub_at_cursor_plan.md). On same-net
+   * motion still over this same object, the origin is re-projected and the star's origins are
+   * rebuilt in place (regional erase + re-stroke) WITHOUT re-clustering; moving to a different
+   * object (or net) forces a full recompute. Valid only while fly_nseg > 0. */
+  unsigned short fly_hub_type;
+  int fly_hub_n;
+  unsigned int fly_hub_col;
   GC gc_flyline;        /* fly-line overlay: dashed thin colored GC (flylines_color/width/dash) */
   GC gc_hilight;        /* net highlight scratch GC: reconfigured per wire from the
                          * NetHilightStyle (color+width+dash) at draw time */

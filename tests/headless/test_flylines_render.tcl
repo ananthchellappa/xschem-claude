@@ -140,6 +140,23 @@ hover 150 5                                    ;# NET CHANGE back onto the wire,
 set o [ox]
 check "H1 drawn origin tracks cursor @150"    [expr {$o ne "" && abs($o-150) < 6}] "origin=[origin]"
 
+# ---- H2: within ONE net the origin TRACKS the pointer (cheap slide, no re-cluster) ----
+# Moving along the SAME wire (same net, no empty between hovers) slides the drawn origin under the
+# cursor via the cheap path (recompute hub point + rebuild fly_seg, NO re-clustering). Without H2
+# the same-net short-circuit would freeze the origin at the first-hover point.
+wire_net
+hover 100000 100000                            ;# drop any stale star -> the seed is a clean recompute
+hover 60 5                                     ;# NET CHANGE empty->CLK: full recompute seeds hub=wire
+set o [ox]
+check "H2 seed hover @60 -> origin ~60"        [expr {$o ne "" && abs($o-60) < 6}]  "origin=[origin]"
+hover 150 5                                     ;# SAME net, same wire hub -> cheap origin slide
+check "H2 same-net slide -> shown still CLK"   [expr {[shown] eq "CLK"}]             "shown=[shown]"
+set o [ox]
+check "H2 same-net slide -> origin follows ~150" [expr {$o ne "" && abs($o-150) < 6}] "origin=[origin]"
+hover 30 5                                      ;# slide back the other way, still one net
+set o [ox]
+check "H2 same-net slide back -> origin ~30"   [expr {$o ne "" && abs($o-30) < 6}]  "origin=[origin]"
+
 # ---- C1 (render): hovering DRAWS but never mutates the schematic -----------
 # The load-bearing invariant carried into the draw path (B0). Build a real net, clear the
 # modified flag, hover so a star is actually drawn (shown==CLK), and confirm nothing changed:

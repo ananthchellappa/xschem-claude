@@ -2099,6 +2099,32 @@ static void flyline_clear(int erase)
   if(erase && had) flyline_erase_region(ox1, oy1, ox2, oy2);
 }
 
+/* H2 cheap path: slide the tracked star's ORIGIN to (hx,hy) without re-clustering. The
+ * destinations already live in fly_seg[4*i+2..3]; only the per-segment origin + bbox change.
+ * Same net + same hub object, so fly_shown_net stays. Mirrors the net-change erase/redraw order
+ * (flyline.c/draw() re-stamp trap): zero fly_nseg BEFORE the erase-draw() so the re-stamp hook
+ * does not redraw the OLD star, then rebuild + re-stroke the NEW origins. Read-only (C1). */
+static void flyline_move_origin(double hx, double hy)
+{
+  double ox1 = xctx->fly_x1, oy1 = xctx->fly_y1, ox2 = xctx->fly_x2, oy2 = xctx->fly_y2;
+  double x1, y1, x2, y2;
+  int i, n = xctx->fly_nseg;
+  if(n <= 0 || !xctx->fly_seg) return;
+  if(hx == xctx->fly_seg[0] && hy == xctx->fly_seg[1]) return;   /* origin unchanged: no redraw */
+  xctx->fly_nseg = 0;                          /* the erase-draw() must not re-stamp the old star */
+  flyline_erase_region(ox1, oy1, ox2, oy2);
+  x1 = x2 = hx; y1 = y2 = hy;
+  for(i = 0; i < n; ++i) {
+    double dx = xctx->fly_seg[4 * i + 2], dy = xctx->fly_seg[4 * i + 3];
+    xctx->fly_seg[4 * i] = hx; xctx->fly_seg[4 * i + 1] = hy;   /* move origin, keep destination */
+    if(dx < x1) x1 = dx; if(dx > x2) x2 = dx;
+    if(dy < y1) y1 = dy; if(dy > y2) y2 = dy;
+  }
+  xctx->fly_nseg = n;
+  xctx->fly_x1 = x1; xctx->fly_y1 = y1; xctx->fly_x2 = x2; xctx->fly_y2 = y2;
+  flyline_restamp();                           /* stroke the star from its new origin */
+}
+
 /* Hover fly-line overlay (doc/claude/specs/hover_flylines.md, Track B). Draw the implicit-
  * connectivity "star" for the net under the cursor: thin dashed lines (gc_flyline) from the
  * hovered cluster to every other cluster of the same net that is joined only by name (no drawn
@@ -2145,11 +2171,28 @@ void draw_flylines(int force)
   /* else: pointer off-canvas (leave) -> netname stays NULL -> erase + clear below. */
   /* change detection against the last RESOLVED net (not just the drawn one): a starless net --
    * e.g. a fully-wired single-cluster net, the common case -- also short-circuits, so repeated
-   * motion over it does not re-run the full member scan. Turns same-net motion into O(1). */
+   * motion over it does not re-run the full member scan. Turns same-net motion into O(1).
+   *
+   * H2: when the net is unchanged AND a star is on screen AND the cursor is still over the SAME
+   * hub object, slide the origin under the cursor (flyline_move_origin) instead of short-circuiting
+   * -- a wire hub then tracks the pointer. This recomputes ONLY the hub point + rebuilds fly_seg
+   * from the cached destinations; NO re-cluster (the review fixed the full-rescan cost). Moving to
+   * a different object of the same net (hub-cluster change) falls through to a full recompute. */
   if(!force) {
     const char *cur = xctx->fly_last_net ? xctx->fly_last_net : "";
     const char *nw  = netname ? netname : "";
-    if(!strcmp(cur, nw)) return;
+    if(!strcmp(cur, nw)) {
+      if(netname && xctx->fly_nseg > 0 &&
+         pick.type == xctx->fly_hub_type && pick.n == xctx->fly_hub_n &&
+         (pick.type != INST_PIN || pick.col == xctx->fly_hub_col)) {
+        double hx, hy;
+        flyline_hub_point(&pick, xctx->mousex, xctx->mousey, &hx, &hy);
+        flyline_move_origin(hx, hy);           /* no-op when the projected origin is unchanged */
+        return;
+      }
+      if(!(netname && xctx->fly_nseg > 0)) return;   /* starless same-net motion: O(1) short-circuit */
+      /* else: same net but a DIFFERENT hub object -> fall through to a full recompute */
+    }
   }
   my_strdup(_ALLOC_ID_, &xctx->fly_last_net, netname);   /* NULL -> frees to NULL */
   /* net changed (possibly to nothing): erase the old star, then draw the new one (if any). */
@@ -2176,6 +2219,8 @@ void draw_flylines(int force)
       }
       xctx->fly_nseg = res.nseg;
       xctx->fly_x1 = x1; xctx->fly_y1 = y1; xctx->fly_x2 = x2; xctx->fly_y2 = y2;
+      /* remember the hub object so subsequent same-object motion slides the origin (H2) */
+      xctx->fly_hub_type = pick.type; xctx->fly_hub_n = pick.n; xctx->fly_hub_col = pick.col;
       my_strdup(_ALLOC_ID_, &xctx->fly_shown_net, netname);
       flyline_restamp();                          /* stroke the freshly-stashed star */
     }
