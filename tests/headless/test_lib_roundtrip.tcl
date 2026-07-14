@@ -8,8 +8,8 @@
 #   - netlisting produces correct connectivity (both resistors share net MID)
 #   - save -> load -> save is byte-stable (the round-trip does not churn the file)
 #
-# Run under X with --pipe from src/:
-#   DISPLAY=:0 ./xschem --pipe -q --script ../tests/headless/test_lib_roundtrip.tcl
+# Run under X with --pipe (any cwd -- paths derive from this script's location):
+#   DISPLAY=:0 ./src/xschem --pipe -q --script tests/headless/test_lib_roundtrip.tcl
 
 set fail 0
 proc check {name ok detail} {
@@ -20,10 +20,15 @@ proc slurp {f} { set fp [open $f r]; set d [read $fp]; close $fp; return $d }
 
 # --- fixture: a new-layout library "tlib" with cell "myres" (a real resistor
 #     symbol copied from devices/) registered via a defs file --------------
-set tmp [file join [pwd] _rt_test_[pid]]
+# repo root from the script's own location (tests/headless/ -> up 2), NOT from
+# [pwd]: the old [pwd]/../xschem_library only resolved when launched from src/,
+# and from anywhere else the copy failed with a startup Tcl error popup that
+# blocked to the audit timeout (same class as test_migrate_engine).
+set repo [file normalize [file join [file dirname [info script]] .. ..]]
+set tmp [file join /tmp _rt_test_[pid]]
 file delete -force $tmp
 file mkdir $tmp/tlib/myres/symbol
-file copy [file join [pwd] ../xschem_library/devices/res.sym] $tmp/tlib/myres/symbol/myres.sym
+file copy [file join $repo xschem_library/devices/res.sym] $tmp/tlib/myres/symbol/myres.sym
 set defs [file join $tmp library.defs]
 set fp [open $defs w]; puts $fp "DEFINE tlib $tmp/tlib"; close $fp
 set ::XSCHEM_LIBRARY_DEFS $defs
@@ -50,8 +55,10 @@ set A [slurp $schA]
 
 # --- RT1 — the saved file carries the portable lib-qualified reference -------
 check "RT1 saved file has C {tlib/myres}" [regexp {C \{tlib/myres\}} $A] {}
-# --- RT1b — and NOT an absolute path or the on-disk view path ---------------
-check "RT1b ref is not absolute/view path" [expr {![regexp {symbol/myres\.sym} $A] && ![regexp [pwd] $A]}] {}
+# --- RT1b — and NOT an absolute path or the on-disk view path (neither the
+#     launch dir nor the /tmp fixture tree may leak into a saved reference) ---
+check "RT1b ref is not absolute/view path" \
+  [expr {![regexp {symbol/myres\.sym} $A] && [string first [pwd] $A] < 0 && [string first $tmp $A] < 0}] {}
 # --- RT1c — the legacy reference is preserved verbatim (mixed mode) ----------
 check "RT1c legacy {lab_pin.sym} preserved" [regexp {C \{lab_pin\.sym\}} $A] {}
 
