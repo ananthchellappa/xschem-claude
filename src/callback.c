@@ -2053,6 +2053,51 @@ void draw_hover(int force)
   xctx->draw_pixmap = sdp;
 }
 
+/* Stroke the currently-tracked fly-line star (xctx->fly_seg) window-only through gc_flyline.
+ * Shared by draw_flylines() (draw the freshly-computed star) and the draw() re-stamp (re-establish
+ * the overlay after a full redraw wipes the window). No recompute -- it replays stored world-coord
+ * segments, which drawtempline maps through the current zoom/pan. Read-only (invariant C1). */
+void flyline_restamp(void)
+{
+  int i, sdw, sdp;
+  if(!has_x || xctx->fly_nseg <= 0 || !xctx->fly_seg) return;
+  sdw = xctx->draw_window; sdp = xctx->draw_pixmap;
+  xctx->draw_pixmap = 0; xctx->draw_window = 1;   /* window-only frame */
+  for(i = 0; i < xctx->fly_nseg; ++i)
+    drawtempline(xctx->gc_flyline, ADD, xctx->fly_seg[4 * i], xctx->fly_seg[4 * i + 1],
+                 xctx->fly_seg[4 * i + 2], xctx->fly_seg[4 * i + 3]);
+  drawtempline(xctx->gc_flyline, END, 0.0, 0.0, 0.0, 0.0);
+  xctx->draw_window = sdw; xctx->draw_pixmap = sdp;
+}
+
+/* Erase the drawn fly-line star by repainting its world bbox from the backing pixmap -- the
+ * regional-draw() idiom of draw_hilight_region() (hilight.c). The CALLER must clear fly_nseg /
+ * fly_shown_net first, so the draw() re-stamp hook sees an empty overlay and does not immediately
+ * re-stroke what we are erasing. Read-only w.r.t. schematic content (C1). */
+static void flyline_erase_region(double x1, double y1, double x2, double y2)
+{
+  double marg;
+  if(!has_x || !xctx->save_pixmap) return;
+  marg = xctx->cadhalfdotsize + 4.0 / xctx->mooz;   /* cover line width + dash + endpoint dots */
+  bbox(START, 0.0, 0.0, 0.0, 0.0);
+  bbox(ADD, x1 - marg, y1 - marg, x2 + marg, y2 + marg);
+  bbox(SET, 0.0, 0.0, 0.0, 0.0);
+  draw();
+  bbox(END, 0.0, 0.0, 0.0, 0.0);
+}
+
+/* Forget the tracked fly-line star, erasing its pixels when the caller asks (a regional redraw
+ * over the old bbox). Order matters: state is cleared BEFORE the erase-draw() so the re-stamp
+ * hook does not redraw the very star we are erasing. */
+static void flyline_clear(int erase)
+{
+  double ox1 = xctx->fly_x1, oy1 = xctx->fly_y1, ox2 = xctx->fly_x2, oy2 = xctx->fly_y2;
+  int had = xctx->fly_nseg > 0;
+  xctx->fly_nseg = 0;
+  if(xctx->fly_shown_net) my_free(_ALLOC_ID_, &xctx->fly_shown_net);
+  if(erase && had) flyline_erase_region(ox1, oy1, ox2, oy2);
+}
+
 /* Hover fly-line overlay (doc/claude/specs/hover_flylines.md, Track B). Draw the implicit-
  * connectivity "star" for the net under the cursor: thin dashed lines (gc_flyline) from the
  * hovered cluster to every other cluster of the same net that is joined only by name (no drawn
@@ -2061,11 +2106,12 @@ void draw_hover(int force)
  *
  * INVARIANT C1: pure read-only overlay. All connectivity comes from flyline_compute()
  * (flyline.c), which never mutates schematic state; here we only stroke the window (via
- * drawtempline, inherently window-only) and update the transient fly_* fields -- nothing
+ * drawtempline / a regional erase draw()) and update the transient fly_* fields -- nothing
  * touches hilight_table / inst.color / .sel / the modified flag / saved bytes.
  *
- * B2: compute + draw + track fly_shown_net (so `xschem flylines shown` reflects it). Erasing
- * the previous star on a net change and surviving pan/zoom/full-redraw are added in B3. */
+ * B2: compute + draw + track fly_shown_net. B3: erase the previous star on a net change / leave
+ * (regional draw() over the old bbox) and re-stamp after pan/zoom/full-redraw (draw() hook +
+ * the retained xctx->fly_seg). */
 void draw_flylines(int force)
 {
   const char *netname = NULL;
@@ -2074,9 +2120,7 @@ void draw_flylines(int force)
 
   if(!has_x) return;
   if(!tclgetboolvar("flylines")) {
-    /* feature off: drop any stale overlay state (leftover pixels clear on the next redraw) */
-    if(xctx->fly_shown_net) my_free(_ALLOC_ID_, &xctx->fly_shown_net);
-    xctx->fly_nseg = 0;
+    flyline_clear(1);   /* feature off: erase any lingering star */
     return;
   }
   /* idle + inside gate, mirroring draw_hover's newsel guard: no fly-lines mid-gesture or when
@@ -2100,35 +2144,31 @@ void draw_flylines(int force)
     const char *nw  = netname ? netname : "";
     if(!strcmp(cur, nw)) return;
   }
-  /* net changed (possibly to nothing). B3 erases the old star here before the new one is drawn. */
-  if(!netname) {
-    if(xctx->fly_shown_net) my_free(_ALLOC_ID_, &xctx->fly_shown_net);
-    xctx->fly_nseg = 0;
-    return;
-  }
+  /* net changed (possibly to nothing): erase the old star, then draw the new one (if any). */
+  flyline_clear(1);
+  if(!netname) return;   /* moved to empty / off-canvas: erased, nothing to draw */
   {
     FlyResult res;
-    int i, sdw = xctx->draw_window, sdp = xctx->draw_pixmap;
     flyline_compute(netname, 1, &pick, &res);     /* hub = hovered cluster */
     if(res.nseg > 0) {
+      int i;
       double x1 = res.sx1[0], y1 = res.sy1[0], x2 = res.sx1[0], y2 = res.sy1[0];
-      xctx->draw_pixmap = 0; xctx->draw_window = 1;   /* window-only frame */
+      if(res.nseg * 4 > xctx->fly_seg_alloc) {   /* grow the retained segment buffer */
+        xctx->fly_seg_alloc = res.nseg * 4;
+        my_realloc(_ALLOC_ID_, &xctx->fly_seg, xctx->fly_seg_alloc * sizeof(double));
+      }
       for(i = 0; i < res.nseg; ++i) {
-        drawtempline(xctx->gc_flyline, ADD, res.sx1[i], res.sy1[i], res.sx2[i], res.sy2[i]);
+        xctx->fly_seg[4 * i]     = res.sx1[i]; xctx->fly_seg[4 * i + 1] = res.sy1[i];
+        xctx->fly_seg[4 * i + 2] = res.sx2[i]; xctx->fly_seg[4 * i + 3] = res.sy2[i];
         if(res.sx1[i] < x1) x1 = res.sx1[i]; if(res.sx1[i] > x2) x2 = res.sx1[i];
         if(res.sx2[i] < x1) x1 = res.sx2[i]; if(res.sx2[i] > x2) x2 = res.sx2[i];
         if(res.sy1[i] < y1) y1 = res.sy1[i]; if(res.sy1[i] > y2) y2 = res.sy1[i];
         if(res.sy2[i] < y1) y1 = res.sy2[i]; if(res.sy2[i] > y2) y2 = res.sy2[i];
       }
-      drawtempline(xctx->gc_flyline, END, 0.0, 0.0, 0.0, 0.0);
-      xctx->draw_window = sdw; xctx->draw_pixmap = sdp;
-      my_strdup(_ALLOC_ID_, &xctx->fly_shown_net, netname);
       xctx->fly_nseg = res.nseg;
       xctx->fly_x1 = x1; xctx->fly_y1 = y1; xctx->fly_x2 = x2; xctx->fly_y2 = y2;
-    } else {
-      /* net has no implicit connections (single cluster) -> nothing shown */
-      if(xctx->fly_shown_net) my_free(_ALLOC_ID_, &xctx->fly_shown_net);
-      xctx->fly_nseg = 0;
+      my_strdup(_ALLOC_ID_, &xctx->fly_shown_net, netname);
+      flyline_restamp();                          /* stroke the freshly-stashed star */
     }
     flyline_result_free(&res);
   }

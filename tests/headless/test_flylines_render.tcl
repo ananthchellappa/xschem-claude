@@ -57,6 +57,14 @@ proc wired_pair {} {
   xschem instance lab_pin.sym 200 0 0 0 {name=l2 lab=CLK}
   xschem unselect_all; xschem zoom_full; update idletasks
 }
+proc two_nets {} {           ;# CLK on the y=0 row, RST on the y=200 row (two implicit nets)
+  xschem clear force
+  xschem instance lab_pin.sym 0   0   0 0 {name=a1 lab=CLK}
+  xschem instance lab_pin.sym 200 0   0 0 {name=a2 lab=CLK}
+  xschem instance lab_pin.sym 0   200 0 0 {name=b1 lab=RST}
+  xschem instance lab_pin.sym 200 200 0 0 {name=b2 lab=RST}
+  xschem unselect_all; xschem zoom_full; update idletasks
+}
 
 # ---- B2: draw on hover; `shown` tracks the hovered net --------------------
 set ::flylines 1
@@ -81,6 +89,23 @@ set ::flylines 0
 hover 0 0
 check "B2 flylines off -> shown {}" [expr {[shown] eq ""}] "shown=[shown]"
 set ::flylines 1
+
+# ---- B3: erase-on-move, survive zoom, clear on <Leave> --------------------
+two_nets
+hover 0 0
+check "B3 hover net A -> shown CLK"                 [expr {[shown] eq "CLK"}] "shown=[shown]"
+hover 0 200
+check "B3 move to net B -> shown RST (A star erased)" [expr {[shown] eq "RST"}] "shown=[shown]"
+hover 100000 100000
+check "B3 move to empty -> shown {}"                [expr {[shown] eq ""}]    "shown=[shown]"
+
+hover 0 0
+check "B3 re-hover A -> shown CLK"                  [expr {[shown] eq "CLK"}] "shown=[shown]"
+xschem zoom_full; update idletasks
+check "B3 shown survives zoom_full (re-stamped)"    [expr {[shown] eq "CLK"}] "shown=[shown]"
+
+event generate $WIN <Leave>; update idletasks
+check "B3 <Leave> -> shown {}"                      [expr {[shown] eq ""}]    "shown=[shown]"
 
 # ---- C1 (render): hovering DRAWS but never mutates the schematic -----------
 # The load-bearing invariant carried into the draw path (B0). Build a real net, clear the

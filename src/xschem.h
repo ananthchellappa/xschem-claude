@@ -1243,6 +1243,9 @@ typedef struct {
   char *fly_shown_net;
   int fly_nseg;
   double fly_x1, fly_y1, fly_x2, fly_y2;
+  double *fly_seg;      /* 4*fly_nseg doubles (x1,y1,x2,y2 per drawn segment, world coords) so the
+                         * draw() re-stamp can re-stroke the star after a full redraw with no recompute */
+  int fly_seg_alloc;    /* allocated doubles in fly_seg */
   GC gc_flyline;        /* fly-line overlay: dashed thin colored GC (flylines_color/width/dash) */
   GC gc_hilight;        /* net highlight scratch GC: reconfigured per wire from the
                          * NetHilightStyle (color+width+dash) at draw time */
@@ -1729,6 +1732,7 @@ extern void add_scope_highlight(int type, unsigned int id);
 extern void draw_hover_shape(GC g, int type, int n, int c); /* hover outline for one object */
 extern void draw_hover(int force);          /* hover (awareness) highlight, motion-driven */
 extern void draw_flylines(int force);       /* hover fly-line overlay (hover_flylines.md, Track B) */
+extern void flyline_restamp(void);          /* re-stroke the tracked fly-line star after a full redraw */
 extern int delete_wires(int selected_flag);
 extern void delete(int to_push_undo);
 extern void delete_only_rect_line_arc_poly(void);

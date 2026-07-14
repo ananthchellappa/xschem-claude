@@ -6146,6 +6146,10 @@ void draw(void)
      * mid-gesture / pointer outside. */
     xctx->hover_type = 0;
     draw_hover(1);
+    /* this full redraw also wiped the window-only fly-line star: re-stroke the tracked segments
+     * (xctx->fly_seg) so the overlay survives pan/zoom/expose, exactly like the hover outline
+     * above. No-op when nothing is shown. See draw_flylines() / hover_flylines.md (Track B). */
+    flyline_restamp();
     if(tclgetboolvar("draw_crosshair")) draw_crosshair(7, 0); /* what = 1(clear) + 2(draw) */
   } /* if(has_x) */
 }
