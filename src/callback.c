@@ -2053,6 +2053,87 @@ void draw_hover(int force)
   xctx->draw_pixmap = sdp;
 }
 
+/* Hover fly-line overlay (doc/claude/specs/hover_flylines.md, Track B). Draw the implicit-
+ * connectivity "star" for the net under the cursor: thin dashed lines (gc_flyline) from the
+ * hovered cluster to every other cluster of the same net that is joined only by name (no drawn
+ * wire between them). Rides the same motion pump as draw_hover() but is independent of
+ * hover_highlight (spec §3.1) and gated by its own `flylines` var.
+ *
+ * INVARIANT C1: pure read-only overlay. All connectivity comes from flyline_compute()
+ * (flyline.c), which never mutates schematic state; here we only stroke the window (via
+ * drawtempline, inherently window-only) and update the transient fly_* fields -- nothing
+ * touches hilight_table / inst.color / .sel / the modified flag / saved bytes.
+ *
+ * B2: compute + draw + track fly_shown_net (so `xschem flylines shown` reflects it). Erasing
+ * the previous star on a net change and surviving pan/zoom/full-redraw are added in B3. */
+void draw_flylines(int force)
+{
+  const char *netname = NULL;
+  Selected pick;
+  int idle;
+
+  if(!has_x) return;
+  if(!tclgetboolvar("flylines")) {
+    /* feature off: drop any stale overlay state (leftover pixels clear on the next redraw) */
+    if(xctx->fly_shown_net) my_free(_ALLOC_ID_, &xctx->fly_shown_net);
+    xctx->fly_nseg = 0;
+    return;
+  }
+  /* idle + inside gate, mirroring draw_hover's newsel guard: no fly-lines mid-gesture or when
+   * the pointer is off-canvas. The masked bits (SELECTION / net-pick modes) are resting states. */
+  idle = xctx->mouse_inside &&
+         (xctx->ui_state & ~(SELECTION | NET_HILIGHT | NET_UNHILIGHT)) == 0 && xctx->semaphore < 2;
+  if(idle) {
+    /* If prep_hi_structs is clear, an edit has invalidated wire[].node/clustering since the star
+     * was last drawn (check.c/paste.c/... reset it): force a recompute even when the net NAME is
+     * unchanged, else a same-name-but-restructured net would keep a stale star (spec §5.4/§6.3). */
+    if(!xctx->prep_hi_structs) force = 1;
+    prepare_netlist_structs(0);           /* rebuilds wire[].node / inst[].node iff stale */
+    pick = find_closest_obj(xctx->mousex, xctx->mousey, 0);
+    netname = flyline_net_of(pick.type, pick.n, pick.col);
+    if(netname && netname[0] == '#') netname = NULL;   /* A6: auto-named nets never fly */
+  }
+  /* change detection: identical net already shown -> nothing to redraw (turns same-net motion
+   * into O(1) -- the §5.4 cache's main win without maintaining a full result cache). */
+  if(!force) {
+    const char *cur = xctx->fly_shown_net ? xctx->fly_shown_net : "";
+    const char *nw  = netname ? netname : "";
+    if(!strcmp(cur, nw)) return;
+  }
+  /* net changed (possibly to nothing). B3 erases the old star here before the new one is drawn. */
+  if(!netname) {
+    if(xctx->fly_shown_net) my_free(_ALLOC_ID_, &xctx->fly_shown_net);
+    xctx->fly_nseg = 0;
+    return;
+  }
+  {
+    FlyResult res;
+    int i, sdw = xctx->draw_window, sdp = xctx->draw_pixmap;
+    flyline_compute(netname, 1, &pick, &res);     /* hub = hovered cluster */
+    if(res.nseg > 0) {
+      double x1 = res.sx1[0], y1 = res.sy1[0], x2 = res.sx1[0], y2 = res.sy1[0];
+      xctx->draw_pixmap = 0; xctx->draw_window = 1;   /* window-only frame */
+      for(i = 0; i < res.nseg; ++i) {
+        drawtempline(xctx->gc_flyline, ADD, res.sx1[i], res.sy1[i], res.sx2[i], res.sy2[i]);
+        if(res.sx1[i] < x1) x1 = res.sx1[i]; if(res.sx1[i] > x2) x2 = res.sx1[i];
+        if(res.sx2[i] < x1) x1 = res.sx2[i]; if(res.sx2[i] > x2) x2 = res.sx2[i];
+        if(res.sy1[i] < y1) y1 = res.sy1[i]; if(res.sy1[i] > y2) y2 = res.sy1[i];
+        if(res.sy2[i] < y1) y1 = res.sy2[i]; if(res.sy2[i] > y2) y2 = res.sy2[i];
+      }
+      drawtempline(xctx->gc_flyline, END, 0.0, 0.0, 0.0, 0.0);
+      xctx->draw_window = sdw; xctx->draw_pixmap = sdp;
+      my_strdup(_ALLOC_ID_, &xctx->fly_shown_net, netname);
+      xctx->fly_nseg = res.nseg;
+      xctx->fly_x1 = x1; xctx->fly_y1 = y1; xctx->fly_x2 = x2; xctx->fly_y2 = y2;
+    } else {
+      /* net has no implicit connections (single cluster) -> nothing shown */
+      if(xctx->fly_shown_net) my_free(_ALLOC_ID_, &xctx->fly_shown_net);
+      xctx->fly_nseg = 0;
+    }
+    flyline_result_free(&res);
+  }
+}
+
 static void unselect_at_mouse_pos(int mx, int my)
 {
        xctx->last_command = 0;
@@ -4355,6 +4436,7 @@ static void handle_motion_notify(int event, KeySym key, int state, int rstate, i
      * crosshair redraw so the crosshair stays on top. No-op when disabled / mid-
      * gesture (ui_state!=0 here) / pointer outside. */
     draw_hover(0);
+    draw_flylines(0); /* hover fly-line overlay: independent of hover_highlight (spec §3.1) */
     if(draw_xhair) {
       draw_crosshair(2, state); /* what = 2(draw) */
     }
@@ -7043,6 +7125,7 @@ int callback(const char *win_path, int event, int mx, int my, KeySym key, int bu
      tclvareval(xctx->top_path, ".drw configure -cursor {}" , NULL);
      xctx->mouse_inside = 0;
      draw_hover(0); /* erase the hover outline when the pointer leaves the canvas */
+     draw_flylines(0); /* drop the fly-line overlay state on leave (mouse_inside==0) */
      break;
 
    case EnterNotify:

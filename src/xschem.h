@@ -1728,6 +1728,7 @@ extern void clear_scope_highlight(void);
 extern void add_scope_highlight(int type, unsigned int id);
 extern void draw_hover_shape(GC g, int type, int n, int c); /* hover outline for one object */
 extern void draw_hover(int force);          /* hover (awareness) highlight, motion-driven */
+extern void draw_flylines(int force);       /* hover fly-line overlay (hover_flylines.md, Track B) */
 extern int delete_wires(int selected_flag);
 extern void delete(int to_push_undo);
 extern void delete_only_rect_line_arc_poly(void);
