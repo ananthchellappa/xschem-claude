@@ -2061,6 +2061,7 @@ void flyline_restamp(void)
 {
   int i, sdw, sdp;
   if(!has_x || xctx->fly_nseg <= 0 || !xctx->fly_seg) return;
+  if(!tclgetboolvar("flylines")) return;   /* disabled mid-show: a redraw must not re-stamp it */
   sdw = xctx->draw_window; sdp = xctx->draw_pixmap;
   xctx->draw_pixmap = 0; xctx->draw_window = 1;   /* window-only frame */
   for(i = 0; i < xctx->fly_nseg; ++i)

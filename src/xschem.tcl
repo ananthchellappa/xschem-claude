@@ -13926,6 +13926,12 @@ proc build_widgets { {topwin {} } } {
   # no notify needed. Independent of Cadence Compatible so it can be toggled on its own.
   $topwin.menubar.option add checkbutton -label "Fluid editing (first-click tip/edge grab)" \
     -variable fluid_editing -selectcolor $selectcolor
+  # Hover fly-lines: on hover, draw transient flight lines from the net under the cursor to its
+  # implicitly-connected clusters (labels/pins/global, no drawn wire). Read fresh from this Tcl
+  # variable by the C side (doc/claude/specs/hover_flylines.md); the redraw erases a lingering
+  # star immediately on toggle-off (flyline_restamp() is gated on the var, so it won't re-appear).
+  $topwin.menubar.option add checkbutton -label "Show hover fly-lines (implicit connectivity)" \
+    -variable flylines -selectcolor $selectcolor -command {xschem redraw}
 
   $topwin.menubar.option add cascade -label "Crosshair" \
        -menu $topwin.menubar.option.crosshair

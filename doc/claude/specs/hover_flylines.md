@@ -1,10 +1,14 @@
 # Spec — Hover fly-lines (dynamic implicit-connectivity highlighting)
 
-Status: DRAFT 2026-07-13, design decisions locked (§12). New feature. Depends on the
-existing hover-highlight (`draw_hover()` in `callback.c`, `xctx->hover_*`), net-highlight
-(`hilight.c`), temp-overlay (`drawtempline()` in `draw.c`) and net-name
-(`prepare_netlist_structs()` in `netlist.c`) subsystems. No code exists yet; this document
-is the plan.
+Status: IMPLEMENTED (v1) 2026-07-13. Track A (headless connectivity engine, `xschem flylines`
+query) and Track B (on-screen overlay, `draw_flylines()`) both shipped on branch `fluid-editing`;
+soft-glow (§7.3) deferred per the B4 spike (`code_analysis/flyline_softglow_spike.md`). Design
+decisions locked (§12). Built on the existing hover-highlight (`draw_hover()` in `callback.c`,
+`xctx->hover_*`), net-highlight (`hilight.c`), temp-overlay (`drawtempline()` in `draw.c`) and
+net-name (`prepare_netlist_structs()` in `netlist.c`) subsystems. Connectivity/clustering lives in
+the new `src/flyline.c` (`flyline_compute()`), shared by the query and the overlay. Regression:
+`tests/headless/test_flylines.sh` (35 rails, --nogui logic) + `test_flylines_render.tcl`
+(14 rails, -x GUI overlay).
 
 Locked decisions (v1): star topology from the hovered cluster; global/bang nets suppressed
 by default (opt-in, capped at 32); bus labels aggregated per label (per-bit internally,
@@ -282,15 +286,30 @@ Assert on the `xschem flylines` output; sabotage-verify each rail.
 
 ## 11. Phasing
 
+Delivered as two tracks (see `suggestions/flyline_implementation_plan.md`); v1 status noted inline.
+
 - **P0 spike** — `gc_flyline`; hover hook; net resolve; `xschem flylines at` query; draw a
   star to *all* same-net endpoints (no clustering yet), gated + netlist-current. Get
-  pixels + a headless query on screen.
+  pixels + a headless query on screen. **[DONE]**
 - **P1 clustering (core)** — union-find physical clusters; draw only between distinct
-  clusters; exclude unnamed. This is the correctness meat.
+  clusters; exclude unnamed. This is the correctness meat. **[DONE — `flyline.c` union-find]**
 - **P2 globals + perf** — global detection + suppress/cap; result caching + invalidation;
-  motion debounce; big-net cap.
+  motion debounce; big-net cap. **[DONE — globals suppress/cap; net-name change-detection +
+  prep_hi_structs invalidation as the cache (§5.4); `flylines_cap`. Motion debounce not needed
+  in practice — same-net motion is already O(1).]**
 - **P3 polish** — pin hover-pick; bus policy; multi-tab gating; freeze key; optional
-  marching-ants; (Cairo soft-glow only if later wanted).
+  marching-ants; (Cairo soft-glow only if later wanted). **[PARTIAL — bus aggregate-per-label
+  DONE (A7); soft-glow assessed + deferred (B4). Freeze key, marching-ants, explicit multi-tab
+  gating remain OPEN for a later pass.]**
+
+### v1 build (Track A logic + Track B render), what shipped
+- **Track A (headless):** `xschem flylines net <name> | at <x> <y>` returns
+  `{net global capped members clusters segments}`; C1 read-only invariant locked. 35 rails.
+- **Track B (render):** `draw_flylines()` strokes the star on hover through `gc_flyline`
+  (dashed placeholder, C2), erases on net-change/`<Leave>`, survives pan/zoom via
+  `flyline_restamp()` + retained `xctx->fly_seg`; Options-menu toggle `flylines`. 14 GUI rails.
+- **Deferred:** soft-glow (B4, `code_analysis/flyline_softglow_spike.md`), freeze/pin snapshot,
+  marching-ants, cross-hierarchy, explicit background-tab gating.
 
 ## 12. Resolved decisions & deferred alternatives
 
