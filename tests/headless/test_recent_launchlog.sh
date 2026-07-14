@@ -4,6 +4,8 @@
 # 1) The recent-views list ($HOME/.xschem/recent_files) BELONGS TO THE USER: scripted/test
 #    sessions (--nogui or --pipe), and any session launched with --norecent, must never
 #    create or rewrite it. A normal user-mode session (none of those flags) still updates it.
+#    A --script startup file is gated only for the DURATION of the script body (its programmatic
+#    loads); a file the user opens AFTER the script (event loop) still records -- rails 4b/4c.
 # 2) The action log (Xschem.log) records the full launch command line + cwd as Tcl-comment
 #    header lines, so a log found later can be traced back to the exact invocation.
 #
@@ -53,8 +55,9 @@ else ok "--norecent run leaves recent_files alone"; fi
 
 # 4) POSITIVE rail: a genuine user-mode session (no --nogui/--pipe/--norecent/--script) still
 #    records the loaded file -- protection must not kill the feature for real users. A real user
-#    opens a file via a positional arg (or File>Open in the GUI), NOT via a canned --script (that
-#    is now treated as automation, see rail 4b). The startup load writes recent_files during init;
+#    opens a file via a positional arg (or File>Open in the GUI). A canned --script's own loads
+#    are automation (gated for the script body, see rail 4b) but a file opened AFTER the script
+#    still records (rail 4c). The startup load writes recent_files during init;
 #    the process then sits in the GUI event loop, so launch it in the background, wait for the
 #    write, then kill it. (-x is required, as in rails 2/3.)
 H4="$TMP/home4"; mkdir -p "$H4"
@@ -66,17 +69,40 @@ if [ -f "$H4/.xschem/recent_files" ] && grep -q "before_3.sch" "$H4/.xschem/rece
   ok "user-mode positional-arg run still records the file in recent_files"
 else bad "user-mode run did not update recent_files (feature broken)"; fi
 
-# 4b) REGRESSION rail: a --script startup file with a real X display (no --pipe) is automation
-#     and must NOT write recent_files. This is the exact leak that re-contaminated the user's
-#     list with test/scratchpad files (mos_power_ampli.sch, scratchpad/wirefix.sch) -- a real-GUI
-#     verify/repro run launches `xschem -x --script foo.tcl`, and foo.tcl's `xschem load` used to
-#     pollute the user list because only --pipe/--nogui/--norecent were gated.
+# 4b) REGRESSION rail: a --script startup file with a real X display (no --pipe) whose body does a
+#     programmatic `xschem load` must NOT write recent_files -- the load happens inside the script
+#     body, which is automation. This is the exact leak that re-contaminated the user's list with
+#     test/scratchpad files (mos_power_ampli.sch, scratchpad/wirefix.sch): a real-GUI verify/repro
+#     run launches `xschem -x --script foo.tcl`, and foo.tcl's `xschem load` used to pollute the
+#     user list. Recents are suppressed for the script body (then restored -- see rail 4c).
 #     See doc/claude/issues/0119-recent-files-script-leak.md.
 H4B="$TMP/home4b"; mkdir -p "$H4B"
 HOME="$H4B" timeout 30 "$XSCHEM" -q -r -x --nolog --script "$TMP/load_quit.tcl" >/dev/null 2>&1
 if [ -f "$H4B/.xschem/recent_files" ]; then
   bad "--script (real-GUI, no --pipe) run wrote recent_files (user list corrupted -- leak is back)"
-else ok "--script run leaves recent_files alone (automation, not a human opening a file)"; fi
+else ok "--script body load leaves recent_files alone (automation, not a human opening a file)"; fi
+
+# 4c) POSITIVE rail (the cadence_style_rc fix): a --script startup file that does NO load in its
+#     body (a config/keybinding rc -- e.g. cadence_style_rc) must NOT freeze the recent list. A
+#     file the user opens AFTER the script runs -- modeled here by an `after` callback firing in
+#     the Tk event loop, exactly as File>Open / Library Manager / reopen-last (Ctrl+Shift+O) do --
+#     MUST record recent_files. Before the fix, --script hard-gated the WHOLE session, so a user
+#     who launched `xschem --script cadence_style_rc` never updated recent_files: reopen-last
+#     stayed stuck on a stale file. See doc/claude/issues/0119-recent-files-script-leak.md.
+cat > "$TMP/rc_then_open.tcl" <<EOF
+# no load in the script body (config/keybinding rc); open a file in the event loop afterwards
+after 300 {
+  xschem load {$SCH}
+  xschem exit closewindow force
+}
+EOF
+# NB: no -q here -- -q (cli_opt_quit) exits right after init, never entering the Tk event loop,
+# so the `after` (and every real interactive open) would never fire. The user's launch has no -q.
+H4C="$TMP/home4c"; mkdir -p "$H4C"
+HOME="$H4C" timeout 30 "$XSCHEM" -r -x --nolog --script "$TMP/rc_then_open.tcl" >/dev/null 2>&1
+if [ -f "$H4C/.xschem/recent_files" ] && grep -q "before_3.sch" "$H4C/.xschem/recent_files"; then
+  ok "post-script (event-loop) open records recent_files -- config rc no longer freezes the session"
+else bad "post-script open did NOT record recent_files (cadence_style_rc-style launch freezes recents)"; fi
 
 # 5) an existing user recent_files survives a test run byte-for-byte
 H5="$TMP/home5"; mkdir -p "$H5/.xschem"

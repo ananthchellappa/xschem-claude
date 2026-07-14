@@ -15065,11 +15065,14 @@ set_ne auto_set_wire_bus 0
 set_ne autosave_backup 1
 set_ne cadence_compat 0
 # recent-files protection: the recent-views list ($USER_CONF_DIR/recent_files) belongs to the USER.
-# C sets no_recent_files=1 for a scripted/automation session (--nogui or --pipe -- all test
-# harnesses -- OR a --script startup file, which likewise runs programmatic loads, not a human
-# clicking File>Open) or --norecent; those sessions must never create/rewrite the file, so the
-# gate is FORCED off (a test's rc cannot re-enable it by accident). A normal session defaults to
-# on and an xschemrc may pre-set it. Consumed by update_recent_file/update_recent_dir/write_recent_file.
+# C sets no_recent_files=1 for a hard-gated automation session (--nogui or --pipe -- all test
+# harnesses -- or --norecent); those must never create/rewrite the file, so update below FORCES
+# the gate off (a test's rc cannot re-enable it by accident). A --script startup file is NOT
+# hard-gated: it may be a config/keybinding rc (cadence_style_rc) that does no loads, so C
+# suppresses recents only for the duration of the script body (update_recent_files toggled 0 then
+# restored around source_tcl_file in xinit.c) and interactive opens afterward record normally.
+# A normal session defaults on; an xschemrc may pre-set it. Consumed by
+# update_recent_file/update_recent_dir/write_recent_file.
 if {[info exists no_recent_files] && $no_recent_files} {
   set update_recent_files 0
 } else {

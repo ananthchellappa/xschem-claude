@@ -3185,20 +3185,22 @@ int Tcl_AppInit(Tcl_Interp *inter)
  }
  tclsetintvar("running_in_src_dir", running_in_src_dir);
  /* recent-files protection: the recent-views list ($USER_CONF_DIR/recent_files) belongs to the
-  * USER; a scripted/automation session must never create/rewrite it. Automation is any of:
+  * USER; a scripted/automation session must never create/rewrite it. HARD-gated for the whole
+  * session by:
   *   --nogui / --pipe  (the headless test harnesses),
-  *   --norecent        (explicit opt-out),
-  *   --script <file>   (a canned startup Tcl script -- e.g. a real-GUI verify/repro run: every
-  *                      `xschem load` it performs is programmatic, NOT a human clicking File>Open).
-  * A genuine desktop launch uses none of these (it opens files via a positional arg or the GUI),
-  * so this stays off for real users. Without the --script guard, a scripted GUI session that
-  * omits --pipe (has a real X display) silently polluted the user's list with test/scratchpad
-  * files -- see doc/claude/issues/0119-recent-files-script-leak.md and
-  * tests/headless/test_recent_launchlog.sh. xschem.tcl
-  * reads this flag when setting update_recent_files, and update_recent_file / update_recent_dir /
-  * write_recent_file are all gated on that variable. */
+  *   --norecent        (explicit opt-out).
+  * A --script <file> startup file is NOT hard-gated here: a shipped config/keybinding rc such as
+  * cadence_style_rc is routinely launched with `--script` and performs NO programmatic loads, so
+  * gating the whole session would freeze the user's recent list for every interactive open that
+  * follows (the bug: reopen-last / File>Open Recent stuck on a stale file). Instead recents are
+  * suppressed only for the DURATION of the --script body -- where a verify/repro run does its
+  * programmatic `xschem load`s -- and restored before the event loop, so loads the human performs
+  * afterward record normally. See the source_tcl_file() call below,
+  * doc/claude/issues/0119-recent-files-script-leak.md and tests/headless/test_recent_launchlog.sh.
+  * xschem.tcl reads this flag when setting update_recent_files, and update_recent_file /
+  * update_recent_dir / write_recent_file are all gated on that variable. */
  tclsetintvar("no_recent_files",
-   (cli_opt_nogui || cli_opt_pipe || cli_opt_norecent || cli_opt_tcl_script[0]) ? 1 : 0);
+   (cli_opt_nogui || cli_opt_pipe || cli_opt_norecent) ? 1 : 0);
 
  if(!sel_file[0]) {
    my_snprintf(sel_file, S(sel_file), "%s/%s", user_conf_dir, ".selection.sch");
@@ -3704,7 +3706,17 @@ int Tcl_AppInit(Tcl_Interp *inter)
     */
    dbg(1, "executing --script file : %s\n",  cli_opt_tcl_script);
    tcleval("update");
+   /* Recent-files (0119): the --script body may perform programmatic `xschem load`s (verify/repro
+    * runs) that must NOT pollute the USER's recent list -- but a config/keybinding rc sourced via
+    * --script (e.g. cadence_style_rc) performs no loads and must not freeze the list for the
+    * interactive session that follows. So suppress recents only for the duration of the script,
+    * then restore: loads the human performs afterward (File>Open, Library Manager, reopen-last)
+    * record normally. Save/restore the prior value so an already-gated session
+    * (--nogui/--pipe/--norecent -> update_recent_files 0) stays gated. */
+   tcleval("set ::_saved_uref [expr {[info exists update_recent_files]?$update_recent_files:1}];"
+           " set update_recent_files 0");
    source_tcl_file(cli_opt_tcl_script);
+   tcleval("set update_recent_files $::_saved_uref; unset ::_saved_uref");
  }
 
  /* autostart the Library Manager if the rc / --script asked for it (after the

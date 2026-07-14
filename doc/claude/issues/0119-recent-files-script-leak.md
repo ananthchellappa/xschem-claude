@@ -64,3 +64,42 @@ discipline required.
 
 The user's live `recent_files` was also cleaned of the two contaminant schematic entries and the
 worktree-scratchpad toolbar array (backup left as `recent_files.bak.<mtime>`).
+
+## Follow-up (2026-07-13): the `--script` gate was too broad — it froze real sessions
+
+**Symptom.** The user's normal launch is `xschem --script src/cadence_style_rc --logdir /tmp` — a
+shipped keybinding/config rc sourced via `--script`, not automation. Under the fix above, that
+session set `no_recent_files=1` for its *whole* lifetime, so nothing the user opened interactively
+(File>Open, Library Manager, reopen-last) ever updated `recent_files`. Concretely: open a symbol
+via the Library Manager, quit, relaunch, press `Ctrl+Shift+O` (`xschem load -gui -lastopened`,
+callback.c ~5331 → `get_lastopened` reads `$tctx::recentfile[0]`) → it reopened a *stale* file
+(`tests/from_user/before_8.sch`) because the recent list had been frozen for every `--script` run.
+
+**Root cause.** The 0119 assumption "real users never launch with `--script`" is false:
+`cadence_style_rc` (and `--script` config rcs generally) *is* a real user's normal launch. A blanket
+session-wide gate keyed on "was `--script` present" cannot tell an rc-that-does-no-loads from a
+verify script that programmatically `xschem load`s designs.
+
+**Fix (window model).** Gate recents only for the **duration of the `--script` body**, not the
+session:
+- Drop `cli_opt_tcl_script[0]` from the persistent `no_recent_files` gate (xinit.c ~3200) — only
+  `--nogui / --pipe / --norecent` hard-gate the whole session now.
+- Around `source_tcl_file(cli_opt_tcl_script)` (xinit.c ~3707), save `update_recent_files`, force it
+  `0`, source the script, then restore. A verify script's `xschem load`s run inside the body (still
+  suppressed); a config rc does no loads (nothing suppressed) and the user's interactive opens
+  happen **after** the body, in the Tk event loop, where recording is back on.
+
+The distinguisher is *when* the load happens (script body = automation vs. event loop = human), a
+robust proxy that needs no per-launch flag and no rc whitelist.
+
+**Test.** `tests/headless/test_recent_launchlog.sh`:
+- Rail **4b** kept: a `--script` body that does `xschem load` must not write `recent_files` (leak
+  stays fixed — the load is inside the body).
+- New rail **4c**: a `--script` rc that does **no** load in its body, followed by a load fired from
+  the Tk event loop (`after ...`, modeling File>Open / Library Manager / reopen-last), **must**
+  record. NB: no `-q` — `-q` (`cli_opt_quit`) exits before the event loop; and `-x` is `no_x`
+  (disables Tk), so a rail exercising post-body opens must avoid both to reach the event loop.
+- Sabotage-verified **both** directions: reverting the gate change → rail 4c fails (session frozen);
+  removing the body-suppression → rail 4b fails (leak back). Full suite: ALL PASS.
+- End-to-end (real X + real `cadence_style_rc`): opening the user's own
+  `test_hier_descend_etc.sym` after the rc records it, 3/3 runs.
