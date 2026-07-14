@@ -107,6 +107,14 @@ check "B3 shown survives zoom_full (re-stamped)"    [expr {[shown] eq "CLK"}] "s
 event generate $WIN <Leave>; update idletasks
 check "B3 <Leave> -> shown {}"                      [expr {[shown] eq ""}]    "shown=[shown]"
 
+# a RESTING selection is not a gesture: the star must still draw (the gesture-mask that keeps a
+# mid-drag erase from tearing the rubber-band must not also suppress fly-lines under a selection).
+labels 0 200
+xschem unselect_all; xschem select_at 0 0; update idletasks
+hover 0 0
+check "B3 selection active -> star still drawn"     [expr {[shown] eq "CLK"}] "shown=[shown]"
+xschem unselect_all; update idletasks
+
 # ---- C1 (render): hovering DRAWS but never mutates the schematic -----------
 # The load-bearing invariant carried into the draw path (B0). Build a real net, clear the
 # modified flag, hover so a star is actually drawn (shown==CLK), and confirm nothing changed:

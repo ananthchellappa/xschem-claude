@@ -518,6 +518,7 @@ static void free_xschem_data()
   my_free(_ALLOC_ID_, &xctx->scope_hi_type);
   my_free(_ALLOC_ID_, &xctx->scope_hi_id);
   my_free(_ALLOC_ID_, &xctx->fly_shown_net);   /* hover fly-line overlay state (Track B) */
+  my_free(_ALLOC_ID_, &xctx->fly_last_net);
   my_free(_ALLOC_ID_, &xctx->fly_seg);
   for(i=0;i<CADMAXHIER; ++i) {
     if(xctx->portmap[i].table) str_hash_free(&xctx->portmap[i]);

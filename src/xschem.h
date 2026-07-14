@@ -1240,7 +1240,9 @@ typedef struct {
    * wire/inst/hilight/modified state). fly_shown_net = net whose star is currently on screen
    * (NULL/empty = none); fly_nseg = drawn segment count; fly_x1..y2 = world bbox of the star,
    * used for erase / regional redraw. `xschem flylines shown` reports fly_shown_net. */
-  char *fly_shown_net;
+  char *fly_shown_net;  /* net whose star is currently DRAWN (nseg>0); "" via NULL = none. `shown` */
+  char *fly_last_net;   /* last net RESOLVED under the cursor (star or not) -- the change-detection
+                         * cache key, so repeated motion over a starless net short-circuits too */
   int fly_nseg;
   double fly_x1, fly_y1, fly_x2, fly_y2;
   double *fly_seg;      /* 4*fly_nseg doubles (x1,y1,x2,y2 per drawn segment, world coords) so the

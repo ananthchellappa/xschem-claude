@@ -2117,18 +2117,22 @@ void draw_flylines(int force)
 {
   const char *netname = NULL;
   Selected pick;
-  int idle;
 
   if(!has_x) return;
   if(!tclgetboolvar("flylines")) {
-    flyline_clear(1);   /* feature off: erase any lingering star */
+    flyline_clear(1);                              /* feature off: erase any lingering star */
+    my_strdup(_ALLOC_ID_, &xctx->fly_last_net, NULL);
     return;
   }
-  /* idle + inside gate, mirroring draw_hover's newsel guard: no fly-lines mid-gesture or when
-   * the pointer is off-canvas. The masked bits (SELECTION / net-pick modes) are resting states. */
-  idle = xctx->mouse_inside &&
-         (xctx->ui_state & ~(SELECTION | NET_HILIGHT | NET_UNHILIGHT)) == 0 && xctx->semaphore < 2;
-  if(idle) {
+  /* Mid-gesture (a drag/wire/... owns the screen): leave the overlay untouched. A regional erase
+   * draw() here would fight the rubber-band redraw drawn earlier in the same frame (one-frame
+   * tear). The star refreshes when idle motion resumes -- and any edit clears prep_hi_structs,
+   * forcing a correct recompute then. The masked bits (SELECTION / net-pick modes) are resting
+   * states, not gestures, so they do not trigger this. */
+  if(xctx->mouse_inside &&
+     (xctx->ui_state & ~(SELECTION | NET_HILIGHT | NET_UNHILIGHT)) != 0) return;
+  if(xctx->semaphore >= 2) return;
+  if(xctx->mouse_inside) {
     /* If prep_hi_structs is clear, an edit has invalidated wire[].node/clustering since the star
      * was last drawn (check.c/paste.c/... reset it): force a recompute even when the net NAME is
      * unchanged, else a same-name-but-restructured net would keep a stale star (spec §5.4/§6.3). */
@@ -2138,13 +2142,16 @@ void draw_flylines(int force)
     netname = flyline_net_of(pick.type, pick.n, pick.col);
     if(netname && netname[0] == '#') netname = NULL;   /* A6: auto-named nets never fly */
   }
-  /* change detection: identical net already shown -> nothing to redraw (turns same-net motion
-   * into O(1) -- the §5.4 cache's main win without maintaining a full result cache). */
+  /* else: pointer off-canvas (leave) -> netname stays NULL -> erase + clear below. */
+  /* change detection against the last RESOLVED net (not just the drawn one): a starless net --
+   * e.g. a fully-wired single-cluster net, the common case -- also short-circuits, so repeated
+   * motion over it does not re-run the full member scan. Turns same-net motion into O(1). */
   if(!force) {
-    const char *cur = xctx->fly_shown_net ? xctx->fly_shown_net : "";
+    const char *cur = xctx->fly_last_net ? xctx->fly_last_net : "";
     const char *nw  = netname ? netname : "";
     if(!strcmp(cur, nw)) return;
   }
+  my_strdup(_ALLOC_ID_, &xctx->fly_last_net, netname);   /* NULL -> frees to NULL */
   /* net changed (possibly to nothing): erase the old star, then draw the new one (if any). */
   flyline_clear(1);
   if(!netname) return;   /* moved to empty / off-canvas: erased, nothing to draw */
