@@ -199,6 +199,10 @@ r=$(probe a8_c1 "$FIX/gnd4.sch" \
 r=$(probe b0_shown "$FIX/two_clk_no_wire.sch" 'xschem flylines shown')
 [ "$r" = "" ] && ok "B0 flylines shown -> empty (nothing drawn headless)" || bad "B0 shown-empty" "$r"
 
+# `flylines origin` (drawn hub point) is likewise empty headless -- nothing is on screen.
+r=$(probe b0_origin "$FIX/two_clk_no_wire.sch" 'xschem flylines origin')
+[ "$r" = "" ] && ok "B0 flylines origin -> empty (nothing drawn headless)" || bad "B0 origin-empty" "$r"
+
 # ---- H0: cursor hub -- the at-form segment ORIGIN is the point on the hovered --
 #         object closest to the pointer (the (x,y) of `at` IS the mouse). Only the
 #         segment origin moves; destinations / clustering / anchors stay unchanged.

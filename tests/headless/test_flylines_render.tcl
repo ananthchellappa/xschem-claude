@@ -115,6 +115,31 @@ hover 0 0
 check "B3 selection active -> star still drawn"     [expr {[shown] eq "CLK"}] "shown=[shown]"
 xschem unselect_all; update idletasks
 
+# ---- H1: the DRAWN star origin is the cursor point on the hovered object ----
+# hub-at-cursor (plan H0/H1): observe the actual drawn origin (fly_seg[0..1]) via
+# `xschem flylines origin`, which the `shown` net name cannot expose. Here each hover is a
+# NET CHANGE (through empty), so the full-recompute path draws the origin at the cursor.
+proc wire_net {} {   ;# wire named CLK by a label at its left end + a far CLK label -> 2 clusters
+  xschem clear force
+  xschem wire 0 0 200 0
+  xschem instance lab_pin.sym 0   0 0 0 {name=l1 lab=CLK}
+  xschem instance lab_pin.sym 500 0 0 0 {name=l2 lab=CLK}
+  xschem unselect_all; xschem zoom_full; update idletasks
+}
+proc origin {} { xschem flylines origin }
+proc ox {} { set o [xschem flylines origin]; expr {$o eq "" ? "" : [lindex $o 0]} }
+
+wire_net
+hover 60 5
+check "H1 hover wire @60 -> shown CLK"        [expr {[shown] eq "CLK"}]           "shown=[shown]"
+set o [ox]
+check "H1 drawn origin tracks cursor @60"     [expr {$o ne "" && abs($o-60) < 6}] "origin=[origin]"
+hover 100000 100000                            ;# leave the net -> star erased
+check "H1 hover empty -> origin cleared"      [expr {[origin] eq ""}]             "origin=[origin]"
+hover 150 5                                    ;# NET CHANGE back onto the wire, cursor at 150
+set o [ox]
+check "H1 drawn origin tracks cursor @150"    [expr {$o ne "" && abs($o-150) < 6}] "origin=[origin]"
+
 # ---- C1 (render): hovering DRAWS but never mutates the schematic -----------
 # The load-bearing invariant carried into the draw path (B0). Build a real net, clear the
 # modified flag, hover so a star is actually drawn (shown==CLK), and confirm nothing changed:

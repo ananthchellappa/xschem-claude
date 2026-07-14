@@ -2081,13 +2081,25 @@ static int xschem_cmds_f(Tcl_Interp *interp, int argc, const char *argv[], int *
       FlyResult res;
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
       if(argc < 3) {
-        Tcl_SetResult(interp, "usage: xschem flylines net <name> | at <x> <y> | shown", TCL_STATIC);
+        Tcl_SetResult(interp, "usage: xschem flylines net <name> | at <x> <y> | shown | origin",
+                      TCL_STATIC);
         return TCL_ERROR;
       }
       /* `flylines shown`: introspect the on-screen overlay (Track B) -- the net whose fly-line
        * star is currently drawn, or "" if none. Read-only; no netlist needed. */
       if(!strcmp(argv[2], "shown")) {
         Tcl_SetResult(interp, xctx->fly_shown_net ? xctx->fly_shown_net : "", TCL_VOLATILE);
+        return TCL_OK;
+      }
+      /* `flylines origin`: the world-coord ORIGIN (hub point) of the star currently drawn on
+       * screen -- fly_seg[0],fly_seg[1] -- or "" when nothing is drawn. Lets a render test observe
+       * that the drawn origin tracks the cursor (the `shown` net name alone cannot). Read-only. */
+      if(!strcmp(argv[2], "origin")) {
+        char ob[128];
+        if(xctx->fly_nseg > 0 && xctx->fly_seg)
+          my_snprintf(ob, S(ob), "%.16g %.16g", xctx->fly_seg[0], xctx->fly_seg[1]);
+        else ob[0] = '\0';
+        Tcl_SetResult(interp, ob, TCL_VOLATILE);
         return TCL_OK;
       }
       prepare_netlist_structs(0);   /* populate wire[].node / inst[].node / node_table */
