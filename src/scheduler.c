@@ -1493,12 +1493,32 @@ static int xschem_cmds_d(Tcl_Interp *interp, int argc, const char *argv[], int *
       Tcl_SetResult(interp, dtoa(ret), TCL_VOLATILE);
     }
 
-    /* descend_symbol
-     *   Descend into the symbol view of selected component instance */
+    /* descend_symbol [-inst <name>]
+     *   Descend into the symbol view of selected component instance.
+     *   With -inst <name>: name-addressed, self-contained form -- resolve the
+     *   instance by its instname, select it, then descend. This IS the
+     *   replay-stable form the action log emits (mirrors `descend -inst`).
+     *   Note: descend_symbol() logs its own outcome line, so no log here. */
     else if(!strcmp(argv[1], "descend_symbol"))
     {
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
-      if(xctx->semaphore == 0) descend_symbol();
+      if(xctx->semaphore == 0) {
+        if(argc > 2 && !strcmp(argv[2], "-inst")) {
+          int inst;
+          if(argc < 4) {
+            Tcl_SetResult(interp, "xschem descend_symbol -inst: instance name required", TCL_STATIC);
+            return TCL_ERROR;
+          }
+          inst = get_instance(argv[3]);
+          if(inst < 0) {
+            Tcl_SetResult(interp, "xschem descend_symbol -inst: instance not found", TCL_STATIC);
+            return TCL_ERROR;
+          }
+          unselect_all(1);
+          select_element(inst, SELECTED, 1, 1);
+        }
+        descend_symbol();
+      }
       Tcl_ResetResult(interp);
     }
 

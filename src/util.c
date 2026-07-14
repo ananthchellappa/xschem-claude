@@ -462,16 +462,20 @@ void log_action_stash_select_at(double x, double y, int add, int inst)
   actionlog_pending_inst = inst;
 }
 
-/* Log a descend at the outcome level: `xschem descend -inst <name>`. If a held
- * select_at selected this same instance, ABSORB it (drop it) so the descend
- * line stands alone; otherwise the held line flushes normally ahead of it. */
-void log_action_descend(int inst_n, const char *instname)
+/* Log a descend at the outcome level: `xschem <verb> -inst <name>` (verb =
+ * "descend" or "descend_symbol"). The -inst form is SELF-CONTAINED: it selects
+ * the instance itself on replay, so the line stays faithful even when the
+ * recording-time selection came from an unlogged path (e.g. the hi_descend
+ * dialog selects programmatically -- issue 0071 atom 3 review finding). If a
+ * held select_at selected this same instance, ABSORB it (drop it) so the
+ * descend line stands alone; otherwise the held line flushes normally ahead. */
+void log_action_descend(const char *verb, int inst_n, const char *instname)
 {
   if(actionlog_pending[0] && actionlog_pending_inst == inst_n) {
     actionlog_pending[0] = '\0';     /* absorb: the select_at is subsumed by the descend */
     actionlog_pending_inst = -1;
   }
-  log_action("xschem descend -inst %s", instname);
+  log_action("xschem %s -inst %s", verb, instname);
 }
 
 /* Append one action to the log as a single line and mirror it to the CIW

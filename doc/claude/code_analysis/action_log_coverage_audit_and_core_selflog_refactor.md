@@ -249,6 +249,58 @@ A live dashboard of this audit (same data, visual matrix) is published at
 
 ---
 
-*Prepared 2026-07-14, `fluid-editing`. Analysis only — no code changed. Coverage verified in
-source at HEAD by a 14-way parallel read; do not trust the status table without re-checking
-the cited `file:line` anchors, which drift as the tree moves.*
+## 6. Atom 3 outcome (2026-07-14): go_back + descend_symbol — and a second wrinkle in the rule
+
+Both cores passed the 1:1 test and now self-log (closing the "Descend / return / navigation"
+PARTIAL row of §2): `go_back()` (actions.c) → `xschem go_back` / `xschem go_back <what>` when
+`what != 1`; `descend_symbol()` (save.c) → `xschem descend_symbol -inst <name>` (scheduler
+grew a matching `-inst` arm mirroring `descend -inst`; `log_action_descend` generalized with
+a verb argument). Verified: 36-check test (`test_descend_goback_selflog.tcl`), sabotage ×3,
+full-audit baseline diff clean.
+
+**Anchor corrections found in source (the audit's landmine was inverted):**
+- The window-close walk-up does NOT call `go_back()` directly from C — it is Tcl
+  (`hierarchy_close`, xschem.tcl) issuing `xschem go_back 1` through the scheduler branch. So
+  there is no "shared-core" caller to protect; go_back is 1:1 at the C level.
+- Those Tcl walk-ups (`hierarchy_close`, `descend_hierarchy`, `probe_net`, `hier_traversal`)
+  **must** log: their descends already log via `descend_schematic`'s core self-log, so a
+  silent ascend would leave the replayed hierarchy level drifted. Logging go_back at the core
+  *fixes* a latent replay-parity hole rather than adding noise.
+- `XK_BackSpace` (callback.c) is a second direct-C-caller of `go_back(1)` no audit had
+  listed; core-log covered it for free.
+
+**The new wrinkle — the self-contained-line rule.** The first cut logged bare
+`xschem descend_symbol`, and adversarial review confirmed a real regression: `log_action()`
+sets `actionlog_cmd_logged`, so a composite wrapper that used to be the replayable record
+(CIW-typed `hi_descend inst=x1 view=symbol` — its internal `xschem select instance … fast` is
+unlogged) now *suppresses its own line* in favor of the core's, and a bare selection-dependent
+line silently no-ops on replay → hierarchy diverges. Rule addition to §4 step 1:
+
+> **When a core's replay depends on ambient state (the selection), the core must log a
+> SELF-CONTAINED form** (here `-inst <name>`, resolved and re-selected at replay), because
+> core-log dedup deliberately suppresses wrapper lines — including composite wrappers whose
+> line was previously the only faithful record. Precedent: `log_action_descend`'s
+> `descend -inst` absorb.
+
+**Review findings documented, not coded (all pre-existing in kind):**
+- *Cadence Ctrl-E window-hop is still silent* — `cadence_style_rc` binds Ctrl-E to
+  `cadence::return_one_level`; at the descend-child's entry level the return is a
+  parent-window hop (`cadence::focus_window` → `xschem new_schematic switch`) that logs
+  nothing. 0053-class multi-window replay gap; candidate follow-up: log the switch inside
+  `focus_window`.
+- *Traversal-dialog volume* — `hier_traversal` all-hierarchy mode now writes a faithful
+  `descend -inst` / `go_back 2` pair per subcircuit per refresh (empirically 28 lines on
+  greycnt.sch). Faithful, replayable, by design (see walk-up parity above); if the noise ever
+  matters the remedy is an `actionlog_suppress` setter around the walk (the flag exists but
+  has no setter today).
+- *Bare `go_back` replay can re-prompt* — go_back(1) on a modified level raises Save/No/Cancel
+  before the log point and the answer is not recorded; a replay-time Cancel desynchronizes the
+  remaining lines. Pre-existing in kind for the ctx-menu/menu Pop line; accepted delta
+  (same class as the undo-granularity deltas of Layer C).
+
+---
+
+*Prepared 2026-07-14, `fluid-editing`. §1–5 analysis only — no code changed. §6 added after
+atom 3 landed. Coverage verified in source at HEAD by a 14-way parallel read; do not trust
+the status table without re-checking the cited `file:line` anchors, which drift as the tree
+moves.*

@@ -3588,7 +3588,7 @@ int descend_schematic(int instnumber, int fallback, int alert, int set_title)
       * selecting click stashed (n = the parent instance it selected). Empty name
       * (rare, unnamed instance) falls back to the plain form + a flushed
       * select_at. doc/claude/specs/action_log_absorb.md */
-     if(descend_logname[0]) log_action_descend(n, descend_logname);
+     if(descend_logname[0]) log_action_descend("descend", n, descend_logname);
      else log_action("xschem descend");
      if(xctx->hilight_nets) {
        prepare_netlist_structs(0);
@@ -3734,6 +3734,18 @@ void go_back(int what)
    * buried-net cue. go_back is not a highlight-mutation hook, so sync explicitly here. Cheap
    * (a no-op when no linked window exists). issue 0073 child->parent. */
   net_hilight_sync_descend_windows();
+
+  /* Self-log at the core (issue 0071 atom 3): go_back() is 1:1 with the user verb
+   * "return up one level" -- Ctrl-E, BackSpace and the context menu call it directly
+   * (bypassing the scheduler branch), and the Tcl walk-ups (hierarchy_close,
+   * descend_hierarchy, traversal) reach it as `xschem go_back`. Those walk-ups must
+   * log too: their descends already log via descend_schematic's core self-log, so a
+   * silent ascend would leave the replayed hierarchy level drifted. The currsch==0
+   * no-op and the Save/No/Cancel "Cancel" path return before this -> no phantom.
+   * Wrapper copies (context-menu table, Layer A csv) dedup via actionlog_cmd_logged.
+   * doc/claude/code_analysis/action_log_coverage_audit_and_core_selflog_refactor.md */
+  if(what == 1) log_action("xschem go_back");
+  else log_action("xschem go_back %d", what);
 
   dbg(1, "go_back(): current path: %s\n", xctx->sch_path[xctx->currsch]);
  }

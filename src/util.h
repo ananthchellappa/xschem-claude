@@ -50,7 +50,7 @@ extern void log_action_noecho(const char *fmt, ...);
  * flush the held line, or let `descend` absorb it into one stable line. */
 extern void log_action_stash_select_at(double x, double y, int add, int inst);
 extern void log_action_flush_pending(void);
-extern void log_action_descend(int inst_n, const char *instname);
+extern void log_action_descend(const char *verb, int inst_n, const char *instname);
 extern void log_action_argv(int argc, const char *const *argv); /* defined in callback.c */
 extern void log_output(int iserr, const char *text);
 extern void my_realloc(int id, void *ptr,size_t size);

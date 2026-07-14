@@ -5528,9 +5528,11 @@ int descend_symbol(void)
   FILE *fd;
   char name[PATH_MAX];
   char name_embedded[PATH_MAX];
+  char instname_log[256]; /* raw instname captured for the outcome-level action log */
   int n = 0;
   struct stat buf;
   int save_netlist_type = xctx->netlist_type;
+  instname_log[0] = '\0';
   if(xctx->currsch + 1 >= CADMAXHIER) {
     dbg(0, "descend_symbol(): max hierarchy depth reached: %d", CADMAXHIER);
     return 0;
@@ -5564,6 +5566,9 @@ int descend_symbol(void)
     /* dont allow descend in the default missing symbol */
     if((xctx->inst[n].ptr+ xctx->sym)->type &&
        !strcmp( (xctx->inst[n].ptr+ xctx->sym)->type,"missing")) return 0;
+    /* capture BEFORE load_schematic replaces the inst array (log emitted at the tail) */
+    my_strncpy(instname_log, xctx->inst[n].instname ? xctx->inst[n].instname : "",
+               S(instname_log));
   }
   else return 0;
 
@@ -5658,6 +5663,20 @@ int descend_symbol(void)
    * nothing animates. */
   net_hilight_anim_update();
   zoom_full(1, 0, 1 + 2 * tclgetboolvar("zoom_full_center"), 0.97);
+  /* Self-log at the core (issue 0071 atom 3): the `i` key and the context menu call
+   * descend_symbol() directly, bypassing the `xschem descend_symbol` scheduler branch,
+   * so the branch is not a coverage point; every caller of this function IS the user
+   * verb (1:1 test). All refusal paths (depth limit, empty/multi selection, missing
+   * symbol, cancelled embedded save) returned 0 above -> no phantom line. Wrapper
+   * copies (context-menu table, Layer A csv) dedup via actionlog_cmd_logged.
+   * The `-inst <name>` form is SELF-CONTAINED (replay selects the instance itself):
+   * the recording-time selection may come from an unlogged path (hi_descend dialog)
+   * whose wrapper line the dedup suppresses, so a bare selection-dependent line
+   * would diverge on replay. Empty instname falls back to the bare form + the
+   * flushed select_at, like descend_schematic.
+   * doc/claude/code_analysis/action_log_coverage_audit_and_core_selflog_refactor.md */
+  if(instname_log[0]) log_action_descend("descend_symbol", n, instname_log);
+  else log_action("xschem descend_symbol");
   return 1;
 }
 
