@@ -29,6 +29,13 @@ if [ ! -x "$XSCHEM" ]; then
   exit 2
 fi
 
+# Tests inherit this process's cwd, and several build paths relative to it
+# (fixture copies, scratch dirs). Pin it to the repo root so the audit gives
+# every test the same cwd no matter where it was invoked from (a src/ or
+# parent-dir invocation used to make relative fixture paths resolve outside
+# the repo -> startup Tcl error popup -> hang until timeout).
+cd "$REPO" || exit 2
+
 # Tests that need the action log / CIW open -> run with --logdir <tmp>
 logdir_tests=" test_ciw test_ciw_autocomplete test_ciw_puts_capture test_hi_descend \
   test_action_log_dispatch test_action_log_libmgr test_context_menu_log \
