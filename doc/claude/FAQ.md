@@ -14,6 +14,58 @@ Newest entries on top.
 
 ---
 
+## Q29. With the action-log / CIW coverage work in progress, what will a user actually *notice* differently when using the tool right now?
+
+- **Asked:** 2026-07-14
+- **Project state:** branch `fluid-editing` @ `e3764a07`. Action-log coverage was
+  re-audited this day (`doc/claude/code_analysis/action_log_coverage_audit_and_core_selflog_refactor.md`):
+  the "self-log at the C core" migration is ~70% landed, and the **first core-migration
+  atom** — double-click connected-select — just shipped (`e3764a07`). This answer is a
+  point-in-time snapshot; later atoms will widen what follows.
+
+**Short version: the CIW log pane (and `Xschem.log`) is becoming a live, replayable transcript
+of what you do — and each landed slice makes more of your gestures show up in it in real time.**
+The value is not a new drawing feature; it is that the tool now *narrates itself* in a language
+you can copy, replay, and script.
+
+### What is visibly different today
+
+- **Open the CIW** (the command/interaction window that auto-opens in an interactive session).
+  As you work, the upper pane fills with the exact `xschem …` command each action maps to —
+  place a wire, move a device, flip, trim, descend, click-select, and now **double-click to grow
+  a connected selection** all appear as they happen. Before this atom, the double-click grew the
+  selection *silently*; now it writes `xschem select_grow_connected x y` you can watch land.
+- **The log is a script.** Those lines are executable. Copy one into the CIW entry to repeat the
+  action; `source` the whole `Xschem.log` into a fresh session to replay a sequence. This turns
+  "how do I automate this?" into "do it once, read the line it logged." The log doubles as a
+  **discoverability tool for the scriptable API** — you learn the command names by performing the
+  gestures.
+- **Bug reports get a reproducer for free.** The tail of the log is the precise command sequence
+  that led to the current state — paste it into an issue instead of describing clicks in prose.
+
+### What a user should *not* yet expect (honest scope)
+
+Coverage is deliberately partial and still climbing, so the log is a **growing transcript, not yet
+a complete macro recorder**. As of this HEAD, a handful of common actions still do not appear or
+do not replay faithfully — notably **Ctrl-X (cut) and the Delete key**, **Ctrl-E return** on the
+keyboard, **Library Manager** create/rename/delete/git operations, and **property-dialog** commits
+(logged as a non-replayable `# marker`, not an executable command). Selecting a single object *is*
+now logged (`xschem select_at`), which updates the older **[Q24]** answer — descend-to-schematic and
+click-select have since moved from "silent" to "logged"; go_back and a few keyboard paths remain the
+open cases. Treat the log today as "most standard edit/selection gestures, faithfully, with a known
+shrinking list of gaps," and check the coverage audit for the current edge.
+
+### Why this is the shape of the value
+
+Each fix is one C core taught to log itself, which means the action is captured **from every path
+that reaches it** — menu, toolbar, keyboard, gesture, script — not just the one the developer
+remembered. So the practical user-visible effect of the ongoing work is monotonic: the CIW keeps
+getting more trustworthy as a record, gesture by gesture, without changing how you draw. The
+double-click atom is the first of several (`delete`, `go_back`, `descend_symbol` are queued next);
+each one you will notice simply as "that thing I do now shows up in the log, and I can replay it."
+
+---
+
 ## Q28. What are XSCHEM's current move/stretch/rotate keys versus Cadence Virtuoso, and with `cadence_compat=1` loaded, what still doesn't match Cadence?
 
 - **Asked:** 2026-07-09
