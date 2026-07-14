@@ -8241,12 +8241,13 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
     {
       int level;
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      /* No log_action here: select_grow_connected_step() self-logs at its core so the
+       * double-click gesture (which calls the core directly) is covered too. See select.c
+       * and doc/claude/code_analysis/action_log_coverage_audit_and_core_selflog_refactor.md. */
       if(argc >= 4) {
         level = select_grow_connected_step(atof(argv[2]), atof(argv[3]), 1);
-        log_action("xschem select_grow_connected %s %s", argv[2], argv[3]);
       } else {
         level = select_grow_connected_step(0.0, 0.0, 0);
-        log_action("xschem select_grow_connected");
       }
       Tcl_SetResult(interp, my_itoa(level), TCL_VOLATILE);
     }

@@ -283,9 +283,57 @@ set ::fluid_editing $fe_save
 set ::en_pin_select $ps_save
 
 # ---------------------------------------------------------------------------
+# T11 -- ACTION-LOG COVERAGE (issue 0071 core-self-log). The double-click GESTURE
+# must record a replayable `xschem select_grow_connected x y` line, and the script
+# subcommand must log EXACTLY ONCE. select_grow_connected_step() now self-logs at its
+# CORE (select.c); handle_double_click() calls that core directly (callback.c), so
+# before the fix the gesture logged NOTHING while only the scheduler branch did.
+# Moving the log to the core covers both; the branch no longer logs (no double).
+# See doc/claude/code_analysis/action_log_coverage_audit_and_core_selflog_refactor.md.
+# Needs the action log open -> registered in full_audit.sh logdir_tests (--logdir).
+# ---------------------------------------------------------------------------
+set LOG [xschem get actionlog_filename]
+if {$LOG eq {}} {
+  check "T11 action-log open (skipped: run with --logdir to exercise)" 1 "no log file"
+} else {
+  proc grow_logcount {} {
+    if {[catch {open [xschem get actionlog_filename] r} fd]} { return -1 }
+    set body [read $fd]; close $fd
+    set n 0
+    foreach line [split $body \n] {
+      if {[string match "xschem select_grow_connected*" $line]} { incr n }
+    }
+    return $n
+  }
+  set ::cadence_compat 1 ; set ::fluid_editing 1 ; set ::en_pin_select 1
+  build_chain
+  xschem unselect_all
+  # (a) the real double-click GESTURE logs -- THE fix (was silent: the gesture calls
+  #     the core directly, bypassing the scheduler branch that used to hold the log)
+  set before [grow_logcount]
+  realtk_dbl 50 0
+  set after_gesture [grow_logcount]
+  check "T11a real dblclick GESTURE logs one select_grow_connected line" \
+    [expr {$after_gesture == $before + 1}] "before=$before after=$after_gesture"
+  # (b) the script subcommand logs EXACTLY ONCE (core logs; branch does not double)
+  xschem select_grow_connected 50 0
+  set after_cmd [grow_logcount]
+  check "T11b script subcommand logs exactly once (no double, no drop)" \
+    [expr {$after_cmd == $after_gesture + 1}] "delta=[expr {$after_cmd - $after_gesture}]"
+  # (the logged line `xschem select_grow_connected <x> <y>` is itself the replayable
+  #  command by construction -- T11a/b prove it was written exactly once per action.)
+  set ::cadence_compat $cc_save ; set ::fluid_editing $fe_save ; set ::en_pin_select $ps_save
+}
+
+# clean RAIL teardown (issue 0002): drop the auto-opened CIW before exit
+catch {destroy .ciw}; update
+
+# ---------------------------------------------------------------------------
 puts ""
 if {$::fails == 0} {
   puts "OVERALL: ok  (all checks passed)"
+  puts "RESULT: ALL PASS"
 } else {
   puts "OVERALL: FAIL  ($::fails failed)"
+  puts "RESULT: $::fails FAILED"
 }

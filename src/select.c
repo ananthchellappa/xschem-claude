@@ -303,6 +303,18 @@ int select_grow_connected_step(double mx, double my, int pick_seed)
   xctx->need_reb_sel_arr = 1;
   rebuild_selected_array();
   xctx->dblgrow_sel_sig = xctx->lastsel;
+  /* Self-log at the CORE, not at the scheduler `select_grow_connected` branch: the
+   * double-click gesture (handle_double_click, callback.c) calls this function directly
+   * and would otherwise never be logged -- the recurring issue-0071 structural gap where
+   * the logged unit is the command string but the shared unit is the C function. See
+   * doc/claude/code_analysis/action_log_coverage_audit_and_core_selflog_refactor.md.
+   * All three callers (scheduler x2, double-click x1) funnel here, so one line records
+   * per action. The empty-click early return above never reaches here, so a no-op click
+   * logs nothing (no phantom). log_action() honors actionlog_suppress (replay/programmatic)
+   * and flushes any pending select_at first, preserving order.
+   * INVARIANT: entry paths (scheduler branch, key handler, gesture) must NOT also log. */
+  if(pick_seed) log_action("xschem select_grow_connected %.16g %.16g", mx, my);
+  else          log_action("xschem select_grow_connected");
   if(has_x) draw_selection(xctx->gc[SELLAYER], 0);
   return xctx->dblgrow_level;
 }
