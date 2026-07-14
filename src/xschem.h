@@ -1248,13 +1248,14 @@ typedef struct {
   double *fly_seg;      /* 4*fly_nseg doubles (x1,y1,x2,y2 per drawn segment, world coords) so the
                          * draw() re-stamp can re-stroke the star after a full redraw with no recompute */
   int fly_seg_alloc;    /* allocated doubles in fly_seg */
-  /* Hub object that produced the drawn star (H2, flyline_hub_at_cursor_plan.md). On same-net
-   * motion still over this same object, the origin is re-projected and the star's origins are
-   * rebuilt in place (regional erase + re-stroke) WITHOUT re-clustering; moving to a different
-   * object (or net) forces a full recompute. Valid only while fly_nseg > 0. */
-  unsigned short fly_hub_type;
-  int fly_hub_n;
-  unsigned int fly_hub_col;
+  /* Member keys of the HUB CLUSTER that produced the drawn star (H2, flyline_hub_at_cursor_plan.md).
+   * While the cursor stays within this cluster on the same net, the origin is re-projected and the
+   * star's origins rebuilt in place (regional erase + re-stroke) WITHOUT re-clustering; moving to a
+   * different cluster (or net) forces a full recompute. Each key is 3 ints {kind, idx, pin} (kind
+   * 0=wire pin=-1, 1=inst pin=p) matching FlyMember. Valid only while fly_nseg > 0. */
+  int *fly_hub_mem;
+  int fly_hub_nmem;     /* number of member keys (fly_hub_mem holds 3*fly_hub_nmem ints) */
+  int fly_hub_mem_alloc;/* allocated ints in fly_hub_mem */
   GC gc_flyline;        /* fly-line overlay: dashed thin colored GC (flylines_color/width/dash) */
   GC gc_hilight;        /* net highlight scratch GC: reconfigured per wire from the
                          * NetHilightStyle (color+width+dash) at draw time */

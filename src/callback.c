@@ -2095,8 +2095,28 @@ static void flyline_clear(int erase)
   double ox1 = xctx->fly_x1, oy1 = xctx->fly_y1, ox2 = xctx->fly_x2, oy2 = xctx->fly_y2;
   int had = xctx->fly_nseg > 0;
   xctx->fly_nseg = 0;
+  xctx->fly_hub_nmem = 0;   /* no star -> no hub cluster to slide within */
   if(xctx->fly_shown_net) my_free(_ALLOC_ID_, &xctx->fly_shown_net);
   if(erase && had) flyline_erase_region(ox1, oy1, ox2, oy2);
+}
+
+/* Map a picked object to its FlyMember key {kind, idx, pin} and test membership in the cached
+ * hub cluster (fly_hub_mem). O(hub size), no re-clustering. Lets same-net motion that crosses
+ * between objects of the SAME hub cluster (a wire junction, a wire->its pin) stay on the cheap
+ * slide path instead of triggering a full recompute (H2 refinement, review of d1f3624c). */
+static int flyline_pick_in_hub_cluster(const Selected *pick)
+{
+  int kind, idx, pin, i;
+  if(xctx->fly_hub_nmem <= 0 || !xctx->fly_hub_mem) return 0;
+  if(pick->type == WIRE)          { kind = 0; idx = pick->n; pin = -1; }
+  else if(pick->type == INST_PIN) { kind = 1; idx = pick->n; pin = (int)pick->col; }
+  else if(pick->type == ELEMENT)  { kind = 1; idx = pick->n; pin = 0; }   /* label/pin: pin 0 */
+  else return 0;
+  for(i = 0; i < xctx->fly_hub_nmem; ++i) {
+    const int *k = &xctx->fly_hub_mem[3 * i];
+    if(k[0] == kind && k[1] == idx && k[2] == pin) return 1;
+  }
+  return 0;
 }
 
 /* H2 cheap path: slide the tracked star's ORIGIN to (hx,hy) without re-clustering. The
@@ -2182,16 +2202,14 @@ void draw_flylines(int force)
     const char *cur = xctx->fly_last_net ? xctx->fly_last_net : "";
     const char *nw  = netname ? netname : "";
     if(!strcmp(cur, nw)) {
-      if(netname && xctx->fly_nseg > 0 &&
-         pick.type == xctx->fly_hub_type && pick.n == xctx->fly_hub_n &&
-         (pick.type != INST_PIN || pick.col == xctx->fly_hub_col)) {
+      if(netname && xctx->fly_nseg > 0 && flyline_pick_in_hub_cluster(&pick)) {
         double hx, hy;
         flyline_hub_point(&pick, xctx->mousex, xctx->mousey, &hx, &hy);
         flyline_move_origin(hx, hy);           /* no-op when the projected origin is unchanged */
         return;
       }
       if(!(netname && xctx->fly_nseg > 0)) return;   /* starless same-net motion: O(1) short-circuit */
-      /* else: same net but a DIFFERENT hub object -> fall through to a full recompute */
+      /* else: same net but a DIFFERENT hub cluster -> fall through to a full recompute */
     }
   }
   my_strdup(_ALLOC_ID_, &xctx->fly_last_net, netname);   /* NULL -> frees to NULL */
@@ -2219,8 +2237,23 @@ void draw_flylines(int force)
       }
       xctx->fly_nseg = res.nseg;
       xctx->fly_x1 = x1; xctx->fly_y1 = y1; xctx->fly_x2 = x2; xctx->fly_y2 = y2;
-      /* remember the hub object so subsequent same-object motion slides the origin (H2) */
-      xctx->fly_hub_type = pick.type; xctx->fly_hub_n = pick.n; xctx->fly_hub_col = pick.col;
+      /* cache the hub CLUSTER's member keys so subsequent same-cluster motion slides the origin
+       * without re-clustering (H2); res is still live here (freed below). */
+      xctx->fly_hub_nmem = 0;
+      {
+        int a;
+        for(a = 0; a < res.nmem; ++a) {
+          if(res.clu[a] != res.hub) continue;
+          if(3 * (xctx->fly_hub_nmem + 1) > xctx->fly_hub_mem_alloc) {
+            xctx->fly_hub_mem_alloc = xctx->fly_hub_mem_alloc ? xctx->fly_hub_mem_alloc * 2 : 48;
+            my_realloc(_ALLOC_ID_, &xctx->fly_hub_mem, xctx->fly_hub_mem_alloc * sizeof(int));
+          }
+          xctx->fly_hub_mem[3 * xctx->fly_hub_nmem]     = res.mem[a].kind;
+          xctx->fly_hub_mem[3 * xctx->fly_hub_nmem + 1] = res.mem[a].idx;
+          xctx->fly_hub_mem[3 * xctx->fly_hub_nmem + 2] = res.mem[a].pin;
+          ++xctx->fly_hub_nmem;
+        }
+      }
       my_strdup(_ALLOC_ID_, &xctx->fly_shown_net, netname);
       flyline_restamp();                          /* stroke the freshly-stashed star */
     }

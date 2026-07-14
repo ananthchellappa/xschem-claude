@@ -2081,7 +2081,8 @@ static int xschem_cmds_f(Tcl_Interp *interp, int argc, const char *argv[], int *
       FlyResult res;
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
       if(argc < 3) {
-        Tcl_SetResult(interp, "usage: xschem flylines net <name> | at <x> <y> | shown | origin",
+        Tcl_SetResult(interp,
+                      "usage: xschem flylines net <name> | at <x> <y> | shown | origin | seg0",
                       TCL_STATIC);
         return TCL_ERROR;
       }
@@ -2098,6 +2099,18 @@ static int xschem_cmds_f(Tcl_Interp *interp, int argc, const char *argv[], int *
         char ob[128];
         if(xctx->fly_nseg > 0 && xctx->fly_seg)
           my_snprintf(ob, S(ob), "%.16g %.16g", xctx->fly_seg[0], xctx->fly_seg[1]);
+        else ob[0] = '\0';
+        Tcl_SetResult(interp, ob, TCL_VOLATILE);
+        return TCL_OK;
+      }
+      /* `flylines seg0`: the full first drawn segment "x1 y1 x2 y2" (origin -> its destination),
+       * or "" when none. Exposes the DESTINATION too, so a render test can catch a cheap-slide
+       * that keeps stale destinations (e.g. an over-broad hub-cluster match). Read-only. */
+      if(!strcmp(argv[2], "seg0")) {
+        char ob[128];
+        if(xctx->fly_nseg > 0 && xctx->fly_seg)
+          my_snprintf(ob, S(ob), "%.16g %.16g %.16g %.16g",
+                      xctx->fly_seg[0], xctx->fly_seg[1], xctx->fly_seg[2], xctx->fly_seg[3]);
         else ob[0] = '\0';
         Tcl_SetResult(interp, ob, TCL_VOLATILE);
         return TCL_OK;

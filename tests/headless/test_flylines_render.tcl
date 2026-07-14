@@ -157,6 +157,21 @@ hover 30 5                                      ;# slide back the other way, sti
 set o [ox]
 check "H2 same-net slide back -> origin ~30"   [expr {$o ne "" && abs($o-30) < 6}]  "origin=[origin]"
 
+# same net, DIFFERENT cluster: moving off the hub cluster onto the far label (both CLK) must
+# RECOMPUTE and flip the hub -- NOT cheap-slide within the stale cluster. seg0 exposes the
+# destination too, so an over-broad hub-cluster match (which would keep a stale destination)
+# is caught. wire_net: wire cluster anchored at the near label (0,0), far CLK label at (500,0).
+wire_net
+hover 100000 100000
+hover 60 5                                      ;# hub = wire cluster; seg0 = ~{60 0  500 0}
+set s [xschem flylines seg0]
+check "H2 hub=wire cluster -> seg0 dest is the far label (500,0)" \
+  [expr {[llength $s]==4 && abs([lindex $s 2]-500)<6 && abs([lindex $s 3]-0)<6}] "seg0=$s"
+hover 500 0                                      ;# SAME net CLK, the far label = a DIFFERENT cluster
+set s [xschem flylines seg0]
+check "H2 cross-cluster recompute -> hub flips: origin=label(500), dest=other cluster(0)" \
+  [expr {[llength $s]==4 && abs([lindex $s 0]-500)<6 && abs([lindex $s 2]-0)<6}] "seg0=$s"
+
 # ---- C1 (render): hovering DRAWS but never mutates the schematic -----------
 # The load-bearing invariant carried into the draw path (B0). Build a real net, clear the
 # modified flag, hover so a star is actually drawn (shown==CLK), and confirm nothing changed:
