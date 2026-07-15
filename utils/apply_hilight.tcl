@@ -99,6 +99,21 @@ proc aphl::try_apply {} {
   set pending ""
   aphl::clear_prompt
   net_hilight_apply $style
+  # ATOM 15 (issue 0065 §4 / 0067 §5, the last live click-gesture hole): the click-to-apply
+  # style lands on the click-selected net. A single-CLICK selection is already recorded by the
+  # select_object() core self-log (`xschem select_at x y`, atom 1) BEFORE this deferred
+  # `after idle` runs, so we owe only the style half: log the RESOLVED positional row and, on
+  # replay, the preceding select_at re-selects the net and this line re-applies the style.
+  # net_hilight_apply is the faithful verb for the STYLE COERCION axis by construction (NOT a
+  # raw-preserving twin like nhse's set_live): it runs net_hilight_style_norm on its arg
+  # identically at record and replay, so a sloppy row (e.g. width 2.5 -> 1) coerces the same way
+  # both times -- the atom-8 divergence lock. (Two accepted 0005-class residuals, NOT closed
+  # here: a rubber-band DRAG-select-several stashes no select_at [select_rect bypasses
+  # select_object], and the APPLIED INDEX is resolved against the ambient net_hilight_style
+  # table, which the log does not snapshot -- both replay against replay-time state, same class
+  # as every selection/config-dependent verb.) Trailing unselect_all/redraw are UI cleanup, not
+  # logged (issue 0065 §4).
+  xschem log_action [list net_hilight_apply $style]
   xschem unselect_all
   xschem redraw
   ciw_echo "highlight style applied"
@@ -116,6 +131,15 @@ proc apply_hilight {style} {
   set row [aphl::parse $style]
   if {[aphl::sel_has_net]} {
     net_hilight_apply $row
+    # ATOM 15: this immediate arm is reached by the raw cadence F5 bind (cadence_style_rc,
+    # `bind .drw <Key-F5> {... apply_hilight {...}}`) which bypasses dispatch_input_action ->
+    # UNLOGGED, the 0067 class; AND by a CIW-typed `apply_hilight {..}` (channel-recorded).
+    # Log the RESOLVED positional row so the F5 raw bind gets its sole record; on the typed
+    # path `xschem log_action` sets actionlog_cmd_logged, so ciw_exec's `-emitted` dedup skips
+    # its own `apply_hilight {..}` copy -> exactly one line either way (the atom-7/8 self-logging
+    # Tcl-seam pattern). Disjoint from the click arm: this branch applies to an existing selection
+    # and never stages a pending prompt, so aphl::try_apply is never reached for the same gesture.
+    xschem log_action [list net_hilight_apply $row]
     ciw_echo "highlight style applied to selection"
   } else {
     set ::aphl::pending $row

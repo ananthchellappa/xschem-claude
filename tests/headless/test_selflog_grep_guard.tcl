@@ -180,6 +180,10 @@ set MANIFEST {
   utils/cadence_nav.tcl {
     {(?n)^\s*xschem log_action "xschem new_schematic switch } 1 {focus_window logs the Cadence Ctrl-E parent-window hop at the entry seam, line-anchored so the prose in the comment above does not count (atom 12 / 0053)}
   }
+  utils/apply_hilight.tcl {
+    {(?n)^\s*xschem log_action \[list net_hilight_apply \$style\]} 1 {aphl::try_apply CLICK-arm emit: the click-to-apply style logs the RESOLVED row (atom 15 / 0065 §4 / 0067 §5); the click's own select_at is logged by the core (atom 1) and re-selects the net on replay}
+    {(?n)^\s*xschem log_action \[list net_hilight_apply \$row\]}   1 {apply_hilight IMMEDIATE-arm emit: the raw cadence F5 bind (bypasses dispatch_input_action) records here; the CIW-typed path dedups via ciw_exec `-emitted` -> exactly once (atom 15)}
+  }
 }
 foreach {relfile rows} $MANIFEST {
   set text [srctext $relfile]
@@ -236,6 +240,21 @@ check "S1c old '# property-edit' marker stays removed (property dialogs now repl
 # must not creep back (it would shadow the real record and drop the orientation).
 check "S1c old rotate/flip 'no single-command replay' marker stays removed (rot/flip drops now replayable)" \
   [expr {[rxcount $cbtext {no single-command replay}] == 0}]
+
+# ---------------------------------------------------------------------------
+# S1d) apply_hilight CLOSURE (atom 15): the two S1 emit rows lock the KNOWN apply
+#      arms, but they cannot see a NEW unlogged net_hilight_apply call site. So
+#      count every statement-position `net_hilight_apply` invocation in
+#      utils/apply_hilight.tcl (the log lines start with `xschem`, comments with
+#      `#`, so neither matches) -- there must be EXACTLY 2 (aphl::try_apply and the
+#      apply_hilight immediate arm). A NEW apply arm bumps this and fails closed
+#      until its own log_action + S1 row are added. Pairs with the 2 emit rows to
+#      guarantee 2 invocations <-> 2 logs.
+# ---------------------------------------------------------------------------
+set aphtext [srctext utils/apply_hilight.tcl]
+check "S1d exactly 2 net_hilight_apply invocation sites in apply_hilight.tcl (both logged)" \
+  [expr {[rxcount $aphtext {(?n)^\s*net_hilight_apply\M}] == 2}] \
+  "got=[rxcount $aphtext {(?n)^\s*net_hilight_apply\M}]"
 
 # ---------------------------------------------------------------------------
 # S2) TCL LITERAL-LOG CONFLICTS: no ungated hand-rolled `xschem log_action

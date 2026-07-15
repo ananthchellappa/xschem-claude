@@ -3,8 +3,10 @@
 **Opened:** 2026-07-02
 **Status:** FIXED 2026-07-14 (issue 0071 atom 8) — the editor's live-commit points
 self-log replayable lines (see §4); locked by `test_selflog_grep_guard` S1 rows;
-tested by `tests/headless/test_nhse_mutation_log.tcl`. One documented residual:
-the `apply_hilight` CLICK-to-apply arm (see §4 end).
+tested by `tests/headless/test_nhse_mutation_log.tcl`. The one documented residual —
+the `apply_hilight` CLICK-to-apply arm (see §4 end) — is now ALSO CLOSED (issue 0071
+atom 15, 2026-07-15): both apply arms log `net_hilight_apply {resolved-row}`; test
+`tests/headless/test_apply_hilight_log.tcl`, report §18. FULLY CLOSED.
 **Severity:** LOW — changes highlight *style* (color/width/dash/blink/march), not
 schematic content; still a user config action absent from the log / CIW.
 **Branch:** `fluid-editing`.
@@ -68,9 +70,15 @@ no-scheduler-log list. Test: `tests/headless/test_nhse_mutation_log.tcl`
 (30 checks, full_audit logdir_tests; raw-fidelity, staged-Save divergence,
 delete-last, `--nogui` child replay, no-Tk self-skip).
 
-**Documented residual (out of scope, 0067 §5 class):** the `apply_hilight`
-CLICK-to-apply arm (`utils/apply_hilight.tcl`, cadence-rc mouse binding) appends a
-style row via `net_hilight_apply` from a raw Tk ButtonRelease — a click-position
-gesture (0005/0069 class); its noun-verb form (select first, then type
-`apply_hilight …`) IS recorded by the typing channel. Closing the click arm needs
-gesture logging, not editor logging.
+**Residual CLOSED (2026-07-14 → 2026-07-15, issue 0071 atom 15):** the `apply_hilight`
+CLICK-to-apply arm (`utils/apply_hilight.tcl`, cadence-rc mouse binding) applied a
+style row via `net_hilight_apply` from a raw Tk ButtonRelease and logged nothing. Both
+apply arms now log `net_hilight_apply {resolved positional row}` at the entry sites
+(atom-8 rule — not the shared proc): the CLICK arm (`aphl::try_apply`) owes only the
+style half because the click's selection is already logged as `xschem select_at x y`
+(atom 1) and re-selects the net on replay; the IMMEDIATE arm (also the cadence F5 raw
+bind, 0067 class) is the raw bind's sole record and dedups the CIW-typed path via
+ciw_exec `-emitted` → exactly once. Accepted 0005-class residuals remain (rubber-band
+DRAG-select-several stashes no select_at; the applied index is resolved against the
+ambient, un-snapshotted `net_hilight_style` table — the `set hilight_color` clamp).
+Test `tests/headless/test_apply_hilight_log.tcl` (33 checks); report §18.

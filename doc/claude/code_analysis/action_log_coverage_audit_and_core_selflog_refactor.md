@@ -1138,11 +1138,119 @@ statically locked by the grep-guard S1 row regardless).
 **0062's last silent toolbar/menu row (Netlist) is CLOSED.** The 0062 remainder now has only the
 `toggle_*` display/edit-mode toggles left, deferred by documented policy above.
 
+## 18. Atom 15 outcome (2026-07-15): the apply_hilight click/immediate arms record a REPLAYABLE line (0065 §4 / 0067 §5 residual CLOSED)
+
+The last live click-gesture hole named in issue 0065 §4 and issue 0067 §5 closed. `apply_hilight`
+(`utils/apply_hilight.tcl`) applied a favourite net-highlight style but recorded nothing; both of
+its arms now log the resolved positional row, one line per apply: `net_hilight_apply {<8-column
+resolved style row>}`.
+
+- **Two entry sites, not the shared proc (the atom-8 rule).** `net_hilight_apply` is a shared Tcl
+  proc (immediate arm + click arm + typed channel + direct scripting/replay), so — exactly as
+  atom 8 did for the NHSE editor — logging goes at the **live entry sites**, never in the proc
+  (which would flood the typed channel and re-log on replay). The click arm (`aphl::try_apply`,
+  fired by the raw `.drw <ButtonRelease>` bind → `after idle`) and the immediate arm
+  (`apply_hilight`, reached with a selection) each emit `xschem log_action [list net_hilight_apply
+  <row>]` right after the C apply. The two arms are DISJOINT per gesture (the immediate branch
+  applies to an existing selection and never stages a pending prompt, so `try_apply` is not reached
+  for the same invocation).
+
+- **The click arm owes only the STYLE half (atom-1 select_at).** A single-CLICK selection is
+  already recorded: `select_object()` self-logs `xschem select_at x y` (stashed by the C core), and
+  that stash is FLUSHED by try_apply's own `log_action` — so the recorded pair is `select_at x y`
+  THEN `net_hilight_apply {row}`, verified in order by driving the FULL Tk ButtonPress/Release
+  sequence (the gesture-test-full-sequence lesson; a lone synthetic event would have passed against
+  a broken feature). On replay the select_at re-selects the net and the apply line re-styles it.
+
+- **net_hilight_apply is faithful for the COERCION axis by construction — no raw-preserving twin.**
+  This is the atom-8 `set_live` divergence axis, and it does NOT recur: `net_hilight_apply` runs
+  `net_hilight_style_norm` on its arg *identically* at record and replay, so a sloppy row (width
+  `2.5` → `1`) round-trips to the same coerced style both times. The recorded row is the RESOLVED
+  positional row (`aphl::parse` output), NOT the raw named `$style` (`net_hilight_apply` reads a
+  POSITIONAL row). The test's E-section locks this: the logged line carries `2.5` verbatim and
+  replaying it reproduces the same width-1 style.
+
+- **The immediate arm covers the F5 raw bind AND the typed channel, exactly-once.** The
+  `cadence_style_rc` F5 bind bypasses `dispatch_input_action` (the 0067 class) — the immediate arm
+  is its SOLE record. A CIW-typed `apply_hilight {..}` runs through `ciw_exec`, whose `-emitted`
+  dedup sees `actionlog_cmd_logged` set by the arm's `log_action` and skips its own `apply_hilight
+  {..}` copy → one line (the more self-contained resolved-row form). Sabotage-proved: with the
+  arm's log removed, `ciw_exec` records the raw `apply_hilight {..}` copy — the double the fix
+  prevents.
+
+- **Scope / no phantom.** Esc-cancel (`aphl::on_key`) logs nothing; a non-net / empty click hits
+  the `sel_has_net` gate in `try_apply` and logs nothing (the prompt stays pending); the trailing
+  `xschem unselect_all`/`redraw` are UI cleanup, not logged. A direct scripted `net_hilight_apply
+  {row}` (the replay form, or any other-proc caller — grep confirms only the two entry sites and a
+  prose mention exist) does NOT self-log, so a replayed line never re-logs (bypass invariant).
+
+**Adversarial review (5-axis refute+verify workflow — raw-row-divergence / double-log /
+missing-log-phantom / selection-referent / machinery-leak-and-guard): 0 CONFIRMED.** Every surviving
+finding was verified as an accepted pre-existing / 0005-class residual, not a regression introduced
+by the two added log lines (the axis-4 refuter aborted on a schema cap and was self-checked clean:
+only two statement-position callers, the proc self-logs nothing, S1d closure sound). The findings,
+now documented residuals:
+
+- **The drag-select-several variant (0005 class).** A *rubber-band* multi-net selection is not a
+  replayable referent: `select_object()` (select.c) stashes `select_at` only for a single-CLICK
+  hit; a rectangle select reaches `select_rect(END)` → `select_inside` → `select_wire` directly and
+  stashes nothing (there is NO area-select action-log command anywhere). So a drag-then-apply
+  records a lone `net_hilight_apply` line that replays against the replay-time selection. The
+  single-click click-to-apply IS fully replayable; the drag variant collapses to the SAME accepted
+  bare-line form the immediate arm already emits on ambient selection. Same class as the K-key
+  `xschem hilight` and every selection-dependent verb.
+- **The applied INDEX is ambient-table-dependent (0005/config class).** `net_hilight_apply`'s
+  selection form does `xschem set hilight_color $idx; xschem hilight`, and `set hilight_color`
+  CLAMPS `if(c >= cadlayers) c = 4` (scheduler.c). The COERCION axis is closed, but the resolved
+  index depends on the ambient `net_hilight_style` table, which the log deliberately does not
+  snapshot. So if the table differs between record and replay AND straddles `cadlayers` (=22 here),
+  the same logged row can apply a different live style (idx 22 → clamp → style 4 vs idx 15 → the
+  appended style). This is the VERB's own documented limitation (net_hilight_apply docstring:
+  "reliable only while the table has fewer than cadlayers rows") — the live interactive apply
+  already shows the clamped style regardless of logging. Snapshotting the whole table (nhse's
+  set_live) would change the "apply one favourite style" semantics by overwriting the replay env's
+  table, so it is deliberately NOT done. Same faithful-to-op class as atom-9's mutable referents.
+- **The snapped-coordinate select_at (pre-existing, 0005).** The click selects on the RAW mouse
+  point but `select_at` logs the SNAP-rounded coordinate; a click in the snap-crossing zone between
+  two nearby unconnected nets can re-select a different net on replay. This is the select_at core's
+  contract (commit fd83c0f5, predates apply_hilight), inherited by every click-select atom — not
+  touched here.
+- **The stale-pending double-apply (pre-existing UI wart, faithfully logged).** The immediate arm
+  never clears `::aphl::pending`, so a prompt staged by an earlier nothing-selected F5, followed by
+  a non-click select (Ctrl+A) + a second F5 (immediate log #1) + a net click (try_apply log #2),
+  records two `net_hilight_apply` lines. Verified pre-existing in committed HEAD; the two lines are
+  a FAITHFUL 1:1 record of two real applies on two selections, not a spurious duplicate — out of
+  scope for a logging atom, left unchanged.
+
+**Guard ratchet:** `test_selflog_grep_guard` gained a `utils/apply_hilight.tcl` S1 block (two
+line-anchored emit rows — S2-INVISIBLE, like the atom-7/8 libmgr/nhse rows) plus a new **S1d
+closure**: it counts statement-position `net_hilight_apply` invocations == 2, so a NEW unlogged
+apply arm fails closed until it logs. NOT added to S2 CVERBS or S3 (Tcl-seam log, atom-7/8 shape,
+no C scheduler branch).
+
+Verified: `tests/headless/test_apply_hilight_log.tcl` (33 checks, full_audit logdir_tests — typed
+channel exactly-once + no apply_hilight double; raw-bind immediate arm +1 + style installed; the
+CLICK arm as a full Tk gesture asserting select_at-BEFORE-net_hilight_apply then replaying the pair
+to re-highlight the net; Esc + non-net click no-line; raw-fidelity 2.5→1 replay lock; direct-call
+machinery silent; `--nogui` child records + replays with no Tk). Sabotage ×3 (neutralize the
+try_apply emit → 5 C-section FAILs + grep S1 try_apply row; neutralize the immediate emit → 8 FAILs
+incl. the ciw_exec double + grep S1 immediate row; inject a 3rd unlogged apply site → S1d count 3),
+each failing exactly its checks, each restore `git diff`-clean. Full audit: no new failures beyond
+the known WSLg/env baseline (`test_apply_hilight_log` PASS; the 12 fails — cadence duo, test_ciw /
+test_hi_descend / test_lib_manager_gui / test_reopen_readonly GUI set, test_selflog_output
+transform-keys, test_phase3_mints g/G, test_lib_sweep migration, test_wire_split W7, test_select_at
+pending-stash, test_fluid_editing congestion flake — all pre-existing, none touches apply_hilight).
+
+**0065 §4 / 0067 §5 residual CLOSED.** Remaining action-log direction of travel: Refactor B
+(`perform_action()` single mutation/log/readonly boundary); the two edit-mode toggles
+(`toggle_stretch`/`toggle_orthogonal_wiring`) remain an optional set-class atom; shape point-edit
+stays a 0005 selection-addressing issue.
+
 ---
 
 *Prepared 2026-07-14, `fluid-editing`. §1–5 analysis only — no code changed. §6 added after
 atom 3 landed; §7 after atom 4; §8 after atom 5; §9 after atom 6; §10 after atom 7; §11 after
 atom 8; §12 after atom 9; §13 after atom 10; §14 after atom 11;
-§15 after atom 12; §16 after atom 13; §17 after atom 14. Coverage verified in source at
-HEAD by a 14-way parallel read; do not trust the status table without re-checking the cited
-`file:line` anchors, which drift as the tree moves.*
+§15 after atom 12; §16 after atom 13; §17 after atom 14; §18 after atom 15. Coverage verified in
+source at HEAD by a 14-way parallel read; do not trust the status table without re-checking the
+cited `file:line` anchors, which drift as the tree moves.*
