@@ -4,6 +4,13 @@
 **Status:** OPEN — partially fixed 2026-07-02: toolbar EditUndo/EditRedo/Cut/Delete
 now record because their C cores self-log (issue 0071 §4b). Remaining toolbar
 buttons await core self-log of their subcommands.
+**Update 2026-07-14 (atom 4):** FileSave / FileReload / EditCopy closed — the three
+scheduler branches now self-log (`xschem save` [named-file arm, `fast` silent],
+`xschem reload[ zoom_full]`, `xschem copy`), plus the inline Ctrl-S/Alt-S/Ctrl-C key
+handlers; `action_reload`'s own log line removed (single site). See
+`doc/claude/code_analysis/action_log_coverage_audit_and_core_selflog_refactor.md` §7.
+Still open here: Netlist / toggle-colors silent, Paste = marker, recent-component
+bar, tab bar navigation.
 **Severity:** HIGH — the toolbar is a primary interaction surface and drives
 core mutations (save, cut/copy/paste/delete, undo/redo, trim/break wires,
 netlist, place symbol/wire/…), none of which are recorded.

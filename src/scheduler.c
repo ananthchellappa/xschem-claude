@@ -1249,6 +1249,11 @@ static int xschem_cmds_c(Tcl_Interp *interp, int argc, const char *argv[], int *
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
       rebuild_selected_array();
       save_selection(2);
+      /* self-log at core (0062), mirrors the cut branch: covers Edit menu, toolbar,
+       * CIW/script (dedup via actionlog_cmd_logged). Ctrl-C and ctx-menu pick 15 call
+       * save_selection() directly and record at their own sites. Empty-selection no-op
+       * still logs (slice-1 norm); clipboard-only, so a replayed line is always safe. */
+      log_action("xschem copy");
       Tcl_ResetResult(interp);
     }
 
@@ -7554,6 +7559,13 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
       } else {
         draw();
       }
+      /* self-log at core (0062): covers the toolbar FileReload confirmed arm (was the
+       * silent gap), File>Reload (action_reload -- its own log line removed, this is
+       * now the single site) and CIW/script (dedup). Both confirm dialogs sit in the
+       * callers, so a Cancel never reaches this branch -> no line. The Alt-S key
+       * reloads inline in callback.c and logs at its own site. */
+      log_action("xschem reload%s",
+                 (argc > 2 && !strcmp(argv[2], "zoom_full")) ? " zoom_full" : "");
       Tcl_ResetResult(interp);
     }
 
@@ -7876,9 +7888,24 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
       }
 
       if(!strcmp(xctx->sch[xctx->currsch], "")) {   /* check if unnamed schematic, use saveas in this case... */
+        /* not logged here: saveas() records the resolved `xschem saveas {f} schematic`
+         * at its dialog arm; a bare `xschem save` line would re-open the dialog on replay */
         saveas(NULL, SCHEMATIC);
       } else {
         save(0, fast);
+        /* self-log at the BRANCH, not inside save() (0062): save() is a shared
+         * confirm-wrapper also entered from go_back/descend/window-close flows, where a
+         * log would emit phantom saves inside already-logged composite verbs (the
+         * delete()-class hazard, atom 2). Covers toolbar FileSave, File>Save
+         * (menu_action_logged dedups), tab-menu Save, mouse binds, CIW/script. Ctrl-S
+         * saves inline in callback.c and logs at its own site. Policy: an unmodified
+         * no-op save still logs (slice-1 norm -- and save() force-writes when the
+         * on-disk mtime changed, so gating on `modified` would drop real writes);
+         * `save fast` stays SILENT: fast is passed only by internal cellview/attr
+         * machinery that saves a temporarily-loaded file between unlogged `load
+         * -keep_symbols` calls -- a logged line would replay against the wrong file
+         * (same machinery axis as the setprop -fast gate, slice 5). */
+        if(!fast) log_action("xschem save");
       }
     }
 

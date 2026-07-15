@@ -4810,6 +4810,9 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
         rebuild_selected_array();
         if(xctx->lastsel) { /* 20071203 check if something selected */
           save_selection(2);
+          /* self-log Ctrl-C (0062): inline path bypasses the scheduler copy branch;
+           * under the selection guard so an empty-selection press logs no phantom */
+          log_action("xschem copy");
         }
       }
       /* duplicate selection */
@@ -5513,6 +5516,9 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
            * "save file?" confirmation (matches the File>Save menu / `xschem save`,
            * which already call save(0,...)). */
           save(0, 0);
+          /* self-log Ctrl-S (0062): inline path bypasses the scheduler save branch
+           * (the branch rejects read-only before its log; mirror that here) */
+          if(!xctx->readonly) log_action("xschem save");
         }
       }
 
@@ -5527,6 +5533,9 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
           my_strncpy(filename, abs_sym_path(xctx->sch[xctx->currsch], ""), S(filename));
           load_schematic(1, filename, 1, 1);
           draw();
+          /* self-log Alt-S (0062): inline reload bypasses the scheduler branch;
+           * inside the "ok" arm so a cancelled dialog logs nothing */
+          log_action("xschem reload");
         }
       }
 

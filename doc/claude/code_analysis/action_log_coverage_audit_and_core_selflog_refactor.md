@@ -300,7 +300,72 @@ line silently no-ops on replay → hierarchy diverges. Rule addition to §4 step
 
 ---
 
+## 7. Atom 4 outcome (2026-07-14): save + reload + copy — all three FAIL the 1:1 test
+
+The 0062 remainder (File Save / Reload / Edit Copy silent from toolbar & co.) closed. None
+of the three has a loggable 1:1 core — `save()` (actions.c) is a shared confirm-wrapper
+(entered from go_back, descend-embedded, `load` window-routing prompts, quit/close flows),
+and copy/reload's effects (`save_selection(2)`, `load_schematic(...)`) are bare primitives
+with inline-key twin callers. So per the atom-2 rule all logs went to the **verbs' entry
+sites** — scheduler branch + inline legacy-switch keys:
+
+- **copy** — branch logs `xschem copy` (mirrors cut, slice 1; empty-selection no-op still
+  logs, slice-1 norm — clipboard-only, a replayed line is always safe). Ctrl-C
+  (`case 'c'` ControlMask) calls `save_selection(2)` directly → logs at the key handler,
+  under the selection guard (no phantom). Ctx-menu pick 15 keeps its `ctxmenu_log_cmd`
+  table line (its direct-C path never reaches the branch; paths disjoint → one line each).
+  `schpins_to_sympins` (Tcl) evals `xschem copy` as machinery → one extra faithful,
+  replay-safe line; accepted.
+- **save** — logged at the branch's NAMED-file arm only, after `save(0,fast)`. The
+  unnamed→`saveas(NULL,SCHEMATIC)` arm stays silent: `saveas()` already logs the resolved
+  `xschem saveas {f} schematic` at dialog resolution, and a bare `xschem save` line would
+  re-open the dialog on replay. Ctrl-S (`case 's'` ControlMask) saves inline → logs at the
+  key handler, gated `!xctx->readonly` (mirrors the branch's read-only reject, which sits
+  before its log). **Policy decisions (in the branch comment):** an unmodified no-op save
+  still logs (slice-1 norm — and `save()` force-writes when the on-disk mtime changed, so
+  a modified-gate would drop real writes); `save fast` stays **silent** — `fast` is passed
+  only by internal cellview/attr machinery that saves a temporarily-loaded file between
+  unlogged `load -keep_symbols` calls, so a logged line would replay against the wrong
+  file (same machinery axis as the setprop `-fast` gate, slice 5).
+- **reload** — branch logs `xschem reload` / `xschem reload zoom_full` (arg form
+  preserved). `action_reload`'s Tcl-side log line (from the File-menu slice, 105718e1)
+  was **removed**: it is not dedup-wired, so branch-log + it double-logged the confirmed
+  pick (sabotage-verified: re-adding it makes the count +2). All confirm dialogs live in
+  the callers (action_reload `alert_`, toolbar FileReload arm, inline Alt-S
+  `tk_messageBox`), so a Cancel never reaches any log site. Alt-S (`case 's'`
+  EQUAL_MODMASK) reloads inline via direct `load_schematic()` → logs inside its ok-arm.
+
+**Self-contained-line check (the §6 rule):** all three wrappers' previously-logged lines —
+menu verbatim `xschem save`, action_reload's `xschem reload`, ctx-table `xschem copy` —
+are *identical* to the new branch/key lines. No wrapper carried extra state, so dedup
+suppression loses no replay fidelity; the rule gained no new wrinkle here.
+
+**Deliberately still silent (documented, pre-existing in kind):**
+- Incidental confirm-saves inside composite verbs (go_back / descend-embedded /
+  `load` window-routing / close prompts answered "yes") — logging inside `save()` is
+  exactly the delete()-class mistake; the composite verb's own line re-raises the prompt
+  on replay (same accepted class as atom 3's bare go_back).
+- The tab-context-menu Save arm routes through the branch and now logs, but its
+  surrounding `new_schematic switch` calls are unlogged (0053-class multi-window gap) —
+  the line may replay against a different current tab; harmless (unmodified no-op or an
+  extra save).
+- mouse `button-8` bind (`xschem set_modify 1; xschem save`) now logs the save; the
+  set_modify hack is not replayed → replay no-ops. Accepted.
+- Two Tcl machinery evals of the plain verb now log a faithful stray line each:
+  `reroute_inst` hier processing (`xschem save`, xschem.tcl:3837 — saves the *current*
+  file, so a replayed line is a harmless consistent write) and `schpins_to_sympins`
+  (`xschem copy`, clipboard-only). Same accepted class as atom 3's traversal-walk lines.
+  The temp-file-swapping cellview machinery stays silent via the `fast` gate.
+
+Verified: 36-check `test_save_reload_copy_selflog.tcl` (full_audit logdir_tests; counting
+alert_/tk_messageBox/ask_save stubs per the atom-3 finding), sabotage 2 rounds × 7 sites
+(each neutralization fails exactly its own checks; the save-gate *flip* catches both the
+missing log and a fast-machinery leak in one shot), `test_selflog_output` transform-key
+failures confirmed pre-existing on baseline (WSLg env).
+
+---
+
 *Prepared 2026-07-14, `fluid-editing`. §1–5 analysis only — no code changed. §6 added after
-atom 3 landed. Coverage verified in source at HEAD by a 14-way parallel read; do not trust
-the status table without re-checking the cited `file:line` anchors, which drift as the tree
-moves.*
+atom 3 landed; §7 after atom 4. Coverage verified in source at HEAD by a 14-way parallel
+read; do not trust the status table without re-checking the cited `file:line` anchors,
+which drift as the tree moves.*

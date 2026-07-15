@@ -177,10 +177,10 @@ proc action_component_browser {} {
 
 proc action_reload {} {
   if {[alert_ "Are you sure you want to reload?" {} 0 1] == 1} {
+    # action-log: the reload branch self-logs (0062) -- no line here, or the
+    # confirmed reload would be recorded twice; the cancelled case never
+    # reaches the branch so it still leaves no line (the menu row is nolog)
     xschem reload
-    # action-log: record the confirmed reload (the menu row is nolog so the
-    # cancelled case leaves no line)
-    xschem log_action {xschem reload}
   }
 }
 
