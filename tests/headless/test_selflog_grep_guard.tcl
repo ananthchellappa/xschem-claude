@@ -105,6 +105,7 @@ set MANIFEST {
     {!strcmp\(argv\[k\], "-anchor"\)}                 1 {paste replay arm: -anchor pivot parse (atom 9 review)}
     {if\(argc > 7\) noline = atoi\(argv\[7\]\);}      1 {add_symbol_pin no-stub-line replay arg: the sympin drop replay form matches the -place geometry (atom 11)}
     {if\(vi >= 0\) pin_view_writeback\(vi\);}         1 {add_symbol_pin noline reproduces the -place move-time name_* writeback so the replay saves byte-identically (atom 11)}
+    {strcmp\(argv\[4\], "kissing"\) && strcmp\(argv\[4\], "stretch"\)} 2 {move_objects + copy_objects replay arms parse `rot flip [local] [-anchor]`, guarded against the kissing/stretch flag words so a plain line parses unchanged (atom 13 / 0069)}
   }
   src/callback.c {
     {log_action\("xschem copy"}                       1 {Ctrl-C inline key (atom 4)}
@@ -124,8 +125,9 @@ set MANIFEST {
     {log_action\("xschem zoom_box %}                  1 {zoom-drag END}
     {(?n)^\s*av\[ac\+\+\] = "xschem"; av\[ac\+\+\] = "paste";} 1 {paste/merge drop replay line (atom 9 / 0069)}
     {(?n)^\s*av\[ac\+\+\] = "-file";}                 1 {paste/merge drop -file source rider (atom 9)}
-    {(?n)^\s*av\[ac\+\+\] = "-anchor";}               1 {paste/merge drop -anchor pivot rider: whole-log replay regenerates the clipboard G record (atom 9 review)}
-    {(?n)^\s*log_action_argv\(ac, av\);}              1 {paste/merge drop emit call, line-anchored: if(0)/line-comment counts as removed (a BLOCK comment still evades -- the behavioral test is the real lock) (atom 9)}
+    {(?n)^\s*av\[ac\+\+\] = "-anchor";}               2 {paste/merge (atom 9) + rotmove (atom 13) drop -anchor pivot rider: a whole-log replay's regenerated clipboard / move-START seeds a different pivot}
+    {(?n)^\s*log_action_argv\(ac, av\);}              2 {paste/merge (atom 9) + rotmove (atom 13) drop emit calls, line-anchored: if(0)/line-comment counts as removed (a BLOCK comment still evades -- the behavioral test is the real lock)}
+    {(?n)^\s*av\[ac\+\+\] = "xschem"; av\[ac\+\+\] = is_copy \? "copy_objects" : "move_objects";} 1 {rotmove drop: mid-move/copy rotate/flip replay line, one form for both verbs (atom 13 / 0069)}
     {(?n)^\s*av\[0\] = "xschem"; av\[1\] = "add_symbol_pin";} 1 {sympin drop: symbol-pin replay line (atom 11 / 0069)}
     {(?n)^\s*av\[0\] = "xschem"; av\[1\] = "instance";} 1 {placed-instance read-back line in log_placed_instance -- shared by PLACE_SYMBOL + schematic Add-Pin drop (atom 11)}
     {(?n)^\s*if\(log_placed_instance\(\)\) return;}   2 {log_placed_instance called by both the PLACE_SYMBOL arm and the START_SYMPIN sch-pin arm (atom 11)}
@@ -226,6 +228,11 @@ check "S1c old '# place symbol pin (no replayable...)' marker stays removed" \
 # it must not creep back for the converted types (it would shadow the real record).
 check "S1c old '# property-edit' marker stays removed (property dialogs now replayable)" \
   [expr {[rxcount [srctext src/editprop.c] {# property-edit}] == 0}]
+# atom 13: the mid-move/copy rotate/flip marker is replaced by replayable
+# move_objects/copy_objects lines -- the dead `no single-command replay` marker
+# must not creep back (it would shadow the real record and drop the orientation).
+check "S1c old rotate/flip 'no single-command replay' marker stays removed (rot/flip drops now replayable)" \
+  [expr {[rxcount $cbtext {no single-command replay}] == 0}]
 
 # ---------------------------------------------------------------------------
 # S2) TCL LITERAL-LOG CONFLICTS: no ungated hand-rolled `xschem log_action
@@ -288,9 +295,12 @@ set sched [srctext src/scheduler.c]
 # the drop funnel (end_move_copy_logged, callback.c) is the SOLE logger -- both
 # the `-place` gesture start and the direct `add_symbol_pin` replay form must
 # stay silent in the scheduler, else a replayed sympin drop double-logs.
+# `move_objects`/`copy_objects` (atom 13): same shape -- the scheduler arms ARE
+# the coordinate replay form (rot/flip/-anchor), the drop funnel is the sole
+# logger, so a log in the branch would re-log every replayed rot/flip drop.
 foreach verb {make_symbol make_sch make_sch_from_sel descend descend_symbol
               go_back select_grow_connected update_net_hilight_style paste
-              add_symbol_pin add_sch_pin} {
+              add_symbol_pin add_sch_pin move_objects copy_objects} {
   set n [rxcount $sched "log_action\\(\"xschem $verb\[\"% \]"]
   check "S3 scheduler.c has NO log_action for core-logged verb '$verb'" \
     [expr {$n == 0}] "got=$n"

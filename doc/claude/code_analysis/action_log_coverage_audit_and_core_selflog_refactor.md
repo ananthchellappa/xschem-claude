@@ -942,11 +942,101 @@ transform-keys, stash-confirmed identical with the impl removed; the cadence duo
 `test_cadence_descend_newwin_ro`/`test_cadence_drag`). `test_descend_newwin_return` and
 `test_descend_readonly` (both source `cadence_nav.tcl`) stay green.
 
+## 16. Atom 13 outcome (2026-07-15): a mid-move/copy rotate/flip drop records a REPLAYABLE line (0069 FULLY CLOSED)
+
+The §2 "Gesture drops — 0069" row's last hole closed. `end_move_copy_logged`'s
+`else if(rot || flip)` arm wrote a dead `# move/duplicate selection with rotate/flip (…):
+no single-command replay` marker, so when the user pressed Alt-R / Shift-R / Shift-V / Alt-F
+mid-drag the replay dropped the object at the WRONG orientation (the translation replayed via
+the plain arm's twin, the ROTATION was lost). The drop now logs the scheduler's own coordinate
+replay form, one line per drop:
+
+```
+xschem move_objects <dx> <dy> <rot> <flip> [local] [-anchor ax ay] [kissing]
+xschem copy_objects <dx> <dy> <rot> <flip> [local] [-anchor ax ay] [kissing]
+```
+
+This is atom 9's paste treatment applied to move/copy — same pivot problem, same two riders.
+
+- **Log site = the drop funnel (Layer-C), not the cores.** `move_objects`/`copy_objects` fail
+  the 1:1 test (shared by the scheduler replay arms + many key/menu paths); the funnel is the
+  sole logger (atom-9/11 pattern). `dx/dy/rot/flip/rotatelocal/kissing/x1/y1` are captured
+  BEFORE the END that resets them (the capture already grabbed `ax=x1/ay=y1`, added for the
+  paste atom).
+- **The pivot (Q1, the central axis, = atom-9's G-record lesson).** The mid-move rotate has two
+  pivot modes, told apart by `xctx->rotatelocal`: **`local`** (per-object center, Alt-R/F on a
+  SINGLE object — `move_objects(ROTATE|ROTATELOCAL)`) is pivot-independent, no rider;
+  **shared-pivot** (Shift-R/F/V, or Alt-R/F on a MULTI-object connected drag —
+  `connected_drag_group_transform()!=0` drops ROTATELOCAL) rotates about `x1/y1` = the grab
+  cursor, which rides as **`-anchor ax ay`**. It MUST ride because a whole-log replay's
+  `move_objects(START)` seeds `x1/y1` from the replay-time cursor (`mousex_snap`), not the
+  recorded grab point → a shared-pivot rotate would land about the wrong point. **Gesture
+  gotcha, verified in source:** mid-move **Shift-R is ALWAYS the group rotate about the anchor,
+  even on a single object** (`case 'R'` STARTMOVE → `move_objects(ROTATE)` with no ROTATELOCAL),
+  so a one-object Shift-R drop correctly logs `-anchor`, not `local`.
+- **The replay arms bypass the funnel (Q2).** The scheduler `move_objects` final-else and
+  `copy_objects` arm parse `rot flip [local] [-anchor ax ay]` (mirroring the paste arm), set
+  `move_rot`/`move_flip`/`rotatelocal` (+ `x1/y1` when `-anchor`) UNCONDITIONALLY from the line
+  (a stale interactive `rotatelocal` must not leak), then call `(START)`+`(END,dx,dy)` directly
+  — never `end_move_copy_logged`, so a replay never re-logs (coordinate-form-bypass invariant).
+  `move_objects`/`copy_objects` joined the S3 branch-must-not-log set. The parse is guarded vs
+  the `kissing`/`stretch` flag words and only runs when a delta is present (`argc>3+nparam`), so
+  a plain `move_objects dx dy [kissing]` line parses byte-identically to before (the sub-verb
+  `start/step/end/abort` forms are dispatched in earlier branches, untouched).
+- **Byte-identical BY CONSTRUCTION.** The fluid diagonal-decomposition is gated
+  `move_rot==0 && move_flip==0` (move.c), so a rot/flip drop always takes the single-pass
+  rotation-aware commit `ROTATION(move_rot,move_flip,pivot,obj)+delta`; the replay runs the same
+  commit with the same recorded `rot/flip/pivot/delta`. move/copy START re-zeros the transform
+  fields, so the replay arm's field-sets cannot leak into the next gesture.
+- **Scope / exclusions (Q3–Q5).** The new arm is reached only after the STARTMERGE / START_SYMPIN
+  / PLACE_SYMBOL / PLACE_TEXT arms return and after `if(nothing) return` (the mouse-drag no-motion
+  path). Preserved: ESC-abort never reaches the funnel (no line); the genuine `nothing`
+  early-return (a `drag_elements` press-release with zero delta) logs nothing. **Q4 fluid:** a
+  rotate during a fluid connected move is the SAME drop funnel (in scope) — the new arm covers it,
+  mirroring the plain-translation arm's issue-0005-bounded fidelity (no `stretch` flag; a
+  connected reroute inherits the same bound the plain arm already has). The separate WIRING.md
+  risk-8 "zero-delta ALT-R silently discarded during a fluid hold" is a fluid GEOMETRY bug
+  orthogonal to logging (the transform is discarded before any log point) — documented there, not
+  touched here.
+
+**Adversarial review (5-lens refute workflow — pivot-anchor / parse-robustness / scope-double-log
+/ exclusions-state / byte-identical-gaps — each lens a source-reading refuter): 0 findings, all
+five empty** after substantial investigation. Every self-identified risk (fluid mid-gesture
+`x1/y1` mutation vs the capture; negative anchor coords vs the exact-`strcmp("-anchor")` parse;
+`argv[4]/argv[5]` OOB vs the `argc>5` short-circuit; the plain-path zero-field-sets vs START's own
+zeroing; non-instance object types under the anchor; state leak into a subsequent gesture) was
+examined and refuted.
+
+**Guard ratchet:** S1 rows pin the callback emit head (`av[ac++] = "xschem"; av[ac++] = is_copy ?
+"copy_objects" : "move_objects";`), the shared `-anchor` rider + `log_action_argv(ac,av)` call
+(count bumped 1→2, now paste + rotmove), and the two scheduler replay-arm parses (the
+kissing/stretch-guarded transform parse, count 2). New **S1c** locks the dead `no single-command
+replay` marker out of callback.c. `move_objects`/`copy_objects` added to S3 (branch IS the replay
+form → must not self-log); already in the S2 CVERBS set.
+
+Verified: `test_rotmove_drop_log.tcl` (57 checks, full_audit logdir_tests — move+copy ×
+Alt-R(local)/Shift-R(anchor,single & group)/Shift-V(rot=2 flip=1)/Alt-F(local flip), byte-
+identical saveas oracle per case, the **poisoned-cursor replay** (`motion 950 730` before eval)
+proving `-anchor` overrides START's seed [the move/copy analog of paste's T6b G-record poison],
+plain-translation regression, replay-bypass zero-log, the genuine `nothing` mouse-drag exclusion,
+ESC-abort no-line + geometry unchanged, whole-log marker sweep, scripted-replay no-self-log for
+both riders). Sabotage ×3 (kill the `rot` parse → all rot-case byte-identical replays fail; kill
+the `-anchor` override → exactly the anchor cases fail, `local`/plain survive; neutralize the emit
+verb → the rot/flip drop-log checks + the grep S1 emit-head row fail), each failing exactly its
+own checks. Full audit: no new failures beyond the known WSLg/env baseline set
+(`test_selflog_output` transform-keys, `test_action_replay.sh` "log missing placed instance",
+`test_phase3_mints` g/G snap keys, `test_lib_sweep` migration, `test_wire_split` W7 netlist
+node-order — all stash+rebuild-confirmed byte-identical on baseline; the cadence duo + GUI set).
+
+**0069 is now FULLY CLOSED** (paste/merge = atom 9, sympin = atom 11, rot/flip-during-move =
+atom 13). The §2 "Gesture drops" row has no remaining marker; shape point-edit (0005) is a
+separate selection-addressing issue, not a 0069 sibling.
+
 ---
 
 *Prepared 2026-07-14, `fluid-editing`. §1–5 analysis only — no code changed. §6 added after
 atom 3 landed; §7 after atom 4; §8 after atom 5; §9 after atom 6; §10 after atom 7; §11 after
 atom 8; §12 after atom 9; §13 after atom 10; §14 after atom 11;
-§15 after atom 12. Coverage verified in source at
+§15 after atom 12; §16 after atom 13. Coverage verified in source at
 HEAD by a 14-way parallel read; do not trust the status table without re-checking the cited
 `file:line` anchors, which drift as the tree moves.*

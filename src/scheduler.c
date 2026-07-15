@@ -1314,6 +1314,8 @@ static int xschem_cmds_c(Tcl_Interp *interp, int argc, const char *argv[], int *
       int nparam = 0;
       int kissing= 0;
       int stretch = 0;
+      int rot = 0, flip = 0, rotl = 0, has_anchor = 0, k;
+      double ax = 0.0, ay = 0.0;
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
       if(scheduler_readonly_reject(interp, "copy_objects")) return TCL_ERROR;
       if(argc > 2) {
@@ -1326,9 +1328,30 @@ static int xschem_cmds_c(Tcl_Interp *interp, int argc, const char *argv[], int *
       if(kissing) xctx->connect_by_kissing = 2;
       if(stretch) select_attached_nets();
       if(argc > 3 + nparam) {
+        /* mid-copy rotate/flip replay (issue 0069 atom 13): optional `rot flip [local]
+         * [-anchor ax ay]` after the delta, mirroring the move_objects and paste arms
+         * (see move_objects for the pivot rationale). */
+        k = 4;
+        if(argc > 5 && argv[4][0] != '-' && argv[5][0] != '-' &&
+           strcmp(argv[4], "kissing") && strcmp(argv[4], "stretch") &&
+           strcmp(argv[5], "kissing") && strcmp(argv[5], "stretch")) {
+          rot = atoi(argv[4]) & 0x3;
+          flip = atoi(argv[5]) & 0x1;
+          k = 6;
+          if(argc > k && !strcmp(argv[k], "local")) { rotl = 1; k++; }
+        }
+        for(; k < argc; k++) {
+          if(!strcmp(argv[k], "-anchor") && k + 2 < argc) {
+            ax = atof(argv[k + 1]); ay = atof(argv[k + 2]); has_anchor = 1; k += 2;
+          }
+        }
         copy_objects(START);
         xctx->deltax = atof(argv[2]);
         xctx->deltay = atof(argv[3]);
+        xctx->move_rot = (short)rot;
+        xctx->move_flip = (short)flip;
+        xctx->rotatelocal = (short)rotl;
+        if(has_anchor) { xctx->x1 = ax; xctx->y1 = ay; }
         copy_objects(END);
       } else {
         /* The MENU "Duplicate objects" arms a DEFERRED copy: the mouse is over the menu, not
@@ -5296,6 +5319,8 @@ static int xschem_cmds_m(Tcl_Interp *interp, int argc, const char *argv[], int *
       }
       else {
         int nparam = 0, kissing = 0, stretch = 0, i;
+        int rot = 0, flip = 0, rotl = 0, has_anchor = 0, k;
+        double ax = 0.0, ay = 0.0;
         if(argc > 2) {
           for(i = 2; i < argc; i++) {
             if(!strcmp(argv[i], "kissing")) {kissing = 1; nparam++;}
@@ -5307,7 +5332,32 @@ static int xschem_cmds_m(Tcl_Interp *interp, int argc, const char *argv[], int *
         if(kissing) xctx->connect_by_kissing = 2;
         if(stretch) select_attached_nets();
         if(argc > 3 + nparam) {
+          /* mid-move rotate/flip replay (issue 0069 atom 13): optional `rot flip [local]
+           * [-anchor ax ay]` after the delta, mirroring the paste arm. `local` = per-object
+           * pivot (ROTATELOCAL); `-anchor` pins the shared group-rotate pivot (x1/y1) that a
+           * replay's START would otherwise seed from the replay-time cursor. Guarded so a
+           * plain `move_objects dx dy [kissing]` line parses identically to before. */
+          k = 4;
+          if(argc > 5 && argv[4][0] != '-' && argv[5][0] != '-' &&
+             strcmp(argv[4], "kissing") && strcmp(argv[4], "stretch") &&
+             strcmp(argv[5], "kissing") && strcmp(argv[5], "stretch")) {
+            rot = atoi(argv[4]) & 0x3;
+            flip = atoi(argv[5]) & 0x1;
+            k = 6;
+            if(argc > k && !strcmp(argv[k], "local")) { rotl = 1; k++; }
+          }
+          for(; k < argc; k++) {
+            if(!strcmp(argv[k], "-anchor") && k + 2 < argc) {
+              ax = atof(argv[k + 1]); ay = atof(argv[k + 2]); has_anchor = 1; k += 2;
+            }
+          }
           move_objects(START,0,0,0);
+          /* unconditional: the line is the FULL transform record -- a stale rotatelocal /
+           * move_rot from a prior gesture must not leak into this one (paste-arm discipline) */
+          xctx->move_rot = (short)rot;
+          xctx->move_flip = (short)flip;
+          xctx->rotatelocal = (short)rotl;
+          if(has_anchor) { xctx->x1 = ax; xctx->y1 = ay; }
           move_objects( END,0,atof(argv[2]), atof(argv[3]));
         }
         else {

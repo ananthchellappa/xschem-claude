@@ -1727,8 +1727,34 @@ static void end_move_copy_logged(int is_copy)
     log_action("# place text (text not cleanly recordable)");
   }
   else if(rot || flip) {
-    log_action("# %s selection with rotate/flip (rot=%d flip=%d delta %.16g %.16g): "
-      "no single-command replay", is_copy ? "duplicate" : "move", rot, flip, dx, dy);
+    /* action-log (issue 0069 atom 13): a mid-move/copy rotate/flip drop replays through
+     * the scheduler's own coordinate move_objects/copy_objects arm, which sets
+     * move_rot/move_flip/rotatelocal (+ the anchor) then calls START/END directly -- never
+     * this funnel -- so a replay never re-logs (coordinate-form-bypass invariant). `local`
+     * marks the per-object in-place transform (Alt-R/F on a single object, pivot-
+     * independent); a shared-pivot group rotate (Shift-R/F/V, or Alt-R/F on a multi-object
+     * connected drag) pins x1/y1 as `-anchor` because a whole-log replay's move START seeds
+     * x1/y1 from the replay-time cursor, not the recorded grab point -> the rotation would
+     * be about the wrong point (the atom-9 paste G-record pivot lesson, verified there).
+     * Translation-only and `local` drops are pivot-independent -> no rider. `kissing` rides
+     * last, exactly as the plain-translation arm below records it. */
+    char xb[64], yb[64], rb[16], fb[16], axb[64], ayb[64];
+    const char *av[12];
+    int ac = 0;
+    my_snprintf(xb, S(xb), "%.16g", dx);
+    my_snprintf(yb, S(yb), "%.16g", dy);
+    my_snprintf(rb, S(rb), "%d", rot);
+    my_snprintf(fb, S(fb), "%d", flip);
+    av[ac++] = "xschem"; av[ac++] = is_copy ? "copy_objects" : "move_objects";
+    av[ac++] = xb; av[ac++] = yb; av[ac++] = rb; av[ac++] = fb;
+    if(rotl) av[ac++] = "local";
+    else {
+      my_snprintf(axb, S(axb), "%.16g", ax);
+      my_snprintf(ayb, S(ayb), "%.16g", ay);
+      av[ac++] = "-anchor"; av[ac++] = axb; av[ac++] = ayb;
+    }
+    if(kissing) av[ac++] = "kissing";
+    log_action_argv(ac, av);
   }
   else {
     log_action("xschem %s %.16g %.16g%s", is_copy ? "copy_objects" : "move_objects",
