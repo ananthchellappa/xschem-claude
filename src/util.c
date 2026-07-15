@@ -545,6 +545,29 @@ void log_output(int iserr, const char *text)
   }
   if(p == text || p[-1] != '\n') fputc('\n', actionlog_fp);
 }
+
+/* Re-entrant scope guard for actionlog_suppress (issue 0071 Refactor A step 2,
+ * the foundation the perform_action() boundary of Refactor B rides on -- see
+ * doc/claude/code_analysis/action_log_coverage_audit_and_core_selflog_refactor.md
+ * §3.2/§4). actionlog_suppress is a DEPTH COUNTER, not a boolean: the two
+ * re-entrancy hazards nest (a REPLAY that re-executes a logged line which is
+ * itself a COMPOSITE op calling several already-self-logging cores), so an inner
+ * pop must NOT re-open logging while an outer scope is still active. The
+ * log_action* / log_output gate `if(!actionlog_fp || actionlog_suppress)` reads
+ * any nonzero count as suppressed. push/pop is the SAFE surface; `xschem set
+ * actionlog_suppress N` is a HARD absolute set (0 clears any nesting). This is
+ * ORTHOGONAL to actionlog_cmd_logged (the wrapper-dedup flag): a suppressed
+ * log_action returns BEFORE setting cmd_logged, so a suppressed scope never
+ * leaves cmd_logged dirty for the next real action. */
+void actionlog_suppress_push(void)
+{
+  actionlog_suppress++;
+}
+
+void actionlog_suppress_pop(void)
+{
+  if(actionlog_suppress > 0) actionlog_suppress--;
+}
 #ifdef HAS_SNPRINTF
 size_t my_snprintf(char *str, size_t size, const char *fmt, ...)
 {

@@ -14803,6 +14803,25 @@ proc source_user_tcl_files {} {
   }
 }
 
+# Replay an action log IN-SESSION without re-logging its lines (issue 0071
+# Refactor A step 2, the audit's replay re-entrancy hazard, §3.2). This is the
+# ONE seam an in-session replay enters. Sourcing a recorded log while the log is
+# still OPEN would re-enter the self-logging cores (undo/copy/flip/set cadsnap/
+# ...) and DOUBLE every re-executable verb. Wrap the source in the re-entrant
+# suppress scope so lines re-EXECUTE (the effect applies) but do NOT re-LOG. The
+# scope is a DEPTH COUNTER, so a replayed line that is itself a composite op
+# (which push/pops again) stays suppressed throughout. Balanced via catch so a
+# mid-file error still pops. (A cross-process replay into a --nolog session --
+# what tests/headless/test_action_replay.sh does -- is already safe because
+# actionlog_fp is NULL there; this seam is what makes an IN-session replay safe.)
+proc replay_action_log {file} {
+  xschem log_action -suppress push
+  set rc [catch {uplevel #0 [list source $file]} res]
+  xschem log_action -suppress pop
+  if {$rc} { return -code error $res }
+  return $res
+}
+
 proc eval_user_startup_commands {} {
   global user_startup_commands
   if {[info exists user_startup_commands]} {

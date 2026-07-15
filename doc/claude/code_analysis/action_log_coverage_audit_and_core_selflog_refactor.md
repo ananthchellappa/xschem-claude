@@ -1322,11 +1322,120 @@ boundary, §4) as its own multi-atom track — the menu-bypass finding here is a
 it: a single boundary would have made "did the menu log it?" a structural invariant, not a
 per-entry-point checklist item. Shape point-edit (0005) stays a selection-addressing issue.
 
+## 20. Refactor B FOUNDATION (2026-07-15): actionlog_suppress gets a real setter + the two seams
+
+Not a coverage atom — the structural groundwork Refactor B (§4, the `perform_action()` north
+star) rides on. Atom 16 proved a per-entry-point self-log discipline still leaks (a bare
+`-variable` menu checkbutton bypassed the core entirely); the cure the audit prescribes (§3.1)
+is ONE choke point where "did we log it?" is a structural invariant. That choke point needs a
+suppress/log gate that is safe under the two re-entrancy hazards of §3.2 — this atom builds
+exactly that gate and **changes no observable log output.**
+
+**What was actually missing (verified in source, not from the audit prose).** `actionlog_suppress`
+already existed as an `int` (globals.c) and already gated all four writers —
+`log_action`/`log_action_noecho`/`log_output`/`log_action_stash_select_at` each early-return on
+`if(!actionlog_fp || actionlog_suppress)` (util.c). The gate was complete; it had **zero write
+sites** — nothing ever set it (its sibling `actionlog_suppress_echo` did have a setter, `xschem
+log_action -suppressecho`). So the whole atom is the SETTER + the WIRING, no new gate and no new
+formatting.
+
+**(1) The setter — a re-entrant DEPTH COUNTER, not a boolean.** The two hazards NEST (a replay
+re-executes a logged line that is itself a composite calling several self-logging cores), so an
+inner scope's exit must not re-open logging while an outer scope is live. `actionlog_suppress_push()`
+(`++`) / `actionlog_suppress_pop()` (`if(>0) --`, underflow-clamped) are the safe surface
+(util.c); `xschem log_action -suppress push|pop` exposes them to Tcl (scheduler.c log_action
+subcommand); `xschem set actionlog_suppress N` is the absolute (hard-reset, `<0`-clamped) form the
+task required (scheduler.c set branch, first arm of the `argv[2][0] < 'n'` block). The counter is a
+pure C int, NOT tcl-mirrored — no reader needs a mirror. **Orthogonality to `actionlog_cmd_logged`
+is by construction:** the writers early-return on `actionlog_suppress` BEFORE the
+`actionlog_cmd_logged = 1` line, so a suppressed scope never leaves the wrapper-dedup flag dirty
+for the next real action (locked by test case f).
+
+**(2a) The REPLAY seam — `proc replay_action_log {file}` (xschem.tcl).** The ONE place an
+in-session replay enters: `push; catch{uplevel #0 source $file}; pop; rethrow`. Sourcing a recorded
+log while the log is still OPEN would re-enter the self-logging cores (undo/copy/flip/`set cadsnap`
+/…) and DOUBLE every re-executable verb; the scope makes the lines re-EXECUTE but not re-LOG. The
+`catch` keeps push/pop balanced across a mid-file error. **The hazard is latent-not-active in the
+existing cross-process acceptance test** (`test_action_replay.sh` replays into a `--nolog` process
+where `actionlog_fp == NULL`, so every writer is already a no-op) — this seam is what makes an
+IN-session replay safe, exactly the §3.2 case the audit flagged and could not yet close.
+
+**(2b) The COMPOSITE seam — the primitive, NOT a production wrap (a review-corrected decision).**
+The first cut wrapped `abort_operation()` (the canonical audit teardown, "`abort_operation`
+delete(1) teardown") in `push; do; pop`, on the premise that it "emits zero log lines today." **The
+adversarial review refuted that premise (CONFIRMED MAJOR, 3 of 4 axes + 2 verifiers):
+`abort_operation` is NOT a pure teardown.** Its `STARTPOLYGON` arm (callback.c:226) calls
+`new_polygon(END)`, which COMPLETES the polygon — `push_undo` + `store_poly` (a real persisting
+object) + `log_action("xschem polygon …")` (actions.c:4677). ESC-to-close-a-polygon is a first-
+class completion gesture (symmetric with the Return-key close), so wrapping the whole function
+SILENCES that real logged edit → the polygon persists but its replay line is dropped → replay
+diverges. **Empirically confirmed:** driving the polygon gesture + ESC on the wrapped binary logged
+0 `xschem polygon` lines; on the unwrapped binary, 1. So `abort_operation` is left UNWRAPPED (a
+comment at its head records why, to stop a future re-add). The lesson generalizes: **there is no
+genuinely zero-drift production composite to wrap today** — `abort_operation` completes+logs the
+ESC-polygon, and `hier_traversal`'s walk logs faithful `descend`/`go_back` lines by §6's deliberate
+choice; wrapping either is real output drift. So the composite hazard is closed **structurally by
+the replay seam + the general `push/pop` primitive**, not by a production teardown wrap. The
+composite MECHANISM is proven by a synthetic composite in the test (case e: three self-logging
+sub-ops → +3 unwrapped, +0 inside a suppress scope), and the ESC-close-polygon-still-logs behavior
+is now LOCKED (case g) so no future teardown wrap can silently reintroduce the drift.
+
+**Deliberately NOT collapsed — `hier_traversal` (xschem.tcl).** §6 named this as the other real
+composite: its all-hierarchy walk logs a faithful `descend -inst` / `go_back 2` pair per subcircuit
+(≈28 lines on greycnt.sch). It is a NET-ZERO read-only dialog refresh (descend then return), so
+wrapping the top-level `hier_traversal 0 …` call in `push/pop` would be replay-equivalent and drop
+the noise — BUT §6 kept those lines by a deliberate "faithful by design" decision, and collapsing
+them WOULD change a currently-shipped log's output. Per the atom's "changes no observable output"
+constraint + DQ3 "do not silence a real multi-effect op / do not change a currently-correct
+granularity," this atom provides the setter that makes the collapse a **one-line opt-in follow-up**
+(the §6 remedy is now available) but does not take it. The composite-collapse MECHANISM is instead
+locked by a synthetic composite in the test (case e: three self-logging sub-ops → +3 unwrapped, +0
+inside a suppress scope).
+
+**Verified:** `tests/headless/test_actionlog_suppress_gate.tcl` (19 checks, full_audit
+logdir_tests — (a)–(f) X-independent, (g) drives a gesture): (a) baseline mutator +1; (b)
+absolute-set scope +0 then resumes; (c) push/pop NESTS at depth 2, one pop stays suppressed, outer
+pop restores, extra pop underflow-clamped; (d) the replay seam re-executes without re-logging
+(`copy`/`set cadsnap 5` counts unchanged) AND the cadsnap effect applies, with a CONTROL unwrapped
+`source` that DOES re-log — proving the wrap is load-bearing; (e) the composite granularity lock;
+(f) `cmd_logged` clean after a suppressed scope (`-emitted==0` inside, `==1` after); (g) the
+review-driven regression lock — a polygon gesture + ESC still logs `xschem polygon` (deferred, not
+failed, if the gesture makes no polygon in a windowless env). **Sabotage ×3 on the shipped design,
+each failing exactly its checks, each restore `git diff`-clean:** (1) push body → no-op:
+(c)/(d)/(e suppressed→+3)/(f) fail while (b) absolute-set stays green (the two surfaces are
+independent); (2) drop the replay wrap: (d) re-logs + grep S1/S4 xschem.tcl rows fail; (3) drop the
+pop `>0` clamp: an extra pop drives the counter negative (still truthy) and logging sticks OFF —
+case (c) extra-pop fails. Plus the empirical A/B that drove the review fix: wrapped binary logs 0
+`xschem polygon` on ESC-close, unwrapped logs 1. **Grep guard extended:** S1 rows for the two
+util.c definitions, the scheduler `-suppress`/`set actionlog_suppress` arms, and the two
+`replay_action_log` seam lines (line-anchored); a new **S4 suppress-scope block** locks the three
+wiring points so a future edit that removes any one fails closed.
+
+**Adversarial review (4-axis refute + independent verify — nesting-leak / replay-completeness /
+output-drift / flag-separation): 1 CONFIRMED MAJOR, FIXED in-tree.** Three axes (nesting,
+replay, flag-separation) independently traced the same real defect — the `abort_operation`
+suppress-wrap silences the ESC-close-polygon `new_polygon(END)` self-log — and a second verifier
+confirmed each; it was fixed by removing the wrap (see 2b above), and locked by case (g). Notably my
+OWN output-drift axis MISSED it (it checked `delete`/`move`/`new_wire` under abort but not
+`new_polygon(END)`) — the multi-axis panel is what caught the hole a single reviewer's blind spot
+left, the point of the exercise. The setter counter (balanced push/pop, safe underflow clamp,
+correct nesting), the replay seam (all writes route through the honored gate; cross-process replay
+`--nolog`-safe), and the flag separation (suppress early-returns before `cmd_logged=1`; the two
+flags never corrupt each other) were all verified SOUND with no surviving findings.
+
+**Next atom:** the FIRST per-verb migration onto `perform_action` — pick one clean 1:1 mutator,
+route its key/menu/scheduler/gesture entry points through the one boundary, and prove one readonly
+gate + one log site (the suppress gate is now the safety net that makes the log site re-entrant-
+safe). Optional bounded pick: the atom-16 menu-bypass CLASS sweep (other edit-geometry `-variable`
+checkbuttons). Optional one-liner: collapse `hier_traversal`'s walk with the new setter if the ≈28
+navigation lines are judged noise.
+
 ---
 
 *Prepared 2026-07-14, `fluid-editing`. §1–5 analysis only — no code changed. §6 added after
 atom 3 landed; §7 after atom 4; §8 after atom 5; §9 after atom 6; §10 after atom 7; §11 after
 atom 8; §12 after atom 9; §13 after atom 10; §14 after atom 11;
-§15 after atom 12; §16 after atom 13; §17 after atom 14; §18 after atom 15; §19 after atom 16.
+§15 after atom 12; §16 after atom 13; §17 after atom 14; §18 after atom 15; §19 after atom 16;
+§20 after the Refactor B foundation (actionlog_suppress setter + the replay/composite seams).
 Coverage verified in source at HEAD by a 14-way parallel read; do not trust the status table
 without re-checking the cited `file:line` anchors, which drift as the tree moves.*

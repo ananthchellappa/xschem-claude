@@ -110,6 +110,12 @@ set MANIFEST {
     {av\[ac\+\+\] = "netlist";}                       1 {netlist branch emits the resolved `xschem netlist [-erc] [-nohier] [{fname}]` replay form -- the branch IS the 1:1 self-log site (atom 14 / 0062)}
     {tclsetboolvar\("enable_stretch", atoi\(argv\[3\]\)} 1 {set enable_stretch replay arm applies the resolved tcl var, the absolute form toggle_stretch_cmd self-logs; NO self-log here -> no double on replay (atom 16 / 0062 tail)}
     {if\(!v\) xctx->manhattan_lines = 0;}             1 {set orthogonal_wiring replay arm reproduces the manhattan_lines side effect (edit-mode faithfulness), matching toggle_orthogonal_wiring_cmd; NO self-log here (atom 16 / 0062 tail)}
+    {!strcmp\(argv\[2\], "-suppress"\)}               1 {log_action -suppress push|pop: the re-entrant scope guard the replay seam + composite ops ride on -- a DEPTH COUNTER so replay{composite{core}} stays suppressed until the outermost pop (issue 0071 Refactor B foundation / audit §3.2)}
+    {!strcmp\(argv\[2\], "actionlog_suppress"\)}      1 {set actionlog_suppress N: the absolute (hard-reset) setter; NOT self-logged (a control command, and once >0 the log_action is a no-op anyway)}
+  }
+  src/util.c {
+    {void actionlog_suppress_push\(void\)}            1 {the re-entrant suppress-scope PUSH (depth counter): the write site actionlog_suppress lacked -- the gate existed in log_action* but nothing ever set it (audit §3.2)}
+    {void actionlog_suppress_pop\(void\)}             1 {the matching POP, underflow-clamped (>0 guard) so an unbalanced extra pop keeps logging ON}
   }
   src/callback.c {
     {log_action\("xschem set enable_stretch}          1 {toggle_stretch_cmd core self-logs the ABSOLUTE resolved state, not the replay-fragile relative flip (atom 16 / 0062 tail)}
@@ -179,6 +185,8 @@ set MANIFEST {
     {(?n)^\s*xschem\s+log_action\s+\[list\s+write_net_hilight_style_conf\M} 1 {nhse_save resolved-path line (atom 8 / 0065)}
     {(?n)^\s*xschem toggle_stretch$} 1 {Options-menu "Enable stretch" checkbutton -command routes through the self-logging toggle_stretch_cmd (atom 16 / 0062 tail): a bare -variable checkbutton bypassed the cmd and logged nothing}
     {(?n)^\s*xschem toggle_orthogonal_wiring$} 1 {Options-menu "Enable orthogonal wiring" checkbutton -command routes through toggle_orthogonal_wiring_cmd -- the ONLY interactive control for the keyless verb -- applying side effects AND self-logging (atom 16 / 0062 tail)}
+    {(?n)^\s*xschem log_action -suppress push$} 1 {replay_action_log seam: source a recorded log IN-SESSION under the suppress scope so lines re-EXECUTE but do not re-LOG -- the audit §3.2 replay re-entrancy hazard, made safe for an in-session replay (Refactor B foundation)}
+    {(?n)^\s*xschem log_action -suppress pop$}  1 {replay_action_log seam close: balanced via catch so a mid-file error still pops the scope}
   }
   src/library_manager.tcl {
     {(?n)^\s*xschem\s+log_action\s+\[list\s+libmgr::do_} 14 {do_* mutation-seam logs, one per worker, line-anchored so a commented-out site does not count (atom 7 / 0064)}
@@ -362,6 +370,25 @@ check "S4 callback.c: dedup flag checks (ctx menu + dispatch)" \
   [expr {[rxcount $cb {!actionlog_cmd_logged}] >= 2}]
 check "S4 library_manager open_cellview: gated fallback (-emitted x2)" \
   [expr {[rxcount $lbm {log_action -emitted}] >= 2}]
+# The suppress-scope guard (issue 0071 Refactor B foundation) is NEW dedup wiring:
+# the setter + the two re-entrancy seams. If any of these four go missing, the
+# replay/composite double-log hazard (§3.2) re-opens -> fail closed.
+set utl [srctext src/util.c]
+set xtcl [srctext src/xschem.tcl]
+check "S4 suppress-scope: util.c defines the push/pop depth guard" \
+  [expr {[rxcount $utl {void actionlog_suppress_push}] >= 1 &&
+         [rxcount $utl {void actionlog_suppress_pop}]  >= 1}]
+check "S4 suppress-scope: scheduler.c wires -suppress push|pop + the absolute set" \
+  [expr {[rxcount $sched {!strcmp\(argv\[3\], "push"\)}] >= 1 &&
+         [rxcount $sched {!strcmp\(argv\[2\], "actionlog_suppress"\)}] >= 1}]
+# NOTE: abort_operation is deliberately NOT suppress-wrapped (adversarial-review
+# MAJOR, §20): its STARTPOLYGON arm calls new_polygon(END) which self-logs a real
+# `xschem polygon` line, so a blanket wrap would drop it. The composite hazard is
+# closed via the replay seam + the general push/pop primitive instead. The
+# suppress-gate test's case (g) locks the "abort must not suppress" behaviour.
+check "S4 suppress-scope: replay_action_log seam push AND pop (xschem.tcl)" \
+  [expr {[rxcount $xtcl {log_action -suppress push}] >= 1 &&
+         [rxcount $xtcl {log_action -suppress pop}]  >= 1}]
 
 # ---------------------------------------------------------------------------
 # S5) RUNTIME CANARY: exactly-once end-to-end (static scans can't see a broken

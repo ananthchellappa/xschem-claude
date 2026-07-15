@@ -189,7 +189,16 @@ void redraw_w_a_l_r_p_z_rubbers(int force)
 /* resets UI state and aborts any pending operation. deselect!=0 also clears the
  * selection when nothing was pending (the legacy ESC behavior); deselect==0 keeps the
  * current selection and just redraws. ESC drives this via the `escape_deselects` var
- * (see src/xschem.tcl); all other internal callers pass 1. */
+ * (see src/xschem.tcl); all other internal callers pass 1.
+ *
+ * NOT wrapped in a log-suppress scope (issue 0071 Refactor B foundation, §20):
+ * abort_operation is NOT a pure teardown -- the STARTPOLYGON arm below calls
+ * new_polygon(END), which COMPLETES the polygon (store_poly + push_undo) and
+ * self-logs `xschem polygon ...` (actions.c). ESC-closes-a-polygon is a real
+ * logged edit, so a blanket suppress here would DROP that line (adversarial-review
+ * MAJOR, empirically confirmed). No production composite is a genuinely zero-drift
+ * suppress target today; the composite hazard is closed structurally by the
+ * replay seam (replay_action_log) + the general push/pop primitive instead. */
 void abort_operation(int deselect)
 {
   xctx->no_draw = 0;

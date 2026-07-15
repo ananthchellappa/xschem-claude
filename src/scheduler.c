@@ -4992,6 +4992,20 @@ static int xschem_cmds_l(Tcl_Interp *interp, int argc, const char *argv[], int *
       /* -suppressecho 0|1: while 1, a core self-log writes the file but not the
        * CIW mirror (the CIW entry already echoed the typed input line). */
       else if(argc > 3 && !strcmp(argv[2], "-suppressecho")) actionlog_suppress_echo = atoi(argv[3]);
+      /* -suppress push|pop: re-entrant scope guard (issue 0071 Refactor A step 2).
+       * Wrap a REPLAY (source a log with the log still OPEN) or a COMPOSITE op so
+       * its sub-lines re-EXECUTE but do NOT re-LOG. A DEPTH COUNTER -> nested
+       * scopes (replay { composite { core } }) stay suppressed until the OUTERMOST
+       * pop. This is the SAFE surface (`replay_action_log`, xschem.tcl, uses it);
+       * `xschem set actionlog_suppress N` below is the absolute (hard-reset) form.
+       * NOT self-logged and never mints a line -- a control command, and once >0
+       * every log_action is a no-op anyway. Distinct from -suppressecho (which
+       * still writes the file). */
+      else if(argc > 3 && !strcmp(argv[2], "-suppress")) {
+        if(!strcmp(argv[3], "push"))      actionlog_suppress_push();
+        else if(!strcmp(argv[3], "pop"))  actionlog_suppress_pop();
+        else actionlog_suppress = atoi(argv[3]);   /* -suppress 0|1 absolute */
+      }
       /* -reset: clear the dedup flag before a wrapper evaluates a command. */
       else if(argc > 2 && !strcmp(argv[2], "-reset")) actionlog_cmd_logged = 0;
       else if(argc > 2) log_action("%s", argv[2]);
@@ -8640,7 +8654,18 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
        * logging spec §6). Do not add blanket logging here; re-flagging them is expected. */
       if(argc > 3) {
         if(argv[2][0] < 'n') {
-          if(!strcmp(argv[2], "cadgrid")) { /* set cad grid (default: 20) */
+          if(!strcmp(argv[2], "actionlog_suppress")) {
+            /* Absolute set of the replay/composite log-suppress depth counter
+             * (issue 0071 Refactor A step 2). A HARD set: 0 clears ANY nesting,
+             * unlike the balanced `xschem log_action -suppress push|pop`. Provided
+             * for scripts/tests that want a flat on/off; the seams use push/pop.
+             * NOT self-logged (a control command; and once >0 the log_action that
+             * would record it is already a no-op). Not a saved-content edit -> no
+             * read-only guard. C int, not tcl-mirrored (globals.c). */
+            actionlog_suppress = atoi(argv[3]);
+            if(actionlog_suppress < 0) actionlog_suppress = 0;
+          }
+          else if(!strcmp(argv[2], "cadgrid")) { /* set cad grid (default: 20) */
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
             set_grid( atof(argv[3]) );
             /* self-log the RESOLVED grid (0066): set_grid maps 0 -> the default, so
