@@ -67,8 +67,20 @@ proc click1 {x y} {
   xschem callback .drw 4 $x $y 0 1 0 0
   xschem callback .drw 5 $x $y 0 1 0 256
 }
-# instance coords: {name} {sym} x0 y0 rot flip
-proc inst_geom {i} { return [lrange [xschem instance_coord $i] 2 5] }
+# instance coords: {name} {sym} x0 y0 rot flip. Empty on a missing instance
+# (e.g. a paste that committed nothing) so callers fail their checks instead
+# of throwing "instance not found" out of the script.
+proc inst_geom {i} {
+  if {[catch {xschem instance_coord $i} r]} { return {} }
+  return [lrange $r 2 5]
+}
+
+# Any uncaught error below must NOT kill the script: the RESULT banner would
+# be lost (full_audit sees a hang/garbage, not a FAIL) and, before the xinit.c
+# automation gate, an erroring --script raised a MODAL Tk dialog on the
+# desktop. One catch wraps every section: an error = one FAIL + clean banner
+# + workdir cleanup.
+if {[catch {
 
 # ---------------------------------------------------------------------------
 # T1) clipboard paste drop -> exactly one replayable line, delta == displacement
@@ -367,6 +379,10 @@ check "T11 real move after empty merge logs move_objects, not paste" \
 # ---------------------------------------------------------------------------
 check "T9 no '# paste/merge drop' marker anywhere in the log" \
   [expr {[countglob [loglines] {# paste/merge drop*}] == 0}]
+
+} ::t_err]} {
+  check "uncaught error in test body" 0 $::t_err
+}
 
 file delete -force $work
 puts ""

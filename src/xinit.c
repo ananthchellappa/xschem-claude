@@ -1432,7 +1432,11 @@ static int source_tcl_file(char *s)
        {Tcl_AppInit() err 1: can not execute %s, please fix:\n%s\n}",
        s, tclresult());
     #endif
-    if(has_x) {
+    /* automation sessions (--pipe / -q script drivers) must never raise a MODAL
+     * error dialog: it litters the desktop and blocks until a human clicks OK
+     * (a whole test-audit run can queue dozens). The error is already on stderr
+     * above; only an interactive GUI session gets the messageBox. */
+    if(has_x && !cli_opt_pipe && !cli_opt_quit) {
       tcleval( "wm withdraw .");
       tcleval( tmp);
       Tcl_Exit(EXIT_FAILURE);
