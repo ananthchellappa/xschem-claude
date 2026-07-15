@@ -5925,6 +5925,33 @@ static int xschem_cmds_n(Tcl_Interp *interp, int argc, const char *argv[], int *
       tclsetvar("show_infowindow_after_netlist", saveshow);
       tcleval("eval_netlist_postprocess");
       set_netlist_dir(1, savedir);
+      /* action-log (issue 0062 last silent toolbar/menu row / issue 0071 atom 14):
+       * this `netlist` branch IS 1:1 with the user verb `xschem netlist` -- it is the
+       * replay form reached by the toolbar (xschem.tcl toolbar_add Netlist), the menu,
+       * the plain `n` key (bound to toolbar.netlist -> the dispatch after-eval dedup
+       * skips the wrapper copy since we set actionlog_cmd_logged here) and scripted
+       * calls. So the branch self-logs the resolved output-affecting form (the atom-3/4
+       * branch-self-log shape, NOT a coordinate-bypass verb -- netlist is a real
+       * re-executable action like `save`, so it correctly re-logs on replay). The
+       * global_*_netlist() cores are SHARED (this branch + the Shift-N key +
+       * the CLI -n batch), so they must NOT self-log; the Shift-N current-level key
+       * logs its own `-nohier` equivalent at its callback.c handler (keyboard-bypass).
+       * MACHINERY GATE (mirrors the atom-4 `save fast` axis): `-keep_symbols` is passed
+       * ONLY by the cellview/reroute machinery (xschem.tcl reroute_inst / cellview
+       * relabel, which netlist a temporarily-loaded file between unlogged
+       * `load -keep_symbols` calls), so a keep_symbols pass stays SILENT or a replayed
+       * line would fire against the wrong file / flood. The dir-unwritable early return
+       * (done_netlist == 0) logs nothing. */
+      if(done_netlist && !keep_symbols) {
+        const char *av[5];
+        int ac = 0;
+        av[ac++] = "xschem";
+        av[ac++] = "netlist";
+        if(erc) av[ac++] = "-erc";
+        if(!hier_netlist) av[ac++] = "-nohier";
+        if(fname) av[ac++] = fname;
+        log_action_argv(ac, (const char *const *)av);
+      }
       if(done_netlist) {
         if(messages) {
           Tcl_SetResult(interp, xctx->infowindow_text, TCL_VOLATILE);

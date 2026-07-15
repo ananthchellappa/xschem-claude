@@ -1032,11 +1032,117 @@ node-order — all stash+rebuild-confirmed byte-identical on baseline; the caden
 atom 13). The §2 "Gesture drops" row has no remaining marker; shape point-edit (0005) is a
 separate selection-addressing issue, not a 0069 sibling.
 
+## 17. Atom 14 outcome (2026-07-15): the Netlist command records a REPLAYABLE line (0062's last silent toolbar/menu row CLOSED)
+
+The §2 "Toolbar + recent-component bar — 0062" PARTIAL row's **Netlist** gap closed. The
+`netlist` scheduler branch logged nothing; the toolbar button (`toolbar_add Netlist
+{xschem netlist -erc}`) and the menu item both eval `xschem netlist -erc`, so the real
+"make a netlist" user action recorded no line at all. It now records the branch's own
+resolved replay form:
+
+```
+xschem netlist [-erc] [-nohier] [{fname}]
+```
+
+- **Log site = the SCHEDULER BRANCH (the atom-3/4 branch-self-log shape, NOT a
+  coordinate-bypass verb).** The branch is 1:1 with the user verb `xschem netlist` — reached
+  by the toolbar, the menu, the plain `n` key (bound to `toolbar.netlist` → the dispatch
+  after-eval dedup skips the wrapper copy because the branch sets `actionlog_cmd_logged` via
+  `log_action_argv`→`log_action`), and scripted calls. It logs the resolved *output-affecting*
+  form via `log_action_argv` (Tcl_Merge → a brace-y/space filename stays replayable),
+  reconstructed from the parsed flags (`erc`, `!hier_netlist`, `fname`). netlist is a real
+  re-executable action (like `save`), so it correctly **re-logs on replay** — this is the
+  OPPOSITE of the coordinate-bypass verbs (paste/move_objects/wire), so `netlist` is
+  deliberately **NOT** in the grep-guard S3 branch-must-not-log set; the S1 branch-emit row IS
+  the lock (it is in S2 CVERBS so no Tcl file may hand-log a literal `xschem netlist` line).
+- **The `global_*_netlist()` cores are SHARED** (this branch + the Shift-N key + the CLI `-n`
+  batch), so they do NOT self-log — logging there would double the branch and flood the batch.
+- **The Shift-N current-level key (callback.c `case 'N'` rstate==0) bypasses the branch**
+  (direct `global_*_netlist(0,1)`), so it logs its equivalent at the entry site (the atom-4
+  Ctrl-S/Alt-S keyboard-bypass pattern). The faithful form is **`xschem netlist -erc -nohier`,
+  NOT bare `-nohier`** — an adversarial-review MAJOR (2 independent verifiers): the key runs
+  `global_*_netlist(0,1)` and touches nothing else, in particular it does NOT clear
+  `xctx->netlist_name`, but the branch's **erc==0** arm DOES clear it after netlisting
+  (scheduler.c). So a bare `-nohier` line (erc=0) would, on replay, clear a custom
+  `netlist_name` the key had preserved → a *later* replayed netlist writes the default file
+  instead. `-erc` (erc=1) is the **state-preserving** flag here (it is not separate ERC work —
+  ERC runs inside `global_*_netlist` regardless); erc=1 skips both the `netlist_name` clear and
+  the infowindow suppression, so `-erc -nohier` reproduces the key's output AND its state
+  (`hier_netlist=0` → the same `global_*_netlist(0,1)`). There is no `'N'`/ShiftMask netlist
+  binding, so the legacy switch runs → the two paths are disjoint → one action = one line.
+  (The key's extra `unselect_all(1)` and the branch's `eval_netlist_postprocess` are non-file
+  side effects — netlisting ignores selection — so the netlist FILE round-trips byte-identically.)
+- **MACHINERY GATE (the atom-4 `save fast` axis): `-keep_symbols` stays SILENT.** `-keep_symbols`
+  is passed ONLY by the cellview/reroute machinery (`xschem.tcl:3278/3355`
+  `xschem netlist -keep_symbols -noalert`, which netlist a temporarily-loaded file between
+  unlogged `load -keep_symbols` calls) — a replayed line would fire against the wrong file /
+  flood — so the branch gates its emit on `!keep_symbols`. Verified in source: `-keep_symbols`
+  has no real-user caller, and `-messages`/`-noalert`/`-nohier` have no non-machinery caller, so
+  `keep_symbols` is the clean, sole discriminator.
+- **Policy (atom-4 `save` precedent): netlist IS a replayable user action** despite writing a
+  file (Virtuoso echoes it); logged unconditionally on success. The **dir-unwritable early
+  return** (`done_netlist == 0`) logs nothing (the emit sits inside that gate).
+- **Out of scope, DEFERRED (user-confirmed, not silently expanded):** the toggle-colors /
+  `toggle_*` family — pure-view toggles (`toggle_colorscheme`/`toggle_draw_pixmap`/
+  `toggle_show_netlist`/`toggle_ignore`) per the 0066 display policy; the two edit-mode toggles
+  (`toggle_stretch`/`toggle_orthogonal_wiring`) flagged as a candidate follow-up needing
+  absolute-value (`set`-class) logging, not a replay-fragile relative flip. `simulate` does NOT
+  netlist (`proc simulate` has no `xschem netlist`; the scheduler `simulate` branch calls the
+  Tcl proc, which assumes the netlist exists). The CLI `-n` batch (`xinit.c:3629` direct
+  `global_*_netlist(1,1)`) is left silent — it is the whole program's purpose (one program = one
+  record, atom-6 policy) and runs at startup before the interactive log matters.
+
+**Adversarial review (5-lens refute workflow — machinery-gate-completeness / key-branch-double-log /
+nohier-byte-equivalence / scope-missed-callers / replay-fname-reentrancy, each a source-reading
+refuter with a second independent verifier per surviving finding): 1 CONFIRMED (fixed in-tree), the
+rest refuted/accepted.**
+1. **MAJOR — the `netlist_name`-clear asymmetry (fixed).** The first cut logged the Shift-N key as
+   bare `xschem netlist -nohier`. Two independent lenses confirmed a real reachable divergence: the
+   branch's `erc==0` arm clears `xctx->netlist_name` after netlisting, but the key never does — so a
+   replayed bare `-nohier` line would clear a custom `netlist_name` (set via `-N foo.spice` launch or
+   `xschem set netlist_name`), and a *later* replayed netlist would then write the default file
+   instead of the custom one. Fixed by logging **`xschem netlist -erc -nohier`** — erc=1 is the
+   state-preserving flag (skips the clear + the infowindow suppression), matching the key exactly.
+   Locked by test 4b (key preserves a custom name; the replayed `-erc -nohier` line preserves it; a
+   control bare `-nohier` line is shown to CLEAR it — the divergence avoided).
+2. *Refuted/accepted (did not survive verification):* the mirror machinery-clear (a silent
+   `-keep_symbols` op clears `netlist_name`; the clear isn't logged so a later replayed bare netlist
+   could write the custom file) is an inherent property of the silent-machinery gate over a shared
+   session global — the SAME accepted class as atom-4's cellview temp-file machinery, not fixable
+   without logging machinery (which would be wrong); the `unselect_all(1)` and `eval_netlist_postprocess`
+   differences are non-file side effects; the `done_netlist==1`-without-a-write no-op log is the
+   slice-1 norm (replay-consistent no-op). Documented, not coded.
+
+Verified: `test_netlist_log.tcl` (26 checks, full_audit logdir_tests — every branch form (`-erc`,
+bare, `-nohier`, `fname`) records exactly its line and the RECORDED line replayed regenerates the
+netlist BYTE-IDENTICALLY (netlisting is deterministic — a double-netlist proof underpins the
+oracle); `-keep_symbols` machinery silent both with and without `-noalert`; dir-unwritable logs
+nothing (a regular-file path component makes mkdir fail root-proof); Shift-N key logs `-erc -nohier`,
+its recorded line replays byte-identically, and it preserves a custom `netlist_name` (with a control
+proving bare `-nohier` clears it — the fixed divergence); plain `n` key dispatch dedup exactly-once;
+fname form replays to the custom path; no `ask_save` prompt). Sabotage ×3 (neutralize the branch
+emit → exactly the 9 branch-form checks; drop the `!keep_symbols` gate → exactly the 2 machinery
+checks; neutralize the Shift-N key log → exactly the 1 Shift-N log-count check, while its two
+netlist-OUTPUT checks stay green). Grep guard: S1 rows for the branch gate (`if(done_netlist &&
+!keep_symbols)`) + emit (`av[ac++] = "netlist";`) + the Shift-N key emit; `netlist` added to the S2
+CVERBS set; deliberately NOT added to S3 (the branch IS the self-log site — the atom-3/4 shape).
+Full audit: no new failures beyond the known WSLg/env baseline (the cadence duo, test_ciw /
+test_hi_descend / test_lib_manager_gui / test_reopen_readonly / test_altf5_ciw GUI set,
+test_selflog_output transform-keys, test_phase3_mints g/G snap keys, test_lib_sweep migration,
+test_wire_split W7 netlist node-order, test_select_at pending-stash, test_verb_noun / test_fluid_editing /
+test_wire_vertex_grab congestion flakes — none touches netlisting); test_netlist_log passes standalone
+and reports ALL PASS headless (its keyboard sections defer without the `skipped: no X` token so the
+non-X branch/machinery/dir/fname core still validates in a windowless audit; the Shift-N emit is
+statically locked by the grep-guard S1 row regardless).
+
+**0062's last silent toolbar/menu row (Netlist) is CLOSED.** The 0062 remainder now has only the
+`toggle_*` display/edit-mode toggles left, deferred by documented policy above.
+
 ---
 
 *Prepared 2026-07-14, `fluid-editing`. §1–5 analysis only — no code changed. §6 added after
 atom 3 landed; §7 after atom 4; §8 after atom 5; §9 after atom 6; §10 after atom 7; §11 after
 atom 8; §12 after atom 9; §13 after atom 10; §14 after atom 11;
-§15 after atom 12; §16 after atom 13. Coverage verified in source at
+§15 after atom 12; §16 after atom 13; §17 after atom 14. Coverage verified in source at
 HEAD by a 14-way parallel read; do not trust the status table without re-checking the cited
 `file:line` anchors, which drift as the tree moves.*

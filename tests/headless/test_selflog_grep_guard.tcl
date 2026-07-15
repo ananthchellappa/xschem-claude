@@ -106,6 +106,8 @@ set MANIFEST {
     {if\(argc > 7\) noline = atoi\(argv\[7\]\);}      1 {add_symbol_pin no-stub-line replay arg: the sympin drop replay form matches the -place geometry (atom 11)}
     {if\(vi >= 0\) pin_view_writeback\(vi\);}         1 {add_symbol_pin noline reproduces the -place move-time name_* writeback so the replay saves byte-identically (atom 11)}
     {strcmp\(argv\[4\], "kissing"\) && strcmp\(argv\[4\], "stretch"\)} 2 {move_objects + copy_objects replay arms parse `rot flip [local] [-anchor]`, guarded against the kissing/stretch flag words so a plain line parses unchanged (atom 13 / 0069)}
+    {if\(done_netlist && !keep_symbols\)}            1 {netlist branch self-log gate: `-keep_symbols` cellview/reroute machinery stays SILENT, the atom-4 `save fast` axis; dir-unwritable (done_netlist==0) logs nothing (atom 14 / 0062)}
+    {av\[ac\+\+\] = "netlist";}                       1 {netlist branch emits the resolved `xschem netlist [-erc] [-nohier] [{fname}]` replay form -- the branch IS the 1:1 self-log site (atom 14 / 0062)}
   }
   src/callback.c {
     {log_action\("xschem copy"}                       1 {Ctrl-C inline key (atom 4)}
@@ -131,6 +133,7 @@ set MANIFEST {
     {(?n)^\s*av\[0\] = "xschem"; av\[1\] = "add_symbol_pin";} 1 {sympin drop: symbol-pin replay line (atom 11 / 0069)}
     {(?n)^\s*av\[0\] = "xschem"; av\[1\] = "instance";} 1 {placed-instance read-back line in log_placed_instance -- shared by PLACE_SYMBOL + schematic Add-Pin drop (atom 11)}
     {(?n)^\s*if\(log_placed_instance\(\)\) return;}   2 {log_placed_instance called by both the PLACE_SYMBOL arm and the START_SYMPIN sch-pin arm (atom 11)}
+    {log_action\("xschem netlist -erc -nohier"}      1 {Shift-N current-level netlist key entry-site: bypasses the branch (direct global_*_netlist(0,1)), logs `-erc -nohier` -- `-erc`=state-preserving (erc=1 skips the netlist_name clear + infowindow suppression the key never does), NOT bare `-nohier` which would clear a custom netlist_name (atom 14 review MAJOR / 0062)}
   }
   src/paste.c {
     {(?n)^\s*my_strncpy\(xctx->merge_source,}         1 {merge_file source stash for the drop logger (atom 9)}
@@ -251,7 +254,7 @@ set CVERBS {
   make_symbol make_sch make_sch_from_sel descend descend_symbol go_back
   select_grow_connected select_at library_manager exit
   wire line rect arc polygon instance text pan zoom_box paste
-  add_symbol_pin add_sch_pin
+  add_symbol_pin add_sch_pin netlist
   move_objects copy_objects load load_new_window
   {set cadsnap} {set cadgrid} {set header_text} {set rectcolor}
 }

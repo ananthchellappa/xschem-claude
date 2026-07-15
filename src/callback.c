@@ -5404,6 +5404,24 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
             tcleval("tk_messageBox -type ok -parent [xschem get topwindow] "
                     "-message {Please Set netlisting mode (Options menu)}");
           dbg(1, "callback(): -------------\n");
+          /* action-log (issue 0071 atom 14): the Shift-N current-level netlist
+           * bypasses the scheduler `netlist` branch (it calls global_*_netlist()
+           * directly), so it logs its own equivalent at this entry site (the atom-4
+           * Ctrl-S/Alt-S keyboard-bypass pattern). The key runs global_*_netlist(0,1)
+           * and touches NOTHING else -- crucially it does NOT clear xctx->netlist_name
+           * and does NOT force show_infowindow_after_netlist=never. The faithful branch
+           * form is therefore `netlist -erc -nohier`, NOT bare `-nohier`: `-nohier`
+           * gives current-level (hier_netlist=0 -> the same global_*_netlist(0,1)), and
+           * `-erc` (erc=1) is the STATE-PRESERVING flag here -- it is NOT separate ERC
+           * work (ERC checks run inside global_*_netlist regardless of the flag); erc=1
+           * simply skips BOTH the netlist_name clear and the infowindow suppression that
+           * the branch's erc==0 arm performs (scheduler.c), which the key never does. A
+           * bare `-nohier` line would clear a custom netlist_name the key had preserved,
+           * diverging a LATER replayed netlist to the wrong output file (adversarial
+           * review MAJOR, 2 independent verifiers). Logged inside the set_netlist_dir()
+           * success arm so the dir-unwritable else logs nothing; disjoint from the branch
+           * (no Shift-N binding entry -> the legacy switch runs) so one action = one line. */
+          log_action("xschem netlist -erc -nohier");
         }
         else {
            if(has_x) tcleval("alert_ {Can not write into the netlist directory. Please check} {}");
