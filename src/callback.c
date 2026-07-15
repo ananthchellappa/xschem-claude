@@ -1551,6 +1551,34 @@ void log_action_argv(int argc, const char *const *argv)
   Tcl_Free(line);
 }
 
+/* Read the lone placed instance back and log its coordinate replay form
+ * `xschem instance {sym} x y rot flip {prop}` (Tcl_Merge quotes name/prop safely
+ * -> replayable for any legal string, incl. the braces/backslashes the old
+ * tcl_braceable guard rejected, issue 0048). Returns 1 if a single ELEMENT was
+ * logged, else 0 (the caller emits its own '#' fallback marker). Shared by the
+ * PLACE_SYMBOL drop and the schematic Add-Pin drop -- add_sch_pin -place places
+ * an ipin/opin/iopin INSTANCE, so its drop replays exactly like a normal symbol
+ * placement (issue 0069 sympin atom 11). The coordinate form bypasses this
+ * funnel on replay, so a replayed line never re-logs. */
+static int log_placed_instance(void)
+{
+  int n = (xctx->lastsel == 1 && xctx->sel_array[0].type == ELEMENT) ? xctx->sel_array[0].n : -1;
+  const char *name, *prop;
+  char xb[64], yb[64], rb[16], fb[16];
+  const char *av[8];
+  if(n < 0 || n >= xctx->instances) return 0;
+  name = xctx->inst[n].name ? xctx->inst[n].name : "";
+  prop = xctx->inst[n].prop_ptr ? xctx->inst[n].prop_ptr : "";
+  my_snprintf(xb, S(xb), "%.16g", xctx->inst[n].x0);
+  my_snprintf(yb, S(yb), "%.16g", xctx->inst[n].y0);
+  my_snprintf(rb, S(rb), "%d", (int)xctx->inst[n].rot);
+  my_snprintf(fb, S(fb), "%d", (int)xctx->inst[n].flip);
+  av[0] = "xschem"; av[1] = "instance"; av[2] = name; av[3] = xb;
+  av[4] = yb; av[5] = rb; av[6] = fb; av[7] = prop;
+  log_action_argv(8, av);
+  return 1;
+}
+
 /* action-log Layer C (spec section 2): complete a move/copy drag and record
  * the single command reproducing its effect. The two callback completion
  * paths (end_place_move_copy_zoom and the intuitive-interface release) both
@@ -1634,26 +1662,49 @@ static void end_move_copy_logged(int is_copy)
     log_action_argv(ac, av);
   }
   else if(ui & START_SYMPIN) {
-    log_action("# place symbol pin (no replayable subcommand yet)");
-  }
-  else if(ui & PLACE_SYMBOL) {
-    int n = (xctx->lastsel == 1 && xctx->sel_array[0].type == ELEMENT) ? xctx->sel_array[0].n : -1;
-    if(n >= 0 && n < xctx->instances) {
-      const char *name = xctx->inst[n].name ? xctx->inst[n].name : "";
-      const char *prop = xctx->inst[n].prop_ptr ? xctx->inst[n].prop_ptr : "";
-      char xb[64], yb[64], rb[16], fb[16];
+    /* Two drops share START_SYMPIN + the sympin_preview move machinery (issue 0069
+     * atom 11), told apart here by the dropped object's type:
+     *  (a) SYMBOL pin -- a PINLAYER rect (+ its owned name view) placed by
+     *      `add_symbol_pin -place`. Replays via the direct `add_symbol_pin x y name
+     *      dir 0 1` form: draw off (a full redraw follows on replay) and NO-LINE on,
+     *      because the -place drop stores only the rect + name view while the raw
+     *      add_symbol_pin form also stores a 20-unit stub leg line; the trailing `1`
+     *      suppresses it so the replay geometry is byte-identical to the drop.
+     *  (b) SCHEMATIC pin -- an ipin/opin/iopin INSTANCE placed by `add_sch_pin
+     *      -place`. Replays via the same `xschem instance` read-back as any symbol
+     *      placement (log_placed_instance).
+     * Both replay forms are coordinate commands that bypass this funnel, so a
+     * replayed line never re-logs (coordinate-form-bypass invariant). */
+    int i, pr = -1;
+    for(i = 0; i < xctx->lastsel; ++i) {
+      if(xctx->sel_array[i].type == xRECT && xctx->sel_array[i].col == PINLAYER) {
+        pr = xctx->sel_array[i].n;
+        break;
+      }
+    }
+    if(pr >= 0 && pr < xctx->rects[PINLAYER]) {
+      xRect *p = &xctx->rect[PINLAYER][pr];
+      char *nm = NULL, *dr = NULL;
+      char xb[64], yb[64];
       const char *av[8];
-      /* Tcl_Merge quotes name/prop safely -> replayable for any legal string,
-       * incl. braces/backslashes the old tcl_braceable guard rejected (issue 0048). */
-      my_snprintf(xb, S(xb), "%.16g", xctx->inst[n].x0);
-      my_snprintf(yb, S(yb), "%.16g", xctx->inst[n].y0);
-      my_snprintf(rb, S(rb), "%d", (int)xctx->inst[n].rot);
-      my_snprintf(fb, S(fb), "%d", (int)xctx->inst[n].flip);
-      av[0] = "xschem"; av[1] = "instance"; av[2] = name; av[3] = xb;
-      av[4] = yb; av[5] = rb; av[6] = fb; av[7] = prop;
+      /* get_tok_value() shares one volatile static buffer -> copy each token out
+       * before the next call (cf. create_pin, actions.c) */
+      my_strdup(_ALLOC_ID_, &nm, get_tok_value(p->prop_ptr, "name", 0));
+      my_strdup(_ALLOC_ID_, &dr, get_tok_value(p->prop_ptr, "dir", 0));
+      my_snprintf(xb, S(xb), "%.16g", (p->x1 + p->x2) / 2.0);
+      my_snprintf(yb, S(yb), "%.16g", (p->y1 + p->y2) / 2.0);
+      av[0] = "xschem"; av[1] = "add_symbol_pin"; av[2] = xb; av[3] = yb;
+      av[4] = nm ? nm : ""; av[5] = dr ? dr : ""; av[6] = "0"; av[7] = "1";
       log_action_argv(8, av);
+      my_free(_ALLOC_ID_, &nm);
+      my_free(_ALLOC_ID_, &dr);
       return;
     }
+    if(log_placed_instance()) return;
+    log_action("# place symbol pin (pin not cleanly recordable)");
+  }
+  else if(ui & PLACE_SYMBOL) {
+    if(log_placed_instance()) return;
     log_action("# place symbol (instance not cleanly recordable)");
   }
   else if(ui & PLACE_TEXT) {

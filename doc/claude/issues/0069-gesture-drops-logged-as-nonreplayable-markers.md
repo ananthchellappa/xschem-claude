@@ -2,7 +2,8 @@
 
 **Opened:** 2026-07-02
 **Status:** OPEN — paste/merge drop FIXED 2026-07-14 (atom 9, see §3/§4 strikethrough
-and the audit doc §12); sympin drop + rotate/flip-during-plain-move still open.
+and the audit doc §12); **sympin (symbol + schematic) drop FIXED 2026-07-15 (atom 11,
+audit doc §14)**; rotate/flip-during-plain-move still open (keeps this issue OPEN).
 **Severity:** MED — the gesture *is* logged (a `#` comment appears in file + CIW),
 but the line does not replay the mutation, so a sourced log silently drops these
 edits.
@@ -44,10 +45,21 @@ gesture from its logged data), per `end_move_copy_logged`.
   drop as a paste). Audit doc §12 (incl. review round + documented residuals:
   unrecorded ESC-abort of a channel-typed paste; mutable `-file` referents);
   locked by `test_paste_at_log.tcl` (40 checks) + grep-guard S1/S1c/S2/S3 rows.
-- `# place symbol pin (no replayable subcommand yet)` (:1570) — dropping a symbol
-  pin (`START_SYMPIN`). Note: an `xschem add_symbol_pin` subcommand already
-  exists (registered `callback.c:3036`) but the drop path doesn't read the pin
-  back to emit a coordinate form.
+- ~~`# place symbol pin (no replayable subcommand yet)` — dropping a symbol
+  pin (`START_SYMPIN`).~~ **FIXED 2026-07-15 (atom 11):** ONE marker covered TWO
+  drops that share `START_SYMPIN` + the sympin-preview move machinery, now told
+  apart in `end_move_copy_logged` by the dropped object's type: a **symbol pin**
+  (a `PINLAYER` xRECT) logs `xschem add_symbol_pin <x> <y> <name> <dir> 0 1` (the
+  direct form gained a trailing `noline` arg so the replay stores no stub leg line
+  and reproduces the move-time `pin_view_writeback`, making the save byte-identical
+  to the drop); a **schematic pin** (an ipin/opin/iopin ELEMENT placed by
+  `add_sch_pin -place`) logs the same `xschem instance {sym} x y rot flip {prop}`
+  read-back as a normal symbol placement (new shared `log_placed_instance` helper).
+  Both replay forms are coordinate commands that bypass the funnel, so a replay
+  never re-logs. Audit doc §14; locked by `test_sympin_drop_log.tcl` (42 checks) +
+  grep-guard S1/S1c/S2/S3 rows. Residual: a mid-gesture rotate/flip of a sym-pin
+  preview replays the label at rot/flip 0 (same class as the open
+  rotate/flip-during-plain-move marker below).
 - `# move/duplicate selection with rotate/flip …` (:1612) — a move/copy drop
   where the selection was also rotated/flipped mid-gesture; no single subcommand
   both translates and rotates about the gesture anchor (spec §6).
@@ -61,9 +73,12 @@ context-menu descend markers (:2534/:2544).
 
 ## 4. Fix sketch
 
-- **place symbol pin:** read the placed pin back post-drop and emit `xschem
+- ~~**place symbol pin:** read the placed pin back post-drop and emit `xschem
   add_symbol_pin x y …` (mirror the existing `PLACE_SYMBOL`/`PLACE_TEXT`
-  read-back path at :1587/:1606).
+  read-back path).~~ DONE (atom 11) — exactly as sketched for the symbol pin, plus
+  the schematic-pin (instance) variant via the shared `log_placed_instance` and a
+  `noline`/writeback replay arg for byte-identical symbol-pin geometry. See §3
+  strikethrough and audit doc §14.
 - ~~**paste/merge drop:** mint a subcommand that pastes the current clipboard/merge
   buffer at a delta (e.g. `xschem paste_at dx dy` or a merge variant), then log
   it. Blocked partly on the clipboard-content referent.~~ DONE (atom 9): no new

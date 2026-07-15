@@ -27,6 +27,11 @@
 # Atom 9 (0069 paste_at) added: the paste/merge drop-log site + merge_source
 # stash rows, the scheduler paste replay-arm rows, `paste` in S2 + S3, and the
 # S1c must-NOT-reappear scans (old marker / ctx-menu pick-8 literal).
+# Atom 11 (0069 sympin) added: the START_SYMPIN drop-log sites (the sympin
+# add_symbol_pin line + the shared log_placed_instance read-back), the scheduler
+# add_symbol_pin no-line/writeback replay-arm rows, `add_symbol_pin`/`add_sch_pin`
+# in S2 + S3 (the drop funnel is the SOLE logger), and the S1c scan for the old
+# `# place symbol pin` marker.
 # The library_manager do_* mutation seam (atom 7 / 0064) is Tcl-only and its
 # `libmgr::do_*` lines don't start with "xschem " (S2-invisible), so it is
 # locked twice: the S1 site-count row (line-anchored, comments don't count)
@@ -92,6 +97,8 @@ set MANIFEST {
     {if\(!\(xctx->ui_state & STARTMERGE\)\)}          1 {paste replay arm: pending-merge completion gate (atom 9)}
     {merge_file\(8, f\)}                              1 {paste replay arm: -file merge form (atom 9)}
     {!strcmp\(argv\[k\], "-anchor"\)}                 1 {paste replay arm: -anchor pivot parse (atom 9 review)}
+    {if\(argc > 7\) noline = atoi\(argv\[7\]\);}      1 {add_symbol_pin no-stub-line replay arg: the sympin drop replay form matches the -place geometry (atom 11)}
+    {if\(vi >= 0\) pin_view_writeback\(vi\);}         1 {add_symbol_pin noline reproduces the -place move-time name_* writeback so the replay saves byte-identically (atom 11)}
   }
   src/callback.c {
     {log_action\("xschem copy"}                       1 {Ctrl-C inline key (atom 4)}
@@ -113,6 +120,9 @@ set MANIFEST {
     {(?n)^\s*av\[ac\+\+\] = "-file";}                 1 {paste/merge drop -file source rider (atom 9)}
     {(?n)^\s*av\[ac\+\+\] = "-anchor";}               1 {paste/merge drop -anchor pivot rider: whole-log replay regenerates the clipboard G record (atom 9 review)}
     {(?n)^\s*log_action_argv\(ac, av\);}              1 {paste/merge drop emit call, line-anchored: if(0)/line-comment counts as removed (a BLOCK comment still evades -- the behavioral test is the real lock) (atom 9)}
+    {(?n)^\s*av\[0\] = "xschem"; av\[1\] = "add_symbol_pin";} 1 {sympin drop: symbol-pin replay line (atom 11 / 0069)}
+    {(?n)^\s*av\[0\] = "xschem"; av\[1\] = "instance";} 1 {placed-instance read-back line in log_placed_instance -- shared by PLACE_SYMBOL + schematic Add-Pin drop (atom 11)}
+    {(?n)^\s*if\(log_placed_instance\(\)\) return;}   2 {log_placed_instance called by both the PLACE_SYMBOL arm and the START_SYMPIN sch-pin arm (atom 11)}
   }
   src/paste.c {
     {(?n)^\s*my_strncpy\(xctx->merge_source,}         1 {merge_file source stash for the drop logger (atom 9)}
@@ -199,6 +209,10 @@ check "S1c old '# paste/merge drop' marker stays removed" \
   [expr {[rxcount $cbtext {# paste/merge drop}] == 0}]
 check "S1c ctx-menu pick-8 'xschem paste' literal stays removed (drop line is the record)" \
   [expr {[rxcount $cbtext {"xschem paste"}] == 0}]
+# atom 11: the sympin drop marker is replaced by replayable add_symbol_pin /
+# instance lines -- it must not creep back (it would shadow the real record).
+check "S1c old '# place symbol pin (no replayable...)' marker stays removed" \
+  [expr {[rxcount $cbtext {# place symbol pin \(no replayable}] == 0}]
 # atom 10: the property-dialog marker is replaced by replayable setprop lines --
 # it must not creep back for the converted types (it would shadow the real record).
 check "S1c old '# property-edit' marker stays removed (property dialogs now replayable)" \
@@ -221,6 +235,7 @@ set CVERBS {
   make_symbol make_sch make_sch_from_sel descend descend_symbol go_back
   select_grow_connected select_at library_manager exit
   wire line rect arc polygon instance text pan zoom_box paste
+  add_symbol_pin add_sch_pin
   move_objects copy_objects load load_new_window
   {set cadsnap} {set cadgrid} {set header_text} {set rectcolor}
 }
@@ -260,9 +275,13 @@ check "S2 no ungated Tcl literal logs of C-self-logged verbs" [expr {$nviol == 0
 # ---------------------------------------------------------------------------
 set sched [srctext src/scheduler.c]
 # `paste`: the branch IS the coordinate replay form (atom 9) -- a log there
-# would re-log every replayed drop.
+# would re-log every replayed drop. `add_symbol_pin`/`add_sch_pin` (atom 11):
+# the drop funnel (end_move_copy_logged, callback.c) is the SOLE logger -- both
+# the `-place` gesture start and the direct `add_symbol_pin` replay form must
+# stay silent in the scheduler, else a replayed sympin drop double-logs.
 foreach verb {make_symbol make_sch make_sch_from_sel descend descend_symbol
-              go_back select_grow_connected update_net_hilight_style paste} {
+              go_back select_grow_connected update_net_hilight_style paste
+              add_symbol_pin add_sch_pin} {
   set n [rxcount $sched "log_action\\(\"xschem $verb\[\"% \]"]
   check "S3 scheduler.c has NO log_action for core-logged verb '$verb'" \
     [expr {$n == 0}] "got=$n"

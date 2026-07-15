@@ -768,10 +768,90 @@ new failures beyond the known WSLg/env set (`test_selflog_output` transform-keys
 emits no `RESULT: ALL PASS` banner so full_audit classifies it FAIL regardless, `test_remap`
 passes standalone — both pre-existing, unrelated).
 
+## 14. Atom 11 outcome (2026-07-15): the Add-Pin drop records a REPLAYABLE line (0069's sympin marker closed)
+
+The §2 "Gesture drops — 0069" row's sympin hole closed. `end_move_copy_logged`'s
+`START_SYMPIN` arm wrote a dead `# place symbol pin (no replayable subcommand yet)`
+marker, so a replayed session silently skipped every pin placed with the Add-Pin form.
+ONE marker covered TWO drops that share `START_SYMPIN` + the `sympin_preview` move
+machinery, now told apart in the funnel by the dropped object's TYPE:
+
+- **(a) SYMBOL pin** — a `PINLAYER` (`col==5`) `xRECT` placed by `add_symbol_pin -place`.
+  Logs `xschem add_symbol_pin <x> <y> <name> <dir> 0 1` (x,y = rect center; name/dir read
+  from the rect prop, copied out because `get_tok_value` shares one static buffer).
+- **(b) SCHEMATIC pin** — an ipin/opin/iopin ELEMENT placed by `add_sch_pin -place`. Logs
+  the SAME `xschem instance {sym} x y rot flip {prop}` read-back a normal symbol placement
+  uses, via a new shared helper `log_placed_instance()` (refactored out of the
+  `PLACE_SYMBOL` arm — the sch-pin drop IS an instance placement).
+
+**Log site = the drop funnel (Layer-C), not the cores.** `add_symbol_pin`, `place_symbol`
+and `place_sch_pin` are shared by the `-place` gesture start, the direct replay form, and
+tests — the 1:1 test fails, so the funnel is the sole logger (atom-9 pattern). Both replay
+forms are coordinate commands that never reach `end_move_copy_logged` and never self-log,
+so a replay never re-logs (coordinate-form-bypass invariant). Grep guard S3 pins
+`add_symbol_pin`/`add_sch_pin` silent in the scheduler; S2 pins no Tcl literal-log.
+
+**The central question (Q3): the faithful SYMBOL-pin replay form.** `add_symbol_pin x y
+name dir` was NOT byte-equivalent to a `-place` drop, for two reasons: (i) it stored a
+20-unit stub LEG LINE the `-place` drop never does, and (ii) the drop MOVES the pin, and in
+a symbol view the move syncs the name view's geometry back into the rect's `name_*` tokens
+(`pin_view_writeback` appends `name_rot`/`name_flip`), which bare `create_pin` does not.
+**Resolution: a new trailing `noline` arg** to the direct form that (a) skips the leg line
+AND (b) reproduces the move-time writeback under the SAME `netlist_type==CAD_SYMBOL_ATTRS`
+gate the move loop uses (actions.c pin-view writeback loop) — so `add_symbol_pin x y name
+dir 0 1` saves byte-identically to the drop **by construction** (it runs the drop's own
+writeback code, not a re-derivation). Rejected alternatives: making `-place` store the leg
+(a behavior change to every dialog-placed pin), and reading back the raw rect + owned name
+view (the view is regenerated on load, not saved, and a plain `xschem text`/`rect` would not
+restore the `owner_pin_id` linkage — the Q3 (iii) fragility).
+
+**Reference forms.** Symbol pin = coords + name + dir, rebuilt via `create_pin` (byte-
+identical incl. the writeback tokens for in/out/inout, where `name_rot` appends after
+`name_flip` deterministically because both drop and replay run the same `subst_token`
+sequence). Schematic pin = the instance read-back (name-addressed, deterministic under the
+fixture-load + ordered-replay model; the atom-10 precedent — deliberately NOT stable-id).
+
+**Multi-name queue (Q5).** Each click drops ONE pin and the funnel logs exactly one line;
+the intuitive release then clears `START_SYMPIN` + `sympin_preview` (callback.c) so the next
+arm starts a fresh gesture. N names → N lines (locked by the test's 3→3 sym and sch cases).
+
+**Exclusions preserved (Q6).** ESC-abort tears down the preview undo-free (callback.c
+abort path) with no drop → no line; an `add_sch_pin` that placed nothing clears
+`sympin_preview` so `START_SYMPIN` is never set → the funnel arm is never reached; and
+`add_sch_pin` refuses in a symbol view (a schematic pin is an instance).
+
+**Adversarial-review round (4-dimension refute workflow, 2 verifiers/finding): 3 findings,
+0 confirmed** — both non-empty findings were the same accepted-class residuals, refuted
+after empirical repro:
+1. *Mid-gesture rotate/flip of a symbol-pin preview* (Alt-R/Shift-R during the drag) replays
+   the name label at rot/flip 0 — the pin rect is symmetric so its geometry is unaffected,
+   but the label orientation diverges. Reachable (START_SYMPIN implies STARTMOVE, so the
+   'R'/'F' keys route into `move_objects(ROTATE|FLIP)`), but the SAME class as the still-open
+   rotate/flip-during-plain-move marker (0069) and the atom-9 deferred sibling; the Add-Pin
+   dialog cycles type via Ctrl+MMB, not rotate. Documented, not coded.
+2. *A pin NAME containing a literal backslash* read-back-diverges (`a\b` → `ab`) because
+   `get_tok_value` unescapes and `create_pin` stores `name=` raw. Every legitimate identifier
+   round-trips byte-identically (verified: plain, bus `A[3:0]`, angle `DATA<7>`, `VDD!`,
+   `net.a`, `a_b`), and the dialog splits names on whitespace so a space in a name is
+   impossible. Same accepted read-back class as the atom-9/10 name-addressed forms.
+
+Verified: `test_sympin_drop_log.tcl` (42 checks, full_audit logdir_tests — in/out/inout for
+BOTH sym & sch pins, byte-identical replay via saveas oracle, replay-logs-nothing bypass,
+ESC no-line for both, multi-name 3→3 for both, `add_sch_pin` symbol-view refusal, direct
+`add_symbol_pin` form not self-logged); sabotage ×3 (remove the noline writeback → exactly
+the 3 sym-pin byte-identical checks; emit `noline=0` → the 3 no-line-form + byte-identical
+checks; break the PINLAYER rect detection → sym-pins fall to the fallback marker, exactly
+the sym-pin + queue + sweep checks — sch pins untouched in all three). Full audit: no new
+failures beyond the known WSLg/env set (`test_sympin_drop_log` PASS; `test_selflog_output`
+transform-keys + `test_action_replay.sh` "log missing placed instance" baseline-confirmed;
+`test_verb_noun_copy_move`/`test_deselect_mode`/`test_fluid_editing` pass standalone =
+audit-congestion flakes). The `PLACE_SYMBOL` refactor (shared `log_placed_instance`) left
+`test_gesture_end_log` + the byte-identical `test_action_replay` checks green.
+
 ---
 
 *Prepared 2026-07-14, `fluid-editing`. §1–5 analysis only — no code changed. §6 added after
 atom 3 landed; §7 after atom 4; §8 after atom 5; §9 after atom 6; §10 after atom 7; §11 after
-atom 8; §12 after atom 9; §13 after atom 10. Coverage verified in source at HEAD by a 14-way
-parallel read; do not trust the status table without re-checking the cited `file:line` anchors,
-which drift as the tree moves.*
+atom 8; §12 after atom 9; §13 after atom 10; §14 after atom 11. Coverage verified in source at
+HEAD by a 14-way parallel read; do not trust the status table without re-checking the cited
+`file:line` anchors, which drift as the tree moves.*

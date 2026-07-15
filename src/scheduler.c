@@ -326,16 +326,20 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
       Tcl_SetResult(interp, "1", TCL_STATIC);
     }
 
-    /* add_symbol_pin [x y name dir [draw]]
+    /* add_symbol_pin [x y name dir [draw [noline]]]
      *   place a symbol pin.
      *   x,y : pin coordinates
      *   name = pin name
      *   dir = in|out|inout
      *   draw: 1 | 0 (draw or not the added pin immediately, default = 1)
+     *   noline: 0 | 1 (default 0). 1 -> do NOT store/draw the 20-unit stub leg line.
+     *     The interactive `-place` drop stores only the rect + owned name view (no
+     *     leg); this arg lets the action-log replay form (`end_move_copy_logged`,
+     *     issue 0069 sympin atom 11) reproduce that exact geometry.
      *   if no parameters given start a GUI placement of a symbol pin */
     else if(!strcmp(argv[1], "add_symbol_pin"))
     {
-      int save, draw = 1, linecol = SYMLAYER;
+      int save, draw = 1, noline = 0, linecol = SYMLAYER;
       double x = xctx->mousex_snap;
       double y = xctx->mousey_snap;
       const char *name = NULL;
@@ -343,8 +347,9 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
       if(scheduler_readonly_reject(interp, "add_symbol_pin")) return TCL_ERROR;
       if(argc > 6) draw = atoi(argv[6]);
+      if(argc > 7) noline = atoi(argv[7]);
       if(argc > 5) {
-        int flip = 0;
+        int flip = 0, ri;
         xctx->push_undo();
         x = atof(argv[2]);
         y = atof(argv[3]);
@@ -353,21 +358,38 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
         if(!strcmp(dir, "inout") || !strcmp(dir, "out") ) flip = 1;
         if(!strcmp(dir, "inout")) linecol = 7;
         /* pin rect + owned name view (Option B); replaces the old rect + standalone T */
-        create_pin(x, y, name, dir, 0);
-        if(flip) {
-          storeobject(-1, x - 20, y, x, y, LINE, linecol, 0, NULL);
+        ri = create_pin(x, y, name, dir, 0);
+        if(noline) {
+          /* replay of a `-place` sympin drop (issue 0069 atom 11): the interactive
+           * drop MOVES the pin, and in a symbol view the move syncs the name view's
+           * geometry back into the pin's name_* tokens (pin_view_writeback ->
+           * name_rot/name_flip), while this raw form would store a 20-unit stub leg
+           * line the drop never did. Reproduce the drop exactly: skip the leg line
+           * and, under the SAME symbol-view condition the move-time sync uses
+           * (actions.c pin-view writeback loop), write the tokens back -> the replay
+           * saves byte-identically to the drop. */
+          if(xctx->netlist_type == CAD_SYMBOL_ATTRS) {
+            int vi = (ri >= 0) ? pin_name_view_of(xctx->rect[PINLAYER][ri].id) : -1;
+            if(vi >= 0) pin_view_writeback(vi);
+          }
         } else {
-          storeobject(-1, x, y, x + 20, y, LINE, linecol, 0, NULL);
+          if(flip) {
+            storeobject(-1, x - 20, y, x, y, LINE, linecol, 0, NULL);
+          } else {
+            storeobject(-1, x, y, x + 20, y, LINE, linecol, 0, NULL);
+          }
         }
 
         if(draw) {
           save = xctx->draw_window; xctx->draw_window = 1;
           drawrect(PINLAYER, NOW, x - 2.5, y - 2.5, x + 2.5, y + 2.5, 0.0, 0, -1, -1);
           filledrect(PINLAYER,NOW, x - 2.5, y - 2.5, x + 2.5, y + 2.5, 1, -1, -1);
-          if(flip) {
-            drawline(linecol, NOW, x -20, y, x, y, 0.0, 0, NULL);
-          } else {
-            drawline(linecol, NOW, x, y, x + 20, y, 0.0, 0, NULL);
+          if(!noline) {
+            if(flip) {
+              drawline(linecol, NOW, x -20, y, x, y, 0.0, 0, NULL);
+            } else {
+              drawline(linecol, NOW, x, y, x + 20, y, 0.0, 0, NULL);
+            }
           }
           xctx->draw_window = save;
         }
