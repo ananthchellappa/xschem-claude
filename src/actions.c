@@ -4853,6 +4853,19 @@ double my_round(double a)
   return (a > 0.0) ? floor(a + 0.5) : (a < 0.0) ? ceil(a - 0.5) : a;
 }
 
+/* snap a schematic coordinate to the current snap grid (cadsnap) -- the
+ * "effective" position an interactive click resolves to. The action log must
+ * record effective coordinates, not the raw mouse position with float noise
+ * (doc/claude/specs/select_at.md). cadsnap <= 0 returns the value unchanged. */
+double snap_to_grid(double c)
+{
+  double s = tclgetdoublevar("cadsnap");
+  double r;
+  if(s <= 0.0) return c;
+  r = my_round(c / s) * s;
+  return (r == 0.0) ? 0.0 : r; /* normalize -0.0 so logs never show "-0" */
+}
+
 double round_to_n_digits(double x, int n)
 {
   double scale;

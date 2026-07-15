@@ -34,6 +34,12 @@ proc center {inst} {
 }
 lassign [center x5] cx5 cy5
 lassign [center x1] cx1 cy1
+# the action log records EFFECTIVE (grid-snapped) coordinates (snap_to_grid,
+# actions.c), so snap the bbox-midpoint expectations the same way; the child
+# runs the same default cadsnap as this outer instance.
+proc gridsnap {v} { expr {round($v / $::cadsnap) * $::cadsnap} }
+set cx5 [gridsnap $cx5]; set cy5 [gridsnap $cy5]
+set cx1 [gridsnap $cx1]; set cy1 [gridsnap $cy1]
 
 set workroot [file join [pwd] descend_log_absorb_work.[pid]]
 file mkdir $workroot

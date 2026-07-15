@@ -2222,6 +2222,7 @@ extern double atof_eng(const char *s); /* same as atof_spice, but recognizes 'M'
 extern char *dtoa_eng(double i, int precision);
 extern char *dtoa_prec(double i);
 extern double my_round(double a);
+extern double snap_to_grid(double c);
 extern double round_to_n_digits(double x, int n);
 extern double floor_to_n_digits(double x, int n);
 extern double ceil_to_n_digits(double x, int n);

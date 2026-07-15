@@ -120,6 +120,10 @@ xschem callback .drw 5 $bmx $bmy 0 1 0 257      ;# Button1Mask|ShiftMask on rele
 update idletasks
 check "SA8a shift-click augments selection (2 selected)" \
   [expr {[llength [xschem selection]] == 2}] "(sel=[xschem selection])"
+# the shift-click line sits in the one-action holding area (absorb spec) until
+# the NEXT logged action flushes it; `set cadsnap <same>` logs a line without
+# touching the selection.
+xschem set cadsnap $cadsnap
 check "SA8b shift-click logs 'select_at ... add'" \
   [expr {[lsearch -glob [newlines $n0] {xschem select_at * add}] >= 0}] "(new=[newlines $n0])"
 

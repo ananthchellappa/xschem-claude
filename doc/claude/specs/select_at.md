@@ -47,8 +47,17 @@ coordinate hit-select:
 
 ```c
 if(!select_at_suppress_log && !selptr && select_mode == SELECTED && sel.type)
-  log_action("xschem select_at %.16g %.16g", mx, my);
+  log_action("xschem select_at %.10g %.10g", snap_to_grid(mx), snap_to_grid(my));
 ```
+
+**Effective coordinates**: the logged coordinate is the EFFECTIVE one — the raw
+mouse position snapped to the current snap grid (`snap_to_grid()`, actions.c:
+`my_round(v/cadsnap)*cadsnap`, -0 normalized to 0) and printed `%.10g` — never
+the raw mouse double with float noise (`242.99999999999997`). Same rule for
+`select_grow_connected x y`. Applied inside `log_action_stash_select_at()`
+(util.c), so both the interactive funnel (raw mouse) and the `xschem select_at`
+command (idempotent on already-snapped input) get it. Replay hit-tests at the
+snapped point, which is Cadence's click-resolution model.
 
 - `!selptr` — the caller passed a coordinate (not a precomputed object); a
   caller that already holds the object logs its own gesture.

@@ -457,8 +457,13 @@ void log_action_stash_select_at(double x, double y, int add, int inst)
 {
   if(!actionlog_fp || actionlog_suppress) return;
   log_action_flush_pending();
+  /* log the EFFECTIVE (grid-snapped) coordinate, not the raw mouse position:
+   * clicks resolve at snap resolution, and raw doubles fill the log with float
+   * noise. Snapping here covers both the interactive funnel (raw mouse) and
+   * the `xschem select_at` command (idempotent on already-snapped input). */
   my_snprintf(actionlog_pending, S(actionlog_pending),
-              "xschem select_at %.16g %.16g%s", x, y, add ? " add" : "");
+              "xschem select_at %.10g %.10g%s",
+              snap_to_grid(x), snap_to_grid(y), add ? " add" : "");
   actionlog_pending_inst = inst;
 }
 

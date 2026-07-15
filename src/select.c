@@ -313,7 +313,8 @@ int select_grow_connected_step(double mx, double my, int pick_seed)
    * logs nothing (no phantom). log_action() honors actionlog_suppress (replay/programmatic)
    * and flushes any pending select_at first, preserving order.
    * INVARIANT: entry paths (scheduler branch, key handler, gesture) must NOT also log. */
-  if(pick_seed) log_action("xschem select_grow_connected %.16g %.16g", mx, my);
+  if(pick_seed) log_action("xschem select_grow_connected %.10g %.10g",
+                           snap_to_grid(mx), snap_to_grid(my));
   else          log_action("xschem select_grow_connected");
   if(has_x) draw_selection(xctx->gc[SELLAYER], 0);
   return xctx->dblgrow_level;
