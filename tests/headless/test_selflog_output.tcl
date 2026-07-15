@@ -277,52 +277,60 @@ check "make_sch_from_sel read-only logs nothing" \
   [expr {[count_lines "xschem make_sch_from_sel"] == $msf_before}]
 xschem set readonly 0
 
-# --- 3h. property-edit dialogs self-log a source-able marker (issue 0063) ----------
+# --- 3h. property-edit dialogs record a REPLAYABLE line (issue 0063 atom 10) --------
 # editprop.c commits (wire/rect/line/arc/poly/text + global attrs + instance-via-vi)
-# had ZERO log_action -> silent. They edit the whole prop of the *selection*, which no
-# subcommand can faithfully replay, so edit_property() now emits a `#` audit marker
-# (skipped on replay) at its commit tail. Drive the dialogs by stubbing the Tcl dialog
-# procs to confirm + mutate tctx::retval; assert one marker per commit, none on cancel.
+# once logged only a dead `# property-edit` marker; they now emit the scheduler's own
+# replay form -- `xschem setprop <type> <ref> allprops {prop}` per selected object
+# (`xschem set sch<X>prop {str}` for global attrs) -- reading each object's committed
+# prop back. Drive by stubbing the dialog procs; assert the replayable line and that
+# the old marker is GONE. (The exhaustive per-type + replay coverage is in
+# tests/headless/test_shape_setprop_log.tcl.)
 xschem load xschem_library/examples/nand2.sch
 proc text_line {args}    { set ::tctx::rcode ok; append ::tctx::retval " tsttok=1" }
 proc edit_vi_prop {args} { set ::tctx::rcode ok; append ::tctx::retval " tsttok=1"; return $::tctx::retval }
 
 # WIRE (x=0 text widget): nand2 has 20 wires.
 xschem unselect_all; xschem select wire 0
-set b [count_pfx "# property-edit wire:"]
+set b [count_pfx "xschem setprop wire 0 allprops"]
 xschem edit_prop
-check "edit wire property logs a marker" [expr {[count_pfx "# property-edit wire:"] > $b}]
+check "edit wire property logs a replayable setprop line" \
+  [expr {[count_pfx "xschem setprop wire 0 allprops"] > $b}]
 
 # RECT (x=0): create one on a fresh layer, select it by index.
 xschem set rectcolor 6
 set rb [xschem get rects 6]
 xschem rect 500 500 600 600
 xschem unselect_all; xschem select rect 6 $rb
-set b [count_pfx "# property-edit rect:"]
+set b [count_pfx "xschem setprop rect 6 $rb allprops"]
 xschem edit_prop
-check "edit rect property logs a marker" [expr {[count_pfx "# property-edit rect:"] > $b}]
+check "edit rect property logs a replayable setprop line" \
+  [expr {[count_pfx "xschem setprop rect 6 $rb allprops"] > $b}]
 
 # INSTANCE via external editor (x=1): edit_symbol_property x==1 -> update_symbol. The
 # slick text-widget instance form (x=0) is excluded because it self-logs apply_properties.
 xschem unselect_all; xschem select instance 0
-set b [count_pfx "# property-edit instance:"]
+set b [count_pfx "xschem setprop instance"]
 xschem edit_vi_prop
-check "edit instance property (vi editor) logs a marker" \
-  [expr {[count_pfx "# property-edit instance:"] > $b}]
+check "edit instance property (vi editor) logs a replayable setprop line" \
+  [expr {[count_pfx "xschem setprop instance"] > $b}]
 
-# GLOBAL schematic attributes (lastsel==0, x==1).
+# GLOBAL schematic attributes (lastsel==0, x==1) -> `xschem set schprop {..}`.
 xschem unselect_all
-set b [count_pfx "# property-edit global:"]
+set b [count_pfx "xschem set schprop"]
 xschem edit_vi_prop
-check "edit global schematic property logs a marker" \
-  [expr {[count_pfx "# property-edit global:"] > $b}]
+check "edit global schematic property logs a replayable set line" \
+  [expr {[count_pfx "xschem set schprop"] > $b}]
 
-# CANCEL (empty rcode) commits nothing -> no marker.
+# The old `# property-edit` marker is GONE for the converted types.
+check "property-edit marker no longer emitted" [expr {[count_pfx "# property-edit"] == 0}]
+
+# CANCEL (empty rcode) commits nothing -> no line.
 proc text_line {args} { set ::tctx::rcode {} }
 xschem unselect_all; xschem select wire 1
-set b [count_pfx "# property-edit"]
+set b [count_pfx "xschem setprop wire 1 allprops"]
 xschem edit_prop
-check "cancelled property edit logs nothing" [expr {[count_pfx "# property-edit"] == $b}]
+check "cancelled property edit logs nothing" \
+  [expr {[count_pfx "xschem setprop wire 1 allprops"] == $b}]
 
 # --- 3i. non-File menubar mutators self-log at their scheduler cores (issue 0061) --
 # The Symbol/Highlight/sym.list menus are hand-written `-command "xschem <sub>"` (not
@@ -454,14 +462,21 @@ xschem log_action -result "line1\nline2"
 check "multiline result prefixes each line" \
   [expr {[has_line "#= line1"] && [has_line "#= line2"]}]
 
-# --- 5. whole log stays source-able: every non-blank line is a comment or a
-#         valid `xschem ...` command (no bare output leaked in) -----------------
+# --- 5. whole log stays source-able: accumulate physical lines into LOGICAL
+#         commands (a braced prop value -- e.g. setprop ... allprops {..} -- may
+#         span physical lines, the accepted multiline class), then require each
+#         to be a comment or a replayable `xschem ...` command (no bare output) --
 set srcok 1
+set acc {}
 foreach l [loglines] {
-  if {$l eq {}} continue
-  if {[string index $l 0] eq "#"} continue          ;# comment (header/output)
-  if {[string match "xschem *" $l]} continue         ;# replayable command
-  set srcok 0 ; puts "  non-source-able line: <$l>"
+  if {$acc eq {} && $l eq {}} continue
+  append acc $l "\n"
+  if {![info complete $acc]} continue               ;# mid multi-line command -> keep going
+  set first [lindex [split [string trimright $acc "\n"] \n] 0]
+  set acc {}
+  if {[string index $first 0] eq "#"} continue       ;# comment (header/output)
+  if {[string match "xschem *" $first]} continue      ;# replayable command
+  set srcok 0 ; puts "  non-source-able command starting: <$first>"
 }
 check "log file is source-able" $srcok
 

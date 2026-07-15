@@ -665,10 +665,113 @@ checks; ctx pick-8 literal re-add → T8 double-line + guard S1c; anchor-overrid
 exactly T6b; dangling-clear `if(0)` → exactly the T11 pair, reproducing the reviewer's
 mislogged line verbatim).
 
+## 13. Atom 10 outcome (2026-07-15): property-edit dialogs record a REPLAYABLE line (0063 shape setprop-allprops)
+
+The §2 "Property-edit dialogs — 0063" PARTIAL row closed. `edit_property()` logged a
+dead `# property-edit <type>` marker for wire/rect/line/arc/poly/text + global attrs +
+instance-via-vi (only the slick instance form was replayable). It now records the
+scheduler's own replay form, one logical line per selected object:
+
+```
+xschem setprop <wire|rect|line|arc|poly> <ref> allprops {prop}   (shapes)
+xschem setprop instance <name> allprops {prop}                   (instance via vi editor)
+xschem set sch<X>prop {str}                                       (global schematic attrs)
+xschem setprop text n txt_ptr {t} / size {h} {v} / allprops {p}  (text: 3 facets)
+```
+
+**The data-model constraint of §3.3 is dissolved, not merely shrunk.**
+- **The `allprops` arms.** `setprop` gained a whole-prop-string `allprops` form on
+  wire/rect/text, and **three entirely new arms — line/arc/poly — which had no `setprop`
+  case at all** (the audit's specific 0063 blocker). Each new arm sets `prop_ptr` then
+  recomputes the cached derived fields (bus/dash/fill) exactly as the matching
+  `edit_{line,arc,polygon}_property()` commit does, so a replayed edit renders identically.
+- **Read-back, not `tctx::retval`.** A multi-object edit forces `preserve_unchanged_attrs`,
+  so `set_different_token` gives each object its own distinct tokens — logging the dialog's
+  single `retval` would clobber them on replay. `edit_property()` reads **each committed
+  `prop_ptr` back** and logs that (`log_prop_edit_one`/`log_prop_edit_replayable`,
+  editprop.c), iterating `sel_array` for the dispatched type (prop edits never reindex, so
+  the array is still valid; `apply_symbol_prop` mutates `prop_ptr` in place without
+  unselecting).
+- **Reference form: index, deliberately not stable-id.** Instances address by their
+  persistent name (`get_instance`); shapes by type + layer(`col`) + array index. **Stable
+  ids are session-only and re-minted on reload**, so an id recorded before a reload never
+  resolves after one; the array index is deterministic under the fixture-load + ordered-replay
+  model (the replay model the tests and `test_action_replay.sh` use). This is the opposite of
+  what a naive "use the new handles" reading of §3.3 would do, and it is the correct call for
+  *replay* (as opposed to a live-session query, where an id is better).
+- **The bypass split (S3).** The shape `allprops` arms **must not self-log** — `editprop.c`
+  emits the line, and the scheduler branch is the replay form. The setprop branch-tail
+  self-log gate stays exactly `fast != 1 && argv[2] == "instance"` (slice 5): the instance
+  arm self-logs (covering scripted token edits and re-emitting the dialog line identically on
+  replay), every shape subtype is excluded. Broadening that gate is what a future refactor
+  would get wrong, so the grep guard pins the gate literal.
+- **Global attrs** map `netlist_type` → `sch{,symbol,vhdl,verilog,spectre,tedax}prop` and log
+  `xschem set <var> {str}` — a form that already existed (scheduler `set` branch) and does
+  **not** overlap `set header_text` (a different field). Those `set sch*prop` arms don't
+  self-log, so the emitted line replays without re-logging.
+- **Text** carries three independent facets (string / independent xscale-yscale / attribute
+  props) that no single prop string holds, so it emits a small bundle; `setprop text ... size`
+  was extended to an optional second value so the dialog's independent h/v sizes round-trip.
+- **Exclusions preserved** by the existing `if(modified && x != 2 && !(type==ELEMENT && x==0))`
+  gate: `x==2` view-only (`view_prop`), the slick instance form (self-logs `apply_properties` —
+  logging both would double), and a cancelled dialog (`rcode` empty → `modified==0`).
+
+**Adversarial-review round (6-dimension refute workflow, 2 independent verifiers per finding):**
+1. **MAJOR — instance rename broke replay (fixed in-tree).** An instance edit via the external
+   editor that changes the `name=` token renames the live instance (`new_prop_string`), so the
+   emit's read-back `instname` is the NEW name — `setprop instance <newname> allprops {..}` fails
+   `get_instance` against the reloaded fixture (still the old name), silently dropping the edit.
+   Fixed by snapshotting each selected instance's **pre-edit** name before the commit and
+   addressing the line by that old name; the arm's `new_prop_string` re-applies the rename from
+   the new prop's `name=` token. Locked by test T9b (a renaming edit), sabotage-reproduced (revert
+   to the post-edit name → T9b + the byte-identical replay both fail). The original T9 stub only
+   appended a token, so it never exercised a rename — the gap was real and untested.
+2. **rect `allprops` cached-field staleness — already fixed (verifiers refuted).** Flagged from the
+   pre-fix diff; the shipping rect arm already recomputes `dash/ellipse/fill/bus` from the new prop.
+3. **Refuted: a slick-form navigation type-flip emitting a spurious shape line** — reachable only
+   via the dead legacy `edit_prop` dialog; the shipping non-blocking slick form never sets
+   `edit_symbol_prop_new_sel`, so `type` stays `ELEMENT` and the `ELEMENT && x==0` exclusion holds.
+
+**Documented residuals (accepted, not coded):**
+- **Text collateral pin-rename (minor).** `edit_text_property` has a legacy heuristic: an ordinary
+  (non-owned) text label whose `txt_ptr` matches a nearby PINLAYER rect's `name=` token, when
+  edited, also renames that pin rect (editprop `~770`). The text bundle records only the text's
+  own facets, so a replay in a symbol-like buffer leaves the pin's old name — a divergence. Narrow
+  (symbol view, proximity + exact name match) and superseded by the modern owner_pin_id mechanism;
+  the D1 residual call is to document rather than re-derive the match at emit time.
+- A pin-name-view text edit is retargeted to its PINLAYER rect (editprop `~1495`), so the line
+  is `setprop rect PINLAYER n allprops {..}`; replay restores the rect's prop + `set_rect_flags`
+  but not the name-view side effects (`pin_view_apply`/`pin_reorient`). Symbol-editor corner,
+  0005/pin-name class.
+- The `set sch*prop` arms have no read-only guard (pre-existing 0041-class); a replayed global
+  line on a read-only view mutates it. The important replay-safety path — `setprop … allprops`
+  on a read-only view — **is** rejected (the branch-head `scheduler_readonly_reject`).
+- Instance-of-a-different-master lines in a multi-instance selection are idempotent no-ops on
+  replay (faithful-to-the-final-state, slightly noisy).
+
+**Guard ratchet:** S1 rows pin the editprop per-object emit tail (line-anchored) and the global
+`set sch<X>prop` emit; **a new S1 row pins the setprop self-log gate literal** so broadening it
+past instance-only fails; S1c locks the old `# property-edit` marker out of editprop.c.
+`test_selflog_output` §3h was rewritten (marker → replayable line) and its §5 whole-log
+source-ability check was made **multi-line-aware** (a braced prop value spans physical lines —
+accumulate to `info complete`; the atom-8/9 accepted class).
+
+Verified: `test_shape_setprop_log.tcl` (35 checks, full_audit logdir_tests — every type +
+multi-object + global + instance-vi + **instance rename (T9b)**, faithful replay via **source**
+(byte-identical save), shape replay-bypass = zero extra log, `info complete` multi-line lock,
+cancel/viewdata/read-only no-line, slick-form-not-double); sabotage ×5 (tail-emit neutralized →
+17 FAIL; self-log-gate broadened → exactly the 5 shape-bypass checks + the grep gate row; global
+emit neutralized → exactly T8; text `size` second value dropped → exactly the T6 independent-scale
+replay; ELEMENT emit reverted to the post-edit name → exactly the T9b rename pair). Full audit: no
+new failures beyond the known WSLg/env set (`test_selflog_output` transform-keys,
+`test_action_replay.sh` "log missing placed instance" — both baseline-confirmed; `test_palette`
+emits no `RESULT: ALL PASS` banner so full_audit classifies it FAIL regardless, `test_remap`
+passes standalone — both pre-existing, unrelated).
+
 ---
 
 *Prepared 2026-07-14, `fluid-editing`. §1–5 analysis only — no code changed. §6 added after
 atom 3 landed; §7 after atom 4; §8 after atom 5; §9 after atom 6; §10 after atom 7; §11 after
-atom 8; §12 after atom 9. Coverage verified in source at HEAD by a 14-way parallel read; do not
-trust the status table without re-checking the cited `file:line` anchors, which drift as the
-tree moves.*
+atom 8; §12 after atom 9; §13 after atom 10. Coverage verified in source at HEAD by a 14-way
+parallel read; do not trust the status table without re-checking the cited `file:line` anchors,
+which drift as the tree moves.*

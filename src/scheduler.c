@@ -9043,6 +9043,32 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
           else dataset = -1;
           graph_fullyzoom(r, gr, dataset);
         }
+        else if(argc > 6 && !strcmp(argv[5], "allprops")) {
+          /* 0063 atom 10: replace the WHOLE prop string (property-dialog replay form).
+           * Recompute the cached derived fields (dash/ellipse/fill/bus) from the new
+           * prop exactly as edit_rect_property() does -- the shared tail below only
+           * recomputes .fill when the edited token WAS "fill", which allprops is not,
+           * so a whole-prop replace would otherwise leave them stale for rendering. */
+          if(strcmp(argv[6], r->prop_ptr ? r->prop_ptr : "")) {
+            const char *a;
+            change_done = 1;
+            if(fast == 3 || fast == 0) xctx->push_undo();
+            my_strdup2(_ALLOC_ID_, &r->prop_ptr, argv[6]);
+            a = get_tok_value(r->prop_ptr, "dash", 0);
+            r->dash = strcmp(a, "") ? (short)(atoi(a) >= 0 ? atoi(a) : 0) : 0;
+            a = get_tok_value(r->prop_ptr, "ellipse", 0);
+            if(strcmp(a, "")) {
+              int ea, eb;
+              if(sscanf(a, "%d%*[ ,]%d", &ea, &eb) != 2) { ea = 0; eb = 360; }
+              r->ellipse_a = ea; r->ellipse_b = eb;
+            } else { r->ellipse_a = -1; r->ellipse_b = -1; }
+            a = get_tok_value(r->prop_ptr, "fill", 0);
+            if(!strcmp(a, "full")) r->fill = 2;
+            else if(!strboolcmp(a, "false")) r->fill = 0;
+            else r->fill = 1;
+            r->bus = get_attr_val(get_tok_value(r->prop_ptr, "bus", 0));
+          }
+        }
         else if(argc > 6) {
           /* verify if there is some difference */
           if(strcmp(argv[6], get_tok_value(r->prop_ptr, argv[5], 0))) {
@@ -9092,6 +9118,16 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
           bbox(START,0.0,0.0,0.0,0.0);
         }
         if(argc > 5) {
+          if(!strcmp(argv[4], "allprops")) {
+            /* 0063 atom 10: replace the WHOLE prop string (the property-dialog
+             * replay form). The wire-property dialog commits a full prop string
+             * per selected wire, so editprop.c logs `setprop wire n allprops {..}`. */
+            if(strcmp(argv[5], w->prop_ptr ? w->prop_ptr : "")) {
+              change_done = 1;
+              if(fast == 3 || fast == 0) xctx->push_undo();
+              my_strdup2(_ALLOC_ID_, &w->prop_ptr, argv[5]);
+            }
+          } else
           /* verify if there is some difference */
           if(strcmp(argv[5], get_tok_value(w->prop_ptr, argv[4], 0))) {
             change_done = 1;
@@ -9162,12 +9198,24 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
               if(fast == 3 || fast == 0) xctx->push_undo();
               my_strdup2(_ALLOC_ID_, &t->txt_ptr, argv[5]);
             }
-          } else if(!strcmp(argv[4], "size")) { /* pseudo-token: set display size (xscale=yscale) */
-            double v = atof(argv[5]);
-            if(v != t->xscale || v != t->yscale) {
+          } else if(!strcmp(argv[4], "size")) {
+            /* pseudo-token: set display size. One value -> xscale=yscale (legacy);
+             * an optional second value (0063 atom 10) sets vscale independently, so
+             * the text-property dialog's independent hsize/vsize round-trips. */
+            double vh = atof(argv[5]);
+            double vv = (argc > 6) ? atof(argv[6]) : vh;
+            if(vh != t->xscale || vv != t->yscale) {
               change_done = 1;
               if(fast == 3 || fast == 0) xctx->push_undo();
-              t->xscale = t->yscale = v;
+              t->xscale = vh; t->yscale = vv;
+            }
+          } else if(!strcmp(argv[4], "allprops")) {
+            /* 0063 atom 10: replace the WHOLE attribute prop string (text's txt_ptr
+             * and size are separate facets, logged as their own setprop lines). */
+            if(strcmp(argv[5], t->prop_ptr ? t->prop_ptr : "")) {
+              change_done = 1;
+              if(fast == 3 || fast == 0) xctx->push_undo();
+              my_strdup2(_ALLOC_ID_, &t->prop_ptr, argv[5]);
             }
           } else if(strcmp(argv[5], get_tok_value(t->prop_ptr, argv[4], 0))) {
             change_done = 1;
@@ -9202,6 +9250,141 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
         }
         Tcl_ResetResult(interp);
       }
+      /* line / arc / polygon: these had NO setprop case at all (audit 0063 gap),
+       * so the property-edit dialogs could not be replayed. Add token + `allprops`
+       * (whole-prop) forms mirroring the rect/wire arms, then recompute the cached
+       * derived fields (bus/dash/fill) from the attributes exactly as the
+       * edit_{line,arc,polygon}_property() commit paths do, so a replayed edit
+       * renders identically. A full draw() (not a partial bbox) keeps these arms
+       * simple and always correct.  0063 atom 10.
+       *  0       1      2    3 4   5      6
+       * xschem setprop line c n token|allprops [value] */
+      else if(argc > 5 && !strcmp(argv[2], "line")) {
+        int change_done = 0;
+        xLine *l;
+        const char *dash;
+        int c = atoi(argv[3]);
+        int n = atoi(argv[4]);
+        if(!(c >= 0 && c < cadlayers && n >= 0 && n < xctx->lines[c])) {
+          Tcl_SetResult(interp, "xschem setprop line: wrong layer or line number", TCL_STATIC);
+          return TCL_ERROR;
+        }
+        l = &xctx->line[c][n];
+        if(argc > 6 && !strcmp(argv[5], "allprops")) {
+          if(strcmp(argv[6], l->prop_ptr ? l->prop_ptr : "")) {
+            change_done = 1;
+            if(fast == 3 || fast == 0) xctx->push_undo();
+            my_strdup2(_ALLOC_ID_, &l->prop_ptr, argv[6]);
+          }
+        } else if(argc > 6) {
+          if(strcmp(argv[6], get_tok_value(l->prop_ptr, argv[5], 0))) {
+            change_done = 1;
+            if(fast == 3 || fast == 0) xctx->push_undo();
+            my_strdup2(_ALLOC_ID_, &l->prop_ptr, subst_token(l->prop_ptr, argv[5], argv[6]));
+          }
+        } else {
+          get_tok_value(l->prop_ptr, argv[5], 0);
+          if(xctx->tok_size) {
+            change_done = 1;
+            if(fast == 3 || fast == 0) xctx->push_undo();
+            my_strdup2(_ALLOC_ID_, &l->prop_ptr, subst_token(l->prop_ptr, argv[5], NULL)); /* delete attr */
+          }
+        }
+        if(change_done) set_modify(1);
+        l->bus = get_attr_val(get_tok_value(l->prop_ptr, "bus", 0));
+        dash = get_tok_value(l->prop_ptr, "dash", 0);
+        l->dash = strcmp(dash, "") ? (short)(atoi(dash) >= 0 ? atoi(dash) : 0) : 0;
+        if(!fast && change_done) draw();
+        Tcl_ResetResult(interp);
+      }
+      /*  0       1      2    3 4   5      6
+       * xschem setprop arc c n token|allprops [value] */
+      else if(argc > 5 && !strcmp(argv[2], "arc")) {
+        int change_done = 0;
+        xArc *a;
+        const char *attr;
+        int c = atoi(argv[3]);
+        int n = atoi(argv[4]);
+        if(!(c >= 0 && c < cadlayers && n >= 0 && n < xctx->arcs[c])) {
+          Tcl_SetResult(interp, "xschem setprop arc: wrong layer or arc number", TCL_STATIC);
+          return TCL_ERROR;
+        }
+        a = &xctx->arc[c][n];
+        if(argc > 6 && !strcmp(argv[5], "allprops")) {
+          if(strcmp(argv[6], a->prop_ptr ? a->prop_ptr : "")) {
+            change_done = 1;
+            if(fast == 3 || fast == 0) xctx->push_undo();
+            my_strdup2(_ALLOC_ID_, &a->prop_ptr, argv[6]);
+          }
+        } else if(argc > 6) {
+          if(strcmp(argv[6], get_tok_value(a->prop_ptr, argv[5], 0))) {
+            change_done = 1;
+            if(fast == 3 || fast == 0) xctx->push_undo();
+            my_strdup2(_ALLOC_ID_, &a->prop_ptr, subst_token(a->prop_ptr, argv[5], argv[6]));
+          }
+        } else {
+          get_tok_value(a->prop_ptr, argv[5], 0);
+          if(xctx->tok_size) {
+            change_done = 1;
+            if(fast == 3 || fast == 0) xctx->push_undo();
+            my_strdup2(_ALLOC_ID_, &a->prop_ptr, subst_token(a->prop_ptr, argv[5], NULL)); /* delete attr */
+          }
+        }
+        if(change_done) set_modify(1);
+        attr = get_tok_value(a->prop_ptr, "fill", 0);
+        if(!strcmp(attr, "full")) a->fill = 2;
+        else if(!strboolcmp(attr, "true")) a->fill = 1;
+        else a->fill = 0;
+        attr = get_tok_value(a->prop_ptr, "dash", 0);
+        a->dash = strcmp(attr, "") ? (short)(atoi(attr) >= 0 ? atoi(attr) : 0) : 0;
+        a->bus = get_attr_val(get_tok_value(a->prop_ptr, "bus", 0));
+        if(!fast && change_done) draw();
+        Tcl_ResetResult(interp);
+      }
+      /*  0       1      2       3 4   5      6
+       * xschem setprop poly c n token|allprops [value] */
+      else if(argc > 5 && !strcmp(argv[2], "poly")) {
+        int change_done = 0;
+        xPoly *p;
+        const char *attr;
+        int c = atoi(argv[3]);
+        int n = atoi(argv[4]);
+        if(!(c >= 0 && c < cadlayers && n >= 0 && n < xctx->polygons[c])) {
+          Tcl_SetResult(interp, "xschem setprop poly: wrong layer or polygon number", TCL_STATIC);
+          return TCL_ERROR;
+        }
+        p = &xctx->poly[c][n];
+        if(argc > 6 && !strcmp(argv[5], "allprops")) {
+          if(strcmp(argv[6], p->prop_ptr ? p->prop_ptr : "")) {
+            change_done = 1;
+            if(fast == 3 || fast == 0) xctx->push_undo();
+            my_strdup2(_ALLOC_ID_, &p->prop_ptr, argv[6]);
+          }
+        } else if(argc > 6) {
+          if(strcmp(argv[6], get_tok_value(p->prop_ptr, argv[5], 0))) {
+            change_done = 1;
+            if(fast == 3 || fast == 0) xctx->push_undo();
+            my_strdup2(_ALLOC_ID_, &p->prop_ptr, subst_token(p->prop_ptr, argv[5], argv[6]));
+          }
+        } else {
+          get_tok_value(p->prop_ptr, argv[5], 0);
+          if(xctx->tok_size) {
+            change_done = 1;
+            if(fast == 3 || fast == 0) xctx->push_undo();
+            my_strdup2(_ALLOC_ID_, &p->prop_ptr, subst_token(p->prop_ptr, argv[5], NULL)); /* delete attr */
+          }
+        }
+        if(change_done) set_modify(1);
+        attr = get_tok_value(p->prop_ptr, "fill", 0);
+        if(!strcmp(attr, "full")) p->fill = 2;
+        else if(!strboolcmp(attr, "true")) p->fill = 1;
+        else p->fill = 0;
+        attr = get_tok_value(p->prop_ptr, "dash", 0);
+        p->dash = strcmp(attr, "") ? (short)(atoi(attr) >= 0 ? atoi(attr) : 0) : 0;
+        p->bus = get_attr_val(get_tok_value(p->prop_ptr, "bus", 0));
+        if(!fast && change_done) draw();
+        Tcl_ResetResult(interp);
+      }
       /* self-log at core, narrowly: only an *instance* property edit that pushed
        * undo. Two axes, both needed:
        *   - subtype == "instance": `setprop rect ...` is graph machinery
@@ -9213,7 +9396,14 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
        *     (op-point backannotation) -- so it is excluded; `-fastundo` (fast==3)
        *     and the plain form (fast==0) DO push_undo and ARE logged.
        * Property-*dialog* edits take a different path (apply_instance_properties),
-       * so this does not double-log them. Tcl_Merge keeps braces/spaces faithful. */
+       * so this does not double-log them. Tcl_Merge keeps braces/spaces faithful.
+       *
+       * 0063 atom 10: the wire/rect/text/line/arc/polygon `allprops` arms above
+       * are the REPLAY form of a property-dialog commit -- editprop.c emits the
+       * `setprop <shape> ... allprops {..}` line itself, so these arms must NOT
+       * self-log (the gate below already excludes every non-instance subtype; a
+       * log here would re-log each replayed shape edit -- the coordinate-form-
+       * bypass invariant). Keep the gate instance-only. */
       if(fast != 1 && argc > 2 && !strcmp(argv[2], "instance"))
         log_action_argv(argc, (const char *const *)argv);
     }

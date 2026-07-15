@@ -88,6 +88,7 @@ set MANIFEST {
     {"xschem hilight_net_interactive" : "xschem unhilight_net_interactive"} 1 {hilight interactive noun-verb (ternary log)}
     {log_action\("xschem library_manager}             1 {library_manager open}
     {log_action_stash_select_at}                      1 {select_at stash flush}
+    {if\(fast != 1 && argc > 2 && !strcmp\(argv\[2\], "instance"\)\)} 1 {setprop self-log gate stays instance-only: the wire/rect/text/line/arc/poly `allprops` replay arms must NOT self-log (atom 10)}
     {if\(!\(xctx->ui_state & STARTMERGE\)\)}          1 {paste replay arm: pending-merge completion gate (atom 9)}
     {merge_file\(8, f\)}                              1 {paste replay arm: -file merge form (atom 9)}
     {!strcmp\(argv\[k\], "-anchor"\)}                 1 {paste replay arm: -anchor pivot parse (atom 9 review)}
@@ -139,7 +140,9 @@ set MANIFEST {
     {log_action\("xschem select_grow_connected}       2 {connected-grow core, both forms (atom 1)}
   }
   src/editprop.c {
-    {# property-edit}                                 1 {property-dialog marker (0063)}
+    {(?n)^\s*log_prop_edit_replayable\(type, presel_names\);} 1 {property-dialog per-object replayable emit tail, line-anchored (atom 10 / 0063)}
+    {"schprop";}                                      1 {global-attrs edit -> `set sch<X>prop {..}` replay emit (atom 10)}
+    {(?n)^\s*presel_names\[s\] = NULL;}               1 {ELEMENT emit pre-edit-name snapshot: a rename must address the OLD name (atom 10 review)}
   }
   src/xschem.tcl {
     {log_action -reset}                               2 {stdin REPL + TCP handler dedup resets (0003)}
@@ -196,6 +199,10 @@ check "S1c old '# paste/merge drop' marker stays removed" \
   [expr {[rxcount $cbtext {# paste/merge drop}] == 0}]
 check "S1c ctx-menu pick-8 'xschem paste' literal stays removed (drop line is the record)" \
   [expr {[rxcount $cbtext {"xschem paste"}] == 0}]
+# atom 10: the property-dialog marker is replaced by replayable setprop lines --
+# it must not creep back for the converted types (it would shadow the real record).
+check "S1c old '# property-edit' marker stays removed (property dialogs now replayable)" \
+  [expr {[rxcount [srctext src/editprop.c] {# property-edit}] == 0}]
 
 # ---------------------------------------------------------------------------
 # S2) TCL LITERAL-LOG CONFLICTS: no ungated hand-rolled `xschem log_action

@@ -1,6 +1,34 @@
 # Issue 0063 — property-edit dialogs (editprop.c) commit silently
 
 **Opened:** 2026-07-02
+**Status:** ✅ REPLAYABLE 2026-07-15 (`fluid-editing`, issue 0071 atom 10) — the
+`# property-edit` marker is superseded by a real replayable command per selected
+object (see audit §13). `edit_property()` now emits, reading each object's
+COMMITTED prop back:
+- shapes → `xschem setprop <wire|rect|line|arc|poly> <ref> allprops {prop}`
+  (`setprop` gained `allprops` on wire/rect/text and **three new arms line/arc/poly
+  that had no `setprop` case at all**);
+- instance via external editor → `xschem setprop instance <name> allprops {prop}`;
+- global schematic/symbol attrs → `xschem set sch<X>prop {str}`;
+- text → a 3-line bundle `setprop text n txt_ptr {t}` / `size {h} {v}` / `allprops {p}`
+  (three independent facets; `size` extended to a second value for independent scales).
+
+Shapes address by type+layer+index, instances by persistent name (ids are session-only,
+re-minted on reload → not replay-stable). The shape arms do NOT self-log (the branch is
+the replay form, bypass invariant); the instance arm self-logs (slice 5). Exclusions
+preserved: `x==2` view-only, the slick instance form (logs `apply_properties`), cancel.
+**All listed types (§3) are now replayable — none stays marker-only.** An adversarial
+review caught + fixed a MAJOR: an instance edit that renames it (name= token) must address
+the setprop line by the **pre-edit** name (the reloaded fixture has the old name; the arm
+re-applies the rename), else replay `get_instance` fails — captured pre-edit names, tested
+by T9b. Residuals (audit §13): a legacy text→pin name-follow heuristic isn't replayed (text
+in a symbol buffer whose string matches a nearby pin name); pin-name-view edits restore the
+rect prop but not the name-view side effects; the `set sch*prop` arms have no read-only guard
+(the `setprop … allprops` replay form IS read-only-rejected). Test:
+`tests/headless/test_shape_setprop_log.tcl` (35 checks), `test_selflog_output` §3h rewritten
+(+§5 made multi-line-aware), grep-guard S1/S1c updated. Sabotage ×5.
+_Prior marker status below._
+
 **Status:** ✅ FIXED 2026-07-02 (`fluid-editing`) — `edit_property()` (the single core
 all commit paths funnel through: scheduler `edit_prop`/`edit_vi_prop`, callback keys/
 actions) now emits a source-able `#`-marker `# property-edit <type>: <flat-prop>` at both
