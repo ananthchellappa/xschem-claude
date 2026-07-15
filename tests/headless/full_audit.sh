@@ -41,7 +41,7 @@ logdir_tests=" test_ciw test_ciw_autocomplete test_ciw_puts_capture test_hi_desc
   test_action_log_dispatch test_action_log_libmgr test_context_menu_log \
   test_gesture_end_log test_phase3_mints test_lib_roundtrip test_selflog_output \
   test_altf5_ciw test_undo_link_symbols test_dblclick_connected_grow test_delete_cut_selflog \
-  test_descend_goback_selflog test_save_reload_copy_selflog "
+  test_descend_goback_selflog test_save_reload_copy_selflog test_selflog_grep_guard "
 # Tests that must run true-headless (no X needed) -> --nogui
 # (test_make_symbol_dialog is designed for --nogui: under X its has_x-gated
 # open-in-new-window step runs, and the second make_symbol_dialog on the same

@@ -436,21 +436,30 @@ proc libmgr::open_view {args} {
   lassign $lcv lib cell view
   set f [xschem cellview_path "$lib/$cell" $view]
   if {$f eq {}} { .libmgr.status configure -text "no $view view for $lib/$cell"; return 0 }
-  # action-log: record the replayable open (the bare load_new_window/load command
-  # is otherwise the silent "replay form", so a Library Manager open would not be
-  # logged to the CIW / Xschem.log without this).
+  # action-log: record the replayable open, DEDUP-GATED (reset + -emitted, the
+  # menu_action_logged pattern). The C side already logs some arms itself -- the
+  # `load -gui` pristine-window arm records `xschem load {f}` at the scheduler's
+  # -gui hook -- so an unconditional line here double-logged the open (and the
+  # `-gui` copy would replay interactively). The gated fallback still covers the
+  # arms C leaves silent (load_new_window -window; the routed new-window load).
   if {$new_window} {
     # -window forces a real top-level OS window (draggable to another monitor),
     # not just a tab, even when the tabbed interface is on
     # (doc/claude/specs/multi_window_detach.md).
+    xschem log_action -reset
     xschem load_new_window -window $f
-    xschem log_action "xschem load_new_window -window {$f}"
+    if {![xschem log_action -emitted]} {
+      xschem log_action "xschem load_new_window -window {$f}"
+    }
   } else {
     # -gui: interactive open. Reuse THIS window only if it is a pristine empty
     # untitled scratch; if it already holds a cellview (or has objects), open a
     # new window instead of clobbering it (doc/claude/specs/load_window_routing.md).
+    xschem log_action -reset
     xschem load -gui $f
-    xschem log_action "xschem load -gui {$f}"
+    if {![xschem log_action -emitted]} {
+      xschem log_action "xschem load -gui {$f}"
+    }
   }
   # WSLg leaves the target window blank (and its renamed tab stale) when a load is
   # driven from this persistent dialog: the window never gets the focus/expose that

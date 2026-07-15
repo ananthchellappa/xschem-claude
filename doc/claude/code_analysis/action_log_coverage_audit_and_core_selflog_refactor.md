@@ -365,7 +365,44 @@ failures confirmed pre-existing on baseline (WSLg env).
 
 ---
 
+## 8. Atom 5 outcome (2026-07-14): the grep guard — discipline made structural
+
+The C-mutator self-log migration (atoms 1–4) is complete; atom 5 locks it.
+`tests/headless/test_selflog_grep_guard.tcl` (81 checks, full_audit logdir_tests) is an
+**executable inventory** of the migration, four static source scans + one runtime canary:
+
+- **S1 manifest** — every landed self-log site (scheduler branches, inline keys, cores in
+  actions.c/save.c/select.c/editprop.c, gesture ENDs) still contains its `log_action` call;
+  gate-locking rows pin the save `!fast` and Ctrl-S `!readonly` guards themselves.
+- **S2 Tcl literal-log conflicts** — no `.tcl` hand-logs a literal `xschem <verb>` line for
+  a verb whose C side self-logs, unless dedup-gated on `log_action -emitted`. This is the
+  action_reload-double class (atom 4); allowlist: the xschem.tcl `load_new_window`
+  dialog-resolution arms (C silent for the with-filename form by design).
+- **S3 branch-must-not-log** — core-logged verbs (make_symbol/make_sch/make_sch_from_sel/
+  descend/descend_symbol/go_back/select_grow_connected) have NO `log_action` in
+  scheduler.c (the slice-6 lesson).
+- **S4 recorder wiring** — the four dedup-wired recorders keep their reset/`-emitted`
+  plumbing; also locks the new library_manager gated fallback.
+- **S5 runtime canary** — exactly-once for cheap no-fixture verbs + a live
+  `menu_action_logged` dedup check (catches suppress/dedup breakage text scans can't see).
+
+**Maintenance ratchet (by design):** a new C self-log must add its S1 row and its S2 verb.
+
+**Real bug found while arming S2:** `library_manager.tcl` `open_cellview` logged an
+unconditional literal for both open arms; the `load -gui` pristine-window arm ALSO logs
+`xschem load {f}` at the scheduler's `-gui` hook → every Library-Manager same-window open
+wrote TWO lines, and the `-gui` copy replays interactively (empirically confirmed:
+1 open = 2 lines). Fixed with the reset/`-emitted` dedup pattern; the gated fallback still
+covers the arms C leaves silent (`load_new_window -window`, the routed new-window `-gui`
+open — probed: `emitted=0` there). 0055-adjacent; the guard would have flagged it forever.
+
+Sabotage-verified ×7 (no rebuild needed — scans read source text): reload literal re-add →
+S2; branch log for descend_symbol → S3; `-emitted` unwire → S4 *and* S5 (live double);
+copy-branch log removal → S1; save-gate drop → S1 gate row; lbm ungating → S2+S4.
+
+---
+
 *Prepared 2026-07-14, `fluid-editing`. §1–5 analysis only — no code changed. §6 added after
-atom 3 landed; §7 after atom 4. Coverage verified in source at HEAD by a 14-way parallel
-read; do not trust the status table without re-checking the cited `file:line` anchors,
-which drift as the tree moves.*
+atom 3 landed; §7 after atom 4; §8 after atom 5. Coverage verified in source at HEAD by a
+14-way parallel read; do not trust the status table without re-checking the cited
+`file:line` anchors, which drift as the tree moves.*
