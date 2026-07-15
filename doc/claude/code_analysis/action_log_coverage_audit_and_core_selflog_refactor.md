@@ -515,9 +515,51 @@ failures (test_reopen_readonly fails identically on stashed baseline — recent-
 pollution; test_wire_vertex_grab passes standalone with the change — audit-congestion
 flake).
 
+## 11. Atom 8 outcome (2026-07-14): NHSE editor commits record (issue 0065 CLOSED — §2's last OPEN row)
+
+Same Tcl-only class as atom 7 (§3.4). The C `update_net_hilight_style` branch fails the
+1:1 test (shared mechanism: startup conf source, every scripting helper, the editor) —
+so the **editor's live-commit points** log, each a self-contained form:
+
+- **`nhse_apply_live`** (single staged→live point: Apply / OK / Cancel-revert) logs
+  `net_hilight_style_set_live {<full table>}` after the C recompile (empty staged var
+  re-materialized first). `set_live` is a new raw-preserving helper: adversarial review
+  proved the first-cut normalizing form (`net_hilight_style_replace`) replay-diverges on
+  sloppy hand-set tables (documented workflow, hilight.c:418) because Tcl norm and the C
+  parser coerce differently — width `2.5` → C `2` vs norm `1`. Cancel logs the restored
+  snapshot (idempotent no-op when nothing applied, slice-1 norm).
+- **`nhse_reset`** (live immediately, outside the seam) logs bare
+  `net_hilight_style_reset` at the button proc (atom-2 entry-site pattern).
+- **`nhse_save`** success arm logs the **staged table** `set ::net_hilight_style {…}`
+  then `write_net_hilight_style_conf {path}` — review proved path-only logging rewrites
+  the wrong table on replay whenever Save wasn't immediately preceded by Apply (Save
+  writes the STAGED var, which no other line records). Plain `set` matches Save's
+  semantics: staged, no live push. Dialog-Cancel/write-fail silent.
+- **Delete-last-row** (review find): emptying the table makes `nhse_rebuild`'s
+  `net_hilight_style_current` re-materialize the layer default LIVE outside the seam —
+  `nhse_op_delete` logs the materialized table, gated on the materialization actually
+  happening (a window-less call early-returns in rebuild: no live change, no line).
+
+Also review-driven: both atom-7/8 mutation tests gained a **no-Tk self-skip** (on a
+display-less box the tk_* renames / `winfo` were invalid-command CRASHES that failed the
+whole audit, not skips). **Documented residual:** the `apply_hilight` CLICK-to-apply arm
+(cadence-rc mouse bind) appends a style row unlogged — click-position gesture, 0067 §5 /
+0005/0069 class, recorded in issue 0065 §4.
+
+Notable accepted form: the C-materialized default table is a MULTILINE Tcl value, so its
+logged line spans physical lines inside balanced braces — the §9/§10 accepted class.
+
+Verified: `test_nhse_mutation_log.tcl` (30 checks, full_audit logdir_tests — per-commit
+exactly-once, machinery-silent sweep, counting-stub Save arms, raw-fidelity lock,
+staged-Save divergence lock, delete-last lock with fake table-body frames, in-process
+replay, `--nogui` child). Sabotage ×6 (3 original sites, then save set-line /
+op_delete line / normalizing-form regression — each fails exactly its checks + its
+guard rows). Full audit ×2: no new failures (test_fluid_editing 4× standalone pass both
+sides = congestion flake; the rest = the known WSLg set).
+
 ---
 
 *Prepared 2026-07-14, `fluid-editing`. §1–5 analysis only — no code changed. §6 added after
-atom 3 landed; §7 after atom 4; §8 after atom 5; §9 after atom 6; §10 after atom 7. Coverage
-verified in source at HEAD by a 14-way parallel read; do not trust the status table without
-re-checking the cited `file:line` anchors, which drift as the tree moves.*
+atom 3 landed; §7 after atom 4; §8 after atom 5; §9 after atom 6; §10 after atom 7; §11 after
+atom 8. Coverage verified in source at HEAD by a 14-way parallel read; do not trust the status
+table without re-checking the cited `file:line` anchors, which drift as the tree moves.*

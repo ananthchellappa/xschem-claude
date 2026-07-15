@@ -42,6 +42,14 @@ if {$LOG eq {}} {
   puts "RESULT: SKIP (no log)"
   exit 0
 }
+# Display-less box: Tk never loads, so the tk_messageBox rename in the ctx-stub
+# section would be an invalid-command CRASH, not a skip (atom-8 review) --
+# self-skip like every other GUI test.
+if {[info commands winfo] eq {}} {
+  puts "SKIP: no Tk (display-less session)"
+  puts "RESULT: SKIP (no Tk)"
+  exit 0
+}
 
 set REPO [file normalize [file join [file dirname [info script]] .. ..]]
 set work /tmp/atom7_libmgr_mutation_log_work.[pid]

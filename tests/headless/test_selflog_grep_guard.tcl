@@ -131,6 +131,10 @@ set MANIFEST {
     {log_action -reset}                               2 {stdin REPL + TCP handler dedup resets (0003)}
     {log_action -emitted}                             4 {stdin REPL + TCP handler -emitted gates (0003)}
     {# failed: }                                      2 {stdin REPL + TCP failed-command comment form (0003)}
+    {(?n)^\s*xschem\s+log_action\s+\[list\s+net_hilight_style_set_live\M} 2 {nhse_apply_live + delete-last-row live-commit lines, raw replay form (atom 8 / 0065)}
+    {(?n)^\s*xschem\s+log_action\s+net_hilight_style_reset\M} 1 {nhse_reset live-reset line (atom 8 / 0065)}
+    {(?n)^\s*xschem\s+log_action\s+\[list\s+set\s+::net_hilight_style\M} 1 {nhse_save staged-table line (atom 8 review: Save writes the staged var)}
+    {(?n)^\s*xschem\s+log_action\s+\[list\s+write_net_hilight_style_conf\M} 1 {nhse_save resolved-path line (atom 8 / 0065)}
   }
   src/library_manager.tcl {
     {(?n)^\s*xschem\s+log_action\s+\[list\s+libmgr::do_} 14 {do_* mutation-seam logs, one per worker, line-anchored so a commented-out site does not count (atom 7 / 0064)}
@@ -224,7 +228,7 @@ check "S2 no ungated Tcl literal logs of C-self-logged verbs" [expr {$nviol == 0
 # ---------------------------------------------------------------------------
 set sched [srctext src/scheduler.c]
 foreach verb {make_symbol make_sch make_sch_from_sel descend descend_symbol
-              go_back select_grow_connected} {
+              go_back select_grow_connected update_net_hilight_style} {
   set n [rxcount $sched "log_action\\(\"xschem $verb\[\"% \]"]
   check "S3 scheduler.c has NO log_action for core-logged verb '$verb'" \
     [expr {$n == 0}] "got=$n"

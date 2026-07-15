@@ -595,6 +595,18 @@ proc net_hilight_style_reset {} {
   return $net_hilight_style
 }
 
+# Set the table VERBATIM and push it live -- the action-log replay form (issue 0065).
+# Unlike net_hilight_style_replace this does NOT normalize: the C compiler parses the
+# raw rows exactly as it did in the recorded session (norm and C coerce sloppy fields
+# differently -- e.g. a hand-set width 2.5 is atoi'd to 2 by C but coerced to 1 by
+# net_hilight_style_norm -- so a normalizing replay would diverge from the session).
+proc net_hilight_style_set_live {rows} {
+  global net_hilight_style
+  set net_hilight_style $rows
+  catch { xschem update_net_hilight_style }
+  return $net_hilight_style
+}
+
 # Bonus -- remove rows by position; the survivors are renumbered to keep index == position.
 proc net_hilight_style_remove {indices {apply 1}} {
   global net_hilight_style
@@ -1338,7 +1350,18 @@ proc nhse_op_delete {} {
   if {$i eq {}} return
   nhse_flush
   net_hilight_style_remove [list $i] 0
+  # Deleting the LAST row empties the staged var, and nhse_rebuild's
+  # net_hilight_style_current then re-materializes the layer default LIVE (a C
+  # recompile + redraw outside the nhse_apply_live seam) -- a real live-state
+  # change, so record it (atom-8 review); the var below holds the materialized
+  # default after the rebuild. Non-empty deletes stay staged-only and silent.
+  # The non-empty gate also covers a window-less call: there nhse_rebuild
+  # early-returns, nothing went live, the var is still {} -> no line.
+  set emptied [expr {[llength $::net_hilight_style] == 0}]
   nhse_rebuild
+  if {$emptied && [llength $::net_hilight_style] > 0} {
+    xschem log_action [list net_hilight_style_set_live $::net_hilight_style]
+  }
   nhse_focus_after_op $i   ;# clamps to the new last row if we removed it
 }
 
@@ -1394,6 +1417,16 @@ proc nhse_save {} {
               -message "Could not write {$path}." }
     return
   }
+  # action log (issue 0065): record the RESOLVED save (the file-menu
+  # dialog-resolution pattern) -- replay rewrites the same path with no dialog.
+  # The staged-table line comes FIRST (atom-8 review: Save writes the STAGED var,
+  # which is unlogged unless Apply happened to precede -- without it a replay
+  # writes whatever table the log last applied, not what the session saved). A
+  # plain `set` matches Save's semantics exactly: var staged, NO live push.
+  # Dialog-Cancel and write-fail arms above log nothing. The ciw_echo below
+  # stays (status comment, not the record).
+  xschem log_action [list set ::net_hilight_style $::net_hilight_style]
+  xschem log_action [list write_net_hilight_style_conf $path]
   if {[nhse_save_announce $path]} {
     catch { tk_messageBox -parent .nhse -type ok -icon info -title {Saved} \
       -message "Saved to:\n$path\n\nThis file will NOT be loaded automatically next session. To use\
@@ -1406,7 +1439,29 @@ proc nhse_save {} {
 # the running session: recompile the C table + redraw. The single point where edits become live, so
 # the dialog follows a staged model -- typing/moving/deleting only restage; nothing reaches the
 # schematic until Apply/OK (or a Cancel revert).
-proc nhse_apply_live {} { catch { xschem update_net_hilight_style } }
+#
+# ACTION LOG (issue 0065 / 0071 atom 8): this single staged->live point records the
+# editor's commit as a SELF-CONTAINED replayable line -- the full table value, not a
+# bare `xschem update_net_hilight_style` (whose replay would depend on the ambient
+# net_hilight_style var, the atom-3 self-contained-line rule). The logged form is
+# net_hilight_style_set_live, which replays the RAW value verbatim -- a normalizing
+# form (net_hilight_style_replace) would coerce sloppy hand-set fields differently
+# than the C parser did in-session (atom-8 review: width 2.5 -> C 2 vs norm 1) and
+# diverge. Logged AFTER the C recompile, so an empty staged var has been
+# re-materialized to the real default first. Covers Apply, OK and Cancel (the
+# snapshot revert is a live-state change worth replaying; with nothing applied it
+# degrades to an idempotent no-op line, the slice-1 no-op norm). Machinery stays
+# silent: the startup conf-file source and the scripting helpers
+# (net_hilight_style_replace/merge/append/reset apply=1, net_hilight_apply) call
+# `xschem update_net_hilight_style` directly, never this proc -- typed/scripted
+# calls are recorded by their own channel (CIW/stdin/TCP). Known residual: the
+# apply_hilight CLICK-to-apply arm (utils/apply_hilight.tcl, cadence rc mouse bind)
+# appends a style row unlogged -- 0067 SS5 deferred gesture class, noted in 0065.
+# Locked by test_selflog_grep_guard S1 rows; test: test_nhse_mutation_log.tcl.
+proc nhse_apply_live {} {
+  catch { xschem update_net_hilight_style }
+  xschem log_action [list net_hilight_style_set_live $::net_hilight_style]
+}
 
 # Apply -- flush any in-progress field edit into the staged table, then push it live; stay open.
 proc nhse_apply {} { nhse_flush ; nhse_apply_live }
@@ -1424,7 +1479,14 @@ proc nhse_cancel {} {
 }
 
 # Reset to defaults -- discard customization, re-derive the layer default (itself a savable state).
-proc nhse_reset {} { net_hilight_style_reset ; nhse_rebuild }
+# Reset commits LIVE immediately (net_hilight_style_reset applies, no staging), bypassing
+# nhse_apply_live -- so it records its own replayable line here (atom-2 entry-site pattern; the
+# scripting proc itself stays silent, its typed/scripted calls are channel-recorded).
+proc nhse_reset {} {
+  net_hilight_style_reset
+  xschem log_action net_hilight_style_reset
+  nhse_rebuild
+}
 
 # ---- slice 9: Load... -- read a saved/similar styles file INTO the editor (Replace / Add) ----------
 # Companion to Save... Save... writes a stand-alone, *sourceable* file; Load... brings such a file (the
