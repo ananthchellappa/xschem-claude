@@ -32,6 +32,12 @@
 # add_symbol_pin no-line/writeback replay-arm rows, `add_symbol_pin`/`add_sch_pin`
 # in S2 + S3 (the drop funnel is the SOLE logger), and the S1c scan for the old
 # `# place symbol pin` marker.
+# Atom 12 (0053 Cadence Ctrl-E window hop) added: the S1 focus_window emit row
+# (utils/cadence_nav.tcl) and the S6 SEAM-EXCLUSIVITY block -- `new_schematic
+# switch` (a shared core: tab-strip/alt2/window-open machinery) must be logged
+# ONLY at the cadence::focus_window seam, never in the C core (else every tab
+# redraw floods the log). `new_schematic` is deliberately NOT in the S2 CVERBS set
+# (it is Tcl-seam-logged, not C-self-logged, so the Tcl literal log is legitimate).
 # The library_manager do_* mutation seam (atom 7 / 0064) is Tcl-only and its
 # `libmgr::do_*` lines don't start with "xschem " (S2-invisible), so it is
 # locked twice: the S1 site-count row (line-anchored, comments don't count)
@@ -165,6 +171,9 @@ set MANIFEST {
   }
   src/library_manager.tcl {
     {(?n)^\s*xschem\s+log_action\s+\[list\s+libmgr::do_} 14 {do_* mutation-seam logs, one per worker, line-anchored so a commented-out site does not count (atom 7 / 0064)}
+  }
+  utils/cadence_nav.tcl {
+    {(?n)^\s*xschem log_action "xschem new_schematic switch } 1 {focus_window logs the Cadence Ctrl-E parent-window hop at the entry seam, line-anchored so the prose in the comment above does not count (atom 12 / 0053)}
   }
 }
 foreach {relfile rows} $MANIFEST {
@@ -333,6 +342,44 @@ if {$LOG eq {}} {
   check "S5 menu_action_logged dedup live (copy exactly +1)" \
     [expr {[logcount {xschem copy}] == $c0 + 1}] "c0=$c0 now=[logcount {xschem copy}]"
 }
+
+# ---------------------------------------------------------------------------
+# S6) new_schematic switch SEAM EXCLUSIVITY (atom 12 / 0053): the Cadence Ctrl-E
+#     parent-window hop is logged ONLY at the cadence::focus_window seam. The core
+#     `new_schematic switch` is shared by the tab-strip click machinery
+#     (xschem.tcl `... switch $w {} 0`, no-draw), alt2 toggle and window-open paths
+#     -- logging in the C core (or in any of those Tcl callers) would flood every
+#     tab redraw. So: exactly ONE Tcl file logs a `new_schematic switch` line, it is
+#     utils/cadence_nav.tcl, and the C scheduler branch logs it nowhere.
+# ---------------------------------------------------------------------------
+set nsw_files {}
+set nsw_total 0
+foreach rel [concat [glob -directory [file join $REPO src] *.tcl] \
+                    [glob -directory [file join $REPO utils] *.tcl]] {
+  set t [srctext [string range $rel [expr {[string length $REPO]+1}] end]]
+  set n 0
+  foreach L [split $t \n] {
+    if {[regexp {^\s*#} $L]} continue
+    if {[regexp {log_action\s+["\{]?xschem new_schematic switch} $L]} { incr n }
+  }
+  if {$n > 0} { lappend nsw_files [file tail $rel] ; incr nsw_total $n }
+}
+check "S6 exactly one Tcl 'new_schematic switch' log line exists" \
+  [expr {$nsw_total == 1}] "total=$nsw_total files=$nsw_files"
+check "S6 the sole 'new_schematic switch' logger is cadence_nav.tcl (focus_window seam)" \
+  [expr {$nsw_files eq {cadence_nav.tcl}}] "files=$nsw_files"
+# The C cores must not self-log the SWITCH form (that is the tab-strip/alt2/window-open
+# machinery). Scan ALL C files the switch machinery lives in -- scheduler.c (the dispatch
+# branch) AND xinit.c (switch_window/new_schematic) AND callback.c (the EnterNotify/FocusIn
+# context switch) -- not scheduler.c alone. Match `new_schematic switch` SPECIFICALLY, so
+# the legitimate `new_schematic destroy` window-close self-logs (xinit.c:2240/2331, the
+# close-window verb) are not false-positives.
+set nsw_c 0
+foreach cf {scheduler.c xinit.c callback.c} {
+  incr nsw_c [rxcount [srctext src/$cf] {log_action\w*\([^;]*"xschem new_schematic switch}]
+}
+check "S6 no C core self-logs the new_schematic SWITCH form (machinery must stay silent)" \
+  [expr {$nsw_c == 0}] "got=$nsw_c across scheduler.c+xinit.c+callback.c"
 
 catch {destroy .ciw}; update
 

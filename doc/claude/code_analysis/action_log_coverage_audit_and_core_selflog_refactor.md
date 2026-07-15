@@ -848,10 +848,105 @@ transform-keys + `test_action_replay.sh` "log missing placed instance" baseline-
 audit-congestion flakes). The `PLACE_SYMBOL` refactor (shared `log_placed_instance`) left
 `test_gesture_end_log` + the byte-identical `test_action_replay` checks green.
 
+## 15. Atom 12 outcome (2026-07-15): the Cadence Ctrl-E parent-window hop records a replayable line (0053-class)
+
+The gap named in §6 (atom-3 review): `cadence_style_rc:180` binds Ctrl-E as a **raw Tk
+bind** (`bind .drw <Control-Key-e> {cadence::return_one_level; break}`) that never reaches
+`dispatch_input_action`, so the sub must self-log. `cadence::return_one_level` has three
+branches; two are in-place `xschem go_back` (already logged by the atom-3 `go_back` core) and
+the third is the **parent-window hop** `cadence::focus_window $parent`, which called
+`xschem new_schematic switch $win` and logged **nothing** — so a replayed session drifted to
+the wrong window and every subsequent edit landed in the wrong context.
+
+**FIX (pure Tcl, ~12 lines, no rebuild):** `cadence::focus_window` now logs
+`xschem log_action "xschem new_schematic switch $win"` immediately after the switch, **after**
+the `if {$win eq $cur} return` same-window early-out (so a no-op hop records nothing).
+
+**The 1:1 test → log at the entry seam, NOT the core (§4 step 1).** `new_schematic switch`
+FAILS the 1:1 test: the C core is a shared mechanism, called by the tab-strip click machinery
+(`xschem.tcl` ~12316/12328/12331/… all `… switch $w {} 0`, no-draw UI plumbing), `alt2_toggle_view.tcl:122`,
+and the window-open paths (`xschem.tcl` 5584/5826). Logging in the scheduler `new_schematic`
+branch (scheduler.c ~5922) would flood every tab redraw and machinery switch. `focus_window`
+is reached **only** by the cadence return chain (`return_one_level` :154, and `return_to_top`
+via it — verified by grep, the two sole callers), so the seam covers exactly the real user
+window-hops. This is the atom-2/4 entry-site rule applied to a Tcl-only class (cf. atoms 7/8).
+
+**Q2 — the replay referent (the central question). Decision: log the raw Tk win_path.**
+`new_schematic switch` resolves its argument via `get_tab_or_window_number` (xinit.c:1555):
+an exact `window_path[]` match, else a cell-name fallback. The **monotonic window number**
+(window-numbering.md) was evaluated and **rejected**: `switch` has no number resolver today
+(it would need new C surface — a number→path lookup + a scheduler arm), and in the **ordered
+whole-log replay model** a number is *no more* replayable than a path — both encode
+window-creation order, and replay reconstructs windows by replaying the logged `create_window`
+/ `load_new_window` lines in the same order, so both line up under the same precondition and
+both fail under the same precondition (a mid-session close+compact that reuses a slot path,
+or a divergent creation order). The path is simpler, lower-risk, natively resolved, and the
+common parent is `.drw` (always exists, always that path — maximally stable). The cell-name
+referent was rejected as ambiguous when two windows show the same cell. **Residual (accepted,
+0053-class, D1):** whole-log replay assumes window-creation order is preserved — the same
+assumption the already-shipped `create_window {}` lines make; a mid-session close+compact can
+reuse a `.xN.drw` path. Documented, same class as atom-9's mutable `-file` referents.
+
+**Q3 dedup / Q4 bypass / Q6 exclusions.** Ctrl-E is a raw bind with no dispatcher wrapper →
+`focus_window` is the **sole logger** (no `-emitted` gate); the scheduler `new_schematic`
+branch does not self-log. A replayed `xschem new_schematic switch <path>` hits the C branch →
+`new_schematic()` → `switch_window`/`switch_tab`, and **never re-enters** the Tcl
+`focus_window` proc → replay never re-logs (bypass invariant, like every coordinate-form
+replay). Preserved exclusions: the same-window early-out (no line); the two `return_one_level`
+`go_back` branches (logged by the atom-3 core — a second line here would double); a
+stale/gone parent (`forget_window`, no switch → no line).
+
+**Test `tests/headless/test_cadence_window_hop_log.tcl` (22 checks, full_audit logdir_tests).**
+Live-Tk (`--pipe --logdir`, NOT `--nogui` — it drives the raw Ctrl-E bind end-to-end and reads
+the log file), with the no-Tk / no-log self-skips + pid workdir of atoms 9–11, and
+`mouse_follows_focus 0` pinned so the explicit context switch is not undone by the pointer-warp
+EnterNotify under WSLg (the issue-0054 desync). Scenarios: H1 parent hop logs exactly one
+`switch .drw` (child kept open); H2 same-window no-op logs nothing (early-out); H3 the in-place
+branch logs `xschem go_back` (atom-3 core) and NO switch; H4 replay oracle — the just-recorded
+switch line, re-evaluated, resolves to the recorded window in BOTH referent directions (parent
+`.drw` and a child `.xN.drw`); H5 end-to-end via the verbatim `cadence_style_rc:180` binding
+(real `<Control-Key-e>` event → real bind → one switch line; the recorded line then replayed
+deterministically resolves to the parent, avoiding the flaky post-event live context); H6 a
+scripted/replayed switch line does not itself log (bypass); H7 a direct core
+`new_schematic switch … {} 0` (the tab-strip machinery form) logs nothing (scope). SABOTAGE
+×3 (neutralize the emit → H1/H4/H5 + grep-guard S1/S6 fail; hard-code the referent → H4b fails;
+log before the early-out → H2 fails), each failing exactly its checks.
+
+**Grep-guard extension (test_selflog_grep_guard.tcl):** S1 row for the `focus_window` emit
+(`utils/cadence_nav.tcl`, line-anchored so the prose comment does not count) + a new **S6
+SEAM-EXCLUSIVITY** block — exactly one Tcl `new_schematic switch` log line exists, it is
+`cadence_nav.tcl`, and **no C core** self-logs the `new_schematic switch` form. The C-core
+scan covers all three machinery files the switch path lives in (`scheduler.c` dispatch,
+`xinit.c` `switch_window`/`new_schematic`, `callback.c` EnterNotify/FocusIn), matching the
+`switch` verb SPECIFICALLY so the legitimate `new_schematic destroy` window-close self-logs
+(`xinit.c:2240/2331`) are not false-positives (this widening was the one actionable note from
+the review — the original scan grepped `scheduler.c` alone). `new_schematic` is deliberately
+NOT added to the S2 CVERBS set: it is Tcl-seam-logged, not C-self-logged, so the Tcl literal
+log is legitimate.
+
+**Adversarial review (6-lens refute workflow, 2 verifiers/finding): 0 confirmed, 4 dismissed
+(all minor, real=false on verification).** Every lens verdict SOUND: the referent lens
+confirmed the window number is minted by the *same* per-creation counter as the slot path, so
+every de-sync scenario perturbs path and number identically — no reachable case where a path
+misresolves while a number would be correct (Q2 vindicated). The edgecases lens confirmed the
+unconditional log-after-switch never diverges: Ctrl-E/Alt-E are raw Tk binds that bypass
+`callback()`'s semaphore bump, so `focus_window` runs at `semaphore==0` and the switch always
+actually happens (the "log a switch that did not occur" hazard is unreachable). Dismissed
+residuals (documented, not fixed): the S6 C-core blind spot (now closed by the widening above);
+H5 hand-installs the verbatim binding rather than sourcing the rc (sourcing clobbers the test's
+library fixtures; `clone_canvas_bindings` propagation already has dedicated coverage in
+`test_clone_canvas_bindings.tcl` CB3).
+
+Full audit: no new failures beyond the known WSLg/env baseline (`test_selflog_output`
+transform-keys, stash-confirmed identical with the impl removed; the cadence duo
+`test_cadence_descend_newwin_ro`/`test_cadence_drag`). `test_descend_newwin_return` and
+`test_descend_readonly` (both source `cadence_nav.tcl`) stay green.
+
 ---
 
 *Prepared 2026-07-14, `fluid-editing`. §1–5 analysis only — no code changed. §6 added after
 atom 3 landed; §7 after atom 4; §8 after atom 5; §9 after atom 6; §10 after atom 7; §11 after
-atom 8; §12 after atom 9; §13 after atom 10; §14 after atom 11. Coverage verified in source at
+atom 8; §12 after atom 9; §13 after atom 10; §14 after atom 11;
+§15 after atom 12. Coverage verified in source at
 HEAD by a 14-way parallel read; do not trust the status table without re-checking the cited
 `file:line` anchors, which drift as the tree moves.*
