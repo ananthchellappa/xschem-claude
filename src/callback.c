@@ -3392,6 +3392,16 @@ void view_snap_change(int dbl)
 void toggle_stretch_cmd(void)
 {
   tclsetboolvar("enable_stretch", !tclgetboolvar("enable_stretch"));
+  /* self-log the ABSOLUTE resolved state, NOT the relative flip (0062 tail / atom 16):
+   * a replayed `xschem toggle_stretch` lands on the OPPOSITE value whenever the start
+   * state differs from record time, so log the set-class form read back AFTER the flip
+   * (the 0066 cadsnap rule: never a relative/gesture form when an absolute one exists).
+   * Both callers -- the scheduler `toggle_stretch` branch and the 'y'-key
+   * act_toggle_stretch -- funnel here (1:1 with the verb), so this one site covers
+   * key/menu/script; the key's csv log_cmd copy dedups via dispatch's
+   * actionlog_cmd_logged gate. The `set enable_stretch` scheduler replay arm reproduces
+   * the effect (the mirrored tcl var) without re-logging. */
+  log_action("xschem set enable_stretch %d", tclgetboolvar("enable_stretch"));
 }
 static int act_toggle_stretch(const ActionEvent *e) { (void)e; toggle_stretch_cmd(); return 1; }
 static int act_toggle_ignore(const ActionEvent *e) { (void)e; toggle_ignore(); return 1; }
@@ -3420,6 +3430,11 @@ void toggle_orthogonal_wiring_cmd(void)
   if(tclgetboolvar("orthogonal_wiring")) { tclsetboolvar("orthogonal_wiring", 0); xctx->manhattan_lines = 0; }
   else                                   { tclsetboolvar("orthogonal_wiring", 1); }
   redraw_w_a_l_r_p_z_rubbers(1);
+  /* self-log the ABSOLUTE resolved state (0062 tail / atom 16): see toggle_stretch_cmd
+   * for the relative-flip-is-replay-fragile rationale. The `set orthogonal_wiring`
+   * scheduler replay arm reproduces the FULL side effect (manhattan_lines + rubber
+   * redraw), so a replayed line is faithful, not just the tcl var. */
+  log_action("xschem set orthogonal_wiring %d", tclgetboolvar("orthogonal_wiring"));
 }
 void toggle_draw_pixmap_cmd(void)
 {

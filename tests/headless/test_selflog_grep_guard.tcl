@@ -108,8 +108,12 @@ set MANIFEST {
     {strcmp\(argv\[4\], "kissing"\) && strcmp\(argv\[4\], "stretch"\)} 2 {move_objects + copy_objects replay arms parse `rot flip [local] [-anchor]`, guarded against the kissing/stretch flag words so a plain line parses unchanged (atom 13 / 0069)}
     {if\(done_netlist && !keep_symbols\)}            1 {netlist branch self-log gate: `-keep_symbols` cellview/reroute machinery stays SILENT, the atom-4 `save fast` axis; dir-unwritable (done_netlist==0) logs nothing (atom 14 / 0062)}
     {av\[ac\+\+\] = "netlist";}                       1 {netlist branch emits the resolved `xschem netlist [-erc] [-nohier] [{fname}]` replay form -- the branch IS the 1:1 self-log site (atom 14 / 0062)}
+    {tclsetboolvar\("enable_stretch", atoi\(argv\[3\]\)} 1 {set enable_stretch replay arm applies the resolved tcl var, the absolute form toggle_stretch_cmd self-logs; NO self-log here -> no double on replay (atom 16 / 0062 tail)}
+    {if\(!v\) xctx->manhattan_lines = 0;}             1 {set orthogonal_wiring replay arm reproduces the manhattan_lines side effect (edit-mode faithfulness), matching toggle_orthogonal_wiring_cmd; NO self-log here (atom 16 / 0062 tail)}
   }
   src/callback.c {
+    {log_action\("xschem set enable_stretch}          1 {toggle_stretch_cmd core self-logs the ABSOLUTE resolved state, not the replay-fragile relative flip (atom 16 / 0062 tail)}
+    {log_action\("xschem set orthogonal_wiring}       1 {toggle_orthogonal_wiring_cmd core self-logs the ABSOLUTE resolved state (atom 16 / 0062 tail)}
     {log_action\("xschem copy"}                       1 {Ctrl-C inline key (atom 4)}
     {if\(!xctx->readonly\) log_action\("xschem save"} 1 {Ctrl-S inline key incl. readonly gate (atom 4)}
     {log_action\("xschem reload"}                     1 {Alt-S inline key ok-arm (atom 4)}
@@ -173,6 +177,8 @@ set MANIFEST {
     {(?n)^\s*xschem\s+log_action\s+net_hilight_style_reset\M} 1 {nhse_reset live-reset line (atom 8 / 0065)}
     {(?n)^\s*xschem\s+log_action\s+\[list\s+set\s+::net_hilight_style\M} 1 {nhse_save staged-table line (atom 8 review: Save writes the staged var)}
     {(?n)^\s*xschem\s+log_action\s+\[list\s+write_net_hilight_style_conf\M} 1 {nhse_save resolved-path line (atom 8 / 0065)}
+    {(?n)^\s*xschem toggle_stretch$} 1 {Options-menu "Enable stretch" checkbutton -command routes through the self-logging toggle_stretch_cmd (atom 16 / 0062 tail): a bare -variable checkbutton bypassed the cmd and logged nothing}
+    {(?n)^\s*xschem toggle_orthogonal_wiring$} 1 {Options-menu "Enable orthogonal wiring" checkbutton -command routes through toggle_orthogonal_wiring_cmd -- the ONLY interactive control for the keyless verb -- applying side effects AND self-logging (atom 16 / 0062 tail)}
   }
   src/library_manager.tcl {
     {(?n)^\s*xschem\s+log_action\s+\[list\s+libmgr::do_} 14 {do_* mutation-seam logs, one per worker, line-anchored so a commented-out site does not count (atom 7 / 0064)}
@@ -276,6 +282,7 @@ set CVERBS {
   add_symbol_pin add_sch_pin netlist
   move_objects copy_objects load load_new_window
   {set cadsnap} {set cadgrid} {set header_text} {set rectcolor}
+  {set enable_stretch} {set orthogonal_wiring}
 }
 # (file,verb) pairs allowed UNGATED: the file-menu dialog-resolution arms eval
 # the WITH-FILENAME form, for which the C side is silent by design (C logs only
@@ -320,9 +327,16 @@ set sched [srctext src/scheduler.c]
 # `move_objects`/`copy_objects` (atom 13): same shape -- the scheduler arms ARE
 # the coordinate replay form (rot/flip/-anchor), the drop funnel is the sole
 # logger, so a log in the branch would re-log every replayed rot/flip drop.
+# toggle_stretch/toggle_orthogonal_wiring (atom 16 / 0062 tail): the cores
+# (toggle_*_cmd, callback.c) self-log the ABSOLUTE `set <var> <v>` form, so the
+# scheduler branches must NOT log the replay-fragile relative flip; likewise the
+# `set enable_stretch`/`set orthogonal_wiring` replay arms ARE the coordinate/replay
+# form and must not self-log (a log there would double every replayed line).
 foreach verb {make_symbol make_sch make_sch_from_sel descend descend_symbol
               go_back select_grow_connected update_net_hilight_style paste
-              add_symbol_pin add_sch_pin move_objects copy_objects} {
+              add_symbol_pin add_sch_pin move_objects copy_objects
+              toggle_stretch toggle_orthogonal_wiring
+              {set enable_stretch} {set orthogonal_wiring}} {
   set n [rxcount $sched "log_action\\(\"xschem $verb\[\"% \]"]
   check "S3 scheduler.c has NO log_action for core-logged verb '$verb'" \
     [expr {$n == 0}] "got=$n"

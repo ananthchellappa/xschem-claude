@@ -1246,11 +1246,87 @@ pending-stash, test_fluid_editing congestion flake — all pre-existing, none to
 (`toggle_stretch`/`toggle_orthogonal_wiring`) remain an optional set-class atom; shape point-edit
 stays a 0005 selection-addressing issue.
 
+## 19. Atom 16 outcome (2026-07-15): the two edit-mode toggles record a REPLAYABLE ABSOLUTE line (0062 tail CLOSED)
+
+The §17 candidate follow-up landed. `toggle_stretch` and `toggle_orthogonal_wiring` logged a
+**relative flip** (`xschem toggle_stretch`), which **replays wrong**: replayed against a start
+state that differs from record time it lands on the *opposite* value. Both now self-log the
+**resolved ABSOLUTE state read back after the flip** — the set-class form, same rule as atom-10's
+read-back, atom-14's `-erc` state-preservation, and the 0066 `set cadsnap` resolved-value policy:
+
+```
+xschem set enable_stretch <0|1>
+xschem set orthogonal_wiring <0|1>
+```
+
+- **Log site = the CORE `toggle_*_cmd` (1:1 with the verb).** Grep confirms each `toggle_*_cmd`
+  (callback.c) is reached by exactly two callers — its scheduler branch (`xschem toggle_*`) and its
+  registered `act_toggle_*` (the key/menu dispatch) — both *are* the toggle verb, so one self-log
+  covers key + script. The key's csv `log_cmd` copy (`xschem toggle_stretch`, actions.csv:204) is
+  the relative form; it **dedups** via the dispatch after-eval `actionlog_cmd_logged` gate
+  (`callback.c` — `log_action()` sets the flag, dispatch skips the copy) → exactly one absolute
+  line, the atom-14 `n`-key pattern.
+- **The `set <var>` scheduler arms are the REPLAY form and must NOT self-log.** New arms
+  `set enable_stretch` (just the mirrored tcl var, all `toggle_stretch_cmd` does) and
+  `set orthogonal_wiring` (reproduces the FULL cmd effect: `manhattan_lines=0` on OFF + the
+  rubber-layer redraw, exactly `toggle_orthogonal_wiring_cmd`) apply the effect on replay without
+  a `log_action` — a log there would double every replayed line (coordinate/replay-form-bypass).
+  Edit-mode session config, not saved content → **no read-only guard** (0066 policy b, like
+  `cadsnap`; a replayed `set enable_stretch` on a read-only view changes an editor mode, not the
+  cell). The pure-VIEW toggles (`toggle_colorscheme`/`draw_pixmap`/`show_netlist`/`ignore`) stay
+  UNLOGGED (0066 display policy) — untouched.
+- **The divergence lock (the whole point).** `test_toggle_editmode_log.tcl` records a toggle from
+  `start=0` (logs `set …1`), sets the live state to 1, replays the logged line → **HOLDS at 1**; a
+  control replay of the relative `xschem toggle_stretch` from state 1 → **FLIPS to 0**, proving the
+  exact divergence the absolute form avoids (the test_netlist_log 4b template).
+
+**Adversarial review (5-axis refute + independent verify + completeness critic): 0 code defects
+confirmed, but the critic surfaced a real UNCOVERED ENTRY POINT — the menu — which the C-only
+design missed.** The Options-menu checkbuttons *"Enable stretch"* (`-variable enable_stretch`) and
+*"Enable orthogonal wiring"* (`-variable orthogonal_wiring`, xschem.tcl ~13972/13979) had **no
+`-command`**: a bare `-variable` checkbutton flips the tcl var directly and **never calls
+`toggle_*_cmd`**, so the menu click recorded nothing — and for `orthogonal_wiring`, whose verb has
+**no key** (the old `L`/76 was rebound to `tools.insert_line`), that menu is the *only* interactive
+control, so the new self-log was interactively dead *and* the click skipped the `manhattan_lines`
+/redraw side effect entirely. The "1:1 caller" property was the smoking gun, not reassurance. Fixed
+by giving both checkbuttons a `-command` that routes through the self-logging cmd (the sibling
+*"Enable pin selection"* precedent, `-command {xschem set en_pin_select $en_pin_select}`): since Tk
+pre-flips the `-variable` before running `-command`, the body **undoes the pre-flip** (`set var
+[expr {!$var}]`) then calls `xschem toggle_*`, so the net effect is exactly one flip to the shown
+value + one absolute log line + (for orthogonal) the C side effects. Verified by invoking the real
+menu checkbuttons headless (`$menu invoke`).
+
+Verified: `tests/headless/test_toggle_editmode_log.tcl` (23 checks, full_audit logdir_tests —
+absolute-not-relative per verb, the divergence lock + orthogonal twin, the `set`-arm side-effect
+replay, the bypass invariant, pure-view toggles silent, key-'y' dispatch dedup exactly-once under X,
+**the two menu checkbuttons each a real `$menu invoke` → one net flip + one absolute line**).
+Sabotage ×4, each failing exactly its checks, each restore `git diff`-clean: (1) revert the core to
+the relative form → the divergence lock FAILS (`HOLDS-at-1` → got 0, plus 6 content checks; the
+exactly-one-line dedup stays green — correct discrimination); (2) make the `set enable_stretch` arm
+self-log → grep S3 (got=1) + the bypass check (delta=2); (3) drop the orthogonal arm's
+`manhattan_lines` line → grep S1 (got=0); (4) strip a checkbutton's `-command` → grep S1 (got=0) +
+the menu-log check (added empty). `test_phase3_mints` key-'y' updated (now asserts the absolute line,
+searching the added tail — the absolute form recurs earlier in the log, so a whole-log `lsearch`
+false-matches; the relative form is absent). Grep guard: S1 rows for both cores (callback.c), both
+`set` replay arms (scheduler.c), and both menu `-command` routes (xschem.tcl, line-anchored);
+`{set enable_stretch}`/`{set orthogonal_wiring}` added to S2 CVERBS; both toggle verbs **and** both
+`set` arms added to S3 branch-must-not-log. Full audit: `test_toggle_editmode_log` PASS, no new
+failures beyond the documented WSLg/env baseline (cadence duo, test_ciw / test_hi_descend /
+test_lib_manager_gui / test_reopen_readonly GUI set, test_selflog_output transform-keys,
+test_phase3_mints g/G snap keys, test_lib_sweep migration, test_wire_split W7, test_select_at
+pending-stash, test_fluid_editing congestion flake — none touches the toggles).
+
+**0062's toggle tail is CLOSED — every remaining §2 PARTIAL/OPEN row is now accounted for.** The
+action-log direction of travel is Refactor B (`perform_action()` single mutation/log/readonly
+boundary, §4) as its own multi-atom track — the menu-bypass finding here is a concrete argument for
+it: a single boundary would have made "did the menu log it?" a structural invariant, not a
+per-entry-point checklist item. Shape point-edit (0005) stays a selection-addressing issue.
+
 ---
 
 *Prepared 2026-07-14, `fluid-editing`. §1–5 analysis only — no code changed. §6 added after
 atom 3 landed; §7 after atom 4; §8 after atom 5; §9 after atom 6; §10 after atom 7; §11 after
 atom 8; §12 after atom 9; §13 after atom 10; §14 after atom 11;
-§15 after atom 12; §16 after atom 13; §17 after atom 14; §18 after atom 15. Coverage verified in
-source at HEAD by a 14-way parallel read; do not trust the status table without re-checking the
-cited `file:line` anchors, which drift as the tree moves.*
+§15 after atom 12; §16 after atom 13; §17 after atom 14; §18 after atom 15; §19 after atom 16.
+Coverage verified in source at HEAD by a 14-way parallel read; do not trust the status table
+without re-checking the cited `file:line` anchors, which drift as the tree moves.*

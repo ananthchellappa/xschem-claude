@@ -8744,6 +8744,16 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
              * back to C on a window/tab focus change (pin_selection.md). */
             tclsetboolvar("en_pin_select", xctx->en_pin_select);
           }
+          else if(!strcmp(argv[2], "enable_stretch")) { /* attached-wire stretch on move (edit-mode) */
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            /* absolute-set / replay arm for toggle_stretch_cmd's self-log (0062 tail /
+             * atom 16): the toggle records `xschem set enable_stretch <resolved>`, this
+             * applies it. The effect is only the mirrored tcl var (toggle_stretch_cmd sets
+             * just that). NO self-log here -- this IS the replay form (coordinate/
+             * replay-form-bypass): a log would double every replay. Edit-mode session
+             * config, not saved content -> no read-only guard (0066 policy b, like cadsnap). */
+            tclsetboolvar("enable_stretch", atoi(argv[3]) ? 1 : 0);
+          }
           else if(!strcmp(argv[2], "hide_symbols")) { /* set to 0,1,2 for various hiding level of symbols */
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
             xctx->hide_symbols=atoi(argv[3]);
@@ -8817,6 +8827,19 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
             int s = atoi(argv[3]);
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
             xctx->no_undo=s;
+          }
+          else if(!strcmp(argv[2], "orthogonal_wiring")) { /* orthogonal (manhattan) wire drawing (edit-mode) */
+            int v = atoi(argv[3]) ? 1 : 0;
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            /* absolute-set / replay arm for toggle_orthogonal_wiring_cmd's self-log (0062
+             * tail / atom 16). Reproduces the cmd's FULL effect, not just the tcl var:
+             * turning it OFF also zeroes manhattan_lines, and either way redraws the rubber
+             * layers -- exactly toggle_orthogonal_wiring_cmd (callback.c). NO self-log here
+             * (this IS the replay form -> no double-log on replay); edit-mode config, no
+             * read-only guard (0066 policy b). */
+            tclsetboolvar("orthogonal_wiring", v);
+            if(!v) xctx->manhattan_lines = 0;
+            redraw_w_a_l_r_p_z_rubbers(1);
           }
           else if(!strcmp(argv[2], "pending_fullzoom")) {
             /* arm a deferred full-zoom: the next ConfigureNotify with valid (mapped,

@@ -13970,14 +13970,32 @@ proc build_widgets { {topwin {} } } {
      -label "Undo buffer on Disk" -variable undo_type \
      -onvalue disk -offvalue memory -command {switch_undo}
   $topwin.menubar.option add checkbutton -label "Enable stretch" -variable enable_stretch \
-     -selectcolor $selectcolor  -accelerator Y
+     -selectcolor $selectcolor  -accelerator Y \
+     -command {
+       # Route the menu toggle through toggle_stretch_cmd so it self-logs the ABSOLUTE
+       # resolved state (atom 16 / 0062 tail) -- a bare -variable checkbutton flips the tcl
+       # var but records nothing. Tk has ALREADY flipped enable_stretch to the new value;
+       # undo that pre-flip so `xschem toggle_stretch` performs exactly one net flip (to the
+       # same new value) AND logs `xschem set enable_stretch <new>`.
+       set enable_stretch [expr {!$enable_stretch}]
+       xschem toggle_stretch
+     }
   $topwin.menubar.option add checkbutton -label "Enable pin selection (click a pin to select it)" \
      -variable en_pin_select -selectcolor $selectcolor \
      -command {xschem set en_pin_select $en_pin_select}
   $topwin.menubar.option add checkbutton -label "Enable infix-interface" -variable infix_interface \
      -selectcolor $selectcolor
   $topwin.menubar.option add checkbutton -label "Enable orthogonal wiring" -variable orthogonal_wiring \
-     -selectcolor $selectcolor  -accelerator Shift-L
+     -selectcolor $selectcolor  -accelerator Shift-L \
+     -command {
+       # Route through toggle_orthogonal_wiring_cmd: applies the manhattan_lines + rubber
+       # redraw side effects AND self-logs the ABSOLUTE resolved state (atom 16 / 0062 tail).
+       # A bare -variable checkbutton flipped only the tcl var -- no side effect, no log, and
+       # this menu is the ONLY interactive control (the verb has no key). Undo Tk's pre-flip so
+       # the cmd's single flip lands on the shown value and logs `xschem set orthogonal_wiring <new>`.
+       set orthogonal_wiring [expr {!$orthogonal_wiring}]
+       xschem toggle_orthogonal_wiring
+     }
   $topwin.menubar.option add checkbutton -label "Keep stub out of moved pins (exit stub)" \
      -selectcolor $selectcolor -variable wire_exit_stub
   $topwin.menubar.option add checkbutton -label "Unsel. partial sel. wires after stretch move" \

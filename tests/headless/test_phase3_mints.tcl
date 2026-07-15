@@ -98,7 +98,6 @@ foreach {desc cmd fire} {
   "Shift+wheel" {xschem pan left}               {fire_wheel 4 1}
   "key g"       {xschem snap half}              {fire_key 103 0}
   "key G"       {xschem snap double}            {fire_key 71 0}
-  "key y"       {xschem toggle_stretch}         {fire_key 121 0}
   "key A"       {xschem toggle_show_netlist}    {fire_key 65 0}
   "key \$"      {xschem toggle_draw_pixmap}     {fire_key 36 0}
 } {
@@ -106,6 +105,18 @@ foreach {desc cmd fire} {
   eval $fire
   check "$desc logs '$cmd'" [expr {[lsearch -exact [loglines] $cmd] >= $n0}]
 }
+# key 'y' -> edit.toggle_stretch now self-logs the ABSOLUTE resolved state (atom 16 /
+# 0062 tail): `xschem set enable_stretch <new>`, NOT the replay-fragile relative
+# `xschem toggle_stretch` (which lands on the opposite value when replayed from a
+# different start). The relative csv log_cmd copy dedups via the dispatch gate.
+set exp [expr {!$enable_stretch}]          ;# value AFTER the flip the key performs
+set n0 [llength [loglines]]
+fire_key 121 0
+set added [lrange [loglines] $n0 end]      ;# search the NEW tail: the absolute form recurs earlier
+check "key y logs absolute 'xschem set enable_stretch $exp'" \
+  [expr {[lsearch -exact $added "xschem set enable_stretch $exp"] >= 0}]
+check "key y does NOT log the relative 'xschem toggle_stretch'" \
+  [expr {[lsearch -exact [loglines] "xschem toggle_stretch"] < 0}]
 # key 76 ('L') was rebound from edit.toggle_orthogonal_wiring to tools.insert_line
 # (add_wire_label.md); insert_line starts a line-draw mode and logs no canonical command, so it
 # is no longer a chord->log case here (toggle_orthogonal_wiring still has its direct-call check).
