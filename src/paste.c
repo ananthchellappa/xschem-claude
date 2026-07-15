@@ -381,6 +381,11 @@ void merge_file(int selection_load, const char ext[])
       fd=my_fopen(name, fopen_read_mode);
     }
     if(fd) {
+     /* action-log (issue 0069): remember what the pending merge reads, so the drop
+      * logger (end_move_copy_logged) can record a self-contained replay line for
+      * non-clipboard sources (`xschem paste dx dy ... -file {f}`). Stored per-window
+      * (xctx) because each window can hold its own pending STARTMERGE. */
+     my_strncpy(xctx->merge_source, name, S(xctx->merge_source));
      xctx->prep_hi_structs=0;
      xctx->prep_net_structs=0;
      xctx->prep_hash_inst=0;
@@ -489,6 +494,14 @@ void merge_file(int selection_load, const char ext[])
        xctx->mousex_snap = xctx->mx_double_save;
        xctx->mousey_snap = xctx->my_double_save;
        if(rubber) move_objects(RUBBER,0,0,0);
+     }
+     else {
+       /* nothing merged (empty file / empty clipboard): move_objects(START) early-returned,
+        * so no gesture is pending and neither of the STARTMERGE-clearing sites (move END
+        * tail, ESC abort) will ever run. Don't leave the flag dangling: a later real
+        * move/copy drop would be mislogged as a paste (issue 0069 atom-9 review), and a
+        * later ESC would delete(1) whatever selection exists. */
+       xctx->ui_state &= ~STARTMERGE;
      }
     } else {
       dbg(0, "merge_file(): can not open %s\n", name);

@@ -24,6 +24,9 @@
 #
 # MAINTENANCE: adding a new C self-log means (a) adding its S1 manifest row and
 # (b) adding the verb to the S2 conflict set. That is the intended ratchet.
+# Atom 9 (0069 paste_at) added: the paste/merge drop-log site + merge_source
+# stash rows, the scheduler paste replay-arm rows, `paste` in S2 + S3, and the
+# S1c must-NOT-reappear scans (old marker / ctx-menu pick-8 literal).
 # The library_manager do_* mutation seam (atom 7 / 0064) is Tcl-only and its
 # `libmgr::do_*` lines don't start with "xschem " (S2-invisible), so it is
 # locked twice: the S1 site-count row (line-anchored, comments don't count)
@@ -85,6 +88,9 @@ set MANIFEST {
     {"xschem hilight_net_interactive" : "xschem unhilight_net_interactive"} 1 {hilight interactive noun-verb (ternary log)}
     {log_action\("xschem library_manager}             1 {library_manager open}
     {log_action_stash_select_at}                      1 {select_at stash flush}
+    {if\(!\(xctx->ui_state & STARTMERGE\)\)}          1 {paste replay arm: pending-merge completion gate (atom 9)}
+    {merge_file\(8, f\)}                              1 {paste replay arm: -file merge form (atom 9)}
+    {!strcmp\(argv\[k\], "-anchor"\)}                 1 {paste replay arm: -anchor pivot parse (atom 9 review)}
   }
   src/callback.c {
     {log_action\("xschem copy"}                       1 {Ctrl-C inline key (atom 4)}
@@ -102,6 +108,14 @@ set MANIFEST {
     {log_action\("xschem rotate %}                    2 {Shift-R key + move-END}
     {log_action\("xschem pan %}                       1 {drag-pan END}
     {log_action\("xschem zoom_box %}                  1 {zoom-drag END}
+    {(?n)^\s*av\[ac\+\+\] = "xschem"; av\[ac\+\+\] = "paste";} 1 {paste/merge drop replay line (atom 9 / 0069)}
+    {(?n)^\s*av\[ac\+\+\] = "-file";}                 1 {paste/merge drop -file source rider (atom 9)}
+    {(?n)^\s*av\[ac\+\+\] = "-anchor";}               1 {paste/merge drop -anchor pivot rider: whole-log replay regenerates the clipboard G record (atom 9 review)}
+    {(?n)^\s*log_action_argv\(ac, av\);}              1 {paste/merge drop emit call, line-anchored: if(0)/line-comment counts as removed (a BLOCK comment still evades -- the behavioral test is the real lock) (atom 9)}
+  }
+  src/paste.c {
+    {(?n)^\s*my_strncpy\(xctx->merge_source,}         1 {merge_file source stash for the drop logger (atom 9)}
+    {(?n)^\s*xctx->ui_state &= ~STARTMERGE;}          1 {merge_file empty-merge dangling-flag clear (atom 9 review: a dangler mislogs the next move drop as a paste)}
   }
   src/actions.c {
     {log_action\("xschem saveas \{%s\}}               1 {saveas dialog-resolution arm}
@@ -173,6 +187,17 @@ foreach w $lbmworkers {
 }
 
 # ---------------------------------------------------------------------------
+# S1c) must-NOT-reappear (atom 9): the paste/merge drop marker and the
+#      ctx-menu pick-8 literal are gone for good -- re-adding either would
+#      shadow or double the drop's replayable `xschem paste dx dy` line.
+# ---------------------------------------------------------------------------
+set cbtext [srctext src/callback.c]
+check "S1c old '# paste/merge drop' marker stays removed" \
+  [expr {[rxcount $cbtext {# paste/merge drop}] == 0}]
+check "S1c ctx-menu pick-8 'xschem paste' literal stays removed (drop line is the record)" \
+  [expr {[rxcount $cbtext {"xschem paste"}] == 0}]
+
+# ---------------------------------------------------------------------------
 # S2) TCL LITERAL-LOG CONFLICTS: no ungated hand-rolled `xschem log_action
 #     "xschem <verb> ..."` for a verb the C side self-logs.
 #     Gated = the same or one of the 2 preceding lines carries `log_action
@@ -188,7 +213,7 @@ set CVERBS {
   setprop unhilight_all hilight_net_interactive unhilight_net_interactive
   make_symbol make_sch make_sch_from_sel descend descend_symbol go_back
   select_grow_connected select_at library_manager exit
-  wire line rect arc polygon instance text pan zoom_box
+  wire line rect arc polygon instance text pan zoom_box paste
   move_objects copy_objects load load_new_window
   {set cadsnap} {set cadgrid} {set header_text} {set rectcolor}
 }
@@ -227,8 +252,10 @@ check "S2 no ungated Tcl literal logs of C-self-logged verbs" [expr {$nviol == 0
 #     so make_sch does not match make_sch_from_sel, descend not descend_symbol.
 # ---------------------------------------------------------------------------
 set sched [srctext src/scheduler.c]
+# `paste`: the branch IS the coordinate replay form (atom 9) -- a log there
+# would re-log every replayed drop.
 foreach verb {make_symbol make_sch make_sch_from_sel descend descend_symbol
-              go_back select_grow_connected update_net_hilight_style} {
+              go_back select_grow_connected update_net_hilight_style paste} {
   set n [rxcount $sched "log_action\\(\"xschem $verb\[\"% \]"]
   check "S3 scheduler.c has NO log_action for core-logged verb '$verb'" \
     [expr {$n == 0}] "got=$n"

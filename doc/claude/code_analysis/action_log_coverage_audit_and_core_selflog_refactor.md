@@ -557,9 +557,118 @@ op_delete line / normalizing-form regression — each fails exactly its checks +
 guard rows). Full audit ×2: no new failures (test_fluid_editing 4× standalone pass both
 sides = congestion flake; the rest = the known WSLg set).
 
+## 12. Atom 9 outcome (2026-07-14): the paste/merge drop records a replayable line (0069's largest marker closed)
+
+The §2 "Gesture drops" row's biggest hole — `end_move_copy_logged`'s STARTMERGE arm wrote a
+dead `# paste/merge drop at delta …` marker, so a replayed session silently skipped every
+pasted or merged object. The drop now logs the scheduler's own coordinate replay form:
+
+```
+xschem paste <dx> <dy> [<rot> <flip> [local]] [-anchor ax ay] [-file {f}]
+```
+
+- **Log site = the drop funnel (Layer-C pattern), not the cores.** `merge_file()` and
+  `move_objects()` both fail the 1:1 test (shared by the scheduler replay arms and multiple
+  key/menu paths). `paste_from` and `rotatelocal` are captured BEFORE `move_objects(END)`
+  (which resets both, move.c END/ABORT). The line is built with `log_action_argv`
+  (Tcl_Merge) so a brace-y filename stays replayable.
+- **Source-distinguished, self-contained (§6 rule):** clipboard (`paste_from == 2`) logs the
+  bare form and replays against the **replay-time clipboard file** (faithful-to-op accepted
+  delta, same class as `do_checkin_lib`'s re-sweep, §10). File merges (`b` key dialog,
+  File→Merge, `xschem merge f`) ride the recorded source via `-file {f}`, stashed per-window
+  in the new `xctx->merge_source` by `merge_file()` at open success. The cross-window
+  selection transfer (`paste_from == 1`) logs its transient `.selection.sch` path — usually
+  gone at replay, so the line no-ops; accepted, the source has no durable referent.
+- **Mid-gesture rotate/flip replays.** The scheduler `paste` branch grew `rot flip [local]`
+  args (backward-compatible argc checks) that set `move_rot`/`move_flip`/`rotatelocal`
+  before the END. `local` distinguishes the per-object in-place variant (Alt-R
+  mid-gesture, or Shift-R via `connected_drag_group_transform()==0`) from the group
+  rotate about the shared anchor. **The shared pivot rides the line as `-anchor ax ay`
+  (adversarial-review MAJOR, confirmed empirically):** the drop's pivot is `x1/y1` from
+  the merged file's `G` record, but a *whole-log* replay regenerates the clipboard via the
+  replayed `xschem copy`, whose pointer position is not in the log — so with identical
+  content the replayed `G` differs and a rot/flip drop landed rotated about the wrong
+  point (final = R_pivot(coords)+delta; only translation-only and `local` drops are
+  pivot-independent). The replay arm overrides `x1/y1` with the recorded anchor after the
+  merge, making the replay G-record-independent (locked by T6b, which poisons the
+  clipboard's `G` record and requires identical geometry).
+- **The replay arm completes a pending merge instead of stacking a second one.** New gate:
+  with `STARTMERGE` already pending, `paste dx dy` skips the `merge_file` call and just sets
+  the deltas + END. This makes the 2-line record of a CIW-typed interactive `xschem paste`
+  followed by the drop replay to exactly one paste (previously a latent double-merge), and
+  keeps old logs (interactive line + skipped marker) harmless. A **failed** merge (missing
+  clipboard/`-file` file) now also skips the END — the old unconditional
+  `move_objects(END)` would translate whatever selection happened to exist by the delta.
+- **The ctx-menu pick-8 table line (`"xschem paste"`) is removed.** The pick only STARTS the
+  gesture (Layer-C class, like the place-symbol/text picks); keeping it would replay a
+  second merge on top of the drop line's. Every entry path — Edit menu, toolbar, Ctrl-V
+  legacy key, ctx pick 8, palette — now records exactly one line: the drop's.
+- **Deliberately unchanged (0069 siblings, later atoms):** the sympin drop marker, the
+  rot/flip-during-plain-move marker, shape point-edit (0005).
+
+**Adversarial-review round (28-agent refute workflow; 46 findings, the confirmed ones
+fixed in-tree):**
+1. *Dangling STARTMERGE mislogged the next move as a paste (MAJOR).* `merge_file()` sets
+   `STARTMERGE` before knowing whether anything was merged; an empty file / empty
+   clipboard leaves `move_objects(START)` early-returning at `lastsel==0`, and neither
+   clearing site (move END tail, ESC abort) ever runs — the next real move drop then took
+   the STARTMERGE branch and logged `xschem paste dx dy [-file]` while the true
+   `move_objects` line was suppressed (pre-change this dangler produced the dead marker;
+   the new code upgraded it to an actively wrong replayable line — and a dangling flag
+   also made a later ESC `delete(1)` the current selection). Fixed in `merge_file`: clear
+   `STARTMERGE` when nothing got selected. Locked by T11 (sabotage reproduces the exact
+   mislogged line).
+2. *G-record pivot divergence (MAJOR)* — the `-anchor` rider above.
+3. *`paste_from` poisoning (minor).* Any failed/cancelled mid-gesture `merge_file()` call
+   (e.g. CIW-typed `xschem merge missing.sch` during a pending clipboard paste) resets
+   `paste_from` without touching the pending gesture, degrading the bare clipboard form to
+   `-file {clipboard path}`. Fixed: the logger's source test is now
+   `merge_source == clip_file` (merge_source is written only on a successful open, so it
+   stays owned by the pending merge). T8 locks the bare 4-element form.
+4. *Replay-arm hardening (minor).* rot/flip masked (`&3`/`&1`, out-of-domain flip used to
+   persist into the .sch); `rotatelocal` set unconditionally from the line (a pending
+   gesture's interactive local flag must not leak into a no-local completion); named
+   options parsed by scan, so `-file` is honored regardless of position.
+5. *Stale `paste_from` header comment* (values 1/2 swapped vs paste.c) corrected.
+
+**Documented residuals (accepted, not coded):**
+- An ESC-abort of a *channel-typed* interactive `xschem paste` is unrecorded (gesture-abort
+  class, 0005/0069): typed-bare + ESC + retry replays with the first pending merge's
+  objects left at their load position. Same class: a session ending with an un-dropped
+  typed paste replays into a live pending merge.
+- `-file` lines referencing mutable/transient sources replay whatever exists at replay time:
+  the cross-window selection transfer's `.selection.sch` (usually deleted → line no-ops; a
+  recreated one merges foreign content), and generator sources re-run the generator. Same
+  faithful-to-op class as the clipboard re-read.
+- Hand-written degenerate grammars degrade silently (`paste x y rot` without flip drops the
+  transform; bare `-file` without a name falls back to clipboard). Logger output is always
+  well-formed.
+
+Guard ratchet: S1 rows pin the drop-log argv build (incl. the `-anchor` rider) + the
+line-anchored `log_action_argv` emit call (an `if(0)`/line-comment counts as removed; a
+block comment still evades — the behavioral test is the real lock), the `merge_source`
+stash + the empty-merge dangling-flag clear (paste.c), and the scheduler arm's completion
+gate + `-file` merge form + `-anchor` parse; new **S1c** must-NOT-reappear scans lock the
+old marker and the ctx pick-8 literal out; `paste` joined S2 and S3 (the branch IS the
+replay form and must never log).
+
+Verified: `test_paste_at_log.tcl` (40 checks, full_audit logdir_tests — drop exactly-once
+with delta == displacement via `instance_coord`, replay-bypass invariant (log count
+unchanged) for bare/rot/local/group/file forms, T6b G-record-poisoned replay still exact,
+T10 pending-merge completion (one paste, no extra line), T11 no dangling STARTMERGE +
+correct move line after an empty merge, ESC-abort logs nothing, no-motion drop still logs,
+ctx-menu single-line + bare form, whole-log marker sweep; dependent checks guarded so a
+dead logger fails 13 checks instead of killing the script; clipboard re-primed per section
+to narrow the shared-`~/.xschem/.clipboard.sch` concurrency window). Sabotage ×5 (drop-log
+`if(0)` → 13 test FAILs; replay-arm rot zeroing → exactly the two orientation-replay
+checks; ctx pick-8 literal re-add → T8 double-line + guard S1c; anchor-override `if(0)` →
+exactly T6b; dangling-clear `if(0)` → exactly the T11 pair, reproducing the reviewer's
+mislogged line verbatim).
+
 ---
 
 *Prepared 2026-07-14, `fluid-editing`. §1–5 analysis only — no code changed. §6 added after
 atom 3 landed; §7 after atom 4; §8 after atom 5; §9 after atom 6; §10 after atom 7; §11 after
-atom 8. Coverage verified in source at HEAD by a 14-way parallel read; do not trust the status
-table without re-checking the cited `file:line` anchors, which drift as the tree moves.*
+atom 8; §12 after atom 9. Coverage verified in source at HEAD by a 14-way parallel read; do not
+trust the status table without re-checking the cited `file:line` anchors, which drift as the
+tree moves.*

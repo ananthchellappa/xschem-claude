@@ -1570,6 +1570,18 @@ static void end_move_copy_logged(int is_copy)
   double dx = xctx->deltax, dy = xctx->deltay;
   int rot = xctx->move_rot, flip = xctx->move_flip;
   int kissing = xctx->kissing;
+  /* paste/merge drop (issue 0069): reset/overwritten by move_objects(END) below, capture
+   * now. The source test is merge_source == clip_file (bare `xschem paste`) vs anything
+   * else (-file rider) -- NOT paste_from, which any failed/cancelled mid-gesture
+   * merge_file() call resets to 0 without touching the pending gesture (atom-9 review);
+   * merge_source is written only on a successful open, so it stays owned by the pending
+   * merge. rotatelocal picks the per-object pivot for a mid-gesture in-place rotate/flip;
+   * x1/y1 is the shared rotation anchor (from the merged file's G record), recorded as
+   * `-anchor` because a whole-log replay regenerates the clipboard via the replayed
+   * `xschem copy` with a DIFFERENT pointer position -> different G record -> a rot/flip
+   * drop would land rotated about the wrong point (atom-9 review). */
+  int rotl = xctx->rotatelocal;
+  double ax = xctx->x1, ay = xctx->y1;
   /* mirror the END early-return: click on elements without motion does nothing */
   int nothing = xctx->drag_elements && dx == 0. && dy == 0.;
 
@@ -1588,7 +1600,38 @@ static void end_move_copy_logged(int is_copy)
 
   if(nothing) return;
   if(ui & STARTMERGE) {
-    log_action("# paste/merge drop at delta %.16g %.16g (pending-merge replay, issue 0005)", dx, dy);
+    /* action-log (issue 0069): the drop replays through the scheduler's coordinate
+     * paste arm (`xschem paste dx dy [rot flip [local]] [-file {f}]`), which calls
+     * merge_file + move_objects(END) directly -- never this funnel -- so a replay
+     * cannot re-log (coordinate-form-bypass invariant). A clipboard paste logs the
+     * bare form and replays against the replay-time clipboard file (faithful-to-op
+     * accepted delta, like the libmgr do_checkin_lib re-sweep); file merges carry
+     * the recorded source via -file. The cross-window selection transfer
+     * (paste_from == 1) logs its transient sel_file path: usually gone at replay,
+     * so the line no-ops -- accepted, the source has no durable referent. */
+    char xb[64], yb[64], rb[16], fb[16], axb[64], ayb[64];
+    const char *av[12];
+    int ac = 0;
+    my_snprintf(xb, S(xb), "%.16g", dx);
+    my_snprintf(yb, S(yb), "%.16g", dy);
+    av[ac++] = "xschem"; av[ac++] = "paste"; av[ac++] = xb; av[ac++] = yb;
+    if(rot || flip) {
+      my_snprintf(rb, S(rb), "%d", rot);
+      my_snprintf(fb, S(fb), "%d", flip);
+      av[ac++] = rb; av[ac++] = fb;
+      if(rotl) av[ac++] = "local";
+      else {
+        /* shared-pivot transform: pin the anchor, see the capture comment above.
+         * (translation-only and `local` drops are pivot-independent -> no rider) */
+        my_snprintf(axb, S(axb), "%.16g", ax);
+        my_snprintf(ayb, S(ayb), "%.16g", ay);
+        av[ac++] = "-anchor"; av[ac++] = axb; av[ac++] = ayb;
+      }
+    }
+    if(strcmp(xctx->merge_source, clip_file) && xctx->merge_source[0]) {
+      av[ac++] = "-file"; av[ac++] = xctx->merge_source;
+    }
+    log_action_argv(ac, av);
   }
   else if(ui & START_SYMPIN) {
     log_action("# place symbol pin (no replayable subcommand yet)");
@@ -2978,7 +3021,10 @@ static const char *ctxmenu_log_cmd[] = {
   NULL,                          /*  5  place polygon     -> Layer C       */
   NULL,                          /*  6  place text        -> Layer C       */
   "xschem cut",                  /*  7  cut selection -> clipboard         */
-  "xschem paste",                /*  8  paste clipboard at mouse           */
+  NULL,                          /*  8  paste clipboard   -> Layer C: the pick only STARTS the
+                                  *     merge gesture; the drop logs the replayable
+                                  *     `xschem paste dx dy ...` line (issue 0069). A pick line
+                                  *     here would replay a second merge on top of it. */
   NULL,                          /*  9  load recent  (dynamic; see case 9) */
   "# context-menu: edit attributes (dialog, not replayable)",            /* 10 */
   "# context-menu: edit attributes in editor (dialog, not replayable)",  /* 11 */

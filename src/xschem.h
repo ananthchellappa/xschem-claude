@@ -1203,9 +1203,15 @@ typedef struct {
   int simdata_ninst;
   int modified;
   int semaphore;
-  int paste_from; /* set to 1 if paste from clipboard is called ,
-                   *        2 if paste from selection
-                   *        3 if paste from user provided file */
+  int paste_from; /* pending-merge source (see paste.c merge_file):
+                   *        0 named file (merge with explicit filename)
+                   *        1 selection transfer (sel_file)
+                   *        2 clipboard (clip_file)
+                   *        3 user-picked file (merge dialog) */
+  char merge_source[PATH_MAX]; /* paste.c: source file of the pending STARTMERGE, as merge_file()
+                                * opened it -- read by the drop logger (callback.c
+                                * end_move_copy_logged) to record `xschem paste ... -file {f}`
+                                * for non-clipboard merges (issue 0069) */
   size_t tok_size;
   char netlist_name[PATH_MAX];
   char current_dirname[PATH_MAX];
