@@ -42,7 +42,7 @@ per-edge wrappers. Decision for the spec owner.
 | 0061 | Non-File menubar items (Edit/View/Tools/Symbol/Highlight/Sim/Properties) not logged | HIGH |
 | 0062 | Toolbar + recent-component bar buttons not logged | HIGH |
 | 0063 | Property-edit dialogs (editprop.c) commit silently | HIGH |
-| 0064 | Library Manager mutations (git/create/rename/delete/copy) not logged | MED |
+| 0064 | Library Manager mutations (git/create/rename/delete/copy) not logged (FIXED, atom 7) | MED |
 | 0065 | Net-hilight-style editor commit not logged | LOW |
 | 0066 | `xschem set` config/display + change-layer/header not logged | MED |
 | 0067 | Raw Tk key/mouse binds bypass registry logger | MED |

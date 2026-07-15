@@ -482,6 +482,29 @@ proc libmgr::place_symbol {} {
 # worker that takes explicit args, calls the library_defs.tcl backend, refreshes
 # the panes and reports via the status bar. The do_* layer is the testable seam
 # (no modal dialogs), returning 1 on success and 0 on a caught backend error.
+#
+# ACTION LOG (issue 0064 / 0071 atom 7): every MUTATING do_* worker records its
+# own call line on the success arm only — log_action of the [list]-built
+# `libmgr::do_<op> <args>` call, just before `return 1` — so every ctx_* dialog
+# Cancel (all divert
+# BEFORE reaching do_*) and every caught backend error leave no line. These are
+# Tcl-only mutations (no C core to self-log); the do_* seam is the single
+# logging site. Do NOT log in the library_defs.tcl / library_git.tcl backends:
+# they are shared sub-steps (lib_git_restore is cancel-checkout's internal
+# step; library_copy_cell+library_delete_cell compose a cross-library rename)
+# and logging there double-counts. [list] keeps brace/backslash/newline args
+# (free-text commit messages) source-able; a multiline message spans log lines
+# inside balanced braces — same accepted class as the TCP multi-line records.
+# Replay caveats (faithful-to-the-op, accepted): do_checkin_lib re-sweeps
+# whatever is pending under the library at REPLAY time; do_cancel_checkout
+# discards replay-time uncommitted edits (it is destructive by contract);
+# do_new_library logs the path the user gave — an empty {} re-resolves the
+# default (beside library.defs) at replay. Read-only viewers (do_history*,
+# do_show_checkouts) stay unlogged. test_selflog_grep_guard locks this twice:
+# an S1 row pins the site count and the S1b closure scan enumerates every
+# `proc libmgr::do_*` -- a NEW mutating worker that does not log its own name
+# (or join the read-only allowlist there) fails the guard closed.
+# Test: tests/headless/test_libmgr_mutation_log.tcl.
 
 proc libmgr::status {msg} { catch {.libmgr.status configure -text $msg} }
 
@@ -496,7 +519,11 @@ proc libmgr::lib_names {} {
 # treeview row id), so a missing target simply leaves the deeper panes empty.
 proc libmgr::refresh_after {{lib {}} {cell {}} {view {}}} {
   variable sel_lib; variable sel_cell; variable suppress_select; variable suppress_after
-  if {![winfo exists .libmgr]} return
+  # headless guard: in a --nogui / display-less session Tk is not loaded, so a
+  # bare `winfo` here is an ERROR, not a false -- and it fires AFTER the do_*
+  # backend has already mutated disk, so a logged libmgr::do_* line would
+  # abort its own recording and abort a log replay mid-file (atom-7 review).
+  if {[info commands winfo] eq {} || ![winfo exists .libmgr]} return
   # Drive the panes programmatically with the bound select-handlers suppressed, so
   # the deferred <<TreeviewSelect>> events queued by our `selection set` calls fire
   # as no-ops (they run before the after-idle reset below) instead of re-clearing
@@ -551,6 +578,7 @@ proc libmgr::do_delete_cell {lib cell} {
   if {[catch {library_delete_cell $lib $cell} e]} { libmgr::status "delete failed: $e"; return 0 }
   libmgr::refresh_after $lib
   libmgr::status "deleted $lib/$cell (recoverable in .xschem_trash)"
+  xschem log_action [list libmgr::do_delete_cell $lib $cell]
   return 1
 }
 
@@ -566,6 +594,7 @@ proc libmgr::do_delete_view {lib cell view} {
   if {[catch {library_delete_view $lib $cell $view} e]} { libmgr::status "delete failed: $e"; return 0 }
   libmgr::refresh_after $lib $cell
   libmgr::status "deleted view $lib/$cell/$view (recoverable in .xschem_trash)"
+  xschem log_action [list libmgr::do_delete_view $lib $cell $view]
   return 1
 }
 
@@ -612,6 +641,7 @@ proc libmgr::do_checkout {lib cell {view {}}} {
   } e]} { libmgr::status "check out failed: $e"; return 0 }
   libmgr::refresh_after $lib $cell $view
   libmgr::status "checked out [libmgr::cv_label $lib $cell $view]"
+  xschem log_action [list libmgr::do_checkout $lib $cell $view]
   return 1
 }
 
@@ -621,6 +651,7 @@ proc libmgr::do_cancel_checkout {lib cell {view {}}} {
   } e]} { libmgr::status "cancel checkout failed: $e"; return 0 }
   libmgr::refresh_after $lib $cell $view
   libmgr::status "cancelled checkout of [libmgr::cv_label $lib $cell $view]"
+  xschem log_action [list libmgr::do_cancel_checkout $lib $cell $view]
   return 1
 }
 
@@ -631,6 +662,7 @@ proc libmgr::do_checkin {lib cell view message} {
   } e]} { libmgr::status "check in failed: $e"; return 0 }
   libmgr::refresh_after $lib $cell $view
   libmgr::status "checked in [libmgr::cv_label $lib $cell $view]"
+  xschem log_action [list libmgr::do_checkin $lib $cell $view $message]
   return 1
 }
 
@@ -647,6 +679,7 @@ proc libmgr::do_checkin_lib {lib message} {
   } e]} { libmgr::status "check in failed: $e"; return 0 }
   libmgr::refresh_after $lib
   libmgr::status "checked in library $lib"
+  xschem log_action [list libmgr::do_checkin_lib $lib $message]
   return 1
 }
 
@@ -885,6 +918,7 @@ proc libmgr::do_copy_cell {sl sc dl dc} {
   if {[catch {library_copy_cell $sl $sc $dl $dc} e]} { libmgr::status "copy failed: $e"; return 0 }
   libmgr::refresh_after $dl $dc
   libmgr::status "copied $sl/$sc -> $dl/$dc"
+  xschem log_action [list libmgr::do_copy_cell $sl $sc $dl $dc]
   return 1
 }
 
@@ -901,6 +935,7 @@ proc libmgr::do_rename_cell {sl sc dl dc} {
   if {[catch {library_rename_cell $sl $sc $dl $dc} e]} { libmgr::status "rename failed: $e"; return 0 }
   libmgr::refresh_after $dl $dc
   libmgr::status "renamed $sl/$sc -> $dl/$dc"
+  xschem log_action [list libmgr::do_rename_cell $sl $sc $dl $dc]
   return 1
 }
 
@@ -916,6 +951,7 @@ proc libmgr::do_new_cell {lib cell} {
   if {[catch {library_new_cell $lib $cell} e]} { libmgr::status "new cell failed: $e"; return 0 }
   libmgr::refresh_after $lib $cell
   libmgr::status "created cell $lib/$cell (schematic view)"
+  xschem log_action [list libmgr::do_new_cell $lib $cell]
   return 1
 }
 
@@ -929,6 +965,7 @@ proc libmgr::do_new_library {name path} {
   if {[catch {library_new $name $path} e]} { libmgr::status "new library failed: $e"; return 0 }
   libmgr::refresh_after $name
   libmgr::status "created library $name"
+  xschem log_action [list libmgr::do_new_library $name $path]
   return 1
 }
 
@@ -943,6 +980,7 @@ proc libmgr::do_unregister {lib} {
   if {[catch {library_unregister $lib} e]} { libmgr::status "remove failed: $e"; return 0 }
   libmgr::refresh_after
   libmgr::status "removed library $lib from the registry (files kept on disk)"
+  xschem log_action [list libmgr::do_unregister $lib]
   return 1
 }
 
@@ -1084,6 +1122,7 @@ proc libmgr::do_rename_view {lib cell oldv newv} {
   if {[catch {library_rename_view $lib $cell $oldv $newv} e]} { libmgr::status "rename failed: $e"; return 0 }
   libmgr::refresh_after $lib $cell $newv
   libmgr::status "renamed view $lib/$cell/$oldv -> $newv"
+  xschem log_action [list libmgr::do_rename_view $lib $cell $oldv $newv]
   return 1
 }
 
@@ -1100,6 +1139,7 @@ proc libmgr::do_copy_view {sl sc sv dl dc dv} {
   if {[catch {library_copy_view $sl $sc $sv $dl $dc $dv} e]} { libmgr::status "copy failed: $e"; return 0 }
   libmgr::refresh_after $dl $dc $dv
   libmgr::status "copied view $sl/$sc/$sv -> $dl/$dc/$dv"
+  xschem log_action [list libmgr::do_copy_view $sl $sc $sv $dl $dc $dv]
   return 1
 }
 
@@ -1115,6 +1155,7 @@ proc libmgr::do_new_view {lib cell view type} {
   if {[catch {library_new_view $lib $cell $view $type} e]} { libmgr::status "new view failed: $e"; return 0 }
   libmgr::refresh_after $lib $cell $view
   libmgr::status "created view $lib/$cell/$view ($type)"
+  xschem log_action [list libmgr::do_new_view $lib $cell $view $type]
   return 1
 }
 

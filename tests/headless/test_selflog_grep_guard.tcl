@@ -24,6 +24,12 @@
 #
 # MAINTENANCE: adding a new C self-log means (a) adding its S1 manifest row and
 # (b) adding the verb to the S2 conflict set. That is the intended ratchet.
+# The library_manager do_* mutation seam (atom 7 / 0064) is Tcl-only and its
+# `libmgr::do_*` lines don't start with "xschem " (S2-invisible), so it is
+# locked twice: the S1 site-count row (line-anchored, comments don't count)
+# and the S1b closure scan, which enumerates every `proc libmgr::do_*` and
+# fails any worker that neither logs its own name nor sits on the read-only
+# allowlist -- a NEW unlogged worker fails closed with no row bump needed.
 # doc/claude/code_analysis/action_log_coverage_audit_and_core_selflog_refactor.md
 #
 # Needs the action log open (S5) -> registered in full_audit.sh logdir_tests:
@@ -126,6 +132,9 @@ set MANIFEST {
     {log_action -emitted}                             4 {stdin REPL + TCP handler -emitted gates (0003)}
     {# failed: }                                      2 {stdin REPL + TCP failed-command comment form (0003)}
   }
+  src/library_manager.tcl {
+    {(?n)^\s*xschem\s+log_action\s+\[list\s+libmgr::do_} 14 {do_* mutation-seam logs, one per worker, line-anchored so a commented-out site does not count (atom 7 / 0064)}
+  }
 }
 foreach {relfile rows} $MANIFEST {
   set text [srctext $relfile]
@@ -133,6 +142,30 @@ foreach {relfile rows} $MANIFEST {
     set n [rxcount $text $re]
     check "S1 $relfile: $label" [expr {$n >= $min}] "want>=$min got=$n re=$re"
   }
+}
+
+# ---------------------------------------------------------------------------
+# S1b) libmgr do_* seam CLOSURE (atom 7 review): the >=14 floor above cannot
+#      see a NEW unlogged worker, so enumerate every `proc libmgr::do_*` and
+#      require each to be either an allowlisted read-only viewer or to carry an
+#      UNCOMMENTED log_action of its own name (line-anchored; \M so do_checkin
+#      does not satisfy do_checkin_lib). A new mutating worker fails closed
+#      until it logs or is allowlisted.
+# ---------------------------------------------------------------------------
+set LBM_READONLY {do_show_checkouts do_history do_history_view do_history_cell do_history_lib}
+set lbmtext [srctext src/library_manager.tcl]
+set lbmworkers {}
+foreach {m name} [regexp -all -inline {proc\s+libmgr::(do_\w+)} $lbmtext] {
+  lappend lbmworkers $name
+}
+set lbmworkers [lsort -unique $lbmworkers]
+check "S1b do_* worker inventory found" [expr {[llength $lbmworkers] >= 19}] \
+  "n=[llength $lbmworkers]"
+foreach w $lbmworkers {
+  if {[lsearch -exact $LBM_READONLY $w] >= 0} continue
+  set re "(?n)^\\s*xschem\\s+log_action\\s+\\\[list\\s+libmgr::${w}\\M"
+  check "S1b libmgr::$w logs its own line (uncommented)" \
+    [expr {[rxcount $lbmtext $re] >= 1}] "re=$re"
 }
 
 # ---------------------------------------------------------------------------

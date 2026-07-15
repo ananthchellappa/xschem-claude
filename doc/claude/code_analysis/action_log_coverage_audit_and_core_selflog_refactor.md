@@ -442,7 +442,82 @@ TCP server failed for environment reasons — the in-process loopback is the rel
 
 ---
 
+## 10. Atom 7 outcome (2026-07-14): Library Manager mutations record (issue 0064 CLOSED)
+
+The Tcl-only mutation class of §3.4 closed by its own §4-step-4 route — not a
+`log_mutation` helper and not new C subcommands, but the simplest correct form: the
+**14 mutating `libmgr::do_*` workers** (the documented dialog-free seam of
+`library_manager.tcl`) each log their own call line on the **success arm only**, just
+before `return 1`:
+
+```tcl
+xschem log_action [list libmgr::do_<op> <args...>]
+```
+
+- **Why the do_* seam:** every ctx_* dialog Cancel diverts *before* reaching do_*, and
+  every backend error is caught to `return 0` — so success-arm logging needs no
+  cancel/error bookkeeping at all. The backends (`library_defs.tcl` / `library_git.tcl`)
+  stay silent: they are shared sub-steps (a cross-library rename composes
+  `library_copy_cell` + `library_delete_cell`; `lib_git_restore` is cancel-checkout's
+  internal step) — logging there is the delete()-class mistake of §4.
+- **No dedup wiring needed, but it exists anyway:** the lines never route through a
+  self-logging C subcommand; and because `xschem log_action` itself sets
+  `actionlog_cmd_logged` (util.c), a CIW-typed `libmgr::do_*` still records exactly once
+  (ciw_exec skips its copy), and `actionlog_suppress` gates these lines for free.
+- **Line form:** `[list]`-built → brace/backslash/newline-safe. A multiline commit
+  message spans physical log lines inside balanced braces — source-able, same accepted
+  class as the §9 TCP multi-line records (verified: `info complete` + re-eval commits
+  the verbatim message).
+- **Replay caveats (faithful-to-the-op, documented at the seam):** `do_checkin_lib`
+  re-sweeps whatever is pending under the library at replay time; `do_cancel_checkout`
+  discards replay-time uncommitted edits (destructive by contract, confirmed at
+  record time only); `do_new_library` logs the path as given — `{}` re-resolves the
+  default beside `library.defs` at replay. Replay is headless-safe: the three files are
+  sourced unconditionally at startup, `refresh_after` early-returns without `.libmgr`,
+  `libmgr::status` is catch-guarded.
+- **Out of scope:** `libmgr::place_symbol` (interactive gesture, 0069 class — the drop
+  already logs `xschem instance`); read-only viewers (`do_history*`,
+  `do_show_checkouts`); the open/locate/read-only trio (already logged, atom 5 / 0055);
+  0065 NHSE editor (separate atom).
+- **Guard ratchet:** the sites are S2-invisible (lines don't start with `"xschem "`), so
+  the lock is double: an **S1 manifest row** pinning ≥14 sites (line-anchored `(?n)^\s*`,
+  so a commented-out site does not count) plus a new **S1b closure scan** that enumerates
+  every `proc libmgr::do_*` and fails any worker that neither logs its own name
+  (`\M`-bounded, so `do_checkin` cannot satisfy `do_checkin_lib`) nor sits on the
+  read-only allowlist — a NEW unlogged mutating worker fails closed with no row bump.
+
+**Adversarial-review round (3 confirmed findings, all fixed):**
+1. **Headless replay was broken by `refresh_after` itself** — its guard
+   `![winfo exists .libmgr]` is an *error*, not a false, in a `--nogui`/display-less
+   session (Tk never loads), and it fired AFTER the backend mutation: the do_* worker
+   mutated disk, then threw before its own log line (via the atom-6 stdin REPL the
+   successful op even recorded as `# failed:`), and re-sourcing a log aborted mid-file
+   at the first `libmgr::do_*` line. Fixed:
+   `if {[info commands winfo] eq {} || ![winfo exists .libmgr]} return`. Locked by the
+   test's new N-section (a `--nogui` child process runs `do_new_cell`: rc 1, cell on
+   disk, exactly one seam line in its log).
+2. **The ≥14 floor was not a ratchet** — a new unlogged do_* worker tripped nothing.
+   Fixed with the S1b closure scan above (sabotage-verified: appending a log-less
+   `do_nuke_cell` fails exactly its S1b row).
+3. **A commented-out log site still counted** (raw-text regex). Fixed with the
+   line-anchored row + S1b (sabotage-verified: commenting the `do_checkin` site fails
+   both the count row and its S1b row).
+   Plus hardening from an unconfirmed finding: the test's fixed `/tmp` work dir is now
+   pid-suffixed (parallel-run collision).
+
+Verified: `test_libmgr_mutation_log.tcl` (75 checks, full_audit logdir_tests — per-site
+exactly-once + on-disk effect, backend-error and dialog-Cancel no-line via COUNTING
+stubs, multiline-message source-ability, in-process replay of both a plain and a
+multiline line, the `--nogui` child N-section; git sections self-skip without git).
+Sabotage ×6: 3 seam logs (new_cell, delete_cell, checkin git-op → exactly the 7 owning
+checks + the guard S1 row fail) + the 3 review-fix mechanics above. Full audit: no new
+failures (test_reopen_readonly fails identically on stashed baseline — recent-files env
+pollution; test_wire_vertex_grab passes standalone with the change — audit-congestion
+flake).
+
+---
+
 *Prepared 2026-07-14, `fluid-editing`. §1–5 analysis only — no code changed. §6 added after
-atom 3 landed; §7 after atom 4; §8 after atom 5; §9 after atom 6. Coverage verified in
-source at HEAD by a 14-way parallel read; do not trust the status table without re-checking
-the cited `file:line` anchors, which drift as the tree moves.*
+atom 3 landed; §7 after atom 4; §8 after atom 5; §9 after atom 6; §10 after atom 7. Coverage
+verified in source at HEAD by a 14-way parallel read; do not trust the status table without
+re-checking the cited `file:line` anchors, which drift as the tree moves.*
