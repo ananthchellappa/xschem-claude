@@ -8,6 +8,12 @@
 # Run headless:
 #   REPO=<repo> src/xschem --nogui --rcfile tests/headless/minrc --pipe -q \
 #       --nolog --script tests/headless/test_readonly_guard.tcl
+# REPO env override kept for the documented invocation; default derives from the
+# script location so full_audit (which sets no REPO) doesn't die on line 1 with a
+# blocking "can't read env(REPO)" popup.
+if {![info exists env(REPO)]} {
+  set env(REPO) [file normalize [file join [file dirname [info script]] .. ..]]
+}
 set sch $env(REPO)/xschem_library/examples/Q1.sch
 set fail 0
 proc check {name ok detail} {

@@ -173,11 +173,14 @@ static char *not_avail = "Not available in this context. If using --tcl consider
 static int scheduler_readonly_reject(Tcl_Interp *interp, const char *subcmd)
 {
   if(!xctx || !xctx->readonly) return 0;
+  /* CIW echo FIRST: tclvareval() overwrites the interp result, so running it after
+   * Tcl_AppendResult silently blanked the "read-only" error message in GUI (has_x)
+   * sessions -- scripts matching on the message saw an empty error. */
+  if(has_x) tclvareval("if {[info procs ciw_echo] ne {}} {ciw_echo {read-only: ",
+                       subcmd, " ignored}}", NULL);
   Tcl_ResetResult(interp);
   Tcl_AppendResult(interp, "xschem ", subcmd, ": schematic is read-only "
                    "(use Edit > Make Editable to enable editing)", NULL);
-  if(has_x) tclvareval("if {[info procs ciw_echo] ne {}} {ciw_echo {read-only: ",
-                       subcmd, " ignored}}", NULL);
   return 1;
 }
 

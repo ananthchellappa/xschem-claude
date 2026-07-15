@@ -43,7 +43,10 @@ logdir_tests=" test_ciw test_ciw_autocomplete test_ciw_puts_capture test_hi_desc
   test_altf5_ciw test_undo_link_symbols test_dblclick_connected_grow test_delete_cut_selflog \
   test_descend_goback_selflog test_save_reload_copy_selflog "
 # Tests that must run true-headless (no X needed) -> --nogui
-nogui_tests=" test_nogui test_sweep_diff "
+# (test_make_symbol_dialog is designed for --nogui: under X its has_x-gated
+# open-in-new-window step runs, and the second make_symbol_dialog on the same
+# cell raises a blocking "already open" warning popup -> flaky FAIL/CRASH)
+nogui_tests=" test_nogui test_sweep_diff test_make_symbol_dialog "
 # test_nolog exercises --nolog mode explicitly
 nolog_tests=" test_nolog "
 
@@ -58,6 +61,8 @@ is_pass() {
     test_ciw_puts_capture)     [[ "$out" == *"PASS: ciw puts-capture (0 failure(s))"* ]] ;;
     test_lib_new_discovered_defs) [[ "$out" == *"RESULT: all passed"* ]] ;;
     test_nogui)                [[ "$out" == *"NOGUI_TEST_PASS"* ]] ;;
+    test_readonly_guard)       [[ "$out" == *"READONLY_GUARD_TEST_PASS"* ]] ;;
+    test_readonly_action_dispatch) [[ "$out" == *"ACTION_READONLY_TEST_PASS"* ]] ;;
     *)                         [[ "$out" == *"RESULT: ALL PASS"* && "$out" != *"skipped: no X"* ]] ;;
   esac
 }

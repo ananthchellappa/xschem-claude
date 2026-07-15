@@ -15,6 +15,12 @@ proc tk_messageBox {args} { return ok }
 update idletasks
 focus -force .drw
 update idletasks
+# REPO env override kept for the documented invocation; default derives from the
+# script location so full_audit (which sets no REPO) doesn't die with a blocking
+# "can't read env(REPO)" popup.
+if {![info exists env(REPO)]} {
+  set env(REPO) [file normalize [file join [file dirname [info script]] .. ..]]
+}
 set sch $env(REPO)/xschem_library/examples/Q1.sch
 set fail 0
 proc check {name ok detail} { global fail; if {$ok} { puts "ok:   $name $detail" } else { puts "FAIL: $name $detail"; incr fail } }

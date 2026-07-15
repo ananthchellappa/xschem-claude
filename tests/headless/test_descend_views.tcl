@@ -18,10 +18,14 @@ proc norm {p} { return [file normalize $p] }
 
 # --- fixture: new-layout library 'tlib' (cells sub, other) + a flat 'flatlib' ---
 # cmos_inv.{sym,sch} is a real type=subcircuit cell, reused as the cell bodies.
-set tmp [file join [pwd] _desc_test_[pid]]
+# Paths derived from [info script], never [pwd] (cwd-independence, cf. 389c5319):
+# the old [pwd]/../xschem_library only resolved when launched from src/, and under
+# full_audit (cwd = repo root) the failed copy raised a blocking error popup.
+set REPO [file normalize [file join [file dirname [info script]] .. ..]]
+set tmp /tmp/_desc_test_[pid]
 file delete -force $tmp
-set SYMSRC [file join [pwd] ../xschem_library/examples/cmos_inv.sym]
-set SCHSRC [file join [pwd] ../xschem_library/examples/cmos_inv.sch]
+set SYMSRC [file join $REPO xschem_library/examples/cmos_inv.sym]
+set SCHSRC [file join $REPO xschem_library/examples/cmos_inv.sch]
 file mkdir $tmp/tlib/sub/symbol   $tmp/tlib/sub/schematic
 file mkdir $tmp/tlib/other/symbol $tmp/tlib/other/schematic
 file mkdir $tmp/flatlib
