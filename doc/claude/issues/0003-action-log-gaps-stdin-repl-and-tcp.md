@@ -1,7 +1,19 @@
 # Issue 0003 — action-log coverage holes: the stdin REPL and the TCP server
 
 **Opened:** 2026-06-11
-**Status:** OPEN — gaps identified, fix sketched, not yet implemented
+**Status:** CLOSED 2026-07-14 (issue 0071 atom 6) — both channels record with the
+ciw_exec pattern. TCP: `xschem_getdata` logs after evaluation (dedup-gated;
+failed multi-line scripts get EVERY line commented). stdin: the built-in Tcl/Tk
+loop has no eval hook, so `stdin_repl_setup` (xschem.tcl) takes the channel
+over for NON-TTY stdin when the log is open (dup fd 0, close `stdin`, park a
+never-EOF pipe in the freed std-channel slot) and serves a logged read-eval
+loop with native parity (errors→stderr, no result echo, exit-on-EOF).
+Open decisions resolved: log unconditionally (decision-1 suggestion), no
+provenance marker (decision 2), `--script` bodies stay unlogged (§NOT in
+scope). RESIDUAL (documented): interactive TTY consoles (tclreadline / native
+prompt) stay native and unlogged; a stdin command that pumps a nested event
+loop while another channel logs has its own line dedup-suppressed (rare).
+Test: `tests/headless/test_stdin_tcp_log.tcl` (16 checks, full_audit).
 **Affects:** the faithfulness/replayability of `Xschem.log` for any session
 driven through a command channel OTHER than bound input or the CIW
 **Branch:** `feature/action-logging`

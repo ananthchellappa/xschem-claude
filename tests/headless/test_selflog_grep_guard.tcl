@@ -121,6 +121,11 @@ set MANIFEST {
   src/editprop.c {
     {# property-edit}                                 1 {property-dialog marker (0063)}
   }
+  src/xschem.tcl {
+    {log_action -reset}                               2 {stdin REPL + TCP handler dedup resets (0003)}
+    {log_action -emitted}                             4 {stdin REPL + TCP handler -emitted gates (0003)}
+    {# failed: }                                      2 {stdin REPL + TCP failed-command comment form (0003)}
+  }
 }
 foreach {relfile rows} $MANIFEST {
   set text [srctext $relfile]

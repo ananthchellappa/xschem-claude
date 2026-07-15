@@ -3685,9 +3685,27 @@ proc xschem_getdata {sock} {
   if {$debug_var<=-1} {puts "tcp<-- $xschem_server_getdata(line,$sock)"}
   # xschem command must be executed at global scope...
   redef_puts
-  uplevel #0 [list catch $xschem_server_getdata(line,$sock) tclcmd_puts]
+  xschem log_action -reset
+  set tcp_rc [uplevel #0 [list catch $xschem_server_getdata(line,$sock) tclcmd_puts]]
   rename puts {}
   rename ::tcl::puts puts
+  # action-log (issue 0003): record the TCP-driven command AFTER evaluation, the
+  # ciw_exec pattern -- raw on success, '# failed:' comment on error so the log
+  # stays source-able; dedup-gated so a self-logging `xschem <verb>` is written
+  # once. A failed multi-line script gets EVERY line commented (a bare prefix
+  # would leave lines 2..n live on replay). Results stay on the socket, never
+  # in the file (spec decision 7 / D1).
+  set tcp_cmd [string trimright $xschem_server_getdata(line,$sock) \n]
+  if {$tcp_cmd ne {}} {
+    if {$tcp_rc} {
+      if {![xschem log_action -emitted]} {
+        regsub -all {\n} $tcp_cmd "\n# " tcp_cmd
+        xschem log_action "# failed: $tcp_cmd"
+      }
+    } elseif {![xschem log_action -emitted]} {
+      xschem log_action $tcp_cmd
+    }
+  }
   if {$debug_var<=-1} {puts "tcp--> $tclcmd_puts"}
   set xschem_server_getdata(res,$sock) "$tclcmd_puts"
   puts -nonewline $sock "$xschem_server_getdata(res,$sock)"
@@ -15545,4 +15563,72 @@ proc cadence_compat_sync {args} {
 }
 trace add variable cadence_compat write cadence_compat_sync
 cadence_compat_sync
+
+# --- action-log stdin REPL (issue 0003) --------------------------------------
+# The built-in Tcl/Tk stdin loop (Tk_MainEx StdinProc / Tcl_Main) evaluates
+# piped-stdin commands with no log_action, so an automation session driven
+# through `--pipe` used to leave a header-only log. The C loop offers no eval
+# hook, so when stdin is a NON-TTY (pipe/fifo/redirect -- the automation
+# channel) and the action log is open, take the channel over here, BEFORE
+# Tk_MainEx runs (this file is sourced from Tcl_AppInit): dup fd 0, close the
+# `stdin` channel, and immediately give the freed std-channel slot to the read
+# end of a never-written pipe (Tcl hands the slot to the NEXT opened channel --
+# without this a later schematic-file open would become "stdin" and Tk_MainEx
+# would eval its CONTENT; /dev/null is no good either: Tcl_Main's stdin
+# handler exits the process on EOF, killing headless --nogui sessions such as
+# a --tcp_port server). Tk/Tcl then see a silent stdin and stand down; our
+# loop serves the same read-eval semantics and records each complete command
+# AFTER evaluation (ciw_exec pattern: raw on success, all-lines-commented
+# '# failed:' on error, dedup-gated so self-logging `xschem <verb>`s are
+# written once). Matching the native non-tty loop: errors go to stderr,
+# results are not echoed. Interactive TTY consoles (tclreadline / native
+# prompt) stay native and unlogged -- documented residual in issue 0003.
+# `--script` files stay one-program-one-record by design (issue 0003 §NOT in
+# scope): sourcing them never passes through here. KNOWN LIMIT: a stdin
+# command that pumps a nested event loop (vwait/update) during which ANOTHER
+# channel logs (e.g. a TCP command) sees the dedup flag set and suppresses its
+# own line -- rare, and the concurrent command IS recorded.
+proc stdin_repl_read {chan} {
+  global stdin_repl_buf
+  if {[catch {gets $chan line} n] || $n < 0} {
+    if {[catch {eof $chan} e] || $e} { catch {fileevent $chan readable {}}; catch {close $chan} }
+    return
+  }
+  append stdin_repl_buf $line \n
+  if {![info complete $stdin_repl_buf]} return
+  set cmd [string trimright $stdin_repl_buf \n]
+  set stdin_repl_buf {}
+  if {$cmd eq {}} return
+  xschem log_action -reset
+  set rc [catch {uplevel #0 $cmd} res]
+  if {$rc} {
+    catch {puts stderr $res}
+    if {![xschem log_action -emitted]} {
+      regsub -all {\n} $cmd "\n# " cmd   ;# comment EVERY line of a multi-line construct
+      xschem log_action "# failed: $cmd"
+    }
+  } elseif {![xschem log_action -emitted]} {
+    xschem log_action $cmd
+  }
+}
+proc stdin_repl_setup {} {
+  global tcl_platform stdin_repl_buf
+  set stdin_repl_buf {}
+  if {$tcl_platform(platform) ne {unix}} return         ;# /dev/fd dup is unix-only
+  if {[catch {eof stdin} e] || $e} return                ;# detached / already closed
+  if {![catch {chan configure stdin -mode}]} return      ;# a TTY: keep the native console
+  if {[catch {xschem get actionlog_filename} lf] || $lf eq {}} return ;# --nolog: no behavior change
+  if {[catch {open /dev/fd/0 r} chan]} return            ;# fresh dup of fd 0
+  chan configure $chan -blocking 0 -buffering line
+  close stdin
+  # Adopt the freed stdin slot NOW with the read end of a never-written pipe
+  # (write end parked in a global); see the header comment for why /dev/null
+  # or a later file open in the slot would be fatal.
+  catch {
+    lassign [chan pipe] stdin_repl_slot_r ::stdin_repl_slot_w
+    chan configure $stdin_repl_slot_r -blocking 0
+  }
+  fileevent $chan readable [list stdin_repl_read $chan]
+}
+stdin_repl_setup
 

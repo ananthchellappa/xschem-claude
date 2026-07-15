@@ -402,7 +402,47 @@ copy-branch log removal → S1; save-gate drop → S1 gate row; lbm ungating →
 
 ---
 
+## 9. Atom 6 outcome (2026-07-14): the stdin REPL and TCP channels record (issue 0003 CLOSED)
+
+The last whole-channel holes (§2 OPEN row "stdin REPL + TCP") closed with the ciw_exec
+record-after-evaluation pattern — reset flag → eval → if not `-emitted`, write the command
+raw on success / `# failed:` comment on error:
+
+- **TCP** (`xschem_getdata`, xschem.tcl): straight application of the pattern; a failed
+  **multi-line** script gets *every* line commented (`regsub` newline → `\n# `) — a bare
+  prefix would leave lines 2..n live on replay. Verified in-process with a loopback client
+  against `setup_tcp_xschem 0`.
+- **stdin** (`stdin_repl_setup`/`stdin_repl_read`, xschem.tcl end): the built-in Tcl/Tk
+  stdin loop (`Tk_MainEx` StdinProc / `Tcl_Main`) is C with **no eval hook**, so for
+  NON-TTY stdin (pipe/fifo/redirect — the automation channel) with the log open we take
+  the channel over *before* `Tk_MainEx` runs: dup fd 0 via `/dev/fd/0`, `close stdin`, and
+  immediately park the read end of a never-written `chan pipe` in the freed std-channel
+  slot. Two landmines found empirically: (a) Tcl hands the freed slot to the NEXT opened
+  channel — without the parked pipe a later schematic-file open becomes "stdin" and
+  Tk_MainEx would eval its content; (b) `/dev/null` as the adopter EOFs instantly and
+  Tcl_Main's stdin handler **exits the process on EOF**, killing headless `--nogui`
+  sessions (e.g. a `--tcp_port` server). The replacement loop keeps native parity: errors
+  to stderr, no result echo (non-tty Tk behavior), `info complete` accumulation,
+  process still exits at stdin EOF.
+
+**Decisions (issue 0003 §open, now resolved):** log unconditionally; no provenance
+marker; `--script` bodies stay unlogged (one program = one record, its own §non-goal).
+**Residuals (documented in the issue):** interactive TTY consoles (tclreadline / native
+prompt) stay native and unlogged; a stdin command that pumps a nested event loop
+(vwait/update) while ANOTHER channel logs sees the shared dedup flag set and suppresses
+its own line — rare, and the concurrent command IS recorded.
+
+Verified: `test_stdin_tcp_log.tcl` (16 checks — stdin via a child process since the
+test's own stdin belongs to the harness; TCP in-process; dedup exactly-once for
+self-logging verbs on both channels; `--script` non-logging; failed-multiline all-lines
+commented), sabotage ×5 across both channels (each kill fails exactly its checks; the
+dedup break shows n=2), grep-guard gained S1 rows locking the new sites' reset/`-emitted`/
+`# failed:` plumbing. Beware the sandbox mirage: cross-process localhost probes of the
+TCP server failed for environment reasons — the in-process loopback is the reliable oracle.
+
+---
+
 *Prepared 2026-07-14, `fluid-editing`. §1–5 analysis only — no code changed. §6 added after
-atom 3 landed; §7 after atom 4; §8 after atom 5. Coverage verified in source at HEAD by a
-14-way parallel read; do not trust the status table without re-checking the cited
-`file:line` anchors, which drift as the tree moves.*
+atom 3 landed; §7 after atom 4; §8 after atom 5; §9 after atom 6. Coverage verified in
+source at HEAD by a 14-way parallel read; do not trust the status table without re-checking
+the cited `file:line` anchors, which drift as the tree moves.*
