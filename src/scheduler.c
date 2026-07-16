@@ -189,14 +189,14 @@ static int scheduler_readonly_reject(Tcl_Interp *interp, const char *subcmd)
  * own (perform_action owns both). Returns TCL_OK on success. Migrated verbs so
  * far: trim_wires (Refactor B atom 1), align (atom 2), rotate_in_place (atom 3),
  * flip_in_place (atom 4), flipv_in_place (atom 5) -- each a bare no-arg verb -- and
- * rotate (atom 6), the FIRST ARG-CARRYING verb: it reads the shared pivot x0,y0 from
- * argv[2]/argv[3] (falling back to the mouse coords).
- * rotate/rotate_in_place/flip_in_place/flipv_in_place are the mid-gesture-split verbs: ONLY
+ * the ARG-CARRYING pivot verbs rotate (atom 6, the FIRST) and flip (atom 7): each reads
+ * the shared pivot x0,y0 from argv[2]/argv[3] (falling back to the mouse coords).
+ * rotate/flip/rotate_in_place/flip_in_place/flipv_in_place are the mid-gesture-split verbs: ONLY
  * their standalone (non-gesture) form crosses this boundary -- the during-move/during-
  * copy arms stay raw in the scheduler branch + callback.c key and are logged at the
  * move/copy END (issue 0069), never here (see the branch comment below).
  * More verbs add an arm here as they move onto the boundary. argc/argv are unused
- * for a bare no-arg verb but carry the pivot for an arg-carrying verb (rotate); the
+ * for a bare no-arg verb but carry the pivot for an arg-carrying verb (rotate/flip); the
  * general boundary shape (audit §4) is the same either way.
  * NB: only the VERB dispatch routes here -- the shared C functions BELOW a verb are
  * ALSO internal sub-steps of other operations (trim_wires() is called raw by
@@ -294,6 +294,29 @@ static int run_core(const char *verb, int argc, const char *argv[])
     move_objects(END,0,0,0);
     return TCL_OK;
   }
+  else if(!strcmp(verb, "flip")) {
+    /* Refactor B atom 7: the STANDALONE (non-gesture) PIVOT flip -- the SECOND arg-carrying verb on
+     * the boundary, a near-clone of the rotate arm above (atom 6). Byte-identical to the scheduler
+     * branch's standalone `else` body: rebuild + seed the SHARED pivot into mx_double_save/mousex_snap
+     * + START + FLIP + END. NO ROTATELOCAL (unlike flip_in_place): the pivot is the single shared point
+     * x0,y0, so the whole selection mirrors rigidly about the vertical line x=x0, not each object about
+     * its own origin. The pivot is resolved from argv[2]/argv[3] (the scripted/Edit-menu-with-coords
+     * form) or the mouse coords (bare `xschem flip`), EXACTLY as the branch used to before delegating
+     * here. move_objects(START/END) owns the undo push, so there is NO push_undo()/draw() here (adding
+     * one would double-push). Seeding mousex_snap = x0 also lets core_log_action (which runs AFTER this,
+     * perform_action = effect THEN log) read back the same pivot on the mouse-fallback path, so the
+     * logged line can never diverge from the applied transform. The during-move/during-copy arms are
+     * NOT here: they are mid-gesture sub-steps logged at move/copy END (0069) and stay raw. */
+    double x0 = xctx->mousex_snap, y0 = xctx->mousey_snap;
+    if(argc > 3) { x0 = atof(argv[2]); y0 = atof(argv[3]); }
+    rebuild_selected_array();
+    xctx->mx_double_save = xctx->mousex_snap = x0;
+    xctx->my_double_save = xctx->mousey_snap = y0;
+    move_objects(START,0,0,0);
+    move_objects(FLIP,0,0,0);
+    move_objects(END,0,0,0);
+    return TCL_OK;
+  }
   return TCL_ERROR; /* unreachable: perform_action is only wired for the verbs above */
 }
 
@@ -301,13 +324,14 @@ static int run_core(const char *verb, int argc, const char *argv[])
  * Refactor A step-2 "log at the core" registry SEED, introduced by atom 6). Formats the ONE
  * self-log line for a migrated verb. The bare no-arg verbs (trim_wires/align/rotate_in_place/
  * flip_in_place/flipv_in_place) emit `xschem <verb>` byte-identically to the pre-atom-6
- * `log_action("xschem %s", verb)`; the FIRST arg-carrying verb, rotate, emits its pivot form
- * `xschem rotate <x0> <y0>`. The pivot is resolved from argv[2]/argv[3] (or the mouse coords as a
- * fallback) IDENTICALLY to run_core's rotate arm -- and run_core, which perform_action runs FIRST,
- * has already seeded xctx->mousex_snap = x0, so even the mouse-fallback path logs exactly the pivot
- * the effect used (both read the same argv, or the same seeded coord). This dispatcher is the
- * minimal first form of the global registry; more arg-carrying verbs (flip/flipv x0 y0) add a
- * branch here. Do NOT reorder perform_action to log before running the effect: the fallback path
+ * `log_action("xschem %s", verb)`; the arg-carrying pivot verbs rotate (atom 6) and flip (atom 7)
+ * emit their pivot form `xschem rotate|flip <x0> <y0>`. The pivot is resolved from argv[2]/argv[3]
+ * (or the mouse coords as a fallback) IDENTICALLY to run_core's rotate/flip arm -- and run_core,
+ * which perform_action runs FIRST, has already seeded xctx->mousex_snap = x0, so even the
+ * mouse-fallback path logs exactly the pivot the effect used (both read the same argv, or the same
+ * seeded coord). This dispatcher is the minimal first form of the global registry; the last pivot
+ * form flipv x0 y0 adds a branch here in its own atom (atom 8). Do NOT reorder perform_action to log
+ * before running the effect: the fallback path
  * depends on run_core seeding mousex_snap first. */
 static void core_log_action(const char *verb, int argc, const char *argv[])
 {
@@ -315,6 +339,15 @@ static void core_log_action(const char *verb, int argc, const char *argv[])
     double x0 = xctx->mousex_snap, y0 = xctx->mousey_snap;
     if(argc > 3) { x0 = atof(argv[2]); y0 = atof(argv[3]); }
     log_action("xschem rotate %.16g %.16g", x0, y0);
+  } else if(!strcmp(verb, "flip")) {
+    /* atom 7: the SECOND arg-carrying verb, mirror of rotate. Same pivot resolution
+     * (argv[2]/argv[3] else the mouse coord run_core just seeded), so the logged
+     * `xschem flip x0 y0` always matches the applied mirror. NB the literal `flip %`
+     * (flip+space+%) does NOT match `flipv %` or `flip_in_place` -- flipv keeps its
+     * bare-verb `xschem %s` form until its own atom. */
+    double x0 = xctx->mousex_snap, y0 = xctx->mousey_snap;
+    if(argc > 3) { x0 = atof(argv[2]); y0 = atof(argv[3]); }
+    log_action("xschem flip %.16g %.16g", x0, y0);
   } else {
     log_action("xschem %s", verb);
   }
@@ -2129,32 +2162,28 @@ static int xschem_cmds_f(Tcl_Interp *interp, int argc, const char *argv[], int *
      *   if x0, y0 not given use mouse coordinates */
     else if(!strcmp(argv[1], "flip"))
     {
-      double x0 = xctx->mousex_snap;
-      double y0 = xctx->mousey_snap;
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
-      if(scheduler_readonly_reject(interp, "flip")) return TCL_ERROR;
-      if(argc > 3) {
-        x0 = atof(argv[2]);
-        y0 = atof(argv[3]);
-      }
+      /* flip-during-move/copy: mirror the whole in-flight selection about the shared gesture pivot.
+       * These two mid-gesture arms stay RAW -- they are sub-steps of a move/copy logged at that
+       * gesture's END (issue 0069), NOT the standalone verb, so they must NOT cross the
+       * perform_action boundary (routing them would spuriously emit `xschem flip x y` mid-drag and
+       * double-count the move-END line). They need no readonly gate: being in STARTMOVE/STARTCOPY
+       * means an edit is already in progress, impossible on a read-only schematic, and the only
+       * commit path `xschem move_objects end` is itself readonly-refused at the move_objects command
+       * gate (covering start/step/end/abort). */
       if(xctx->ui_state & STARTMOVE) move_objects(FLIP,0,0,0);
       else if(xctx->ui_state & STARTCOPY) copy_objects(FLIP);
-      else {
-        rebuild_selected_array();
-        xctx->mx_double_save = xctx->mousex_snap = x0;
-        xctx->my_double_save = xctx->mousey_snap = y0;
-        move_objects(START,0,0,0);
-        move_objects(FLIP,0, 0, 0);
-        move_objects(END,0,0,0);
-        /* self-log at core (standalone, non-gesture): covers the Edit-menu item,
-         * toolbar, context menu and any scripted `xschem flip` -- all of which
-         * funnel through here. The Shift-F key does NOT: it is handled inline in
-         * callback.c's legacy switch (case 'F') and logs nothing (issue 0068,
-         * un-migrated keys). During-move/copy flips are part of an unfinished
-         * gesture logged by the move END (issue 0069), not here. */
-        log_action("xschem flip %.16g %.16g", x0, y0);
-      }
-      Tcl_ResetResult(interp);
+      /* standalone verb: the single mutation boundary (Refactor B atom 7, run_core above) owns the
+       * readonly gate + the ONE `xschem flip x0 y0` log site (core_log_action formats the pivot) +
+       * the rebuild+seed-pivot+START+FLIP+END effect. run_core resolves the pivot from argv[2]/
+       * argv[3] (else the mouse coords) exactly as this branch used to, so passing the branch's own
+       * argc/argv straight through is byte-identical. The Edit menu (bare `xschem flip`), the context
+       * menu and the command palette reach here; the Shift-F key, the Alt-F group transform and the
+       * verb-noun apply reach the same boundary from callback.c, each carrying its own pivot. flip is
+       * the SECOND arg-carrying verb on the boundary, a near-clone of rotate (atom 6) -- issue 0068's
+       * "Shift-F logs nothing" note is now stale (Shift-F logs here too). */
+      else return perform_action("flip", argc, argv);
+      Tcl_ResetResult(interp);   /* only the mid-gesture arms fall through to here */
     }
 
     /* flip_in_place

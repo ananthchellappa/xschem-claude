@@ -2054,6 +2054,108 @@ scheduler branch / Shift-key / group-FLIP arm / verb-noun case (the group FLIP a
 flip/flipv cases were deliberately left raw here). The other open direction is the full
 `core_log_action` registry (§4 Refactor A step 2, rewriting all ~40 `log_action` sites).
 
+## 27. Refactor B ATOM 7 (2026-07-16): the SEVENTH per-verb migration — the SECOND arg-carrying verb (`flip`, the pivot form)
+
+`flip` (the pivot form `xschem flip x0 y0` — horizontal-mirror the SELECTION about the vertical line
+x=x0) now routes through the `perform_action(verb, argc, argv)` boundary. Atom 7 is a NEAR-CLONE of
+atom 6 (rotate): the arg-carrying machinery — `core_log_action` + the `run_core` pivot arm — already
+existed, so flip reuses it wholesale. It adds exactly one `run_core` arm + one `core_log_action` branch
+and routes its four standalone entry points onto the boundary, mirroring rotate line-for-line.
+
+**`run_core` grew a `flip` arm** (byte-identical to the old scheduler standalone `else` body): resolve
+the shared pivot from `argv[2]/argv[3]` (else the mouse coords `mousex_snap/mousey_snap`),
+`rebuild_selected_array()`, seed `mx_double_save/mousex_snap = x0` and `my_double_save/mousey_snap = y0`,
+then `move_objects(START)` + `move_objects(FLIP)` + `move_objects(END)`. **NO `ROTATELOCAL`** (the pivot
+is the single shared point, so the whole selection mirrors rigidly about x=x0, not each object about its
+own origin — `ROTATELOCAL` would be a real bug). **NO `push_undo()`/`draw()`** (`move_objects(START/END)`
+own them). **`core_log_action` grew a `flip` branch** → `log_action("xschem flip %.16g %.16g", x0, y0)`
+with the SAME pivot resolution — so, with `perform_action`'s effect-then-log order and `run_core`'s
+`mousex_snap = x0` seed, the logged pivot can never diverge from the applied one (the atom-6 pivot-
+fidelity pattern, unchanged; move.c never writes `mousex_snap`, corroborated by the refute panel).
+
+**FOUR standalone entry points, all funnelled** (mirroring rotate): (1) the **scheduler branch** `flip`
+standalone `else` → `return perform_action("flip", argc, argv)`, dropping its own
+`scheduler_readonly_reject(interp, "flip")` and its inline pivot/log; (2) the **Shift-F key** (callback.c
+`case 'F'`, keysym 70) → builds `av[4]` from `mousex/y_snap` → `perform_action("flip", 4, av)`; (3) the
+**Alt-F GROUP transform** (`standalone_group_transform`, issue 0116): the `else`/FLIP branch — deliberately
+left RAW by atom 6 with a `%s` log form — now → `perform_action("flip", 4, av)` with the grid-snapped bbox
+centre px,py; after atom 7 BOTH group arms (ROTATE + FLIP) cross the boundary; (4) the **verb-noun deferred
+apply** (MENUSTARTROTATE `PENDING_TR_FLIP`) — **pulled OUT** of the shared `move_objects(START) … switch …
+move_objects(END)` block into its own `else if(t == PENDING_TR_FLIP)`. After the pull, `PENDING_TR_FLIPV`
+is the only case remaining in the shared switch (it stays until atom 8) and is made the `default`.
+
+**The mid-gesture split (identical to atoms 3/4/5/6).** The scheduler `flip` branch and the Shift-F key
+each keep STARTMOVE / STARTCOPY / standalone arms. Only the standalone crosses; the during-move/during-copy
+arms stay **raw and unlogged** (`move_objects`/`copy_objects(FLIP)`) — logged once at the move/copy END as
+a `move_objects`/`copy_objects` drop line (issue 0069, atom 13), never as `xschem flip`. Routing a gesture
+arm through `perform_action` would spuriously emit `xschem flip` mid-drag and double-count the move-END line
+(test (e) + sabotage 5). The gesture arms need no readonly gate (preview-only: for `what==FLIP`,
+`move_objects` only toggles `move_flip` + a preview redraw; `push_undo`/`set_modify` fire only in the
+`move_objects(END)` block, itself readonly-refused at the `move_objects` command gate). The scheduler branch
+**drops** its top `scheduler_readonly_reject`; the Shift-F key **keeps** its `readonly_block()`.
+
+**Grep guard.** flip's scheduler `log_action("xschem flip %` row STAYS count 1 — the pivot-format log MOVED
+from the scheduler branch into `core_log_action` (net scheduler.c count unchanged). A new S1 row asserts the
+scheduler `return perform_action("flip", argc, argv)` boundary arm; the callback.c `perform_action("flip",
+4, av)` row is asserted count **3** (Shift-F + group FLIP + verb-noun); the callback.c `log_action("xschem
+flip %` row is REMOVED (now 0). **S7 is the same subtlety as rotate:** `core_log_action` legitimately holds
+one `log_action("xschem flip %...")`, so scheduler.c is asserted **EXACTLY ONE** (a re-scattered branch log
+bumps to 2 → fails, sabotage 4) and callback.c **ZERO** (sabotage 3). The literal `flip %` (flip+space+%)
+does NOT match `flipv %` (a `v` intervenes) nor `flip_in_place`; `"flip"` (flip+quote) does NOT match
+`"flipv"`/`"flip_in_place"` — flip and flipv are counted independently, and flipv is UNTOUCHED (its scheduler
+branch + Alt-V key + verb-noun `PENDING_TR_FLIPV` stay raw for atom 8).
+
+**Verified:** `test_perform_action_flip.tcl` (27 checks, full_audit logdir_tests): effect oracle a lone
+**diagonal** wire `0 0 100 40` (cadsnap=20, select_all), `xschem flip 0 0` → `-100 40 0 0` (horizontal mirror
+about x=0), pivot-SENSITIVE (`flip 50 0` → `0 40 100 0`) and involutive×2 — all empirically confirmed before
+writing the oracle. A DIAGONAL wire is the oracle because a horizontal wire flips to the mirror side but STAYS
+horizontal (an orientation check would falsely pass), and `-100 40 0 0` is also DISTINCT from the vertical-
+flip result (discriminates flip from flipv). (a) +1 from each of script / Shift-F key (keysym 70) / menu
+wrapper (the Alt-F group + verb-noun apply are grep-guard-locked); (b) read-only reject from the scripted
+(TCL_ERROR, verb-named message) + Shift-F paths — no log, no mutation; (c) byte-exact `xschem flip 0 0`; (d)
+replay re-executes with no re-log through the seam, vs a control unwrapped `source` that re-logs; (e) the
+wrinkle lock — a flip issued with STARTMOVE active is NOT logged (+0); (f) pivot fidelity — the logged pivot
+reproduces the live effect for a scripted `flip 40 20` AND the Shift-F mouse pivot.
+**Sabotage ×6** (each failing exactly its checks, each restore byte-clean vs the atom-7 scratchpad backup):
+(1) neutralise the boundary readonly gate → (b) scripted read-only mutates + logs; (2) drop the pivot in
+`core_log_action` (flip falls to the bare else) → (a)/(c)/(f) fail; (3) bypass the boundary at the Shift-F
+standalone (raw inline log) → grep **S1** `perform_action("flip",4,av)` 3→2 + **S7** callback scattered-log
+both fail closed; (4) re-add a scattered scheduler `log_action("xschem flip %...")` → **S7** scheduler `== 1`
+fails (got 2) WITHOUT tripping the legit `core_log_action` line; (5) route the STARTMOVE arm through
+`perform_action` → case (e) fails (mid-gesture double-logs); (6) swap x0/y0 in the log → (f) pivot-fidelity
+diverges (logged `20 40` vs effect `40 20`; replay lands the wrong coords).
+**Full-audit baseline diff clean:** the AFTER set (143 pass / 19 fail / 1 timeout / 11 skip) reconciles to
+the pre-atom-7 BASELINE (159 pass / 15 fail / 0 skip) — the count wobble is WSLg congestion (the AFTER run's
+11 skips vs baseline 0 = it ran under the concurrent adversarial panel + baseline rebuild). The sole
+BASELINE-only fail is `test_selflog_grep_guard` (the guard correctly detects the migration ABSENT on baseline
+— proving it is load-bearing; it passes on atom-7). The six AFTER-only fails (`test_altf5_ciw`,
+`test_deselect_mode`, `test_fluid_editing`, `test_lib_manager_ctx`, `test_verb_noun_copy_move`,
+`test_wire_complete_with_selection`) ALL pass STANDALONE on the atom-7 binary = congestion/ordering flakes.
+Every other AFTER fail is a known pre-existing WSLg-env fail common to both sets (the cadence duo, the GUI set
+test_ciw / test_hi_descend / test_lib_manager_gui / test_reopen_readonly / test_altf5_ciw, test_lib_sweep,
+test_phase3_mints g/G, test_wire_split, test_select_at, test_save_as_cellview, test_descend_untitled_preserve,
+test_untitled_reuse) and `test_selflog_output`'s six transform-KEY checks (Shift-F/R/V + Alt-F/R/V), which
+fail **IDENTICALLY on baseline** — its NON-key checks incl. `flip self-logs with pivot` PASS on atom-7,
+confirming the migrated Shift-F flip keeps its pivot-form self-log. Every change-adjacent test stays green:
+the six `test_perform_action_*` siblings, `test_selflog_grep_guard`, `test_gesture_end_log` +
+`test_rotmove_drop_log` (the move-END counterpart, its `move_objects`/`copy_objects` drop line untouched),
+`test_rotate_prompt_object` (verb-noun handler restructured here) and `test_alt_transform_group_0116`
+(`standalone_group_transform`). ZERO new deterministic failures.
+**Adversarial review (7-axis refute panel, ultracode): verdict CLEAN, no must-fix** (all 7 axes
+`defect_found:false`, high confidence) — entry-point completeness (incl. the newly-routed group FLIP arm +
+verb-noun `PENDING_TR_FLIP`), readonly gate (incl. the mid-gesture arms proven preview-only), pivot fidelity
+across all four entry points, output-drift + flip/flipv disambiguation (flipv untouched), the move-END line
+unchanged (move.c untouched), `run_core` arm fidelity (FLIP not FLIP|ROTATELOCAL, seed-before-START, no
+push_undo) and signature/build/C89 each found no failing scenario after a genuine refutation. The one
+non-blocking doc nit it raised (the `run_core` header example not naming flip) was fixed.
+
+**Next atom:** the LAST pivot form `flipv x0 y0` (atom 8, the mirror of atom 7 exactly as atom 5 mirrored
+atom 4): one `run_core` arm (the THREE-`move_objects` vertical-mirror shape ROTATE + ROTATE + FLIP) + one
+`core_log_action` branch + routing its scheduler branch / Alt-V key / verb-noun `PENDING_TR_FLIPV` (the last
+case in the shared switch). After atom 8 the whole transform sextet is on the boundary. The other open
+direction remains the full `core_log_action` registry (§4 Refactor A step 2, rewriting all ~40 `log_action`
+sites).
+
 *Prepared 2026-07-14, `fluid-editing`. §1–5 analysis only — no code changed. §6 added after
 atom 3 landed; §7 after atom 4; §8 after atom 5; §9 after atom 6; §10 after atom 7; §11 after
 atom 8; §12 after atom 9; §13 after atom 10; §14 after atom 11;
@@ -2064,6 +2166,7 @@ atom 8; §12 after atom 9; §13 after atom 10; §14 after atom 11;
 FOURTH (flip_in_place — the mirror of rotate_in_place); §25 after the FIFTH (flipv_in_place — the last
 in-place transform; the in-place quartet rotate/flip/flipv is now fully on the boundary); §26 after the
 SIXTH (rotate — the FIRST ARG-CARRYING verb, the pivot form `rotate x0 y0`; introduces core_log_action,
-the per-verb log-form registry seed).
+the per-verb log-form registry seed); §27 after the SEVENTH (flip — the SECOND arg-carrying verb, the pivot
+form `flip x0 y0`, a near-clone of rotate reusing core_log_action + the run_core pivot arm).
 Coverage verified in source at HEAD by a 14-way parallel read; do not trust the status table
 without re-checking the cited `file:line` anchors, which drift as the tree moves.*
