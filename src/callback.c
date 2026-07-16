@@ -2596,7 +2596,7 @@ static int check_menu_start_commands(int state, double c_snap, int mx, int my)
        * … move_objects(END) block below (Refactor B atom 6): perform_action->run_core owns its own
        * rebuild+seed-pivot+START+ROTATE+END and must NOT nest inside the outer START/END. run_core
        * re-seeds mx/my_double_save = mousex/y_snap from the argv pivot, so the effect is unchanged.
-       * The flip/flipv PIVOT cases stay in the shared block (their own atom). */
+       * The flip/flipv PIVOT cases followed in atoms 7/8 -- all six arms now cross the boundary. */
       char sx[64], sy[64]; const char *av[4];
       my_snprintf(sx, S(sx), "%.16g", xctx->mx_double_save);
       my_snprintf(sy, S(sy), "%.16g", xctx->my_double_save);
@@ -2609,25 +2609,28 @@ static int check_menu_start_commands(int state, double c_snap, int mx, int my)
        * … move_objects(END) block below (Refactor B atom 7): perform_action->run_core owns its own
        * rebuild+seed-pivot+START+FLIP+END and must NOT nest inside the outer START/END. run_core
        * re-seeds mx/my_double_save = mousex/y_snap from the argv pivot, so the effect is unchanged.
-       * The flipv PIVOT case stays in the shared block (its own atom, atom 8). */
+       * The flipv PIVOT case followed in atom 8 (its own else-if arm just below). */
       char sx[64], sy[64]; const char *av[4];
       my_snprintf(sx, S(sx), "%.16g", xctx->mx_double_save);
       my_snprintf(sy, S(sy), "%.16g", xctx->my_double_save);
       av[0] = "xschem"; av[1] = "flip"; av[2] = sx; av[3] = sy;
       perform_action("flip", 4, av);
-    } else {
-      /* remaining PIVOT transform: only PENDING_TR_FLIPV still reaches here -- one START/END,
-       * self-log raw. PENDING_TR_ROTATE (atom 6) and PENDING_TR_FLIP (atom 7) were pulled out to
-       * the boundary above; the last pivot form flipv x0 y0 follows in its own atom (atom 8). */
-      move_objects(START,0,0,0);
-      switch(t) {
-        case PENDING_TR_FLIPV:
-        default:
-          move_objects(ROTATE,0,0,0); move_objects(ROTATE,0,0,0); move_objects(FLIP,0,0,0);
-          log_action("xschem flipv %.16g %.16g", xctx->mx_double_save, xctx->my_double_save);
-          break;
-      }
-      move_objects(END,0,0,0);
+    } else if(t == PENDING_TR_FLIPV) {
+      /* PENDING_TR_FLIPV pivot verb (verb-noun deferred apply): the deferred PIVOT flipv crosses the
+       * boundary like PENDING_TR_FLIP above, carrying the click-point pivot (mx/my_double_save, seeded
+       * just above from mousex/y_snap). PULLED OUT of the (now removed) shared move_objects(START) …
+       * switch … move_objects(END) block (Refactor B atom 8, the LAST pivot form): perform_action->
+       * run_core owns its own rebuild+seed-pivot+START+ROTATE+ROTATE+FLIP+END (net vertical mirror)
+       * and must NOT nest inside an outer START/END. run_core re-seeds mx/my_double_save = mousex/
+       * y_snap from the argv pivot, so the effect is unchanged. With this pull the shared block is
+       * EMPTY and removed -- the whole verb-noun transform chain is now six boundary arms, one
+       * perform_action each. An unexpected t simply no-ops off the end of the chain (which is armed
+       * only for the six PENDING_TR_* transform values -- no spurious default re-added). */
+      char sx[64], sy[64]; const char *av[4];
+      my_snprintf(sx, S(sx), "%.16g", xctx->mx_double_save);
+      my_snprintf(sy, S(sy), "%.16g", xctx->my_double_save);
+      av[0] = "xschem"; av[1] = "flipv"; av[2] = sx; av[3] = sy;
+      perform_action("flipv", 4, av);
     }
     xctx->ui_state &= ~MENUSTART;
     xctx->ui_state2 = 0;
@@ -5947,14 +5950,20 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
             xctx->menu_pending_transform = PENDING_TR_FLIPV;
             statusmsg("Vertical flip: click an object to flip", 1);
           } else {
-            xctx->mx_double_save=xctx->mousex_snap;
-            xctx->my_double_save=xctx->mousey_snap;
-            move_objects(START,0,0,0);
-            move_objects(ROTATE,0,0,0);
-            move_objects(ROTATE,0,0,0);
-            move_objects(FLIP,0,0,0);
-            move_objects(END,0,0,0);
-            log_action("xschem flipv %.16g %.16g", xctx->mx_double_save, xctx->my_double_save);
+            /* standalone Shift-V (single-inline apply, no group form): route through the mutation
+             * boundary (Refactor B atom 8, the LAST pivot form, mirror of Shift-F atom 7).
+             * perform_action->run_core owns the readonly gate + the rebuild+seed-pivot+START+
+             * ROTATE+ROTATE+FLIP+END effect (net vertical mirror) + the ONE `xschem flipv x y` log
+             * (core_log_action). The pivot is the mouse-snap point, passed as argv[2]/argv[3];
+             * run_core re-seeds mx/my_double_save = mousex/y_snap from it exactly as this block did.
+             * readonly was already refused by readonly_block() at the top of case 'V' (which also
+             * guards the raw gesture arms + the arming path). Unlike Alt-R/Alt-F, Shift-V has NO
+             * standalone_group_transform (no group form), so this is flipv's only key entry site. */
+            char sx[64], sy[64]; const char *av[4];
+            my_snprintf(sx, S(sx), "%.16g", xctx->mousex_snap);
+            my_snprintf(sy, S(sy), "%.16g", xctx->mousey_snap);
+            av[0] = "xschem"; av[1] = "flipv"; av[2] = sx; av[3] = sy;
+            perform_action("flipv", 4, av);
           }
         }
       }

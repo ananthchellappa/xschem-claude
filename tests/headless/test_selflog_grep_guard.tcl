@@ -83,9 +83,22 @@
 # literal `rotate %` (rotate+space+%) regex does NOT match `rotate_in_place` (no space after rotate),
 # and `"rotate"` (rotate+quote) does NOT match `"rotate_in_place"` -- so the two verbs are counted
 # independently. The mid-gesture STARTMOVE/STARTCOPY arms (scheduler branch + Shift-R key) stay raw
-# and log NOTHING (move/copy END, 0069). rotate stays in S2 CVERBS, stays OUT of S3. The group FLIP
-# and the verb-noun flip/flipv PIVOT forms are deliberately UNMIGRATED (their own atom) -- the group
-# FLIP arm keeps its `%s` log form so flip's S1 counts are untouched here.
+# and log NOTHING (move/copy END, 0069). rotate stays in S2 CVERBS, stays OUT of S3.
+# Refactor B atom 7 (perform_action / flip -- pivot form `xschem flip x0 y0`) migrated the SECOND
+# arg-carrying verb, a near-clone of rotate: one run_core arm + one core_log_action `flip` branch,
+# MOVED flip's S1 rows onto the boundary (scheduler `return perform_action("flip", argc, argv)` +
+# THREE callback.c `perform_action("flip", 4, av)` -- Shift-F key + Alt-F GROUP standalone_group_transform
+# else-arm + verb-noun PENDING_TR_FLIP), and extended S7 with the flip EXACTLY-ONE scoping.
+# Refactor B atom 8 (perform_action / flipv -- pivot form `xschem flipv x0 y0`) migrated the THIRD and
+# LAST arg-carrying pivot verb, the MIRROR of flip: one run_core arm (the THREE-move vertical mirror
+# ROTATE, ROTATE, FLIP -- NO ROTATELOCAL, the atom-5-class order hazard) + one core_log_action `flipv`
+# branch, MOVED flipv's S1 rows onto the boundary (scheduler `return perform_action("flipv", argc, argv)`
+# + TWO callback.c `perform_action("flipv", 4, av)` -- the Shift-V key + verb-noun PENDING_TR_FLIPV;
+# count TWO not three -- flipv has NO group form), removed the callback `log_action("xschem flipv %")`
+# rows, and extended S7 with the flipv EXACTLY-ONE scoping (+ two flip-unperturbed guards). The literal
+# `flipv %` regex does NOT match `flip %` (a `v` intervenes) nor `flipv_in_place`. After atom 8 the whole
+# transform SEXTET (rotate/flip/flipv x pivot + in-place) is on the boundary and the shared verb-noun
+# START/switch/END block is GONE (six boundary else-if arms). flipv stays in S2 CVERBS, OUT of S3.
 # Atom 12 (0053 Cadence Ctrl-E window hop) added: the S1 focus_window emit row
 # (utils/cadence_nav.tcl) and the S6 SEAM-EXCLUSIVITY block -- `new_schematic
 # switch` (a shared core: tab-strip/alt2/window-open machinery) must be logged
@@ -136,15 +149,16 @@ set MANIFEST {
     {int perform_action\(const char \*verb,}          1 {the single mutation/command boundary is defined once (Refactor B, audit §4)}
     {if\(scheduler_readonly_reject\(interp, verb\)\) return TCL_ERROR;} 1 {perform_action's ONE readonly gate -- covers every migrated verb from every entry point (0041/0051 unification)}
     {if\(!actionlog_suppress\) core_log_action\(verb, argc, argv\);} 1 {perform_action's ONE log site -- delegates the per-verb log FORM to core_log_action (atom 6), gated on the re-entrant suppress counter (foundation §20)}
-    {static void core_log_action\(const char \*verb, int argc, const char \*argv\[\]\)} 1 {the per-verb log-form dispatcher (§4 Refactor A step-2 registry SEED, atom 6): bare verbs -> "xschem %s"; the arg-carrying rotate -> the pivot form "xschem rotate x0 y0"}
+    {static void core_log_action\(const char \*verb, int argc, const char \*argv\[\]\)} 1 {the per-verb log-form dispatcher (§4 Refactor A step-2 registry SEED, atom 6): bare verbs -> "xschem %s"; the arg-carrying pivot verbs rotate/flip/flipv -> the pivot form "xschem <verb> x0 y0" (rotate atom 6, flip atom 7, flipv atom 8)}
     {log_action\("xschem %s", verb\);}                1 {core_log_action's BARE-verb form -- trim_wires/align/rotate_in_place/flip_in_place/flipv_in_place all self-log through here, byte-identical to the pre-atom-6 perform_action log site}
     {log_action\("xschem break_wires 1"}              1 {break_wires remove form}
     {log_action\("xschem break_wires"\)}              1 {break_wires bare form}
     {log_action\("xschem flip %}                      1 {flip PIVOT form now lives in core_log_action (atom 7), NOT the scheduler branch -- exactly ONE such site remains in scheduler.c (S7 pins the exclusivity); the literal `flip %` (flip+space) does NOT match `flipv %`}
-    {log_action\("xschem flipv %}                     1 {flipv branch (still raw -- atom 8)}
+    {log_action\("xschem flipv %}                     1 {flipv PIVOT form now lives in core_log_action (atom 8), NOT the scheduler branch -- exactly ONE such site remains in scheduler.c (S7 pins the exclusivity); the literal `flipv %` (flipv+space) does NOT match `flip %` (a `v` intervenes) nor `flipv_in_place`}
     {log_action\("xschem rotate %}                    1 {rotate PIVOT form now lives in core_log_action (atom 6), NOT the scheduler branch -- exactly ONE such site remains in scheduler.c (S7 pins the exclusivity)}
     {return perform_action\("rotate", argc, argv\);}  1 {rotate branch STANDALONE arm routes through the perform_action boundary (Refactor B atom 6 -- the FIRST arg-carrying verb): run_core + core_log_action thread the pivot from argc/argv; the mid-gesture STARTMOVE/STARTCOPY arms stay raw (logged at move/copy END, 0069), no scattered readonly/log/push_undo here}
     {return perform_action\("flip", argc, argv\);}    1 {flip branch STANDALONE arm routes through the perform_action boundary (Refactor B atom 7 -- the SECOND arg-carrying verb, a near-clone of rotate): run_core + core_log_action thread the pivot from argc/argv; the mid-gesture STARTMOVE/STARTCOPY arms stay raw (logged at move/copy END, 0069), no scattered readonly/log/push_undo here}
+    {return perform_action\("flipv", argc, argv\);}   1 {flipv branch STANDALONE arm routes through the perform_action boundary (Refactor B atom 8 -- the THIRD and LAST arg-carrying pivot verb, the mirror of flip): run_core's THREE-move vertical mirror (ROTATE, ROTATE, FLIP, NO ROTATELOCAL) + core_log_action thread the pivot from argc/argv; the mid-gesture STARTMOVE/STARTCOPY arms stay raw (logged at move/copy END, 0069), no scattered readonly/log/push_undo here}
     {return perform_action\("flip_in_place", argc, argv\);} 1 {flip_in_place branch STANDALONE arm routes through the perform_action boundary (Refactor B atom 4, the mirror of rotate_in_place): the mid-gesture STARTMOVE/STARTCOPY arms stay raw (logged at move/copy END, 0069), no scattered readonly/log/push_undo here}
     {return perform_action\("flipv_in_place", argc, argv\);} 1 {flipv_in_place branch STANDALONE arm routes through the perform_action boundary (Refactor B atom 5, the last in-place transform): THREE move_objects calls (ROTATE|ROTATELOCAL x2 + FLIP|ROTATELOCAL) live in run_core; the mid-gesture STARTMOVE/STARTCOPY arms stay raw (logged at move/copy END, 0069), no scattered readonly/log/push_undo here}
     {return perform_action\("rotate_in_place", argc, argv\);} 1 {rotate_in_place branch STANDALONE arm routes through the perform_action boundary (Refactor B atom 3): the mid-gesture STARTMOVE/STARTCOPY arms stay raw (logged at move/copy END, 0069), no scattered readonly/log/push_undo here}
@@ -194,9 +208,9 @@ set MANIFEST {
     {perform_action\("flipv_in_place", 0, NULL\);}    2 {the two callback.c standalone flipv_in_place entry points route through the perform_action boundary (Refactor B atom 5): the Alt-V standalone apply (case 'v' EQUAL_MODMASK -- no standalone_group_transform / no group form) + the verb-noun deferred apply (MENUSTARTROTATE PENDING_TR_FLIPV_IP); the mid-gesture STARTMOVE/STARTCOPY arms stay raw}
     {perform_action\("rotate", 4, av\);}              3 {the THREE callback.c standalone rotate (pivot form) entry points route through the perform_action boundary (Refactor B atom 6, the FIRST arg-carrying verb), each passing its own pivot in av[2]/av[3]: the Shift-R key standalone apply + the Alt-R GROUP standalone_group_transform arm (issue 0116) + the verb-noun deferred apply (MENUSTARTROTATE PENDING_TR_ROTATE); the mid-gesture STARTMOVE/STARTCOPY arms stay raw}
     {perform_action\("flip", 4, av\);}                3 {the THREE callback.c standalone flip (pivot form) entry points route through the perform_action boundary (Refactor B atom 7, the SECOND arg-carrying verb, mirror of rotate), each passing its own pivot in av[2]/av[3]: the Shift-F key standalone apply + the Alt-F GROUP standalone_group_transform else-arm (issue 0116) + the verb-noun deferred apply (MENUSTARTROTATE PENDING_TR_FLIP); the mid-gesture STARTMOVE/STARTCOPY arms stay raw}
+    {perform_action\("flipv", 4, av\);}               2 {the TWO callback.c standalone flipv (pivot form) entry points route through the perform_action boundary (Refactor B atom 8, the THIRD and LAST arg-carrying verb, mirror of flip), each passing its own pivot in av[2]/av[3]: the Shift-V key standalone apply + the verb-noun deferred apply (MENUSTARTROTATE PENDING_TR_FLIPV). Count is TWO, NOT three -- flipv has NO group form (no standalone_group_transform arm), unlike rotate/flip; the mid-gesture STARTMOVE/STARTCOPY arms stay raw}
     {log_action\("xschem break_wires 1"}              1 {Ctrl-! inline key}
     {log_action\("xschem break_wires"\)}              1 {'!' inline key}
-    {log_action\("xschem flipv %}                     2 {Shift-V key + move-END}
     {log_action\("xschem pan %}                       1 {drag-pan END}
     {log_action\("xschem zoom_box %}                  1 {zoom-drag END}
     {(?n)^\s*av\[ac\+\+\] = "xschem"; av\[ac\+\+\] = "paste";} 1 {paste/merge drop replay line (atom 9 / 0069)}
@@ -633,6 +647,33 @@ check "S7 callback.c: NO scattered log_action(\"xschem flip %\") (Shift-F + Alt-
 check "S7 scheduler.c: NO scattered scheduler_readonly_reject(...,\"flip\") (the boundary's generic gate covers the standalone verb)" \
   [expr {[rxcount $sched {scheduler_readonly_reject\(interp, "flip"\)}] == 0}] \
   "got=[rxcount $sched {scheduler_readonly_reject\(interp, "flip"\)}]"
+# flipv (Refactor B atom 8 -- the THIRD and LAST arg-carrying pivot verb, the pivot form
+# `xschem flipv x0 y0`, the mirror of flip): the STANDALONE verb's readonly gate + the ONE
+# `xschem flipv x0 y0` log site (via core_log_action) live SOLELY in perform_action. The
+# mid-gesture STARTMOVE/STARTCOPY arms (scheduler branch + Shift-V key) stay raw and log NOTHING
+# at the verb level (logged at move/copy END as move_objects/copy_objects, 0069). Like rotate/flip,
+# core_log_action legitimately CONTAINS one `log_action("xschem flipv %...")` (the pivot format), so
+# scheduler.c must have EXACTLY ONE (the core_log_action site), with the scheduler flipv BRANCH
+# carrying none and every callback.c entry carrying ZERO. The literal `flipv %` (flipv+space+%) regex
+# does NOT match `flip %` (a `v` intervenes before the space) nor `flipv_in_place` (an `_` follows),
+# and `"flipv"` (flipv+quote) does NOT match `"flip"`/`"flipv_in_place"`, so flipv is counted
+# independently of BOTH flip and flipv_in_place -- and this migration must NOT perturb flip's counts.
+check "S7 scheduler.c: EXACTLY ONE log_action(\"xschem flipv %\") -- the core_log_action pivot site (the branch delegates to the boundary)" \
+  [expr {[rxcount $sched {log_action\("xschem flipv %}] == 1}] \
+  "got=[rxcount $sched {log_action\("xschem flipv %}]"
+check "S7 callback.c: NO scattered log_action(\"xschem flipv %\") (Shift-V + verb-noun apply delegate to the boundary; flipv has no group arm)" \
+  [expr {[rxcount $cbtext {log_action\("xschem flipv %}] == 0}] \
+  "got=[rxcount $cbtext {log_action\("xschem flipv %}]"
+check "S7 scheduler.c: NO scattered scheduler_readonly_reject(...,\"flipv\") (the boundary's generic gate covers the standalone verb)" \
+  [expr {[rxcount $sched {scheduler_readonly_reject\(interp, "flipv"\)}] == 0}] \
+  "got=[rxcount $sched {scheduler_readonly_reject\(interp, "flipv"\)}]"
+# flip counts must stay EXACTLY as atom 7 left them -- flipv's migration must not perturb them.
+check "S7 (flip unperturbed) scheduler.c: still EXACTLY ONE log_action(\"xschem flip %\")" \
+  [expr {[rxcount $sched {log_action\("xschem flip %}] == 1}] \
+  "got=[rxcount $sched {log_action\("xschem flip %}]"
+check "S7 (flip unperturbed) callback.c: still ZERO log_action(\"xschem flip %\")" \
+  [expr {[rxcount $cbtext {log_action\("xschem flip %}] == 0}] \
+  "got=[rxcount $cbtext {log_action\("xschem flip %}]"
 check "S7 perform_action is defined EXACTLY once" \
   [expr {[rxcount $sched {int perform_action\(const char \*verb,}] == 1}] \
   "got=[rxcount $sched {int perform_action\(const char \*verb,}]"
