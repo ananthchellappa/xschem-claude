@@ -431,6 +431,57 @@ static int run_core(const char *verb, int argc, const char *argv[])
     toggle_ignore();
     return TCL_OK;
   }
+  else if(!strcmp(verb, "reset_inst_prop")) {
+    /* Refactor B atom 13: the FIRST BENEFICIARY of the log-on-success boundary change
+     * (the shared-machinery half of this atom). reset_inst_prop resets an instance's
+     * property string from its symbol template (set_inst_prop, editprop.c). It is the
+     * FIRST VALIDATING verb on the boundary: it rejects a bad request with an early
+     * TCL_ERROR + Tcl_SetResult *before* any mutation -- exactly the shape the old
+     * unconditional-log boundary could not host (it would phantom-log the rejected
+     * call). The two validation gates MOVE here from the scheduler branch and stay
+     * BEFORE push_undo, so a bad arg mutates nothing and (via log-on-success) logs
+     * nothing. On success argv[2] is the instance referent (a name or a numeric index,
+     * resolved by get_instance) read IDENTICALLY to core_log_action's arm, so the
+     * logged line can never diverge from the reset one. The undo is a SINGLE push_undo
+     * (below), owned here -- there is no core fn that pushes, so unlike the
+     * self-undo verbs (toggle_ignore/floaters) this arm DOES push once (and only once).
+     * The old branch set the interp result to the instname on success; the boundary's
+     * success-path Tcl_ResetResult clears it (no caller consumes it -- verified), so
+     * this arm sets NO success result. */
+    char *translated_sym = NULL;
+    int sym_number = -1;
+    int inst;
+    if(argc < 3) {
+      Tcl_SetResult(interp, "xschem reset_inst_prop needs 1 more argument", TCL_STATIC);
+      return TCL_ERROR;
+    }
+    if((inst = get_instance(argv[2])) < 0 ) {
+      Tcl_SetResult(interp, "xschem reset_inst_prop: instance not found", TCL_STATIC);
+      return TCL_ERROR;
+    }
+    symbol_bbox(inst, &xctx->inst[inst].x1, &xctx->inst[inst].y1, &xctx->inst[inst].x2, &xctx->inst[inst].y2);
+    xctx->push_undo();
+    xctx->prep_hash_inst=0;
+    xctx->prep_net_structs=0;
+    xctx->prep_hi_structs=0;
+    hash_names(-1, XINSERT);
+    hash_names(inst, XDELETE);
+    set_inst_prop(inst);
+    my_strdup2(_ALLOC_ID_, &translated_sym, translate(inst, xctx->inst[inst].name));
+    sym_number=match_symbol(translated_sym);
+    if(sym_number > 0) {
+      delete_inst_node(inst);
+      xctx->inst[inst].ptr=sym_number;
+    }
+    set_inst_flags(&xctx->inst[inst]);
+    hash_names(inst, XINSERT);
+    /* new symbol bbox after prop changes (may change due to text length) */
+    symbol_bbox(inst, &xctx->inst[inst].x1, &xctx->inst[inst].y1, &xctx->inst[inst].x2, &xctx->inst[inst].y2);
+    set_modify(-2); /* reset floaters caches */
+    draw();
+    my_free(_ALLOC_ID_, &translated_sym);
+    return TCL_OK;
+  }
   return TCL_ERROR; /* unreachable: perform_action is only wired for the verbs above */
 }
 
@@ -502,6 +553,27 @@ static void core_log_action(const char *verb, int argc, const char *argv[])
      * counted independently by the grep guard (S7). */
     if(argc > 2) log_action("xschem attach_labels %d", atoi(argv[2]));
     else         log_action("xschem attach_labels");
+  } else if(!strcmp(verb, "reset_inst_prop")) {
+    /* atom 13: the arg is the instance REFERENT argv[2] (a name or a numeric index),
+     * read IDENTICALLY to run_core's reset_inst_prop arm -- so the logged
+     * `xschem reset_inst_prop <ref>` self-contained line always names exactly the
+     * instance the effect reset (SELECTION-INDEPENDENT: the referent is in the line,
+     * not the current selection; replay re-resolves it via get_instance). This arm is
+     * reached ONLY on TCL_OK (perform_action gates core_log_action on success, atom 13),
+     * and run_core returns TCL_OK only after `argc<3` passed -- so argv[2] is always
+     * present here; a failed validation logs NOTHING.
+     * The referent is emitted via log_action_argv (Tcl_Merge), NOT a raw `%s` -- an
+     * arrayed/bussed instance name carries Tcl metacharacters (a real shipped case is
+     * `x2[3:0]`), and a raw `xschem reset_inst_prop x2[3:0]` line would replay `[3:0]` as
+     * a command substitution ("invalid command name 3:0"). Tcl_Merge brace-quotes it to
+     * `xschem reset_inst_prop {x2[3:0]}`, which replays back to the same argv[2]. Tcl_Merge
+     * quotes MINIMALLY, so a plain refdes (R1) logs byte-identically to `xschem
+     * reset_inst_prop R1`. This is the issue-0048 replay-safe name pattern (adversarial
+     * review of this atom flagged the raw-%s replay gap; the sibling `descend -inst %s`
+     * shares the latent gap and is left for its own change). */
+    const char *av[3];
+    av[0] = "xschem"; av[1] = verb; av[2] = argv[2];
+    log_action_argv(3, av);
   } else {
     log_action("xschem %s", verb);
   }
@@ -522,15 +594,32 @@ static void core_log_action(const char *verb, int argc, const char *argv[])
  * from core_log_action(verb, argc, argv) (atom 6): bare verbs -> `xschem <verb>`,
  * the arg-carrying rotate -> `xschem rotate <x0> <y0>`. Effect THEN log, always:
  * core_log_action's mouse-fallback pivot reads the coord run_core just seeded.
- * Uses the global interp. */
+ * Uses the global interp.
+ *
+ * LOG-ON-SUCCESS (Refactor B atom 13 -- the FIRST shared-machinery change): the log
+ * site AND the interp reset fire ONLY on rc == TCL_OK. This lets a VALIDATING verb --
+ * one whose run_core rejects a bad argument/precondition with Tcl_SetResult(...) +
+ * return TCL_ERROR *before* mutating (reset_inst_prop's `argc<3` / "instance not
+ * found", and the whole replace_symbol/load_backup/reset_symbol class it unblocks) --
+ * live on the boundary without being PHANTOM-logged: a rejected call records no
+ * replayable line. The guard MUST NOT be split from the Tcl_ResetResult: on the
+ * TCL_ERROR path run_core's error message must survive to the caller, so the reset is
+ * skipped on failure (resetting unconditionally here would blank the message -- the
+ * known C-side empty-error bug). The readonly early return above already keeps its own
+ * message for the same reason. INVARIANT: every verb already on the boundary returns
+ * TCL_OK on BOTH its success AND its no-op path (floaters nothing-selected,
+ * toggle_ignore attr==NULL) -- so log-on-success drops no existing log and PRESERVES
+ * the no-op-still-logs property (§30/§32); a no-op is a SUCCESS, not a failure. */
 int perform_action(const char *verb, int argc, const char *argv[])
 {
   int rc;
   if(!xctx) { Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR; }
   if(scheduler_readonly_reject(interp, verb)) return TCL_ERROR;   /* ONE readonly gate */
   rc = run_core(verb, argc, argv);                                /* the effect */
-  if(!actionlog_suppress) core_log_action(verb, argc, argv);      /* ONE log site (per-verb form) */
-  Tcl_ResetResult(interp);
+  if(rc == TCL_OK) {   /* LOG-ON-SUCCESS + success-only reset (Refactor B atom 13) */
+    if(!actionlog_suppress) core_log_action(verb, argc, argv);    /* ONE log site (per-verb form) */
+    Tcl_ResetResult(interp);   /* clear on success ONLY -- preserve run_core's error message on TCL_ERROR */
+  }
   return rc;
 }
 
@@ -8202,51 +8291,17 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
     }
 
     /* reset_inst_prop inst
-     *   Reset instance attribute string taking it from symbol template string */
+     *   Reset instance attribute string taking it from symbol template string.
+     * Routes through the single mutation boundary (Refactor B atom 13): the readonly
+     * gate, the argc<3 / "instance not found" validation, the single push_undo + the
+     * reset effect, and the ONE `xschem reset_inst_prop <ref>` log site (via
+     * core_log_action, LOGGED ONLY ON SUCCESS) all live in perform_action/run_core.
+     * This is the FIRST VALIDATING verb on the boundary -- the atom-13 log-on-success
+     * change is what lets its early-TCL_ERROR paths cross without being phantom-logged.
+     * No scattered readonly/log/push_undo here; the old success-path instname result is
+     * dropped (the boundary clears the interp on success; no caller consumed it). */
     else if(!strcmp(argv[1], "reset_inst_prop"))
-    {
-      char *translated_sym = NULL;
-      int sym_number = -1;
-      char *subst = NULL;
-      int inst;
-
-      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
-      if(scheduler_readonly_reject(interp, "reset_inst_prop")) return TCL_ERROR;
-      if(argc < 3) {
-        Tcl_SetResult(interp, "xschem reset_inst_prop needs 1 more argument", TCL_STATIC);
-        return TCL_ERROR;
-      }
-      if((inst = get_instance(argv[2])) < 0 ) {
-        Tcl_SetResult(interp, "xschem reset_inst_prop: instance not found", TCL_STATIC);
-        return TCL_ERROR;
-      }
-      symbol_bbox(inst, &xctx->inst[inst].x1, &xctx->inst[inst].y1, &xctx->inst[inst].x2, &xctx->inst[inst].y2);
-      xctx->push_undo();
-      xctx->prep_hash_inst=0;
-      xctx->prep_net_structs=0;
-      xctx->prep_hi_structs=0;
-
-      hash_names(-1, XINSERT);
-      hash_names(inst, XDELETE);
-      set_inst_prop(inst);
-
-      my_strdup2(_ALLOC_ID_, &translated_sym, translate(inst, xctx->inst[inst].name));
-      sym_number=match_symbol(translated_sym);
-
-      if(sym_number > 0) {
-        delete_inst_node(inst);
-        xctx->inst[inst].ptr=sym_number;
-      }
-      if(subst) my_free(_ALLOC_ID_, &subst);
-      set_inst_flags(&xctx->inst[inst]);
-      hash_names(inst, XINSERT);
-      /* new symbol bbox after prop changes (may change due to text length) */
-      symbol_bbox(inst, &xctx->inst[inst].x1, &xctx->inst[inst].y1, &xctx->inst[inst].x2, &xctx->inst[inst].y2);
-      set_modify(-2); /* reset floaters caches */
-      draw();
-      my_free(_ALLOC_ID_, &translated_sym);
-      Tcl_SetResult(interp, xctx->inst[inst].instname , TCL_VOLATILE);
-    }
+      return perform_action("reset_inst_prop", argc, argv);
 
     /* reset_symbol inst symref
      *   This is a low level command, it merely changes the xctx->inst[...].name field.

@@ -162,6 +162,17 @@
 # actionlog_cmd_logged DEDUP (the boundary log sets the flag, Layer A skips -> ONE line). The S1 key row is the
 # load-bearing lock: the runtime output is identical whether the key uses Layer A or core_log_action, so only
 # this grep row catches a raw-core key regression. toggle_ignore stays in S2 CVERBS, OUT of S3.
+# Refactor B atom 13 (perform_action LOG-ON-SUCCESS + reset_inst_prop) is the FIRST shared-machinery atom:
+# it CHANGED the boundary itself so the log site + the interp reset fire only on rc==TCL_OK, then migrated the
+# first verb the change unblocks (reset_inst_prop, the FIRST VALIDATING verb -- it rejects a bad arg with an
+# early TCL_ERROR before mutating). Grep changes: (a) the S1 log-site row's regex UPDATED from
+# `if(!actionlog_suppress) core_log_action(...)` to `if(rc == TCL_OK && !actionlog_suppress) core_log_action(...)`
+# (it fails closed if the guard is reverted -- the correct signal), plus a NEW S1 row pinning the success-only
+# `Tcl_ResetResult(interp);   /* clear on success ONLY` (the landmine: it must stay coupled to the log-on-success
+# guard so a failed validating call's error message survives); (b) a NEW S1 boundary-branch row + a NEW S1
+# core_log_action `xschem reset_inst_prop %s` name-form row; (c) reset_inst_prop ADDED to S2 CVERBS, kept OUT of
+# S3; (d) an S7 block (single-form arg-carrying, like rotate/flip: EXACTLY ONE core_log_action site in
+# scheduler.c, ZERO in callback.c, ZERO scattered readonly_reject -- the old branch HAD a per-verb one, now GONE).
 # Atom 12 (0053 Cadence Ctrl-E window hop) added: the S1 focus_window emit row
 # (utils/cadence_nav.tcl) and the S6 SEAM-EXCLUSIVITY block -- `new_schematic
 # switch` (a shared core: tab-strip/alt2/window-open machinery) must be logged
@@ -211,13 +222,17 @@ set MANIFEST {
     {return perform_action\("trim_wires", argc, argv\);} 1 {trim_wires branch routes through the perform_action boundary (Refactor B atom 1): no scattered readonly/log/push_undo here}
     {int perform_action\(const char \*verb,}          1 {the single mutation/command boundary is defined once (Refactor B, audit §4)}
     {if\(scheduler_readonly_reject\(interp, verb\)\) return TCL_ERROR;} 1 {perform_action's ONE readonly gate -- covers every migrated verb from every entry point (0041/0051 unification)}
-    {if\(!actionlog_suppress\) core_log_action\(verb, argc, argv\);} 1 {perform_action's ONE log site -- delegates the per-verb log FORM to core_log_action (atom 6), gated on the re-entrant suppress counter (foundation §20)}
+    {if\(rc == TCL_OK\) \{   /\* LOG-ON-SUCCESS \+ success-only reset \(Refactor B atom 13\)} 1 {perform_action's LOG-ON-SUCCESS guard (Refactor B atom 13, the FIRST shared-machinery change): the log site AND the interp reset fire only when run_core returned TCL_OK, so a VALIDATING verb's early-TCL_ERROR (reset_inst_prop `argc<3` / "instance not found", and the replace_symbol/load_backup class it unblocks) is NOT phantom-logged. Reverting to the unconditional log (sabotage 1) deletes this uniquely-commented line -> fails closed. Every migrated verb returns TCL_OK on BOTH success AND no-op, so no existing log is dropped and the no-op-still-logs property survives}
+    {if\(!actionlog_suppress\) core_log_action\(verb, argc, argv\);} 1 {perform_action's ONE log site -- delegates the per-verb log FORM to core_log_action (atom 6), gated on the re-entrant suppress counter (foundation §20); now NESTED inside the atom-13 log-on-success `if(rc == TCL_OK)` block above}
+    {Tcl_ResetResult\(interp\);   /\* clear on success ONLY} 1 {perform_action clears the interp result ONLY on the TCL_OK path (atom 13) -- a TCL_ERROR from a validating verb (reset_inst_prop) keeps run_core's Tcl_SetResult message, closing the C-side empty-error bug; MUST stay coupled to the log-on-success guard, never split from it}
     {static void core_log_action\(const char \*verb, int argc, const char \*argv\[\]\)} 1 {the per-verb log-form dispatcher (§4 Refactor A step-2 registry SEED, atom 6): bare verbs -> "xschem %s"; the arg-carrying pivot verbs rotate/flip/flipv -> the pivot form "xschem <verb> x0 y0" (rotate atom 6, flip atom 7, flipv atom 8)}
     {log_action\("xschem %s", verb\);}                1 {core_log_action's BARE-verb form -- trim_wires/align/rotate_in_place/flip_in_place/flipv_in_place/floaters_from_selected_inst/toggle_ignore all self-log through here, byte-identical to the pre-atom-6 perform_action log site}
     {log_action\("xschem break_wires 1"}              1 {break_wires REMOVE form now lives in core_log_action (atom 9), NOT the scheduler branch -- exactly ONE such site in scheduler.c (S7 pins exclusivity); the literal `break_wires 1"` (space+1 before the quote) does NOT match the bare `break_wires")` form}
     {log_action\("xschem break_wires"\)}              1 {break_wires BARE form now lives in core_log_action (atom 9), NOT the scheduler branch -- exactly ONE such site in scheduler.c (S7 pins exclusivity); the `break_wires"\)` (quote then paren) does NOT match `break_wires 1"` nor break_wires_at_pins/_at_point/_at_attach_points}
     {log_action\("xschem attach_labels %}             1 {attach_labels VALUE form now lives in core_log_action (atom 11) -- `log_action("xschem attach_labels %d", atoi(argv[2]))` PRESERVES the 0/1/2 value (unlike break_wires which collapses nonzero to 1); byte-identical to the old log_action_argv for the canonical integer arg every live path emits, strictly MORE faithful for a non-canonical token (`007`->`7`); exactly ONE such site in scheduler.c (S7 pins exclusivity); the literal `attach_labels %` (space+%) does NOT match the bare `attach_labels")` form}
     {log_action\("xschem attach_labels"\)}            1 {attach_labels BARE form now lives in core_log_action (atom 11), NOT the scheduler branch -- exactly ONE such site in scheduler.c (S7 pins exclusivity); the `attach_labels"\)` (quote then paren) does NOT match `attach_labels %`}
+    {av\[0\] = "xschem"; av\[1\] = verb; av\[2\] = argv\[2\];} 1 {reset_inst_prop SELF-CONTAINED name form lives in core_log_action (atom 13): the referent argv[2] (a name or numeric index) is emitted via log_action_argv (Tcl_Merge), NOT a raw %s -- so an arrayed/bussed name with Tcl metacharacters (x2[3:0]) is brace-quoted and REPLAYS (raw %s would replay `[3:0]` as a command substitution; the issue-0048 replay-safe pattern, flagged by this atom's adversarial review). Reached ONLY on TCL_OK (log-on-success), so a failed validation logs nothing}
+    {log_action_argv\(3, av\);} 1 {reset_inst_prop's Tcl_Merge emit (atom 13): log_action_argv brace-quotes the referent minimally, so a plain refdes (R1) logs byte-identically to `xschem reset_inst_prop R1` while an arrayed name logs `xschem reset_inst_prop {x2[3:0]}`. Exactly ONE such `(3, av)` site in scheduler.c (S7 pins exclusivity); distinct from the `argc`/`ac`-arg log_action_argv calls (add_pin_stubs, paste)}
     {return perform_action\("break_wires", argc, argv\);} 1 {break_wires branch routes through the perform_action boundary (Refactor B atom 9 -- the FIRST NON-transform verb; the arg is a FLAG (0/1), not a pivot; NO mid-gesture split): run_core + core_log_action read `remove` from argc/argv; break_wires_at_pins owns its own push_undo/draw, so no scattered readonly/log/push_undo here}
     {log_action\("xschem flip %}                      1 {flip PIVOT form now lives in core_log_action (atom 7), NOT the scheduler branch -- exactly ONE such site remains in scheduler.c (S7 pins the exclusivity); the literal `flip %` (flip+space) does NOT match `flipv %`}
     {log_action\("xschem flipv %}                     1 {flipv PIVOT form now lives in core_log_action (atom 8), NOT the scheduler branch -- exactly ONE such site remains in scheduler.c (S7 pins the exclusivity); the literal `flipv %` (flipv+space) does NOT match `flip %` (a `v` intervenes) nor `flipv_in_place`}
@@ -234,6 +249,7 @@ set MANIFEST {
     {return perform_action\("floaters_from_selected_inst", argc, argv\);} 1 {floaters_from_selected_inst branch routes through the perform_action boundary (Refactor B atom 10 -- the SECOND non-transform verb, a BARE no-arg verb): run_core calls floaters_from_selected_inst() which OWNS its own push_undo/set_modify/draw (no double-push); the log is the shared bare `xschem %s` core_log_action DEFAULT line (no per-verb branch); the boundary ADDS the readonly gate this branch never had (a 0041/0051 close). No scattered readonly/log/push_undo here}
     {return perform_action\("attach_labels", argc, argv\);} 1 {attach_labels branch routes through the perform_action boundary (Refactor B atom 11 -- the THIRD non-transform verb; the arg is a FLAG `interactive` (0/1/2, value PRESERVED not collapsed), not a pivot; NO mid-gesture split): run_core + core_log_action read `interactive` from argc/argv; attach_labels_to_inst() OWNS its own push_undo (via place_symbol) + set_modify + draw, so no double-push; the boundary ADDS the readonly gate this branch never had (a 0041/0051 close -- every 0/1/2 form mutates); the SHARED core is ALSO a raw netlisting sub-step (show_unconnected_pins) + the Shift+H dialog key, both off the boundary. No scattered readonly/log/push_undo here}
     {return perform_action\("toggle_ignore", argc, argv\);} 1 {toggle_ignore branch routes through the perform_action boundary (Refactor B atom 12 -- the FIRST FRICTION-FREE-SCOUTED verb, a BARE no-arg verb): run_core calls toggle_ignore() which OWNS its own push_undo (on the FIRST selected element) + set_modify + draw (no double-push); the log is the shared bare `xschem %s` core_log_action DEFAULT line (no per-verb branch); the boundary is PURELY ADDITIVE -- this branch logged NOTHING and had NO readonly gate before, so it ADDS BOTH (a 0041/0051 close). The equivalent Shift+T key routes through the SAME boundary. No scattered readonly/log/push_undo here}
+    {return perform_action\("reset_inst_prop", argc, argv\);} 1 {reset_inst_prop branch routes through the perform_action boundary (Refactor B atom 13 -- the FIRST BENEFICIARY of the log-on-success change, and the FIRST VALIDATING verb): run_core MOVES the argc<3 / "instance not found" validation IN (early TCL_ERROR BEFORE its single push_undo, so a bad arg mutates nothing) and, via log-on-success, logs nothing on failure; core_log_action logs the SELF-CONTAINED `xschem reset_inst_prop <ref>` (argv[2], a name or index) on success only. The boundary ADDS the generic readonly gate (already present in the old branch, now unified); the old success-path instname interp result is dropped (no caller consumed it). No scattered readonly/log/push_undo here}
     {log_action\("xschem print_hilight_net}           1 {print_hilight_net branch}
     {log_action\("xschem exit closewindow force"}     2 {exit hook (both terminating sites)}
     {log_action\("xschem set cadgrid}                 1 {set cadgrid resolved-value}
@@ -429,6 +445,7 @@ set CVERBS {
   cut delete copy undo redo save reload saveas align trim_wires break_wires
   flip flipv rotate flip_in_place flipv_in_place rotate_in_place
   change_elem_order check_unique_names create_instance toggle_ignore
+  reset_inst_prop
   floaters_from_selected_inst print_hilight_net attach_labels add_pin_stubs
   setprop unhilight_all hilight_net_interactive unhilight_net_interactive
   make_symbol make_sch make_sch_from_sel descend descend_symbol go_back
@@ -843,6 +860,42 @@ check "S7 callback.c: NO scattered log_action(\"xschem toggle_ignore\") (Shift+T
 check "S7 scheduler.c: NO scattered scheduler_readonly_reject(...,\"toggle_ignore\") (the boundary's generic gate covers the verb -- the branch never had one)" \
   [expr {[rxcount $sched {scheduler_readonly_reject\(interp, "toggle_ignore"\)}] == 0}] \
   "got=[rxcount $sched {scheduler_readonly_reject\(interp, "toggle_ignore"\)}]"
+# reset_inst_prop (Refactor B atom 13 -- the FIRST BENEFICIARY of the log-on-success boundary change,
+# and the FIRST VALIDATING verb): the readonly gate + the ONE `xschem reset_inst_prop <ref>` log form
+# (via core_log_action) live SOLELY in perform_action. It is arg-carrying (a single %s referent, like
+# rotate/flip's single pivot form), so core_log_action legitimately holds EXACTLY ONE
+# `log_action("xschem reset_inst_prop %s"...)` and scheduler.c must have EXACTLY that ONE -- the
+# scheduler BRANCH carries none (it delegates) and callback.c ZERO (no key entry point). NB the branch's
+# early-error Tcl_SetResult("xschem reset_inst_prop needs 1 more argument" / "... instance not found")
+# are NOT log_action calls, so they don't perturb this count. The literal `reset_inst_prop %` (space+%)
+# does not collide with any other verb. The old branch HAD a scattered scheduler_readonly_reject(...,
+# "reset_inst_prop"); the boundary's generic gate now covers it, so a re-scattered per-verb one fails
+# closed. reset_inst_prop stays in S2 CVERBS (a scripted/replayed `xschem reset_inst_prop <ref>`
+# re-executes AND self-logs) and OUT of S3 (its log lives in the boundary, reached from the branch).
+check "S7 scheduler.c: EXACTLY ONE reset_inst_prop referent-build (av\[1\]=verb; av\[2\]=argv\[2\]) -- the core_log_action Tcl_Merge site (the branch delegates to the boundary)" \
+  [expr {[rxcount $sched {av\[1\] = verb; av\[2\] = argv\[2\];}] == 1}] \
+  "got=[rxcount $sched {av\[1\] = verb; av\[2\] = argv\[2\];}]"
+check "S7 scheduler.c: NO scattered raw log_action(\"xschem reset_inst_prop\") (the replay-unsafe %s form must not reappear -- Tcl_Merge is the only emit)" \
+  [expr {[rxcount $sched {log_action\("xschem reset_inst_prop}] == 0}] \
+  "got=[rxcount $sched {log_action\("xschem reset_inst_prop}]"
+check "S7 callback.c: NO scattered log_action(\"xschem reset_inst_prop\") (no key entry point; guards a future re-scatter)" \
+  [expr {[rxcount $cbtext {log_action\("xschem reset_inst_prop}] == 0}] \
+  "got=[rxcount $cbtext {log_action\("xschem reset_inst_prop}]"
+check "S7 scheduler.c: NO scattered scheduler_readonly_reject(...,\"reset_inst_prop\") (the boundary's generic gate covers the verb -- the old branch's per-verb one is GONE)" \
+  [expr {[rxcount $sched {scheduler_readonly_reject\(interp, "reset_inst_prop"\)}] == 0}] \
+  "got=[rxcount $sched {scheduler_readonly_reject\(interp, "reset_inst_prop"\)}]"
+# atom-13 NESTING COUPLING (adversarial-review finding): the S1 existence rows above pin
+# that the guard line, the log line and the reset line each EXIST, but not that log+reset are
+# INSIDE the log-on-success block. A de-nest that keeps all three lines yet closes the
+# `if(rc == TCL_OK) {` block early (moving core_log_action + Tcl_ResetResult OUT, back to
+# unconditional) would satisfy every existence row while reintroducing the phantom-log
+# regression. This regex requires BOTH core_log_action(verb,argc,argv) AND Tcl_ResetResult
+# to appear before the FIRST `}` after the guard (i.e. still nested). `[^}]` matches newlines,
+# and the intervening comments carry no `}`, so the block matches as one unit; the de-nest
+# puts a `}` before core_log_action -> 0 matches -> fails closed. (Runtime (b) also catches it.)
+check "S7 perform_action: core_log_action + Tcl_ResetResult stay NESTED inside the log-on-success if(rc == TCL_OK) block (atom 13 coupling; a de-nest reintroduces the unconditional-log regression)" \
+  [expr {[rxcount $sched {if\(rc == TCL_OK\) \{[^\175]*core_log_action\(verb, argc, argv\);[^\175]*Tcl_ResetResult\(interp\);[^\175]*\175}] == 1}] \
+  "got=[rxcount $sched {if\(rc == TCL_OK\) \{[^\175]*core_log_action\(verb, argc, argv\);[^\175]*Tcl_ResetResult\(interp\);[^\175]*\175}]"
 check "S7 perform_action is defined EXACTLY once" \
   [expr {[rxcount $sched {int perform_action\(const char \*verb,}] == 1}] \
   "got=[rxcount $sched {int perform_action\(const char \*verb,}]"

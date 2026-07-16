@@ -2880,6 +2880,220 @@ last of the three friction-free verbs worth taking (show_unconnected_pins wraps 
 sub-step; redo already self-gates), so the additive-only phase is now spent; the boundary
 extension is the next real step.
 
+## 33. Refactor B ATOM 13 (2026-07-16): the FIRST SHARED-MACHINERY atom — the boundary now LOGS ONLY ON SUCCESS, landing `reset_inst_prop` (the FIRST VALIDATING verb) as its first beneficiary
+
+Atoms 1–12 each migrated ONE verb onto an UNCHANGED `perform_action(verb, argc, argv)`
+boundary whose contract was "log unconditionally after the effect." **Atom 13 is
+different in kind: it CHANGES THE SHARED BOUNDARY ITSELF** (log-on-success) and migrates
+the first verb the change unblocks (`reset_inst_prop`) as its proving beneficiary. One
+atom = the boundary change + its first beneficiary together — the boundary change alone
+has no observable behaviour without a verb whose `run_core` can FAIL, so they ship as a
+pair. This is the friction analysis's headline recommendation
+(`perform_action_boundary_migration_friction_analysis.md` §2/§3-crit-3/§7-lesson-2),
+executed: the additive-only phase was spent after atom 12, and the LARGEST disqualified
+family was the VALIDATING verbs (early `TCL_ERROR` before mutating — `reset_inst_prop`,
+`replace_symbol`, `load_backup`, `reset_symbol`, `move_instance`, `apply_properties`, …).
+
+**THE BOUNDARY CHANGE (the heart of the atom).** `perform_action` was:
+
+```c
+rc = run_core(verb, argc, argv);
+if(!actionlog_suppress) core_log_action(verb, argc, argv);   /* logged REGARDLESS of rc */
+Tcl_ResetResult(interp);                                     /* wiped REGARDLESS of rc */
+return rc;
+```
+
+and is now:
+
+```c
+rc = run_core(verb, argc, argv);
+if(rc == TCL_OK) {   /* LOG-ON-SUCCESS + success-only reset (Refactor B atom 13) */
+  if(!actionlog_suppress) core_log_action(verb, argc, argv);
+  Tcl_ResetResult(interp);   /* clear on success ONLY -- preserve error message on TCL_ERROR */
+}
+return rc;
+```
+
+A rejected VALIDATING call now records **no** replayable line (a phantom command that
+does nothing / errors on replay was the regression the old contract would have
+introduced). This reclaims the entire validating-verb class with one change.
+
+**THE LANDMINE — the guard MUST wrap the `Tcl_ResetResult`, never split from it.** Today
+every migrated verb returns `TCL_OK`, so the old unconditional `Tcl_ResetResult` was
+harmless. But `reset_inst_prop`'s `run_core` `Tcl_SetResult`s an error ("needs 1 more
+argument" / "instance not found") and returns `TCL_ERROR` — and an unconditional
+`Tcl_ResetResult` would WIPE that message before returning, so the caller saw an EMPTY
+error (a known C-side empty-error bug class). Resetting only on the `TCL_OK` path
+preserves the message on failure AND skips the phantom log with ONE guard. The
+`scheduler_readonly_reject` early return keeps its own message the same way (it returns
+before `rc`/reset). The nested-block form (one `if(rc == TCL_OK)` wrapping BOTH) is used
+deliberately over the split inline form (`if(rc==TCL_OK && !suppress)` + a separate
+`if(rc==TCL_OK) reset`) precisely so log and reset cannot drift apart.
+
+**THE INVARIANT AUDIT (the load-bearing safety proof for a shared-machinery change).**
+Log-on-success must not silently DROP a log any already-migrated verb emits. Every
+`run_core` arm was read: the bare verbs (trim_wires/align/rotate_in_place/flip_in_place/
+flipv_in_place/floaters/toggle_ignore) never fail → always `TCL_OK`; the arg-carrying
+pivot verbs (rotate/flip/flipv) and the flag verbs (break_wires/attach_labels) return
+`TCL_OK`; and — the subtle one — **the NO-OP-STILL-LOGS cases (floaters nothing-selected;
+toggle_ignore `attr==NULL` symbol mode) return `TCL_OK`, so they STILL log under
+log-on-success (a no-op is a SUCCESS, not a failure — the §30/§32 property MUST survive,
+and does).** `run_core`'s final `return TCL_ERROR` is the unreachable "unwired verb"
+default, unaffected. The test's check (e) drives BOTH no-op verbs and asserts each STILL
+emits +1 — the explicit regression assertion that a future "gate the log on did-something-
+mutate" change would trip.
+
+**THE FIRST BENEFICIARY: `reset_inst_prop`** (`xschem reset_inst_prop <ref>` — resets an
+instance's property string from its symbol template via `set_inst_prop`, editprop.c:214).
+It is the FIRST VALIDATING verb on the boundary. Migration:
+
+- **Branch** (`scheduler.c`) → `return perform_action("reset_inst_prop", argc, argv);` —
+  dropping the `!xctx` guard, the per-verb `scheduler_readonly_reject`, the inline effect,
+  and the success-path `Tcl_SetResult(instname)` result (the boundary owns them).
+- **`run_core` arm**: the two validation gates MOVE in — `argc<3 → TCL_ERROR "needs 1 more
+  argument"`, then `get_instance(argv[2])<0 → TCL_ERROR "instance not found"` — BEFORE the
+  single `xctx->push_undo()`, so a bad arg mutates nothing and (via log-on-success) logs
+  nothing. Then the reset effect (`hash_names`/`set_inst_prop`/`translate`/`match_symbol`/
+  `delete_inst_node`/`set_inst_flags`/`symbol_bbox`/`set_modify(-2)`/`draw`), `return
+  TCL_OK`. There is NO core fn that pushes undo (unlike toggle_ignore/floaters which
+  self-undo), so THIS arm owns the single `push_undo` — pushed once, only once (the atom-1
+  no-double-push rule, locked by test (f) undo-depth). The dead `char *subst=NULL; … if(subst)
+  my_free(&subst)` (never assigned → unreachable) was dropped.
+- **`core_log_action` arm**: `log_action("xschem reset_inst_prop %s", argv[2])`.
+  `reset_inst_prop` is ARG-CARRYING and SELECTION-INDEPENDENT (it targets an instance BY
+  NAME or numeric index via `get_instance`, scheduler.c:86), so the log is the
+  SELF-CONTAINED name form — `argv[2]` read IDENTICALLY to `run_core`, so the logged
+  referent can never diverge from the reset one; replay re-resolves it. Reached ONLY on
+  `TCL_OK` (log-on-success), and `run_core` returns `TCL_OK` only after `argc<3` passed, so
+  `argv[2]` is always present here.
+
+**Entry map.** `reset_inst_prop` has **NO key, NO menu, and NO other C caller** — verified
+by grepping the live repo (keybindings.csv / mousebindings.csv / actions.csv / callback.c
+`act_*` / xschem.tcl `-command` / Tcl procs / C `Tcl_Eval`): it is a PURE SCRIPTED verb,
+reached only by its own scheduler branch. So there is NO callback.c edit, NO menu wrapper,
+and NO key-equivalence decision (contrast toggle_ignore's Shift+T §32 / attach_labels'
+Shift+H §31). Its core is strictly 1:1 (the inline effect had no other caller), so there is
+no shared sub-step to lock.
+
+**Behaviour delta (the ONE intentional change beyond the coverage gain).** The old branch
+returned the instance's `instname` as the Tcl result on success; the boundary's success-path
+`Tcl_ResetResult` now clears it. Verified no caller consumes it (the only repo reference to
+the verb is `test_readonly_guard`'s rejection-loop verb list). The read-only gate is NOT new
+(the old branch already had one) — the boundary merely UNIFIES it onto the generic gate.
+
+**Grep guard (`test_selflog_grep_guard.tcl`).** (a) the S1 log-site row's regex was UPDATED
+to pin the uniquely-commented `if(rc == TCL_OK) {   /* LOG-ON-SUCCESS + success-only reset
+(Refactor B atom 13)` outer-guard line — reverting to the unconditional log DELETES that
+line → fails closed (sabotage 1) — plus a NEW S1 row pinning the success-only
+`Tcl_ResetResult(interp);   /* clear on success ONLY` (the landmine coupling); (b) NEW S1
+rows for the boundary branch and the `xschem reset_inst_prop %s` name form; (c)
+`reset_inst_prop` ADDED to S2 CVERBS, kept OUT of S3; (d) an S7 block (single arg-carrying
+form, like rotate/flip: EXACTLY ONE `log_action("xschem reset_inst_prop %s"` in scheduler.c,
+ZERO in callback.c, ZERO scattered `scheduler_readonly_reject(...,"reset_inst_prop")` — the
+old branch HAD a per-verb one, now GONE). Maintenance-header note added.
+
+**Effect oracle (byte-identical effect before/after — the migration MOVES validation +
+gates the log, it does not change the reset).** A `devices/res.sym` resistor (template
+`value=1k`) placed at the origin with a non-template `value=999`; `xschem reset_inst_prop
+R1` copies the template back → `xschem getprop instance 0 value` goes 999 → 1k. Determined
+empirically on the pre-migration binary. The FAILING cases pinned: `xschem reset_inst_prop`
+(no arg) and `xschem reset_inst_prop bogus_name` each `TCL_ERROR` with a NON-EMPTY verb-named
+message and, on the migrated binary, log NOTHING — the load-bearing new-capability observable.
+
+**Test `test_perform_action_reset_inst_prop.tcl` (25 checks, full_audit logdir_tests).** (a)
+SUCCESS: the ONE script entry → exactly +1 + effect (999→1k) + byte-exact `xschem
+reset_inst_prop R1`; (b) THE ATOM-13 HEADLINE — FAILURE IS NOT LOGGED: no-arg + bogus-name
+each `TCL_ERROR` + NON-EMPTY verb-named message (the landmine proof: `Tcl_ResetResult` did
+not wipe it) + no mutation + +0 log; (c) readonly reject (`TCL_ERROR`, verb-named read-only
+message, no mutation, no log); (d) replay — the self-contained name form re-EXECUTES through
+the `replay_action_log` suppress seam without re-logging vs a control unwrapped `source` that
+DOES re-log; (e) THE INVARIANT REGRESSION — floaters-nothing-selected AND toggle_ignore-
+attr==NULL each STILL log +1 under log-on-success (the no-op-still-logs §30/§32 property
+survives; the drives are `catch`-wrapped so a regressed verb reports a clean log-count FAIL,
+not a script abort); (f) undo DEPTH — one undo restores the prior value (1k→999), a second
+removes the instance (single `push_undo`).
+
+**SABOTAGE ×9** (each rebuild-run-restore, each failing EXACTLY its checks; restore from the
+post-edit scratchpad backup `scheduler.c.atom13`, NOT git — ~200 dirty files):
+(1) revert to the UNCONDITIONAL log + reset → (b) both the phantom-log (`+1` on failure) AND
+the empty-error (`msg=><`) checks fail, and both grep guard rows fail closed;
+(2) log-on-success but Tcl_ResetResult UNCONDITIONAL (split the guard) → ISOLATES the
+landmine: only the (b) message-non-empty checks fail (the +0-log checks PASS, readonly
+unaffected — it returns early);
+(3) neutralize the boundary readonly gate → (c) all fail (rc=0, mutates+logs, empty msg);
+(4) inline the branch with its OWN gate+log (bypass the boundary) → the runtime .tcl PASSES,
+only the grep guard fails closed (S1 boundary-branch row missing + S7 EXACTLY-ONE→2 + S7
+scattered readonly_reject present) — the grep guard IS the load-bearing structural lock;
+(5) scattered branch log → (a) double-log + (b)/(c) phantom-log on failed/readonly calls +
+S7 EXACTLY-ONE→2;
+(6) spurious second `push_undo` in the arm → (f) undo-depth (instance survives the 2nd undo);
+(7) make a MIGRATED BARE verb's `run_core` arm (`floaters`) return `TCL_ERROR` → the (e)
+INVARIANT check fails cleanly (floaters no-op logs 0 not 1) AND the floaters sibling fails —
+the safety proof that log-on-success did not silently break an existing verb (this sabotage
+also drove the (e)-block hardening: `catch`-wrap so the regression is a clean FAIL not an
+uncaught-error abort);
+(8) raw `%s` referent form (the replay-unsafe pre-review form) → the (a2) arrayed-name checks
+fail (logs `x2[3:0]` unbraced; replay errors "invalid command name 3:0"; the reset is not
+reproduced) + the S1 `log_action_argv`/`av[...]` rows and the S7 exclusivity fail closed;
+(9) DE-NEST the boundary — keep all three pinned lines but close the `if(rc == TCL_OK)` block
+early so log+reset run unconditionally → the S7 NESTING-COUPLING regex fails closed (the
+finding-2 lock) AND runtime (b) catches the phantom-log + wiped message (the behavioral backstop).
+
+**Full-audit baseline diff clean.** AFTER (atom-13 binary: 153 pass / 17 fail / 0 crash / 10 skip)
+vs BASELINE (`scheduler.c` reverted to HEAD, rebuilt: 153 pass / 18 fail / 4 crash / 5 skip),
+behind the one-button approval gate. The load-bearing BASELINE-only fails are PRECISELY the two
+atom-13 tests — `test_perform_action_reset_inst_prop` (its +1-log / replay / byte-exact checks fail
+when the migration is absent — the old branch never logged) and `test_selflog_grep_guard` (the
+atom-13 S1/S7 rows are absent on reverted source) — proving both load-bearing (they PASS on
+atom-13). The four OTHER BASELINE-only fails (`test_nh_angle_editor` / `test_nh_angle_range` /
+`test_nh_editor_rowops` / `test_nh_editor_staged`) are the BASELINE run's WSLg crash/timeout flakes
+(BASELINE had 4 crash/timeout vs AFTER 0; all four PASS on atom-13 — NOT an atom-13 fix, a load
+artifact). The sole AFTER-only fail, `test_palette`, is a standing WSLg flake (PASSES standalone on
+the restored binary). Everything else is the COMMON pre-existing set (the cadence trio, the GUI set
+test_ciw/test_hi_descend/test_lib_manager_gui/test_reopen_readonly, test_lib_sweep/test_phase3_mints/
+test_wire_split/test_select_at/test_save_as_cellview/test_descend_untitled_preserve/
+test_untitled_reuse, test_selflog_output's six transform-KEY checks, test_fluid_editing). The
+thirteen sibling `test_perform_action_*` + `test_selflog_grep_guard` are ABSENT from the AFTER fail
+set = GREEN. **ZERO new deterministic failures.** (The AFTER run predates the small
+adversarial-review log-format fix — `log_action_argv` vs raw `%s` — which touches ONLY
+reset_inst_prop's log line and cannot affect any other test; the two affected tests were re-verified
+standalone on the fixed binary and PASS, and the extra sabotages 8′/9 were run on the fixed source.)
+
+**Adversarial review (8-axis refute panel + completeness critic, Workflow/ultracode, against a FROZEN
+atom-13 snapshot).** Axes 1 (boundary log-on-success / no dropped log / no-op-still-logs), 2 (the landmine —
+error message survives on failure, result cleared on success, dropped instname has no consumer), 3
+(validation moved into run_core — single push_undo, no dropped step, dead `subst` genuinely dead), 5
+(readonly gate — no over/under-reject), 7 (entry-point completeness — no key/menu/other caller) and 8
+(build/C89/signature) all SURVIVED (clean, 0 defects). Axes 4 + 6 and the completeness critic returned
+MINOR findings — ALL FIXED before commit:
+- **Axis 4 (arg fidelity) + critic:** the raw `log_action("xschem reset_inst_prop %s", argv[2])` broke
+  replay for an arrayed/bussed instance name carrying Tcl metacharacters — a real shipped case is
+  `x2[3:0]` (its instname is literally `x2[3:0]`): the log line `xschem reset_inst_prop x2[3:0]` replays
+  `[3:0]` as a Tcl command substitution ("invalid command name 3:0"), so the reset is never reproduced.
+  Empirically confirmed. FIXED by emitting the referent via `log_action_argv` (`Tcl_Merge`) — the
+  issue-0048 replay-safe name pattern — so it logs `xschem reset_inst_prop {x2[3:0]}` (Tcl_Merge quotes
+  MINIMALLY, so a plain refdes still logs the byte-identical `xschem reset_inst_prop R1`). The critic's
+  point — that the defect "ships undefended" — is closed by the new test check (a2): it places `x2[3:0]`,
+  asserts the logged line is brace-quoted, AND asserts that EXACT line REPLAYS without a Tcl error and
+  re-applies the reset. (The sibling `descend -inst %s`, util.c:483, shares the latent raw-%s gap; left
+  for its own change — not expanded into this atom's scope.)
+- **Axis 6 (grep guard):** the S1 existence rows pinned that the guard/log/reset lines each EXIST but not
+  that log+reset stay NESTED inside the `if(rc == TCL_OK)` block — a de-nest that keeps all three lines
+  yet moves log+reset out (back to unconditional) would pass every row. FIXED by an S7 nesting-coupling
+  regex that requires `core_log_action` AND `Tcl_ResetResult` before the first `}` of the block (a de-nest
+  fails closed; runtime (b) also catches it).
+0 major/blocker, 0 residual after the fixes.
+
+**Next atom:** the validating-verb class is now UNBLOCKED. The next real step is the next
+validating verb — `replace_symbol` / `load_backup` / `reset_symbol` / `move_instance` /
+`apply_properties` — each of which now fits the boundary because its early `TCL_ERROR` is no
+longer phantom-logged. Re-verify EACH from source (the atom-10 lesson): confirm the single
+`push_undo` ownership, the arg-fidelity (the logged arg must equal the arg the effect used),
+and whether an equivalent key/menu exists (route it, or leave a non-equivalent dialog off).
+The composite-hazard verbs (delete/cut/copy/save/reload) whose shared cores are called by
+abort/merge/teardown paths remain deferred (the §4 `delete()`-is-NOT-1:1 lesson);
+selection-referent replay (0005) remains the accepted config/selection-dependent class.
+
 *Prepared 2026-07-14, `fluid-editing`. §1–5 analysis only — no code changed. §6 added after
 atom 3 landed; §7 after atom 4; §8 after atom 5; §9 after atom 6; §10 after atom 7; §11 after
 atom 8; §12 after atom 9; §13 after atom 10; §14 after atom 11;
@@ -2911,6 +3125,11 @@ INVERSION of atom 11 — the EQUIVALENT Shift+T key routes THROUGH the boundary,
 scout premise: the key was NOT a coverage hole (already gated via registry `mutates=1`, already logged via
 Layer A `d->log_cmd`), so routing it is a consistency move whose single-log rests on the `actionlog_cmd_logged`
 dedup and whose `mutates=1` is KEPT to avoid a phantom-log-on-read-only; the no-op-still-logs property is
-preserved).
+preserved); §33 after the THIRTEENTH and the FIRST SHARED-MACHINERY atom (reset_inst_prop — the boundary
+itself CHANGED to LOG-ON-SUCCESS: log + success-only Tcl_ResetResult fire only on rc==TCL_OK, so the
+VALIDATING-verb class (early TCL_ERROR before mutating) no longer phantom-logs a rejected call; reset_inst_prop
+is the first beneficiary, its validation moved into run_core before the single push_undo, its referent logged
+replay-safe via log_action_argv/Tcl_Merge after an adversarial review caught the raw-%s arrayed-name gap; the
+no-op-still-logs property is preserved because a no-op returns TCL_OK).
 Coverage verified in source at HEAD by a 14-way parallel read; do not trust the status table
 without re-checking the cited `file:line` anchors, which drift as the tree moves.*
