@@ -5777,21 +5777,14 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
        * pop_undo(0,1)+draw()). The Alt (align) and Ctrl (unselect floaters) branches
        * stay in C. See init_input_bindings. */
       if(EQUAL_MODMASK) { /* align to grid */
-        if(xctx->semaphore >= 2) break;
-        if(readonly_block()) break;
-        xctx->push_undo();
-        round_schematic_to_grid(c_snap);
-        set_modify(1);
-        /* W3: align-to-grid can snap a pin onto/off a wire -> re-split/rejoin (maintain).
-         * Gated on autotrim_wires; undo pushed above. See wire_segment_splitting.md (W3). */
-        if(tclgetboolvar("autotrim_wires")) maintain_wire_segments();
-        xctx->prep_hash_inst=0;
-        xctx->prep_hash_wires=0;
-        xctx->prep_net_structs=0;
-        xctx->prep_hi_structs=0;
-
-        draw();
-        log_action("xschem align"); /* self-log Alt-U align keyboard shortcut (issue 0068) */
+        if(xctx->semaphore >= 2) break;       /* key-specific re-entrancy guard stays here */
+        /* Route through the single mutation boundary (Refactor B atom 2, scheduler.c): it
+         * owns the readonly gate (scheduler_readonly_reject -> a CIW note, replacing this
+         * key's old readonly_block() modal), the push_undo + round_schematic_to_grid +
+         * maintain + draw effect, and the ONE `xschem align` log site. No inline readonly/
+         * undo/log here. The boundary reads cadsnap the same way the c_snap local was
+         * derived (tclgetdoublevar("cadsnap"), callback entry), so the snap is identical. */
+        perform_action("align", 0, NULL);
       }
       else if(rstate==ControlMask) { /* Unselect floater texts */
         unselect_attached_floaters();

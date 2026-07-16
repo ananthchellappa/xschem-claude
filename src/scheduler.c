@@ -186,13 +186,15 @@ static int scheduler_readonly_reject(Tcl_Interp *interp, const char *subcmd)
 
 /* run_core -- the EFFECT half of the perform_action boundary. Dispatches a
  * migrated verb to its raw core with no readonly check and no log_action of its
- * own (perform_action owns both). Returns TCL_OK on success. This atom migrates
- * exactly ONE verb (trim_wires, Refactor B first per-verb migration); more verbs
- * add an arm here as they move onto the boundary. argc/argv are unused for a bare
- * no-arg verb but carried for the general boundary shape (audit §4).
- * NB: only the VERB dispatch routes here -- the shared trim_wires() C function is
- * ALSO an internal sub-step of align()/move-END autotrim, which keep calling it
- * raw (they are not user verbs and must not self-log). */
+ * own (perform_action owns both). Returns TCL_OK on success. Migrated verbs so
+ * far: trim_wires (Refactor B atom 1), align (atom 2); each is a bare no-arg verb.
+ * More verbs add an arm here as they move onto the boundary. argc/argv are unused
+ * for a bare no-arg verb but carried for the general boundary shape (audit §4).
+ * NB: only the VERB dispatch routes here -- the shared C functions BELOW a verb are
+ * ALSO internal sub-steps of other operations (trim_wires() is called raw by
+ * align()/move-END autotrim; maintain_wire_segments() is called raw by many edits),
+ * and those callers keep calling them raw (they are not user verbs and must not
+ * self-log). round_schematic_to_grid() is exclusive to the align verb. */
 static int run_core(const char *verb, int argc, const char *argv[])
 {
   (void)argc; (void)argv;
@@ -202,7 +204,21 @@ static int run_core(const char *verb, int argc, const char *argv[])
     draw();
     return TCL_OK;
   }
-  return TCL_ERROR; /* unreachable this atom: perform_action is only wired for trim_wires */
+  else if(!strcmp(verb, "align")) {
+    xctx->push_undo();
+    round_schematic_to_grid(tclgetdoublevar("cadsnap"));
+    /* W3: align-to-grid can snap a pin onto/off a wire -> re-split/rejoin (maintain).
+     * Gated on autotrim_wires; undo pushed above. See wire_segment_splitting.md (W3). */
+    if(tclgetboolvar("autotrim_wires")) maintain_wire_segments();
+    set_modify(1);
+    xctx->prep_hash_inst=0;
+    xctx->prep_hash_wires=0;
+    xctx->prep_net_structs=0;
+    xctx->prep_hi_structs=0;
+    draw();
+    return TCL_OK;
+  }
+  return TCL_ERROR; /* unreachable: perform_action is only wired for the verbs above */
 }
 
 /* perform_action -- the single mutation/command boundary (Refactor B, audit §4).
@@ -711,21 +727,12 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
      *   Align currently selected objects to current snap setting */
     else if(!strcmp(argv[1], "align"))
     {
-      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
-      if(scheduler_readonly_reject(interp, "align")) return TCL_ERROR;
-      xctx->push_undo();
-      round_schematic_to_grid(tclgetdoublevar("cadsnap"));
-      /* W3: align-to-grid can snap a pin onto/off a wire -> re-split/rejoin (maintain).
-       * Gated on autotrim_wires; undo pushed above. See wire_segment_splitting.md (W3). */
-      if(tclgetboolvar("autotrim_wires")) maintain_wire_segments();
-      set_modify(1);
-      xctx->prep_hash_inst=0;
-      xctx->prep_hash_wires=0;
-      xctx->prep_net_structs=0;
-      xctx->prep_hi_structs=0;
-      draw();
-      log_action("xschem align"); /* self-log at core: Tools menu + toolbar (Alt-U key is inline) */
-      Tcl_ResetResult(interp); /* don't leak a sub-call's stale interp result as align's return */
+      /* Route through the single mutation boundary (Refactor B atom 2, run_core above):
+       * ONE readonly gate + the push_undo/round_schematic_to_grid/maintain/draw effect +
+       * the ONE `xschem align` log site all live in perform_action. Tools menu / toolbar /
+       * command palette / scripted `xschem align` all reach here; the Alt-U key funnels
+       * through the same boundary (callback.c). No scattered readonly/undo/log here. */
+      return perform_action("align", argc, argv);
     }
 
     /* annotate_op [raw_file] [level] [sim_type]

@@ -1538,6 +1538,97 @@ signature-build each independently found no failing scenario; the sole observati
 The end-state remains the full funnel of §4; each verb that moves onto `perform_action` deletes its
 scattered readonly+log pair and gains an S7-locked structural invariant.
 
+## 22. Refactor B ATOM 2 (2026-07-15): the SECOND per-verb migration onto perform_action (align)
+
+The pattern proves it generalizes. A second verb — `align` — now routes through the same
+`perform_action(verb, argc, argv)` boundary; `run_core` grew exactly ONE arm; output stays
+byte-identical. Scope held as tight as atom 1: one verb, no global `core_log_action` registry,
+no rewrite of the ~40 existing `log_action` sites.
+
+**Why `align` — and the wrinkle it carries that `trim_wires` didn't.** align is a bare no-arg
+verb (`xschem align`), clean 1:1 at the VERB level, adjacent to `trim_wires` in the scheduler. Two
+differences from atom 1 shaped the work:
+1. **align operates on the SELECTION.** Its effect is `round_schematic_to_grid(cadsnap)`, which
+   `rebuild_selected_array()`s and snaps each *selected* object's coords to the grid — unlike
+   `trim_wires`, which works on all wires. With nothing selected it is a silent no-op (but still
+   logs from the boundary). So the effect oracle SELECTS an off-grid wire `(3,7)-(103,7)` and
+   asserts it snaps to `(0,0)-(100,0)` at `cadsnap=20` — verified empirically that `xschem wire`
+   stores raw off-grid coords and the migrated verb snaps them through every path.
+2. **The effect body is richer** than trim_wires' three lines: `push_undo` +
+   `round_schematic_to_grid(tclgetdoublevar("cadsnap"))` + (autotrim-gated)
+   `maintain_wire_segments()` + `set_modify(1)` + the four `prep_*` hash-invalidations + `draw()`.
+   `run_core`'s align arm replicates the **scheduler branch's** body byte-for-byte (the branch is
+   the canonical reference, as atom 1 established). This also **retired a latent divergence:** the
+   old Alt-U key body ran `set_modify(1)` *before* `maintain_wire_segments()` and read `c_snap`
+   (its local) rather than `tclgetdoublevar("cadsnap")`; both now converge on the branch order and
+   the same cadsnap read. That read is provably identical — `c_snap` is initialised to
+   `tclgetdoublevar("cadsnap")` at `handle_key_press`'s caller (`callback.c:7400`), so no snap drift.
+
+**The 1:1 rule, re-applied.** There is **no `align()` C function** — the verb inlines
+`round_schematic_to_grid` + `maintain_wire_segments`. `round_schematic_to_grid` is **exclusive to
+the align verb** (its only two callers were the two align entry points), so it has no sub-step
+caller to leak from. `maintain_wire_segments` IS shared (move-END autotrim, place-symbol, the wire
+cmd, the trim_wires branch, …) and internally calls `trim_wires()`, but none of those log `xschem
+align`, and align's own `maintain → trim_wires` sub-step must NOT emit `xschem trim_wires` — the
+shared C functions are not user verbs. Locked by test case (e): `xschem align` logs exactly one
+`xschem align`, zero `xschem trim_wires`.
+
+**Entry-point map, grepped from the GUI (the atom-16 lesson), not just C callers.** Every LIVE user
+path funnels through `perform_action` once: the hand-written Tools menu item (`xschem.tcl:14394`,
+`-command "xschem align"`, raw — NOT `menu_action_logged`-wrapped), the command palette
+(`uplevel #0` raw), the `actions.csv` `tools.align_to_grid` row (feeds palette + cheat-sheet), and
+scripted `xschem align` all reach the scheduler branch; the **Alt-U key** → the callback legacy
+switch. No double-dispatch: keysym `u` has **zero rows in keybindings.csv**, so the registry
+pre-dispatch is skipped and only the legacy `case 'u'` `EQUAL_MODMASK` arm runs; the menu's
+`-accelerator Alt+U` is display-only. Shape is identical to `trim_wires`/`tools.join_trim_wires`.
+
+**The read-only unification (0041/0051), again.** The boundary's ONE `scheduler_readonly_reject`
+replaces the branch's identical call AND the Alt-U key's `readonly_block()` — both gated on
+`!xctx->readonly`, so the decision is unchanged from every path. Same deliberate delta atom 1 made
+for `&`: the Alt-U key on a read-only cell now emits a CIW note / interp error instead of a
+`tk_messageBox` MODAL, making it consistent with its own Tools-menu item and no longer hangs
+headless. Same accepted residual (no `ciw_echo` → no visible feedback, but the mutation is still
+blocked and nothing logged) — not patched, for the same reason.
+
+**Replay parity.** align is a bare, RE-executable verb (like `trim_wires`/`save`), NOT a
+coordinate-form bypass: a direct re-run re-executes AND re-logs; a replay through the
+`replay_action_log` suppress seam re-executes (the selected off-grid wire snaps) but does NOT re-log
+(the log site rides `!actionlog_suppress`). Stays IN S2 CVERBS, OUT of S3.
+
+**Grep guard (test_selflog_grep_guard.tcl).** The two `align` S1 log rows (scheduler branch + Alt-U
+key) were MOVED onto boundary rows (branch `return perform_action("align", argc, argv);`, Alt-U key
+`perform_action("align", 0, NULL);`); the boundary's generic gate + log-site rows already exist from
+atom 1. The **S7 BOUNDARY EXCLUSIVITY** block was extended to align: it fails closed if a future edit
+re-adds a scattered `log_action("xschem align")` (scheduler OR callback) or a scattered
+`scheduler_readonly_reject(..., "align")` at any entry point.
+
+**Verified:** `test_perform_action_align.tcl` (17 checks, full_audit logdir_tests): (a) exactly +1
+from EACH of script / Alt-U key / menu wrapper; (b) read-only reject from the scripted (TCL_ERROR,
+verb-named message) and Alt-U paths — no log, no mutation (wire stays off-grid); (c) byte-exact
+`xschem align`; (d) replay re-executes with the effect applied (off-grid wire → `0 0 100 0`) but no
+re-log through the seam, vs a control unwrapped `source` that re-executes AND re-logs; (e) the
+`maintain → trim_wires` sub-step logs only `align`, never `trim_wires`. `test_selflog_output`'s
+align/Alt-U lines stay green (its only FAILs are the pre-existing transform-key set). **Sabotage ×4**
+(each failing exactly its checks, each restore `git diff`-clean): (1) neutralize the boundary's
+readonly gate → the (b) read-only checks fail (scripted+Alt-U align mutate + log on a read-only
+cell); (2) neutralize the log site → (a) scripted/Alt-U + grep S1-log-site + S5-canary fail, while
+the menu wrapper's dedup safety-net correctly still logs once (so (a) menu + (c) stay green —
+proving the boundary is not the ONLY guard); (3) bypass the boundary on the Alt-U key (raw
+`round_schematic_to_grid`, no gate) → the read-only-Alt-U mutation leak + grep S1 Alt-U row fail;
+(4) re-add a scattered scheduler `log_action("xschem align")` → grep **S7** fails closed (and the
+scattered log fires *before* the boundary's gate, so it even logs on a read-only cell — the exact
+per-path bug the boundary abolishes). **Full-audit baseline diff clean** (git stash + rebuild +
+rerun: the deterministic FAIL set is unchanged — the known GUI/cadence/keybind/congestion
+pre-existing failures — with `test_perform_action_align` added GREEN). **Adversarial review (refute
+panel, ultracode): verdict CLEAN** — bypass-entrypoint, readonly-gate, output-drift,
+substep-misroute, replay-parity, and effect-body-fidelity each found no failing scenario.
+
+**Next atom:** a THIRD per-verb migration (a bare in-place transform —
+`flip_in_place`/`rotate_in_place`/`flipv_in_place` — is the cleanest next candidate: bare, no pivot
+args, same shape, `run_core` grows one arm), or the bounded atom-16 menu-bypass CLASS sweep. The
+global `core_log_action` registry (§4 Refactor A step 2, rewriting all ~40 log sites) remains its
+own future atom.
+
 ---
 
 *Prepared 2026-07-14, `fluid-editing`. §1–5 analysis only — no code changed. §6 added after
@@ -1545,6 +1636,7 @@ atom 3 landed; §7 after atom 4; §8 after atom 5; §9 after atom 6; §10 after 
 atom 8; §12 after atom 9; §13 after atom 10; §14 after atom 11;
 §15 after atom 12; §16 after atom 13; §17 after atom 14; §18 after atom 15; §19 after atom 16;
 §20 after the Refactor B foundation (actionlog_suppress setter + the replay/composite seams);
-§21 after the FIRST per-verb migration onto perform_action (trim_wires).
+§21 after the FIRST per-verb migration onto perform_action (trim_wires); §22 after the SECOND
+(align).
 Coverage verified in source at HEAD by a 14-way parallel read; do not trust the status table
 without re-checking the cited `file:line` anchors, which drift as the tree moves.*
