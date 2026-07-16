@@ -99,6 +99,23 @@
 # `flipv %` regex does NOT match `flip %` (a `v` intervenes) nor `flipv_in_place`. After atom 8 the whole
 # transform SEXTET (rotate/flip/flipv x pivot + in-place) is on the boundary and the shared verb-noun
 # START/switch/END block is GONE (six boundary else-if arms). flipv stays in S2 CVERBS, OUT of S3.
+# Refactor B atom 9 (perform_action / break_wires) migrated the FIRST NON-transform verb, the
+# wire-surgery SIBLING of trim_wires (atom 1): one run_core arm (break_wires_at_pins(remove), which
+# owns its OWN push_undo/draw -- no double-push) + one core_log_action `break_wires` branch that
+# canonicalizes the FLAG (remove -> `xschem break_wires 1`, else bare `xschem break_wires`). The arg is
+# a FLAG (0/1), NOT a coordinate pivot, and there is NO mid-gesture split (break_wires is not a
+# transform). MOVED break_wires's S1 rows onto the boundary: the scheduler branch
+# (`return perform_action("break_wires", argc, argv)`) + TWO callback.c entries (the '!' key bare
+# `perform_action("break_wires", 0, NULL)` and the Ctrl-! key remove `perform_action("break_wires", 3, av)`
+# with av[2]="1"), REMOVED the callback `log_action("xschem break_wires[ 1]")` rows, and extended S7 with
+# the break_wires exclusivity block. Like the pivot verbs, core_log_action legitimately holds the log
+# lines, so scheduler.c must have EXACTLY TWO (one bare + one remove form, both in core_log_action) and
+# callback.c ZERO. The literals `break_wires 1"` (space+1 before the quote) and `break_wires")` (quote
+# then paren) are mutually exclusive and counted independently -- a re-scattered branch log of EITHER
+# fails closed; neither matches break_wires_at_pins / break_wires_at_point / break_wires_at_attach_points
+# (an `_` follows). break_wires stays in S2 CVERBS, OUT of S3. break_wires_at_pins() is 1:1 with the verb
+# (called only by its own entry points) while break_wires_at_point (the Alt-Right wire_cut gesture) stays
+# a SEPARATE verb+gesture, off this boundary.
 # Atom 12 (0053 Cadence Ctrl-E window hop) added: the S1 focus_window emit row
 # (utils/cadence_nav.tcl) and the S6 SEAM-EXCLUSIVITY block -- `new_schematic
 # switch` (a shared core: tab-strip/alt2/window-open machinery) must be logged
@@ -151,8 +168,9 @@ set MANIFEST {
     {if\(!actionlog_suppress\) core_log_action\(verb, argc, argv\);} 1 {perform_action's ONE log site -- delegates the per-verb log FORM to core_log_action (atom 6), gated on the re-entrant suppress counter (foundation §20)}
     {static void core_log_action\(const char \*verb, int argc, const char \*argv\[\]\)} 1 {the per-verb log-form dispatcher (§4 Refactor A step-2 registry SEED, atom 6): bare verbs -> "xschem %s"; the arg-carrying pivot verbs rotate/flip/flipv -> the pivot form "xschem <verb> x0 y0" (rotate atom 6, flip atom 7, flipv atom 8)}
     {log_action\("xschem %s", verb\);}                1 {core_log_action's BARE-verb form -- trim_wires/align/rotate_in_place/flip_in_place/flipv_in_place all self-log through here, byte-identical to the pre-atom-6 perform_action log site}
-    {log_action\("xschem break_wires 1"}              1 {break_wires remove form}
-    {log_action\("xschem break_wires"\)}              1 {break_wires bare form}
+    {log_action\("xschem break_wires 1"}              1 {break_wires REMOVE form now lives in core_log_action (atom 9), NOT the scheduler branch -- exactly ONE such site in scheduler.c (S7 pins exclusivity); the literal `break_wires 1"` (space+1 before the quote) does NOT match the bare `break_wires")` form}
+    {log_action\("xschem break_wires"\)}              1 {break_wires BARE form now lives in core_log_action (atom 9), NOT the scheduler branch -- exactly ONE such site in scheduler.c (S7 pins exclusivity); the `break_wires"\)` (quote then paren) does NOT match `break_wires 1"` nor break_wires_at_pins/_at_point/_at_attach_points}
+    {return perform_action\("break_wires", argc, argv\);} 1 {break_wires branch routes through the perform_action boundary (Refactor B atom 9 -- the FIRST NON-transform verb; the arg is a FLAG (0/1), not a pivot; NO mid-gesture split): run_core + core_log_action read `remove` from argc/argv; break_wires_at_pins owns its own push_undo/draw, so no scattered readonly/log/push_undo here}
     {log_action\("xschem flip %}                      1 {flip PIVOT form now lives in core_log_action (atom 7), NOT the scheduler branch -- exactly ONE such site remains in scheduler.c (S7 pins the exclusivity); the literal `flip %` (flip+space) does NOT match `flipv %`}
     {log_action\("xschem flipv %}                     1 {flipv PIVOT form now lives in core_log_action (atom 8), NOT the scheduler branch -- exactly ONE such site remains in scheduler.c (S7 pins the exclusivity); the literal `flipv %` (flipv+space) does NOT match `flip %` (a `v` intervenes) nor `flipv_in_place`}
     {log_action\("xschem rotate %}                    1 {rotate PIVOT form now lives in core_log_action (atom 6), NOT the scheduler branch -- exactly ONE such site remains in scheduler.c (S7 pins the exclusivity)}
@@ -209,8 +227,8 @@ set MANIFEST {
     {perform_action\("rotate", 4, av\);}              3 {the THREE callback.c standalone rotate (pivot form) entry points route through the perform_action boundary (Refactor B atom 6, the FIRST arg-carrying verb), each passing its own pivot in av[2]/av[3]: the Shift-R key standalone apply + the Alt-R GROUP standalone_group_transform arm (issue 0116) + the verb-noun deferred apply (MENUSTARTROTATE PENDING_TR_ROTATE); the mid-gesture STARTMOVE/STARTCOPY arms stay raw}
     {perform_action\("flip", 4, av\);}                3 {the THREE callback.c standalone flip (pivot form) entry points route through the perform_action boundary (Refactor B atom 7, the SECOND arg-carrying verb, mirror of rotate), each passing its own pivot in av[2]/av[3]: the Shift-F key standalone apply + the Alt-F GROUP standalone_group_transform else-arm (issue 0116) + the verb-noun deferred apply (MENUSTARTROTATE PENDING_TR_FLIP); the mid-gesture STARTMOVE/STARTCOPY arms stay raw}
     {perform_action\("flipv", 4, av\);}               2 {the TWO callback.c standalone flipv (pivot form) entry points route through the perform_action boundary (Refactor B atom 8, the THIRD and LAST arg-carrying verb, mirror of flip), each passing its own pivot in av[2]/av[3]: the Shift-V key standalone apply + the verb-noun deferred apply (MENUSTARTROTATE PENDING_TR_FLIPV). Count is TWO, NOT three -- flipv has NO group form (no standalone_group_transform arm), unlike rotate/flip; the mid-gesture STARTMOVE/STARTCOPY arms stay raw}
-    {log_action\("xschem break_wires 1"}              1 {Ctrl-! inline key}
-    {log_action\("xschem break_wires"\)}              1 {'!' inline key}
+    {perform_action\("break_wires", 0, NULL\);}       1 {'!' inline key (bare split, remove=0) routes through the perform_action boundary (Refactor B atom 9): no inline break_wires_at_pins/log_action; the semaphore + readonly_block key guards stay}
+    {perform_action\("break_wires", 3, av\);}         1 {Ctrl-! inline key (split-and-remove) routes through the perform_action boundary (Refactor B atom 9): av[2]="1" carries the remove FLAG (the arg is a flag, not a pivot); no inline break_wires_at_pins/log_action}
     {log_action\("xschem pan %}                       1 {drag-pan END}
     {log_action\("xschem zoom_box %}                  1 {zoom-drag END}
     {(?n)^\s*av\[ac\+\+\] = "xschem"; av\[ac\+\+\] = "paste";} 1 {paste/merge drop replay line (atom 9 / 0069)}
@@ -674,6 +692,32 @@ check "S7 (flip unperturbed) scheduler.c: still EXACTLY ONE log_action(\"xschem 
 check "S7 (flip unperturbed) callback.c: still ZERO log_action(\"xschem flip %\")" \
   [expr {[rxcount $cbtext {log_action\("xschem flip %}] == 0}] \
   "got=[rxcount $cbtext {log_action\("xschem flip %}]"
+# break_wires (Refactor B atom 9 -- the FIRST NON-transform verb, arg is a FLAG (0/1) not a pivot):
+# the readonly gate + the TWO `xschem break_wires [1]` log forms (via core_log_action) live SOLELY in
+# perform_action. break_wires has NO mid-gesture split (not a transform) -- both keys ('!' bare /
+# Ctrl-! remove) and the scheduler branch fully cross the boundary. UNLIKE the single-form pivot verbs,
+# core_log_action legitimately holds TWO break_wires log lines (the bare + the remove form), so
+# scheduler.c must have EXACTLY TWO in total -- ONE of each form -- with the scheduler BRANCH carrying
+# none and every callback.c entry carrying ZERO. The literals `break_wires 1"` (a space+1 before the
+# quote) and `break_wires")` (a quote then a paren) are MUTUALLY EXCLUSIVE and counted independently,
+# so a re-scattered branch log of EITHER form fails closed; and neither matches break_wires_at_pins /
+# break_wires_at_point / break_wires_at_attach_points (an `_` follows in all three). break_wires stays
+# in S2 CVERBS (a scripted/replayed `xschem break_wires [1]` re-executes AND self-logs) and OUT of S3.
+check "S7 scheduler.c: EXACTLY ONE log_action(\"xschem break_wires 1\") -- the core_log_action REMOVE form (the branch delegates to the boundary)" \
+  [expr {[rxcount $sched {log_action\("xschem break_wires 1"}] == 1}] \
+  "got=[rxcount $sched {log_action\("xschem break_wires 1"}]"
+check "S7 scheduler.c: EXACTLY ONE log_action(\"xschem break_wires\") -- the core_log_action BARE form (the branch delegates to the boundary)" \
+  [expr {[rxcount $sched {log_action\("xschem break_wires"\)}] == 1}] \
+  "got=[rxcount $sched {log_action\("xschem break_wires"\)}]"
+check "S7 scheduler.c: EXACTLY TWO log_action(\"xschem break_wires...\") in total -- both forms live in core_log_action, nowhere else" \
+  [expr {[rxcount $sched {log_action\("xschem break_wires}] == 2}] \
+  "got=[rxcount $sched {log_action\("xschem break_wires}]"
+check "S7 callback.c: NO scattered log_action(\"xschem break_wires...\") (both '!'/Ctrl-! keys delegate to the boundary)" \
+  [expr {[rxcount $cbtext {log_action\("xschem break_wires}] == 0}] \
+  "got=[rxcount $cbtext {log_action\("xschem break_wires}]"
+check "S7 scheduler.c: NO scattered scheduler_readonly_reject(...,\"break_wires\") (the boundary's generic gate covers the verb)" \
+  [expr {[rxcount $sched {scheduler_readonly_reject\(interp, "break_wires"\)}] == 0}] \
+  "got=[rxcount $sched {scheduler_readonly_reject\(interp, "break_wires"\)}]"
 check "S7 perform_action is defined EXACTLY once" \
   [expr {[rxcount $sched {int perform_action\(const char \*verb,}] == 1}] \
   "got=[rxcount $sched {int perform_action\(const char \*verb,}]"

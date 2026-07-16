@@ -2276,6 +2276,152 @@ transposed, NO ROTATELOCAL, seed-before-START, no push_undo) and signature/build
 `core_log_action` registry (§4 Refactor A step 2, rewriting all ~40 `log_action` sites), migrating the
 non-transform mutating verbs onto the boundary one by one.
 
+## 29. Refactor B ATOM 9 (2026-07-16): the NINTH per-verb migration — the FIRST NON-transform verb (`break_wires`)
+
+`break_wires` (the wire-surgery verb: `xschem break_wires` breaks wires at the pins of the SELECTED
+instances; `xschem break_wires 1` breaks-AND-removes wire pieces that end up entirely inside those
+instances) now routes through the `perform_action(verb, argc, argv)` boundary. Atom 9 is the class
+boundary AFTER the transform sextet: atoms 1–8 were trim_wires/align + the six transforms (rotate/flip/
+flipv × pivot + in-place). break_wires is the **FIRST NON-transform verb**, and it is deliberately the
+CLEANEST next atom — the wire-surgery **SIBLING of trim_wires** (atom 1, the template): a bare verb at
+the entry level, **NO mid-gesture split** (it is not a transform, so there are no STARTMOVE/STARTCOPY
+arms and none of the atom-3..8 gesture wrinkle), and its arg is a **FLAG (0/1), not a coordinate pivot**,
+so it is SIMPLER than the pivot atoms 6/7/8 (one flag to thread, no `snprintf` of a mouse coord).
+
+**`run_core` grew a `break_wires` arm** (byte-identical to the old scheduler standalone branch effect):
+`int remove = 0; if(argc > 2) remove = atoi(argv[2]); break_wires_at_pins(remove);`. **NO `push_undo()`/
+`draw()`** — unlike the earlier atoms whose transform effect owns its undo inside `move_objects(START/
+END)`, here the core `break_wires_at_pins()` (check.c:548) OWNS its own undo directly: it calls
+`xctx->push_undo()` on first mutation (check.c:575/611/654) and `set_modify(1)` + `draw()` itself
+(check.c:668–678). Adding a `push_undo()` in the arm would DOUBLE-push (the atom-1 no-double-push rule,
+re-confirmed here). **`core_log_action` grew a `break_wires` branch** that reads `remove` from `argv[2]`
+IDENTICALLY to `run_core` and canonicalizes to the two forms the UI emits: `remove` →
+`log_action("xschem break_wires 1")`, else `log_action("xschem break_wires")`. `break_wires_at_pins()`
+reads `remove` as a BOOLEAN, so any non-zero `argv[2]` (`xschem break_wires 5`) logs the canonical `1`
+form — a deterministic, faithful replay.
+
+**FLAG FIDELITY — the atom-9 analogue of pivot fidelity.** The arg-carrying risk is that the flag reaching
+the LOG diverges from the flag the EFFECT used. Both halves read `remove` from the SAME `argv[2]` with the
+SAME `if(argc > 2)` test, so they cannot diverge — the log form always matches the applied effect (locked
+by test (e) + sabotage 5, which swaps `break_wires_at_pins(!remove)` and makes the effect diverge from the
+still-correct log). Unlike the pivot verbs there is no mouse-coord fallback to seed, so the effect-then-log
+order is not load-bearing here (the flag lives in `argv`, not in `xctx`).
+
+**THE 1:1 TEST — `break_wires_at_pins` IS the verb; `break_wires_at_point` is a SEPARATE gesture.** Grepping
+every caller of `break_wires_at_pins()` confirms it is reached ONLY by this verb's own entry points (the
+scheduler branch, now via `run_core`, + the two keys, now via `perform_action`). So it is 1:1 with the verb
+and the boundary/core_log_action is the correct single log site (contrast trim_wires atom 1, whose shared
+`trim_wires()` C fn is ALSO an internal sub-step of align/move-END autotrim and stays below the boundary).
+Two DISTINCT functions must NOT be confused with it and are UNTOUCHED: `break_wires_at_point()` (check.c:501
+— the mouse-position **Alt-Right `wire_cut` gesture**, a separate verb+gesture, 0069 class) and
+`break_wires_at_attach_points()` (check.c:693 — the load/save auto-split). The literal regex
+`break_wires_at_pins` distinguishes it from both (an `_` follows). Test (e) drives the `wire_cut` gesture
+(`xschem wire_cut 40 0`) and locks that it emits ZERO `xschem break_wires` lines — the separate gesture
+stays off the boundary.
+
+**THREE standalone entry points, all funnelled — NO group form, NO mid-gesture split.** (1) the **scheduler
+branch** → `return perform_action("break_wires", argc, argv)`, dropping its own `!xctx` guard (the boundary
+owns it), its `scheduler_readonly_reject(interp, "break_wires")`, and its inline effect + dual log; reached
+by scripted `xschem break_wires [1]`, the Edit/Tools menu, the toolbar and the command palette. (2) the
+**`!` key** (callback.c `case '!'`, keysym 33 state 0) → bare → `perform_action("break_wires", 0, NULL)`
+(argc≤2 ⇒ `remove` stays 0 in both halves). (3) the **Ctrl-! key** (`case '!'` + `ControlMask`, keysym 33
+state 4) → remove → builds `av[3]={"xschem","break_wires","1"}` → `perform_action("break_wires", 3, av)`.
+No verb-noun deferred apply, no group form (break_wires is not a transform). Confirmed keysym 33 (`!`) has
+ZERO rows in keybindings.csv — no registry double-dispatch, only the legacy `case '!'` runs (like `&` for
+trim_wires).
+
+**The read-only decision — the keys KEEP `readonly_block()`, unlike trim_wires atom 1.** The scheduler
+branch DROPS its `scheduler_readonly_reject`; the boundary's ONE gate covers the scheduler/menu/script path.
+The `!`/Ctrl-! keys KEEP their `semaphore>=2` re-entrancy guard AND their `readonly_block()` (guarding
+themselves first, like the transform keys atoms 3–8) — so on a read-only cell the key is blocked at
+`readonly_block()` before ever reaching the boundary. This is a DELIBERATE difference from trim_wires atom
+1, which dropped `&`'s `readonly_block()` to unify onto the boundary's CIW-note (changing a modal to a CIW
+note): break_wires keeps the keys' existing feedback and matches the more-recent transform-key convention,
+at the cost of the boundary gate being redundant on the key path. `readonly_block()` is headless-safe (its
+`tk_messageBox` only fires when `has_x`; the test stubs it defensively anyway). The S7 grep guard asserts
+`scheduler_readonly_reject(...,"break_wires") == 0` in scheduler.c — `readonly_block()` (a different fn, no
+`break_wires` literal) does not perturb that count.
+
+**Replay parity.** `break_wires [1]` is a re-executable verb (NOT a coordinate-STORE bypass like
+`wire x1 y1 x2 y2`): a direct re-run re-executes AND re-logs; a replay through the `replay_action_log`
+suppress seam re-executes (wires split / split-and-remove) but does NOT re-log. Stays IN S2 CVERBS, OUT of
+S3 (its log lives in core_log_action reached from the branch, not in a shared core the branch must stay
+silent for).
+
+**Grep guard (test_selflog_grep_guard.tcl).** break_wires's two scheduler `log_action("xschem break_wires
+[1]")` rows STAY (net scheduler.c count unchanged) — the two pivot-less log forms MOVED from the branch
+into `core_log_action` (both still in scheduler.c); the row comments are re-pointed. A new S1 row asserts
+the scheduler `return perform_action("break_wires", argc, argv)` boundary arm; the TWO callback.c
+`log_action("xschem break_wires[ 1]")` rows are REMOVED and replaced with S1 rows for
+`perform_action("break_wires", 0, NULL)` (`!` key) and `perform_action("break_wires", 3, av)` (Ctrl-! key).
+**S7 is SUBTLER — like rotate/flip/flipv but with TWO forms:** `core_log_action` legitimately holds BOTH
+break_wires log lines, so scheduler.c is asserted **EXACTLY TWO** total, **EXACTLY ONE of each form**, with
+the branch carrying none and callback.c ZERO. The literals `break_wires 1"` (space+1 before the quote) and
+`break_wires")` (quote then paren) are MUTUALLY EXCLUSIVE and counted independently — a re-scattered branch
+log of EITHER form fails closed (sabotage 4 bumps the bare count to 2 and the total to 3 WITHOUT tripping
+the remove-form count) — and neither matches `break_wires_at_pins`/`_at_point`/`_at_attach_points`.
+
+**Verified:** `test_perform_action_break_wires.tcl` (29 checks, full_audit logdir_tests): effect oracle a
+resistor at the origin (pins 0,−30 & 0,30) + a wire `0 -60 0 60` spanning both pins — `xschem break_wires`
+SPLITS at both pins into THREE wires (middle span `{0 -30 0 30}` KEPT), `xschem break_wires 1` splits AND
+removes the middle span (entirely inside the resistor, touching both pins) → TWO wires. Wire-count 3-vs-2
+AND the presence/absence of `{0 -30 0 30}` distinguish the two forms cleanly — determined empirically on the
+pre-migration binary. (a) +1 from EACH of script bare / script `1` / `!` key (keysym 33 state 0) / Ctrl-!
+key (state 4) / menu wrapper; (b) read-only reject from the scripted (TCL_ERROR, verb-named message) BOTH
+forms + the `!`/Ctrl-! key paths — no log, no mutation; (c) byte-exact `xschem break_wires` AND
+`xschem break_wires 1` (the FLAG survives the boundary); (d) replay re-executes with no re-log through the
+seam (both forms) vs a control unwrapped `source` that re-logs; (e) the FLAG threads — `break_wires 1`
+removes and logs the remove form NOT the bare, `break_wires` splits and logs the bare NOT the remove — plus
+the SEPARATE `wire_cut` gesture emits NO `xschem break_wires`. **Sabotage ×5** (each failing exactly its
+checks, each restore byte-clean vs the atom-9 scratchpad backup, NOT git checkout): (1) neutralise the
+boundary readonly gate → the (b) SCRIPTED read-only checks fail (mutation + log leak; the KEY read-only
+checks still pass, blocked at their own `readonly_block()` — proving the key guards itself while the
+boundary gates the scripted path); (2) drop the `break_wires` branch in `core_log_action` (falls to the
+bare else) → the `1` form's (a)/(c)/(e) logging checks fail, effect intact; (3) bypass the boundary at the
+`!` key (raw inline `break_wires_at_pins`+log) → grep S1 boundary-count 1→0 + S7 callback scattered-log
+0→1 fail closed WHILE the runtime .tcl still passes (proving the grep guard is the load-bearing lock for
+boundary exclusivity); (4) re-add a scattered scheduler branch `log_action("xschem break_wires")` → S7
+scheduler EXACTLY-ONE-bare (got 2) + EXACTLY-TWO-total (got 3) fail closed WITHOUT tripping the remove-form
+count; (5) swap the remove flag in `run_core` (`break_wires_at_pins(!remove)`) → the (d)/(e) EFFECT oracles
+diverge (bare removes, remove splits) while the LOG stays correct — the effect/log divergence caught by the
+effect checks. The change-adjacent siblings stay green: the eight `test_perform_action_*` + the grep guard;
+`test_selflog_output`'s break_wires + `!`/Ctrl-! key checks pass (its only FAILs are the pre-existing six
+transform-KEY checks that fail identically on baseline).
+
+**Full-audit baseline diff clean.** The AFTER run (161 pass / 15 fail / 0 crash / 0 skip) has 14 of its 15
+failures on the standing WSLg-env list — the cadence duo (test_cadence_descend_newwin_ro /
+test_cadence_drag), the GUI set (test_ciw / test_hi_descend / test_lib_manager_gui / test_reopen_readonly),
+test_lib_sweep, test_phase3_mints (g/G snap), test_select_at, test_save_as_cellview,
+test_descend_untitled_preserve, test_untitled_reuse, test_wire_split (W7), and test_selflog_output's six
+transform-KEY checks (Shift/Alt-F/R/V, which fail identically on baseline). The 15th, `test_fluid_editing`,
+is the sole AFTER-only fail and PASSES STANDALONE on the atom-9 binary (26 checks) — a congestion flake (it
+ran under the concurrent baseline rebuild + adversarial panel), not a regression. The new
+`test_perform_action_break_wires`, the `test_selflog_grep_guard`, and all eight sibling
+`test_perform_action_*` are ABSENT from the AFTER fail set = GREEN. The BASELINE run (the 2 C files reverted
+to HEAD/atom-8, rebuilt; 159 pass / 16 fail / 1 timeout) reconciles: its BASELINE-only fails are
+`test_selflog_grep_guard` (the guard correctly detects the migration ABSENT on the reverted source, proving
+it is load-bearing — it passes on atom-9) plus two more congestion flakes (test_pin_name_size_win /
+test_pristine_untitled_basename, both pass on atom-9). ZERO new deterministic failures.
+
+**Adversarial review (6-axis refute panel, Workflow, ultracode, against a source snapshot): verdict CLEAN,
+zero confirmed defects** — entry-point completeness (all three paths funnel through `perform_action` once,
+no double-log, `break_wires_at_point`/`wire_cut` untouched, `break_wires_at_pins` 1:1), readonly gate (no
+miss, no over-reject, no double-message, headless-safe), FLAG fidelity (log flag == effect flag for all
+forms and entry points; the `(0, NULL)` path never dereferences `argv[2]` because both halves guard
+`if(argc > 2)`), output-drift/replay/disambiguation (byte-exact literals, regexes sound, IN S2 / OUT S3),
+`run_core` arm fidelity (byte-equivalent effect, `break_wires_at_pins` owns undo+draw so no double-push and
+no missing undo, C89-clean), and signature/build/C89 each found no failing scenario after a genuine
+refutation. The one observation raised — the `remove` local shadows POSIX `remove()` from `<stdio.h>` — was
+explicitly classed NOT-a-defect: legal C89 block-scope shadowing of a file-scope function never called in
+scope, matching the pre-existing convention (the old scheduler branch also used `int remove`); the build is
+warning-clean at `-O2`.
+
+**Next atom:** the wire-surgery PAIR trim_wires + break_wires is now on the boundary. The remaining
+Refactor B direction is more bare non-transform verbs onto the growing `core_log_action` registry —
+`create_instance` / `floaters_from_selected_inst` / `check_unique_names` / `change_elem_order` are the
+clean 1:1 next candidates — deferring the composite-hazard verbs (delete / cut / copy / save / reload)
+whose shared cores are called by abort/merge/teardown paths (the §4 step-1 `delete()`-is-not-1:1 lesson).
+
 ---
 
 *Prepared 2026-07-14, `fluid-editing`. §1–5 analysis only — no code changed. §6 added after
@@ -2292,6 +2438,9 @@ the per-verb log-form registry seed); §27 after the SEVENTH (flip — the SECON
 form `flip x0 y0`, a near-clone of rotate reusing core_log_action + the run_core pivot arm); §28 after the
 EIGHTH (flipv — the THIRD and LAST arg-carrying pivot verb, the pivot form `flipv x0 y0`, the mirror of
 flip; the transform sextet rotate/flip/flipv × pivot + in-place is now fully on the boundary and the shared
-verb-noun START/switch/END block is gone).
+verb-noun START/switch/END block is gone); §29 after the NINTH (break_wires — the FIRST NON-transform verb,
+the wire-surgery sibling of trim_wires; the arg is a FLAG `0/1` not a coordinate pivot, there is no
+mid-gesture split, and `break_wires_at_pins` is 1:1 with the verb while `break_wires_at_point`/`wire_cut`
+stays a separate gesture off the boundary).
 Coverage verified in source at HEAD by a 14-way parallel read; do not trust the status table
 without re-checking the cited `file:line` anchors, which drift as the tree moves.*

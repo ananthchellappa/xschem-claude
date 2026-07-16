@@ -346,6 +346,27 @@ static int run_core(const char *verb, int argc, const char *argv[])
     move_objects(END,0,0,0);
     return TCL_OK;
   }
+  else if(!strcmp(verb, "break_wires")) {
+    /* Refactor B atom 9: the FIRST NON-transform verb on the boundary, and the
+     * wire-surgery SIBLING of trim_wires (atom 1). break_wires breaks wires at the
+     * pins of the SELECTED instances (and at selected-wire endpoints); its arg is a
+     * FLAG (0/1 = split / split-and-remove), NOT a coordinate pivot -- so it is
+     * SIMPLER than the arg-carrying pivot verbs rotate/flip/flipv (atoms 6/7/8):
+     * one flag to thread, and there is NO mid-gesture split (break_wires is not a
+     * transform -- no STARTMOVE/STARTCOPY arms). `remove` is read from argv[2]
+     * IDENTICALLY to core_log_action, so the logged form can never diverge from the
+     * applied effect. The core break_wires_at_pins() OWNS its own undo (push_undo on
+     * first mutation) + draw() + set_modify, so there is NO push_undo()/draw() here --
+     * adding one would double-push (the atom-1 no-double-push rule). break_wires_at_pins()
+     * is called ONLY by this verb's own entry points (the scheduler branch + the two
+     * keys), so it IS the verb (1:1). NB the DISTINCT break_wires_at_point() (the
+     * Alt-Right wire_cut mouse gesture) and break_wires_at_attach_points() (the
+     * load/save auto-split) are SEPARATE functions and stay OFF this boundary. */
+    int remove = 0;
+    if(argc > 2) remove = atoi(argv[2]);
+    break_wires_at_pins(remove);
+    return TCL_OK;
+  }
   return TCL_ERROR; /* unreachable: perform_action is only wired for the verbs above */
 }
 
@@ -387,6 +408,20 @@ static void core_log_action(const char *verb, int argc, const char *argv[])
     double x0 = xctx->mousex_snap, y0 = xctx->mousey_snap;
     if(argc > 3) { x0 = atof(argv[2]); y0 = atof(argv[3]); }
     log_action("xschem flipv %.16g %.16g", x0, y0);
+  } else if(!strcmp(verb, "break_wires")) {
+    /* atom 9: the FIRST NON-transform verb, and the FIRST whose arg is a FLAG (0/1)
+     * rather than a coordinate pivot. `remove` is read from argv[2] IDENTICALLY to
+     * run_core's break_wires arm, and canonicalized to the two forms the UI emits:
+     * `xschem break_wires 1` (split-and-remove) vs bare `xschem break_wires` (split).
+     * break_wires_at_pins() reads remove as a BOOLEAN, so any non-zero argv[2] logs
+     * the canonical `1` form -> a deterministic, faithful replay. NB the literals
+     * `break_wires 1"` and `break_wires")` are counted independently by the grep guard
+     * (S7) so a re-scattered branch log of EITHER form fails closed; neither matches
+     * break_wires_at_pins / break_wires_at_point / break_wires_at_attach_points. */
+    int remove = 0;
+    if(argc > 2) remove = atoi(argv[2]);
+    if(remove) log_action("xschem break_wires 1");
+    else       log_action("xschem break_wires");
   } else {
     log_action("xschem %s", verb);
   }
@@ -1094,18 +1129,16 @@ static int xschem_cmds_b(Tcl_Interp *interp, int argc, const char *argv[], int *
      *   all inside selected instances will be deleted */
     else if(!strcmp(argv[1], "break_wires"))
     {
-      int remove = 0;
-      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
-      if(scheduler_readonly_reject(interp, "break_wires")) return TCL_ERROR;
-      if(argc > 2) remove = atoi(argv[2]);
-      break_wires_at_pins(remove);
-      /* self-log at core: Tools menu + toolbar path (the '!'/Ctrl-'!' keys are handled
-       * inline in callback.c and log nothing -- issue 0068). break_wires_at_pins()
-       * reads `remove` as a boolean (!remove / if(remove)), so canonicalize to bare vs
-       * "1" -- the only two forms the UI emits -- for a faithful, deterministic replay. */
-      if(remove) log_action("xschem break_wires 1");
-      else       log_action("xschem break_wires");
-      Tcl_ResetResult(interp);
+      /* Route through the single mutation boundary (Refactor B atom 9, run_core above):
+       * the readonly gate (scheduler_readonly_reject) + the remove-FLAG effect
+       * (break_wires_at_pins, which owns its OWN push_undo/draw/set_modify) + the ONE
+       * `xschem break_wires [1]` log site (core_log_action canonicalizes the flag) all
+       * live in perform_action. The Tools/Edit menu, the toolbar, the command palette
+       * and scripted `xschem break_wires [1]` all reach here; the '!'/Ctrl-'!' keys
+       * reach the same boundary from callback.c. No inline readonly/effect/log here.
+       * This is the FIRST non-transform verb migrated (audit §29): the arg is a FLAG,
+       * not a pivot, and there is no mid-gesture split. */
+      return perform_action("break_wires", argc, argv);
     }
 
     /* build_colors

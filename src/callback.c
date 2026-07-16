@@ -6454,17 +6454,27 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
       break;
 
     case '!':
+      /* Route through the single mutation boundary (Refactor B atom 9, scheduler.c):
+       * it owns the effect (break_wires_at_pins, which owns its own undo/draw) + the
+       * ONE `xschem break_wires [1]` log site (core_log_action canonicalizes the FLAG).
+       * The key-specific semaphore>=2 re-entrancy guard and the readonly_block() guard
+       * stay here (the key guards itself first, like the transform keys); no inline
+       * break_wires_at_pins()/log_action() remains. The Ctrl-! form carries the remove
+       * FLAG in av[2]="1" (the arg is a flag, not a coordinate pivot -- so no snprintf
+       * of a mouse coord, unlike the pivot keys Shift-R/F/V). */
       if((state & ControlMask)) {
         if(xctx->semaphore >= 2) break;
         if(readonly_block()) break;
-        break_wires_at_pins(1);
-        log_action("xschem break_wires 1"); /* self-log Ctrl-! shortcut (issue 0068) */
+        {
+          const char *av[3];
+          av[0] = "xschem"; av[1] = "break_wires"; av[2] = "1";
+          perform_action("break_wires", 3, av);
+        }
       }
       else {
         if(xctx->semaphore >= 2) break;
         if(readonly_block()) break;
-        break_wires_at_pins(0);
-        log_action("xschem break_wires"); /* self-log '!' shortcut (issue 0068) */
+        perform_action("break_wires", 0, NULL);
       }
       break;
 
