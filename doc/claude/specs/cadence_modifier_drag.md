@@ -237,6 +237,37 @@ delete the `select_attached_nets()` call (Phase 3 reddens); force plain to
 - `tests/headless/test_cadence_drag.tcl` — new suite (Phases 0–5).
 - Docs: cross-link from `doc/claude/code_analysis/wire_editing_spec_and_plan.md`.
 
+## 5b. Deferred-selection (issue 0097)
+
+A press-hold-drag-release must NOT change the selection membership; only a CLICK (press+release,
+no motion) selects. Rules:
+- nothing selected + drag → object moves, ends UNSELECTED;
+- selection S + drag an object not in S → object moves, S preserved untouched (not added to);
+- object in S + drag → S moves, stays selected.
+
+Because the move engine is selection-based, the press still transiently selects the grabbed
+object. `handle_button_press` snapshots the pre-press selection by session-stable id
+(`drag_sel_snapshot`, before the press-time `unselect_all`), arms the restore at the plain move
+START (gated on `did_snapshot`), and the move-completion funnel `end_move_copy_logged` restores it
+(`drag_sel_restore_now`) iff the gesture actually moved — a click keeps its select, copy is
+excluded. Whole-object moves only (the shape-point vertex/edge grab keeps its precise-edit
+selection). Regression: `tests/headless/test_drag_keeps_selection.tcl`. See
+`doc/claude/issues/0097-drag-must-not-change-selection.md`.
+
+**Leak fix (keyboard `m` deselect).** `drag_sel_restore` is armed at the press but only *consumed*
+by `end_move_copy_logged`. The press-armed move has other endings that BYPASS that funnel: the
+no-motion click ABORT (`handle_button_release`, `move_objects(ABORT)`) and `abort_operation` (ESC,
+the double-click transient-abort, context-menu). Those left the flag SET. The usual safety net is
+`drag_sel_free()` at the next button-press select-head — but a KEYBOARD verb-move (`m`/`c`) starts a
+move with no such press, so the leaked flag reached that move's `end_move_copy_logged` and
+`drag_sel_restore_now()` wiped the just-moved object down to the stale pre-click snapshot (empty, or
+the earlier selection). Reported repro: dbl-click to grow a selection, click R18, press `m` to
+connected-drag it, the final placement click drops R18. Fix: free the snapshot at BOTH bypassing
+endings — the no-motion click ABORT (a click keeps its click-select, never restores) and the top of
+`abort_operation`. Guarded by cases 5–7 of the regression test (`m`-move keeps selection; the
+reported net-A/net-B flow; and the ESC-abort path). `c` (copy) was already immune —
+`end_move_copy_logged` frees, not restores, for copies.
+
 ## 6. Out of scope (explicitly)
 
 - Wire-follow *quality* (T-junctions, sub-grid endpoints, orthogonal re-routing) —

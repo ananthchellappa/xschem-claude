@@ -3,8 +3,8 @@
 # with tools/migrate/xschem_libmigrate.py, points xschem at the GENERATED
 # library.defs, then loads + netlists the migrated schematic.
 #
-# Run under X with --pipe from src/:
-#   DISPLAY=:0 ./xschem --pipe -q --script ../tests/headless/test_migrate_engine.tcl
+# Run under X with --pipe (any cwd -- paths derive from this script's location):
+#   DISPLAY=:0 ./src/xschem --pipe -q --script tests/headless/test_migrate_engine.tcl
 
 set fail 0
 proc check {name ok detail} {
@@ -13,11 +13,14 @@ proc check {name ok detail} {
 }
 proc slurp {f} { set fp [open $f r]; set d [read $fp]; close $fp; return $d }
 
-set repo [file normalize [file join [pwd] ..]]
+# repo root from the script's own location (tests/headless/ -> up 2), NOT from
+# [pwd]: a cwd-relative repo made the fixture copy below fail with a startup
+# Tcl error popup whenever the test was launched from anywhere but src/.
+set repo [file normalize [file join [file dirname [info script]] .. ..]]
 set tool [file join $repo tools/migrate/xschem_libmigrate.py]
 
 # --- flat source fixture: real resistor symbol + a schematic referencing it ---
-set tmp [file join [pwd] _migeng_[pid]]
+set tmp [file join /tmp _migeng_[pid]]
 file delete -force $tmp
 file mkdir $tmp/src/devices $tmp/src/des
 file copy [file join $repo xschem_library/devices/res.sym]     $tmp/src/devices/res.sym

@@ -158,6 +158,48 @@ double timer(int start)
   }
 }
 
+static int touches_inst_pin(double x, double y, int inst); /* defined below; reused here */
+
+/* Return 1 if any instance PIN coincides EXACTLY with (x, y). Net-labels, pin-labels
+ * and bus_taps are just instances carrying PINLAYER pins, so they are covered too.
+ * Used by trim_wires' collinear-rejoin to REFUSE welding two segments across an
+ * attachment point (a net-label / instance pin between them is a meaningful segment
+ * boundary for click-selection). Exact double compare (delegated to touches_inst_pin) is
+ * correct here: pin coords and wire endpoints are on-grid, so a genuine attachment matches
+ * exactly; a pin merely NEAR the wire is not an attachment (and is not connected either --
+ * see doc/claude/specs/wire_segment_splitting.md, W0 + Hazard H2).
+ * Only called (when splitting is active) from the merge branch after the cheap
+ * end1/end2==0 test, i.e. for the rare degree-2 collinear joints trim would collapse. */
+static int any_inst_pin_at(double x, double y)
+{
+  int i;
+  for(i = 0; i < xctx->instances; ++i) {
+    if(touches_inst_pin(x, y, i)) return 1;
+  }
+  return 0;
+}
+
+/* Cadence net-label drop constraint (doc/claude/specs/add_wire_label.md): return 1 if (x,y)
+ * lands on COPPER -- ON any wire segment (touch(), endpoints included) OR EXACTLY on an
+ * instance PINLAYER pin (touches_inst_pin(), exact on-grid compare, covers net-labels /
+ * pin-labels / bus_taps which are just instances carrying PINLAYER pins). SELECTED wires and
+ * instances are skipped so the label PREVIEW being placed (it is selected) never satisfies the
+ * rule against its own pin. Used by the add_wire_label drop gate. */
+int point_on_wire_or_pin(double x, double y)
+{
+  int i;
+  for(i = 0; i < xctx->wires; ++i) {
+    if(xctx->wire[i].sel == SELECTED) continue;
+    if(touch(xctx->wire[i].x1, xctx->wire[i].y1, xctx->wire[i].x2, xctx->wire[i].y2, x, y))
+      return 1;
+  }
+  for(i = 0; i < xctx->instances; ++i) {
+    if(xctx->inst[i].sel == SELECTED) continue;
+    if(touches_inst_pin(x, y, i)) return 1;
+  }
+  return 0;
+}
+
 void trim_wires(void)
 {
   int k, sqx, sqy, doloops;
@@ -166,6 +208,11 @@ void trim_wires(void)
   int includes, breaks;
   Wireentry *wptr;
   unsigned short *wireflag=NULL;
+  /* The pin-aware-merge guard (below) only matters when wire auto-splitting is active, and
+   * gating it here keeps default (autotrim off) trim/join behaviour byte-for-byte unchanged
+   * -- spec D2. It also short-circuits the O(inst*pins) any_inst_pin_at() away entirely on
+   * the default path. See doc/claude/specs/wire_segment_splitting.md. */
+  int split_active = tclgetboolvar("autotrim_wires");
 
   doloops = 0;
   xctx->prep_hash_wires = 0;
@@ -350,7 +397,12 @@ void trim_wires(void)
             /* touch in wire[j].x1, wire[j].y1 */
             xctx->wire[j].x1 == x0 && xctx->wire[j].y1 == y0 &&
             /* no other connecting wires */
-            xctx->wire[i].end2 == 0 && xctx->wire[j].end1 == 0 ) {
+            xctx->wire[i].end2 == 0 && xctx->wire[j].end1 == 0 &&
+            /* and (when splitting is active) no instance pin / net-label at the joint: an
+             * attachment there is a meaningful segment boundary, do not weld across it
+             * (W0 -- pin-aware merge). Also gives free auto-rejoin when the pin is later
+             * removed. Gated on split_active so default trim/join is unchanged (D2). */
+            (!split_active || !any_inst_pin_at(x0, y0)) ) {
           dbg(2, "trim_wires(): i=%d merged with j=%d\n", i, j);
           xctx->wire[i].x2 = xctx->wire[j].x2;
           xctx->wire[i].y2 = xctx->wire[j].y2;
@@ -626,4 +678,172 @@ void break_wires_at_pins(int remove)
     }
   }
 
+}
+
+/* Split every wire at every interior instance-pin / net-label attachment point, so each
+ * inter-attachment span becomes an independent (clickable) wire object. Connectivity is
+ * coordinate-based and unchanged (INV-1). In-memory only: coalesce-on-save (W4,
+ * merge_collinear_wires) re-joins these attachment-pin splits on save so the .sch stays
+ * byte-stable (D1). Uses the EXACT stored pin coordinate (get_inst_pin_coord) and requires
+ * a true touch(), so a pin merely NEAR the wire neither splits nor connects (Hazard H2);
+ * splits only where a pin coincides with a wire's interior, never at a bare X-crossing
+ * (Hazard H3). Does NOT push_undo -- the caller owns undo (load: no push; edit: caller
+ * pushes). Returns the number of splits performed.
+ * See doc/claude/specs/wire_segment_splitting.md (W1). */
+int break_wires_at_attach_points(void)
+{
+  int k, i, r, rects, sqx, sqy;
+  Wireentry *wptr;
+  double x0, y0;
+  int nsplit = 0;
+
+  /* Force a fresh spatial table: hash_wires() no-ops when prep_hash_wires==1 (netlist.c),
+   * and an earlier prepare_netlist_structs / check_collapsing_objects in the load path may
+   * have built it (or left it stale after a wire deletion). Walking a stale table would
+   * read reindexed / out-of-range wire slots. trim_wires() takes the same precaution. */
+  xctx->prep_hash_wires = 0;
+  hash_wires();
+  for(k = 0; k < xctx->instances; ++k) {
+    if(xctx->inst[k].ptr < 0) continue;
+    rects = (xctx->inst[k].ptr + xctx->sym)->rects[PINLAYER];
+    for(r = 0; r < rects; ++r) {
+      get_inst_pin_coord(k, r, &x0, &y0);
+      get_square(x0, y0, &sqx, &sqy);
+      for(wptr = xctx->wire_spatial_table[sqx][sqy]; wptr; wptr = wptr->next) {
+        i = wptr->n;
+        if( touch(xctx->wire[i].x1, xctx->wire[i].y1,
+                  xctx->wire[i].x2, xctx->wire[i].y2, x0, y0) ) {
+          /* strictly interior: (x0,y0) not coincident with either endpoint */
+          if( (x0 != xctx->wire[i].x1 && x0 != xctx->wire[i].x2) ||
+              (y0 != xctx->wire[i].y1 && y0 != xctx->wire[i].y2) ) {
+            wire_store_split(i, x0, y0, xctx->wire[i].sel); /* head [old x1..x0], keeps prop/node */
+            xctx->wire[i].x1 = x0;                          /* tail becomes [x0..old x2] */
+            xctx->wire[i].y1 = y0;
+            xctx->wire[i].end1 = 1;
+            xctx->need_reb_sel_arr = 1;
+            ++nsplit;
+          }
+        }
+      }
+    }
+  }
+  if(nsplit) {
+    /* the wire array changed: invalidate every derived cache (matching
+     * break_wires_at_pins), so a later netlist/hilight rebuilds against the new geometry.
+     * Harmless at load (both already 0) but required when called from edit paths (W3). */
+    xctx->prep_hash_wires = 0;
+    xctx->prep_net_structs = 0;
+    xctx->prep_hi_structs = 0;
+  }
+  return nsplit;
+}
+
+/* Canonical read/edit-time wire-segment maintenance (the caller gates this on
+ * autotrim_wires): first split at attachment points, then trim_wires() performs
+ * T-junction splits, the PIN-AWARE collinear merge (W0) and the degenerate cull. The order
+ * matters -- splitting first, then a pin-aware merge that cannot undo the pin-splits.
+ * See doc/claude/specs/wire_segment_splitting.md (W1/W3). */
+void maintain_wire_segments(void)
+{
+  break_wires_at_attach_points();
+  trim_wires();
+}
+
+/* Prop strings equal (NULL treated as empty). The save-time coalescer requires identical
+ * prop_ptr before welding two segments so a user who diverges one segment's attributes keeps
+ * that boundary on disk (Hazard H7 -- nothing is silently lost). */
+static int wire_prop_eq(const char *a, const char *b)
+{
+  return !strcmp(a ? a : "", b ? b : "");
+}
+
+/* Coalesce a scratch array of wires IN PLACE: re-join every maximal run of collinear,
+ * same-prop, abutting segments whose shared joints carry no OTHER (non-collinear) wire
+ * endpoint -- a real T-junction stays split. This is the inverse of the read-time split
+ * (break_wires_at_attach_points), so a single-N file that was split into clickable segments
+ * in memory round-trips to the identical single-N file on disk (spec D1 / W4, section 6.3).
+ *
+ * `list` MUST be a private copy of the wire records (see the save path in save.c): entries
+ * are shallow -- prop_ptr/node are BORROWED from xctx->wire[], never freed or mutated here;
+ * only the geometry (x1..y2) of a surviving segment is rewritten. xctx->wire[] is untouched,
+ * so the live segmented array (the user's clickable segments) survives a save intact.
+ *
+ * ignore_pins: 1 = pin-blind -- coalesce ACROSS an attachment pin / net-label, because the
+ *   pin is only a SELECTION boundary, not a topology node: the .sch must not persist the
+ *   split (the save path uses this). 0 = pin-aware -- refuse to weld across an instance pin,
+ *   matching trim_wires' in-memory W0 merge (provided for a future unification of the two
+ *   merge sites; not on the current save path).
+ * Unlike trim_wires' in-place merge, this ALWAYS requires identical prop_ptr (H7).
+ * Returns the compacted survivor count.
+ * See doc/claude/specs/wire_segment_splitting.md (W4). */
+int merge_collinear_wires(xWire *list, int n, int ignore_pins)
+{
+  int i, j, e, k, changed;
+  char *dead;
+  if(n < 2) return n;
+  dead = my_calloc(_ALLOC_ID_, n, sizeof(char));
+  do {
+    changed = 0;
+    for(i = 0; i < n; ++i) {
+      if(dead[i]) continue;
+      /* try to absorb a collinear neighbour at either open end of wire i */
+      for(e = 0; e < 2; ++e) {
+        double px = (e == 0) ? list[i].x1 : list[i].x2;
+        double py = (e == 0) ? list[i].y1 : list[i].y2;
+        double dxi = list[i].x2 - list[i].x1, dyi = list[i].y2 - list[i].y1;
+        int branch = 0, partner = -1;
+        if(!ignore_pins && any_inst_pin_at(px, py)) continue;
+        for(j = 0; j < n; ++j) {
+          double dxj, dyj;
+          int parallel, tj;
+          if(dead[j] || j == i) continue;
+          dxj = list[j].x2 - list[j].x1; dyj = list[j].y2 - list[j].y1;
+          parallel = (dxi * dyj == dxj * dyi);
+          tj = touch(list[j].x1, list[j].y1, list[j].x2, list[j].y2, px, py);
+          if(!tj) continue;
+          if(!parallel) { branch = 1; break; } /* real electrical node here: never weld across it */
+          /* a collinear wire touching the joint is a merge candidate only if it ENDS there
+           * (endpoint match) and carries an identical prop_ptr */
+          if( ((px == list[j].x1 && py == list[j].y1) ||
+               (px == list[j].x2 && py == list[j].y2)) &&
+              partner < 0 && wire_prop_eq(list[i].prop_ptr, list[j].prop_ptr) ) {
+            partner = j;
+          }
+        }
+        if(branch || partner < 0) continue;
+        /* extend i to the extreme span of {i, partner} along i's direction, drop partner.
+         * Projecting all four endpoints handles any collinear orientation and preserves the
+         * original endpoint ordering (so a byte-identical record comes back). */
+        {
+          double px4[4], py4[4], tmin, tmax, dx, dy;
+          int m, imin = 0, imax = 0;
+          px4[0] = list[i].x1;       py4[0] = list[i].y1;
+          px4[1] = list[i].x2;       py4[1] = list[i].y2;
+          px4[2] = list[partner].x1; py4[2] = list[partner].y1;
+          px4[3] = list[partner].x2; py4[3] = list[partner].y2;
+          dx = dxi; dy = dyi;
+          if(dx == 0 && dy == 0) { /* degenerate i: fall back to partner's direction */
+            dx = list[partner].x2 - list[partner].x1;
+            dy = list[partner].y2 - list[partner].y1;
+          }
+          tmin = tmax = px4[0] * dx + py4[0] * dy;
+          for(m = 1; m < 4; ++m) {
+            double t = px4[m] * dx + py4[m] * dy;
+            if(t < tmin) { tmin = t; imin = m; }
+            if(t > tmax) { tmax = t; imax = m; }
+          }
+          list[i].x1 = px4[imin]; list[i].y1 = py4[imin];
+          list[i].x2 = px4[imax]; list[i].y2 = py4[imax];
+        }
+        dead[partner] = 1;
+        changed = 1;
+        e = -1; /* rescan both (now-extended) ends of the enlarged wire i */
+      }
+    }
+  } while(changed);
+  /* compact survivors to the front, order-preserving */
+  k = 0;
+  for(i = 0; i < n; ++i) if(!dead[i]) { if(k != i) list[k] = list[i]; ++k; }
+  my_free(_ALLOC_ID_, &dead);
+  return k;
 }

@@ -1,0 +1,75 @@
+name: Fluid fuzz (nightly)
+
+# Hardening sprint Track C / step C5. The delta-sweep fuzzer runs TRUE HEADLESS (--nogui,
+# no X, no xvfb -- WIRING.md §0.7), so it is cheap and deterministic. Kept OUT of the PR CI
+# (ci.yaml stays fast: Track A suites only); this runs nightly and on manual dispatch, gates
+# on the fuzzer's own self-tests (the C4 xfail tripwires alert if a blind spot's verdict
+# flips), and uploads every failure replay file as an artifact.
+
+on:
+  schedule:
+    - cron: '0 6 * * *'      # 06:00 UTC nightly
+  workflow_dispatch: {}       # allow manual runs from the Actions tab
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    name: Delta-sweep fuzzer
+    steps:
+    - name: Install dependencies
+      run: sudo apt-get install -y flex bison gawk tcl tcl-dev tk tk-dev libcairo2 libcairo2-dev xcb libxcb1 libxcb1-dev libxrender-dev libxpm-dev libxcb-render0-dev libx11-xcb1 libx11-xcb-dev
+    - name: Checkout source
+      uses: actions/checkout@v4
+    - name: configure
+      run: ./configure
+    - name: make
+      run: make
+
+    # GATE: the fuzzer's own self-tests (C1 harness, C2 sabotage teeth, C3 sweep smoke, C4
+    # blind-spot xfails). The C4 tripwires FAIL loud if a pinned blind-spot verdict changes --
+    # most importantly a blind spot getting REPAIRED (flip to GREEN) -- the signal to re-baseline.
+    - name: Fuzz self-tests (gate)
+      run: |
+        set -uo pipefail
+        rc=0
+        for t in test_fuzz_harness_c1 test_fuzz_c2_sabotage test_fuzz_c3_sweep test_fuzz_c4_blindspots; do
+          echo "::group::$t"
+          out=$(./src/xschem --nogui --pipe -q --nolog --script tests/headless/fuzz/$t.tcl 2>&1)
+          printf '%s\n' "$out" | grep -E '^(ok:|FAIL:|RESULT:)' || true
+          printf '%s\n' "$out" | grep -q '^RESULT: ALL PASS' || { echo "FUZZ SELF-TEST FAILED: $t"; rc=1; }
+          echo "::endgroup::"
+        done
+        exit $rc
+
+    # INFORMATIONAL: the full delta sweep over before_3/5/7/8 (enforce ON, the shipped default)
+    # plus the C4 blind-spot fixtures. Never fails the build (a known xfail RED such as the
+    # multi-pin disconnect must not turn the nightly red -- the gate above owns regressions);
+    # every failure replay file is uploaded so a new escape is a downloadable, runnable RED test.
+    - name: Delta sweep (informational)
+      run: |
+        mkdir -p fuzz-artifacts
+        echo "===== before_3/5/7/8 (enforce ON) =====" | tee fuzz-artifacts/summary.txt
+        FUZZ_OUTDIR="$PWD/fuzz-artifacts/fails" \
+          ./src/xschem --nogui --pipe -q --nolog --script tests/headless/fuzz/fuzz_sweep.tcl 2>&1 \
+          | tee -a fuzz-artifacts/summary.txt || true
+        echo "===== C4 blind-spot fixtures =====" | tee -a fuzz-artifacts/summary.txt
+        FUZZ_FIXTURES="c4_labeled_rail c4_transistor c4_mixed" FUZZ_GESTURES="stretch" \
+        FUZZ_OUTDIR="$PWD/fuzz-artifacts/fails-c4" \
+          ./src/xschem --nogui --pipe -q --nolog --script tests/headless/fuzz/fuzz_sweep.tcl 2>&1 \
+          | tee -a fuzz-artifacts/summary.txt || true
+
+    - name: Sweep summary
+      if: always()
+      run: |
+        echo "## Fluid fuzz nightly summary" >> "$GITHUB_STEP_SUMMARY"
+        echo '```' >> "$GITHUB_STEP_SUMMARY"
+        grep -E '^(fixture|before_|c4_|TOTAL|RESULT|=====)' fuzz-artifacts/summary.txt >> "$GITHUB_STEP_SUMMARY" || true
+        echo '```' >> "$GITHUB_STEP_SUMMARY"
+        grep -E '^(fixture|before_|c4_|TOTAL|RESULT|=====)' fuzz-artifacts/summary.txt || true
+
+    - name: Upload replay files + summary
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: fuzz-replays
+        path: fuzz-artifacts/

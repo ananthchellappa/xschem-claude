@@ -52,6 +52,15 @@ static int check_opt(char *opt, char *optval, int type)
 
     } else if( (type == LONG && !strcmp("pipe", opt)) ) {
         cli_opt_no_readline = 1;
+        /* --pipe marks a scripted/automation session (the test harnesses all use it):
+         * remember it so such sessions never rewrite the USER's recent-files list */
+        cli_opt_pipe = 1;
+
+    } else if( (type == LONG && !strcmp("norecent", opt)) ) {
+        /* never create/rewrite $USER_CONF_DIR/recent_files in this session -- the
+         * recent-views list belongs to the user, not to software testing activity */
+        dbg(1, "process_options(): recent-files updates disabled (--norecent)\n");
+        cli_opt_norecent = 1;
 
     } else if( (type == SHORT && *opt == 'p') || (type == LONG && !strcmp("postscript", opt)) ) {
         dbg(1, "process_options(): will print postscript/pdf\n");

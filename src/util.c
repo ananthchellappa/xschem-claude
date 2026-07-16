@@ -283,6 +283,38 @@ static void actionlog_name(char *out, size_t sz, const char *dir, int n)
   else       my_snprintf(out, sz, "%s/Xschem.log.%d", dir, n);
 }
 
+/* Snapshot of the launch command line, taken BEFORE process_options() runs: that parser permutes
+ * argv in place (it compacts non-option arguments forward over consumed flag slots and NUL-splits
+ * "--opt=val" at the '='), so a post-parse dump silently drops flags, duplicates file arguments and
+ * amputates =values (adversarial review wf_a23dea5b). Newlines/CRs are escaped and whitespace-
+ * containing or empty args are brace-wrapped, so the "# launch:" header stays ONE Tcl comment line
+ * -- a raw newline inside an argument would break out of the comment and EXECUTE on replay. */
+static char *launch_line = NULL;
+void snapshot_launch_line(int lc, char **lv)
+{
+  size_t need = 1;
+  int i;
+  const char *p;
+  char *o;
+  for(i = 0; i < lc; ++i) need += (lv[i] ? strlen(lv[i]) : 0) * 2 + 4;
+  launch_line = my_malloc(_ALLOC_ID_, need);
+  o = launch_line;
+  for(i = 0; i < lc; ++i) {
+    int wrap;
+    if(!lv[i]) continue;
+    wrap = (lv[i][0] == '\0' || strpbrk(lv[i], " \t") != NULL);
+    if(i) *o++ = ' ';
+    if(wrap) *o++ = '{';
+    for(p = lv[i]; *p; ++p) {
+      if(*p == '\n')      { *o++ = '\\'; *o++ = 'n'; }
+      else if(*p == '\r') { *o++ = '\\'; *o++ = 'r'; }
+      else *o++ = *p;
+    }
+    if(wrap) *o++ = '}';
+  }
+  *o = '\0';
+}
+
 /* Action log (Phase 0).
  *
  * Opens a per-session log of user actions, each line a replayable `xschem ...`
@@ -374,6 +406,14 @@ void init_action_log(void)
   my_strncpy(actionlog_filename, fname, S(actionlog_filename));
   /* header is a Tcl comment so the log stays source-able for replay */
   fprintf(actionlog_fp, "# xschem action log\n");
+  /* record the exact launch (full command line + cwd) so a log found later can be traced
+   * back to the invocation that produced it. launch_line is the PRE-process_options snapshot
+   * (see snapshot_launch_line above), newline-escaped => still one Tcl comment, replay-safe */
+  if(launch_line) fprintf(actionlog_fp, "# launch: %s\n", launch_line);
+  {
+    char cwdbuf[PATH_MAX];
+    if(getcwd(cwdbuf, sizeof(cwdbuf))) fprintf(actionlog_fp, "# cwd: %s\n", cwdbuf);
+  }
   dbg(1, "init_action_log(): logging actions to %s\n", fname);
 }
 
@@ -388,6 +428,61 @@ static void log_action_echo(const char *str)
   tcleval("if {[info procs ciw_echo] ne {}} {ciw_echo $ciw_line}");
 }
 
+/* --- Outcome-level logging: the select_at holding area -------------------
+ * See doc/claude/specs/action_log_absorb.md. A single-slot buffer lets an
+ * interactive `select_at` be ABSORBED by a following outcome command
+ * (descend) so the log records the stable result, not the coordinate gesture.
+ * `descend` is the only consumer today; delete/copy/move can be wired the same
+ * way later (add a log_action_<verb>() that absorbs then logs its own line). */
+
+/* Commit any held select_at line to the log + CIW, then clear the slot.
+ * Called at the top of log_action() so a held click always precedes the next
+ * action; a no-op when nothing is held. */
+void log_action_flush_pending(void)
+{
+  char line[300];
+  if(!actionlog_pending[0]) return;
+  my_strncpy(line, actionlog_pending, S(line));
+  actionlog_pending[0] = '\0';       /* clear BEFORE re-logging (breaks recursion) */
+  actionlog_pending_inst = -1;
+  log_action("%s", line);            /* now a real write + CIW echo */
+}
+
+/* Stash a provisional select_at from the interactive selection funnel instead
+ * of writing it immediately. `inst` is the instance the click selected, or -1
+ * if the hit was not a single instance (only instance targets are absorbable).
+ * A prior held line (a click with no follow-up) is flushed first, so at most
+ * one select_at is ever pending. */
+void log_action_stash_select_at(double x, double y, int add, int inst)
+{
+  if(!actionlog_fp || actionlog_suppress) return;
+  log_action_flush_pending();
+  /* log the EFFECTIVE (grid-snapped) coordinate, not the raw mouse position:
+   * clicks resolve at snap resolution, and raw doubles fill the log with float
+   * noise. Snapping here covers both the interactive funnel (raw mouse) and
+   * the `xschem select_at` command (idempotent on already-snapped input). */
+  my_snprintf(actionlog_pending, S(actionlog_pending),
+              "xschem select_at %.10g %.10g%s",
+              snap_to_grid(x), snap_to_grid(y), add ? " add" : "");
+  actionlog_pending_inst = inst;
+}
+
+/* Log a descend at the outcome level: `xschem <verb> -inst <name>` (verb =
+ * "descend" or "descend_symbol"). The -inst form is SELF-CONTAINED: it selects
+ * the instance itself on replay, so the line stays faithful even when the
+ * recording-time selection came from an unlogged path (e.g. the hi_descend
+ * dialog selects programmatically -- issue 0071 atom 3 review finding). If a
+ * held select_at selected this same instance, ABSORB it (drop it) so the
+ * descend line stands alone; otherwise the held line flushes normally ahead. */
+void log_action_descend(const char *verb, int inst_n, const char *instname)
+{
+  if(actionlog_pending[0] && actionlog_pending_inst == inst_n) {
+    actionlog_pending[0] = '\0';     /* absorb: the select_at is subsumed by the descend */
+    actionlog_pending_inst = -1;
+  }
+  log_action("xschem %s -inst %s", verb, instname);
+}
+
 /* Append one action to the log as a single line and mirror it to the CIW
  * log pane. No-op when logging is disabled. Each call is one line; the
  * trailing newline is added here. */
@@ -396,6 +491,9 @@ void log_action(const char *fmt, ...)
   char buf[4096]; /* pane copy only; the file write below is unbounded */
   va_list args;
   if(!actionlog_fp || actionlog_suppress) return;
+  /* commit any provisional select_at first, so it precedes this line in order.
+   * flush clears the buffer BEFORE re-entering here, so no recursion. */
+  log_action_flush_pending();
   va_start(args, fmt);
   vfprintf(actionlog_fp, fmt, args);
   va_end(args);
@@ -446,6 +544,29 @@ void log_output(int iserr, const char *text)
     if(*p == '\n' && p[1]) fputs(pfx, actionlog_fp);  /* prefix each further line */
   }
   if(p == text || p[-1] != '\n') fputc('\n', actionlog_fp);
+}
+
+/* Re-entrant scope guard for actionlog_suppress (issue 0071 Refactor A step 2,
+ * the foundation the perform_action() boundary of Refactor B rides on -- see
+ * doc/claude/code_analysis/action_log_coverage_audit_and_core_selflog_refactor.md
+ * §3.2/§4). actionlog_suppress is a DEPTH COUNTER, not a boolean: the two
+ * re-entrancy hazards nest (a REPLAY that re-executes a logged line which is
+ * itself a COMPOSITE op calling several already-self-logging cores), so an inner
+ * pop must NOT re-open logging while an outer scope is still active. The
+ * log_action* / log_output gate `if(!actionlog_fp || actionlog_suppress)` reads
+ * any nonzero count as suppressed. push/pop is the SAFE surface; `xschem set
+ * actionlog_suppress N` is a HARD absolute set (0 clears any nesting). This is
+ * ORTHOGONAL to actionlog_cmd_logged (the wrapper-dedup flag): a suppressed
+ * log_action returns BEFORE setting cmd_logged, so a suppressed scope never
+ * leaves cmd_logged dirty for the next real action. */
+void actionlog_suppress_push(void)
+{
+  actionlog_suppress++;
+}
+
+void actionlog_suppress_pop(void)
+{
+  if(actionlog_suppress > 0) actionlog_suppress--;
 }
 #ifdef HAS_SNPRINTF
 size_t my_snprintf(char *str, size_t size, const char *fmt, ...)

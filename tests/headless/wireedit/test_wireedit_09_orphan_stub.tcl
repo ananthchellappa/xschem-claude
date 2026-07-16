@@ -7,6 +7,10 @@
 # (anchored at the OUTI label) are preserved. Per the plan (option A) the fixture
 # builds the residue then performs a stretch move so the in-gesture cleanup fires.
 source [file join [file dirname [info script]] fixtures.tcl]
+# fluid_editing now defaults ON (0091-0096 reroute chain). This test pins the BASE
+# (fluid-off) stretch mechanic it was written for; the fluid-on behavior for the same
+# scene is covered by test_wireedit_20..51. See doc/claude/issues/0096 re-baseline.
+uplevel #0 {set fluid_editing 0}
 we_reset 1 1
 we_device 1360 -900            ;# R18: pin M=(1360,-870), P=(1360,-930)
 we_wire 1270 -870 1360 -870    ;# horizontal rail: serves pin M

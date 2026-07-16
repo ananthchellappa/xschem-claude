@@ -186,12 +186,30 @@ void redraw_w_a_l_r_p_z_rubbers(int force)
   xctx->prev_rubbery = xctx->mousey_snap;
 }
 
-/* resets UI state, unselect all and abort any pending operation */
-void abort_operation(void)
+/* resets UI state and aborts any pending operation. deselect!=0 also clears the
+ * selection when nothing was pending (the legacy ESC behavior); deselect==0 keeps the
+ * current selection and just redraws. ESC drives this via the `escape_deselects` var
+ * (see src/xschem.tcl); all other internal callers pass 1.
+ *
+ * NOT wrapped in a log-suppress scope (issue 0071 Refactor B foundation, §20):
+ * abort_operation is NOT a pure teardown -- the STARTPOLYGON arm below calls
+ * new_polygon(END), which COMPLETES the polygon (store_poly + push_undo) and
+ * self-logs `xschem polygon ...` (actions.c). ESC-closes-a-polygon is a real
+ * logged edit, so a blanket suppress here would DROP that line (adversarial-review
+ * MAJOR, empirically confirmed). No production composite is a genuinely zero-drift
+ * suppress target today; the composite hazard is closed structurally by the
+ * replay seam (replay_action_log) + the general push/pop primitive instead. */
+void abort_operation(int deselect)
 {
   xctx->no_draw = 0;
   xctx->pin_pending = 0; /* drop any armed pin-click gesture (pin_selection.md D3) */
   xctx->pin_pending_add = 0; /* and any armed SHIFT+pin additive gesture (D6) */
+  /* An aborted move never reaches end_move_copy_logged, which is the only place that
+   * consumes a pending cadence deferred-selection restore (drag_sel_restore, spec
+   * doc/claude/specs/cadence_modifier_drag.md). Free it here so it cannot leak past this
+   * gesture into a later keyboard 'm'/'c' move (which has no press-select to clear it) and
+   * spuriously restore a stale pre-press selection -- deselecting the just-moved object. */
+  drag_sel_free();
   tcleval("set constr_mv 0" );
   dbg(1, "abort_operation(): Escape: ui_state=%d, last_command=%d\n", xctx->ui_state, xctx->last_command);
   xctx->constr_mv=0;
@@ -240,6 +258,7 @@ void abort_operation(void)
      xctx->ui_state &= ~PLACE_SYMBOL;
      xctx->ui_state &= ~PLACE_TEXT;
      xctx->sympin_preview = 0;
+     xctx->wirelabel_preview = 0;   /* add_wire_label.md: torn-down label preview */
    }
    if(xctx->ui_state & STARTMERGE) {
      delete(1/* to_push_undo */);
@@ -258,7 +277,7 @@ void abort_operation(void)
     set_modify(0); /* aborted merge: no change, so reset modify flag set by delete() */
   }
   xctx->ui_state = 0;
-  unselect_all(1);
+  if(deselect) unselect_all(1);
   draw();
 }
 
@@ -1541,6 +1560,34 @@ void log_action_argv(int argc, const char *const *argv)
   Tcl_Free(line);
 }
 
+/* Read the lone placed instance back and log its coordinate replay form
+ * `xschem instance {sym} x y rot flip {prop}` (Tcl_Merge quotes name/prop safely
+ * -> replayable for any legal string, incl. the braces/backslashes the old
+ * tcl_braceable guard rejected, issue 0048). Returns 1 if a single ELEMENT was
+ * logged, else 0 (the caller emits its own '#' fallback marker). Shared by the
+ * PLACE_SYMBOL drop and the schematic Add-Pin drop -- add_sch_pin -place places
+ * an ipin/opin/iopin INSTANCE, so its drop replays exactly like a normal symbol
+ * placement (issue 0069 sympin atom 11). The coordinate form bypasses this
+ * funnel on replay, so a replayed line never re-logs. */
+static int log_placed_instance(void)
+{
+  int n = (xctx->lastsel == 1 && xctx->sel_array[0].type == ELEMENT) ? xctx->sel_array[0].n : -1;
+  const char *name, *prop;
+  char xb[64], yb[64], rb[16], fb[16];
+  const char *av[8];
+  if(n < 0 || n >= xctx->instances) return 0;
+  name = xctx->inst[n].name ? xctx->inst[n].name : "";
+  prop = xctx->inst[n].prop_ptr ? xctx->inst[n].prop_ptr : "";
+  my_snprintf(xb, S(xb), "%.16g", xctx->inst[n].x0);
+  my_snprintf(yb, S(yb), "%.16g", xctx->inst[n].y0);
+  my_snprintf(rb, S(rb), "%d", (int)xctx->inst[n].rot);
+  my_snprintf(fb, S(fb), "%d", (int)xctx->inst[n].flip);
+  av[0] = "xschem"; av[1] = "instance"; av[2] = name; av[3] = xb;
+  av[4] = yb; av[5] = rb; av[6] = fb; av[7] = prop;
+  log_action_argv(8, av);
+  return 1;
+}
+
 /* action-log Layer C (spec section 2): complete a move/copy drag and record
  * the single command reproducing its effect. The two callback completion
  * paths (end_place_move_copy_zoom and the intuitive-interface release) both
@@ -1560,37 +1607,113 @@ static void end_move_copy_logged(int is_copy)
   double dx = xctx->deltax, dy = xctx->deltay;
   int rot = xctx->move_rot, flip = xctx->move_flip;
   int kissing = xctx->kissing;
+  /* paste/merge drop (issue 0069): reset/overwritten by move_objects(END) below, capture
+   * now. The source test is merge_source == clip_file (bare `xschem paste`) vs anything
+   * else (-file rider) -- NOT paste_from, which any failed/cancelled mid-gesture
+   * merge_file() call resets to 0 without touching the pending gesture (atom-9 review);
+   * merge_source is written only on a successful open, so it stays owned by the pending
+   * merge. rotatelocal picks the per-object pivot for a mid-gesture in-place rotate/flip;
+   * x1/y1 is the shared rotation anchor (from the merged file's G record), recorded as
+   * `-anchor` because a whole-log replay regenerates the clipboard via the replayed
+   * `xschem copy` with a DIFFERENT pointer position -> different G record -> a rot/flip
+   * drop would land rotated about the wrong point (atom-9 review). */
+  int rotl = xctx->rotatelocal;
+  double ax = xctx->x1, ay = xctx->y1;
   /* mirror the END early-return: click on elements without motion does nothing */
   int nothing = xctx->drag_elements && dx == 0. && dy == 0.;
 
   if(is_copy) copy_objects(END);
   else        move_objects(END, 0, 0, 0);
 
+  /* cadence deferred-selection (doc/claude/specs/cadence_modifier_drag.md): a plain drag that
+   * transiently selected a previously-unselected object restores the pre-press selection -- so the
+   * grabbed object ends UNSELECTED (or a pre-existing selection is preserved untouched). Only when
+   * it actually MOVED: a click (nothing) keeps the normal click-select. Never on copy (the new copy
+   * stays selected). Armed only for a plain no-modifier move of a not-already-selected object. */
+  if(xctx->drag_sel_restore) {
+    if(!is_copy && !nothing) drag_sel_restore_now();  /* frees the snapshot internally */
+    else                     drag_sel_free();
+  }
+
   if(nothing) return;
   if(ui & STARTMERGE) {
-    log_action("# paste/merge drop at delta %.16g %.16g (pending-merge replay, issue 0005)", dx, dy);
+    /* action-log (issue 0069): the drop replays through the scheduler's coordinate
+     * paste arm (`xschem paste dx dy [rot flip [local]] [-file {f}]`), which calls
+     * merge_file + move_objects(END) directly -- never this funnel -- so a replay
+     * cannot re-log (coordinate-form-bypass invariant). A clipboard paste logs the
+     * bare form and replays against the replay-time clipboard file (faithful-to-op
+     * accepted delta, like the libmgr do_checkin_lib re-sweep); file merges carry
+     * the recorded source via -file. The cross-window selection transfer
+     * (paste_from == 1) logs its transient sel_file path: usually gone at replay,
+     * so the line no-ops -- accepted, the source has no durable referent. */
+    char xb[64], yb[64], rb[16], fb[16], axb[64], ayb[64];
+    const char *av[12];
+    int ac = 0;
+    my_snprintf(xb, S(xb), "%.16g", dx);
+    my_snprintf(yb, S(yb), "%.16g", dy);
+    av[ac++] = "xschem"; av[ac++] = "paste"; av[ac++] = xb; av[ac++] = yb;
+    if(rot || flip) {
+      my_snprintf(rb, S(rb), "%d", rot);
+      my_snprintf(fb, S(fb), "%d", flip);
+      av[ac++] = rb; av[ac++] = fb;
+      if(rotl) av[ac++] = "local";
+      else {
+        /* shared-pivot transform: pin the anchor, see the capture comment above.
+         * (translation-only and `local` drops are pivot-independent -> no rider) */
+        my_snprintf(axb, S(axb), "%.16g", ax);
+        my_snprintf(ayb, S(ayb), "%.16g", ay);
+        av[ac++] = "-anchor"; av[ac++] = axb; av[ac++] = ayb;
+      }
+    }
+    if(strcmp(xctx->merge_source, clip_file) && xctx->merge_source[0]) {
+      av[ac++] = "-file"; av[ac++] = xctx->merge_source;
+    }
+    log_action_argv(ac, av);
   }
   else if(ui & START_SYMPIN) {
-    log_action("# place symbol pin (no replayable subcommand yet)");
-  }
-  else if(ui & PLACE_SYMBOL) {
-    int n = (xctx->lastsel == 1 && xctx->sel_array[0].type == ELEMENT) ? xctx->sel_array[0].n : -1;
-    if(n >= 0 && n < xctx->instances) {
-      const char *name = xctx->inst[n].name ? xctx->inst[n].name : "";
-      const char *prop = xctx->inst[n].prop_ptr ? xctx->inst[n].prop_ptr : "";
-      char xb[64], yb[64], rb[16], fb[16];
+    /* Two drops share START_SYMPIN + the sympin_preview move machinery (issue 0069
+     * atom 11), told apart here by the dropped object's type:
+     *  (a) SYMBOL pin -- a PINLAYER rect (+ its owned name view) placed by
+     *      `add_symbol_pin -place`. Replays via the direct `add_symbol_pin x y name
+     *      dir 0 1` form: draw off (a full redraw follows on replay) and NO-LINE on,
+     *      because the -place drop stores only the rect + name view while the raw
+     *      add_symbol_pin form also stores a 20-unit stub leg line; the trailing `1`
+     *      suppresses it so the replay geometry is byte-identical to the drop.
+     *  (b) SCHEMATIC pin -- an ipin/opin/iopin INSTANCE placed by `add_sch_pin
+     *      -place`. Replays via the same `xschem instance` read-back as any symbol
+     *      placement (log_placed_instance).
+     * Both replay forms are coordinate commands that bypass this funnel, so a
+     * replayed line never re-logs (coordinate-form-bypass invariant). */
+    int i, pr = -1;
+    for(i = 0; i < xctx->lastsel; ++i) {
+      if(xctx->sel_array[i].type == xRECT && xctx->sel_array[i].col == PINLAYER) {
+        pr = xctx->sel_array[i].n;
+        break;
+      }
+    }
+    if(pr >= 0 && pr < xctx->rects[PINLAYER]) {
+      xRect *p = &xctx->rect[PINLAYER][pr];
+      char *nm = NULL, *dr = NULL;
+      char xb[64], yb[64];
       const char *av[8];
-      /* Tcl_Merge quotes name/prop safely -> replayable for any legal string,
-       * incl. braces/backslashes the old tcl_braceable guard rejected (issue 0048). */
-      my_snprintf(xb, S(xb), "%.16g", xctx->inst[n].x0);
-      my_snprintf(yb, S(yb), "%.16g", xctx->inst[n].y0);
-      my_snprintf(rb, S(rb), "%d", (int)xctx->inst[n].rot);
-      my_snprintf(fb, S(fb), "%d", (int)xctx->inst[n].flip);
-      av[0] = "xschem"; av[1] = "instance"; av[2] = name; av[3] = xb;
-      av[4] = yb; av[5] = rb; av[6] = fb; av[7] = prop;
+      /* get_tok_value() shares one volatile static buffer -> copy each token out
+       * before the next call (cf. create_pin, actions.c) */
+      my_strdup(_ALLOC_ID_, &nm, get_tok_value(p->prop_ptr, "name", 0));
+      my_strdup(_ALLOC_ID_, &dr, get_tok_value(p->prop_ptr, "dir", 0));
+      my_snprintf(xb, S(xb), "%.16g", (p->x1 + p->x2) / 2.0);
+      my_snprintf(yb, S(yb), "%.16g", (p->y1 + p->y2) / 2.0);
+      av[0] = "xschem"; av[1] = "add_symbol_pin"; av[2] = xb; av[3] = yb;
+      av[4] = nm ? nm : ""; av[5] = dr ? dr : ""; av[6] = "0"; av[7] = "1";
       log_action_argv(8, av);
+      my_free(_ALLOC_ID_, &nm);
+      my_free(_ALLOC_ID_, &dr);
       return;
     }
+    if(log_placed_instance()) return;
+    log_action("# place symbol pin (pin not cleanly recordable)");
+  }
+  else if(ui & PLACE_SYMBOL) {
+    if(log_placed_instance()) return;
     log_action("# place symbol (instance not cleanly recordable)");
   }
   else if(ui & PLACE_TEXT) {
@@ -1613,8 +1736,34 @@ static void end_move_copy_logged(int is_copy)
     log_action("# place text (text not cleanly recordable)");
   }
   else if(rot || flip) {
-    log_action("# %s selection with rotate/flip (rot=%d flip=%d delta %.16g %.16g): "
-      "no single-command replay", is_copy ? "duplicate" : "move", rot, flip, dx, dy);
+    /* action-log (issue 0069 atom 13): a mid-move/copy rotate/flip drop replays through
+     * the scheduler's own coordinate move_objects/copy_objects arm, which sets
+     * move_rot/move_flip/rotatelocal (+ the anchor) then calls START/END directly -- never
+     * this funnel -- so a replay never re-logs (coordinate-form-bypass invariant). `local`
+     * marks the per-object in-place transform (Alt-R/F on a single object, pivot-
+     * independent); a shared-pivot group rotate (Shift-R/F/V, or Alt-R/F on a multi-object
+     * connected drag) pins x1/y1 as `-anchor` because a whole-log replay's move START seeds
+     * x1/y1 from the replay-time cursor, not the recorded grab point -> the rotation would
+     * be about the wrong point (the atom-9 paste G-record pivot lesson, verified there).
+     * Translation-only and `local` drops are pivot-independent -> no rider. `kissing` rides
+     * last, exactly as the plain-translation arm below records it. */
+    char xb[64], yb[64], rb[16], fb[16], axb[64], ayb[64];
+    const char *av[12];
+    int ac = 0;
+    my_snprintf(xb, S(xb), "%.16g", dx);
+    my_snprintf(yb, S(yb), "%.16g", dy);
+    my_snprintf(rb, S(rb), "%d", rot);
+    my_snprintf(fb, S(fb), "%d", flip);
+    av[ac++] = "xschem"; av[ac++] = is_copy ? "copy_objects" : "move_objects";
+    av[ac++] = xb; av[ac++] = yb; av[ac++] = rb; av[ac++] = fb;
+    if(rotl) av[ac++] = "local";
+    else {
+      my_snprintf(axb, S(axb), "%.16g", ax);
+      my_snprintf(ayb, S(ayb), "%.16g", ay);
+      av[ac++] = "-anchor"; av[ac++] = axb; av[ac++] = ayb;
+    }
+    if(kissing) av[ac++] = "kissing";
+    log_action_argv(ac, av);
   }
   else {
     log_action("xschem %s %.16g %.16g%s", is_copy ? "copy_objects" : "move_objects",
@@ -1640,6 +1789,30 @@ static void log_pan_end(void)
   double dx = xctx->xorigin - pan_log_xorig;
   double dy = xctx->yorigin - pan_log_yorig;
   if(dx != 0. || dy != 0.) log_action("xschem pan %.16g %.16g", dx, dy);
+}
+
+/* Cadence net-label drop gate (doc/claude/specs/add_wire_label.md). The armed wire-label
+ * preview may be COMMITTED only where its pin lands on copper (a wire or a non-selected instance
+ * pin, point_on_wire_or_pin()). Returns 1 = committed (move END + preview flags cleared, undo
+ * baseline kept), 0 = refused (preview left attached to the cursor, queue not advanced). Shared
+ * by the GUI button drop (end_place_move_copy_zoom, below) and the headless `add_wire_label
+ * -drop` seam so both enforce the identical rule. Not our gesture -> 0 (caller must not treat
+ * that as a refusal of a real label drop). */
+int wire_label_try_commit(void)
+{
+  if(!xctx) return 0;
+  if(!(xctx->ui_state & START_SYMPIN) || !xctx->wirelabel_preview) return 0;
+  if(!point_on_wire_or_pin(xctx->mousex_snap, xctx->mousey_snap)) {
+    tcleval("if {[info procs addlabel::on_reject] ne {}} {addlabel::on_reject}");
+    return 0;  /* off copper: keep the preview live so the user can reposition */
+  }
+  end_move_copy_logged(0);
+  xctx->ui_state &= ~START_SYMPIN;
+  xctx->sympin_preview = 0;
+  xctx->wirelabel_preview = 0;
+  xctx->constr_mv = 0;
+  tcleval("set constr_mv 0");
+  return 1;
 }
 
 /* complete the STARTWIRE, STARTRECT, STARTZOOM, STARTCOPY ... operations */
@@ -1713,6 +1886,14 @@ static int end_place_move_copy_zoom()
     return 0;
   }
   else if(xctx->ui_state & STARTMOVE) {
+    /* add_wire_label.md: a Cadence net-label preview may only drop on copper. Route it through
+     * the shared gate; on REFUSAL swallow the click (return 1 -> the caller records the press as
+     * a committed placement click and does NOT fall through to click-select) but leave the
+     * preview attached so the next motion + click retries. */
+    if(xctx->wirelabel_preview) {
+      wire_label_try_commit();
+      return 1;
+    }
     end_move_copy_logged(0);
     xctx->ui_state &=~START_SYMPIN;
     /* an Add-Pin preview pin was just dropped (committed): the gesture's undo baseline is
@@ -2001,6 +2182,214 @@ void draw_hover(int force)
   xctx->draw_pixmap = sdp;
 }
 
+/* Stroke the currently-tracked fly-line star (xctx->fly_seg) window-only through gc_flyline.
+ * Shared by draw_flylines() (draw the freshly-computed star) and the draw() re-stamp (re-establish
+ * the overlay after a full redraw wipes the window). No recompute -- it replays stored world-coord
+ * segments, which drawtempline maps through the current zoom/pan. Read-only (invariant C1). */
+void flyline_restamp(void)
+{
+  int i, sdw, sdp;
+  if(!has_x || xctx->fly_nseg <= 0 || !xctx->fly_seg) return;
+  if(!tclgetboolvar("flylines")) return;   /* disabled mid-show: a redraw must not re-stamp it */
+  sdw = xctx->draw_window; sdp = xctx->draw_pixmap;
+  xctx->draw_pixmap = 0; xctx->draw_window = 1;   /* window-only frame */
+  for(i = 0; i < xctx->fly_nseg; ++i)
+    drawtempline(xctx->gc_flyline, ADD, xctx->fly_seg[4 * i], xctx->fly_seg[4 * i + 1],
+                 xctx->fly_seg[4 * i + 2], xctx->fly_seg[4 * i + 3]);
+  drawtempline(xctx->gc_flyline, END, 0.0, 0.0, 0.0, 0.0);
+  xctx->draw_window = sdw; xctx->draw_pixmap = sdp;
+}
+
+/* Erase the drawn fly-line star by repainting its world bbox from the backing pixmap -- the
+ * regional-draw() idiom of draw_hilight_region() (hilight.c). The CALLER must clear fly_nseg /
+ * fly_shown_net first, so the draw() re-stamp hook sees an empty overlay and does not immediately
+ * re-stroke what we are erasing. Read-only w.r.t. schematic content (C1). */
+static void flyline_erase_region(double x1, double y1, double x2, double y2)
+{
+  double marg;
+  if(!has_x || !xctx->save_pixmap) return;
+  marg = xctx->cadhalfdotsize + 4.0 / xctx->mooz;   /* cover line width + dash + endpoint dots */
+  bbox(START, 0.0, 0.0, 0.0, 0.0);
+  bbox(ADD, x1 - marg, y1 - marg, x2 + marg, y2 + marg);
+  bbox(SET, 0.0, 0.0, 0.0, 0.0);
+  draw();
+  bbox(END, 0.0, 0.0, 0.0, 0.0);
+}
+
+/* Forget the tracked fly-line star, erasing its pixels when the caller asks (a regional redraw
+ * over the old bbox). Order matters: state is cleared BEFORE the erase-draw() so the re-stamp
+ * hook does not redraw the very star we are erasing. */
+static void flyline_clear(int erase)
+{
+  double ox1 = xctx->fly_x1, oy1 = xctx->fly_y1, ox2 = xctx->fly_x2, oy2 = xctx->fly_y2;
+  int had = xctx->fly_nseg > 0;
+  xctx->fly_nseg = 0;
+  xctx->fly_hub_nmem = 0;   /* no star -> no hub cluster to slide within */
+  if(xctx->fly_shown_net) my_free(_ALLOC_ID_, &xctx->fly_shown_net);
+  if(erase && had) flyline_erase_region(ox1, oy1, ox2, oy2);
+}
+
+/* Map a picked object to its FlyMember key {kind, idx, pin} and test membership in the cached
+ * hub cluster (fly_hub_mem). O(hub size), no re-clustering. Lets same-net motion that crosses
+ * between objects of the SAME hub cluster (a wire junction, a wire->its pin) stay on the cheap
+ * slide path instead of triggering a full recompute (H2 refinement, review of d1f3624c). */
+static int flyline_pick_in_hub_cluster(const Selected *pick)
+{
+  int kind, idx, pin, i;
+  if(xctx->fly_hub_nmem <= 0 || !xctx->fly_hub_mem) return 0;
+  if(pick->type == WIRE)          { kind = 0; idx = pick->n; pin = -1; }
+  else if(pick->type == INST_PIN) { kind = 1; idx = pick->n; pin = (int)pick->col; }
+  else if(pick->type == ELEMENT)  { kind = 1; idx = pick->n; pin = 0; }   /* label/pin: pin 0 */
+  else return 0;
+  for(i = 0; i < xctx->fly_hub_nmem; ++i) {
+    const int *k = &xctx->fly_hub_mem[3 * i];
+    if(k[0] == kind && k[1] == idx && k[2] == pin) return 1;
+  }
+  return 0;
+}
+
+/* H2 cheap path: slide the tracked star's ORIGIN to (hx,hy) without re-clustering. The
+ * destinations already live in fly_seg[4*i+2..3]; only the per-segment origin + bbox change.
+ * Same net + same hub object, so fly_shown_net stays. Mirrors the net-change erase/redraw order
+ * (flyline.c/draw() re-stamp trap): zero fly_nseg BEFORE the erase-draw() so the re-stamp hook
+ * does not redraw the OLD star, then rebuild + re-stroke the NEW origins. Read-only (C1). */
+static void flyline_move_origin(double hx, double hy)
+{
+  double ox1 = xctx->fly_x1, oy1 = xctx->fly_y1, ox2 = xctx->fly_x2, oy2 = xctx->fly_y2;
+  double x1, y1, x2, y2;
+  int i, n = xctx->fly_nseg;
+  if(n <= 0 || !xctx->fly_seg) return;
+  if(hx == xctx->fly_seg[0] && hy == xctx->fly_seg[1]) return;   /* origin unchanged: no redraw */
+  xctx->fly_nseg = 0;                          /* the erase-draw() must not re-stamp the old star */
+  flyline_erase_region(ox1, oy1, ox2, oy2);
+  x1 = x2 = hx; y1 = y2 = hy;
+  for(i = 0; i < n; ++i) {
+    double dx = xctx->fly_seg[4 * i + 2], dy = xctx->fly_seg[4 * i + 3];
+    xctx->fly_seg[4 * i] = hx; xctx->fly_seg[4 * i + 1] = hy;   /* move origin, keep destination */
+    if(dx < x1) x1 = dx; if(dx > x2) x2 = dx;
+    if(dy < y1) y1 = dy; if(dy > y2) y2 = dy;
+  }
+  xctx->fly_nseg = n;
+  xctx->fly_x1 = x1; xctx->fly_y1 = y1; xctx->fly_x2 = x2; xctx->fly_y2 = y2;
+  flyline_restamp();                           /* stroke the star from its new origin */
+}
+
+/* Hover fly-line overlay (doc/claude/specs/hover_flylines.md, Track B). Draw the implicit-
+ * connectivity "star" for the net under the cursor: thin dashed lines (gc_flyline) from the
+ * hovered cluster to every other cluster of the same net that is joined only by name (no drawn
+ * wire between them). Rides the same motion pump as draw_hover() but is independent of
+ * hover_highlight (spec §3.1) and gated by its own `flylines` var.
+ *
+ * INVARIANT C1: pure read-only overlay. All connectivity comes from flyline_compute()
+ * (flyline.c), which never mutates schematic state; here we only stroke the window (via
+ * drawtempline / a regional erase draw()) and update the transient fly_* fields -- nothing
+ * touches hilight_table / inst.color / .sel / the modified flag / saved bytes.
+ *
+ * B2: compute + draw + track fly_shown_net. B3: erase the previous star on a net change / leave
+ * (regional draw() over the old bbox) and re-stamp after pan/zoom/full-redraw (draw() hook +
+ * the retained xctx->fly_seg). */
+void draw_flylines(int force)
+{
+  const char *netname = NULL;
+  Selected pick;
+
+  if(!has_x) return;
+  if(!tclgetboolvar("flylines")) {
+    flyline_clear(1);                              /* feature off: erase any lingering star */
+    my_strdup(_ALLOC_ID_, &xctx->fly_last_net, NULL);
+    return;
+  }
+  /* Mid-gesture (a drag/wire/... owns the screen): leave the overlay untouched. A regional erase
+   * draw() here would fight the rubber-band redraw drawn earlier in the same frame (one-frame
+   * tear). The star refreshes when idle motion resumes -- and any edit clears prep_hi_structs,
+   * forcing a correct recompute then. The masked bits (SELECTION / net-pick modes) are resting
+   * states, not gestures, so they do not trigger this. */
+  if(xctx->mouse_inside &&
+     (xctx->ui_state & ~(SELECTION | NET_HILIGHT | NET_UNHILIGHT)) != 0) return;
+  if(xctx->semaphore >= 2) return;
+  if(xctx->mouse_inside) {
+    /* If prep_hi_structs is clear, an edit has invalidated wire[].node/clustering since the star
+     * was last drawn (check.c/paste.c/... reset it): force a recompute even when the net NAME is
+     * unchanged, else a same-name-but-restructured net would keep a stale star (spec §5.4/§6.3). */
+    if(!xctx->prep_hi_structs) force = 1;
+    prepare_netlist_structs(0);           /* rebuilds wire[].node / inst[].node iff stale */
+    pick = find_closest_obj(xctx->mousex, xctx->mousey, 0);
+    netname = flyline_net_of(pick.type, pick.n, pick.col);
+    if(netname && netname[0] == '#') netname = NULL;   /* A6: auto-named nets never fly */
+  }
+  /* else: pointer off-canvas (leave) -> netname stays NULL -> erase + clear below. */
+  /* change detection against the last RESOLVED net (not just the drawn one): a starless net --
+   * e.g. a fully-wired single-cluster net, the common case -- also short-circuits, so repeated
+   * motion over it does not re-run the full member scan. Turns same-net motion into O(1).
+   *
+   * H2: when the net is unchanged AND a star is on screen AND the cursor is still over the SAME
+   * hub object, slide the origin under the cursor (flyline_move_origin) instead of short-circuiting
+   * -- a wire hub then tracks the pointer. This recomputes ONLY the hub point + rebuilds fly_seg
+   * from the cached destinations; NO re-cluster (the review fixed the full-rescan cost). Moving to
+   * a different object of the same net (hub-cluster change) falls through to a full recompute. */
+  if(!force) {
+    const char *cur = xctx->fly_last_net ? xctx->fly_last_net : "";
+    const char *nw  = netname ? netname : "";
+    if(!strcmp(cur, nw)) {
+      if(netname && xctx->fly_nseg > 0 && flyline_pick_in_hub_cluster(&pick)) {
+        double hx, hy;
+        flyline_hub_point(&pick, xctx->mousex, xctx->mousey, &hx, &hy);
+        flyline_move_origin(hx, hy);           /* no-op when the projected origin is unchanged */
+        return;
+      }
+      if(!(netname && xctx->fly_nseg > 0)) return;   /* starless same-net motion: O(1) short-circuit */
+      /* else: same net but a DIFFERENT hub cluster -> fall through to a full recompute */
+    }
+  }
+  my_strdup(_ALLOC_ID_, &xctx->fly_last_net, netname);   /* NULL -> frees to NULL */
+  /* net changed (possibly to nothing): erase the old star, then draw the new one (if any). */
+  flyline_clear(1);
+  if(!netname) return;   /* moved to empty / off-canvas: erased, nothing to draw */
+  {
+    FlyResult res;
+    /* hub = hovered cluster; origin = the point on the hovered object under the pointer */
+    flyline_compute(netname, 1, &pick, xctx->mousex, xctx->mousey, &res);
+    if(res.nseg > 0) {
+      int i;
+      double x1 = res.sx1[0], y1 = res.sy1[0], x2 = res.sx1[0], y2 = res.sy1[0];
+      if(res.nseg * 4 > xctx->fly_seg_alloc) {   /* grow the retained segment buffer */
+        xctx->fly_seg_alloc = res.nseg * 4;
+        my_realloc(_ALLOC_ID_, &xctx->fly_seg, xctx->fly_seg_alloc * sizeof(double));
+      }
+      for(i = 0; i < res.nseg; ++i) {
+        xctx->fly_seg[4 * i]     = res.sx1[i]; xctx->fly_seg[4 * i + 1] = res.sy1[i];
+        xctx->fly_seg[4 * i + 2] = res.sx2[i]; xctx->fly_seg[4 * i + 3] = res.sy2[i];
+        if(res.sx1[i] < x1) x1 = res.sx1[i]; if(res.sx1[i] > x2) x2 = res.sx1[i];
+        if(res.sx2[i] < x1) x1 = res.sx2[i]; if(res.sx2[i] > x2) x2 = res.sx2[i];
+        if(res.sy1[i] < y1) y1 = res.sy1[i]; if(res.sy1[i] > y2) y2 = res.sy1[i];
+        if(res.sy2[i] < y1) y1 = res.sy2[i]; if(res.sy2[i] > y2) y2 = res.sy2[i];
+      }
+      xctx->fly_nseg = res.nseg;
+      xctx->fly_x1 = x1; xctx->fly_y1 = y1; xctx->fly_x2 = x2; xctx->fly_y2 = y2;
+      /* cache the hub CLUSTER's member keys so subsequent same-cluster motion slides the origin
+       * without re-clustering (H2); res is still live here (freed below). */
+      xctx->fly_hub_nmem = 0;
+      {
+        int a;
+        for(a = 0; a < res.nmem; ++a) {
+          if(res.clu[a] != res.hub) continue;
+          if(3 * (xctx->fly_hub_nmem + 1) > xctx->fly_hub_mem_alloc) {
+            xctx->fly_hub_mem_alloc = xctx->fly_hub_mem_alloc ? xctx->fly_hub_mem_alloc * 2 : 48;
+            my_realloc(_ALLOC_ID_, &xctx->fly_hub_mem, xctx->fly_hub_mem_alloc * sizeof(int));
+          }
+          xctx->fly_hub_mem[3 * xctx->fly_hub_nmem]     = res.mem[a].kind;
+          xctx->fly_hub_mem[3 * xctx->fly_hub_nmem + 1] = res.mem[a].idx;
+          xctx->fly_hub_mem[3 * xctx->fly_hub_nmem + 2] = res.mem[a].pin;
+          ++xctx->fly_hub_nmem;
+        }
+      }
+      my_strdup(_ALLOC_ID_, &xctx->fly_shown_net, netname);
+      flyline_restamp();                          /* stroke the freshly-stashed star */
+    }
+    flyline_result_free(&res);
+  }
+}
+
 static void unselect_at_mouse_pos(int mx, int my)
 {
        xctx->last_command = 0;
@@ -2106,10 +2495,11 @@ static int check_menu_start_commands(int state, double c_snap, int mx, int my)
   if((xctx->ui_state & MENUSTART) &&
      (xctx->ui_state2 & (MENUSTARTWIRECUT | MENUSTARTWIRECUT2 | MENUSTARTMOVE | MENUSTARTCOPY |
                          MENUSTARTWIRE | MENUSTARTSNAPWIRE | MENUSTARTLINE | MENUSTARTRECT |
-                         MENUSTARTPOLYGON | MENUSTARTARC | MENUSTARTCIRCLE)) &&
+                         MENUSTARTPOLYGON | MENUSTARTARC | MENUSTARTCIRCLE | MENUSTARTROTATE)) &&
      readonly_block()) {
     xctx->ui_state &= ~MENUSTART;
     xctx->ui_state2 = 0;
+    xctx->menu_pending_transform = PENDING_TR_NONE;
     return 1;
   }
   if((xctx->ui_state & MENUSTART) && (xctx->ui_state2 & MENUSTARTWIRECUT)) {
@@ -2124,16 +2514,26 @@ static int check_menu_start_commands(int state, double c_snap, int mx, int my)
     /* verb-noun (cadence_pin_name_text.md copy/move UX): 'm' on an empty selection arms
      * MENUSTARTMOVE, so this click SELECTS the object under the cursor and picks it up in
      * one gesture. With something already selected (Edit>Move menu path) the existing
-     * selection is moved and the click is just the pick-up point. */
+     * selection is moved and the click is just the pick-up point.
+     * MENUSTARTSTRETCH (cadence 'm') additionally grabs attached nets so wires stay
+     * connected/reroute — see doc/claude/specs/cadence_stretch_move_keys.md */
+    int stretch_move = (xctx->ui_state2 & MENUSTARTSTRETCH) ? 1 : 0;
     rebuild_selected_array();
     if(xctx->lastsel == 0) {
       select_object(xctx->mousex, xctx->mousey, SELECTED, 0, NULL);
       rebuild_selected_array();
     }
+    if(xctx->lastsel == 0) { /* clicked empty space: cancel the armed move cleanly */
+      xctx->ui_state &= ~MENUSTART;
+      xctx->ui_state2 = 0;
+      return 1;
+    }
     xctx->mx_double_save=xctx->mousex_snap;
     xctx->my_double_save=xctx->mousey_snap;
-    /* stretch nets that land on selected instance pins if connect_by_kissing == 2 */
-    /* select_attached_nets(); */
+    if(stretch_move) { /* connected: kissing armed before select_attached_nets (through-run tap skip) */
+      xctx->connect_by_kissing = 2;
+      select_attached_nets();
+    }
     move_objects(START,0,0,0);
     return 1;
   }
@@ -2148,6 +2548,68 @@ static int check_menu_start_commands(int state, double c_snap, int mx, int my)
     xctx->mx_double_save=xctx->mousex_snap;
     xctx->my_double_save=xctx->mousey_snap;
     copy_objects(START);
+    return 1;
+  }
+  else if((xctx->ui_state & MENUSTART) && (xctx->ui_state2 & MENUSTARTROTATE)) {
+    /* verb-noun prompt-for-object rotate/flip (Cases 1 & 3, rotate_keep_connected_stretch.md):
+     * a rotate/flip verb fired with nothing selected armed this; this click SELECTS the object
+     * under the cursor and applies the pending transform about the click point, in one shot.
+     * PLAIN transform -- no select_attached_nets(), so wires are NOT kept connected (Case 3
+     * deliberately abandoned any pending stretch). Unlike move/copy this is instantaneous, so
+     * it clears MENUSTART itself (the caller only clears MENUSTART for the fall-through click). */
+    int t = xctx->menu_pending_transform;
+    rebuild_selected_array();
+    if(xctx->lastsel == 0) {
+      select_object(xctx->mousex, xctx->mousey, SELECTED, 0, NULL);
+      rebuild_selected_array();
+    }
+    if(xctx->lastsel == 0) { /* clicked empty space: cancel the armed rotate cleanly */
+      xctx->ui_state &= ~MENUSTART;
+      xctx->ui_state2 = 0;
+      xctx->menu_pending_transform = PENDING_TR_NONE;
+      return 1;
+    }
+    xctx->mx_double_save = xctx->mousex_snap;
+    xctx->my_double_save = xctx->mousey_snap;
+    if(t == PENDING_TR_ROTATE_IP) {
+      /* rotate_in_place standalone (verb-noun deferred apply): route through the mutation
+       * boundary (Refactor B atom 3), which owns readonly + the ONE `xschem rotate_in_place`
+       * log site + its own rebuild+START+ROTATE|ROTATELOCAL+END effect. It must NOT be nested
+       * inside the shared move_objects(START/END) the other transform cases use -- that would
+       * double the START/END. readonly was already refused at the MENUSTART backstop above. */
+      perform_action("rotate_in_place", 0, NULL);
+    } else if(t == PENDING_TR_FLIP_IP) {
+      /* flip_in_place standalone (verb-noun deferred apply): same shape as rotate_in_place,
+       * routed through the boundary (Refactor B atom 4). perform_action->run_core owns its own
+       * rebuild+START+FLIP|ROTATELOCAL+END, so it must NOT nest inside the shared START/END below. */
+      perform_action("flip_in_place", 0, NULL);
+    } else {
+      move_objects(START,0,0,0);
+      switch(t) {
+        case PENDING_TR_FLIP:
+          move_objects(FLIP,0,0,0);
+          log_action("xschem flip %.16g %.16g", xctx->mx_double_save, xctx->my_double_save);
+          break;
+        case PENDING_TR_FLIPV:
+          move_objects(ROTATE,0,0,0); move_objects(ROTATE,0,0,0); move_objects(FLIP,0,0,0);
+          log_action("xschem flipv %.16g %.16g", xctx->mx_double_save, xctx->my_double_save);
+          break;
+        case PENDING_TR_FLIPV_IP:
+          move_objects(ROTATE|ROTATELOCAL,0,0,0); move_objects(ROTATE|ROTATELOCAL,0,0,0);
+          move_objects(FLIP|ROTATELOCAL,0,0,0);
+          log_action("xschem flipv_in_place");
+          break;
+        case PENDING_TR_ROTATE:
+        default:
+          move_objects(ROTATE,0,0,0);
+          log_action("xschem rotate %.16g %.16g", xctx->mx_double_save, xctx->my_double_save);
+          break;
+      }
+      move_objects(END,0,0,0);
+    }
+    xctx->ui_state &= ~MENUSTART;
+    xctx->ui_state2 = 0;
+    xctx->menu_pending_transform = PENDING_TR_NONE;
     return 1;
   }
   else if((xctx->ui_state & MENUSTART) && (xctx->ui_state2 & MENUSTARTWIRE)) {
@@ -2283,28 +2745,34 @@ static int edit_line_point(int state)
 {
    int line_n = -1, line_c = -1;
    dbg(1, "1 Line selected\n");
+   /* Fluid editing: a modifier-held press is a Cadence copy (Shift) / detach (Ctrl)
+    * gesture, not a stretch. Bail BEFORE setting shape_point_selected so the press falls
+    * through cleanly to the whole-object modifier-drag path (which is gated on
+    * !shape_point_selected); otherwise the flag stays stuck and the copy/detach silently
+    * no-ops with a spurious commit on release. */
+   if(state & (ControlMask | ShiftMask)) return 0;
    line_n = xctx->sel_array[0].n;
    line_c = xctx->sel_array[0].col;
   /* lineangle point: Check is user is clicking a control point of a lineangle */
   if(line_n >= 0) {
+    double ds = xctx->cadhalfdotsize * 2 * xctx->zoom;
     xLine *p = &xctx->line[line_c][line_n];
 
     xctx->need_reb_sel_arr=1;
-    if(xctx->mousex_snap == p->x1 && xctx->mousey_snap == p->y1) {
+    /* C4: a cadhalfdotsize tolerance zone around each endpoint (was an exact snap-match),
+     * matching rect corners / arc endpoints for a forgiving, consistent grab. */
+    if(POINTINSIDE(xctx->mousex, xctx->mousey, p->x1 - ds, p->y1 - ds, p->x1 + ds, p->y1 + ds)) {
       xctx->shape_point_selected = 1;
       p->sel = SELECTED1;
     }
-    else if(xctx->mousex_snap == p->x2 && xctx->mousey_snap == p->y2) {
+    else if(POINTINSIDE(xctx->mousex, xctx->mousey, p->x2 - ds, p->y2 - ds, p->x2 + ds, p->y2 + ds)) {
       xctx->shape_point_selected = 1;
       p->sel = SELECTED2;
     }
     if(xctx->shape_point_selected) {
-      /* move one line selected point */
-      if(!(state & (ControlMask | ShiftMask))){
-        /* xctx->push_undo(); */
-        move_objects(START,0,0,0);
-        return 1;
-      }
+      /* move one line selected point (undo push owned by move_objects START) */
+      move_objects(START,0,0,0);
+      return 1;
     } /* if(xctx->shape_point_selected) */
   } /* if(line_n >= 0) */
   return 0;
@@ -2315,27 +2783,32 @@ static int edit_wire_point(int state)
 {
    int wire_n = -1;
    dbg(1, "edit_wire_point, ds = %g\n", xctx->cadhalfdotsize);
+   /* Fluid editing: modifier-held press = copy/detach gesture, not a stretch (see
+    * edit_line_point). Bail before setting shape_point_selected. */
+   if(state & (ControlMask | ShiftMask)) return 0;
    wire_n = xctx->sel_array[0].n;
   /* wire point: Check is user is clicking a control point of a wire */
   if(wire_n >= 0) {
+    double ds = xctx->cadhalfdotsize * 2 * xctx->zoom;
     xWire *p = &xctx->wire[wire_n];
 
     xctx->need_reb_sel_arr=1;
-    if(xctx->mousex_snap == p->x1 && xctx->mousey_snap == p->y1) {
+    /* C4: tolerance zone around each endpoint (was exact snap-match). Free/connected wire
+     * endpoints are still consumed earlier by grab_free_wire_vertex / add_wire_from_wire;
+     * this forgiving zone applies when the wire reaches edit_wire_point (already selected,
+     * or a near-endpoint click that missed those paths). */
+    if(POINTINSIDE(xctx->mousex, xctx->mousey, p->x1 - ds, p->y1 - ds, p->x1 + ds, p->y1 + ds)) {
       xctx->shape_point_selected = 1;
       p->sel = SELECTED1;
     }
-    else if(xctx->mousex_snap == p->x2 && xctx->mousey_snap == p->y2) {
+    else if(POINTINSIDE(xctx->mousex, xctx->mousey, p->x2 - ds, p->y2 - ds, p->x2 + ds, p->y2 + ds)) {
       xctx->shape_point_selected = 1;
       p->sel = SELECTED2;
     }
     if(xctx->shape_point_selected) {
-      /* move one wire selected point */
-      if(!(state & (ControlMask | ShiftMask))){
-        /* xctx->push_undo(); */
-        move_objects(START,0,0,0);
-        return 1;
-      }
+      /* move one wire selected point (undo push owned by move_objects START) */
+      move_objects(START,0,0,0);
+      return 1;
     } /* if(xctx->shape_point_selected) */
   } /* if(wire_n >= 0) */
   return 0;
@@ -2389,11 +2862,16 @@ static int grab_free_wire_vertex(Selected *sel, double mx, double my, int state)
   return edit_wire_point(state); /* sets shape_point_selected + move_objects(START); commit-on-release */
 }
 
-/* sets xctx->shape_point_selected */
-static int edit_rect_point(int state)
+/* `fluid` = fluid_editing (C4). Corners grab whenever this editor is reached (the caller
+ * already applied the two-step/fluid gate); the side EDGES are fluid-only. sets
+ * xctx->shape_point_selected */
+static int edit_rect_point(int state, int fluid)
 {
    int rect_n = -1, rect_c = -1;
    dbg(1, "1 Rectangle selected\n");
+   /* Fluid editing: modifier-held press = Cadence copy/detach gesture, not a stretch
+    * (see edit_line_point). Bail before setting shape_point_selected. */
+   if(state & (ControlMask | ShiftMask)) return 0;
    rect_n = xctx->sel_array[0].n;
    rect_c = xctx->sel_array[0].col;
   /* rectangle point: Check is user is clicking a control point of a rectangle */
@@ -2418,15 +2896,96 @@ static int edit_rect_point(int state)
       xctx->shape_point_selected = 1;
       p->sel = SELECTED4;
     }
+    /* Fluid editing (C3, doc/claude/specs/fluid_editing.md): a click near a SIDE (not a
+     * corner) grabs that whole edge -- both of its corners -- so the drag stretches the
+     * side. The four corner zones are tested first (else-if), so an edge branch only fires
+     * away from the corners; each side is a full-span band +/- ds perpendicular to the
+     * edge line. The two-corner SELECTED pairs match move.c's edge-stretch commit cases:
+     *   top    (y1) -> SELECTED1|SELECTED2   bottom (y2) -> SELECTED3|SELECTED4
+     *   left   (x1) -> SELECTED1|SELECTED3   right  (x2) -> SELECTED2|SELECTED4
+     * Gated on `fluid` (fluid_editing) so stock behaviour (the two-step, corners only) is
+     * unchanged. An edge band is only enabled when the rect is thicker than 2*ds in the
+     * perpendicular direction. That keeps the two opposite bands DISJOINT (so the far
+     * edge stays grabbable) and always leaves an interior dead zone wider than the two
+     * bands, so a body click still falls through to the whole-object move. Without this
+     * guard a thin (or zoomed-out) rect has its whole interior covered by the bands and
+     * can never be moved, only deformed. */
+    else if(fluid && (p->y2 - p->y1) > 2 * ds &&
+            POINTINSIDE(xctx->mousex, xctx->mousey, p->x1, p->y1 - ds, p->x2, p->y1 + ds)) {
+      xctx->shape_point_selected = 1;
+      p->sel = SELECTED1 | SELECTED2;              /* top edge (y1) */
+    }
+    else if(fluid && (p->y2 - p->y1) > 2 * ds &&
+            POINTINSIDE(xctx->mousex, xctx->mousey, p->x1, p->y2 - ds, p->x2, p->y2 + ds)) {
+      xctx->shape_point_selected = 1;
+      p->sel = SELECTED3 | SELECTED4;              /* bottom edge (y2) */
+    }
+    else if(fluid && (p->x2 - p->x1) > 2 * ds &&
+            POINTINSIDE(xctx->mousex, xctx->mousey, p->x1 - ds, p->y1, p->x1 + ds, p->y2)) {
+      xctx->shape_point_selected = 1;
+      p->sel = SELECTED1 | SELECTED3;              /* left edge (x1) */
+    }
+    else if(fluid && (p->x2 - p->x1) > 2 * ds &&
+            POINTINSIDE(xctx->mousex, xctx->mousey, p->x2 - ds, p->y1, p->x2 + ds, p->y2)) {
+      xctx->shape_point_selected = 1;
+      p->sel = SELECTED2 | SELECTED4;              /* right edge (x2) */
+    }
     if(xctx->shape_point_selected) {
-      /* move one rectangle selected point */
-      if(!(state & (ControlMask | ShiftMask))){
-        /* xctx->push_undo(); */
-        move_objects(START,0,0,0);
-        return 1;
-      }
+      /* move one rectangle control point / edge (undo push owned by move_objects START) */
+      move_objects(START,0,0,0);
+      return 1;
     } /* if(xctx->shape_point_selected) */
   } /* if(rect_n >= 0) */
+  return 0;
+}
+
+/* Fluid editing (C2, doc/claude/specs/fluid_editing.md) -- grab an arc angular endpoint.
+ * Mirrors edit_rect_point: a cadhalfdotsize-scaled tolerance zone on each grabbable arc
+ * handle. The point->SELECTED mapping matches the area-stretch path in select.c
+ * (select_inside, arc branch) so the same move.c commit code applies:
+ *   end endpoint (xb,yb)   -> SELECTED3  (arc sweep b)
+ *   start endpoint (xa,ya) -> SELECTED2  (start angle a)
+ * The end endpoint is tested first, so a full-circle arc where xa==xb resolves to it.
+ * NOTE: the arc CENTER (radius handle, SELECTED1 in select.c/move.c) is intentionally NOT
+ * offered here: the center is not on the curve, so a click there never hits/selects the
+ * arc (find_closest_arc measures distance to the ring), which means the arc is never
+ * sel_array[0] for a center press -- a center zone would be dead code. Radius editing
+ * stays available via the area-stretch (rubber-band) path. A click on the arc BODY away
+ * from the endpoints returns 0 and falls through to the whole-object move.
+ * Gated on `fluid` (fluid_editing) -- a NEW handle with no prior editor, like the C3 rect
+ * edges -- so the stock two-step keeps moving the whole arc. sets xctx->shape_point_selected */
+static int edit_arc_point(int state, int fluid)
+{
+   int arc_n = -1, arc_c = -1;
+   dbg(1, "1 Arc selected\n");
+   if(!fluid) return 0;
+   /* modifier-held press = copy/detach gesture, not a stretch (see edit_line_point) */
+   if(state & (ControlMask | ShiftMask)) return 0;
+   arc_n = xctx->sel_array[0].n;
+   arc_c = xctx->sel_array[0].col;
+  if(arc_n >= 0) {
+    double ds = xctx->cadhalfdotsize * 2 * xctx->zoom;
+    xArc *p = &xctx->arc[arc_c][arc_n];
+    double xa = p->x + p->r * cos(p->a * XSCH_PI / 180.);
+    double ya = p->y - p->r * sin(p->a * XSCH_PI / 180.);
+    double xb = p->x + p->r * cos((p->a + p->b) * XSCH_PI / 180.);
+    double yb = p->y - p->r * sin((p->a + p->b) * XSCH_PI / 180.);
+
+    xctx->need_reb_sel_arr=1;
+    if(POINTINSIDE(xctx->mousex, xctx->mousey, xb - ds, yb - ds, xb + ds, yb + ds)) {
+      xctx->shape_point_selected = 1;
+      p->sel = SELECTED3;
+    }
+    else if(POINTINSIDE(xctx->mousex, xctx->mousey, xa - ds, ya - ds, xa + ds, ya + ds)) {
+      xctx->shape_point_selected = 1;
+      p->sel = SELECTED2;
+    }
+    if(xctx->shape_point_selected) {
+      /* move one arc endpoint (undo push owned by move_objects START) */
+      move_objects(START,0,0,0);
+      return 1;
+    } /* if(xctx->shape_point_selected) */
+  } /* if(arc_n >= 0) */
   return 0;
 }
 
@@ -2509,6 +3068,29 @@ static int edit_polygon_point(int state)
   return 0;
 }
 
+/* Fluid editing (C4, doc/claude/specs/fluid_editing.md): try to start a first-click
+ * control-point grab on the single selected object under the cursor. Returns 1 if a grab
+ * started (move_objects(START) called) so the caller returns, skipping the whole-object
+ * move; 0 to fall through. Gating, preserved from the per-type if-chain it replaces:
+ *   - polygon vertex: grabs unconditionally (legacy; intuitive-independent).
+ *   - rect corner / line end / wire end: grabs when already-selected (the stock two-step)
+ *     OR `fluid` (fluid_editing) -- and only in the intuitive interface.
+ *   - rect side EDGE and arc endpoint: NEW handles, fluid-only (enforced inside the
+ *     editors), so the stock two-step is unchanged. */
+static int try_grab_shape_point(int state, int intuitive, int already_selected, int fluid)
+{
+  if(xctx->readonly || xctx->lastsel != 1) return 0;
+  if(xctx->sel_array[0].type == POLYGON) return edit_polygon_point(state);
+  if(!intuitive || !(already_selected || fluid)) return 0;
+  switch(xctx->sel_array[0].type) {
+    case xRECT: return edit_rect_point(state, fluid);
+    case LINE:  return edit_line_point(state);
+    case WIRE:  return edit_wire_point(state);
+    case ARC:   return edit_arc_point(state, fluid);
+    default:    return 0;
+  }
+}
+
 /* Action-log Layer B (spec section 2): the replayable command recorded when a
  * context-menu pick fires, indexed by the menu's retval (1..21). One table, the
  * complete classification, so the log call below stays a single line:
@@ -2531,7 +3113,10 @@ static const char *ctxmenu_log_cmd[] = {
   NULL,                          /*  5  place polygon     -> Layer C       */
   NULL,                          /*  6  place text        -> Layer C       */
   "xschem cut",                  /*  7  cut selection -> clipboard         */
-  "xschem paste",                /*  8  paste clipboard at mouse           */
+  NULL,                          /*  8  paste clipboard   -> Layer C: the pick only STARTS the
+                                  *     merge gesture; the drop logs the replayable
+                                  *     `xschem paste dx dy ...` line (issue 0069). A pick line
+                                  *     here would replay a second merge on top of it. */
   NULL,                          /*  9  load recent  (dynamic; see case 9) */
   "# context-menu: edit attributes (dialog, not replayable)",            /* 10 */
   "# context-menu: edit attributes in editor (dialog, not replayable)",  /* 11 */
@@ -2689,7 +3274,7 @@ static void context_menu_action(double mx, double my)
       new_arc(PLACE, 360., mx, my);
       break;
     case 21: /* abort & redraw */
-      abort_operation();
+      abort_operation(1);
       break;
     default:
       break;
@@ -2822,6 +3407,16 @@ void view_snap_change(int dbl)
 void toggle_stretch_cmd(void)
 {
   tclsetboolvar("enable_stretch", !tclgetboolvar("enable_stretch"));
+  /* self-log the ABSOLUTE resolved state, NOT the relative flip (0062 tail / atom 16):
+   * a replayed `xschem toggle_stretch` lands on the OPPOSITE value whenever the start
+   * state differs from record time, so log the set-class form read back AFTER the flip
+   * (the 0066 cadsnap rule: never a relative/gesture form when an absolute one exists).
+   * Both callers -- the scheduler `toggle_stretch` branch and the 'y'-key
+   * act_toggle_stretch -- funnel here (1:1 with the verb), so this one site covers
+   * key/menu/script; the key's csv log_cmd copy dedups via dispatch's
+   * actionlog_cmd_logged gate. The `set enable_stretch` scheduler replay arm reproduces
+   * the effect (the mirrored tcl var) without re-logging. */
+  log_action("xschem set enable_stretch %d", tclgetboolvar("enable_stretch"));
 }
 static int act_toggle_stretch(const ActionEvent *e) { (void)e; toggle_stretch_cmd(); return 1; }
 static int act_toggle_ignore(const ActionEvent *e) { (void)e; toggle_ignore(); return 1; }
@@ -2850,6 +3445,11 @@ void toggle_orthogonal_wiring_cmd(void)
   if(tclgetboolvar("orthogonal_wiring")) { tclsetboolvar("orthogonal_wiring", 0); xctx->manhattan_lines = 0; }
   else                                   { tclsetboolvar("orthogonal_wiring", 1); }
   redraw_w_a_l_r_p_z_rubbers(1);
+  /* self-log the ABSOLUTE resolved state (0062 tail / atom 16): see toggle_stretch_cmd
+   * for the relative-flip-is-replay-fragile rationale. The `set orthogonal_wiring`
+   * scheduler replay arm reproduces the FULL side effect (manhattan_lines + rubber
+   * redraw), so a replayed line is faithful, not just the tcl var. */
+  log_action("xschem set orthogonal_wiring %d", tclgetboolvar("orthogonal_wiring"));
 }
 void toggle_draw_pixmap_cmd(void)
 {
@@ -3041,6 +3641,9 @@ static ActionDef action_registry[] = {
   { "sym.place_symbol_pin", NULL, "xschem add_symbol_pin",
     "Add a symbol pin (Name + Direction dialog)", 1 },
   { "tools.insert_polygon", NULL, "xschem polygon gui", "Start drawing a polygon", 1 },
+  /* graphic-line placement, migrated off the plain-'l' switch case so 'l' can host the
+   * Add-Wire-Label form (add_wire_label.md). Default chord Shift+L (see init_input_bindings). */
+  { "tools.insert_line", NULL, "xschem line gui", "Start drawing a line", 1 },
   { "view.center_at_cursor", act_view_center_at_cursor, NULL,
     "Center the view on the cursor position" },
   /* Phase 3d.2 batch 2 — clean canvas-only command keys (C-backed). All ids below
@@ -3144,6 +3747,21 @@ static ActionDef action_registry[] = {
    * schematic content. See doc/claude/specs/alt2_toggle_view.md. */
   { "view.toggle_view_type", NULL, "alt2_toggle_view",
     "Open the alternate view (schematic<->symbol) of the current cell" },
+  /* Schematic/symbol Add-Pin (doc/claude/specs/schematic_add_pin.md): while a pin preview is
+   * attached to the cursor, cycle its direction/type (input/output/inout, i.e.
+   * ipin<->opin<->iopin in a schematic) and re-arm the current name. Tcl-backed
+   * (addpin::cycle_type). Default chord Ctrl+Button2 (seeded in init_input_bindings, mirrored
+   * in mousebindings.csv); rebind with `xschem bind`. mutates=0: it only re-arms an
+   * undo-managed preview -- no standalone content change. */
+  { "edit.cycle_pin_type", NULL, "addpin::cycle_type",
+    "Cycle the direction/type (input/output/inout) of the pin being placed",
+    0 /* mutates */, NULL /* log_cmd */, 1 /* nolog: GUI-only chord, self-guards, not replayable */ },
+  /* Cadence-style Add Wire Label form (add_wire_label.md): open the modeless net-label form
+   * (typed name queue -> lab_pin instances, bus split, drop-on-copper constraint). Tcl-backed;
+   * mutates=0 -- opening the dialog changes nothing; the -place/-drop verbs own their undo.
+   * Default key 'l' (init_input_bindings). Rebindable. */
+  { "edit.add_wire_label", NULL, "xschem add_wire_label",
+    "Open the Add Wire Label form (place net labels)" },
 };
 static const int num_action_defs = (int)(sizeof(action_registry)/sizeof(action_registry[0]));
 
@@ -3249,6 +3867,9 @@ static void init_input_bindings(void)
   set_input_binding(DEV_WHEEL, WHEEL_UP,   ControlMask, ACTX_CANVAS, "view.pan_up");
   set_input_binding(DEV_WHEEL, WHEEL_DOWN, ControlMask, ACTX_CANVAS, "view.pan_down");
   set_input_binding(DEV_BUTTON, Button3,   0,           ACTX_CANVAS, "view.zoom_rect");
+  /* Ctrl+Middle-click cycles the pin direction/type while placing (schematic_add_pin.md).
+   * Button2-pan requires state==0, so this exact-Ctrl chord never collides with the pan. */
+  set_input_binding(DEV_BUTTON, Button2,   ControlMask, ACTX_CANVAS, "edit.cycle_pin_type");
   /* over a waveform graph, the no-modifier and Shift wheel drive the graph
    * (the old inline waves_selected routing, now data). Ctrl-wheel never did, so
    * it has no over_graph row and stays canvas pan. */
@@ -3317,7 +3938,13 @@ static void init_input_bindings(void)
    * canvas row makes the whole case data. L/=/$ are canvas-only (no over_graph row),
    * so only their plain-chord switch branch is deleted (Ctrl/Alt branches stay in C). */
   set_input_binding(DEV_KEY, 'A', 0, ACTX_CANVAS, "view.toggle_show_netlist");
-  set_input_binding(DEV_KEY, 'L', 0, ACTX_CANVAS, "edit.toggle_orthogonal_wiring");
+  /* add_wire_label.md (user-ratified): plain 'l' opens the Add-Wire-Label form (was: start a
+   * graphic line -- that switch case is now shadowed and relocated to Shift+L below). Shift+L
+   * hosts the graphic line (was: edit.toggle_orthogonal_wiring, which now ships UNBOUND -- rebind
+   * via keybindings.csv / `xschem bind`, same pattern as view.center_at_cursor). Both are freely
+   * reconfigurable from a user rc/script. */
+  set_input_binding_idle(DEV_KEY, 'l', 0, ACTX_CANVAS, "edit.add_wire_label");
+  set_input_binding(DEV_KEY, 'L', 0, ACTX_CANVAS, "tools.insert_line");
   set_input_binding(DEV_KEY, '=', 0, ACTX_CANVAS, "tools.execute_tcl_command");
   set_input_binding(DEV_KEY, '$', 0, ACTX_CANVAS, "view.toggle_draw_pixmap");
   /* 't': plain (place text) is an EXACT chord -> its switch guard is deleted like
@@ -3760,11 +4387,17 @@ static int handle_mouse_wheel(int event, int mx, int my, KeySym key, int button,
    return (ctx == ACTX_OVER_GRAPH);
 }
 
-static void end_shape_point_edit(double c_snap)
+static void end_shape_point_edit(void)
 {
      int save = xctx->modified;
      int edited = 0;
-     double sx, sy;
+     /* Did the gesture actually move anything? move_objects(END) commits the accumulated
+      * xctx->deltax/deltay (set by the last RUBBER) and zeroes them, so capture the net
+      * move HERE, before any END below. This replaces an older "release cell == press cell"
+      * test that assumed the move reference is the mouse -- false for an arc, whose START
+      * reference is the arc CENTER (move.c:1600), so a drag-and-return would silently change
+      * the arc yet reset the modified flag to clean (a lost edit on close-without-save). */
+     int moved = (xctx->deltax != 0.0 || xctx->deltay != 0.0);
      dbg(1, "%g %g %g %g\n",
          xctx->mx_double_save, xctx->my_double_save, xctx->mousex_snap, xctx->mousey_snap);
      if(xctx->lastsel == 1 && xctx->sel_array[0].type==POLYGON) {
@@ -3814,10 +4447,20 @@ static void end_shape_point_edit(double c_snap)
         xctx->shape_point_selected = 0;
         xctx->need_reb_sel_arr=1;
      }
-     sx = my_round(xctx->mx_double_save / c_snap) * c_snap;
-     sy = my_round(xctx->my_double_save / c_snap) * c_snap;
-
-     if(sx == xctx->mousex_snap && sy == xctx->mousey_snap) {
+     else if(xctx->lastsel == 1 && xctx->sel_array[0].type==ARC) {
+        int n = xctx->sel_array[0].n;
+        int c = xctx->sel_array[0].col;
+        move_objects(END,0,0,0);
+        edited = 1;
+        xctx->constr_mv=0;
+        tcleval("set constr_mv 0" );
+        xctx->arc[c][n].sel = SELECTED;
+        xctx->shape_point_selected = 0;
+        xctx->need_reb_sel_arr=1;
+     }
+     if(!moved) {
+       /* no net move: restore the pre-gesture modified flag so a click that did not drag
+        * (or dragged back to the start) does not leave the buffer spuriously dirty. */
        set_modify(save);
      }
      /* action-log Layer C: a control-point drag has no replayable form yet
@@ -3826,6 +4469,10 @@ static void end_shape_point_edit(double c_snap)
      else if(edited) {
        log_action("# edit shape control point (drag; not replayable: needs object referent, issue 0005)");
      }
+     /* a shape-point (vertex/edge) grab captured a pre-press snapshot at press but never armed the
+      * deferred-selection restore (this precise edit keeps its shape selected). Free the unused
+      * snapshot so it does not linger to the next gesture. */
+     drag_sel_free();
 }
 
 void unselect_attached_floaters(void)
@@ -3899,7 +4546,7 @@ static void handle_enter_notify(int draw_xhair, int crosshair_size)
     /* xschem window *receiving* selected objects selection cleared --> abort */
     else if(xctx->paste_from == 1 && stat(sel_file, &buf) && (xctx->ui_state & STARTMERGE)) {
       dbg(1, " xschem window *receiving* selected objects selection cleared: abort\n");
-      abort_operation();
+      abort_operation(1);
     }
     /*xschem window *receiving* selected objects
      * no selected objects and selection file exists --> start merge */
@@ -4069,12 +4716,72 @@ static void handle_motion_notify(int event, KeySym key, int state, int rstate, i
      * crosshair redraw so the crosshair stays on top. No-op when disabled / mid-
      * gesture (ui_state!=0 here) / pointer outside. */
     draw_hover(0);
+    draw_flylines(0); /* hover fly-line overlay: independent of hover_highlight (spec §3.1) */
     if(draw_xhair) {
       draw_crosshair(2, state); /* what = 2(draw) */
     }
     if(snap_cursor && ((state == ShiftMask) || wire_draw_active)) draw_snap_cursor(2); /* redraw */
 
     return;
+}
+
+/* issue 0114: is the in-flight move/copy a MULTI-OBJECT selection? A rotate/flip during a
+ * connected drag must transform the WHOLE selection rigidly about a shared pivot (Cadence
+ * Stretch semantics, wires kept connected), NOT spin each object about its own origin
+ * (ROTATELOCAL). A follow-set (select_attached_nets) only ever adds WIREs, so every selected
+ * non-wire object is user-owned; the user's own wires are counted by fluid_startsel_wires during
+ * a fluid stretch, or are simply every selected wire for a rigid (non-stretch) move. Scans the
+ * object arrays directly (not sel_array) so it is correct even if need_reb_sel_arr is unset
+ * mid-gesture. >1 user object => coerce ROTATELOCAL to the group ROTATE/FLIP form. */
+static int connected_drag_group_transform(void)
+{
+  int i, c, nonwire = 0, wires = 0, userwires;
+  for(i = 0; i < xctx->instances; ++i) if(xctx->inst[i].sel) ++nonwire;
+  for(i = 0; i < xctx->texts;     ++i) if(xctx->text[i].sel) ++nonwire;
+  for(c = 0; c < cadlayers; ++c) {
+    for(i = 0; i < xctx->arcs[c];     ++i) if(xctx->arc[c][i].sel)  ++nonwire;
+    for(i = 0; i < xctx->rects[c];    ++i) if(xctx->rect[c][i].sel) ++nonwire;
+    for(i = 0; i < xctx->lines[c];    ++i) if(xctx->line[c][i].sel) ++nonwire;
+    for(i = 0; i < xctx->polygons[c]; ++i) if(xctx->poly[c][i].sel) ++nonwire;
+  }
+  for(i = 0; i < xctx->wires; ++i) if(xctx->wire[i].sel) ++wires;
+  userwires = xctx->stretch_select ? xctx->fluid_startsel_wires : wires;
+  return (nonwire + userwires) > 1;
+}
+
+/* issue 0116 bug 2: standalone (non-drag) Alt-R / Alt-F on the CURRENT selection. With >1 object
+ * selected, transform the WHOLE selection as one rigid body about its grid-snapped bounding-box
+ * centre (Cadence "treat the selection as one object" -- an in-place group rotate/flip), NOT each
+ * object spun about its own origin (the old unconditional ROTATELOCAL). A single object keeps the
+ * per-object in-place transform about its own 0,0. `what` is ROTATE or FLIP. Self-logs the matching
+ * replay verb (group -> `xschem rotate|flip x y`; single -> `xschem rotate_in_place|flip_in_place`).
+ * Caller has ensured lastsel>0 and passed the readonly guard. */
+static void standalone_group_transform(int what, double c_snap)
+{
+  if(connected_drag_group_transform()) {
+    xRect bb; double px, py;
+    calc_drawing_bbox(&bb, 1);
+    px = my_round(((bb.x1 + bb.x2) * 0.5) / c_snap) * c_snap;
+    py = my_round(((bb.y1 + bb.y2) * 0.5) / c_snap) * c_snap;
+    xctx->mx_double_save = xctx->mousex_snap = px;
+    xctx->my_double_save = xctx->mousey_snap = py;
+    move_objects(START,0,0,0);
+    move_objects(what,0,0,0);           /* group form: ROTATELOCAL dropped -> shared pivot (x1,y1) */
+    move_objects(END,0,0,0);
+    log_action("xschem %s %.16g %.16g", (what & ROTATE) ? "rotate" : "flip", px, py);
+  } else {
+    /* single-object standalone in-place transform: route through the mutation boundary
+     * (Refactor B atom 3 rotate_in_place, atom 4 flip_in_place). perform_action owns the
+     * readonly gate + the ONE `xschem rotate_in_place`/`xschem flip_in_place` log site + the
+     * rebuild+START+what|ROTATELOCAL+END effect. ROTATELOCAL pivots each object about its own
+     * origin, so the mx/my_double_save seeded here is immaterial to the transform (carried only
+     * for symmetry with the group form above). `what` is ROTATE or FLIP; kept as two explicit
+     * verb calls (not a ternary verb string) so each self-log site stays greppable (S1). */
+    xctx->mx_double_save = xctx->mousex_snap;
+    xctx->my_double_save = xctx->mousey_snap;
+    if(what & ROTATE) perform_action("rotate_in_place", 0, NULL);
+    else              perform_action("flip_in_place", 0, NULL);
+  }
 }
 
 static void handle_key_press(int event, KeySym key, int state, int rstate, int mx, int my,
@@ -4261,6 +4968,9 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
         rebuild_selected_array();
         if(xctx->lastsel) { /* 20071203 check if something selected */
           save_selection(2);
+          /* self-log Ctrl-C (0062): inline path bypasses the scheduler copy branch;
+           * under the selection guard so an empty-selection press logs no phantom */
+          log_action("xschem copy");
         }
       }
       /* duplicate selection */
@@ -4372,21 +5082,26 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
       }
       else if(EQUAL_MODMASK) { /* flip objects around their anchor points 20171208 */
         if(readonly_block()) break;
-        if(xctx->ui_state & STARTMOVE) move_objects(FLIP|ROTATELOCAL,0,0,0);
-        else if(xctx->ui_state & STARTCOPY) copy_objects(FLIP|ROTATELOCAL);
+        /* issue 0114: multi-object connected drag flips the whole selection as a group
+         * (shared pivot); a single object keeps the per-object in-place flip. */
+        if(xctx->ui_state & STARTMOVE)
+          move_objects(FLIP | (connected_drag_group_transform() ? 0 : ROTATELOCAL),0,0,0);
+        else if(xctx->ui_state & STARTCOPY)
+          copy_objects(FLIP | (connected_drag_group_transform() ? 0 : ROTATELOCAL));
         else {
           rebuild_selected_array();
-          xctx->mx_double_save=xctx->mousex_snap;
-          xctx->my_double_save=xctx->mousey_snap;
-          move_objects(START,0,0,0);
-          move_objects(FLIP|ROTATELOCAL,0,0,0);
-          move_objects(END,0,0,0);
-          /* self-log the keyboard shortcut at its inline handler (issue 0068): Alt-F
-           * flip-in-place. Standalone branch only -- readonly already rejected above,
-           * and the during-move/copy variants are gesture-logged by the move END
-           * (0069). Live keypress reaches only here (never the scheduler branch), so
-           * no double-log; replay sources `xschem flip_in_place` into the scheduler. */
-          log_action("xschem flip_in_place");
+          if(xctx->lastsel == 0) { /* Cases 1 & 3: arm prompt-for-object flip-in-place */
+            xctx->ui_state |= MENUSTART;
+            xctx->ui_state2 = MENUSTARTROTATE;
+            xctx->menu_pending_transform = PENDING_TR_FLIP_IP;
+            statusmsg("Flip in place: click an object to flip", 1);
+          } else {
+            /* issue 0116 bug 2: multi-object selection flips as one rigid body (group, about the
+             * grid-snapped bbox centre); a single object keeps its own-origin in-place flip.
+             * Self-logs at the helper (issue 0068): standalone reaches only here, never the
+             * scheduler branch, so no double-log; replay sources the verb into the scheduler. */
+            standalone_group_transform(FLIP, c_snap);
+          }
         }
       }
       break;
@@ -4398,14 +5113,21 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
         else if(xctx->ui_state & STARTCOPY) copy_objects(FLIP);
         else {
           rebuild_selected_array();
-          xctx->mx_double_save=xctx->mousex_snap;
-          xctx->my_double_save=xctx->mousey_snap;
-          move_objects(START,0,0,0);
-          move_objects(FLIP,0,0,0);
-          move_objects(END,0,0,0);
-          /* self-log Shift-F flip keyboard shortcut (issue 0068); pivot = the anchor
-           * move_objects used, matching the scheduler `xschem flip x0 y0` form. */
-          log_action("xschem flip %.16g %.16g", xctx->mx_double_save, xctx->my_double_save);
+          if(xctx->lastsel == 0) { /* Cases 1 & 3: arm prompt-for-object flip */
+            xctx->ui_state |= MENUSTART;
+            xctx->ui_state2 = MENUSTARTROTATE;
+            xctx->menu_pending_transform = PENDING_TR_FLIP;
+            statusmsg("Flip: click an object to flip", 1);
+          } else {
+            xctx->mx_double_save=xctx->mousex_snap;
+            xctx->my_double_save=xctx->mousey_snap;
+            move_objects(START,0,0,0);
+            move_objects(FLIP,0,0,0);
+            move_objects(END,0,0,0);
+            /* self-log Shift-F flip keyboard shortcut (issue 0068); pivot = the anchor
+             * move_objects used, matching the scheduler `xschem flip x0 y0` form. */
+            log_action("xschem flip %.16g %.16g", xctx->mx_double_save, xctx->my_double_save);
+          }
         }
       }
       else if(rstate == ControlMask ) { /* full zoom selection */
@@ -4526,7 +5248,10 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
      * hilight.propagate_highlight_selected_net_pins (drill, idle). See init_input_bindings. */
 
     case 'l':
-      if(/* !xctx->ui_state && */ rstate == 0) { /* start line */
+      /* plain 'l' is bound to edit.add_wire_label in the binding table (add_wire_label.md),
+       * dispatched BEFORE this switch, so the start-line branch below is a dormant fallback that
+       * only resurfaces if the user unbinds 'l' (graphic line now defaults to Shift+L). */
+      if(/* !xctx->ui_state && */ rstate == 0) { /* start line (shadowed by edit.add_wire_label) */
         int prev_state = xctx->ui_state;
         if(xctx->semaphore >= 2) break;
         if(readonly_block()) break;
@@ -4546,17 +5271,18 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
         if(xctx->semaphore >= 2) break;
         create_sch_from_sym();
       }
-      else if(EQUAL_MODMASK) { /* add pin label*/
+      else if(EQUAL_MODMASK) { /* Alt+L: open the Add-Wire-Label form (was place_net_label(1)) */
         if(readonly_block()) break;
-        place_net_label(1);
+        tcleval("addlabel::open");
       }
       break;
 
     case 'L':
-      /* plain 'L' (toggle orthogonal routing) migrated to the binding table
-       * (Phase 3d.2 batch 3): key 'L' 0 canvas -> edit.toggle_orthogonal_wiring.
-       * The Alt branch (add pin label) stays in C. See init_input_bindings. */
-      if(EQUAL_MODMASK ) { /* add pin label*/
+      /* plain 'L' (Shift+L) is bound in the binding table to tools.insert_line (graphic line),
+       * relocated here from 'l' so 'l' can host the Add-Wire-Label form (add_wire_label.md);
+       * edit.toggle_orthogonal_wiring now ships UNBOUND. The Alt branch (place lab_wire label)
+       * stays in C. See init_input_bindings. */
+      if(EQUAL_MODMASK ) { /* Alt+Shift+L: place a lab_wire net label */
         if(readonly_block()) break;
         place_net_label(0);
       }
@@ -4573,6 +5299,25 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
           break;
         }
         if(readonly_block()) break;
+        if(cadence_compat) {
+          /* Cadence 'm' = STRETCH (connectivity-preserving), mirror of the plain LMB drag.
+           * noun-verb: pick up the selection now with attached nets so wires reroute;
+           * verb-noun: arm a connected pickup (MENUSTARTSTRETCH) for the next click.
+           * see doc/claude/specs/cadence_stretch_move_keys.md */
+          rebuild_selected_array();
+          if(xctx->lastsel > 0) {
+            xctx->connect_by_kissing = 2; /* armed before select_attached_nets (through-run tap skip) */
+            select_attached_nets();
+            xctx->mx_double_save=xctx->mousex_snap;
+            xctx->my_double_save=xctx->mousey_snap;
+            move_objects(START,0,0,0);
+          } else {
+            xctx->ui_state |= MENUSTART;
+            xctx->ui_state2 = MENUSTARTMOVE | MENUSTARTSTRETCH;
+            statusmsg("Stretch: click an object to move it (wires stay connected)", 1);
+          }
+          break;
+        }
         if(enable_stretch) select_attached_nets(); /* stretch nets that land on selected instance pins */
         rebuild_selected_array();
         if(xctx->lastsel > 0) {
@@ -4624,6 +5369,22 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
       /* Move selection adding wires to moved pins */
       if((rstate == 0) && !(xctx->ui_state & (STARTMOVE | STARTCOPY))) {
         if(readonly_block()) break;
+        if(cadence_compat) {
+          /* Cadence Shift+M = MOVE (rigid / disconnected): move selected objects only,
+           * attached wires stay put (connections break). Mirror of Ctrl+LMB drag detach.
+           * see doc/claude/specs/cadence_stretch_move_keys.md */
+          rebuild_selected_array();
+          if(xctx->lastsel > 0) {
+            xctx->mx_double_save=xctx->mousex_snap;
+            xctx->my_double_save=xctx->mousey_snap;
+            move_objects(START,0,0,0);
+          } else {
+            xctx->ui_state |= MENUSTART;
+            xctx->ui_state2 = MENUSTARTMOVE;
+            statusmsg("Move: click an object to move it (disconnected)", 1);
+          }
+          break;
+        }
         xctx->connect_by_kissing = 2; /* 2 will be used to reset var to 0 at end of move */
         if(infix_interface) {
           xctx->mx_double_save=xctx->mousex_snap;
@@ -4638,8 +5399,8 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
       /* move selection, stretch attached nets, create new wires on pin-to-moved-pin connections */
       else if(rstate == ControlMask && !(xctx->ui_state & (STARTMOVE | STARTCOPY))) {
         if(readonly_block()) break;
+        xctx->connect_by_kissing = 2; /* armed before select_attached_nets (through-run tap skip) */
         if(!enable_stretch) select_attached_nets(); /* stretch nets that land on selected instance pins */
-        xctx->connect_by_kissing = 2; /* 2 will be used to reset var to 0 at end of move */
         if(infix_interface) {
           xctx->mx_double_save=xctx->mousex_snap;
           xctx->my_double_save=xctx->mousey_snap;
@@ -4678,6 +5439,24 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
             tcleval("tk_messageBox -type ok -parent [xschem get topwindow] "
                     "-message {Please Set netlisting mode (Options menu)}");
           dbg(1, "callback(): -------------\n");
+          /* action-log (issue 0071 atom 14): the Shift-N current-level netlist
+           * bypasses the scheduler `netlist` branch (it calls global_*_netlist()
+           * directly), so it logs its own equivalent at this entry site (the atom-4
+           * Ctrl-S/Alt-S keyboard-bypass pattern). The key runs global_*_netlist(0,1)
+           * and touches NOTHING else -- crucially it does NOT clear xctx->netlist_name
+           * and does NOT force show_infowindow_after_netlist=never. The faithful branch
+           * form is therefore `netlist -erc -nohier`, NOT bare `-nohier`: `-nohier`
+           * gives current-level (hier_netlist=0 -> the same global_*_netlist(0,1)), and
+           * `-erc` (erc=1) is the STATE-PRESERVING flag here -- it is NOT separate ERC
+           * work (ERC checks run inside global_*_netlist regardless of the flag); erc=1
+           * simply skips BOTH the netlist_name clear and the infowindow suppression that
+           * the branch's erc==0 arm performs (scheduler.c), which the key never does. A
+           * bare `-nohier` line would clear a custom netlist_name the key had preserved,
+           * diverging a LATER replayed netlist to the wrong output file (adversarial
+           * review MAJOR, 2 independent verifiers). Logged inside the set_netlist_dir()
+           * success arm so the dir-unwritable else logs nothing; disjoint from the branch
+           * (no Shift-N binding entry -> the legacy switch runs) so one action = one line. */
+          log_action("xschem netlist -erc -nohier");
         }
         else {
            if(has_x) tcleval("alert_ {Can not write into the netlist directory. Please check} {}");
@@ -4831,16 +5610,25 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
       }
       else if(EQUAL_MODMASK) { /* rotate objects around their anchor points 20171208 */
         if(readonly_block()) break;
-        if(xctx->ui_state & STARTMOVE) move_objects(ROTATE|ROTATELOCAL,0,0,0);
-        else if(xctx->ui_state & STARTCOPY) copy_objects(ROTATE|ROTATELOCAL);
+        /* issue 0114: a multi-object connected drag rotates the whole selection as a group
+         * (shared pivot, ROTATELOCAL dropped) so wires stay connected; a single object keeps
+         * the per-object in-place rotate (rotatelocal about its own origin). */
+        if(xctx->ui_state & STARTMOVE)
+          move_objects(ROTATE | (connected_drag_group_transform() ? 0 : ROTATELOCAL),0,0,0);
+        else if(xctx->ui_state & STARTCOPY)
+          copy_objects(ROTATE | (connected_drag_group_transform() ? 0 : ROTATELOCAL));
         else {
           rebuild_selected_array();
-          xctx->mx_double_save=xctx->mousex_snap;
-          xctx->my_double_save=xctx->mousey_snap;
-          move_objects(START,0,0,0);
-          move_objects(ROTATE|ROTATELOCAL,0,0,0);
-          move_objects(END,0,0,0);
-          log_action("xschem rotate_in_place"); /* self-log Alt-R shortcut (issue 0068) */
+          if(xctx->lastsel == 0) { /* Cases 1 & 3: arm prompt-for-object rotate-in-place */
+            xctx->ui_state |= MENUSTART;
+            xctx->ui_state2 = MENUSTARTROTATE;
+            xctx->menu_pending_transform = PENDING_TR_ROTATE_IP;
+            statusmsg("Rotate in place: click an object to rotate", 1);
+          } else {
+            /* issue 0116 bug 2: multi-object selection rotates as one rigid body (group, about the
+             * grid-snapped bbox centre); a single object keeps its own-origin in-place rotate. */
+            standalone_group_transform(ROTATE, c_snap);
+          }
         }
       }
       break;
@@ -4852,12 +5640,22 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
         else if(xctx->ui_state & STARTCOPY) copy_objects(ROTATE);
         else {
           rebuild_selected_array();
-          xctx->mx_double_save=xctx->mousex_snap;
-          xctx->my_double_save=xctx->mousey_snap;
-          move_objects(START,0,0,0);
-          move_objects(ROTATE,0,0,0);
-          move_objects(END,0,0,0);
-          log_action("xschem rotate %.16g %.16g", xctx->mx_double_save, xctx->my_double_save);
+          if(xctx->lastsel == 0) {
+            /* Cases 1 & 3 (rotate_keep_connected_stretch.md): nothing selected -> arm a
+             * prompt-for-object rotate. Assigning ui_state2 abandons any pending verb-noun
+             * move/stretch (Case 3). Plain rotate; wires are NOT kept connected. */
+            xctx->ui_state |= MENUSTART;
+            xctx->ui_state2 = MENUSTARTROTATE;
+            xctx->menu_pending_transform = PENDING_TR_ROTATE;
+            statusmsg("Rotate: click an object to rotate", 1);
+          } else {
+            xctx->mx_double_save=xctx->mousex_snap;
+            xctx->my_double_save=xctx->mousey_snap;
+            move_objects(START,0,0,0);
+            move_objects(ROTATE,0,0,0);
+            move_objects(END,0,0,0);
+            log_action("xschem rotate %.16g %.16g", xctx->mx_double_save, xctx->my_double_save);
+          }
         }
 
       }
@@ -4894,6 +5692,9 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
            * "save file?" confirmation (matches the File>Save menu / `xschem save`,
            * which already call save(0,...)). */
           save(0, 0);
+          /* self-log Ctrl-S (0062): inline path bypasses the scheduler save branch
+           * (the branch rejects read-only before its log; mirror that here) */
+          if(!xctx->readonly) log_action("xschem save");
         }
       }
 
@@ -4908,6 +5709,9 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
           my_strncpy(filename, abs_sym_path(xctx->sch[xctx->currsch], ""), S(filename));
           load_schematic(1, filename, 1, 1);
           draw();
+          /* self-log Alt-S (0062): inline reload bypasses the scheduler branch;
+           * inside the "ok" arm so a cancelled dialog logs nothing */
+          log_action("xschem reload");
         }
       }
 
@@ -4984,19 +5788,14 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
        * pop_undo(0,1)+draw()). The Alt (align) and Ctrl (unselect floaters) branches
        * stay in C. See init_input_bindings. */
       if(EQUAL_MODMASK) { /* align to grid */
-        if(xctx->semaphore >= 2) break;
-        if(readonly_block()) break;
-        xctx->push_undo();
-        round_schematic_to_grid(c_snap);
-        set_modify(1);
-        if(tclgetboolvar("autotrim_wires")) trim_wires();
-        xctx->prep_hash_inst=0;
-        xctx->prep_hash_wires=0;
-        xctx->prep_net_structs=0;
-        xctx->prep_hi_structs=0;
-
-        draw();
-        log_action("xschem align"); /* self-log Alt-U align keyboard shortcut (issue 0068) */
+        if(xctx->semaphore >= 2) break;       /* key-specific re-entrancy guard stays here */
+        /* Route through the single mutation boundary (Refactor B atom 2, scheduler.c): it
+         * owns the readonly gate (scheduler_readonly_reject -> a CIW note, replacing this
+         * key's old readonly_block() modal), the push_undo + round_schematic_to_grid +
+         * maintain + draw effect, and the ONE `xschem align` log site. No inline readonly/
+         * undo/log here. The boundary reads cadsnap the same way the c_snap local was
+         * derived (tclgetdoublevar("cadsnap"), callback entry), so the snap is identical. */
+        perform_action("align", 0, NULL);
       }
       else if(rstate==ControlMask) { /* Unselect floater texts */
         unselect_attached_floaters();
@@ -5035,26 +5834,37 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
       }
       else if(EQUAL_MODMASK) { /* vertical flip objects around their anchor points */
         if(readonly_block()) break;
+        /* issue 0114: multi-object connected drag = group vertical flip (shared pivot);
+         * single object keeps the per-object in-place flip. rl applied to all three steps. */
         if(xctx->ui_state & STARTMOVE) {
-          move_objects(ROTATE|ROTATELOCAL,0,0,0);
-          move_objects(ROTATE|ROTATELOCAL,0,0,0);
-          move_objects(FLIP|ROTATELOCAL,0,0,0);
+          int rl = connected_drag_group_transform() ? 0 : ROTATELOCAL;
+          move_objects(ROTATE|rl,0,0,0);
+          move_objects(ROTATE|rl,0,0,0);
+          move_objects(FLIP|rl,0,0,0);
         }
         else if(xctx->ui_state & STARTCOPY) {
-          copy_objects(ROTATE|ROTATELOCAL);
-          copy_objects(ROTATE|ROTATELOCAL);
-          copy_objects(FLIP|ROTATELOCAL);
+          int rl = connected_drag_group_transform() ? 0 : ROTATELOCAL;
+          copy_objects(ROTATE|rl);
+          copy_objects(ROTATE|rl);
+          copy_objects(FLIP|rl);
         }
         else {
           rebuild_selected_array();
-          xctx->mx_double_save=xctx->mousex_snap;
-          xctx->my_double_save=xctx->mousey_snap;
-          move_objects(START,0,0,0);
-          move_objects(ROTATE|ROTATELOCAL,0,0,0);
-          move_objects(ROTATE|ROTATELOCAL,0,0,0);
-          move_objects(FLIP|ROTATELOCAL,0,0,0);
-          move_objects(END,0,0,0);
-          log_action("xschem flipv_in_place"); /* self-log Alt-V shortcut (issue 0068) */
+          if(xctx->lastsel == 0) { /* Cases 1 & 3: arm prompt-for-object vertical flip-in-place */
+            xctx->ui_state |= MENUSTART;
+            xctx->ui_state2 = MENUSTARTROTATE;
+            xctx->menu_pending_transform = PENDING_TR_FLIPV_IP;
+            statusmsg("Vertical flip in place: click an object to flip", 1);
+          } else {
+            xctx->mx_double_save=xctx->mousex_snap;
+            xctx->my_double_save=xctx->mousey_snap;
+            move_objects(START,0,0,0);
+            move_objects(ROTATE|ROTATELOCAL,0,0,0);
+            move_objects(ROTATE|ROTATELOCAL,0,0,0);
+            move_objects(FLIP|ROTATELOCAL,0,0,0);
+            move_objects(END,0,0,0);
+            log_action("xschem flipv_in_place"); /* self-log Alt-V shortcut (issue 0068) */
+          }
         }
       }
       break;
@@ -5074,14 +5884,21 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
         }
         else {
           rebuild_selected_array();
-          xctx->mx_double_save=xctx->mousex_snap;
-          xctx->my_double_save=xctx->mousey_snap;
-          move_objects(START,0,0,0);
-          move_objects(ROTATE,0,0,0);
-          move_objects(ROTATE,0,0,0);
-          move_objects(FLIP,0,0,0);
-          move_objects(END,0,0,0);
-          log_action("xschem flipv %.16g %.16g", xctx->mx_double_save, xctx->my_double_save);
+          if(xctx->lastsel == 0) { /* Cases 1 & 3: arm prompt-for-object vertical flip */
+            xctx->ui_state |= MENUSTART;
+            xctx->ui_state2 = MENUSTARTROTATE;
+            xctx->menu_pending_transform = PENDING_TR_FLIPV;
+            statusmsg("Vertical flip: click an object to flip", 1);
+          } else {
+            xctx->mx_double_save=xctx->mousex_snap;
+            xctx->my_double_save=xctx->mousey_snap;
+            move_objects(START,0,0,0);
+            move_objects(ROTATE,0,0,0);
+            move_objects(ROTATE,0,0,0);
+            move_objects(FLIP,0,0,0);
+            move_objects(END,0,0,0);
+            log_action("xschem flipv %.16g %.16g", xctx->mx_double_save, xctx->my_double_save);
+          }
         }
       }
       else if(rstate == ControlMask) { /* toggle spice/vhdl netlist */
@@ -5150,6 +5967,13 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
         if(xctx->lastsel) { /* 20071203 check if something selected */
           save_selection(2);
           delete(1/* to_push_undo */);
+          /* action-log (issue 0071): Ctrl-X is an inline legacy-switch key -- it never
+           * reaches the `xschem cut` scheduler branch, so it must self-log here. Logged as
+           * `xschem cut` (fills the clipboard), NOT `xschem delete`. delete() is a shared
+           * primitive (aborts/merges/preview teardown call it too) so it is deliberately not
+           * the log site -- the cut/delete VERBS live at the scheduler branch + these keys.
+           * See doc/claude/code_analysis/action_log_coverage_audit_and_core_selflog_refactor.md */
+          log_action("xschem cut");
         }
       }
       break;
@@ -5296,7 +6120,9 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
 
     case XK_Escape:                                       /* abort & redraw */
       if(xctx->semaphore < 2) {
-        abort_operation();
+        /* escape_deselects gates the idle-case unselect: 0 => keep selection,
+         * only redraw; 1 => legacy deselect-all. Pending ops abort regardless. */
+        abort_operation(tclgetboolvar("escape_deselects"));
       }
       /* stuff that can be done reentrantly ... */
       tclsetvar("tclstop", "1"); /* stop simulation if any running */
@@ -5314,6 +6140,13 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
         if(xctx->semaphore >= 2) break;
         if(readonly_block()) break;
         delete(1/* to_push_undo */);
+        /* action-log (issue 0071): the Delete key is an inline legacy-switch handler that
+         * never reaches the `xschem delete` scheduler branch, so it self-logs here. Guarded
+         * by the SELECTION check above, so an empty-selection Delete logs nothing (no
+         * phantom). delete() itself is a shared primitive (aborts/merges call it) and is not
+         * the log site. See
+         * doc/claude/code_analysis/action_log_coverage_audit_and_core_selflog_refactor.md */
+        log_action("xschem delete");
       }
       break;
 
@@ -5482,12 +6315,12 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
       break;
 
     case '&':                               /* check wire connectivity */
-      if(xctx->semaphore >= 2) break;
-      if(readonly_block()) break;
-      xctx->push_undo();
-      trim_wires();
-      draw();
-      log_action("xschem trim_wires"); /* self-log '&' keyboard shortcut (issue 0068) */
+      if(xctx->semaphore >= 2) break;       /* key-specific re-entrancy guard stays here */
+      /* Route through the single mutation boundary (Refactor B, scheduler.c): it owns
+       * the readonly gate (scheduler_readonly_reject -> a CIW note, replacing this
+       * key's old readonly_block() modal), the push_undo + trim_wires + draw effect,
+       * and the ONE `xschem trim_wires` log site. No inline readonly/undo/log here. */
+      perform_action("trim_wires", 0, NULL);
       break;
 
     case '\\':
@@ -5591,6 +6424,9 @@ static void handle_button_press(int event, int state, int rstate, KeySym key, in
      waves_callback(event, mx, my, key, button, aux, state);
      return;
    }
+   /* This press is not a double-click's `-3` grow: mark it so the matching release runs the
+    * escalation-reset (dblclick_connected_select.md). The grow sets the flag back to 1. */
+   if(button == Button1) xctx->dblgrow_last_press_was_grow = 0;
    /* terminate a schematic pan action */
    if(xctx->ui_state & STARTPAN) {
      xctx->ui_state &=~STARTPAN;
@@ -5734,19 +6570,37 @@ static void handle_button_press(int event, int state, int rstate, KeySym key, in
      if(check_menu_start_commands(state, c_snap, mx, my)) return;
 
      /* complete the pending STARTWIRE, STARTRECT, STARTZOOM, STARTCOPY ... operations */
-     if(end_place_move_copy_zoom()) return;
+     {
+       /* issue 0113: a verb-noun / keyboard 'm' (or 'c') move started on a PRIOR event, so this
+        * press is the PLACEMENT click -- end_place_move_copy_zoom() commits it here (move END).
+        * Latch it so the matching RELEASE skips the cadence deselect-others (and every click-select)
+        * path: with STARTMOVE already cleared and mouse_moved reset to 0 at press, that path would
+        * otherwise collapse a moved multi-selection down to the single object under the cursor. */
+       int had_move = (xctx->ui_state & (STARTMOVE | STARTCOPY)) ? 1 : 0;
+       if(end_place_move_copy_zoom()) {
+         if(had_move) xctx->place_click_committed = 1;
+         return;
+       }
+     }
 
      /* Button1Press to select objects */
      if(!excl && !(xctx->ui_state & STARTSELECT)) {
        Selected sel;
        int already_selected = 0;
+       int did_snapshot = 0;   /* cadence deferred-selection: pre-press selection was captured */
        int prev_last_sel = xctx->lastsel;
        int no_shift_no_ctrl = !(state & (ShiftMask | ControlMask));
        /* cadence_compat forces the intuitive interface (Cadence-style direct
         * click-drag to move/copy objects), spec doc/claude/specs/cadence_modifier_drag.md */
        int intuitive = xctx->intuitive_interface || cadence_compat;
+       /* fluid_editing (C4): gates first-click tip/edge grab independently of cadence_compat.
+        * Default ON as of the 0091-0096 reroute chain (dragging an INSTANCE body still needs the
+        * intuitive/cadence interface; this gates the tip-grab + reroute). See
+        * doc/claude/specs/fluid_editing.md. */
+       int fluid_editing = tclgetboolvar("fluid_editing");
 
        xctx->shape_point_selected = 0;
+       drag_sel_free();   /* cadence deferred-selection: wipe any leaked pre-press snapshot */
        xctx->mx_save = mx; xctx->my_save = my;
        xctx->mx_double_save=xctx->mousex;
        xctx->my_double_save=xctx->mousey;
@@ -5859,9 +6713,10 @@ static void handle_button_press(int event, int state, int rstate, KeySym key, in
         * grabs that vertex and moves it (toward the other end = shorten, away = grow),
         * committing on release -- instead of starting a new wire (and getting stuck in
         * wire-draw mode). Plain drag only; connected ends fall through to
-        * add_wire_from_wire() below (draw a new branch wire). Gated on cadence_compat so
-        * stock behavior is unchanged. Must run BEFORE add_wire_from_wire. */
-       if(!xctx->readonly && cadence_compat && intuitive && !already_selected &&
+        * add_wire_from_wire() below (draw a new branch wire). Gated on fluid_editing (C4:
+        * this is first-click tip grab of a wire end) so it toggles with the rest of fluid
+        * editing; stock behavior is unchanged. Must run BEFORE add_wire_from_wire. */
+       if(!xctx->readonly && fluid_editing && intuitive && !already_selected &&
           !(state & (ControlMask | ShiftMask))) {
          if(grab_free_wire_vertex(&sel, xctx->mousex_snap, xctx->mousey_snap, state)) return;
        }
@@ -5873,7 +6728,13 @@ static void handle_button_press(int event, int state, int rstate, KeySym key, in
 
        /* In intuitive interface a button1 press with no modifiers will
         *  unselect everything... we do it here */
-       if(intuitive && !already_selected && no_shift_no_ctrl )  unselect_all(1);
+       if(intuitive && !already_selected && no_shift_no_ctrl ) {
+         /* cadence deferred-selection: snapshot the pre-press selection BEFORE clearing it, so a
+          * drag of this (not-yet-selected) object can restore it at release and leave the selection
+          * unchanged. Only when an object was actually hit (a drag candidate); armed at drag-start. */
+         if(sel.type) { drag_sel_snapshot(); did_snapshot = 1; }
+         unselect_all(1);
+       }
 
        /* select the object under the mouse and rebuild the selected array.
         * Shift held = augment (unselect_all above was skipped) -> tell the
@@ -5887,26 +6748,13 @@ static void handle_button_press(int event, int state, int rstate, KeySym key, in
        rebuild_selected_array();
        dbg(1, "Button1Press to select objects, lastsel = %d\n", xctx->lastsel);
 
-       /* if clicking on some object endpoints or vertices set shape_point_selected
-        * this information will be used in Motion events to draw the stretched vertices */
-       if(!xctx->readonly && xctx->lastsel == 1 && xctx->sel_array[0].type==POLYGON) {
-         if(edit_polygon_point(state)) return; /* sets xctx->shape_point_selected */
-       }
-       if(!xctx->readonly && xctx->lastsel == 1 && intuitive) {
-         int cond = already_selected;
-
-         if(cond && xctx->sel_array[0].type==xRECT) {
-           if(edit_rect_point(state)) return; /* sets xctx->shape_point_selected */
-         }
-
-         if(cond && xctx->sel_array[0].type==LINE) {
-           if(edit_line_point(state)) return; /* sets xctx->shape_point_selected */
-         }
-
-         if(cond && xctx->sel_array[0].type==WIRE) {
-          if(edit_wire_point(state)) return; /* sets xctx->shape_point_selected */
-         }
-       }
+       /* If the click landed on a grabbable control point (rect corner/edge, line/wire end,
+        * arc endpoint, polygon vertex) start a first-click stretch and return -- the drag
+        * then stretches that sub-part and commits on release (Motion draws the preview).
+        * A body click returns 0 here and falls through to the whole-object move. The whole
+        * feature (rect/line/wire/arc) is gated on fluid_editing (doc/claude/specs/
+        * fluid_editing.md); polygon vertices grab regardless (legacy). */
+       if(try_grab_shape_point(state, intuitive, already_selected, fluid_editing)) return;
        dbg(1, "shape_point_selected=%d, lastsel=%d\n", xctx->shape_point_selected, xctx->lastsel);
 
        /* intuitive interface: directly drag elements */
@@ -5929,9 +6777,11 @@ static void handle_button_press(int event, int state, int rstate, KeySym key, in
            } else if(state & ControlMask) {
              move_objects(START,0,0,0);
            } else {
+             xctx->connect_by_kissing = 2; /* armed BEFORE select_attached_nets so a through-run
+                                            * tap arm is skipped (stub replaces it); reset at move end */
              select_attached_nets(); /* nets that land on selected instance pins follow */
-             xctx->connect_by_kissing = 2; /* 2 will be used to reset var to 0 at end of move */
              move_objects(START,0,0,0);
+             if(did_snapshot) xctx->drag_sel_restore = 1;  /* cadence deferred-selection: arm restore */
            }
          } else {
            /* enable_stretch (from TCL variable) reverses command if enabled:
@@ -5941,12 +6791,13 @@ static void handle_button_press(int event, int state, int rstate, KeySym key, in
            int stretch = (state & ControlMask ? 1 : 0) ^ enable_stretch;
            /* select attached nets depending on ControlMask and enable_stretch */
            if(stretch && !(state & ShiftMask)) {
-             select_attached_nets(); /* stretch nets that land on selected instance pins */
              /* plain stretch drag also follows abutments and T-junctions
               * (wire-follow spec Phase 3); kissing only adds wires where a pin
               * abuts a pin or touches a wire, so non-stretch (default) moves are
-              * unaffected. */
+              * unaffected. Armed BEFORE select_attached_nets so a through-run tap arm
+              * is skipped (a stub replaces it). */
              xctx->connect_by_kissing = 2; /* 2 will be used to reset var to 0 at end of move */
+             select_attached_nets(); /* stretch nets that land on selected instance pins */
            }
            /* if dragging instances with stretch enabled and Shift down add wires to pins
             * attached to something */
@@ -5957,7 +6808,10 @@ static void handle_button_press(int event, int state, int rstate, KeySym key, in
            /* dragging away an object with Shift pressed is a copy (duplicate object) */
            else if(state & ShiftMask) copy_objects(START);
            /* else it is a normal move */
-           else move_objects(START,0,0,0);
+           else {
+             move_objects(START,0,0,0);
+             if(did_snapshot) xctx->drag_sel_restore = 1;  /* cadence deferred-selection: arm restore */
+           }
          }
        }
 
@@ -5987,6 +6841,29 @@ static void handle_button_release(int event, KeySym key, int state, int button, 
    /* cadence_compat forces the intuitive interface (matches handle_button_press),
     * spec doc/claude/specs/cadence_modifier_drag.md */
    int intuitive = xctx->intuitive_interface || cadence_compat;
+   /* issue 0113: consume the "placement press committed a move/copy" latch exactly once, at the
+    * TOP of the release so it is cleared on EVERY exit path -- BEFORE the waves_selected early
+    * return below (a placement dropped over a waveform graph routes there; the press cleared
+    * STARTMOVE so waves_selected, skipped on the press, now fires -- review wf_fdd928d4). When set,
+    * this release ends a verb-noun / keyboard 'm' placement whose move already committed on the
+    * matching PRESS; force mouse_moved=1 so the cadence deselect-others path (guarded !mouse_moved)
+    * is suppressed and does not collapse the moved multi-selection. Cleared unconditionally so it
+    * can never leak to a later, unrelated click. */
+   {
+     int placed_committed = xctx->place_click_committed;
+     xctx->place_click_committed = 0;
+     if(placed_committed) xctx->mouse_moved = 1; /* mark as a completed gesture, not a bare click */
+   }
+   /* End any double-click connected-select escalation on a button-1 release that is NOT the
+    * release of a double-click: snapshot the level (so a real double's following `-3` can
+    * restore it) and tentatively zero it. A standalone single click's zero is never restored
+    * and so sticks -> the next double-click on the seed restarts at ring1. The double's own
+    * release2 is skipped (its preceding press was the `-3` grow, which set the flag).
+    * doc/claude/specs/dblclick_connected_select.md. */
+   if(button == Button1 && !xctx->dblgrow_last_press_was_grow) {
+     xctx->dblgrow_level_save = xctx->dblgrow_level;
+     xctx->dblgrow_level = 0;
+   }
    if(waves_selected(event, key, state, button)) {
      waves_callback(event, mx, my, key, button, aux, state);
      return;
@@ -6068,6 +6945,14 @@ static void handle_button_release(int event, KeySym key, int state, int button, 
       !xctx->mouse_moved && !(state & (ShiftMask | ControlMask))) {
      move_objects(ABORT, 0, 0.0, 0.0);
      xctx->drag_elements = 0;
+     /* This is a plain CLICK (no drag) whose press armed a move + a cadence deferred-selection
+      * restore (drag_sel_restore, spec doc/claude/specs/cadence_modifier_drag.md §5b). A click
+      * keeps its click-select and must NOT restore the pre-press selection, so free the snapshot
+      * (mirrors end_move_copy_logged's no-motion `nothing` path). This ABORT bypasses
+      * end_move_copy_logged, so without freeing here the flag LEAKS past this gesture: a later
+      * keyboard 'm'/'c' move has no press-select to clear it (drag_sel_free at the press-select
+      * head), consumes the leak at its END, and deselects the just-moved object. */
+     drag_sel_free();
      /* When a kiss happened, ABORT's pop_undo cleared the selection; a click must
       * leave the clicked object selected, so re-select what is under the cursor.
       * When nothing was kissed the selection is intact, so leave it untouched
@@ -6102,8 +6987,12 @@ static void handle_button_release(int event, KeySym key, int state, int button, 
    }
 
    /* in cadence_compat mode a button release on a selected item will unselect everything
-    * but the item under the mouse. */
-   else if(cadence_compat && xctx->lastsel != 1 && state == Button1Mask && !xctx->mouse_moved) {
+    * but the item under the mouse. NOT while a move/copy is in flight: a verb-noun 'm'
+    * pickup starts a connected move whose selection includes the grabbed attached nets
+    * (lastsel > 1), and this collapse would drop them mid-gesture.
+    * see doc/claude/specs/cadence_stretch_move_keys.md */
+   else if(cadence_compat && xctx->lastsel != 1 && state == Button1Mask && !xctx->mouse_moved &&
+           !(xctx->ui_state & (STARTMOVE | STARTCOPY))) {
      Selected sel;
      int already_selected = 0;
 
@@ -6153,7 +7042,7 @@ static void handle_button_release(int event, KeySym key, int state, int button, 
    /* if a polygon/bezier/rectangle control point was clicked, end point move operation
     * and set polygon state back to SELECTED from SELECTED1 */
    else if((xctx->ui_state & (STARTMOVE | SELECTION)) && xctx->shape_point_selected) {
-     end_shape_point_edit(c_snap);
+     end_shape_point_edit();
    }
 
    if(xctx->ui_state & STARTPAN) {
@@ -6211,6 +7100,43 @@ static void handle_double_click(int event, int state, KeySym key, int button,
      dbg(1, "callback(): DoubleClick  ui_state=%d state=%d\n",xctx->ui_state,state);
      if(button==Button1) {
        Selected sel;
+       /* Cadence double-click incremental connected-select
+        * (doc/claude/specs/dblclick_connected_select.md): under cadence_compat a
+        * LMB double-click grows the selection outward along wire connectivity, one
+        * ring per double-click (Edit Properties is reached via 'q' instead).
+        *
+        * With the cadence profile (fluid_editing + en_pin_select) the 2nd press of
+        * the double-click ALWAYS arms a TRANSIENT press-gesture before -3 fires: a
+        * fluid move-grab (STARTMOVE) on a wire/instance body, or a pin wire-arm
+        * (STARTWIRE + pin_pending) on an instance pin. So ui_state at -3 is almost
+        * never a bare 0/SELECTION. Detect those transient arms and abort_operation()
+        * them first -- that also pops the move's undo, restoring the pre-press
+        * selection (which, on a 2nd/3rd double-click, IS the previously-grown set,
+        * so escalation survives). Then grow, and latch place_click_committed so the
+        * matching release2 does NOT collapse the grown multi-selection down to the
+        * object under the cursor (same latch issue 0113 uses). A genuine multi-point
+        * draw (STARTLINE/STARTPOLYGON, or a real STARTWIRE draw without pin_pending)
+        * is NOT transient and falls through to the termination code below. */
+       {
+         int transient_pin  = (xctx->ui_state & STARTWIRE) && xctx->pin_pending;
+         int transient_move = (xctx->ui_state & (STARTMOVE | STARTCOPY)) && !xctx->mouse_moved;
+         if(cadence_compat && (xctx->ui_state == 0 || xctx->ui_state == SELECTION ||
+                               transient_pin || transient_move)) {
+           if(transient_pin || transient_move) {
+             abort_operation(1);
+             xctx->drag_elements = 0;
+           }
+           /* This -3 confirms the preceding press/release was the first half of a double,
+            * NOT a standalone click: undo the release's tentative escalation-reset before
+            * growing, and flag so the double's own release2 does not re-trigger the reset
+            * (dblclick_connected_select.md). */
+           xctx->dblgrow_level = xctx->dblgrow_level_save;
+           xctx->dblgrow_last_press_was_grow = 1;
+           select_grow_connected_step(xctx->mousex, xctx->mousey, 1);
+           xctx->place_click_committed = 1; /* release2: suppress cadence deselect-others */
+           return;
+         }
+       }
        if(!xctx->lastsel && xctx->ui_state ==  0) {
          /* Following 5 lines do again a selection overriding lock,
           * so locked instance attrs can be edited */
@@ -6518,6 +7444,7 @@ int callback(const char *win_path, int event, int mx, int my, KeySym key, int bu
      tclvareval(xctx->top_path, ".drw configure -cursor {}" , NULL);
      xctx->mouse_inside = 0;
      draw_hover(0); /* erase the hover outline when the pointer leaves the canvas */
+     draw_flylines(0); /* drop the fly-line overlay state on leave (mouse_inside==0) */
      break;
 
    case EnterNotify:

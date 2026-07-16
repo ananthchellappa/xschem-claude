@@ -8,6 +8,12 @@
 # Run headless:
 #   REPO=<repo> src/xschem --nogui --rcfile tests/headless/minrc --pipe -q \
 #       --nolog --script tests/headless/test_readonly_guard.tcl
+# REPO env override kept for the documented invocation; default derives from the
+# script location so full_audit (which sets no REPO) doesn't die on line 1 with a
+# blocking "can't read env(REPO)" popup.
+if {![info exists env(REPO)]} {
+  set env(REPO) [file normalize [file join [file dirname [info script]] .. ..]]
+}
 set sch $env(REPO)/xschem_library/examples/Q1.sch
 set fail 0
 proc check {name ok detail} {
@@ -37,7 +43,7 @@ check "treatment: buffer starts unmodified" [expr {[xschem get modified] == 0}] 
 
 set cmds {
   copy_objects cut delete flip merge move_objects paste rotate
-  add_graph add_image add_symbol_pin arc change_elem_order instance line
+  add_graph add_image add_symbol_pin add_sch_pin add_wire_label arc change_elem_order instance line
   move_instance net_label place_symbol polygon rect reset_inst_prop text
   trim_wires wire undo redo align setprop replace_symbol
 }

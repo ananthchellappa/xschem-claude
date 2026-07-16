@@ -1,29 +1,45 @@
-1. Fluid click and drag on objects to move, while maintaining wire connections. 
-2. Cadence-style property forms - get a professional look. 
-3. Logging of all user interactions to enable macros and script creation from log files. 
+Incredibly, as hairbally as the code base is, Claude Code is able to handle it. I didn't write a single line of code. All I did was tell Claude Code what I wanted and reported what wasn't to my liking.
+
+The new list :
+
+1. Pin creation in schematic view with same UX as Cadence. DONE! Claude Code
+2. Wire labels creation in schematic view with Cadence UX. 60% done by Claude Code (need to add support for vertical justification, and place multiple members of bus in one shot)
+3. Double-click to extend connected wire-segment selection. DONE! Claude Code
+4. Cadence style dynamic highlight fly-lines when hovering on wire/label/pin. 70% DONE by Claude Code. Needs polish. Currently only dashed line
+5. Telescopic moving instance across hierarchical boundaries (wait and see - something even CDNS can't do :)
+6. Symbol generator with Cadence UX
+7. Efficiency coach / key promoter / notification menu (visit to find out where you will benefit from using shortcuts)
+8. Be able to copy pins from schematic to symbol (something Tanner Tools S-Edit provides but CDNS doesn't. Yes, Tanner is very difficult to use, but this is something that does have value once in a w)
+9. Cadence UX Search and Replace utility.
+
+The old list (what was posted on Go Fund Me a year ago) :
+
+1. Fluid click and drag on objects to move, while maintaining wire connections. DONE! Claude Code
+2. Cadence-style property forms - get a professional look. DONE! Claude Code
+3. Logging of all user interactions to enable macros and script creation from log files. WIP - but 25% DONE by Claude Code
 4. Cadence-style right-mouse click-and-drag to zoom - DONE! Thank you, Chayan Deb. 
-5. Command interpreter window, like Cadence (shows log of commands and system messages, and has a command entry pane). 
+5. Command interpreter window, like Cadence (shows log of commands and system messages, and has a command entry pane). DONE! Claude Code
 6. Cadence-style yellow dot cursor. DONE! Thank you Stefan Schippers! 
 7. Cadence-style snap cursor indicating current snap point for wire start/end. DONE! Thank you Chayan Deb! 
-8. Option to switch between crossing/enclosing of objects with selection rectangle for inclusion in selected set. 
-9. Keep selected set selected when current command is aborted. 
-10. Permit descend without requiring current schematic to be saved. 
-11. Create instance command should be ready to place most recently placed cell again, not require selection from browser. 
-12. After an instance is placed, stay in instance-create and give user the option to place more instances of the same cell. 
-13. Display current command prompt on status bar (e.g., 'Enter first point of wire segment'). 
+8. Option to switch between crossing/enclosing of objects with selection rectangle for inclusion in selected set. // Deferred, since leftward click-and-drag provides it
+9. Keep selected set selected when current command is aborted. DONE! Claude Code
+10. Permit descend without requiring current schematic to be saved. DONE! Claude Code
+11. Create instance command should be ready to place most recently placed cell again, not require selection from browser. DONE! Claude Code
+12. After an instance is placed, stay in instance-create and give user the option to place more instances of the same cell. DONE! Claude Code
+13. Display current command prompt on status bar (e.g., 'Enter first point of wire segment'). // WIP :) Not a true pain point. Some of the cmds have it
 14. Orthogonal wire routing between first point and current mouse position - DONE! Thank you, Chayan Deb. 
-15. Flexible key bindings - currently all key bindings (shortcuts) are hard-coded. With the enhancement, TCL code can be used to let the user pick arbitrary key combinations for built-in commands and user-defined functions. 
-16. Make wire-label a fundamental object - like wire and text, not a component that needs to be placed from a library. 
-17. Menu item and TCL command to save changed settings to defaults so that they are available upon next launch. 
-18. Cadence-style library manager - showing available libraries all the time, rather than being visible only when placing components. 
-19. Cadence-style library structure - directory with sub-directory for each cell, rather than only one directory containing a bunch of .sch and .sym files. 
-20. Better support for multiple windows (currently, with one schematic open, if one wants to open another one through File > Open, Xschem wants to open it within the same window). 
-21. Provide a way, through TCL, to access properties of any object - wire label, pin, wire, instance, etc. 
-22. Improved Cadence-style net highlighting. The current implementation is pretty good. It can be enhanced with bindkey support. 
-23. Provide outline rectangles (already exists - need to fix UX) 
+15. Flexible key bindings - currently all key bindings (shortcuts) are hard-coded. With the enhancement, TCL code can be used to let the user pick arbitrary key combinations for built-in commands and user-defined functions. DONE! Claude Code
+16. Make wire-label a fundamental object - like wire and text, not a component that needs to be placed from a library. // Deferred
+17. Menu item and TCL command to save changed settings to defaults so that they are available upon next launch. // Deferred
+18. Cadence-style library manager - showing available libraries all the time, rather than being visible only when placing components. DONE! Claude Code
+19. Cadence-style library structure - directory with sub-directory for each cell, rather than only one directory containing a bunch of .sch and .sym files. DONE! Claude Code
+20. Better support for multiple windows (currently, with one schematic open, if one wants to open another one through File > Open, Xschem wants to open it within the same window). DONE! Claude Code
+21. Provide a way, through TCL, to access properties of any object - wire label, pin, wire, instance, etc. // WIP - Not trivial :)
+22. Improved Cadence-style net highlighting. The current implementation is pretty good. It can be enhanced with bindkey support. DONE! Claude Code - even animated (marching ants) highlights
+23. Provide outline rectangles (already exists - need to fix UX) DONE! Claude Code
 24. Auto-generate the symbol from schematic using a rectangle rather than four lines, which needs the user to do four delete operations. DONE! Thank you Stefan Schippers! 
-25. Click and drag for rectangle or polygon edge 
-26. Support similar use model to Cadence's o=car(geGetSelSet()) and then o~>?? to look at properties. Currently, we have selected_set for things other than wire and selected_wire 
+25. Click and drag for rectangle or polygon edge // Deferred - not a pain point ATM :)
+26. Support similar use model to Cadence's o=car(geGetSelSet()) and then o~>?? to look at properties. Currently, we have selected_set for things other than wire and selected_wire // Pending
 27. Error message calling out line number when parsing xschemrc. DONE! Thank you Stefan Schippers 
 28. Allow users to run from anywhere, not just the src directory (DONE! Thank you Claude Code! Waiting on SS to merge) 
 

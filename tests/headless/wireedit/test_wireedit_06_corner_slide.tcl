@@ -2,6 +2,10 @@
 # its exit stub should slide the stub+corner, keeping the run orthogonal, with no
 # spurious segment and the same wire count (reproduces golden desired2).
 source [file join [file dirname [info script]] fixtures.tcl]
+# fluid_editing now defaults ON (0091-0096 reroute chain). This test pins the BASE
+# (fluid-off) stretch mechanic it was written for; the fluid-on behavior for the same
+# scene is covered by test_wireedit_20..51. See doc/claude/issues/0096 re-baseline.
+uplevel #0 {set fluid_editing 0}
 we_reset 1 1
 we_device 1360 -930          ;# pin M (1360,-900)
 we_wire 1270 -900 1360 -900  ;# stub  (pin -> corner)

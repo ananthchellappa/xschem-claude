@@ -1307,25 +1307,105 @@ char *str_chars_replace(const char *str, const char *replace_set, const char wit
   return res;
 }
 
-/* 0063: a property-dialog commit edits the whole prop string of the *selected*
- * object(s). No faithful replayable subcommand exists (setprop is token-level only;
- * line/arc/poly have none; the target is the live selection, not a stable id), so we
- * emit a source-able `#` audit marker (skipped on replay, per the D1 comment-line
- * decision) instead of a bogus command -- otherwise these mutating, undo-pushing edits
- * leave no CIW/log trace at all. Newlines are flattened so the marker stays one
- * source-able line. The slick INSTANCE form (edit_prop, x==0) already logs a real
- * replayable `xschem apply_properties`, so that path is excluded by the caller. */
-static void log_prop_edit_marker(const char *what, const char *prop)
+/* 0063 atom 10: a property-dialog commit edits the whole prop string of the
+ * *selected* object(s). It now records a REPLAYABLE line per selected object,
+ * superseding the old property-edit audit marker (which a replayed session
+ * silently skipped). Two data-model facts make this faithful:
+ *
+ *   - The setprop `allprops` arms (scheduler.c) set the whole prop string; the
+ *     shape arms line/arc/polygon were added by this atom (they had no setprop
+ *     case at all). One `xschem setprop <type> <ref> allprops {prop}` per object.
+ *   - We READ EACH OBJECT'S COMMITTED prop_ptr back (not the dialog's single
+ *     tctx::retval): a multi-object edit forces preserve_unchanged_attrs, so each
+ *     object keeps its own distinct tokens (set_different_token) -- logging the raw
+ *     retval would clobber them on replay.
+ *
+ * Reference form: an INSTANCE is addressed by its persistent name (survives
+ * reload, resolved by get_instance); a SHAPE by type + layer(col) + array index.
+ * Stable ids are deliberately NOT used: ids are session-only and re-minted on
+ * reload, so an id recorded before a reload never resolves after one; the array
+ * index is deterministic under a fixture load + ordered replay (the replay model).
+ * The scheduler shape arms are the replay form and do NOT self-log (bypass), so a
+ * replayed line is not re-logged (the instance arm self-logs identically, slice-5).
+ *
+ * TEXT carries three independent facets -- string (txt_ptr), size (independent
+ * xscale/yscale), attributes (prop_ptr) -- that no single prop string holds, so it
+ * emits a small bundle of setprop lines (txt_ptr / size / allprops).
+ *
+ * The slick INSTANCE form (edit_prop, x==0) already logs a real replayable
+ * `xschem apply_properties`, so that path is excluded by the caller. */
+static void log_prop_edit_one(int type, int n, int c, const char *elem_name)
 {
-  char *flat = str_chars_replace(prop ? prop : "", "\n\r", ' ');
-  log_action("# property-edit %s: %s", what, flat);
-  my_free(_ALLOC_ID_, &flat);
+  char cbuf[32], nbuf[32], hbuf[64], vbuf[64];
+  const char *av[8];
+  const char *p;
+  av[0] = "xschem"; av[1] = "setprop";
+  my_snprintf(nbuf, S(nbuf), "%d", n);
+  my_snprintf(cbuf, S(cbuf), "%d", c);
+  switch(type) {
+    case WIRE:
+      p = xctx->wire[n].prop_ptr;
+      av[2] = "wire"; av[3] = nbuf; av[4] = "allprops"; av[5] = p ? p : "";
+      log_action_argv(6, av);
+      break;
+    case ELEMENT:
+      /* Address by the PRE-EDIT name: an instance edit via the external editor can
+       * RENAME the instance (new_prop_string from the new name= token), so the
+       * post-edit instname would not resolve against the reloaded fixture on replay.
+       * The old name resolves, and the setprop-instance arm re-applies the rename
+       * from the new prop's name= token. (Falls back to the live name if none was
+       * captured.) 0063 atom 10 / adversarial review. */
+      p = xctx->inst[n].prop_ptr;
+      av[2] = "instance";
+      av[3] = elem_name ? elem_name : (xctx->inst[n].instname ? xctx->inst[n].instname : "");
+      av[4] = "allprops"; av[5] = p ? p : "";
+      log_action_argv(6, av);
+      break;
+    case xRECT:  case LINE:  case ARC:  case POLYGON: {
+      const char *tn;
+      if(type == xRECT)      { p = xctx->rect[c][n].prop_ptr; tn = "rect"; }
+      else if(type == LINE)  { p = xctx->line[c][n].prop_ptr; tn = "line"; }
+      else if(type == ARC)   { p = xctx->arc[c][n].prop_ptr;  tn = "arc"; }
+      else                   { p = xctx->poly[c][n].prop_ptr; tn = "poly"; }
+      av[2] = tn; av[3] = cbuf; av[4] = nbuf; av[5] = "allprops"; av[6] = p ? p : "";
+      log_action_argv(7, av);
+      break;
+    }
+    case xTEXT: {
+      const char *t = xctx->text[n].txt_ptr;
+      p = xctx->text[n].prop_ptr;
+      av[2] = "text"; av[3] = nbuf;
+      av[4] = "txt_ptr"; av[5] = t ? t : "";              log_action_argv(6, av);
+      my_snprintf(hbuf, S(hbuf), "%.16g", xctx->text[n].xscale);
+      my_snprintf(vbuf, S(vbuf), "%.16g", xctx->text[n].yscale);
+      av[4] = "size"; av[5] = hbuf; av[6] = vbuf;          log_action_argv(7, av);
+      av[4] = "allprops"; av[5] = p ? p : "";              log_action_argv(6, av);
+      break;
+    }
+  }
+}
+
+/* Emit one replayable line (bundle for text) per selected object of the dispatched
+ * type -- the property edit fanned out only over that type (the edit_* loops skip
+ * other types), and prop edits never reindex, so xctx->sel_array is still valid.
+ * elem_names (if non-NULL) holds each selected object's PRE-EDIT instname, aligned
+ * with sel_array, used to address ELEMENT lines (see log_prop_edit_one). */
+static void log_prop_edit_replayable(int type, char **elem_names)
+{
+  int i;
+  for(i = 0; i < xctx->lastsel; ++i) {
+    if(xctx->sel_array[i].type != type) continue;
+    log_prop_edit_one(type, xctx->sel_array[i].n, xctx->sel_array[i].col,
+                      (type == ELEMENT && elem_names) ? elem_names[i] : NULL);
+  }
 }
 
 /* x=0 use tcl text widget  x=1 use vim editor  x=2 only view data */
 void edit_property(int x)
 {
  int type, j, modified = 0;
+ char **presel_names = NULL; /* pre-edit instnames (ELEMENT emit addresses the OLD name) */
+ int presel_n = 0;           /* count captured (lastsel may change in the x==0 slick loop) */
 
  if(!has_x) return;
  rebuild_selected_array(); /* from the .sel field in objects build */
@@ -1447,7 +1527,24 @@ void edit_property(int x)
     }
    } /* end for(j...) */
    if(modified) set_modify(1);
-   if(modified) log_prop_edit_marker("global", tclgetvar("tctx::retval")); /* 0063 */
+   /* 0063 atom 10: the global schematic/symbol attribute edit has a faithful
+    * replay form -- the `xschem set sch<X>prop {str}` command that sets the same
+    * per-netlist-type field (scheduler.c). Record it (superseding the old
+    * property-edit-global marker). No double-log: those `set` arms do not
+    * self-log; on replay the command re-sets the field and records nothing extra. */
+   if(modified) {
+     const char *av[4];
+     const char *val = tclgetvar("tctx::retval");
+     av[0] = "xschem"; av[1] = "set";
+     av[2] = xctx->netlist_type == CAD_SYMBOL_ATTRS    ? "schsymbolprop"  :
+             xctx->netlist_type == CAD_VHDL_NETLIST    ? "schvhdlprop"    :
+             xctx->netlist_type == CAD_VERILOG_NETLIST ? "schverilogprop" :
+             xctx->netlist_type == CAD_SPECTRE_NETLIST ? "schspectreprop" :
+             xctx->netlist_type == CAD_TEDAX_NETLIST   ? "schtedaxprop"   :
+                                                         "schprop";
+     av[3] = val ? val : "";
+     log_action_argv(4, av);
+   }
    return;
  } /* if((xctx->lastsel==0 ) */
 
@@ -1516,6 +1613,22 @@ void edit_property(int x)
    tclsetvar("preserve_unchanged_attrs", "1");
  }
 
+ /* 0063 atom 10: snapshot the selected instances' PRE-EDIT names now -- the commit
+  * below may RENAME them (name= token via the external editor), and the replay line
+  * must address the name present in the reloaded fixture, i.e. the old one. */
+ if(type == ELEMENT) {
+   int s;
+   presel_n = xctx->lastsel;
+   presel_names = my_malloc(_ALLOC_ID_, presel_n * sizeof(char *));
+   for(s = 0; s < presel_n; ++s) {
+     presel_names[s] = NULL;
+     if(xctx->sel_array[s].type == ELEMENT) {
+       char *nm = xctx->inst[xctx->sel_array[s].n].instname;
+       my_strdup(_ALLOC_ID_, &presel_names[s], nm ? nm : "");
+     }
+   }
+ }
+
  switch(type)
  {
   case ELEMENT:
@@ -1561,16 +1674,18 @@ void edit_property(int x)
    break;
  }
  if(modified) set_modify(1);
- /* 0063: audit-log the commit once per dialog session (not per selected object).
-  * Exclude x==2 (view-only) and the instance slick form (ELEMENT && x==0), which
-  * self-logs `xschem apply_properties`; every other path (wire/rect/line/arc/poly/
-  * text + instance-via-external-editor) is otherwise silent. */
+ /* 0063 atom 10: record a REPLAYABLE line per selected object (was a `#` marker).
+  * Exclude x==2 (view-only, no commit) and the instance slick form (ELEMENT && x==0),
+  * which self-logs `xschem apply_properties` (logging both would double). Every other
+  * path (wire/rect/line/arc/poly/text + instance-via-external-editor) records its
+  * `xschem setprop <type> <ref> allprops {..}` line(s) here. */
  if(modified && x != 2 && !(type == ELEMENT && x == 0)) {
-   const char *tn = type == ELEMENT ? "instance" : type == ARC     ? "arc"  :
-                    type == xRECT   ? "rect"     : type == WIRE     ? "wire" :
-                    type == POLYGON ? "polygon"  : type == LINE     ? "line" :
-                    type == xTEXT   ? "text"     : "object";
-   log_prop_edit_marker(tn, tclgetvar("tctx::retval"));
+   log_prop_edit_replayable(type, presel_names);
+ }
+ if(presel_names) {
+   int s;
+   for(s = 0; s < presel_n; ++s) my_free(_ALLOC_ID_, &presel_names[s]);
+   my_free(_ALLOC_ID_, &presel_names);
  }
 }
 

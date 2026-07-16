@@ -13,6 +13,10 @@
 # Biggest behavior change in the plan -> gated behind `wire_exit_stub` (default OFF). This
 # test turns it ON; every other wireedit test leaves it OFF, so their geometry is unchanged.
 source [file join [file dirname [info script]] fixtures.tcl]
+# fluid_editing now defaults ON (0091-0096 reroute chain). This test pins the BASE
+# (fluid-off) stretch mechanic it was written for; the fluid-on behavior for the same
+# scene is covered by test_wireedit_20..51. See doc/claude/issues/0096 re-baseline.
+uplevel #0 {set fluid_editing 0}
 
 proc build_tc10 {} {
   we_reset 1 1

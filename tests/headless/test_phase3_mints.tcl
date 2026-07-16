@@ -89,7 +89,7 @@ check "toggle_draw_pixmap runs" 1
 
 # --- 2. Layer A: bound chords now log the canonical command -----------------
 # chord -> expected line (from the C binding table: arrows, Shift/Ctrl wheel,
-# g/G/y/A/L/$). Fire through `xschem callback`, the real dispatch path.
+# g/G/y/A/$). Fire through `xschem callback`, the real dispatch path.
 proc fire_key {keysym state} { xschem callback .drw 2 200 200 $keysym 0 0 $state; update idletasks }
 proc fire_wheel {button state} { xschem callback .drw 4 200 200 0 $button 0 $state; update idletasks }
 
@@ -98,18 +98,31 @@ foreach {desc cmd fire} {
   "Shift+wheel" {xschem pan left}               {fire_wheel 4 1}
   "key g"       {xschem snap half}              {fire_key 103 0}
   "key G"       {xschem snap double}            {fire_key 71 0}
-  "key y"       {xschem toggle_stretch}         {fire_key 121 0}
   "key A"       {xschem toggle_show_netlist}    {fire_key 65 0}
-  "key L"       {xschem toggle_orthogonal_wiring} {fire_key 76 0}
   "key \$"      {xschem toggle_draw_pixmap}     {fire_key 36 0}
 } {
   set n0 [llength [loglines]]
   eval $fire
   check "$desc logs '$cmd'" [expr {[lsearch -exact [loglines] $cmd] >= $n0}]
 }
+# key 'y' -> edit.toggle_stretch now self-logs the ABSOLUTE resolved state (atom 16 /
+# 0062 tail): `xschem set enable_stretch <new>`, NOT the replay-fragile relative
+# `xschem toggle_stretch` (which lands on the opposite value when replayed from a
+# different start). The relative csv log_cmd copy dedups via the dispatch gate.
+set exp [expr {!$enable_stretch}]          ;# value AFTER the flip the key performs
+set n0 [llength [loglines]]
+fire_key 121 0
+set added [lrange [loglines] $n0 end]      ;# search the NEW tail: the absolute form recurs earlier
+check "key y logs absolute 'xschem set enable_stretch $exp'" \
+  [expr {[lsearch -exact $added "xschem set enable_stretch $exp"] >= 0}]
+check "key y does NOT log the relative 'xschem toggle_stretch'" \
+  [expr {[lsearch -exact [loglines] "xschem toggle_stretch"] < 0}]
+# key 76 ('L') was rebound from edit.toggle_orthogonal_wiring to tools.insert_line
+# (add_wire_label.md); insert_line starts a line-draw mode and logs no canonical command, so it
+# is no longer a chord->log case here (toggle_orthogonal_wiring still has its direct-call check).
 # undo the toggles the chords flipped (pairs: snap half+double cancel already)
 xschem toggle_stretch; xschem toggle_show_netlist
-xschem toggle_orthogonal_wiring; xschem toggle_draw_pixmap
+xschem toggle_draw_pixmap
 xschem scroll down; xschem pan right
 
 # --- 3. replay: a logged line re-applies the same relative step -------------

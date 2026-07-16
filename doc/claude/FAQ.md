@@ -14,6 +14,241 @@ Newest entries on top.
 
 ---
 
+## Q29. With the action-log / CIW coverage work in progress, what will a user actually *notice* differently when using the tool right now?
+
+- **Asked:** 2026-07-14
+- **Project state:** branch `fluid-editing` @ `e3764a07`. Action-log coverage was
+  re-audited this day (`doc/claude/code_analysis/action_log_coverage_audit_and_core_selflog_refactor.md`):
+  the "self-log at the C core" migration is ~70% landed, and the **first core-migration
+  atom** — double-click connected-select — just shipped (`e3764a07`). This answer is a
+  point-in-time snapshot; later atoms will widen what follows.
+
+**Short version: the CIW log pane (and `Xschem.log`) is becoming a live, replayable transcript
+of what you do — and each landed slice makes more of your gestures show up in it in real time.**
+The value is not a new drawing feature; it is that the tool now *narrates itself* in a language
+you can copy, replay, and script.
+
+### What is visibly different today
+
+- **Open the CIW** (the command/interaction window that auto-opens in an interactive session).
+  As you work, the upper pane fills with the exact `xschem …` command each action maps to —
+  place a wire, move a device, flip, trim, descend, click-select, and now **double-click to grow
+  a connected selection** all appear as they happen. Before this atom, the double-click grew the
+  selection *silently*; now it writes `xschem select_grow_connected x y` you can watch land.
+- **The log is a script.** Those lines are executable. Copy one into the CIW entry to repeat the
+  action; `source` the whole `Xschem.log` into a fresh session to replay a sequence. This turns
+  "how do I automate this?" into "do it once, read the line it logged." The log doubles as a
+  **discoverability tool for the scriptable API** — you learn the command names by performing the
+  gestures.
+- **Bug reports get a reproducer for free.** The tail of the log is the precise command sequence
+  that led to the current state — paste it into an issue instead of describing clicks in prose.
+
+### What a user should *not* yet expect (honest scope)
+
+Coverage is deliberately partial and still climbing, so the log is a **growing transcript, not yet
+a complete macro recorder**. As of this HEAD, a handful of common actions still do not appear or
+do not replay faithfully — notably **Ctrl-X (cut) and the Delete key**, **Ctrl-E return** on the
+keyboard, **Library Manager** create/rename/delete/git operations, and **property-dialog** commits
+(logged as a non-replayable `# marker`, not an executable command). Selecting a single object *is*
+now logged (`xschem select_at`), which updates the older **[Q24]** answer — descend-to-schematic and
+click-select have since moved from "silent" to "logged"; go_back and a few keyboard paths remain the
+open cases. Treat the log today as "most standard edit/selection gestures, faithfully, with a known
+shrinking list of gaps," and check the coverage audit for the current edge.
+
+### Why this is the shape of the value
+
+Each fix is one C core taught to log itself, which means the action is captured **from every path
+that reaches it** — menu, toolbar, keyboard, gesture, script — not just the one the developer
+remembered. So the practical user-visible effect of the ongoing work is monotonic: the CIW keeps
+getting more trustworthy as a record, gesture by gesture, without changing how you draw. The
+double-click atom is the first of several (`delete`, `go_back`, `descend_symbol` are queued next);
+each one you will notice simply as "that thing I do now shows up in the log, and I can replay it."
+
+---
+
+## Q28. What are XSCHEM's current move/stretch/rotate keys versus Cadence Virtuoso, and with `cadence_compat=1` loaded, what still doesn't match Cadence?
+
+- **Asked:** 2026-07-09
+- **Project state:** branch `fluid-editing` @ `4cc95a99` (fluid-editing default ON; issues 0091–0097 landed).
+
+**Two variables, often confused.** Wire behavior on a move is governed by two independent
+Tcl vars:
+
+- `fluid_editing` (default **1**, `xschem.tcl:14715`) — the incremental rip-up/reroute
+  *engine*. **On its own it reroutes nothing.** It only runs once `xctx->stretch_select` is
+  armed. `stretch_select` is set exclusively inside `select_attached_nets()`
+  (`select.c:1589`), and whether that runs at move START is gated on
+  `enable_stretch`/Ctrl/`cadence_compat` — **never on `fluid_editing`** (`move.c:5162`,
+  `5228`, `5740`).
+- `enable_stretch` (default **0**, `xschem.tcl:14673`) — global "grab attached nets on move"
+  toggle. Key `y` flips it (`edit.toggle_stretch`, `keybindings.csv:33`).
+
+### Default config (`cadence_compat=0`) — inverted vs Cadence
+
+- **Keyboard** (`m` is hard-coded in C at `callback.c:4715`, *not* in `keybindings.csv`, so it
+  can't be remapped there): plain `m` = **disconnected** move (because `enable_stretch=0`);
+  **Ctrl+`m`** = stretch/connected (Ctrl inverts `enable_stretch`, `callback.c:6096`);
+  `Shift+m`/`M` = kissing-connect (add wires to moved pins), *not* a plain move; Alt+`m` =
+  kissing.
+- **Drag**: plain LMB-drag = disconnected (`stretch = 0 ^ 0 = 0`); **Ctrl+LMB-drag** =
+  connected/reroute; Shift+LMB-drag = copy.
+- This is **backwards from Cadence**, where plain drag = stretch and Ctrl+drag = detach.
+
+### `cadence_compat=1` (loaded via `cadence_style_rc`)
+
+`cadence_style_rc` sets `cadence_compat 1` + `fluid_editing 1` + `en_pin_select 1` +
+snap/crosshair/orthogonal, and *leaves `enable_stretch` at 0* (its `set enable_stretch 1` is
+commented out). The `cadence_compat` flag rewires the Button1 drag branch
+(`callback.c:6069-6090`) to the true Virtuoso three-way, independent of `enable_stretch`:
+
+| Gesture | Effect |
+|---|---|
+| plain LMB-drag | attached move — `connect_by_kissing=2` + `select_attached_nets()` → wires follow/reroute |
+| **Ctrl**+LMB-drag | **detached** move — wires left behind |
+| Shift+LMB-drag | copy |
+
+It also force-sets `autotrim_wires=1` (`xschem.tcl:15153`), collapses a multi-select to the
+clicked item on a no-drag release (`callback.c:6263`), and remaps several keys (`Ctrl+r` →
+run simulation, plain `s` → snapped wire, etc.).
+
+### Cadence Virtuoso *schematic* reference (for the diff)
+
+Note the schematic/layout trap: in the **schematic** editor `m` = **Stretch** (keeps wires
+attached + reroutes), `Shift+m` = **Move** (rigid, no reroute) — opposite of the layout
+editor. Rotate `r` (90° **CCW**); mirror `Shift+r` (L↔R) / `Ctrl+r` (U↕D). Plain drag =
+move-with-wires, Ctrl+drag = detach, Shift+drag = copy. Commands are modal/sticky with a
+reference point, `F3` opens a live options form (reroute on/off, gravity), and while an
+object floats you can press the rotate/mirror key and **the wires stay connected and reroute
+live**. (Sources: VT MICS bindkeys tutorial; AnalogHub/miscircuitos hotkey lists; Cadence
+forum 38605.)
+
+### Gaps that remain with `cadence_compat=1`
+
+What already matches: the 3-way LMB drag model (plain/Ctrl/Shift), copy-drops-disconnected,
+end-of-move cleanup (`maintain_wire_segments` + orphan/loop/reversal cleanup,
+`move.c:5778-5816`), single wire-endpoint tip-grab stretch (`callback.c:6024`/`6062`), and
+snap/orthogonal defaults. The gaps:
+
+1. **No connected rotate/flip (headline gap).** Cadence keeps a rotated/mirrored component
+   wired and reroutes live. In XSCHEM, pressing R/F *mid-stretch* sets `move_rot`/`move_flip`
+   ≠ 0, which gates **off** every fluid-reroute stage (`move.c:1167`, `5349`, `5740`, `5790`)
+   — the wires still rubber-band-translate but the intelligent reroute dies for the rest of
+   the gesture. A *standalone* rotate/flip of a placed wired instance (`callback.c:5003-5011`)
+   grabs no attached nets → wires detach/dangle. There is no connected rotate/flip anywhere.
+2. **Keyboard verbs inverted — `cadence_compat` does not remap `m`/`M`** (the `m`/`M`
+   handlers contain no `cadence_compat` reference). Cadence `m`=stretch, `Shift+m`=move;
+   XSCHEM plain `m`=disconnected, connected=**Ctrl+`m`**, and `Shift+m`=kissing (not a rigid
+   move). The correct mouse model is undone by wrong keyboard verbs.
+   **ADDRESSED 2026-07-09** (uncommitted): with `cadence_compat=1`, `m` is now STRETCH
+   (connected, verb-noun + noun-verb) and `Shift+M` is a rigid disconnected MOVE, matching
+   Virtuoso. See `doc/claude/specs/cadence_stretch_move_keys.md`. Gaps #1 (connected
+   rotate/flip) and #3–#6 remain.
+3. **Rotate/mirror keys + direction differ.** Cadence `r` (CCW) / `Shift+r` / `Ctrl+r`;
+   XSCHEM `Shift+R` (**CW**) / `Shift+F` (L↔R) / `Shift+V` (U↕D).
+4. **`Ctrl+r` collision.** Cadence `Ctrl+r` = mirror vertical; XSCHEM cadence mode rebinds it
+   to **run simulation** (`callback.c:4969`).
+5. **No `F3` mid-command options form** — reroute on/off, gravity, and route style are not
+   user-tunable mid-gesture.
+6. **(unverified/softer)** numeric coordinate/delta entry during a move and `Enter`=repeat-
+   last / sticky modal repeat — present in Virtuoso, not found on the XSCHEM move path.
+
+Bottom line: `cadence_compat=1` gives correct **mouse** semantics but wrong **keyboard**
+semantics, and **no connected rotate/flip** — gap #1 is the real feature hole; #2–#4 are
+keybinding/remap fixes.
+
+---
+
+## Q27. When I drag a net-label that taps the *middle* of a wire, why did the whole wire jog into a U-detour instead of leaving the wire in place and dropping a single stub?
+
+- **Asked:** 2026-07-05
+- **Project state:** branch `fluid-editing` @ `670ad255` (wire-segment-splitting W0–W6 landed).
+
+**Symptom.** Fixture `SANDBOX/test_wire_splits/`: wire `N -100 -60 110 -60`, a `lab_wire`
+net-label tapping it mid-span at `(-80,-60)`, a resistor tap at `0`. Grab the label and drag
+it up. Desired (`sch_desired`): the horizontal run stays put, one clean vertical stub joins
+the label's new position back to the tap. Actual (`sch_after`): the left half of the run got
+rubber-banded into a 4-segment U-detour.
+
+**Root cause — a two-feature interaction.** The **wire-segment-splitting** feature (W1)
+breaks the wire at every attachment point into abutting **collinear segments**, so the label
+tap at `(-80,-60)` — which used to be *mid-span* on one wire — becomes a shared **endpoint**
+of two segments (`-100→-80` and `-80→0`). The **wire-follow-on-move** machinery then grabs
+those segments through *two* paths:
+
+1. `select_attached_nets()` (select.c) grabs wires by **endpoint coincidence** with the
+   moving pin → it grabs *both* through-segments.
+2. Even after (1) is suppressed, `connect_by_kissing()` drops a stub at the tap and
+   `compute_wire_slide()` (move.c) **promotes** that stub — its far end (the tap) has
+   coincident neighbours, so it looks like a slidable *corner* — and drags the run.
+
+Before the split, the tap was mid-span (not an endpoint) so `select_attached_nets` never
+fired and `connect_by_kissing` alone dropped one clean stub. **The split defeated the
+correct tap-move semantics.** (Diagnostic lever: with `orthogonal_wiring=0`, kissing already
+produced the desired result, which isolated `compute_wire_slide` as the second culprit.)
+
+**Fix (both gated inside the stretch path only).** Two predicates that recognise a *straight
+run passing through a point* (two wire endpoints there that are collinear **and**
+opposite-direction: `cross==0 && dot<0`, exact because split coords are grid-aligned):
+
+- `select.c wire_through_tap_arm()` — in `select_attached_nets`, **skip** grabbing a wire
+  that is one arm of a through-run at the moving pin. Gated on `connect_by_kissing` being
+  armed, so a stub always *replaces* the skipped grab (otherwise a stretch-without-kissing
+  move would leave the tap disconnected); the arming was reordered before
+  `select_attached_nets` at the move/copy/drag sites.
+- `move.c point_is_collinear_pass()` — in `compute_wire_slide`, **jog instead of slide**
+  when a wire's far end is a straight pass-through of *stationary* wires (so the kiss stub at
+  a tap stays a single clean stub, never dragging the run).
+
+A perpendicular L-arm or a lone wire-end has no collinear-opposite partner, so it still
+follows normally. Regression coverage: `tests/headless/test_wire_split.tcl` W7/W7b/W7c
+(run-intact + single stub; stretch-without-kissing stays connected; 4-way cross stays
+connected). See `doc/claude/specs/wire_segment_splitting.md`.
+
+---
+
+## Q26. When I rubber-band a selection box, why does a partially-crossed *line* (or pin/wire endpoint) get grabbed but a partially-crossed *instance* does not — and is `enable_stretch` the reason?
+
+- **Asked:** 2026-07-04
+- **Project state:** branch `fluid-editing` @ `8f7e621b`.
+
+**Short version:** two *different* features are in play, and neither is "partial overlap
+selects the whole object" the way it first looks. **`enable_stretch`** grabs individual
+**sub-parts** (endpoints / corners / vertices) of *decomposable* objects as stretch
+handles — it does **nothing** to an instance, which is atomic. The behavior that selects a
+**whole** object on partial overlap is a *separate* variable, **`select_touch`** (an
+AutoCAD-style crossing-window), and it is gated on the **drag direction**, not on
+`enable_stretch`.
+
+**The area-select funnel** is `select_inside()` (`select.c:1524`). Per object type:
+
+| Object | Selected by area when… | Extra when `stretch` on |
+|---|---|---|
+| instance | **fully enclosed** (`RECT_INSIDE`) only | *nothing* — the partial branch is `#if 0` (select.c:1601) |
+| wire / line | both endpoints enclosed | one endpoint inside → that end grabbed (`SELECTED1/2`) |
+| rectangle | all 4 corners enclosed | a corner inside → that corner grabbed (`SELECTED1..4`) |
+| arc | bbox enclosed | center/endpoint inside → grabbed (`SELECTED1/2/3`) |
+| polygon | all vertices enclosed | a vertex inside → that vertex grabbed |
+
+So an instance is **all-or-nothing**: `enable_stretch` cannot make it partial-selectable
+because it has no grabbable sub-points. A line looked "partially selected" only because its
+*endpoint* (a sub-part) fell in the box while `stretch` was on.
+
+**Window vs crossing is drag direction.** `select_rect()` (`actions.c:4956`) dispatches on
+`xctx->nl_dir`, set at press time from the drag direction
+(`callback.c:3986`: `mx >= mx_save ? nl_dir=0 : nl_dir=1`):
+- **left → right** (`nl_dir=0`) → `select_inside()` — **window**, full enclosure.
+- **right → left** (`nl_dir=1`) *and* `select_touch=1` → `select_touch()` — **crossing**,
+  partial overlap selects **whole** objects, instances included.
+
+`select_touch` defaults **on** (`xschem.tcl:14669`); `enable_stretch` defaults **off**
+(`xschem.tcl:14659`). So: to grab a partially-crossed *instance*, drag **right-to-left**
+(that is `select_touch`, not `enable_stretch`). `enable_stretch` is only about grabbing
+endpoints/corners for a subsequent stretch-move, and (non-cadence) about instance-move
+net-follow. See the fluid-editing spec `doc/claude/specs/fluid_editing.md`, which builds on
+this to give first-click tip/edge grab.
+
+---
+
 ## Q25. Which `xschem` Tcl commands exist in this fork but not in upstream XSCHEM — and where is the list?
 
 - **Asked:** 2026-07-04

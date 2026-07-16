@@ -199,6 +199,54 @@ static void free_undo_symbols(Undo_slot *s)
   s->symbols = 0;
 }
 
+/* incremental_wire_reroute.md Phase II: a STANDALONE snapshot slot (NOT part of xctx->uslot[]).
+ * mem_serialize_slot() begins by calling free_undo_*(s), each of which dereferences s->lines[c] /
+ * s->lptr[c] etc, so the per-layer count/pointer arrays MUST exist (and the slot be zeroed so the
+ * first pass over zero counts / NULL wptr is a safe no-op) before the first serialize. This mirrors
+ * the per-slot block in mem_init_undo() but for a caller-owned slot with its own lifetime. */
+void mem_snapshot_alloc(Undo_slot *s)
+{
+  s->lines    = my_calloc(_ALLOC_ID_, cadlayers, sizeof(int));
+  s->rects    = my_calloc(_ALLOC_ID_, cadlayers, sizeof(int));
+  s->arcs     = my_calloc(_ALLOC_ID_, cadlayers, sizeof(int));
+  s->polygons = my_calloc(_ALLOC_ID_, cadlayers, sizeof(int));
+  s->lptr = my_calloc(_ALLOC_ID_, cadlayers, sizeof(xLine *));
+  s->bptr = my_calloc(_ALLOC_ID_, cadlayers, sizeof(xRect *));
+  s->aptr = my_calloc(_ALLOC_ID_, cadlayers, sizeof(xArc *));
+  s->pptr = my_calloc(_ALLOC_ID_, cadlayers, sizeof(xPoly *));
+}
+
+/* Free everything a standalone snapshot slot owns: the deep-copied schematic contents (via the
+ * free_undo_* helpers), the per-layer count/pointer arrays, and the six schematic-prop strings.
+ * Idempotent: a NULL s->lines (never alloc'd) is a no-op. Leaves the slot fully zeroed so a later
+ * mem_snapshot_alloc + mem_serialize_slot starts clean (no per-gesture or exit-time leak). */
+void mem_snapshot_free(Undo_slot *s)
+{
+  if(!s->lines) return;                 /* never allocated -> nothing owned */
+  free_undo_lines(s);
+  free_undo_rects(s);
+  free_undo_polygons(s);
+  free_undo_arcs(s);
+  free_undo_wires(s);
+  free_undo_texts(s);
+  free_undo_instances(s);
+  free_undo_symbols(s);
+  my_free(_ALLOC_ID_, &s->lines);
+  my_free(_ALLOC_ID_, &s->rects);
+  my_free(_ALLOC_ID_, &s->arcs);
+  my_free(_ALLOC_ID_, &s->polygons);
+  my_free(_ALLOC_ID_, &s->lptr);
+  my_free(_ALLOC_ID_, &s->bptr);
+  my_free(_ALLOC_ID_, &s->aptr);
+  my_free(_ALLOC_ID_, &s->pptr);
+  my_free(_ALLOC_ID_, &s->gptr);
+  my_free(_ALLOC_ID_, &s->vptr);
+  my_free(_ALLOC_ID_, &s->sptr);
+  my_free(_ALLOC_ID_, &s->fptr);
+  my_free(_ALLOC_ID_, &s->kptr);
+  my_free(_ALLOC_ID_, &s->eptr);
+}
+
 static void mem_init_undo(void)
 {
   int slot;

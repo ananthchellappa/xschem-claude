@@ -1869,8 +1869,11 @@ void clear_drawing(void)
  /* the document is being torn down (load / clear / new / undo reload): any in-flight
   * Add-Pin cursor preview is now invalid, so drop the flag (cadence_pin_name_text.md
   * item #3) -- otherwise it would survive into the next document and mislead the next
-  * -place re-arm / abort_operation. */
+  * -place re-arm / abort_operation. wirelabel_preview is cleared alongside it (must hold
+  * the "cleared everywhere sympin_preview is" invariant, add_wire_label.md) so a torn-down
+  * net-label preview cannot leak its drop-on-copper gate onto the next document's placements. */
  xctx->sympin_preview = 0;
+ xctx->wirelabel_preview = 0;
  xctx->graph_lastsel = -1;
  del_inst_table();
  del_wire_table();
@@ -2366,6 +2369,60 @@ void place_net_label(int type)
   }
   move_objects(START,0,0,0);
   xctx->ui_state |= START_SYMPIN;
+}
+
+/* Place one schematic port-pin INSTANCE named <name> at the cursor, SELECTED so it can be
+ * dragged as a placement preview -- the schematic analog of create_pin (which places a symbol
+ * PINLAYER rect). See doc/claude/specs/schematic_add_pin.md. Direction picks the device symbol:
+ *   in -> ipin.sym   out -> opin.sym   inout|other -> iopin.sym
+ * The port's net name is its lab= property; "name=p1" lets new_prop_string uniquify the refdes.
+ * to_push_undo is 0: the modeless `add_sch_pin -place` driver manages one undo baseline across
+ * the per-keystroke re-arms itself. Returns place_symbol()'s result (1 placed, 0 not). */
+int place_sch_pin(const char *name, const char *dir)
+{
+  char symbuf[PATH_MAX];
+  char *prop = NULL;
+  const char *symcmd;
+  int r;
+  if(!xctx) return 0;
+  if(!name) name = "";
+  if(!dir || !dir[0]) dir = "inout";
+  if(!strcmp(dir, "in"))       symcmd = "find_file_first ipin.sym";
+  else if(!strcmp(dir, "out")) symcmd = "find_file_first opin.sym";
+  else                         symcmd = "find_file_first iopin.sym";
+  /* copy the resolved path out of the volatile Tcl result BEFORE place_symbol runs its own
+   * tclevals (abs_sym_path/is_xschem_file), which would clobber it. */
+  my_strncpy(symbuf, tcleval(symcmd), S(symbuf));
+  my_mstrcat(_ALLOC_ID_, &prop, "name=p1 lab=", name, NULL);
+  r = place_symbol(-1, symbuf, xctx->mousex_snap, xctx->mousey_snap, 0, 0, prop,
+                   4 /* select the new instance */, 1 /* first_call */,
+                   0 /* to_push_undo: the -place driver owns the undo baseline */);
+  my_free(_ALLOC_ID_, &prop);
+  return r;
+}
+
+/* Place one Cadence net-label INSTANCE (lab_pin.sym, lab=<name>) at the cursor, SELECTED as a
+ * placement preview -- the label twin of place_sch_pin (place_net_label(1) with a pre-filled
+ * name). See doc/claude/specs/add_wire_label.md. The net name is the lab= property; "name=l1"
+ * lets new_prop_string uniquify the (netlist-irrelevant) refdes. to_push_undo is 0: the modeless
+ * `add_wire_label -place` driver owns the single undo baseline across the per-keystroke re-arms.
+ * Returns place_symbol()'s result (1 placed, 0 not). */
+int place_wire_label(const char *name)
+{
+  char symbuf[PATH_MAX];
+  char *prop = NULL;
+  int r;
+  if(!xctx) return 0;
+  if(!name) name = "";
+  /* copy the resolved path out of the volatile Tcl result BEFORE place_symbol runs its own
+   * tclevals (abs_sym_path/is_xschem_file), which would clobber it. */
+  my_strncpy(symbuf, tcleval("find_file_first lab_pin.sym"), S(symbuf));
+  my_mstrcat(_ALLOC_ID_, &prop, "name=l1 lab=", name, NULL);
+  r = place_symbol(-1, symbuf, xctx->mousex_snap, xctx->mousey_snap, 0, 0, prop,
+                   4 /* select the new instance */, 1 /* first_call */,
+                   0 /* to_push_undo: the -place driver owns the undo baseline */);
+  my_free(_ALLOC_ID_, &prop);
+  return r;
 }
 
 /* True when the top-level view currently being edited is a symbol (.sym). Symbol
@@ -3366,6 +3423,7 @@ int descend_schematic(int instnumber, int fallback, int alert, int set_title)
 {
  char *str = NULL;
  char filename[PATH_MAX];
+ char descend_logname[256] = ""; /* raw instname captured for the outcome-level action log */
  int inst_mult, inst_number;
  int save_ok = 0;
  int i, n = 0;
@@ -3397,6 +3455,10 @@ int descend_schematic(int instnumber, int fallback, int alert, int set_title)
      if(save_ok==0) return 0;
    }
    n = xctx->sel_array[0].n;
+   /* capture the raw instname NOW: after load_schematic() below, xctx->inst[]
+    * is the CHILD's array and n no longer names this instance. Used for the
+    * `xschem descend -inst <name>` action-log line. action_log_absorb.md */
+   my_strncpy(descend_logname, xctx->inst[n].instname ? xctx->inst[n].instname : "", S(descend_logname));
    get_sch_from_sym(filename, xctx->inst[n].ptr+ xctx->sym, n, fallback);
 
    if(!filename[0]) return 0; /* no filename returned from get_sch_from_sym() --> abort */
@@ -3521,6 +3583,13 @@ int descend_schematic(int instnumber, int fallback, int alert, int set_title)
    if(!tclgetboolvar("keep_symbols")) remove_symbols();
    descend_ok = load_schematic(1, filename, (set_title & 1), alert);
    if(descend_ok) {
+     /* Outcome-level action log: record the coordinate-free, replay-stable form
+      * `xschem descend -inst <name>`, absorbing the provisional select_at the
+      * selecting click stashed (n = the parent instance it selected). Empty name
+      * (rare, unnamed instance) falls back to the plain form + a flushed
+      * select_at. doc/claude/specs/action_log_absorb.md */
+     if(descend_logname[0]) log_action_descend("descend", n, descend_logname);
+     else log_action("xschem descend");
      if(xctx->hilight_nets) {
        prepare_netlist_structs(0);
        propagate_hilights(1, 0, XINSERT_NOREPLACE);
@@ -3666,6 +3735,18 @@ void go_back(int what)
    * (a no-op when no linked window exists). issue 0073 child->parent. */
   net_hilight_sync_descend_windows();
 
+  /* Self-log at the core (issue 0071 atom 3): go_back() is 1:1 with the user verb
+   * "return up one level" -- Ctrl-E, BackSpace and the context menu call it directly
+   * (bypassing the scheduler branch), and the Tcl walk-ups (hierarchy_close,
+   * descend_hierarchy, traversal) reach it as `xschem go_back`. Those walk-ups must
+   * log too: their descends already log via descend_schematic's core self-log, so a
+   * silent ascend would leave the replayed hierarchy level drifted. The currsch==0
+   * no-op and the Save/No/Cancel "Cancel" path return before this -> no phantom.
+   * Wrapper copies (context-menu table, Layer A csv) dedup via actionlog_cmd_logged.
+   * doc/claude/code_analysis/action_log_coverage_audit_and_core_selflog_refactor.md */
+  if(what == 1) log_action("xschem go_back");
+  else log_action("xschem go_back %d", what);
+
   dbg(1, "go_back(): current path: %s\n", xctx->sch_path[xctx->currsch]);
  }
 }
@@ -3682,6 +3763,19 @@ void clear_schematic(int cancel, int symbol)
         remove_backup();
         xctx->currsch = 0;
         unselect_all(1);
+        /* incremental_wire_reroute Phase II: if a fluid stretch gesture is still armed, tearing down
+         * the buffer here must drop its move-scoped state -- else a later move_objects(RUBBER) could
+         * restore the pre-clear geometry onto the cleared buffer (resurrecting deleted content), and
+         * the deep copy / grabbed-coord array would leak. Frees the reroute snapshot (fluid_reroute_
+         * discard) and the stretch scope (stretch_grabbed_xy, allocated by select_attached_nets). */
+        fluid_reroute_discard();
+        fluid_gesture_free();  /* D1 (Track D): close the Fluid_gesture START snapshot too (clear
+                                * is a legitimate 3rd gesture-close point beside move END/ABORT) */
+        xctx->stretch_select = 0;
+        xctx->stretch_grabbed_n = 0;
+        my_free(_ALLOC_ID_, &xctx->stretch_grabbed_xy);
+        xctx->fluid_startsel_nid = 0;                   /* issue 0091: drop the user-selected id set */
+        my_free(_ALLOC_ID_, &xctx->fluid_startsel_id);
         remove_symbols();
         clear_drawing();
         /* next free untitled[-n] name, avoiding both on-disk files and names already open
@@ -4240,7 +4334,10 @@ void new_wire(int what, double mx_snap, double my_snap)
         drawline(WIRELAYER,NOW, nl_xx1,nl_yy1,nl_xx2,nl_yy2, 0.0, 0, NULL);
       }
       xctx->prep_hi_structs = 0;
-      if(tclgetboolvar("autotrim_wires")) trim_wires();
+      /* W3: a freshly drawn wire may pass under existing pins/net-labels -> split it into
+       * inter-attachment segments (maintain = split + pin-aware merge). Gated on autotrim_wires.
+       * See doc/claude/specs/wire_segment_splitting.md (W3). */
+      if(tclgetboolvar("autotrim_wires")) maintain_wire_segments();
       prepare_netlist_structs(0); /* since xctx->prep_hi_structs==0, do a delete_netlist_structs() first,
                                    * this clears both xctx->prep_hi_structs and xctx->prep_net_structs. */
       if(xctx->hilight_nets) {
@@ -4754,6 +4851,19 @@ double my_round(double a)
 {
   /* return 0.0 or -0.0 if a == 0.0 or -0.0 */
   return (a > 0.0) ? floor(a + 0.5) : (a < 0.0) ? ceil(a - 0.5) : a;
+}
+
+/* snap a schematic coordinate to the current snap grid (cadsnap) -- the
+ * "effective" position an interactive click resolves to. The action log must
+ * record effective coordinates, not the raw mouse position with float noise
+ * (doc/claude/specs/select_at.md). cadsnap <= 0 returns the value unchanged. */
+double snap_to_grid(double c)
+{
+  double s = tclgetdoublevar("cadsnap");
+  double r;
+  if(s <= 0.0) return c;
+  r = my_round(c / s) * s;
+  return (r == 0.0) ? 0.0 : r; /* normalize -0.0 so logs never show "-0" */
 }
 
 double round_to_n_digits(double x, int n)

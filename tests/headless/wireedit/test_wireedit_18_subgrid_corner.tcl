@@ -7,6 +7,10 @@
 # spurious segment appeared. With the shared tolerance it slides just like the
 # on-grid TC6, no spurious stub. RED before the 0046 fix, GREEN after.
 source [file join [file dirname [info script]] fixtures.tcl]
+# fluid_editing now defaults ON (0091-0096 reroute chain). This test pins the BASE
+# (fluid-off) stretch mechanic it was written for; the fluid-on behavior for the same
+# scene is covered by test_wireedit_20..51. See doc/claude/issues/0096 re-baseline.
+uplevel #0 {set fluid_editing 0}
 we_reset 1 1
 # device at sub-grid Y=-931 => pin M = (1360,-901), 1 unit off the on-grid stub
 we_device 1360 -931          ;# pin M (1360,-901)

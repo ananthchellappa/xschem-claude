@@ -17,6 +17,9 @@
 # genuinely needs a real window.)
 
 set ::fails 0
+# belt+braces: never let a test session rewrite the USER's recent-files list, even if
+# launched without --nogui/--pipe (e.g. a windowed DISPLAY=:0 run of a gesture suite)
+set ::update_recent_files 0
 proc check {name ok} {
   puts "[expr {$ok ? {ok:  } : {FAIL:}}] $name"; flush stdout
   if {!$ok} {incr ::fails}

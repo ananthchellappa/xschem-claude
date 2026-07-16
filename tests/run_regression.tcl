@@ -29,7 +29,12 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                  "headless/test_ciw_interactive_load" \
                  "headless/test_select_inside_argc" \
                  "headless/test_callback_argc" \
-                 "headless/test_getprop_index_bounds"]
+                 "headless/test_getprop_index_bounds" \
+                 "headless/test_descend_log_absorb" \
+                 "headless/test_fluid_editing" \
+                 "headless/test_wire_split" \
+                 "headless/test_sch_add_pin" \
+                 "headless/test_add_wire_label"]
 set log_fn "results.log"
 
 proc summarize_all {fn fd} {

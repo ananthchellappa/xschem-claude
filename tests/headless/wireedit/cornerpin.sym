@@ -1,0 +1,14 @@
+v {xschem version=3.4.8RC file_version=1.2}
+G {}
+K {type=cornerpin
+template="name=X1"}
+V {}
+S {}
+E {}
+L 4 -40 -40 40 -40 {}
+L 4 40 -40 40 40 {}
+L 4 40 40 -40 40 {}
+L 4 -40 40 -40 -40 {}
+B 5 37.5 27.5 42.5 32.5 {name=b dir=inout}
+B 5 27.5 37.5 32.5 42.5 {name=a dir=inout}
+T {@name} 0 0 0 0 0.2 0.2 {}

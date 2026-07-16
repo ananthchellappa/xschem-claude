@@ -517,6 +517,10 @@ static void free_xschem_data()
   my_free(_ALLOC_ID_, &xctx->sel_array);
   my_free(_ALLOC_ID_, &xctx->scope_hi_type);
   my_free(_ALLOC_ID_, &xctx->scope_hi_id);
+  my_free(_ALLOC_ID_, &xctx->fly_shown_net);   /* hover fly-line overlay state (Track B) */
+  my_free(_ALLOC_ID_, &xctx->fly_last_net);
+  my_free(_ALLOC_ID_, &xctx->fly_seg);
+  my_free(_ALLOC_ID_, &xctx->fly_hub_mem);   /* H2 hub-cluster member cache */
   for(i=0;i<CADMAXHIER; ++i) {
     if(xctx->portmap[i].table) str_hash_free(&xctx->portmap[i]);
     if(xctx->sch[i]) my_free(_ALLOC_ID_, &xctx->sch[i]);
@@ -563,6 +567,9 @@ void create_gc(void)
    * style set in build_colors(). hover_type 0 = nothing currently outlined. */
   xctx->gc_hover = XCreateGC(display,xctx->window,0L,NULL);
   xctx->hover_type = 0;
+  /* dedicated GC for the hover fly-line overlay (doc/claude/specs/hover_flylines.md);
+   * foreground + dashed line style set in build_colors() from flylines_color/width/dash. */
+  xctx->gc_flyline = XCreateGC(display,xctx->window,0L,NULL);
   /* dedicated scratch GC for net highlights; foreground/width/dash are set per
    * wire at draw time from the active NetHilightStyle (see draw_hilight_wire). */
   xctx->gc_hilight = XCreateGC(display,xctx->window,0L,NULL);
@@ -577,6 +584,7 @@ void free_gc()
   }
   XFreeGC(display,xctx->gc_scope);
   XFreeGC(display,xctx->gc_hover);
+  XFreeGC(display,xctx->gc_flyline);
   XFreeGC(display,xctx->gc_hilight);
 }
 
@@ -1253,6 +1261,23 @@ int build_colors(double dim, double dim_bg)
       dashes[0] = 4; dashes[1] = 4;
       XSetDashes(display, xctx->gc_hover, 0, dashes, 2);
     }
+    /* hover fly-line overlay GC (doc/claude/specs/hover_flylines.md): a thin DASHED colored
+     * line from the hovered net to its implicitly-connected clusters. flylines_color is a
+     * layer-color index (not a name, unlike gc_hover), flylines_width the screen weight,
+     * flylines_dash the on/off dash length. Placeholder look (C2); soft-glow deferred (B4). */
+    if(has_x) {
+      int col = tclgetintvar("flylines_color");
+      int width = tclgetintvar("flylines_width");
+      int dash = tclgetintvar("flylines_dash");
+      char dashes[2];
+      if(col < 0 || col >= cadlayers) col = 4 % cadlayers;
+      if(width < 0) width = 0;
+      if(dash <= 0) dash = 4;
+      XSetForeground(display, xctx->gc_flyline, find_best_color(xctx->color_array[col]));
+      XSetLineAttributes(display, xctx->gc_flyline, width, LineOnOffDash, LINECAP, LINEJOIN);
+      dashes[0] = dash; dashes[1] = dash;
+      XSetDashes(display, xctx->gc_flyline, 0, dashes, 2);
+    }
     if(has_x) for(i=0;i<cadlayers; ++i) {
 #ifdef __unix__
       XLookupColor(display, colormap, xctx->color_array[i], &xcolor_exact, &xcolor);
@@ -1407,7 +1432,11 @@ static int source_tcl_file(char *s)
        {Tcl_AppInit() err 1: can not execute %s, please fix:\n%s\n}",
        s, tclresult());
     #endif
-    if(has_x) {
+    /* automation sessions (--pipe / -q script drivers) must never raise a MODAL
+     * error dialog: it litters the desktop and blocks until a human clicks OK
+     * (a whole test-audit run can queue dozens). The error is already on stderr
+     * above; only an interactive GUI session gets the messageBox. */
+    if(has_x && !cli_opt_pipe && !cli_opt_quit) {
       tcleval( "wm withdraw .");
       tcleval( tmp);
       Tcl_Exit(EXIT_FAILURE);
@@ -3159,6 +3188,23 @@ int Tcl_AppInit(Tcl_Interp *inter)
    running_in_src_dir = 1;
  }
  tclsetintvar("running_in_src_dir", running_in_src_dir);
+ /* recent-files protection: the recent-views list ($USER_CONF_DIR/recent_files) belongs to the
+  * USER; a scripted/automation session must never create/rewrite it. HARD-gated for the whole
+  * session by:
+  *   --nogui / --pipe  (the headless test harnesses),
+  *   --norecent        (explicit opt-out).
+  * A --script <file> startup file is NOT hard-gated here: a shipped config/keybinding rc such as
+  * cadence_style_rc is routinely launched with `--script` and performs NO programmatic loads, so
+  * gating the whole session would freeze the user's recent list for every interactive open that
+  * follows (the bug: reopen-last / File>Open Recent stuck on a stale file). Instead recents are
+  * suppressed only for the DURATION of the --script body -- where a verify/repro run does its
+  * programmatic `xschem load`s -- and restored before the event loop, so loads the human performs
+  * afterward record normally. See the source_tcl_file() call below,
+  * doc/claude/issues/0119-recent-files-script-leak.md and tests/headless/test_recent_launchlog.sh.
+  * xschem.tcl reads this flag when setting update_recent_files, and update_recent_file /
+  * update_recent_dir / write_recent_file are all gated on that variable. */
+ tclsetintvar("no_recent_files",
+   (cli_opt_nogui || cli_opt_pipe || cli_opt_norecent) ? 1 : 0);
 
  if(!sel_file[0]) {
    my_snprintf(sel_file, S(sel_file), "%s/%s", user_conf_dir, ".selection.sch");
@@ -3664,7 +3710,17 @@ int Tcl_AppInit(Tcl_Interp *inter)
     */
    dbg(1, "executing --script file : %s\n",  cli_opt_tcl_script);
    tcleval("update");
+   /* Recent-files (0119): the --script body may perform programmatic `xschem load`s (verify/repro
+    * runs) that must NOT pollute the USER's recent list -- but a config/keybinding rc sourced via
+    * --script (e.g. cadence_style_rc) performs no loads and must not freeze the list for the
+    * interactive session that follows. So suppress recents only for the duration of the script,
+    * then restore: loads the human performs afterward (File>Open, Library Manager, reopen-last)
+    * record normally. Save/restore the prior value so an already-gated session
+    * (--nogui/--pipe/--norecent -> update_recent_files 0) stays gated. */
+   tcleval("set ::_saved_uref [expr {[info exists update_recent_files]?$update_recent_files:1}];"
+           " set update_recent_files 0");
    source_tcl_file(cli_opt_tcl_script);
+   tcleval("set update_recent_files $::_saved_uref; unset ::_saved_uref");
  }
 
  /* autostart the Library Manager if the rc / --script asked for it (after the

@@ -161,6 +161,165 @@ void select_connected_nets(int stop_at_junction)
   draw_selection(xctx->gc[SELLAYER], 0);
 }
 
+/* Add exactly ONE ring of directly-touching WIRES to the current selection.
+ * doc/claude/specs/dblclick_connected_select.md (O2 = wires-only). Mirrors the
+ * one-ring core of select_connected_nets(2) but omits the instance/label
+ * selection loops, so growth never pulls in devices -- only wire segments. The
+ * seed object (of any type) is left as-is. sel_array is snapshotted before the
+ * walk, so wires added in THIS call are not themselves expanded here: exactly one
+ * ring per call. Newly-selected wires are drawn nowhere (select_wire fast bit2);
+ * the caller strokes the whole selection once. Grows from the WHOLE current
+ * selection (every selected wire/instance), so multi-object selections grow all
+ * their nets together. Returns the number of wires newly selected. */
+static int grow_one_ring_wires(void)
+{
+  int i, n, added = 0;
+  double x0, y0;
+  int sqx, sqy, p, rects;
+  Wireentry *wptr, *wireptr;
+  Iterator_ctx ctx;
+
+  hash_wires();
+  hash_instances();
+  rebuild_selected_array();
+  for(n = 0; n < xctx->lastsel; ++n) {
+    i = xctx->sel_array[n].n;
+    switch(xctx->sel_array[n].type) {
+      double x1, y1, x2, y2;
+      int k;
+
+      case WIRE:
+        x1 = xctx->wire[i].x1; y1 = xctx->wire[i].y1;
+        x2 = xctx->wire[i].x2; y2 = xctx->wire[i].y2;
+        RECTORDER(x1, y1, x2, y2);
+        for(init_wire_iterator(&ctx, x1, y1, x2, y2); (wireptr = wire_iterator_next(&ctx)) ;) {
+          k = wireptr->n;
+          if(k == i || xctx->wire[k].sel == SELECTED) continue;
+          if( touch(xctx->wire[i].x1, xctx->wire[i].y1, xctx->wire[i].x2, xctx->wire[i].y2,
+                    xctx->wire[k].x1, xctx->wire[k].y1) ||
+              touch(xctx->wire[i].x1, xctx->wire[i].y1, xctx->wire[i].x2, xctx->wire[i].y2,
+                    xctx->wire[k].x2, xctx->wire[k].y2) ||
+              touch(xctx->wire[k].x1, xctx->wire[k].y1, xctx->wire[k].x2, xctx->wire[k].y2,
+                    xctx->wire[i].x1, xctx->wire[i].y1) ||
+              touch(xctx->wire[k].x1, xctx->wire[k].y1, xctx->wire[k].x2, xctx->wire[k].y2,
+                    xctx->wire[i].x2, xctx->wire[i].y2) ) {
+            select_wire(k, SELECTED, 3, 1); /* fast: quiet + nodraw; override_lock (match connected_nets) */
+            added++;
+          }
+        }
+        break;
+      case ELEMENT:
+        rects = (xctx->inst[i].ptr + xctx->sym)->rects[PINLAYER];
+        for(p = 0; p < rects; p++) {
+          get_inst_pin_coord(i, p, &x0, &y0);
+          get_square(x0, y0, &sqx, &sqy);
+          for(wptr = xctx->wire_spatial_table[sqx][sqy]; wptr; wptr = wptr->next) {
+            k = wptr->n;
+            if(xctx->wire[k].sel == SELECTED) continue;
+            if(touch(xctx->wire[k].x1, xctx->wire[k].y1, xctx->wire[k].x2, xctx->wire[k].y2, x0, y0)) {
+              select_wire(k, SELECTED, 3, 1);
+              added++;
+            }
+          }
+        }
+        break;
+      default:
+        break;
+    }
+  }
+  xctx->need_reb_sel_arr = 1;
+  rebuild_selected_array();
+  return added;
+}
+
+/* Apply level N to the current selection: level 1 -> ring1, 2 -> ring2, ...,
+ * >=3 -> whole-net geometric flood (wires only, O4 cap). */
+static void dblgrow_apply_level(int level)
+{
+  int i;
+  if(level >= 3) {
+    while(grow_one_ring_wires() > 0) ; /* whole net */
+  } else {
+    for(i = 0; i < level; i++) grow_one_ring_wires();
+  }
+}
+
+/* One escalation step of the Cadence double-click connected-select
+ * (doc/claude/specs/dblclick_connected_select.md). Two entry modes:
+ *
+ * - pick_seed (the interactive double-click / `xschem select_grow_connected x y`):
+ *   the object under (mx,my) is the SEED. The level advances 1->2->3(=whole) on
+ *   repeated calls with the same seed, resetting to 1 when the seed changes. The
+ *   selection is then RECOMPUTED FROM SCRATCH -- unselect_all, re-select the seed,
+ *   grow `level` rings -- so it is immune to whatever transient selection the
+ *   surrounding fluid gesture (STARTMOVE grab / pin wire-arm) left behind. Rings
+ *   are wires-only; the seed object of any type stays selected.
+ *
+ * - !pick_seed (`xschem select_grow_connected` with no coords): incremental grow
+ *   of the CURRENT selection by one ring, resetting the level when the selection
+ *   was changed externally since the last step (sel_sig). Used for scripting.
+ *
+ * Returns the new level (1, 2 or 3). */
+int select_grow_connected_step(double mx, double my, int pick_seed)
+{
+  if(pick_seed) {
+    Selected sel;
+    unsigned short seed_type;
+    unsigned int seed_id;
+
+    sel = find_closest_obj(mx, my, 1); /* identify seed, no selection side effect */
+    if(!sel.type) { /* clicked empty space: leave level/selection untouched */
+      if(xctx->need_reb_sel_arr) rebuild_selected_array();
+      return xctx->dblgrow_level;
+    }
+    seed_type = sel.type;
+    if(sel.type == WIRE) seed_id = xctx->wire[sel.n].id;
+    else if(sel.type == ELEMENT) seed_id = xctx->inst[sel.n].id;
+    else seed_id = 0;
+    if(seed_type != xctx->dblgrow_seed_type || seed_id != xctx->dblgrow_seed_id)
+      xctx->dblgrow_level = 0; /* new seed: restart escalation */
+    xctx->dblgrow_seed_type = seed_type;
+    xctx->dblgrow_seed_id = seed_id;
+    xctx->dblgrow_seed_x = mx;
+    xctx->dblgrow_seed_y = my;
+
+    if(xctx->dblgrow_level < 3) xctx->dblgrow_level++; /* advance, cap at 3 (whole net) */
+
+    /* recompute from the seed at the target level */
+    unselect_all(1);
+    select_at_suppress_log = 1; /* the command/gesture self-logs */
+    select_object(mx, my, SELECTED, 1, NULL);
+    select_at_suppress_log = 0;
+    dblgrow_apply_level(xctx->dblgrow_level);
+  } else {
+    int cur_before;
+    if(xctx->need_reb_sel_arr) rebuild_selected_array();
+    cur_before = xctx->lastsel;
+    if(cur_before != xctx->dblgrow_sel_sig) xctx->dblgrow_level = 0; /* external change */
+    if(xctx->dblgrow_level < 3) xctx->dblgrow_level++;
+    dblgrow_apply_level(xctx->dblgrow_level >= 3 ? 3 : 1); /* incremental: one more ring */
+  }
+
+  xctx->need_reb_sel_arr = 1;
+  rebuild_selected_array();
+  xctx->dblgrow_sel_sig = xctx->lastsel;
+  /* Self-log at the CORE, not at the scheduler `select_grow_connected` branch: the
+   * double-click gesture (handle_double_click, callback.c) calls this function directly
+   * and would otherwise never be logged -- the recurring issue-0071 structural gap where
+   * the logged unit is the command string but the shared unit is the C function. See
+   * doc/claude/code_analysis/action_log_coverage_audit_and_core_selflog_refactor.md.
+   * All three callers (scheduler x2, double-click x1) funnel here, so one line records
+   * per action. The empty-click early return above never reaches here, so a no-op click
+   * logs nothing (no phantom). log_action() honors actionlog_suppress (replay/programmatic)
+   * and flushes any pending select_at first, preserving order.
+   * INVARIANT: entry paths (scheduler branch, key handler, gesture) must NOT also log. */
+  if(pick_seed) log_action("xschem select_grow_connected %.10g %.10g",
+                           snap_to_grid(mx), snap_to_grid(my));
+  else          log_action("xschem select_grow_connected");
+  if(has_x) draw_selection(xctx->gc[SELLAYER], 0);
+  return xctx->dblgrow_level;
+}
+
 int select_dangling_nets(void)
 {
   int netlist_lvs_ignore=tclgetboolvar("lvs_ignore");
@@ -606,10 +765,22 @@ void delete(int to_push_undo)
     xctx->prep_hi_structs=0;
   }
 
-  if(delete_wires(SELECTED)) {
-    deleted = 1;
-    if(tclgetboolvar("autotrim_wires")) trim_wires();
-    update_conn_cues(WIRELAYER, 0, 0);
+  {
+    int wires_deleted = delete_wires(SELECTED);
+    if(wires_deleted) deleted = 1;
+    /* W3 edit-time maintenance: after ANY deletion re-run wire-segment maintenance so the two
+     * collinear stubs left by a removed net-label / instance pin REJOIN (free, via the W0
+     * pin-aware merge once the pin is gone). The old code trimmed only when a WIRE was deleted,
+     * so a lone label delete never rejoined its stubs. push_undo already happened at entry, so
+     * this is one undo transaction. Gated on autotrim_wires (D2); trim_wires inside maintain
+     * refreshes the connection cues, so only the default (verbatim) path needs the explicit
+     * update_conn_cues -- kept identical to before. See doc/claude/specs/wire_segment_splitting.md
+     * (W3). */
+    if(tclgetboolvar("autotrim_wires")) {
+      if(deleted) maintain_wire_segments();
+    } else if(wires_deleted) {
+      update_conn_cues(WIRELAYER, 0, 0);
+    }
   }
   if(xctx->hilight_nets) {
     propagate_hilights(1, 1, XINSERT_NOREPLACE);
@@ -785,6 +956,81 @@ int set_first_sel(unsigned short type, int n, unsigned int col)
     dbg(1, "set_first_sel(): storing %d\n", n);
   }
   return 0;
+}
+
+/* ==== Cadence deferred-selection (doc/claude/specs/cadence_modifier_drag.md) ================
+ * A plain (no-modifier) press-drag-release of an object that was NOT already selected must MOVE it
+ * without changing the selection: if nothing was selected it ends unselected; a pre-existing
+ * selection is preserved untouched (the grabbed object is not added to it). A CLICK (no motion)
+ * still selects normally. The move engine is selection-based, so the press transiently selects the
+ * grabbed object to drag it; these helpers snapshot the pre-press selection by session-stable id
+ * and restore it at the move-completion funnel iff the gesture actually moved. */
+
+/* free/reset the drag-selection snapshot (idempotent) */
+void drag_sel_free(void)
+{
+  my_free(_ALLOC_ID_, &xctx->drag_sel_id);
+  my_free(_ALLOC_ID_, &xctx->drag_sel_type);
+  my_free(_ALLOC_ID_, &xctx->drag_sel_col);
+  xctx->drag_sel_n = 0;
+  xctx->drag_sel_restore = 0;
+}
+
+/* snapshot the CURRENT selection (session-stable ids) so a moved drag can restore it. Skips the
+ * INST_PIN pin-selection pseudo-entries (inert + transient). Does NOT arm drag_sel_restore -- the
+ * plain-move drag-start arms it (only when a move actually begins), so a captured-but-never-dragged
+ * press (read-only, etc.) leaves the flag clear and no unrelated later move spuriously restores. */
+void drag_sel_snapshot(void)
+{
+  int i, k = 0;
+  drag_sel_free();
+  rebuild_selected_array();
+  if(xctx->lastsel <= 0) { xctx->drag_sel_n = 0; return; }
+  xctx->drag_sel_id   = my_malloc(_ALLOC_ID_, xctx->lastsel * sizeof(unsigned int));
+  xctx->drag_sel_type = my_malloc(_ALLOC_ID_, xctx->lastsel * sizeof(short));
+  xctx->drag_sel_col  = my_malloc(_ALLOC_ID_, xctx->lastsel * sizeof(short));
+  for(i = 0; i < xctx->lastsel; ++i) {
+    int n = xctx->sel_array[i].n, c = xctx->sel_array[i].col, t = xctx->sel_array[i].type;
+    unsigned int id;
+    switch(t) {
+      case WIRE:    id = xctx->wire[n].id;    break;
+      case ELEMENT: id = xctx->inst[n].id;    break;
+      case xTEXT:   id = xctx->text[n].id;    break;
+      case xRECT:   id = xctx->rect[c][n].id; break;
+      case LINE:    id = xctx->line[c][n].id; break;
+      case POLYGON: id = xctx->poly[c][n].id; break;
+      case ARC:     id = xctx->arc[c][n].id;  break;
+      default: continue;                      /* INST_PIN pseudo-type etc.: not persistent selection */
+    }
+    xctx->drag_sel_id[k] = id; xctx->drag_sel_type[k] = (short)t; xctx->drag_sel_col[k] = (short)c; ++k;
+  }
+  xctx->drag_sel_n = k;
+}
+
+/* restore the snapshotted pre-press selection: clear everything, then re-select each saved object
+ * still present (matched by session-stable id, so a move that renumbered the arrays is handled).
+ * An id that no longer exists (e.g. a snapshot wire trimmed away) is silently dropped. */
+void drag_sel_restore_now(void)
+{
+  int j;
+  unselect_all(1);
+  for(j = 0; j < xctx->drag_sel_n; ++j) {
+    unsigned int id = xctx->drag_sel_id[j];
+    int t = xctx->drag_sel_type[j], c = xctx->drag_sel_col[j], i;
+    switch(t) {
+      case WIRE:    for(i=0;i<xctx->wires;      ++i) if(xctx->wire[i].id==id)   { xctx->wire[i].sel=SELECTED;    break; } break;
+      case ELEMENT: for(i=0;i<xctx->instances;  ++i) if(xctx->inst[i].id==id)   { xctx->inst[i].sel=SELECTED;    break; } break;
+      case xTEXT:   for(i=0;i<xctx->texts;      ++i) if(xctx->text[i].id==id)   { xctx->text[i].sel=SELECTED;    break; } break;
+      case xRECT:   for(i=0;i<xctx->rects[c];   ++i) if(xctx->rect[c][i].id==id){ xctx->rect[c][i].sel=SELECTED; break; } break;
+      case LINE:    for(i=0;i<xctx->lines[c];   ++i) if(xctx->line[c][i].id==id){ xctx->line[c][i].sel=SELECTED; break; } break;
+      case POLYGON: for(i=0;i<xctx->polygons[c];++i) if(xctx->poly[c][i].id==id){ xctx->poly[c][i].sel=SELECTED; break; } break;
+      case ARC:     for(i=0;i<xctx->arcs[c];    ++i) if(xctx->arc[c][i].id==id) { xctx->arc[c][i].sel=SELECTED;  break; } break;
+    }
+  }
+  xctx->need_reb_sel_arr = 1;
+  rebuild_selected_array();
+  if(has_x) draw_selection(xctx->gc[SELLAYER], 0);
+  drag_sel_free();
 }
 
 void unselect_all(int dr)
@@ -1419,7 +1665,10 @@ Selected select_object(double mx,double my, unsigned short select_mode,
     * select_at_suppress_log and logs its own line (so it can carry the `add` flag
     * and record exactly once). */
    if(!select_at_suppress_log && select_mode == SELECTED && sel.type) {
-     log_action("xschem select_at %.16g %.16g%s", mx, my, select_at_add ? " add" : "");
+     /* Stash (not write): a following outcome command (descend) may absorb this
+      * click into one stable line; else the next action flushes it verbatim.
+      * doc/claude/specs/action_log_absorb.md */
+     log_action_stash_select_at(mx, my, select_at_add, sel.type == ELEMENT ? sel.n : -1);
    }
 
    return sel;
@@ -1436,17 +1685,96 @@ static int endpoint_near(double ax, double ay, double bx, double by, double tol)
   return fabs(ax - bx) <= tol && fabs(ay - by) <= tol;
 }
 
+/* Is wire i (which has an endpoint at the moving pin (px,py)) merely one arm of a
+ * straight wire run passing THROUGH the pin -- i.e. a mid-span TAP? A net-label or
+ * instance pin that taps the interior of a wire is stored as ONE wire, but the
+ * wire-segment-splitting feature (see doc/claude/specs/wire_segment_splitting.md)
+ * breaks that wire at the tap into abutting collinear segments, each of which then
+ * has an ENDPOINT at the pin. select_attached_nets() would grab BOTH through-segments
+ * by endpoint coincidence and place_moved_wire()/compute_wire_slide() would jog the
+ * whole run into an ugly detour -- when the Cadence-correct behavior is to leave the
+ * through-wire in place and let connect_by_kissing() drop a SINGLE stub from the pin's
+ * new position back to the tap point (the pre-split, mid-span-tap behavior).
+ *
+ * Returns 1 iff there is ANOTHER wire j (!= i) with an endpoint at (px,py) that is
+ * COLLINEAR with i and extends in the OPPOSITE direction -- so i and j together form a
+ * straight line through (px,py). A perpendicular arm (real L-corner) or a lone wire
+ * end (true endpoint connection) has no such partner and is still grabbed to follow.
+ * The caller only acts on this when connect_by_kissing is armed (so a stub replaces the
+ * skipped grab and connectivity is preserved). */
+static int wire_through_tap_arm(int i, double px, double py, double tol)
+{
+  double ix, iy, jx, jy, cross, dot;
+  int j, sqx, sqy;
+  Wireentry *wptr;
+  /* direction from the tap toward wire i's FAR endpoint */
+  if(endpoint_near(xctx->wire[i].x1, xctx->wire[i].y1, px, py, tol)) {
+    ix = xctx->wire[i].x2 - px; iy = xctx->wire[i].y2 - py;
+  } else {
+    ix = xctx->wire[i].x1 - px; iy = xctx->wire[i].y1 - py;
+  }
+  if(ix == 0 && iy == 0) return 0; /* degenerate zero-length wire */
+  get_square(px, py, &sqx, &sqy);
+  for(wptr = xctx->wire_spatial_table[sqx][sqy]; wptr; wptr = wptr->next) {
+    j = wptr->n;
+    if(j == i) continue;
+    if(endpoint_near(xctx->wire[j].x1, xctx->wire[j].y1, px, py, tol)) {
+      jx = xctx->wire[j].x2 - px; jy = xctx->wire[j].y2 - py;
+    } else if(endpoint_near(xctx->wire[j].x2, xctx->wire[j].y2, px, py, tol)) {
+      jx = xctx->wire[j].x1 - px; jy = xctx->wire[j].y1 - py;
+    } else {
+      continue; /* wire j does not touch the tap */
+    }
+    if(jx == 0 && jy == 0) continue;
+    cross = ix * jy - iy * jx;      /* ==0 => EXACTLY collinear. cross is an AREA, so it
+                                     * must NOT be compared to the length tol; split points
+                                     * sit on exact grid-aligned coords -> cross is 0. */
+    dot   = ix * jx + iy * jy;      /* <0  => opposite sense */
+    if(cross == 0 && dot < 0) return 1; /* straight run through pin */
+  }
+  return 0;
+}
+
 void select_attached_nets(void)
 {
   int wire, inst, j, i, rects, r, sqx, sqy;
   double x0, y0, tol;
   Wireentry *wptr;
+  /* fast bit 1 = quiet (no info popup); bit 2 = do NOT stroke the selection highlight.
+   * The between-legs regrab (move_regrab_follow_set) re-derives the follow SET off the
+   * intermediate X-moved geometry -- stroking it would bake a ghost segment at the leg-A
+   * position that the final redraw does not clear (issue 0117). Suppress the draw there. */
+  int fast = xctx->select_attached_nodraw ? 3 : 1;
 
   hash_wires();
   rebuild_selected_array();
   /* mark this move as a stretch move so move_objects(END) runs the Phase-5
    * release-time cleanup even when autotrim_wires is off (wire-editing Phase 5). */
   xctx->stretch_select = 1;
+  /* incremental_wire_reroute Phase I (ownership decoupling, spec §4a): snapshot how many wires the
+   * USER had selected, captured HERE -- before the grab loop below marks any follow-wire. Count ANY
+   * selection state (sel != 0), not just full SELECTED: a stretch box-select marks a user's own wire
+   * SELECTED1/SELECTED2 (partial), which is a genuine user selection that must count. Taking the
+   * count after the grab is wrong two ways -- user-partial and tool-partial wires become
+   * indistinguishable, and a follow-wire grabbed at BOTH ends is folded to full SELECTED
+   * (select.c select_wire ~965) -- so it is done here instead. move_objects(END) consumes it: when
+   * this count is 0, every wire selected at END is a tool-owned follow-wire and is deselected. */
+  { int wi; xctx->fluid_startsel_wires = 0;
+    for(wi = 0; wi < xctx->wires; ++wi) if(xctx->wire[wi].sel) ++xctx->fluid_startsel_wires; }
+  /* issue 0091: snapshot the ids of exactly those user-selected wires (here, before the grab loop
+   * marks any follow-wire) so the END redundant-route cleanup can decline PER-COMPONENT instead of
+   * being wholesale-gated off whenever the user selected any wire. Rebuilt every call; freed with the
+   * move. A regrab pass (move_regrab_follow_set, all sel==0) rebuilds an empty set -- its caller
+   * saves/restores the count and this set, so the real snapshot survives. */
+  { int wi, kk = 0; xctx->fluid_startsel_nid = 0;
+    if(tclgetboolvar("fluid_editing") && xctx->fluid_startsel_wires > 0) {
+      my_realloc(_ALLOC_ID_, &xctx->fluid_startsel_id,
+                 xctx->fluid_startsel_wires * sizeof(unsigned int));
+      for(wi = 0; wi < xctx->wires; ++wi) if(xctx->wire[wi].sel)
+        xctx->fluid_startsel_id[kk++] = xctx->wire[wi].id;
+      xctx->fluid_startsel_nid = kk;
+    }
+  }
   tol = tclgetdoublevar("cadsnap") / 2.0;
   if(tol < 1e-6) tol = 1e-6;
 
@@ -1461,11 +1789,17 @@ void select_attached_nets(void)
           get_square(x0, y0, &sqx, &sqy);
           for(wptr=xctx->wire_spatial_table[sqx][sqy]; wptr; wptr=wptr->next) {
             i = wptr->n;
+            /* A pin tapping the interior of a straight wire run (split into abutting
+             * collinear segments) must NOT drag the run: leave it and let
+             * connect_by_kissing() drop a single stub. Gated on kissing being armed so a
+             * stub WILL replace the skipped grab -- otherwise (stretch without kissing)
+             * skipping would leave the moved pin disconnected. See wire_through_tap_arm(). */
+            if(xctx->connect_by_kissing && wire_through_tap_arm(i, x0, y0, tol)) continue;
             if(endpoint_near(xctx->wire[i].x1, xctx->wire[i].y1, x0, y0, tol)) {
-               select_wire(i,SELECTED1, 1, 0);
+               select_wire(i,SELECTED1, fast, 0);
             }
             if(endpoint_near(xctx->wire[i].x2, xctx->wire[i].y2, x0, y0, tol)) {
-               select_wire(i,SELECTED2, 1, 0);
+               select_wire(i,SELECTED2, fast, 0);
             }
           }
         }
@@ -1488,10 +1822,10 @@ void select_attached_nets(void)
           i = wptr->n;
           if(i == wire) continue;
           if(endpoint_near(xctx->wire[i].x1, xctx->wire[i].y1, x0, y0, tol)) {
-             select_wire(i,SELECTED1, 1, 0);
+             select_wire(i,SELECTED1, fast, 0);
           }
           if(endpoint_near(xctx->wire[i].x2, xctx->wire[i].y2, x0, y0, tol)) {
-             select_wire(i,SELECTED2, 1, 0);
+             select_wire(i,SELECTED2, fast, 0);
           }
         }
       }
@@ -1998,28 +2332,37 @@ static int gfx_total(int *per_layer)
   return n;
 }
 
-/* Issue 0007: preserve the selection across an undo/redo restore.
+/* Issue 0007 + 0095: preserve the selection across an undo/redo restore.
  *
  * Both undo backends clear the selection during a restore (unselect_all), and
  * selection is NOT part of the undo snapshot, so undoing an edit used to silently
- * deselect the object. Here we snapshot the selected set by ARRAY POSITION
- * (type, layer, index) before the restore and re-apply it after — but only if the
- * object population is unchanged (a non-structural edit was undone): for a
- * property/geometry edit the restored objects keep their order in BOTH backends,
- * so the indices still point at the same objects.
+ * deselect the object. We snapshot the selected set BEFORE the restore and re-apply
+ * it AFTER, keyed on each object's session-stable id (xWire.id / xInstance.id / the
+ * gfx & text .id, stamped at birth in store.c).
  *
- * Array position (not stable id) is used deliberately: the default 'disk' backend
- * restores by reloading the slot file, which re-mints stable ids, so an id
- * snapshot would not survive it (memory keeps ids, disk does not). Structural
- * undos (create/delete/reorder change the per-type counts) skip re-selection —
- * the selection drops, exactly the prior behaviour. Backend-agnostic: wraps the
- * xctx->pop_undo function pointer, so it covers both backends from one place.
- * Plan: doc/claude/code_analysis/undo_keep_selection_decision.md. */
+ * Why id, not array position (issue 0095 corrects the original 0007 approach): a
+ * topology-changing move (fluid rip-up/reroute, kissing stubs, trim merges) adds or
+ * deletes WIRES, so the pre/post per-type counts differ. The original code re-selected
+ * by (type,layer,index) only when ALL seven per-type counts were unchanged — a single
+ * global fingerprint — so any wire-count change threw away the WHOLE selection,
+ * including the untouched moved instance. Ids sidestep this: they survive pop_undo in
+ * BOTH backends (memory keeps them verbatim; the disk backend re-mints on reload but
+ * re-stamps the pre-move ids via the issue-0043 side channel), and a moved instance
+ * keeps its id, so it is re-found no matter how the wire arrays changed. An id that no
+ * longer resolves (deleted by the undone op, or re-stored with a fresh id) is skipped.
+ *
+ * The count fingerprint is kept ONLY as a fallback: if nothing resolves by id but the
+ * population is unchanged (the disk restore_undo_ids side channel bailed on a per-type
+ * shape mismatch and left fresh ids — save.c:4035), fall back to the pre-0095
+ * array-position re-select. Backend-agnostic: wraps the xctx->pop_undo function pointer.
+ * Plan: doc/claude/code_analysis/undo_keep_selection_decision.md,
+ * doc/claude/issues/0095-undo-after-move-drops-selection.md. */
 void pop_undo_keep_selection(int redo, int set_modify)
 {
   int nsel, i;
-  int *sty = NULL, *scl = NULL, *sn = NULL;   /* snapshot: type, layer(col), index */
-  int b_inst, b_wire, b_text, b_rect, b_line, b_poly, b_arc; /* population, before */
+  int *sty = NULL, *scl = NULL, *sn = NULL;   /* snapshot: type, layer(col), index (fallback) */
+  unsigned int *sid = NULL;                   /* snapshot: session-stable id (primary key) */
+  int b_inst, b_wire, b_text, b_rect, b_line, b_poly, b_arc; /* population, before (fallback guard) */
 
   rebuild_selected_array();
   nsel = xctx->lastsel;
@@ -2027,13 +2370,23 @@ void pop_undo_keep_selection(int redo, int set_modify)
     sty = my_malloc(_ALLOC_ID_, nsel * sizeof(int));
     scl = my_malloc(_ALLOC_ID_, nsel * sizeof(int));
     sn  = my_malloc(_ALLOC_ID_, nsel * sizeof(int));
+    sid = my_malloc(_ALLOC_ID_, nsel * sizeof(unsigned int));
     for(i = 0; i < nsel; ++i) {
-      sty[i] = xctx->sel_array[i].type;
-      scl[i] = xctx->sel_array[i].col;
-      sn[i]  = xctx->sel_array[i].n;
+      int t = xctx->sel_array[i].type, c = xctx->sel_array[i].col, n = xctx->sel_array[i].n;
+      sty[i] = t; scl[i] = c; sn[i] = n;
+      switch(t) {
+        case ELEMENT: sid[i] = xctx->inst[n].id;    break;
+        case WIRE:    sid[i] = xctx->wire[n].id;    break;
+        case xTEXT:   sid[i] = xctx->text[n].id;    break;
+        case xRECT:   sid[i] = xctx->rect[c][n].id; break;
+        case LINE:    sid[i] = xctx->line[c][n].id; break;
+        case POLYGON: sid[i] = xctx->poly[c][n].id; break;
+        case ARC:     sid[i] = xctx->arc[c][n].id;  break;
+        default:      sid[i] = 0;                    break;
+      }
     }
   }
-  /* population fingerprint before the restore (per-type totals) */
+  /* population fingerprint before the restore (per-type totals) -- fallback guard only */
   b_inst = xctx->instances; b_wire = xctx->wires; b_text = xctx->texts;
   b_rect = gfx_total(xctx->rects); b_line = gfx_total(xctx->lines);
   b_poly = gfx_total(xctx->polygons); b_arc = gfx_total(xctx->arcs);
@@ -2041,24 +2394,56 @@ void pop_undo_keep_selection(int redo, int set_modify)
   /* the actual restore (clears the selection + reloads the object model) */
   xctx->pop_undo(redo, set_modify);
 
-  /* re-apply the selection only if the population is unchanged (non-structural
-   * undo). select_*(..., 3, 1): fast=3 = no status line + no draw (a redraw
-   * follows); override_lock=1 = faithfully reselect (these were selected). */
-  if(nsel > 0 &&
-     b_inst == xctx->instances && b_wire == xctx->wires && b_text == xctx->texts &&
-     b_rect == gfx_total(xctx->rects) && b_line == gfx_total(xctx->lines) &&
-     b_poly == gfx_total(xctx->polygons) && b_arc == gfx_total(xctx->arcs)) {
+  /* Normalize the post-restore selection to empty. The MEMORY backend restores the slot's
+   * stale .sel flags (the undo slot was serialized mid-gesture, when the follow-wires were
+   * still grabbed as SELECTED1/2), so without this an undone move re-adds tool-owned wires
+   * to the selection. This must run UNCONDITIONALLY (not under nsel>0): if nothing was
+   * selected before the undo (nsel==0) the memory backend would otherwise leak those stale
+   * bits as a ghost selection the user never made (review wf_579a8cff). mem_restore_slot
+   * leaves lastsel==0 while the stale per-object .sel bits are set, so unselect_all's
+   * `(SELECTION|lastsel)` guard would skip clearing; force a rebuild first to sync lastsel
+   * with the restored flags, then clear. The disk backend restores everything unselected,
+   * so this is a cheap no-op there. dr=0: the undo/redo command redraws. */
+  xctx->need_reb_sel_arr = 1;
+  rebuild_selected_array();
+  unselect_all(0);
+
+  if(nsel > 0) {
+    int reselected = 0, idx, layer;
+    /* PRIMARY: re-select by session-stable id (survives both backends, robust to a
+     * topology-changing move). select_*(..., 3, 1): fast=3 = no status line + no draw;
+     * override_lock=1 = faithfully reselect (these were selected). */
     for(i = 0; i < nsel; ++i) {
-      int c = scl[i], n = sn[i];
       switch(sty[i]) {
-        case ELEMENT: if(n < xctx->instances)                       select_element(n, SELECTED, 3, 1); break;
-        case WIRE:    if(n < xctx->wires)                           select_wire(n, SELECTED, 3, 1);    break;
-        case xTEXT:   if(n < xctx->texts)                           select_text(n, SELECTED, 3, 1);    break;
-        case xRECT:   if(c < cadlayers && n < xctx->rects[c])       select_box(c, n, SELECTED, 3, 1);  break;
-        case LINE:    if(c < cadlayers && n < xctx->lines[c])       select_line(c, n, SELECTED, 3, 1); break;
-        case POLYGON: if(c < cadlayers && n < xctx->polygons[c])    select_polygon(c, n, SELECTED, 3, 1); break;
-        case ARC:     if(c < cadlayers && n < xctx->arcs[c])        select_arc(c, n, SELECTED, 3, 1);  break;
+        case ELEMENT: idx = inst_index_from_id(sid[i]); if(idx >= 0) { select_element(idx, SELECTED, 3, 1); reselected++; } break;
+        case WIRE:    idx = wire_index_from_id(sid[i]); if(idx >= 0) { select_wire(idx, SELECTED, 3, 1);    reselected++; } break;
+        case xTEXT:   idx = text_index_from_id(sid[i]); if(idx >= 0) { select_text(idx, SELECTED, 3, 1);    reselected++; } break;
+        case xRECT:   idx = gfx_index_from_id(xRECT, sid[i], &layer);   if(idx >= 0) { select_box(layer, idx, SELECTED, 3, 1);     reselected++; } break;
+        case LINE:    idx = gfx_index_from_id(LINE, sid[i], &layer);    if(idx >= 0) { select_line(layer, idx, SELECTED, 3, 1);    reselected++; } break;
+        case POLYGON: idx = gfx_index_from_id(POLYGON, sid[i], &layer); if(idx >= 0) { select_polygon(layer, idx, SELECTED, 3, 1); reselected++; } break;
+        case ARC:     idx = gfx_index_from_id(ARC, sid[i], &layer);     if(idx >= 0) { select_arc(layer, idx, SELECTED, 3, 1);     reselected++; } break;
         default: break;
+      }
+    }
+    /* FALLBACK (rare): nothing resolved by id AND the population is unchanged -- the disk
+     * restore_undo_ids side channel bailed on a shape mismatch and left fresh ids. Re-select
+     * by array position under the strict count guard (the pre-0095 behaviour). */
+    if(reselected == 0 &&
+       b_inst == xctx->instances && b_wire == xctx->wires && b_text == xctx->texts &&
+       b_rect == gfx_total(xctx->rects) && b_line == gfx_total(xctx->lines) &&
+       b_poly == gfx_total(xctx->polygons) && b_arc == gfx_total(xctx->arcs)) {
+      for(i = 0; i < nsel; ++i) {
+        int c = scl[i], n = sn[i];
+        switch(sty[i]) {
+          case ELEMENT: if(n < xctx->instances)                       select_element(n, SELECTED, 3, 1); break;
+          case WIRE:    if(n < xctx->wires)                           select_wire(n, SELECTED, 3, 1);    break;
+          case xTEXT:   if(n < xctx->texts)                           select_text(n, SELECTED, 3, 1);    break;
+          case xRECT:   if(c < cadlayers && n < xctx->rects[c])       select_box(c, n, SELECTED, 3, 1);  break;
+          case LINE:    if(c < cadlayers && n < xctx->lines[c])       select_line(c, n, SELECTED, 3, 1); break;
+          case POLYGON: if(c < cadlayers && n < xctx->polygons[c])    select_polygon(c, n, SELECTED, 3, 1); break;
+          case ARC:     if(c < cadlayers && n < xctx->arcs[c])        select_arc(c, n, SELECTED, 3, 1);  break;
+          default: break;
+        }
       }
     }
     rebuild_selected_array();
@@ -2066,6 +2451,7 @@ void pop_undo_keep_selection(int redo, int set_modify)
   my_free(_ALLOC_ID_, &sty);
   my_free(_ALLOC_ID_, &scl);
   my_free(_ALLOC_ID_, &sn);
+  my_free(_ALLOC_ID_, &sid);
 }
 
 

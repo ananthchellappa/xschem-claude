@@ -595,6 +595,18 @@ proc net_hilight_style_reset {} {
   return $net_hilight_style
 }
 
+# Set the table VERBATIM and push it live -- the action-log replay form (issue 0065).
+# Unlike net_hilight_style_replace this does NOT normalize: the C compiler parses the
+# raw rows exactly as it did in the recorded session (norm and C coerce sloppy fields
+# differently -- e.g. a hand-set width 2.5 is atoi'd to 2 by C but coerced to 1 by
+# net_hilight_style_norm -- so a normalizing replay would diverge from the session).
+proc net_hilight_style_set_live {rows} {
+  global net_hilight_style
+  set net_hilight_style $rows
+  catch { xschem update_net_hilight_style }
+  return $net_hilight_style
+}
+
 # Bonus -- remove rows by position; the survivors are renumbered to keep index == position.
 proc net_hilight_style_remove {indices {apply 1}} {
   global net_hilight_style
@@ -1338,7 +1350,18 @@ proc nhse_op_delete {} {
   if {$i eq {}} return
   nhse_flush
   net_hilight_style_remove [list $i] 0
+  # Deleting the LAST row empties the staged var, and nhse_rebuild's
+  # net_hilight_style_current then re-materializes the layer default LIVE (a C
+  # recompile + redraw outside the nhse_apply_live seam) -- a real live-state
+  # change, so record it (atom-8 review); the var below holds the materialized
+  # default after the rebuild. Non-empty deletes stay staged-only and silent.
+  # The non-empty gate also covers a window-less call: there nhse_rebuild
+  # early-returns, nothing went live, the var is still {} -> no line.
+  set emptied [expr {[llength $::net_hilight_style] == 0}]
   nhse_rebuild
+  if {$emptied && [llength $::net_hilight_style] > 0} {
+    xschem log_action [list net_hilight_style_set_live $::net_hilight_style]
+  }
   nhse_focus_after_op $i   ;# clamps to the new last row if we removed it
 }
 
@@ -1394,6 +1417,16 @@ proc nhse_save {} {
               -message "Could not write {$path}." }
     return
   }
+  # action log (issue 0065): record the RESOLVED save (the file-menu
+  # dialog-resolution pattern) -- replay rewrites the same path with no dialog.
+  # The staged-table line comes FIRST (atom-8 review: Save writes the STAGED var,
+  # which is unlogged unless Apply happened to precede -- without it a replay
+  # writes whatever table the log last applied, not what the session saved). A
+  # plain `set` matches Save's semantics exactly: var staged, NO live push.
+  # Dialog-Cancel and write-fail arms above log nothing. The ciw_echo below
+  # stays (status comment, not the record).
+  xschem log_action [list set ::net_hilight_style $::net_hilight_style]
+  xschem log_action [list write_net_hilight_style_conf $path]
   if {[nhse_save_announce $path]} {
     catch { tk_messageBox -parent .nhse -type ok -icon info -title {Saved} \
       -message "Saved to:\n$path\n\nThis file will NOT be loaded automatically next session. To use\
@@ -1406,7 +1439,29 @@ proc nhse_save {} {
 # the running session: recompile the C table + redraw. The single point where edits become live, so
 # the dialog follows a staged model -- typing/moving/deleting only restage; nothing reaches the
 # schematic until Apply/OK (or a Cancel revert).
-proc nhse_apply_live {} { catch { xschem update_net_hilight_style } }
+#
+# ACTION LOG (issue 0065 / 0071 atom 8): this single staged->live point records the
+# editor's commit as a SELF-CONTAINED replayable line -- the full table value, not a
+# bare `xschem update_net_hilight_style` (whose replay would depend on the ambient
+# net_hilight_style var, the atom-3 self-contained-line rule). The logged form is
+# net_hilight_style_set_live, which replays the RAW value verbatim -- a normalizing
+# form (net_hilight_style_replace) would coerce sloppy hand-set fields differently
+# than the C parser did in-session (atom-8 review: width 2.5 -> C 2 vs norm 1) and
+# diverge. Logged AFTER the C recompile, so an empty staged var has been
+# re-materialized to the real default first. Covers Apply, OK and Cancel (the
+# snapshot revert is a live-state change worth replaying; with nothing applied it
+# degrades to an idempotent no-op line, the slice-1 no-op norm). Machinery stays
+# silent: the startup conf-file source and the scripting helpers
+# (net_hilight_style_replace/merge/append/reset apply=1, net_hilight_apply) call
+# `xschem update_net_hilight_style` directly, never this proc -- typed/scripted
+# calls are recorded by their own channel (CIW/stdin/TCP). Known residual: the
+# apply_hilight CLICK-to-apply arm (utils/apply_hilight.tcl, cadence rc mouse bind)
+# appends a style row unlogged -- 0067 SS5 deferred gesture class, noted in 0065.
+# Locked by test_selflog_grep_guard S1 rows; test: test_nhse_mutation_log.tcl.
+proc nhse_apply_live {} {
+  catch { xschem update_net_hilight_style }
+  xschem log_action [list net_hilight_style_set_live $::net_hilight_style]
+}
 
 # Apply -- flush any in-progress field edit into the staged table, then push it live; stay open.
 proc nhse_apply {} { nhse_flush ; nhse_apply_live }
@@ -1424,7 +1479,14 @@ proc nhse_cancel {} {
 }
 
 # Reset to defaults -- discard customization, re-derive the layer default (itself a savable state).
-proc nhse_reset {} { net_hilight_style_reset ; nhse_rebuild }
+# Reset commits LIVE immediately (net_hilight_style_reset applies, no staging), bypassing
+# nhse_apply_live -- so it records its own replayable line here (atom-2 entry-site pattern; the
+# scripting proc itself stays silent, its typed/scripted calls are channel-recorded).
+proc nhse_reset {} {
+  net_hilight_style_reset
+  xschem log_action net_hilight_style_reset
+  nhse_rebuild
+}
 
 # ---- slice 9: Load... -- read a saved/similar styles file INTO the editor (Replace / Add) ----------
 # Companion to Save... Save... writes a stand-alone, *sourceable* file; Load... brings such a file (the
@@ -2442,7 +2504,9 @@ proc load_recent_file {} {
 }
 
 proc update_recent_file {f {topwin {} } } {
-  global has_x
+  global has_x update_recent_files
+  # the recent-views list belongs to the user: no-op in gated (test/automation) sessions
+  if {[info exists update_recent_files] && !$update_recent_files} return
   # puts "update recent file, f=$f, topwin=$topwin"
   set old $tctx::recentfile
   set tctx::recentfile {}
@@ -2464,6 +2528,9 @@ proc update_recent_file {f {topwin {} } } {
 # Recent drop-down (most recent first, deduped, capped like tctx::recentfile,
 # persisted in the same recent_files conf file)
 proc update_recent_dir {d} {
+  global update_recent_files
+  # the recent-views list belongs to the user: no-op in gated (test/automation) sessions
+  if {[info exists update_recent_files] && !$update_recent_files} return
   set d [file normalize $d]
   if { ![info exists tctx::recentdirs] } { set tctx::recentdirs {} }
   set old $tctx::recentdirs
@@ -2479,8 +2546,11 @@ proc update_recent_dir {d} {
 }
 
 proc write_recent_file {} {
-  global USER_CONF_DIR
+  global USER_CONF_DIR update_recent_files
 
+  # final safety: never rewrite the USER's recent_files from a gated (test/automation)
+  # session -- this also covers the c_toolbar recent-components writer (c_t arrays)
+  if {[info exists update_recent_files] && !$update_recent_files} return
   # puts "write recent file tctx::recentfile=$tctx::recentfile"
   set a [catch {open $USER_CONF_DIR/recent_files w} fd]
   if { $a } {
@@ -3677,9 +3747,27 @@ proc xschem_getdata {sock} {
   if {$debug_var<=-1} {puts "tcp<-- $xschem_server_getdata(line,$sock)"}
   # xschem command must be executed at global scope...
   redef_puts
-  uplevel #0 [list catch $xschem_server_getdata(line,$sock) tclcmd_puts]
+  xschem log_action -reset
+  set tcp_rc [uplevel #0 [list catch $xschem_server_getdata(line,$sock) tclcmd_puts]]
   rename puts {}
   rename ::tcl::puts puts
+  # action-log (issue 0003): record the TCP-driven command AFTER evaluation, the
+  # ciw_exec pattern -- raw on success, '# failed:' comment on error so the log
+  # stays source-able; dedup-gated so a self-logging `xschem <verb>` is written
+  # once. A failed multi-line script gets EVERY line commented (a bare prefix
+  # would leave lines 2..n live on replay). Results stay on the socket, never
+  # in the file (spec decision 7 / D1).
+  set tcp_cmd [string trimright $xschem_server_getdata(line,$sock) \n]
+  if {$tcp_cmd ne {}} {
+    if {$tcp_rc} {
+      if {![xschem log_action -emitted]} {
+        regsub -all {\n} $tcp_cmd "\n# " tcp_cmd
+        xschem log_action "# failed: $tcp_cmd"
+      }
+    } elseif {![xschem log_action -emitted]} {
+      xschem log_action $tcp_cmd
+    }
+  }
   if {$debug_var<=-1} {puts "tcp--> $tclcmd_puts"}
   set xschem_server_getdata(res,$sock) "$tclcmd_puts"
   puts -nonewline $sock "$xschem_server_getdata(res,$sock)"
@@ -9957,6 +10045,7 @@ namespace eval gfxform {
   variable loaded       ;# array: tok -> value it opened with
   variable chk          ;# array: bool-field tok -> current checkbox state
   variable chk0         ;# array: bool-field tok -> initial checkbox state
+  variable ind          ;# array: editable tok -> its modified-dot indicator widget path
   variable fillchoices {}
   variable fill_label {} ;# enum combobox var (a choice label)
   variable fill_label0 {}
@@ -9995,7 +10084,8 @@ proc gfxform::init {prop type} {
   variable orig; variable schema; variable val; variable loaded; variable chk; variable chk0
   variable fillchoices; variable fill_label; variable fill_label0
   variable ell_on; variable ell_on0; variable ell_start; variable ell_end
-  array unset val; array unset loaded; array unset chk; array unset chk0
+  variable ind
+  array unset val; array unset loaded; array unset chk; array unset chk0; array unset ind
   set orig $prop
   set ::gfxform::type $type   ;# remembered for the OK/Apply routing (param shadows the var)
   set schema [slickprop::gfx_schema $type]
@@ -10037,6 +10127,13 @@ proc gfxform::desired {} {
   foreach row $schema {
     if {[dict exists $row hide] && [dict get $row hide]} continue ;# preserved via orig, not edited
     set tok [dict get $row tok]
+    if {[dict exists $row readonly] && [dict get $row readonly]} {
+      # read-only field (e.g. a wire's Net name): never a user edit, so re-emit the
+      # value it loaded with -> the token round-trips byte-for-byte on both the
+      # "extra unchanged" and "extra edited" assemble paths.
+      lappend d $tok $loaded($tok)
+      continue
+    }
     switch -- [dict get $row widget] {
       int - num {
         set v [string trim $val($tok)]
@@ -10075,6 +10172,27 @@ proc gfxform::collect {} {
   variable orig; variable schema
   set extra [string trim [.dialog.other.e get]]
   return [slickprop::schema_assemble $schema $orig [gfxform::desired] $extra]
+}
+
+# Live modified-cue for an editable field: show an accent dot in its indicator
+# column when the current widget value differs from what it loaded with, blank when
+# it matches. Bound to the entry's <KeyRelease> (int/num/string) and the
+# checkbutton's -command (bool). Mirrors slickprop::update_dirty for the instance
+# form, over gfxform's val()/chk()/loaded() state model.
+proc gfxform::update_dirty {tok} {
+  variable val; variable chk; variable loaded; variable chk0; variable ind
+  if {![info exists ind($tok)] || ![winfo exists $ind($tok)]} return
+  set dirty 0
+  if {[info exists chk($tok)]} {
+    if {[info exists chk0($tok)] && $chk($tok) != $chk0($tok)} { set dirty 1 }
+  } elseif {[info exists val($tok)] && [info exists loaded($tok)]} {
+    if {$val($tok) ne $loaded($tok)} { set dirty 1 }
+  }
+  if {$dirty} {
+    $ind($tok) configure -text "●"
+  } else {
+    $ind($tok) configure -text " "
+  }
 }
 
 # ---- "Apply to" scope for the pin body editor (doc/claude/specs/symbol_editor_apply_scope.md)
@@ -10170,12 +10288,21 @@ proc gfxform::apply {} {
   catch {gfxform::do_apply [gfxform::collect]}
 }
 
+# Remember the dialog geometry per object type, so reopening the same editor restores
+# its size+position (mirrors the instance form's ::slickprop_geometry). Keyed by type
+# so a small wire form is not resized to a large pin form's remembered geometry.
+proc gfxform::save_geom {} {
+  variable type
+  if {[winfo exists .dialog]} { catch {set ::gfxform_geom($type) [wm geometry .dialog]} }
+}
+
 # OK: for pin/pinname, apply HERE (same path as Apply) and tell C not to re-apply
 # (rcode {}), so OK-after-Apply never double-commits. Other graphical types keep the
 # legacy C round-trip (rcode {ok} -> C applies tctx::retval after tkwait).
 proc gfxform::ok {} {
   variable type
   set ::tctx::retval [gfxform::collect]
+  gfxform::save_geom
   if {$type eq {pin} || $type eq {pinname}} {
     if {![xschem get readonly]} { catch {gfxform::do_apply $::tctx::retval} }
     set ::tctx::rcode {}
@@ -10194,6 +10321,7 @@ proc text_line_slick {txtlabel clear preserve_disabled type} {
   set tctx::rcode {}
   if { [winfo exists .dialog] } return
   gfxform::init $tctx::retval $type
+  slickprop::init_fonts ;# the 4 named fonts (slickPropLabel/Value/Header/Hint) shared with the instance form
   toplevel .dialog -class Dialog
   set title [expr {$type eq {pinname} ? {Pin Name Text} : [string totitle $type]}]
   wm title .dialog "Edit $title properties"
@@ -10201,7 +10329,19 @@ proc text_line_slick {txtlabel clear preserve_disabled type} {
   set X [expr {[winfo pointerx .dialog] - 60}]
   set Y [expr {[winfo pointery .dialog] - 35}]
   if { $wm_fix } { tkwait visibility .dialog }
-  wm geometry .dialog "+$X+$Y" ;# position only, size to content
+  wm geometry .dialog "+$X+$Y" ;# position only, size to content (may be overridden below)
+
+  # --- header bar: what is being edited (grey60 bold, xschem convention) --------
+  # For a wire the header names its NET (the lab token) -- "#net3  —  wire" -- mirroring
+  # the instance form's "R1  —  res"; other graphical types show the type title.
+  set hdrtxt $title
+  if {$type eq {wire}} {
+    set net {}
+    catch {set net [xschem get_tok $tctx::retval lab 2]}
+    if {$net ne {}} { set hdrtxt "$net  —  wire" }
+  }
+  label .dialog.hdr -text "  $hdrtxt" -bg grey60 -anchor w -font slickPropHeader
+  pack .dialog.hdr -side top -fill x
 
   # "Apply to" scope selector -- pin body editor only (symbol_editor_apply_scope.md D9).
   if {$type eq {pin}} {
@@ -10225,47 +10365,58 @@ proc text_line_slick {txtlabel clear preserve_disabled type} {
     pack .dialog.scope -side top -fill x -padx 4 -pady 4
   }
 
-  labelframe .dialog.appear -text "Appearance"
+  labelframe .dialog.appear -text "Appearance" -font slickPropLabel
   set ltk [expr {[info tclversion] > 8.4}]
   foreach row $gfxform::schema {
     if {[dict exists $row hide] && [dict get $row hide]} continue ;# hidden: preserved, no widget
     set tok [dict get $row tok]
     set lab [dict get $row label]
+    set ro  [expr {[dict exists $row readonly] && [dict get $row readonly]}]
     set f .dialog.appear.$tok
     frame $f
     switch -- [dict get $row widget] {
-      int - num {
-        label $f.l -text "$lab:"
-        entry $f.e -textvariable gfxform::val($tok) -width 6
-        pack $f.l $f.e -side left
-      }
-      string {
-        label $f.l -text "$lab:"
-        set ww [expr {[dict exists $row width] ? [dict get $row width] : 24}]
-        entry $f.e -textvariable gfxform::val($tok) -width $ww
-        pack $f.l $f.e -side left
+      int - num - string {
+        set ww [expr {[dict exists $row width] ? [dict get $row width] : \
+                     ([dict get $row widget] eq {string} ? 24 : 6)}]
+        # dot | right-aligned label | monospace value entry -- the instance form's row shape.
+        label $f.i -width 2 -anchor center -text " " -font slickPropLabel -fg [slickprop::accent]
+        label $f.l -text "$lab:" -width 12 -anchor e -font slickPropLabel
+        if {$ro} {
+          # read-only field (a wire's Net name): shown, not edited; no dirty dot.
+          entry $f.e -textvariable gfxform::val($tok) -width $ww -font slickPropValue \
+            -state readonly -relief flat
+        } else {
+          entry $f.e -textvariable gfxform::val($tok) -width $ww -font slickPropValue \
+            -relief sunken -borderwidth 1
+          set gfxform::ind($tok) $f.i
+          bind $f.e <KeyRelease> [list gfxform::update_dirty $tok]
+        }
+        pack $f.i $f.l $f.e -side left
       }
       bool {
-        checkbutton $f.ck -text "$lab" -variable gfxform::chk($tok)
-        pack $f.ck -side left
+        label $f.i -width 2 -anchor center -text " " -font slickPropLabel -fg [slickprop::accent]
+        checkbutton $f.ck -text "$lab" -variable gfxform::chk($tok) -font slickPropLabel \
+          -command [list gfxform::update_dirty $tok]
+        set gfxform::ind($tok) $f.i
+        pack $f.i $f.ck -side left
       }
       enum {
-        label $f.l -text "$lab:"
+        label $f.l -text "$lab:" -width 12 -anchor e -font slickPropLabel
         if {$ltk} {
           ttk::combobox $f.cb -state readonly -width 10 \
             -textvariable gfxform::fill_label -values [dict keys $gfxform::fillchoices]
           bind $f.cb <KeyPress> {combo_letter_cycle %W %A; break}
         } else {
-          entry $f.cb -textvariable gfxform::fill_label -width 10
+          entry $f.cb -textvariable gfxform::fill_label -width 10 -font slickPropValue
         }
         pack $f.l $f.cb -side left
       }
       ellipse {
-        checkbutton $f.ck -text "$lab" -variable gfxform::ell_on
-        label $f.sl -text "  Start:"
-        entry $f.se -textvariable gfxform::ell_start -width 5
-        label $f.el -text "End:"
-        entry $f.ee -textvariable gfxform::ell_end -width 5
+        checkbutton $f.ck -text "$lab" -variable gfxform::ell_on -font slickPropLabel
+        label $f.sl -text "  Start:" -font slickPropLabel
+        entry $f.se -textvariable gfxform::ell_start -width 5 -font slickPropValue
+        label $f.el -text "End:" -font slickPropLabel
+        entry $f.ee -textvariable gfxform::ell_end -width 5 -font slickPropValue
         pack $f.ck $f.sl $f.se $f.el $f.ee -side left
       }
     }
@@ -10274,22 +10425,23 @@ proc text_line_slick {txtlabel clear preserve_disabled type} {
   pack .dialog.appear -side top -fill x -padx 4 -pady 4
 
   frame .dialog.other
-  label .dialog.other.l -text "Other properties:"
-  entry .dialog.other.e -width 50
+  label .dialog.other.l -text "Other properties:" -font slickPropLabel
+  entry .dialog.other.e -width 50 -font slickPropValue
   .dialog.other.e insert 0 [slickprop::schema_extra $gfxform::schema $tctx::retval]
   pack .dialog.other.l -side left
   pack .dialog.other.e -side left -fill x -expand yes
   pack .dialog.other -side top -fill x -padx 4 -pady 2
 
   frame .dialog.buttons
-  button .dialog.buttons.ok -text OK -command gfxform::ok
+  button .dialog.buttons.ok -text OK -default active -font slickPropLabel -command gfxform::ok
   # Live Apply for the pin / pin-name-text editors: commit + redraw, keep the form open so
   # the effect (e.g. a font change) is visible without dismissing (cadence_pin_name_text.md).
   if {$type eq {pin} || $type eq {pinname}} {
-    button .dialog.buttons.apply -text Apply -command gfxform::apply
+    button .dialog.buttons.apply -text Apply -font slickPropLabel -command gfxform::apply
   }
-  button .dialog.buttons.cancel -text Cancel -command {
+  button .dialog.buttons.cancel -text Cancel -font slickPropLabel -command {
     set ::tctx::rcode {}
+    gfxform::save_geom
     gfxform::clear_pin_highlight
     destroy .dialog
   }
@@ -10301,6 +10453,9 @@ proc text_line_slick {txtlabel clear preserve_disabled type} {
     pack .dialog.buttons.ok .dialog.buttons.cancel -side left -fill x -expand yes
   }
   pack .dialog.buttons -side bottom -fill x
+  # footer hint (grey50, small) mirroring the instance form; rewritten under read-only.
+  label .dialog.hint -text "Enter: OK    Esc: Cancel" -font slickPropHint -fg grey50 -anchor center
+  pack .dialog.hint -side bottom -fill x -pady {0 2}
   # No multi-line text box here, so Enter = OK from anywhere; Escape = Cancel.
   bind .dialog <Return>   {.dialog.buttons.ok invoke}
   bind .dialog <KP_Enter> {.dialog.buttons.ok invoke}
@@ -10309,10 +10464,16 @@ proc text_line_slick {txtlabel clear preserve_disabled type} {
   if {[xschem get readonly]} {
     .dialog.buttons.ok configure -state disabled
     catch {.dialog.buttons.apply configure -state disabled}
+    .dialog.hint configure -text "Read-only view — changes cannot be applied"
     bind .dialog <Return>   {.dialog.buttons.cancel invoke}
     bind .dialog <KP_Enter> {.dialog.buttons.cancel invoke}
   }
   dialog_minsize_floor .dialog
+  # restore this editor type's remembered geometry (size+pos), overriding the initial
+  # pointer-relative position; first open falls back to that position + size-to-content.
+  if {[info exists ::gfxform_geom($type)] && $::gfxform_geom($type) ne {}} {
+    catch {wm geometry .dialog $::gfxform_geom($type)}
+  }
   # Initial Name greying + apply-set overlay. update_pin_highlight sets the overlay and schedules
   # a deferred force_window_repaint so it is flushed once the dialog has mapped (a synchronous
   # draw before tkwait is not flushed under WSLg -> the outline used to appear only after the
@@ -10358,23 +10519,32 @@ proc combo_letter_cycle {w ch} {
   }
 }
 
-# addpin -- the Cadence-style "Add Pin" form (doc/claude/specs/cadence_pin_name_text.md
-# item #3). MODELESS, mirroring ciform (Create Instance): a non-empty Pin Name arms a
-# cursor PREVIEW of the pin on the canvas; click drops it; the form re-arms so you can
-# place more until Esc. There is NO "Place" button -- placement is a canvas click.
+# addpin -- the Cadence-style "Add Pin" form (doc/claude/specs/schematic_add_pin.md,
+# cadence_pin_name_text.md item #3). MODELESS, VIEW-AWARE: in a SYMBOL view it places symbol
+# pins (`xschem add_symbol_pin -place` -> PINLAYER rects); in a SCHEMATIC view it places
+# ipin/opin/iopin INSTANCES (`xschem add_sch_pin -place`). The verb is chosen by place_verb.
 #
-# The C `xschem add_symbol_pin -place` self-manages undo across the per-keystroke re-arms
-# (pushes ONE baseline at the first arm, drops the previous preview pin undo-free); the
-# drop keeps the baseline; abort_operation tears down an undropped preview undo-free.
+# The Pin Name field takes ONE OR MORE names separated by spaces: they form a QUEUE. A cursor
+# PREVIEW of the current name follows the mouse; a canvas click drops it and the NEXT queued
+# name auto-arms. When the last name is placed, placement STOPS but the form stays open (type
+# more names, or Esc/Close to dismiss). Ctrl+MMB (edit.cycle_pin_type) cycles the direction/type
+# of the pin being placed and re-arms the current name. There is NO "Place" button.
+#
+# Both C `-place` verbs self-manage undo across the per-keystroke re-arms (push ONE baseline at
+# the first arm, drop the previous preview undo-free); the drop keeps the baseline;
+# abort_operation tears down an undropped preview undo-free.
 namespace eval addpin {
   variable name {}
   variable dir  inout
-  # a preview is armed; after each drop it re-arms so placement continues until Esc.
+  # a preview is armed; after each drop it advances the queue (or stops if drained).
   variable armed          0
   variable hook_installed 0
   # last {name dir} actually armed -- lets arm() skip a redundant rebuild when a keystroke
   # (arrows, Shift/Ctrl/Tab, ...) did not change the pin, avoiding canvas flicker.
   variable last           {}
+  # multi-name queue: pending = names not yet placed this pass; current = head (the armed one).
+  variable pending        {}
+  variable current        {}
 }
 
 proc addpin::status {msg} { catch {.addpin.status configure -text $msg} }
@@ -10390,6 +10560,24 @@ proc addpin::dirtok {} {
   return [expr {[dict exists $map $dir] ? [dict get $map $dir] : {inout}}]
 }
 
+# ---- pure helpers (no Tk; headless-testable, see tests/headless/test_sch_add_pin.tcl) ----
+# Split a Pin Name entry into a list of names on any run of whitespace (trims ends).
+proc addpin::names_from {s} { return [regexp -all -inline {\S+} $s] }
+
+# Cycle the Direction label input -> output -> inout -> input (Ctrl+MMB, Direction combobox).
+proc addpin::next_dir {d} {
+  set order {input output inout}
+  set i [lsearch -exact $order $d]
+  if {$i < 0} { return input }
+  return [lindex $order [expr {($i + 1) % 3}]]
+}
+
+# The C -place verb for the CURRENT view: schematic -> add_sch_pin (ipin/opin/iopin instances);
+# symbol (.sym) -> add_symbol_pin (PINLAYER pin rects). Filename test (editing_symbol_view()).
+proc addpin::place_verb {} {
+  return [expr {[string match {*.sym} [xschem get current_name]] ? "add_symbol_pin" : "add_sch_pin"}]
+}
+
 # Re-arm the next pin after each canvas drop, so placement continues until Esc. Appended
 # (+) to the canvas ButtonRelease so it runs AFTER xschem handled the drop; a no-op unless
 # a preview is armed and a drop just completed (mirror of ciform::after_drop).
@@ -10401,39 +10589,76 @@ proc addpin::install_drop_hook {} {
   set hook_installed 1
 }
 proc addpin::after_drop {b} {
-  variable armed
-  if {$b != 1} return
+  variable armed; variable pending; variable current
+  if {$b != 1} return             ;# only a LEFT-click drops (Ctrl+MMB must not count)
   if {!$armed} return
   if {![winfo exists .addpin]} { set armed 0; return }
   if {[addpin::placing]} return   ;# preview still attached -> no drop happened
-  addpin::arm                     ;# a drop completed -> re-arm for the next pin
+  # if the Add-Wire-Label form is ALSO open and it (not us) armed the preview that just
+  # committed, do NOT drain the pin queue (add_wire_label.md #8: cross-form drop cross-talk).
+  if {[info exists ::sympin_place] && $::sympin_place ne {pin}} return
+  # a drop completed -> advance the queue to the next typed name
+  set pending [lrange $pending 1 end]
+  set current [lindex $pending 0]
+  if {[string trim $current] ne {}} {
+    addpin::arm                   ;# arm the next queued name
+  } else {
+    set armed 0                   ;# all typed names placed -> stop; form stays open (D2)
+    addpin::status "all pins placed -- type more names, or Esc/Close to finish"
+  }
 }
 
-# (Re)arm the cursor preview from the current Name/Direction. Empty name -> no preview
-# (there is nothing to place yet), aborting any attached one. `-place` re-issues are
-# undo-safe (see the C side), so calling this on every keystroke is fine.
+# Recompute the queue from the Name entry and arm its head. Editing the Name field RESTARTS
+# the pass (fresh queue); called on every keystroke in the Name entry.
+proc addpin::start_pass {} {
+  variable name; variable pending; variable current
+  set pending [addpin::names_from $name]
+  set current [lindex $pending 0]
+  addpin::arm
+}
+
+# (Re)arm the cursor preview from the CURRENT queued name + Direction. Empty -> no preview
+# (nothing to place yet), aborting any attached one. `-place` re-issues are undo-safe (see the
+# C side), so calling this on every keystroke / dir change / Ctrl+MMB cycle is fine. The verb is
+# view-aware (add_sch_pin in a schematic, add_symbol_pin in a symbol view).
 proc addpin::arm {} {
-  variable name; variable armed; variable last
+  variable current; variable armed; variable last; variable pending
   if {![winfo exists .addpin]} { set armed 0; return }
-  if {[string trim $name] eq {}} {
+  if {[string trim $current] eq {}} {
     set armed 0; set last {}
     addpin::abort_if_placing
-    addpin::status "type a Pin Name, then move onto the canvas to place it"
+    addpin::status "type a Pin Name (space-separated for several), then move onto the canvas"
     return
   }
   set d [addpin::dirtok]
   # nothing changed AND a preview is still attached -> don't rebuild it (a non-editing key
-  # fired KeyRelease). After a drop, placing is 0, so the next pin still arms (keep-placing).
-  if {[list $name $d] eq $last && [addpin::placing]} return
-  set last [list $name $d]
-  set ::pin_new_name $name
+  # fired KeyRelease).
+  if {[list $current $d] eq $last && [addpin::placing]} return
+  set last [list $current $d]
+  set ::pin_new_name $current
   set ::pin_new_dir  $d
-  xschem add_symbol_pin -place    ;# self-aborts the previous preview (no undo) and re-arms
+  xschem [addpin::place_verb] -place ;# self-aborts the previous preview (no undo) and re-arms
+  set ::sympin_place pin             ;# owner latch: this preview is a PIN (add_wire_label.md #8)
   set armed 1
-  addpin::status "placing pin '$name' ($d) -- click the canvas to place; Esc to finish"
+  set nleft [llength $pending]
+  set more [expr {$nleft > 1 ? " (+[expr {$nleft-1}] queued)" : {}}]
+  addpin::status "placing '$current' ($d)$more -- click to place; Ctrl+MMB cycles type; Esc finishes"
 }
 
-proc addpin::on_change {} { addpin::arm }
+# Name entry edited -> rebuild the queue. Direction combobox picked -> re-arm current with new dir.
+proc addpin::on_name_change {} { addpin::start_pass }
+proc addpin::on_dir_change  {} { addpin::arm }
+
+# Ctrl+MMB while placing: advance the direction/type and re-arm the CURRENT name so the user
+# can place differently-typed pins from one queue without touching the Direction combobox.
+proc addpin::cycle_type {} {
+  variable dir; variable current
+  if {![winfo exists .addpin]} return
+  if {![addpin::placing]} return       ;# only meaningful with a preview attached
+  if {[string trim $current] eq {}} return
+  set dir [addpin::next_dir $dir]      ;# the Direction combobox updates via -textvariable
+  addpin::arm                          ;# re-arm current name with the new direction/type
+}
 
 # Esc / Close: end placement and dismiss the form.
 proc addpin::escape {} {
@@ -10444,8 +10669,8 @@ proc addpin::escape {} {
 }
 # Form destroyed by any means: abort an armed preview and restore the default canvas Esc.
 proc addpin::on_destroy {} {
-  variable armed; variable last
-  set armed 0; set last {}
+  variable armed; variable last; variable pending; variable current
+  set armed 0; set last {}; set pending {}; set current {}
   catch {bind .drw <Key-Escape> {}}
   addpin::abort_if_placing
 }
@@ -10457,7 +10682,7 @@ proc addpin::open {} {
   if {[winfo exists $w]} {
     raise_activate_toplevel $w
     focus $w.f.ename
-    addpin::arm
+    addpin::start_pass
     return
   }
   catch {slickprop::init_fonts}   ;# reuse the slick property-form fonts for the look
@@ -10481,7 +10706,7 @@ proc addpin::open {} {
   grid columnconfigure $w.f 1 -weight 1
 
   ttk::label $w.status -anchor w -relief sunken -padding {4 2} \
-    -text "type a Pin Name, then move onto the canvas to place it; Esc finishes"
+    -text "type Pin Name(s) (space-separated), then move onto the canvas; Ctrl+MMB cycles type; Esc finishes"
   pack $w.status -side bottom -fill x
 
   ttk::frame $w.b
@@ -10489,9 +10714,9 @@ proc addpin::open {} {
   pack $w.b.close -side right -padx 4 -pady 4
   pack $w.b -side bottom -fill x
 
-  # editing the name or picking a direction re-arms the preview live
-  bind $w.f.ename <KeyRelease>        {+addpin::on_change}
-  bind $w.f.edir  <<ComboboxSelected>> {+addpin::on_change}
+  # editing the name rebuilds the queue; picking a direction re-arms the current name
+  bind $w.f.ename <KeyRelease>         {+addpin::on_name_change}
+  bind $w.f.edir  <<ComboboxSelected>> {+addpin::on_dir_change}
   # Esc ends placement AND dismisses the form. On the CANVAS only swallow Esc while a
   # preview is actually armed (`break` pre-empts the generic <KeyPress> -> C dispatcher);
   # when nothing is being placed, fall through so Esc still cancels an unrelated in-progress
@@ -10502,7 +10727,227 @@ proc addpin::open {} {
 
   raise_activate_toplevel $w
   focus $w.f.ename
-  addpin::arm   ;# a reopened singleton may already hold a name -> arm immediately
+  addpin::start_pass   ;# a reopened singleton may already hold name(s) -> build the queue + arm
+}
+
+# addlabel -- the Cadence-style "Add Wire Label" form (doc/claude/specs/add_wire_label.md), a
+# close sibling of addpin::. MODELESS: the Label Name field takes one or more names (a QUEUE); a
+# cursor PREVIEW of the current name (a lab_pin.sym net-label INSTANCE) follows the mouse; a
+# canvas click DROPS it -- but only where its pin lands on copper (a wire or an instance pin),
+# else the drop is refused and the preview stays attached (no stray net-labels). "Split bus"
+# expands bus ranges (B[2:0] -> B[2] B[1] B[0]); "Place multiple labels at once" and "Vertically
+# justified" are reserved (inert) for later. Placement is driven by `xschem add_wire_label
+# -place` (arms) + the shared C drop gate (wire_label_try_commit); this form only manages the
+# name queue and re-arms after each committed drop.
+namespace eval addlabel {
+  variable name           {}
+  variable split_bus      0   ;# Split bus unchecked by default (user request)
+  variable place_multiple 0   ;# reserved (inert)
+  variable vjust          0   ;# reserved (inert)
+  variable armed          0
+  variable hook_installed 0
+  variable last           {}
+  variable pending        {}
+  variable current        {}
+}
+
+proc addlabel::status {msg} { catch {.addlabel.status configure -style TLabel -text $msg} }
+# Placement-time syntax error: red status line, keep the bad name so the user can fix it in place.
+proc addlabel::status_error {msg} { catch {.addlabel.status configure -style AddLabelErr.TLabel -text $msg} }
+
+# START_SYMPIN (xschem.h) = 16384: a preview is attached to the cursor.
+proc addlabel::placing {} { return [expr {[xschem get ui_state] & 16384}] }
+proc addlabel::abort_if_placing {} { if {[addlabel::placing]} { catch {xschem abort_operation} } }
+
+# ---- pure helper (no Tk; headless-testable, see tests/headless/test_add_wire_label.tcl) ----
+# Split a Label Name entry into placement names. Tokens separate on any run of whitespace and/or
+# commas; each token's angle brackets normalise to square (B<2:0> -> B[2:0]). When split_bus is
+# true a bit RANGE token (base[hi:lo]) expands to one name per bit, walking hi->lo (or lo->hi for
+# an ascending range); non-range tokens and the split_bus=false case pass through verbatim (so a
+# vector like B[2:0] stays a single label).
+proc addlabel::expand_names {s split_bus} {
+  set out {}
+  foreach tok [regexp -all -inline {[^,\s]+} $s] {
+    set tok [string map {< \[ > \]} $tok]
+    if {$split_bus && [regexp {^(.+)\[\s*(\d+)\s*:\s*(\d+)\s*\]$} $tok -> base hi lo]} {
+      # Force DECIMAL parsing: Tcl treats a leading-zero integer as OCTAL, so `08`/`09` would
+      # throw and `010` would mis-expand (silent netlist corruption). scan %d fixes both.
+      scan $hi %d hi; scan $lo %d lo
+      if {abs($hi - $lo) + 1 > 4096} {
+        # pathological width (typo/paste like A[20000000:0]): do NOT build a multi-million
+        # element list on this keystroke -- keep the token as a single vector label.
+        lappend out $tok
+      } elseif {$hi >= $lo} {
+        for {set i $hi} {$i >= $lo} {incr i -1} { lappend out "${base}\[$i\]" }
+      } else {
+        for {set i $hi} {$i <= $lo} {incr i}    { lappend out "${base}\[$i\]" }
+      }
+    } else {
+      lappend out $tok
+    }
+  }
+  return $out
+}
+
+# Placement-time name validity (doc/claude/specs/add_wire_label.md "Name parsing"). The form ACCEPTS
+# any text at entry so paste-from-elsewhere is never fought; a name is validated only when it is
+# about to be placed (armed). Valid = a non-empty base of non-bracket chars, optionally followed by
+# ONE bus suffix `[i]` or `[hi:lo]` (digits, single colon). Angle brackets normalise to square first,
+# so `B<2:0>` is valid; `B{2:0]`, `C[2;0]`, `B[2:0` (unclosed) and a bare `[2:0]` are rejected.
+proc addlabel::name_ok {n} {
+  set n [string map {< \[ > \]} $n]
+  return [regexp {^[^][{}<>;:]+(\[[0-9]+(:[0-9]+)?\])?$} $n]
+}
+
+# Re-arm the next label after each committed canvas drop (mirror of addpin::after_drop). A no-op
+# unless a preview is armed and a drop just COMMITTED (a refused drop leaves the preview attached,
+# so placing==1 and we do not advance).
+proc addlabel::install_drop_hook {} {
+  variable hook_installed
+  if {$hook_installed} return
+  if {![winfo exists .drw]} return
+  bind .drw <ButtonRelease> {+addlabel::after_drop %b}
+  set hook_installed 1
+}
+proc addlabel::after_drop {b} {
+  variable armed; variable pending; variable current; variable name
+  if {$b != 1} return
+  if {!$armed} return
+  if {![winfo exists .addlabel]} { set armed 0; return }
+  if {[addlabel::placing]} return   ;# preview still attached (not committed, or refused) -> wait
+  # if the Add-Pin form is ALSO open and it (not us) armed the committed preview, don't drain the
+  # label queue (add_wire_label.md #8: cross-form drop cross-talk).
+  if {[info exists ::sympin_place] && $::sympin_place ne {label}} return
+  set pending [lrange $pending 1 end]
+  set current [lindex $pending 0]
+  # Consume the just-placed name from the Label Name entry so the field always shows what is still
+  # queued (e.g. "A B[2:0]" -> "B[2:0]" after dropping A). Setting the textvariable does not fire
+  # the entry's KeyRelease, so this does NOT re-trigger start_pass / rebuild the queue.
+  set name [join $pending " "]
+  if {[string trim $current] ne {}} {
+    addlabel::arm
+  } else {
+    set armed 0
+    addlabel::status "all labels placed -- type more names, or Esc/Close to finish"
+  }
+}
+
+# Recompute the queue from the Label Name entry + Split bus, and arm its head. Editing either
+# RESTARTS the pass (fresh queue).
+proc addlabel::start_pass {} {
+  variable name; variable split_bus; variable pending; variable current
+  set pending [addlabel::expand_names $name $split_bus]
+  set current [lindex $pending 0]
+  addlabel::arm
+}
+
+# (Re)arm the cursor preview from the CURRENT queued name. Empty -> no preview (abort any attached
+# one). `-place` re-issues are undo-safe (the C driver owns one baseline), so calling this on
+# every keystroke / Split-bus toggle is fine.
+proc addlabel::arm {} {
+  variable current; variable armed; variable last; variable pending
+  if {![winfo exists .addlabel]} { set armed 0; return }
+  if {[string trim $current] eq {}} {
+    set armed 0; set last {}
+    addlabel::abort_if_placing
+    addlabel::status "type a Label Name (space/comma-separated for several), then move onto the canvas"
+    return
+  }
+  # Enforce syntax at placement time: an invalid head does NOT arm a preview (nothing to drop) --
+  # red status prompts the user to fix the name; editing the field re-runs start_pass -> arm.
+  if {![addlabel::name_ok $current]} {
+    set armed 0; set last {}
+    addlabel::abort_if_placing   ;# never leave a stale preview attached to the cursor
+    addlabel::status_error "'$current' has a syntax error -- fix it to place (use \[\] or <> for buses)"
+    return
+  }
+  if {$current eq $last && [addlabel::placing]} return
+  set last $current
+  set ::label_new_name $current
+  xschem add_wire_label -place   ;# self-aborts the previous preview (no undo) and re-arms
+  set ::sympin_place label        ;# owner latch: this preview is a LABEL (add_wire_label.md #8)
+  set armed 1
+  set nleft [llength $pending]
+  set more [expr {$nleft > 1 ? " (+[expr {$nleft-1}] queued)" : {}}]
+  addlabel::status "placing '$current'$more -- click ON a wire or pin to drop; Esc finishes"
+}
+
+proc addlabel::on_name_change  {} { addlabel::start_pass }
+proc addlabel::on_split_change {} { addlabel::start_pass }
+
+# Called from the C drop gate when a click lands OFF copper: keep the user informed.
+proc addlabel::on_reject {} {
+  variable current
+  addlabel::status "'$current' must land ON a wire or an instance pin -- move and click again"
+}
+
+# Esc / Close: end placement and dismiss the form.
+proc addlabel::escape {} {
+  variable armed
+  set armed 0
+  addlabel::abort_if_placing
+  catch {destroy .addlabel}
+}
+proc addlabel::on_destroy {} {
+  variable armed; variable last; variable pending; variable current
+  set armed 0; set last {}; set pending {}; set current {}
+  catch {bind .drw <Key-Escape> {}}
+  addlabel::abort_if_placing
+}
+
+proc addlabel::open {} {
+  if {[xschem get readonly]} { readonly_notice; return }
+  set w .addlabel
+  addlabel::install_drop_hook
+  if {[winfo exists $w]} {
+    raise_activate_toplevel $w
+    focus $w.f.ename
+    addlabel::start_pass
+    return
+  }
+  catch {slickprop::init_fonts}
+  catch {ttk::style configure AddLabelErr.TLabel -background #c0392b -foreground white}
+  toplevel $w
+  wm title $w "Add Wire Label"
+  ttk::frame $w.f -padding 8
+  pack $w.f -side top -fill both -expand 1
+  ttk::label $w.f.lname -text "Label Name" -anchor w
+  ttk::entry $w.f.ename -textvariable addlabel::name -width 28
+  ttk::checkbutton $w.f.split -text "Split bus" -variable addlabel::split_bus \
+     -command addlabel::on_split_change
+  # reserved for later work (add_wire_label.md) -- present but inert
+  ttk::checkbutton $w.f.multi -text "Place multiple labels at once" \
+     -variable addlabel::place_multiple -state disabled
+  ttk::checkbutton $w.f.vjust -text "Vertically justified" \
+     -variable addlabel::vjust -state disabled
+  catch {$w.f.lname configure -font slickPropLabel}
+  catch {$w.f.ename configure -font slickPropValue}
+  grid $w.f.lname -row 0 -column 0 -sticky w  -padx {0 10} -pady 3
+  grid $w.f.ename -row 0 -column 1 -sticky we -pady 3
+  grid $w.f.split -row 1 -column 0 -columnspan 2 -sticky w -pady {6 0}
+  grid $w.f.multi -row 2 -column 0 -columnspan 2 -sticky w
+  grid $w.f.vjust -row 3 -column 0 -columnspan 2 -sticky w
+  grid columnconfigure $w.f 1 -weight 1
+
+  ttk::label $w.status -anchor w -relief sunken -padding {4 2} \
+    -text "type Label Name(s), then move onto the canvas; click ON a wire or pin to drop; Esc finishes"
+  pack $w.status -side bottom -fill x
+
+  ttk::frame $w.b
+  ttk::button $w.b.close -text "Close" -command addlabel::escape
+  pack $w.b.close -side right -padx 4 -pady 4
+  pack $w.b -side bottom -fill x
+
+  bind $w.f.ename <KeyRelease> {+addlabel::on_name_change}
+  # Focus lands on the canvas after a drop, so Esc there must also close the form/command mode --
+  # dismiss whenever the form exists, not only while a preview is still attached (queue drained).
+  bind .drw <Key-Escape> {if {[winfo exists .addlabel]} {addlabel::escape; break}}
+  bind $w   <Key-Escape> {addlabel::escape}
+  bind $w   <Destroy>    {if {{%W} eq {.addlabel}} {addlabel::on_destroy}}
+
+  raise_activate_toplevel $w
+  focus $w.f.ename
+  addlabel::start_pass
 }
 
 proc text_line_legacy {txtlabel clear {preserve_disabled disabled} } {
@@ -13525,14 +13970,32 @@ proc build_widgets { {topwin {} } } {
      -label "Undo buffer on Disk" -variable undo_type \
      -onvalue disk -offvalue memory -command {switch_undo}
   $topwin.menubar.option add checkbutton -label "Enable stretch" -variable enable_stretch \
-     -selectcolor $selectcolor  -accelerator Y
+     -selectcolor $selectcolor  -accelerator Y \
+     -command {
+       # Route the menu toggle through toggle_stretch_cmd so it self-logs the ABSOLUTE
+       # resolved state (atom 16 / 0062 tail) -- a bare -variable checkbutton flips the tcl
+       # var but records nothing. Tk has ALREADY flipped enable_stretch to the new value;
+       # undo that pre-flip so `xschem toggle_stretch` performs exactly one net flip (to the
+       # same new value) AND logs `xschem set enable_stretch <new>`.
+       set enable_stretch [expr {!$enable_stretch}]
+       xschem toggle_stretch
+     }
   $topwin.menubar.option add checkbutton -label "Enable pin selection (click a pin to select it)" \
      -variable en_pin_select -selectcolor $selectcolor \
      -command {xschem set en_pin_select $en_pin_select}
   $topwin.menubar.option add checkbutton -label "Enable infix-interface" -variable infix_interface \
      -selectcolor $selectcolor
   $topwin.menubar.option add checkbutton -label "Enable orthogonal wiring" -variable orthogonal_wiring \
-     -selectcolor $selectcolor  -accelerator Shift-L
+     -selectcolor $selectcolor  -accelerator Shift-L \
+     -command {
+       # Route through toggle_orthogonal_wiring_cmd: applies the manhattan_lines + rubber
+       # redraw side effects AND self-logs the ABSOLUTE resolved state (atom 16 / 0062 tail).
+       # A bare -variable checkbutton flipped only the tcl var -- no side effect, no log, and
+       # this menu is the ONLY interactive control (the verb has no key). Undo Tk's pre-flip so
+       # the cmd's single flip lands on the shown value and logs `xschem set orthogonal_wiring <new>`.
+       set orthogonal_wiring [expr {!$orthogonal_wiring}]
+       xschem toggle_orthogonal_wiring
+     }
   $topwin.menubar.option add checkbutton -label "Keep stub out of moved pins (exit stub)" \
      -selectcolor $selectcolor -variable wire_exit_stub
   $topwin.menubar.option add checkbutton -label "Unsel. partial sel. wires after stretch move" \
@@ -13555,6 +14018,18 @@ proc build_widgets { {topwin {} } } {
   # Wires via the cadence_compat write-trace (see cadence_compat_sync).
   $topwin.menubar.option add checkbutton -label "Cadence Compatible" \
     -variable cadence_compat -selectcolor $selectcolor
+  # Fluid editing: first-click grab of an object tip/edge (rect corner+edge, line/wire
+  # end, arc endpoint) -> drag stretches, no pre-select, independent of enable_stretch.
+  # Read fresh from this Tcl variable by the C side (doc/claude/specs/fluid_editing.md);
+  # no notify needed. Independent of Cadence Compatible so it can be toggled on its own.
+  $topwin.menubar.option add checkbutton -label "Fluid editing (first-click tip/edge grab)" \
+    -variable fluid_editing -selectcolor $selectcolor
+  # Hover fly-lines: on hover, draw transient flight lines from the net under the cursor to its
+  # implicitly-connected clusters (labels/pins/global, no drawn wire). Read fresh from this Tcl
+  # variable by the C side (doc/claude/specs/hover_flylines.md); the redraw erases a lingering
+  # star immediately on toggle-off (flyline_restamp() is gated on the var, so it won't re-appear).
+  $topwin.menubar.option add checkbutton -label "Show hover fly-lines (implicit connectivity)" \
+    -variable flylines -selectcolor $selectcolor -command {xschem redraw}
 
   $topwin.menubar.option add cascade -label "Crosshair" \
        -menu $topwin.menubar.option.crosshair
@@ -13872,8 +14347,8 @@ proc build_widgets { {topwin {} } } {
           -command "xschem net_label 2" -accelerator Ctrl+P
   $topwin.menubar.sym add command -label "Place schematic output port" \
           -command "xschem net_label 3" -accelerator Ctrl+Shift+P
-  $topwin.menubar.sym add command -label "Place net pin label" \
-          -command "xschem net_label 1" -accelerator Alt+L
+  $topwin.menubar.sym add command -label "Add Wire Label" \
+          -command "xschem add_wire_label" -accelerator l
   $topwin.menubar.sym add command -label "Place net wire label" \
           -command "xschem net_label 0" -accelerator Alt+Shift+L
   $topwin.menubar.sym add command -label "Change selected inst. texts to floaters" \
@@ -13907,7 +14382,7 @@ proc build_widgets { {topwin {} } } {
   $topwin.menubar.tools add command -label "Insert text" -command "xschem place_text" -accelerator T
   $topwin.menubar.tools add command -label "Insert wire" -command "xschem wire" -accelerator W
   $topwin.menubar.tools add command -label "Insert snap wire" -command "xschem snap_wire" -accelerator Shift+W
-  $topwin.menubar.tools add command -label "Insert line" -command "xschem line" -accelerator L
+  $topwin.menubar.tools add command -label "Insert line" -command "xschem line gui" -accelerator Shift+L
   $topwin.menubar.tools add command -label "Insert rect" -command "xschem rect" -accelerator R
   $topwin.menubar.tools add command -label "Insert polygon" -command "xschem polygon" -accelerator P
   $topwin.menubar.tools add command -label "Insert arc" -command "xschem arc" -accelerator Shift+C
@@ -14328,6 +14803,25 @@ proc source_user_tcl_files {} {
   }
 }
 
+# Replay an action log IN-SESSION without re-logging its lines (issue 0071
+# Refactor A step 2, the audit's replay re-entrancy hazard, §3.2). This is the
+# ONE seam an in-session replay enters. Sourcing a recorded log while the log is
+# still OPEN would re-enter the self-logging cores (undo/copy/flip/set cadsnap/
+# ...) and DOUBLE every re-executable verb. Wrap the source in the re-entrant
+# suppress scope so lines re-EXECUTE (the effect applies) but do NOT re-LOG. The
+# scope is a DEPTH COUNTER, so a replayed line that is itself a composite op
+# (which push/pops again) stays suppressed throughout. Balanced via catch so a
+# mid-file error still pops. (A cross-process replay into a --nolog session --
+# what tests/headless/test_action_replay.sh does -- is already safe because
+# actionlog_fp is NULL there; this seam is what makes an IN-session replay safe.)
+proc replay_action_log {file} {
+  xschem log_action -suppress push
+  set rc [catch {uplevel #0 [list source $file]} res]
+  xschem log_action -suppress pop
+  if {$rc} { return -code error $res }
+  return $res
+}
+
 proc eval_user_startup_commands {} {
   global user_startup_commands
   if {[info exists user_startup_commands]} {
@@ -14673,6 +15167,11 @@ set_ne big_grid_points 0
 set_ne grid_point_size -1 ;# grid point size (>=0) or unspecified (-1)
 set_ne draw_grid_axes 1
 set_ne persistent_command 0
+# ESC key: 0 => abort pending command + redraw only, KEEP current selection;
+# 1 => also deselect all (legacy behavior). The standalone deselect-all command is
+# `xschem unselect_all`, so a user can bind ESC to redraw+deselect either by setting
+# this to 1 or by binding ESC to `xschem unselect_all` in a custom rc.
+set_ne escape_deselects 0
 set_ne intuitive_interface 1
 set_ne use_cursor_for_selection 0
 set_ne autotrim_wires 0
@@ -14682,7 +15181,45 @@ set_ne auto_set_wire_bus 0
 # (doc/claude/specs/descend_hierarchy_in_memory.md). Off => no backup files.
 set_ne autosave_backup 1
 set_ne cadence_compat 0
+# recent-files protection: the recent-views list ($USER_CONF_DIR/recent_files) belongs to the USER.
+# C sets no_recent_files=1 for a hard-gated automation session (--nogui or --pipe -- all test
+# harnesses -- or --norecent); those must never create/rewrite the file, so update below FORCES
+# the gate off (a test's rc cannot re-enable it by accident). A --script startup file is NOT
+# hard-gated: it may be a config/keybinding rc (cadence_style_rc) that does no loads, so C
+# suppresses recents only for the duration of the script body (update_recent_files toggled 0 then
+# restored around source_tcl_file in xinit.c) and interactive opens afterward record normally.
+# A normal session defaults on; an xschemrc may pre-set it. Consumed by
+# update_recent_file/update_recent_dir/write_recent_file.
+if {[info exists no_recent_files] && $no_recent_files} {
+  set update_recent_files 0
+} else {
+  set_ne update_recent_files 1
+}
+# Fluid editing: first-click tip/edge grab + incremental wire rip-up-reroute on drag
+# (doc/claude/specs/fluid_editing.md, nice_drag_rerouting.md). Default ON as of the
+# 0091-0096 reroute chain. The drag-to-move gesture itself still needs the intuitive/
+# cadence interface (cadence_compat or intuitive_interface); this only enables the
+# reroute + tip-grab once a stretch move is in flight. Read fresh from C (tclgetboolvar)
+# each button press.
+set_ne fluid_editing 1
+# Fluid enforcement (hardening sprint Track B, doc/claude/suggestions/hardening_sprint_plan.md):
+# promote the END P1/P2 invariant checker from log-only to rollback-or-refuse -- a connected
+# drag that would merge/disconnect nets is refused and the schematic left untouched (with a
+# ciw_echo notice), instead of silently saving the short. Read fresh from C (tclgetboolvar) at
+# move END. Default ON (enforcement is the point); set 0 as an emergency escape hatch.
+set_ne fluid_enforce_invariants 1
 set_ne infix_interface 1
+# Hover fly-lines (doc/claude/specs/hover_flylines.md): on hover, draw transient flight lines
+# from the net under the cursor to its implicitly-connected clusters (labels/pins/global, no wire).
+# 'flylines' gates the whole feature (default OFF). Globals (vdd!/gnd!/0) are suppressed unless
+# flylines_show_globals; the star is capped at flylines_cap nearest clusters. color/width/dash
+# describe the placeholder dashed overlay (Track B, gc_flyline). Read in C via tclget*var.
+set_ne flylines 0
+set_ne flylines_show_globals 0
+set_ne flylines_cap 32
+set_ne flylines_color 4
+set_ne flylines_width 1
+set_ne flylines_dash 4
 # autostart the Library Manager window at launch (doc/claude/specs/library_manager_launch.md)
 set_ne launch_library_manager 0
 set_ne snap_cursor 0
@@ -15125,4 +15662,72 @@ proc cadence_compat_sync {args} {
 }
 trace add variable cadence_compat write cadence_compat_sync
 cadence_compat_sync
+
+# --- action-log stdin REPL (issue 0003) --------------------------------------
+# The built-in Tcl/Tk stdin loop (Tk_MainEx StdinProc / Tcl_Main) evaluates
+# piped-stdin commands with no log_action, so an automation session driven
+# through `--pipe` used to leave a header-only log. The C loop offers no eval
+# hook, so when stdin is a NON-TTY (pipe/fifo/redirect -- the automation
+# channel) and the action log is open, take the channel over here, BEFORE
+# Tk_MainEx runs (this file is sourced from Tcl_AppInit): dup fd 0, close the
+# `stdin` channel, and immediately give the freed std-channel slot to the read
+# end of a never-written pipe (Tcl hands the slot to the NEXT opened channel --
+# without this a later schematic-file open would become "stdin" and Tk_MainEx
+# would eval its CONTENT; /dev/null is no good either: Tcl_Main's stdin
+# handler exits the process on EOF, killing headless --nogui sessions such as
+# a --tcp_port server). Tk/Tcl then see a silent stdin and stand down; our
+# loop serves the same read-eval semantics and records each complete command
+# AFTER evaluation (ciw_exec pattern: raw on success, all-lines-commented
+# '# failed:' on error, dedup-gated so self-logging `xschem <verb>`s are
+# written once). Matching the native non-tty loop: errors go to stderr,
+# results are not echoed. Interactive TTY consoles (tclreadline / native
+# prompt) stay native and unlogged -- documented residual in issue 0003.
+# `--script` files stay one-program-one-record by design (issue 0003 §NOT in
+# scope): sourcing them never passes through here. KNOWN LIMIT: a stdin
+# command that pumps a nested event loop (vwait/update) during which ANOTHER
+# channel logs (e.g. a TCP command) sees the dedup flag set and suppresses its
+# own line -- rare, and the concurrent command IS recorded.
+proc stdin_repl_read {chan} {
+  global stdin_repl_buf
+  if {[catch {gets $chan line} n] || $n < 0} {
+    if {[catch {eof $chan} e] || $e} { catch {fileevent $chan readable {}}; catch {close $chan} }
+    return
+  }
+  append stdin_repl_buf $line \n
+  if {![info complete $stdin_repl_buf]} return
+  set cmd [string trimright $stdin_repl_buf \n]
+  set stdin_repl_buf {}
+  if {$cmd eq {}} return
+  xschem log_action -reset
+  set rc [catch {uplevel #0 $cmd} res]
+  if {$rc} {
+    catch {puts stderr $res}
+    if {![xschem log_action -emitted]} {
+      regsub -all {\n} $cmd "\n# " cmd   ;# comment EVERY line of a multi-line construct
+      xschem log_action "# failed: $cmd"
+    }
+  } elseif {![xschem log_action -emitted]} {
+    xschem log_action $cmd
+  }
+}
+proc stdin_repl_setup {} {
+  global tcl_platform stdin_repl_buf
+  set stdin_repl_buf {}
+  if {$tcl_platform(platform) ne {unix}} return         ;# /dev/fd dup is unix-only
+  if {[catch {eof stdin} e] || $e} return                ;# detached / already closed
+  if {![catch {chan configure stdin -mode}]} return      ;# a TTY: keep the native console
+  if {[catch {xschem get actionlog_filename} lf] || $lf eq {}} return ;# --nolog: no behavior change
+  if {[catch {open /dev/fd/0 r} chan]} return            ;# fresh dup of fd 0
+  chan configure $chan -blocking 0 -buffering line
+  close stdin
+  # Adopt the freed stdin slot NOW with the read end of a never-written pipe
+  # (write end parked in a global); see the header comment for why /dev/null
+  # or a later file open in the slot would be fatal.
+  catch {
+    lassign [chan pipe] stdin_repl_slot_r ::stdin_repl_slot_w
+    chan configure $stdin_repl_slot_r -blocking 0
+  }
+  fileevent $chan readable [list stdin_repl_read $chan]
+}
+stdin_repl_setup
 

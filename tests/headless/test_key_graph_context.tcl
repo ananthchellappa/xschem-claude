@@ -286,7 +286,7 @@ check "A has both canvas and over_graph rows" [expr {
   [lsearch -exact $dump {key 65 0 canvas view.toggle_show_netlist}] >= 0 &&
   [lsearch -exact $dump {key 65 0 graph graph.forward}]            >= 0 }] {}
 check "batch-3 canvas-only rows present" [expr {
-  [lsearch -exact $dump {key 76 0 canvas edit.toggle_orthogonal_wiring}] >= 0 &&
+  [lsearch -exact $dump {key 76 0 canvas tools.insert_line}]             >= 0 &&
   [lsearch -exact $dump {key 61 0 canvas tools.execute_tcl_command}]     >= 0 &&
   [lsearch -exact $dump {key 36 0 canvas view.toggle_draw_pixmap}]       >= 0 }] {}
 check "L/=/\$ are canvas-only (no graph rows)" [expr {
@@ -295,10 +295,15 @@ check "L/=/\$ are canvas-only (no graph rows)" [expr {
   [lsearch -glob $dump {key 36 * graph *}] < 0 }] {}
 
 lassign [screen 870 100] cx cy
-# L toggles orthogonal_wiring; round-trip back
-set b $orthogonal_wiring; keyat $cx $cy 76; set d $orthogonal_wiring; keyat $cx $cy 76
-check "L toggles orthogonal_wiring then back (round-trip)" [expr {$d != $b && $orthogonal_wiring == $b}] \
+# key 76 (Shift+L) now starts a graphic line (tools.insert_line, asserted in the batch-3 rows
+# above); edit.toggle_orthogonal_wiring ships UNBOUND (add_wire_label.md). Verify the toggle
+# action itself still round-trips via a temp bind on the spare keysym 96 (mirror of the g/G
+# snap pattern above); we do NOT fire key 76 here since insert_line would enter a line-draw mode.
+xschem bind key 96 0 canvas edit.toggle_orthogonal_wiring
+set b $orthogonal_wiring; keyat $cx $cy 96; set d $orthogonal_wiring; keyat $cx $cy 96
+check "orthogonal_wiring toggles then back (round-trip, temp bind)" [expr {$d != $b && $orthogonal_wiring == $b}] \
   "($b -> $d -> $orthogonal_wiring)"
+xschem unbind key 96 0 canvas
 # '=' runs the Tcl-backed console command: stub the proc as a counter
 set ::tclcmd_calls 0
 proc tclcmd {} { incr ::tclcmd_calls }

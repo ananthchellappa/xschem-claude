@@ -2648,19 +2648,45 @@ static void save_inst(FILE *fd, int select_only)
  my_free(_ALLOC_ID_, &embedded_saved);
 }
 
+/* Coalesce split wire segments back to their minimal form only when writing the PERSISTENT
+ * .sch artifact (save_schematic sets this around write_xschem_file). It stays 0 for undo/redo
+ * snapshots (push_undo) and autosave ~ backups (write_backup), which must preserve the EXACT
+ * in-memory segmented array so an undo/restore round-trips bit-for-bit (W4 must not collapse
+ * the user's clickable segments on undo). See doc/claude/specs/wire_segment_splitting.md (W4). */
+static int coalesce_wires_on_save = 0;
+
 static void save_wire(FILE *fd, int select_only)
 {
- int i;
- xWire *ptr;
+ int i, nw;
+ xWire *ptr, *coalesced = NULL;
 
- ptr=xctx->wire;
- for(i=0;i<xctx->wires; ++i)
+ ptr = xctx->wire;
+ nw = xctx->wires;
+ /* D1 / W4: on a persistent full save with wire auto-splitting active, write the COALESCED
+  * (byte-stable) form -- re-join the in-memory inter-attachment segments on a PRIVATE scratch
+  * copy so the on-disk .sch matches the pre-split single record, WITHOUT disturbing the live
+  * segmented array (the user keeps clickable segments after saving). Gated on
+  * coalesce_wires_on_save (persistent .sch only, NOT undo/autosave -- see above) AND
+  * autotrim_wires: default-mode saves stay verbatim (a default user's deliberately abutting
+  * collinear wires must not be silently merged). Never on select_only (clipboard/paste keeps
+  * exactly what is selected). See doc/claude/specs/wire_segment_splitting.md (section 6.3).
+  * The scratch copy is shallow: prop_ptr/node are borrowed from xctx->wire[] and only READ
+  * (save_ascii_string) / geometry-rewritten (merge_collinear_wires), so freeing the array is
+  * enough -- the borrowed strings stay owned by xctx->wire[]. */
+ if(!select_only && coalesce_wires_on_save && xctx->wires > 1 && tclgetboolvar("autotrim_wires")) {
+   coalesced = my_malloc(_ALLOC_ID_, xctx->wires * sizeof(xWire));
+   memcpy(coalesced, xctx->wire, xctx->wires * sizeof(xWire));
+   nw = merge_collinear_wires(coalesced, xctx->wires, 1 /* pin-blind */);
+   ptr = coalesced;
+ }
+ for(i=0;i<nw; ++i)
  {
    if (select_only && ptr[i].sel != SELECTED) continue;
   fprintf(fd, "N %.16g %.16g %.16g %.16g ",ptr[i].x1, ptr[i].y1, ptr[i].x2,
      ptr[i].y2);
   save_ascii_string(ptr[i].prop_ptr,fd, 1);
  }
+ if(coalesced) my_free(_ALLOC_ID_, &coalesced);
 }
 
 static void save_text(FILE *fd, int select_only)
@@ -3599,7 +3625,11 @@ int save_schematic(const char *schname, int fast) /* 20171020 added return value
   rects = xctx->rects[PINLAYER];
   rect = xctx->rect[PINLAYER];
   sort_symbol_pins(rect, rects, schname);
+  /* This is the persistent .sch artifact: coalesce split wire segments to the byte-stable form
+   * (W4 / D1). Undo snapshots and autosave backups deliberately do NOT set this. */
+  coalesce_wires_on_save = 1;
   write_xschem_file(fd);
+  coalesce_wires_on_save = 0;
   fclose(fd);
   /* update time stamp */
   if(!stat(schname, &buf)) {
@@ -3840,7 +3870,13 @@ int load_schematic(int load_symbols, const char *fname, int reset_undo, int aler
      * change came from this normalization. */
     int mod_before_norm = xctx->modified;
     check_collapsing_objects();
-    if(reset_undo && tclgetboolvar("autotrim_wires")) trim_wires();
+    /* Wire-segment maintenance: split each wire at its interior attachment points into
+     * independent clickable segments, then trim/merge (pin-aware). Runs inside the
+     * mod_before_norm revert so a freshly-opened file is not flagged modified, and under
+     * no_autosave. In-memory only: coalesce-on-save (W4, save_wire -> merge_collinear_wires)
+     * re-joins these splits on save, so the on-disk .sch stays byte-stable (D1).
+     * See doc/claude/specs/wire_segment_splitting.md (W1, W4). */
+    if(reset_undo && tclgetboolvar("autotrim_wires")) maintain_wire_segments();
     if(reset_undo && !mod_before_norm && xctx->modified) set_modify(0);
   }
   update_conn_cues(WIRELAYER, 0, 0);
@@ -5492,9 +5528,11 @@ int descend_symbol(void)
   FILE *fd;
   char name[PATH_MAX];
   char name_embedded[PATH_MAX];
+  char instname_log[256]; /* raw instname captured for the outcome-level action log */
   int n = 0;
   struct stat buf;
   int save_netlist_type = xctx->netlist_type;
+  instname_log[0] = '\0';
   if(xctx->currsch + 1 >= CADMAXHIER) {
     dbg(0, "descend_symbol(): max hierarchy depth reached: %d", CADMAXHIER);
     return 0;
@@ -5528,6 +5566,9 @@ int descend_symbol(void)
     /* dont allow descend in the default missing symbol */
     if((xctx->inst[n].ptr+ xctx->sym)->type &&
        !strcmp( (xctx->inst[n].ptr+ xctx->sym)->type,"missing")) return 0;
+    /* capture BEFORE load_schematic replaces the inst array (log emitted at the tail) */
+    my_strncpy(instname_log, xctx->inst[n].instname ? xctx->inst[n].instname : "",
+               S(instname_log));
   }
   else return 0;
 
@@ -5622,6 +5663,20 @@ int descend_symbol(void)
    * nothing animates. */
   net_hilight_anim_update();
   zoom_full(1, 0, 1 + 2 * tclgetboolvar("zoom_full_center"), 0.97);
+  /* Self-log at the core (issue 0071 atom 3): the `i` key and the context menu call
+   * descend_symbol() directly, bypassing the `xschem descend_symbol` scheduler branch,
+   * so the branch is not a coverage point; every caller of this function IS the user
+   * verb (1:1 test). All refusal paths (depth limit, empty/multi selection, missing
+   * symbol, cancelled embedded save) returned 0 above -> no phantom line. Wrapper
+   * copies (context-menu table, Layer A csv) dedup via actionlog_cmd_logged.
+   * The `-inst <name>` form is SELF-CONTAINED (replay selects the instance itself):
+   * the recording-time selection may come from an unlogged path (hi_descend dialog)
+   * whose wrapper line the dedup suppresses, so a bare selection-dependent line
+   * would diverge on replay. Empty instname falls back to the bare form + the
+   * flushed select_at, like descend_schematic.
+   * doc/claude/code_analysis/action_log_coverage_audit_and_core_selflog_refactor.md */
+  if(instname_log[0]) log_action_descend("descend_symbol", n, instname_log);
+  else log_action("xschem descend_symbol");
   return 1;
 }
 

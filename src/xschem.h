@@ -276,6 +276,24 @@ typedef int Tcl_Size;
 #define MENUSTARTWIRECUT2 1024U /* do not align cut point to snap */
 #define MENUSTARTCOPY 2048U
 #define MENUSTARTDESEL 4096U
+#define MENUSTARTSTRETCH 8192U /* a pending MENUSTARTMOVE is a connected stretch (cadence 'm').
+                                * Only ever set together with MENUSTARTMOVE.
+                                * see doc/claude/specs/cadence_stretch_move_keys.md */
+#define MENUSTARTROTATE 16384U /* a pending prompt-for-object rotate/flip (Cases 1 & 3): a
+                                * rotate/flip verb fired with nothing selected arms this, so the
+                                * next canvas click SELECTS the object under the cursor and applies
+                                * xctx->menu_pending_transform to it (plain: no attached-net grab,
+                                * wires are NOT kept connected).
+                                * see doc/claude/specs/rotate_keep_connected_stretch.md */
+
+/* xctx->menu_pending_transform codes: which transform a pending MENUSTARTROTATE applies */
+#define PENDING_TR_NONE      0
+#define PENDING_TR_ROTATE    1  /* rotate about click point            (Shift-R / xschem rotate) */
+#define PENDING_TR_ROTATE_IP 2  /* rotate about each object's anchor   (Alt-R   / rotate_in_place) */
+#define PENDING_TR_FLIP      3  /* flip horizontally about click point (Shift-F / xschem flip) */
+#define PENDING_TR_FLIP_IP   4  /* flip about each object's anchor     (Alt-F   / flip_in_place) */
+#define PENDING_TR_FLIPV     5  /* flip vertically about click point   (V       / xschem flipv) */
+#define PENDING_TR_FLIPV_IP  6  /* flip vertically about each anchor   (Alt-V   / flipv_in_place) */
 
 #define WIRE 1              /*  types of defined objects */
 #define xRECT  2
@@ -475,6 +493,29 @@ typedef struct
   int n;
   unsigned int col;
 } Selected;
+
+/* Hover fly-line query result (doc/claude/specs/hover_flylines.md). One geometry member on a
+ * queried net: a wire (kind 0) or an instance pin (kind 1). idx = wire/instance index, pin =
+ * pin index (-1 for a wire), (x,y) = wire midpoint or pin coord. */
+typedef struct { int kind; int idx; int pin; double x, y; } FlyMember;
+
+/* Computed fly-line set for one net, produced by flyline_compute() (flyline.c) and consumed by
+ * both the `xschem flylines` query (scheduler.c) and the on-screen overlay (draw_flylines).
+ * Pure read-only product (invariant C1): describes geometry, never mutates it. Release with
+ * flyline_result_free(). */
+typedef struct {
+  char *net;                      /* net name (my_strdup'd), NULL when no net resolved */
+  int is_global;                  /* net is a global/bang net (vdd!/gnd!/0) */
+  int capped;                     /* star truncated to flylines_cap nearest clusters */
+  FlyMember *mem;                 /* member geometry, build order */
+  int nmem;
+  int *clu;                       /* nmem entries: cluster ordinal per member */
+  int nclu;                       /* number of physical clusters */
+  double *cx, *cy;                /* nclu entries: per-cluster anchor coords */
+  int hub;                        /* hub cluster ordinal (hovered cluster, else 0) */
+  double *sx1, *sy1, *sx2, *sy2;  /* nseg entries: star segment endpoints (world coords) */
+  int nseg;
+} FlyResult;
 
 typedef struct
 {
@@ -1101,6 +1142,30 @@ typedef struct {
   int need_reb_sel_arr;
   int lastsel;
   int maxsel;
+  /* Cadence double-click incremental connected-select escalation state.
+   * doc/claude/specs/dblclick_connected_select.md. Keyed on a seed (type + session-
+   * stable id): dblgrow_level is how many grow steps have run on this seed
+   * (0 -> next does ring1, 1 -> ring2, 2 -> whole-net flood, 3 -> saturated/no-op).
+   * A different seed, or a selection count that no longer matches dblgrow_sel_sig
+   * (an external selection change between double-clicks), resets the level to 0.
+   * Zero-init is correct: seed_type 0 never matches a real WIRE/ELEMENT seed, so
+   * the first call always resets. */
+  int dblgrow_level;
+  unsigned short dblgrow_seed_type;
+  unsigned int dblgrow_seed_id;
+  int dblgrow_sel_sig;
+  double dblgrow_seed_x, dblgrow_seed_y;
+  /* Any single click (or other non-double gesture) ends the escalation, so the next
+   * double-click on the seed restarts at ring1. This can't be seen from the selection
+   * (a click on the already-selected seed changes nothing) so it is driven by the event
+   * stream: a button-1 RELEASE that is not the release of a double-click snapshots the
+   * level into dblgrow_level_save and zeroes it (tentative reset); the following `-3`
+   * double-click RESTORES the snapshot (proving that press/release was the first half of
+   * a double, not a standalone click) before advancing. A standalone click's zero is
+   * never restored, so it sticks. dblgrow_last_press_was_grow guards the double's own
+   * release2 (whose preceding "press" was the `-3` grow) from tripping the reset. */
+  int dblgrow_level_save;
+  int dblgrow_last_press_was_grow;
   int pin_sel_active; /* hint: 1 once any instance pin has been selected (pin_selection.md).
                        * Lets unselect_all() clear stale pin selections even when lastsel/
                        * SELECTION were reset out from under them (e.g. after delete()).
@@ -1123,6 +1188,10 @@ typedef struct {
                        * undo (so typing a name does not spam/corrupt the undo stack); the drop
                        * keeps the baseline; an aborted preview is removed undo-free. 0 = a
                        * normal placement (add_graph/add_image/scripted pin), undo as usual. */
+  int wirelabel_preview; /* add_wire_label.md: the current sympin PREVIEW is a Cadence net-label
+                       * (lab_pin) under the "must land on copper" drop constraint. Set together
+                       * with sympin_preview at arm; cleared alongside it. When set, the drop gate
+                       * (wire_label_try_commit) refuses a click that is not on a wire/inst pin. */
   Selected *sel_array;
   Selected first_sel; /* first selected instance (used as master when editing multiple objects) */
   int prep_net_structs;
@@ -1134,9 +1203,15 @@ typedef struct {
   int simdata_ninst;
   int modified;
   int semaphore;
-  int paste_from; /* set to 1 if paste from clipboard is called ,
-                   *        2 if paste from selection
-                   *        3 if paste from user provided file */
+  int paste_from; /* pending-merge source (see paste.c merge_file):
+                   *        0 named file (merge with explicit filename)
+                   *        1 selection transfer (sel_file)
+                   *        2 clipboard (clip_file)
+                   *        3 user-picked file (merge dialog) */
+  char merge_source[PATH_MAX]; /* paste.c: source file of the pending STARTMERGE, as merge_file()
+                                * opened it -- read by the drop logger (callback.c
+                                * end_move_copy_logged) to record `xschem paste ... -file {f}`
+                                * for non-clipboard merges (issue 0069) */
   size_t tok_size;
   char netlist_name[PATH_MAX];
   char current_dirname[PATH_MAX];
@@ -1166,6 +1241,28 @@ typedef struct {
   int hover_type;       /* hover highlight: currently-outlined object type (0 = none) */
   int hover_n;          /* hover highlight: its array index */
   int hover_col;        /* hover highlight: its layer (graphical types) */
+  /* Hover fly-line overlay (doc/claude/specs/hover_flylines.md, Track B). Pure read-only
+   * overlay state (invariant C1: draw_flylines writes ONLY the window + these fields, never
+   * wire/inst/hilight/modified state). fly_shown_net = net whose star is currently on screen
+   * (NULL/empty = none); fly_nseg = drawn segment count; fly_x1..y2 = world bbox of the star,
+   * used for erase / regional redraw. `xschem flylines shown` reports fly_shown_net. */
+  char *fly_shown_net;  /* net whose star is currently DRAWN (nseg>0); "" via NULL = none. `shown` */
+  char *fly_last_net;   /* last net RESOLVED under the cursor (star or not) -- the change-detection
+                         * cache key, so repeated motion over a starless net short-circuits too */
+  int fly_nseg;
+  double fly_x1, fly_y1, fly_x2, fly_y2;
+  double *fly_seg;      /* 4*fly_nseg doubles (x1,y1,x2,y2 per drawn segment, world coords) so the
+                         * draw() re-stamp can re-stroke the star after a full redraw with no recompute */
+  int fly_seg_alloc;    /* allocated doubles in fly_seg */
+  /* Member keys of the HUB CLUSTER that produced the drawn star (H2, flyline_hub_at_cursor_plan.md).
+   * While the cursor stays within this cluster on the same net, the origin is re-projected and the
+   * star's origins rebuilt in place (regional erase + re-stroke) WITHOUT re-clustering; moving to a
+   * different cluster (or net) forces a full recompute. Each key is 3 ints {kind, idx, pin} (kind
+   * 0=wire pin=-1, 1=inst pin=p) matching FlyMember. Valid only while fly_nseg > 0. */
+  int *fly_hub_mem;
+  int fly_hub_nmem;     /* number of member keys (fly_hub_mem holds 3*fly_hub_nmem ints) */
+  int fly_hub_mem_alloc;/* allocated ints in fly_hub_mem */
+  GC gc_flyline;        /* fly-line overlay: dashed thin colored GC (flylines_color/width/dash) */
   GC gc_hilight;        /* net highlight scratch GC: reconfigured per wire from the
                          * NetHilightStyle (color+width+dash) at draw time */
   char **color_array;
@@ -1239,10 +1336,62 @@ typedef struct {
    * 2*stretch_grabbed_n doubles (n points). */
   double *stretch_grabbed_xy;
   int stretch_grabbed_n;
+  /* incremental_wire_reroute.md Phase I (ownership decoupling): number of wires the USER had
+   * selected (ANY selection state -- full SELECTED or partial SELECTED1/2 from a stretch box-select),
+   * captured at the TOP of select_attached_nets() BEFORE it grabs any follow-wire. Consumed at move
+   * END: if 0, every selected wire at END is a tool-owned follow-wire and is deselected (transient,
+   * not persistent user selection). Only meaningful under fluid_editing. */
+  int fluid_startsel_wires;
+  /* issue 0091: session-stable ids (xWire.id) of exactly the wires the USER had selected at drag
+   * START, captured in select_attached_nets() alongside fluid_startsel_wires BEFORE follow-grab.
+   * The END redundant-route cleanup (0088-0090) uses these to decline PER-COMPONENT: it floods each
+   * user-selected wire's touch-component and never reshapes/deletes copper in a protected component,
+   * so it cleans tool-grabbed follow copper on OTHER nets while leaving the user's own selected net
+   * intact. Allocated in select_attached_nets, freed with the move (mirrors stretch_grabbed_xy). */
+  unsigned int *fluid_startsel_id;
+  int fluid_startsel_nid;
+  /* Cadence deferred-selection: a plain (no-modifier) press-drag-release of an object that was NOT
+   * already selected must MOVE it without changing the selection membership -- if nothing was
+   * selected it ends unselected, and a pre-existing selection is preserved untouched. A CLICK (no
+   * motion) still selects normally. Snapshot the pre-press selection by session-stable id here
+   * (BEFORE the transient select that the drag needs), then at the move-completion funnel
+   * (end_move_copy_logged) restore it iff the gesture actually moved. Freed/reset each gesture.
+   * doc/claude/specs/cadence_modifier_drag.md (deferred-selection). */
+  int drag_sel_restore;           /* 1 => a transient drag-select is pending restore on a moved drag */
+  int drag_sel_n;                 /* snapshot length (0 => pre-press selection was empty) */
+  unsigned int *drag_sel_id;      /* session-stable ids of the pre-press selection */
+  short *drag_sel_type;           /* parallel: object type (WIRE/ELEMENT/xTEXT/xRECT/LINE/POLYGON/ARC) */
+  short *drag_sel_col;            /* parallel: layer col for per-layer types, else 0 */
+  int place_click_committed;      /* issue 0113: a Button1 PRESS completed an in-flight move/copy
+                                   * (verb-noun / keyboard 'm' placement). The matching RELEASE must
+                                   * NOT run the cadence deselect-others or any click-select logic --
+                                   * that would collapse the just-moved multi-selection. Latched at
+                                   * the press (end_place_move_copy_zoom), consumed once at release. */
+  /* incremental_wire_reroute.md Phase II (per-snap-step reroute, restore-and-reapply). A fluid
+   * stretch drag snapshots the whole pristine (post-kiss, pre-delta) schematic here at move START;
+   * each qualifying move_objects(RUBBER) step restores it and re-applies the current TOTAL drag
+   * delta through the unchanged reroute pipeline, so the live route tracks the cursor and the
+   * committed result on release is byte-identical to the release-only path. Uses the same
+   * mem_serialize_slot/mem_restore_slot machinery as the undo stack but with an independent
+   * lifetime (a scratch slot, NOT in uslot[]), so it is unaffected by the disk-vs-memory undo
+   * backend. See doc/claude/suggestions/incremental_reroute_phase2_decision.md. */
+  Undo_slot fluid_reroute_snap;   /* pristine geometry+selection snapshot for the active gesture */
+  int fluid_reroute_active;       /* 1 while a fluid stretch gesture owns fluid_reroute_snap */
+  int fluid_reroute_dirty;        /* 1 once a RUBBER step has committed geometry (END must restore) */
+  int select_attached_nodraw;     /* 1 => select_attached_nets() re-derives the follow SET only, no
+                                     highlight draw (between-legs regrab: the intermediate leg-A
+                                     geometry must NOT be stroked into the pixmap -- issue 0117 ghost) */
+  /* the four session-stable id counters at gesture START -- restored after every per-step
+   * mem_restore_slot so tool-created wires re-stamp identical ids each step (determinism, P8). */
+  unsigned int fluid_reroute_wid, fluid_reroute_iid, fluid_reroute_gid, fluid_reroute_tid;
   short move_flip;
   int manhattan_lines;
   int movelastsel;
   short rotatelocal;
+  /* prompt-for-object rotate/flip (Cases 1 & 3): which transform a pending MENUSTARTROTATE
+   * applies to the object clicked next (a PENDING_TR_* code). see
+   * doc/claude/specs/rotate_keep_connected_stretch.md */
+  short menu_pending_transform;
   /* new_wire, new_line, new_rect*/
   double nl_x1,nl_y1,nl_x2,nl_y2;
   double nl_xx1,nl_yy1,nl_xx2,nl_yy2;
@@ -1431,6 +1580,8 @@ extern int actionlog_suppress_echo; /* skip CIW mirror while set (CIW-typed cmds
 extern int actionlog_suppress;      /* full log no-op while set (replay guard) */
 extern int select_at_suppress_log;  /* skip select_object()'s auto select_at log line */
 extern int select_at_add;           /* funnel logs the ` add` (augment) marker while set */
+extern char actionlog_pending[300]; /* held select_at line awaiting flush/absorb (action_log_absorb.md) */
+extern int actionlog_pending_inst;  /* instance the held select_at selected, or -1 */
 extern int exit_code;
 extern const char *xschem_library_path[];
 extern char home_dir[PATH_MAX]; /* home dir obtained via getpwuid */
@@ -1477,6 +1628,8 @@ extern int cli_opt_do_waves;
 extern int cli_opt_detach; /* no TCL console */
 extern int cli_opt_quit;
 extern int cli_opt_nogui; /* --nogui: true headless, never init Tk / map a window */
+extern int cli_opt_pipe;  /* --pipe given: a scripted/automation session */
+extern int cli_opt_norecent; /* --norecent: never create/rewrite the user's recent_files list */
 extern char cli_opt_tcl_script[PATH_MAX];
 extern char cli_opt_initial_netlist_name[PATH_MAX];
 extern char cli_opt_rcfile[PATH_MAX];
@@ -1594,6 +1747,8 @@ extern void clear_scope_highlight(void);
 extern void add_scope_highlight(int type, unsigned int id);
 extern void draw_hover_shape(GC g, int type, int n, int c); /* hover outline for one object */
 extern void draw_hover(int force);          /* hover (awareness) highlight, motion-driven */
+extern void draw_flylines(int force);       /* hover fly-line overlay (hover_flylines.md, Track B) */
+extern void flyline_restamp(void);          /* re-stroke the tracked fly-line star after a full redraw */
 extern int delete_wires(int selected_flag);
 extern void delete(int to_push_undo);
 extern void delete_only_rect_line_arc_poly(void);
@@ -1651,6 +1806,7 @@ extern void draw_hilight_dot(unsigned int fg, double x, double y, double r);
 extern void incr_hilight_color(void);
 extern void decr_hilight_color(void);
 extern void get_inst_pin_coord(int i, int j, double *x, double *y);
+extern void get_pin_escape_normal(int i, int r, double *nx, double *ny);
 
 extern void del_inst_table(void);
 extern void hash_inst(int what, int n);
@@ -1677,6 +1833,9 @@ extern Selected select_object(double mx,double my, unsigned short sel_mode,
                                     int override_lock, const Selected *selptr);
 extern int set_first_sel(unsigned short type, int n, unsigned int col);
 extern void unselect_all(int dr);
+extern void drag_sel_free(void);          /* cadence deferred-selection: reset the pre-press snapshot */
+extern void drag_sel_snapshot(void);      /* snapshot pre-press selection ids before a transient drag-select */
+extern void drag_sel_restore_now(void);   /* restore the pre-press selection after a moved drag */
 extern void select_attached_nets(void);
 extern void select_inside(int stretch, double x1,double y1, double x2, double y2, int sel);
 extern void select_touch(double x1,double y1, double x2, double y2, int sel);
@@ -1684,7 +1843,7 @@ extern void select_touch(double x1,double y1, double x2, double y2, int sel);
 extern int select_dangling_nets(void);
 extern void tclmainloop(void);
 extern int Tcl_AppInit(Tcl_Interp *interp);
-extern void abort_operation(void);
+extern void abort_operation(int deselect);
 extern void enter_deselect_mode(void);
 extern void draw_crosshair(int what, int state);
 extern void start_line(double mx, double my);
@@ -1716,6 +1875,12 @@ extern int action_cmd_unbind(int argc, const char **argv);
 extern int action_cmd_bindings(int argc, const char **argv);
 extern void resetwin(int create_pixmap, int clear_pixmap, int force, int w, int h);
 extern Selected find_closest_obj(double mx,double my, int override_lock);
+/* Hover fly-lines (flyline.c, doc/claude/specs/hover_flylines.md). Read-only (invariant C1). */
+extern const char *flyline_net_of(unsigned short type, int n, unsigned int col);
+extern void flyline_compute(const char *netname, int have_pick, const Selected *pick,
+                            double mx, double my, FlyResult *res);
+extern void flyline_hub_point(const Selected *pick, double mx, double my, double *hx, double *hy);
+extern void flyline_result_free(FlyResult *res);
 /* find the instance pin within a tight radius of (mx,my); returns 1 and fills *r
  * (type=INST_PIN, n=instance, col=pin) on hit, 0 otherwise. See pin_selection.md */
 extern int find_closest_pin(double mx, double my, Selected *r);
@@ -1781,6 +1946,9 @@ extern void trim_wires(void);
 extern void update_conn_cues(int layer, int draw_cues, int dr_win);
 extern void break_wires_at_point(double x0, double y0, int align);
 extern void break_wires_at_pins(int remove);
+extern int break_wires_at_attach_points(void);
+extern void maintain_wire_segments(void);
+extern int merge_collinear_wires(xWire *list, int n, int ignore_pins);
 
 extern void check_touch(int i, int j,
          unsigned short *parallel,unsigned short *breaks,
@@ -1832,6 +2000,10 @@ extern int place_symbol(int pos, const char *symbol_name, double x, double y, sh
                          const char *inst_props, int draw_sym, int first_call, int to_push_undo);
 extern int editing_symbol_view(void);
 extern void place_net_label(int type);
+extern int place_sch_pin(const char *name, const char *dir);
+extern int place_wire_label(const char *name);
+extern int point_on_wire_or_pin(double x, double y);
+extern int wire_label_try_commit(void);
 extern void attach_labels_to_inst(int interactive);
 extern void clear_partial_selected_wires(void);
 extern int connect_by_kissing(void);
@@ -1856,6 +2028,12 @@ extern void mem_push_undo(void);
 extern void mem_pop_undo(int redo, int set_modify_status);
 extern void mem_serialize_slot(Undo_slot *s);
 extern void mem_restore_slot(Undo_slot *s, int set_modify_status);
+/* incremental_wire_reroute Phase II: alloc/free a STANDALONE snapshot slot (not in uslot[]).
+ * mem_snapshot_alloc must run before mem_serialize_slot on a scratch slot (mem_serialize_slot
+ * frees prior contents first, dereferencing the per-layer arrays). mem_snapshot_free releases the
+ * deep copy AND the per-layer arrays and re-zeroes the slot. */
+extern void mem_snapshot_alloc(Undo_slot *s);
+extern void mem_snapshot_free(Undo_slot *s);
 extern void mem_delete_undo(void);
 extern void mem_clear_undo(void);
 extern int load_schematic(int load_symbol, const char *fname, int reset_undo, int alert);
@@ -1898,6 +2076,20 @@ extern void arc_3_points(double x1, double y1, double x2, double y2, double x3, 
 /* sel: if set to 1 change references only on selected items, like in a copy operation */
 extern void update_attached_floaters(const char *from_name, int inst, int sel);
 extern void move_objects(int what,int merge, double dx, double dy);
+/* incremental_wire_reroute Phase II: free any armed fluid-reroute snapshot + clear its flags.
+ * Called by clear_schematic() so a buffer teardown/reload mid-gesture can't resurrect/leak it. */
+extern void fluid_reroute_discard(void);
+/* D1 (Track D): free the Fluid_gesture START-snapshot context + clear its armed flag. Called by
+ * clear_schematic() alongside fluid_reroute_discard() so a buffer teardown mid-gesture closes the
+ * gesture (else the next move START's arm assert would see a leaked-armed context). */
+extern void fluid_gesture_free(void);
+/* D6 single-pass harness (scheduler `xschem fluid_snapshot arm` / `xschem fluid_pass <name>`):
+ * run one END-cleanup pass in isolation, no gesture/X. arm returns 1 if a valid START snapshot was
+ * taken (needs fluid_editing on + >=1 instance pin), else 0; run_pass returns the pass's
+ * changed-count, 0 when it fail-safe-declines (no armed snapshot -- gate enforcement), or -1 for an
+ * unknown / MANUAL_SITE name. */
+extern int fluid_harness_snapshot_arm(void);
+extern int fluid_harness_run_pass(const char *name);
 extern void check_collapsing_objects();
 extern void redraw_w_a_l_r_p_z_rubbers(int force); /* redraw wire, arcs, line, polygon rubbers */
 extern void copy_objects(int what);
@@ -1922,6 +2114,11 @@ extern int scope_targets(int displayed_inst, const char *scope, int *targets);
 extern int pin_scope_targets(int primary_n, const char *scope, int *targets);
 extern int xschem(ClientData clientdata, Tcl_Interp *interp,
            int argc, const char * argv[]);
+/* The single mutation/command boundary (Refactor B, audit §4): ONE readonly gate +
+ * ONE effect + ONE log site. Entry points (scheduler branch, inline key, menu) call
+ * this for a migrated verb instead of the raw core + a scattered readonly/log. Defined
+ * in scheduler.c. This atom wires exactly one verb (trim_wires). */
+extern int perform_action(const char *verb, int argc, const char *argv[]);
 extern const char *tcleval(const char str[]);
 extern const char *tclresult(void);
 extern const char *tclgetvar(const char *s);
@@ -2036,6 +2233,7 @@ extern double atof_eng(const char *s); /* same as atof_spice, but recognizes 'M'
 extern char *dtoa_eng(double i, int precision);
 extern char *dtoa_prec(double i);
 extern double my_round(double a);
+extern double snap_to_grid(double c);
 extern double round_to_n_digits(double x, int n);
 extern double floor_to_n_digits(double x, int n);
 extern double ceil_to_n_digits(double x, int n);
@@ -2097,6 +2295,7 @@ extern void unhilight_net(int keep_sel);
 extern void hilight_net_styled(void);
 extern void propagate_hilights(int set, int clear, int mode);
 extern void  select_connected_nets(int stop_at_junction);
+extern int   select_grow_connected_step(double mx, double my, int pick_seed);
 extern char *resolved_net(const char *net);
 extern void draw_hilight_net(int on_window);
 extern void copy_hilights(void);

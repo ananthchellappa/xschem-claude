@@ -111,6 +111,18 @@ proc cadence::focus_window {win} {
   set cur [xschem get current_win_path]
   if {$win eq $cur} return
   xschem new_schematic switch $win
+  # Replayable: the Cadence Ctrl-E parent-window hop (issue 0053) was silent, so a
+  # replayed session drifted to the wrong window and every later edit landed in the
+  # wrong context. Log the switch here at the entry seam, NOT in the C core: the core
+  # `new_schematic switch` is shared by tab-strip clicks, alt2 toggle and window-open
+  # (all machinery, no-draw), so a core log would flood every tab redraw. focus_window
+  # is reached ONLY by the cadence return chain (return_one_level / return_to_top), so
+  # this covers exactly the real user hops. The referent is the Tk win_path -- the form
+  # `new_schematic switch` resolves natively; in the ordered whole-log replay it is as
+  # stable as the monotonic window number (both encode creation order) and the common
+  # parent `.drw` is rock-solid. Logged AFTER the same-window early-out above so a no-op
+  # switch records nothing. (cf. new_blank_window's create_window log, issue 0055.)
+  xschem log_action "xschem new_schematic switch $win"
   catch {
     set top [winfo toplevel $win]
     set curtop {}

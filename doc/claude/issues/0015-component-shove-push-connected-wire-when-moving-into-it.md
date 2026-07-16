@@ -1,8 +1,11 @@
 # Issue 0015 — moving a component toward a connected perpendicular wire should PUSH the wire, not cross it
 
 **Opened:** 2026-06-19
-**Status:** OPEN — **deferred** (feature, not a regression). Specified here; not yet
-implemented. Scoped out of issue 0014 deliberately.
+**Status:** IMPLEMENTED 2026-07-06 (commit `897b3133`, branch `fluid-editing`) →
+**SHOVE** (occupancy model), behind `fluid_editing`. `fluid_shove_connected_wire()`
+in `move.c` at the pre-trim commit seam; tests `test_wireedit_37` (positive) +
+`test_wireedit_38` (decline guards). See §7 for the design; §8 for the build notes.
+Was DECIDED 2026-07-06, before that OPEN/deferred (scoped out of issue 0014).
 **Affects:** interactive use with `cadence_compat` / `enable_stretch` /
 `orthogonal_wiring` (stretch-move of an instance).
 **Severity:** low — current behavior keeps connectivity correct; this is an
@@ -126,3 +129,90 @@ must yield (shove).
 > implement the shove, anchor it to the occupancy rule, not to this one fixture.
 
 Until then, the current cross-through is a safe, connectivity-preserving placeholder.
+
+---
+
+## 7. DECISION (2026-07-06) — SHOVE, anchored to the occupancy model
+
+**Chosen: component-into-connected-wire SHOVES** (away = stretch, unchanged). The
+moved instance pushes the connected perpendicular wire ahead of it; it never crosses.
+Anchored to the §6 occupancy rule — *a solid body (instance + pins) may not occupy a
+wire's location; a **connected** wire yields, an **unconnected** wire is an obstacle* —
+not to this one fixture.
+
+**Why (not merely ergonomics):**
+- Cadence shoves; this project targets Cadence fidelity.
+- It resolves the `tests/from_user/before_1.sch` feel-test failure directly: dragging
+  R18 down drives its M pin along its stub *past* the connected horizontal wire.
+  Today's pure-stretch lays a **reversed stub back through R18's own body**
+  (the reported intrusion); the shove keeps the wire one exit-stub ahead of the pin,
+  so the stub is always outward — never reversed, never through the body. The
+  user's hand-authored `desired_beautified_1.sch` **is** the shove result. So shove
+  also closes the *connected-wire* slice of P5 (own-body no-cross) for free.
+
+**Sub-decisions (§5 open questions, resolved):**
+1. **When** — shove engages when the pin would reach/cross V (overrun ≥ 0). Below
+   that the stub just shortens. Invariant: V is kept one exit-stub-length ahead of the
+   pin on the drive side; the pin never crosses V.
+2. **Stub length** — preserve a **one-grid exit stub**, not zero. Reuses
+   `insert_exit_stubs` / P3 escape-perp; a zero-length stub = pin sitting on the wire =
+   invisible/ambiguous junction (same reason Layer-2 offsets the solder joint one grid).
+3. **Chains** — shove **only the directly-connected** perpendicular wire V; its arms
+   stretch (exactly like `compute_wire_slide`). **No transitive propagation** past
+   further junctions — one level. If an arm then collides, that is the obstacle layers'
+   job (decline/detour), not a deeper shove.
+4. **Multiple wires in the path** — shove **only connected** wires (the follow-set /
+   terminal). An **unconnected** wire the pin drives toward is an **obstacle** handled
+   by the already-shipped no-short / stop-short / detour layers (Layers 1–3) — never
+   shoved (moving a foreign net would be wrong and could short).
+5. **Undo / no-merge (R16/R17)** — reuse the incremental pipeline's single-undo entry
+   + P1/P2 guards. The yield target is the connected same-net wire, so no distinct-net
+   contact is created by construction.
+
+**Home / integration.** The original §5 sketch ("sibling pass at `move_objects(END)`")
+is **superseded**: implement in the **per-snap-step fluid reroute pipeline**
+(`move.c` `fluid_reroute_*`), as a new layer alongside Layers 1–3, so the wire visibly
+slides ahead *during* the drag (fluid feel), and release==stepwise holds for free.
+Gate on `fluid_editing` (default-off byte-identical), same as Layers 1–3.
+
+**Conflict order** unchanged (P1=P2 > P3 > P5 > P4 > P7 > P6): shove serves P1 + P5 +
+aesthetics and must not manufacture a P2 short (guaranteed — it only relocates the
+connected same-net wire; arm collisions defer to the obstacle layers).
+
+**Deferred within the shove** (predicted by the occupancy model, not built now):
+component-toward-*parallel* wire, and two-abutted-components. Placeholder cross-through
+stays until the shove layer lands. **Diagonal (non-axis-aligned) drag-toward is gated
+out** (`dxnz == dynz` bail, mirroring `compute_wire_slide`) and tracked separately in
+**issue 0081** (per-axis X-then-Y decomposition).
+
+---
+
+## 8. Implementation notes (commit `897b3133`)
+
+Approach **B** (design workflow `wf_7c208608` + judge): a new sibling pass
+`fluid_shove_connected_wire()` at the shared pre-trim commit seam next to
+`fluid_reroute_around_obstacles` — **zero shipped-function-body edits**, one call
+line. Runs for both a real END and a live RUBBER step ⇒ release==stepwise; gated on
+`fluid_editing && stretch_select && rot==flip==0` ⇒ default-off byte-identical.
+
+It **post-detects** the reversed stub `place_moved_wire` just laid (a parallel
+single-endpoint stub is always relaid as one straight wire), finds the connected
+perpendicular V at a clean corner J, sets `J' = pin + one grid outward`, translates
+V wholesale by `J'-J`, drags one level of arm endpoints at V's far corner C, and
+relays the stub as the one-grid outward exit stub.
+
+**Adversarial review** (`wf_44288957`, 6 lenses) found the naive shove shorted/
+disconnected on messy topologies. Guards added, each **collective-sabotage verified**
+(with all guards off the review scenes fail 5 checks; with them, green):
+- **clean SPAN of V** — decline if a wire taps V's interior (would strand → P1) or a
+  collinear wire sits at C (an autotrim split of V; the arm-drag would bend it → P4);
+- **P2 on new S / new V / each dragged arm** vs stationary foreign device pins
+  (`fluid_seg_hits_foreign_pin`), co-moving distinct-net pins
+  (`fluid_seg_hits_moving_pin`, mirroring Layer 3), and stationary foreign-net WIRES
+  (new `fluid_seg_hits_foreign_wire`, closing the pin-only P2 gap).
+Every guard **declines to baseline** (never worse). `prepare_netlist_structs(0)` is
+called once at entry so the wire-level P2 guard sees pre-move net names.
+
+**Process note:** a review subagent ran `git reset --hard` in the shared worktree
+mid-run and wiped the then-uncommitted implementation; it was restored from context.
+Lesson: commit before spawning tree-mutating subagents, or isolate them in a worktree.

@@ -100,7 +100,12 @@ replayable:
 - **F5** `apply_hilight {…}` and the transient `<ButtonRelease>` / `<KeyPress>`
   binds (`aphl::on_release`/`on_key`) apply a highlight *style to the clicked
   net* — click-position-dependent (0005), and they live in the separate
-  `utils/apply_hilight.tcl` machinery.
+  `utils/apply_hilight.tcl` machinery. **CLOSED 2026-07-15 (issue 0071 atom 15):**
+  both apply arms now log `net_hilight_apply {resolved-row}` at the entry sites; the
+  CLICK arm's selection is already covered by the atom-1 `select_at` self-log (single
+  click) and the IMMEDIATE arm is the F5 raw bind's sole record (typed path dedups via
+  ciw_exec `-emitted`). Accepted 0005 residuals: rubber-band drag-select-several, the
+  ambient-table-dependent applied index. Test `test_apply_hilight_log.tcl`; report §18.
 - **Ctrl-Alt-N** `place_libmgr_selection` → `xschem place_symbol` launches a
   place gesture; the drop already logs a `#` stub (0069).
 - **Ctrl-Alt-D** `cadence::deeploc_note` places a text note at a chosen point
