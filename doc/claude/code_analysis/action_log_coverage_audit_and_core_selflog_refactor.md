@@ -1629,6 +1629,103 @@ args, same shape, `run_core` grows one arm), or the bounded atom-16 menu-bypass 
 global `core_log_action` registry (§4 Refactor A step 2, rewriting all ~40 log sites) remains its
 own future atom.
 
+## 23. Refactor B ATOM 3 (2026-07-15): the THIRD per-verb migration — the FIRST with a mid-gesture split (`rotate_in_place`)
+
+`rotate_in_place` now routes through the same `perform_action(verb, argc, argv)` boundary; `run_core`
+grew exactly ONE arm; output stays byte-identical. Scope held as tight as atoms 1–2: one verb, no
+global `core_log_action` registry, no rewrite of the ~40 existing `log_action` sites. What makes
+atom 3 ≠ atoms 1–2 is a **`ui_state` SPLIT** that `trim_wires`/`align` did not carry.
+
+**The wrinkle: only the STANDALONE verb crosses the boundary; the gesture arms stay raw.** The
+scheduler `rotate_in_place` branch and the callback.c Alt-R key each have three arms:
+`if(STARTMOVE) move_objects(ROTATE|ROTATELOCAL)` / `else if(STARTCOPY) copy_objects(ROTATE|ROTATELOCAL)`
+/ `else <standalone>`. The during-move / during-copy arms are the **mid-gesture transform**,
+DELIBERATELY silent at the verb level — they are logged once at the move/copy END as the
+`move_objects`/`copy_objects` replay line (issue 0069, atom 13). Only the STANDALONE `else` is the
+real user verb. So the boundary wraps ONLY the standalone case; the gesture arms stay **raw and
+unlogged**. Routing a gesture arm through `perform_action` would spuriously emit
+`xschem rotate_in_place` mid-drag and double-count the move-END line (locked by test case (e), and
+by sabotage 5). `run_core`'s arm is byte-identical to the scheduler standalone body —
+`rebuild_selected_array()` + `move_objects(START)` + `move_objects(ROTATE|ROTATELOCAL)` +
+`move_objects(END)` — with **NO `push_undo()`/`draw()`**: `move_objects(START/END)` owns the undo push
+(move.c) and the redraw, exactly as the pre-migration standalone body did. `ROTATELOCAL` pivots each
+object about its own origin (`move.c:5325` `pvx = rotatelocal ? inst[i].x0 : x1`; wires
+`move.c:7009` `wire[n].x1/y1`), so no pivot/`mousex_snap` seeding is needed.
+
+**THREE standalone entry points, not two — the callback side has an extra.** Grepping the GUI (the
+atom-16 lesson) surfaced that `rotate_in_place`'s standalone verb is reachable from THREE places, all
+now funnelled through `perform_action` exactly once: (1) the **scheduler branch** `else` (`return
+perform_action("rotate_in_place", argc, argv)`), reached by scripted `xschem rotate_in_place`, the
+Edit menu (`xschem.tcl:14141`), the context menu (`xschem.tcl:12161`), and the `actions.csv`
+`edit.rotate_in_place_selected_objects` row; (2) the **Alt-R key** → `standalone_group_transform`'s
+single-object arm (`callback.c`); (3) the **verb-noun deferred apply** — Alt-R on an empty selection
+arms `MENUSTARTROTATE` + `PENDING_TR_ROTATE_IP`, and the next click selects+applies it. Path (3) sat
+inside a shared `move_objects(START) … switch … move_objects(END)` block with the flip/flipv cases;
+migrating it meant **pulling `PENDING_TR_ROTATE_IP` OUT of the shared switch** (its own
+`if(t == PENDING_TR_ROTATE_IP) perform_action(...)` before the shared START/END), because
+`perform_action`→`run_core` owns its own START/END and must not nest inside the outer one. The other
+five transform cases keep their exact bodies. No double-dispatch: keysym `r` has **zero rows in
+keybindings.csv**, so the registry pre-dispatch is skipped and only the legacy `case 'r'`
+`EQUAL_MODMASK` arm runs; the menu's `-accelerator Alt-R` is display-only.
+
+**The read-only decision, and the one deliberate residual.** The boundary's ONE
+`scheduler_readonly_reject` covers the standalone verb from every path. The scheduler branch **drops**
+its top `scheduler_readonly_reject(interp, "rotate_in_place")` (S7 requires it gone); the Alt-R key
+**keeps** its `readonly_block()` (it still guards the raw gesture arms + the arming path, and is not
+S7-forbidden). Dropping the scheduler top-gate leaves the branch's STARTMOVE/STARTCOPY arms without a
+readonly check — the adversarial panel refuted the naive premise "STARTMOVE ⟹ !readonly" (a script or
+Ctrl-2 can toggle `readonly=1` mid-gesture without aborting the move). **But the panel then dismissed
+it as unreachable-in-effect:** the raw mid-gesture ROTATE transform is *preview only* — `push_undo`
+and `set_modify(1)` fire **only** in `move_objects(END)` (move.c:6814/7776), never in the
+RUBBER/transform step — and the *only* commit path, `xschem move_objects end`, is itself refused under
+readonly at the `move_objects` command's top gate (`scheduler.c:5369`, covering start/step/end/abort).
+So a readonly-toggled-mid-gesture rotate **cannot persist or even dirty the buffer**. The transient
+"flip_in_place still guards, rotate_in_place doesn't" asymmetry is cosmetic and closes when
+`flip_in_place`/`flipv_in_place` migrate next. Accepted as a documented residual, not patched — a
+targeted gesture-arm gate would be cosmetic (the base move-END gate already closes the window) and
+would re-scatter a readonly check the boundary exists to abolish.
+
+**Replay parity.** `rotate_in_place` is a bare, RE-executable verb (like `trim_wires`/`align`): a
+direct re-run re-executes AND re-logs; a replay through the `replay_action_log` suppress seam
+re-executes (a selected horizontal wire rotates to vertical) but does NOT re-log (the boundary log
+site rides `!actionlog_suppress`). Stays IN S2 CVERBS, OUT of S3.
+
+**Grep guard (test_selflog_grep_guard.tcl).** The `rotate_in_place` S1 rows MOVED onto boundary rows:
+the scheduler branch `return perform_action("rotate_in_place", argc, argv);` and a callback.c row with
+count **2** on `perform_action("rotate_in_place", 0, NULL);` (the Alt-R single-object standalone AND
+the verb-noun apply — the verb-noun path is thus structurally locked without a runtime driver, which
+would need a real arm-then-click on the wire's screen pixel). The **S7 BOUNDARY EXCLUSIVITY** block was
+extended to `rotate_in_place`: it fails closed on a scattered `log_action("xschem rotate_in_place")`
+(scheduler OR callback) or a scattered `scheduler_readonly_reject(..., "rotate_in_place")`.
+
+**Verified:** `test_perform_action_rotate_in_place.tcl` (22 checks, full_audit logdir_tests): (a) +1
+from EACH of script / Alt-R key / menu wrapper; (b) read-only reject from the scripted (TCL_ERROR,
+verb-named message) and Alt-R paths — no log, no mutation; (c) byte-exact `xschem rotate_in_place`;
+(d) replay re-executes (horizontal wire `0 0 100 0` → vertical `0 0 0 100`) with no re-log through the
+seam, vs a control unwrapped `source` that re-executes AND re-logs; (e) **the wrinkle lock** — a
+`rotate_in_place` issued with `STARTMOVE` active (headless `move_objects start` seam) is NOT logged
+(+0). The effect oracle is a lone horizontal wire whose first endpoint is at the origin, so
+`ROTATELOCAL` (pivot = its own `x1,y1`) rotates it to a clean vertical wire. `test_selflog_output`'s
+`rotate_in_place`/read-only lines stay green; its `key Alt-R logs rotate_in_place` FAIL is
+PRE-EXISTING (its `select_all` on a churned multi-object schematic makes Alt-R a *group* rotate
+logging `rotate x y`, issue-0116 semantics, unchanged here — one of the known transform-key fails).
+**Sabotage ×5** (each failing exactly its checks, each restore `git diff`-clean): (1) neutralise the
+boundary readonly gate → (b) scripted read-only mutates + logs; (2) neutralise the log site → (a)
+scripted/Alt-R + (c) byte-exact fail while the menu wrapper's dedup safety-net still logs once (so (a)
+menu stays green — the boundary is not the ONLY guard); (3) bypass the boundary at the Alt-R
+standalone (raw inline log) → grep **S1** count 2→1 + **S7** callback scattered-log both fail closed;
+(4) re-add a scattered scheduler `log_action("xschem rotate_in_place")` → grep **S7** fails closed;
+(5) route the STARTMOVE arm through `perform_action` → case **(e)** fails (mid-gesture double-logs).
+**Full-audit baseline diff clean:** every AFTER failure reconciled as pre-existing — the known
+GUI/cadence/keybind/congestion set, plus `test_remap`/`test_select_at` confirmed FAIL identically on
+baseline standalone — with `test_perform_action_rotate_in_place` added GREEN; every change-adjacent
+test (`test_rotate_prompt_object` = the verb-noun path restructured here, `test_alt_transform_group_0116`
+= `standalone_group_transform`, `test_gesture_end_log` + `test_rotmove_drop_log` = the move-END
+counterpart) PASSES. **Adversarial review (6-way refute panel, ultracode): verdict CLEAN, no must-fix**
+— entry-point coverage, byte-identical effect, mid-gesture double-log, output-drift/replay, and
+build/C89 each found no failing scenario; the one flagged readonly-gate item was dismissed as
+unreachable-in-effect (preview-only transform + readonly-gated move-END, above).
+
 ---
 
 *Prepared 2026-07-14, `fluid-editing`. §1–5 analysis only — no code changed. §6 added after
@@ -1637,6 +1734,6 @@ atom 8; §12 after atom 9; §13 after atom 10; §14 after atom 11;
 §15 after atom 12; §16 after atom 13; §17 after atom 14; §18 after atom 15; §19 after atom 16;
 §20 after the Refactor B foundation (actionlog_suppress setter + the replay/composite seams);
 §21 after the FIRST per-verb migration onto perform_action (trim_wires); §22 after the SECOND
-(align).
+(align); §23 after the THIRD (rotate_in_place — the first with a mid-gesture split).
 Coverage verified in source at HEAD by a 14-way parallel read; do not trust the status table
 without re-checking the cited `file:line` anchors, which drift as the tree moves.*

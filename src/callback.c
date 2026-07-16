@@ -2571,36 +2571,41 @@ static int check_menu_start_commands(int state, double c_snap, int mx, int my)
     }
     xctx->mx_double_save = xctx->mousex_snap;
     xctx->my_double_save = xctx->mousey_snap;
-    move_objects(START,0,0,0);
-    switch(t) {
-      case PENDING_TR_ROTATE_IP:
-        move_objects(ROTATE|ROTATELOCAL,0,0,0);
-        log_action("xschem rotate_in_place");
-        break;
-      case PENDING_TR_FLIP:
-        move_objects(FLIP,0,0,0);
-        log_action("xschem flip %.16g %.16g", xctx->mx_double_save, xctx->my_double_save);
-        break;
-      case PENDING_TR_FLIP_IP:
-        move_objects(FLIP|ROTATELOCAL,0,0,0);
-        log_action("xschem flip_in_place");
-        break;
-      case PENDING_TR_FLIPV:
-        move_objects(ROTATE,0,0,0); move_objects(ROTATE,0,0,0); move_objects(FLIP,0,0,0);
-        log_action("xschem flipv %.16g %.16g", xctx->mx_double_save, xctx->my_double_save);
-        break;
-      case PENDING_TR_FLIPV_IP:
-        move_objects(ROTATE|ROTATELOCAL,0,0,0); move_objects(ROTATE|ROTATELOCAL,0,0,0);
-        move_objects(FLIP|ROTATELOCAL,0,0,0);
-        log_action("xschem flipv_in_place");
-        break;
-      case PENDING_TR_ROTATE:
-      default:
-        move_objects(ROTATE,0,0,0);
-        log_action("xschem rotate %.16g %.16g", xctx->mx_double_save, xctx->my_double_save);
-        break;
+    if(t == PENDING_TR_ROTATE_IP) {
+      /* rotate_in_place standalone (verb-noun deferred apply): route through the mutation
+       * boundary (Refactor B atom 3), which owns readonly + the ONE `xschem rotate_in_place`
+       * log site + its own rebuild+START+ROTATE|ROTATELOCAL+END effect. It must NOT be nested
+       * inside the shared move_objects(START/END) the other transform cases use -- that would
+       * double the START/END. readonly was already refused at the MENUSTART backstop above. */
+      perform_action("rotate_in_place", 0, NULL);
+    } else {
+      move_objects(START,0,0,0);
+      switch(t) {
+        case PENDING_TR_FLIP:
+          move_objects(FLIP,0,0,0);
+          log_action("xschem flip %.16g %.16g", xctx->mx_double_save, xctx->my_double_save);
+          break;
+        case PENDING_TR_FLIP_IP:
+          move_objects(FLIP|ROTATELOCAL,0,0,0);
+          log_action("xschem flip_in_place");
+          break;
+        case PENDING_TR_FLIPV:
+          move_objects(ROTATE,0,0,0); move_objects(ROTATE,0,0,0); move_objects(FLIP,0,0,0);
+          log_action("xschem flipv %.16g %.16g", xctx->mx_double_save, xctx->my_double_save);
+          break;
+        case PENDING_TR_FLIPV_IP:
+          move_objects(ROTATE|ROTATELOCAL,0,0,0); move_objects(ROTATE|ROTATELOCAL,0,0,0);
+          move_objects(FLIP|ROTATELOCAL,0,0,0);
+          log_action("xschem flipv_in_place");
+          break;
+        case PENDING_TR_ROTATE:
+        default:
+          move_objects(ROTATE,0,0,0);
+          log_action("xschem rotate %.16g %.16g", xctx->mx_double_save, xctx->my_double_save);
+          break;
+      }
+      move_objects(END,0,0,0);
     }
-    move_objects(END,0,0,0);
     xctx->ui_state &= ~MENUSTART;
     xctx->ui_state2 = 0;
     xctx->menu_pending_transform = PENDING_TR_NONE;
@@ -4766,10 +4771,20 @@ static void standalone_group_transform(int what, double c_snap)
   } else {
     xctx->mx_double_save = xctx->mousex_snap;
     xctx->my_double_save = xctx->mousey_snap;
-    move_objects(START,0,0,0);
-    move_objects(what | ROTATELOCAL,0,0,0);
-    move_objects(END,0,0,0);
-    log_action((what & ROTATE) ? "xschem rotate_in_place" : "xschem flip_in_place");
+    if(what & ROTATE) {
+      /* single-object standalone in-place ROTATE: route through the mutation boundary
+       * (Refactor B atom 3). perform_action owns the readonly gate + the ONE
+       * `xschem rotate_in_place` log site + the rebuild+START+ROTATE|ROTATELOCAL+END effect.
+       * ROTATELOCAL pivots on each object's own origin, so the mx/my_double_save seeded
+       * above is immaterial to the rotate (carried only for symmetry with the flip arm).
+       * flip_in_place is not yet migrated, so its arm stays raw. */
+      perform_action("rotate_in_place", 0, NULL);
+    } else {
+      move_objects(START,0,0,0);
+      move_objects(what | ROTATELOCAL,0,0,0);
+      move_objects(END,0,0,0);
+      log_action("xschem flip_in_place");
+    }
   }
 }
 

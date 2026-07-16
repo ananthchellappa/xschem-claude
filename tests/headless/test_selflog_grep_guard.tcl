@@ -37,6 +37,16 @@
 # boundary rows (the branch `return perform_action(...)`, the '&' key call, and
 # the boundary's ONE readonly gate + ONE log site), and added the S7 exclusivity
 # block. trim_wires stays in S2 CVERBS, stays OUT of S3.
+# Refactor B atom 3 (perform_action / rotate_in_place) MOVED the rotate_in_place S1
+# rows onto boundary rows: the scheduler branch STANDALONE arm (`return perform_action`)
+# and the TWO callback.c standalone entry points (the Alt-R single-object
+# standalone_group_transform + the verb-noun MENUSTARTROTATE deferred apply, count 2 on
+# `perform_action("rotate_in_place", 0, NULL)`), and extended the S7 block (scheduler.c +
+# callback.c: NO scattered log_action("xschem rotate_in_place"); scheduler.c: NO scattered
+# readonly_reject for it). The UNIQUE wrinkle vs atoms 1-2: rotate_in_place has a
+# mid-gesture split -- ONLY the standalone verb crosses the boundary; the during-move/
+# during-copy arms stay RAW and log at move/copy END (0069). rotate_in_place stays in S2
+# CVERBS, stays OUT of S3.
 # Atom 12 (0053 Cadence Ctrl-E window hop) added: the S1 focus_window emit row
 # (utils/cadence_nav.tcl) and the S6 SEAM-EXCLUSIVITY block -- `new_schematic
 # switch` (a shared core: tab-strip/alt2/window-open machinery) must be logged
@@ -94,7 +104,7 @@ set MANIFEST {
     {log_action\("xschem rotate %}                    1 {rotate branch}
     {log_action\("xschem flip_in_place"}              1 {flip_in_place branch}
     {log_action\("xschem flipv_in_place"}             1 {flipv_in_place branch}
-    {log_action\("xschem rotate_in_place"}            1 {rotate_in_place branch}
+    {return perform_action\("rotate_in_place", argc, argv\);} 1 {rotate_in_place branch STANDALONE arm routes through the perform_action boundary (Refactor B atom 3): the mid-gesture STARTMOVE/STARTCOPY arms stay raw (logged at move/copy END, 0069), no scattered readonly/log/push_undo here}
     {log_action\("xschem change_elem_order %d"}       1 {change_elem_order branch}
     {log_action\("xschem check_unique_names}          1 {check_unique_names branch}
     {log_action\("xschem create_instance"}            1 {create_instance branch}
@@ -136,6 +146,7 @@ set MANIFEST {
     {log_action\("xschem change_elem_order -1"}       1 {Shift-S inline key}
     {perform_action\("align", 0, NULL\);}             1 {Alt-U inline key routes through the perform_action boundary (Refactor B atom 2): no inline readonly_block/push_undo/log_action}
     {perform_action\("trim_wires", 0, NULL\);}        1 {'&' inline key routes through the perform_action boundary (Refactor B atom 1): no inline readonly_block/push_undo/log_action}
+    {perform_action\("rotate_in_place", 0, NULL\);}   2 {the two callback.c standalone rotate_in_place entry points route through the perform_action boundary (Refactor B atom 3): the Alt-R single-object standalone (standalone_group_transform) + the verb-noun deferred apply (MENUSTARTROTATE); the mid-gesture STARTMOVE/STARTCOPY arms stay raw}
     {log_action\("xschem break_wires 1"}              1 {Ctrl-! inline key}
     {log_action\("xschem break_wires"\)}              1 {'!' inline key}
     {log_action\("xschem flip %}                      2 {Shift-F key + move-END}
@@ -494,6 +505,20 @@ check "S7 callback.c: NO scattered log_action(\"xschem align\") (Alt-U key deleg
 check "S7 scheduler.c: NO scattered scheduler_readonly_reject(...,\"align\") (the boundary's generic gate covers it)" \
   [expr {[rxcount $sched {scheduler_readonly_reject\(interp, "align"\)}] == 0}] \
   "got=[rxcount $sched {scheduler_readonly_reject\(interp, "align"\)}]"
+# rotate_in_place (Refactor B atom 3): the STANDALONE verb's readonly gate + log site live
+# SOLELY in perform_action. The mid-gesture STARTMOVE/STARTCOPY arms (scheduler branch +
+# Alt-R key) stay raw and log NOTHING at the verb level (they are logged at move/copy END,
+# 0069) -- so `log_action("xschem rotate_in_place")` must be ZERO in BOTH files, and the
+# scheduler branch drops its scattered readonly_reject (gesture arms are unreachable read-only).
+check "S7 scheduler.c: NO scattered log_action(\"xschem rotate_in_place\") (standalone delegates to the boundary; gesture arms are silent)" \
+  [expr {[rxcount $sched {log_action\("xschem rotate_in_place"}] == 0}] \
+  "got=[rxcount $sched {log_action\("xschem rotate_in_place"}]"
+check "S7 callback.c: NO scattered log_action(\"xschem rotate_in_place\") (Alt-R + verb-noun apply delegate to the boundary)" \
+  [expr {[rxcount $cbtext {log_action\("xschem rotate_in_place"}] == 0}] \
+  "got=[rxcount $cbtext {log_action\("xschem rotate_in_place"}]"
+check "S7 scheduler.c: NO scattered scheduler_readonly_reject(...,\"rotate_in_place\") (the boundary's generic gate covers the standalone verb)" \
+  [expr {[rxcount $sched {scheduler_readonly_reject\(interp, "rotate_in_place"\)}] == 0}] \
+  "got=[rxcount $sched {scheduler_readonly_reject\(interp, "rotate_in_place"\)}]"
 check "S7 perform_action is defined EXACTLY once" \
   [expr {[rxcount $sched {int perform_action\(const char \*verb,}] == 1}] \
   "got=[rxcount $sched {int perform_action\(const char \*verb,}]"
