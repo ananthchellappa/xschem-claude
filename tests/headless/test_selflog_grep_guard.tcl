@@ -116,6 +116,19 @@
 # (an `_` follows). break_wires stays in S2 CVERBS, OUT of S3. break_wires_at_pins() is 1:1 with the verb
 # (called only by its own entry points) while break_wires_at_point (the Alt-Right wire_cut gesture) stays
 # a SEPARATE verb+gesture, off this boundary.
+# Refactor B atom 10 (perform_action / floaters_from_selected_inst) migrated the SECOND non-transform verb,
+# the FIRST after the wire-surgery pair. A BARE no-arg verb (no pivot, no flag, no mid-gesture split -- even
+# simpler than break_wires), so its run_core arm is `floaters_from_selected_inst(); return TCL_OK;` (the core
+# owns its OWN push_undo/set_modify/draw -- no double-push) and its log is the shared bare `xschem %s`
+# core_log_action DEFAULT line (NO per-verb branch, like trim_wires/align/in-place). MOVED floaters's single
+# S1 row from the scheduler `log_action("xschem floaters_from_selected_inst")` onto the boundary row
+# (`return perform_action("floaters_from_selected_inst", argc, argv)`), and added a 3-check S7 block MIRRORING
+# trim_wires (scheduler.c + callback.c ZERO scattered `log_action("xschem floaters_from_selected_inst")` +
+# scheduler.c ZERO scattered readonly_reject). floaters_from_selected_inst() is strictly 1:1 (the ONLY caller
+# is this verb's own scheduler branch -- NO key, NO other C caller), so unlike trim_wires there is no
+# sub-step lock to add. NB the branch NEVER HAD a scheduler_readonly_reject -- floaters mutates, so the
+# boundary's generic gate CLOSES a scattered 0041/0051 read-only gap (it now refuses on a read-only cell).
+# floaters stays in S2 CVERBS, OUT of S3.
 # Atom 12 (0053 Cadence Ctrl-E window hop) added: the S1 focus_window emit row
 # (utils/cadence_nav.tcl) and the S6 SEAM-EXCLUSIVITY block -- `new_schematic
 # switch` (a shared core: tab-strip/alt2/window-open machinery) must be logged
@@ -167,7 +180,7 @@ set MANIFEST {
     {if\(scheduler_readonly_reject\(interp, verb\)\) return TCL_ERROR;} 1 {perform_action's ONE readonly gate -- covers every migrated verb from every entry point (0041/0051 unification)}
     {if\(!actionlog_suppress\) core_log_action\(verb, argc, argv\);} 1 {perform_action's ONE log site -- delegates the per-verb log FORM to core_log_action (atom 6), gated on the re-entrant suppress counter (foundation §20)}
     {static void core_log_action\(const char \*verb, int argc, const char \*argv\[\]\)} 1 {the per-verb log-form dispatcher (§4 Refactor A step-2 registry SEED, atom 6): bare verbs -> "xschem %s"; the arg-carrying pivot verbs rotate/flip/flipv -> the pivot form "xschem <verb> x0 y0" (rotate atom 6, flip atom 7, flipv atom 8)}
-    {log_action\("xschem %s", verb\);}                1 {core_log_action's BARE-verb form -- trim_wires/align/rotate_in_place/flip_in_place/flipv_in_place all self-log through here, byte-identical to the pre-atom-6 perform_action log site}
+    {log_action\("xschem %s", verb\);}                1 {core_log_action's BARE-verb form -- trim_wires/align/rotate_in_place/flip_in_place/flipv_in_place/floaters_from_selected_inst all self-log through here, byte-identical to the pre-atom-6 perform_action log site}
     {log_action\("xschem break_wires 1"}              1 {break_wires REMOVE form now lives in core_log_action (atom 9), NOT the scheduler branch -- exactly ONE such site in scheduler.c (S7 pins exclusivity); the literal `break_wires 1"` (space+1 before the quote) does NOT match the bare `break_wires")` form}
     {log_action\("xschem break_wires"\)}              1 {break_wires BARE form now lives in core_log_action (atom 9), NOT the scheduler branch -- exactly ONE such site in scheduler.c (S7 pins exclusivity); the `break_wires"\)` (quote then paren) does NOT match `break_wires 1"` nor break_wires_at_pins/_at_point/_at_attach_points}
     {return perform_action\("break_wires", argc, argv\);} 1 {break_wires branch routes through the perform_action boundary (Refactor B atom 9 -- the FIRST NON-transform verb; the arg is a FLAG (0/1), not a pivot; NO mid-gesture split): run_core + core_log_action read `remove` from argc/argv; break_wires_at_pins owns its own push_undo/draw, so no scattered readonly/log/push_undo here}
@@ -183,7 +196,7 @@ set MANIFEST {
     {log_action\("xschem change_elem_order %d"}       1 {change_elem_order branch}
     {log_action\("xschem check_unique_names}          1 {check_unique_names branch}
     {log_action\("xschem create_instance"}            1 {create_instance branch}
-    {log_action\("xschem floaters_from_selected_inst"} 1 {floaters branch}
+    {return perform_action\("floaters_from_selected_inst", argc, argv\);} 1 {floaters_from_selected_inst branch routes through the perform_action boundary (Refactor B atom 10 -- the SECOND non-transform verb, a BARE no-arg verb): run_core calls floaters_from_selected_inst() which OWNS its own push_undo/set_modify/draw (no double-push); the log is the shared bare `xschem %s` core_log_action DEFAULT line (no per-verb branch); the boundary ADDS the readonly gate this branch never had (a 0041/0051 close). No scattered readonly/log/push_undo here}
     {log_action\("xschem print_hilight_net}           1 {print_hilight_net branch}
     {log_action\("xschem exit closewindow force"}     2 {exit hook (both terminating sites)}
     {log_action\("xschem set cadgrid}                 1 {set cadgrid resolved-value}
@@ -718,6 +731,25 @@ check "S7 callback.c: NO scattered log_action(\"xschem break_wires...\") (both '
 check "S7 scheduler.c: NO scattered scheduler_readonly_reject(...,\"break_wires\") (the boundary's generic gate covers the verb)" \
   [expr {[rxcount $sched {scheduler_readonly_reject\(interp, "break_wires"\)}] == 0}] \
   "got=[rxcount $sched {scheduler_readonly_reject\(interp, "break_wires"\)}]"
+# floaters_from_selected_inst (Refactor B atom 10 -- the SECOND non-transform verb, a BARE no-arg verb like
+# trim_wires): the readonly gate + the log site live SOLELY in perform_action. floaters is BARE (no pivot,
+# no flag), so its log is the shared `xschem %s` core_log_action DEFAULT line -- there is NO per-verb
+# `log_action("xschem floaters_from_selected_inst")` anywhere (contrast the EXACTLY-N pivot/flag verbs
+# rotate/flip/flipv/break_wires whose forms live in core_log_action). So scheduler.c AND callback.c must
+# have ZERO such literal. There is NO key entry point -- the callback.c ZERO check guards against a future
+# key re-adding a scattered log. The branch NEVER had a scheduler_readonly_reject; the boundary's generic
+# gate now covers it (a 0041/0051 close), so a re-scattered per-verb readonly_reject also fails closed.
+# floaters_from_selected_inst() is strictly 1:1 (only its own scheduler branch calls it), so unlike
+# trim_wires there is no sub-step to lock. floaters stays in S2 CVERBS, OUT of S3.
+check "S7 scheduler.c: NO scattered log_action(\"xschem floaters_from_selected_inst\") (branch delegates to the boundary; the log is the shared bare %s form)" \
+  [expr {[rxcount $sched {log_action\("xschem floaters_from_selected_inst"}] == 0}] \
+  "got=[rxcount $sched {log_action\("xschem floaters_from_selected_inst"}]"
+check "S7 callback.c: NO scattered log_action(\"xschem floaters_from_selected_inst\") (no key entry point; guards a future re-scatter)" \
+  [expr {[rxcount $cbtext {log_action\("xschem floaters_from_selected_inst"}] == 0}] \
+  "got=[rxcount $cbtext {log_action\("xschem floaters_from_selected_inst"}]"
+check "S7 scheduler.c: NO scattered scheduler_readonly_reject(...,\"floaters_from_selected_inst\") (the boundary's generic gate covers the verb -- the branch never had one)" \
+  [expr {[rxcount $sched {scheduler_readonly_reject\(interp, "floaters_from_selected_inst"\)}] == 0}] \
+  "got=[rxcount $sched {scheduler_readonly_reject\(interp, "floaters_from_selected_inst"\)}]"
 check "S7 perform_action is defined EXACTLY once" \
   [expr {[rxcount $sched {int perform_action\(const char \*verb,}] == 1}] \
   "got=[rxcount $sched {int perform_action\(const char \*verb,}]"

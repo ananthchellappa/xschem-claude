@@ -2422,7 +2422,154 @@ Refactor B direction is more bare non-transform verbs onto the growing `core_log
 clean 1:1 next candidates — deferring the composite-hazard verbs (delete / cut / copy / save / reload)
 whose shared cores are called by abort/merge/teardown paths (the §4 step-1 `delete()`-is-not-1:1 lesson).
 
----
+## 30. Refactor B ATOM 10 (2026-07-16): the TENTH per-verb migration — the SECOND NON-transform verb, the FIRST after the wire-surgery pair (`floaters_from_selected_inst`)
+
+`floaters_from_selected_inst` (the Symbol-menu verb that flattens each SELECTED instance's visible symbol
+texts into standalone *floater* texts — `attach=<instname>` + `hide_texts` on the instance) now routes
+through the `perform_action(verb, argc, argv)` boundary. Atom 10 is the FIRST after the wire-surgery PAIR
+(trim_wires atom 1 + break_wires atom 9) completed the boundary, and it is deliberately the CLEANEST next
+atom: a **BARE no-arg verb** — no coordinate pivot (unlike rotate/flip/flipv atoms 6/7/8), no `0/1` flag
+(unlike break_wires atom 9), no mid-gesture split (not a transform). It is even SIMPLER than break_wires.
+
+**The pilot was disqualified from source; the fallback was re-verified, not assumed.** The suggested pilot
+`check_unique_names` was assumed "bare, no-arg" — but source shows it takes an `int rename` flag with a
+**read-only-SAFE form**: `check_unique_names 0` only HIGHLIGHTs duplicate refdes (a pure ERC query, no
+mutation), while `check_unique_names 1` renames. The boundary's readonly gate is **all-or-nothing per verb**
+(rejects whenever `xctx->readonly`, regardless of arg), so routing the whole verb would OVER-reject the
+legitimate read-only highlight query — a functional regression. A verb with a non-mutating form does not
+belong wholesale behind a *mutation* boundary, so `check_unique_names` was rejected (it passes the caller-1:1
+test but fails the clean-boundary criterion). Next in the fallback, `change_elem_order` carries two wrinkles:
+its branch + Shift-S key both suppress the log when nothing is selected (`if(had_sel) log_action(...)`, "don't
+record a phantom edit"), which the boundary's unconditional `core_log_action` would break (a phantom-log
+regression needing had_sel state seeded like the pivot `mousex_snap` trick), AND its core `change_elem_order()`
+is a shared sub-step of the DIFFERENT verb `instance_number` (scheduler.c). `create_instance` is not an effect
+verb at all — it just opens the `ciform::open` Tcl dialog (no `run_core` effect). So `floaters_from_selected_inst`
+— the fourth candidate, and the CLEANEST — was migrated: strictly 1:1 (its ONLY caller is its own scheduler
+branch), always-mutating (no read-only-safe form), unconditional log (matches the boundary), no key.
+
+**`run_core` grew a `floaters_from_selected_inst` arm** (byte-identical to the old scheduler standalone branch
+effect): just `floaters_from_selected_inst(); return TCL_OK;` — it takes no `argc/argv`. **NO `push_undo()`/
+`draw()`** — the core `floaters_from_selected_inst()` (select.c) OWNS its own undo (`xctx->push_undo()` on
+first mutation), `set_modify(1)`, and `draw()`. Adding a `push_undo()` in the arm would DOUBLE-push (the
+atom-1 no-double-push rule, re-confirmed here as with break_wires_at_pins atom 9). **`core_log_action` grew NO
+branch** — a bare verb falls to the DEFAULT `log_action("xschem %s", verb)`, emitting `xschem
+floaters_from_selected_inst` byte-identically to the pre-migration `log_action` (the header comment's bare-verb
+list gained floaters). This is the same shape as trim_wires/align/the in-place trio.
+
+**THE 1:1 TEST — `floaters_from_selected_inst()` IS the verb, and (unlike trim_wires) is not even a sub-step.**
+Grepping every caller confirms `floaters_from_selected_inst()` is reached ONLY by this verb's own scheduler
+branch — there is NO key, and NO other C caller (contrast trim_wires atom 1, whose shared `trim_wires()` C fn
+is ALSO an internal sub-step of align/move-END autotrim and needs a case-(e) sub-step lock; floaters needs
+none). So the boundary/core_log_action is unambiguously the single log site.
+
+**Entry-point map — every LIVE path funnels once, verified by grepping the GUI (the atom-16 lesson).** (1) the
+**scheduler branch** → `return perform_action("floaters_from_selected_inst", argc, argv)`, dropping its own
+`!xctx` guard (the boundary owns it) and its inline effect + log; reached by scripted `xschem
+floaters_from_selected_inst`, the **hand-written Symbol menu** item (`xschem.tcl` `add command -command "xschem
+floaters_from_selected_inst"`, NOT table-built, so NOT wrapped in `menu_action_logged`), and the command
+palette (runs the `actions.csv` `sym.change_selected_inst_texts_to_floaters` command RAW). (2) there is **NO
+key** — keysym-free, ABSENT from `keybindings.csv`, no `callback.c` legacy switch. `menu_action_logged` is
+dedup-aware anyway (`log_action -reset`/`-emitted`), so even a hypothetical registry-menu path could not
+double-log. The single entry point makes the map the simplest of any atom so far.
+
+**The read-only decision — the boundary ADDS a gate the branch NEVER HAD (a 0041/0051 close).** Unlike every
+prior atom (which had an existing `scheduler_readonly_reject` to unify), the floaters branch had NO readonly
+gate at all: on a read-only cell it would flatten texts, `push_undo`, `set_modify` — a scattered
+0041/0051-class mutation-on-a-read-only-cell gap. The boundary's ONE gate now CLOSES it: `xschem
+floaters_from_selected_inst` correctly REFUSES on a read-only cell (`TCL_ERROR`, verb-named message, no
+mutation, no log). This is the ONE deliberate user-facing behaviour delta of this atom — a bug fix, and
+exactly the read-only unification §4 designed the boundary for. The WRITABLE effect + log are byte-identical
+to pre-migration. This is safe precisely BECAUSE floaters has no read-only-safe form (the reason
+check_unique_names could NOT be migrated this way).
+
+**Unconditional-log preservation.** Pre-migration the branch logged `xschem floaters_from_selected_inst`
+UNCONDITIONALLY — even a nothing-selected no-op logged. The boundary's `core_log_action` also logs
+unconditionally, so this is byte-identical (contrast change_elem_order, whose branch deliberately suppresses
+the no-op log — the reason it was NOT a clean candidate). Case (e) of the test locks this: a nothing-selected
+floaters is a no-op (no texts created) but STILL emits exactly one line.
+
+**Replay parity.** `floaters_from_selected_inst` is a bare, re-executable verb (like `save`/`netlist`, NOT a
+coordinate-STORE bypass): a direct re-run re-executes AND re-logs; a replay through the `replay_action_log`
+suppress seam re-executes (texts flatten) but does NOT re-log. Stays IN S2 CVERBS, OUT of S3.
+
+**Grep guard (test_selflog_grep_guard.tcl).** floaters's single scheduler `log_action("xschem
+floaters_from_selected_inst")` S1 row was MOVED onto the boundary row (`return
+perform_action("floaters_from_selected_inst", argc, argv)`). A new **S7 block MIRRORS trim_wires** (the
+bare-verb shape, NOT the EXACTLY-N pivot/flag shape): scheduler.c AND callback.c must have ZERO scattered
+`log_action("xschem floaters_from_selected_inst")` (its log is the shared `%s` default, so NO per-verb literal
+exists anywhere) + scheduler.c ZERO scattered `scheduler_readonly_reject(...,"floaters_from_selected_inst")`
+(the branch never had one; a re-scatter fails closed). The callback.c ZERO check guards against a future key
+re-adding a scattered log. floaters stays in S2 CVERBS, OUT of S3.
+
+**Effect oracle (byte-identical before/after atom 10 — atom 10 only MOVES the log site):** a `devices/res.sym`
+resistor selected at the origin. res.sym has 8 symbol texts, 2 of them `:net_name` (skipped by floaters), so
+`xschem floaters_from_selected_inst` flattens the other 6 into standalone floater texts → **text count 0 → 6**,
+a clean deterministic oracle determined empirically on the pre-migration binary. NB `xschem select instance`
+sets the sel flag but does NOT rebuild `xctx->sel_array`; floaters reads `lastsel`/`sel_array` directly, so
+the fixture forces a rebuild via `xschem get lastsel` before the verb (else it silently no-ops — the "rebuild
+selection/spatial state headless" gotcha). Undo ownership is proved by depth: floaters's ONE `push_undo` +
+the instance-place snapshot means TWO undos wind back to empty (R1 gone); a double-push would insert an
+identical third snapshot so R1 would SURVIVE two undos (the discriminator that caught sabotage 5).
+
+**Verified:** `test_perform_action_floaters_from_selected_inst.tcl` (17 checks, full_audit logdir_tests):
+(a) +1 from EACH of scripted / menu wrapper, and the WRITABLE effect applies (texts 0 → 6); (b) read-only
+reject from the scripted path (TCL_ERROR, verb-named message, NO mutation, NO log — the 0041/0051 close);
+(c) byte-exact `xschem floaters_from_selected_inst` (no format drift); (d) replay re-executes with no re-log
+through the seam vs a control unwrapped `source` that re-logs; (e) the UNCONDITIONAL-log lock — a
+nothing-selected floaters is a no-op but STILL logs +1 (the floaters analogue of the atom-1 sub-step lock,
+since floaters has no sub-step); (f) undo ownership — ONE undo restores texts, a SECOND undo removes the
+instance, proving the single push_undo (no double-push). **Sabotage ×6** (each failing exactly its checks,
+each restore byte-clean vs the atom-10 scratchpad backup, NOT git checkout): (1) neutralise the boundary
+readonly gate → the (b) read-only checks fail (scripted floaters mutates + logs on a read-only cell); (2)
+revert the branch to an inline form that KEEPS a gate → the runtime `.tcl` STILL passes while the grep guard's
+S1 boundary-row + S7 scattered-log + S7 scattered-readonly-reject all fail closed (proving the grep guard is
+the load-bearing lock for boundary exclusivity); (3) re-add a scattered scheduler `log_action("xschem
+floaters_from_selected_inst")` in the branch → the (a) exactly-+1 checks fail (double-log) and S7
+scheduler-scattered fails closed; (4) neutralise the effect in `run_core` → the (a)/(d)/(f) effect oracles
+diverge (texts stay 0), log intact; (5) add a spurious `xctx->push_undo()` to the `run_core` arm → the (f)
+second-undo depth check fails (R1 survives two undos) — the no-double-push discriminator; (6) add a wrong
+`core_log_action` branch logging `xschem floaters` → (c) byte-exact + (a) exact-count fail (log-form drift).
+The change-adjacent siblings stay green: the nine other `test_perform_action_*` + `test_selflog_grep_guard` +
+`test_actionlog_suppress_gate`; `test_selflog_output`'s floaters self-log check passes (its only FAILs are the
+pre-existing six transform-KEY checks that fail identically on baseline).
+
+**Adversarial review (7-agent refute panel — 6 axes + a completeness critic, Workflow, ultracode, against a
+source snapshot): verdict CLEAN, zero confirmed defects, zero plausible.** Each axis independently tried and
+FAILED to refute: entry-point completeness (every live path — scheduler branch, hand-written Symbol menu,
+`actions.csv` command palette / table-menu builder — funnels through `perform_action` once and logs once;
+`floaters_from_selected_inst()` is strictly 1:1); readonly gate (no over-reject — floaters has no read-only-safe
+form — and no miss/bypass; the message names the verb); bare-log-form fidelity (byte-identical
+`xschem floaters_from_selected_inst`, re-executable, replay-suppressed); output-drift / grep-guard (S1 boundary
+row matches the branch text; IN S2, OUT S3; all three S7 `==0` assertions hold live and fail closed on every
+realistic re-scatter); run_core arm + undo ownership (byte-equivalent to the old branch; the core alone owns
+push_undo/set_modify/draw — no double-push, no missed undo, no-op still logs unconditionally); and
+signature/build/C89 (the snapshot builds exit-0 under both `-O2 -Wall -Wextra` AND `-std=c89 -pedantic`, with a
+warning multiset byte-identical to HEAD). The completeness critic confirmed the one un-grepped surface (the
+`actions.csv` palette/table-menu) inherits the same single funnel + new readonly gate. Nothing to fix.
+
+**Full-audit baseline diff clean.** The AFTER run (atom-10 binary: 162 pass / 15 fail / 0 crash) vs the
+BASELINE run (scheduler.c + callback.c reverted to HEAD, rebuilt: 161 pass / 16 fail / 0 crash) reconciles
+exactly. The BASELINE-only fails are PRECISELY the two load-bearing atom-10 tests —
+`test_perform_action_floaters_from_selected_inst` (its (b) readonly-reject fails when the migration is absent —
+the boundary gate the branch never had) and `test_selflog_grep_guard` (the S1 boundary row is absent on the
+reverted source) — proving both are load-bearing (they PASS on atom-10). The sole AFTER-only fail,
+`test_fluid_editing`, is the standing WSLg congestion flake (it ran under the concurrent GUI batch) and PASSES
+STANDALONE on the restored atom-10 binary (26 checks). The remaining 14 are the COMMON pre-existing set (fail
+identically on BOTH: the cadence duo, the GUI set test_ciw/test_hi_descend/test_lib_manager_gui/
+test_reopen_readonly, test_lib_sweep, test_phase3_mints, test_wire_split, test_select_at, test_save_as_cellview,
+test_descend_untitled_preserve, test_untitled_reuse, and test_selflog_output's six transform-KEY checks). The
+nine sibling `test_perform_action_*` + `test_selflog_grep_guard` are ABSENT from the AFTER fail set = GREEN.
+**ZERO new deterministic failures.**
+
+**Next atom:** the wire-surgery pair + the first bare non-transform verb are now on the boundary. The remaining
+Refactor B direction is more bare/effect verbs onto the `core_log_action` registry — but the atom-10 lesson is
+that the old "clean 1:1 candidate" shortlist was WRONG and each candidate must be RE-VERIFIED from source: a
+verb qualifies only if it is always-mutating (no read-only-safe form the all-or-nothing gate would over-reject,
+which killed `check_unique_names`), logs unconditionally (no had_sel-style suppression to break, which — plus a
+shared-core sub-step of `instance_number` — deferred `change_elem_order`), is a real effect verb (not a dialog
+opener like `create_instance`), and whose core does not route OTHER verbs through the boundary. Defer the
+composite-hazard verbs (delete / cut / copy / save / reload) whose shared cores are called by abort/merge/
+teardown paths (the §4 step-1 `delete()`-is-NOT-1:1 lesson).
 
 *Prepared 2026-07-14, `fluid-editing`. §1–5 analysis only — no code changed. §6 added after
 atom 3 landed; §7 after atom 4; §8 after atom 5; §9 after atom 6; §10 after atom 7; §11 after
@@ -2441,6 +2588,8 @@ flip; the transform sextet rotate/flip/flipv × pivot + in-place is now fully on
 verb-noun START/switch/END block is gone); §29 after the NINTH (break_wires — the FIRST NON-transform verb,
 the wire-surgery sibling of trim_wires; the arg is a FLAG `0/1` not a coordinate pivot, there is no
 mid-gesture split, and `break_wires_at_pins` is 1:1 with the verb while `break_wires_at_point`/`wire_cut`
-stays a separate gesture off the boundary).
+stays a separate gesture off the boundary); §30 after the TENTH (floaters_from_selected_inst — the SECOND
+NON-transform verb, the FIRST after the wire-surgery pair; a BARE no-arg verb whose log is the shared
+`xschem %s` default, whose core owns its own undo, and whose boundary gate CLOSES a scattered read-only gap).
 Coverage verified in source at HEAD by a 14-way parallel read; do not trust the status table
 without re-checking the cited `file:line` anchors, which drift as the tree moves.*

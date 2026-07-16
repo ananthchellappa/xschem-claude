@@ -367,13 +367,31 @@ static int run_core(const char *verb, int argc, const char *argv[])
     break_wires_at_pins(remove);
     return TCL_OK;
   }
+  else if(!strcmp(verb, "floaters_from_selected_inst")) {
+    /* Refactor B atom 10: the SECOND NON-transform verb, and the FIRST after the
+     * wire-surgery PAIR (trim_wires atom 1 + break_wires atom 9) completed the
+     * boundary. It is deliberately the CLEANEST next atom: a BARE no-arg verb (no
+     * coordinate pivot, no 0/1 flag, no mid-gesture split) -- even SIMPLER than
+     * break_wires -- so run_core takes no argc/argv, and the log falls to
+     * core_log_action's DEFAULT `xschem %s` form (NO per-verb branch, like the bare
+     * trim_wires/align/in-place verbs). The effect flattens each SELECTED instance's
+     * visible symbol texts into standalone floater texts (setting hide_texts + attach
+     * on the instance). The core floaters_from_selected_inst() (select.c) OWNS its own
+     * undo (push_undo on first mutation), set_modify and draw() -- so there is NO
+     * push_undo()/draw() here; adding one would DOUBLE-push (the atom-1 no-double-push
+     * rule, as with break_wires_at_pins atom 9). It is called ONLY by this verb's own
+     * scheduler branch (NO key, NO other C caller), so it is strictly 1:1 with the
+     * verb and the boundary/core_log_action is the single log site. */
+    floaters_from_selected_inst();
+    return TCL_OK;
+  }
   return TCL_ERROR; /* unreachable: perform_action is only wired for the verbs above */
 }
 
 /* core_log_action -- the per-verb LOG-FORM half of the perform_action boundary (audit §4,
  * Refactor A step-2 "log at the core" registry SEED, introduced by atom 6). Formats the ONE
  * self-log line for a migrated verb. The bare no-arg verbs (trim_wires/align/rotate_in_place/
- * flip_in_place/flipv_in_place) emit `xschem <verb>` byte-identically to the pre-atom-6
+ * flip_in_place/flipv_in_place/floaters_from_selected_inst) emit `xschem <verb>` byte-identically to the pre-atom-6
  * `log_action("xschem %s", verb)`; the arg-carrying pivot verbs rotate (atom 6), flip (atom 7) and
  * flipv (atom 8) emit their pivot form `xschem rotate|flip|flipv <x0> <y0>`. The pivot is resolved
  * from argv[2]/argv[3] (or the mouse coords as a fallback) IDENTICALLY to run_core's rotate/flip/flipv
@@ -2358,10 +2376,16 @@ static int xschem_cmds_f(Tcl_Interp *interp, int argc, const char *argv[], int *
      *   flatten to current level selected instance texts */
     else if(!strcmp(argv[1], "floaters_from_selected_inst"))
     {
-      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
-      floaters_from_selected_inst();
-      log_action("xschem floaters_from_selected_inst"); /* self-log at core (0061): Symbol menu + script */
-      Tcl_ResetResult(interp);
+      /* Route through the single mutation boundary (Refactor B atom 10, run_core above):
+       * the readonly gate + the flatten-texts effect (floaters_from_selected_inst, which
+       * owns its OWN push_undo/set_modify/draw) + the ONE bare `xschem floaters_from_selected_inst`
+       * log site (core_log_action's DEFAULT %s form) all live in perform_action. The Symbol
+       * menu (hand-written -command) and the command palette (raw) reach here via
+       * `xschem floaters_from_selected_inst`; there is NO key entry point. NB this branch
+       * NEVER HAD a scheduler_readonly_reject -- floaters mutates, so the boundary's generic
+       * gate CLOSES a scattered 0041/0051-class read-only gap (it now correctly refuses on a
+       * read-only cell), the one deliberate behaviour delta of this atom. */
+      return perform_action("floaters_from_selected_inst", argc, argv);
     }
 
     /* fluid_snapshot arm
