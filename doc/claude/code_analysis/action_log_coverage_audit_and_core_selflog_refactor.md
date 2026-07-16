@@ -1813,6 +1813,112 @@ PASSES. **Adversarial review (refute panel, ultracode): verdict CLEAN, no must-f
 readonly-gate item was again dismissed as unreachable-in-effect (preview-only transform + readonly-gated
 move-END, above).
 
+## 25. Atom 5 outcome (2026-07-15): the FIFTH per-verb migration — the LAST in-place transform (`flipv_in_place`)
+
+`flipv_in_place` now routes through the same `perform_action(verb, argc, argv)` boundary; `run_core`
+grew exactly ONE arm; output stays byte-identical. Scope held as tight as atoms 1–4: one verb, no
+global `core_log_action` registry, no rewrite of the existing `log_action` sites. Atom 5 completes the
+in-place transform QUARTET — after it, `rotate_in_place` (atom 3), `flip_in_place` (atom 4), and
+`flipv_in_place` are all on the boundary (`align`/`trim_wires` are atoms 2/1). Two structural
+differences from atom 4 shaped the work:
+
+**(1) SHAPE — three `move_objects` calls, not one.** A net vertical mirror = a 180° rotate + a
+horizontal flip, so the standalone effect is `rebuild_selected_array()` + `move_objects(START)` +
+`move_objects(ROTATE|ROTATELOCAL)` + `move_objects(ROTATE|ROTATELOCAL)` + `move_objects(FLIP|ROTATELOCAL)`
++ `move_objects(END)` — byte-identical to the old scheduler standalone `else` body, with **NO
+`push_undo()`/`draw()`** (`move_objects(START/END)` owns the undo push). The ROTATE, ROTATE, FLIP
+ORDER matters — a transposition (FLIP-first, or a dropped `ROTATELOCAL` bit) is the atom-5 copy-paste
+hazard the review axis 3 targeted; the arm was copied verbatim from the pre-atom-5 standalone body.
+
+**(2) ENTRY MAP — Alt-V is NOT `standalone_group_transform`.** That helper (issue 0116) serves only
+Alt-R/Alt-F, splitting a multi-object connected-drag selection into a GROUP transform (shared pivot,
+logs `rotate`/`flip x y`) vs a single-object in-place form. **Alt-V (`case 'v'` `EQUAL_MODMASK`,
+callback.c) has NO group form** — its standalone apply is always the per-object in-place flip, so the
+WHOLE standalone apply (`lastsel != 0`) crosses the boundary via one
+`perform_action("flipv_in_place", 0, NULL)`. The `mx/my_double_save` seeded there previously was
+immaterial (ROTATELOCAL pivots each object about its own origin) and was dropped.
+
+**The wrinkle (identical to atoms 3/4): only the STANDALONE verb crosses the boundary.** The scheduler
+`flipv_in_place` branch and the Alt-V key each have three arms: `if(STARTMOVE)` (raw `move_objects`
+triple) / `else if(STARTCOPY)` (raw `copy_objects` triple) / `else <standalone>`. The during-move/
+during-copy arms are mid-gesture sub-steps logged once at the move/copy END (issue 0069), so they stay
+**raw and unlogged**; only the standalone `else` is wrapped. Routing a gesture arm through
+`perform_action` would spuriously emit `xschem flipv_in_place` mid-drag and double-count the move-END
+line (locked by test case (e) + sabotage 5). The gesture arms need no readonly gate — same finding as
+atoms 3/4: the transform is preview-only (`push_undo`/`set_modify` fire only in `move_objects(END)`),
+and the only commit path `xschem move_objects end` is itself readonly-refused at the `move_objects`
+command gate, so a readonly-toggled-mid-gesture flip cannot persist or dirty the buffer.
+
+**THREE standalone entry points, all funnelled once.** (1) the **scheduler branch** `else` (`return
+perform_action("flipv_in_place", argc, argv)`), reached by scripted `xschem flipv_in_place`, the Edit
+menu, the context menu, and the command palette; (2) the **Alt-V key** (`case 'v'` `EQUAL_MODMASK`
+standalone apply); (3) the **verb-noun deferred apply** — Alt-V on an empty selection arms
+`MENUSTART`/`MENUSTARTROTATE`/`PENDING_TR_FLIPV_IP`, and the next click selects+applies it; path (3)
+was **pulled OUT of the shared `move_objects(START) … switch … move_objects(END)` block** into its own
+`else if(t == PENDING_TR_FLIPV_IP) perform_action("flipv_in_place", 0, NULL)` (after the
+`PENDING_TR_FLIP_IP` arm), because `perform_action`→`run_core` owns its own START/END and must not
+nest. The remaining switch cases keep their exact bodies. No double-dispatch: keysym `v` (118) has
+**zero rows in keybindings.csv**, so only the legacy `case 'v'` runs; the menu accelerator is display-
+only. The two callback.c `perform_action("flipv_in_place", 0, NULL)` sites were kept as explicit
+separate calls (S1 count 2), never a ternary verb string.
+
+**The read-only decision, same residual as atoms 3/4.** The boundary's ONE `scheduler_readonly_reject`
+covers the standalone verb from every path. The scheduler branch **drops** its top
+`scheduler_readonly_reject(interp, "flipv_in_place")` (S7 requires it gone); the Alt-V key **keeps** its
+`readonly_block()` (it still guards the raw gesture arms + the arming path).
+
+**Replay parity.** `flipv_in_place` is a bare, RE-executable verb: a direct re-run re-executes AND
+re-logs; a replay through the `replay_action_log` suppress seam re-executes but does NOT re-log. Stays
+IN S2 CVERBS, OUT of S3.
+
+**Grep guard (test_selflog_grep_guard.tcl).** The `flipv_in_place` S1 scheduler row MOVED from
+`log_action("xschem flipv_in_place")` onto the boundary row `return perform_action("flipv_in_place",
+argc, argv);`, plus a callback.c row with count **2** on `perform_action("flipv_in_place", 0, NULL);`
+(the Alt-V standalone apply + the verb-noun apply). The **S7 BOUNDARY EXCLUSIVITY** block was extended
+to `flipv_in_place`: it fails closed on a scattered `log_action("xschem flipv_in_place")` (scheduler OR
+callback) or a scattered `scheduler_readonly_reject(..., "flipv_in_place")`. The literal
+`flipv_in_place"` regex is distinct from `flip_in_place"`/`rotate_in_place"` (a `v` intervenes) — after
+atom 5 all four in-place transforms are migrated and no stray `log_action` for any of them remains.
+
+**Verified:** `test_perform_action_flipv_in_place.tcl` (22 checks, full_audit logdir_tests): (a) +1 from
+EACH of script / Alt-V key (keysym 118 state 8, single object) / menu wrapper; (b) read-only reject from
+the scripted (TCL_ERROR, verb-named message) and Alt-V paths — no log, no mutation; (c) byte-exact
+`xschem flipv_in_place`; (d) replay re-executes with no re-log through the seam, vs a control unwrapped
+`source` that re-executes AND re-logs; (e) **the wrinkle lock** — a `flipv_in_place` issued with
+STARTMOVE active is NOT logged (+0). The effect oracle is a lone **diagonal** wire `0 0 100 40`: a
+horizontal wire flips vertically to the mirror side but STAYS horizontal (an orientation oracle cannot
+see it), whereas the diagonal wire flips to `0 0 100 -40` — observable, involutive, and distinct from
+the horizontal flip `-100 40 0 0` (verified empirically before writing the oracle). **Sabotage ×5**
+(each failing exactly its checks, each restore byte-clean vs the atom-5 scratchpad backup, NOT git
+checkout): (1) neutralise the boundary readonly gate → (b) scripted read-only mutates + logs (4 fails);
+(2) neutralise the log site → (a) scripted/Alt-V +0 while the menu wrapper's dedup safety-net still logs
+once (menu stays green); (3) bypass the boundary at the Alt-V standalone (raw inline log) → grep **S1**
+count 2→1 + **S7** callback scattered-log both fail closed; (4) re-add a scattered scheduler
+`log_action("xschem flipv_in_place")` → grep **S7** fails closed; (5) route the STARTMOVE arm through
+`perform_action` → case **(e)** fails (mid-gesture double-logs).
+**Full-audit baseline diff clean:** the AFTER FAIL set (160 pass / 12 fail) reconciles to the pre-atom-5
+BASELINE — every common failure is a known pre-existing WSLg-env fail (cadence duo, GUI set —
+test_ciw/test_hi_descend/test_lib_manager_gui/test_reopen_readonly, test_lib_sweep, test_phase3_mints
+g/G, test_wire_split W7, test_select_at, and test_selflog_output's six transform-KEY checks, which fire
+identically on baseline including `key Alt-V logs flipv_in_place`). The only set-diff deltas are
+reconciled: `test_selflog_grep_guard` fails ONLY on the reverted baseline source (the atom-5 guard test
+correctly detects the migration absent — proving the guard is load-bearing; it passes on atom-5), and
+`test_fluid_editing` (AFTER-only) passes 3/3 standalone on the atom-5 binary (the known FE8 WSLg-
+congestion flake). `test_perform_action_flipv_in_place` is added GREEN and every change-adjacent test
+(the four `test_perform_action_*` siblings, `test_rotate_prompt_object` = the MENUSTARTROTATE verb-noun
+handler, `test_gesture_end_log` + `test_rotmove_drop_log` = the move-END counterpart,
+`test_selflog_output`'s flipv self-log + readonly checks) PASSES. **Adversarial review (6-axis refute
+panel, ultracode): verdict CLEAN, no must-fix** — bypass-entrypoint, readonly-gate, run_core arm
+fidelity (the three-call order/opcode hazard), output-drift/replay, mid-gesture double-log, and
+signature/build/C89 each found no failing scenario (all six `defect_found:false`, high confidence); the
+readonly-gate item was again dismissed as unreachable-in-effect (preview-only transform + readonly-gated
+move-END, above).
+
+**Next atom:** the in-place transform quartet is DONE. The next candidate class is a **bare pivot-form
+transform** (`flip`/`flipv`/`rotate x0 y0`) — same boundary shape but with two coordinate args threaded
+through `run_core`/`perform_action` — or the global `core_log_action` registry (§4 Refactor A step 2,
+rewriting all ~40 `log_action` sites), which remains its own future atom.
+
 ---
 
 *Prepared 2026-07-14, `fluid-editing`. §1–5 analysis only — no code changed. §6 added after
@@ -1822,6 +1928,7 @@ atom 8; §12 after atom 9; §13 after atom 10; §14 after atom 11;
 §20 after the Refactor B foundation (actionlog_suppress setter + the replay/composite seams);
 §21 after the FIRST per-verb migration onto perform_action (trim_wires); §22 after the SECOND
 (align); §23 after the THIRD (rotate_in_place — the first with a mid-gesture split); §24 after the
-FOURTH (flip_in_place — the mirror of rotate_in_place).
+FOURTH (flip_in_place — the mirror of rotate_in_place); §25 after the FIFTH (flipv_in_place — the last
+in-place transform; the in-place quartet rotate/flip/flipv is now fully on the boundary).
 Coverage verified in source at HEAD by a 14-way parallel read; do not trust the status table
 without re-checking the cited `file:line` anchors, which drift as the tree moves.*

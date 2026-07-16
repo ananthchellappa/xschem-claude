@@ -2583,6 +2583,12 @@ static int check_menu_start_commands(int state, double c_snap, int mx, int my)
        * routed through the boundary (Refactor B atom 4). perform_action->run_core owns its own
        * rebuild+START+FLIP|ROTATELOCAL+END, so it must NOT nest inside the shared START/END below. */
       perform_action("flip_in_place", 0, NULL);
+    } else if(t == PENDING_TR_FLIPV_IP) {
+      /* flipv_in_place standalone (verb-noun deferred apply): routed through the boundary
+       * (Refactor B atom 5). perform_action->run_core owns its own rebuild+START+ROTATE|
+       * ROTATELOCAL x2 + FLIP|ROTATELOCAL + END (a net vertical mirror), so it must NOT nest
+       * inside the shared START/END below. */
+      perform_action("flipv_in_place", 0, NULL);
     } else {
       move_objects(START,0,0,0);
       switch(t) {
@@ -2593,11 +2599,6 @@ static int check_menu_start_commands(int state, double c_snap, int mx, int my)
         case PENDING_TR_FLIPV:
           move_objects(ROTATE,0,0,0); move_objects(ROTATE,0,0,0); move_objects(FLIP,0,0,0);
           log_action("xschem flipv %.16g %.16g", xctx->mx_double_save, xctx->my_double_save);
-          break;
-        case PENDING_TR_FLIPV_IP:
-          move_objects(ROTATE|ROTATELOCAL,0,0,0); move_objects(ROTATE|ROTATELOCAL,0,0,0);
-          move_objects(FLIP|ROTATELOCAL,0,0,0);
-          log_action("xschem flipv_in_place");
           break;
         case PENDING_TR_ROTATE:
         default:
@@ -5856,14 +5857,14 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
             xctx->menu_pending_transform = PENDING_TR_FLIPV_IP;
             statusmsg("Vertical flip in place: click an object to flip", 1);
           } else {
-            xctx->mx_double_save=xctx->mousex_snap;
-            xctx->my_double_save=xctx->mousey_snap;
-            move_objects(START,0,0,0);
-            move_objects(ROTATE|ROTATELOCAL,0,0,0);
-            move_objects(ROTATE|ROTATELOCAL,0,0,0);
-            move_objects(FLIP|ROTATELOCAL,0,0,0);
-            move_objects(END,0,0,0);
-            log_action("xschem flipv_in_place"); /* self-log Alt-V shortcut (issue 0068) */
+            /* standalone vertical flip-in-place: route through the mutation boundary (Refactor B
+             * atom 5). perform_action owns the readonly gate + the ONE `xschem flipv_in_place`
+             * log site + the rebuild+START+ROTATE|ROTATELOCAL x2 + FLIP|ROTATELOCAL+END effect.
+             * Unlike Alt-R/Alt-F, Alt-V has NO standalone_group_transform (no issue-0116 group
+             * form): the standalone apply is always the per-object in-place flip, so the WHOLE
+             * apply crosses the boundary here. ROTATELOCAL pivots each object about its own origin,
+             * so the mx/my_double_save previously seeded here was immaterial to the transform. */
+            perform_action("flipv_in_place", 0, NULL);
           }
         }
       }

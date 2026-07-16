@@ -54,7 +54,18 @@
 # 2 on `perform_action("flip_in_place", 0, NULL)`), and extended the S7 block (scheduler.c +
 # callback.c: NO scattered log_action("xschem flip_in_place"); scheduler.c: NO scattered
 # readonly_reject for it). Same mid-gesture split as atom 3. flip_in_place stays in S2 CVERBS, stays
-# OUT of S3. (flipv_in_place is NOT migrated -- atom 5 -- and keeps its scheduler self-log row.)
+# OUT of S3.
+# Refactor B atom 5 (perform_action / flipv_in_place) migrates the LAST in-place transform:
+# MOVED the flipv_in_place S1 rows onto boundary rows -- the scheduler branch STANDALONE arm
+# (`return perform_action`) and the TWO callback.c standalone entry points (the Alt-V single-inline
+# standalone apply -- Alt-V has NO standalone_group_transform / no issue-0116 group form -- + the
+# verb-noun MENUSTARTROTATE PENDING_TR_FLIPV_IP apply, count 2 on
+# `perform_action("flipv_in_place", 0, NULL)`), and extended the S7 block (scheduler.c + callback.c:
+# NO scattered log_action("xschem flipv_in_place"); scheduler.c: NO scattered readonly_reject for it).
+# flipv_in_place is THREE move_objects calls (ROTATE|ROTATELOCAL x2 + FLIP|ROTATELOCAL, a net vertical
+# mirror), not one -- but the boundary row is the same shape. Same mid-gesture split as atoms 3/4.
+# flipv_in_place stays in S2 CVERBS, stays OUT of S3. After atom 5 ALL FOUR in-place transforms
+# (rotate/flip/flipv) are on the boundary -- no scattered log_action for any remains.
 # Atom 12 (0053 Cadence Ctrl-E window hop) added: the S1 focus_window emit row
 # (utils/cadence_nav.tcl) and the S6 SEAM-EXCLUSIVITY block -- `new_schematic
 # switch` (a shared core: tab-strip/alt2/window-open machinery) must be logged
@@ -111,7 +122,7 @@ set MANIFEST {
     {log_action\("xschem flipv %}                     1 {flipv branch}
     {log_action\("xschem rotate %}                    1 {rotate branch}
     {return perform_action\("flip_in_place", argc, argv\);} 1 {flip_in_place branch STANDALONE arm routes through the perform_action boundary (Refactor B atom 4, the mirror of rotate_in_place): the mid-gesture STARTMOVE/STARTCOPY arms stay raw (logged at move/copy END, 0069), no scattered readonly/log/push_undo here}
-    {log_action\("xschem flipv_in_place"}             1 {flipv_in_place branch}
+    {return perform_action\("flipv_in_place", argc, argv\);} 1 {flipv_in_place branch STANDALONE arm routes through the perform_action boundary (Refactor B atom 5, the last in-place transform): THREE move_objects calls (ROTATE|ROTATELOCAL x2 + FLIP|ROTATELOCAL) live in run_core; the mid-gesture STARTMOVE/STARTCOPY arms stay raw (logged at move/copy END, 0069), no scattered readonly/log/push_undo here}
     {return perform_action\("rotate_in_place", argc, argv\);} 1 {rotate_in_place branch STANDALONE arm routes through the perform_action boundary (Refactor B atom 3): the mid-gesture STARTMOVE/STARTCOPY arms stay raw (logged at move/copy END, 0069), no scattered readonly/log/push_undo here}
     {log_action\("xschem change_elem_order %d"}       1 {change_elem_order branch}
     {log_action\("xschem check_unique_names}          1 {check_unique_names branch}
@@ -156,6 +167,7 @@ set MANIFEST {
     {perform_action\("trim_wires", 0, NULL\);}        1 {'&' inline key routes through the perform_action boundary (Refactor B atom 1): no inline readonly_block/push_undo/log_action}
     {perform_action\("rotate_in_place", 0, NULL\);}   2 {the two callback.c standalone rotate_in_place entry points route through the perform_action boundary (Refactor B atom 3): the Alt-R single-object standalone (standalone_group_transform) + the verb-noun deferred apply (MENUSTARTROTATE); the mid-gesture STARTMOVE/STARTCOPY arms stay raw}
     {perform_action\("flip_in_place", 0, NULL\);}     2 {the two callback.c standalone flip_in_place entry points route through the perform_action boundary (Refactor B atom 4): the Alt-F single-object standalone (standalone_group_transform else-arm) + the verb-noun deferred apply (MENUSTARTROTATE PENDING_TR_FLIP_IP); the mid-gesture STARTMOVE/STARTCOPY arms stay raw}
+    {perform_action\("flipv_in_place", 0, NULL\);}    2 {the two callback.c standalone flipv_in_place entry points route through the perform_action boundary (Refactor B atom 5): the Alt-V standalone apply (case 'v' EQUAL_MODMASK -- no standalone_group_transform / no group form) + the verb-noun deferred apply (MENUSTARTROTATE PENDING_TR_FLIPV_IP); the mid-gesture STARTMOVE/STARTCOPY arms stay raw}
     {log_action\("xschem break_wires 1"}              1 {Ctrl-! inline key}
     {log_action\("xschem break_wires"\)}              1 {'!' inline key}
     {log_action\("xschem flip %}                      2 {Shift-F key + move-END}
@@ -533,7 +545,8 @@ check "S7 scheduler.c: NO scattered scheduler_readonly_reject(...,\"rotate_in_pl
 # (scheduler branch + Alt-F key) stay raw and log NOTHING at the verb level (logged at move/copy END,
 # 0069) -- so `log_action("xschem flip_in_place")` must be ZERO in BOTH files, and the scheduler
 # branch drops its scattered readonly_reject (gesture arms are unreachable read-only). NB the regex
-# is literal `flip_in_place` -- it does NOT match the un-migrated `flipv_in_place` self-log.
+# is literal `flip_in_place"` -- it does NOT match `flipv_in_place"` (a `v` intervenes), so the two
+# verbs are counted independently below.
 check "S7 scheduler.c: NO scattered log_action(\"xschem flip_in_place\") (standalone delegates to the boundary; gesture arms are silent)" \
   [expr {[rxcount $sched {log_action\("xschem flip_in_place"}] == 0}] \
   "got=[rxcount $sched {log_action\("xschem flip_in_place"}]"
@@ -543,6 +556,21 @@ check "S7 callback.c: NO scattered log_action(\"xschem flip_in_place\") (Alt-F +
 check "S7 scheduler.c: NO scattered scheduler_readonly_reject(...,\"flip_in_place\") (the boundary's generic gate covers the standalone verb)" \
   [expr {[rxcount $sched {scheduler_readonly_reject\(interp, "flip_in_place"\)}] == 0}] \
   "got=[rxcount $sched {scheduler_readonly_reject\(interp, "flip_in_place"\)}]"
+# flipv_in_place (Refactor B atom 5): the LAST in-place transform. The STANDALONE verb's readonly
+# gate + log site live SOLELY in perform_action. The mid-gesture STARTMOVE/STARTCOPY arms (scheduler
+# branch + Alt-V key) stay raw and log NOTHING at the verb level (logged at move/copy END, 0069) --
+# so `log_action("xschem flipv_in_place")` must be ZERO in BOTH files, and the scheduler branch drops
+# its scattered readonly_reject. The literal `flipv_in_place"` regex is distinct from `flip_in_place"`
+# / `rotate_in_place"`. After atom 5 all four in-place transforms are on the boundary.
+check "S7 scheduler.c: NO scattered log_action(\"xschem flipv_in_place\") (standalone delegates to the boundary; gesture arms are silent)" \
+  [expr {[rxcount $sched {log_action\("xschem flipv_in_place"}] == 0}] \
+  "got=[rxcount $sched {log_action\("xschem flipv_in_place"}]"
+check "S7 callback.c: NO scattered log_action(\"xschem flipv_in_place\") (Alt-V + verb-noun apply delegate to the boundary)" \
+  [expr {[rxcount $cbtext {log_action\("xschem flipv_in_place"}] == 0}] \
+  "got=[rxcount $cbtext {log_action\("xschem flipv_in_place"}]"
+check "S7 scheduler.c: NO scattered scheduler_readonly_reject(...,\"flipv_in_place\") (the boundary's generic gate covers the standalone verb)" \
+  [expr {[rxcount $sched {scheduler_readonly_reject\(interp, "flipv_in_place"\)}] == 0}] \
+  "got=[rxcount $sched {scheduler_readonly_reject\(interp, "flipv_in_place"\)}]"
 check "S7 perform_action is defined EXACTLY once" \
   [expr {[rxcount $sched {int perform_action\(const char \*verb,}] == 1}] \
   "got=[rxcount $sched {int perform_action\(const char \*verb,}]"
