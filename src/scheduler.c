@@ -187,11 +187,12 @@ static int scheduler_readonly_reject(Tcl_Interp *interp, const char *subcmd)
 /* run_core -- the EFFECT half of the perform_action boundary. Dispatches a
  * migrated verb to its raw core with no readonly check and no log_action of its
  * own (perform_action owns both). Returns TCL_OK on success. Migrated verbs so
- * far: trim_wires (Refactor B atom 1), align (atom 2), rotate_in_place (atom 3);
- * each is a bare no-arg verb. rotate_in_place is the first with a mid-gesture split:
- * ONLY its standalone (non-gesture) form crosses this boundary -- the during-move/
- * during-copy arms stay raw in the scheduler branch + callback.c key and are logged
- * at the move/copy END (issue 0069), never here (see the branch comment below).
+ * far: trim_wires (Refactor B atom 1), align (atom 2), rotate_in_place (atom 3),
+ * flip_in_place (atom 4); each is a bare no-arg verb. rotate_in_place/flip_in_place
+ * are the mid-gesture-split verbs: ONLY their standalone (non-gesture) form crosses
+ * this boundary -- the during-move/during-copy arms stay raw in the scheduler branch
+ * + callback.c key and are logged at the move/copy END (issue 0069), never here
+ * (see the branch comment below).
  * More verbs add an arm here as they move onto the boundary. argc/argv are unused
  * for a bare no-arg verb but carried for the general boundary shape (audit §4).
  * NB: only the VERB dispatch routes here -- the shared C functions BELOW a verb are
@@ -233,6 +234,20 @@ static int run_core(const char *verb, int argc, const char *argv[])
     rebuild_selected_array();
     move_objects(START,0,0,0);
     move_objects(ROTATE|ROTATELOCAL,0,0,0);
+    move_objects(END,0,0,0);
+    return TCL_OK;
+  }
+  else if(!strcmp(verb, "flip_in_place")) {
+    /* Refactor B atom 4: the STANDALONE (non-gesture) in-place horizontal flip. Exact mirror
+     * of the rotate_in_place arm -- byte-identical to the scheduler branch's standalone `else`
+     * body (rebuild + START + FLIP|ROTATELOCAL + END). move_objects(START/END) owns the undo
+     * push, so there is NO push_undo()/draw() here (adding one would double-push). ROTATELOCAL
+     * flips each object about its OWN origin (move.c pvx/pvy; ROTATION() mirrors x about x0), so
+     * no pivot/mousex_snap seeding is needed. The during-move/during-copy arms are NOT here:
+     * they are mid-gesture sub-steps logged at move/copy END (issue 0069) and stay raw. */
+    rebuild_selected_array();
+    move_objects(START,0,0,0);
+    move_objects(FLIP|ROTATELOCAL,0,0,0);
     move_objects(END,0,0,0);
     return TCL_OK;
   }
@@ -2077,17 +2092,23 @@ static int xschem_cmds_f(Tcl_Interp *interp, int argc, const char *argv[], int *
     else if(!strcmp(argv[1], "flip_in_place"))
     {
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
-      if(scheduler_readonly_reject(interp, "flip_in_place")) return TCL_ERROR;
+      /* flip-during-move/copy: flip each object about its own center. These two mid-gesture
+       * arms stay RAW -- they are sub-steps of a move/copy logged at that gesture's END
+       * (issue 0069), NOT the standalone verb, so they must NOT cross the perform_action
+       * boundary (routing them would spuriously emit `xschem flip_in_place` mid-drag and
+       * double-count the move-END line). They need no readonly gate: being in STARTMOVE/
+       * STARTCOPY means an edit is already in progress, which a read-only schematic never
+       * permits, and the transform is preview-only -- push_undo/set_modify fire only in
+       * move_objects(END), which is itself readonly-refused at the move_objects command gate. */
       if(xctx->ui_state & STARTMOVE) move_objects(FLIP|ROTATELOCAL,0,0,0);
       else if(xctx->ui_state & STARTCOPY) copy_objects(FLIP|ROTATELOCAL);
-      else {
-        rebuild_selected_array();
-        move_objects(START,0,0,0);
-        move_objects(FLIP|ROTATELOCAL,0,0,0);
-        move_objects(END,0,0,0);
-        log_action("xschem flip_in_place"); /* self-log at core (standalone only) */
-      }
-      Tcl_ResetResult(interp);
+      /* standalone verb: the single mutation boundary (Refactor B atom 4, run_core above) owns
+       * the readonly gate + the ONE `xschem flip_in_place` log site + the rebuild+START+
+       * FLIP|ROTATELOCAL+END effect. The Edit menu / context menu / command palette reach here
+       * via `xschem flip_in_place`; the Alt-F key + verb-noun apply reach the same boundary from
+       * callback.c. Exact mirror of the rotate_in_place branch above. */
+      else return perform_action("flip_in_place", argc, argv);
+      Tcl_ResetResult(interp);   /* only the mid-gesture arms fall through to here */
     }
 
     /* flipv [x0 y0]
