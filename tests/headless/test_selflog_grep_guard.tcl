@@ -32,6 +32,11 @@
 # add_symbol_pin no-line/writeback replay-arm rows, `add_symbol_pin`/`add_sch_pin`
 # in S2 + S3 (the drop funnel is the SOLE logger), and the S1c scan for the old
 # `# place symbol pin` marker.
+# Refactor B atom 1 (perform_action / trim_wires) MOVED the two trim_wires S1
+# log rows (scheduler.c branch + callback.c '&' key) onto the perform_action
+# boundary rows (the branch `return perform_action(...)`, the '&' key call, and
+# the boundary's ONE readonly gate + ONE log site), and added the S7 exclusivity
+# block. trim_wires stays in S2 CVERBS, stays OUT of S3.
 # Atom 12 (0053 Cadence Ctrl-E window hop) added: the S1 focus_window emit row
 # (utils/cadence_nav.tcl) and the S6 SEAM-EXCLUSIVITY block -- `new_schematic
 # switch` (a shared core: tab-strip/alt2/window-open machinery) must be logged
@@ -78,7 +83,10 @@ set MANIFEST {
     {if\(!fast\) log_action\("xschem save"}           1 {save branch incl. fast-machinery gate (atom 4)}
     {log_action\("xschem reload%s"}                   1 {reload branch incl. zoom_full arg (atom 4)}
     {log_action\("xschem align"}                      1 {align branch}
-    {log_action\("xschem trim_wires"}                 1 {trim_wires branch}
+    {return perform_action\("trim_wires", argc, argv\);} 1 {trim_wires branch routes through the perform_action boundary (Refactor B atom 1): no scattered readonly/log/push_undo here}
+    {int perform_action\(const char \*verb,}          1 {the single mutation/command boundary is defined once (Refactor B, audit §4)}
+    {if\(scheduler_readonly_reject\(interp, verb\)\) return TCL_ERROR;} 1 {perform_action's ONE readonly gate -- covers every migrated verb from every entry point (0041/0051 unification)}
+    {if\(!actionlog_suppress\) log_action\("xschem %s", verb\);} 1 {perform_action's ONE log site -- the migrated verb's sole self-log, gated on the re-entrant suppress counter (foundation §20)}
     {log_action\("xschem break_wires 1"}              1 {break_wires remove form}
     {log_action\("xschem break_wires"\)}              1 {break_wires bare form}
     {log_action\("xschem flip %}                      1 {flip branch (pivot form)}
@@ -127,7 +135,7 @@ set MANIFEST {
     {log_action\("xschem delete"}                     1 {Delete inline key (atom 2)}
     {log_action\("xschem change_elem_order -1"}       1 {Shift-S inline key}
     {log_action\("xschem align"}                      1 {Alt-U inline key}
-    {log_action\("xschem trim_wires"}                 1 {'&' inline key}
+    {perform_action\("trim_wires", 0, NULL\);}        1 {'&' inline key routes through the perform_action boundary (Refactor B atom 1): no inline readonly_block/push_undo/log_action}
     {log_action\("xschem break_wires 1"}              1 {Ctrl-! inline key}
     {log_action\("xschem break_wires"\)}              1 {'!' inline key}
     {log_action\("xschem flip %}                      2 {Shift-F key + move-END}
@@ -453,6 +461,33 @@ foreach cf {scheduler.c xinit.c callback.c} {
 }
 check "S6 no C core self-logs the new_schematic SWITCH form (machinery must stay silent)" \
   [expr {$nsw_c == 0}] "got=$nsw_c across scheduler.c+xinit.c+callback.c"
+
+# ---------------------------------------------------------------------------
+# S7) perform_action BOUNDARY EXCLUSIVITY (Refactor B atom 1 / trim_wires): the
+#     migrated verb's readonly gate + log site live SOLELY in perform_action.
+#     Every entry point (scheduler branch, inline '&' key, and the menu/toolbar/
+#     auto-trim-checkbutton that reach the branch via `xschem trim_wires`) funnels
+#     through it. This block fails closed if a future edit re-adds a SCATTERED
+#     readonly check or log_action for trim_wires at any entry point -- the exact
+#     per-path-checklist regression the boundary abolishes (audit §3.1). The S1
+#     rows above pin the boundary's positive presence; these pin its exclusivity.
+#     trim_wires stays in S2 CVERBS (a scripted/replayed `xschem trim_wires`
+#     re-executes AND self-logs -- a real re-executable verb, not a coordinate-form
+#     bypass) and deliberately OUT of S3 (its log lives in the boundary, reached
+#     from the branch, not in a shared core the branch must stay silent for).
+# ---------------------------------------------------------------------------
+check "S7 scheduler.c: NO scattered log_action(\"xschem trim_wires\") (branch delegates to the boundary)" \
+  [expr {[rxcount $sched {log_action\("xschem trim_wires"}] == 0}] \
+  "got=[rxcount $sched {log_action\("xschem trim_wires"}]"
+check "S7 callback.c: NO scattered log_action(\"xschem trim_wires\") ('&' key delegates to the boundary)" \
+  [expr {[rxcount $cbtext {log_action\("xschem trim_wires"}] == 0}] \
+  "got=[rxcount $cbtext {log_action\("xschem trim_wires"}]"
+check "S7 scheduler.c: NO scattered scheduler_readonly_reject(...,\"trim_wires\") (the boundary's generic gate covers it)" \
+  [expr {[rxcount $sched {scheduler_readonly_reject\(interp, "trim_wires"\)}] == 0}] \
+  "got=[rxcount $sched {scheduler_readonly_reject\(interp, "trim_wires"\)}]"
+check "S7 perform_action is defined EXACTLY once" \
+  [expr {[rxcount $sched {int perform_action\(const char \*verb,}] == 1}] \
+  "got=[rxcount $sched {int perform_action\(const char \*verb,}]"
 
 catch {destroy .ciw}; update
 

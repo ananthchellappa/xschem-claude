@@ -1430,12 +1430,121 @@ safe). Optional bounded pick: the atom-16 menu-bypass CLASS sweep (other edit-ge
 checkbuttons). Optional one-liner: collapse `hier_traversal`'s walk with the new setter if the ≈28
 navigation lines are judged noise.
 
+## 21. Refactor B ATOM 1 (2026-07-15): the FIRST per-verb migration onto perform_action (trim_wires)
+
+The north star of §4 gets its first real vertebra. `perform_action(verb, argc, argv)` now
+EXISTS as the single mutation/command boundary (scheduler.c, right after
+`scheduler_readonly_reject`), and exactly ONE verb — `trim_wires` — is routed through it,
+proving the pattern end-to-end with **byte-identical output preserved.** Scope was held tight:
+one verb, no global `core_log_action` registry, no rewrite of the ~40 existing `log_action`
+sites (that churns every S1 anchor + replay test — its own future atom).
+
+**The boundary, as built.**
+```c
+static int run_core(const char *verb, int argc, const char *argv[]) {   /* the EFFECT */
+  if(!strcmp(verb, "trim_wires")) { xctx->push_undo(); trim_wires(); draw(); return TCL_OK; }
+  return TCL_ERROR;                       /* unreachable this atom */
+}
+int perform_action(const char *verb, int argc, const char *argv[]) {
+  if(!xctx) { Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR; }
+  if(scheduler_readonly_reject(interp, verb)) return TCL_ERROR;   /* ONE readonly gate  */
+  int rc = run_core(verb, argc, argv);                           /* ONE effect         */
+  if(!actionlog_suppress) log_action("xschem %s", verb);         /* ONE log site        */
+  Tcl_ResetResult(interp); return rc;
+}
+```
+The two disjoint entry sites collapse onto it: the scheduler `trim_wires` branch becomes
+`return perform_action("trim_wires", argc, argv);` (was: `!xctx` check + `scheduler_readonly_reject`
++ `push_undo` + `trim_wires()` + `draw()` + `log_action("xschem trim_wires")` + `Tcl_ResetResult` —
+all now inside the boundary), and the inline `&` key (callback.c legacy switch) becomes
+`perform_action("trim_wires", 0, NULL)` (its key-specific `semaphore>=2` guard stays before the
+call; its old `readonly_block()` is subsumed). `perform_action` is `extern` in xschem.h; the key
+handler and the branch call it uniformly via the global `interp` (no interp param needed) — the
+key passes `(0, NULL)`, the branch passes `(argc, argv)`, and for a bare no-arg verb `run_core`
+`(void)`-casts them.
+
+**Why `trim_wires` — and the 1:1 rule applied precisely.** The verb is bare (no pivot/args/
+gesture complications) and clean at the VERB level. But the *shared C function* `trim_wires()`
+is ALSO an internal sub-step of `align()`, move/rotate/flip-END autotrim (move.c), the
+wire-break edit (check.c), `maintain_wire_segments`, and `select_connected_nets` (select.c) —
+those call it RAW and legitimately DO NOT route through `perform_action` (the boundary wraps the
+verb DISPATCH, not the C function). Locked by test case (e): `xschem align` still logs only
+`xschem align`, never `xschem trim_wires`. This is the §4-step-1 rule ("log at the core when the
+core IS the verb; log at the entry sites when the core is a shared mechanism") re-cast for the
+boundary: the boundary wraps the verb, the shared mechanism stays below it.
+
+**Entry-point map, verified by grepping the GUI (the atom-16 lesson), not just C callers.** Every
+LIVE user path to the verb funnels through `perform_action` exactly once: Tools menu
+(hand-written `-command "xschem trim_wires"`), toolbar `ToolJoinTrim`, the *Auto Join/Trim Wires*
+checkbutton on turn-ON (evaluates `xschem trim_wires`), the command palette, and scripted
+`xschem trim_wires` → all reach the scheduler branch; the `&` key → the callback legacy switch.
+No double-dispatch: `&` (keysym 38) is ABSENT from keybindings.csv, so `handle_key_press`'s
+registry pre-dispatch is skipped and only the legacy `case '&'` runs; the menu `-accelerator {&}`
+is display-only. No wrapper double-log: the Tools menu is hand-written, NOT table-built, so
+`trim_wires` is never wrapped in `menu_action_logged` (and the palette runs the command raw) —
+the core's log is the sole line. There is no `trace` on `autotrim_wires` that could hide a fifth
+trim path.
+
+**The read-only unification (0041/0051), realized.** The boundary's ONE `scheduler_readonly_reject`
+replaces the branch's identical call AND the `&` key's `readonly_block()` — both gated on the exact
+same predicate `if(!xctx || !xctx->readonly)`, so the decision is unchanged from every path. The
+one deliberate user-facing delta: the `&` key on a read-only cell now emits a CIW note (has_x) /
+interp error (headless) instead of a `tk_messageBox` MODAL — which makes the key CONSISTENT with
+its own Tools-menu item (already CIW-note via the scheduler path). A welcome side effect: the
+`&`-on-readonly path no longer HANGS headless (the modal was un-stubbable), so the test drives it
+directly. **Accepted residual (review-confirmed, not a defect):** in a GUI session where `ciw_echo`
+is somehow not loaded, the `&` key on a read-only cell gives no visible feedback — but the mutation
+is still blocked and nothing is logged; it is a feedback-quality tradeoff of the intended
+unification. NOT patched, because a per-key fallback would re-diverge the key from its menu item.
+
+**Replay parity.** `trim_wires` is a bare, RE-executable verb (like `save`/`netlist`), NOT a
+coordinate-form bypass (`wire x1 y1 x2 y2`): a direct re-run re-executes AND re-logs (correct); a
+replay through the `replay_action_log` suppress seam re-executes but does NOT re-log (the log site
+rides `!actionlog_suppress`, the atom-20 foundation). So it stays IN S2 CVERBS and correctly OUT
+of S3 branch-must-not-log.
+
+**Grep guard (test_selflog_grep_guard.tcl).** The two `trim_wires` S1 log rows (scheduler branch +
+`&` key) were MOVED onto the boundary rows: the branch `return perform_action(...)`, the `&` key
+call, the `int perform_action(...)` definition, the ONE `scheduler_readonly_reject(interp, verb)`
+gate, and the ONE `log_action("xschem %s", verb)` site. A new **S7 BOUNDARY EXCLUSIVITY** block
+fails closed if a future edit re-adds a SCATTERED `log_action("xschem trim_wires")` or a scattered
+`scheduler_readonly_reject(...,"trim_wires")` at any entry point (the exact per-path-checklist
+regression the boundary abolishes), and pins `perform_action` as defined exactly once.
+
+**Verified:** `test_perform_action_trim_wires.tcl` (16 checks, full_audit logdir_tests):
+(a) exactly +1 from EACH of script / `&` key / menu wrapper; (b) read-only reject from the scripted
+(TCL_ERROR, verb-named message) and `&`-key paths — no log, no mutation; (c) the logged line is
+byte-exact `xschem trim_wires` (no format drift); (d) replay re-executes with the effect applied
+(wires 2→1) but no re-log through the seam, vs a control unwrapped `source` that re-executes AND
+re-logs; (e) the `align` sub-step logs only `align`, never `trim_wires`. A pre/post-migration 5-axis
+behavioral probe (read-only scripted + `&` reject, writable `&` trim, `align`, menu dedup) diffs
+**IDENTICAL.** Grep guard + suppress-gate stay green; `test_selflog_output`'s trim_wires lines pass
+(its only FAILs are the pre-existing transform-key set). **Sabotage ×4** (each failing exactly its
+checks, each restore `git diff`-clean): (1) neutralize the boundary's readonly gate → the (b)
+read-only-mutation checks fail (scripted trim on a read-only cell now mutates + logs); (2)
+neutralize the log site → (a)/(c) + grep S1-log-site + S5-canary fail (and the menu wrapper's
+dedup safety-net correctly still logs once — proving the boundary is not the ONLY guard); (3)
+bypass the boundary on the `&` key (raw core, no gate) → the read-only-`&` mutation leak + grep S1
+`&` row fail; (4) re-add a scattered scheduler `log_action("xschem trim_wires")` → grep **S7** fails
+closed. **Full-audit baseline diff clean** (git stash + rebuild + rerun: the FAIL set is unchanged —
+the known GUI/cadence/keybind/congestion pre-existing failures, with `test_perform_action_trim_wires`
+added GREEN). **Adversarial review (6-axis refute panel, ultracode): verdict CLEAN, zero confirmed
+defects** — bypass-entrypoint, readonly-gate, output-drift, substep-misroute, replay-parity, and
+signature-build each independently found no failing scenario; the sole observation (the
+`&`-on-readonly feedback-quality note above) was explicitly classed not-a-defect.
+
+**Next atom:** the SECOND per-verb migration — `align` or a bare in-place transform
+(`flip_in_place`/`rotate_in_place`) onto the same boundary (same shape, `run_core` grows one arm).
+The end-state remains the full funnel of §4; each verb that moves onto `perform_action` deletes its
+scattered readonly+log pair and gains an S7-locked structural invariant.
+
 ---
 
 *Prepared 2026-07-14, `fluid-editing`. §1–5 analysis only — no code changed. §6 added after
 atom 3 landed; §7 after atom 4; §8 after atom 5; §9 after atom 6; §10 after atom 7; §11 after
 atom 8; §12 after atom 9; §13 after atom 10; §14 after atom 11;
 §15 after atom 12; §16 after atom 13; §17 after atom 14; §18 after atom 15; §19 after atom 16;
-§20 after the Refactor B foundation (actionlog_suppress setter + the replay/composite seams).
+§20 after the Refactor B foundation (actionlog_suppress setter + the replay/composite seams);
+§21 after the FIRST per-verb migration onto perform_action (trim_wires).
 Coverage verified in source at HEAD by a 14-way parallel read; do not trust the status table
 without re-checking the cited `file:line` anchors, which drift as the tree moves.*

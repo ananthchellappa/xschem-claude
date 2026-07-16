@@ -184,6 +184,50 @@ static int scheduler_readonly_reject(Tcl_Interp *interp, const char *subcmd)
   return 1;
 }
 
+/* run_core -- the EFFECT half of the perform_action boundary. Dispatches a
+ * migrated verb to its raw core with no readonly check and no log_action of its
+ * own (perform_action owns both). Returns TCL_OK on success. This atom migrates
+ * exactly ONE verb (trim_wires, Refactor B first per-verb migration); more verbs
+ * add an arm here as they move onto the boundary. argc/argv are unused for a bare
+ * no-arg verb but carried for the general boundary shape (audit §4).
+ * NB: only the VERB dispatch routes here -- the shared trim_wires() C function is
+ * ALSO an internal sub-step of align()/move-END autotrim, which keep calling it
+ * raw (they are not user verbs and must not self-log). */
+static int run_core(const char *verb, int argc, const char *argv[])
+{
+  (void)argc; (void)argv;
+  if(!strcmp(verb, "trim_wires")) {
+    xctx->push_undo();
+    trim_wires();
+    draw();
+    return TCL_OK;
+  }
+  return TCL_ERROR; /* unreachable this atom: perform_action is only wired for trim_wires */
+}
+
+/* perform_action -- the single mutation/command boundary (Refactor B, audit §4).
+ * Every entry point that reaches a migrated verb -- the scheduler branch, the
+ * inline legacy-switch key, the menu/toolbar (which reach the branch via
+ * `xschem <verb>`) -- calls THIS instead of duplicating a readonly check + the
+ * effect + a log_action. That collapses the four-edge coverage problem (§3.1) to
+ * one edge and makes "did we readonly-check it?" and "did we log it?" structural
+ * invariants rather than per-path checklist items (it also unifies the scattered
+ * 0041/0051 read-only gates). ONE readonly gate + ONE effect + ONE log site.
+ * The log site is gated on !actionlog_suppress -- the re-entrant depth counter
+ * from the Refactor B foundation -- so a replayed / composite re-execution re-runs
+ * the effect but does not re-log (log_action also honors the gate internally;
+ * the explicit check documents the boundary contract). Uses the global interp. */
+int perform_action(const char *verb, int argc, const char *argv[])
+{
+  int rc;
+  if(!xctx) { Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR; }
+  if(scheduler_readonly_reject(interp, verb)) return TCL_ERROR;   /* ONE readonly gate */
+  rc = run_core(verb, argc, argv);                                /* the effect */
+  if(!actionlog_suppress) log_action("xschem %s", verb);          /* ONE log site */
+  Tcl_ResetResult(interp);
+  return rc;
+}
+
 /* Shared setup for the symbol-editor pin-scope commands (apply_pin_prop /
  * pin_scope_prop_uniform): rebuild the selection, find the primary pin (sel_array[0] iff it
  * is a PINLAYER rect, else -1), and resolve <scope> into a freshly my_malloc'd targets[]
@@ -10130,17 +10174,16 @@ static int xschem_cmds_t(Tcl_Interp *interp, int argc, const char *argv[], int *
     }
 
     /* trim_wires
-     *   Remove operlapping wires, join lines, trim wires at intersections */
+     *   Remove operlapping wires, join lines, trim wires at intersections.
+     *   Migrated onto the perform_action() boundary (Refactor B, first per-verb
+     *   migration): the ONE readonly gate + ONE effect + ONE log site now live in
+     *   perform_action, so this branch AND the inline '&' key (callback.c) funnel
+     *   through the same choke point -- no scattered readonly_reject/log_action here.
+     *   Menu (Tools) + toolbar + the auto-trim checkbutton reach this branch via
+     *   `xschem trim_wires`. */
     else if(!strcmp(argv[1], "trim_wires"))
     {
-      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
-      if(scheduler_readonly_reject(interp, "trim_wires")) return TCL_ERROR;
-      xctx->push_undo();
-      trim_wires();
-      draw();
-      log_action("xschem trim_wires"); /* self-log at core: Tools menu + toolbar (the '&'
-                                        * key is handled inline in callback.c, issue 0068) */
-      Tcl_ResetResult(interp);
+      return perform_action("trim_wires", argc, argv);
     }
     else { *cmd_found = 0;}
   return TCL_OK;

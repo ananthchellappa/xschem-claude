@@ -2114,6 +2114,11 @@ extern int scope_targets(int displayed_inst, const char *scope, int *targets);
 extern int pin_scope_targets(int primary_n, const char *scope, int *targets);
 extern int xschem(ClientData clientdata, Tcl_Interp *interp,
            int argc, const char * argv[]);
+/* The single mutation/command boundary (Refactor B, audit §4): ONE readonly gate +
+ * ONE effect + ONE log site. Entry points (scheduler branch, inline key, menu) call
+ * this for a migrated verb instead of the raw core + a scattered readonly/log. Defined
+ * in scheduler.c. This atom wires exactly one verb (trim_wires). */
+extern int perform_action(const char *verb, int argc, const char *argv[]);
 extern const char *tcleval(const char str[]);
 extern const char *tclresult(void);
 extern const char *tclgetvar(const char *s);

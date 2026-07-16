@@ -6311,12 +6311,12 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
       break;
 
     case '&':                               /* check wire connectivity */
-      if(xctx->semaphore >= 2) break;
-      if(readonly_block()) break;
-      xctx->push_undo();
-      trim_wires();
-      draw();
-      log_action("xschem trim_wires"); /* self-log '&' keyboard shortcut (issue 0068) */
+      if(xctx->semaphore >= 2) break;       /* key-specific re-entrancy guard stays here */
+      /* Route through the single mutation boundary (Refactor B, scheduler.c): it owns
+       * the readonly gate (scheduler_readonly_reject -> a CIW note, replacing this
+       * key's old readonly_block() modal), the push_undo + trim_wires + draw effect,
+       * and the ONE `xschem trim_wires` log site. No inline readonly/undo/log here. */
+      perform_action("trim_wires", 0, NULL);
       break;
 
     case '\\':
