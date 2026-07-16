@@ -2680,6 +2680,206 @@ the ten other `test_perform_action_*` + `test_selflog_grep_guard`; `test_selflog
 self-log check passes (its only FAILs are the pre-existing six transform-KEY checks that fail identically on
 baseline).
 
+## 32. Refactor B ATOM 12 (2026-07-16): the TWELFTH per-verb migration — the FIRST FRICTION-FREE-SCOUTED verb, a PURELY ADDITIVE boundary (`toggle_ignore`)
+
+`toggle_ignore` (`xschem toggle_ignore` — cycles the per-mode `*_ignore` attribute
+none → `"true"` → `"short"` → none on the SELECTED instances AND wires, where `*` ∈
+{spice,verilog,vhdl,tedax,spectre} per `xctx->netlist_type`) now routes through the
+`perform_action(verb, argc, argv)` boundary. Atom 12 is the FIRST atom whose pilot was
+chosen NOT off a hand-carried shortlist but by an EXHAUSTIVE scout: the companion
+`perform_action_boundary_migration_friction_analysis.md` classified ALL 243 mutating
+scheduler verbs against 6 friction-free criteria and found exactly THREE friction-free
+(`toggle_ignore`, `show_unconnected_pins`, `redo`); `toggle_ignore` was the cleanest. It
+is a **BARE no-arg verb** like `floaters_from_selected_inst` (atom 10) — even simpler
+than the arg-carrying `break_wires`/`attach_labels`.
+
+**`run_core` grew a bare `toggle_ignore` arm** — `toggle_ignore(); return TCL_OK;` (no
+`argc/argv`). **NO `push_undo()`/`draw()`** — `toggle_ignore()` (actions.c:2997) OWNS its
+own undo (`xctx->push_undo()` on the FIRST selected element, gated by `first`),
+`set_modify(1)` and `draw()` (all inside `if(attr)`); adding one would DOUBLE-push (the
+atom-1 no-double-push rule, locked by test (f)). **`core_log_action` grew NO branch** — a
+bare verb rides the DEFAULT `log_action("xschem %s", verb)`, emitting `xschem
+toggle_ignore` (the header-comment bare-verb list gained `toggle_ignore`).
+
+**THE PURELY-ADDITIVE BOUNDARY.** Unlike every prior atom, the branch had NEITHER a
+readonly gate NOR a log before this atom — verified at runtime on the pre-migration
+binary: scripted `xschem toggle_ignore` logged 0 lines and MUTATED a read-only cell
+(`rc=0`, attribute changed). So the boundary ADDS **both**: the ONE
+`scheduler_readonly_reject` now REFUSES on a read-only cell (`TCL_ERROR`, verb-named
+message, no mutation, no log — a scattered 0041/0051 mutation-on-a-read-only-cell gap
+CLOSED) AND the ONE `core_log_action` DEFAULT `%s` log line (a coverage gain, not a
+byte-identical move — contrast attach_labels, which only MOVED an existing log). The
+WRITABLE effect is byte-identical (the migration adds only the gate + log).
+
+**THE NO-OP-STILL-LOGS PROPERTY (§30 floaters analogue).** In a netlist mode where the
+ignore attribute is undefined (`attr == NULL` — `xctx->netlist_type` is none of
+spice/verilog/vhdl/tedax/spectre, e.g. `set netlist_type symbol` = `CAD_SYMBOL_ATTRS`),
+`toggle_ignore()` is a harmless no-op: the whole body is inside `if(attr)`, so nothing
+mutates, NO `push_undo`, no `draw`. Under the boundary's unconditional log it STILL emits
+one `xschem toggle_ignore` line — idempotent + replayable, the CORRECT behaviour (§30),
+locked by test (e).
+
+**THE KEY-EQUIVALENCE INVERSION — and the scout premise it OVERTURNED.** attach_labels
+(§31) kept its Shift+H key OFF the boundary because that key ran a NON-equivalent
+interactive dialog (csv-`nolog`). toggle_ignore INVERTS that: its Shift+T key
+(`act_toggle_ignore`, callback.c) calls the SAME core with the SAME effect and its
+registry row is NOT `nolog`, so it is EQUIVALENT and routes THROUGH the boundary —
+`{ (void)e; perform_action("toggle_ignore", 0, NULL); return 1; }`. **But re-verifying
+from source (the atom-10 discipline) overturned the friction doc's premise that the key
+was a "coverage hole."** It was NOT:
+
+- **Already readonly-gated.** The registry `ActionDef` row carries `mutates=1`, and
+  `dispatch_input_action()` (callback.c ~4108) runs
+  `if(action_id_mutates(id) && readonly_block()) return 1;` BEFORE calling the handler.
+  So on a read-only cell the key was — and still is — blocked at DISPATCH (via
+  `readonly_block`, which pops a modal `tk_messageBox` when `has_x`), *before* reaching
+  `perform_action`.
+- **Already logged.** dispatch ~4117 runs
+  `if(ret && d->log_cmd && !actionlog_cmd_logged) log_action("%s", d->log_cmd);`, and
+  `d->log_cmd` is `"xschem toggle_ignore"` (pushed from actions.csv:113, not-`nolog`).
+  So the key already emitted `xschem toggle_ignore` via **Layer A** — verified at runtime
+  (the key logged +1 on the pre-migration binary; the branch logged +0).
+
+So the true coverage gap was the **branch only**; routing the key is a **CONSISTENCY**
+move (unify the log onto `core_log_action`), not a coverage add. Its correctness rests on
+the **`actionlog_cmd_logged` DEDUP**: the boundary's `log_action` sets the flag (util.c),
+so dispatch's Layer A copy at 4117 is skipped → EXACTLY ONE line (verified: the key logs
++1, NOT +2). `mutates=1` is KEPT on the registry row — so the key's read-only safety
+remains the dispatch gate (`readonly_block`), and `perform_action`'s gate is redundant
+belt for the key while being load-bearing for the branch. `return 1` (not
+`return perform_action(...)`) preserves the ActionEvent handler contract:
+`perform_action` returns `TCL_OK`(0)/`TCL_ERROR`(1), the OPPOSITE of the handler's
+"1 = handled", so returning it would tell the dispatcher the event was unhandled.
+
+**Why `mutates=1` must stay (the phantom-log trap).** If `mutates=1` were removed to make
+`perform_action` the sole key gate, then on a read-only cell dispatch would NOT block, the
+handler would call `perform_action` → reject (no log, `actionlog_cmd_logged` stays 0) →
+return, and dispatch 4117 would then log a PHANTOM `xschem toggle_ignore` line for a
+refused edit. Keeping `mutates=1` blocks the key before the handler, so no phantom.
+
+**THE 1:1 TEST.** `toggle_ignore()` is called by ONLY two sites (grep-verified): the
+scheduler branch and `act_toggle_ignore` — BOTH on the boundary. So it is strictly 1:1
+with the verb; there is NO shared sub-step to lock (unlike attach_labels'
+`attach_labels_to_inst`, also called raw by `show_unconnected_pins`).
+
+**Entry-point map — every LIVE path funnels once.** (1) the **scheduler branch** →
+`return perform_action("toggle_ignore", argc, argv)`, reached by scripted `xschem
+toggle_ignore`, the hand-written Prop menu item (xschem.tcl:14278 `-command "xschem
+toggle_ignore"`, NOT `menu_action_logged`-wrapped) and the command palette
+(actions.csv:113 raw). (2) the **Shift+T key** (`act_toggle_ignore`) →
+`perform_action("toggle_ignore", 0, NULL)`. The key binding lives in `input_bindings[]`
+(seeded by `set_input_binding(DEV_KEY,'T',0,…)`, callback.c:3960) and its keybindings.csv
+mirror (row 34) — the SAME binding in two mirrored places, ONE handler dispatch, no
+legacy `case 'T'` switch, so no double-dispatch of the effect.
+
+**Replay parity.** `toggle_ignore` is a bare, re-executable verb (like `save`/`floaters`,
+not a coordinate-STORE bypass): a direct re-run re-executes AND re-logs; a replay through
+the `replay_action_log` suppress seam re-executes but does NOT re-log. Stays IN S2
+CVERBS, OUT of S3.
+
+**Grep guard (test_selflog_grep_guard.tcl).** ADDED: the S1 scheduler boundary row
+(`return perform_action("toggle_ignore", argc, argv)`), the S1 callback key row
+(`perform_action("toggle_ignore", 0, NULL)`), `toggle_ignore` in the S2 CVERBS set, the
+bare-verb `%s` label update, and an S7 block MIRRORING floaters (scheduler.c AND
+callback.c ZERO scattered `log_action("xschem toggle_ignore")` — the log is the shared
+`%s` default, so NO per-verb literal exists — plus scheduler.c ZERO scattered
+`scheduler_readonly_reject(...,"toggle_ignore")`). UNLIKE floaters, toggle_ignore HAS a
+key, so the callback.c ZERO check locks that the key routes through the boundary and never
+self-logs a C literal (its Layer A log is from actions.csv, deduped). The S1 key row is
+the **load-bearing lock** for the key routing: the runtime output is identical whether the
+key uses Layer A or `core_log_action`, so ONLY this grep row catches a raw-core key
+regression (sabotage 3 proves it).
+
+**Effect oracle (byte-identical before/after atom 12).** A `devices/res.sym` resistor
+selected at the origin in SPICE mode: `xschem toggle_ignore` cycles its `spice_ignore`
+attribute `""` → `"true"` → `"short"` → `""` on successive calls (actions.c flag
+0→1→2→0), observed via `xschem getprop instance 0 spice_ignore`. A selected WIRE cycles
+identically (`xschem getprop wire 0 spice_ignore`). `toggle_ignore()` rebuilds the
+selected array itself, so a bare `xschem select instance` suffices (the fixture still
+`redraw`s so the KEY/callback path has spatial state). Undo DEPTH proves single push:
+after one toggle, ONE undo restores the prior value and a SECOND undo removes the
+instance — a double-push would leave the value alive past one undo.
+
+**Verified:** `test_perform_action_toggle_ignore.tcl` (26 checks, full_audit logdir_tests):
+(a) +1 from EACH of scripted / Shift+T key / menu wrapper — the KEY logging ONE not TWO is
+the load-bearing dedup proof — and the WRITABLE effect cycles (instance + wire); (b)
+readonly reject — SCRIPTED branch (the coverage add) TCL_ERROR + verb-named message + no
+mutation + no log, AND the Shift+T key on a read-only cell mutates/logs nothing (gated at
+dispatch by `mutates=1`, tk_messageBox stubbed); (c) byte-exact `xschem toggle_ignore`;
+(d) replay re-executes with no re-log through the seam vs a control unwrapped `source` that
+re-logs; (e) the NO-OP-STILL-LOGS lock (symbol mode `attr==NULL` → no mutation but +1
+line); (f) undo DEPTH (ONE undo restores the prior value, a SECOND removes the instance —
+single push_undo). **Sabotage ×6** (each failing exactly its checks, each restore
+byte-clean vs the atom-12 scratchpad backup, NOT git checkout): (1) neutralise the boundary
+readonly gate → the (b) scripted-readonly checks fail (mutates + logs) + grep S1 gate row;
+(2) bypass the boundary at the BRANCH with an inline gate+effect+log → the runtime `.tcl`
+STILL PASSES while the grep guard's S1 boundary row + S7 scattered-log + S7
+scattered-readonly-reject all fail closed (the grep guard is the load-bearing exclusivity
+lock); (3) bypass the boundary at the KEY (raw `toggle_ignore()`+`return 1`) → the runtime
+`.tcl` STILL PASSES (the raw key still logs via Layer A + is gated via `mutates=1`) while
+ONLY the grep guard's S1 key row fails closed (proving the key routes through the boundary
+and the grep row is load-bearing — the corrected-model finding); (4) re-add a scattered
+branch `log_action("xschem toggle_ignore")` → the (a) exactly-+1 checks double-log + S7
+scheduler scattered-log fails closed; (5) add a spurious `xctx->push_undo()` to the
+run_core arm → the (f) undo-DEPTH check fails (the instance survives the second undo) —
+the no-double-push discriminator; (6) neutralise the effect in run_core → the (a)/(d)/(f)
+effect oracles diverge (spice_ignore stays `""`), log intact. One change-adjacent test
+needed a deliberate UPDATE: `test_toggle_editmode_log`'s (f) "pure-view toggles log
+NOTHING" check listed `xschem toggle_ignore` among the silent verbs — but atom 12 makes the
+branch log UNCONDITIONALLY (the coverage add), so `toggle_ignore` was DROPPED from that
+group (it is a real MUTATOR, silent before only because its branch lacked a log; its
+logging is covered by its own test). The change-adjacent siblings stay green: the eleven
+`test_perform_action_*` + `test_selflog_grep_guard` + `test_actionlog_suppress_gate` +
+`test_action_log_dispatch` + `test_accelerators`; `test_selflog_output`'s only FAILs are
+the pre-existing SIX transform-KEY checks (fail identically on baseline).
+
+**Adversarial review (7-axis refute panel + a completeness critic, Workflow, ultracode,
+against an atom-12 source snapshot): verdict CLEAN, zero confirmed defects, zero findings.**
+Each axis independently tried and FAILED to refute: entry-point completeness / double-log
+(every live path funnels once; the key logs EXACTLY ONE line via the `actionlog_cmd_logged`
+dedup; `toggle_ignore()` is strictly 1:1); readonly gate (no over-reject — the `attr==NULL`
+path is a no-op, not a read-only-safe query, so nothing legitimate is refused — no
+miss/bypass, message verb-named + headless-safe on the branch, the key still gated via
+`mutates=1`); bare-log-form fidelity (byte-exact `xschem toggle_ignore`, replay-suppressed,
+IN S2 / OUT S3); output-drift / grep-guard (S1 branch + key rows, S7 zero-scatter, all fail
+closed on realistic re-scatter); run_core arm + undo (byte-equivalent effect; the core
+alone owns push_undo/set_modify/draw — no double-push, no missing draw, no-op still logs);
+the KEY decision (routing the equivalent registered key is correct, the `return 1` handler
+contract is preserved — `perform_action`'s rc is NOT returned — and `mutates=1` MUST stay to
+avoid a Layer-A phantom-log-on-read-only); and signature/build/C89 (the added code is C89,
+compiles, no unused vars). The completeness critic confirmed the un-attacked surfaces (the
+command palette, the menu-wrapper dedup, the keybindings.csv-vs-`set_input_binding` single
+dispatch, mixed wire+instance selection, the `CAD_SYMBOL_ATTRS` no-op logging) inherit the
+single funnel. Nothing to fix.
+
+**Full-audit baseline diff clean.** The AFTER run (atom-12 binary: 151 pass / 19 fail /
+0 crash) vs the BASELINE run (scheduler.c + callback.c reverted to HEAD, rebuilt: 150 pass /
+22 fail / 0 crash) reconciles exactly. The load-bearing BASELINE-only fails are PRECISELY
+the two atom-12 tests — `test_perform_action_toggle_ignore` (its readonly-reject + branch-log
+checks fail when the migration is absent) and `test_selflog_grep_guard` (the S1 boundary
+rows are absent on reverted source) — proving both load-bearing (they PASS on atom-12). The
+sole real change-adjacent fail, `test_toggle_editmode_log`, was the stale silent-verb
+assertion above, now UPDATED (passes). The remaining AFTER fails are the COMMON pre-existing
+set (the cadence trio test_altf5_ciw/test_cadence_descend_newwin_ro/test_cadence_drag, the
+GUI set test_ciw/test_hi_descend/test_lib_manager_gui/test_reopen_readonly,
+test_lib_sweep/test_phase3_mints/test_wire_split/test_select_at/test_save_as_cellview/
+test_descend_untitled_preserve/test_untitled_reuse, and test_selflog_output's six
+transform-KEY checks) plus the standing WSLg flakes (test_fluid_editing/test_hover_highlight/
+test_palette — each PASSES standalone on the restored atom-12 binary). The eleven sibling
+`test_perform_action_*` + `test_selflog_grep_guard` are ABSENT from the AFTER fail set =
+GREEN. **ZERO new deterministic failures.**
+
+**Next atom:** the friction analysis's headline recommendation — EXTEND the boundary to
+log-on-success (`if(rc == TCL_OK && !actionlog_suppress) core_log_action(...)`) — which
+unblocks the LARGEST failure family (the validating verbs `reset_inst_prop` /
+`replace_symbol` / `load_backup` that fail an argument check before mutating and therefore
+cannot ride the current unconditional-log contract). That is a shared-machinery change, so
+it is its own deliberately-scoped atom (does any migrated verb rely on the unconditional
+log? the bare verbs never fail, so no — but check, don't assume). toggle_ignore was the
+last of the three friction-free verbs worth taking (show_unconnected_pins wraps a shared
+sub-step; redo already self-gates), so the additive-only phase is now spent; the boundary
+extension is the next real step.
+
 *Prepared 2026-07-14, `fluid-editing`. §1–5 analysis only — no code changed. §6 added after
 atom 3 landed; §7 after atom 4; §8 after atom 5; §9 after atom 6; §10 after atom 7; §11 after
 atom 8; §12 after atom 9; §13 after atom 10; §14 after atom 11;
@@ -2704,6 +2904,13 @@ NON-transform verb, the FIRST after the wire-surgery pair; a BARE no-arg verb wh
 core: it combines the break_wires arg-carrying FLAG pattern — but `interactive` 0/1/2 is PRESERVED with `%d`,
 not collapsed — with the trim_wires shared-core sub-step lock, since `attach_labels_to_inst()` is ALSO called
 raw by `show_unconnected_pins` and the Shift+H dialog key; it was a currently-logged MOVE, and the boundary
-ADDED the read-only gate the branch never had).
+ADDED the read-only gate the branch never had); §32 after the TWELFTH (toggle_ignore — the FIRST
+FRICTION-FREE-SCOUTED verb, from the 243-verb friction analysis; a BARE no-arg verb whose boundary is PURELY
+ADDITIVE, adding BOTH a new log site AND the read-only gate the branch never had; the KEY-EQUIVALENCE
+INVERSION of atom 11 — the EQUIVALENT Shift+T key routes THROUGH the boundary, but re-verify OVERTURNED the
+scout premise: the key was NOT a coverage hole (already gated via registry `mutates=1`, already logged via
+Layer A `d->log_cmd`), so routing it is a consistency move whose single-log rests on the `actionlog_cmd_logged`
+dedup and whose `mutates=1` is KEPT to avoid a phantom-log-on-read-only; the no-op-still-logs property is
+preserved).
 Coverage verified in source at HEAD by a 14-way parallel read; do not trust the status table
 without re-checking the cited `file:line` anchors, which drift as the tree moves.*

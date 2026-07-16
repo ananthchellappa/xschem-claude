@@ -147,7 +147,7 @@ to build next.
 
 | Verb | Friction-free? | Verdict |
 |------|:--------------:|---------|
-| `toggle_ignore` | yes | **Recommended.** Bare, always-mutating, no existing log, no existing gate, no early error, 1:1 core (branch + one key). Purely additive migration. |
+| `toggle_ignore` | yes | **Recommended → MIGRATED (atom 12, DONE 2026-07-16).** Bare, always-mutating, no existing *branch* log, no *branch* gate, no early error, 1:1 core (branch + one key). Purely additive migration. (One §6 sub-claim was overturned on re-verify — see Status below.) |
 | `show_unconnected_pins` | yes | Viable fallback. The natural sibling of atom 11's `attach_labels` — but its core wraps the *shared* sub-step `attach_labels_to_inst(2)`, one more moving part to reason about. |
 | `redo` | yes (technically) | Skip. It **already** carries a manual readonly gate and self-logs, so migrating it is a no-op-equivalent move with no coverage win, and it is undo-family composite-adjacent. |
 
@@ -192,6 +192,27 @@ One residual behaviour to lock with a test: in a netlist mode where the ignore a
 (`attr == NULL`), `toggle_ignore()` is a harmless no-op — but under the unconditional log it still emits
 one line. That is the *correct* behaviour (idempotent and replayable, exactly the "no-op still logs"
 property §30 established for `floaters`), and the test should assert it rather than treat it as a bug.
+
+### Status (2026-07-16): atom 12 landed `toggle_ignore` — and one §6 sub-claim was overturned
+
+Atom 12 shipped `toggle_ignore` on the boundary (full record in
+`action_log_coverage_audit_and_core_selflog_refactor.md` §32). The friction-free classification held, but
+re-verifying from source (the discipline lesson 5 preaches) **overturned §6's "the key is a coverage
+hole" sub-claim.** The Shift+T key was NOT unlogged/ungated:
+
+- It was **already read-only-gated** — its registry `ActionDef` carries `mutates=1`, and
+  `dispatch_input_action()` checks `action_id_mutates(id) && readonly_block()` *before* calling the handler.
+- It was **already logged** — dispatch's Layer A emits `d->log_cmd` (`"xschem toggle_ignore"`, from
+  actions.csv, not-`nolog`) once the handler reports the event handled.
+
+So routing the key through the boundary was a **consistency** move (unify the log onto `core_log_action`),
+not a coverage add — and its correctness rests on the `actionlog_cmd_logged` dedup (the boundary's
+`log_action` sets the flag, so the Layer A copy skips → exactly one line). `mutates=1` was **kept** so the
+key stays blocked-before-handler on read-only; removing it would let the Layer A fallback phantom-log a
+*refused* edit. The genuine coverage gap — and the purely additive win — was the menu/script **branch**,
+which had NEITHER a gate NOR a log. Lesson reinforced: a scout's *headline* verdict ("friction-free") can be
+right while a *supporting* claim ("the key is a hole") is wrong; both must be re-verified from source, because
+they justify different parts of the change.
 
 ## 7. Lessons for the engineer who reads this next
 

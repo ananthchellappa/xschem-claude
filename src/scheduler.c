@@ -409,14 +409,36 @@ static int run_core(const char *verb, int argc, const char *argv[])
     attach_labels_to_inst(interactive);
     return TCL_OK;
   }
+  else if(!strcmp(verb, "toggle_ignore")) {
+    /* Refactor B atom 12: the FIRST FRICTION-FREE-SCOUTED verb. The exhaustive
+     * classification in doc/claude/code_analysis/perform_action_boundary_migration_
+     * friction_analysis.md scored ALL 243 mutating scheduler verbs against 6 criteria
+     * and found exactly THREE friction-free ones; toggle_ignore is the cleanest. A
+     * BARE no-arg verb like floaters (atom 10): run_core takes no argc/argv and the
+     * log falls to core_log_action's DEFAULT `xschem %s` form (NO per-verb branch).
+     * The effect cycles the *_ignore attribute (none -> "true" -> "short" -> none) on
+     * the SELECTED instances AND wires, per the current netlist mode
+     * ({spice,verilog,vhdl,tedax,spectre}_ignore). toggle_ignore() (actions.c) OWNS its
+     * own undo (push_undo on the FIRST selected element), set_modify(1) and draw() --
+     * so there is NO push_undo()/draw() here; adding one would DOUBLE-push (the atom-1
+     * no-double-push rule). In a netlist mode where the attribute is undefined
+     * (attr==NULL, e.g. `set netlist_type symbol`) toggle_ignore() is a harmless NO-OP
+     * (no mutation, no push_undo, no draw) -- but the boundary STILL logs one line
+     * unconditionally (the floaters no-op-still-logs property, §30). It is called by
+     * ONLY two entry points -- this branch and the equivalent Shift+T key
+     * (act_toggle_ignore, callback.c), BOTH routed through the boundary -- so it is 1:1
+     * with the verb (NO shared-sub-step lock, unlike attach_labels atom 11). */
+    toggle_ignore();
+    return TCL_OK;
+  }
   return TCL_ERROR; /* unreachable: perform_action is only wired for the verbs above */
 }
 
 /* core_log_action -- the per-verb LOG-FORM half of the perform_action boundary (audit §4,
  * Refactor A step-2 "log at the core" registry SEED, introduced by atom 6). Formats the ONE
  * self-log line for a migrated verb. The bare no-arg verbs (trim_wires/align/rotate_in_place/
- * flip_in_place/flipv_in_place/floaters_from_selected_inst) emit `xschem <verb>` byte-identically to the pre-atom-6
- * `log_action("xschem %s", verb)`; the arg-carrying pivot verbs rotate (atom 6), flip (atom 7) and
+ * flip_in_place/flipv_in_place/floaters_from_selected_inst/toggle_ignore) emit `xschem <verb>` byte-identically to the
+ * pre-atom-6 `log_action("xschem %s", verb)`; the arg-carrying pivot verbs rotate (atom 6), flip (atom 7) and
  * flipv (atom 8) emit their pivot form `xschem rotate|flip|flipv <x0> <y0>`. The pivot is resolved
  * from argv[2]/argv[3] (or the mouse coords as a fallback) IDENTICALLY to run_core's rotate/flip/flipv
  * arm -- and run_core,
@@ -10382,13 +10404,18 @@ static int xschem_cmds_t(Tcl_Interp *interp, int argc, const char *argv[], int *
     }
 
     /* toggle_ignore
-     *   toggle *_ignore=true attribute on selected instances
-     *   * = {spice,verilog,vhdl,tedax} depending on current netlist mode */
+     *   toggle *_ignore={true,short} attribute on selected instances AND wires
+     *   * = {spice,verilog,vhdl,tedax,spectre} depending on current netlist mode.
+     * Refactor B atom 12: routes through the perform_action boundary -- the ONE
+     * readonly gate (this branch NEVER HAD one: a scattered 0041/0051 mutation-on-a-
+     * read-only-cell gap the boundary now CLOSES) + the ONE effect (run_core arm) + the
+     * ONE log site (core_log_action's DEFAULT `xschem %s` bare form -- this branch
+     * logged NOTHING before, so the boundary is a pure COVERAGE ADD) all live in
+     * perform_action. No scattered readonly/log/push_undo here. The equivalent Shift+T
+     * key (act_toggle_ignore, callback.c) routes through the SAME boundary. */
     else if(!strcmp(argv[1], "toggle_ignore"))
     {
-      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
-      toggle_ignore();
-      Tcl_ResetResult(interp);
+      return perform_action("toggle_ignore", argc, argv);
     }
 
     /* touch x1 y1 x2 y2 x0 y0

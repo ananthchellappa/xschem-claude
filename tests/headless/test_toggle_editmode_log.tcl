@@ -128,14 +128,19 @@ check "the 'set enable_stretch'/'set orthogonal_wiring' replay arms self-log NOT
 
 # ---------------------------------------------------------------------------
 # (f) the pure-VIEW toggles still log NOTHING (0066 display policy) -- unchanged.
+#   NB toggle_ignore was DROPPED from this group by Refactor B atom 12: it is a real
+#   MUTATOR (it edits the *_ignore attribute), not a pure-view toggle -- it was silent
+#   only because its scheduler branch lacked a log_action. The atom-12 perform_action
+#   migration now logs `xschem toggle_ignore` UNCONDITIONALLY (even a no-selection
+#   no-op), the coverage add + the no-op-still-logs property (audit §30/§32); that
+#   logging is covered by test_perform_action_toggle_ignore.tcl.
 # ---------------------------------------------------------------------------
 xschem unselect_all
 set nv [llength [loglines]]
 xschem toggle_colorscheme; xschem toggle_colorscheme
 xschem toggle_draw_pixmap; xschem toggle_draw_pixmap
 xschem toggle_show_netlist; xschem toggle_show_netlist
-xschem toggle_ignore                          ;# no selection -> no-op mutator
-check "pure-view toggles (colorscheme/draw_pixmap/show_netlist/ignore) log NOTHING" \
+check "pure-view toggles (colorscheme/draw_pixmap/show_netlist) log NOTHING" \
   [expr {[llength [loglines]] == $nv}] "delta=[expr {[llength [loglines]]-$nv}]"
 
 # ---------------------------------------------------------------------------

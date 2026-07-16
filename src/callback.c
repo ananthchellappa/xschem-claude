@@ -3444,7 +3444,20 @@ void toggle_stretch_cmd(void)
   log_action("xschem set enable_stretch %d", tclgetboolvar("enable_stretch"));
 }
 static int act_toggle_stretch(const ActionEvent *e) { (void)e; toggle_stretch_cmd(); return 1; }
-static int act_toggle_ignore(const ActionEvent *e) { (void)e; toggle_ignore(); return 1; }
+/* Refactor B atom 12: the equivalent Shift+T key routes through the perform_action
+ * boundary (not the raw toggle_ignore()), exactly like the '&'/Alt-U inline keys.
+ * perform_action's rc is DISCARDED -- an ActionEvent handler returns 1 (event handled),
+ * NOT perform_action's TCL_OK(0)/TCL_ERROR(1), so `return perform_action(...)` would
+ * break the handler contract. The readonly gate this key already had (the registry
+ * `mutates=1` field -> dispatch_input_action's readonly_block, kept) blocks it BEFORE
+ * this handler runs on a read-only cell, so perform_action's own gate is redundant
+ * belt-and-suspenders here (it is load-bearing for the menu/script BRANCH, which had
+ * none). The key ALSO already logged `xschem toggle_ignore` via Layer A (d->log_cmd
+ * from actions.csv, not-nolog); routing through the boundary moves that log onto
+ * core_log_action -- and log_action sets actionlog_cmd_logged, so dispatch's Layer A
+ * copy DEDUPS to exactly ONE line. Net: same gate, same single log line, now via the
+ * unified boundary mechanism. */
+static int act_toggle_ignore(const ActionEvent *e) { (void)e; perform_action("toggle_ignore", 0, NULL); return 1; }
 static int act_snap_half(const ActionEvent *e)   { (void)e; view_snap_change(0); return 1; }
 static int act_snap_double(const ActionEvent *e) { (void)e; view_snap_change(1); return 1; }
 static int act_toggle_colorscheme(const ActionEvent *e) {

@@ -146,6 +146,22 @@
 # locks it). The branch NEVER HAD a scheduler_readonly_reject -- attach_labels mutates in every 0/1/2 form
 # (none is a read-only-safe query, unlike check_unique_names §30), so the boundary's generic gate CLOSES a
 # scattered 0041/0051 read-only gap. attach_labels stays in S2 CVERBS, OUT of S3.
+# Refactor B atom 12 (perform_action / toggle_ignore) migrated the FIRST FRICTION-FREE-SCOUTED verb (the
+# exhaustive classification in perform_action_boundary_migration_friction_analysis.md scored all 243 mutating
+# scheduler verbs; toggle_ignore was the cleanest of three). A BARE no-arg verb like floaters: one run_core
+# arm (`toggle_ignore(); return TCL_OK;`, the core owns its OWN push_undo/set_modify/draw -- no double-push)
+# and NO core_log_action branch (it rides the shared bare `xschem %s` DEFAULT). The migration is PURELY
+# ADDITIVE: this branch logged NOTHING and had NO readonly gate before, so the boundary ADDS BOTH (a new S1
+# scheduler boundary row + the readonly gate, a 0041/0051 close). Added an S7 block MIRRORING floaters
+# (scheduler.c + callback.c ZERO scattered `log_action("xschem toggle_ignore")` + scheduler.c ZERO scattered
+# readonly_reject). The KEY-EQUIVALENCE INVERSION of attach_labels (§31): toggle_ignore's Shift+T key is
+# EQUIVALENT (same core, csv NOT-nolog), so it routes THROUGH the boundary -- ADDING the callback.c S1 key row
+# `perform_action("toggle_ignore", 0, NULL)`. Re-verifying from source overturned the scout's premise: the key
+# was NOT a coverage hole -- it was ALREADY gated (registry mutates=1 -> readonly_block) and ALREADY logged
+# (Layer A d->log_cmd from actions.csv), so routing it is a CONSISTENCY move whose correctness rests on the
+# actionlog_cmd_logged DEDUP (the boundary log sets the flag, Layer A skips -> ONE line). The S1 key row is the
+# load-bearing lock: the runtime output is identical whether the key uses Layer A or core_log_action, so only
+# this grep row catches a raw-core key regression. toggle_ignore stays in S2 CVERBS, OUT of S3.
 # Atom 12 (0053 Cadence Ctrl-E window hop) added: the S1 focus_window emit row
 # (utils/cadence_nav.tcl) and the S6 SEAM-EXCLUSIVITY block -- `new_schematic
 # switch` (a shared core: tab-strip/alt2/window-open machinery) must be logged
@@ -197,7 +213,7 @@ set MANIFEST {
     {if\(scheduler_readonly_reject\(interp, verb\)\) return TCL_ERROR;} 1 {perform_action's ONE readonly gate -- covers every migrated verb from every entry point (0041/0051 unification)}
     {if\(!actionlog_suppress\) core_log_action\(verb, argc, argv\);} 1 {perform_action's ONE log site -- delegates the per-verb log FORM to core_log_action (atom 6), gated on the re-entrant suppress counter (foundation §20)}
     {static void core_log_action\(const char \*verb, int argc, const char \*argv\[\]\)} 1 {the per-verb log-form dispatcher (§4 Refactor A step-2 registry SEED, atom 6): bare verbs -> "xschem %s"; the arg-carrying pivot verbs rotate/flip/flipv -> the pivot form "xschem <verb> x0 y0" (rotate atom 6, flip atom 7, flipv atom 8)}
-    {log_action\("xschem %s", verb\);}                1 {core_log_action's BARE-verb form -- trim_wires/align/rotate_in_place/flip_in_place/flipv_in_place/floaters_from_selected_inst all self-log through here, byte-identical to the pre-atom-6 perform_action log site}
+    {log_action\("xschem %s", verb\);}                1 {core_log_action's BARE-verb form -- trim_wires/align/rotate_in_place/flip_in_place/flipv_in_place/floaters_from_selected_inst/toggle_ignore all self-log through here, byte-identical to the pre-atom-6 perform_action log site}
     {log_action\("xschem break_wires 1"}              1 {break_wires REMOVE form now lives in core_log_action (atom 9), NOT the scheduler branch -- exactly ONE such site in scheduler.c (S7 pins exclusivity); the literal `break_wires 1"` (space+1 before the quote) does NOT match the bare `break_wires")` form}
     {log_action\("xschem break_wires"\)}              1 {break_wires BARE form now lives in core_log_action (atom 9), NOT the scheduler branch -- exactly ONE such site in scheduler.c (S7 pins exclusivity); the `break_wires"\)` (quote then paren) does NOT match `break_wires 1"` nor break_wires_at_pins/_at_point/_at_attach_points}
     {log_action\("xschem attach_labels %}             1 {attach_labels VALUE form now lives in core_log_action (atom 11) -- `log_action("xschem attach_labels %d", atoi(argv[2]))` PRESERVES the 0/1/2 value (unlike break_wires which collapses nonzero to 1); byte-identical to the old log_action_argv for the canonical integer arg every live path emits, strictly MORE faithful for a non-canonical token (`007`->`7`); exactly ONE such site in scheduler.c (S7 pins exclusivity); the literal `attach_labels %` (space+%) does NOT match the bare `attach_labels")` form}
@@ -217,6 +233,7 @@ set MANIFEST {
     {log_action\("xschem create_instance"}            1 {create_instance branch}
     {return perform_action\("floaters_from_selected_inst", argc, argv\);} 1 {floaters_from_selected_inst branch routes through the perform_action boundary (Refactor B atom 10 -- the SECOND non-transform verb, a BARE no-arg verb): run_core calls floaters_from_selected_inst() which OWNS its own push_undo/set_modify/draw (no double-push); the log is the shared bare `xschem %s` core_log_action DEFAULT line (no per-verb branch); the boundary ADDS the readonly gate this branch never had (a 0041/0051 close). No scattered readonly/log/push_undo here}
     {return perform_action\("attach_labels", argc, argv\);} 1 {attach_labels branch routes through the perform_action boundary (Refactor B atom 11 -- the THIRD non-transform verb; the arg is a FLAG `interactive` (0/1/2, value PRESERVED not collapsed), not a pivot; NO mid-gesture split): run_core + core_log_action read `interactive` from argc/argv; attach_labels_to_inst() OWNS its own push_undo (via place_symbol) + set_modify + draw, so no double-push; the boundary ADDS the readonly gate this branch never had (a 0041/0051 close -- every 0/1/2 form mutates); the SHARED core is ALSO a raw netlisting sub-step (show_unconnected_pins) + the Shift+H dialog key, both off the boundary. No scattered readonly/log/push_undo here}
+    {return perform_action\("toggle_ignore", argc, argv\);} 1 {toggle_ignore branch routes through the perform_action boundary (Refactor B atom 12 -- the FIRST FRICTION-FREE-SCOUTED verb, a BARE no-arg verb): run_core calls toggle_ignore() which OWNS its own push_undo (on the FIRST selected element) + set_modify + draw (no double-push); the log is the shared bare `xschem %s` core_log_action DEFAULT line (no per-verb branch); the boundary is PURELY ADDITIVE -- this branch logged NOTHING and had NO readonly gate before, so it ADDS BOTH (a 0041/0051 close). The equivalent Shift+T key routes through the SAME boundary. No scattered readonly/log/push_undo here}
     {log_action\("xschem print_hilight_net}           1 {print_hilight_net branch}
     {log_action\("xschem exit closewindow force"}     2 {exit hook (both terminating sites)}
     {log_action\("xschem set cadgrid}                 1 {set cadgrid resolved-value}
@@ -262,6 +279,7 @@ set MANIFEST {
     {perform_action\("flipv", 4, av\);}               2 {the TWO callback.c standalone flipv (pivot form) entry points route through the perform_action boundary (Refactor B atom 8, the THIRD and LAST arg-carrying verb, mirror of flip), each passing its own pivot in av[2]/av[3]: the Shift-V key standalone apply + the verb-noun deferred apply (MENUSTARTROTATE PENDING_TR_FLIPV). Count is TWO, NOT three -- flipv has NO group form (no standalone_group_transform arm), unlike rotate/flip; the mid-gesture STARTMOVE/STARTCOPY arms stay raw}
     {perform_action\("break_wires", 0, NULL\);}       1 {'!' inline key (bare split, remove=0) routes through the perform_action boundary (Refactor B atom 9): no inline break_wires_at_pins/log_action; the semaphore + readonly_block key guards stay}
     {perform_action\("break_wires", 3, av\);}         1 {Ctrl-! inline key (split-and-remove) routes through the perform_action boundary (Refactor B atom 9): av[2]="1" carries the remove FLAG (the arg is a flag, not a pivot); no inline break_wires_at_pins/log_action}
+    {perform_action\("toggle_ignore", 0, NULL\);}     1 {Shift+T key (act_toggle_ignore) routes through the perform_action boundary (Refactor B atom 12): perform_action's rc is DISCARDED and the handler returns 1 (event-handled contract, NOT perform_action's TCL_OK/ERROR). The key was ALREADY readonly-gated (registry mutates=1 -> readonly_block) + already logged via Layer A (d->log_cmd, actions.csv not-nolog); routing through the boundary unifies the log onto core_log_action -- log_action sets actionlog_cmd_logged so dispatch's Layer A copy DEDUPS to ONE line. This S1 row is the load-bearing lock that the EQUIVALENT key routes through the boundary (the runtime output is identical either way, so only this grep row catches a raw-core regression). No inline toggle_ignore()/log_action}
     {log_action\("xschem pan %}                       1 {drag-pan END}
     {log_action\("xschem zoom_box %}                  1 {zoom-drag END}
     {(?n)^\s*av\[ac\+\+\] = "xschem"; av\[ac\+\+\] = "paste";} 1 {paste/merge drop replay line (atom 9 / 0069)}
@@ -410,7 +428,7 @@ check "S1d exactly 2 net_hilight_apply invocation sites in apply_hilight.tcl (bo
 set CVERBS {
   cut delete copy undo redo save reload saveas align trim_wires break_wires
   flip flipv rotate flip_in_place flipv_in_place rotate_in_place
-  change_elem_order check_unique_names create_instance
+  change_elem_order check_unique_names create_instance toggle_ignore
   floaters_from_selected_inst print_hilight_net attach_labels add_pin_stubs
   setprop unhilight_all hilight_net_interactive unhilight_net_interactive
   make_symbol make_sch make_sch_from_sel descend descend_symbol go_back
@@ -801,6 +819,30 @@ check "S7 callback.c: NO scattered log_action(\"xschem attach_labels...\") (the 
 check "S7 scheduler.c: NO scattered scheduler_readonly_reject(...,\"attach_labels\") (the boundary's generic gate covers the verb -- the branch never had one)" \
   [expr {[rxcount $sched {scheduler_readonly_reject\(interp, "attach_labels"\)}] == 0}] \
   "got=[rxcount $sched {scheduler_readonly_reject\(interp, "attach_labels"\)}]"
+# toggle_ignore (Refactor B atom 12 -- the FIRST FRICTION-FREE-SCOUTED verb, a BARE no-arg verb like
+# floaters/trim_wires): the readonly gate + the log site live SOLELY in perform_action. toggle_ignore is
+# BARE (no pivot, no flag), so its log is the shared `xschem %s` core_log_action DEFAULT line -- there is
+# NO per-verb `log_action("xschem toggle_ignore")` anywhere (contrast the EXACTLY-N pivot/flag verbs
+# rotate/flip/flipv/break_wires/attach_labels whose forms live in core_log_action). So scheduler.c AND
+# callback.c must have ZERO such literal. UNLIKE floaters (no key), toggle_ignore HAS a key -- but the
+# Shift+T key (act_toggle_ignore) routes THROUGH perform_action, so it carries NO `log_action("xschem
+# toggle_ignore")` C literal either (its pre-migration Layer A log came from actions.csv `d->log_cmd`, NOT a
+# C literal, and now DEDUPS against the boundary). The callback.c ZERO check thus locks that the key routes
+# through the boundary and never self-logs a scattered literal -- a re-scattered C literal in either file
+# fails closed. The branch NEVER had a scheduler_readonly_reject; the boundary's generic gate now covers it
+# (a 0041/0051 close -- purely additive, this branch had NEITHER a gate NOR a log before), so a re-scattered
+# per-verb readonly_reject also fails closed. toggle_ignore() is 1:1 with the verb (called ONLY by the branch
+# + the key, both on the boundary), so unlike attach_labels there is no sub-step to lock. toggle_ignore stays
+# in S2 CVERBS, OUT of S3.
+check "S7 scheduler.c: NO scattered log_action(\"xschem toggle_ignore\") (branch delegates to the boundary; the log is the shared bare %s form)" \
+  [expr {[rxcount $sched {log_action\("xschem toggle_ignore"}] == 0}] \
+  "got=[rxcount $sched {log_action\("xschem toggle_ignore"}]"
+check "S7 callback.c: NO scattered log_action(\"xschem toggle_ignore\") (Shift+T key routes through the boundary; its Layer A log is from actions.csv, not a C literal -- a re-scatter fails closed)" \
+  [expr {[rxcount $cbtext {log_action\("xschem toggle_ignore"}] == 0}] \
+  "got=[rxcount $cbtext {log_action\("xschem toggle_ignore"}]"
+check "S7 scheduler.c: NO scattered scheduler_readonly_reject(...,\"toggle_ignore\") (the boundary's generic gate covers the verb -- the branch never had one)" \
+  [expr {[rxcount $sched {scheduler_readonly_reject\(interp, "toggle_ignore"\)}] == 0}] \
+  "got=[rxcount $sched {scheduler_readonly_reject\(interp, "toggle_ignore"\)}]"
 check "S7 perform_action is defined EXACTLY once" \
   [expr {[rxcount $sched {int perform_action\(const char \*verb,}] == 1}] \
   "got=[rxcount $sched {int perform_action\(const char \*verb,}]"
