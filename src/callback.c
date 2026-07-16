@@ -2589,7 +2589,23 @@ static int check_menu_start_commands(int state, double c_snap, int mx, int my)
        * ROTATELOCAL x2 + FLIP|ROTATELOCAL + END (a net vertical mirror), so it must NOT nest
        * inside the shared START/END below. */
       perform_action("flipv_in_place", 0, NULL);
+    } else if(t == PENDING_TR_ROTATE) {
+      /* PENDING_TR_ROTATE pivot verb (verb-noun deferred apply): the deferred PIVOT rotate crosses
+       * the boundary like the _IP cases above, but carries the click-point pivot (mx/my_double_save,
+       * seeded just above from mousex/y_snap). PULLED OUT of the shared move_objects(START) … switch
+       * … move_objects(END) block below (Refactor B atom 6): perform_action->run_core owns its own
+       * rebuild+seed-pivot+START+ROTATE+END and must NOT nest inside the outer START/END. run_core
+       * re-seeds mx/my_double_save = mousex/y_snap from the argv pivot, so the effect is unchanged.
+       * The flip/flipv PIVOT cases stay in the shared block (their own atom). */
+      char sx[64], sy[64]; const char *av[4];
+      my_snprintf(sx, S(sx), "%.16g", xctx->mx_double_save);
+      my_snprintf(sy, S(sy), "%.16g", xctx->my_double_save);
+      av[0] = "xschem"; av[1] = "rotate"; av[2] = sx; av[3] = sy;
+      perform_action("rotate", 4, av);
     } else {
+      /* remaining PIVOT transforms (PENDING_TR_FLIP / PENDING_TR_FLIPV) -- share one START/END,
+       * self-log raw. PENDING_TR_ROTATE was pulled out to the boundary above (atom 6); the two
+       * flip pivot forms follow in their own atom. */
       move_objects(START,0,0,0);
       switch(t) {
         case PENDING_TR_FLIP:
@@ -2597,13 +2613,9 @@ static int check_menu_start_commands(int state, double c_snap, int mx, int my)
           log_action("xschem flip %.16g %.16g", xctx->mx_double_save, xctx->my_double_save);
           break;
         case PENDING_TR_FLIPV:
+        default:
           move_objects(ROTATE,0,0,0); move_objects(ROTATE,0,0,0); move_objects(FLIP,0,0,0);
           log_action("xschem flipv %.16g %.16g", xctx->mx_double_save, xctx->my_double_save);
-          break;
-        case PENDING_TR_ROTATE:
-        default:
-          move_objects(ROTATE,0,0,0);
-          log_action("xschem rotate %.16g %.16g", xctx->mx_double_save, xctx->my_double_save);
           break;
       }
       move_objects(END,0,0,0);
@@ -4754,9 +4766,11 @@ static int connected_drag_group_transform(void)
  * selected, transform the WHOLE selection as one rigid body about its grid-snapped bounding-box
  * centre (Cadence "treat the selection as one object" -- an in-place group rotate/flip), NOT each
  * object spun about its own origin (the old unconditional ROTATELOCAL). A single object keeps the
- * per-object in-place transform about its own 0,0. `what` is ROTATE or FLIP. Self-logs the matching
- * replay verb (group -> `xschem rotate|flip x y`; single -> `xschem rotate_in_place|flip_in_place`).
- * Caller has ensured lastsel>0 and passed the readonly guard. */
+ * per-object in-place transform about its own 0,0. `what` is ROTATE or FLIP. Records the matching
+ * replay verb (group ROTATE -> the perform_action boundary logs `xschem rotate x y`, Refactor B
+ * atom 6; group FLIP -> raw `xschem flip x y`, its own atom; single -> the boundary's
+ * `xschem rotate_in_place|flip_in_place`, atoms 3/4). Caller has ensured lastsel>0 and passed the
+ * readonly guard. */
 static void standalone_group_transform(int what, double c_snap)
 {
   if(connected_drag_group_transform()) {
@@ -4764,12 +4778,30 @@ static void standalone_group_transform(int what, double c_snap)
     calc_drawing_bbox(&bb, 1);
     px = my_round(((bb.x1 + bb.x2) * 0.5) / c_snap) * c_snap;
     py = my_round(((bb.y1 + bb.y2) * 0.5) / c_snap) * c_snap;
-    xctx->mx_double_save = xctx->mousex_snap = px;
-    xctx->my_double_save = xctx->mousey_snap = py;
-    move_objects(START,0,0,0);
-    move_objects(what,0,0,0);           /* group form: ROTATELOCAL dropped -> shared pivot (x1,y1) */
-    move_objects(END,0,0,0);
-    log_action("xschem %s %.16g %.16g", (what & ROTATE) ? "rotate" : "flip", px, py);
+    if(what & ROTATE) {
+      /* GROUP rotate (issue 0116): the whole selection spins rigidly about the grid-snapped bbox
+       * centre px,py. Route through the mutation boundary (Refactor B atom 6) -- perform_action->
+       * run_core owns the readonly gate + the rebuild+seed-pivot(px,py)+START+ROTATE+END effect
+       * (ROTATELOCAL dropped -> shared pivot, exactly the old group form) + the ONE
+       * `xschem rotate px py` log (core_log_action). The pivot is passed as argv[2]/argv[3];
+       * run_core re-seeds mx/my_double_save = mousex/y_snap = px,py from it. readonly was already
+       * refused by the caller (readonly_block at the Alt-R key). */
+      char sx[64], sy[64]; const char *av[4];
+      my_snprintf(sx, S(sx), "%.16g", px);
+      my_snprintf(sy, S(sy), "%.16g", py);
+      av[0] = "xschem"; av[1] = "rotate"; av[2] = sx; av[3] = sy;
+      perform_action("rotate", 4, av);
+    } else {
+      /* GROUP flip (what == FLIP): stays RAW until its own pivot-form migration (atom 7). Keeps the
+       * `%s` form (no literal `xschem flip %` string) so flip's grep-guard S1 count is untouched
+       * by atom 6 -- only rotate migrates here. */
+      xctx->mx_double_save = xctx->mousex_snap = px;
+      xctx->my_double_save = xctx->mousey_snap = py;
+      move_objects(START,0,0,0);
+      move_objects(what,0,0,0);         /* group form: ROTATELOCAL dropped -> shared pivot (x1,y1) */
+      move_objects(END,0,0,0);
+      log_action("xschem %s %.16g %.16g", "flip", px, py);
+    }
   } else {
     /* single-object standalone in-place transform: route through the mutation boundary
      * (Refactor B atom 3 rotate_in_place, atom 4 flip_in_place). perform_action owns the
@@ -5650,12 +5682,19 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
             xctx->menu_pending_transform = PENDING_TR_ROTATE;
             statusmsg("Rotate: click an object to rotate", 1);
           } else {
-            xctx->mx_double_save=xctx->mousex_snap;
-            xctx->my_double_save=xctx->mousey_snap;
-            move_objects(START,0,0,0);
-            move_objects(ROTATE,0,0,0);
-            move_objects(END,0,0,0);
-            log_action("xschem rotate %.16g %.16g", xctx->mx_double_save, xctx->my_double_save);
+            /* standalone Shift-R (single-inline apply, no group form): route through the mutation
+             * boundary (Refactor B atom 6). perform_action->run_core owns the readonly gate + the
+             * rebuild+seed-pivot+START+ROTATE+END effect + the ONE `xschem rotate x y` log
+             * (core_log_action). The pivot is the mouse-snap point, passed as argv[2]/argv[3];
+             * run_core re-seeds mx/my_double_save = mousex/y_snap from it exactly as this block
+             * did. readonly was already refused by readonly_block() at the top of case 'R' (which
+             * also guards the raw gesture arms + the arming path). issue 0068's "Shift-R logs
+             * nothing" note is now stale -- Shift-R self-logs its pivot form via the boundary. */
+            char sx[64], sy[64]; const char *av[4];
+            my_snprintf(sx, S(sx), "%.16g", xctx->mousex_snap);
+            my_snprintf(sy, S(sy), "%.16g", xctx->mousey_snap);
+            av[0] = "xschem"; av[1] = "rotate"; av[2] = sx; av[3] = sy;
+            perform_action("rotate", 4, av);
           }
         }
 
