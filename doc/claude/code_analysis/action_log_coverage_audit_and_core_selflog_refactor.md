@@ -2571,6 +2571,115 @@ opener like `create_instance`), and whose core does not route OTHER verbs throug
 composite-hazard verbs (delete / cut / copy / save / reload) whose shared cores are called by abort/merge/
 teardown paths (the §4 step-1 `delete()`-is-NOT-1:1 lesson).
 
+## 31. Refactor B ATOM 11 (2026-07-16): the ELEVENTH per-verb migration — the THIRD non-transform verb, the FIRST with a SHARED (sub-step) core (`attach_labels`)
+
+`attach_labels` (the Symbol-menu verb: `xschem attach_labels [interactive]` attaches net-name labels to the
+pins of the SELECTED component instances) now routes through the `perform_action(verb, argc, argv)` boundary.
+Atom 11 is deliberately a LOWER-friction atom than the suggested `reset_inst_prop`/`check_unique_names`
+class: it has a REAL 1:1-ish core fn (`attach_labels_to_inst(int interactive)`, actions.c:2167 — NO inline-
+effect extraction) and it was ALREADY logged (a currently-logged MOVE, not a new log site). It combines two
+patterns from earlier atoms: it is an **arg-carrying FLAG verb like break_wires (atom 9)** AND its core is a
+**SHARED sub-step like trim_wires (atom 1)** — the first atom to be both at once.
+
+**`run_core` grew an `attach_labels` arm** (byte-identical to the old scheduler standalone branch effect):
+`int interactive = 0; if(argc > 2) interactive = atoi(argv[2]); attach_labels_to_inst(interactive);`. **NO
+`push_undo()`/`draw()`** — the core `attach_labels_to_inst()` OWNS its own undo (it calls `place_symbol(...,
+1 /*to_push_undo*/)` which pushes on the first placed label), `set_modify(1)` (actions.c:2316) and `draw()`
+(actions.c:2322–2326). Adding one would DOUBLE-push (the atom-1 no-double-push rule, re-confirmed — locked by
+test (f), the undo-DEPTH discriminator: ONE undo removes the labels, a SECOND removes the instance).
+
+**FLAG FIDELITY with a PRESERVED value (the break_wires §29 template, extended).** `core_log_action` grew an
+`attach_labels` branch that reads `interactive` from `argv[2]` IDENTICALLY to `run_core`. UNLIKE break_wires
+(whose `break_wires_at_pins()` reads `remove` as a BOOLEAN, so any nonzero canonicalizes to `1`),
+attach_labels's `interactive` is **0/1/2 with DISTINCT meanings** (0 = place `lab_pin`, 1 = interactive
+dialog, 2 = the netlisting `lab_show` mode), so the actual value is **PRESERVED with `%d`**, not collapsed:
+`if(argc > 2) log_action("xschem attach_labels %d", atoi(argv[2])); else log_action("xschem attach_labels");`.
+For the canonical decimal-integer arg every live path emits (the menu/palette `xschem attach_labels`, scripted
+`xschem attach_labels <n>`), this is byte-identical to the old `log_action_argv(argc, argv)` (a `Tcl_Merge` of
+the verbatim argv); for a non-canonical or multi-token argv (`007` → `7`, `+2` → `2`, `2 foo` → `2`) the `%d`
+form is STRICTLY MORE faithful, because it logs exactly the value the effect's `atoi(argv[2])` consumed, so the
+logged line can never diverge from the applied effect (the atom-9 flag-fidelity rule — not a regression, since
+no menu/palette/key path ever emits a non-canonical or extra arg, and replay re-executes to the identical
+interactive value regardless). The adversarial panel classed this canonicalization a nit/not-a-defect on all
+three axes that raised it. Test (c) locks byte-exact `xschem attach_labels` AND `xschem attach_labels 2`; test (a) locks
+that the `2` form logs the `2` line and NOT the bare, and vice-versa (mutually exclusive counts).
+
+**THE SHARED-CORE SUB-STEP LOCK — `attach_labels_to_inst()` IS the verb, but is ALSO a raw sub-step (the
+trim_wires §21 template).** Grepping every caller shows `attach_labels_to_inst()` is NOT strictly 1:1 (unlike
+break_wires/floaters): besides this verb's scheduler branch it is called RAW by (1) `show_unconnected_pins()`
+(netlist.c:1608, `attach_labels_to_inst(2)` — the netlisting-adjacent "Show unconnected pins" sub-step,
+reached by `xschem show_unconnected_pins`; NB the raw caller is `show_unconnected_pins`, NOT the main `xschem
+netlist` flow — the candidate list said "netlist", source said `show_unconnected_pins`, the atom-10 re-verify-
+from-source lesson applied) and (2) the **Shift+H interactive-DIALOG key** (`act_attach_labels`, callback.c:3418
+→ `attach_labels_to_inst(1)`, a registered action, `actions.csv:125` marked `nolog=1` because the dialog
+variant is behaviourally NON-equivalent to the scheduler `xschem attach_labels` = interactive 0 form). Both
+callers stay BELOW the boundary — raw core, no `perform_action`, no self-log — exactly the trim_wires-is-a-sub-
+step-of-align pattern (the boundary wraps the VERB DISPATCH, not the C fn). Test (e) drives BOTH raw paths
+(`xschem show_unconnected_pins` and the Shift+H key via `xschem callback .drw 2 … 72 0 0 0` with the modal
+dialog proc stubbed) and locks that each MUTATES (proving it ran) yet emits ZERO `xschem attach_labels` lines.
+
+**Three entry points — the scheduler branch crosses, the key + netlist sub-step stay off.** (1) the **scheduler
+branch** → `return perform_action("attach_labels", argc, argv)`, dropping its own `!xctx` guard (the boundary
+owns it), its inline `attach_labels_to_inst()` call, and its `log_action_argv(argc, argv)` self-log; reached by
+the hand-written Symbol menu (`xschem.tcl:14341` `-command "xschem attach_labels"`, interactive=0, NOT
+`menu_action_logged`-wrapped) and the command palette (runs the `actions.csv` command raw). (2) the **Shift+H
+key** stays OFF the boundary (registered csv-nolog dialog path — a separate pre-existing concern; its own
+read-only behaviour is UNCHANGED by this atom, deliberately, since it is a registered-action dialog path, not
+an inline legacy-switch key like break_wires's `!`/Ctrl-!). (3) the **`show_unconnected_pins` netlist sub-step**
+stays BELOW the boundary. Confirmed keysym `'H'` (`set_input_binding(DEV_KEY, 'H', 0, …)`) — the old `case 'H'`
+is fully migrated to the binding table; no legacy-switch double-dispatch.
+
+**The read-only decision — the boundary ADDS a gate the branch NEVER HAD (the floaters §30 template).** The
+old branch had NO `scheduler_readonly_reject`: on a read-only cell `xschem attach_labels` would place label
+instances, `push_undo`, `set_modify` — a scattered 0041/0051-class mutation-on-a-read-only-cell gap. The
+boundary's ONE gate now CLOSES it (`xschem attach_labels` / `xschem attach_labels 2` REFUSE on a read-only
+cell: `TCL_ERROR`, verb-named message, no mutation, no log). This is safe precisely BECAUSE attach_labels has
+NO read-only-safe form — **every** `interactive` value MUTATES (0/1/2 all reach `place_symbol`; none is a
+query-only path like `check_unique_names 0` that the all-or-nothing gate would OVER-reject, §30). Verified by
+reading `attach_labels_to_inst()` end-to-end: there is no highlight/ERC-only branch. This is the one deliberate
+user-facing delta of the atom — a bug fix. The WRITABLE effect + log are byte-identical to pre-migration.
+
+**Grep guard (test_selflog_grep_guard.tcl).** attach_labels had NO dedicated S1 row before (its self-log was
+`log_action_argv(argc, argv)`, a literal shared by several verbs). This atom ADDED three S1 rows (the boundary
+branch row + the two `core_log_action` VALUE/BARE form rows) and an **S7 block MIRRORING break_wires** (arg-
+carrying, TWO forms): scheduler.c EXACTLY ONE `log_action("xschem attach_labels %` (value form) + EXACTLY ONE
+`log_action("xschem attach_labels")` (bare form) + EXACTLY TWO total, callback.c ZERO, scheduler.c ZERO
+scattered `scheduler_readonly_reject(...,"attach_labels")`. The literals `attach_labels %` (space+%) and
+`attach_labels")` (quote+paren) are mutually exclusive and counted independently (a re-scatter of EITHER fails
+closed); neither matches `attach_labels_to_inst` (an `_` follows). attach_labels was ALREADY in S2 CVERBS
+(kept), stays OUT of S3.
+
+**Effect oracle (byte-identical before/after atom 11 — atom 11 only MOVES the log site + ADDS the gate):** a
+`devices/res.sym` resistor selected at the origin has TWO pins (P 0,−30, M 0,30), both unconnected (no wires),
+so `xschem attach_labels` places TWO `lab_pin` instances → **instance count 1 → 3**; `xschem attach_labels 2`
+places TWO `lab_show` instances → same +2. Determined empirically on the pre-migration binary. `attach_labels_
+to_inst()` rebuilds the selected array itself (`rebuild_selected_array()`, actions.c:2197), so a bare `xschem
+select instance` suffices, but the fixture still forces a `redraw` so the pin-vs-wire skip test's spatial hash
+is populated headless.
+
+**Verified:** `test_perform_action_attach_labels.tcl` (27 checks, full_audit logdir_tests): (a) +1 from EACH of
+script bare / script `2` / menu wrapper + the effect applies (+2 label instances); (b) read-only reject from
+the scripted path (TCL_ERROR, verb-named message, NO mutation, NO log — the 0041/0051 close) for BOTH forms;
+(c) byte-exact `xschem attach_labels` / `xschem attach_labels 2` (the VALUE is PRESERVED); (d) replay re-
+executes with no re-log through the seam vs a control unwrapped `source` that re-logs; (e) the SHARED-CORE
+SUB-STEP lock — `xschem show_unconnected_pins` (raw `attach_labels_to_inst(2)`) AND the Shift+H interactive key
+(raw `attach_labels_to_inst(1)`, dialog stubbed) each MUTATE but emit ZERO `xschem attach_labels`; (f) undo
+DEPTH — ONE undo removes the labels, a SECOND removes the instance (single push_undo, no double). **Sabotage
+×5** (each failing exactly its checks, each restore byte-clean vs the atom-11 scratchpad backup, NOT git
+checkout): (1) neutralise the boundary readonly gate → the (b) read-only checks fail (scripted attach mutates +
+logs on a read-only cell); (2) bypass the boundary at the branch with an inline form that KEEPS a gate + effect
++ log → the runtime `.tcl` STILL passes while the grep guard's S1 boundary row + S7 EXACTLY-ONE/TWO all fail
+closed (proving the grep guard is the load-bearing lock for boundary exclusivity); (3) re-add a scattered
+scheduler `log_action("xschem attach_labels")` → the (a) exactly-+1 checks fail (double-log) and S7 EXACTLY-TWO
+(got 3) fails closed; (4) drop the `core_log_action` attach_labels branch (falls to the bare `%s` default) →
+the `2` form's (a)/(c) FLAG-fidelity checks diverge (`xschem attach_labels 2` logs bare `xschem attach_labels`)
+and the S1/S7 `%`-form rows fail closed; (5) route the netlist.c raw sub-step through the boundary verb
+(`Tcl_GlobalEval(interp, "xschem attach_labels 2")` in `show_unconnected_pins`) → the (e) sub-step lock fails
+(`xschem show_unconnected_pins` now emits `xschem attach_labels 2`). The change-adjacent siblings stay green:
+the ten other `test_perform_action_*` + `test_selflog_grep_guard`; `test_selflog_output`'s attach_labels
+self-log check passes (its only FAILs are the pre-existing six transform-KEY checks that fail identically on
+baseline).
+
 *Prepared 2026-07-14, `fluid-editing`. §1–5 analysis only — no code changed. §6 added after
 atom 3 landed; §7 after atom 4; §8 after atom 5; §9 after atom 6; §10 after atom 7; §11 after
 atom 8; §12 after atom 9; §13 after atom 10; §14 after atom 11;
@@ -2590,6 +2699,11 @@ the wire-surgery sibling of trim_wires; the arg is a FLAG `0/1` not a coordinate
 mid-gesture split, and `break_wires_at_pins` is 1:1 with the verb while `break_wires_at_point`/`wire_cut`
 stays a separate gesture off the boundary); §30 after the TENTH (floaters_from_selected_inst — the SECOND
 NON-transform verb, the FIRST after the wire-surgery pair; a BARE no-arg verb whose log is the shared
-`xschem %s` default, whose core owns its own undo, and whose boundary gate CLOSES a scattered read-only gap).
+`xschem %s` default, whose core owns its own undo, and whose boundary gate CLOSES a scattered read-only gap);
+§31 after the ELEVENTH (attach_labels — the THIRD non-transform verb, and the FIRST with a SHARED sub-step
+core: it combines the break_wires arg-carrying FLAG pattern — but `interactive` 0/1/2 is PRESERVED with `%d`,
+not collapsed — with the trim_wires shared-core sub-step lock, since `attach_labels_to_inst()` is ALSO called
+raw by `show_unconnected_pins` and the Shift+H dialog key; it was a currently-logged MOVE, and the boundary
+ADDED the read-only gate the branch never had).
 Coverage verified in source at HEAD by a 14-way parallel read; do not trust the status table
 without re-checking the cited `file:line` anchors, which drift as the tree moves.*

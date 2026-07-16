@@ -129,6 +129,23 @@
 # sub-step lock to add. NB the branch NEVER HAD a scheduler_readonly_reject -- floaters mutates, so the
 # boundary's generic gate CLOSES a scattered 0041/0051 read-only gap (it now refuses on a read-only cell).
 # floaters stays in S2 CVERBS, OUT of S3.
+# Refactor B atom 11 (perform_action / attach_labels) migrated the THIRD non-transform verb. Its arg is a
+# FLAG `interactive` read from argv[2] (like break_wires) but 0/1/2 carry DISTINCT meanings, so its run_core
+# arm PRESERVES the value -- `int interactive=0; if(argc>2) interactive=atoi(argv[2]); attach_labels_to_inst(
+# interactive);` (the core OWNS its own push_undo via place_symbol/set_modify/draw -- no double-push) -- and
+# its core_log_action branch emits TWO forms (`xschem attach_labels %d` for argc>2 preserving the value,
+# `xschem attach_labels` for argc==2), reproducing the old branch's log_action_argv byte-for-byte. MOVED the
+# branch's self-log OFF its old `log_action_argv(argc, argv)` (which the branch shared with several other
+# verbs, so it had NO dedicated S1 row) onto the boundary row (`return perform_action("attach_labels", argc,
+# argv)`), added the two core_log_action VALUE/BARE S1 rows, and added an S7 block MIRRORING break_wires
+# (arg-carrying, TWO forms): scheduler.c EXACTLY ONE of each form + EXACTLY TWO total, callback.c ZERO,
+# scheduler.c ZERO scattered readonly_reject. UNLIKE break_wires/floaters, attach_labels_to_inst() is NOT
+# strictly 1:1 (like trim_wires atom 1): it is ALSO called RAW below the boundary by show_unconnected_pins()
+# (netlist.c, a netlisting sub-step) and by the Shift+H interactive-DIALOG key (act_attach_labels, registered
+# csv-nolog non-equivalent path) -- both stay off the boundary and never self-log (the runtime .tcl case (e)
+# locks it). The branch NEVER HAD a scheduler_readonly_reject -- attach_labels mutates in every 0/1/2 form
+# (none is a read-only-safe query, unlike check_unique_names §30), so the boundary's generic gate CLOSES a
+# scattered 0041/0051 read-only gap. attach_labels stays in S2 CVERBS, OUT of S3.
 # Atom 12 (0053 Cadence Ctrl-E window hop) added: the S1 focus_window emit row
 # (utils/cadence_nav.tcl) and the S6 SEAM-EXCLUSIVITY block -- `new_schematic
 # switch` (a shared core: tab-strip/alt2/window-open machinery) must be logged
@@ -183,6 +200,8 @@ set MANIFEST {
     {log_action\("xschem %s", verb\);}                1 {core_log_action's BARE-verb form -- trim_wires/align/rotate_in_place/flip_in_place/flipv_in_place/floaters_from_selected_inst all self-log through here, byte-identical to the pre-atom-6 perform_action log site}
     {log_action\("xschem break_wires 1"}              1 {break_wires REMOVE form now lives in core_log_action (atom 9), NOT the scheduler branch -- exactly ONE such site in scheduler.c (S7 pins exclusivity); the literal `break_wires 1"` (space+1 before the quote) does NOT match the bare `break_wires")` form}
     {log_action\("xschem break_wires"\)}              1 {break_wires BARE form now lives in core_log_action (atom 9), NOT the scheduler branch -- exactly ONE such site in scheduler.c (S7 pins exclusivity); the `break_wires"\)` (quote then paren) does NOT match `break_wires 1"` nor break_wires_at_pins/_at_point/_at_attach_points}
+    {log_action\("xschem attach_labels %}             1 {attach_labels VALUE form now lives in core_log_action (atom 11) -- `log_action("xschem attach_labels %d", atoi(argv[2]))` PRESERVES the 0/1/2 value (unlike break_wires which collapses nonzero to 1); byte-identical to the old log_action_argv for the canonical integer arg every live path emits, strictly MORE faithful for a non-canonical token (`007`->`7`); exactly ONE such site in scheduler.c (S7 pins exclusivity); the literal `attach_labels %` (space+%) does NOT match the bare `attach_labels")` form}
+    {log_action\("xschem attach_labels"\)}            1 {attach_labels BARE form now lives in core_log_action (atom 11), NOT the scheduler branch -- exactly ONE such site in scheduler.c (S7 pins exclusivity); the `attach_labels"\)` (quote then paren) does NOT match `attach_labels %`}
     {return perform_action\("break_wires", argc, argv\);} 1 {break_wires branch routes through the perform_action boundary (Refactor B atom 9 -- the FIRST NON-transform verb; the arg is a FLAG (0/1), not a pivot; NO mid-gesture split): run_core + core_log_action read `remove` from argc/argv; break_wires_at_pins owns its own push_undo/draw, so no scattered readonly/log/push_undo here}
     {log_action\("xschem flip %}                      1 {flip PIVOT form now lives in core_log_action (atom 7), NOT the scheduler branch -- exactly ONE such site remains in scheduler.c (S7 pins the exclusivity); the literal `flip %` (flip+space) does NOT match `flipv %`}
     {log_action\("xschem flipv %}                     1 {flipv PIVOT form now lives in core_log_action (atom 8), NOT the scheduler branch -- exactly ONE such site remains in scheduler.c (S7 pins the exclusivity); the literal `flipv %` (flipv+space) does NOT match `flip %` (a `v` intervenes) nor `flipv_in_place`}
@@ -197,6 +216,7 @@ set MANIFEST {
     {log_action\("xschem check_unique_names}          1 {check_unique_names branch}
     {log_action\("xschem create_instance"}            1 {create_instance branch}
     {return perform_action\("floaters_from_selected_inst", argc, argv\);} 1 {floaters_from_selected_inst branch routes through the perform_action boundary (Refactor B atom 10 -- the SECOND non-transform verb, a BARE no-arg verb): run_core calls floaters_from_selected_inst() which OWNS its own push_undo/set_modify/draw (no double-push); the log is the shared bare `xschem %s` core_log_action DEFAULT line (no per-verb branch); the boundary ADDS the readonly gate this branch never had (a 0041/0051 close). No scattered readonly/log/push_undo here}
+    {return perform_action\("attach_labels", argc, argv\);} 1 {attach_labels branch routes through the perform_action boundary (Refactor B atom 11 -- the THIRD non-transform verb; the arg is a FLAG `interactive` (0/1/2, value PRESERVED not collapsed), not a pivot; NO mid-gesture split): run_core + core_log_action read `interactive` from argc/argv; attach_labels_to_inst() OWNS its own push_undo (via place_symbol) + set_modify + draw, so no double-push; the boundary ADDS the readonly gate this branch never had (a 0041/0051 close -- every 0/1/2 form mutates); the SHARED core is ALSO a raw netlisting sub-step (show_unconnected_pins) + the Shift+H dialog key, both off the boundary. No scattered readonly/log/push_undo here}
     {log_action\("xschem print_hilight_net}           1 {print_hilight_net branch}
     {log_action\("xschem exit closewindow force"}     2 {exit hook (both terminating sites)}
     {log_action\("xschem set cadgrid}                 1 {set cadgrid resolved-value}
@@ -750,6 +770,37 @@ check "S7 callback.c: NO scattered log_action(\"xschem floaters_from_selected_in
 check "S7 scheduler.c: NO scattered scheduler_readonly_reject(...,\"floaters_from_selected_inst\") (the boundary's generic gate covers the verb -- the branch never had one)" \
   [expr {[rxcount $sched {scheduler_readonly_reject\(interp, "floaters_from_selected_inst"\)}] == 0}] \
   "got=[rxcount $sched {scheduler_readonly_reject\(interp, "floaters_from_selected_inst"\)}]"
+# attach_labels (Refactor B atom 11 -- the THIRD non-transform verb; the arg is a FLAG `interactive`
+# (0/1/2), not a pivot): the readonly gate + the TWO `xschem attach_labels [n]` log forms (via
+# core_log_action) live SOLELY in perform_action. attach_labels has NO mid-gesture split (not a
+# transform). UNLIKE break_wires (which collapses any nonzero to 1), attach_labels PRESERVES the value
+# with `%d`, so core_log_action legitimately holds TWO forms (the bare `xschem attach_labels` for
+# argc==2, and the value form `xschem attach_labels %d` for argc>2). So scheduler.c must have EXACTLY
+# TWO in total -- ONE of each form -- with the scheduler BRANCH carrying none (it delegates) and
+# callback.c carrying ZERO (the Shift+H interactive-dialog key calls the raw core, csv-nolog, and never
+# self-logs `xschem attach_labels`). The literals `attach_labels %` (a space+% before the format) and
+# `attach_labels")` (a quote then a paren) are MUTUALLY EXCLUSIVE and counted independently, so a
+# re-scattered branch log of EITHER form fails closed; and neither matches attach_labels_to_inst (an `_`
+# follows). attach_labels stays in S2 CVERBS (a scripted/replayed `xschem attach_labels [n]` re-executes
+# AND self-logs) and OUT of S3. The SHARED core attach_labels_to_inst() is ALSO a raw netlisting
+# sub-step (show_unconnected_pins, netlist.c) + the Shift+H dialog key -- both stay BELOW the boundary
+# (raw core, no self-log), exactly the trim_wires-is-a-sub-step-of-align pattern; the runtime .tcl case
+# (e) locks that `xschem show_unconnected_pins` and the key emit ZERO `xschem attach_labels`.
+check "S7 scheduler.c: EXACTLY ONE log_action(\"xschem attach_labels %\") -- the core_log_action VALUE form (the branch delegates to the boundary)" \
+  [expr {[rxcount $sched {log_action\("xschem attach_labels %}] == 1}] \
+  "got=[rxcount $sched {log_action\("xschem attach_labels %}]"
+check "S7 scheduler.c: EXACTLY ONE log_action(\"xschem attach_labels\") -- the core_log_action BARE form (the branch delegates to the boundary)" \
+  [expr {[rxcount $sched {log_action\("xschem attach_labels"\)}] == 1}] \
+  "got=[rxcount $sched {log_action\("xschem attach_labels"\)}]"
+check "S7 scheduler.c: EXACTLY TWO log_action(\"xschem attach_labels...\") in total -- both forms live in core_log_action, nowhere else" \
+  [expr {[rxcount $sched {log_action\("xschem attach_labels}] == 2}] \
+  "got=[rxcount $sched {log_action\("xschem attach_labels}]"
+check "S7 callback.c: NO scattered log_action(\"xschem attach_labels...\") (the Shift+H dialog key calls the raw core, csv-nolog -- it never self-logs)" \
+  [expr {[rxcount $cbtext {log_action\("xschem attach_labels}] == 0}] \
+  "got=[rxcount $cbtext {log_action\("xschem attach_labels}]"
+check "S7 scheduler.c: NO scattered scheduler_readonly_reject(...,\"attach_labels\") (the boundary's generic gate covers the verb -- the branch never had one)" \
+  [expr {[rxcount $sched {scheduler_readonly_reject\(interp, "attach_labels"\)}] == 0}] \
+  "got=[rxcount $sched {scheduler_readonly_reject\(interp, "attach_labels"\)}]"
 check "S7 perform_action is defined EXACTLY once" \
   [expr {[rxcount $sched {int perform_action\(const char \*verb,}] == 1}] \
   "got=[rxcount $sched {int perform_action\(const char \*verb,}]"

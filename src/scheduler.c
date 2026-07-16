@@ -385,6 +385,30 @@ static int run_core(const char *verb, int argc, const char *argv[])
     floaters_from_selected_inst();
     return TCL_OK;
   }
+  else if(!strcmp(verb, "attach_labels")) {
+    /* Refactor B atom 11: the THIRD non-transform verb (after break_wires atom 9 +
+     * floaters atom 10). Its arg is a FLAG like break_wires -- `interactive` read
+     * from argv[2] (default 0) -- but the value carries THREE DISTINCT meanings
+     * (0 = silent place lab_pin, 1 = interactive dialog, 2 = the netlisting
+     * lab_show mode), so unlike break_wires (which canonicalizes any nonzero to 1)
+     * the value is PRESERVED, not collapsed. `interactive` is read from argv[2]
+     * IDENTICALLY to core_log_action, so the logged form can never diverge from the
+     * applied effect (the atom-9 FLAG-fidelity rule). The core attach_labels_to_inst()
+     * (actions.c) OWNS its own undo (place_symbol pushes it once via to_push_undo on
+     * the first placed label), set_modify(1) and draw() -- so there is NO push_undo()/
+     * draw() here; adding one would DOUBLE-push (the atom-1 no-double-push rule).
+     * attach_labels_to_inst() is NOT strictly 1:1: it is ALSO called RAW as a
+     * netlisting sub-step by show_unconnected_pins() (netlist.c, attach_labels_to_inst(2))
+     * and by the Shift+H interactive-DIALOG key (act_attach_labels, attach_labels_to_inst(1),
+     * a registered csv-nolog non-equivalent path). Both stay BELOW the boundary (raw core,
+     * no perform_action, no self-log) -- the boundary wraps the VERB DISPATCH, not the C fn
+     * (the trim_wires atom-1 sub-step rule). Only this scheduler branch (Symbol menu +
+     * scripted `xschem attach_labels [interactive]`) crosses. */
+    int interactive = 0;
+    if(argc > 2) interactive = atoi(argv[2]);
+    attach_labels_to_inst(interactive);
+    return TCL_OK;
+  }
   return TCL_ERROR; /* unreachable: perform_action is only wired for the verbs above */
 }
 
@@ -440,6 +464,22 @@ static void core_log_action(const char *verb, int argc, const char *argv[])
     if(argc > 2) remove = atoi(argv[2]);
     if(remove) log_action("xschem break_wires 1");
     else       log_action("xschem break_wires");
+  } else if(!strcmp(verb, "attach_labels")) {
+    /* atom 11: the arg is a FLAG `interactive` (default 0) read from argv[2]
+     * IDENTICALLY to run_core's attach_labels arm -- so the logged form always
+     * matches the applied effect. UNLIKE break_wires (which canonicalizes any
+     * nonzero to `1`), attach_labels's 0/1/2 carry DISTINCT meanings (0 = place
+     * lab_pin, 1 = interactive dialog, 2 = netlisting lab_show mode), so the actual
+     * value is PRESERVED with `%d`, not collapsed. For the canonical decimal-integer
+     * arg every live path emits (`xschem attach_labels` argc==2 / `xschem attach_labels
+     * <n>` argc>2) this is byte-identical to the old `log_action_argv(argc, argv)`; for a
+     * non-canonical or multi-token argv (`007`, `+2`, `2 foo`) the `%d` form logs exactly
+     * the value the effect's atoi consumed -- strictly MORE faithful than the raw-token
+     * log_action_argv, never a divergence from the applied effect (the atom-9 rule). The
+     * literal `attach_labels %` (space+%) and `attach_labels")` (quote+paren) are
+     * counted independently by the grep guard (S7). */
+    if(argc > 2) log_action("xschem attach_labels %d", atoi(argv[2]));
+    else         log_action("xschem attach_labels");
   } else {
     log_action("xschem %s", verb);
   }
@@ -1103,15 +1143,22 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
      *   setting interactive=2 will place lab_show.sym labels on unconnected instance pins */
     else if(!strcmp(argv[1], "attach_labels"))
     {
-      int interactive = 0;
-      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
-
-      if(argc > 2) interactive = atoi(argv[2]);
-      attach_labels_to_inst(interactive);
-      log_action_argv(argc, (const char *const *)argv); /* self-log at core (0061):
-        Symbol menu + script. The Shift+H key runs the interactive dialog variant via
-        its registered action (csv-nolog), a separate non-equivalent path. */
-      Tcl_ResetResult(interp);
+      /* Route through the single mutation boundary (Refactor B atom 11, run_core above):
+       * the readonly gate (scheduler_readonly_reject) + the effect (attach_labels_to_inst,
+       * reading `interactive` from argv[2]) + the ONE `xschem attach_labels [interactive]`
+       * log site (core_log_action PRESERVES the 0/1/2 value -- byte-identical to the old
+       * log_action_argv for the canonical integer arg the UI emits, and strictly MORE
+       * faithful for a non-canonical token) all live in perform_action, dropping this branch's
+       * own `!xctx` guard (the boundary owns it) and its inline effect + self-log. The
+       * Symbol menu (hand-written `-command "xschem attach_labels"`, interactive=0) and the
+       * command palette reach here. The boundary ADDS a readonly gate this branch never had
+       * (a scattered 0041/0051 close): attach_labels always mutates -- every form (0/1/2)
+       * places label instances, none is a read-only-safe query -- so the all-or-nothing gate
+       * cannot over-reject (contrast check_unique_names, §30). The Shift+H key runs the
+       * interactive-DIALOG variant attach_labels_to_inst(1) via its registered action
+       * (csv-nolog, NON-equivalent) and stays OFF the boundary; the netlisting sub-step
+       * show_unconnected_pins() calls attach_labels_to_inst(2) raw and stays BELOW it. */
+      return perform_action("attach_labels", argc, argv);
     }
     else { *cmd_found = 0;}
   return TCL_OK;
