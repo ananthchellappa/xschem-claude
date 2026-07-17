@@ -830,6 +830,44 @@ static int run_core(const char *verb, int argc, const char *argv[])
     return TCL_OK;
   }
 #endif
+  else if(!strcmp(verb, "change_elem_order")) {
+    /* Refactor B atom 21 (audit §41): reorders the z-order (array position) of the SELECTED
+     * object -- `xschem change_elem_order <n>` sets it to position n (n>=0), or n==-1 opens the
+     * interactive "Object Sequence number" input_line dialog (the Shift+S / Prop-menu form). Its
+     * arg is a value-carrying integer like attach_labels (atom 11), so core_log_action PRESERVES
+     * it with %d (not collapsed like break_wires atom 9). The core change_elem_order() (editprop.c)
+     * OWNS its own push_undo (on the first mutation, gated on `modified`) + set_modify(1) -- so
+     * there is NO push_undo/set_modify/draw here; adding one would DOUBLE-push (the atom-1
+     * no-double-push rule, as with break_wires/floaters/toggle_ignore). It rebuilds the selection
+     * itself and guards on lastsel==1, so a nothing-selected (or multi-selected) call is a harmless
+     * NO-OP. UNLIKE the §30 no-op-still-logs verbs (floaters/toggle_ignore), this verb PRESERVES the
+     * pre-migration had_sel LOG GATE (in core_log_action, `if(xctx->lastsel)`) -- §30 was REJECTED
+     * here because the verb is SELECTION-DEPENDENT and keeps its target selected, so a phantom
+     * empty-selection line would reorder a still-selected object on replay (adversarial-review MAJOR;
+     * the spec's form-split fallback, audit §41). TWO
+     * validation gates MOVE here from the branch and stay BEFORE the effect: the argc<3 gate (an
+     * early TCL_ERROR -- the old branch SILENTLY no-op'd on a missing arg; the gate ALSO prevents
+     * core_log_action from reading argv[2] OOB on a short call, the move_instance §39 crash class)
+     * and the `n >= 0 || n == -1` range gate (a bad n -- the old branch silently ignored it; now an
+     * early TCL_ERROR so, via log-on-success, a bad n mutates nothing AND logs nothing). `n` is read
+     * from argv[2] with the SAME atoi as core_log_action, so the logged form can never diverge from
+     * the applied reorder. NB change_elem_order() is NOT strictly 1:1: it is ALSO called RAW as a
+     * sub-step by the `instance_number inst <n>` scripted verb (scheduler.c) -- that caller stays
+     * BELOW the boundary (raw core, no perform_action, no self-log; it logged nothing before and
+     * still does), exactly the attach_labels atom-11 shared-sub-step rule. C89: n at block top. */
+    int n;
+    if(argc < 3) {
+      Tcl_SetResult(interp, "xschem change_elem_order needs an integer argument", TCL_STATIC);
+      return TCL_ERROR;
+    }
+    n = atoi(argv[2]);
+    if(!(n >= 0 || n == -1)) {
+      Tcl_SetResult(interp, "xschem change_elem_order: invalid order (need n >= 0 or -1)", TCL_STATIC);
+      return TCL_ERROR;
+    }
+    change_elem_order(n);
+    return TCL_OK;
+  }
   return TCL_ERROR; /* unreachable: perform_action is only wired for the verbs above */
 }
 
@@ -1063,6 +1101,41 @@ static void core_log_action(const char *verb, int argc, const char *argv[])
     log_action_argv(argc, im);
     my_free(_ALLOC_ID_, &im);
 #endif
+  } else if(!strcmp(verb, "change_elem_order")) {
+    /* atom 21: the arg is a value-carrying integer `n` read from argv[2] IDENTICALLY to run_core's
+     * change_elem_order arm -- so the logged `xschem change_elem_order %d` always matches the applied
+     * reorder. VALUE-PRESERVING with %d like attach_labels (atom 11), NOT collapsed like break_wires
+     * (atom 9): n is a position index whose exact value matters, and the branch logged the RAW n
+     * (before change_elem_order's internal clamp to instances-1), so replay re-clamps identically --
+     * log the value the user gave. It is a bare integer (no Tcl metacharacter), so
+     * log_action("...%d", atoi(argv[2])) is the right form (the attach_labels/break_wires template),
+     * NOT log_action_argv -- there is no referent to brace-quote, hence no av/ev/pp/mi/im array and no
+     * §36 collision. SINGLE form (no bare variant): the arg is REQUIRED (run_core's argc<3 gate is an
+     * early TCL_ERROR), so unlike attach_labels/break_wires there is no argc==2 bare line. Reached
+     * ONLY on TCL_OK (log-on-success) and only past run_core's argc<3 gate, so argv[2] is always
+     * present. The literal `change_elem_order %d` is UNIQUE (no other verb shares the prefix).
+     *
+     * THE had_sel LOG GATE (`if(xctx->lastsel)`): this verb PRESERVES the pre-migration had_sel gate
+     * rather than taking the §30 no-op-still-logs alignment -- a DELIBERATE per-verb exception (like
+     * replace_symbol's `fast` gate). §30 was REJECTED here because change_elem_order is SELECTION-
+     * DEPENDENT (0005 class) AND its core keeps the reordered object SELECTED (the array swap in
+     * editprop.c moves the .sel bit): a phantom empty-selection line would, on a whole-log replay
+     * where an intervening interactive deselect was NOT logged, find that object STILL selected and
+     * REORDER it -- a silent z-order divergence (adversarial-review MAJOR). The old branch/key gated
+     * the log on `had_sel = xctx->lastsel` taken BEFORE change_elem_order; change_elem_order() rebuilds
+     * the selection itself (run just now in run_core) and its swap does not change the COUNT, so
+     * xctx->lastsel here == that had_sel EXACTLY (0 = nothing selected -> skip the log; 1 or >1 ->
+     * log, matching the branch which logged even the multi-select no-op). Reading xctx state in
+     * core_log_action is the rotate/flip mousex_snap precedent -- run_core (which perform_action runs
+     * FIRST) has already established it. This locks test_selflog_output.tcl:190
+     * `change_elem_order (no sel) is nolog`. INVARIANT this equality relies on (adversarial-review
+     * note): NOTHING mutates xctx->lastsel between the effect and this log -- perform_action runs
+     * run_core then core_log_action back-to-back with only the rc/suppress checks between, and neither
+     * change_elem_order's push_undo/set_modify nor its post-entry work touches the selection COUNT (it
+     * rebuilds ONCE at entry and its swap moves the .sel bit with the struct). A future selection-
+     * mutating step added inside change_elem_order after that entry rebuild, or between the effect and
+     * this log, would break had_sel == lastsel and must re-capture the count explicitly. */
+    if(xctx->lastsel) log_action("xschem change_elem_order %d", atoi(argv[2]));
   } else {
     log_action("xschem %s", verb);
   }
@@ -1890,25 +1963,18 @@ static int xschem_cmds_c(Tcl_Interp *interp, int argc, const char *argv[], int *
 
     /* change_elem_order n
      *   set selected object (instance, wire, line, rect, ...) to
-     *   position 'n' in its respective array */
+     *   position 'n' in its respective array
+     *   Refactor B atom 21 (audit §41): routes through the perform_action boundary.
+     *   run_core owns the argc<3 + `n >= 0 || n == -1` validation gates and the
+     *   change_elem_order(n) effect (the core OWNS its own push_undo + set_modify);
+     *   core_log_action owns the ONE value-preserving `xschem change_elem_order %d`
+     *   log site (which PRESERVES the pre-migration had_sel gate via `if(xctx->lastsel)` --
+     *   §30 no-op-still-logs was REJECTED for this SELECTION-DEPENDENT verb, see audit §41).
+     *   The equivalent Shift+S key (callback.c case 'S', hardcoded -1) routes through the
+     *   SAME boundary. No scattered readonly/log/push_undo remains here. */
     else if(!strcmp(argv[1], "change_elem_order"))
     {
-      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
-      if(scheduler_readonly_reject(interp, "change_elem_order")) return TCL_ERROR;
-      if(argc > 2) {
-        int n = atoi(argv[2]);
-        if(n >= 0 || n == -1) {
-          int had_sel;
-          rebuild_selected_array();
-          had_sel = xctx->lastsel;   /* selection BEFORE the op (which may clear it) */
-          change_elem_order(n);
-          /* self-log at core: covers the Prop menu + scripted form. The Shift+S key
-           * is handled inline in callback.c (case 'S') and logs there too (0068).
-           * change_elem_order reorders the SELECTED objects; with nothing selected
-           * it is a no-op, so don't record a phantom edit (matches set rectcolor). */
-          if(had_sel) log_action("xschem change_elem_order %d", n);
-        }
-      }
+      return perform_action("change_elem_order", argc, argv);
     }
 
     /* change_sch_path n <draw>

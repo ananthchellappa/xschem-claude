@@ -4304,3 +4304,136 @@ re-scout the migrated-verb roster fresh; the remaining unmigrated mutating sched
 higher-friction / composite class. DEFER the composite delete/cut/copy/save/reload (shared cores called
 by abort/merge/teardown — the §4 delete()-is-NOT-1:1 lesson); selection-referent replay (0005) is the
 accepted config/selection-dependent class.
+
+## 41. Refactor B ATOM 21 (2026-07-17): the TWENTY-FIRST per-verb migration — a value-carrying integer verb with a SECOND live entry point (the Shift-S key), the had_sel §30 LOG-GATE FLIP, and the read-only gate CONSOLIDATED (`change_elem_order`)
+
+`change_elem_order` was drawn fresh from the higher-friction pool (empty since atom 16). It is the FIRST
+migrated verb since break_wires (atom 9) to carry **a second LIVE entry point that also mutates+logs** —
+the Shift-S legacy-switch key — so, like break_wires' Ctrl-! and the transform keys, BOTH entry points
+route through the boundary (the atom-16 "grep the GUI for every entry point" lesson). Its distinguishing
+wrinkle is a **logging-policy flip**, not a new plumbing shape.
+
+**The verb.** `xschem change_elem_order <n>` reorders the z-order (array position) of the SELECTED
+object (instance / wire / rect / text): `n>=0` sets it to position `n` (clamped in-core to array bounds);
+`n==-1` opens the interactive "Object Sequence number" `input_line` dialog (the Shift-S / Prop-menu
+form). The core `change_elem_order()` (editprop.c) rebuilds the selection itself, guards on `lastsel==1`
+(nothing-selected or multi-selected → a harmless NO-OP), and OWNS its own `push_undo` (on the first
+mutation, gated on `modified`) + `set_modify(1)`.
+
+**Two entry points, BOTH funnelled through perform_action.**
+- **Scheduler branch** (Prop menu / scripted): drop the inline body → `return perform_action(
+  "change_elem_order", argc, argv)`.
+- **Shift-S key** (callback.c `case 'S'`, `rstate==0`, HARDCODED -1): drop the inline
+  `rebuild_selected_array` + `had_sel` gate + `change_elem_order(-1)` + `log_action` → `perform_action(
+  "change_elem_order", 3, av)` with `av[2]="-1"` (the break_wires Ctrl-! FLAG-arg pattern). perform_action's
+  rc is DISCARDED and the switch falls through to `break` (the toggle_ignore atom-12 event-handled contract).
+
+**STEP 0 — EFFECT ORACLE (pinned on the pre-migration binary FIRST, `scratchpad/atom21/oracle.tcl`, 26
+checks all PASS).** Fixture: two overlapping `res.sym` instances (R1@idx0, R2@idx1, same origin, distinct
+names) → z-order == array index, read back via `xschem instance_number <name>`. Pinned: (A) `change_elem_order 0`
+on selected R2 swaps R2→idx0/R1→idx1; (B) scripted AND Shift-S both REFUSE on a read-only cell (no mutate,
+no log); (C) undo is a SINGLE push; (D) a reorder on a SAVED sheet sets `modified=1`; (E) nothing-selected =
+TCL_OK no-op that logs **NOTHING** pre-migration (the `had_sel` gate) — the +1-on-empty is the migration
+delta; (E2/E3) invalid `n=-5` and bare `change_elem_order` (argc<3) are pre-migration SILENT no-ops (TCL_OK,
+no log); (F) the Shift-S key mutates + logs `xschem change_elem_order -1` IDENTICALLY to the scripted form
+(input_line stubbed to a target index); (F2) Shift-S on read-only calls `readonly_block()` and BREAKS
+**before** input_line/mutation/log; (G) `change_elem_order 7` logs the RAW `7` byte-exact (value-preserving,
+before the in-core clamp).
+
+**THREE DESIGN CALLS (resolved from source).**
+1. **READONLY = CONSOLIDATION, not a new fix** (like move_instance §39, unlike embed/wire_cut/apply_pin_prop
+   which ADDED a gate). The old branch HAD `scheduler_readonly_reject(interp, "change_elem_order")` AND the
+   Shift-S key an inline `readonly_block()`. The scheduler_readonly_reject is REMOVED (the boundary's ONE
+   generic gate covers the scheduler/menu/script path). **The Shift-S key KEEPS its `readonly_block()`**
+   (belt-and-suspenders, exactly the break_wires Ctrl-! pattern) — a DELIBERATE deviation from the spec's
+   literal "remove it", resolved by asking the user: Shift-S is a LEGACY-switch key (NOT registry-dispatched,
+   so no `dispatch_input_action` readonly backstop), so dropping `readonly_block()` would silently lose the
+   read-only messageBox the key posted (the boundary's TCL_ERROR rc is DISCARDED by the event handler → no
+   feedback). Keeping it makes behaviour TRULY identical pre/post on both paths. Grep-guard S7 forbids ZERO
+   scattered `scheduler_readonly_reject(…,"change_elem_order")` (which is removed); it does NOT forbid the
+   key's `readonly_block()` (break_wires keeps its too).
+2. **THE had_sel LOG GATE — PRESERVED, §30 REJECTED (the load-bearing decision, driven by the adversarial
+   review).** Both entry points gated the log on `if(had_sel)` — a nothing-selected reorder was a no-op that
+   did NOT log. The FIRST cut took the §30 alignment (log-on-success UNCONDITIONALLY, as
+   floaters/toggle_ignore) — the 10-axis refute panel (below) found this HARMFUL and it was REVERSED. **Why
+   §30 fails here:** `change_elem_order` is SELECTION-DEPENDENT (the 0005 replay class) AND its core keeps the
+   reordered object SELECTED — the array swap in `editprop.c` moves the whole struct including the `.sel` bit,
+   `need_reb_sel_arr=1`. So a phantom empty-selection log line is NOT a reliable no-op on a WHOLE-LOG replay:
+   if an intervening interactive deselect was NOT logged (the accepted 0005 gap), the previously-reordered
+   object is STILL selected when the phantom line replays → it REORDERS that object → a silent z-order
+   divergence (affecting netlist ordering + draw stacking). Two majors converged: (i) the replay divergence
+   above; (ii) an EXISTING registered check `test_selflog_output.tcl:190` (`change_elem_order (no sel) is
+   nolog`) — in the same logdir_tests set — asserts the OPPOSITE of §30, so the flip was a NEW deterministic
+   audit contradiction. **The fix (the spec's named form-split fallback):** the had_sel gate is PRESERVED,
+   moved into `core_log_action` as `if(xctx->lastsel)` — the log authority's natural home (like
+   replace_symbol's `fast` gate). `change_elem_order()` rebuilds the selection itself (just run in run_core)
+   and its swap does not change the COUNT, so `xctx->lastsel` there == the old `had_sel` EXACTLY (0 → skip the
+   log; 1 or >1 → log, matching the branch which logged even the multi-select no-op — `test_selflog_output.tcl
+   :184`). Reading xctx state in core_log_action is the rotate/flip `mousex_snap` precedent. A grep-guard S1
+   row locks the `if(xctx->lastsel)` gate (revert → count 0, fails closed); test (c) covers empty/single/multi.
+3. **LOG FORM = value-preserving `xschem change_elem_order %d`** via core_log_action (the attach_labels
+   atom-11 `%d` template — PRESERVES the integer, unlike break_wires which collapses nonzero to 1). It is a
+   bare numeric arg (no Tcl metacharacter), so `log_action("xschem change_elem_order %d", atoi(argv[2]))` is
+   the right form (NOT log_action_argv — no referent to brace-quote, hence NO av/ev/pp/mi/im array and no §36
+   collision). SINGLE form (no bare variant): the arg is REQUIRED (run_core's `argc<3` is an early TCL_ERROR),
+   so unlike attach_labels/break_wires there is no argc==2 bare line.
+
+**Migration.**
+- **`run_core` arm** (OUTSIDE the `#if HAS_CAIRO` block — change_elem_order is not cairo-gated): TWO
+  validation gates move IN and stay BEFORE the effect — the `argc<3` gate (early TCL_ERROR; the old branch
+  SILENTLY no-op'd on a missing arg, AND — the move_instance §39 crash class — the gate prevents
+  core_log_action reading `argv[2]` OOB → `atoi(NULL)` SIGSEGV, DEMONSTRATED by sabotage 3) and the
+  `n >= 0 || n == -1` range gate (a bad `n` was silently ignored; now an early TCL_ERROR so, via
+  log-on-success, it mutates nothing AND logs nothing). Then `change_elem_order(n)`; NO push_undo/set_modify/
+  draw here (the core OWNS all three — adding one would DOUBLE-push, the atom-1 rule). `n` is read from
+  `argv[2]` with the SAME `atoi` as core_log_action, so the logged form can never diverge from the applied
+  reorder.
+- **`core_log_action` arm** (OUTSIDE the `#if HAS_CAIRO` block): `if(xctx->lastsel) log_action("xschem
+  change_elem_order %d", atoi(argv[2]))` — the value-preserving log GATED on the preserved had_sel (design
+  call 2 above).
+- **NOT strictly 1:1.** `change_elem_order()` is ALSO called RAW as a sub-step by the `instance_number inst
+  <n>` scripted verb (scheduler.c) — that caller stays BELOW the boundary (raw core, no perform_action, no
+  self-log; it logged nothing before and still does), exactly the attach_labels atom-11 shared-sub-step lock.
+
+**Verification.** `tests/headless/test_perform_action_change_elem_order.tcl` (40 checks, full_audit
+logdir_tests, self-deferring on no-logdir): (a) reorder oracle + exactly +1 + VALUE-PRESERVING byte-exact
+`change_elem_order 7` + set_modify(1) on a saved sheet; (b) read-only REFUSE from BOTH entry points
+(scripted TCL_ERROR + verb-named message + no mutate + no log; Shift-S no mutate + no log, input_line NOT
+reached); (c) the had_sel LOG GATE — empty-selection logs +0 (locks `test_selflog_output:190`), a SELECTED
+reorder logs +1 (gate not stuck-closed), a multi-select no-op STILL logs +1 (had_sel!=0, locks
+`test_selflog_output:184`); (d) invalid `n=-5` + bare argc<3 → TCL_ERROR + +0 log + no mutate; (e) undo
+single-push; (f) Shift-S key equivalence via callback injection (keysym 83 state 0) — mutate + byte-exact
+`xschem change_elem_order -1` +1; (g) replay round-trip (seam re-executes without re-logging; control
+`source` re-logs); (h) the `instance_number inst <n>` raw sub-step logs NO change_elem_order line (the
+runtime lock the grep-guard cannot provide — a future editprop.c self-log would escape the scheduler.c/
+callback.c scan). **grep guard:** the S1 scheduler branch-row moved onto `return perform_action(...)` + the
+`%d` core_log_action row RE-LABELLED (site moved branch→core, count stays 1) + a NEW row locking the
+`if(xctx->lastsel)` had_sel gate (revert → count 0, fails closed); the callback.c S1 row moved from the
+inline `log_action("xschem change_elem_order -1")` onto `perform_action("change_elem_order", 3, av)`;
+`change_elem_order` STAYS in S2 CVERBS (already present), OUT of S3; an S7 block (EXACTLY ONE `log_action(
+"xschem change_elem_order %"` + EXACTLY ONE total in scheduler.c, ZERO in callback.c, ZERO scattered
+`scheduler_readonly_reject(…,"change_elem_order")`). **Sabotage ×7** (each fails EXACTLY its checks; restore
+from `scratchpad/atom21/*.mig`, NOT git — ~200 dirty sibling worktrees): (1) drop the range gate → test (d)
+invalid-n (4 checks); (2) drop `%d` → test (a)/(c)/(f) byte-exact value + grep S1/S7 `%d` rows; (3) drop the
+argc<3 gate → **`FATAL: signal 11`** on the bare call (atoi(NULL), the §39 OOB class); (4) re-add scattered
+`scheduler_readonly_reject` → grep S7 readonly=1; (5) re-add inline callback `log_action` → grep S7
+callback=1; (6) drop `change_elem_order(n)` → test (a) reorder oracle + set_modify; (7) revert the
+`if(xctx->lastsel)` gate to unconditional → test (c) empty-log + grep S1 gate row (the §30-regression lock).
+**Baseline diff CLEAN** (AFTER atom-21 vs HEAD atom-20): all perform_action_* + selflog + grep-guard PASS;
+the 10 failing logdir tests are BYTE-IDENTICAL on HEAD and migrated (the standing WSLg/GUI set —
+CIW/gesture/context-menu/hi_descend/phase3/shape_setprop/libmgr, none referencing change_elem_order,
+confirmed by rebuilding the pre-migration binary and re-running); ZERO new deterministic fails.
+
+**10-axis adversarial refute panel + completeness critic (Workflow, ultracode), against the FROZEN
+commit 4ebe9b61.** 7/11 axes CLEAN, 0 critical. TWO MAJORS — both on the had_sel §30 FLIP (the phantom
+empty-log line reorders a still-selected object on whole-log replay; and it breaks the registered
+`test_selflog_output:190` check) — CONFIRMED against source and FIXED by preserving the had_sel gate (design
+call 2, the spec's form-split fallback). TWO MINORS — (i) the `instance_number` shared-sub-step had no
+runtime coverage → CLOSED by check (h); (ii) the §30 replay-harmless claim was overclaimed → mooted by the
+fix (no phantom line). ONE NIT — the `deferred`-prints-`ALL PASS` hollow-pass on a no-logdir standalone run
+→ ACCEPTED (identical to all 15 perform_action_* siblings; mitigated by logdir_tests registration). The fix
+was applied and re-verified (40 checks + 314 grep checks + sabotage 7 green) BEFORE re-committing.
+
+RECOMMENDED NEXT: the friction-free pool is still EMPTY — re-scout the roster fresh for the next
+higher-friction verb (the same deferrals as §40 stand: composite delete/cut/copy/save/reload; selection-
+referent replay is the accepted 0005 class).

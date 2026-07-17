@@ -362,7 +362,9 @@ set MANIFEST {
     {return perform_action\("flip_in_place", argc, argv\);} 1 {flip_in_place branch STANDALONE arm routes through the perform_action boundary (Refactor B atom 4, the mirror of rotate_in_place): the mid-gesture STARTMOVE/STARTCOPY arms stay raw (logged at move/copy END, 0069), no scattered readonly/log/push_undo here}
     {return perform_action\("flipv_in_place", argc, argv\);} 1 {flipv_in_place branch STANDALONE arm routes through the perform_action boundary (Refactor B atom 5, the last in-place transform): THREE move_objects calls (ROTATE|ROTATELOCAL x2 + FLIP|ROTATELOCAL) live in run_core; the mid-gesture STARTMOVE/STARTCOPY arms stay raw (logged at move/copy END, 0069), no scattered readonly/log/push_undo here}
     {return perform_action\("rotate_in_place", argc, argv\);} 1 {rotate_in_place branch STANDALONE arm routes through the perform_action boundary (Refactor B atom 3): the mid-gesture STARTMOVE/STARTCOPY arms stay raw (logged at move/copy END, 0069), no scattered readonly/log/push_undo here}
-    {log_action\("xschem change_elem_order %d"}       1 {change_elem_order branch}
+    {return perform_action\("change_elem_order", argc, argv\);} 1 {change_elem_order branch routes through the perform_action boundary (Refactor B atom 21 -- the TWENTY-FIRST per-verb migration; a value-carrying integer verb with TWO entry points -- the branch + the Shift-S key): run_core MOVES the argc<3 + `n >= 0 || n == -1` validation IN (early TCL_ERROR BEFORE the effect -- the argc<3 gate also prevents core_log_action reading argv[2] OOB on a short call, the move_instance §39 crash class) and calls change_elem_order(n), whose core (editprop.c) OWNS its own push_undo (on the first mutation, gated on `modified`) + set_modify -- so no double-push; core_log_action logs the VALUE-PRESERVING `xschem change_elem_order %d` (the attach_labels atom-11 %d template, NOT collapsed like break_wires) on success only, GATED on `if(xctx->lastsel)` -- the pre-migration had_sel gate PRESERVED (§30 no-op-still-logs REJECTED here: change_elem_order is SELECTION-DEPENDENT and keeps its target selected, so a phantom empty-log line would reorder a still-selected object on replay -- adversarial-review MAJOR; the spec's form-split fallback). change_elem_order() is NOT strictly 1:1 -- the `instance_number inst <n>` verb calls it RAW as a sub-step, staying BELOW the boundary (silent, the attach_labels atom-11 shared-sub-step lock). The boundary's readonly gate is a CONSOLIDATION (the old branch HAD a per-verb scheduler_readonly_reject, now REMOVED). No scattered readonly/log/push_undo here}
+    {log_action\("xschem change_elem_order %d"}       1 {change_elem_order VALUE form now lives in core_log_action (atom 21), NOT the scheduler branch -- `log_action("xschem change_elem_order %d", atoi(argv[2]))` PRESERVES the integer (unlike break_wires which collapses nonzero to 1), byte-identical to the old branch's log for the same n and to the Shift-S `change_elem_order -1`; exactly ONE such site in scheduler.c (S7 pins exclusivity); the literal `change_elem_order %d` is UNIQUE (no other verb shares the prefix)}
+    {if\(xctx->lastsel\) log_action\("xschem change_elem_order %d"} 1 {change_elem_order had_sel LOG GATE in core_log_action (atom 21): the log fires ONLY when something was selected (xctx->lastsel != 0 -- the count change_elem_order's own rebuild_selected_array just set, == the pre-migration `had_sel`). §30 no-op-still-logs was REJECTED for this SELECTION-DEPENDENT verb (the editprop.c swap keeps the reordered object SELECTED, so a phantom empty-selection line would reorder a still-selected object on a whole-log replay where an unlogged interactive deselect left it selected -- adversarial-review MAJOR). A revert to an UNCONDITIONAL log (dropping the `if(xctx->lastsel)`) makes this row count 0 -> fails closed, and re-breaks test_selflog_output.tcl:190 `change_elem_order (no sel) is nolog`. Like replace_symbol's fast-flag log gate, this is a per-verb conditional in core_log_action (the log authority)}
     {log_action\("xschem check_unique_names}          1 {check_unique_names branch}
     {log_action\("xschem create_instance"}            1 {create_instance branch}
     {return perform_action\("floaters_from_selected_inst", argc, argv\);} 1 {floaters_from_selected_inst branch routes through the perform_action boundary (Refactor B atom 10 -- the SECOND non-transform verb, a BARE no-arg verb): run_core calls floaters_from_selected_inst() which OWNS its own push_undo/set_modify/draw (no double-push); the log is the shared bare `xschem %s` core_log_action DEFAULT line (no per-verb branch); the boundary ADDS the readonly gate this branch never had (a 0041/0051 close). No scattered readonly/log/push_undo here}
@@ -423,7 +425,7 @@ set MANIFEST {
     {log_action\("xschem reload"}                     1 {Alt-S inline key ok-arm (atom 4)}
     {log_action\("xschem cut"}                        1 {Ctrl-X inline key (atom 2)}
     {log_action\("xschem delete"}                     1 {Delete inline key (atom 2)}
-    {log_action\("xschem change_elem_order -1"}       1 {Shift-S inline key}
+    {perform_action\("change_elem_order", 3, av\);}   1 {Shift-S key (case 'S', rstate==0) routes through the perform_action boundary (Refactor B atom 21) with av[2]="-1" -- the break_wires Ctrl-! FLAG-arg pattern. The inline rebuild_selected_array + had_sel gate + change_elem_order(-1) + log_action are GONE (run_core rebuilds/guards; core_log_action logs the ONE value-preserving `xschem change_elem_order -1` line). The semaphore>=2 + readonly_block() key self-guards STAY (like break_wires's keys -- readonly_block() keeps the read-only messageBox this legacy-switch key posted, which the boundary's silent TCL_ERROR would drop; perform_action's rc is DISCARDED, the toggle_ignore atom-12 event-handled contract). No inline change_elem_order()/log_action remains}
     {perform_action\("align", 0, NULL\);}             1 {Alt-U inline key routes through the perform_action boundary (Refactor B atom 2): no inline readonly_block/push_undo/log_action}
     {perform_action\("trim_wires", 0, NULL\);}        1 {'&' inline key routes through the perform_action boundary (Refactor B atom 1): no inline readonly_block/push_undo/log_action}
     {perform_action\("rotate_in_place", 0, NULL\);}   2 {the two callback.c standalone rotate_in_place entry points route through the perform_action boundary (Refactor B atom 3): the Alt-R single-object standalone (standalone_group_transform) + the verb-noun deferred apply (MENUSTARTROTATE); the mid-gesture STARTMOVE/STARTCOPY arms stay raw}
@@ -1333,6 +1335,42 @@ check "S7 (move_instance unperturbed) scheduler.c: still EXACTLY ONE mi\[9\]-dec
   [expr {[rxcount $sched {const char \*mi\[9\];}] == 1 &&
          [rxcount $sched {log_action_argv\(k, mi\);}] == 1}] \
   "decl=[rxcount $sched {const char \*mi\[9\];}] emit=[rxcount $sched {log_action_argv\(k, mi\);}]"
+# change_elem_order (Refactor B atom 21 -- the TWENTY-FIRST per-verb migration; a value-carrying
+# integer verb with TWO entry points, the scheduler branch + the Shift-S legacy-switch key): the
+# readonly gate + the ONE VALUE-PRESERVING `xschem change_elem_order %d` log form (via
+# core_log_action) live SOLELY in perform_action. UNLIKE break_wires (which collapses any nonzero to
+# 1) it PRESERVES the value with %d (the attach_labels atom-11 template), and unlike attach_labels
+# there is NO bare form -- the arg is REQUIRED (run_core's argc<3 is an early TCL_ERROR), so
+# core_log_action holds EXACTLY ONE `log_action("xschem change_elem_order %d"...)` and scheduler.c
+# must have EXACTLY that ONE (the scheduler BRANCH delegates via `return perform_action`, carrying
+# none). It is a bare integer (no Tcl metacharacter), so it uses log_action("...%d", atoi(argv[2])),
+# NOT log_action_argv -- there is NO av/ev/pp/mi/im referent array, hence NO §36 collision to guard.
+# The Shift-S key routes through the SAME boundary with av[2]="-1", so callback.c must have ZERO
+# scattered `log_action("xschem change_elem_order` (its inline -1 log is GONE); the key KEEPS its
+# readonly_block() belt-and-suspenders (the break_wires pattern -- NOT forbidden here; only the
+# scheduler_readonly_reject is). The READONLY gate is a CONSOLIDATION (like move_instance atom 19,
+# unlike embed/wire_cut/apply_pin_prop which ADDED one): the old branch HAD a per-verb
+# scheduler_readonly_reject(interp, "change_elem_order"), now REMOVED -- a re-scattered per-verb one
+# fails closed. THE had_sel LOG GATE is PRESERVED (§30 no-op-still-logs REJECTED, adversarial-review
+# MAJOR): core_log_action gates on `if(xctx->lastsel)` (its own S1 row locks the gate), so an
+# empty-selection reorder logs NOTHING -- the pre-migration behaviour, locking test_selflog_output.tcl
+# :190. The literal `change_elem_order %` (space+%) is UNIQUE (no other
+# verb shares the prefix). change_elem_order stays in S2 CVERBS (a scripted/replayed
+# `xschem change_elem_order <n>` re-executes AND self-logs) and OUT of S3 (its log lives in the
+# boundary). The RAW-CORE sub-step caller `instance_number inst <n>` stays off the boundary (silent
+# -- it logged nothing before, still does; the attach_labels atom-11 shared-sub-step lock).
+check "S7 scheduler.c: EXACTLY ONE log_action(\"xschem change_elem_order %\") -- the core_log_action VALUE form (the branch delegates to the boundary; %d PRESERVES the integer, not collapsed)" \
+  [expr {[rxcount $sched {log_action\("xschem change_elem_order %}] == 1}] \
+  "got=[rxcount $sched {log_action\("xschem change_elem_order %}]"
+check "S7 scheduler.c: EXACTLY ONE log_action(\"xschem change_elem_order...\") in TOTAL -- only the %d VALUE form lives in core_log_action, nowhere else (the old branch/-1 forms are GONE)" \
+  [expr {[rxcount $sched {log_action\("xschem change_elem_order}] == 1}] \
+  "got=[rxcount $sched {log_action\("xschem change_elem_order}]"
+check "S7 callback.c: NO scattered log_action(\"xschem change_elem_order\") (the Shift-S key delegates to the boundary -- its inline `change_elem_order -1` log is GONE)" \
+  [expr {[rxcount $cbtext {log_action\("xschem change_elem_order}] == 0}] \
+  "got=[rxcount $cbtext {log_action\("xschem change_elem_order}]"
+check "S7 scheduler.c: NO scattered scheduler_readonly_reject(...,\"change_elem_order\") (CONSOLIDATION -- the old branch HAD a per-verb gate, now REMOVED; the boundary's generic gate covers it)" \
+  [expr {[rxcount $sched {scheduler_readonly_reject\(interp, "change_elem_order"\)}] == 0}] \
+  "got=[rxcount $sched {scheduler_readonly_reject\(interp, "change_elem_order"\)}]"
 # atom-13 NESTING COUPLING (adversarial-review finding): the S1 existence rows above pin
 # that the guard line, the log line and the reset line each EXIST, but not that log+reset are
 # INSIDE the log-on-success block. A de-nest that keeps all three lines yet closes the

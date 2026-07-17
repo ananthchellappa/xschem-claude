@@ -5796,13 +5796,20 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
 
     case 'S':
       if(rstate == 0) { /* change element order */
-        int had_sel;
+        /* Refactor B atom 21: the Shift-S key routes through the perform_action boundary (not the
+         * raw change_elem_order(-1)) with av[2]="-1" -- the break_wires Ctrl-! FLAG-arg pattern. The
+         * inline rebuild_selected_array + had_sel gate + change_elem_order(-1) + log_action are GONE
+         * (run_core rebuilds/guards; core_log_action logs the ONE value-preserving
+         * `xschem change_elem_order -1` line). The semaphore>=2 + readonly_block() key self-guards
+         * STAY (like break_wires's '!'/Ctrl-! keys) -- readonly_block() keeps the read-only messageBox
+         * this legacy-switch key posted, which the boundary's silent TCL_ERROR would drop (an
+         * ActionEvent-style handler DISCARDS perform_action's rc and falls through to break, the
+         * toggle_ignore atom-12 event-handled contract). C89: av at block top. */
+        const char *av[3];
         if(xctx->semaphore >= 2) break;
         if(readonly_block()) break;
-        rebuild_selected_array();
-        had_sel = xctx->lastsel;   /* nothing selected -> no-op; don't log a phantom edit */
-        change_elem_order(-1);
-        if(had_sel) log_action("xschem change_elem_order -1"); /* self-log Shift-S (issue 0068) */
+        av[0] = "xschem"; av[1] = "change_elem_order"; av[2] = "-1";
+        perform_action("change_elem_order", 3, av);
       }
       else if(rstate == ControlMask) { /* save as schematic */
         if(xctx->semaphore >= 2) break;
