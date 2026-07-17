@@ -610,6 +610,30 @@ static int run_core(const char *verb, int argc, const char *argv[])
     embed_rawfile(f);
     return TCL_OK;
   }
+  else if(!strcmp(verb, "wire_cut")) {
+    /* Refactor B atom 17: the SILENT-MUTATOR twin of break_wires (atom 9, §29) -- the
+     * mouse-position wire cut (break_wires_at_point, check.c) that break_wires' §29 note
+     * already flagged as the SEPARATE gesture core kept OFF break_wires' boundary. It logged
+     * NOTHING before this atom. Only the SCRIPTED coord form crosses: the scheduler branch's
+     * argc>3 guard sends it here; the no-coord GESTURE-START form stays RAW in the branch
+     * (arms ui_state, no mutation), exactly the rotate/flip STARTMOVE-stays-raw split. The arg
+     * is numeric coords + a bareword `noalign` flag (NO Tcl_Merge -- no metacharacter referent).
+     * break_wires_at_point() OWNS a CONDITIONAL SINGLE push_undo (only when a wire is actually
+     * split) + its own draw, so there is NO push_undo/draw here -- adding one would double-push
+     * (the atom-1 rule); a point off any wire is a NO-OP (no push, no draw) that still returns
+     * success. Reached only via the branch's argc>3 guard, so argv[2]/argv[3] are always
+     * present; `align` is read from the args IDENTICALLY to core_log_action, so the logged form
+     * can never diverge from the applied cut. break_wires_at_point() returns void -> always
+     * TCL_OK (a no-op point-off-wire is a SUCCESS -> no-op-still-logs, §30). The interactive
+     * Alt-Right gesture (callback.c break_wires_at_point at gesture completion) stays RAW+silent
+     * under the chosen option (A) -- a pre-existing 0069-class gesture-drop gap this atom does
+     * NOT widen but does NOT close, deferred to a follow-up gesture-logging atom (audit §37).
+     * C89: decls at block top. */
+    int i, align = 1;
+    for(i = 2; i < argc; i++) if(!strcmp(argv[i], "noalign")) align = 0;
+    break_wires_at_point(atof(argv[2]), atof(argv[3]), align);
+    return TCL_OK;
+  }
   return TCL_ERROR; /* unreachable: perform_action is only wired for the verbs above */
 }
 
@@ -738,6 +762,25 @@ static void core_log_action(const char *verb, int argc, const char *argv[])
     const char *ev[3];
     ev[0] = "xschem"; ev[1] = verb; ev[2] = argv[2];
     log_action_argv(3, ev);
+  } else if(!strcmp(verb, "wire_cut")) {
+    /* atom 17: a numeric COORD + bareword-FLAG log, the %.16g pivot convention of rotate/flip
+     * (atoms 6/7) -- NOT log_action_argv (the coords are numeric, there is no Tcl metacharacter
+     * referent to brace-quote). TWO forms like break_wires (atom 9): the aligned
+     * `xschem wire_cut x y` and the `xschem wire_cut x y noalign`. Logs the RAW click coords
+     * argv[2]/argv[3] (NOT the snapped point break_wires_at_point computes): `align` is applied
+     * INSIDE the core (closest_point_calculation), so raw-coords + the flag replay IDENTICALLY
+     * (replay re-snaps to the same point). `align` is read here with the SAME loop as run_core's
+     * wire_cut arm, so the logged form can never diverge from the applied cut. Reached ONLY on
+     * TCL_OK (log-on-success) and only via the branch's argc>3 guard, so argv[2]/argv[3] are
+     * always present. NB the literal `wire_cut %` matches BOTH forms (the S7 total == 2), while
+     * `wire_cut %.16g %.16g noalign` (space+noalign before the quote) is DISTINCT from the
+     * aligned `wire_cut %.16g %.16g"` (quote-terminated) -- counted independently by the grep
+     * guard; and neither matches break_wires_at_point / _at_pins / _at_attach_points (an `_`
+     * follows). C89: decls at block top. */
+    int i, align = 1;
+    for(i = 2; i < argc; i++) if(!strcmp(argv[i], "noalign")) align = 0;
+    if(align) log_action("xschem wire_cut %.16g %.16g", atof(argv[2]), atof(argv[3]));
+    else      log_action("xschem wire_cut %.16g %.16g noalign", atof(argv[2]), atof(argv[3]));
   } else {
     log_action("xschem %s", verb);
   }
@@ -11050,23 +11093,28 @@ static int xschem_cmds_w(Tcl_Interp *interp, int argc, const char *argv[], int *
      *   if noalign is given and is set to 'noalign' do not align the cut point to closest snap point */
     else if(!strcmp(argv[1], "wire_cut"))
     {
-      int i, align = 1;
+      /* Refactor B atom 17: SPLIT on the coord form. Only the SCRIPTED/replay coord form
+       * (argc>3 -- `xschem wire_cut x y [noalign]`) is a mutation and crosses the boundary;
+       * the no-coord GESTURE-START form (`xschem wire_cut [noalign]`, the two Alt-Right menu
+       * items) ARMS ui_state and mutates NOTHING, so it stays RAW here and logs NOTHING --
+       * exactly the rotate/flip STARTMOVE-stays-raw split (the during-gesture arm is silent,
+       * the standalone/scripted form crosses). The !xctx guard covers the gesture-START path
+       * (it dereferences xctx->ui_state); the coord form re-checks it inside perform_action
+       * (harmless redundancy). The interactive Alt-Right cut COMPLETION lives in callback.c
+       * (break_wires_at_point at mousex/y_snap) and stays RAW+silent under option (A) -- a
+       * pre-existing 0069-class gesture-drop gap, deferred to a follow-up (audit §37). */
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
-      for(i = 2; i < argc; i++) {
-        if(!strcmp(argv[i], "noalign")) align = 0;
-      }
       if(argc > 3) {
-        break_wires_at_point(atof(argv[2]), atof(argv[3]), align);
-      } else {
-        if(align) {
-          xctx->ui_state |= MENUSTART;
-          xctx->ui_state2 = MENUSTARTWIRECUT;
-        } else {
-          xctx->ui_state |= MENUSTART;
-          xctx->ui_state2 = MENUSTARTWIRECUT2;
+        return perform_action("wire_cut", argc, argv);   /* the scripted/replay coord MUTATION */
+      } else {                                            /* gesture START: arms ui_state, no mutation, no log */
+        int i, align = 1;
+        for(i = 2; i < argc; i++) {
+          if(!strcmp(argv[i], "noalign")) align = 0;
         }
+        xctx->ui_state |= MENUSTART;
+        xctx->ui_state2 = align ? MENUSTARTWIRECUT : MENUSTARTWIRECUT2;
+        Tcl_ResetResult(interp);
       }
-      Tcl_ResetResult(interp);
     }
 
     else { *cmd_found = 0;}

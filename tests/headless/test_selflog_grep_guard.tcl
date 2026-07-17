@@ -218,6 +218,25 @@
 # stay == 1. The branch NEVER had a scheduler_readonly_reject; the boundary ADDS one as a CORRECTNESS FIX
 # (the old branch embedded on a read-only cell). embed_rawfile is a PURE SCRIPTED verb (no key/menu/
 # palette/callback/Tcl caller), so NO callback.c edit and NO key-equivalence decision.
+# Refactor B atom 17 (perform_action / wire_cut) is the SILENT-MUTATOR twin of break_wires (atom 9,
+# §29): break_wires_at_point (check.c) is the SEPARATE Alt-Right wire_cut gesture core that §29 kept
+# OFF break_wires' boundary; atom 17 puts it on. It logged NOTHING before. Structural mirror of
+# break_wires: the core OWNS a CONDITIONAL single push_undo (only when a wire is actually split) + its
+# own draw, so run_core adds NEITHER (no double-push; a point-off-wire no-op pushes nothing yet returns
+# TCL_OK -> no-op-still-logs). The arg is numeric COORDS + a bareword FLAG (%.16g coord log, the
+# rotate/flip convention -- NOT log_action_argv, no metacharacter referent), in TWO forms like
+# break_wires (aligned `xschem wire_cut x y` + `xschem wire_cut x y noalign`). It carries a MID-GESTURE
+# SPLIT like rotate/flip: only the SCRIPTED coord form (scheduler branch argc>3) crosses; the no-coord
+# GESTURE-START form stays RAW (arms ui_state, no mutation, no log). Grep changes: (a) a NEW S1
+# boundary-branch row + TWO NEW S1 core_log_action form rows (aligned `wire_cut %.16g %.16g"` +
+# noalign `wire_cut %.16g %.16g noalign`); (b) wire_cut ADDED to S2 CVERBS, kept OUT of S3; (c) an S7
+# block MIRRORING break_wires (EXACTLY TWO total, ONE of each form, ZERO bare, ZERO scattered
+# log/readonly_reject in scheduler.c, ZERO in callback.c). The branch NEVER had a
+# scheduler_readonly_reject; the boundary ADDS one as a CORRECTNESS FIX (the old scripted coord form cut
+# on a read-only cell). OPTION (A): the interactive Alt-Right COMPLETION (callback.c break_wires_at_point
+# at mousex/y_snap) stays RAW+silent -- a pre-existing 0069-class gesture-drop gap this atom does NOT
+# widen but does NOT close (grep-guard-locked callback.c ZERO; deferred to a follow-up (B) atom). So NO
+# callback.c edit.
 # Atom 12 (0053 Cadence Ctrl-E window hop) added: the S1 focus_window emit row
 # (utils/cadence_nav.tcl) and the S6 SEAM-EXCLUSIVITY block -- `new_schematic
 # switch` (a shared core: tab-strip/alt2/window-open machinery) must be logged
@@ -303,6 +322,9 @@ set MANIFEST {
     {return perform_action\("embed_rawfile", argc, argv\);} 1 {embed_rawfile branch routes through the perform_action boundary (Refactor B atom 16 -- the DEFERRED runner-up from the atom-15 scout, a HYBRID of the reset_inst_prop §33 single-STRING-referent + argc-gate template and the floaters/show_unconnected_pins §30/§35 core-owns-its-own-undo template): run_core MOVES the `~/` expansion IN (via the home_dir global) and the argc<3 "needs a file argument" validation (early TCL_ERROR BEFORE any mutation, so a missing arg mutates nothing and, via log-on-success, logs nothing -- the old branch SILENTLY no-op'd); the core embed_rawfile() (draw.c) OWNS the SINGLE push_undo + set_modify (no double-push); core_log_action logs the SELF-CONTAINED `xschem embed_rawfile <path>` via log_action_argv (Tcl_Merge on the RAW argv[2] so a metachar path replays + the `~/` re-expands) on success only. The boundary ADDS the readonly gate this branch NEVER HAD -- a CORRECTNESS FIX: the old branch embedded on a read-only cell. A missing/non-regular file is a MUTATION (base64_from_file NULL -> blanks spice_data), not a failure. No scattered readonly/log/push_undo here}
     {(?n)ev\[0\] = "xschem"; ev\[1\] = verb; ev\[2\] = argv\[2\];$} 1 {embed_rawfile SELF-CONTAINED path form lives in core_log_action (atom 16): the referent argv[2] (a `~/...`, absolute or relative RAW path) is emitted via log_action_argv (Tcl_Merge), NOT a raw %s -- a path with a space/bracket/brace carries Tcl metacharacters (`sim [1].raw`) and a raw line would misparse on replay. The array is named `ev` (not `av`) SO THIS LINE STAYS TEXTUALLY DISTINCT from reset_inst_prop's byte-identical `av[...]` build -- both are line-anchored (?n)...;$, and a shared name would make each verb's count == 2, breaking the exclusivity rows. Reached ONLY on TCL_OK (log-on-success), so a failed validation logs nothing}
     {log_action_argv\(3, ev\);} 1 {embed_rawfile's Tcl_Merge emit (atom 16): log_action_argv brace-quotes the path minimally, so a plain path (/d/small.raw) logs unbraced while a metachar path logs `xschem embed_rawfile {/d/sim [1].raw}` and a `~/` path logs the RAW `xschem embed_rawfile ~/f.raw` (re-expanded on replay). Exactly ONE such `(3, ev)` site in scheduler.c (S7 pins exclusivity); the `ev` name keeps it distinct from reset_inst_prop's `log_action_argv(3, av)` and replace_symbol's `(4, av)`}
+    {return perform_action\("wire_cut", argc, argv\);} 1 {wire_cut branch routes the SCRIPTED COORD form through the perform_action boundary (Refactor B atom 17 -- the SILENT-MUTATOR twin of break_wires (atom 9, §29): break_wires_at_point (check.c) is the SEPARATE Alt-Right wire_cut gesture core that §29 kept OFF break_wires' boundary; atom 17 puts it on). Only the argc>3 coord form crosses (via the branch's argc>3 guard); the no-coord GESTURE-START form stays RAW (arms ui_state, no mutation, no log -- the rotate/flip STARTMOVE-stays-raw split). break_wires_at_point OWNS a CONDITIONAL single push_undo + draw, so no scattered readonly/log/push_undo here; a point off any wire is a no-op that still returns TCL_OK -> no-op-still-logs. The boundary ADDS the readonly gate this coord form NEVER HAD -- a CORRECTNESS FIX (the old scripted form cut on a read-only cell)}
+    {log_action\("xschem wire_cut %\.16g %\.16g"} 1 {wire_cut ALIGNED coord form lives in core_log_action (atom 17): the RAW click coords argv[2]/argv[3] via %.16g (NOT log_action_argv -- numeric coords, no metacharacter referent to brace-quote), NOT the snapped point (align is applied in-core by closest_point_calculation, so raw-coords replay IDENTICALLY). Exactly ONE such quote-terminated site in scheduler.c (S7 pins exclusivity); the trailing `"` (immediately after the second %.16g) does NOT match the ` noalign"` form}
+    {log_action\("xschem wire_cut %\.16g %\.16g noalign"} 1 {wire_cut NOALIGN coord form lives in core_log_action (atom 17): the RAW click coords + the bareword `noalign` flag; break_wires_at_point applies noalign in-core, so the raw-coords+flag line replays IDENTICALLY. Exactly ONE such site in scheduler.c (S7 pins exclusivity); the ` noalign"` (space before the quote) does NOT match the aligned `%.16g"` form, and neither matches break_wires_at_point / _at_pins / _at_attach_points (an `_` follows)}
     {log_action\("xschem print_hilight_net}           1 {print_hilight_net branch}
     {log_action\("xschem exit closewindow force"}     2 {exit hook (both terminating sites)}
     {log_action\("xschem set cadgrid}                 1 {set cadgrid resolved-value}
@@ -498,7 +520,7 @@ set CVERBS {
   cut delete copy undo redo save reload saveas align trim_wires break_wires
   flip flipv rotate flip_in_place flipv_in_place rotate_in_place
   change_elem_order check_unique_names create_instance toggle_ignore
-  reset_inst_prop replace_symbol show_unconnected_pins embed_rawfile
+  reset_inst_prop replace_symbol show_unconnected_pins embed_rawfile wire_cut
   floaters_from_selected_inst print_hilight_net attach_labels add_pin_stubs
   setprop unhilight_all hilight_net_interactive unhilight_net_interactive
   make_symbol make_sch make_sch_from_sel descend descend_symbol go_back
@@ -1037,6 +1059,45 @@ check "S7 (reset_inst_prop unperturbed) scheduler.c: still EXACTLY ONE av-build 
 check "S7 (reset_inst_prop unperturbed) scheduler.c: still EXACTLY ONE log_action_argv(3, av)" \
   [expr {[rxcount $sched {log_action_argv\(3, av\);}] == 1}] \
   "got=[rxcount $sched {log_action_argv\(3, av\);}]"
+# wire_cut (Refactor B atom 17 -- the SILENT-MUTATOR twin of break_wires (atom 9, §29); the SEPARATE
+# Alt-Right gesture core break_wires_at_point (check.c) that §29 kept OFF break_wires' boundary): the
+# readonly gate + the TWO `xschem wire_cut x y [noalign]` log forms (via core_log_action) live SOLELY in
+# perform_action. Only the SCRIPTED coord form crosses (the scheduler branch's argc>3 guard) -- the
+# no-coord GESTURE-START form stays RAW in the branch (arms ui_state, no mutation, no log, the rotate/flip
+# STARTMOVE-stays-raw split). Like break_wires, core_log_action legitimately holds TWO log lines (the
+# aligned + the noalign form), so scheduler.c must have EXACTLY TWO in total -- ONE of each form -- with
+# the scheduler BRANCH carrying none (it delegates) and every callback.c entry carrying ZERO. The arg is
+# numeric COORDS + a bareword FLAG (%.16g, NOT log_action_argv -- no metacharacter referent). The aligned
+# literal `wire_cut %.16g %.16g"` (a quote right after the second %.16g) and the noalign literal
+# `wire_cut %.16g %.16g noalign` (a space+noalign before the quote) are MUTUALLY EXCLUSIVE and counted
+# independently, so a re-scattered branch log of EITHER form fails closed; and neither matches
+# break_wires_at_point / break_wires_at_pins / break_wires_at_attach_points (an `_` follows in all three).
+# The verb is ALWAYS arg-carrying, so a BARE `xschem wire_cut"` log form must be ZERO. OPTION (A): the
+# interactive Alt-Right COMPLETION (callback.c break_wires_at_point at mousex/y_snap) stays RAW+silent, so
+# callback.c must have ZERO `log_action("xschem wire_cut` (this guards a future gesture-logging edit from
+# silently double-logging). The branch NEVER HAD a scheduler_readonly_reject; the boundary's generic gate
+# now ADDS one (a CORRECTNESS FIX -- the old scripted coord form cut on a read-only cell). break_wires_at_point()
+# is 1:1 with wire_cut's own entry points (the scheduler branch + the callback.c Alt-Right gesture), never
+# another verb. wire_cut stays in S2 CVERBS (a scripted/replayed `xschem wire_cut x y [noalign]` re-executes
+# AND self-logs) and OUT of S3.
+check "S7 scheduler.c: EXACTLY ONE log_action(\"xschem wire_cut %.16g %.16g noalign\") -- the core_log_action NOALIGN form (the branch delegates to the boundary)" \
+  [expr {[rxcount $sched {log_action\("xschem wire_cut %\.16g %\.16g noalign"}] == 1}] \
+  "got=[rxcount $sched {log_action\("xschem wire_cut %\.16g %\.16g noalign"}]"
+check "S7 scheduler.c: EXACTLY ONE log_action(\"xschem wire_cut %.16g %.16g\\\"\") -- the core_log_action ALIGNED form (quote-terminated, distinct from the noalign form)" \
+  [expr {[rxcount $sched {log_action\("xschem wire_cut %\.16g %\.16g"}] == 1}] \
+  "got=[rxcount $sched {log_action\("xschem wire_cut %\.16g %\.16g"}]"
+check "S7 scheduler.c: EXACTLY TWO log_action(\"xschem wire_cut %...\") in total -- both forms live in core_log_action, nowhere else" \
+  [expr {[rxcount $sched {log_action\("xschem wire_cut %}] == 2}] \
+  "got=[rxcount $sched {log_action\("xschem wire_cut %}]"
+check "S7 scheduler.c: NO scattered bare log_action(\"xschem wire_cut\") (the verb is always arg-carrying -- both forms are %.16g)" \
+  [expr {[rxcount $sched {log_action\("xschem wire_cut"}] == 0}] \
+  "got=[rxcount $sched {log_action\("xschem wire_cut"}]"
+check "S7 callback.c: NO scattered log_action(\"xschem wire_cut...\") (option A: the interactive Alt-Right completion stays raw+silent)" \
+  [expr {[rxcount $cbtext {log_action\("xschem wire_cut}] == 0}] \
+  "got=[rxcount $cbtext {log_action\("xschem wire_cut}]"
+check "S7 scheduler.c: NO scattered scheduler_readonly_reject(...,\"wire_cut\") (the boundary's generic gate covers the verb -- the branch never had one; the gate is a NEW correctness fix)" \
+  [expr {[rxcount $sched {scheduler_readonly_reject\(interp, "wire_cut"\)}] == 0}] \
+  "got=[rxcount $sched {scheduler_readonly_reject\(interp, "wire_cut"\)}]"
 # atom-13 NESTING COUPLING (adversarial-review finding): the S1 existence rows above pin
 # that the guard line, the log line and the reset line each EXIST, but not that log+reset are
 # INSIDE the log-on-success block. A de-nest that keeps all three lines yet closes the

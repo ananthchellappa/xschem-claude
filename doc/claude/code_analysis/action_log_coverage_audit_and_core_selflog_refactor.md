@@ -3606,6 +3606,180 @@ unconditional-log verb (re-verify from source, the atom-10 lesson). DEFER the co
 `delete()`-is-NOT-1:1 lesson); selection-referent replay (0005) remains the accepted
 config/selection-dependent class.
 
+## 37. Refactor B ATOM 17 (2026-07-17): the SEVENTEENTH per-verb migration — the SILENT-MUTATOR twin of break_wires, the mouse-position wire cut `break_wires_at_point` (`wire_cut`)
+
+The friction-free pool went EMPTY at atom 16. A fresh 22-group grep-scout (the atom-16 fan-out) named
+`wire_cut` as the LEAST-friction genuine coverage gain: a **SILENT MUTATOR** (it logged NOTHING before) and
+the **direct structural twin of break_wires** (atom 9, §29). break_wires' §29 note already flagged
+`break_wires_at_point()` (check.c) as the SEPARATE Alt-Right `wire_cut` gesture core kept OFF break_wires'
+boundary; **atom 17 puts THAT core on the boundary.** It is NOT strictly friction-free — it carries TWO
+wrinkles: route only the coord form, and decide the interactive-gesture callback sites — both handled by the
+accepted rotate/flip/break_wires patterns.
+
+**The verb.** `xschem wire_cut [x y] [noalign]` cuts a wire at a point. The SCRIPTED coord form
+(`argc>3`) splits the wire whose body the point touches (via `break_wires_at_point`, check.c:501); the
+no-coord form ARMS the interactive Alt-Right cut gesture (ui_state only — no mutation).
+
+**Migration (scheduler.c only — callback.c/check.c UNCHANGED = option A).**
+- **Branch** (`xschem_cmds_w`): SPLIT on the coord form. `if(argc > 3) return perform_action("wire_cut",
+  argc, argv);` sends the scripted/replay MUTATION through the boundary; the no-coord GESTURE-START `else`
+  stays RAW (`ui_state |= MENUSTART; ui_state2 = align ? MENUSTARTWIRECUT : MENUSTARTWIRECUT2`), mutates
+  NOTHING and logs NOTHING — exactly the rotate/flip **STARTMOVE-stays-raw** split (§26/§27: the standalone
+  form crosses, the during-gesture arm stays raw). The `!xctx` guard STAYS in the branch (the gesture-START
+  path dereferences `xctx->ui_state`); the coord form re-checks it inside `perform_action` (harmless
+  redundancy). The two Alt-Right menu items (`xschem.tcl` ~14403/14405, `wire_cut` + `wire_cut noalign`) are
+  BOTH the no-coord gesture-START form → they reach ONLY this `else`.
+- **`run_core` arm**: parse `noalign`, `break_wires_at_point(atof(argv[2]), atof(argv[3]), align)`, `return
+  TCL_OK`. **NO `push_undo`/`draw`** — `break_wires_at_point()` OWNS a **CONDITIONAL SINGLE `push_undo`**
+  (only on the first actual split, check.c:522) + its own `draw()` + dot (check.c:532–544); adding one here
+  would DOUBLE-push (the atom-1 rule, locked by test (f) undo-depth). Returns `void` → the arm ALWAYS
+  returns TCL_OK; a **point OFF any wire is a NO-OP** (`changed` stays 0 → no push, no draw) that still
+  succeeds → **no-op-still-logs** (§30). Reached only via the branch's `argc>3` guard, so `argv[2]/argv[3]`
+  are always present.
+- **`core_log_action` arm**: logs the **RAW click coords** `argv[2]/argv[3]` via **`%.16g`** (the rotate/flip
+  pivot convention — **NOT `log_action_argv`**: numeric coords carry no Tcl-metacharacter referent to
+  brace-quote), in **TWO forms** like break_wires: aligned `xschem wire_cut x y` and `xschem wire_cut x y
+  noalign`. `align` is applied INSIDE the core (`closest_point_calculation`), so **raw-coords + the flag
+  replay IDENTICALLY** (replay re-snaps). The `align` read here uses the SAME loop as `run_core`'s arm, so
+  the logged form can never diverge from the applied cut.
+
+**COORD FIDELITY — the atom-17 analogue of pivot fidelity.** The log records the RAW argv coords, NOT the
+snapped point the core computes. Empirically: `wire_cut 47 3` (cadsnap=20) cuts at x=**40** (snapped) and
+logs `xschem wire_cut 47 3`; replay re-snaps 47→40 → identical. `wire_cut 47 3 noalign` cuts at x=**47** and
+logs `xschem wire_cut 47 3 noalign`; replay → identical. Logging the snapped point instead would still
+replay-snap on top of an already-snapped coord (idempotent for the aligned form) but DIVERGES for the noalign
+form — so RAW coords are the correct, uniform choice (locked by test (a2) + sabotage 5).
+
+**THE 1:1 TEST (C3).** `break_wires_at_point()` is called ONLY by `wire_cut`'s own entry points: the
+scheduler branch (now via `run_core`) + the four callback.c Alt-Right gesture-completion sites
+(callback.c:2506/2510/6538/6544, `mousex/y_snap`) — never by another verb (grep-verified). So it is 1:1 with
+`wire_cut`, and the boundary/`core_log_action` is the correct single log site. The twin `break_wires_at_pins`
+(break_wires, atom 9) and `break_wires_at_attach_points` (load/save auto-split) are UNTOUCHED; the literal
+`wire_cut %` distinguishes all three (an `_` follows in the `break_wires_at_*` names).
+
+**BONUS CORRECTNESS FIX — the coord form had NO readonly gate.** Verified empirically on the pre-migration
+binary: `xschem wire_cut 50 0` on a read-only cell **CUT the wire** (push_undo + split + draw ran, rc=0) — a
+scattered 0041/0051-class mutation-on-a-read-only-cell gap. The boundary's ONE gate now CLOSES it: the
+scripted verb REFUSES (`TCL_ERROR`, `xschem wire_cut: schematic is read-only …`, no cut, no log). Safe
+precisely BECAUSE `wire_cut` has NO read-only-safe form — every coord-form path attempts a cut; a
+point-off-wire is a NO-OP, not a QUERY — so the all-or-nothing gate cannot OVER-reject (the
+show_unconnected_pins §35 / floaters §30 template).
+
+**THE (A)/(B) GESTURE-COMPLETION DECISION — option (A) chosen.** The four callback.c interactive Alt-Right
+completion sites call `break_wires_at_point(mousex_snap, mousey_snap, align)` RAW at gesture completion and
+log NOTHING today. **(A) LEAVE RAW** (the rotate/flip during-gesture pattern, the scout default): migrate the
+SCRIPTED coord form ONLY; the interactive cut stays raw+silent — a PRE-EXISTING 0069-class gesture-drop gap
+the atom does NOT widen but does NOT close. **(B) ROUTE THE GESTURE TOO** would move the four sites to
+`perform_action("wire_cut", 4, av)` (av[2]/av[3] = snapped coords as strings), +4 callback.c S1 rows + a
+gesture test. **Chose (A):** the four sites pass DOUBLE `mousex_snap`/`mousey_snap` needing snprintf-to-string
+at four sites in two functions (NOT the trivial `av[2]="1"` byte-move break_wires' keys were), they are the
+exact rotate/flip STARTMOVE-stays-raw precedent (mid-gesture logged at END, not per-gesture), and two of the
+four (callback.c:2505/2509) are ALREADY readonly-gated by the MENUSTART backstop (callback.c:2495–2504), so
+(A) is the clean, well-scoped atom with the smaller sabotage surface. (B) is noted as the follow-up
+gesture-logging atom. The decision is captured in the branch comment + the test (case g) + this section — a
+DELIBERATE, documented choice, not an accident.
+
+**Entry map.** The SCRIPTED coord form has NO key/menu/palette/Tcl-caller (pure scripted + replay). The two
+menu items + the Alt-Right/Alt-Shift-Right mouse gesture are the NO-COORD gesture-START form (stay raw).
+Under option (A) there is NO callback.c edit and no key-equivalence decision beyond (A).
+
+**Effect oracle (empirical on the pre-migration binary; deltas re-confirmed on the migrated binary).** A
+horizontal wire `0 0 100 0` + `redraw` (break_wires_at_point reads the wire spatial hash a redraw populates —
+unlike break_wires_at_pins it does not `hash_wires()` itself). `wire_cut 50 0` splits it into `{50 0 100 0}`
++ `{0 0 50 0}` (count 1→2). Deltas after migration: readonly rc 0-cut → TCL_ERROR-no-cut; no-op (`wire_cut
+500 500`) rc 0 no-split STILL logs +1; noalign x=47 vs align x=40; gesture no-coord unchanged (ui_state
+MENUSTART=65536); byte-exact `xschem wire_cut 50 0`; undo depth 1.
+
+**Verified:** `test_perform_action_wire_cut.tcl` (30 checks, full_audit logdir_tests, self-deferring
+"deferred (no --logdir)" guard): (a) SUCCESS +1 aligned log + split + vertex at (50,0) + byte-exact; (a2)
+NOALIGN cuts raw x=47 + logs `xschem wire_cut 47 3 noalign` + the ALIGN form snaps to x=40 (the
+discriminator) + replaying the logged noalign line re-cuts at x=47 (flag round-trip); (b) NO-OP off-wire
+TCL_OK + no split + STILL +1 log (§30, catch-wrapped); (c) readonly reject TCL_ERROR + verb-named message +
+no cut + no log (the correctness fix); (d) mid-gesture split — `xschem wire_cut` (no coords) TCL_OK + no
+mutation + MENUSTART armed + +0 log (the gesture-START else did NOT cross the boundary), and `wire_cut
+noalign` likewise; (e) replay through the suppress seam re-executes without re-logging vs a control
+unwrapped `source` that re-logs; (f) undo DEPTH — ONE undo restores the un-split wire (single conditional
+push_undo), a SECOND removes the placed wire; (g) NOTE: the interactive completion stays off the boundary
+(option A, grep-guard locked). **Sabotage ×6** (each rebuild-run-restore from the scratchpad backup
+`scheduler.c.atom17`, NOT git — ~220 dirty files; each failing EXACTLY its checks): (1) neutralise the
+boundary route (inline the coord form KEEPING gate+log) → the runtime `.tcl` STILL PASSES while the grep
+guard's S1 branch-route row + S7 exclusivity (total 2→4, each form →2) + S7 scattered-readonly-reject (0→1)
+fail closed (the grep guard is the load-bearing structural lock); (2) neutralise the boundary readonly gate
+→ the (c) checks fail (cut happened, no error); (3) spurious `push_undo` in the arm → the (f) SECOND-undo
+depth check fails (the placed wire survives the second undo) — the no-double-push discriminator; (4) make the
+gesture-START form cross/log → the (d) +0-log checks fail + S7 total 2→3 fails closed (a LITERAL `argc>=2`
+route would instead OOB-crash on `atof(argv[2/3])` for the coordless form — exactly why the `argc>3` guard
+exists); (5) log a +1-offset coord instead of the raw argv coords → the (a)/(a2) byte-exact + count + replay
+checks diverge (the coord fidelity is load-bearing); (6) drop the noalign branch (always apply/log aligned) →
+the (a2) noalign effect+log+replay checks fail + the S1/S7 noalign-form rows fail closed (noalign 1→0, total
+2→1). The change-adjacent siblings stay green: all fifteen other `test_perform_action_*` +
+`test_selflog_grep_guard` + `test_actionlog_suppress_gate` + `test_toggle_editmode_log`, and ESPECIALLY
+`test_perform_action_break_wires` (the twin — its `wire_cut` case (e) still emits ZERO `xschem break_wires`).
+
+**Grep guard (`test_selflog_grep_guard.tcl`).** ADDED to the `src/scheduler.c` S1 MANIFEST: the boundary
+branch row (`return perform_action("wire_cut", argc, argv);`) + the aligned form row (`log_action("xschem
+wire_cut %.16g %.16g"`) + the noalign form row (`log_action("xschem wire_cut %.16g %.16g noalign"`). ADDED
+`wire_cut` to the S2 CVERBS set (kept OUT of S3). ADDED an S7 block MIRRORING break_wires: scheduler.c
+EXACTLY TWO `wire_cut %` total (ONE aligned + ONE noalign, counted independently — the aligned literal
+`%.16g %.16g"` is quote-terminated, the noalign literal `%.16g %.16g noalign` has a space before the quote,
+so they are mutually exclusive), ZERO bare `wire_cut"`, ZERO scattered `log_action("xschem wire_cut` in
+callback.c (option A), ZERO scattered `scheduler_readonly_reject(...,"wire_cut")`. All comment references
+avoid the `log_action("xschem wire_cut %` literal prefix so no comment perturbs a count.
+
+**Full-audit baseline diff.** AFTER (atom-17 binary, run under concurrent 11-agent refute-panel load: 157
+pass / 18 fail-files + 1 timeout / 0 crash) vs BASELINE (`scheduler.c` reverted to HEAD 73c422ac, rebuilt:
+154 pass / 19 fail-files). The load-bearing signal is CLEAN: the BASELINE-only file-fails are PRECISELY the
+two atom-17 tests — `test_perform_action_wire_cut` (its +1-log / effect / noalign / readonly-reject /
+undo-depth checks fail when the migration is absent — the old scripted coord form never logged and CUT on a
+read-only cell) and `test_selflog_grep_guard` (its atom-17 S1/S7 rows scan for `scheduler.c` code absent on
+the reverted source) — proving BOTH load-bearing (they PASS on atom-17). The other four BASELINE-only
+file-fails (`test_context_menu_descend_edit`, `test_multi_window`, `test_palette`,
+`test_verb_noun_copy_move`) are WSLg-congestion GUI/gesture flakes on the baseline run — NOT change-adjacent,
+and PASS on the AFTER run. The two AFTER-only file-fails (`test_key_graph_context`, `test_wire_vertex_grab`)
+are congestion flakes RE-VERIFIED to PASS STANDALONE on the atom-17 binary (the concurrent refute panel
+loaded the box during the AFTER run). Everything else is the COMMON pre-existing WSLg standing set (the
+cadence pair `test_cadence_descend_newwin_ro`/`test_cadence_drag`, the GUI set `test_ciw`/`test_hi_descend`/
+`test_lib_manager_gui`/`test_reopen_readonly`/`test_altf5_ciw`, `test_lib_sweep`/`test_phase3_mints`/
+`test_wire_split`(W7 move-netlist invariant)/`test_select_at`/`test_save_as_cellview`/
+`test_descend_untitled_preserve`/`test_untitled_reuse`/`test_fluid_editing`, and `test_selflog_output`'s
+transform-KEY checks). ALL seventeen `test_perform_action_*` (wire_cut included) + `test_selflog_grep_guard`
++ `test_actionlog_suppress_gate` + `test_toggle_editmode_log` are GREEN on AFTER, ESPECIALLY
+`test_perform_action_break_wires` (the twin). **ZERO new deterministic failures.**
+
+**Adversarial review (10-axis refute panel + completeness critic, Workflow/ultracode, against a FROZEN
+atom-17 snapshot): verdict SHIP — 10/10 axes `defect_found=false`, zero code defects.** The axes: (1) branch
+coord/gesture SPLIT — only `argc>3` crosses, the gesture-START else arms `MENUSTART`/`MENUSTARTWIRECUT[2]`
+identically, the coord form is the SOLE `perform_action("wire_cut")` caller, the `return`-early matches all
+sixteen siblings and skips no common tail; (2) core-owns-conditional-undo — the arm adds no push/draw, the
+core's single `push_undo` (check.c:522) + `draw` (check.c:532) are gated on `changed`, the point-off-wire
+no-op pushes nothing, undo-depth-1 holds; (3) coord fidelity — RAW `argv` coords logged (not the snapped
+point), `align` applied in-core, replay re-snaps identically; (4) noalign round-trips in BOTH effect and log
+(identical parse loops); (5) readonly gate additive + no over-reject (no read-only-safe form); (6)
+no-op-still-logs (void core → TCL_OK); (7) 1:1/C3 — `break_wires_at_point` called only by `wire_cut` entry
+points, the break_wires twin's `wire_cut %` literals stay independent; (8) the (A) gesture decision sound +
+documented; (9) grep-guard drift — the aligned/noalign literals mutually exclusive, no comment false-match;
+(10) C89/build clean. The completeness critic returned `review_complete=true`, `SHIP`, and independently
+**RAN the pre-existing coord-form consumer `tests/stable_handles/test_body.tcl:152`** (`xschem wire_cut 100
+3 noalign`, guarding CH4i/CH4i2) on the migrated binary — BOTH PASS = an independent non-regression proof
+(the 2 stable_handles FAILs H7b/H7c are orthogonal disk-undo/handle red tests). It raised THREE coverage
+gaps, all resolving to NON-defects: (i) a coord-fidelity NIT — the `r==2` EXACT-ON-SEGMENT case in
+`closest_point_calculation` (check.c:496) leaves the point UNSNAPPED even with `align=1`, but replay is
+SYMMETRIC (both split halves get the identical replayed coord → no short/disconnect), the drift is sub-ULP,
+realistic coords are grid integers that round-trip exactly, and it is the codebase-wide `%.16g` convention
+shared with rotate/flip (atoms 6/7); (ii) the `break_wires_at_point` **spatial-hash dependency** — it does
+NOT call `hash_wires()` (unlike `break_wires_at_pins`), assuming `wire_spatial_table` is already populated —
+a real landmine but PRE-EXISTING and byte-faithful (the old scripted coord form called it identically; the
+test/consumers redraw first); (iii) the stable_handles consumer (verified PASS). No concrete input/state
+producing wrong output, crash, or replay divergence that atom 17 introduces.
+
+**Next atom:** the SILENT-MUTATOR wire_cut is now on the boundary alongside its twin break_wires. The
+friction-free pool remains EMPTY, so the next atom is another HIGHER-FRICTION coverage gain — the atom-16
+scout runners-up were `image` (HAS_CAIRO + a help/no-op C1/C2 split), `apply_pin_prop` (inline-body
+extraction + 2 Tcl_Merge string referents — HIGHEST value), and `move_instance` (conditional noundo/nodraw
+C5 + a name referent) — pick with a fresh source re-verify. DEFER the composite-hazard verbs
+(delete/cut/copy/save/reload) whose shared cores are called by abort/merge/teardown (the §4
+`delete()`-is-NOT-1:1 lesson).
+
 *Prepared 2026-07-14, `fluid-editing`. §1–5 analysis only — no code changed. §6 added after
 atom 3 landed; §7 after atom 4; §8 after atom 5; §9 after atom 6; §10 after atom 7; §11 after
 atom 8; §12 after atom 9; §13 after atom 10; §14 after atom 11;
@@ -3670,6 +3844,18 @@ log_action_argv/Tcl_Merge using an array named `ev` (NOT `av`) to stay collision
 reset_inst_prop's byte-identical build; the boundary ADDS the read-only gate the branch NEVER HAD as a
 CORRECTNESS FIX — the old branch embedded on a read-only cell; the external-file replay caveat is IDENTICAL
 pre/post, not a new hazard; a PURE SCRIPTED verb — no key/menu/palette/callback/Tcl caller, so no callback.c
-edit; the friction-free pool is now EXHAUSTED so the next atom needs another fresh grep-scout).
+edit; the friction-free pool is now EXHAUSTED so the next atom needs another fresh grep-scout); §37 after the
+SEVENTEENTH (wire_cut — the SILENT-MUTATOR twin of break_wires named by the atom-16 22-group scout after the
+friction-free pool went empty; the mouse-position wire cut `break_wires_at_point` that §29 kept OFF
+break_wires' boundary. NOT friction-free — TWO wrinkles handled by accepted patterns: the core OWNS a
+CONDITIONAL single push_undo + draw so run_core adds NEITHER (no double-push; a point-off-wire no-op still
+returns TCL_OK → no-op-still-logs); core_log_action logs the RAW click coords via `%.16g` + a bareword
+`noalign` flag in TWO forms, NO Tcl_Merge (numeric coords), align applied in-core so raw coords replay
+identically; a MID-GESTURE SPLIT routing ONLY the SCRIPTED coord form (branch argc>3) while the no-coord
+gesture-START form stays RAW (arms ui_state, no mutation, no log — the rotate/flip STARTMOVE-stays-raw
+pattern); the boundary ADDS the read-only gate the coord form NEVER HAD as a CORRECTNESS FIX — the old
+scripted form cut on a read-only cell; and the (A)/(B) gesture-completion decision recorded — option (A),
+the four interactive Alt-Right callback.c completion sites stay RAW+silent, a pre-existing 0069-class gap
+this atom does not widen, (B) deferred to a follow-up gesture-logging atom, so NO callback.c edit).
 Coverage verified in source at HEAD by a 14-way parallel read; do not trust the status table
 without re-checking the cited `file:line` anchors, which drift as the tree moves.*
