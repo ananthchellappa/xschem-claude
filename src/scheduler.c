@@ -184,6 +184,10 @@ static int scheduler_readonly_reject(Tcl_Interp *interp, const char *subcmd)
   return 1;
 }
 
+/* Forward decl: pin_scope_resolve() is defined below (after the xschem_cmds_a group) but
+ * run_core's apply_pin_prop arm (Refactor B atom 18) calls it above its definition. */
+static int pin_scope_resolve(const char *scope, int *primary_out, int **targets_out);
+
 /* run_core -- the EFFECT half of the perform_action boundary. Dispatches a
  * migrated verb to its raw core with no readonly check and no log_action of its
  * own (perform_action owns both). Returns TCL_OK on success. Migrated verbs so
@@ -634,6 +638,87 @@ static int run_core(const char *verb, int argc, const char *argv[])
     break_wires_at_point(atof(argv[2]), atof(argv[3]), align);
     return TCL_OK;
   }
+  else if(!strcmp(verb, "apply_pin_prop")) {
+    /* Refactor B atom 18: a HIGHER-FRICTION coverage gain (the friction-free pool is EMPTY) --
+     * a symbol-editor mutation that logged NOTHING and had NO C-level read-only gate before this
+     * atom, carrying an INLINE mutation body (not a shared core, so strictly 1:1 with the verb --
+     * C3) and TWO string referents. Follows the replace_symbol §34 template (a VALIDATING verb
+     * whose validation MOVES IN before its single push_undo, and whose TWO referents log via
+     * log_action_argv/Tcl_Merge) crossed with the reset_inst_prop §33 argc-gate. apply_pin_prop
+     * applies <prop> to the symbol PINLAYER rects named by <scope>, mirroring the pin branch of
+     * edit_rect_property without a dialog round-trip (cadence_pin_name_text.md; symbol_editor_
+     * apply_scope.md). The whole inline body MOVES here verbatim from the scheduler branch:
+     *   - the argc<3 VALIDATION is an early TCL_ERROR *before* any mutation, so (via log-on-
+     *     success, §33) a bad arg mutates nothing and logs nothing;
+     *   - pin_scope_resolve() is the SHARED READ-ONLY resolver (also used by pin_scope_prop_
+     *     uniform / the SP3 preview) -- it stays RAW below the boundary, does NOT mutate;
+     *   - the GUARD-PASS no-op (nothing would change) returns "0"+TCL_OK BEFORE push_undo -- NO
+     *     undo slot; under log-on-success it STILL logs one line (a no-op is a SUCCESS, §30/§32);
+     *   - else the SINGLE push_undo (owned here -- there is no self-undo core) + the apply loop
+     *     (set_different_token / pin_reorient / pin_view_apply) + set_modify(1) + draw().
+     * RESULT-DROPPED (verified): the old branch returned a MEANINGFUL "0"/"1" interp result; the
+     * boundary's success-path Tcl_ResetResult BLANKS it. The production consumer gfxform::do_apply
+     * DISCARDS the result; the two standalone tests that asserted it (symbol_pin_scope.tcl /
+     * pin_name_text.tcl) were updated to assert the EFFECT (a stronger oracle) -- so no caller
+     * regresses. The Tcl_SetResult("0"/"1") is kept here for a byte-faithful body; the boundary
+     * clears it on success (like reset_inst_prop's dropped instname, §33). C89: decls at block top. */
+    int i, n, change = 0, primary = -1, ntargets;
+    int *targets;
+    const char *scope, *newprop;
+    char *base = NULL;          /* primary pin's prop: the changed-fields baseline */
+    if(argc < 3) {
+      Tcl_SetResult(interp, "xschem apply_pin_prop needs: [scope] new_prop", TCL_STATIC);
+      return TCL_ERROR;
+    }
+    if(argc >= 4) { scope = argv[2]; newprop = argv[3]; }   /* apply_pin_prop <scope> <prop> */
+    else          { scope = "selected"; newprop = argv[2]; } /* apply_pin_prop <prop> (back-compat) */
+    ntargets = pin_scope_resolve(scope, &primary, &targets);
+    if(primary >= 0) my_strdup(_ALLOC_ID_, &base, xctx->rect[PINLAYER][primary].prop_ptr);
+    /* No pin primary (sel_array[0] is not a pin) but a scope like "all" still resolves
+     * targets: use the FIRST target as the changed-fields baseline so a fan can NEVER
+     * degenerate into a whole-prop overwrite that mass-renames every pin to the same
+     * string (the base==NULL else branch below). */
+    if(!base && ntargets > 0) my_strdup(_ALLOC_ID_, &base, xctx->rect[PINLAYER][targets[0]].prop_ptr);
+    /* guard pass: would applying change any target pin? avoid an empty undo slot */
+    for(i = 0; i < ntargets && !change; i++) {
+      char *cand = NULL;
+      n = targets[i];
+      my_strdup(_ALLOC_ID_, &cand, xctx->rect[PINLAYER][n].prop_ptr);
+      if(base) {
+        if(set_different_token(&cand, newprop, base)) change = 1;
+      } else {
+        my_strdup(_ALLOC_ID_, &cand, newprop);
+        if(!cand || !xctx->rect[PINLAYER][n].prop_ptr || strcmp(cand, xctx->rect[PINLAYER][n].prop_ptr)) change = 1;
+      }
+      my_free(_ALLOC_ID_, &cand);
+    }
+    if(!ntargets || !change) {
+      if(base) my_free(_ALLOC_ID_, &base);
+      my_free(_ALLOC_ID_, &targets);
+      Tcl_SetResult(interp, "0", TCL_STATIC);
+      return TCL_OK;
+    }
+    xctx->push_undo();
+    for(i = 0; i < ntargets; i++) {
+      char olddir[40];
+      n = targets[i];
+      my_snprintf(olddir, S(olddir), "%s", get_tok_value(xctx->rect[PINLAYER][n].prop_ptr, "dir", 0));
+      if(base) {
+        set_different_token(&xctx->rect[PINLAYER][n].prop_ptr, newprop, base);
+      } else {
+        my_strdup(_ALLOC_ID_, &xctx->rect[PINLAYER][n].prop_ptr, newprop);
+      }
+      set_rect_flags(&xctx->rect[PINLAYER][n]);
+      if(strcmp(olddir, get_tok_value(xctx->rect[PINLAYER][n].prop_ptr, "dir", 0))) pin_reorient(n);
+      pin_view_apply(n);   /* create/delete the name view per show_pinname, then sync it */
+    }
+    if(base) my_free(_ALLOC_ID_, &base);
+    my_free(_ALLOC_ID_, &targets);
+    set_modify(1);
+    draw();               /* a pin's name view is a separate object -> full redraw */
+    Tcl_SetResult(interp, "1", TCL_STATIC);
+    return TCL_OK;
+  }
   return TCL_ERROR; /* unreachable: perform_action is only wired for the verbs above */
 }
 
@@ -781,6 +866,29 @@ static void core_log_action(const char *verb, int argc, const char *argv[])
     for(i = 2; i < argc; i++) if(!strcmp(argv[i], "noalign")) align = 0;
     if(align) log_action("xschem wire_cut %.16g %.16g", atof(argv[2]), atof(argv[3]));
     else      log_action("xschem wire_cut %.16g %.16g noalign", atof(argv[2]), atof(argv[3]));
+  } else if(!strcmp(verb, "apply_pin_prop")) {
+    /* atom 18: TWO referents like replace_symbol (§34), read IDENTICALLY to run_core's arm so the
+     * logged line can never diverge from the applied change. TWO forms mirror the branch's arg
+     * resolution: argc>=4 -> `xschem apply_pin_prop <scope> <prop>`, argc==3 -> the back-compat
+     * `xschem apply_pin_prop <prop>` (default "selected" scope). BOTH are emitted via log_action_argv
+     * (Tcl_Merge), NOT a raw %s: <prop> is a full pin-attribute string carrying spaces + brackets +
+     * possibly braces (name=X dir=in name_dx=20 ... foo=a[1]) -- a raw line would misparse on replay;
+     * <scope> is a bareword (current|selected|all) that Tcl_Merge logs unbraced (minimal quoting), so
+     * a plain form logs byte-identically. The array is named `pp` (NOT av/ev -- the §36 collision
+     * lesson) so its build/emit lines stay TEXTUALLY DISTINCT from reset_inst_prop's `av`, embed's
+     * `ev`, and replace_symbol's `av[3]`. Reached ONLY on TCL_OK (log-on-success), so the argc<3
+     * validation failure logs nothing. NB the argc==3 back-compat form replays against the CURRENT
+     * selection ("selected" scope) -- the accepted selection-dependent replay class (0005), same as
+     * floaters/attach_labels; the resolved pin set is deliberately NOT baked into the line. */
+    if(argc >= 4) {
+      const char *pp[4];
+      pp[0] = "xschem"; pp[1] = verb; pp[2] = argv[2]; pp[3] = argv[3];
+      log_action_argv(4, pp);
+    } else {
+      const char *pp[3];
+      pp[0] = "xschem"; pp[1] = verb; pp[2] = argv[2];
+      log_action_argv(3, pp);
+    }
   } else {
     log_action("xschem %s", verb);
   }
@@ -903,74 +1011,24 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
     /* apply_pin_prop [<scope>] <prop>
      *   Apply <prop> to the symbol pins (PINLAYER rects) named by <scope>, mirroring the pin
      *   branch of edit_rect_property but WITHOUT a dialog round-trip, so the pin/pinname
-     *   property forms can offer a live "Apply" that updates the canvas while staying open
-     *   (cadence_pin_name_text.md; scope = symbol_editor_apply_scope.md).
-     *   <scope> = current (primary pin only) | selected (all selected pins) | all (every pin
-     *   of the symbol), resolved by the shared pin_scope_targets(). If <scope> is omitted the
-     *   default is "selected" (back-compat with the pre-scope command and any replay logs).
-     *   Changed-fields-only is UNCONDITIONAL when a primary pin exists: the primary pin's prop
-     *   (sel_array[0]) is the diff baseline, so fanned pins keep their own unchanged tokens
-     *   (notably their distinct name=). No-op (no undo slot) when nothing would change; pushes
-     *   one undo; returns 1/0. */
+     *   property forms can offer a live "Apply" (cadence_pin_name_text.md; scope =
+     *   symbol_editor_apply_scope.md). <scope> = current | selected | all (default "selected").
+     * Routes through the single mutation boundary (Refactor B atom 18 -- a HIGHER-FRICTION
+     * coverage gain now the friction-free pool is EMPTY; the replace_symbol §34 two-referent
+     * VALIDATING template crossed with the reset_inst_prop §33 argc-gate): the readonly gate,
+     * the argc<3 "needs: [scope] new_prop" validation, the guard-pass no-op, the SINGLE
+     * push_undo + the inline apply loop (set_different_token/pin_reorient/pin_view_apply), and
+     * the ONE `xschem apply_pin_prop [<scope>] <prop>` log site (via core_log_action, both
+     * referents Tcl_Merge-quoted, LOGGED ONLY ON SUCCESS) all live in perform_action/run_core.
+     * The mutation body is INLINE (not a shared C fn) so it is strictly 1:1 with the verb (C3);
+     * pin_scope_resolve() is a SHARED read-only resolver that stays RAW below the boundary. The
+     * boundary ADDS the C-level read-only gate the scripted verb NEVER HAD (a correctness fix --
+     * the old scripted form mutated a read-only symbol view); the old success-path "0"/"1" interp
+     * result is dropped (the boundary clears the interp on success -- gfxform::do_apply discards
+     * it, and the two standalone tests were switched to assert the effect). No scattered
+     * readonly/log/push_undo here. */
     else if(!strcmp(argv[1], "apply_pin_prop"))
-    {
-      int i, n, change = 0, primary = -1, ntargets;
-      int *targets;
-      const char *scope, *newprop;
-      char *base = NULL;          /* primary pin's prop: the changed-fields baseline */
-      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
-      if(argc < 3) {
-        Tcl_SetResult(interp, "xschem apply_pin_prop needs: [scope] new_prop", TCL_STATIC);
-        return TCL_ERROR;
-      }
-      if(argc >= 4) { scope = argv[2]; newprop = argv[3]; }   /* apply_pin_prop <scope> <prop> */
-      else          { scope = "selected"; newprop = argv[2]; } /* apply_pin_prop <prop> (back-compat) */
-      ntargets = pin_scope_resolve(scope, &primary, &targets);
-      if(primary >= 0) my_strdup(_ALLOC_ID_, &base, xctx->rect[PINLAYER][primary].prop_ptr);
-      /* No pin primary (sel_array[0] is not a pin) but a scope like "all" still resolves
-       * targets: use the FIRST target as the changed-fields baseline so a fan can NEVER
-       * degenerate into a whole-prop overwrite that mass-renames every pin to the same
-       * string (the base==NULL else branch below). */
-      if(!base && ntargets > 0) my_strdup(_ALLOC_ID_, &base, xctx->rect[PINLAYER][targets[0]].prop_ptr);
-      /* guard pass: would applying change any target pin? avoid an empty undo slot */
-      for(i = 0; i < ntargets && !change; i++) {
-        char *cand = NULL;
-        n = targets[i];
-        my_strdup(_ALLOC_ID_, &cand, xctx->rect[PINLAYER][n].prop_ptr);
-        if(base) {
-          if(set_different_token(&cand, newprop, base)) change = 1;
-        } else {
-          my_strdup(_ALLOC_ID_, &cand, newprop);
-          if(!cand || !xctx->rect[PINLAYER][n].prop_ptr || strcmp(cand, xctx->rect[PINLAYER][n].prop_ptr)) change = 1;
-        }
-        my_free(_ALLOC_ID_, &cand);
-      }
-      if(!ntargets || !change) {
-        if(base) my_free(_ALLOC_ID_, &base);
-        my_free(_ALLOC_ID_, &targets);
-        Tcl_SetResult(interp, "0", TCL_STATIC);
-        return TCL_OK;
-      }
-      xctx->push_undo();
-      for(i = 0; i < ntargets; i++) {
-        char olddir[40];
-        n = targets[i];
-        my_snprintf(olddir, S(olddir), "%s", get_tok_value(xctx->rect[PINLAYER][n].prop_ptr, "dir", 0));
-        if(base) {
-          set_different_token(&xctx->rect[PINLAYER][n].prop_ptr, newprop, base);
-        } else {
-          my_strdup(_ALLOC_ID_, &xctx->rect[PINLAYER][n].prop_ptr, newprop);
-        }
-        set_rect_flags(&xctx->rect[PINLAYER][n]);
-        if(strcmp(olddir, get_tok_value(xctx->rect[PINLAYER][n].prop_ptr, "dir", 0))) pin_reorient(n);
-        pin_view_apply(n);   /* create/delete the name view per show_pinname, then sync it */
-      }
-      if(base) my_free(_ALLOC_ID_, &base);
-      my_free(_ALLOC_ID_, &targets);
-      set_modify(1);
-      draw();               /* a pin's name view is a separate object -> full redraw */
-      Tcl_SetResult(interp, "1", TCL_STATIC);
-    }
+      return perform_action("apply_pin_prop", argc, argv);
 
     /* add_symbol_pin [x y name dir [draw [noline]]]
      *   place a symbol pin.

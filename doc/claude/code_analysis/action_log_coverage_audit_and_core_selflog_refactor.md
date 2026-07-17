@@ -3780,6 +3780,129 @@ C5 + a name referent) — pick with a fresh source re-verify. DEFER the composit
 (delete/cut/copy/save/reload) whose shared cores are called by abort/merge/teardown (the §4
 `delete()`-is-NOT-1:1 lesson).
 
+## 38. Refactor B ATOM 18 (2026-07-17): the EIGHTEENTH per-verb migration — a symbol-editor pin edit with an INLINE two-referent VALIDATING body, purely-additive log + a read-only correctness fix (`apply_pin_prop`)
+
+The friction-free pool has been EMPTY since atom 16. `apply_pin_prop` was the HIGHEST-VALUE runner-up named
+by the atom-16/17 scout: a genuine HIGHER-FRICTION coverage gain — a symbol-editor mutation that logged
+NOTHING and had NO C-level read-only gate before this atom, carrying an INLINE mutation body (not a shared
+core) and TWO string referents. It is the **replace_symbol §34 two-referent VALIDATING template** crossed
+with the **reset_inst_prop §33 argc-gate**.
+
+**The verb.** `xschem apply_pin_prop [<scope>] <prop>` applies `<prop>` to the symbol PINLAYER rects named by
+`<scope>` (`current` | `selected` | `all`; default `selected`), mirroring the pin branch of
+`edit_rect_property` WITHOUT a dialog round-trip so the pin/pinname property forms can offer a live "Apply"
+(cadence_pin_name_text.md; symbol_editor_apply_scope.md). Changed-fields-only vs the primary pin's prop
+(sel_array[0]), so a fan keeps each pin's distinct `name=`.
+
+**Migration (scheduler.c only — no callback.c edit).**
+- **Branch** (`xschem_cmds_a`): the whole inline body is replaced by `return perform_action("apply_pin_prop",
+  argc, argv);`. The `!xctx` guard is dropped (perform_action re-checks it) and the old `Tcl_SetResult
+  "0"/"1"` leaves the branch. The early-return-from-a-matched-branch is byte-identical in the `*cmd_found`
+  protocol to reset_inst_prop/replace_symbol (`cmd_found` inits to 1 before the letter-dispatch switch, a
+  matched early return keeps it 1, `if(retcode != TCL_OK) return retcode;` propagates the readonly/argc
+  TCL_ERROR).
+- **`run_core` arm**: the WHOLE inline body MOVES in verbatim — the `argc<3` "needs: [scope] new_prop"
+  VALIDATION (early TCL_ERROR *before* any mutation), the scope/newprop resolution (argc>=4 → argv[2]/argv[3];
+  argc==3 → "selected"/argv[2] back-compat), `pin_scope_resolve()` (the SHARED READ-ONLY resolver, stays raw
+  below the boundary), the GUARD-PASS no-op (`Tcl_SetResult "0"` + `return TCL_OK` **BEFORE** push_undo — no
+  undo slot), else the SINGLE `xctx->push_undo()` + the apply loop (`set_different_token`/`pin_reorient`/
+  `pin_view_apply`) + `set_modify(1)` + `draw()` + `Tcl_SetResult "1"`. There is no self-undo core, so THIS
+  arm owns the single push (like reset_inst_prop/replace_symbol, unlike the self-undo verbs). A forward decl
+  of `static pin_scope_resolve` was added before `run_core` (its definition is later in the file). C89: decls
+  at block top.
+- **`core_log_action` arm**: TWO forms mirroring the branch's arg resolution — argc>=4 → `xschem
+  apply_pin_prop <scope> <prop>` via `log_action_argv(4, pp)`; argc==3 → `xschem apply_pin_prop <prop>` via
+  `log_action_argv(3, pp)`. BOTH referents Tcl_Merge-quoted: `<prop>` is a full pin-attribute string with
+  spaces + brackets + possibly braces (a raw `%s` would misparse on replay — the §33 arrayed-name lesson);
+  `<scope>` is a bareword Tcl_Merge logs unbraced. The array is named **`pp`** (NOT `av`/`ev`/`av[3]`) — the
+  §36 collision lesson — so its build/emit lines stay TEXTUALLY DISTINCT.
+
+**THE RESULT-DROPPED WRINKLE (verified, not assumed).** The old branch returned a MEANINGFUL `"0"`/`"1"`
+interp result; the boundary's atom-13 success-path `Tcl_ResetResult` BLANKS it (empirically confirmed: a
+scripted apply now returns `""`). A repo-wide grep for consumers of the return found: the PRODUCTION consumer
+`gfxform::do_apply` (xschem.tcl) DISCARDS it (a bare statement, verified by DRIVING it in test (g)); the ONLY
+return-consumers were TWO STANDALONE tests — `tests/symbol_pin_scope.tcl` (6 `[xschem apply_pin_prop …] 1`
+sites) and `tests/pin_name_text.tcl` (a `→1` and a no-op `→0`) — which were SWITCHED to assert the EFFECT (a
+stronger oracle; idempotence proven by "undo reverts size"). So no caller regresses. This is the
+reset_inst_prop/replace_symbol dropped-success-result pattern (§33/§34) but with a genuine — if test-only —
+consumer that had to be reworked, so the drop was a DELIBERATE, user-confirmed decision, not a silent one.
+
+**THE READONLY CORRECTNESS FIX.** Verified empirically on the pre-migration binary: a scripted `xschem
+apply_pin_prop selected {… name_size=0.9}` on a read-only symbol view MUTATED the pin (name_size changed) — a
+scattered 0041/0051-class mutation-on-a-read-only-cell gap (the scripted verb had NO C gate; only the Tcl
+form's `gfxform::apply` guarded `[xschem get readonly]`). The boundary's ONE gate now CLOSES it: the scripted
+verb REFUSES (TCL_ERROR + `xschem apply_pin_prop: schematic is read-only …`, no apply, no log). Safe because
+`apply_pin_prop` has NO read-only-safe form — the guard-pass no-op is a NO-OP, not a QUERY — so the
+all-or-nothing gate cannot OVER-reject (the show_unconnected_pins §35 / floaters §30 template).
+
+**THE 1:1 TEST (C3).** The mutation body is INLINE (not a shared C fn), so it is strictly 1:1 with the verb —
+there is NO shared mutating core to lock (unlike trim_wires atom 1 / attach_labels atom 11).
+`pin_scope_resolve()` is a SHARED READ-ONLY resolver (also used by `pin_scope_prop_uniform` and the SP3
+preview) — grep-verified it does NOT mutate, so it stays RAW below the boundary with no self-log.
+
+**Entry map.** TWO Tcl callers reach the branch via `xschem apply_pin_prop`: `gfxform::do_apply` (the pin
+editor's live Apply, scope form) + its back-compat prop-form. NO key/menu/palette/keybindings.csv/
+mousebindings.csv bind. So there is NO callback.c edit and no key-equivalence decision.
+
+**Effect oracle (empirical, pre- and post-migration).** Two PINLAYER pins A,B via `add_symbol_pin` (each
+`name=X dir=in show_pinname=true name_dx=25 name_dy=-5 name_size=0.2`), both selected (A primary). `xschem
+apply_pin_prop selected {… name_size=0.9}` changed-fields-diffs vs A, so the ONLY changed token `name_size`
+fans to A AND B (B keeps `name=B`). Pinned: the RESULT is now `""` (was `"1"`); a re-apply is a no-op that
+returns `""` but STILL logs +1 (§30); the argc gate errors `xschem apply_pin_prop needs: [scope] new_prop`;
+readonly now REFUSES (was: mutated); a metachar prop `foo=a[1]` logs BRACE-QUOTED and replays.
+
+**Verified:** `test_perform_action_apply_pin_prop.tcl` (33 checks, full_audit logdir_tests, self-deferring
+"deferred (no --logdir)" guard): (a) SUCCESS +1 scope-form log + change on A,B + B keeps name=B + RESULT
+BLANK + byte-exact brace-quoted line; (a2) metachar prop logs BRACE-QUOTED + replays without a Tcl error +
+re-applies; (b) argc-gate TCL_ERROR + non-empty message + +0 log + no mutation; (b2) NO-OP re-apply returns
+BLANK but STILL logs +1 (§30, catch-wrapped); (c) READONLY reject TCL_ERROR + verb-named message + no apply +
+no log (the correctness fix); (d) back-compat `xschem apply_pin_prop <prop>` (argc==3) logs the 3-arg form +
+applies to the current selection; (e) replay through the suppress seam re-applies without re-logging vs a
+control `source` that re-logs; (f) undo DEPTH — TWO applies (0.5 then 0.9), ONE undo → 0.5, a SECOND undo →
+the original 0.2 (single push_undo per apply; a double-push would leave 0.5 — the discriminator needs the
+second undo, the §33 lesson); (g) RESULT-DROP + no caller regressed — DRIVES the real `gfxform::do_apply`
+(which discards the result) and asserts the change still applies. **Sabotage ×6** (each rebuild-run-restore
+from the scratchpad backup `scheduler.c.atom18`, NOT git — ~220 dirty files; each failing EXACTLY its
+checks): (1) neutralise the boundary route (inline perform_action's body in the branch KEEPING gate+log) →
+the runtime `.tcl` STILL PASSES while the grep guard's S1 branch-route row (→0) + S7 scattered-readonly (0→1)
+fail closed — the grep guard is the load-bearing structural lock; (2) neutralise the readonly gate (for
+apply_pin_prop only) → the (c) checks fail (mutated, no error); (3) spurious double push_undo in the arm →
+the (f) SECOND-undo depth check fails (0.5 survives) — the no-double-push discriminator; (4) log on the
+argc<3 failure path → the (b) +0-log check fails; (5) raw `%s` referent instead of `log_action_argv` → the
+(a2) metachar-replay + byte-exact checks fail + the S1/S7 `pp`-build rows fail closed; (6) drop the
+back-compat 3-arg form → the (d) checks fail + the S7 `(3, pp)` + line-anchored 3-arg build rows fail closed.
+The change-adjacent siblings stay GREEN: all seventeen other `test_perform_action_*` +
+`test_selflog_grep_guard` + `test_actionlog_suppress_gate` + `test_toggle_editmode_log`, and the two rewired
+consumer tests (`symbol_pin_scope`/`pin_name_text`) PASS on BOTH the atom-18 AND the reverted-HEAD binary
+(they now assert the unchanged EFFECT).
+
+**Grep guard (`test_selflog_grep_guard.tcl`).** ADDED to the `src/scheduler.c` S1 MANIFEST: the boundary
+branch row + the scope-form build row (`pp[3] = argv[3];`, UNIQUE to apply_pin_prop) + the line-anchored
+back-compat build row (`(?n)pp[0] = "xschem"; pp[1] = verb; pp[2] = argv[2];$` — matches ONLY the 3-arg
+line, NOT the 4-arg line that continues past `argv[2];`) + the two emit rows (`(4, pp)` / `(3, pp)`). ADDED
+`apply_pin_prop` to S2 CVERBS (kept OUT of S3). ADDED an S7 block: EXACTLY ONE of each build + emit, ZERO
+scattered `log_action("xschem apply_pin_prop"` in scheduler.c AND callback.c, ZERO scattered
+`scheduler_readonly_reject(…, "apply_pin_prop")`, PLUS a COLLISION GUARD re-asserting reset_inst_prop's `av`,
+embed_rawfile's `ev`, and replace_symbol's `av[3]` single-referent sites all stay == 1.
+
+**Full-audit baseline diff.** AFTER (atom-18 binary) vs BASELINE (`scheduler.c` reverted to HEAD c40241b3,
+rebuilt), on the change-adjacent set: the ONLY two BASELINE-only fails are `test_perform_action_apply_pin_prop`
+(13 checks fail when the migration is absent — the old scripted form never logged, returned `"1"`, and mutated
+a read-only cell) and `test_selflog_grep_guard` (its atom-18 S1/S7 rows scan for code absent on the reverted
+source) — proving BOTH load-bearing (they PASS on atom-18). All nineteen other change-adjacent tests + the two
+consumer tests PASS on BOTH. The FULL headless audit on the atom-18 binary showed ZERO new deterministic
+failures — the fail set is the documented WSLg standing set (the cadence pair, the GUI set, `test_lib_sweep`/
+`test_phase3_mints`/`test_wire_split`(W7)/`test_select_at`/`test_save_as_cellview`/`test_untitled_reuse`/
+`test_fluid_editing`/`test_selflog_output`'s transform-KEY checks); the only two non-standing-set entries
+(`test_select_inside_argc`, `test_selflog_grep_guard` TIMEOUT under load) were RE-VERIFIED to PASS STANDALONE
+on the atom-18 binary (and `test_select_inside_argc` PASSES on the baseline too — a transient flake, not
+change-adjacent). The wireedit 52-test suite is ALL PASS.
+
+**Next atom:** the friction-free pool remains EMPTY. The atom-16/17 scout runners-up now stand at `image`
+(HAS_CAIRO + a help/no-op C1/C2 split) and `move_instance` (conditional noundo/nodraw C5 + a name referent) —
+pick with a fresh source re-verify. DEFER the composite-hazard verbs (delete/cut/copy/save/reload) whose
+shared cores are called by abort/merge/teardown (the §4 `delete()`-is-NOT-1:1 lesson).
+
 *Prepared 2026-07-14, `fluid-editing`. §1–5 analysis only — no code changed. §6 added after
 atom 3 landed; §7 after atom 4; §8 after atom 5; §9 after atom 6; §10 after atom 7; §11 after
 atom 8; §12 after atom 9; §13 after atom 10; §14 after atom 11;
@@ -3856,6 +3979,21 @@ gesture-START form stays RAW (arms ui_state, no mutation, no log — the rotate/
 pattern); the boundary ADDS the read-only gate the coord form NEVER HAD as a CORRECTNESS FIX — the old
 scripted form cut on a read-only cell; and the (A)/(B) gesture-completion decision recorded — option (A),
 the four interactive Alt-Right callback.c completion sites stay RAW+silent, a pre-existing 0069-class gap
-this atom does not widen, (B) deferred to a follow-up gesture-logging atom, so NO callback.c edit).
+this atom does not widen, (B) deferred to a follow-up gesture-logging atom, so NO callback.c edit); §38 after
+the EIGHTEENTH (apply_pin_prop — a HIGHER-FRICTION coverage gain now the friction-free pool is EMPTY, the
+HIGHEST-VALUE atom-16/17 runner-up: a symbol-editor pin edit with an INLINE two-referent VALIDATING body, the
+replace_symbol §34 two-referent template crossed with the reset_inst_prop §33 argc-gate. run_core MOVES the
+whole inline body IN — the argc<3 validation before any mutation, the SHARED read-only pin_scope_resolve
+resolver that stays raw below the boundary, the guard-pass no-op returning "0"+TCL_OK before push_undo, and
+the SINGLE push_undo + apply loop; core_log_action logs TWO forms — argc>=4 `xschem apply_pin_prop <scope>
+<prop>` and the back-compat argc==3 `xschem apply_pin_prop <prop>` — BOTH referents Tcl_Merge-quoted via an
+array named `pp` (NOT av/ev/av[3], the §36 collision lesson). The migration is PURELY ADDITIVE (the branch
+logged NOTHING) and ADDS the C-level read-only gate the SCRIPTED verb NEVER HAD as a CORRECTNESS FIX — the old
+scripted form mutated a read-only symbol view. The RESULT-DROPPED wrinkle was VERIFIED not assumed: the old
+branch returned a meaningful "0"/"1" that the boundary now blanks; the production consumer gfxform::do_apply
+DISCARDS it, and the ONLY return-consumers (two standalone tests, symbol_pin_scope.tcl / pin_name_text.tcl)
+were switched to assert the EFFECT — a user-confirmed deliberate drop. The no-op-still-logs property (§30) is
+preserved; the back-compat 3-arg form replays against the current selection, the accepted 0005
+selection-dependent class. TWO Tcl callers, NO key — so NO callback.c edit).
 Coverage verified in source at HEAD by a 14-way parallel read; do not trust the status table
 without re-checking the cited `file:line` anchors, which drift as the tree moves.*

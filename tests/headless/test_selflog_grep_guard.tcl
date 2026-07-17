@@ -237,6 +237,26 @@
 # at mousex/y_snap) stays RAW+silent -- a pre-existing 0069-class gesture-drop gap this atom does NOT
 # widen but does NOT close (grep-guard-locked callback.c ZERO; deferred to a follow-up (B) atom). So NO
 # callback.c edit.
+# Refactor B atom 18 (perform_action / apply_pin_prop) migrated a HIGHER-FRICTION coverage gain now the
+# friction-free pool is EMPTY: a symbol-editor mutation (apply <prop> to the PINLAYER rects named by
+# <scope>) that logged NOTHING and had NO C-level read-only gate before, carrying an INLINE mutation body
+# (strictly 1:1 -- C3, no shared mutating core to lock) and TWO string referents. It is the replace_symbol
+# §34 two-referent VALIDATING template crossed with the reset_inst_prop §33 argc-gate. run_core MOVES the
+# whole inline body IN (the argc<3 validation before any mutation, the SHARED read-only pin_scope_resolve
+# resolver, the guard-pass no-op, the SINGLE push_undo + apply loop). core_log_action logs TWO forms:
+# argc>=4 `xschem apply_pin_prop <scope> <prop>` (log_action_argv(4, pp)) + argc==3 back-compat
+# `xschem apply_pin_prop <prop>` (log_action_argv(3, pp)), BOTH referents Tcl_Merge-quoted, using an
+# array named `pp` (NOT av/ev/av[3]) to stay collision-distinct (the §36 lesson). Grep changes: (a) a NEW
+# S1 boundary-branch row + a NEW S1 scope-form build row (`pp[3] = argv[3];`, unique to apply_pin_prop) + a
+# NEW S1 line-anchored back-compat build row + TWO NEW S1 emit rows ((4, pp) and (3, pp)); (b) apply_pin_prop
+# ADDED to S2 CVERBS, kept OUT of S3; (c) an S7 block (EXACTLY ONE of each build + emit, ZERO scattered raw
+# log/readonly_reject in scheduler.c, ZERO in callback.c) PLUS a COLLISION GUARD re-asserting reset_inst_prop's
+# `av`, embed's `ev`, and replace_symbol's `av[3]` stay == 1. The RESULT-DROPPED wrinkle: the old branch
+# returned a meaningful "0"/"1"; the boundary blanks it on success -- the production consumer gfxform::do_apply
+# DISCARDS it, and the two standalone tests that asserted it (symbol_pin_scope.tcl, pin_name_text.tcl) were
+# switched to assert the EFFECT. The branch NEVER had a readonly gate; the boundary ADDS one as a CORRECTNESS
+# FIX (the old scripted form mutated a read-only symbol view). TWO Tcl callers reach the branch, NO key -- so
+# NO callback.c edit and no key-equivalence decision.
 # Atom 12 (0053 Cadence Ctrl-E window hop) added: the S1 focus_window emit row
 # (utils/cadence_nav.tcl) and the S6 SEAM-EXCLUSIVITY block -- `new_schematic
 # switch` (a shared core: tab-strip/alt2/window-open machinery) must be logged
@@ -325,6 +345,11 @@ set MANIFEST {
     {return perform_action\("wire_cut", argc, argv\);} 1 {wire_cut branch routes the SCRIPTED COORD form through the perform_action boundary (Refactor B atom 17 -- the SILENT-MUTATOR twin of break_wires (atom 9, §29): break_wires_at_point (check.c) is the SEPARATE Alt-Right wire_cut gesture core that §29 kept OFF break_wires' boundary; atom 17 puts it on). Only the argc>3 coord form crosses (via the branch's argc>3 guard); the no-coord GESTURE-START form stays RAW (arms ui_state, no mutation, no log -- the rotate/flip STARTMOVE-stays-raw split). break_wires_at_point OWNS a CONDITIONAL single push_undo + draw, so no scattered readonly/log/push_undo here; a point off any wire is a no-op that still returns TCL_OK -> no-op-still-logs. The boundary ADDS the readonly gate this coord form NEVER HAD -- a CORRECTNESS FIX (the old scripted form cut on a read-only cell)}
     {log_action\("xschem wire_cut %\.16g %\.16g"} 1 {wire_cut ALIGNED coord form lives in core_log_action (atom 17): the RAW click coords argv[2]/argv[3] via %.16g (NOT log_action_argv -- numeric coords, no metacharacter referent to brace-quote), NOT the snapped point (align is applied in-core by closest_point_calculation, so raw-coords replay IDENTICALLY). Exactly ONE such quote-terminated site in scheduler.c (S7 pins exclusivity); the trailing `"` (immediately after the second %.16g) does NOT match the ` noalign"` form}
     {log_action\("xschem wire_cut %\.16g %\.16g noalign"} 1 {wire_cut NOALIGN coord form lives in core_log_action (atom 17): the RAW click coords + the bareword `noalign` flag; break_wires_at_point applies noalign in-core, so the raw-coords+flag line replays IDENTICALLY. Exactly ONE such site in scheduler.c (S7 pins exclusivity); the ` noalign"` (space before the quote) does NOT match the aligned `%.16g"` form, and neither matches break_wires_at_point / _at_pins / _at_attach_points (an `_` follows)}
+    {return perform_action\("apply_pin_prop", argc, argv\);} 1 {apply_pin_prop branch routes through the perform_action boundary (Refactor B atom 18 -- the EIGHTEENTH per-verb migration, a HIGHER-FRICTION coverage gain now the friction-free pool is EMPTY; the replace_symbol §34 two-referent VALIDATING template crossed with the reset_inst_prop §33 argc-gate): run_core MOVES the WHOLE INLINE body IN -- the argc<3 "needs: [scope] new_prop" validation (early TCL_ERROR BEFORE any mutation), the SHARED read-only pin_scope_resolve resolver (stays raw below the boundary), the guard-pass no-op (Tcl_SetResult "0" + TCL_OK, NO push_undo), and the SINGLE push_undo + apply loop (set_different_token/pin_reorient/pin_view_apply) + set_modify + draw; core_log_action logs the SELF-CONTAINED `xschem apply_pin_prop [<scope>] <prop>` (BOTH referents Tcl_Merge-quoted) on success only. The mutation body is INLINE so it is strictly 1:1 with the verb (C3 -- no shared mutating core to lock). The boundary ADDS the C-level read-only gate the SCRIPTED verb NEVER HAD (a CORRECTNESS FIX -- the old scripted form mutated a read-only symbol view); the old success-path "0"/"1" interp result is dropped (gfxform::do_apply discards it; the two standalone tests switched to assert the effect). No scattered readonly/log/push_undo here}
+    {pp\[3\] = argv\[3\];} 1 {apply_pin_prop SELF-CONTAINED two-arg form (scope form) lives in core_log_action (atom 18): the argc>=4 `xschem apply_pin_prop <scope> <prop>` build. BOTH the scope bareword argv[2] AND the prop string argv[3] are emitted via log_action_argv (Tcl_Merge), NOT a raw %s -- the prop carries spaces/brackets/braces (name=X dir=in ... foo=a[1]); Tcl_Merge quotes MINIMALLY (the scope bareword logs unbraced). `pp[3] = argv[3];` is UNIQUE to apply_pin_prop (the array is `pp`, NOT replace_symbol's `av[3]`) -- the S7 exclusivity marker. Reached ONLY on TCL_OK (log-on-success), so a failed argc<3 validation logs nothing}
+    {(?n)pp\[0\] = "xschem"; pp\[1\] = verb; pp\[2\] = argv\[2\];$} 1 {apply_pin_prop BACK-COMPAT one-arg form (argc==3) lives in core_log_action (atom 18): the `xschem apply_pin_prop <prop>` build (default "selected" scope). The prop referent argv[2] is emitted via log_action_argv (Tcl_Merge). The array `pp` (NOT av/ev) keeps this line-anchored (?n)...;$ build TEXTUALLY DISTINCT from reset_inst_prop's `av[...]` and embed_rawfile's `ev[...]` byte-identical builds -- a shared name would make each verb's count == 2, the §36 collision. Line-anchored on `argv[2];$` so it matches ONLY the 3-arg build, NOT the 4-arg `pp[2] = argv[2]; pp[3] = argv[3];` line}
+    {log_action_argv\(4, pp\);} 1 {apply_pin_prop's Tcl_Merge emit for the scope form (atom 18): distinct from replace_symbol's `(4, av)` by the `pp` array name. Exactly ONE such `(4, pp)` site in scheduler.c (S7 pins exclusivity)}
+    {log_action_argv\(3, pp\);} 1 {apply_pin_prop's Tcl_Merge emit for the back-compat form (atom 18): distinct from reset_inst_prop's `(3, av)` and embed_rawfile's `(3, ev)` by the `pp` array name. Exactly ONE such `(3, pp)` site in scheduler.c (S7 pins exclusivity)}
     {log_action\("xschem print_hilight_net}           1 {print_hilight_net branch}
     {log_action\("xschem exit closewindow force"}     2 {exit hook (both terminating sites)}
     {log_action\("xschem set cadgrid}                 1 {set cadgrid resolved-value}
@@ -520,7 +545,7 @@ set CVERBS {
   cut delete copy undo redo save reload saveas align trim_wires break_wires
   flip flipv rotate flip_in_place flipv_in_place rotate_in_place
   change_elem_order check_unique_names create_instance toggle_ignore
-  reset_inst_prop replace_symbol show_unconnected_pins embed_rawfile wire_cut
+  reset_inst_prop replace_symbol show_unconnected_pins embed_rawfile wire_cut apply_pin_prop
   floaters_from_selected_inst print_hilight_net attach_labels add_pin_stubs
   setprop unhilight_all hilight_net_interactive unhilight_net_interactive
   make_symbol make_sch make_sch_from_sel descend descend_symbol go_back
@@ -1098,6 +1123,64 @@ check "S7 callback.c: NO scattered log_action(\"xschem wire_cut...\") (option A:
 check "S7 scheduler.c: NO scattered scheduler_readonly_reject(...,\"wire_cut\") (the boundary's generic gate covers the verb -- the branch never had one; the gate is a NEW correctness fix)" \
   [expr {[rxcount $sched {scheduler_readonly_reject\(interp, "wire_cut"\)}] == 0}] \
   "got=[rxcount $sched {scheduler_readonly_reject\(interp, "wire_cut"\)}]"
+# apply_pin_prop (Refactor B atom 18 -- the EIGHTEENTH per-verb migration, a HIGHER-FRICTION coverage gain
+# now the friction-free pool is EMPTY; the replace_symbol §34 two-referent VALIDATING template crossed with
+# the reset_inst_prop §33 argc-gate): the readonly gate + the TWO `xschem apply_pin_prop [<scope>] <prop>`
+# log forms (via core_log_action) live SOLELY in perform_action. It is TWO-arg on the scope form
+# (argv[2]=scope, argv[3]=prop) and ONE-arg on the back-compat form (argv[2]=prop, default "selected"), so
+# core_log_action holds EXACTLY ONE `log_action_argv(4, pp)` built from `pp[3] = argv[3];` (the scope-form
+# marker, UNIQUE to apply_pin_prop) AND EXACTLY ONE `log_action_argv(3, pp)` built from the line-anchored
+# `pp[0] = "xschem"; pp[1] = verb; pp[2] = argv[2];` (the back-compat form); scheduler.c must have EXACTLY
+# those -- the scheduler BRANCH carries none (it delegates) and callback.c ZERO (no key entry point; the two
+# Tcl callers gfxform::do_apply scope-form + back-compat reach the branch via `xschem apply_pin_prop`). The
+# referent array is named `pp` (NOT av/ev/av[3]) so its build/emit lines stay TEXTUALLY DISTINCT from
+# reset_inst_prop's `av`, embed_rawfile's `ev`, and replace_symbol's `av[3]` -- a shared name would make each
+# verb's count == 2, breaking the exclusivity rows (the §36 collision the task flags). The branch's
+# early-error Tcl_SetResult("xschem apply_pin_prop needs: [scope] new_prop") is NOT a log_action call, so it
+# doesn't perturb the raw-log count. The mutation body is INLINE (not a shared C fn), so it is strictly 1:1
+# with the verb (C3) -- pin_scope_resolve() is a SHARED READ-ONLY resolver (also used by
+# pin_scope_prop_uniform / the SP3 preview) that does NOT mutate, so it stays raw below the boundary and
+# there is no sub-step to lock. The SCRIPTED verb NEVER HAD a scheduler_readonly_reject; the boundary's
+# generic gate now ADDS one (a CORRECTNESS FIX -- the old scripted form mutated a read-only symbol view), so
+# a re-scattered per-verb readonly_reject also fails closed. apply_pin_prop stays in S2 CVERBS (a
+# scripted/replayed `xschem apply_pin_prop [<scope>] <prop>` re-executes AND self-logs) and OUT of S3.
+check "S7 scheduler.c: EXACTLY ONE apply_pin_prop scope-form referent-build (pp\[3\] = argv\[3\];) -- the core_log_action two-arg Tcl_Merge site; `pp` (not `av`) keeps it distinct from replace_symbol's av\[3\]" \
+  [expr {[rxcount $sched {pp\[3\] = argv\[3\];}] == 1}] \
+  "got=[rxcount $sched {pp\[3\] = argv\[3\];}]"
+check "S7 scheduler.c: EXACTLY ONE apply_pin_prop back-compat referent-build (line-anchored pp\[0\]=xschem; pp\[1\]=verb; pp\[2\]=argv\[2\]) -- distinct from reset_inst_prop's `av` and embed's `ev` line-anchored builds" \
+  [expr {[rxcount $sched {(?n)pp\[0\] = "xschem"; pp\[1\] = verb; pp\[2\] = argv\[2\];$}] == 1}] \
+  "got=[rxcount $sched {(?n)pp\[0\] = "xschem"; pp\[1\] = verb; pp\[2\] = argv\[2\];$}]"
+check "S7 scheduler.c: EXACTLY ONE apply_pin_prop log_action_argv(4, pp) emit (distinct from replace_symbol's (4, av))" \
+  [expr {[rxcount $sched {log_action_argv\(4, pp\);}] == 1}] \
+  "got=[rxcount $sched {log_action_argv\(4, pp\);}]"
+check "S7 scheduler.c: EXACTLY ONE apply_pin_prop log_action_argv(3, pp) emit (distinct from reset_inst_prop's (3, av) and embed's (3, ev))" \
+  [expr {[rxcount $sched {log_action_argv\(3, pp\);}] == 1}] \
+  "got=[rxcount $sched {log_action_argv\(3, pp\);}]"
+check "S7 scheduler.c: NO scattered raw log_action(\"xschem apply_pin_prop\") (the replay-unsafe %s form must not reappear -- Tcl_Merge is the only emit)" \
+  [expr {[rxcount $sched {log_action\("xschem apply_pin_prop}] == 0}] \
+  "got=[rxcount $sched {log_action\("xschem apply_pin_prop}]"
+check "S7 callback.c: NO scattered log_action(\"xschem apply_pin_prop\") (no key entry point; guards a future re-scatter)" \
+  [expr {[rxcount $cbtext {log_action\("xschem apply_pin_prop}] == 0}] \
+  "got=[rxcount $cbtext {log_action\("xschem apply_pin_prop}]"
+check "S7 scheduler.c: NO scattered scheduler_readonly_reject(...,\"apply_pin_prop\") (the boundary's generic gate covers the verb -- the branch never had one; the gate is a NEW correctness fix)" \
+  [expr {[rxcount $sched {scheduler_readonly_reject\(interp, "apply_pin_prop"\)}] == 0}] \
+  "got=[rxcount $sched {scheduler_readonly_reject\(interp, "apply_pin_prop"\)}]"
+# COLLISION GUARD: apply_pin_prop's `pp` build must NOT perturb reset_inst_prop's `av`, embed_rawfile's `ev`,
+# or replace_symbol's `av[3]` single-referent Tcl_Merge sites. Re-assert each stays EXACTLY ONE -- a
+# regression that renamed apply_pin_prop's array back to `av`/`ev` would make these == 2, failing closed
+# here (and on those verbs' own S1/S7 rows).
+check "S7 (reset_inst_prop unperturbed) scheduler.c: still EXACTLY ONE av-build + (3, av) (apply_pin_prop's pp name did not collide)" \
+  [expr {[rxcount $sched {(?n)av\[0\] = "xschem"; av\[1\] = verb; av\[2\] = argv\[2\];$}] == 1 &&
+         [rxcount $sched {log_action_argv\(3, av\);}] == 1}] \
+  "build=[rxcount $sched {(?n)av\[0\] = "xschem"; av\[1\] = verb; av\[2\] = argv\[2\];$}] emit=[rxcount $sched {log_action_argv\(3, av\);}]"
+check "S7 (embed_rawfile unperturbed) scheduler.c: still EXACTLY ONE ev-build + (3, ev)" \
+  [expr {[rxcount $sched {(?n)ev\[0\] = "xschem"; ev\[1\] = verb; ev\[2\] = argv\[2\];$}] == 1 &&
+         [rxcount $sched {log_action_argv\(3, ev\);}] == 1}] \
+  "build=[rxcount $sched {(?n)ev\[0\] = "xschem"; ev\[1\] = verb; ev\[2\] = argv\[2\];$}] emit=[rxcount $sched {log_action_argv\(3, ev\);}]"
+check "S7 (replace_symbol unperturbed) scheduler.c: still EXACTLY ONE av\[3\]-build + (4, av)" \
+  [expr {[rxcount $sched {av\[3\] = argv\[3\];}] == 1 &&
+         [rxcount $sched {log_action_argv\(4, av\);}] == 1}] \
+  "build=[rxcount $sched {av\[3\] = argv\[3\];}] emit=[rxcount $sched {log_action_argv\(4, av\);}]"
 # atom-13 NESTING COUPLING (adversarial-review finding): the S1 existence rows above pin
 # that the guard line, the log line and the reset line each EXIST, but not that log+reset are
 # INSIDE the log-on-success block. A de-nest that keeps all three lines yet closes the

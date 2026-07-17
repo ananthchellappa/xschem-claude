@@ -25,6 +25,13 @@ proc check {desc got want} {
   else { puts "$desc (got '$got' want '$want'): FAIL" ; incr nfail }
 }
 
+# NOTE (Refactor B atom 18): `xschem apply_pin_prop` now routes through the perform_action
+# boundary, which clears the interp result on success -- so it no longer returns "1"/"0".
+# The apply calls below are bare statements (the return is not asserted); each is verified by
+# the EFFECT checks that follow it (a stronger oracle). The only production consumer
+# (gfxform::do_apply, xschem.tcl) always discarded the return. See
+# tests/headless/test_perform_action_apply_pin_prop.tcl + audit §38.
+
 set wd [file normalize ./symbol_pin_scope_work]
 file delete -force $wd
 file mkdir $wd
@@ -66,7 +73,7 @@ proc uni {scope tok} { if {[catch {xschem pin_scope_prop_uniform $scope $tok} r]
 # 1. scope=current -> only the primary pin (A) changes
 # ---------------------------------------------------------------------------
 xschem load $sym ; selAB
-check "current: apply reports change"  [xschem apply_pin_prop current $showoff] 1
+xschem apply_pin_prop current $showoff
 check "current: A hidden"              [showv 0] false
 check "current: B untouched"           [showv 1] true
 check "current: C untouched"           [showv 2] true
@@ -75,7 +82,7 @@ check "current: C untouched"           [showv 2] true
 # 2. scope=selected -> both selected pins (A,B), not the unselected C
 # ---------------------------------------------------------------------------
 xschem load $sym ; selAB
-check "selected: apply reports change" [xschem apply_pin_prop selected $showoff] 1
+xschem apply_pin_prop selected $showoff
 check "selected: A hidden"             [showv 0] false
 check "selected: B hidden"             [showv 1] false
 check "selected: C untouched"          [showv 2] true
@@ -85,7 +92,7 @@ check "selected: B name NOT fanned"    [xschem getprop rect 5 1 name] B
 # 3. scope=all -> every pin of the symbol, incl the unselected C
 # ---------------------------------------------------------------------------
 xschem load $sym ; selAB
-check "all: apply reports change"      [xschem apply_pin_prop all $showoff] 1
+xschem apply_pin_prop all $showoff
 check "all: A hidden"                  [showv 0] false
 check "all: B hidden"                  [showv 1] false
 check "all: C hidden (unselected)"     [showv 2] false
@@ -94,7 +101,7 @@ check "all: C hidden (unselected)"     [showv 2] false
 # 4. back-compat: no scope arg -> defaults to 'selected'
 # ---------------------------------------------------------------------------
 xschem load $sym ; selAB
-check "noscope: apply reports change"  [xschem apply_pin_prop $showoff] 1
+xschem apply_pin_prop $showoff
 check "noscope: A hidden"              [showv 0] false
 check "noscope: C untouched"           [showv 2] true
 
@@ -113,7 +120,7 @@ check "uniform: current single -> 1"       [uni current name] 1
 # 6. dir change fans + fires per-target pin_reorient (in -> out sets name_flip=1)
 # ---------------------------------------------------------------------------
 xschem load $sym ; selAB
-check "dir: apply reports change"      [xschem apply_pin_prop selected $dirout] 1
+xschem apply_pin_prop selected $dirout
 check "dir: A dir=out"                 [dirv 0] out
 check "dir: B dir=out"                 [dirv 1] out
 check "dir: A reoriented name_flip=1"  [xschem getprop rect 5 0 name_flip] 1
@@ -124,7 +131,7 @@ check "dir: A reoriented name_flip=1"  [xschem getprop rect 5 0 name_flip] 1
 #    baseline, so distinct names + untouched dirs survive. (code-review finding [1])
 # ---------------------------------------------------------------------------
 xschem load $sym ; xschem unselect_all
-check "noprimary all: reports change" [xschem apply_pin_prop all $showoff] 1
+xschem apply_pin_prop all $showoff
 check "noprimary all: A hidden"       [showv 0] false
 check "noprimary all: B hidden"       [showv 1] false
 check "noprimary all: C hidden"       [showv 2] false
