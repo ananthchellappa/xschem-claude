@@ -583,6 +583,33 @@ static int run_core(const char *verb, int argc, const char *argv[])
     show_unconnected_pins();
     return TCL_OK;
   }
+  else if(!strcmp(verb, "embed_rawfile")) {
+    /* Refactor B atom 16: a HYBRID of reset_inst_prop (§33, the single-STRING referent +
+     * an argc gate) and floaters/show_unconnected_pins (§30/§35, the core OWNS its own
+     * undo). embed_rawfile base64-encodes a raw file into the single selected element's
+     * `spice_data` attribute. The `~/` expansion (via the home_dir global, reachable here)
+     * MOVES IN from the scheduler branch unchanged. The argc<3 gate is a VALIDATING-LITE
+     * early TCL_ERROR (BEFORE any mutation) -- the old branch SILENTLY no-op'd on a missing
+     * arg; the gate makes it error AND, via log-on-success, avoids phantom-logging a
+     * no-path call. There is NO push_undo/set_modify/draw here: the core embed_rawfile()
+     * (draw.c) OWNS the SINGLE push_undo + set_modify when it embeds (lastsel==1 &&
+     * ELEMENT); adding one would DOUBLE-push (the atom-1 rule). NB embed_rawfile() draws
+     * NOTHING (the old branch never drew), and a missing/non-regular file is a MUTATION
+     * (base64_from_file returns NULL -> subst_token BLANKS spice_data), not a failure, so
+     * the arm cannot pre-validate file existence -- the log records the PATH, replay
+     * re-reads it (wrinkle 3, the external-file replay caveat). C89: f declared at block
+     * top. */
+    char f[PATH_MAX + 100];
+    if(argc < 3) {
+      Tcl_SetResult(interp, "xschem embed_rawfile needs a file argument", TCL_STATIC);
+      return TCL_ERROR;
+    }
+    my_snprintf(f, S(f), "regsub {^~/} {%s} {%s/}", argv[2], home_dir);
+    tcleval(f);
+    my_strncpy(f, tclresult(), S(f));
+    embed_rawfile(f);
+    return TCL_OK;
+  }
   return TCL_ERROR; /* unreachable: perform_action is only wired for the verbs above */
 }
 
@@ -695,6 +722,22 @@ static void core_log_action(const char *verb, int argc, const char *argv[])
       av[0] = "xschem"; av[1] = verb; av[2] = argv[2]; av[3] = argv[3];
       log_action_argv(4, av);
     }
+  } else if(!strcmp(verb, "embed_rawfile")) {
+    /* atom 16: the arg is the RAW file-path referent argv[2] (a `~/...`, absolute or
+     * relative path), read here NOT the expanded form run_core derives -- so the logged
+     * `xschem embed_rawfile <path>` re-expands the `~/` IDENTICALLY on replay (arg-fidelity:
+     * run_core derives f from argv[2], replay re-derives it). Emitted via log_action_argv
+     * (Tcl_Merge), NOT a raw %s -- a path with a space/bracket/brace carries Tcl
+     * metacharacters (`sim [1].raw`) and a raw line would misparse on replay; Tcl_Merge
+     * brace-quotes it minimally (a plain path logs unbraced) -- the atom-13 replay-safe
+     * referent lesson. Reached ONLY on TCL_OK (log-on-success), and run_core returns TCL_OK
+     * only after the argc<3 gate passed, so argv[2] is always present here. The array is
+     * named `ev` (not `av`) so this build line stays TEXTUALLY DISTINCT from
+     * reset_inst_prop's byte-identical `av[...]` build -- the grep guard line-anchors both,
+     * and a shared name would make each verb's count == 2, failing the exclusivity rows. */
+    const char *ev[3];
+    ev[0] = "xschem"; ev[1] = verb; ev[2] = argv[2];
+    log_action_argv(3, ev);
   } else {
     log_action("xschem %s", verb);
   }
@@ -2281,20 +2324,16 @@ static int xschem_cmds_e(Tcl_Interp *interp, int argc, const char *argv[], int *
 
     /* embed_rawfile raw_file
      *   Embed base 64 encoded 'raw_file' into currently
-     *   selected element as a 'spice_data'
-     *   attribute. */
+     *   selected element as a 'spice_data' attribute.
+     *   Refactor B atom 16 (audit §36): routes through the perform_action boundary.
+     *   run_core owns the `~/` expansion + the argc<3 validation gate; the boundary owns
+     *   the ONE readonly gate (a CORRECTNESS FIX -- the old branch embedded on a read-only
+     *   cell) + the log-on-success self-log (log_action_argv on the RAW argv[2] path so a
+     *   metachar path replays and the `~/` form re-expands). The old !xctx guard + the
+     *   Tcl_ResetResult are the boundary's now; the old silent argc<=2 no-op becomes a
+     *   TCL_ERROR that (via log-on-success) records no phantom line. */
     else if(!strcmp(argv[1], "embed_rawfile"))
-    {
-      char f[PATH_MAX + 100];
-      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
-      if(argc > 2) {
-        my_snprintf(f, S(f),"regsub {^~/} {%s} {%s/}", argv[2], home_dir);
-        tcleval(f);
-        my_strncpy(f, tclresult(), S(f));
-        embed_rawfile(f);
-      }
-      Tcl_ResetResult(interp);
-    }
+      return perform_action("embed_rawfile", argc, argv);
 
     /* enable_layers
      *   Enable/disable layers depending on tcl array variable enable_layer() */

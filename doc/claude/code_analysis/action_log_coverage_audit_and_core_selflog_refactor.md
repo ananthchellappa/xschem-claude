@@ -3449,6 +3449,163 @@ composite-hazard verbs (delete/cut/copy/save/reload) whose shared cores are call
 abort/merge/teardown remain deferred (the §4 `delete()`-is-NOT-1:1 lesson); selection-referent replay
 (0005) remains the accepted config/selection-dependent class.
 
+## 36. Refactor B ATOM 16 (2026-07-17): the SIXTEENTH per-verb migration — the DEFERRED runner-up from the atom-15 scout, a HYBRID of the reset_inst_prop single-string-referent/argc-gate and the floaters/show_unconnected_pins core-owns-undo templates (`embed_rawfile`)
+
+The atom-15 fan-out scout left EXACTLY TWO friction-free candidates: `show_unconnected_pins` (atom 15,
+DONE) and `embed_rawfile` (the DEFERRED runner-up). **Atom 16 lands `embed_rawfile` — a PLAIN per-verb
+migration on the now-UNCHANGED atom-13 log-on-success boundary that touches NO shared machinery.** It is
+not a bare move: it is a HYBRID of two prior templates — the `reset_inst_prop` (§33) SINGLE-STRING-referent
++ argc-GATE template crossed with the `floaters`/`show_unconnected_pins` (§30/§35) CORE-OWNS-ITS-OWN-UNDO
+template — plus a `~` path expansion relocated into `run_core`.
+
+**The verb.** `xschem embed_rawfile <path>` base64-encodes a raw simulation file into the SINGLE selected
+element's `spice_data` attribute (read back later by `raw_read_from_attr`, save.c:930). A pure SCRIPTED
+verb — the user types it after selecting a component.
+
+**Migration.**
+- **Branch** (`scheduler.c` ~2286, `xschem_cmds_e`): the old inline body `{ char f[...]; if(!xctx){...}
+  if(argc>2){ regsub ~ expand; embed_rawfile(f); } Tcl_ResetResult(interp); }` becomes `return
+  perform_action("embed_rawfile", argc, argv);` — dropping the `!xctx` guard + the `Tcl_ResetResult` (the
+  boundary owns both; the old branch returned an EMPTY result, a zero success-result delta) + the local
+  `char f[]` (moved into `run_core`).
+- **`run_core` arm**: MOVES the `~/` expansion IN verbatim (`my_snprintf(f,S(f),"regsub {^~/} {%s} {%s/}",
+  argv[2],home_dir); tcleval(f); my_strncpy(f,tclresult(),S(f));`) — `home_dir` (globals.c:209, extern
+  xschem.h) is a global reachable here. It carries a VALIDATING-LITE `argc<3 -> TCL_ERROR "needs a file
+  argument"` gate BEFORE any mutation (the reset_inst_prop §33 shape). Then `embed_rawfile(f)` — NO
+  `push_undo`/`set_modify`/`draw`: the core `embed_rawfile()` (draw.c:4089) OWNS the SINGLE `push_undo` +
+  `set_modify` when it embeds (`lastsel==1 && sel_array[0].type==ELEMENT`) and draws NOTHING; adding one
+  here would DOUBLE-push (the atom-1 rule, locked by test (f) undo-DEPTH).
+- **`core_log_action` arm**: logs the RAW `argv[2]` (NOT the expanded `f`) via `log_action_argv`/`Tcl_Merge`
+  — `const char *ev[3]; ev[0]="xschem"; ev[1]=verb; ev[2]=argv[2]; log_action_argv(3, ev);`. The array is
+  named `ev` (NOT `av`) to stay TEXTUALLY DISTINCT from `reset_inst_prop`'s byte-identical `av[...]` build:
+  the grep guard line-anchors BOTH `(?n)...;$`, and a shared name would make each verb's count == 2,
+  breaking BOTH verbs' exclusivity rows (the collision the migration explicitly hardens against).
+
+**THE ARGC GATE — a VALIDATING-LITE behaviour delta (test (b)).** The old branch SILENTLY no-op'd on a
+missing arg (`if(argc>2)` skipped; `rc=0`). The migration makes `argc<3` an early `TCL_ERROR` +
+verb-named message, and — via log-on-success (atom 13) — records NO phantom line. It also PREVENTS a
+latent crash: the OLD `if(argc>2){...} return TCL_OK` shape, ported naively, would let a no-arg call reach
+`core_log_action` and read `argv[2]==NULL` → `Tcl_Merge` crash. The gate returns before that. The one
+design choice (vs keeping the silent no-op and letting log-on-success log a useless bare line) is cleaner.
+
+**THE READONLY GATE — a CORRECTNESS FIX (test (c), the floaters §30 / show_unconnected_pins §35 template).**
+Verified empirically on the pre-migration binary: `xschem embed_rawfile <path>` on a read-only cell
+EMBEDDED (push_undo + set_modify + subst_token ran, spice_data set) and returned `rc=0` — a scattered
+0041/0051-class mutation-on-a-read-only-cell gap. The boundary's ONE gate now CLOSES it: the verb REFUSES
+(`TCL_ERROR`, `xschem embed_rawfile: schematic is read-only …`, no embed, no log). Safe precisely BECAUSE
+embed_rawfile has NO read-only-safe form — every path with a selected element mutates; `argc<3` and
+nothing-selected are no-ops, not queries — so the all-or-nothing gate cannot OVER-reject (contrast
+`check_unique_names`, §30).
+
+**WRINKLE — external-file replay fidelity (test (e)) — an ACCEPTED caveat, NOT a new hazard.** The log
+records the PATH, not the base64 content (too large to inline). Replay RE-READS the file, so a round-trip
+where the file is PRESENT replays the SAME `spice_data` (asserted). A file removed between record and
+replay replays an empty/cleared attribute — because `base64_from_file` (save.c:900) returns NULL on a
+missing/non-regular file and `subst_token` BLANKS `spice_data`, so a missing file is a MUTATION, not a
+failure. This property is IDENTICAL pre- and post-migration — the migration introduces no new hazard.
+Selection-dependence (embeds into the single selected element; the log does not encode WHICH instance) is
+the accepted `floaters`/`attach_labels`/`toggle_ignore` config/selection-dependent model, not a blocker.
+
+**Entry map — a PURE SCRIPTED verb, verified by grepping the LIVE repo (the atom-10/atom-14 lesson).**
+NO key (`keybindings.csv`/`mousebindings.csv`), NO menu `-command` (`xschem.tcl`), NO command palette
+(`actions.csv`), NO `callback.c` `act_*`/legacy switch, NO Tcl caller anywhere (`embed_rawfile(` is called
+ONLY at its own scheduler branch; the only other repo references are the `xschem.h` prototype + the
+`xschem_subcommands.txt` completion list). So there is NO `callback.c` edit and NO key-equivalence decision
+(like `reset_inst_prop` §33 / `replace_symbol` §34).
+
+**Grep guard (`test_selflog_grep_guard.tcl`).** ADDED to the `src/scheduler.c` S1 MANIFEST: the boundary
+branch row (`return perform_action("embed_rawfile", argc, argv);`), the line-anchored referent-build row
+(`(?n)ev[0] = "xschem"; ev[1] = verb; ev[2] = argv[2];$`) and the emit row (`log_action_argv(3, ev);`).
+ADDED `embed_rawfile` to the S2 CVERBS set (kept OUT of S3). ADDED an S7 block: EXACTLY ONE `ev`-build +
+EXACTLY ONE `log_action_argv(3, ev)` + ZERO scattered raw `log_action("xschem embed_rawfile"` (scheduler.c
+AND callback.c) + ZERO scattered `scheduler_readonly_reject(..., "embed_rawfile")` — PLUS a COLLISION GUARD
+re-asserting `reset_inst_prop`'s `av`-build + `log_action_argv(3, av)` each stay == 1 (a regression that
+renamed embed's array back to `av` fails closed here and on reset_inst_prop's own rows).
+
+**Effect oracle (byte-identical WRITABLE effect before/after — atom 16 MOVES the `~` expansion + ADDS the
+argc/readonly gates + gates the log).** A `devices/res.sym` resistor at the origin, SELECTED, + a small raw
+file on disk. `xschem embed_rawfile <path>` sets `spice_data` empty → a base64 blob (the "hello raw data
+12345" fixture logs `aGVsbG8gcmF3IGRhdGEgMTIzNDU=`). Undo DEPTH proves the single push: ONE undo clears the
+`spice_data` and a SECOND removes the instance — under a double-push undo#1 ALSO clears the attribute (so
+undo#1 is NOT the discriminator), but undo#2 restores an identical extra R1-empty snapshot so the INSTANCE
+would SURVIVE (`instances==1`) instead of winding back to empty (`instances==0`) — the second-undo
+discriminator that caught sabotage 3. Determined empirically on the pre-migration binary (deltas confirmed
+on the migrated binary: no-arg rc 0→TCL_ERROR, readonly rc 0-embedded→TCL_ERROR-no-embed, `~/` + undo-depth
+unchanged, missing-file still blanks).
+
+**Verified:** `test_perform_action_embed_rawfile.tcl` (full_audit logdir_tests, self-deferring guard): (a)
++1 log + effect (spice_data → base64) + byte-exact Tcl_Merge form; (a2) a metachar path (space+bracket)
+logs BRACE-QUOTED and REPLAYS without a Tcl error + re-embeds; (b) the argc gate — bare `xschem
+embed_rawfile` → TCL_ERROR + non-empty message + +0 log + no mutation; (c) readonly reject (the correctness
+fix) — TCL_ERROR + verb-named msg + no embed + no log; (d) `~/` expansion — embeds IDENTICALLY to the
+absolute path, the log records the RAW `~/` form (not the expanded $HOME), replay re-expands; (e) replay
+through the suppress seam applies the effect without re-logging (external file present → SAME spice_data,
+wrinkle-3 fidelity) vs a control `source` that re-logs; (f) undo DEPTH (single push_undo). **Sabotage ×6**
+(each rebuild-run-restore from the scratchpad backup `scheduler.c.atom16`, NOT git — ~200 dirty files;
+each failing EXACTLY its checks): (1) neutralise the boundary route (inline branch KEEPING gate+expansion+
+log) → the runtime `.tcl` STILL PASSES while the grep guard's S1 boundary-branch row + S7 emit + S7
+scattered-readonly-reject fail closed (the grep guard is the load-bearing structural lock); (2) neutralise
+the readonly gate → the (c) checks fail; (3) spurious `push_undo` in the arm → the (f) second-undo depth
+check fails (the instance survives) — the no-double-push discriminator; (4) log on the argc<3 failure path →
+the (b) validation-not-logged checks fail; (5) raw `%s` referent instead of `log_action_argv` → (a2)
+metachar-replay fails + the S1/S7 `ev`-form rows fail closed; (6) move the `~` expansion OUT (embed the
+unexpanded `~/` literal) → the (d) expansion/replay checks fail. The change-adjacent siblings stay green:
+all fifteen other `test_perform_action_*` + `test_selflog_grep_guard` + `test_actionlog_suppress_gate` +
+`test_toggle_editmode_log`, and ESPECIALLY `test_perform_action_reset_inst_prop` (the shared
+single-string-referent template — stays green + its `av`-build count does NOT collide with embed's `ev`).
+
+**Adversarial review (10-axis refute panel + completeness critic, Workflow/ultracode, against a FROZEN
+atom-16 snapshot): verdict CLEAN — `ship-with-doc-note`, zero code defects.** All ten axes returned
+`defect_found=false`: (1) branch→boundary — `perform_action` reproduces the dropped `!xctx` guard (same
+`not_avail`, checked before the readonly gate) + the success-path `Tcl_ResetResult`; the direct `return
+perform_action(...)` is safe under the `cmd_found` protocol (defaults to 1, an early return leaves it
+"found"); no consumer of the old empty success-result exists; (2) the `~/` expansion is behaviourally
+byte-faithful (`home_dir` extern-global reachable + populated post-init, same regsub, same buffer, the
+`}`/`[` behaviour identical pre/post — the pre-existing injection risk correctly left untouched); (3)
+push_undo ownership — the core owns EXACTLY ONE push inside the selection guard, the arm adds none (no
+double-push), the no-op pushes zero, and the readonly fix is a strict REDUCTION in spurious pushes; (4) the
+argc<3 gate returns before any mutation, log-on-success drops the phantom log, `core_log_action` is reached
+only after argc>=3 so its `argv[2]` read is never out-of-bounds, and the error message survives the
+success-only `Tcl_ResetResult`; (5) referent fidelity — logging RAW `argv[2]` (not expanded `f`) is
+correct; a metachar path round-trips via `Tcl_Merge` and the `~/` form re-expands on replay, no divergence
+from the applied effect; (6) readonly gate additive + no over-reject (no read-only-safe form exists); (7)
+the external-file replay caveat is IDENTICAL pre/post (no new hazard) and selection-dependence is the
+accepted floaters-class model; (8) grep-guard drift + the `reset_inst_prop` COLLISION — the `ev`-vs-`av`
+naming holds by substring analysis AND empirically (every cross-match 0, self-match 1), no brace/
+substitution trap, no sibling perturbation, the collision-guard rows re-assert `reset_inst_prop`'s
+`av`-build/emit stay ==1 (this axis's original panel agent hit a transient 529 Overloaded and was re-run
+independently to CLEAN); (9) entry-point completeness — a PURE SCRIPTED verb, no key/menu/palette/callback/
+Tcl caller; (10) C89/build — decls at block top, compiles clean. The completeness critic returned
+`review_complete=true`, no functional defect missed, raising two NON-code items: (i) the three `§36`
+citations (this section, now added, resolves them); (ii) a prose NIT in test check (f) — the double-push
+discriminator is the SECOND undo (`instances==0`), not the first (undo#1 clears `spice_data` under BOTH
+single- and double-push); the assertion was already correct, the comment was tightened before commit.
+
+**Full-audit baseline diff (behind the one-button approval gate).** AFTER (atom-16 binary: 168 pass / 15
+fail / 0 crash / 0 skip, total 183) vs BASELINE (`scheduler.c` reverted to HEAD 98d7cd73, rebuilt: 167 pass
+/ 16 fail / 0 crash). The load-bearing signal is CLEAN: the BASELINE-only fails are PRECISELY the two
+atom-16 tests — `test_perform_action_embed_rawfile` (its +1-log / effect / argc-gate / readonly-reject
+checks fail when the migration is absent — the old branch never logged, silently no-op'd on a missing arg,
+and embedded on a read-only cell) and `test_selflog_grep_guard` (the atom-16 S1/S7 rows scan for
+`scheduler.c` code absent on the reverted source) — proving both load-bearing (they PASS on atom-16). The
+ONE AFTER-only fail, `test_fluid_editing`, is a WSLg-congestion flake (the BASELINE ran SECOND back-to-back
+after the AFTER GUI batch, so its transient pass on BASELINE reads as an AFTER-only fail): atom 16 edits
+ONLY `scheduler.c`'s `embed_rawfile` arms + the test/doc, touches NOTHING in the fluid-editing path, and
+`test_fluid_editing` was re-verified to PASS STANDALONE ×2 (26/26) on the atom-16 binary. Everything else is
+the COMMON pre-existing set (14: the cadence pair test_cadence_descend_newwin_ro/test_cadence_drag, the GUI
+set test_ciw/test_hi_descend/test_lib_manager_gui/test_reopen_readonly, test_lib_sweep/test_phase3_mints/
+test_wire_split/test_select_at/test_save_as_cellview/test_descend_untitled_preserve/test_untitled_reuse,
+and test_selflog_output's transform-KEY checks). ALL sixteen sibling `test_perform_action_*` +
+`test_selflog_grep_guard` + `test_actionlog_suppress_gate` + `test_toggle_editmode_log` are GREEN on AFTER.
+**ZERO new deterministic failures.**
+
+**Next atom:** the friction-free pool from the atom-15 scout is now EXHAUSTED (both candidates spoken for).
+The NEXT atom needs ANOTHER fresh grep-scout of the remaining mutating verbs for a 1:1, always-mutating,
+unconditional-log verb (re-verify from source, the atom-10 lesson). DEFER the composite-hazard verbs
+(delete/cut/copy/save/reload) whose shared cores are called by abort/merge/teardown (the §4
+`delete()`-is-NOT-1:1 lesson); selection-referent replay (0005) remains the accepted
+config/selection-dependent class.
+
 *Prepared 2026-07-14, `fluid-editing`. §1–5 analysis only — no code changed. §6 added after
 atom 3 landed; §7 after atom 4; §8 after atom 5; §9 after atom 6; §10 after atom 7; §11 after
 atom 8; §12 after atom 9; §13 after atom 10; §14 after atom 11;
@@ -3503,6 +3660,16 @@ double-logs NOTHING with attach_labels (the §31 lock, INVERTED); the boundary A
 the branch NEVER HAD as a CORRECTNESS FIX — the old branch placed lab_show labels on a read-only cell;
 menu-only (no key, no callback.c edit; the Shift+H attach_labels dialog path is disjoint); the
 no-op-still-logs property preserved; the scout left EXACTLY TWO candidates so beyond the DEFERRED runner-up
-embed_rawfile the next atom needs another fresh grep-scout).
+embed_rawfile the next atom needs another fresh grep-scout); §36 after the SIXTEENTH (embed_rawfile — the
+DEFERRED runner-up from the atom-15 scout, a PLAIN migration onto the UNCHANGED atom-13 log-on-success
+boundary that touches NO shared machinery; a HYBRID of the reset_inst_prop §33 SINGLE-STRING-referent +
+argc-GATE template and the floaters/show_unconnected_pins §30/§35 CORE-OWNS-ITS-OWN-UNDO template: run_core
+MOVES the `~/` expansion IN (via the home_dir global) with a VALIDATING-LITE argc<3 gate, the core
+embed_rawfile() owns the single push_undo, and core_log_action logs the RAW argv[2] path via
+log_action_argv/Tcl_Merge using an array named `ev` (NOT `av`) to stay collision-distinct from
+reset_inst_prop's byte-identical build; the boundary ADDS the read-only gate the branch NEVER HAD as a
+CORRECTNESS FIX — the old branch embedded on a read-only cell; the external-file replay caveat is IDENTICAL
+pre/post, not a new hazard; a PURE SCRIPTED verb — no key/menu/palette/callback/Tcl caller, so no callback.c
+edit; the friction-free pool is now EXHAUSTED so the next atom needs another fresh grep-scout).
 Coverage verified in source at HEAD by a 14-way parallel read; do not trust the status table
 without re-checking the cited `file:line` anchors, which drift as the tree moves.*

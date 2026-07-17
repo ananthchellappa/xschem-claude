@@ -199,6 +199,25 @@
 # block MIRRORING floaters/toggle_ignore (scheduler.c + callback.c ZERO scattered `log_action("xschem
 # show_unconnected_pins")` + scheduler.c ZERO scattered readonly_reject -- the branch never had one; the
 # boundary ADDS the readonly gate as a correctness fix, the old branch placed labels on a read-only cell).
+# Refactor B atom 16 (perform_action / embed_rawfile) is a PLAIN per-verb migration onto the UNCHANGED
+# atom-13 log-on-success boundary (NO shared-machinery change): the DEFERRED runner-up from the atom-15
+# fan-out scout (the scout left EXACTLY TWO friction-free candidates -- show_unconnected_pins = atom 15,
+# embed_rawfile = atom 16; the pool is now EXHAUSTED). embed_rawfile is a HYBRID: the reset_inst_prop §33
+# SINGLE-STRING-referent + argc-GATE template (a VALIDATING-LITE argc<3 early TCL_ERROR; the RAW argv[2]
+# file path logged via log_action_argv/Tcl_Merge so a metachar path replays + the `~/` re-expands) crossed
+# with the floaters/show_unconnected_pins §30/§35 CORE-OWNS-ITS-OWN-UNDO template (embed_rawfile() (draw.c)
+# owns the single push_undo + set_modify -- run_core adds none, no double-push). The `~/` expansion MOVES
+# from the scheduler branch into run_core (via the home_dir global). Grep changes: (a) a NEW S1
+# boundary-branch row + a NEW S1 referent-build row (`ev[0]=xschem; ev[1]=verb; ev[2]=argv[2];` -- NOTE the
+# array is `ev`, NOT `av`, so its line-anchored (?n)...;$ regex stays TEXTUALLY DISTINCT from
+# reset_inst_prop's byte-identical `av[...]` build; a shared name would make each verb's count == 2, the
+# COLLISION the task flags) + a NEW S1 `log_action_argv(3, ev)` emit row (distinct from reset_inst_prop's
+# `(3, av)` and replace_symbol's `(4, av)`); (b) embed_rawfile ADDED to S2 CVERBS, kept OUT of S3; (c) an
+# S7 block (EXACTLY ONE ev-build + ONE log_action_argv(3, ev) + ZERO scattered raw log/readonly_reject in
+# scheduler.c, ZERO in callback.c) PLUS a COLLISION GUARD re-asserting reset_inst_prop's av-build + (3, av)
+# stay == 1. The branch NEVER had a scheduler_readonly_reject; the boundary ADDS one as a CORRECTNESS FIX
+# (the old branch embedded on a read-only cell). embed_rawfile is a PURE SCRIPTED verb (no key/menu/
+# palette/callback/Tcl caller), so NO callback.c edit and NO key-equivalence decision.
 # Atom 12 (0053 Cadence Ctrl-E window hop) added: the S1 focus_window emit row
 # (utils/cadence_nav.tcl) and the S6 SEAM-EXCLUSIVITY block -- `new_schematic
 # switch` (a shared core: tab-strip/alt2/window-open machinery) must be logged
@@ -281,6 +300,9 @@ set MANIFEST {
     {return perform_action\("toggle_ignore", argc, argv\);} 1 {toggle_ignore branch routes through the perform_action boundary (Refactor B atom 12 -- the FIRST FRICTION-FREE-SCOUTED verb, a BARE no-arg verb): run_core calls toggle_ignore() which OWNS its own push_undo (on the FIRST selected element) + set_modify + draw (no double-push); the log is the shared bare `xschem %s` core_log_action DEFAULT line (no per-verb branch); the boundary is PURELY ADDITIVE -- this branch logged NOTHING and had NO readonly gate before, so it ADDS BOTH (a 0041/0051 close). The equivalent Shift+T key routes through the SAME boundary. No scattered readonly/log/push_undo here}
     {return perform_action\("reset_inst_prop", argc, argv\);} 1 {reset_inst_prop branch routes through the perform_action boundary (Refactor B atom 13 -- the FIRST BENEFICIARY of the log-on-success change, and the FIRST VALIDATING verb): run_core MOVES the argc<3 / "instance not found" validation IN (early TCL_ERROR BEFORE its single push_undo, so a bad arg mutates nothing) and, via log-on-success, logs nothing on failure; core_log_action logs the SELF-CONTAINED `xschem reset_inst_prop <ref>` (argv[2], a name or index) on success only. The boundary ADDS the generic readonly gate (already present in the old branch, now unified); the old success-path instname interp result is dropped (no caller consumed it). No scattered readonly/log/push_undo here}
     {return perform_action\("show_unconnected_pins", argc, argv\);} 1 {show_unconnected_pins branch routes through the perform_action boundary (Refactor B atom 15 -- the friction-free BARE no-arg verb from the fresh atom-15 fan-out scout, after the atom-14 validating shortlist was EXHAUSTED): run_core calls show_unconnected_pins() (netlist.c), whose RAW attach_labels_to_inst(2) sub-step OWNS its push_undo (via place_symbol) + set_modify + draw (no double-push) and stays SILENT below the boundary (its log lives under the `attach_labels` verb in core_log_action, NOT in the C fn -- the atom-11 shared-sub-step lock -- so show_unconnected_pins double-logs NOTHING with attach_labels); the log is the shared bare `xschem %s` core_log_action DEFAULT line (no per-verb branch). The boundary ADDS the readonly gate this branch NEVER HAD -- a correctness fix: the old branch placed lab_show labels on a read-only cell. A no-unconnected-pins sheet is a no-op but STILL logs +1 (the §30 no-op-still-logs property). No scattered readonly/log/push_undo here}
+    {return perform_action\("embed_rawfile", argc, argv\);} 1 {embed_rawfile branch routes through the perform_action boundary (Refactor B atom 16 -- the DEFERRED runner-up from the atom-15 scout, a HYBRID of the reset_inst_prop §33 single-STRING-referent + argc-gate template and the floaters/show_unconnected_pins §30/§35 core-owns-its-own-undo template): run_core MOVES the `~/` expansion IN (via the home_dir global) and the argc<3 "needs a file argument" validation (early TCL_ERROR BEFORE any mutation, so a missing arg mutates nothing and, via log-on-success, logs nothing -- the old branch SILENTLY no-op'd); the core embed_rawfile() (draw.c) OWNS the SINGLE push_undo + set_modify (no double-push); core_log_action logs the SELF-CONTAINED `xschem embed_rawfile <path>` via log_action_argv (Tcl_Merge on the RAW argv[2] so a metachar path replays + the `~/` re-expands) on success only. The boundary ADDS the readonly gate this branch NEVER HAD -- a CORRECTNESS FIX: the old branch embedded on a read-only cell. A missing/non-regular file is a MUTATION (base64_from_file NULL -> blanks spice_data), not a failure. No scattered readonly/log/push_undo here}
+    {(?n)ev\[0\] = "xschem"; ev\[1\] = verb; ev\[2\] = argv\[2\];$} 1 {embed_rawfile SELF-CONTAINED path form lives in core_log_action (atom 16): the referent argv[2] (a `~/...`, absolute or relative RAW path) is emitted via log_action_argv (Tcl_Merge), NOT a raw %s -- a path with a space/bracket/brace carries Tcl metacharacters (`sim [1].raw`) and a raw line would misparse on replay. The array is named `ev` (not `av`) SO THIS LINE STAYS TEXTUALLY DISTINCT from reset_inst_prop's byte-identical `av[...]` build -- both are line-anchored (?n)...;$, and a shared name would make each verb's count == 2, breaking the exclusivity rows. Reached ONLY on TCL_OK (log-on-success), so a failed validation logs nothing}
+    {log_action_argv\(3, ev\);} 1 {embed_rawfile's Tcl_Merge emit (atom 16): log_action_argv brace-quotes the path minimally, so a plain path (/d/small.raw) logs unbraced while a metachar path logs `xschem embed_rawfile {/d/sim [1].raw}` and a `~/` path logs the RAW `xschem embed_rawfile ~/f.raw` (re-expanded on replay). Exactly ONE such `(3, ev)` site in scheduler.c (S7 pins exclusivity); the `ev` name keeps it distinct from reset_inst_prop's `log_action_argv(3, av)` and replace_symbol's `(4, av)`}
     {log_action\("xschem print_hilight_net}           1 {print_hilight_net branch}
     {log_action\("xschem exit closewindow force"}     2 {exit hook (both terminating sites)}
     {log_action\("xschem set cadgrid}                 1 {set cadgrid resolved-value}
@@ -476,7 +498,7 @@ set CVERBS {
   cut delete copy undo redo save reload saveas align trim_wires break_wires
   flip flipv rotate flip_in_place flipv_in_place rotate_in_place
   change_elem_order check_unique_names create_instance toggle_ignore
-  reset_inst_prop replace_symbol show_unconnected_pins
+  reset_inst_prop replace_symbol show_unconnected_pins embed_rawfile
   floaters_from_selected_inst print_hilight_net attach_labels add_pin_stubs
   setprop unhilight_all hilight_net_interactive unhilight_net_interactive
   make_symbol make_sch make_sch_from_sel descend descend_symbol go_back
@@ -972,6 +994,49 @@ check "S7 callback.c: NO scattered log_action(\"xschem show_unconnected_pins\") 
 check "S7 scheduler.c: NO scattered scheduler_readonly_reject(...,\"show_unconnected_pins\") (the boundary's generic gate covers the verb -- the branch never had one; the gate is a NEW correctness fix)" \
   [expr {[rxcount $sched {scheduler_readonly_reject\(interp, "show_unconnected_pins"\)}] == 0}] \
   "got=[rxcount $sched {scheduler_readonly_reject\(interp, "show_unconnected_pins"\)}]"
+# embed_rawfile (Refactor B atom 16 -- the DEFERRED runner-up from the atom-15 scout; a HYBRID of the
+# reset_inst_prop §33 single-STRING-referent/argc-gate template and the floaters/show_unconnected_pins
+# §30/§35 core-owns-its-own-undo template): the readonly gate + the ONE `xschem embed_rawfile <path>` log
+# form (via core_log_action) live SOLELY in perform_action. It is arg-carrying (a single RAW-path %s
+# referent, like reset_inst_prop's single referent), so core_log_action legitimately holds EXACTLY ONE
+# referent-build + ONE log_action_argv emit, and scheduler.c must have EXACTLY that ONE -- the scheduler
+# BRANCH carries none (it delegates) and callback.c ZERO (a PURE SCRIPTED verb: NO key/menu/palette/
+# callback/Tcl caller). The referent array is named `ev` (NOT `av`) so its line-anchored build regex is
+# TEXTUALLY DISTINCT from reset_inst_prop's byte-identical `av[...]` build -- if they shared a name the
+# line-anchored (?n)...;$ regexes would each match BOTH lines, making each verb's count == 2 and breaking
+# BOTH verbs' exclusivity rows (the COLLISION the task flags). The branch's early-error Tcl_SetResult
+# ("xschem embed_rawfile needs a file argument") is NOT a log_action call, so it doesn't perturb the
+# raw-log count. The branch NEVER HAD a scheduler_readonly_reject; the boundary's generic gate now ADDS
+# one (a CORRECTNESS FIX -- the old branch embedded on a read-only cell), so a re-scattered per-verb
+# readonly_reject also fails closed. embed_rawfile() is 1:1 with the verb (called ONLY by its own branch --
+# no key, no other C caller, no Tcl caller), so unlike reset_inst_prop there is no sub-step to lock.
+# embed_rawfile stays in S2 CVERBS (a scripted/replayed `xschem embed_rawfile <path>` re-executes AND
+# self-logs) and OUT of S3 (its log lives in the boundary, reached from the branch).
+check "S7 scheduler.c: EXACTLY ONE embed_rawfile referent-build (ev\[0\]=xschem; ev\[1\]=verb; ev\[2\]=argv\[2\]) -- the core_log_action Tcl_Merge site; `ev` (not `av`) keeps it distinct from reset_inst_prop's line-anchored build" \
+  [expr {[rxcount $sched {(?n)ev\[0\] = "xschem"; ev\[1\] = verb; ev\[2\] = argv\[2\];$}] == 1}] \
+  "got=[rxcount $sched {(?n)ev\[0\] = "xschem"; ev\[1\] = verb; ev\[2\] = argv\[2\];$}]"
+check "S7 scheduler.c: EXACTLY ONE embed_rawfile log_action_argv(3, ev) emit (distinct from reset_inst_prop's (3, av) and replace_symbol's (4, av))" \
+  [expr {[rxcount $sched {log_action_argv\(3, ev\);}] == 1}] \
+  "got=[rxcount $sched {log_action_argv\(3, ev\);}]"
+check "S7 scheduler.c: NO scattered raw log_action(\"xschem embed_rawfile\") (the replay-unsafe %s form must not reappear -- Tcl_Merge is the only emit)" \
+  [expr {[rxcount $sched {log_action\("xschem embed_rawfile}] == 0}] \
+  "got=[rxcount $sched {log_action\("xschem embed_rawfile}]"
+check "S7 callback.c: NO scattered log_action(\"xschem embed_rawfile\") (no key entry point; guards a future re-scatter)" \
+  [expr {[rxcount $cbtext {log_action\("xschem embed_rawfile}] == 0}] \
+  "got=[rxcount $cbtext {log_action\("xschem embed_rawfile}]"
+check "S7 scheduler.c: NO scattered scheduler_readonly_reject(...,\"embed_rawfile\") (the boundary's generic gate covers the verb -- the branch never had one; the gate is a NEW correctness fix)" \
+  [expr {[rxcount $sched {scheduler_readonly_reject\(interp, "embed_rawfile"\)}] == 0}] \
+  "got=[rxcount $sched {scheduler_readonly_reject\(interp, "embed_rawfile"\)}]"
+# COLLISION GUARD: embed_rawfile's `ev` build must NOT perturb reset_inst_prop's byte-identical `av` build
+# (both are single-referent Tcl_Merge sites). Re-assert reset_inst_prop stays EXACTLY ONE on BOTH its
+# line-anchored build and its (3, av) emit -- a regression that renamed embed's array back to `av` would
+# make these == 2, failing closed here (and on reset_inst_prop's own S1/S7 rows).
+check "S7 (reset_inst_prop unperturbed) scheduler.c: still EXACTLY ONE av-build (embed's ev name did not collide)" \
+  [expr {[rxcount $sched {(?n)av\[0\] = "xschem"; av\[1\] = verb; av\[2\] = argv\[2\];$}] == 1}] \
+  "got=[rxcount $sched {(?n)av\[0\] = "xschem"; av\[1\] = verb; av\[2\] = argv\[2\];$}]"
+check "S7 (reset_inst_prop unperturbed) scheduler.c: still EXACTLY ONE log_action_argv(3, av)" \
+  [expr {[rxcount $sched {log_action_argv\(3, av\);}] == 1}] \
+  "got=[rxcount $sched {log_action_argv\(3, av\);}]"
 # atom-13 NESTING COUPLING (adversarial-review finding): the S1 existence rows above pin
 # that the guard line, the log line and the reset line each EXIST, but not that log+reset are
 # INSIDE the log-on-success block. A de-nest that keeps all three lines yet closes the
