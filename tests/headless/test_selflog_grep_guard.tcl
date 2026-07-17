@@ -257,6 +257,37 @@
 # switched to assert the EFFECT. The branch NEVER had a readonly gate; the boundary ADDS one as a CORRECTNESS
 # FIX (the old scripted form mutated a read-only symbol view). TWO Tcl callers reach the branch, NO key -- so
 # NO callback.c edit and no key-equivalence decision.
+# Refactor B atom 19 (perform_action / move_instance) migrated another HIGHER-FRICTION coverage gain
+# (the friction-free pool is EMPTY): a PURE SCRIPTED instance-reposition verb (`xschem move_instance
+# inst x y rot flip [nodraw] [noundo]`) that logged NOTHING before, carrying an INLINE mutation body
+# (strictly 1:1 -- C3, no shared mutating core to lock, like apply_pin_prop atom 18), a CONDITIONAL
+# push_undo/draw (the noundo/nodraw C5 sub-mode) and an instance-name referent. run_core MOVES the whole
+# inline body IN -- the argc<7 "needs: inst x y rot flip [nodraw] [noundo]" validation (early TCL_ERROR
+# BEFORE any mutation, which ALSO prevents core_log_action reading argv[3..6] OOB on a short call, the
+# embed_rawfile argv[2]-NULL crash class), the nodraw/noundo flag parse, the get_instance "instance not
+# found" validation, the CONDITIONAL single `if(undo) push_undo()` owned here (no self-undo core), the
+# dashed x/y/rot/flip sets, symbol_bbox + prep-flag resets, and the CONDITIONAL `if(dr) draw()`. There is
+# NO set_modify (the branch had none). core_log_action logs the FAITHFUL FULL CALL `xschem move_instance
+# <inst> <x> <y> <rot> <flip> [nodraw] [noundo]` via log_action_argv/Tcl_Merge -- the instance referent
+# argv[2] is metachar-safe (an arrayed name x2[3:0] brace-quotes), built into a `mi` array (NOT av/ev/pp/
+# av[3] -- the §36 collision lesson; and a FRESH build, NOT the bare `log_action_argv(argc, argv)` form
+# which recurs at three other scheduler.c sites so could not be grep-pinned uniquely) emitted via a
+# VARIABLE count `log_action_argv(k, mi)` (k = canonical arg count, distinct from every fixed-count site).
+# THE noundo/nodraw LOG DECISION: both flags are LOGGED FAITHFULLY (the wire_cut `noalign` approach, atom
+# 17), NOT gated OUT like replace_symbol's `fast` (atom 14) -- because move_instance has NO internal
+# machinery caller (grep-verified pure scripted), so nodraw/noundo are faithful user args a replay must
+# reproduce; they are re-emitted in a CANONICAL order (nodraw before noundo) -- order-independent booleans,
+# so the canonical line replays to the identical effect. Grep changes: (a) a NEW S1 boundary-branch row + a
+# NEW S1 `mi[9]` decl row + a NEW S1 line-anchored referent-build row (`mi[k++] = argv[2]; ... argv[6];`,
+# UNIQUE to move_instance) + a NEW S1 emit row (`log_action_argv(k, mi)`); (b) move_instance ADDED to S2
+# CVERBS, kept OUT of S3; (c) an S7 block (EXACTLY ONE decl + ONE build + ONE emit, ZERO scattered raw
+# `log_action("xschem move_instance"` in scheduler.c AND callback.c, ZERO scattered
+# `scheduler_readonly_reject(...,"move_instance")` -- the old branch HAD a per-verb one, now REMOVED, a
+# CONSOLIDATION not a new fix) PLUS a COLLISION GUARD re-asserting reset_inst_prop's `av`, embed's `ev`,
+# replace_symbol's `av[3]` and apply_pin_prop's `pp` all stay == 1. The READONLY gate is a CONSOLIDATION
+# (unlike atom 18): the old branch already refused on a read-only cell (test_readonly_guard.tcl locks it),
+# the boundary's generic gate now covers it. A PURE SCRIPTED verb -- no key/menu/palette/callback/Tcl
+# caller -- so NO callback.c edit and no key-equivalence decision.
 # Atom 12 (0053 Cadence Ctrl-E window hop) added: the S1 focus_window emit row
 # (utils/cadence_nav.tcl) and the S6 SEAM-EXCLUSIVITY block -- `new_schematic
 # switch` (a shared core: tab-strip/alt2/window-open machinery) must be logged
@@ -350,6 +381,10 @@ set MANIFEST {
     {(?n)pp\[0\] = "xschem"; pp\[1\] = verb; pp\[2\] = argv\[2\];$} 1 {apply_pin_prop BACK-COMPAT one-arg form (argc==3) lives in core_log_action (atom 18): the `xschem apply_pin_prop <prop>` build (default "selected" scope). The prop referent argv[2] is emitted via log_action_argv (Tcl_Merge). The array `pp` (NOT av/ev) keeps this line-anchored (?n)...;$ build TEXTUALLY DISTINCT from reset_inst_prop's `av[...]` and embed_rawfile's `ev[...]` byte-identical builds -- a shared name would make each verb's count == 2, the §36 collision. Line-anchored on `argv[2];$` so it matches ONLY the 3-arg build, NOT the 4-arg `pp[2] = argv[2]; pp[3] = argv[3];` line}
     {log_action_argv\(4, pp\);} 1 {apply_pin_prop's Tcl_Merge emit for the scope form (atom 18): distinct from replace_symbol's `(4, av)` by the `pp` array name. Exactly ONE such `(4, pp)` site in scheduler.c (S7 pins exclusivity)}
     {log_action_argv\(3, pp\);} 1 {apply_pin_prop's Tcl_Merge emit for the back-compat form (atom 18): distinct from reset_inst_prop's `(3, av)` and embed_rawfile's `(3, ev)` by the `pp` array name. Exactly ONE such `(3, pp)` site in scheduler.c (S7 pins exclusivity)}
+    {return perform_action\("move_instance", argc, argv\);} 1 {move_instance branch routes through the perform_action boundary (Refactor B atom 19 -- the NINETEENTH per-verb migration, a HIGHER-FRICTION coverage gain now the friction-free pool is EMPTY; a PURE SCRIPTED instance-reposition verb with an INLINE mutation body, a CONDITIONAL noundo/nodraw push/draw C5 sub-mode, and an instance-name referent): run_core MOVES the WHOLE INLINE body IN -- the argc<7 "needs: inst x y rot flip [nodraw] [noundo]" validation (early TCL_ERROR BEFORE any mutation, which also prevents core_log_action reading argv 3..6 OOB on a short call), the nodraw/noundo flag parse, the get_instance "instance not found" validation, the CONDITIONAL single `if(undo) push_undo()` owned here (no self-undo core), the dashed x/y/rot/flip sets, symbol_bbox + prep-flag resets, and the CONDITIONAL `if(dr) draw()`; core_log_action logs the FAITHFUL FULL CALL `xschem move_instance <inst> <x> <y> <rot> <flip> [nodraw] [noundo]` (via log_action_argv/Tcl_Merge, instance name metachar-safe) on success only. The mutation body is INLINE so it is strictly 1:1 with the verb (C3). NO set_modify (the branch had none). The boundary's readonly gate is a CONSOLIDATION (the old branch HAD a per-verb scheduler_readonly_reject, now REMOVED). No scattered readonly/log/push_undo here}
+    {const char \*mi\[9\];} 1 {move_instance's FAITHFUL-FULL-CALL log array lives in core_log_action (atom 19): sized for the max canonical call (xschem, move_instance, inst, x, y, rot, flip, nodraw, noundo = 9). The array is named `mi` (NOT av/ev/pp/av[3]) to stay collision-distinct (the §36 lesson); a FRESH build (NOT the bare `log_action_argv(argc, argv)` form, which recurs at three other scheduler.c sites so could not be grep-pinned uniquely)}
+    {(?n)mi\[k\+\+\] = argv\[2\]; mi\[k\+\+\] = argv\[3\]; mi\[k\+\+\] = argv\[4\]; mi\[k\+\+\] = argv\[5\]; mi\[k\+\+\] = argv\[6\];$} 1 {move_instance SELF-CONTAINED faithful-full-call referent copy lives in core_log_action (atom 19): the FIVE positional referents inst/x/y/rot/flip (argv[2..6]) copied into `mi`, emitted via log_action_argv (Tcl_Merge), NOT a raw %s -- the instance name argv[2] can carry Tcl metacharacters (x2[3:0]) that a raw line would replay as a command substitution (the §33 lesson); the dashes (keep-existing) round-trip verbatim. Line-anchored (?n)...;$ and UNIQUE to move_instance (no other verb copies argv[2..6] into `mi`). Reached ONLY on TCL_OK (log-on-success), so a failed argc<7 validation logs nothing}
+    {log_action_argv\(k, mi\);} 1 {move_instance's Tcl_Merge emit (atom 19): a VARIABLE count `k` (the canonical arg count, 7 base + 0/1/2 flags) with the `mi` array -- distinct from every FIXED-count site (reset_inst_prop's (3, av), replace_symbol's (4, av), embed's (3, ev), apply_pin_prop's (4, pp)/(3, pp)) AND from the bare `(argc, argv)`/`(ac, av)` forms. Exactly ONE such `(k, mi)` site in scheduler.c (S7 pins exclusivity). The nodraw/noundo flags are appended into `mi` BEFORE this in CANONICAL order (nodraw then noundo) -- LOGGED faithfully, NOT gated out (the wire_cut noalign approach, unlike replace_symbol's fast)}
     {log_action\("xschem print_hilight_net}           1 {print_hilight_net branch}
     {log_action\("xschem exit closewindow force"}     2 {exit hook (both terminating sites)}
     {log_action\("xschem set cadgrid}                 1 {set cadgrid resolved-value}
@@ -546,6 +581,7 @@ set CVERBS {
   flip flipv rotate flip_in_place flipv_in_place rotate_in_place
   change_elem_order check_unique_names create_instance toggle_ignore
   reset_inst_prop replace_symbol show_unconnected_pins embed_rawfile wire_cut apply_pin_prop
+  move_instance
   floaters_from_selected_inst print_hilight_net attach_labels add_pin_stubs
   setprop unhilight_all hilight_net_interactive unhilight_net_interactive
   make_symbol make_sch make_sch_from_sel descend descend_symbol go_back
@@ -1181,6 +1217,66 @@ check "S7 (replace_symbol unperturbed) scheduler.c: still EXACTLY ONE av\[3\]-bu
   [expr {[rxcount $sched {av\[3\] = argv\[3\];}] == 1 &&
          [rxcount $sched {log_action_argv\(4, av\);}] == 1}] \
   "build=[rxcount $sched {av\[3\] = argv\[3\];}] emit=[rxcount $sched {log_action_argv\(4, av\);}]"
+# move_instance (Refactor B atom 19 -- the NINETEENTH per-verb migration, a HIGHER-FRICTION coverage gain
+# now the friction-free pool is EMPTY; a PURE SCRIPTED instance-reposition verb with an INLINE mutation
+# body, a CONDITIONAL noundo/nodraw push/draw C5 sub-mode, and an instance-name referent): the readonly
+# gate + the ONE FAITHFUL-FULL-CALL `xschem move_instance <inst> <x> <y> <rot> <flip> [nodraw] [noundo]`
+# log form (via core_log_action) live SOLELY in perform_action. core_log_action holds EXACTLY ONE `mi[9]`
+# decl + EXACTLY ONE line-anchored 5-referent build (`mi[k++] = argv[2]; ... argv[6];`, UNIQUE to
+# move_instance) + EXACTLY ONE `log_action_argv(k, mi)` emit; scheduler.c must have EXACTLY those -- the
+# scheduler BRANCH carries none (it delegates via `return perform_action`) and callback.c ZERO (no key
+# entry point -- a PURE SCRIPTED verb, grep-verified: no key/menu/palette/callback/C/Tcl caller). The
+# referent array is named `mi` (NOT av/ev/pp/av[3]) so its decl/build/emit stay TEXTUALLY DISTINCT from
+# reset_inst_prop's `av`, embed_rawfile's `ev`, apply_pin_prop's `pp`, and replace_symbol's `av[3]` -- a
+# shared name would make counts collide (the §36 lesson). The emit uses a VARIABLE `k` (canonical arg
+# count) so `log_action_argv(k, mi)` is distinct from every fixed-count site AND from the bare
+# `log_action_argv(argc, argv)`/`(ac, av)` forms (three of the former recur in scheduler.c -- the reason
+# move_instance uses a FRESH `mi` build, not the bare form which could not be grep-pinned uniquely). The
+# nodraw/noundo flags are LOGGED FAITHFULLY into `mi` (the wire_cut noalign approach, atom 17), NOT gated
+# out like replace_symbol's `fast` (atom 14) -- move_instance has no internal machinery caller. The
+# READONLY gate is a CONSOLIDATION (unlike apply_pin_prop atom 18 / embed atom 16, where the boundary ADDED
+# it): the old branch HAD a per-verb `scheduler_readonly_reject(interp, "move_instance")`, now REMOVED --
+# the boundary's generic gate covers it, SAME behaviour before/after (test_readonly_guard.tcl locks both
+# binaries refuse). So a re-scattered per-verb readonly_reject fails closed here. The verb logged NOTHING
+# before (like apply_pin_prop / embed / wire_cut / toggle_ignore), so a scattered raw `log_action("xschem
+# move_instance"` must NOT appear (the replay-unsafe %s form -- Tcl_Merge is the only emit). move_instance
+# stays in S2 CVERBS (a scripted/replayed `xschem move_instance ...` re-executes AND self-logs) and OUT of
+# S3.
+check "S7 scheduler.c: EXACTLY ONE move_instance mi\[9\] decl -- the core_log_action faithful-full-call array; `mi` (not av/ev/pp) keeps it distinct" \
+  [expr {[rxcount $sched {const char \*mi\[9\];}] == 1}] \
+  "got=[rxcount $sched {const char \*mi\[9\];}]"
+check "S7 scheduler.c: EXACTLY ONE move_instance line-anchored 5-referent build (mi\[k++\] = argv\[2\]; ... argv\[6\];) -- the metachar-safe inst/x/y/rot/flip copy, UNIQUE to move_instance" \
+  [expr {[rxcount $sched {(?n)mi\[k\+\+\] = argv\[2\]; mi\[k\+\+\] = argv\[3\]; mi\[k\+\+\] = argv\[4\]; mi\[k\+\+\] = argv\[5\]; mi\[k\+\+\] = argv\[6\];$}] == 1}] \
+  "got=[rxcount $sched {(?n)mi\[k\+\+\] = argv\[2\]; mi\[k\+\+\] = argv\[3\]; mi\[k\+\+\] = argv\[4\]; mi\[k\+\+\] = argv\[5\]; mi\[k\+\+\] = argv\[6\];$}]"
+check "S7 scheduler.c: EXACTLY ONE move_instance log_action_argv(k, mi) emit (VARIABLE count, distinct from every fixed-count (N, av/ev/pp) site and the bare (argc, argv)/(ac, av) forms)" \
+  [expr {[rxcount $sched {log_action_argv\(k, mi\);}] == 1}] \
+  "got=[rxcount $sched {log_action_argv\(k, mi\);}]"
+check "S7 scheduler.c: NO scattered raw log_action(\"xschem move_instance\") (the replay-unsafe %s form must not reappear -- Tcl_Merge is the only emit; the verb logged NOTHING before atom 19)" \
+  [expr {[rxcount $sched {log_action\("xschem move_instance}] == 0}] \
+  "got=[rxcount $sched {log_action\("xschem move_instance}]"
+check "S7 callback.c: NO scattered log_action(\"xschem move_instance\") (no key entry point -- a pure scripted verb; guards a future re-scatter)" \
+  [expr {[rxcount $cbtext {log_action\("xschem move_instance}] == 0}] \
+  "got=[rxcount $cbtext {log_action\("xschem move_instance}]"
+check "S7 scheduler.c: NO scattered scheduler_readonly_reject(...,\"move_instance\") (CONSOLIDATION -- the old branch HAD a per-verb gate, now REMOVED; the boundary's generic gate covers it, same behaviour before/after)" \
+  [expr {[rxcount $sched {scheduler_readonly_reject\(interp, "move_instance"\)}] == 0}] \
+  "got=[rxcount $sched {scheduler_readonly_reject\(interp, "move_instance"\)}]"
+# COLLISION GUARD: move_instance's `mi` build must NOT perturb reset_inst_prop's `av`, embed_rawfile's
+# `ev`, replace_symbol's `av[3]`, or apply_pin_prop's `pp` single-referent Tcl_Merge sites. Re-assert each
+# stays EXACTLY ONE -- a regression that renamed move_instance's array to av/ev/pp would make these == 2,
+# failing closed here (and on those verbs' own S1/S7 rows).
+check "S7 (reset_inst_prop unperturbed) scheduler.c: still EXACTLY ONE av-build + (3, av) (move_instance's mi name did not collide)" \
+  [expr {[rxcount $sched {(?n)av\[0\] = "xschem"; av\[1\] = verb; av\[2\] = argv\[2\];$}] == 1 &&
+         [rxcount $sched {log_action_argv\(3, av\);}] == 1}] \
+  "build=[rxcount $sched {(?n)av\[0\] = "xschem"; av\[1\] = verb; av\[2\] = argv\[2\];$}] emit=[rxcount $sched {log_action_argv\(3, av\);}]"
+check "S7 (embed_rawfile unperturbed) scheduler.c: still EXACTLY ONE ev-build + (3, ev) (move_instance's mi name did not collide)" \
+  [expr {[rxcount $sched {(?n)ev\[0\] = "xschem"; ev\[1\] = verb; ev\[2\] = argv\[2\];$}] == 1 &&
+         [rxcount $sched {log_action_argv\(3, ev\);}] == 1}] \
+  "build=[rxcount $sched {(?n)ev\[0\] = "xschem"; ev\[1\] = verb; ev\[2\] = argv\[2\];$}] emit=[rxcount $sched {log_action_argv\(3, ev\);}]"
+check "S7 (apply_pin_prop unperturbed) scheduler.c: still EXACTLY ONE pp\[3\]-build + (4, pp) + (3, pp) (move_instance's mi name did not collide)" \
+  [expr {[rxcount $sched {pp\[3\] = argv\[3\];}] == 1 &&
+         [rxcount $sched {log_action_argv\(4, pp\);}] == 1 &&
+         [rxcount $sched {log_action_argv\(3, pp\);}] == 1}] \
+  "build=[rxcount $sched {pp\[3\] = argv\[3\];}] emit4=[rxcount $sched {log_action_argv\(4, pp\);}] emit3=[rxcount $sched {log_action_argv\(3, pp\);}]"
 # atom-13 NESTING COUPLING (adversarial-review finding): the S1 existence rows above pin
 # that the guard line, the log line and the reset line each EXIST, but not that log+reset are
 # INSIDE the log-on-success block. A de-nest that keeps all three lines yet closes the

@@ -3903,6 +3903,187 @@ change-adjacent). The wireedit 52-test suite is ALL PASS.
 pick with a fresh source re-verify. DEFER the composite-hazard verbs (delete/cut/copy/save/reload) whose
 shared cores are called by abort/merge/teardown (the §4 `delete()`-is-NOT-1:1 lesson).
 
+## 39. Refactor B ATOM 19 (2026-07-17): the NINETEENTH per-verb migration — a PURE SCRIPTED instance-reposition verb with an INLINE conditional-undo/draw body, the noundo/nodraw C5 handled, readonly CONSOLIDATED (not newly fixed), and the noundo-log decision recorded (`move_instance`)
+
+The friction-free pool has been EMPTY since atom 16. `move_instance` was the atom-18 scout's named runner-up
+alongside `image` — a genuine HIGHER-FRICTION coverage gain: a PURE SCRIPTED instance-reposition verb that
+logged NOTHING before this atom, carrying an **INLINE mutation body** (not a shared core), a **CONDITIONAL
+push_undo/draw** (the noundo/nodraw C5 sub-mode) and an **instance-name referent**. It is the **apply_pin_prop
+§38 INLINE-body extraction** + the **reset_inst_prop §33 single-referent + argc-gate** templates, crossed with
+a CONDITIONAL single push_undo (the replace_symbol §34 owns-the-push, but the flag GATES ONLY the undo, NOT the
+log) and the **wire_cut §37 "log the flag FAITHFULLY" decision** (see below).
+
+**The verb.** `xschem move_instance inst x y rot flip [nodraw] [noundo]` repositions an instance by NAME (a `-`
+in any of x/y/rot/flip keeps the existing value); `nodraw` skips the redraw, `noundo` makes it non-undoable. A
+pure SCRIPTED verb — the user (or a replay) types it.
+
+**Migration (scheduler.c only — no callback.c edit).**
+- **Branch** (`xschem_cmds_m`): the whole inline body (`int undo=1, dr=1; !xctx guard; scheduler_readonly_reject;
+  if(argc>7){flag parse} if(argc>6){validate + conditional push + dashed sets + bbox + prep resets + conditional
+  draw}`) is replaced by `return perform_action("move_instance", argc, argv);`. The `!xctx` guard is dropped
+  (perform_action re-checks it) AND the per-verb `scheduler_readonly_reject` is dropped (the boundary's generic
+  gate covers it — a CONSOLIDATION, see below). NB the OLD branch FELL THROUGH (no `return`) and returned TCL_OK
+  at the dispatch tail; the new `return perform_action(...)` returns run_core's TCL_OK — byte-identical under the
+  `*cmd_found` protocol (`cmd_found` inits to 1, a matched early return leaves it "found").
+- **`run_core` arm**: the WHOLE inline body MOVES in verbatim — the `argc<7` VALIDATION (early TCL_ERROR *before*
+  any mutation), the nodraw/noundo flag parse, the `get_instance(argv[2])<0` "instance not found" validation, the
+  CONDITIONAL single `if(undo) xctx->push_undo()` (owned here — there is no self-undo core, like reset_inst_prop/
+  replace_symbol; a normal move pushes once, a `noundo` move pushes NOTHING), the dashed x/y/rot/flip sets (each
+  gated on `strcmp(argv[N],"-")`), `symbol_bbox` + the three prep-flag resets, and the CONDITIONAL `if(dr) draw()`.
+  There is NO `set_modify` (the old branch had none) and NO success `Tcl_SetResult` (see the RESULT wrinkle). The
+  original body declared `int i` TWICE in nested blocks (the flag-loop counter + the instance index); flattened to
+  `i` (loop) + `inst` (index) at the block top (C89).
+- **`core_log_action` arm**: the FAITHFUL FULL CALL `xschem move_instance <inst> <x> <y> <rot> <flip> [nodraw]
+  [noundo]` via `log_action_argv`/`Tcl_Merge` — the instance referent `argv[2]` is metachar-safe (an arrayed name
+  `x2[3:0]` brace-quotes), the five positional referents `argv[2..6]` copied into a `mi` array, the nodraw/noundo
+  flags appended in CANONICAL order (nodraw before noundo) and emitted via a VARIABLE-count `log_action_argv(k,
+  mi)`. The array is named **`mi`** (NOT `av`/`ev`/`pp`/`av[3]` — the §36 collision lesson) AND is a FRESH build
+  (NOT the bare `log_action_argv(argc, argv)` form, which recurs at THREE other scheduler.c sites — add_pin_stubs/
+  paste/... — so could not be grep-pinned uniquely).
+
+**THE noundo/nodraw LOG DECISION — the load-bearing design call, RESOLVED FROM THE CALLERS.** The KEY question:
+is `noundo` a machinery/replay sub-mode that must NOT be logged (like replace_symbol's `fast`, §34) or a faithful
+arg to LOG (like wire_cut's `noalign`, §37)? **Answer: LOG it faithfully.** `fast` is gated OUT because
+replace_symbol is called as an internal sub-step of a larger logged op (a multi-substitution), so logging each
+`fast` call would DOUBLE-log. `move_instance` has NO such internal caller — grep-verified PURE SCRIPTED (no
+key/menu/palette/callback/C/Tcl caller anywhere; the only live-repo references are a completion list, docs, and
+`test_readonly_guard.tcl`). So nodraw/noundo are just faithful user args a replay must reproduce: a user who
+scripts `move_instance ... noundo` wants replay to reproduce it (no undo slot). They are logged, not gated, and
+re-emitted in a CANONICAL order (order-independent booleans → the canonical line replays to the identical effect,
+the atom-9/-11 "log the value the effect consumed" rule).
+
+**THE ARGC GATE — a VALIDATING behaviour delta (test (b)), AND an OOB-crash guard.** The old branch SILENTLY
+no-op'd on a short call (`if(argc>6)` false → nothing, TCL_OK). The migration makes `argc<7` an early TCL_ERROR +
+verb-named message, and — via log-on-success (atom 13) — records NO phantom line. Crucially it ALSO prevents a
+CRASH: without the gate, a short call (e.g. `xschem move_instance R1`, argc=3) would return TCL_OK and reach
+`core_log_action`, which reads `argv[3..6]` → an OUT-OF-BOUNDS read → `Tcl_Merge` crash (the embed_rawfile §36
+`argv[2]`-NULL class). The gate returns before both. Verified no caller relies on the silent no-op (pure scripted,
+grep-clean).
+
+**THE READONLY GATE — a CONSOLIDATION, not a new fix (test (c)).** UNLIKE apply_pin_prop §38 / embed_rawfile §36 /
+wire_cut §37 (where the boundary ADDED a gate the branch never had), the old move_instance branch ALREADY had a
+per-verb `scheduler_readonly_reject(interp, "move_instance")`. The migration REMOVES it and the boundary's generic
+gate covers it — the reset_inst_prop §33 / replace_symbol §34 consolidation. Verified empirically: `test_readonly_
+guard.tcl` (which lists `move_instance` in its read-only-refuse set) PASSES on BOTH the reverted-HEAD baseline AND
+the atom-19 binary — SAME refuse behaviour, the per-verb gate just moved onto the boundary. The S7 grep row locks
+scheduler.c to ZERO scattered `scheduler_readonly_reject(...,"move_instance")`.
+
+**THE 1:1 TEST (C3).** The mutation body is INLINE (not a shared C fn), so it is strictly 1:1 with the verb —
+there is NO shared mutating core to lock (like apply_pin_prop §38, unlike trim_wires atom 1 / attach_labels
+atom 11). Routing move_instance double-logs NOTHING with any other verb.
+
+**THE RESULT WRINKLE (verified, not assumed).** The task's premise was "move_instance sets no success interp
+result, so the boundary drops NOTHING". Re-verified from source + empirically: the BRANCH sets no result, but the
+mutation path leaks an INCIDENTAL `"0"` (from an internal `tcleval` — push_undo/autosave machinery), while the
+no-op / short forms leave `""`. The boundary's success-path `Tcl_ResetResult` blanks the leaked `"0"` to `""`
+uniformly (empirically confirmed: a scripted move now returns `""`). No caller consumes the return (PURE SCRIPTED —
+grep-clean), so the drop is safe — the reset_inst_prop/replace_symbol/apply_pin_prop dropped-result pattern
+(§33/§34/§38), here on an INCIDENTAL leak rather than a deliberate `Tcl_SetResult`.
+
+**NO set_modify — byte-faithful.** The old branch had NO `set_modify` (a move on a SAVED sheet leaves `modified`==0
+— verified: after `saveas` then `move_instance`, `modified` stays 0). The arm adds none; adding one would change
+behaviour. Locked by test (g).
+
+**Entry map — a PURE SCRIPTED verb, verified by grepping the LIVE repo (the atom-10/14/16 lesson).** NO key
+(`keybindings.csv`/`mousebindings.csv`), NO menu `-command`, NO command palette (`actions.csv`), NO `callback.c`
+`act_*`/legacy switch, NO Tcl caller anywhere. So there is NO `callback.c` edit and NO key-equivalence decision
+(like reset_inst_prop §33 / replace_symbol §34 / embed_rawfile §36 / apply_pin_prop §38).
+
+**Effect oracle (empirical, pre- and post-migration).** A `devices/res.sym` resistor placed at the origin
+(0 0 0 0). `xschem move_instance R1 100 40 90 0` sets x0=100 y0=40 rot=90 flip=0 (read back via `xschem
+instance_coord R1` → `{R1} {res.sym} 100 40 90 0`; note `getprop instance x0` reads PROP-STRING tokens, NOT the
+geometric struct fields — `instance_coord` is the correct oracle). Pinned on the pre-migration binary: the
+argc<7 SILENT no-op (→ TCL_ERROR post), the incidental `"0"` result leak (→ `""` post), the dashed keep-existing
+(`- - 180 -` changes ONLY rot), the noundo undo-depth (a noundo move pushes NOTHING → one undo unwinds the
+PLACEMENT, instances→0; a normal move pushes ONCE → one undo restores x0=0 with the instance present), the
+metachar name round-trip, and the no-set_modify (modified==0 after saveas+move).
+
+**Verified:** `test_perform_action_move_instance.tcl` (41 checks, full_audit logdir_tests, self-deferring
+"deferred (no --logdir)" guard): (a) SUCCESS +1 FAITHFUL log + byte-exact `xschem move_instance R1 100 40 90 0` +
+x0/y0/rot/flip applied + RESULT BLANK; (a2) metachar name `x2[3:0]` logs BRACE-QUOTED + replays without a Tcl
+error + re-moves; (b) argc gate — `move_instance R1` (argc<7) AND bare `move_instance` (argc==2, the OOB class)
+each → TCL_ERROR + non-empty "needs:" message + +0 log + no mutation; `move_instance BOGUS 1 1 0 0` → TCL_ERROR
+"instance not found" + +0 log + no mutation; (c) readonly reject (the CONSOLIDATION) — TCL_ERROR + verb-named
+message + no move + +0 log; (d) noundo — pushes NOTHING (one undo removes the instance, instances→0) AND the
+noundo-log decision (the line is LOGGED WITH the `noundo` flag) + nodraw likewise; (e) replay through the suppress
+seam re-executes without re-logging vs a control `source` that re-logs; (f) undo DEPTH normal move — ONE undo
+restores x0=0 with the instance PRESENT, a SECOND undo unwinds the placement (single conditional push_undo); (g)
+dashed keep-existing (only rot) + nodraw identical + NO set_modify (modified==0 after saveas+move). **Sabotage ×6**
+(each rebuild-run-restore from the scratchpad backup `scheduler.c.atom19`, NOT git — ~220 dirty files; each
+failing EXACTLY its checks): (1) neutralise the boundary route (inline perform_action's readonly+run_core+log in
+the branch, KEEPING the effect+log) → the runtime `.tcl` STILL PASSES while the grep guard's S1 branch-route row
+(→0) + the S7 scattered-readonly-reject row (0→1) fail closed — the grep guard is the load-bearing structural
+lock; (2) neutralise the readonly gate (for move_instance only) → the (c) checks fail (mutated, no error, +1 log);
+(3) make push_undo UNCONDITIONAL (ignore noundo) → the (d) noundo undo-depth check fails (the instance survives
+one undo) — the no-double-push / conditional-push discriminator; (4) log on the not-found failure path (return
+TCL_OK) → the (b) not-found checks fail (rc=0, empty msg, +1 log); (5) raw `%s` referent instead of
+`log_action_argv` → the (a2) metachar-replay ("invalid command name 3:0") + byte-exact + (d) flag-log checks fail
++ the S1/S7 `mi` rows + the scattered-log row fail closed; (6) the noundo-log decision's INVERSE (gate the emit on
+`!noundo`, the fast-analogy) → the (d) noundo "+1 log" + "logged WITH noundo flag" checks fail. The change-adjacent
+siblings stay GREEN: all eighteen other `test_perform_action_*` + `test_selflog_grep_guard` +
+`test_actionlog_suppress_gate` + `test_toggle_editmode_log`, and ESPECIALLY `test_readonly_guard` (the readonly
+CONSOLIDATION — move_instance still refuses on BOTH binaries).
+
+**Grep guard (`test_selflog_grep_guard.tcl`).** ADDED to the `src/scheduler.c` S1 MANIFEST: the boundary-branch row
+(`return perform_action("move_instance", argc, argv);`), the `const char *mi[9];` decl row, the line-anchored
+5-referent build row (`(?n)mi[k++] = argv[2]; … argv[6];$`, UNIQUE to move_instance) and the emit row
+(`log_action_argv(k, mi);`, a VARIABLE count distinct from every fixed-count `(N, av/ev/pp)` site and the bare
+`(argc, argv)`/`(ac, av)` forms). ADDED `move_instance` to S2 CVERBS (kept OUT of S3). ADDED an S7 block: EXACTLY
+ONE decl + ONE build + ONE emit, ZERO scattered raw `log_action("xschem move_instance"` in scheduler.c AND
+callback.c, ZERO scattered `scheduler_readonly_reject(…, "move_instance")` (the per-verb gate REMOVED — the
+consolidation) — PLUS a COLLISION GUARD re-asserting reset_inst_prop's `av`, embed's `ev`, replace_symbol's `av[3]`
+and apply_pin_prop's `pp` single-referent sites each stay == 1.
+
+**Full-audit baseline diff.** AFTER (atom-19 binary) vs BASELINE (`scheduler.c` reverted to HEAD dc57ba83,
+rebuilt): the load-bearing signal is CLEAN — the ONLY two BASELINE-only fails are `test_perform_action_move_instance`
+(13 checks fail when the migration is absent — the old scripted form never logged, silently no-op'd on a short
+call, and leaked a `"0"` result) and `test_selflog_grep_guard` (its atom-19 S1/S7 rows scan for scheduler.c code
+absent on the reverted source) — proving BOTH load-bearing (they PASS on atom-19). `test_readonly_guard` PASSES on
+BOTH (the readonly consolidation). The FULL headless audit on the atom-19 binary showed **ZERO new deterministic
+AFTER-only failures** — the 16 file-fails are the documented WSLg standing set: the cadence pair
+(`test_cadence_descend_newwin_ro`/`test_cadence_drag`), the GUI set (`test_ciw`/`test_hi_descend`/
+`test_lib_manager_gui`/`test_reopen_readonly`), `test_lib_sweep`/`test_phase3_mints`/`test_wire_split`(W7)/
+`test_select_at`/`test_save_as_cellview`/`test_descend_untitled_preserve`/`test_untitled_reuse`/`test_fluid_editing`,
+and `test_selflog_output`'s transform-KEY checks (Shift-F/Alt-F/Shift-R/Alt-R/Shift-V/Alt-V — GUI key-dispatch
+flakes, all in verbs UNTOUCHED by atom 19). The one non-standing-set entry `test_verb_noun_copy_move` was
+RE-VERIFIED to PASS STANDALONE (a WSLg-congestion flake — the audit box was loaded). None is change-adjacent
+(atom 19 edits ONLY scheduler.c's move_instance arms + the test/grep-guard/doc). All eighteen sibling
+`test_perform_action_*` + `test_selflog_grep_guard` + `test_actionlog_suppress_gate` + `test_toggle_editmode_log` +
+`test_readonly_guard` are GREEN on AFTER.
+
+**Adversarial review (10-axis refute panel + completeness critic, Workflow/ultracode, against a FROZEN atom-19
+snapshot): verdict SHIP — 10/10 axes `defect_found=false`, zero code defects.** The axes: (1) branch→boundary —
+`return perform_action(...)` reproduces the dropped `!xctx` guard + per-verb readonly gate, and the old branch's
+fall-through-to-TCL_OK is byte-identical under the `*cmd_found` protocol (no skipped shared tail); (2) inline body
+byte-faithful — the conditional push_undo owned once, conditional draw, NO set_modify, the dashed sets + the two
+nested `int i` correctly flattened, argc>=7 behaviour identical to the old argc>6 path; (3) readonly consolidation
+— same refuse behaviour before/after, no slip-through window, gate order correct; (4) referent fidelity — the
+metachar name round-trips, x/y/rot/flip/dashes/flags reproduce exactly, `mi[9]` never overflows; (5) argc gate —
+returns before any mutation AND before the `core_log_action` argv[3..6] OOB read, message survives the success-only
+reset; (6) the noundo-log decision sound — grep-confirmed NO internal `move_instance … noundo` caller, so faithful
+logging (not a fast-style gate) is correct and replay-safe; (7) no-op/result — no consumer of the blanked `"0"`;
+(8) 1:1/C3 — inline body, no shared core, no double-log; (9) grep-guard — the `mi` decl/build/emit each count 1,
+textually distinct from av/ev/pp/av[3], collision guards hold, no comment false-match; (10) C89/build — decls at
+block top, compiles clean. The completeness critic returned `review_complete=true`, `SHIP`, and ran SEVEN of its
+own adversarial probes on the built binary, all faithful: (P5) a negative coordinate `-90` is APPLIED (strcmp≠"-")
+and logged RAW so replay re-casts identically — the `(unsigned short)atoi` cast is byte-identical to pre-migration;
+(P6) a flag-WORD (`nodraw`) sitting in the flip slot at argc==7 is correctly treated as a VALUE, not a flag,
+because BOTH run_core and core_log_action start the flag scan at `i=7` (so effect and log never diverge); (P3) a
+triple-flag input canonicalizes to `nodraw noundo` with no `mi[9]` overflow; (P1) a trailing junk arg is dropped
+from the log but the effect is intact with no replay divergence; (a) the replay suppress-seam × a logged `noundo`
+line re-executes with undo skipped, does NOT re-log (rides the actionlog_suppress depth counter), and the follow-up
+undo unwinds the PLACEMENT — no double-log, no undo-depth error; (e) `instance_coord` (the test oracle) reads
+`inst[].x0/.y0/.rot/.flip` — EXACTLY the fields move_instance writes, so the oracle is not blind/tautological; (f)
+every test check discriminates a concrete failure mode (the positive control where an unwrapped `source` re-logs +1
+proves the suppress assertion is non-vacuous). No concrete input/state producing wrong output, crash, replay
+divergence, undo-depth error, double-log, build failure, or unlocked grep-guard on any axis.
+
+**Next atom:** the friction-free pool remains EMPTY. The atom-18/19 scout runner-up now stands at `image`
+(HAS_CAIRO + a help/no-op C1/C2 split — a read-only-safe-query over-reject RISK to weigh). DEFER the
+composite-hazard verbs (delete/cut/copy/save/reload) whose shared cores are called by abort/merge/teardown (the §4
+`delete()`-is-NOT-1:1 lesson); selection-referent replay (0005) remains the accepted config/selection-dependent
+class.
+
 *Prepared 2026-07-14, `fluid-editing`. §1–5 analysis only — no code changed. §6 added after
 atom 3 landed; §7 after atom 4; §8 after atom 5; §9 after atom 6; §10 after atom 7; §11 after
 atom 8; §12 after atom 9; §13 after atom 10; §14 after atom 11;
@@ -3994,6 +4175,23 @@ branch returned a meaningful "0"/"1" that the boundary now blanks; the productio
 DISCARDS it, and the ONLY return-consumers (two standalone tests, symbol_pin_scope.tcl / pin_name_text.tcl)
 were switched to assert the EFFECT — a user-confirmed deliberate drop. The no-op-still-logs property (§30) is
 preserved; the back-compat 3-arg form replays against the current selection, the accepted 0005
-selection-dependent class. TWO Tcl callers, NO key — so NO callback.c edit).
+selection-dependent class. TWO Tcl callers, NO key — so NO callback.c edit); §39 after the NINETEENTH
+(move_instance — a HIGHER-FRICTION coverage gain now the friction-free pool is EMPTY, the atom-18 runner-up
+alongside image: a PURE SCRIPTED instance-reposition verb (`move_instance inst x y rot flip [nodraw] [noundo]`)
+with an INLINE mutation body, a CONDITIONAL push_undo/draw (the noundo/nodraw C5 sub-mode) and an instance-name
+referent. run_core MOVES the whole inline body IN — the argc<7 validation before any mutation (which ALSO
+prevents core_log_action reading argv[3..6] OOB on a short call, the embed_rawfile crash class), the flag parse,
+the get_instance validation, the CONDITIONAL single `if(undo) push_undo()` owned here, the dashed x/y/rot/flip
+sets, and the CONDITIONAL `if(dr) draw()`; core_log_action logs the FAITHFUL FULL CALL `xschem move_instance
+<inst> <x> <y> <rot> <flip> [nodraw] [noundo]` via log_action_argv/Tcl_Merge (instance name metachar-safe) using
+a FRESH `mi` array (NOT av/ev/pp/av[3], the §36 collision lesson; NOT the bare log_action_argv(argc, argv) form
+which recurs at three other scheduler.c sites). THE noundo/nodraw LOG DECISION, resolved from the callers: both
+flags are LOGGED FAITHFULLY (the wire_cut noalign approach) NOT gated out like replace_symbol's fast — because
+move_instance has NO internal machinery caller (pure scripted); the flags re-emit in a CANONICAL order
+(nodraw before noundo). The READONLY gate is a CONSOLIDATION not a new fix (unlike atoms 16/17/18): the old
+branch HAD a per-verb scheduler_readonly_reject, now REMOVED, the boundary's generic gate covers it —
+test_readonly_guard PASSES on both binaries. NO set_modify (the branch had none); the incidental "0" result the
+mutation path leaked is blanked to "" by the boundary, no caller consumes it. A PURE SCRIPTED verb — no
+key/menu/palette/callback/Tcl caller — so NO callback.c edit).
 Coverage verified in source at HEAD by a 14-way parallel read; do not trust the status table
 without re-checking the cited `file:line` anchors, which drift as the tree moves.*

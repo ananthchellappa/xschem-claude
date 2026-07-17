@@ -719,6 +719,64 @@ static int run_core(const char *verb, int argc, const char *argv[])
     Tcl_SetResult(interp, "1", TCL_STATIC);
     return TCL_OK;
   }
+  else if(!strcmp(verb, "move_instance")) {
+    /* Refactor B atom 19: a HIGHER-FRICTION coverage gain (the friction-free pool is EMPTY) --
+     * a PURE SCRIPTED instance-reposition verb (`xschem move_instance inst x y rot flip [nodraw]
+     * [noundo]`, a `-` in any of x/y/rot/flip keeps the existing value) with an INLINE mutation
+     * body (not a shared core, so strictly 1:1 with the verb -- C3, like apply_pin_prop §38), a
+     * CONDITIONAL push_undo/draw (the noundo/nodraw C5 sub-mode) and an instance-name referent.
+     * The whole inline body MOVES here verbatim from the scheduler branch (which merely dropped
+     * the !xctx guard + its per-verb scheduler_readonly_reject, both now the boundary's):
+     *   - the argc<7 VALIDATION is an early TCL_ERROR *before* any mutation (the reset_inst_prop
+     *     §33 / embed_rawfile §36 shape). The old branch SILENTLY no-op'd on a short call
+     *     (`if(argc>6)` false -> nothing, TCL_OK); under log-on-success (§33) that would phantom-log
+     *     a useless line AND -- worse -- let a short call reach core_log_action, which reads
+     *     argv[3..6] and would read OUT OF BOUNDS (the embed_rawfile §36 argv[2]-NULL crash class).
+     *     The gate returns before both. Verified no caller relies on the silent no-op (pure scripted,
+     *     grep-clean);
+     *   - the nodraw/noundo flag parse (argc>7 -> scan argv[7..]);
+     *   - get_instance(argv[2])<0 -> TCL_ERROR "instance not found" (BEFORE the conditional push);
+     *   - `if(undo) push_undo()` -- ONE CONDITIONAL push, owned here (there is no self-undo core,
+     *     like reset_inst_prop/replace_symbol; a normal move pushes once, a `noundo` move pushes
+     *     NOTHING). Mirrors replace_symbol's !fast-gated push (§34) but the flag GATES ONLY the undo,
+     *     NOT the log (see core_log_action below);
+     *   - the dashed x/y/rot/flip sets (each gated on strcmp(argv[N],"-") != 0);
+     *   - symbol_bbox recompute + the prep_hash/net/hi flag resets;
+     *   - `if(dr) draw()`.
+     * NB there is NO set_modify(1) -- the old branch had none, and (verified: a move on a SAVED
+     * sheet leaves `modified`==0) adding one would change behaviour. NO success Tcl_SetResult
+     * either -- the branch set none (an incidental "0" leaks in from an internal tcleval on the
+     * mutation path; the boundary's success-path Tcl_ResetResult blanks it uniformly, and NO caller
+     * consumes it -- pure scripted). The original body declared `int i` twice in nested blocks (the
+     * flag loop counter + the instance index); flattened here to `i` (loop) + `inst` (index) at the
+     * block top (C89). */
+    int i, inst, undo = 1, dr = 1;
+    if(argc < 7) {
+      Tcl_SetResult(interp, "xschem move_instance needs: inst x y rot flip [nodraw] [noundo]", TCL_STATIC);
+      return TCL_ERROR;
+    }
+    for(i = 7; i < argc; i++) {
+      if(!strcmp(argv[i], "nodraw")) dr = 0;
+      if(!strcmp(argv[i], "noundo")) undo = 0;
+    }
+    if((inst = get_instance(argv[2])) < 0 ) {
+      Tcl_SetResult(interp, "xschem move_instance: instance not found", TCL_STATIC);
+      return TCL_ERROR;
+    }
+    if(undo) xctx->push_undo();
+    if(strcmp(argv[3], "-")) xctx->inst[inst].x0 = atof(argv[3]);
+    if(strcmp(argv[4], "-")) xctx->inst[inst].y0 = atof(argv[4]);
+    if(strcmp(argv[5], "-")) xctx->inst[inst].rot = (unsigned short)atoi(argv[5]);
+    if(strcmp(argv[6], "-")) xctx->inst[inst].flip = (unsigned short)atoi(argv[6]);
+    symbol_bbox(inst, &xctx->inst[inst].x1, &xctx->inst[inst].y1, &xctx->inst[inst].x2, &xctx->inst[inst].y2);
+    xctx->prep_hash_inst=0;
+    xctx->prep_net_structs=0;
+    xctx->prep_hi_structs=0;
+    if(dr) {
+      draw();
+    }
+    return TCL_OK;
+  }
   return TCL_ERROR; /* unreachable: perform_action is only wired for the verbs above */
 }
 
@@ -889,6 +947,47 @@ static void core_log_action(const char *verb, int argc, const char *argv[])
       pp[0] = "xschem"; pp[1] = verb; pp[2] = argv[2];
       log_action_argv(3, pp);
     }
+  } else if(!strcmp(verb, "move_instance")) {
+    /* atom 19: the FAITHFUL FULL-CALL log `xschem move_instance <inst> <x> <y> <rot> <flip>
+     * [nodraw] [noundo]`. Emitted via log_action_argv (Tcl_Merge), NOT a raw %s: the instance
+     * referent argv[2] can carry Tcl metacharacters (an arrayed/bussed name `x2[3:0]`), and a raw
+     * line would replay `[3:0]` as a command substitution -- the §33 replay-safe lesson. Tcl_Merge
+     * quotes MINIMALLY, so a plain refdes + numeric coords log byte-identically to
+     * `xschem move_instance R1 100 40 90 0`, while the dashes (`-`, keep-existing) and any braced
+     * name round-trip exactly.
+     *
+     * THE noundo/nodraw LOG DECISION (the load-bearing design call, resolved from the callers). Both
+     * flags are LOGGED FAITHFULLY -- the wire_cut `noalign` approach (§37), NOT the replace_symbol
+     * `fast` gate (§34). `fast` is a MULTI-substitution machinery sub-mode: replace_symbol is called
+     * as an internal sub-step of a larger logged op, so logging each `fast` call would DOUBLE-log ->
+     * it must be gated OUT of the log. move_instance has NO such internal caller -- it is a PURE
+     * SCRIPTED verb (grep-verified: no key/menu/palette/callback/C/Tcl caller anywhere), so nodraw/
+     * noundo are just faithful user args: a user who scripts `move_instance ... noundo` wants the
+     * replay to reproduce it (no undo slot on replay), exactly as they typed it. So they are logged,
+     * not gated. The flags are read here with the SAME loop as run_core's arm, so the logged form can
+     * never diverge from the applied effect, and are re-emitted in a CANONICAL order (nodraw before
+     * noundo) regardless of the input order -- the effect is order-independent (both are booleans),
+     * so the canonical line replays to the identical effect (the atom-9/-11 "log the value the effect
+     * consumed" rule).
+     *
+     * The array is named `mi` (NOT av/ev/pp/av[3] -- the §36 collision lesson) so its build/emit lines
+     * stay TEXTUALLY DISTINCT, and it is a FRESH build (NOT the bare `log_action_argv(argc, argv)`
+     * form, which recurs at three other scheduler.c sites -- add_pin_stubs/paste/... -- and could not
+     * be grep-pinned uniquely). `mi[9]` is sized for the max canonical call (xschem, move_instance,
+     * inst, x, y, rot, flip, nodraw, noundo = 9), and k never exceeds it. Reached ONLY on TCL_OK
+     * (log-on-success) and only after the argc<7 gate passed, so argv[2..6] are always present here;
+     * a failed validation logs NOTHING. C89: decls at block top. */
+    const char *mi[9];
+    int i, k = 0, undo = 1, dr = 1;
+    for(i = 7; i < argc; i++) {
+      if(!strcmp(argv[i], "nodraw")) dr = 0;
+      if(!strcmp(argv[i], "noundo")) undo = 0;
+    }
+    mi[k++] = "xschem"; mi[k++] = verb;
+    mi[k++] = argv[2]; mi[k++] = argv[3]; mi[k++] = argv[4]; mi[k++] = argv[5]; mi[k++] = argv[6];
+    if(!dr)   mi[k++] = "nodraw";
+    if(!undo) mi[k++] = "noundo";
+    log_action_argv(k, mi);
   } else {
     log_action("xschem %s", verb);
   }
@@ -5967,39 +6066,25 @@ static int xschem_cmds_m(Tcl_Interp *interp, int argc, const char *argv[], int *
     /* move_instance inst x y rot flip [nodraw] [noundo]
      *   resets instance coordinates, and rotaton/flip. A dash will keep existing value
      *   if 'nodraw' is given do not draw the moved instance
-     *   if 'noundo' is given operation is not undoable */
+     *   if 'noundo' is given operation is not undoable
+     * Routes through the perform_action boundary (Refactor B atom 19 -- the NINETEENTH per-verb
+     * migration, a HIGHER-FRICTION coverage gain now the friction-free pool is EMPTY; a PURE SCRIPTED
+     * instance-reposition verb with an INLINE mutation body, a CONDITIONAL noundo/nodraw push/draw (the
+     * C5 sub-mode) and an instance-name referent). run_core MOVES the WHOLE INLINE body IN -- the argc<7
+     * "needs: inst x y rot flip [nodraw] [noundo]" validation (early TCL_ERROR BEFORE any mutation, which
+     * also prevents an OOB argv read in core_log_action on a short call), the nodraw/noundo flag parse,
+     * the get_instance "instance not found" validation, the CONDITIONAL single push_undo (`if(undo)`,
+     * owned here -- no self-undo core), the dashed x/y/rot/flip sets, symbol_bbox + prep-flag resets, and
+     * the CONDITIONAL `if(dr) draw()`. core_log_action logs the FAITHFUL FULL CALL `xschem move_instance
+     * <inst> <x> <y> <rot> <flip> [nodraw] [noundo]` (via log_action_argv/Tcl_Merge, instance name
+     * metachar-safe, a `mi` array distinct from av/ev/pp; nodraw/noundo LOGGED not gated -- the wire_cut
+     * noalign approach, since there is NO internal machinery caller, unlike replace_symbol's fast) on
+     * success only. The mutation body is INLINE so it is strictly 1:1 with the verb (C3). The !xctx guard
+     * + the per-verb scheduler_readonly_reject are DROPPED (the boundary re-checks both -- a readonly
+     * CONSOLIDATION, not a new gate: the old branch already refused on a read-only cell, and the readonly
+     * guard test locks it). NO set_modify (the branch had none). No scattered readonly/log/push_undo here. */
     else if(!strcmp(argv[1], "move_instance"))
-    {
-      int undo = 1, dr = 1;
-      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
-      if(scheduler_readonly_reject(interp, "move_instance")) return TCL_ERROR;
-      if(argc > 7) {
-        int i;
-        for(i = 7; i < argc; i++) {
-          if(!strcmp(argv[i], "nodraw")) dr = 0;
-          if(!strcmp(argv[i], "noundo")) undo = 0;
-        }
-      }
-      if(argc > 6) {
-        int i;
-        if((i = get_instance(argv[2])) < 0 ) {
-          Tcl_SetResult(interp, "xschem move_instance: instance not found", TCL_STATIC);
-          return TCL_ERROR;
-        }
-        if(undo) xctx->push_undo();
-        if(strcmp(argv[3], "-")) xctx->inst[i].x0 = atof(argv[3]);
-        if(strcmp(argv[4], "-")) xctx->inst[i].y0 = atof(argv[4]);
-        if(strcmp(argv[5], "-")) xctx->inst[i].rot = (unsigned short)atoi(argv[5]);
-        if(strcmp(argv[6], "-")) xctx->inst[i].flip = (unsigned short)atoi(argv[6]);
-        symbol_bbox(i, &xctx->inst[i].x1, &xctx->inst[i].y1, &xctx->inst[i].x2, &xctx->inst[i].y2);
-        xctx->prep_hash_inst=0;
-        xctx->prep_net_structs=0;
-        xctx->prep_hi_structs=0;
-        if(dr) {
-          draw();
-        }
-      }
-    }
+      return perform_action("move_instance", argc, argv);
     /* move_objects [dx dy] [kissing] [stretch]
      *   Start a move operation on selection and let user terminate the operation in the GUI
      *   if kissing is given add nets to pins that touch other instances or nets
