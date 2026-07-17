@@ -385,6 +385,10 @@ set MANIFEST {
     {const char \*mi\[9\];} 1 {move_instance's FAITHFUL-FULL-CALL log array lives in core_log_action (atom 19): sized for the max canonical call (xschem, move_instance, inst, x, y, rot, flip, nodraw, noundo = 9). The array is named `mi` (NOT av/ev/pp/av[3]) to stay collision-distinct (the §36 lesson); a FRESH build (NOT the bare `log_action_argv(argc, argv)` form, which recurs at three other scheduler.c sites so could not be grep-pinned uniquely)}
     {(?n)mi\[k\+\+\] = argv\[2\]; mi\[k\+\+\] = argv\[3\]; mi\[k\+\+\] = argv\[4\]; mi\[k\+\+\] = argv\[5\]; mi\[k\+\+\] = argv\[6\];$} 1 {move_instance SELF-CONTAINED faithful-full-call referent copy lives in core_log_action (atom 19): the FIVE positional referents inst/x/y/rot/flip (argv[2..6]) copied into `mi`, emitted via log_action_argv (Tcl_Merge), NOT a raw %s -- the instance name argv[2] can carry Tcl metacharacters (x2[3:0]) that a raw line would replay as a command substitution (the §33 lesson); the dashes (keep-existing) round-trip verbatim. Line-anchored (?n)...;$ and UNIQUE to move_instance (no other verb copies argv[2..6] into `mi`). Reached ONLY on TCL_OK (log-on-success), so a failed argc<7 validation logs nothing}
     {log_action_argv\(k, mi\);} 1 {move_instance's Tcl_Merge emit (atom 19): a VARIABLE count `k` (the canonical arg count, 7 base + 0/1/2 flags) with the `mi` array -- distinct from every FIXED-count site (reset_inst_prop's (3, av), replace_symbol's (4, av), embed's (3, ev), apply_pin_prop's (4, pp)/(3, pp)) AND from the bare `(argc, argv)`/`(ac, av)` forms. Exactly ONE such `(k, mi)` site in scheduler.c (S7 pins exclusivity). The nodraw/noundo flags are appended into `mi` BEFORE this in CANONICAL order (nodraw then noundo) -- LOGGED faithfully, NOT gated out (the wire_cut noalign approach, unlike replace_symbol's fast)}
+    {return perform_action\("image", argc, argv\);} 1 {image branch routes the MUTATING tail through the perform_action boundary (Refactor B atom 20 -- the FIRST HAS_CAIRO-gated migration and the first verb with a read-only-SAFE QUERY sub-form, so a QUERY/MUTATE SPLIT -- the wire_cut §37 form-split applied to a query vs a mutation): ONLY the mutating path crosses. The two pre-mutation, read-only-SAFE replies stay RAW in the branch IN FRONT of the boundary -- `image help` (a static usage string -> TCL_OK) and the argc<3 "Missing arguments" validation -- because the boundary's ONE unconditional readonly gate would REFUSE a pure query on a read-only cell (the read-only-safe-query over-reject the atom-19 handoff flagged). run_core holds the `No images selected` precondition (a MUTATION precondition, NOT a query -- it stays below the boundary so a read-only cell refuses first) + the flag parse + the `if(what)` block (rebuild_selected_array, set_modify ONLY on write_back (256), the SINGLE push_undo, the edit_image loop over the selected GRIDLAYER image rects (flags&1024), draw); core_log_action logs the FAITHFUL RAW `xschem image <flag>...` on success only. The mutation is HAS_CAIRO-gated (edit_image is `#if HAS_CAIRO==1`; the whole branch is too, so on a no-cairo build perform_action("image") is never reached). The boundary ADDS the readonly gate the branch NEVER HAD -- a CORRECTNESS FIX: pre-migration `image invert` MUTATED a read-only cell. No scattered readonly/log/push_undo here}
+    {const char \*\*im = my_malloc} 1 {image's FAITHFUL RAW full-call log array lives in core_log_action (atom 20): sized to argc (the flag COUNT is variable, 1..8 -- unlike the fixed-arity mi[9]/pp[4]) and copied VERBATIM from argv. The array is named `im` (NOT av/ev/pp/mi) to stay collision-distinct (the §36 lesson); a FRESH heap build (NOT the bare `log_action_argv(argc, argv)` form, which recurs at three other scheduler.c sites so could not be grep-pinned uniquely)}
+    {im\[j\] = argv\[j\];} 1 {image SELF-CONTAINED flag-tail copy lives in core_log_action (atom 20): the `xschem`/verb prefix is hardcoded (im[0]/im[1], the sibling idiom) and the flag tail argv[2..argc-1] copied VERBATIM into `im`, emitted via log_action_argv (Tcl_Merge). RAW (not canonical-from-`what`) so an unrecognized flag word (what==0 no-op, e.g. `image foo`) round-trips to the SAME no-op on replay instead of collapsing to a bare `xschem image` that replays as "Missing arguments". UNIQUE to image (no other verb copies argv[j] into `im`). Reached ONLY on TCL_OK (log-on-success), so a failed `No images selected` precondition logs nothing}
+    {log_action_argv\(argc, im\);} 1 {image's Tcl_Merge emit (atom 20): the whole-call `im` copy -- distinct from every FIXED-count site (reset_inst_prop's (3, av), replace_symbol's (4, av), embed's (3, ev), apply_pin_prop's (4, pp)/(3, pp), move_instance's (k, mi)) AND from the bare `(argc, (const char *const *)argv)` form by the `im` array name. Exactly ONE such `(argc, im)` site in scheduler.c (S7 pins exclusivity)}
     {log_action\("xschem print_hilight_net}           1 {print_hilight_net branch}
     {log_action\("xschem exit closewindow force"}     2 {exit hook (both terminating sites)}
     {log_action\("xschem set cadgrid}                 1 {set cadgrid resolved-value}
@@ -581,7 +585,7 @@ set CVERBS {
   flip flipv rotate flip_in_place flipv_in_place rotate_in_place
   change_elem_order check_unique_names create_instance toggle_ignore
   reset_inst_prop replace_symbol show_unconnected_pins embed_rawfile wire_cut apply_pin_prop
-  move_instance
+  move_instance image
   floaters_from_selected_inst print_hilight_net attach_labels add_pin_stubs
   setprop unhilight_all hilight_net_interactive unhilight_net_interactive
   make_symbol make_sch make_sch_from_sel descend descend_symbol go_back
@@ -1277,6 +1281,58 @@ check "S7 (apply_pin_prop unperturbed) scheduler.c: still EXACTLY ONE pp\[3\]-bu
          [rxcount $sched {log_action_argv\(4, pp\);}] == 1 &&
          [rxcount $sched {log_action_argv\(3, pp\);}] == 1}] \
   "build=[rxcount $sched {pp\[3\] = argv\[3\];}] emit4=[rxcount $sched {log_action_argv\(4, pp\);}] emit3=[rxcount $sched {log_action_argv\(3, pp\);}]"
+# image (Refactor B atom 20 -- the FIRST HAS_CAIRO-gated migration and the first QUERY/MUTATE SPLIT
+# verb): the readonly gate + the ONE FAITHFUL RAW `xschem image <flag>...` log form live SOLELY in
+# perform_action. core_log_action holds EXACTLY ONE `const char **im = my_malloc` decl + EXACTLY ONE
+# verbatim `im[j] = argv[j];` copy (UNIQUE to image) + EXACTLY ONE `log_action_argv(argc, im)` emit; the
+# scheduler BRANCH carries none (it delegates via `return perform_action("image", ...)`, keeping only
+# the raw read-only-safe help/argc<3 replies IN FRONT of the boundary) and callback.c ZERO (no key entry
+# point -- add_image is a SEPARATE verb). The array is named `im` (NOT av/ev/pp/mi) so its decl/build/
+# emit stay TEXTUALLY DISTINCT (the §36 lesson); a FRESH heap build, not the bare `log_action_argv(argc,
+# argv)` form (three of those recur in scheduler.c, so it could not be grep-pinned uniquely). The verb
+# logged NOTHING before atom 20, so a scattered raw `log_action("xschem image` must NOT appear (the
+# replay-unsafe %s form -- log_action_argv/Tcl_Merge is the only emit). The branch NEVER had a
+# scheduler_readonly_reject; the boundary ADDS one as a CORRECTNESS FIX (pre-migration `image invert`
+# mutated a read-only cell), so a re-scattered per-verb readonly_reject fails closed. image stays in S2
+# CVERBS (a scripted/replayed `xschem image <flag>...` re-executes AND self-logs) and OUT of S3.
+check "S7 scheduler.c: EXACTLY ONE image `im` heap-array decl (const char **im = my_malloc) -- the core_log_action faithful-raw log array; `im` (not av/ev/pp/mi) keeps it distinct" \
+  [expr {[rxcount $sched {const char \*\*im = my_malloc}] == 1}] \
+  "got=[rxcount $sched {const char \*\*im = my_malloc}]"
+check "S7 scheduler.c: EXACTLY ONE image flag-tail copy (im\[j\] = argv\[j\];) -- UNIQUE to image (no other verb copies argv into `im`); the xschem/verb prefix is hardcoded im\[0\]/im\[1\] per the sibling idiom" \
+  [expr {[rxcount $sched {im\[j\] = argv\[j\];}] == 1}] \
+  "got=[rxcount $sched {im\[j\] = argv\[j\];}]"
+check "S7 scheduler.c: EXACTLY ONE image log_action_argv(argc, im) emit (whole-call copy, distinct from every fixed-count (N, av/ev/pp) + variable (k, mi) site AND the bare (argc, argv) form by the `im` name)" \
+  [expr {[rxcount $sched {log_action_argv\(argc, im\);}] == 1}] \
+  "got=[rxcount $sched {log_action_argv\(argc, im\);}]"
+check "S7 scheduler.c: NO scattered raw log_action(\"xschem image\") (the replay-unsafe %s form must not reappear -- log_action_argv is the only emit; the verb logged NOTHING before atom 20)" \
+  [expr {[rxcount $sched {log_action\("xschem image}] == 0}] \
+  "got=[rxcount $sched {log_action\("xschem image}]"
+check "S7 callback.c: NO scattered log_action(\"xschem image\") (no key entry point -- add_image is a SEPARATE verb; guards a future re-scatter)" \
+  [expr {[rxcount $cbtext {log_action\("xschem image}] == 0}] \
+  "got=[rxcount $cbtext {log_action\("xschem image}]"
+check "S7 scheduler.c: NO scattered scheduler_readonly_reject(...,\"image\") (the boundary's generic gate covers the verb -- the branch never had one; the gate is a NEW correctness fix)" \
+  [expr {[rxcount $sched {scheduler_readonly_reject\(interp, "image"\)}] == 0}] \
+  "got=[rxcount $sched {scheduler_readonly_reject\(interp, "image"\)}]"
+# COLLISION GUARD: image's `im` build must NOT perturb reset_inst_prop's `av`, embed_rawfile's `ev`,
+# apply_pin_prop's `pp`, or move_instance's `mi` sites. Re-assert each stays EXACTLY ONE -- a regression
+# that renamed image's array to av/ev/pp/mi would make these == 2, failing closed here.
+check "S7 (reset_inst_prop unperturbed) scheduler.c: still EXACTLY ONE av-build + (3, av) (image's im name did not collide)" \
+  [expr {[rxcount $sched {(?n)av\[0\] = "xschem"; av\[1\] = verb; av\[2\] = argv\[2\];$}] == 1 &&
+         [rxcount $sched {log_action_argv\(3, av\);}] == 1}] \
+  "build=[rxcount $sched {(?n)av\[0\] = "xschem"; av\[1\] = verb; av\[2\] = argv\[2\];$}] emit=[rxcount $sched {log_action_argv\(3, av\);}]"
+check "S7 (embed_rawfile unperturbed) scheduler.c: still EXACTLY ONE ev-build + (3, ev) (image's im name did not collide)" \
+  [expr {[rxcount $sched {(?n)ev\[0\] = "xschem"; ev\[1\] = verb; ev\[2\] = argv\[2\];$}] == 1 &&
+         [rxcount $sched {log_action_argv\(3, ev\);}] == 1}] \
+  "build=[rxcount $sched {(?n)ev\[0\] = "xschem"; ev\[1\] = verb; ev\[2\] = argv\[2\];$}] emit=[rxcount $sched {log_action_argv\(3, ev\);}]"
+check "S7 (apply_pin_prop unperturbed) scheduler.c: still EXACTLY ONE pp\[3\]-build + (4, pp) + (3, pp) (image's im name did not collide)" \
+  [expr {[rxcount $sched {pp\[3\] = argv\[3\];}] == 1 &&
+         [rxcount $sched {log_action_argv\(4, pp\);}] == 1 &&
+         [rxcount $sched {log_action_argv\(3, pp\);}] == 1}] \
+  "build=[rxcount $sched {pp\[3\] = argv\[3\];}] emit4=[rxcount $sched {log_action_argv\(4, pp\);}] emit3=[rxcount $sched {log_action_argv\(3, pp\);}]"
+check "S7 (move_instance unperturbed) scheduler.c: still EXACTLY ONE mi\[9\]-decl + (k, mi) (image's im name did not collide)" \
+  [expr {[rxcount $sched {const char \*mi\[9\];}] == 1 &&
+         [rxcount $sched {log_action_argv\(k, mi\);}] == 1}] \
+  "decl=[rxcount $sched {const char \*mi\[9\];}] emit=[rxcount $sched {log_action_argv\(k, mi\);}]"
 # atom-13 NESTING COUPLING (adversarial-review finding): the S1 existence rows above pin
 # that the guard line, the log line and the reset line each EXIST, but not that log+reset are
 # INSIDE the log-on-success block. A de-nest that keeps all three lines yet closes the

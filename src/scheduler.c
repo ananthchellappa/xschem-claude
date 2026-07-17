@@ -777,6 +777,59 @@ static int run_core(const char *verb, int argc, const char *argv[])
     }
     return TCL_OK;
   }
+#if HAS_CAIRO==1
+  else if(!strcmp(verb, "image")) {
+    /* Refactor B atom 20 (audit §40): the MUTATING tail of `xschem image [invert|white_transp|
+     * black_transp|transp_white|transp_black|blend_white|blend_black|write_back]`, moved verbatim
+     * from the scheduler branch (which kept only the read-only-safe help/argc<3 replies IN FRONT of
+     * the boundary). HAS_CAIRO-gated because edit_image is `#if HAS_CAIRO==1`; on a no-cairo build
+     * the branch itself does not exist, so perform_action("image") is never reached. The branch's
+     * bare mutation (it had NO readonly gate) now sits under the boundary's ONE gate -- the
+     * correctness fix (pre-migration `image invert` mutated a read-only cell). Order preserved from
+     * the branch: the `No images selected` precondition (a MUTATION precondition, NOT a read-only-
+     * safe query -- it stays BELOW the boundary so a read-only cell REFUSES first; accepted message
+     * change on the readonly+nothing-selected corner), the flag parse, then the `if(what)` block:
+     * rebuild_selected_array, set_modify(1) ONLY when write_back (256) is set (a plain invert leaves
+     * modified==0 -- pinned on the pre-migration binary), the SINGLE push_undo, the edit_image loop
+     * over the selected GRIDLAYER image rects (flags&1024), draw(). Returns TCL_OK on BOTH the
+     * mutate AND the what==0 no-op (an unrecognized flag word) so the no-op still logs (§30), while
+     * `No images selected` returns TCL_ERROR so a failed precondition logs nothing (log-on-success).
+     * C89: the branch's `int n, i, c` + `int what` + `xRect *r` decls move here at block top. */
+    int n, i, c, what = 0;
+    xRect *r;
+    if(xctx->lastsel == 0) {
+      Tcl_SetResult(interp, "No images selected", TCL_STATIC);
+      return TCL_ERROR;
+    }
+    for(i = 2; i < argc; i++) {
+      if(!strcmp(argv[i], "invert"))       what |=   1;
+      if(!strcmp(argv[i], "white_transp")) what |=   2;
+      if(!strcmp(argv[i], "black_transp")) what |=   4;
+      if(!strcmp(argv[i], "transp_white")) what |=   8;
+      if(!strcmp(argv[i], "transp_black")) what |=  16;
+      if(!strcmp(argv[i], "blend_white"))  what |=  32;
+      if(!strcmp(argv[i], "blend_black"))  what |=  64;
+      if(!strcmp(argv[i], "write_back"))   what |= 256;
+    }
+    if(what) {
+      rebuild_selected_array();
+      if(what & 256) set_modify(1);
+      xctx->push_undo();
+      for(n = 0; n < xctx->lastsel; ++n) {
+        if(xctx->sel_array[n].type == xRECT) {
+          i = xctx->sel_array[n].n;
+          c = xctx->sel_array[n].col;
+          r = &xctx->rect[c][i];
+          if(c == GRIDLAYER && r->flags & 1024) {
+            edit_image(what, &xctx->rect[c][i]);
+          }
+        }
+      }
+      draw();
+    }
+    return TCL_OK;
+  }
+#endif
   return TCL_ERROR; /* unreachable: perform_action is only wired for the verbs above */
 }
 
@@ -988,6 +1041,28 @@ static void core_log_action(const char *verb, int argc, const char *argv[])
     if(!dr)   mi[k++] = "nodraw";
     if(!undo) mi[k++] = "noundo";
     log_action_argv(k, mi);
+#if HAS_CAIRO==1
+  } else if(!strcmp(verb, "image")) {
+    /* atom 20: the FAITHFUL RAW full-call log `xschem image <flag> [<flag>...]`. Unlike the
+     * fixed-arity mi[9]/pp[4]/av[3]/ev[3] arms, the flag COUNT is variable (1..8), so the array is
+     * sized to argc: the `xschem`/verb prefix is hardcoded (im[0]/im[1], the sibling idiom) and the
+     * flag tail argv[2..] is copied VERBATIM. RAW, NOT canonical-from-`what`: an unrecognized flag
+     * word yields what==0, and a canonical rebuild would collapse that no-op to a bare `xschem image`
+     * that REPLAYS as "Missing arguments" -- the raw echo round-trips the same no-op instead. Any
+     * recognized-flag call replays to the identical `what` regardless of order/dupes. The flags are
+     * barewords (no Tcl metacharacter), so log_action_argv/Tcl_Merge logs them unbraced ==
+     * byte-identical to the typed call. A fresh heap array named `im` (NOT the bare
+     * `log_action_argv(argc, argv)` form that recurs at three other scheduler.c sites, NOR av/ev/pp/mi
+     * -- the §36 collision lesson) keeps the build+emit grep-pinnable. Reached only on TCL_OK
+     * (log-on-success) and only past the branch's argc>=3 + non-help guard, so argv[2] is always
+     * present (argc>=3 -> im[0]/im[1] always valid). C89: decls at block top. */
+    const char **im = my_malloc(_ALLOC_ID_, (size_t)argc * sizeof(char *));
+    int j;
+    im[0] = "xschem"; im[1] = verb;
+    for(j = 2; j < argc; j++) im[j] = argv[j];
+    log_action_argv(argc, im);
+    my_free(_ALLOC_ID_, &im);
+#endif
   } else {
     log_action("xschem %s", verb);
   }
@@ -4737,9 +4812,20 @@ static int xschem_cmds_i(Tcl_Interp *interp, int argc, const char *argv[], int *
     }
     else if(!strcmp(argv[1], "image"))
     {
-      int n, i, c;
-      int what = 0;
-      xRect *r;
+      /* Refactor B atom 20 (audit §40): the FIRST HAS_CAIRO-gated migration and the first verb with
+       * a read-only-SAFE query sub-form. Only the MUTATING tail routes through the boundary; the two
+       * pre-mutation read-only-safe replies stay RAW here IN FRONT of it -- `help` (a static usage
+       * string) and the argc<3 "Missing arguments" validation -- because the boundary's ONE readonly
+       * gate (scheduler.c:1031) is unconditional per-verb: routing `image help` through it would
+       * REFUSE a pure query on a read-only cell (the read-only-safe-query over-reject the atom-19
+       * handoff flagged). This is the wire_cut §37 form-split (coord form -> boundary, no-mutation
+       * gesture-start -> raw) applied to a query/mutate split. Everything past help -- the
+       * `No images selected` precondition, the flag parse, the CONDITIONAL push_undo + the
+       * edit_image loop over the selected GRIDLAYER image rects, set_modify-only-on-write_back, and
+       * the ONE faithful `xschem image <flag>...` log site -- lives in perform_action/run_core. The
+       * boundary ADDS the C read-only gate the verb NEVER HAD (a correctness fix: pre-migration
+       * `image invert` MUTATED a read-only cell). !xctx stays first to preserve the pre-migration
+       * precedence (not_avail BEFORE help). */
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
       if(argc < 3) {
         Tcl_SetResult(interp, "Missing arguments", TCL_STATIC);
@@ -4752,37 +4838,7 @@ static int xschem_cmds_i(Tcl_Interp *interp, int argc, const char *argv[], int *
             TCL_STATIC);
         return TCL_OK;
       }
-      if(xctx->lastsel == 0) {
-        Tcl_SetResult(interp, "No images selected", TCL_STATIC);
-        return TCL_ERROR;
-      }
-      for(i = 2; i < argc; i++) {
-        if(!strcmp(argv[i], "invert"))       what |=   1;
-        if(!strcmp(argv[i], "white_transp")) what |=   2;
-        if(!strcmp(argv[i], "black_transp")) what |=   4;
-        if(!strcmp(argv[i], "transp_white")) what |=   8;
-        if(!strcmp(argv[i], "transp_black")) what |=  16;
-        if(!strcmp(argv[i], "blend_white"))  what |=  32;
-        if(!strcmp(argv[i], "blend_black"))  what |=  64;
-        if(!strcmp(argv[i], "write_back"))   what |= 256;
-      }
-      if(what) {
-        rebuild_selected_array();
-        if(what & 256) set_modify(1);
-        xctx->push_undo();
-        for(n=0; n < xctx->lastsel; ++n) {
-          if(xctx->sel_array[n].type == xRECT) {
-            i = xctx->sel_array[n].n;
-            c = xctx->sel_array[n].col;
-            r = &xctx->rect[c][i];
-            if(c == GRIDLAYER && r->flags & 1024) {
-            edit_image(what, &xctx->rect[c][i]);
-            }
-          }
-        }
-        draw();
-      }
-      Tcl_ResetResult(interp);
+      return perform_action("image", argc, argv);
     }
     else
     #endif

@@ -4195,3 +4195,112 @@ mutation path leaked is blanked to "" by the boundary, no caller consumes it. A 
 key/menu/palette/callback/Tcl caller — so NO callback.c edit).
 Coverage verified in source at HEAD by a 14-way parallel read; do not trust the status table
 without re-checking the cited `file:line` anchors, which drift as the tree moves.*
+
+## 40. Refactor B ATOM 20 (2026-07-17): the TWENTIETH per-verb migration — the FIRST HAS_CAIRO-gated verb and the FIRST QUERY/MUTATE SPLIT, a read-only-safe `help` kept RAW in front of the boundary, a FAITHFUL RAW variable-arity log, and the read-only gate added as a correctness fix (`image`)
+
+`image` was the atom-18/19 scout's named runner-up alongside `move_instance`. It is the migration the
+atom-19 handoff flagged with a specific RISK: **a read-only-safe QUERY sub-form that the boundary's
+unconditional readonly gate would OVER-REJECT.** It is also the FIRST verb whose effect is `#if
+HAS_CAIRO==1` (it drives `edit_image`, draw.c), and the FIRST whose log form has a VARIABLE argument
+count.
+
+**The verb.** `xschem image [invert|white_transp|black_transp|transp_white|transp_black|blend_white|
+blend_black|write_back]` applies pixel transforms (a bitmask `what`) to the SELECTED GRIDLAYER image
+rects (`c==GRIDLAYER && r->flags & 1024`) via `edit_image`. `image help` returns a usage string;
+`write_back` (256) re-encodes the modified surface into the `image_data=` attribute and is the ONLY
+flag that sets `modified`.
+
+**STEP 0 — the fixture scout (the real unknown).** A selected image is NOT creatable by a one-liner
+(the GUI `add_image` uses `tk_getOpenFile`; `edit_image` needs REAL decoded pixels — it early-returns
+`if(!emb_ptr || !emb_ptr->image)`). Route R-A (chosen): a self-contained fixture `.sch`
+(`tests/headless/fixtures/image/image_embedded.sch`) carrying one GRIDLAYER `B 2 …` rect with
+`flags=image,unscaled` + an inline base64 4×4 PNG (`gen_tiny_png.py`, reproducible, no PIL). Verified
+on the pre-migration binary that `xschem load` + `select_all` yields exactly one selected GRIDLAYER
+image rect (flags&1024), that `image invert write_back` MUTATES `image_data` headless (edit_image runs
+under cairo at load/draw), and that `image write_back` re-encodes. GOTCHA: `saveas`/`load` CLEAR the
+selection, so every image op must `select_all` first (else "No images selected").
+
+**EFFECT ORACLE (pinned on the pre-migration binary FIRST).** (A) `image help` → TCL_OK + usage,
+read-only-safe; (B) `image invert` on a read-only cell PRE-migration **MUTATES** (the bug); (C) undo is
+a SINGLE push; (D) `set_modify` ONLY on write_back (a plain invert leaves `modified==0`); (F) the verb
+logged NOTHING pre-migration (the +1 is the migration delta); (G) an unrecognized flag (`what==0`) is a
+TCL_OK no-op that mutates nothing.
+
+**Migration (scheduler.c only — no callback.c edit; a PURE SCRIPTED / menu-via-branch verb).**
+- **Branch** (`xschem_cmds_i`, inside the existing `#if HAS_CAIRO==1`): the QUERY/MUTATE SPLIT — the two
+  pre-mutation, read-only-SAFE replies stay RAW IN FRONT of the boundary (`!xctx` guard [precedence
+  preserved], the `argc<3` "Missing arguments" validation, and `image help` → usage + TCL_OK), then
+  `return perform_action("image", argc, argv)`. Routing `help` through the boundary would REFUSE a pure
+  query on a read-only cell (the boundary's ONE readonly gate, scheduler.c:1031, is unconditional
+  per-verb). This is the wire_cut §37 form-split applied to a query vs a mutation.
+- **`run_core` arm** (`#if HAS_CAIRO==1`): the `No images selected` precondition (a MUTATION
+  precondition, NOT a query — it stays BELOW the boundary so a read-only cell REFUSES first; accepted
+  message change on the readonly+nothing-selected corner), the flag parse, and the `if(what)` block
+  (`rebuild_selected_array`; `if(what & 256) set_modify(1)` — the write_back-only modify; the SINGLE
+  `push_undo`; the `edit_image` loop over the selected GRIDLAYER rects; `draw()`). Returns TCL_OK on
+  BOTH the mutate AND the `what==0` no-op. The branch's `int n,i,c` + `int what` + `xRect *r` move here
+  at block top (C89).
+- **`core_log_action` arm** (`#if HAS_CAIRO==1`): the FAITHFUL RAW full call `xschem image <flag>…` via
+  a fresh HEAP array `im` (`my_malloc(argc*sizeof(char*))`; the `xschem`/verb prefix hardcoded
+  `im[0]="xschem"; im[1]=verb;` per the sibling idiom, the flag tail `argv[2..]` copied verbatim;
+  `log_action_argv(argc, im)`, `my_free`). Sized to argc because the flag COUNT is variable (1..8) — unlike the
+  fixed-arity `mi[9]`/`pp[4]`. **RAW, not canonical-from-`what`:** an unrecognized flag yields
+  `what==0`, and a canonical rebuild would collapse that no-op to a bare `xschem image` that REPLAYS as
+  "Missing arguments"; the raw echo (`xschem image foo`) round-trips to the SAME no-op. Any
+  recognized-flag call replays to the identical `what` regardless of order/dupes. The barewords carry no
+  Tcl metacharacter, so Tcl_Merge logs them unbraced == byte-identical. Named `im` (NOT av/ev/pp/mi —
+  the §36 collision lesson) and a fresh build (NOT the bare `log_action_argv(argc, argv)` form, which
+  recurs at three other scheduler.c sites so could not be grep-pinned uniquely). `log_action_argv` is
+  synchronous (Tcl_Merge → log → Tcl_Free), so freeing `im` immediately after is safe.
+
+**HAS_CAIRO gating.** The run_core + core_log_action arms are `#if HAS_CAIRO==1 … #endif` (edit_image is
+cairo-only); the whole branch already was, so on a no-cairo build `perform_action("image")` is never
+reached and the arms compile out — the else-if chains stay brace-balanced across the `#if` in both
+functions. The test self-DEFERS on a no-cairo build (the dispatcher returns `xschem image: invalid
+command.` — the defer triggers ONLY on that exact signal, so a broken-`help` regression cannot mask
+itself as a defer).
+
+**READONLY = a CORRECTNESS FIX (like atoms 16/17/18, unlike atom 19's consolidation).** The branch
+NEVER had a readonly gate; the boundary ADDS it — pre-migration `image invert` MUTATED a read-only cell
+(EFFECT ORACLE (B)), now REFUSED. `image help` stays read-only-safe (it returns in the branch, before
+the boundary). No read-only-safe MUTATING form exists (every `if(what)` path mutates; help/argc<3 are
+the only queries and stay raw).
+
+**Verification.** `tests/headless/test_perform_action_image.tcl` (29 checks, full_audit logdir_tests,
+self-deferring on no-cairo/no-logdir): (a) mutate + exactly +1 byte-exact `xschem image invert
+write_back` + blank interp result; (a2) multi-flag verbatim; (b) `image help` read-only-safe TCL_OK +
+usage + logs NOTHING; (c) read-only REFUSE (the correctness fix) — TCL_ERROR + no mutate + no log; (d)
+set_modify only on write_back; (e) undo single-push; (f) `what==0` no-op — TCL_OK, no mutate, no modify,
+STILL logs +1 as the RAW replayable `xschem image bogusflag`; (g) nothing-selected TCL_ERROR + no log;
+(h) replay round-trip faithful; (i) the OTHER raw-front reply — bare `xschem image` (argc<3) → TCL_ERROR
+"Missing arguments" + logs NOTHING (added from the completeness-critic note below). **grep guard:** S1 boundary-branch + `const char **im` decl +
+`im[j] = argv[j];` copy + `log_action_argv(argc, im)` emit rows; `image` in S2 CVERBS, OUT of S3; an S7
+block (EXACTLY ONE of each build/copy/emit, ZERO scattered raw `log_action("xschem image"` in
+scheduler.c AND callback.c, ZERO scattered `scheduler_readonly_reject(…,"image")`) PLUS a COLLISION
+GUARD re-asserting av/ev/pp/mi stay ==1. **Sabotage ×6** (rebuild-run-restore from a scratchpad backup,
+NOT git — ~200 dirty files), each failing exactly its checks: (1) bypass boundary via `run_core` direct
+→ grep S1 branch-row=0 fails closed even though the effect still works (the grep is the structural lock)
++ test (a)/(c); (2) remove the help split → (b) read-only-safe; (3) unconditional set_modify → (d); (4)
+faithless hardcoded log → (a)/(a2)/(f) + grep S1/S7 emit + scattered-raw; (5) No-images→TCL_OK → (g); (6)
+scattered per-verb readonly gate → (b) + grep S7 scattered-readonly=1. **Baseline diff CLEAN** (AFTER
+atom-20 vs HEAD atom-19): the only BASELINE-only fails are my two tests (they detect the migration's
+absence — load-bearing); ZERO new deterministic fails (the 5 GUI tests that flipped between the full run
+and the subset — graph_context/hover_highlight/key_graph_context/palette — PASS standalone, full-run
+WSLg-congestion flakes; test_fluid_editing fails on HEAD too = pre-existing). **10-axis adversarial
+refute panel + completeness critic (Workflow, ultracode): unanimous CLEAN, 0 code defects, verdict
+SHIP_WITH_NOTE** across split / read-only-safe-query / HAS_CAIRO-gating / faithful-RAW-log /
+im-memory-safety / set_modify+undo / precondition-placement / log-on-success / C89 / entry-completeness.
+The critic raised four NON-defect notes, all resolved: (1) REVIEW-INTEGRITY — the working tree was not
+frozen during the review (the baseline-diff builds flipped scheduler.c HEAD↔atom-20, and ~174 sibling
+scratch worktrees churn the shared tree), so citations may drift → resolved by COMMITTING to freeze the
+snapshot; (2) test-gap on the argc<3 raw-front reply → closed by check (i); (3) the `im[0]` verbatim
+copy diverged from the sibling hardcode idiom → aligned to `im[0]="xschem"; im[1]=verb;`; (4) a
+PRE-EXISTING (NOT atom-20) latent quirk — the `#if HAS_CAIRO==1` block in `xschem_cmds_i` also encloses
+`incr_hilight_color` + `inst_name_text`, so those two NON-cairo verbs silently vanish on a no-cairo build
+(present identically on HEAD, gate@4674) → flagged for a separate fix, out of this atom's scope.
+
+RECOMMENDED NEXT (the friction-free pool has been EMPTY since atom 16 → keep taking HIGHER-FRICTION):
+re-scout the migrated-verb roster fresh; the remaining unmigrated mutating scheduler verbs are the
+higher-friction / composite class. DEFER the composite delete/cut/copy/save/reload (shared cores called
+by abort/merge/teardown — the §4 delete()-is-NOT-1:1 lesson); selection-referent replay (0005) is the
+accepted config/selection-dependent class.
