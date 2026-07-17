@@ -482,6 +482,85 @@ static int run_core(const char *verb, int argc, const char *argv[])
     my_free(_ALLOC_ID_, &translated_sym);
     return TCL_OK;
   }
+  else if(!strcmp(verb, "replace_symbol")) {
+    /* Refactor B atom 14: the SECOND VALIDATING verb, and the FIRST per-verb migration
+     * to carry a FAST-FLAG log gate. It rides the atom-13 log-on-success boundary
+     * UNCHANGED -- this atom touches NO shared machinery. replace_symbol swaps an
+     * instance's symbol for another (delete_inst_node + inst.name = rel_sym_path(sym) +
+     * match_symbol + new_prop_string). The fast-flag parse + the two validation gates
+     * MOVE here from the scheduler branch and stay BEFORE push_undo: argc!=4 -> TCL_ERROR
+     * "needs 2 additional arguments", then get_instance(argv[2])<0 -> TCL_ERROR "instance
+     * not found" -- so a bad arg mutates nothing and (via log-on-success) logs nothing.
+     * The `fast` flag (argc>4 && argv[4]=="fast") is a MULTI-substitution machinery
+     * sub-mode: it SKIPS the single push_undo (exactly as the old branch did --
+     * `if(!fast) push_undo()`), and core_log_action SKIPS the log for it too (the atom-4
+     * save-fast axis: a replay sub-mode must not be logged). The `fast`/argv reads here
+     * MUST be identical to core_log_action's. set_modify(1) is kept; draw() stays
+     * COMMENTED-OUT -- replace_symbol relies on the CALLER to redraw (the old branch never
+     * drew; adding a draw() would change behaviour). There is no core fn that pushes undo,
+     * so (like reset_inst_prop, unlike the self-undo verbs) THIS arm owns the single
+     * push_undo, gated on !fast. The old branch set the interp result to the new instname
+     * on success; the boundary's success-path Tcl_ResetResult clears it (no caller
+     * consumes it -- verified), so this arm sets NO success result. */
+    int inst, fast = 0;
+    char symbol[PATH_MAX];
+    int sym_number, prefix;
+    char *name=NULL;
+    char *ptr=NULL;
+    char *sym = NULL;
+    if(argc > 4) {
+      argc = 4;
+      if(!strcmp(argv[4], "fast")) {
+        fast = 1;
+      }
+    }
+    if(argc != 4) {
+      Tcl_SetResult(interp, "xschem replace_symbol needs 2 additional arguments", TCL_STATIC);
+      return TCL_ERROR;
+    }
+    if((inst = get_instance(argv[2])) < 0 ) {
+      Tcl_SetResult(interp, "xschem replace_symbol: instance not found", TCL_STATIC);
+      return TCL_ERROR;
+    }
+    my_strncpy(symbol, argv[3], S(symbol));
+    if(!fast) {
+      xctx->push_undo();
+      xctx->prep_hash_inst=0;
+      xctx->prep_net_structs=0;
+      xctx->prep_hi_structs=0;
+    }
+    my_strdup(_ALLOC_ID_, &sym, tcl_hook2(symbol));
+    sym_number=match_symbol(sym);
+    my_free(_ALLOC_ID_, &sym);
+    if(sym_number>=0)
+    {
+      prefix=(get_tok_value(xctx->sym[sym_number].templ , "name",0))[0]; /* get new symbol prefix  */
+    }
+    else prefix = 'x';
+    delete_inst_node(inst); /* 20180208 fix crashing bug: delete node info if changing symbol */
+                         /* if number of pins is different we must delete these data *before* */
+                         /* changing ysmbol, otherwise i might end up deleting non allocated data. */
+    my_strdup2(_ALLOC_ID_, &xctx->inst[inst].name, rel_sym_path(symbol));
+    xctx->inst[inst].ptr=sym_number;
+    my_strdup(_ALLOC_ID_, &name, xctx->inst[inst].instname);
+    if(name && name[0] )
+    {
+      /* 20110325 only modify prefix if prefix not NUL */
+      if(prefix) name[0]=(char)prefix; /* change prefix if changing symbol type; */
+      my_strdup(_ALLOC_ID_, &ptr,subst_token(xctx->inst[inst].prop_ptr, "name", name) );
+      if(!fast) hash_names(-1, XINSERT);
+      hash_names(inst, XDELETE);
+      new_prop_string(inst, ptr,           /* sets also inst[].instname */
+         tclgetboolvar("disable_unique_names")); /* set new prop_ptr */
+      hash_names(inst, XINSERT);
+      set_inst_flags(&xctx->inst[inst]);
+      my_free(_ALLOC_ID_, &ptr);
+    }
+    my_free(_ALLOC_ID_, &name);
+    set_modify(1);
+    /* draw(); -- replace_symbol relies on the caller to redraw (old branch behaviour) */
+    return TCL_OK;
+  }
   return TCL_ERROR; /* unreachable: perform_action is only wired for the verbs above */
 }
 
@@ -574,6 +653,26 @@ static void core_log_action(const char *verb, int argc, const char *argv[])
     const char *av[3];
     av[0] = "xschem"; av[1] = verb; av[2] = argv[2];
     log_action_argv(3, av);
+  } else if(!strcmp(verb, "replace_symbol")) {
+    /* atom 14: the SECOND validating verb, and the FIRST per-verb log form to carry a
+     * FAST-FLAG GATE. The log is the SELF-CONTAINED `xschem replace_symbol <inst> <sym>`:
+     * BOTH the instance referent argv[2] (a name or numeric index) AND the symbol path
+     * argv[3] can carry Tcl metacharacters (an arrayed name `x2[3:0]`, a path with a
+     * space/bracket), so BOTH are emitted via log_action_argv (Tcl_Merge), NOT a raw `%s`
+     * -- the atom-13 arrayed-name replay lesson (a raw `x2[3:0]` would replay `[3:0]` as a
+     * command substitution). Tcl_Merge quotes MINIMALLY, so a plain refdes + path logs
+     * byte-identically to `xschem replace_symbol R1 devices/capa.sym`. Reached ONLY on
+     * TCL_OK (log-on-success), so a failed validation logs nothing. GATED on !fast: the
+     * fast form (argc>4 && argv[4]=="fast") is a multi-substitution machinery sub-mode
+     * that skips undo and MUST NOT be logged (the atom-4 save-fast axis); the argv reads
+     * here are IDENTICAL to run_core's, so the logged line can never diverge from the
+     * applied swap. NB run_core clamps its OWN local argc to 4, but core_log_action gets
+     * the ORIGINAL argc from perform_action, so the fast test reads the untouched argv. */
+    if(argc <= 4 || strcmp(argv[4], "fast")) {
+      const char *av[4];
+      av[0] = "xschem"; av[1] = verb; av[2] = argv[2]; av[3] = argv[3];
+      log_action_argv(4, av);
+    }
   } else {
     log_action("xschem %s", verb);
   }
@@ -8215,71 +8314,19 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
      *    on first call and 'fast' on next calls
      *   for faster operation.
      *   do a 'xschem redraw' at end to update screen
-     *   Example: xschem replace_symbol R3 capa.sym */
+     *   Example: xschem replace_symbol R3 capa.sym
+     * Routes through the single mutation boundary (Refactor B atom 14): the readonly
+     * gate, the fast-flag parse + the argc!=4 / "instance not found" validation, the
+     * (non-fast) push_undo + the symbol swap, and the ONE `xschem replace_symbol <inst>
+     * <sym>` log site (via core_log_action, LOGGED ONLY ON SUCCESS and ONLY when NOT
+     * fast) all live in perform_action/run_core. This is the SECOND VALIDATING verb on
+     * the boundary and the FIRST per-verb migration to carry a FAST-FLAG log gate: the
+     * fast form is a multi-substitution machinery/replay sub-mode that skips BOTH the
+     * undo and the log. No scattered readonly/log/push_undo here; the old success-path
+     * instname interp result is dropped (the boundary clears the interp on success; no
+     * caller consumed it). */
     else if(!strcmp(argv[1], "replace_symbol"))
-    {
-      int inst, fast = 0;
-      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
-      if(scheduler_readonly_reject(interp, "replace_symbol")) return TCL_ERROR;
-      if(argc > 4) {
-        argc = 4;
-        if(!strcmp(argv[4], "fast")) {
-          fast = 1;
-        }
-      }
-      if(argc!=4) {
-        Tcl_SetResult(interp, "xschem replace_symbol needs 2 additional arguments", TCL_STATIC);
-        return TCL_ERROR;
-      }
-      if((inst = get_instance(argv[2])) < 0 ) {
-        Tcl_SetResult(interp, "xschem replace_symbol: instance not found", TCL_STATIC);
-        return TCL_ERROR;
-      } else {
-        char symbol[PATH_MAX];
-        int sym_number, prefix;
-        char *name=NULL;
-        char *ptr=NULL;
-        char *sym = NULL;
-        my_strncpy(symbol, argv[3], S(symbol));
-        if(!fast) {
-          xctx->push_undo();
-          xctx->prep_hash_inst=0;
-          xctx->prep_net_structs=0;
-          xctx->prep_hi_structs=0;
-        }
-        my_strdup(_ALLOC_ID_, &sym, tcl_hook2(symbol));
-        sym_number=match_symbol(sym);
-        my_free(_ALLOC_ID_, &sym);
-        if(sym_number>=0)
-        {
-          prefix=(get_tok_value(xctx->sym[sym_number].templ , "name",0))[0]; /* get new symbol prefix  */
-        }
-        else prefix = 'x';
-        delete_inst_node(inst); /* 20180208 fix crashing bug: delete node info if changing symbol */
-                             /* if number of pins is different we must delete these data *before* */
-                             /* changing ysmbol, otherwise i might end up deleting non allocated data. */
-        my_strdup2(_ALLOC_ID_, &xctx->inst[inst].name, rel_sym_path(symbol));
-        xctx->inst[inst].ptr=sym_number;
-        my_strdup(_ALLOC_ID_, &name, xctx->inst[inst].instname);
-        if(name && name[0] )
-        {
-          /* 20110325 only modify prefix if prefix not NUL */
-          if(prefix) name[0]=(char)prefix; /* change prefix if changing symbol type; */
-          my_strdup(_ALLOC_ID_, &ptr,subst_token(xctx->inst[inst].prop_ptr, "name", name) );
-          if(!fast) hash_names(-1, XINSERT);
-          hash_names(inst, XDELETE);
-          new_prop_string(inst, ptr,           /* sets also inst[].instname */
-             tclgetboolvar("disable_unique_names")); /* set new prop_ptr */
-          hash_names(inst, XINSERT);
-          set_inst_flags(&xctx->inst[inst]);
-          my_free(_ALLOC_ID_, &ptr);
-        }
-        my_free(_ALLOC_ID_, &name);
-        set_modify(1);
-        /* draw(); */
-        Tcl_SetResult(interp, xctx->inst[inst].instname , TCL_VOLATILE);
-      }
-    }
+      return perform_action("replace_symbol", argc, argv);
 
     /* reset_caches
      *   Reset cached instance and symbol cached flags (inst->flags, sym->flags) */

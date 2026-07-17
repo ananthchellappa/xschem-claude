@@ -173,6 +173,18 @@
 # core_log_action `xschem reset_inst_prop %s` name-form row; (c) reset_inst_prop ADDED to S2 CVERBS, kept OUT of
 # S3; (d) an S7 block (single-form arg-carrying, like rotate/flip: EXACTLY ONE core_log_action site in
 # scheduler.c, ZERO in callback.c, ZERO scattered readonly_reject -- the old branch HAD a per-verb one, now GONE).
+# Refactor B atom 14 (perform_action / replace_symbol) is a PLAIN per-verb migration onto the UNCHANGED
+# atom-13 log-on-success boundary (NO shared-machinery change): the SECOND VALIDATING verb, and the FIRST
+# per-verb migration to carry a FAST-FLAG log gate. Grep changes: (a) a NEW S1 boundary-branch row + a NEW
+# S1 two-arg referent-build row (`av[3] = argv[3];` -- UNIQUE to replace_symbol) + a NEW S1
+# `log_action_argv(4, av)` emit row (distinct from reset_inst_prop's `(3, av)`) + a NEW S1 FAST-FLAG GATE
+# row (`if(argc <= 4 || strcmp(argv[4], "fast"))` -- a revert to unconditional logging makes the fast
+# machinery form log, failing test (e) closed); (b) replace_symbol ADDED to S2 CVERBS, kept OUT of S3;
+# (c) an S7 block (EXACTLY ONE av[3]-build + ONE log_action_argv(4,av) + ONE fast-gate in scheduler.c,
+# ZERO scattered raw log / readonly_reject in scheduler.c, ZERO in callback.c). NB atom 14's two-arg
+# build line `av[0] = "xschem"; av[1] = verb; av[2] = argv[2]; av[3] = argv[3];` is a SUPERSTRING of
+# atom-13's reset_inst_prop build, so the reset_inst_prop S1/S7 referent regexes were LINE-ANCHORED
+# (`(?n)...;$`) to stay collision-proof (they end at `argv[2];`, replace_symbol continues to `argv[3];`).
 # Atom 12 (0053 Cadence Ctrl-E window hop) added: the S1 focus_window emit row
 # (utils/cadence_nav.tcl) and the S6 SEAM-EXCLUSIVITY block -- `new_schematic
 # switch` (a shared core: tab-strip/alt2/window-open machinery) must be logged
@@ -231,8 +243,12 @@ set MANIFEST {
     {log_action\("xschem break_wires"\)}              1 {break_wires BARE form now lives in core_log_action (atom 9), NOT the scheduler branch -- exactly ONE such site in scheduler.c (S7 pins exclusivity); the `break_wires"\)` (quote then paren) does NOT match `break_wires 1"` nor break_wires_at_pins/_at_point/_at_attach_points}
     {log_action\("xschem attach_labels %}             1 {attach_labels VALUE form now lives in core_log_action (atom 11) -- `log_action("xschem attach_labels %d", atoi(argv[2]))` PRESERVES the 0/1/2 value (unlike break_wires which collapses nonzero to 1); byte-identical to the old log_action_argv for the canonical integer arg every live path emits, strictly MORE faithful for a non-canonical token (`007`->`7`); exactly ONE such site in scheduler.c (S7 pins exclusivity); the literal `attach_labels %` (space+%) does NOT match the bare `attach_labels")` form}
     {log_action\("xschem attach_labels"\)}            1 {attach_labels BARE form now lives in core_log_action (atom 11), NOT the scheduler branch -- exactly ONE such site in scheduler.c (S7 pins exclusivity); the `attach_labels"\)` (quote then paren) does NOT match `attach_labels %`}
-    {av\[0\] = "xschem"; av\[1\] = verb; av\[2\] = argv\[2\];} 1 {reset_inst_prop SELF-CONTAINED name form lives in core_log_action (atom 13): the referent argv[2] (a name or numeric index) is emitted via log_action_argv (Tcl_Merge), NOT a raw %s -- so an arrayed/bussed name with Tcl metacharacters (x2[3:0]) is brace-quoted and REPLAYS (raw %s would replay `[3:0]` as a command substitution; the issue-0048 replay-safe pattern, flagged by this atom's adversarial review). Reached ONLY on TCL_OK (log-on-success), so a failed validation logs nothing}
+    {(?n)av\[0\] = "xschem"; av\[1\] = verb; av\[2\] = argv\[2\];$} 1 {reset_inst_prop SELF-CONTAINED name form lives in core_log_action (atom 13): the referent argv[2] (a name or numeric index) is emitted via log_action_argv (Tcl_Merge), NOT a raw %s -- so an arrayed/bussed name with Tcl metacharacters (x2[3:0]) is brace-quoted and REPLAYS (raw %s would replay `[3:0]` as a command substitution; the issue-0048 replay-safe pattern, flagged by this atom's adversarial review). Reached ONLY on TCL_OK (log-on-success), so a failed validation logs nothing}
     {log_action_argv\(3, av\);} 1 {reset_inst_prop's Tcl_Merge emit (atom 13): log_action_argv brace-quotes the referent minimally, so a plain refdes (R1) logs byte-identically to `xschem reset_inst_prop R1` while an arrayed name logs `xschem reset_inst_prop {x2[3:0]}`. Exactly ONE such `(3, av)` site in scheduler.c (S7 pins exclusivity); distinct from the `argc`/`ac`-arg log_action_argv calls (add_pin_stubs, paste)}
+    {return perform_action\("replace_symbol", argc, argv\);} 1 {replace_symbol branch routes through the perform_action boundary (Refactor B atom 14 -- the SECOND VALIDATING verb, and the FIRST per-verb migration to carry a FAST-FLAG log gate; a PLAIN migration onto the UNCHANGED atom-13 log-on-success boundary): run_core MOVES the fast-flag parse + the argc!=4 "needs 2 additional arguments" / "instance not found" validation IN (early TCL_ERROR BEFORE its single non-fast push_undo, so a bad arg mutates nothing) and, via log-on-success, logs nothing on failure; core_log_action logs the SELF-CONTAINED `xschem replace_symbol <inst> <sym>` (argv[2]+argv[3], both Tcl_Merge-quoted) on success only AND only when NOT fast. The boundary ADDS the generic readonly gate (already present in the old branch, now unified); the old success-path instname interp result is dropped (no caller consumed it). No scattered readonly/log/push_undo here}
+    {av\[3\] = argv\[3\];} 1 {replace_symbol SELF-CONTAINED two-arg form lives in core_log_action (atom 14): BOTH the instance referent argv[2] AND the symbol path argv[3] are emitted via log_action_argv (Tcl_Merge), NOT a raw %s -- either can carry Tcl metacharacters (an arrayed name x2[3:0], a path with a space/bracket), so both are brace-quoted and REPLAY. `av[3] = argv[3];` is UNIQUE to replace_symbol (no other verb uses av[3]) -- the S7 exclusivity marker. Reached ONLY on TCL_OK (log-on-success) AND only when NOT fast, so a failed validation or a fast machinery call logs nothing}
+    {log_action_argv\(4, av\);} 1 {replace_symbol's Tcl_Merge emit (atom 14): log_action_argv brace-quotes the two referents minimally, so a plain refdes+path (R1 devices/capa.sym) logs byte-identically to `xschem replace_symbol R1 devices/capa.sym` while an arrayed name logs `xschem replace_symbol {x2[3:0]} devices/capa.sym`. Exactly ONE such `(4, av)` site in scheduler.c (S7 pins exclusivity); distinct from reset_inst_prop's `(3, av)` and the `argc`/`ac`-arg calls (add_pin_stubs, paste)}
+    {if\(argc <= 4 \|\| strcmp\(argv\[4\], "fast"\)\)} 1 {replace_symbol's FAST-FLAG LOG GATE (atom 14 -- the FIRST per-verb migration to carry one): core_log_action logs the swap ONLY when the call is NOT the fast multi-substitution machinery sub-mode (argv[4]=="fast"), mirroring run_core's `if(!fast)` undo skip -- the atom-4 save-fast axis applied to a per-verb log form. NB core_log_action reads the ORIGINAL argc (run_core clamps its own local copy to 4), so the fast test reads the untouched argv[4]. Reverting the gate (log unconditionally) makes the fast form log +1 -> test (e) fails closed}
     {return perform_action\("break_wires", argc, argv\);} 1 {break_wires branch routes through the perform_action boundary (Refactor B atom 9 -- the FIRST NON-transform verb; the arg is a FLAG (0/1), not a pivot; NO mid-gesture split): run_core + core_log_action read `remove` from argc/argv; break_wires_at_pins owns its own push_undo/draw, so no scattered readonly/log/push_undo here}
     {log_action\("xschem flip %}                      1 {flip PIVOT form now lives in core_log_action (atom 7), NOT the scheduler branch -- exactly ONE such site remains in scheduler.c (S7 pins the exclusivity); the literal `flip %` (flip+space) does NOT match `flipv %`}
     {log_action\("xschem flipv %}                     1 {flipv PIVOT form now lives in core_log_action (atom 8), NOT the scheduler branch -- exactly ONE such site remains in scheduler.c (S7 pins the exclusivity); the literal `flipv %` (flipv+space) does NOT match `flip %` (a `v` intervenes) nor `flipv_in_place`}
@@ -445,7 +461,7 @@ set CVERBS {
   cut delete copy undo redo save reload saveas align trim_wires break_wires
   flip flipv rotate flip_in_place flipv_in_place rotate_in_place
   change_elem_order check_unique_names create_instance toggle_ignore
-  reset_inst_prop
+  reset_inst_prop replace_symbol
   floaters_from_selected_inst print_hilight_net attach_labels add_pin_stubs
   setprop unhilight_all hilight_net_interactive unhilight_net_interactive
   make_symbol make_sch make_sch_from_sel descend descend_symbol go_back
@@ -873,8 +889,8 @@ check "S7 scheduler.c: NO scattered scheduler_readonly_reject(...,\"toggle_ignor
 # closed. reset_inst_prop stays in S2 CVERBS (a scripted/replayed `xschem reset_inst_prop <ref>`
 # re-executes AND self-logs) and OUT of S3 (its log lives in the boundary, reached from the branch).
 check "S7 scheduler.c: EXACTLY ONE reset_inst_prop referent-build (av\[1\]=verb; av\[2\]=argv\[2\]) -- the core_log_action Tcl_Merge site (the branch delegates to the boundary)" \
-  [expr {[rxcount $sched {av\[1\] = verb; av\[2\] = argv\[2\];}] == 1}] \
-  "got=[rxcount $sched {av\[1\] = verb; av\[2\] = argv\[2\];}]"
+  [expr {[rxcount $sched {(?n)av\[1\] = verb; av\[2\] = argv\[2\];$}] == 1}] \
+  "got=[rxcount $sched {(?n)av\[1\] = verb; av\[2\] = argv\[2\];$}]"
 check "S7 scheduler.c: NO scattered raw log_action(\"xschem reset_inst_prop\") (the replay-unsafe %s form must not reappear -- Tcl_Merge is the only emit)" \
   [expr {[rxcount $sched {log_action\("xschem reset_inst_prop}] == 0}] \
   "got=[rxcount $sched {log_action\("xschem reset_inst_prop}]"
@@ -884,6 +900,40 @@ check "S7 callback.c: NO scattered log_action(\"xschem reset_inst_prop\") (no ke
 check "S7 scheduler.c: NO scattered scheduler_readonly_reject(...,\"reset_inst_prop\") (the boundary's generic gate covers the verb -- the old branch's per-verb one is GONE)" \
   [expr {[rxcount $sched {scheduler_readonly_reject\(interp, "reset_inst_prop"\)}] == 0}] \
   "got=[rxcount $sched {scheduler_readonly_reject\(interp, "reset_inst_prop"\)}]"
+# replace_symbol (Refactor B atom 14 -- the SECOND VALIDATING verb, and the FIRST per-verb migration to
+# carry a FAST-FLAG log gate; a PLAIN migration onto the UNCHANGED atom-13 log-on-success boundary): the
+# readonly gate + the ONE `xschem replace_symbol <inst> <sym>` log form (via core_log_action, gated on
+# !fast) live SOLELY in perform_action. It is TWO-arg (argv[2]+argv[3]), so core_log_action holds EXACTLY
+# ONE `log_action_argv(4, av)` built from `av[3] = argv[3];` (UNIQUE to replace_symbol -- no other verb
+# uses av[3]) and scheduler.c must have EXACTLY that ONE -- the scheduler BRANCH carries none (it
+# delegates) and callback.c ZERO (no key entry point). NB the branch's early-error Tcl_SetResult("xschem
+# replace_symbol needs 2 additional arguments" / "... instance not found") are NOT log_action calls, so
+# they don't perturb this count; NB2 print_spice_element (scheduler.c ~7470) has a PRE-EXISTING copy-paste
+# Tcl_SetResult "xschem replace_symbol: instance not found" -- also NOT a log_action, so the raw-log scan
+# stays 0 (it is NOT a second replace_symbol entry and NOT atom 14's to fix). The FAST-FLAG gate is pinned
+# so a revert to unconditional logging (which would log the fast machinery sub-mode) fails closed. The old
+# branch HAD a scattered scheduler_readonly_reject(..., "replace_symbol"); the boundary's generic gate now
+# covers it, so a re-scattered per-verb one fails closed. replace_symbol stays in S2 CVERBS (a
+# scripted/replayed `xschem replace_symbol <inst> <sym>` re-executes AND self-logs) and OUT of S3 (its log
+# lives in the boundary, reached from the branch).
+check "S7 scheduler.c: EXACTLY ONE replace_symbol referent-build (av\[3\] = argv\[3\];) -- the core_log_action two-arg Tcl_Merge site (the branch delegates to the boundary); av\[3\] is unique to replace_symbol" \
+  [expr {[rxcount $sched {av\[3\] = argv\[3\];}] == 1}] \
+  "got=[rxcount $sched {av\[3\] = argv\[3\];}]"
+check "S7 scheduler.c: EXACTLY ONE replace_symbol log_action_argv(4, av) emit (distinct from reset_inst_prop's (3, av))" \
+  [expr {[rxcount $sched {log_action_argv\(4, av\);}] == 1}] \
+  "got=[rxcount $sched {log_action_argv\(4, av\);}]"
+check "S7 scheduler.c: EXACTLY ONE replace_symbol FAST-FLAG log gate (if(argc <= 4 || strcmp(argv\[4\], \"fast\"))) -- a revert to unconditional logging makes the fast machinery form log +1, failing test (e) closed" \
+  [expr {[rxcount $sched {if\(argc <= 4 \|\| strcmp\(argv\[4\], "fast"\)\)}] == 1}] \
+  "got=[rxcount $sched {if\(argc <= 4 \|\| strcmp\(argv\[4\], "fast"\)\)}]"
+check "S7 scheduler.c: NO scattered raw log_action(\"xschem replace_symbol\") (the replay-unsafe %s form must not reappear -- Tcl_Merge is the only emit; the print_spice_element Tcl_SetResult copy-paste is NOT a log_action)" \
+  [expr {[rxcount $sched {log_action\("xschem replace_symbol}] == 0}] \
+  "got=[rxcount $sched {log_action\("xschem replace_symbol}]"
+check "S7 callback.c: NO scattered log_action(\"xschem replace_symbol\") (no key entry point; guards a future re-scatter)" \
+  [expr {[rxcount $cbtext {log_action\("xschem replace_symbol}] == 0}] \
+  "got=[rxcount $cbtext {log_action\("xschem replace_symbol}]"
+check "S7 scheduler.c: NO scattered scheduler_readonly_reject(...,\"replace_symbol\") (the boundary's generic gate covers the verb -- the old branch's per-verb one is GONE)" \
+  [expr {[rxcount $sched {scheduler_readonly_reject\(interp, "replace_symbol"\)}] == 0}] \
+  "got=[rxcount $sched {scheduler_readonly_reject\(interp, "replace_symbol"\)}]"
 # atom-13 NESTING COUPLING (adversarial-review finding): the S1 existence rows above pin
 # that the guard line, the log line and the reset line each EXIST, but not that log+reset are
 # INSIDE the log-on-success block. A de-nest that keeps all three lines yet closes the

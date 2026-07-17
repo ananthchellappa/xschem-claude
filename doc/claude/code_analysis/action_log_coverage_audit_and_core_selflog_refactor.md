@@ -3094,6 +3094,191 @@ The composite-hazard verbs (delete/cut/copy/save/reload) whose shared cores are 
 abort/merge/teardown paths remain deferred (the §4 `delete()`-is-NOT-1:1 lesson);
 selection-referent replay (0005) remains the accepted config/selection-dependent class.
 
+## 34. Refactor B ATOM 14 (2026-07-16): the SECOND VALIDATING verb, and the FIRST per-verb migration to carry a FAST-FLAG log gate (`replace_symbol`)
+
+Atom 13 CHANGED the shared boundary to LOG-ON-SUCCESS and landed `reset_inst_prop` as its
+first beneficiary. **Atom 14 is a PLAIN per-verb migration back on the now-UNCHANGED
+boundary** — it touches NO shared machinery. The log-on-success change atom 13 made handles
+`replace_symbol`'s validation-failure paths FOR FREE; atom 14 only migrates the verb the way
+atoms 9–12 migrated theirs. Two things make it a slightly richer atom than a bare move: it is
+the SECOND VALIDATING verb (proving the atom-13 boundary hosts the class, not just its first
+member), and it is the FIRST per-verb migration to carry a **fast-flag log gate** (the atom-4
+`save fast` axis, previously only on `save`/`reload`, applied to a `core_log_action` per-verb
+form for the first time).
+
+**The verb.** `xschem replace_symbol <inst> <new_symbol> [fast]` swaps an instance's symbol
+for another (`delete_inst_node` + `inst.name = rel_sym_path(symbol)` + `match_symbol` +
+`new_prop_string`; a prefix change renames the instance, e.g. `R1 → C1` swapping
+`devices/res.sym → devices/capa.sym`). The optional `fast` flag is a MULTI-substitution
+machinery sub-mode: on the first of many swaps you pass `{}`, on the rest `fast`, and you
+`xschem redraw` at the end — it SKIPS the per-call `push_undo` (one bracketing undo for the
+whole batch) and the caller redraws. `replace_symbol` was the ONLY viable candidate of the
+five validating verbs the atom-13 "Next atom" note listed — a fan-out scout DISQUALIFIED the
+other four (see the friction-analysis companion + the §33 note): `reset_symbol` is a low-level
+bare-`inst.name` setter with NO undo/set_modify/draw ("caller must delete+reload symbols"),
+called inside Tcl composites → NOT 1:1; `load_backup` is a file-buffer load
+(backup-recovery/file-IO class, no undo/readonly/set_modify); `move_instance` is a
+coordinate-store replay form (criterion 5, `<name> x y rot flip` + noundo/nodraw);
+`apply_properties` is property-dialog machinery whose core self-undoes AND is ALREADY logged
+via `editprop.c log_prop_edit_replayable`. `replace_symbol` is the one real effect verb:
+validating (`argc!=4` + `get_instance`), owns `push_undo` (non-fast) + `set_modify(1)`, 1:1 (a
+single branch), readonly-gated, and had NO existing log (a coverage gap).
+
+**Migration.**
+- **Branch** (`scheduler.c`, `xschem_cmds_r`) → `return perform_action("replace_symbol", argc,
+  argv);` — dropping the `!xctx` guard, the per-verb `scheduler_readonly_reject`, the ~65-line
+  inline effect, and the success-path `Tcl_SetResult(instname)` result (the boundary owns them).
+- **`run_core` arm**: the fast-flag parse (`if(argc>4){argc=4; if(!strcmp(argv[4],"fast"))
+  fast=1;}`) + the two validation gates (`argc!=4 → TCL_ERROR "needs 2 additional arguments"`,
+  `get_instance(argv[2])<0 → TCL_ERROR "instance not found"`) MOVE in, ALL before the single
+  `if(!fast) push_undo()`, so a bad arg mutates nothing and (via log-on-success) logs nothing.
+  Then the byte-identical swap, `set_modify(1)`, `return TCL_OK`. `draw()` stays
+  COMMENTED-OUT — `replace_symbol` relies on the CALLER to redraw (the old branch never drew;
+  adding a `draw()` would CHANGE behaviour). Like `reset_inst_prop`, there is no core fn that
+  pushes undo, so THIS arm owns the single `push_undo` — and gates it on `!fast`.
+- **`core_log_action` arm**: `if(argc <= 4 || strcmp(argv[4],"fast")) { av = {"xschem",verb,
+  argv[2],argv[3]}; log_action_argv(4, av); }`. TWO referents — the instance `argv[2]` AND the
+  symbol path `argv[3]` — BOTH can carry Tcl metacharacters (an arrayed name `x2[3:0]`, a path
+  with a space/bracket), so BOTH go through `log_action_argv` (`Tcl_Merge`), NOT a raw `%s`
+  (the atom-13 arrayed-name lesson, applied pre-emptively this time rather than after a review
+  catch). `Tcl_Merge` quotes MINIMALLY, so a plain refdes+path logs byte-identically to `xschem
+  replace_symbol R1 devices/capa.sym`. The FAST-FLAG GATE (`!fast`) is the new element: the
+  fast sub-mode skips undo AND must not be logged (a machinery/replay sub-mode is not a user
+  edit). The `!fast`/`argv` reads here are IDENTICAL to `run_core`'s, so log iff `!fast` iff
+  `push_undo` happened — the logged line can never diverge from the applied swap.
+
+**The argc-clamp subtlety (locked by test (e) + the fast-gate grep row).** `run_core`
+reassigns its OWN LOCAL `argc` to 4 for the fast form; `core_log_action` receives the ORIGINAL
+`argc` from `perform_action` (a separate stack copy — `perform_action` runs `run_core(verb,
+argc, argv)` then `core_log_action(verb, argc, argv)` with the unmutated `argc`). So
+`core_log_action`'s `argc<=4` fast test reads the untouched `argv[4]`; the `argv[4]` read is
+short-circuit-safe (never reached when `argc<=4`) and always in-bounds when reached (`argc>4`
+⇒ argv[0..4] exist). And `core_log_action` runs ONLY on `run_core` `TCL_OK`, which requires the
+original `argc>=4` (the pre-undo `argc!=4` gate), so `argv[2]`/`argv[3]` are always valid at
+the log site.
+
+**Entry map.** `replace_symbol` has **NO key, NO menu, NO GUI trigger, and NO other C/Tcl
+caller** — verified by grepping keybindings/mousebindings/actions.csv, `xschem.tcl` `-command`,
+`callback.c` `act_*`, and C `Tcl_Eval` (the interactive change-symbol flow uses the `editprop`
+path, NOT this verb). It is a PURE SCRIPTED verb (like `reset_inst_prop` §33, unlike
+`toggle_ignore`'s Shift+T §32). So there is NO `callback.c` edit and NO key-equivalence
+decision; the migration is purely ADDITIVE coverage — the old branch NEVER logged. The ONE
+pre-existing test that DOES exercise the verb, `test_readonly_guard.tcl` (the issue-0041
+regression, in full_audit), drives `xschem replace_symbol` on a read-only buffer and requires a
+read-only error — it exercises exactly the readonly path this atom RELOCATED (readonly now in
+`perform_action`, before `run_core`), and it stays GREEN because that relocation preserves the
+readonly-then-argc ordering. (NB `scheduler.c` ~7470 has a PRE-EXISTING copy-paste bug:
+`print_spice_element` emits the wrong error string `"xschem replace_symbol: instance not
+found"`. NOT a second `replace_symbol` entry, NOT atom 14's to fix — the grep guard's raw-log
+scan matches `log_action("xschem replace_symbol`, not the `Tcl_SetResult`, so it is
+unperturbed.)
+
+**Behaviour delta (the ONE intentional change beyond the coverage gain).** The old branch
+returned the (possibly renamed) `instname` as the Tcl result on success; the boundary's
+success-path `Tcl_ResetResult` now clears it. Verified NO caller consumes `xschem
+replace_symbol`'s return value (grep of `*.tcl`/`*.c`/`*.csv`: the only references are
+`test_readonly_guard`'s rejection-loop list and the grep guard). The read-only gate is NOT new
+(the old branch had one) — the boundary UNIFIES it onto the generic gate.
+
+**Grep guard (`test_selflog_grep_guard.tcl`).** NEW S1 rows: the boundary branch `return
+perform_action("replace_symbol", argc, argv);`; the two-arg referent build `av[3] = argv[3];`
+(UNIQUE to `replace_symbol` — no other verb uses `av[3]`); the emit `log_action_argv(4, av);`
+(distinct from `reset_inst_prop`'s `(3, av)`); and the FAST-FLAG GATE `if(argc <= 4 ||
+strcmp(argv[4], "fast"))`. `replace_symbol` ADDED to S2 CVERBS, kept OUT of S3. An S7 block:
+EXACTLY ONE `av[3]`-build + ONE `log_action_argv(4,av)` + ONE fast-gate in `scheduler.c`, ZERO
+scattered raw `log_action("xschem replace_symbol"` / `scheduler_readonly_reject(...,
+"replace_symbol")` in `scheduler.c`, ZERO in `callback.c`. **Collision-hardening:** atom 14's
+two-arg build line `av[0] = "xschem"; av[1] = verb; av[2] = argv[2]; av[3] = argv[3];` is a
+SUPERSTRING of atom-13's `reset_inst_prop` build (which ends at `argv[2];`), so the
+`reset_inst_prop` S1 + S7 referent regexes were LINE-ANCHORED (`(?n)...;$`) to stay
+collision-proof (reset's line ends at `argv[2];`, replace's continues to `argv[3];`; an
+`argv[2]↔argv[3]` swap sabotage drops the `av[3]` count 1→0 and fails S1/S7 closed).
+
+**Effect oracle (byte-identical effect before/after — the migration MOVES validation + gates
+the log, it does not change the swap).** A `devices/res.sym` resistor placed at the origin as
+R1; `xschem replace_symbol R1 devices/capa.sym` swaps its symbol, so `xschem getprop instance 0
+cell::name` goes `res.sym → devices/capa.sym` (and the instance is renamed R1 → C1 by the capa
+prefix). Determined empirically on the pre-migration binary. The FAILING cases pinned: `xschem
+replace_symbol` / `... R1` (argc<4) each `TCL_ERROR "needs 2 additional arguments"`, `... bogus
+other.sym` `TCL_ERROR "instance not found"` — each NON-EMPTY-message and, on the migrated
+binary, logs NOTHING. The FAST case: `... R1 devices/capa.sym fast` MUTATES (swaps) but logs
+NOTHING and pushes NO undo (one undo removes the instance, not the pre-fast symbol).
+
+**Test `test_perform_action_replace_symbol.tcl` (36 checks, full_audit logdir_tests).** (a)
+SUCCESS: +1 + swap (cell::name res.sym → devices/capa.sym) + byte-exact + dropped-result; (a2)
+arrayed-name `x2[3:0]` logs BRACE-QUOTED via Tcl_Merge AND replays without a Tcl error; (b)
+no-arg + one-arg + bogus each TCL_ERROR + NON-EMPTY verb-named message + no mutation + +0 log;
+(c) readonly reject; (d) replay through the suppress seam re-executes without re-logging vs a
+control unwrapped `source` that re-logs; (e) THE NEW FAST-GATE LOCK — the fast form swaps but
+emits +0 log AND pushes no undo (one undo removes the instance, not the pre-fast symbol); (f)
+undo DEPTH (non-fast) — one undo restores the prior symbol with the instance intact, a second
+removes it (single `push_undo`).
+
+**SABOTAGE ×7** (each rebuild-run-restore from the scratchpad backup `scheduler.c.atom14`, NOT
+git — ~200 dirty files; each failing EXACTLY its checks): (1) inline the branch keeping
+gate+log (bypass the boundary) → runtime `.tcl` PASSES, only the grep guard fails closed (S1
+boundary-branch missing + S7 scattered readonly_reject present + S7 fast-gate count 2) — the
+grep guard IS the structural lock; (2) raw `%s` referent instead of `log_action_argv` → the
+(a2) metachar-replay checks fail (logs `x2[3:0]` unbraced; replay errors `invalid command name
+"3:0"`; the swap is not reproduced) + the S1 `av[3]`/`log_action_argv(4,av)` rows and the S7
+raw-log exclusivity fail closed; (3) drop the `!fast` log gate (log unconditionally) → (e)
+fast-form-logs-+1 fails + S7/S1 fast-gate rows fail closed; (4) add `push_undo` in the fast path
+→ (e) no-undo fails (one undo leaves the instance); (5) scattered branch log → (a) double-log +
+(b)/(c) phantom-log on failed/readonly calls + S7 raw-log ==1; (6) neutralize the boundary
+readonly gate → (c) all fail + S1 gate row fails closed; (7) spurious second `push_undo` in the
+non-fast arm → (f) undo-depth (the symbol survives the second undo).
+
+**Full-audit baseline diff (behind the one-button approval gate).** AFTER (atom-14 binary: 153
+pass / 21 fail / 1 crash / 6 skip) vs BASELINE (`scheduler.c` reverted to HEAD, rebuilt: 152
+pass / 18 fail / 0 crash / 11 skip). The load-bearing signal is CLEAN: the ONLY two
+BASELINE-only fails are PRECISELY the two atom-14 tests — `test_perform_action_replace_symbol`
+(its +1-log / swap / byte-exact / fast-gate checks fail when the migration is absent — the old
+branch never logged) and `test_selflog_grep_guard` (the atom-14 S1/S7 rows are absent on
+reverted source) — proving both load-bearing (they PASS on atom-14). The six AFTER-only fails
+(`test_hover_highlight`, `test_launch_context`, `test_wire_vertex_grab`,
+`test_key_graph_context`, `test_nh_anim_rearm`, `test_palette`) are WSLg-congestion flakes from
+running two full GUI audits back-to-back — NONE touches the action log or `replace_symbol`
+(atom 14 only edits `scheduler.c`'s `replace_symbol` arms), and ALL SIX were re-verified to PASS
+standalone on the restored atom-14 binary. Everything else is the COMMON pre-existing set (the
+cadence trio, the GUI set `test_ciw`/`test_hi_descend`/`test_lib_manager_gui`/
+`test_reopen_readonly`, `test_lib_sweep`/`test_phase3_mints`/`test_wire_split`/`test_select_at`/
+`test_save_as_cellview`/`test_untitled_reuse`/`test_descend_untitled_preserve`/
+`test_fluid_editing`/`test_verb_noun_copy_move`, `test_selflog_output`'s transform-KEY checks).
+ALL fourteen sibling `test_perform_action_*` + `test_selflog_grep_guard` +
+`test_actionlog_suppress_gate` + `test_toggle_editmode_log` are GREEN on AFTER. **ZERO new
+deterministic failures.**
+
+**Adversarial review (6-axis refute panel + completeness critic, Workflow/ultracode, against a
+FROZEN atom-14 snapshot).** All six axes returned CLEAN (0 defects): (1) the fast-flag gate —
+`argc<=4 || strcmp(argv[4],"fast")` is the EXACT negation of `run_core`'s `fast` test, both
+reading the same untouched original `argc`, `argv[4]` short-circuit-safe, so log iff `!fast` iff
+`push_undo`; (2) validation moved into `run_core` — every effect statement present and in order,
+a single `!fast`-gated `push_undo` with both gates returning before it, C89 decls hoisted, heap
+balanced; (3) referent fidelity — both `argv[2]` and `argv[3]` via `Tcl_Merge` round-trip every
+metachar, empty `argv[3]` logs `{}` and replays, the clamp drops only ignored args, and
+rename-on-success is the ACCEPTED whole-log mutable-referent model (not a new hazard); (4)
+readonly gate + dropped result + boundary unchanged — `perform_action` is ABSENT from the diff,
+the readonly-then-argc ordering mirrors the old branch, the dropped instname has no consumer;
+(5) grep-guard drift — the `(?n)...;$` anchor genuinely resolves the `reset_inst_prop`
+superstring collision (unanchored 2, anchored 1) and an `argv[2]↔argv[3]` swap fails S1/S7
+closed; (6) entry-point completeness + build/C89 + test rigor. The COMPLETENESS CRITIC raised
+ONE MINOR gap — a VERIFICATION-completeness gap, NOT a code defect: axis 6's "no caller outside
+scheduler.c" overlooked that `test_readonly_guard.tcl` (the issue-0041 regression) drives
+`xschem replace_symbol` on a read-only buffer, exercising the exact readonly path this atom
+RELOCATED; no axis cited it. Closed here: `test_readonly_guard` was re-run and stays GREEN
+(`READONLY_GUARD_TEST_PASS`, 31/31 mutating verbs refused incl. `replace_symbol`), the atom's
+own check (c) independently locks the readonly reject, and the entry map above now cites it. 0
+major/blocker, 0 code findings, 0 residual.
+
+**Next atom:** `reset_symbol`, `load_backup`, `move_instance`, `apply_properties` are all
+DISQUALIFIED (above), so the validating-verb shortlist the atom-13 note carried is now
+EXHAUSTED. The next atom needs a FRESH grep-scout for a 1:1, always-mutating,
+unconditional-log verb (re-verify from source, the atom-10 lesson) — with `log_action_argv` for
+any string referent (the arrayed-name rule) and the key/menu-equivalence check. The
+composite-hazard verbs (delete/cut/copy/save/reload) whose shared cores are called by
+abort/merge/teardown remain deferred (the §4 `delete()`-is-NOT-1:1 lesson); selection-referent
+replay (0005) remains the accepted config/selection-dependent class.
+
 *Prepared 2026-07-14, `fluid-editing`. §1–5 analysis only — no code changed. §6 added after
 atom 3 landed; §7 after atom 4; §8 after atom 5; §9 after atom 6; §10 after atom 7; §11 after
 atom 8; §12 after atom 9; §13 after atom 10; §14 after atom 11;
@@ -3130,6 +3315,14 @@ itself CHANGED to LOG-ON-SUCCESS: log + success-only Tcl_ResetResult fire only o
 VALIDATING-verb class (early TCL_ERROR before mutating) no longer phantom-logs a rejected call; reset_inst_prop
 is the first beneficiary, its validation moved into run_core before the single push_undo, its referent logged
 replay-safe via log_action_argv/Tcl_Merge after an adversarial review caught the raw-%s arrayed-name gap; the
-no-op-still-logs property is preserved because a no-op returns TCL_OK).
+no-op-still-logs property is preserved because a no-op returns TCL_OK); §34 after the FOURTEENTH
+(replace_symbol — the SECOND VALIDATING verb, and the FIRST per-verb migration to carry a FAST-FLAG
+log gate; a PLAIN migration onto the UNCHANGED atom-13 log-on-success boundary that touches NO shared
+machinery: run_core MOVES the fast parse + argc!=4 / "instance not found" validation IN before its
+single !fast-gated push_undo, core_log_action logs the two-referent `xschem replace_symbol <inst>
+<sym>` via log_action_argv/Tcl_Merge gated on !fast — the fast multi-substitution machinery sub-mode
+skips both undo and log; a PURE SCRIPTED verb with no key/menu/other caller, purely additive coverage;
+the five validating-verb shortlist is now EXHAUSTED — reset_symbol/load_backup/move_instance/
+apply_properties are DISQUALIFIED, so the next atom needs a fresh grep-scout).
 Coverage verified in source at HEAD by a 14-way parallel read; do not trust the status table
 without re-checking the cited `file:line` anchors, which drift as the tree moves.*
