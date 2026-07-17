@@ -561,14 +561,36 @@ static int run_core(const char *verb, int argc, const char *argv[])
     /* draw(); -- replace_symbol relies on the caller to redraw (old branch behaviour) */
     return TCL_OK;
   }
+  else if(!strcmp(verb, "show_unconnected_pins")) {
+    /* Refactor B atom 15: a BARE no-arg verb like floaters (atom 10) / toggle_ignore
+     * (atom 12) -- run_core takes no argc/argv and the log falls to core_log_action's
+     * DEFAULT `xschem %s` form (NO per-verb branch). It is the friction-free verb from
+     * the fresh atom-15 fan-out scout (the atom-14 validating shortlist was EXHAUSTED):
+     * always-mutating, 1:1, unconditional-log, no key. The effect selects every
+     * instance and places a lab_show.sym label on each UNCONNECTED pin. It is the
+     * SECOND verb to share the attach_labels_to_inst() core after atom 11: its core
+     * show_unconnected_pins() (netlist.c) calls attach_labels_to_inst(2) RAW, which
+     * OWNS the undo (place_symbol pushes it once via to_push_undo on the first placed
+     * label), set_modify(1) and draw() -- so there is NO push_undo()/draw() here;
+     * adding one would DOUBLE-push (the atom-1 no-double-push rule). That raw
+     * attach_labels_to_inst(2) call stays SILENT below the boundary (its log lives in
+     * core_log_action under the `attach_labels` verb, NOT inside the C fn -- the
+     * atom-11 shared-sub-step lock), so routing show_unconnected_pins double-logs
+     * NOTHING with the attach_labels verb. A no-unconnected-pins sheet is a harmless
+     * no-op (attach_labels_to_inst places nothing, no push_undo, no set_modify) but the
+     * boundary STILL logs one line unconditionally (the floaters no-op-still-logs
+     * property, §30). */
+    show_unconnected_pins();
+    return TCL_OK;
+  }
   return TCL_ERROR; /* unreachable: perform_action is only wired for the verbs above */
 }
 
 /* core_log_action -- the per-verb LOG-FORM half of the perform_action boundary (audit §4,
  * Refactor A step-2 "log at the core" registry SEED, introduced by atom 6). Formats the ONE
  * self-log line for a migrated verb. The bare no-arg verbs (trim_wires/align/rotate_in_place/
- * flip_in_place/flipv_in_place/floaters_from_selected_inst/toggle_ignore) emit `xschem <verb>` byte-identically to the
- * pre-atom-6 `log_action("xschem %s", verb)`; the arg-carrying pivot verbs rotate (atom 6), flip (atom 7) and
+ * flip_in_place/flipv_in_place/floaters_from_selected_inst/toggle_ignore/show_unconnected_pins) emit `xschem <verb>`
+ * byte-identically to the pre-atom-6 `log_action("xschem %s", verb)`; the arg-carrying pivot verbs rotate (atom 6), flip (atom 7) and
  * flipv (atom 8) emit their pivot form `xschem rotate|flip|flipv <x0> <y0>`. The pivot is resolved
  * from argv[2]/argv[3] (or the mouse coords as a fallback) IDENTICALLY to run_core's rotate/flip/flipv
  * arm -- and run_core,
@@ -10017,13 +10039,18 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
         log_action_argv(argc, (const char *const *)argv);
     }
     /* show_unconnected_pins
-     *   Add a "lab_show.sym" to all instance pins that are not connected to anything */
+     *   Add a "lab_show.sym" to all instance pins that are not connected to anything.
+     *   Refactor B atom 15: routes through the perform_action boundary. The readonly
+     *   gate (NEW -- the branch never had one, a correctness fix; the old branch let
+     *   show_unconnected_pins place labels on a read-only cell) + the effect
+     *   (show_unconnected_pins, run_core) + the ONE `xschem show_unconnected_pins`
+     *   log site (core_log_action's DEFAULT bare `xschem %s` form) all live in
+     *   perform_action. The hilight menu / command palette invoke `xschem
+     *   show_unconnected_pins` verbatim -> this branch -> the boundary, with no
+     *   separate routing. The `!xctx` guard + the Tcl_ResetResult are DROPPED (the
+     *   boundary owns both -- Tcl_ResetResult on the success path only, atom 13). */
     else if(!strcmp(argv[1], "show_unconnected_pins") )
-    {
-      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
-      show_unconnected_pins();
-      Tcl_ResetResult(interp);
-    }
+      return perform_action("show_unconnected_pins", argc, argv);
     /* simulate [callback]
      *   Run a simulation (start simulator configured as default in
      *   Tools -> Configure simulators and tools)

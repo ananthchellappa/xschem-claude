@@ -185,6 +185,20 @@
 # build line `av[0] = "xschem"; av[1] = verb; av[2] = argv[2]; av[3] = argv[3];` is a SUPERSTRING of
 # atom-13's reset_inst_prop build, so the reset_inst_prop S1/S7 referent regexes were LINE-ANCHORED
 # (`(?n)...;$`) to stay collision-proof (they end at `argv[2];`, replace_symbol continues to `argv[3];`).
+# Refactor B atom 15 (perform_action / show_unconnected_pins) is a PLAIN per-verb migration onto the
+# UNCHANGED atom-13 log-on-success boundary (NO shared-machinery change): a BARE no-arg verb like
+# floaters (atom 10) / toggle_ignore (atom 12) -- the friction-free verb from the fresh atom-15 fan-out
+# scout (the atom-14 validating shortlist was EXHAUSTED). It is the SECOND verb to share the
+# attach_labels_to_inst() core after atom 11: its core show_unconnected_pins() (netlist.c) calls
+# attach_labels_to_inst(2) RAW, which OWNS the undo/set_modify/draw (no double-push) and stays SILENT
+# below the boundary (its log lives under the `attach_labels` verb in core_log_action, NOT in the C fn --
+# the atom-11 shared-sub-step lock), so routing show_unconnected_pins double-logs NOTHING with attach_labels.
+# Grep changes: (a) a NEW S1 boundary-branch row; its log is the shared bare `xschem %s` core_log_action
+# DEFAULT (NO per-verb branch, like floaters/toggle_ignore -- so NO new core_log_action S1 row, just the
+# roster note on the `%s` row); (b) show_unconnected_pins ADDED to S2 CVERBS, kept OUT of S3; (c) an S7
+# block MIRRORING floaters/toggle_ignore (scheduler.c + callback.c ZERO scattered `log_action("xschem
+# show_unconnected_pins")` + scheduler.c ZERO scattered readonly_reject -- the branch never had one; the
+# boundary ADDS the readonly gate as a correctness fix, the old branch placed labels on a read-only cell).
 # Atom 12 (0053 Cadence Ctrl-E window hop) added: the S1 focus_window emit row
 # (utils/cadence_nav.tcl) and the S6 SEAM-EXCLUSIVITY block -- `new_schematic
 # switch` (a shared core: tab-strip/alt2/window-open machinery) must be logged
@@ -238,7 +252,7 @@ set MANIFEST {
     {if\(!actionlog_suppress\) core_log_action\(verb, argc, argv\);} 1 {perform_action's ONE log site -- delegates the per-verb log FORM to core_log_action (atom 6), gated on the re-entrant suppress counter (foundation §20); now NESTED inside the atom-13 log-on-success `if(rc == TCL_OK)` block above}
     {Tcl_ResetResult\(interp\);   /\* clear on success ONLY} 1 {perform_action clears the interp result ONLY on the TCL_OK path (atom 13) -- a TCL_ERROR from a validating verb (reset_inst_prop) keeps run_core's Tcl_SetResult message, closing the C-side empty-error bug; MUST stay coupled to the log-on-success guard, never split from it}
     {static void core_log_action\(const char \*verb, int argc, const char \*argv\[\]\)} 1 {the per-verb log-form dispatcher (§4 Refactor A step-2 registry SEED, atom 6): bare verbs -> "xschem %s"; the arg-carrying pivot verbs rotate/flip/flipv -> the pivot form "xschem <verb> x0 y0" (rotate atom 6, flip atom 7, flipv atom 8)}
-    {log_action\("xschem %s", verb\);}                1 {core_log_action's BARE-verb form -- trim_wires/align/rotate_in_place/flip_in_place/flipv_in_place/floaters_from_selected_inst/toggle_ignore all self-log through here, byte-identical to the pre-atom-6 perform_action log site}
+    {log_action\("xschem %s", verb\);}                1 {core_log_action's BARE-verb form -- trim_wires/align/rotate_in_place/flip_in_place/flipv_in_place/floaters_from_selected_inst/toggle_ignore/show_unconnected_pins all self-log through here, byte-identical to the pre-atom-6 perform_action log site}
     {log_action\("xschem break_wires 1"}              1 {break_wires REMOVE form now lives in core_log_action (atom 9), NOT the scheduler branch -- exactly ONE such site in scheduler.c (S7 pins exclusivity); the literal `break_wires 1"` (space+1 before the quote) does NOT match the bare `break_wires")` form}
     {log_action\("xschem break_wires"\)}              1 {break_wires BARE form now lives in core_log_action (atom 9), NOT the scheduler branch -- exactly ONE such site in scheduler.c (S7 pins exclusivity); the `break_wires"\)` (quote then paren) does NOT match `break_wires 1"` nor break_wires_at_pins/_at_point/_at_attach_points}
     {log_action\("xschem attach_labels %}             1 {attach_labels VALUE form now lives in core_log_action (atom 11) -- `log_action("xschem attach_labels %d", atoi(argv[2]))` PRESERVES the 0/1/2 value (unlike break_wires which collapses nonzero to 1); byte-identical to the old log_action_argv for the canonical integer arg every live path emits, strictly MORE faithful for a non-canonical token (`007`->`7`); exactly ONE such site in scheduler.c (S7 pins exclusivity); the literal `attach_labels %` (space+%) does NOT match the bare `attach_labels")` form}
@@ -266,6 +280,7 @@ set MANIFEST {
     {return perform_action\("attach_labels", argc, argv\);} 1 {attach_labels branch routes through the perform_action boundary (Refactor B atom 11 -- the THIRD non-transform verb; the arg is a FLAG `interactive` (0/1/2, value PRESERVED not collapsed), not a pivot; NO mid-gesture split): run_core + core_log_action read `interactive` from argc/argv; attach_labels_to_inst() OWNS its own push_undo (via place_symbol) + set_modify + draw, so no double-push; the boundary ADDS the readonly gate this branch never had (a 0041/0051 close -- every 0/1/2 form mutates); the SHARED core is ALSO a raw netlisting sub-step (show_unconnected_pins) + the Shift+H dialog key, both off the boundary. No scattered readonly/log/push_undo here}
     {return perform_action\("toggle_ignore", argc, argv\);} 1 {toggle_ignore branch routes through the perform_action boundary (Refactor B atom 12 -- the FIRST FRICTION-FREE-SCOUTED verb, a BARE no-arg verb): run_core calls toggle_ignore() which OWNS its own push_undo (on the FIRST selected element) + set_modify + draw (no double-push); the log is the shared bare `xschem %s` core_log_action DEFAULT line (no per-verb branch); the boundary is PURELY ADDITIVE -- this branch logged NOTHING and had NO readonly gate before, so it ADDS BOTH (a 0041/0051 close). The equivalent Shift+T key routes through the SAME boundary. No scattered readonly/log/push_undo here}
     {return perform_action\("reset_inst_prop", argc, argv\);} 1 {reset_inst_prop branch routes through the perform_action boundary (Refactor B atom 13 -- the FIRST BENEFICIARY of the log-on-success change, and the FIRST VALIDATING verb): run_core MOVES the argc<3 / "instance not found" validation IN (early TCL_ERROR BEFORE its single push_undo, so a bad arg mutates nothing) and, via log-on-success, logs nothing on failure; core_log_action logs the SELF-CONTAINED `xschem reset_inst_prop <ref>` (argv[2], a name or index) on success only. The boundary ADDS the generic readonly gate (already present in the old branch, now unified); the old success-path instname interp result is dropped (no caller consumed it). No scattered readonly/log/push_undo here}
+    {return perform_action\("show_unconnected_pins", argc, argv\);} 1 {show_unconnected_pins branch routes through the perform_action boundary (Refactor B atom 15 -- the friction-free BARE no-arg verb from the fresh atom-15 fan-out scout, after the atom-14 validating shortlist was EXHAUSTED): run_core calls show_unconnected_pins() (netlist.c), whose RAW attach_labels_to_inst(2) sub-step OWNS its push_undo (via place_symbol) + set_modify + draw (no double-push) and stays SILENT below the boundary (its log lives under the `attach_labels` verb in core_log_action, NOT in the C fn -- the atom-11 shared-sub-step lock -- so show_unconnected_pins double-logs NOTHING with attach_labels); the log is the shared bare `xschem %s` core_log_action DEFAULT line (no per-verb branch). The boundary ADDS the readonly gate this branch NEVER HAD -- a correctness fix: the old branch placed lab_show labels on a read-only cell. A no-unconnected-pins sheet is a no-op but STILL logs +1 (the §30 no-op-still-logs property). No scattered readonly/log/push_undo here}
     {log_action\("xschem print_hilight_net}           1 {print_hilight_net branch}
     {log_action\("xschem exit closewindow force"}     2 {exit hook (both terminating sites)}
     {log_action\("xschem set cadgrid}                 1 {set cadgrid resolved-value}
@@ -461,7 +476,7 @@ set CVERBS {
   cut delete copy undo redo save reload saveas align trim_wires break_wires
   flip flipv rotate flip_in_place flipv_in_place rotate_in_place
   change_elem_order check_unique_names create_instance toggle_ignore
-  reset_inst_prop replace_symbol
+  reset_inst_prop replace_symbol show_unconnected_pins
   floaters_from_selected_inst print_hilight_net attach_labels add_pin_stubs
   setprop unhilight_all hilight_net_interactive unhilight_net_interactive
   make_symbol make_sch make_sch_from_sel descend descend_symbol go_back
@@ -934,6 +949,29 @@ check "S7 callback.c: NO scattered log_action(\"xschem replace_symbol\") (no key
 check "S7 scheduler.c: NO scattered scheduler_readonly_reject(...,\"replace_symbol\") (the boundary's generic gate covers the verb -- the old branch's per-verb one is GONE)" \
   [expr {[rxcount $sched {scheduler_readonly_reject\(interp, "replace_symbol"\)}] == 0}] \
   "got=[rxcount $sched {scheduler_readonly_reject\(interp, "replace_symbol"\)}]"
+# show_unconnected_pins (Refactor B atom 15 -- the friction-free BARE no-arg verb from the fresh atom-15
+# fan-out scout, like floaters/toggle_ignore): the readonly gate + the log site live SOLELY in
+# perform_action. It is BARE (no pivot, no flag), so its log is the shared `xschem %s` core_log_action
+# DEFAULT line -- there is NO per-verb `log_action("xschem show_unconnected_pins")` anywhere (contrast the
+# EXACTLY-N pivot/flag verbs rotate/flip/flipv/break_wires/attach_labels whose forms live in
+# core_log_action). So scheduler.c AND callback.c must have ZERO such literal. There is NO key entry point
+# (menu-only + command palette, both `xschem show_unconnected_pins` verbatim) -- the callback.c ZERO check
+# guards against a future key re-adding a scattered log. The branch NEVER had a scheduler_readonly_reject;
+# the boundary's generic gate now ADDS one (a correctness fix -- the old branch placed lab_show labels on a
+# read-only cell), so a re-scattered per-verb readonly_reject also fails closed. show_unconnected_pins() is
+# the SECOND caller of the shared attach_labels_to_inst() core (after atom 11): that raw call stays BELOW
+# the boundary (its log rides the `attach_labels` verb, not the C fn), so routing this verb double-logs
+# NOTHING -- the runtime .tcl case (g) locks that `xschem show_unconnected_pins` emits ZERO `xschem
+# attach_labels`. show_unconnected_pins stays in S2 CVERBS, OUT of S3.
+check "S7 scheduler.c: NO scattered log_action(\"xschem show_unconnected_pins\") (branch delegates to the boundary; the log is the shared bare %s form)" \
+  [expr {[rxcount $sched {log_action\("xschem show_unconnected_pins"}] == 0}] \
+  "got=[rxcount $sched {log_action\("xschem show_unconnected_pins"}]"
+check "S7 callback.c: NO scattered log_action(\"xschem show_unconnected_pins\") (no key entry point; guards a future re-scatter)" \
+  [expr {[rxcount $cbtext {log_action\("xschem show_unconnected_pins"}] == 0}] \
+  "got=[rxcount $cbtext {log_action\("xschem show_unconnected_pins"}]"
+check "S7 scheduler.c: NO scattered scheduler_readonly_reject(...,\"show_unconnected_pins\") (the boundary's generic gate covers the verb -- the branch never had one; the gate is a NEW correctness fix)" \
+  [expr {[rxcount $sched {scheduler_readonly_reject\(interp, "show_unconnected_pins"\)}] == 0}] \
+  "got=[rxcount $sched {scheduler_readonly_reject\(interp, "show_unconnected_pins"\)}]"
 # atom-13 NESTING COUPLING (adversarial-review finding): the S1 existence rows above pin
 # that the guard line, the log line and the reset line each EXIST, but not that log+reset are
 # INSIDE the log-on-success block. A de-nest that keeps all three lines yet closes the

@@ -3279,6 +3279,176 @@ composite-hazard verbs (delete/cut/copy/save/reload) whose shared cores are call
 abort/merge/teardown remain deferred (the §4 `delete()`-is-NOT-1:1 lesson); selection-referent
 replay (0005) remains the accepted config/selection-dependent class.
 
+## 35. Refactor B ATOM 15 (2026-07-17): the FIFTEENTH per-verb migration — a BARE no-arg friction-free verb, the SECOND to share the attach_labels_to_inst core, adding the read-only gate as a correctness fix (`show_unconnected_pins`)
+
+Atom 14 EXHAUSTED the validating-verb shortlist the atom-13 note carried
+(`reset_symbol`/`load_backup`/`move_instance`/`apply_properties` all DISQUALIFIED). **Atom 15 is a
+PLAIN per-verb migration back on the now-UNCHANGED atom-13 log-on-success boundary** — it touches NO
+shared machinery. A fresh 279-branch fan-out scout classified all 22 dispatch groups and left EXACTLY
+TWO candidates: `show_unconnected_pins` (the friction-free winner) and `embed_rawfile` (runner-up,
+DEFERRED — it carries a `~` path expansion to relocate, a STRING file-path referent needing
+`log_action_argv`/`Tcl_Merge`, and a replay-fidelity risk from re-reading an external file).
+`show_unconnected_pins` is the BARE no-arg, always-mutating, 1:1, unconditional-log verb the scout
+wanted — the same shape as `floaters_from_selected_inst` (atom 10) / `toggle_ignore` (atom 12).
+
+**The verb.** `xschem show_unconnected_pins` (the hilight-menu "Show labels on unconnected instance
+pins") selects every instance and places a `lab_show.sym` label on each pin NOT connected to a wire /
+label / other instance's pin. Its core `show_unconnected_pins()` (netlist.c:1594) is
+`select_element(all)` + `rebuild_selected_array` + `prepare_netlist_structs(1)` + `traverse_node_hash`
++ `attach_labels_to_inst(2)` + `unselect_all(1)` — the netlisting `lab_show` sub-mode of the atom-11
+core.
+
+**Migration.**
+- **Branch** (`scheduler.c` ~10021, `xschem_cmds_s`): the old inline body `{ if(!xctx){...}
+  show_unconnected_pins(); Tcl_ResetResult(interp); }` becomes `return
+  perform_action("show_unconnected_pins", argc, argv);` — dropping the `!xctx` guard and the
+  `Tcl_ResetResult` (the boundary owns both; the old branch already returned an EMPTY result, so the
+  dropped `Tcl_ResetResult` is a zero success-result delta — nothing to preserve).
+- **`run_core` arm**: a BARE arm `show_unconnected_pins(); return TCL_OK;` — NO `argc/argv`, NO
+  validation, NO `push_undo()`, NO `draw()`. The core's RAW `attach_labels_to_inst(2)` OWNS the single
+  `push_undo` (`place_symbol(..., 1/*to_push_undo*/)` on the first placed label), `set_modify(1)`
+  (actions.c:2316) and `draw()` (actions.c:2322–2326); adding one here would DOUBLE-push (the atom-1
+  no-double-push rule, locked by test (f) undo-DEPTH).
+- **`core_log_action` arm**: NONE. A bare verb falls to the DEFAULT `log_action("xschem %s", verb)`,
+  emitting `xschem show_unconnected_pins` byte-identically to `floaters`/`toggle_ignore`. NO per-verb
+  branch, NO string referent, NO `log_action_argv`.
+
+**THE SHARED-SUB-STEP LOCK — re-verified from the OTHER side (the atom-11 §31 template).**
+`attach_labels_to_inst()` is the core of the `attach_labels` verb (atom 11) AND is called RAW by
+`show_unconnected_pins()` (interactive=2). That raw call stays SILENT below the boundary — its log
+lives in `core_log_action` under the `attach_labels` verb, NOT inside the C fn — so routing
+`show_unconnected_pins` double-logs NOTHING with the `attach_labels` verb (the boundary wraps the VERB
+DISPATCH, not the C fn). Atom 11 recorded this lock from the `attach_labels` side ("its core is ALSO
+a raw sub-step of show_unconnected_pins"); atom 15 is its INVERSION — the sub-step's OWNER verb now
+also rides the boundary, and the lock still holds. Test (g) drives `xschem show_unconnected_pins`,
+asserts it MUTATES (2 labels placed) yet emits ZERO `xschem attach_labels` lines; sabotage 6 (a
+self-log inside `attach_labels_to_inst`) fails BOTH atom-15 (g) AND the `attach_labels` sibling — the
+shared core seen from both verbs.
+
+**The read-only decision — the boundary ADDS a gate the branch NEVER HAD (a CORRECTNESS FIX, the
+floaters §30 / toggle_ignore §32 template).** Verified empirically on the pre-migration binary: `xschem
+show_unconnected_pins` on a read-only cell PLACED the `lab_show` labels (`place_symbol` ran; only
+`set_modify` was read-only-suppressed) and returned `rc=0` — a scattered 0041/0051-class
+mutation-on-a-read-only-cell gap. The boundary's ONE gate now CLOSES it: the verb correctly REFUSES on
+a read-only cell (`TCL_ERROR`, verb-named message `xschem show_unconnected_pins: schematic is
+read-only …`, no placement, no log). This is the ONE deliberate user-facing behaviour delta of the
+atom — a bug fix — and it is safe precisely BECAUSE `show_unconnected_pins` has NO read-only-safe form
+(every path places labels; there is no ERC-only query the all-or-nothing gate would OVER-reject,
+contrast `check_unique_names`, §30). The WRITABLE effect + log are byte-identical to pre-migration.
+
+**THE NO-OP-STILL-LOGS PROPERTY (§30/§32).** A sheet with NO unconnected pins (a resistor whose both
+pins are covered by a wire) places NOTHING — `attach_labels_to_inst` calls no `place_symbol`, so no
+`push_undo`/`set_modify`/`draw`. But `show_unconnected_pins()` is void and `run_core` returns TCL_OK,
+so under log-on-success (atom 13) the boundary STILL emits one `xschem show_unconnected_pins` line —
+idempotent + replayable, the CORRECT behaviour. Test (b) locks it.
+
+**Entry map — menu-only, verified by grepping the LIVE repo (the atom-16 lesson).** (1) the **scheduler
+branch** → `return perform_action(...)`, reached by scripted `xschem show_unconnected_pins`, the
+**hand-written hilight menu** item (`xschem.tcl:14454` `-command "xschem show_unconnected_pins"`, NOT
+`menu_action_logged`-wrapped) and the command palette (`actions.csv:109`
+`hilight.show_labels_on_unconnected_instance_pins` runs the verb RAW). (2) there is **NO key** — absent
+from `keybindings.csv`/`mousebindings.csv`, NO `callback.c` `act_*` handler, NO legacy switch. So there
+is NO `callback.c` edit. The **Shift+H** key is `act_attach_labels` → `attach_labels_to_inst(1)` (the
+interactive-DIALOG variant), a DIFFERENT path that does NOT pass through `show_unconnected_pins` and is
+left untouched.
+
+**Grep guard (`test_selflog_grep_guard.tcl`).** ADDED: the S1 scheduler boundary-branch row (`return
+perform_action("show_unconnected_pins", argc, argv);`), `show_unconnected_pins` in the S2 CVERBS set,
+and an S7 block MIRRORING floaters/toggle_ignore (scheduler.c AND callback.c ZERO scattered
+`log_action("xschem show_unconnected_pins")` — the log is the shared `%s` default, so NO per-verb
+literal exists — plus scheduler.c ZERO scattered `scheduler_readonly_reject(...,
+"show_unconnected_pins")`, the branch never had one). NO new `core_log_action` S1 row — it uses the
+existing DEFAULT `xschem %s` row, whose roster note gained `show_unconnected_pins`. `show_unconnected_pins`
+stays IN S2 CVERBS, OUT of S3.
+
+**Effect oracle (byte-identical writable effect before/after — atom 15 MOVES the log site + ADDS the
+gate).** A `devices/res.sym` resistor at the origin has TWO pins (0,−30 & 0,30), both unconnected, so
+`xschem show_unconnected_pins` places TWO `lab_show.sym` labels (p1,p2) → **instance count 1 → 3**, a
+clean deterministic oracle determined empirically on the pre-migration binary. Undo DEPTH proves the
+single push: ONE undo removes both labels (3 → 1), a SECOND removes the instance (1 → 0) — a
+double-push would insert an identical third snapshot so R1 would SURVIVE two undos (the discriminator
+that caught sabotage 3).
+
+**Verified:** `test_perform_action_show_unconnected_pins.tcl` (24 checks, full_audit logdir_tests): (a)
++1 from EACH of scripted / synthetic dedup-wrapper drive, and the WRITABLE effect applies (instances 1 →
+3, two lab_show); (b) NO-OP STILL LOGS — a no-unconnected-pins sheet places nothing but STILL logs +1
+(catch-wrapped so a regressed TCL_ERROR arm reports a clean FAIL, the atom-13 (e) lesson); (c) readonly
+reject (the CORRECTNESS FIX) — TCL_ERROR, verb-named message, no placement, no log; (d) byte-exact
+`xschem show_unconnected_pins`; (e) replay re-executes through the suppress seam without re-logging vs a
+control unwrapped `source` that re-logs; (f) undo DEPTH (single push_undo, no double); (g) the
+SHARED-SUB-STEP LOCK — `xschem show_unconnected_pins` mutates yet emits ZERO `xschem attach_labels`
+lines; (h) the menu `-command` is `xschem show_unconnected_pins` verbatim and rides the boundary.
+**Sabotage ×6** (each rebuild-run-restore from the scratchpad backup `scheduler.c.atom15`, NOT git —
+~200 dirty files; each failing EXACTLY its checks): (1) neutralise the boundary route (inline branch
+KEEPING gate+effect+log) → the runtime `.tcl` STILL PASSES while the grep guard's S1 boundary row + S7
+scattered-log + S7 scattered-readonly-reject all fail closed (the grep guard is the load-bearing
+structural lock); (2) neutralise the boundary readonly gate → the (c) readonly checks all fail
+(mutates + logs on a read-only cell); (3) spurious `push_undo` in the run_core arm → the (f)
+second-undo depth check fails (R1 survives two undos) — the no-double-push discriminator; (4) make the
+arm return TCL_ERROR on the no-op (nothing-placed) path → the (b) no-op-still-logs check fails
+(log-on-success drops it); (5) scattered branch `log_action("xschem show_unconnected_pins")` → the (a)
+exactly-+1 checks double-log (and (b)/(c)/(e)/(h) log counts drift) + the S7 scattered-log fails
+closed; (6) a self-log inside the SHARED `attach_labels_to_inst()` core → the (g) shared-sub-step lock
+fails AND the `attach_labels` sibling's (a)/(e) fail (the atom-11 lock seen from BOTH verbs). The
+change-adjacent siblings stay green: all fourteen other `test_perform_action_*` +
+`test_selflog_grep_guard` + `test_actionlog_suppress_gate` + `test_toggle_editmode_log`, and
+ESPECIALLY `test_perform_action_attach_labels` (the SHARED core — stays green + does not double-log).
+
+**Adversarial review (8-axis refute panel + completeness critic, Workflow/ultracode, against a FROZEN
+atom-15 snapshot): verdict CLEAN, zero confirmed defects, zero refuted axes.** All 8 axes returned
+`refuted=false / severity=none`: (1) bare-verb migration correctness — the arm calls the void core,
+returns TCL_OK, uses no argc/argv, relocates no validation, drops no step; the dropped `!xctx` guard +
+`Tcl_ResetResult` are byte-identically owned by `perform_action` (same message, same reset-on-success);
+(2) push_undo ownership — exactly ONE push per invocation (`place_symbol`'s `first_call &&
+to_push_undo`), the arm + boundary add none, and the no-op keeps `first_call=1` so it pushes nothing (no
+empty snapshot), sabotage-confirmed; (3) the SHARED sub-step lock — netlist.c + `attach_labels_to_inst()`
+carry ZERO `log_action`, so the raw `attach_labels_to_inst(2)` call is silent and routing
+`show_unconnected_pins` emits exactly one line and zero `attach_labels` lines; (4) readonly gate additive
+AND correct — no read-only-safe form exists (every path reaches `place_symbol`, friction Criterion 1),
+so the all-or-nothing gate cannot over-reject (the `check_unique_names` hazard is absent), and the
+pre-migration branch genuinely lacked the gate (`place_symbol` ran on a read-only cell — the issue-0074
+family); (5) no-op-still-logs — the void core always returns TCL_OK so a zero-unconnected-pins sheet
+still logs +1, replay idempotent (a re-run finds the placed lab_show pin covering the pins, so it places
+nothing more); (6) grep-guard drift — the S1/S2/S7 rows + `%s` roster note pass and fail closed on
+realistic re-scatter, no collision with `attach_labels`/`attach_labels_to_inst` literals; (7)
+entry-point completeness — exactly TWO entry points (hilight menu + command palette), both routed, no
+key/mouse/callback bypass, the Shift+H `attach_labels` path disjoint; (8) build/C89 — the snapshot is
+byte-identical to the live source and compiles clean under `-std=c89 -pedantic -Wall -Wextra` with zero
+new warnings. The completeness critic raised ONE informational NIT (not a code defect): check (a)'s
+comment called the SYNTHETIC `menu_action_logged` drive "the menu wrapper" path, contradicting check (h)
+which correctly notes the real hilight menu is a hand-written raw `-command` (not
+`menu_action_logged`-wrapped); FIXED before commit by rewording the comment to describe the drive as a
+synthetic dedup-wrapper exercise. 0 blocking, 0 code findings, 0 residual.
+
+**Full-audit baseline diff (behind the one-button approval gate).** AFTER (atom-15 binary: 167 pass /
+15 fail / 0 crash / 0 skip, total 182) vs BASELINE (`scheduler.c` reverted to HEAD 5e7469af, rebuilt:
+163 pass / 18 fail / 1 crash/timeout / 0 skip). The load-bearing signal is CLEAN: the load-bearing
+BASELINE-only fails are PRECISELY the two atom-15 tests — `test_perform_action_show_unconnected_pins`
+(its +1-log / effect / readonly-reject / no-op checks fail when the migration is absent — the old
+branch never logged and PLACED labels on a read-only cell) and `test_selflog_grep_guard` (the atom-15
+S1/S7 rows scan for `scheduler.c` code absent on the reverted source) — proving both load-bearing (they
+PASS on atom-15). Two OTHER BASELINE-only fails (`test_action_log_libmgr` FAIL + `test_actionlog_suppress_gate`
+TIMEOUT) are WSLg-congestion flakes from the BASELINE run (which ran SECOND, back-to-back after the
+AFTER GUI batch) — NEITHER is touched by atom 15 (it only edits `scheduler.c`'s `show_unconnected_pins`
+arms) and BOTH were re-verified to PASS STANDALONE on the atom-15 binary. There are ZERO AFTER-only
+fails. Everything else is the COMMON pre-existing set (the cadence pair
+test_cadence_descend_newwin_ro/test_cadence_drag, the GUI set
+test_ciw/test_hi_descend/test_lib_manager_gui/test_reopen_readonly,
+test_lib_sweep/test_phase3_mints/test_wire_split/test_select_at/test_save_as_cellview/
+test_descend_untitled_preserve/test_untitled_reuse/test_fluid_editing, and test_selflog_output's
+transform-KEY checks). ALL fifteen sibling `test_perform_action_*` + `test_selflog_grep_guard` +
+`test_actionlog_suppress_gate` + `test_toggle_editmode_log` are GREEN on AFTER. **ZERO new deterministic
+failures.**
+
+**Next atom:** `embed_rawfile` is the DEFERRED runner-up — its three wrinkles (the `~` path expansion
+to relocate, the STRING file-path referent needing `log_action_argv`/`Tcl_Merge`, the external-file
+replay-fidelity risk) make it a richer atom than a bare move. The atom-15 scout left EXACTLY TWO
+candidates, so beyond `embed_rawfile` the next atom needs ANOTHER fresh grep-scout for a 1:1,
+always-mutating, unconditional-log verb (re-verify from source, the atom-10 lesson). The
+composite-hazard verbs (delete/cut/copy/save/reload) whose shared cores are called by
+abort/merge/teardown remain deferred (the §4 `delete()`-is-NOT-1:1 lesson); selection-referent replay
+(0005) remains the accepted config/selection-dependent class.
+
 *Prepared 2026-07-14, `fluid-editing`. §1–5 analysis only — no code changed. §6 added after
 atom 3 landed; §7 after atom 4; §8 after atom 5; §9 after atom 6; §10 after atom 7; §11 after
 atom 8; §12 after atom 9; §13 after atom 10; §14 after atom 11;
@@ -3323,6 +3493,16 @@ single !fast-gated push_undo, core_log_action logs the two-referent `xschem repl
 <sym>` via log_action_argv/Tcl_Merge gated on !fast — the fast multi-substitution machinery sub-mode
 skips both undo and log; a PURE SCRIPTED verb with no key/menu/other caller, purely additive coverage;
 the five validating-verb shortlist is now EXHAUSTED — reset_symbol/load_backup/move_instance/
-apply_properties are DISQUALIFIED, so the next atom needs a fresh grep-scout).
+apply_properties are DISQUALIFIED, so the next atom needs a fresh grep-scout); §35 after the FIFTEENTH
+(show_unconnected_pins — a BARE no-arg friction-free verb from a fresh 279-branch scout, the same shape
+as floaters/toggle_ignore; a PLAIN migration onto the UNCHANGED atom-13 log-on-success boundary that
+touches NO shared machinery: run_core is a bare `show_unconnected_pins(); return TCL_OK;` and the log
+falls to core_log_action's DEFAULT `xschem %s`; it is the SECOND verb to share the attach_labels_to_inst
+core after atom 11 — the raw attach_labels_to_inst(2) sub-step stays SILENT below the boundary so it
+double-logs NOTHING with attach_labels (the §31 lock, INVERTED); the boundary ADDS the read-only gate
+the branch NEVER HAD as a CORRECTNESS FIX — the old branch placed lab_show labels on a read-only cell;
+menu-only (no key, no callback.c edit; the Shift+H attach_labels dialog path is disjoint); the
+no-op-still-logs property preserved; the scout left EXACTLY TWO candidates so beyond the DEFERRED runner-up
+embed_rawfile the next atom needs another fresh grep-scout).
 Coverage verified in source at HEAD by a 14-way parallel read; do not trust the status table
 without re-checking the cited `file:line` anchors, which drift as the tree moves.*

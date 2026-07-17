@@ -51,7 +51,8 @@ logdir_tests=" test_ciw test_ciw_autocomplete test_ciw_puts_capture test_hi_desc
   test_perform_action_rotate test_perform_action_flip test_perform_action_flipv \
   test_perform_action_break_wires test_perform_action_floaters_from_selected_inst \
   test_perform_action_attach_labels test_perform_action_toggle_ignore \
-  test_perform_action_reset_inst_prop test_perform_action_replace_symbol "
+  test_perform_action_reset_inst_prop test_perform_action_replace_symbol \
+  test_perform_action_show_unconnected_pins "
 # Tests that must run true-headless (no X needed) -> --nogui
 # (test_make_symbol_dialog is designed for --nogui: under X its has_x-gated
 # open-in-new-window step runs, and the second make_symbol_dialog on the same
