@@ -397,6 +397,13 @@ set MANIFEST {
     {my_strdup\(_ALLOC_ID_, &xctx->inst\[inst\].name, argv\[3\]\);} 1 {reset_symbol's SOLE EFFECT lives in run_core (atom 22): swap the instance's symbol reference from argv[3]. NO push_undo/set_modify precede or follow it in the arm -- the load-bearing no-undo/no-set_modify divergence (fix_symbols owns the single undo bracket). Exactly ONE such statement in scheduler.c; a regression that re-added push_undo here would shatter fix_symbols' batch (caught by the test's single-Ctrl-Z check)}
     {(?n)rs\[0\] = "xschem"; rs\[1\] = verb; rs\[2\] = argv\[2\]; rs\[3\] = argv\[3\];$} 1 {reset_symbol SELF-CONTAINED two-referent build lives in core_log_action (atom 22): BOTH the instance referent argv[2] AND the symref argv[3] are emitted via log_action_argv (Tcl_Merge), NOT a raw %s -- either can carry Tcl metacharacters (an arrayed name x2[3:0], a path with a space/bracket), so both brace-quote and REPLAY (the atom-13 issue-0048 lesson). The array is named `rs` (NOT av/ev/pp/mi/im -- the §36 collision lesson) so this build stays TEXTUALLY DISTINCT from every sibling; a shared name would make each verb's count == 2, breaking the exclusivity rows. Reached ONLY on TCL_OK (log-on-success), so a failed validation logs nothing}
     {log_action_argv\(4, rs\);} 1 {reset_symbol's Tcl_Merge emit (atom 22): log_action_argv brace-quotes the two referents minimally, so a plain refdes+path (R1 devices/res.sym) logs byte-identically to `xschem reset_symbol R1 devices/res.sym` while an arrayed name logs `xschem reset_symbol {x2[3:0]} devices/res.sym`. Exactly ONE such `(4, rs)` site in scheduler.c (S7 pins exclusivity); the `rs` array name keeps it distinct from replace_symbol's `(4, av)` and apply_pin_prop's `(4, pp)`}
+    {if\(argc > 3\) return perform_action\("instance_number", argc, argv\);} 1 {instance_number MUTATE form routes through the perform_action boundary (Refactor B atom 23 -- a QUERY/MUTATE SPLIT, the image §40 template): ONLY the argc>3 MUTATE tail delegates. The read-only-SAFE QUERY form (argc==3, a pure array-position read-back) stays RAW in the branch IN FRONT of the boundary -- routing it through perform_action would let the unconditional readonly gate OVER-REJECT it on a read-only cell AND let the success-path Tcl_ResetResult WIPE the position result callers (idx) consume. The verb owns NO push_undo/set_modify -- the shared change_elem_order() core (editprop.c) brackets the mutate; that raw sub-step stays SILENT below the boundary (the atom-11 shared-sub-step lock). No scattered readonly/log/push_undo here}
+    {Tcl_SetResult\(interp, "xschem instance_number 1 additional argument", TCL_STATIC\);} 2 {instance_number's argc<3 gate appears at BOTH boundary sites (atom 23): the branch raw-front (guards the read-only-safe QUERY) AND run_core (defensive re-assert -- an early TCL_ERROR before any mutation; keeps the branch message in parity). NOT a log_action, so it does not perturb the raw-log count. Removing EITHER site drops this below 2 -> fails closed}
+    {Tcl_SetResult\(interp, "xschem instance_number: instance not found", TCL_STATIC\);} 2 {instance_number's get_instance gate appears at BOTH boundary sites (atom 23): the branch (resolves the QUERY position + rejects a bad MUTATE before delegating) AND run_core (resolves `i` for select_element + rejects before the effect). NOT a log_action. Removing EITHER site drops this below 2 -> fails closed}
+    {Tcl_SetResult\(interp, "xschem instance_number: invalid order \(need n >= 0\)", TCL_STATIC\);} 1 {instance_number's n>=0 REPLAY-SAFETY gate lives in run_core (atom 23): a negative n would drive the shared change_elem_order() core into its interactive input_line DIALOG, and -- since the mutate is now LOGGED -- a `xschem instance_number <inst> <neg>` line would replay straight into a headless WEDGE. instance_number is a PURE SCRIPTED verb (no interactive entry, unlike change_elem_order's Shift-S -1 form), so n<0 is REJECTED with an early TCL_ERROR before any mutation (via log-on-success it mutates nothing and logs nothing), keeping every logged line dialog-free + faithfully replayable. NOT a log_action. Exactly ONE such statement in scheduler.c. This is a DELIBERATE divergence from change_elem_order's `n >= 0 || n == -1` gate -- change_elem_order allows -1 because it HAS an interactive form}
+    {change_elem_order\(atoi\(argv\[3\]\)\);} 1 {instance_number's SHARED-SUB-STEP call lives in run_core (atom 23): it reorders the just-selected instance by calling change_elem_order() RAW -- the SAME core on the boundary under the `change_elem_order` verb, but a raw sub-step MUST stay SILENT (it self-logs NOTHING; instance_number logs its own `instance_number` line). change_elem_order() OWNS its push_undo (called on the mutate path) + set_modify(1) (the set_modify gated on `modified`), so the arm adds NEITHER (a double-push would regress undo granularity -- the atom-1 no-double-push rule). UNIQUE to instance_number (change_elem_order's own arm calls change_elem_order(n), NOT atoi(argv[3])); exactly ONE semicolon-anchored call in scheduler.c (the comment mention has no `;`). A regression that made this raw sub-step self-log a `change_elem_order` line is caught by the S7 change_elem_order-unperturbed guard + the runtime test (h)}
+    {(?n)ino\[0\] = "xschem"; ino\[1\] = verb; ino\[2\] = argv\[2\]; ino\[3\] = argv\[3\];$} 1 {instance_number SELF-CONTAINED two-referent build lives in core_log_action (atom 23): BOTH the instance referent argv[2] AND the target position argv[3] are emitted via log_action_argv (Tcl_Merge), NOT a raw %s -- an arrayed name (x2[3:0]) would replay `[3:0]` as a command substitution (the atom-13 issue-0048 lesson); n is a bareword integer Tcl_Merge logs unbraced. The array is named `ino` (av/ev/pp/mi/im/rs -- and replace_symbol's av[3] -- all taken, the §36 collision lesson) so this build stays TEXTUALLY DISTINCT from every sibling. NO had_sel gate (unlike change_elem_order §41): the mutate is SELF-CONTAINED (run_core re-selects argv[2] itself), so the log is UNCONDITIONAL on success (no ambient-selection/0005 dependence). Reached ONLY on TCL_OK (log-on-success), so a failed validation logs nothing}
+    {log_action_argv\(4, ino\);} 1 {instance_number's Tcl_Merge emit (atom 23): log_action_argv brace-quotes the two referents minimally, so a plain refdes+n (R1 3) logs byte-identically to `xschem instance_number R1 3` while an arrayed name logs `xschem instance_number {x2[3:0]} 3`. Exactly ONE such `(4, ino)` site in scheduler.c (S7 pins exclusivity); the `ino` array name keeps it distinct from replace_symbol's (4, av), apply_pin_prop's (4, pp), and reset_symbol's (4, rs)}
     {log_action\("xschem print_hilight_net}           1 {print_hilight_net branch}
     {log_action\("xschem exit closewindow force"}     2 {exit hook (both terminating sites)}
     {log_action\("xschem set cadgrid}                 1 {set cadgrid resolved-value}
@@ -593,7 +600,7 @@ set CVERBS {
   flip flipv rotate flip_in_place flipv_in_place rotate_in_place
   change_elem_order check_unique_names create_instance toggle_ignore
   reset_inst_prop replace_symbol show_unconnected_pins embed_rawfile wire_cut apply_pin_prop
-  move_instance image reset_symbol
+  move_instance image reset_symbol instance_number
   floaters_from_selected_inst print_hilight_net attach_labels add_pin_stubs
   setprop unhilight_all hilight_net_interactive unhilight_net_interactive
   make_symbol make_sch make_sch_from_sel descend descend_symbol go_back
@@ -1443,6 +1450,96 @@ check "S7 (image unperturbed) scheduler.c: still EXACTLY ONE im heap-decl + (arg
   [expr {[rxcount $sched {const char \*\*im = my_malloc}] == 1 &&
          [rxcount $sched {log_action_argv\(argc, im\);}] == 1}] \
   "decl=[rxcount $sched {const char \*\*im = my_malloc}] emit=[rxcount $sched {log_action_argv\(argc, im\);}]"
+# instance_number (Refactor B atom 23 -- the TWENTY-THIRD per-verb migration, an ADDITIVE-LOG
+# QUERY/MUTATE SPLIT: the pre-migration MUTATE branch had NO self-log and NO readonly gate, so the
+# boundary ADDS both -- a replay line AND the C-level read-only gate that closes a LATENT
+# reorder-on-read-only bug). A three-way synthesis: the image §40 query/mutate split (ONLY the
+# argc>3 MUTATE crosses; the read-only-safe QUERY stays RAW in front of the boundary), the
+# reset_symbol §42 two-referent Tcl_Merge log (a collision-distinct array `ino`, both referents
+# brace-quoted), and the change_elem_order §41 SHARED-SUB-STEP LOCK (the MUTATE calls
+# change_elem_order() RAW -- the SAME core already on the boundary under the `change_elem_order`
+# verb -- which OWNS its push_undo + set_modify; that raw sub-step stays SILENT below the boundary,
+# and instance_number logs its OWN `instance_number` line, never a `change_elem_order` line). So
+# core_log_action holds EXACTLY ONE `log_action_argv(4, ino)` built from the line-anchored
+# `ino[...] = argv[3];` build (UNIQUE to instance_number -- no other verb uses `ino`); scheduler.c
+# must have EXACTLY that ONE -- the scheduler BRANCH delegates via `if(argc>3) return perform_action`
+# (carrying none), and callback.c ZERO (a PURE SCRIPTED verb -- no key/menu/palette/callback entry).
+# The verb logged NOTHING before atom 23, so a scattered raw `log_action("xschem instance_number"`
+# must NOT appear (the replay-unsafe %s form -- Tcl_Merge is the only emit). The branch NEVER HAD a
+# scheduler_readonly_reject; the boundary's generic gate now ADDS one (a CORRECTNESS FIX), so a
+# re-scattered per-verb readonly_reject also fails closed. THE CRITICAL SHARED-SUB-STEP GUARD: the raw
+# change_elem_order(atoi(argv[3])) sub-step must NOT self-log a `change_elem_order` line -- the shared
+# change_elem_order log form `log_action("xschem change_elem_order %d")` must STAY == 1 (only
+# change_elem_order's OWN arm, atom 21), UNPERTURBED by instance_number's raw call (a double there is
+# the atom-11 shared-sub-step regression, also caught by the runtime test (h)). instance_number stays
+# in S2 CVERBS (a scripted/replayed `xschem instance_number <inst> <n>` re-executes AND self-logs) and
+# OUT of S3 (its log lives in the boundary). The QUERY form is NOT in S3 either -- it logs nothing.
+check "S7 scheduler.c: EXACTLY ONE instance_number MUTATE-form boundary delegation (if(argc > 3) return perform_action) -- the QUERY form stays raw in front, only the mutate crosses" \
+  [expr {[rxcount $sched {if\(argc > 3\) return perform_action\("instance_number", argc, argv\);}] == 1}] \
+  "got=[rxcount $sched {if\(argc > 3\) return perform_action\("instance_number", argc, argv\);}]"
+check "S7 scheduler.c: EXACTLY ONE instance_number two-referent build (line-anchored ino\[0\]=xschem; ino\[1\]=verb; ino\[2\]=argv\[2\]; ino\[3\]=argv\[3\]) -- the core_log_action Tcl_Merge site; `ino` (not av/pp/rs) keeps it distinct from replace_symbol's av\[3\], apply_pin_prop's pp\[3\], reset_symbol's rs\[3\]" \
+  [expr {[rxcount $sched {(?n)ino\[0\] = "xschem"; ino\[1\] = verb; ino\[2\] = argv\[2\]; ino\[3\] = argv\[3\];$}] == 1}] \
+  "got=[rxcount $sched {(?n)ino\[0\] = "xschem"; ino\[1\] = verb; ino\[2\] = argv\[2\]; ino\[3\] = argv\[3\];$}]"
+check "S7 scheduler.c: EXACTLY ONE instance_number log_action_argv(4, ino) emit (distinct from replace_symbol's (4, av), apply_pin_prop's (4, pp), reset_symbol's (4, rs) by the `ino` array name)" \
+  [expr {[rxcount $sched {log_action_argv\(4, ino\);}] == 1}] \
+  "got=[rxcount $sched {log_action_argv\(4, ino\);}]"
+check "S7 scheduler.c: EXACTLY ONE instance_number shared-sub-step call (change_elem_order(atoi(argv\[3\]));) -- the raw core call, UNIQUE to instance_number (change_elem_order's own arm calls change_elem_order(n)); semicolon-anchored so the comment mention does not count" \
+  [expr {[rxcount $sched {change_elem_order\(atoi\(argv\[3\]\)\);}] == 1}] \
+  "got=[rxcount $sched {change_elem_order\(atoi\(argv\[3\]\)\);}]"
+check "S7 scheduler.c: EXACTLY ONE instance_number n>=0 replay-safety gate (Tcl_SetResult .. \"invalid order (need n >= 0)\") -- rejects the n<0 dialog path so no logged line can wedge headless replay; a DELIBERATE divergence from change_elem_order's n==-1 allowance (that verb has an interactive form; instance_number does not)" \
+  [expr {[rxcount $sched {Tcl_SetResult\(interp, "xschem instance_number: invalid order \(need n >= 0\)", TCL_STATIC\);}] == 1}] \
+  "got=[rxcount $sched {Tcl_SetResult\(interp, "xschem instance_number: invalid order \(need n >= 0\)", TCL_STATIC\);}]"
+check "S7 scheduler.c: NO scattered raw log_action(\"xschem instance_number\") (the replay-unsafe %s form must not reappear -- Tcl_Merge is the only emit; the verb logged NOTHING before atom 23)" \
+  [expr {[rxcount $sched {log_action\("xschem instance_number}] == 0}] \
+  "got=[rxcount $sched {log_action\("xschem instance_number}]"
+check "S7 callback.c: NO scattered log_action(\"xschem instance_number\") (no key entry point -- a pure scripted verb; guards a future re-scatter)" \
+  [expr {[rxcount $cbtext {log_action\("xschem instance_number}] == 0}] \
+  "got=[rxcount $cbtext {log_action\("xschem instance_number}]"
+check "S7 scheduler.c: NO scattered scheduler_readonly_reject(...,\"instance_number\") (the boundary's generic gate covers the MUTATE -- the branch never had one; the gate is a NEW correctness fix; the QUERY form is deliberately NOT readonly-gated)" \
+  [expr {[rxcount $sched {scheduler_readonly_reject\(interp, "instance_number"\)}] == 0}] \
+  "got=[rxcount $sched {scheduler_readonly_reject\(interp, "instance_number"\)}]"
+# THE CRITICAL SHARED-SUB-STEP GUARD (the load-bearing atom-11/atom-21 lock): instance_number's raw
+# change_elem_order(atoi(argv[3])) sub-step must NOT introduce a SECOND change_elem_order self-log --
+# the shared change_elem_order log form stays SOLELY in change_elem_order's own core_log_action arm.
+check "S7 (change_elem_order UNPERTURBED) scheduler.c: still EXACTLY ONE log_action(\"xschem change_elem_order %\") -- instance_number's raw sub-step added NO second change_elem_order log line (the shared-sub-step lock)" \
+  [expr {[rxcount $sched {log_action\("xschem change_elem_order %}] == 1}] \
+  "got=[rxcount $sched {log_action\("xschem change_elem_order %}]"
+check "S7 (change_elem_order UNPERTURBED) scheduler.c: still EXACTLY ONE log_action(\"xschem change_elem_order\") in TOTAL (instance_number logs its OWN line, NOT a change_elem_order one)" \
+  [expr {[rxcount $sched {log_action\("xschem change_elem_order}] == 1}] \
+  "got=[rxcount $sched {log_action\("xschem change_elem_order}]"
+# COLLISION GUARD: instance_number's `ino` build must NOT perturb reset_inst_prop's `av`, embed_rawfile's
+# `ev`, replace_symbol's `av[3]`, apply_pin_prop's `pp`, move_instance's `mi`, image's `im`, or
+# reset_symbol's `rs` Tcl_Merge sites. Re-assert each stays EXACTLY ONE -- a regression that renamed
+# instance_number's array to av/ev/pp/mi/im/rs would make these == 2, failing closed here.
+check "S7 (reset_inst_prop unperturbed) scheduler.c: still EXACTLY ONE av-build + (3, av) (instance_number's ino name did not collide)" \
+  [expr {[rxcount $sched {(?n)av\[0\] = "xschem"; av\[1\] = verb; av\[2\] = argv\[2\];$}] == 1 &&
+         [rxcount $sched {log_action_argv\(3, av\);}] == 1}] \
+  "build=[rxcount $sched {(?n)av\[0\] = "xschem"; av\[1\] = verb; av\[2\] = argv\[2\];$}] emit=[rxcount $sched {log_action_argv\(3, av\);}]"
+check "S7 (embed_rawfile unperturbed) scheduler.c: still EXACTLY ONE ev-build + (3, ev) (instance_number's ino name did not collide)" \
+  [expr {[rxcount $sched {(?n)ev\[0\] = "xschem"; ev\[1\] = verb; ev\[2\] = argv\[2\];$}] == 1 &&
+         [rxcount $sched {log_action_argv\(3, ev\);}] == 1}] \
+  "build=[rxcount $sched {(?n)ev\[0\] = "xschem"; ev\[1\] = verb; ev\[2\] = argv\[2\];$}] emit=[rxcount $sched {log_action_argv\(3, ev\);}]"
+check "S7 (replace_symbol unperturbed) scheduler.c: still EXACTLY ONE av\[3\]-build + (4, av) (instance_number's ino name did not collide)" \
+  [expr {[rxcount $sched {av\[3\] = argv\[3\];}] == 1 &&
+         [rxcount $sched {log_action_argv\(4, av\);}] == 1}] \
+  "build=[rxcount $sched {av\[3\] = argv\[3\];}] emit=[rxcount $sched {log_action_argv\(4, av\);}]"
+check "S7 (apply_pin_prop unperturbed) scheduler.c: still EXACTLY ONE pp\[3\]-build + (4, pp) + (3, pp) (instance_number's ino name did not collide)" \
+  [expr {[rxcount $sched {pp\[3\] = argv\[3\];}] == 1 &&
+         [rxcount $sched {log_action_argv\(4, pp\);}] == 1 &&
+         [rxcount $sched {log_action_argv\(3, pp\);}] == 1}] \
+  "build=[rxcount $sched {pp\[3\] = argv\[3\];}] emit4=[rxcount $sched {log_action_argv\(4, pp\);}] emit3=[rxcount $sched {log_action_argv\(3, pp\);}]"
+check "S7 (move_instance unperturbed) scheduler.c: still EXACTLY ONE mi\[9\]-decl + (k, mi) (instance_number's ino name did not collide)" \
+  [expr {[rxcount $sched {const char \*mi\[9\];}] == 1 &&
+         [rxcount $sched {log_action_argv\(k, mi\);}] == 1}] \
+  "decl=[rxcount $sched {const char \*mi\[9\];}] emit=[rxcount $sched {log_action_argv\(k, mi\);}]"
+check "S7 (image unperturbed) scheduler.c: still EXACTLY ONE im heap-decl + (argc, im) (instance_number's ino name did not collide)" \
+  [expr {[rxcount $sched {const char \*\*im = my_malloc}] == 1 &&
+         [rxcount $sched {log_action_argv\(argc, im\);}] == 1}] \
+  "decl=[rxcount $sched {const char \*\*im = my_malloc}] emit=[rxcount $sched {log_action_argv\(argc, im\);}]"
+check "S7 (reset_symbol unperturbed) scheduler.c: still EXACTLY ONE rs\[3\]-build + (4, rs) (instance_number's ino name did not collide)" \
+  [expr {[rxcount $sched {rs\[3\] = argv\[3\];}] == 1 &&
+         [rxcount $sched {log_action_argv\(4, rs\);}] == 1}] \
+  "build=[rxcount $sched {rs\[3\] = argv\[3\];}] emit=[rxcount $sched {log_action_argv\(4, rs\);}]"
 # atom-13 NESTING COUPLING (adversarial-review finding): the S1 existence rows above pin
 # that the guard line, the log line and the reset line each EXIST, but not that log+reset are
 # INSIDE the log-on-success block. A de-nest that keeps all three lines yet closes the

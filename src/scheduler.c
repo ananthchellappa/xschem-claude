@@ -899,6 +899,59 @@ static int run_core(const char *verb, int argc, const char *argv[])
     change_elem_order(n);
     return TCL_OK;
   }
+  else if(!strcmp(verb, "instance_number")) {
+    /* Refactor B atom 23 (audit §43): the MUTATE half of `xschem instance_number <inst> <n>`
+     * -- reorders the SELECTED instance's z-order (array position) to n. The QUERY form
+     * (argc==3, a read-only-safe position read-back) does NOT reach here: the scheduler branch
+     * keeps it RAW IN FRONT of the boundary (the image §40 query/mutate split), so run_core is
+     * entered ONLY via the branch's `if(argc>3)` delegation -- argc is therefore always >3 and
+     * argv[3] is always present. The two gates re-assert defensively BEFORE any mutation (an
+     * early TCL_ERROR -- and the argc<3 gate keeps the query branch's message in parity): argc<3
+     * -> "1 additional argument", get_instance(argv[2])<0 -> "instance not found". The effect is
+     * SELF-CONTAINED -- it unselect_all + select_element(argv[2]) itself, so its replay does NOT
+     * depend on the ambient selection (no had_sel/0005 dependence, unlike change_elem_order).
+     * *** NO push_undo and NO set_modify here: the shared change_elem_order() core (editprop.c)
+     * OWNS both -- it calls push_undo() on the mutate path (before setting its local `modified`)
+     * and set_modify(1) at the end (that set_modify gated on `modified`) -- so adding either here
+     * would DOUBLE-push (the atom-1 no-double-push rule, the atom-21 precedent). *** The raw
+     * change_elem_order(atoi(argv[3])) sub-step stays SILENT below the boundary (the atom-11
+     * shared-sub-step lock -- it is ALSO the `change_elem_order` verb's core, but a raw sub-step
+     * call must not self-log; instance_number logs its OWN `instance_number` line, NOT a
+     * `change_elem_order` line). The branch drew, so draw() is preserved.
+     *
+     * THE n >= 0 GATE (a replay-safety divergence from change_elem_order's `n >= 0 || n == -1`
+     * gate). change_elem_order(n<0) opens the interactive "Object Sequence number" input_line
+     * DIALOG (editprop.c) -- change_elem_order's VERB allows this (n==-1 is its Shift-S interactive
+     * form, whose logged `-1` line is the accepted interactive-replay class). instance_number is a
+     * PURE SCRIPTED verb (no key/menu/interactive entry), so it must NEVER reach that dialog: a
+     * scripted verb that opened a modal would WEDGE a headless action-log replay, and -- now that
+     * the mutate is LOGGED -- a `xschem instance_number <inst> <neg>` line would replay straight
+     * into that wedge. So n<0 is REJECTED here (early TCL_ERROR before any mutation -> via
+     * log-on-success it mutates nothing and logs nothing), keeping EVERY logged instance_number
+     * line a deterministic, dialog-free, faithfully-replayable reorder (n is read with the SAME
+     * atoi as core_log_action, so the logged form can never diverge from the applied reorder;
+     * an out-of-range n>=0 is clamped in-core and replays to the same clamp -- the atom-21 value-
+     * preserving property). C89: i at block top. */
+    int i;
+    if(argc < 3) {
+      Tcl_SetResult(interp, "xschem instance_number 1 additional argument", TCL_STATIC);
+      return TCL_ERROR;
+    }
+    if((i = get_instance(argv[2])) < 0 ) {
+      Tcl_SetResult(interp, "xschem instance_number: instance not found", TCL_STATIC);
+      return TCL_ERROR;
+    }
+    if(atoi(argv[3]) < 0) {
+      Tcl_SetResult(interp, "xschem instance_number: invalid order (need n >= 0)", TCL_STATIC);
+      return TCL_ERROR;
+    }
+    unselect_all(0);
+    select_element(i, SELECTED, 1, 1);
+    rebuild_selected_array();
+    change_elem_order(atoi(argv[3]));
+    draw();
+    return TCL_OK;
+  }
   return TCL_ERROR; /* unreachable: perform_action is only wired for the verbs above */
 }
 
@@ -1185,6 +1238,27 @@ static void core_log_action(const char *verb, int argc, const char *argv[])
      * mutating step added inside change_elem_order after that entry rebuild, or between the effect and
      * this log, would break had_sel == lastsel and must re-capture the count explicitly. */
     if(xctx->lastsel) log_action("xschem change_elem_order %d", atoi(argv[2]));
+  } else if(!strcmp(verb, "instance_number")) {
+    /* atom 23: TWO referents -- the instance referent argv[2] (a name or numeric index) AND the
+     * target position n argv[3] (a bareword integer) -- read IDENTICALLY to run_core's
+     * instance_number arm, so the logged `xschem instance_number <inst> <n>` self-contained line
+     * always names exactly the instance the effect reordered and the position it moved to. BOTH
+     * are emitted via log_action_argv (Tcl_Merge), NOT a raw `%s`: the instance name can carry Tcl
+     * metacharacters (an arrayed/bussed name `x2[3:0]`), and a raw line would replay `[3:0]` as a
+     * command substitution (the atom-13 issue-0048 replay-safe lesson); n is a bareword integer
+     * that Tcl_Merge logs unbraced. Tcl_Merge quotes MINIMALLY, so a plain refdes logs
+     * byte-identically to `xschem instance_number R1 3`. The array is named `ino` (av/ev/pp/mi/im/
+     * rs + replace_symbol's av[3] all taken -- the §36 collision lesson) so its build/emit stay
+     * TEXTUALLY DISTINCT from every sibling.
+     *
+     * NO had_sel GATE (a replay ADVANTAGE over change_elem_order, atom 21): instance_number's
+     * mutate is SELF-CONTAINED -- run_core did unselect_all + select_element(argv[2]) itself, so
+     * the log is UNCONDITIONAL on success (the selection is always the one it just made, never
+     * ambient; no phantom-line/0005 class). Reached ONLY on TCL_OK (log-on-success), and only via
+     * the branch's argc>3 delegation past run_core's gates, so argv[2]/argv[3] are always present. */
+    const char *ino[4];
+    ino[0] = "xschem"; ino[1] = verb; ino[2] = argv[2]; ino[3] = argv[3];
+    log_action_argv(4, ino);
   } else {
     log_action("xschem %s", verb);
   }
@@ -5191,8 +5265,23 @@ static int xschem_cmds_i(Tcl_Interp *interp, int argc, const char *argv[], int *
     }
 
     /* instance_number inst [n]
-     *   Return the position of instance 'inst' in the instance array
-     *   If 'n' is given set indicated instance position to 'n' */
+     *   QUERY form (argc == 3): return the array position of instance 'inst'.
+     *   MUTATE form (argc  > 3): set instance 'inst' to array position 'n'.
+     *
+     *   Refactor B atom 23 (audit §43): a QUERY/MUTATE SPLIT (the image §40 template applied
+     *   to a query vs a mutation). ONLY the MUTATE form crosses the perform_action boundary --
+     *   the argc>3 tail delegates for the boundary's ONE readonly gate + the ONE self-logged
+     *   `xschem instance_number <inst> <n>` line. The read-only-SAFE QUERY form (argc==3) stays
+     *   RAW IN FRONT of the boundary: routing it through perform_action would (a) let the
+     *   boundary's unconditional readonly gate OVER-REJECT a pure position read-back on a
+     *   read-only cell, and (b) let its success-path Tcl_ResetResult WIPE the position result
+     *   that callers consume (`idx` in the tests, the z-order read-back). NOTE this verb owns
+     *   NO push_undo/set_modify -- the shared change_elem_order() core (editprop.c) brackets the
+     *   mutate (it calls push_undo() on the mutate path + set_modify(1), the latter gated on its
+     *   local `modified`); and that raw change_elem_order() sub-step stays SILENT below the
+     *   boundary (the atom-11 shared-sub-step
+     *   lock -- it logs nothing, the `instance_number` verb logs its own line). No scattered
+     *   readonly/log/push_undo remains here. */
     else if(!strcmp(argv[1], "instance_number"))
     {
       int i;
@@ -5205,15 +5294,9 @@ static int xschem_cmds_i(Tcl_Interp *interp, int argc, const char *argv[], int *
         Tcl_SetResult(interp, "xschem instance_number: instance not found", TCL_STATIC);
         return TCL_ERROR;
       }
-
-      if(argc > 3) {
-        unselect_all(0);
-        select_element(i, SELECTED, 1, 1);
-        rebuild_selected_array();
-        i = atoi(argv[3]);
-        change_elem_order(i);
-        draw();
-      }
+      /* MUTATE form: route through the boundary (readonly gate + self-log). */
+      if(argc > 3) return perform_action("instance_number", argc, argv);
+      /* QUERY form (argc == 3): read-only-safe array-position read-back, kept RAW in front. */
       Tcl_SetResult(interp, my_itoa(i), TCL_VOLATILE);
     }
 

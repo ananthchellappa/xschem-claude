@@ -4553,3 +4553,140 @@ RECOMMENDED NEXT: after reset_symbol the additive-log pool holds only `instance_
 needs the C1 query/mutate split + the shared `change_elem_order` core kept silent below the boundary + a
 new verb name) then `text` (additive-log, already gated). The §40 deferrals still stand (composite
 delete/cut/copy/save/reload; selection-referent replay is the accepted 0005 class).
+
+## 43. Refactor B ATOM 23 (2026-07-17): the TWENTY-THIRD per-verb migration — a QUERY/MUTATE SPLIT whose read-only-safe QUERY stays RAW in front, whose MUTATE calls the shared `change_elem_order` core silently, and whose two-referent log has NO had_sel gate (`instance_number`)
+
+`instance_number` was the sole remaining ADDITIVE-LOG candidate from the §42 shortlist — a **three-way
+SYNTHESIS** of already-shipped templates, not new machinery: the image §40 QUERY/MUTATE SPLIT, the
+reset_symbol §42 two-referent Tcl_Merge log, and the change_elem_order §41 shared-sub-step lock.
+
+**The verb.** `xschem instance_number <inst> [n]` has TWO forms sharing one branch:
+- **QUERY** (`argc == 3`): return the array position (z-order index) of instance `<inst>` — a pure
+  read-back, NO mutation / undo / log / readonly gate. Its result IS consumed (the `idx` proc in the
+  tests reads it; it is the z-order read-back oracle of the change_elem_order test).
+- **MUTATE** (`argc > 3`): `unselect_all + select_element(<inst>) + rebuild + change_elem_order(atoi(n)) +
+  draw` — reorder `<inst>` to array position `n`, returning the requested n (pre-migration). Its result is
+  consumed by NO caller (grep-verified: the only MUTATE callers are this suite + oracle scripts).
+
+**THE C1 FRICTION — the QUERY/MUTATE SPLIT (the image §40 template).** ONLY the MUTATE form crosses the
+boundary. The read-only-safe QUERY stays RAW in the branch IN FRONT of the boundary, for TWO reasons the
+boundary would otherwise break: (a) the boundary's ONE unconditional readonly gate would OVER-REJECT a pure
+position read-back on a read-only cell (check (b) pins TCL_OK + correct position on a read-only cell); (b)
+the success-path `Tcl_ResetResult` would WIPE the position result that `idx` consumes. So the branch keeps
+`!xctx`, the `argc<3` gate, `get_instance`, and (argc==3) the `Tcl_SetResult(my_itoa(i))` reply + return;
+ONLY `if(argc > 3) return perform_action("instance_number", argc, argv)`.
+
+**THE MUTATE-FORM RESULT (the apply_pin_prop §18 wrinkle).** The old mutate returned
+`my_itoa(atoi(argv[3]))`. NO caller consumes it (the QUERY result is what `idx` reads), so the boundary's
+success-path `Tcl_ResetResult` DROPS it (accepted, like apply_pin_prop's `0`/`1` drop). The standalone
+checks assert the EFFECT (z-order via the QUERY form), not the result.
+
+**THE SHARED-SUB-STEP LOCK (the change_elem_order §41 / attach_labels §11 template).** The MUTATE calls
+`change_elem_order()` (editprop.c) RAW — the SAME core already on the boundary under the `change_elem_order`
+verb. That core OWNS its push_undo (for n>=0 it calls `xctx->push_undo()` unconditionally) + `set_modify(1)`.
+So the run_core arm adds NEITHER (a double-push would regress undo granularity — the atom-1 no-double-push
+rule). And the raw `change_elem_order()` sub-step stays SILENT below the boundary: instance_number logs its
+OWN `instance_number` line, NOT a `change_elem_order` line. This is a load-bearing lock — sabotage 6 (make
+the sub-step self-log a change_elem_order line) is caught BOTH by the grep-guard change_elem_order-unperturbed
+S7 rows (count 2) AND the runtime test (h2).
+
+**TWO REFERENTS, both Tcl_Merge-quoted, NO had_sel gate.** core_log_action logs `xschem instance_number
+<inst> <n>` via a COLLISION-DISTINCT `const char *ino[4]` (av/ev/pp/mi/im/rs + replace_symbol's av[3] all
+taken — §36): `ino[2]=argv[2]` (instance, can be arrayed `x2[3:0]`), `ino[3]=argv[3]` (n, a bareword). Both
+via `log_action_argv`/Tcl_Merge, NOT raw `%s` — a raw `x2[3:0]` replays `[3:0]` as a command substitution
+(DEMONSTRATED by sabotage 5: `invalid command name "3:0"`). A replay ADVANTAGE over change_elem_order (§41):
+instance_number's mutate is SELF-CONTAINED — run_core does `unselect_all + select_element(argv[2])` itself,
+so replay does NOT depend on ambient selection (no had_sel/0005 dependence). Hence the log is UNCONDITIONAL
+on success — NO `if(xctx->lastsel)` gate.
+
+**THE n >= 0 GATE (a replay-safety divergence, added after the refute/critic pass).** `change_elem_order(n<0)`
+opens the interactive "Object Sequence number" input_line DIALOG. change_elem_order's VERB gates `n >= 0 ||
+n == -1` — it ALLOWS -1 because -1 is its Shift-S interactive form (whose logged `-1` line is the accepted
+interactive-replay class). instance_number is a PURE SCRIPTED verb (no key/menu/interactive entry), so it
+must NEVER reach that dialog: a scripted verb that opened a modal would WEDGE a headless action-log replay,
+and — now that the mutate is LOGGED — a `xschem instance_number <inst> <neg>` line would replay straight into
+that wedge. So the run_core arm REJECTS n<0 with an early TCL_ERROR ("invalid order (need n >= 0)"); via
+log-on-success it mutates nothing and logs nothing. This keeps EVERY logged instance_number line a
+deterministic, dialog-free, faithfully-replayable reorder — squarely the action-log refactor's core invariant.
+This is a DELIBERATE divergence from change_elem_order's `|| n == -1` allowance (that verb has an interactive
+form to preserve; this one does not).
+
+**Migration.**
+- **Scheduler branch (~5265):** rewritten to the query/mutate split above; doc-comment mirrors image's §40.
+- **`run_core` arm (~902):** re-asserts the `argc<3` + `get_instance` gates (early TCL_ERROR before any
+  mutation; the argc<3 gate keeps the branch message in parity, and — since run_core is reached ONLY via the
+  branch's `if(argc>3)` delegation — argv[3] is always present), then the `n >= 0` gate, then
+  `unselect_all(0); select_element(i,SELECTED,1,1); rebuild_selected_array(); change_elem_order(atoi(argv[3]));
+  draw();`. NO push_undo / NO set_modify — change_elem_order() owns push_undo (on the mutate path) +
+  set_modify(1) (the set_modify gated on its local `modified`). C89: `int i` at block top.
+- **`core_log_action` arm (~1222):** the `ino[4]` two-referent Tcl_Merge build, reached only on TCL_OK.
+
+**Verification.** `tests/headless/test_perform_action_instance_number.tcl` (59 checks, full_audit
+logdir_tests, self-deferring on no-logdir): (a) MUTATE success reorders (asserted via the QUERY form) +
+exactly +1 byte-exact `xschem instance_number R2 0` + interp result BLANK; (a2) QUERY on an editable cell
+returns the position + logs NOTHING; (b) QUERY on a READ-ONLY cell stays TCL_OK + correct position + no log
+(the headline of the split — NOT over-rejected); (c) MUTATE on a read-only cell REFUSED (TCL_ERROR,
+verb-named) + no reorder + no log (the NEW gate); (d) argc<3 → TCL_ERROR + no log; (d2) n<0 REJECTED
+(TCL_ERROR "invalid order", both -1 and -5) + no reorder + no log + NO dialog opened (the replay-safety
+gate); (e) instance-not-found (BOTH forms) → TCL_ERROR + no log; (f) metachar referent `x2[3:0]` round-trips
+via Tcl_Merge (brace-quoted; the exact line REPLAYS + re-applies); (g)/(g2) undo: standalone mutate SETS
+modified=1 + ONE undo reverts a single reorder, and a 3-instance / 2-mutation / 2-undo sequence returns to S0
+(the DOUBLE-PUSH detector — a single mutate+undo can't distinguish a double-push, so g2 is load-bearing);
+(h1)/(h2) the shared-sub-step lock at runtime (a `change_elem_order` verb still logs its OWN line; an
+`instance_number` mutate logs ZERO change_elem_order lines + its own `instance_number` line) + the
+SELF-CONTAINED replay round-trip (the recorded line re-applies through the suppress seam WITHOUT re-logging
+AND without a fixture re-selection; a control unwrapped `source` re-logs); (i) NUMERIC-INDEX referent
+(`instance_number 0 1`) applies + logs unbraced + replays; (j) OUT-OF-RANGE n clamps in-core while the log
+records the RAW n (value-preserving, replays to the same clamp); (k) NO-OP reorder (n == current index) still
+logs +1 + sets modified + one undo restores (consistent with the change_elem_order core). Build cairo
+(default) OK.
+**Sibling + guard PASS:** test_perform_action_change_elem_order (its (h) shared-sub-step check still green —
+instance_number now logs its own line but ZERO change_elem_order lines), test_perform_action_image,
+test_perform_action_reset_symbol, test_selflog_grep_guard (all green). **Baseline-diff CLEAN:** the pre-edit
+(HEAD atom-22, 0ddc2951) binary fails test_selflog_output with the IDENTICAL 6 transform-key-injection flakes
+(Shift-F/Alt-F/Shift-R/Alt-R/Shift-V/Alt-V — the standing nondeterministic WSLg key set; NONE reference
+instance_number), byte-identical pre/post; ZERO new deterministic fails.
+
+**grep guard (test_selflog_grep_guard.tcl):** S1 rows — the boundary branch delegation row, the run_core
+gate statements (count 2 — BOTH the raw-front query gate AND the run_core defensive re-assert; removing
+either drops below 2), the `change_elem_order(atoi(argv[3]))` sub-step, the core_log_action line-anchored
+`ino`-build + the `log_action_argv(4, ino)` emit; `instance_number` ADDED to S2 CVERBS, kept OUT of S3; an
+S7 exclusivity block (EXACTLY ONE branch delegation + ONE `ino`-build + ONE `log_action_argv(4, ino)` +
+ONE `change_elem_order(atoi(argv[3]))`, ZERO raw `log_action("xschem instance_number"` in scheduler.c AND
+callback.c, ZERO scattered `scheduler_readonly_reject(…,"instance_number")`) PLUS the CRITICAL
+change_elem_order-UNPERTURBED guard (`log_action("xschem change_elem_order %"` + the total stay == 1 — the
+raw sub-step added no second) PLUS a COLLISION GUARD re-asserting av / ev / av[3] / pp / mi / im / rs all
+stay == 1.
+
+**Sabotage ×7** (each fails EXACTLY its target; restore from `scratchpad/atom23_backup/scheduler.c.golden`,
+NOT git — ~200 dirty sibling worktrees): (1) whole verb delegates (query crosses) → SIGSEGV (the query
+argc==3 reaches run_core which reads argv[3] OOB — the raw-front split is a crash-safety fix, not just a
+readonly one); (2) add push_undo to the arm → test (g2) double-push (2 undos leave S1 not S0); (3) re-add a
+scattered `scheduler_readonly_reject` → grep S7 readonly=1; (4) drop `log_action_argv(4, ino)` → grep
+S1/S7 (ino emit count 0) AND test (a) exactly-+1; (5) raw `%s` instead of Tcl_Merge → test (f) metachar
+(logs raw `x2[3:0]`, replay errors `invalid command name "3:0"`); (6) make the raw change_elem_order(n)
+sub-step self-log → grep change_elem_order-unperturbed S7 (count 2) AND test (h2); (7) remove the `n >= 0`
+gate → test (d2) (n=-1/-5 no longer TCL_ERROR + the dialog stub fires).
+
+**Adversarial refute panel + completeness critic (Workflow, ultracode), against the frozen change.**
+Axes = query/mutate-split correctness (readonly + result-preservation) / shared-core-stays-silent /
+two-referent replay-safety / undo (no double-push) / C89 / entry-completeness (incl. every instance_number
+Tcl caller + the MUTATE-result consumer question). Verdict: all SIX refute axes returned refuted=FALSE
+(severity none) — the query/mutate split refuses nothing it should answer and preserves the consumed QUERY
+result; the raw change_elem_order() sub-step is provably silent (editprop.c has no log_action; the
+select/unselect/rebuild/draw chain is silent; only `verb` drives core_log_action); the two referents replay
+faithfully (identical argv pointers, Tcl_Merge, self-contained re-selection so no 0005 class); exactly ONE
+undo slot per mutate (change_elem_order owns it); C89-clean (decls at block top, no set-but-unused, perform_action
+prototyped); a full-tree grep confirms NO other entry point and NO MUTATE-result consumer. Completeness critic
+verdict = **ship**; it raised FOUR non-blocking gaps, all ADDRESSED here: (1) the dangling §43 audit reference
+— this section; (2) the n<0 mutate reaching change_elem_order's interactive DIALOG + logging a replay-unfaithful
+line — CLOSED by the new `n >= 0` gate (the load-bearing fix above) + check (d2) + sabotage 7; (3) the imprecise
+"push_undo gated on `modified`" comment (push_undo is UNCONDITIONAL on the mutate path; only set_modify is
+modified-gated) — REWORDED in the branch/run_core comments + the grep-guard S1 row; (4) untested
+numeric-index referent / out-of-range clamp / no-op reorder — CLOSED by new checks (i)/(j)/(k). Re-verified
+after the fixes: 59 test checks + 355 grep-guard checks green, all seven sabotages re-confirmed.
+
+RECOMMENDED NEXT: after instance_number the additive-log pool holds `text` (additive-log, already gated).
+Then re-scout the roster for the next tractable atom. The §40 deferrals still stand (composite
+delete/cut/copy/save/reload stay deferred — shared cores, §4; selection-referent replay is the accepted
+0005 class).
