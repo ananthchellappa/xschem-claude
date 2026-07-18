@@ -4761,3 +4761,60 @@ RECOMMENDED NEXT: the friction re-scout's runner-ups — `add_pin_stubs` (fr 4: 
 a query/mutate split whose mode-0 highlight is *currently logged*, so an asymmetric split). Both are viable but
 carry more friction than `delete`; sequence the cheaper isolated wins first. `text` stays disqualified;
 cut/copy/save/reload stay deferred (composites, §4/§40).
+
+## 45. Refactor B ATOM 25 (2026-07-17): the TWENTY-FIFTH per-verb migration — the fr-4 runner-up whose RETURN-VALUE CONDLOG dissolved into OPTION (c) NO-OP-STILL-LOGS (`add_pin_stubs`)
+
+**The decision, and why it dissolved.** `add_pin_stubs` (draw a wire stub + an outward `lab_pin` net-label
+out of each selected/unconnected pin) was the atom-24 re-scout's fr-4 runner-up. Its old branch logged
+`if(added > 0) log_action_argv(argc, argv)` — a log gated on the core's RETURN VALUE, which the boundary
+cannot re-derive in `core_log_action` (unlike atom-21's `had_sel`, still sitting in `xctx`). The decision
+(full write-up: `doc/claude/code_analysis/perform_action_atom25_add_pin_stubs_returnvalue_condlog_decision.md`)
+weighed three options: (a) `TCL_ERROR` on `added==0` — REJECTED, it mis-classifies a no-op success as a
+failure; (b) a side-channel field — REJECTED, new bespoke machinery for one verb; (c) embrace
+no-op-still-logs. **(c) won** on the sharp question: `added==0` (nothing unconnected to stub) is a no-op
+SUCCESS, not a failure — the SAME shape as floaters-nothing-selected (§30), toggle_ignore-attr==NULL (§32)
+and delete-nothing-selected (§44), all of which log their no-op. The boundary's rule is log-on-success and
+a no-op is a success, so the `if(added>0)` suppression was a policy the boundary had ALREADY reversed
+elsewhere. The fr-4 friction was an artifact of the assumption that the old gate must be preserved; drop
+that assumption and the wrinkle disappears — exactly the move atom 24 made for `delete`'s arity gate.
+
+**The migration.** `run_core` parses `-prefix/-suffix/-inst-prefix` (identically to `core_log_action`),
+calls `add_pin_stubs()` (which OWNS its single push_undo + set_modify + draw, so the arm adds none — the
+no-double-push rule), **DISCARDS the returned count**, and always returns `TCL_OK`. The branch collapses to
+`return perform_action("add_pin_stubs", argc, argv)`. `core_log_action` gets a per-verb arm: a fresh heap
+array `aps` sized to `argc`, the flag tail copied verbatim, emitted via `log_action_argv` (the image `im[]`
+template §40 — NOT the bare `log_action_argv(argc, argv)` form the old branch used, which recurs at
+`paste/...` and can't be grep-pinned; `aps` is distinct from av/ev/pp/mi/im/rs/ino, the §36 collision
+lesson). A `-prefix a[0]` value brace-quotes and replays (issue-0048). Two benign behaviour changes: (1)
+the `added==0` no-op now logs one idempotent line; (2) the success-path count interp-result is dropped —
+**grep-verified no consumer** (the Symbol-menu `-command` discards it; the SPACE key reads the C-fn int
+return, not the Tcl result — the `apply_pin_prop` §38 precedent). The boundary ADDS the C-level readonly
+gate the scripted verb never had (a correctness fix — was a silent `return 0`); the core keeps its OWN
+silent `if(readonly) return 0` for the SPACE key's pan-on-decline dual-use. The SPACE key
+(`act_add_pin_stubs`, callback.c) stays RAW below the boundary and never reaches the branch → no double-log
+(the delete/cut F-2ndentry pattern).
+
+**Test (test_perform_action_add_pin_stubs.tcl, 22 checks, registered in full_audit logdir_tests):** (a)
+bare success — 2 stubs (2 wires + 2 lab_pin), exactly +1 byte-exact `xschem add_pin_stubs`; (a2) flag form
+— net names reflect `-prefix p_ -suffix _s` (p_P_s/p_M_s) + byte-exact flag-tail log; (b) THE OPTION-(c)
+HEADLINE — nothing-selected no-op mutates nothing but STILL logs +1 (old `if(added>0)` suppressed it); (c)
+readonly reject — `TCL_ERROR` + non-empty message, no mutation, no log (was a silent `0`); (d) replay
+through the suppress seam (re-stubs the selection) not re-logged, control re-logs; (e) FLAG-FIDELITY —
+`-prefix a[0]` logs BRACE-QUOTED (`{a[0]}`) and the exact line replays without a Tcl error; (f) undo depth —
+one undo removes the stubs (3→1 inst), a SECOND removes the placed instance (1→0), a double-push would
+leave the second undo at 1. **Sabotage ×2 (each fails EXACTLY its target):** (A) `TCL_ERROR` on `added==0`
+→ test (b) no-op-still-logs fails; (B) spurious `push_undo` → test (f) second-undo fails. Both reverted;
+clean re-run all 22 green. **grep guard:** 4 new S1 manifest rows (branch delegation + the `aps` decl/copy/
+emit) + a 5-check S7 exclusivity block (EXACTLY ONE `aps` decl / `aps[j]=argv[j]` copy / `log_action_argv(argc,
+aps)` emit; ZERO scattered `log_action("xschem add_pin_stubs")` in scheduler.c AND callback.c). Build cairo
+(default) OK.
+
+**Filed separately (issue 0121, NOT bundled):** the core pushes undo unconditionally at the top of its loop,
+before knowing whether any target will stub — a LATE no-op (targets exist but all are nameless-empty-net
+skips → `added==0`) leaves a spurious undo slot. Pre-existing (independent of the migration); the atom-25
+test uses the EARLY no-op (nothing selected) to avoid entangling it. Fix = lazy push_undo on the first
+actual store.
+
+RECOMMENDED NEXT: `check_unique_names` (fr 5: a query/mutate split whose mode-0 highlight is *currently*
+logged, so an asymmetric split — the harder of the two remaining scout runner-ups). Then re-scout again;
+`text` stays disqualified; cut/copy/save/reload stay deferred (composites, §4/§40).

@@ -231,8 +231,10 @@ was the friction *composition* (`F-validate`, not `F-condlog` — the guard is a
 was silent-OK), calls `delete(1)` and adds no push_undo (core-owned). `test_perform_action_delete.tcl` (24
 checks) + two sabotages green; the `test_selflog_grep_guard.tcl` S1 `delete branch` row updated from the old
 inline `log_action` to the `perform_action` delegation. The §40 delete/cut/copy lumping was corrected: `delete`
-is the migratable primitive; `cut`/`copy` stay deferred as composites. Runner-ups `add_pin_stubs` (fr 4) and
-`check_unique_names` (fr 5) remain the leading candidates for atom 25.
+is the migratable primitive; `cut`/`copy` stay deferred as composites. Runner-up **`add_pin_stubs` landed as
+atom 25** (its fr-4 return-value condlog dissolved into option (c) no-op-still-logs — see
+`perform_action_atom25_add_pin_stubs_returnvalue_condlog_decision.md` + audit §45); `check_unique_names`
+(fr 5) remains the leading candidate for atom 26.
 
 ---
 

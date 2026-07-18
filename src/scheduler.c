@@ -986,6 +986,36 @@ static int run_core(const char *verb, int argc, const char *argv[])
     delete(1/*to_push_undo*/);
     return TCL_OK;
   }
+  else if(!strcmp(verb, "add_pin_stubs")) {
+    /* Refactor B atom 25 (audit §45; decision doc perform_action_atom25_add_pin_stubs_returnvalue_
+     * condlog_decision.md). Draws a wire stub + outward lab_pin net-label out of each selected/
+     * unconnected pin. The flags -prefix/-suffix/-inst-prefix are parsed here IDENTICALLY to
+     * core_log_action's arm (so the logged form can never diverge from the applied effect). The core
+     * add_pin_stubs() (actions.c) OWNS its single push_undo (on the first store) + set_modify + draw,
+     * so this arm adds NONE (the atom-1 no-double-push rule).
+     *
+     * OPTION (c) -- NO-OP-STILL-LOGS. The core returns `added` (stub count); the old branch gated its
+     * log on `if(added>0)`. That gate is INTENTIONALLY DROPPED here: `added==0` is a no-op SUCCESS
+     * (nothing unconnected to stub), NOT a failure -- exactly like floaters-nothing-selected (§30),
+     * toggle_ignore-attr==NULL (§32) and delete-nothing-selected (§44), all of which log their no-op
+     * under log-on-success. So this arm DISCARDS `added`, always returns TCL_OK, and the boundary logs
+     * one idempotent, replayable line unconditionally. The old success-path count interp-result is
+     * dropped (the boundary clears the interp on success; grep-verified NO Tcl caller consumes it --
+     * the Symbol-menu -command discards it, the SPACE key reads the C-fn int return, not the Tcl
+     * result; the apply_pin_prop §38 precedent). The boundary ADDS the C-level readonly gate the
+     * scripted verb NEVER HAD -- a correctness fix; the core keeps its OWN silent `if(readonly) return
+     * 0` for the SPACE key's pan-on-decline dual-use (callback.c act_add_pin_stubs stays RAW below the
+     * boundary, so it never double-logs -- the delete/cut F-2ndentry pattern). C89: decls at top. */
+    const char *prefix = "", *suffix = "";
+    int inst_prefix = 0, i;
+    for(i = 2; i < argc; ++i) {
+      if(!strcmp(argv[i], "-prefix") && i + 1 < argc) prefix = argv[++i];
+      else if(!strcmp(argv[i], "-suffix") && i + 1 < argc) suffix = argv[++i];
+      else if(!strcmp(argv[i], "-inst-prefix") || !strcmp(argv[i], "-inst_prefix")) inst_prefix = 1;
+    }
+    add_pin_stubs(prefix, suffix, inst_prefix);
+    return TCL_OK;
+  }
   return TCL_ERROR; /* unreachable: perform_action is only wired for the verbs above */
 }
 
@@ -1293,6 +1323,26 @@ static void core_log_action(const char *verb, int argc, const char *argv[])
     const char *ino[4];
     ino[0] = "xschem"; ino[1] = verb; ino[2] = argv[2]; ino[3] = argv[3];
     log_action_argv(4, ino);
+  } else if(!strcmp(verb, "add_pin_stubs")) {
+    /* atom 25: the FAITHFUL RAW full-call log `xschem add_pin_stubs [-prefix <s>] [-suffix <s>]
+     * [-inst-prefix]`. The flag COUNT is variable (0..5 tail words), so the array is sized to argc and
+     * the flag tail argv[2..] is copied VERBATIM -- the image im[] template (atom 20), NOT the fixed-
+     * arity av/pp/mi arms. The `xschem`/verb prefix is hardcoded (aps[0]/aps[1], the sibling idiom).
+     * A fresh heap array named `aps` (av/ev/pp/mi/im/rs/ino all taken -- the §36 collision lesson;
+     * and NOT the bare `log_action_argv(argc, argv)` form the old branch used, which recurs at paste/...
+     * and could not be grep-pinned uniquely). The flag words + their -prefix/-suffix VALUES may carry
+     * Tcl metacharacters, so log_action_argv/Tcl_Merge brace-quotes minimally (a plain word logs
+     * unbraced == byte-identical to the typed call). LOGGED UNCONDITIONALLY on TCL_OK -- option (c):
+     * add_pin_stubs always returns TCL_OK (added==0 is a no-op success), so a no-op logs one idempotent
+     * replayable line (the §30 floaters property); the old `if(added>0)` suppression is dropped. At
+     * argc==2 (bare verb) the loop copies nothing and this logs `xschem add_pin_stubs`. C89: decls at
+     * block top. */
+    const char **aps = my_malloc(_ALLOC_ID_, (size_t)argc * sizeof(char *));
+    int j;
+    aps[0] = "xschem"; aps[1] = verb;
+    for(j = 2; j < argc; j++) aps[j] = argv[j];
+    log_action_argv(argc, aps);
+    my_free(_ALLOC_ID_, &aps);
   } else {
     log_action("xschem %s", verb);
   }
@@ -1749,27 +1799,18 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
     /* add_pin_stubs [-prefix <s>] [-suffix <s>] [-inst-prefix]
      *   For the current selection (individual pins, else whole instances' unconnected pins),
      *   draw a wire stub out of each pin + a lab_pin net-label at the far end. The net name is
-     *   [instname_ if -inst-prefix][-prefix]<pinname>[-suffix]. Returns the number of stubs added.
-     *   One undo. B5, doc/claude/specs/wire_stub_netlabel.md §4. */
+     *   [instname_ if -inst-prefix][-prefix]<pinname>[-suffix]. One undo. B5,
+     *   doc/claude/specs/wire_stub_netlabel.md §4.
+     * Routes through the single mutation boundary (Refactor B atom 25, run_core above): the readonly
+     * gate, the -prefix/-suffix/-inst-prefix flag parse, the add_pin_stubs() effect (core owns its
+     * undo+draw) and the ONE `xschem add_pin_stubs [flags]` log site (via core_log_action, LOGGED
+     * UNCONDITIONALLY on success -- option (c) no-op-still-logs) all live in perform_action/run_core.
+     * The old inline flag-parse + `if(added>0) log_action_argv` gate + the count Tcl_SetResult are GONE
+     * (the boundary owns the log; NO caller consumed the count). The SPACE key (act_add_pin_stubs,
+     * callback.c) stays RAW below the boundary -- it needs the C-fn int return for its pan-on-decline
+     * dual-use and never reaches this branch, so no double-log. */
     else if(!strcmp(argv[1], "add_pin_stubs"))
-    {
-      const char *prefix = "", *suffix = "";
-      int inst_prefix = 0, i, added;
-      char b[32];
-      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
-      for(i = 2; i < argc; ++i) {
-        if(!strcmp(argv[i], "-prefix") && i + 1 < argc) prefix = argv[++i];
-        else if(!strcmp(argv[i], "-suffix") && i + 1 < argc) suffix = argv[++i];
-        else if(!strcmp(argv[i], "-inst-prefix") || !strcmp(argv[i], "-inst_prefix")) inst_prefix = 1;
-      }
-      added = add_pin_stubs(prefix, suffix, inst_prefix);
-      my_snprintf(b, S(b), "%d", added);
-      /* self-log at core (0061): the Symbol menu item + script. Gate on added>0 --
-       * add_pin_stubs self-declines (read-only / nothing to stub) returning 0, so a
-       * no-op leaves no line. The SPACE key logs via its own registered action. */
-      if(added > 0) log_action_argv(argc, (const char *const *)argv);
-      Tcl_SetResult(interp, b, TCL_VOLATILE);
-    }
+      return perform_action("add_pin_stubs", argc, argv);
 
     /* align
      *   Align currently selected objects to current snap setting */
