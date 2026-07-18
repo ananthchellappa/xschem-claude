@@ -952,13 +952,47 @@ static int run_core(const char *verb, int argc, const char *argv[])
     draw();
     return TCL_OK;
   }
+  else if(!strcmp(verb, "delete")) {
+    /* Refactor B atom 24 (audit §44): a BARE no-arg mutating verb, the near-twin of toggle_ignore
+     * (atom 12) / floaters (atom 10) -- it deletes the current selection. The core delete()
+     * (select.c) OWNS its undo (push_undo on the first mutation, select.c:707), set_modify (788)
+     * and draw() (790), and returns VOID => the branch is always TCL_OK. So run_core adds NO
+     * push_undo()/draw() here -- adding one would DOUBLE-push (the atom-1 no-double-push rule).
+     *
+     * THE ONE FRICTION is the ARITY GATE (F-validate, the reset_inst_prop §33 argc-gate). The old
+     * scheduler branch acted only inside `if(argc==2)`, so a malformed `xschem delete <extra>` was
+     * a SILENT no-op returning TCL_OK. Under log-on-success (atom 13) that silent no-op would be
+     * PHANTOM-logged, so we validate argc==2 and return TCL_ERROR otherwise (mutating nothing,
+     * logging nothing -- the one deliberate behaviour tighten: malformed -> rejected, not silent).
+     * The bare `xschem delete` form logs via core_log_action's DEFAULT `xschem %s` arm (NO per-verb
+     * branch, like floaters/toggle_ignore). delete() reads NO x/y coords -> NOT a coordinate-replay
+     * form; it deletes the ambient selection, so its logged line replays against whatever is selected
+     * (the standard selection-dependent replay class).
+     *
+     * delete() is a benign SHARED primitive -- the cut verb (scheduler.c cut branch: save_selection
+     * + delete(1)), three preview re-arm teardowns (delete(0)), save.c, and the callback.c interactive
+     * gestures all call it RAW -- but it ROUTES NO VERBS through the boundary and stays raw below it;
+     * only the `delete` VERB crosses (the trim_wires atom-1 shared-sub-step rule, the attach_labels
+     * atom-11 shared-core rule). The two inline legacy-switch KEYS -- Ctrl-X (logs `xschem cut`) and
+     * XK_Delete (logs `xschem delete`), both in callback.c -- call delete() DIRECTLY and self-log;
+     * they NEVER reach this scheduler branch, so they stay untouched and cannot double-log (the
+     * shipped cut arrangement). The boundary's scheduler_readonly_reject also CONSOLIDATES the
+     * read-only gate that delete()'s own begin_edit() backstop (select.c:695) already provided --
+     * belt-and-suspenders, no behaviour change. */
+    if(argc != 2) {
+      Tcl_SetResult(interp, "xschem delete: too many arguments", TCL_STATIC);
+      return TCL_ERROR;
+    }
+    delete(1/*to_push_undo*/);
+    return TCL_OK;
+  }
   return TCL_ERROR; /* unreachable: perform_action is only wired for the verbs above */
 }
 
 /* core_log_action -- the per-verb LOG-FORM half of the perform_action boundary (audit §4,
  * Refactor A step-2 "log at the core" registry SEED, introduced by atom 6). Formats the ONE
  * self-log line for a migrated verb. The bare no-arg verbs (trim_wires/align/rotate_in_place/
- * flip_in_place/flipv_in_place/floaters_from_selected_inst/toggle_ignore/show_unconnected_pins) emit `xschem <verb>`
+ * flip_in_place/flipv_in_place/floaters_from_selected_inst/toggle_ignore/show_unconnected_pins/delete) emit `xschem <verb>`
  * byte-identically to the pre-atom-6 `log_action("xschem %s", verb)`; the arg-carrying pivot verbs rotate (atom 6), flip (atom 7) and
  * flipv (atom 8) emit their pivot form `xschem rotate|flip|flipv <x0> <y0>`. The pivot is resolved
  * from argv[2]/argv[3] (or the mouse coords as a fallback) IDENTICALLY to run_core's rotate/flip/flipv
@@ -2526,17 +2560,15 @@ static int xschem_cmds_d(Tcl_Interp *interp, int argc, const char *argv[], int *
     }
 
     /* delete
-     *   Delete selection */
+     *   Delete selection.
+     * Routes through the single mutation boundary (Refactor B atom 24, run_core above): the
+     * readonly gate, the argc==2 arity validation, the delete() effect (core owns undo/draw) and
+     * the ONE `xschem delete` log site all live in perform_action/run_core. The old inline
+     * scheduler_readonly_reject + if(argc==2) log_action are GONE (the boundary owns both). Only
+     * this branch (menu Edit>Delete + scripted `xschem delete`) crosses; the Ctrl-X / XK_Delete
+     * inline keys (callback.c) stay raw + self-logging and never reach here (no double-log). */
     else if(!strcmp(argv[1], "delete"))
-    {
-      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
-      if(scheduler_readonly_reject(interp, "delete")) return TCL_ERROR;
-      if(argc==2) {
-        delete(1/*to_push_undo*/);
-        log_action("xschem delete"); /* self-log at core */
-      }
-      Tcl_ResetResult(interp);
-    }
+      return perform_action("delete", argc, argv);
 
     /* delete_files
      *   Bring up a file selector the user can use to delete files */

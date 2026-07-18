@@ -327,7 +327,7 @@ proc rxcount {text re} { return [regexp -all -- $re $text] }
 set MANIFEST {
   src/scheduler.c {
     {log_action\("xschem cut"}                        1 {cut branch}
-    {log_action\("xschem delete"}                     1 {delete branch}
+    {return perform_action\("delete", argc, argv\);}  1 {delete branch routes through the perform_action boundary (Refactor B atom 24 -- a BARE no-arg mutating verb, the near-twin of toggle_ignore/floaters: delete() (select.c) OWNS undo+set_modify+draw and returns void, so run_core adds no push_undo/draw (no-double-push rule). The ONE friction is the argc==2 ARITY GATE (F-validate): run_core returns TCL_ERROR on a malformed `xschem delete <extra>` so log-on-success does not phantom-log the pre-migration silent no-op. The old inline scheduler_readonly_reject("delete") + if(argc==2) log_action("xschem delete") are GONE (the boundary owns both); bare-verb log via core_log_action's `xschem %s` default. The Ctrl-X / XK_Delete inline legacy-switch keys STAY raw + self-logging in callback.c and never reach this branch, so no double-log (the shipped cut arrangement)}
     {log_action\("xschem copy"}                       1 {copy branch (atom 4)}
     {log_action\("xschem undo"}                       1 {undo branch}
     {log_action\("xschem redo"}                       1 {redo branch}

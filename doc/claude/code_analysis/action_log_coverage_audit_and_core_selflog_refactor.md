@@ -4690,3 +4690,74 @@ RECOMMENDED NEXT: after instance_number the additive-log pool holds `text` (addi
 Then re-scout the roster for the next tractable atom. The §40 deferrals still stand (composite
 delete/cut/copy/save/reload stay deferred — shared cores, §4; selection-referent replay is the accepted
 0005 class).
+
+## 44. Refactor B ATOM 24 (2026-07-17): the TWENTY-FOURTH per-verb migration — the FRESH-RE-SCOUT winner, a BARE no-arg mutating verb whose core owns its undo, and the §40 delete/cut/copy lumping CORRECTED (`delete`)
+
+**The re-scout, and why it was needed.** The `text` additive-log candidate named above was disqualified on a
+source scout (the drop-funnel already logs it; it is a shared sub-step of `create_graph`/`place_sym_pins`),
+exhausting the named pool. Rather than guess, we re-ran the atom-12 fan-out method (one reviewer per
+`xschem_cmds_[a-z]` dispatch group, re-verify survivors from source) against the CURRENT contract — which is
+no longer the atom-12 "always succeeds" boundary but the atom-13 **log-on-success** boundary, extended by the
+atom-20/23 **query/mutate split** and the atom-21 **log-gate flip**. Those three pattern-expansions retired the
+three biggest atom-12 failure families (validating verbs, read-only-safe query forms, conditional logs), so the
+atom-12 taxonomy is stale as a *filter* even though its *method* is not. Full write-up:
+`doc/claude/code_analysis/perform_action_atom24_delete_friction_analysis.md`. **303 branches** classified across
+all 22 groups; **8** un-migrated mutating candidates; **3** confirmed genuine after a two-lens adversarial
+re-verify (`delete` fr 3, `add_pin_stubs` fr 4, `check_unique_names` fr 5); **5** rejected (`cut` D4-composite,
+`make_sch_from_sel` D2-dialog, `fluid_pass` D4-router+D2-returns-data, `setprop` D3/D4, `apply_properties`
+D3-replay-vehicle whose logging the decision doc forbids at the engine).
+
+**The §40 lumping, corrected.** §40 deferred "composite delete/cut/copy" together as "shared cores." The
+re-scout **splits that lump**: `cut` (`save_selection(2)` + `delete(1)`) and `copy` (`save_selection(2)`) ARE
+composites of other verbs and stay deferred (D4, fail the 1:1 test); but **`delete` is the PRIMITIVE those
+composites call**, not a composite itself. `delete()` (select.c) is a benign SHARED sub-step — the `cut` verb,
+three preview teardowns (`delete(0)`), `save.c`, and the callback.c interactive gestures all call it raw — but
+it ROUTES NO VERBS through the boundary, so only the `delete` VERB crosses and every shared caller stays raw
+below it (the trim_wires atom-1 shared-sub-step rule, the attach_labels atom-11 shared-core rule). Low raw
+friction is not fitness (`cut` scored the lowest raw friction, 2, and is still D4); a verb that is a composite
+of other verbs fails D4 no matter how short its branch looks.
+
+**The migration.** `delete` is a BARE no-arg mutating verb, the near-twin of `toggle_ignore` (atom 12) /
+`floaters` (atom 10): `delete()` OWNS its undo (`push_undo` on the first mutation, select.c:707), `set_modify`
+(788) and `draw()` (790), and returns **void** ⇒ the run_core arm is always TCL_OK and adds **no**
+push_undo/draw (the atom-1 no-double-push rule). The bare `xschem delete` logs via `core_log_action`'s DEFAULT
+`xschem %s` arm (no per-verb branch). The scheduler branch collapses to
+`return perform_action("delete", argc, argv);`, dropping the inline `scheduler_readonly_reject` + the
+`if(argc==2) log_action("xschem delete")` (the boundary owns both). The two inline legacy-switch KEYS — Ctrl-X
+(`callback.c`, logs `xschem cut`) and XK_Delete (`callback.c`, logs `xschem delete`) — call `delete()` directly,
+self-log, and NEVER reach this branch, so they stay untouched with **no double-log** (the shipped `cut`
+arrangement; F-2ndentry).
+
+**The one friction (F-validate), and the one deliberate behaviour tighten.** The old branch acted only inside
+`if(argc==2)`, so a malformed `xschem delete <extra>` was a **silent TCL_OK no-op**. Under log-on-success that
+silent no-op would be PHANTOM-logged, so `run_core` validates `argc==2` and returns TCL_ERROR otherwise
+(mutating nothing, logging nothing — the reset_inst_prop §33 argc-gate). This is the ONE behaviour change: a
+malformed extra-arg call goes from silent-OK to a rejected error — correct (a malformed request is not a
+replayable edit) and mainstream. The no-op-still-logs property (§30/§32) is UNTOUCHED: `xschem delete` with
+nothing selected bails before push_undo, mutates nothing, returns void ⇒ TCL_OK ⇒ STILL logs one line.
+
+**Test (test_perform_action_delete.tcl, 24 checks, registered in full_audit logdir_tests):** (a) SUCCESS —
+a selection deleted, exactly +1 byte-exact `xschem delete`; (b) THE ATOM-24 HEADLINE — `xschem delete extra`
+returns TCL_ERROR with a NON-EMPTY verb-named message (the atom-13 landmine: success-only Tcl_ResetResult did
+not wipe it), +0 log, no mutation; (c) readonly reject — TCL_ERROR + non-empty read-only message, +0 log, no
+mutation; (d) REPLAY — the recorded `xschem delete` re-executes through the replay_action_log suppress seam
+(deleting the ambient selection) but does NOT re-log, while a control unwrapped `source` DOES re-log; (e)
+NO-OP-STILL-LOGS — nothing-selected `xschem delete` mutates nothing but STILL logs +1; (f) UNDO DEPTH — the
+fixture places 3 (each `xschem instance` pushes undo), delete pushes ONE more; one undo restores all 3, a
+SECOND undo peels back one placement (3→2) — a spurious run_core double-push would leave an identical extra
+snapshot so the second undo would still read 3; (g) SIBLING UNTOUCHED — `xschem cut` still deletes + logs its
+OWN `xschem cut` line, +0 `xschem delete`. Build cairo (default) OK.
+
+**Sabotage ×2 (each fails EXACTLY its target):** (A) remove the argc==2 arity gate (extra-arg deletes+logs) →
+test (b) all four checks fail (rc=0, empty msg, +1 log, mutation). (B) add a spurious `xctx->push_undo()`
+before `delete(1)` → test (f) second-undo fails (reads 3 not 2 — the identical duplicate snapshot). Both
+reverted; clean re-run all 24 green. **grep guard (test_selflog_grep_guard.tcl):** the S1 scheduler.c `delete
+branch` manifest row was updated from the old `log_action("xschem delete")` (inline, now GONE) to
+`return perform_action("delete", argc, argv);`; the callback.c `Delete inline key` row is UNCHANGED (the key
+keeps its raw self-log). `core_log_action`'s bare-verb comment list gains `delete`.
+
+RECOMMENDED NEXT: the friction re-scout's runner-ups — `add_pin_stubs` (fr 4: a return-value conditional log
+`if(added>0)` the boundary cannot re-derive + `-prefix/-suffix` flag fidelity) and `check_unique_names` (fr 5:
+a query/mutate split whose mode-0 highlight is *currently logged*, so an asymmetric split). Both are viable but
+carry more friction than `delete`; sequence the cheaper isolated wins first. `text` stays disqualified;
+cut/copy/save/reload stay deferred (composites, §4/§40).
