@@ -365,7 +365,9 @@ set MANIFEST {
     {return perform_action\("change_elem_order", argc, argv\);} 1 {change_elem_order branch routes through the perform_action boundary (Refactor B atom 21 -- the TWENTY-FIRST per-verb migration; a value-carrying integer verb with TWO entry points -- the branch + the Shift-S key): run_core MOVES the argc<3 + `n >= 0 || n == -1` validation IN (early TCL_ERROR BEFORE the effect -- the argc<3 gate also prevents core_log_action reading argv[2] OOB on a short call, the move_instance §39 crash class) and calls change_elem_order(n), whose core (editprop.c) OWNS its own push_undo (on the first mutation, gated on `modified`) + set_modify -- so no double-push; core_log_action logs the VALUE-PRESERVING `xschem change_elem_order %d` (the attach_labels atom-11 %d template, NOT collapsed like break_wires) on success only, GATED on `if(xctx->lastsel)` -- the pre-migration had_sel gate PRESERVED (§30 no-op-still-logs REJECTED here: change_elem_order is SELECTION-DEPENDENT and keeps its target selected, so a phantom empty-log line would reorder a still-selected object on replay -- adversarial-review MAJOR; the spec's form-split fallback). change_elem_order() is NOT strictly 1:1 -- the `instance_number inst <n>` verb calls it RAW as a sub-step, staying BELOW the boundary (silent, the attach_labels atom-11 shared-sub-step lock). The boundary's readonly gate is a CONSOLIDATION (the old branch HAD a per-verb scheduler_readonly_reject, now REMOVED). No scattered readonly/log/push_undo here}
     {log_action\("xschem change_elem_order %d"}       1 {change_elem_order VALUE form now lives in core_log_action (atom 21), NOT the scheduler branch -- `log_action("xschem change_elem_order %d", atoi(argv[2]))` PRESERVES the integer (unlike break_wires which collapses nonzero to 1), byte-identical to the old branch's log for the same n and to the Shift-S `change_elem_order -1`; exactly ONE such site in scheduler.c (S7 pins exclusivity); the literal `change_elem_order %d` is UNIQUE (no other verb shares the prefix)}
     {if\(xctx->lastsel\) log_action\("xschem change_elem_order %d"} 1 {change_elem_order had_sel LOG GATE in core_log_action (atom 21): the log fires ONLY when something was selected (xctx->lastsel != 0 -- the count change_elem_order's own rebuild_selected_array just set, == the pre-migration `had_sel`). §30 no-op-still-logs was REJECTED for this SELECTION-DEPENDENT verb (the editprop.c swap keeps the reordered object SELECTED, so a phantom empty-selection line would reorder a still-selected object on a whole-log replay where an unlogged interactive deselect left it selected -- adversarial-review MAJOR). A revert to an UNCONDITIONAL log (dropping the `if(xctx->lastsel)`) makes this row count 0 -> fails closed, and re-breaks test_selflog_output.tcl:190 `change_elem_order (no sel) is nolog`. Like replace_symbol's fast-flag log gate, this is a per-verb conditional in core_log_action (the log authority)}
-    {log_action\("xschem check_unique_names}          1 {check_unique_names branch}
+    {return perform_action\("check_unique_names", argc, argv\);} 1 {check_unique_names MODE-1 (rename) delegation routes through the perform_action boundary (Refactor B atom 26 / audit §46 -- the ASYMMETRIC QUERY/MUTATE SPLIT): ONLY argv[2]=="1" crosses (the branch delegates solely on the exact "1"); the boundary ADDS the readonly gate the branch NEVER had (a CORRECTNESS FIX -- pre-migration `check_unique_names 1` silently RENAMED a read-only cell). check_unique_names(1) (token.c) OWNS its push_undo (on the FIRST duplicate) + set_modify, so run_core adds no push_undo/draw (no-double-push). A no-duplicates run is a no-op SUCCESS that still logs (§30)}
+    {log_action\("xschem check_unique_names 0"\);}     1 {check_unique_names MODE-0 LOGGED-QUERY raw front in the BRANCH (atom 26 -- the asymmetric-split novelty): the duplicate-refdes HIGHLIGHT is read-only-LEGAL, so it stays RAW in front of the boundary (the image §40 / instance_number §43 split -- the all-or-nothing gate would OVER-REJECT it on a read-only cell) BUT, unlike those UNLOGGED query fronts, mode 0 was ALREADY a logged replayable action -- so the raw front KEEPS its own log_action, canonicalizing every non-"1" argv[2] (and the bare form) to the byte-identical "0" line the old `%s`/?: site emitted}
+    {log_action\("xschem check_unique_names 1"\);}     1 {check_unique_names MODE-1 form in core_log_action (atom 26): a FIXED literal -- only "1" ever crosses the boundary (the branch delegates solely argv[2]=="1"; the Ctrl+# key passes a literal "1"), byte-identical to the old canonicalized log for every argc/argv shape that reaches it. No flag array, no referent -- the simplest per-verb arm}
     {log_action\("xschem create_instance"}            1 {create_instance branch}
     {return perform_action\("floaters_from_selected_inst", argc, argv\);} 1 {floaters_from_selected_inst branch routes through the perform_action boundary (Refactor B atom 10 -- the SECOND non-transform verb, a BARE no-arg verb): run_core calls floaters_from_selected_inst() which OWNS its own push_undo/set_modify/draw (no double-push); the log is the shared bare `xschem %s` core_log_action DEFAULT line (no per-verb branch); the boundary ADDS the readonly gate this branch never had (a 0041/0051 close). No scattered readonly/log/push_undo here}
     {return perform_action\("attach_labels", argc, argv\);} 1 {attach_labels branch routes through the perform_action boundary (Refactor B atom 11 -- the THIRD non-transform verb; the arg is a FLAG `interactive` (0/1/2, value PRESERVED not collapsed), not a pivot; NO mid-gesture split): run_core + core_log_action read `interactive` from argc/argv; attach_labels_to_inst() OWNS its own push_undo (via place_symbol) + set_modify + draw, so no double-push; the boundary ADDS the readonly gate this branch never had (a 0041/0051 close -- every 0/1/2 form mutates); the SHARED core is ALSO a raw netlisting sub-step (show_unconnected_pins) + the Shift+H dialog key, both off the boundary. No scattered readonly/log/push_undo here}
@@ -465,6 +467,8 @@ set MANIFEST {
     {(?n)^\s*av\[0\] = "xschem"; av\[1\] = "instance";} 1 {placed-instance read-back line in log_placed_instance -- shared by PLACE_SYMBOL + schematic Add-Pin drop (atom 11)}
     {(?n)^\s*if\(log_placed_instance\(\)\) return;}   2 {log_placed_instance called by both the PLACE_SYMBOL arm and the START_SYMPIN sch-pin arm (atom 11)}
     {log_action\("xschem netlist -erc -nohier"}      1 {Shift-N current-level netlist key entry-site: bypasses the branch (direct global_*_netlist(0,1)), logs `-erc -nohier` -- `-erc`=state-preserving (erc=1 skips the netlist_name clear + infowindow suppression the key never does), NOT bare `-nohier` which would clear a custom netlist_name (atom 14 review MAJOR / 0062)}
+    {perform_action\("check_unique_names", 3, av\);}  1 {Ctrl+# key (case '#', ControlMask arm) routes through the perform_action boundary (Refactor B atom 26) with av[2]="1" -- the break_wires Ctrl-! FLAG-arg pattern. Pre-migration the key was a 0068-class legacy-switch gap: RAW check_unique_names(1), no log, no readonly gate (a read-only cell was silently RENAMED -- no keybindings.csv numbersign row exists, so this case is the ONLY handler). rc DISCARDED (the toggle_ignore §32 event-handled contract); no semaphore/readonly_block added -- the key never had them, scheduler_readonly_reject's ciw_echo is the read-only feedback}
+    {log_action\("xschem check_unique_names 0"\);}    1 {'#' key (case '#', no-Control arm) mode-0 raw front + its OWN log (atom 26): the read-only-legal duplicate highlight stays RAW below the boundary and gains the same `xschem check_unique_names 0` logged-query line as the scheduler branch's mode-0 front -- ADDITIVE coverage, the key logged nothing before}
   }
   src/paste.c {
     {(?n)^\s*my_strncpy\(xctx->merge_source,}         1 {merge_file source stash for the drop logger (atom 9)}
@@ -1565,6 +1569,39 @@ check "S7 (reset_symbol unperturbed) scheduler.c: still EXACTLY ONE rs\[3\]-buil
   [expr {[rxcount $sched {rs\[3\] = argv\[3\];}] == 1 &&
          [rxcount $sched {log_action_argv\(4, rs\);}] == 1}] \
   "build=[rxcount $sched {rs\[3\] = argv\[3\];}] emit=[rxcount $sched {log_action_argv\(4, rs\);}]"
+# ---- atom 26 check_unique_names S7 exact counts (audit §46) ----
+# THE FAIL-CLOSED LOCK for the asymmetric split: the S1 manifest rows are `n >= min` FLOORS, so
+# after the migration the OLD prefix regex `log_action\("xschem check_unique_names` would count 2
+# in scheduler.c and silently keep passing -- exact counts are the only static lock (the rotate
+# atom-6 "legitimately-one-site" model). scheduler.c holds EXACTLY ONE mode-0 line (the branch's
+# LOGGED-QUERY raw front) + EXACTLY ONE mode-1 line (core_log_action's fixed literal) + ZERO of
+# the OLD canonicalizing `%s` form + ZERO scattered per-verb readonly_rejects (the boundary's
+# generic gate is the ONLY mode-1 gate; the mode-0 front is DELIBERATELY ungated -- adding a gate
+# there is the over-reject regression runtime check (b2) catches). callback.c holds EXACTLY ONE
+# mode-0 line (the '#' key raw front) + ZERO mode-1 lines (the Ctrl+# key delegates -- a raw
+# `..." 1")` there would double-log every Ctrl+# against core_log_action's line) + EXACTLY ONE
+# Ctrl+# boundary delegation.
+check "S7 scheduler.c: EXACTLY ONE log_action(\"xschem check_unique_names 0\") -- the branch mode-0 LOGGED-QUERY raw front (atom 26)" \
+  [expr {[rxcount $sched {log_action\("xschem check_unique_names 0"}] == 1}] \
+  "got=[rxcount $sched {log_action\("xschem check_unique_names 0"}]"
+check "S7 scheduler.c: EXACTLY ONE log_action(\"xschem check_unique_names 1\") -- the core_log_action fixed-literal mode-1 form (atom 26)" \
+  [expr {[rxcount $sched {log_action\("xschem check_unique_names 1"}] == 1}] \
+  "got=[rxcount $sched {log_action\("xschem check_unique_names 1"}]"
+check "S7 scheduler.c: ZERO of the OLD canonicalizing log_action(\"xschem check_unique_names %\") form (replaced by the two fixed-literal sites)" \
+  [expr {[rxcount $sched {log_action\("xschem check_unique_names %}] == 0}] \
+  "got=[rxcount $sched {log_action\("xschem check_unique_names %}]"
+check "S7 scheduler.c: NO scattered scheduler_readonly_reject(...,\"check_unique_names\") (the boundary's generic gate is the ONLY mode-1 gate; the mode-0 front is DELIBERATELY ungated -- read-only-legal)" \
+  [expr {[rxcount $sched {scheduler_readonly_reject\(interp, "check_unique_names"\)}] == 0}] \
+  "got=[rxcount $sched {scheduler_readonly_reject\(interp, "check_unique_names"\)}]"
+check "S7 callback.c: EXACTLY ONE log_action(\"xschem check_unique_names 0\") -- the '#' key mode-0 raw front + its own log (atom 26)" \
+  [expr {[rxcount $cbtext {log_action\("xschem check_unique_names 0"}] == 1}] \
+  "got=[rxcount $cbtext {log_action\("xschem check_unique_names 0"}]"
+check "S7 callback.c: ZERO log_action(\"xschem check_unique_names 1\") (the Ctrl+# key DELEGATES to the boundary -- a raw mode-1 log here would double every Ctrl+# against core_log_action's line)" \
+  [expr {[rxcount $cbtext {log_action\("xschem check_unique_names 1"}] == 0}] \
+  "got=[rxcount $cbtext {log_action\("xschem check_unique_names 1"}]"
+check "S7 callback.c: EXACTLY ONE perform_action(\"check_unique_names\", 3, av) -- the Ctrl+# key's boundary delegation (atom 26)" \
+  [expr {[rxcount $cbtext {perform_action\("check_unique_names", 3, av\);}] == 1}] \
+  "got=[rxcount $cbtext {perform_action\("check_unique_names", 3, av\);}]"
 # atom-13 NESTING COUPLING (adversarial-review finding): the S1 existence rows above pin
 # that the guard line, the log line and the reset line each EXIST, but not that log+reset are
 # INSIDE the log-on-success block. A de-nest that keeps all three lines yet closes the

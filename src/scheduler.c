@@ -201,6 +201,9 @@ static int pin_scope_resolve(const char *scope, int *primary_out, int **targets_
  * their standalone (non-gesture) form crosses this boundary -- the during-move/during-
  * copy arms stay raw in the scheduler branch + callback.c key and are logged at the
  * move/copy END (issue 0069), never here (see the branch comment below).
+ * check_unique_names (atom 26) is the ASYMMETRIC split: only its mode-1 RENAME
+ * form crosses (the arm calls check_unique_names(1)); the mode-0 highlight is a
+ * read-only-legal LOGGED QUERY that stays raw in the branch front + '#' key.
  * More verbs add an arm here as they move onto the boundary. argc/argv are unused
  * for a bare no-arg verb but carry the pivot for an arg-carrying verb (rotate/flip/flipv); the
  * general boundary shape (audit §4) is the same either way.
@@ -1016,6 +1019,20 @@ static int run_core(const char *verb, int argc, const char *argv[])
     add_pin_stubs(prefix, suffix, inst_prefix);
     return TCL_OK;
   }
+  else if(!strcmp(verb, "check_unique_names")) {
+    /* Refactor B atom 26 (audit §46; decision doc perform_action_atom26_check_unique_names_
+     * asymmetric_split_decision.md): ONLY mode 1 (rename) crosses the boundary -- the branch
+     * delegates solely on argv[2]=="1". check_unique_names(1) (token.c) OWNS its undo (push_undo
+     * on the FIRST duplicate found, token.c:851) + set_modify(1) (875), so this arm adds NO
+     * push_undo/draw (the atom-1 no-double-push rule). Returns void => always TCL_OK; a
+     * no-duplicates run is a no-op SUCCESS that still logs one idempotent line (§30
+     * no-op-still-logs). Extra args beyond the "1" are ignored, exactly as the old branch did.
+     * Mode 0 (duplicate highlight) is the read-only-legal LOGGED QUERY: it stays RAW in the
+     * branch front + the '#' key with its own log_action (the asymmetric split -- see the
+     * branch comment). */
+    check_unique_names(1);
+    return TCL_OK;
+  }
   return TCL_ERROR; /* unreachable: perform_action is only wired for the verbs above */
 }
 
@@ -1023,7 +1040,9 @@ static int run_core(const char *verb, int argc, const char *argv[])
  * Refactor A step-2 "log at the core" registry SEED, introduced by atom 6). Formats the ONE
  * self-log line for a migrated verb. The bare no-arg verbs (trim_wires/align/rotate_in_place/
  * flip_in_place/flipv_in_place/floaters_from_selected_inst/toggle_ignore/show_unconnected_pins/delete) emit `xschem <verb>`
- * byte-identically to the pre-atom-6 `log_action("xschem %s", verb)`; the arg-carrying pivot verbs rotate (atom 6), flip (atom 7) and
+ * byte-identically to the pre-atom-6 `log_action("xschem %s", verb)`; check_unique_names (atom 26)
+ * emits the FIXED literal `xschem check_unique_names 1` (only mode 1 crosses the boundary -- the
+ * mode-0 logged-query line lives raw-front in the branch + the '#' key, audit §46); the arg-carrying pivot verbs rotate (atom 6), flip (atom 7) and
  * flipv (atom 8) emit their pivot form `xschem rotate|flip|flipv <x0> <y0>`. The pivot is resolved
  * from argv[2]/argv[3] (or the mouse coords as a fallback) IDENTICALLY to run_core's rotate/flip/flipv
  * arm -- and run_core,
@@ -1355,6 +1374,14 @@ static void core_log_action(const char *verb, int argc, const char *argv[])
     for(j = 2; j < argc; j++) aps[j] = argv[j];
     log_action_argv(argc, aps);
     my_free(_ALLOC_ID_, &aps);
+  } else if(!strcmp(verb, "check_unique_names")) {
+    /* atom 26: FIXED literal -- only "1" ever crosses the boundary (the branch delegates solely
+     * argv[2]=="1"; the Ctrl+# key passes a literal "1"), and the OLD branch log canonicalized
+     * every call to "1"/"0" via its ?: -- so this literal is byte-identical to the pre-migration
+     * log for every argc/argv shape that reaches it. No flag array, no F-flagarg machinery.
+     * The mode-0 line is NOT here: it lives raw-front in the branch + the '#' key (the
+     * asymmetric logged-query split, §46). */
+    log_action("xschem check_unique_names 1");
   } else {
     log_action("xschem %s", verb);
   }
@@ -2255,15 +2282,17 @@ static int xschem_cmds_c(Tcl_Interp *interp, int argc, const char *argv[], int *
     else if(!strcmp(argv[1], "check_unique_names"))
     {
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
-      if(argc > 2 && !strcmp(argv[2], "1")) {
-        check_unique_names(1);
-      } else {
-        check_unique_names(0);
-      }
-      /* self-log at core (0061): Highlight menu + script. The mode arg (0 highlight /
-       * 1 rename) is deterministic, so both forms replay faithfully. The `#`/Ctrl+#
-       * keys are handled inline in callback.c (0068), a disjoint path. */
-      log_action("xschem check_unique_names %s", (argc > 2 && !strcmp(argv[2], "1")) ? "1" : "0");
+      if(argc > 2 && !strcmp(argv[2], "1"))
+        return perform_action("check_unique_names", argc, argv);  /* MUTATE: gate + effect + log(=1) */
+      /* mode 0: read-only-safe duplicate-refdes HIGHLIGHT stays RAW in front of the boundary
+       * (the all-or-nothing readonly gate would over-reject it on a read-only cell -- the image
+       * §40 / instance_number §43 split). UNLIKE those unlogged query fronts, mode 0 is a
+       * CURRENTLY-LOGGED replayable action, so it KEEPS its own log_action here (the asymmetric
+       * logged-query sub-shape, atom 26 / audit §46). Any argv[2] other than exact "1" -- and the
+       * bare argc==2 form -- lands here and logs the canonical "0", byte-identical to the old
+       * `%s`-with-?: site. */
+      check_unique_names(0);
+      log_action("xschem check_unique_names 0");
       Tcl_ResetResult(interp);
     }
 

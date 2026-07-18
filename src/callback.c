@@ -6466,10 +6466,23 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
 
     case '#':
       if((state & ControlMask)) {
-        check_unique_names(1);
+        /* Ctrl+#: rename duplicates -- route through the mutation boundary (Refactor B atom 26):
+         * readonly gate (was NONE -- a read-only cell was silently RENAMED) + effect + the ONE
+         * `xschem check_unique_names 1` log (was UNLOGGED -- a 0068-class legacy-switch gap; no
+         * keybindings.csv row exists, so this case is the only handler). rc DISCARDED (the
+         * toggle_ignore §32 / Shift-S §41 event-handled contract). No semaphore/readonly_block
+         * added: this key never had them (sibling keys only KEPT pre-existing guards);
+         * scheduler_readonly_reject's ciw_echo is the read-only feedback. C89: av at block top. */
+        const char *av[3];
+        av[0] = "xschem"; av[1] = "check_unique_names"; av[2] = "1";
+        perform_action("check_unique_names", 3, av);
       }
       else {
+        /* #: duplicate highlight -- read-only-legal, stays RAW + gains its own log, mirroring the
+         * scheduler branch's mode-0 front (asymmetric split, atom 26). ADDITIVE coverage: this key
+         * logged nothing before. */
         check_unique_names(0);
+        log_action("xschem check_unique_names 0");
       }
       break;
 

@@ -4817,4 +4817,70 @@ actual store.
 
 RECOMMENDED NEXT: `check_unique_names` (fr 5: a query/mutate split whose mode-0 highlight is *currently*
 logged, so an asymmetric split — the harder of the two remaining scout runner-ups). Then re-scout again;
-`text` stays disqualified; cut/copy/save/reload stay deferred (composites, §4/§40).
+`text` stays disqualified; cut/copy/save/reload stay deferred (composites, §4/§40). **DONE — shipped as
+atom 26 (§46, the asymmetric logged-query split + the `#`/Ctrl+# key routing).**
+
+## 46. Refactor B ATOM 26 (2026-07-18): the TWENTY-SIXTH per-verb migration — the ASYMMETRIC logged-query/mutate split + the `#`/Ctrl+# key routing (`check_unique_names`)
+
+**The split, and the pattern novelty.** `check_unique_names <0|1>` is one core (`token.c:820`) behind a
+flag: mode 0 HIGHLIGHTS duplicate-refdes instances (transient hilight state only — read-only-LEGAL), mode 1
+additionally RENAMES them (`push_undo` on the FIRST duplicate + `new_prop_string` + `set_modify` — a real
+saved-content mutation). Only mode 1 belongs on the boundary, so the branch delegates SOLELY on
+`argv[2]=="1"`; every other shape (bare, `0`, `2`, garbage) lands on the mode-0 raw front — the image §40 /
+instance_number §43 query/mutate split. **The novelty — a LOGGED query**: unlike those verbs' silent query
+fronts, mode 0 was ALREADY logged (`xschem check_unique_names 0` is a replayable highlight action), so the
+raw front cannot fall silent — it KEEPS its own `log_action("xschem check_unique_names 0")`, canonicalizing
+every non-`"1"` argv[2] to the byte-identical `0` line the old `%s`/?: site emitted. The result is an
+**asymmetric split — two log sites on two paths**: the branch raw front (mode 0) + `core_log_action`'s
+FIXED literal `xschem check_unique_names 1` (only `"1"` ever crosses; no flag array, the simplest per-verb
+arm). Decision doc: `perform_action_atom26_check_unique_names_asymmetric_split_decision.md` — its Lesson 1
+names the rule: *a query/mutate split has two sub-shapes; the query's LOGGING STATUS determines whether the
+raw-front half falls silent (image/instance_number) or retains its own log_action (this atom).*
+
+**The correctness fix + the 0068-class key close.** The old branch had NO readonly gate — pre-migration
+`check_unique_names 1` silently RENAMED a read-only cell (oracle-verified on the HEAD binary). The boundary's
+generic gate closes it. And the `#`/Ctrl+# keys were a 0068-class legacy-switch gap (an `actions.csv:100/101`
+accel with NO `keybindings.csv` row → the legacy `case '#'` was the only handler — RAW: no log, no gate, and
+unlike sibling keys no semaphore/readonly_block of its own): Ctrl+# now routes through
+`perform_action("check_unique_names", 3, av)` with `av[2]="1"` (the break_wires Ctrl-! flag-arg pattern; rc
+DISCARDED — the toggle_ignore §32 event-handled contract; no new guards added, the boundary's ciw_echo is
+the read-only feedback), and `#` stays raw + gains its own mode-0 log — ADDITIVE coverage, a PARTIAL close
+of issue 0068 (the §3 list's other keys remain). `run_core`'s arm is `check_unique_names(1)` alone — the
+core OWNS its undo (first-duplicate push) + set_modify, so no push_undo/draw (no-double-push);
+returns-void ⇒ always TCL_OK ⇒ a no-duplicates run is a no-op SUCCESS that still logs one idempotent line
+(§30). No caller anywhere consumed the branch's interp result (it ended in Tcl_ResetResult).
+
+**Fixture gotcha (oracle-pinned).** `xschem instance` auto-uniquifies the second `name=R1` to R2 and
+`setprop instance <i> name R1` RE-uniquifies (`new_prop_string` reads the `disable_unique_names` tclvar —
+a trailing `fast` word does NOT skip uniquify, only `-fast` is parsed and it only skips undo/draw). The
+duplicate pair is forced under `set ::disable_unique_names 1` + `setprop`, read back R1/R1.
+
+**Test (test_perform_action_check_unique_names.tcl, 38 checks, registered in full_audit logdir_tests):**
+(a) mutate success — rename + exactly +1 byte-exact `... 1` + interp blank; (b) LOGGED QUERY on an editable
+cell — highlights (`list_hilights all_inst` carries R1 @ −PINLAYER=−5), renames nothing, +1 `... 0`;
+(b2) THE SPLIT HEADLINE — read-only query NOT over-rejected (TCL_OK + highlight + `+1 ... 0`); (c) THE NEW
+GATE — read-only mutate refused (TCL_ERROR, non-empty verb-named message — the §33 landmine, no rename,
++0); (d) replay both lines through the suppress seam (re-highlight/re-rename) not re-logged, control
+re-logs; (e) undo depth — ONE undo restores R1/R1, a SECOND peels the fixture setprop (name1→R2; a
+run_core double-push would still read R1/R1); (e2) no-op-still-logs + a no-push undo probe (one undo peels
+a PLACEMENT, not a rename snapshot); (f) KEYS via deterministic injection (`xschem callback .drw 2 400 300
+35 0 0 <0|4>` — the real `handle_key_press` chain): `#` +1 `... 0` + works read-only; Ctrl+# +1 `... 1` +
+renames, REFUSED read-only (+0); (g) canonicalization — `check_unique_names 2` runs mode 0 and logs the
+canonical `0`. **Sabotage ×5 (each fails its target, reverted byte-exact, clean re-run green):** (A)
+readonly-gate the mode-0 front (the whole-verb-delegate consequence) → ONLY (b2) fails (the over-reject
+proof); (B) drop the branch mode-0 log → (b) +0 (collateral: (b2)/(d-control)/(g) — the SAME removed site;
+the `#`-key logs still pass, proving the second site); (C) spurious run_core push_undo → (e) second-undo +
+(e2) no-push probe; (D) bypass the boundary in the branch (raw call + inline log) → (c) renames read-only
+AND the S1 delegation row + S7 exact-count `... 1"` row fail closed; (E) revert Ctrl+# to the raw call →
+(f) Ctrl+# +0 log / read-only key renames. **grep guard:** the old S1 prefix row REPLACED by three
+form-specific rows (branch delegation + the two literal log forms) + two callback.c rows (Ctrl+# delegation
++ `#` raw-front log); a 7-check S7 exact-count block is the fail-closed lock (S1 rows are `>=` floors — the
+old prefix regex would have counted 2 and silently passed): scheduler.c EXACTLY ONE `... 0"` + EXACTLY ONE
+`... 1"` + ZERO old `%` form + ZERO scattered readonly_rejects; callback.c EXACTLY ONE `... 0"` + ZERO
+`... 1"` + EXACTLY ONE `perform_action("check_unique_names", 3, av)`. `check_unique_names` stays in S2
+CVERBS, OUT of S3. Build cairo (default) OK.
+
+RECOMMENDED NEXT: re-scout the roster (the atom-24 re-scout's confirmed survivors are now EXHAUSTED —
+delete §44, add_pin_stubs §45, check_unique_names §46 all shipped). `text` stays disqualified;
+cut/copy/save/reload stay deferred (composites, §4/§40); the 0068 §3 key list remains the separate
+key-migration track. See the Refactor B batch ledger `doc/claude/refactor_b_batch/PLAN.md` (item 02 next).

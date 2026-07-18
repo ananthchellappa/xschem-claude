@@ -5,6 +5,14 @@
 resolve to `cut`/`delete`/`undo`/`redo` now record because those cores self-log
 (issue 0071 §4b), independent of key migration. Remaining un-migrated keys await
 either core self-log of their subcommands or migration to the registry.
+**2026-07-18 (Refactor B atom 26, audit §46):** the `#`/Ctrl+# duplicate-refdes
+keys — exactly this class (`actions.csv:100/101` accels with no `keybindings.csv`
+row → the legacy `case '#'` was the only handler, unlogged AND ungated) — now
+route/log via the atom-26 migration: Ctrl+# through `perform_action`
+("check_unique_names", av[2]="1" — gains the readonly gate that closed a silent
+read-only RENAME + the one `xschem check_unique_names 1` log), `#` stays raw with
+its own `xschem check_unique_names 0` log. A PARTIAL close of the class; the §3
+list's other keys remain.
 **Severity:** MED — common editing keys (clipboard, orient-in-place, property
 edit) mutate state with no record because they are still handled by the legacy
 `switch(key)` rather than the registry.
