@@ -204,6 +204,10 @@ static int pin_scope_resolve(const char *scope, int *primary_out, int **targets_
  * check_unique_names (atom 26) is the ASYMMETRIC split: only its mode-1 RENAME
  * form crosses (the arm calls check_unique_names(1)); the mode-0 highlight is a
  * read-only-legal LOGGED QUERY that stays raw in the branch front + '#' key.
+ * clear_drawing (atom 27) is a bare no-arg verb in the delete (atom 24) mold:
+ * silent -> logged + a NEW readonly gate; its core is a SHARED teardown
+ * primitive (load/undo-restore/window-teardown/clear_schematic/debug) whose
+ * seven raw C callers stay below the boundary, and the core stays SILENT.
  * More verbs add an arm here as they move onto the boundary. argc/argv are unused
  * for a bare no-arg verb but carry the pivot for an arg-carrying verb (rotate/flip/flipv); the
  * general boundary shape (audit §4) is the same either way.
@@ -1033,13 +1037,41 @@ static int run_core(const char *verb, int argc, const char *argv[])
     check_unique_names(1);
     return TCL_OK;
   }
+  else if(!strcmp(verb, "clear_drawing")) {
+    /* Refactor B atom 27 (audit §47; decision doc perform_action_atom27_clear_drawing_decision.md):
+     * a BARE no-arg mutating verb in the delete (atom 24) mold -- empties the current drawing but
+     * does NOT purge symbols. clear_drawing() (actions.c) is a SHARED teardown primitive (load_
+     * schematic, disk/memory undo restore, delete_schematic_data, clear_schematic = the separate
+     * `xschem clear` verb, debug) -- ALL callers stay RAW below the boundary and the core stays
+     * SILENT (a core log would spam every load/undo/close; audit §4 log-at-the-verb rule). Only
+     * this VERB crosses. NO push_undo/set_modify/draw exist anywhere on this path and NONE are
+     * added: destructive-with-no-undo is ACCEPTED shipped behaviour (the logged line replays
+     * faithfully but is irreversible -- decision doc §2); a push_undo here would be a behaviour
+     * change, not a migration (and the test's undo-depth detector would catch it).
+     * THE ONE FRICTION is the ARITY GATE (F-validate, the reset_inst_prop §33 argc-gate): the old
+     * branch acted only inside `if(argc==2)`, so `xschem clear_drawing <extra>` was a silent
+     * TCL_OK no-op that log-on-success would PHANTOM-log; validate argc==2 and reject otherwise
+     * (the one deliberate behaviour tighten). unselect_all(1) is the branch's original pre-step
+     * (selection torn down BEFORE the storage resets free the selected objects) -- kept, same
+     * order. Bare-verb log via core_log_action's DEFAULT `xschem %s` arm (NO per-verb branch).
+     * The boundary's scheduler_readonly_reject is NEW here -- a correctness fix (pre-migration a
+     * READ-ONLY view was silently emptied; the 0041/0051 class, like reset_symbol §42). */
+    if(argc != 2) {
+      Tcl_SetResult(interp, "xschem clear_drawing: too many arguments", TCL_STATIC);
+      return TCL_ERROR;
+    }
+    unselect_all(1);
+    clear_drawing();
+    return TCL_OK;
+  }
   return TCL_ERROR; /* unreachable: perform_action is only wired for the verbs above */
 }
 
 /* core_log_action -- the per-verb LOG-FORM half of the perform_action boundary (audit §4,
  * Refactor A step-2 "log at the core" registry SEED, introduced by atom 6). Formats the ONE
  * self-log line for a migrated verb. The bare no-arg verbs (trim_wires/align/rotate_in_place/
- * flip_in_place/flipv_in_place/floaters_from_selected_inst/toggle_ignore/show_unconnected_pins/delete) emit `xschem <verb>`
+ * flip_in_place/flipv_in_place/floaters_from_selected_inst/toggle_ignore/show_unconnected_pins/delete/
+ * clear_drawing) emit `xschem <verb>`
  * byte-identically to the pre-atom-6 `log_action("xschem %s", verb)`; check_unique_names (atom 26)
  * emits the FIXED literal `xschem check_unique_names 1` (only mode 1 crosses the boundary -- the
  * mode-0 logged-query line lives raw-front in the branch + the '#' key, audit §46); the arg-carrying pivot verbs rotate (atom 6), flip (atom 7) and
@@ -2384,16 +2416,16 @@ static int xschem_cmds_c(Tcl_Interp *interp, int argc, const char *argv[], int *
     }
 
     /* clear_drawing
-     *   Clears drawing but does not purge symbols */
+     *   Clears drawing but does not purge symbols.
+     * Routes through the single mutation boundary (Refactor B atom 27, run_core above): the NEW
+     * readonly gate (was NONE -- a read-only view was silently emptied), the argc==2 arity
+     * validation (was a silent no-op), the unselect_all+clear_drawing effect and the ONE bare
+     * `xschem clear_drawing` log site (was SILENT) all live in perform_action/run_core. No undo
+     * exists on this path (accepted -- decision doc §2). The seven raw C teardown callers of
+     * clear_drawing() (load/undo-restore/window-teardown/clear_schematic/debug) stay raw + silent
+     * below the boundary and never reach this branch. */
     else if(!strcmp(argv[1], "clear_drawing"))
-    {
-      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
-      if(argc==2) {
-        unselect_all(1);
-        clear_drawing();
-      }
-      Tcl_ResetResult(interp);
-    }
+      return perform_action("clear_drawing", argc, argv);
 
     /* color_dim value
      *   Dim colors or brite colors depending on value parameter: -5 <= value <= 5 */

@@ -328,6 +328,7 @@ set MANIFEST {
   src/scheduler.c {
     {log_action\("xschem cut"}                        1 {cut branch}
     {return perform_action\("delete", argc, argv\);}  1 {delete branch routes through the perform_action boundary (Refactor B atom 24 -- a BARE no-arg mutating verb, the near-twin of toggle_ignore/floaters: delete() (select.c) OWNS undo+set_modify+draw and returns void, so run_core adds no push_undo/draw (no-double-push rule). The ONE friction is the argc==2 ARITY GATE (F-validate): run_core returns TCL_ERROR on a malformed `xschem delete <extra>` so log-on-success does not phantom-log the pre-migration silent no-op. The old inline scheduler_readonly_reject("delete") + if(argc==2) log_action("xschem delete") are GONE (the boundary owns both); bare-verb log via core_log_action's `xschem %s` default. The Ctrl-X / XK_Delete inline legacy-switch keys STAY raw + self-logging in callback.c and never reach this branch, so no double-log (the shipped cut arrangement)}
+    {return perform_action\("clear_drawing", argc, argv\);} 1 {clear_drawing branch routes through the perform_action boundary (Refactor B atom 27 -- a BARE no-arg SILENT mutation gaining the log + the NEW readonly gate; argc==2 arity gate; core stays raw+silent below the boundary for its seven teardown callers; no undo anywhere -- accepted): pre-migration the verb had NO log (silent free-everything), NO readonly gate (a READ-ONLY view was silently EMPTIED -- the 0041/0051 class, fixed like reset_symbol §42) and an `if(argc==2)` silent-no-op quirk that log-on-success would PHANTOM-log (run_core now rejects extra args -- the one deliberate behaviour tighten). clear_drawing() (actions.c) OWNS nothing (void, no push_undo/set_modify/draw) and is a SHARED teardown primitive of seven raw C flows (load_schematic x3, disk pop_undo, mem_restore_slot, delete_schematic_data, clear_schematic = the separate `xschem clear` verb, debug) -- ALL stay raw+silent below the boundary (audit §4 log-at-the-verb rule); bare-verb log via core_log_action's `xschem %s` default}
     {log_action\("xschem copy"}                       1 {copy branch (atom 4)}
     {log_action\("xschem undo"}                       1 {undo branch}
     {log_action\("xschem redo"}                       1 {redo branch}
@@ -606,7 +607,7 @@ check "S1d exactly 2 net_hilight_apply invocation sites in apply_hilight.tcl (bo
 set CVERBS {
   cut delete copy undo redo save reload saveas align trim_wires break_wires
   flip flipv rotate flip_in_place flipv_in_place rotate_in_place
-  change_elem_order check_unique_names create_instance toggle_ignore
+  change_elem_order check_unique_names clear_drawing create_instance toggle_ignore
   reset_inst_prop replace_symbol show_unconnected_pins embed_rawfile wire_cut apply_pin_prop
   move_instance image reset_symbol instance_number
   floaters_from_selected_inst print_hilight_net attach_labels add_pin_stubs
@@ -1602,6 +1603,30 @@ check "S7 callback.c: ZERO log_action(\"xschem check_unique_names 1\") (the Ctrl
 check "S7 callback.c: EXACTLY ONE perform_action(\"check_unique_names\", 3, av) -- the Ctrl+# key's boundary delegation (atom 26)" \
   [expr {[rxcount $cbtext {perform_action\("check_unique_names", 3, av\);}] == 1}] \
   "got=[rxcount $cbtext {perform_action\("check_unique_names", 3, av\);}]"
+# ---- atom 27 clear_drawing S7 exact counts (audit §47) ----
+# THE FAIL-CLOSED LOCK for the bare-verb migration + the SHARED-TEARDOWN SILENT-CORE rule: the
+# bare `xschem clear_drawing` line is emitted SOLELY by core_log_action's DEFAULT `xschem %s`
+# arm -- NO literal log_action("xschem clear_drawing...") site may EVER exist, neither in
+# scheduler.c (a re-scattered branch log would double every scripted clear against the boundary's
+# line) nor in actions.c (clear_drawing() is a shared teardown primitive of SEVEN raw C flows --
+# load_schematic x3, disk pop_undo, mem_restore_slot, delete_schematic_data, clear_schematic =
+# the separate `xschem clear` verb, debug -- so a core-side log would SPAM a phantom line on
+# every load/undo/close/clear; runtime check (g) + sabotage D's fail-closed row). The boundary's
+# generic scheduler_readonly_reject(interp, verb) is the ONLY gate -- the branch NEVER had one
+# (the NEW gate is the atom's correctness fix) so no scattered per-verb copy may appear.
+check "S7 scheduler.c: EXACTLY ONE clear_drawing boundary delegation (return perform_action) -- the whole verb crosses (atom 27)" \
+  [expr {[rxcount $sched {return perform_action\("clear_drawing", argc, argv\);}] == 1}] \
+  "got=[rxcount $sched {return perform_action\("clear_drawing", argc, argv\);}]"
+check "S7 scheduler.c: ZERO literal log_action(\"xschem clear_drawing\") (the bare form logs ONLY via core_log_action's default %s arm -- a re-scattered branch log would double-log)" \
+  [expr {[rxcount $sched {log_action\("xschem clear_drawing}] == 0}] \
+  "got=[rxcount $sched {log_action\("xschem clear_drawing}]"
+check "S7 scheduler.c: NO scattered scheduler_readonly_reject(...,\"clear_drawing\") (the boundary's generic gate is the ONLY gate -- NEW in atom 27, the branch never had one)" \
+  [expr {[rxcount $sched {scheduler_readonly_reject\(interp, "clear_drawing"\)}] == 0}] \
+  "got=[rxcount $sched {scheduler_readonly_reject\(interp, "clear_drawing"\)}]"
+set acttext [srctext src/actions.c]
+check "S7 actions.c: ZERO log_action(\"xschem clear_drawing\") -- the CORE stays SILENT (shared teardown primitive of seven raw C flows; a core log would spam every load/undo/close -- the atom-27 spam lock, sabotage D fails closed here)" \
+  [expr {[rxcount $acttext {log_action\("xschem clear_drawing}] == 0}] \
+  "got=[rxcount $acttext {log_action\("xschem clear_drawing}]"
 # atom-13 NESTING COUPLING (adversarial-review finding): the S1 existence rows above pin
 # that the guard line, the log line and the reset line each EXIST, but not that log+reset are
 # INSIDE the log-on-success block. A de-nest that keeps all three lines yet closes the

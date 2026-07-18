@@ -4880,7 +4880,73 @@ old prefix regex would have counted 2 and silently passed): scheduler.c EXACTLY 
 `... 1"` + EXACTLY ONE `perform_action("check_unique_names", 3, av)`. `check_unique_names` stays in S2
 CVERBS, OUT of S3. Build cairo (default) OK.
 
-RECOMMENDED NEXT: re-scout the roster (the atom-24 re-scout's confirmed survivors are now EXHAUSTED —
-delete §44, add_pin_stubs §45, check_unique_names §46 all shipped). `text` stays disqualified;
-cut/copy/save/reload stay deferred (composites, §4/§40); the 0068 §3 key list remains the separate
-key-migration track. See the Refactor B batch ledger `doc/claude/refactor_b_batch/PLAN.md` (item 02 next).
+RECOMMENDED NEXT (superseded by §47): the batch ledger's item 02 (`clear_drawing`) shipped as atom 27 —
+see §47 below and `doc/claude/refactor_b_batch/PLAN.md` (item 03 `redo` next).
+
+## 47. Refactor B ATOM 27 (2026-07-18): the TWENTY-SEVENTH per-verb migration — silent→logged + a NEW readonly gate for the shared-teardown bare verb (`clear_drawing`)
+
+**The verb, and the win class.** `clear_drawing` was the batch plan's lowest-friction SILENT mutation: a
+free-everything verb (empties instances/wires/texts/lines/rects/arcs/polys + the sheet's prop strings but
+does NOT purge symbols — the contract delta vs the separate `xschem clear`) with NO log, NO readonly gate,
+NO undo, NO second entry point and ZERO repo callers (a PURE SCRIPTED verb, the reset_inst_prop §33 entry
+map). The migration is the atom-24 `delete` mold verbatim — branch → `return perform_action("clear_drawing",
+argc, argv)`; run_core arm → argc gate + `unselect_all(1); clear_drawing();` (the branch's original
+selection-teardown pre-step, kept in order — selection must die BEFORE the storage resets free the objects
+it references); bare-verb log via `core_log_action`'s DEFAULT `xschem %s` arm (NO per-verb branch, only the
+two header rosters gain the name). Decision doc: `perform_action_atom27_clear_drawing_decision.md`.
+
+**The correctness fix.** The old branch had NO readonly gate — oracle-pinned on the HEAD binary
+(2026-07-18): `xschem clear_drawing` on a READ-ONLY view returned rc=0 and silently EMPTIED it (the
+0041/0051 class). The boundary's generic `scheduler_readonly_reject` closes it — the reset_symbol §42 /
+add_pin_stubs §45 fix class. **The one behaviour tighten** is the ARITY GATE (F-validate, the §33
+argc-gate): the old `if(argc==2)` skip-body made `xschem clear_drawing <extra>` a silent TCL_OK no-op that
+log-on-success would PHANTOM-log; run_core now rejects `argc != 2` with a verb-named TCL_ERROR (oracle-
+pinned pre-migration: rc=0, no message, no mutation).
+
+**The load-bearing rule — the SHARED-TEARDOWN SILENT CORE.** `clear_drawing()` (actions.c:1866, void, owns
+NOTHING — no push_undo/set_modify/draw/log) is a shared teardown primitive of SEVEN raw C flows:
+`load_schematic` ×3 (save.c), disk `pop_undo` (save.c), `mem_restore_slot` (in_memory_undo.c),
+`delete_schematic_data` (xinit.c), `clear_schematic` (actions.c — the separate `xschem clear` verb's core),
+plus two debug sites (font.c, actions.c `draw_stuff`). ALL stay raw + silent below the boundary; a core-side
+log would spam a phantom line on every load/undo/tab-close/`xschem clear` — the cleanest illustration yet of
+§4's *log at the verb's entry when the core is a shared mechanism*. Runtime check (g) + the S7 actions.c
+`== 0` row lock it.
+
+**The accepted oddity — destructive with NO undo.** Neither branch nor core ever pushed undo, and NONE is
+added: the logged line is FAITHFUL on replay (re-clears whatever is loaded) but IRREVERSIBLE (`xschem undo`
+restores the last PRIOR snapshot, not the pre-clear state) — shipped behaviour, unchanged, recorded as
+accepted (decision doc §2; an undo-before-clear would be a standalone behaviour-change fix in the rect/§25-
+pool mold, not a migration). Check (f) turns the acceptance into a detector: a spurious run_core push_undo
+would snapshot WITH the placed instance so ONE undo would resurrect it. `set_modify`/`draw` likewise stay
+absent (behaviour-preserving). No caller anywhere consumed the branch's interp result (it ended in
+Tcl_ResetResult — the boundary's success-only reset changes nothing observable).
+
+**Test (test_perform_action_clear_drawing.tcl, 29 checks, registered in full_audit logdir_tests):**
+(a) SUCCESS — 3 placed instances cleared (instances/texts/wires all 0), `get symbols` still ≥1 (the
+does-not-purge-symbols contract), exactly +1 byte-exact bare `xschem clear_drawing`, interp result blank;
+(b) THE ARITY TIGHTEN — `extra` arg → TCL_ERROR `*clear_drawing*argument*` (the §33 landmine: the message
+survives the success-only reset), NO mutation, +0 log; (c) THE NEW GATE — read-only clear refused
+(TCL_ERROR `*clear_drawing*read-only*`, view NOT emptied, +0 log); (d) REPLAY — the recorded line
+re-executes through the `replay_action_log` suppress seam (re-clears) without re-logging; a control
+unwrapped `source` re-logs +1; (e) NO-OP-STILL-LOGS — clearing an already-empty sheet is a void SUCCESS,
+still +1 (§30); (f) NO-SPURIOUS-PUSH — place ONE instance on an empty sheet (the placement pushes the
+pre-placement EMPTY snapshot), clear, ONE undo → instances STAYS 0 (the shipped irreversibility; a
+run_core push would read 1); (g) SHARED CORE / SIBLING UNTOUCHED — `xschem clear force` still clears and
+logs +0 `xschem clear_drawing` lines (its `clear_schematic` core calls the primitive RAW below the
+boundary). **Sabotage ×4 (each fails its target, reverted byte-exact, clean re-run green):** (A) drop the
+run_core argc gate (restore old skip-body semantics) → ONLY the (b) checks fail (extra-arg silent-OK +
+phantom-log); (B) bypass the boundary in the branch (restore the raw inline body) → (c) fails (read-only
+view emptied 3→0) AND the S1 delegation row + S7 delegation row fail closed (collateral (a)/(b)/(d)/(e) —
+the same removed boundary); (C) spurious `xctx->push_undo()` in the arm → ONLY (f) fails (undo resurrects
+the instance); (D) `log_action("xschem clear_drawing")` inside the CORE → (g) fails (`xschem clear` spams
+a phantom line) AND the S7 actions.c `== 0` row fails closed (collateral (a)/(d-control)/(e) read +2 — the
+same spam). **grep guard:** ONE S1 floor row (the delegation, delete-row prose style); `clear_drawing`
+ADDED to S2 CVERBS, kept OUT of S3; a 4-check S7 exact-count block — scheduler.c EXACTLY ONE delegation +
+ZERO literal `log_action("xschem clear_drawing` (the bare form logs ONLY via the default `%s` arm) + ZERO
+scattered `scheduler_readonly_reject(interp, "clear_drawing")`, and actions.c ZERO literal
+`log_action("xschem clear_drawing` (the silent-core spam lock). Build cairo (default) OK.
+
+RECOMMENDED NEXT: the Refactor B batch ledger `doc/claude/refactor_b_batch/PLAN.md` — item 03 `redo`
+(T2-clean, fr1, logged-raw: already boundary-shaped, a zero-coverage consistency move onto
+core_log_action) is next; cut/copy/save/reload stay deferred (composites, §4/§40); the 0068 §3 key list
+remains the separate key-migration track.
