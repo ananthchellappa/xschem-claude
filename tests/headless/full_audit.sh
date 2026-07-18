@@ -42,6 +42,7 @@ logdir_tests=" test_ciw test_ciw_autocomplete test_ciw_puts_capture test_hi_desc
   test_gesture_end_log test_phase3_mints test_lib_roundtrip test_selflog_output \
   test_altf5_ciw test_undo_link_symbols test_dblclick_connected_grow test_delete_cut_selflog \
   test_descend_goback_selflog test_save_reload_copy_selflog test_selflog_grep_guard \
+  test_coordlog_precision \
   test_stdin_tcp_log test_libmgr_mutation_log test_nhse_mutation_log test_paste_at_log \
   test_shape_setprop_log test_sympin_drop_log test_cadence_window_hop_log \
   test_rotmove_drop_log test_netlist_log test_apply_hilight_log \

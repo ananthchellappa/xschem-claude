@@ -1798,7 +1798,12 @@ static void log_pan_end(void)
 {
   double dx = xctx->xorigin - pan_log_xorig;
   double dy = xctx->yorigin - pan_log_yorig;
-  if(dx != 0. || dy != 0.) log_action("xschem pan %.16g %.16g", dx, dy);
+  /* dx/dy are a VIEWPORT delta (origin shift), NOT a coordinate on the snap grid --
+   * the origin is arbitrary, so snap_to_grid() does not apply here (unlike the pivot
+   * verbs / select_at). Pan is view-only (never touches schematic/netlist), so the
+   * shift need not be grid-aligned; %.10g (was %.16g) only trims the float noise a
+   * mouse-pixel*zoom delta accrues, keeping the log readable. */
+  if(dx != 0. || dy != 0.) log_action("xschem pan %.10g %.10g", dx, dy);
 }
 
 /* Cadence net-label drop gate (doc/claude/specs/add_wire_label.md). The armed wire-label

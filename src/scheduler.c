@@ -1036,27 +1036,38 @@ static int run_core(const char *verb, int argc, const char *argv[])
 static void core_log_action(const char *verb, int argc, const char *argv[])
 {
   if(!strcmp(verb, "rotate")) {
-    double x0 = xctx->mousex_snap, y0 = xctx->mousey_snap;
+    /* The logged pivot is the EFFECTIVE coordinate (doc/claude/specs/select_at.md):
+     * the mouse-fallback path is mousex_snap, already grid-snapped by the callback
+     * (my_round(mousex/cadsnap)*cadsnap) -- routing it through snap_to_grid() is
+     * idempotent but normalizes -0 and, with %.10g, strips the residual float noise
+     * %.16g re-leaked (242.99999999999997 -> 243). The explicit-arg path stays
+     * verbatim (atof of argv, NOT snapped): a scripted `rotate 100 40` must replay
+     * byte-identically. %.10g is exact for real inputs (<=10 sig figs). */
+    double x0 = snap_to_grid(xctx->mousex_snap), y0 = snap_to_grid(xctx->mousey_snap);
     if(argc > 3) { x0 = atof(argv[2]); y0 = atof(argv[3]); }
-    log_action("xschem rotate %.16g %.16g", x0, y0);
+    log_action("xschem rotate %.10g %.10g", x0, y0);
   } else if(!strcmp(verb, "flip")) {
     /* atom 7: the SECOND arg-carrying verb, mirror of rotate. Same pivot resolution
-     * (argv[2]/argv[3] else the mouse coord run_core just seeded), so the logged
-     * `xschem flip x0 y0` always matches the applied mirror. NB the literal `flip %`
-     * (flip+space+%) does NOT match `flipv %` or `flip_in_place` -- flipv keeps its
-     * bare-verb `xschem %s` form until its own atom. */
-    double x0 = xctx->mousex_snap, y0 = xctx->mousey_snap;
+     * (argv[2]/argv[3] else the mouse coord run_core just seeded) AND same effective-
+     * coordinate rule (snap_to_grid + %.10g on the mouse path, verbatim atof on the
+     * explicit-arg path -- see rotate above), so the logged `xschem flip x0 y0`
+     * always matches the applied mirror. NB the literal `flip %` (flip+space+%) does
+     * NOT match `flipv %` or `flip_in_place` -- flipv keeps its bare-verb `xschem %s`
+     * form until its own atom. */
+    double x0 = snap_to_grid(xctx->mousex_snap), y0 = snap_to_grid(xctx->mousey_snap);
     if(argc > 3) { x0 = atof(argv[2]); y0 = atof(argv[3]); }
-    log_action("xschem flip %.16g %.16g", x0, y0);
+    log_action("xschem flip %.10g %.10g", x0, y0);
   } else if(!strcmp(verb, "flipv")) {
     /* atom 8: the THIRD and LAST arg-carrying pivot verb, mirror of flip. Same pivot
-     * resolution (argv[2]/argv[3] else the mouse coord run_core just seeded), so the
-     * logged `xschem flipv x0 y0` always matches the applied vertical mirror. NB the
-     * literal `flipv %` (flipv+space+%) does NOT match `flip %` (a `v` intervenes before
-     * the space) nor `flipv_in_place` -- the three are counted independently. */
-    double x0 = xctx->mousex_snap, y0 = xctx->mousey_snap;
+     * resolution (argv[2]/argv[3] else the mouse coord run_core just seeded) AND same
+     * effective-coordinate rule (snap_to_grid + %.10g on the mouse path, verbatim atof
+     * on the explicit-arg path -- see rotate above), so the logged `xschem flipv x0 y0`
+     * always matches the applied vertical mirror. NB the literal `flipv %`
+     * (flipv+space+%) does NOT match `flip %` (a `v` intervenes before the space) nor
+     * `flipv_in_place` -- the three are counted independently. */
+    double x0 = snap_to_grid(xctx->mousex_snap), y0 = snap_to_grid(xctx->mousey_snap);
     if(argc > 3) { x0 = atof(argv[2]); y0 = atof(argv[3]); }
-    log_action("xschem flipv %.16g %.16g", x0, y0);
+    log_action("xschem flipv %.10g %.10g", x0, y0);
   } else if(!strcmp(verb, "break_wires")) {
     /* atom 9: the FIRST NON-transform verb, and the FIRST whose arg is a FLAG (0/1)
      * rather than a coordinate pivot. `remove` is read from argv[2] IDENTICALLY to
@@ -1163,11 +1174,12 @@ static void core_log_action(const char *verb, int argc, const char *argv[])
     ev[0] = "xschem"; ev[1] = verb; ev[2] = argv[2];
     log_action_argv(3, ev);
   } else if(!strcmp(verb, "wire_cut")) {
-    /* atom 17: a numeric COORD + bareword-FLAG log, the %.16g pivot convention of rotate/flip
-     * (atoms 6/7) -- NOT log_action_argv (the coords are numeric, there is no Tcl metacharacter
-     * referent to brace-quote). TWO forms like break_wires (atom 9): the aligned
-     * `xschem wire_cut x y` and the `xschem wire_cut x y noalign`. Logs the RAW click coords
-     * argv[2]/argv[3] (NOT the snapped point break_wires_at_point computes): `align` is applied
+    /* atom 17: a numeric COORD + bareword-FLAG log -- NOT log_action_argv (the coords are
+     * numeric, there is no Tcl metacharacter referent to brace-quote). TWO forms like
+     * break_wires (atom 9): the aligned `xschem wire_cut x y` and the `xschem wire_cut x y
+     * noalign`. Unlike the pivot verbs (rotate/flip snap the mouse coord + %.10g), wire_cut
+     * KEEPS %.16g and logs the RAW click coords argv[2]/argv[3] (NOT the snapped point
+     * break_wires_at_point computes): `align` is applied
      * INSIDE the core (closest_point_calculation), so raw-coords + the flag replay IDENTICALLY
      * (replay re-snaps to the same point). `align` is read here with the SAME loop as run_core's
      * wire_cut arm, so the logged form can never diverge from the applied cut. Reached ONLY on
