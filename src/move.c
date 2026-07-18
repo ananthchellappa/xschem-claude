@@ -6428,12 +6428,16 @@ static void fluid_shove_connected_wire(int orthogonal_wiring)
  * cascade-sensitive (WIRING.md §5 -- trust zero/nonzero, not magnitude), and the "never-worse"
  * healers legitimately accept a baseline disconnect (test_wireedit_42); the sprint's target is the
  * SILENT saved short/merge, so enforcement refuses on P2 only and disconnects stay log-only. */
-static int fluid_check_move_invariants(void)
+/* Count net-label instances whose forced name disagrees with the physical net of the wire they
+ * touch -- the P2 label-short signal. This is an ABSOLUTE (whole-schematic) count. The END enforce
+ * gate turns it into a DELTA by subtracting the gesture-START baseline (see fluid_check_move_invariants
+ * + the enf_short_base capture at the pristine snapshot): a PRE-EXISTING naming short on a net the
+ * gesture never touched must NOT veto an otherwise-valid move (issue 0123 -- moving an isolated
+ * segment of a clean net was refused because a foreign net elsewhere carried conflicting labels).
+ * Requires inst[].node[]/wire[].node fresh (caller runs prepare_netlist_structs). */
+static int fluid_count_label_shorts(void)
 {
-  int i, w, shorts = 0, disconnects = 0, dev_merges = 0;
-  if(!tclgetboolvar("fluid_editing")) { fluid_gesture_free(); return 0; }
-  prepare_netlist_structs(0);
-  /* --- P2: no-short/merge (wire-level, see comment above) --- */
+  int i, w, shorts = 0;
   for(i = 0; i < xctx->instances; ++i) {
     const char *type = xctx->sym[xctx->inst[i].ptr].type;
     const char *intended;
@@ -6447,13 +6451,26 @@ static int fluid_check_move_invariants(void)
         const char *phys = xctx->wire[w].node;
         if(phys && strcmp(intended, phys)) {
           ++shorts;
-          dbg(0, "fluid_editing INVARIANT (P2): net label '%s' (%s) now on net '%s' after "
-                 "move -- possible short/merge\n", intended, xctx->inst[i].instname, phys);
+          dbg(0, "fluid_editing INVARIANT (P2): net label '%s' (%s) on net '%s' -- "
+                 "possible short/merge\n", intended, xctx->inst[i].instname, phys);
         }
         break;                                           /* first wire at the pin is enough */
       }
     }
   }
+  return shorts;
+}
+
+static int fluid_check_move_invariants(int short_baseline)
+{
+  int shorts = 0, disconnects = 0, dev_merges = 0, short_delta;
+  if(!tclgetboolvar("fluid_editing")) { fluid_gesture_free(); return 0; }
+  prepare_netlist_structs(0);
+  /* --- P2: no-short/merge (wire-level, see comment above). DELTA vs the gesture-START baseline:
+   * only shorts THIS gesture INTRODUCED count toward the refuse signal. --- */
+  shorts = fluid_count_label_shorts();
+  short_delta = shorts - short_baseline;
+  if(short_delta < 0) short_delta = 0;                   /* a gesture that HEALS a pre-existing short */
   /* --- P1: connectivity partition unchanged (pin-level, vs START snapshot) --- */
   if(fluid_g.snap_id && fluid_g.snap_npins > 0) {
     int tot = fluid_count_pins();
@@ -6472,13 +6489,13 @@ static int fluid_check_move_invariants(void)
    * the label pass above misses. Runs BEFORE the snapshot is freed. --- */
   dev_merges = fluid_check_device_merge();
   fluid_gesture_free();
-  tclsetvar("fluid_last_move_violations", my_itoa(shorts));
+  tclsetvar("fluid_last_move_violations", my_itoa(short_delta));  /* violations THIS move introduced */
   tclsetvar("fluid_last_move_disconnects", my_itoa(disconnects));
   tclsetvar("fluid_last_move_dev_merges", my_itoa(dev_merges));
   tclsetvar("fluid_last_move_failsafes", my_itoa(fluid_move_failsafes));  /* B4: silent-degradation count */
   fltrace("FLTRACE move: fluid_last_move_failsafes=%d (fluid helpers that fail-safe no-op'd)\n",
           fluid_move_failsafes);
-  return shorts + dev_merges;   /* P2 electrical-merge count = the enforcement refuse signal */
+  return short_delta + dev_merges;   /* P2 electrical-merge count (gesture-introduced) = refuse signal */
 }
 
 /* incremental_wire_reroute.md Phase II: restore the live schematic to the pristine (post-kiss,
@@ -6761,6 +6778,7 @@ void move_objects(int what, int merge, double dx, double dy)
    Undo_slot enf_snap;
    int enf_snapped = 0, enf_mod_before = 0;
    int enf_cur = 0, enf_head = 0, enf_tail = 0;   /* pre-push undo counters, to exactly invert the push on refuse */
+   int enf_short_base = 0;   /* issue 0123: absolute label-short count at gesture START (pristine) */
    unsigned int enf_wid = 0, enf_iid = 0, enf_gid = 0, enf_tid = 0;
 
    /* --- END-only pre-commit finalizers; a live fluid RUBBER step (commit_now) skips them and
@@ -6825,6 +6843,11 @@ void move_objects(int what, int merge, double dx, double dy)
        mem_snapshot_alloc(&enf_snap); mem_serialize_slot(&enf_snap); enf_snapped = 1;
        enf_wid = xctx->wire_id_counter; enf_iid = xctx->inst_id_counter;
        enf_gid = xctx->gfx_id_counter;  enf_tid = xctx->text_id_counter;
+       /* issue 0123: baseline the ABSOLUTE label-short count on the gesture-START (pristine, pre-delta)
+        * geometry, so the END gate refuses only on shorts THIS gesture INTRODUCES. A pre-existing
+        * naming short on a foreign net (that the move never touches) had been vetoing valid moves. */
+       prepare_netlist_structs(0);
+       enf_short_base = fluid_count_label_shorts();
      }
    }
    if((xctx->ui_state & PLACE_SYMBOL)) {
@@ -7744,9 +7767,9 @@ void move_objects(int what, int merge, double dx, double dy)
       * 0094/0098/0099 class the checker merely PRINTED while it shipped). */
      {
        int enforce = tclgetboolvar("fluid_enforce_invariants");
-       int p2bad = fluid_check_move_invariants();  /* sets fluid_last_move_* AND returns shorts+dev_merges */
-       fltrace("FLTRACE move: fluid_enforce_invariants=%d p2_merges=%d enf_snapped=%d\n",
-               enforce, p2bad, enf_snapped);
+       int p2bad = fluid_check_move_invariants(enf_short_base);  /* sets fluid_last_move_* AND returns delta-shorts+dev_merges */
+       fltrace("FLTRACE move: fluid_enforce_invariants=%d p2_merges=%d short_base=%d enf_snapped=%d\n",
+               enforce, p2bad, enf_short_base, enf_snapped);
        if(enforce && enf_snapped && p2bad) {
          /* REFUSE. Restore ritual mirrors the leg_snap rollback (:7171): preserve ui_state across
           * mem_restore_slot (which zeroes it via unselect_all), put the START id counters back

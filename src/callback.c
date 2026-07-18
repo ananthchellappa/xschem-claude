@@ -6689,8 +6689,16 @@ static void handle_button_press(int event, int state, int rstate, KeySym key, in
        }
      }
 
-     /* Button1Press to select objects */
-     if(!excl && !(xctx->ui_state & STARTSELECT)) {
+     /* Button1Press to select objects.
+      * issue 0123 (secondary): while a placement preview is LIVE (a symbol/pin/text/sympin drop
+      * following the cursor) a plain press must NEVER be captured by the fluid tip-grab / wire-add /
+      * shape-point grab in this block -- that path calls move_objects(START), starting a spurious
+      * wire-stretch (and tripping the leaked-armed fluid tripwire) whenever STARTMOVE has been
+      * desynced from the live placement flags. The legit drop is committed just above by
+      * end_place_move_copy_zoom() (STARTMOVE set => it returns first); this guard only bites in the
+      * desync window, where declining the grab is strictly safer than stealing the click. */
+     if(!excl && !(xctx->ui_state & STARTSELECT) &&
+        !(xctx->ui_state & (PLACE_SYMBOL | PLACE_TEXT | START_SYMPIN)) && !xctx->sympin_preview) {
        Selected sel;
        int already_selected = 0;
        int did_snapshot = 0;   /* cadence deferred-selection: pre-press selection was captured */

@@ -388,6 +388,14 @@ spec digest). Enforcement TODAY:
   (shorts + dev_merges) drives ROLLBACK-OR-REFUSE when `fluid_enforce_invariants` is set (the
   default). A short no healer can repair (named-rail blackout, degenerate relay) is REFUSED,
   not saved. Escape hatch: `set fluid_enforce_invariants 0` reverts to log-only.
+  Both P2 sub-signals are now **DELTA vs the gesture-START baseline**, not absolute: the
+  device-merge pass always was (compares `fluid_snap_pinnet[]` start-vs-end); the label-short pass
+  (`fluid_count_label_shorts`) was ABSOLUTE until issue 0123 and vetoed valid moves whenever ANY
+  pre-existing naming short existed on a FOREIGN net the gesture never touched. Now the pristine
+  enforce snapshot also captures `enf_short_base = fluid_count_label_shorts()`, and the gate refuses
+  on `max(0, end_shorts − base) + dev_merges`. Landmine: a schematic can carry a legit-looking
+  short at rest (multiple conflicting `lab_pin`/`ipin` names on one net); the gate must never punish
+  an unrelated move for it.
 - P1 disconnect: still **log-only** (Tcl var `fluid_last_move_disconnects`). NOT part of the
   refuse signal — a disconnect is visible (a dangling pin), the count is cascade-sensitive (§5),
   and the never-worse healers legitimately accept a baseline disconnect (test_wireedit_42).
