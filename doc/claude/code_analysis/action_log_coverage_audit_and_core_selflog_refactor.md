@@ -5028,8 +5028,93 @@ the RAW undo branch must neither disappear nor route this atom), and callback.c 
 `log_action("xschem redo"` (no key self-logs it). The S1 undo row (`log_action\("xschem undo"`, pinning
 the branch's argc==2 form) untouched. Build cairo (default) OK.
 
-RECOMMENDED NEXT: the Refactor B batch ledger `doc/claude/refactor_b_batch/PLAN.md` — item 04
-`get_additional_symbols` (T2-clean, fr2, silent: a real xctx->sym mutator, but the transient/derived-state
-scope question must be settled first); item 05 `undo` (redo's twin, consistency-only with a
-normalizing-log wrinkle) follows; cut/copy/save/reload stay deferred (composites, §4/§40); the 0068 §3
+RECOMMENDED NEXT (superseded by §49): item 04 `get_additional_symbols` was DEFERRED at scout (derived
+netlisting cache, reclassified D2 transient — PLAN.md ledger); item 05 `undo` (redo's twin) shipped as
+atom 29 — see §49 below; cut/copy/save/reload stay deferred (composites, §4/§40); the 0068 §3
 key list remains the separate key-migration track.
+
+## 49. Refactor B ATOM 29 (2026-07-18): the TWENTY-NINTH per-verb migration — the NORMALIZING-LOG-ARM twin of redo (`undo`)
+
+**The verb, and the win class.** `undo` is batch item 05 and the undo-family twin of redo (§48) — the
+same consistency-only class, ZERO coverage gain by design. The old branch (scheduler.c, `xschem_cmds_u`)
+was already boundary-shaped: inline `!xctx` guard + inline `scheduler_readonly_reject(interp, "undo")` +
+argv parse (`redo`/`set_modify` from argv[2]/argv[3] with atoi defaults 0/1) +
+`pop_undo_keep_selection(redo, set_modify)` + unconditional two-form log + `Tcl_ResetResult`. Branch →
+`return perform_action("undo", argc, argv)`; run_core arm → the argv parse + the core call, verbatim.
+Decision doc: `perform_action_atom29_undo_decision.md`.
+
+**The one design decision — the NORMALIZING `core_log_action` arm.** Unlike redo's fixed bare line,
+undo's old branch logged a NORMALIZED form of its two optional integer args, so the log can ride neither
+the default `%s` arm (which would flip `xschem undo 1 1` to a bare undo on replay — a WRONG-direction
+replay) nor a raw-argv passthrough. The per-verb arm reads argv IDENTICALLY to run_core (the
+rotate/break_wires/attach_labels invariant) and reproduces all three normalizations byte-identically:
+atoi canonicalization (`xschem undo 00 01` logs `xschem undo 0 1`), default fill (`xschem undo 1` logs
+`xschem undo 1 1` — replay preserves DIRECTION), tail drop (`xschem undo 0 1 extra` logs
+`xschem undo 0 1`). Bare `xschem undo` at argc==2, `xschem undo %d %d` else. The F-flagarg lesson: the
+normalizing arm is standard per-verb machinery, ZERO edits to any shared seam. TOLERANT ARGC is the
+PRESERVED behaviour (no arity gate — the §48 rule: an arity gate is a contract consequence of an OLD
+`if(argc==N)` silent no-op, which undo never had).
+
+**Undo-stack ownership — NO push_undo, ever.** `pop_undo_keep_selection(redo, set_modify)` (select.c,
+the issue-0095 wrapper over `xctx->pop_undo`) is undo-stack NAVIGATION: a spurious push before the pop
+would restore the just-pushed state = a no-op undo. The at-head push that arms the redo slot lives
+INSIDE the core (save.c pop_undo). The flag passes through verbatim (0/4 undo, 1 redo, 2 peek), so
+`xschem undo 1 1` IS a redo wearing the undo verb, with its OWN log line. An EMPTY undo stack no-ops
+in-core (`cur_undo_ptr == tail_undo_ptr` early return) = a no-op SUCCESS that still logs one idempotent
+line (§30).
+
+**The entry map — NO callback.c edit.** Legacy `case 'u'` plain is GONE (Phase 3d.2, comment only; the
+surviving Alt-u=align / Ctrl-u=unselect-floaters arms never touch undo); key `u` is a Tcl-funneled
+binding (keysym 117, mods 0, idle-gated) → ActionDef `edit.undo` (`xschem undo; xschem redraw`,
+mutates=1) → dispatch_input_action → Tcl eval → the branch → the boundary. Layer A dedup unchanged: the
+boundary log sets `actionlog_cmd_logged`, the wrapper copy is skipped — exactly ONE bare `xschem undo`,
+never the compound, before AND after. Read-only key path gated at DISPATCH (mutates=1 → readonly_block).
+Menu/toolbar run the same compound; zero `[xschem undo]` result consumers repo-wide. Issue 0068 NOT
+implicated.
+
+**The F-SHARED twin rows — the hand-off from atom 28.** `pop_undo_keep_selection` still has exactly TWO
+scheduler.c call sites: the fixed-arg `(1, 1)` site (run_core's redo arm) and the argv-parsed
+`(redo, set_modify)` site — which MOVED from the raw branch into run_core's undo arm this atom, count
+unchanged. Atom 28's S7 rows were written to fail closed against exactly this atom done wrong; done
+right, the counts survive and only the row DESCRIPTIONS move (rewritten to name run_core's undo arm as
+the pinned argv-parsed site). `test_perform_action_redo.tcl` NOT edited — its check (g) byte-pins the
+`xschem undo 1 1` line the normalizing arm reproduces; it passes unchanged.
+
+**Test (test_perform_action_undo.tcl, 46 checks, registered in full_audit logdir_tests; ALL 46 pass on
+the PRE-migration binary too — the zero-delta proof):** (e) runs FIRST — empty launch undo stack → rc
+TCL_OK, no mutation, +1 exact-bare (§30); (a) SUCCESS — place R1, `xschem undo` → 1→0, rc TCL_OK, +1
+byte-exact bare, interp result blank; (b) THE HEADLINE, the normalizing arm — (b1) `xschem undo 1 1`
+REDOES 0→1, +1 exact `xschem undo 1 1`, +0 bare, +0 `xschem redo`; (b2) `xschem undo 00 01` undoes, +1
+exact `xschem undo 0 1`, +0 raw `00 01` (atoi canonicalization); (b3) `xschem undo 1` redoes, +1 exact
+`xschem undo 1 1` (default fill); (b4) `xschem undo 0 1 extra` undoes, rc TCL_OK, +1 exact
+`xschem undo 0 1`, +0 lines containing `extra` (tolerant argc + tail drop); (c) READONLY CONSOLIDATION —
+TCL_ERROR `*undo*read-only*` non-empty (§33), no mutation, +0 log; (d) REPLAY — suppress seam re-applies
+without re-logging, control `source` re-logs +1; (f) STACK ROUND-TRIP + SIBLING LOCK — undo→0/redo→1
+twice, redo verb +1 exact-bare `xschem redo` each with +0 undo lines; (g) KEY FUNNEL + LAYER-A DEDUP —
+injected `u` (`callback .drw 2 400 300 117 0 0 0`) applies the undo, +1 exact-bare, +0 compound lines;
+read-only + same injection blocked at dispatch, no mutation, +0 log.
+**Sabotage ×5 (each reverted byte-exact, clean re-run green):** (A) bypass the boundary (restore the raw
+inline body) → the runtime .tcl STILL PASSES IN FULL (the §48/§32 zero-delta lesson) while EXACTLY the 6
+undo grep rows fail closed (S1 delegation want>=1 got 0; S7 delegation ==1 got 0, bare-log ==1 got 2,
+`%d %d`-log ==1 got 2, readonly-reject ==0 got 1, `(redo, set_modify);` ==1 got 2) — the grep guard is
+the load-bearing exclusivity lock; (B) spurious `xctx->push_undo()` before the pop → (a) fails
+(instances stays 1, push-then-pop restores the just-pushed state; same-signature collateral on the other
+undo-direction effect checks (b2)/(b4)/(d)/(f)/(g)); (C) raw-argv passthrough in the arm (argv[2]/argv[3]
+logged as strings, atoi dropped) → ONLY (b2) fails (`xschem undo 00 01` logged non-normalized, exact
+`xschem undo 0 1` +0); (D) delete the per-verb arm (fall to default `%s`) → (b1) fails (`xschem undo 1 1`
+logs BARE; predicted collateral (b2)/(b3)/(b4)); (E) gate on did-something (run_core TCL_ERROR at
+`cur_undo_ptr == tail_undo_ptr`) → (e) fails (+0 log, rc error — the no-op-still-logs discriminator; (e)
+trips ONLY under this sabotage), plus mechanically-linked collateral on (b1)-(b4) beyond the prediction:
+at stack bottom cur==tail even with a redo tail armed, so the naive gate also blocks every
+redo-wearing-undo form — one more reason a did-something gate is wrong for this verb. **grep guard:** the
+S1 `log_action("xschem undo"` floor row REPLACED by the delegation row; `undo` stays in S2 CVERBS, OUT of
+S3; the S5 runtime canary untouched and passing; a 5-check S7 exact-count block — scheduler.c EXACTLY ONE
+delegation + EXACTLY ONE literal `log_action("xschem undo")` (the arm's bare form) + EXACTLY ONE
+`log_action("xschem undo %d %d"` (the arm's normalized form) + ZERO scattered
+`scheduler_readonly_reject(interp, "undo")`, and callback.c ZERO `log_action("xschem undo"`; the atom-28
+S7 twin rows' counts unchanged, prose re-homed to run_core's undo arm. Build cairo (default) OK.
+
+RECOMMENDED NEXT: the Refactor B batch ledger `doc/claude/refactor_b_batch/PLAN.md` — item 06 `wire`
+(T2-clean, fr3, silent: the best silent coverage win in the pool, a wire_cut-style split shape with a
+branch-push undo reconcile); cut/copy/save/reload stay deferred (composites, §4/§40); the 0068 §3 key
+list remains the separate key-migration track.

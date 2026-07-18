@@ -212,8 +212,12 @@ static int pin_scope_resolve(const char *scope, int *primary_out, int **targets_
  * already boundary-shaped (inline reject + fixed bare log + reset-on-success),
  * so gate and log consolidate with NO observable change; NO arity gate
  * (tolerant argc preserved -- the old branch executed + logged bare at ANY
- * argc) and NO push_undo (a redo is undo-stack NAVIGATION; the RAW undo branch
- * stays the F-shared twin, batch item 05).
+ * argc) and NO push_undo (a redo is undo-stack NAVIGATION).
+ * undo (atom 29) is redo's argv-parsed F-shared twin (the same consistency
+ * class): its arm parses redo/set_modify from argv[2]/argv[3] with atoi
+ * defaults exactly as the old branch did (tolerant argc, NO arity gate, NO
+ * push_undo -- stack navigation) and its log is core_log_action's NORMALIZING
+ * undo arm (bare at argc==2, `xschem undo %d %d` else).
  * More verbs add an arm here as they move onto the boundary. argc/argv are unused
  * for a bare no-arg verb but carry the pivot for an arg-carrying verb (rotate/flip/flipv); the
  * general boundary shape (audit §4) is the same either way.
@@ -1084,11 +1088,35 @@ static int run_core(const char *verb, int argc, const char *argv[])
      * (the toggle_ignore §32 precedent) and the DEFAULT `xschem %s` log arm keeps the line
      * byte-identical bare at every argc. An empty redo stack early-returns in-core = a no-op
      * SUCCESS that still logs one idempotent line (§30) -- byte-identical to the old
-     * unconditional log. F-shared: the RAW undo branch (xschem_cmds_u) calls
+     * unconditional log. F-shared: run_core's undo arm below (atom 29) calls
      * pop_undo_keep_selection(redo, set_modify) with argv-parsed ints (`xschem undo 1 1` = a
-     * redo with its OWN `xschem undo %d %d` log) -- it STAYS RAW (batch item 05), distinct
+     * redo with its OWN `xschem undo %d %d` log) -- the argv-parsed site, distinct
      * verb, distinct line, no double-log path; the S7 exact-count rows lock both call sites. */
     pop_undo_keep_selection(1, 1); /* issue 0007: keep selection across redo */
+    return TCL_OK;
+  }
+  else if(!strcmp(verb, "undo")) {
+    /* Refactor B atom 29 (audit §49; decision doc perform_action_atom29_undo_decision.md): the
+     * undo-family twin of redo (§48) -- the old branch was already boundary-shaped (inline
+     * readonly reject + normalized two-form log + reset-on-success), so gate and log consolidate
+     * with NO observable change. pop_undo_keep_selection(redo, set_modify) (select.c, the
+     * issue-0095 selection-keeping wrapper over xctx->pop_undo) is undo-stack NAVIGATION: NO
+     * push_undo is added here (the at-head push that arms the redo slot lives INSIDE the core,
+     * save.c pop_undo; a spurious push here would pop back the just-pushed state = a no-op undo).
+     * NO ARITY GATE -- tolerant argc is the preserved behaviour (§48 rule: an arity gate is a
+     * consequence of an OLD if(argc==N) silent no-op, which undo never had); extra args are
+     * consumed by the atoi defaults exactly as the old branch did. The redo flag passes through
+     * verbatim (0/4 undo, 1 redo, 2 peek -- save.c), so `xschem undo 1 1` IS a redo wearing the
+     * undo verb, logged as its OWN `xschem undo 1 1` line by core_log_action's NORMALIZING arm
+     * (which reads argv IDENTICALLY to this parse -- the rotate/break_wires/attach_labels
+     * invariant). An empty undo stack no-ops in-core (cur==tail early return) = a no-op SUCCESS
+     * that still logs one idempotent line (§30). F-shared: the redo arm above calls the SAME core
+     * fixed-arg (1, 1) -- distinct verb, distinct line, no double-log path; the S7 exact-count
+     * rows pin both call sites (this arm is now the ONE argv-parsed site). */
+    int redo = 0, set_modify = 1;
+    if(argc > 2) redo = atoi(argv[2]);
+    if(argc > 3) set_modify = atoi(argv[3]);
+    pop_undo_keep_selection(redo, set_modify); /* issue 0007: keep selection across undo */
     return TCL_OK;
   }
   return TCL_ERROR; /* unreachable: perform_action is only wired for the verbs above */
@@ -1102,7 +1130,10 @@ static int run_core(const char *verb, int argc, const char *argv[])
  * `xschem redo extra` still logs the byte-identical bare line) emit `xschem <verb>`
  * byte-identically to the pre-atom-6 `log_action("xschem %s", verb)`; check_unique_names (atom 26)
  * emits the FIXED literal `xschem check_unique_names 1` (only mode 1 crosses the boundary -- the
- * mode-0 logged-query line lives raw-front in the branch + the '#' key, audit §46); the arg-carrying pivot verbs rotate (atom 6), flip (atom 7) and
+ * mode-0 logged-query line lives raw-front in the branch + the '#' key, audit §46); undo (atom 29)
+ * has the NORMALIZING integer-pair arm (bare `xschem undo` at argc==2, atoi-canonical
+ * default-filled tail-dropped `xschem undo %d %d` else -- argv read IDENTICALLY to run_core's
+ * undo arm, byte-identical to the old branch's two forms); the arg-carrying pivot verbs rotate (atom 6), flip (atom 7) and
  * flipv (atom 8) emit their pivot form `xschem rotate|flip|flipv <x0> <y0>`. The pivot is resolved
  * from argv[2]/argv[3] (or the mouse coords as a fallback) IDENTICALLY to run_core's rotate/flip/flipv
  * arm -- and run_core,
@@ -1442,6 +1473,21 @@ static void core_log_action(const char *verb, int argc, const char *argv[])
      * The mode-0 line is NOT here: it lives raw-front in the branch + the '#' key (the
      * asymmetric logged-query split, §46). */
     log_action("xschem check_unique_names 1");
+  } else if(!strcmp(verb, "undo")) {
+    /* atom 29: NORMALIZING arm -- byte-identical to the OLD branch's two log forms at every
+     * argc/argv. argv is read IDENTICALLY to run_core's undo arm (same defaults, same atoi), so
+     * the logged line can never diverge from the applied pop: `xschem undo 00 01` logs
+     * `xschem undo 0 1` (atoi canonicalization), `xschem undo 1` logs `xschem undo 1 1`
+     * (default fill -- replay preserves DIRECTION), `xschem undo 0 1 extra` logs
+     * `xschem undo 0 1` (tail drop). A raw-argv passthrough would diverge on all three; the
+     * default `%s` arm would flip `xschem undo 1 1` to a bare undo on replay -- a WRONG-direction
+     * replay. Reached ONLY on TCL_OK (log-on-success); bareword ints, no Tcl metachars, so
+     * log_action %d is replay-safe (no Tcl_Merge needed). */
+    int redo = 0, set_modify = 1;
+    if(argc > 2) redo = atoi(argv[2]);
+    if(argc > 3) set_modify = atoi(argv[3]);
+    if(argc == 2) log_action("xschem undo");
+    else          log_action("xschem undo %d %d", redo, set_modify);
   } else {
     log_action("xschem %s", verb);
   }
@@ -11331,24 +11377,21 @@ static int xschem_cmds_u(Tcl_Interp *interp, int argc, const char *argv[], int *
     }
 
     /* undo  [redo [set_modify]]
-         Undo last action. Optional integers redo and set_modify are passed to pop_undo() */
+     *   Undo last action. Optional integers redo and set_modify are passed to pop_undo()
+     *   (redo: 0/4 = undo, 1 = redo, 2 = peek -- so `xschem undo 1 1` performs a redo with its
+     *   own log line, distinct from the `redo` verb's).
+     *   Refactor B atom 29 (audit §49): routes through the perform_action boundary. The ONE
+     *   readonly gate (same scheduler_readonly_reject + "undo" verb string = byte-identical
+     *   message), the argv-parsed pop_undo_keep_selection effect and the ONE NORMALIZED log site
+     *   (core_log_action's undo arm: bare at argc==2, `xschem undo %d %d` else -- atoi-canonical,
+     *   default-filled, tail-dropped, exactly the old branch's forms) all live in
+     *   perform_action/run_core. Every entry funnels here: the `u` key is a Tcl-funneled binding
+     *   (edit.undo -> `xschem undo; xschem redraw`, legacy case 'u' deleted), deduped via
+     *   actionlog_cmd_logged; menu/toolbar run the same compound; scripts call the verb.
+     *   Tolerant argc PRESERVED (no arity gate -- every argc executes + logs, as before). */
     else if(!strcmp(argv[1], "undo"))
     {
-      int redo = 0, set_modify = 1;
-      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
-      if(scheduler_readonly_reject(interp, "undo")) return TCL_ERROR;
-      if(argc > 2) {
-        redo = atoi(argv[2]);
-      }
-      if(argc > 3) {
-        set_modify = atoi(argv[3]);
-      }
-      pop_undo_keep_selection(redo, set_modify); /* issue 0007: keep selection across undo */
-      /* self-log at core: bare form for the interactive case, explicit args when
-       * a caller passed the redo/set_modify variant, so replay is faithful. */
-      if(argc == 2) log_action("xschem undo");
-      else          log_action("xschem undo %d %d", redo, set_modify);
-      Tcl_ResetResult(interp);
+      return perform_action("undo", argc, argv);
     }
 
     /* undo_type disk|memory
