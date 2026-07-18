@@ -2096,6 +2096,13 @@ extern void fluid_gesture_free(void);
  * unknown / MANUAL_SITE name. */
 extern int fluid_harness_snapshot_arm(void);
 extern int fluid_harness_run_pass(const char *name);
+/* FLUID_TRACE diagnostic (issue 0083/0123): on-flag, line writer, ui_state stringify, and the
+ * runtime start/stop used by the Help>Debug menu (`xschem fluid_trace start|stop`). */
+extern int fluid_trace_on(void);
+extern void fltrace(const char *fmt, ...);
+extern const char *fltrace_uistate(unsigned int s);
+extern const char *fltrace_runtime_start(const char *path);
+extern const char *fltrace_runtime_stop(void);
 extern void check_collapsing_objects();
 extern void redraw_w_a_l_r_p_z_rubbers(int force); /* redraw wire, arcs, line, polygon rubbers */
 extern void copy_objects(int what);

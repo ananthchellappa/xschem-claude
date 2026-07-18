@@ -1135,7 +1135,7 @@ static int fluid_mlh_sev(int h);
 static int fluid_ml_future_covers(int ml, int sel1);
 /* issue 0086 companion: future-aware corner-slide decline (defined next to fluid_ml_future_covers) */
 static int fluid_slide_future_hazard(int n, double fx, double fy, double mx, double my);
-static void fltrace(const char *fmt, ...);
+void fltrace(const char *fmt, ...);
 /* issue 0091 (per-component "selection wins"): mark every wire touch-connected to a user-selected
  * wire so the END redundant-route cleanup leaves the user's own net(s) untouched (defined after
  * fluid_wire_reach_set, the flood it uses). */
@@ -2134,34 +2134,83 @@ static void fluid_discard_snapshot(void);
  * and shares the captured stderr). OFF by default (env unset) => single cached int compare per trace
  * point, no output, no behaviour change. To use: `FLUID_TRACE=1 src/xschem ... 2>/tmp/fltrace.log`,
  * then `grep FLTRACE /tmp/fltrace.log`. Trace lines go to errfp (stderr) via dbg(0,...). */
-static int fluid_trace_on(void)
+/* FLUID_TRACE state + open file, promoted to file scope so the Help>Debug menu
+ * (`xschem fluid_trace start|stop`) can rotate the file and toggle tracing at RUNTIME, not only
+ * from the FLUID_TRACE env var at launch. fltrace_enabled: -1 = not yet consulted (lazy env read),
+ * 0 = off, 1 = on. */
+static FILE *fltrace_fp = NULL;
+static int   fltrace_enabled = -1;
+static char  fltrace_curpath[1024] = "";
+
+int fluid_trace_on(void)
 {
-  static int v = -1;
-  if(v < 0) { const char *e = getenv("FLUID_TRACE"); v = (e && *e && *e != '0') ? 1 : 0; }
-  return v;
+  if(fltrace_enabled < 0) {
+    const char *e = getenv("FLUID_TRACE");
+    fltrace_enabled = (e && *e && *e != '0') ? 1 : 0;
+  }
+  return fltrace_enabled;
 }
 /* Write a trace line to a DEDICATED file -- NOT stderr/dbg: a windowed (GUI) launch detaches and
  * freopen()s stderr to /dev/null (main.c), and --logdir points the action log elsewhere, so a shell
- * `2>file` capture is EMPTY for a real interactive drag. The file is $FLUID_TRACE when that looks like a
- * path (contains '/'), else /tmp/xschem_fltrace.log. Opened once (truncated), flushed per line so a
- * killed session still has the trace. OFF (env unset) => returns immediately, nothing opened/written. */
-static void fltrace(const char *fmt, ...)
+ * `2>file` capture is EMPTY for a real interactive drag. The env-launch file is $FLUID_TRACE when that
+ * looks like a path (contains '/'), else /tmp/xschem_fltrace.log; a runtime start() overrides it.
+ * Opened once (truncated), flushed per line so a killed session still has the trace. OFF => returns
+ * immediately, nothing opened/written. */
+void fltrace(const char *fmt, ...)
 {
-  static FILE *fp = NULL;
-  static int tried = 0;
   va_list ap;
   if(!fluid_trace_on()) return;
-  if(!tried) {
+  if(!fltrace_fp) {
     const char *e = getenv("FLUID_TRACE");
     const char *path = (e && strchr(e, '/')) ? e : "/tmp/xschem_fltrace.log";
-    fp = fopen(path, "w");
-    tried = 1;
+    fltrace_fp = fopen(path, "w");
+    if(fltrace_fp) my_strncpy(fltrace_curpath, path, S(fltrace_curpath));
+    else { fltrace_enabled = 0; return; }   /* open failed: disable so we don't retry every line */
   }
-  if(!fp) return;
   va_start(ap, fmt);
-  vfprintf(fp, fmt, ap);
+  vfprintf(fltrace_fp, fmt, ap);
   va_end(ap);
-  fflush(fp);
+  fflush(fltrace_fp);
+}
+/* Runtime FLUID_TRACE control for the Help>Debug menu (issue 0123). start(path): rotate to a fresh
+ * (truncated) file and enable tracing -- returns the open path, or "" on open failure. stop():
+ * flush+close and disable -- returns the last path (for a "wrote X" message). The caller (Tcl) picks
+ * a PID-named path, so the C side stays portable. */
+const char *fltrace_runtime_start(const char *path)
+{
+  if(fltrace_fp) { fflush(fltrace_fp); fclose(fltrace_fp); fltrace_fp = NULL; }
+  if(!path || !path[0]) path = "/tmp/xschem_fltrace.log";
+  fltrace_fp = fopen(path, "w");
+  if(fltrace_fp) { my_strncpy(fltrace_curpath, path, S(fltrace_curpath)); fltrace_enabled = 1; }
+  else { fltrace_curpath[0] = '\0'; fltrace_enabled = 0; }
+  return fltrace_curpath;
+}
+const char *fltrace_runtime_stop(void)
+{
+  if(fltrace_fp) { fflush(fltrace_fp); fclose(fltrace_fp); fltrace_fp = NULL; }
+  fltrace_enabled = 0;
+  return fltrace_curpath;
+}
+/* Compact ui_state bitmask -> static string, for FLUID_TRACE forensics (issue 0123 arm desync: the
+ * STARTMOVE-vs-START_SYMPIN split that mis-routes a placement click into a tip-grab). */
+const char *fltrace_uistate(unsigned int s)
+{
+  static char b[256];
+  b[0] = '\0';
+  if(s & STARTWIRE)    strcat(b, "STARTWIRE|");
+  if(s & STARTSELECT)  strcat(b, "STARTSELECT|");
+  if(s & SELECTION)    strcat(b, "SELECTION|");
+  if(s & STARTMOVE)    strcat(b, "STARTMOVE|");
+  if(s & STARTCOPY)    strcat(b, "STARTCOPY|");
+  if(s & STARTMERGE)   strcat(b, "STARTMERGE|");
+  if(s & STARTZOOM)    strcat(b, "STARTZOOM|");
+  if(s & STARTPAN)     strcat(b, "STARTPAN|");
+  if(s & PLACE_TEXT)   strcat(b, "PLACE_TEXT|");
+  if(s & PLACE_SYMBOL) strcat(b, "PLACE_SYMBOL|");
+  if(s & START_SYMPIN) strcat(b, "START_SYMPIN|");
+  if(!b[0]) return "0";
+  b[strlen(b) - 1] = '\0';   /* drop the trailing '|' */
+  return b;
 }
 
 /* Phase IV P6 (min-bend): outward escape normal of the MOVING, non-label instance pin coincident
@@ -2494,11 +2543,17 @@ static void fluid_gesture_arm(void)
   if(fluid_gesture_armed) {
     dbg(0, "fluid_editing: fluid_gesture_arm() re-armed while a prior gesture was still armed -- it "
            "leaked its snapshot (WIRING risk #11.10 mid-STARTMOVE abandon); recovering\n");
-    fltrace("FLTRACE move: fluid_gesture_arm leaked-armed recover (single-free tripwire)\n");
+    /* issue 0123: stamp ui_state + sympin_preview so the leak's origin is visible -- a STARTMOVE-less
+     * arm while START_SYMPIN/sympin_preview is live is the placement-click desync that mis-routes to
+     * a tip-grab. */
+    fltrace("FLTRACE move: fluid_gesture_arm leaked-armed recover (single-free tripwire) "
+            "at ui=%s sympin_preview=%d\n", fltrace_uistate(xctx->ui_state), xctx->sympin_preview);
     fluid_gesture_free();
   }
   fluid_snapshot_partition();
   fluid_gesture_armed = 1;
+  fltrace("FLTRACE move: fluid_gesture_arm ui=%s sympin_preview=%d snap_npins=%d\n",
+          fltrace_uistate(xctx->ui_state), xctx->sympin_preview, fluid_g.snap_npins);
 }
 void fluid_gesture_free(void)   /* NOT static: clear_schematic() (actions.c) closes the gesture too */
 {

@@ -6683,6 +6683,14 @@ static void handle_button_press(int event, int state, int rstate, KeySym key, in
         * path: with STARTMOVE already cleared and mouse_moved reset to 0 at press, that path would
         * otherwise collapse a moved multi-selection down to the single object under the cursor. */
        int had_move = (xctx->ui_state & (STARTMOVE | STARTCOPY)) ? 1 : 0;
+       /* issue 0123: a placement click witness. If a preview is live but STARTMOVE is absent, this
+        * press will MISS end_place_move_copy_zoom (STARTMOVE branch) and, without the guard below,
+        * would be stolen by the fluid tip-grab -- the exact desync that mis-routed Add-Pin. */
+       if(fluid_trace_on() &&
+          ((xctx->ui_state & (PLACE_SYMBOL | PLACE_TEXT | START_SYMPIN)) || xctx->sympin_preview))
+         fltrace("FLTRACE press: placement-live ui=%s sympin_preview=%d STARTMOVE=%d\n",
+                 fltrace_uistate(xctx->ui_state), xctx->sympin_preview,
+                 (xctx->ui_state & STARTMOVE) ? 1 : 0);
        if(end_place_move_copy_zoom()) {
          if(had_move) xctx->place_click_committed = 1;
          return;

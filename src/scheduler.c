@@ -3287,6 +3287,27 @@ static int xschem_cmds_f(Tcl_Interp *interp, int argc, const char *argv[], int *
       Tcl_SetResult(interp, buf, TCL_VOLATILE);
     }
 
+    /* fluid_trace start <path> | stop | status
+     *   Runtime FLUID_TRACE control for the Help>Debug menu (issue 0123). `start <path>` opens a
+     *   fresh (truncated) trace file and enables tracing; `stop` flush+closes and disables; `status`
+     *   reports on/off. start returns the open path (or "" on failure), stop the last path -- so the
+     *   caller can echo the filename in the CIW. No xctx needed: the trace file is process-global. */
+    else if(!strcmp(argv[1], "fluid_trace"))
+    {
+      if(argc > 2 && !strcmp(argv[2], "start")) {
+        const char *p = fltrace_runtime_start(argc > 3 ? argv[3] : NULL);
+        Tcl_SetResult(interp, (char *)(p ? p : ""), TCL_VOLATILE);
+      } else if(argc > 2 && !strcmp(argv[2], "stop")) {
+        const char *p = fltrace_runtime_stop();
+        Tcl_SetResult(interp, (char *)(p ? p : ""), TCL_VOLATILE);
+      } else if(argc > 2 && !strcmp(argv[2], "status")) {
+        Tcl_SetResult(interp, fluid_trace_on() ? "on" : "off", TCL_STATIC);
+      } else {
+        Tcl_SetResult(interp, "usage: xschem fluid_trace start <path> | stop | status", TCL_STATIC);
+        return TCL_ERROR;
+      }
+    }
+
     /* flylines net <name> | at <x> <y>
      *   Read-only net-connectivity query backing the hover fly-line overlay
      *   (doc/claude/specs/hover_flylines.md, suggestions/flyline_implementation_plan.md).

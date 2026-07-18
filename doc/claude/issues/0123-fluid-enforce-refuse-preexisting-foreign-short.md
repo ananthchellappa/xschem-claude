@@ -91,3 +91,17 @@ while `START_SYMPIN`/`sympin_preview` stay live, and `unselect_all()` orphaning 
 not closed (candidate: have the ui_state teardown release the gesture, but `unselect_all` runs inside
 legit fluid passes too, so a blanket free is risky). No headless repro exists (the capture needs real
 X button events; `test_fluid_editing` SKIPs with no X). Needs a GUI repro to close cleanly.
+
+**Instrumentation added to catch the desync from a GUI trace:**
+- `fluid_gesture_arm` (move.c) now stamps `ui=<state> sympin_preview=N snap_npins=N` on both the
+  normal arm and the leaked-armed recover — a `STARTMOVE`-absent arm while `START_SYMPIN` is live is
+  the desync fingerprint.
+- The ButtonPress handler (callback.c:6685) emits `FLTRACE press: placement-live ui=... STARTMOVE=N`
+  whenever a placement preview is live at a click — `STARTMOVE=0` there is the smoking gun.
+- New `fltrace_uistate()` stringifies the `ui_state` bitmask.
+
+**Runtime trace control (no relaunch needed):** `Help > Debug > Start/Stop FLUID trace` (xschem.tcl)
+→ `xschem fluid_trace start <path> | stop | status` (scheduler.c) → `fltrace_runtime_start/stop`
+(move.c). Start writes a PID-named file in the temp dir and echoes the path in the CIW; Stop closes
+it. So the next time the hiccup reproduces, the user can capture a trace on the spot and the arm/press
+lines will show exactly where `STARTMOVE` was lost.

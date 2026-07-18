@@ -13945,6 +13945,29 @@ foreach row $action_table {
 # in the build-widgets block below.
 source $XSCHEM_SHAREDIR/ciw.tcl
 
+# issue 0123: Help>Debug FLUID_TRACE control. Start picks a PID-named file in the system temp dir
+# and hands the path to the C side (`xschem fluid_trace start <path>`), then reports it in the CIW so
+# the user knows where to find it. Stop closes it. Portable temp-dir pick (TMPDIR/TEMP/TMP, else /tmp).
+proc fluid_trace_start {} {
+  set tdir /tmp
+  foreach v {TMPDIR TEMP TMP} {
+    if {[info exists ::env($v)] && $::env($v) ne {}} { set tdir $::env($v); break }
+  }
+  set fn [file join $tdir "xschem_fltrace_[pid].log"]
+  set path [xschem fluid_trace start $fn]
+  if {[info procs ciw_echo] ne {}} {
+    if {$path ne {}} { ciw_echo "FLUID trace STARTED -> $path" result } \
+    else { ciw_echo "FLUID trace: could NOT open $fn" error }
+  }
+}
+proc fluid_trace_stop {} {
+  set path [xschem fluid_trace stop]
+  if {[info procs ciw_echo] ne {}} {
+    if {$path ne {}} { ciw_echo "FLUID trace STOPPED -> $path" result } \
+    else { ciw_echo "FLUID trace stopped (no file was open)" result }
+  }
+}
+
 proc build_widgets { {topwin {} } } {
   global canvas_height canvas_width
   global XSCHEM_SHAREDIR tabbed_interface simulate_bg OS sim
@@ -14007,6 +14030,14 @@ proc build_widgets { {topwin {} } } {
   $topwin.menubar.help add command -label "Command palette" -command "command_palette $topwin" \
        -accelerator {Ctrl+Shift+P}
   $topwin.menubar.help add command -label "About XSCHEM" -command "about"
+  # issue 0123: runtime FLUID_TRACE control. Start opens a PID-named trace file and reports the
+  # name in the CIW; Stop flush+closes it. Lets a user capture a fluid-editing trace on demand
+  # without relaunching with FLUID_TRACE=... See doc/claude/WIRING.md.
+  $topwin.menubar.help add separator
+  menu $topwin.menubar.help.debug -tearoff 0 -takefocus 0
+  $topwin.menubar.help add cascade -label "Debug" -menu $topwin.menubar.help.debug
+  $topwin.menubar.help.debug add command -label "Start FLUID trace" -command {fluid_trace_start}
+  $topwin.menubar.help.debug add command -label "Stop FLUID trace"  -command {fluid_trace_stop}
 
   # File menu is generated from the action registry (actions.csv). The parent
   # menu widget $topwin.menubar.file is created above; submenus (Image export,
