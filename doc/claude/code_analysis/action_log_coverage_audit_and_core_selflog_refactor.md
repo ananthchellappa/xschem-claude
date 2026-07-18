@@ -4297,7 +4297,14 @@ snapshot; (2) test-gap on the argc<3 raw-front reply → closed by check (i); (3
 copy diverged from the sibling hardcode idiom → aligned to `im[0]="xschem"; im[1]=verb;`; (4) a
 PRE-EXISTING (NOT atom-20) latent quirk — the `#if HAS_CAIRO==1` block in `xschem_cmds_i` also encloses
 `incr_hilight_color` + `inst_name_text`, so those two NON-cairo verbs silently vanish on a no-cairo build
-(present identically on HEAD, gate@4674) → flagged for a separate fix, out of this atom's scope.
+(present identically on HEAD, gate@4674) → filed as issue 0120 and **RESOLVED** (fix(scheduler),
+2026-07-17): the gate was narrowed to wrap ONLY the `image` branch (`#if` moved down to just before
+`else if("image")`, dangling `else` dropped, `#endif` kept after it, and `instance` promoted from a bare
+`if` to `else if` so the chain bridges cleanly in BOTH configs). Verified with a REAL HAS_CAIRO==0 build:
+compiles+links, `incr_hilight_color`/`inst_name_text` work, `image` reports a graceful `invalid command`
+(no crash); sabotage-confirmed the pre-fix no-cairo build LOST both verbs. Locked by
+tests/headless/test_noncairo_verbs_ungated.tcl (structural fail-closed grep guard + functional
+reachability). See doc/claude/issues/0120-noncairo-verbs-lost-in-image-cairo-gate.md.
 
 RECOMMENDED NEXT (the friction-free pool has been EMPTY since atom 16 → keep taking HIGHER-FRICTION):
 re-scout the migrated-verb roster fresh; the remaining unmigrated mutating scheduler verbs are the

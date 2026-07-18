@@ -4812,19 +4812,6 @@ static int xschem_cmds_h(Tcl_Interp *interp, int argc, const char *argv[], int *
  * matches no command in this group; early returns propagate unchanged. */
 static int xschem_cmds_i(Tcl_Interp *interp, int argc, const char *argv[], int *cmd_found)
 {
-    #if HAS_CAIRO==1
-    /* image [invert|white_transp|black_transp|transp_white|transp_black|write_back|
-     *        blend_white|blend_black]
-     *   Apply required changes to selected images
-     *   invert: invert colors
-     *   white_transp: transform white color to transparent (alpha=0)
-     *   black_transp: transform black color to transparent (alpha=0)
-     *   transp_white: transform transparent to white color
-     *   transp_black: transform transparent to black color
-     *   blend_white:  blend with white background and remove alpha
-     *   blend_black:  blend with black background and remove alpha
-     *   write_back:   write resulting image back into `image_data` attribute
-     */
     /* incr_hilight_color
      *   Step the net-highlight style cursor forward one (wrapping modulo the number
      *   of styles) and return the resulting style index. This normally happens
@@ -4876,6 +4863,19 @@ static int xschem_cmds_i(Tcl_Interp *interp, int argc, const char *argv[], int *
         Tcl_SetResult(interp, buf, TCL_VOLATILE);
       }
     }
+    #if HAS_CAIRO==1
+    /* image [invert|white_transp|black_transp|transp_white|transp_black|write_back|
+     *        blend_white|blend_black]
+     *   Apply required changes to selected images
+     *   invert: invert colors
+     *   white_transp: transform white color to transparent (alpha=0)
+     *   black_transp: transform black color to transparent (alpha=0)
+     *   transp_white: transform transparent to white color
+     *   transp_black: transform transparent to black color
+     *   blend_white:  blend with white background and remove alpha
+     *   blend_black:  blend with black background and remove alpha
+     *   write_back:   write resulting image back into `image_data` attribute
+     */
     else if(!strcmp(argv[1], "image"))
     {
       /* Refactor B atom 20 (audit §40): the FIRST HAS_CAIRO-gated migration and the first verb with
@@ -4906,7 +4906,6 @@ static int xschem_cmds_i(Tcl_Interp *interp, int argc, const char *argv[], int *
       }
       return perform_action("image", argc, argv);
     }
-    else
     #endif
     /* instance sym_name x y rot flip [prop] [n]
      *   Place a new instance of symbol 'sym_name' at position x,y,
@@ -4916,7 +4915,7 @@ static int xschem_cmds_i(Tcl_Interp *interp, int argc, const char *argv[], int *
      *   if 'n' is given it must be 0 on first call
      *   and non zero on following calls
      *   It is used only for efficiency reasons if placing multiple instances */
-    if(!strcmp(argv[1], "instance"))
+    else if(!strcmp(argv[1], "instance"))
     {
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
       if(scheduler_readonly_reject(interp, "instance")) return TCL_ERROR;
