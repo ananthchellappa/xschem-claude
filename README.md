@@ -9,6 +9,6 @@ Very early-stage intro video : https://www.youtube.com/watch?v=gtipAPsql_M
 
 The core feature is the [connected-drag](https://youtu.be/3W1Wa5XLRAQ?si=JDjivWFHSbSzXXRp) (YouTube)
 
-![Logo](doc/xschem_poster.png)
+![Logo](https://github.com/ananthchellappa/xschem-claude/blob/main/doc/xschem_poster.png)
 
 [Manual and instructions](http://repo.hu/projects/xschem/xschem_man/xschem_man.html)
