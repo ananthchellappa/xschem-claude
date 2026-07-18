@@ -1192,6 +1192,12 @@ typedef struct {
                        * (lab_pin) under the "must land on copper" drop constraint. Set together
                        * with sympin_preview at arm; cleared alongside it. When set, the drop gate
                        * (wire_label_try_commit) refuses a click that is not on a wire/inst pin. */
+  int sympin_drops;  /* issue 0122 E1: monotonic count of COMMITTED sympin drops (Add-Pin /
+                       * Add-Wire-Label). Bumped only in end_move_copy_logged (the single commit
+                       * funnel; aborts and off-copper label refusals never reach it). The Tcl
+                       * form procs snapshot `xschem get sympin_drops` at arm and compare after a
+                       * drop: an unchanged count means NO real drop happened (an external gesture
+                       * aborted the preview), so the queue/name entry must NOT drain. */
   Selected *sel_array;
   Selected first_sel; /* first selected instance (used as master when editing multiple objects) */
   int prep_net_structs;

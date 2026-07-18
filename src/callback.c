@@ -1622,6 +1622,16 @@ static void end_move_copy_logged(int is_copy)
   /* mirror the END early-return: click on elements without motion does nothing */
   int nothing = xctx->drag_elements && dx == 0. && dy == 0.;
 
+  /* issue 0122 E1: count a COMMITTED Add-Pin/Add-Wire-Label FORM drop for the Tcl form queue.
+   * end_move_copy_logged is the only commit funnel (aborts are deleted in a different path and
+   * never reach here; an off-copper net-label refusal returns from wire_label_try_commit() before
+   * calling us). Gate on sympin_preview -- set ONLY by the three form -place arms (add_sch_pin /
+   * add_symbol_pin / add_wire_label, scheduler.c) and still 1 here (cleared AFTER this funnel) --
+   * so a NON-form START_SYMPIN placement that also uses this machinery (place_net_label,
+   * add_graph, add_image, image paste) does NOT bump the count and cannot make an armed form
+   * spuriously drain. Bump BEFORE the nothing/early returns so even a no-motion drop is recorded. */
+  if((ui & START_SYMPIN) && xctx->sympin_preview) xctx->sympin_drops++;
+
   if(is_copy) copy_objects(END);
   else        move_objects(END, 0, 0, 0);
 

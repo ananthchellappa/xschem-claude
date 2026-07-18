@@ -10545,6 +10545,10 @@ namespace eval addpin {
   # multi-name queue: pending = names not yet placed this pass; current = head (the armed one).
   variable pending        {}
   variable current        {}
+  # issue 0122 E1: `xschem get sympin_drops` snapshot taken when the current preview is armed.
+  # after_drop only advances/drains if the count actually rose (a real commit) -- so an external
+  # gesture that abandoned the preview cannot make a stray click consume an un-placed name.
+  variable drop_snap      0
 }
 
 proc addpin::status {msg} { catch {.addpin.status configure -text $msg} }
@@ -10589,7 +10593,7 @@ proc addpin::install_drop_hook {} {
   set hook_installed 1
 }
 proc addpin::after_drop {b} {
-  variable armed; variable pending; variable current
+  variable armed; variable pending; variable current; variable name; variable drop_snap
   if {$b != 1} return             ;# only a LEFT-click drops (Ctrl+MMB must not count)
   if {!$armed} return
   if {![winfo exists .addpin]} { set armed 0; return }
@@ -10597,9 +10601,22 @@ proc addpin::after_drop {b} {
   # if the Add-Wire-Label form is ALSO open and it (not us) armed the preview that just
   # committed, do NOT drain the pin queue (add_wire_label.md #8: cross-form drop cross-talk).
   if {[info exists ::sympin_place] && $::sympin_place ne {pin}} return
+  # issue 0122 E1: require a REAL commit. If the drop count did not rise, this ButtonRelease is
+  # not our pin drop -- e.g. the user started an unrelated canvas gesture (wire/move) that
+  # abandoned the preview (placing cleared, but armed/latch still ours). Do not consume a name;
+  # disarm and tell the user placement paused (E1-F2) -- editing the name or reopening re-arms.
+  if {[xschem get sympin_drops] == $drop_snap} {
+    set armed 0
+    addpin::status "placement paused (another action took over) -- edit the name or reopen to resume"
+    return
+  }
   # a drop completed -> advance the queue to the next typed name
   set pending [lrange $pending 1 end]
   set current [lindex $pending 0]
+  # Consume the just-placed name from the Pin Name entry so the field always shows what is still
+  # queued (e.g. "IN OUT VDD" -> "OUT VDD" after dropping IN). Setting the textvariable does not
+  # fire the entry's KeyRelease, so this does NOT re-trigger start_pass / rebuild the queue.
+  set name [join $pending " "]
   if {[string trim $current] ne {}} {
     addpin::arm                   ;# arm the next queued name
   } else {
@@ -10640,6 +10657,8 @@ proc addpin::arm {} {
   xschem [addpin::place_verb] -place ;# self-aborts the previous preview (no undo) and re-arms
   set ::sympin_place pin             ;# owner latch: this preview is a PIN (add_wire_label.md #8)
   set armed 1
+  variable drop_snap
+  set drop_snap [xschem get sympin_drops]  ;# issue 0122 E1: witness baseline for THIS preview
   set nleft [llength $pending]
   set more [expr {$nleft > 1 ? " (+[expr {$nleft-1}] queued)" : {}}]
   addpin::status "placing '$current' ($d)$more -- click to place; Ctrl+MMB cycles type; Esc finishes"
@@ -10660,6 +10679,18 @@ proc addpin::cycle_type {} {
   addpin::arm                          ;# re-arm current name with the new direction/type
 }
 
+# issue 0122 E2: the Add-Pin and Add-Wire-Label forms share the single `.drw <Key-Escape>` slot.
+# grab_esc points that slot at THIS form -- called on open/raise so the form the user just focused
+# owns canvas-Esc. release_esc (on close) hands the slot BACK to the sibling form if it is still
+# open, else clears it -- so closing one form no longer kills the survivor's canvas-Esc.
+# SCOPE (0122-F3): like the whole form mechanism (the `.drw <ButtonRelease>` drop hook in
+# install_drop_hook, and the sibling ciform), this targets the MAIN window canvas `.drw` only --
+# not a detached window / non-first tab (`.xN.drw`). Pre-existing single-canvas assumption.
+proc addpin::grab_esc {}    { bind .drw <Key-Escape> {if {[winfo exists .addpin]} {addpin::escape; break}} }
+proc addpin::release_esc {} {
+  if {[winfo exists .addlabel]} { addlabel::grab_esc } else { catch {bind .drw <Key-Escape> {}} }
+}
+
 # Esc / Close: end placement and dismiss the form.
 proc addpin::escape {} {
   variable armed
@@ -10667,11 +10698,12 @@ proc addpin::escape {} {
   addpin::abort_if_placing
   catch {destroy .addpin}
 }
-# Form destroyed by any means: abort an armed preview and restore the default canvas Esc.
+# Form destroyed by any means: abort an armed preview and hand canvas-Esc back to the sibling form.
+# Also wipe the Pin Name so a NEW invocation opens blank (never retains the previous names).
 proc addpin::on_destroy {} {
-  variable armed; variable last; variable pending; variable current
-  set armed 0; set last {}; set pending {}; set current {}
-  catch {bind .drw <Key-Escape> {}}
+  variable armed; variable last; variable pending; variable current; variable name
+  set armed 0; set last {}; set pending {}; set current {}; set name {}
+  catch {addpin::release_esc}
   addpin::abort_if_placing
 }
 
@@ -10682,6 +10714,7 @@ proc addpin::open {} {
   if {[winfo exists $w]} {
     raise_activate_toplevel $w
     focus $w.f.ename
+    addpin::grab_esc            ;# 0122 E2: re-focused form re-claims the shared canvas-Esc slot
     addpin::start_pass
     return
   }
@@ -10717,11 +10750,12 @@ proc addpin::open {} {
   # editing the name rebuilds the queue; picking a direction re-arms the current name
   bind $w.f.ename <KeyRelease>         {+addpin::on_name_change}
   bind $w.f.edir  <<ComboboxSelected>> {+addpin::on_dir_change}
-  # Esc ends placement AND dismisses the form. On the CANVAS only swallow Esc while a
-  # preview is actually armed (`break` pre-empts the generic <KeyPress> -> C dispatcher);
-  # when nothing is being placed, fall through so Esc still cancels an unrelated in-progress
-  # gesture (wire/move/...) the user may have started while this form is open.
-  bind .drw <Key-Escape> {if {[addpin::placing]} {addpin::escape; break}}
+  # Esc ends placement AND dismisses the form -- at any time, whether or not a preview is
+  # armed. Focus lands on the canvas after each drop, so Esc there must also close the form
+  # (mirror of the Add-Wire-Label form); dismiss whenever the form exists. `break` pre-empts
+  # the generic <KeyPress> -> C dispatcher so the same key does not also fire a canvas verb.
+  # grab_esc claims the shared canvas-Esc slot (0122 E2); on_destroy hands it back to the sibling.
+  addpin::grab_esc
   bind $w   <Key-Escape> {addpin::escape}
   bind $w   <Destroy>    {if {{%W} eq {.addpin}} {addpin::on_destroy}}
 
@@ -10749,6 +10783,7 @@ namespace eval addlabel {
   variable last           {}
   variable pending        {}
   variable current        {}
+  variable drop_snap      0   ;# issue 0122 E1: sympin_drops witness for the armed preview
 }
 
 proc addlabel::status {msg} { catch {.addlabel.status configure -style TLabel -text $msg} }
@@ -10810,7 +10845,7 @@ proc addlabel::install_drop_hook {} {
   set hook_installed 1
 }
 proc addlabel::after_drop {b} {
-  variable armed; variable pending; variable current; variable name
+  variable armed; variable pending; variable current; variable name; variable drop_snap
   if {$b != 1} return
   if {!$armed} return
   if {![winfo exists .addlabel]} { set armed 0; return }
@@ -10818,6 +10853,14 @@ proc addlabel::after_drop {b} {
   # if the Add-Pin form is ALSO open and it (not us) armed the committed preview, don't drain the
   # label queue (add_wire_label.md #8: cross-form drop cross-talk).
   if {[info exists ::sympin_place] && $::sympin_place ne {label}} return
+  # issue 0122 E1: require a REAL commit -- a stray ButtonRelease after an external gesture
+  # abandoned the preview must not consume a queued label (see addpin::after_drop). Disarm and
+  # tell the user placement paused (E1-F2); editing the name or reopening re-arms.
+  if {[xschem get sympin_drops] == $drop_snap} {
+    set armed 0
+    addlabel::status "placement paused (another action took over) -- edit the name or reopen to resume"
+    return
+  }
   set pending [lrange $pending 1 end]
   set current [lindex $pending 0]
   # Consume the just-placed name from the Label Name entry so the field always shows what is still
@@ -10867,6 +10910,8 @@ proc addlabel::arm {} {
   xschem add_wire_label -place   ;# self-aborts the previous preview (no undo) and re-arms
   set ::sympin_place label        ;# owner latch: this preview is a LABEL (add_wire_label.md #8)
   set armed 1
+  variable drop_snap
+  set drop_snap [xschem get sympin_drops]  ;# issue 0122 E1: witness baseline for THIS preview
   set nleft [llength $pending]
   set more [expr {$nleft > 1 ? " (+[expr {$nleft-1}] queued)" : {}}]
   addlabel::status "placing '$current'$more -- click ON a wire or pin to drop; Esc finishes"
@@ -10881,6 +10926,13 @@ proc addlabel::on_reject {} {
   addlabel::status "'$current' must land ON a wire or an instance pin -- move and click again"
 }
 
+# issue 0122 E2: shared `.drw <Key-Escape>` slot (see addpin::grab_esc). grab_esc claims it for
+# THIS form; release_esc hands it back to the sibling Add-Pin form if still open, else clears it.
+proc addlabel::grab_esc {}    { bind .drw <Key-Escape> {if {[winfo exists .addlabel]} {addlabel::escape; break}} }
+proc addlabel::release_esc {} {
+  if {[winfo exists .addpin]} { addpin::grab_esc } else { catch {bind .drw <Key-Escape> {}} }
+}
+
 # Esc / Close: end placement and dismiss the form.
 proc addlabel::escape {} {
   variable armed
@@ -10888,10 +10940,12 @@ proc addlabel::escape {} {
   addlabel::abort_if_placing
   catch {destroy .addlabel}
 }
+# Hand canvas-Esc back to the sibling form on close; wipe the Label Name so a NEW invocation opens
+# blank (never retains the previous names).
 proc addlabel::on_destroy {} {
-  variable armed; variable last; variable pending; variable current
-  set armed 0; set last {}; set pending {}; set current {}
-  catch {bind .drw <Key-Escape> {}}
+  variable armed; variable last; variable pending; variable current; variable name
+  set armed 0; set last {}; set pending {}; set current {}; set name {}
+  catch {addlabel::release_esc}
   addlabel::abort_if_placing
 }
 
@@ -10902,6 +10956,7 @@ proc addlabel::open {} {
   if {[winfo exists $w]} {
     raise_activate_toplevel $w
     focus $w.f.ename
+    addlabel::grab_esc          ;# 0122 E2: re-focused form re-claims the shared canvas-Esc slot
     addlabel::start_pass
     return
   }
@@ -10941,7 +10996,8 @@ proc addlabel::open {} {
   bind $w.f.ename <KeyRelease> {+addlabel::on_name_change}
   # Focus lands on the canvas after a drop, so Esc there must also close the form/command mode --
   # dismiss whenever the form exists, not only while a preview is still attached (queue drained).
-  bind .drw <Key-Escape> {if {[winfo exists .addlabel]} {addlabel::escape; break}}
+  # grab_esc claims the shared canvas-Esc slot (0122 E2); on_destroy hands it back to the sibling.
+  addlabel::grab_esc
   bind $w   <Key-Escape> {addlabel::escape}
   bind $w   <Destroy>    {if {{%W} eq {.addlabel}} {addlabel::on_destroy}}
 

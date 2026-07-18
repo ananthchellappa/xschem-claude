@@ -3903,6 +3903,10 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
             Tcl_SetResult(interp, my_itoa(xctx->semaphore),TCL_VOLATILE);
           }
+          else if(!strcmp(argv[2], "sympin_drops")) { /* issue 0122 E1: committed Add-Pin/Add-Wire-Label drop count */
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            Tcl_SetResult(interp, my_itoa(xctx->sympin_drops),TCL_VOLATILE);
+          }
           else if(!strcmp(argv[2], "schname")) /* get full path of current sch. if 'n' given get sch of level 'n' */
           {
             int x;
