@@ -391,6 +391,12 @@ set MANIFEST {
     {const char \*\*im = my_malloc} 1 {image's FAITHFUL RAW full-call log array lives in core_log_action (atom 20): sized to argc (the flag COUNT is variable, 1..8 -- unlike the fixed-arity mi[9]/pp[4]) and copied VERBATIM from argv. The array is named `im` (NOT av/ev/pp/mi) to stay collision-distinct (the §36 lesson); a FRESH heap build (NOT the bare `log_action_argv(argc, argv)` form, which recurs at three other scheduler.c sites so could not be grep-pinned uniquely)}
     {im\[j\] = argv\[j\];} 1 {image SELF-CONTAINED flag-tail copy lives in core_log_action (atom 20): the `xschem`/verb prefix is hardcoded (im[0]/im[1], the sibling idiom) and the flag tail argv[2..argc-1] copied VERBATIM into `im`, emitted via log_action_argv (Tcl_Merge). RAW (not canonical-from-`what`) so an unrecognized flag word (what==0 no-op, e.g. `image foo`) round-trips to the SAME no-op on replay instead of collapsing to a bare `xschem image` that replays as "Missing arguments". UNIQUE to image (no other verb copies argv[j] into `im`). Reached ONLY on TCL_OK (log-on-success), so a failed `No images selected` precondition logs nothing}
     {log_action_argv\(argc, im\);} 1 {image's Tcl_Merge emit (atom 20): the whole-call `im` copy -- distinct from every FIXED-count site (reset_inst_prop's (3, av), replace_symbol's (4, av), embed's (3, ev), apply_pin_prop's (4, pp)/(3, pp), move_instance's (k, mi)) AND from the bare `(argc, (const char *const *)argv)` form by the `im` array name. Exactly ONE such `(argc, im)` site in scheduler.c (S7 pins exclusivity)}
+    {return perform_action\("reset_symbol", argc, argv\);} 1 {reset_symbol branch routes through the perform_action boundary (Refactor B atom 22 -- the TWENTY-SECOND per-verb migration, the direct INLINE twin of reset_inst_prop (atom 13); an ADDITIVE-LOG+GATE atom: the branch had NEITHER a self-log NOR a readonly gate before, so the boundary ADDS both -- a replay line AND the C-level read-only gate that closes a LATENT mutate-on-read-only bug): run_core MOVES the argc!=4 "needs 2 additional arguments" + get_instance "instance not found" validation IN (early TCL_ERROR BEFORE the my_strdup effect, so a bad arg mutates nothing and, via log-on-success, logs nothing) and does `my_strdup(_ALLOC_ID_, &xctx->inst[inst].name, argv[3])` -- with NO push_undo and NO set_modify (the CRITICAL DIVERGENCE from reset_inst_prop: reset_symbol is a low-level batch sub-step whose sole caller fix_symbols (xschem.tcl) brackets the whole remap loop in ONE push_undo + owns the set_modify(1) after; a per-call push here would SHATTER that single-Ctrl-Z batch -- the replace_symbol fast-form no-undo precedent). core_log_action logs the SELF-CONTAINED `xschem reset_symbol <inst> <symref>` (BOTH referents Tcl_Merge-quoted) on success only. No scattered readonly/log/push_undo here; the old success-path Tcl_ResetResult is the boundary's job now}
+    {Tcl_SetResult\(interp, "xschem reset_symbol needs 2 additional arguments", TCL_STATIC\);} 1 {reset_symbol's argc!=4 validation gate lives in run_core (atom 22), moved from the old scheduler branch, and stays BEFORE the my_strdup mutation -- so a bad call mutates nothing and (via log-on-success) logs nothing. NOT a log_action, so it does not perturb the raw-log count. Exactly ONE such statement in scheduler.c}
+    {Tcl_SetResult\(interp, "xschem reset_symbol: instance not found", TCL_STATIC\);} 1 {reset_symbol's get_instance validation gate lives in run_core (atom 22), moved from the old scheduler branch, and stays BEFORE the my_strdup mutation. NOT a log_action. Exactly ONE such statement in scheduler.c}
+    {my_strdup\(_ALLOC_ID_, &xctx->inst\[inst\].name, argv\[3\]\);} 1 {reset_symbol's SOLE EFFECT lives in run_core (atom 22): swap the instance's symbol reference from argv[3]. NO push_undo/set_modify precede or follow it in the arm -- the load-bearing no-undo/no-set_modify divergence (fix_symbols owns the single undo bracket). Exactly ONE such statement in scheduler.c; a regression that re-added push_undo here would shatter fix_symbols' batch (caught by the test's single-Ctrl-Z check)}
+    {(?n)rs\[0\] = "xschem"; rs\[1\] = verb; rs\[2\] = argv\[2\]; rs\[3\] = argv\[3\];$} 1 {reset_symbol SELF-CONTAINED two-referent build lives in core_log_action (atom 22): BOTH the instance referent argv[2] AND the symref argv[3] are emitted via log_action_argv (Tcl_Merge), NOT a raw %s -- either can carry Tcl metacharacters (an arrayed name x2[3:0], a path with a space/bracket), so both brace-quote and REPLAY (the atom-13 issue-0048 lesson). The array is named `rs` (NOT av/ev/pp/mi/im -- the §36 collision lesson) so this build stays TEXTUALLY DISTINCT from every sibling; a shared name would make each verb's count == 2, breaking the exclusivity rows. Reached ONLY on TCL_OK (log-on-success), so a failed validation logs nothing}
+    {log_action_argv\(4, rs\);} 1 {reset_symbol's Tcl_Merge emit (atom 22): log_action_argv brace-quotes the two referents minimally, so a plain refdes+path (R1 devices/res.sym) logs byte-identically to `xschem reset_symbol R1 devices/res.sym` while an arrayed name logs `xschem reset_symbol {x2[3:0]} devices/res.sym`. Exactly ONE such `(4, rs)` site in scheduler.c (S7 pins exclusivity); the `rs` array name keeps it distinct from replace_symbol's `(4, av)` and apply_pin_prop's `(4, pp)`}
     {log_action\("xschem print_hilight_net}           1 {print_hilight_net branch}
     {log_action\("xschem exit closewindow force"}     2 {exit hook (both terminating sites)}
     {log_action\("xschem set cadgrid}                 1 {set cadgrid resolved-value}
@@ -587,7 +593,7 @@ set CVERBS {
   flip flipv rotate flip_in_place flipv_in_place rotate_in_place
   change_elem_order check_unique_names create_instance toggle_ignore
   reset_inst_prop replace_symbol show_unconnected_pins embed_rawfile wire_cut apply_pin_prop
-  move_instance image
+  move_instance image reset_symbol
   floaters_from_selected_inst print_hilight_net attach_labels add_pin_stubs
   setprop unhilight_all hilight_net_interactive unhilight_net_interactive
   make_symbol make_sch make_sch_from_sel descend descend_symbol go_back
@@ -1371,6 +1377,72 @@ check "S7 callback.c: NO scattered log_action(\"xschem change_elem_order\") (the
 check "S7 scheduler.c: NO scattered scheduler_readonly_reject(...,\"change_elem_order\") (CONSOLIDATION -- the old branch HAD a per-verb gate, now REMOVED; the boundary's generic gate covers it)" \
   [expr {[rxcount $sched {scheduler_readonly_reject\(interp, "change_elem_order"\)}] == 0}] \
   "got=[rxcount $sched {scheduler_readonly_reject\(interp, "change_elem_order"\)}]"
+# reset_symbol (Refactor B atom 22 -- the TWENTY-SECOND per-verb migration, the direct INLINE twin of
+# reset_inst_prop (atom 13); an ADDITIVE-LOG+GATE migration: the branch had NEITHER a self-log NOR a
+# readonly gate before, so the boundary ADDS both -- a replay line AND the read-only gate that closes a
+# LATENT mutate-on-read-only bug): the readonly gate + the ONE `xschem reset_symbol <inst> <symref>` log
+# form (via core_log_action) live SOLELY in perform_action. It is TWO-arg (argv[2]=inst, argv[3]=symref),
+# so core_log_action holds EXACTLY ONE `log_action_argv(4, rs)` built from `rs[3] = argv[3];` (UNIQUE to
+# reset_symbol -- no other verb uses `rs`); scheduler.c must have EXACTLY that ONE -- the scheduler BRANCH
+# carries none (it delegates via `return perform_action`) and callback.c ZERO (a PURE SCRIPTED verb: the
+# SOLE non-branch caller is the Tcl proc fix_symbols, which reaches the branch via `xschem reset_symbol`;
+# no key/menu/palette/callback entry). The referent array is named `rs` (NOT av/ev/pp/mi/im) so its
+# build/emit stay TEXTUALLY DISTINCT from reset_inst_prop's `av`, embed_rawfile's `ev`, replace_symbol's
+# `av[3]`, apply_pin_prop's `pp`, move_instance's `mi`, and image's `im` -- a shared name would make each
+# verb's count == 2, breaking the exclusivity rows (the §36 collision the task flags). The branch's
+# early-error Tcl_SetResult("xschem reset_symbol needs 2 additional arguments" / "... instance not found")
+# are NOT log_action calls, so they don't perturb the raw-log count. The verb logged NOTHING before atom
+# 22 (like toggle_ignore/apply_pin_prop/move_instance/image), so a scattered raw `log_action("xschem
+# reset_symbol"` must NOT appear (the replay-unsafe %s form -- Tcl_Merge is the only emit). The branch
+# NEVER HAD a scheduler_readonly_reject; the boundary's generic gate now ADDS one (a CORRECTNESS FIX -- the
+# old branch mutated a read-only cell), so a re-scattered per-verb readonly_reject also fails closed.
+# reset_symbol() has no shared C core -- the my_strdup effect is INLINE in run_core, strictly 1:1 with the
+# verb (C3), so there is no sub-step to lock. reset_symbol stays in S2 CVERBS (a scripted/replayed
+# `xschem reset_symbol <inst> <symref>` re-executes AND self-logs) and OUT of S3.
+check "S7 scheduler.c: EXACTLY ONE reset_symbol two-referent build (rs\[3\] = argv\[3\];) -- the core_log_action Tcl_Merge site (the branch delegates to the boundary); `rs` (not av/pp) keeps it distinct from replace_symbol's av\[3\] and apply_pin_prop's pp\[3\]" \
+  [expr {[rxcount $sched {rs\[3\] = argv\[3\];}] == 1}] \
+  "got=[rxcount $sched {rs\[3\] = argv\[3\];}]"
+check "S7 scheduler.c: EXACTLY ONE reset_symbol log_action_argv(4, rs) emit (distinct from replace_symbol's (4, av) and apply_pin_prop's (4, pp) by the `rs` array name)" \
+  [expr {[rxcount $sched {log_action_argv\(4, rs\);}] == 1}] \
+  "got=[rxcount $sched {log_action_argv\(4, rs\);}]"
+check "S7 scheduler.c: NO scattered raw log_action(\"xschem reset_symbol\") (the replay-unsafe %s form must not reappear -- Tcl_Merge is the only emit; the verb logged NOTHING before atom 22)" \
+  [expr {[rxcount $sched {log_action\("xschem reset_symbol}] == 0}] \
+  "got=[rxcount $sched {log_action\("xschem reset_symbol}]"
+check "S7 callback.c: NO scattered log_action(\"xschem reset_symbol\") (no key entry point -- a pure scripted verb, fix_symbols reaches the branch; guards a future re-scatter)" \
+  [expr {[rxcount $cbtext {log_action\("xschem reset_symbol}] == 0}] \
+  "got=[rxcount $cbtext {log_action\("xschem reset_symbol}]"
+check "S7 scheduler.c: NO scattered scheduler_readonly_reject(...,\"reset_symbol\") (the boundary's generic gate covers the verb -- the branch never had one; the gate is a NEW correctness fix)" \
+  [expr {[rxcount $sched {scheduler_readonly_reject\(interp, "reset_symbol"\)}] == 0}] \
+  "got=[rxcount $sched {scheduler_readonly_reject\(interp, "reset_symbol"\)}]"
+# COLLISION GUARD: reset_symbol's `rs` build must NOT perturb reset_inst_prop's `av`, embed_rawfile's `ev`,
+# replace_symbol's `av[3]`, apply_pin_prop's `pp`, move_instance's `mi`, or image's `im` Tcl_Merge sites.
+# Re-assert each stays EXACTLY ONE -- a regression that renamed reset_symbol's array to av/ev/pp/mi/im
+# would make these == 2, failing closed here (and on those verbs' own S1/S7 rows).
+check "S7 (reset_inst_prop unperturbed) scheduler.c: still EXACTLY ONE av-build + (3, av) (reset_symbol's rs name did not collide)" \
+  [expr {[rxcount $sched {(?n)av\[0\] = "xschem"; av\[1\] = verb; av\[2\] = argv\[2\];$}] == 1 &&
+         [rxcount $sched {log_action_argv\(3, av\);}] == 1}] \
+  "build=[rxcount $sched {(?n)av\[0\] = "xschem"; av\[1\] = verb; av\[2\] = argv\[2\];$}] emit=[rxcount $sched {log_action_argv\(3, av\);}]"
+check "S7 (embed_rawfile unperturbed) scheduler.c: still EXACTLY ONE ev-build + (3, ev) (reset_symbol's rs name did not collide)" \
+  [expr {[rxcount $sched {(?n)ev\[0\] = "xschem"; ev\[1\] = verb; ev\[2\] = argv\[2\];$}] == 1 &&
+         [rxcount $sched {log_action_argv\(3, ev\);}] == 1}] \
+  "build=[rxcount $sched {(?n)ev\[0\] = "xschem"; ev\[1\] = verb; ev\[2\] = argv\[2\];$}] emit=[rxcount $sched {log_action_argv\(3, ev\);}]"
+check "S7 (replace_symbol unperturbed) scheduler.c: still EXACTLY ONE av\[3\]-build + (4, av) (reset_symbol's rs name did not collide)" \
+  [expr {[rxcount $sched {av\[3\] = argv\[3\];}] == 1 &&
+         [rxcount $sched {log_action_argv\(4, av\);}] == 1}] \
+  "build=[rxcount $sched {av\[3\] = argv\[3\];}] emit=[rxcount $sched {log_action_argv\(4, av\);}]"
+check "S7 (apply_pin_prop unperturbed) scheduler.c: still EXACTLY ONE pp\[3\]-build + (4, pp) + (3, pp) (reset_symbol's rs name did not collide)" \
+  [expr {[rxcount $sched {pp\[3\] = argv\[3\];}] == 1 &&
+         [rxcount $sched {log_action_argv\(4, pp\);}] == 1 &&
+         [rxcount $sched {log_action_argv\(3, pp\);}] == 1}] \
+  "build=[rxcount $sched {pp\[3\] = argv\[3\];}] emit4=[rxcount $sched {log_action_argv\(4, pp\);}] emit3=[rxcount $sched {log_action_argv\(3, pp\);}]"
+check "S7 (move_instance unperturbed) scheduler.c: still EXACTLY ONE mi\[9\]-decl + (k, mi) (reset_symbol's rs name did not collide)" \
+  [expr {[rxcount $sched {const char \*mi\[9\];}] == 1 &&
+         [rxcount $sched {log_action_argv\(k, mi\);}] == 1}] \
+  "decl=[rxcount $sched {const char \*mi\[9\];}] emit=[rxcount $sched {log_action_argv\(k, mi\);}]"
+check "S7 (image unperturbed) scheduler.c: still EXACTLY ONE im heap-decl + (argc, im) (reset_symbol's rs name did not collide)" \
+  [expr {[rxcount $sched {const char \*\*im = my_malloc}] == 1 &&
+         [rxcount $sched {log_action_argv\(argc, im\);}] == 1}] \
+  "decl=[rxcount $sched {const char \*\*im = my_malloc}] emit=[rxcount $sched {log_action_argv\(argc, im\);}]"
 # atom-13 NESTING COUPLING (adversarial-review finding): the S1 existence rows above pin
 # that the guard line, the log line and the reset line each EXIST, but not that log+reset are
 # INSIDE the log-on-success block. A de-nest that keeps all three lines yet closes the

@@ -486,6 +486,37 @@ static int run_core(const char *verb, int argc, const char *argv[])
     my_free(_ALLOC_ID_, &translated_sym);
     return TCL_OK;
   }
+  else if(!strcmp(verb, "reset_symbol")) {
+    /* Refactor B atom 22: the TWENTY-SECOND per-verb migration, the direct INLINE twin of
+     * reset_inst_prop (§33, atom 13) sitting a few arms above -- a VALIDATING verb whose two
+     * gates reject a bad call with an early TCL_ERROR BEFORE any mutation, so (via log-on-
+     * success) a rejected call mutates nothing and logs nothing. This is an ADDITIVE-LOG+GATE
+     * atom: the old branch had NEITHER a self-log NOR a readonly gate, so the migration ADDS
+     * BOTH -- a replay line AND the C-level read-only gate (a CORRECTNESS FIX: the old branch
+     * mutated a read-only cell). reset_symbol is a documented LOW-LEVEL batch sub-step: it
+     * merely swaps xctx->inst[...].name; the CALLER (fix_symbols, xschem.tcl) deletes symbols
+     * first and reload_symbols afterward.
+     * *** CRITICAL DIVERGENCE from the reset_inst_prop template: this arm must NOT push_undo
+     * and must NOT set_modify. *** fix_symbols brackets its whole remap loop in a SINGLE
+     * `xschem push_undo` before the foreach, so N per-instance reset_symbol calls that each
+     * pushed a slot would SHATTER that one-Ctrl-Z batch (one undo would revert only the last
+     * remap); and fix_symbols owns the set_modify(1) after the loop. The precedent for a
+     * no-undo/no-set_modify run_core arm is replace_symbol's fast-form (which skips both). The old
+     * branch already ended in Tcl_ResetResult on success (a BLANK result -- unlike reset_inst_prop,
+     * reset_symbol NEVER set the instname), and the boundary's success-path Tcl_ResetResult PRESERVES
+     * that blank result. C89: decls at block top. */
+    int inst;
+    if(argc != 4) {
+      Tcl_SetResult(interp, "xschem reset_symbol needs 2 additional arguments", TCL_STATIC);
+      return TCL_ERROR;
+    }
+    if((inst = get_instance(argv[2])) < 0 ) {
+      Tcl_SetResult(interp, "xschem reset_symbol: instance not found", TCL_STATIC);
+      return TCL_ERROR;
+    }
+    my_strdup(_ALLOC_ID_, &xctx->inst[inst].name, argv[3]);
+    return TCL_OK;
+  }
   else if(!strcmp(verb, "replace_symbol")) {
     /* Refactor B atom 14: the SECOND VALIDATING verb, and the FIRST per-verb migration
      * to carry a FAST-FLAG log gate. It rides the atom-13 log-on-success boundary
@@ -960,6 +991,24 @@ static void core_log_action(const char *verb, int argc, const char *argv[])
     const char *av[3];
     av[0] = "xschem"; av[1] = verb; av[2] = argv[2];
     log_action_argv(3, av);
+  } else if(!strcmp(verb, "reset_symbol")) {
+    /* atom 22: TWO referents -- the instance referent argv[2] (a name or numeric index) AND
+     * the symbol reference argv[3] -- read IDENTICALLY to run_core's reset_symbol arm, so the
+     * logged `xschem reset_symbol <inst> <symref>` self-contained line always names exactly the
+     * instance the effect remapped and the symbol it pointed at (SELECTION-INDEPENDENT: replay
+     * re-resolves argv[2] via get_instance). BOTH referents can carry Tcl metacharacters -- an
+     * arrayed/bussed instance name (`x2[3:0]`), a symref path with a space or bracket -- so BOTH
+     * are emitted via log_action_argv (Tcl_Merge), NOT a raw `%s`: a raw `x2[3:0]` would replay
+     * `[3:0]` as a command substitution (the atom-13 issue-0048 replay-safe lesson). Tcl_Merge
+     * quotes MINIMALLY, so a plain refdes+path logs byte-identically to `xschem reset_symbol R1
+     * devices/res.sym`. The array is named `rs` (NOT av/ev/pp/mi/im -- the §36 collision lesson)
+     * so its build/emit lines stay TEXTUALLY DISTINCT from every sibling's; a shared name would
+     * make each verb's count == 2, failing the exclusivity rows. Reached ONLY on TCL_OK
+     * (log-on-success), and run_core returns TCL_OK only after the argc!=4 + "instance not found"
+     * gates passed, so argv[2]/argv[3] are always present here; a failed validation logs nothing. */
+    const char *rs[4];
+    rs[0] = "xschem"; rs[1] = verb; rs[2] = argv[2]; rs[3] = argv[3];
+    log_action_argv(4, rs);
   } else if(!strcmp(verb, "replace_symbol")) {
     /* atom 14: the SECOND validating verb, and the FIRST per-verb log form to carry a
      * FAST-FLAG GATE. The log is the SELF-CONTAINED `xschem replace_symbol <inst> <sym>`:
@@ -8719,25 +8768,22 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
       return perform_action("reset_inst_prop", argc, argv);
 
     /* reset_symbol inst symref
-     *   This is a low level command, it merely changes the xctx->inst[...].name field.
-     *   It is caller responsibility to delete all symbols before and do a reload_symbols
-     *   afterward */
+     *   Low-level command: it merely swaps the xctx->inst[...].name field. It is the CALLER's
+     *   responsibility to delete all symbols before and do a reload_symbols afterward
+     *   (fix_symbols, xschem.tcl, does exactly this -- bracketing its remap loop in ONE
+     *   push_undo).
+     * Routes through the single mutation boundary (Refactor B atom 22 -- the direct INLINE twin
+     * of reset_inst_prop (atom 13); an ADDITIVE-LOG+GATE migration: the branch had NEITHER a
+     * self-log NOR a readonly gate, so the boundary ADDS both -- a replay line AND the read-only
+     * gate that closes a latent mutate-on-read-only bug). The readonly gate + the argc!=4 /
+     * "instance not found" validation + the my_strdup effect + the ONE `xschem reset_symbol
+     * <inst> <symref>` log site (via core_log_action, LOGGED ONLY ON SUCCESS) all live in
+     * perform_action/run_core. NOTE this verb owns NO push_undo/set_modify -- fix_symbols
+     * brackets the batch with a single undo, so a per-call push here would shatter it. No
+     * scattered readonly/log/push_undo here; the old success-path Tcl_ResetResult is the
+     * boundary's job now. */
     else if(!strcmp(argv[1], "reset_symbol"))
-    {
-      int inst;
-      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
-      if(argc!=4) {
-        Tcl_SetResult(interp, "xschem reset_symbol needs 2 additional arguments", TCL_STATIC);
-        return TCL_ERROR;
-      }
-      if((inst = get_instance(argv[2])) < 0 ) {
-        Tcl_SetResult(interp, "xschem reset_symbol: instance not found", TCL_STATIC);
-        return TCL_ERROR;
-      } else {
-        my_strdup(_ALLOC_ID_, &xctx->inst[inst].name, argv[3]);
-      }
-      Tcl_ResetResult(interp);
-    }
+      return perform_action("reset_symbol", argc, argv);
 
     /* resetwin create_pixmap clear_pixmap force w h   (full internal form)
      * resetwin w h                                     (fit form, issue 0035/0037)

@@ -4441,6 +4441,115 @@ fix (no phantom line). ONE NIT — the `deferred`-prints-`ALL PASS` hollow-pass 
 → ACCEPTED (identical to all 15 perform_action_* siblings; mitigated by logdir_tests registration). The fix
 was applied and re-verified (40 checks + 314 grep checks + sabotage 7 green) BEFORE re-committing.
 
-RECOMMENDED NEXT: the friction-free pool is still EMPTY — re-scout the roster fresh for the next
-higher-friction verb (the same deferrals as §40 stand: composite delete/cut/copy/save/reload; selection-
-referent replay is the accepted 0005 class).
+RECOMMENDED NEXT (superseded by §42): re-scout the roster for the next atom.
+
+## 42. Refactor B ATOM 22 (2026-07-17): the TWENTY-SECOND per-verb migration — an ADDITIVE-LOG+GATE verb whose run_core arm must NOT push_undo (the load-bearing divergence: `fix_symbols` owns the single undo bracket) (`reset_symbol`)
+
+`reset_symbol` was the top-tier pick from the additive-log pool: **additive-log+gate** (the branch had
+NEITHER a self-log NOR a read-only gate, so the migration ADDS both — a replay line AND a closed latent
+bug) crossed with the highest tractability (a 1:1 INLINE body, the direct twin of reset_inst_prop = atom
+13, a few arms above it). Its only friction — the two early semantic TCL_ERRORs — was already crossed by
+the atom-13 log-on-success boundary.
+
+**The verb.** `xschem reset_symbol <inst> <symref>` is a documented LOW-LEVEL batch sub-step: it merely
+swaps `xctx->inst[...].name` (a raw `my_strdup`, NO match_symbol / reload / bbox / hash update). The CALLER
+is responsible for deleting symbols first and `reload_symbols` afterward. Its SOLE non-branch caller is the
+Tcl proc `fix_symbols` (xschem.tcl), which re-maps every instance's symbol reference to N last path
+components.
+
+**THE ONE REAL DIVERGENCE from the reset_inst_prop template — no push_undo, no set_modify in the run_core
+arm.** reset_inst_prop's arm owns a SINGLE `push_undo` (there is no self-undo core). reset_symbol must NOT:
+`fix_symbols` does ONE `xschem push_undo` **before** a `foreach` loop that calls `xschem reset_symbol` per
+instance, then `reload_symbols` + `set_modify(1)` + `redraw` **after** the loop. That single push is the
+one-Ctrl-Z bracket for the WHOLE remap. If the run_core arm pushed a slot per call, fix_symbols' N calls
+would SHATTER it — one undo would revert only the LAST remap. The precedent for a no-undo/no-set_modify
+run_core arm is replace_symbol's fast-form (atom 14, which skips both). This is the load-bearing hazard;
+sabotage 1 (add `push_undo` to the arm) is caught by the test's fix_symbols single-undo check (checks
+(g)/(g2)): `0=devices/res.sym 1=devices/res.sym 2=res.sym` — only the last remap reverted, batch broken.
+
+**TWO REFERENTS, both Tcl_Merge-quoted.** Unlike reset_inst_prop (single referent argv[2]), reset_symbol
+logs BOTH argv[2] (instance name/index) AND argv[3] (symbol reference) — the replace_symbol §34 two-referent
+shape. Both can carry Tcl metacharacters (an arrayed name `x2[3:0]`, a symref path with a space/bracket), so
+BOTH are emitted via `log_action_argv`/Tcl_Merge, NOT a raw `%s` — a raw `x2[3:0]` would replay `[3:0]` as a
+command substitution (`invalid command name "3:0"`, DEMONSTRATED by sabotage 4). Tcl_Merge quotes MINIMALLY,
+so a plain refdes+path logs byte-identically to `xschem reset_symbol R1 devices/res.sym`. The referent array
+is named `rs` (av/ev/pp/mi/im all taken — the §36 collision lesson), unique so its build/emit stay
+textually distinct.
+
+**Migration (the direct twin of atom 13, minus the undo).**
+- **`run_core` arm** (beside reset_inst_prop's): the TWO gates lift VERBATIM and stay BEFORE the effect —
+  `argc != 4` → TCL_ERROR "needs 2 additional arguments"; `get_instance(argv[2]) < 0` → TCL_ERROR "instance
+  not found" — so a bad call mutates nothing and (via log-on-success) logs nothing. Effect:
+  `my_strdup(_ALLOC_ID_, &xctx->inst[inst].name, argv[3]); return TCL_OK;` — **no push_undo, no
+  set_modify, no draw.** (Accuracy note, from the refute panel: unlike reset_inst_prop, the old
+  reset_symbol branch NEVER set the interp result to the instname — it already ended in
+  `Tcl_ResetResult`, a blank result; the boundary's success-path Tcl_ResetResult PRESERVES that. So
+  check (a)'s "result BLANK" is a preservation guard, not a behavior-change delta.)
+- **`core_log_action` arm** (beside reset_inst_prop's): a COLLISION-DISTINCT `const char *rs[4]`;
+  `rs[0]="xschem"; rs[1]=verb; rs[2]=argv[2]; rs[3]=argv[3]; log_action_argv(4, rs);` — logged ONLY on
+  TCL_OK, after the gates passed, so argv[2]/argv[3] are always present.
+- **Scheduler branch** → `return perform_action("reset_symbol", argc, argv);` with the doc-comment
+  mirroring reset_inst_prop's (adds the "owns NO push_undo/set_modify — fix_symbols brackets the batch"
+  note). The old `!xctx` check moves into perform_action.
+
+**fix_symbols BEHAVIOR CHANGES (both stated in the commit body).** (a) It now emits N replay lines (one
+per remapped instance) — byte-replayable, matching the replace_symbol fast-form precedent (check (f):
+`fix_symbols 1` on a 3-instance sheet emits exactly +3 `xschem reset_symbol` lines). (b) On a READ-ONLY
+cell it now THROWS at the first reset_symbol (was: silently mutated) — the intended correctness fix, but a
+fix_symbols error-path change worth naming.
+
+**Verification.** `tests/headless/test_perform_action_reset_symbol.tcl` (32 checks, full_audit
+logdir_tests, self-deferring on no-logdir): (a) SUCCESS mutates inst.name + exactly +1 byte-exact
+`xschem reset_symbol R1 devices/capa.sym` + interp result BLANK; (b) argc!=4 (too-few AND too-many) →
+TCL_ERROR + non-empty verb message + no mutation + +0 log; (c) instance-not-found → TCL_ERROR + +0; (d)
+READONLY REFUSE (the NEW gate) → TCL_ERROR + verb-named read-only message + inst.name UNCHANGED + +0 log
+(pins the pre-migration mutate-on-read-only bug closed); (e) metachar referents (arrayed `x2[3:0]` + a
+spaced symref) round-trip via Tcl_Merge — logged brace-quoted, the exact line REPLAYS; (f) fix_symbols
+emits +3 replay lines + all remapped; (g)/(g2) ONE undo reverts the WHOLE remap (fix_symbols real proc +
+a distilled explicit-bracket variant) — proving the arm pushed no undo. Build cairo (default) OK.
+**Sibling + guard PASS:** test_perform_action_reset_inst_prop, test_perform_action_replace_symbol,
+test_selflog_grep_guard (331 checks) all green. **Baseline-diff CLEAN:** the pre-edit (HEAD atom-21)
+binary fails test_selflog_output with the IDENTICAL 7 transform-key-injection flakes (Shift-F/Alt-R/… —
+the standing nondeterministic WSLg key set, count varied 6↔7 across runs; NONE reference reset_symbol),
+byte-identical pre/post; ZERO new deterministic fails.
+
+**grep guard (test_selflog_grep_guard.tcl):** S1 rows — the boundary branch row, the run_core arm's two
+gate statements + the `my_strdup` effect, the core_log_action line-anchored `rs`-build + the
+`log_action_argv(4, rs)` emit; `reset_symbol` ADDED to S2 CVERBS, kept OUT of S3; an S7 exclusivity block
+(EXACTLY ONE `rs[3]=argv[3];` build + ONE `log_action_argv(4, rs)`, ZERO raw `log_action("xschem
+reset_symbol"` in scheduler.c AND callback.c, ZERO scattered `scheduler_readonly_reject(…,"reset_symbol")`)
+PLUS a COLLISION GUARD re-asserting reset_inst_prop's `av`, embed's `ev`, replace_symbol's `av[3]`,
+apply_pin_prop's `pp`, move_instance's `mi`, and image's `im` all stay == 1.
+
+**Sabotage ×6** (each fails EXACTLY its checks; restore from `scratchpad/atom22_backup/scheduler.c.golden`,
+NOT git — ~200 dirty sibling worktrees): (1) add `push_undo` to the arm → fix_symbols undo-batch checks
+(g)/(g2) fail (only the last remap reverts); (2) re-add a scattered `scheduler_readonly_reject` → grep S7
+readonly=1; (3) drop `log_action_argv(4, rs)` → grep S1/S7 (rs emit count 0) AND test (a) exactly-+1; (4)
+raw `%s` instead of Tcl_Merge → test (e) metachar (logs raw `x2[3:0]`, replay errors `invalid command name
+"3:0"`); (5) drop the argc!=4 gate → test (b) (too-few now returns TCL_OK with a corrupt empty name).
+
+**Adversarial refute panel + completeness critic (Workflow, ultracode), against the frozen change.**
+Axes = undo-batch integrity / log-on-success / two-referent replay-safety / readonly-gate correctness /
+C89 / entry-completeness (incl. the fix_symbols Tcl caller). Verdict `ship`, 0 critical/major. All axes
+CLEAN (readonly-gate a NIT: fix_symbols on a read-only cell now throws UNCAUGHT at the first reset_symbol,
+after its no-op push_undo — strictly better than the old silent read-only mutation; the residue is a
+cosmetic console error in a power-user utility, no state-integrity defect; readonly is per-cell so no
+partial remap). Completeness critic found THREE non-blocking gaps, TWO fixed here: (1) the "must NOT
+set_modify" half of the divergence was UNTESTED — a set_modify(1) regression would pass all checks (it
+pushes no undo slot, and fix_symbols set_modify(1)'s anyway) yet fire N mid-loop autosave write_backup()
+of a half-remapped sheet — CLOSED by new check (a3) (standalone reset_symbol on a cleared sheet leaves
+`modified` == 0); (2) check (a)'s "result BLANK" rationale + the source/test comments wrongly claimed the
+old branch set the instname result — FIXED (the old branch already Tcl_ResetResult'd; it is a preservation
+guard). ACCEPTED CAVEAT (3, low-sev, inherent to the verb): reset_symbol's required companion
+`reload_symbols` is NOT a logged verb, so an action-log replay of a fix_symbols session swaps inst.name but
+leaves inst.ptr/bbox/node-hash STALE until a later relink — the low-level-batch-sub-step replay class
+(kin to embed_rawfile's external-file caveat / the 0005 companion-step class). No crash (ptr stays
+in-range), and a save writes the correct new name (ptr is not serialized). This is a pre-existing property
+of the verb's design (the branch documents "caller must reload_symbols afterward"), not a regression;
+logging reload_symbols is out of atom-22 scope (it is a separate, unmigrated verb). The two errored refute
+axes (undo-batch, replay-safety — schema-retry cap) were re-run as plain agents and returned CLEAN.
+
+RECOMMENDED NEXT: after reset_symbol the additive-log pool holds only `instance_number` (higher-friction:
+needs the C1 query/mutate split + the shared `change_elem_order` core kept silent below the boundary + a
+new verb name) then `text` (additive-log, already gated). The §40 deferrals still stand (composite
+delete/cut/copy/save/reload; selection-referent replay is the accepted 0005 class).
