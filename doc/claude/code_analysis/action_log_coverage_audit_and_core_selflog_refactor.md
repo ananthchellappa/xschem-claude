@@ -4946,7 +4946,90 @@ ZERO literal `log_action("xschem clear_drawing` (the bare form logs ONLY via the
 scattered `scheduler_readonly_reject(interp, "clear_drawing")`, and actions.c ZERO literal
 `log_action("xschem clear_drawing` (the silent-core spam lock). Build cairo (default) OK.
 
-RECOMMENDED NEXT: the Refactor B batch ledger `doc/claude/refactor_b_batch/PLAN.md` — item 03 `redo`
-(T2-clean, fr1, logged-raw: already boundary-shaped, a zero-coverage consistency move onto
-core_log_action) is next; cut/copy/save/reload stay deferred (composites, §4/§40); the 0068 §3 key list
-remains the separate key-migration track.
+RECOMMENDED NEXT (superseded by §48): the batch ledger's item 03 (`redo`) shipped as atom 28 —
+see §48 below and `doc/claude/refactor_b_batch/PLAN.md` (item 04 `get_additional_symbols` next).
+
+## 48. Refactor B ATOM 28 (2026-07-18): the TWENTY-EIGHTH per-verb migration — the ZERO-DELTA consistency class (`redo`)
+
+**The verb, and the win class.** `redo` is batch item 03 and the first strictly ZERO-DELTA migration
+(delete §44 and clear_drawing §47 each tightened arity; toggle_ignore §32 added gate+log; redo changes
+NOTHING observable). The old branch (scheduler.c, `xschem_cmds_r`) was already boundary-shaped: inline
+`!xctx` guard + inline `scheduler_readonly_reject(interp, "redo")` + `pop_undo_keep_selection(1, 1)` +
+unconditional fixed `log_action("xschem redo")` + `Tcl_ResetResult`. The migration consolidates gate and
+log onto the boundary — branch → `return perform_action("redo", argc, argv)`; run_core arm →
+`pop_undo_keep_selection(1, 1); return TCL_OK;`; bare-verb log via `core_log_action`'s DEFAULT `xschem %s`
+arm (NO per-verb branch, only the two header rosters gain the name). Coverage gain is ZERO by design; the
+deliverable is uniformity + the S7 fail-closed exclusivity lock. Decision doc:
+`perform_action_atom28_redo_decision.md`.
+
+**The one design decision — TOLERANT ARGC, NO ARITY GATE.** Unlike delete/clear_drawing (whose OLD
+branches were `if(argc==2)` silent no-ops that log-on-success would PHANTOM-log, forcing the gate), redo's
+old branch had NO argc handling anywhere: `xschem redo extra` EXECUTED the redo and logged the bare line
+(oracle-pinned on the HEAD binary 2026-07-18). So tolerant argc is the PRESERVED behaviour (the
+toggle_ignore §32 precedent) and an arity gate would be gratuitous churn inside a zero-delta atom. The
+DEFAULT `%s` arm ignores argv entirely, keeping the logged line byte-identical bare at every argc — the
+lesson: *the arity gate is a contract consequence of the OLD branch's argc semantics, not a boundary
+convention*.
+
+**Undo-stack ownership — NO push_undo, ever.** `pop_undo_keep_selection(1, 1)` (select.c, the issue-0095
+selection-keeping wrapper over `xctx->pop_undo`) is undo-stack NAVIGATION: no push_undo exists on this
+path and NONE is added — a push at `cur < head` snaps `head = ++cur` (save.c push_undo), TRUNCATING the
+redo tail and turning every redo into a no-op. `set_modify` is passed INTO the core. An EMPTY redo stack
+early-returns in-core (disk pop_undo: `cur_undo_ptr >= head_undo_ptr`) = a no-op SUCCESS that still logs
+one idempotent line (§30) — byte-identical to the old unconditional log.
+
+**The entry map — NO callback.c edit (the resolved atom-12 premise).** Legacy `case 'U'` is GONE (Phase
+3d.2, comment only); Shift+U is a Tcl-funneled binding (keysym 85, mods 0 — printable keysyms strip
+ShiftMask) → ActionDef `edit.redo` (`xschem redo; xschem redraw`, mutates=1) → dispatch_input_action →
+Tcl eval → the branch → the boundary. Layer A dedup already correct and unchanged: the boundary log sets
+`actionlog_cmd_logged`, dispatch's wrapper copy is skipped — exactly ONE bare `xschem redo`, never the
+compound, before AND after. Read-only key path: gated at DISPATCH (mutates=1 → readonly_block) before any
+Tcl runs. Menu/toolbar run the same compound; zero `[xschem redo]` result consumers repo-wide (the old
+branch already reset-on-success, so the boundary's success-only reset is observably identical).
+
+**The F-SHARED twin — the raw `undo` branch (batch item 05's scope).** `pop_undo_keep_selection` has
+exactly TWO scheduler.c call sites: the fixed-arg `(1, 1)` site (this atom's run_core arm — count 1
+before and after, the call just MOVED) and the argv-parsed `(redo, set_modify)` site in the RAW undo
+branch (`xschem undo 1 1` performs a redo with its OWN `xschem undo 1 1` log — distinct verb, distinct
+line, no double-log path). The undo branch stays RAW this atom; the S7 exact-count rows pin BOTH call
+sites so a future "route undo's redo-form through the redo verb" edit (which WOULD double-log) fails
+closed.
+
+**Test (test_perform_action_redo.tcl, 33 checks, registered in full_audit logdir_tests; ALL 33 pass on
+the PRE-migration binary too — the zero-delta proof):** (a) SUCCESS — armed redo re-applies the placement
+(0→1), rc TCL_OK, exactly +1 byte-exact bare `xschem redo`, interp result blank; (b) THE HEADLINE —
+`xschem redo extra` STILL executes (0→1), rc TCL_OK, +1 exact-bare, +0 `xschem redo extra` lines (pins
+no-arity-gate AND the default-%s byte-identical log shape); (c) READONLY CONSOLIDATION — TCL_ERROR
+`*redo*read-only*` non-empty (the §33 landmine), no mutation, +0 log; (d) REPLAY — the recorded line
+re-executes through the `replay_action_log` suppress seam without re-logging; a control unwrapped
+`source` re-logs +1; (e) NO-OP-STILL-LOGS — empty redo stack → rc TCL_OK, no mutation, +1 (§30);
+(f) STACK NEUTRALITY — undo→0/redo→1 round-trips twice (the truncated-redo-tail detector); (g) SIBLING
+RAW — `xschem undo 1 1` redoes via the RAW undo branch, +1 `xschem undo 1 1`, +0 `xschem redo`;
+(h) KEY FUNNEL + LAYER-A DEDUP — injected Shift+U (`callback .drw 2 400 300 85 0 0 0`) applies the redo,
++1 exact-bare, +0 compound lines; read-only + same injection blocked at dispatch, no mutation, +0 log.
+**Sabotage ×4 (each fails its target, reverted byte-exact, clean re-run green):** (A) bypass the boundary
+(restore the raw inline gate+pop+log+reset body) → the runtime .tcl STILL PASSES IN FULL (the §32
+sabotage-2 lesson, here in its purest form — zero-delta means the raw body is observably identical) while
+the S1 delegation row + 4 S7 rows fail closed (delegation ==1 got 0, literal-log ==0 got 1,
+readonly-reject ==0 got 1, `(1, 1)` ==1 got 2) — the grep guard is the load-bearing exclusivity lock;
+(B) spurious `xctx->push_undo()` in the arm before the pop → (a)/(f) fail (instances stays 0, the
+truncated-redo-tail signature; same-signature collateral on the other redo-driving effect checks
+(b)/(d)/(h)); (C) per-verb raw-argv log arm in core_log_action → ONLY (b) fails (`xschem redo extra`
+logged non-bare, exact-bare +0); (D) gate the log on did-something (run_core TCL_ERROR at
+`cur_undo_ptr >= head_undo_ptr`) → ONLY (e) fails (+0 log, rc error — the no-op-still-logs
+discriminator). **grep guard:** the S1 `log_action("xschem redo"` floor row REPLACED by the delegation
+row (delete-row prose style); `redo` stays in S2 CVERBS (already listed), OUT of S3; the S5 runtime
+canary (`foreach verb {undo redo ...}` exactly-+1) untouched and passing; a 6-check S7 exact-count block
+— scheduler.c EXACTLY ONE delegation + ZERO literal `log_action("xschem redo"` + ZERO scattered
+`scheduler_readonly_reject(interp, "redo")` + EXACTLY ONE `pop_undo_keep_selection(1, 1)` (the run_core
+arm, the ONLY fixed-arg site) + EXACTLY ONE `pop_undo_keep_selection(redo, set_modify);`
+(semicolon-anchored, the atom-23 idiom, so the run_core arm's F-shared comment mention does not count —
+the RAW undo branch must neither disappear nor route this atom), and callback.c ZERO
+`log_action("xschem redo"` (no key self-logs it). The S1 undo row (`log_action\("xschem undo"`, pinning
+the branch's argc==2 form) untouched. Build cairo (default) OK.
+
+RECOMMENDED NEXT: the Refactor B batch ledger `doc/claude/refactor_b_batch/PLAN.md` — item 04
+`get_additional_symbols` (T2-clean, fr2, silent: a real xctx->sym mutator, but the transient/derived-state
+scope question must be settled first); item 05 `undo` (redo's twin, consistency-only with a
+normalizing-log wrinkle) follows; cut/copy/save/reload stay deferred (composites, §4/§40); the 0068 §3
+key list remains the separate key-migration track.

@@ -208,6 +208,12 @@ static int pin_scope_resolve(const char *scope, int *primary_out, int **targets_
  * silent -> logged + a NEW readonly gate; its core is a SHARED teardown
  * primitive (load/undo-restore/window-teardown/clear_schematic/debug) whose
  * seven raw C callers stay below the boundary, and the core stays SILENT.
+ * redo (atom 28) is the ZERO-DELTA consistency migration: the old branch was
+ * already boundary-shaped (inline reject + fixed bare log + reset-on-success),
+ * so gate and log consolidate with NO observable change; NO arity gate
+ * (tolerant argc preserved -- the old branch executed + logged bare at ANY
+ * argc) and NO push_undo (a redo is undo-stack NAVIGATION; the RAW undo branch
+ * stays the F-shared twin, batch item 05).
  * More verbs add an arm here as they move onto the boundary. argc/argv are unused
  * for a bare no-arg verb but carry the pivot for an arg-carrying verb (rotate/flip/flipv); the
  * general boundary shape (audit §4) is the same either way.
@@ -1064,6 +1070,27 @@ static int run_core(const char *verb, int argc, const char *argv[])
     clear_drawing();
     return TCL_OK;
   }
+  else if(!strcmp(verb, "redo")) {
+    /* Refactor B atom 28 (audit §48; decision doc perform_action_atom28_redo_decision.md): the
+     * ZERO-DELTA consistency migration -- the old branch was already boundary-shaped (inline
+     * readonly reject + fixed bare log + reset-on-success), so this arm changes NOTHING
+     * observable. pop_undo_keep_selection(1,1) (select.c, the issue-0095 selection-keeping
+     * wrapper over xctx->pop_undo) is undo-stack NAVIGATION: NO push_undo exists on this path
+     * and NONE is added (a push here would fire at cur<head and TRUNCATE the redo tail --
+     * save.c push_undo snaps head=++cur -- turning every redo into a no-op); set_modify is
+     * passed INTO the core. NO ARITY GATE -- deliberately unlike delete (§44)/clear_drawing
+     * (§47), whose OLD branches were if(argc==2) silent no-ops (phantom-log hazard): redo's old
+     * branch EXECUTES and logs bare at ANY argc, so tolerant argc is the preserved behaviour
+     * (the toggle_ignore §32 precedent) and the DEFAULT `xschem %s` log arm keeps the line
+     * byte-identical bare at every argc. An empty redo stack early-returns in-core = a no-op
+     * SUCCESS that still logs one idempotent line (§30) -- byte-identical to the old
+     * unconditional log. F-shared: the RAW undo branch (xschem_cmds_u) calls
+     * pop_undo_keep_selection(redo, set_modify) with argv-parsed ints (`xschem undo 1 1` = a
+     * redo with its OWN `xschem undo %d %d` log) -- it STAYS RAW (batch item 05), distinct
+     * verb, distinct line, no double-log path; the S7 exact-count rows lock both call sites. */
+    pop_undo_keep_selection(1, 1); /* issue 0007: keep selection across redo */
+    return TCL_OK;
+  }
   return TCL_ERROR; /* unreachable: perform_action is only wired for the verbs above */
 }
 
@@ -1071,7 +1098,8 @@ static int run_core(const char *verb, int argc, const char *argv[])
  * Refactor A step-2 "log at the core" registry SEED, introduced by atom 6). Formats the ONE
  * self-log line for a migrated verb. The bare no-arg verbs (trim_wires/align/rotate_in_place/
  * flip_in_place/flipv_in_place/floaters_from_selected_inst/toggle_ignore/show_unconnected_pins/delete/
- * clear_drawing) emit `xschem <verb>`
+ * clear_drawing/redo -- redo is atom 28, tolerant argc: the default arm ignores argv, so
+ * `xschem redo extra` still logs the byte-identical bare line) emit `xschem <verb>`
  * byte-identically to the pre-atom-6 `log_action("xschem %s", verb)`; check_unique_names (atom 26)
  * emits the FIXED literal `xschem check_unique_names 1` (only mode 1 crosses the boundary -- the
  * mode-0 logged-query line lives raw-front in the branch + the '#' key, audit §46); the arg-carrying pivot verbs rotate (atom 6), flip (atom 7) and
@@ -8857,14 +8885,18 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
     }
 
     /* redo
-     *   Redo last undone action */
+     *   Redo last undone action.
+     *   Refactor B atom 28 (audit §48): routes through the perform_action boundary. The ONE
+     *   readonly gate (same scheduler_readonly_reject + "redo" verb string = byte-identical
+     *   message), the pop_undo_keep_selection(1,1) effect and the ONE bare `xschem redo` log
+     *   site (core_log_action's DEFAULT %s arm) all live in perform_action/run_core. Every
+     *   entry funnels here: the Shift+U key is a Tcl-funneled binding (edit.redo ->
+     *   `xschem redo; xschem redraw`, legacy case 'U' deleted), deduped via
+     *   actionlog_cmd_logged; menu/toolbar run the same compound; scripts call the verb.
+     *   Tolerant argc PRESERVED (extra args execute + log bare, as before -- no arity gate). */
     else if(!strcmp(argv[1], "redo"))
     {
-      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
-      if(scheduler_readonly_reject(interp, "redo")) return TCL_ERROR;
-      pop_undo_keep_selection(1, 1); /* issue 0007: keep selection across redo */
-      log_action("xschem redo"); /* self-log at core */
-      Tcl_ResetResult(interp);
+      return perform_action("redo", argc, argv);
     }
 
     /* redraw

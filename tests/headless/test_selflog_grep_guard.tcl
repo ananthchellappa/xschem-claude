@@ -331,7 +331,7 @@ set MANIFEST {
     {return perform_action\("clear_drawing", argc, argv\);} 1 {clear_drawing branch routes through the perform_action boundary (Refactor B atom 27 -- a BARE no-arg SILENT mutation gaining the log + the NEW readonly gate; argc==2 arity gate; core stays raw+silent below the boundary for its seven teardown callers; no undo anywhere -- accepted): pre-migration the verb had NO log (silent free-everything), NO readonly gate (a READ-ONLY view was silently EMPTIED -- the 0041/0051 class, fixed like reset_symbol §42) and an `if(argc==2)` silent-no-op quirk that log-on-success would PHANTOM-log (run_core now rejects extra args -- the one deliberate behaviour tighten). clear_drawing() (actions.c) OWNS nothing (void, no push_undo/set_modify/draw) and is a SHARED teardown primitive of seven raw C flows (load_schematic x3, disk pop_undo, mem_restore_slot, delete_schematic_data, clear_schematic = the separate `xschem clear` verb, debug) -- ALL stay raw+silent below the boundary (audit §4 log-at-the-verb rule); bare-verb log via core_log_action's `xschem %s` default}
     {log_action\("xschem copy"}                       1 {copy branch (atom 4)}
     {log_action\("xschem undo"}                       1 {undo branch}
-    {log_action\("xschem redo"}                       1 {redo branch}
+    {return perform_action\("redo", argc, argv\);}    1 {redo branch routes through the perform_action boundary (Refactor B atom 28 -- the ZERO-DELTA consistency migration: the old branch was already boundary-shaped (inline readonly reject + fixed bare log + reset-on-success), so gate/log/reset consolidate with no observable change; NO arity gate -- tolerant argc preserved, the old branch executed + logged bare at ANY argc, so bare log via core_log_action's %s default at every argc; NO push_undo anywhere -- a redo is undo-stack navigation and a push would truncate the redo tail (push at cur<head snaps head=++cur); the Shift+U key is a Tcl-funneled binding deduped via actionlog_cmd_logged, legacy case 'U' deleted. The RAW undo branch (`xschem undo 1 1` = a redo with its OWN log line) stays batch item 05's scope)}
     {if\(!fast\) log_action\("xschem save"}           1 {save branch incl. fast-machinery gate (atom 4)}
     {log_action\("xschem reload%s"}                   1 {reload branch incl. zoom_full arg (atom 4)}
     {return perform_action\("align", argc, argv\);}   1 {align branch routes through the perform_action boundary (Refactor B atom 2): no scattered readonly/log/push_undo here}
@@ -1627,6 +1627,44 @@ set acttext [srctext src/actions.c]
 check "S7 actions.c: ZERO log_action(\"xschem clear_drawing\") -- the CORE stays SILENT (shared teardown primitive of seven raw C flows; a core log would spam every load/undo/close -- the atom-27 spam lock, sabotage D fails closed here)" \
   [expr {[rxcount $acttext {log_action\("xschem clear_drawing}] == 0}] \
   "got=[rxcount $acttext {log_action\("xschem clear_drawing}]"
+# ---- atom 28 redo S7 exact counts (audit §48) ----
+# THE FAIL-CLOSED LOCK for the ZERO-DELTA consistency migration: the observable behaviour is
+# byte-identical before and after (the old branch was already boundary-shaped and had NO argc
+# handling), so the runtime .tcl passes EVEN IF the branch is reverted to its raw inline body
+# (the §32 sabotage-2 lesson) -- these exact counts are the load-bearing exclusivity lock.
+# The bare `xschem redo` line is emitted SOLELY by core_log_action's DEFAULT `xschem %s` arm --
+# NO literal log_action("xschem redo") site may reappear in scheduler.c (a re-scattered branch
+# log would double every scripted redo against the boundary's line) nor in callback.c (the
+# Shift+U key funnels through the branch's Tcl command with Layer-A actionlog_cmd_logged dedup;
+# legacy case 'U' is deleted -- no key ever self-logs it). The boundary's generic
+# scheduler_readonly_reject(interp, verb) is the ONLY gate -- the old branch's per-verb inline
+# copy is GONE (a byte-identical CONSOLIDATION, not a new gate). THE F-SHARED TWIN LOCK:
+# pop_undo_keep_selection has exactly TWO scheduler.c call sites, pinned independently by their
+# argument shapes -- the fixed-arg `(1, 1)` site (the run_core redo arm; the count is 1 before
+# and after the migration, the call just MOVED from the branch) and the argv-parsed
+# `(redo, set_modify)` site (the RAW undo branch, batch item 05's scope: `xschem undo 1 1`
+# performs a redo with its OWN `xschem undo 1 1` log). A future "helpfully route undo's
+# redo-form through the redo verb" edit -- which WOULD double-log -- bumps the (1, 1) count or
+# drops the (redo, set_modify) count and fails closed here. NO push_undo lock is needed as a
+# grep row: the runtime (a)/(f) round-trip is the truncated-redo-tail detector.
+check "S7 scheduler.c: EXACTLY ONE redo boundary delegation (return perform_action) -- the whole verb crosses (atom 28)" \
+  [expr {[rxcount $sched {return perform_action\("redo", argc, argv\);}] == 1}] \
+  "got=[rxcount $sched {return perform_action\("redo", argc, argv\);}]"
+check "S7 scheduler.c: ZERO literal log_action(\"xschem redo\") (the bare form logs ONLY via core_log_action's default %s arm -- a re-scattered branch/arm log would double-log)" \
+  [expr {[rxcount $sched {log_action\("xschem redo"}] == 0}] \
+  "got=[rxcount $sched {log_action\("xschem redo"}]"
+check "S7 scheduler.c: NO scattered scheduler_readonly_reject(...,\"redo\") (the boundary's generic gate covers it -- the old branch's inline per-verb copy is GONE, a byte-identical consolidation)" \
+  [expr {[rxcount $sched {scheduler_readonly_reject\(interp, "redo"\)}] == 0}] \
+  "got=[rxcount $sched {scheduler_readonly_reject\(interp, "redo"\)}]"
+check "S7 scheduler.c: EXACTLY ONE pop_undo_keep_selection(1, 1) -- the run_core redo arm, the ONLY fixed-arg site (a routed copy inside the undo branch would double-log and bumps this)" \
+  [expr {[rxcount $sched {pop_undo_keep_selection\(1, 1\)}] == 1}] \
+  "got=[rxcount $sched {pop_undo_keep_selection\(1, 1\)}]"
+check "S7 scheduler.c: EXACTLY ONE pop_undo_keep_selection(redo, set_modify); -- the RAW undo branch (batch item 05's scope, the F-shared lock: it must neither disappear nor route this atom); semicolon-anchored so the run_core arm's F-shared comment mention does not count (the atom-23 change_elem_order idiom)" \
+  [expr {[rxcount $sched {pop_undo_keep_selection\(redo, set_modify\);}] == 1}] \
+  "got=[rxcount $sched {pop_undo_keep_selection\(redo, set_modify\);}]"
+check "S7 callback.c: ZERO log_action(\"xschem redo\") (no key self-logs it -- the Shift+U key funnels through the branch's Tcl command with Layer-A dedup; legacy case 'U' deleted)" \
+  [expr {[rxcount $cbtext {log_action\("xschem redo"}] == 0}] \
+  "got=[rxcount $cbtext {log_action\("xschem redo"}]"
 # atom-13 NESTING COUPLING (adversarial-review finding): the S1 existence rows above pin
 # that the guard line, the log line and the reset line each EXIST, but not that log+reset are
 # INSIDE the log-on-success block. A de-nest that keeps all three lines yet closes the
