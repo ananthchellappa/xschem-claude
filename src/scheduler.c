@@ -1595,6 +1595,7 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
     {
       int modified, keep_name = 0;
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(scheduler_readonly_reject(interp, "apply_properties")) return TCL_ERROR;
       if(argc < 6) {
         Tcl_SetResult(interp,
           "xschem apply_properties needs: scope displayed_id new_prop old_prop [keep_name]", TCL_STATIC);
