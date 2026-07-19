@@ -22,9 +22,92 @@
 
 #include "xschem.h"
 
+/* ---- cross-view paste (doc/claude/specs/crossview_copy_paste.md) --------------------
+ * Armed by merge_file for the duration of ONE merge when the clipboard's
+ * #XSCHEM_CLIPBOARD_VIEW= marker names the OTHER view type:
+ *   mode 1: schematic clipboard -> symbol view (C pin instances become PINLAYER pin
+ *           rects via create_pin; other instances and wires are skipped)
+ *   mode 2: symbol clipboard -> schematic view (PINLAYER B rects carrying name=/dir=
+ *           become devices/ipin|opin|iopin.sym instances)
+ * A clipboard without the marker (old xschem) keeps legacy behavior (mode 0). */
+static int xview_mode = 0;
+static int xview_pre_pins = 0;   /* rect[PINLAYER] count before the merge (coercion scan) */
+static int xview_pre_insts = 0;  /* instance count before the merge (coercion scan) */
+static int xview_converted = 0, xview_skipped = 0, xview_coerced = 0;
+static int xview_inst_hashed = 0; /* hash_names(-1) done once before first created inst */
+static char xview_coerced_names[256];
 
+/* "in"/"out"/"inout" if name is a schematic port symbol (basename match), else NULL */
+static const char *pin_sym_dir(const char *name)
+{
+  const char *b, *s;
+  if(!name) return NULL;
+  b = name;
+  for(s = name; *s; s++) if(*s == '/') b = s + 1;
+  if(!strcmp(b, "ipin.sym")) return "in";
+  if(!strcmp(b, "opin.sym")) return "out";
+  if(!strcmp(b, "iopin.sym")) return "inout";
+  return NULL;
+}
 
+static const char *dir_pin_sym(const char *dir)
+{
+  if(dir && !strcmp(dir, "in")) return "devices/ipin.sym";
+  if(dir && !strcmp(dir, "out")) return "devices/opin.sym";
+  return "devices/iopin.sym";
+}
 
+/* normalize a dir attribute to one of the three literals (lifetime-safe vs the
+ * get_tok_value internal buffer) */
+static const char *dir_literal(const char *d)
+{
+  if(d && !strcmp(d, "in")) return "in";
+  if(d && !strcmp(d, "out")) return "out";
+  return "inout";
+}
+
+static void xview_note_coerced(const char *name)
+{
+  size_t l = strlen(xview_coerced_names), nl = strlen(name);
+  ++xview_coerced;
+  if(l + nl + 2 < sizeof(xview_coerced_names) && !strpbrk(name, "{}\\")) {
+    if(l) xview_coerced_names[l++] = ' ';
+    memcpy(xview_coerced_names + l, name, nl + 1);
+  }
+}
+
+/* mode 2: store a port instance for a pasted symbol pin rect, mirroring merge_inst's
+ * storage sequence (link_symbols_to_instances(old) later selects it like any merge) */
+static void place_merged_pin_inst(double cx, double cy, const char *lab, const char *symname)
+{
+  int i;
+  char *prop = NULL;
+  i = xctx->instances;
+  check_inst_storage();
+  xctx->inst[i].name = NULL;
+  my_strdup(_ALLOC_ID_, &xctx->inst[i].name, symname);
+  xctx->inst[i].x0 = cx;
+  xctx->inst[i].y0 = cy;
+  xctx->inst[i].rot = 0;
+  xctx->inst[i].flip = 0;
+  xctx->inst[i].sel = 0;
+  xctx->inst[i].color = -10000;
+  xctx->inst[i].ptr = -1;
+  xctx->inst[i].instname = NULL;
+  xctx->inst[i].prop_ptr = NULL;
+  xctx->inst[i].lab = NULL;
+  xctx->inst[i].node = NULL;
+  xctx->inst[i].pin_sel = NULL;
+  xctx->inst[i].pin_sel_size = 0;
+  my_mstrcat(_ALLOC_ID_, &prop, "name=p1 lab=", lab, NULL);
+  my_strdup(_ALLOC_ID_, &xctx->inst[i].prop_ptr, prop);
+  set_inst_flags(&xctx->inst[i]);
+  if(!xview_inst_hashed) { hash_names(-1, XINSERT); xview_inst_hashed = 1; }
+  new_prop_string(i, prop, tclgetboolvar("disable_unique_names"));
+  hash_names(i, XINSERT);
+  my_free(_ALLOC_ID_, &prop);
+  inst_register(i);
+}
 
 static void merge_text(FILE *fd)
 {
@@ -96,6 +179,37 @@ static void merge_box(FILE *fd)
     RECTORDER(ptr[i].x1, ptr[i].y1, ptr[i].x2, ptr[i].y2);
     ptr[i].sel=0;
     load_ascii_string( &ptr[i].prop_ptr, fd);
+    /* cross-view divert (mode 2): a symbol pin rect (PINLAYER + name= + dir=) pasted
+     * into a schematic becomes a devices/ipin|opin|iopin.sym port instance at the rect
+     * center. Any other rect (or a PINLAYER rect without pin attrs) stays graphics. */
+    if(xview_mode == 2 && c == PINLAYER) {
+      char *nm = NULL;
+      my_strdup(_ALLOC_ID_, &nm, get_tok_value(ptr[i].prop_ptr, "name", 0));
+      if(nm && nm[0]) {
+        const char *dr = get_tok_value(ptr[i].prop_ptr, "dir", 0);
+        if(dr[0]) {
+          const char *symname = dir_pin_sym(dir_literal(dr));
+          const char *edir;
+          int j;
+          /* dup-name coercion: an existing port instance labeled nm forces the type */
+          for(j = 0; j < xview_pre_insts; ++j) {
+            edir = pin_sym_dir(xctx->inst[j].name);
+            if(edir && !strcmp(get_tok_value(xctx->inst[j].prop_ptr, "lab", 0), nm)) {
+              symname = dir_pin_sym(edir);
+              xview_note_coerced(nm);
+              break;
+            }
+          }
+          place_merged_pin_inst((ptr[i].x1 + ptr[i].x2) / 2.0,
+                                (ptr[i].y1 + ptr[i].y2) / 2.0, nm, symname);
+          ++xview_converted;
+          my_free(_ALLOC_ID_, &nm);
+          my_free(_ALLOC_ID_, &ptr[i].prop_ptr);
+          return;
+        }
+      }
+      my_free(_ALLOC_ID_, &nm);
+    }
     ptr[i].bus = get_attr_val(get_tok_value(ptr[i].prop_ptr, "bus", 0));
     attr = get_tok_value(ptr[i].prop_ptr,"dash",0);
     if(strcmp(attr, "")) {
@@ -304,6 +418,34 @@ static void merge_inst(int k,FILE *fd)
     xctx->inst[i].pin_sel=NULL;     /* transient pin selection, not pasted (pin_selection.md) */
     xctx->inst[i].pin_sel_size=0;
     load_ascii_string(&prop_ptr,fd);
+    /* cross-view divert (mode 1): a schematic port instance pasted into a symbol view
+     * becomes a PINLAYER pin rect (owned name view included). Non-port instances are
+     * skipped: they have no symbol-view meaning. The slot writes above are abandoned
+     * (i was never registered), only the strdup'd name must be freed. */
+    if(xview_mode == 1) {
+      const char *dir = pin_sym_dir(xctx->inst[i].name);
+      if(dir) {
+        char *lab = NULL;
+        int j;
+        my_strdup(_ALLOC_ID_, &lab, get_tok_value(prop_ptr, "lab", 0));
+        if(lab && lab[0]) {
+          /* dup-name coercion: an existing pin named lab forces the incoming dir */
+          for(j = 0; j < xview_pre_pins; ++j) {
+            if(!strcmp(get_tok_value(xctx->rect[PINLAYER][j].prop_ptr, "name", 0), lab)) {
+              dir = dir_literal(get_tok_value(xctx->rect[PINLAYER][j].prop_ptr, "dir", 0));
+              xview_note_coerced(lab);
+              break;
+            }
+          }
+          create_pin(xctx->inst[i].x0, xctx->inst[i].y0, lab, dir, SELECTED);
+          ++xview_converted;
+        } else ++xview_skipped; /* port symbol without a lab: nothing to name a pin */
+        my_free(_ALLOC_ID_, &lab);
+      } else ++xview_skipped;
+      my_free(_ALLOC_ID_, &xctx->inst[i].name);
+      my_free(_ALLOC_ID_, &prop_ptr);
+      return;
+    }
     my_strdup(_ALLOC_ID_, &xctx->inst[i].prop_ptr, prop_ptr);
     set_inst_flags(&xctx->inst[i]);
     if(!k) hash_names(-1, XINSERT);
@@ -394,6 +536,15 @@ void merge_file(int selection_load, const char ext[])
      xctx->push_undo();
      unselect_all(1);
      old=xctx->instances;
+     /* cross-view paste: fresh state per merge; mode arms only if the clipboard's
+      * view marker (read in the '#' case below, always before object records)
+      * names the other view type */
+     xview_mode = 0;
+     xview_converted = xview_skipped = xview_coerced = 0;
+     xview_coerced_names[0] = '\0';
+     xview_inst_hashed = 0;
+     xview_pre_pins = xctx->rects[PINLAYER];
+     xview_pre_insts = xctx->instances;
      while(!endfile)
      {
       if(fscanf(fd," %c",tag)==EOF) break;
@@ -403,7 +554,18 @@ void merge_file(int selection_load, const char ext[])
         load_ascii_string(&aux_ptr, fd);
         break;
        case '#':
-        read_line(fd, 1);
+        {
+          /* capture the cross-view source marker; every other comment is discarded
+           * as before (read_line consumes to end of line either way) */
+          char *cl = read_line(fd, 1);
+          if(cl && !strncmp(cl, "XSCHEM_CLIPBOARD_VIEW=", 22)) {
+            int src_sym = !strcmp(cl + 22, "symbol");
+            int dst_sym = editing_symbol_view();
+            if(src_sym && !dst_sym) xview_mode = 2;
+            else if(!src_sym && dst_sym) xview_mode = 1;
+            else xview_mode = 0;
+          }
+        }
         break;
        case 'F': /* extension for future symbol floater labels */
         read_line(fd, 1);
@@ -446,7 +608,18 @@ void merge_file(int selection_load, const char ext[])
         merge_text(fd);
         break;
        case 'N':
-        merge_wire(fd);
+        if(xview_mode == 1) {
+          /* wires have no symbol-view meaning: parse + skip (cross-view only) */
+          double dx1, dy1, dx2, dy2;
+          char *dptr = NULL;
+          if(fscanf(fd, "%lf %lf %lf %lf", &dx1, &dy1, &dx2, &dy2) < 4) {
+            fprintf(errfp,"merge_file(): WARNING: missing fields for skipped WIRE\n");
+          } else {
+            load_ascii_string(&dptr, fd);
+            my_free(_ALLOC_ID_, &dptr);
+          }
+          ++xview_skipped;
+        } else merge_wire(fd);
         break;
        case 'C':
         merge_inst(k++,fd);
@@ -486,6 +659,17 @@ void merge_file(int selection_load, const char ext[])
        rebuild_selected_array();
      }
 
+     /* cross-view paste report ([[ciw-feedback-channels]]: ciw_echo, guarded) */
+     if(xview_mode && (xview_converted || xview_skipped || xview_coerced)) {
+       char cnt[120];
+       my_snprintf(cnt, S(cnt), "# cross-view paste: %d pin(s) converted, %d object(s) skipped, %d dir-coerced",
+                   xview_converted, xview_skipped, xview_coerced);
+       if(has_x) tclvareval("if {[info procs ciw_echo] ne {}} {ciw_echo {", cnt,
+                            xview_coerced_names[0] ? " (" : "", xview_coerced_names,
+                            xview_coerced_names[0] ? ")" : "", "}}", NULL);
+       dbg(1, "merge_file(): %s (%s)\n", cnt, xview_coerced_names);
+     }
+     xview_mode = 0;
      xctx->ui_state |= STARTMERGE;
      dbg(1, "End merge_file(): loaded file %s: wire=%d inst=%d ui_state=%ld\n",
              name, xctx->wires , xctx->instances, xctx->ui_state);
