@@ -1,9 +1,13 @@
 # 0125 — `xschem instance` branch: refusal still set_modify(1) + spurious undo slot on no-match
 
-**Status: FIXED** (defect 1, 2026-07-18, commit: see `git log --oneline -- src/scheduler.c`,
-"fix(instance): refused placement no longer dirties buffer + 1/0 result (issue 0125)").
+**Status: FIXED — both residuals closed** (defect 1, 2026-07-18, commit 84890f12
+"fix(instance): refused placement no longer dirties buffer + 1/0 result (issue 0125)";
+residuals — burnt undo slot + bbox unbalance in the scope-ammeter bail — fixed
+2026-07-18, batch item 6, "fix(instance): scope-ammeter bail balances bbox + no burnt
+undo slot (issue 0125 residual)").
 Defect 2 as originally written was REFUTED from source; the one real spurious-slot path
-(scope-ammeter bail) is a documented RESIDUAL, left OPEN — see below.
+(scope-ammeter bail) was a documented RESIDUAL, now fixed via pre-flight — see below.
+Only a NARROWED theoretical residual remains (translate-swapped-symbol backstop path).
 (Found 2026-07-18 by the Refactor B batch item-08 scout while DEFERring the `instance`
 migration; pre-existing behavior bugs, independent of any migration — fixed standalone.)
 
@@ -49,23 +53,41 @@ precedes match_symbol at 2504" — is WRONG:
   are all CORRECT there (pinned by test check IR9).
 - The empty-name bails (actions.c:2477 and the else-arm of the `if(name[0])` push gate at
   2501-2503) return BEFORE the push — no slot (pinned by test check IR6).
-- **The ONLY real spurious-slot refusal is the scope-ammeter bail** (actions.c:~2604,
-  `type=scope` with zero pin rects and nothing selected): `push_undo` fires at 2502, real
-  mutations follow (inst array slot, hash, register), then the bail manually rolls back
-  (`xctx->instances--`) and returns 0 — the slot survives (live-proven no-op undo #1).
-  Moving the push later cannot fix this (the mutations must stay covered); it needs an
-  undo-discard primitive. **RESIDUAL — left OPEN.** Documented by test check IR8, which
-  deliberately asserts today's burnt-slot behavior so a future fix flips it consciously.
+- **The ONLY real spurious-slot refusal was the scope-ammeter bail** (`type=scope` with
+  zero pin rects and nothing selected): `push_undo` fired, real mutations followed
+  (inst array slot, hash, register), then the bail manually rolled back
+  (`xctx->instances--`) and returned 0 — the slot survived (live-proven no-op undo #1).
+  **FIXED (batch item 6) via option (a): a pre-flight twin of the bail condition now
+  runs BEFORE push_undo** in `place_symbol` — `match_symbol` is hoisted above the push
+  (idempotent, never returns -1, token.c; the undo snapshot may now carry one extra
+  unreferenced symbol def — harmless for both in-memory and disk undo), and the
+  scope/no-pins/no-single-ELEMENT-selected condition refuses with the same dbg +
+  has_x-gated alert_, rc 0, before any mutation. No undo-discard primitive was needed.
+  Test check IR8 consciously FLIPPED from pinning the burnt slot to asserting undo #1
+  peels the prior edit in one step; IR12 added as the scope-success control
+  (selected ELEMENT → placement still succeeds).
 
-### Additional residual found while building the regression (same bail, 2026-07-18)
+### Second residual found while building the regression (same bail) — also FIXED
 
-The scope-ammeter bail also returns 0 AFTER `bbox(START, ...)` (actions.c:2567 region)
-without the matching `bbox(END)`, leaving `xctx->bbox_set==1`. The NEXT placement's
-`bbox(START)` then reports "ERROR: rentrant bbox() call" and — worse — `bbox()` itself
-calls the real `alert_` (select.c:811-812), i.e. a modal popup under X (live-verified
-hang in an X-attached headless run). The regression test stubs `alert_` for its whole
-duration to stay immune. Same missing-cleanup class as the burnt slot; fix together with
-the undo-discard residual.
+The scope-ammeter bail also returned 0 AFTER `bbox(START, ...)` without the matching
+`bbox(END)`, leaving `xctx->bbox_set==1`. The NEXT placement's `bbox(START)` then
+reported "ERROR: rentrant bbox() call" and — worse — `bbox()` itself calls the real
+`alert_` (select.c, unconditional, NOT has_x-gated), i.e. a modal popup under X
+(live-verified hang in an X-attached headless run). **FIXED (batch item 6): the in-body
+backstop bail now closes with `bbox(END)` under the exact same gate as the START
+(`first_call && (draw_sym & 3)`)**, so a batch-owned bbox is never closed from there.
+Test check IR11 added (placement after a bail is clean, zero alerts via a counting
+alert_ stub).
+
+### NARROWED theoretical residual (left OPEN, documented)
+
+The in-body bail stays as a BACKSTOP: after `translate()` a parameterized/generator
+name can in principle swap the symbol for a different one, re-triggering the scope
+condition post-mutation. Only on that exotic path: (1) the push already fired, so the
+slot still burns; (2) the old bail's pre-existing stale name-hash entry (hash_names
+ran before the rollback) still survives. On the normal pre-flighted path both artifacts
+are gone — including the transient mutate-then-rollback side effects (stale name-hash
+entry) the old bail always left behind.
 
 ## Why it mattered beyond tidiness
 

@@ -6,6 +6,10 @@
 # The fix captures the rc into `placed`, gates set_modify(1) + the W3
 # maintain_wire_segments pass on it, and returns a deterministic "1"/"0"
 # (TCL_OK kept; consumer audit 2026-07-18: nobody read the old stale result).
+# RESIDUAL fix (issue 0125, batch item 6): the scope-ammeter bail in
+# place_symbol is now pre-flighted BEFORE push_undo (no burnt undo slot, IR8
+# flipped) and the in-body backstop bail balances its bbox(START) so the NEXT
+# placement is clean (IR11); IR12 pins the scope-success control.
 #
 # Headless, own process, run from repo root (full_audit default runner):
 #   src/xschem --pipe -q --nolog --script tests/headless/test_instance_refusal.tcl
@@ -31,15 +35,16 @@ proc record_variant {name res inst_before} {
   set V($name,delta) [expr {[xschem get instances] - $inst_before}]
 }
 
-# Stub alert_ for the WHOLE test so no has_x-gated popup can tkwait-flake an
-# X-attached full_audit run.  Two popups are reachable here: the scope-ammeter
-# no-selection alert (B7) and - pre-existing residual, same bail - the
-# reentrant-bbox alert fired by the NEXT placement (B8), because the bail
-# returns 0 after bbox(START) without the matching bbox(END) (select.c bbox()
-# calls alert_ directly; live-verified hang without this stub).  Restored
-# before exit.
+# Counting stub for alert_ over the WHOLE test: still guards the X-attached
+# full_audit run against tkwait-flaking popups (the has_x-gated scope-ammeter
+# no-selection alert, B7 — see the item-5 receipt), and now also WITNESSES
+# that no alert fires where none should: the reentrant-bbox alert_ from
+# select.c bbox() (unconditional, not has_x-gated) that the unbalanced bail
+# used to trigger on the NEXT placement is asserted absent by IR11 via
+# ::alert_count.  Restored before exit.
+set ::alert_count 0
 rename alert_ alert_orig_0125
-proc alert_ {args} {return 1}
+proc alert_ {args} {incr ::alert_count; return 1}
 
 # ------------------------------------------------ B1 IR1: success contract (argc==8)
 xschem clear force
@@ -117,14 +122,36 @@ check "IR7 scope-ammeter bail rolled the instance back, wire untouched" \
   [expr {[xschem get instances] == 0 && [xschem get wires] == $wb}] \
   "(instances=[xschem get instances] wires=[xschem get wires] wires_before=$wb)"
 xschem undo
-# RESIDUAL DOC (issue 0125 part (b), left OPEN): the bail's push_undo fired
-# before the rollback, so the slot survives and undo #1 is a no-op restoring
-# the same {wire} state.  This check deliberately pins TODAY's burnt-slot
-# behavior; it is EXPECTED TO FLIP when an undo-discard primitive ever fixes
-# the residual - flip it consciously then.
-check "IR8 residual-doc: burnt slot makes undo #1 a no-op (wire still there)" \
-  [expr {[xschem get wires] == 1}] \
-  "(wires=[xschem get wires])"
+# RESIDUAL FIXED (issue 0125, batch item 6): the scope-ammeter refusal is now
+# pre-flighted BEFORE push_undo (option (a) — no undo-discard primitive
+# needed), so no slot is burnt and undo #1 peels the wire in ONE step.  This
+# consciously flips the old IR8 burnt-slot pin.  Only the theoretical
+# translate-swapped-symbol path reaching the in-body backstop bail still
+# burns a slot (documented residual in the issue file).
+check "IR8 scope refusal burns no undo slot: undo #1 peels the wire" \
+  [expr {[xschem get wires] == 0}] "(wires=[xschem get wires])"
+xschem clear force
+
+# B7b IR11: the bail must not poison bbox state for the NEXT placement
+xschem clear force
+xschem unselect_all
+xschem instance devices/scope_ammeter.sym 300 300 0 0   ;# refusal
+set ::alert_count 0                                     ;# window starts AFTER the refusal
+set r [xschem instance devices/lab_pin.sym 0 0 0 0 {name=lbb lab=bb}]
+check "IR11 placement after scope bail: clean (no reentrant-bbox alert)" \
+  [expr {$r eq "1" && [xschem get instances] == 1 && $::alert_count == 0}] \
+  "(r='$r' instances=[xschem get instances] alerts=$::alert_count)"
+xschem clear force
+
+# B7c IR12: with exactly one selected ELEMENT the scope placement must SUCCEED
+xschem clear force
+xschem instance devices/res.sym 100 100 0 0 {name=R1 value=1k}
+xschem select instance R1
+set ls [xschem get lastsel]   ;# forces rebuild_selected_array (select_element only flags)
+set r [xschem instance devices/scope_ammeter.sym 400 400 0 0]
+check "IR12 scope+selected-device still places (control)" \
+  [expr {$ls == 1 && $r eq "1" && [xschem get instances] == 2}] \
+  "(lastsel=$ls r='$r' instances=[xschem get instances])"
 xschem clear force
 
 # ---------------- B8 IR9: bad name is a MUTATION, not a refusal (semantic pin)

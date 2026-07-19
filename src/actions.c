@@ -2498,10 +2498,27 @@ int place_symbol(int pos, const char *symbol_name, double x, double y, short rot
  } else {
    my_strncpy(name, name1, S(name));
  }
- if(name[0]) {
-   if(first_call && to_push_undo) xctx->push_undo();
- } else  return 0;
- i=match_symbol(name);
+ if(!name[0]) return 0;
+ /* issue 0125 residual: resolve the symbol BEFORE push_undo (match_symbol is
+  * idempotent and never returns -1, token.c) so the scope-ammeter refusal below
+  * can bail without burning an undo slot. Snapshot-ordering delta is harmless:
+  * the undo slot may now contain one extra unreferenced symbol def. */
+ i = match_symbol(name);
+ /* Pre-flight twin of the in-body scope-ammeter bail (below, at the
+  * rects[PINLAYER]==0 arm): a type=scope symbol with no pins needs exactly one
+  * selected ELEMENT to link to; refuse BEFORE push_undo and before any mutation.
+  * lastsel/sel_array are read raw, in deliberate parity with the in-body check.
+  * The in-body bail stays as a backstop for the exotic translate()-swapped-symbol
+  * path (that path still burns a slot - documented residual in issue 0125). */
+ if(xctx->sym[i].type && !strcmp(xctx->sym[i].type, "scope")
+    && xctx->sym[i].rects[PINLAYER] == 0
+    && !(xctx->lastsel == 1 && xctx->sel_array[0].type == ELEMENT)) {
+   const char msg[]="scope_ammeter is being inserted but no selected ammeter device/vsource to link to\n";
+   dbg(0, "%s", msg);
+   if(has_x) tclvareval("alert_ {", msg, "} {} 1", NULL);
+   return 0;
+ }
+ if(first_call && to_push_undo) xctx->push_undo();
 
  if(i!=-1)
  {
@@ -2601,6 +2618,12 @@ int place_symbol(int pos, const char *symbol_name, double x, double y, short rot
         if(xctx->inst[n].lab) my_free(_ALLOC_ID_, &xctx->inst[n].lab);
         if(prop) my_free(_ALLOC_ID_, &prop);
         xctx->instances--;
+        /* issue 0125 residual: balance the bbox(START) opened at 2567 for this
+         * first_call; bailing with bbox_set==1 poisons the NEXT placement
+         * (reentrant-bbox error + real alert_ modal from select.c bbox()).
+         * Gate mirrors the START gate exactly so a batch-owned bbox (first_call==0)
+         * is never closed from here. */
+        if(first_call && (draw_sym & 3)) bbox(END, 0.0, 0.0, 0.0, 0.0);
         return 0;
         #endif
       }
