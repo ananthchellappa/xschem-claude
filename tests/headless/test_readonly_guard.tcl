@@ -34,6 +34,10 @@ set w0 [xschem get wires]
 set rc [catch {xschem wire 10 10 200 10} e]
 check "control: wire creation mutates writable" [expr {$rc == 0 && [xschem get wires] > $w0}] "($w0 -> [xschem get wires])"
 
+# edit_vi_prop reaches an external $editor exec if the readonly gate is absent
+# (red-first / sabotage runs under X) — stub it inert: rcode {} = "unchanged".
+proc edit_vi_prop {txtlabel} { set tctx::rcode {}; return {} }
+
 # TREATMENT: read-only buffer refuses every mutating subcommand
 xschem load $sch
 xschem set readonly 1
@@ -46,6 +50,7 @@ set cmds {
   add_graph add_image add_symbol_pin add_sch_pin add_wire_label arc change_elem_order instance line
   move_instance net_label place_symbol polygon rect reset_inst_prop text
   trim_wires wire undo redo align setprop replace_symbol apply_properties
+  edit_vi_prop
 }
 set refused 0
 foreach cmd $cmds {

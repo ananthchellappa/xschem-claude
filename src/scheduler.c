@@ -3003,6 +3003,7 @@ static int xschem_cmds_e(Tcl_Interp *interp, int argc, const char *argv[], int *
     else if(!strcmp(argv[1], "edit_vi_prop"))
     {
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(scheduler_readonly_reject(interp, "edit_vi_prop")) return TCL_ERROR;
       edit_property(1);
       Tcl_ResetResult(interp);
     }
