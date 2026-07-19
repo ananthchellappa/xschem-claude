@@ -2,21 +2,26 @@
 #
 #  Toggle the SELECTED objects between schematic PORTS and WIRE-LABELS.
 #
-#    wire-label (devices/lab_pin.sym)  ->  INPUT pin (devices/ipin.sym),
-#                                          canonically "pointing to the right"
-#                                          (rot 0, flip 0)
-#    port (ipin/opin/iopin.sym)        ->  wire-label (devices/lab_pin.sym),
-#                                          label text kept on the SAME side the
-#                                          pin's @lab text was on.
+#    wire-label  (symbol type=label: lab_pin.sym, lab_wire.sym, ...)
+#                -> INPUT pin (devices/ipin.sym), canonically "pointing right"
+#                   (rot 0, flip 0)
+#    port  (symbol type=ipin|opin|iopin)
+#                -> wire-label (devices/lab_pin.sym), label text kept on the SAME
+#                   side the pin's @lab text was on.
+#
+#  Objects are classified by their SYMBOL TYPE (xschem getprop instance N cell::type),
+#  not by filename, so every label flavour (lab_pin, lab_wire, ...) and every port
+#  flavour is recognised. lab_show (type=show_label) and lab_generic (empty type) are
+#  NOT connecting net-labels and are deliberately left alone.
 #
 #  Text-side rule (see the ROTATION macro in src/xschem.h and the @lab T lines in
 #  the .sym files): a symbol's @lab text occupies a fixed side at rot0/flip0 --
-#  ipin=LEFT, lab_pin=LEFT, opin=RIGHT, iopin=RIGHT -- and rigidly transforms with
-#  the instance. So to reproduce a pin's text side with a lab_pin:
+#  type ipin=LEFT, label=LEFT, opin=RIGHT, iopin=RIGHT -- and rigidly transforms
+#  with the instance. So to reproduce a pin's text side with a lab_pin:
 #    ipin   : same default side as lab_pin  -> keep (rot, flip)
 #    opin   : opposite default side          -> keep rot, toggle flip
 #    iopin  : opposite default side          -> keep rot, toggle flip
-#  The pin's connection node is the instance origin for all four symbols, so the
+#  The pin's connection node is the instance origin for all these symbols, so the
 #  replacement is placed at the same (x0,y0) and the wiring stays attached.
 #
 #  The whole batch is ONE undo step (push_undo + no_undo), and the transformed
@@ -39,28 +44,25 @@
 #  canvases, so it works in child windows too.
 #
 #  Rebind / move the chord: edit the `bind .drw ...` line at the bottom of this
-#  file (e.g. to <Control-Shift-Key-P>), or unbind with:  bind .drw <Control-Shift-Key-O> {}
+#  file (e.g. to <Control-Shift-Key-P>), or unbind with:  bind .drw <Control-Shift-Key-T> {}
 #
 # ---------------------------------------------------------------------------
-#  Recovering the OLD Ctrl+Shift+O (and the related Ctrl+Shift+T)
-# ---------------------------------------------------------------------------
-#  Ctrl+Shift+O used to "reopen the most-recently-OPENED file" (load -lastopened);
-#  Ctrl+Shift+T still "reopens the most-recently-CLOSED file" (load -lastclosed).
-#  Both are handled directly in the C key switch (src/callback.c case 'O'/'T'); they
-#  are NOT registered action ids, so they cannot be put in keybindings.csv either.
-#  The only way to (re)home them is a Tk bind that calls the underlying command
-#  directly. To give "reopen last opened" another chord (here Ctrl+Shift+Y):
+#  This chord OVERRIDES the old Ctrl+Shift+T ("open last closed" = load -lastclosed).
+#  Ctrl+Shift+O ("open most recent" = load -lastopened) is left untouched.
+#  Both -lastopened/-lastclosed are handled directly in the C key switch
+#  (src/callback.c case 'O'/'T'); they are NOT registered action ids, so they cannot
+#  live in keybindings.csv. To recover "open last closed" on another chord, add a Tk
+#  bind that calls the underlying command directly (here Ctrl+Shift+Y):
 #
 #      bind .drw <Control-Shift-Key-Y> {
 #        global open_in_new_window
-#        if {$open_in_new_window} { xschem load_new_window -lastopened } \
-#        else                     { xschem load -gui -lastopened }
+#        if {$open_in_new_window} { xschem load_new_window -lastclosed } \
+#        else                     { xschem load -gui -lastclosed }
 #        break
 #      }
 #
-#  For "reopen last closed" use -lastclosed instead of -lastopened. To simply give
-#  Ctrl+Shift+O back its old job, delete the `bind` line below (the C default
-#  resurfaces) or point that chord at the -lastopened snippet above.
+#  Or simply delete the `bind` line below to give Ctrl+Shift+T its old job back
+#  (the C default resurfaces).
 # ---------------------------------------------------------------------------
 
 proc toggle_pins_netlabels {} {
@@ -79,44 +81,58 @@ proc toggle_pins_netlabels {} {
   # `xschem instance_coord` prints one line per selected instance:
   #     {instname} {symref} x0 y0 rot flip
   set jobs {}
+  set seen {}
   foreach line [split [xschem instance_coord] "\n"] {
     set line [string trim $line]
     if {$line eq {}} continue
     set instname [lindex $line 0]
-    set base     [file tail [lindex $line 1]]
     set x        [lindex $line 2]
     set y        [lindex $line 3]
     set rot      [lindex $line 4]
     set flip     [lindex $line 5]
-    switch -exact -- $base {
-      lab_pin.sym {
+    # classify by SYMBOL TYPE, robust to every label / port filename
+    set type [xschem getprop instance $instname cell::type]
+    switch -exact -- $type {
+      label {
         # wire-label -> input pin pointing right (canonical rot 0, flip 0)
         set tsym devices/ipin.sym ; set trot 0 ; set tflip 0
       }
-      ipin.sym {
+      ipin {
         # ipin default @lab side == lab_pin default side -> keep orientation
         set tsym devices/lab_pin.sym ; set trot $rot ; set tflip $flip
       }
-      opin.sym  -
-      iopin.sym {
+      opin -
+      iopin {
         # opin/iopin default @lab side is opposite lab_pin's -> toggle flip so
         # the label text lands on the same absolute side as the pin's name text
         set tsym devices/lab_pin.sym ; set trot $rot ; set tflip [expr {$flip ^ 1}]
       }
-      default { continue }
+      default {
+        lappend seen "[file tail [lindex $line 1]](type=$type)"
+        continue
+      }
     }
-    # (any non-port, non-wire-label instance is skipped by the default arm above)
     set lab [xschem getprop instance $instname lab]
     lappend jobs [list $instname $tsym $x $y $trot $tflip $lab]
   }
 
   if {[llength $jobs] == 0} {
-    ciw_echo "toggle pins/labels: no ports or wire-labels selected"
+    # Actionable diagnostic: distinguish "nothing selected" from "wrong things
+    # selected" (the CIW line is the only feedback -- ciw_echo writes to the CIW
+    # widget, NOT to any log file).
+    set nsel [xschem get lastsel]
+    if {$nsel == 0} {
+      ciw_echo "toggle pins/labels: nothing selected -- select the ports/wire-labels first"
+    } elseif {[llength $seen]} {
+      ciw_echo "toggle pins/labels: $nsel selected, none are ports/wire-labels: [join $seen {, }]"
+    } else {
+      ciw_echo "toggle pins/labels: $nsel object(s) selected but none are instances (wires/text?)"
+    }
     return
   }
 
   # ---- apply as ONE undo transaction ---------------------------------------
-  xschem push_undo        ;# the single slot Ctrl-Z restores to
+  xschem push_undo         ;# the single slot Ctrl-Z restores to
   xschem set no_undo 1     ;# suppress the per-op undo pushes below
   set newidx {}
   set failed [catch {
@@ -147,10 +163,11 @@ proc toggle_pins_netlabels {} {
 
   xschem set_modify 1
   xschem redraw
+  ciw_echo "toggle pins/labels: converted [llength $jobs] object(s)"
 }
 
-# Default chord: Ctrl+Shift+O (Shift makes the 'o' key emit the capital "O"
-# keysym, so bind Key-O -- same idiom as the other Control-Shift binds in
-# cadence_style_rc). Ends in `break` to override the C-side default. See the
-# BINDING NOTE above to rebind or to recover the old Ctrl+Shift+O behavior.
-bind .drw <Control-Shift-Key-O> {toggle_pins_netlabels; break}
+# Default chord: Ctrl+Shift+T (Shift makes the 't' key emit the capital "T"
+# keysym, so bind Key-T -- same idiom as the other Control-Shift binds in
+# cadence_style_rc). Ends in `break` to override the C-side default (open last
+# closed). See the BINDING NOTE above to rebind or to recover that behaviour.
+bind .drw <Control-Shift-Key-T> {toggle_pins_netlabels; break}
