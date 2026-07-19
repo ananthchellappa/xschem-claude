@@ -121,7 +121,7 @@ simulation.send_highlighted_nets_to_viewer,command,simulation,Send highlighted n
 simulation.graph.add_waveform_graph,command,simulation.graph,Add waveform graph,,xschem add_graph,,,Add waveform graph,
 sym.make_symbol_from_schematic,command,sym,Make symbol from schematic,A,xschem make_symbol,,,Make symbol from schematic,
 sym.make_schematic_from_symbol,command,sym,Make schematic from symbol,Ctrl+L,xschem make_sch,,,Make schematic from symbol,
-sym.make_schematic_and_symbol_from_selected_components,command,sym,Make schematic and symbol from selected components,Ctrl+Shift+H,xschem make_sch_from_sel,,,Make schematic and symbol from selected components,
+sym.make_schematic_and_symbol_from_selected_components,command,sym,Make schematic and symbol from selected components,Ctrl+Shift+H,xschem make_sch_from_sel,,,Make schematic and symbol from selected components,,1
 sym.attach_net_labels_to_component_instance,command,sym,Attach net labels to component instance,Shift+H,xschem attach_labels,,,Attach net labels to component instance,,1
 sym.create_symbol_pins_from_selected_schematic_pins,command,sym,Create symbol pins from selected schematic pins,Alt+H,schpins_to_sympins,,,Create symbol pins from selected schematic pins,
 sym.place_symbol_pin,command,sym,Place symbol pin,P,xschem add_symbol_pin,,,Place symbol pin,

@@ -5392,8 +5392,9 @@ void make_schematic_symbol_from_sel(void)
     draw();
     /* self-log only on the real edit: a cancelled Save dialog (empty filename) or a
      * name equal to the current schematic skips this whole block -> no phantom line.
-     * Covers menu/script; the Ctrl+H registered action logs `xschem make_sch_from_sel`
-     * via Layer A on success (deduped by this line via actionlog_cmd_logged). */
+     * ONLY log site for every entry: menu/script subcommand AND the Ctrl+Shift+H registered
+     * action -- its actions.csv row is nolog (issue 0124), so dispatch's Layer A fallback
+     * never fires (it used to phantom-log a cancelled dialog). */
     log_action("xschem make_sch_from_sel");
   }
 }
