@@ -218,6 +218,89 @@ assume the abstraction's internal representation* in code that lives underneath 
    the real environment; make failure messages self-diagnosing.
 7. **Don't assume an abstraction's internal representation** in code beneath it.
 
+---
+
+## Working the problem with a collaborator who can't run your environment
+
+Much of the delay here was structural: the person debugging (an AI pair, but this is true of
+any remote reviewer, or a maintainer triaging a report from a user whose machine they can't
+touch) could *read* the code but could not *run it in the configuration where it failed*. The
+failure was environment data — library manager on, symbols in `lib/cell` form — invisible from
+the source alone. Practices that collapse this gap:
+
+- **Lead a bug report with a state dump, not a symptom.** "The wrong form opens" cost several
+  rounds; `sym=devices/ipin routes=0` ended it in one. Report the **value of the decision
+  variable and its inputs**, captured in the failing environment — not the outward behavior.
+- **State the environment and configuration up front.** The library manager, the loaded rc
+  profile, the display stack (here WSLg, whose interactive-only bugs don't reproduce headless),
+  the exact launch command. When the bug *is* the environment, naming it prunes whole search
+  subtrees the reader would otherwise explore blind.
+- **Hand over one real artifact from your equivalence class.** The actual `.sch` (or even just
+  "my ports are `devices/ipin`, no `.sym`") beats any number of the reader's synthetic
+  fixtures — those are drawn from the reader's assumptions and inherit the reader's blind spot
+  (Lesson 2). One input sampled from the *failing* class is worth ten from the happy one.
+- **After ~2 non-reproducing rounds, switch the mode from theorizing to measuring.** Explicit
+  ask: *"stop reasoning about the code — add a trace at the decision point, I'll run it in my
+  session and paste the log."* The reader can analyze code they cannot execute; a trace the
+  *reporter* runs closes exactly the gap that source-reading cannot.
+
+The through-line: when the fault lives in data the reader can't see, more reading doesn't help —
+**shift the observation into the environment that has the data.**
+
+## Instrumentation that would have shortened this
+
+The bug was a 30-second read *if* the deciding predicate had announced itself. Concrete
+patterns, in rough order of value, using this repo's existing facilities:
+
+**1. Decision-point traces (highest value).** At every branch that *classifies or dispatches*,
+log the predicate **and its inputs**, not just function entry. The port bug:
+```c
+/* at the classify site in pin_sym_dir() */
+dbg(1, "pin_sym_dir: name='%s' base='%s' -> %s\n", name, b, r ? r : "NULL");
+```
+This repo already has `dbg(level, ...)` → stderr, enabled with `-d N`. Instrument the `if` that
+*decides*, printing what it decided and the raw values it decided from. A fork that logs its
+inputs is self-explaining; a fork that logs nothing is a guess generator.
+
+**2. An env-gated subsystem tracer — generalize the `FLUID_TRACE` pattern.** `FLUID_TRACE`
+(move.c, issue 0083/0123) exists precisely because WSLg gestures can't be reproduced headless:
+it is a compile-time-cheap, **off-by-default, env-var-gated** trace that writes to a file the
+user captures interactively. The same shape fits any dispatch the maintainer can't drive:
+```
+PIN_TRACE=1 ./xschem …  2>/tmp/pin.log      # no-op unless the env var is set
+```
+For GUI/WSLg-only faults this is the single most effective tool: the *user* turns it on in the
+real session and hands back the log, so the maintainer never needs to reproduce the environment.
+
+**3. A reusable CIW probe proc.** Keep a one-liner that dumps the classification of the current
+selection in *every* representation, so "why did I get X?" is instant and self-diagnosing:
+```tcl
+proc pin_debug {} {
+  set inst [lindex [xschem instance_coord] 0]
+  set sym  [lindex [xschem instance_coord] 1]
+  puts "sym=$sym  tail=[file tail $sym]  root=[file rootname [file tail $sym]] \
+        type=[xschem getprop instance $inst cell::type]"
+}
+```
+Printing *tail* **and** *root* **and** *type* side by side is exactly what would have exposed
+the missing `.sym` on sight — the surface form and the intrinsic form in one line (Lessons 1, 6).
+
+**4. Self-diagnosing failure messages.** When a path bails, make the message say what it saw.
+Bug 1's fix turned *"no ports or wire-labels selected"* into *"3 selected, none are ports:
+res.sym(type=resistor)"*. The bail message *becomes* the trace, so the next mismatch diagnoses
+itself instead of opening a fresh investigation.
+
+**5. Trace the canonicalization boundaries.** This whole bug class lives where one entity has
+many spellings. A `dbg("resolve: '%s' -> '%s'\n", raw, canonical)` at the normalization seam
+(`rel_sym_path` / symbol resolution) makes aliasing — the exact fault here — visible as it
+happens.
+
+The instrumentation meta-rule mirrors Lesson 4: **print the decision variable and its inputs, in
+the real environment, self-locating** (one line that both proves the fault and explains it). The
+cheapest place to spend a `dbg` line is the branch that chose wrong.
+
+---
+
 The one-line summary: *both bugs, and the long hunt for the second, came from treating a
 representation (a filename) as an identity (a kind). Ask what a thing **is**, not what it is
-**called**.*
+**called** — and when you can't see what it is, print it where it lives.*
