@@ -1,0 +1,13 @@
+# Item 17 netlist - DEFERRED at scout stage.
+
+fr: 99
+
+## reasons
+
+- Defer trigger 1 CONFIRMED both halves from source: branch (scheduler.c:7147, drifted from plan's 7012) self-logs a TRANSFORMED argv (log_action_argv of rebuilt av[] = 'xschem netlist [-erc] [-nohier] [fname]', dropping -messages/-noalert) gated on done_netlist && !keep_symbols, and sets a consumed result (my_itoa(err), or xctx->infowindow_text under -messages); perform_action (scheduler.c:1527) does unconditional Tcl_ResetResult on TCL_OK, which would clobber that result — result-preserving boundary variant ratified nonexistent (item-09 apply_properties defer).
+- done_netlist is a success witness STRONGER than TCL_OK: the dir-unwritable path sets err=1, logs nothing, sets no result, and still falls through to TCL_OK — log-on-TCL_OK would phantom-log that failure and core_log_action cannot see done_netlist (no per-verb internal-witness channel exists in the boundary).
+- -keep_symbols machinery passes (live callers xschem.tcl:3278 and 3355, 'xschem netlist -keep_symbols -noalert' hierarchy-traversal machinery) must stay totally silent; a boundary log needs this per-verb suppression gate on top of the witness gate.
+- Shared cores stay silent — verified: no log_action in any of spice/vhdl/verilog/spectre/tedax_netlist.c; Shift-N key (callback.c ~5540) calls global_*_netlist(0,1) raw and logs its own 'xschem netlist -erc -nohier' bypass line; CLI -n batch (xinit.c:3618-3641) calls cores raw, silent. Verb is already fully logged (test_netlist_log.tcl locks the shape) — migration gains zero coverage.
+- NEW defer reason from scout: branch has NO readonly gate and netlist is readonly-legal (writes netlist_dir, not the cell); perform_action's mandatory readonly gate would newly refuse netlisting read-only views (descend-readonly/reopen-readonly flows) — readonly-exempt boundary variant ratified nonexistent (items 14/15/16, same class as item 22 make_symbol).
+- Unlock spec (concise; what netlist ADDS over receipts/09_apply_properties.md result-preserving and receipts/11_setprop.md option-stripping): (a) per-verb internal success-witness channel (gate log on done_netlist, not TCL_OK), (b) -keep_symbols machinery-pass total log suppression, (c) readonly-exempt gating; three boundary extensions at once = scope balloons past a single-verb atom.
+- Order-sensitive tcl-var juggling confirmed (show_infowindow_after_netlist save/force/restore, netlist_dir savedir round-trip via set_netlist_dir x2, keep_symbols save_keep bracket, eval_netlist_postprocess after cores) — the whole bracket plus log site sits AFTER restore, so a run_core extraction must carry the full order intact; defer trigger 2 plausible but trigger 1 alone is decisive.
