@@ -2417,9 +2417,22 @@ proc key_binding {  s  d { win_path {.drw} } } {
 
 }
 
+# true if the external text editor configured in $editor (e.g. {gvim -f}) is
+# actually executable on this system. Callers fall back to the internal text
+# widgets when it is not, instead of popping a modal 'Can not execute' error.
+proc editor_exists {} {
+  global editor
+  return [expr {[auto_execok [lindex $editor 0]] ne {}}]
+}
+
 proc edit_file {filename} {
 
  global editor
+ if {![editor_exists]} {
+   # no external editor available: internal text window with a Save button
+   textwindow $filename
+   return {}
+ }
  # since $editor can be an executable with options (gvim -f) I *need* to use eval
  eval execute 0  $editor  $filename
  return {}
@@ -5387,6 +5400,11 @@ proc edit_netlist {netlist } {
 
  if { [regexp vim $editor] } { set ftype "-c \":set filetype=$netlist_type\"" } else { set ftype {} }
  if { [set_netlist_dir 0] ne "" } {
+   if {![editor_exists]} {
+     # no external editor available: internal text window with a Save button
+     textwindow [file join $netlist_dir $netlist]
+     return {}
+   }
    set save [pwd]
    cd $netlist_dir
    if {$OS == "Windows"} {
@@ -9550,6 +9568,21 @@ proc edit_vi_prop {txtlabel} {
   set netlist_type [xschem get netlist_type]
   set user_wants_copy_cell 0
   set tctx::rcode {}
+  if {![editor_exists]} {
+    # external editor missing: internal dialog, keeping the vi-path contract
+    # (rcode set to ok ONLY if the text really changed, retval untouched otherwise)
+    set prev $tctx::retval
+    xschem set semaphore [expr {[xschem get semaphore] +1}]
+    text_line $txtlabel 0 header
+    xschem set semaphore [expr {[xschem get semaphore] -1}]
+    if {$tctx::rcode ne {} && [string compare $tctx::retval $prev]} {
+      set tctx::rcode ok
+    } else {
+      set tctx::retval $prev
+      set tctx::rcode {}
+    }
+    return $tctx::rcode
+  }
   set filename .xschem_edit_file.[pid]
   if ![string compare $netlist_type "vhdl"] { set suffix vhd } else { set suffix v }
   set filename $filename.$suffix
@@ -9583,6 +9616,23 @@ proc edit_vi_netlist_prop {txtlabel} {
   set filename $filename.$suffix
   regsub -all {\\?"} $tctx::retval {"} tctx::retval
   regsub -all {\\?\\} $tctx::retval {\\} tctx::retval
+  if {![editor_exists]} {
+    # external editor missing: internal dialog on the unescaped text; on change
+    # re-escape and wrap in quotes exactly like the editor path below
+    set prev $tctx::retval
+    xschem set semaphore [expr {[xschem get semaphore] +1}]
+    text_line $txtlabel 0 header
+    xschem set semaphore [expr {[xschem get semaphore] -1}]
+    if {$tctx::rcode ne {} && [string compare $tctx::retval $prev]} {
+      regsub -all {(["\\])} $tctx::retval {\\\1} tctx::retval ;#"  editor is confused by the previous quote
+      set tctx::retval \"${tctx::retval}\"
+      set tctx::rcode ok
+    } else {
+      set tctx::retval $prev
+      set tctx::rcode {}
+    }
+    return $tctx::rcode
+  }
   write_data $tctx::retval $XSCHEM_TMP_DIR/$filename
   if { [regexp vim $editor] } { set ftype "\{-c :set filetype=$netlist_type\}" } else { set ftype {} }
   # since $editor can be an executable with options (gvim -f) I *need* to use eval
@@ -12365,15 +12415,23 @@ proc tab_ctx_cmd {tab_but what} {
         cd $save
       }
     } elseif {$what eq {edit}} {
-      eval execute 0 $editor $filename
+      if {![editor_exists]} {
+        textwindow $filename
+      } else {
+        eval execute 0 $editor $filename
+      }
     } elseif {$what eq {netlist}} {
       set old [xschem get current_win_path]
       set save [pwd]
       xschem new_schematic switch $win_path {} 0 ;# no draw
       if {[file exists $netlist_dir] && [file exists "$netlist_dir/[xschem get netlist_name fallback]"]} {
-        cd $netlist_dir
-        eval execute 0 $editor \"[xschem get netlist_name fallback]\"
-        cd $save
+        if {![editor_exists]} {
+          textwindow [file join $netlist_dir [xschem get netlist_name fallback]]
+        } else {
+          cd $netlist_dir
+          eval execute 0 $editor \"[xschem get netlist_name fallback]\"
+          cd $save
+        }
       } else {
         if {[info exists has_x]} {
           alert_ {Netlist not existing, not yet generated} {} 0 0
