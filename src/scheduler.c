@@ -2091,6 +2091,7 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
         int layer = atoi(argv[7]);
 
         if(layer >= 0 && layer < cadlayers) {
+          xctx->push_undo(); /* issue 0127: checkpoint like interactive new_arc; only when actually storing */
           store_arc(-1, x, y, r, a, b, layer, 0, prop);
           set_modify(1);
           Tcl_SetResult(interp, "1", TCL_STATIC);
@@ -5773,6 +5774,7 @@ static int xschem_cmds_l(Tcl_Interp *interp, int argc, const char *argv[], int *
         if(argc > 6) pos=atoi(argv[6]);
         if(argc > 7) prop_str = argv[7];
         if(argc > 8) draw = atoi(argv[8]);
+        xctx->push_undo(); /* issue 0127: checkpoint like interactive new_line + the wire coord arm */
         storeobject(pos, x1,y1,x2,y2,LINE,xctx->rectcolor,0,prop_str);
         if(draw) {
           save = xctx->draw_window; xctx->draw_window = 1;
@@ -8903,6 +8905,7 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
         if(argc > 6) pos=atoi(argv[6]);
         if(argc > 7) prop_str = argv[7];
         if(argc > 8) draw = atoi(argv[8]);
+        xctx->push_undo(); /* issue 0127: checkpoint like interactive new_rect + the wire coord arm */
         storeobject(pos, x1,y1,x2,y2,xRECT,xctx->rectcolor,0,prop_str);
         if(draw) {
           int c = xctx->rectcolor;
