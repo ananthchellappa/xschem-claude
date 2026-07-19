@@ -5288,30 +5288,31 @@ static int xschem_cmds_i(Tcl_Interp *interp, int argc, const char *argv[], int *
      *   It is used only for efficiency reasons if placing multiple instances */
     else if(!strcmp(argv[1], "instance"))
     {
+      int placed = 0; /* issue 0125: rc of place_symbol, 1-placed / 0-refused */
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
       if(scheduler_readonly_reject(interp, "instance")) return TCL_ERROR;
-      int placed = 0;
       if(argc==7) {
        /*           pos sym_name      x                y             rot       */
-        place_symbol(-1, argv[2], atof(argv[3]), atof(argv[4]), (short)atoi(argv[5]),
+        placed = place_symbol(-1, argv[2], atof(argv[3]), atof(argv[4]), (short)atoi(argv[5]),
                /* flip              prop draw first to_push_undo */
                (short)atoi(argv[6]),NULL,  3,   1,      1);
-        set_modify(1); placed = 1;
       } else if(argc==8) {
-        place_symbol(-1, argv[2], atof(argv[3]), atof(argv[4]), (short)atoi(argv[5]),
+        placed = place_symbol(-1, argv[2], atof(argv[3]), atof(argv[4]), (short)atoi(argv[5]),
                (short)atoi(argv[6]), argv[7], 3, 1, 1);
-        set_modify(1); placed = 1;
       } else if(argc==9) {
         int x = !(atoi(argv[8]));
-        place_symbol(-1, argv[2], atof(argv[3]), atof(argv[4]), (short)atoi(argv[5]),
+        placed = place_symbol(-1, argv[2], atof(argv[3]), atof(argv[4]), (short)atoi(argv[5]),
                (short)atoi(argv[6]), argv[7], 0, x, 1);
-        set_modify(1); placed = 1;
       }
+      /* issue 0125: a refusal (symbol-view guard, empty name, scope-ammeter bail) must not
+       * dirty the buffer; it used to set_modify(1) unconditionally and leak a stale result */
+      if(placed) set_modify(1);
       /* W3: a placed instance may drop a pin / net-label onto a wire -> split it into
        * inter-attachment segments (maintain = split + pin-aware merge); if it lands off any
        * wire nothing changes. Gated on autotrim_wires; place_symbol already pushed undo, so
        * this rides the same transaction. See doc/claude/specs/wire_segment_splitting.md (W3). */
       if(placed && tclgetboolvar("autotrim_wires")) maintain_wire_segments();
+      Tcl_SetResult(interp, placed ? "1" : "0", TCL_STATIC); /* issue 0125: 1-placed / 0-refused */
     }
 
     /* instance_bbox inst
