@@ -33,16 +33,16 @@ Generated 2026-07-18 by the phase-0 ranking workflow (fresh per-dispatch-group s
 - [D] 18 save (T4-unlock, fr99, logged-raw) - log deliberately lives at the branch because save(0,fast) is a shared confirm-wrapper entered from composites -> DEFERRED: file-op family undesigned (no undo/replay-witness semantics) + composite shared-core entries indiscriminable at save(); branch log already at the boundary, zero coverage gain
 - [D] 19 saveas (T4-unlock, fr99, logged-raw) - core self-logs the RESOLVED path; needs dialog-arm/path-arm split + transformed-argv logging -> DEFERRED: transformed-argv (resolved-path) logging pattern nonexistent; boundary log would double the core's resolved self-log and re-log every replayed `saveas {path}` line
 - [D] 20 reload (T4-unlock, fr99, logged-raw) - load composite with an Alt-S inline raw second entry; load-family boundary shape undesigned -> DEFERRED: load-family boundary undesigned (no 1:1 core to extract) + Alt-S inline second entry has no dedup channel; readonly gate would break read-only reload
-- [ ] 21 print_hilight_net (T4-unlock, fr99, logged-raw) - tcleval-routes an inner merge and mixes viewer/mutator modes; stress test for suppress-scope
-- [ ] 22 make_symbol (T4-unlock, fr99, logged-raw) - deliberately allowed on read-only cells, so the all-or-nothing gate would wrongly refuse it
-- [ ] 23 make_sch (T4-unlock, fr99, logged-raw) - writes a NEW sibling .sch, object model untouched; disk-artifact class undesigned, zero gain
-- [ ] 24 text (T4-unlock, fr99, none) - canonical coordinate-store replay primitive; suppress + byte-dedup pattern here would retire the whole D3 family
-- [ ] 25 rect (T4-unlock, fr99, silent) - silent D3 sibling with a genuine undo hole worth a standalone bug fix regardless of migration
-- [ ] 26 arc (T4-unlock, fr99, none) - interactive 3-click commit logs the exact same line; needs the unattempted log-site-relocation pattern
-- [ ] 27 add_wire_label (T4-unlock, fr99, none) - drop is already logged in end_move_copy_logged and the 1/0 result is the 0122 commit witness
-- [ ] 28 net_label (T4-unlock, fr99, silent) - gesture-arm at live cursor position; needs effective-coordinate drop logging plus three key-bypass dedups
-- [ ] 29 edit_vi_prop (T4-unlock, fr99, none) - mutation value comes from an external editor session, never 1:1 replayable; needs a new value-carrying sibling verb
-- [ ] 30 line (T4-unlock, fr99, none) - D3 family tail riding the rank-24 suppress story, same coord-branch undo hole as rect
+- [D] 21 print_hilight_net (T4-unlock, fr99, logged-raw) - tcleval-routes an inner merge and mixes viewer/mutator modes; stress test for suppress-scope -> DEFERRED: suppress-scope composite pattern undesigned, and the routed merge only arms a pending STARTMERGE gesture so no truthful boundary effect-log exists
+- [D] 22 make_symbol (T4-unlock, fr99, logged-raw) - deliberately allowed on read-only cells, so the all-or-nothing gate would wrongly refuse it -> DEFERRED: partial-readonly gating (allow verb, skip only the save leg) is not expressible in the one-gate contract
+- [D] 23 make_sch (T4-unlock, fr99, logged-raw) - writes a NEW sibling .sch, object model untouched; disk-artifact class undesigned, zero gain -> DEFERRED: D2 disk-artifact class undesigned with zero net coverage gain (core self-log already covers both entries)
+- [D] 24 text (T4-unlock, fr99, none) - canonical coordinate-store replay primitive; suppress + byte-dedup pattern here would retire the whole D3 family -> DEFERRED: both defer triggers confirmed (un-suppressed replay/machinery paths exist + read-back-vs-raw-argv byte-dedup structurally unachievable)
+- [D] 25 rect (T4-unlock, fr99, silent) - silent D3 sibling with a genuine undo hole worth a standalone bug fix regardless of migration -> DEFERRED: rank-24 replay-suppress/byte-dedup unlock is itself deferred, and rect is NOT silent — actions.c:4584 emits the %.16g coord read-back form, making it a full D3 coordinate-form-bypass sibling of wire
+- [D] 26 arc (T4-unlock, fr99, none) - interactive 3-click commit logs the exact same line; needs the unattempted log-site-relocation pattern -> DEFERRED: D3 coordinate-form-bypass confirmed (interactive commit at actions.c:4453 emits the exact scheduler-branch line) + rank-24 replay-suppress unlock itself deferred
+- [D] 27 add_wire_label (T4-unlock, fr99, none) - drop is already logged in end_move_copy_logged and the 1/0 result is the 0122 commit witness -> DEFERRED: drop already logged in the wire_label_try_commit funnel; boundary logging would double-log unless the undesigned log-site-move pattern lands, and the 1/0 commit-witness result would be clobbered
+- [D] 28 net_label (T4-unlock, fr99, silent) - gesture-arm at live cursor position; needs effective-coordinate drop logging plus three key-bypass dedups -> DEFERRED: gesture-arm at live cursor; drop already funnel-logged as `xschem instance`, boundary logging would double-record
+- [D] 29 edit_vi_prop (T4-unlock, fr99, none) - mutation value comes from an external editor session, never 1:1 replayable; needs a new value-carrying sibling verb -> DEFERRED: coverage hole is FALSE - the core already self-logs the result as replayable setprop/set lines (0063 atom 10), putting it in the self-logging-core class where boundary migration would double-record
+- [D] 30 line (T4-unlock, fr99, none) - D3 family tail riding the rank-24 suppress story, same coord-branch undo hole as rect -> DEFERRED: D3 coordinate-form-bypass confirmed (five %.16g emit sites in new_line PLACE, no suppress channel) and both plan defer triggers fire (rank-24 pattern deferred; un-suppressed machinery path via place_sym_pins.tcl)
 
 ## Item detail
 
@@ -308,7 +308,7 @@ Generated 2026-07-18 by the phase-0 ranking workflow (fresh per-dispatch-group s
   - Suppress-scope composite pattern undesigned - DEFER
   - Pending-gesture TCL_OK is not a committed edit (log-the-effect rule violated by construction)
 - rationale: Expected DEFER - composite that tcleval-routes an inner `xschem merge` (which arms a pending STARTMERGE gesture logged later at drop), self-logs raw with 0061 dedup, and mixes viewer-dialog modes 1/3 with mutating modes 0/2/4 under NO readonly gate. Unlock: composite-aware actionlog_suppress scoping + a mode split for the readonly gate - a good stress test for the suppress-scope pattern.
-- receipt:
+- receipt: receipts/21_print_hilight_net.md - DEFERRED at scout stage; both defer triggers confirmed (inner tcleval-routed merge re-enters the scheduler and only arms a pending STARTMERGE gesture, so no truthful boundary effect-log exists), zero coverage gain over the existing 0061-deduped branch self-log, and raw family-chord entries (callback.c:5309/5317) belong to issue 0068.
 
 ### 22 make_symbol
 - tier: T4-unlock | fr: 99 | gain: logged-raw | line: scheduler.c:6395
@@ -320,7 +320,7 @@ Generated 2026-07-18 by the phase-0 ranking workflow (fresh per-dispatch-group s
   - Partial-readonly gating not expressible in the one-gate contract (it is not) - DEFER
   - The 0041 sibling hole gets fixed independently, removing half the motivation
 - rationale: Expected DEFER - composite (confirm messageBox + conditional save_schematic leg + .sym generation) that is DELIBERATELY allowed on read-only cells, so the boundary's all-or-nothing gate would wrongly refuse it. Unlock: a partial-readonly boundary form (allow verb, skip only the save leg) - worth friction-testing because the 0041-sibling hole (readonly silently skips the save) is a live bug either way.
-- receipt:
+- receipt: receipts/22_make_symbol.md - DEFERRED at scout stage; defer trigger 1 confirmed (inline allow-verb/skip-save-leg readonly form beyond the one-gate contract), the 0041-sibling hole already mitigated in-source, and zero net coverage gain over the save.c:3336 core self-log that also covers the raw 'a' key.
 
 ### 23 make_sch
 - tier: T4-unlock | fr: 99 | gain: logged-raw | line: scheduler.c:6370
@@ -332,7 +332,7 @@ Generated 2026-07-18 by the phase-0 ranking workflow (fresh per-dispatch-group s
   - Disk-artifact class undesigned and zero coverage gain - near-automatic DEFER
   - Any coupling with the symbol-view-create flow
 - rationale: Expected DEFER - writes a NEW sibling .sch file; the in-memory object model is untouched, so under the current scope it is D2. Unlock: an admit-disk-artifact-generators logging class (no undo, no set_modify, deliberately no readonly gate); net coverage gain is zero since the core already self-logs and covers the raw Ctrl+L key.
-- receipt:
+- receipt: receipts/23_make_sch.md - DEFERRED at scout stage; defer trigger 1 confirmed (D2 disk-artifact class, no undo/set_modify), zero net coverage gain over the save.c:5509 core self-log that also covers the raw Ctrl+L key, ask_save phantom-log blocker, and no-readonly-gate-by-design incompatible with the one-gate contract.
 
 ### 24 text
 - tier: T4-unlock | fr: 99 | gain: none | line: scheduler.c:11039
@@ -344,7 +344,7 @@ Generated 2026-07-18 by the phase-0 ranking workflow (fresh per-dispatch-group s
   - Any replay path found NOT suppress-armed (one exists -> whole-family hard stop)
   - Byte-for-byte dedup between two emitters judged too fragile to guard
 - rationale: Expected DEFER - the canonical coordinate-store replay primitive: the PLACE_TEXT drop funnel (callback.c:1741) emits this exact argv form, so boundary logging re-logs every replay. Unlock: prove all replays run under actionlog_suppress (the boundary already checks it) AND make the drop-funnel line dedup byte-for-byte against core_log_action - the pattern that, if it holds, retires the whole D3 family.
-- receipt:
+- receipt: receipts/24_text.md - DEFERRED at scout stage: both defer triggers confirmed (unwrapped source/machinery re-log paths + byte-dedup impossible against the read-back PLACE_TEXT funnel); viable replacement is an event-disjointness multi-file pattern, not a single-verb atom; no code changed, atom number unburned
 
 ### 25 rect
 - tier: T4-unlock | fr: 99 | gain: silent | line: scheduler.c:8751
@@ -356,7 +356,7 @@ Generated 2026-07-18 by the phase-0 ranking workflow (fresh per-dispatch-group s
   - Replay-suppress pattern (rank 24) deferred -> DEFER
   - create_graph.tcl or other machinery found emitting `xschem rect` sub-steps (log spam)
 - rationale: Expected DEFER - D3 coordinate form, but notable within the family because it is SILENT today (no gesture log emits it) and has a genuine undo hole (no push_undo anywhere in the coord path). If the rank-24 replay-suppress story lands, rect is the family's cheapest beneficiary; the undo hole deserves a standalone bug fix regardless of migration.
-- receipt:
+- receipt: receipts/25_rect.md - DEFERRED at scout stage: both defer triggers fired (rank-24 pattern deferred; create_graph.tcl:36 + place_sym_pins.tcl:38 emit coord-form sub-steps) and the plan's 'silent' claim is false (actions.c:4584 logs the coord form); undo hole flagged as standalone 0125/0121-class bug; no code changed, atom number unburned
 
 ### 26 arc
 - tier: T4-unlock | fr: 99 | gain: none | line: scheduler.c:1943
@@ -368,7 +368,7 @@ Generated 2026-07-18 by the phase-0 ranking workflow (fresh per-dispatch-group s
   - Log-site relocation pattern undesigned - DEFER
   - Result-preservation requirement (same blocker as apply_properties)
 - rationale: Expected DEFER - the scripted x/y/r form is the EXACT line the interactive 3-click commit logs (new_arc, actions.c:4453), so routing double-logs interactively and re-logs replays. Unlock: relocate new_arc's commit log into the boundary AND add the missing scripted-path push_undo; the log-site-move is a pattern no atom has attempted.
-- receipt:
+- receipt: receipts/26_arc.md - DEFERRED at scout stage: D3 confirmed and rank-24 defer fired; result-preservation trigger re-verified but weakened (no consumer found); undo hole already on issue 0127's verify list; no code changed, atom number unburned
 
 ### 27 add_wire_label
 - tier: T4-unlock | fr: 99 | gain: none | line: scheduler.c:1682
@@ -380,7 +380,7 @@ Generated 2026-07-18 by the phase-0 ranking workflow (fresh per-dispatch-group s
   - Log-site-move pattern undesigned (shared blocker with arc) - DEFER
   - Any change risking the 0122 E1 drop-witness tests
 - rationale: Expected DEFER - only the -drop form is admissible, and only by relocating end_move_copy_logged's drop log into the boundary (else every commit double-logs); the 1/0 interp result is the committed/refused witness that 0122's GUI tests and the form depend on.
-- receipt:
+- receipt: receipts/27_add_wire_label.md - DEFERRED at scout stage, both defer triggers confirmed (log-site-move undesigned + 0122 drop-witness/result contract).
 
 ### 28 net_label
 - tier: T4-unlock | fr: 99 | gain: silent | line: scheduler.c:6965
@@ -392,7 +392,7 @@ Generated 2026-07-18 by the phase-0 ranking workflow (fresh per-dispatch-group s
   - Effective-coordinate drop logging for placements not yet built - DEFER
   - Key-bypass dedup requires touching three legacy handlers for marginal gain
 - rationale: Expected DEFER - gesture-arm at live cursor (place_symbol at mousex/y_snap then move_objects START), so replaying the arm depends on mouse position. Unlock: effective-coordinate capture at the DROP (the feb3071e pivot-verb pattern) plus dedup for the three callback.c direct-key bypasses (Alt+Shift+L / Ctrl+P / Ctrl+Shift+P).
-- receipt:
+- receipt: receipts/28_net_label.md - DEFERRED at scout stage; both defer triggers confirmed and trigger 1 sharpened (drop logging is unnecessary, not unbuilt - the funnel's log_placed_instance already emits an effective-coordinate `xschem instance` line).
 
 ### 29 edit_vi_prop
 - tier: T4-unlock | fr: 99 | gain: none | line: scheduler.c:2867
@@ -403,7 +403,7 @@ Generated 2026-07-18 by the phase-0 ranking workflow (fresh per-dispatch-group s
   - New-verb design out of Refactor B scope (it is migration-only) - DEFER to a feature issue
   - setprop-family coverage judged sufficient for the same edits
 - rationale: Expected DEFER - the mutation value comes from an external editor session, so the existing form can never be 1:1 replayable. Unlock: design a value-carrying non-interactive sibling (property text as argv) that the boundary logs, leaving the editor form as its interactive front - a new-verb design task, not a migration.
-- receipt:
+- receipt: receipts/29_edit_vi_prop.md - DEFERRED at scout stage; the plan's coverage-hole wrinkle is false (core self-logs the edit as setprop/set lines via log_prop_edit_replayable, 0063 atom 10), so this is a self-logging-core defer and the proposed sibling-verb unlock is largely moot.
 
 ### 30 line
 - tier: T4-unlock | fr: 99 | gain: none | line: scheduler.c:5621
@@ -415,4 +415,4 @@ Generated 2026-07-18 by the phase-0 ranking workflow (fresh per-dispatch-group s
   - Rank-24 pattern deferred -> DEFER
   - Any un-suppressed replay path found (family-wide hard stop)
 - rationale: Expected DEFER - same D3 family as text/rect/arc: new_line's gesture end emits the `xschem line x1 y1 x2 y2` replay lines and pushes the undo, while the coord branch pushes none; rides entirely on the rank-24 replay-suppress + dedup story.
-- receipt:
+- receipt: receipts/30_line.md - DEFERRED at scout stage; both defer triggers fired and the 0127 undo-hole sibling was confirmed with exact cites (storeobject scheduler.c:5774 + set_modify scheduler.c:5780, no push_undo, vs interactive push at actions.c:4499).
