@@ -10219,6 +10219,96 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
       }
       Tcl_ResetResult(interp);
     }
+    /* set_pin_type in|out|inout|-cycle [inst]
+     *   Cadence-parity pin-type editing (doc/claude/specs/pin_type_editing.md).
+     *   Schematic view: swaps devices/ipin|opin|iopin.sym on the named port instance
+     *   (or every SELECTED one), via `replace_symbol ... fast` so this branch owns ONE
+     *   undo slot for the whole call; lab/position/rotation are preserved.
+     *   Symbol view: rewrites dir= on every SELECTED PINLAYER pin rect (name view
+     *   geometry untouched). -cycle advances each target in->out->inout->in.
+     *   Returns the number of pins changed; a fully no-op call pushes no undo.
+     *   Logged raw on success; the inner fast replace_symbol calls self-suppress. */
+    else if(!strcmp(argv[1], "set_pin_type"))
+    {
+      int i, changed = 0, cycle, undo_done = 0, named = 0;
+      const char *want = NULL;
+      char nres[30];
+      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(scheduler_readonly_reject(interp, "set_pin_type")) return TCL_ERROR;
+      if(argc < 3) {
+        Tcl_SetResult(interp, "xschem set_pin_type needs in|out|inout|-cycle", TCL_STATIC);
+        return TCL_ERROR;
+      }
+      cycle = !strcmp(argv[2], "-cycle");
+      if(!cycle) {
+        if(!strcmp(argv[2], "in") || !strcmp(argv[2], "out") || !strcmp(argv[2], "inout")) {
+          want = argv[2];
+        } else {
+          Tcl_SetResult(interp, "xschem set_pin_type: bad type (in|out|inout|-cycle)", TCL_STATIC);
+          return TCL_ERROR;
+        }
+      }
+      if(!editing_symbol_view()) {
+        int first = 0, last = xctx->instances;
+        if(argc > 3) {
+          if((first = get_instance(argv[3])) < 0) {
+            Tcl_SetResult(interp, "xschem set_pin_type: instance not found", TCL_STATIC);
+            return TCL_ERROR;
+          }
+          if(!pin_sym_dir(xctx->inst[first].name)) {
+            Tcl_SetResult(interp, "xschem set_pin_type: not a port (ipin/opin/iopin) instance", TCL_STATIC);
+            return TCL_ERROR;
+          }
+          last = first + 1;
+          named = 1;
+        }
+        for(i = first; i < last; ++i) {
+          const char *cur, *tgt;
+          char num[30];
+          cur = pin_sym_dir(xctx->inst[i].name);
+          if(!cur) continue;
+          if(!named && xctx->inst[i].sel != SELECTED) continue;
+          if(cycle) tgt = !strcmp(cur, "in") ? "out" : !strcmp(cur, "out") ? "inout" : "in";
+          else tgt = want;
+          if(!strcmp(tgt, cur)) continue;
+          if(!undo_done) { xctx->push_undo(); undo_done = 1; }
+          my_snprintf(num, S(num), "%d", i);
+          tclvareval("xschem replace_symbol {", num, "} {", dir_pin_sym(tgt), "} fast", NULL);
+          ++changed;
+        }
+      } else {
+        if(argc > 3) {
+          Tcl_SetResult(interp, "xschem set_pin_type: named target only in schematic view", TCL_STATIC);
+          return TCL_ERROR;
+        }
+        for(i = 0; i < xctx->rects[PINLAYER]; ++i) {
+          xRect *r = &xctx->rect[PINLAYER][i];
+          const char *cur, *tgt;
+          if(r->sel != SELECTED) continue;
+          if(!get_tok_value(r->prop_ptr, "name", 0)[0]) continue;
+          if(!get_tok_value(r->prop_ptr, "dir", 0)[0]) continue;
+          cur = dir_literal(get_tok_value(r->prop_ptr, "dir", 0));
+          if(cycle) tgt = !strcmp(cur, "in") ? "out" : !strcmp(cur, "out") ? "inout" : "in";
+          else tgt = want;
+          if(!strcmp(tgt, cur)) continue;
+          if(!undo_done) { xctx->push_undo(); undo_done = 1; }
+          my_strdup(_ALLOC_ID_, &r->prop_ptr, subst_token(r->prop_ptr, "dir", tgt));
+          set_rect_flags(r);
+          ++changed;
+        }
+      }
+      if(changed) {
+        set_modify(1);
+        xctx->prep_hash_inst = 0;
+        xctx->prep_net_structs = 0;
+        xctx->prep_hi_structs = 0;
+        draw();
+        if(argc > 3) log_action("xschem set_pin_type %s {%s}", argv[2], argv[3]);
+        else log_action("xschem set_pin_type %s", argv[2]);
+      }
+      my_snprintf(nres, S(nres), "%d", changed);
+      Tcl_SetResult(interp, nres, TCL_VOLATILE);
+    }
     /* setprop [-fast|-fastundo] instance|symbol|text|rect|wire ref tok [val]
      *
      * setprop [-fast] instance inst [tok] [val]

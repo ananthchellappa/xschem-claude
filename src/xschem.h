@@ -2276,6 +2276,10 @@ extern const char *expandlabel(const char *s, int *m);
 extern void parse(const char *s);
 extern void clear_expandlabel_data(void);
 extern void merge_file(int selection_load, const char ext[]);
+/* cross-view pin mapping helpers (paste.c; shared with set_pin_type in scheduler.c) */
+extern const char *pin_sym_dir(const char *name);
+extern const char *dir_pin_sym(const char *dir);
+extern const char *dir_literal(const char *d);
 extern void select_wire(int i, unsigned short select_mode, int fast, int override_lock);
 extern void select_element(int i, unsigned short select_mode, int fast, int override_lock);
 extern void select_pin(int i, int j, unsigned short select_mode, int fast);

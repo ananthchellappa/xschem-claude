@@ -1178,6 +1178,11 @@ proc slickprop::edit_form {txtlabel} {
   global symbol prev_symbol no_change_attrs preserve_unchanged_attrs copy_cell
   global user_wants_copy_cell edit_prop_size edit_prop_pos edit_symbol_prop_new_sel
   variable nav
+  # port instances get the Cadence pin form (Name + Direction, matching the symbol
+  # editor's pin panel) instead of the generic instance form -- pin_type_editing.md
+  if {[file tail $symbol] in {ipin.sym opin.sym iopin.sym}} {
+    return [schpin::edit_form]
+  }
   variable cur   ;# link to ::slickprop::cur — a relative $slickprop::cur read in this proc body
                  ;# resolves to ::slickprop::slickprop::cur on Tcl 9 (TIP 278, no global fallback)
   set user_wants_copy_cell 0

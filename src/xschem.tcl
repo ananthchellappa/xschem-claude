@@ -10722,11 +10722,23 @@ proc addpin::on_dir_change  {} { addpin::arm }
 # can place differently-typed pins from one queue without touching the Direction combobox.
 proc addpin::cycle_type {} {
   variable dir; variable current
-  if {![winfo exists .addpin]} return
-  if {![addpin::placing]} return       ;# only meaningful with a preview attached
-  if {[string trim $current] eq {}} return
-  set dir [addpin::next_dir $dir]      ;# the Direction combobox updates via -textvariable
-  addpin::arm                          ;# re-arm current name with the new direction/type
+  if {[info commands winfo] ne {} && [winfo exists .addpin] && [addpin::placing]} {
+    if {[string trim $current] eq {}} return
+    set dir [addpin::next_dir $dir]    ;# the Direction combobox updates via -textvariable
+    addpin::arm                        ;# re-arm current name with the new direction/type
+    return
+  }
+  # placed-pin fallback (doc/claude/specs/pin_type_editing.md): Ctrl+MMB cycles the type
+  # of the selected pin(s) in EITHER view (set_pin_type is view-aware); with no pin in
+  # the selection, click-select whatever is under the pointer and retry. Selection is
+  # left where it lands (click-acts-on-object), so a miss on empty canvas deselects.
+  if {[catch {xschem set_pin_type -cycle} n] || $n == 0} {
+    catch {
+      xschem unselect_all
+      xschem select_at [xschem get mousex_snap] [xschem get mousey_snap]
+      xschem set_pin_type -cycle
+    }
+  }
 }
 
 # issue 0122 E2: the Add-Pin and Add-Wire-Label forms share the single `.drw <Key-Escape>` slot.
@@ -10755,6 +10767,99 @@ proc addpin::on_destroy {} {
   set armed 0; set last {}; set pending {}; set current {}; set name {}
   catch {addpin::release_esc}
   addpin::abort_if_placing
+}
+
+# ---------------------------------------------------------------------------
+# schpin -- Edit Properties form for a schematic PORT instance (ipin/opin/iopin).
+# doc/claude/specs/pin_type_editing.md item 3: `q` on a pin instance opens THIS
+# form (routed from slickprop::edit_form) instead of the generic instance form,
+# mirroring the symbol editor's pin panel: Name (the lab= token) + Direction
+# combobox. Modeless like the slick form (M2). Apply: lab via `xschem setprop
+# instance`, direction via `xschem set_pin_type <dir> <inst>` (each its own undo
+# slot, v1 accepted). Sets tctx::applied for the C caller's contract.
+# ---------------------------------------------------------------------------
+namespace eval schpin {
+  variable inst {}   ;# instance name= captured at open (stable across applies)
+  variable name {}   ;# form Name field (the lab= token)
+  variable dir  {}   ;# form Direction label (input/output/inout)
+  variable name0 {}  ;# values at open / last apply, for change detection
+  variable dir0 {}
+}
+
+# symbol basename -> Direction label, and label -> set_pin_type token
+proc schpin::dir_of_sym {sym} {
+  switch -- [file tail $sym] {
+    ipin.sym  { return input }
+    opin.sym  { return output }
+    default   { return inout }
+  }
+}
+proc schpin::dirtok {lbl} {
+  set map {input in output out inout inout}
+  return [expr {[dict exists $map $lbl] ? [dict get $map $lbl] : {inout}}]
+}
+
+proc schpin::apply {} {
+  variable inst; variable name; variable dir; variable name0; variable dir0
+  if {$inst eq {}} return
+  set changed 0
+  if {$name ne $name0 && [string trim $name] ne {}} {
+    xschem setprop instance $inst lab [string trim $name]
+    set name0 $name
+    set changed 1
+  }
+  if {$dir ne $dir0} {
+    xschem set_pin_type [schpin::dirtok $dir] $inst
+    set dir0 $dir
+    set changed 1
+  }
+  if {$changed} {
+    set ::tctx::applied 1
+    catch {xschem redraw}
+  }
+}
+
+proc schpin::edit_form {} {
+  variable inst; variable name; variable dir; variable name0; variable dir0
+  global symbol
+  set ::tctx::rcode {}
+  if {[winfo exists .dialog]} { return {} }
+  catch {slickprop::init_fonts}
+  set inst  [xschem get_tok $::tctx::retval name 2]
+  set name  [xschem get_tok $::tctx::retval lab 2]
+  set dir   [schpin::dir_of_sym $symbol]
+  set name0 $name; set dir0 $dir
+  toplevel .dialog -class Dialog
+  wm title .dialog {Edit Pin}
+  set X [expr {[winfo pointerx .dialog] - 60}]
+  set Y [expr {[winfo pointery .dialog] - 35}]
+  wm geometry .dialog "+$X+$Y"
+  # header bar: slick convention (grey60 bold), like the symbol editor pin panel
+  set hdr "$inst  —  [file tail $symbol]"
+  if {[catch {label .dialog.hdr -text "  $hdr" -bg grey60 -anchor w -font slickPropHeader}]} {
+    label .dialog.hdr -text "  $hdr" -bg grey60 -anchor w
+  }
+  pack .dialog.hdr -side top -fill x
+  frame .dialog.f
+  grid [label .dialog.f.ln -text {Pin Name:} -anchor w] -row 0 -column 0 -sticky w -padx 4 -pady 4
+  grid [entry .dialog.f.en -textvariable schpin::name -width 24] -row 0 -column 1 -sticky we -padx 4
+  grid [label .dialog.f.ld -text {Direction:} -anchor w] -row 1 -column 0 -sticky w -padx 4 -pady 4
+  grid [ttk::combobox .dialog.f.cd -textvariable schpin::dir -state readonly \
+        -values {input output inout} -width 10] -row 1 -column 1 -sticky w -padx 4
+  bind .dialog.f.cd <Key> {combo_letter_cycle %W %A}
+  grid columnconfigure .dialog.f 1 -weight 1
+  pack .dialog.f -side top -fill x
+  frame .dialog.b
+  button .dialog.b.ok     -text OK     -command {schpin::apply; destroy .dialog}
+  button .dialog.b.apply  -text Apply  -command {schpin::apply}
+  button .dialog.b.cancel -text Cancel -command {destroy .dialog}
+  pack .dialog.b.ok .dialog.b.apply .dialog.b.cancel -side left -expand 1 -fill x
+  pack .dialog.b -side bottom -fill x -pady 3
+  bind .dialog <Return> {schpin::apply; destroy .dialog}
+  bind .dialog <Escape> {destroy .dialog}
+  raise .dialog
+  focus .dialog.f.en
+  return {}
 }
 
 proc addpin::open {} {

@@ -37,8 +37,9 @@ static int xview_converted = 0, xview_skipped = 0, xview_coerced = 0;
 static int xview_inst_hashed = 0; /* hash_names(-1) done once before first created inst */
 static char xview_coerced_names[256];
 
-/* "in"/"out"/"inout" if name is a schematic port symbol (basename match), else NULL */
-static const char *pin_sym_dir(const char *name)
+/* "in"/"out"/"inout" if name is a schematic port symbol (basename match), else NULL.
+ * Shared with set_pin_type (scheduler.c) -- see pin_type_editing.md. */
+const char *pin_sym_dir(const char *name)
 {
   const char *b, *s;
   if(!name) return NULL;
@@ -50,7 +51,7 @@ static const char *pin_sym_dir(const char *name)
   return NULL;
 }
 
-static const char *dir_pin_sym(const char *dir)
+const char *dir_pin_sym(const char *dir)
 {
   if(dir && !strcmp(dir, "in")) return "devices/ipin.sym";
   if(dir && !strcmp(dir, "out")) return "devices/opin.sym";
@@ -59,7 +60,7 @@ static const char *dir_pin_sym(const char *dir)
 
 /* normalize a dir attribute to one of the three literals (lifetime-safe vs the
  * get_tok_value internal buffer) */
-static const char *dir_literal(const char *d)
+const char *dir_literal(const char *d)
 {
   if(d && !strcmp(d, "in")) return "in";
   if(d && !strcmp(d, "out")) return "out";
