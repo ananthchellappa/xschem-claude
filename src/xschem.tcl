@@ -10788,9 +10788,10 @@ namespace eval schpin {
 
 # symbol basename -> Direction label, and label -> set_pin_type token
 proc schpin::dir_of_sym {sym} {
-  switch -- [file tail $sym] {
-    ipin.sym  { return input }
-    opin.sym  { return output }
+  # accept both 'ipin.sym' and the library-manager 'ipin' (lib/cell, no .sym) forms
+  switch -- [file rootname [file tail $sym]] {
+    ipin  { return input }
+    opin  { return output }
     default   { return inout }
   }
 }

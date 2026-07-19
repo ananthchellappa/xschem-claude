@@ -45,9 +45,11 @@ const char *pin_sym_dir(const char *name)
   if(!name) return NULL;
   b = name;
   for(s = name; *s; s++) if(*s == '/') b = s + 1;
-  if(!strcmp(b, "ipin.sym")) return "in";
-  if(!strcmp(b, "opin.sym")) return "out";
-  if(!strcmp(b, "iopin.sym")) return "inout";
+  /* accept both the legacy 'ipin.sym' and the library-manager 'ipin' (lib/cell,
+   * no .sym extension) reference forms -- see pin_type_editing.md */
+  if(!strcmp(b, "ipin.sym")  || !strcmp(b, "ipin"))  return "in";
+  if(!strcmp(b, "opin.sym")  || !strcmp(b, "opin"))  return "out";
+  if(!strcmp(b, "iopin.sym") || !strcmp(b, "iopin")) return "inout";
   return NULL;
 }
 

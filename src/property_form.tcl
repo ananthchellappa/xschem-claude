@@ -1180,7 +1180,8 @@ proc slickprop::edit_form {txtlabel} {
   variable nav
   # port instances get the Cadence pin form (Name + Direction, matching the symbol
   # editor's pin panel) instead of the generic instance form -- pin_type_editing.md
-  if {[file tail $symbol] in {ipin.sym opin.sym iopin.sym}} {
+  # accept both 'ipin.sym' and the library-manager 'ipin' (lib/cell, no .sym) forms
+  if {[file rootname [file tail $symbol]] in {ipin opin iopin}} {
     return [schpin::edit_form]
   }
   variable cur   ;# link to ::slickprop::cur — a relative $slickprop::cur read in this proc body
