@@ -44,6 +44,12 @@ Generated 2026-07-18 by the phase-0 ranking workflow (fresh per-dispatch-group s
 - [D] 29 edit_vi_prop (T4-unlock, fr99, none) - mutation value comes from an external editor session, never 1:1 replayable; needs a new value-carrying sibling verb -> DEFERRED: coverage hole is FALSE - the core already self-logs the result as replayable setprop/set lines (0063 atom 10), putting it in the self-logging-core class where boundary migration would double-record
 - [D] 30 line (T4-unlock, fr99, none) - D3 family tail riding the rank-24 suppress story, same coord-branch undo hole as rect -> DEFERRED: D3 coordinate-form-bypass confirmed (five %.16g emit sites in new_line PLACE, no suppress channel) and both plan defer triggers fire (rank-24 pattern deferred; un-suppressed machinery path via place_sym_pins.tcl)
 
+## Round 3 ledger - descend-family pattern extension (added 2026-07-19; driver: DESCEND_ROUND_PROMPT.md)
+- Baseline fail list at round-3 start (full_audit.sh, 2026-07-19, WSLg env; 22 pre-existing fails — synthetic key-event delivery + display-dependent dispatch + the harness `FAIL=0` grep quirk, none attributable to a round-3 atom): test_altf5_ciw, test_cadence_descend_newwin_ro, test_cadence_drag, test_ciw, test_crossview_paste (internal PASS=28/0 — harness quirk), test_descend_untitled_preserve, test_fluid_editing, test_hi_descend, test_lib_manager_gui, test_lib_sweep, test_nh_anim_rearm, test_phase3_mints, test_pin_type_edit (internal PASS=19/0 — harness quirk), test_readonly_action_dispatch, test_reopen_readonly, test_save_as_cellview, test_select_at, test_selflog_output, test_untitled_reuse, test_verb_noun_copy_move, test_wire_split, test_wire_vertex_grab
+- [D] 31 descend (PATTERN-EXTENSION + first consumer, fr99 at rank-14 scout, gain: pattern) - land the self-logging-core/readonly-exempt boundary variant per the receipts/14_descend.md EXEMPTION SPEC, migrating descend as its first consumer -> DEFERRED: pure pass-through variant (only the !xctx guard the branch already performs) with zero coverage gain — the core self-log + grep-guard invariant already hold, so the family stops here
+- [D] 32 descend_symbol (family member, PRE-SCOPED on item-31 decision doc) - same variant minus the result-preserving requirement (no consumed Tcl result, receipts/15) -> DEFERRED: rank-31 automatic defer (descend-family pattern not landed — the self-logging-core/readonly-exempt variant is a pure pass-through)
+- [D] 33 go_back (family member, PRE-SCOPED on item-31 decision doc) - variant on a VOID core with tail self-log; ask_save Cancel handling stays in-core (receipts/16) -> DEFERRED: rank-31 automatic defer (descend-family pattern not landed)
+
 ## Item detail
 
 ### 01 check_unique_names
@@ -416,3 +422,47 @@ Generated 2026-07-18 by the phase-0 ranking workflow (fresh per-dispatch-group s
   - Any un-suppressed replay path found (family-wide hard stop)
 - rationale: Expected DEFER - same D3 family as text/rect/arc: new_line's gesture end emits the `xschem line x1 y1 x2 y2` replay lines and pushes the undo, while the coord branch pushes none; rides entirely on the rank-24 replay-suppress + dedup story.
 - receipt: receipts/30_line.md - DEFERRED at scout stage; both defer triggers fired and the 0127 undo-hole sibling was confirmed with exact cites (storeobject scheduler.c:5774 + set_modify scheduler.c:5780, no push_undo, vs interactive push at actions.c:4499).
+
+### 31 descend (round 3 - pattern extension)
+- tier: PATTERN-EXTENSION | fr: 99 at rank-14 scout (re-scout under the new-variant premise) | gain: pattern + family unlock | line: scheduler.c:2791-2830 (branch, verify - lines drift)
+- deliverable if PROCEED (atom = 26 + count of [x] at launch): the perform_action SELF-LOGGING-CORE variant per receipts/14_descend.md EXEMPTION SPEC, landed together with descend as its first consumer, one commit:
+  - (a) SELF-LOG-EXEMPT: variant skips core_log_action and the whole log-on-success clause; trusts the core's outcome-gated self-log (log_action_descend at actions.c:3591-3592, gated on descend_ok, instname captured pre-load at actions.c:3461)
+  - (b) RESULT-PRESERVING: no Tcl_ResetResult on success; live consumers xschem.tcl:3688 (hier_traversal) and xschem.tcl:5756 (hi_descend) branch on the returned witness
+  - (c) READONLY-EXEMPT: no scheduler_readonly_reject; descend is read-only-legal navigation (descend_readonly forces readonly=1 on children actions.c:3615-3617; hi_descend opens read-only xschem.tcl:5760) - a gate would break every browse session
+  - (d) grep-guard rows locking "core logs exactly once, boundary never": pin log_action_descend("descend"...) to exactly one actions.c site; assert run_core/core_log_action contain NO descend arm; pin the branch to zero log_action calls
+- wrinkles:
+  - Semaphore-gated silent no-op (scheduler.c:2796 returns "0") - variant must not phantom-log it (it logs nothing, so this is free; the guard rows must still hold)
+  - Raw C entries ('e' key callback.c:5124-5127, ctx-menu picks 12/22 callback.c:3267/3270) are covered ONLY by the core self-log - variant must not disturb them
+  - In-core modal dialogs (save_file_dialog actions.c:3443-3456, input_line actions.c:3499-3510) stay replay-nondeterministic - explicitly OUT OF SCOPE, not solved by this pattern
+  - select_at stash absorb: log_action_descend absorbs the pending stash on instance-index match (util.c:477-484); any boundary log_action would flush it (util.c:496) - reason (a) exists
+- defer triggers (any -> DEFER, and items 32/33 auto-defer with it):
+  - Scout judges the variant a pure pass-through (only the !xctx guard) whose grep-guard rows + docs do not justify touching the landed boundary machinery - ratify that verdict in the decision doc and stop the family
+  - Variant cannot be expressed without weakening the existing one-shape boundary contract for already-migrated verbs (any change to their behavior = hard stop)
+- rationale: receipts/14 EXEMPTION SPEC written for exactly this atom; admits descend, descend_symbol, go_back as a family. The honest open question is whether a pass-through variant carries its weight - that is the scout's PROCEED/DEFER call, not pre-decided.
+- receipt: receipts/31_descend.md - DEFERRED at scout stage; defer trigger 1 confirmed (pure pass-through: strip the three exempted services and the variant reduces to the branch's existing !xctx guard), grep-guard invariant + single core self-log already hold, zero coverage gain, and trigger 2 is the only alternative — items 32/33 auto-defer.
+
+### 32 descend_symbol (round 3 - family member)
+- tier: family | fr: inherits 31 | gain: consistency | line: scheduler.c:2838-2860 (branch; plan's old 2703 drifted)
+- prescoped: TRUE on item-31 decision doc (pass decisionDoc = the atom-numbered doc item 31's scout writes)
+- wrinkles:
+  - Core self-log at save.c:5678-5679, outcome-gated (all refusal paths return 0 pre-log, incl. embedded-save cancel save.c:5563)
+  - NO result-preserving requirement: branch always Tcl_ResetResult (scheduler.c:2858); hi_descend detects success via currsch rise (xschem.tcl:5747-5751)
+  - Raw C entries: 'i' key callback.c:5261-5264, ctx-menu pick 13 callback.c:3275-3277 (wrapper dedup via actionlog_cmd_logged) - core log is sole coverage
+  - Embedded-symbol save leg save.c:5558-5563 + temp-file dump: same in-core-modal class as 31, out of scope
+  - Semaphore-guarded silent no-op scheduler.c:2842
+- defer triggers: item 31 DEFERRED (automatic); or the variant as landed does not fit the no-consumed-result shape without a second variant flavor
+- rationale: rank-15 defer was purely "pattern does not exist"; with the pattern landed this should be the cheapest family migration.
+- receipt: receipts/32_descend_symbol.md - DEFERRED (rank-31 automatic): item 31 deferred the descend-family pattern as a pure pass-through, so the family member migration has no pattern to consume and gains zero coverage over the core self-log at save.c:5678.
+
+### 33 go_back (round 3 - family member)
+- tier: family | fr: inherits 31 | gain: consistency | line: scheduler.c:4789-4798 (branch; plan's old 4654 drifted)
+- prescoped: TRUE on item-31 decision doc
+- wrinkles:
+  - VOID core with tail self-log at actions.c:3747-3748 inside if(currsch>0), AFTER the ask_save dialog (tcleval actions.c:3661-3663); Cancel early-returns pre-log - resolved-outcome gating no boundary can reproduce, hence self-log-exempt
+  - Three raw C entries: Ctrl-E callback.c:5131, BackSpace callback.c:6370, ctx-menu case 14 callback.c:3279
+  - Semaphore!=0 silent TCL_OK no-op; no consumable result
+  - ask_save Yes arm nests save_schematic - coupling to deferred save family (18/19) stays OUT OF SCOPE; the variant logs nothing so no new coupling
+  - Live machinery callers depend on current branch semantics: xschem.tcl:3692/3695 (go_back 2), walk-up loops xschem.tcl:3831-3908, window-close xschem.tcl:13213, toolbar xschem.tcl:12721 - behavior must be byte-identical
+- defer triggers: item 31 DEFERRED (automatic); or any machinery caller observably changes behavior under the variant
+- receipt: receipts/33_go_back.md - DEFERRED (rank-31 automatic): descend-family pattern not landed; go_back's void-core tail self-log at actions.c:3747-3748 already covers its three raw C entries, and the dialog-Cancel nondeterminism is unsolved by the pass-through variant regardless.
+- rationale: third family member; validates the variant on a void core with dialog-gated tail log.
