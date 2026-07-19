@@ -11188,8 +11188,10 @@ static int xschem_cmds_t(Tcl_Interp *interp, int argc, const char *argv[], int *
       if(argc < 10) {Tcl_SetResult(interp,
           "xschem text requires 8 additional arguments", TCL_STATIC); return TCL_ERROR;}
 
+      xctx->push_undo(); /* issue 0127 residual: checkpoint like interactive place_text + the rect/line/arc coord arms */
       create_text(atoi(argv[9]), atof(argv[2]), atof(argv[3]), atoi(argv[4]), atoi(argv[5]),
                     argv[6], argv[7], atof(argv[8]), atof(argv[8]));
+      set_modify(1); /* issue 0127 residual: mark modified like the rect/line/arc coord arms */
       Tcl_ResetResult(interp);
     }
 

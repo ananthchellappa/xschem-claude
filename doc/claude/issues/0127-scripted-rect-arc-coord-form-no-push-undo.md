@@ -1,6 +1,6 @@
 # 0127 — scripted `xschem rect` (and arc/line siblings) coordinate form: set_modify with NO push_undo
 
-**Status: FIXED** (2026-07-18, fluid-editing, commit `fix(undo): scripted rect/arc/line
+**Status: FIXED** (2026-07-18, fluid-editing, commit de1b75d4 `fix(undo): scripted rect/arc/line
 coord forms push an undo checkpoint (issue 0127)` — bug-fix batch item 4; three one-line
 `xctx->push_undo()` calls in the scheduler rect/line/arc coord arms; found 2026-07-18 by
 the Refactor B batch item-25 scout while DEFERring the `rect` migration; pre-existing
@@ -32,12 +32,33 @@ behavior bug, independent of any migration — fixed standalone).
   invalid-layer-arc no-spurious-slot + set_modify control + readonly refusal controls).
   create_save goldens verified byte-identical pre/post fix (defer trigger does not fire).
 
-## RESIDUAL (still OPEN)
+## RESIDUAL FIXED (2026-07-19, fluid-editing, commit `fix(undo): scripted text coord form
+pushes undo + sets modify (issue 0127 residual)` — bug-fix batch item 7)
 
-Scripted `xschem text` (scheduler.c `text` branch, create_text) pushes NOTHING and ALSO
-never calls set_modify — a worse, two-part bug class (interactive place_text pushes in
-actions.c). Fixing it needs its own set_modify decision; deliberately left OUT of this fix
-(see receipts/24_text.md).
+Scripted `xschem text` (scheduler.c `text` branch, create_text) pushed NOTHING and ALSO
+never called set_modify — a worse, two-part bug class (interactive place_text pushes in
+actions.c). It was deliberately left OUT of the item-4 fix (see receipts/24_text.md)
+pending its own set_modify decision; now resolved the same way as the siblings.
+
+### What changed (residual fix)
+
+- Two lines in the scheduler `text` branch (scheduler.c ~:11191): `xctx->push_undo()`
+  immediately before the `create_text(...)` call (create_text has no failure/early-return
+  mode, so the push is always matched by a store; readonly + argc rejects both return
+  BEFORE it) and `set_modify(1)` immediately after it — mirroring interactive place_text
+  and the fixed rect/line/arc coord arms. All four coord forms (rect/line/arc/text) now
+  share undo + modify semantics.
+- Red-first pair: SSU-T2 (undo rode the wire's checkpoint) + SSU-TM1 (modified stayed 0);
+  test extended 18 → 25 checks (text block SSU-T1..T4/TD1 + SSU-TM1 modified witness +
+  SSU-RO4 readonly refusal) in tests/headless/test_scripted_shape_undo.tcl.
+- create_save goldens: zero `xschem text` callers under tests/create_save/tests/ (grep
+  witness), so the defer trigger cannot fire; no regen needed.
+- Re-scout verification note (2026-07-19): TH6a/TH6b in tests/stable_handles/text_body.tcl
+  fail PRE-EXISTING — 6658b655 (2026-07-02, issue 0043) extended the disk-undo id
+  side-channel to texts (save.c walk_user_text_ids), superseding TH6's invalidate-on-restore
+  expectation (2026-06-13, 9ff519ee); fails identically on the pre-fix binary; outside
+  full_audit (headless test_*.tcl only); not addressed here — candidate for its own issue
+  at next planning.
 
 ## Symptom
 

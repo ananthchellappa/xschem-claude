@@ -7,6 +7,10 @@
 # branch and the interactive twins (new_rect/new_line/new_arc); the arc push
 # sits INSIDE the layer-validity gate so a refused invalid-layer arc still
 # pushes nothing (0121/0125 spurious-undo class).
+# Issue 0127 RESIDUAL: the `xschem text` coord arm was the fourth sibling out
+# of line — it pushed NO undo AND never set_modify(1); fixed the same way
+# (push before create_text + set_modify(1) after), covered by the text block
+# and SSU-TM1/SSU-RO4 below.
 #
 # Headless, own process, run from repo root (full_audit default runner):
 #   src/xschem --pipe -q --nolog --script tests/headless/test_scripted_shape_undo.tcl
@@ -117,6 +121,34 @@ check "SSU-A5 refused arc left no undo slot" \
          && [xschem get wires] == 0}] \
   "(r=$r arcs=[llength [xschem objects -type arc]] wires=[xschem get wires])"
 
+# ---------------------------------------------------------------- text block
+# (issue 0127 residual: the text coord arm pushed nothing and never set modify)
+xschem clear force
+reset_undo
+xschem set rectcolor 4
+xschem wire 0 0 100 0
+xschem text 300 -300 0 0 {t0127} {} 0.4 0
+
+check "SSU-T1 text stored" \
+  [expr {[llength [xschem objects -type text]] == 1}] \
+  "(texts=[llength [xschem objects -type text]])"
+xschem undo
+check "SSU-T2 prior wire survives one undo" \
+  [expr {[xschem get wires] == 1}] \
+  "(wires=[xschem get wires])"
+check "SSU-T3 undo removed the text" \
+  [expr {[llength [xschem objects -type text]] == 0}] \
+  "(texts=[llength [xschem objects -type text]])"
+xschem undo
+check "SSU-T4 second undo peels the wire (exactly one push)" \
+  [expr {[xschem get wires] == 0}] \
+  "(wires=[xschem get wires])"
+xschem redo
+xschem redo
+check "SSU-TD1 two redos restore wire + text" \
+  [expr {[xschem get wires] == 1 && [llength [xschem objects -type text]] == 1}] \
+  "(wires=[xschem get wires] texts=[llength [xschem objects -type text]])"
+
 # ------------------------------------------- modified + readonly controls
 xschem clear force
 reset_undo
@@ -125,6 +157,13 @@ xschem rect 300 -100 400 -50        ;# real edit
 
 # SSU-M1 (unchanged-behavior control): set_modify still fires on the coord arm.
 check "SSU-M1 scripted rect sets modified" \
+  [expr {[xschem get modified] == 1}] \
+  "(modified=[xschem get modified])"
+
+# SSU-TM1 (the second half of the residual): scripted text now sets modified.
+xschem set_modify 0
+xschem text 700 -100 0 0 {t0127} {} 0.4 0
+check "SSU-TM1 scripted text sets modified" \
   [expr {[xschem get modified] == 1}] \
   "(modified=[xschem get modified])"
 
@@ -149,6 +188,13 @@ check "SSU-RO3 readonly arc refused" \
          && [llength [xschem objects -type arc]] == 0 \
          && [xschem get modified] == 0}] \
   "(rc=$rcA arcs=[llength [xschem objects -type arc]] modified=[xschem get modified])"
+
+set rcT [catch {xschem text 700 -300 0 0 {ro} {} 0.4 0} errT]
+check "SSU-RO4 readonly text refused" \
+  [expr {$rcT == 1 && [string match "*read-only*" $errT] \
+         && [llength [xschem objects -type text]] == 1 \
+         && [xschem get modified] == 0}] \
+  "(rc=$rcT texts=[llength [xschem objects -type text]] modified=[xschem get modified])"
 
 xschem set readonly 0
 
