@@ -148,6 +148,9 @@ source [file join $_ut bus_transpose.tcl]
 source [file join $_ut text_resize.tcl]
 source [file join $_ut apply_hilight.tcl]
 source [file join $_ut select_same_cell.tcl]
+# Toggle selected ports <-> wire-labels (Ctrl+Shift+O). The bind lives inside
+# this file; see its header for why it is a Tk bind and not a keybindings.csv row.
+source [file join $_ut toggle_pins_netlabels.tcl]
 # moved unset _ut
 
 # Ctrl-Alt-S : locate a cell in the Library Manager. Acts on the selected instance's
