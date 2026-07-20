@@ -1,0 +1,38 @@
+v {xschem version=3.1.0 file_version=1.2 }
+G {}
+K {type=subcircuit
+format="@name @pinlist @symname"
+template="name=x1"
+}
+V {}
+S {}
+E {}
+L 4 130 -50 150 -50 {}
+L 4 -150 -50 -130 -50 {}
+L 4 130 -30 150 -30 {}
+L 4 -150 -30 -130 -30 {}
+L 4 130 -10 150 -10 {}
+L 4 -150 -10 -130 -10 {}
+L 4 130 10 150 10 {}
+L 4 -150 10 -130 10 {}
+L 4 130 30 150 30 {}
+L 4 -150 30 -130 30 {}
+L 4 -150 50 -130 50 {}
+L 10 -130 -60 130 -60 {}
+L 10 -130 60 130 60 {}
+L 10 -130 -60 -130 60 {}
+L 10 130 -60 130 60 {}
+B 5 147.5 -52.5 152.5 -47.5 {show_pinname=true name_dx=-25 name_dy=-4 name_size=0.2 name_flip=1 name=QLATCH dir=out }
+B 5 -152.5 -52.5 -147.5 -47.5 {show_pinname=true name_dx=25 name_dy=-4 name_size=0.2 name=A dir=in }
+B 5 147.5 -32.5 152.5 -27.5 {show_pinname=true name_dx=-25 name_dy=-4 name_size=0.2 name_flip=1 name=X dir=out }
+B 5 -152.5 -32.5 -147.5 -27.5 {show_pinname=true name_dx=25 name_dy=-4 name_size=0.2 name=B dir=in }
+B 5 147.5 -12.5 152.5 -7.5 {show_pinname=true name_dx=-25 name_dy=-4 name_size=0.2 name_flip=1 name=Y dir=out }
+B 5 -152.5 -12.5 -147.5 -7.5 {show_pinname=true name_dx=25 name_dy=-4 name_size=0.2 name=CLK dir=in }
+B 5 147.5 7.5 152.5 12.5 {show_pinname=true name_dx=-25 name_dy=-4 name_size=0.2 name_flip=1 name=Q dir=out }
+B 5 -152.5 7.5 -147.5 12.5 {show_pinname=true name_dx=25 name_dy=-4 name_size=0.2 name=RESET_B dir=in }
+B 5 147.5 27.5 152.5 32.5 {show_pinname=true name_dx=-25 name_dy=-4 name_size=0.2 name_flip=1 name=XSCHEM dir=out }
+B 5 -152.5 27.5 -147.5 32.5 {show_pinname=true name_dx=25 name_dy=-4 name_size=0.2 name=VCC dir=in }
+B 5 -152.5 47.5 -147.5 52.5 {show_pinname=true name_dx=25 name_dy=-4 name_size=0.2 name=VSS dir=in }
+T {@symname} -54 -6 0 0 0.3 0.3 {}
+T {@name} 135 -72 0 0 0.2 0.2 {}
+T {SPICE} -45.5 -56 0 0 0.6 0.6 {layer=10}

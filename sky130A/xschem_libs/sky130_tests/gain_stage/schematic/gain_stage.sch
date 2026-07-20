@@ -1,0 +1,181 @@
+v {xschem version=3.4.8RC file_version=1.3
+* Copyright 2021 Stefan Frederik Schippers
+* 
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*     https://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+
+}
+G {}
+K {}
+V {}
+S {}
+F {}
+E {}
+P 4 7 610 -210 840 -210 840 -220 860 -210 840 -200 840 -210 610 -210 {fill=1}
+P 4 5 580 -600 580 -610 600 -600 580 -590 580 -600 {fill=1}
+P 4 3 580 -600 540 -600 540 -290 {}
+T {These transistors have parametrized
+"modeln" attribute that can be set
+in instance together with a instance
+based schematic=.... attribute.
+default modeln is set in symbol
+template attribute.} 210 -280 0 0 0.4 0.4 {layer=4}
+N 910 -240 940 -240 {lab=VSS}
+N 1060 -320 1130 -320 {lab=OUT}
+N 910 -320 910 -270 {lab=OUT}
+N 910 -210 910 -170 {lab=#net1}
+N 1060 -170 1090 -170 {lab=VSS}
+N 1060 -320 1060 -200 {lab=OUT}
+N 1040 -320 1060 -320 {lab=OUT}
+N 1060 -140 1060 -110 {lab=VSS}
+N 910 -370 910 -320 {lab=OUT}
+N 910 -550 940 -550 {lab=VCC}
+N 910 -610 910 -580 {lab=VCC}
+N 810 -400 870 -400 {lab=IN}
+N 910 -400 940 -400 {lab=VCC}
+N 910 -460 910 -430 {lab=#net2}
+N 670 -800 700 -800 {lab=VCC}
+N 670 -860 670 -830 {lab=VCC}
+N 670 -720 700 -720 {lab=VCC}
+N 670 -770 670 -750 {lab=#net3}
+N 670 -620 700 -620 {lab=VSS}
+N 670 -660 670 -650 {lab=#net4}
+N 670 -690 670 -660 {lab=#net4}
+N 630 -660 630 -620 {lab=ADJ}
+N 670 -540 700 -540 {lab=VSS}
+N 670 -510 670 -500 {lab=VSS}
+N 670 -590 670 -570 {lab=#net5}
+N 860 -660 1040 -660 {lab=OUT}
+N 900 -110 1060 -110 {lab=VSS}
+N 810 -320 810 -240 {lab=IN}
+N 810 -240 870 -240 {lab=IN}
+N 1040 -660 1040 -320 {lab=OUT}
+N 1040 -880 1040 -660 {lab=OUT}
+N 200 -880 1040 -880 {lab=OUT}
+N 200 -880 200 -660 {lab=OUT}
+N 630 -720 630 -660 {lab=ADJ}
+N 910 -320 1040 -320 {lab=OUT}
+N 720 -320 810 -320 {lab=IN}
+N 670 -660 800 -660 {lab=#net4}
+N 330 -660 630 -660 {lab=ADJ}
+N 200 -660 250 -660 {lab=OUT}
+N 810 -400 810 -320 {lab=IN}
+C {devices/title} 160 -30 0 0 {name=l1 author="Stefan Schippers"}
+C {devices/ipin} 100 -580 0 0 { name=p95 lab=IN }
+C {devices/ipin} 100 -430 0 0 { name=p96 lab=VSS }
+C {devices/ipin} 100 -460 0 0 { name=p97 lab=VCC }
+C {devices/opin} 140 -550 0 0 { name=p116 lab=OUT}
+C {devices/launcher} 240 -90 0 0 {name=h3
+descr="Load file into gaw" 
+comment="
+  This launcher gets raw filename from current schematic using 'xschem get schname'
+  and stripping off path and suffix.  It then loads raw file into gaw.
+  This allow to use it in any schematic without changes.
+"
+tclcommand="
+set rawfile [file tail [file rootname [xschem get schname]]].raw
+gaw_cmd \\"tabledel $rawfile
+load $netlist_dir/$rawfile
+table_set $rawfile\\"
+unset rawfile"
+}
+C {devices/lab_pin} 940 -240 0 1 {name=p2 lab=VSS}
+C {devices/lab_pin} 1130 -320 0 1 {name=l10 lab=OUT}
+C {devices/parax_cap} 980 -310 0 0 {name=C5  value=4f}
+C {sky130_fd_pr/nfet_01v8_lvt} 890 -240 0 0 {name=M6
+L=1
+W=WN
+nf=1 mult=1
+model=@modeln
+spiceprefix=X
+ }
+C {devices/ammeter} 910 -140 0 0 {name=v4}
+C {devices/lab_pin} 1090 -170 0 1 {name=p5 lab=VSS}
+C {sky130_fd_pr/nfet_01v8} 1040 -170 0 0 {name=M7
+L=0.15
+W=0.5
+nf=1 mult=3
+model=nfet_01v8
+spiceprefix=X
+ }
+C {devices/lab_pin} 1020 -170 0 0 {name=l6 lab=EN_N}
+C {devices/lab_pin} 940 -550 0 1 {name=p123 lab=VCC}
+C {devices/lab_pin} 910 -610 0 0 {name=p124 lab=VCC}
+C {devices/lab_pin} 870 -550 0 0 {name=l65 lab=EN_N}
+C {sky130_fd_pr/pfet_01v8} 890 -550 0 0 {name=M46
+L=0.15
+W=5
+nf=1 mult=1
+model=pfet_01v8
+spiceprefix=X
+ }
+C {devices/ammeter} 910 -490 0 0 {name=v17}
+C {devices/lab_pin} 940 -400 0 1 {name=p144 lab=VCC}
+C {sky130_fd_pr/pfet_01v8_lvt} 890 -400 0 0 {name=M5
+L=1
+W=WP
+nf=1 mult=1
+model=pfet_01v8_lvt
+spiceprefix=X
+ }
+C {devices/lab_pin} 700 -800 0 1 {name=p6 lab=VCC}
+C {devices/lab_pin} 670 -860 0 0 {name=p7 lab=VCC}
+C {devices/lab_pin} 630 -800 0 0 {name=l7 lab=EN_N}
+C {devices/lab_pin} 700 -720 0 1 {name=p8 lab=VCC}
+C {sky130_fd_pr/pfet_01v8_lvt} 650 -720 0 0 {name=M8
+L=1
+W=WP
+nf=1 mult=1
+model=pfet_01v8_lvt
+spiceprefix=X
+ }
+C {devices/lab_pin} 700 -620 0 1 {name=p9 lab=VSS}
+C {sky130_fd_pr/nfet_01v8} 650 -620 0 0 {name=M9
+L=1
+W=WN
+nf=1 mult=1
+model=@modeln
+spiceprefix=X
+ }
+C {devices/lab_pin} 700 -540 0 1 {name=p10 lab=VSS}
+C {sky130_fd_pr/nfet_01v8} 650 -540 0 0 {name=M10
+L=4
+W=WN
+nf=1 mult=1
+model=nfet_01v8
+spiceprefix=X
+ }
+C {devices/lab_pin} 630 -690 0 0 {name=l8 lab=ADJ}
+C {devices/lab_pin} 630 -540 0 0 {name=p11 lab=VCC}
+C {devices/lab_pin} 670 -500 0 0 {name=p27 lab=VSS}
+C {sky130_fd_pr/pfet_01v8} 650 -800 0 0 {name=M1
+L=4
+W=WP
+nf=1 mult=1
+model=pfet_01v8
+spiceprefix=X
+ }
+C {devices/lab_pin} 900 -110 0 0 {name=p1 lab=VSS}
+C {devices/lab_pin} 720 -320 0 0 {name=l2 lab=IN}
+C {devices/parax_cap} 830 -390 0 0 {name=C1  value=4f}
+C {sky130_tests/passgate} 290 -660 0 0 {name=x6 W_N=0.42 L_N=0.35 W_P=0.6 L_P=0.35 VCCBPIN=VCC VSSBPIN=VSS m=1
+modeln=nfet_01v8
+modelp=pfet_01v8_lvt
+schematic=passgate_1}
+C {devices/lab_pin} 290 -630 0 0 {name=l34 sig_type=std_logic lab=START_N}
+C {devices/lab_pin} 290 -690 0 0 {name=l37 sig_type=std_logic lab=START}
+C {devices/lab_pin} 450 -600 0 0 {name=l40 sig_type=std_logic lab=VSS}
+C {sky130_fd_pr/cap_mim_m3_2} 450 -630 0 0 {name=C2 model=cap_mim_m3_2 W=wcap L=wcap MF=2 spiceprefix=X}
+C {devices/ipin} 100 -510 0 0 { name=p4 lab=START }
+C {devices/ipin} 100 -490 0 0 { name=p12 lab=START_N }
+C {devices/ipin} 100 -530 0 0 { name=p13 lab=EN_N }
+C {devices/ammeter} 830 -660 3 0 {name=v1}

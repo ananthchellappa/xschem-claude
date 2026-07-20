@@ -1,0 +1,31 @@
+v {xschem version=3.4.6RC file_version=1.2
+}
+G {}
+K {type=subcircuit
+format="@name @pinlist @symname WN=@WN WP=@WP wcap=@wcap"
+template="name=x1 wcap=10 WN=0.5 WP=1 modeln=nfet_01v8_lvt"
+extra="modeln"}
+V {}
+S {}
+E {}
+L 4 -40 -30 -40 30 {}
+L 4 -60 0 -40 0 {}
+L 4 40 0 60 0 {}
+L 4 -20 110 0 110 {}
+L 4 -20 130 0 130 {}
+L 4 -40 -30 30 0 {}
+L 4 -40 30 30 0 {}
+L 4 0 13.125 0 130 {bus=true}
+L 4 -20 90 0 90 {}
+L 4 -20 70 0 70 {}
+L 4 -20 50 0 50 {}
+B 5 -62.5 -2.5 -57.5 2.5 {show_pinname=true name_dx=25 name_dy=-4 name_size=0.2 name=IN dir=in }
+B 5 57.5 -2.5 62.5 2.5 {show_pinname=true name_dx=-45 name_dy=-4 name_size=0.2 name_flip=1 name=OUT dir=out }
+B 5 -22.5 107.5 -17.5 112.5 {show_pinname=true name_dx=25 name_dy=-4 name_size=0.2 name=VCC dir=in }
+B 5 -22.5 127.5 -17.5 132.5 {show_pinname=true name_dx=25 name_dy=-4 name_size=0.2 name=VSS dir=in }
+B 5 -22.5 87.5 -17.5 92.5 {show_pinname=true name_dx=25 name_dy=-4 name_size=0.2 name=START_N dir=in }
+B 5 -22.5 67.5 -17.5 72.5 {show_pinname=true name_dx=25 name_dy=-4 name_size=0.2 name=START dir=in }
+B 5 -22.5 47.5 -17.5 52.5 {show_pinname=true name_dx=25 name_dy=-4 name_size=0.2 name=EN_N dir=in }
+A 4 35 -0 5 180 360 {}
+T {@symname} -58 -48.5 0 0 0.3 0.3 {}
+T {@name} 21.25 -23.25 0 0 0.2 0.2 {}
