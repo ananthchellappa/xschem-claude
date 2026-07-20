@@ -131,9 +131,19 @@ proc toggle_pins_netlabels {} {
     return
   }
 
-  # ---- apply as ONE undo transaction ---------------------------------------
-  xschem push_undo         ;# the single slot Ctrl-Z restores to
-  xschem set no_undo 1     ;# suppress the per-op undo pushes below
+  # ---- apply as ONE undo transaction + ONE log line ------------------------
+  # The mutating sub-verbs below are wrapped in `log_action -suppress push/pop`
+  # so their own self-logs do NOT leak a partial, misleading record: today only
+  # `xschem delete` self-logs (at the perform_action boundary, scheduler.c:1534),
+  # which alone would replay as "delete the selection" and never re-create the
+  # replacements. `-suppress` is a DEPTH COUNTER (scheduler.c:6317), so a replay
+  # that already holds the scope nests cleanly and never re-logs. On success we
+  # emit ONE replayable line, `toggle_pins_netlabels`, via the log_action bridge
+  # (scheduler.c:6324) -- the proc IS the action. Both the pop and `no_undo 0`
+  # ALWAYS run (the catch captures errors), keeping the suppress scope balanced.
+  xschem push_undo                  ;# the single slot Ctrl-Z restores to
+  xschem set no_undo 1              ;# suppress the per-op undo pushes below
+  xschem log_action -suppress push  ;# silence sub-verb self-logs; one named line below
   set newidx {}
   set failed [catch {
     # delete the originals: select exactly them (nothing else), then one delete
@@ -149,7 +159,8 @@ proc toggle_pins_netlabels {} {
       lappend newidx [expr {[xschem get instances] - 1}]
     }
   } emsg]
-  xschem set no_undo 0     ;# ALWAYS re-enable undo, even on error
+  xschem log_action -suppress pop   ;# ALWAYS balance the push, even on error
+  xschem set no_undo 0              ;# ALWAYS re-enable undo, even on error
 
   if {$failed} {
     ciw_echo "toggle pins/labels: aborted ($emsg)"
@@ -163,6 +174,11 @@ proc toggle_pins_netlabels {} {
 
   xschem set_modify 1
   xschem redraw
+  # ONE replayable line for the whole gesture (the sub-verbs were suppressed
+  # above). No `xschem` prefix: this is a Tcl proc, re-run directly when the log
+  # is sourced. Suppressed to a no-op during replay (counter still >0), so it is
+  # never double-logged.
+  xschem log_action toggle_pins_netlabels
   ciw_echo "toggle pins/labels: converted [llength $jobs] object(s)"
 }
 
