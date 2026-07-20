@@ -1,6 +1,6 @@
 # 0128 — menu "Edit with editor" edits a read-only cell (`edit_vi_prop` branch ungated)
 
-**Status: FIXED** (2026-07-18, fluid-editing, commit `fix(readonly): reject scripted/menu
+**Status: FIXED** (2026-07-18, fluid-editing, commit bb123115 `fix(readonly): reject scripted/menu
 edit_vi_prop on read-only buffer (issue 0128)` — bug-fix batch item 2; found
 2026-07-18 by the Refactor B batch item-29 scout while DEFERring the `edit_vi_prop`
 migration; standalone gate fix, independent of any boundary work).

@@ -3,7 +3,7 @@
 **Status: FIXED — both residuals closed** (defect 1, 2026-07-18, commit 84890f12
 "fix(instance): refused placement no longer dirties buffer + 1/0 result (issue 0125)";
 residuals — burnt undo slot + bbox unbalance in the scope-ammeter bail — fixed
-2026-07-18, batch item 6, "fix(instance): scope-ammeter bail balances bbox + no burnt
+2026-07-18, batch item 6, commit 096f3f84 "fix(instance): scope-ammeter bail balances bbox + no burnt
 undo slot (issue 0125 residual)").
 Defect 2 as originally written was REFUTED from source; the one real spurious-slot path
 (scope-ammeter bail) was a documented RESIDUAL, now fixed via pre-flight — see below.

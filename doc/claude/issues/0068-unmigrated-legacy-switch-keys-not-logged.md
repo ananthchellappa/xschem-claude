@@ -1,7 +1,8 @@
 # Issue 0068 — un-migrated keyboard shortcuts (legacy C `switch`) are not logged
 
 **Opened:** 2026-07-02
-**Status:** OPEN — narrowed to 5 rows by the 2026-07-19 definitive inventory (below):
+**Status:** FIXED (sweep deliverable) — commit 682e63ac, the 2026-07-19 definitive
+inventory (below). Residual work narrowed to 5 rows:
 3 unlogged schematic-state mutations + 2 unlogged semantic-config toggles; 0
 readonly-ungated arms. Everything else in the legacy switch is funnel-logged,
 key-site-logged, boundary-routed, non-mutating, or migrated.

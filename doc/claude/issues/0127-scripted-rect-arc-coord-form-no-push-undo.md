@@ -32,7 +32,7 @@ behavior bug, independent of any migration — fixed standalone).
   invalid-layer-arc no-spurious-slot + set_modify control + readonly refusal controls).
   create_save goldens verified byte-identical pre/post fix (defer trigger does not fire).
 
-## RESIDUAL FIXED (2026-07-19, fluid-editing, commit `fix(undo): scripted text coord form
+## RESIDUAL FIXED (2026-07-19, fluid-editing, commit 9febeaa6 `fix(undo): scripted text coord form
 pushes undo + sets modify (issue 0127 residual)` — bug-fix batch item 7)
 
 Scripted `xschem text` (scheduler.c `text` branch, create_text) pushed NOTHING and ALSO

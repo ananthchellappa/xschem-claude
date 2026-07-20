@@ -1,7 +1,7 @@
 # 0126 — scripted `xschem apply_properties` mutates a read-only cell
 
-**Status: FIXED** (2026-07-18, fluid-editing, commit `fix(readonly): reject scripted
-apply_properties on read-only buffer (issue 0126)` — hash recorded in the batch memory block).
+**Status: FIXED** (2026-07-18, fluid-editing, commit `cdb9636d` — `fix(readonly): reject scripted
+apply_properties on read-only buffer (issue 0126)`).
 Found 2026-07-18 by the Refactor B batch item-09 scout while DEFERring the
 `apply_properties` migration; standalone gate fix, independent of any boundary work.
 

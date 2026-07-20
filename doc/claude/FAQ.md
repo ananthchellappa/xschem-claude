@@ -14,6 +14,50 @@ Newest entries on top.
 
 ---
 
+## Q30. Ctrl+MMB cycles a pin's type (in/out/inout). How do I rebind that gesture to something else?
+
+- **Asked:** 2026-07-19
+- **Project state:** branch `fluid-editing` @ `74d1e03f` — the pin-type-editing slice
+  (doc/claude/specs/pin_type_editing.md) just landed: `xschem set_pin_type` core verb,
+  Ctrl+MMB placed-pin cycle (action id `edit.cycle_pin_type`), and the Edit Pin form.
+
+The gesture is a row in the input action registry, so every generic remap route applies.
+Three options, persistent first:
+
+1. **Edit the user binding csv** (survives upgrades; the file-editable route). Copy
+   `mousebindings.csv` (or `keybindings.csv` for a key chord) from the share dir to
+   `~/.xschem/` and edit — the user copy is loaded after the shipped defaults and wins.
+   The shipped row is:
+
+       button,2,ctrl,canvas,edit.cycle_pin_type,
+
+   Change device/code/mods as desired; a key example for `keybindings.csv`
+   (`code` = X keysym, `mods` = `ctrl|alt|shift|super` joined by `+`, ctx
+   `canvas|graph|global`):
+
+       key,t,0,canvas,edit.cycle_pin_type,
+
+   To *remove* the default chord, set its action column to `-`. Format details are in
+   each csv's header comment.
+
+2. **`xschem bind` / `xschem unbind`** — same table, scripted. Works in
+   `~/.xschem/xschemrc`, `cadence_style_rc`, or live in the CIW:
+
+       xschem bind key t ctrl canvas edit.cycle_pin_type
+       xschem bind wheel up alt canvas edit.cycle_pin_type   ;# Alt+wheel-up cycles
+       xschem unbind button 2 ctrl canvas                    ;# drop the default MMB chord
+
+   Usage: `xschem bind <wheel|button|key> <code> <mods> <ctx> <action_id> [idle]`.
+
+3. **Bind the raw verb** anywhere Tk reaches: the core is plain
+   `xschem set_pin_type -cycle` (selection-based), and `addpin::cycle_type` is the full
+   gesture (adds the pin-under-pointer pick when nothing is selected). A custom menu
+   button, toolbar hook, or direct `bind .drw <Key-F9> {addpin::cycle_type}` all work —
+   but prefer routes 1/2: registry-bound chords appear in the generated keyboard
+   cheat-sheet and are action-logged.
+
+---
+
 ## Q29. With the action-log / CIW coverage work in progress, what will a user actually *notice* differently when using the tool right now?
 
 - **Asked:** 2026-07-14

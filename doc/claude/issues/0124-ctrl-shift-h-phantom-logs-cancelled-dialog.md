@@ -1,6 +1,6 @@
 # 0124 — Ctrl+Shift+H phantom-logs a cancelled make_sch_from_sel dialog
 
-**Status: FIXED** (2026-07-18, bug-fix batch item 3; commit on `fluid-editing`). What changed:
+**Status: FIXED** (2026-07-18, bug-fix batch item 3; commit e6419588 on `fluid-editing`). What changed:
 `src/actions.csv:124` gained the 11th field `nolog=1` (startup loop then calls
 `xschem set_action_nolog` for the id, so `d->log_cmd` stays NULL and dispatch's Layer-A
 fallback is permanently silent for this action); stale comment above the core self-log in
