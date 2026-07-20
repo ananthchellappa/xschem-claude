@@ -151,6 +151,12 @@ source [file join $_ut select_same_cell.tcl]
 # Toggle selected ports <-> wire-labels (Ctrl+Shift+T). The bind lives inside
 # this file; see its header for why it is a Tk bind and not a keybindings.csv row.
 source [file join $_ut toggle_pins_netlabels.tcl]
+# Find Navigator form (Ctrl+Shift+G). The Tk bind lives inside the util file; see
+# its header for why it is a .drw bind and not a keybindings.csv row.
+source [file join $_ut find_helper.tcl]
+# Instance Update form (Ctrl+Shift+I). The Tk bind lives inside the util file; see
+# its header for why it is a .drw bind and not a keybindings.csv row.
+source [file join $_ut instance_update.tcl]
 # moved unset _ut
 
 # Ctrl-Alt-S : locate a cell in the Library Manager. Acts on the selected instance's

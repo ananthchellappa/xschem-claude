@@ -36,7 +36,9 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                  "headless/test_sch_add_pin" \
                  "headless/test_add_wire_label" \
                  "headless/test_crossview_paste" \
-                 "headless/test_pin_type_edit"]
+                 "headless/test_pin_type_edit" \
+                 "headless/test_find_helper" \
+                 "headless/test_instance_update"]
 set log_fn "results.log"
 
 proc summarize_all {fn fd} {
