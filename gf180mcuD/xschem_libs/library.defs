@@ -1,0 +1,15 @@
+# gf180mcuD workarea library registry (Cadence cds.lib style).
+# Paths are relative to this file's directory (gf180mcuD/xschem_libs).
+#
+# General libs are NOT duplicated: they point at the repo's already-migrated
+# newsym tree (../../xschem_libs_newsym) so there is one copy in the repo. The
+# two PDK libs (gf180mcu_pr, gf180mcu_tests) are local to this workarea, built
+# by tools/migrate/xschem_libmigrate.py from the open_pdks gf180mcuD xschem tree.
+DEFINE devices ../../xschem_libs_newsym/devices
+DEFINE analyses ../../xschem_libs_newsym/analyses
+DEFINE examples ../../xschem_libs_newsym/examples
+DEFINE ngspice ../../xschem_libs_newsym/ngspice
+DEFINE ngspice_verilog_cosim ../../xschem_libs_newsym/ngspice_verilog_cosim
+DEFINE xschem_simulator ../../xschem_libs_newsym/xschem_simulator
+DEFINE gf180mcu_pr gf180mcu_pr
+DEFINE gf180mcu_tests gf180mcu_tests
