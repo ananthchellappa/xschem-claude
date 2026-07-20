@@ -26,7 +26,8 @@ crosshair, `cadence_compat`, connected stretch/move, and the custom forms
 | `sky130_tests`    | 81  | example testbenches (symbol + schematic views) |
 | `mips_cpu`        | 12  | MIPS CPU verilog-port example |
 | `stdcells`        | 76  | process-agnostic digital draft (used by a couple of tests) |
-| `devices`         | —   | the standard xschem device lib — referenced from `../xschem_libs_newsym/devices` (not duplicated) |
+| `devices`         | —   | standard xschem device lib — referenced from `../xschem_libs_newsym/devices` (not duplicated) |
+| `analyses`, `examples`, `ngspice`, `ngspice_verilog_cosim`, `xschem_simulator` | — | the repo's migrated general-purpose libraries — referenced from `../xschem_libs_newsym/<lib>` (not duplicated) |
 
 All cross-references are lib-qualified (`C {sky130_fd_pr/nfet_01v8}`, `C {devices/vsource}`),
 resolved through `xschem_libs/library.defs` (registry-only mode).
@@ -58,5 +59,106 @@ top-level schematic and pick the corner (`tt`/`ss`/`ff`/…).
 3. Put `.tran`/`.dc`/`.op`/`.control` in a `devices/simulator_commands_shown` symbol.
 4. Netlist (SPICE) → `netlist_dir`; simulate with ngspice.
 
-Regenerate the libraries from the PDK with `tools/migrate/xschem_libmigrate.py` — see
-`doc/claude/specs/sky130_workarea.md`.
+## Validation
+
+All green (registry + migration re-verified 2026-07-20; op-point from the build session):
+
+- **Registry** — headless `library_list` lists exactly the 11 intended libs; `devices` + the 5
+  general libs resolve to `xschem_libs_newsym/<lib>` (outside `sky130A/`, not duplicated); cells
+  resolve to real `<lib>/<cell>/{symbol,schematic}/<cell>.<ext>` files.
+- **Migration** — replaying the recipe below (steps 1–2) reproduces the 5 shipped library trees
+  **byte-identical** (`diff -rq` clean for `sky130_fd_pr`, `sky130_stdcells`, `sky130_tests`,
+  `mips_cpu`, `stdcells`).
+- **Models** — `corner.sym` emits `.lib $::SKYWATER_MODELS/sky130.lib.spice tt`; the vendored
+  `combined` + `libs.ref` mirror resolves the mixed-depth relative `.include`s. `test_nmos`
+  (a 10-transistor nfet family: `nfet_01v8`/`_lvt`/`_03v3_nvt`/`_05v0_nvt`/`g5v0d10v5`/`g5v0d16v0`/…)
+  netlists through the registry and ngspice runs the DC sweep clean (3610 rows, only benign model
+  warnings).
+- **Simulation** — the build session measured a migrated `nfet_01v8` operating point of
+  **Id ≈ 409.7 µA**, matching the system open_pdks PDK; 4 real testbenches netlist with 0 unresolved
+  symbols.
+- **Regression smoke** — `tests/headless/test_sky130a_libmgr.tcl` (18 checks) is registered in
+  `tests/run_regression.tcl` and sabotage-verified. Run it alone:
+  ```sh
+  ./src/xschem --nogui --pipe -q --nolog --script tests/headless/test_sky130a_libmgr.tcl
+  # prints "OVERALL: ok"
+  ```
+
+## Building from original source
+
+How to reproduce this workarea from a fresh open_pdks sky130 install, **without** Claude Code — just
+the repo's migration scripts + shell. Design + full rationale:
+`doc/claude/specs/sky130_workarea.md`. The two Python tools are stdlib-only (Python 3),
+non-destructive (they never touch the source PDK), and idempotent.
+
+Unlike the gf180mcuD sibling, the sky130 PDK's xschem files already reference cells in **lib-qualified**
+form (`C {sky130_fd_pr/nfet_01v8}`, `C {devices/vsource}`) whose prefixes match the library names — so
+there is **no staging / prefix-normalization step**; the migrate tool rewrites them in place. The
+catch here is instead the **models**: `combined`'s corner files `.include` device models from
+`libs.ref/sky130_fd_pr/spice/` via mixed-depth relative paths (`../../../libs.ref` from
+`combined/corners/`), so the vendored `models/` must mirror **both** `libs.tech/combined` and
+`libs.ref/sky130_fd_pr/spice` for those relative includes to resolve.
+
+Run from the repo root. `$PDK_ROOT` is the dir that **directly contains** `sky130A/` (locate with
+`find <install> -type d -name sky130A`):
+
+```sh
+SKY=$PDK_ROOT/sky130A/libs.tech/xschem          # sky130_fd_pr, sky130_stdcells, sky130_tests, mips_cpu, stdcells
+DST=sky130A/xschem_libs
+
+# 1. Flat -> lib/cell/view + lib-qualified reference rewrite (5 PDK libs).
+#    'devices' is INDEX-ONLY: its FLAT repo copy (xschem_library/devices) is passed purely so the tool
+#    can enumerate device cells and rewrite `devices/foo.sym` -> `devices/foo`; the emitted devices/
+#    dir is discarded in step 3 (the registry points at the repo's newsym copy instead). The --lib
+#    ORDER is the reference search order for any bare refs.
+python3 tools/migrate/xschem_libmigrate.py --dst "$DST" \
+  --lib devices=xschem_library/devices \
+  --lib sky130_fd_pr="$SKY/sky130_fd_pr" \
+  --lib sky130_stdcells="$SKY/sky130_stdcells" \
+  --lib sky130_tests="$SKY/sky130_tests" \
+  --lib mips_cpu="$SKY/mips_cpu" \
+  --lib stdcells="$SKY/stdcells"
+
+# 2. Cadence-style pin-owned name text (netlist-invariant, idempotent) over the whole tree.
+python3 tools/migrate/migrate_pin_names.py -r --no-backup "$DST"
+
+# 3. Drop the index-only devices dir; write the curated registry (general libs -> newsym).
+rm -rf "$DST/devices"
+cat > "$DST/library.defs" <<'DEFS'
+DEFINE devices ../../xschem_libs_newsym/devices
+DEFINE analyses ../../xschem_libs_newsym/analyses
+DEFINE examples ../../xschem_libs_newsym/examples
+DEFINE ngspice ../../xschem_libs_newsym/ngspice
+DEFINE ngspice_verilog_cosim ../../xschem_libs_newsym/ngspice_verilog_cosim
+DEFINE xschem_simulator ../../xschem_libs_newsym/xschem_simulator
+DEFINE sky130_fd_pr sky130_fd_pr
+DEFINE sky130_stdcells sky130_stdcells
+DEFINE sky130_tests sky130_tests
+DEFINE mips_cpu mips_cpu
+DEFINE stdcells stdcells
+DEFS
+
+# 4. Vendor the models. Mirror BOTH trees under models/ so the mixed-depth relative includes resolve.
+#    SKYWATER_MODELS then points at models/libs.tech/combined (set by cadence_style_rc).
+mkdir -p sky130A/models/libs.tech sky130A/models/libs.ref/sky130_fd_pr
+cp -a "$PDK_ROOT/sky130A/libs.tech/combined"           sky130A/models/libs.tech/
+cp -a "$PDK_ROOT/sky130A/libs.ref/sky130_fd_pr/spice"  sky130A/models/libs.ref/sky130_fd_pr/
+```
+
+Step 4's `cp -a` of the whole `libs.ref/sky130_fd_pr/spice` is the **robust** path (~48 MB, correct by
+construction — every corner's includes are present). The shipped `models/` is trimmed to the **tt
+corner's ~128-file include closure** (~4.7 MB): only the `libs.ref` files transitively pulled by the
+`tt` `.lib` section are kept. Reproducing that exact minimal set needs a SPICE `.lib`-section-aware
+transitive walk (a naive `.include` follow under-collects the `.lib`-scoped cap models), so if you want
+the small tree, start from copy-whole and prune to the files the tt corner reaches, or copy the shipped
+`models/` as-is.
+
+`cadence_style_rc`, `sky130_procs.tcl`, `run.sh` and this `README.md` are hand-written (not generated).
+
+> The general libs point at `../../xschem_libs_newsym/<lib>` (repo-relative), so this workarea must stay
+> **inside** the repo. To make it fully standalone, migrate those libs into `xschem_libs/` too and change
+> the `DEFINE`s to local paths.
+
+Regeneration note: the migrate tools are idempotent, so re-running steps 1–2 over an existing tree is
+safe. See `doc/claude/specs/sky130_workarea.md` for tool internals and the gf180mcuD sibling
+(`../gf180mcuD/README.md`) for the simpler symbol-only variant.
