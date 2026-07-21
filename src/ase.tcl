@@ -16,9 +16,9 @@
 # so a load→save round trip of any state_save-produced file is byte-stable.
 #
 # Backend seam: ase::backends maps simulator name -> hook dict
-# {render_deck run_cmd log_file result_probe} (proc names). v1 registers
-# `ngspice` only; the only ngspice literals outside the ase::backend::ngspice
-# namespace are the state_default schema defaults.
+# {render_deck run_cmd log_file result_probe raw_file} (proc names). v1
+# registers `ngspice` only; the only ngspice literals outside the
+# ase::backend::ngspice namespace are the state_default schema defaults.
 
 namespace eval ase {
   # canonical state-file key order (the spec's v1 schema + the UI v2
@@ -183,10 +183,10 @@ proc ase::state_save {path state} {
 # --- Backend registry -------------------------------------------------------
 
 # Register simulator `name` with a hooks dict providing proc names for all of
-# render_deck, run_cmd, log_file, result_probe.
+# render_deck, run_cmd, log_file, result_probe, raw_file.
 proc ase::register_backend {name hooks} {
   variable backends
-  foreach h {render_deck run_cmd log_file result_probe} {
+  foreach h {render_deck run_cmd log_file result_probe raw_file} {
     if {![dict exists $hooks $h]} {
       return -code error "ase: backend '$name' missing hook '$h'"
     }
@@ -662,6 +662,22 @@ namespace eval ase::backend::ngspice {
         lappend lines "print [dict get $o expr]"
       }
     }
+    # waveform-viewer raw artifact (item 11 D3): with a .control block,
+    # ngspice's `-b -r <file>` is DEAD (probe-verified: no raw file written),
+    # so emit an explicit `write <raw_file path>` of the CURRENT (= last
+    # analysis) plot — only when >= 1 analysis is enabled (a plot-less
+    # `write` would error). `remzerovec` first: `.options savecurrents`
+    # leaves zero-length @m...[ib]-class vectors in the plot and ngspice's
+    # write then aborts SILENTLY (probe-verified, ngspice-42) — remzerovec
+    # prunes them and is harmless when there are none.
+    set n_enabled 0
+    foreach a [ase::state_get $state analyses] {
+      if {[ase::state_get $a enabled 0] eq {1}} { incr n_enabled }
+    }
+    if {$n_enabled > 0} {
+      lappend lines "remzerovec"
+      lappend lines "write [raw_file $state]"
+    }
     lappend lines ".endc"
     lappend lines ".end"
     return "[join $lines "\n"]\n"
@@ -680,6 +696,17 @@ namespace eval ase::backend::ngspice {
     }
     set cell [dict get $state design cell]
     return [file join [ase::rundir $state] ${cell}_ase.log]
+  }
+
+  # <rundir>/<cell>_ase.raw — the raw-file artifact the waveform viewer feeds
+  # from (item 11 D3, log_file mirror). render_deck emits an in-.control
+  # `write` of this path whenever >= 1 analysis is enabled.
+  proc raw_file {state} {
+    if {![dict exists $state design cell]} {
+      return -code error "ase: state design has no cell (raw_file)"
+    }
+    set cell [dict get $state design cell]
+    return [file join [ase::rundir $state] ${cell}_ase.raw]
   }
 
   # Parse `<expr> = <float>` lines out of the log text (e.g.
@@ -711,5 +738,6 @@ namespace eval ase::backend::ngspice {
     render_deck  ::ase::backend::ngspice::render_deck \
     run_cmd      ::ase::backend::ngspice::run_cmd \
     log_file     ::ase::backend::ngspice::log_file \
-    result_probe ::ase::backend::ngspice::result_probe]
+    result_probe ::ase::backend::ngspice::result_probe \
+    raw_file     ::ase::backend::ngspice::raw_file]
 }

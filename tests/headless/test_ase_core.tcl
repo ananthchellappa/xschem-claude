@@ -158,7 +158,11 @@ V2 G GND 1.8
 .GLOBAL GND
 .end
 }
-set expected_deck {** sch_path: /fixture/nfet_clean.sch
+# the raw-artifact write line (item 11 D3): rundir {} -> the netlist_dir
+# default, resolved through the SAME ase::rundir call render_deck's raw_file
+# hook uses, so the golden stays deterministic on every machine
+set d1_raw [file join [ase::rundir [nfet_state /models/sky130.lib.spice {}]] nfet_clean_ase.raw]
+set expected_deck [string map [list @RAWFILE@ $d1_raw] {** sch_path: /fixture/nfet_clean.sch
 **.subckt nfet_clean
 XM1 D G GND GND sky130_fd_pr__nfet_01v8 L=0.15 W=1 nf=1 ad=0.29 as=0.29 pd=2.58 ps=2.58 nrd=0.29 nrs=0.29 sa=0 sb=0 sd=0 mult=1
 V1 D GND 1
@@ -174,9 +178,11 @@ V2 G GND 1.8
 .control
 op
 print -i(v1)
+remzerovec
+write @RAWFILE@
 .endc
 .end
-}
+}]
 set render [ase::backend_hook ngspice render_deck]
 set deck [$render [nfet_state /models/sky130.lib.spice {}] $netlist_text]
 check_true "D1 golden deck for the nfet state" [string equal $deck $expected_deck]
@@ -347,7 +353,8 @@ ase::register_backend fakesim [dict create \
   render_deck  [ase::backend_hook ngspice render_deck] \
   run_cmd      ase_test_fake_run_cmd \
   log_file     [ase::backend_hook ngspice log_file] \
-  result_probe [ase::backend_hook ngspice result_probe]]
+  result_probe [ase::backend_hook ngspice result_probe] \
+  raw_file     [ase::backend_hook ngspice raw_file]]
 set st [nfet_state $models $rundir]
 dict set st simulator fakesim
 set caught [catch {ase::run $st} err]
