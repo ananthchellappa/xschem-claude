@@ -676,15 +676,30 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     }
     check "W4 window list has the design schematic" $found 1
     # the WSLg-safe raise is a withdraw/deiconify RE-MAP — the design window
-    # can take ~2s to reappear in wm stackorder, hence the long retry loop
-    set raised 0
-    for {set i 0} {$i < 100} {incr i} {
-      update
-      set so [wm stackorder .]
-      set di [lsearch -exact $so $dtop]
-      set ai [lsearch -exact $so $top]
-      if {$di >= 0 && $ai >= 0 && $di > $ai} { set raised 1; break }
-      after 50
+    # can take ~2s to reappear in wm stackorder, hence the long retry loop.
+    # WSLg occasionally DROPS a re-map outright (fixer round 1: 1/5 pristine
+    # runs stalled here forever): after a stalled wait, re-invoke the SAME
+    # product entry point — Design Window's already-open arm funnels through
+    # the identical raise_design_editor/raise_activate_toplevel path as the
+    # fresh-open arm just exercised, so a product regression that never
+    # raises still fails every attempt; only a compositor-dropped re-map is
+    # given another chance.
+    proc w4_wait_raised {dtop top} {
+      for {set i 0} {$i < 100} {incr i} {
+        update
+        set so [wm stackorder .]
+        set di [lsearch -exact $so $dtop]
+        set ai [lsearch -exact $so $top]
+        if {$di >= 0 && $ai >= 0 && $di > $ai} { return 1 }
+        after 50
+      }
+      return 0
+    }
+    set raised [w4_wait_raised $dtop $top]
+    for {set nudge 1} {!$raised && $nudge <= 2} {incr nudge} {
+      puts "  W4 raise stalled (WSLg re-map drop) — re-invoking Design Window (nudge $nudge)"
+      $top.mb.session invoke {Design Window}
+      set raised [w4_wait_raised $dtop $top]
     }
     check "W4 design toplevel raised above the ASE window" $raised 1
 
@@ -767,14 +782,31 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
         [string match "*HAND_EDIT_SENTINEL*" $d2]
 
       # W6c: Ctrl-W (FULL Tk key sequence) closes the log window; Simulation >
-      # Log reopens it on the current log file
+      # Log reopens it on the current log file.
+      # WSLg gotcha (fixer round 1): Tk redirects GENERATED KeyPress events to
+      # the display's focus window, and under WSLg the X focus round-trip is
+      # asynchronous — a lone `focus -force; event generate` intermittently
+      # delivered the Ctrl-W to the previously-focused widget, so the
+      # product's <Control-w> binding never fired (3/5 pristine runs failed
+      # here). Gate the generate on Tk actually REPORTING the log text as the
+      # focus owner, and retry the sequence. The destroy itself must still
+      # come from the product's binding on the log toplevel — this loop only
+      # makes sure the key event REACHES it.
       check_true "W6c log toplevel open before Ctrl-W" [winfo exists $top.logwin]
-      focus -force $top.logwin.t
-      update
-      event generate $top.logwin.t <Control-w>
-      update
-      check_true "W6c Ctrl-W destroyed the log window" \
-        [expr {![winfo exists $top.logwin]}]
+      set gone 0
+      for {set i 0} {$i < 200} {incr i} {
+        if {![winfo exists $top.logwin]} { set gone 1; break }
+        focus -force $top.logwin.t
+        update
+        if {![winfo exists $top.logwin]} { set gone 1; break }
+        if {[focus -displayof $top.logwin.t] eq "$top.logwin.t"} {
+          event generate $top.logwin.t <Control-w>
+          update
+          if {![winfo exists $top.logwin]} { set gone 1; break }
+        }
+        after 50
+      }
+      check "W6c Ctrl-W destroyed the log window" $gone 1
       $top.mb.sim invoke Log
       update
       check_true "W6c Simulation > Log reopened the window" \
