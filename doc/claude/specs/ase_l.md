@@ -268,7 +268,9 @@ step/stop; AC: points/start/stop) + an Options button for nuanced options.
 ### Dialog style
 All dialogs follow references/copy_current_cell_dialog.tcl idioms: named
 fonts, ttk::combobox with type-to-filter where a library/cell list appears,
-Return = proceed, per-window state arrays cleaned on destroy.
+Return = proceed, per-window state arrays cleaned on destroy. Every dialog
+dismisses on ESC through the same cancel path as its Cancel button; the ASE
+main window and the log window are exempt (2026-07-21, item 10).
 
 ## UI sketch v1 (single toplevel per session, Tk) — SUPERSEDED, kept for history
 

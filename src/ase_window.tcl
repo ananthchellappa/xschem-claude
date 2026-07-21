@@ -820,6 +820,23 @@ proc ase::ui::temp_commit {key} {
 # catch-destroy reuse, Return on every entry = proceed, per-window records
 # (edrow/edchk) cleaned on proceed/cancel AND in ase::ui::close. MODELESS —
 # no grab/tkwait — which is what keeps them test-drivable.
+# ESC = Cancel (item 10 esc-dismiss): every dialog toplevel binds <Key-Escape>
+# to its OWN cancel path via bind_dialog_esc — wired centrally in
+# dialog_buttons, so every dialog_frame+dialog_buttons dialog (including
+# FUTURE ones) gets ESC by construction; the non-scaffold dialogs (confirm,
+# chana_options, listdlg_open, load_state_dialog) call it explicitly at
+# creation. The ASE session window and the log window stay ESC-unbound by
+# design (no accidental session close; Ctrl-W owns the log window).
+
+# ESC dismisses the dialog through the SAME command as its Cancel/Close
+# button — never a bare destroy that would leak the per-window records
+# (edrow/edchk/dlg). Bound on the dialog TOPLEVEL: a child widget's bindtags
+# include its nearest toplevel, so ESC pressed inside any entry bubbles here
+# (Tk's Entry class Escape binding is a no-op and does not stop propagation).
+# No `break`: `bind all <Key-Escape>` is empty in this app.
+proc ase::ui::bind_dialog_esc {w cancelcmd} {
+  bind $w <Key-Escape> $cancelcmd
+}
 
 # Shared scaffold: (re)create a modeless dialog toplevel; everything is
 # GRIDDED into $w directly so the entries live at the deterministic paths
@@ -847,6 +864,8 @@ proc ase::ui::dialog_buttons {w row okcmd cancelcmd} {
   pack $w.btns.proceed -side left -padx 5
   pack $w.btns.cancel -side right -padx 5
   grid $w.btns -row $row -column 0 -columnspan 2 -sticky we -padx 8 -pady 6
+  # item 10: every scaffold dialog dismisses on ESC through its cancel path
+  ase::ui::bind_dialog_esc $w $cancelcmd
 }
 
 # `=` / Variables context Add… / Variables > Edit… fallback: the Add Variable
@@ -1320,6 +1339,8 @@ proc ase::ui::confirm {key title msg oncmd} {
   pack $w.btns.cancel -side right -padx 5
   pack $w.btns -side bottom -fill x -padx 8 -pady 6
   bind $w <Return> [list ase::ui::confirm_ok $w $oncmd]
+  # item 10: ESC = the Cancel destroy — oncmd must NOT run
+  ase::ui::bind_dialog_esc $w [list destroy $w]
   ase::ui::apply_theme $w
   focus $w.btns.proceed
   return $w
@@ -1506,7 +1527,7 @@ proc ase::ui::chana_options {key} {
     -side left -padx 2
   frame $w.btns
   button $w.btns.proceed -text OK -command [list ase::ui::chana_x_ok $key]
-  button $w.btns.cancel -text Cancel -command [list destroy $w]
+  button $w.btns.cancel -text Cancel -command [list ase::ui::chana_x_cancel $key]
   pack $w.btns.proceed -side left -padx 5
   pack $w.btns.cancel -side right -padx 5
   pack $w.btns -side bottom -fill x -padx 8 -pady 6
@@ -1514,6 +1535,9 @@ proc ase::ui::chana_options {key} {
   pack $w.tv -side top -fill both -expand 1 -padx 8 -pady {8 2}
   bind $w.row.name  <Return> [list ase::ui::chana_x_add $key]
   bind $w.row.value <Return> [list ase::ui::chana_x_add $key]
+  # item 10: ESC on the SUBDIALOG only — a nested toplevel's bindtags never
+  # reach the parent dialog, so .chana's own ESC cannot fire from here
+  ase::ui::bind_dialog_esc $w [list ase::ui::chana_x_cancel $key]
   ase::ui::chana_x_fill $key
   ase::ui::apply_theme $w
   focus $w.row.name
@@ -1557,6 +1581,20 @@ proc ase::ui::chana_x_del {key} {
     set dlg($key,anextra) [dict remove $dlg($key,anextra) $id]
   }
   ase::ui::chana_x_fill $key
+}
+
+# ESC / the Cancel button of the Options subdialog (item 10): discard the
+# edited extra-key set. The bare-destroy Cancel it replaces left
+# dlg($key,anextra) lingering until the PARENT Choose Analyses closed —
+# exactly the record-leak class ESC-dismiss forbids. Dropping it loses
+# nothing: chana_options re-derives anextra from the state row on every open
+# (chana_cancel and ase::ui::close stay as backstops).
+proc ase::ui::chana_x_cancel {key} {
+  variable wins; variable dlg
+  array unset dlg $key,anextra
+  if {[dict exists $wins $key]} {
+    catch {destroy [dict get $wins $key].chana.x}
+  }
 }
 
 proc ase::ui::chana_x_ok {key} {
@@ -1753,6 +1791,9 @@ proc ase::ui::listdlg_open {key which title} {
     -command [list ase::ui::listdlg_delete $key $which]
   bind $w.tv <Button-3> [list ase::ui::listdlg_ctx $key $which %X %Y]
   bind $w.tv <Delete> [list ase::ui::listdlg_delete $key $which]
+  # item 10: ESC = the Close button (the list dialog keeps no records —
+  # every mutation commits immediately, D15)
+  ase::ui::bind_dialog_esc $w [list destroy $w]
   ase::ui::listdlg_fill $key $which
   ase::ui::apply_theme $w
   return $w
@@ -1995,6 +2036,8 @@ proc ase::ui::load_state_dialog {key} {
   pack $w.pw -side top -fill both -expand 1
   bind $w.pw.lib.lb  <<ListboxSelect>> [list ase::ui::loadst_on_lib $key]
   bind $w.pw.cell.lb <<ListboxSelect>> [list ase::ui::loadst_on_cell $key]
+  # item 10: ESC = the Cancel button (the browser keeps no records)
+  ase::ui::bind_dialog_esc $w [list destroy $w]
   foreach n [lsort [libmgr::lib_names]] { $w.pw.lib.lb insert end $n }
   ase::ui::apply_theme $w
   return $w

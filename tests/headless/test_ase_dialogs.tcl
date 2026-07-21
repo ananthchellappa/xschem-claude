@@ -19,6 +19,16 @@
 #          same-target confirm gate; Load State browser (state-view filter,
 #          import + dirty, dirty-prompt-first); --> strip = Add Output;
 #          no todo_stub left on any rewired item-07 entry.
+#   GE1-16 item-10 esc-dismiss legs: EVERY ASE-L dialog dismisses on a real
+#          generated <Key-Escape> through its CANCEL path — dialog destroyed,
+#          per-window records (edrow/edchk/dlg) cleaned, ZERO state mutation
+#          (serialize snapshot unchanged); ESC from inside an entry bubbles
+#          to the dialog toplevel (GE2); the .chana.x subdialog dismisses
+#          without killing its parent and cleans dlg(anextra) (GE5); the
+#          confirm's ESC never runs oncmd (GE13); the ASE main window (GE14,
+#          witness-proven delivery) and the log window (GE15) stay
+#          ESC-unbound; the item-08 Select-On-Design canvas ESC still ends
+#          the mode with the seized binding restored verbatim (GE16).
 #
 # Runs via full_audit's DEFAULT arm. Standalone repro from the repo ROOT:
 #   ./src/xschem --pipe -q --nolog --script tests/headless/test_ase_dialogs.tcl
@@ -88,20 +98,21 @@ proc tv_cell_click {tv item col {dx 0}} {
   return 1
 }
 
-# deliver a REAL <Return> to $w, WSLg-robustly. The W6c diagnosis, extended
-# to EVERY generated-<Return> site (fixer round 2): Tk redirects GENERATED
-# KeyPress events to the display's focus window, and under WSLg the X focus
-# round-trip is asynchronous — an ungated `focus -force; update;
-# event generate ... <Return>` intermittently lands the key on the
-# previously-focused widget, so the product binding under test silently never
-# fires (run 4: the W3 editor's Return was lost, cascading into 5 FAILs; a
-# lost W3t restore-to-27 left .temp 33 in the W6 deck). Gate every generate
-# on Tk actually REPORTING $w as the focus owner, and retry the whole
-# sequence until $done — an expr string evaluated in the CALLER's scope that
-# proves the product binding really ran (dialog destroyed / state key
+# deliver a REAL generated key event $ev to $w, WSLg-robustly. The W6c
+# diagnosis, extended to EVERY generated-key site (item-06 fixer round 2,
+# generalized from <Return>-only to any key for the item-10 ESC legs): Tk
+# redirects GENERATED KeyPress events to the display's focus window, and
+# under WSLg the X focus round-trip is asynchronous — an ungated
+# `focus -force; update; event generate ...` intermittently lands the key on
+# the previously-focused widget, so the product binding under test silently
+# never fires (run 4: the W3 editor's Return was lost, cascading into 5
+# FAILs; a lost W3t restore-to-27 left .temp 33 in the W6 deck). Gate every
+# generate on Tk actually REPORTING $w as the focus owner, and retry the
+# whole sequence until $done — an expr string evaluated in the CALLER's scope
+# that proves the product binding really ran (dialog destroyed / state key
 # changed / entry restored) — turns true. Returns 1 on proven delivery, 0 on
 # timeout (~10s); the caller's own checks then report the real failure.
-proc send_return {w done} {
+proc send_key {w ev done} {
   for {set i 0} {$i < 200} {incr i} {
     update
     if {[uplevel 1 [list expr $done]]} { return 1 }
@@ -110,15 +121,20 @@ proc send_return {w done} {
       update
       if {[uplevel 1 [list expr $done]]} { return 1 }
       if {[winfo exists $w] && [focus -displayof $w] eq $w} {
-        event generate $w <Return>
+        event generate $w $ev
         update
         if {[uplevel 1 [list expr $done]]} { return 1 }
       }
     }
     after 50
   }
-  puts "  send_return: delivery to $w never confirmed (WSLg focus stall)"
+  puts "  send_key: $ev delivery to $w never confirmed (WSLg focus stall)"
   return 0
+}
+
+# the original 2-arg helper the pre-item-10 legs call (same contract)
+proc send_return {w done} {
+  return [uplevel 1 [list send_key $w <Return> $done]]
 }
 
 # --- local helper (extends the copied pair) ----------------------------------
@@ -581,6 +597,256 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     }
   }
   check "G11 no item-07 todo stubs remain" $stub_hits {}
+
+  # ===========================================================================
+  # GE: item 10 esc-dismiss — every dialog dismisses on ESC through its
+  # CANCEL path. Per leg: serialize-snapshot the session state, open the
+  # dialog through a REAL entry point, optionally perturb a field, deliver a
+  # focus-gated <Key-Escape> (send_key), then assert: dialog destroyed,
+  # per-window records cleaned (info exists = 0), state byte-identical to the
+  # snapshot. Each leg keeps its snapshot local so the legs stay
+  # mutation-free by construction.
+  # ===========================================================================
+
+  # GE1: Add Variable (= strip button; no per-window records)
+  set snap [ase::state_serialize [ase::session_state $key]]
+  $top.strip.var invoke
+  update
+  check_true "GE1 Add Variable dialog up" [winfo exists $top.addvar]
+  $top.addvar.name insert 0 geVar
+  send_key $top.addvar <Key-Escape> {![winfo exists $top.addvar]}
+  check_true "GE1 ESC dismisses Add Variable" \
+    [expr {![winfo exists $top.addvar]}]
+  check "GE1 state unchanged" \
+    [ase::state_serialize [ase::session_state $key]] $snap
+
+  # GE2: Edit Variable — ESC is sent TO THE ENTRY (the bubbling proof: the
+  # entry's bindtags include the dialog toplevel, whose ESC binding fires)
+  set snap [ase::state_serialize [ase::session_state $key]]
+  ase::ui::variable_editor $key 0
+  update
+  check_true "GE2 Edit Variable dialog up" [winfo exists $top.edvar]
+  $top.edvar.value delete 0 end
+  $top.edvar.value insert 0 9.99
+  send_key $top.edvar.value <Key-Escape> {![winfo exists $top.edvar]}
+  check_true "GE2 ESC from inside an entry dismisses the editor" \
+    [expr {![winfo exists $top.edvar]}]
+  check "GE2 edrow record cleaned" [info exists ::ase::ui::edrow($key,var)] 0
+  check "GE2 state unchanged" \
+    [ase::state_serialize [ase::session_state $key]] $snap
+
+  # GE3: Add Output (--> strip button)
+  set snap [ase::state_serialize [ase::session_state $key]]
+  $top.strip.out invoke
+  update
+  check_true "GE3 Add Output dialog up" [winfo exists $top.edout]
+  $top.edout.expr insert 0 v(d)
+  send_key $top.edout <Key-Escape> {![winfo exists $top.edout]}
+  check_true "GE3 ESC dismisses Add Output" \
+    [expr {![winfo exists $top.edout]}]
+  check "GE3 edrow/edchk records cleaned" \
+    [list [info exists ::ase::ui::edrow($key,out)] \
+          [info exists ::ase::ui::edchk($key,plot)] \
+          [info exists ::ase::ui::edchk($key,save)]] {0 0 0}
+  check "GE3 state unchanged" \
+    [ase::state_serialize [ase::session_state $key]] $snap
+
+  # GE4: Choose Analyses (OP,TR strip; perturb by picking the tran radio)
+  set snap [ase::state_serialize [ase::session_state $key]]
+  $top.strip.ana invoke
+  update
+  check_true "GE4 Choose Analyses dialog up" [winfo exists $top.chana]
+  $top.chana.types.tran invoke
+  update
+  send_key $top.chana <Key-Escape> {![winfo exists $top.chana]}
+  check_true "GE4 ESC dismisses Choose Analyses" \
+    [expr {![winfo exists $top.chana]}]
+  check "GE4 antype/anen records cleaned" \
+    [list [info exists ::ase::ui::dlg($key,antype)] \
+          [info exists ::ase::ui::dlg($key,anen)]] {0 0}
+  check "GE4 state unchanged" \
+    [ase::state_serialize [ase::session_state $key]] $snap
+
+  # GE5: the Analysis Options SUBDIALOG (.chana.x, a nested toplevel):
+  # ESC the subdialog FIRST (it dies with its Tk parent), the parent
+  # survives (nested-toplevel binding isolation), dlg(anextra) is cleaned
+  # (the chana_x_cancel fix — the old bare-destroy Cancel leaked it); then
+  # ESC dismisses the parent too.
+  set snap [ase::state_serialize [ase::session_state $key]]
+  $top.strip.ana invoke
+  update
+  $top.chana.opts invoke
+  update
+  check_true "GE5 Analysis Options subdialog up" [winfo exists $top.chana.x]
+  send_key $top.chana.x <Key-Escape> {![winfo exists $top.chana.x]}
+  check_true "GE5 ESC dismisses Analysis Options" \
+    [expr {![winfo exists $top.chana.x]}]
+  check_true "GE5 parent Choose Analyses survives" [winfo exists $top.chana]
+  check "GE5 anextra record cleaned" \
+    [info exists ::ase::ui::dlg($key,anextra)] 0
+  send_key $top.chana <Key-Escape> {![winfo exists $top.chana]}
+  check_true "GE5 ESC then dismisses Choose Analyses" \
+    [expr {![winfo exists $top.chana]}]
+  check "GE5 state unchanged" \
+    [ase::state_serialize [ase::session_state $key]] $snap
+
+  # GE6: Setup > Design
+  set snap [ase::state_serialize [ase::session_state $key]]
+  $top.mb.setup invoke "Design\u2026"
+  update
+  check_true "GE6 Setup Design dialog up" [winfo exists $top.design]
+  send_key $top.design <Key-Escape> {![winfo exists $top.design]}
+  check_true "GE6 ESC dismisses Setup Design" \
+    [expr {![winfo exists $top.design]}]
+  check "GE6 dlib/dcell/dview records cleaned" \
+    [list [info exists ::ase::ui::dlg($key,dlib)] \
+          [info exists ::ase::ui::dlg($key,dcell)] \
+          [info exists ::ase::ui::dlg($key,dview)]] {0 0 0}
+  check "GE6 state unchanged" \
+    [ase::state_serialize [ase::session_state $key]] $snap
+
+  # GE7: Model Files list dialog (no records — immediate-commit engine)
+  $top.mb.setup invoke "Model Files\u2026"
+  update
+  check_true "GE7 Model Files dialog up" [winfo exists $top.models]
+  send_key $top.models <Key-Escape> {![winfo exists $top.models]}
+  check_true "GE7 ESC dismisses Model Files" \
+    [expr {![winfo exists $top.models]}]
+
+  # GE8: Model File row editor over a reopened list dialog — ESC the row
+  # editor first (list dialog survives, dlg(models) cleaned), then ESC the
+  # list dialog
+  set snap [ase::state_serialize [ase::session_state $key]]
+  $top.mb.setup invoke "Model Files\u2026"
+  update
+  $top.models.ctx invoke "Add\u2026"
+  update
+  check_true "GE8 model row editor up" [winfo exists $top.modrow]
+  send_key $top.modrow <Key-Escape> {![winfo exists $top.modrow]}
+  check_true "GE8 ESC dismisses the row editor" \
+    [expr {![winfo exists $top.modrow]}]
+  check_true "GE8 models list dialog survives" [winfo exists $top.models]
+  check "GE8 dlg(models) record cleaned" \
+    [info exists ::ase::ui::dlg($key,models)] 0
+  send_key $top.models <Key-Escape> {![winfo exists $top.models]}
+  check_true "GE8 ESC then closes Model Files" \
+    [expr {![winfo exists $top.models]}]
+  check "GE8 state unchanged" \
+    [ase::state_serialize [ase::session_state $key]] $snap
+
+  # GE9: Simulation Options — same engine, terser (dismiss + record checks)
+  $top.mb.sim invoke "Options\u2026"
+  update
+  $top.simopt.ctx invoke "Add\u2026"
+  update
+  check_true "GE9 option row editor up" [winfo exists $top.optrow]
+  send_key $top.optrow <Key-Escape> {![winfo exists $top.optrow]}
+  check_true "GE9 ESC dismisses the option row editor" \
+    [expr {![winfo exists $top.optrow]}]
+  check "GE9 dlg(simopt) record cleaned" \
+    [info exists ::ase::ui::dlg($key,simopt)] 0
+  send_key $top.simopt <Key-Escape> {![winfo exists $top.simopt]}
+  check_true "GE9 ESC dismisses Simulation Options" \
+    [expr {![winfo exists $top.simopt]}]
+
+  # GE10: Save All — toggle a checkbox first: the toggle must NOT reach the
+  # state through ESC (save_all_i stays as G5 wrote it)
+  set snap [ase::state_serialize [ase::session_state $key]]
+  $top.mb.outputs invoke "Save All\u2026"
+  update
+  check_true "GE10 Save All dialog up" [winfo exists $top.saveall]
+  $top.saveall.alli invoke
+  send_key $top.saveall <Key-Escape> {![winfo exists $top.saveall]}
+  check_true "GE10 ESC dismisses Save All" \
+    [expr {![winfo exists $top.saveall]}]
+  check "GE10 allv/alli records cleaned" \
+    [list [info exists ::ase::ui::dlg($key,allv)] \
+          [info exists ::ase::ui::dlg($key,alli)]] {0 0}
+  check "GE10 state unchanged" \
+    [ase::state_serialize [ase::session_state $key]] $snap
+
+  # GE11: Load State browser (no records)
+  set snap [ase::state_serialize [ase::session_state $key]]
+  $top.mb.session invoke {Load State}
+  update
+  check_true "GE11 Load State browser up" [winfo exists $top.loadst]
+  send_key $top.loadst <Key-Escape> {![winfo exists $top.loadst]}
+  check_true "GE11 ESC dismisses Load State" \
+    [expr {![winfo exists $top.loadst]}]
+  check "GE11 state unchanged" \
+    [ase::state_serialize [ase::session_state $key]] $snap
+
+  # GE12: Save State (Save-As)
+  set snap [ase::state_serialize [ase::session_state $key]]
+  $top.mb.session invoke {Save State}
+  update
+  check_true "GE12 Save-As dialog up" [winfo exists $top.saveas]
+  send_key $top.saveas <Key-Escape> {![winfo exists $top.saveas]}
+  check_true "GE12 ESC dismisses Save-As" \
+    [expr {![winfo exists $top.saveas]}]
+  check "GE12 salib record cleaned" \
+    [info exists ::ase::ui::dlg($key,salib)] 0
+  check "GE12 state unchanged" \
+    [ase::state_serialize [ase::session_state $key]] $snap
+
+  # GE13: the shared confirm — ESC = Cancel, oncmd must NOT run
+  unset -nocomplain ::ge13
+  ase::ui::confirm $key {Confirm Test} {ESC must cancel, not proceed} \
+    {set ::ge13 1}
+  update
+  check_true "GE13 confirm popup up" [winfo exists $top.confirm]
+  send_key $top.confirm <Key-Escape> {![winfo exists $top.confirm]}
+  check_true "GE13 ESC dismisses the confirm" \
+    [expr {![winfo exists $top.confirm]}]
+  check "GE13 oncmd did not run" [info exists ::ge13] 0
+
+  # GE14: the ASE MAIN window stays ESC-unbound (structural), and a
+  # temporary test-side witness binding proves ESC DELIVERY to the toplevel
+  # (receipts/06: a no-op leg without a delivery witness is hollow-green);
+  # the witness is restored to the empty binding afterwards
+  check "GE14 session toplevel has no Escape binding" \
+    [bind $top <Key-Escape>] {}
+  set snap [ase::state_serialize [ase::session_state $key]]
+  unset -nocomplain ::ge14
+  bind $top <Key-Escape> {set ::ge14 1}
+  send_key $top <Key-Escape> {[info exists ::ge14]}
+  check "GE14 ESC delivery witnessed" [info exists ::ge14] 1
+  bind $top <Key-Escape> {}
+  check "GE14 witness removed (binding empty again)" \
+    [bind $top <Key-Escape>] {}
+  check_true "GE14 window survives" [winfo exists $top]
+  check "GE14 state unchanged" \
+    [ase::state_serialize [ase::session_state $key]] $snap
+
+  # GE15: the log window stays ESC-exempt (structural — its documented
+  # close is Ctrl-W, covered by test_ase_window W6c)
+  set lw [ase::ui::log_open $key]
+  update
+  check_true "GE15 log window up" \
+    [expr {$lw ne {} && [winfo exists $lw]}]
+  check "GE15 log window has no Escape binding" [bind $lw <Key-Escape>] {}
+  destroy $lw
+  update
+
+  # GE16: item-08 Select-On-Design ESC regression (D8) — the canvas-side
+  # ESC seize/restore is untouched by the dialog wiring. Self-SKIP ONLY
+  # when the mode never arms (design window unopenable — the WSLg W4-class
+  # raise stall); once armed the assertions MUST run.
+  set armed [ase::ui::select_on_design $key {save 1 plot 0}]
+  if {$armed != 1} {
+    puts "SKIPPED: GE16 sod ESC regression (select_on_design returned\
+ $armed — design window unopenable, WSLg stall)"
+  } else {
+    set cv   $::ase::ui::sod($key,canvas)
+    set prev $::ase::ui::sod($key,prevesc)
+    # the test_ase_interact I7 pattern via send_key: done = the seized
+    # Key-Escape binding reverted (restored by the product's sod_end)
+    send_key $cv <Key-Escape> {[bind $cv <Key-Escape>] eq $prev}
+    check "GE16 SOD ESC still ends the mode" \
+      [expr {[bind $cv <Key-Escape>] eq $prev ? 1 : 0}] 1
+    check "GE16 canvas Escape binding restored verbatim" \
+      [bind $cv <Key-Escape>] $prev
+  }
 
   # done: close the session window (unsaved edits are discarded by contract)
   $top.mb.session invoke Close
