@@ -1,23 +1,33 @@
-# ASE-L session window (items 03+05 of doc/claude/ase_l_batch, spec
-# doc/claude/specs/ase_l.md incl. the UI v2 "ADE-L parity rework" chrome):
+# ASE-L session window (items 03+05+06 of doc/claude/ase_l_batch, spec
+# doc/claude/specs/ase_l.md incl. the UI v2 "ADE-L parity rework"):
 #   H1-H3  session model: open/state/update/dirty/save/load/revert (headless)
 #   H4     ase::open_state contract (1 / 0, never an error; session registered)
 #   H5     `xschem allocate_window_number` C seam (monotonic, starts >= 3)
 #   H6     ase::backend_names offers ngspice
 #   T1     ase::run_existing clean error without a netlist artifact (headless)
+#   P2-P4  pure pane-cell helpers, headless (item 06): output_display_name
+#          (name / whole short expr / 21+"..." truncation), output_kind +
+#          save_options_cell (allv/alli/blank), arg_summary
 #   W1-W8  GUI legs (DISPLAY only, else a partial skip): open -> .ase<N>
 #          toplevel, v2 title `Analog Sim Environment <cell>`, NO log pane,
 #          temperature toolbar entry, themed widgets (locked palette + named
-#          fonts); W1m the v2 menu tree; re-open raises (no new number);
-#          widget edit -> dirty marker -> real-menu Save State + temperature
-#          round-trip/validation; Design Window opens AND raises the design
-#          (v1-bug regression gate); Netlist Recreate/Display via the menu;
-#          Netlist-and-Run with the live-log TOPLEVEL + status segment +
-#          `.temp` in the deck; Run (existing netlist) must NOT re-netlist
-#          (hand-edit sentinel proof); log-window Ctrl-W close + Simulation >
-#          Log reopen; Stop (status red); Close. Legs needing the MAIN window
-#          (W4-W7) self-SKIP when WSLg never maps it to a usable size; run
-#          legs self-SKIP without ngspice.
+#          fonts); W1m the v2 menu tree; W1p the three v2 treeview panes
+#          (columns, seeded rows, blank Value/Save Options, NO inline +/-);
+#          W1s the action strip; W1c the per-pane context menus; re-open
+#          raises (no new number); W3 double-click row -> variable editor
+#          dialog -> dirty -> real-menu Save State; W3t temperature
+#          round-trip/validation; W3s single-pane selection; W3c checkbox
+#          cell toggle persists; W3v Add Variable dialog round trip (dup
+#          rejected); W3x action-strip X deletes the multi-selection; W3o
+#          Save Options reacts to save_all_i; Design Window opens AND raises
+#          the design (v1-bug regression gate); Netlist Recreate/Display via
+#          the menu; Netlist-and-Run with the live-log TOPLEVEL + status
+#          segment + `.temp` in the deck + the id row's Value cell filled
+#          from the parsed results; Run (existing netlist) must NOT
+#          re-netlist (hand-edit sentinel proof); log-window Ctrl-W close +
+#          Simulation > Log reopen; Stop (status red); Close. Legs needing
+#          the MAIN window (W4-W7) self-SKIP when WSLg never maps it to a
+#          usable size; run legs self-SKIP without ngspice.
 #
 # Runs via full_audit's DEFAULT arm. Standalone repro from the repo ROOT:
 #   ./src/xschem --pipe -q --nolog --script tests/headless/test_ase_window.tcl
@@ -60,6 +70,69 @@ proc ase_toplevels {} {
     if {[string match .ase* $w] && [winfo class $w] eq {Toplevel}} { lappend out $w }
   }
   return $out
+}
+
+# every descendant widget of $w (recursive)
+proc descendants {w} {
+  set out {}
+  foreach c [winfo children $w] {
+    lappend out $c
+    foreach d [descendants $c] { lappend out $d }
+  }
+  return $out
+}
+
+# the treeview item whose $col cell equals $val, or {}
+proc tv_find {tv col val} {
+  foreach it [$tv children {}] {
+    if {[$tv set $it $col] eq $val} { return $it }
+  }
+  return {}
+}
+
+# bbox of $item (optionally a cell) with a retry loop — WSLg can be slow to
+# map the toplevel, and bbox is empty until the row is displayed
+proc tv_bbox {tv item {col {}}} {
+  for {set i 0} {$i < 100} {incr i} {
+    update
+    if {$col ne {}} { set bb [$tv bbox $item $col] } \
+    else            { set bb [$tv bbox $item] }
+    if {[llength $bb] == 4} { return $bb }
+    after 50
+  }
+  return {}
+}
+
+# real double-click replay at the center of $item's row: Tk REFUSES `event
+# generate <Double-1>`, so replay two press/release pairs — Tk's click-count
+# machinery turns the second press into the <Double-1> match (the
+# test_ase_view G1 idiom)
+proc tv_dblclick {tv item} {
+  set bb [tv_bbox $tv $item]
+  if {[llength $bb] != 4} { return 0 }
+  lassign $bb x y wdt hgt
+  set cx [expr {$x + $wdt/2}]; set cy [expr {$y + $hgt/2}]
+  foreach ev {<ButtonPress-1> <ButtonRelease-1> <ButtonPress-1> <ButtonRelease-1>} {
+    event generate $tv $ev -x $cx -y $cy
+  }
+  update
+  return 1
+}
+
+# real single click at the center of $item's $col cell (checkbox cells).
+# `dx` shifts the click point horizontally: two consecutive generated clicks
+# at the SAME spot classify as <Double-1> (generated events share the display
+# timestamp, so Tk's 500ms window never expires — only a >5px offset breaks
+# the multi-click chain).
+proc tv_cell_click {tv item col {dx 0}} {
+  set bb [tv_bbox $tv $item $col]
+  if {[llength $bb] != 4} { return 0 }
+  lassign $bb x y wdt hgt
+  set cx [expr {$x + $wdt/2 + $dx}]; set cy [expr {$y + $hgt/2}]
+  event generate $tv <ButtonPress-1> -x $cx -y $cy
+  event generate $tv <ButtonRelease-1> -x $cx -y $cy
+  update
+  return 1
 }
 
 # --- locations (cwd-independent) --------------------------------------------
@@ -210,6 +283,36 @@ check "T1 run_existing without a netlist artifact raises" $caughtT 1
 check_true "T1 error points at Netlist > Recreate" \
   [string match "*Recreate*" $errT]
 
+# --- P2: output_display_name (pure helper — Outputs Name cell) ---------------
+check "P2 output_display_name prefers the user name" \
+  [ase::ui::output_display_name {name id expr -i(v1)}] id
+check "P2 unnamed short expr shown whole" \
+  [ase::ui::output_display_name {expr v(out)}] v(out)
+set longe {v(abcdefghijklmnopqrstuvwx)}   ;# 27 chars > 24
+set dn [ase::ui::output_display_name [list expr $longe]]
+check "P2 unnamed long expr truncated to 21+..." $dn \
+  "[string range $longe 0 20]..."
+check "P2 truncated form is exactly 24 chars" [string length $dn] 24
+
+# --- P3: output_kind + save_options_cell (pure helpers — Save Options) -------
+check "P3 output_kind v(net) -> voltage" [ase::ui::output_kind {v(net)}] voltage
+check "P3 output_kind -i(v1) -> current" [ase::ui::output_kind {-i(v1)}] current
+set stx [ase::state_default]
+dict set stx save_all_v 1
+check "P3 save_options_cell voltage+save_all_v -> allv" \
+  [ase::ui::save_options_cell $stx {expr v(d)}] allv
+set stx [ase::state_default]
+dict set stx save_all_i 1
+check "P3 current+save_all_i -> alli" \
+  [ase::ui::save_options_cell $stx {name id expr -i(v1)}] alli
+check "P3 blanket off -> blank" \
+  [ase::ui::save_options_cell [ase::state_default] {expr v(d)}] {}
+
+# --- P4: arg_summary (pure helper — Analyses Arguments column) ---------------
+check "P4 arg_summary dc row" \
+  [ase::ui::arg_summary {type dc enabled 0 source V2 start 0 stop 1.8 step 0.01}] \
+  {source=V2 start=0 stop=1.8 step=0.01}
+
 # --- GUI legs (DISPLAY-guarded partial skip) ---------------------------------
 if {[info exists ::has_x] && [info commands winfo] ne {}} {
 
@@ -233,12 +336,11 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     [lsearch -exact [font names] AseEntryFont] >= 0 &&
     [lsearch -exact [font names] AseMonoFont] >= 0}]
   check "W1 pane title dark-red accent" [$top.body.vars cget -foreground] #8b0000
-  set ve [ase::ui::variable_entry $key Vgs]
-  check_true "W1 variables pane has a Vgs row" [expr {$ve ne {}}]
-  check "W1 Vgs value entry shows the seeded value" \
-    [expr {$ve ne {} ? [$ve get] : {}}] 1.8
-  check_true "W1 Vgs entry white + AseEntryFont" [expr {$ve ne {} &&
-    [$ve cget -background] eq {#ffffff} && [$ve cget -font] eq {AseEntryFont}}]
+  # the v1 inline Vgs entry is gone (v2 panes are view-only treeviews) — the
+  # Entry theme gate re-anchors to the surviving toolbar temperature entry
+  check_true "W1 temperature entry white + AseEntryFont" [expr {
+    [$top.tb.temp cget -background] eq {#ffffff} &&
+    [$top.tb.temp cget -font] eq {AseEntryFont}}]
 
   # W1m: menu tree v2 — the 9 cascades in order; Launch/Tools disabled;
   # Results entries present-but-disabled; the Simulation tree; no Revert
@@ -275,6 +377,60 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   check "W1m Session menu entries (v2, no Revert)" $sess \
     {{Design Window} {Load State} {Save State} -- Close}
 
+  # W1p: the v2 pane model — EXACTLY three treeview panes, spec columns,
+  # seeded rows, blank Value/Save Options pre-run, NO inline +/- buttons
+  check_true "W1p exactly the three v2 panes" [expr {
+    [winfo exists $top.body.vars] && [winfo exists $top.body.ana] &&
+    [winfo exists $top.body.outs] && ![winfo exists $top.body.mods] &&
+    ![winfo exists $top.body.opts] && ![winfo exists $top.body.setup]}]
+  set inline_btns {}
+  foreach w [descendants $top.body] {
+    if {[winfo class $w] eq {Button}} { lappend inline_btns $w }
+  }
+  check "W1p no inline add/del buttons under the panes" $inline_btns {}
+  check "W1p variables columns" [$top.body.vars.tv cget -columns] {name value}
+  check "W1p analyses columns" [$top.body.ana.tv cget -columns] \
+    {num type enable args}
+  check "W1p outputs columns" [$top.body.outs.tv cget -columns] \
+    {name value plot save saveopts}
+  set nums {}
+  foreach it [$top.body.ana.tv children {}] {
+    lappend nums [$top.body.ana.tv set $it num]
+  }
+  check "W1p analyses rows numbered 1..4" $nums {1 2 3 4}
+  set vgsit [tv_find $top.body.vars.tv name Vgs]
+  check_true "W1p variables pane has a Vgs row" [expr {$vgsit ne {}}]
+  check "W1p Vgs row shows 1.8" \
+    [expr {$vgsit ne {} ? [$top.body.vars.tv set $vgsit value] : {}}] 1.8
+  set idit [tv_find $top.body.outs.tv name id]
+  check_true "W1p outputs pane has the id row" [expr {$idit ne {}}]
+  check "W1p id output row Value blank pre-run" \
+    [expr {$idit ne {} ? [$top.body.outs.tv set $idit value] : {?}}] {}
+  check "W1p id Save Options blank while blankets off" \
+    [expr {$idit ne {} ? [$top.body.outs.tv set $idit saveopts] : {?}}] {}
+  check "W1p treeview themed (style Ase.Treeview)" \
+    [$top.body.vars.tv cget -style] Ase.Treeview
+  check "W1p heading strip carries the locked header color" \
+    [ttk::style configure Ase.Treeview.Heading -background] #e8e8e8
+
+  # W1s: the right vertical action strip, spec order, ~ disabled
+  set slbls {}
+  foreach b [winfo children $top.strip] { lappend slbls [$b cget -text] }
+  check "W1s strip buttons in order" $slbls {OP,TR = --> X N&> > ! ~}
+  check "W1s plot placeholder disabled" [$top.strip.plot cget -state] disabled
+
+  # W1c: per-pane context menus = exactly Add.../Edit.../Delete (entrycget,
+  # never posted)
+  foreach pane {vars ana outs} {
+    set m $top.body.$pane.ctx
+    set entries {}
+    for {set i 0} {$i <= [$m index end]} {incr i} {
+      lappend entries [$m entrycget $i -label]
+    }
+    check "W1c $pane context menu entries" $entries \
+      [list "Add\u2026" "Edit\u2026" Delete]
+  }
+
   # W2: re-open raises the SAME window, consumes NO window number
   set p1 [xschem allocate_window_number]
   check "W2 re-open returns 1" [ase::open_state aselib nfet_clean ngspice_state1] 1
@@ -285,20 +441,28 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   check "W2 no number consumed by the re-open (delta == the probe only)" \
     [expr {$p2 - $p1}] 1
 
-  # W3: edit through the widget (REAL Return commit), dirty marker, REAL menu
-  # Save State
-  set ve [ase::ui::variable_entry $key Vgs]
-  # real sequence: focus enters the entry (a click would do this), the text is
-  # replaced, Return commits. Key events are only dispatched to the focus
-  # window, so focus first (keybind-test lesson).
-  focus -force $ve
+  # W3: REAL double-click on the Vgs row (two press/release pairs — Tk
+  # refuses `event generate <Double-1>`) -> the per-row variable editor
+  # dialog; edit + Return commits; dirty marker; REAL menu Save State
+  set vtv $top.body.vars.tv
+  set vgsit [tv_find $vtv name Vgs]
+  tv_dblclick $vtv $vgsit
+  check_true "W3 double-click opens the variable editor" \
+    [winfo exists $top.edvar]
+  check "W3 editor prefilled with the row name" [$top.edvar.name get] Vgs
+  check "W3 editor prefilled with the row value" [$top.edvar.value get] 1.8
+  $top.edvar.value delete 0 end
+  $top.edvar.value insert 0 2.2
+  focus -force $top.edvar.value
   update
-  $ve delete 0 end
-  $ve insert 0 2.2
-  event generate $ve <Return>
+  event generate $top.edvar.value <Return>
   update
+  check_true "W3 editor closed on Return" [expr {![winfo exists $top.edvar]}]
   check "W3 title gained the dirty marker" [string range [wm title $top] end-1 end] { *}
   check "W3 session dirty after widget commit" [ase::session_dirty $key] 1
+  set vgsit [tv_find $vtv name Vgs]
+  check "W3 tree shows 2.2" \
+    [expr {$vgsit ne {} ? [$vtv set $vgsit value] : {}}] 2.2
   $top.mb.session invoke {Save State}
   update
   set f [open $spath r]; set sdata [read $f]; close $f
@@ -307,6 +471,21 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   check_true "W3 dirty marker gone after save" \
     [expr {[string range [wm title $top] end-1 end] ne { *}}]
   check "W3 session clean after save" [ase::session_dirty $key] 0
+  # edit BACK to 1.8 + Save: restores the fixture for the run legs (W6's
+  # Value assertion needs Vgs=1.8)
+  set vgsit [tv_find $vtv name Vgs]
+  tv_dblclick $vtv $vgsit
+  $top.edvar.value delete 0 end
+  $top.edvar.value insert 0 1.8
+  focus -force $top.edvar.value
+  update
+  event generate $top.edvar.value <Return>
+  update
+  $top.mb.session invoke {Save State}
+  update
+  check "W3 Vgs restored to 1.8 + saved" \
+    [ase::state_get [ase::session_state $key] variables] \
+    {{name Vgs value 1.8} {name Vds value 1.0}}
 
   # W3t: temperature round-trip through the toolbar entry + validation
   set te $top.tb.temp
@@ -345,6 +524,134 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   update
   check "W3t temperature restored + saved" \
     [ase::state_get [ase::session_state $key] temperature] 27
+
+  # W3s: multi-select lives within ONE pane — selecting in another pane
+  # clears the first pane's selection
+  set vgsit [tv_find $vtv name Vgs]
+  $vtv selection set [list $vgsit]
+  update
+  check "W3s variables row selected" [$vtv selection] $vgsit
+  set otv $top.body.outs.tv
+  $otv selection set [list [tv_find $otv name id]]
+  update
+  check "W3s selecting in outputs clears the variables selection" \
+    [$vtv selection] {}
+  $otv selection set {}
+  update
+
+  # W3c: REAL click on the dc row's Enable checkbox cell toggles the flag in
+  # the session state (all other row keys preserved) and Save State persists
+  set atv $top.body.ana.tv
+  set dcit [tv_find $atv type dc]
+  check_true "W3c analyses pane has the dc row" [expr {$dcit ne {}}]
+  tv_cell_click $atv $dcit enable
+  set dcen {}
+  foreach a [ase::state_get [ase::session_state $key] analyses] {
+    if {[ase::state_get $a type] eq {dc}} { set dcen [ase::state_get $a enabled] }
+  }
+  check "W3c click toggles dc enabled in state" $dcen 1
+  $top.mb.session invoke {Save State}
+  update
+  set f [open $spath r]; set sdata [read $f]; close $f
+  check_true "W3c save persists the toggle" \
+    [string match "*{type dc enabled 1}*" $sdata]
+  # click again + Save -> restored (op-only for the run legs). dx 10 keeps
+  # the second click >5px from the first: at the same spot it would classify
+  # as <Double-1> (the Choose Analyses stub) instead of a checkbox toggle.
+  set dcit [tv_find $atv type dc]
+  tv_cell_click $atv $dcit enable 10
+  $top.mb.session invoke {Save State}
+  update
+  set f [open $spath r]; set sdata [read $f]; close $f
+  check_true "W3c second click + save restores enabled 0" \
+    [string match "*{type dc enabled 0}*" $sdata]
+
+  # W3v: `=` opens the Add Variable dialog; name/value + Return appends the
+  # row; duplicate names are rejected with the dialog kept up
+  $top.strip.var invoke
+  update
+  check_true "W3v = opens the Add Variable dialog" [winfo exists $top.addvar]
+  $top.addvar.name insert 0 tmpA
+  $top.addvar.value insert 0 0.5
+  focus -force $top.addvar.value
+  update
+  event generate $top.addvar.value <Return>
+  update
+  check_true "W3v add dialog closed on Return" \
+    [expr {![winfo exists $top.addvar]}]
+  set ta [tv_find $vtv name tmpA]
+  check "W3v tmpA in the tree" \
+    [expr {$ta ne {} ? [$vtv set $ta value] : {}}] 0.5
+  check_true "W3v tmpA in the session state" [string match \
+    "*{name tmpA value 0.5}*" \
+    [ase::state_get [ase::session_state $key] variables]]
+  $top.strip.var invoke
+  update
+  $top.addvar.name insert 0 tmpB
+  $top.addvar.value insert 0 0.7
+  focus -force $top.addvar.name
+  update
+  event generate $top.addvar.name <Return>
+  update
+  check_true "W3v tmpB added too" \
+    [expr {[tv_find $vtv name tmpB] ne {}}]
+  set vars_before [ase::state_get [ase::session_state $key] variables]
+  $top.strip.var invoke
+  update
+  $top.addvar.name insert 0 tmpA
+  $top.addvar.value insert 0 9
+  focus -force $top.addvar.name
+  update
+  event generate $top.addvar.name <Return>
+  update
+  check "W3v duplicate name rejected (state unchanged)" \
+    [ase::state_get [ase::session_state $key] variables] $vars_before
+  check_true "W3v duplicate add keeps the dialog up" \
+    [winfo exists $top.addvar]
+  $top.addvar.btns.cancel invoke
+  update
+  check_true "W3v cancel closes the dialog" [expr {![winfo exists $top.addvar]}]
+
+  # W3x: action-strip X deletes the (multi-)selection, no confirm; empty
+  # selection is a clean no-op
+  set ita [tv_find $vtv name tmpA]
+  set itb [tv_find $vtv name tmpB]
+  $vtv selection set [list $ita $itb]
+  update
+  $top.strip.del invoke
+  update
+  set names {}
+  foreach v [ase::state_get [ase::session_state $key] variables] {
+    lappend names [ase::state_get $v name]
+  }
+  check "W3x X removed both rows from the state" $names {Vgs Vds}
+  check_true "W3x survivors intact" [expr {
+    [tv_find $vtv name Vgs] ne {} && [tv_find $vtv name Vds] ne {} &&
+    [tv_find $vtv name tmpA] eq {} && [tv_find $vtv name tmpB] eq {}}]
+  $top.mb.session invoke {Save State}
+  update
+  set before_noop [ase::state_get [ase::session_state $key] variables]
+  $top.strip.del invoke
+  update
+  check "W3x X with empty selection is a clean no-op" \
+    [ase::state_get [ase::session_state $key] variables] $before_noop
+
+  # W3o: Save Options auto-cell reacts to the save_all_i blanket
+  set st3o [ase::session_state $key]
+  dict set st3o save_all_i 1
+  ase::session_update $key $st3o
+  ase::ui::populate $key
+  set idit [tv_find $otv name id]
+  check "W3o id row Save Options shows alli" \
+    [expr {$idit ne {} ? [$otv set $idit saveopts] : {}}] alli
+  set st3o [ase::session_state $key]
+  dict set st3o save_all_i 0
+  ase::session_update $key $st3o
+  ase::ui::populate $key
+  set idit [tv_find $otv name id]
+  check "W3o blanket off -> Save Options blank again" \
+    [expr {$idit ne {} ? [$otv set $idit saveopts] : {?}}] {}
+  check "W3o session clean after the round trip" [ase::session_dirty $key] 0
 
   # W4-W7 need a usable MAIN window (design load / netlist / run)
   if {![main_ready]} {
@@ -428,6 +735,17 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
       set decktext [read $f]; close $f
       check_true "W6 deck contains .temp 27" \
         [regexp -line {^\.temp 27$} $decktext]
+      # UI v2 Value column: after the successful run the id row's Value cell
+      # carries the parsed Id (the F10 idiom: |v*1e6 - 409.68| < 1.0)
+      set otv6 $top.body.outs.tv
+      set idit6 [tv_find $otv6 name id]
+      set vcell [expr {$idit6 ne {} ? [$otv6 set $idit6 value] : {}}]
+      set vok 0
+      if {[string is double -strict $vcell]} {
+        if {abs($vcell * 1e6 - 409.68) < 1.0} { set vok 1 }
+      }
+      check "W6 id row Value filled after run" $vok 1
+      if {!$vok} { puts "  W6 Value cell: '$vcell'" }
 
       # W6b: Run (existing netlist) must NOT re-netlist — hand-edit sentinel
       # in the circuit netlist survives and reaches the deck

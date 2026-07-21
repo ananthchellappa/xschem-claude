@@ -87,10 +87,12 @@ if {[catch {
 
 # --- R1: state_default schema -----------------------------------------------
 set d [ase::state_default]
-check "R1 default has exactly the 11 schema keys" [lsort [dict keys $d]] \
-  [lsort {version simulator design rundir temperature models variables analyses outputs options includes}]
+check "R1 default has exactly the 13 schema keys" [lsort [dict keys $d]] \
+  [lsort {version simulator design rundir temperature models variables analyses outputs save_all_v save_all_i options includes}]
 check "R1 version is 1" [dict get $d version] 1
 check "R1 temperature default 27" [dict get $d temperature] 27
+check "R1 save_all_v and save_all_i default 0" \
+  [list [dict get $d save_all_v] [dict get $d save_all_i]] {0 0}
 set types {}; set enabled {}
 foreach a [dict get $d analyses] {
   lappend types [dict get $a type]
@@ -212,6 +214,24 @@ set st [dict remove [nfet_state /models/sky130.lib.spice {}] temperature]
 set deck4b [$render $st $netlist_text]
 check_true "D4 missing temperature key still emits .temp 27" \
   [regexp -line {^\.temp 27$} $deck4b]
+
+# --- P1: result_probe keying (UI v2 Outputs Value column) --------------------
+# unnamed outputs (no `name` key) are keyed by their expr; named outputs stay
+# keyed by name (backward compatible: F10/E1c read key `id`)
+set probe [ase::backend_hook ngspice result_probe]
+set logtext_p1 "Some banner line\n-i(v1) = 4.096837e-04\nNo. of Data Rows : 1\n"
+set stp [ase::state_default]
+dict set stp outputs {{expr -i(v1) save 1}}
+set resp [$probe $stp $logtext_p1]
+set got {}
+if {[dict exists $resp -i(v1)]} { set got [dict get $resp -i(v1)] }
+check "P1 result_probe keys unnamed outputs by expr" $got 4.096837e-04
+set stp [ase::state_default]
+dict set stp outputs {{name id expr -i(v1) save 1}}
+set resp [$probe $stp $logtext_p1]
+set got {}
+if {[dict exists $resp id]} { set got [dict get $resp id] }
+check "P1 named output still keyed by name" $got 4.096837e-04
 
 # --- N1: ase::netlist on the scratch fixture ---------------------------------
 set rundir [file normalize [file join $scratch run]]

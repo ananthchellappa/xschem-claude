@@ -1,4 +1,4 @@
-# ase_window.tcl — the ASE-L session window (items 03+05 of
+# ase_window.tcl — the ASE-L session window (items 03+05+06 of
 # doc/claude/ase_l_batch, spec doc/claude/specs/ase_l.md — UI v2 "ADE-L
 # parity rework" is the authoritative chrome contract): ALL Tk widget code of
 # the ASE-L feature. ase.tcl (the headless core + session model) stays
@@ -18,16 +18,21 @@
 # named fonts are centralized in ase::theme / ase::ui::apply_theme (USER-
 # LOCKED colors; no ASE widget left on Tk defaults).
 #
-# Editing model: the panes are plain entry/checkbutton grids populated from
-# `ase::session_state`; every commit event (Return/FocusOut on an entry,
-# checkbox toggle, combobox selection) HARVESTS the widgets back into a state
-# dict and calls `ase::session_update` — the one write path. Harvest merges
-# each row's fields over the row's ORIGINAL dict (rowbase), so keys the
-# widgets do not show (e.g. an output's `plot`) and absent optional args are
-# preserved byte-for-byte: an untouched pane can never dirty the session.
-# The `ase::session_notify` hook only refreshes the TITLE + status bar
-# (repopulating panes from inside a FocusOut-driven commit would destroy the
-# widget mid-event); Load State / Revert repopulate explicitly.
+# Editing model (UI v2 "Panes", item 06): exactly THREE panes — Design
+# Variables, Analyses, Outputs — each a ttk::treeview column table that is a
+# pure VIEW of `ase::session_state` (no inline editing, no +/- buttons).
+# Every mutation (checkbox-cell click, dialog OK, action-strip X delete)
+# edits the session dict directly and calls `ase::session_update`, then
+# repopulates the affected panes — there is nothing to harvest. Dialogs merge
+# their fields over the row's ORIGINAL dict, so per-row keys the dialog does
+# not show are preserved byte-for-byte. Row multi-select lives within ONE
+# pane at a time (selecting in a pane clears the others); double-click a row
+# opens its edit dialog; per-pane right-click context menus offer
+# Add/Edit/Delete; the right vertical action strip carries the spec's
+# OP,TR = --> X N&> > ! ~ buttons. The Outputs Value column fills from the
+# per-SESSION `results` attr after a successful run (blank pre-run).
+# The `ase::session_notify` hook only refreshes the TITLE + status bar;
+# pane-changing paths repopulate explicitly.
 #
 # Run pipeline: a run opens the log toplevel and streams the simulator's
 # stdout into it live via a `trace add variable ::execute(data,$id) write`
@@ -53,22 +58,20 @@ namespace eval ase::ui {
   # the log widget; tracecb(key) = {id callback} of the attached trace
   variable loglen;  array set loglen {}
   variable tracecb; array set tracecb {}
-  # rowbase(key,pane,i): the row's original dict (harvest merges over it);
-  # rowchk(key,pane,i): checkbutton var; lastrow(key,pane): last-focused row;
-  # anaen(key,type): per-analysis enabled checkbutton var
-  variable rowbase; array set rowbase {}
-  variable rowchk;  array set rowchk {}
-  variable lastrow; array set lastrow {}
-  variable anaen;   array set anaen {}
-  # analysis arg fields per type (the spec's v1 schema)
+  # analysis arg fields per type (the spec's v1 schema; also the Arguments
+  # summary order of the Analyses pane)
   variable anaargs [dict create op {} dc {source start stop step} \
                                 ac {points start stop dec} tran {step stop}]
-  # list panes: state key -> {frame-name field-list}; `save` is a checkbutton
-  variable panes [dict create \
-    variables {vars {name value}} \
-    outputs   {outs {name expr save}} \
-    models    {mods {file section}} \
-    options   {opts {name value}}]
+  # pane frame name -> the state list key it views (UI v2: ONLY these three)
+  variable panekeys [dict create vars variables ana analyses outs outputs]
+  # selclear(key): suppress flag while pane_selected clears the other panes'
+  # selections (the libmgr::suppress_select idiom)
+  variable selclear; array set selclear {}
+  # edrow(key,var|out): state-list index the open edit dialog targets
+  # (-1 = the outputs Add flavor); cleaned on proceed/cancel AND in close
+  variable edrow;   array set edrow {}
+  # edchk(key,plot|save): the output editor's checkbutton variables
+  variable edchk;   array set edchk {}
 }
 
 # --- theme (UI v2 "Window chrome": USER-LOCKED palette + named fonts) --------
@@ -90,6 +93,15 @@ proc ase::theme {{name {}}} {
   }
   option add *TCombobox*Listbox.font AseEntryFont
   catch {ttk::style configure Ase.TCombobox -fieldbackground #ffffff}
+  # pane tables (UI v2): white rows in the entry font, the USER-LOCKED
+  # header-strip color on the column headings
+  catch {
+    ttk::style configure Ase.Treeview -font AseEntryFont \
+      -background #ffffff -fieldbackground #ffffff \
+      -rowheight [expr {[font metrics AseEntryFont -linespace] + 4}]
+    ttk::style configure Ase.Treeview.Heading -font AseLabelFont \
+      -background #e8e8e8
+  }
   set pal [dict create panel #f2f2f2 table #ffffff header #e8e8e8 \
                        accent #8b0000]
   if {$name ne {}} { return [dict get $pal $name] }
@@ -118,6 +130,10 @@ proc ase::ui::apply_theme {w} {
     }
     TCombobox {
       catch {$w configure -font AseEntryFont -style Ase.TCombobox}
+    }
+    Treeview {
+      # ttk widgets ignore -background/-font configure: style-based theming
+      catch {$w configure -style Ase.Treeview}
     }
     Scrollbar {
       catch {$w configure -background [ase::theme panel]}
@@ -163,8 +179,7 @@ proc ase::ui::open {key lib cell view} {
 # is a child of the session toplevel, so it dies with it.
 proc ase::ui::close {key} {
   variable wins; variable wnum; variable meta; variable idlebg
-  variable loglen; variable rowbase; variable rowchk; variable lastrow
-  variable anaen
+  variable loglen; variable selclear; variable edrow; variable edchk
   if {![dict exists $wins $key]} { return }
   set top [dict get $wins $key]
   ase::ui::drop_trace $key
@@ -177,10 +192,9 @@ proc ase::ui::close {key} {
   dict unset meta $key
   catch {unset idlebg($key)}
   catch {unset loglen($key)}
-  array unset rowbase $key,*
-  array unset rowchk $key,*
-  array unset lastrow $key,*
-  array unset anaen $key,*
+  catch {unset selclear($key)}
+  array unset edrow $key,*
+  array unset edchk $key,*
   catch {destroy $top}
 }
 
@@ -231,9 +245,11 @@ proc ase::ui::build {key top} {
 
   menu $top.mb.variables -tearoff 0
   $top.mb add cascade -label Variables -menu $top.mb.variables
-  # TODO(item06): variables editor dialog
+  # Variables > Edit...: the per-row variable editor on the first selected
+  # variables row, or the Add Variable dialog when nothing is selected (the
+  # minimal honest reading of the spec's "variables editor" within item 06)
   $top.mb.variables add command -label "Edit\u2026" \
-    -command [list ase::ui::todo_stub {Edit Variables} 06]
+    -command [list ase::ui::edit_variables $key]
 
   menu $top.mb.outputs -tearoff 0
   $top.mb add cascade -label Outputs -menu $top.mb.outputs
@@ -317,24 +333,52 @@ proc ase::ui::build {key top} {
        $top.status.state -side left
   pack $top.status -side bottom -fill x -pady 2
 
-  # 2x3 grid of panes (v1 layout — the ADE 3-pane rework is item 06)
+  # right vertical action strip (spec "Action strip"): text placeholders,
+  # top-down in spec order; ~ (Plot waveforms) is a disabled placeholder.
+  # Packed AFTER the toolbar + status bar and BEFORE the expanding body (the
+  # item-05 packing lesson: the expanding widget must be packed last).
+  frame $top.strip
+  button $top.strip.ana -text {OP,TR} -width 5 \
+    -command [list ase::ui::todo_stub {Choose Analyses} 07]
+  button $top.strip.var -text = -width 5 \
+    -command [list ase::ui::add_variable_dialog $key]
+  button $top.strip.out -text --> -width 5 \
+    -command [list ase::ui::todo_stub {Setup Outputs} 07]
+  button $top.strip.del -text X -width 5 \
+    -command [list ase::ui::delete_selection $key]
+  button $top.strip.netrun -text {N&>} -width 5 \
+    -command [list ase::ui::do_run $key]
+  button $top.strip.run -text > -width 5 \
+    -command [list ase::ui::do_run_existing $key]
+  button $top.strip.stop -text ! -width 5 \
+    -command [list ase::ui::do_stop $key]
+  button $top.strip.plot -text ~ -width 5 -state disabled
+  pack $top.strip.ana $top.strip.var $top.strip.out $top.strip.del \
+       $top.strip.netrun $top.strip.run $top.strip.stop $top.strip.plot \
+       -side top -padx 2 -pady 1
+  pack $top.strip -side right -fill y
+
+  # UI v2 body: EXACTLY three panes (spec "Panes") — Design Variables (left,
+  # full height), Analyses (right top), Outputs (right bottom); each a
+  # ttk::treeview column table (pure view — no inline editing, no +/-)
   frame $top.body
-  labelframe $top.body.vars  -text {Design Variables}
-  labelframe $top.body.ana   -text {Analyses}
-  labelframe $top.body.outs  -text {Outputs}
-  labelframe $top.body.mods  -text {Model libs}
-  labelframe $top.body.opts  -text {Options}
-  labelframe $top.body.setup -text {Setup}
-  grid $top.body.vars $top.body.ana   -sticky nsew -padx 2 -pady 2
-  grid $top.body.outs $top.body.mods  -sticky nsew -padx 2 -pady 2
-  grid $top.body.opts $top.body.setup -sticky nsew -padx 2 -pady 2
+  labelframe $top.body.vars -text {Design Variables}
+  labelframe $top.body.ana  -text {Analyses}
+  labelframe $top.body.outs -text {Outputs}
+  grid $top.body.vars -row 0 -column 0 -rowspan 2 -sticky nsew -padx 2 -pady 2
+  grid $top.body.ana  -row 0 -column 1 -sticky nsew -padx 2 -pady 2
+  grid $top.body.outs -row 1 -column 1 -sticky nsew -padx 2 -pady 2
   grid columnconfigure $top.body 0 -weight 1
-  grid columnconfigure $top.body 1 -weight 1
-  foreach skey {variables outputs models options} {
-    ase::ui::build_list_pane $key $top $skey
-  }
-  ase::ui::build_ana_pane $key $top
-  ase::ui::build_setup_pane $key $top
+  grid columnconfigure $top.body 1 -weight 2
+  grid rowconfigure $top.body 0 -weight 1
+  grid rowconfigure $top.body 1 -weight 1
+  ase::ui::build_pane $key $top vars {name value} {Name Value} \
+    {name 140 value 120}
+  ase::ui::build_pane $key $top ana {num type enable args} \
+    [list # Type Enable Arguments] {num 30 type 60 enable 60 args 260}
+  ase::ui::build_pane $key $top outs {name value plot save saveopts} \
+    [list Name Value Plot Save {Save Options}] \
+    {name 120 value 110 plot 50 save 50 saveopts 90}
   pack $top.body -side top -fill both -expand 1
 
   ase::ui::apply_theme $top
@@ -343,246 +387,300 @@ proc ase::ui::build {key top} {
   set idlebg($key) [$top.status.stat cget -background]
 }
 
-proc ase::ui::build_list_pane {key top skey} {
-  variable panes
-  lassign [dict get $panes $skey] fname fields
-  set pane $top.body.$fname
-  frame $pane.rows
-  pack $pane.rows -side top -fill both -expand 1 -anchor w
-  frame $pane.btns
-  button $pane.btns.add -text + -width 2 -command [list ase::ui::row_add $key $skey]
-  button $pane.btns.del -text - -width 2 -command [list ase::ui::row_del $key $skey]
-  pack $pane.btns.add $pane.btns.del -side left -padx 1
-  pack $pane.btns -side bottom -anchor w
-}
-
-proc ase::ui::build_ana_pane {key top} {
-  variable anaargs
-  set pane $top.body.ana
-  foreach type {op dc ac tran} {
-    set f [frame $pane.$type]
-    checkbutton $f.en -text $type -width 5 -anchor w \
-      -variable ::ase::ui::anaen($key,$type) -command [list ase::ui::commit $key]
-    pack $f.en -side left
-    foreach arg [dict get $anaargs $type] {
-      label $f.l$arg -text $arg
-      entry $f.$arg -width 7
-      bind $f.$arg <Return>   [list ase::ui::commit $key]
-      bind $f.$arg <FocusOut> [list ase::ui::commit $key]
-      pack $f.l$arg $f.$arg -side left -padx 1
+# One themed treeview pane: columns + headings, vertical scrollbar, the
+# selection/checkbox/double-click bindings and the Add/Edit/Delete context
+# menu. Item ids are the row's 0-based index into the pane's state list
+# (repopulate after every mutation keeps them dense), so identify/selection
+# results address the state directly.
+proc ase::ui::build_pane {key top pane columns headings widths} {
+  set pf $top.body.$pane
+  ttk::treeview $pf.tv -columns $columns -show headings \
+    -selectmode extended -height 8 -style Ase.Treeview \
+    -yscrollcommand [list $pf.sb set]
+  foreach c $columns h $headings {
+    $pf.tv heading $c -text $h
+    $pf.tv column $c -width [dict get $widths $c] -anchor w -stretch 1
+  }
+  scrollbar $pf.sb -orient vertical -command [list $pf.tv yview]
+  pack $pf.sb -side right -fill y
+  pack $pf.tv -side left -fill both -expand 1
+  # multi-select within ONE pane: selecting here clears the other panes
+  bind $pf.tv <<TreeviewSelect>> [list ase::ui::pane_selected $key $pane]
+  # checkbox cells: a click on an Enable/Plot/Save cell flips the flag and
+  # consumes the event (break skips the class binding's selection change)
+  bind $pf.tv <Button-1> \
+    "if {\[[list ase::ui::pane_click $key $pane] %x %y\]} break"
+  # double-click a row -> its edit dialog (binding <Double-1> is legal; only
+  # event GENERATE of <Double-1> is refused — tests replay two click pairs)
+  bind $pf.tv <Double-1> [list ase::ui::pane_dblclick $key $pane %x %y]
+  # context menu: exactly Add... / Edit... / Delete (checkable without posting)
+  menu $pf.ctx -tearoff 0
+  switch -- $pane {
+    vars {
+      $pf.ctx add command -label "Add\u2026" \
+        -command [list ase::ui::add_variable_dialog $key]
+      $pf.ctx add command -label "Edit\u2026" \
+        -command [list ase::ui::edit_variable_first $key]
     }
-    pack $f -side top -anchor w
-  }
-}
-
-proc ase::ui::build_setup_pane {key top} {
-  set pane $top.body.setup
-  label $pane.rl -text {Run dir:}
-  entry $pane.rundir -width 30
-  bind $pane.rundir <Return>   [list ase::ui::commit $key]
-  bind $pane.rundir <FocusOut> [list ase::ui::commit $key]
-  label $pane.sl -text {Simulator:}
-  ttk::combobox $pane.sim -values [ase::backend_names] -state readonly -width 12
-  bind $pane.sim <<ComboboxSelected>> [list ase::ui::commit $key]
-  grid $pane.rl $pane.rundir -sticky w -padx 2 -pady 2
-  grid $pane.sl $pane.sim    -sticky w -padx 2 -pady 2
-}
-
-# --- rows (list panes) -------------------------------------------------------
-
-# Numeric row indices present under a .rows frame, sorted (deleting a middle
-# row leaves gaps, so never assume contiguity).
-proc ase::ui::row_indices {rows} {
-  set idx {}
-  foreach c [winfo children $rows] {
-    if {[regexp {\.r([0-9]+)$} $c -> n]} { lappend idx $n }
-  }
-  return [lsort -integer $idx]
-}
-
-proc ase::ui::row_build {key skey i row} {
-  variable wins; variable panes; variable rowbase; variable rowchk
-  set top [dict get $wins $key]
-  lassign [dict get $panes $skey] fname fields
-  set f [frame $top.body.$fname.rows.r$i]
-  set rowbase($key,$skey,$i) $row
-  foreach fld $fields {
-    if {$fld eq {save}} {
-      set rowchk($key,$skey,$i) [expr {[ase::state_get $row save 0] eq {1} ? 1 : 0}]
-      checkbutton $f.$fld -text save -variable ::ase::ui::rowchk($key,$skey,$i) \
-        -command [list ase::ui::commit $key]
-    } else {
-      entry $f.$fld -width 13
-      $f.$fld insert 0 [ase::state_get $row $fld]
-      bind $f.$fld <Return>   [list ase::ui::commit $key]
-      bind $f.$fld <FocusOut> [list ase::ui::commit $key]
-      bind $f.$fld <FocusIn>  [list set ::ase::ui::lastrow($key,$skey) $i]
+    ana {
+      # TODO(item07): route to Choose Analyses with the row preselected
+      $pf.ctx add command -label "Add\u2026" \
+        -command [list ase::ui::todo_stub {Choose Analyses} 07]
+      $pf.ctx add command -label "Edit\u2026" \
+        -command [list ase::ui::todo_stub {Choose Analyses} 07]
     }
-    pack $f.$fld -side left -padx 1
+    outs {
+      $pf.ctx add command -label "Add\u2026" \
+        -command [list ase::ui::output_editor $key -1]
+      $pf.ctx add command -label "Edit\u2026" \
+        -command [list ase::ui::edit_output_first $key]
+    }
   }
-  pack $f -side top -anchor w
+  $pf.ctx add command -label Delete \
+    -command [list ase::ui::delete_selection $key]
+  bind $pf.tv <Button-3> [list ase::ui::pane_ctx_post $key $pane %X %Y]
 }
 
-# Append an empty row. Harvest skips all-empty fresh rows, so adding one does
-# not dirty the state until it is filled in.
-proc ase::ui::row_add {key skey} {
-  variable wins; variable panes
-  set top [dict get $wins $key]
-  lassign [dict get $panes $skey] fname fields
-  set rows $top.body.$fname.rows
-  set i 0
-  while {[winfo exists $rows.r$i]} { incr i }
-  ase::ui::row_build $key $skey $i {}
-  ase::ui::apply_theme $rows.r$i
-}
+# --- pane interaction (UI v2) ------------------------------------------------
 
-# Delete the last-focused row of the pane (or the last row when none was
-# focused yet), then commit the shrunken list.
-proc ase::ui::row_del {key skey} {
-  variable wins; variable panes; variable lastrow; variable rowbase; variable rowchk
+# <<TreeviewSelect>> handler: enforce single-pane selection by clearing the
+# OTHER two panes. selclear suppresses the handler while the clears re-fire
+# it (libmgr::suppress_select idiom); the non-empty test keeps a clear from
+# cascading.
+proc ase::ui::pane_selected {key pane} {
+  variable wins; variable selclear
+  if {[info exists selclear($key)] && $selclear($key)} { return }
+  if {![dict exists $wins $key]} { return }
   set top [dict get $wins $key]
-  lassign [dict get $panes $skey] fname fields
-  set rows $top.body.$fname.rows
-  set target -1
-  if {[info exists lastrow($key,$skey)]} {
-    set t $lastrow($key,$skey)
-    if {[winfo exists $rows.r$t]} { set target $t }
+  set tv $top.body.$pane.tv
+  if {![winfo exists $tv] || [$tv selection] eq {}} { return }
+  set selclear($key) 1
+  foreach p {vars ana outs} {
+    if {$p eq $pane} { continue }
+    set o $top.body.$p.tv
+    if {[winfo exists $o] && [$o selection] ne {}} { $o selection set {} }
   }
-  if {$target < 0} { set target [lindex [ase::ui::row_indices $rows] end] }
-  if {$target eq {} || $target < 0} { return }
-  destroy $rows.r$target
-  catch {unset rowbase($key,$skey,$target)}
-  catch {unset rowchk($key,$skey,$target)}
-  catch {unset lastrow($key,$skey)}
-  ase::ui::commit $key
+  set selclear($key) 0
 }
 
-# The value-entry widget of the named design variable ({} if absent) — used by
-# the tests and handy for scripting.
-proc ase::ui::variable_entry {key name} {
+# <Button-1> on a pane: a click landing on a checkbox cell (analyses Enable,
+# outputs Plot/Save) flips that flag in the row's state dict and returns 1
+# (the bind script then breaks so the selection is untouched); any other
+# click returns 0 and falls through to normal selection handling.
+proc ase::ui::pane_click {key pane x y} {
   variable wins
-  if {![dict exists $wins $key]} { return {} }
-  set rows [dict get $wins $key].body.vars.rows
-  foreach i [ase::ui::row_indices $rows] {
-    if {[$rows.r$i.name get] eq $name} { return $rows.r$i.value }
+  if {![dict exists $wins $key]} { return 0 }
+  set tv [dict get $wins $key].body.$pane.tv
+  if {![winfo exists $tv]} { return 0 }
+  set item [$tv identify row $x $y]
+  set col  [$tv identify column $x $y]
+  if {$item eq {} || $col eq {}} { return 0 }
+  set cname [lindex [$tv cget -columns] [expr {[string range $col 1 end] - 1}]]
+  if {$pane eq {ana} && $cname eq {enable}} {
+    ase::ui::toggle_flag $key analyses $item enabled
+    return 1
+  }
+  if {$pane eq {outs} && ($cname eq {plot} || $cname eq {save})} {
+    ase::ui::toggle_flag $key outputs $item $cname
+    return 1
+  }
+  return 0
+}
+
+# Flip a 0/1 flag of row `idx` in the state list `skey`, preserving every
+# other per-row key, then commit + repopulate.
+proc ase::ui::toggle_flag {key skey idx field} {
+  set st [ase::session_state $key]
+  set rows [ase::state_get $st $skey]
+  if {![string is integer -strict $idx] || $idx < 0 || $idx >= [llength $rows]} {
+    return
+  }
+  set row [lindex $rows $idx]
+  set cur [expr {[ase::state_get $row $field 0] eq {1} ? 1 : 0}]
+  dict set row $field [expr {1 - $cur}]
+  lset rows $idx $row
+  dict set st $skey $rows
+  ase::session_update $key $st
+  ase::ui::populate $key
+}
+
+# Double-click a row -> the per-item edit dialog (spec "Panes" interaction
+# model). Analyses rows route to Choose Analyses — TODO(item07): preselect
+# the double-clicked analysis when that dialog lands.
+proc ase::ui::pane_dblclick {key pane x y} {
+  variable wins
+  if {![dict exists $wins $key]} { return }
+  set tv [dict get $wins $key].body.$pane.tv
+  if {![winfo exists $tv]} { return }
+  set item [$tv identify row $x $y]
+  if {$item eq {}} { return }
+  switch -- $pane {
+    vars { ase::ui::variable_editor $key $item }
+    outs { ase::ui::output_editor $key $item }
+    ana  { ase::ui::todo_stub {Choose Analyses} 07 }
+  }
+}
+
+proc ase::ui::pane_ctx_post {key pane X Y} {
+  variable wins
+  if {![dict exists $wins $key]} { return }
+  set m [dict get $wins $key].body.$pane.ctx
+  if {![winfo exists $m]} { return }
+  tk_popup $m $X $Y
+}
+
+# Action-strip X (noun-verb): delete the current selection — scan the three
+# panes for the one holding a selection (single-pane selection is enforced by
+# pane_selected), remove those rows from its state list in descending index
+# order, commit, repopulate. No confirm anywhere in this path.
+proc ase::ui::delete_selection {key} {
+  variable wins; variable panekeys
+  if {![dict exists $wins $key]} { return }
+  set top [dict get $wins $key]
+  foreach pane {vars ana outs} {
+    set tv $top.body.$pane.tv
+    if {![winfo exists $tv]} { continue }
+    set sel [$tv selection]
+    if {$sel eq {}} { continue }
+    set skey [dict get $panekeys $pane]
+    set st [ase::session_state $key]
+    set rows [ase::state_get $st $skey]
+    foreach i [lsort -integer -decreasing $sel] {
+      if {[string is integer -strict $i] && $i >= 0 && $i < [llength $rows]} {
+        set rows [lreplace $rows $i $i]
+      }
+    }
+    dict set st $skey $rows
+    ase::session_update $key $st
+    ase::ui::populate $key
+    return
+  }
+  catch {ciw_echo "ase: nothing selected"}
+}
+
+# --- pure cell helpers (Tk-free — headless tests drive these directly) -------
+
+# Outputs Name cell: the user-given name when present, else the expression —
+# whole when <= 24 chars, else the first 21 chars + `...` (deterministic
+# truncation; column autosizing is not deterministic across DPI).
+proc ase::ui::output_display_name {row} {
+  if {[dict exists $row name] && [dict get $row name] ne {}} {
+    return [dict get $row name]
+  }
+  set e [ase::state_get $row expr]
+  if {[string length $e] <= 24} { return $e }
+  return "[string range $e 0 20]..."
+}
+
+# The results-dict key of an output row: name when present and non-empty,
+# else expr (matches ase::backend::*::result_probe keying).
+proc ase::ui::output_result_key {row} {
+  if {[dict exists $row name] && [dict get $row name] ne {}} {
+    return [dict get $row name]
+  }
+  return [ase::state_get $row expr]
+}
+
+# Classify an output expression: `v(` -> voltage, `i(` or `@` (ngspice
+# terminal-current form) -> current, else other. Leading whitespace/`-`
+# stripped, case-insensitive.
+proc ase::ui::output_kind {ex} {
+  set e [string trim $ex]
+  set e [string trimleft $e -]
+  set e [string trim $e]
+  if {[string match -nocase {v(*} $e]} { return voltage }
+  if {[string match -nocase {i(*} $e] || [string match {@*} $e]} {
+    return current
+  }
+  return other
+}
+
+# Outputs Save Options auto-cell: `allv` for a voltage while blanket
+# save-all-voltages is on, `alli` for a current while save-all-currents is
+# on, blank otherwise (the blankets are state keys save_all_v/save_all_i;
+# item 07's Save All dialog writes them, item 06 displays their effect).
+proc ase::ui::save_options_cell {state row} {
+  set kind [ase::ui::output_kind [ase::state_get $row expr]]
+  if {$kind eq {voltage} && [ase::state_get $state save_all_v 0] eq {1}} {
+    return allv
+  }
+  if {$kind eq {current} && [ase::state_get $state save_all_i 0] eq {1}} {
+    return alli
   }
   return {}
 }
 
-# --- populate / harvest ------------------------------------------------------
-
-proc ase::ui::populate_list_pane {key skey} {
-  variable wins; variable panes; variable rowbase; variable rowchk; variable lastrow
-  set top [dict get $wins $key]
-  lassign [dict get $panes $skey] fname fields
-  set rows $top.body.$fname.rows
-  foreach c [winfo children $rows] { destroy $c }
-  array unset rowbase $key,$skey,*
-  array unset rowchk $key,$skey,*
-  catch {unset lastrow($key,$skey)}
-  set i 0
-  foreach row [ase::state_get [ase::session_state $key] $skey] {
-    ase::ui::row_build $key $skey $i $row
-    incr i
-  }
-}
-
-proc ase::ui::harvest_list_pane {key skey} {
-  variable wins; variable panes; variable rowbase; variable rowchk
-  set top [dict get $wins $key]
-  lassign [dict get $panes $skey] fname fields
-  set rows $top.body.$fname.rows
+# Analyses Arguments summary (view-only): the row's args in anaargs order as
+# `key=value` joined by spaces, unknown extra keys appended in dict order;
+# type/enabled excluded.
+proc ase::ui::arg_summary {row} {
+  variable anaargs
+  set type [ase::state_get $row type]
+  set order {}
+  if {[dict exists $anaargs $type]} { set order [dict get $anaargs $type] }
   set out {}
-  foreach i [ase::ui::row_indices $rows] {
-    set base {}
-    if {[info exists rowbase($key,$skey,$i)]} { set base $rowbase($key,$skey,$i) }
-    set row $base
-    set allempty 1
-    foreach fld $fields {
-      if {$fld eq {save}} {
-        set v [expr {[info exists rowchk($key,$skey,$i)] && $rowchk($key,$skey,$i) ? 1 : 0}]
-        # include only when set or previously present: an untouched row must
-        # serialize identically to its original
-        if {$v || [dict exists $base save]} { dict set row save $v }
-      } else {
-        set v [$rows.r$i.$fld get]
-        if {$v ne {}} { set allempty 0 }
-        if {$v ne {} || [dict exists $base $fld]} { dict set row $fld $v }
-      }
-    }
-    if {$allempty && $base eq {}} { continue }   ;# fresh, still-empty row
-    lappend out $row
+  foreach a $order {
+    if {[dict exists $row $a]} { lappend out "$a=[dict get $row $a]" }
   }
-  return $out
+  dict for {k v} $row {
+    if {$k eq {type} || $k eq {enabled}} { continue }
+    if {[lsearch -exact $order $k] >= 0} { continue }
+    lappend out "$k=$v"
+  }
+  return [join $out { }]
 }
 
-proc ase::ui::populate_ana {key} {
-  variable wins; variable anaargs; variable anaen; variable rowbase
-  set top [dict get $wins $key]
-  set pane $top.body.ana
-  # stash each type's original dict; unknown-type/duplicate entries are
-  # preserved verbatim and re-appended by harvest_ana
-  set extras {}
-  foreach type {op dc ac tran} { set seen($type) 0 }
-  foreach a [ase::state_get [ase::session_state $key] analyses] {
-    set t [ase::state_get $a type]
-    if {[lsearch -exact {op dc ac tran} $t] >= 0 && !$seen($t)} {
-      set rowbase($key,ana,$t) $a
-      set seen($t) 1
-    } else {
-      lappend extras $a
-    }
-  }
-  set rowbase($key,ana,extra) $extras
-  foreach type {op dc ac tran} {
-    if {![info exists rowbase($key,ana,$type)] || !$seen($type)} {
-      set rowbase($key,ana,$type) [list type $type enabled 0]
-    }
-    set a $rowbase($key,ana,$type)
-    set anaen($key,$type) [expr {[ase::state_get $a enabled 0] eq {1} ? 1 : 0}]
-    foreach arg [dict get $anaargs $type] {
-      $pane.$type.$arg delete 0 end
-      $pane.$type.$arg insert 0 [ase::state_get $a $arg]
-    }
-  }
+# --- populate ----------------------------------------------------------------
+
+# Checkbox-cell glyphs (unicode ballot boxes as escapes — file stays ASCII).
+proc ase::ui::chk_glyph {on} {
+  return [expr {$on eq {1} ? "\u2611" : "\u2610"}]
 }
 
-proc ase::ui::harvest_ana {key} {
-  variable wins; variable anaargs; variable anaen; variable rowbase
-  set top [dict get $wins $key]
-  set pane $top.body.ana
-  set out {}
-  foreach type {op dc ac tran} {
-    set base [list type $type enabled 0]
-    if {[info exists rowbase($key,ana,$type)]} { set base $rowbase($key,ana,$type) }
-    set a $base
-    dict set a type $type
-    dict set a enabled [expr {[info exists anaen($key,$type)] && $anaen($key,$type) ? 1 : 0}]
-    foreach arg [dict get $anaargs $type] {
-      set v [$pane.$type.$arg get]
-      if {$v ne {} || [dict exists $base $arg]} { dict set a $arg $v }
-    }
-    lappend out $a
-  }
-  if {[info exists rowbase($key,ana,extra)]} {
-    foreach a $rowbase($key,ana,extra) { lappend out $a }
-  }
-  return $out
-}
-
+# Fill the three treeview panes + the toolbar temperature entry from the
+# session state; Outputs Value cells come from the per-session `results`
+# attr (set by run_finished — blank before the first successful run).
 proc ase::ui::populate {key} {
   variable wins
   if {![dict exists $wins $key]} { return }
   set top [dict get $wins $key]
   if {![winfo exists $top]} { return }
-  foreach skey {variables outputs models options} {
-    ase::ui::populate_list_pane $key $skey
-  }
-  ase::ui::populate_ana $key
   set st [ase::session_state $key]
-  $top.body.setup.rundir delete 0 end
-  $top.body.setup.rundir insert 0 [ase::state_get $st rundir]
-  catch {$top.body.setup.sim set [ase::state_get $st simulator]}
+  set results [ase::session_getattr $key results]
+  set tv $top.body.vars.tv
+  $tv delete [$tv children {}]
+  set i 0
+  foreach row [ase::state_get $st variables] {
+    $tv insert {} end -id $i -values \
+      [list [ase::state_get $row name] [ase::state_get $row value]]
+    incr i
+  }
+  set tv $top.body.ana.tv
+  $tv delete [$tv children {}]
+  set i 0
+  foreach row [ase::state_get $st analyses] {
+    $tv insert {} end -id $i -values [list [expr {$i + 1}] \
+      [ase::state_get $row type] \
+      [ase::ui::chk_glyph [ase::state_get $row enabled 0]] \
+      [ase::ui::arg_summary $row]]
+    incr i
+  }
+  set tv $top.body.outs.tv
+  $tv delete [$tv children {}]
+  set i 0
+  foreach row [ase::state_get $st outputs] {
+    set val {}
+    set rkey [ase::ui::output_result_key $row]
+    if {$results ne {} && [dict exists $results $rkey]} {
+      set val [dict get $results $rkey]
+    }
+    $tv insert {} end -id $i -values \
+      [list [ase::ui::output_display_name $row] $val \
+        [ase::ui::chk_glyph [ase::state_get $row plot 0]] \
+        [ase::ui::chk_glyph [ase::state_get $row save 0]] \
+        [ase::ui::save_options_cell $st $row]]
+    incr i
+  }
   $top.tb.temp delete 0 end
   $top.tb.temp insert 0 [ase::state_get $st temperature 27]
   ase::ui::refresh_title $key
@@ -590,37 +688,31 @@ proc ase::ui::populate {key} {
   ase::ui::apply_theme $top
 }
 
-# Widgets -> state dict, merged over the current session state so keys no pane
-# shows (version/design/includes, unknown keys) ride through untouched.
-proc ase::ui::harvest {key} {
-  variable wins
-  set top [dict get $wins $key]
-  set st [ase::session_state $key]
-  foreach skey {variables outputs models options} {
-    dict set st $skey [ase::ui::harvest_list_pane $key $skey]
-  }
-  dict set st analyses [ase::ui::harvest_ana $key]
-  dict set st rundir [$top.body.setup.rundir get]
-  set sim [$top.body.setup.sim get]
-  if {$sim ne {}} { dict set st simulator $sim }
-  # temperature: only a valid number may enter the state — a commit fired
-  # from another pane must never harvest a half-typed toolbar value
-  # (temp_commit restores + reports garbage on the entry's own commit)
-  set T [string trim [$top.tb.temp get]]
-  if {[string is double -strict $T]} { dict set st temperature $T }
-  return $st
-}
-
-# The ONE write path of every pane edit event.
-proc ase::ui::commit {key} {
+# Refresh only the Outputs Value cells from the session `results` attr —
+# called by run_finished after a successful run (keeps the selection, unlike
+# a full repopulate).
+proc ase::ui::refresh_output_values {key} {
   variable wins
   if {![dict exists $wins $key]} { return }
-  if {![winfo exists [dict get $wins $key]]} { return }
-  ase::session_update $key [ase::ui::harvest $key]
+  set tv [dict get $wins $key].body.outs.tv
+  if {![winfo exists $tv]} { return }
+  set st [ase::session_state $key]
+  set results [ase::session_getattr $key results]
+  set i 0
+  foreach row [ase::state_get $st outputs] {
+    set val {}
+    set rkey [ase::ui::output_result_key $row]
+    if {$results ne {} && [dict exists $results $rkey]} {
+      set val [dict get $results $rkey]
+    }
+    catch {$tv set $i value $val}
+    incr i
+  }
 }
 
-# Return/FocusOut on the toolbar temperature entry: numeric -> normal commit;
-# garbage -> restore the entry from the state + report, state untouched.
+# Return/FocusOut on the toolbar temperature entry: numeric -> straight into
+# the session state (the harvest model is gone — this is the entry's own
+# commit); garbage -> restore the entry from the state + report.
 proc ase::ui::temp_commit {key} {
   variable wins
   if {![dict exists $wins $key]} { return }
@@ -633,7 +725,275 @@ proc ase::ui::temp_commit {key} {
     catch {ciw_echo "ase: temperature must be numeric" error}
     return
   }
-  ase::ui::commit $key
+  set st [ase::session_state $key]
+  dict set st temperature $v
+  ase::session_update $key $st
+}
+
+# --- dialogs (UI v2 "Dialog style": modeless, themed, Return = proceed) ------
+# All three follow references/copy_current_cell_dialog.tcl: named fonts,
+# catch-destroy reuse, Return on every entry = proceed, per-window records
+# (edrow/edchk) cleaned on proceed/cancel AND in ase::ui::close. MODELESS —
+# no grab/tkwait — which is what keeps them test-drivable.
+
+# Shared scaffold: (re)create a modeless dialog toplevel; everything is
+# GRIDDED into $w directly so the entries live at the deterministic paths
+# $w.name / $w.value / $w.expr.
+proc ase::ui::dialog_frame {w title} {
+  catch {destroy $w}
+  toplevel $w
+  wm title $w $title
+  grid columnconfigure $w 1 -weight 1
+  return $w
+}
+
+proc ase::ui::dialog_row {w row label ename} {
+  label $w.l$ename -text $label -font AseLabelFont -anchor w
+  entry $w.$ename -width 26 -font AseEntryFont
+  grid $w.l$ename -row $row -column 0 -sticky w -padx {8 6} -pady 2
+  grid $w.$ename  -row $row -column 1 -sticky we -padx {0 8} -pady 2
+  return $w.$ename
+}
+
+proc ase::ui::dialog_buttons {w row okcmd cancelcmd} {
+  frame $w.btns
+  button $w.btns.proceed -text OK -command $okcmd
+  button $w.btns.cancel -text Cancel -command $cancelcmd
+  pack $w.btns.proceed -side left -padx 5
+  pack $w.btns.cancel -side right -padx 5
+  grid $w.btns -row $row -column 0 -columnspan 2 -sticky we -padx 8 -pady 6
+}
+
+# `=` / Variables context Add… / Variables > Edit… fallback: the Add Variable
+# dialog (fields: name, value). OK appends {name N value V} to `variables`;
+# empty or duplicate names are rejected with the dialog kept up.
+proc ase::ui::add_variable_dialog {key} {
+  variable wins
+  if {![dict exists $wins $key]} { return }
+  set w [ase::ui::dialog_frame [dict get $wins $key].addvar {Add Variable}]
+  set ne [ase::ui::dialog_row $w 0 Name: name]
+  set ve [ase::ui::dialog_row $w 1 Value: value]
+  ase::ui::dialog_buttons $w 2 [list ase::ui::add_variable_ok $key] \
+    [list destroy $w]
+  bind $ne <Return> [list ase::ui::add_variable_ok $key]
+  bind $ve <Return> [list ase::ui::add_variable_ok $key]
+  ase::ui::apply_theme $w
+  focus $ne
+  return $w
+}
+
+proc ase::ui::add_variable_ok {key} {
+  variable wins
+  if {![dict exists $wins $key]} { return }
+  set w [dict get $wins $key].addvar
+  if {![winfo exists $w]} { return }
+  set name [string trim [$w.name get]]
+  set value [string trim [$w.value get]]
+  if {$name eq {}} {
+    catch {ciw_echo "ase: variable name must not be empty" error}
+    return
+  }
+  set st [ase::session_state $key]
+  set rows [ase::state_get $st variables]
+  foreach v $rows {
+    if {[ase::state_get $v name] eq $name} {
+      catch {ciw_echo "ase: variable '$name' already exists" error}
+      return
+    }
+  }
+  lappend rows [list name $name value $value]
+  dict set st variables $rows
+  ase::session_update $key $st
+  ase::ui::populate $key
+  destroy $w
+}
+
+# Double-click / context Edit… on a variables row: per-row editor
+# (name/value prefilled); OK merges over the ORIGINAL row dict.
+proc ase::ui::variable_editor {key idx} {
+  variable wins; variable edrow
+  if {![dict exists $wins $key]} { return }
+  set rows [ase::state_get [ase::session_state $key] variables]
+  if {![string is integer -strict $idx] || $idx < 0 || $idx >= [llength $rows]} {
+    return
+  }
+  set row [lindex $rows $idx]
+  set w [ase::ui::dialog_frame [dict get $wins $key].edvar {Edit Variable}]
+  set edrow($key,var) $idx
+  set ne [ase::ui::dialog_row $w 0 Name: name]
+  set ve [ase::ui::dialog_row $w 1 Value: value]
+  $ne insert 0 [ase::state_get $row name]
+  $ve insert 0 [ase::state_get $row value]
+  ase::ui::dialog_buttons $w 2 [list ase::ui::variable_editor_ok $key] \
+    [list ase::ui::variable_editor_cancel $key]
+  bind $ne <Return> [list ase::ui::variable_editor_ok $key]
+  bind $ve <Return> [list ase::ui::variable_editor_ok $key]
+  ase::ui::apply_theme $w
+  focus $ve
+  return $w
+}
+
+proc ase::ui::variable_editor_ok {key} {
+  variable wins; variable edrow
+  if {![dict exists $wins $key]} { return }
+  set w [dict get $wins $key].edvar
+  if {![winfo exists $w] || ![info exists edrow($key,var)]} { return }
+  set name [string trim [$w.name get]]
+  set value [string trim [$w.value get]]
+  if {$name eq {}} {
+    catch {ciw_echo "ase: variable name must not be empty" error}
+    return
+  }
+  set idx $edrow($key,var)
+  set st [ase::session_state $key]
+  set rows [ase::state_get $st variables]
+  if {$idx >= 0 && $idx < [llength $rows]} {
+    set row [lindex $rows $idx]
+    dict set row name $name
+    dict set row value $value
+    lset rows $idx $row
+    dict set st variables $rows
+    ase::session_update $key $st
+    ase::ui::populate $key
+  }
+  catch {unset edrow($key,var)}
+  destroy $w
+}
+
+proc ase::ui::variable_editor_cancel {key} {
+  variable wins; variable edrow
+  catch {unset edrow($key,var)}
+  if {[dict exists $wins $key]} {
+    catch {destroy [dict get $wins $key].edvar}
+  }
+}
+
+# Double-click / context Edit… on an outputs row (idx >= 0), or the outputs
+# Add… flavor (idx -1, blank prefill): name (optional) / expr entries +
+# Plot / Save checkbuttons; OK merges name/expr/plot/save over the ORIGINAL
+# row dict (blank name = unnamed output, allowed; expr must be non-empty).
+proc ase::ui::output_editor {key idx} {
+  variable wins; variable edrow; variable edchk
+  if {![dict exists $wins $key]} { return }
+  set rows [ase::state_get [ase::session_state $key] outputs]
+  set row {}
+  if {$idx >= 0} {
+    if {![string is integer -strict $idx] || $idx >= [llength $rows]} { return }
+    set row [lindex $rows $idx]
+  } else {
+    set idx -1
+  }
+  set w [ase::ui::dialog_frame [dict get $wins $key].edout \
+           [expr {$idx >= 0 ? {Edit Output} : {Add Output}}]]
+  set edrow($key,out) $idx
+  set ne [ase::ui::dialog_row $w 0 Name: name]
+  set xe [ase::ui::dialog_row $w 1 Expression: expr]
+  $ne insert 0 [ase::state_get $row name]
+  $xe insert 0 [ase::state_get $row expr]
+  set edchk($key,plot) [expr {[ase::state_get $row plot 0] eq {1} ? 1 : 0}]
+  set edchk($key,save) [expr {[ase::state_get $row save 0] eq {1} ? 1 : 0}]
+  checkbutton $w.plot -text Plot -variable ::ase::ui::edchk($key,plot)
+  checkbutton $w.save -text Save -variable ::ase::ui::edchk($key,save)
+  grid $w.plot -row 2 -column 1 -sticky w -padx {0 8} -pady 2
+  grid $w.save -row 3 -column 1 -sticky w -padx {0 8} -pady 2
+  ase::ui::dialog_buttons $w 4 [list ase::ui::output_editor_ok $key] \
+    [list ase::ui::output_editor_cancel $key]
+  bind $ne <Return> [list ase::ui::output_editor_ok $key]
+  bind $xe <Return> [list ase::ui::output_editor_ok $key]
+  ase::ui::apply_theme $w
+  focus $xe
+  return $w
+}
+
+proc ase::ui::output_editor_ok {key} {
+  variable wins; variable edrow; variable edchk
+  if {![dict exists $wins $key]} { return }
+  set w [dict get $wins $key].edout
+  if {![winfo exists $w] || ![info exists edrow($key,out)]} { return }
+  set name [string trim [$w.name get]]
+  set ex [string trim [$w.expr get]]
+  if {$ex eq {}} {
+    catch {ciw_echo "ase: output expression must not be empty" error}
+    return
+  }
+  set plot [expr {[info exists edchk($key,plot)] && $edchk($key,plot) ? 1 : 0}]
+  set save [expr {[info exists edchk($key,save)] && $edchk($key,save) ? 1 : 0}]
+  set idx $edrow($key,out)
+  set st [ase::session_state $key]
+  set rows [ase::state_get $st outputs]
+  if {$idx < 0} {
+    lappend rows [dict create name $name expr $ex plot $plot save $save]
+  } elseif {$idx < [llength $rows]} {
+    set row [lindex $rows $idx]
+    dict set row name $name
+    dict set row expr $ex
+    dict set row plot $plot
+    dict set row save $save
+    lset rows $idx $row
+  } else {
+    ase::ui::output_editor_cancel $key
+    return
+  }
+  dict set st outputs $rows
+  ase::session_update $key $st
+  ase::ui::populate $key
+  catch {unset edrow($key,out)}
+  catch {unset edchk($key,plot)}
+  catch {unset edchk($key,save)}
+  destroy $w
+}
+
+proc ase::ui::output_editor_cancel {key} {
+  variable wins; variable edrow; variable edchk
+  catch {unset edrow($key,out)}
+  catch {unset edchk($key,plot)}
+  catch {unset edchk($key,save)}
+  if {[dict exists $wins $key]} {
+    catch {destroy [dict get $wins $key].edout}
+  }
+}
+
+# Context Edit… on the variables pane: editor on the FIRST selected row.
+proc ase::ui::edit_variable_first {key} {
+  variable wins
+  if {![dict exists $wins $key]} { return }
+  set tv [dict get $wins $key].body.vars.tv
+  set sel {}
+  if {[winfo exists $tv]} { set sel [$tv selection] }
+  if {$sel eq {}} {
+    catch {ciw_echo "ase: nothing selected"}
+    return
+  }
+  ase::ui::variable_editor $key [lindex $sel 0]
+}
+
+# Context Edit… on the outputs pane: editor on the FIRST selected row.
+proc ase::ui::edit_output_first {key} {
+  variable wins
+  if {![dict exists $wins $key]} { return }
+  set tv [dict get $wins $key].body.outs.tv
+  set sel {}
+  if {[winfo exists $tv]} { set sel [$tv selection] }
+  if {$sel eq {}} {
+    catch {ciw_echo "ase: nothing selected"}
+    return
+  }
+  ase::ui::output_editor $key [lindex $sel 0]
+}
+
+# Variables > Edit… (menu): per-row editor on the first selected variables
+# row, or the Add Variable dialog when nothing is selected.
+proc ase::ui::edit_variables {key} {
+  variable wins
+  if {![dict exists $wins $key]} { return }
+  set tv [dict get $wins $key].body.vars.tv
+  set sel {}
+  if {[winfo exists $tv]} { set sel [$tv selection] }
+  if {$sel ne {}} {
+    ase::ui::variable_editor $key [lindex $sel 0]
+  } else {
+    ase::ui::add_variable_dialog $key
+  }
 }
 
 # --- title / status bar / notify ---------------------------------------------
@@ -960,7 +1320,16 @@ proc ase::ui::run_finished {key} {
   ase::ui::drop_trace $key
   set ec -1
   if {[info exists ::execute(exitcode,last)]} { set ec $::execute(exitcode,last) }
-  if {$ec == 0} { ase::ui::set_status $key ok } else { ase::ui::set_status $key fail }
+  if {$ec == 0} {
+    # UI v2 Value column: per-SESSION results (a global last_result would
+    # bleed session A's numbers into session B); display-only, never
+    # serialized to the state file
+    ase::session_setattr $key results [ase::last_result]
+    ase::ui::refresh_output_values $key
+    ase::ui::set_status $key ok
+  } else {
+    ase::ui::set_status $key fail
+  }
   ase::session_setattr $key run_id {}
 }
 

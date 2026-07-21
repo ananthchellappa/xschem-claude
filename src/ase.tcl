@@ -22,9 +22,12 @@
 
 namespace eval ase {
   # canonical state-file key order (the spec's v1 schema + the UI v2
-  # `temperature` session scalar, grouped with the other scalars)
+  # `temperature` session scalar, grouped with the other scalars, and the UI v2
+  # blanket-save flags `save_all_v`/`save_all_i`, grouped with outputs whose
+  # saving semantics they modify; deck mapping allv/alli is item 07)
   variable schema_keys {version simulator design rundir temperature models
-                        variables analyses outputs options includes}
+                        variables analyses outputs save_all_v save_all_i
+                        options includes}
   # simulator name -> hooks dict {render_deck run_cmd log_file result_probe}
   variable backends [dict create]
   # most recent completed run: {results <dict> exitcode <n> log <path> }
@@ -73,6 +76,8 @@ proc ase::state_default {} {
     variables {} \
     analyses  {{type op enabled 1} {type dc enabled 0} {type ac enabled 0} {type tran enabled 0}} \
     outputs   {} \
+    save_all_v 0 \
+    save_all_i 0 \
     options   {} \
     includes  {}]
 }
@@ -612,16 +617,22 @@ namespace eval ase::backend::ngspice {
   }
 
   # Parse `<expr> = <float>` lines out of the log text (e.g.
-  # `-i(v1) = 4.096837e-04`) -> dict output-name -> value, for every state
-  # output whose line appears.
+  # `-i(v1) = 4.096837e-04`) -> results dict, for every state output whose
+  # line appears. Keyed by the output's `name` when present and non-empty,
+  # else by its `expr` (UI v2: the Outputs pane needs a Value for unnamed
+  # rows too); outputs without an `expr` are skipped.
   proc result_probe {state logtext} {
     set results [dict create]
     foreach o [ase::state_get $state outputs] {
-      if {![dict exists $o name] || ![dict exists $o expr]} { continue }
+      if {![dict exists $o expr]} { continue }
+      set rkey [dict get $o expr]
+      if {[dict exists $o name] && [dict get $o name] ne {}} {
+        set rkey [dict get $o name]
+      }
       regsub -all {\W} [dict get $o expr] {\\&} esc
       set pat [format {^\s*%s\s*=\s*([-+]?[0-9.]+(?:[eE][-+]?[0-9]+)?)\s*$} $esc]
       if {[regexp -line $pat $logtext -> val]} {
-        dict set results [dict get $o name] $val
+        dict set results $rkey $val
       }
     }
     return $results
