@@ -37,6 +37,134 @@ Runbook: doc/claude/ase_l_batch/RUNBOOK.md. Branch: fluid-editing. NEVER push.
 
 Verdicts: [x] done (commit in receipt) | [F] failed (reason in receipt). No DEFER in this batch.
 
+## Round 2 — UI v2 / ADE-L parity (2026-07-21)
+
+Authoritative contract: spec section "UI v2 — ADE-L parity rework" in
+doc/claude/specs/ase_l.md (user-reviewed; palette + Value-column decisions
+USER-LOCKED in the spec). Fonts/dialog idioms:
+references/copy_current_cell_dialog.tcl. Same policies, same baseline fail
+list as round 1; tests test_ase_{core,view,window,final}.tcl are NOT baseline
+fails and must stay green (they MAY be edited when the UI they assert
+changes — receipt must justify every loosened assertion).
+
+- [x] 05 ui-shell        — chrome: title/toolbar-temp/statusbar/palette/fonts, menu tree v2, log window (pane removed), Design Window BUGFIX -> 6230ca56 v2 chrome + Design Window raise fix landed, 129 checks (91 GUI + 38 headless) + 3 exact-target sabotages, verifier lenses clean (audit caveat in receipt)
+- [x] 06 panes-strip     — 3 panes w/ v2 columns + selection + ctx menus + dbl-click editors, action strip, Value fill-after-run -> 76c4cffe v2 treeview panes + action strip + Value fill landed, 185 checks (144 GUI + 41 headless) + 3 exact-target sabotages, 2 test-only WSLg fixer commits (483084e0, 7530dc39), lenses clean
+- [x] 07 dialogs         — Choose Analyses, Setup Design/Model Files, Save All, Load/Save State, Simulation Options -> 0c54ed28 all nine TODO(item07) stubs replaced with real themed dialogs, 262 checks (201 GUI + 61 headless) + 3 exact-target sabotages, no fixer rounds, audit fails strict subset of baseline
+- [x] 08 design-interact — Select On Design (click wires/terminals), whole-flow GUI acceptance -> 54c78d31 ROUND-2 GATE PASSED: click mode + whole-flow leg end-to-end with zero SKIPs (Id 409.7 uA, scratch-state reload identical), 63 checks (54 GUI + 9 headless) + 3 exact-target sabotages, no fixer rounds, verifier audit fails strict subset of baseline
+
+### 05 ui-shell
+
+Rework src/ase_window.tcl chrome per spec "Window chrome" + "Menu tree v2" +
+"Log window":
+1. Title `Analog Sim Environment <design cell>`; toolbar row under menubar
+   with temperature numeric entry (state key `temperature` default 27,
+   validated numeric) + `°C` label; bottom status bar
+   `<win#> | Status: <Ready/Running/…> | T=<T> C | Simulator: <sim> | State: <view>`.
+   Temperature emits `.temp <T>` in render_deck (ase.tcl backend + test).
+2. Palette (USER-LOCKED): panels #f2f2f2, tables/entries white, header
+   strips #e8e8e8, dark-red pane-title accent. Central `ase::theme` proc
+   (colors + named fonts AseLabelFont Arial 10 bold / AseEntryFont Arial 13
+   / AseMonoFont Courier 13, `option add *TCombobox*Listbox.font`) applied
+   to EVERY ASE widget — no stock-Tk leftovers.
+3. Menu tree v2 VERBATIM from spec: Launch (placeholder), Session, Setup,
+   Analyses, Variables, Outputs, Simulation, Results (deferred entries
+   present but disabled), Tools (disabled). Wire everything that already
+   has a proc (Netlist Recreate/Display, Netlist-and-Run, Run-existing
+   [must NOT re-netlist], Stop, Log); dialogs landing in item 07 get a
+   `ciw_echo "coming in item 07"` stub command marked with a `TODO(item07)`
+   comment.
+4. Log pane REMOVED from the window; run opens a live-follow log toplevel
+   (reuse v1 live-log machinery), Ctrl-W closes it, Simulation > Log
+   reopens on the current log file.
+5. **BUGFIX Session > Design Window**: currently does not raise/open the
+   schematic. Scout: reproduce first (read receipts/03 + the current
+   handler), root-cause, fix = raise if a window holds the design cellview,
+   else open via load-routing precedent + `after 120 force_window_repaint`.
+   Regression check in the GUI test.
+6. Update tests/headless/test_ase_window.tcl for the new chrome (title,
+   no log pane, menu entries exist, temp entry present, .temp in deck) —
+   every assertion change justified in the receipt. ≥2 sabotages.
+
+### 06 panes-strip
+
+Spec sections "Panes" + "Action strip":
+1. Exactly 3 panes: Design Variables (Name,Value), Analyses (row#, Type,
+   Enable checkbox, view-only Arguments summary), Outputs (Name, Value,
+   Plot cb, Save cb, Save Options). NO inline +/- buttons anywhere.
+2. Outputs semantics: Name = user name if named else truncated expression;
+   Save Options auto-cell `allv`/`alli` per spec (needs state keys for
+   blanket saves — coordinate with item 07's Save All dialog: land the
+   state keys `save_all_v`/`save_all_i` HERE with defaults 0, dialog later);
+   Value column filled after successful run from parsed results (extend
+   ase::last_result / backend result_probe to return per-output scalars;
+   blank pre-run; test with the nfet fixture: id row shows ≈4.0968e-04).
+3. Selection model: row multi-select within ONE pane; selecting in a pane
+   clears the other panes' selections; action-strip `X` deletes the
+   current selection (noun-verb) with no confirm; context menu per pane:
+   Add… / Edit… / Delete.
+4. Double-click row → per-item edit dialog (variables: name/value;
+   outputs: name/expr/plot/save; analyses: routes to Choose Analyses with
+   that analysis preselected — stub `TODO(item07)` until 07 lands, but the
+   variables + outputs editors land NOW).
+5. Action strip (right vertical, per spec): OP,TR / = / --> / X / N&> /
+   > / ! / ~ (~ = disabled placeholder; unicode ▶ ■ acceptable for run/
+   stop if they render). OP,TR + --> may stub to item 07 dialogs; = (Add
+   Variable name/value dialog) lands NOW.
+6. Extend test_ase_window.tcl: pane columns, checkbox toggles persist to
+   state on save, X deletes multi-selection, add-variable dialog round
+   trip, Value fill after run leg. ≥2 sabotages.
+
+### 07 dialogs
+
+Spec "Menu tree v2" + "Choose Analyses dialog" + "Dialog style" (idioms
+from references/copy_current_cell_dialog.tcl — named fonts, type-to-filter
+ttk::combobox, Return=proceed, per-window state arrays cleaned on destroy):
+1. **Choose Analyses**: top radio section (op/dc/ac/tran), bottom
+   per-analysis form (Enable + quick fields: DC source/start/stop/step,
+   TRAN step/stop, AC points/start/stop) + Options button (simulator-side
+   nuanced options; minimal form OK). Replaces item-06 stubs (OP,TR
+   button, analyses dbl-click preselect).
+2. **Setup > Design**: Library/Cell/View dropdowns; View lists ONLY
+   schematic views once Cell chosen; writes state `design`.
+3. **Setup > Model Files**: one row per model file + corner entry (e.g.
+   tt); add/delete rows via context menu + strip X consistency.
+4. **Outputs > Save All**: checkboxes all-voltages / all-terminal-currents
+   (+ levels field, may be inert v1); writes `save_all_v`/`save_all_i`;
+   deck mapping allv → `.save all`, alli → `.options savecurrents`
+   (render_deck + test); Outputs pane Save Options column reacts.
+5. **Session > Load State**: library-browser dialog (Create Instance
+   browser precedent — scout: src/create_instance.tcl) filtered to
+   simulation-state views; loads into THIS session (dirty-check prompt).
+6. **Session > Save State**: always Save-As — Library dropdown +
+   editable Cell/View entries prefilled; read-only-opened view +
+   same-target overwrite → confirmation popup; saving to a new view
+   creates it (item-02 creation path).
+7. **Simulation > Options**: minimal ngspice options dialog (rows of
+   name/value, feeds state `options`).
+8. Extend test_ase_window.tcl (or new test_ase_dialogs.tcl): each dialog
+   opens, round-trips its state key, Save-As creates a new view dir,
+   read-only overwrite confirm path, .save all/.options savecurrents in
+   deck. ≥2 sabotages.
+
+### 08 design-interact
+
+1. **Select On Design** (Outputs > To Be Saved / To Be Plotted, and the
+   --> dialog's choose-from-design button): raise-or-open the design
+   schematic (reuse the item-05-fixed Design Window path), enter a click
+   mode where wire click → voltage output `v(<net>)`, instance terminal
+   click → current output `i(<source>)`/terminal current; each click
+   queues an output row (Save or Plot flavor per entry point); ESC ends
+   the mode and returns focus to ASE. Scout: reuse existing xschem click
+   infra (select_at / pin_view machinery / hover) — smallest honest hook,
+   document choice.
+2. Whole-flow GUI acceptance leg (this round's gate): open
+   test_nfet_final state → Choose Analyses enable op → add output via
+   dialog → Netlist and Run → log window appears, status Ready, Outputs
+   Value column shows Id ≈ 409.7 µA → Save State to a scratch view →
+   reload it → panes repopulate identically. DISPLAY-guarded; self-SKIP
+   only for legs WSLg physically cannot do (justify each in receipt).
+3. ≥2 sabotages.
+
 ---
 
 ## Item detail

@@ -152,7 +152,117 @@ Recon (2026-07-20):
 ### Window numbering
 TBD-AGENT-A2
 
-## UI sketch (single toplevel per session, Tk)
+## UI v2 — ADE-L parity rework (2026-07-21; supersedes the v1 sketch below)
+
+User reviewed shipped v1 against a real ADE-L screenshot; functionality OK,
+UI wrong. Contract below is authoritative. Known v1 BUG carried in: Session >
+Design Window does not raise/open the schematic — fix in this rework.
+
+### Window chrome
+- Title: `Analog Sim Environment <design cell name>` (e.g.
+  `Analog Sim Environment test_nfet_final`).
+- Below the menubar: toolbar row with a numeric entry for **simulation
+  temperature** (default 27) followed by label `°C`. Temperature emits
+  `.temp <T>` in the deck (state key `temperature`, default 27).
+- Bottom status bar: simulator name + state name (e.g.
+  `Simulator: ngspice | State: ngspice_state1`) + status (Ready/Running/…).
+- **Brighter palette than stock Tk** (stock = #d9d9d9 grey). USER-LOCKED
+  2026-07-21: ADE-like light grey/white — panels #f2f2f2, tables/entries
+  white, header strips #e8e8e8, dark-red accent for pane titles.
+- **Fonts**: named-font pattern from references/copy_current_cell_dialog.tcl —
+  create once, apply to every widget: `AseLabelFont` Arial 10 bold (labels,
+  table headers), `AseEntryFont` Arial 13 (entries, table rows, combos —
+  incl. `option add *TCombobox*Listbox.font`), `AseMonoFont` Courier 13
+  (netlist/log/preview text). No widget left on Tk defaults.
+
+### Panes (ONLY these three; log pane REMOVED)
+- **Design Variables** (left): columns Name, Value.
+- **Analyses** (right top): columns Type, Enable (checkbox), Arguments
+  (view-only one-line summary). One row per chosen analysis, row-numbered.
+- **Outputs** (right bottom): columns Name, Value, Plot (checkbox), Save
+  (checkbox), Save Options. Value column USER-LOCKED 2026-07-21: filled
+  after a successful run (op/scalar results evaluated per row), blank
+  before the first run. Name shows the user-given name if named, else as
+  much of the expression as fits. Save Options auto-displays `allv` (item is
+  a voltage and blanket save-all-voltages is on) or `alli` (terminal current
+  + save-all-currents on); blank otherwise.
+- Interaction model (all panes): NO inline +/- buttons. Add via right-click
+  context menu, menu bar, or action strip. **Double-click a row → edit
+  dialog for that item.** Multi-select within ONE pane at a time; global
+  Delete (action strip `X`) is noun-verb on the current selection.
+
+### Action strip (right vertical panel; text placeholders for now — real
+icons welcome where Tk can do them, e.g. unicode ▶ ■)
+- `OP,TR` → Choose Analyses dialog
+- `=`     → Add Variable dialog (fields: name, value)
+- `-->`   → Setup Outputs dialog (name optional + expression, or
+            choose-from-design: raises/opens the schematic, user clicks
+            wires → voltage / terminals → current; ESC ends)
+- `X`     → Delete current selection (noun-verb, single-pane selections)
+- `N&>`   → Netlist and Run
+- `>`     → Run (existing netlist)
+- `!`     → Stop
+- `~`     → Plot waveforms (functionality deferred; button present)
+
+**Select On Design v1 scope** (item 08; applies to the `-->` choose-from-
+design flow and both Outputs > To Be Saved/Plotted > Select On Design):
+a click on a wire, a net label or anything else that resolves to a net
+queues the voltage output `v(<net>)`; a click on a SOURCE-class instance
+(symbol `type` ∈ {vsource, ammeter}) queues the source-current output
+`i(<instname>)` — a source has exactly one branch current, so instance-
+level click granularity is exact for the supported class. Generated tokens
+are lowercased (ngspice echoes `print` expressions lowercased and
+result_probe matches the expr literally). Per-terminal currents of OTHER
+devices are deferred: ngspice needs `.options savecurrents` plus
+`@m.x<inst>.<subdev>[id]`-style names that depend on subcircuit internals
+invisible to the schematic click. Clicks that resolve to neither report a
+one-line notice and queue nothing. Queueing dedupes on the exact expression
+string: an existing row gets the flavor's plot/save flags ORed in, an
+identical re-queue writes nothing.
+
+### Menu tree (v2)
+- **Launch** — placeholder menu, ignore for now.
+- **Session** — Design Window (raise-or-open the attached schematic window —
+  FIX the v1 bug); Load State (library browser like Create Instance,
+  filtered to simulation-state views); Save State (always Save-As: Library
+  dropdown + editable Cell/View text fields prefilled with current; if
+  current view was opened read-only and target = same view, Overwrite needs
+  a confirmation popup); Close.
+- **Setup** — Design (L/C/V dropdown dialog; after Cell chosen, View
+  dropdown lists ONLY schematic views); Model Files (dialog: one row per
+  model file + corner/section entry per row, e.g. `tt`).
+- **Analyses** — Choose… (Choose Analyses dialog).
+- **Variables** — Edit… (variables editor).
+- **Outputs** — To Be Saved > Select On Design; To Be Plotted > Select On
+  Design; Save All… (dialog: save all voltages?, all terminal currents?,
+  levels, etc. — ngspice mapping v1: allv → `.save all`, alli →
+  `.options savecurrents`).
+- **Simulation** — Netlist > Recreate; Netlist > Display; Netlist and Run;
+  Run (uses EXISTING netlist — supports hand-edited decks); Stop; Log
+  (reopen log window); Options… (simulator-specific options dialog,
+  minimal for now).
+- **Results** — Direct Plot (DEFERRED: command mode, click signals on
+  schematic, queue, ESC → plot); Annotate > Operating Point info (DEFERRED);
+  Annotate > DC Node Voltages (DEFERRED). Menu entries may exist disabled.
+- **Tools** — deferred entirely.
+
+### Log window (not a pane)
+Kicking off a run opens a NEW toplevel showing the live log (existing
+live-follow machinery from v1 moves here). Ctrl-W closes it;
+Simulation > Log reopens on the current log file.
+
+### Choose Analyses dialog
+Two vertical sections: top = analysis types with radio buttons (selects
+which analysis the bottom shows); bottom = per-analysis form: Enable
+checkbox + quick fields (e.g. DC: source/start/stop/step; TRAN:
+step/stop; AC: points/start/stop) + an Options button for nuanced options.
+
+### Dialog style
+All dialogs follow references/copy_current_cell_dialog.tcl idioms: named
+fonts, ttk::combobox with type-to-filter where a library/cell list appears,
+Return = proceed, per-window state arrays cleaned on destroy.
+
+## UI sketch v1 (single toplevel per session, Tk) — SUPERSEDED, kept for history
 
 ```
 +--------------------------------------------------------------+
