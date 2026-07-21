@@ -1,4 +1,4 @@
-# ase_window.tcl — the ASE-L session window (items 03+05+06+07 of
+# ase_window.tcl — the ASE-L session window (items 03+05-08 of
 # doc/claude/ase_l_batch, spec doc/claude/specs/ase_l.md — UI v2 "ADE-L
 # parity rework" is the authoritative chrome contract): ALL Tk widget code of
 # the ASE-L feature. ase.tcl (the headless core + session model) stays
@@ -100,6 +100,15 @@ namespace eval ase::ui {
                         heads {File Section} ed modrow edtitle {Model File}] \
     simopt [dict create win simopt skey options cols {name value} \
                         heads {Name Value} ed optrow edtitle {Simulation Option}]]
+  # sod(...): the Select On Design click mode (item 08). ONE mode globally:
+  # sod(active) = the owning session key; per key: sod($key,canvas) = the
+  # design window's canvas whose <ButtonPress-1>/<ButtonRelease-1>/
+  # <Key-Escape> bindings the mode seized, sod($key,flavor) = the queue
+  # flavor dict {save S plot P}, sod($key,prevpress|prevrel|prevesc) = the
+  # seized bindings' PREVIOUS scripts (restored VERBATIM on exit — empty
+  # string = no binding — so the mode composes with the addpin/addlabel
+  # shared canvas-Esc slot), sod($key,count) = outputs queued this mode.
+  variable sod;     array set sod {}
 }
 
 # --- theme (UI v2 "Window chrome": USER-LOCKED palette + named fonts) --------
@@ -226,6 +235,10 @@ proc ase::ui::close {key} {
   array unset edchk $key,*
   array unset dlg $key,*
   catch {destroy $top}
+  # binding-leak guard (item 08): end an active Select On Design mode so the
+  # design canvas gets its bindings back. AFTER the destroy + wins unset, so
+  # sod_end's raise-the-ASE-window arm no-ops on the dead toplevel.
+  ase::ui::sod_end $key
 }
 
 # --- window construction -----------------------------------------------------
@@ -282,13 +295,15 @@ proc ase::ui::build {key top} {
   menu $top.mb.outputs -tearoff 0
   $top.mb add cascade -label Outputs -menu $top.mb.outputs
   menu $top.mb.outputs.saved -tearoff 0
-  # TODO(item08): Select On Design command mode (click wires/terminals)
+  # Select On Design (item 08): click mode on the design schematic — wire /
+  # net-label clicks queue v(<net>), source clicks queue i(<inst>); the To Be
+  # Saved flavor queues {save 1 plot 0}, To Be Plotted {save 1 plot 1}
   $top.mb.outputs.saved add command -label {Select On Design} \
-    -command [list ase::ui::todo_stub {Outputs To Be Saved} 08]
+    -command [list ase::ui::select_on_design $key {save 1 plot 0}]
   $top.mb.outputs add cascade -label {To Be Saved} -menu $top.mb.outputs.saved
   menu $top.mb.outputs.plotted -tearoff 0
   $top.mb.outputs.plotted add command -label {Select On Design} \
-    -command [list ase::ui::todo_stub {Outputs To Be Plotted} 08]
+    -command [list ase::ui::select_on_design $key {save 1 plot 1}]
   $top.mb.outputs add cascade -label {To Be Plotted} \
     -menu $top.mb.outputs.plotted
   $top.mb.outputs add command -label "Save All\u2026" \
@@ -665,6 +680,40 @@ proc ase::ui::arg_summary {row} {
   return [join $out { }]
 }
 
+# Select On Design expression builder: kind `voltage` + a net name ->
+# `v(<net>)`, kind `current` + an instance name -> `i(<inst>)`. The token is
+# LOWERCASED: ngspice echoes `print` expressions lowercased and result_probe
+# matches the expr literally, so only a lowercase token can ever get a Value.
+proc ase::ui::sod_expr {kind token} {
+  if {$kind eq {voltage}} { return "v([string tolower $token])" }
+  return "i([string tolower $token])"
+}
+
+# Select On Design queue merge (pure): dedupe on the EXACT expr string.
+# Existing row -> OR the flavor's plot/save flags into it; a row already
+# carrying both flags is left alone. Returns {newoutputs status} with status
+# `added` (row appended), `merged` (flags ORed into an existing row) or
+# `nochange` (identical re-queue — the outputs list is returned unchanged).
+proc ase::ui::sod_merge {outputs ex flavor} {
+  set p [expr {[ase::state_get $flavor plot 0] eq {1} ? 1 : 0}]
+  set s [expr {[ase::state_get $flavor save 0] eq {1} ? 1 : 0}]
+  for {set i 0} {$i < [llength $outputs]} {incr i} {
+    set row [lindex $outputs $i]
+    if {[ase::state_get $row expr] ne $ex} { continue }
+    set op [expr {[ase::state_get $row plot 0] eq {1} ? 1 : 0}]
+    set os [expr {[ase::state_get $row save 0] eq {1} ? 1 : 0}]
+    set np [expr {$op || $p ? 1 : 0}]
+    set ns [expr {$os || $s ? 1 : 0}]
+    if {$np == $op && $ns == $os} { return [list $outputs nochange] }
+    dict set row plot $np
+    dict set row save $ns
+    lset outputs $i $row
+    return [list $outputs merged]
+  }
+  lappend outputs [dict create name {} expr $ex plot $p save $s]
+  return [list $outputs added]
+}
+
 # --- populate ----------------------------------------------------------------
 
 # Checkbox-cell glyphs (unicode ballot boxes as escapes — file stays ASCII).
@@ -931,6 +980,12 @@ proc ase::ui::output_editor {key idx} {
   checkbutton $w.save -text Save -variable ::ase::ui::edchk($key,save)
   grid $w.plot -row 2 -column 1 -sticky w -padx {0 8} -pady 2
   grid $w.save -row 3 -column 1 -sticky w -padx {0 8} -pady 2
+  # item 08: choose-from-design — closes this dialog and enters the Select On
+  # Design click mode with the checkboxes' current flavor (rows 2/3 column 0
+  # are free; existing field paths untouched)
+  button $w.fromdes -text "From Design…" \
+    -command [list ase::ui::output_editor_from_design $key]
+  grid $w.fromdes -row 2 -column 0 -rowspan 2 -sticky w -padx {8 6} -pady 2
   ase::ui::dialog_buttons $w 4 [list ase::ui::output_editor_ok $key] \
     [list ase::ui::output_editor_cancel $key]
   bind $ne <Return> [list ase::ui::output_editor_ok $key]
@@ -986,6 +1041,165 @@ proc ase::ui::output_editor_cancel {key} {
   if {[dict exists $wins $key]} {
     catch {destroy [dict get $wins $key].edout}
   }
+}
+
+# --- Select On Design (item 08) ----------------------------------------------
+# A click mode on the design schematic that queues Outputs rows: wire /
+# net-label click -> voltage output `v(<net>)`, source-class instance click
+# (symbol type vsource/ammeter) -> source-current output `i(<inst>)`; ESC
+# ends the mode, restores the seized canvas bindings VERBATIM and returns
+# focus to the ASE window. Entry points: Outputs > To Be Saved/To Be Plotted >
+# Select On Design and the Add/Edit Output dialog's "From Design…" button.
+#
+# Mechanism (no C hook): Tk fires the MOST SPECIFIC matching binding per tag,
+# so seizing <ButtonPress-1>/<ButtonRelease-1>/<Key-Escape> on the design
+# canvas pre-empts the generic <ButtonPress>/<ButtonRelease>/<KeyPress> ->
+# `xschem callback` bindings for exactly those events while Motion (context
+# switching + mousex_snap updates) keeps flowing to C. Every seized script
+# ends in `break` so the generic class/all bindtags never see the event. The
+# previous binding STRINGS are saved at entry and restored verbatim at exit,
+# which composes with the addpin/addlabel forms' shared `.drw <Key-Escape>`
+# slot for free.
+#
+# v1 terminal-current scope (honest restriction, spec "Select On Design v1
+# scope"): only SOURCE-class instances (symbol type vsource/ammeter) queue
+# currents — a source has exactly one branch current, so instance-level hit
+# granularity is exact. Per-terminal currents of other devices need ngspice
+# `.options savecurrents` + `@m.x<inst>.<subdev>[id]` names that depend on
+# subcircuit internals invisible to the schematic click — deferred.
+
+# Enter the mode for session `key` with `flavor` = {save S plot P} (menu To
+# Be Saved -> {save 1 plot 0}, To Be Plotted -> {save 1 plot 1}, From Design…
+# -> the dialog checkboxes). ONE mode globally: entering while another is
+# active cleanly ends the previous one first. Returns 1 when the mode is
+# armed, 0 when the design window cannot be opened.
+proc ase::ui::select_on_design {key flavor} {
+  variable sod
+  if {[info exists sod(active)]} { ase::ui::sod_end $sod(active) }
+  if {![ase::ui::design_window $key]} { return 0 }
+  set cv [xschem get current_win_path]
+  if {![winfo exists $cv]} {
+    catch {ciw_echo "ase: no design canvas to select on ($cv)" error}
+    return 0
+  }
+  set sod($key,canvas)    $cv
+  set sod($key,flavor)    $flavor
+  set sod($key,count)     0
+  set sod($key,prevpress) [bind $cv <ButtonPress-1>]
+  set sod($key,prevrel)   [bind $cv <ButtonRelease-1>]
+  set sod($key,prevesc)   [bind $cv <Key-Escape>]
+  bind $cv <ButtonPress-1>   "[list ase::ui::sod_click $key]; break"
+  # a lone release must not reach the C callback — the press it pairs with
+  # was swallowed above
+  bind $cv <ButtonRelease-1> {break}
+  bind $cv <Key-Escape>      "[list ase::ui::sod_end $key]; break"
+  set sod(active) $key
+  catch {ciw_echo "ase: Select On Design — click wires/net labels for\
+ voltages, sources for currents; ESC ends"}
+  return 1
+}
+
+# End the mode: restore the three seized bindings verbatim (catch — the
+# canvas may be dead), clear the mode records, report how many outputs were
+# queued and return focus to the ASE window (raise_activate_toplevel — a bare
+# raise is a no-op under WSLg/Weston, issue 0054). Safe to call when no mode
+# is active for `key` (early return).
+proc ase::ui::sod_end {key} {
+  variable sod; variable wins
+  if {![info exists sod($key,canvas)]} { return }
+  set cv $sod($key,canvas)
+  catch {bind $cv <ButtonPress-1>   $sod($key,prevpress)}
+  catch {bind $cv <ButtonRelease-1> $sod($key,prevrel)}
+  catch {bind $cv <Key-Escape>      $sod($key,prevesc)}
+  set n 0
+  if {[info exists sod($key,count)]} { set n $sod($key,count) }
+  array unset sod $key,*
+  if {[info exists sod(active)] && $sod(active) eq $key} { unset sod(active) }
+  catch {ciw_echo "ase: Select On Design ended — $n output(s) queued"}
+  if {[dict exists $wins $key]} {
+    set top [dict get $wins $key]
+    if {[winfo exists $top]} {
+      catch {raise_activate_toplevel $top}
+      catch {focus $top}
+    }
+  }
+}
+
+# One mode click. Bare x/y (the canvas binding) read the last snapped mouse
+# position — kept current by the generic <Motion> binding that still flows to
+# C; tests pass explicit schematic coordinates (replayable). Classification
+# (D4): select_at miss -> nothing; source-class instance -> current output;
+# anything resolving to a net under the click (wires, net labels, labeled
+# pins — via the read-only flylines query) -> voltage output; else the v1
+# scope notice. select_at doubles as the Cadence-like click feedback and logs
+# its own replayable action-log line.
+proc ase::ui::sod_click {key {x {}} {y {}}} {
+  variable sod
+  if {![info exists sod($key,flavor)]} { return }
+  if {$x eq {}} { set x [xschem get mousex_snap] }
+  if {$y eq {}} { set y [xschem get mousey_snap] }
+  set hit [xschem select_at $x $y]
+  if {$hit eq {}} { return }
+  set kind {}
+  set token {}
+  if {[lindex $hit 0] eq {instance}} {
+    set n [lindex $hit 1]
+    set ctype {}
+    catch {set ctype [xschem getprop instance $n cell::type]}
+    if {[lsearch -exact {vsource ammeter} $ctype] >= 0} {
+      set kind current
+      set token [xschem getprop instance $n name]
+    }
+  }
+  if {$kind eq {}} {
+    set net {}
+    catch {set net [dict get [xschem flylines at $x $y] net]}
+    if {$net ne {}} {
+      set kind voltage
+      set token $net
+    }
+  }
+  if {$kind eq {}} {
+    catch {ciw_echo "ase: v1 queues source currents only — click a wire, a\
+ net label or a voltage source/ammeter"}
+    return
+  }
+  ase::ui::sod_queue $key [ase::ui::sod_expr $kind $token]
+}
+
+# Queue `ex` into the session's outputs with the mode's flavor (the
+# delete_selection mutation idiom: session_update + populate, so the row is
+# visible in the Outputs pane IMMEDIATELY even while the pane is stacked
+# under the design window). An identical re-queue writes nothing.
+proc ase::ui::sod_queue {key ex} {
+  variable sod
+  if {![info exists sod($key,flavor)]} { return }
+  set st [ase::session_state $key]
+  lassign [ase::ui::sod_merge [ase::state_get $st outputs] $ex \
+             $sod($key,flavor)] rows status
+  if {$status eq {nochange}} {
+    catch {ciw_echo "ase: output '$ex' already queued"}
+    return
+  }
+  dict set st outputs $rows
+  ase::session_update $key $st
+  ase::ui::populate $key
+  incr sod($key,count)
+  catch {ciw_echo "ase: queued output '$ex' ($status)"}
+}
+
+# The Add/Edit Output dialog's "From Design…" button: flavor = the dialog's
+# current Plot/Save checkboxes with save coerced to 1 when both are 0 (a
+# plot-only row would be DEAD — render_deck emits .save/print only for rows
+# with save 1), then the dialog closes (typed name/expr are DISCARDED —
+# choose-from-design replaces manual entry) and the mode starts.
+proc ase::ui::output_editor_from_design {key} {
+  variable edchk
+  set p [expr {[info exists edchk($key,plot)] && $edchk($key,plot) ? 1 : 0}]
+  set s [expr {[info exists edchk($key,save)] && $edchk($key,save) ? 1 : 0}]
+  if {!$p && !$s} { set s 1 }
+  ase::ui::output_editor_cancel $key
+  ase::ui::select_on_design $key [list save $s plot $p]
 }
 
 # Context Edit… on the variables pane: editor on the FIRST selected row.
@@ -2065,12 +2279,6 @@ proc ase::ui::load_state {key} {
 proc ase::ui::revert_state {key} {
   ase::session_revert $key
   ase::ui::populate $key
-}
-
-# Menu entries whose real dialog lands in a later batch item: honest
-# one-line notice instead of a dead click.
-proc ase::ui::todo_stub {what item} {
-  catch {ciw_echo "ase: '$what' dialog lands in item $item"}
 }
 
 # The session design's resolved schematic path ({} when unresolvable);
