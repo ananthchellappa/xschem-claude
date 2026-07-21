@@ -317,3 +317,36 @@ sync procs) run without DISPLAY.
 4. This item is the acceptance gate for the whole batch: if Id mismatches or
    the schematic needs any sim clutter to pass, the item FAILS (no
    workarounds inside the test).
+
+## Round 2 addendum
+
+- [x] 09 eng-notation    — engineering-notation display for ASE values, gated ase_eng_notation, rc comment -> 05b2a708 formatter+gate+rc comments landed; workflow died pre-verify, driver ran 3 lenses directly (hygiene/tests/spec ALL ok, sabotage failed exactly 4 u-suffix checks), receipt 09
+
+### 09 eng-notation
+
+User request 2026-07-21: ASE-L displays values in ENGINEERING notation
+(exponent multiple of 3, SPICE SI suffix) — e.g. 1.04e-4 displays as `104u`.
+Applies to: Variables pane Value column AND Outputs pane Value column
+(post-sim evaluated values). Edit dialogs / entry fields keep RAW values
+(round-trip safety); the state file ALWAYS stores raw values — formatting is
+display-only at pane-render time.
+
+1. `ase::format_value <v>` in src/ase.tcl (headless-testable): engineering
+   notation, SPICE-compatible suffixes f p n u m (none) k Meg G T; ~4
+   significant digits, trailing zeros trimmed (1.04e-4 → 104u, 4.096837e-4
+   → 409.7u, 1e-3 → 1m, 27 → 27, 1.5e6 → 1.5Meg, 0 → 0, negatives keep
+   sign); out-of-suffix-range (|v| >= 1e15 or < 1e-18 nonzero) falls back
+   to %g; non-numeric input returned verbatim (expressions, blanks).
+2. Gate: Tcl global `ase_eng_notation`, default 1 via set_ne (rc may
+   preset). 0 → panes show plain %g/scientific. Both pane render paths go
+   through the formatter.
+3. cadence_style_rc INFORMATIONAL comment (scout: pick the rc(s) users
+   actually source — sky130A/cadence_style_rc and siblings; the file is NOT
+   in the pre-batch dirty list — verify before staging):
+   `# ASE-L shows values in engineering notation (104u). To recover
+   scientific notation:  set ase_eng_notation 0`
+4. Tests (extend test_ase_core.tcl formatter table headless + a GUI pane
+   leg in test_ase_window.tcl: variable 1.04e-4 renders 104u, toggle var →
+   scientific, state file still stores raw). ≥2 sabotages.
+5. Spec ase_l.md UI-v2 section: one paragraph documenting the behavior +
+   gate (commit it).
