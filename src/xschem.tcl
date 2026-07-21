@@ -5676,7 +5676,9 @@ proc hi_descend_target_inst {inst} {
 }
 
 # Enumerate the views available for the cell behind instance $instname.
-# Returns a list of {viewname type abspath} rows, type in {schematic symbol}.
+# Returns a list of {viewname type abspath} rows, type in {schematic symbol
+# ngspice_state} (the last for ASE simulation-state views,
+# doc/claude/specs/ase_l.md — hi_descend_do routes those to ase::open_state).
 # Covers both the OpenAccess lib/cell/view layout (alternates like schematic_old)
 # and the legacy flat layout (default schematic + symbol).
 proc hi_descend_enum_views {instname} {
@@ -5694,7 +5696,11 @@ proc hi_descend_enum_views {instname} {
     foreach v [cell_views $lib $cell] {
       set p [cellview_resolve $lib $cell $v]
       if {$p eq {} || [lsearch -exact $seen $p] >= 0} { continue }
-      set ty [expr {[file extension $p] eq {.sch} ? "schematic" : "symbol"}]
+      switch -- [file extension $p] {
+        .sch    { set ty schematic }
+        .state  { set ty ngspice_state }
+        default { set ty symbol }
+      }
       lappend rows [list $v $ty $p]
       lappend seen $p
     }
@@ -5760,6 +5766,14 @@ proc hi_descend_iters {instname} {
 # vtype: schematic|symbol; iter: 1-based bit (leftmost=1), 1 for a plain instance;
 # mode: readonly|edit (read-only browse is the default).
 proc hi_descend_finish {instname vtype vpath iter mode} {
+  # Only schematic/symbol views descend. Anything else (e.g. an ngspice_state
+  # ASE view) is routed by hi_descend_do to its own handler before it can get
+  # here; refuse rather than fall into the binary schematic/symbol branch
+  # below, so no future direct caller can "descend" into a state file.
+  if {$vtype ni {schematic symbol}} {
+    ciw_echo "hi_descend: view type '$vtype' does not descend; open it from the Library Manager" error
+    return 0
+  }
   set lvl [xschem get currsch]
   if {$vtype eq {symbol}} {
     # descend_symbol has no return value; detect success by the hierarchy level rising,
@@ -5876,6 +5890,21 @@ proc hi_descend_do {instname view type target iter mode} {
     foreach r $rows { lappend names [lindex $r 0] }
     ciw_echo "hi_descend: no view \"$view\" for $instname (have: [join $names {, }])" error
     return 0
+  }
+  # ASE state views (doc/claude/specs/ase_l.md) do not descend: route to
+  # ase::open_state, ignoring target/iter/mode (meaningless for a state view).
+  # Intercepted HERE — the shared dialog + scripted entry — so no target arm
+  # (in particular hi_descend_newwin) can first open a window that would end
+  # up orphaned. lib/cell are derived exactly as hi_descend_enum_views did.
+  if {[lindex $row 1] eq {ngspice_state}} {
+    set rel [rel_sym_path [abs_sym_path [hi_descend_inst_sym $instname]]]
+    if {![regexp {^([^/]+)/([^/]+)$} $rel -> lib cell]} {
+      # cannot happen for rows the enum built (only its OA branch, gated by
+      # this very regexp, emits ngspice_state rows) — defensive only
+      ciw_echo "hi_descend: cannot derive lib/cell for the state view of $instname" error
+      return 0
+    }
+    return [ase::open_state $lib $cell [lindex $row 0]]
   }
   if {$iter eq {} || ![string is integer -strict $iter]} { set iter 1 }
   switch -- $target {

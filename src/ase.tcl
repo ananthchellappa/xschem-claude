@@ -2,9 +2,11 @@
 # per-simulator backend registry, deck rendering, headless-safe netlist +
 # batch simulation run via the `execute` infra, result parsing.
 #
-# P1 of doc/claude/specs/ase_l.md. Pure Tcl, NO Tk anywhere in these paths —
-# everything here must run under --nogui (tests/headless/test_ase_core.tcl runs
-# this file's procs true-headless). GUI (items 02/03) layers on top of these
+# P1+P2 of doc/claude/specs/ase_l.md. Pure Tcl, NO Tk anywhere in the core
+# paths — everything must run under --nogui (tests/headless/test_ase_core.tcl
+# runs this file's procs true-headless) — with ONE carve-out: ase::open_state
+# is the single Tk-GUARDED GUI seam (every Tk call in it sits behind the has_x
+# guard, so it stays headless-callable). GUI (item 03) layers on top of these
 # procs; their names are contracts.
 #
 # State = a single Tcl-dict text file per ngspice_state* view, one `key value`
@@ -280,6 +282,33 @@ proc ase::last_result {} {
   variable last_run
   if {[dict exists $last_run results]} { return [dict get $last_run results] }
   return [dict create]
+}
+
+# --- View open (P2 dispatch target) ------------------------------------------
+
+# Open an ngspice_state* cellview (the LibMgr / hi_descend dispatch target).
+# THE single Tk-guarded GUI seam of ase.tcl: every Tk call sits behind the
+# has_x guard, so headless callers get path resolution + the return code with
+# no Tk side effects. v0 = read-only textwindow on the .state file + a
+# ciw_echo notice; item 03 replaces this BODY with the full ASE-L window — the
+# name and signature `ase::open_state <lib> <cell> <view>` are the item-03
+# contract, keep them stable. Returns 1 when the view resolved (viewer shown
+# under X), 0 when it does not exist (no error thrown).
+proc ase::open_state {lib cell view} {
+  set path [xschem cellview_path $lib/$cell $view]
+  if {$path eq {}} {
+    if {[info exists ::has_x] && [info commands ::ciw_echo] ne {}} {
+      ciw_echo "ase: no '$view' view for $lib/$cell" error
+    }
+    return 0
+  }
+  if {[info exists ::has_x]} {
+    textwindow $path ro
+    if {[info commands ::ciw_echo] ne {}} {
+      ciw_echo "ase: opened $lib/$cell/$view read-only; the full ASE-L window arrives in a later phase"
+    }
+  }
+  return 1
 }
 
 # --- ngspice backend --------------------------------------------------------
