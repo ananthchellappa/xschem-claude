@@ -24,7 +24,8 @@ namespace eval ase {
   # canonical state-file key order (the spec's v1 schema + the UI v2
   # `temperature` session scalar, grouped with the other scalars, and the UI v2
   # blanket-save flags `save_all_v`/`save_all_i`, grouped with outputs whose
-  # saving semantics they modify; deck mapping allv/alli is item 07)
+  # saving semantics they modify; deck mapping allv -> `.save all`, alli ->
+  # `.options savecurrents` in the ngspice render_deck)
   variable schema_keys {version simulator design rundir temperature models
                         variables analyses outputs save_all_v save_all_i
                         options includes}
@@ -498,11 +499,15 @@ proc ase::session_getattr {key name {dflt {}}} {
 # (pure dict) + the return code with no Tk side effects. Under X this opens
 # the ASE-L session window (ase::ui, src/ase_window.tcl) — ONE toplevel per
 # state view; re-opening an already-open session just raises its window (no
-# new window number is consumed). The name and signature
-# `ase::open_state <lib> <cell> <view>` are a stable contract. Returns 1 when
-# the view resolved, 0 when it does not exist or its state file does not load
-# (no error thrown).
-proc ase::open_state {lib cell view} {
+# new window number is consumed). The name and the 3-arg call shape
+# `ase::open_state <lib> <cell> <view>` are a stable contract; the TRAILING
+# OPTIONAL `ro` flag (item 07 D7) records whether this open was read-only in
+# the session attr `readonly` — EVERY open sets it (last open wins, so a
+# later plain open upgrades the session to editable). v1 scope: the flag
+# gates only the Save-As overwrite confirmation (no edit blocking). Returns
+# 1 when the view resolved, 0 when it does not exist or its state file does
+# not load (no error thrown).
+proc ase::open_state {lib cell view {ro 0}} {
   set path [xschem cellview_path $lib/$cell $view]
   if {$path eq {}} {
     if {[info exists ::has_x] && [info commands ::ciw_echo] ne {}} {
@@ -518,6 +523,9 @@ proc ase::open_state {lib cell view} {
     }
     return 0
   }
+  # D7: both the fresh-open and the raise arm pass through here, so every
+  # successful open records the flag
+  ase::session_setattr $key readonly $ro
   if {![info exists ::has_x]} { return 1 }
   set w [ase::ui::window_for $key]
   if {$w ne {} && [winfo exists $w]} {
@@ -563,6 +571,13 @@ namespace eval ase::backend::ngspice {
         lappend lines ".options [dict get $o name]=$val"
       }
     }
+    # UI v2 Save-All blanket (item 07 D12): all-terminal-currents ->
+    # `.options savecurrents`, emitted unconditionally while the flag is 1 —
+    # a duplicate line from an explicit `savecurrents` options row above is
+    # harmless to ngspice
+    if {[ase::state_get $state save_all_i 0] eq {1}} {
+      lappend lines ".options savecurrents"
+    }
     # simulation temperature (UI v2): always emitted, default 27 (= ngspice's
     # own default). Non-numeric values error honestly — the GUI validates at
     # commit, so only hand-edited states can ever get here.
@@ -571,6 +586,11 @@ namespace eval ase::backend::ngspice {
       return -code error "ase: temperature must be numeric: '$T'"
     }
     lappend lines ".temp $T"
+    # UI v2 Save-All blanket (item 07 D12): all-voltages -> `.save all`,
+    # ahead of the per-output .save lines
+    if {[ase::state_get $state save_all_v 0] eq {1}} {
+      lappend lines ".save all"
+    }
     foreach o [ase::state_get $state outputs] {
       if {[ase::state_get $o save 0] eq {1}} {
         lappend lines ".save [dict get $o expr]"

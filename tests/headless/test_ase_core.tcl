@@ -4,7 +4,10 @@
 #   B1 backend registry: ngspice entry, all four hooks resolve
 #   D* deck render: golden deck for the nfet state, disabled analyses absent +
 #                   fixed op..tran order, trailing-.end strip robustness,
-#                   temperature -> .temp (custom / non-numeric / missing key)
+#                   temperature -> .temp (custom / non-numeric / missing key),
+#                   Save-All blankets (save_all_v -> `.save all` before the
+#                   per-output saves, save_all_i -> `.options savecurrents`,
+#                   nothing while both flags are 0)
 #   N* netlist:     ase::netlist on a scratch lib/cell/view fixture, rundir
 #                   defaulting to $netlist_dir
 #   E* run:         real ngspice batch end-to-end (Id ~ 4.096837e-04, leg
@@ -214,6 +217,34 @@ set st [dict remove [nfet_state /models/sky130.lib.spice {}] temperature]
 set deck4b [$render $st $netlist_text]
 check_true "D4 missing temperature key still emits .temp 27" \
   [regexp -line {^\.temp 27$} $deck4b]
+
+# --- D5: Save-All blankets -> deck (item 07 D12) ------------------------------
+# save_all_v -> `.save all` ahead of the per-output .save lines
+set st [nfet_state /models/sky130.lib.spice {}]
+dict set st save_all_v 1
+set deck5 [$render $st $netlist_text]
+check_true "D5 save_all_v renders .save all" \
+  [regexp -line {^\.save all$} $deck5]
+set allpos [string first "\n.save all\n" $deck5]
+set outpos [string first "\n.save -i(v1)\n" $deck5]
+check_true "D5 .save all precedes the per-output .save" \
+  [expr {$allpos >= 0 && $outpos >= 0 && $allpos < $outpos}]
+# save_all_i -> `.options savecurrents` WITHOUT the explicit options row
+# (options emptied first — the blanket alone must produce the line)
+set st [nfet_state /models/sky130.lib.spice {}]
+dict set st options {}
+dict set st save_all_i 1
+set deck5i [$render $st $netlist_text]
+check_true "D5 save_all_i renders .options savecurrents" \
+  [regexp -line {^\.options savecurrents$} $deck5i]
+# both flags 0 (the fixture default): no blanket lines anywhere
+set deck5off [$render [nfet_state /models/sky130.lib.spice {}] $netlist_text]
+set st [nfet_state /models/sky130.lib.spice {}]
+dict set st options {}
+set deck5offi [$render $st $netlist_text]
+check_true "D5 blankets off leave no blanket lines" \
+  [expr {![regexp -line {^\.save all$} $deck5off] &&
+         ![regexp -line {^\.options savecurrents$} $deck5offi]}]
 
 # --- P1: result_probe keying (UI v2 Outputs Value column) --------------------
 # unnamed outputs (no `name` key) are keyed by their expr; named outputs stay

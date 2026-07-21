@@ -1,9 +1,24 @@
-# ase_window.tcl — the ASE-L session window (items 03+05+06 of
+# ase_window.tcl — the ASE-L session window (items 03+05+06+07 of
 # doc/claude/ase_l_batch, spec doc/claude/specs/ase_l.md — UI v2 "ADE-L
 # parity rework" is the authoritative chrome contract): ALL Tk widget code of
 # the ASE-L feature. ase.tcl (the headless core + session model) stays
 # Tk-free; its has_x-guarded `ase::open_state` is the ONE seam that reaches
 # into this file.
+#
+# Dialog layer (item 07, spec "Menu tree v2" / "Choose Analyses dialog" /
+# "Dialog style"): every menu-tree dialog is real — Choose Analyses (top
+# radio section + per-analysis quick-field form + extra-options editor),
+# Setup > Design (L/C/V type-to-filter comboboxes, View limited to schematic
+# views), Setup > Model Files + Simulation > Options (one shared two-column
+# list-dialog engine over the state's `models`/`options` lists, immediate
+# commit per mutation), Outputs > Save All (save_all_v/save_all_i blankets,
+# deck mapping allv -> `.save all` / alli -> `.options savecurrents` in
+# ase.tcl), Session > Load State (mkinst-style 3-column browser filtered to
+# simulation-state views, content import into THIS session) and Session >
+# Save State (always Save-As; a read-only-opened session overwriting its own
+# view goes through the shared modeless confirm). All dialogs are MODELESS
+# (no grab/tkwait — test-drivable), themed, with deterministic widget paths
+# and per-key records in the `dlg` array cleaned on proceed/cancel AND close.
 #
 # One toplevel per state view, named .ase<N> where N is the Cadence-style
 # window number allocated from the SHARED C counter (`xschem
@@ -72,6 +87,19 @@ namespace eval ase::ui {
   variable edrow;   array set edrow {}
   # edchk(key,plot|save): the output editor's checkbutton variables
   variable edchk;   array set edchk {}
+  # dlg(key,...): per-window records of the item-07 dialog layer — Choose
+  # Analyses antype/anen/anextra, Save All allv/alli, the Design/Save-As
+  # combo full-value lists (dlib/dcell/dview/salib), and the list-dialog row
+  # index (models/simopt). Cleaned on dialog proceed/cancel AND in close.
+  variable dlg;     array set dlg {}
+  # the shared two-column list-dialog configs (Setup > Model Files and
+  # Simulation > Options share one engine): toplevel suffix, state list key,
+  # row dict fields, column headings, row-editor toplevel suffix + title
+  variable listdlg [dict create \
+    models [dict create win models skey models cols {file section} \
+                        heads {File Section} ed modrow edtitle {Model File}] \
+    simopt [dict create win simopt skey options cols {name value} \
+                        heads {Name Value} ed optrow edtitle {Simulation Option}]]
 }
 
 # --- theme (UI v2 "Window chrome": USER-LOCKED palette + named fonts) --------
@@ -180,6 +208,7 @@ proc ase::ui::open {key lib cell view} {
 proc ase::ui::close {key} {
   variable wins; variable wnum; variable meta; variable idlebg
   variable loglen; variable selclear; variable edrow; variable edchk
+  variable dlg
   if {![dict exists $wins $key]} { return }
   set top [dict get $wins $key]
   ase::ui::drop_trace $key
@@ -195,6 +224,7 @@ proc ase::ui::close {key} {
   catch {unset selclear($key)}
   array unset edrow $key,*
   array unset edchk $key,*
+  array unset dlg $key,*
   catch {destroy $top}
 }
 
@@ -219,29 +249,27 @@ proc ase::ui::build {key top} {
   $top.mb add cascade -label Session -menu $top.mb.session
   $top.mb.session add command -label {Design Window} \
     -command [list ase::ui::design_window $key]
-  # TODO(item07): Load State grows the state-view library browser and Save
-  # State the Save-As form; until then both wire to the existing working
-  # procs (stubbing them would regress working save/load for an item-cycle).
+  # Load State = the state-view library browser (content import); Save State
+  # = the always-Save-As form (menu LABELS are v2-spec-fixed, W1m asserts
+  # them)
   $top.mb.session add command -label {Load State} \
-    -command [list ase::ui::load_state $key]
+    -command [list ase::ui::load_state_dialog $key]
   $top.mb.session add command -label {Save State} \
-    -command [list ase::ui::save_state $key]
+    -command [list ase::ui::save_state_dialog $key]
   $top.mb.session add separator
   $top.mb.session add command -label Close -command [list ase::ui::close $key]
 
   menu $top.mb.setup -tearoff 0
   $top.mb add cascade -label Setup -menu $top.mb.setup
-  # TODO(item07): Design L/C/V dialog + Model Files dialog
   $top.mb.setup add command -label "Design\u2026" \
-    -command [list ase::ui::todo_stub {Setup Design} 07]
+    -command [list ase::ui::design_dialog $key]
   $top.mb.setup add command -label "Model Files\u2026" \
-    -command [list ase::ui::todo_stub {Model Files} 07]
+    -command [list ase::ui::model_files_dialog $key]
 
   menu $top.mb.analyses -tearoff 0
   $top.mb add cascade -label Analyses -menu $top.mb.analyses
-  # TODO(item07): Choose Analyses dialog
   $top.mb.analyses add command -label "Choose\u2026" \
-    -command [list ase::ui::todo_stub {Choose Analyses} 07]
+    -command [list ase::ui::choose_analyses $key]
 
   menu $top.mb.variables -tearoff 0
   $top.mb add cascade -label Variables -menu $top.mb.variables
@@ -263,9 +291,8 @@ proc ase::ui::build {key top} {
     -command [list ase::ui::todo_stub {Outputs To Be Plotted} 08]
   $top.mb.outputs add cascade -label {To Be Plotted} \
     -menu $top.mb.outputs.plotted
-  # TODO(item07): Save All dialog (allv/alli)
   $top.mb.outputs add command -label "Save All\u2026" \
-    -command [list ase::ui::todo_stub {Save All} 07]
+    -command [list ase::ui::save_all_dialog $key]
 
   menu $top.mb.sim -tearoff 0
   $top.mb add cascade -label Simulation -menu $top.mb.sim
@@ -281,9 +308,8 @@ proc ase::ui::build {key top} {
     -command [list ase::ui::do_run_existing $key]
   $top.mb.sim add command -label Stop -command [list ase::ui::do_stop $key]
   $top.mb.sim add command -label Log -command [list ase::ui::show_log $key]
-  # TODO(item07): simulator-specific options dialog
   $top.mb.sim add command -label "Options\u2026" \
-    -command [list ase::ui::todo_stub {Simulator Options} 07]
+    -command [list ase::ui::sim_options_dialog $key]
 
   # Results: deferred — the cascade posts, its entries are disabled (spec:
   # "Menu entries may exist disabled")
@@ -339,11 +365,13 @@ proc ase::ui::build {key top} {
   # item-05 packing lesson: the expanding widget must be packed last).
   frame $top.strip
   button $top.strip.ana -text {OP,TR} -width 5 \
-    -command [list ase::ui::todo_stub {Choose Analyses} 07]
+    -command [list ase::ui::choose_analyses $key]
   button $top.strip.var -text = -width 5 \
     -command [list ase::ui::add_variable_dialog $key]
+  # --> = the v1 "Setup Outputs" dialog (the Add Output editor: optional
+  # name + expression + Plot/Save); choose-from-design is item 08
   button $top.strip.out -text --> -width 5 \
-    -command [list ase::ui::todo_stub {Setup Outputs} 07]
+    -command [list ase::ui::output_editor $key -1]
   button $top.strip.del -text X -width 5 \
     -command [list ase::ui::delete_selection $key]
   button $top.strip.netrun -text {N&>} -width 5 \
@@ -423,11 +451,10 @@ proc ase::ui::build_pane {key top pane columns headings widths} {
         -command [list ase::ui::edit_variable_first $key]
     }
     ana {
-      # TODO(item07): route to Choose Analyses with the row preselected
       $pf.ctx add command -label "Add\u2026" \
-        -command [list ase::ui::todo_stub {Choose Analyses} 07]
+        -command [list ase::ui::choose_analyses $key]
       $pf.ctx add command -label "Edit\u2026" \
-        -command [list ase::ui::todo_stub {Choose Analyses} 07]
+        -command [list ase::ui::edit_analysis_first $key]
     }
     outs {
       $pf.ctx add command -label "Add\u2026" \
@@ -505,8 +532,8 @@ proc ase::ui::toggle_flag {key skey idx field} {
 }
 
 # Double-click a row -> the per-item edit dialog (spec "Panes" interaction
-# model). Analyses rows route to Choose Analyses — TODO(item07): preselect
-# the double-clicked analysis when that dialog lands.
+# model). Analyses rows route to Choose Analyses preselected on that row's
+# type.
 proc ase::ui::pane_dblclick {key pane x y} {
   variable wins
   if {![dict exists $wins $key]} { return }
@@ -517,7 +544,15 @@ proc ase::ui::pane_dblclick {key pane x y} {
   switch -- $pane {
     vars { ase::ui::variable_editor $key $item }
     outs { ase::ui::output_editor $key $item }
-    ana  { ase::ui::todo_stub {Choose Analyses} 07 }
+    ana  {
+      set rows [ase::state_get [ase::session_state $key] analyses]
+      set type {}
+      if {[string is integer -strict $item] && $item >= 0 \
+          && $item < [llength $rows]} {
+        set type [ase::state_get [lindex $rows $item] type]
+      }
+      ase::ui::choose_analyses $key $type
+    }
   }
 }
 
@@ -981,6 +1016,29 @@ proc ase::ui::edit_output_first {key} {
   ase::ui::output_editor $key [lindex $sel 0]
 }
 
+# Context Edit… on the analyses pane: Choose Analyses preselected on the
+# FIRST selected row's type (with several same-type rows the dialog
+# addresses the first row of that type; extras remain X-deletable in the
+# pane).
+proc ase::ui::edit_analysis_first {key} {
+  variable wins
+  if {![dict exists $wins $key]} { return }
+  set tv [dict get $wins $key].body.ana.tv
+  set sel {}
+  if {[winfo exists $tv]} { set sel [$tv selection] }
+  if {$sel eq {}} {
+    catch {ciw_echo "ase: nothing selected"}
+    return
+  }
+  set rows [ase::state_get [ase::session_state $key] analyses]
+  set idx [lindex $sel 0]
+  set type {}
+  if {[string is integer -strict $idx] && $idx >= 0 && $idx < [llength $rows]} {
+    set type [ase::state_get [lindex $rows $idx] type]
+  }
+  ase::ui::choose_analyses $key $type
+}
+
 # Variables > Edit… (menu): per-row editor on the first selected variables
 # row, or the Add Variable dialog when nothing is selected.
 proc ase::ui::edit_variables {key} {
@@ -994,6 +1052,939 @@ proc ase::ui::edit_variables {key} {
   } else {
     ase::ui::add_variable_dialog $key
   }
+}
+
+# --- item 07 dialogs ---------------------------------------------------------
+# The v2 menu-tree dialogs. Same doctrine as the item-06 editors: MODELESS,
+# themed via apply_theme, deterministic widget paths, per-key records in the
+# `dlg` array cleaned on proceed/cancel AND in ase::ui::close, every entry
+# proc guarded on the session window's existence, Return = proceed.
+
+# type-to-filter for a ttk::combobox (the copy_current_cell_dialog idiom):
+# prefix-filter the stored FULL value list against the typed text;
+# no matches -> offer the full list again.
+proc ase::ui::combo_filter {cb full} {
+  if {![winfo exists $cb]} { return }
+  set typed [string trim [$cb get]]
+  set matches {}
+  foreach v $full {
+    if {$typed eq {} || [string match -nocase ${typed}* $v]} {
+      lappend matches $v
+    }
+  }
+  if {![llength $matches]} { set matches $full }
+  $cb configure -values $matches
+}
+
+# The first-selected value of a listbox, or {}.
+proc ase::ui::lb_sel {lb} {
+  set s [$lb curselection]
+  if {$s eq {}} { return {} }
+  return [$lb get [lindex $s 0]]
+}
+
+# --- (h) shared confirm ------------------------------------------------------
+
+# Modeless themed confirm (NOT tk_messageBox — a modal grab would kill test
+# drivability, the item-06 modeless doctrine): label + OK/Cancel,
+# Return = proceed. Proceed destroys the popup FIRST, then runs `oncmd` at
+# global level; Cancel just destroys. Re-open replaces any live confirm.
+proc ase::ui::confirm {key title msg oncmd} {
+  variable wins
+  if {![dict exists $wins $key]} { return }
+  set w [dict get $wins $key].confirm
+  catch {destroy $w}
+  toplevel $w
+  wm title $w $title
+  label $w.msg -text $msg -font AseLabelFont -justify left -anchor w
+  pack $w.msg -side top -fill x -padx 12 -pady 10
+  frame $w.btns
+  button $w.btns.proceed -text OK -command [list ase::ui::confirm_ok $w $oncmd]
+  button $w.btns.cancel -text Cancel -command [list destroy $w]
+  pack $w.btns.proceed -side left -padx 5
+  pack $w.btns.cancel -side right -padx 5
+  pack $w.btns -side bottom -fill x -padx 8 -pady 6
+  bind $w <Return> [list ase::ui::confirm_ok $w $oncmd]
+  ase::ui::apply_theme $w
+  focus $w.btns.proceed
+  return $w
+}
+
+proc ase::ui::confirm_ok {w oncmd} {
+  catch {destroy $w}
+  uplevel #0 $oncmd
+}
+
+# --- (a) Choose Analyses -----------------------------------------------------
+
+# The dialog's quick fields per analysis type (spec "Choose Analyses
+# dialog"; a subset of anaargs — `dec` for ac is render-hardwired and only
+# reachable through the extra-options editor).
+proc ase::ui::chana_fields {type} {
+  switch -- $type {
+    dc   { return {source start stop step} }
+    ac   { return {points start stop} }
+    tran { return {step stop} }
+  }
+  return {}
+}
+
+# The FIRST state row of `type` (the row the dialog addresses; extra
+# same-type rows stay X-deletable in the pane), or a fresh disabled stub.
+proc ase::ui::chana_row {key type} {
+  foreach a [ase::state_get [ase::session_state $key] analyses] {
+    if {[ase::state_get $a type] eq $type} { return $a }
+  }
+  return [dict create type $type enabled 0]
+}
+
+# Choose Analyses (menu Analyses > Choose…, strip OP,TR, ana ctx Add…/Edit…,
+# ana double-click): top radio section picks the analysis type, bottom form
+# = Enable + the type's quick fields, `Options…` opens the extra-key editor.
+# `type` {} preselects op.
+proc ase::ui::choose_analyses {key {type {}}} {
+  variable wins; variable dlg
+  if {![dict exists $wins $key]} { return }
+  set w [ase::ui::dialog_frame [dict get $wins $key].chana {Choose Analyses}]
+  if {$type eq {}} { set type op }
+  set dlg($key,antype) $type
+  # top section: one radiobutton per analysis type; switching repopulates
+  # the bottom form from state (D4: in-form edits of the previous type are
+  # DISCARDED — deterministic, no hidden multi-type writes)
+  frame $w.types
+  foreach t {op dc ac tran} {
+    radiobutton $w.types.$t -text $t -value $t \
+      -variable ::ase::ui::dlg($key,antype) \
+      -command [list ase::ui::chana_show $key]
+    pack $w.types.$t -side left -padx 4
+  }
+  grid $w.types -row 0 -column 0 -columnspan 2 -sticky w -padx 8 -pady {8 4}
+  checkbutton $w.enable -text Enable -variable ::ase::ui::dlg($key,anen)
+  grid $w.enable -row 1 -column 0 -columnspan 2 -sticky w -padx 8 -pady 2
+  # quick-field rows land on grid rows 2.. (chana_show); Options/buttons sit
+  # on high fixed rows so the rebuilds never collide
+  button $w.opts -text "Options…" -command [list ase::ui::chana_options $key]
+  grid $w.opts -row 8 -column 0 -sticky w -padx 8 -pady 2
+  ase::ui::dialog_buttons $w 9 [list ase::ui::chana_ok $key] \
+    [list ase::ui::chana_cancel $key]
+  ase::ui::chana_show $key
+  return $w
+}
+
+# (Re)build the bottom per-analysis form from the session state for the
+# currently selected type: Enable + one dialog_row per quick field at the
+# deterministic paths $w.<field>.
+proc ase::ui::chana_show {key} {
+  variable wins; variable dlg
+  if {![dict exists $wins $key] || ![info exists dlg($key,antype)]} { return }
+  set w [dict get $wins $key].chana
+  if {![winfo exists $w]} { return }
+  set type $dlg($key,antype)
+  foreach f {source start stop step points} {
+    catch {destroy $w.$f}
+    catch {destroy $w.l$f}
+  }
+  set row [ase::ui::chana_row $key $type]
+  set dlg($key,anen) [expr {[ase::state_get $row enabled 0] eq {1} ? 1 : 0}]
+  set r 2
+  foreach f [ase::ui::chana_fields $type] {
+    set e [ase::ui::dialog_row $w $r "[string totitle $f]:" $f]
+    $e insert 0 [ase::state_get $row $f]
+    bind $e <Return> [list ase::ui::chana_ok $key]
+    incr r
+  }
+  ase::ui::apply_theme $w
+}
+
+# OK: D6 validation (an ENABLED analysis needs every quick field non-empty,
+# else render_deck's `dict get` would blow up at run time — reject with the
+# dialog kept up), then edit the FIRST state row of the shown type MERGED
+# over its original dict (unknown/extra keys survive); an empty quick field
+# deletes its key, no row of the type appends a fresh one.
+proc ase::ui::chana_ok {key} {
+  variable wins; variable dlg
+  if {![dict exists $wins $key] || ![info exists dlg($key,antype)]} { return }
+  set w [dict get $wins $key].chana
+  if {![winfo exists $w]} { return }
+  set type $dlg($key,antype)
+  set en [expr {[info exists dlg($key,anen)] && $dlg($key,anen) ? 1 : 0}]
+  set vals [dict create]
+  foreach f [ase::ui::chana_fields $type] {
+    if {[winfo exists $w.$f]} {
+      dict set vals $f [string trim [$w.$f get]]
+    }
+  }
+  if {$en} {
+    foreach f [ase::ui::chana_fields $type] {
+      if {![dict exists $vals $f] || [dict get $vals $f] eq {}} {
+        catch {ciw_echo "ase: enabled $type analysis needs a non-empty '$f'" error}
+        return
+      }
+    }
+  }
+  set st [ase::session_state $key]
+  set rows [ase::state_get $st analyses]
+  set idx -1
+  for {set i 0} {$i < [llength $rows]} {incr i} {
+    if {[ase::state_get [lindex $rows $i] type] eq $type} { set idx $i; break }
+  }
+  if {$idx >= 0} { set row [lindex $rows $idx] } \
+  else           { set row [dict create type $type] }
+  dict set row enabled $en
+  dict for {f v} $vals {
+    if {$v eq {}} { set row [dict remove $row $f] } \
+    else          { dict set row $f $v }
+  }
+  if {$idx >= 0} { lset rows $idx $row } else { lappend rows $row }
+  dict set st analyses $rows
+  ase::session_update $key $st
+  ase::ui::populate $key
+  ase::ui::chana_cancel $key
+}
+
+proc ase::ui::chana_cancel {key} {
+  variable wins; variable dlg
+  array unset dlg $key,antype
+  array unset dlg $key,anen
+  array unset dlg $key,anextra
+  if {[dict exists $wins $key]} {
+    catch {destroy [dict get $wins $key].chana}
+  }
+}
+
+# D5: the `Options…` extra-key editor (toplevel $w.chana.x — a Tk child of
+# the Choose Analyses dialog, so it dies with it): name/value keys of the
+# current type's FIRST row beyond type/enabled + the quick fields. Return on
+# the entry pair = Add (the pair's own proceed); the dialog OK writes the
+# whole set straight into that state row (immediate commit — the main OK
+# then merges only enabled + quick fields over the SAME row, so both
+# compose). Extra keys round-trip through the state file and show in the
+# Arguments summary (arg_summary's unknown-key arm); DECK emission of extra
+# keys stays deferred (v1 limit, documented here).
+proc ase::ui::chana_options {key} {
+  variable wins; variable dlg
+  if {![dict exists $wins $key] || ![info exists dlg($key,antype)]} { return }
+  set w [dict get $wins $key].chana.x
+  catch {destroy $w}
+  toplevel $w
+  set type $dlg($key,antype)
+  wm title $w "Analysis Options ($type)"
+  set row [ase::ui::chana_row $key $type]
+  set skip [concat {type enabled} [ase::ui::chana_fields $type]]
+  set ex [dict create]
+  dict for {k v} $row {
+    if {[lsearch -exact $skip $k] < 0} { dict set ex $k $v }
+  }
+  set dlg($key,anextra) $ex
+  ttk::treeview $w.tv -columns {name value} -show headings -height 5 \
+    -selectmode browse -style Ase.Treeview
+  $w.tv heading name -text Name
+  $w.tv heading value -text Value
+  frame $w.row
+  label $w.row.ln -text Name: -font AseLabelFont
+  entry $w.row.name -width 10 -font AseEntryFont
+  label $w.row.lv -text Value: -font AseLabelFont
+  entry $w.row.value -width 10 -font AseEntryFont
+  button $w.row.add -text Add -command [list ase::ui::chana_x_add $key]
+  button $w.row.del -text Delete -command [list ase::ui::chana_x_del $key]
+  pack $w.row.ln $w.row.name $w.row.lv $w.row.value $w.row.add $w.row.del \
+    -side left -padx 2
+  frame $w.btns
+  button $w.btns.proceed -text OK -command [list ase::ui::chana_x_ok $key]
+  button $w.btns.cancel -text Cancel -command [list destroy $w]
+  pack $w.btns.proceed -side left -padx 5
+  pack $w.btns.cancel -side right -padx 5
+  pack $w.btns -side bottom -fill x -padx 8 -pady 6
+  pack $w.row -side bottom -fill x -padx 8 -pady 2
+  pack $w.tv -side top -fill both -expand 1 -padx 8 -pady {8 2}
+  bind $w.row.name  <Return> [list ase::ui::chana_x_add $key]
+  bind $w.row.value <Return> [list ase::ui::chana_x_add $key]
+  ase::ui::chana_x_fill $key
+  ase::ui::apply_theme $w
+  focus $w.row.name
+  return $w
+}
+
+proc ase::ui::chana_x_fill {key} {
+  variable wins; variable dlg
+  if {![dict exists $wins $key] || ![info exists dlg($key,anextra)]} { return }
+  set tv [dict get $wins $key].chana.x.tv
+  if {![winfo exists $tv]} { return }
+  $tv delete [$tv children {}]
+  dict for {k v} $dlg($key,anextra) {
+    $tv insert {} end -id $k -values [list $k $v]
+  }
+}
+
+proc ase::ui::chana_x_add {key} {
+  variable wins; variable dlg
+  if {![dict exists $wins $key] || ![info exists dlg($key,anextra)]} { return }
+  set w [dict get $wins $key].chana.x
+  if {![winfo exists $w]} { return }
+  set n [string trim [$w.row.name get]]
+  set v [string trim [$w.row.value get]]
+  if {$n eq {}} {
+    catch {ciw_echo "ase: option name must not be empty" error}
+    return
+  }
+  dict set dlg($key,anextra) $n $v
+  $w.row.name delete 0 end
+  $w.row.value delete 0 end
+  ase::ui::chana_x_fill $key
+}
+
+proc ase::ui::chana_x_del {key} {
+  variable wins; variable dlg
+  if {![dict exists $wins $key] || ![info exists dlg($key,anextra)]} { return }
+  set tv [dict get $wins $key].chana.x.tv
+  if {![winfo exists $tv]} { return }
+  foreach id [$tv selection] {
+    set dlg($key,anextra) [dict remove $dlg($key,anextra) $id]
+  }
+  ase::ui::chana_x_fill $key
+}
+
+proc ase::ui::chana_x_ok {key} {
+  variable wins; variable dlg
+  if {![dict exists $wins $key] || ![info exists dlg($key,antype)] \
+      || ![info exists dlg($key,anextra)]} { return }
+  set type $dlg($key,antype)
+  set st [ase::session_state $key]
+  set rows [ase::state_get $st analyses]
+  set idx -1
+  for {set i 0} {$i < [llength $rows]} {incr i} {
+    if {[ase::state_get [lindex $rows $i] type] eq $type} { set idx $i; break }
+  }
+  if {$idx >= 0} { set row [lindex $rows $idx] } \
+  else           { set row [dict create type $type enabled 0] }
+  # replace the row's extra-key set with the edited one (a Delete here must
+  # really delete), keeping type/enabled + quick fields untouched
+  set skip [concat {type enabled} [ase::ui::chana_fields $type]]
+  foreach k [dict keys $row] {
+    if {[lsearch -exact $skip $k] < 0} { set row [dict remove $row $k] }
+  }
+  dict for {k v} $dlg($key,anextra) { dict set row $k $v }
+  if {$idx >= 0} { lset rows $idx $row } else { lappend rows $row }
+  dict set st analyses $rows
+  ase::session_update $key $st
+  ase::ui::populate $key
+  array unset dlg $key,anextra
+  catch {destroy [dict get $wins $key].chana.x}
+}
+
+# --- (b) Setup > Design ------------------------------------------------------
+
+# schematic views of lib/cell: those whose datafile resolves to a .sch (the
+# mkinst::symbol_views mirror — a view's TYPE comes from its datafile
+# extension, not its name).
+proc ase::ui::design_sch_views {lib cell} {
+  set out {}
+  foreach v [xschem cell_views $lib $cell] {
+    if {[string match {*.sch} [xschem cellview_path "$lib/$cell" $v]]} {
+      lappend out $v
+    }
+  }
+  return $out
+}
+
+# Setup > Design…: Library/Cell/View type-to-filter comboboxes; the View
+# list holds ONLY schematic views once a Cell is chosen. Prefilled from the
+# state's `design`; OK validates and writes it back.
+proc ase::ui::design_dialog {key} {
+  variable wins; variable dlg
+  if {![dict exists $wins $key]} { return }
+  set w [ase::ui::dialog_frame [dict get $wins $key].design {Setup Design}]
+  set dlg($key,dlib) [lsort [libmgr::lib_names]]
+  foreach {r name lbl} [list 0 lib Library: 1 cell Cell: 2 view View:] {
+    label $w.l$name -text $lbl -font AseLabelFont -anchor w
+    ttk::combobox $w.$name -width 24 -font AseEntryFont -style Ase.TCombobox
+    grid $w.l$name -row $r -column 0 -sticky w -padx {8 6} -pady 2
+    grid $w.$name  -row $r -column 1 -sticky we -padx {0 8} -pady 2
+    bind $w.$name <Return> [list ase::ui::design_ok $key]
+    bind $w.$name <KeyRelease> [list ase::ui::design_filter $key $name]
+  }
+  bind $w.lib  <<ComboboxSelected>> [list ase::ui::design_refill $key 1]
+  bind $w.cell <<ComboboxSelected>> [list ase::ui::design_refill $key 0]
+  ase::ui::dialog_buttons $w 3 [list ase::ui::design_ok $key] \
+    [list ase::ui::design_cancel $key]
+  set d [ase::state_get [ase::session_state $key] design]
+  foreach f {lib cell view} {
+    if {[dict exists $d $f]} { $w.$f set [dict get $d $f] }
+  }
+  $w.lib configure -values $dlg($key,dlib)
+  ase::ui::design_lists $key
+  ase::ui::apply_theme $w
+  focus $w.lib
+  return $w
+}
+
+# Recompute the dependent Cell/View full-value lists from the current
+# Library/Cell text (prefill and selection changes both land here).
+proc ase::ui::design_lists {key} {
+  variable wins; variable dlg
+  if {![dict exists $wins $key]} { return }
+  set w [dict get $wins $key].design
+  if {![winfo exists $w]} { return }
+  set l [string trim [$w.lib get]]
+  set c [string trim [$w.cell get]]
+  set dlg($key,dcell) {}
+  if {$l ne {}} { catch {set dlg($key,dcell) [lsort [xschem lib_cells $l]]} }
+  $w.cell configure -values $dlg($key,dcell)
+  set dlg($key,dview) {}
+  if {$l ne {} && $c ne {}} {
+    set dlg($key,dview) [ase::ui::design_sch_views $l $c]
+  }
+  $w.view configure -values $dlg($key,dview)
+}
+
+# A Library pick invalidates the Cell + View texts; a Cell pick the View.
+proc ase::ui::design_refill {key libchanged} {
+  variable wins
+  if {![dict exists $wins $key]} { return }
+  set w [dict get $wins $key].design
+  if {![winfo exists $w]} { return }
+  if {$libchanged} { $w.cell set {} }
+  $w.view set {}
+  ase::ui::design_lists $key
+}
+
+proc ase::ui::design_filter {key f} {
+  variable wins; variable dlg
+  if {![dict exists $wins $key] || ![info exists dlg($key,d$f)]} { return }
+  set w [dict get $wins $key].design
+  if {![winfo exists $w.$f]} { return }
+  ase::ui::combo_filter $w.$f $dlg($key,d$f)
+}
+
+proc ase::ui::design_ok {key} {
+  variable wins
+  if {![dict exists $wins $key]} { return }
+  set w [dict get $wins $key].design
+  if {![winfo exists $w]} { return }
+  set l [string trim [$w.lib get]]
+  set c [string trim [$w.cell get]]
+  set v [string trim [$w.view get]]
+  if {$l eq {} || $c eq {} || $v eq {}} {
+    catch {ciw_echo "ase: Library, Cell and View are all required" error}
+    return
+  }
+  if {[lsearch -exact [ase::ui::design_sch_views $l $c] $v] < 0} {
+    catch {ciw_echo "ase: '$v' is not a schematic view of $l/$c" error}
+    return
+  }
+  set st [ase::session_state $key]
+  dict set st design [list lib $l cell $c view $v]
+  ase::session_update $key $st
+  ase::ui::populate $key
+  ase::ui::design_cancel $key
+}
+
+proc ase::ui::design_cancel {key} {
+  variable wins; variable dlg
+  array unset dlg $key,dlib
+  array unset dlg $key,dcell
+  array unset dlg $key,dview
+  if {[dict exists $wins $key]} {
+    catch {destroy [dict get $wins $key].design}
+  }
+}
+
+# --- (c)+(g) Model Files / Simulation Options: the shared list dialog --------
+
+# Setup > Model Files…: one row per `models` entry {file section} — the
+# corner/section entry per row (e.g. tt). Deletion is DIALOG-LOCAL (ctx
+# Delete + the Delete key on the treeview, D1): the main action-strip X
+# keeps scanning only the three panes.
+proc ase::ui::model_files_dialog {key} {
+  return [ase::ui::listdlg_open $key models {Model Files}]
+}
+
+# Simulation > Options…: minimal simulator-options dialog on the state's
+# `options` rows {name value}. render_deck semantics of a row (ase.tcl):
+# value 0 = skipped, value 1 = bare `.options name`, anything else =
+# `.options name=value`.
+proc ase::ui::sim_options_dialog {key} {
+  return [ase::ui::listdlg_open $key simopt {Simulation Options}]
+}
+
+proc ase::ui::listdlg_open {key which title} {
+  variable wins; variable listdlg
+  if {![dict exists $wins $key]} { return }
+  set cfg [dict get $listdlg $which]
+  set w [dict get $wins $key].[dict get $cfg win]
+  catch {destroy $w}
+  toplevel $w
+  wm title $w $title
+  set cols [dict get $cfg cols]
+  ttk::treeview $w.tv -columns $cols -show headings -selectmode extended \
+    -height 8 -style Ase.Treeview -yscrollcommand [list $w.sb set]
+  foreach c $cols h [dict get $cfg heads] {
+    $w.tv heading $c -text $h
+    $w.tv column $c -width 170 -anchor w -stretch 1
+  }
+  scrollbar $w.sb -orient vertical -command [list $w.tv yview]
+  frame $w.btns
+  button $w.btns.close -text Close -command [list destroy $w]
+  pack $w.btns.close -side right -padx 5
+  pack $w.btns -side bottom -fill x -padx 8 -pady 6
+  pack $w.sb -side right -fill y
+  pack $w.tv -side left -fill both -expand 1
+  menu $w.ctx -tearoff 0
+  $w.ctx add command -label "Add…" \
+    -command [list ase::ui::listdlg_editor $key $which -1]
+  $w.ctx add command -label "Edit…" \
+    -command [list ase::ui::listdlg_edit_first $key $which]
+  $w.ctx add command -label Delete \
+    -command [list ase::ui::listdlg_delete $key $which]
+  bind $w.tv <Button-3> [list ase::ui::listdlg_ctx $key $which %X %Y]
+  bind $w.tv <Delete> [list ase::ui::listdlg_delete $key $which]
+  ase::ui::listdlg_fill $key $which
+  ase::ui::apply_theme $w
+  return $w
+}
+
+proc ase::ui::listdlg_fill {key which} {
+  variable wins; variable listdlg
+  if {![dict exists $wins $key]} { return }
+  set cfg [dict get $listdlg $which]
+  set tv [dict get $wins $key].[dict get $cfg win].tv
+  if {![winfo exists $tv]} { return }
+  $tv delete [$tv children {}]
+  set i 0
+  foreach row [ase::state_get [ase::session_state $key] [dict get $cfg skey]] {
+    set vals {}
+    foreach f [dict get $cfg cols] { lappend vals [ase::state_get $row $f] }
+    $tv insert {} end -id $i -values $vals
+    incr i
+  }
+}
+
+proc ase::ui::listdlg_ctx {key which X Y} {
+  variable wins; variable listdlg
+  if {![dict exists $wins $key]} { return }
+  set m [dict get $wins $key].[dict get $listdlg $which win].ctx
+  if {![winfo exists $m]} { return }
+  tk_popup $m $X $Y
+}
+
+# The two-entry row editor (Add flavor: idx -1). OK merges the fields over
+# the row's ORIGINAL dict and commits immediately (D15).
+proc ase::ui::listdlg_editor {key which idx} {
+  variable wins; variable listdlg; variable dlg
+  if {![dict exists $wins $key]} { return }
+  set cfg [dict get $listdlg $which]
+  set rows [ase::state_get [ase::session_state $key] [dict get $cfg skey]]
+  set row {}
+  if {$idx >= 0} {
+    if {![string is integer -strict $idx] || $idx >= [llength $rows]} { return }
+    set row [lindex $rows $idx]
+  } else {
+    set idx -1
+  }
+  set w [ase::ui::dialog_frame [dict get $wins $key].[dict get $cfg ed] \
+    [expr {$idx >= 0 ? "Edit [dict get $cfg edtitle]" : "Add [dict get $cfg edtitle]"}]]
+  set dlg($key,$which) $idx
+  set r 0
+  foreach f [dict get $cfg cols] h [dict get $cfg heads] {
+    set e [ase::ui::dialog_row $w $r "$h:" $f]
+    $e insert 0 [ase::state_get $row $f]
+    bind $e <Return> [list ase::ui::listdlg_ok $key $which]
+    incr r
+  }
+  ase::ui::dialog_buttons $w $r [list ase::ui::listdlg_ok $key $which] \
+    [list ase::ui::listdlg_editor_cancel $key $which]
+  ase::ui::apply_theme $w
+  focus $w.[lindex [dict get $cfg cols] 0]
+  return $w
+}
+
+proc ase::ui::listdlg_edit_first {key which} {
+  variable wins; variable listdlg
+  if {![dict exists $wins $key]} { return }
+  set tv [dict get $wins $key].[dict get $listdlg $which win].tv
+  set sel {}
+  if {[winfo exists $tv]} { set sel [$tv selection] }
+  if {$sel eq {}} {
+    catch {ciw_echo "ase: nothing selected"}
+    return
+  }
+  ase::ui::listdlg_editor $key $which [lindex $sel 0]
+}
+
+proc ase::ui::listdlg_ok {key which} {
+  variable wins; variable listdlg; variable dlg
+  if {![dict exists $wins $key] || ![info exists dlg($key,$which)]} { return }
+  set cfg [dict get $listdlg $which]
+  set w [dict get $wins $key].[dict get $cfg ed]
+  if {![winfo exists $w]} { return }
+  set cols [dict get $cfg cols]
+  set first [string trim [$w.[lindex $cols 0] get]]
+  if {$first eq {}} {
+    catch {ciw_echo "ase: '[lindex [dict get $cfg heads] 0]' must not be empty" error}
+    return
+  }
+  set idx $dlg($key,$which)
+  set st [ase::session_state $key]
+  set rows [ase::state_get $st [dict get $cfg skey]]
+  if {$idx < 0} {
+    set row [dict create]
+  } elseif {$idx < [llength $rows]} {
+    set row [lindex $rows $idx]
+  } else {
+    ase::ui::listdlg_editor_cancel $key $which
+    return
+  }
+  foreach f $cols { dict set row $f [string trim [$w.$f get]] }
+  if {$idx < 0} { lappend rows $row } else { lset rows $idx $row }
+  dict set st [dict get $cfg skey] $rows
+  ase::session_update $key $st        ;# D15: every mutation commits at once
+  array unset dlg $key,$which
+  destroy $w
+  ase::ui::listdlg_fill $key $which
+}
+
+proc ase::ui::listdlg_editor_cancel {key which} {
+  variable wins; variable listdlg; variable dlg
+  array unset dlg $key,$which
+  if {[dict exists $wins $key]} {
+    catch {destroy [dict get $wins $key].[dict get $listdlg $which ed]}
+  }
+}
+
+# ctx Delete / the Delete key on the dialog treeview (D1: dialog-local —
+# never coupled to the main panes' selection model).
+proc ase::ui::listdlg_delete {key which} {
+  variable wins; variable listdlg
+  if {![dict exists $wins $key]} { return }
+  set cfg [dict get $listdlg $which]
+  set tv [dict get $wins $key].[dict get $cfg win].tv
+  if {![winfo exists $tv]} { return }
+  set sel [$tv selection]
+  if {$sel eq {}} {
+    catch {ciw_echo "ase: nothing selected"}
+    return
+  }
+  set st [ase::session_state $key]
+  set rows [ase::state_get $st [dict get $cfg skey]]
+  foreach i [lsort -integer -decreasing $sel] {
+    if {[string is integer -strict $i] && $i >= 0 && $i < [llength $rows]} {
+      set rows [lreplace $rows $i $i]
+    }
+  }
+  dict set st [dict get $cfg skey] $rows
+  ase::session_update $key $st        ;# D15
+  ase::ui::listdlg_fill $key $which
+}
+
+# --- (d) Outputs > Save All --------------------------------------------------
+
+# Outputs > Save All…: the two blanket checkboxes writing save_all_v /
+# save_all_i (deck mapping in ase.tcl: allv -> `.save all`, alli ->
+# `.options savecurrents`); the Levels entry is present-but-DISABLED and
+# backed by NO state key (D11 — a schema addition would ripple into the
+# protected byte-identity fixture).
+proc ase::ui::save_all_dialog {key} {
+  variable wins; variable dlg
+  if {![dict exists $wins $key]} { return }
+  set w [ase::ui::dialog_frame [dict get $wins $key].saveall {Save All}]
+  set st [ase::session_state $key]
+  set dlg($key,allv) [expr {[ase::state_get $st save_all_v 0] eq {1} ? 1 : 0}]
+  set dlg($key,alli) [expr {[ase::state_get $st save_all_i 0] eq {1} ? 1 : 0}]
+  checkbutton $w.allv -text {Save all voltages} \
+    -variable ::ase::ui::dlg($key,allv)
+  checkbutton $w.alli -text {Save all terminal currents} \
+    -variable ::ase::ui::dlg($key,alli)
+  grid $w.allv -row 0 -column 0 -columnspan 2 -sticky w -padx 8 -pady 2
+  grid $w.alli -row 1 -column 0 -columnspan 2 -sticky w -padx 8 -pady 2
+  set le [ase::ui::dialog_row $w 2 Levels: levels]
+  ase::ui::dialog_buttons $w 3 [list ase::ui::save_all_ok $key] \
+    [list ase::ui::save_all_cancel $key]
+  bind $w <Return> [list ase::ui::save_all_ok $key]
+  ase::ui::apply_theme $w
+  $le configure -state disabled       ;# after theming: inert v1 field
+  return $w
+}
+
+proc ase::ui::save_all_ok {key} {
+  variable wins; variable dlg
+  if {![dict exists $wins $key]} { return }
+  if {![winfo exists [dict get $wins $key].saveall]} { return }
+  set st [ase::session_state $key]
+  dict set st save_all_v \
+    [expr {[info exists dlg($key,allv)] && $dlg($key,allv) ? 1 : 0}]
+  dict set st save_all_i \
+    [expr {[info exists dlg($key,alli)] && $dlg($key,alli) ? 1 : 0}]
+  ase::session_update $key $st
+  ase::ui::populate $key    ;# the Save Options auto-cells react (item 06)
+  ase::ui::save_all_cancel $key
+}
+
+proc ase::ui::save_all_cancel {key} {
+  variable wins; variable dlg
+  array unset dlg $key,allv
+  array unset dlg $key,alli
+  if {[dict exists $wins $key]} {
+    catch {destroy [dict get $wins $key].saveall}
+  }
+}
+
+# --- (e) Session > Load State ------------------------------------------------
+
+# simulation-state views of lib/cell: those whose datafile resolves to a
+# .state (the design_sch_views sibling).
+proc ase::ui::state_views {lib cell} {
+  set out {}
+  foreach v [xschem cell_views $lib $cell] {
+    if {[string match {*.state} [xschem cellview_path "$lib/$cell" $v]]} {
+      lappend out $v
+    }
+  }
+  return $out
+}
+
+# Session > Load State: the Create Instance browser shape (3 listbox
+# columns, -exportselection 0) with the View column filtered to
+# simulation-state views. OK resolves the target; a dirty session gets the
+# discard confirm first (D10).
+proc ase::ui::load_state_dialog {key} {
+  variable wins
+  if {![dict exists $wins $key]} { return }
+  set w [dict get $wins $key].loadst
+  catch {destroy $w}
+  toplevel $w
+  wm title $w {Load State}
+  ttk::panedwindow $w.pw -orient horizontal
+  foreach {col title} {lib Library cell Cell view View} {
+    set f [ttk::frame $w.pw.$col]
+    ttk::label $f.h -text $title -anchor w -padding {4 2}
+    listbox $f.lb -exportselection 0 -activestyle dotbox \
+            -yscrollcommand [list $f.sb set] -width 16 -height 14 \
+            -background [ase::theme table] -font AseEntryFont
+    ttk::scrollbar $f.sb -orient vertical -command [list $f.lb yview]
+    grid $f.h  -row 0 -column 0 -columnspan 2 -sticky we
+    grid $f.lb -row 1 -column 0 -sticky nsew
+    grid $f.sb -row 1 -column 1 -sticky ns
+    grid rowconfigure $f 1 -weight 1
+    grid columnconfigure $f 0 -weight 1
+    $w.pw add $f -weight 1
+  }
+  label $w.status -anchor w \
+    -text {pick a Library / Cell / simulation-state View}
+  frame $w.b
+  button $w.b.ok -text OK -command [list ase::ui::load_state_ok $key]
+  button $w.b.cancel -text Cancel -command [list destroy $w]
+  pack $w.b.ok -side left -padx 5
+  pack $w.b.cancel -side right -padx 5
+  pack $w.b -side bottom -fill x -padx 8 -pady 6
+  pack $w.status -side bottom -fill x -padx 8
+  pack $w.pw -side top -fill both -expand 1
+  bind $w.pw.lib.lb  <<ListboxSelect>> [list ase::ui::loadst_on_lib $key]
+  bind $w.pw.cell.lb <<ListboxSelect>> [list ase::ui::loadst_on_cell $key]
+  foreach n [lsort [libmgr::lib_names]] { $w.pw.lib.lb insert end $n }
+  ase::ui::apply_theme $w
+  return $w
+}
+
+proc ase::ui::loadst_on_lib {key} {
+  variable wins
+  if {![dict exists $wins $key]} { return }
+  set w [dict get $wins $key].loadst
+  if {![winfo exists $w]} { return }
+  set lib [ase::ui::lb_sel $w.pw.lib.lb]
+  $w.pw.cell.lb delete 0 end
+  $w.pw.view.lb delete 0 end
+  if {$lib eq {}} { return }
+  foreach c [lsort [xschem lib_cells $lib]] { $w.pw.cell.lb insert end $c }
+}
+
+proc ase::ui::loadst_on_cell {key} {
+  variable wins
+  if {![dict exists $wins $key]} { return }
+  set w [dict get $wins $key].loadst
+  if {![winfo exists $w]} { return }
+  set lib  [ase::ui::lb_sel $w.pw.lib.lb]
+  set cell [ase::ui::lb_sel $w.pw.cell.lb]
+  $w.pw.view.lb delete 0 end
+  if {$lib eq {} || $cell eq {}} { return }
+  set sv [ase::ui::state_views $lib $cell]
+  foreach v $sv { $w.pw.view.lb insert end $v }
+  if {[llength $sv] == 0} {
+    $w.status configure -text "no simulation-state view for $lib/$cell"
+  } else {
+    $w.status configure -text "$lib/$cell — choose a state View"
+  }
+}
+
+proc ase::ui::load_state_ok {key} {
+  variable wins
+  if {![dict exists $wins $key]} { return }
+  set w [dict get $wins $key].loadst
+  if {![winfo exists $w]} { return }
+  set lib  [ase::ui::lb_sel $w.pw.lib.lb]
+  set cell [ase::ui::lb_sel $w.pw.cell.lb]
+  set view [ase::ui::lb_sel $w.pw.view.lb]
+  if {$lib eq {} || $cell eq {} || $view eq {}} {
+    $w.status configure -text {pick a Library / Cell / simulation-state View}
+    return
+  }
+  set path [xschem cellview_path "$lib/$cell" $view]
+  if {$path eq {}} {
+    $w.status configure -text "no $view view for $lib/$cell"
+    return
+  }
+  destroy $w
+  if {[ase::session_dirty $key]} {
+    ase::ui::confirm $key {Load State} \
+      "Discard unsaved edits of this session\nand load $lib/$cell/$view?" \
+      [list ase::ui::do_load_state_from $key $path]
+  } else {
+    ase::ui::do_load_state_from $key $path
+  }
+}
+
+# D10 worker (headless-testable): Load State is a CONTENT IMPORT into THIS
+# session — replace the in-memory state with the chosen file's dict
+# (state_load merges over defaults); the session's path/key/meta stay
+# untouched, so the dirty marker appears whenever the import differs from
+# the session's own file. No session retargeting, no key juggling.
+proc ase::ui::do_load_state_from {key path} {
+  if {[catch {ase::state_load $path} st]} {
+    catch {ciw_echo $st error}
+    return 0
+  }
+  ase::session_update $key $st
+  ase::ui::populate $key
+  return 1
+}
+
+# --- (f) Session > Save State ------------------------------------------------
+
+# Session > Save State: ALWAYS Save-As — Library type-to-filter combobox +
+# editable Cell/View entries prefilled with the session's own l/c/v (so a
+# bare OK is the plain save).
+proc ase::ui::save_state_dialog {key} {
+  variable wins; variable meta; variable dlg
+  if {![dict exists $wins $key]} { return }
+  set w [ase::ui::dialog_frame [dict get $wins $key].saveas {Save State}]
+  lassign [dict get $meta $key] mlib mcell mview
+  set dlg($key,salib) [lsort [libmgr::lib_names]]
+  label $w.llib -text Library: -font AseLabelFont -anchor w
+  ttk::combobox $w.lib -width 24 -font AseEntryFont -style Ase.TCombobox \
+    -values $dlg($key,salib)
+  grid $w.llib -row 0 -column 0 -sticky w -padx {8 6} -pady 2
+  grid $w.lib  -row 0 -column 1 -sticky we -padx {0 8} -pady 2
+  $w.lib set $mlib
+  bind $w.lib <KeyRelease> [list ase::ui::saveas_filter $key]
+  set ce [ase::ui::dialog_row $w 1 Cell: cell]
+  set ve [ase::ui::dialog_row $w 2 View: view]
+  $ce insert 0 $mcell
+  $ve insert 0 $mview
+  ase::ui::dialog_buttons $w 3 [list ase::ui::save_state_ok $key] \
+    [list ase::ui::saveas_cancel $key]
+  foreach e [list $w.lib $ce $ve] {
+    bind $e <Return> [list ase::ui::save_state_ok $key]
+  }
+  ase::ui::apply_theme $w
+  focus $ve
+  return $w
+}
+
+proc ase::ui::saveas_filter {key} {
+  variable wins; variable dlg
+  if {![dict exists $wins $key] || ![info exists dlg($key,salib)]} { return }
+  ase::ui::combo_filter [dict get $wins $key].saveas.lib $dlg($key,salib)
+}
+
+proc ase::ui::saveas_cancel {key} {
+  variable wins; variable dlg
+  array unset dlg $key,salib
+  if {[dict exists $wins $key]} {
+    catch {destroy [dict get $wins $key].saveas}
+  }
+}
+
+# D8: pure predicate — the Save-As target needs a confirmation iff it
+# resolves to the session's OWN state file AND that file is effectively
+# read-only: the session was opened read-only (attr `readonly`, threaded by
+# ase::open_state's trailing arg) or the file itself is unwritable (the
+# LibMgr git-checkout discipline leaves non-checked-out files 0444).
+# D13: overwriting a DIFFERENT existing view needs NO confirm in v1 — the
+# spec's only confirm trigger is read-only + same-target.
+proc ase::ui::save_as_needs_confirm {key lib cell view} {
+  set target [xschem cellview_path "$lib/$cell" $view]
+  if {$target eq {}} { return 0 }
+  set own [ase::session_path $key]
+  if {$own eq {} || [file normalize $target] ne [file normalize $own]} {
+    return 0
+  }
+  if {[ase::session_getattr $key readonly 0] eq {1}} { return 1 }
+  if {![file writable [file normalize $target]]} { return 1 }
+  return 0
+}
+
+proc ase::ui::save_state_ok {key} {
+  variable wins
+  if {![dict exists $wins $key]} { return }
+  set w [dict get $wins $key].saveas
+  if {![winfo exists $w]} { return }
+  set l [string trim [$w.lib get]]
+  set c [string trim [$w.cell get]]
+  set v [string trim [$w.view get]]
+  if {$l eq {} || $c eq {} || $v eq {}} {
+    catch {ciw_echo "ase: Library, Cell and View are all required" error}
+    return
+  }
+  if {[ase::ui::save_as_needs_confirm $key $l $c $v]} {
+    ase::ui::confirm $key {Overwrite State} \
+      "The state $l/$c/$v was opened read-only.\nOverwrite it?" \
+      [list ase::ui::do_save_state_as $key $l $c $v]
+    return
+  }
+  ase::ui::do_save_state_as $key $l $c $v
+}
+
+# Save-As worker (headless-testable). Target arms:
+#  - the session's OWN view -> ase::session_save (clears dirty);
+#  - a MISSING view -> `library_new_view <l> <c> <v> ngspice_state1` (the
+#    item-02 creation path; D9: the CELL must already exist — a nonexistent
+#    cell errors cleanly, auto-creating cells would invent behavior), then
+#    the seeded file is overwritten with THIS session's serialization;
+#  - a DIFFERENT existing view -> plain state_save overwrite (D13).
+# On success: LibMgr pane refresh (headless-safe catch), notice, the Save-As
+# dialog dies. Returns 1 on success, 0 on a reported error (dialog kept up).
+proc ase::ui::do_save_state_as {key l c v} {
+  variable wins
+  set target [xschem cellview_path "$l/$c" $v]
+  set own [ase::session_path $key]
+  if {$target ne {} && $own ne {} \
+      && [file normalize $target] eq [file normalize $own]} {
+    if {[catch {ase::session_save $key} err]} {
+      catch {ciw_echo "ase: cannot save $l/$c/$v: $err" error}
+      return 0
+    }
+  } else {
+    if {$target eq {}} {
+      if {[catch {library_new_view $l $c $v ngspice_state1} err]} {
+        catch {ciw_echo "ase: cannot create view $l/$c/$v: $err" error}
+        return 0
+      }
+      set target [xschem cellview_path "$l/$c" $v]
+      if {$target eq {}} {
+        catch {ciw_echo "ase: created view $l/$c/$v did not resolve" error}
+        return 0
+      }
+    }
+    if {[catch {ase::state_save $target [ase::session_state $key]} err]} {
+      catch {ciw_echo "ase: cannot write $target: $err" error}
+      return 0
+    }
+  }
+  catch {libmgr::refresh_after $l $c $v}
+  catch {ciw_echo "ase: state saved to $l/$c/$v"}
+  if {[dict exists $wins $key]} {
+    catch {destroy [dict get $wins $key].saveas}
+  }
+  return 1
 }
 
 # --- title / status bar / notify ---------------------------------------------
@@ -1060,6 +2051,9 @@ proc ase::ui::session_changed {key} {
 }
 
 # --- Session menu ------------------------------------------------------------
+# v1 direct workers, kept as plain scripting/test seams (W7 uses
+# revert_state); the Session MENU now routes through the item-07 dialogs
+# (save_state_dialog / load_state_dialog above).
 
 proc ase::ui::save_state {key} {
   ase::session_save $key

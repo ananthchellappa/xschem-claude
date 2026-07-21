@@ -585,11 +585,16 @@ proc libmgr::open_view_ro {} {
   set lcv [libmgr::current_view]
   if {$lcv eq {}} return
   lassign $lcv lib cell view
-  # Non-editor views (ASE simulation states) divert to the plain open: their
-  # v0 viewer is already read-only, and the `xschem set readonly 1` below
-  # would wrongly mark the CURRENT schematic window read-only instead.
+  # Non-editor views (ASE simulation states): dispatch DIRECTLY with the
+  # read-only flag (ase::open_state's trailing arg, item 07 D7 — it records
+  # the session attr `readonly` that gates the ASE Save-As overwrite
+  # confirmation). Routing through libmgr::open_view would drop the flag,
+  # and the `xschem set readonly 1` below would wrongly mark the CURRENT
+  # schematic window read-only instead. Like the plain-open ASE arm this
+  # logs NO action line (read-only viewer allowlist doctrine).
   if {[libmgr::view_handler $view [xschem cellview_path "$lib/$cell" $view]] ne {editor}} {
-    libmgr::open_view
+    ase::open_state $lib $cell $view 1
+    libmgr::status "opened $lib/$cell/$view read-only"
     return
   }
   if {![libmgr::open_view]} return

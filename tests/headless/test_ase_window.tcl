@@ -172,6 +172,28 @@ proc send_return {w done} {
   return 0
 }
 
+# Menu-driven save (item 07): Session > Save State now opens the Save-As
+# dialog prefilled with the session's own Library/Cell/View — its OK on the
+# untouched prefill IS the old direct save. Invoke the menu entry, wait for
+# the dialog, proceed, wait for it to die (the worker destroys it after the
+# write). Returns 1 when the save round completed.
+proc menu_save_state {top} {
+  $top.mb.session invoke {Save State}
+  for {set i 0} {$i < 100} {incr i} {
+    update
+    if {[winfo exists $top.saveas]} { break }
+    after 20
+  }
+  if {![winfo exists $top.saveas]} { return 0 }
+  $top.saveas.btns.proceed invoke
+  for {set i 0} {$i < 100} {incr i} {
+    update
+    if {![winfo exists $top.saveas]} { return 1 }
+    after 20
+  }
+  return 0
+}
+
 # --- locations (cwd-independent) --------------------------------------------
 set here    [file normalize [file dirname [info script]]]      ;# tests/headless
 set repo    [file normalize [file join $here .. ..]]           ;# repo root
@@ -497,7 +519,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   set vgsit [tv_find $vtv name Vgs]
   check "W3 tree shows 2.2" \
     [expr {$vgsit ne {} ? [$vtv set $vgsit value] : {}}] 2.2
-  $top.mb.session invoke {Save State}
+  menu_save_state $top
   update
   set f [open $spath r]; set sdata [read $f]; close $f
   check_true "W3 saved file contains the widget's value" \
@@ -512,7 +534,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   $top.edvar.value delete 0 end
   $top.edvar.value insert 0 1.8
   send_return $top.edvar.value {![winfo exists $top.edvar]}
-  $top.mb.session invoke {Save State}
+  menu_save_state $top
   update
   check "W3 Vgs restored to 1.8 + saved" \
     [ase::state_get [ase::session_state $key] variables] \
@@ -528,7 +550,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   check "W3t session dirty after temperature commit" [ase::session_dirty $key] 1
   check_true "W3t status bar carries T=33 C" \
     [string match "*T=33 C*" [ase::ui::status_text $key]]
-  $top.mb.session invoke {Save State}
+  menu_save_state $top
   update
   set f [open $spath r]; set sdata [read $f]; close $f
   check_true "W3t saved file contains temperature 33" \
@@ -546,7 +568,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   $te delete 0 end
   $te insert 0 27
   send_return $te {[ase::state_get [ase::session_state $key] temperature] eq {27}}
-  $top.mb.session invoke {Save State}
+  menu_save_state $top
   update
   check "W3t temperature restored + saved" \
     [ase::state_get [ase::session_state $key] temperature] 27
@@ -576,7 +598,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     if {[ase::state_get $a type] eq {dc}} { set dcen [ase::state_get $a enabled] }
   }
   check "W3c click toggles dc enabled in state" $dcen 1
-  $top.mb.session invoke {Save State}
+  menu_save_state $top
   update
   set f [open $spath r]; set sdata [read $f]; close $f
   check_true "W3c save persists the toggle" \
@@ -586,7 +608,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   # as <Double-1> (the Choose Analyses stub) instead of a checkbox toggle.
   set dcit [tv_find $atv type dc]
   tv_cell_click $atv $dcit enable 10
-  $top.mb.session invoke {Save State}
+  menu_save_state $top
   update
   set f [open $spath r]; set sdata [read $f]; close $f
   check_true "W3c second click + save restores enabled 0" \
@@ -653,7 +675,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   check_true "W3x survivors intact" [expr {
     [tv_find $vtv name Vgs] ne {} && [tv_find $vtv name Vds] ne {} &&
     [tv_find $vtv name tmpA] eq {} && [tv_find $vtv name tmpB] eq {}}]
-  $top.mb.session invoke {Save State}
+  menu_save_state $top
   update
   set before_noop [ase::state_get [ase::session_state $key] variables]
   $top.strip.del invoke
