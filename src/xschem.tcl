@@ -14073,6 +14073,8 @@ source $XSCHEM_SHAREDIR/library_manager.tcl
 source $XSCHEM_SHAREDIR/create_instance.tcl
 # Library/Cell/View Save-As form (doc/claude/specs/save_as_cellview.md)
 source $XSCHEM_SHAREDIR/save_as_form.tcl
+# ASE-L analog simulation environment core (doc/claude/specs/ase_l.md)
+source $XSCHEM_SHAREDIR/ase.tcl
 # Slick per-field "Edit Properties" form (replaces the legacy raw-text dialog)
 source $XSCHEM_SHAREDIR/property_form.tcl
 # Alt-2 schematic<->symbol view toggle (action view.toggle_view_type;
