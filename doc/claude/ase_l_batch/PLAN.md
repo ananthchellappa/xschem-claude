@@ -350,3 +350,34 @@ display-only at pane-render time.
    scientific, state file still stores raw). ≥2 sabotages.
 5. Spec ase_l.md UI-v2 section: one paragraph documenting the behavior +
    gate (commit it).
+
+- [x] 10 esc-dismiss     — every ASE-L dialog dismissible with ESC (cancel semantics, cleanup preserved) -> d8ab6769 central bind_dialog_esc in dialog_buttons (9 scaffold dialogs + future ones by construction) + 4 explicit sites + chana_x_cancel anextra-leak fix, 133 GUI + 16 headless checks + 3 exact-target sabotages, audit fails strict subset of baseline (one WSLg flake green on direct re-run)
+
+### 10 esc-dismiss
+
+User request 2026-07-21: ANY dialog opened through ASE-L must be dismissible
+with ESC.
+
+1. Scout: enumerate EVERY toplevel dialog created by src/ase_window.tcl (and
+   ase.tcl if any): Choose Analyses (+its Options subdialog), Add Variable,
+   variable/output row editors, Setup Outputs (-->), Setup > Design, Model
+   Files, Save All, Load State browser, Save State (Save-As), Simulation >
+   Options — plus any others found in code. For each, identify its CANCEL
+   path (the command that cleans per-window state arrays and destroys).
+2. ESC must invoke that SAME cancel path — never a bare `destroy` that
+   leaks the per-window state arrays (references/copy_current_cell_dialog.tcl
+   cleanup idiom). Central helper (e.g. `ase::bind_dialog_esc <w> <cancelcmd>`)
+   applied at every dialog creation site; new future dialogs get it by
+   construction if there is a common dialog-constructor path (scout decides,
+   document).
+3. Non-collisions: tk_messageBox/confirm popups already ESC-cancel natively —
+   leave; the item-08 Select-On-Design ESC (schematic-side mode end) is
+   UNRELATED and must stay untouched (regression leg proves it still works).
+   ESC on the ASE MAIN window stays unbound (no accidental session close).
+4. Tests (GUI legs in test_ase_dialogs.tcl): for EACH enumerated dialog —
+   open, press ESC (focus-gated generated key event, send_return-pattern
+   helper generalized to send_key if needed), assert: dialog destroyed,
+   per-window state arrays cleaned (info exists = 0), NO state mutation
+   (dict unchanged vs pre-open snapshot). Plus: ESC in an ENTRY inside a
+   dialog still dismisses (event bubbles); Select-On-Design ESC regression
+   leg; main-window ESC does nothing. ≥2 sabotages.
