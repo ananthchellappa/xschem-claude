@@ -3,7 +3,8 @@
 #                   load->save byte-stability
 #   B1 backend registry: ngspice entry, all four hooks resolve
 #   D* deck render: golden deck for the nfet state, disabled analyses absent +
-#                   fixed op..tran order, trailing-.end strip robustness
+#                   fixed op..tran order, trailing-.end strip robustness,
+#                   temperature -> .temp (custom / non-numeric / missing key)
 #   N* netlist:     ase::netlist on a scratch lib/cell/view fixture, rundir
 #                   defaulting to $netlist_dir
 #   E* run:         real ngspice batch end-to-end (Id ~ 4.096837e-04, leg
@@ -86,9 +87,10 @@ if {[catch {
 
 # --- R1: state_default schema -----------------------------------------------
 set d [ase::state_default]
-check "R1 default has exactly the 10 schema keys" [lsort [dict keys $d]] \
-  [lsort {version simulator design rundir models variables analyses outputs options includes}]
+check "R1 default has exactly the 11 schema keys" [lsort [dict keys $d]] \
+  [lsort {version simulator design rundir temperature models variables analyses outputs options includes}]
 check "R1 version is 1" [dict get $d version] 1
+check "R1 temperature default 27" [dict get $d temperature] 27
 set types {}; set enabled {}
 foreach a [dict get $d analyses] {
   lappend types [dict get $a type]
@@ -162,6 +164,7 @@ V2 G GND 1.8
 .param Vgs=1.8
 .param Vds=1.0
 .options savecurrents
+.temp 27
 .save -i(v1)
 .control
 op
@@ -192,6 +195,23 @@ foreach line [split $deck3 "\n"] { if {[string trim $line] eq ".end"} { incr nen
 check "D3 exactly one .end" $nend 1
 check "D3 .end is the last non-blank line" \
   [string trim [lindex [split [string trimright $deck3 "\n"] "\n"] end]] {.end}
+
+# --- D4: temperature -> .temp (UI v2) ----------------------------------------
+set st [nfet_state /models/sky130.lib.spice {}]
+dict set st temperature 33.5
+set deck4 [$render $st $netlist_text]
+check_true "D4 custom temperature renders .temp 33.5" \
+  [regexp -line {^\.temp 33\.5$} $deck4]
+set st [nfet_state /models/sky130.lib.spice {}]
+dict set st temperature bogus
+set caught [catch {$render $st $netlist_text} err4]
+check "D4 non-numeric temperature errors cleanly" $caught 1
+check_true "D4 temperature error is the clean ase message" \
+  [string match "ase:*" $err4]
+set st [dict remove [nfet_state /models/sky130.lib.spice {}] temperature]
+set deck4b [$render $st $netlist_text]
+check_true "D4 missing temperature key still emits .temp 27" \
+  [regexp -line {^\.temp 27$} $deck4b]
 
 # --- N1: ase::netlist on the scratch fixture ---------------------------------
 set rundir [file normalize [file join $scratch run]]

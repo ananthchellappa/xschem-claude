@@ -21,9 +21,10 @@
 # namespace are the state_default schema defaults.
 
 namespace eval ase {
-  # canonical state-file key order (the spec's v1 schema)
-  variable schema_keys {version simulator design rundir models variables
-                        analyses outputs options includes}
+  # canonical state-file key order (the spec's v1 schema + the UI v2
+  # `temperature` session scalar, grouped with the other scalars)
+  variable schema_keys {version simulator design rundir temperature models
+                        variables analyses outputs options includes}
   # simulator name -> hooks dict {render_deck run_cmd log_file result_probe}
   variable backends [dict create]
   # most recent completed run: {results <dict> exitcode <n> log <path> }
@@ -67,6 +68,7 @@ proc ase::state_default {} {
     simulator ngspice \
     design    {} \
     rundir    {} \
+    temperature 27 \
     models    {} \
     variables {} \
     analyses  {{type op enabled 1} {type dc enabled 0} {type ac enabled 0} {type tran enabled 0}} \
@@ -224,26 +226,65 @@ proc ase::netlist {state} {
 
 # --- Run --------------------------------------------------------------------
 
-# Netlist + render deck -> <rundir>/<cell>_ase.spice, then batch-run the
-# simulator through the `execute` infra (status 0: no viewdata popup, headless
-# safe; no $terminal anywhere). Returns the execute id (use ase::wait).
-# Output accumulates in execute(data,$id) and is flushed to the backend's log
-# file by ase::run_done, which then parses results and finally evals the
-# optional user callback at global level.
+# Netlist + run: regenerate the circuit netlist artifact, then hand off to
+# ase::run_deck (the shared post-netlist body). Every hook is resolved up
+# front so an unknown simulator errors before any netlisting / file I/O.
+# Returns the execute id (use ase::wait).
 proc ase::run {state {callback {}}} {
   set sim [ase::state_get $state simulator]
   if {$sim eq {}} {
     return -code error "ase: state has no simulator"
   }
-  # resolve every hook up front: clean error on an unknown simulator before
-  # any netlisting / file I/O happens
+  foreach h {render_deck run_cmd log_file result_probe} {
+    ase::backend_hook $sim $h
+  }
+  set nl [ase::netlist $state]
+  return [ase::run_deck $state $nl $callback]
+}
+
+# Run on the EXISTING netlist artifact <rundir>/<cell>.spice (ADE-L "Run":
+# applies the state's current analyses/outputs but does NOT re-netlist, so
+# hand-edits to the circuit netlist survive; needs no current-schematic guard
+# because no netlisting happens — works with the design window closed).
+# Clean error when the artifact is absent.
+proc ase::run_existing {state {callback {}}} {
+  set sim [ase::state_get $state simulator]
+  if {$sim eq {}} {
+    return -code error "ase: state has no simulator"
+  }
+  foreach h {render_deck run_cmd log_file result_probe} {
+    ase::backend_hook $sim $h
+  }
+  set design [ase::state_get $state design]
+  if {$design eq {} || ![dict exists $design cell]} {
+    return -code error "ase: state has no design cell"
+  }
+  set nl [file join [ase::rundir $state] [dict get $design cell].spice]
+  if {![file isfile $nl]} {
+    return -code error "ase: no netlist artifact: $nl (run Simulation >\
+ Netlist > Recreate first)"
+  }
+  return [ase::run_deck $state $nl $callback]
+}
+
+# The shared post-netlist run body: render deck from `netlistfile` ->
+# <rundir>/<cell>_ase.spice, then batch-run the simulator through the
+# `execute` infra (status 0: no viewdata popup, headless safe; no $terminal
+# anywhere). Returns the execute id (use ase::wait). Output accumulates in
+# execute(data,$id) and is flushed to the backend's log file by ase::run_done,
+# which then parses results and finally evals the optional user callback at
+# global level.
+proc ase::run_deck {state netlistfile {callback {}}} {
+  set sim [ase::state_get $state simulator]
+  if {$sim eq {}} {
+    return -code error "ase: state has no simulator"
+  }
   set render_deck [ase::backend_hook $sim render_deck]
   set run_cmd     [ase::backend_hook $sim run_cmd]
   set log_file    [ase::backend_hook $sim log_file]
   ase::backend_hook $sim result_probe
 
-  set nl [ase::netlist $state]
-  set f [open $nl r]
+  set f [open $netlistfile r]
   set netlist_text [read $f]
   close $f
 
@@ -517,6 +558,14 @@ namespace eval ase::backend::ngspice {
         lappend lines ".options [dict get $o name]=$val"
       }
     }
+    # simulation temperature (UI v2): always emitted, default 27 (= ngspice's
+    # own default). Non-numeric values error honestly — the GUI validates at
+    # commit, so only hand-edited states can ever get here.
+    set T [ase::state_get $state temperature 27]
+    if {![string is double -strict $T]} {
+      return -code error "ase: temperature must be numeric: '$T'"
+    }
+    lappend lines ".temp $T"
     foreach o [ase::state_get $state outputs] {
       if {[ase::state_get $o save 0] eq {1}} {
         lappend lines ".save [dict get $o expr]"

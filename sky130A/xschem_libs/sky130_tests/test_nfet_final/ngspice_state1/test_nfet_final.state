@@ -2,6 +2,7 @@ version 1
 simulator ngspice
 design {lib sky130_tests cell test_nfet_final view schematic}
 rundir {}
+temperature 27
 models {{file $::SKYWATER_MODELS/sky130.lib.spice section tt}}
 variables {{name Vgs value 1.8} {name Vds value 1.0}}
 analyses {{type op enabled 1} {type dc enabled 0} {type ac enabled 0} {type tran enabled 0}}
