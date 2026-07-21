@@ -13,16 +13,22 @@
 #   V6  embedded-graph regression: shipped test_ne555.sch loads (readonly),
 #       keeps its layer-2 graph rect + flags=graph, redraws rc 0
 #   G1-G9 GUI legs (DISPLAY-guarded self-SKIP): open viewer from a session
-#       token (toplevel, registry, readonly, untitled buffer); viewer menubar
-#       attached (File/View/Graph/Cursors, Graph+Cursors disabled), editor
-#       menubar NOT attached; exact title + with_edit clobber regression;
-#       window number > 0; strip (Insert/w do nothing: no instance, no wire,
-#       no modify, no readonly MODAL — recording tk_messageBox stub — no new
-#       toplevel); ESC does not close; display_raw (1 graph rect, node prop,
-#       raw points in the viewer ctx, redraw, modified 0 + readonly restored,
-#       no untitled*~.sch autosave backup); re-open raises the SAME window
-#       (number unchanged); Ctrl-W closes with no prompt, registry cleaned,
-#       reopen builds a fresh window.
+#       token (toplevel, registry, readonly, untitled buffer); strip SWEEP
+#       (G1s, fixup: user-rc binds installed on the main .drw pre-open —
+#       cadence_style_rc:109 verbatim <Key-i> + a Windows-arm-shaped
+#       <Alt-KeyPress> — are cloned by clone_canvas_bindings onto the viewer
+#       canvas and MUST be cleared there, main canvas keeps its own; plus a
+#       completeness check: no sequence outside the keep+filter set); viewer
+#       menubar attached (File/View/Graph/Cursors, Graph+Cursors disabled),
+#       editor menubar NOT attached; exact title + with_edit clobber
+#       regression; window number > 0; strip (i/Insert/w do nothing: no
+#       instance, no wire, no modify, no readonly MODAL — recording
+#       tk_messageBox stub — no new toplevel; `i` reaches the FILTER, not
+#       the cloned create_instance bind); ESC does not close; display_raw
+#       (1 graph rect, node prop, raw points in the viewer ctx, redraw,
+#       modified 0 + readonly restored, no untitled*~.sch autosave backup);
+#       re-open raises the SAME window (number unchanged); Ctrl-W closes
+#       with no prompt, registry cleaned, reopen builds a fresh window.
 #
 # Honest assertability (spec D8): headless/GUI legs can assert raw
 # points/vars/sim_type, layer-2 rect count/props, redraw rc 0 and
@@ -240,6 +246,15 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     }
   }
 
+  # user-rc canvas binds that clone_canvas_bindings (xinit.c
+  # create_new_window) copies onto every new window's canvas BEFORE
+  # wviewer::strip_bindings runs — the strip-sweep fixup target.
+  # cadence_style_rc:109 VERBATIM + a per-widget bind shaped like
+  # set_bindings' Windows-only Alt arm (the latent class). Unbound again
+  # after the GUI legs.
+  bind .drw <Key-i> {xschem create_instance; break}
+  bind .drw <Alt-KeyPress> {wvtest_alt_arm_probe}
+
   # --- G1: session registered headless -> wviewer::open ----------------------
   check "G1 unknown token -> 0, no throw" [wviewer::open no/such/token] 0
   set sstate [file join $scratch session.state]
@@ -256,6 +271,31 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   check "G1 viewer buffer is readonly" [xschem get readonly] 1
   check_true "G1 viewer buffer is untitled-class" \
     [string match {*untitled*} [file tail [xschem get schname]]]
+
+  # --- G1s: strip SWEEP — cloned user-rc / Windows-arm binds cleared ---------
+  # (more-specific Tk binds fire INSTEAD of the generic key_filter, so any
+  # survivor is a live editing-verb hole)
+  check "G1s cloned <Key-i> cleared from the viewer canvas" \
+    [bind $vdrw <Key-i>] {}
+  check "G1s cloned <Alt-KeyPress> cleared from the viewer canvas" \
+    [bind $vdrw <Alt-KeyPress>] {}
+  check "G1s main canvas keeps its own <Key-i> bind (per-widget strip)" \
+    [bind .drw <Key-i>] {xschem create_instance; break}
+  # completeness: NOTHING outside keep-set + installed filters survives.
+  # The allowed list is hardcoded (independent witness, canonical Tk
+  # spellings) — reading wviewer::keepseqs back would go hollow if a verb
+  # sequence ever crept into it.
+  set allowed {
+    <Expose> <Configure> <Visibility> <Enter> <Leave> <Motion> <Unmap>
+    <MouseWheel> <Button> <ButtonRelease>
+    <Key> <KeyRelease> <Button-3> <ButtonRelease-3>
+    <Double-Button-1> <Double-Button-2> <Double-Button-3>
+  }
+  set stray {}
+  foreach seq [bind $vdrw] {
+    if {[lsearch -exact $allowed $seq] < 0} { lappend stray $seq }
+  }
+  check "G1s no canvas sequence outside the keep+filter set" $stray {}
 
   # --- G2: viewer menubar replaces the editor menubar ------------------------
   set mb [$vtop cget -menu]
@@ -303,6 +343,12 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     set ::kf_calls 0
     set d2 [send_key $vdrw <Key-w> {$::kf_calls > 0}]
     check "G5 Insert + w delivered to the viewer filter" [list $d1 $d2] {1 1}
+    # `i`: the cloned create_instance bind would fire INSTEAD of the filter
+    # (and `break`) — kf_calls can only move if the sweep cleared it, so
+    # delivery-to-filter IS the strip witness for the fixed hole
+    set ::kf_calls 0
+    set d2i [send_key $vdrw <Key-i> {$::kf_calls > 0}]
+    check "G5 i reaches the FILTER (cloned bind swept)" $d2i 1
     update
     xschem new_schematic switch $vdrw
     check "G5 instances still 0" [xschem get instances] 0
@@ -375,11 +421,13 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   # instrumentation itself once induced exactly this)
   check "G* key_filter ran error-free" $::kf_errs 0
 
-  # restore the instrumented procs
+  # restore the instrumented procs + drop the user-rc probe binds
   rename ::wviewer::key_filter {}
   rename ::wviewer::key_filter_orig ::wviewer::key_filter
   rename ::tk_messageBox {}
   rename ::wvtest_real_messageBox ::tk_messageBox
+  bind .drw <Key-i> {}
+  bind .drw <Alt-KeyPress> {}
 } else {
   puts "SKIPPED: G1-G9 GUI legs (no usable DISPLAY)"
 }

@@ -16,8 +16,14 @@
 #     back up untitled buffers since issue 0060 — without the bracket a
 #     mutation writes untitled-N~.sch into the cwd).
 #   - D2 strip = readonly enforcement (quiet core backstop) + a per-window
-#     binding filter on THIS window's .drw only: the generic <KeyPress>/
-#     <KeyRelease> binds are replaced by wviewer::key_filter (allowlist:
+#     binding SWEEP + filter on THIS window's .drw only: strip_bindings
+#     first clears EVERY sequence bound on the canvas except the
+#     non-input infrastructure keep-set (more-specific Tk binds pre-empt
+#     the generic filter, so user-rc binds cloned by clone_canvas_bindings
+#     — e.g. cadence_style_rc `bind .drw <Key-i>` — and set_bindings'
+#     Windows-only per-widget Alt/Mod4 arms would otherwise reach editor
+#     verbs and their readonly modal), then installs wviewer::key_filter
+#     as the generic <KeyPress>/<KeyRelease> handler (allowlist:
 #     navigation always; the waves_callback key set only over a graph;
 #     Ctrl-W = close; everything else silently swallowed — readonly alone
 #     would pop the readonly_block MODAL on every editing key). Button-3 is
@@ -61,6 +67,18 @@ namespace eval wviewer {
   # over a graph; outside graphs these are editor verbs (m=move, t=text ...)
   # and must do nothing, silently.
   variable graphkeys {97 98 115 109 116 65 66}
+  # Canvas sequences the strip sweep KEEPS, in the canonical spellings `bind`
+  # reports (<KeyPress> -> <Key>, <ButtonPress> -> <Button>, <Key-i> -> bare
+  # `i`, <Shift-Insert> -> <Shift-Key-Insert> — probe-verified): the
+  # non-input plumbing (redraw/resize/enter/leave/motion) plus wheel and
+  # generic button press/release (zoom/pan + the C graph engine's own
+  # interactions; Button-3 and double-clicks are re-filtered right after
+  # the sweep). EVERYTHING else bound on the viewer canvas is cleared
+  # before the filters go in.
+  variable keepseqs {
+    <Expose> <Configure> <Visibility> <Enter> <Leave> <Motion> <Unmap>
+    <MouseWheel> <Button> <ButtonRelease>
+  }
 }
 
 # The viewer title (D6): `Waveforms <design cell> (<state view>)`. Cell from
@@ -292,15 +310,30 @@ proc wviewer::btn3_filter {W T x y b s} {
 }
 
 # Replace/override the editor bindings on the viewer canvas `wp` (per-widget:
-# other windows keep their full binding set by construction).
+# other windows keep their full binding set by construction). Two steps:
+#   1. SWEEP: clear every sequence bound on the canvas except the keepseqs
+#      infrastructure. The generic <Key>/<KeyRelease>/Button-3/double binds
+#      are re-installed as filters below, but the canvas also carries MORE
+#      SPECIFIC binds that Tk fires INSTEAD of the generic filter (most
+#      specific match wins): user-rc binds cloned by clone_canvas_bindings
+#      (xinit.c create_new_window — e.g. cadence_style_rc `bind .drw <Key-i>
+#      {xschem create_instance; break}` reached create_instance and its
+#      readonly modal in the viewer), replace_key remaps
+#      (set_replace_key_binding), set_bindings' own <Control-Shift-Key-P>/
+#      hi_descend binds, and set_bindings' Windows-only per-widget Alt/Mod4
+#      key/button arms. The sweep clears them ALL whatever their spelling —
+#      no enumerated blocklist to fall out of date. (The former explicit
+#      palette/hi_descend `{break}` binds are subsumed: those keysyms now
+#      reach key_filter, which swallows them.)
+#   2. install the filters — afterwards they are the ONLY key/button
+#      handlers on the canvas.
 proc wviewer::strip_bindings {wp} {
+  variable keepseqs
+  foreach seq [bind $wp] {
+    if {[lsearch -exact $keepseqs $seq] < 0} { bind $wp $seq {} }
+  }
   bind $wp <KeyPress>   {wviewer::key_filter %W %T %x %y %N %K %s}
   bind $wp <KeyRelease> {wviewer::key_filter %W %T %x %y %N %K %s}
-  # more-specific editor key binds that would pre-empt the generic filter
-  bind $wp <Control-Shift-Key-P> {break}              ;# command palette
-  if {[info exists ::hi_descend_key] && $::hi_descend_key ne {}} {
-    bind $wp <Key-$::hi_descend_key> {break}          ;# hi_descend dialog
-  }
   bind $wp <ButtonPress-3>   {wviewer::btn3_filter %W %T %x %y 3 %s}
   bind $wp <ButtonRelease-3> {wviewer::btn3_filter %W %T %x %y 3 %s}
   bind $wp <Double-Button-1> {break}                  ;# D9: no graph props dlg
