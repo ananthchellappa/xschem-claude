@@ -43,6 +43,20 @@ proc ase::state_get {state key {dflt {}}} {
   return $dflt
 }
 
+# Expand Tcl variable references in a path coming from a state file (model
+# files store the portable form `$::SKYWATER_MODELS/sky130.lib.spice` — the
+# workarea rc sets the variable; a literal absolute path would break other
+# checkouts). Variables-ONLY: no command execution from state files
+# (-nocommands) and backslashes are kept verbatim for Windows paths
+# (-nobackslashes). Substitutes at global level so unqualified names resolve
+# like the rc wrote them. Clean error when a referenced variable is unset.
+proc ase::expand_path {p} {
+  if {[catch {uplevel #0 [list subst -nocommands -nobackslashes $p]} out]} {
+    return -code error "ase: cannot expand model path '$p': $out"
+  }
+  return $out
+}
+
 # --- State I/O --------------------------------------------------------------
 
 # The v1 default state (spec "State file schema"). `simulator ngspice` here is
@@ -488,7 +502,7 @@ namespace eval ase::backend::ngspice {
       set lines [lrange $lines 0 end-1]
     }
     foreach m [ase::state_get $state models] {
-      lappend lines ".lib [dict get $m file] [dict get $m section]"
+      lappend lines ".lib [ase::expand_path [dict get $m file]] [dict get $m section]"
     }
     foreach v [ase::state_get $state variables] {
       lappend lines ".param [dict get $v name]=[dict get $v value]"

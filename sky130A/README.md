@@ -59,6 +59,20 @@ top-level schematic and pick the corner (`tt`/`ss`/`ff`/…).
 3. Put `.tran`/`.dc`/`.op`/`.control` in a `devices/simulator_commands_shown` symbol.
 4. Netlist (SPICE) → `netlist_dir`; simulate with ngspice.
 
+## ASE-L (Analog Simulation Environment)
+
+`sky130_tests/test_nfet_final` is the ASE-L reference cell: its schematic carries **only the
+circuit** (`nfet_01v8` M1, Vds/Vgs sources, gnd, net labels — no `corner`, no
+`simulator_commands_shown`), while models/corner (`tt`), `.param` design variables (Vgs 1.8,
+Vds 1.0), analyses (`op`), options and saved outputs live in its
+`ngspice_state1/test_nfet_final.state` view (spec: `doc/claude/specs/ase_l.md`). Double-click
+the `ngspice_state1` view in the Library Manager to open the ASE-L session window
+(Session > Design Window raises the schematic; Simulation > Netlist / Run with a live log).
+The model path resolves through `$::SKYWATER_MODELS` (set by `cadence_style_rc`). End-to-end
+proof: `tests/headless/test_ase_final.tcl` reproduces **Id ≈ 409.7 µA** through the public
+`ase::` API, headless from the repo root. `nfet_test_claude` is the pre-ASE "before"
+exhibit — the same circuit with in-schematic sim clutter.
+
 ## Validation
 
 All green (registry + migration re-verified 2026-07-20; op-point from the build session):
