@@ -1582,6 +1582,18 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
       }
     }
 
+    /* allocate_window_number
+     *   Hand out the next Cadence-style window number and advance the shared counter
+     *   (doc/claude/specs/window_numbering.md) -- the same monotonic, never-reused
+     *   sequence the editor birth sites consume via assign_window_number(). Lets
+     *   non-editor toplevels built in Tcl (the ASE-L session window,
+     *   doc/claude/specs/ase_l.md) claim a collision-free number. A verb, not a
+     *   `get`: it MUTATES the counter. */
+    else if(!strcmp(argv[1], "allocate_window_number"))
+    {
+      Tcl_SetResult(interp, my_itoa(allocate_window_number()), TCL_VOLATILE);
+    }
+
     /* apply_properties scope displayed_id new_prop old_prop [keep_name]
      *   Mid-session apply for the slick property form (P2 Apply / OK). Fans the
      *   change set (new_prop vs old_prop, changed-fields-only) to the instances

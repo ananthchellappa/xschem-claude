@@ -14104,6 +14104,8 @@ source $XSCHEM_SHAREDIR/create_instance.tcl
 source $XSCHEM_SHAREDIR/save_as_form.tcl
 # ASE-L analog simulation environment core (doc/claude/specs/ase_l.md)
 source $XSCHEM_SHAREDIR/ase.tcl
+# ASE-L session window GUI (ase::ui; proc definitions only at source time)
+source $XSCHEM_SHAREDIR/ase_window.tcl
 # Slick per-field "Edit Properties" form (replaces the legacy raw-text dialog)
 source $XSCHEM_SHAREDIR/property_form.tcl
 # Alt-2 schematic<->symbol view toggle (action view.toggle_view_type;

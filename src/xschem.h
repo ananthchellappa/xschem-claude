@@ -2045,6 +2045,8 @@ extern void mem_clear_undo(void);
 extern int load_schematic(int load_symbol, const char *fname, int reset_undo, int alert);
 /* check if filename already in an open window/tab */
 extern int get_tab_or_window_number(const char *win_path);
+/* next Cadence-style window number (window_numbering.md counter; ASE-L toplevels) */
+extern int allocate_window_number(void);
 extern void swap_tabs(void);
 extern void swap_windows(int dr);
 extern int check_loaded(const char *f, char *win_path);

@@ -3,7 +3,7 @@
 #   V1/V2  discovery/resolution through the UNCHANGED cell_views/cellview_path
 #   V3/V4  library_new_view seeds a VALID serialized default state (never empty)
 #   V5     libmgr::view_handler dispatch-table unit checks (no Tk)
-#   V6     ase::open_state v0 return codes (headless: no Tk side effects)
+#   V6     ase::open_state return codes (headless: no Tk side effects)
 #   V7-V9  hi_descend enum type / hi_descend_do routing / finish refuse
 #   V10    saveform::resolve_target type mapping (+ schematic no-regression)
 #   V11    git plumbing is view-name agnostic (silent skip without git)
@@ -22,14 +22,12 @@ proc check {name got exp} {
 }
 proc check_true {name cond} { check $name [expr {$cond ? 1 : 0}] 1 }
 
-# first toplevel whose title is exactly $path (the read-only textwindow viewer
-# ase::open_state v0 opens), or {}. GUI sessions only.
-proc find_state_viewer {path} {
+# the live ASE-L session window of session `key` (item 03 replaced the v0
+# read-only textwindow with the real ase::ui window), or {}. GUI sessions only.
+proc find_ase_window {key} {
   if {![info exists ::has_x] || [info commands winfo] eq {}} { return {} }
-  foreach w [winfo children .] {
-    if {[winfo class $w] ne {Toplevel}} continue
-    if {![catch {wm title $w} t] && $t eq $path} { return $w }
-  }
+  set w [ase::ui::window_for $key]
+  if {$w ne {} && [winfo exists $w]} { return $w }
   return {}
 }
 
@@ -86,15 +84,17 @@ check "V5 path authoritative: .state under any view name -> ase" \
 check "V5 path authoritative: .sch under ngspice_state1 name -> editor" \
   [libmgr::view_handler ngspice_state1 /x/c/ngspice_state1/c.sch] editor
 
-# --- V6: ase::open_state v0 --------------------------------------------------
+# --- V6: ase::open_state return codes ----------------------------------------
 check "V6 existing view -> 1" [ase::open_state aseviewlib vcell ngspice_state1] 1
 set caught [catch {ase::open_state aseviewlib vcell nosuchview} r6]
 check "V6 missing view throws no error" $caught 0
 check "V6 missing view -> 0" $r6 0
-# under DISPLAY the V6 call opened a real viewer: drop it so G1/G2 see only
-# their own window
-set w [find_state_viewer $spath]
-if {$w ne {}} { destroy $w; update }
+# under DISPLAY the V6 call opened the real ASE-L session window: close it
+# (real Close path) so G1/G2 see only their own window; headless just drop the
+# session registration
+set akey [ase::session_key aseviewlib vcell ngspice_state1]
+set w [find_ase_window $akey]
+if {$w ne {}} { ase::ui::close $akey; update } else { ase::session_close $akey }
 
 # --- parent schematic for the hi_descend legs --------------------------------
 set psch [file join $scratch parent.sch]
@@ -184,9 +184,9 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     event generate $t $ev -x $bx -y $by
   }
   update
-  set viewer [find_state_viewer $spath]
-  check_true "G1 double-click opened the read-only state viewer" [expr {$viewer ne {}}]
-  if {$viewer ne {}} { destroy $viewer; update }
+  set viewer [find_ase_window $akey]
+  check_true "G1 double-click opened the ASE-L session window" [expr {$viewer ne {}}]
+  if {$viewer ne {}} { ase::ui::close $akey; update }
 
   # G2: Open (read-only) diverts to the (already read-only) viewer and must
   # NOT force the current schematic window read-only
@@ -194,10 +194,10 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   update
   libmgr::open_view_ro
   update
-  set viewer [find_state_viewer $spath]
-  check_true "G2 open_view_ro opened the viewer" [expr {$viewer ne {}}]
+  set viewer [find_ase_window $akey]
+  check_true "G2 open_view_ro opened the ASE-L window" [expr {$viewer ne {}}]
   check "G2 current window readonly untouched" [xschem get readonly] 0
-  if {$viewer ne {}} { destroy $viewer; update }
+  if {$viewer ne {}} { ase::ui::close $akey; update }
 
   # G3: the newview dialog's editor-type combobox offers ngspice_state1
   # (harvested from inside the modal vwait, then cancelled)

@@ -599,6 +599,17 @@ static void assign_window_number(void)
   xctx->window_number = window_number_counter++;
 }
 
+/* Hand out the next Cadence-style window number and advance the shared counter
+ * (doc/claude/specs/window_numbering.md): the allocator behind
+ * `xschem allocate_window_number`, letting non-editor toplevels built in Tcl (the
+ * ASE-L session window, doc/claude/specs/ase_l.md) claim numbers from the SAME
+ * monotonic, never-reused sequence assign_window_number() stamps on editor
+ * contexts -- so no future File>New Window can collide with them. */
+int allocate_window_number(void)
+{
+  return window_number_counter++;
+}
+
 static void alloc_xschem_data(const char *top_path, const char *win_path)
 {
   int i, j;

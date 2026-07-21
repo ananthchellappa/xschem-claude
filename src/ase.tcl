@@ -2,12 +2,12 @@
 # per-simulator backend registry, deck rendering, headless-safe netlist +
 # batch simulation run via the `execute` infra, result parsing.
 #
-# P1+P2 of doc/claude/specs/ase_l.md. Pure Tcl, NO Tk anywhere in the core
-# paths — everything must run under --nogui (tests/headless/test_ase_core.tcl
-# runs this file's procs true-headless) — with ONE carve-out: ase::open_state
-# is the single Tk-GUARDED GUI seam (every Tk call in it sits behind the has_x
-# guard, so it stays headless-callable). GUI (item 03) layers on top of these
-# procs; their names are contracts.
+# P1+P2+P3 of doc/claude/specs/ase_l.md. Pure Tcl, NO Tk anywhere in this file
+# — everything must run under --nogui (tests/headless/test_ase_core.tcl runs
+# this file's procs true-headless) — with ONE carve-out: ase::open_state is the
+# single Tk-GUARDED GUI seam: under has_x it delegates to the ase::ui widget
+# layer (src/ase_window.tcl, the ASE-L session window); headless it does only
+# session-model bookkeeping and stays Tk-free. All procs' names are contracts.
 #
 # State = a single Tcl-dict text file per ngspice_state* view, one `key value`
 # per line (see "State file schema" in the spec). Loading merges over
@@ -28,6 +28,13 @@ namespace eval ase {
   variable backends [dict create]
   # most recent completed run: {results <dict> exitcode <n> log <path> }
   variable last_run [dict create]
+  # session registry (item 03): key ("lib/cell/view") -> entry dict
+  # {path <file> state <dict> saved <dict> ...attrs}. Pure dict, headless-safe.
+  variable sessions [dict create]
+  # notify seam: command prefix invoked with the session key after every
+  # session_update/save/load/revert. Default {} (headless: nothing runs);
+  # ase::ui (ase_window.tcl) points it at its title-refresh handler.
+  variable session_notify {}
 }
 
 # dict get with a default (states are open dicts: keys may be absent).
@@ -74,10 +81,12 @@ proc ase::state_load {path} {
   return [dict merge [ase::state_default] [dict create {*}$content]]
 }
 
-# Save a state dict: one `key [list value]` per line, canonical schema order
-# first, then unknown keys in lsort order (deterministic ordering + list
-# quoting give load→save byte-stability for free). Returns the path.
-proc ase::state_save {path state} {
+# Canonical text form of a state dict: one `key [list value]` per line,
+# canonical schema order first, then unknown keys in lsort order (deterministic
+# ordering + list quoting give load→save byte-stability for free). This is
+# ALSO the session dirty-compare form: two states are "equal" iff their
+# serializations match byte-for-byte.
+proc ase::state_serialize {state} {
   variable schema_keys
   set lines {}
   foreach k $schema_keys {
@@ -92,8 +101,13 @@ proc ase::state_save {path state} {
   foreach k [lsort $unknown] {
     lappend lines "$k [list [dict get $state $k]]"
   }
+  return [join $lines "\n"]
+}
+
+# Save a state dict in the canonical serialized form. Returns the path.
+proc ase::state_save {path state} {
   set f [open $path w]
-  puts $f [join $lines "\n"]
+  puts $f [ase::state_serialize $state]
   close $f
   return $path
 }
@@ -124,6 +138,12 @@ proc ase::backend_hook {sim hook} {
     return -code error "ase: unknown hook '$hook' for simulator '$sim'"
   }
   return [dict get $backends $sim $hook]
+}
+
+# Registered simulator names, sorted (the ASE window's simulator combobox).
+proc ase::backend_names {} {
+  variable backends
+  return [lsort [dict keys $backends]]
 }
 
 # --- Run directory ----------------------------------------------------------
@@ -284,16 +304,144 @@ proc ase::last_result {} {
   return [dict create]
 }
 
+# --- Session model (item 03) --------------------------------------------------
+# Headless-testable bookkeeping behind the ASE-L window: one session per state
+# view, keyed "lib/cell/view". An entry holds the state file path, the CURRENT
+# state dict (what the window edits) and the SAVED state dict (last disk
+# content); dirty = the two serialize differently. The GUI layer never touches
+# `sessions` directly — it goes through these procs, so every leg runs headless.
+
+# The canonical session key for a state view.
+proc ase::session_key {lib cell view} {
+  return "$lib/$cell/$view"
+}
+
+# Fire the notify seam (session_update/save/load/revert). Guarded: a broken
+# GUI hook must never abort the session mutation that already happened.
+proc ase::session_notify_fire {key} {
+  variable session_notify
+  if {$session_notify ne {}} {
+    catch {uplevel #0 [concat $session_notify [list $key]]}
+  }
+  return {}
+}
+
+# Register (or re-open) a session on state file `path`. First open loads the
+# file; a re-open refreshes from disk only when the session is NOT dirty (a
+# dirty session keeps its in-memory edits — re-open just raises the window).
+# Returns the key.
+proc ase::session_open {key path} {
+  variable sessions
+  if {[dict exists $sessions $key] && [ase::session_dirty $key]} {
+    dict set sessions $key path $path
+    return $key
+  }
+  set st [ase::state_load $path]
+  dict set sessions $key [dict create path $path state $st saved $st]
+  return $key
+}
+
+# The session's state file path ({} if the key is unknown).
+proc ase::session_path {key} {
+  variable sessions
+  if {[dict exists $sessions $key path]} { return [dict get $sessions $key path] }
+  return {}
+}
+
+# The session's CURRENT state dict ({} if the key is unknown).
+proc ase::session_state {key} {
+  variable sessions
+  if {[dict exists $sessions $key state]} { return [dict get $sessions $key state] }
+  return {}
+}
+
+# Replace the session's current state (the ONE write path the GUI panes use).
+# Returns 1, or 0 for an unknown key.
+proc ase::session_update {key newstate} {
+  variable sessions
+  if {![dict exists $sessions $key]} { return 0 }
+  dict set sessions $key state $newstate
+  ase::session_notify_fire $key
+  return 1
+}
+
+# 1 when the current state differs from the last-saved one (canonical
+# serialization compare), else 0.
+proc ase::session_dirty {key} {
+  variable sessions
+  if {![dict exists $sessions $key]} { return 0 }
+  set s [dict get $sessions $key]
+  return [expr {[ase::state_serialize [dict get $s state]] ne
+                [ase::state_serialize [dict get $s saved]]}]
+}
+
+# Write the current state to the session's file (Session > Save State);
+# saved <- state. Returns 1, or 0 for an unknown key.
+proc ase::session_save {key} {
+  variable sessions
+  if {![dict exists $sessions $key]} { return 0 }
+  set s [dict get $sessions $key]
+  ase::state_save [dict get $s path] [dict get $s state]
+  dict set sessions $key saved [dict get $s state]
+  ase::session_notify_fire $key
+  return 1
+}
+
+# Re-read the state file from disk (Session > Load State); saved <- state <-
+# file, discarding in-memory edits. Returns 1, or 0 for an unknown key.
+proc ase::session_load {key} {
+  variable sessions
+  if {![dict exists $sessions $key]} { return 0 }
+  set st [ase::state_load [dict get $sessions $key path]]
+  dict set sessions $key state $st
+  dict set sessions $key saved $st
+  ase::session_notify_fire $key
+  return 1
+}
+
+# Discard in-memory edits: state <- saved (Session > Revert). Returns 1, or 0
+# for an unknown key.
+proc ase::session_revert {key} {
+  variable sessions
+  if {![dict exists $sessions $key]} { return 0 }
+  dict set sessions $key state [dict get $sessions $key saved]
+  ase::session_notify_fire $key
+  return 1
+}
+
+# Unregister a session (window close). Unknown keys are a no-op.
+proc ase::session_close {key} {
+  variable sessions
+  if {[dict exists $sessions $key]} { dict unset sessions $key }
+  return 1
+}
+
+# Extra per-session attributes (e.g. the GUI's live run_id). Stored on the
+# session entry beside path/state/saved — those three names are reserved.
+proc ase::session_setattr {key name value} {
+  variable sessions
+  if {![dict exists $sessions $key]} { return 0 }
+  dict set sessions $key $name $value
+  return 1
+}
+proc ase::session_getattr {key name {dflt {}}} {
+  variable sessions
+  if {[dict exists $sessions $key $name]} { return [dict get $sessions $key $name] }
+  return $dflt
+}
+
 # --- View open (P2 dispatch target) ------------------------------------------
 
 # Open an ngspice_state* cellview (the LibMgr / hi_descend dispatch target).
 # THE single Tk-guarded GUI seam of ase.tcl: every Tk call sits behind the
-# has_x guard, so headless callers get path resolution + the return code with
-# no Tk side effects. v0 = read-only textwindow on the .state file + a
-# ciw_echo notice; item 03 replaces this BODY with the full ASE-L window — the
-# name and signature `ase::open_state <lib> <cell> <view>` are the item-03
-# contract, keep them stable. Returns 1 when the view resolved (viewer shown
-# under X), 0 when it does not exist (no error thrown).
+# has_x guard, so headless callers get path resolution + session registration
+# (pure dict) + the return code with no Tk side effects. Under X this opens
+# the ASE-L session window (ase::ui, src/ase_window.tcl) — ONE toplevel per
+# state view; re-opening an already-open session just raises its window (no
+# new window number is consumed). The name and signature
+# `ase::open_state <lib> <cell> <view>` are a stable contract. Returns 1 when
+# the view resolved, 0 when it does not exist or its state file does not load
+# (no error thrown).
 proc ase::open_state {lib cell view} {
   set path [xschem cellview_path $lib/$cell $view]
   if {$path eq {}} {
@@ -302,12 +450,23 @@ proc ase::open_state {lib cell view} {
     }
     return 0
   }
-  if {[info exists ::has_x]} {
-    textwindow $path ro
-    if {[info commands ::ciw_echo] ne {}} {
-      ciw_echo "ase: opened $lib/$cell/$view read-only; the full ASE-L window arrives in a later phase"
+  set key [ase::session_key $lib $cell $view]
+  if {[catch {ase::session_open $key $path} err]} {
+    # view exists but its state file is unloadable: clean report, no throw
+    if {[info exists ::has_x] && [info commands ::ciw_echo] ne {}} {
+      ciw_echo $err error
     }
+    return 0
   }
+  if {![info exists ::has_x]} { return 1 }
+  set w [ase::ui::window_for $key]
+  if {$w ne {} && [winfo exists $w]} {
+    catch {wm deiconify $w}
+    catch {raise $w}
+    catch {focus $w}
+    return 1
+  }
+  ase::ui::open $key $lib $cell $view
   return 1
 }
 
