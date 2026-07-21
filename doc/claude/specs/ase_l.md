@@ -190,6 +190,14 @@ Design Window does not raise/open the schematic — fix in this rework.
   context menu, menu bar, or action strip. **Double-click a row → edit
   dialog for that item.** Multi-select within ONE pane at a time; global
   Delete (action strip `X`) is noun-verb on the current selection.
+- **Value display — engineering notation (2026-07-21, item 09):** the
+  Variables and Outputs Value columns render numeric values in engineering
+  notation (SPICE SI suffixes f p n u m k Meg G T, ~4 significant digits:
+  `1.04e-4` → `104u`, `4.096837e-4` → `409.7u`); |v| ≥ 1e15 or nonzero
+  < 1e-18 falls back to %g; non-numeric strings (expressions) verbatim.
+  Display-only: state files and edit dialogs always carry raw values.
+  Gated by the Tcl global `ase_eng_notation` (default 1; rc may preset 0
+  to recover plain scientific display). Formatter: `ase::format_value`.
 
 ### Action strip (right vertical panel; text placeholders for now — real
 icons welcome where Tk can do them, e.g. unicode ▶ ■)

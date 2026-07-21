@@ -264,6 +264,36 @@ set got {}
 if {[dict exists $resp id]} { set got [dict get $resp id] }
 check "P1 named output still keyed by name" $got 4.096837e-04
 
+# --- F: ase::format_value engineering-notation display (item 09) -------------
+# F1 suffix table, F2 out-of-range %g fallback, F3 non-numeric verbatim,
+# F4 the ase_eng_notation gate (default 1 via set_ne at ase.tcl source time)
+check "F0 gate defaults to 1" $::ase_eng_notation 1
+check "F1 1.04e-4 -> 104u" [ase::format_value 1.04e-4] 104u
+check "F1 4.096837e-4 -> 409.7u" [ase::format_value 4.096837e-4] 409.7u
+check "F1 1e-3 -> 1m" [ase::format_value 1e-3] 1m
+check "F1 27 -> 27" [ase::format_value 27] 27
+check "F1 1.5e6 -> 1.5Meg" [ase::format_value 1.5e6] 1.5Meg
+check "F1 0 -> 0" [ase::format_value 0] 0
+check "F1 negative keeps sign (-1.04e-4 -> -104u)" [ase::format_value -1.04e-4] -104u
+check "F1 sub-unity gets a suffix (0.5 -> 500m)" [ase::format_value 0.5] 500m
+check "F1 mantissa rounding rolls over (999.96e-6 -> 1m)" \
+  [ase::format_value 999.96e-6] 1m
+check "F1 sub-femto clamps to f (5e-16 -> 0.5f)" [ase::format_value 5e-16] 0.5f
+check "F1 clamp edge (1e-18 -> 0.001f)" [ase::format_value 1e-18] 0.001f
+check "F1 exponent-form unity (1.000000e+00 -> 1)" \
+  [ase::format_value 1.000000e+00] 1
+check "F1 plain decimal unchanged (1.8 -> 1.8)" [ase::format_value 1.8] 1.8
+check "F2 1e15 falls back to %g" [ase::format_value 1e15] 1e+15
+check "F2 9e-19 falls back to %g" [ase::format_value 9e-19] 9e-19
+check "F3 expression verbatim (vdd/2)" [ase::format_value vdd/2] vdd/2
+check "F3 blank verbatim" [ase::format_value {}] {}
+check "F3 already-suffixed verbatim (1k)" [ase::format_value 1k] 1k
+set ::ase_eng_notation 0
+check "F4 gate off returns raw (set ::ase_eng_notation 0 -> 1.04e-4)" \
+  [ase::format_value 1.04e-4] 1.04e-4
+set ::ase_eng_notation 1
+check "F4 gate restored -> 104u again" [ase::format_value 1.04e-4] 104u
+
 # --- N1: ase::netlist on the scratch fixture ---------------------------------
 set rundir [file normalize [file join $scratch run]]
 set st [nfet_state $models $rundir]

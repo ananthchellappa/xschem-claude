@@ -520,8 +520,10 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   check "G9 session dirty after the import" [ase::session_dirty $key] 1
   set vt $top.body.vars.tv
   set vgsit [tv_find $vt name Vgs]
+  # item 09: the pane renders the imported 0.9 in engineering notation
+  # (900m); the raw-state import check above keeps asserting 0.9
   check "G9 panes repopulated with the imported value" \
-    [expr {$vgsit ne {} ? [$vt set $vgsit value] : {}}] 0.9
+    [expr {$vgsit ne {} ? [$vt set $vgsit value] : {}}] 900m
   # dirty session -> the discard prompt comes FIRST
   $top.mb.session invoke {Load State}
   update

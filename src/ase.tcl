@@ -62,6 +62,52 @@ proc ase::expand_path {p} {
   return $out
 }
 
+# --- Display formatting (UI v2 item 09) -------------------------------------
+
+# Engineering-notation display for the Variables/Outputs pane Value columns:
+# exponent a multiple of 3, SPICE SI suffix (f p n u m k Meg G T), ~4
+# significant digits with trailing zeros trimmed (1.04e-4 -> 104u,
+# 4.096837e-4 -> 409.7u). Display-ONLY — state files and the edit dialogs
+# always carry raw values; only pane-render call sites (ase_window.tcl) wrap
+# through here. Gated by the global ase_eng_notation (rc may preset; 0 ->
+# the stored value is returned verbatim, i.e. the plain %g/scientific form
+# it was entered/parsed as). |v| >= 1e15 or nonzero |v| < 1e-18 falls back
+# to %g; non-numeric input (expressions, blanks) is returned verbatim.
+set_ne ase_eng_notation 1
+
+proc ase::format_value {v} {
+  if {![string is double -strict $v]} { return $v }
+  if {![info exists ::ase_eng_notation] || !$::ase_eng_notation} { return $v }
+  # Inf/NaN (accepted by `string is double`) error out of the numeric arm ->
+  # verbatim. NOTE the helper call: a `return` INSIDE this catch body would
+  # read as TCL_RETURN (caught!) and silently fall back for every input.
+  if {[catch {ase::format_value_num $v} out]} { return $v }
+  return $out
+}
+
+# Numeric arm of ase::format_value (kept separate — see the catch note above).
+proc ase::format_value_num {v} {
+  set d [expr {double($v)}]
+  if {$d == 0} { return 0 }
+  set sign {}
+  set a [expr {abs($d)}]
+  if {$d < 0} { set sign - }
+  if {$a >= 1e15 || $a < 1e-18} { return [format %g $d] }
+  set e3 [expr {int(floor(log10($a)/3.0)*3)}]
+  # clamp into the suffix range: [1e-18,1e-15) renders with a fractional
+  # mantissa on `f` (5e-16 -> 0.5f); nothing above needs the top clamp but
+  # it keeps the table lookup total
+  if {$e3 < -15} { set e3 -15 }
+  if {$e3 > 12}  { set e3 12 }
+  set m [expr {$a / pow(10.0,$e3)}]
+  set ms [format %.4g $m]
+  # rounding can carry the mantissa to 1000 (999.96e-6): roll to the next
+  # suffix instead of printing a 4-digit mantissa
+  if {$ms == 1000 && $e3 < 12} { set e3 [expr {$e3 + 3}]; set ms 1 }
+  set sfx [dict create -15 f -12 p -9 n -6 u -3 m 0 {} 3 k 6 Meg 9 G 12 T]
+  return $sign$ms[dict get $sfx $e3]
+}
+
 # --- State I/O --------------------------------------------------------------
 
 # The v1 default state (spec "State file schema"). `simulator ngspice` here is

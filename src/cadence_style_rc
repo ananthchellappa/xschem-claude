@@ -277,3 +277,7 @@ bind .drw <Key-F5> {if {%s & 8} {xschem callback %W %T %x %y %N 0 0 %s} \
                     else {apply_hilight {color purple thickness 3 pattern {20 20}}}; break}
 unset _ut
 
+# ASE-L shows values in engineering notation (e.g. 104u). To recover
+# scientific notation, uncomment:
+# set ase_eng_notation 0
+

@@ -41,4 +41,8 @@ if {[info exists user_startup_commands]} {
   set user_startup_commands "sky130_menupdk\n"
 }
 
+# ASE-L shows values in engineering notation (e.g. 104u). To recover
+# scientific notation, uncomment:
+# set ase_eng_notation 0
+
 unset _ws

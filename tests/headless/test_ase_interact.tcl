@@ -405,17 +405,23 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     set otv $top.body.outs.tv
     set idit [tv_find $otv name id]
     set vcell [expr {$idit ne {} ? [$otv set $idit value] : {}}]
+    # item 09: the Value cell renders in engineering notation (409.7u) — the
+    # `u` suffix makes the cell uA directly, same physical gate as before
     set vok 0
-    if {[string is double -strict $vcell]} {
-      if {abs($vcell * 1e6 - 409.68) < 1.0} { set vok 1 }
+    if {[regexp {^-?([0-9.]+)u$} $vcell -> num]} {
+      if {abs($num - 409.68) < 1.0} { set vok 1 }
     }
     check "WF id Value ~409.7uA" $vok 1
     if {!$vok} { puts "  WF id Value cell: '$vcell'" }
     set vdit [tv_find $otv name vd]
     set vdcell [expr {$vdit ne {} ? [$otv set $vdit value] : {}}]
+    # v(d)=1.0 formats to a plain `1`, but accept a NUMm (x1e-3) rendering
+    # too so a 999.9m-class rounding can never flake the leg (item 09)
     set vdok 0
     if {[string is double -strict $vdcell]} {
       if {abs($vdcell - 1.0) < 1e-3} { set vdok 1 }
+    } elseif {[regexp {^-?([0-9.]+)m$} $vdcell -> vdnum]} {
+      if {abs($vdnum * 1e-3 - 1.0) < 1e-3} { set vdok 1 }
     }
     check "WF vd Value ~1.0 (added output flowed through)" $vdok 1
     if {!$vdok} { puts "  WF vd Value cell: '$vdcell'" }

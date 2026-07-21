@@ -736,7 +736,8 @@ proc ase::ui::populate {key} {
   set i 0
   foreach row [ase::state_get $st variables] {
     $tv insert {} end -id $i -values \
-      [list [ase::state_get $row name] [ase::state_get $row value]]
+      [list [ase::state_get $row name] \
+        [ase::format_value [ase::state_get $row value]]]
     incr i
   }
   set tv $top.body.ana.tv
@@ -759,7 +760,7 @@ proc ase::ui::populate {key} {
       set val [dict get $results $rkey]
     }
     $tv insert {} end -id $i -values \
-      [list [ase::ui::output_display_name $row] $val \
+      [list [ase::ui::output_display_name $row] [ase::format_value $val] \
         [ase::ui::chk_glyph [ase::state_get $row plot 0]] \
         [ase::ui::chk_glyph [ase::state_get $row save 0]] \
         [ase::ui::save_options_cell $st $row]]
@@ -789,7 +790,7 @@ proc ase::ui::refresh_output_values {key} {
     if {$results ne {} && [dict exists $results $rkey]} {
       set val [dict get $results $rkey]
     }
-    catch {$tv set $i value $val}
+    catch {$tv set $i value [ase::format_value $val]}
     incr i
   }
 }

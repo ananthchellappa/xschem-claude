@@ -625,8 +625,10 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   check_true "W3v add dialog closed on Return" \
     [expr {![winfo exists $top.addvar]}]
   set ta [tv_find $vtv name tmpA]
+  # item 09: the pane renders the value in engineering notation (0.5 -> 500m);
+  # the session-state check below keeps asserting the RAW 0.5
   check "W3v tmpA in the tree" \
-    [expr {$ta ne {} ? [$vtv set $ta value] : {}}] 0.5
+    [expr {$ta ne {} ? [$vtv set $ta value] : {}}] 500m
   check_true "W3v tmpA in the session state" [string match \
     "*{name tmpA value 0.5}*" \
     [ase::state_get [ase::session_state $key] variables]]
@@ -699,6 +701,64 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   check "W3o blanket off -> Save Options blank again" \
     [expr {$idit ne {} ? [$otv set $idit saveopts] : {?}}] {}
   check "W3o session clean after the round trip" [ase::session_dirty $key] 0
+
+  # W3e: engineering-notation Value display (item 09) — the pane shows 104u
+  # for a 1.04e-4 variable while the session state, the state FILE and the
+  # editor prefill all keep the raw value; the ase_eng_notation gate turns
+  # the formatting off/on at populate time
+  $top.strip.var invoke
+  update
+  $top.addvar.name insert 0 tmpE
+  $top.addvar.value insert 0 1.04e-4
+  send_return $top.addvar.value {![winfo exists $top.addvar]}
+  set te3 [tv_find $vtv name tmpE]
+  check "W3e add-variable 1.04e-4 shows 104u in the pane" \
+    [expr {$te3 ne {} ? [$vtv set $te3 value] : {}}] 104u
+  check_true "W3e session state keeps the raw value" [string match \
+    "*{name tmpE value 1.04e-4}*" \
+    [ase::state_get [ase::session_state $key] variables]]
+  menu_save_state $top
+  update
+  set f [open $spath r]; set sdata [read $f]; close $f
+  check_true "W3e saved state file stores the raw value" \
+    [string match "*value 1.04e-4*" $sdata]
+  check_true "W3e saved state file has no formatted value" \
+    [expr {![string match "*104u*" $sdata]}]
+  set ::ase_eng_notation 0
+  ase::ui::populate $key
+  set te3 [tv_find $vtv name tmpE]
+  # read the cell WITHOUT expr — an expr ternary canonicalizes numeric-
+  # looking strings (1.04e-4 -> 0.000104) and would corrupt the comparison
+  set cell3e {}
+  if {$te3 ne {}} { set cell3e [$vtv set $te3 value] }
+  check "W3e gate off shows the raw scientific value" $cell3e 1.04e-4
+  set ::ase_eng_notation 1
+  ase::ui::populate $key
+  set te3 [tv_find $vtv name tmpE]
+  check "W3e gate back on shows 104u again" \
+    [expr {$te3 ne {} ? [$vtv set $te3 value] : {}}] 104u
+  tv_dblclick $vtv $te3
+  check_true "W3e double-click opens the variable editor" \
+    [winfo exists $top.edvar]
+  set pre3e {}
+  if {[winfo exists $top.edvar]} { set pre3e [$top.edvar.value get] }
+  check "W3e editor prefill is the RAW value" $pre3e 1.04e-4
+  catch {$top.edvar.btns.cancel invoke}
+  update
+  # cleanup: delete tmpE + save — W4-W7 depend on the seeded Vgs/Vds state
+  set te3 [tv_find $vtv name tmpE]
+  $vtv selection set [list $te3]
+  update
+  $top.strip.del invoke
+  update
+  menu_save_state $top
+  update
+  check "W3e cleanup leaves the session clean" [ase::session_dirty $key] 0
+  set names3e {}
+  foreach v [ase::state_get [ase::session_state $key] variables] {
+    lappend names3e [ase::state_get $v name]
+  }
+  check "W3e cleanup restored the seeded variables" $names3e {Vgs Vds}
 
   # W4-W7 need a usable MAIN window (design load / netlist / run)
   if {![main_ready]} {
@@ -809,13 +869,15 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
       check_true "W6 deck contains .temp 27" \
         [regexp -line {^\.temp 27$} $decktext]
       # UI v2 Value column: after the successful run the id row's Value cell
-      # carries the parsed Id (the F10 idiom: |v*1e6 - 409.68| < 1.0)
+      # carries the parsed Id, rendered in engineering notation (item 09:
+      # 4.0968e-4 A -> `409.7u`) — the `u` suffix makes the cell uA directly,
+      # so the physical gate stays |cell_uA - 409.68| < 1.0
       set otv6 $top.body.outs.tv
       set idit6 [tv_find $otv6 name id]
       set vcell [expr {$idit6 ne {} ? [$otv6 set $idit6 value] : {}}]
       set vok 0
-      if {[string is double -strict $vcell]} {
-        if {abs($vcell * 1e6 - 409.68) < 1.0} { set vok 1 }
+      if {[regexp {^-?([0-9.]+)u$} $vcell -> num]} {
+        if {abs($num - 409.68) < 1.0} { set vok 1 }
       }
       check "W6 id row Value filled after run" $vok 1
       if {!$vok} { puts "  W6 Value cell: '$vcell'" }
