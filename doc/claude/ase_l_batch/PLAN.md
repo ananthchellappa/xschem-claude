@@ -397,3 +397,104 @@ test_ase_{core,view,window,dialogs,final,interact}.tcl must stay green.
 
 Item details live in the spec's "Round-3 batch items" section + per-item
 notes passed by the driver; scouts re-verify all spec file:line anchors.
+
+## Round 4 — Launch-from-schematic + dirty-save-prompt (2026-07-21)
+
+User asks (2026-07-21): (1) a hosted technology (sky130A/gf180mcuD) needs a
+DEFAULT MODEL setup that loads by default, and a schematic window needs
+Tools > Launch ASE-L that opens a fresh minimal ASE-L session (no vars/
+analyses/outputs, but the tech default model already in place), bound to the
+current schematic — like Cadence Tools>ADE-L. (2) BUG: opening an
+ngspice_state1 view, editing, then quitting does NOT prompt to save.
+
+Same policies/baseline as prior rounds (WSLg flakes rerun-first;
+send_return/send_key helpers). ASE tests test_ase_{core,view,window,dialogs,
+final,interact,plot,persist} + test_wave_viewer must stay green.
+
+- [x] 15 launch-ase      — Tools>Launch ASE-L on current schematic + per-tech ASE_DEFAULT_MODELS default -> 4112e1c9 Tools>Launch ASE-L opens a fresh untitled session bound to the current schematic with the tech default models preloaded (raise-not-duplicate on relaunch); ::ASE_DEFAULT_MODELS feeds state_default behind an info-exists guard, sky130A/gf180mcuD rcs set it; 38 checks (22 headless) + 3 exact-target sabotages, audit fails strict subset of baseline (3 WSLg flakes green on direct re-run)
+- [x] 16 dirty-prompt    — save-prompt (yes/no/cancel) on ASE session close + on xschem quit -> 750b3577 a dirty ASE session now prompts yes/no/cancel on close (WM_DELETE/Ctrl-W/Session>Close) and on xschem quit (guarded ASE sweep, Cancel on any aborts the whole quit); Yes routes through Save-As so RO-opened + untitled sessions never silently overwrite, No discards, Cancel keeps window+per-window state intact; 41/41 checks (test_ase_dirty, DISPLAY-guarded self-SKIP) + 3 exact-target sabotages, all 11 protected ASE/wave suites green, audit fails strict subset of baseline; +f04703e0 round-1 fixer hardens ask_save_close against a build-time teardown race (catch-guarded focus + skip tkwait when window gone) so DR4 stops WSLg-flaking
+
+### 15 launch-ase
+
+Anchors (scout re-verifies): Tools menu xschem.tcl:14201 (per-window
+`.menubar.tools`), entries ~14665-14667 (add after Net styles separator);
+`ase::state_default` ase.tcl:116 (models {} today) + model render ase.tcl:
+642-643; `ase::open_state {lib cell view {ro}}` ase.tcl:594 (loads existing
+.state); seed pattern `library_new_view` ase.tcl:716-718; workarea model
+sets sky130A/cadence_style_rc:31 (SKYWATER_MODELS), gf180mcuD/cadence_style_
+rc:34 (180MCU_MODELS); ase.tcl+ase_window.tcl sourced unconditionally
+xschem.tcl:14106/14108.
+
+1. **Per-tech default models global**: `ase::state_default` reads
+   `::ASE_DEFAULT_MODELS` (a list of `{file <path> section <sec>}` dicts) if
+   set, else `models {}`. Set via set_ne default empty in ase.tcl. This also
+   improves item-02 newview seeding (fresh state views inherit the default).
+   Workarea rcs set it per technology:
+   - sky130A/cadence_style_rc: `set ::ASE_DEFAULT_MODELS [list [list file
+     [file join $::SKYWATER_MODELS sky130.lib.spice] section tt]]`.
+   - gf180mcuD/cadence_style_rc: scout determines the correct gf180 model
+     file + section from the gf180mcuD workarea (existing benches/corner
+     symbol emit — match what a working gf180 op sim uses); set the same
+     shape. If the honest default is ambiguous, set the tt/typical corner
+     and note it. (These rc files are NOT in the pre-batch dirty list — item
+     09 already committed to them at 05b2a708 — verify clean before staging.)
+2. **Path→design resolver**: add a helper (library_defs.tcl or ase.tcl)
+   reversing an abs schematic path to `{lib cell view}` by matching
+   `xschem get schname` against the registered library roots
+   (`xschem libraries`/library_list). Symbol/non-schematic current view →
+   honest error via ciw_echo (ASE simulates schematic designs).
+3. **Tools > Launch ASE-L**: new entry opens a FRESH in-memory ASE session
+   bound to the current schematic's design (Cadence-like untitled session —
+   NOT a .state file on disk until the user does Save State). Minimal:
+   state_default (→ tech default models present, vars/analyses/outputs
+   empty). If an ASE session already targets this design, raise it instead
+   of duplicating. Needs a new `ase::launch_for_current` (resolve design →
+   new_session) + an `ase::new_session {lib cell view}` blank-session entry
+   distinct from open_state's file-load. Session key/title for an untitled
+   session: `<cell> (unsaved)` or similar; scout picks, documents; the
+   dirty-baseline is the initial default state (NOT dirty until edited — so
+   item-16's prompt does not fire on an untouched launch).
+4. Status-bar / title reflect untitled state; Save State (Save-As) persists
+   it as an ngspice_state view (creation path from item 02).
+5. Tests: test_ase_window.tcl (or new test_ase_launch.tcl) — headless: the
+   resolver maps a known workarea schematic path → correct lib/cell/view +
+   errors on a bogus/symbol path; state_default honors ::ASE_DEFAULT_MODELS
+   (set global → models present; unset → empty); GUI: from a loaded
+   test_nfet_final schematic, Tools>Launch ASE-L opens a session whose
+   models pane shows the sky130 default and whose vars/analyses/outputs are
+   empty; second launch on same design raises, not duplicates. ≥2 sabotages.
+
+### 16 dirty-prompt
+
+Anchors (scout re-verifies): dirty detect `ase::session_dirty` ase.tcl:515;
+title marker refresh ase_window.tcl:2461/2503; close `ase::ui::close`
+ase_window.tcl:227 (WM_DELETE→ it at :212; the :234 dirty check LOGS ONLY);
+cleanup unsets :238-246; save `ase::ui::save_state_dialog` :2258 /
+`do_save_state_as` :2409 (Save-As only, returns success/cancel — verify the
+return contract); precedent `ask_save` xschem.tcl:9537 (yes/no/cancel);
+app quit `quit_xschem` xschem.tcl:13426 (does NOT iterate ASE windows).
+
+1. **On ASE session close** (WM_DELETE + any Ctrl-W/File>Close): if
+   `ase::session_dirty`, prompt yes/no/cancel (mirror ask_save styling/
+   return semantics; use the ASE theme). Yes → save_state_dialog; if the
+   save is completed, proceed to close, if the Save-As is cancelled, ABORT
+   the close (treat as Cancel). No → close discarding. Cancel → abort close,
+   leave the window + per-window state arrays intact (no cleanup).
+2. **On xschem quit** (`quit_xschem`): before exit, iterate open ASE
+   sessions (`ase::ui::wins` or the session registry); for each dirty one,
+   run the same prompt; a Cancel on ANY aborts the whole quit. Guard so the
+   sweep is a no-op when no ASE sessions exist (must not change normal quit
+   behavior / other windows). Scout confirms whether quit_xschem already has
+   a dirty-schematic sweep to slot alongside, or if ASE needs its own hook.
+3. Read-only-opened view: a dirty session whose backing view was opened RO,
+   on Yes-save, goes through Save-As (its overwrite-confirm path from item
+   07) — never silently writes the RO view.
+4. Untitled launched sessions (item 15): dirty prompt on close if edited;
+   Yes → Save-As creates the view.
+5. Tests: GUI legs in test_ase_window.tcl (or test_ase_dirty.tcl) —
+   edit a variable → session_dirty true; WM_DELETE → prompt appears
+   (assert dialog exists), Cancel → window survives + state intact, No →
+   window gone, Yes → Save-As path invoked; unedited session closes with NO
+   prompt; quit path leg with a dirty session prompts (drive quit_xschem's
+   ASE sweep directly if full-exit is untestable headless — document).
+   Use send_return/send_key. ≥2 sabotages.
