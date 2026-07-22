@@ -2889,8 +2889,19 @@ int graph_fullxzoom(int i, Graph_ctx *gr, int dataset)
     char *sim_type = NULL;
     int k, save_datasets = -1, save_npoints = -1;
     int autoload = 0;
+    int master;
     Raw *raw = NULL;
     const char *ptr;
+
+    /* xctx->graph_master is MOUSE state: waves_selected() sets it to -1 whenever the
+     * pointer is not over a graph (callback.c). A programmatic full zoom
+     * (`xschem setprop rect 2 n fullxzoom`, see doc/claude/specs/waveform_viewer.md)
+     * can therefore run with graph_master == -1 (or stale beyond the rect count after
+     * a canvas rebuild) and the unguarded xctx->rect[GRIDLAYER][xctx->graph_master]
+     * reads below walked off the array -> intermittent SIGSEGV. Out-of-range master ->
+     * treat the target graph as its own master. */
+    master = xctx->graph_master;
+    if(master < 0 || master >= xctx->rects[GRIDLAYER]) master = i;
 
     raw = xctx->raw;
     autoload = !strboolcmp(get_tok_value(r->prop_ptr,"autoload", 0), "true");
@@ -2903,7 +2914,7 @@ int graph_fullxzoom(int i, Graph_ctx *gr, int dataset)
       my_strdup2(_ALLOC_ID_, &custom_rawfile, ptr);
     }
     my_strdup2(_ALLOC_ID_, &sim_type, get_tok_value(r->prop_ptr,"sim_type", 0));
-    if((i == xctx->graph_master) && custom_rawfile[0]) {
+    if((i == master) && custom_rawfile[0]) {
       if(!extra_rawfile(autoload, custom_rawfile, sim_type[0] ? sim_type : xctx->raw->sim_type, -1.0, -1.0)) {
         if(custom_rawfile) my_free(_ALLOC_ID_, &custom_rawfile);
         if(sim_type) my_free(_ALLOC_ID_, &sim_type);
@@ -2913,9 +2924,9 @@ int graph_fullxzoom(int i, Graph_ctx *gr, int dataset)
     idx = get_raw_index(find_nth(get_tok_value(r->prop_ptr, "sweep", 0), ", ", "\"", 0, 1), NULL);
     dbg(1, "graph_fullxzoom(): sweep idx=%d\n", idx);
     if(idx < 0 ) idx = 0;
-    if(i != xctx->graph_master ) {
+    if(i != master ) {
 
-      ptr = get_tok_value(xctx->rect[GRIDLAYER][xctx->graph_master].prop_ptr,"rawfile", 0);
+      ptr = get_tok_value(xctx->rect[GRIDLAYER][master].prop_ptr,"rawfile", 0);
       if(!ptr[0]) {
         if(raw && raw->rawfile) my_strdup2(_ALLOC_ID_, &custom_rawfile, raw->rawfile);
         else  my_strdup2(_ALLOC_ID_, &custom_rawfile, "");
@@ -2924,7 +2935,7 @@ int graph_fullxzoom(int i, Graph_ctx *gr, int dataset)
       }
 
       my_strdup2(_ALLOC_ID_, &sim_type,
-        get_tok_value(xctx->rect[GRIDLAYER][xctx->graph_master].prop_ptr,"sim_type", 0));
+        get_tok_value(xctx->rect[GRIDLAYER][master].prop_ptr,"sim_type", 0));
       if(custom_rawfile[0]) {
         if(!extra_rawfile(autoload, custom_rawfile, sim_type[0] ? sim_type : xctx->raw->sim_type, -1.0, -1.0)) {
           if(custom_rawfile) my_free(_ALLOC_ID_, &custom_rawfile);

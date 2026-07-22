@@ -90,8 +90,8 @@ if {[catch {
 
 # --- R1: state_default schema -----------------------------------------------
 set d [ase::state_default]
-check "R1 default has exactly the 13 schema keys" [lsort [dict keys $d]] \
-  [lsort {version simulator design rundir temperature models variables analyses outputs save_all_v save_all_i options includes}]
+check "R1 default has exactly the 14 schema keys" [lsort [dict keys $d]] \
+  [lsort {version simulator design rundir temperature models variables analyses outputs save_all_v save_all_i options includes viewer}]
 check "R1 version is 1" [dict get $d version] 1
 check "R1 temperature default 27" [dict get $d temperature] 27
 check "R1 save_all_v and save_all_i default 0" \

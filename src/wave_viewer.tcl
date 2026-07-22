@@ -83,6 +83,10 @@
 # layer-2 rect count/props, redraw rc, modified-still-0 — actual pixel
 # rendering is eyeball-only.
 #
+# Persistence (item 14): wviewer::snapshot / wviewer::restore serialize the
+# layout into / rebuild it from the ASE state's `viewer` key — contract in
+# doc/claude/specs/waveform_viewer.md "Item 14 notes (as shipped)".
+#
 # Pure Tcl, procs only at source time (safe under --nogui); ciw_echo only
 # under has_x. TIP-278: `variable` declarations, absolute names.
 
@@ -661,6 +665,79 @@ proc wviewer::attach_raw {token rawfile sim_type} {
     xschem raw read $rawfile $sim_type
   } else {
     xschem raw read $rawfile
+  }
+  wviewer::regenerate $token
+  return 1
+}
+
+# --- persistence (item 14, D5/D8) --------------------------------------------
+# The ASE state's `viewer` key (doc/claude/specs/waveform_viewer.md): fixed
+# build order `open <0|1> sharedx <0|1> rawfile {} graphs <model graph list>`
+# so snapshots serialize byte-deterministically. Graphs go in VERBATIM from
+# the model — incl. the `auto 1` marker (dropping it would make post-reload
+# runs append a SECOND auto graph, receipts/13). Cursor state (cva/cvb/cvr)
+# is NOT persisted: the mirrors die with the window by item-12 design.
+
+# Snapshot of `token`'s viewer for the state dict. Window open -> `open 1` +
+# the LIVE layout (sharedx + graphs; rawfile always {} in v1 = "the current
+# run's raw" — a non-{} value is the hand-editable saved-results seam the
+# restore side honors). Window closed -> the PREVIOUS dict with `open 0` and
+# its graphs KEPT (last-known layout: wviewer::forget wiped the live model
+# with the window, so the state dict is the only survivor); no previous dict
+# -> {} (a session that never opened a viewer keeps a clean `viewer {}`).
+proc wviewer::snapshot {token prev} {
+  if {[wviewer::window_for $token] ne {}} {
+    set lay [wviewer::layout_for $token]
+    return [dict create open 1 \
+                        sharedx [wviewer::dget $lay sharedx 0] \
+                        rawfile {} \
+                        graphs  [wviewer::dget $lay graphs {}]]
+  }
+  if {$prev eq {}} { return {} }
+  return [dict replace $prev open 0]
+}
+
+# Rebuild `token`'s viewer from a state `viewer` dict (ase::ui::viewer_restore
+# orchestrates: raw resolution + the open-1 gate live THERE). Steps: open the
+# window (headless returns 0 -> bail, no Tk side effects); OVERWRITE the
+# layout from the dict (open zeroed it on a fresh window) + sync the Shared-X
+# menu mirror; when a usable rawfile is given, attach it INLINE (raw clear +
+# raw read, the attach_raw shape — attach_raw itself is NOT called: it
+# regenerates internally and would double-regenerate before the trace
+# re-materialize below) and RE-MATERIALIZE every multi-token RPN expression
+# trace via `xschem raw add` (the raw clear killed those vectors; without the
+# re-add restored traces draw empty and the readout interp throws — the RPNs
+# were validated when the traces were created, so the catch is enough); ONE
+# regenerate at the end. No usable rawfile -> regenerate alone (safe:
+# autozoom only runs when `raw loaded >= 0`, redraw rc 0 on unresolved
+# nodes). `sim_type` {} omits the `raw read` type word entirely (absent arg
+# != empty arg in the C handler). Returns 1 when the viewer is up.
+proc wviewer::restore {token vdict rawfile sim_type} {
+  variable layouts
+  variable sharedx
+  if {![wviewer::open $token]} { return 0 }
+  set sx [wviewer::dget $vdict sharedx 0]
+  dict set layouts $token \
+    [dict create sharedx $sx graphs [wviewer::dget $vdict graphs {}]]
+  set sharedx($token) $sx
+  if {$rawfile ne {} && [file isfile $rawfile] \
+      && [wviewer::switch_ctx $token]} {
+    catch {xschem raw clear}
+    if {$sim_type ne {}} {
+      xschem raw read $rawfile $sim_type
+    } else {
+      xschem raw read $rawfile
+    }
+    foreach G [dict get [wviewer::layout_for $token] graphs] {
+      foreach tr [wviewer::dget $G traces {}] {
+        set ex  [wviewer::dget $tr expr {}]
+        set vec [wviewer::dget $tr vec {}]
+        if {$vec ne {} \
+            && [llength [regexp -all -inline {\S+} $ex]] > 1} {
+          catch {xschem raw add $vec $ex}
+        }
+      }
+    }
   }
   wviewer::regenerate $token
   return 1

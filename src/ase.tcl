@@ -25,10 +25,11 @@ namespace eval ase {
   # `temperature` session scalar, grouped with the other scalars, and the UI v2
   # blanket-save flags `save_all_v`/`save_all_i`, grouped with outputs whose
   # saving semantics they modify; deck mapping allv -> `.save all`, alli ->
-  # `.options savecurrents` in the ngspice render_deck)
+  # `.options savecurrents` in the ngspice render_deck; `viewer` = the item-14
+  # waveform-viewer persistence dict, doc/claude/specs/waveform_viewer.md)
   variable schema_keys {version simulator design rundir temperature models
                         variables analyses outputs save_all_v save_all_i
-                        options includes}
+                        options includes viewer}
   # simulator name -> hooks dict {render_deck run_cmd log_file result_probe}
   variable backends [dict create]
   # most recent completed run: {results <dict> exitcode <n> log <path> }
@@ -126,7 +127,8 @@ proc ase::state_default {} {
     save_all_v 0 \
     save_all_i 0 \
     options   {} \
-    includes  {}]
+    includes  {} \
+    viewer    {}]
 }
 
 # Load a state file -> dict merged OVER the defaults (loaded values win,

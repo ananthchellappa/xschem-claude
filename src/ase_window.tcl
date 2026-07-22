@@ -212,6 +212,11 @@ proc ase::ui::open {key lib cell view} {
   wm protocol $top WM_DELETE_WINDOW [list ase::ui::close $key]
   ase::ui::build $key $top
   ase::ui::populate $key
+  # item 14 (D6): a state saved with its viewer open relaunches the viewer —
+  # FRESH-open only, deliberately not the ase::open_state raise arm
+  # (re-raising an existing session must not resurrect a viewer the user
+  # closed)
+  ase::ui::viewer_restore $key
   return $top
 }
 
@@ -2238,6 +2243,10 @@ proc ase::ui::do_load_state_from {key path} {
   }
   ase::session_update $key $st
   ase::ui::populate $key
+  # item 14 (D7): an imported state with `viewer open 1` relaunches/rebuilds
+  # the viewer; open 0 / absent leaves an already-open viewer exactly as it
+  # is (minimal contract arm — viewer_restore gates internally)
+  ase::ui::viewer_restore $key
   return 1
 }
 
@@ -2327,6 +2336,65 @@ proc ase::ui::save_state_ok {key} {
   ase::ui::do_save_state_as $key $l $c $v
 }
 
+# --- viewer persistence (item 14) ---------------------------------------------
+# Contract: doc/claude/specs/waveform_viewer.md "Item 14 notes (as shipped)".
+# Snapshot-at-Save-only: viewer-layout edits never dirty the session until a
+# Save State runs the snapshot; closing the session/viewer DISCARDS the
+# in-memory layout like any unsaved edit (by ase::ui::close time the session
+# is already unregistered when wviewer::close runs — a snapshot there would
+# no-op anyway).
+
+# Fold a fresh wviewer::snapshot of the session's viewer into the session
+# state IFF it differs from the stored `viewer` value (so a plain save of a
+# viewer-less session stays byte-identical and un-dirtied). Called FIRST by
+# both Save State paths — do_save_state_as covers all three target arms
+# (accepted side effect, documented in the spec notes: save-as to a DIFFERENT
+# view leaves THIS session dirty-marked when the snapshot changed the
+# in-memory state — honest, the session's own file now differs). Returns 1
+# when a snapshot was folded in, else 0.
+proc ase::ui::viewer_snapshot {key} {
+  set st [ase::session_state $key]
+  if {$st eq {}} { return 0 }
+  set prev [ase::state_get $st viewer]
+  set vd [wviewer::snapshot $key $prev]
+  if {$vd eq $prev} { return 0 }
+  dict set st viewer $vd
+  ase::session_update $key $st
+  return 1
+}
+
+# Relaunch/rebuild the session's viewer from the state's `viewer` dict. Acts
+# ONLY when the dict carries `open 1` (open 0 / absent / `viewer {}` -> 0, no
+# viewer action — an already-open viewer is left exactly as it is). Raw
+# resolution (D4): a non-{} `rawfile` in the dict is the saved-results seam —
+# absolute used as-is, relative resolved against the state's rundir, attached
+# IFF it exists; else fall back to ase::last_rawfile (file existence == "has
+# results"). sim_type from ase::plot_sim_type (NO op-only gate: restoring an
+# op raw is harmless, unlike plotting into it). No rawfile at all -> the
+# viewer still opens with its layout, traces draw empty, ciw_echo notice, no
+# crash. Returns wviewer::restore's rc (0 headless: wviewer::open bails).
+proc ase::ui::viewer_restore {key} {
+  set st [ase::session_state $key]
+  set vd [ase::state_get $st viewer]
+  if {[ase::state_get $vd open 0] ne {1}} { return 0 }
+  set rf {}
+  set vraw [ase::state_get $vd rawfile]
+  if {$vraw ne {}} {
+    if {[file pathtype $vraw] ne {absolute}} {
+      set vraw [file join [ase::rundir $st] $vraw]
+    }
+    if {[file isfile $vraw]} { set rf $vraw }
+  }
+  if {$rf eq {}} { set rf [ase::last_rawfile $key] }
+  set sim_t [ase::plot_sim_type $st]
+  set rc [wviewer::restore $key $vd $rf $sim_t]
+  if {$rc && $rf eq {}} {
+    catch {ciw_echo "ase: no simulation results for this state — viewer\
+ restored, traces will fill after a run"}
+  }
+  return $rc
+}
+
 # Save-As worker (headless-testable). Target arms:
 #  - the session's OWN view -> ase::session_save (clears dirty);
 #  - a MISSING view -> `library_new_view <l> <c> <v> ngspice_state1` (the
@@ -2336,8 +2404,11 @@ proc ase::ui::save_state_ok {key} {
 #  - a DIFFERENT existing view -> plain state_save overwrite (D13).
 # On success: LibMgr pane refresh (headless-safe catch), notice, the Save-As
 # dialog dies. Returns 1 on success, 0 on a reported error (dialog kept up).
+# item 14 (D5): the viewer snapshot runs FIRST, so every arm writes the
+# up-to-date `viewer` dict.
 proc ase::ui::do_save_state_as {key l c v} {
   variable wins
+  ase::ui::viewer_snapshot $key
   set target [xschem cellview_path "$l/$c" $v]
   set own [ase::session_path $key]
   if {$target ne {} && $own ne {} \
@@ -2440,6 +2511,8 @@ proc ase::ui::session_changed {key} {
 # (save_state_dialog / load_state_dialog above).
 
 proc ase::ui::save_state {key} {
+  # item 14 (D5): snapshot the viewer into the state before it hits disk
+  ase::ui::viewer_snapshot $key
   ase::session_save $key
 }
 proc ase::ui::load_state {key} {
