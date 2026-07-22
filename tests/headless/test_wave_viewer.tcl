@@ -18,7 +18,12 @@
 #       cadence_style_rc:109 verbatim <Key-i> + a Windows-arm-shaped
 #       <Alt-KeyPress> — are cloned by clone_canvas_bindings onto the viewer
 #       canvas and MUST be cleared there, main canvas keeps its own; plus a
-#       completeness check: no sequence outside the keep+filter set); viewer
+#       completeness check: no sequence outside the keep+filter set); editor
+#       TOOLBAR stripped per-window (G1t, fixup r2: toolbar_visible defaults
+#       1 so pack_widgets shows 37 armed editing/simulator buttons on the
+#       viewer — forced to 1 for determinism, widget exists but is not
+#       pack-managed/mapped, main-window packedness unchanged, fresh G9
+#       reopen stripped too); viewer
 #       menubar attached (File/View/Graph/Cursors, Graph+Cursors disabled),
 #       editor menubar NOT attached; exact title + with_edit clobber
 #       regression; window number > 0; strip (i/Insert/w do nothing: no
@@ -261,12 +266,37 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   ase::state_save $sstate $st
   set tok [ase::session_key sky130_tests test_nfet_final ngspice_state1]
   ase::session_open $tok $sstate
+  # toolbar-strip determinism (fixup r2): pack_widgets packs $top.toolbar on
+  # every new window while the GLOBAL toolbar_visible is 1 — force the
+  # shipping default so the G1t leg is deterministic under any rc profile
+  # (without the strip the viewer showed 37 armed editing/simulator buttons,
+  # verifier probe). Restored right after G1t; main-window packedness is
+  # asserted UNCHANGED, not absolute, so an rc with toolbar off cannot flip
+  # that check.
+  set save_tbv 1
+  if {[info exists ::toolbar_visible]} { set save_tbv $::toolbar_visible }
+  set ::toolbar_visible 1
+  set main_tb_packed [expr {![catch {pack info .toolbar}]}]
   check "G1 wviewer::open returns 1" [wviewer::open $tok] 1
   set vtop [wviewer::window_for $tok]
   check_true "G1 viewer toplevel exists" \
     [expr {$vtop ne {} && [winfo exists $vtop]}]
   set vdrw $vtop.drw
   check_true "G1 viewer canvas exists" [winfo exists $vdrw]
+
+  # --- G1t: editor toolbar stripped from the viewer, per-window --------------
+  # the widget EXISTS (build_widgets made the surface — the strip is not
+  # trivially green) but is neither pack-managed nor mapped; pack info is the
+  # mapping-independent witness (`pack forget` -> `pack info` throws even
+  # before WSLg ever maps the toplevel)
+  check "G1t editor toolbar widget exists on the viewer toplevel" \
+    [winfo exists $vtop.toolbar] 1
+  check "G1t viewer toolbar NOT pack-managed (pack info throws)" \
+    [catch {pack info $vtop.toolbar}] 1
+  check "G1t viewer toolbar not mapped" [winfo ismapped $vtop.toolbar] 0
+  check "G1t main window toolbar packedness UNCHANGED (per-window strip)" \
+    [expr {![catch {pack info .toolbar}]}] $main_tb_packed
+  set ::toolbar_visible $save_tbv
   xschem new_schematic switch $vdrw
   check "G1 viewer buffer is readonly" [xschem get readonly] 1
   check_true "G1 viewer buffer is untitled-class" \
@@ -411,6 +441,8 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     set vtop2 [wviewer::window_for $tok]
     check_true "G9 fresh viewer window created" \
       [expr {$vtop2 ne {} && [winfo exists $vtop2]}]
+    check "G9 fresh viewer toolbar also stripped" \
+      [catch {pack info $vtop2.toolbar}] 1
     wviewer::close $tok
     update
     check "G9 closed via the API, registry clean" [wviewer::window_for $tok] {}

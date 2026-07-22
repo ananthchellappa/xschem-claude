@@ -31,7 +31,9 @@
 #     the C engine's graph pan/zoom), double-clicks are swallowed entirely
 #     (D9: dbl-click would open graph_edit_properties whose writeback is
 #     readonly-rejected; Axes editing is item 12). Per-widget binds provably
-#     cannot affect other windows.
+#     cannot affect other windows. The editor TOOLBAR (the mouse-reachable
+#     editing surface pack_widgets shows on every new window) is
+#     pack-forgotten per-window in open — see the D2 fixup comment there.
 #   - D6 title `Waveforms <design cell> (<state view>)`, re-asserted after
 #     every readonly toggle (`xschem set readonly` rewrites the wm title via
 #     set_modify(-1)) and on FocusIn.
@@ -172,6 +174,20 @@ proc wviewer::open {token} {
   dict set windows $token [dict create top $top win_path $wp]
   wviewer::build_menubar $token $top
   wviewer::strip_bindings $wp
+  # D2 fixup: the editor TOOLBAR is a second editing-verb surface, reachable
+  # by mouse — build_widgets creates $top.toolbar (37 armed buttons: Insert
+  # Wire/Symbol/Line/Rect/Polygon, Cut/Copy/Paste/Delete/Move, FileOpen/Save/
+  # Reload, Netlist/Simulate/Waves) and pack_widgets packs it on EVERY new
+  # window while the global toolbar_visible is 1 (the shipping default,
+  # xschem.tcl set_ne toolbar_visible 1). A click there either reaches an
+  # editor/simulator flow or throws the readonly rejection into Tk's bgerror
+  # stack-trace modal. Per-window `pack forget` hides it for the window's
+  # life; toolbar_hide is NOT used — it flips the GLOBAL toolbar_visible off
+  # and every future editor window would silently lose its toolbar. Nothing
+  # re-shows it here: the View > Show Toolbar checkbutton lives on the
+  # detached editor menubar and the fullscreen toggle key never reaches the
+  # C callback (key_filter swallows it).
+  catch {pack forget $top.toolbar}
   wviewer::retitle $token
   bind $top <FocusIn> "+[list wviewer::retitle $token]"
   # WM-close (or any external destroy) must also clean the registry; every
