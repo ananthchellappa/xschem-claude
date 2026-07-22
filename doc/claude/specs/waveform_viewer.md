@@ -197,6 +197,65 @@ session (raise-or-open; N sessions → N viewers).
   (self-master). Pre-existing since item 12; surfaced by item 14's
   close/reopen cycles.
 
+## Item 19 notes (as shipped, 2026-07-22)
+
+Round-5 acceptance item. Item 18 made the graph FILL the viewer window and
+pinned the canvas viewport (regenerate no longer runs `xschem zoom_full`);
+item 19 makes every zoom/pan/View verb act on the **graph** content, so it can
+never shrink the graph (the canvas xorigin/yorigin/zoom never change). **Pure
+Tcl in `src/wave_viewer.tcl` + tests + docs — NO C touched** (the C graph engine
+and the input-binding table already do everything the RMB path needs).
+
+- **Wheel (D1)** mirrors the `cadence_style_rc` canvas wheel scheme, applied to
+  GRAPH content, as a pure-Tcl viewer handler (`wviewer::wheel`, bound in
+  `strip_bindings` AFTER the sweep as the most-specific wheel binds):
+  - **plain wheel up/down** = GRAPH **vertical** pan (shift y1/y2 by ±5% of the
+    y span; up = toward larger y),
+  - **Shift+wheel** = GRAPH **horizontal** pan (shift x1/x2 by ±5% of the x span),
+  - **Ctrl+wheel** = GRAPH **X zoom** about centre (up = span×0.8 in, down =
+    span÷0.8 out).
+  On Tcl 8.6/X11 the wheel arrives as `Button-4`(up)/`Button-5`(down); the new
+  `<Button-4/5>` + `<Shift-*>` + `<Control-*>` binds (each ending in `break`)
+  pre-empt the kept generic `<Button>` that used to forward X11 wheel to the C
+  waveform handler. **Forwarding to the C waveform-wheel was rejected:** plain
+  wheel there is a HORIZONTAL body pan (callback.c:1157-1168) and Ctrl+wheel is
+  hard-pinned to CANVAS zoom (callback.c:4417) — both contradict the user's ask.
+  `<MouseWheel>`/`<Shift-*>`/`<Control-*>` (signed `%D`) are also bound for
+  Tcl>8.7/non-X11 portability. The token is resolved from `%W` at event time
+  (`wviewer::wheel_bind`) — never captured stale at bind time.
+- **RMB (D2)** stays on the C engine. `btn3_filter` dropped its `over_graph`
+  early-return and now forwards Button-3 press+release **unconditionally**:
+  item-18 tiling guarantees the pointer is always inside a graph, so the C
+  press→GRAPHPAN / release→zoom-x-to-box path (callback.c:1000/:1454) always
+  fires and `view.zoom_rect` (the canvas zoom box) is never reached. Right-drag
+  narrows only the graph rect's x1/x2 tokens; the canvas stays pinned.
+- **`f` / `Z` / `Ctrl-z` (D4)** are intercepted in `key_filter` (KeyPress only;
+  the matching KeyRelease is swallowed) BEFORE the forward: `f`→`wviewer::fit`
+  (fit is the only path that fits BOTH x and y), `Z`→`graph_zoom in`,
+  `Ctrl-z`→`graph_zoom out`. An unknown canvas (`token_for_canvas` `{}`) falls
+  through to the old forward. Arrows still forward (the C over_graph
+  `graph.forward` already pans/zooms the graph X, not the canvas).
+- **`wviewer::fit` de-canvased (D5)**: its trailing `xschem zoom_full; xschem
+  redraw` became `xschem redraw`. fullx/fullyzoom already fit the graph data
+  range; item-18 pins the canvas, so Fit must not reframe the window.
+- **View menu (D6)**: `Zoom In`/`Zoom Out` → `wviewer::graph_zoom $token in|out`
+  (X-only zoom about centre, every graph); `Fit` → `wviewer::fit` (de-canvased);
+  `Redraw` stays a plain canvas redraw (canvas-safe).
+- **Range writes freeze all four axes (D7)**: any pan/zoom reads the current
+  concrete `{x1 x2 y1 y2}` (`graph_range` via `getprop rect`), applies the delta
+  to the target axis, and writes ALL FOUR back into the model as concrete values
+  before regenerate (`apply_range`). Freezing an untouched axis stops
+  regenerate's autozoom from wiping a prior pan/zoom on the other axis.
+- **New pure-Tcl helpers**: `graph_at_pointer` (band under the pointer; fallback
+  0 for none/one graph), `graph_range`, `apply_range`, `wheel`, `graph_zoom`,
+  `wheel_bind`.
+- **The graph-not-canvas invariant** is the deterministic test teeth: every IX*
+  leg in `test_wave_viewer.tcl` asserts the intended graph-range change AND that
+  `xschem get xorigin/yorigin/zoom` still equal a once-captured baseline (item-17
+  lesson: witness a synchronous state write, not a gesture/stacking race). IX-fit
+  runs last because the S2 sabotage (re-inserting `zoom_full`) moves the canvas;
+  the real code never does, so the single baseline holds for every leg.
+
 ## Non-goals (v1)
 
 Digital lanes, sweep-family selector, cursor backannotate-to-schematic,

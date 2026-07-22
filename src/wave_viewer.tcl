@@ -1098,7 +1098,12 @@ proc wviewer::readout_refresh {token} {
 # traces run the engine's fullx/fullyzoom (computes the data range INTO the
 # rect attrs, log/expr aware) and read the resulting ranges back into the
 # model (the ONE sanctioned model write from engine-computed values; rect
-# generation stays one-directional). Then canvas zoom_full + redraw.
+# generation stays one-directional). Then a plain redraw — item 19 (D5)
+# dropped the trailing `xschem zoom_full`: Fit reframes the GRAPH data range
+# (fullx/fullyzoom), never the canvas viewport. item-18 pins the canvas so the
+# graph already fills the window; a zoom_full here would SHRINK the graph (the
+# very bug item 19 fixes). The graph-not-canvas invariant: canvas xorigin/
+# yorigin/zoom are UNCHANGED by Fit.
 proc wviewer::fit {token} {
   variable windows
   if {![dict exists $windows $token]} { return 0 }
@@ -1131,9 +1136,169 @@ proc wviewer::fit {token} {
     }
     wviewer::set_graphs $token $out
   }
-  wviewer::in_ctx $token {xschem zoom_full; xschem redraw}
+  wviewer::in_ctx $token {xschem redraw}
   wviewer::readout_refresh $token
   return 1
+}
+
+# --- graph interaction: wheel / zoom (item 19 graph-interact) -----------------
+# The viewer wheel MIRRORS the cadence_style_rc canvas wheel scheme (plain =
+# vertical scroll, Shift = horizontal, Ctrl = zoom) but applies it to GRAPH
+# content, NOT the canvas: every pan/zoom edits the graph rect's range tokens
+# (x1/x2/y1/y2) via the model + regenerate, leaving canvas xorigin/yorigin/zoom
+# untouched (item-18 pins them). Forwarding the wheel to the C waveform handler
+# was rejected (D1): plain wheel there is a HORIZONTAL body pan (callback.c
+# :1157-1168) and Ctrl+wheel is hard-pinned to CANVAS zoom (callback.c:4417) —
+# both contradict the user's ask. Pure Tcl setprop/getprop keeps it
+# deterministic (item-17 lesson: witness a synchronous state write, not a
+# gesture). RMB stays on the C engine (btn3_filter) — the engine already does
+# graph x-zoom-to-box and leaves the canvas pinned.
+
+# Index of the graph band under the viewer pointer (mousex_snap/mousey_snap),
+# iterating graphbb($wp) exactly like over_graph; fallback 0 when there is
+# none/one graph (the wheel acts on the pointed graph; a lone graph is always
+# the target regardless of pointer position).
+proc wviewer::graph_at_pointer {wp} {
+  variable graphbb
+  if {![dict exists $graphbb $wp]} { return 0 }
+  set bbs [dict get $graphbb $wp]
+  set n [llength $bbs]
+  if {$n <= 1} { return 0 }
+  xschem new_schematic switch $wp
+  if {[xschem get current_win_path] ne $wp} { return 0 }
+  set mx [xschem get mousex_snap]
+  set my [xschem get mousey_snap]
+  for {set gi 0} {$gi < $n} {incr gi} {
+    lassign [lindex $bbs $gi] bx1 by1 bx2 by2
+    if {$mx >= $bx1 && $mx <= $bx2 && $my >= $by1 && $my <= $by2} { return $gi }
+  }
+  return 0
+}
+
+# Current DRAWN range of model graph `gi`: switch to the viewer ctx and read
+# `{x1 x2 y1 y2}` from `xschem getprop rect 2 $gi <tok>`. Each element is `{}`
+# when the token is empty or not a finite number (concrete after regenerate's
+# autozoom, but stay defensive). Returns four `{}` on an unknown token / a
+# refused context switch.
+proc wviewer::graph_range {token gi} {
+  variable windows
+  if {![dict exists $windows $token]} { return {{} {} {} {}} }
+  if {![wviewer::switch_ctx $token]} { return {{} {} {} {}} }
+  set out {}
+  foreach tok {x1 x2 y1 y2} {
+    set v {}
+    catch {set v [xschem getprop rect 2 $gi $tok]}
+    if {![string is double -strict $v]} { set v {} }
+    lappend out $v
+  }
+  return $out
+}
+
+# Write the four concrete range values into model graph `gi` (any `{}` axis is
+# left unchanged) + set_graphs, then re-render through regenerate — item-18
+# canvas-safe (no zoom_full), keeps model<->rect in sync, never touches the
+# canvas origin/zoom. D7: callers pass ALL FOUR concrete (the read-back values
+# for untouched axes) so regenerate never re-autozooms and wipes a prior
+# pan/zoom on the other axis.
+proc wviewer::apply_range {token gi x1 x2 y1 y2} {
+  set gs [dict get [wviewer::layout_for $token] graphs]
+  if {![string is integer -strict $gi] || $gi < 0 || $gi >= [llength $gs]} {
+    return 0
+  }
+  set G [lindex $gs $gi]
+  foreach {k v} [list x1 $x1 x2 $x2 y1 $y1 y2 $y2] {
+    if {$v ne {}} { dict set G $k $v }
+  }
+  wviewer::set_graphs $token [lreplace $gs $gi $gi $G]
+  wviewer::regenerate $token
+  return 1
+}
+
+# Viewer wheel handler (D1/D3/D7). `dir` in up|down, `mods` in 0|shift|ctrl:
+#   0     (plain) -> GRAPH vertical pan: shift y1/y2 by +-5% of the y span
+#                    (up = toward larger y / view moves up; down = opposite).
+#   shift          -> GRAPH horizontal pan: shift x1/x2 by +-5% of the x span.
+#   ctrl           -> GRAPH X zoom about center: up = zoom in (span *0.8),
+#                    down = zoom out (span /0.8).
+# Acts on the pointed graph (graph_at_pointer). Reads the concrete range, applies
+# the delta, freezes ALL FOUR (D7). A `{}` target axis (nothing to pan/zoom) is
+# a no-op.
+proc wviewer::wheel {token wp dir mods} {
+  variable windows
+  if {![dict exists $windows $token]} { return }
+  set gi [wviewer::graph_at_pointer $wp]
+  lassign [wviewer::graph_range $token $gi] x1 x2 y1 y2
+  switch -- $mods {
+    shift {
+      if {$x1 eq {} || $x2 eq {}} { return }
+      set d [expr {0.05 * ($x2 - $x1)}]
+      if {$dir eq {down}} { set d [expr {-$d}] }
+      set x1 [expr {$x1 + $d}]
+      set x2 [expr {$x2 + $d}]
+    }
+    ctrl {
+      if {$x1 eq {} || $x2 eq {}} { return }
+      set span [expr {$x2 - $x1}]
+      set c    [expr {($x1 + $x2) / 2.0}]
+      if {$dir eq {up}} { set span [expr {$span * 0.8}] } \
+      else              { set span [expr {$span / 0.8}] }
+      set x1 [expr {$c - $span / 2.0}]
+      set x2 [expr {$c + $span / 2.0}]
+    }
+    default {
+      if {$y1 eq {} || $y2 eq {}} { return }
+      set d [expr {0.05 * ($y2 - $y1)}]
+      if {$dir eq {down}} { set d [expr {-$d}] }
+      set y1 [expr {$y1 + $d}]
+      set y2 [expr {$y2 + $d}]
+    }
+  }
+  wviewer::apply_range $token $gi $x1 $x2 $y1 $y2
+}
+
+# View menu Zoom In/Out (D6): X-only zoom about center, like the ctrl-wheel
+# case, on the target graph(s). `gi all` = every model graph (the menu has no
+# pointer). Freezes all four axes per graph (D7); ONE regenerate at the end.
+proc wviewer::graph_zoom {token dir {gi all}} {
+  variable windows
+  if {![dict exists $windows $token]} { return }
+  set gs [dict get [wviewer::layout_for $token] graphs]
+  set n [llength $gs]
+  if {$gi eq {all}} {
+    set targets {}
+    for {set i 0} {$i < $n} {incr i} { lappend targets $i }
+  } else {
+    set targets [list $gi]
+  }
+  set changed 0
+  foreach t $targets {
+    if {![string is integer -strict $t] || $t < 0 || $t >= $n} { continue }
+    lassign [wviewer::graph_range $token $t] x1 x2 y1 y2
+    if {$x1 eq {} || $x2 eq {}} { continue }
+    set span [expr {$x2 - $x1}]
+    set c    [expr {($x1 + $x2) / 2.0}]
+    if {$dir eq {in}} { set span [expr {$span * 0.8}] } \
+    else             { set span [expr {$span / 0.8}] }
+    set G [lindex $gs $t]
+    dict set G x1 [expr {$c - $span / 2.0}]
+    dict set G x2 [expr {$c + $span / 2.0}]
+    if {$y1 ne {}} { dict set G y1 $y1 }
+    if {$y2 ne {}} { dict set G y2 $y2 }
+    set gs [lreplace $gs $t $t $G]
+    set changed 1
+  }
+  if {$changed} {
+    wviewer::set_graphs $token $gs
+    wviewer::regenerate $token
+  }
+}
+
+# Wheel binding shim: resolve the session token from the canvas at EVENT time
+# (never capture a stale token at bind time — strip_bindings only has `wp`).
+proc wviewer::wheel_bind {wp dir mods} {
+  set token [wviewer::token_for_canvas $wp]
+  if {$token eq {}} { return }
+  wviewer::wheel $token $wp $dir $mods
 }
 
 # --- Graph menu dialogs (item 12, D3/D11/D13) --------------------------------
@@ -1445,8 +1610,10 @@ proc wviewer::over_graph {wp} {
 
 # The viewer's generic key handler, replacing the editor <KeyPress>/
 # <KeyRelease> binds on the viewer .drw ONLY. Allowlist:
-#   always forwarded: f (fit / graph fullx), Z (zoom in), Ctrl-z (zoom out),
-#     arrows (scroll / graph pan), Escape (abort+redraw — NEVER closes, D10);
+#   intercepted to the GRAPH (item 19, D4 — NOT forwarded to the C canvas-zoom
+#     keys): f = fit (x+y), Z = graph zoom in (X), Ctrl-z = graph zoom out (X);
+#   always forwarded: arrows (scroll / graph pan X), Escape (abort+redraw —
+#     NEVER closes, D10);
 #   over a graph only: a b s m t A B (+ctrl) — the waves_callback key set;
 #   Ctrl-W: close the viewer (handled Tcl-side, swallowed);
 #   everything else: swallowed silently (readonly backstops any miss).
@@ -1455,6 +1622,24 @@ proc wviewer::key_filter {W T x y N K s} {
   if {($s & 4) && ($N == 119 || $N == 87)} {          ;# Ctrl-W / Ctrl-Shift-W
     if {$T == 2} { wviewer::close [wviewer::token_for_canvas $W] }
     return
+  }
+  # item 19 (D4): f / Z / Ctrl-z act on the GRAPH, not the canvas. Intercept
+  # them here (act on KeyPress, T==2; swallow the matching KeyRelease) instead
+  # of forwarding to the C canvas-zoom keys. `f` = FIT (full x+y = wviewer::fit,
+  # the only path that fits BOTH axes); `Z`/`Ctrl-z` = graph X zoom in/out like
+  # View>Zoom. token {} (unknown canvas) falls through to the old forward.
+  set tok19 [wviewer::token_for_canvas $W]
+  if {$tok19 ne {}} {
+    if {$N == 102} {                                  ;# f = fit (x+y)
+      if {$T == 2} { wviewer::fit $tok19 }
+      return
+    } elseif {$N == 90} {                             ;# Z = graph zoom in (X)
+      if {$T == 2} { wviewer::graph_zoom $tok19 in }
+      return
+    } elseif {$N == 122 && ($s & 4)} {                ;# Ctrl-z = graph zoom out
+      if {$T == 2} { wviewer::graph_zoom $tok19 out }
+      return
+    }
   }
   set fwd 0
   if {$K eq {Escape}} {
@@ -1476,10 +1661,16 @@ proc wviewer::key_filter {W T x y N K s} {
   }
 }
 
-# Button-3 filter: forwarded only over a graph (the C engine's graph
-# pan/zoom); elsewhere swallowed, which kills the schematic context menu.
+# Button-3 filter (item 19, D2): forward Button-3 press+release EVERYWHERE in
+# the viewer. Since item-18 tiling makes the graph FILL the window, the pointer
+# is always inside a graph, so the C engine's over-graph path (GRAPHPAN start ->
+# release zoom-x-to-box, callback.c:1000/:1454) always fires and view.zoom_rect
+# (the canvas zoom box) is never reached — press-drag-release zooms the GRAPH
+# x-range and leaves the canvas pinned. The old `over_graph` early-return is
+# dropped: it would swallow RMB whenever the mouse-position mirror lagged the
+# tiling, and there is no longer any off-graph region to protect (the schematic
+# context menu is already killed by the sweep). Never swallow RMB here.
 proc wviewer::btn3_filter {W T x y b s} {
-  if {![wviewer::over_graph $W]} { return }
   if {$T == 4} { catch {focus $W} }                   ;# ButtonPress focuses
   xschem callback $W $T $x $y 0 $b 0 $s
 }
@@ -1514,6 +1705,25 @@ proc wviewer::strip_bindings {wp} {
   bind $wp <Double-Button-1> {break}                  ;# D9: no graph props dlg
   bind $wp <Double-Button-2> {break}
   bind $wp <Double-Button-3> {break}
+  # item 19 (D-B): wheel = GRAPH pan/zoom, mirroring cadence_style_rc on graph
+  # content. On Tcl 8.6 / X11 the wheel arrives as Button-4 (up) / Button-5
+  # (down); these more-specific binds PRE-EMPT the kept generic <Button> (which
+  # forwarded X11 wheel to the C waveform-wheel = horizontal pan, wrong per D1).
+  # plain = vertical pan, Shift = horizontal pan, Ctrl = X zoom. Each `break`s so
+  # the kept generic wheel binds never also fire. `wheel_bind` resolves the token
+  # from %W at event time (no stale capture).
+  bind $wp <Button-4>          {wviewer::wheel_bind %W up 0;      break}
+  bind $wp <Button-5>          {wviewer::wheel_bind %W down 0;    break}
+  bind $wp <Shift-Button-4>    {wviewer::wheel_bind %W up shift;  break}
+  bind $wp <Shift-Button-5>    {wviewer::wheel_bind %W down shift; break}
+  bind $wp <Control-Button-4>  {wviewer::wheel_bind %W up ctrl;   break}
+  bind $wp <Control-Button-5>  {wviewer::wheel_bind %W down ctrl; break}
+  # portability (Tcl > 8.7 / non-X11): <MouseWheel> carries a signed %D. Tests
+  # run on 8.6/X11 where this never fires, but keep the viewer wheel correct
+  # everywhere. Overwrites the kept generic <MouseWheel> on THIS canvas only.
+  bind $wp <MouseWheel>         {wviewer::wheel_bind %W [expr {%D > 0 ? "up" : "down"}] 0;     break}
+  bind $wp <Shift-MouseWheel>   {wviewer::wheel_bind %W [expr {%D > 0 ? "up" : "down"}] shift; break}
+  bind $wp <Control-MouseWheel> {wviewer::wheel_bind %W [expr {%D > 0 ? "up" : "down"}] ctrl;  break}
 }
 
 # --- menubar (D7) ------------------------------------------------------------
@@ -1537,14 +1747,18 @@ proc wviewer::build_menubar {token top} {
   }
   $mb.file add command -label Close -accelerator Ctrl+W \
     -command [list wviewer::close $token]
-  # View > Fit = graph-data autozoom + model read-back (D6); the rest are
-  # plain canvas ops
+  # View menu (item 19, D6): Fit / Zoom In / Zoom Out all act on the GRAPH data
+  # range, never the canvas viewport (item-18 pins the canvas, so canvas zoom
+  # would SHRINK the graph). Fit = fullx/fullyzoom + model read-back (de-canvased
+  # in wviewer::fit, D5); Zoom In/Out = graph X zoom about center on every graph
+  # (wviewer::graph_zoom, D6). Redraw stays a plain canvas redraw (canvas-safe:
+  # never touches zoom/origin).
   $mb.view add command -label Fit \
     -command [list wviewer::fit $token]
   $mb.view add command -label {Zoom In} \
-    -command [list wviewer::in_ctx $token {xschem zoom_in}]
+    -command [list wviewer::graph_zoom $token in]
   $mb.view add command -label {Zoom Out} \
-    -command [list wviewer::in_ctx $token {xschem zoom_out}]
+    -command [list wviewer::graph_zoom $token out]
   $mb.view add command -label Redraw \
     -command [list wviewer::in_ctx $token {xschem redraw}]
   # Graph menu (item 12, live): model editing, always through regenerate

@@ -60,6 +60,16 @@
 #       cursor-B ground truth (`raw value <var> {}` after `set cursor2_x`)
 #       and proven different from the nearest raw sample; View>Fit = engine
 #       autozoom + model read-back; no Graph/Cursors entry left disabled.
+#   item 19 (graph-interact): wheel / RMB / f / View-zoom act on the GRAPH,
+#       never the canvas (IX*, GUI self-SKIP). IX-vpan-up/dn plain wheel =
+#       vertical graph pan (y1/y2 shift, opposite signs, x fixed); IX-hpan
+#       Shift+wheel = horizontal pan; IX-zoom-in/out Ctrl+wheel = graph X zoom;
+#       IX-menu-zoomin/out the View menu commands zoom the graph X; IX-fit Fit
+#       reframes the graph data range with NO canvas zoom_full; IX-rmb a
+#       synthetic Button-3 press+release box narrows the graph rect x-range via
+#       btn3_filter -> the C engine. EVERY IX leg also asserts the canvas
+#       xorigin/yorigin/zoom == a once-captured baseline (the graph-not-canvas
+#       teeth). Pure Tcl; the C engine and binding table are unchanged.
 #
 # Honest assertability (spec D8): headless/GUI legs can assert raw
 # points/vars/sim_type, layer-2 rect count/props, redraw rc 0 and
@@ -458,6 +468,9 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     <MouseWheel> <Button> <ButtonRelease>
     <Key> <KeyRelease> <Button-3> <ButtonRelease-3>
     <Double-Button-1> <Double-Button-2> <Double-Button-3>
+    <Button-4> <Button-5> <Shift-Button-4> <Shift-Button-5>
+    <Control-Button-4> <Control-Button-5>
+    <Shift-MouseWheel> <Control-MouseWheel>
   }
   set stray {}
   foreach seq [bind $vdrw] {
@@ -992,6 +1005,190 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
 
     rename gf_viewport {}
     rename gf_near {}
+    wviewer::close $tok
+    update
+  }
+
+  # ===== item 19: wheel / RMB / f / View-zoom act on the GRAPH (IX) ==========
+  # Deterministic: every leg drives a wviewer:: proc (or a synthetic C callback)
+  # and witnesses a SYNCHRONOUS state write (graph rect range tokens) — never a
+  # gesture/stacking/timing race (item-17 de-flake lesson). The graph-not-canvas
+  # TEETH: after every op the canvas xorigin/yorigin/zoom must equal the baseline
+  # captured once (item-18 pinned them; only the graph axes may change).
+  check "IX item-19 reopen returns 1" [wviewer::open $tok] 1
+  set vtop [wviewer::window_for $tok]
+  set vdrw $vtop.drw
+  set mb $vtop.wvmenubar
+  if {![viewer_ready $vtop]} {
+    puts "SKIPPED: IX interaction legs (viewer window never mapped)"
+    wviewer::close $tok
+    update
+  } else {
+    # let the map-time <Configure> refit settle so the canvas viewport is stable
+    for {set i 0} {$i < 40} {incr i} { update; after 20 }
+
+    # ONE graph with KNOWN concrete ranges. No trace / no raw needed: the wheel,
+    # zoom and RMB x-box all operate on the graph rect's range tokens, which exist
+    # regardless of loaded data — this keeps the whole IX block ngspice-independent
+    # and deterministic.
+    proc ix_setrange {tok x1 x2 y1 y2} {
+      set gs [dict get [wviewer::layout_for $tok] graphs]
+      set G [dict replace [lindex $gs 0] x1 $x1 x2 $x2 y1 $y1 y2 $y2]
+      wviewer::set_graphs $tok [lreplace $gs 0 0 $G]
+      wviewer::regenerate $tok
+    }
+    proc ix_canvas_ok {vdrw cx0 cy0 cz0} {
+      xschem new_schematic switch $vdrw
+      expr {[xschem get xorigin] == $cx0 && [xschem get yorigin] == $cy0 &&
+            [xschem get zoom] == $cz0}
+    }
+    wviewer::add_graph $tok                       ;# one empty graph, fills window
+    ix_setrange $tok 0 10 -1 1
+    xschem new_schematic switch $vdrw
+    check_true "IX-setup rect x1/x2/y1/y2 == 0/10/-1/1" \
+      [expr {[xschem getprop rect 2 0 x1] == 0 && [xschem getprop rect 2 0 x2] == 10 &&
+             [xschem getprop rect 2 0 y1] == -1 && [xschem getprop rect 2 0 y2] == 1}]
+    # baseline canvas AFTER the setup regenerate (stable henceforth: regenerate,
+    # wheel, zoom and fit all leave the canvas pinned — the invariant under test)
+    set cx0 [xschem get xorigin]
+    set cy0 [xschem get yorigin]
+    set cz0 [xschem get zoom]
+
+    # --- IX-vpan-up / IX-vpan-dn: plain wheel = GRAPH vertical pan ------------
+    ix_setrange $tok 0 10 -1 1
+    xschem new_schematic switch $vdrw
+    set y1a [xschem getprop rect 2 0 y1]; set y2a [xschem getprop rect 2 0 y2]
+    set x1a [xschem getprop rect 2 0 x1]; set x2a [xschem getprop rect 2 0 x2]
+    wviewer::wheel $tok $vdrw up 0
+    xschem new_schematic switch $vdrw
+    set dyu1 [expr {[xschem getprop rect 2 0 y1] - $y1a}]
+    set dyu2 [expr {[xschem getprop rect 2 0 y2] - $y2a}]
+    check_true "IX-vpan-up y1,y2 shift by the same nonzero delta" \
+      [expr {abs($dyu1 - $dyu2) < 1e-9 && abs($dyu1) > 1e-9}]
+    check_true "IX-vpan-up x range unchanged" \
+      [expr {[xschem getprop rect 2 0 x1] == $x1a &&
+             [xschem getprop rect 2 0 x2] == $x2a}]
+    check_true "IX-vpan-up canvas == baseline (graph-not-canvas)" \
+      [ix_canvas_ok $vdrw $cx0 $cy0 $cz0]
+
+    ix_setrange $tok 0 10 -1 1
+    xschem new_schematic switch $vdrw
+    set y1a [xschem getprop rect 2 0 y1]; set y2a [xschem getprop rect 2 0 y2]
+    wviewer::wheel $tok $vdrw down 0
+    xschem new_schematic switch $vdrw
+    set dyd1 [expr {[xschem getprop rect 2 0 y1] - $y1a}]
+    set dyd2 [expr {[xschem getprop rect 2 0 y2] - $y2a}]
+    check_true "IX-vpan-dn y1,y2 shift by the same nonzero delta" \
+      [expr {abs($dyd1 - $dyd2) < 1e-9 && abs($dyd1) > 1e-9}]
+    check_true "IX-vpan-dn is opposite in sign to IX-vpan-up" \
+      [expr {$dyd1 * $dyu1 < 0}]
+    check_true "IX-vpan-dn canvas == baseline" [ix_canvas_ok $vdrw $cx0 $cy0 $cz0]
+
+    # --- IX-hpan: Shift+wheel = GRAPH horizontal pan -------------------------
+    ix_setrange $tok 0 10 -1 1
+    xschem new_schematic switch $vdrw
+    set x1a [xschem getprop rect 2 0 x1]; set x2a [xschem getprop rect 2 0 x2]
+    set y1a [xschem getprop rect 2 0 y1]; set y2a [xschem getprop rect 2 0 y2]
+    wviewer::wheel $tok $vdrw up shift
+    xschem new_schematic switch $vdrw
+    set dxh1 [expr {[xschem getprop rect 2 0 x1] - $x1a}]
+    set dxh2 [expr {[xschem getprop rect 2 0 x2] - $x2a}]
+    check_true "IX-hpan x1,x2 shift by the same nonzero delta" \
+      [expr {abs($dxh1 - $dxh2) < 1e-9 && abs($dxh1) > 1e-9}]
+    check_true "IX-hpan y range unchanged" \
+      [expr {[xschem getprop rect 2 0 y1] == $y1a &&
+             [xschem getprop rect 2 0 y2] == $y2a}]
+    check_true "IX-hpan canvas == baseline" [ix_canvas_ok $vdrw $cx0 $cy0 $cz0]
+
+    # --- IX-zoom-in / IX-zoom-out: Ctrl+wheel = GRAPH X zoom -----------------
+    ix_setrange $tok 0 10 -1 1
+    xschem new_schematic switch $vdrw
+    set span0 [expr {[xschem getprop rect 2 0 x2] - [xschem getprop rect 2 0 x1]}]
+    wviewer::wheel $tok $vdrw up ctrl
+    xschem new_schematic switch $vdrw
+    set spani [expr {[xschem getprop rect 2 0 x2] - [xschem getprop rect 2 0 x1]}]
+    check_true "IX-zoom-in x-span strictly smaller" [expr {$spani < $span0 - 1e-9}]
+    check_true "IX-zoom-in canvas == baseline" [ix_canvas_ok $vdrw $cx0 $cy0 $cz0]
+
+    ix_setrange $tok 0 10 -1 1
+    xschem new_schematic switch $vdrw
+    set span0 [expr {[xschem getprop rect 2 0 x2] - [xschem getprop rect 2 0 x1]}]
+    wviewer::wheel $tok $vdrw down ctrl
+    xschem new_schematic switch $vdrw
+    set spano [expr {[xschem getprop rect 2 0 x2] - [xschem getprop rect 2 0 x1]}]
+    check_true "IX-zoom-out x-span strictly larger" [expr {$spano > $span0 + 1e-9}]
+    check_true "IX-zoom-out canvas == baseline" [ix_canvas_ok $vdrw $cx0 $cy0 $cz0]
+
+    # --- IX-menu-zoomin / IX-menu-zoomout: View menu commands ---------------
+    ix_setrange $tok 0 10 -1 1
+    xschem new_schematic switch $vdrw
+    set span0 [expr {[xschem getprop rect 2 0 x2] - [xschem getprop rect 2 0 x1]}]
+    $mb.view invoke [$mb.view index {Zoom In}]
+    xschem new_schematic switch $vdrw
+    set spani [expr {[xschem getprop rect 2 0 x2] - [xschem getprop rect 2 0 x1]}]
+    check_true "IX-menu-zoomin x-span shrinks on the graph" \
+      [expr {$spani < $span0 - 1e-9}]
+    check_true "IX-menu-zoomin canvas == baseline" [ix_canvas_ok $vdrw $cx0 $cy0 $cz0]
+
+    ix_setrange $tok 0 10 -1 1
+    xschem new_schematic switch $vdrw
+    set span0 [expr {[xschem getprop rect 2 0 x2] - [xschem getprop rect 2 0 x1]}]
+    $mb.view invoke [$mb.view index {Zoom Out}]
+    xschem new_schematic switch $vdrw
+    set spano [expr {[xschem getprop rect 2 0 x2] - [xschem getprop rect 2 0 x1]}]
+    check_true "IX-menu-zoomout x-span grows on the graph" \
+      [expr {$spano > $span0 + 1e-9}]
+    check_true "IX-menu-zoomout canvas == baseline" [ix_canvas_ok $vdrw $cx0 $cy0 $cz0]
+
+    # --- IX-rmb: right-drag = GRAPH x-zoom-to-box via the C engine -----------
+    # Drive wviewer::btn3_filter (the forwarder S3 sabotages) with a synthetic
+    # ButtonPress then ButtonRelease at two body x pixels (30% / 70% of width,
+    # mid-height): well inside the plot body (horizontally 14%..95%, vertically
+    # 14%..86% of the full-window graph rect), so graph_left/graph_top are 0 and
+    # the C GRAPHPAN x-zoom-to-box path fires (callback.c:1000/:1454). The box
+    # narrows the graph rect x-range; the canvas stays pinned. The rect-x state
+    # change also proves btn3_filter forwarded (S3's unconditional swallow leaves
+    # it unchanged).
+    ix_setrange $tok 0 10 -1 1
+    xschem new_schematic switch $vdrw
+    set rx1_0 [xschem getprop rect 2 0 x1]
+    set rx2_0 [xschem getprop rect 2 0 x2]
+    set W [winfo width $vdrw]; set H [winfo height $vdrw]
+    set px1 [expr {int(0.30 * $W)}]
+    set px2 [expr {int(0.70 * $W)}]
+    set py  [expr {int(0.50 * $H)}]
+    wviewer::btn3_filter $vdrw 4 $px1 $py 3 0        ;# ButtonPress   -> GRAPHPAN
+    wviewer::btn3_filter $vdrw 5 $px2 $py 3 0        ;# ButtonRelease -> zoom box
+    xschem new_schematic switch $vdrw
+    set rx1_1 [xschem getprop rect 2 0 x1]
+    set rx2_1 [xschem getprop rect 2 0 x2]
+    check_true "IX-rmb graph x1 narrowed inward (x1 grew)" \
+      [expr {$rx1_1 > $rx1_0 + 1e-9}]
+    check_true "IX-rmb graph x2 narrowed inward (x2 shrank)" \
+      [expr {$rx2_1 < $rx2_0 - 1e-9}]
+    check_true "IX-rmb graph x-span narrowed toward the box" \
+      [expr {($rx2_1 - $rx1_1) < ($rx2_0 - $rx1_0) - 1e-9}]
+    check_true "IX-rmb canvas == baseline (graph zoom, not canvas)" \
+      [ix_canvas_ok $vdrw $cx0 $cy0 $cz0]
+
+    # --- IX-fit: Fit reframes the GRAPH data range, never the canvas ---------
+    # PRIMARY teeth (the removed zoom_full): perturb the data range, Fit, and the
+    # CANVAS must be unchanged. Holds with or without a raw loaded. Runs LAST
+    # among the IX legs: the S2 sabotage (re-inserting `xschem zoom_full`) moves
+    # the canvas, and running Fit last keeps that drift from leaking a canvas ==
+    # baseline failure into a later leg — the real code never moves the canvas,
+    # so the single baseline still holds for every leg above.
+    ix_setrange $tok 0 10 -1 1
+    ix_setrange $tok 0.5 1.0 -1 1
+    xschem new_schematic switch $vdrw
+    check_true "IX-fit perturbed data range (x1==0.5)" \
+      [expr {[xschem getprop rect 2 0 x1] == 0.5}]
+    wviewer::fit $tok
+    check_true "IX-fit canvas == baseline (no zoom_full reframe)" \
+      [ix_canvas_ok $vdrw $cx0 $cy0 $cz0]
+
+    rename ix_setrange {}
+    rename ix_canvas_ok {}
     wviewer::close $tok
     update
   }

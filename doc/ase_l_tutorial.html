@@ -368,7 +368,10 @@ re-add the trace, or save and reload the state, to re-materialize them.</p>
 <ul>
 <li><span class="menu">File</span>: <b>Close</b> (<kbd>Ctrl+W</kbd>)</li>
 <li><span class="menu">View</span>: <b>Fit</b>, <b>Zoom In</b>, <b>Zoom Out</b>,
-<b>Redraw</b></li>
+<b>Redraw</b> — all act on the <b>graph</b> content, never on the window: the
+graph always fills the viewer, and these commands change only the graph axes,
+so they can never shrink the graph. <b>Zoom In</b>/<b>Zoom Out</b> zoom the graph
+x-axis about its centre.</li>
 <li><span class="menu">Graph</span>: <b>Add Graph</b>, <b>Add Trace...</b>,
 <b>Delete...</b>, <b>Axes...</b>, checkbutton <b>Shared X Axis</b></li>
 <li><span class="menu">Cursors</span>: checkbuttons <b>Cursor A</b>,
@@ -376,7 +379,8 @@ re-add the trace, or save and reload the state, to re-materialize them.</p>
 </ul>
 <p>Graphs stack vertically; trace colors auto-cycle through the layer palette.
 <b>Shared X Axis</b> makes all graphs inherit graph&nbsp;0's x range. <b>Fit</b>
-runs the engine full-zoom and reads the resulting ranges back.</p>
+runs the engine full-zoom on the graph data (full x + y) and reads the resulting
+ranges back — it fits the <b>graph</b>, it does not reframe the window.</p>
 
 <h3>Adding traces and expression waves</h3>
 <p><span class="menu">Graph &gt; Add Trace...</span> opens the <b>Add Trace</b>
@@ -429,17 +433,30 @@ each mouse-button release. Cursor state is not saved with the session.</p>
 <h3>Viewer keyboard</h3>
 <table>
 <tr><th>Key</th><th>Action</th></tr>
-<tr><td><kbd>f</kbd></td><td>fit</td></tr>
-<tr><td><kbd>Z</kbd> / <kbd>Ctrl-z</kbd></td><td>zoom in / zoom out</td></tr>
-<tr><td>arrows</td><td>pan</td></tr>
+<tr><td><kbd>f</kbd></td><td>fit the graph (full x + y)</td></tr>
+<tr><td><kbd>Z</kbd> / <kbd>Ctrl-z</kbd></td><td>zoom the <b>graph</b> x-axis in / out
+(about the centre; never the window)</td></tr>
+<tr><td>arrows</td><td>pan / zoom the graph x-axis</td></tr>
 <tr><td><kbd>a</kbd> <kbd>b</kbd> <kbd>s</kbd> <kbd>m</kbd> <kbd>t</kbd> <kbd>A</kbd> <kbd>B</kbd></td>
 <td>cursor A/B toggle, swap, measure etc. — only while the pointer is over a graph</td></tr>
 <tr><td><kbd>Ctrl-W</kbd></td><td>close the viewer</td></tr>
 <tr><td><kbd>ESC</kbd></td><td>abort + redraw (never closes the viewer)</td></tr>
 </table>
-<p>Right-click works only over a graph (pan/zoom); double-clicks are swallowed
-— axis editing belongs to the <b>Axes</b> dialog. All other editor keys are
-disabled in the viewer.</p>
+
+<h3>Viewer mouse / wheel</h3>
+<p>The wheel mirrors the schematic wheel scheme, but acts on the <b>graph</b>
+content — it never pans or zooms the window (the graph always fills the viewer):</p>
+<table>
+<tr><th>Gesture</th><th>Action</th></tr>
+<tr><td>wheel up / down</td><td>vertical pan of the graph (shifts the y range)</td></tr>
+<tr><td><kbd>Shift</kbd> + wheel</td><td>horizontal pan of the graph (shifts the x range)</td></tr>
+<tr><td><kbd>Ctrl</kbd> + wheel</td><td>zoom the graph x-axis in / out</td></tr>
+<tr><td>right-button drag</td><td>rubber-band a box, release to zoom the graph
+x-axis to that box (like a schematic zoom-box, but on the graph)</td></tr>
+</table>
+<p>Right-click drag zooms the graph and leaves the window untouched;
+double-clicks are swallowed — axis editing belongs to the <b>Axes</b> dialog.
+All other editor keys and mouse verbs are disabled in the viewer.</p>
 
 <h2 id="dcsweep">7. Worked example: a DC sweep</h2>
 <p>Turn the quick-start op point into an Id–Vgs curve.</p>
