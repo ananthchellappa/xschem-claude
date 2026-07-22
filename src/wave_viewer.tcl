@@ -56,8 +56,9 @@
 # Fit (D6): engine fullx/fullyzoom computes the data ranges into the rect
 # attrs and fit reads them back into the model like a user edit. Pure
 # helpers (headless-checkable, no xschem/Tk calls): graph_props (model ->
-# rect prop string, add_graph template order), graph_geometry (stacked
-# slots), next_color (D10 palette cycle), validate_rpn (D4 — the C RPN
+# rect prop string, add_graph template order), band_geometry (item 18: equal
+# viewport bands, replacing the old fixed graph_geometry slots),
+# next_color (D10 palette cycle), validate_rpn (D4 — the C RPN
 # evaluator DISCARDS errors, save.c raw_add_vector, so expressions are
 # pre-validated Tcl-side against the save.c token table).
 # Graph menu (D3/D5/D11/D13): Add Graph, Add Trace... (expression entry +
@@ -139,6 +140,12 @@ namespace eval wviewer {
   # per-dialog transient state (D13), cleaned on OK/cancel/forget
   variable axl;     array set axl {}
   variable delmap;  array set delmap {}
+  # item 18 (graph-fills-win): <Configure> refit bookkeeping, per session token.
+  # cfgafter = the pending `after idle` id (coalesces resize storms); fillwh =
+  # the canvas pixel size {W H} the last regenerate filled at (so on_configure
+  # re-fills ONLY when the size actually changed). Cleaned on forget.
+  variable cfgafter; array set cfgafter {}
+  variable fillwh;   array set fillwh {}
 }
 
 # The viewer title (D6): `Waveforms <design cell> (<state view>)`. Cell from
@@ -192,6 +199,7 @@ proc wviewer::forget {token} {
   variable layouts
   variable cva; variable cvb; variable cvr; variable sharedx
   variable axl; variable delmap
+  variable cfgafter; variable fillwh
   if {[dict exists $windows $token]} {
     dict unset graphbb [dict get $windows $token win_path]
     dict unset windows $token
@@ -203,6 +211,9 @@ proc wviewer::forget {token} {
   catch {unset sharedx($token)}
   array unset axl ${token},*
   catch {unset delmap($token)}
+  if {[info exists cfgafter($token)]} { catch {after cancel $cfgafter($token)} }
+  catch {unset cfgafter($token)}
+  catch {unset fillwh($token)}
   return {}
 }
 
@@ -244,6 +255,11 @@ proc wviewer::open {token} {
   # D1: readonly for the window's life — modified becomes unsettable, so no
   # save prompt can ever appear on close
   xschem set readonly 1
+  # item 18 (D1): grid/origin OFF for THIS window only (per-ctx C flag, NOT the
+  # global draw_grid — normal schematic windows keep their grid). Set once and
+  # never cleared; alloc_xschem_data zeroes it for every other ctx. The window
+  # now reads as a graph, not a schematic.
+  xschem set no_grid 1
   dict set windows $token [dict create top $top win_path $wp]
   wviewer::build_menubar $token $top
   wviewer::strip_bindings $wp
@@ -288,6 +304,12 @@ proc wviewer::open {token} {
   # dragging (Tk most-specific-wins; the item-11 sweep exists for exactly
   # this class).
   bind $wp <ButtonRelease> "+[list wviewer::readout_refresh $token]"
+  # item 18: refit the graph(s) to the new viewport on any canvas resize so the
+  # graph ALWAYS fills the window. APPEND (never replace) — <Configure> is in
+  # keepseqs and the editor's own resize handler (resetwin+draw) MUST keep
+  # running; on_configure debounces to `after idle` and re-fills only on a real
+  # size change (D6).
+  bind $wp <Configure> "+[list wviewer::on_configure $token]"
   wviewer::retitle $token
   bind $top <FocusIn> "+[list wviewer::retitle $token]"
   # WM-close (or any external destroy) must also clean the registry; every
@@ -386,7 +408,8 @@ proc wviewer::dget {d key def} {
 }
 
 # A fresh model graph. Spec model fields; `height` (per-graph relative
-# height) is DEFERRED — every graph gets the fixed graph_geometry slot.
+# height) is DEFERRED — every graph gets an equal viewport band (item 18,
+# band_geometry).
 proc wviewer::empty_graph {} {
   return [dict create traces {} logx 0 logy 0 x1 {} x2 {} y1 {} y2 {}]
 }
@@ -452,11 +475,66 @@ proc wviewer::clear_graph_traces {token gi} {
   return 1
 }
 
-# PURE (headless-checkable): canvas slot of graph index `i` — stacked
-# vertically, 800x400 with a 50 gap (xschem y grows downward).
-proc wviewer::graph_geometry {i} {
-  set y [expr {$i * 450}]
-  return [list 0 $y 800 [expr {$y + 400}]]
+# GUI: the schematic-coord rect covering the CURRENT visible viewport of the
+# viewer canvas `wp` (item 18, D2). Inverts the documented pixel->schematic
+# transform (xschem.h X_TO_XSCHEM: px*zoom - xorigin): the canvas pixel box
+# [0..W]x[0..H] maps to [-xorigin .. W*zoom-xorigin] x [-yorigin .. H*zoom-
+# yorigin]. Switches to the viewer ctx first (zoom/xorigin/yorigin are per
+# window). A not-yet-mapped canvas (W<=1 || H<=1) falls back to a sane default
+# so the first placement is reasonable — the map-time <Configure> refit
+# (on_configure) is the authority that makes the final state exact. NO new
+# `xschem get` accessor is warranted (cleanly computable pure-Tcl, D2).
+proc wviewer::viewport_rect {wp} {
+  xschem new_schematic switch $wp
+  set W [winfo width $wp]
+  set H [winfo height $wp]
+  if {$W <= 1 || $H <= 1} { return {0 0 800 600} }
+  set zoom [xschem get zoom]
+  set xo   [xschem get xorigin]
+  set yo   [xschem get yorigin]
+  return [list [expr {-$xo}] [expr {-$yo}] \
+               [expr {$W * $zoom - $xo}] [expr {$H * $zoom - $yo}]]
+}
+
+# PURE (headless-checkable; no Tk/xschem calls): the schematic-coord rect of
+# graph `i` of `n`, tiling the viewport {vx1 vy1 vx2 vy2} into n equal
+# full-width vertical bands (xschem y grows downward), replacing the old fixed
+# 800x400/i*450 slots (item 18, D3/D5). NO inter-band gap — the engine's 14%
+# draw margins (draw.c) already separate adjacent graphs. Boundaries use
+# `vy1 + k*span/n` at k=i and k=i+1 (NOT a pre-divided `span/n`): so a whole-
+# number viewport tiles to clean integer bands while a fractional GUI viewport
+# still tiles exactly (band i's bottom is the SAME expression as band i+1's
+# top -> contiguous, no gap/overlap, in int and double alike).
+proc wviewer::band_geometry {i n vx1 vy1 vx2 vy2} {
+  if {$n < 1} { set n 1 }
+  set span [expr {$vy2 - $vy1}]
+  set by1 [expr {$vy1 + ($i * $span) / $n}]
+  set by2 [expr {$vy1 + (($i + 1) * $span) / $n}]
+  return [list $vx1 $by1 $vx2 $by2]
+}
+
+# item 18 (D6): the <Configure> refit. Debounced — coalesce a resize storm into
+# ONE `after idle` refit; a real re-fill runs only when the canvas pixel size
+# changed since the last fill (fillwh), suppressing no-op Configure churn.
+proc wviewer::on_configure {token} {
+  variable windows
+  variable cfgafter
+  if {![dict exists $windows $token]} { return }
+  if {[info exists cfgafter($token)]} { catch {after cancel $cfgafter($token)} }
+  set cfgafter($token) [after idle [list wviewer::configure_apply $token]]
+}
+
+proc wviewer::configure_apply {token} {
+  variable windows
+  variable cfgafter
+  variable fillwh
+  catch {unset cfgafter($token)}
+  if {![dict exists $windows $token]} { return }
+  set wp [dict get $windows $token win_path]
+  if {[catch {winfo width $wp} w] || $w <= 1} { return }
+  set cur [list $w [winfo height $wp]]
+  if {[info exists fillwh($token)] && $fillwh($token) eq $cur} { return }
+  wviewer::regenerate $token
 }
 
 # PURE (D10): next auto-cycled trace color for model graph `G` — the first
@@ -573,6 +651,7 @@ proc wviewer::auto_expr_name {token} {
 proc wviewer::regenerate {token} {
   variable windows
   variable graphbb
+  variable fillwh
   if {![dict exists $windows $token]} { return 0 }
   set wp [dict get $windows $token win_path]
   set lay [wviewer::layout_for $token]
@@ -586,11 +665,17 @@ proc wviewer::regenerate {token} {
       set gs [lreplace $gs $i $i $gg]
     }
   }
+  # item 18: every graph FILLS an equal vertical band of the CURRENT viewport
+  # (no fixed slot). viewport_rect switches to the viewer ctx and reads its live
+  # zoom/origin + canvas size; band_geometry tiles that viewport.
+  set n [llength $gs]
+  lassign [wviewer::viewport_rect $wp] vx1 vy1 vx2 vy2
   wviewer::with_edit $token {
     xschem clear_drawing
     set gi_ 0
     foreach G_ $gs {
-      lassign [wviewer::graph_geometry $gi_] rx1_ ry1_ rx2_ ry2_
+      lassign [wviewer::band_geometry $gi_ $n $vx1 $vy1 $vx2 $vy2] \
+        rx1_ ry1_ rx2_ ry2_
       wviewer::place_graph_rect $rx1_ $ry1_ $rx2_ $ry2_ [wviewer::graph_props $G_]
       incr gi_
     }
@@ -612,14 +697,22 @@ proc wviewer::regenerate {token} {
       }
     }
   }
+  # graphbb feeds over_graph / the a/b/s key gate — build it from the SAME
+  # band rects so it matches the placed graphs exactly (D5)
   set bbs {}
-  for {set i 0} {$i < [llength $gs]} {incr i} {
-    lappend bbs [wviewer::graph_geometry $i]
+  for {set i 0} {$i < $n} {incr i} {
+    lappend bbs [wviewer::band_geometry $i $n $vx1 $vy1 $vx2 $vy2]
   }
   dict set graphbb $wp $bbs
   xschem new_schematic switch $wp
-  xschem zoom_full
+  # item 18 (D4): NO `xschem zoom_full` — the graph fills the viewport by
+  # construction, so canvas zoom must NOT re-frame (shrink) it. Just redraw;
+  # clear_drawing/redraw never touch zoom/origin, so the viewport stays pinned
+  # and only the graph's internal axes change (item 19). View>Fit keeps its own
+  # zoom_full (wviewer::fit) — that is item 19, out of scope here.
   xschem redraw
+  # record the canvas pixel size just filled, for the <Configure> refit gate
+  catch {set fillwh($token) [list [winfo width $wp] [winfo height $wp]]}
   catch {wviewer::readout_refresh $token}
   return 1
 }

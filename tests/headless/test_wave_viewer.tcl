@@ -38,8 +38,16 @@
 #       with no prompt, registry cleaned, reopen builds a fresh window.
 #   H1-H6 item-12 pure model->rect-props procs (BOTH arms, no window, no
 #       xschem calls): graph_props template/token/alias/range/log emission,
-#       graph_geometry stacking, next_color palette cycle, validate_rpn
-#       token rules (save.c RPN table; D4 pre-validation)
+#       band_geometry viewport tiling (item 18; replaced graph_geometry),
+#       next_color palette cycle, validate_rpn token rules (save.c RPN table;
+#       D4 pre-validation)
+#   item 18 (graph-fills-win): the graph FILLS the viewer window, not a fixed
+#       800x400 rect on a grid canvas. RG0 no_grid getter/setter roundtrip;
+#       RG1/RG2 normal-window grid+embedded-graph regression (grid-off is
+#       VIEWER-ONLY); H-band1..4 pure band tiling (single-fills / equal halves /
+#       n=3 contiguous / nonzero-origin verbatim); GF1-GF5 GUI (single graph
+#       covers the viewport, grid off here / on elsewhere, resize refits,
+#       two graphs each fill a half, regenerate never re-frames the canvas).
 #   G10-G17 item-12 viewer core (GUI, self-SKIP): Add Graph stacking +
 #       model/rect/graphbb agreement; Add Trace from the raw-vars listbox
 #       (count == `raw vars`, palette-head color); expression trace via
@@ -187,6 +195,14 @@ if {[auto_execok ngspice] eq {}} {
   catch {xschem raw clear}
 }
 
+# --- RG0: no_grid getter/setter roundtrip (item 18; per-window flag, default 0)
+# Ends at 0 so the RG1 (normal window keeps its grid) assertion below holds.
+check "RG0 no_grid defaults 0 on a normal ctx" [xschem get no_grid] 0
+xschem set no_grid 1
+check "RG0 no_grid reads back 1 after set" [xschem get no_grid] 1
+xschem set no_grid 0
+check "RG0 no_grid cleared back to 0" [xschem get no_grid] 0
+
 # --- V6: embedded-graph regression (shipped file, readonly) ------------------
 xschem load [file join $repo xschem_library examples test_ne555.sch]
 xschem set readonly 1
@@ -195,6 +211,16 @@ check_true "V6 shipped schematic keeps its layer-2 graph rect(s)" \
 check "V6 first layer-2 rect keeps flags=graph" \
   [xschem getprop rect 2 0 flags] graph
 check "V6 redraw rc 0 on the readonly graph schematic" [catch {xschem redraw}] 0
+
+# --- RG1/RG2: normal-window grid + embedded-graph regression (item 18, D7) ----
+# The grid-off + fill behavior is VIEWER-WINDOW-ONLY: a plain file load never
+# enters wviewer::, so no_grid stays 0 (grid draws) and the embedded graph rect
+# is geometrically untouched.
+check "RG1 normal window keeps no_grid 0 (grid still draws)" \
+  [xschem get no_grid] 0
+check_true "RG2 embedded graph rect present on the normal window" \
+  [expr {[xschem get rects 2] >= 1}]
+check "RG2 redraw rc 0 on the normal graph window" [catch {xschem redraw}] 0
 
 # --- H1-H6: item-12 pure model->props procs (both arms; no window) -----------
 
@@ -233,9 +259,36 @@ check_true "H3 x1=0 line" [regexp -line {^x1=0$} $ph3]
 check_true "H3 x2=1.8 line" [regexp -line {^x2=1.8$} $ph3]
 check_true "H3 logy=1 line" [regexp -line {^logy=1$} $ph3]
 
-# H4: vertical stacking (xschem y grows downward, 800x400 slots, 50 gap)
-check "H4 graph 0 slot" [wviewer::graph_geometry 0] {0 0 800 400}
-check "H4 graph 2 slot" [wviewer::graph_geometry 2] {0 900 800 1300}
+# H-band: viewport-relative equal vertical bands (item 18 replaces the old
+# fixed 800x400 / i*450 graph_geometry slots — geometry is now viewport-
+# relative, so a graph always FILLS its band of the live window).
+# H-band1: single graph fills the whole viewport
+check "H-band1 single graph fills the whole viewport" \
+  [wviewer::band_geometry 0 1 0 0 1000 800] {0 0 1000 800}
+# H-band2: two equal full-width bands, top then bottom
+check "H-band2 top half" \
+  [wviewer::band_geometry 0 2 0 0 1000 800] {0 0 1000 400}
+check "H-band2 bottom half" \
+  [wviewer::band_geometry 1 2 0 0 1000 800] {0 400 1000 800}
+# H-band3: n=3 tiling — contiguous (band i+1 top == band i bottom), the union
+# spans [vy1,vy2], all three share the full width [vx1,vx2]
+set hb0 [wviewer::band_geometry 0 3 0 0 1000 800]
+set hb1 [wviewer::band_geometry 1 3 0 0 1000 800]
+set hb2 [wviewer::band_geometry 2 3 0 0 1000 800]
+check_true "H-band3 band1 top == band0 bottom (contiguous)" \
+  [expr {[lindex $hb1 1] == [lindex $hb0 3]}]
+check_true "H-band3 band2 top == band1 bottom (contiguous)" \
+  [expr {[lindex $hb2 1] == [lindex $hb1 3]}]
+check_true "H-band3 union spans the full viewport height" \
+  [expr {[lindex $hb0 1] == 0 && [lindex $hb2 3] == 800}]
+check_true "H-band3 all three bands share the full width" \
+  [expr {[lindex $hb0 0] == 0 && [lindex $hb0 2] == 1000 &&
+         [lindex $hb1 0] == 0 && [lindex $hb1 2] == 1000 &&
+         [lindex $hb2 0] == 0 && [lindex $hb2 2] == 1000}]
+# H-band4: a nonzero-origin viewport is used VERBATIM (proves the geometry is
+# viewport-relative, not hardcoded 0/800)
+check "H-band4 nonzero-origin viewport used verbatim" \
+  [wviewer::band_geometry 1 2 -100 -50 900 550] {-100 250 900 550}
 
 # H5: color auto-cycle (palette 4 5 7 8 9 12 14 15 10 11)
 set Gh5a [dict create traces {} logx 0 logy 0 x1 {} x2 {} y1 {} y2 {}]
@@ -551,14 +604,30 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
       [expr {[$gmenu entrycget [$gmenu index {Add Graph}] -state] ne {disabled}}]
     $gmenu invoke [$gmenu index {Add Graph}]
     $gmenu invoke [$gmenu index {Add Graph}]
+    update                                 ;# flush any pending <Configure> refit
     check "G10 model has 2 graphs" \
       [llength [dict get [wviewer::layout_for $tok] graphs]] 2
     xschem new_schematic switch $vdrw
     check "G10 two layer-2 graph rects" [xschem get rects 2] 2
     set bbs [dict get $::wviewer::graphbb $vdrw]
-    check "G10 graphbb row 1 y-offset 450" [lindex $bbs 1] {0 450 800 850}
-    check "G10 graphbb row 1 == graph_geometry 1" \
-      [lindex $bbs 1] [wviewer::graph_geometry 1]
+    check "G10 graphbb has 2 bands" [llength $bbs] 2
+    # item 18: the two graphs split the live viewport into equal full-width
+    # halves (viewport-relative, replacing the old fixed i*450 slot). graphbb is
+    # built from band_geometry, so each row equals the band of the live viewport;
+    # row 1 is the BOTTOM half.
+    set vp10 [wviewer::viewport_rect $vdrw]
+    lassign $vp10 v10x1 v10y1 v10x2 v10y2
+    check "G10 graphbb row 0 == band 0 of 2 (top half)" \
+      [lindex $bbs 0] [wviewer::band_geometry 0 2 $v10x1 $v10y1 $v10x2 $v10y2]
+    check "G10 graphbb row 1 == band 1 of 2 (bottom half)" \
+      [lindex $bbs 1] [wviewer::band_geometry 1 2 $v10x1 $v10y1 $v10x2 $v10y2]
+    check_true "G10 rows are contiguous (row1 top == row0 bottom)" \
+      [expr {[lindex [lindex $bbs 1] 1] == [lindex [lindex $bbs 0] 3]}]
+    check_true "G10 both rows span the full viewport width" \
+      [expr {[lindex [lindex $bbs 0] 0] == $v10x1 &&
+             [lindex [lindex $bbs 0] 2] == $v10x2 &&
+             [lindex [lindex $bbs 1] 0] == $v10x1 &&
+             [lindex [lindex $bbs 1] 2] == $v10x2}]
 
     set names {}
     if {$have_raw} {
@@ -692,8 +761,14 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
       check "G14 rects drop to 1" [xschem get rects 2] 1
       check "G14 model drops to 1 graph" \
         [llength [dict get [wviewer::layout_for $tok] graphs]] 1
-      check "G14 remaining graph re-stacked from y 0" \
-        [lindex [dict get $::wviewer::graphbb $vdrw] 0] {0 0 800 400}
+      # item 18: the sole surviving graph re-FILLS the WHOLE viewport (n=1),
+      # not a fixed 800x400 slot — compute the expected full-viewport band
+      update
+      set vp14 [wviewer::viewport_rect $vdrw]
+      lassign $vp14 v14x1 v14y1 v14x2 v14y2
+      check "G14 remaining graph fills the whole viewport" \
+        [lindex [dict get $::wviewer::graphbb $vdrw] 0] \
+        [wviewer::band_geometry 0 1 $v14x1 $v14y1 $v14x2 $v14y2]
 
       # --- G15: cursors + readout (menu-driven; interpolation honest) --------
       set sweepv [lindex $names 0]
@@ -780,6 +855,143 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     }
     check "G17 no Graph/Cursors entry left disabled" $anydis17 0
 
+    wviewer::close $tok
+    update
+  }
+
+  # ===== item 18: the graph FILLS the viewer window (GF1-GF5) ================
+  # A fresh viewer: assert the graph rect covers ~the full canvas viewport,
+  # refits on resize, splits into equal bands for multi-graph, and regenerate
+  # never re-frames (shrinks) the canvas.
+  check "GF item-18 reopen returns 1" [wviewer::open $tok] 1
+  set vtop [wviewer::window_for $tok]
+  set vdrw $vtop.drw
+  set mb $vtop.wvmenubar
+  if {![viewer_ready $vtop]} {
+    puts "SKIPPED: GF1-GF5 fill legs (viewer window never mapped)"
+    wviewer::close $tok
+    update
+  } else {
+    # let the map-time <Configure> refit + any pending_fullzoom settle
+    for {set i 0} {$i < 60} {incr i} { update; after 20 }
+
+    # the live viewport-covering rect in schematic coords (mirrors
+    # wviewer::viewport_rect, computed independently as the test's witness)
+    proc gf_viewport {vdrw} {
+      xschem new_schematic switch $vdrw
+      set W [winfo width $vdrw]; set H [winfo height $vdrw]
+      set z [xschem get zoom]
+      set xo [xschem get xorigin]; set yo [xschem get yorigin]
+      return [list [expr {-$xo}] [expr {-$yo}] \
+                   [expr {$W * $z - $xo}] [expr {$H * $z - $yo}]]
+    }
+    proc gf_near {a b tol} { expr {abs($a - $b) <= $tol} }
+
+    # --- GF1: a single graph fills the whole viewport ------------------------
+    $mb.graph invoke [$mb.graph index {Add Graph}]
+    update
+    xschem new_schematic switch $vdrw
+    check "GF1 exactly one graph rect" [xschem get rects 2] 1
+    set bb0 [lindex [dict get $::wviewer::graphbb $vdrw] 0]
+    lassign [gf_viewport $vdrw] vx1 vy1 vx2 vy2
+    set tol [expr {(abs($vx2 - $vx1) + abs($vy2 - $vy1)) * 0.02 + 2}]
+    check_true "GF1 graph left edge ~ viewport left" \
+      [gf_near [lindex $bb0 0] $vx1 $tol]
+    check_true "GF1 graph right edge ~ viewport right" \
+      [gf_near [lindex $bb0 2] $vx2 $tol]
+    check_true "GF1 graph top edge ~ viewport top" \
+      [gf_near [lindex $bb0 1] $vy1 $tol]
+    check_true "GF1 graph bottom edge ~ viewport bottom" \
+      [gf_near [lindex $bb0 3] $vy2 $tol]
+
+    # --- GF2: grid OFF in the viewer, ON in a normal window ------------------
+    xschem new_schematic switch $vdrw
+    check "GF2 viewer no_grid == 1" [xschem get no_grid] 1
+    check "GF2 viewer redraw rc 0 (no_grid draw path runs clean)" \
+      [catch {xschem redraw}] 0
+    xschem new_schematic switch .drw
+    check "GF2 design/main canvas no_grid == 0" [xschem get no_grid] 0
+    xschem new_schematic switch $vdrw
+
+    # --- GF3: resize -> refit ran (graph still fills, and it grew) -----------
+    xschem new_schematic switch $vdrw
+    set bb_before [lindex [dict get $::wviewer::graphbb $vdrw] 0]
+    set w_before [winfo width $vdrw]
+    set h_before [winfo height $vdrw]
+    wm geometry $vtop 1200x900
+    update
+    for {set i 0} {$i < 120} {incr i} {
+      update
+      if {[winfo width $vdrw] != $w_before || \
+          [winfo height $vdrw] != $h_before} break
+      after 20
+    }
+    update; after 150; update            ;# let on_configure's after-idle fire
+    if {[winfo width $vdrw] == $w_before && [winfo height $vdrw] == $h_before} {
+      puts "SKIPPED: GF3 resize refit (WM refused the resize)"
+    } else {
+      xschem new_schematic switch $vdrw
+      set bb_after [lindex [dict get $::wviewer::graphbb $vdrw] 0]
+      lassign [gf_viewport $vdrw] vx1 vy1 vx2 vy2
+      set tol [expr {(abs($vx2 - $vx1) + abs($vy2 - $vy1)) * 0.02 + 2}]
+      check_true "GF3 graph still covers the new viewport (right edge)" \
+        [gf_near [lindex $bb_after 2] $vx2 $tol]
+      check_true "GF3 graph still covers the new viewport (bottom edge)" \
+        [gf_near [lindex $bb_after 3] $vy2 $tol]
+      set wb [expr {[lindex $bb_before 2] - [lindex $bb_before 0]}]
+      set wa [expr {[lindex $bb_after 2] - [lindex $bb_after 0]}]
+      set hb [expr {[lindex $bb_before 3] - [lindex $bb_before 1]}]
+      set ha [expr {[lindex $bb_after 3] - [lindex $bb_after 1]}]
+      check_true "GF3 graph grew vs the pre-resize bbox (refit ran)" \
+        [expr {$wa > $wb || $ha > $hb}]
+    }
+
+    # --- GF4: two graphs each fill a half ------------------------------------
+    $mb.graph invoke [$mb.graph index {Add Graph}]
+    update
+    xschem new_schematic switch $vdrw
+    check "GF4 two graph rects" [xschem get rects 2] 2
+    set bbs [dict get $::wviewer::graphbb $vdrw]
+    check "GF4 graphbb has 2 entries" [llength $bbs] 2
+    set gtop [lindex $bbs 0]; set gbot [lindex $bbs 1]
+    lassign [gf_viewport $vdrw] vx1 vy1 vx2 vy2
+    set mid [expr {($vy1 + $vy2) / 2.0}]
+    set tol [expr {(abs($vx2 - $vx1) + abs($vy2 - $vy1)) * 0.03 + 2}]
+    check_true "GF4 top graph starts at the viewport top" \
+      [gf_near [lindex $gtop 1] $vy1 $tol]
+    check_true "GF4 top graph ends at the midpoint" \
+      [gf_near [lindex $gtop 3] $mid $tol]
+    check_true "GF4 bottom graph starts at the midpoint" \
+      [gf_near [lindex $gbot 1] $mid $tol]
+    check_true "GF4 bottom graph ends at the viewport bottom" \
+      [gf_near [lindex $gbot 3] $vy2 $tol]
+    check_true "GF4 both graphs span the full viewport width" \
+      [expr {[gf_near [lindex $gtop 0] $vx1 $tol] &&
+             [gf_near [lindex $gtop 2] $vx2 $tol] &&
+             [gf_near [lindex $gbot 0] $vx1 $tol] &&
+             [gf_near [lindex $gbot 2] $vx2 $tol]}]
+    check_true "GF4 bands contiguous (bottom top == top bottom)" \
+      [expr {[lindex $gbot 1] == [lindex $gtop 3]}]
+
+    # --- GF5: regenerate does NOT re-frame the canvas (kill the shrink) -------
+    xschem new_schematic switch $vdrw
+    set zoom0 [xschem get zoom]
+    set xo0 [xschem get xorigin]
+    set yo0 [xschem get yorigin]
+    wviewer::regenerate $tok
+    xschem new_schematic switch $vdrw
+    check "GF5 zoom unchanged across regenerate" [xschem get zoom] $zoom0
+    check "GF5 xorigin unchanged across regenerate" [xschem get xorigin] $xo0
+    check "GF5 yorigin unchanged across regenerate" [xschem get yorigin] $yo0
+    set bb0 [lindex [dict get $::wviewer::graphbb $vdrw] 0]
+    lassign [gf_viewport $vdrw] vx1 vy1 vx2 vy2
+    set tol [expr {(abs($vx2 - $vx1) + abs($vy2 - $vy1)) * 0.02 + 2}]
+    check_true "GF5 graph still fills after regenerate (full width)" \
+      [expr {[gf_near [lindex $bb0 0] $vx1 $tol] &&
+             [gf_near [lindex $bb0 2] $vx2 $tol]}]
+
+    rename gf_viewport {}
+    rename gf_near {}
     wviewer::close $tok
     update
   }

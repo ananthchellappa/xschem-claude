@@ -3979,6 +3979,10 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
             else
               Tcl_SetResult(interp, "0",TCL_STATIC);
           }
+          else if(!strcmp(argv[2], "no_grid")) { /* per-window grid/origin suppression (item 18) */
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            Tcl_SetResult(interp, xctx->no_grid != 0 ? "1" : "0", TCL_STATIC);
+          }
           else if(!strcmp(argv[2], "ntabs")) { /* get number of additional tabs (0 = only one tab) */
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
             Tcl_SetResult(interp, my_itoa(get_window_count()), TCL_VOLATILE);
@@ -10068,6 +10072,10 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
             int s = atoi(argv[3]);
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
             xctx->no_draw=s;
+          }
+          else if(!strcmp(argv[2], "no_grid")) { /* per-window grid/origin suppression (item 18) */
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            xctx->no_grid = atoi(argv[3]) ? 1 : 0;
           }
           else if(!strcmp(argv[2], "readonly")) { /* set window read-only (0 or 1); refresh title */
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}

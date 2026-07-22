@@ -1143,8 +1143,11 @@ static void drawgrid()
    * of this function is only reached on the grid-ON path), so draw_selection() then stroked
    * the grey selection overlay dashed/broken -- the CTRL-G bug. The axis lines this sets up
    * are all drawn below the guard too, so nothing is lost on the grid-OFF path.
-   * See doc/claude/issues/0082-grid-toggle-corrupts-selection-gc.md */
-  if( !tclgetboolvar("draw_grid") || !has_x) return;
+   * See doc/claude/issues/0082-grid-toggle-corrupts-selection-gc.md
+   * xctx->no_grid stays FIRST (per-window grid-off, Waveform Viewer, item 18):
+   * it must short-circuit before the shared-GC dash setup below, exactly like the
+   * draw_grid guard it joins -- see doc/claude/specs/waveform_viewer.md. */
+  if( xctx->no_grid || !tclgetboolvar("draw_grid") || !has_x) return;
   #if DRAW_ALL_CAIRO==0
   if(axes) {
     dash_arr[0] = dash_arr[1] = (char) 3;

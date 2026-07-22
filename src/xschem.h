@@ -1499,6 +1499,9 @@ typedef struct {
   int draw_single_layer;
   int draw_dots;
   int only_probes;
+  int no_grid; /* per-window grid/origin suppression (Waveform Viewer: the window
+                * reads as a graph, not a schematic). NOT mirrored in Tcl -- scoped
+                * to this ctx only; see doc/claude/specs/waveform_viewer.md item 18 */
   int menu_removed; /* fullscreen previous setting */
   double save_lw; /* used to save linewidth when selecting 'only_probes' view */
   int no_draw;
