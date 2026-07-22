@@ -31,6 +31,12 @@ sky130A/
 `xschem_libs_newsym/devices` (all 39 referenced device cells confirmed present). Repo-relative link
 `DEFINE devices ../../xschem_libs_newsym/devices` — valid while `sky130A/` lives inside the repo.
 
+The workarea also exposes five more of the repo's migrated general-purpose libraries the same way
+(repo-relative `DEFINE <lib> ../../xschem_libs_newsym/<lib>`): `analyses`, `examples`, `ngspice`,
+`ngspice_verilog_cosim`, `xschem_simulator` — so the Library Manager lists 11 libraries total.
+(A handful of `examples` cells also reach `rom8k`/`logic`, which are not registered; register those
+two similarly if full resolution of every example is wanted.)
+
 ## Migration recipe
 
 1. Tool A — flat→lib/cell/view + lib-qualified ref rewrite:

@@ -44,8 +44,9 @@ foreach pair [library_list] {
   set libpath($nm) $pth
 }
 set names [lsort $names]
-set expect [lsort {devices sky130_fd_pr sky130_stdcells sky130_tests mips_cpu stdcells}]
-check "library_list = exactly the 6 intended libs" $names $expect
+set expect [lsort {devices sky130_fd_pr sky130_stdcells sky130_tests mips_cpu stdcells \
+                   analyses examples ngspice ngspice_verilog_cosim xschem_simulator}]
+check "library_list = exactly the 11 intended libs" $names $expect
 
 # --- devices wired to the repo's already-migrated newsym copy (not duplicated) ---
 check_true "devices -> xschem_libs_newsym/devices" \
@@ -63,6 +64,12 @@ check_true "devices/vsource symbol resolves (cross-lib -> newsym)" \
   [file isfile [symfile $libpath(devices) vsource]]
 check_true "stdcells/AND2 symbol resolves (draft lib)" \
   [file isfile [symfile $libpath(stdcells) AND2]]
+# the extra migrated newsym libraries the workarea also exposes
+foreach L {analyses examples ngspice ngspice_verilog_cosim xschem_simulator} {
+  check_true "$L registered from newsym (outside sky130A/)" \
+    [expr {[info exists libpath($L)] && [string match *xschem_libs_newsym/$L $libpath($L)] \
+           && ![string match */sky130A/* $libpath($L)]}]
+}
 check_true "sky130_stdcells has 437 cell dirs" \
   [expr {[llength [glob -nocomplain -type d [file join $libpath(sky130_stdcells) *]]] == 437}]
 
