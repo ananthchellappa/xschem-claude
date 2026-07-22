@@ -177,15 +177,25 @@ proc ciw_capture_puts {argl} {
   set a $argl
   if {[lindex $a 0] eq "-nonewline"} {set a [lrange $a 1 end]}
   set n [llength $a]
+  ## Bug B (issue 0129): mirror console puts to the action-log FILE too -- but BUFFER it in
+  ## ::ciw_out_pending instead of writing now, so ciw_exec can emit it AFTER the command line
+  ## (0129 ordering follow-up: output must FOLLOW its command in the transcript, not precede it).
+  ## ciw_echo still updates the pane immediately. Only the console forms are buffered; a channel
+  ## puts (else) writes to a file, not the console, and must NOT be recorded.
   if {$n == 1} {
     ciw_echo [lindex $a 0] result
+    lappend ::ciw_out_pending result [lindex $a 0]
   } elseif {$n == 2 && [lindex $a 0] eq "stdout"} {
     ciw_echo [lindex $a 1] result
+    lappend ::ciw_out_pending result [lindex $a 1]
   } elseif {$n == 2 && [lindex $a 0] eq "stderr"} {
     ciw_echo [lindex $a 1] error
+    lappend ::ciw_out_pending error [lindex $a 1]
   } else {
     eval [linsert $argl 0 ::ciw_saved_puts]   ;# 8.4-safe form of: ::ciw_saved_puts {*}$argl
   }
+  return {}   ;# the real puts returns "" -- keep that (else `lappend`'s value would become the
+              ;# result of a command ending in puts, minting a spurious "#= " result line -- 0129)
 }
 
 ## A command TYPED here by a human is an interactive open, so a bare
@@ -226,22 +236,45 @@ proc ciw_exec {} {
   ## core self-log to write the FILE but skip the CIW mirror (we already echoed the input line).
   xschem log_action -reset
   xschem log_action -suppressecho 1
+  set ::ciw_out_pending {} ;# 0129: captured console puts buffers here; emitted after the command
   rename ::puts ::ciw_saved_puts
   proc ::puts {args} {ciw_capture_puts $args}
+  ## Bug A (issue 0129): a command that ends the process (exit/quit) never returns to
+  ## the post-eval log-write at the tail of this proc, so record it NOW. The action-log
+  ## stream is line-buffered, so the newline flushes it to disk before Tcl's exit runs.
+  ## This also sets the cmd_logged flag, so the tail below will not duplicate the line.
+  if {[regexp {^(exit|quit)(\s|$)} $cmd]} { xschem log_action -noecho $cmd }
   set code [catch {uplevel #0 $cmd} res]
   rename ::puts {}
   rename ::ciw_saved_puts ::puts
   xschem log_action -suppressecho 0
   if {$code} {
     ciw_echo $res error
-    ## D1 (issue 0070): record the error OUTPUT as a source-able comment in the file.
-    xschem log_action -error $res
-    ## record the command itself only if the core did not already self-log it.
-    if {![xschem log_action -emitted]} { xschem log_action -noecho "# failed: $cmd" }
-  } else {
-    if {$res ne {}} {ciw_echo $res result ; xschem log_action -result $res}
-    if {![xschem log_action -emitted]} { xschem log_action -noecho $cmd }
+  } elseif {$res ne {}} {
+    ciw_echo $res result
   }
+  ciw_log_outcome $code $cmd $res
+}
+
+## Emit the action-log transcript for a just-run CIW command in console order (issue 0129):
+## the COMMAND line first, then its captured console output (::ciw_out_pending, filled by
+## ciw_capture_puts), then its result -- so the file reads top-to-bottom like the pane. The
+## command line is written only HERE (post-eval), so a FAILED command stays a "# failed:"
+## comment rather than a live line that would abort a replay `source`. The `-emitted` guard
+## skips our command line when the core already self-logged it (self-log-at-core dedup); the
+## buffered output then correctly trails that core line too. Split out of ciw_exec so the
+## ordering is unit-testable without the Tk CIW widget.
+proc ciw_log_outcome {code cmd res} {
+  if {$code} {
+    if {![xschem log_action -emitted]} { xschem log_action -noecho "# failed: $cmd" }
+    foreach {kind txt} $::ciw_out_pending { xschem log_action -$kind $txt }
+    xschem log_action -error $res   ;# D1 (issue 0070): error output as a source-able comment
+  } else {
+    if {![xschem log_action -emitted]} { xschem log_action -noecho $cmd }
+    foreach {kind txt} $::ciw_out_pending { xschem log_action -$kind $txt }
+    if {$res ne {}} { xschem log_action -result $res }
+  }
+  set ::ciw_out_pending {}
 }
 
 ## --- Tab completion ---------------------------------------------------------
