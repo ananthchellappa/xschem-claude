@@ -544,6 +544,29 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     set N0 [toplevel_count]
     set cv .drw
 
+    # item-17 witness (DETERMINISTIC; does NOT depend on WSLg stacking). The old
+    # `wm stackorder` snapshot was both HOLLOW (the freshly-created viewer is
+    # naturally last in stackorder in a scripted driver, so the check passed
+    # even with the fix reverted) and ~30% FLAKY under WSLg (the ASE/main window
+    # sometimes ended up on top), which is intolerable in a must-stay-green
+    # suite. The production fix is the FRESH arm of wviewer::open calling
+    # raise_activate_toplevel on the NEW viewer top; nothing else raises that
+    # toplevel during a first Direct Plot (select_on_design raises the DESIGN
+    # window `.`; plot-mode sod_end SKIPS the ASE-window raise). Spy on the raise
+    # proc, recording its argument list, so we assert the fresh viewer was
+    # brought to front BY the fix. Revert the fix (drop the fresh-arm
+    # raise_activate_toplevel) -> the viewer top is never raised at open -> the
+    # witness below FAILS. Wrapper is behaviour-preserving (logs, then delegates
+    # to the renamed real proc) and is removed at the end of P8.
+    set ::dp_raise_log {}
+    if {[llength [info commands ::dp_real_raise_activate_toplevel]] == 0} {
+      rename raise_activate_toplevel ::dp_real_raise_activate_toplevel
+      proc raise_activate_toplevel {top} {
+        lappend ::dp_raise_log $top
+        ::dp_real_raise_activate_toplevel $top
+      }
+    }
+
     # first Direct Plot (whole Tk gesture: menu -> click -> REAL ESC); make the
     # design current first (deterministic, P6 precedent)
     xschem new_schematic switch .drw
@@ -570,19 +593,27 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
       set sm [viewer_ready $vtop]
     }
     check "P8 first viewer STAYS" [expr {$se && $sm ? 1 : 0}] 1
-    check "P8 first viewer top of stackorder" \
-      [lindex [wm stackorder .] end] $vtop
+    # TEETH (replaces the hollow+flaky `wm stackorder` snapshot): the fresh open
+    # brought the NEW viewer to front via the item-17 raise. Reverting the fix
+    # empties the viewer from this log -> FAIL.
+    check_true "P8 fresh open raised the new viewer (item-17 fix witnessed)" \
+      [expr {$vtop ne {} && [lsearch -exact $::dp_raise_log $vtop] >= 0}]
 
     # second Direct Plot: the RE-OPEN arm must raise the SAME viewer (item 13),
     # never a duplicate. Make the design current first (the first plot's viewer
     # raise leaves WSLg focus events in flight, P6 precedent).
     set vtop1 $vtop
+    set ::dp_raise_log {}
     xschem new_schematic switch .drw
     update
     check "P8 second Direct Plot REAL ESC ended the mode" [dp_gesture $top $cv $key] 1
     for {set i 0} {$i < 20} {incr i} { update; after 25 }
     check_true "P8 second Direct Plot raises the SAME viewer" \
       [expr {$vtop1 ne {} && [wviewer::window_for $key] eq $vtop1}]
+    # TEETH for item-13 (raise-not-duplicate): the RE-OPEN arm re-raised the
+    # existing viewer (same deterministic raise witness).
+    check_true "P8 second Direct Plot re-raised the SAME viewer (item-13)" \
+      [expr {$vtop1 ne {} && [lsearch -exact $::dp_raise_log $vtop1] >= 0}]
     check "P8 second Direct Plot added no new toplevel" \
       [toplevel_count] [expr {$N0 + 1}]
     # the re-open arm's raise (withdraw+deiconify) can be mid-flight -> poll for
@@ -593,6 +624,12 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
       set sm2 [viewer_ready $vtop1]
     }
     check "P8 second viewer still exists+mapped" [expr {$se2 && $sm2 ? 1 : 0}] 1
+
+    # remove the item-17 raise spy (restore the real proc verbatim)
+    if {[llength [info commands ::dp_real_raise_activate_toplevel]] != 0} {
+      rename raise_activate_toplevel {}
+      rename ::dp_real_raise_activate_toplevel raise_activate_toplevel
+    }
 
     # cleanup: close the session (closes its viewer, D10) + registry clean
     ase::ui::close $key
