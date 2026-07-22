@@ -29,6 +29,10 @@ set launch_library_manager 1
 # --- 3. Models + sky130 helper procs ----------------------------------------
 # corner.sym emits  .lib $::SKYWATER_MODELS/sky130.lib.spice <corner>
 set ::SKYWATER_MODELS [file join $_ws models libs.tech combined]
+# ASE-L default corner: preload the sky130 tt models in every fresh session /
+# state view. Stored in the PORTABLE $::VAR form (ase::expand_path resolves it
+# at deck time) so state files stay git-portable.
+set ::ASE_DEFAULT_MODELS [list [list file {$::SKYWATER_MODELS/sky130.lib.spice} section tt]]
 # PDK/PDK_ROOT are referenced by a couple of the helper procs' status strings.
 if {![info exists ::env(PDK)]}      { set ::env(PDK) sky130A }
 source [file join $_ws sky130_procs.tcl]

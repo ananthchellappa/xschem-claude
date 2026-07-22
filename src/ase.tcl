@@ -37,6 +37,9 @@ namespace eval ase {
   # session registry (item 03): key ("lib/cell/view") -> entry dict
   # {path <file> state <dict> saved <dict> ...attrs}. Pure dict, headless-safe.
   variable sessions [dict create]
+  # untitled-launch synthetic view label (Tools > Launch ASE-L): a real state
+  # view is always ngspice_stateN, so this never collides with a LibMgr open.
+  variable untitled_view {(unsaved)}
   # notify seam: command prefix invoked with the session key after every
   # session_update/save/load/revert. Default {} (headless: nothing runs);
   # ase::ui (ase_window.tcl) points it at its title-refresh handler.
@@ -111,6 +114,12 @@ proc ase::format_value_num {v} {
 
 # --- State I/O --------------------------------------------------------------
 
+# Per-technology ASE default models: a list of {file <portable-path> section
+# <sec>} dicts a fresh session/state view inherits (empty in stock xschem; a
+# workarea rc sets it — sky130A: sky130.lib.spice tt; gf180mcuD: sm141064
+# typical). set_ne so an rc value set before ase.tcl is sourced survives.
+set_ne ASE_DEFAULT_MODELS {}
+
 # The v1 default state (spec "State file schema"). `simulator ngspice` here is
 # the one permitted ngspice literal outside the backend namespace.
 proc ase::state_default {} {
@@ -120,7 +129,7 @@ proc ase::state_default {} {
     design    {} \
     rundir    {} \
     temperature 27 \
-    models    {} \
+    models    [expr {[info exists ::ASE_DEFAULT_MODELS] ? $::ASE_DEFAULT_MODELS : {}}] \
     variables {} \
     analyses  {{type op enabled 1} {type dc enabled 0} {type ac enabled 0} {type tran enabled 0}} \
     outputs   {} \
@@ -620,6 +629,103 @@ proc ase::open_state {lib cell view {ro 0}} {
   }
   ase::ui::open $key $lib $cell $view
   return 1
+}
+
+# --- Launch ASE-L for the current schematic (Tools > Launch ASE-L) -----------
+
+# Reverse an absolute cellview datafile path to {lib cell view}, or throw a
+# clean error. ASE simulates SCHEMATIC designs only: any non-.sch current view
+# (symbol/state/…) is refused up front (the create_instance.tcl *.sym idiom).
+# Reuses schematic_cellview (library_defs.tcl) for the library-root matching;
+# a flat-library hit (view {}) defaults to the schematic view.
+proc ase::design_of_path {abspath} {
+  if {$abspath eq {}} {
+    return -code error "ase: no current design (empty schematic path)"
+  }
+  if {[string tolower [file extension $abspath]] ne {.sch}} {
+    return -code error "ase: current view is not a schematic\
+ (ASE simulates schematic designs)"
+  }
+  set r [schematic_cellview $abspath]
+  if {$r eq {}} {
+    return -code error "ase: '$abspath' is not under a registered library"
+  }
+  lassign $r lib cell view layout
+  if {$view eq {}} { set view schematic }
+  return [list $lib $cell $view]
+}
+
+# {lib cell view} of the CURRENT schematic, or {} after a ciw_echo'd honest
+# error (symbol view / unsaved / outside every library).
+proc ase::design_of_current {} {
+  set p {}
+  catch {set p [file normalize [xschem get schname]]}
+  if {[catch {ase::design_of_path $p} r]} {
+    if {[info commands ::ciw_echo] ne {}} { catch {ciw_echo $r error} }
+    return {}
+  }
+  return $r
+}
+
+# The session key (if any) whose state.design targets {lib cell view}. Used by
+# Launch to RAISE rather than duplicate a session already on this design.
+proc ase::session_for_design {lib cell view} {
+  variable sessions
+  dict for {k entry} $sessions {
+    set d [ase::state_get [dict get $entry state] design]
+    if {[dict exists $d lib]  && [dict get $d lib]  eq $lib  \
+     && [dict exists $d cell] && [dict get $d cell] eq $cell \
+     && [dict exists $d view] && [dict get $d view] eq $view} {
+      return $k
+    }
+  }
+  return {}
+}
+
+# Register a BLANK untitled session bound to design {lib cell schview} (Tools >
+# Launch ASE-L). Distinct from session_open (which loads a .state file): NO file
+# on disk (path {}), state = state_default (already carrying ::ASE_DEFAULT_MODELS
+# + empty vars/outputs) with design pointing at the schematic view; saved ==
+# state so the session is NOT dirty until edited (item-16's close-prompt will not
+# fire on an untouched launch). Key/meta view = the synthetic untitled_view;
+# saveview seeds the Save-As View prefill. Returns the session key.
+proc ase::new_session {lib cell schview} {
+  variable sessions
+  variable untitled_view
+  set key [ase::session_key $lib $cell $untitled_view]
+  set st [ase::state_default]
+  dict set st design [list lib $lib cell $cell view $schview]
+  dict set sessions $key [dict create path {} state $st saved $st \
+    untitled 1 metaview $untitled_view saveview ngspice_state1]
+  return $key
+}
+
+# Tools > Launch ASE-L: open a FRESH untitled ASE session for the current
+# schematic's design (Cadence Tools>ADE-L). Raise-not-duplicate: if any session
+# already targets this design, raise it (under X) and return its key. Returns
+# the session key, or {} when the current view does not resolve to a schematic
+# design (design_of_current already reported the honest error). Headless-safe:
+# all Tk work is behind the has_x guard (the open_state carve-out doctrine).
+proc ase::launch_for_current {} {
+  variable untitled_view
+  set d [ase::design_of_current]
+  if {$d eq {}} { return {} }
+  lassign $d lib cell view
+  set ek [ase::session_for_design $lib $cell $view]
+  if {$ek ne {}} {
+    if {[info exists ::has_x]} {
+      set w [ase::ui::window_for $ek]
+      if {$w ne {} && [winfo exists $w]} {
+        catch {wm deiconify $w}; catch {raise $w}; catch {focus $w}
+      }
+    }
+    return $ek
+  }
+  set key [ase::new_session $lib $cell $view]
+  if {[info exists ::has_x]} {
+    ase::ui::open $key $lib $cell $untitled_view
+  }
+  return $key
 }
 
 # --- ngspice backend --------------------------------------------------------

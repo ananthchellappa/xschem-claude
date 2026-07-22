@@ -32,6 +32,13 @@ set launch_library_manager 1
 #                           .lib     $::180MCU_MODELS/sm141064.ngspice typical
 # so 180MCU_MODELS points straight at the vendored (flat, self-contained) dir.
 set ::180MCU_MODELS [file join $_ws models]
+# ASE-L default corner: preload the GF180MCU typical-corner model .lib in every
+# fresh session / state view (portable $::VAR form). NOTE a full gf180 run ALSO
+# needs design.ngspice's global-switch .params (sw_stat_global, mc_skew, …),
+# which the models reference and sm141064 does not self-default; that is an
+# .include (not a .lib section) and thus outside this v1 models list — add it by
+# hand or via a future includes seed for an actual gf180 simulation.
+set ::ASE_DEFAULT_MODELS [list [list file {$::180MCU_MODELS/sm141064.ngspice} section typical]]
 # PDK/PDK_ROOT are referenced by a couple of status strings.
 if {![info exists ::env(PDK)]} { set ::env(PDK) gf180mcuD }
 source [file join $_ws gf180_procs.tcl]

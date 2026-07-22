@@ -2271,7 +2271,7 @@ proc ase::ui::save_state_dialog {key} {
   set ce [ase::ui::dialog_row $w 1 Cell: cell]
   set ve [ase::ui::dialog_row $w 2 View: view]
   $ce insert 0 $mcell
-  $ve insert 0 $mview
+  $ve insert 0 [ase::session_getattr $key saveview $mview]
   ase::ui::dialog_buttons $w 3 [list ase::ui::save_state_ok $key] \
     [list ase::ui::saveas_cancel $key]
   foreach e [list $w.lib $ce $ve] {
@@ -2464,6 +2464,7 @@ proc ase::ui::refresh_title {key} {
   set top [dict get $wins $key]
   if {![winfo exists $top]} { return }
   set t "Analog Sim Environment [ase::ui::design_cell_name $key]"
+  if {[ase::session_getattr $key untitled 0] eq {1}} { append t { (unsaved)} }
   if {[ase::session_dirty $key]} { append t { *} }
   wm title $top $t
 }

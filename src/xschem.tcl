@@ -14664,6 +14664,7 @@ proc build_widgets { {topwin {} } } {
       -selectcolor $selectcolor -variable disable_unique_names
   $topwin.menubar.tools add command -label "Library Manager" -command "xschem library_manager"
   $topwin.menubar.tools add command -label "Net highlight styles..." -command {net_hilight_style_editor}
+  $topwin.menubar.tools add command -label "Launch ASE-L" -command "ase::launch_for_current"
   $topwin.menubar.tools add separator
   $topwin.menubar.tools add command -label "Insert text" -command "xschem place_text" -accelerator T
   $topwin.menubar.tools add command -label "Insert wire" -command "xschem wire" -accelerator W
