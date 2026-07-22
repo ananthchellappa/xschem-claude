@@ -381,3 +381,19 @@ with ESC.
    (dict unchanged vs pre-open snapshot). Plus: ESC in an ENTRY inside a
    dialog still dismisses (event bubbles); Select-On-Design ESC regression
    leg; main-window ESC does nothing. ≥2 sabotages.
+
+## Round 3 — Waveform Viewer (2026-07-21)
+
+Authoritative contract: doc/claude/specs/waveform_viewer.md (user-locked:
+engine-reuse window architecture; viewer session persists INSIDE the ASE
+state dict; v1 = analog core). Same policies/baseline as round 2 (incl. WSLg
+flake list + send_return/send_key helpers). ASE tests
+test_ase_{core,view,window,dialogs,final,interact}.tcl must stay green.
+
+- [x] 11 viewer-window   — standalone viewer toplevel: graph-only canvas, stripped editing, viewer menus, theme, numbering -> cd332719 viewer window shell landed (readonly-for-life untitled buffer via load_new_window, canonical bind-sweep strip + per-window toolbar strip, themed viewer menubar, raw-fed graph sanity + ne555 regression legs), 68 GUI + 15 headless checks + 4 exact-target sabotages, 2 fixer commits (2c3ac80d bind-sweep, 0a90b9db toolbar strip), lenses clean
+- [x] 12 viewer-core     — trace/graph model, add/remove trace, cursors A/B readout, zoom/fit, log axes, expression waves -> c143cedb viewer core landed (model-as-source-of-truth regenerate, live Graph/Cursors/View menus, validated expression waves, interpolated cursor readout cross-checked vs engine), 149 GUI + 36 headless checks + 3 exact-target sabotages, no fixer rounds, verified clean
+- [x] 13 ase-plot        — Results>Direct Plot click mode, Outputs Plot checkboxes auto-plot, `~` button live, raw wiring -> 10649ec8 ASE wired to the viewer (Direct Plot queues clicks into ONE new stacked graph per invocation, always-replace auto-plot of Plot-checked outputs after each run with Direct-Plot graphs untouched, `~` raise-or-open, last_rawfile/attach_raw clear+read+regenerate re-run replace, op-only notice; run_finished semaphore-bracket landmine fixed via after-idle auto_plot + switch_ctx guard), 85 checks (25 also --nogui) + 3 exact-target sabotages, no fixer rounds, verified clean
+- [x] 14 persistence-accept — `viewer` state key round-trip, Save/Load relaunch, dc-sweep end-to-end ACCEPTANCE GATE -> 435a6fc9 ROUND-3 GATE PASSED: viewer persisted as 14th state key (snapshot/restore incl. auto marker + rawfile seam), whole-flow dc leg green 3x with ZERO SKIPs (cursor readout 409.7u vs raw ground truth, both graphs relaunch on reopen), 109 checks (17 also --nogui) + 3 exact-target sabotages, no fixer rounds, one reality-forced C fix (draw.c graph_fullxzoom -1-master SIGSEGV clamp), verified clean
+
+Item details live in the spec's "Round-3 batch items" section + per-item
+notes passed by the driver; scouts re-verify all spec file:line anchors.
