@@ -544,28 +544,29 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     set N0 [toplevel_count]
     set cv .drw
 
-    # item-17 witness (DETERMINISTIC; does NOT depend on WSLg stacking). The old
-    # `wm stackorder` snapshot was both HOLLOW (the freshly-created viewer is
-    # naturally last in stackorder in a scripted driver, so the check passed
-    # even with the fix reverted) and ~30% FLAKY under WSLg (the ASE/main window
-    # sometimes ended up on top), which is intolerable in a must-stay-green
-    # suite. The production fix is the FRESH arm of wviewer::open calling
-    # raise_activate_toplevel on the NEW viewer top; nothing else raises that
-    # toplevel during a first Direct Plot (select_on_design raises the DESIGN
-    # window `.`; plot-mode sod_end SKIPS the ASE-window raise). Spy on the raise
-    # proc, recording its argument list, so we assert the fresh viewer was
-    # brought to front BY the fix. Revert the fix (drop the fresh-arm
-    # raise_activate_toplevel) -> the viewer top is never raised at open -> the
-    # witness below FAILS. Wrapper is behaviour-preserving (logs, then delegates
-    # to the renamed real proc) and is removed at the end of P8.
+    # item-17 witness (DETERMINISTIC; does NOT depend on WSLg stacking, and is
+    # BYPASS-PROOF). Two earlier attempts were unsound: (a) a `wm stackorder`
+    # snapshot was HOLLOW (a freshly-created viewer is naturally last in
+    # stackorder in a scripted driver, so it passed even with the fix reverted)
+    # and ~30% FLAKY under WSLg (the ASE/main window sometimes ended up on top);
+    # (b) a `rename`+wrapper shim on raise_activate_toplevel had real teeth but
+    # was itself ~5% FLAKY -- wviewer::open is byte-compiled and already ran in
+    # P1-P7, so its "raise_activate_toplevel" literal caches a command
+    # resolution that, after the rename, intermittently still points at the
+    # renamed real proc and BYPASSES the wrapper (the fresh-arm raise fires but
+    # is never logged). An EXECUTION TRACE attaches to the ONE command object
+    # itself and fires on every invocation regardless of how the caller resolved
+    # the name (verified: fires through a warmed byte-compiled caller) -- no
+    # bypass is possible. The production fix is the FRESH arm of wviewer::open
+    # calling raise_activate_toplevel on the NEW viewer top; nothing else raises
+    # that toplevel during a first Direct Plot (select_on_design raises the
+    # DESIGN window `.`; plot-mode sod_end SKIPS the ASE-window raise). Revert
+    # the fix -> the viewer top never enters this log -> the witness below FAILS.
+    # The trace + spy proc are removed at the end of P8.
     set ::dp_raise_log {}
-    if {[llength [info commands ::dp_real_raise_activate_toplevel]] == 0} {
-      rename raise_activate_toplevel ::dp_real_raise_activate_toplevel
-      proc raise_activate_toplevel {top} {
-        lappend ::dp_raise_log $top
-        ::dp_real_raise_activate_toplevel $top
-      }
-    }
+    proc ::dp_raise_spy {cmd op} { lappend ::dp_raise_log [lindex $cmd 1] }
+    catch {trace remove execution raise_activate_toplevel enter ::dp_raise_spy}
+    trace add execution raise_activate_toplevel enter ::dp_raise_spy
 
     # first Direct Plot (whole Tk gesture: menu -> click -> REAL ESC); make the
     # design current first (deterministic, P6 precedent)
@@ -625,11 +626,9 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     }
     check "P8 second viewer still exists+mapped" [expr {$se2 && $sm2 ? 1 : 0}] 1
 
-    # remove the item-17 raise spy (restore the real proc verbatim)
-    if {[llength [info commands ::dp_real_raise_activate_toplevel]] != 0} {
-      rename raise_activate_toplevel {}
-      rename ::dp_real_raise_activate_toplevel raise_activate_toplevel
-    }
+    # remove the item-17 raise witness (execution trace + spy proc)
+    catch {trace remove execution raise_activate_toplevel enter ::dp_raise_spy}
+    catch {rename ::dp_raise_spy {}}
 
     # cleanup: close the session (closes its viewer, D10) + registry clean
     ase::ui::close $key
