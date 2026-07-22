@@ -594,11 +594,17 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
       set sm [viewer_ready $vtop]
     }
     check "P8 first viewer STAYS" [expr {$se && $sm ? 1 : 0}] 1
-    # TEETH (replaces the hollow+flaky `wm stackorder` snapshot): the fresh open
-    # brought the NEW viewer to front via the item-17 raise. Reverting the fix
-    # empties the viewer from this log -> FAIL.
-    check_true "P8 fresh open raised the new viewer (item-17 fix witnessed)" \
-      [expr {$vtop ne {} && [lsearch -exact $::dp_raise_log $vtop] >= 0}]
+    # NOTE: the "fresh open RAISED the viewer" teeth (item-17) + the re-open
+    # raise teeth (item-13) are asserted DETERMINISTICALLY below via a direct
+    # wviewer::open call, NOT here on the gesture path. Reason: raising a
+    # freshly-mapped toplevel through the full WSLg Direct-Plot gesture
+    # (menu->click->ESC->dp_finish->wviewer::open, with select_on_design having
+    # just raised the design window) is timing-flaky (~1/10) -- the raise fires
+    # but the execution trace intermittently observes it out of the settle
+    # window. A direct wviewer::open call exercises the SAME production raise
+    # (wave_viewer.tcl fresh + re-open arms) with no gesture/design-raise race,
+    # so the raise witness is deterministic. The gesture legs above still prove
+    # the end-to-end no-vanish behavior (opened + mapped + STAYS + one toplevel).
 
     # second Direct Plot: the RE-OPEN arm must raise the SAME viewer (item 13),
     # never a duplicate. Make the design current first (the first plot's viewer
@@ -611,10 +617,6 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     for {set i 0} {$i < 20} {incr i} { update; after 25 }
     check_true "P8 second Direct Plot raises the SAME viewer" \
       [expr {$vtop1 ne {} && [wviewer::window_for $key] eq $vtop1}]
-    # TEETH for item-13 (raise-not-duplicate): the RE-OPEN arm re-raised the
-    # existing viewer (same deterministic raise witness).
-    check_true "P8 second Direct Plot re-raised the SAME viewer (item-13)" \
-      [expr {$vtop1 ne {} && [lsearch -exact $::dp_raise_log $vtop1] >= 0}]
     check "P8 second Direct Plot added no new toplevel" \
       [toplevel_count] [expr {$N0 + 1}]
     # the re-open arm's raise (withdraw+deiconify) can be mid-flight -> poll for
@@ -625,6 +627,33 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
       set sm2 [viewer_ready $vtop1]
     }
     check "P8 second viewer still exists+mapped" [expr {$se2 && $sm2 ? 1 : 0}] 1
+
+    # --- DETERMINISTIC raise teeth (gesture-free) ----------------------------
+    # The real teeth for the item-17 fix: both arms of wviewer::open end by
+    # calling raise_activate_toplevel on the viewer top. Exercise them by
+    # calling wviewer::open DIRECTLY (no Direct-Plot gesture, no design-window
+    # raise in flight) so the execution-trace observation is deterministic.
+    # RE-OPEN arm: the viewer is currently open -> a direct open re-raises it.
+    set ::dp_raise_log {}
+    wviewer::open $key
+    update
+    check_true "P8 re-open arm raises the viewer (item-13, deterministic)" \
+      [expr {[lsearch -exact $::dp_raise_log $vtop1] >= 0}]
+    # FRESH arm: drop the viewer (registry clean, SESSION still alive), then a
+    # direct open rebuilds it via the fresh arm and must raise the new top.
+    # Reverting the item-17 fix (removing raise_activate_toplevel from the fresh
+    # arm) leaves this log empty -> FAIL. This is the item-17 witness.
+    wviewer::close $key
+    update
+    check "P8 viewer dropped before fresh-arm probe" [wviewer::window_for $key] {}
+    set ::dp_raise_log {}
+    wviewer::open $key
+    update
+    set vfresh [wviewer::window_for $key]
+    check_true "P8 fresh arm opens a viewer" \
+      [expr {$vfresh ne {} && [winfo exists $vfresh]}]
+    check_true "P8 fresh arm raises the new viewer (item-17, deterministic)" \
+      [expr {$vfresh ne {} && [lsearch -exact $::dp_raise_log $vfresh] >= 0}]
 
     # remove the item-17 raise witness (execution trace + spy proc)
     catch {trace remove execution raise_activate_toplevel enter ::dp_raise_spy}
