@@ -110,9 +110,29 @@ fi
 PASS=0 FAIL=0 CRASH=0 SKIP=0
 declare -A STATUS OUT
 
+# GUI-test control gate: warn the user before the suite runs and give
+# Pause/Resume during it (tests/headless/gui_gate.sh). Fails open (no DISPLAY /
+# GUI_GATE=0 / no panel -> just runs). A Stop press aborts the remaining tests.
+# shellcheck source=/dev/null
+. "$HERE/gui_gate.sh" 2>/dev/null || true
+_ntests=${#files[@]}
+if type gate_start >/dev/null 2>&1; then
+  gate_start "full_audit: $_ntests tests ($(basename "${files[0]:-?}") ...)" || {
+    echo "gui_gate: stopped before start"; exit 3; }
+fi
+_gate_stopped=0
+
 for testfile in "${files[@]}"; do
   name=$(basename "$testfile" .tcl)
   [ -f "$testfile" ] || { echo "MISSING | $name"; STATUS[$name]=FAIL; OUT[$name]="no such test file"; ((FAIL++)); continue; }
+
+  # pause point BETWEEN atomic tests: the current test always finishes; the
+  # suite holds here while Paused, and breaks out cleanly on Stop.
+  if type gate_pause_point >/dev/null 2>&1; then
+    if ! gate_pause_point "full_audit | ${name} (next of ${_ntests})"; then
+      _gate_stopped=1; echo "gui_gate: STOP -> skipping remaining tests"; break
+    fi
+  fi
 
   if in_list "$name" "$logdir_tests"; then
     tmpd=$(mktemp -d)
@@ -146,6 +166,12 @@ for testfile in "${files[@]}"; do
   fi
   printf '%-8s | %s\n' "${STATUS[$name]}" "$name"
 done
+
+type gate_finish >/dev/null 2>&1 && gate_finish
+if [ "${_gate_stopped:-0}" = "1" ]; then
+  echo "RESULT: STOPPED by GUI-test control panel (partial: ${PASS} pass ${FAIL} fail ${SKIP} skip so far)"
+  exit 3
+fi
 
 # Wireedit suite: run_wireedit.sh exits nonzero on any FAIL or missing RESULT
 # line; its verdict is merged into the audit exit code so a wireedit regression

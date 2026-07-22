@@ -53,6 +53,19 @@ tclsh run_regression.tcl        # runs all cases: create_save, open_close, netli
   `xschem --script xschemtest.tcl` then calling `xschemtest`. Use `-d 3 -l log` to
   log allocations for leak checking.
 
+### GUI-test control gate (`tests/headless/full_audit.sh`)
+Running `full_audit.sh` under a real/WSLg `$DISPLAY` pops a **control panel**
+(`tests/headless/gui_gate_widget.tcl` via `wish`) that **warns before the
+suite runs** (Proceed / Snooze 5·15·30 min) and gives a **Pause/Resume toggle
++ Stop** during it — the GUI suite otherwise floods the display and makes the
+machine unusable. The gate lives in the harness (`gui_gate.sh`), **not** a
+Claude Code settings hook (a prior hook-based gate silently died when
+`settings.local.json` was rewritten — do NOT reintroduce it as a hook). Control
+dir `~/.claude/gui_test_gate/` is shared by the main session and all
+worktree/subagent runs, so one Pause pauses every suite. It **fails open** (no
+`DISPLAY`, `GUI_GATE=0`, or a closed panel → tests just run) so CI/headless is
+unaffected. Spec: `doc/claude/specs/gui_test_gate.md`.
+
 ## Architecture
 
 ### The `xctx` global context
