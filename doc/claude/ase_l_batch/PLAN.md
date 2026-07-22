@@ -498,3 +498,98 @@ app quit `quit_xschem` xschem.tcl:13426 (does NOT iterate ASE windows).
    prompt; quit path leg with a dirty session prompts (drive quit_xschem's
    ASE sweep directly if full-exit is untestable headless — document).
    Use send_return/send_key. ≥2 sabotages.
+
+## Round 5 — Waveform Viewer interaction fixes (2026-07-22)
+
+User report on Results > Direct Plot: (1) window launches then vanishes,
+appears only on 2nd invocation (open race); (2) viewer looks like a
+schematic window (grid) with a small graph rect floating in it — the graph
+should FILL the whole window; (3) zooming when pointer is outside the graph
+shrinks the graph rect (canvas zoom) — zoom/pan must act on GRAPH content;
+(4) define up/down vertical scrolling; (5) RMB press+drag must zoom the graph
+like a schematic.
+
+Recon (2026-07-22, verified): viewer = editor window (load_new_window) with a
+normal grid canvas; graph rects FIXED 800x400 schematic coords stacked
+(wave_viewer.tcl:444), no <Configure> refit; regenerate ends `xschem
+zoom_full` (CANVAS zoom, wave_viewer.tcl:608) so zoom shrinks the rect. C
+routes ALL graph interaction through graph_master = graph under pointer
+(callback.c POINTINSIDE :109); Button-3 press->zoom_rect, motion->rubber,
+release->zoom-to-box already exist (callback.c:1836/159/3922) + over-graph
+graph-zoom (callback.c:1048); over-graph wheel = graph pan/scroll
+(callback.c:1170/1133). cadence_style_rc canvas wheel: plain=pan u/d :86,
+Shift=pan l/r, Ctrl=zoom. btn3_filter forwards Button-3 only when over_graph
+(wave_viewer.tcl:1376). So: make the graph FILL the viewport + track it +
+lock canvas zoom -> pointer always inside -> all interaction routes to graph.
+
+Same policies/baseline as prior rounds. All 11 ASE/wave suites must stay green.
+
+- [F] 17 dp-open-race   — Direct Plot: single clean viewer open first time (kill launch->vanish->2nd-time race) -> 2b5fc4a9 FAILED: product fix is correct (d08015f4 src/wave_viewer.tcl fresh-arm raise, byte-identical through HEAD) but the shipped P8 raise-witness in test_ase_plot flakes ~1/10 witness-executing runs — protected suite not reliably green on direct re-run, refuting the "bypass-proof / stable across runs" claim; user bug itself is fixed
+- [ ] 18 graph-fills-win — graph fills the viewer viewport, grid off, <Configure> refit, canvas zoom locked (multi-graph = vertical split)
+- [ ] 19 graph-interact  — zoom/pan/scroll/RMB act on graph content: plain wheel vertical, RMB drag zoom-box, fit, documented bindings
+
+### 17 dp-open-race
+
+Anchors (scout re-verify): dp_finish ase_window.tcl:1427-1444; select_on_
+design + sod_end :1312/:1368; wviewer::open wave_viewer.tcl:237-263 (load_new_
+window :238, readonly :245, toolbar forget :263, destroy-stale-entry-then-
+build). Root-cause the "first Direct Plot builds a viewer that vanishes, 2nd
+call raises one": likely the open path destroys a stale/half-built registry
+entry, or select_on_design's ESC/mode-exit tears down the just-built window,
+or an `after` ordering. REPRODUCE FIRST (document the exact sequence), then
+fix so the FIRST Direct Plot opens exactly one viewer that stays. No new
+window flashes. Keep raise-not-duplicate on subsequent plots.
+Tests: GUI leg in test_ase_plot.tcl or test_wave_viewer.tcl driving Direct
+Plot from a dc-sweep session ONCE -> exactly one live viewer toplevel, no
+orphan/destroyed window; second Direct Plot raises the same one. >=2 sabotages.
+
+### 18 graph-fills-win
+
+The core fix. The viewer's graph must FILL the window, not float as a fixed
+rect on a grid canvas.
+1. Grid/schematic chrome OFF in the viewer (draw_grid gated, or the viewer
+   canvas draws no grid/origin). The window should read as a graph, not a
+   schematic.
+2. Single graph: its rect fills the ENTIRE canvas viewport (in schematic
+   coords matching the current viewport). A `<Configure>`/resize handler
+   refits the rect(s) to the new viewport so the graph always fills the
+   window (scout: read viewport bounds via `xschem get` xorigin/yorigin/zoom
+   + winfo width/height; compute the schematic-coord rect that exactly covers
+   the canvas; if not cleanly computable pure-Tcl, add a minimal `xschem get`
+   accessor for viewport-in-schematic-coords -- document the choice).
+3. Multi-graph (Add Graph): split the viewport vertically into equal bands,
+   each graph rect fills its band full-width; refit all on <Configure>.
+   Replace the fixed 800x400/i*450 geometry (wave_viewer.tcl:444) with
+   viewport-relative geometry.
+4. Kill the canvas-zoom shrink: regenerate must NOT leave the graph subject
+   to canvas zoom_full shrinking (wave_viewer.tcl:608). After fill, the graph
+   fills regardless of any canvas zoom; ideally the canvas viewport is pinned
+   (fixed origin/zoom) and only the graph's internal axes change (item 19).
+5. Tests: GUI -- open viewer, assert the graph rect covers ~the full canvas
+   (rect bbox ≈ viewport within margin); resize the toplevel -> graph still
+   fills (refit ran); two graphs -> each fills its half; grid not drawn.
+   Headless where computable (geometry proc unit checks). >=2 sabotages.
+
+### 19 graph-interact
+
+Route all zoom/pan/scroll/RMB to the GRAPH content (item 18 makes the pointer
+always inside a graph). Depends on item 18.
+1. Plain wheel up/down = vertical scroll/pan of the graph content (the
+   over-graph graph pan, callback.c:1170/1133) -- NOT canvas pan. Document
+   the final assignment in the spec + tutorial. Decide Shift/Ctrl+wheel:
+   Ctrl+wheel = zoom in/out on the graph (x or both), Shift+wheel = horizontal
+   pan (scout picks the Cadence-consistent scheme, documents).
+2. RMB (Button-3) press+drag = zoom rectangle in the graph, release = zoom to
+   box (the C path callback.c:1836/159 already does this over-graph); ensure
+   btn3_filter (wave_viewer.tcl:1376) forwards Button-3 everywhere now that
+   the graph fills the window, so RMB drag zoom works anywhere in the viewer.
+3. 'f' = fit (full x+y). Keep the View menu Fit/Zoom/Redraw acting on the
+   GRAPH now (not canvas zoom_full). Arrows pan/zoom x (callback.c:1339+) stay.
+4. Ensure canvas zoom verbs no longer shrink the graph -- View>Zoom In/Out
+   act on graph axes, not canvas.
+5. Tests: GUI -- wheel over viewer changes graph y-view not canvas; RMB drag
+   a box -> graph x-range narrows to the box (assert graph gx1/gx2 or the
+   rect node x1/x2 changed, canvas origin/zoom unchanged); f fits; Ctrl+wheel
+   zooms. Assert canvas xorigin/zoom stable across these (proves graph-not-
+   canvas). >=2 sabotages. Update the tutorial's viewer key/mouse table +
+   the spec.
