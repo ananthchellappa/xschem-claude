@@ -46,6 +46,10 @@ set_style {0 4 8 {6 4} 50 0 none 0}
 check "W4 angle 50 still warns, clamped to 45" \
   [expr {[lsearch -glob $::warns {*out of range*clamped to 45*}] >= 0}] "(=> $::warns)"
 
+# scrub scratch: silence the exit-time geometry write (xwin_exit -> store_geom)
+# so it doesn't fault on the just-deleted USER_CONF_DIR, then remove it.
+proc store_geom {args} {}
+catch {file delete -force $tmp}
 if {$fail == 0} { puts "RESULT: ALL PASS" } else { puts "RESULT: $fail FAILED" }
 flush stdout
 exit [expr {$fail == 0 ? 0 : 1}]

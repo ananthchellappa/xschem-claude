@@ -38,6 +38,10 @@ check "E2c angle 0 -> flat (no polygons)" \
   [expr {[count_type .nhse.preview polygon] == 0}] "(polygons=[count_type .nhse.preview polygon])"
 
 catch {destroy .nhse}
+# scrub scratch: silence the exit-time geometry write (xwin_exit -> store_geom)
+# so it doesn't fault on the just-deleted USER_CONF_DIR, then remove it.
+proc store_geom {args} {}
+catch {file delete -force $::USER_CONF_DIR}
 if {$fail == 0} { puts "RESULT: ALL PASS" } else { puts "RESULT: $fail FAILED" }
 flush stdout
 exit [expr {$fail == 0 ? 0 : 1}]
