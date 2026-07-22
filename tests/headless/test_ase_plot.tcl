@@ -214,6 +214,33 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     return 0
   }
 
+  # One full Direct-Plot gesture from ASE window $awin on design canvas $cv:
+  # arm the mode via the Results menu, click the D-net wire to queue a trace,
+  # then end with a REAL <Key-Escape> (focus-gated retry — a lone synthetic
+  # ESC is green-but-hollow, gesture-test-full-sequence lesson). Returns 1 once
+  # the product's sod_end provably reverted the seized Key-Escape binding.
+  proc dp_gesture {awin cv key} {
+    set pre_esc [bind $cv <Key-Escape>]
+    $awin.mb.results invoke {Direct Plot}
+    update
+    ase::ui::sod_click $key 550 -330
+    update
+    set ended 0
+    for {set i 0} {$i < 200} {incr i} {
+      update
+      if {[bind $cv <Key-Escape>] eq $pre_esc} { set ended 1; break }
+      focus -force $cv
+      update
+      if {[focus -displayof $cv] eq $cv} {
+        event generate $cv <Key-Escape>
+        update
+        if {[bind $cv <Key-Escape>] eq $pre_esc} { set ended 1; break }
+      }
+      after 50
+    }
+    return $ended
+  }
+
   set key [ase::session_key sky130_tests test_nfet_final ngspice_state1]
   set mainok [main_ready]
   set have_ng [expr {[auto_execok ngspice] ne {}}]
@@ -477,6 +504,100 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
       puts "SKIPPED: P7 viewer-destroy assert (no viewer was open — run legs skipped)"
     }
     check "P7 viewer registry cleaned" [wviewer::window_for $key] {}
+
+    # --- P8: dp-open-race (item 17) — the FIRST Direct Plot of a FRESH session
+    # opens EXACTLY ONE viewer that STAYS visible. Placed AFTER P7 so the
+    # session's viewer registry is clean and wviewer::open takes its FRESH arm
+    # (the arm that pre-fix never raised/focused the new window -> under
+    # interactive WSLg it mapped BEHIND the just-raised design window and never
+    # came forward: "launch then VANISH", only the 2nd Direct Plot's RE-OPEN
+    # arm brought it up — issue 0054 stacking). Gated on mainok ONLY (needs NO
+    # ngspice: a dc-enabled analysis makes dp_finish open the viewer regardless
+    # of a raw; all outputs plot 0 + NO run keeps Direct Plot the FIRST viewer
+    # open). The user's VANISH symptom is an interactive-WSLg stacking race a
+    # scripted driver cannot faithfully reproduce; this phase asserts the
+    # open-race INVARIANT (exactly one live viewer that STAYS; the 2nd raises
+    # the SAME one) and the top-of-stack end-state the raise-fix guarantees.
+    set cst [ase::state_load $clonestate]
+    set an {}
+    foreach a [dict get $cst analyses] {
+      if {[dict get $a type] eq {dc}} {
+        set a [dict create type dc enabled 1 source V2 start 0 stop 1.8 step 0.01]
+      } else {
+        set a [dict replace $a enabled 0]
+      }
+      lappend an $a
+    }
+    dict set cst analyses $an
+    set outs {}
+    foreach o [dict get $cst outputs] { dict set o plot 0; lappend outs $o }
+    dict set cst outputs $outs
+    ase::state_save $clonestate $cst
+
+    check "P8 reopen a FRESH session -> 1" \
+      [ase::open_state sky130_tests test_nfet_final ngspice_state1] 1
+    update
+    set top [ase::ui::window_for $key]
+    check_true "P8 session window exists" \
+      [expr {$top ne {} && [winfo exists $top]}]
+    check "P8 fresh session has NO viewer yet" [wviewer::window_for $key] {}
+    set N0 [toplevel_count]
+    set cv .drw
+
+    # first Direct Plot (whole Tk gesture: menu -> click -> REAL ESC); make the
+    # design current first (deterministic, P6 precedent)
+    xschem new_schematic switch .drw
+    update
+    check "P8 first Direct Plot REAL ESC ended the mode" [dp_gesture $top $cv $key] 1
+    # settle: let dp_finish's wviewer::open + the fresh-arm raise (withdraw/
+    # deiconify remap) run to completion
+    for {set i 0} {$i < 20} {incr i} { update; after 25 }
+    set vtop [wviewer::window_for $key]
+    check_true "P8 first Direct Plot opened a viewer" \
+      [expr {$vtop ne {} && [winfo exists $vtop]}]
+    set vready 0
+    if {$vtop ne {}} { set vready [viewer_ready $vtop] }
+    check "P8 first viewer mapped" $vready 1
+    check "P8 exactly ONE new toplevel" [toplevel_count] [expr {$N0 + 1}]
+
+    # STAYS: poll across a settle window; a transient unmap during a withdraw/
+    # deiconify re-map is tolerated (viewer_ready polls until re-mapped), a
+    # persistent gone/unmapped IS the user's VANISH bug -> FAIL
+    for {set i 0} {$i < 40} {incr i} { update; after 25 }
+    set se 0; set sm 0
+    if {$vtop ne {} && [winfo exists $vtop]} {
+      set se 1
+      set sm [viewer_ready $vtop]
+    }
+    check "P8 first viewer STAYS" [expr {$se && $sm ? 1 : 0}] 1
+    check "P8 first viewer top of stackorder" \
+      [lindex [wm stackorder .] end] $vtop
+
+    # second Direct Plot: the RE-OPEN arm must raise the SAME viewer (item 13),
+    # never a duplicate. Make the design current first (the first plot's viewer
+    # raise leaves WSLg focus events in flight, P6 precedent).
+    set vtop1 $vtop
+    xschem new_schematic switch .drw
+    update
+    check "P8 second Direct Plot REAL ESC ended the mode" [dp_gesture $top $cv $key] 1
+    for {set i 0} {$i < 20} {incr i} { update; after 25 }
+    check_true "P8 second Direct Plot raises the SAME viewer" \
+      [expr {$vtop1 ne {} && [wviewer::window_for $key] eq $vtop1}]
+    check "P8 second Direct Plot added no new toplevel" \
+      [toplevel_count] [expr {$N0 + 1}]
+    # the re-open arm's raise (withdraw+deiconify) can be mid-flight -> poll for
+    # the re-map (transient unmap tolerated) rather than a bare snapshot
+    set se2 0; set sm2 0
+    if {$vtop1 ne {} && [winfo exists $vtop1]} {
+      set se2 1
+      set sm2 [viewer_ready $vtop1]
+    }
+    check "P8 second viewer still exists+mapped" [expr {$se2 && $sm2 ? 1 : 0}] 1
+
+    # cleanup: close the session (closes its viewer, D10) + registry clean
+    ase::ui::close $key
+    update
+    check "P8 session closed, viewer registry cleaned" [wviewer::window_for $key] {}
   }
 
 } else {

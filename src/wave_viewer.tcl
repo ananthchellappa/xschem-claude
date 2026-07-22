@@ -293,6 +293,19 @@ proc wviewer::open {token} {
   # WM-close (or any external destroy) must also clean the registry; every
   # descendant's <Destroy> carries the toplevel bindtag, hence the %W guard
   bind $top <Destroy> "+if {{%W} eq {$top}} {[list wviewer::forget $token]}"
+  # item 17 (dp-open-race): finish the FRESH open the SAME WSLg-reliable way
+  # the RE-OPEN arm above does — a viewer that just opened must come to the
+  # FRONT. Pre-fix this arm relied on load_new_window's natural first map, but
+  # select_on_design/design_window has just raised the DESIGN window, so under
+  # interactive WSLg the fresh viewer mapped BEHIND it and never came forward
+  # (raise honored only at map time, issue 0054): the user saw "launch then
+  # VANISH", and only the SECOND Direct Plot (this token's RE-OPEN arm) brought
+  # it up. raise_activate_toplevel handles both the mapped and not-yet-mapped
+  # cases (xschem.tcl), so it is safe on a window load_new_window may have
+  # mapped asynchronously; additive for every caller (dp_finish, `~`/
+  # open_viewer, auto_plot, restore) — none want a viewer opening behind.
+  raise_activate_toplevel $top
+  catch {focus $top}
   return 1
 }
 
