@@ -1,6 +1,6 @@
-# Waveform Viewer window shell (item 11 of doc/claude/ase_l_batch, spec
-# doc/claude/specs/waveform_viewer.md — src/wave_viewer.tcl + the ase.tcl
-# raw_file backend hook):
+# Waveform Viewer window shell + working core (items 11+12 of
+# doc/claude/ase_l_batch, spec doc/claude/specs/waveform_viewer.md —
+# src/wave_viewer.tcl + the ase.tcl raw_file backend hook):
 #   V1  render_deck emits exactly one `write <rundir>/<cell>_ase.raw` line
 #       inside .control...endc, after the print line (fixture state, op on)
 #   V2  no write line when ALL analyses are disabled
@@ -24,7 +24,9 @@
 #       viewer — forced to 1 for determinism, widget exists but is not
 #       pack-managed/mapped, main-window packedness unchanged, fresh G9
 #       reopen stripped too); viewer
-#       menubar attached (File/View/Graph/Cursors, Graph+Cursors disabled),
+#       menubar attached (File/View/Graph/Cursors; since item 12 every
+#       Graph+Cursors entry is LIVE — the item-11 "all disabled" assertion
+#       flipped with the item-12 core),
 #       editor menubar NOT attached; exact title + with_edit clobber
 #       regression; window number > 0; strip (i/Insert/w do nothing: no
 #       instance, no wire, no modify, no readonly MODAL — recording
@@ -34,6 +36,22 @@
 #       modified 0 + readonly restored, no untitled*~.sch autosave backup);
 #       re-open raises the SAME window (number unchanged); Ctrl-W closes
 #       with no prompt, registry cleaned, reopen builds a fresh window.
+#   H1-H6 item-12 pure model->rect-props procs (BOTH arms, no window, no
+#       xschem calls): graph_props template/token/alias/range/log emission,
+#       graph_geometry stacking, next_color palette cycle, validate_rpn
+#       token rules (save.c RPN table; D4 pre-validation)
+#   G10-G17 item-12 viewer core (GUI, self-SKIP): Add Graph stacking +
+#       model/rect/graphbb agreement; Add Trace from the raw-vars listbox
+#       (count == `raw vars`, palette-head color); expression trace via
+#       `xschem raw add` (db20) + bad expression surfaces IN-DIALOG (D4:
+#       error label, no phantom vector, model unchanged, no throw); Axes
+#       dialog log toggle + exact ranges; Delete dialog (one trace, then a
+#       whole graph — remaining graphs re-stack from y 0); cursors A/B via
+#       menu checkbuttons + bottom-bar readout showing eng-formatted x and
+#       INTERPOLATED per-trace y cross-checked against the engine's
+#       cursor-B ground truth (`raw value <var> {}` after `set cursor2_x`)
+#       and proven different from the nearest raw sample; View>Fit = engine
+#       autozoom + model read-back; no Graph/Cursors entry left disabled.
 #
 # Honest assertability (spec D8): headless/GUI legs can assert raw
 # points/vars/sim_type, layer-2 rect count/props, redraw rc 0 and
@@ -177,6 +195,73 @@ check_true "V6 shipped schematic keeps its layer-2 graph rect(s)" \
 check "V6 first layer-2 rect keeps flags=graph" \
   [xschem getprop rect 2 0 flags] graph
 check "V6 redraw rc 0 on the readonly graph schematic" [catch {xschem redraw}] 0
+
+# --- H1-H6: item-12 pure model->props procs (both arms; no window) -----------
+
+# H1: single plain trace -> add_graph-template props with node/color filled
+set Gh [dict create traces [list [dict create expr {v(d)} name {} vec {v(d)} \
+        color 4]] logx 0 logy 0 x1 {} x2 {} y1 {} y2 {}]
+set ph [wviewer::graph_props $Gh]
+check_true "H1 props carry flags=graph" \
+  [expr {[string first "flags=graph" $ph] >= 0}]
+check_true "H1 props carry node=\"v(d)\"" \
+  [expr {[string first "node=\"v(d)\"" $ph] >= 0}]
+check_true "H1 props carry color=\"4\"" \
+  [expr {[string first "color=\"4\"" $ph] >= 0}]
+check_true "H1 logx=0 line" [regexp -line {^logx=0$} $ph]
+check_true "H1 logy=0 line" [regexp -line {^logy=0$} $ph]
+
+# H2: alias + multi-trace -> quoted "alias;vec" token (backslash-escaped in
+# the in-memory prop form) AND the plain token; color count == trace count
+set Gh2 [dict create traces [list \
+  [dict create expr {v(d)} name drain vec {v(d)} color 4] \
+  [dict create expr {v(g)} name {} vec {v(g)} color 5]] \
+  logx 0 logy 0 x1 {} x2 {} y1 {} y2 {}]
+set ph2 [wviewer::graph_props $Gh2]
+check_true "H2 alias token \\\"drain;v(d)\\\" present" \
+  [expr {[string first "\\\"drain;v(d)\\\"" $ph2] >= 0}]
+check_true "H2 plain second token v(g) closes the node attr" \
+  [expr {[string first "\nv(g)\"" $ph2] >= 0}]
+regexp {color="([^"]*)"} $ph2 -> ph2c
+check "H2 color has exactly 2 entries" [llength $ph2c] 2
+
+# H3: explicit ranges + logy override the template defaults
+set Gh3 [dict create traces [list [dict create expr {v(d)} name {} vec {v(d)} \
+        color 4]] logx 0 logy 1 x1 0 x2 1.8 y1 {} y2 {}]
+set ph3 [wviewer::graph_props $Gh3]
+check_true "H3 x1=0 line" [regexp -line {^x1=0$} $ph3]
+check_true "H3 x2=1.8 line" [regexp -line {^x2=1.8$} $ph3]
+check_true "H3 logy=1 line" [regexp -line {^logy=1$} $ph3]
+
+# H4: vertical stacking (xschem y grows downward, 800x400 slots, 50 gap)
+check "H4 graph 0 slot" [wviewer::graph_geometry 0] {0 0 800 400}
+check "H4 graph 2 slot" [wviewer::graph_geometry 2] {0 900 800 1300}
+
+# H5: color auto-cycle (palette 4 5 7 8 9 12 14 15 10 11)
+set Gh5a [dict create traces {} logx 0 logy 0 x1 {} x2 {} y1 {} y2 {}]
+check "H5 fresh graph -> palette head 4" [wviewer::next_color $Gh5a] 4
+set Gh5b [dict create traces [list [dict create vec a color 4] \
+          [dict create vec b color 5]] logx 0 logy 0 x1 {} x2 {} y1 {} y2 {}]
+check "H5 graph using {4 5} -> 7" [wviewer::next_color $Gh5b] 7
+set trs {}
+foreach c {4 5 7 8 9 12 14 15 10 11} {
+  lappend trs [dict create vec v$c color $c]
+}
+set Gh5c [dict create traces $trs logx 0 logy 0 x1 {} x2 {} y1 {} y2 {}]
+check "H5 full palette wraps deterministically (10 % 10 -> head)" \
+  [wviewer::next_color $Gh5c] 4
+
+# H6: RPN pre-validation (D4) against the save.c token table
+check "H6 valid expr {v(d) db20()} ok" \
+  [wviewer::validate_rpn {v(d) db20()} {v(d)}] {}
+set e6a [wviewer::validate_rpn {v(d) bogus()} {v(d)}]
+check_true "H6 bogus() rejected + named" [string match {*bogus()*} $e6a]
+set e6b [wviewer::validate_rpn {v(nosuch) db20()} {v(d)}]
+check_true "H6 v(nosuch) rejected + named" [string match {*v(nosuch)*} $e6b]
+check "H6 bare net d accepted via the v() wrap rule" \
+  [wviewer::validate_rpn {d db20()} {v(d)}] {}
+check "H6 number tokens accepted (1k 2.5 -3)" \
+  [wviewer::validate_rpn {1k 2.5 -3 + +} {v(d)}] {}
 
 # --- GUI legs (DISPLAY-guarded self-SKIP) ------------------------------------
 if {[info exists ::has_x] && [info commands winfo] ne {}} {
@@ -338,14 +423,15 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   }
   check "G2 cascade labels exactly File View Graph Cursors" $labels \
     {File View Graph Cursors}
-  set alldis 1
+  # item 12 flipped this leg: the item-11 placeholders were disabled, the
+  # live core must leave NO Graph/Cursors entry disabled (also G17)
+  set anydis 0
   foreach m [list $mb.graph $mb.cursors] {
     for {set i 0} {$i <= [$m index end]} {incr i} {
-      if {[$m entrycget $i -state] ne {disabled}} { set alldis 0 }
+      if {[$m entrycget $i -state] eq {disabled}} { set anydis 1 }
     }
   }
-  check "G2 every Graph + Cursors entry disabled (item-12 placeholders)" \
-    $alldis 1
+  check "G2 no Graph/Cursors entry disabled (item-12: menus live)" $anydis 0
 
   # --- G3: exact title + with_edit clobber regression ------------------------
   set exp_title "Waveforms test_nfet_final (ngspice_state1)"
@@ -446,6 +532,256 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     wviewer::close $tok
     update
     check "G9 closed via the API, registry clean" [wviewer::window_for $tok] {}
+  }
+
+  # ===== item 12: viewer core (G10-G17, fresh viewer window) =================
+  check "G10 core-legs reopen returns 1" [wviewer::open $tok] 1
+  set vtop [wviewer::window_for $tok]
+  set vdrw $vtop.drw
+  set mb $vtop.wvmenubar
+  if {![viewer_ready $vtop]} {
+    puts "SKIPPED: G10-G17 core legs (viewer window never mapped)"
+    wviewer::close $tok
+    update
+  } else {
+
+    # --- G10: Add Graph (menu live; model -> rects -> graphbb agree) ---------
+    set gmenu $mb.graph
+    check_true "G10 Add Graph entry enabled" \
+      [expr {[$gmenu entrycget [$gmenu index {Add Graph}] -state] ne {disabled}}]
+    $gmenu invoke [$gmenu index {Add Graph}]
+    $gmenu invoke [$gmenu index {Add Graph}]
+    check "G10 model has 2 graphs" \
+      [llength [dict get [wviewer::layout_for $tok] graphs]] 2
+    xschem new_schematic switch $vdrw
+    check "G10 two layer-2 graph rects" [xschem get rects 2] 2
+    set bbs [dict get $::wviewer::graphbb $vdrw]
+    check "G10 graphbb row 1 y-offset 450" [lindex $bbs 1] {0 450 800 850}
+    check "G10 graphbb row 1 == graph_geometry 1" \
+      [lindex $bbs 1] [wviewer::graph_geometry 1]
+
+    set names {}
+    if {$have_raw} {
+      # raw goes into the (fresh) viewer ctx: per-context xctx->raw
+      xschem new_schematic switch $vdrw
+      check "G11 raw read into the viewer ctx" [rawq {xschem raw read $rawpath dc}] 1
+      set names [split [xschem raw list] "\n"]
+      set var1 [lindex $names 1]                     ;# first non-sweep var
+
+      # --- G11: Add Trace picked from the raw-vars listbox -------------------
+      set w [wviewer::add_trace_dialog $tok]
+      check_true "G11 Add Trace dialog exists" [winfo exists $w]
+      check "G11 listbox count == raw vars" [$w.vars size] [xschem raw vars]
+      $w.vars selection clear 0 end
+      $w.vars selection set 1
+      $w.expr delete 0 end                           ;# empty -> listbox pick
+      wviewer::add_trace_ok $tok
+      check_true "G11 dialog closed on OK" [expr {![winfo exists $w]}]
+      xschem new_schematic switch $vdrw
+      check_true "G11 rect 1 node carries the picked var verbatim" \
+        [expr {[string first $var1 [xschem getprop rect 2 1 node]] >= 0}]
+      check "G11 rect 1 color == palette head" [xschem getprop rect 2 1 color] 4
+      set g1 [lindex [dict get [wviewer::layout_for $tok] graphs] 1]
+      check "G11 model records 1 trace on the LAST (default) graph" \
+        [llength [dict get $g1 traces]] 1
+      set t0 [lindex [dict get $g1 traces] 0]
+      check "G11 model trace vec == picked var" [dict get $t0 vec] $var1
+      check "G11 model trace color 4" [dict get $t0 color] 4
+
+      # --- G12: expression trace (RPN via `xschem raw add`) ------------------
+      set w [wviewer::add_trace_dialog $tok]
+      $w.expr delete 0 end
+      $w.expr insert 0 "$var1 db20()"
+      $w.name delete 0 end
+      $w.name insert 0 db1
+      wviewer::add_trace_ok $tok
+      check_true "G12 dialog closed on OK" [expr {![winfo exists $w]}]
+      xschem new_schematic switch $vdrw
+      check_true "G12 raw vector db1 exists (raw index >= 0)" \
+        [expr {[rawq {xschem raw index db1}] >= 0}]
+      check_true "G12 rect 1 node carries db1" \
+        [expr {[string first db1 [xschem getprop rect 2 1 node]] >= 0}]
+      check "G12 redraw rc 0" [catch {xschem redraw}] 0
+      set g1 [lindex [dict get [wviewer::layout_for $tok] graphs] 1]
+      set t1 [lindex [dict get $g1 traces] 1]
+      check "G12 model stores the original RPN expr" [dict get $t1 expr] \
+        "$var1 db20()"
+      check "G12 model stores the vector name" [dict get $t1 vec] db1
+
+      # --- G12b: bad expression surfaces in-dialog (D4), no phantom ----------
+      set before_g [dict get [wviewer::layout_for $tok] graphs]
+      set w [wviewer::add_trace_dialog $tok]
+      $w.expr delete 0 end
+      $w.expr insert 0 "v(nosuchnet) db20()"
+      $w.name delete 0 end
+      $w.name insert 0 db2
+      check "G12b OK path does not throw" [catch {wviewer::add_trace_ok $tok}] 0
+      check_true "G12b dialog still up" [winfo exists $w]
+      set errtxt {}
+      catch {set errtxt [$w.err cget -text]}
+      check_true "G12b error label non-empty" [expr {$errtxt ne {}}]
+      xschem new_schematic switch $vdrw
+      check "G12b no phantom raw vector db2" [rawq {xschem raw index db2}] -1
+      check_true "G12b model unchanged" \
+        [expr {[dict get [wviewer::layout_for $tok] graphs] eq $before_g}]
+      catch {$w.btns.cancel invoke}                  ;# ESC-equivalent path
+      check_true "G12b dialog dismissed via cancel" [expr {![winfo exists $w]}]
+    } else {
+      puts "SKIPPED: G11/G12 raw-driven legs (no rawfile from V4)"
+    }
+
+    # --- G13: Axes dialog log toggle + explicit ranges -----------------------
+    set w [wviewer::axes_dialog $tok]
+    check_true "G13 Axes dialog exists" [winfo exists $w]
+    $w.graph set 0
+    wviewer::axes_load $tok
+    $w.x1 delete 0 end
+    $w.x1 insert 0 0
+    $w.x2 delete 0 end
+    $w.x2 insert 0 1.8
+    set ::wviewer::axl($tok,y) 1
+    wviewer::axes_ok $tok
+    check_true "G13 dialog closed on OK" [expr {![winfo exists $w]}]
+    xschem new_schematic switch $vdrw
+    check "G13 rect 0 logy == 1" [xschem getprop rect 2 0 logy] 1
+    check_true "G13 rect 0 x1 exact 0" \
+      [expr {[xschem getprop rect 2 0 x1] == 0}]
+    check_true "G13 rect 0 x2 exact 1.8" \
+      [expr {[xschem getprop rect 2 0 x2] == 1.8}]
+    set g0 [lindex [dict get [wviewer::layout_for $tok] graphs] 0]
+    check "G13 model logy" [dict get $g0 logy] 1
+    check "G13 model x1" [dict get $g0 x1] 0
+    check "G13 model x2" [dict get $g0 x2] 1.8
+
+    if {$have_raw} {
+      # --- G14: Delete dialog — one trace, then a whole graph ----------------
+      set var1 [lindex $names 1]
+      set w [wviewer::delete_dialog $tok]
+      set rows {}
+      for {set i 0} {$i < [$w.items size]} {incr i} {
+        lappend rows [$w.items get $i]
+      }
+      # the picked-var trace row is exactly "graph 1: <var> (<var>)" — the
+      # db1 row also CONTAINS $var1 (inside its expr), so match the full row
+      set want "graph 1: $var1 ($var1)"
+      set ri [lsearch -exact $rows $want]
+      check_true "G14 trace row found in the Delete listbox" [expr {$ri >= 0}]
+      $w.items selection clear 0 end
+      $w.items selection set $ri
+      wviewer::delete_ok $tok
+      xschem new_schematic switch $vdrw
+      check_true "G14 deleted trace gone from the node attr" \
+        [expr {[string first $var1 [xschem getprop rect 2 1 node]] < 0}]
+      set g1 [lindex [dict get [wviewer::layout_for $tok] graphs] 1]
+      check "G14 model graph 1 keeps exactly the surviving trace" \
+        [llength [dict get $g1 traces]] 1
+      check "G14 surviving trace is db1" \
+        [dict get [lindex [dict get $g1 traces] 0] vec] db1
+      # whole-graph delete: graph 1 disappears, graph 0 re-stacks from y 0
+      set w [wviewer::delete_dialog $tok]
+      set rows {}
+      for {set i 0} {$i < [$w.items size]} {incr i} {
+        lappend rows [$w.items get $i]
+      }
+      set ri [lsearch -exact $rows {graph 1}]
+      check_true "G14 graph row found" [expr {$ri >= 0}]
+      $w.items selection clear 0 end
+      $w.items selection set $ri
+      wviewer::delete_ok $tok
+      xschem new_schematic switch $vdrw
+      check "G14 rects drop to 1" [xschem get rects 2] 1
+      check "G14 model drops to 1 graph" \
+        [llength [dict get [wviewer::layout_for $tok] graphs]] 1
+      check "G14 remaining graph re-stacked from y 0" \
+        [lindex [dict get $::wviewer::graphbb $vdrw] 0] {0 0 800 400}
+
+      # --- G15: cursors + readout (menu-driven; interpolation honest) --------
+      set sweepv [lindex $names 0]
+      set cx 0.905                       ;# strictly between two sweep samples
+      xschem new_schematic switch $vdrw
+      set pos [xschem raw pos_at $sweepv $cx]
+      check_true "G15 pos_at finds the bracketing sample" [expr {$pos >= 0}]
+      set slopevar {}
+      foreach v [lrange $names 1 end] {
+        set va [xschem raw value $v $pos]
+        set vb [xschem raw value $v [expr {$pos + 1}]]
+        if {$va != $vb} { set slopevar $v; break }
+      }
+      check_true "G15 found a nonzero-slope var" [expr {$slopevar ne {}}]
+      check "G15 add slope trace to graph 0" \
+        [wviewer::add_trace $tok 0 $slopevar {}] {}
+      set cmenu $mb.cursors
+      $cmenu invoke [$cmenu index {Cursor A}]
+      $cmenu invoke [$cmenu index {Cursor B}]
+      check "G15 cursor mirrors both on" \
+        [list $::wviewer::cva($tok) $::wviewer::cvb($tok)] {1 1}
+      check_true "G15 readout bar auto-shown (pack-managed)" \
+        [expr {![catch {pack info $vtop.wvreadout}]}]
+      xschem new_schematic switch $vdrw
+      xschem redraw                      ;# engine graph ctx follows the rects
+      xschem set cursor1_x $cx
+      xschem set cursor2_x $cx           ;# fires the engine backannotate (B)
+      wviewer::readout_refresh $tok
+      set ta [$vtop.wvreadout.a cget -text]
+      set tb [$vtop.wvreadout.b cget -text]
+      set fx [ase::format_value $cx]
+      check_true "G15a A line shows x=$fx" \
+        [expr {[string first "x=$fx" $ta] >= 0}]
+      check_true "G15a B line shows x=$fx" \
+        [expr {[string first "x=$fx" $tb] >= 0}]
+      set yh [wviewer::interp_value $slopevar $cx]
+      set ye [xschem raw value $slopevar {}]  ;# engine cursor-B ground truth
+      set denom [expr {abs($ye) > 1e-30 ? abs($ye) : 1e-30}]
+      check_true "G15b Tcl interpolation == engine cursor_b_val (rel 1e-6)" \
+        [expr {abs($yh - $ye) / $denom < 1e-6}]
+      set ynear [xschem raw value $slopevar $pos]
+      check_true "G15c interpolated y differs from the nearest sample" \
+        [expr {abs($yh - $ynear) > 0}]
+      set fy [ase::format_value $yh]
+      check_true "G15d A line carries $slopevar=$fy (same helper, cursor A)" \
+        [expr {[string first "$slopevar=$fy" $ta] >= 0}]
+      check_true "G15d B line carries $slopevar=$fy" \
+        [expr {[string first "$slopevar=$fy" $tb] >= 0}]
+
+      # --- G16: View > Fit = engine autozoom + model read-back ---------------
+      set gs [dict get [wviewer::layout_for $tok] graphs]
+      set g0 [dict replace [lindex $gs 0] x1 0.5 x2 1.0]
+      wviewer::set_graphs $tok [lreplace $gs 0 0 $g0]
+      wviewer::regenerate $tok
+      xschem new_schematic switch $vdrw
+      check_true "G16 rect shows the subrange (x1 0.5)" \
+        [expr {[xschem getprop rect 2 0 x1] == 0.5}]
+      $mb.view invoke [$mb.view index Fit]
+      xschem new_schematic switch $vdrw
+      set rx1 [xschem getprop rect 2 0 x1]
+      set rx2 [xschem getprop rect 2 0 x2]
+      set np   [xschem raw points]
+      set smin [xschem raw value $sweepv 0]
+      set smax [xschem raw value $sweepv [expr {$np - 1}]]
+      if {$smin > $smax} { foreach {smin smax} [list $smax $smin] break }
+      set ftol [expr {1e-6 * (abs($smax) + 1.0)}]
+      check_true "G16 fit x1 == sweep min ($smin)" \
+        [expr {abs($rx1 - $smin) <= $ftol}]
+      check_true "G16 fit x2 == sweep max ($smax)" \
+        [expr {abs($rx2 - $smax) <= $ftol}]
+      set g0 [lindex [dict get [wviewer::layout_for $tok] graphs] 0]
+      check "G16 model x1 read back from the rect" [dict get $g0 x1] $rx1
+      check "G16 model x2 read back from the rect" [dict get $g0 x2] $rx2
+    } else {
+      puts "SKIPPED: G14/G15/G16 raw-driven legs (no rawfile from V4)"
+    }
+
+    # --- G17: every Graph + Cursors entry live -------------------------------
+    set anydis17 0
+    foreach m [list $mb.graph $mb.cursors] {
+      for {set i 0} {$i <= [$m index end]} {incr i} {
+        if {[$m entrycget $i -state] eq {disabled}} { set anydis17 1 }
+      }
+    }
+    check "G17 no Graph/Cursors entry left disabled" $anydis17 0
+
+    wviewer::close $tok
+    update
   }
 
   # the strip filter must never throw: a filter error swallows keys by
