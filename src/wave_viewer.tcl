@@ -314,6 +314,22 @@ proc wviewer::in_ctx {token script} {
   uplevel #0 $script
 }
 
+# Switch the current context to `token`'s viewer canvas and VERIFY the
+# switch took effect (item 13): `new_schematic switch` silently NO-OPS while
+# the current ctx's semaphore is raised (xinit.c switch_window) — e.g.
+# inside ase::wait's vwait bracket — and proceeding blind would aim
+# clear_drawing / raw clear+read / raw add at a FOREIGN schematic
+# (probe-verified: a refused switch emptied the ASE design schematic).
+# Returns 1 when the viewer ctx is current, else 0; destructive callers
+# must bail out on 0.
+proc wviewer::switch_ctx {token} {
+  variable windows
+  if {![dict exists $windows $token]} { return 0 }
+  set wp [dict get $windows $token win_path]
+  xschem new_schematic switch $wp
+  return [expr {[xschem get current_win_path] eq $wp}]
+}
+
 # Run `script` (caller's scope) against the viewer buffer with editing
 # temporarily allowed. Contract (D1): switch to the viewer ctx, readonly 0,
 # run, `set_modify 0` BEFORE readonly 1 (so modified can never stick), then
@@ -322,11 +338,15 @@ proc wviewer::in_ctx {token script} {
 # untitled buffers (issue 0060), and a with_edit mutation would drop
 # untitled-N~.sch into the cwd. The script must not call `update`, so no
 # foreign edit can interleave with the bracket. Errors from the script
-# propagate AFTER the readonly/title/autosave restore.
+# propagate AFTER the readonly/title/autosave restore. A REFUSED context
+# switch (switch_ctx, item 13) errors out loudly BEFORE any mutation — the
+# alternative is clear_drawing on somebody else's schematic.
 proc wviewer::with_edit {token script} {
   variable windows
   if {![dict exists $windows $token]} { return 0 }
-  xschem new_schematic switch [dict get $windows $token win_path]
+  if {![wviewer::switch_ctx $token]} {
+    return -code error "wviewer: cannot switch to the viewer window (context busy)"
+  }
   set save_ab 1
   if {[info exists ::autosave_backup]} { set save_ab $::autosave_backup }
   set ::autosave_backup 0
@@ -369,6 +389,50 @@ proc wviewer::set_graphs {token gs} {
   dict set lay graphs $gs
   dict set layouts $token $lay
   return {}
+}
+
+# --- auto-plot graph (item 13, D4) -------------------------------------------
+# The ASE Plot-checkbox auto-plot rebuilds ONE dedicated graph after every
+# successful run (v1 always-replace). That graph carries an extra `auto 1`
+# key on its model dict — graph_props reads only known keys (dget), so the
+# marker never leaks into the rect props, and open dicts round-trip it for
+# free (item 14 serialization included). Rebuild = CLEAR the traces, never
+# remove the graph: Direct-Plot graph indices stay stable. All three helpers
+# are PURE model ops (no Tk/xschem calls — headless-testable); callers
+# regenerate.
+
+# Index of the auto-plot graph in `token`'s layout, or -1 when none exists.
+proc wviewer::auto_graph_index {token} {
+  set gi 0
+  foreach G [dict get [wviewer::layout_for $token] graphs] {
+    if {[wviewer::dget $G auto 0] eq {1}} { return $gi }
+    incr gi
+  }
+  return -1
+}
+
+# Find-or-append the auto-plot graph of `token`; returns its index (no
+# regenerate — callers do).
+proc wviewer::ensure_auto_graph {token} {
+  set gi [wviewer::auto_graph_index $token]
+  if {$gi >= 0} { return $gi }
+  set gs [dict get [wviewer::layout_for $token] graphs]
+  lappend gs [dict merge [wviewer::empty_graph] [dict create auto 1]]
+  wviewer::set_graphs $token $gs
+  return [expr {[llength $gs] - 1}]
+}
+
+# Empty the trace list of model graph `gi` (the graph itself is KEPT —
+# clear-not-remove keeps later graph indices stable). Returns 1, 0 on a bad
+# index.
+proc wviewer::clear_graph_traces {token gi} {
+  set gs [dict get [wviewer::layout_for $token] graphs]
+  if {![string is integer -strict $gi] || $gi < 0 || $gi >= [llength $gs]} {
+    return 0
+  }
+  set G [dict replace [lindex $gs $gi] traces {}]
+  wviewer::set_graphs $token [lreplace $gs $gi $gi $G]
+  return 1
 }
 
 # PURE (headless-checkable): canvas slot of graph index `i` — stacked
@@ -577,6 +641,31 @@ proc wviewer::display_raw {token rawfile sim_type node {color 4}} {
   return 1
 }
 
+# Attach (or REPLACE) the raw data of `token`'s viewer (item 13, D9): switch
+# to the viewer ctx, unload whatever raw the ctx holds, read `rawfile` as
+# `sim_type` ({} = let the engine pick the first analysis in the file),
+# regenerate. Returns 1; 0 on an unknown token or a missing file (then NO
+# clear happens — a stale-but-loaded raw beats an empty viewer). Re-run
+# replace goes through this same helper. NOTE: the clear also kills every
+# `xschem raw add` vector — ase::ui::auto_plot re-adds its own on rebuild
+# (`raw add` of an existing name recalculates it); user-dialog expression
+# traces (item 12) go stale-but-CLEAN: the engine draws nothing for an
+# unresolved node and redraw keeps rc 0 (test-asserted).
+proc wviewer::attach_raw {token rawfile sim_type} {
+  variable windows
+  if {![dict exists $windows $token]} { return 0 }
+  if {$rawfile eq {} || ![file isfile $rawfile]} { return 0 }
+  if {![wviewer::switch_ctx $token]} { return 0 }   ;# never clear a foreign ctx
+  catch {xschem raw clear}
+  if {$sim_type ne {}} {
+    xschem raw read $rawfile $sim_type
+  } else {
+    xschem raw read $rawfile
+  }
+  wviewer::regenerate $token
+  return 1
+}
+
 # Append a trace to model graph `gi` of `token` (the Add Trace… core; also
 # the scripting/test seam). `rpn` = a raw variable reference (single token)
 # or a whitespace-separated RPN expression (D5: materialized as a raw
@@ -593,7 +682,9 @@ proc wviewer::add_trace {token gi rpn {name {}}} {
   if {![string is integer -strict $gi] || $gi < 0 || $gi >= [llength $gs]} {
     set gi [expr {[llength $gs] - 1}]
   }
-  xschem new_schematic switch [dict get $windows $token win_path]
+  if {![wviewer::switch_ctx $token]} {
+    return "viewer window busy - cannot switch context"
+  }
   set rawok [expr {[xschem raw loaded] >= 0}]
   set varlist {}
   if {$rawok} { set varlist [split [xschem raw list] "\n"] }

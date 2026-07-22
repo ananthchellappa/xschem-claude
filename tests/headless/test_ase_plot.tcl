@@ -1,0 +1,499 @@
+# ASE-L -> Waveform Viewer wiring (item 13 of doc/claude/ase_l_batch, spec
+# doc/claude/specs/waveform_viewer.md "ASE integration"):
+#   PH1  ase::plot_sim_type: last enabled analysis in the fixed emit order
+#        op dc ac tran; {} when none (headless, pure)
+#   PH2  ase::last_rawfile: {} for an unknown session / a session with no raw
+#        artifact; the exact <rundir>/<cell>_ase.raw path once the file
+#        exists (headless)
+#   PH3  ase::ui::plot_map_expr: -i(v1) -> `i(v1) -1 *` RPN, everything else
+#        verbatim after a trim, bare `-` untouched (headless, pure)
+#   PH4  wviewer auto-graph model helpers: ensure_auto_graph find-or-append
+#        (`auto 1` marker), clear_graph_traces keeps the graph + neighbors,
+#        auto_graph_index (headless, pure)
+#   P1   op-only run with a Plot-checked row -> auto-plot NOTICE arm: run
+#        Ready/Green, NO viewer opened (GUI + ngspice)
+#   P2   op-only Results > Direct Plot: menu entry live, mode seizes the
+#        design-canvas bindings, click queues, sod_end -> notice arm (no
+#        viewer), bindings restored VERBATIM, session outputs UNCHANGED (D2)
+#   P3   dc-sweep run, id=-i(v1) + v(d) Plot-checked -> viewer auto-opened,
+#        raw attached (loaded INDEX >= 0, sim_type dc, points 181), auto
+#        graph 0 carries both traces (id materialized via `raw add` from the
+#        D6-mapped RPN), redraw rc 0 (GUI + ngspice)
+#   P4   Direct Plot live: menu invoke -> mode, wire + vsource clicks queue
+#        v(d)/i(v1), REAL <Key-Escape> ends -> ONE new stacked graph with
+#        exactly those traces, auto graph untouched, outputs unchanged,
+#        bindings restored verbatim
+#   P5   `~` strip button: not disabled; invoke raises the SAME viewer (no
+#        new toplevel, no traces added)
+#   P6   re-run -> always-replace: auto graph REBUILT (still 2 traces),
+#        Direct-Plot graph untouched, raw re-read (points/sim_type), redraw
+#        rc 0 over the stale `raw add` interval
+#   P7   session close closes the viewer (D10) + registry cleaned
+# Hermetic: the committed sky130_tests/test_nfet_final cell is CLONED into a
+# scratch dir (the committed tree is never written); state shaping goes ONLY
+# through the public ase::state_load/state_save schema on the CLONE.
+#
+# Runs via full_audit's DEFAULT arm (GUI legs self-SKIP without a usable
+# DISPLAY; run legs additionally self-SKIP without ngspice). Standalone
+# repro from the repo ROOT:
+#   ./src/xschem --pipe -q --nolog --script tests/headless/test_ase_plot.tcl
+# (headless arm: add --nogui)
+
+set fail 0; set npass 0
+proc check {name got exp} {
+  global fail npass
+  if {$got eq $exp} { puts "ok:   $name"; incr npass } \
+  else { puts "FAIL: $name -> {$got} (exp {$exp}) : FAIL"; incr fail }
+}
+proc check_true {name cond} { check $name [expr {$cond ? 1 : 0}] 1 }
+
+# recent-files gate (issue 0119): this script loads real cells
+set no_recent_files 1
+
+# wait for a real, mapped main canvas (WSLg can be slow to map the window);
+# returns 0 when it never becomes usable -> the caller SKIPs, not FAILs
+proc main_ready {} {
+  catch {wm geometry . 1000x800}
+  for {set i 0} {$i < 300} {incr i} {
+    update
+    if {[winfo ismapped .drw] && [winfo width .drw] > 300 && [winfo height .drw] > 300} {
+      return 1
+    }
+  }
+  return 0
+}
+
+# error-guarded raw query: `xschem raw ...` THROWS when nothing is loaded —
+# a missing raw must FAIL its check, not abort the test
+proc rawq {script} {
+  if {[catch {uplevel 1 $script} r]} { return "ERR:$r" }
+  return $r
+}
+
+# traces count of graph $i in graph-list $gs, -1 when the graph is absent —
+# a sabotaged/missing graph must FAIL its count check, not abort on
+# `dict get {} traces`
+proc gtr_n {gs i} {
+  if {![string is integer -strict $i] || $i < 0 || $i >= [llength $gs]} {
+    return -1
+  }
+  set G [lindex $gs $i]
+  if {![dict exists $G traces]} { return -1 }
+  return [llength [dict get $G traces]]
+}
+
+# --- locations (cwd-independent) --------------------------------------------
+set here    [file normalize [file dirname [info script]]]      ;# tests/headless
+set repo    [file normalize [file join $here .. ..]]           ;# repo root
+set scratch [file normalize [file join [pwd] _ase_plot_[pid]]]
+file delete -force $scratch
+file mkdir $scratch
+
+# model resolution exactly as sky130A/cadence_style_rc sets it
+set ::SKYWATER_MODELS [file join $repo sky130A models libs.tech combined]
+
+# --- fixture: CLONE the committed cell, scratch registry ---------------------
+# sky130_tests points at the CLONE (all state writes land there); the device
+# libraries point at the real committed trees.
+set clonelib [file join $scratch sky130_tests]
+file mkdir $clonelib
+file copy [file join $repo sky130A xschem_libs sky130_tests test_nfet_final] \
+  $clonelib
+set f [open [file join $scratch library.defs] w]
+puts $f "DEFINE sky130_tests $clonelib"
+puts $f "DEFINE sky130_fd_pr [file join $repo sky130A xschem_libs sky130_fd_pr]"
+puts $f "DEFINE devices [file join $repo xschem_libs_newsym devices]"
+close $f
+set ::XSCHEM_LIBRARY_DEFS [file join $scratch library.defs]
+set ::library_registry_defs_only 1
+set ::XSCHEM_LIBRARY_PATH {}
+
+set rundir  [file normalize [file join $scratch run]]
+set schpath [file normalize \
+  [file join $clonelib test_nfet_final schematic test_nfet_final.sch]]
+set clonestate [file join $clonelib test_nfet_final ngspice_state1 \
+  test_nfet_final.state]
+
+if {[catch {
+
+# hermetic rundir: rewrite the CLONE's state file through the public schema
+# BEFORE any session opens (fixture shaping, not a flow workaround)
+set cst [ase::state_load $clonestate]
+dict set cst rundir $rundir
+ase::state_save $clonestate $cst
+
+# --- PH1: plot_sim_type (pure) -----------------------------------------------
+check "PH1 committed-shape op-only -> op" [ase::plot_sim_type $cst] op
+set st_dc [dict replace $cst analyses \
+  {{type op enabled 1} {type dc enabled 1} {type ac enabled 0} {type tran enabled 0}}]
+check "PH1 op+dc enabled -> dc (last in emit order)" \
+  [ase::plot_sim_type $st_dc] dc
+set st_none [dict replace $cst analyses \
+  {{type op enabled 0} {type dc enabled 0} {type ac enabled 0} {type tran enabled 0}}]
+check "PH1 all disabled -> {}" [ase::plot_sim_type $st_none] {}
+set st_actran [dict replace $cst analyses \
+  {{type op enabled 0} {type dc enabled 0} {type ac enabled 1} {type tran enabled 1}}]
+check "PH1 ac+tran enabled -> tran" [ase::plot_sim_type $st_actran] tran
+
+# --- PH2: last_rawfile (headless session) ------------------------------------
+check "PH2 unknown session key -> {}" [ase::last_rawfile no/such/session] {}
+# a private rundir so this touched raw can never leak into the GUI legs
+set ph2run [file normalize [file join $scratch ph2run]]
+set ph2state [ase::state_load $clonestate]
+dict set ph2state rundir $ph2run
+set ph2file [file join $scratch ph2.state]
+ase::state_save $ph2file $ph2state
+set ph2key [ase::session_key phlib test_nfet_final phview]
+ase::session_open $ph2key $ph2file
+check "PH2 registered session, no raw artifact yet -> {}" \
+  [ase::last_rawfile $ph2key] {}
+set ph2raw [file join $ph2run test_nfet_final_ase.raw]
+file mkdir $ph2run
+close [open $ph2raw w]
+check "PH2 raw artifact present -> the exact backend path" \
+  [ase::last_rawfile $ph2key] $ph2raw
+ase::session_close $ph2key
+
+# --- PH3: plot_map_expr (pure) -----------------------------------------------
+check "PH3 v(d) verbatim" [ase::ui::plot_map_expr {v(d)}] {v(d)}
+check "PH3 -i(v1) -> RPN i(v1) -1 *" [ase::ui::plot_map_expr {-i(v1)}] {i(v1) -1 *}
+check "PH3 ready RPN verbatim" [ase::ui::plot_map_expr {i(v1) -1 *}] {i(v1) -1 *}
+check "PH3 whitespace trimmed" [ase::ui::plot_map_expr { v(d) }] {v(d)}
+check "PH3 bare - untouched" [ase::ui::plot_map_expr {-}] -
+# --- PH4: wviewer auto-graph model helpers (pure) ----------------------------
+set phtok ph4/model/tok
+check "PH4 auto_graph_index pre-create -> -1" [wviewer::auto_graph_index $phtok] -1
+check "PH4 ensure_auto_graph on an empty layout -> 0" \
+  [wviewer::ensure_auto_graph $phtok] 0
+set gs [dict get [wviewer::layout_for $phtok] graphs]
+check "PH4 layout gained exactly 1 graph" [llength $gs] 1
+check "PH4 the graph carries the auto 1 marker" \
+  [wviewer::dget [lindex $gs 0] auto 0] 1
+check "PH4 second ensure_auto_graph -> 0 again" \
+  [wviewer::ensure_auto_graph $phtok] 0
+check "PH4 still 1 graph (find, not append)" \
+  [llength [dict get [wviewer::layout_for $phtok] graphs]] 1
+# seed traces on the auto graph + append a plain graph with its own trace
+set G0 [lindex [dict get [wviewer::layout_for $phtok] graphs] 0]
+set G0 [dict replace $G0 traces \
+  {{expr v(a) name {} vec v(a) color 4} {expr v(b) name {} vec v(b) color 5}}]
+set G1 [dict replace [wviewer::empty_graph] traces \
+  {{expr v(c) name {} vec v(c) color 4}}]
+wviewer::set_graphs $phtok [list $G0 $G1]
+check "PH4 clear_graph_traces 0 -> 1" [wviewer::clear_graph_traces $phtok 0] 1
+set gs [dict get [wviewer::layout_for $phtok] graphs]
+check "PH4 graph count unchanged (clear, not remove)" [llength $gs] 2
+check "PH4 graph 0 kept with traces emptied" [dict get [lindex $gs 0] traces] {}
+check "PH4 graph 0 still auto-marked" [wviewer::dget [lindex $gs 0] auto 0] 1
+check "PH4 graph 1 untouched" [dict get [lindex $gs 1] traces] \
+  {{expr v(c) name {} vec v(c) color 4}}
+check "PH4 auto_graph_index finds graph 0" [wviewer::auto_graph_index $phtok] 0
+check "PH4 bad index -> 0, model intact" \
+  [list [wviewer::clear_graph_traces $phtok 7] \
+        [llength [dict get [wviewer::layout_for $phtok] graphs]]] {0 2}
+wviewer::forget $phtok
+
+# --- GUI legs (DISPLAY-guarded partial skip) ---------------------------------
+if {[info exists ::has_x] && [info commands winfo] ne {}} {
+
+  proc toplevel_count {} {
+    set n 0
+    foreach c [winfo children .] {
+      if {[winfo class $c] eq {Toplevel}} { incr n }
+    }
+    return $n
+  }
+
+  # wait for the viewer canvas to be mapped (WSLg can be slow); 0 -> SKIP
+  proc viewer_ready {top} {
+    for {set i 0} {$i < 300} {incr i} {
+      update
+      if {[winfo exists $top.drw] && [winfo ismapped $top.drw]} { return 1 }
+      after 20
+    }
+    return 0
+  }
+
+  set key [ase::session_key sky130_tests test_nfet_final ngspice_state1]
+  set mainok [main_ready]
+  set have_ng [expr {[auto_execok ngspice] ne {}}]
+
+  if {!$mainok} {
+    puts "SKIPPED: P1-P7 viewer-wiring legs (WSLg geometry: main window never became usable)"
+  } else {
+
+    # --- P1 fixture: op enabled ONLY, id row Plot-checked --------------------
+    set cst [ase::state_load $clonestate]
+    set an {}
+    foreach a [dict get $cst analyses] {
+      if {[dict get $a type] eq {op}} { set a [dict replace $a enabled 1] } \
+      else { set a [dict replace $a enabled 0] }
+      lappend an $a
+    }
+    dict set cst analyses $an
+    set outs {}
+    foreach o [dict get $cst outputs] {
+      if {[ase::state_get $o name] eq {id}} { dict set o plot 1 }
+      lappend outs $o
+    }
+    dict set cst outputs $outs
+    ase::state_save $clonestate $cst
+
+    check "P1 open_state -> 1" \
+      [ase::open_state sky130_tests test_nfet_final ngspice_state1] 1
+    update
+    set top [ase::ui::window_for $key]
+    check_true "P1 session window exists" \
+      [expr {$top ne {} && [winfo exists $top]}]
+
+    if {!$have_ng} {
+      puts "SKIPPED: P1 op-only run leg (ngspice not found)"
+    } else {
+      $top.mb.sim invoke {Netlist and Run}
+      set id1 [ase::session_getattr $key run_id]
+      check_true "P1 run started (integer execute id)" \
+        [string is integer -strict $id1]
+      set ec1 [ase::wait $id1]
+      update
+      check "P1 exit 0" $ec1 0
+      check "P1 status Ready" [$top.status.stat cget -text] {Status: Ready}
+      check "P1 status light Green" [$top.status.stat cget -background] Green
+      check "P1 op-only auto-plot opened NO viewer (notice arm)" \
+        [wviewer::window_for $key] {}
+    }
+
+    # --- P2: op-only Direct Plot -> notice arm, D2 outputs untouched ---------
+    set cv .drw
+    check_true "P2 Results Direct Plot entry not disabled" \
+      [expr {[$top.mb.results entrycget {Direct Plot} -state] ne {disabled}}]
+    set outs_snap [ase::state_get [ase::session_state $key] outputs]
+    set pre_press [bind $cv <ButtonPress-1>]
+    set pre_rel   [bind $cv <ButtonRelease-1>]
+    set pre_esc   [bind $cv <Key-Escape>]
+    $top.mb.results invoke {Direct Plot}
+    update
+    check "P2 design is the current schematic" \
+      [file normalize [xschem get schname]] $schpath
+    check "P2 mode canvas is the main canvas" [xschem get current_win_path] .drw
+    check_true "P2 mode armed (ButtonPress-1 seized)" \
+      [expr {[bind $cv <ButtonPress-1>] ne {} && \
+             [bind $cv <ButtonPress-1>] ne $pre_press}]
+    ase::ui::sod_click $key 550 -330                   ;# the D-net wire
+    update
+    ase::ui::sod_end $key
+    update
+    check "P2 op-only Direct Plot opened NO viewer (notice arm)" \
+      [wviewer::window_for $key] {}
+    check "P2 ButtonPress-1 restored verbatim" [bind $cv <ButtonPress-1>] $pre_press
+    check "P2 ButtonRelease-1 restored" [bind $cv <ButtonRelease-1>] $pre_rel
+    check "P2 Key-Escape restored" [bind $cv <Key-Escape>] $pre_esc
+    check "P2 outputs unchanged (D2: plot mode writes no outputs)" \
+      [ase::state_get [ase::session_state $key] outputs] $outs_snap
+    ase::ui::close $key
+    update
+    check_true "P2 session closed for the dc reshape" \
+      [expr {![winfo exists $top]}]
+
+    # --- P3 fixture: dc sweep + two Plot-checked rows ------------------------
+    set cst [ase::state_load $clonestate]
+    set an {}
+    foreach a [dict get $cst analyses] {
+      if {[dict get $a type] eq {dc}} {
+        set a [dict create type dc enabled 1 source V2 start 0 stop 1.8 step 0.01]
+      } else {
+        set a [dict replace $a enabled 0]
+      }
+      lappend an $a
+    }
+    dict set cst analyses $an
+    dict set cst outputs {{name id expr -i(v1) save 1 plot 1} \
+                          {name {} expr v(d) plot 1 save 1}}
+    ase::state_save $clonestate $cst
+    check "P3 reopen state -> 1" \
+      [ase::open_state sky130_tests test_nfet_final ngspice_state1] 1
+    update
+    set top [ase::ui::window_for $key]
+    check_true "P3 session window exists" \
+      [expr {$top ne {} && [winfo exists $top]}]
+
+    if {!$have_ng} {
+      puts "SKIPPED: P3-P6 dc auto-plot/Direct-Plot/rerun legs (ngspice not found)"
+      # the ~ button liveness is still assertable without a run
+      check_true "P5 ~ strip button not disabled" \
+        [expr {[$top.strip.plot cget -state] ne {disabled}}]
+    } else {
+
+      # --- P3: run -> auto-plot opens the viewer, raw attached ---------------
+      $top.mb.sim invoke {Netlist and Run}
+      set id3 [ase::session_getattr $key run_id]
+      check_true "P3 run started (integer execute id)" \
+        [string is integer -strict $id3]
+      set ec3 [ase::wait $id3]
+      update
+      check "P3 exit 0" $ec3 0
+      set vtop [wviewer::window_for $key]
+      check_true "P3 auto-plot opened the viewer" \
+        [expr {$vtop ne {} && [winfo exists $vtop]}]
+      set vready 0
+      if {$vtop ne {}} { set vready [viewer_ready $vtop] }
+      check "P3 viewer window mapped" $vready 1
+      set vdrw $vtop.drw
+      xschem new_schematic switch $vdrw
+      check_true "P3 raw loaded index >= 0 (INDEX semantics)" \
+        [expr {[string is integer -strict [rawq {xschem raw loaded}]] &&
+               [rawq {xschem raw loaded}] >= 0}]
+      check "P3 raw sim_type dc" [rawq {xschem raw sim_type}] dc
+      check "P3 raw points 181 (dc 0..1.8 step 0.01)" \
+        [rawq {xschem raw points}] 181
+      check "P3 auto graph is graph 0" [wviewer::auto_graph_index $key] 0
+      set gs3 [dict get [wviewer::layout_for $key] graphs]
+      check "P3 auto graph carries 2 traces" [gtr_n $gs3 0] 2
+      set node3 [rawq {xschem getprop rect 2 0 node}]
+      check_true "P3 rect 0 node attr carries v(d)" \
+        [expr {[string first {v(d)} $node3] >= 0}]
+      check_true "P3 rect 0 node attr carries id" \
+        [expr {[string first id $node3] >= 0}]
+      check_true "P3 raw vector id materialized (D6 RPN via raw add)" \
+        [expr {[string is integer -strict [rawq {xschem raw index id}]] &&
+               [rawq {xschem raw index id}] >= 0}]
+      check "P3 redraw rc 0" [catch {xschem redraw}] 0
+
+      # --- P4: Direct Plot -> one new stacked graph with the clicked traces --
+      set outs_snap [ase::state_get [ase::session_state $key] outputs]
+      set g_before [llength [dict get [wviewer::layout_for $key] graphs]]
+      set pre_press [bind $cv <ButtonPress-1>]
+      set pre_rel   [bind $cv <ButtonRelease-1>]
+      set pre_esc   [bind $cv <Key-Escape>]
+      $top.mb.results invoke {Direct Plot}
+      update
+      check_true "P4 mode armed (ButtonPress-1 seized)" \
+        [expr {[bind $cv <ButtonPress-1>] ne $pre_press}]
+      ase::ui::sod_click $key 550 -330                 ;# wire -> v(d)
+      update
+      ase::ui::sod_click $key 600 -300                 ;# vsource -> i(v1)
+      update
+      # REAL <Key-Escape> ends the mode (gesture-test-full-sequence lesson):
+      # generated KeyPress goes to the display's FOCUS window and WSLg
+      # confirms focus asynchronously — gate each generate on Tk reporting
+      # the canvas as focus owner and retry until the seized Key-Escape
+      # binding is provably reverted (restored by the product's sod_end).
+      set ended 0
+      for {set i 0} {$i < 200} {incr i} {
+        update
+        if {[bind $cv <Key-Escape>] eq $pre_esc} { set ended 1; break }
+        focus -force $cv
+        update
+        if {[focus -displayof $cv] eq $cv} {
+          event generate $cv <Key-Escape>
+          update
+          if {[bind $cv <Key-Escape>] eq $pre_esc} { set ended 1; break }
+        }
+        after 50
+      }
+      check "P4 REAL ESC ended the mode" $ended 1
+      check "P4 ButtonPress-1 restored verbatim" \
+        [bind $cv <ButtonPress-1>] $pre_press
+      check "P4 ButtonRelease-1 restored" [bind $cv <ButtonRelease-1>] $pre_rel
+      check "P4 Key-Escape restored" [bind $cv <Key-Escape>] $pre_esc
+      set gs4 [dict get [wviewer::layout_for $key] graphs]
+      set n4 [llength $gs4]
+      check "P4 exactly ONE new graph appended" $n4 [expr {$g_before + 1}]
+      set dpgi [expr {$n4 - 1}]
+      set dg [lindex $gs4 $dpgi]
+      check "P4 new graph is NOT the auto graph" [wviewer::dget $dg auto 0] 0
+      set dtr {}
+      catch {set dtr [dict get $dg traces]}
+      set dvecs {}
+      foreach tr $dtr { lappend dvecs [wviewer::dget $tr vec {}] }
+      check "P4 new graph traces are exactly v(d) + i(v1)" \
+        [lsort $dvecs] [lsort {v(d) i(v1)}]
+      set agi4 [wviewer::auto_graph_index $key]
+      check "P4 auto graph untouched (still 2 traces)" [gtr_n $gs4 $agi4] 2
+      check "P4 outputs unchanged (D2: traces queued, no output rows)" \
+        [ase::state_get [ase::session_state $key] outputs] $outs_snap
+      # D9 stale-but-clean: the dp_finish re-attach (raw clear + re-read)
+      # killed the runtime `raw add` vector id — P6's rebuild must bring it
+      # back (the honest REBUILT witness)
+      xschem new_schematic switch $vdrw
+      check "P4 re-attach cleared the raw-add vector id (D9)" \
+        [rawq {xschem raw index id}] -1
+
+      # --- P5: `~` raises the SAME viewer, adds nothing ----------------------
+      check_true "P5 ~ strip button not disabled" \
+        [expr {[$top.strip.plot cget -state] ne {disabled}}]
+      set tls5 [toplevel_count]
+      set gc5 [llength [dict get [wviewer::layout_for $key] graphs]]
+      $top.strip.plot invoke
+      update
+      check "P5 same viewer toplevel" [wviewer::window_for $key] $vtop
+      check "P5 no new toplevel" [toplevel_count] $tls5
+      check "P5 model graph count unchanged (no traces added)" \
+        [llength [dict get [wviewer::layout_for $key] graphs]] $gc5
+
+      # --- P6: re-run -> always-replace auto graph, Direct-Plot graph intact -
+      # make the design current DETERMINISTICALLY first: P5's viewer raise
+      # leaves WSLg focus events in flight, and do_run's design-current guard
+      # can race them during its own `update` (the guard then honestly
+      # refuses with "open its design window first"). A user would click the
+      # design window before re-running; replicate that click's ctx switch.
+      xschem new_schematic switch .drw
+      update
+      $top.mb.sim invoke {Netlist and Run}
+      set id6 [ase::session_getattr $key run_id]
+      check_true "P6 re-run started" [string is integer -strict $id6]
+      set ec6 [ase::wait $id6]
+      update
+      check "P6 exit 0" $ec6 0
+      set gs6 [dict get [wviewer::layout_for $key] graphs]
+      check "P6 model graphs STILL 2 (replace, not append)" [llength $gs6] 2
+      set agi6 [wviewer::auto_graph_index $key]
+      check "P6 auto graph still present" $agi6 0
+      check "P6 auto graph REBUILT with exactly 2 traces" [gtr_n $gs6 $agi6] 2
+      set dtr6 {}
+      catch {set dtr6 [dict get [lindex $gs6 $dpgi] traces]}
+      set dvecs6 {}
+      foreach tr $dtr6 { lappend dvecs6 [wviewer::dget $tr vec {}] }
+      check "P6 Direct-Plot graph untouched (v(d) + i(v1))" \
+        [lsort $dvecs6] [lsort {v(d) i(v1)}]
+      xschem new_schematic switch $vdrw
+      check "P6 raw re-read: points 181" [rawq {xschem raw points}] 181
+      check "P6 raw re-read: sim_type dc" [rawq {xschem raw sim_type}] dc
+      check_true "P6 raw vector id re-materialized (auto graph truly rebuilt)" \
+        [expr {[string is integer -strict [rawq {xschem raw index id}]] &&
+               [rawq {xschem raw index id}] >= 0}]
+      check "P6 redraw rc 0 (stale add-vectors draw clean)" \
+        [catch {xschem redraw}] 0
+    }
+
+    # --- P7: session close closes the viewer (D10) ---------------------------
+    set vtop7 [wviewer::window_for $key]
+    ase::ui::close $key
+    update
+    check_true "P7 session toplevel gone" [expr {![winfo exists $top]}]
+    if {$vtop7 ne {}} {
+      check_true "P7 viewer toplevel destroyed with the session" \
+        [expr {![winfo exists $vtop7]}]
+    } else {
+      puts "SKIPPED: P7 viewer-destroy assert (no viewer was open — run legs skipped)"
+    }
+    check "P7 viewer registry cleaned" [wviewer::window_for $key] {}
+  }
+
+} else {
+  puts "gui legs skipped (no DISPLAY)"
+}
+
+} bigerr]} {
+  puts "UNEXPECTED ERROR: $bigerr"
+  incr fail
+}
+
+# --- cleanup + verdict -------------------------------------------------------
+catch {file delete -force $scratch}
+if {$fail == 0} {
+  puts "RESULT: ALL PASS ($npass checks)"
+} else {
+  puts "RESULT: $fail FAILED ($npass passed)"
+}
+flush stdout
+exit [expr {$fail == 0 ? 0 : 1}]

@@ -411,6 +411,42 @@ proc ase::last_result {} {
   return [dict create]
 }
 
+# --- Waveform-viewer seams (item 13) -----------------------------------------
+
+# The `xschem raw read` type argument (and the op-only "nothing plottable"
+# gate) for a state's results: the LAST enabled analysis type in the FIXED
+# emit order op dc ac tran ({} when none is enabled). COUPLING: the ngspice
+# render_deck emits the enabled analyses into one .control block in exactly
+# this order, so when the trailing `write` executes, ngspice's CURRENT plot
+# (the one the raw file carries) belongs to the FINAL analysis — this proc
+# must mirror render_deck's emit order forever.
+proc ase::plot_sim_type {state} {
+  set out {}
+  foreach type {op dc ac tran} {
+    foreach a [ase::state_get $state analyses] {
+      if {[ase::state_get $a type] ne $type} { continue }
+      if {[ase::state_get $a enabled 0] ne {1}} { continue }
+      set out $type
+    }
+  }
+  return $out
+}
+
+# The raw-file artifact of session `key` when it has results: {} for an
+# unknown session, else the backend raw_file path — returned ONLY when the
+# file exists ({} otherwise). The path is deterministic per rundir/cell and
+# runs overwrite it in place, so file existence == "this session has
+# simulation results"; it also lets a fresh xschem session attach a PREVIOUS
+# run's raw (the waveform_viewer.md saved-results seam).
+proc ase::last_rawfile {key} {
+  set state [ase::session_state $key]
+  if {$state eq {}} { return {} }
+  set sim [ase::state_get $state simulator]
+  if {[catch {[ase::backend_hook $sim raw_file] $state} rf]} { return {} }
+  if {$rf ne {} && [file isfile $rf]} { return $rf }
+  return {}
+}
+
 # --- Session model (item 03) --------------------------------------------------
 # Headless-testable bookkeeping behind the ASE-L window: one session per state
 # view, keyed "lib/cell/view". An entry holds the state file path, the CURRENT

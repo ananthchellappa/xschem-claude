@@ -402,7 +402,8 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     [$top.tb.temp cget -font] eq {AseEntryFont}}]
 
   # W1m: menu tree v2 — the 9 cascades in order; Launch/Tools disabled;
-  # Results entries present-but-disabled; the Simulation tree; no Revert
+  # Results > Direct Plot LIVE since item 13 (wired to ase::ui::direct_plot);
+  # the Annotate entries stay disabled; the Simulation tree; no Revert
   set mlabels {}
   for {set i 0} {$i <= [$top.mb index end]} {incr i} {
     lappend mlabels [$top.mb entrycget $i -label]
@@ -411,8 +412,10 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     {Launch Session Setup Analyses Variables Outputs Simulation Results Tools}
   check "W1m Launch cascade disabled" [$top.mb entrycget Launch -state] disabled
   check "W1m Tools cascade disabled" [$top.mb entrycget Tools -state] disabled
-  check "W1m Results Direct Plot disabled" \
-    [$top.mb.results entrycget {Direct Plot} -state] disabled
+  check_true "W1m Results Direct Plot NOT disabled (item 13: live)" \
+    [expr {[$top.mb.results entrycget {Direct Plot} -state] ne {disabled}}]
+  check_true "W1m Results Direct Plot has a command" \
+    [expr {[$top.mb.results entrycget {Direct Plot} -command] ne {}}]
   check "W1m Results Annotate OP info disabled" \
     [$top.mb.results.annotate entrycget {Operating Point info} -state] disabled
   check "W1m Results Annotate DC Node Voltages disabled" \
@@ -472,11 +475,12 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   check "W1p heading strip carries the locked header color" \
     [ttk::style configure Ase.Treeview.Heading -background] #e8e8e8
 
-  # W1s: the right vertical action strip, spec order, ~ disabled
+  # W1s: the right vertical action strip, spec order, ~ live (item 13)
   set slbls {}
   foreach b [winfo children $top.strip] { lappend slbls [$b cget -text] }
   check "W1s strip buttons in order" $slbls {OP,TR = --> X N&> > ! ~}
-  check "W1s plot placeholder disabled" [$top.strip.plot cget -state] disabled
+  check "W1s plot button normal (item 13: ~ live)" \
+    [$top.strip.plot cget -state] normal
 
   # W1c: per-pane context menus = exactly Add.../Edit.../Delete (entrycget,
   # never posted)

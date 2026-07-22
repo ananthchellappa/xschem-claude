@@ -1,4 +1,4 @@
-# ase_window.tcl — the ASE-L session window (items 03+05-08 of
+# ase_window.tcl — the ASE-L session window (items 03+05-08+13 of
 # doc/claude/ase_l_batch, spec doc/claude/specs/ase_l.md — UI v2 "ADE-L
 # parity rework" is the authoritative chrome contract): ALL Tk widget code of
 # the ASE-L feature. ase.tcl (the headless core + session model) stays
@@ -108,6 +108,11 @@ namespace eval ase::ui {
   # seized bindings' PREVIOUS scripts (restored VERBATIM on exit — empty
   # string = no binding — so the mode composes with the addpin/addlabel
   # shared canvas-Esc slot), sod($key,count) = outputs queued this mode.
+  # Item 13 adds the mode dimension: sod($key,mode) = `outputs` (item-08
+  # behavior: clicks write session outputs via sod_queue) or `plot`
+  # (Results > Direct Plot: clicks queue TRACE expressions into
+  # sod($key,queue) via dp_queue — session outputs are NEVER written — and
+  # sod_end hands the queue to dp_finish, which raises the waveform viewer).
   variable sod;     array set sod {}
 }
 
@@ -235,6 +240,10 @@ proc ase::ui::close {key} {
   array unset edchk $key,*
   array unset dlg $key,*
   catch {destroy $top}
+  # item 13 (D10): the session's waveform viewer dies with the session
+  # (wviewer::close destroys its OWN toplevel and is registry-keyed — no-op
+  # headless or when no viewer is open)
+  catch {wviewer::close $key}
   # binding-leak guard (item 08): end an active Select On Design mode so the
   # design canvas gets its bindings back. AFTER the destroy + wins unset, so
   # sod_end's raise-the-ASE-window arm no-ops on the dead toplevel.
@@ -326,11 +335,14 @@ proc ase::ui::build {key top} {
   $top.mb.sim add command -label "Options\u2026" \
     -command [list ase::ui::sim_options_dialog $key]
 
-  # Results: deferred — the cascade posts, its entries are disabled (spec:
-  # "Menu entries may exist disabled")
+  # Results: Direct Plot is LIVE (item 13) — the Select-On-Design click mode
+  # in the `plot` flavor: clicks queue traces, ESC opens/raises the session's
+  # waveform viewer with a new stacked graph. The Annotate entries stay
+  # disabled (spec: "Menu entries may exist disabled").
   menu $top.mb.results -tearoff 0
   $top.mb add cascade -label Results -menu $top.mb.results
-  $top.mb.results add command -label {Direct Plot} -state disabled
+  $top.mb.results add command -label {Direct Plot} \
+    -command [list ase::ui::direct_plot $key]
   menu $top.mb.results.annotate -tearoff 0
   $top.mb.results.annotate add command -label {Operating Point info} \
     -state disabled
@@ -375,7 +387,8 @@ proc ase::ui::build {key top} {
   pack $top.status -side bottom -fill x -pady 2
 
   # right vertical action strip (spec "Action strip"): text placeholders,
-  # top-down in spec order; ~ (Plot waveforms) is a disabled placeholder.
+  # top-down in spec order; ~ (Plot waveforms, live since item 13) raises or
+  # opens the session's waveform viewer, no traces added.
   # Packed AFTER the toolbar + status bar and BEFORE the expanding body (the
   # item-05 packing lesson: the expanding widget must be packed last).
   frame $top.strip
@@ -395,7 +408,8 @@ proc ase::ui::build {key top} {
     -command [list ase::ui::do_run_existing $key]
   button $top.strip.stop -text ! -width 5 \
     -command [list ase::ui::do_stop $key]
-  button $top.strip.plot -text ~ -width 5 -state disabled
+  button $top.strip.plot -text ~ -width 5 \
+    -command [list ase::ui::open_viewer $key]
   pack $top.strip.ana $top.strip.var $top.strip.out $top.strip.del \
        $top.strip.netrun $top.strip.run $top.strip.stop $top.strip.plot \
        -side top -padx 2 -pady 1
@@ -712,6 +726,22 @@ proc ase::ui::sod_merge {outputs ex flavor} {
   }
   lappend outputs [dict create name {} expr $ex plot $p save $s]
   return [list $outputs added]
+}
+
+# Output-expression -> viewer-trace mapping (item 13, D6; PURE): a single
+# token starting with `-` (and more than the dash — the canonical `-i(v1)`
+# nfet output shape) becomes the RPN `<rest> -1 *`, which add_trace
+# materializes as a raw vector via `xschem raw add` — a leading minus is
+# print-deck syntax the graph engine cannot resolve as a vector name.
+# Everything else (plain vectors, ready RPN, a bare `-`) passes through
+# verbatim after a trim; add_trace's validate_rpn is the backstop.
+proc ase::ui::plot_map_expr {ex} {
+  set ex [string trim $ex]
+  if {[llength [regexp -all -inline {\S+} $ex]] != 1} { return $ex }
+  if {[string index $ex 0] eq {-} && [string length $ex] > 1} {
+    return "[string range $ex 1 end] -1 *"
+  }
+  return $ex
 }
 
 # --- populate ----------------------------------------------------------------
@@ -1090,10 +1120,14 @@ proc ase::ui::output_editor_cancel {key} {
 
 # Enter the mode for session `key` with `flavor` = {save S plot P} (menu To
 # Be Saved -> {save 1 plot 0}, To Be Plotted -> {save 1 plot 1}, From Design…
-# -> the dialog checkboxes). ONE mode globally: entering while another is
-# active cleanly ends the previous one first. Returns 1 when the mode is
-# armed, 0 when the design window cannot be opened.
-proc ase::ui::select_on_design {key flavor} {
+# -> the dialog checkboxes). `mode` (item 13, D1) selects what a click
+# queues: `outputs` (default — item-08 behavior, session outputs written) or
+# `plot` (Results > Direct Plot — trace expressions collected into
+# sod($key,queue), handed to dp_finish on ESC; the flavor is inert there).
+# ONE mode globally: entering while another is active cleanly ends the
+# previous one first. Returns 1 when the mode is armed, 0 when the design
+# window cannot be opened.
+proc ase::ui::select_on_design {key flavor {mode outputs}} {
   variable sod
   if {[info exists sod(active)]} { ase::ui::sod_end $sod(active) }
   if {![ase::ui::design_window $key]} { return 0 }
@@ -1104,6 +1138,8 @@ proc ase::ui::select_on_design {key flavor} {
   }
   set sod($key,canvas)    $cv
   set sod($key,flavor)    $flavor
+  set sod($key,mode)      $mode
+  if {$mode eq {plot}} { set sod($key,queue) {} }
   set sod($key,count)     0
   set sod($key,prevpress) [bind $cv <ButtonPress-1>]
   set sod($key,prevrel)   [bind $cv <ButtonRelease-1>]
@@ -1114,16 +1150,24 @@ proc ase::ui::select_on_design {key flavor} {
   bind $cv <ButtonRelease-1> {break}
   bind $cv <Key-Escape>      "[list ase::ui::sod_end $key]; break"
   set sod(active) $key
-  catch {ciw_echo "ase: Select On Design — click wires/net labels for\
+  if {$mode eq {plot}} {
+    catch {ciw_echo "ase: Direct Plot — click wires/net labels for voltage\
+ traces, sources for current traces; ESC plots"}
+  } else {
+    catch {ciw_echo "ase: Select On Design — click wires/net labels for\
  voltages, sources for currents; ESC ends"}
+  }
   return 1
 }
 
 # End the mode: restore the three seized bindings verbatim (catch — the
-# canvas may be dead), clear the mode records, report how many outputs were
-# queued and return focus to the ASE window (raise_activate_toplevel — a bare
-# raise is a no-op under WSLg/Weston, issue 0054). Safe to call when no mode
-# is active for `key` (early return).
+# canvas may be dead; the restore is IDENTICAL for both modes), clear the
+# mode records, then finish per mode: `outputs` reports how many outputs
+# were queued and returns focus to the ASE window (raise_activate_toplevel —
+# a bare raise is a no-op under WSLg/Weston, issue 0054); `plot` (item 13)
+# SKIPS the ASE-window raise and hands the queued trace expressions to
+# dp_finish, which raises/opens the VIEWER instead. Safe to call when no
+# mode is active for `key` (early return).
 proc ase::ui::sod_end {key} {
   variable sod; variable wins
   if {![info exists sod($key,canvas)]} { return }
@@ -1133,8 +1177,18 @@ proc ase::ui::sod_end {key} {
   catch {bind $cv <Key-Escape>      $sod($key,prevesc)}
   set n 0
   if {[info exists sod($key,count)]} { set n $sod($key,count) }
+  # item 13 (D1): capture mode + queue BEFORE the records are wiped
+  set mode outputs
+  if {[info exists sod($key,mode)]} { set mode $sod($key,mode) }
+  set queue {}
+  if {[info exists sod($key,queue)]} { set queue $sod($key,queue) }
   array unset sod $key,*
   if {[info exists sod(active)] && $sod(active) eq $key} { unset sod(active) }
+  if {$mode eq {plot}} {
+    catch {ciw_echo "ase: Direct Plot — $n trace(s) queued"}
+    ase::ui::dp_finish $key $queue
+    return
+  }
   catch {ciw_echo "ase: Select On Design ended — $n output(s) queued"}
   if {[dict exists $wins $key]} {
     set top [dict get $wins $key]
@@ -1184,7 +1238,14 @@ proc ase::ui::sod_click {key {x {}} {y {}}} {
  net label or a voltage source/ammeter"}
     return
   }
-  ase::ui::sod_queue $key [ase::ui::sod_expr $kind $token]
+  # item 13 (D1): route on the mode — `outputs` writes session outputs
+  # (item-08 behavior), `plot` collects trace expressions for dp_finish
+  set ex [ase::ui::sod_expr $kind $token]
+  if {[info exists sod($key,mode)] && $sod($key,mode) eq {plot}} {
+    ase::ui::dp_queue $key $ex
+  } else {
+    ase::ui::sod_queue $key $ex
+  }
 }
 
 # Queue `ex` into the session's outputs with the mode's flavor (the
@@ -1206,6 +1267,71 @@ proc ase::ui::sod_queue {key ex} {
   ase::ui::populate $key
   incr sod($key,count)
   catch {ciw_echo "ase: queued output '$ex' ($status)"}
+}
+
+# Direct Plot queue step (item 13, D1/D2): collect the trace expression into
+# the mode's queue — session outputs are NEVER written in plot mode (Cadence
+# Direct Plot creates no save entries; test-asserted). Exact-string dedupe.
+proc ase::ui::dp_queue {key ex} {
+  variable sod
+  if {![info exists sod($key,queue)]} { return }
+  if {[lsearch -exact $sod($key,queue) $ex] >= 0} {
+    catch {ciw_echo "ase: trace '$ex' already queued"}
+    return
+  }
+  lappend sod($key,queue) $ex
+  incr sod($key,count)
+  catch {ciw_echo "ase: queued trace '$ex'"}
+}
+
+# Direct Plot finish (item 13, D3): runs AFTER sod_end restored the canvas
+# bindings, with the queued trace expressions. Policy: (1) op-only results
+# have no sweep -> notice, queue discarded, viewer untouched; (2) viewer
+# raised-or-opened; (3) the session's raw attached when a run has produced
+# one — no run yet is a notice, NOT an abort: the traces are still recorded
+# (add_trace's pre-run seam) and resolve at the next attach_raw; (4) ONE new
+# stacked graph per invocation, every queued expression appended to it
+# (per-trace add errors are reported and skipped); an empty queue just
+# leaves the raised viewer. The mode itself already exited clean before this
+# runs, whatever happens here.
+proc ase::ui::dp_finish {key queue} {
+  set st [ase::session_state $key]
+  set sim_t [ase::plot_sim_type $st]
+  if {$sim_t eq {op}} {
+    catch {ciw_echo "ase: op results have no sweep — nothing to plot"}
+    return
+  }
+  if {![wviewer::open $key]} {
+    catch {ciw_echo "ase: cannot open the waveform viewer for $key" error}
+    return
+  }
+  set rf [ase::last_rawfile $key]
+  if {$rf ne {}} {
+    wviewer::attach_raw $key $rf $sim_t
+  } else {
+    catch {ciw_echo "ase: no simulation results yet — run first (queued\
+ traces are recorded and resolve after the run)"}
+  }
+  if {![llength $queue]} { return }
+  wviewer::add_graph $key
+  set gi [expr {[llength [dict get [wviewer::layout_for $key] graphs]] - 1}]
+  foreach ex $queue {
+    set err [wviewer::add_trace $key $gi $ex]
+    if {$err ne {}} { catch {ciw_echo "ase: cannot plot '$ex': $err" error} }
+  }
+}
+
+# Results > Direct Plot (item 13, D13): the Select-On-Design mode in the
+# `plot` flavor — clicks queue traces; the flavor content is inert in plot
+# mode (D2) but kept self-documenting.
+proc ase::ui::direct_plot {key} {
+  ase::ui::select_on_design $key {save 0 plot 1} plot
+}
+
+# `~` strip button / raise-or-open the session's waveform viewer (item 13,
+# D13): no traces added; headless / unknown-session safe via the catch.
+proc ase::ui::open_viewer {key} {
+  catch {wviewer::open $key}
 }
 
 # The Add/Edit Output dialog's "From Design…" button: flavor = the dialog's
@@ -2551,6 +2677,76 @@ proc ase::ui::do_netlist_recreate {key} {
   catch {ciw_echo "ase: netlist written: $nl"}
 }
 
+# Auto-plot after a successful run (item 13, D5): every outputs row with
+# plot==1 is rebuilt into the viewer's dedicated auto graph (the `auto 1`
+# model marker) — v1 ALWAYS-REPLACE policy: the auto graph's traces are
+# cleared and re-added each run, Direct-Plot graphs are never touched
+# (clear-not-remove keeps their indices stable). Zero plot rows -> never
+# opens a viewer to show nothing (but an already-open viewer's stale auto
+# graph is emptied). op-only results -> notice (no sweep, nothing
+# plottable). Row exprs go through plot_map_expr (D6); the row name is used
+# as the trace name when it is a legal vector name (add_trace's rule), else
+# auto. Reached from run_finished via auto_plot_idle (after idle + catch): a
+# viewer failure must never break the status pipeline.
+proc ase::ui::auto_plot {key} {
+  set st [ase::session_state $key]
+  set rows {}
+  foreach o [ase::state_get $st outputs] {
+    if {[ase::state_get $o plot 0] eq {1} && [dict exists $o expr]} {
+      lappend rows $o
+    }
+  }
+  if {![llength $rows]} {
+    if {[wviewer::window_for $key] ne {}} {
+      set gi [wviewer::auto_graph_index $key]
+      if {$gi >= 0} {
+        wviewer::clear_graph_traces $key $gi
+        wviewer::regenerate $key
+      }
+    }
+    return
+  }
+  set sim_t [ase::plot_sim_type $st]
+  if {$sim_t eq {op}} {
+    catch {ciw_echo "ase: op results have no sweep — nothing to auto-plot"}
+    return
+  }
+  if {![wviewer::open $key]} { return }
+  set rf [ase::last_rawfile $key]
+  if {$rf eq {}} {
+    # the run just succeeded, so this is exceptional (raw write failed?)
+    catch {ciw_echo "ase: no raw file from the run — nothing to auto-plot"}
+    return
+  }
+  wviewer::attach_raw $key $rf $sim_t
+  set gi [wviewer::ensure_auto_graph $key]
+  wviewer::clear_graph_traces $key $gi
+  wviewer::regenerate $key   ;# reflect the clear even if every add fails
+  foreach o $rows {
+    set ex [ase::ui::plot_map_expr [ase::state_get $o expr]]
+    set nm [ase::state_get $o name]
+    if {![regexp {^[A-Za-z_][A-Za-z0-9_]*$} $nm]} { set nm {} }
+    set err [wviewer::add_trace $key $gi $ex $nm]
+    if {$err ne {}} {
+      catch {ciw_echo "ase: cannot auto-plot '[ase::state_get $o expr]': $err" error}
+    }
+  }
+}
+
+# The deferred auto-plot entry run_finished schedules (item 13, D5). WHY
+# `after idle`: run_finished fires from the execute fileevent, which can be
+# dispatched INSIDE ase::wait's semaphore bracket (the vwait) — with the
+# current window's semaphore raised, every `new_schematic switch` is a
+# silent no-op (xinit.c switch_window), so running auto_plot right there
+# would aim its viewer clear/read/regenerate at the DESIGN window
+# (probe-verified: it emptied the design schematic). At idle time the
+# bracket is balanced and switches work; wviewer::switch_ctx backstops any
+# residual refusal loudly. The catch keeps an idle-time viewer failure out
+# of Tk's bgerror modal.
+proc ase::ui::auto_plot_idle {key} {
+  catch {ase::ui::auto_plot $key}
+}
+
 # ase run completion callback (eval'd at #0 by ase::run_done AFTER the log
 # file was flushed and results parsed): final log delta, status color, drop
 # the live run id.
@@ -2573,6 +2769,10 @@ proc ase::ui::run_finished {key} {
     ase::session_setattr $key results [ase::last_result]
     ase::ui::refresh_output_values $key
     ase::ui::set_status $key ok
+    # item 13 (D5): Plot-checked rows -> the viewer's auto graph. Deferred:
+    # this callback can run inside ase::wait's semaphore bracket where
+    # window switches silently no-op — see auto_plot_idle.
+    after idle [list ase::ui::auto_plot_idle $key]
   } else {
     ase::ui::set_status $key fail
   }
