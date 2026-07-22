@@ -46,6 +46,22 @@ proc main_ready {} {
   return 0
 }
 
+# Give WSLg/Xwayland real wall-clock time to drain pending map/unmap/destroy X
+# requests between window churn. This DR block opens+tears down ~10 session
+# toplevels and several dialogs; a rapid create/destroy storm can overwhelm the
+# WSLg compositor and drop the X connection (or dump core) mid-run — an
+# uncatchable process death, not a Tcl error. vwait on a short timer yields real
+# time WHILE still pumping the event loop (a bare `after N` would block without
+# draining), so the compositor keeps up. Purely a pacing aid: it never changes
+# what any check observes (it only drains more than a plain `update` would).
+proc settle {{ms 60}} {
+  update idletasks
+  set ::_settle_done 0
+  after $ms [list set ::_settle_done 1]
+  vwait ::_settle_done
+  update
+}
+
 # --- DR-leg helpers ----------------------------------------------------------
 # A distinct dirty state EVERY call: Vgs 9.9 (DR8's on-disk witness) plus a
 # UNIQUE second variable name, so the session is reliably dirty even after an
@@ -112,9 +128,9 @@ proc dr4_cancel {top} {
 proc fresh {{ro 0}} {
   set k [ase::session_key aselib nfet_clean ngspice_state1]
   if {[ase::ui::window_for $k] ne {}} { ase::ui::close $k }
-  update
+  settle
   ase::open_state aselib nfet_clean ngspice_state1 $ro
-  update
+  settle
   return $k
 }
 
@@ -284,6 +300,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   check "DR9 Yes: real Save-As ran" $::saveas_seen 1
   check_true "DR9 Yes: Save-As created the new view file" [file exists $dirtyview]
   check_true "DR9 Yes: untitled window gone" [expr {![winfo exists $utop]}]
+  settle   ;# drain the untitled toplevel teardown before the next churn
 
   # --- DR10: Yes on a READ-ONLY session -> Save-As, RO file untouched --------
   set key [fresh 1]

@@ -304,10 +304,17 @@ proc ase::ui::ask_save_close {key} {
   ase::ui::apply_theme $w
   set ::ase::ui::asksave_result {}
   update
+  # The build-time `update` above pumps the event loop, so a Cancel/close that
+  # lands during it (a WM or WSLg compositor teardown, or a test driving the
+  # modal) can destroy $w before we reach tkwait. raise/grab already tolerate a
+  # gone window via catch; guard focus the same way and skip tkwait on an
+  # already-destroyed window (tkwait on a missing window throws) so this modal
+  # can never leak an uncaught "bad window path name". The result asksave_done
+  # recorded still stands (its Cancel/{} init when nothing ran).
   catch {raise $w}
   catch {grab set $w}
-  focus $w.btns.yes
-  tkwait window $w
+  catch {focus $w.btns.yes}
+  if {[winfo exists $w]} { tkwait window $w }
   return $::ase::ui::asksave_result
 }
 
