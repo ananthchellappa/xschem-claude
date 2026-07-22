@@ -463,7 +463,10 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
         {{expr v(d) name {} vec v(d) color 4}}
 
       # --- G8: close + relaunch (the gate's heart) ---------------------------
-      $top.mb.session invoke Close
+      # item 16: this session is DIRTY (viewer snapshot at save-time); the menu
+      # Close now routes through close_request's save prompt, so tear down
+      # directly (behavior-identical to the pre-rewire menu Close).
+      ase::ui::close $key
       update
       check_true "G8 session toplevel gone" [expr {![winfo exists $top]}]
       check_true "G8 viewer closed with the session (item-13 lifecycle)" \

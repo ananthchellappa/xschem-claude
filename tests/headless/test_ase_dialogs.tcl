@@ -848,8 +848,11 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
       [bind $cv <Key-Escape>] $prev
   }
 
-  # done: close the session window (unsaved edits are discarded by contract)
-  $top.mb.session invoke Close
+  # done: close the session window (unsaved edits are discarded by contract).
+  # item 16: this session is DIRTY; the menu Close now routes through
+  # close_request's save prompt, so tear down directly (behavior-identical to
+  # the pre-rewire menu Close).
+  ase::ui::close $key
   update
   check_true "G12 session window closed" [expr {![winfo exists $top]}]
 

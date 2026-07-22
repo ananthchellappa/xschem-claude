@@ -62,6 +62,8 @@
 namespace eval ase::ui {
   # session key -> toplevel path (.ase<N>)
   variable wins [dict create]
+  # item 16: ask_save_close's yes/no/cancel result (read across tkwait)
+  variable asksave_result {}
   # session key -> allocated Cadence window number
   variable wnum [dict create]
   # session key -> {lib cell view}
@@ -209,7 +211,11 @@ proc ase::ui::open {key lib cell view} {
   # window-activation logging, the CIW/LibMgr pattern ('+' keeps other
   # bindings; notify_window_active dedupes the FocusIn repeats)
   bind $top <FocusIn> "+[list notify_window_active $N "ASE-L $lib/$cell"]"
-  wm protocol $top WM_DELETE_WINDOW [list ase::ui::close $key]
+  # item 16: the real user close entry points route through close_request (the
+  # dirty-session save prompt); ase::ui::close stays the teardown primitive
+  wm protocol $top WM_DELETE_WINDOW [list ase::ui::close_request $key]
+  bind $top <Control-w> [list ase::ui::close_request $key]
+  bind $top <Control-W> [list ase::ui::close_request $key]
   ase::ui::build $key $top
   ase::ui::populate $key
   # item 14 (D6): a state saved with its viewer open relaunches the viewer —
@@ -255,6 +261,110 @@ proc ase::ui::close {key} {
   ase::ui::sod_end $key
 }
 
+# --- item 16: save-on-close prompt -------------------------------------------
+# Opening a state view, editing it, then closing the ASE window (or quitting
+# xschem) must offer a Cadence/ask_save-style Yes/No/Cancel "save changes?"
+# prompt for any DIRTY session — exactly like a normal schematic. See
+# doc/claude/ase_l_batch/prompts/item16_dirty-prompt.md (D1-D9). ase::ui::close
+# stays the unconditional teardown primitive (~10 direct test/quit callers);
+# the prompt lives in the close_request WRAPPER wired to the real user close
+# entry points (WM_DELETE, Session>Close, Ctrl-W).
+
+proc ase::ui::asksave_done {w val} {
+  set ::ase::ui::asksave_result $val
+  catch {destroy $w}
+}
+
+# Modal "save this dirty ASE session?" prompt (ask_save semantics + ASE theme).
+# Returns yes / no / {} (empty == Cancel). Child of the session toplevel so it
+# dies with it and tests can find it at $top.askclose.
+proc ase::ui::ask_save_close {key} {
+  variable wins
+  if {![dict exists $wins $key]} { return no }
+  set top [dict get $wins $key]
+  set w $top.askclose
+  catch {destroy $w}
+  toplevel $w
+  wm title $w {Save State?}
+  catch {wm transient $w $top}
+  set cell [ase::ui::design_cell_name $key]
+  label $w.msg -font AseLabelFont -justify left -anchor w \
+    -text "Simulation state “$cell” has unsaved changes.\n\nSave changes before closing?"
+  pack $w.msg -side top -fill x -padx 16 -pady 12
+  frame $w.btns
+  button $w.btns.yes    -text Yes    -width 8 -command [list ase::ui::asksave_done $w yes]
+  button $w.btns.no     -text No     -width 8 -command [list ase::ui::asksave_done $w no]
+  button $w.btns.cancel -text Cancel -width 8 -command [list ase::ui::asksave_done $w {}]
+  pack $w.btns.yes $w.btns.no $w.btns.cancel -side left -padx 5 -expand yes
+  pack $w.btns -side bottom -fill x -padx 8 -pady 8
+  bind $w <Return> [list $w.btns.yes invoke]
+  bind $w <y>      [list $w.btns.yes invoke]
+  bind $w <n>      [list $w.btns.no invoke]
+  ase::ui::bind_dialog_esc $w [list $w.btns.cancel invoke]  ;# ESC = Cancel
+  ase::ui::apply_theme $w
+  set ::ase::ui::asksave_result {}
+  update
+  catch {raise $w}
+  catch {grab set $w}
+  focus $w.btns.yes
+  tkwait window $w
+  return $::ase::ui::asksave_result
+}
+
+# Run Save State (Save-As) MODALLY for the close/quit paths: show the modeless
+# save_state_dialog, block until it is dismissed, and report whether the save
+# COMPLETED (1) or was cancelled (0). No grab (the RO-overwrite confirm is a
+# nested child). Completion is flagged by do_save_state_as via
+# dlg($key,saveas_result).
+proc ase::ui::save_state_modal {key} {
+  variable wins; variable dlg
+  if {![dict exists $wins $key]} { return 0 }
+  set dlg($key,saveas_result) 0
+  set w [ase::ui::save_state_dialog $key]
+  if {![winfo exists $w]} { catch {unset dlg($key,saveas_result)}; return 0 }
+  tkwait window $w
+  set r 0
+  if {[info exists dlg($key,saveas_result)]} { set r $dlg($key,saveas_result) }
+  catch {unset dlg($key,saveas_result)}
+  return $r
+}
+
+# item 16: prompt-aware session close. Clean -> teardown. Dirty -> yes/no/cancel:
+#   Yes    -> Save-As; close ONLY if the save completed (cancelled Save-As aborts)
+#   No     -> close, discarding (ase::ui::close's discard notice fires)
+#   Cancel -> abort, leaving the window + per-window state arrays intact
+proc ase::ui::close_request {key} {
+  variable wins
+  if {![dict exists $wins $key]} { return }
+  if {![ase::session_dirty $key]} { ase::ui::close $key; return }
+  switch -- [ase::ui::ask_save_close $key] {
+    yes     { if {[ase::ui::save_state_modal $key]} { ase::ui::close $key } }
+    no      { ase::ui::close $key }
+    default { return }
+  }
+}
+
+# item 16: xschem-quit ASE sweep. Prompt each dirty open session; a Cancel on
+# ANY aborts the whole quit (return 0). Yes -> Save-As (a cancelled Save-As also
+# aborts); No -> discard+close. Returns 1 to proceed. No-op (returns 1) when no
+# ASE window is open. Iterates a snapshot of the open-window keys so the
+# ase::ui::close dict-unset mid-loop is safe.
+proc ase::ui::prompt_all_on_quit {} {
+  variable wins
+  foreach key [dict keys $wins] {
+    if {![dict exists $wins $key]} { continue }
+    if {![ase::session_dirty $key]} { continue }
+    catch {raise [dict get $wins $key]}
+    switch -- [ase::ui::ask_save_close $key] {
+      yes     { if {![ase::ui::save_state_modal $key]} { return 0 }
+                ase::ui::close $key }
+      no      { ase::ui::close $key }
+      default { return 0 }
+    }
+  }
+  return 1
+}
+
 # --- window construction -----------------------------------------------------
 
 proc ase::ui::build {key top} {
@@ -284,7 +394,8 @@ proc ase::ui::build {key top} {
   $top.mb.session add command -label {Save State} \
     -command [list ase::ui::save_state_dialog $key]
   $top.mb.session add separator
-  $top.mb.session add command -label Close -command [list ase::ui::close $key]
+  $top.mb.session add command -label Close \
+    -command [list ase::ui::close_request $key]
 
   menu $top.mb.setup -tearoff 0
   $top.mb add cascade -label Setup -menu $top.mb.setup
@@ -2407,7 +2518,7 @@ proc ase::ui::viewer_restore {key} {
 # item 14 (D5): the viewer snapshot runs FIRST, so every arm writes the
 # up-to-date `viewer` dict.
 proc ase::ui::do_save_state_as {key l c v} {
-  variable wins
+  variable wins; variable dlg
   ase::ui::viewer_snapshot $key
   set target [xschem cellview_path "$l/$c" $v]
   set own [ase::session_path $key]
@@ -2436,6 +2547,10 @@ proc ase::ui::do_save_state_as {key l c v} {
   }
   catch {libmgr::refresh_after $l $c $v}
   catch {ciw_echo "ase: state saved to $l/$c/$v"}
+  # item 16 (D3): signal a COMPLETED save to save_state_modal's tkwait. Guarded
+  # by info-exists so the ordinary menu Save State path (which never seeds the
+  # flag) is byte-identical.
+  if {[info exists dlg($key,saveas_result)]} { set dlg($key,saveas_result) 1 }
   if {[dict exists $wins $key]} {
     catch {destroy [dict get $wins $key].saveas}
   }

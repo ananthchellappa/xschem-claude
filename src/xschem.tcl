@@ -13431,6 +13431,12 @@ proc quit_xschem { {force {}}} {
   # any OTHER open windows still get their own unsaved-data prompt via destroy_all.
   if {$force eq {}} {
     if {![hierarchy_close quit]} return
+    # item 16: prompt to save any dirty ASE-L session before exit; a Cancel on
+    # any aborts the quit. No-op when no ASE window is open (and when ase_window
+    # is not loaded), so normal quit / other windows are unaffected.
+    if {[info commands ase::ui::prompt_all_on_quit] ne {}} {
+      if {![ase::ui::prompt_all_on_quit]} return
+    }
     if {[xschem new_schematic ntabs] == 0} { set force force }
   }
   xschem new_schematic destroy_all $force

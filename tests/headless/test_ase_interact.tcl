@@ -439,7 +439,10 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   set snap_outs [ase::state_get [ase::session_state $key] outputs]
 
   # WF close the session
-  $top.mb.session invoke Close
+  # item 16: this session is DIRTY; the menu Close now routes through
+  # close_request's save prompt, so tear down directly (behavior-identical to
+  # the pre-rewire menu Close).
+  ase::ui::close $key
   update
   check_true "WF close destroyed the window" [expr {![winfo exists $top]}]
 
