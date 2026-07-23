@@ -4749,13 +4749,38 @@ static int fluid_nearest_outside_body_anchor(double px, double py, const char *n
   return found;
 }
 
+/* issue 0132 (P-D, after_37): a wire whose endpoint sits exactly on a moved (selected) instance pin
+ * is that pin's OWN lead -- never "stale through-body copper", even when the pin lies strictly inside
+ * the pin-inclusive body box (under rotation the symbol-left pins map to the box interior, so a lead
+ * MUST cross the box to reach its pin -- yet it is still clear of the real device-body polygon).
+ * Deleting such a lead orphans the pin: the delete's partition-verify below is fooled by a transient
+ * weld (a relay corner momentarily bridging the pin to sibling copper) that a later prune removes,
+ * so the "redundant" test passes and the pin's only feed vanishes. Protect every moved-pin lead. */
+static int fluid_wire_end_on_moved_pin(double x1, double y1, double x2, double y2)
+{
+  int i, p;
+  for(i = 0; i < xctx->instances; ++i) {
+    int npins;
+    if(xctx->inst[i].sel != SELECTED || xctx->inst[i].ptr < 0) continue;
+    npins = (xctx->inst[i].ptr + xctx->sym)->rects[PINLAYER];
+    for(p = 0; p < npins; ++p) {
+      double px, py;
+      get_inst_pin_coord(i, p, &px, &py);
+      if((px == x1 && py == y1) || (px == x2 && py == y2)) return 1;
+    }
+  }
+  return 0;
+}
+
 /* issue 0132: VERIFIED delete of same-net copper that strictly threads a moved body. After the pin
  * feed has been re-routed clear of the body (fluid_manh_route to an outside anchor), the old
  * through-body backbone is redundant -- but it is NAMED copper (TRIANG/CTRL1...), which the
  * explicit-lab orphan prune refuses to touch (WIRING.md §11.1 named-rail blackout). Delete it here
  * with an explicit pin-partition verify: a wire is removed ONLY if the netlist is unchanged without
  * it (so a load-bearing crossing -- one with no alternate path -- is kept). Greedy to fixpoint;
- * indices shift on each delete so the scan restarts. Returns 1 if anything was removed. */
+ * indices shift on each delete so the scan restarts. A moved pin's OWN lead is never deleted here
+ * (fluid_wire_end_on_moved_pin, P-D) -- the partition-verify alone is fooled by a transient weld.
+ * Returns 1 if anything was removed. */
 static int fluid_delete_body_crossing_copper(const char *node)
 {
   int changed = 0, progress = 1, guard = 0;
@@ -4773,6 +4798,12 @@ static int fluid_delete_body_crossing_copper(const char *node)
       if(xctx->wire[s].x1 == xctx->wire[s].x2 && xctx->wire[s].y1 == xctx->wire[s].y2) continue;
       if(!fluid_seg_crosses_sel_body(xctx->wire[s].x1, xctx->wire[s].y1,
                                      xctx->wire[s].x2, xctx->wire[s].y2)) continue;
+      if(fluid_wire_end_on_moved_pin(xctx->wire[s].x1, xctx->wire[s].y1,      /* P-D: pin's own lead */
+                                     xctx->wire[s].x2, xctx->wire[s].y2)) {
+        fltrace("FLTRACE bodycross: KEEP moved-pin lead [%g %g %g %g] %s\n",
+                xctx->wire[s].x1, xctx->wire[s].y1, xctx->wire[s].x2, xctx->wire[s].y2, node);
+        continue;
+      }
       ox1 = xctx->wire[s].x1; oy1 = xctx->wire[s].y1;
       ox2 = xctx->wire[s].x2; oy2 = xctx->wire[s].y2;
       my_strdup(_ALLOC_ID_, &op, xctx->wire[s].prop_ptr);

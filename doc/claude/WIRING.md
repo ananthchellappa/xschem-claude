@@ -278,7 +278,7 @@ Hard ordering edges (all documented in-code, all discovered by bugs):
 | `fluid_prune_novel_orphan_stub` :4085 | 0094-tail | `if(ripped)` only; free-end START-deg==0 | retract/delete | preserve-entry |
 | `insert_exit_stubs` :1816 | P3 / 0132 | rot-free, one wire exactly on pin | slide leg 1 grid out along escape normal + stub | **0132: DECLINE the slide (fluid_editing) if stub/leg would thread the moved instance's own PIN-INCLUSIVE body (`fluid_seg_crosses_sel_body`, escape-normal exempt) — guards the `get_pin_escape_normal` text-inflated-bbox mis-pick on corner pins** |
 | `fluid_manhattanize_relay_diagonals` :4214 (`fluid_try_reanchor` :4188) | 0107/0108/0130/0133/0132 | accepted relay, entry partition-clean | re-anchor to live same-net copper (**0132: body-aware — reject a candidate whose leg crosses a moved body**), else `fluid_manh_route` (body-free L/Z/escaped-stub route around the PIN-INCLUSIVE body, else body-crossing, else keep diagonal); stale-feed prune; **then `fluid_reroute_body_crossing_feeds` (0132)** | restore-START per candidate |
-| `fluid_reroute_body_crossing_feeds` / `_delete_body_crossing_copper` / `_nearest_outside_body_anchor` / `_net_crosses_sel_body` :4520+ | 0132 | body dropped on its OWN copper: a moved pin's net crosses the body (2nd incremental drag) | re-route the pin feed to nearest same-net vertex OUTSIDE the union body box (`fluid_manh_route`), then verified-delete the redundant through-body backbone — **deletes even NAMED copper** when the pin partition is provably unchanged without it (§11.1 crack) | `fluid_manh_route` partition-verify + per-delete restore-START |
+| `fluid_reroute_body_crossing_feeds` / `_delete_body_crossing_copper` / `_wire_end_on_moved_pin` / `_nearest_outside_body_anchor` / `_net_crosses_sel_body` :4520+ | 0132 (§11.9e P-D) | body dropped on its OWN copper: a moved pin's net crosses the body (2nd incremental drag) | re-route the pin feed to nearest same-net vertex OUTSIDE the union body box (`fluid_manh_route`), then verified-delete the redundant through-body backbone — **deletes even NAMED copper** when the pin partition is provably unchanged without it (§11.1 crack). **§11.9e: NEVER delete a wire whose endpoint is on a moved pin (`fluid_wire_end_on_moved_pin`) — that is the pin's own lead; when the pin sits inside the pin-inclusive box its lead MUST cross the box, and the partition-verify is fooled by a transient relay weld a later prune removes → the delete would orphan the pin (after_37 REF-net-drop)** | `fluid_manh_route` partition-verify + per-delete restore-START + moved-pin-lead protect |
 | `fluid_manh_route` / `_manh_commit_path` / `_manh_pushpath` :4498 | 0133 | manhattanize per relay diagonal | enumerate L / Z (grid channels) / escaped-stub L/Z, index-sort by (len,legs), commit first body-free (pref0) else any (pref1) | partition-verify + exact revert per candidate |
 | `fluid_shove_body_crossing_backbone` :6790 | 0132 §11.9c/§11.9d | LIVE every RUBBER step + real END, `!diag_relay` pure-ortho, rot-free, startsel==0; owning inst ≥2 pins (1-pin symbols straddle the pin — CRITICAL over-fire, review wf_cff67bed); pin column strictly in OWN body; same-net perp copper strictly INSIDE the body along-span by **> 1 grid** (§11.9d: covers a pin MID-run *and* a ONE-SIDED inward feed with the pin on the run's END; excludes a clean escape feed leaving the body within a grid — the TRIANG +y exit); no pin on run; EVERY wire endpoint on run = plain same-net axis corner else DECLINE (bus/diag/foreign); new backbone welds no foreign copper, crosses no other moved / stationary body | BODY-driven shove: collapse run to pin, rebuild ONE backbone 1 grid past OWN body edge (not union — fling guard) spanning [pin..corners] (dead overhang dropped), translate attachments (pin-row overlap dedup), re-feed via jog; may reshape NAMED copper (§11.1 crack #2, prop copied) | mem-snapshot + restore-START name AND preserve-entry geometric, exact revert |
 | `fluid_inst_body_box` / `_seg_crosses_sel_body` / `_union_sel_body_box` :4415 | 0130/0133 | manhattanize route pick | **PIN-INCLUSIVE** box = symbol no-text bbox (`sym->minx..maxy` rotated, spans all pins; excludes @name text); strict-interior crossing over SELECTED bodies WITH escape-normal exemption (box-centre dominant axis, NOT get_pin_escape_normal) | pure geometric (no verify) |
@@ -554,6 +554,33 @@ declaring any wiring feature done, convert to xfail tests when touching the area
    `test_fluid_ortho_ctrl1_shove_0132.tcl` drag-2 (was xfail, promoted to hard check + drag-2 P5b
    whole-net clearance). Evidence `before_10.sch`/`after_36.sch`. Guards G1–G5
    (`test_fluid_bodyshove_guards_0132.tcl`) unaffected — all first-drag pin-mid-run, identical gate.
+
+   ~~(§11.9e) the DIAGONAL drag (after_37, defect P-D "ref-net-drop"): a moved pin's OWN feed deleted~~
+   **FIXED (0132 §11.9e)**: a two-axis drag (delta +20,−10) whose pure-ortho X-then-Y decomposition
+   shorts + rolls back to the rigid `diag_relay` fallback. The fallback is repaired ONLY by
+   `fluid_manhattanize_relay_diagonals` (the whole `!diag_relay` ortho shove/END battery is gated off);
+   its post-accept cleanup `fluid_reroute_body_crossing_feeds` → `fluid_delete_body_crossing_copper`
+   DELETED REF's own feed `-60 -140 120 -140` because REF's pin (120,-140) lies strictly INSIDE the
+   pin-inclusive body box (under rot1 the symbol-left pins map to the box interior, so the lead must
+   cross the box — yet it is clear of the real device-body polygon at y=-140 vs body y[-120,50]). The
+   delete's partition-verify passed because a transient relay weld momentarily bridged REF to sibling
+   copper; a later prune removed the weld → REF ORPHANED, and the surviving LED net annexed #net1. It
+   SAVED silently because a P1 disconnect is not in the B3 refuse signal (`fluid_check_move_invariants`
+   returns `short_delta + dev_merges`, disconnects excluded — the documented log-only P1 design). ROOT CAUSE (from the
+   trace, NOT the static after-file): at the accepted state both nets were connected (partition_changed
+   =0); the corruption is entirely in the diag_relay cleanup's false-positive deletion. FIX:
+   `fluid_wire_end_on_moved_pin` — the delete NEVER removes a wire whose endpoint is exactly on a moved
+   (SELECTED) instance pin; that is the pin's lead and deleting it can only orphan the pin. Safe for the
+   §11.9b self-drop case (there the feed is re-routed body-free first so it is not a delete candidate;
+   the deleted stale backbone does not touch the pin). Reproduction NEEDS a real-X multi-motion gesture
+   (a single `move_objects` starts from pristine and does not accumulate the RUBBER history the END
+   cleanup consumes — it does not reproduce the orphan). Test
+   `test_fluid_diagonal_ref_drop_0132.tcl` (self-skips without DISPLAY; geometric pin-touch check —
+   `instance_net` reports a phantom auto-name for an orphaned pin and cannot tell connected from
+   orphaned). Verified: real gesture REF geom-connected 0→1 pre/post-fix, both top nets stay separate;
+   5 fluid suites green; wireedit 57/57. Evidence `before_10.sch`/`after_37.sch`.
+   STILL OPEN on after_37: defects P-A/P-C (CTRL1 through-body vertical) and P-B (TRIANG orphan stub at
+   80,90) — same diag_relay root, next steps.
 10. **Mid-drag unguarded keys**: Delete and descend 'e' run during STARTMOVE (no
     `!(ui_state&STARTMOVE)` guard) → undo corruption / resurrected geometry / UAF class.
     Sweep the whole key dispatch.
