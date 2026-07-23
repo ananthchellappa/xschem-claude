@@ -488,7 +488,16 @@ declaring any wiring feature done, convert to xfail tests when touching the area
    pin whose net threads the body to an outside-body anchor then **verified-deletes** the redundant
    through-body backbone (`fluid_delete_body_crossing_copper` — removes even NAMED copper when the pin
    partition is provably unchanged without it, a first verified crack in the §11.1 blackout). Test
-   `test_fluid_rotate_second_drag_0132.tcl`.
+   `test_fluid_rotate_second_drag_0132.tcl`. **STILL OPEN — the PURE-ORTHO variant (after_34)**: the
+   SAME body-on-own-copper defect via a plain +dx translation of an already-rotated body (move_rot==0,
+   accepts at attempt 0, `diag_relay==0`) NEVER reaches `fluid_manhattanize_relay_diagonals` (trace:
+   `manhattanize_relay_diagonals: SKIP`) so the 0132 reroute doesn't fire. Hoisting the reroute to run
+   on every accepted fluid stretch was tried and REVERTED: its pin-inclusive + escape-normal detector
+   false-fires on ordinary 2-pin device moves (res/ammeter) and deletes legit copper — after_34's
+   crossing is the pin's OWN lateral feed, geometrically indistinguishable from a normal device feed.
+   The correct fix is a **body-aware elbow in `place_moved_wire`** (penalise the -x/inward elbow so the
+   feed escapes along the pin normal), on the ortho path itself. xfail tripwire
+   `test_fluid_ortho_second_drag_0132.tcl`, evidence `before_10.sch`/`after_34.sch`.
 10. **Mid-drag unguarded keys**: Delete and descend 'e' run during STARTMOVE (no
     `!(ui_state&STARTMOVE)` guard) → undo corruption / resurrected geometry / UAF class.
     Sweep the whole key dispatch.

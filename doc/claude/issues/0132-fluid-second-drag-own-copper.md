@@ -96,3 +96,27 @@ byte-identical or a verified fallback.
 - `fluid_delete_body_crossing_copper` deletes named copper under an explicit partition verify — the
   first repair that safely touches named rails (§11.1). The blanket explicit-lab decline in the older
   orphan prune is unchanged; this pass is verified per-deletion instead.
+
+## OPEN follow-up — the PURE-ORTHO variant (after_34)
+
+The fix above only covers the rotated diagonal-relay path (it lives in
+`fluid_manhattanize_relay_diagonals`, gated `diag_relay`). The **same** body-on-own-copper defect also
+occurs via a **plain +dx translation** of an already-rotated body (`/tmp/Xschem.log.2`:
+`before_10.sch` x1 at (110,20) rot 1 → `move_objects 20 0` → `after_34.sch` (130,20) rot 1). That
+gesture has `move_rot==0`, accepts cleanly at attempt 0 (`diag_relay==0`), so it **never reaches**
+`fluid_manhattanize_relay_diagonals` (trace: `manhattanize_relay_diagonals: SKIP`, `diag_relay=0`). The
+TRIANG pin feed routes **-x into the pin-inclusive body** (`N 90 80 100 80`) instead of escaping +y.
+
+Attempted fix (hoist the reroute to run on *every* accepted fluid stretch) was **reverted**: the
+body-crossing detector (`fluid_net_crosses_sel_body` + escape-normal `fluid_seg_crosses_sel_body` + an
+"inward feed" gate) **false-fires on ordinary 2-pin device moves** (res/ammeter, wireedit 20/36/39/45)
+— a normal lateral pin feed reads as "inward", and the pass then deletes legitimate copper. after_34's
+crossing is the pin's *own* feed, geometrically indistinguishable from a normal device feed, so no
+cheap gate separates them (the through-backbone at y=90 is *outside* the body; only the feed crosses).
+
+**Correct fix (not yet done): a body-aware elbow in `place_moved_wire`.** The `-x` elbow is chosen by
+the ortho placement's elbow picker (`fluid_ml_hazards`); adding a body-crossing hazard so the pin
+escapes along its outward normal (+y) is the root fix, on the ortho path itself, and is verified by the
+existing per-elbow severity compare. Tripwire: `tests/headless/test_fluid_ortho_second_drag_0132.tcl`
+(xfail; the `after_34.sch` RED-reference detector check passes, the reproduction's P5 is the xfail).
+WIRING.md §11.9b.
