@@ -7071,6 +7071,30 @@ static int fluid_shove_body_crossing_backbone(void)
           if(ihi - ilo <= grid) bad = 1;
         }
       }
+      /* issue 0135 (after_39, defect D1): the per-axis spoof at the call site (move.c ~8779, 0134
+       * hunk-2) feeds this shove a SINGLE-axis delta so it can run on a DIAGONAL drag; `dirpos`
+       * (motion "ahead") then decides which body edge to shove PAST. On a diagonal SW drag of
+       * solar_ctl that mis-models REF: the y-run (deltay spoofed +y/south) read REF's HORIZONTAL
+       * escape feed as a shoveable backbone and set ct one grid past the SOUTH edge, dragging the feed
+       * from REF's north pin straight DOWN through the whole body (a through-body U). REF's real lead
+       * escape normal points NORTH. GUARD: if the pin's outward escape normal has a component ALONG the
+       * shove axis that OPPOSES the relocation direction (dirpos), the rebuilt backbone would land on
+       * the FAR side of the body -- across it from where the feed should escape. DECLINE (keep the
+       * accepted route; never worse). The legitimate perpendicular-backbone shoves (after_35/36 CTRL1,
+       * the 0134 x=140 column) have their escape normal PERPENDICULAR to the shove axis (component 0),
+       * so this never declines them. Gated fluid_editing via get_pin_escape_normal (the shove call site
+       * is fluid-only); the normal is the lead-geometry one (issue 0134), so it is exact on this pin. */
+      if(!bad) {
+        double enx, eny, en, rel;
+        get_pin_escape_normal(i, p, &enx, &eny);
+        en  = xmove ? enx : eny;                          /* escape component on the shove axis */
+        rel = dirpos ? 1.0 : -1.0;                        /* backbone relocation direction (toward ct) */
+        if(en != 0.0 && en * rel < 0.0) {
+          fltrace("FLTRACE bodyshove: pin=(%g,%g) escape=(%g,%g) rel=%g -- shove OPPOSES escape, DECLINE\n",
+                  px, py, enx, eny, rel);
+          bad = 1;
+        }
+      }
       /* any OTHER pin on the run (tolerant test; includes labels + co-moved siblings): decline */
       for(m = 0; m < xctx->instances && !bad; ++m) {
         int rq, nr2;
