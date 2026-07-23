@@ -2132,19 +2132,84 @@ static void insert_exit_stubs(void)
   set_modify(1);
 }
 
+/* issue 0134 (candidate #1): the pin's TRUE outward normal from the symbol LEAD geometry, replacing
+ * the text-inflated-bbox nearest-edge PROXY below on the pins where the proxy mis-picks (asymmetric
+ * symbols, corner pins, and the same pin under rotation). A symbol pin is a PINLAYER rect whose CENTRE
+ * (in SYMBOL coords) is the connection tip; the pin's short connector LEAD is a LINE record with one
+ * endpoint exactly at that tip (its other endpoint sits at the body edge). Outward (symbol) = tip -
+ * inner_end; a direction vector, so transform it by the instance rot/flip about pivot (0,0) -- ROTATION
+ * is linear, so rotating the difference == the difference of rotations, and flip correctly negates the
+ * x-component. NB `dir=in|out` is ELECTRICAL only (two in-pins share an edge), never a geometric normal,
+ * so it is NOT read here -- the lead segment is the geometry.
+ *
+ * Robustness: scan lines on ALL layers (device leads live on SYMLAYER, but ipin/opin leads on PINLAYER),
+ * disambiguated by the EXACT endpoint==tip match -- a body outline / device-graphic line never ends on a
+ * pin tip (the lead offsets the pin from the body). Multiple leads meeting one pin (an nmos gate has two)
+ * are fine while they agree on axis; a diagonal lead or a cross-axis disagreement => ambiguous => return 0
+ * (caller keeps the nearest-edge proxy). Strictly MORE accurate than the proxy on asymmetric/corner pins
+ * (solar_ctl TRIANG under rot1: symbol +x lead -> world +y/south, where the proxy TIES OUT to Left and
+ * staircases); on symmetric symbols (res/capa: pin on the body axis, lead == nearest edge) the two agree,
+ * so the result is unchanged there. Returns 1 with a unit world axis in (*nx,*ny), else 0. */
+static int get_pin_lead_normal(int i, int r, double *nx, double *ny)
+{
+  xSymbol *sym;
+  xRect *rct;
+  int layer, k, rects, found = 0, sx = 0, sy = 0;
+  double pcx, pcy, rdx, rdy;
+  short rot, flip;
+  *nx = 0.0; *ny = 0.0;
+  if(i < 0 || i >= xctx->instances || xctx->inst[i].ptr < 0) return 0;
+  sym = xctx->inst[i].ptr + xctx->sym;
+  rects = sym->rects[PINLAYER];
+  if(r < 0 || r >= rects) return 0;
+  rct = sym->rect[PINLAYER];
+  pcx = (rct[r].x1 + rct[r].x2) / 2.0;             /* pin tip in SYMBOL coords */
+  pcy = (rct[r].y1 + rct[r].y2) / 2.0;
+  for(layer = 0; layer < cadlayers; layer++) {
+    for(k = 0; k < sym->lines[layer]; k++) {
+      xLine *ln = &sym->line[layer][k];
+      double ox, oy, dx, dy;
+      int csx, csy;
+      if(ln->x1 == pcx && ln->y1 == pcy)      { ox = ln->x2; oy = ln->y2; }
+      else if(ln->x2 == pcx && ln->y2 == pcy) { ox = ln->x1; oy = ln->y1; }
+      else continue;
+      dx = pcx - ox; dy = pcy - oy;                /* outward = tip - inner end */
+      if(dx != 0.0 && dy != 0.0) continue;         /* diagonal lead: not an axis normal */
+      if(dx == 0.0 && dy == 0.0) continue;         /* zero-length: ignore */
+      csx = dx > 0.0 ? 1 : (dx < 0.0 ? -1 : 0);
+      csy = dy > 0.0 ? 1 : (dy < 0.0 ? -1 : 0);
+      if(!found) { sx = csx; sy = csy; found = 1; }
+      else if(csx != sx || csy != sy) return 0;    /* leads disagree on axis: ambiguous */
+    }
+  }
+  if(!found) return 0;
+  rot = xctx->inst[i].rot; flip = xctx->inst[i].flip;
+  ROTATION(rot, flip, 0.0, 0.0, (double)sx, (double)sy, rdx, rdy);   /* rotate the DIRECTION vector */
+  *nx = rdx > 0.0 ? 1.0 : (rdx < 0.0 ? -1.0 : 0.0);
+  *ny = rdy > 0.0 ? 1.0 : (rdy < 0.0 ? -1.0 : 0.0);
+  return (*nx != 0.0) ^ (*ny != 0.0);              /* exactly one axis, else treat as unresolved */
+}
+
 /* Phase 2 (doc/claude/specs/nice_drag_rerouting.md §6; geometry-only per the resolved §10.1):
  * outward escape normal of pin r of instance i -- the axis direction a wire should leave the
- * pin, perpendicular to the pin's edge. Nearest-edge geometry: the pin's WORLD coordinate vs
- * the instance's WORLD bounding box (already rotated/translated), so a rotated/flipped instance
- * yields the correctly rotated normal for free. Ties broken L,R,B,T -- identical to the Tcl
- * reference predicates.tcl pin_escape_normal, which this ports. Crude by design on ambiguous
- * pins (corner, near-centre/bulk, text-skewed bbox); accepted per the geometry-only decision (no
- * per-pin dir= symbol property). Returns a unit axis vector in (*nx,*ny), or (0,0) if invalid. */
+ * pin, perpendicular to the pin's edge. PRIMARY source (issue 0134, fluid mode): the symbol LEAD
+ * geometry (get_pin_lead_normal above) -- the true outward axis, correct on asymmetric/corner pins.
+ * FALLBACK (and the legacy wire_exit_stub path with fluid_editing off, kept byte-identical): the
+ * nearest-edge PROXY -- the pin's WORLD coordinate vs the instance's WORLD bounding box (already
+ * rotated/translated), ties broken L,R,B,T, identical to the Tcl reference predicates.tcl
+ * pin_escape_normal which this ports. The proxy is crude on ambiguous pins (corner, near-centre/bulk,
+ * text-skewed bbox); the lead source removes that crudeness where a clean lead resolves. Returns a
+ * unit axis vector in (*nx,*ny), or (0,0) if invalid. */
 void get_pin_escape_normal(int i, int r, double *nx, double *ny)
 {
   double px, py, x1, y1, x2, y2, dl, dr, db, dt, m, t;
   *nx = 0.0; *ny = 0.0;
   if(i < 0 || i >= xctx->instances || xctx->inst[i].ptr < 0) return;
+  /* issue 0134: prefer the TRUE lead-geometry normal in fluid mode (accurate on asymmetric/corner
+   * pins where the nearest-edge proxy below ties out -- e.g. solar_ctl TRIANG under rot1). Gated
+   * fluid_editing so the legacy wire_exit_stub path (fluid off) stays byte-identical to the proxy,
+   * and (0,0)/ambiguous leads fall through to the proxy unchanged. */
+  if(tclgetboolvar("fluid_editing") && get_pin_lead_normal(i, r, nx, ny)) return;
   get_inst_pin_coord(i, r, &px, &py);          /* pin world coord */
   x1 = xctx->inst[i].x1; y1 = xctx->inst[i].y1;    /* instance world bbox */
   x2 = xctx->inst[i].x2; y2 = xctx->inst[i].y2;

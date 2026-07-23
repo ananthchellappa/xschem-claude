@@ -239,6 +239,14 @@ proc p5_no_body_cross {} {
 # side, so the nearest edge is the correct body edge. DEVICE pins only -- a net label has zero
 # body extent and no meaningful escape direction (spec §2), so p3 is not applied to labels.
 #
+# DIVERGENCE (issue 0134): this remains the NEAREST-EDGE proxy, but the C getter now derives the
+# normal from the symbol LEAD geometry when fluid_editing is on (accurate on asymmetric/corner and
+# near-centre pins -- e.g. an nmos4 bulk pin, or solar_ctl TRIANG under rotation -- where the proxy
+# ties out or mis-picks). The two therefore DIFFER on those pins; on symmetric symbols they agree.
+# Kept as the independent nearest-edge oracle on purpose (matching it to the C would be circular);
+# valid for this suite's symmetric-pin corpus. A future routing test on a near-centre/corner pin
+# must expect the LEAD direction (query `xschem pin_escape_normal`), not this proxy.
+#
 # outward escape normal of pin `pin` on instance `inst` -> {nx ny}, a unit axis vector
 proc pin_escape_normal {inst pin} {
   set pc [xschem instance_pin_coord $inst name $pin]     ;# "{pin} x y"

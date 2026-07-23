@@ -45,6 +45,33 @@ wire → a no-short (P2) hazard … caught log-only"). It had only a body-cross 
 netlisting `*_debug` FAILs and `test_fluid_editing` FE8 pre-date this branch — confirmed on
 clean HEAD).
 
+**Defect C (route-quality) — ROOTED (candidate #1, follow-up commit).** The moved out-pin's
+escape normal is now derived from the symbol's **lead geometry** instead of the text-inflated-bbox
+nearest-edge PROXY. `get_pin_escape_normal` (move.c) gains a fluid-gated primary source
+`get_pin_lead_normal`: a symbol pin is a PINLAYER rect whose centre (symbol coords) is the tip, and
+its connector `L` lead line has one endpoint exactly at that tip; outward = tip − inner_end,
+transformed by the instance rot/flip via `ROTATION(rot,flip,0,0,…)` (a direction vector — linear, so
+rotating the difference == difference of rotations; flip negates x correctly). `dir=in|out` is
+electrical only and is *not* read. This is strictly more accurate on asymmetric/corner/near-centre
+pins where the proxy ties out or mis-picks: TRIANG (solar_ctl rot1) symbol +x lead → world +y/south,
+so the moved pin exits VERTICALLY (the after_38 staircase, RED check "C: first segment … VERTICAL",
+is now rooted, not merely masked by the downstream shove); the proxy had returned −x (Left) by tie.
+Sanity: nmos4 bulk `b` (a classic near-centre pin) proxy → −Y (into the body), lead → +X (east, the
+side its `L 4 10 0 20 0` lead actually points), corrected in all 8 orientations.
+
+Consumers unchanged in shape but now fed the true normal: `insert_exit_stubs`,
+`fluid_moving_pin_normal`→`fluid_p6_bias_ml` (the P6 L-elbow axis bias — this is what turns the
+staircase into a vertical-first L), and `fluid_seg_crosses_body`'s moved-pin exemption. The raw ml
+default (`recompute_orthogonal_manhattanline`, actions.c, |dx| vs |dy|, tie→ml=2) is untouched but is
+overridden by the p6 bias when a lead resolves. The 0132 body-cross decline and the hunk-1 foreign-net
+label guard in `insert_exit_stubs` remain as defense-in-depth (a correct normal makes them fire less,
+but they still catch the residual no-short/body gaps). **Gated `fluid_editing`**: with fluid off the
+legacy `wire_exit_stub` path stays byte-identical to the proxy (and to the Tcl reference
+`predicates.tcl pin_escape_normal`); an ambiguous/absent lead falls through to the proxy unchanged.
+Test: `tests/headless/wireedit/test_wireedit_28_escape_normal.tcl` rewritten — legacy proxy==Tcl
+byte-identity (fluid off), fluid lead-accuracy + documented b-pin divergence (RED on the pre-fix
+all-proxy binary). 0134 stays 10/10; wireedit 57/57; all fluid gesture suites green.
+
 **Not implemented (latent, no test reaches it after the fix):** Defect A — the ripup jog can
 still orphan a pin / weld a neighbor bus via the single-pin-net partition blind spot. Left as
 open risk (WIRING §11 item 14); add the jog's foreign-touch + no-orphan guard **with a test

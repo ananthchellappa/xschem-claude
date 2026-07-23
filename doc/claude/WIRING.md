@@ -664,9 +664,17 @@ declaring any wiring feature done, convert to xfail tests when touching the area
     verify (:4188) is **pin-pair-indexed + single-pin-net BLIND** (orphaned/merged singleton
     ids :2483 ≡ START singleton :2481 → `partition_changed()==0` masks an orphan/weld). Add its
     foreign-touch + no-orphan guard WITH a test that forces attempt=1 before touching that
-    load-bearing function. Also latent (route-quality, masked here by the clean attempt=0 route):
-    the elbow axis chooser (`recompute_orthogonal_manhattanline` actions.c:5150-5153) picks ml
-    from `|dx|` vs `|dy|` alone (tie→ml=2), never reads the moved pin's lead `dir=`.
+    load-bearing function. **Route-quality (defect C) — ROOTED (candidate #1)**: `get_pin_escape_normal`
+    now derives the moved pin's outward normal from the symbol **lead geometry**
+    (`get_pin_lead_normal`, move.c: pin-rect-centre tip → the `L` lead line ending there → tip−inner,
+    rotated by the inst rot/flip) instead of the text-inflated-bbox nearest-edge PROXY, gated
+    `fluid_editing` (legacy `wire_exit_stub` path byte-identical; ambiguous/absent lead falls through
+    to the proxy). This feeds the P6 L-elbow bias (`fluid_p6_bias_ml`), so TRIANG (solar_ctl rot1,
+    symbol +x lead → world +y/south) exits VERTICALLY rather than staircasing — and nmos4 bulk `b`
+    (near-centre) now escapes +x (its lead) not the proxy's −y (into the body). The raw ml default
+    (`recompute_orthogonal_manhattanline` actions.c, |dx| vs |dy|, tie→ml=2) is unchanged but overridden
+    by the p6 bias when a lead resolves; `dir=in|out` (electrical) is NOT used. Test
+    `tests/headless/wireedit/test_wireedit_28_escape_normal.tcl`.
 
 Below-cut (quality, keep on radar): elbow legs through pin-less stationary bodies (no
 body class in `fluid_ml_hazards`); two moved devices sharing a channel (NULL node treated
@@ -704,7 +712,8 @@ the historical issues pre-user.
 
 `move.c`: move_objects :5986 (START :6009, RUBBER :6112, END :6154), place_moved_wire
 :1149, compute_wire_slide :1539, insert_exit_stubs :1816, escape normal
-get_pin_escape_normal :1896, snapshots :2262-2328, novelty :2432-2478, partition/verify
+get_pin_escape_normal :1896 (0134: lead-geometry primary source `get_pin_lead_normal` just above it,
+fluid-gated; proxy is the fallback), snapshots :2262-2328, novelty :2432-2478, partition/verify
 :2232/2378/2496/3641, healers (§4 table), obstacle router :5148, restore/discard
 :5935/5955, regrab :5975, invariant check :5869, FLTRACE :1986.
 Track-D gesture context: `typedef struct {...} Fluid_gesture` + the one instance `fluid_g`
