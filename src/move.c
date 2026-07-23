@@ -8574,8 +8574,29 @@ void move_objects(int what, int merge, double dx, double dy)
     * saved result is what the user keeps; the live RUBBER relay preview stays as-is. When the relay
     * was NOT accepted (attempt-1 alt restored) the function's partition-clean entry check declines. */
    if(!commit_now && diag_relay && orthogonal_wiring && xctx->stretch_select &&
-      tclgetboolvar("fluid_editing"))
+      tclgetboolvar("fluid_editing")) {
      fluid_manhattanize_relay_diagonals();
+     /* issue 0132 §11.9f (after_37, defects P-A/P-C): the relay cleanup above can only RE-ROUTE a
+      * moved pin's feed to an existing same-net vertex -- it cannot shove a LOAD-BEARING backbone
+      * sideways out of the body. So a stationary through-body vertical the moved pin lands on
+      * MID-SEGMENT (the CTRL1 x=140 column) is left threading the body: reroute_body_crossing_feeds'
+      * nearest-outside anchor is IN-COLUMN (140,100) so the feed never pulls past the body edge, and
+      * the verified delete reverts it as load-bearing (it is the only path to the naming label). The
+      * pure-ortho path gets exactly this fix from fluid_shove_body_crossing_backbone -- run it here
+      * too, now that the diagonals are Manhattan. That function derives its motion axis from
+      * xctx->delta[xy] and PURE-AXIS-gates itself off for a diagonal delta, so feed it ONE axis at a
+      * time (x-run shove with deltay spoofed to 0, then y-run shove with deltax spoofed to 0). delta
+      * is read ONLY at that gate (verified); every downstream gate (engulf + through-run + corner)
+      * self-guards and the pass double-verifies with exact revert, so a pin whose run is on the other
+      * axis, escapes the body within a grid, or would short is left byte-identical (never worse). END
+      * only -- it rides under the diag manhattanize, which is itself END-only. */
+     if(xctx->fluid_startsel_wires == 0 && xctx->move_rot == 0 && xctx->move_flip == 0) {
+       double sdx = xctx->deltax, sdy = xctx->deltay;
+       xctx->deltay = 0.0;                        fluid_shove_body_crossing_backbone(); /* x-run */
+       xctx->deltax = 0.0; xctx->deltay = sdy;    fluid_shove_body_crossing_backbone(); /* y-run */
+       xctx->deltax = sdx; xctx->deltay = sdy;
+     }
+   }
    /* issue 0132 §11.9c/§11.9d (after_35/after_36): BODY-driven backbone shove on the accepted
     * PURE-ORTHO path (diag_relay==0 -- the relay path's body-crossing repair lives inside
     * manhattanize above). Runs LIVE on every RUBBER live-commit step AND at the real END -- the

@@ -74,6 +74,14 @@ proc touched {X Y} {
   }
   return 0
 }
+proc ndiag {} {
+  set n 0; set nw [xschem get wires]
+  for {set k 0} {$k < $nw} {incr k} {
+    lassign [xschem wire_coord $k] a b c d
+    if {$a != $c && $b != $d} { incr n }
+  }
+  return $n
+}
 
 set ref_before [pnet REF]; set led_before [pnet LED]
 check "setup: REF/LED on distinct nets (REF=$ref_before LED=$led_before)" \
@@ -110,6 +118,33 @@ set ref_after [pnet REF]; set led_after [pnet LED]
 # both pins really connected AND resolving to distinct real nets => the two top nets did NOT collapse
 check "P-D: REF and LED stay on DISTINCT nets, no collapse (REF=$ref_after LED=$led_after)" \
   [expr {$ref_conn && $led_conn && $ref_after ne $led_after}]
+
+# ---- P-A/P-C (§11.9f): the CTRL1 backbone must be shoved CLEAR of x1's body, not left threading it ----
+# x1 body box at (130,10) rot1 (pin-inclusive, from fluid_inst_body_box): x[97.5,150] y[-142.5,72.5].
+set BX1 97.5; set BX2 150; set BY1 -142.5; set BY2 72.5
+proc ctrl1_verticals {} {
+  set out {}; set nw [xschem get wires]
+  for {set k 0} {$k < $nw} {incr k} {
+    if {[xschem getprop wire $k lab] ne "CTRL1"} continue
+    lassign [xschem wire_coord $k] a b c d
+    if {$a == $c && $b != $d} { lappend out [list $a [expr {min($b,$d)}] [expr {max($b,$d)}]] }
+  }
+  return $out
+}
+# CTRL1 pin (140,70) must stay connected
+check "P-C: CTRL1 pin (140,70) connected" [touched 140 70]
+# no CTRL1 vertical may thread the body column (x strictly inside body, span dipping into body y)
+set threading {}; set pushed 0
+foreach v [ctrl1_verticals] {
+  lassign $v x ylo yhi
+  if {$x > $BX1 && $x < $BX2 && $ylo < $BY2 && $yhi > $BY1} { lappend threading $v }
+  if {$x >= $BX2} { set pushed 1 }
+}
+check "P-A: no CTRL1 vertical threads x1's body (x in ($BX1,$BX2))" \
+  [expr {[llength $threading]==0}] "threading=$threading verticals=[ctrl1_verticals]"
+check "P-A: a CTRL1 vertical exists at/right of the body edge (the shoved backbone at x=160)" \
+  $pushed "verticals=[ctrl1_verticals]"
+check "P-A/P-C: no diagonal wire remains" [expr {[ndiag]==0}] "diag=[ndiag]"
 
 puts "PASS=$::npass FAIL=$::fails"
 if {$::fails == 0} { puts "RESULT: ALL PASS"; puts "OVERALL: ok" } \
