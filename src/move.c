@@ -3204,7 +3204,41 @@ static int fluid_start_deg_at(double x, double y)
  * it is a fully-orphaned stub whose far end stays connected. Partition-verified against base; reverts on
  * any change. Returns 1 iff geometry changed. `ex,ey` is the dangling end (deg_now==1, verified by the
  * caller). */
-static int fluid_retract_orphan_tail(int kw, double ex, double ey, int *base, int np, int *now)
+/* issue 0132 §11.9g (P-B, after_37): does the net NAME on wire kw survive on OTHER live copper that
+ * touches kw's FAR (kept) end (ox,oy)? Authorizes deleting a stale NAMED old-elbow overhang without
+ * orphaning its label. The pin-indexed partition-verify (fluid_loop_partition) is BLIND to a pin-less
+ * named net (e.g. a lab=VDD stub), so deleting the SOLE carrier of a name would pass the partition
+ * check yet silently drop the label. Requiring a same-lab survivor touching the far end guarantees
+ * (a) the name is never orphaned (never delete the last carrier), (b) the survivor is in the SAME
+ * touch-component (not a separately-named same-lab island), (c) self-protection across prune rounds.
+ * Compares the lab STRING, not merely "is named". */
+static int fluid_same_name_survivor(int kw, double ox, double oy)
+{
+  char *mylab = NULL;
+  int m, found = 0;
+  my_strdup(_ALLOC_ID_, &mylab, get_tok_value(xctx->wire[kw].prop_ptr, "lab", 0));
+  if(!mylab || !mylab[0]) { my_free(_ALLOC_ID_, &mylab); return 0; }
+  for(m = 0; m < xctx->wires && !found; ++m) {
+    const char *ml;
+    if(m == kw) continue;
+    if(xctx->wire[m].x1 == xctx->wire[m].x2 && xctx->wire[m].y1 == xctx->wire[m].y2) continue;
+    if(!touch(xctx->wire[m].x1, xctx->wire[m].y1, xctx->wire[m].x2, xctx->wire[m].y2, ox, oy)) continue;
+    if(!fluid_wire_explicit_lab(m)) continue;      /* (calls get_tok_value; ml read AFTER, so fresh) */
+    ml = get_tok_value(xctx->wire[m].prop_ptr, "lab", 0);
+    if(ml && ml[0] && !strcmp(ml, mylab)) found = 1;
+  }
+  my_free(_ALLOC_ID_, &mylab);
+  return found;
+}
+
+/* allow_named_stale (0132 §11.9g): when 1, the DELETE branch below may remove a NAMED whole-stub
+ * overhang IF its label survives on live copper at the far end (fluid_same_name_survivor) -- the
+ * relocated-pin-riser old-elbow tail (TRIANG 80,90 / CTRL1 120,100). Set ONLY by the diag_relay
+ * stale-feed prune, whose per-end gates already prove the dangling end was a drag-orphaned START
+ * junction. 0 elsewhere keeps the §11.1 delete-blackout byte-identical (RETRACT stays name-safe
+ * unconditionally). */
+static int fluid_retract_orphan_tail(int kw, double ex, double ey, int *base, int np, int *now,
+                                     int allow_named_stale)
 {
   xWire *w = &xctx->wire[kw];
   double ox = (w->x1 == ex && w->y1 == ey) ? w->x2 : w->x1;  /* the far (kept) end */
@@ -3259,7 +3293,10 @@ static int fluid_retract_orphan_tail(int kw, double ex, double ey, int *base, in
     memset(doomed, 0, xctx->wires * sizeof(unsigned short));
     doomed[kw] = 1;
     fluid_loop_partition(doomed, now);
-    keep = fluid_part_equal(now, base, np) && !fluid_wire_explicit_lab(kw);  /* never delete named copper */
+    keep = fluid_part_equal(now, base, np) &&
+           (!fluid_wire_explicit_lab(kw) ||                        /* never delete named copper, unless... */
+            (allow_named_stale && fluid_same_name_survivor(kw, ox, oy)));  /* §11.9g: a stale named
+                                    * old-elbow overhang whose label survives at its far end */
     if(keep) {
       fltrace("FLTRACE straighten: deleted orphan stub wire=%d [%g %g %g %g]\n", kw, sx1, sy1, sx2, sy2);
       wire_delete_compact(wire_doomed_flag, doomed);
@@ -3585,7 +3622,7 @@ static void fluid_straighten_reversals(void)
         if(point_on_any_pin(ex, ey)) continue;               /* a pin end is never dangling */
         if(fluid_deg_at(ex, ey, NULL, kd) != 0) continue;    /* still connected: not a dangling end */
         if(fluid_start_deg_at(ex, ey) < 2) continue;         /* a pre-existing user dangler tip: leave */
-        if(fluid_retract_orphan_tail(kd, ex, ey, base, np, now)) { changed_any = 1; progress = 1; }
+        if(fluid_retract_orphan_tail(kd, ex, ey, base, np, now, 0)) { changed_any = 1; progress = 1; }
       }
     }
   }
@@ -4370,7 +4407,7 @@ static void fluid_prune_novel_orphan_stub(void)
         if(fluid_wire_explicit_lab(kd)) continue;          /* never delete named copper */
         if(fluid_deg_at(ex, ey, NULL, kd) != 0) continue;  /* still connected: not a dangling end */
         if(fluid_start_deg_at(ex, ey) != 0) continue;      /* touched START copper: not a fresh orphan */
-        if(fluid_retract_orphan_tail(kd, ex, ey, base, np, now)) progress = 1;
+        if(fluid_retract_orphan_tail(kd, ex, ey, base, np, now, 0)) progress = 1;
       }
     }
   }
@@ -5020,14 +5057,23 @@ static void fluid_manhattanize_relay_diagonals(void)
             if(prot[i]) continue;
             if(xctx->wire[i].bus != 0.0) continue;
             if(xctx->wire[i].x1 == xctx->wire[i].x2 && xctx->wire[i].y1 == xctx->wire[i].y2) continue;
-            if(fluid_wire_explicit_lab(i)) continue;
+            /* 0132 §11.9g (after_37 P-B): NAMED copper is NOT skipped here any more. The old-elbow
+             * overhang a relocated pin-riser leaves dangling (TRIANG's 80,90 tail, CTRL1's 120,100
+             * tail) carries the net's explicit lab, so the §11.1 blackout used to refuse to remove it.
+             * These overhangs are WHOLE stubs (trim keeps them split at the riser T, so there is no
+             * interior junction to retract to) -- fluid_retract_orphan_tail falls to DELETE mode.
+             * Pass allow_named_stale=1: DELETE may remove a named stub ONLY when its label survives on
+             * live copper at the far end (fluid_same_name_survivor) AND the partition is preserved. The
+             * per-end gates below (drag-orphaned NOW, not on a pin, START deg>=2 = was a real junction,
+             * never a user's deliberate deg<=1 named-stub tip) scope it to genuinely stale elbows.
+             * RETRACT (name-preserving) stays available too. */
             for(e = 0; e < 2 && !progress; ++e) {
               double ex = e ? xctx->wire[i].x2 : xctx->wire[i].x1;
               double ey = e ? xctx->wire[i].y2 : xctx->wire[i].y1;
               if(fluid_deg_at(ex, ey, NULL, i) != 0) continue;
               if(point_on_any_pin(ex, ey)) continue;
               if(fluid_start_deg_at(ex, ey) < 2) continue;
-              if(fluid_retract_orphan_tail(i, ex, ey, base, np, now)) {
+              if(fluid_retract_orphan_tail(i, ex, ey, base, np, now, 1)) {
                 fltrace("FLTRACE reanchor: pruned stale feed at (%g,%g)\n", ex, ey);
                 progress = 1;             /* indices shifted: restart the scan */
               }

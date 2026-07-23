@@ -146,6 +146,37 @@ check "P-A: a CTRL1 vertical exists at/right of the body edge (the shoved backbo
   $pushed "verticals=[ctrl1_verticals]"
 check "P-A/P-C: no diagonal wire remains" [expr {[ndiag]==0}] "diag=[ndiag]"
 
+# ---- P-B (§11.9g): the old pin-riser elbows the moved pin vacated must not survive as dangling
+# named-copper overhangs. TRIANG's old elbow (80,90) and CTRL1's old elbow (120,100) had a wire
+# endpoint each in the buggy result; after the fix no wire touches those vacated vertices. ----
+check "P-B: TRIANG old-elbow overhang gone (nothing at 80,90)" [expr {![touched 80 90]}]
+check "P-B: CTRL1 old-elbow overhang gone (nothing at 120,100)" [expr {![touched 120 100]}]
+# and no CTRL1 dead-branch stub above the pin jog: the only CTRL1 vertical is the live 160,-20..160,70
+proc named_free_ends {lab} {
+  set out {}; set nw [xschem get wires]
+  for {set k 0} {$k < $nw} {incr k} {
+    if {[xschem getprop wire $k lab] ne $lab} continue
+    lassign [xschem wire_coord $k] a b c d
+    foreach {ex ey} [list $a $b $c $d] {
+      set deg 0
+      for {set j 0} {$j < $nw} {incr j} {
+        if {$j==$k} continue
+        lassign [xschem wire_coord $j] p q r s
+        if {($p==$ex && $q==$ey) || ($r==$ex && $s==$ey)} { incr deg }
+      }
+      # a free end not shared with another wire, not on the label pin (220,±20) or a device pin
+      if {$deg==0 && !($ex==220)} { lappend out [list $ex $ey] }
+    }
+  }
+  return $out
+}
+# CTRL1 free ends: only the device pin (140,70) is a legit dangling-looking end (it sits on a pin).
+set c1free [named_free_ends CTRL1]
+set c1bad {}
+foreach fe $c1free { if {$fe ne {140 70}} { lappend c1bad $fe } }
+check "P-B: no stray CTRL1 dead-branch free end (only the pin 140,70)" \
+  [expr {[llength $c1bad]==0}] "stray=$c1bad free=$c1free"
+
 puts "PASS=$::npass FAIL=$::fails"
 if {$::fails == 0} { puts "RESULT: ALL PASS"; puts "OVERALL: ok" } \
 else { puts "RESULT: $::fails FAILED"; puts "OVERALL: FAIL" }

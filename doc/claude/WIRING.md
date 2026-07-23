@@ -600,7 +600,31 @@ declaring any wiring feature done, convert to xfail tests when touching the area
    Test `test_fluid_diagonal_ref_drop_0132.tcl` extended with P-A/P-C body-clearance checks (same
    gesture; 9 checks). Verified: CTRL1 SHOVED trace, ctrl1_shove 14/14 (ortho path untouched), P-D
    preserved, wireedit 57/57.
-   STILL OPEN on after_37: defect P-B (TRIANG orphan stub at 80,90) — same diag_relay root, next step.
+
+   ~~(§11.9g) the DIAGONAL drag (after_37, defect P-B): old-elbow overhangs left dangling~~
+   **FIXED (0132 §11.9g)**: the same diagonal drag leaves DANGLING named-copper stubs at the OLD
+   pin-riser elbows the moved pin vacated — TRIANG's `80 90 100 90` (free at 80,90) and CTRL1's elbow
+   (free at 120,100). The diag_relay stale-feed prune (0108, inside `fluid_manhattanize_relay_diagonals`)
+   that should retract these SKIPPED them via the §11.1 named-rail blackout
+   (`if(fluid_wire_explicit_lab(i)) continue;`): both overhangs carry an explicit lab. trim keeps each
+   fragment SPLIT at the riser T (100,90 / 140,100), so they are WHOLE stubs with no interior junction
+   → `fluid_retract_orphan_tail` reaches its DELETE branch, which refused named copper
+   (`&& !fluid_wire_explicit_lab(kw)`). FIX: (1) drop the prune's per-wire §11.1 gate so named copper
+   reaches the pruner (RETRACT is already name-safe — keeps the wire+lab, partition-verified); (2) add
+   `fluid_same_name_survivor(kw,ox,oy)` + an `allow_named_stale` param so the DELETE branch may remove a
+   named stub ONLY when its label survives on live copper touching the FAR end AND the partition is
+   preserved. The survivor check closes the pin-indexed partition-verify's blind spot (a pin-less named
+   net — a `lab=VDD` stub — is invisible to `fluid_loop_partition`, so partition-equal alone would let
+   the SOLE carrier of a name be deleted, silently dropping the label); requiring a same-lab survivor
+   guarantees the last carrier is never removed. Scoped by flag to the diag_relay prune ONLY (the other
+   two `fluid_retract_orphan_tail` callers pass 0 → byte-identical §11.1 delete-blackout); the per-end
+   gates (drag-orphaned NOW, not on a pin, START deg≥2 = was a real junction, never a user's deliberate
+   deg≤1 named-stub tip) scope it to genuinely stale elbows. Because the prune runs BEFORE the §11.9f
+   shove, it deletes the x=140 elbow tails first and the shove then moves a CLEAN CTRL1 to x=160 (no
+   residual dead branch). Result: TRIANG = `100 70 100 90`+`100 90 220 90`+`220 20 220 90`; CTRL1 =
+   `140 70 160 70`+`160 -20 160 70`+`160 -20 220 -20` — both clean. Test extended (12 checks; the 3 P-B
+   checks FAIL without this). Verified: ctrl1_shove 14/14, bodyshove_guards 14/14, rotate_body/second
+   green, wireedit 57/57 (incl wireedit_54 named-rail). ALL FOUR after_37 defects (P-A/P-B/P-C/P-D) fixed.
 10. **Mid-drag unguarded keys**: Delete and descend 'e' run during STARTMOVE (no
     `!(ui_state&STARTMOVE)` guard) → undo corruption / resurrected geometry / UAF class.
     Sweep the whole key dispatch.
