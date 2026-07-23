@@ -641,6 +641,32 @@ declaring any wiring feature done, convert to xfail tests when touching the area
     span on a label-only foreign net's wire endpoint welds it silently (pin-indexed
     verifies blind, backstop log-only). Same fix shape as the push-through's
     `fluid_pushthrough_new_foreign_contact`; needs its own RED test first.
+14. ~~**Ripup jogs the wrong pin → welds 1-grid-apart neighbor buses → cleanup deletes both
+    nets** (0134, after_38)~~ **FIXED (0134)** — but the *true* root was NOT the ripup jog
+    (static analysis mis-fingered it; runtime tracing corrected it, like 0132 P-D).
+    `doc/claude/issues/0134-*.md`. Diagonal drag (-20,-10) of a device with two NORTH-edge
+    input pins on parallel buses one grid apart (REF y=-140, LED y=-150). The accepted path is
+    END **attempt=0 (leg-split, `diag_relay=0`)**, and the wire that welds REF↔LED is
+    **`insert_exit_stubs` (:1996) sliding REF's exit leg one grid north (y=-140→y=-150) onto
+    LED's bus** — the documented no-short gap (comment ~:8500: the exit slide can shift a leg
+    one grid onto a DIFFERENT net's wire, caught log-only). It had only a body-cross decline,
+    no foreign-net decline. **FIX** (2 hunks, gated `fluid_editing`): (a) `insert_exit_stubs`
+    foreign-net guard — `fluid_seg_touches_foreign_lab` (:1996) + decline (:2094): DECLINE the
+    slide if the stub/leg touches a stationary wire of a different net label (P3, never worse);
+    (b) pure-ortho body-shove **per-axis spoof** (:8705): a diagonal drag now accepted on the
+    pure-ortho path needs `fluid_shove_body_crossing_backbone` fed ONE axis at a time (it
+    pure-axis-gates off a diagonal delta) — mirrors the §11.9f diag_relay site (:8680); restores
+    the after_37 CTRL1 x=160 shove that (a) exposed. RED test
+    `test_fluid_diagonal_neighbor_bus_0134.tcl` 10/10; ref_drop_0132 12/12; exit_stub_0111 20/20.
+    **STILL LATENT (no test reaches it after the fix, so NOT fixed):** the ripup jog
+    (`fluid_ripup_foreign_pin_short` :4220 → `fluid_jog_pin_off_backbone` :4071) CAN still jog
+    the wrong pin (walks pin-pairs **in index order**, reaches the non-invader first) and its
+    verify (:4188) is **pin-pair-indexed + single-pin-net BLIND** (orphaned/merged singleton
+    ids :2483 ≡ START singleton :2481 → `partition_changed()==0` masks an orphan/weld). Add its
+    foreign-touch + no-orphan guard WITH a test that forces attempt=1 before touching that
+    load-bearing function. Also latent (route-quality, masked here by the clean attempt=0 route):
+    the elbow axis chooser (`recompute_orthogonal_manhattanline` actions.c:5150-5153) picks ml
+    from `|dx|` vs `|dy|` alone (tie→ml=2), never reads the moved pin's lead `dir=`.
 
 Below-cut (quality, keep on radar): elbow legs through pin-less stationary bodies (no
 body class in `fluid_ml_hazards`); two moved devices sharing a channel (NULL node treated

@@ -1993,6 +1993,26 @@ static void order_wire_coords(int n)
   }
 }
 
+/* issue 0134: does segment (ax,ay)-(bx,by) touch a stationary wire whose net label DIFFERS from
+ * mylab (a caller-owned COPY -- get_tok_value shares a buffer)? The documented no-short gap in
+ * insert_exit_stubs: sliding an exit leg one grid can land it on a neighbour bus one grid away
+ * (after_38 REF's y=-140 backbone slid north onto LED's y=-150 bus). excl is the leg being slid. */
+static int fluid_seg_touches_foreign_lab(double ax, double ay, double bx, double by,
+                                         const char *mylab, int excl)
+{
+  int m;
+  for(m = 0; m < xctx->wires; m++) {
+    xWire *w;
+    if(m == excl) continue;
+    w = &xctx->wire[m];
+    if(!(touch(ax, ay, bx, by, w->x1, w->y1) || touch(ax, ay, bx, by, w->x2, w->y2) ||
+         touch(w->x1, w->y1, w->x2, w->y2, ax, ay) || touch(w->x1, w->y1, w->x2, w->y2, bx, by)))
+      continue;
+    if(strcmp(mylab ? mylab : "", get_tok_value(w->prop_ptr, "lab", 0))) return 1;
+  }
+  return 0;
+}
+
 static void insert_exit_stubs(void)
 {
   int inst, r, rects, n, m;
@@ -2070,6 +2090,25 @@ static void insert_exit_stubs(void)
         fltrace("FLTRACE exitstub: DECLINE slide inst=%d pin=%d n=(%g,%g) -- threads own body\n",
                 inst, r, nx, ny);
         continue;
+      }
+      /* issue 0134: DECLINE a slide that lands the stub or the slid leg on a DIFFERENT net's copper
+       * (the documented no-short gap: an exit-leg slide can shift one grid onto a neighbour bus one
+       * grid away -- after_38 REF's y=-140 backbone slid north onto LED's y=-150 bus, re-shorting the
+       * two nets a de-shorter had just separated). P3 is the lowest aesthetic pass, so declining is
+       * never worse than the clean pre-slide route. Gated fluid_editing (legacy wire_exit_stub path
+       * unchanged). WIRING.md §11 item 14. */
+      if(tclgetboolvar("fluid_editing")) {
+        char *nlab = NULL;
+        int foreign;
+        my_strdup(_ALLOC_ID_, &nlab, get_tok_value(xctx->wire[n].prop_ptr, "lab", 0));
+        foreign = fluid_seg_touches_foreign_lab(px, py, sx, sy, nlab, n) ||
+                  fluid_seg_touches_foreign_lab(sx, sy, nfx, nfy, nlab, n);
+        my_free(_ALLOC_ID_, &nlab);
+        if(foreign) {
+          fltrace("FLTRACE exitstub: DECLINE slide inst=%d pin=%d n=(%g,%g) -- would short foreign net\n",
+                  inst, r, nx, ny);
+          continue;
+        }
       }
       for(m = 0; m < nwires0; m++) {                /* drag every neighbour at the corner */
         if(m == n) continue;
@@ -8662,8 +8701,20 @@ void move_objects(int what, int merge, double dx, double dy)
     * accepted route byte-identical (never worse). */
    if(!diag_relay && orthogonal_wiring && xctx->stretch_select &&
       tclgetboolvar("fluid_editing") && xctx->fluid_startsel_wires == 0 &&
-      xctx->move_rot == 0 && xctx->move_flip == 0)
-     fluid_shove_body_crossing_backbone();
+      xctx->move_rot == 0 && xctx->move_flip == 0) {
+     /* issue 0134: a DIAGONAL drag accepted on the PURE-ORTHO path (attempt=0 leg-split, NOT
+      * diag_relay) still threads a load-bearing backbone through the body (the +20,-10 CTRL1 x=140
+      * column). This path became reachable once the 0134 exit-stub foreign-net guard keeps the
+      * leg-split electrically clean, so the drag no longer falls through to the diag_relay site above
+      * (which already spoofs per-axis, §11.9f). fluid_shove_body_crossing_backbone pure-axis-gates
+      * itself off a diagonal delta, so -- exactly as the diag_relay site -- feed it ONE axis at a
+      * time. A pure-axis drag (one of sdx/sdy is 0) is unaffected: the zero-axis run self-declines,
+      * so the live RUBBER behaviour for ordinary single-axis drags is byte-identical. */
+     double sdx = xctx->deltax, sdy = xctx->deltay;
+     xctx->deltay = 0.0;                     fluid_shove_body_crossing_backbone(); /* x-run */
+     xctx->deltax = 0.0; xctx->deltay = sdy; fluid_shove_body_crossing_backbone(); /* y-run */
+     xctx->deltax = sdx; xctx->deltay = sdy;
+   }
    /* the END delta-zeroing (below) and the commit_now redraw save/restore consume xctx->deltax/deltay
     * as the true accumulated total (not the last leg's split); it is set to (totdx,totdy) above. */
    /* --- END-only post-commit finalizers. A live fluid RUBBER step (commit_now) keeps the gesture
