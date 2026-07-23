@@ -176,7 +176,7 @@ the `after_34.sch` RED-reference detector still passes, and the reproduction now
 `test_fluid_*` GREEN** (incl. `exit_stub_staircase_0111`, rotated `0130`/`0132`). WIRING.md §11.9b / §5
 pass table.
 
-## §11.9c — the CTRL1 sibling (after_35): body-driven backbone shove — OPEN (xfail)
+## §11.9c — the CTRL1 sibling (after_35): body-driven backbone shove — FIXED
 
 The after_34 fix (§11.9b) only covered the TRIANG pin's *lateral feed*. The **same gesture**
 (`before_10` + connected drag of x1 `+20x`, pure ortho) leaves a **second, distinct** defect on the
@@ -205,17 +205,102 @@ for CTRL1, but running in the mid-gesture shared commit block fought the dirty t
 geometric contact — likely RUBBER-vs-END / follow-selection interaction). Rather than ship a shove that
 mangles connectivity or over-fires into the most landmine-heavy code, it was **reverted** to e6186956.
 
-**Correct fix (not done):** run the shove on a CLEAN, fully-committed geometry (all `sel==0`, trimmed —
-after `unselect_partial_sel_wires`) rather than mid-gesture, or reformulate as a first-class END-cluster
-pass with its own restore snapshot; the both-sides + load-bearing-span + partition-verify design is
-sound, the *timing/selection interaction* is the unsolved part.
+**Fix (landed): `fluid_shove_body_crossing_backbone` (move.c, defined just before the pin-driven
+`fluid_shove_connected_wire`).** Exactly the "correct fix" path above: the SAME both-sides +
+load-bearing-span + partition-verify design, but sited as a first-class PER-GESTURE pass at the real
+END — called right after `fluid_manhattanize_relay_diagonals`' site on the COMPLEMENTARY gate
+(`!commit_now && !diag_relay && orthogonal_wiring && stretch_select && fluid_editing &&
+fluid_startsel_wires==0 && rot-free`) — i.e. AFTER the attempt ladder accepted (partition clean vs
+START) and AFTER trim/cleanup/ownership-normalize, so it sees CLEAN, fully-committed geometry (all
+wire `sel==0`, no degenerates, no mixed-sel split runs). The mid-gesture phantom-merge fight never
+recurs at this site; *timing was the fix*. Cataloged as a MANUAL_SITE entry in `fluid_end_passes[]`.
 
-**Tripwire:** `tests/headless/test_fluid_ortho_ctrl1_shove_0132.tcl` — P1 connectivity + P4 no-diagonal
-are hard checks (both pass; the current save IS connected, just body-threading); **P5 (backbone clear of
-body) is xfail** and flips to XPASS when the shove lands. Body box `x[97.5,150] y[-132.5,82.5]` from the
-C `fluid_inst_body_box` trace.
+Per-pin algorithm (each negation declines to baseline — never worse):
+- Gates: pure-axis delta; moved pin's cross-axis column `pc` STRICTLY inside its own instance's
+  pin-inclusive body box; live pin net non-empty (strdup'd, renumber-safe); contiguous same-net
+  perpendicular THROUGH-RUN at `pc` (chained to fixpoint — the live run is trim-SPLIT at the pin:
+  `(140,-20)-(140,80)` + `(140,80)-(140,100)`) with copper strictly BOTH sides of the pin (excludes
+  TRIANG/#net one-sided escape feeds — the over-fire guard; all 3 sibling pins DECLINE here) and
+  overlapping the body span; NO other instance pin (device/label/co-moved) on the run
+  (`fluid_pin_on_seg`, tolerant); every same-net attachment endpoint on the column axis-aligned;
+  ≥1 attachment corner; `fluid_seg_welds_foreign` clean on every rebuilt segment (jog, new
+  backbone, each attachment's `pc→ct` extension) — pin-less foreign copper cover.
+- REBUILD: jog `(px,py)-(ct,py)` + ONE new backbone at `ct` = `fluid_grid_above/_below`(union body
+  edge, cadsnap) ahead of the motion, spanning ONLY [pin..corners]; attachment endpoints translated
+  `pc→ct`; run wires collapsed to the pin point and reaped by `check_collapsing_objects` BEFORE any
+  partition math (degenerates poison `touch()`). Props for new wires copied from a RUN wire — this
+  pass reshapes NAMED copper (second verified §11.1 crack, after `fluid_delete_body_crossing_copper`)
+  but can never rename it. The dead overhang past the last corner (`(140,80)-(140,100)`, named
+  CTRL1) is deliberately DROPPED, not shoved — it feeds nothing and shoving it crosses TRIANG at y=90.
+- Verify: mem-snapshot (`Undo_slot` + 4 id counters) then DUAL check — `fluid_partition_changed()==0`
+  (restore-START name; entry re-checked accepted-clean, so this equals preserve-entry) AND
+  `fluid_loop_partition` preserve-pass-entry GEOMETRIC compare (same-name-island + rename cover);
+  any mismatch → exact revert with the full house restore ritual (ui_state, id counters,
+  rebuild_selected_array, movelastsel). T-taps with no endpoint on the column are not collected;
+  if load-bearing the verify reverts (deliberate narrow decline).
+
+Result on the repro (`after_35_fixed.sch`, byte-verified from a real save):
+```
+N 140 80 160 80   {lab=CTRL1}   (jog)
+N 160 -20 160 80  {lab=CTRL1}   (shoved backbone, spans pin..corner only)
+N 160 -20 220 -20 {lab=CTRL1}   (translated attachment)
+```
+TRIANG + both #net feeds untouched (one-sided runs decline). Live-during-drag shove (the user's
+ideal "as the body reaches it") is deferred: the pass is END-only like the whole cleanup cluster
+(reshaping follow copper mid-drag destabilises the next RUBBER step's follow set, §3 step 9 note);
+each RUBBER step previews the un-shoved route, the release commits the shoved one.
+
+**Adversarial review round (workflow wf_cff67bed, 5 lenses × 2-refuter verify; 13 raw findings,
+7 confirmed) — all confirmed findings fixed same session:**
+1. *CRITICAL over-fire*: dragging a **1-pin lab_pin/power symbol** onto its own backbone fired the
+   shove and DELETED the pin-less user backbone — a 1-pin symbol's graphic STRADDLES its pin
+   (strictly interior to the no-text bbox on both axes) so the engulf gate was meaningless, and
+   both pin-indexed verifies are blind to pin-less copper. Fix: hard `npins >= 2` instance gate
+   (the 1-pin family is §11.5's ownerless class; the body-shove is a multi-pin device concept).
+2. *MAJOR union-fling*: ct came from the UNION selected-body box, so an unrelated co-selected
+   instance far ahead flung the rebuilt copper past itself (410+ unit stubs). Fix: ct = OWNING
+   instance's body edge + 1 grid; a backbone landing in another moved body now DECLINES
+   (`fluid_seg_crosses_sel_body` on the new backbone — own body impossible by construction).
+3. *MAJOR bus-spur stranding*: a bus-flagged same-net spur ending on the run was silently skipped
+   by the corner scan → run collapse stranded it as a floating island (verify-blind, pin-less).
+   Fix: the corner scan now walks EVERY non-run wire endpoint on the run — plain same-net
+   axis-aligned → corner; bus/diagonal/foreign → hard DECLINE of the whole shove.
+4. *Stationary-body threading (minor ×2)*: the new backbone could park through a bystander
+   device's body. Fix: `fluid_seg_crosses_stationary_body` decline on the new backbone (jog and
+   attachment extensions stay exempt — the jog is the pin's bridge, extensions ride pre-existing
+   rows). Text-inflated stationary box may over-decline → baseline kept, never worse.
+5. *Duplicate-overlap (minor ×2)*: pin-row attachments left collinear copper fully/partially
+   overlapping the jog (nothing re-trims after this site). Fix: skip the jog when a from-behind
+   pin-row attachment's translated span already covers it; collapse (instead of translate) a
+   pin-row attachment pointing into the shove that ends short of ct.
+Killed (refuted) findings incl. the far-side-extension body-crossing (grandfathered pre-existing
+row), the D5 idempotence-probe MANUAL_SITE skip (pass is self-fixpoint: post-shove the column
+holds no perpendicular run), and the O(W²) verify cost (fires on a narrow gate, house pattern).
+
+**Tests:** `tests/headless/test_fluid_ortho_ctrl1_shove_0132.tcl` — P5 promoted **xfail → hard
+check** (was XPASS), plus a new hard P5 "shoved vertical exists at/right of body edge" and **P5b: a
+WHOLE-NET body-clearance invariant** (no wire of ANY net threads the body box unless it carries an
+endpoint ON a moved pin) — the lesson below applied; P5b sabotage-verified RED against the broken
+`after_35.sch` (flags both the threading backbone and the through-body attachment). 12 hard checks
+GREEN + drag2 xfail tripwire (below). **NEW `tests/headless/test_fluid_bodyshove_guards_0132.tcl`**
+(14 checks) pins all five review findings: G1 label-drop backbone survival, G2 union-fling, G3
+bus-spur decline, G4 stationary-neighbor decline, G5 no-overlap — each RED on the pre-guard build
+(review repro runs). Regression: wireedit **ALL PASS** + all `test_fluid_*` GREEN (workflow-verified,
+per-test verdict lines confirmed). Evidence: `after_35.sch` (broken) / `after_35_fixed.sch` (fixed
+save, identical before and after the guard round).
 
 **Lesson (repeat of the after_34 lesson at the test level):** the after_34 fix was declared done with a
 test that only asserted the TRIANG feed — it never checked CTRL1, so a second real defect on the same
 gesture passed "green" and the adversarial review (scoped to the guard's correctness) could not see it.
-A per-pin/whole-net body-clearance invariant, not a single-wire check, is the right assertion.
+A per-pin/whole-net body-clearance invariant, not a single-wire check, is the right assertion — now
+codified as P5b (direction-blind pin-feed exemption; the feed-DIRECTION class stays owned by the
+after_34 test).
+
+**Deferred (xfail tripwire in the same test): third-generation drag, pin ON the run END.** A SECOND
++20x drag from the fixed state advances the body over the shoved backbone (x=160 now inside
+x[117.5,170]), but the pin (160,80) lands exactly ON the run's END — the strictly-both-sides gate
+(the over-fire guard) declines, and the backbone survives as an INWARD vertical feed through the
+body to the l1 rail. Connected + Manhattan + strictly better than pre-fix at every generation
+(never-worse holds); the ideal reroute (jog to 180 / escape +y) is the same feed-direction class as
+the §11.9 escape un-gate — fix it there, not by weakening the both-sides gate (a pin at a run end is
+the ordinary escape-feed shape; relaxing it re-opens the 2-pin-device over-fire).

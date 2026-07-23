@@ -223,6 +223,11 @@ Ordered passes per leg (gates in brackets):
 —— per gesture, after the attempt loop ——
 13. fluid_manhattanize_relay_diagonals                  [accepted relay only —
     that path had leg_ortho==0 and SKIPPED steps 5-10 entirely]
+13b. fluid_shove_body_crossing_backbone                 [0132 §11.9c; the COMPLEMENTARY path:
+    !diag_relay accepted pure-ortho, real END only, rot-free, startsel==0 — BODY-driven shove
+    of an engulfed same-net perpendicular backbone (pin mid-run, copper both sides), on CLEAN
+    post-cleanup geometry; mem-snapshot + dual partition verify, exact revert. Do NOT resite
+    into the shared commit block (dirty-state phantom merges, see issue doc)]
 14. END finalizers: clear stretch state (exactly once — per-leg clearing = UAF),
     fluid_check_move_invariants → ROLLBACK-OR-REFUSE on a residual P2 short/dev-merge when
     `fluid_enforce_invariants` (hardening B3): restore the `enf_snap` pristine snapshot (taken at
@@ -270,6 +275,7 @@ Hard ordering edges (all documented in-code, all discovered by bugs):
 | `fluid_manhattanize_relay_diagonals` :4214 (`fluid_try_reanchor` :4188) | 0107/0108/0130/0133/0132 | accepted relay, entry partition-clean | re-anchor to live same-net copper (**0132: body-aware — reject a candidate whose leg crosses a moved body**), else `fluid_manh_route` (body-free L/Z/escaped-stub route around the PIN-INCLUSIVE body, else body-crossing, else keep diagonal); stale-feed prune; **then `fluid_reroute_body_crossing_feeds` (0132)** | restore-START per candidate |
 | `fluid_reroute_body_crossing_feeds` / `_delete_body_crossing_copper` / `_nearest_outside_body_anchor` / `_net_crosses_sel_body` :4520+ | 0132 | body dropped on its OWN copper: a moved pin's net crosses the body (2nd incremental drag) | re-route the pin feed to nearest same-net vertex OUTSIDE the union body box (`fluid_manh_route`), then verified-delete the redundant through-body backbone — **deletes even NAMED copper** when the pin partition is provably unchanged without it (§11.1 crack) | `fluid_manh_route` partition-verify + per-delete restore-START |
 | `fluid_manh_route` / `_manh_commit_path` / `_manh_pushpath` :4498 | 0133 | manhattanize per relay diagonal | enumerate L / Z (grid channels) / escaped-stub L/Z, index-sort by (len,legs), commit first body-free (pref0) else any (pref1) | partition-verify + exact revert per candidate |
+| `fluid_shove_body_crossing_backbone` :6728 | 0132 §11.9c | per-gesture real END, `!diag_relay` pure-ortho, rot-free, startsel==0; owning inst ≥2 pins (1-pin symbols straddle the pin — CRITICAL over-fire, review wf_cff67bed); pin column strictly in OWN body; same-net perp THROUGH-RUN copper BOTH sides of pin; no pin on run; EVERY wire endpoint on run = plain same-net axis corner else DECLINE (bus/diag/foreign); new backbone welds no foreign copper, crosses no other moved / stationary body | BODY-driven shove: collapse run to pin, rebuild ONE backbone 1 grid past OWN body edge (not union — fling guard) spanning [pin..corners] (dead overhang dropped), translate attachments (pin-row overlap dedup), re-feed via jog; may reshape NAMED copper (§11.1 crack #2, prop copied) | mem-snapshot + restore-START name AND preserve-entry geometric, exact revert |
 | `fluid_inst_body_box` / `_seg_crosses_sel_body` / `_union_sel_body_box` :4415 | 0130/0133 | manhattanize route pick | **PIN-INCLUSIVE** box = symbol no-text bbox (`sym->minx..maxy` rotated, spans all pins; excludes @name text); strict-interior crossing over SELECTED bodies WITH escape-normal exemption (box-centre dominant axis, NOT get_pin_escape_normal) | pure geometric (no verify) |
 
 Dangling-tail candidacy exists in **4 variants with deliberately different START-degree
@@ -506,6 +512,24 @@ declaring any wiring feature done, convert to xfail tests when touching the area
    `fluid_editing` so the legacy `wire_exit_stub` feature is byte-identical. Test
    `test_fluid_ortho_second_drag_0132.tcl` (P5 promoted xfail→hard check; XPASS), evidence
    `before_10.sch`/`after_34.sch`. Regression: wireedit ALL PASS, all 15 `test_fluid_*` GREEN.
+   ~~(§11.9c) the CTRL1 sibling (after_35): BODY-driven backbone shove~~ **FIXED (0132 §11.9c)**: the
+   SAME gesture left a second defect on the OTHER pin — CTRL1's stationary vertical backbone
+   `N 140 -20 140 100` perpendicular to the move, engulfed by the advancing body (pin (140,80) landed
+   mid-run), threading it in the save. PIN-driven shove never matches (needs a parallel stub driven
+   past its junction), reroute/delete layers gated `diag_relay`. FIX: `fluid_shove_body_crossing_backbone`
+   (move.c) — a per-gesture real-END pass on the accepted PURE-ORTHO path (`!diag_relay`), sited AFTER
+   the attempt ladder + trim/cleanup/ownership-normalize on CLEAN committed geometry (an earlier
+   mid-gesture siting fought dirty transient state — phantom merges — and was reverted; timing IS the
+   fix). Gates: pure-axis, rot-free, `fluid_startsel_wires==0`, pin column strictly inside own body
+   box, same-net perpendicular THROUGH-RUN with copper strictly BOTH sides of the pin (excludes
+   one-sided escape feeds — the over-fire guard), no foreign pin on the run, no pin-less foreign weld.
+   REBUILD: collapse run to pin, ONE new backbone at `fluid_grid_above(body edge)` spanning only
+   [pin..attachment corners] (dead overhang DROPPED — shoving it would cross the foreign rail),
+   attachments translated, pin re-fed via jog; mem-snapshot + dual verify (restore-START name AND
+   preserve-entry geometric partition) with exact revert. Reshapes NAMED copper under verify (second
+   §11.1 crack; props copied from the run, never renamed). Test `test_fluid_ortho_ctrl1_shove_0132.tcl`
+   (P5 promoted xfail→hard; new P5b WHOLE-NET body-clearance invariant — the after_34 single-wire-check
+   lesson — sabotage-verified RED on after_35). Evidence `after_35.sch`/`after_35_fixed.sch`.
 10. **Mid-drag unguarded keys**: Delete and descend 'e' run during STARTMOVE (no
     `!(ui_state&STARTMOVE)` guard) → undo corruption / resurrected geometry / UAF class.
     Sweep the whole key dispatch.
