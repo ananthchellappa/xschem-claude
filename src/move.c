@@ -1137,6 +1137,7 @@ static int fluid_ml_future_covers(int ml, int sel1);
  * insert_exit_stubs (issue 0132 after_34: decline an exit-stub slide that would thread the pin body). */
 static int fluid_inst_body_box(int i, double *bx1, double *by1, double *bx2, double *by2);
 static int fluid_seg_crosses_sel_body(double x1, double y1, double x2, double y2);
+static int fluid_seg_crosses_stationary_body(double x1, double y1, double x2, double y2); /* 0135 D2 */
 /* issue 0086 companion: future-aware corner-slide decline (defined next to fluid_ml_future_covers) */
 static int fluid_slide_future_hazard(int n, double fx, double fy, double mx, double my);
 void fltrace(const char *fmt, ...);
@@ -2001,6 +2002,12 @@ static int fluid_seg_touches_foreign_lab(double ax, double ay, double bx, double
                                          const char *mylab, int excl)
 {
   int m;
+  /* touch() (clip.c) requires its FIRST segment ordered left-to-right / bottom-to-top, else the two
+   * "does the foreign wire's ENDPOINT lie on MY span" probes silently return 0. Callers pass this segment
+   * pin->tip, REVERSED for a -x/-y escape normal (0135 D2's multi-grid stub/leg span an interior a foreign
+   * endpoint can land on). Order it here so all four probes are valid (stored wires are already ordered).
+   * Review wf_ae8e4446; no test outcome changes (verified) -- also hardens the 0134 single-grid slide. */
+  if(ax > bx || (ax == bx && ay > by)) { double t; t = ax; ax = bx; bx = t; t = ay; ay = by; by = t; }
   for(m = 0; m < xctx->wires; m++) {
     xWire *w;
     if(m == excl) continue;
@@ -2060,55 +2067,92 @@ static void insert_exit_stubs(void)
       }
       if(!has_corner) continue;
 
-      /* slide the first leg one grid out along the normal; drag the corner with it */
-      sx  = px + grid * nx; sy  = py + grid * ny;   /* stub tip = leg's new pin end  */
-      nfx = fx + grid * nx; nfy = fy + grid * ny;   /* leg's new far (corner) end     */
-      /* issue 0132 (after_34, pure-ortho variant): get_pin_escape_normal reads the TEXT-INFLATED
-       * inst.x1..y2 nearest-edge, which mis-picks an INWARD normal (-x/Left) for a pin near a corner
-       * of an asymmetric symbol (the rot-1 SANDBOX/solar_ctl TRIANG pin). The route's first leg
-       * already exits +y straight over the top, but with the mis-picked -x normal it reads as
-       * "perpendicular -> bends at the pin", so this pass SLIDES it -x back through the moved
-       * instance's OWN pin-inclusive body (N 90 80 100 80) -- undoing a clean route. Guard with the
-       * PIN-INCLUSIVE body box (0130/0133 sym-no-text bbox, escape-normal exempt): if the stub or the
-       * slid leg would thread the moved body, DECLINE the slide and leave the pre-slide route (which
-       * is already the correct over-the-top exit). insert_exit_stubs is the lowest-but-one aesthetic
-       * pass (P3), so declining is never worse; a TRUE outward normal slides AWAY from the body and is
-       * exempt (fluid_seg_crosses_sel_body's escape exemption), so ordinary device feeds are untouched.
-       * Instances are committed to POST-move coords here (ELEMENT loop ran; inst still SELECTED), so no
-       * delta shift is needed. Gated fluid_editing so the legacy wire_exit_stub feature is unchanged.
-       * KNOWN LIMITATION (adversarial review wf_ea9a847a, CONFIRMED minor/cosmetic): the escape
-       * exemption inside fluid_seg_crosses_sel_body derives the outward axis from the box-CENTRE
-       * dominant axis, which is aspect-ratio-blind -- for a near-corner pin on a WIDE/TALL asymmetric
-       * symbol it can mis-judge a genuinely-outward slide as inward and DECLINE a legit beautifying
-       * stub. Never worse (the kept pre-slide route is connected, Manhattan AND body-clear -- only the
-       * exit-stub aesthetic is skipped, and that stub itself grazed the body); no shipped symbol/test
-       * triggers it. Same box-centre approximation already used by the 0130/0133 manhattanize path.
-       * WIRING.md §11.9b. */
-      if(tclgetboolvar("fluid_editing") &&
-         (fluid_seg_crosses_sel_body(px, py, sx, sy) ||
-          fluid_seg_crosses_sel_body(sx, sy, nfx, nfy))) {
-        fltrace("FLTRACE exitstub: DECLINE slide inst=%d pin=%d n=(%g,%g) -- threads own body\n",
-                inst, r, nx, ny);
-        continue;
-      }
-      /* issue 0134: DECLINE a slide that lands the stub or the slid leg on a DIFFERENT net's copper
-       * (the documented no-short gap: an exit-leg slide can shift one grid onto a neighbour bus one
-       * grid away -- after_38 REF's y=-140 backbone slid north onto LED's y=-150 bus, re-shorting the
-       * two nets a de-shorter had just separated). P3 is the lowest aesthetic pass, so declining is
-       * never worse than the clean pre-slide route. Gated fluid_editing (legacy wire_exit_stub path
-       * unchanged). WIRING.md §11 item 14. */
-      if(tclgetboolvar("fluid_editing")) {
-        char *nlab = NULL;
-        int foreign;
-        my_strdup(_ALLOC_ID_, &nlab, get_tok_value(xctx->wire[n].prop_ptr, "lab", 0));
-        foreign = fluid_seg_touches_foreign_lab(px, py, sx, sy, nlab, n) ||
-                  fluid_seg_touches_foreign_lab(sx, sy, nfx, nfy, nlab, n);
-        my_free(_ALLOC_ID_, &nlab);
-        if(foreign) {
-          fltrace("FLTRACE exitstub: DECLINE slide inst=%d pin=%d n=(%g,%g) -- would short foreign net\n",
-                  inst, r, nx, ny);
+      /* slide the pin-incident perpendicular leg out along the escape normal and fill the pin gap with
+       * a short exit stub. DISTANCE: normally ONE grid (a cosmetic lead stub). Two per-distance guards
+       * (both gated fluid_editing so the legacy wire_exit_stub path is byte-identical):
+       *
+       * (0132 after_34) body-cross DECLINE: get_pin_escape_normal used to read the TEXT-INFLATED
+       *   inst.x1..y2 nearest-edge and mis-pick an INWARD normal for a near-corner pin, sliding a clean
+       *   over-the-top feed back THROUGH the moved instance's OWN pin-inclusive body. If the stub or the
+       *   slid leg threads the body (PIN-INCLUSIVE box, escape-normal exempt), that distance is rejected.
+       *   (Post-0134 get_pin_escape_normal returns the true LEAD normal in fluid mode, so a true outward
+       *   normal slides AWAY from the body and is exempt; ordinary device feeds are untouched.)
+       * (0134 after_38) foreign-short DECLINE: an exit-leg slide can shift one grid onto a neighbour bus
+       *   one grid away (REF's backbone sliding north onto LED's bus), re-shorting two nets a de-shorter
+       *   just separated. If the stub or slid leg lands on a DIFFERENT net's copper, that distance is
+       *   rejected.
+       *
+       * issue 0135 D2 -- OUTWARD SEARCH: when the CURRENT feed leg already grazes/crosses this instance's
+       * OWN pin-inclusive body, one grid may not clear the body OR may land the slid leg on a neighbour
+       * bus (after_39 REF: a moved north-input pin whose translated feed runs along the body top edge; the
+       * two-leg decomposition PURE-TRANSLATES the whole-selected feed so the elbow/P6 layer never
+       * re-orients it, and the single-grid slide to y=-130 lands on LED's row). Search outward along the
+       * normal for the NEAREST distance whose slid leg passes BOTH guards (clears the body AND shorts no
+       * foreign net) and slide there. A grazing feed is already wrong, so any body-clear short-free row is
+       * a strict improvement (P5 body-clearance dominates P6 min-bend); if none is found within the cap the
+       * feed is left exactly as-is (never worse -- the D1 body-shove decline is the safety net). A
+       * NON-grazing leg keeps dmax==1 => the historical single-grid behaviour byte-identical. Instances are
+       * committed to POST-move coords here (ELEMENT loop ran; inst still SELECTED), so no delta shift is
+       * needed. The search adds a third per-distance guard (stationary-body cross, grazing-only) so the
+       * longer slid backbone cannot walk through ANOTHER device (P5).
+       *
+       * WHY GEOMETRIC GUARDS, NO PARTITION SNAPSHOT: the slide never DISCONNECTS by construction -- the pin
+       * gap is filled by the stub and the far corner + every wire on it are dragged together, so the net
+       * stays whole; the only failure mode is a SHORT onto foreign copper, exactly what the foreign-lab
+       * guard rejects (identical mechanism to the shipped 0134 single-grid slide). A mem_snapshot verify is
+       * the wrong tool here: mem_restore_slot() unselect_all()s, which would strip the inst .sel the pin
+       * loop iterates on and silently skip every later pin. The residual gap (a short onto an UNLABELED
+       * distinct net, both lab="") is pre-existing/shared with 0134 and is backstopped at END by the B3
+       * fluid_check_move_invariants rollback-or-refuse (fluid_enforce_invariants) and the D1 shove-decline.
+       * DEFERRED (adversarial review wf_ae8e4446, CONFIRMED minor): the neighbour-drag below (lines ~2144-2148)
+       * re-routes every OTHER wire at the corner to the far end WITHOUT re-checking its swept span; the
+       * outward search widens that (grazing + up to `dmax` grids), so a same-net corner backbone could sweep
+       * onto foreign copper unseen. A guard that validated the neighbours' post-drag spans over-fired on the
+       * legitimate SAME-NET T-tap CARRY this pass exists to perform (test_wireedit_31) -- distinguishing a
+       * carried same-net tap from a swept foreign backbone needs real net resolution, which this geometric P3
+       * pass deliberately avoids; the realistic case is B3-backstopped, so it is left as a documented limit.
+       * WIRING.md §11.9b / §11 item 14 / §11.9a. KNOWN LIMITATION (adversarial review wf_ea9a847a):
+       * fluid_seg_crosses_sel_body's escape exemption uses the box-CENTRE dominant axis (aspect-ratio-blind)
+       * -- can mis-judge a genuinely-outward slide on a WIDE/TALL near-corner pin and decline a legit stub;
+       * never worse (the kept route is connected, Manhattan and body-clear). Same approximation as 0130/0133. */
+      {
+        int fe = tclgetboolvar("fluid_editing");
+        int graze = fe && fluid_seg_crosses_sel_body(px, py, fx, fy);   /* D2 trigger: feed threads own body */
+        int dmax = graze ? 6 : 1, d, found = 0;
+        for(d = 1; d <= dmax && !found; d++) {
+          double tsx = px + d * grid * nx, tsy = py + d * grid * ny;    /* stub tip = leg's new pin end */
+          double tfx = fx + d * grid * nx, tfy = fy + d * grid * ny;    /* leg's new far (corner) end   */
+          /* (0132) still THREADS the moved instance's own PIN-INCLUSIVE body: not cleared yet -- keep
+           * searching outward (the point of the D2 walk is to get the feed off its own body edge). */
+          if(fe && (fluid_seg_crosses_sel_body(px, py, tsx, tsy) ||
+                    fluid_seg_crosses_sel_body(tsx, tsy, tfx, tfy))) continue;
+          /* (0135) a STATIONARY device blocks the outward direction: the exit stub is a LOCAL beautifier,
+           * not a global router -- NEVER detour a feed past another device (that is the reroute/
+           * manhattanize layers' job). STOP the search and DECLINE (leave the feed as-is, never worse).
+           * This is the guard that keeps the D2 walk from flinging R18's grazing P feed 8 grids north past
+           * C12 in the 0090 multi-gesture staircase (which then cascades). Grazing-only, so the cosmetic
+           * single-grid slide stays byte-identical. */
+          if(fe && graze && (fluid_seg_crosses_stationary_body(px, py, tsx, tsy) ||
+                             fluid_seg_crosses_stationary_body(tsx, tsy, tfx, tfy))) break;
+          if(fe) {                                            /* (0134) shorts a neighbour bus at this row */
+            char *nlab = NULL;
+            int foreign;
+            my_strdup(_ALLOC_ID_, &nlab, get_tok_value(xctx->wire[n].prop_ptr, "lab", 0));
+            foreign = fluid_seg_touches_foreign_lab(px, py, tsx, tsy, nlab, n) ||
+                      fluid_seg_touches_foreign_lab(tsx, tsy, tfx, tfy, nlab, n);
+            my_free(_ALLOC_ID_, &nlab);
+            if(foreign) continue;                             /* try further out (a farther row may be free) */
+          }
+          sx = tsx; sy = tsy; nfx = tfx; nfy = tfy; found = 1; /* first body-clear, device-clear, short-free row */
+        }
+        if(!found) {
+          fltrace("FLTRACE exitstub: DECLINE slide inst=%d pin=%d n=(%g,%g) graze=%d dmax=%d -- no clean row\n",
+                  inst, r, nx, ny, graze, dmax);
           continue;
         }
+        if(graze)
+          fltrace("FLTRACE exitstub: D2 outward slide inst=%d pin=%d n=(%g,%g) -> stub=(%g,%g) far=(%g,%g)\n",
+                  inst, r, nx, ny, sx, sy, nfx, nfy);
       }
       for(m = 0; m < nwires0; m++) {                /* drag every neighbour at the corner */
         if(m == n) continue;

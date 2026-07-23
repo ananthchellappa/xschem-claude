@@ -1,6 +1,6 @@
 # 0135 — fluid diagonal drag: body-shove rebuilds a moved input pin's feed as a through-body U
 
-**Status: FIXED (defect D1). Branch `fluid-editing`.**
+**Status: FIXED (defects D1 + D2). Branch `fluid-editing`.**
 
 ## Reproduction
 
@@ -77,11 +77,87 @@ and pure-ortho 0134 hunk-2) since it lives inside the shove.
 Post-fix REF routes the clean L `-60 -120 60 -120` + `-60 -120 -60 0` (the pre-shove accepted route);
 trace: `bodyshove: pin=(60,-120) escape=(0,-1) rel=1 -- shove OPPOSES escape, DECLINE`.
 
-## Not fixed (defect D2, route-quality, out of scope)
+## Fixed (defect D2, route-quality)
 
-REF's declined feed still exits WEST (perpendicular), grazing the body top edge by 2.5, instead of NORTH
-along its lead escape normal (0,−1). LED exited north cleanly; the two-leg decomposition does not route
-REF's feed along its now-correct normal. Dissolving D2 (route north-first) would remove D1 at the source.
+**Status: FIXED (candidate #1 follow-up, uncommitted at time of writing → see commit).**
+
+### Root cause (trace-verified, not static)
+
+REF's declined feed exited WEST (perpendicular), grazing the body top edge by 2.5, instead of NORTH along
+its lead escape normal (0,−1). The workflow's first hypothesis (P6 length veto in `fluid_p6_bias_ml`) was
+WRONG — the FLUID_TRACE `p6-DIAG`/`pmw-DIAG` probes showed **P6 is never called for REF's feed**. The true
+root: the END re-derives the two-leg (X-then-Y) decomposition from pristine, and after leg-0 the per-gesture
+`move_regrab_follow_set` re-selects REF's horizontal feed wire as **`SELECTED` (whole wire, sel==1)**, not
+`SELECTED1/2` (endpoint). So leg-1 takes `place_moved_wire`'s **pure-translation `else` branch** (both
+endpoints move by the delta) — the elbow / P6 orientation layer is never consulted, and REF's horizontal
+orientation is preserved from the fixture (the pre-existing `-60 -140 70 -140` feed, translated +20 to
+`-60 -120 60 -120`, now grazing since the body moved under it). LED differs only because its fixture feed
+already had a NORTH stub (`90 -150 90 -140`), so it exits north after translation. This is the WIRING §11.9a
+class: the diagonal/decomposed path routes some feeds by pure translation, bypassing the elbow/reroute/
+exit-stub re-orientation layers.
+
+Note the geometric conflict that makes the naive "route REF north at y=−130" WRONG: REF pin (60,−120) and
+LED pin (80,−120) are at the same y; both exit north; the minimal clearance row y=−130 is LED's row, so a
+1-grid north slide of REF SHORTS onto LED. The clean escape is y=−140 (clears the body top −122.5, sits one
+row past LED).
+
+### Fix (`insert_exit_stubs`, move.c ~2064, gated `fluid_editing`)
+
+Turn the single-grid exit-stub slide into an **outward search** that engages only when the current
+pin-incident perpendicular feed leg **grazes/crosses the instance's OWN pin-inclusive body** (`graze =
+fluid_seg_crosses_sel_body(px,py,fx,fy)`; a NON-grazing leg keeps `dmax==1` → the historical single-grid
+behaviour byte-identical). Walk `d = 1..6` grids along the lead escape normal; per distance:
+
+- still threads the own body (`fluid_seg_crosses_sel_body`) → **continue** (not cleared yet);
+- crosses a **STATIONARY** device body (`fluid_seg_crosses_stationary_body`) → **break/DECLINE** — the exit
+  stub is a LOCAL beautifier, never detour a feed past another device (this guard is load-bearing: without
+  it the search flings R18's grazing P feed 8 grids north past C12 in the 0090 multi-gesture staircase,
+  which then cascades and corrupts the route — the regression that drove this guard in);
+- shorts a foreign net (`fluid_seg_touches_foreign_lab`, the 0134 guard) → **continue** (a farther row may
+  be free — this is what walks REF past LED's y=−130 to y=−140);
+- else accept: slide the leg there, drag the far corner + its wires, fill the pin gap with the stub.
+
+Result: REF exits NORTH — stub `60 -120 60 -140` (vertical, the pin's own exempt lead) + west run
+`-60 -140 60 -140` (clears the body) + riser `-60 -140 -60 0`; LED untouched at y=−130; no short. This also
+DISSOLVES D1 at the source in this fixture (no through-body feed for the shove to see; D1's escape-side
+decline remains the safety net if the search declines).
+
+**Why geometric guards, not a mem_snapshot partition verify:** the slide never DISCONNECTS by construction
+(the pin gap is filled by the stub and the far corner + every wire on it are dragged together, so the net
+stays whole); the only failure mode is a short, exactly what the foreign-lab guard rejects (identical
+mechanism to the shipped 0134 single-grid slide). A `mem_snapshot` verify is the wrong tool: `mem_restore_slot()`
+`unselect_all()`s, which would strip the instance `.sel` the pin loop iterates on and silently skip every
+later pin. The residual gap (a short onto an UNLABELED distinct net, both `lab=""`) is pre-existing / shared
+with 0134 and is backstopped at END by the B3 `fluid_check_move_invariants` rollback (`fluid_enforce_invariants`)
+and the D1 shove-decline.
+
+### Verification
+
+RED test (extended `test_fluid_diagonal_shove_throughbody_0135.tcl`, 3 new D2 checks): REF's pin-incident
+first segment is VERTICAL/NORTH; no wire grazes the body top interior at y=−120. Both RED on the pre-D2
+binary (`FAIL: REF first segment ... other end (-60,-120)`), GREEN post-fix (9/9). Regression: 0134
+neighbor_bus 10/10, ref_drop_0132 12/12, ctrl1_shove/bodyshove_guards 14/14, rotate_body_route_0130 7/7,
+ortho/rotate_second_0132, exit_stub_0111 20/20, **wireedit 57/57** (the 0090 staircase regression that the
+stationary-body BREAK closed), test_fluid_editing only pre-existing FE8. WIRING.md §11.9a.
+
+### Adversarial review (workflow wf_ae8e4446, 4 lenses × verify)
+
+2 CONFIRMED, 2 refuted:
+
+- **NIT — `fluid_seg_touches_foreign_lab` fed unordered (pin→tip) segments** → `touch()`'s "foreign endpoint
+  on MY span" probes die on a reversed (-x/-y-normal) segment, missing a foreign endpoint on the multi-grid
+  stub/leg interior. **FIXED**: order the segment at the top of the helper (also hardens the shipped 0134
+  single-grid slide; verified no test-outcome change).
+- **MINOR — the corner neighbour-drag re-routes every other wire at the corner unchecked**; the outward
+  search widens it (grazing + up to 6 grids), so a same-net corner backbone could sweep onto foreign copper
+  unseen by the leg/stub guards, and B3 misses a label-less cross-instance merge. Latent, "not reproduced on
+  any current fixture," contrived confluence. **DEFERRED**: a guard validating the neighbours' post-drag
+  spans OVER-FIRED on the legitimate SAME-NET T-tap CARRY this pass exists to perform (`test_wireedit_31`) —
+  distinguishing a carried same-net tap from a swept foreign backbone needs real net resolution, which this
+  geometric P3 pass deliberately avoids. Left as a documented limitation (code comment + here), backstopped
+  by B3 `fluid_check_move_invariants` and the fact that the unguarded 1-grid neighbour-drag is pre-existing
+  (0132/0134). The 2 refuted findings restated the same neighbour-drag concern (verifier: pre-existing /
+  unconstructible on any fixture).
 
 ## Verification
 

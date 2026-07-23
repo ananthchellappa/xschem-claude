@@ -122,6 +122,42 @@ check "D1: no through-body vertical at REF column x=$REFX (was #net2 60 -120 60 
   [expr {![through_body_vertical $REFX]}]
 check "no diagonal wire remains" [expr {[ndiag]==0}] "diag=[ndiag]"
 
+# ---- D2 (route-quality): REF's feed must EXIT NORTH along the symbol LEAD normal (0,-1), not
+# preserve the translated perpendicular-WEST backbone that grazes the body top edge. x1's
+# pin-inclusive body is world x[37.5,90] y[-122.5,92.5]; REF's pin (60,-120) is 2.5 inside the top,
+# so the correct escape is vertical-north (like LED). Pre-fix REF's feed is `-60 -120 60 -120`
+# (horizontal at the pin row y=-120, grazing x[37.5,60] inside the body); post-fix it exits north
+# via a vertical stub then a west run at y=-140 (clears the body, no LED short). BOTH checks are RED
+# on the pre-D2 binary. issue 0135 D2 / WIRING §11.9a.
+proc first_seg {X Y} {                      ;# other endpoints of every wire incident on (X,Y)
+  set nw [xschem get wires]; set hits {}
+  for {set k 0} {$k < $nw} {incr k} {
+    lassign [xschem wire_coord $k] a b c d
+    if {$a==$X && $b==$Y} { lappend hits [list $c $d] }
+    if {$c==$X && $d==$Y} { lappend hits [list $a $b] }
+  }
+  return $hits
+}
+# a horizontal wire running along the body-top interior row (y=-120) overlapping the body x-span
+# [37.5,90] -- the D2 graze signature (net-agnostic; nothing should legitimately run there).
+proc grazes_body_top {} {
+  set nw [xschem get wires]
+  for {set k 0} {$k < $nw} {incr k} {
+    lassign [xschem wire_coord $k] a b c d
+    if {$b != $d} continue                  ;# not horizontal
+    if {$b != -120} continue                ;# only the y=-120 body-top graze row
+    set lo [expr {$a<$c?$a:$c}]; set hi [expr {$a<$c?$c:$a}]
+    if {$hi > 37 && $lo < 90} { return 1 }  ;# overlaps the body x-interior
+  }
+  return 0
+}
+set fs [first_seg $REFX $REFY]
+check "D2: exactly one wire on REF pin ($REFX,$REFY)" [expr {[llength $fs]==1}] "got {$fs}"
+lassign [lindex $fs 0] ox oy
+check "D2: REF first segment exits VERTICAL/NORTH along lead normal (not horizontal-grazing)" \
+  [expr {$ox==$REFX && $oy<$REFY}] "other end ($ox,$oy)"
+check "D2: no wire grazes the body top interior at y=-120" [expr {![grazes_body_top]}]
+
 puts "PASS=$::npass FAIL=$::fails"
 if {$::fails == 0} { puts "RESULT: ALL PASS"; puts "OVERALL: ok" } \
 else { puts "RESULT: $::fails FAILED"; puts "OVERALL: FAIL" }
