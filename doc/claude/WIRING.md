@@ -223,11 +223,16 @@ Ordered passes per leg (gates in brackets):
 —— per gesture, after the attempt loop ——
 13. fluid_manhattanize_relay_diagonals                  [accepted relay only —
     that path had leg_ortho==0 and SKIPPED steps 5-10 entirely]
-13b. fluid_shove_body_crossing_backbone                 [0132 §11.9c; the COMPLEMENTARY path:
-    !diag_relay accepted pure-ortho, real END only, rot-free, startsel==0 — BODY-driven shove
-    of an engulfed same-net perpendicular backbone (pin mid-run, copper both sides), on CLEAN
-    post-cleanup geometry; mem-snapshot + dual partition verify, exact revert. Do NOT resite
-    into the shared commit block (dirty-state phantom merges, see issue doc)]
+13b. fluid_shove_body_crossing_backbone                 [0132 §11.9c/§11.9d; the COMPLEMENTARY path:
+    !diag_relay accepted pure-ortho, rot-free, startsel==0 — BODY-driven shove of an engulfed
+    same-net perpendicular backbone. Gate (§11.9d): same-net copper strictly INSIDE the body
+    along-span by > 1 grid — a pin MID-run (copper both sides) OR a ONE-SIDED inward feed (pin on
+    the run's END, diving through the body); a clean escape feed ≤1 grid inside declines. Runs
+    LIVE on every RUBBER step AND the real END (§11.9d: the body shoves its own copper on the
+    slightest drag, like the pin-driven shove, not only at release) — on CLEAN post-attempt-ladder
+    geometry; mem-snapshot + dual partition verify, exact revert. release==stepwise-safe: each
+    RUBBER step + END restore-to-pristine and re-derive, so the shove never accumulates. Do NOT
+    resite into the shared commit block — THAT dirty-state siting bred phantom merges (issue doc)]
 14. END finalizers: clear stretch state (exactly once — per-leg clearing = UAF),
     fluid_check_move_invariants → ROLLBACK-OR-REFUSE on a residual P2 short/dev-merge when
     `fluid_enforce_invariants` (hardening B3): restore the `enf_snap` pristine snapshot (taken at
@@ -275,7 +280,7 @@ Hard ordering edges (all documented in-code, all discovered by bugs):
 | `fluid_manhattanize_relay_diagonals` :4214 (`fluid_try_reanchor` :4188) | 0107/0108/0130/0133/0132 | accepted relay, entry partition-clean | re-anchor to live same-net copper (**0132: body-aware — reject a candidate whose leg crosses a moved body**), else `fluid_manh_route` (body-free L/Z/escaped-stub route around the PIN-INCLUSIVE body, else body-crossing, else keep diagonal); stale-feed prune; **then `fluid_reroute_body_crossing_feeds` (0132)** | restore-START per candidate |
 | `fluid_reroute_body_crossing_feeds` / `_delete_body_crossing_copper` / `_nearest_outside_body_anchor` / `_net_crosses_sel_body` :4520+ | 0132 | body dropped on its OWN copper: a moved pin's net crosses the body (2nd incremental drag) | re-route the pin feed to nearest same-net vertex OUTSIDE the union body box (`fluid_manh_route`), then verified-delete the redundant through-body backbone — **deletes even NAMED copper** when the pin partition is provably unchanged without it (§11.1 crack) | `fluid_manh_route` partition-verify + per-delete restore-START |
 | `fluid_manh_route` / `_manh_commit_path` / `_manh_pushpath` :4498 | 0133 | manhattanize per relay diagonal | enumerate L / Z (grid channels) / escaped-stub L/Z, index-sort by (len,legs), commit first body-free (pref0) else any (pref1) | partition-verify + exact revert per candidate |
-| `fluid_shove_body_crossing_backbone` :6728 | 0132 §11.9c | per-gesture real END, `!diag_relay` pure-ortho, rot-free, startsel==0; owning inst ≥2 pins (1-pin symbols straddle the pin — CRITICAL over-fire, review wf_cff67bed); pin column strictly in OWN body; same-net perp THROUGH-RUN copper BOTH sides of pin; no pin on run; EVERY wire endpoint on run = plain same-net axis corner else DECLINE (bus/diag/foreign); new backbone welds no foreign copper, crosses no other moved / stationary body | BODY-driven shove: collapse run to pin, rebuild ONE backbone 1 grid past OWN body edge (not union — fling guard) spanning [pin..corners] (dead overhang dropped), translate attachments (pin-row overlap dedup), re-feed via jog; may reshape NAMED copper (§11.1 crack #2, prop copied) | mem-snapshot + restore-START name AND preserve-entry geometric, exact revert |
+| `fluid_shove_body_crossing_backbone` :6790 | 0132 §11.9c/§11.9d | LIVE every RUBBER step + real END, `!diag_relay` pure-ortho, rot-free, startsel==0; owning inst ≥2 pins (1-pin symbols straddle the pin — CRITICAL over-fire, review wf_cff67bed); pin column strictly in OWN body; same-net perp copper strictly INSIDE the body along-span by **> 1 grid** (§11.9d: covers a pin MID-run *and* a ONE-SIDED inward feed with the pin on the run's END; excludes a clean escape feed leaving the body within a grid — the TRIANG +y exit); no pin on run; EVERY wire endpoint on run = plain same-net axis corner else DECLINE (bus/diag/foreign); new backbone welds no foreign copper, crosses no other moved / stationary body | BODY-driven shove: collapse run to pin, rebuild ONE backbone 1 grid past OWN body edge (not union — fling guard) spanning [pin..corners] (dead overhang dropped), translate attachments (pin-row overlap dedup), re-feed via jog; may reshape NAMED copper (§11.1 crack #2, prop copied) | mem-snapshot + restore-START name AND preserve-entry geometric, exact revert |
 | `fluid_inst_body_box` / `_seg_crosses_sel_body` / `_union_sel_body_box` :4415 | 0130/0133 | manhattanize route pick | **PIN-INCLUSIVE** box = symbol no-text bbox (`sym->minx..maxy` rotated, spans all pins; excludes @name text); strict-interior crossing over SELECTED bodies WITH escape-normal exemption (box-centre dominant axis, NOT get_pin_escape_normal) | pure geometric (no verify) |
 
 Dangling-tail candidacy exists in **4 variants with deliberately different START-degree
@@ -530,6 +535,25 @@ declaring any wiring feature done, convert to xfail tests when touching the area
    §11.1 crack; props copied from the run, never renamed). Test `test_fluid_ortho_ctrl1_shove_0132.tcl`
    (P5 promoted xfail→hard; new P5b WHOLE-NET body-clearance invariant — the after_34 single-wire-check
    lesson — sabotage-verified RED on after_35). Evidence `after_35.sch`/`after_35_fixed.sch`.
+   ~~(§11.9d) the SECOND-generation incremental drag (after_36): the one-sided inward feed~~
+   **FIXED (0132 §11.9d)**: every subsequent +dx drag re-engulfs the previously-shoved backbone and
+   lands the moved pin on the run's END (copper only on the body-interior side), so the feed threads
+   the WHOLE body to reach its rail yet reads as a "one-sided escape" — the after_35 shove's
+   strictly-both-sides over-fire guard DECLINED it and the through-body wire was saved (the user's
+   after_36 complaint, recreated on every incremental drag). ROOT CAUSE: the both-sides gate was a
+   crude proxy for "threads the body"; it rejected BOTH the CTRL1 inward feed (bad) and the TRIANG +y
+   escape (good). FIX: re-gate on `min(run_hi,ahi) − max(run_lo,alo) > grid` — same-net copper strictly
+   INSIDE the body along-span by more than one grid (the user's spec: own copper stays ≥1 grid outside
+   the body). A pin mid-run OR a one-sided inward feed both qualify; the TRIANG +y exit (2.5 < grid
+   inside) still declines. The downstream rebuild already handles a pin at the run END (span from
+   palong + corners, jog re-feed). Also (user request) the shove now fires LIVE on every RUBBER
+   live-commit step, not only at the LMB release — the `!commit_now` gate at the call site was dropped;
+   release==stepwise-safe because each RUBBER step and the real END both restore-to-pristine and
+   re-derive from the total delta (verified: FLUID_TRACE shows `bodyshove … SHOVED` under a
+   `what=RUBBER commit_now=1` step and again at `what=END`, identical result). Test
+   `test_fluid_ortho_ctrl1_shove_0132.tcl` drag-2 (was xfail, promoted to hard check + drag-2 P5b
+   whole-net clearance). Evidence `before_10.sch`/`after_36.sch`. Guards G1–G5
+   (`test_fluid_bodyshove_guards_0132.tcl`) unaffected — all first-drag pin-mid-run, identical gate.
 10. **Mid-drag unguarded keys**: Delete and descend 'e' run during STARTMOVE (no
     `!(ui_state&STARTMOVE)` guard) → undo corruption / resurrected geometry / UAF class.
     Sweep the whole key dispatch.

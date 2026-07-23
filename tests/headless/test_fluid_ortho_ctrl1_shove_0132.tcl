@@ -124,17 +124,15 @@ for {set k 0} {$k < $nw} {incr k} {
 check "P5b: whole-net body clearance (no wire threads the body except a moved pin's own feed)" \
   [expr {[llength $viol]==0}] "viol=$viol"
 
-# --- XFAIL tripwire: THIRD-generation incremental drag (deferred quality gap) -----------------------
+# --- SECOND-generation incremental drag: the one-sided inward feed (issue 0132 §11.9d, after_36) ----
 # A SECOND +20x drag from the fixed state puts the body (now x[117.5,170]) back over the shoved
-# backbone (x=160), but the CTRL1 pin (160,80) lands exactly ON the run's END, not mid-run -- the
-# shove's strictly-both-sides gate (its over-fire guard) declines, and the backbone survives as an
-# INWARD vertical feed diving through the body to reach the l1 rail. Connected + Manhattan + strictly
-# better than pre-fix at every generation (never-worse holds); the ideal route (jog right to 180, or
-# escape +y) is the same feed-direction class as the §11.9 escape un-gate. Promote when that lands.
-proc xcheck {name ok note} {
-  if {$ok} { puts "XPASS: $name -- fix landed, PROMOTE to check ($note)"; incr ::npass } \
-  else     { puts "xfail: $name (known-open: $note)"; incr ::npass }
-}
+# backbone (x=160), and the CTRL1 pin (160,80) lands exactly ON the run's END, not mid-run. The old
+# strictly-both-sides shove gate (its over-fire guard) DECLINED this, so the backbone survived as an
+# INWARD vertical feed diving through the whole body to reach the l1 rail (this is exactly the user's
+# after_36 complaint, recreated by every subsequent incremental drag). FIXED by re-gating the shove on
+# "same-net copper strictly inside the body along-span by > one grid" (the user's ">=1 grid outside
+# body" spec): the one-sided inward feed qualifies and is shoved one grid past the advanced body edge
+# (x=180); the TRIANG +y escape feed (<= a grid inside) still declines. Was an xfail; now a hard check.
 xschem unselect_all
 xschem select instance x1
 xschem move_objects 20 0 stretch kissing
@@ -146,13 +144,33 @@ check "drag2 P4: no diagonal wire"      [expr {[ndiag]==0}] "diag=[ndiag]"
 # body box of x1 at (150,20) rot1 = drag-1 box shifted +20x
 set ::BX1 117.5; set ::BX2 170
 set threading2 {}
+set pushed2 0
 foreach v [ctrl1_verticals] {
   lassign $v x ylo yhi
   if {$x > $::BX1 && $x < $::BX2 && $ylo < $::BY2 && $yhi > $::BY1} { lappend threading2 $v }
+  if {$x >= $::BX2} { set pushed2 1 }
 }
-xcheck "drag2 P5: CTRL1 vertical clear of the advanced body (none threading x in (117.5,170))" \
+check "drag2 P5: CTRL1 vertical clear of the advanced body (none threading x in (117.5,170))" \
   [expr {[llength $threading2]==0}] \
-  "pin-on-run-END inward feed; both-sides gate declines by design; threading=$threading2"
+  "one-sided inward feed must be shoved out; threading=$threading2 verticals=[ctrl1_verticals]"
+check "drag2 P5: the shoved CTRL1 backbone exists at/right of the advanced body edge (x>=170)" \
+  $pushed2 "verticals=[ctrl1_verticals]"
+
+# drag2 P5b: WHOLE-NET body-clearance (mirror of drag-1). x1 at (150,20) rot 1 moved pins:
+# TRIANG (120,80), CTRL1 (160,80), top feeds (140,-130) (160,-130).
+set ::MOVEDPINS {{120 80} {160 80} {140 -130} {160 -130}}
+set viol2 {}
+set nw [xschem get wires]
+for {set k 0} {$k < $nw} {incr k} {
+  lassign [xschem wire_coord $k] a b c d
+  if {![seg_threads_body $a $b $c $d]} continue
+  set onpin 0
+  foreach mp $::MOVEDPINS { lassign $mp mx my
+    if {($a==$mx && $b==$my) || ($c==$mx && $d==$my)} { set onpin 1; break } }
+  if {!$onpin} { lappend viol2 [list [xschem getprop wire $k lab] $a $b $c $d] }
+}
+check "drag2 P5b: whole-net body clearance (no wire threads the body except a moved pin's own feed)" \
+  [expr {[llength $viol2]==0}] "viol=$viol2"
 
 puts "RESULT: [expr {$::fails==0 ? {ALL PASS} : {FAIL}}] ($::npass ok, $::fails fail)"
 puts "OVERALL: [expr {$::fails==0 ? {ok} : {FAIL}}]"

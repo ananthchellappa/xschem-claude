@@ -6747,12 +6747,17 @@ static int fluid_seg_hits_foreign_wire(double x1, double y1, double x2, double y
  * BODY-driven counterpart: push the overrun backbone one grid PAST the body edge in the direction
  * of motion, reconnecting the pin with a short jog (the user's expected result).
  *
- * TIMING (the hard-won part -- see doc/claude/issues/0132-*.md §11.9c): runs ONCE per gesture at
- * the real END, AFTER the attempt ladder accepted (partition clean vs START) and AFTER
- * trim/cleanup/ownership-normalize -- i.e. on CLEAN, fully-committed geometry (all wire sel==0,
- * no degenerates, no mixed-selection split runs). An earlier attempt at this shove inside the
- * mid-gesture shared commit block fought the dirty transient state (phantom cross-net merges that
- * survived its internal verify) and was reverted; do NOT move this call back there.
+ * TIMING (the hard-won part -- see doc/claude/issues/0132-*.md §11.9c/§11.9d): runs LIVE on every
+ * RUBBER live-commit step AND at the real END (issue 0132 §11.9d / after_36: the body shoves its own
+ * copper on the slightest drag, like the pin-driven fluid_shove_connected_wire, instead of only at
+ * release). Called from the ONE clean site AFTER the attempt ladder accepted (partition clean vs
+ * START) and AFTER trim/cleanup/ownership-normalize -- i.e. on CLEAN, committed geometry (all wire
+ * sel==0, instances at moved coords, no degenerates, no mixed-selection split runs). An earlier
+ * attempt at this shove inside the mid-gesture SHARED COMMIT BLOCK (step 4/5) fought the dirty
+ * transient state (phantom cross-net merges that survived its internal verify) and was reverted; do
+ * NOT move this call back there. Live firing is release==stepwise-safe: each RUBBER step and the real
+ * END both fluid_reroute_restore() to pristine and re-derive from the TOTAL delta, so the shove is
+ * re-applied fresh each step, never accumulated, and the saved END result is step-count-independent.
  *
  * Per moved pin (px,py), ALL gates must hold (each negation declines to baseline -- never worse):
  *   - the owning instance has >=2 pins (a 1-pin label/power/sheet-pin symbol STRADDLES its pin --
@@ -6858,10 +6863,33 @@ static int fluid_shove_body_crossing_backbone(void)
           if(hi > run_hi) run_hi = hi;
         }
       } while(grew);
-      /* THROUGH-RUN gate: copper strictly BOTH sides of the pin, and the run threads the body */
-      if(nrun == 0 || !(run_lo < palong && run_hi > palong)) bad = 1;
-      if(!bad && (xmove ? !(run_lo < by2 && run_hi > by1)
-                        : !(run_lo < bx2 && run_hi > bx1))) bad = 1;
+      /* THROUGH-RUN / one-sided body-threading gate (issue 0132 §11.9d, after_36): the run must
+       * carry same-net copper strictly INSIDE the body along-span by MORE than one grid. A pin
+       * mid-run (copper both sides -- the after_35 case) OR a ONE-SIDED feed diving deep into the
+       * body both qualify; what is excluded is a CLEAN escape feed that leaves the body within a
+       * grid of the pin (TRIANG's +y exit: pin 2.5 below the top edge, wire immediately out).
+       * The old strictly-both-sides test over-declined the one-sided INWARD feed that a SECOND
+       * incremental drag creates: the advancing body re-engulfs the previously-shoved backbone and
+       * the moved pin lands on the run's END (copper only on the body-interior side), so the wire
+       * threads the whole body to reach its rail yet reads as a "one-sided escape" and was kept.
+       * "> one grid inside" is exactly the user's spec: own copper stays >=1 grid outside the body. */
+      if(nrun == 0) bad = 1;
+      else {
+        int both_sided = (run_lo < palong && run_hi > palong);
+        double alo = xmove ? by1 : bx1, ahi = xmove ? by2 : bx2;
+        double ilo = run_lo > alo ? run_lo : alo;    /* run interval clipped to the body along-span */
+        double ihi = run_hi < ahi ? run_hi : ahi;
+        if(both_sided) {
+          /* pin MID-run (the after_35 case): preserved BYTE-IDENTICAL -- shove whenever the run
+           * reaches the body at all (open-interval overlap == ilo < ihi), regardless of depth. */
+          if(ihi <= ilo) bad = 1;
+        } else {
+          /* pin at a run END (the after_36 one-sided feed): require the copper to dive strictly
+           * INSIDE the body by MORE than one grid, so a clean escape feed leaving within a grid
+           * (TRIANG's +y exit) still declines and ordinary 2-pin device feeds are untouched. */
+          if(ihi - ilo <= grid) bad = 1;
+        }
+      }
       /* any OTHER pin on the run (tolerant test; includes labels + co-moved siblings): decline */
       for(m = 0; m < xctx->instances && !bad; ++m) {
         int rq, nr2;
@@ -8517,16 +8545,24 @@ void move_objects(int what, int merge, double dx, double dy)
    if(!commit_now && diag_relay && orthogonal_wiring && xctx->stretch_select &&
       tclgetboolvar("fluid_editing"))
      fluid_manhattanize_relay_diagonals();
-   /* issue 0132 §11.9c (after_35): BODY-driven backbone shove on the accepted PURE-ORTHO path
-    * (diag_relay==0 -- the relay path's body-crossing repair lives inside manhattanize above).
-    * Per gesture, real END only, on CLEAN fully-committed geometry (post attempt-ladder accept,
-    * post trim/cleanup/ownership-normalize: all wire sel==0) -- the earlier mid-gesture siting
-    * of this shove fought the dirty transient state and was reverted; keep it HERE. Tool-owned
-    * follow set only (fluid_startsel_wires==0): a user-grabbed wire is her own routing, not the
-    * tool's to reshape (P7). Rot-free: the rotated twin goes through the diag-relay machinery.
-    * Internally pure-axis-gated, per-pin gated, mem-snapshotted and partition-verified with
-    * exact revert -- a decline keeps the accepted route byte-identical (never worse). */
-   if(!commit_now && !diag_relay && orthogonal_wiring && xctx->stretch_select &&
+   /* issue 0132 §11.9c/§11.9d (after_35/after_36): BODY-driven backbone shove on the accepted
+    * PURE-ORTHO path (diag_relay==0 -- the relay path's body-crossing repair lives inside
+    * manhattanize above). Runs LIVE on every RUBBER live-commit step AND at the real END -- the
+    * body of the selection shoves its own copper the same way the PIN-driven shove
+    * (fluid_shove_connected_wire, step 5) already does, so the re-route kicks in on the slightest
+    * drag instead of snapping into place only at the LMB release (the user's request). This is the
+    * CLEAN post-attempt-ladder site (post trim/orphan-removal/ownership-normalize: all wire sel==0,
+    * instances committed to moved coords), NOT the mid-gesture SHARED COMMIT BLOCK (step 4/5) whose
+    * dirty transient state bred phantom cross-net merges and was reverted -- do NOT move this call
+    * back there. Firing live is release==stepwise-safe by construction: every RUBBER step and the
+    * real END each fluid_reroute_restore() to pristine and re-derive from the TOTAL delta, so a
+    * per-step shove never accumulates and the saved END result is independent of how many steps
+    * fired. Tool-owned follow set only (fluid_startsel_wires==0): a user-grabbed wire is her own
+    * routing, not the tool's to reshape (P7). Rot-free: the rotated twin goes through the diag-relay
+    * machinery. Internally pure-axis-gated, per-pin gated, mem-snapshotted and DOUBLE partition-
+    * verified with exact revert -- a decline (or a live step on not-yet-engulfed geometry) keeps the
+    * accepted route byte-identical (never worse). */
+   if(!diag_relay && orthogonal_wiring && xctx->stretch_select &&
       tclgetboolvar("fluid_editing") && xctx->fluid_startsel_wires == 0 &&
       xctx->move_rot == 0 && xctx->move_flip == 0)
      fluid_shove_body_crossing_backbone();
