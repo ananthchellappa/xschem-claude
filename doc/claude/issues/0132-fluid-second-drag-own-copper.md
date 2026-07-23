@@ -97,26 +97,81 @@ byte-identical or a verified fallback.
   first repair that safely touches named rails (§11.1). The blanket explicit-lab decline in the older
   orphan prune is unchanged; this pass is verified per-deletion instead.
 
-## OPEN follow-up — the PURE-ORTHO variant (after_34)
+## §11.9b — the PURE-ORTHO variant (after_34): FIXED
 
-The fix above only covers the rotated diagonal-relay path (it lives in
-`fluid_manhattanize_relay_diagonals`, gated `diag_relay`). The **same** body-on-own-copper defect also
-occurs via a **plain +dx translation** of an already-rotated body (`/tmp/Xschem.log.2`:
-`before_10.sch` x1 at (110,20) rot 1 → `move_objects 20 0` → `after_34.sch` (130,20) rot 1). That
-gesture has `move_rot==0`, accepts cleanly at attempt 0 (`diag_relay==0`), so it **never reaches**
-`fluid_manhattanize_relay_diagonals` (trace: `manhattanize_relay_diagonals: SKIP`, `diag_relay=0`). The
-TRIANG pin feed routes **-x into the pin-inclusive body** (`N 90 80 100 80`) instead of escaping +y.
+The rotated fix above only covers the diagonal-relay path (`fluid_manhattanize_relay_diagonals`, gated
+`diag_relay`). The **same** body-on-own-copper defect also occurs via a **plain +dx translation** of an
+already-rotated body (`/tmp/Xschem.log.2`: `before_10.sch` x1 at (110,20) rot 1 → `move_objects 20 0` →
+`after_34.sch` (130,20) rot 1). That gesture has `move_rot==0`, accepts cleanly at attempt 0
+(`diag_relay==0`), so it **never reaches** `fluid_manhattanize_relay_diagonals` (trace:
+`manhattanize_relay_diagonals: SKIP`, `diag_relay=0`). The TRIANG pin feed saved as **-x into the
+pin-inclusive body** (`N 90 80 100 80`) instead of escaping +y.
 
-Attempted fix (hoist the reroute to run on *every* accepted fluid stretch) was **reverted**: the
-body-crossing detector (`fluid_net_crosses_sel_body` + escape-normal `fluid_seg_crosses_sel_body` + an
-"inward feed" gate) **false-fires on ordinary 2-pin device moves** (res/ammeter, wireedit 20/36/39/45)
-— a normal lateral pin feed reads as "inward", and the pass then deletes legitimate copper. after_34's
-crossing is the pin's *own* feed, geometrically indistinguishable from a normal device feed, so no
-cheap gate separates them (the through-backbone at y=90 is *outside* the body; only the feed crosses).
+### Root cause (traced, NOT the earlier `place_moved_wire` guess)
 
-**Correct fix (not yet done): a body-aware elbow in `place_moved_wire`.** The `-x` elbow is chosen by
-the ortho placement's elbow picker (`fluid_ml_hazards`); adding a body-crossing hazard so the pin
-escapes along its outward normal (+y) is the root fix, on the ortho path itself, and is verified by the
-existing per-elbow severity compare. Tripwire: `tests/headless/test_fluid_ortho_second_drag_0132.tcl`
-(xfail; the `after_34.sch` RED-reference detector check passes, the reproduction's P5 is the xfail).
-WIRING.md §11.9b.
+FLUID_TRACE checkpoint dumps proved the birth site. `place_moved_wire` lays a **CLEAN** feed —
+`w2 [100 80 100 90]` (pin (100,80) straight up +y) + backbone `[100 90 220 90]` — and stays clean
+through the whole offset/trim/END-cluster (every pass reports `changed=0`, `b0=b1=0`). The −x jog is
+born in the END-cluster's **`insert_exit_stubs`** (a MANUAL_SITE pass, move.c ~8055):
+
+```
+pre-exitstub : w2 [100 80 100 90]   (clean +y feed)
+post-exitstub: w2 [90 80 90 90]  w10 [90 90 220 90]  w12 [90 80 100 80]   (-x jog)
+ES-DBG: pin=(100,80) escape_normal=(-1,0)  box[97.5 -132.5 150 82.5]  stubX=1
+```
+
+`insert_exit_stubs` reads the escape direction from `get_pin_escape_normal`, whose nearest-edge test
+runs on the **TEXT-INFLATED `inst.x1..y2`** and mis-picks **-x/Left** for the rot-1 `solar_ctl` TRIANG
+pin (a corner pin of an asymmetric symbol; the @name halo pulls the nearest edge to Left). The route
+already exits +y straight, but with a -x normal that reads as "first leg is PERPENDICULAR → bends at
+the pin", so the pass **SLIDES** it one grid -x and drops a stub — straight back through the pin body.
+
+The earlier "body-aware elbow in `place_moved_wire`" plan was **wrong about the site**: the elbow was
+never the problem (place_moved_wire's output is already clean; a `fluid_ml_hazards` body-cross tie-break
+is inert here). So was the reverted `fluid_reroute_body_crossing_feeds` hoist (it deleted legit copper
+on 2-pin moves). The defect is purely `insert_exit_stubs` acting on a bad normal.
+
+### Fix
+
+A pin-inclusive body-box guard in `insert_exit_stubs` (move.c ~2046), right after the slide candidate is
+computed:
+
+```c
+if(tclgetboolvar("fluid_editing") &&
+   (fluid_seg_crosses_sel_body(px, py, sx, sy) ||          /* the stub */
+    fluid_seg_crosses_sel_body(sx, sy, nfx, nfy))) {        /* the slid leg */
+  continue;                                                 /* DECLINE the slide */
+}
+```
+
+`fluid_seg_crosses_sel_body` (the 0130/0133 pin-inclusive `fluid_inst_body_box` strict-interior test
+with the box-centre escape-normal exemption) returns 1 for the -x stub `(100,80)-(90,80)` (`stubX=1`
+above) because y=80 is interior to `[−132.5, 82.5]` and the -x direction is NOT along the pin's outward
+normal (+y), so it is not exempt. Declining leaves the pre-slide over-the-top route, which is already
+the correct exit. Instances are POST-move-committed and still SELECTED at this call site, so no delta
+shift is needed. Gated `fluid_editing`, so the legacy `wire_exit_stub` feature is byte-identical.
+
+### Never-worse
+
+`insert_exit_stubs` is the lowest-but-one aesthetic pass (P3). Declining a slide only ever keeps the
+route `place_moved_wire`/the cleaners already produced (electrically identical, no disconnect). A **true**
+outward-normal slide moves AWAY from the body and is exempt by construction, so ordinary device feeds
+(res/ammeter/mos — wireedit 10/19/28/29/30…) are untouched. The guard only bites the mis-picked inward
+slide.
+
+**Known limitation (adversarial review wf_ea9a847a, CONFIRMED minor/cosmetic):** the escape exemption
+in `fluid_seg_crosses_sel_body` derives the outward axis from the box-CENTRE dominant axis, which is
+aspect-ratio-blind. For a near-corner pin on a WIDE/TALL asymmetric symbol it can misjudge a genuinely
+outward slide as inward and DECLINE a legit beautifying stub. Still never-worse (the kept route is
+connected, Manhattan AND body-clear — only the stub aesthetic is skipped, and that stub itself grazed
+the body). No shipped symbol/test triggers it, and it is the same box-centre approximation already used
+by the 0130/0133 manhattanize path. A poly-accurate crossing test would fix it but contradicts the
+deliberate 0133 pin-inclusive-box design; deferred as not worth the complexity.
+
+### Tests
+
+`tests/headless/test_fluid_ortho_second_drag_0132.tcl` — P5 promoted **xfail → hard `check`** (XPASS):
+the `after_34.sch` RED-reference detector still passes, and the reproduction now escapes +y
+(`up=1 inward=0`), P1 connectivity + P4 no-diagonal intact. Regression: **wireedit ALL PASS**, all **15
+`test_fluid_*` GREEN** (incl. `exit_stub_staircase_0111`, rotated `0130`/`0132`). WIRING.md §11.9b / §5
+pass table.

@@ -266,7 +266,7 @@ Hard ordering edges (all documented in-code, all discovered by bugs):
 | `fluid_straighten_reversals` :3093 | 0089/0090/0096/0110/0111 | novel-SPAN, deg==1 corners, not prot[], no explicit lab | slide jog (near→far; 0111 pin-landing reschedule), tail retract | preserve-entry + foreign-merge guard |
 | `fluid_collapse_axis_overshoot_stub` :3362 | 0092 | brand-new dangle (START-deg==0); **deliberately not prot[]-gated** | shove riser or trim stub | preserve-entry |
 | `fluid_prune_novel_orphan_stub` :4085 | 0094-tail | `if(ripped)` only; free-end START-deg==0 | retract/delete | preserve-entry |
-| `insert_exit_stubs` :1816 | P3 | rot-free, one wire exactly on pin | slide leg 1 grid out along escape normal + stub | none (geometric construction) |
+| `insert_exit_stubs` :1816 | P3 / 0132 | rot-free, one wire exactly on pin | slide leg 1 grid out along escape normal + stub | **0132: DECLINE the slide (fluid_editing) if stub/leg would thread the moved instance's own PIN-INCLUSIVE body (`fluid_seg_crosses_sel_body`, escape-normal exempt) — guards the `get_pin_escape_normal` text-inflated-bbox mis-pick on corner pins** |
 | `fluid_manhattanize_relay_diagonals` :4214 (`fluid_try_reanchor` :4188) | 0107/0108/0130/0133/0132 | accepted relay, entry partition-clean | re-anchor to live same-net copper (**0132: body-aware — reject a candidate whose leg crosses a moved body**), else `fluid_manh_route` (body-free L/Z/escaped-stub route around the PIN-INCLUSIVE body, else body-crossing, else keep diagonal); stale-feed prune; **then `fluid_reroute_body_crossing_feeds` (0132)** | restore-START per candidate |
 | `fluid_reroute_body_crossing_feeds` / `_delete_body_crossing_copper` / `_nearest_outside_body_anchor` / `_net_crosses_sel_body` :4520+ | 0132 | body dropped on its OWN copper: a moved pin's net crosses the body (2nd incremental drag) | re-route the pin feed to nearest same-net vertex OUTSIDE the union body box (`fluid_manh_route`), then verified-delete the redundant through-body backbone — **deletes even NAMED copper** when the pin partition is provably unchanged without it (§11.1 crack) | `fluid_manh_route` partition-verify + per-delete restore-START |
 | `fluid_manh_route` / `_manh_commit_path` / `_manh_pushpath` :4498 | 0133 | manhattanize per relay diagonal | enumerate L / Z (grid channels) / escaped-stub L/Z, index-sort by (len,legs), commit first body-free (pref0) else any (pref1) | partition-verify + exact revert per candidate |
@@ -488,16 +488,24 @@ declaring any wiring feature done, convert to xfail tests when touching the area
    pin whose net threads the body to an outside-body anchor then **verified-deletes** the redundant
    through-body backbone (`fluid_delete_body_crossing_copper` — removes even NAMED copper when the pin
    partition is provably unchanged without it, a first verified crack in the §11.1 blackout). Test
-   `test_fluid_rotate_second_drag_0132.tcl`. **STILL OPEN — the PURE-ORTHO variant (after_34)**: the
-   SAME body-on-own-copper defect via a plain +dx translation of an already-rotated body (move_rot==0,
-   accepts at attempt 0, `diag_relay==0`) NEVER reaches `fluid_manhattanize_relay_diagonals` (trace:
-   `manhattanize_relay_diagonals: SKIP`) so the 0132 reroute doesn't fire. Hoisting the reroute to run
-   on every accepted fluid stretch was tried and REVERTED: its pin-inclusive + escape-normal detector
-   false-fires on ordinary 2-pin device moves (res/ammeter) and deletes legit copper — after_34's
-   crossing is the pin's OWN lateral feed, geometrically indistinguishable from a normal device feed.
-   The correct fix is a **body-aware elbow in `place_moved_wire`** (penalise the -x/inward elbow so the
-   feed escapes along the pin normal), on the ortho path itself. xfail tripwire
-   `test_fluid_ortho_second_drag_0132.tcl`, evidence `before_10.sch`/`after_34.sch`.
+   `test_fluid_rotate_second_drag_0132.tcl`. ~~(§11.9b) STILL OPEN — the PURE-ORTHO variant (after_34)~~
+   **FIXED (0132 §11.9b)**: the SAME body-on-own-copper defect via a plain +dx translation of an
+   already-rotated body (move_rot==0, accepts at attempt 0, `diag_relay==0`) NEVER reaches
+   `fluid_manhattanize_relay_diagonals` (trace: `manhattanize_relay_diagonals: SKIP`) so the 0132
+   reroute doesn't fire. ROOT CAUSE (traced, NOT the earlier `place_moved_wire` guess): `place_moved_wire`
+   lays a CLEAN +y feed (`100 80 100 90`); the END-cluster **`insert_exit_stubs`** then SLIDES it -x back
+   through the body because `get_pin_escape_normal`'s nearest-edge test on the TEXT-INFLATED `inst.x1..y2`
+   mis-picks a -x/Left normal for the rot-1 solar_ctl TRIANG pin (a corner pin of an asymmetric symbol),
+   so a route already exiting +y straight reads as "bends at the pin → slide". (The reverted hoist of
+   `fluid_reroute_body_crossing_feeds` to every accepted fluid stretch false-fired on ordinary 2-pin
+   moves and deleted legit copper — that whole approach was wrong; the real defect was never in the elbow
+   or a reroute.) FIX: a pin-inclusive body-box guard in `insert_exit_stubs` (move.c ~2046) — if the stub
+   or the slid leg would thread the moved instance's OWN `fluid_inst_body_box` (escape-normal exempt),
+   DECLINE the slide and keep the pre-slide over-the-top route. Never worse (P3 aesthetic pass; a TRUE
+   outward normal slides AWAY from the body and is exempt, so ordinary device feeds are untouched); gated
+   `fluid_editing` so the legacy `wire_exit_stub` feature is byte-identical. Test
+   `test_fluid_ortho_second_drag_0132.tcl` (P5 promoted xfail→hard check; XPASS), evidence
+   `before_10.sch`/`after_34.sch`. Regression: wireedit ALL PASS, all 15 `test_fluid_*` GREEN.
 10. **Mid-drag unguarded keys**: Delete and descend 'e' run during STARTMOVE (no
     `!(ui_state&STARTMOVE)` guard) → undo corruption / resurrected geometry / UAF class.
     Sweep the whole key dispatch.

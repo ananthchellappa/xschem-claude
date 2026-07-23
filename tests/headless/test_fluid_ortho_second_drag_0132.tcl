@@ -2,8 +2,15 @@
 # TRANSLATION (no rotation) of an already-rotated instance onto its OWN previously-routed copper.
 # The first 0132 fix only reached the rotated diagonal-relay path (fluid_manhattanize_relay_diagonals,
 # gated diag_relay); a pure +dx translation accepts clean at attempt 0 (diag_relay=0) so that path is
-# skipped (trace: `manhattanize_relay_diagonals: SKIP`, `diag_relay=0`). The body-crossing-feed reroute
-# is hoisted to run on ANY accepted fluid stretch. See doc/claude/issues/0132-* + WIRING.md §11.9b.
+# skipped (trace: `manhattanize_relay_diagonals: SKIP`, `diag_relay=0`).
+#
+# ROOT CAUSE (traced, not the earlier place_moved_wire guess): place_moved_wire lays a CLEAN +y feed
+# (`100 80 100 90`); the END-cluster `insert_exit_stubs` then SLIDES it -x back through the body. It
+# read the escape normal from get_pin_escape_normal, whose nearest-edge test on the TEXT-INFLATED
+# inst.x1..y2 mis-picks -x/Left for the rot-1 solar_ctl TRIANG pin, so a route already exiting +y
+# reads as "bends at the pin -> slide". FIX: a pin-inclusive body-box guard in insert_exit_stubs
+# declines any slide whose stub/leg would thread the moved instance's own body (never worse -- P3
+# aesthetic pass, and a true outward normal is escape-exempt). See doc/claude/issues/0132-* + WIRING §11.9b.
 #
 # Evidence: /tmp/Xschem.log.2 -> tests/from_user/before_10.sch (x1 = SANDBOX/solar_ctl at (110,20)
 # rot 1, copper already routed) then `move_objects 20 0` -> tests/from_user/after_34.sch (x1 (130,20)
@@ -103,13 +110,11 @@ check "P1: x1<->l0 connected (TRIANG)"    [share_net x1 l0]
 check "P1: x1<->l1 connected (CTRL1)"     [share_net x1 l1]
 check "P4: no diagonal wire"              [expr {[ndiag]==0}] "diag=[ndiag]"
 lassign [triang_feed] upa ina
-# OPEN (xfail): the pure-ortho path (move_rot==0, accepts at attempt 0, diag_relay==0) never reaches
-# fluid_manhattanize_relay_diagonals, and the body-crossing-feed reroute could NOT be hoisted to run on
-# every accepted fluid stretch -- its pin-inclusive/escape-normal detector fires on ordinary 2-pin
-# device moves (res/ammeter) and deletes legit copper. The correct fix is a body-aware elbow in
-# place_moved_wire (penalise the -x elbow so the feed escapes +y), on the ortho path itself.
-xcheck "P5: TRIANG feed escapes +y over the top (not -x into body)" [expr {$upa && !$ina}] \
-  "ortho-path body-crossing feed; fix = body-aware place_moved_wire elbow"
+# FIXED (was xfail): insert_exit_stubs now declines a slide that would thread the moved instance's
+# own pin-inclusive body (the mis-picked -x escape normal), leaving the clean +y route place_moved_wire
+# already laid. Promoted from xcheck to a hard check.
+check "P5: TRIANG feed escapes +y over the top (not -x into body)" [expr {$upa && !$ina}] \
+  "up=$upa inward=$ina"
 
 puts "RESULT: [expr {$::fails==0 ? {ALL PASS} : {FAIL}}] ($::npass ok, $::fails fail)"
 puts "OVERALL: [expr {$::fails==0 ? {ok} : {FAIL}}]"

@@ -1133,6 +1133,10 @@ static int fluid_mlh_sev(int h);
  * foreign-net pin's FINAL (post-remaining-legs) landing point? Tie-break input only (defined below,
  * after fluid_ml_hazards). */
 static int fluid_ml_future_covers(int ml, int sel1);
+/* pin-inclusive body-box helpers (0130/0133), defined far below but needed up here by
+ * insert_exit_stubs (issue 0132 after_34: decline an exit-stub slide that would thread the pin body). */
+static int fluid_inst_body_box(int i, double *bx1, double *by1, double *bx2, double *by2);
+static int fluid_seg_crosses_sel_body(double x1, double y1, double x2, double y2);
 /* issue 0086 companion: future-aware corner-slide decline (defined next to fluid_ml_future_covers) */
 static int fluid_slide_future_hazard(int n, double fx, double fy, double mx, double my);
 void fltrace(const char *fmt, ...);
@@ -2039,6 +2043,34 @@ static void insert_exit_stubs(void)
       /* slide the first leg one grid out along the normal; drag the corner with it */
       sx  = px + grid * nx; sy  = py + grid * ny;   /* stub tip = leg's new pin end  */
       nfx = fx + grid * nx; nfy = fy + grid * ny;   /* leg's new far (corner) end     */
+      /* issue 0132 (after_34, pure-ortho variant): get_pin_escape_normal reads the TEXT-INFLATED
+       * inst.x1..y2 nearest-edge, which mis-picks an INWARD normal (-x/Left) for a pin near a corner
+       * of an asymmetric symbol (the rot-1 SANDBOX/solar_ctl TRIANG pin). The route's first leg
+       * already exits +y straight over the top, but with the mis-picked -x normal it reads as
+       * "perpendicular -> bends at the pin", so this pass SLIDES it -x back through the moved
+       * instance's OWN pin-inclusive body (N 90 80 100 80) -- undoing a clean route. Guard with the
+       * PIN-INCLUSIVE body box (0130/0133 sym-no-text bbox, escape-normal exempt): if the stub or the
+       * slid leg would thread the moved body, DECLINE the slide and leave the pre-slide route (which
+       * is already the correct over-the-top exit). insert_exit_stubs is the lowest-but-one aesthetic
+       * pass (P3), so declining is never worse; a TRUE outward normal slides AWAY from the body and is
+       * exempt (fluid_seg_crosses_sel_body's escape exemption), so ordinary device feeds are untouched.
+       * Instances are committed to POST-move coords here (ELEMENT loop ran; inst still SELECTED), so no
+       * delta shift is needed. Gated fluid_editing so the legacy wire_exit_stub feature is unchanged.
+       * KNOWN LIMITATION (adversarial review wf_ea9a847a, CONFIRMED minor/cosmetic): the escape
+       * exemption inside fluid_seg_crosses_sel_body derives the outward axis from the box-CENTRE
+       * dominant axis, which is aspect-ratio-blind -- for a near-corner pin on a WIDE/TALL asymmetric
+       * symbol it can mis-judge a genuinely-outward slide as inward and DECLINE a legit beautifying
+       * stub. Never worse (the kept pre-slide route is connected, Manhattan AND body-clear -- only the
+       * exit-stub aesthetic is skipped, and that stub itself grazed the body); no shipped symbol/test
+       * triggers it. Same box-centre approximation already used by the 0130/0133 manhattanize path.
+       * WIRING.md §11.9b. */
+      if(tclgetboolvar("fluid_editing") &&
+         (fluid_seg_crosses_sel_body(px, py, sx, sy) ||
+          fluid_seg_crosses_sel_body(sx, sy, nfx, nfy))) {
+        fltrace("FLTRACE exitstub: DECLINE slide inst=%d pin=%d n=(%g,%g) -- threads own body\n",
+                inst, r, nx, ny);
+        continue;
+      }
       for(m = 0; m < nwires0; m++) {                /* drag every neighbour at the corner */
         if(m == n) continue;
         if(xctx->wire[m].x1 == fx && xctx->wire[m].y1 == fy) { xctx->wire[m].x1 = nfx; xctx->wire[m].y1 = nfy; order_wire_coords(m); }
