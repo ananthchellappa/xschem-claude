@@ -175,3 +175,47 @@ the `after_34.sch` RED-reference detector still passes, and the reproduction now
 (`up=1 inward=0`), P1 connectivity + P4 no-diagonal intact. Regression: **wireedit ALL PASS**, all **15
 `test_fluid_*` GREEN** (incl. `exit_stub_staircase_0111`, rotated `0130`/`0132`). WIRING.md §11.9b / §5
 pass table.
+
+## §11.9c — the CTRL1 sibling (after_35): body-driven backbone shove — OPEN (xfail)
+
+The after_34 fix (§11.9b) only covered the TRIANG pin's *lateral feed*. The **same gesture**
+(`before_10` + connected drag of x1 `+20x`, pure ortho) leaves a **second, distinct** defect on the
+*other* pin, CTRL1. Evidence `/tmp/Xschem.log.7` → `after_35.sch`.
+
+CTRL1's stationary vertical backbone `N 140 -20 140 100` runs perpendicular to the move. As x1's body
+advances right it engulfs the column x=140 (body box `x[97.5,150]`), and the CTRL1 pin (140,80) lands
+**mid-run on its own backbone**, which is left threading the body. **Expected** (user): the vertical
+segment is pushed RIGHT clear of the body (to x=160), the pin reconnecting via a short jog. At human
+drag speed the wire should be shoved out *as the body reaches it* (live, during the connected drag).
+
+**Why the existing layers miss it:** `fluid_shove_connected_wire` (issue 0015, the PIN-driven shove)
+needs a *parallel* stub with a moving-pin endpoint driven past its junction — CTRL1's pin exits +y then
+jogs, so that trigger never matches. This is the **BODY-driven** counterpart (the advancing body, not
+the pin, overruns the wire). The diag-relay reroute/`fluid_delete_body_crossing_copper` is gated off on
+the pure-ortho path (`diag_relay==0`), and the reverted whole-net delete-hoist over-fired on ordinary
+2-pin devices.
+
+**Attempted + reverted (this session):** a new `fluid_shove_body_crossing_backbone` END pass — detect a
+same-net perpendicular run *straddling* the pin (copper both above AND below it: the both-sides gate is
+what excludes TRIANG's one-sided +y escape), collapse the run, rebuild one backbone at ct=160 spanning
+only [pin..load-bearing-corner] (dropping the dead stub above the pin so it can't cross the TRIANG rail
+at y=90), reconnect via a jog, partition-verify with exact revert. It produced the *correct geometry*
+for CTRL1, but running in the mid-gesture shared commit block fought the dirty transient state
+(mixed-sel split runs; a phantom CTRL1↔TRIANG merge that survived even with `jprop.lab=CTRL1` and no
+geometric contact — likely RUBBER-vs-END / follow-selection interaction). Rather than ship a shove that
+mangles connectivity or over-fires into the most landmine-heavy code, it was **reverted** to e6186956.
+
+**Correct fix (not done):** run the shove on a CLEAN, fully-committed geometry (all `sel==0`, trimmed —
+after `unselect_partial_sel_wires`) rather than mid-gesture, or reformulate as a first-class END-cluster
+pass with its own restore snapshot; the both-sides + load-bearing-span + partition-verify design is
+sound, the *timing/selection interaction* is the unsolved part.
+
+**Tripwire:** `tests/headless/test_fluid_ortho_ctrl1_shove_0132.tcl` — P1 connectivity + P4 no-diagonal
+are hard checks (both pass; the current save IS connected, just body-threading); **P5 (backbone clear of
+body) is xfail** and flips to XPASS when the shove lands. Body box `x[97.5,150] y[-132.5,82.5]` from the
+C `fluid_inst_body_box` trace.
+
+**Lesson (repeat of the after_34 lesson at the test level):** the after_34 fix was declared done with a
+test that only asserted the TRIANG feed — it never checked CTRL1, so a second real defect on the same
+gesture passed "green" and the adversarial review (scoped to the guard's correctness) could not see it.
+A per-pin/whole-net body-clearance invariant, not a single-wire check, is the right assertion.
