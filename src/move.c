@@ -4411,6 +4411,98 @@ static int fluid_seg_welds_foreign(double x1, double y1, double x2, double y2,
   return 0;
 }
 
+/* PIN-INCLUSIVE body box (world) of instance i = the symbol's NO-TEXT drawn bbox. sym->minx..maxy
+ * (calc_symbol_bbox, save.c:4475) span every pin rect, stub line and body polygon but EXCLUDE text
+ * (which is instance-variable via @-expansion). This is the "widest bbox that includes all pins" the
+ * user routes around -- NOT the tight central body -- so a backbone threading UNDER the top pins
+ * counts as a body crossing. Rotation is 0/90/180/270, so rotating the two opposite bbox corners and
+ * re-ordering yields the exact world AABB (same construction as symbol_bbox, select.c:499). The
+ * text-inflated inst.x1..y2 is deliberately NOT used (its @name halo varies per instance). */
+static int fluid_inst_body_box(int i, double *bx1, double *by1, double *bx2, double *by2)
+{
+  short rot, flip;
+  double x0, y0, rx1, ry1, rx2, ry2, t;
+  xSymbol *sym;
+  if(xctx->inst[i].ptr < 0) return 0;
+  rot = xctx->inst[i].rot; flip = xctx->inst[i].flip;
+  x0 = xctx->inst[i].x0; y0 = xctx->inst[i].y0;
+  sym = xctx->inst[i].ptr + xctx->sym;
+  ROTATION(rot, flip, 0.0, 0.0, sym->minx, sym->miny, rx1, ry1);
+  ROTATION(rot, flip, 0.0, 0.0, sym->maxx, sym->maxy, rx2, ry2);
+  *bx1 = rx1 + x0; *by1 = ry1 + y0; *bx2 = rx2 + x0; *by2 = ry2 + y0;
+  if(*bx1 > *bx2) { t = *bx1; *bx1 = *bx2; *bx2 = t; }
+  if(*by1 > *by2) { t = *by1; *by1 = *by2; *by2 = t; }
+  return 1;
+}
+
+/* Does axis-aligned segment [x1,y1]-[x2,y2] strictly enter the PIN-INCLUSIVE body of ANY selected
+ * (moved) instance? Same strict-interior test as fluid_seg_crosses_body, WITH its escape-normal
+ * exemption: because a pin sits ON the pin-inclusive box, EVERY feed leg touching a pin clips the
+ * box -- a leg leaving one of THIS instance's pins along the pin's OUTWARD normal is its own
+ * connection, not a crossing; a backbone threading under/through the pins (or a leg diving INWARD)
+ * is. Used to PREFER a body-free relay L/Z; never a hard decline. */
+static int fluid_seg_crosses_sel_body(double x1, double y1, double x2, double y2)
+{
+  int i;
+  for(i = 0; i < xctx->instances; ++i) {
+    double bx1, by1, bx2, by2, slo, shi;
+    int crossed = 0, r, rects, exempt = 0;
+    if(xctx->inst[i].sel != SELECTED) continue;
+    if(!fluid_inst_body_box(i, &bx1, &by1, &bx2, &by2)) continue;   /* already ordered */
+    if(x1 == x2) {                                      /* vertical segment at x1 */
+      if(x1 <= bx1 || x1 >= bx2) continue;
+      slo = y1 < y2 ? y1 : y2; shi = y1 < y2 ? y2 : y1;
+      crossed = (slo < by2 && shi > by1);
+    } else if(y1 == y2) {                               /* horizontal segment at y1 */
+      if(y1 <= by1 || y1 >= by2) continue;
+      slo = x1 < x2 ? x1 : x2; shi = x1 < x2 ? x2 : x1;
+      crossed = (slo < bx2 && shi > bx1);
+    }
+    if(!crossed) continue;
+    /* escape exemption: a feed leg leaving one of THIS instance's pins OUTWARD is the pin's own
+     * connection, not a crossing (the pin sits ON the pin-inclusive box, so every feed leg clips it).
+     * Outward = away from the box centre on the dominant axis. NOTE: get_pin_escape_normal() is NOT
+     * used -- its nearest-edge heuristic runs on the TEXT-inflated inst.x1..y2 and mis-picks the axis
+     * for a pin near a corner (e.g. an output pin 2.5u from both the left and top edges ties to Left),
+     * which would reject the correct over-the-top route. Deriving the axis from the pin-inclusive box
+     * centre is exact for the 0/90/180/270 pin positions here. */
+    {
+      double cx = (bx1 + bx2) / 2.0, cy = (by1 + by2) / 2.0;
+      rects = (xctx->inst[i].ptr + xctx->sym)->rects[PINLAYER];
+      for(r = 0; r < rects && !exempt; ++r) {
+        double px, py, fx, fy, dx, dy, nx, ny;
+        get_inst_pin_coord(i, r, &px, &py);
+        if(x1 == px && y1 == py)      { fx = x2; fy = y2; }
+        else if(x2 == px && y2 == py) { fx = x1; fy = y1; }
+        else continue;
+        dx = px - cx; dy = py - cy;
+        if(fabs(dx) >= fabs(dy)) { nx = dx >= 0.0 ? 1.0 : -1.0; ny = 0.0; }
+        else                     { nx = 0.0; ny = dy >= 0.0 ? 1.0 : -1.0; }
+        if(nx * (fx - px) + ny * (fy - py) > 0.0) exempt = 1;
+      }
+    }
+    if(!exempt) return 1;
+  }
+  return 0;
+}
+
+/* union of all selected instances' tight drawn-body boxes (world). 0 if none has a solid body. */
+static int fluid_union_sel_body_box(double *bx1, double *by1, double *bx2, double *by2)
+{
+  int i, seen = 0;
+  for(i = 0; i < xctx->instances; ++i) {
+    double x1, y1, x2, y2, t;
+    if(xctx->inst[i].sel != SELECTED) continue;
+    if(!fluid_inst_body_box(i, &x1, &y1, &x2, &y2)) continue;
+    if(x1 > x2) { t = x1; x1 = x2; x2 = t; }
+    if(y1 > y2) { t = y1; y1 = y2; y2 = t; }
+    if(!seen) { *bx1 = x1; *by1 = y1; *bx2 = x2; *by2 = y2; seen = 1; }
+    else { if(x1 < *bx1) *bx1 = x1; if(y1 < *by1) *by1 = y1;
+           if(x2 > *bx2) *bx2 = x2; if(y2 > *by2) *by2 = y2; }
+  }
+  return seen;
+}
+
 /* 0108: one re-anchor candidate -- connect pin P to Q, optionally via corner C (nbend 1) */
 typedef struct { double qx, qy, cx, cy; int nbend; double cost; } Fluid_reanchor_cand;
 
@@ -4443,6 +4535,294 @@ static int fluid_try_reanchor(int w, double px, double py, double ax, double ay,
   return 0;
 }
 
+/* Commit an n-point axis-aligned polyline as relay wire w (its first segment) plus storeobjects for
+ * the rest, partition-verify; return 1 on success, else revert EXACTLY (restore the diagonal
+ * ox/oy, drop the added legs via the manh_doomed watermark). Same tentative-apply/verify/revert
+ * contract as fluid_try_reanchor. */
+static int fluid_manh_commit_path(int w, const double *ptx, const double *pty, int n,
+                                  double ox1, double oy1, double ox2, double oy2, const char *prp)
+{
+  int k;
+  fluid_g.manh_doomed_from = xctx->wires;
+  xctx->wire[w].x1 = ptx[0]; xctx->wire[w].y1 = pty[0];
+  xctx->wire[w].x2 = ptx[1]; xctx->wire[w].y2 = pty[1];
+  order_wire_coords(w);
+  for(k = 1; k < n - 1; ++k) {
+    storeobject(-1, ptx[k], pty[k], ptx[k+1], pty[k+1], WIRE, 0, 0, prp);
+    order_wire_coords(xctx->wires - 1);
+  }
+  xctx->prep_hash_wires = xctx->prep_net_structs = xctx->prep_hi_structs = 0;
+  prepare_netlist_structs(0);
+  if(fluid_partition_changed() == 0) return 1;
+  xctx->wire[w].x1 = ox1; xctx->wire[w].y1 = oy1;
+  xctx->wire[w].x2 = ox2; xctx->wire[w].y2 = oy2;
+  order_wire_coords(w);
+  wire_delete_compact(fluid_manh_is_doomed, NULL);
+  xctx->prep_hash_wires = xctx->prep_net_structs = xctx->prep_hi_structs = 0;
+  prepare_netlist_structs(0);
+  return 0;
+}
+
+/* Append a compressed axis-aligned candidate path (raw pts rx/ry[0..nr-1]) to the candidate arrays
+ * (row stride 5). Drops coincident points, rejects a non-Manhattan or <2-point path. Records leg
+ * count + Manhattan length for the shortest-first sort. */
+static void fluid_manh_pushpath(double *ax, double *ay, int *an, int *aleg, double *alen, int *na,
+                                int cap, const double *rx, const double *ry, int nr)
+{
+  int k, m = 0, base;
+  double len = 0.0;
+  if(*na >= cap) return;
+  base = *na * 5;
+  for(k = 0; k < nr; ++k) {
+    if(m > 0 && rx[k] == ax[base+m-1] && ry[k] == ay[base+m-1]) continue;   /* coincident -> drop */
+    if(m > 0 && rx[k] != ax[base+m-1] && ry[k] != ay[base+m-1]) return;     /* non-Manhattan -> reject */
+    if(m >= 5) return;
+    ax[base+m] = rx[k]; ay[base+m] = ry[k]; ++m;
+  }
+  if(m < 2) return;
+  for(k = 0; k < m - 1; ++k) len += fabs(ax[base+k+1]-ax[base+k]) + fabs(ay[base+k+1]-ay[base+k]);
+  an[*na] = m; aleg[*na] = m - 1; alen[*na] = len; ++(*na);
+}
+
+/* issue 0130/0133: shape ONE accepted relay diagonal (moved pin P=(px,py) -> stale anchor A=(ax,ay))
+ * into a Manhattan route that clears the PIN-INCLUSIVE body of every moved instance. Enumerates, in
+ * increasing complexity, axis-aligned candidate routes:
+ *   L : P -> corner -> A                               (2 legs)
+ *   Z : P -> channel -> A                              (3 legs; channel = 1/2 grids off the pin, one
+ *                                                        grid outside a body edge, or the anchor line)
+ *   escaped L/Z: a one-grid exit stub along the pin's OUTWARD normal first (P -> E), then L/Z from E
+ *                -- the only way out when the pin is INSET from the body edge so no direct L/Z leaves
+ *                it without threading the body (e.g. an output pin whose net-label sits past the far
+ *                side, after_33.sch CTRL1).
+ * Every candidate is partition-verified and reverted exactly; body-free routes (pref 0) are committed
+ * before body-crossing ones (pref 1), shortest first. Purely geometric on the baked coords ->
+ * rotation-safe; NEVER WORSE (only reached where the wire would else stay diagonal, commits only a
+ * verified route). Returns 1 if a route committed. */
+static int fluid_manh_route(int w, double px, double py, double ax, double ay, const char *prp)
+{
+  enum { MANH_CAP = 64 };
+  double grid = tclgetdoublevar("cadsnap");
+  double bx1 = 0.0, by1 = 0.0, bx2 = 0.0, by2 = 0.0, cx = 0.0, cy = 0.0;
+  double sk_lo, sk_hi, sk_l, sk_r, yc[8], xc[8];
+  double AX[MANH_CAP * 5], AY[MANH_CAP * 5], ALEN[MANH_CAP];
+  int AN[MANH_CAP], ALEG[MANH_CAP], IDX[MANH_CAP], na = 0, have_body;
+  int nyc = 0, nxc = 0, s, i, ii, pref;
+  if(grid <= 0.0) grid = 1.0;
+  have_body = fluid_union_sel_body_box(&bx1, &by1, &bx2, &by2);
+  sk_lo = grid * (ceil(by1 / grid) - 1.0); sk_hi = grid * (floor(by2 / grid) + 1.0);
+  sk_l  = grid * (ceil(bx1 / grid) - 1.0); sk_r  = grid * (floor(bx2 / grid) + 1.0);
+  yc[nyc++] = py - grid; yc[nyc++] = py + grid; yc[nyc++] = py - 2.0 * grid; yc[nyc++] = py + 2.0 * grid;
+  yc[nyc++] = ay; if(have_body) { yc[nyc++] = sk_lo; yc[nyc++] = sk_hi; }
+  xc[nxc++] = px - grid; xc[nxc++] = px + grid; xc[nxc++] = px - 2.0 * grid; xc[nxc++] = px + 2.0 * grid;
+  xc[nxc++] = ax; if(have_body) { xc[nxc++] = sk_l; xc[nxc++] = sk_r; }
+  if(have_body) {                                 /* drop channels that lie ON a body edge (a wire */
+    int nn = 0, t;                                /* there grazes the outline); sk_* keep a clear one */
+    for(t = 0; t < nyc; ++t) if(yc[t] != by1 && yc[t] != by2) yc[nn++] = yc[t];
+    nyc = nn;
+    for(nn = 0, t = 0; t < nxc; ++t) if(xc[t] != bx1 && xc[t] != bx2) xc[nn++] = xc[t];
+    nxc = nn;
+  }
+  /* direct L (V-first, H-first) */
+  { double rx[3] = {px, px, ax}, ry[3] = {py, ay, ay}; fluid_manh_pushpath(AX,AY,AN,ALEG,ALEN,&na,MANH_CAP,rx,ry,3); }
+  { double rx[3] = {px, ax, ax}, ry[3] = {py, py, ay}; fluid_manh_pushpath(AX,AY,AN,ALEG,ALEN,&na,MANH_CAP,rx,ry,3); }
+  for(s = 0; s < nyc; ++s) { double m = yc[s], rx[4] = {px, px, ax, ax}, ry[4] = {py, m, m, ay};
+    fluid_manh_pushpath(AX,AY,AN,ALEG,ALEN,&na,MANH_CAP,rx,ry,4); }
+  for(s = 0; s < nxc; ++s) { double m = xc[s], rx[4] = {px, m, m, ax}, ry[4] = {py, py, ay, ay};
+    fluid_manh_pushpath(AX,AY,AN,ALEG,ALEN,&na,MANH_CAP,rx,ry,4); }
+  /* escaped L/Z: a stub along the pin's OUTWARD normal (box-centre dominant axis) to a point one or
+   * two grids outside the body, then L/Z from there. Two step distances so a pin whose 1-grid escape
+   * row is already taken by a sibling feed can step one grid further (after_33.sch: CTRL1 vs TRIANG,
+   * both output pins escaping +y). */
+  if(have_body) {
+    int ed, vert;
+    cx = (bx1 + bx2) / 2.0; cy = (by1 + by2) / 2.0;
+    vert = (fabs(px - cx) < fabs(py - cy));
+    for(ed = 0; ed < 2; ++ed) {
+      double ex, ey;
+      if(!vert) { ex = (px >= cx) ? sk_r + ed * grid : sk_l - ed * grid; ey = py; }
+      else      { ex = px; ey = (py >= cy) ? sk_hi + ed * grid : sk_lo - ed * grid; }
+      if(ex == px && ey == py) continue;
+      { double rx[4] = {px, ex, ex, ax}, ry[4] = {py, ey, ay, ay}; fluid_manh_pushpath(AX,AY,AN,ALEG,ALEN,&na,MANH_CAP,rx,ry,4); }
+      { double rx[4] = {px, ex, ax, ax}, ry[4] = {py, ey, ey, ay}; fluid_manh_pushpath(AX,AY,AN,ALEG,ALEN,&na,MANH_CAP,rx,ry,4); }
+      for(s = 0; s < nyc; ++s) { double m = yc[s], rx[5] = {px, ex, ex, ax, ax}, ry[5] = {py, ey, m, m, ay};
+        fluid_manh_pushpath(AX,AY,AN,ALEG,ALEN,&na,MANH_CAP,rx,ry,5); }
+      for(s = 0; s < nxc; ++s) { double m = xc[s], rx[5] = {px, ex, m, m, ax}, ry[5] = {py, ey, ey, ay, ay};
+        fluid_manh_pushpath(AX,AY,AN,ALEG,ALEN,&na,MANH_CAP,rx,ry,5); }
+    }
+  }
+  for(i = 0; i < na; ++i) IDX[i] = i;             /* index sort: length, then fewer legs */
+  for(i = 1; i < na; ++i) { int t = IDX[i], j = i - 1;
+    while(j >= 0 && (ALEN[IDX[j]] > ALEN[t] || (ALEN[IDX[j]] == ALEN[t] && ALEG[IDX[j]] > ALEG[t])))
+      { IDX[j+1] = IDX[j]; --j; }
+    IDX[j+1] = t;
+  }
+  for(pref = 0; pref < 2; ++pref) for(ii = 0; ii < na; ++ii) {
+    int c = IDX[ii], base = c * 5, k, crosses = 0;
+    for(k = 0; k < AN[c] - 1 && !crosses; ++k)
+      crosses = fluid_seg_crosses_sel_body(AX[base+k], AY[base+k], AX[base+k+1], AY[base+k+1]);
+    if(pref == 0 ? crosses : !crosses) continue;
+    if(fluid_manh_commit_path(w, &AX[base], &AY[base], AN[c], px, py, ax, ay, prp)) {
+      fltrace("FLTRACE manh: wire=%d [%g %g %g %g] -> %d-leg route via (%g,%g)\n",
+              w, px, py, ax, ay, ALEG[c], AX[base+1], AY[base+1]);
+      return 1;
+    }
+  }
+  return 0;
+}
+
+/* issue 0132: does ANY same-net (== node) axis-aligned wire strictly enter a moved instance's
+ * PIN-INCLUSIVE body? (fluid_seg_crosses_sel_body already exempts a leg leaving one of the moved
+ * pins outward -- the pin's own feed -- so a bare feed stub does NOT count; only a backbone that
+ * threads under/through the pins does.) Used to detect a body dropped onto its OWN copper. */
+static int fluid_net_crosses_sel_body(const char *node)
+{
+  int m;
+  if(!node || !node[0]) return 0;
+  for(m = 0; m < xctx->wires; ++m) {
+    const char *wn = xctx->wire[m].node;
+    if(!wn || strcmp(wn, node)) continue;
+    if(xctx->wire[m].bus != 0.0) continue;
+    if(xctx->wire[m].x1 == xctx->wire[m].x2 && xctx->wire[m].y1 == xctx->wire[m].y2) continue;
+    if(fluid_seg_crosses_sel_body(xctx->wire[m].x1, xctx->wire[m].y1,
+                                  xctx->wire[m].x2, xctx->wire[m].y2)) return 1;
+  }
+  return 0;
+}
+
+/* issue 0132: nearest same-net wire ENDPOINT strictly OUTSIDE the union pin-inclusive body box to
+ * the moved pin (px,py) -- the re-route target when the pin's own copper now threads the body. A
+ * vertex (not a closest-point-on-span) so the re-anchor lands on real copper that survives after the
+ * in-body backbone is ripped. Returns 0 if the net has no copper outside the body. */
+static int fluid_nearest_outside_body_anchor(double px, double py, const char *node,
+                                             double *ax, double *ay)
+{
+  double bx1, by1, bx2, by2, best = 1e30;
+  int m, e, found = 0;
+  if(!node || !node[0]) return 0;
+  if(!fluid_union_sel_body_box(&bx1, &by1, &bx2, &by2)) return 0;
+  for(m = 0; m < xctx->wires; ++m) {
+    const char *sn = xctx->wire[m].node;
+    if(!sn || strcmp(sn, node)) continue;
+    if(xctx->wire[m].bus != 0.0) continue;
+    for(e = 0; e < 2; ++e) {
+      double ex = e ? xctx->wire[m].x2 : xctx->wire[m].x1;
+      double ey = e ? xctx->wire[m].y2 : xctx->wire[m].y1;
+      double d;
+      if(ex == px && ey == py) continue;                 /* the pin itself */
+      if(ex > bx1 && ex < bx2 && ey > by1 && ey < by2) continue;  /* strictly inside body: reject */
+      d = fabs(ex - px) + fabs(ey - py);
+      if(d < best) { best = d; *ax = ex; *ay = ey; found = 1; }
+    }
+  }
+  return found;
+}
+
+/* issue 0132: VERIFIED delete of same-net copper that strictly threads a moved body. After the pin
+ * feed has been re-routed clear of the body (fluid_manh_route to an outside anchor), the old
+ * through-body backbone is redundant -- but it is NAMED copper (TRIANG/CTRL1...), which the
+ * explicit-lab orphan prune refuses to touch (WIRING.md §11.1 named-rail blackout). Delete it here
+ * with an explicit pin-partition verify: a wire is removed ONLY if the netlist is unchanged without
+ * it (so a load-bearing crossing -- one with no alternate path -- is kept). Greedy to fixpoint;
+ * indices shift on each delete so the scan restarts. Returns 1 if anything was removed. */
+static int fluid_delete_body_crossing_copper(const char *node)
+{
+  int changed = 0, progress = 1, guard = 0;
+  if(!node || !node[0]) return 0;
+  while(progress && ++guard < 256) {
+    int s;
+    progress = 0;
+    for(s = 0; s < xctx->wires; ++s) {
+      double ox1, oy1, ox2, oy2;
+      char *op = NULL;
+      unsigned short *flag;
+      const char *sn = xctx->wire[s].node;
+      if(!sn || strcmp(sn, node)) continue;
+      if(xctx->wire[s].bus != 0.0) continue;
+      if(xctx->wire[s].x1 == xctx->wire[s].x2 && xctx->wire[s].y1 == xctx->wire[s].y2) continue;
+      if(!fluid_seg_crosses_sel_body(xctx->wire[s].x1, xctx->wire[s].y1,
+                                     xctx->wire[s].x2, xctx->wire[s].y2)) continue;
+      ox1 = xctx->wire[s].x1; oy1 = xctx->wire[s].y1;
+      ox2 = xctx->wire[s].x2; oy2 = xctx->wire[s].y2;
+      my_strdup(_ALLOC_ID_, &op, xctx->wire[s].prop_ptr);
+      flag = my_malloc(_ALLOC_ID_, (size_t)(xctx->wires > 0 ? xctx->wires : 1) * sizeof(unsigned short));
+      memset(flag, 0, (size_t)(xctx->wires > 0 ? xctx->wires : 1) * sizeof(unsigned short));
+      flag[s] = 1;
+      wire_delete_compact(wire_doomed_flag, flag);
+      my_free(_ALLOC_ID_, &flag);
+      xctx->prep_hash_wires = xctx->prep_net_structs = xctx->prep_hi_structs = 0;
+      prepare_netlist_structs(0);
+      if(fluid_partition_changed() != 0) {               /* load-bearing: put it back exactly */
+        storeobject(-1, ox1, oy1, ox2, oy2, WIRE, 0, 0, op);
+        order_wire_coords(xctx->wires - 1);
+        xctx->prep_hash_wires = xctx->prep_net_structs = xctx->prep_hi_structs = 0;
+        prepare_netlist_structs(0);
+      } else {
+        fltrace("FLTRACE bodycross: deleted stale through-body copper [%g %g %g %g] %s\n",
+                ox1, oy1, ox2, oy2, node);
+        changed = 1; progress = 1;
+      }
+      my_free(_ALLOC_ID_, &op);
+      if(progress) break;                                /* indices shifted: restart the scan */
+    }
+  }
+  return changed;
+}
+
+/* issue 0132: a moved instance dropped onto its OWN previously-routed copper (a second incremental
+ * fluid drag) leaves a stationary Manhattan backbone threading the pin-inclusive body -- the
+ * diagonal manhattanizer never touches it (it is Manhattan, its ends are not on a moved pin, and
+ * the named-net orphan prune skips it, §11.1). For each moved pin whose net now crosses the body,
+ * re-route the pin's feed to an OUTSIDE-body anchor (body-aware fluid_manh_route), then verified-
+ * delete the now-redundant crossing copper. Purely on the baked coords -> rotation-safe; never worse
+ * (fluid_manh_route commits only a verified route, the delete only verified-redundant copper).
+ * Returns 1 if anything changed. */
+static int fluid_reroute_body_crossing_feeds(void)
+{
+  int i, changed = 0;
+  for(i = 0; i < xctx->instances; ++i) {
+    int npins, p;
+    if(xctx->inst[i].sel != SELECTED || xctx->inst[i].ptr < 0) continue;
+    npins = (xctx->inst[i].ptr + xctx->sym)->rects[PINLAYER];
+    for(p = 0; p < npins; ++p) {
+      double px, py, ax = 0.0, ay = 0.0, fox1, foy1, fox2, foy2;
+      int f = -1, w;
+      char *fprop = NULL, *fnode = NULL;
+      get_inst_pin_coord(i, p, &px, &py);
+      /* the feed wire = a wire with an endpoint exactly on this moved pin */
+      for(w = 0; w < xctx->wires; ++w) {
+        if(xctx->wire[w].bus != 0.0) continue;
+        if((xctx->wire[w].x1 == px && xctx->wire[w].y1 == py) ||
+           (xctx->wire[w].x2 == px && xctx->wire[w].y2 == py)) { f = w; break; }
+      }
+      if(f < 0) continue;
+      my_strdup(_ALLOC_ID_, &fnode, xctx->wire[f].node);
+      if(!fnode || !fnode[0]) { my_free(_ALLOC_ID_, &fnode); continue; }
+      if(!fluid_net_crosses_sel_body(fnode)) { my_free(_ALLOC_ID_, &fnode); continue; }
+      if(!fluid_nearest_outside_body_anchor(px, py, fnode, &ax, &ay)) {
+        my_free(_ALLOC_ID_, &fnode); continue;
+      }
+      my_strdup(_ALLOC_ID_, &fprop, xctx->wire[f].prop_ptr);
+      fox1 = xctx->wire[f].x1; foy1 = xctx->wire[f].y1;
+      fox2 = xctx->wire[f].x2; foy2 = xctx->wire[f].y2;
+      /* fluid_manh_route routes (px,py)->(ax,ay); it reverts a failed attempt to that straight
+       * pair, NOT the feed's original shape, so restore the original explicitly on failure. */
+      if(fluid_manh_route(f, px, py, ax, ay, fprop)) {
+        changed = 1;
+        fluid_delete_body_crossing_copper(fnode);
+      } else {
+        xctx->wire[f].x1 = fox1; xctx->wire[f].y1 = foy1;
+        xctx->wire[f].x2 = fox2; xctx->wire[f].y2 = foy2;
+        order_wire_coords(f);
+        xctx->prep_hash_wires = xctx->prep_net_structs = xctx->prep_hi_structs = 0;
+        prepare_netlist_structs(0);
+      }
+      my_free(_ALLOC_ID_, &fprop);
+      my_free(_ALLOC_ID_, &fnode);
+    }
+  }
+  return changed;
+}
+
 static void fluid_manhattanize_relay_diagonals(void)
 {
   int w, changed = 0;
@@ -4452,7 +4832,7 @@ static void fluid_manhattanize_relay_diagonals(void)
   if(fluid_partition_changed() != 0) return;      /* relay not accepted clean (alt result restored) */
   for(w = 0; w < xctx->wires; ++w) {
     double x1, y1, x2, y2, px, py;
-    int i, p, hit = 0, ci, done = 0;
+    int i, p, hit = 0, done = 0;
     char *prp = NULL, *wnode = NULL;
     if(xctx->wire[w].x1 == xctx->wire[w].x2 || xctx->wire[w].y1 == xctx->wire[w].y2) continue;
     if(xctx->wire[w].bus != 0.0) continue;
@@ -4514,6 +4894,16 @@ static void fluid_manhattanize_relay_diagonals(void)
         } else {
           if(fluid_seg_welds_foreign(x1, y1, cand[k].qx, cand[k].qy, wnode, w)) continue;
         }
+        /* 0132: never re-anchor THROUGH a moved body. A body dropped onto its own copper makes the
+         * distance-nearest same-net point the stationary backbone threading the body; taking it
+         * solders the pin through the body AND short-circuits the body-aware fluid_manh_route below
+         * (it sets done=1). Reject such a candidate so a clean outside route is used instead. */
+        if(cand[k].nbend) {
+          if(fluid_seg_crosses_sel_body(x1, y1, cand[k].cx, cand[k].cy) ||
+             fluid_seg_crosses_sel_body(cand[k].cx, cand[k].cy, cand[k].qx, cand[k].qy)) continue;
+        } else {
+          if(fluid_seg_crosses_sel_body(x1, y1, cand[k].qx, cand[k].qy)) continue;
+        }
         if(fluid_try_reanchor(w, x1, y1, x2, y2, &cand[k], prp)) {
           fltrace("FLTRACE reanchor: wire=%d [%g %g %g %g] -> Q=(%g,%g) nbend=%d cost=%g\n",
                   w, x1, y1, x2, y2, cand[k].qx, cand[k].qy, cand[k].nbend, cand[k].cost);
@@ -4522,34 +4912,21 @@ static void fluid_manhattanize_relay_diagonals(void)
       }
       my_free(_ALLOC_ID_, &cand);
     }
-    /* --- 0107 phase 2 (fallback): L to the stale anchor, V-first then H-first --- */
-    for(ci = 0; ci < 2 && !done; ++ci) {
-      double cx = ci == 0 ? x1 : x2;               /* corner: V-first from the pin, then H-first */
-      double cy = ci == 0 ? y2 : y1;
-      fluid_g.manh_doomed_from = xctx->wires;        /* the added far leg is revertible */
-      xctx->wire[w].x1 = x1; xctx->wire[w].y1 = y1;
-      xctx->wire[w].x2 = cx; xctx->wire[w].y2 = cy;
-      order_wire_coords(w);
-      storeobject(-1, cx, cy, x2, y2, WIRE, 0, 0, prp);
-      order_wire_coords(xctx->wires - 1);
-      xctx->prep_hash_wires = xctx->prep_net_structs = xctx->prep_hi_structs = 0;
-      prepare_netlist_structs(0);
-      if(fluid_partition_changed() == 0) {         /* START partition kept: L is as clean as the diagonal */
-        fltrace("FLTRACE manh: wire=%d [%g %g %g %g] -> L via (%g,%g)\n", w, x1, y1, x2, y2, cx, cy);
-        changed = 1;
-        done = 1;
-        break;
-      }
-      xctx->wire[w].x1 = x1; xctx->wire[w].y1 = y1; /* revert: restore the diagonal, drop the far leg */
-      xctx->wire[w].x2 = x2; xctx->wire[w].y2 = y2;
-      order_wire_coords(w);
-      wire_delete_compact(fluid_manh_is_doomed, NULL);
-      xctx->prep_hash_wires = xctx->prep_net_structs = xctx->prep_hi_structs = 0;
-      prepare_netlist_structs(0);
-    }
+    /* --- phases 2-4 (0130/0133): reshape the accepted relay diagonal into a Manhattan route that
+     * clears the PIN-INCLUSIVE body of every moved instance. Under rotation the whole obstacle/exit-
+     * stub layer is gated OFF (move.c fluid-block, rot==flip==0), so this is the ONLY shaper of the
+     * relay diagonals; picking the first partition-clean L regardless of geometry routed the feeds
+     * through the body / under the top pins. fluid_manh_route tries body-free L -> body-free Z ->
+     * escape-stub Z before any body-crossing route, shortest first, each partition-verified and
+     * reverted exactly. Runs whenever phase 1 (re-anchor) did not resolve the diagonal. */
+    if(!done && fluid_manh_route(w, x1, y1, x2, y2, prp)) { changed = 1; done = 1; }
     my_free(_ALLOC_ID_, &prp);
     my_free(_ALLOC_ID_, &wnode);
   }
+  /* 0132: a body dropped onto its OWN stationary Manhattan copper (second incremental drag) is not a
+   * relay diagonal -- re-route each moved pin whose net threads the body to an outside anchor and
+   * verified-delete the redundant through-body backbone (§11.9b). */
+  if(fluid_reroute_body_crossing_feeds()) changed = 1;
   if(changed) {
     trim_wires();
     check_collapsing_objects();

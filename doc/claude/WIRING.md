@@ -267,7 +267,10 @@ Hard ordering edges (all documented in-code, all discovered by bugs):
 | `fluid_collapse_axis_overshoot_stub` :3362 | 0092 | brand-new dangle (START-deg==0); **deliberately not prot[]-gated** | shove riser or trim stub | preserve-entry |
 | `fluid_prune_novel_orphan_stub` :4085 | 0094-tail | `if(ripped)` only; free-end START-deg==0 | retract/delete | preserve-entry |
 | `insert_exit_stubs` :1816 | P3 | rot-free, one wire exactly on pin | slide leg 1 grid out along escape normal + stub | none (geometric construction) |
-| `fluid_manhattanize_relay_diagonals` :4214 (`fluid_try_reanchor` :4188) | 0107/0108 | accepted relay, entry partition-clean | re-anchor to live same-net copper, else L to stale anchor, else keep diagonal; stale-feed prune | restore-START per candidate |
+| `fluid_manhattanize_relay_diagonals` :4214 (`fluid_try_reanchor` :4188) | 0107/0108/0130/0133/0132 | accepted relay, entry partition-clean | re-anchor to live same-net copper (**0132: body-aware — reject a candidate whose leg crosses a moved body**), else `fluid_manh_route` (body-free L/Z/escaped-stub route around the PIN-INCLUSIVE body, else body-crossing, else keep diagonal); stale-feed prune; **then `fluid_reroute_body_crossing_feeds` (0132)** | restore-START per candidate |
+| `fluid_reroute_body_crossing_feeds` / `_delete_body_crossing_copper` / `_nearest_outside_body_anchor` / `_net_crosses_sel_body` :4520+ | 0132 | body dropped on its OWN copper: a moved pin's net crosses the body (2nd incremental drag) | re-route the pin feed to nearest same-net vertex OUTSIDE the union body box (`fluid_manh_route`), then verified-delete the redundant through-body backbone — **deletes even NAMED copper** when the pin partition is provably unchanged without it (§11.1 crack) | `fluid_manh_route` partition-verify + per-delete restore-START |
+| `fluid_manh_route` / `_manh_commit_path` / `_manh_pushpath` :4498 | 0133 | manhattanize per relay diagonal | enumerate L / Z (grid channels) / escaped-stub L/Z, index-sort by (len,legs), commit first body-free (pref0) else any (pref1) | partition-verify + exact revert per candidate |
+| `fluid_inst_body_box` / `_seg_crosses_sel_body` / `_union_sel_body_box` :4415 | 0130/0133 | manhattanize route pick | **PIN-INCLUSIVE** box = symbol no-text bbox (`sym->minx..maxy` rotated, spans all pins; excludes @name text); strict-interior crossing over SELECTED bodies WITH escape-normal exemption (box-centre dominant axis, NOT get_pin_escape_normal) | pure geometric (no verify) |
 
 Dangling-tail candidacy exists in **4 variants with deliberately different START-degree
 thresholds** — that split IS the domain contract (0103 deg-0 vs 0104 deg≥1, stated at
@@ -471,7 +474,21 @@ declaring any wiring feature done, convert to xfail tests when touching the area
 9. **Rotation lacks the Layer-2/3 + exit-stub machinery** (gates :6788, :6933): rotated
    drops near a straddle save diagonals or shorted ortho where the translated twin routes
    clean; straighten can land arrivals ON a rotated pin (0111 reschedule is rot-gated off).
-   The 0110 un-gating argument applies verbatim — audit and un-gate.
+   The 0110 un-gating argument applies verbatim — audit and un-gate. **PARTLY MITIGATED (0130/0133)**:
+   the manhattanize pass — the only shaper on the accepted rotated relay — now runs `fluid_manh_route`,
+   which reshapes each relay diagonal into a body-free L / Z / escape-stub route around the
+   **PIN-INCLUSIVE** body (`fluid_inst_body_box` = symbol no-text bbox spanning all pins, with a
+   box-centre escape-normal exemption for pin feed legs), so the common rotated drag no longer saves
+   wires that thread under the pins or a leftover diagonal (test 0130, after_33). REMAINING gap:
+   (a) a **fully congested** layout (no body-free route verifies) still falls back to a body-crossing
+   route (never worse), the elbow/reroute/exit-stub layers stay gated off — un-gating is the complete
+   fix. ~~(b) second incremental drag onto own copper (after_32)~~ **FIXED (0132)**: the phase-1
+   re-anchor is now body-aware (rejects a candidate whose leg crosses a moved body → falls through to
+   `fluid_manh_route`), and a new END phase `fluid_reroute_body_crossing_feeds` re-routes each moved
+   pin whose net threads the body to an outside-body anchor then **verified-deletes** the redundant
+   through-body backbone (`fluid_delete_body_crossing_copper` — removes even NAMED copper when the pin
+   partition is provably unchanged without it, a first verified crack in the §11.1 blackout). Test
+   `test_fluid_rotate_second_drag_0132.tcl`.
 10. **Mid-drag unguarded keys**: Delete and descend 'e' run during STARTMOVE (no
     `!(ui_state&STARTMOVE)` guard) → undo corruption / resurrected geometry / UAF class.
     Sweep the whole key dispatch.
