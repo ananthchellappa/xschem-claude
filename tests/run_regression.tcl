@@ -34,6 +34,7 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                  "headless/test_fluid_editing" \
                  "headless/test_wire_split" \
                  "headless/test_sch_add_pin" \
+                 "headless/test_add_pin_lib_symbol_view" \
                  "headless/test_add_wire_label" \
                  "headless/test_crossview_paste" \
                  "headless/test_pin_type_edit" \

@@ -181,3 +181,13 @@ by hand and by the wireedit-style headless proxies above; `--nogui` cannot creat
   today's net labels.
 - **Behavior change (intended, D2):** single-name placement now stops after one drop (form
   stays) instead of re-arming the same name. Documented; improves symbol pins (no dup names).
+- **View detection must not read the display name.** `addpin::place_verb` picks the C verb by
+  the CURRENT view (symbol → `add_symbol_pin`, schematic → `add_sch_pin`). It queries
+  `xschem get editing_symbol_view` (the authoritative C `editing_symbol_view()`, which tests the
+  real loaded path `xctx->sch[currsch]`) — NOT a `*.sym` match on `xschem get current_name`. A
+  library-manager symbol DISPLAYS as the extension-less `lib/cell` reference (`rel_sym_path` →
+  `lib_qualified_rel` drops `.sym`), so the old name-string match returned 0 and ran
+  `add_sch_pin -place`, a no-op in a symbol view: `p` opened the form but no preview armed and a
+  click placed nothing. `untitled.sym` kept its `.sym` and worked, which masked the bug. Any new
+  symbol-vs-schematic decision in Tcl MUST use `editing_symbol_view`, never the name string.
+  Regression: `tests/headless/test_add_pin_lib_symbol_view.tcl`.

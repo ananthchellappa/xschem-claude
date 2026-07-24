@@ -10656,9 +10656,13 @@ proc addpin::next_dir {d} {
 }
 
 # The C -place verb for the CURRENT view: schematic -> add_sch_pin (ipin/opin/iopin instances);
-# symbol (.sym) -> add_symbol_pin (PINLAYER pin rects). Filename test (editing_symbol_view()).
+# symbol (.sym) -> add_symbol_pin (PINLAYER pin rects). Ask the C `editing_symbol_view()` truth
+# (real loaded path), NOT a `*.sym` match on current_name: a library-manager symbol displays as
+# the extension-less "lib/cell" reference, so a name match wrongly picks add_sch_pin -- a no-op in
+# a symbol view -> the Add-Pin preview never arms and nothing is placed (was: existing / made
+# symbols dead while untitled.sym worked).
 proc addpin::place_verb {} {
-  return [expr {[string match {*.sym} [xschem get current_name]] ? "add_symbol_pin" : "add_sch_pin"}]
+  return [expr {[xschem get editing_symbol_view] ? "add_symbol_pin" : "add_sch_pin"}]
 }
 
 # Re-arm the next pin after each canvas drop, so placement continues until Esc. Appended

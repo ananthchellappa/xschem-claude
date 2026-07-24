@@ -3744,7 +3744,17 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
           }
           break;
           case 'e':
-          if(!strcmp(argv[2], "en_pin_select")) { /* 1 if clicking a pin selects it (pin_selection.md) */
+          if(!strcmp(argv[2], "editing_symbol_view")) {
+            /* 1 if the current view is a symbol (.sym), else 0. The AUTHORITATIVE test
+             * (checks the real loaded path xctx->sch[currsch]), unlike a `*.sym` match on
+             * `current_name`: a library-manager symbol displays as the extension-less
+             * "lib/cell" reference (rel_sym_path -> lib_qualified_rel), so a name-string
+             * match wrongly reports "schematic" and mis-routes the view-aware Add-Pin verb
+             * (addpin::place_verb) to add_sch_pin, a no-op in a symbol view. */
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            Tcl_SetResult(interp, my_itoa(editing_symbol_view()),TCL_VOLATILE);
+          }
+          else if(!strcmp(argv[2], "en_pin_select")) { /* 1 if clicking a pin selects it (pin_selection.md) */
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
             Tcl_SetResult(interp, my_itoa(xctx->en_pin_select),TCL_VOLATILE);
           }
