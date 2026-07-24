@@ -63,6 +63,13 @@ includes    {}
 - `analyses` render into one `.control` block (op → `op`, dc → `dc V2 0 1.8
   0.01`, …) in a fixed order; only `enabled 1` entries emit.
 - `models` render `.lib <file> <section>` lines (corner.sym's job today).
+- `includes` render top-level `.include <file>` lines, emitted **before** the
+  `.lib` models so any global `.param`s they define are in scope when the models
+  evaluate. Each entry is a `{file <portable-path>}` dict with the same
+  `$::VAR`-expansion contract as `models` (a bare-string entry is taken verbatim
+  as the path). Needed for PDKs whose corner section is not self-contained —
+  e.g. gf180's `sm141064` `typical` references `design.ngspice`'s switch params
+  (`sw_stat_global`, `mc_skew`, `fnoicor`, …); see `gf180mcuD/README.md`.
 - Loader/saver in `ase.tcl`; unknown keys preserved round-trip (forward compat).
 
 ## Deck assembly (no C changes)
@@ -71,8 +78,8 @@ includes    {}
    (devices + `.GLOBAL` + `.end` only, since the schematic carries no
    `netlist_commands` instances — verified spice_netlist.c:214-591).
 2. ASE post-processes: strip trailing `.end`, append in order:
-   `.lib` models, `.param` variables, `.options`, `.save` outputs,
-   `.control` analyses block, `.end`.
+   `.include` includes, `.lib` models, `.param` variables, `.options`,
+   `.save` outputs, `.control` analyses block, `.end`.
 3. Write `<rundir>/<cell>_ase.spice` (schematic netlist artifact stays
    untouched); run `ngspice -b <cell>_ase.spice -o <cell>_ase.log`.
 

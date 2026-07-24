@@ -733,10 +733,11 @@ proc ase::launch_for_current {} {
 namespace eval ase::backend::ngspice {
 
   # Render the simulation deck: the circuit netlist minus its trailing `.end`
-  # (spice_netlist.c emits it last for top-level .spice netlists), then .lib
-  # models, .param variables, .options, .save outputs, one .control block from
-  # the enabled analyses in fixed order (op, dc, ac, tran) + a print per saved
-  # output for log-based result probing, then .end + trailing newline.
+  # (spice_netlist.c emits it last for top-level .spice netlists), then
+  # .include files, .lib models, .param variables, .options, .save outputs, one
+  # .control block from the enabled analyses in fixed order (op, dc, ac, tran) +
+  # a print per saved output for log-based result probing, then .end + trailing
+  # newline.
   proc render_deck {state netlist_text} {
     set lines [split [string trimright $netlist_text "\n"] "\n"]
     while {[llength $lines] > 0 && [string trim [lindex $lines end]] eq {}} {
@@ -744,6 +745,20 @@ namespace eval ase::backend::ngspice {
     }
     if {[llength $lines] > 0 && [string trim [lindex $lines end]] eq ".end"} {
       set lines [lrange $lines 0 end-1]
+    }
+    # .include cards (top-level, before .lib models so any global .params they
+    # define — gf180's design.ngspice switches sw_stat_global/mc_skew/fnoicor/…
+    # that sm141064's typical section references — are in scope when the models
+    # evaluate). v1 schema: each entry is a {file <portable-path>} dict, same
+    # $::VAR-expansion contract as models (ase::expand_path). A bare-string
+    # entry (hand-written state) is taken verbatim as the path.
+    foreach inc [ase::state_get $state includes] {
+      if {[llength $inc] >= 2 && [dict exists $inc file]} {
+        set incfile [dict get $inc file]
+      } else {
+        set incfile $inc
+      }
+      lappend lines ".include [ase::expand_path $incfile]"
     }
     foreach m [ase::state_get $state models] {
       lappend lines ".lib [ase::expand_path [dict get $m file]] [dict get $m section]"
