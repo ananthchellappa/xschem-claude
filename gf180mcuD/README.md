@@ -60,6 +60,32 @@ embed:
 `cadence_style_rc` sets `::180MCU_MODELS` to `gf180mcuD/models`. Use **GF180MCU → Add models
 block** to drop the same two lines into a new top-level schematic.
 
+## ASE-L reference cells
+
+`gf180mcu_tests/test_nfet_final` is the ASE-L reference cell (companion to sky130A's
+`sky130_tests/test_nfet_final`): its schematic carries **only the circuit** (`nfet_03v3` M1,
+symbolic `Vds`/`Vgs` sources, gnd, net labels — no models, no `code_shown`, no `.control`),
+while the typical corner, the `.param` design variables (Vgs 3.3, Vds 1.65), the `op`
+analysis, options and saved outputs live in its `ngspice_state1/test_nfet_final.state` view.
+
+- **Tools → Launch ASE-L** on the schematic opens a fresh Analog Sim Environment session
+  with the **default model preloaded** — `cadence_style_rc` sets `::ASE_DEFAULT_MODELS` to
+  `sm141064.ngspice typical`, which every new session inherits.
+- Double-clicking the `ngspice_state1` view in the Library Manager opens the session with
+  **whatever the committed state carries** (the full setup above).
+
+gf180 twist vs sky130: `sm141064`'s `typical` section is **not** self-contained — it
+references `design.ngspice`'s global switch `.param`s (`sw_stat_global`, `mc_skew`,
+`fnoicor`, …). The state carries `design.ngspice` in its `includes` field; `render_deck`
+emits it as a top-level `.include` ahead of the `.lib`, so the clean state runs headless with
+no switch params leaking into the Design Variables (variables = `Vgs`/`Vds` only). Model paths
+resolve through `$::180MCU_MODELS`.
+
+End-to-end proof: `tests/headless/test_ase_final_gf180.tcl` (33 checks, registered in
+`full_audit.sh` `nogui_tests`) reproduces **Id ≈ 484.35 µA** through the public `ase::` API,
+headless from the repo root. `nfet_test_claude` is the pre-ASE "before" exhibit — the same
+circuit with the models block and `.control` clutter baked into the schematic.
+
 ## Design flow
 
 1. New schematic; place devices from `gf180mcu_pr` (set W/L/nf on the FET template).
