@@ -7323,6 +7323,260 @@ static int fluid_shove_body_crossing_backbone(void)
   return changed;
 }
 
+/* issue 0136 (before_39 -> after_40, delta +60,+30): a moved DEVICE body advances over a stationary
+ * same-net backbone that is NOT incident to any moved pin -- the moved pin reaches it through a JOG
+ * (an elbow one grid off the pin's column). fluid_shove_body_crossing_backbone is PIN-INCIDENT: it
+ * seeds the perpendicular run at the moved pin's OWN column (move.c:7056/7067/7077), so a trunk one
+ * grid off-column is invisible to it (every moved pin declines with corners=0), and the diag_relay
+ * reroute/delete family cannot pull it (fluid_nearest_outside_body_anchor returns the pin's own riser
+ * END (this fixture: (150,130)) so the feed never leaves the body, and the through-body trunk stays
+ * LOAD-BEARING to the naming label). Shove such a jog-separated trunk sideways one grid past the
+ * crossed body edge and TRANSLATE its perpendicular attachments' near ends (translate, not
+ * collapse -- the pin is elsewhere and stays fed through the jog). Try both sides, prefer the side the
+ * attachments lean toward; commit only a body-free, DOUBLE partition-verified route with exact revert.
+ * Per-axis (xmove => the trunk is VERTICAL at column tc, shoved in x), fed one axis at a time by the
+ * same per-axis spoof as the shove. Scoped to a FOLLOW net (a moved pin carries the trunk's node) so
+ * only the gesture's OWN copper is reshaped, never a foreign rail (WIRING §11.1). No new wires are
+ * created (each translated wire keeps its own lab), so a named rail is reshaped but never renamed.
+ * Never worse: a decline / failed verify keeps the accepted route byte-identical. Returns 1 if a trunk
+ * was shoved. */
+static int fluid_shove_jog_separated_trunk(void)
+{
+  enum { TRUNK_MAXCORN = 64 };
+  double grid = tclgetdoublevar("cadsnap");
+  int xmove, changed = 0, restart = 1, guard = 0;
+  if(!fluid_g.snap_pinnet || fluid_g.snap_npins <= 0) return 0;
+  if(fluid_count_pins() != fluid_g.snap_npins) return 0;   /* instance set changed: not comparable */
+  if(grid <= 0.0) grid = 10.0;
+  xmove = (xctx->deltay == 0.0 && xctx->deltax != 0.0);
+  if(!xmove && !(xctx->deltax == 0.0 && xctx->deltay != 0.0)) return 0;   /* pure-axis only */
+  xctx->prep_hash_wires = xctx->prep_net_structs = xctx->prep_hi_structs = 0;
+  prepare_netlist_structs(0);
+  if(fluid_partition_changed() != 0) return 0;             /* entry not accepted-clean: stand down */
+
+  while(restart && ++guard < 64) {
+    int t;
+    restart = 0;
+    for(t = 0; t < xctx->wires && !restart; ++t) {
+      double tc, run_lo, run_hi, bx1 = 0, by1 = 0, bx2 = 0, by2 = 0;
+      char *node = NULL;
+      unsigned short *run = NULL;
+      int w, m, e, j, side, grew, nrun, ncorn = 0, bad = 0, bi = -1, nw0 = xctx->wires;
+      int has_moved_pin = 0, pin_on_run = 0, lean = 0;
+      int cw[TRUNK_MAXCORN], ce[TRUNK_MAXCORN];
+      double ca[TRUNK_MAXCORN], fa[TRUNK_MAXCORN];
+      const char *wn = xctx->wire[t].node;
+      /* candidate trunk = a same-net thin PERPENDICULAR-orientation wire strictly threading a moved
+       * body (fluid_seg_crosses_sel_body already exempts a pin's own OUTWARD feed leg -- so a bare
+       * escape stub is never a candidate; only a backbone threading under/through the pins is). */
+      if(!wn || !wn[0]) continue;
+      if(xctx->wire[t].bus != 0.0) continue;
+      if(xctx->wire[t].x1 == xctx->wire[t].x2 && xctx->wire[t].y1 == xctx->wire[t].y2) continue;
+      if(xmove) { if(xctx->wire[t].x1 != xctx->wire[t].x2) continue; tc = xctx->wire[t].x1; }
+      else      { if(xctx->wire[t].y1 != xctx->wire[t].y2) continue; tc = xctx->wire[t].y1; }
+      if(!fluid_seg_crosses_sel_body(xctx->wire[t].x1, xctx->wire[t].y1,
+                                     xctx->wire[t].x2, xctx->wire[t].y2)) continue;
+      /* only a PRE-EXISTING backbone the moved body advanced OVER -- never a detour leg THIS gesture's
+       * reroute just laid (test_wireedit_36 case j: a fresh Layer-3 step-out leg through the moving
+       * device's own pin-inclusive body must be left exactly where the router placed it, P7). A
+       * pre-existing trunk's span is byte-identical at START (the CTRL1 x=140 column); a this-drag leg
+       * is novel. Span-scoped (lab-independent) so a #net renumber across the move does not read novel. */
+      if(fluid_wire_is_novel_span(t)) continue;
+      my_strdup(_ALLOC_ID_, &node, wn);
+
+      /* the contiguous same-net run at column tc (a saved backbone is typically trim-SPLIT, so chain
+       * touching intervals to fixpoint) */
+      run = my_malloc(_ALLOC_ID_, (size_t)(nw0 > 0 ? nw0 : 1) * sizeof(unsigned short));
+      memset(run, 0, (size_t)(nw0 > 0 ? nw0 : 1) * sizeof(unsigned short));
+      run_lo = xmove ? (xctx->wire[t].y1 < xctx->wire[t].y2 ? xctx->wire[t].y1 : xctx->wire[t].y2)
+                     : (xctx->wire[t].x1 < xctx->wire[t].x2 ? xctx->wire[t].x1 : xctx->wire[t].x2);
+      run_hi = xmove ? (xctx->wire[t].y1 < xctx->wire[t].y2 ? xctx->wire[t].y2 : xctx->wire[t].y1)
+                     : (xctx->wire[t].x1 < xctx->wire[t].x2 ? xctx->wire[t].x2 : xctx->wire[t].x1);
+      run[t] = 1; nrun = 1;
+      do {
+        grew = 0;
+        for(w = 0; w < nw0; ++w) {
+          double a, b, lo, hi; const char *wn2 = xctx->wire[w].node;
+          if(run[w]) continue;
+          if(xctx->wire[w].bus != 0.0) continue;
+          if(!wn2 || strcmp(wn2, node)) continue;
+          if(xmove) { if(xctx->wire[w].x1 != tc || xctx->wire[w].x2 != tc) continue;
+                      a = xctx->wire[w].y1; b = xctx->wire[w].y2; }
+          else      { if(xctx->wire[w].y1 != tc || xctx->wire[w].y2 != tc) continue;
+                      a = xctx->wire[w].x1; b = xctx->wire[w].x2; }
+          if(a == b) continue;
+          lo = a < b ? a : b; hi = a < b ? b : a;
+          if(lo > run_hi || hi < run_lo) continue;
+          run[w] = 1; ++nrun; grew = 1;
+          if(lo < run_lo) run_lo = lo;
+          if(hi > run_hi) run_hi = hi;
+        }
+      } while(grew);
+
+      /* the crossed moved body (its edges set the shove target): column strictly interior, run overlaps
+       * the body along-span. NOT the union of all selected bodies -- a co-selected instance elsewhere
+       * must not fling the copper past itself (the shove's wf_cff67bed fling guard, verbatim). */
+      for(m = 0; m < xctx->instances; ++m) {
+        double lx1, ly1, lx2, ly2, blo, bhi;
+        if(xctx->inst[m].sel != SELECTED) continue;
+        if(!fluid_inst_body_box(m, &lx1, &ly1, &lx2, &ly2)) continue;
+        if(xmove) { if(tc <= lx1 || tc >= lx2) continue; blo = ly1; bhi = ly2; }
+        else      { if(tc <= ly1 || tc >= ly2) continue; blo = lx1; bhi = lx2; }
+        if(run_hi <= blo || run_lo >= bhi) continue;
+        bi = m; bx1 = lx1; by1 = ly1; bx2 = lx2; by2 = ly2; break;
+      }
+      if(bi < 0) bad = 1;
+
+      /* net must be a FOLLOW net (a moved pin carries this node); NO moved pin may lie on the run (that
+       * is the pin-incident shove's job -- do not duplicate/fight it); NO fixed pin on the run either
+       * (translating the run would sever its attachment, invisible to the pin-indexed verify). */
+      for(m = 0; m < xctx->instances && !bad; ++m) {
+        int np, p2;
+        if(xctx->inst[m].ptr < 0) continue;
+        np = (xctx->inst[m].ptr + xctx->sym)->rects[PINLAYER];
+        for(p2 = 0; p2 < np; ++p2) {
+          double qx, qy, qc, qa;
+          get_inst_pin_coord(m, p2, &qx, &qy);
+          qc = xmove ? qx : qy; qa = xmove ? qy : qx;
+          if(xctx->inst[m].sel == SELECTED && xctx->inst[m].node && xctx->inst[m].node[p2] &&
+             !strcmp(xctx->inst[m].node[p2], node)) has_moved_pin = 1;
+          if(qc == tc && qa >= run_lo && qa <= run_hi) {
+            if(xctx->inst[m].sel == SELECTED) pin_on_run = 1;
+            else bad = 1;
+          }
+        }
+      }
+      if(!has_moved_pin || pin_on_run) bad = 1;
+
+      /* attachments: every non-run wire endpoint exactly on column tc within the run interval. Each
+       * must be a plain same-net axis-aligned thin wire whose FAR end is off the column (a real
+       * perpendicular attachment); a bus / foreign node / diagonal / collinear-on-column endpoint
+       * DECLINES the whole shove (cannot be re-soldered safely). fa[] = far-end cross coord; the lean
+       * (which side the attachments extend to) orders the two shove-target candidates. */
+      for(w = 0; w < nw0 && !bad; ++w) {
+        const char *wn2 = xctx->wire[w].node;
+        if(run[w]) continue;
+        if(xctx->wire[w].x1 == xctx->wire[w].x2 && xctx->wire[w].y1 == xctx->wire[w].y2) continue;
+        for(e = 0; e < 2 && !bad; ++e) {
+          double ex = e ? xctx->wire[w].x2 : xctx->wire[w].x1;
+          double ey = e ? xctx->wire[w].y2 : xctx->wire[w].y1;
+          double cross = xmove ? ex : ey, along = xmove ? ey : ex;
+          double fcross = xmove ? (e ? xctx->wire[w].x1 : xctx->wire[w].x2)
+                                : (e ? xctx->wire[w].y1 : xctx->wire[w].y2);
+          if(cross != tc) continue;
+          if(along < run_lo || along > run_hi) continue;
+          if(xctx->wire[w].bus != 0.0 || !wn2 || strcmp(wn2, node) ||
+             (xctx->wire[w].x1 != xctx->wire[w].x2 && xctx->wire[w].y1 != xctx->wire[w].y2) ||
+             fcross == tc) { bad = 1; break; }
+          if(ncorn >= TRUNK_MAXCORN) { bad = 1; break; }
+          cw[ncorn] = w; ce[ncorn] = e; ca[ncorn] = along; fa[ncorn] = fcross;
+          lean += (fcross > tc) ? 1 : -1;
+          ++ncorn;
+        }
+      }
+      if(!bad && ncorn == 0) bad = 1;                       /* nothing to re-anchor: not our shape */
+
+      /* the trunk must be LOAD-BEARING (a BRIDGE): dooming the run must change the pin partition. A
+       * REDUNDANT run -- a user-drawn ring/loop the moved body merely overlaps (test_wireedit_45 cases
+       * U/T) -- keeps the partition intact via its other edges, so reshaping it would silently mangle
+       * deliberate user copper (P7). Only a true trunk whose removal disconnects the moved pin from its
+       * anchor is ours to shove. Pure computation via fluid_loop_partition's doomed mask (no mutation). */
+      if(!bad) {
+        int npX = fluid_count_pins(), *rA, *rR;
+        rA = my_malloc(_ALLOC_ID_, (size_t)(npX > 0 ? npX : 1) * sizeof(int));
+        rR = my_malloc(_ALLOC_ID_, (size_t)(npX > 0 ? npX : 1) * sizeof(int));
+        fluid_loop_partition(NULL, rA);
+        fluid_loop_partition(run, rR);
+        if(fluid_part_equal(rA, rR, npX)) bad = 1;          /* run redundant: not a load-bearing trunk */
+        my_free(_ALLOC_ID_, &rA);
+        my_free(_ALLOC_ID_, &rR);
+      }
+
+      /* pick a shove target: one grid past the crossed body edge, on the side the attachments lean
+       * toward first, then the other side. Accept the first that is BODY-FREE (trunk + every rebuilt
+       * attachment clears every moved & stationary body) and welds no foreign copper. */
+      for(side = 0; side < 2 && !bad; ++side) {
+        double ct;
+        int prefer_hi = (lean >= 0);
+        int hi = prefer_hi ? (side == 0) : (side == 1);    /* which edge this iteration tries */
+        int free_ok = 1;
+        if(xmove) ct = hi ? fluid_grid_above(bx2, grid) : fluid_grid_below(bx1, grid);
+        else      ct = hi ? fluid_grid_above(by2, grid) : fluid_grid_below(by1, grid);
+        {
+          double t1x = xmove ? ct : run_lo, t1y = xmove ? run_lo : ct;
+          double t2x = xmove ? ct : run_hi, t2y = xmove ? run_hi : ct;
+          if(fluid_seg_crosses_sel_body(t1x, t1y, t2x, t2y) ||
+             fluid_seg_crosses_stationary_body(t1x, t1y, t2x, t2y) ||
+             fluid_seg_welds_foreign(t1x, t1y, t2x, t2y, node, -1)) free_ok = 0;
+        }
+        for(j = 0; j < ncorn && free_ok; ++j) {
+          double nx = xmove ? ct : ca[j], ny = xmove ? ca[j] : ct;
+          double fx = xmove ? fa[j] : ca[j], fy = xmove ? ca[j] : fa[j];
+          if(fluid_seg_crosses_sel_body(nx, ny, fx, fy) ||
+             fluid_seg_crosses_stationary_body(nx, ny, fx, fy) ||
+             fluid_seg_welds_foreign(nx, ny, fx, fy, node, cw[j])) free_ok = 0;
+        }
+        if(!free_ok) continue;                             /* this side is not body-free: try the other */
+
+        /* apply the translate under a mem-snapshot; DOUBLE partition-verify; exact revert on mismatch */
+        {
+          Undo_slot snap;
+          unsigned int s_wid = xctx->wire_id_counter, s_iid = xctx->inst_id_counter;
+          unsigned int s_gid = xctx->gfx_id_counter,  s_tid = xctx->text_id_counter;
+          int npA, npB, ok, *repA, *repB;
+          memset(&snap, 0, sizeof(snap));
+          mem_snapshot_alloc(&snap); mem_serialize_slot(&snap);
+          npA = fluid_count_pins();
+          repA = my_malloc(_ALLOC_ID_, (size_t)(npA > 0 ? npA : 1) * sizeof(int));
+          repB = my_malloc(_ALLOC_ID_, (size_t)(npA > 0 ? npA : 1) * sizeof(int));
+          fluid_loop_partition(NULL, repA);
+          for(w = 0; w < nw0; ++w) if(run[w]) {            /* translate the run to column ct */
+            if(xmove) { xctx->wire[w].x1 = ct; xctx->wire[w].x2 = ct; }
+            else      { xctx->wire[w].y1 = ct; xctx->wire[w].y2 = ct; }
+            order_wire_coords(w);
+          }
+          for(j = 0; j < ncorn; ++j) {                     /* move each attachment's near end to ct */
+            if(ce[j]) { if(xmove) xctx->wire[cw[j]].x2 = ct; else xctx->wire[cw[j]].y2 = ct; }
+            else      { if(xmove) xctx->wire[cw[j]].x1 = ct; else xctx->wire[cw[j]].y1 = ct; }
+            order_wire_coords(cw[j]);
+          }
+          check_collapsing_objects();
+          xctx->prep_hash_wires = xctx->prep_net_structs = xctx->prep_hi_structs = 0;
+          prepare_netlist_structs(0);
+          npB = fluid_count_pins();
+          fluid_loop_partition(NULL, repB);
+          ok = (fluid_partition_changed() == 0) && npB == npA && fluid_part_equal(repA, repB, npA);
+          if(!ok) {
+            unsigned int saved_ui = xctx->ui_state;
+            mem_restore_slot(&snap, 0);
+            xctx->ui_state = saved_ui;
+            xctx->wire_id_counter = s_wid; xctx->inst_id_counter = s_iid;
+            xctx->gfx_id_counter  = s_gid; xctx->text_id_counter = s_tid;
+            xctx->need_reb_sel_arr = 1; rebuild_selected_array();
+            xctx->movelastsel = xctx->lastsel;
+            xctx->prep_hash_wires = xctx->prep_net_structs = xctx->prep_hi_structs = 0;
+            prepare_netlist_structs(0);
+            fltrace("FLTRACE trunkshove: tc=%g -> ct=%g REVERTED (verify failed)\n", tc, ct);
+          } else {
+            changed = 1; restart = 1;
+            fltrace("FLTRACE trunkshove: tc=%g run=[%g %g] -> ct=%g corners=%d SHOVED\n",
+                    tc, run_lo, run_hi, ct, ncorn);
+          }
+          mem_snapshot_free(&snap);
+          my_free(_ALLOC_ID_, &repA);
+          my_free(_ALLOC_ID_, &repB);
+        }
+        break;                                             /* body-free side chosen: done with sides */
+      }
+      if(bad) fltrace("FLTRACE trunkshove: tc=%g run=[%g %g] corners=%d DECLINE\n",
+                      tc, run_lo, run_hi, ncorn);
+      my_free(_ALLOC_ID_, &run);
+      my_free(_ALLOC_ID_, &node);
+    }
+  }
+  return changed;
+}
+
 static void fluid_shove_connected_wire(int orthogonal_wiring)
 {
   double grid = tclgetdoublevar("cadsnap");
@@ -8811,7 +9065,9 @@ void move_objects(int what, int merge, double dx, double dy)
      if(xctx->fluid_startsel_wires == 0 && xctx->move_rot == 0 && xctx->move_flip == 0) {
        double sdx = xctx->deltax, sdy = xctx->deltay;
        xctx->deltay = 0.0;                        fluid_shove_body_crossing_backbone(); /* x-run */
+       fluid_shove_jog_separated_trunk();                                               /* 0136 x-run */
        xctx->deltax = 0.0; xctx->deltay = sdy;    fluid_shove_body_crossing_backbone(); /* y-run */
+       fluid_shove_jog_separated_trunk();                                               /* 0136 y-run */
        xctx->deltax = sdx; xctx->deltay = sdy;
      }
    }
@@ -8845,7 +9101,9 @@ void move_objects(int what, int merge, double dx, double dy)
       * so the live RUBBER behaviour for ordinary single-axis drags is byte-identical. */
      double sdx = xctx->deltax, sdy = xctx->deltay;
      xctx->deltay = 0.0;                     fluid_shove_body_crossing_backbone(); /* x-run */
+     fluid_shove_jog_separated_trunk();                                            /* 0136 x-run */
      xctx->deltax = 0.0; xctx->deltay = sdy; fluid_shove_body_crossing_backbone(); /* y-run */
+     fluid_shove_jog_separated_trunk();                                            /* 0136 y-run */
      xctx->deltax = sdx; xctx->deltay = sdy;
    }
    /* the END delta-zeroing (below) and the commit_now redraw save/restore consume xctx->deltax/deltay
