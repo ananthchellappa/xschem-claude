@@ -86,6 +86,25 @@ includes    {}
 Per-simulator seam: step 2+3 live behind `ase::backend::<sim>::render_deck` /
 `run_cmd` table; v1 registers `ngspice` only.
 
+## Migration tool (cluttered testbench → clean + state view)
+
+`tools/migrate/ase_migrate.py` (stdlib-only, OO; tests `test_ase_migrate.py`)
+mechanically de-clutters an existing testbench into this form: it scans the
+`.sch` (reusing `migrate_pin_names`'s save.c-faithful record scanner),
+classifies each record, keeps the circuit (devices/wires/labels/gnd/sources) on
+a clean `.sch`, and routes the rest into a byte-canonical `ngspice_state1`
+`.state` view — a `corner` symbol or `code_shown`/`simulator_commands` block →
+`models`/`includes`/`variables`/`options`/`analyses`; a `.control` block →
+`analyses` + `outputs` (unmappable commands like `let`/`meas` are preserved in
+the report, never dropped); a `flags=graph` block → plotted `outputs`; a
+`launcher` → dropped. The state serializer reproduces `ase::state_serialize`'s
+Tcl-list quoting in pure Python (byte-identical to a loader round-trip, verified
+against the committed gf180 golden). Per-PDK profiles (`sky130`, `gf180`) supply
+the corner→model map and the `$::<var>` model path. `--verify` runs the cluttered
+cell and the migrated state view through xschem+ngspice and asserts the operating
+point matches (fixtures: the `nfet_test_claude`→`test_nfet_final` pairs;
+409.7 µA sky130 / 484.35 µA gf180). `--library` migrates a whole `*_tests` lib.
+
 ## Integration points (filled from code recon)
 
 ### View machinery (library_manager.tcl / library_defs.tcl)
