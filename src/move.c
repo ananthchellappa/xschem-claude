@@ -2459,7 +2459,7 @@ static int fluid_anchor_absorbs_along_normal(double fx, double fy, double nx, do
  * along-normal axis has b=0 yet its body sits on the leg -- P6 would drive the straight exit through
  * it (a P5 break, and P5 > P6). Box = inst world bbox (symbol_bbox, move.c:221, the same box the
  * reroute layers use). */
-static int fluid_seg_crosses_body(double x1, double y1, double x2, double y2, int moved)
+static int fluid_seg_crosses_body(double x1, double y1, double x2, double y2, int moved, int notext)
 {
   int i;
   for(i = 0; i < xctx->instances; i++) {
@@ -2469,8 +2469,13 @@ static int fluid_seg_crosses_body(double x1, double y1, double x2, double y2, in
     if(xctx->inst[i].ptr < 0) continue;
     itype = xctx->sym[xctx->inst[i].ptr].type;
     if(itype && !strcmp(itype, "label")) continue;                   /* labels have no body (§2) */
-    bx1 = xctx->inst[i].x1; by1 = xctx->inst[i].y1;
-    bx2 = xctx->inst[i].x2; by2 = xctx->inst[i].y2;
+    /* notext (issue 0138): use the instance bbox WITHOUT texts (xx1..yy2, the real drawn body) instead of
+     * the text-inflated world bbox (x1..y2). A wire may legally route under a device's @name text (it is
+     * not copper); the min-copper escape reclaim must not decline a stub that merely grazes that text
+     * (before_41 R1's 1-grid escape at y=60 sits above R1's real body but inside its text bbox). Existing
+     * callers pass notext=0 and are byte-identical. */
+    if(notext) { bx1 = xctx->inst[i].xx1; by1 = xctx->inst[i].yy1; bx2 = xctx->inst[i].xx2; by2 = xctx->inst[i].yy2; }
+    else       { bx1 = xctx->inst[i].x1;  by1 = xctx->inst[i].y1;  bx2 = xctx->inst[i].x2;  by2 = xctx->inst[i].y2; }
     if(bx1 > bx2) { t = bx1; bx1 = bx2; bx2 = t; }
     if(by1 > by2) { t = by1; by1 = by2; by2 = t; }
     if(x1 == x2) {                                                    /* vertical segment at x1 */
@@ -2509,7 +2514,7 @@ static int fluid_seg_crosses_body(double x1, double y1, double x2, double y2, in
 
 static int fluid_seg_crosses_stationary_body(double x1, double y1, double x2, double y2)
 {
-  return fluid_seg_crosses_body(x1, y1, x2, y2, 0);
+  return fluid_seg_crosses_body(x1, y1, x2, y2, 0, 0);
 }
 
 /* Phase IV P6 length veto (pin end; adversarial review wf_6e97238b, length finding). Complements
@@ -3575,7 +3580,12 @@ static int fluid_jog_is_moved_pin_escape_overshoot(int kd)
    * (rotation lacks the exit-stub/escape machinery anyway, WIRING §11.9). */
   if(xctx->move_rot != 0 || xctx->move_flip != 0) return 0;
   if(grid <= 0.0) grid = 1.0;
-  if(d->bus != 0.0 || fluid_wire_explicit_lab(kd)) return 0;
+  /* issue 0138 (after_41): named nets (TRIANG/CTRL1) may overshoot too. An escape-stub overshoot slide is
+   * a pure INWARD same-net shorten (crossbar pulled toward the pin, both risers shrink) -- it keeps every
+   * wire's lab and the straighten slide's partition + foreign-copper verify prevents any rename/merge, so
+   * the explicit-lab carve-out (which spares #-auto vs named) is not needed here. Buses stay excluded
+   * (index/range reshaping is genuinely risky). */
+  if(d->bus != 0.0) return 0;
   vert = (dx1 == dx2 && dy1 != dy2);
   if(!vert && !(dy1 == dy2 && dx1 != dx2)) return 0;          /* diagonal / zero-length */
   for(m = 0; m < xctx->wires; ++m) {                          /* the cornered neighbour at each end */
@@ -3591,7 +3601,8 @@ static int fluid_jog_is_moved_pin_escape_overshoot(int kd)
     double fa, fb, dcoord, near_t, pinx, piny, along, nnx = 0.0, nny = 0.0;
     int sa, sb;
     if(A->bus != 0.0 || C->bus != 0.0) return 0;
-    if(fluid_wire_explicit_lab(kA) || fluid_wire_explicit_lab(kC)) return 0;
+    /* issue 0138: explicit-labelled neighbours allowed too (see the kd gate above -- the slide is a
+     * same-net inward shorten that the partition/foreign verify keeps rename-safe). */
     if(vert) {
       if(A->y1 != A->y2 || C->y1 != C->y2) return 0;         /* neighbours must be horizontal */
       fa = (A->x1 == dx1 && A->y1 == dy1) ? A->x2 : A->x1;
@@ -3652,10 +3663,10 @@ static void fluid_straighten_reversals(void)
      *     opposite-side case additionally guards the reshaped legs against crossing a stationary body. */
     for(kd = 0; kd < W && !progress; ++kd) {
       xWire *d = &xctx->wire[kd];
-      int vert, kA = -1, kC = -1, m, sa, sb, oppo = 0;
+      int vert, kA = -1, kC = -1, m, sa, sb, oppo = 0, is_overshoot = 0;
       double dx1, dy1, dx2, dy2, fa = 0, fb = 0, target, near_t = 0, far_t = 0;
-      double cand[2];
-      int ci, ncand, cext[2], call_body[2], near_pin;
+      double cand[10];
+      int ci, ncand, cext[10], call_body[10], near_pin;
       const char *lab;
       if(d->bus != 0.0) continue;
       dx1 = d->x1; dy1 = d->y1; dx2 = d->x2; dy2 = d->y2;
@@ -3665,7 +3676,8 @@ static void fluid_straighten_reversals(void)
       if(lab && strpbrk(lab, "[:")) continue;                /* bus label: never reshape */
       /* issue 0137: reshape a jog THIS drag created (span-novelty) OR a moved-pin escape stub the drag
        * stretched past the minimal 1-grid escape and never pulled back (min-copper compaction). */
-      if(!fluid_wire_is_novel_span(kd) && !fluid_jog_is_moved_pin_escape_overshoot(kd)) continue;
+      is_overshoot = fluid_jog_is_moved_pin_escape_overshoot(kd);
+      if(!fluid_wire_is_novel_span(kd) && !is_overshoot) continue;
       if(prot[kd]) continue;                                 /* issue 0091: user's own net component -- leave it */
       if(point_on_any_pin(dx1, dy1) || point_on_any_pin(dx2, dy2)) continue;
       if(fluid_deg_at(dx1, dy1, NULL, kd) != 1) continue;    /* each end a clean corner (d + one wire) */
@@ -3684,7 +3696,13 @@ static void fluid_straighten_reversals(void)
          * construction -- no net-token compare is needed (and the partition verify catches any short).
          * Only decline when an EXPLICIT label is present: reshaping named copper could rename its net. */
         if(A->bus != 0.0 || C->bus != 0.0) continue;
-        if(fluid_wire_explicit_lab(kd) || fluid_wire_explicit_lab(kA) || fluid_wire_explicit_lab(kC)) continue;
+        /* issue 0138: explicit-labelled copper is normally left untouched -- reshaping a named net could
+         * merge/rename it. EXCEPTION: a verified moved-pin escape-stub OVERSHOOT is a pure same-net inward
+         * slide; the partition + foreign-copper verify below rejects any merge/rename, so admit it and let
+         * the 0111 pin-landing reschedule compact the crossbar to the minimal 1-grid escape (after_41
+         * TRIANG/CTRL1 crossbars stranded below their pins by a multi-motion jiggle drag). */
+        if(!is_overshoot &&
+           (fluid_wire_explicit_lab(kd) || fluid_wire_explicit_lab(kA) || fluid_wire_explicit_lab(kC))) continue;
         if(vert) {
           if(A->y1 != A->y2 || C->y1 != C->y2) continue;     /* neighbours perpendicular = horizontal */
           fa = (A->x1 == dx1 && A->y1 == dy1) ? A->x2 : A->x1;
@@ -3762,7 +3780,21 @@ static void fluid_straighten_reversals(void)
                       near_t, outward);
               cand[0] = far_t; cext[0] = 1; call_body[0] = 1;
               ncand = 1;
-              if(outward != dpos) {              /* already normalized: candidate is a no-op */
+              if(is_overshoot) {
+                /* issue 0138: an escape-stub OVERSHOOT can be blocked at the minimal 1-grid row by a
+                 * sibling net that already compacted onto it (after_41: TRIANG holds y=130 across the
+                 * whole width, so CTRL1's 1-grid escape would short it). Search outward grid-by-grid --
+                 * pin+1, pin+2, ... -- and take the nearest row that VERIFIES. Every generated row is
+                 * strictly inside (pin, current jog), so it is always shorter than leaving the jog
+                 * stranded; landing at dpos (the no-op) and beyond (longer) is never generated. Bounded
+                 * search (<= 8 rows), same spirit as insert_exit_stubs' D2 outward slide. */
+                int st; double cur = near_t;
+                for(st = 0; st < 8; ++st) {
+                  cur += grid * along;
+                  if((along > 0 && cur >= dpos) || (along < 0 && cur <= dpos)) break;
+                  cand[ncand] = cur; cext[ncand] = oppo; call_body[ncand] = 1; ncand++;
+                }
+              } else if(outward != dpos) {       /* novel-span jog: single 1-grid step (unchanged) */
                 cand[1] = outward;
                 cext[1] = oppo;
                 call_body[1] = 0;                /* == the old collapse + re-stub round trip */
@@ -3804,22 +3836,37 @@ static void fluid_straighten_reversals(void)
             int part_ok = fluid_part_equal(now, base, np);
             int foreign = fluid_slide_merges_foreign(kd, kA, kC, reach);
             int extends = cext[ci];                          /* slide lengthens a neighbour => guard body */
+            /* issue 0138: an escape-overshoot outward row (ci>0) TRANSLATES the crossbar to a new column at
+             * fixed length while its neighbours shorten -- so its final column can sweep into a device body
+             * that partition/foreign (pin-net only) never see. The multi-step outward search reaches deeper
+             * corridor columns than 0137's single step, so those rows must clear BOTH the MOVED body (0136:
+             * a named trunk pulled back through the dragged device) AND STATIONARY bodies (review wf_fa599f4d
+             * never-worse lens: a crossbar routed across a pin-less stationary symbol). Both use the REAL
+             * drawn body (notext = inst.xx1..yy2), NOT the text-inflated world bbox: a wire may legally graze
+             * a device's @name text (before_41's minimal y=60 escape sits above R1's real body but inside its
+             * text bbox -- the text-inflated check wrongly declined it, regressing 0137). Non-overshoot / far
+             * collapse (ci==0) paths keep the historical text-inflated stationary check gated on `extends`
+             * (byte-identical). */
+            int overshoot_row = is_overshoot && ci > 0;
+            int guard_stat = extends || overshoot_row;
+            int guard_moved = extends || is_overshoot;
             int body = 0;
-            if(extends && part_ok && !foreign) {             /* extended leg must not plough a device body */
+            if((guard_stat || guard_moved) && part_ok && !foreign) {
               int q; int idx[3]; idx[0] = kd; idx[1] = kA; idx[2] = kC;
               for(q = 0; q < 3 && !body; ++q) {
                 xWire *ww = &xctx->wire[idx[q]];
                 if(ww->x1 == ww->x2 && ww->y1 == ww->y2) continue;   /* collapsed neighbour */
-                if(fluid_seg_crosses_stationary_body(ww->x1, ww->y1, ww->x2, ww->y2)) body = 1;
-                /* issue 0111: the pin-landing far collapse must clear MOVED bodies too */
-                if(!body && call_body[ci] &&
-                   fluid_seg_crosses_body(ww->x1, ww->y1, ww->x2, ww->y2, 1)) body = 1;
+                if(guard_stat &&
+                   fluid_seg_crosses_body(ww->x1, ww->y1, ww->x2, ww->y2, 0, overshoot_row)) body = 1;
+                /* issue 0111/0138: the pin-landing far collapse and the overshoot reclaim must clear MOVED bodies */
+                if(!body && guard_moved && call_body[ci] &&
+                   fluid_seg_crosses_body(ww->x1, ww->y1, ww->x2, ww->y2, 1, overshoot_row)) body = 1;
               }
             }
             if(part_ok && foreign)
               fltrace("FLTRACE straighten: DECLINE slide wire=%d %s->%g (would short foreign copper)\n",
                       kd, vert ? "x" : "y", target);
-            if(extends && part_ok && !foreign && body)
+            if((extends || is_overshoot) && part_ok && !foreign && body)
               fltrace("FLTRACE straighten: DECLINE slide wire=%d %s->%g (%s leg crosses body)\n",
                       kd, vert ? "x" : "y", target, oppo ? "staircase" : "reversal");
             if(part_ok && !foreign && !body) {
