@@ -3541,6 +3541,83 @@ static void fluid_mark_user_protected(unsigned char *prot)
   my_free(_ALLOC_ID_, &reach);
 }
 
+/* issue 0137 (minimum-copper compaction on every move): re-admit ONE shape into
+ * fluid_straighten_reversals that its span-novelty gate (:3589) would otherwise skip -- a MOVED pin's
+ * escape stub left OVERSHOOTING beyond the minimal 1-grid P3 escape. Mechanism (traced, before_41.sch):
+ * the drag pipeline is PUSH-only. Dragging the instance so its pin approaches its own perpendicular jog,
+ * the push-through slide (fluid_slide_push_through) SHOVES the jog out along the escape normal (keeps the
+ * escape >= 1 grid) -- correct. But dragging the instance back so the pin RECEDES, nothing PULLS the jog
+ * in: the escape stub simply stretches. Because each gesture's START snapshot is the PREVIOUS gesture's
+ * output, the stretched stub is now pre-existing copper that fluid_wire_is_novel_span() protects, so the
+ * excess is never reclaimed and GROWS 2*delta per round trip (before_41: up30/dn30 -> 130 copper vs the
+ * minimal 70; up60/dn60 -> 190).
+ *
+ * fluid_straighten_reversals ALREADY slides exactly this reversal to the 1-grid escape row -- its 0111
+ * pin-landing reschedule tries the far target first (blocked by the pin's own body) then pin + grid*normal
+ * -- and VERIFIES it (pin-partition + foreign-copper + body, exact revert). It just never SEES the wire.
+ * This predicate re-admits precisely that shape. It is deliberately narrow so straighten stays
+ * byte-identical everywhere else: kd is a plain (non-bus, non-explicit-lab) axis jog; both cornered
+ * neighbours are perpendicular and on the SAME side of kd (a REVERSAL -- the near slide only ever
+ * SHORTENS, safe by construction); the NEARER neighbour's far end lands EXACTLY on a MOVED pin whose
+ * outward lead normal is collinear with, and points along, that stub; and the stub is longer than one
+ * grid (a real overshoot). Anything else => 0 => the gate is unchanged. Gated fluid_editing. */
+static int fluid_jog_is_moved_pin_escape_overshoot(int kd)
+{
+  xWire *d = &xctx->wire[kd];
+  int vert, m, kA = -1, kC = -1;
+  double dx1 = d->x1, dy1 = d->y1, dx2 = d->x2, dy2 = d->y2;
+  double grid = tclgetdoublevar("cadsnap");
+  if(!tclgetboolvar("fluid_editing")) return 0;
+  /* mirror straighten's 0111 pin-landing gate (:3672): only when rot==flip==0 does straighten reschedule
+   * a pin-landing near target to pin + grid*normal (the 1-grid escape). Under a rotated/flipped stretch it
+   * takes the plain near-first slide -- onto the pin, collapsing the escape to 0 (partition-preserved, so
+   * the verify would NOT decline it). Reclaiming here would then be WORSE, so restrict to the rot-free case
+   * (rotation lacks the exit-stub/escape machinery anyway, WIRING §11.9). */
+  if(xctx->move_rot != 0 || xctx->move_flip != 0) return 0;
+  if(grid <= 0.0) grid = 1.0;
+  if(d->bus != 0.0 || fluid_wire_explicit_lab(kd)) return 0;
+  vert = (dx1 == dx2 && dy1 != dy2);
+  if(!vert && !(dy1 == dy2 && dx1 != dx2)) return 0;          /* diagonal / zero-length */
+  for(m = 0; m < xctx->wires; ++m) {                          /* the cornered neighbour at each end */
+    if(m == kd) continue;
+    if((xctx->wire[m].x1 == dx1 && xctx->wire[m].y1 == dy1) ||
+       (xctx->wire[m].x2 == dx1 && xctx->wire[m].y2 == dy1)) kA = m;
+    if((xctx->wire[m].x1 == dx2 && xctx->wire[m].y1 == dy2) ||
+       (xctx->wire[m].x2 == dx2 && xctx->wire[m].y2 == dy2)) kC = m;
+  }
+  if(kA < 0 || kC < 0 || kA == kC) return 0;
+  {
+    xWire *A = &xctx->wire[kA], *C = &xctx->wire[kC];
+    double fa, fb, dcoord, near_t, pinx, piny, along, nnx = 0.0, nny = 0.0;
+    int sa, sb;
+    if(A->bus != 0.0 || C->bus != 0.0) return 0;
+    if(fluid_wire_explicit_lab(kA) || fluid_wire_explicit_lab(kC)) return 0;
+    if(vert) {
+      if(A->y1 != A->y2 || C->y1 != C->y2) return 0;         /* neighbours must be horizontal */
+      fa = (A->x1 == dx1 && A->y1 == dy1) ? A->x2 : A->x1;
+      fb = (C->x1 == dx2 && C->y1 == dy2) ? C->x2 : C->x1;
+      dcoord = dx1;
+    } else {
+      if(A->x1 != A->x2 || C->x1 != C->x2) return 0;         /* neighbours must be vertical */
+      fa = (A->x1 == dx1 && A->y1 == dy1) ? A->y2 : A->y1;
+      fb = (C->x1 == dx2 && C->y1 == dy2) ? C->y2 : C->y1;
+      dcoord = dy1;
+    }
+    sa = (fa > dcoord) - (fa < dcoord); sb = (fb > dcoord) - (fb < dcoord);
+    if(sa == 0 || sb == 0 || sa != sb) return 0;             /* must be a same-side REVERSAL */
+    near_t = (fabs(fa - dcoord) <= fabs(fb - dcoord)) ? fa : fb;
+    if(vert) { pinx = near_t; piny = (near_t == fa) ? dy1 : dy2; }
+    else     { piny = near_t; pinx = (near_t == fa) ? dx1 : dx2; }
+    if(!point_on_any_pin(pinx, piny)) return 0;
+    if(!fluid_moving_pin_normal(pinx, piny, &nnx, &nny)) return 0;    /* MOVED pin + outward lead normal */
+    along = vert ? nnx : nny;                                /* normal component on kd's slide axis */
+    if(along == 0.0) return 0;                               /* normal perpendicular to stub: not an escape */
+    if((dcoord - near_t) * along <= 0.0) return 0;           /* the jog must lie OUTWARD of the pin */
+    if(fabs(near_t - dcoord) <= grid) return 0;              /* already the minimal 1-grid escape */
+    return 1;
+  }
+}
+
 static void fluid_straighten_reversals(void)
 {
   int np, progress, guard = 0, changed_any = 0, npins;
@@ -3586,7 +3663,9 @@ static void fluid_straighten_reversals(void)
       if(!vert && !(dy1 == dy2 && dx1 != dx2)) continue;     /* diagonal or zero-length */
       lab = get_tok_value(d->prop_ptr, "lab", 0);
       if(lab && strpbrk(lab, "[:")) continue;                /* bus label: never reshape */
-      if(!fluid_wire_is_novel_span(kd)) continue;            /* only a jog THIS drag created (span-scoped) */
+      /* issue 0137: reshape a jog THIS drag created (span-novelty) OR a moved-pin escape stub the drag
+       * stretched past the minimal 1-grid escape and never pulled back (min-copper compaction). */
+      if(!fluid_wire_is_novel_span(kd) && !fluid_jog_is_moved_pin_escape_overshoot(kd)) continue;
       if(prot[kd]) continue;                                 /* issue 0091: user's own net component -- leave it */
       if(point_on_any_pin(dx1, dy1) || point_on_any_pin(dx2, dy2)) continue;
       if(fluid_deg_at(dx1, dy1, NULL, kd) != 1) continue;    /* each end a clean corner (d + one wire) */

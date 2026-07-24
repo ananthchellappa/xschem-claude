@@ -273,7 +273,7 @@ Hard ordering edges (all documented in-code, all discovered by bugs):
 | `fluid_prune_shorting_anchor_tails` :3682 | 0104 | novel-span, no-pin free end, live deg≥1 | delete-only, greedy, commit only at full restore | restore-START (**geometric**) |
 | `fluid_remove_redundant_loops` :2761 | 0088 | chord + clean interior + novelty commit gate; START-cycle decline | delete-only fixpoint | preserve-entry (geometric) |
 | `fluid_prune_anchor_tails` :3577 | 0103 | **only !rotfree**; deg-0 free end at pristine junction | delete-only | preserve-entry |
-| `fluid_straighten_reversals` :3093 | 0089/0090/0096/0110/0111 | novel-SPAN, deg==1 corners, not prot[], no explicit lab | slide jog (near→far; 0111 pin-landing reschedule), tail retract | preserve-entry + foreign-merge guard |
+| `fluid_straighten_reversals` :3093 | 0089/0090/0096/0110/0111/**0137** | novel-SPAN, deg==1 corners, not prot[], no explicit lab. **0137: ALSO admits a non-novel jog that is a moved-pin escape-stub OVERSHOOT (`fluid_jog_is_moved_pin_escape_overshoot`: same-side reversal, nearer neighbour on a MOVED pin, stub >1 grid, rot==flip==0) — min-copper compaction of the push-only pipeline's un-reclaimed retreat slack; the verified 0111 pin-landing slide then compacts it to the 1-grid escape** | slide jog (near→far; 0111 pin-landing reschedule), tail retract | preserve-entry + foreign-merge guard |
 | `fluid_collapse_axis_overshoot_stub` :3362 | 0092 | brand-new dangle (START-deg==0); **deliberately not prot[]-gated** | shove riser or trim stub | preserve-entry |
 | `fluid_prune_novel_orphan_stub` :4085 | 0094-tail | `if(ripped)` only; free-end START-deg==0 | retract/delete | preserve-entry |
 | `insert_exit_stubs` :1816 | P3 / 0132 / **0135 D2** | rot-free, one wire exactly on pin | slide the perpendicular pin-incident leg out along the escape normal + fill the pin gap with a stub. **DISTANCE: normally 1 grid; 0135 D2 — when the CURRENT feed leg grazes/crosses the moved instance's OWN pin-inclusive body (`graze`), OUTWARD-SEARCH `d=1..6` for the nearest row that clears the body AND shorts no foreign net (walks a grazing whole-TRANSLATED feed off its body edge — the two-leg/diagonal decomposition pure-translates a `SELECTED`-whole feed so the elbow/P6 layer never re-orients it, after_39 REF)** | **0132: DECLINE if stub/leg threads the own PIN-INCLUSIVE body (`fluid_seg_crosses_sel_body`, escape-normal exempt) — guards the `get_pin_escape_normal` text-inflated-bbox mis-pick on corner pins. 0134: DECLINE if the slid stub/leg touches a DIFFERENT-net-label wire (`fluid_seg_touches_foreign_lab`). 0135 D2 search per-distance: own-body-cross → continue; STATIONARY-body cross → BREAK/decline (local beautifier never detours a feed past another device — this is what stops R18's grazing feed from flinging 8 grids past C12 in the 0090 staircase); foreign short → continue (try a farther row → walks REF past LED's row). NON-grazing keeps `dmax==1` → byte-identical. NO partition snapshot: the slide never disconnects by construction (pin gap stubbed, corner + its wires dragged together); the foreign-lab guard is the short guard (as 0134); `mem_restore_slot` `unselect_all`s and would strip the pin loop's `.sel`. Unlabeled-foreign gap pre-existing/shared with 0134, B3-backstopped** |
@@ -708,6 +708,25 @@ declaring any wiring feature done, convert to xfail tests when touching the area
     without X); wireedit 57/57. **DEFERRED (defect 2, `neighbor-net-riser-near-miss`):** REF's #net2
     riser `130 -130 130 -110` crosses the LED #net1 rail at (130,-120) — a 4-way crossing, NOT a short
     (no endpoint coincidence); a separate REF/LED routing near-miss, no test yet.
+    **NOTE (0136 defect 2, superseded analysis):** the REF/LED crossing is TOPOLOGICALLY FORCED, not a
+    routable defect — REF{pin,src} and LED{pin,src} interleave on the convex hull (the two nets are
+    LINKED), so a crossing is forced by the Jordan curve theorem for ANY routing; before_39 carried it
+    too (at (-50,-140), near the sources), the drag only RELOCATED it to the pin-exit. There is also no
+    invariant against different-net wire crossings (WIRING §9: P1/P2/P3/P4/P5-BODY/P6/P7 — none forbid a
+    wire-wire cross; a non-endpoint cross is electrically correct, drawn with no junction dot). Left as-is
+    (WONTFIX class): not an invariant violation, and unremovable without moving a fixed terminal.
+16. ~~**Push-only pipeline leaves un-reclaimed retreat slack → non-minimal copper** (0137)~~ **FIXED
+    (0137).** Minimum copper is a first-class goal on EVERY move, not just P3/P5 compliance. The
+    push-through slide shoves a moved pin's perpendicular jog OUT on approach but nothing pulls it IN on
+    retreat; the stretched escape stub becomes pre-existing copper the straightener's novelty gate
+    protects, so the overshoot grows 2·δ per round trip (before_41: up30/dn30 → copper 130 vs minimal 70,
+    unbounded). FIX: `fluid_jog_is_moved_pin_escape_overshoot` re-admits exactly that reversal shape into
+    `fluid_straighten_reversals`, whose verified 0111 pin-landing slide compacts it to the 1-grid escape;
+    narrow (moved pin only = P7 guard; rot==flip==0; reversal-only = shorten-safe), never worse by the
+    pass's own exact-revert verify. `doc/claude/issues/0137-*.md`,
+    `test_fluid_compact_escape_stub_0137.tcl` (RED→GREEN), wireedit 57/57. **OPEN (min-copper family,
+    not yet reclaimed):** multi-jog staircases whose whole run could shift; stranded far-legs. Extend the
+    predicate family RED-first as cases surface.
 
 Below-cut (quality, keep on radar): elbow legs through pin-less stationary bodies (no
 body class in `fluid_ml_hazards`); two moved devices sharing a channel (NULL node treated
