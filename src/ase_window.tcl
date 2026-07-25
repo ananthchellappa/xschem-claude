@@ -2527,9 +2527,11 @@ proc ase::ui::save_state_ok {key} {
 # viewer-less session stays byte-identical and un-dirtied). Called FIRST by
 # both Save State paths — do_save_state_as covers all three target arms
 # (accepted side effect, documented in the spec notes: save-as to a DIFFERENT
-# view leaves THIS session dirty-marked when the snapshot changed the
-# in-memory state — honest, the session's own file now differs). Returns 1
-# when a snapshot was folded in, else 0.
+# view leaves a TITLED session dirty-marked when the snapshot changed the
+# in-memory state — honest, the session's own file now differs). CARVE-OUT
+# (issue 0141): an UNTITLED session's first Save-As instead ADOPTS the target
+# (do_save_state_as, own eq {}) and becomes CLEAN — do not "fix" it back to
+# dirty. Returns 1 when a snapshot was folded in, else 0.
 proc ase::ui::viewer_snapshot {key} {
   set st [ase::session_state $key]
   if {$st eq {}} { return 0 }
@@ -2580,12 +2582,19 @@ proc ase::ui::viewer_restore {key} {
 #    cell errors cleanly, auto-creating cells would invent behavior), then
 #    the seeded file is overwritten with THIS session's serialization;
 #  - a DIFFERENT existing view -> plain state_save overwrite (D13).
+# UNTITLED ADOPT (issue 0141): when this session was never saved (own eq {} —
+# a Launch-ASE untitled session), the first successful Save-As ADOPTS the
+# target as the session's real identity via ase::session_adopt (path set,
+# saved<-state so dirty clears, `untitled` attr dropped) + meta view update, so
+# the still-open window loses its "(unsaved)"/"*" cues and shows "State: <v>".
+# This is gated on own eq {}, so a TITLED different-view save-as still stays
+# dirty (D5/D13, deliberate) and the own-view save (first arm) is untouched.
 # On success: LibMgr pane refresh (headless-safe catch), notice, the Save-As
 # dialog dies. Returns 1 on success, 0 on a reported error (dialog kept up).
 # item 14 (D5): the viewer snapshot runs FIRST, so every arm writes the
 # up-to-date `viewer` dict.
 proc ase::ui::do_save_state_as {key l c v} {
-  variable wins; variable dlg
+  variable wins; variable dlg; variable meta
   ase::ui::viewer_snapshot $key
   set target [xschem cellview_path "$l/$c" $v]
   set own [ase::session_path $key]
@@ -2611,6 +2620,18 @@ proc ase::ui::do_save_state_as {key l c v} {
       catch {ciw_echo "ase: cannot write $target: $err" error}
       return 0
     }
+  }
+  # First Save-As of a never-saved (untitled) launch session: adopt the target
+  # as this session's real identity. `own eq {}` is the untitled marker — a
+  # TITLED session (own ne {}) never reaches here, so its deliberate "save-as to
+  # a DIFFERENT view stays dirty" behavior (item 14 D5) and the working own-view
+  # save (the first if-arm above) are both untouched. meta is updated BEFORE the
+  # adopt so session_adopt's notify repaints "State: <v>" in the status bar and
+  # drops the title's "(unsaved)"/"*" cues. `target` here is the resolved real
+  # path in both untitled arms (pre-existing view, or the just-created one).
+  if {$own eq {}} {
+    if {[dict exists $meta $key]} { dict set meta $key [list $l $c $v] }
+    ase::session_adopt $key $target
   }
   catch {libmgr::refresh_after $l $c $v}
   catch {ciw_echo "ase: state saved to $l/$c/$v"}

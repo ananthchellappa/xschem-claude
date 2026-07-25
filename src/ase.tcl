@@ -547,6 +547,27 @@ proc ase::session_save {key} {
   return 1
 }
 
+# First Save-As of a never-saved (untitled Launch) session: adopt `newpath` as
+# the session's real identity (classic Save-As on an untitled document). saved
+# <- current state so ase::session_dirty -> 0; the `untitled` attr is cleared so
+# refresh_title drops " (unsaved)" (and " *"); notify fires (title + status
+# refresh). The CALLER must have ALREADY written `state` to `newpath`
+# (do_save_state_as does), so saved matches disk. TITLED sessions (own path
+# already set) must NOT call this — their deliberate "save-as to a DIFFERENT
+# view stays dirty" behavior (item 14 D5) depends on saved being left alone.
+# The session KEY is deliberately NOT re-homed (it is an opaque handle: ~91
+# build() bindings + WM_DELETE/Ctrl-W bake it in; Launch dedup keys on
+# state.design, not the key). Returns 1, or 0 for an unknown key.
+proc ase::session_adopt {key newpath} {
+  variable sessions
+  if {![dict exists $sessions $key]} { return 0 }
+  dict set sessions $key path $newpath
+  dict set sessions $key saved [dict get $sessions $key state]
+  dict set sessions $key untitled 0
+  ase::session_notify_fire $key
+  return 1
+}
+
 # Re-read the state file from disk (Session > Load State); saved <- state <-
 # file, discarding in-memory edits. Returns 1, or 0 for an unknown key.
 proc ase::session_load {key} {

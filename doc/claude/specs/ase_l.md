@@ -319,6 +319,15 @@ main window and the log window are exempt (2026-07-21, item 10).
 
 - Session menu: Save State / Load State / Design Window (raise or open the
   schematic cellview via existing load routing) / Close.
+  - **Untitled adopt (issue 0141).** A Launch-ASE session is *untitled* (no
+    file, title `… (unsaved) *` once edited). Its **first** successful Save State
+    ADOPTS the target as the session's real identity (`ase::session_adopt`):
+    path set, `saved <- state` so the dirty ` *` clears, the `untitled` attr
+    dropped so `(unsaved)` disappears, and the status `State:` shows the saved
+    view. Gated on the untitled marker (`own eq {}`), so a **titled** session
+    saving-as to a *different* existing view deliberately stays dirty (item 14
+    D5) and the own-view save is unchanged. The session key is NOT re-homed
+    (opaque handle; ~91 build() bindings bake it in) — see issue 0141.
 - Simulation menu: Netlist, Run, Stop, View Netlist, View Log.
 - Netlist/log viewers: read-only text windows; log follows live output.
 - Double-click `ngspice_state1` view in LibMgr → opens ASE-L on that state.
