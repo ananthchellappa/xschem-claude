@@ -226,9 +226,15 @@ and the input-binding table already do everything the RMB path needs).
 - **RMB (D2)** stays on the C engine. `btn3_filter` dropped its `over_graph`
   early-return and now forwards Button-3 press+release **unconditionally**:
   item-18 tiling guarantees the pointer is always inside a graph, so the C
-  press→GRAPHPAN / release→zoom-x-to-box path (callback.c:1000/:1454) always
-  fires and `view.zoom_rect` (the canvas zoom box) is never reached. Right-drag
-  narrows only the graph rect's x1/x2 tokens; the canvas stays pinned.
+  press→GRAPHPAN / release→box-zoom path (callback.c:1000/:1454) always fires
+  and `view.zoom_rect` (the canvas zoom box) is never reached; the canvas stays
+  pinned. **XY box-zoom (issue 0142):** an interior RMB press-drag now draws a
+  live rubber rectangle and zooms **both** axes — X window (x1/x2) across the
+  participating graphs, Y window (y1/y2, or ypos1/ypos2 for digital) on the
+  master graph. Dragging on the **left Y-axis margin** stays a Y-only zoom;
+  Shift still inverts to zoom-out. (Previously the interior drag narrowed only
+  x1/x2 and drew no rectangle.) All in shared C `waves_callback`, so on-canvas
+  schematic graphs get it too.
 - **`f` / `Z` / `Ctrl-z` (D4)** are intercepted in `key_filter` (KeyPress only;
   the matching KeyRelease is swallowed) BEFORE the forward: `f`→`wviewer::fit`
   (fit is the only path that fits BOTH x and y), `Z`→`graph_zoom in`,

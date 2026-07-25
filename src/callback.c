@@ -1003,8 +1003,10 @@ static int waves_callback(int event, int mx, int my, KeySym key, int button, int
       !xctx->graph_top /* && !xctx->graph_bottom */
     ) {
     xctx->ui_state |= GRAPHPAN;
-    if(!xctx->graph_left) xctx->mx_double_save = xctx->mousex_snap;
-    if(xctx->graph_left) xctx->my_double_save = xctx->mousey_snap;
+    /* box-zoom needs BOTH press coords: an interior RMB drag zooms X and Y */
+    xctx->mx_double_save = xctx->mousex_snap;
+    xctx->my_double_save = xctx->mousey_snap;
+    xctx->graph_rubber_active = 0; /* fresh gesture: no rubber rect drawn yet */
   }
   dbg(1, "graph_master=%d\n", xctx->graph_master);
 
@@ -1056,6 +1058,44 @@ static int waves_callback(int event, int mx, int my, KeySym key, int button, int
     }
 
     if(xx1 == xx2) xx2 += 1e-6;
+  }
+  /* RMB interior drag: draw the live box-zoom rubber rectangle (both axes). gr
+   * is set up for the master graph (above). Each motion erases the previous
+   * outline via the tiled GC (restores the graph pixmap under it) then draws the
+   * new one in the selection color, exactly like the schematic zoom_rectangle.
+   * Display-only: drawtemprect no-ops when !has_x, so the headless box-zoom math
+   * below is unaffected. */
+  if(event == MotionNotify && (state & Button3Mask) && (xctx->ui_state & GRAPHPAN) &&
+     xctx->graph_master >= 0 && !xctx->graph_left && !xctx->graph_top && !xctx->graph_bottom) {
+    double xlo = gr->x1 < gr->x2 ? gr->x1 : gr->x2;
+    double xhi = gr->x1 < gr->x2 ? gr->x2 : gr->x1;
+    double ylo = gr->y1 < gr->y2 ? gr->y1 : gr->y2;
+    double yhi = gr->y1 < gr->y2 ? gr->y2 : gr->y1;
+    double cx2 = xctx->mousex_snap, cy2 = xctx->mousey_snap;
+    if(cx2 < xlo) cx2 = xlo; if(cx2 > xhi) cx2 = xhi;   /* clamp to the plot box */
+    if(cy2 < ylo) cy2 = ylo; if(cy2 > yhi) cy2 = yhi;
+    if(xctx->graph_rubber_active) { /* erase the previous outline */
+      double ex1 = xctx->mx_double_save, ey1 = xctx->my_double_save;
+      double ex2 = xctx->graph_rubber_x, ey2 = xctx->graph_rubber_y;
+      RECTORDER(ex1, ey1, ex2, ey2);
+      drawtemprect(xctx->gctiled, NOW, ex1, ey1, ex2, ey2);
+    }
+    { /* draw the new outline */
+      double dx1 = xctx->mx_double_save, dy1 = xctx->my_double_save, dx2 = cx2, dy2 = cy2;
+      RECTORDER(dx1, dy1, dx2, dy2);
+      drawtemprect(xctx->gc[SELLAYER], NOW, dx1, dy1, dx2, dy2);
+    }
+    xctx->graph_rubber_x = cx2;
+    xctx->graph_rubber_y = cy2;
+    xctx->graph_rubber_active = 1;
+  }
+  /* Button3 release: erase the last rubber outline before the zoom redraw */
+  if(event == ButtonRelease && button == Button3 && xctx->graph_rubber_active) {
+    double ex1 = xctx->mx_double_save, ey1 = xctx->my_double_save;
+    double ex2 = xctx->graph_rubber_x, ey2 = xctx->graph_rubber_y;
+    RECTORDER(ex1, ey1, ex2, ey2);
+    drawtemprect(xctx->gctiled, NOW, ex1, ey1, ex2, ey2);
+    xctx->graph_rubber_active = 0;
   }
   /* loop: after having operated on the master graph do the others */
   for(i=0; i< xctx->rects[GRIDLAYER]; ++i) {
@@ -1450,21 +1490,50 @@ static int waves_callback(int event, int mx, int my, KeySym key, int button, int
         xctx->ui_state &= ~GRAPHPAN;
         xctx->graph_flags &= ~(16 | 32 | 512 | 1024); /* clear move cursor flags */
       }
-      /* zoom X area by mouse drag */
+      /* zoom X+Y area by mouse drag (box zoom): X window across all
+       * participating graphs (as before), Y window on the master graph only
+       * (Y is per-graph). The Y branch mirrors the left-margin Y zoom below. */
       else if(button == Button3 && (xctx->ui_state & GRAPHPAN) &&
               !xctx->graph_left && !xctx->graph_top) {
-        /* selected or locked or master */
-        if(r->sel || (same_sim_type && !(r->flags & 2)) || i == xctx->graph_master) {
-          if(xctx->mx_double_save != xctx->mousex_snap) {
-            clear_graphpan_at_end = 1;
-
-            /* xx1 and xx2 calculated for master graph above */
-            my_strdup(_ALLOC_ID_, &r->prop_ptr, subst_token(r->prop_ptr, "x1", dtoa(xx1)));
-            my_strdup(_ALLOC_ID_, &r->prop_ptr, subst_token(r->prop_ptr, "x2", dtoa(xx2)));
-            need_redraw = 1;
-          } else if(i == xctx->graph_master) {
-            clear_graphpan_at_end = 1;
+        int xmoved = (xctx->mx_double_save != xctx->mousex_snap);
+        int ymoved = (xctx->my_double_save != xctx->mousey_snap);
+        /* X: selected or locked or master */
+        if(xmoved && (r->sel || (same_sim_type && !(r->flags & 2)) || i == xctx->graph_master)) {
+          clear_graphpan_at_end = 1;
+          /* xx1 and xx2 calculated for master graph above */
+          my_strdup(_ALLOC_ID_, &r->prop_ptr, subst_token(r->prop_ptr, "x1", dtoa(xx1)));
+          my_strdup(_ALLOC_ID_, &r->prop_ptr, subst_token(r->prop_ptr, "x2", dtoa(xx2)));
+          need_redraw = 1;
+        }
+        /* Y: master graph only */
+        if(ymoved && i == xctx->graph_master) {
+          double byy1, byy2;
+          clear_graphpan_at_end = 1;
+          if(!gr->digital) {
+            byy1 = G_Y(xctx->my_double_save);
+            byy2 = G_Y(xctx->mousey_snap);
+            if(state & ShiftMask) {
+              if(byy1 < byy2) { double tmp = byy1; byy1 = byy2; byy2 = tmp; }
+            } else {
+              if(byy2 < byy1) { double tmp = byy1; byy1 = byy2; byy2 = tmp; }
+            }
+            my_strdup(_ALLOC_ID_, &r->prop_ptr, subst_token(r->prop_ptr, "y1", dtoa(byy1)));
+            my_strdup(_ALLOC_ID_, &r->prop_ptr, subst_token(r->prop_ptr, "y2", dtoa(byy2)));
+          } else {
+            byy1 = DG_Y(xctx->my_double_save);
+            byy2 = DG_Y(xctx->mousey_snap);
+            if(state & ShiftMask) {
+              if(byy1 < byy2) { double tmp = byy1; byy1 = byy2; byy2 = tmp; }
+            } else {
+              if(byy2 < byy1) { double tmp = byy1; byy1 = byy2; byy2 = tmp; }
+            }
+            my_strdup(_ALLOC_ID_, &r->prop_ptr, subst_token(r->prop_ptr, "ypos1", dtoa(byy1)));
+            my_strdup(_ALLOC_ID_, &r->prop_ptr, subst_token(r->prop_ptr, "ypos2", dtoa(byy2)));
           }
+          need_redraw = 1;
+        }
+        if(!xmoved && !ymoved && i == xctx->graph_master) {
+          clear_graphpan_at_end = 1;
         }
       }
       /* zoom Y area by mouse drag */

@@ -244,7 +244,9 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
   grab within 10px, numeric cursor set, `a`/`b`/`s`/`m`/`t` keys), then loops
   all graphs: participation test `r->sel || (same_sim_type && !(flags&2)) ||
   i==graph_master`; wheel zoom/pan, arrow pan/zoom, `f`=fit, drag pan,
-  Button3-drag box-zoom. **Writes results into `prop_ptr` tokens via
+  Button3-drag **XY box-zoom** (issue 0142: interior drag zooms x1/x2 across
+  participating graphs + y1/y2 on the master, with a live rubber rect via
+  `drawtemprect`/`gctiled`; left-margin drag = Y-only). **Writes results into `prop_ptr` tokens via
   `subst_token`, then `draw_graph()`.**
 - **Two different flag words — do not confuse:** `xctx->graph_flags` =
   per-session cursor/measure modes (bits 2/4=draw A/B, 16/32=move A/B,

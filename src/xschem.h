@@ -1484,8 +1484,10 @@ typedef struct {
   int graph_flags;
   int graph_master; /* graph where mouse operations are started, used to lock x-axis */
   int graph_top; /* regions of graph where mouse events occur */
-  int graph_bottom; 
+  int graph_bottom;
   int graph_left;
+  int graph_rubber_active; /* RMB interior-drag zoom-rubber rectangle in progress */
+  double graph_rubber_x, graph_rubber_y; /* last-drawn rubber moving corner (xschem coords) */
   int graph_lastsel; /* last graph that was clicked (selected) */
   /*    */
   XSegment *biggridpoint;
