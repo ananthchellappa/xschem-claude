@@ -49,6 +49,20 @@ tclsh run_regression.tcl        # runs all cases: create_save, open_close, netli
   `results.log` for `FAIL` / `GOLD?` / `FATAL`. To run one case, source its script
   directly (e.g. `tclsh netlisting.tcl`).
 - Tests invoke the built binary headless via `xschem ... --pipe -q --script <file>`.
+  `tests/test_utility.tcl` resolves it as **`$XSCHEM` → in-tree `src/xschem` →
+  `PATH`**, so an uninstalled dev tree works out of the box (issue 0147 — it used
+  to be a bare `xschem`, and with nothing installed the entire suite silently
+  no-op'd while still printing a plausible `results.log`).
+- **`create_save`, `open_close` and `netlisting` have no committed `gold/`
+  baseline**, so they can only report `NOGOLD` — they run the cases and produce
+  `<case>/results/`, but verify nothing until someone promotes a baseline. The
+  trustworthy signal is the headless cases (which do have
+  `tests/headless/gold/`), or running one directly:
+  `./src/xschem --nogui --pipe -q --script tests/headless/<t>.tcl`.
+- **Reading `results.log`:** a `FAIL` ending a line, `GOLD?`, `RESULT?` or a
+  leading `FATAL` is counted. `couldn't execute "xschem"` or `exit 127` anywhere
+  means the binary never launched and *nothing in that run is meaningful*
+  (issue 0016 Part 4 distinguishes this from the benign rc=10 fall-through).
 - `xschemtest.tcl` is a broader functional/perf harness, run as
   `xschem --script xschemtest.tcl` then calling `xschemtest`. Use `-d 3 -l log` to
   log allocations for leak checking.

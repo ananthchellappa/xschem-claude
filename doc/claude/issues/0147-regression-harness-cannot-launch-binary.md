@@ -1,6 +1,6 @@
 # 0147 — Regression harness resolves the binary as bare `xschem`: the whole suite silently no-ops, and stale logs are re-reported as current results
 
-**Status:** OPEN (diagnosed, not fixed)
+**Status:** FIXED
 **Branch:** fluid-editing
 **Area:** `tests/test_utility.tcl`, `tests/run_regression.tcl` (+ a wrong
 instruction in `CLAUDE.md` `## Tests`).
@@ -102,7 +102,63 @@ that legitimately grows, unlike the PDK libraries pinned exactly beside it
 (`gf180mcu_pr == 66`, `sky130_stdcells == 437`). `sky130_tests` has no count
 assertion, which is why its sibling test stayed green.
 
-## Fix scope (all in `tests/`, plus one doc)
+## Fix (as applied)
+
+1. **`test_utility.tcl`** — `xschem_cmd` resolves `$XSCHEM` → in-tree
+   `[info script]/../src/xschem` → `PATH`, absolutised with `file normalize`
+   (`info script` anchors to this file, so it holds from any cwd; the path is
+   interpolated into `sh` strings that `cd` first). Verified: resolves to
+   `.../src/xschem` both from `tests/` and from a foreign cwd.
+2. **`test_utility.tcl` `print_results`** — now **always** writes `<case>.log`.
+   A missing `gold/` produces a non-counting `NOGOLD:` line *in the log*
+   (previously stdout-only, where `summarize_all` could never see it), and
+   `num_fatals` is emitted on **both** paths — it used to be discarded entirely
+   when gold was absent, which is how 2654 dead jobs summarised as zero failures.
+   Also fixed an undefined `$f` in the open-error message.
+3. **`run_regression.tcl`** — `file delete -force ${tc}.log` before each golden
+   case, so a previous run's log can never be replayed as current.
+4. **`run_regression.tcl` `summarize_all`** — a missing log is now a counting
+   `HARNESS: ... FAIL`, not a silent note.
+5. **`run_regression.tcl`** — the final `xschemtest.tcl` `exec` is wrapped in
+   `catch`, moved **inside** the `results.log` block, and its failure recorded as
+   a FAIL instead of aborting the interpreter after the log was closed.
+6. **`CLAUDE.md` `## Tests`** — documents the resolution order, states plainly
+   that `create_save`/`open_close`/`netlisting` have **no committed baseline** and
+   can only report `NOGOLD`, and explains how to read `results.log` (incl. that
+   `couldn't execute` / `exit 127` invalidates the whole run).
+7. **`0016` Part 4** — its "the last line's error is cosmetic" note was true only
+   for the benign rc=10 fall-through and actively misleading for the
+   `couldn't execute` variant; corrected in place with the distinguishing rule.
+
+8. **`summarize_all`** also echoes `^NOGOLD` **uncounted**. Caught by
+   self-review of the fix: without it a case with no baseline summarised as a
+   bare `Total num fail: 0`, which reads exactly like a pass — the same hollow
+   shape this issue is about, just moved.
+9. **Robustness** (from adversarial review): a **bare** `$XSCHEM` (e.g.
+   `XSCHEM=xschem`, meaning "find it on PATH") is no longer `file normalize`d
+   into a bogus cwd-relative path; `$xschem_cmd` is single-quoted in the three
+   `sh` job strings like its neighbouring `'$path'` interpolations; and the two
+   Tcl `exec` sites dropped `eval`, so a binary path containing spaces stays one
+   argument.
+
+### Post-fix baseline (this workarea, no `$XSCHEM`, nothing installed)
+
+| | before | after |
+|---|---|---|
+| `results.log` FAIL lines | 24 (3 phantom + 21 never-ran) | **0** |
+| `sh` jobs exiting 127 | 2654 (748+5+1901) | **0** |
+| headless case logs | 17 × 1-line stub, no test output | real output, `OVERALL: ok` (e.g. `test_instance_update` 100 lines) |
+| golden cases | silent; no log written | run, produce 10 / 1901 / 1496 result files, log `NOGOLD` |
+| end of run | aborts: `couldn't execute "xschem"` | exits 0, xschemtest recorded |
+
+`hilight_hier_oracle`, `buried_hilight` etc. were never failing — they had simply
+never run. They now pass (`OVERALL: ok`).
+
+**The suite still verifies nothing for `create_save`/`open_close`/`netlisting`**
+until someone promotes a `gold/` baseline; `results.log` now says so out loud
+instead of implying a pass.
+
+## Original fix scope (all in `tests/`, plus one doc)
 
 1. **`test_utility.tcl:24`** — resolve in order: `$env(XSCHEM)` → in-tree
    `[file dirname [info script]]/../src/xschem` → `PATH`. Must be **absolutised**

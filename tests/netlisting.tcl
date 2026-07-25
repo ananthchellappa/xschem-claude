@@ -94,7 +94,7 @@ proc plan_xschem_netlist {type output_dir dir fn} {
   # generate identical names and collide in a shared /tmp -> create_tmpdir aborts
   # (exit 1). A private parent dir makes the collision impossible. We reuse this
   # job's private -o dir; the netlist file we extract has a distinct name.
-  set cmd "mkdir -p '$workdir' && cd '$cwd/$dir' && $xschem_cmd '$fn' -q --nogui -r -$opt -o '$workdir' -n --preinit 'set XSCHEM_TMP_DIR {$workdir}' 2> '$output'; echo \$? > '$status'"
+  set cmd "mkdir -p '$workdir' && cd '$cwd/$dir' && '$xschem_cmd' '$fn' -q --nogui -r -$opt -o '$workdir' -n --preinit 'set XSCHEM_TMP_DIR {$workdir}' 2> '$output'; echo \$? > '$status'"
   lappend jobs [list $fn_debug $fn_netlist $output $workdir $status $cmd]
 }
 
