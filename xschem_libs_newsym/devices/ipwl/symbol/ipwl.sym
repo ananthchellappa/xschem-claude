@@ -20,24 +20,23 @@ v {xschem version=3.4.8RC file_version=1.2
 * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
 }
 G {}
-K {type=vsource
+K {type=isource
 format="@name @pinlist @DC PWL(@pwl )"
-template="name=V1 DC=0 pwl=\"0 0 1n 1\""
-edit_form=vpwl}
+template="name=I1 DC=0 pwl=\"0 0 1n 1m\""
+edit_form=ipwl}
 V {}
 S {}
 F {}
 E {}
-L 4 -0 -30 -0 30 {}
-L 4 -7 -19 7 -19 {}
-L 4 -7 -19 -7 19 {}
-L 4 -7 19 0 19 {}
+L 4 0 -30 0 -15 {}
+L 4 0 15 0 30 {}
 B 5 -2.5 -32.5 2.5 -27.5 {show_pinname=false name_dx=-25 name_dy=-5 name_size=0.2 name_flip=1 name=p dir=inout}
 B 5 -2.5 27.5 2.5 32.5 {show_pinname=false name_dx=-25 name_dy=-5 name_size=0.2 name_flip=1 name=m dir=inout}
 A 4 0 0 15 270 360 {}
-T {@name} 20 -18.75 0 0 0.2 0.2 {}
-T {PWL} 20 -3 0 0 0.2 0.2 {}
-T {DC=@DC} 20 9 0 0 0.15 0.15 {}
-T {@#0:net_name} 10 -28.75 0 0 0.15 0.15 {layer=15 hide=instance}
-T {@#1:net_name} 10 20 0 0 0.15 0.15 {layer=15 hide=instance}
-T {@spice_get_current} 20 -33 0 0 0.2 0.2 {layer=17}
+P 4 7 -0 -7.5 -0 2.5 2.5 2.5 -0 10 -2.5 2.5 0 2.5 -0 -7.5 {fill=true}
+T {@name} 20 -12 0 0 0.2 0.2 {}
+T {PWL} 20 3 0 0 0.15 0.15 {}
+T {DC=@DC} 20 13 0 0 0.15 0.15 {}
+T {@#0:net_name} 5 -42.5 0 0 0.15 0.15 {layer=15 hide=instance}
+T {@#1:net_name} 5 32.5 0 0 0.15 0.15 {layer=15 hide=instance}
+T {@spice_get_current} -4.375 15 0 1 0.2 0.2 {layer=17}

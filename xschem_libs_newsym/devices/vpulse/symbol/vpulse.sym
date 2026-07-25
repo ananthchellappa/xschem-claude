@@ -23,7 +23,7 @@ G {}
 K {type=vsource
 format="@name @pinlist @DC PULSE(@Vinit @Vpulse @TD @TR @TF @PW @PER )"
 template="name=V1 DC=0 Vinit=0 Vpulse=1 TD=0 TR=1n TF=1n PW=50n PER=100n"
-edit_form=vpulse::edit_form}
+edit_form=vpulse}
 V {}
 S {}
 F {}

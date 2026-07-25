@@ -1,6 +1,6 @@
-# vpwl.tcl — field customization for the devices/vpwl cell, consumed by the
-# GENERIC Edit-Properties form (slickprop). The symbol declares `edit_form=vpwl`;
-# slickprop::build_fields lazily sources this file (next to vpwl.sym) and asks it
+# ipwl.tcl — field customization for the devices/ipwl cell, consumed by the
+# GENERIC Edit-Properties form (slickprop). The symbol declares `edit_form=ipwl`;
+# slickprop::build_fields lazily sources this file (next to ipwl.sym) and asks it
 # to (a) relabel fields and (b) render the `pwl` token with a dynamic (time,value)
 # point editor instead of a plain text entry — because the number of points
 # varies. Everything else (Apply-to, Library/Cell/View, Name, DC) is the standard
@@ -13,12 +13,12 @@
 #                                    seeded from the current value string
 #   field_get   tok        -> the token's current value string (read back on apply)
 
-namespace eval vpwl {}
+namespace eval ipwl {}
 
 # --- pure helpers (headless-testable) ---------------------------------------
 
 # "t1 v1 t2 v2 ..." -> list of {time value} pairs (trailing lone token dropped).
-proc vpwl::split_pairs {pwl} {
+proc ipwl::split_pairs {pwl} {
   set toks [regexp -all -inline {\S+} $pwl]
   set pairs {}
   for {set i 0} {$i + 1 < [llength $toks]} {incr i 2} {
@@ -28,7 +28,7 @@ proc vpwl::split_pairs {pwl} {
 }
 # complete pairs from the start, stopping at the first incomplete one (the
 # grey-cascade guarantees only a filled prefix is valid — no interior gap).
-proc vpwl::prefix_pairs {pairs} {
+proc ipwl::prefix_pairs {pairs} {
   set out {}
   foreach p $pairs {
     lassign $p t v
@@ -37,19 +37,19 @@ proc vpwl::prefix_pairs {pairs} {
   }
   return $out
 }
-proc vpwl::join_pairs {pairs} {
+proc ipwl::join_pairs {pairs} {
   set out {}
-  foreach p [vpwl::prefix_pairs $pairs] { lassign $p t v; lappend out $t $v }
+  foreach p [ipwl::prefix_pairs $pairs] { lassign $p t v; lappend out $t $v }
   return [join $out { }]
 }
 
 # --- field-customization API ------------------------------------------------
 
-proc vpwl::field_labels {} { return {DC {DC Voltage}} }
-proc vpwl::field_custom {} { return {pwl} }
+proc ipwl::field_labels {} { return {DC {DC Voltage}} }
+proc ipwl::field_custom {} { return {pwl} }
 
 # read the row entry vars into an ordered {time value} list of length npts
-proc vpwl::collect_pairs {} {
+proc ipwl::collect_pairs {} {
   variable npts; variable tval; variable vval
   set n $npts
   if {![string is integer -strict $n] || $n < 2} { set n 2 }
@@ -64,7 +64,7 @@ proc vpwl::collect_pairs {} {
 }
 
 # grey-cascade: row k editable only when every earlier row is a complete pair.
-proc vpwl::refresh_cascade {} {
+proc ipwl::refresh_cascade {} {
   variable npts; variable tval; variable vval; variable ptsframe
   if {![info exists ptsframe] || ![winfo exists $ptsframe]} return
   set n $npts
@@ -86,7 +86,7 @@ proc vpwl::refresh_cascade {} {
 }
 
 # (re)build the N (time,value) rows in the points sub-frame, preserving values.
-proc vpwl::rebuild_rows {} {
+proc ipwl::rebuild_rows {} {
   variable npts; variable tval; variable vval; variable ptsframe
   if {![info exists ptsframe] || ![winfo exists $ptsframe]} return
   foreach w [winfo children $ptsframe] { destroy $w }
@@ -102,44 +102,44 @@ proc vpwl::rebuild_rows {} {
     if {![info exists tval($k)]} { set tval($k) {} }
     if {![info exists vval($k)]} { set vval($k) {} }
     label $ptsframe.l$k -text "[expr {$k + 1}]" -anchor e -width 3
-    entry $ptsframe.t$k -textvariable vpwl::tval($k) -width 12
-    entry $ptsframe.v$k -textvariable vpwl::vval($k) -width 12
+    entry $ptsframe.t$k -textvariable ipwl::tval($k) -width 12
+    entry $ptsframe.v$k -textvariable ipwl::vval($k) -width 12
     grid $ptsframe.l$k $ptsframe.t$k $ptsframe.v$k -sticky we -padx 4 -pady 1
-    bind $ptsframe.t$k <KeyRelease> vpwl::refresh_cascade
-    bind $ptsframe.v$k <KeyRelease> vpwl::refresh_cascade
+    bind $ptsframe.t$k <KeyRelease> ipwl::refresh_cascade
+    bind $ptsframe.v$k <KeyRelease> ipwl::refresh_cascade
     catch {$ptsframe.t$k configure -font slickPropValue}
     catch {$ptsframe.v$k configure -font slickPropValue}
   }
-  vpwl::refresh_cascade
+  ipwl::refresh_cascade
 }
 
-proc vpwl::on_npts {} {
+proc ipwl::on_npts {} {
   variable npts
   if {![string is integer -strict $npts] || $npts < 2} { return }
-  vpwl::rebuild_rows
+  ipwl::rebuild_rows
 }
 
 # Build the inline PWL editor into $frame, seeded from the pwl string $value.
-proc vpwl::field_build {tok frame value} {
+proc ipwl::field_build {tok frame value} {
   variable npts; variable tval; variable vval; variable ptsframe
   catch {slickprop::init_fonts}
   array unset tval; array unset vval
-  set pairs [vpwl::split_pairs $value]
+  set pairs [ipwl::split_pairs $value]
   set i 0
   foreach p $pairs { set tval($i) [lindex $p 0]; set vval($i) [lindex $p 1]; incr i }
   set npts [expr {max(2, [llength $pairs])}]
   label   $frame.lbl -text {PWL points:} -anchor w
   spinbox $frame.n -from 2 -to 999 -increment 1 -width 5 \
-    -textvariable vpwl::npts -command vpwl::rebuild_rows
-  bind $frame.n <KeyRelease> vpwl::on_npts
+    -textvariable ipwl::npts -command ipwl::rebuild_rows
+  bind $frame.n <KeyRelease> ipwl::on_npts
   grid $frame.lbl -row 0 -column 0 -sticky w -padx 4 -pady 2
   grid $frame.n   -row 0 -column 1 -sticky w -padx 4 -pady 2
   catch {$frame.lbl configure -font slickPropLabel}
   set ptsframe $frame.pts
   frame $ptsframe
   grid $ptsframe -row 1 -column 0 -columnspan 2 -sticky we -padx 2
-  vpwl::rebuild_rows
+  ipwl::rebuild_rows
 }
 
 # Read the editor back as a "t1 v1 t2 v2 ..." string (filled prefix only).
-proc vpwl::field_get {tok} { return [vpwl::join_pairs [vpwl::collect_pairs]] }
+proc ipwl::field_get {tok} { return [ipwl::join_pairs [ipwl::collect_pairs]] }
