@@ -67,6 +67,26 @@ form (seed / dynamic N / grey-cascade / apply); GUI-gated **dispatch**
 (green-but-hollow: delete the form proc, prove `slickprop::edit_form`
 lazy-sources + routes, seeded from `retval`).
 
+## The `devices/vpulse` cell (static-form example)
+
+Same hook, but the field set is FIXED — the custom form exists only to give the
+ngspice PULSE parameters friendly labels (the generic slick form would also
+render them, just labelled by raw token name).
+
+- **Symbol** (`vpulse.sym`): 2 pins, `type=vsource`,
+  `template="name=V1 DC=0 Vinit=0 Vpulse=1 TD=0 TR=1n TF=1n PW=50n PER=100n"`,
+  `format="@name @pinlist @DC PULSE(@Vinit @Vpulse @TD @TR @TF @PW @PER )"`,
+  `edit_form=vpulse::edit_form`. Netlist:
+  `V<name> p m <DC> PULSE(V1 V2 TD TR TF PW PER )` — ngspice PULSE order
+  (V1 initial, V2 pulsed, TD delay, TR rise, TF fall, PW width, PER period).
+  Every param is its own token so the whitespace-terminator rule is automatic;
+  the single space before `)` is still required.
+- **Form** (`vpulse.tcl`, namespace `vpulse`): one static grid built from a
+  `{token label}` table (`vpulse::fields`) — DC Voltage, Initial/Pulsed Value,
+  Delay/Rise/Fall Time, Pulse Width, Period. No dynamic rows, no cascade. Apply
+  writes each field with `xschem setprop instance`.
+- **Tests**: `tests/headless/test_vpulse.tcl` (18 checks).
+
 ## Adding another custom-form cell
 
 1. Author `<cell>.sym` with `edit_form=<ns>::edit_form` (+ its `format`).
