@@ -3,8 +3,9 @@
 # tests/headless/gui_gate_widget.tcl and doc/claude/specs/gui_test_gate.md).
 #
 # Source this, then:
-#   gate_start "<suite-label>"      # warn + block until the user clicks Proceed
-#                                   #   (or a Snooze timer auto-proceeds)
+#   gate_start "<suite-label>"      # warn + hold until Proceed, or until the
+#                                   #   panel's 2-minute auto-start countdown
+#                                   #   expires (GUI_GATE_AUTOSTART seconds)
 #   gate_pause_point "<i/N test>"   # call BETWEEN atomic tests; holds while the
 #                                   #   panel is Paused; returns 2 on Stop
 #   gate_finish                     # clean this suite's status/request files
@@ -16,7 +17,8 @@
 #   * The control dir is under $HOME (not the repo), so the SAME panel governs
 #     the main session and every worktree/subagent test run.
 #   * FAIL OPEN: no DISPLAY, GUI_GATE=0, or a dead/again-unlaunchable panel
-#     never blocks testing — the suite just runs.
+#     never blocks testing — the suite just runs. Nor does an unattended desk:
+#     the panel auto-starts a waiting suite after 2 minutes.
 #
 # Disable entirely:  export GUI_GATE=0
 

@@ -31,19 +31,22 @@ because the hook was simply gone).
 
 - `widget.pid` — panel liveness / singleton lock.
 - `req/<pid>` — a suite drops this at start and BLOCKS until it is removed.
-  Proceed removes all; a Snooze timer removes them on expiry (auto-proceed);
-  Stop removes them so blocked suites can exit.
+  Proceed removes all; the auto-start countdown and Snooze remove them on
+  expiry; Stop removes them so blocked suites can exit.
 - `control` — `RUN` | `PAUSE` | `STOP`, read by suites at each between-test
   pause point. Written by the panel's Pause/Resume toggle and Stop.
 - `status/<pid>` — live "which suite / which test" line the panel displays.
-- `snooze_until` — epoch; while set, the panel shows a countdown and
-  auto-proceeds at expiry.
+- `snooze_until` — epoch deadline; while set, the panel shows a countdown and
+  auto-proceeds at expiry. One deadline serves BOTH the default auto-start
+  countdown and a user Snooze (they differ only in length and wording), which
+  is why the file keeps its original name.
 
 ## Shell API (`gui_gate.sh`)
 
-- `gate_start "<label>"` — ensure the panel, drop a go-ahead request, block
-  until Proceed / snooze-expiry. Returns 2 if Stop was pressed while waiting.
-  **Warns before EVERY suite** (user choice): each suite re-arms a request.
+- `gate_start "<label>"` — ensure the panel, drop a go-ahead request, hold
+  until Proceed or countdown expiry. Returns 2 if Stop was pressed while
+  waiting. **Warns before EVERY suite** (user choice): each suite re-arms a
+  request.
 - `gate_pause_point "<status>"` — call BETWEEN atomic tests: writes status,
   holds while `control==PAUSE` (the in-flight test always finishes first),
   returns 2 on `STOP`.
@@ -53,6 +56,15 @@ because the hook was simply gone).
 
 - Top: warning listing suites waiting for go-ahead + **Proceed** /
   **Snooze 5m/15m/30m** (timed, auto-proceed).
+- **Auto-start countdown (v2, 2026-07-25).** A waiting suite arms a 2-minute
+  deadline and then runs by itself; `GUI_GATE_AUTOSTART=<seconds>` overrides,
+  `0` disables (restoring v1's block-until-clicked behaviour). The gate exists
+  to warn a user who is AT the desk — v1 stranded every suite indefinitely when
+  nobody was there to click, which is the opposite of "fails open". Snooze
+  re-arms the same deadline further out. **Pause freezes it** (the countdown
+  stops advancing while `control==PAUSE`) — that is the explicit "I am here,
+  hold off"; the Resume button clears the deadline so the countdown restarts at
+  full length instead of firing the instant you un-pause.
 - Persistent controls: a single **Pause/Resume toggle** (label + colour flip
   with `control` state) + **Stop suite**. Live "Running suites" readout.
 - Closing the panel (window-manager close) is "get out of the way": it

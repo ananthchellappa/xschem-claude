@@ -8,12 +8,19 @@
 # governs them all:
 #
 #   $GATE_DIR/req/<pid>      a suite dropped this on start and is BLOCKED until
-#                            it is removed (Proceed removes all; Snooze removes
-#                            them when the timer expires -> auto-proceed).
+#                            it is removed (Proceed removes all; the auto-start
+#                            countdown and Snooze remove them on expiry).
 #   $GATE_DIR/control        RUN | PAUSE | STOP — running suites read this at
 #                            each between-test pause point.
 #   $GATE_DIR/status/<pid>   "<suite> | <i>/<N> <testname>" live status line.
 #   $GATE_DIR/widget.pid     this process's pid (liveness / singleton lock).
+#
+# The gate ASKS but never blocks forever: a waiting suite arms a 2-minute
+# auto-start countdown ($GUI_GATE_AUTOSTART seconds overrides; 0 disables) and
+# runs when it expires. The panel is here to warn the user who is AT the desk,
+# not to strand a suite behind a dialog nobody is there to click. Snooze pushes
+# the deadline out; Pause freezes it — an explicit "I am here, hold off" — and
+# is also how you stop the flood once a suite is running.
 #
 # The shell side FAILS OPEN if this process dies, so a crashed panel never
 # blocks testing forever. Design: doc/claude/specs/gui_test_gate.md.
@@ -24,6 +31,13 @@ set GATE_DIR [lindex $argv 0]
 if {$GATE_DIR eq ""} { set GATE_DIR [file join $env(HOME) .claude gui_test_gate] }
 file mkdir [file join $GATE_DIR req]
 file mkdir [file join $GATE_DIR status]
+
+# seconds a suite waits before it starts by itself (0 disables auto-start)
+set AUTOSTART_SECS 120
+if {[info exists env(GUI_GATE_AUTOSTART)]
+    && [string is integer -strict $env(GUI_GATE_AUTOSTART)]} {
+  set AUTOSTART_SECS $env(GUI_GATE_AUTOSTART)
+}
 
 set CONTROL   [file join $GATE_DIR control]
 set REQDIR    [file join $GATE_DIR req]
@@ -47,18 +61,28 @@ proc write_control {v} {
 }
 if {![file exists $CONTROL]} { write_control RUN }
 
-# snooze bookkeeping (epoch seconds; 0 = not snoozed)
-set ::snooze_until 0
-proc set_snooze {mins} {
+# Auto-proceed deadline (epoch seconds; 0 = none armed). ONE deadline serves
+# both the default auto-start countdown and a user Snooze -- they differ only in
+# length and in what the panel says, so a Snooze simply re-arms it further out.
+# The file keeps its `snooze_until` name for compatibility with the spec.
+set ::deadline      0
+set ::deadline_kind {}      ;# auto | snooze
+proc arm_deadline {secs kind} {
   global SNOOZE
-  set until [expr {[clock seconds] + $mins*60}]
-  set ::snooze_until $until
+  set until [expr {[clock seconds] + $secs}]
+  set ::deadline $until
+  set ::deadline_kind $kind
   set fp [open $SNOOZE w]; puts -nonewline $fp $until; close $fp
 }
-proc clear_snooze {} {
+proc clear_deadline {} {
   global SNOOZE
-  set ::snooze_until 0
+  set ::deadline 0
+  set ::deadline_kind {}
   catch {file delete $SNOOZE}
+}
+proc fmt_left {secs} {
+  if {$secs < 0} { set secs 0 }
+  return "[expr {$secs/60}]m [format %02d [expr {$secs%60}]]s"
 }
 
 # ---- widgets -------------------------------------------------------------
@@ -114,15 +138,17 @@ proc pending_reqs {} {
 }
 proc do_proceed {} {
   global REQDIR
-  clear_snooze
+  clear_deadline
   foreach r [pending_reqs] { catch {file delete [file join $REQDIR $r]} }
 }
 proc do_snooze {mins} {
-  set_snooze $mins
+  arm_deadline [expr {$mins*60}] snooze
 }
 proc do_toggle_pause {} {
   if {[read_control] eq "PAUSE"} {
-    write_control RUN; clear_snooze
+    # Resume: drop the frozen deadline so the countdown restarts from full
+    # length rather than firing the instant the user un-pauses.
+    write_control RUN; clear_deadline
   } else {
     write_control PAUSE
   }
@@ -144,28 +170,49 @@ proc req_label {r} {
   return $txt
 }
 proc refresh {} {
-  global STATUSDIR REQDIR
+  global STATUSDIR REQDIR AUTOSTART_SECS
   set reqs [pending_reqs]
   set nctrl [read_control]
+  set now [clock seconds]
 
-  # auto-proceed when a snooze expires
-  if {$::snooze_until > 0 && [clock seconds] >= $::snooze_until} {
+  if {[llength $reqs] == 0} {
+    # nothing waiting -> nothing to count down to
+    if {$::deadline > 0} { clear_deadline }
+  } elseif {$::deadline == 0 && $AUTOSTART_SECS > 0} {
+    # a suite is waiting and no deadline is armed -> start the countdown
+    arm_deadline $AUTOSTART_SECS auto
+  }
+
+  # PAUSE freezes the countdown: the user is demonstrably at the desk, so push
+  # the deadline forward by the elapsed tick instead of letting it run out.
+  if {$::deadline > 0 && $nctrl eq "PAUSE"} {
+    if {[info exists ::last_tick]} { incr ::deadline [expr {$now - $::last_tick}] }
+  }
+  set ::last_tick $now
+
+  # auto-proceed when the countdown (default or snoozed) expires
+  if {$::deadline > 0 && $now >= $::deadline} {
     do_proceed
     set reqs {}
   }
 
   # top message + go-button state
   if {[llength $reqs] > 0} {
-    if {$::snooze_until > 0} {
-      set left [expr {$::snooze_until - [clock seconds]}]
-      if {$left < 0} { set left 0 }
-      .top.msg configure -fg #ffd27f -text \
-        "[llength $reqs] suite(s) waiting — SNOOZED, auto-proceed in [expr {$left/60}]m [expr {$left%60}]s.\nClick Proceed to start now."
-    } else {
-      set names {}
-      foreach r $reqs { lappend names [req_label $r] }
+    set names {}
+    foreach r $reqs { lappend names [req_label $r] }
+    set who "[llength $reqs] suite(s) want to run:\n  [join $names "\n  "]"
+    if {$nctrl eq "PAUSE"} {
+      .top.msg configure -fg #90caf9 -text \
+        "$who\nHELD — countdown frozen while Paused. Resume to restart it, or Proceed to start now."
+    } elseif {$::deadline == 0} {
       .top.msg configure -fg #ff8a80 -text \
-        "[llength $reqs] suite(s) want to run:\n  [join $names "\n  "]\nProceed to allow, or Snooze to keep your PC free."
+        "$who\nProceed to allow, or Snooze to keep your PC free."
+    } elseif {$::deadline_kind eq "snooze"} {
+      .top.msg configure -fg #ffd27f -text \
+        "$who\nSNOOZED — starts by itself in [fmt_left [expr {$::deadline - $now}]].\nProceed to start now, Pause to hold."
+    } else {
+      .top.msg configure -fg #ff8a80 -text \
+        "$who\nSTARTING BY ITSELF in [fmt_left [expr {$::deadline - $now}]] — Proceed to start now, Snooze to defer, Pause to hold."
     }
     .go.proceed configure -state normal
     .go.s5  configure -state normal
@@ -221,7 +268,7 @@ proc on_close {} {
   # closing the panel must never wedge blocked suites: release every
   # go-ahead request and set RUN so paused suites resume, then exit. (Closing
   # is "get out of the way", NOT "abort the suite" — that is the Stop button.)
-  clear_snooze
+  clear_deadline
   write_control RUN
   foreach r [pending_reqs] { catch {file delete [file join $REQDIR $r]} }
   catch {file delete $PIDFILE}
