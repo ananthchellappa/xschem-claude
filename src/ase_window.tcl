@@ -473,10 +473,16 @@ proc ase::ui::build {key top} {
     -state disabled
   $top.mb.results add cascade -label Annotate -menu $top.mb.results.annotate
 
-  # Tools: deferred entirely -> disabled menubar entry
+  # Tools: Waveform Viewer raises-or-opens THE waveform viewer of THIS session
+  # — wviewer::open is per-token idempotent (re-open arm raises the existing
+  # toplevel), so a session never gets a second viewer window; same seam the
+  # `~` strip button and Direct Plot use. Calculator is a named placeholder
+  # (disabled) until it exists, like the Results > Annotate entries.
   menu $top.mb.tools -tearoff 0
-  $top.mb.tools add command -label {(deferred)} -state disabled
-  $top.mb add cascade -label Tools -menu $top.mb.tools -state disabled
+  $top.mb add cascade -label Tools -menu $top.mb.tools
+  $top.mb.tools add command -label {Waveform Viewer} \
+    -command [list ase::ui::open_viewer $key]
+  $top.mb.tools add command -label Calculator -state disabled
 
   # toolbar row under the menubar: the simulation-temperature entry (state
   # key `temperature`, commit-validated numeric -> `.temp <T>` in the deck)

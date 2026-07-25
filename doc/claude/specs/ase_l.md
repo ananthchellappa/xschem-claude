@@ -278,7 +278,10 @@ identical re-queue writes nothing.
 - **Results** — Direct Plot (DEFERRED: command mode, click signals on
   schematic, queue, ESC → plot); Annotate > Operating Point info (DEFERRED);
   Annotate > DC Node Voltages (DEFERRED). Menu entries may exist disabled.
-- **Tools** — deferred entirely.
+- **Tools** — Waveform Viewer (raise-or-open THE waveform viewer bound to
+  this ASE-L session — `wviewer::open` is per-token idempotent, so a session
+  never gets two viewer windows; same seam as the `~` strip button);
+  Calculator (placeholder, disabled until it exists).
 
 ### Log window (not a pane)
 Kicking off a run opens a NEW toplevel showing the live log (existing

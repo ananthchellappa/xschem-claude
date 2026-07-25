@@ -25,7 +25,9 @@
 #          segment + `.temp` in the deck + the id row's Value cell filled
 #          from the parsed results; Run (existing netlist) must NOT
 #          re-netlist (hand-edit sentinel proof); log-window Ctrl-W close +
-#          Simulation > Log reopen; Stop (status red); Close. Legs needing
+#          Simulation > Log reopen; Stop (status red); W7v Tools > Waveform
+#          Viewer (opens this session's viewer, second invoke raises the same
+#          one, disabled Calculator is inert); Close. Legs needing
 #          the MAIN window (W4-W7) self-SKIP when WSLg never maps it to a
 #          usable size; the W4 raise assertion also self-SKIPs when WSLg
 #          drops every re-map (stackorder stall); run legs self-SKIP
@@ -65,6 +67,15 @@ proc find_titled_toplevel {title} {
     if {![catch {wm title $w} t] && $t eq $title} { return $w }
   }
   return {}
+}
+
+# every toplevel under . (viewer windows included), sorted
+proc toplevel_names {} {
+  set out {}
+  foreach w [winfo children .] {
+    if {[winfo class $w] eq {Toplevel}} { lappend out $w }
+  }
+  return [lsort $out]
 }
 
 # all .ase* session toplevels
@@ -401,9 +412,11 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     [$top.tb.temp cget -background] eq {#ffffff} &&
     [$top.tb.temp cget -font] eq {AseEntryFont}}]
 
-  # W1m: menu tree v2 — the 9 cascades in order; Launch/Tools disabled;
-  # Results > Direct Plot LIVE since item 13 (wired to ase::ui::direct_plot);
-  # the Annotate entries stay disabled; the Simulation tree; no Revert
+  # W1m: menu tree v2 — the 9 cascades in order; Launch disabled; Tools LIVE
+  # (Waveform Viewer wired to ase::ui::open_viewer, Calculator a disabled
+  # placeholder); Results > Direct Plot LIVE since item 13 (wired to
+  # ase::ui::direct_plot); the Annotate entries stay disabled; the Simulation
+  # tree; no Revert
   set mlabels {}
   for {set i 0} {$i <= [$top.mb index end]} {incr i} {
     lappend mlabels [$top.mb entrycget $i -label]
@@ -411,7 +424,20 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   check "W1m menubar cascades in order" $mlabels \
     {Launch Session Setup Analyses Variables Outputs Simulation Results Tools}
   check "W1m Launch cascade disabled" [$top.mb entrycget Launch -state] disabled
-  check "W1m Tools cascade disabled" [$top.mb entrycget Tools -state] disabled
+  check_true "W1m Tools cascade NOT disabled" \
+    [expr {[$top.mb entrycget Tools -state] ne {disabled}}]
+  set tlabels {}
+  for {set i 0} {$i <= [$top.mb.tools index end]} {incr i} {
+    lappend tlabels [$top.mb.tools entrycget $i -label]
+  }
+  check "W1m Tools menu entries" $tlabels {{Waveform Viewer} Calculator}
+  check_true "W1m Tools Waveform Viewer NOT disabled" \
+    [expr {[$top.mb.tools entrycget {Waveform Viewer} -state] ne {disabled}}]
+  check "W1m Tools Waveform Viewer command" \
+    [$top.mb.tools entrycget {Waveform Viewer} -command] \
+    [list ase::ui::open_viewer $key]
+  check "W1m Tools Calculator disabled (placeholder)" \
+    [$top.mb.tools entrycget Calculator -state] disabled
   check_true "W1m Results Direct Plot NOT disabled (item 13: live)" \
     [expr {[$top.mb.results entrycget {Direct Plot} -state] ne {disabled}}]
   check_true "W1m Results Direct Plot has a command" \
@@ -968,6 +994,35 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
       ase::ui::revert_state $key
       check "W7 revert leaves the session clean" [ase::session_dirty $key] 0
     }
+  }
+
+  # W7v: Tools > Waveform Viewer opens THIS session's viewer; invoking it a
+  # second time raises the SAME window (one viewer per ASE-L instance, the
+  # wviewer::open re-open arm). Calculator is a disabled placeholder — Tk's
+  # `invoke` on a disabled entry is a no-op, so it can never open anything.
+  $top.mb.tools invoke {Waveform Viewer}
+  update
+  set vtop [wviewer::window_for $key]
+  # NOT a self-SKIP: wviewer::open registers the toplevel synchronously (the
+  # C load_new_window returns built), so an empty registry here means the menu
+  # entry did not open a viewer — a product failure, not a WSLg mapping flake.
+  check_true "W7v Tools > Waveform Viewer opened a viewer toplevel" \
+    [expr {$vtop ne {} && [winfo exists $vtop]}]
+  if {$vtop ne {} && [winfo exists $vtop]} {
+    check "W7v the viewer is a toplevel" [winfo class $vtop] Toplevel
+    set tls [toplevel_names]
+    $top.mb.tools invoke {Waveform Viewer}
+    update
+    check "W7v second invoke raises the SAME viewer" \
+      [wviewer::window_for $key] $vtop
+    check "W7v no second viewer window" [toplevel_names] $tls
+    check "W7v disabled Calculator invoke does not throw" \
+      [catch {$top.mb.tools invoke Calculator}] 0
+    update
+    check "W7v Calculator opened nothing" [toplevel_names] $tls
+    wviewer::close $key
+    update
+    check "W7v viewer closed, registry clean" [wviewer::window_for $key] {}
   }
 
   # W8: Session > Close destroys the window and unregisters the session
