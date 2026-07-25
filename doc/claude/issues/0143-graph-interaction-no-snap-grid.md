@@ -1,0 +1,54 @@
+# 0143 — Snap grid must not apply to graphs (box-zoom snapped to grid steps)
+
+**Status:** FIXED (not pushed)
+**Branch:** fluid-editing
+**Area:** shared graph interaction engine `waves_callback` (`src/callback.c`).
+Follow-on to issue 0142 (graph RMB XY box-zoom).
+**Reported by:** user, 2026-07-25 ("Concept of snap grid does not apply to graph
+windows. Remove that restriction on the zoom rectangle in the graph window").
+**Test:** `tests/headless/test_graph_box_zoom_xy.tcl` (Part 2 unsnap legs).
+
+## Symptom
+
+The RMB box-zoom rectangle (and, generally, all graph pan/zoom) used the
+schematic-grid-**snapped** pointer, so the zoom box could only be dragged to
+grid points — a fine sub-region could not be selected. The snap grid is a
+schematic drawing concept; it has no meaning inside a graph.
+
+## Root cause
+
+`callback()` computes `xctx->mousex_snap = round(mousex / cadsnap) * cadsnap`
+(`src/callback.c:7631`) for every event, and `waves_callback` read
+`mousex_snap`/`mousey_snap` in ~29 places (box-zoom corners, pan deltas, region
+detection). So graph interaction inherited the schematic grid quantization.
+
+## Fix
+
+One override at the top of `waves_callback` (`src/callback.c`):
+
+```c
+xctx->mousex_snap = xctx->mousex;
+xctx->mousey_snap = xctx->mousey;
+```
+
+`waves_callback` only ever mutates graph tokens / cursors — never schematic
+geometry — and `callback()` returns immediately after this handler (the next
+event recomputes the snap), so unsnapping here is safe and does not leak into
+schematic editing. This unsnaps ALL graph interaction (box-zoom rectangle, pan,
+region detection, cursor grab) in one place, matching the user's principle,
+rather than swapping 29 call sites.
+
+## Verification
+
+- `test_graph_box_zoom_xy.tcl` Part 2: with `cadsnap` set LARGER than the whole
+  drag, a snapped pointer would collapse press==release (no zoom); the test
+  asserts the box-zoom still zooms X and Y. RED before this fix (2 FAIL — snapped
+  to one point), GREEN after (7/7 total).
+- No regressions: `test_wave_viewer` 213, `test_ase_plot` 124, `test_ase_window`
+  155, `test_ase_dialogs` 133.
+
+## Files
+
+- `src/callback.c` — `waves_callback` entry unsnap.
+- `tests/headless/test_graph_box_zoom_xy.tcl` — Part 2 unsnap legs.
+- `doc/claude/specs/waveform_viewer.md`, `.../waveform_subsystem_reference.md`.

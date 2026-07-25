@@ -104,6 +104,31 @@ if {[catch {
      [expr {$ny1 != $oy1 || $ny2 != $oy2}]
    check_true "Y zoomed in (new Y range inside old)" \
      [expr {$nylo >= $oylo - 1e-9 && $nyhi <= $oyhi + 1e-9 && ($nyhi-$nylo) < ($oyhi-$oylo)}]
+
+   # --- unsnap (issue 0143): the schematic snap grid must NOT apply in a graph.
+   # With a snap step LARGER than the whole drag, a *snapped* pointer collapses
+   # press==release -> no zoom; an *unsnapped* pointer still zooms. RED before
+   # the unsnap fix, GREEN after. ---
+   set save_snap $::cadsnap
+   set ::cadsnap 100000
+   xschem load [file join $repo xschem_library examples test_ne555.sch]
+   xschem zoom_full
+   update
+   set ux1 [gtok x1]; set ux2 [gtok x2]; set uy1 [gtok y1]; set uy2 [gtok y2]
+   lassign [screen $p1x $p1y] s1x s1y
+   lassign [screen [expr {($p1x+$p2x)/2}] [expr {($p1y+$p2y)/2}]] smx smy
+   lassign [screen $p2x $p2y] s2x s2y
+   xschem callback .drw $BP     $s1x $s1y 0 3 0 $C
+   xschem callback .drw $MOTION $smx $smy 0 0 0 $CM
+   xschem callback .drw $MOTION $s2x $s2y 0 0 0 $CM
+   xschem callback .drw $BR     $s2x $s2y 0 3 0 $CM
+   update
+   set vx1 [gtok x1]; set vx2 [gtok x2]; set vy1 [gtok y1]; set vy2 [gtok y2]
+   set ::cadsnap $save_snap
+   check_true "unsnap: X still zooms with a snap grid bigger than the drag" \
+     [expr {$vx1 != $ux1 || $vx2 != $ux2}]
+   check_true "unsnap: Y still zooms with a snap grid bigger than the drag" \
+     [expr {$vy1 != $uy1 || $vy2 != $uy2}]
  }
 
 } bigerr]} {

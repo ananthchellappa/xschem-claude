@@ -554,6 +554,16 @@ static int waves_callback(int event, int mx, int my, KeySym key, int button, int
 
   dbg(1, "uistate=%d, graph_flags=%d\n", xctx->ui_state, xctx->graph_flags);
   /* if(event != -3 && !xctx->raw) return 0; */
+  /* The snap grid is a schematic concept and does not apply to graphs (issue
+   * 0143 — user: "snap grid does not apply to graph windows"). Override the
+   * snapped pointer with the raw one for ALL graph interaction (box-zoom
+   * rectangle, pan, region detection, cursors) so a drag can select any
+   * sub-region, not grid steps. waves_callback only ever mutates graph tokens /
+   * cursors, never schematic geometry, and callback() returns right after this
+   * handler (the next event recomputes the snap), so this override is safe and
+   * does not leak into schematic editing. */
+  xctx->mousex_snap = xctx->mousex;
+  xctx->mousey_snap = xctx->mousey;
   rstate = state; /* rstate does not have ShiftMask bit, so easier to test for KeyPress events */
   rstate &= ~ShiftMask; /* don't use ShiftMask, identifying characters is sufficient */
   #if HAS_CAIRO==1

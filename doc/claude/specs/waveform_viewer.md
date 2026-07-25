@@ -234,7 +234,10 @@ and the input-binding table already do everything the RMB path needs).
   master graph. Dragging on the **left Y-axis margin** stays a Y-only zoom;
   Shift still inverts to zoom-out. (Previously the interior drag narrowed only
   x1/x2 and drew no rectangle.) All in shared C `waves_callback`, so on-canvas
-  schematic graphs get it too.
+  schematic graphs get it too. **No snap grid in graphs (issue 0143):**
+  `waves_callback` overrides `mousex_snap`/`mousey_snap` with the raw pointer at
+  entry, so the box-zoom (and pan/cursors) select any sub-region, not grid
+  steps — the schematic snap grid is a schematic-only concept.
 - **`f` / `Z` / `Ctrl-z` (D4)** are intercepted in `key_filter` (KeyPress only;
   the matching KeyRelease is swallowed) BEFORE the forward: `f`→`wviewer::fit`
   (fit is the only path that fits BOTH x and y), `Z`→`graph_zoom in`,
