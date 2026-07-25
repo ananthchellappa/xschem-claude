@@ -331,7 +331,8 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
   them** (see backlog #1, #5, #6).
 - Scripting seams (pure, headless-testable): `add_trace` (~858, returns error
   string, never throws), `display_raw` (~735), `graph_props`/`band_geometry`/
-  `next_color`/`interp_value`, `wheel_zoom` (issue 0144 zoom worker: X on every
+  `next_color`/`interp_value`, `zoom_about` (0146 anchor-preserving range scale),
+  `wheel_zoom` (issue 0144 zoom worker: X on every
   strip, Y only on the pointed strip — the seam tests drive instead of the
   gesture). **All four zoom affordances route through it:** `wheel`'s ctrl arm and
   `graph_zoom` (View-menu Zoom In/Out + `Z`/`Ctrl-z`, issue 0145) only resolve the
@@ -352,6 +353,11 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
   `xschem raw_clear` (~8740) / `xschem raw_read_from_attr` (~8794).
   **`raw read $file $sim_type`: omit `sim_type` entirely when empty** (absent
   arg ≠ empty arg in the C handler).
+- `xschem graph_coord <graph_idx> <screen_x> <screen_y>` (`xschem_cmds_g`) — data-space
+  `{dx dy}` under a canvas pixel for a graph rect: pixel -> `X_TO_XSCHEM` -> `G_X`/`G_Y`,
+  so callers get the plot-box (14% margin) transform without mirroring it in Tcl. Uses a
+  LOCAL `Graph_ctx` (landmine 11); `{}` on a bad index / non-graph rect. Added for the
+  viewer's pointer-anchored zoom (issue 0146); partially covers backlog #7.
 - `xschem add_graph` (~1887, sets `graph_lastsel`), `xschem draw_graph <i>`,
   `xschem get graph_lastsel` (~3772), `xschem cursor <which> <on>` (~2689),
   `xschem annotate_op`, `xschem embed_rawfile`.
@@ -468,7 +474,9 @@ Effort: S=hours, M=days, L=weeks. Impact in caps.
 6. **[M · MED] Propagate RPN eval errors** out of `raw_add_vector`/
    `plot_raw_custom_data` (`save.c` ~971/1821) through `xschem raw add`. Lets
    `wave_viewer.tcl validate_rpn` (~600) be deleted.
-7. **[M · HIGH] Graph coordinate / legend hit-test verb** — extend
+7. **[M · HIGH] Graph coordinate / legend hit-test verb** *(PARTIAL: `xschem
+   graph_coord` now returns data coords for a pixel, issue 0146; the rect-bbox
+   read-back + legend hit-test that would delete `graphbb` are still open.)* — extend
    `xschem object rect` (or add `xschem graph bbox`/`graph hit`) to return
    `x1/y1/x2/y2` + legend-entry hit, reusing `edit_wave_attributes`
    (`draw.c` ~4129) / `setup_graph_data`. Eliminates `graphbb` (~103) and

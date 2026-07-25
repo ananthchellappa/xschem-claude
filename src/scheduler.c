@@ -4837,6 +4837,44 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
       #endif
       Tcl_ResetResult(interp);
     }
+
+    /* graph_coord <graph_idx> <screen_x> <screen_y>
+     * Data-space coordinates `<dx> <dy>` of a CANVAS PIXEL inside graph
+     * <graph_idx> (a layer-2 rect with flags&1). The inverse of the draw
+     * transform: pixel -> xschem (X_TO_XSCHEM) -> graph data (G_X/G_Y), so it
+     * accounts for the plot box's 14% margins that only setup_graph_data knows.
+     * Added for the ASE viewer's POINTER-ANCHORED zoom (issue 0146): Tcl must not
+     * re-derive the margin math (the documented mirror/desync trap, see
+     * doc/claude/code_analysis/waveform_subsystem_reference.md §8).
+     * Returns {} for a bad index / non-graph rect, so callers can fall back.
+     * Uses a LOCAL Graph_ctx: never clobber xctx->graph_struct, which an active
+     * draw_graph may be using (landmine 11 in the same reference). */
+    else if(!strcmp(argv[1], "graph_coord"))
+    {
+      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      Tcl_ResetResult(interp);
+      if(argc > 4) {
+        i = atoi(argv[2]);
+        if(i >= 0 && i < xctx->rects[GRIDLAYER] && (xctx->rect[GRIDLAYER][i].flags & 1)) {
+          char res[100];
+          Graph_ctx gr_ctx;
+          Graph_ctx *gr = &gr_ctx;
+          double xx = X_TO_XSCHEM(atof(argv[3]));
+          double yy = Y_TO_XSCHEM(atof(argv[4]));
+          /* setup_graph_data() RETURNS EARLY for an off-screen graph (draw.c, the
+           * RECT_OUTSIDE test) WITHOUT computing the cx/dx/cy/dy transform, so
+           * zero it first and treat a still-zero scale as "no transform": G_X/G_Y
+           * divide by cx/cy, which would otherwise be a garbage/inf anchor. Empty
+           * result -> the caller zooms about centre instead. */
+          memset(&gr_ctx, 0, sizeof(gr_ctx));
+          setup_graph_data(i, 0, gr);
+          if(gr->cx != 0.0 && gr->cy != 0.0) {
+            my_snprintf(res, S(res), "%.16g %.16g", G_X(xx), G_Y(yy));
+            Tcl_SetResult(interp, res, TCL_VOLATILE); /* copies: stack buf is fine */
+          }
+        }
+      }
+    }
     else { *cmd_found = 0;}
   return TCL_OK;
 }

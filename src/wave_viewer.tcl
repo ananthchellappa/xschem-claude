@@ -1214,6 +1214,18 @@ proc wviewer::apply_range {token gi x1 x2 y1 y2} {
   return 1
 }
 
+# Scale the range [lo,hi] by factor `f` keeping the data coordinate `a` at the
+# SAME relative position — the point under the cursor does not move (issue 0146).
+# `a` empty or outside [lo,hi] falls back to / clamps to the range, so an anchor
+# in a plot margin pins the nearest edge instead of flinging the window. Pure:
+# returns the new {lo hi}. Zoom-about-centre is just a == the midpoint.
+proc wviewer::zoom_about {lo hi a f} {
+  if {$a eq {} || ![string is double -strict $a]} {
+    set a [expr {($lo + $hi) / 2.0}]
+  } elseif {$a < $lo} { set a $lo } elseif {$a > $hi} { set a $hi }
+  return [list [expr {$a - ($a - $lo) * $f}] [expr {$a + ($hi - $a) * $f}]]
+}
+
 # Ctrl+wheel zoom (D1, REVISED by issue 0144 — was X-only on the pointed graph).
 # Zoom about center by 0.8 (in) / 1/0.8 (out): the X window on EVERY graph, so
 # the stacked strips stay time-aligned; the Y window ONLY on graph `gi`, the
@@ -1228,12 +1240,35 @@ proc wviewer::apply_range {token gi x1 x2 y1 y2} {
 # consistent under sharedx 0 and 1. Separate from `wviewer::wheel` as the
 # synchronous-write seam tests drive directly (item-17 lesson).
 # Returns 1 when anything was written, else 0.
-proc wviewer::wheel_zoom {token dir gi} {
+proc wviewer::wheel_zoom {token dir gi {px {}} {py {}}} {
   variable windows
   if {![dict exists $windows $token]} { return 0 }
   set gs [dict get [wviewer::layout_for $token] graphs]
   set n [llength $gs]
   set f [expr {($dir eq {up} || $dir eq {in}) ? 0.8 : 1 / 0.8}]
+  # ANCHOR (issue 0146): the data point under the pointer must stay put, like the
+  # schematic's view_zoom. `graph_coord` (C) inverts the draw transform for the
+  # POINTED strip — Tcl must not re-derive the plot box's margins. The x anchor
+  # (a time) is reused by every strip: they share the axis, so anchoring them all
+  # at the cursor's time keeps the stack aligned AND pinned under the cursor.
+  # Anything unavailable (no pixel given — e.g. the View menu — bad index, refused
+  # ctx switch, non-numeric) falls back to that axis's CENTRE.
+  set anx {} ; set any {}
+  if {$px ne {} && $py ne {} && [wviewer::switch_ctx $token]} {
+    set a {}
+    catch {set a [xschem graph_coord $gi $px $py]}
+    if {[llength $a] == 2} {
+      lassign $a a0 a1
+      # finite only: `string is double` ACCEPTS Inf/NaN, and a non-finite anchor
+      # would clamp to an edge instead of falling back to centre. The C verb
+      # already refuses an untransformed (off-screen) graph — this is the
+      # belt-and-braces check on the value crossing the C->Tcl boundary.
+      foreach {v_ n_} [list $a0 anx $a1 any] {
+        if {[string is double -strict $v_] && ![string match -nocase {*inf*} $v_]
+            && ![string match -nocase {*nan*} $v_]} { set $n_ $v_ }
+      }
+    }
+  }
   set changed 0
   for {set t 0} {$t < $n} {incr t} {
     lassign [wviewer::graph_range $token $t] ax1 ax2 ay1 ay2
@@ -1243,17 +1278,15 @@ proc wviewer::wheel_zoom {token dir gi} {
       if {$v ne {}} { dict set G $k $v }
     }
     if {$ax1 ne {} && $ax2 ne {}} {
-      set span [expr {($ax2 - $ax1) * $f}]
-      set c    [expr {($ax1 + $ax2) / 2.0}]
-      dict set G x1 [expr {$c - $span / 2.0}]
-      dict set G x2 [expr {$c + $span / 2.0}]
+      lassign [wviewer::zoom_about $ax1 $ax2 $anx $f] nx1 nx2
+      dict set G x1 $nx1
+      dict set G x2 $nx2
       set changed 1
     }
     if {$t == $gi && $ay1 ne {} && $ay2 ne {}} {
-      set span [expr {($ay2 - $ay1) * $f}]
-      set c    [expr {($ay1 + $ay2) / 2.0}]
-      dict set G y1 [expr {$c - $span / 2.0}]
-      dict set G y2 [expr {$c + $span / 2.0}]
+      lassign [wviewer::zoom_about $ay1 $ay2 $any $f] ny1 ny2
+      dict set G y1 $ny1
+      dict set G y2 $ny2
       set changed 1
     }
     set gs [lreplace $gs $t $t $G]
@@ -1274,7 +1307,7 @@ proc wviewer::wheel_zoom {token dir gi} {
 # Acts on the pointed graph (graph_at_pointer). Reads the concrete range, applies
 # the delta, freezes ALL FOUR (D7). A `{}` target axis (nothing to pan/zoom) is
 # a no-op.
-proc wviewer::wheel {token wp dir mods} {
+proc wviewer::wheel {token wp dir mods {px {}} {py {}}} {
   variable windows
   if {![dict exists $windows $token]} { return }
   set gi [wviewer::graph_at_pointer $wp]
@@ -1288,8 +1321,9 @@ proc wviewer::wheel {token wp dir mods} {
       set x2 [expr {$x2 + $d}]
     }
     ctrl {
-      # X on every graph + Y on the pointed one; writes + regenerates itself
-      wviewer::wheel_zoom $token $dir $gi
+      # X on every graph + Y on the pointed one, anchored at the pointer pixel
+      # (0146); writes + regenerates itself
+      wviewer::wheel_zoom $token $dir $gi $px $py
       return
     }
     default {
@@ -1311,22 +1345,26 @@ proc wviewer::wheel {token wp dir mods} {
 # keys, and for the menu it is the LAST strip the pointer was over (the click
 # leaves the canvas but mousex_snap keeps the last canvas position; it falls back
 # to strip 0 when the pointer was never over one). An explicit `gi` names the Y
-# target directly (scripting/tests). Returns wheel_zoom's changed flag.
-proc wviewer::graph_zoom {token dir {gi all}} {
+# target directly (scripting/tests). `px`/`py` (canvas pixels) anchor the zoom at
+# the pointer (0146) — the Z / Ctrl-z keys pass the KeyPress %x/%y; the View menu
+# passes none (its click is off-canvas), so it zooms about centre.
+# Returns wheel_zoom's changed flag.
+proc wviewer::graph_zoom {token dir {gi all} {px {}} {py {}}} {
   variable windows
   if {![dict exists $windows $token]} { return 0 }
   if {$gi eq {all}} {
     set gi [wviewer::graph_at_pointer [dict get $windows $token win_path]]
   }
-  return [wviewer::wheel_zoom $token $dir $gi]
+  return [wviewer::wheel_zoom $token $dir $gi $px $py]
 }
 
 # Wheel binding shim: resolve the session token from the canvas at EVENT time
 # (never capture a stale token at bind time — strip_bindings only has `wp`).
-proc wviewer::wheel_bind {wp dir mods} {
+# `px`/`py` are the event's %x/%y — the zoom anchor (0146).
+proc wviewer::wheel_bind {wp dir mods {px {}} {py {}}} {
   set token [wviewer::token_for_canvas $wp]
   if {$token eq {}} { return }
-  wviewer::wheel $token $wp $dir $mods
+  wviewer::wheel $token $wp $dir $mods $px $py
 }
 
 # --- Graph menu dialogs (item 12, D3/D11/D13) --------------------------------
@@ -1654,18 +1692,20 @@ proc wviewer::key_filter {W T x y N K s} {
   # item 19 (D4): f / Z / Ctrl-z act on the GRAPH, not the canvas. Intercept
   # them here (act on KeyPress, T==2; swallow the matching KeyRelease) instead
   # of forwarding to the C canvas-zoom keys. `f` = FIT (full x+y = wviewer::fit,
-  # the only path that fits BOTH axes); `Z`/`Ctrl-z` = graph X zoom in/out like
-  # View>Zoom. token {} (unknown canvas) falls through to the old forward.
+  # the only path that fits BOTH axes); `Z`/`Ctrl-z` = graph zoom in/out like
+  # View>Zoom — X on every strip, Y on the pointed strip (0145), anchored at the
+  # KeyPress pointer %x/%y (0146, like the schematic's view_zoom).
+  # token {} (unknown canvas) falls through to the old forward.
   set tok19 [wviewer::token_for_canvas $W]
   if {$tok19 ne {}} {
     if {$N == 102} {                                  ;# f = fit (x+y)
       if {$T == 2} { wviewer::fit $tok19 }
       return
     } elseif {$N == 90} {                             ;# Z = graph zoom in (X)
-      if {$T == 2} { wviewer::graph_zoom $tok19 in }
+      if {$T == 2} { wviewer::graph_zoom $tok19 in all $x $y }
       return
     } elseif {$N == 122 && ($s & 4)} {                ;# Ctrl-z = graph zoom out
-      if {$T == 2} { wviewer::graph_zoom $tok19 out }
+      if {$T == 2} { wviewer::graph_zoom $tok19 out all $x $y }
       return
     }
   }
@@ -1740,18 +1780,18 @@ proc wviewer::strip_bindings {wp} {
   # plain = vertical pan, Shift = horizontal pan, Ctrl = X zoom. Each `break`s so
   # the kept generic wheel binds never also fire. `wheel_bind` resolves the token
   # from %W at event time (no stale capture).
-  bind $wp <Button-4>          {wviewer::wheel_bind %W up 0;      break}
-  bind $wp <Button-5>          {wviewer::wheel_bind %W down 0;    break}
-  bind $wp <Shift-Button-4>    {wviewer::wheel_bind %W up shift;  break}
-  bind $wp <Shift-Button-5>    {wviewer::wheel_bind %W down shift; break}
-  bind $wp <Control-Button-4>  {wviewer::wheel_bind %W up ctrl;   break}
-  bind $wp <Control-Button-5>  {wviewer::wheel_bind %W down ctrl; break}
+  bind $wp <Button-4>          {wviewer::wheel_bind %W up 0 %x %y;      break}
+  bind $wp <Button-5>          {wviewer::wheel_bind %W down 0 %x %y;    break}
+  bind $wp <Shift-Button-4>    {wviewer::wheel_bind %W up shift %x %y;  break}
+  bind $wp <Shift-Button-5>    {wviewer::wheel_bind %W down shift %x %y; break}
+  bind $wp <Control-Button-4>  {wviewer::wheel_bind %W up ctrl %x %y;   break}
+  bind $wp <Control-Button-5>  {wviewer::wheel_bind %W down ctrl %x %y; break}
   # portability (Tcl > 8.7 / non-X11): <MouseWheel> carries a signed %D. Tests
   # run on 8.6/X11 where this never fires, but keep the viewer wheel correct
   # everywhere. Overwrites the kept generic <MouseWheel> on THIS canvas only.
-  bind $wp <MouseWheel>         {wviewer::wheel_bind %W [expr {%D > 0 ? "up" : "down"}] 0;     break}
-  bind $wp <Shift-MouseWheel>   {wviewer::wheel_bind %W [expr {%D > 0 ? "up" : "down"}] shift; break}
-  bind $wp <Control-MouseWheel> {wviewer::wheel_bind %W [expr {%D > 0 ? "up" : "down"}] ctrl;  break}
+  bind $wp <MouseWheel>         {wviewer::wheel_bind %W [expr {%D > 0 ? "up" : "down"}] 0 %x %y;     break}
+  bind $wp <Shift-MouseWheel>   {wviewer::wheel_bind %W [expr {%D > 0 ? "up" : "down"}] shift %x %y; break}
+  bind $wp <Control-MouseWheel> {wviewer::wheel_bind %W [expr {%D > 0 ? "up" : "down"}] ctrl %x %y;  break}
 }
 
 # --- menubar (D7) ------------------------------------------------------------

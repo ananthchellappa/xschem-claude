@@ -226,6 +226,14 @@ and the input-binding table already do everything the RMB path needs).
     pointed strip with `graph_at_pointer` (for the menu that is the last strip the
     pointer was over — the click leaves the canvas but `mousex_snap` keeps the
     last canvas position; fallback strip 0). An explicit `gi` names the Y target.
+    **Anchored AT the pointer (issue 0146):** the data point under the cursor
+    stays put, like the schematic's `view_zoom` — `wviewer::zoom_about` scales a
+    range about an anchor, and the anchor comes from the new C verb
+    `xschem graph_coord <gi> <px> <py>` (pixel → data; Tcl must not re-derive the
+    plot box's 14% margins). The wheel binds and `Z`/`Ctrl-z` pass the event
+    `%x %y`; the x anchor (a time) is shared by every strip so the stack stays
+    aligned and pinned, the y anchor applies to the pointed strip. The View menu
+    passes no pixel (its click is off-canvas) and so keeps zooming about centre.
   On Tcl 8.6/X11 the wheel arrives as `Button-4`(up)/`Button-5`(down); the new
   `<Button-4/5>` + `<Shift-*>` + `<Control-*>` binds (each ending in `break`)
   pre-empt the kept generic `<Button>` that used to forward X11 wheel to the C

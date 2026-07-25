@@ -129,6 +129,26 @@ if {[catch {
      [expr {$vx1 != $ux1 || $vx2 != $ux2}]
    check_true "unsnap: Y still zooms with a snap grid bigger than the drag" \
      [expr {$vy1 != $uy1 || $vy2 != $uy2}]
+
+   # --- graph_coord (issue 0146): the C verb behind pointer-anchored zoom.
+   # On-screen it returns two numbers; for an OFF-SCREEN graph it must return {}
+   # (setup_graph_data early-returns without the cx/cy transform, and G_X/G_Y
+   # divide by them) so callers fall back to centre-anchored zoom. ---
+   xschem load [file join $repo xschem_library examples test_ne555.sch]
+   xschem zoom_full
+   update
+   set gc_on [xschem graph_coord 0 [expr {[winfo width .drw]/2}] \
+                                   [expr {[winfo height .drw]/2}]]
+   check_true "graph_coord on-screen returns two finite numbers" \
+     [expr {[llength $gc_on] == 2 && [string is double -strict [lindex $gc_on 0]]
+            && [string is double -strict [lindex $gc_on 1]]}]
+   check "graph_coord rejects a non-graph / bad index" \
+     [xschem graph_coord 999 10 10] {}
+   xschem zoom_box 200000 200000 200100 200100          ;# pan far away
+   update
+   check "graph_coord off-screen graph returns {} (no garbage anchor)" \
+     [xschem graph_coord 0 [expr {[winfo width .drw]/2}] \
+                           [expr {[winfo height .drw]/2}]] {}
  }
 
 } bigerr]} {

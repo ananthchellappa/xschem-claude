@@ -1103,6 +1103,22 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
              [xschem getprop rect 2 0 y2] == $y2a}]
     check_true "IX-hpan canvas == baseline" [ix_canvas_ok $vdrw $cx0 $cy0 $cz0]
 
+    # --- IX-anchor-pure (issue 0146): wviewer::zoom_about keeps the anchor at
+    # the same relative position; empty anchor = centre; outside anchor clamps.
+    # Pure math, no display needed. --------------------------------------------
+    lassign [wviewer::zoom_about 0 10 2 0.8] _zl _zh
+    check_true {IX-anchor-pure anchor 2 in 0..10 f=0.8 -> 0.4 8.4} \
+      [expr {abs($_zl - 0.4) < 1e-12 && abs($_zh - 8.4) < 1e-12}]
+    check {IX-anchor-pure empty anchor == centre -> {1.0 9.0}} \
+      [wviewer::zoom_about 0 10 {} 0.8] {1.0 9.0}
+    check {IX-anchor-pure anchor past hi clamps to hi -> {2.0 10.0}} \
+      [wviewer::zoom_about 0 10 20 0.8] {2.0 10.0}
+    set _za [wviewer::zoom_about 0 10 2 0.8]
+    check_true "IX-anchor-pure span scales by f (8 == 10*0.8)" \
+      [expr {abs(([lindex $_za 1] - [lindex $_za 0]) - 8.0) < 1e-12}]
+    check_true "IX-anchor-pure anchor fraction preserved (0.2)" \
+      [expr {abs((2.0 - [lindex $_za 0]) / 8.0 - 0.2) < 1e-12}]
+
     # --- IX-zoom-in / IX-zoom-out: Ctrl+wheel = GRAPH zoom, BOTH axes on the
     # strip under the cursor (issue 0144; the y-span legs are RED pre-fix, when
     # ctrl-wheel was X-only) -------------------------------------------------
@@ -1131,6 +1147,44 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     check_true "IX-zoom-out y-span strictly larger (both axes)" \
       [expr {$yspano > $yspan0 + 1e-9}]
     check_true "IX-zoom-out canvas == baseline" [ix_canvas_ok $vdrw $cx0 $cy0 $cz0]
+
+    # --- IX-anchor (issue 0146): THE teeth — Ctrl+wheel must zoom AT the mouse
+    # pointer, like the schematic's view_zoom. The invariant: the data point under
+    # a given canvas pixel is the SAME before and after the zoom. Uses a pixel
+    # well OFF-centre (30% of the canvas, inside the plot body: 14%..95% x,
+    # 14%..86% y) so a centre-anchored zoom visibly moves it -> RED pre-fix. Also
+    # validates the new C verb `xschem graph_coord`. -------------------------
+    ix_setrange $tok 0 10 -1 1
+    xschem new_schematic switch $vdrw
+    set apx [expr {int(0.30 * [winfo width $vdrw])}]
+    set apy [expr {int(0.30 * [winfo height $vdrw])}]
+    set a0 [xschem graph_coord 0 $apx $apy]
+    check_true "IX-anchor graph_coord returns two numbers" \
+      [expr {[llength $a0] == 2 && [string is double -strict [lindex $a0 0]] &&
+             [string is double -strict [lindex $a0 1]]}]
+    set xs0 [expr {[xschem getprop rect 2 0 x2] - [xschem getprop rect 2 0 x1]}]
+    set ys0 [expr {[xschem getprop rect 2 0 y2] - [xschem getprop rect 2 0 y1]}]
+    check_true "IX-anchor probe pixel is off-centre in the data window" \
+      [expr {abs([lindex $a0 0] - 5.0) > 0.5 && abs([lindex $a0 1] - 0.0) > 0.05}]
+    wviewer::wheel $tok $vdrw up ctrl $apx $apy
+    xschem new_schematic switch $vdrw
+    set a1 [xschem graph_coord 0 $apx $apy]
+    set xs1 [expr {[xschem getprop rect 2 0 x2] - [xschem getprop rect 2 0 x1]}]
+    set ys1 [expr {[xschem getprop rect 2 0 y2] - [xschem getprop rect 2 0 y1]}]
+    check_true "IX-anchor it really zoomed in (both spans shrank)" \
+      [expr {$xs1 < $xs0 - 1e-9 && $ys1 < $ys0 - 1e-9}]
+    check_true "IX-anchor X under the pointer did not move" \
+      [expr {abs([lindex $a1 0] - [lindex $a0 0]) < 1e-6 * $xs0}]
+    check_true "IX-anchor Y under the pointer did not move" \
+      [expr {abs([lindex $a1 1] - [lindex $a0 1]) < 1e-6 * $ys0}]
+    # zoom back OUT at the same pixel: still pinned
+    wviewer::wheel $tok $vdrw down ctrl $apx $apy
+    xschem new_schematic switch $vdrw
+    set a2 [xschem graph_coord 0 $apx $apy]
+    check_true "IX-anchor zoom-out at the same pixel stays pinned" \
+      [expr {abs([lindex $a2 0] - [lindex $a0 0]) < 1e-6 * $xs0 &&
+             abs([lindex $a2 1] - [lindex $a0 1]) < 1e-6 * $ys0}]
+    check_true "IX-anchor canvas == baseline" [ix_canvas_ok $vdrw $cx0 $cy0 $cz0]
 
     # --- IX-menu-zoomin / IX-menu-zoomout: View menu commands. Like Ctrl+wheel
     # they zoom BOTH axes on the pointed strip (issue 0145; the y-span legs are
