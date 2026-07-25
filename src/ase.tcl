@@ -120,6 +120,12 @@ proc ase::format_value_num {v} {
 # typical). set_ne so an rc value set before ase.tcl is sourced survives.
 set_ne ASE_DEFAULT_MODELS {}
 
+# Same, but for `.include` files (not `.lib` sections) a fresh session/state view
+# inherits — e.g. gf180mcuD's design.ngspice global-switch .params that the model
+# subckts reference. Each entry is a {file <path>} dict. set_ne so an rc value set
+# before ase.tcl is sourced survives.
+set_ne ASE_DEFAULT_INCLUDES {}
+
 # The v1 default state (spec "State file schema"). `simulator ngspice` here is
 # the one permitted ngspice literal outside the backend namespace.
 proc ase::state_default {} {
@@ -136,7 +142,7 @@ proc ase::state_default {} {
     save_all_v 0 \
     save_all_i 0 \
     options   {} \
-    includes  {} \
+    includes  [expr {[info exists ::ASE_DEFAULT_INCLUDES] ? $::ASE_DEFAULT_INCLUDES : {}}] \
     viewer    {}]
 }
 
