@@ -9,6 +9,8 @@
 #   d=/tmp/al.$$; XSCHEM_AL_LOGDIR=$d DISPLAY=:0 ./xschem --pipe -q --logdir $d \
 #       --script ../tests/headless/test_action_log_libmgr.tcl
 
+source [file join [file dirname [info script]] scratch.tcl]
+
 set fail 0
 proc check {name ok detail} {
   global fail
@@ -24,8 +26,7 @@ set LOG [file join $env(XSCHEM_AL_LOGDIR) Xschem.log]
 check "AL0 action log is open" [file isfile $LOG] "(=> $LOG)"
 
 # --- fixture: a private library with a nested cell -------------------------
-set tmp [file join [pwd] _allm_[pid]]
-file delete -force $tmp
+set tmp [test_scratch allm]
 touch $tmp/tlib/foo/schematic/foo.sch "v {xschem version=3.4.8RC file_version=1.3}"
 touch $tmp/tlib/foo/symbol/foo.sym    "v {xschem version=3.4.8RC file_version=1.3}"
 touch $tmp/tlib/bar/schematic/bar.sch "v {xschem version=3.4.8RC file_version=1.3}"
@@ -128,7 +129,6 @@ catch {ciform::escape}   ;# tear down the Create Instance form (.ciform) + brows
 
 destroy .ins
 destroy .libmgr
-file delete -force $tmp
 if {$fail == 0} { puts "RESULT: ALL PASS" } else { puts "RESULT: $fail FAILED" }
 flush stdout
 exit [expr {$fail == 0 ? 0 : 1}]

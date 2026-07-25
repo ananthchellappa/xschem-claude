@@ -23,8 +23,8 @@ proc touch {f {txt {v {xschem version=3.4.8 file_version=1.3}}}} {
 }
 
 # --- fixture: one registered (writable) library + a temp cwd for untitled ------
-set tmp [file join [pwd] _saveas_[pid]]
-file delete -force $tmp
+source [file join [file dirname [info script]] scratch.tcl]
+set tmp [test_scratch saveas]
 file mkdir $tmp/tlib
 # a pre-existing cell so enumeration/overwrite can be exercised
 touch $tmp/tlib/existing/schematic/existing.sch
@@ -77,6 +77,5 @@ check "R4b untitled buffer rebinds to the cellview datafile" \
   [expr {[file normalize [xschem get schname]] eq [file normalize $t2]} && ![string match {*untitled.sch} [xschem get schname]]] \
   "(=> [xschem get schname])"
 
-file delete -force $tmp
 if {$fail == 0} { puts "RESULT: ALL PASS" } else { puts "RESULT: $fail FAILED" }
 flush stdout

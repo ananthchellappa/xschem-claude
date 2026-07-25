@@ -22,6 +22,7 @@ proc check {name got exp} {
   else { puts "FAIL: $name -> {$got} (exp {$exp}) : FAIL"; incr fail }
 }
 proc bail {msg} { puts "FATAL: $msg : FAIL"; puts "OVERALL: notok"; exit 1 }
+source [file join [file dirname [info script]] scratch.tcl]
 
 # Build a fresh sheet with two collinear abutting horizontal wires meeting at (jx,-60),
 # built with autotrim OFF so construction never merges them prematurely. `withlabel` places
@@ -81,8 +82,7 @@ check "W0/D2: default mode (autotrim off) still merges across a pin" [xschem get
 # x=+50 (same lab=GB, so one net, no ERC short). Expect 3 segments after load.
 # ===========================================================================
 proc write_sch {path body} { set fd [open $path w]; puts -nonewline $fd $body; close $fd }
-set wdir [file join /tmp ws_w1_[pid]]
-file mkdir $wdir
+set wdir [test_scratch ws_w1]
 set f1 [file join $wdir two_labels.sch]
 write_sch $f1 {v {xschem version=3.4.8RC file_version=1.3}
 G {}

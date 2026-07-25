@@ -20,9 +20,10 @@ proc touch {f {txt {v {xschem}}}} {
 proc has {lib cell} { expr {[lsearch [xschem lib_cells $lib] $cell] >= 0} }
 proc views {lib cell} { return [lsort [xschem cell_views $lib $cell]] }
 
+source [file join [file dirname [info script]] scratch.tcl]
+
 # --- fixture: two libraries, both layouts -----------------------------------
-set tmp [file join [pwd] _libops_[pid]]
-file delete -force $tmp
+set tmp [test_scratch libops]
 
 # tlib: flat cell 'inv' (sym+sch), flat 'res' (sym only), nested 'buf' (both)
 touch $tmp/tlib/inv.sym "v {inv sym}"
@@ -180,8 +181,7 @@ check "VOP8 view ops on a flat cell error" [errs {library_rename_view tlib vflat
 
 # === copy across layout STYLES (destination style wins) ======================
 # Fresh, isolated libraries so each style is unambiguous.
-set tmp2 [file join [pwd] _libops2_[pid]]
-file delete -force $tmp2
+set tmp2 [test_scratch libops2]
 # flatlib: only flat cells.  nestlib: only nested cells.  emptylib: no cells.
 touch $tmp2/flatlib/fa.sym "v {fa sym}"
 touch $tmp2/flatlib/fa.sch "v {fa sch}"
@@ -240,9 +240,7 @@ check "CV5 default=flat nests nothing in an empty lib" \
   [expr {[file isfile [file join $tmp2 emptflat fa_ef.sym]] && \
          ![file isdirectory [file join $tmp2 emptflat fa_ef]]}] {}
 set ::library_default_layout nested
-file delete -force $tmp2
 
-file delete -force $tmp
 if {$fail == 0} { puts "RESULT: ALL PASS" } else { puts "RESULT: $fail FAILED" }
 flush stdout
 exit [expr {$fail == 0 ? 0 : 1}]

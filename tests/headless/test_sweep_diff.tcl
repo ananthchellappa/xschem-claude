@@ -21,6 +21,7 @@
 #   ./src/xschem --nogui --pipe -q --nolog --script tests/headless/test_sweep_diff.tcl
 
 set here    [file dirname [file normalize [info script]]]
+source [file join $here scratch.tcl]
 set fixroot [file normalize [file join $here .. test_sweep_diff]]
 if {![file isdirectory $fixroot]} {
   puts "RESULT: SKIP (fixture not found at $fixroot)"; flush stdout; exit 0
@@ -30,8 +31,7 @@ if {![file isdirectory $fixroot]} {
 if {![info exists ::XSCHEM_LIBRARY_PATH]} { set ::XSCHEM_LIBRARY_PATH {} }
 set ::XSCHEM_LIBRARY_PATH "$fixroot:$::XSCHEM_LIBRARY_PATH"
 
-set work [file join [file dirname $fixroot] _sweep_work_[pid]]
-file delete -force $work; file mkdir $work
+set work [test_scratch sweep_work]
 
 # recursive file finder (Tcl 8.6 has no glob **), so the test is structure-agnostic
 proc findfiles {dir pat} {
@@ -63,7 +63,6 @@ foreach f [concat $syms $schs] {
     puts "FAIL: $rel -- non-idempotent round-trip (saveas A != saveas B)"; incr fail; continue
   }
 }
-file delete -force $work
 puts "swept $n cells ([llength $syms] sym + [llength $schs] sch)"
 if {$fail == 0} { puts "RESULT: ALL PASS ($n cells)" } else { puts "RESULT: $fail FAILED" }
 flush stdout

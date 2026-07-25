@@ -10,7 +10,8 @@ set fail 0
 proc check {n ok d} { global fail; if {$ok} { puts "ok:   $n $d" } else { puts "FAIL: $n $d"; incr fail } }
 proc s7 {} { return [lindex [lindex [net_hilight_style_current] 0] 7] }   ;# row 0 speed
 
-set ::USER_CONF_DIR [file join [pwd] _nhefs_[pid]] ; file delete -force $::USER_CONF_DIR ; file mkdir $::USER_CONF_DIR
+source [file join [file dirname [info script]] scratch.tcl]
+set ::USER_CONF_DIR [test_scratch nhefs]
 
 # --- (1) flush on Apply / OK / row-op ----------------------------------------------------------
 set ::net_hilight_style {{0 4 1 {6 4} 0 0 march_fwd 2}}
@@ -63,7 +64,6 @@ update idletasks
 check "W4 wheel scroll back returns toward top" [expr {[lindex [.nhse.tbl.sf yview] 0] < $y1}] {}
 
 catch {destroy .nhse}
-file delete -force $::USER_CONF_DIR
 if {$fail == 0} { puts "RESULT: ALL PASS" } else { puts "RESULT: $fail FAILED" }
 flush stdout
 exit [expr {$fail == 0 ? 0 : 1}]

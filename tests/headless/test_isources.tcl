@@ -20,8 +20,8 @@ set repo    [file normalize [file join $here .. ..]]
 set dev     [file join $repo xschem_libs_newsym devices]
 set ipwlsym   [file join $dev ipwl symbol ipwl.sym]
 set ipulsesym [file join $dev ipulse symbol ipulse.sym]
-set scratch [file normalize [file join [pwd] _isrc_[pid]]]
-file delete -force $scratch; file mkdir $scratch
+source [file join $here scratch.tcl]
+set scratch [test_scratch isrc]
 
 proc netlist_of {scratch symsym instprops} {
   set sch [file join $scratch tb.sch]
@@ -74,7 +74,6 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   catch {destroy .tf}
 } else { puts "build_fields GUI legs skipped (no DISPLAY)" }
 
-file delete -force $scratch
 if {$fail == 0} { puts "RESULT: ALL PASS ($npass checks)" } \
 else { puts "RESULT: $fail FAILED ($npass passed)" }
 flush stdout

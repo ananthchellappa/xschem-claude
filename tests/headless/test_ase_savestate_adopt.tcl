@@ -60,8 +60,8 @@ proc make_dirty {key} {
 # --- locations (cwd-independent) --------------------------------------------
 set here    [file normalize [file dirname [info script]]]      ;# tests/headless
 set repo    [file normalize [file join $here .. ..]]           ;# repo root
-set scratch [file normalize [file join [pwd] _ase_adopt_[pid]]]
-file delete -force $scratch
+source [file join $here scratch.tcl]
+set scratch [test_scratch ase_adopt]
 
 # --- scratch lib/cell fixture + registry (NO state view pre-created: the save
 #     must hit the missing-view creation arm) ---------------------------------
@@ -212,8 +212,7 @@ if {[catch {
   incr fail
 }
 
-# --- cleanup + verdict -------------------------------------------------------
-catch {file delete -force $scratch}
+# --- verdict -----------------------------------------------------------------
 if {$fail == 0 && $skipped} {
   puts "RESULT: SKIP (ASE adopt GUI legs need a usable display; headless core passed)"
   flush stdout

@@ -11,7 +11,8 @@ set fail 0
 proc check {n ok d} { global fail; if {$ok} { puts "ok:   $n $d" } else { puts "FAIL: $n $d"; incr fail } }
 proc c0 {} { return [lindex [lindex [net_hilight_style_current] 0] 1] }   ;# row 0 color
 
-set ::USER_CONF_DIR [file join [pwd] _nhebtn_[pid]] ; file delete -force $::USER_CONF_DIR ; file mkdir $::USER_CONF_DIR
+source [file join [file dirname [info script]] scratch.tcl]
+set ::USER_CONF_DIR [test_scratch nhebtn]
 set auto [file join $::USER_CONF_DIR net_hilight_style]
 
 # ---- (1) located-save path logic (no Tk needed) ----------------------------------------------
@@ -36,7 +37,6 @@ if {$had_echo} { rename ciw_echo_orig ciw_echo }
 
 # ---- (2) GUI: buttons, snapshot/revert, OK keeps, Reset, WM-close=Cancel ----------------------
 if {[catch {winfo exists .}]} {
-  file delete -force $::USER_CONF_DIR
   if {$fail == 0} { puts "RESULT: ALL PASS (logic only; GUI skipped — needs Tk/X)" } else { puts "RESULT: $fail FAILED" }
   flush stdout
   exit [expr {$fail == 0 ? 0 : 1}]
@@ -86,7 +86,6 @@ check "B15 saved conf round-trips table" [expr {$::net_hilight_style eq {{0 4 2 
 check "B16 saved conf sets seen flag"    [expr {$::net_hilight_editor_seen == 1}] {}
 
 catch {destroy .nhse}
-file delete -force $::USER_CONF_DIR
 if {$fail == 0} { puts "RESULT: ALL PASS" } else { puts "RESULT: $fail FAILED" }
 flush stdout
 exit [expr {$fail == 0 ? 0 : 1}]

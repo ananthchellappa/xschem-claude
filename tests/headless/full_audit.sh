@@ -110,6 +110,20 @@ fi
 PASS=0 FAIL=0 CRASH=0 SKIP=0
 declare -A STATUS OUT
 
+# Scratch-leak detector (issue 0148). Tests mkdir a per-pid `_<tag>_<pid>` dir
+# and delete it on their last line, so any test that exits early, errors, or
+# crashes orphans one in the working tree -- invisible in `git status` because
+# .gitignore hides the pattern. Snapshot before/after, report what the run left
+# behind, and remove it. Every test now goes through tests/headless/scratch.tcl,
+# so the expected count is 0 and a leak is FATAL by default -- that enforcement
+# is the whole point of issue 0148 (the class recurred twice because nothing
+# checked). Set AUDIT_STRICT_SCRATCH=0 to downgrade it to a warning.
+scratch_snapshot() {
+  ls -1d "$REPO"/_*_[0-9]* "$REPO"/tests/_*_[0-9]* "$HERE"/_*_[0-9]* \
+         "$REPO"/src/_*_[0-9]* 2>/dev/null | sort
+}
+SCRATCH_BEFORE=$(scratch_snapshot)
+
 # GUI-test control gate: warn the user before the suite runs and give
 # Pause/Resume during it (tests/headless/gui_gate.sh). Fails open (no DISPLAY /
 # GUI_GATE=0 / no panel -> just runs). A Stop press aborts the remaining tests.
@@ -184,9 +198,21 @@ if [ "$run_wireedit" -eq 1 ]; then
   if [ "$WIREEDIT_RC" -eq 0 ]; then WIREEDIT_VERDICT="PASS"; else WIREEDIT_VERDICT="FAIL (rc=$WIREEDIT_RC)"; fi
 fi
 
+SCRATCH_LEAKED=$(comm -13 <(printf '%s\n' "$SCRATCH_BEFORE") <(scratch_snapshot))
+SCRATCH_N=0
+if [ -n "$SCRATCH_LEAKED" ]; then
+  SCRATCH_N=$(printf '%s\n' "$SCRATCH_LEAKED" | grep -c .)
+  echo "--------- scratch leaks ---------"
+  printf '%s\n' "$SCRATCH_LEAKED" | sed 's/^/LEAKED  | /'
+  # only ever remove paths this run created, never a glob
+  printf '%s\n' "$SCRATCH_LEAKED" | while IFS= read -r d; do [ -n "$d" ] && rm -rf -- "$d"; done
+  echo "(removed; convert the owning test to tests/headless/scratch.tcl -- issue 0148)"
+fi
+
 echo "========================================"
 echo "SUMMARY: $PASS pass  $FAIL fail  $CRASH crash/timeout  $SKIP skip  (total $((PASS+FAIL+CRASH+SKIP)))"
 echo "WIREEDIT: $WIREEDIT_VERDICT"
+echo "SCRATCH:  $SCRATCH_N leaked dir(s)"
 echo "========================================"
 
 if [ "$((FAIL+CRASH))" -gt 0 ]; then
@@ -202,6 +228,10 @@ fi
 # the expected pass floor; default 0 keeps local subset runs unchanged.
 if [ "$PASS" -lt "${AUDIT_MIN_PASS:-0}" ]; then
   echo "AUDIT_MIN_PASS: only $PASS pass < required ${AUDIT_MIN_PASS} -- treating as failure (hollow green)"
+  exit 1
+fi
+if [ "${AUDIT_STRICT_SCRATCH:-1}" = "1" ] && [ "$SCRATCH_N" -gt 0 ]; then
+  echo "AUDIT_STRICT_SCRATCH: $SCRATCH_N scratch dir(s) leaked into the working tree"
   exit 1
 fi
 exit 0

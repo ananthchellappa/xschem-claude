@@ -42,8 +42,8 @@ proc ase_toplevels {} {
 # --- locations (cwd-independent) --------------------------------------------
 set here    [file normalize [file dirname [info script]]]      ;# tests/headless
 set repo    [file normalize [file join $here .. ..]]           ;# repo root
-set scratch [file normalize [file join [pwd] _ase_launch_[pid]]]
-file delete -force $scratch
+source [file join $here scratch.tcl]
+set scratch [test_scratch ase_launch]
 
 # --- scratch lib/cell/view fixture + registry --------------------------------
 # clean nfet schematic (the test_ase_core fixture: nfet_test_claude minus its
@@ -227,8 +227,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {} && [winfo exists .menub
   incr fail
 }
 
-# --- cleanup + verdict -------------------------------------------------------
-catch {file delete -force $scratch}
+# --- verdict -----------------------------------------------------------------
 if {$fail == 0} {
   puts "RESULT: ALL PASS ($npass checks)"
 } else {

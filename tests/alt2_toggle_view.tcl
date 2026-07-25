@@ -14,6 +14,7 @@ set here [file normalize [file dirname [info script]]]
 set ::ECHO {}
 proc ciw_echo {line {tag {}}} { lappend ::ECHO [list $tag $line] }
 source [file normalize [file join $here .. src alt2_toggle_view.tcl]]
+source [file join $here headless scratch.tcl]
 
 set nfail 0
 proc check {desc got want} {
@@ -46,8 +47,7 @@ set src_sch [file normalize buried_hilight/a.sch]
 check "fixtures resolve" [expr {[file exists $src_sym] && [file exists $src_sch]}] 1
 
 proc cp {src dst} { file mkdir [file dirname $dst]; file copy -force $src $dst; catch {file attributes $dst -permissions 0644} }
-set tmp [file join [pwd] _alt2_[pid]]
-file delete -force $tmp
+set tmp [test_scratch alt2]
 # aa: two symbol views + a schematic view (exercises the chooser view-list)
 cp $src_sym $tmp/tl/aa/symbol/aa.sym
 cp $src_sym $tmp/tl/aa/sym_alt/aa.sym
@@ -97,8 +97,6 @@ set ::ECHO {}
 alt2_toggle_view
 check "bb stays schematic (no symbol view)" [string match {*/bb/schematic/bb.sch} [xschem get schname]] 1
 check "bb no-op warns" [expr {[string first {no symbol view} [join $::ECHO]] >= 0}] 1
-
-file delete -force $tmp
 
 if {$nfail} { puts "alt2_toggle_view: $nfail check(s): FAIL" } \
 else        { puts "alt2_toggle_view: all checks PASS" }

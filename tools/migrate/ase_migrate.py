@@ -42,6 +42,7 @@ CLI:
 import argparse
 import os
 import re
+import shutil
 import subprocess
 import sys
 
@@ -665,7 +666,7 @@ set cell      {@@CELL@@}
 set before    {@@BEFORE@@}
 set afterroot {@@AFTERROOT@@}
 set ::@@MODELVAR@@ $modelsdir
-set scratch [file normalize [file join [pwd] _ase_mig_verify_[pid]]]
+set scratch {@@SCRATCH@@}
 file delete -force $scratch; file mkdir $scratch
 set f [open [file join $scratch library.defs] w]
 # the after tree (migrated) as $libname; keep the PRIMITIVE libs resolvable too.
@@ -728,7 +729,6 @@ if {[auto_execok ngspice] ne {}} {
 }
 puts "ID_BEFORE $idb"
 puts "ID_AFTER $ida"
-file delete -force $scratch
 """
 
 
@@ -738,11 +738,21 @@ def verify(repo, pdk, libname, cellname, before_sch, after_root,
     and return (id_before, id_after, ok). ok compares within 1 uA (or None if
     ngspice absent)."""
     drv = os.path.join(after_root, "_verify_%d.tcl" % os.getpid())
+    # The driver's scratch dir is OWNED BY PYTHON, not by the driver: the Tcl
+    # used to mkdir `_ase_mig_verify_<pid>` under [pwd] (= the repo root) and
+    # delete it on its last line, so any driver that errored out, crashed, or
+    # hit the 180 s timeout orphaned it in the working tree. Baking the path in
+    # here lets the `finally` below remove it on every path.
+    # See doc/claude/issues/0148-scratch-dir-leak-recurrence.md.
+    scratch = os.path.join(repo, "tests", "headless", ".scratch",
+                           "_ase_mig_verify_%d" % os.getpid())
+    os.makedirs(scratch, exist_ok=True)
     script = _VERIFY_TCL
     for tok, val in (("@@REPO@@", repo), ("@@MODELSDIR@@", models_dir),
                      ("@@LIBNAME@@", libname), ("@@CELL@@", cellname),
                      ("@@BEFORE@@", before_sch),
                      ("@@AFTERROOT@@", os.path.abspath(after_root)),
+                     ("@@SCRATCH@@", os.path.abspath(scratch)),
                      ("@@MODELVAR@@", pdk.model_var)):
         script = script.replace(tok, val)
     _write(drv, script)
@@ -755,6 +765,7 @@ def verify(repo, pdk, libname, cellname, before_sch, after_root,
             os.remove(drv)
         except OSError:
             pass
+        shutil.rmtree(scratch, ignore_errors=True)
     idb = ida = None
     for ln in p.stdout.splitlines():
         parts = ln.split(None, 1)

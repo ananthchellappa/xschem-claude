@@ -32,10 +32,8 @@ proc rfield {recs n key} {
   return $v
 }
 
-set tmpbase [expr {[info exists env(TMPDIR)] && $env(TMPDIR) ne {} ? $env(TMPDIR) : "/tmp"}]
-set tmp [file join $tmpbase _libgithist_[pid]]
-file delete -force $tmp
-file mkdir $tmp
+source [file join $here scratch.tcl]
+set tmp [test_scratch libgithist]
 
 # a bigger repo with two libraries; commits scoped to each
 set big [file join $tmp big]
@@ -79,7 +77,6 @@ check "HR11 and2 history excludes the examples-only commit" [expr {
   [lsearch -exact [list [rfield $recs 0 subject] [rfield $recs 1 subject]] "examples-only change"] < 0}] {}
 check "HR12 not-under-git returns empty list" [expr {[val {lib_git_log_records "" {x}}] eq ""}] "(=> [val {lib_git_log_records "" {x}}])"
 
-file delete -force $tmp
 if {$fail == 0} { puts "RESULT: ALL PASS" } else { puts "RESULT: $fail FAILED" }
 flush stdout
 exit [expr {$fail == 0 ? 0 : 1}]

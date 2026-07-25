@@ -220,9 +220,28 @@ xschem set readonly 0
 #     IDENTICALLY to the absolute path (regsub expands `^~/` via the home_dir global,
 #     moved into run_core). The log records the RAW `~/` form (NOT the expanded $HOME path)
 #     so replay re-expands identically -- and the recorded line matches the Tcl_Merge form.
+#
+#     $HOME IS LOAD-BEARING HERE: run_core rewrites only a LEADING `~/` into `$home_dir/`
+#     (scheduler.c `regsub {^~/}`, home_dir = getenv("HOME")), so the probe file can ONLY
+#     live directly under $HOME -- a test_scratch dir is unreachable by the `~/` form and
+#     would make check (d) test nothing. So the PATH stays and the REMOVAL is hardened
+#     instead -- this is the 0148 leak class in its worst variant, the corpse lands in the
+#     developer's real $HOME: (i) this run's probe is deleted on EVERY exit path, not only
+#     by the statement after check (d), and (ii) corpses of earlier runs killed mid-script
+#     (segfault/timeout/^C) are swept on the way in, since nothing else ever sweeps $HOME.
 # ---------------------------------------------------------------------------
+source [file join [file dirname [info script]] scratch.tcl]   ;# exit discipline + pid-liveness
 set HNAME embprobe_[pid].raw
 set HRAW [file join $::env(HOME) $HNAME]
+foreach f [glob -nocomplain -directory $::env(HOME) embprobe_*.raw] {
+  if {![regexp {^embprobe_([0-9]+)\.raw$} [file tail $f] -> p]} continue
+  if {$p eq [pid] || [__scratch_pid_alive $p]} continue    ;# never touch a concurrent run's
+  catch {file delete -force $f}
+}
+if {[info commands ::__emb_real_exit] eq {}} {
+  rename ::exit ::__emb_real_exit
+  proc ::exit {{code 0}} { catch {file delete -force $::HRAW}; ::__emb_real_exit $code }
+}
 file copy -force $RAW $HRAW
 # canonical: the absolute-path embed's spice_data
 fixture
@@ -249,7 +268,7 @@ fixture
 set trc [catch {uplevel #0 $wantT} tres]
 check "(d) ~/ form REPLAYS without error (re-expands via home_dir)" [expr {$trc == 0}] "rc=$trc res=>$tres<"
 check "(d) ~/ form replay re-embeds IDENTICALLY" [expr {[sd] eq $sdAbs}] "replay-len=[string length [sd]] abs-len=[string length $sdAbs]"
-file delete $HRAW
+file delete -force $HRAW   ;# early drop; the exit hook above is the backstop
 
 # ---------------------------------------------------------------------------
 # (e) REPLAY. embed_rawfile is a self-contained, re-executable verb (the path is in the

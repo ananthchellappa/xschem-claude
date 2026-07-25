@@ -320,7 +320,8 @@ check "ro guard flag"          $::find_helper::last_guard readonly
 check "ro no mutation"         [inst_lab 0] clk_in
 
 # --- 22. symbol-view guard ---
-set symf [file join [pwd] _fh_[pid].sym]
+source [file join $here scratch.tcl]
+set symf [file join [test_scratch fh_sym] fh.sym]
 set fhh [open $symf w]
 puts $fhh "v {xschem version=3.4.8RC file_version=1.3}"
 puts $fhh "G {}"; puts $fhh "K {type=subcircuit}"; puts $fhh "V {}"; puts $fhh "S {}"; puts $fhh "E {}"

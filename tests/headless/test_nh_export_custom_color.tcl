@@ -13,7 +13,8 @@ if {[catch {winfo exists .}]} { puts "RESULT: SKIP (needs Tk/X; custom-color res
 set fail 0
 proc check {n ok d} { global fail; if {$ok} { puts "ok:   $n $d" } else { puts "FAIL: $n $d"; incr fail } }
 
-set dir [file join [pwd] _nhexport_[pid]] ; file delete -force $dir ; file mkdir $dir
+source [file join [file dirname [info script]] scratch.tcl]
+set dir [test_scratch nhexport]
 
 # style 0 = a custom TEAL color (#1a9b8c, color_layer<0), thick solid; highlight a wire with it
 set ::net_hilight_style {{0 #1a9b8c 4 {} 0 0 none 0}}
@@ -54,7 +55,6 @@ set fd [open $psf r] ; set ps [read $fd] ; close $fd
 check "E6 PS emits the custom color as an RGB triple" [regexp {0\.101562 [0-9.]+ [0-9.]+ RGB} $ps] \
   "(found=[regexp {0\.101562 [0-9.]+ [0-9.]+ RGB} $ps])"
 
-file delete -force $dir
 if {$fail == 0} { puts "RESULT: ALL PASS" } else { puts "RESULT: $fail FAILED" }
 flush stdout
 exit [expr {$fail == 0 ? 0 : 1}]

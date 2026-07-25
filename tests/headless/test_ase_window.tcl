@@ -198,8 +198,8 @@ proc menu_save_state {top} {
 set here    [file normalize [file dirname [info script]]]      ;# tests/headless
 set repo    [file normalize [file join $here .. ..]]           ;# repo root
 set models  [file join $repo sky130A models libs.tech combined sky130.lib.spice]
-set scratch [file normalize [file join [pwd] _ase_window_[pid]]]
-file delete -force $scratch
+source [file join $here scratch.tcl]
+set scratch [test_scratch ase_window]
 
 # --- scratch lib/cell/view fixture + registry --------------------------------
 # clean nfet schematic (the test_ase_core fixture: nfet_test_claude minus its
@@ -985,8 +985,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   incr fail
 }
 
-# --- cleanup + verdict -------------------------------------------------------
-catch {file delete -force $scratch}
+# --- verdict -----------------------------------------------------------------
 if {$fail == 0} {
   puts "RESULT: ALL PASS ($npass checks)"
 } else {

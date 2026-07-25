@@ -35,8 +35,8 @@ proc check_true {name cond} { check $name [expr {$cond ? 1 : 0}] 1 }
 set here    [file normalize [file dirname [info script]]]      ;# tests/headless
 set repo    [file normalize [file join $here .. ..]]           ;# repo root
 set models  [file join $repo sky130A models libs.tech combined sky130.lib.spice]
-set scratch [file normalize [file join [pwd] _ase_core_[pid]]]
-file delete -force $scratch
+source [file join $here scratch.tcl]
+set scratch [test_scratch ase_core]
 
 # --- scratch lib/cell/view fixture + registry --------------------------------
 # clean nfet schematic: nfet_test_claude minus corner + simulator_commands_shown
@@ -373,8 +373,7 @@ check_true "E3 error mentions nosuchsim" [string match "*nosuchsim*" $err]
   incr fail
 }
 
-# --- cleanup + verdict -------------------------------------------------------
-file delete -force $scratch
+# --- verdict -----------------------------------------------------------------
 if {$fail == 0} {
   puts "RESULT: ALL PASS ($npass checks)"
 } else {

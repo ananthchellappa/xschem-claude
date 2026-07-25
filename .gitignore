@@ -56,4 +56,8 @@ config.h
 # headless-test scratch dirs: tests/headless/*.tcl mkdir a per-pid scratch dir
 # under [pwd] (repo root) -- e.g. _nhangle_<pid>, _ase_plot_<pid>, _mkinst_<pid>.
 # Tests self-clean on normal exit; crashed/interrupted dev runs orphan them here.
+# Tests converted to tests/headless/scratch.tcl put theirs under .scratch/ below
+# instead, and sweep dead-pid corpses from BOTH locations on the next run
+# (issue 0148).
 _*_[0-9]*/
+tests/headless/.scratch/

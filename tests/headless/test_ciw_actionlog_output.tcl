@@ -29,8 +29,8 @@ proc check_true {name cond} { check $name [expr {$cond ? 1 : 0}] 1 }
 set bin  [info nameofexecutable]
 set here [file normalize [file dirname [info script]]]
 set root [file normalize [file join $here .. ..]]
-set workroot [file join [pwd] ciw_actionlog_work.[pid]]
-file mkdir $workroot
+source [file join $here scratch.tcl]
+set workroot [test_scratch ciw_actionlog_work]
 set childn 0
 
 # Run an inner script in a fresh CHILD xschem with a private --logdir; return the RAW action-log body.
@@ -141,8 +141,6 @@ check_true "ciw_capture_puts buffers into ::ciw_out_pending" \
   [expr {[regexp {lappend ::ciw_out_pending result} $rc] && [regexp {lappend ::ciw_out_pending error} $rc]}]
 check_true "ciw_log_outcome emits command then buffered output" \
   [expr {[regexp {proc ciw_log_outcome} $rc] && [regexp {foreach \{kind txt\} \$::ciw_out_pending} $rc]}]
-
-catch {file delete -force $workroot}
 
 # --- verdict ---
 if {$fail == 0} {

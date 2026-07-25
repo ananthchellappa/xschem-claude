@@ -28,10 +28,10 @@ proc menu_labels {m} {
   return $out
 }
 proc has_label {m l} { return [expr {[lsearch -exact [menu_labels $m] $l] >= 0}] }
+source [file join [file dirname [info script]] scratch.tcl]
 
 # --- fixture: a git-backed library, one committed cell (and2/symbol) ---------
-set tmp [file join [pwd] _ci_[pid]]
-file delete -force $tmp
+set tmp [test_scratch ci]
 set glib [file join $tmp glib]
 touch $glib/and2/symbol/and2.sym "v {and2 sym}\n"
 ginit $glib
@@ -90,7 +90,6 @@ check "CI7 nothing-to-commit is a soft failure" [expr {[libmgr::do_checkin glib 
 
 catch {destroy .libmgr}
 catch {foreach w [winfo children .] { if {[string match {.view*} $w]} { destroy $w } }}
-file delete -force $tmp
 if {$fail == 0} { puts "RESULT: ALL PASS" } else { puts "RESULT: $fail FAILED" }
 flush stdout
 exit [expr {$fail == 0 ? 0 : 1}]

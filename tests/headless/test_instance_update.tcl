@@ -24,6 +24,7 @@ proc check {name got exp} {
 # Source the util under test (relative to repo root, where the harness runs).
 set here [file dirname [file normalize [info script]]]
 source [file join $here .. .. utils instance_update.tcl]
+source [file join $here scratch.tcl]
 
 # convenience
 proc iu_set {args} { foreach {v val} $args { set ::inst_update::$v $val } }
@@ -172,8 +173,7 @@ check "inj cell brace2"  [inst_update::cell_match {n{2}} n]      0
 #    devices/res (R1@0,0  R2@100,0), devices/capa (C3@200,0), an off-registry
 #    orphan (.sym not under any library, U4@300,0 -> unresolvable master).
 # ===========================================================================
-set orphdir [file join [pwd] _iu_orph_[pid]]
-file mkdir $orphdir
+set orphdir [test_scratch iu_orph]
 file copy -force [abs_sym_path devices/res.sym] [file join $orphdir orph.sym]
 set orphsym [file join $orphdir orph.sym]
 
@@ -328,7 +328,7 @@ check "ro guard flag"    $::inst_update::last_guard readonly
 check "ro no mutation"   [inst_lc 0] {devices res}
 
 # --- 26. symbol-view guard ---
-set symf [file join [pwd] _iu_[pid].sym]
+set symf [file join [test_scratch iu_sym] iu.sym]
 set fhh [open $symf w]
 puts $fhh "v {xschem version=3.4.8RC file_version=1.3}"
 puts $fhh "G {}"; puts $fhh "K {type=subcircuit}"; puts $fhh "V {}"; puts $fhh "S {}"; puts $fhh "E {}"
@@ -342,9 +342,6 @@ check "symview run guard"  $::inst_update::last_guard symbol
 inst_update::list_matches
 check "symview list guard"  $::inst_update::last_guard symbol
 catch {file delete -force $symf}
-
-# cleanup
-catch {file delete -force $orphdir}
 
 # ===========================================================================
 if {$fail == 0} { puts "RESULT: ALL PASS ($npass checks)"; puts "OVERALL: ok"; exit 0 } \

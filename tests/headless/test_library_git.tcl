@@ -51,10 +51,13 @@ proc gcommit {repo msg args} {
 }
 
 # --- fixtures (in a real temp dir, NOT under any git repo) -------------------
+# Case E only holds OUTSIDE any repo, so redirect the scratch helper to $TMPDIR:
+# its default (tests/headless/.scratch) is inside this repo and `git rev-parse`
+# would find that root instead of "".
 set tmpbase [expr {[info exists env(TMPDIR)] && $env(TMPDIR) ne {} ? $env(TMPDIR) : "/tmp"}]
-set tmp [file join $tmpbase _libgit_[pid]]
-file delete -force $tmp
-file mkdir $tmp
+set ::env(XSCHEM_TEST_SCRATCH) [file join $tmpbase xschem_test_scratch]
+source [file join $here scratch.tcl]
+set tmp [test_scratch libgit]
 
 # Case A — standalone repo: library dir == repo root. Nested 'inv' (sym+sch)
 # committed; a flat 'res.sym' left untracked.
@@ -157,7 +160,6 @@ check "CC2 datafile restored after cancel" [expr {[slurp $slib/inv/symbol/inv.sy
 check "CC3 commit on a non-git path errors (never silently no-ops)" [errs {lib_git_commit "" {x} "m"}] {}
 check "CC4 checkout on a non-git path errors" [errs {lib_git_checkout $plain/inv.sym}] {}
 
-file delete -force $tmp
 if {$fail == 0} { puts "RESULT: ALL PASS" } else { puts "RESULT: $fail FAILED" }
 flush stdout
 exit [expr {$fail == 0 ? 0 : 1}]

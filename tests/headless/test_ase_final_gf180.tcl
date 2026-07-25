@@ -46,9 +46,8 @@ proc check_true {name cond} { check $name [expr {$cond ? 1 : 0}] 1 }
 # --- locations (cwd-independent) --------------------------------------------
 set here    [file normalize [file dirname [info script]]]      ;# tests/headless
 set repo    [file normalize [file join $here .. ..]]           ;# repo root
-set scratch [file normalize [file join [pwd] _ase_final_gf180_[pid]]]
-file delete -force $scratch
-file mkdir $scratch
+source [file join $here scratch.tcl]
+set scratch [test_scratch ase_final_gf180]
 
 set cellroot  [file join $repo gf180mcuD xschem_libs gf180mcu_tests test_nfet_final]
 set statefile [file join $cellroot ngspice_state1 test_nfet_final.state]
@@ -173,8 +172,7 @@ if {[auto_execok ngspice] eq {}} {
   incr fail
 }
 
-# --- cleanup + verdict -------------------------------------------------------
-file delete -force $scratch
+# --- verdict -----------------------------------------------------------------
 if {$fail == 0} {
   puts "RESULT: ALL PASS ($npass checks)"
 } else {

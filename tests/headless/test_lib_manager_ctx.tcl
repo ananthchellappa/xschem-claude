@@ -19,10 +19,10 @@ proc has {lib cell} { expr {[lsearch [xschem lib_cells $lib] $cell] >= 0} }
 # panes are ttk::treeview now: row ids == item names, so children{} is the list
 proc lb {col} { return [.libmgr.pw.$col.lb children {}] }
 proc tvsel {col name} { .libmgr.pw.$col.lb selection set $name; .libmgr.pw.$col.lb focus $name }
+source [file join [file dirname [info script]] scratch.tcl]
 
 # --- private fixture (never touches the repo libraries) ---------------------
-set tmp [file join [pwd] _ctx_[pid]]
-file delete -force $tmp
+set tmp [test_scratch ctx]
 touch $tmp/tlib/inv.sym "v {inv sym}"
 touch $tmp/tlib/inv.sch "v {inv sch}"
 touch $tmp/tlib/buf/schematic/buf.sch "v {buf sch}"
@@ -147,7 +147,6 @@ check "CTX16 view rename collision is a soft failure" [expr {[libmgr::do_rename_
   "(status: [.libmgr.status cget -text])"
 
 destroy .libmgr
-file delete -force $tmp
 if {$fail == 0} { puts "RESULT: ALL PASS" } else { puts "RESULT: $fail FAILED" }
 flush stdout
 exit [expr {$fail == 0 ? 0 : 1}]

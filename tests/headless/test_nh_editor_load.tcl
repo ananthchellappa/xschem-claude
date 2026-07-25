@@ -21,7 +21,8 @@
 set fail 0
 proc check {n ok d} { global fail; if {$ok} { puts "ok:   $n $d" } else { puts "FAIL: $n $d"; incr fail } }
 
-set ::USER_CONF_DIR [file join [pwd] _nheload_[pid]] ; file delete -force $::USER_CONF_DIR ; file mkdir $::USER_CONF_DIR
+source [file join [file dirname [info script]] scratch.tcl]
+set ::USER_CONF_DIR [test_scratch nheload]
 
 # ---- (A) headless parse round-trip -----------------------------------------------------------
 # write_net_hilight_style_conf writes `set net_hilight_style {<rows>}`; nhse_parse_style_file extracts
@@ -85,7 +86,6 @@ rename xschem {} ; rename xschem_real xschem
 
 # ---- (C) GUI: button, Load Replace/Add staged, no-styles leaves table unchanged --------------
 if {[catch {winfo exists .}]} {
-  file delete -force $::USER_CONF_DIR
   if {$fail == 0} { puts "RESULT: ALL PASS (headless A+B; GUI skipped — needs Tk/X)" } else { puts "RESULT: $fail FAILED" }
   flush stdout
   exit [expr {$fail == 0 ? 0 : 1}]
@@ -170,7 +170,6 @@ rename ciw_echo {}
 if {$had_echo} { rename ciw_echo_orig ciw_echo }
 
 catch {destroy .nhse}
-file delete -force $::USER_CONF_DIR
 if {$fail == 0} { puts "RESULT: ALL PASS" } else { puts "RESULT: $fail FAILED" }
 flush stdout
 exit [expr {$fail == 0 ? 0 : 1}]

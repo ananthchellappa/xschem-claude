@@ -12,7 +12,8 @@ proc check {name ok detail} {
   global fail
   if {$ok} { puts "ok:   $name $detail" } else { puts "FAIL: $name $detail"; incr fail }
 }
-set tmp [file join [pwd] _nhrender_[pid]] ; file delete -force $tmp ; file mkdir $tmp
+source [file join [file dirname [info script]] scratch.tcl]
+set tmp [test_scratch nhrender]
 
 proc render {angle outfile} {
   global tmp
@@ -52,7 +53,6 @@ check "N1 angle -40 renders tilted (not flat like angle 0)" \
 check "N2 angle -40 mirrors +40 (equal drawn area, fabs coverage)" \
   [expr {abs($nn - $np) <= 20}] "(nn=$nn np=$np diff=[expr {abs($nn-$np)}])"
 
-file delete -force $tmp
 if {$fail == 0} { puts "RESULT: ALL PASS" } else { puts "RESULT: $fail FAILED" }
 flush stdout
 exit [expr {$fail == 0 ? 0 : 1}]

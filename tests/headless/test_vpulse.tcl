@@ -17,11 +17,11 @@ proc find_cls {w cls} { if {[winfo class $w] eq $cls} {return $w}
 
 set here    [file normalize [file dirname [info script]]]
 set repo    [file normalize [file join $here .. ..]]
+source [file join $here scratch.tcl]
 set symdir  [file join $repo xschem_libs_newsym devices vpulse symbol]
 set symsym  [file join $symdir vpulse.sym]
 set symtcl  [file join $symdir vpulse.tcl]
-set scratch [file normalize [file join [pwd] _vpulse_[pid]]]
-file delete -force $scratch; file mkdir $scratch
+set scratch [test_scratch vpulse]
 
 source $symtcl
 check "field_labels: Vpulse"  [dict get [vpulse::field_labels] Vpulse] {Pulsed Value (V2)}
@@ -64,7 +64,6 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   catch {destroy .tf}
 } else { puts "build_fields GUI legs skipped (no DISPLAY)" }
 
-file delete -force $scratch
 if {$fail == 0} { puts "RESULT: ALL PASS ($npass checks)" } \
 else { puts "RESULT: $fail FAILED ($npass passed)" }
 flush stdout

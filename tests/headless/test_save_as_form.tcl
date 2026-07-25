@@ -33,8 +33,8 @@ proc pick {col txt handler} {
 }
 
 # --- fixture: one writable library with a cell that has a schematic view -------
-set tmp [file join [pwd] _saveform_[pid]]
-file delete -force $tmp
+source [file join [file dirname [info script]] scratch.tcl]
+set tmp [test_scratch saveform]
 touch $tmp/tlib/existing/schematic/existing.sch
 set defs [file join $tmp library.defs]
 set fp [open $defs w]; puts $fp "DEFINE tlib $tmp/tlib"; close $fp
@@ -139,6 +139,5 @@ catch {destroy .saveform}
 
 catch {destroy .saveform}; catch {destroy .savebrowse}
 catch {rename tk_messageBox {}; rename _real_tk_messageBox tk_messageBox}
-file delete -force $tmp
 if {$fail == 0} { puts "RESULT: ALL PASS" } else { puts "RESULT: $fail FAILED" }
 flush stdout

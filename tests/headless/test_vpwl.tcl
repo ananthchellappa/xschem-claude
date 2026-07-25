@@ -21,8 +21,8 @@ set repo    [file normalize [file join $here .. ..]]
 set symdir  [file join $repo xschem_libs_newsym devices vpwl symbol]
 set symsym  [file join $symdir vpwl.sym]
 set symtcl  [file join $symdir vpwl.tcl]
-set scratch [file normalize [file join [pwd] _vpwl_[pid]]]
-file delete -force $scratch; file mkdir $scratch
+source [file join $here scratch.tcl]
+set scratch [test_scratch vpwl]
 
 # --- pure helpers + field API (source the companion directly) ---------------
 source $symtcl
@@ -78,7 +78,6 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   catch {destroy .tf}
 } else { puts "build_fields GUI legs skipped (no DISPLAY)" }
 
-file delete -force $scratch
 if {$fail == 0} { puts "RESULT: ALL PASS ($npass checks)" } \
 else { puts "RESULT: $fail FAILED ($npass passed)" }
 flush stdout

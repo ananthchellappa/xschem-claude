@@ -100,9 +100,8 @@ proc gvecs {gs i} {
 # --- locations (cwd-independent) --------------------------------------------
 set here    [file normalize [file dirname [info script]]]      ;# tests/headless
 set repo    [file normalize [file join $here .. ..]]           ;# repo root
-set scratch [file normalize [file join [pwd] _ase_persist_[pid]]]
-file delete -force $scratch
-file mkdir $scratch
+source [file join $here scratch.tcl]
+set scratch [test_scratch ase_persist]
 
 # model resolution exactly as sky130A/cadence_style_rc sets it
 set ::SKYWATER_MODELS [file join $repo sky130A models libs.tech combined]
@@ -626,7 +625,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
 }
 
 # --- cleanup + verdict -------------------------------------------------------
-catch {file delete -force $scratch}
+test_scratch_drop $scratch      ;# early drop; the check below asserts removal
 check "cleanup: scratch removed" [file exists $scratch] 0
 if {$fail == 0} {
   puts "RESULT: ALL PASS ($npass checks)"

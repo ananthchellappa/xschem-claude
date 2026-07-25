@@ -9,7 +9,8 @@ set fail 0
 proc check {n ok d} { global fail; if {$ok} { puts "ok:   $n $d" } else { puts "FAIL: $n $d"; incr fail } }
 proc count_type {c t} { set n 0; foreach id [$c find all] { if {[$c type $id] eq $t} { incr n } }; return $n }
 
-set ::USER_CONF_DIR [file join [pwd] _nhangle_ed_[pid]] ; file delete -force $::USER_CONF_DIR ; file mkdir $::USER_CONF_DIR
+source [file join [file dirname [info script]] scratch.tcl]
+set ::USER_CONF_DIR [test_scratch nhangle_ed]
 
 # open the editor on one thick, dashed row
 set ::net_hilight_style {{0 4 14 {8 8} -30 0 none 0}}
@@ -38,10 +39,9 @@ check "E2c angle 0 -> flat (no polygons)" \
   [expr {[count_type .nhse.preview polygon] == 0}] "(polygons=[count_type .nhse.preview polygon])"
 
 catch {destroy .nhse}
-# scrub scratch: silence the exit-time geometry write (xwin_exit -> store_geom)
-# so it doesn't fault on the just-deleted USER_CONF_DIR, then remove it.
+# silence the exit-time geometry write (xwin_exit -> store_geom); the scratch dir
+# itself is removed by test_scratch's exit hook.
 proc store_geom {args} {}
-catch {file delete -force $::USER_CONF_DIR}
 if {$fail == 0} { puts "RESULT: ALL PASS" } else { puts "RESULT: $fail FAILED" }
 flush stdout
 exit [expr {$fail == 0 ? 0 : 1}]

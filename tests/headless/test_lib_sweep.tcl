@@ -31,6 +31,7 @@ proc body {text} {
   }
   return [lsort $out]
 }
+source [file join [file dirname [info script]] scratch.tcl]
 
 set repo [file normalize [file join [pwd] ..]]
 set OA   [file join $repo xschem_libraries_oa]
@@ -81,7 +82,7 @@ proc netlist_body {sch defs dirs outdir} {
   if {![file exists $sp]} { return "<none>" }
   return [body [slurp $sp]]
 }
-set tmp [file join [pwd] _sweep_[pid]]
+set tmp [test_scratch sweep]
 set compared 0; set diffs {}
 foreach lib $MIGRATED {
   foreach msch [lsort [glob -nocomplain [file join $OA $lib */schematic/*.sch]]] {
@@ -96,7 +97,6 @@ foreach lib $MIGRATED {
     }
   }
 }
-file delete -force $tmp
 check "P4 netlist equivalence over all migrated schematics" \
   [expr {[llength $diffs] == 0 && $compared > 50}] "(compared=$compared, diffs=[llength $diffs])"
 foreach d $diffs { puts "    DIFF $d" }

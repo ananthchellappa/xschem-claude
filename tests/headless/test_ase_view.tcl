@@ -32,8 +32,8 @@ proc find_ase_window {key} {
 }
 
 # --- scratch lib fixture ------------------------------------------------------
-set scratch [file normalize [file join [pwd] _ase_view_[pid]]]
-file delete -force $scratch
+source [file join [file dirname [info script]] scratch.tcl]
+set scratch [test_scratch ase_view]
 file mkdir [file join $scratch aseviewlib]
 set f [open [file join $scratch library.defs] w]
 puts $f "DEFINE aseviewlib [file join $scratch aseviewlib]"
@@ -222,8 +222,7 @@ if {[info commands ::ase::open_state_real] ne {}} {
   catch {rename ::ase::open_state_real ::ase::open_state}
 }
 
-# --- cleanup + verdict -------------------------------------------------------
-catch {file delete -force $scratch}
+# --- verdict -----------------------------------------------------------------
 if {$fail == 0} {
   puts "RESULT: ALL PASS ($npass checks)"
 } else {
