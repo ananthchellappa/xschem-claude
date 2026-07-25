@@ -193,6 +193,18 @@ check "PH4 bad index -> 0, model intact" \
         [llength [dict get [wviewer::layout_for $phtok] graphs]]] {0 2}
 wviewer::forget $phtok
 
+# --- PH5 (pure): Ctrl-4 entry proc + status-line slot mapping ----------------
+# The keyboard entry point ase::direct_plot_for_current and the bottom
+# mode-prompt slot resolver ase::ui::sod_statusbar (.drw -> .statusbar.10,
+# .x1.drw -> .x1.statusbar.10) are pure and load without a display.
+check_true "PH5 ase::direct_plot_for_current defined" \
+  [expr {[info commands ::ase::direct_plot_for_current] ne {}}]
+check_true "PH5 ase::ui::sod_statusbar defined" \
+  [expr {[info commands ::ase::ui::sod_statusbar] ne {}}]
+check "PH5 statusbar slot main canvas"   [ase::ui::sod_statusbar .drw]     .statusbar.10
+check "PH5 statusbar slot window .x1"     [ase::ui::sod_statusbar .x1.drw] .x1.statusbar.10
+check "PH5 statusbar slot window .x2"     [ase::ui::sod_statusbar .x2.drw] .x2.statusbar.10
+
 # --- GUI legs (DISPLAY-guarded partial skip) ---------------------------------
 if {[info exists ::has_x] && [info commands winfo] ne {}} {
 
@@ -663,6 +675,75 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     ase::ui::close $key
     update
     check "P8 session closed, viewer registry cleaned" [wviewer::window_for $key] {}
+
+    # --- P9: Ctrl-4 entry point (ase::direct_plot_for_current) + bottom
+    #     status-line prompt. Fresh session, make the design the CURRENT window
+    #     (Ctrl-4 fires from it), then drive the same path the bind fires. ------
+    check "P9 reopen state -> 1" \
+      [ase::open_state sky130_tests test_nfet_final ngspice_state1] 1
+    update
+    set top9 [ase::ui::window_for $key]
+    check_true "P9 session window exists" \
+      [expr {$top9 ne {} && [winfo exists $top9]}]
+    ase::ui::design_window $key                        ;# make the design current
+    update
+    check "P9 design is the current schematic" \
+      [file normalize [xschem get schname]] $schpath
+    set cv9  [xschem get current_win_path]
+    set sb9  [ase::ui::sod_statusbar $cv9]
+    set pre_esc9 [bind $cv9 <Key-Escape>]
+    set pre_mot9 [bind $cv9 <Motion>]
+    set rk [ase::direct_plot_for_current]              ;# the Ctrl-4 command
+    update
+    check "P9 entry proc returned the bound session key" $rk $key
+    check_true "P9 mode armed (ButtonPress-1 seized, sod active)" \
+      [expr {[bind $cv9 <ButtonPress-1>] ne {} \
+             && [info exists ::ase::ui::sod(active)] \
+             && $::ase::ui::sod(active) eq $key}]
+    # design_window's raise focuses the TOPLEVEL; select_on_design must refocus
+    # the CANVAS or the seized <Key-Escape> never fires (mode stuck on real ESC).
+    # Without the `focus $cv` fix this is the toplevel, not the canvas -> FAIL.
+    check "P9 canvas holds keyboard focus (real ESC will fire)" \
+      [focus -lastfor $cv9] $cv9
+    # the prompt is kept up by sod_prompt_pump (re-asserts within ~80ms after the
+    # C engine blanks .statusbar.10), so poll rather than sample synchronously
+    proc wait_prompt {w txt} {
+      for {set i 0} {$i < 80} {incr i} {
+        update
+        if {[$w cget -text] eq $txt} { return 1 }
+        after 20
+      }
+      return 0
+    }
+    check_true "P9 status line shows the prompt" \
+      [wait_prompt $sb9 {select signals to plot}]
+    check "P9 status line prompt is active (green)" [$sb9 cget -state] active
+    # regression guard: a Motion routes through C update_statusbar() which BLANKS
+    # .statusbar.10; the pump must bring the prompt back (delete sod_prompt_pump
+    # in select_on_design and this leg times out -> FAIL).
+    event generate $cv9 <Motion> -x 40 -y 40
+    check_true "P9 prompt returns after a Motion blank (pump re-asserts)" \
+      [wait_prompt $sb9 {select signals to plot}]
+    ase::ui::sod_end $key                              ;# ESC path
+    update
+    check "P9 prompt cleared on end" [string trim [$sb9 cget -text]] {}
+    check "P9 prompt state restored to normal" [$sb9 cget -state] normal
+    check "P9 Motion binding restored verbatim" [bind $cv9 <Motion>] $pre_mot9
+    check "P9 Key-Escape restored verbatim" [bind $cv9 <Key-Escape>] $pre_esc9
+
+    # --- P10: no ASE session bound to the current design -> honest no-op
+    #     (returns {}, does NOT arm the mode, leaves canvas bindings alone). ----
+    ase::ui::close $key
+    update
+    check "P10 session closed" [ase::ui::window_for $key] {}
+    set cv10 [xschem get current_win_path]             ;# design still current
+    set pre_press10 [bind $cv10 <ButtonPress-1>]
+    set r10 [ase::direct_plot_for_current]
+    update
+    check "P10 no-session entry returns {}" $r10 {}
+    check "P10 no-session did NOT arm the mode" \
+      [expr {[info exists ::ase::ui::sod(active)] ? $::ase::ui::sod(active) : {}}] {}
+    check "P10 ButtonPress-1 untouched (no mode)" [bind $cv10 <ButtonPress-1>] $pre_press10
   }
 
 } else {

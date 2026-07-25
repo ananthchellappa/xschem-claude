@@ -209,6 +209,14 @@ bind .drw <Control-Alt-Key-d>   {cadence::deeploc_note;           break}
 bind .drw <Control-Key-2>       {cadence::make_editable;          break}
 bind .drw <Control-Key-at>      {cadence::make_readonly;          break}
 bind .drw <Control-Shift-Key-2> {cadence::make_readonly;          break}
+# Ctrl-4 : ASE-L "select signals to plot" (Cadence Direct Plot, driven from the
+# design window). Enters the ASE Direct Plot click mode for the session bound to
+# THIS schematic: click wires/net-labels for voltage traces, sources/ammeters for
+# current traces; ESC plots the queue into the session's waveform viewer (opening
+# it if needed). A bottom-status-line prompt shows while the mode is armed.
+# Overrides the C default (Ctrl+4 = select drawing layer 4), so it ends in
+# `break`, exactly like Ctrl-2 above. Remap: edit the chord on this line.
+bind .drw <Control-Key-4>       {ase::direct_plot_for_current;    break}
 
 # Descend opens the child schematic READ-ONLY by default (browse mode). To edit,
 # press Ctrl-2 after descending, use the "Descend schematic (edit)" right-click

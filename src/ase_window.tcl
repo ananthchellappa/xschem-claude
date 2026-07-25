@@ -1241,6 +1241,40 @@ proc ase::ui::output_editor_cancel {key} {
 # `.options savecurrents` + `@m.x<inst>.<subdev>[id]` names that depend on
 # subcircuit internals invisible to the schematic click — deferred.
 
+# The design window's bottom mode-prompt slot for a canvas $cv: the green
+# .statusbar.10 label (xschem's "DRAW WIRE!" / "HIGHLIGHT NET!" convention),
+# per-window (.drw -> "", .x1.drw -> ".x1"). Kept as raw Tk configure — there
+# is no xschem verb wrapper for this slot.
+proc ase::ui::sod_statusbar {cv} {
+  regsub {\.drw$} $cv {} top
+  return "$top.statusbar.10"
+}
+# Show / clear the select-on-design prompt on that slot. `-state active` turns on
+# the green background; clearing restores the neutral state + blank text. Both
+# catch — the canvas/statusbar may not exist (headless, torn-down window).
+proc ase::ui::sod_prompt_set {cv text} {
+  catch {[ase::ui::sod_statusbar $cv] configure -state active -text $text}
+}
+proc ase::ui::sod_prompt_clear {cv} {
+  catch {[ase::ui::sod_statusbar $cv] configure -state normal -text { }}
+}
+# Keep the prompt up while the mode is armed. Every generic canvas event forwards
+# to C callback() -> update_statusbar(), which BLANKS .statusbar.10 whenever no C
+# ui_state mode bit is set (this is a pure-Tcl mode, so none is) — and window
+# focus/creation churn re-establishes the generic canvas bindings, so appending a
+# re-assert to them does not survive. A light periodic re-set is immune to both
+# the blank and the rebind. Self-cancels the instant the mode ends (sod(active)
+# gone or moved to another key); the pending `after` id is also cancelled
+# explicitly in sod_end. ~80 ms => a blanking event shows at most a sub-frame
+# flicker before the prompt returns; a C ui_state bit would remove even that.
+proc ase::ui::sod_prompt_pump {key} {
+  variable sod
+  if {![info exists sod(active)] || $sod(active) ne $key} return
+  if {![info exists sod($key,canvas)] || ![info exists sod($key,prompt)]} return
+  ase::ui::sod_prompt_set $sod($key,canvas) $sod($key,prompt)
+  set sod($key,pump) [after 80 [list ase::ui::sod_prompt_pump $key]]
+}
+
 # Enter the mode for session `key` with `flavor` = {save S plot P} (menu To
 # Be Saved -> {save 1 plot 0}, To Be Plotted -> {save 1 plot 1}, From Design…
 # -> the dialog checkboxes). `mode` (item 13, D1) selects what a click
@@ -1250,10 +1284,16 @@ proc ase::ui::output_editor_cancel {key} {
 # ONE mode globally: entering while another is active cleanly ends the
 # previous one first. Returns 1 when the mode is armed, 0 when the design
 # window cannot be opened.
-proc ase::ui::select_on_design {key flavor {mode outputs}} {
+proc ase::ui::select_on_design {key flavor {mode outputs} {do_raise 1}} {
   variable sod
   if {[info exists sod(active)]} { ase::ui::sod_end $sod(active) }
-  if {![ase::ui::design_window $key]} { return 0 }
+  # do_raise 0 (Ctrl-4 from the design window): the design is ALREADY the current
+  # front window, so skip design_window's raise_activate_toplevel — a visible
+  # withdraw/deiconify flash + a toplevel focus-steal (the reported "hiccup").
+  # The menu path (Session/Results) keeps do_raise 1 to bring the design forward.
+  if {$do_raise} {
+    if {![ase::ui::design_window $key]} { return 0 }
+  }
   set cv [xschem get current_win_path]
   if {![winfo exists $cv]} {
     catch {ciw_echo "ase: no design canvas to select on ($cv)" error}
@@ -1272,7 +1312,25 @@ proc ase::ui::select_on_design {key flavor {mode outputs}} {
   # was swallowed above
   bind $cv <ButtonRelease-1> {break}
   bind $cv <Key-Escape>      "[list ase::ui::sod_end $key]; break"
+  # The seized <Key-Escape>/<ButtonPress-1> binds live on the design CANVAS, but
+  # design_window's raise_activate_toplevel + `focus $tp` just moved keyboard
+  # focus to the TOPLEVEL (and the seized Button-1 `break`s before the generic
+  # <ButtonPress> that would refocus the canvas). Without the canvas holding
+  # focus, a real ESC keypress never reaches this binding — the mode gets stuck
+  # (mouse picking still works, ESC does not). Give the canvas keyboard focus.
+  catch {focus $cv}
+  # Bottom-status-line prompt (the schematic window's own mode line, distinct
+  # from the CIW ciw_echo log below): set it now and keep it up via sod_prompt_pump
+  # (the C engine blanks .statusbar.10 on every event — see that proc). Cleared
+  # and the pump cancelled in sod_end.
+  if {$mode eq {plot}} {
+    set sod($key,prompt) {select signals to plot}
+  } else {
+    set sod($key,prompt) {select outputs on design}
+  }
   set sod(active) $key
+  ase::ui::sod_prompt_set $cv $sod($key,prompt)
+  ase::ui::sod_prompt_pump $key
   if {$mode eq {plot}} {
     catch {ciw_echo "ase: Direct Plot — click wires/net labels for voltage\
  traces, sources for current traces; ESC plots"}
@@ -1298,6 +1356,8 @@ proc ase::ui::sod_end {key} {
   catch {bind $cv <ButtonPress-1>   $sod($key,prevpress)}
   catch {bind $cv <ButtonRelease-1> $sod($key,prevrel)}
   catch {bind $cv <Key-Escape>      $sod($key,prevesc)}
+  if {[info exists sod($key,pump)]} { catch {after cancel $sod($key,pump)} }
+  ase::ui::sod_prompt_clear $cv
   set n 0
   if {[info exists sod($key,count)]} { set n $sod($key,count) }
   # item 13 (D1): capture mode + queue BEFORE the records are wiped
@@ -1447,8 +1507,8 @@ proc ase::ui::dp_finish {key queue} {
 # Results > Direct Plot (item 13, D13): the Select-On-Design mode in the
 # `plot` flavor — clicks queue traces; the flavor content is inert in plot
 # mode (D2) but kept self-documenting.
-proc ase::ui::direct_plot {key} {
-  ase::ui::select_on_design $key {save 0 plot 1} plot
+proc ase::ui::direct_plot {key {do_raise 1}} {
+  ase::ui::select_on_design $key {save 0 plot 1} plot $do_raise
 }
 
 # `~` strip button / raise-or-open the session's waveform viewer (item 13,

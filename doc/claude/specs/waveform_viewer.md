@@ -256,6 +256,63 @@ and the input-binding table already do everything the RMB path needs).
   runs last because the S2 sabotage (re-inserting `zoom_full`) moves the canvas;
   the real code never does, so the single baseline holds for every leg.
 
+## Ctrl-4 schematic entry + status-line prompt (as shipped, 2026-07-24)
+
+Keyboard entry to item-13 Direct Plot straight from the DESIGN window, so the
+user never has to reach the ASE window's Results menu. Pure Tcl, no C change, no
+recompile (decision: pure-Tcl `.drw` bind, defer device-pin terminal currents).
+
+- **Entry proc** `ase::direct_plot_for_current` (`src/ase.tcl`, next to
+  `launch_for_current`): `design_of_current` -> `session_for_design` -> if a
+  session is bound, `ase::ui::direct_plot $key`; no session -> honest `ciw_echo`
+  and `{}`; non-schematic view -> `{}` (design_of_current already reported it).
+  has_x-guarded; returns the session key or `{}`.
+- **Keybind** `bind .drw <Control-Key-4> {ase::direct_plot_for_current; break}`
+  in `src/cadence_style_rc` (by the Ctrl-2 group). The `break` overrides the C
+  default (Ctrl+4 = select drawing layer 4, `callback.c` case '4'), same idiom as
+  `Ctrl-2 -> cadence::make_editable`. `clone_canvas_bindings` propagates it to
+  every canvas. Remap = edit that one line.
+- **Bottom status-line prompt** "select signals to plot" on the design window's
+  green mode slot `$top.statusbar.10` (the "DRAW WIRE!"/"HIGHLIGHT NET!"
+  convention) while the mode is armed; cleared on ESC. Because C
+  `update_statusbar()` (end of `callback()`, `callback.c`) BLANKS `.statusbar.10`
+  on every event when no C ui_state bit is set — and focus/window churn
+  re-establishes the generic canvas bindings, so an appended (`+`) re-assert does
+  NOT survive — the prompt is kept up by a light `after 80` re-assert pump
+  (`ase::ui::sod_prompt_pump`), self-cancelling when the mode ends. This is
+  per-mode (`plot` -> "select signals to plot", `outputs` -> "select outputs on
+  design"). **Known tradeoff:** a blanking event shows a sub-100ms flicker before
+  the pump restores the prompt; a proper fix (zero flicker) is a new C ui_state
+  bit + an `update_statusbar()` branch + a clear in `abort_operation()` — deferred
+  with the "no recompile" decision.
+- **Deferred (explicit):** clicking an arbitrary device TERMINAL to queue its
+  current. v1 currents still come only from `vsource`/`ammeter` bodies
+  (`sod_click`). The device-pin path needs a new C verb wrapping
+  `find_closest_pin` (`findnet.c`), a PDK `@spice_get_current` token builder
+  (D/G/S/B -> id/ig/is/ib via `xschem translate`), and auto `.options
+  savecurrents` (`save_all_i`, `ase.tcl`). See the ctrl4-directplot workflow
+  findings.
+- **Interactive fixes (first real GUI use, 2026-07-24):**
+  - *ESC dead / nothing plotted*: `design_window`'s `raise_activate_toplevel` +
+    `focus $tp` moved keyboard focus to the TOPLEVEL, but the mode's seized
+    `<Key-Escape>`/`<ButtonPress-1>` binds live on the CANVAS (and the Button-1
+    `break` pre-empts the generic `<ButtonPress>` that would refocus it). Real ESC
+    never reached `sod_end` → mode stuck, `dp_finish` never ran → no plot (mouse
+    picking worked because it needs no focus). Fix: `catch {focus $cv}` at the end
+    of `select_on_design`'s arm. (The item-13 menu Direct Plot had this latent too;
+    test P4 hid it with `focus -force`.)
+  - *Window flash / "hiccup"*: `raise_activate_toplevel` does `wm withdraw` +
+    `wm deiconify` — a visible flash — even when the design is already front.
+    Ctrl-4 knows the design IS the current front window, so `direct_plot_for_current`
+    now calls `ase::ui::direct_plot $key 0`; the new `do_raise` arg on
+    `direct_plot`/`select_on_design` skips `design_window` entirely on the Ctrl-4
+    path (also sidesteps any `raise_design_editor` path-mismatch duplicate-window
+    open). The menu path keeps `do_raise 1`.
+- **Tests**: `tests/headless/test_ase_plot.tcl` PH5 (pure: proc + statusbar-slot
+  mapping) and P9/P10 (GUI: entry proc arms Direct Plot, CANVAS holds focus so ESC
+  fires [sabotage-verified], prompt shows/returns via pump/clears, no-session honest
+  no-op). 124 checks green.
+
 ## Non-goals (v1)
 
 Digital lanes, sweep-family selector, cursor backannotate-to-schematic,

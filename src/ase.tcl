@@ -728,6 +728,32 @@ proc ase::launch_for_current {} {
   return $key
 }
 
+# Ctrl-4 (Cadence "select signals to plot"): enter ASE Direct Plot for the
+# session bound to the CURRENT schematic, without going through the ASE window's
+# Results menu. Resolves the current design -> its ASE session
+# (design_of_current + session_for_design, the launch_for_current precedent),
+# then hands off to ase::ui::direct_plot -- the click mode where a wire/net-label
+# queues a voltage trace, a source/ammeter queues a current trace, and ESC plots
+# the queue into the session's waveform viewer (opening it if closed). Honest
+# no-op with a ciw_echo when the current view is not a schematic
+# (design_of_current already reported it) or has no ASE session yet. Headless-safe:
+# the Tk click mode is behind the has_x guard. Returns the session key, or {}.
+proc ase::direct_plot_for_current {} {
+  set d [ase::design_of_current]
+  if {$d eq {}} { return {} }
+  lassign $d lib cell view
+  set key [ase::session_for_design $lib $cell $view]
+  if {$key eq {}} {
+    if {[info commands ::ciw_echo] ne {}} {
+      catch {ciw_echo "ase: no ASE-L session for this design -- Launch ASE-L\
+ (Tools menu) or open its ngspice_state view first" error}
+    }
+    return {}
+  }
+  if {[info exists ::has_x]} { ase::ui::direct_plot $key 0 }
+  return $key
+}
+
 # --- ngspice backend --------------------------------------------------------
 
 namespace eval ase::backend::ngspice {
