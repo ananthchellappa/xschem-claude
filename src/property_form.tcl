@@ -1184,6 +1184,29 @@ proc slickprop::edit_form {txtlabel} {
   if {[file rootname [file tail $symbol]] in {ipin opin iopin}} {
     return [schpin::edit_form]
   }
+  # Per-cell custom Edit-Properties form declared BY THE CELL (library-owned):
+  # a symbol global attribute `edit_form=<ns::proc>` routes here to a form that
+  # ships WITH the library as a companion <symbol>.tcl (same path, .tcl ext),
+  # lazily sourced on first use. The ONLY cell-specific knowledge in xschem core
+  # is this generic hook — the form logic + the netlist format live entirely in
+  # the library cell (e.g. devices/vpwl). See doc/claude/specs/cell_custom_form.md.
+  set _ef {}
+  catch {set _ef [string trim [xschem getprop symbol $symbol edit_form]]}
+  if {$_ef ne {}} {
+    # fully-qualify (leading ::) — this proc runs in the ::slickprop namespace, so
+    # a bare `vpwl::edit_form` would resolve as ::slickprop::vpwl::edit_form and
+    # never be found (Tcl 9 TIP 278 relative-namespace resolution).
+    set _efq ::[string trimleft $_ef :]
+    if {[info commands $_efq] eq {}} {
+      catch {
+        set _tcl [file rootname [abs_sym_path $symbol]].tcl
+        if {[file readable $_tcl]} { uplevel #0 [list source $_tcl] }
+      }
+    }
+    if {[info commands $_efq] ne {}} { return [$_efq] }
+    catch {ciw_echo "edit_form '$_ef' declared by $symbol not found\
+ (companion .tcl missing?)" error}
+  }
   variable cur   ;# link to ::slickprop::cur — a relative $slickprop::cur read in this proc body
                  ;# resolves to ::slickprop::slickprop::cur on Tcl 9 (TIP 278, no global fallback)
   set user_wants_copy_cell 0
