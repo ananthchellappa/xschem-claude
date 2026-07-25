@@ -87,8 +87,16 @@ check_true "testbench carries no stale symbols/ dir-prefixed ref" \
 # --- library sizes ---
 check_true "gf180mcu_pr has 66 cell dirs" \
   [expr {[llength [glob -nocomplain -type d [file join $libpath(gf180mcu_pr) *]]] == 66}]
-check_true "gf180mcu_tests has 59 cell dirs" \
-  [expr {[llength [glob -nocomplain -type d [file join $libpath(gf180mcu_tests) *]]] == 59}]
+# gf180mcu_tests is a LIVE test library — cells get added to it (nfet_test_claude,
+# test_nfet_final, test_nfet_TRAN since the 59 the migration brought in). An `== 59`
+# assertion therefore breaks on every legitimate addition, and did: it had been RED
+# at 61 before anyone noticed, because run_regression could not launch the binary
+# (issue 0147). A FLOOR still catches what this check exists for — cells LOST or a
+# half-completed migration — without failing on growth. Contrast the two library
+# counts pinned exactly above/below: those are PDK libraries, which do not grow.
+set _ntests [llength [glob -nocomplain -type d [file join $libpath(gf180mcu_tests) *]]]
+check_true "gf180mcu_tests has >= 59 cell dirs (migration floor; got $_ntests)" \
+  [expr {$_ntests >= 59}]
 
 # --- vendored models present and self-contained ---
 set mdir [file join $repo gf180mcuD models]
