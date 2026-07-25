@@ -1214,12 +1214,63 @@ proc wviewer::apply_range {token gi x1 x2 y1 y2} {
   return 1
 }
 
+# Ctrl+wheel zoom (D1, REVISED by issue 0144 — was X-only on the pointed graph).
+# Zoom about center by 0.8 (in) / 1/0.8 (out): the X window on EVERY graph, so
+# the stacked strips stay time-aligned; the Y window ONLY on graph `gi`, the
+# strip under the pointer. Y is deliberately per-strip — each carries its own
+# signal scale, so zooming Y on all of them at once would fight the user's
+# intent; the other strips "only match the X zoom".
+# Every axis is re-frozen at its read-back value BEFORE zooming (D7) so
+# regenerate cannot re-autozoom an untouched axis away. ONE set_graphs +
+# regenerate for the whole sweep. Also fixes X under `sharedx 1`: regenerate
+# makes non-master graphs inherit graph-0's x range, so zooming the pointed
+# graph alone was clobbered — zooming every graph by the same factor is
+# consistent under sharedx 0 and 1. Separate from `wviewer::wheel` as the
+# synchronous-write seam tests drive directly (item-17 lesson).
+# Returns 1 when anything was written, else 0.
+proc wviewer::wheel_zoom {token dir gi} {
+  variable windows
+  if {![dict exists $windows $token]} { return 0 }
+  set gs [dict get [wviewer::layout_for $token] graphs]
+  set n [llength $gs]
+  set f [expr {($dir eq {up} || $dir eq {in}) ? 0.8 : 1 / 0.8}]
+  set changed 0
+  for {set t 0} {$t < $n} {incr t} {
+    lassign [wviewer::graph_range $token $t] ax1 ax2 ay1 ay2
+    set G [lindex $gs $t]
+    # D7: freeze every concrete axis first, then zoom the ones this gesture owns
+    foreach {k v} [list x1 $ax1 x2 $ax2 y1 $ay1 y2 $ay2] {
+      if {$v ne {}} { dict set G $k $v }
+    }
+    if {$ax1 ne {} && $ax2 ne {}} {
+      set span [expr {($ax2 - $ax1) * $f}]
+      set c    [expr {($ax1 + $ax2) / 2.0}]
+      dict set G x1 [expr {$c - $span / 2.0}]
+      dict set G x2 [expr {$c + $span / 2.0}]
+      set changed 1
+    }
+    if {$t == $gi && $ay1 ne {} && $ay2 ne {}} {
+      set span [expr {($ay2 - $ay1) * $f}]
+      set c    [expr {($ay1 + $ay2) / 2.0}]
+      dict set G y1 [expr {$c - $span / 2.0}]
+      dict set G y2 [expr {$c + $span / 2.0}]
+      set changed 1
+    }
+    set gs [lreplace $gs $t $t $G]
+  }
+  if {$changed} {
+    wviewer::set_graphs $token $gs
+    wviewer::regenerate $token
+  }
+  return $changed
+}
+
 # Viewer wheel handler (D1/D3/D7). `dir` in up|down, `mods` in 0|shift|ctrl:
 #   0     (plain) -> GRAPH vertical pan: shift y1/y2 by +-5% of the y span
 #                    (up = toward larger y / view moves up; down = opposite).
 #   shift          -> GRAPH horizontal pan: shift x1/x2 by +-5% of the x span.
-#   ctrl           -> GRAPH X zoom about center: up = zoom in (span *0.8),
-#                    down = zoom out (span /0.8).
+#   ctrl           -> GRAPH zoom about center (wviewer::wheel_zoom): X on every
+#                    graph, Y on the POINTED graph only (issue 0144).
 # Acts on the pointed graph (graph_at_pointer). Reads the concrete range, applies
 # the delta, freezes ALL FOUR (D7). A `{}` target axis (nothing to pan/zoom) is
 # a no-op.
@@ -1237,13 +1288,9 @@ proc wviewer::wheel {token wp dir mods} {
       set x2 [expr {$x2 + $d}]
     }
     ctrl {
-      if {$x1 eq {} || $x2 eq {}} { return }
-      set span [expr {$x2 - $x1}]
-      set c    [expr {($x1 + $x2) / 2.0}]
-      if {$dir eq {up}} { set span [expr {$span * 0.8}] } \
-      else              { set span [expr {$span / 0.8}] }
-      set x1 [expr {$c - $span / 2.0}]
-      set x2 [expr {$c + $span / 2.0}]
+      # X on every graph + Y on the pointed one; writes + regenerates itself
+      wviewer::wheel_zoom $token $dir $gi
+      return
     }
     default {
       if {$y1 eq {} || $y2 eq {}} { return }

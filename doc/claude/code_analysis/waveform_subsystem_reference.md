@@ -331,7 +331,9 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
   them** (see backlog #1, #5, #6).
 - Scripting seams (pure, headless-testable): `add_trace` (~858, returns error
   string, never throws), `display_raw` (~735), `graph_props`/`band_geometry`/
-  `next_color`/`interp_value`.
+  `next_color`/`interp_value`, `wheel_zoom` (issue 0144 ctrl-wheel zoom: X on
+  every strip, Y only on the pointed strip — the seam tests drive instead of the
+  gesture; `wheel`'s ctrl arm only resolves `graph_at_pointer` and delegates).
 - `switch_ctx` **verifies** the switch took — it silently no-ops inside a
   raised ctx semaphore (e.g. `ase::wait`'s vwait); `auto_plot` defers via
   `after idle` for exactly this reason (inline aimed clear/read at the DESIGN

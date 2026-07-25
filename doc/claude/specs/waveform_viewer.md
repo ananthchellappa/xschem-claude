@@ -212,8 +212,17 @@ and the input-binding table already do everything the RMB path needs).
   - **plain wheel up/down** = GRAPH **vertical** pan (shift y1/y2 by ±5% of the
     y span; up = toward larger y),
   - **Shift+wheel** = GRAPH **horizontal** pan (shift x1/x2 by ±5% of the x span),
-  - **Ctrl+wheel** = GRAPH **X zoom** about centre (up = span×0.8 in, down =
-    span÷0.8 out).
+  - **Ctrl+wheel** = GRAPH zoom about centre (up = span×0.8 in, down = span÷0.8
+    out). **Both axes on the pointed strip (issue 0144):** the X window is zoomed
+    on **every** strip so the stack stays time-aligned, the Y window **only** on
+    the strip under the cursor (Y is per-strip — each carries its own signal
+    scale). Implemented in `wviewer::wheel_zoom`, the synchronous-write seam the
+    tests drive directly; `wviewer::wheel`'s ctrl arm just resolves the pointed
+    strip (`graph_at_pointer`) and delegates. This also fixes X under
+    `sharedx 1`, where `regenerate` makes non-master strips inherit graph-0's x
+    range — zooming the pointed strip alone was clobbered. (Was X-only on the
+    pointed strip.) The View-menu Zoom In/Out and `Z`/`Ctrl-z` remain X-only
+    (`graph_zoom`, D6) — they have no pointed strip.
   On Tcl 8.6/X11 the wheel arrives as `Button-4`(up)/`Button-5`(down); the new
   `<Button-4/5>` + `<Shift-*>` + `<Control-*>` binds (each ending in `break`)
   pre-empt the kept generic `<Button>` that used to forward X11 wheel to the C
@@ -256,8 +265,8 @@ and the input-binding table already do everything the RMB path needs).
   before regenerate (`apply_range`). Freezing an untouched axis stops
   regenerate's autozoom from wiping a prior pan/zoom on the other axis.
 - **New pure-Tcl helpers**: `graph_at_pointer` (band under the pointer; fallback
-  0 for none/one graph), `graph_range`, `apply_range`, `wheel`, `graph_zoom`,
-  `wheel_bind`.
+  0 for none/one graph), `graph_range`, `apply_range`, `wheel`, `wheel_zoom`
+  (0144: X-all + Y-pointed ctrl-wheel zoom), `graph_zoom`, `wheel_bind`.
 - **The graph-not-canvas invariant** is the deterministic test teeth: every IX*
   leg in `test_wave_viewer.tcl` asserts the intended graph-range change AND that
   `xschem get xorigin/yorigin/zoom` still equal a once-captured baseline (item-17
