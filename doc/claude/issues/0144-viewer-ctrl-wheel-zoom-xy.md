@@ -52,9 +52,10 @@ the pointed strip (`graph_at_pointer`) and delegates to it. Semantics:
 the tests drive with an explicit target index — a 2-strip pointer position is not
 reproducible headlessly (item-17 lesson: witness a state write, not a gesture).
 
-**Out of scope (unchanged, X-only):** the View-menu Zoom In/Out and the `Z` /
-`Ctrl-z` keys (`wviewer::graph_zoom`, D6) — they have no pointed strip. Say so if
-they should follow.
+**Out of scope at the time (View-menu Zoom In/Out and the `Z` / `Ctrl-z` keys,
+`wviewer::graph_zoom`, D6):** the user asked for them to follow — done in issue
+**0145**, where `graph_zoom` delegates to `wheel_zoom` so all four zoom
+affordances share one contract.
 
 ## Verification
 

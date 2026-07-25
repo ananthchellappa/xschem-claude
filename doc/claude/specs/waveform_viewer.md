@@ -221,8 +221,11 @@ and the input-binding table already do everything the RMB path needs).
     strip (`graph_at_pointer`) and delegates. This also fixes X under
     `sharedx 1`, where `regenerate` makes non-master strips inherit graph-0's x
     range — zooming the pointed strip alone was clobbered. (Was X-only on the
-    pointed strip.) The View-menu Zoom In/Out and `Z`/`Ctrl-z` remain X-only
-    (`graph_zoom`, D6) — they have no pointed strip.
+    pointed strip.) **The View-menu Zoom In/Out and `Z`/`Ctrl-z` share this
+    contract (issue 0145):** `graph_zoom` delegates to `wheel_zoom`, resolving the
+    pointed strip with `graph_at_pointer` (for the menu that is the last strip the
+    pointer was over — the click leaves the canvas but `mousex_snap` keeps the
+    last canvas position; fallback strip 0). An explicit `gi` names the Y target.
   On Tcl 8.6/X11 the wheel arrives as `Button-4`(up)/`Button-5`(down); the new
   `<Button-4/5>` + `<Shift-*>` + `<Control-*>` binds (each ending in `break`)
   pre-empt the kept generic `<Button>` that used to forward X11 wheel to the C

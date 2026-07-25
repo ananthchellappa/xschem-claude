@@ -1303,41 +1303,22 @@ proc wviewer::wheel {token wp dir mods} {
   wviewer::apply_range $token $gi $x1 $x2 $y1 $y2
 }
 
-# View menu Zoom In/Out (D6): X-only zoom about center, like the ctrl-wheel
-# case, on the target graph(s). `gi all` = every model graph (the menu has no
-# pointer). Freezes all four axes per graph (D7); ONE regenerate at the end.
+# View menu Zoom In/Out + the Z / Ctrl-z keys (D6, REVISED by issue 0145 — was
+# X-only on every graph). Now identical to Ctrl+wheel (issue 0144): X on EVERY
+# strip, Y on the strip under the pointer, via wviewer::wheel_zoom. `dir` is
+# in|out (wheel_zoom takes in/up and out/down alike). `gi all` (every caller's
+# default) resolves the pointed strip with graph_at_pointer — accurate for the
+# keys, and for the menu it is the LAST strip the pointer was over (the click
+# leaves the canvas but mousex_snap keeps the last canvas position; it falls back
+# to strip 0 when the pointer was never over one). An explicit `gi` names the Y
+# target directly (scripting/tests). Returns wheel_zoom's changed flag.
 proc wviewer::graph_zoom {token dir {gi all}} {
   variable windows
-  if {![dict exists $windows $token]} { return }
-  set gs [dict get [wviewer::layout_for $token] graphs]
-  set n [llength $gs]
+  if {![dict exists $windows $token]} { return 0 }
   if {$gi eq {all}} {
-    set targets {}
-    for {set i 0} {$i < $n} {incr i} { lappend targets $i }
-  } else {
-    set targets [list $gi]
+    set gi [wviewer::graph_at_pointer [dict get $windows $token win_path]]
   }
-  set changed 0
-  foreach t $targets {
-    if {![string is integer -strict $t] || $t < 0 || $t >= $n} { continue }
-    lassign [wviewer::graph_range $token $t] x1 x2 y1 y2
-    if {$x1 eq {} || $x2 eq {}} { continue }
-    set span [expr {$x2 - $x1}]
-    set c    [expr {($x1 + $x2) / 2.0}]
-    if {$dir eq {in}} { set span [expr {$span * 0.8}] } \
-    else             { set span [expr {$span / 0.8}] }
-    set G [lindex $gs $t]
-    dict set G x1 [expr {$c - $span / 2.0}]
-    dict set G x2 [expr {$c + $span / 2.0}]
-    if {$y1 ne {}} { dict set G y1 $y1 }
-    if {$y2 ne {}} { dict set G y2 $y2 }
-    set gs [lreplace $gs $t $t $G]
-    set changed 1
-  }
-  if {$changed} {
-    wviewer::set_graphs $token $gs
-    wviewer::regenerate $token
-  }
+  return [wviewer::wheel_zoom $token $dir $gi]
 }
 
 # Wheel binding shim: resolve the session token from the canvas at EVENT time

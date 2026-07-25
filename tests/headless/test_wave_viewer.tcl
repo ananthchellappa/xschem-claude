@@ -66,7 +66,8 @@
 #       Shift+wheel = horizontal pan; IX-zoom-in/out Ctrl+wheel = graph zoom in
 #       BOTH axes on the pointed strip + IX-zoom-strips X-on-every-strip /
 #       Y-on-the-pointed-one-only (issue 0144);
-#       IX-menu-zoomin/out the View menu commands zoom the graph X; IX-fit Fit
+#       IX-menu-zoomin/out the View menu commands zoom the graph the same way
+#       (both axes on the pointed strip, issue 0145); IX-fit Fit
 #       reframes the graph data range with NO canvas zoom_full; IX-rmb a
 #       synthetic Button-3 press+release box narrows the graph rect x-range via
 #       btn3_filter -> the C engine. EVERY IX leg also asserts the canvas
@@ -1131,25 +1132,35 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
       [expr {$yspano > $yspan0 + 1e-9}]
     check_true "IX-zoom-out canvas == baseline" [ix_canvas_ok $vdrw $cx0 $cy0 $cz0]
 
-    # --- IX-menu-zoomin / IX-menu-zoomout: View menu commands ---------------
+    # --- IX-menu-zoomin / IX-menu-zoomout: View menu commands. Like Ctrl+wheel
+    # they zoom BOTH axes on the pointed strip (issue 0145; the y-span legs are
+    # RED pre-fix, when the menu zoom was X-only) --------------------------
     ix_setrange $tok 0 10 -1 1
     xschem new_schematic switch $vdrw
     set span0 [expr {[xschem getprop rect 2 0 x2] - [xschem getprop rect 2 0 x1]}]
+    set yspan0 [expr {[xschem getprop rect 2 0 y2] - [xschem getprop rect 2 0 y1]}]
     $mb.view invoke [$mb.view index {Zoom In}]
     xschem new_schematic switch $vdrw
     set spani [expr {[xschem getprop rect 2 0 x2] - [xschem getprop rect 2 0 x1]}]
+    set yspani [expr {[xschem getprop rect 2 0 y2] - [xschem getprop rect 2 0 y1]}]
     check_true "IX-menu-zoomin x-span shrinks on the graph" \
       [expr {$spani < $span0 - 1e-9}]
+    check_true "IX-menu-zoomin y-span shrinks too (both axes)" \
+      [expr {$yspani < $yspan0 - 1e-9}]
     check_true "IX-menu-zoomin canvas == baseline" [ix_canvas_ok $vdrw $cx0 $cy0 $cz0]
 
     ix_setrange $tok 0 10 -1 1
     xschem new_schematic switch $vdrw
     set span0 [expr {[xschem getprop rect 2 0 x2] - [xschem getprop rect 2 0 x1]}]
+    set yspan0 [expr {[xschem getprop rect 2 0 y2] - [xschem getprop rect 2 0 y1]}]
     $mb.view invoke [$mb.view index {Zoom Out}]
     xschem new_schematic switch $vdrw
     set spano [expr {[xschem getprop rect 2 0 x2] - [xschem getprop rect 2 0 x1]}]
+    set yspano [expr {[xschem getprop rect 2 0 y2] - [xschem getprop rect 2 0 y1]}]
     check_true "IX-menu-zoomout x-span grows on the graph" \
       [expr {$spano > $span0 + 1e-9}]
+    check_true "IX-menu-zoomout y-span grows too (both axes)" \
+      [expr {$yspano > $yspan0 + 1e-9}]
     check_true "IX-menu-zoomout canvas == baseline" [ix_canvas_ok $vdrw $cx0 $cy0 $cz0]
 
     # --- IX-rmb: right-drag = GRAPH x-zoom-to-box via the C engine -----------
@@ -1216,6 +1227,31 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     check_true "IX-zoom-strips other strip 0 keeps its Y (X-only)" \
       [expr {abs($ay1 - $ay0) < 1e-9}]
     check_true "IX-zoom-strips canvas == baseline" [ix_canvas_ok $vdrw $cx0 $cy0 $cz0]
+
+    # same contract through graph_zoom — the View-menu / Z / Ctrl-z path (issue
+    # 0145) — here with an EXPLICIT target strip 0 and the opposite direction
+    wviewer::set_graphs $tok [list $sg0 $sg1]
+    wviewer::regenerate $tok
+    xschem new_schematic switch $vdrw
+    set mx0 [expr {[xschem getprop rect 2 0 x2] - [xschem getprop rect 2 0 x1]}]
+    set my0 [expr {[xschem getprop rect 2 0 y2] - [xschem getprop rect 2 0 y1]}]
+    set nx0 [expr {[xschem getprop rect 2 1 x2] - [xschem getprop rect 2 1 x1]}]
+    set ny0 [expr {[xschem getprop rect 2 1 y2] - [xschem getprop rect 2 1 y1]}]
+    wviewer::graph_zoom $tok out 0                           ;# target strip 0
+    xschem new_schematic switch $vdrw
+    set mx1 [expr {[xschem getprop rect 2 0 x2] - [xschem getprop rect 2 0 x1]}]
+    set my1 [expr {[xschem getprop rect 2 0 y2] - [xschem getprop rect 2 0 y1]}]
+    set nx1 [expr {[xschem getprop rect 2 1 x2] - [xschem getprop rect 2 1 x1]}]
+    set ny1 [expr {[xschem getprop rect 2 1 y2] - [xschem getprop rect 2 1 y1]}]
+    check_true "IX-zoom-strips graph_zoom target strip 0 zooms X out" \
+      [expr {$mx1 > $mx0 + 1e-9}]
+    check_true "IX-zoom-strips graph_zoom target strip 0 zooms Y out" \
+      [expr {$my1 > $my0 + 1e-9}]
+    check_true "IX-zoom-strips graph_zoom other strip 1 MATCHES the X zoom" \
+      [expr {abs($nx1 - $mx1) < 1e-9 && $nx1 > $nx0 + 1e-9}]
+    check_true "IX-zoom-strips graph_zoom other strip 1 keeps its Y (X-only)" \
+      [expr {abs($ny1 - $ny0) < 1e-9}]
+
     wviewer::set_graphs $tok [list $sg0]                     ;# back to 1 strip
     wviewer::regenerate $tok
 
