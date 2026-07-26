@@ -866,6 +866,158 @@ proc ase::ui::sod_expr {kind token} {
   return "i([string tolower $token])"
 }
 
+# Split a possibly-bussed net token into its individual bits (issue 0159).
+# `A[1:0]` -> {A[1] A[0]}, `D,E` -> {D E}, `A[1:0],B` -> {A[1] A[0] B}, and a
+# scalar -> a one-element list. The `#` marker rides along per bit; sod_expr
+# strips it later, which is where that mapping belongs.
+#
+# PURE, exactly like sod_expr, and for the same reason: `xschem expandlabel` is
+# the bison label parser and needs no loaded design (verified), unlike
+# `xschem resolved_net` which runs prepare_netlist_structs. test_ase_interact H1
+# calls this family with nothing loaded.
+#
+# Why buses need splitting at all: sod_expr is a string wrap, so a bus picked
+# whole became one invalid vector -- `v(a[1:0])` -- and src/ase.tcl interpolates
+# the expr verbatim into `.save`/`print` cards. Measured with ngspice-42: that
+# card ALONE aborts the entire analysis ("no data saved for Transient analysis;
+# analysis not run"); alongside any other valid `.save` it is silently dropped
+# and the trace just never appears.
+proc ase::ui::sod_bits {token} {
+  if {$token eq {}} { return {} }
+  set r {}
+  if {[catch {xschem expandlabel $token} r]} { return [list $token] }
+  ## `xschem expandlabel` answers "<expanded> <mult>"; the expansion is a
+  ## comma-separated list in MSB-first (declaration) order.
+  set exp [lindex $r 0]
+  if {$exp eq {}} { return [list $token] }
+  return [split $exp ,]
+}
+
+# What one Select-On-Design click should queue: a list of tokens. A scalar (or
+# any `current` pick, which is an instance name and can never be a bus) is
+# itself; a multi-bit net opens the bit dialog and yields the user's chosen bits
+# in the order the dialog displayed them, or {} for Cancel.
+#
+# This is the seam sod_click routes through, so a test can stub
+# `ase::ui::bus_dialog` and assert the queue set without driving Tk (the same
+# idiom the descend tests use to stub `ask_save`).
+proc ase::ui::sod_pick_tokens {key kind token} {
+  if {$kind ne {voltage}} { return [list $token] }
+  set bits [ase::ui::sod_bits $token]
+  if {[llength $bits] < 2} { return [list $token] }
+  return [ase::ui::bus_dialog $key $token $bits]
+}
+
+# Build the bus bit-selection dialog and return its toplevel path. Split out of
+# `bus_dialog` so the widgets can be driven directly by a test without a modal
+# `tkwait` (the ask_save_close precedent keeps its widgets at deterministic
+# paths for the same reason).
+#
+# Contract (user decision, issue 0159): nothing is selected when it opens --
+# OK with an empty selection is therefore a no-op, same as Cancel. `All`
+# selects every bit; Ctrl-click toggles individual bits (Tk `extended`
+# selectmode gives that plus Shift-click ranges for free). `Reverse` flips the
+# DISPLAYED order, carrying the selection with the items, because the display
+# order IS the order the bits get queued in.
+proc ase::ui::bus_dialog_build {parent token bits} {
+  set w [expr {$parent eq {} ? {.asebusbits} : "$parent.busbits"}]
+  catch {destroy $w}
+  toplevel $w
+  wm title $w {Select Bus Bits}
+  catch {wm transient $w [expr {$parent eq {} ? {.} : $parent}]}
+  label $w.msg -font AseLabelFont -justify left -anchor w \
+    -text "Bus “$token” has [llength $bits] bits.\nSelect the bits to plot\
+ (Ctrl-click toggles, Shift-click extends)."
+  pack $w.msg -side top -fill x -padx 12 -pady {10 6}
+  ## list + scrollbar share a frame so the toplevel itself stays pack-managed
+  frame $w.lf
+  set n [llength $bits]
+  listbox $w.lf.list -selectmode extended -exportselection 0 -activestyle none \
+    -height [expr {$n > 16 ? 16 : ($n < 2 ? 2 : $n)}] \
+    -yscrollcommand [list $w.lf.sb set]
+  scrollbar $w.lf.sb -orient vertical -command [list $w.lf.list yview]
+  foreach b $bits { $w.lf.list insert end $b }
+  pack $w.lf.sb -side right -fill y
+  pack $w.lf.list -side left -fill both -expand yes
+  pack $w.lf -side top -fill both -expand yes -padx 12 -pady 4
+  frame $w.btns
+  button $w.btns.all    -text All     -width 8 \
+    -command [list ase::ui::bus_dialog_all $w]
+  button $w.btns.rev    -text Reverse -width 8 \
+    -command [list ase::ui::bus_dialog_reverse $w]
+  button $w.btns.ok     -text OK      -width 8 \
+    -command [list ase::ui::bus_dialog_done $w 1]
+  button $w.btns.cancel -text Cancel  -width 8 \
+    -command [list ase::ui::bus_dialog_done $w 0]
+  pack $w.btns.all $w.btns.rev -side left -padx 5
+  pack $w.btns.cancel $w.btns.ok -side right -padx 5
+  pack $w.btns -side bottom -fill x -padx 8 -pady {4 10}
+  bind $w <Return> [list $w.btns.ok invoke]
+  ase::ui::bind_dialog_esc $w [list $w.btns.cancel invoke]  ;# ESC = Cancel
+  catch {ase::ui::apply_theme $w}
+  set ::ase::ui::bus_dialog_result {}
+  return $w
+}
+
+# The selected bits in DISPLAY order. `curselection` returns indices ascending,
+# which is display order by construction, so Reverse changing the display also
+# changes the queue order -- the whole point of the button.
+proc ase::ui::bus_dialog_selected {w} {
+  set out {}
+  if {![winfo exists $w.lf.list]} { return {} }
+  foreach i [$w.lf.list curselection] { lappend out [$w.lf.list get $i] }
+  return $out
+}
+
+proc ase::ui::bus_dialog_all {w} {
+  if {[winfo exists $w.lf.list]} { $w.lf.list selection set 0 end }
+}
+
+# Flip the displayed order, re-selecting the same BITS (not the same indices) so
+# a selection made before the flip survives it.
+proc ase::ui::bus_dialog_reverse {w} {
+  if {![winfo exists $w.lf.list]} { return }
+  set lb $w.lf.list
+  set sel [ase::ui::bus_dialog_selected $w]
+  ## built by hand rather than with `lreverse`: the C side still declares Tcl
+  ## 8.4 support (CLAUDE.md), and lreverse is 8.5+.
+  set items {}
+  foreach it [$lb get 0 end] { set items [linsert $items 0 $it] }
+  $lb delete 0 end
+  foreach it $items { $lb insert end $it }
+  foreach it $sel {
+    set i [lsearch -exact $items $it]
+    if {$i >= 0} { $lb selection set $i }
+  }
+}
+
+proc ase::ui::bus_dialog_done {w ok} {
+  if {$ok} {
+    set ::ase::ui::bus_dialog_result [ase::ui::bus_dialog_selected $w]
+  } else {
+    set ::ase::ui::bus_dialog_result {}
+  }
+  catch {destroy $w}
+}
+
+# Modal wrapper: show the dialog, block until dismissed, return the chosen bits
+# (empty on Cancel). Same teardown-tolerance as ask_save_close -- the build-time
+# `update` pumps the event loop, so a test or a compositor can destroy $w before
+# tkwait is reached; tkwait on a dead window throws, so guard it. The result
+# bus_dialog_done recorded still stands.
+proc ase::ui::bus_dialog {key token bits} {
+  variable wins
+  set parent {}
+  if {[dict exists $wins $key]} { set parent [dict get $wins $key] }
+  set w [ase::ui::bus_dialog_build $parent $token $bits]
+  update
+  catch {raise $w}
+  catch {grab set $w}
+  catch {focus $w.lf.list}
+  if {[winfo exists $w]} { tkwait window $w }
+  return $::ase::ui::bus_dialog_result
+}
+
 # Select On Design queue merge (pure): dedupe on the EXACT expr string.
 # Existing row -> OR the flavor's plot/save flags into it; a row already
 # carrying both flags is left alone. Returns {newoutputs status} with status
@@ -1507,11 +1659,25 @@ proc ase::ui::sod_click {key {x {}} {y {}}} {
   # issue 0153: plot mode also gets the classification (kind + raw net/instance
   # name) so it can paint that object in the color the trace will use — `ex` is
   # already wrapped as v(...)/i(...) and is not a highlight target.
-  set ex [ase::ui::sod_expr $kind $token]
-  if {[info exists sod($key,mode)] && $sod($key,mode) eq {plot}} {
-    ase::ui::dp_queue $key $ex $kind $token
-  } else {
-    ase::ui::sod_queue $key $ex
+  # issue 0159: a BUS net is not one signal. sod_pick_tokens asks the user which
+  # bits (bit dialog; Cancel -> empty list -> queue nothing) and we queue one row
+  # per chosen bit, in the order the dialog displayed them. A scalar or a current
+  # pick comes back as the single original token, so the common path is unchanged.
+  set toks [ase::ui::sod_pick_tokens $key $kind $token]
+  if {![llength $toks]} { return }
+  set first 1
+  foreach t $toks {
+    set ex [ase::ui::sod_expr $kind $t]
+    if {[info exists sod($key,mode)] && $sod($key,mode) eq {plot}} {
+      # 0153's schematic cue: colour the picked object ONCE, in the first
+      # trace's colour. The bus is a single wire, so N cues would just repaint
+      # it N times and end on the last bit's colour; and the per-bit token is
+      # not a highlightable net name in its own right.
+      ase::ui::dp_queue $key $ex $kind [expr {$first ? $token : {}}]
+    } else {
+      ase::ui::sod_queue $key $ex
+    }
+    set first 0
   }
 }
 

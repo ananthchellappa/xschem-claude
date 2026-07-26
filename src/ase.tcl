@@ -163,7 +163,71 @@ proc ase::state_load {path} {
   if {$len % 2} {
     return -code error "ase: malformed state file (odd-length list): $path"
   }
-  return [dict merge [ase::state_default] [dict create {*}$content]]
+  set st [dict merge [ase::state_default] [dict create {*}$content]]
+  # issue 0159 migration: a state saved before the bit dialog can carry one
+  # output row whose expr is a whole bus -- `v(a[1:0])` -- which is not a valid
+  # ngspice vector and, if it is the only `.save` in the deck, aborts the run.
+  # Expand such a row per bit on load (user decision). Idempotent: an expanded
+  # row is scalar and expands to itself.
+  #
+  # `catch`ed on purpose, and it is not hiding a bug: opening a session must
+  # never FAIL because a cosmetic migration tripped over an odd stored row (a
+  # row that is not a dict, say). The failure mode of the catch is "no
+  # migration ran", which is exactly the pre-fix behavior — the outputs list is
+  # left byte-identical to the file. `bus_expr_bits` already catches
+  # `expandlabel` itself, so this only fires on a malformed outputs list.
+  catch {dict set st outputs [ase::expand_bus_outputs [ase::state_get $st outputs]]}
+  return $st
+}
+
+# The per-bit expressions a bus output expr stands for, or {} if it is not one.
+# Only used by the load-time migration, and deliberately much narrower than
+# `ase::ui::sod_bits`, because here the string is OPAQUE: a picked token came
+# from the schematic and is known to be a net, but a stored expr may have been
+# typed by hand in the Add-Output dialog.
+#
+# Two guards:
+#  * only a bare `v(<label>)` is a candidate, so a DERIVED expression
+#    (`v(a)-v(b)`, an RPN row, anything with an operator or a nested paren) is
+#    never rewritten. `i(...)` is an instance name and can never be a bus.
+#  * the label must carry an explicit `[n:m]` RANGE. The comma form is
+#    deliberately left alone even though a comma-bus PICK produces it, because
+#    `v(a,b)` is also ngspice's DIFFERENTIAL voltage and `print v(a,b)` is a
+#    real thing a user can have typed into the Add-Output dialog; expanding it
+#    would silently destroy their row. Giving that case up costs nothing
+#    measurable: unlike the bracket form, `.save v(d,e)` does NOT abort the run
+#    (measured, ngspice-42 — it saves v(d) and v(e)), so a legacy comma row is
+#    the benign half of issue 0159.
+proc ase::bus_expr_bits {ex} {
+  if {![regexp {^v\(([^()]+)\)$} $ex -> inner]} { return {} }
+  if {[regexp {[+*/ ]} $inner]} { return {} }
+  if {![regexp {\[[^\]]*:[^\]]*\]} $inner]} { return {} }
+  set r {}
+  if {[catch {xschem expandlabel $inner} r]} { return {} }
+  set exp [lindex $r 0]
+  if {$exp eq {} || [string first , $exp] < 0} { return {} }
+  set out {}
+  foreach b [split $exp ,] { lappend out "v($b)" }
+  return $out
+}
+
+# Rewrite an outputs list, expanding any bus row into one row per bit and
+# keeping every other field (name, plot/save flags) as it was. Row order is
+# preserved, with the expanded rows sitting where the bus row was.
+proc ase::expand_bus_outputs {outputs} {
+  set out {}
+  foreach o $outputs {
+    set ex {}
+    catch {set ex [dict get $o expr]}
+    set bits [ase::bus_expr_bits $ex]
+    if {[llength $bits] < 2} { lappend out $o ; continue }
+    foreach b $bits {
+      set row $o
+      dict set row expr $b
+      lappend out $row
+    }
+  }
+  return $out
 }
 
 # Canonical text form of a state dict: one `key [list value]` per line,

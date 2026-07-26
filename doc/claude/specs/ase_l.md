@@ -254,6 +254,40 @@ one-line notice and queue nothing. Queueing dedupes on the exact expression
 string: an existing row gets the flavor's plot/save flags ORed in, an
 identical re-queue writes nothing.
 
+**Bus picks open a bit-selection dialog** (issue 0159). A net with more than
+one bit is not one signal, and wrapping it whole produced an invalid vector —
+`A[1:0]` → `v(a[1:0])` — which src/ase.tcl interpolates verbatim into the
+deck's `.save`/`print` cards. Measured with ngspice-42: as the ONLY `.save`
+in the deck that card aborts the entire analysis (`no data saved for
+Transient analysis; analysis not run`); alongside any other valid `.save` it
+is silently dropped and the trace simply never appears.
+
+So a click resolving to a multi-bit net (bracket range or comma list) opens
+**Select Bus Bits**, listing the bits in `xschem expandlabel` order —
+MSB-first for a descending range. Contract:
+- **nothing is selected when it opens**, so OK with an empty selection is a
+  no-op, the same as Cancel;
+- **All** selects every bit; **Ctrl-click** toggles one (Tk `extended`
+  selectmode, which also gives Shift-click ranges);
+- **Reverse** flips the *displayed* order and carries the selection with the
+  items — the display order IS the order the bits are queued in, which is
+  what makes the button meaningful;
+- **OK** queues one row per selected bit, in display order; **Cancel**
+  queues nothing.
+
+It applies to BOTH pick paths — Direct Plot and the persisted Outputs list —
+since both wrote the same broken expr. In Direct Plot the 0153 schematic
+colour cue is painted ONCE, in the first bit's colour: the bus is a single
+wire, so N cues would just repaint it and end on the last bit's colour.
+
+Saved states from before this carry a `v(a[1:0])` row; `ase::state_load`
+expands it per bit on load. That migration is restricted to the **bracket**
+form on purpose — a stored expr is opaque, and `v(a,b)` is also ngspice's
+differential voltage, which a user can legitimately have typed into the
+Add-Output dialog. The comma form is left alone, which costs nothing:
+`.save v(d,e)` does not abort a run (measured). A comma bus picked on the
+*schematic* still splits, because there the token is known to be a net.
+
 ### Menu tree (v2)
 - **Launch** — placeholder menu, ignore for now.
 - **Session** — Design Window (raise-or-open the attached schematic window —

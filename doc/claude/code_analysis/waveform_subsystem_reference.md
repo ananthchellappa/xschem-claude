@@ -597,6 +597,25 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
     never stripped since the strip precedes the lookup. The portmap path is immune
     because `actions.c:3568-3572` strips at build time.
 
+27. **A `.save` card ngspice cannot parse is fatal ONLY when it is the sole
+    `.save`** (issue 0159, measured ngspice-42). This corrects the sweeping
+    version of the claim in landmine 23 and issue 0154. The matrix:
+    `.save v(a[1:0])` alone → `Error: no data saved for Transient analysis;
+    analysis not run`, no raw written; **the same card alongside any other
+    valid `.save`** → the run succeeds and the bad token is *silently dropped*;
+    `.save all` + a bad `print` → runs with only `Warning from checkvalid:
+    vector … is not available or has zero length`. So the usual symptom of a
+    bad expr is a **missing trace**, not a dead session — which is why these
+    survive unnoticed. Also: the comma form `.save v(d,e)` is accepted outright
+    (ngspice saves `v(d)` and `v(e)`), so `v(a,b)` is NOT a broken expr — it is
+    ngspice's differential voltage, and any code tempted to "fix" a comma expr
+    must not rewrite one a user typed (`ase::bus_expr_bits` is restricted to the
+    bracket form for exactly this reason). A bus PICK is different: there the
+    token came from the schematic and is known to be a net, so
+    `ase::ui::sod_bits` splits both forms. `xschem expandlabel` is the splitter
+    and needs **no loaded design**, so it is safe inside the pure ASE helpers
+    where `xschem resolved_net` is not.
+
 ---
 
 ## 12. Improvement backlog (ranked, with where-to-touch)
@@ -674,6 +693,9 @@ Effort: S=hours, M=days, L=weeks. Impact in caps.
   `test_resolved_net_hash_bus_0158.tcl` (`HS*` = the per-element `#` strip and
   why it stays loose, issue 0158; `HS0` reads the auto-net name out of
   `xschem nets` rather than hardcoding `#net1`),
+  `test_ase_bus_bits_0159.tcl` (`BB*` = the Select Bus Bits dialog, the
+  `sod_bits` split and the legacy-state migration, issue 0159; the dialog and
+  real-click groups self-SKIP without a DISPLAY),
   `test_ase_*` family. They
   `--pipe`/`--script` the built binary and diff against golden state. Pure
   Tcl helpers in `wave_viewer.tcl` (`graph_props`, `band_geometry`,

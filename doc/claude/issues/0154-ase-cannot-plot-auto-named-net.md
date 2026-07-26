@@ -241,10 +241,18 @@ All **VERIFIED first-hand**, all **pre-existing** and independent of this fix.
    `xctx->node_mult` with no bounds/NULL check. Nothing to do with ASE, but it
    means "`#` implies auto-named" — the premise A6's comment states — is not
    actually true: a user *can* create a `#`-leading net.
-6. **A BUS pick still emits an invalid single vector.** `sod_expr voltage
-   {A[1:0]}` → `v(a[1:0])`, unchanged by this fix (`trimleft` only touches a
-   leading `#`). It has the same `.save`-card hazard as root cause B did. The
-   `send_net_to_graph` precedent fans out per bit; ASE does not.
+6. **A BUS pick still emits an invalid single vector.** → **FIXED, issue 0159.**
+   `sod_expr voltage {A[1:0]}` → `v(a[1:0])`, unchanged by this fix (`trimleft`
+   only touches a leading `#`). It has the same `.save`-card hazard as root
+   cause B did. The `send_net_to_graph` precedent fans out per bit; ASE does not.
+   *(Two corrections from measuring ngspice-42 directly: the hazard is only
+   fatal when the bad card is the ONLY `.save` — alongside any other valid save
+   ngspice silently drops it and the trace just never appears — and the comma
+   bus form `v(d,e)` never aborts at all. Also, both bus shapes reach the picker,
+   not just the bracket one. Fixed not by fanning out silently but with a
+   **Select Bus Bits** dialog: the user picks which bits and in what order.
+   Legacy `v(a[1:0])` rows expand on load, bracket form only, so a user's
+   `v(a,b)` differential is never rewritten.)*
 7. **A `lock=true` wire is unpickable, silently.** `select_at` picks with
    `override_lock=0` while `flylines at` uses `1`, so `sod_click`'s
    `if {$hit eq {}} { return }` fires before any classification — not even the
