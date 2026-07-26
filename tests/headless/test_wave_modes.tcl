@@ -14,10 +14,19 @@
 #     M4 wviewer::target_clamp      stale/negative target never escapes range
 #     M5 wviewer::graph_props       emits `active=1` ONLY when asked (the C
 #                                   indicator's only Tcl-side witness)
+#     M6 the trace-COLOR policy     (issue 0153) first_unused_color /
+#                                   graph_colors / colors_in_graphs /
+#                                   next_color / plan_colors: single = per
+#                                   landing strip (unchanged), multi = unique
+#                                   across the WHOLE window (the "all yellow"
+#                                   fix), prefix-stable for the picker
 #   GUI legs (MG*) open a real viewer window (self-SKIP without a usable
 #   DISPLAY) and assert per-window state, the menu, the click re-target, the
 #   prop-token plumbing of the marker, persistence and the schematic-side
-#   entry points.
+#   entry points. MG6c/MG6d (issue 0153) drive plot_signals for real and read
+#   the trace colors back out of the MODEL: multi-plot must assign DIFFERENT
+#   colors (pre-fix all three were 4), single-plot must still cycle, explicit
+#   colors must win, and predict_colors must equal what plot_signals assigns.
 #
 # NOT asserted (stated, not hidden): the PIXELS of the dull-yellow active-strip
 # marker. The C draw is gated behind draw_graph's new flags bit 16 and is
@@ -153,6 +162,62 @@ check_true "M5 active props still carry flags=graph" \
   [expr {[string match {flags=graph*} $p_on]}]
 check_true "M5 explicit 0 emits no active token" \
   [expr {![string match {*active=*} [pcall {wviewer::graph_props $Gm 0}]]}]
+
+# --- M6: trace-color policy (issue 0153) ------------------------------------
+# The reported defect: in MULTI-plot mode every trace came out the same
+# yellow-green. Cause: the color cycle looked only at the LANDING graph's
+# traces, and multi-plot gives each signal a brand-new EMPTY strip, so every
+# signal got palette head 4. Single-plot stacks into one strip, so it cycled
+# correctly — hence "different colors in single, all yellow in multi".
+proc m6_g {colors} {
+  set trs {}
+  foreach c $colors {
+    lappend trs [dict create expr {v(x)} name {} vec {v(x)} color $c]
+  }
+  return [dict create traces $trs logx 0 logy 0 x1 {} x2 {} y1 {} y2 {}]
+}
+check "M6 palette head when nothing is used" [pcall {wviewer::first_unused_color {}}] 4
+check "M6 first gap is taken, not the next index" \
+  [pcall {wviewer::first_unused_color {4 7}}] 5
+check "M6 exhausted palette falls back to count mod length (D10, unchanged)" \
+  [pcall {wviewer::first_unused_color {4 5 7 8 9 12 14 15 10 11}}] 4
+check "M6 graph_colors reads trace colors in order" \
+  [pcall {wviewer::graph_colors [m6_g {7 4}]}] {7 4}
+check "M6 graph_colors of an empty graph" [pcall {wviewer::graph_colors [m6_g {}]}] {}
+check "M6 colors_in_graphs unions across strips and dedupes" \
+  [pcall {wviewer::colors_in_graphs [list [m6_g {4 7}] [m6_g {7 5}]]}] {4 7 5}
+check "M6 next_color is still per-graph (unchanged contract)" \
+  [pcall {wviewer::next_color [m6_g {4 5}]}] 7
+
+# single-plot: `used` is the LANDING strip only — unchanged behavior. Three
+# signals into strip 0 of a 1-strip stack get three consecutive palette entries.
+check "M6 plan_colors single: consecutive palette entries in one strip" \
+  [pcall {wviewer::plan_colors [list [m6_g {}]] single {0 0 0}}] {4 5 7}
+check "M6 plan_colors single: continues past what the strip already uses" \
+  [pcall {wviewer::plan_colors [list [m6_g {4 5}]] single {0 0}}] {7 8}
+check "M6 plan_colors single ignores OTHER strips (per-strip, as shipped)" \
+  [pcall {wviewer::plan_colors [list [m6_g {}] [m6_g {4 5 7}]] single {0 0}}] {4 5}
+
+# multi-plot: THE FIX. Each signal lands in its own new strip (indices past the
+# end of the list), so per-strip `used` is empty for all of them; the window-wide
+# seed is what makes them differ. Pre-fix this was {4 4 4}.
+check "M6 plan_colors multi: distinct colors across new strips" \
+  [pcall {wviewer::plan_colors [list [m6_g {}]] multi {1 2 3}}] {4 5 7}
+check "M6 plan_colors multi: avoids colors already on screen" \
+  [pcall {wviewer::plan_colors [list [m6_g {4}] [m6_g {5}]] multi {2 3}}] {7 8}
+check "M6 plan_colors multi: colorless existing traces do not block the palette" \
+  [pcall {wviewer::plan_colors [list [m6_g {{}}]] multi {1 2}}] {4 5}
+check "M6 plan_colors of an empty batch" \
+  [pcall {wviewer::plan_colors [list [m6_g {}]] multi {}}] {}
+# prefix stability — what lets the picker resolve click k's color before click
+# k+1 exists (dp_queue asks for the colors of the queue-so-far and takes the last)
+set m6full [pcall {wviewer::plan_colors [list [m6_g {}]] multi {1 2 3 4}}]
+check "M6 plan_colors multi is prefix-stable" \
+  [pcall {wviewer::plan_colors [list [m6_g {}]] multi {1 2}}] [lrange $m6full 0 1]
+set m6fs [pcall {wviewer::plan_colors [list [m6_g {}]] single {0 0 0 0}}]
+check "M6 plan_colors single is prefix-stable" \
+  [pcall {wviewer::plan_colors [list [m6_g {}]] single {0 0}}] [lrange $m6fs 0 1]
+rename m6_g {}
 
 # ============================================================================
 # GUI legs
@@ -331,6 +396,70 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   check "MG6 signal order preserved (strip 2 = first pick)" \
     [dict get [lindex [dict get [lindex $gs 2] traces] 0] expr] {v(x)}
   check "MG6 multi-plot does NOT move the target" [pcall {wviewer::target_strip $tok}] 0
+
+  # --- MG6c: the reported defect, end to end (issue 0153) --------------------
+  # Drive plot_signals in MULTI mode with no explicit colors and read the colors
+  # back out of the MODEL. Pre-fix every one of them was 4 (each signal gets a
+  # fresh empty strip, and the cycle only looked at that strip) — this is the
+  # leg with teeth for the multi-plot half of the issue.
+  proc mg_colors {tok} {
+    set out {}
+    foreach G [dict get [wviewer::layout_for $tok] graphs] {
+      foreach tr [dict get $G traces] { lappend out [dict get $tr color] }
+    }
+    return $out
+  }
+  wviewer::set_graphs $tok [list [wviewer::empty_graph]]
+  wviewer::regenerate $tok
+  pcall {wviewer::set_plot_mode multi $tok}
+  pcall {wviewer::plot_signals $tok {v(m1) v(m2) v(m3)}}
+  set mgc [pcall {mg_colors $tok}]
+  check "MG6c multi-plot assigned 3 colors" [llength $mgc] 3
+  check "MG6c multi-plot colors are all DIFFERENT" \
+    [llength [lsort -unique $mgc]] 3
+  check "MG6c and they are the palette head onwards" $mgc {4 5 7}
+
+  # a SECOND multi gesture must not restart the cycle over colors already up
+  pcall {wviewer::plot_signals $tok {v(m4)}}
+  set mgc2 [pcall {mg_colors $tok}]
+  check "MG6c a later gesture keeps going, no reuse" [llength [lsort -unique $mgc2]] 4
+
+  # single-plot stays as shipped: one strip, cycling within it
+  wviewer::set_graphs $tok [list [wviewer::empty_graph]]
+  wviewer::regenerate $tok
+  pcall {wviewer::set_plot_mode single $tok}
+  pcall {wviewer::set_target_strip 0 $tok}
+  pcall {wviewer::plot_signals $tok {v(s1) v(s2) v(s3)}}
+  check "MG6c single-plot still cycles (unchanged)" [pcall {mg_colors $tok}] {4 5 7}
+
+  # explicit colors win over the cycle (the picker's channel)
+  wviewer::set_graphs $tok [list [wviewer::empty_graph]]
+  wviewer::regenerate $tok
+  pcall {wviewer::plot_signals $tok {v(e1) v(e2)} {12 9}}
+  check "MG6c explicit colors are honored verbatim" [pcall {mg_colors $tok}] {12 9}
+  check "MG6c add_trace honors an explicit color too" \
+    [pcall {wviewer::add_trace $tok 0 {v(e3)} {} 14}] {}
+  check "MG6c ... and stored it" [lindex [pcall {mg_colors $tok}] end] 14
+
+  # --- MG6d: predict_colors == what plot_signals then assigns ---------------
+  # The picker paints the schematic from predict_colors BEFORE the plot happens;
+  # if the two ever diverged the wire and its trace would disagree. Asserted for
+  # both modes, against the live window state.
+  foreach m {single multi} {
+    wviewer::set_graphs $tok [list [wviewer::empty_graph]]
+    wviewer::regenerate $tok
+    pcall {wviewer::set_plot_mode $m $tok}
+    pcall {wviewer::set_target_strip 0 $tok}
+    set pre [pcall {wviewer::predict_colors $tok 3}]
+    pcall {wviewer::plot_signals $tok {v(p1) v(p2) v(p3)}}
+    check "MG6d $m predicted colors == assigned colors" $pre [pcall {mg_colors $tok}]
+    check_true "MG6d $m predicted 3 distinct colors" \
+      [expr {[llength [lsort -unique $pre]] == 3}]
+  }
+  check "MG6d predict_colors 0 signals -> {}" [pcall {wviewer::predict_colors $tok 0}] {}
+  check "MG6d predict_colors rejects a non-number" \
+    [pcall {wviewer::predict_colors $tok x}] {}
+  rename mg_colors {}
 
   # --- MG7: click re-targets the strip ---------------------------------------
   check_true "MG7 <ButtonPress-1> is bound on the viewer canvas" \

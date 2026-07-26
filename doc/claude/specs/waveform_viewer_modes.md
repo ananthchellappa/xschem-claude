@@ -97,10 +97,27 @@ wviewer::plan_plot {mode ngraphs target n}  ->  {new <count> targets {gi ...}}
 | single | 0 strips | `new 1`, every signal → strip 0 (the created one) |
 | multi | any | `new n`, signal *k* → strip `ngraphs + k` |
 
-`wviewer::plot_signals {token exprs}` applies it: create the planned strips via
-`add_graph`, then `add_trace` each expression at its planned index, returning a
-list of `{expr error}` pairs for the ones that failed (`add_trace` never
-throws — it returns a user-displayable string).
+`wviewer::plot_signals {token exprs {colors {}}}` applies it: create the planned
+strips via `add_graph`, then `add_trace` each expression at its planned index,
+returning a list of `{expr error}` pairs for the ones that failed (`add_trace`
+never throws — it returns a user-displayable string).
+
+**The mode also decides trace COLORS (issue 0153).** Because multi-plot lands
+each signal in a fresh EMPTY strip, the original per-graph color cycle gave every
+multi-plot trace the palette head — the "all yellow" defect. A second PURE proc
+runs off the same plan:
+
+```tcl
+wviewer::plan_colors {gs mode targets}  ->  {color-per-signal}
+```
+
+`used` is seeded window-wide for `multi` and per-landing-strip for `single` (so
+single-plot is unchanged), and it accumulates within the batch. It is
+**prefix-stable**, which is what lets the Direct Plot picker resolve click *k*'s
+color before click *k+1* exists (`wviewer::predict_colors`). `plot_signals`
+derives the colors itself when `colors` is `{}`; the picker passes the colors it
+already painted onto the schematic nets so the cue and the trace cannot disagree.
+Full detail: `doc/claude/issues/0153-trace-colors-and-picker-hilight.md`.
 
 `ase::ui::dp_finish` (`src/ase_window.tcl`) replaces its hard-wired
 `add_graph` + "last index" with one `wviewer::plot_signals` call. Its four

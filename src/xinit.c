@@ -659,6 +659,9 @@ static void alloc_xschem_data(const char *top_path, const char *win_path)
   xctx->graph_top = 0;
   xctx->graph_bottom = 0;
   xctx->graph_left = 0;
+  /* issue 0152: wave-bold click anchor. A huge sentinel means "no live press", so a
+   * release that arrives without a preceding press can never read as a click. */
+  xctx->graph_press_x = xctx->graph_press_y = -1e30;
   xctx->graph_lastsel = -1;
   xctx->graph_struct.hilight_wave = -1; /* index of wave */
   xctx->wires = 0;

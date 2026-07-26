@@ -1319,7 +1319,7 @@ proc ase::ui::select_on_design {key flavor {mode outputs} {do_raise 1}} {
   set sod($key,canvas)    $cv
   set sod($key,flavor)    $flavor
   set sod($key,mode)      $mode
-  if {$mode eq {plot}} { set sod($key,queue) {} }
+  if {$mode eq {plot}} { set sod($key,queue) {}; set sod($key,qcolors) {} }
   set sod($key,count)     0
   set sod($key,prevpress) [bind $cv <ButtonPress-1>]
   set sod($key,prevrel)   [bind $cv <ButtonRelease-1>]
@@ -1382,11 +1382,13 @@ proc ase::ui::sod_end {key} {
   if {[info exists sod($key,mode)]} { set mode $sod($key,mode) }
   set queue {}
   if {[info exists sod($key,queue)]} { set queue $sod($key,queue) }
+  set qcolors {}                        ;# issue 0153: colors already on the schematic
+  if {[info exists sod($key,qcolors)]} { set qcolors $sod($key,qcolors) }
   array unset sod $key,*
   if {[info exists sod(active)] && $sod(active) eq $key} { unset sod(active) }
   if {$mode eq {plot}} {
     catch {ciw_echo "ase: Direct Plot — $n trace(s) queued"}
-    ase::ui::dp_finish $key $queue
+    ase::ui::dp_finish $key $queue $qcolors
     return
   }
   catch {ciw_echo "ase: Select On Design ended — $n output(s) queued"}
@@ -1439,13 +1441,43 @@ proc ase::ui::sod_click {key {x {}} {y {}}} {
     return
   }
   # item 13 (D1): route on the mode — `outputs` writes session outputs
-  # (item-08 behavior), `plot` collects trace expressions for dp_finish
+  # (item-08 behavior), `plot` collects trace expressions for dp_finish.
+  # issue 0153: plot mode also gets the classification (kind + raw net/instance
+  # name) so it can paint that object in the color the trace will use — `ex` is
+  # already wrapped as v(...)/i(...) and is not a highlight target.
   set ex [ase::ui::sod_expr $kind $token]
   if {[info exists sod($key,mode)] && $sod($key,mode) eq {plot}} {
-    ase::ui::dp_queue $key $ex
+    ase::ui::dp_queue $key $ex $kind $token
   } else {
     ase::ui::sod_queue $key $ex
   }
+}
+
+# Paint the schematic object a queued Direct Plot signal came from, in the layer
+# color its waveform trace will carry (issue 0153) — the whole point of the
+# feature: the viewer's traces map back onto the schematic by color.
+#
+# `xschem hilight_netname/-instname -layer N` highlights in the PLAIN color of
+# drawing layer N (a negative hilight value, the engine's existing
+# "layer color, no style" path) rather than taking the next entry from the
+# net-hilight STYLE table. That is required, not a convenience: the viewer
+# palette is layer indices, and two of them (4, 5) have no style-table entry at
+# all (default styles cover layers >= 7 only), so `-style` could not reproduce
+# them. It also leaves the user's style cursor untouched.
+#
+# Highlights PERSIST past ESC (user decision) so the color map stays readable
+# while reading the plots; clear them the normal way (Del/unhilight). Existing
+# highlights are deliberately NOT wiped on entry. All catch-guarded: a net that
+# resolves to nothing must never break the picking mode.
+proc ase::ui::dp_hilight {kind token color} {
+  if {$color eq {} || $token eq {}} { return 0 }
+  if {![string is integer -strict $color] || $color <= 0} { return 0 }
+  if {$kind eq {current}} {
+    # a current probe was picked on a source/ammeter BODY: there is no wire to
+    # color, so the instance itself carries the cue
+    return [expr {[catch {xschem hilight_instname -layer $color $token}] ? 0 : 1}]
+  }
+  return [expr {[catch {xschem hilight_netname -layer $color $token}] ? 0 : 1}]
 }
 
 # Queue `ex` into the session's outputs with the mode's flavor (the
@@ -1472,7 +1504,14 @@ proc ase::ui::sod_queue {key ex} {
 # Direct Plot queue step (item 13, D1/D2): collect the trace expression into
 # the mode's queue — session outputs are NEVER written in plot mode (Cadence
 # Direct Plot creates no save entries; test-asserted). Exact-string dedupe.
-proc ase::ui::dp_queue {key ex} {
+#
+# issue 0153: each accepted signal also gets its FUTURE trace color resolved
+# now (wviewer::predict_colors is prefix-stable, so asking for the colors of the
+# queue-so-far always returns this signal's color last), recorded in a parallel
+# `qcolors` list, and applied to the clicked net/instance. dp_finish hands the
+# colors to plot_signals, so the schematic cue and the trace can never disagree.
+# A duplicate re-queue colors nothing (it adds no trace).
+proc ase::ui::dp_queue {key ex {kind {}} {token {}}} {
   variable sod
   if {![info exists sod($key,queue)]} { return }
   if {[lsearch -exact $sod($key,queue) $ex] >= 0} {
@@ -1481,6 +1520,10 @@ proc ase::ui::dp_queue {key ex} {
   }
   lappend sod($key,queue) $ex
   incr sod($key,count)
+  set col {}
+  catch {set col [lindex [wviewer::predict_colors $key [llength $sod($key,queue)]] end]}
+  lappend sod($key,qcolors) $col
+  ase::ui::dp_hilight $kind $token $col
   catch {ciw_echo "ase: queued trace '$ex'"}
 }
 
@@ -1494,7 +1537,7 @@ proc ase::ui::dp_queue {key ex} {
 # (per-trace add errors are reported and skipped); an empty queue just
 # leaves the raised viewer. The mode itself already exited clean before this
 # runs, whatever happens here.
-proc ase::ui::dp_finish {key queue} {
+proc ase::ui::dp_finish {key queue {qcolors {}}} {
   set st [ase::session_state $key]
   set sim_t [ase::plot_sim_type $st]
   if {$sim_t eq {op}} {
@@ -1518,7 +1561,10 @@ proc ase::ui::dp_finish {key queue} {
   # into the target strip, multi-plot gives each one its own new strip. The
   # whole policy lives in wviewer::plot_signals; this side only reports the
   # per-signal failures it returns.
-  foreach pair [wviewer::plot_signals $key $queue] {
+  # issue 0153: `qcolors` are the colors the picker already painted onto the
+  # schematic nets, passed through verbatim so each trace lands in ITS wire's
+  # color. Empty (a scripted/replayed call) -> plot_signals derives them itself.
+  foreach pair [wviewer::plot_signals $key $queue $qcolors] {
     lassign $pair ex err
     catch {ciw_echo "ase: cannot plot '$ex': $err" error}
   }

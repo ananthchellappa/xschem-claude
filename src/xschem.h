@@ -1496,6 +1496,12 @@ typedef struct {
   int graph_left;
   int graph_rubber_active; /* RMB interior-drag zoom-rubber rectangle in progress */
   double graph_rubber_x, graph_rubber_y; /* last-drawn rubber moving corner (xschem coords) */
+  /* Button1 press anchor for the wave-bold CLICK test (issue 0152). Deliberately NOT
+   * mx/my_double_save: the Button1 graph drag-pan re-seeds those on every motion step
+   * (waves_callback save_mouse_at_end), so at the end of a long pan they equal the
+   * current pointer and a click test against them would fire. Set to the raw pointer
+   * on every Button1 press over a graph, invalidated by a double-click. */
+  double graph_press_x, graph_press_y;
   int graph_lastsel; /* last graph that was clicked (selected) */
   /*    */
   XSegment *biggridpoint;

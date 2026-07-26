@@ -26,6 +26,13 @@
 #define SET_MODMASK ( (rstate & Mod1Mask) || (rstate & Mod4Mask) )
 #define EQUAL_MODMASK ( (rstate == Mod1Mask) || (rstate == Mod4Mask) )
 
+/* How far (in SCREEN PIXELS) a Button1 press may travel before its release stops
+ * counting as a click on a graph. Real mice jitter a pixel or two on a click, so a
+ * zero-travel test would lose clicks; a few pixels is far below any intentional drag.
+ * Converted to xschem units at the comparison with xctx->zoom (units per pixel).
+ * Issue 0152. */
+#define GRAPH_CLICK_TOL 3.0
+
 /* Read-only guard. If the current window is marked read-only (xctx->readonly,
  * which is per-window), warn the user with a modal dialog and return 1 so the
  * caller aborts the edit; return 0 when editing is allowed. Only object-mutating
@@ -581,32 +588,53 @@ static int waves_callback(int event, int mx, int my, KeySym key, int button, int
     /* determine if mouse pointer is below xaxis or left of yaxis in some graph */
     setup_graph_data(i, 0, gr);
 
-   /* check if user clicked on a wave or a wave label -> draw wave in bold */
-    if(event == ButtonPress && button == Button3) {
-      /* button3 click on a wave */
-      if(POINTINSIDE(xctx->mousex, xctx->mousey, gr->x1, gr->y1, gr->x2 , gr->y2)) {
-        int wcnt, save;
-        save = gr->hilight_wave;
-        find_closest_wave(i, gr, &wcnt);
-        if(gr->hilight_wave >= 0) {
-          gr->hilight_wave = -1;
-          my_strdup2(_ALLOC_ID_, &r->prop_ptr,
-                     subst_token(r->prop_ptr, "hilight_wave", my_itoa(gr->hilight_wave)));
-        } else {
-          gr->hilight_wave = wcnt;
-          my_strdup2(_ALLOC_ID_, &r->prop_ptr,
-                     subst_token(r->prop_ptr, "hilight_wave", my_itoa(gr->hilight_wave)));
-        }
+   /* Remember where a Button1 press landed, so its release can tell a CLICK from the
+    * end of a drag (issue 0152). Kept in dedicated fields -- see the xschem.h comment
+    * on graph_press_x for why mx/my_double_save cannot be used here. */
+    if(event == ButtonPress && button == Button1) {
+      xctx->graph_press_x = xctx->mousex;
+      xctx->graph_press_y = xctx->mousey;
+    }
 
-        if(save != gr->hilight_wave) {
-          draw_graph(i, 1 + 8 + 16 + (xctx->graph_flags & (2 | 4 | 128 | 256)), gr, NULL); /* draw data in graph box */
-        }
-      /* button3 click on wave label */
-      } else {
-        if( edit_wave_attributes(2, i, gr)) {
-          draw_graph(i, 1 + 8 + 16 + (xctx->graph_flags & (2 | 4 | 128 | 256)), gr, NULL); /* draw data in graph box */
-          return 0;
-        }
+   /* Toggle bold ("selected") rendering of the wave nearest the pointer.
+    *
+    * This is a plain LMB CLICK on the plot body: the RELEASE of a Button1 press that
+    * did not travel more than GRAPH_CLICK_TOL pixels. It used to be a Button3 PRESS,
+    * which meant every RMB press-drag box-zoom (issue 0142) also bolded whatever trace
+    * was nearest the press point -- the reported defect. A release-with-no-travel
+    * trigger cannot be produced by any drag gesture, so the class is closed rather
+    * than moved. Button3 inside the plot body is now box-zoom only.
+    *
+    * The click deliberately WINS over a cursor grab armed by the same press (user
+    * decision): with no travel no cursor moved, and the ButtonRelease arm in the
+    * per-graph loop below clears the grab flags regardless.
+    *
+    * Applies to every graph, on-canvas schematic graphs included, not just the ASE
+    * waveform viewer. doc/claude/issues/0152-graph-rmb-bolds-wave.md */
+    if(event == ButtonRelease && button == Button1 &&
+       POINTINSIDE(xctx->mousex, xctx->mousey, gr->x1, gr->y1, gr->x2 , gr->y2) &&
+       fabs(xctx->mousex - xctx->graph_press_x) <= GRAPH_CLICK_TOL * xctx->zoom &&
+       fabs(xctx->mousey - xctx->graph_press_y) <= GRAPH_CLICK_TOL * xctx->zoom) {
+      int wcnt, save;
+      save = gr->hilight_wave;
+      find_closest_wave(i, gr, &wcnt);
+      /* NOTE (pre-existing semantics, kept): the test is on the CURRENT bold wave, not
+       * on wcnt -- so while any wave is bold a click anywhere in the body un-bolds it,
+       * and only a click with nothing bold selects the closest wave. */
+      if(gr->hilight_wave >= 0) gr->hilight_wave = -1;
+      else                      gr->hilight_wave = wcnt;
+      my_strdup2(_ALLOC_ID_, &r->prop_ptr,
+                 subst_token(r->prop_ptr, "hilight_wave", my_itoa(gr->hilight_wave)));
+      if(save != gr->hilight_wave) {
+        draw_graph(i, 1 + 8 + 16 + (xctx->graph_flags & (2 | 4 | 128 | 256)), gr, NULL); /* draw data in graph box */
+      }
+    }
+    /* button3 click on a wave label (outside the plot body) -> wave attributes dialog */
+    else if(event == ButtonPress && button == Button3 &&
+            !POINTINSIDE(xctx->mousex, xctx->mousey, gr->x1, gr->y1, gr->x2 , gr->y2)) {
+      if( edit_wave_attributes(2, i, gr)) {
+        draw_graph(i, 1 + 8 + 16 + (xctx->graph_flags & (2 | 4 | 128 | 256)), gr, NULL); /* draw data in graph box */
+        return 0;
       }
     }
 
@@ -880,6 +908,10 @@ static int waves_callback(int event, int mx, int my, KeySym key, int button, int
       }
     }
     else if(event == -3 && button == Button1) {
+      /* issue 0152: a double-click is press,release,`-3`,release -- invalidate the click
+       * anchor so the trailing release does not also toggle the wave bold on top of the
+       * attributes/properties dialog this opens. */
+      xctx->graph_press_x = xctx->graph_press_y = -1e30;
       if(!edit_wave_attributes(1, i, gr)) {
         tclvareval("graph_edit_properties ", my_itoa(i), NULL);
       }

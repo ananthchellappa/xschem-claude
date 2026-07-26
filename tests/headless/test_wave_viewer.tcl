@@ -73,6 +73,16 @@
 #       btn3_filter -> the C engine. EVERY IX leg also asserts the canvas
 #       xorigin/yorigin/zoom == a once-captured baseline (the graph-not-canvas
 #       teeth). Pure Tcl; the C engine and binding table are unchanged.
+#   WB* (issue 0152): the wave-BOLD toggle (`hilight_wave`) is a plain LMB
+#       CLICK on the plot body, not a Button3 press — on the press it also
+#       fired at the start of every RMB box-zoom drag. Needs the real raw
+#       (find_closest_wave bails without one, so a data-less run would be
+#       hollow). Full Tk sequences via the shipped bindings, each event with an
+#       explicit increasing -time (two identical presses close together are
+#       collapsed by Tk into <Double-Button-N>, which the viewer swallows).
+#       Legs: LMB click bolds/un-bolds; RMB click and RMB box-zoom leave it
+#       alone (and the zoom still happens); an LMB drag-pan does not bold (and
+#       the pan still happens); the per-trace LEGEND RMB is unchanged.
 #
 # Honest assertability (spec D8): headless/GUI legs can assert raw
 # points/vars/sim_type, layer-2 rect count/props, redraw rc 0 and
@@ -1514,6 +1524,148 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     update
     xschem new_schematic switch $vdrw
     check_true "CG-shift-b1 canvas == baseline" [ix_canvas_ok $vdrw $cx0 $cy0 $cz0]
+
+    # === WB (issue 0152): wave bold is an LMB CLICK, never an RMB press ======
+    # Reported: RMB near a plotted trace makes it thick, and the RMB press-drag
+    # box-zoom (issue 0142) does it too. The bold is the `hilight_wave` prop
+    # token (draw.c setup_graph_data / draw_graph); it used to be toggled on
+    # Button3 PRESS in waves_callback, so every RMB gesture bolted whatever
+    # trace was nearest the press point. It is now the RELEASE of a Button1
+    # press that did not travel.
+    #
+    # Needs REAL data: find_closest_wave() bails on a NULL xctx->raw, so with no
+    # raw every click would write hilight_wave=-1 and nothing is witnessable
+    # (the green-but-hollow trap). Full Tk event sequences through the
+    # PRODUCTION bindings (<ButtonPress-1> forward, kept generic <ButtonRelease>,
+    # btn3_filter), never a lone synthetic callback.
+    if {$have_raw} {
+      xschem new_schematic switch $vdrw
+      check "WB raw read into the IX viewer ctx" [rawq {xschem raw read $rawpath dc}] 1
+      check "WB add one trace to strip 0" [wviewer::add_trace $tok 0 {i(v1)}] {}
+      wviewer::fit $tok                 ;# data inside the plot box -> wcnt >= 0
+      proc wb_bold {vdrw} {
+        xschem new_schematic switch $vdrw
+        set v [xschem getprop rect 2 0 hilight_wave]
+        if {$v eq {}} { return -1 }
+        return $v
+      }
+      # the viewer buffer is readonly, so the reset goes through with_edit like
+      # every other viewer mutation (landmine 17)
+      proc wb_reset {tok} {
+        wviewer::with_edit $tok {xschem setprop rect 2 0 hilight_wave -1}
+      }
+      # Every synthetic event carries an explicitly INCREASING %t. Without it Tk
+      # collapses two identical presses that fall inside its double-click window
+      # into <Double-Button-N>, which the viewer binds to {break} -- the second
+      # press then vanishes entirely (probe-verified: no `xschem callback` at all,
+      # and the leg failed for a reason that had nothing to do with the code under
+      # test). Explicit times make the pairing independent of the wall clock.
+      set ::wbt 100000
+      proc wb_ev {w seq args} {
+        set ::wbt [expr {$::wbt + 1000}]
+        eval [list event generate $w $seq -time $::wbt] $args
+      }
+      set W [winfo width $vdrw]; set H [winfo height $vdrw]
+      set bpx  [expr {int(0.50 * $W)}]      ;# well inside the plot body
+      set bpx2 [expr {int(0.70 * $W)}]      ;# a drag away from it
+      set bpy  [expr {int(0.50 * $H)}]
+
+      wb_reset $tok
+      check "WB-setup nothing bold to start" [wb_bold $vdrw] -1
+
+      # WB-click: press+release at the SAME pixel bolds the closest wave, and a
+      # second click clears it (the pre-existing toggle semantics, kept).
+      wb_ev $vdrw <ButtonPress-1>   -x $bpx -y $bpy
+      wb_ev $vdrw <ButtonRelease-1> -x $bpx -y $bpy -state 0x100
+      update
+      check "WB-click LMB click bolds the closest wave (trace 0)" [wb_bold $vdrw] 0
+      wb_ev $vdrw <ButtonPress-1>   -x $bpx -y $bpy
+      wb_ev $vdrw <ButtonRelease-1> -x $bpx -y $bpy -state 0x100
+      update
+      check "WB-click second LMB click un-bolds" [wb_bold $vdrw] -1
+      check_true "WB-click canvas == baseline" [ix_canvas_ok $vdrw $cx0 $cy0 $cz0]
+
+      # WB-rmb-click: THE reported defect, minimal form. An RMB press+release in
+      # the plot body must leave the bold alone (it is box-zoom only now).
+      # RED pre-fix: the press toggled it to 0.
+      wb_reset $tok
+      wb_ev $vdrw <ButtonPress-3>   -x $bpx -y $bpy
+      wb_ev $vdrw <ButtonRelease-3> -x $bpx -y $bpy -state 0x400
+      update
+      check "WB-rmb-click RMB click leaves the bold alone" [wb_bold $vdrw] -1
+
+      # WB-rmb-drag: the reported defect in its real form — an RMB press-drag
+      # box-zoom must not bold. Asserts the zoom STILL happened, so this cannot
+      # pass by the gesture silently dying. RED pre-fix.
+      wb_reset $tok
+      wviewer::fit $tok
+      xschem new_schematic switch $vdrw
+      set wbx1 [xschem getprop rect 2 0 x1]
+      set wbx2 [xschem getprop rect 2 0 x2]
+      wb_ev $vdrw <ButtonPress-3>   -x [expr {int(0.30 * $W)}] -y $bpy
+      wb_ev $vdrw <ButtonRelease-3> -x [expr {int(0.70 * $W)}] -y $bpy -state 0x400
+      update
+      check "WB-rmb-drag box-zoom leaves the bold alone" [wb_bold $vdrw] -1
+      xschem new_schematic switch $vdrw
+      check_true "WB-rmb-drag really did zoom (x-span narrowed)" \
+        [expr {([xschem getprop rect 2 0 x2] - [xschem getprop rect 2 0 x1]) <
+               ($wbx2 - $wbx1) - 1e-9}]
+
+      # WB-lmb-drag: the SAME hazard on the new trigger — a Button1 drag is the
+      # graph pan, and its release must not read as a click. The teeth for using
+      # dedicated graph_press_x/y instead of mx/my_double_save, which the pan
+      # re-seeds on every motion step (waves_callback save_mouse_at_end): with
+      # mx_double_save this leg bolds. Asserts the pan happened too.
+      wb_reset $tok
+      wviewer::fit $tok
+      xschem new_schematic switch $vdrw
+      set wbp1 [xschem getprop rect 2 0 x1]
+      wb_ev $vdrw <ButtonPress-1> -x $bpx -y $bpy
+      foreach fx {0.55 0.60 0.65 0.70} {
+        wb_ev $vdrw <Motion> -x [expr {int($fx * $W)}] -y $bpy -state 0x100
+      }
+      wb_ev $vdrw <ButtonRelease-1> -x $bpx2 -y $bpy -state 0x100
+      update
+      check "WB-lmb-drag graph pan does NOT bold" [wb_bold $vdrw] -1
+      xschem new_schematic switch $vdrw
+      check_true "WB-lmb-drag really did pan (x1 moved)" \
+        [expr {abs([xschem getprop rect 2 0 x1] - $wbp1) > 1e-12}]
+      check_true "WB-lmb-drag canvas == baseline" [ix_canvas_ok $vdrw $cx0 $cy0 $cz0]
+
+      # WB-legend: Button3 OUTSIDE the plot body is the SEPARATE, per-trace legend
+      # affordance (edit_wave_attributes(2,...), draw.c) — it bolds the trace whose
+      # label was hit, and it is deliberately UNCHANGED by this issue: only the
+      # imprecise "closest wave to the press point" toggle inside the plot body
+      # moved to LMB. This leg is the no-collateral-damage witness.
+      wb_reset $tok
+      set wbly [expr {int(0.03 * $H)}]      ;# above the plot box (14% top margin)
+      wb_ev $vdrw <ButtonPress-3>   -x $bpx -y $wbly
+      wb_ev $vdrw <ButtonRelease-3> -x $bpx -y $wbly -state 0x400
+      update
+      check "WB-legend RMB on the legend still bolds that trace" [wb_bold $vdrw] 0
+      wb_ev $vdrw <ButtonPress-3>   -x $bpx -y $wbly
+      wb_ev $vdrw <ButtonRelease-3> -x $bpx -y $wbly -state 0x400
+      update
+      check "WB-legend second legend RMB un-bolds" [wb_bold $vdrw] -1
+      # boundary, recorded rather than desired: the new LMB click acts on the plot
+      # BODY only, so an LMB click on the legend does nothing (as before).
+      wb_ev $vdrw <ButtonPress-1>   -x $bpx -y $wbly
+      wb_ev $vdrw <ButtonRelease-1> -x $bpx -y $wbly -state 0x100
+      update
+      check "WB-legend LMB on the legend does not bold (body-only)" [wb_bold $vdrw] -1
+
+      rename wb_bold {}
+      rename wb_reset {}
+      rename wb_ev {}
+      unset ::wbt
+      # leave strip 0 trace-free again so IX-fit sees the same shape as before
+      set wbgs [dict get [wviewer::layout_for $tok] graphs]
+      wviewer::set_graphs $tok \
+        [lreplace $wbgs 0 0 [dict replace [lindex $wbgs 0] traces {}]]
+      wviewer::regenerate $tok
+    } else {
+      puts "SKIPPED: WB wave-bold legs (no raw artifact)"
+    }
 
     # --- IX-fit: Fit reframes the GRAPH data range, never the canvas ---------
     # PRIMARY teeth (the removed zoom_full): perturb the data range, Fit, and the

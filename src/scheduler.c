@@ -5125,20 +5125,32 @@ static int xschem_cmds_h(Tcl_Interp *interp, int argc, const char *argv[], int *
       net_hilight_interactive(1);
       Tcl_ResetResult(interp);
     }
-    /* hilight_instname [-fast] inst
+    /* hilight_instname [-fast] [-layer <n>] inst
      *   Highlight instance 'inst'
      * if '-fast' is specified do not redraw
-     *   'inst' can be an instance name or number */
+     *   'inst' can be an instance name or number
+     *   -layer <n>  highlight in the plain color of drawing layer n instead of the next
+     *               style from the net-hilight style table, and do NOT advance the style
+     *               cursor. Same mechanism and same rationale as hilight_netname -layer
+     *               (see there): a negative hilight value means "layer color, no style".
+     *               Used by the ASE Direct Plot signal picker to paint a current-probe
+     *               source body in the color its waveform trace will use. */
     else if(!strcmp(argv[1], "hilight_instname"))
     {
       const char *instname=NULL;
-      int i, fast = 0;
+      int i, fast = 0, layer = 0;
 
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
       for(i = 2; i < argc; i++) {
         if(argv[i][0] == '-') {
           if(!strcmp(argv[i], "-fast")) {
             fast = 1;
+          } else if(!strcmp(argv[i], "-layer") && i + 1 < argc) {
+            layer = atoi(argv[++i]);
+            if(layer <= 0 || layer >= cadlayers) {
+              Tcl_SetResult(interp, "hilight_instname: -layer must be in 1..cadlayers-1", TCL_STATIC);
+              return TCL_ERROR;
+            }
           }
         } else {
           instname = argv[i];
@@ -5149,10 +5161,14 @@ static int xschem_cmds_h(Tcl_Interp *interp, int argc, const char *argv[], int *
         int inst;
         char *type;
         int incr_hi;
+        int saved_col = xctx->hilight_color;
         xctx->enable_drill=0;
         incr_hi = tclgetboolvar("incr_hilight");
+        /* an explicit layer neither uses nor advances the style cursor */
+        if(layer) { xctx->hilight_color = -layer; incr_hi = 0; }
         prepare_netlist_structs(0);
         if((inst = get_instance(instname)) < 0 ) {
+          xctx->hilight_color = saved_col; /* restore on the error path too */
           Tcl_SetResult(interp, "xschem hilight_instname: instance not found", TCL_STATIC);
           return TCL_ERROR;
         } else {
@@ -5177,6 +5193,7 @@ static int xschem_cmds_h(Tcl_Interp *interp, int argc, const char *argv[], int *
             net_hilight_sync_descend_windows(); /* issue 0073: push into linked descend children */
           }
         }
+        xctx->hilight_color = saved_col; /* no-op unless -layer overrode it */
       }
       Tcl_ResetResult(interp);
     }
@@ -5201,9 +5218,23 @@ static int xschem_cmds_h(Tcl_Interp *interp, int argc, const char *argv[], int *
       Tcl_SetResult(interp, res, TCL_VOLATILE);
     }
 
-    /* hilight_netname [-fast] net
+    /* hilight_netname [-fast] [-style <n> | -layer <n>] net
      *   Highlight net name 'net'
-     *   if '-fast' is given do not redraw hilights after operation */
+     *   if '-fast' is given do not redraw hilights after operation
+     *   -style <n>  highlight with net-hilight-style index n (the style table decides
+     *               color/width/dash/animation); does not advance the style cursor
+     *   -layer <n>  highlight in the PLAIN COLOR OF DRAWING LAYER n, bypassing the style
+     *               table entirely (no width/dash/blink). Needed by callers that must
+     *               match a color chosen elsewhere in layer terms -- the ASE Direct Plot
+     *               signal picker paints each wire in the layer its waveform trace will
+     *               use (doc/claude/issues/0153-*), and layers 4/5 of the viewer palette
+     *               have no style-table entry at all (default styles cover layers >= 7
+     *               only, hilight.c default_net_hilight_styles). Implemented with the
+     *               NEGATIVE hilight value the engine already uses for this exact
+     *               purpose (get_color/hilight_pixel_of: value < 0 -> layer -value),
+     *               as draw.c's auto_hilight_graph_nodes path does via
+     *               hilight_graph_node(). Layer 0 is the background and is refused
+     *               (-0 == 0 == style 0). */
     else if(!strcmp(argv[1], "hilight_netname"))
     {
       int ret = 0, fast = 0, i, style = 0, have_style = 0;
@@ -5215,6 +5246,18 @@ static int xschem_cmds_h(Tcl_Interp *interp, int argc, const char *argv[], int *
             fast = 1;
           } else if(!strcmp(argv[i], "-style") && i + 1 < argc) {
             style = atoi(argv[++i]); /* explicit style index; does not advance the cursor */
+            if(style < 0) {
+              Tcl_SetResult(interp, "hilight_netname: -style index must be >= 0", TCL_STATIC);
+              return TCL_ERROR;
+            }
+            have_style = 1;
+          } else if(!strcmp(argv[i], "-layer") && i + 1 < argc) {
+            int layer = atoi(argv[++i]);
+            if(layer <= 0 || layer >= cadlayers) {
+              Tcl_SetResult(interp, "hilight_netname: -layer must be in 1..cadlayers-1", TCL_STATIC);
+              return TCL_ERROR;
+            }
+            style = -layer; /* negative hilight value = plain layer color, no style */
             have_style = 1;
           }
         } else {
@@ -5222,12 +5265,8 @@ static int xschem_cmds_h(Tcl_Interp *interp, int argc, const char *argv[], int *
           break;
         }
       }
-      if(have_style && style < 0) {
-        Tcl_SetResult(interp, "hilight_netname: -style index must be >= 0", TCL_STATIC);
-        return TCL_ERROR;
-      }
       if(net && have_style) {
-        /* highlight with an explicit style: set the cursor, then restore it so the
+        /* highlight with an explicit style/layer: set the cursor, then restore it so the
          * style cursor is neither used nor advanced (waveform-viewer / scripted bridge) */
         int saved = xctx->hilight_color;
         xctx->hilight_color = style;

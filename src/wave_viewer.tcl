@@ -655,18 +655,98 @@ proc wviewer::configure_apply {token} {
   wviewer::regenerate $token
 }
 
-# PURE (D10): next auto-cycled trace color for model graph `G` — the first
-# palette entry unused by its traces, else index by trace count mod length.
-proc wviewer::next_color {G} {
+# --- trace colors (D10 + issue 0153) ----------------------------------------
+# All PURE. The cycle rule: the first palette entry not in `used`, and once the
+# palette is exhausted, index by how many are used (the original D10 fallback,
+# kept verbatim so a >10-trace graph behaves exactly as it always did).
+#
+# WHAT `used` CONTAINS is the whole of issue 0153. Before it, the only rule was
+# "colors used by the LANDING graph", which is right for single-plot (everything
+# stacks in one strip, so per-strip uniqueness IS window uniqueness) but made
+# multi-plot paint every trace the same color: multi gives each signal its own
+# BRAND-NEW strip, an empty strip has no used colors, so every one of them got
+# palette head 4 (#88dd00). Multi-plot therefore seeds `used` from the WHOLE
+# window (colors_in_graphs), so no two traces visible in the viewer share a
+# color until the palette runs out. Single-plot is unchanged by design.
+
+# The first palette entry not in `used`.
+proc wviewer::first_unused_color {used} {
   variable palette
-  set used {}
-  foreach tr [wviewer::dget $G traces {}] {
-    lappend used [wviewer::dget $tr color {}]
-  }
   foreach c $palette {
     if {[lsearch -exact $used $c] < 0} { return $c }
   }
   return [lindex $palette [expr {[llength $used] % [llength $palette]}]]
+}
+
+# The colors of one model graph's traces, in trace order (a colorless trace
+# contributes {}, exactly as the pre-0153 `used` list did).
+proc wviewer::graph_colors {G} {
+  set out {}
+  foreach tr [wviewer::dget $G traces {}] {
+    lappend out [wviewer::dget $tr color {}]
+  }
+  return $out
+}
+
+# Every color in use anywhere in a strip list, deduped, {} dropped.
+proc wviewer::colors_in_graphs {gs} {
+  set out {}
+  foreach G $gs {
+    foreach c [wviewer::graph_colors $G] {
+      if {$c ne {} && [lsearch -exact $out $c] < 0} { lappend out $c }
+    }
+  }
+  return $out
+}
+
+# (D10) next auto-cycled trace color for model graph `G` — unchanged contract,
+# used by add_trace and the Add Trace… dialog when no color is dictated.
+proc wviewer::next_color {G} {
+  return [wviewer::first_unused_color [wviewer::graph_colors $G]]
+}
+
+# One color per signal of a plot batch, given the strip list as it is BEFORE the
+# batch lands, the plot mode, and the landing index per signal that plan_plot
+# produced. Simulates the accumulation, so colors are distinct WITHIN the batch
+# as well as against what is already plotted.
+#
+# Prefix-stable by construction (each signal's color depends only on the state
+# and on the signals before it), which is what lets the Direct Plot picker ask
+# for the color of click k while click k+1 has not happened yet.
+proc wviewer::plan_colors {gs mode targets} {
+  set base {}
+  if {$mode eq {multi}} { set base [wviewer::colors_in_graphs $gs] }
+  array set acc {}
+  set out {}
+  foreach gi $targets {
+    if {![info exists acc($gi)]} {
+      # a landing index past the end of `gs` is a strip the plan will CREATE:
+      # lindex yields {} and it starts with no colors of its own
+      set acc($gi) [concat $base [wviewer::graph_colors [lindex $gs $gi]]]
+    }
+    set c [wviewer::first_unused_color $acc($gi)]
+    lappend acc($gi) $c
+    if {$mode eq {multi}} { lappend base $c }
+    lappend out $c
+  }
+  return $out
+}
+
+# The colors the NEXT `n` Direct-Plot signals will get in `token`'s viewer, in
+# pick order. Impure only in reading the window's live mode/target/layout; the
+# policy is plan_plot + plan_colors. Works with NO viewer open yet (the mode
+# falls back to the config default and the layout to whatever is recorded, i.e.
+# nothing after a close — see forget), because the picker runs before dp_finish
+# raises the window.
+proc wviewer::predict_colors {token n} {
+  if {![string is integer -strict $n] || $n <= 0} { return {} }
+  set gs [dict get [wviewer::layout_for $token] graphs]
+  set mode [wviewer::plot_mode $token]
+  if {$mode eq {}} { set mode [wviewer::default_plot_mode] }
+  set plan [wviewer::plan_plot $mode [llength $gs] \
+                               [wviewer::target_index $token] $n \
+                               [wviewer::auto_graph_index $token]]
+  return [wviewer::plan_colors $gs $mode [dict get $plan targets]]
 }
 
 # PURE: model graph dict -> full graph-rect prop string. Token order +
@@ -998,7 +1078,12 @@ proc wviewer::restore {token vdict rawfile sim_type} {
 # vector named `name`/auto expr<N> via `xschem raw add`, so it then plots
 # like any var). Returns {} on success or a user-displayable error message
 # (never throws): D4 pre-validation, invalid names, missing raw data.
-proc wviewer::add_trace {token gi rpn {name {}}} {
+#
+# `color` (issue 0153) pins the trace color instead of auto-cycling it. The
+# Direct Plot picker uses it so the trace lands in exactly the color it already
+# painted the schematic net with — the prediction and the plot then cannot
+# disagree, whatever happened to the layout in between.
+proc wviewer::add_trace {token gi rpn {name {}} {color {}}} {
   variable windows
   if {![dict exists $windows $token]} { return "unknown viewer window" }
   set rpn [string trim $rpn]
@@ -1040,8 +1125,9 @@ proc wviewer::add_trace {token gi rpn {name {}}} {
   }
   set G [lindex $gs $gi]
   set trs [dict get $G traces]
-  lappend trs [dict create expr $rpn name $name vec $vec \
-                           color [wviewer::next_color $G]]
+  set col $color
+  if {$col eq {}} { set col [wviewer::next_color $G] }
+  lappend trs [dict create expr $rpn name $name vec $vec color $col]
   set G [dict replace $G traces $trs]
   wviewer::set_graphs $token [lreplace $gs $gi $gi $G]
   wviewer::regenerate $token
@@ -1244,7 +1330,13 @@ proc wviewer::click_target {W px py} {
 # strips plan_plot asks for, then appends one trace per signal at its planned
 # index. Returns a list of {expr error} pairs for the signals that failed
 # (add_trace returns a message, never throws); {} = every signal landed.
-proc wviewer::plot_signals {token exprs} {
+#
+# `colors` (issue 0153) pins one color per signal, in the same order. The Direct
+# Plot picker passes the colors it already painted the schematic nets with. When
+# it is {} the colors are derived here from the same policy (plan_colors), which
+# is what makes multi-plot cycle colors instead of giving every fresh strip the
+# palette head — so any caller gets that fix, not just the picker.
+proc wviewer::plot_signals {token exprs {colors {}}} {
   variable windows
   if {![dict exists $windows $token]} {
     return [list [list {} "unknown viewer window"]]
@@ -1254,6 +1346,10 @@ proc wviewer::plot_signals {token exprs} {
   set plan [wviewer::plan_plot $mode [llength $gs] \
                                [wviewer::target_index $token] [llength $exprs] \
                                [wviewer::auto_graph_index $token]]
+  if {![llength $colors]} {
+    # `gs` is the PRE-batch strip list, which is what plan_colors expects
+    set colors [wviewer::plan_colors $gs $mode [dict get $plan targets]]
+  }
   for {set k 0} {$k < [dict get $plan new]} {incr k} {
     wviewer::add_graph $token
   }
@@ -1265,8 +1361,8 @@ proc wviewer::plot_signals {token exprs} {
     wviewer::set_target_strip [lindex [dict get $plan targets] 0] $token
   }
   set errs {}
-  foreach ex $exprs gi [dict get $plan targets] {
-    set err [wviewer::add_trace $token $gi $ex]
+  foreach ex $exprs gi [dict get $plan targets] col $colors {
+    set err [wviewer::add_trace $token $gi $ex {} $col]
     if {$err ne {}} { lappend errs [list $ex $err] }
   }
   return $errs

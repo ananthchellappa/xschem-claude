@@ -296,6 +296,7 @@ and the input-binding table already do everything the RMB path needs).
 Full contract: **`doc/claude/specs/waveform_viewer_modes.md`**. What it changes
 in the ledger above:
 
+- (Issue 0153 later made the landing mode decide trace COLORS too — see below.)
 - Item 13's "**ONE new stacked graph per invocation**" is now **mode
   dependent**. `ase::ui::dp_finish` delegates to `wviewer::plot_signals`:
   *single-plot* (the shipped default, `wviewer_plot_mode`) appends every queued
@@ -318,6 +319,46 @@ in the ledger above:
 - The target strip is marked by a dull-yellow bar at its right edge, drawn by
   the C engine from an `active=1` prop token, only while more than one strip is
   up, only on screen (never in SVG/PS export).
+
+## Wave bold is an LMB click (issue 0152, 2026-07-25)
+
+Full detail: `doc/claude/issues/0152-graph-rmb-bolds-wave.md`. Changes the item-19
+"RMB stays on the C engine" note: inside the plot body RMB is now **box-zoom
+only**. The wave-bold toggle (`hilight_wave`, the trace drawn thick) moved from
+Button3 PRESS to the **release of a Button1 press that did not travel** — on the
+press it also fired at the start of every RMB box-zoom drag (0142). Applies to
+**every** graph, on-canvas schematic graphs included (shared `waves_callback`),
+which is a deliberate change to long-standing upstream behavior.
+
+RMB on a **legend entry** is untouched: it is the separate, per-trace bold
+(`edit_wave_attributes(2,...)`), and a legend double-click still opens the
+attributes dialog. LMB on the legend does nothing, as before.
+
+## Trace colors + color-matched picker highlight (issue 0153, 2026-07-25)
+
+Full detail: `doc/claude/issues/0153-trace-colors-and-picker-hilight.md`.
+
+- **Multi-plot no longer paints every trace the same color.** Per-graph
+  `next_color` was right for single-plot only; multi-plot lands each signal in a
+  fresh EMPTY strip, so all of them got palette head 4 (`#88dd00`). Batch colors
+  now come from the PURE `wviewer::plan_colors` — `used` is seeded window-wide for
+  multi, per-landing-strip for single (**single-plot is unchanged**). Any caller
+  of `plot_signals` gets this, not just the picker.
+- **The Direct Plot / Ctrl-4 signal picker paints the schematic.** As each signal
+  is clicked, the wire (or, for a current probe, the source body) is highlighted
+  in **the exact color that signal's trace will use**, so the viewer maps back
+  onto the schematic. The color is resolved once at click time
+  (`wviewer::predict_colors`, prefix-stable), carried in the queue, and pinned
+  through `plot_signals`/`add_trace` — the cue and the trace cannot disagree.
+- Highlights **persist past ESC** (user decision); pre-existing highlights are not
+  wiped on entry, so colors may coincide with them.
+- New C surface: `xschem hilight_netname [-layer <n>]` /
+  `xschem hilight_instname [-layer <n>]` — highlight in the plain color of a
+  drawing layer, without using or advancing the style cursor. Required because
+  highlight values >= 0 are *style* indices and palette layers 4/5 have no style
+  row at all.
+- Unchanged: the **Add Trace… dialog** and **auto-plot** still ignore the plot
+  mode and use per-graph `next_color`.
 
 ## X is shared, Y is per-strip (issue 0150, 2026-07-25)
 

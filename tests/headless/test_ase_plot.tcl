@@ -19,10 +19,18 @@
 #        raw attached (loaded INDEX >= 0, sim_type dc, points 181), auto
 #        graph 0 carries both traces (id materialized via `raw add` from the
 #        D6-mapped RPN), redraw rc 0 (GUI + ngspice)
+#   PL   (issue 0153) `xschem hilight_netname/-instname -layer <n>`: highlight
+#        in the PLAIN color of a drawing layer (stored as the engine's NEGATIVE
+#        hilight value, read back through `list_hilights all`) rather than the
+#        next net-hilight STYLE — required because the viewer palette is layer
+#        indices and layers 4/5 have no style row. Refusals + the style cursor
+#        left alone + the ase::ui::dp_hilight wrapper's arms
 #   P4   Direct Plot live: menu invoke -> mode, wire + vsource clicks queue
 #        v(d)/i(v1), REAL <Key-Escape> ends -> ONE new stacked graph with
 #        exactly those traces, auto graph untouched, outputs unchanged,
-#        bindings restored verbatim
+#        bindings restored verbatim; and (issue 0153) the wire click paints net
+#        D in a plain layer color, the v(d) TRACE color equals that same color,
+#        the highlight PERSISTS past ESC, and the two picks differ
 #   P5   `~` strip button: not disabled; invoke raises the SAME viewer (no
 #        new toplevel, no traces added)
 #   P6   re-run -> always-replace: auto graph REBUILT (still 2 traces),
@@ -396,6 +404,68 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
                [rawq {xschem raw index id}] >= 0}]
       check "P3 redraw rc 0" [catch {xschem redraw}] 0
 
+      # --- PL: `xschem hilight_netname/-instname -layer N` (issue 0153) ------
+      # The picker needs a net highlighted in the PLAIN color of a given drawing
+      # LAYER, because the viewer's trace palette is layer indices and two of
+      # them (4, 5) have no net-hilight-STYLE entry at all (default styles cover
+      # layers >= 7). The engine already had the mechanism — a NEGATIVE hilight
+      # value means "layer color, no style" — it just was not reachable from Tcl.
+      # `list_hilights all` prints `path token value`, so the negative value is
+      # directly witnessable.
+      proc hl_val {net} {
+        set v {}
+        foreach ln [split [xschem list_hilights all] "\n"] {
+          set f [regexp -all -inline {\S+} $ln]
+          if {[llength $f] >= 3 && [lindex $f 1] eq $net} { set v [lindex $f 2] }
+        }
+        return $v
+      }
+      xschem new_schematic switch $cv
+      catch {xschem unhilight_all}
+      check "PL -layer 4 highlights the net" \
+        [catch {xschem hilight_netname -layer 4 D}] 0
+      check "PL -layer 4 stores the NEGATIVE layer value (plain layer color)" \
+        [hl_val D] -4
+      catch {xschem unhilight_all}
+      check "PL -layer 5 (no style-table entry exists for layer 5) works too" \
+        [catch {xschem hilight_netname -layer 5 D}] 0
+      check "PL ... and stores -5" [hl_val D] -5
+      catch {xschem unhilight_all}
+      check "PL -style 2 still stores a POSITIVE style index (unchanged)" \
+        [expr {[catch {xschem hilight_netname -style 2 D}] ? {ERR} : [hl_val D]}] 2
+      catch {xschem unhilight_all}
+      check_true "PL -layer 0 is refused (layer 0 is the background; -0 == style 0)" \
+        [catch {xschem hilight_netname -layer 0 D}]
+      check_true "PL -layer out of range is refused" \
+        [catch {xschem hilight_netname -layer 9999 D}]
+      check_true "PL -style with a negative index is still refused" \
+        [catch {xschem hilight_netname -style -1 D}]
+      # -layer must not touch the user's style cursor (an explicit color is not
+      # a use of the cycle). Set it, highlight with -layer, then step it: the
+      # step must land where it would have without the highlight.
+      catch {xschem unhilight_all}
+      xschem set hilight_color 3
+      catch {xschem hilight_netname -layer 7 D}
+      check "PL -layer left the style cursor alone (3 -> incr -> 4)" \
+        [xschem incr_hilight_color] 4
+      catch {xschem unhilight_all}
+      # the instance arm (current probes are picked on a source BODY, which has
+      # no wire to color). Instance highlights live in a different hash than
+      # list_hilights walks, so this is a no-throw + accepted witness only —
+      # stated, not hidden.
+      check "PL -instname -layer accepted" \
+        [catch {xschem hilight_instname -layer 4 V1}] 0
+      check_true "PL -instname -layer out of range refused" \
+        [catch {xschem hilight_instname -layer 0 V1}]
+      check "PL dp_hilight voltage arm reports success" \
+        [ase::ui::dp_hilight voltage D 4] 1
+      check "PL dp_hilight current arm reports success" \
+        [ase::ui::dp_hilight current V1 4] 1
+      check "PL dp_hilight refuses a bad color" [ase::ui::dp_hilight voltage D 0] 0
+      check "PL dp_hilight refuses an empty color" [ase::ui::dp_hilight voltage D {}] 0
+      check "PL dp_hilight refuses an empty target" [ase::ui::dp_hilight voltage {} 4] 0
+      catch {xschem unhilight_all}
+
       # --- P4: Direct Plot -> one new stacked graph with the clicked traces --
       set outs_snap [ase::state_get [ase::session_state $key] outputs]
       set g_before [llength [dict get [wviewer::layout_for $key] graphs]]
@@ -408,6 +478,14 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
         [expr {[bind $cv <ButtonPress-1>] ne $pre_press}]
       ase::ui::sod_click $key 550 -330                 ;# wire -> v(d)
       update
+      # issue 0153: the click must have painted net d in the color its trace will
+      # get -- a NEGATIVE hilight value (plain layer color). Captured BEFORE ESC
+      # so the post-plot comparison is against what the user actually saw.
+      xschem new_schematic switch $cv
+      set p4hl [hl_val D]
+      check_true "P4 the wire click highlighted net D" [expr {$p4hl ne {}}]
+      check_true "P4 ... in a plain LAYER color (negative hilight value)" \
+        [expr {[string is integer -strict $p4hl] && $p4hl < 0}]
       ase::ui::sod_click $key 600 -300                 ;# vsource -> i(v1)
       update
       # REAL <Key-Escape> ends the mode (gesture-test-full-sequence lesson):
@@ -445,6 +523,22 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
       foreach tr $dtr { lappend dvecs [wviewer::dget $tr vec {}] }
       check "P4 new graph traces are exactly v(d) + i(v1)" \
         [lsort $dvecs] [lsort {v(d) i(v1)}]
+      # issue 0153 THE teeth: the trace for v(d) must carry EXACTLY the color the
+      # wire was painted with, and the wire must still be painted after ESC
+      # (highlights persist by decision, so the color map stays readable).
+      set p4tc {}
+      foreach tr $dtr {
+        if {[wviewer::dget $tr vec {}] eq {v(d)}} { set p4tc [wviewer::dget $tr color {}] }
+      }
+      check "P4 v(d) trace color == the color painted on the wire" $p4tc [expr {-$p4hl}]
+      xschem new_schematic switch $cv
+      check "P4 the wire highlight PERSISTS past ESC" [hl_val D] $p4hl
+      # the two picks must not share a color (they are two different signals)
+      set p4cols {}
+      foreach tr $dtr { lappend p4cols [wviewer::dget $tr color {}] }
+      check "P4 the two picked traces have different colors" \
+        [llength [lsort -unique $p4cols]] 2
+      xschem new_schematic switch $vdrw
       set agi4 [wviewer::auto_graph_index $key]
       check "P4 auto graph untouched (still 2 traces)" [gtr_n $gs4 $agi4] 2
       check "P4 outputs unchanged (D2: traces queued, no output rows)" \

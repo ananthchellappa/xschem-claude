@@ -239,8 +239,9 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
   `graph_master=-1`, drop GRAPHPAN, return 0. **Cannot be used as a pure
   predicate.**
 - `waves_callback` (~540): the gesture engine. Operates on `graph_master`
-  first (RMB wave-bold via `find_closest_wave`, RMB-on-legend via
-  `edit_wave_attributes`, hover measurement tooltip via `G_X`/`G_Y`, cursor
+  first (**LMB-click wave-bold** via `find_closest_wave` — issue 0152, see
+  landmine 20; RMB-on-legend per-trace bold via `edit_wave_attributes`, hover
+  measurement tooltip via `G_X`/`G_Y`, cursor
   grab within 10px, numeric cursor set, `a`/`b`/`s`/`m`/`t` keys), then loops
   all graphs: participation test `r->sel || (same_sim_type && !(flags&2)) ||
   i==graph_master`; wheel zoom/pan, arrow pan/zoom, `f`=fit, drag pan,
@@ -331,7 +332,11 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
   them** (see backlog #1, #5, #6).
 - Scripting seams (pure, headless-testable): `add_trace` (~858, returns error
   string, never throws), `display_raw` (~735), `graph_props`/`band_geometry`/
-  `next_color`/`interp_value`, `zoom_about` (0146 anchor-preserving range scale),
+  `next_color`/`interp_value`, the issue-0153 color policy
+  (`first_unused_color`, `graph_colors`, `colors_in_graphs`, `plan_colors`,
+  `predict_colors` — landmine 22; `add_trace`/`plot_signals` take an optional
+  explicit color, which the Direct Plot picker uses to pin what it painted on the
+  schematic), `zoom_about` (0146 anchor-preserving range scale),
   `wheel_zoom` (issue 0144 zoom worker: X on every
   strip, Y only on the pointed strip — the seam tests drive instead of the
   gesture). **All four zoom affordances route through it:** `wheel`'s ctrl arm and
@@ -374,6 +379,12 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
   so callers get the plot-box (14% margin) transform without mirroring it in Tcl. Uses a
   LOCAL `Graph_ctx` (landmine 11); `{}` on a bad index / non-graph rect. Added for the
   viewer's pointer-anchored zoom (issue 0146); partially covers backlog #7.
+- `xschem hilight_netname [-fast] [-style <n> | -layer <n>] <net>` and
+  `xschem hilight_instname [-fast] [-layer <n>] <inst>` (`xschem_cmds_h`) —
+  `-layer` highlights in the PLAIN color of a drawing layer (the negative-value
+  path, landmine 21) without touching the style cursor. Added for the ASE Direct
+  Plot picker, which paints each clicked wire in the color its trace will use
+  (issue 0153).
 - `xschem add_graph` (~1887, sets `graph_lastsel`), `xschem draw_graph <i>`,
   `xschem get graph_lastsel` (~3772), `xschem cursor <which> <on>` (~2689),
   `xschem annotate_op`, `xschem embed_rawfile`.
@@ -481,6 +492,34 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
 19. **Zooming/annotating a graph marks the file dirty** — `graph_fullxzoom`/
     `fullyzoom` write `x1`/`x2`/`y1`/`y2` tokens via `subst_token`
     (`set_modify`). `create_graph.tcl` calls `set_modify 0` afterward.
+20. **A graph gesture must not be triggered on a PRESS that a drag also starts**
+    (issue 0152). The wave-bold toggle used to fire on Button3 *press*, so every
+    RMB press-drag box-zoom (0142) bolded a trace. It is now the **release of a
+    Button1 press that did not travel** more than `GRAPH_CLICK_TOL` (3) pixels.
+    The press anchor is `xctx->graph_press_x/y`, **never**
+    `mx/my_double_save`: the Button1 drag-pan **re-seeds** those on every motion
+    step (`save_mouse_at_end`, end of `waves_callback`), so at the end of a long
+    pan they equal the release point and a click test against them fires. Also
+    note `find_closest_wave()` has **no distance threshold** — "near a trace" is
+    really "anywhere in the plot body" — and the toggle tests the *currently*
+    bold wave, not the one just found (a click anywhere un-bolds whatever is
+    bold). RMB inside the plot body is box-zoom only; RMB on a **legend** entry
+    is a separate, per-trace bold (`edit_wave_attributes(2,...)`) and is
+    unchanged.
+21. **Highlight values >= 0 are STYLE indices, not layers** (issue 0153).
+    `get_hilight_style` indexes the net-hilight style table, whose default rows
+    map style *i* to `active_layer[i]` = layers **>= 7 only**. A **negative**
+    value means "plain color of layer `-value`, no style"
+    (`get_color`/`hilight_pixel_of`) — the only way to reproduce an arbitrary
+    layer color, and what `hilight_netname/-instname -layer <n>` and
+    `hilight_graph_node()` use. Viewer palette entries 4 and 5 have no style row
+    at all, so `-style` cannot express them.
+22. **Trace-color `used` sets are mode-dependent** (issue 0153). Per-graph
+    `next_color` is correct for single-plot only; multi-plot lands each signal in
+    a fresh EMPTY strip, so a per-graph rule gives every trace palette head 4.
+    Batch colors come from the PURE `wviewer::plan_colors` (window-wide `used`
+    for multi, per-strip for single), and it is prefix-stable so the Direct Plot
+    picker can resolve click *k*'s color before click *k+1* exists.
 
 ---
 
@@ -526,8 +565,10 @@ Effort: S=hours, M=days, L=weeks. Impact in caps.
 ## 13. Testing waveform work
 
 - Headless raw/graph/viewer coverage lives in `tests/headless/`:
-  `test_ase_plot.tcl`, `test_wave_viewer.tcl`, `test_wave_modes.tcl`
-  (plot modes / target strip, issue 0151), `test_ase_*` family. They
+  `test_ase_plot.tcl` (Direct Plot; `PL` = the `-layer` highlight verbs),
+  `test_wave_viewer.tcl` (`WB` = the LMB wave-bold gesture, issue 0152),
+  `test_wave_modes.tcl` (plot modes / target strip, issue 0151; `M6`/`MG6c`/
+  `MG6d` = the trace-color policy, issue 0153), `test_ase_*` family. They
   `--pipe`/`--script` the built binary and diff against golden state. Pure
   Tcl helpers in `wave_viewer.tcl` (`graph_props`, `band_geometry`,
   `next_color`, `validate_rpn`, `interp_value`) are directly unit-testable.
@@ -536,7 +577,11 @@ Effort: S=hours, M=days, L=weeks. Impact in caps.
   while drawing nothing.
 - Gesture tests must replay the **full Tk event sequence** in the shipping rc
   (memory `gesture-test-full-sequence`) — a lone synthetic event passes while
-  the feature is broken.
+  the feature is broken. And **stamp `-time` on every synthetic button event**:
+  two identical `event generate <ButtonPress-N>` calls close together are
+  collapsed by Tk into `<Double-Button-N>`, which the viewer binds to `{break}`,
+  so the second press never reaches C at all (issue 0152; `wb_ev` in
+  `test_wave_viewer.tcl` is the pattern).
 - `test_nh_angle_*` etc. create per-pid scratch dirs under `[pwd]`; the
   `_*_[0-9]*/` gitignore + end-cleanup pattern is the convention (commit
   `cf57955c`).
