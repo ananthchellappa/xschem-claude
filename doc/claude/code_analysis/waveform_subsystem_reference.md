@@ -384,7 +384,14 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
   `-layer` highlights in the PLAIN color of a drawing layer (the negative-value
   path, landmine 21) without touching the style cursor. Added for the ASE Direct
   Plot picker, which paints each clicked wire in the color its trace will use
-  (issue 0153).
+  (issue 0153). **Feed these the RAW schematic token** (`#net1`, original case);
+  the stripped/lowercased form silently matches nothing — landmine 23.
+- `xschem nets [-selected]` / `xschem net <sel>` / `xschem net_members <sel>`
+  (`xschem_cmds_n`) — net descriptors `{name {<tok>} nwires N npins M anchor {..}}`.
+  `-selected` restricts to the current selection and **rebuilds it first, so a
+  COLD call is correct**; these verbs reset the interp result AFTER
+  `prepare_netlist_structs`, which `xschem resolved_net` does not (landmine 23).
+  `sod_net_at` uses `nets -selected` as its auto-named-net fallback (issue 0154).
 - `xschem add_graph` (~1887, sets `graph_lastsel`), `xschem draw_graph <i>`,
   `xschem get graph_lastsel` (~3772), `xschem cursor <which> <on>` (~2689),
   `xschem annotate_op`, `xschem embed_rawfile`.
@@ -520,6 +527,23 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
     Batch colors come from the PURE `wviewer::plan_colors` (window-wide `used`
     for multi, per-strip for single), and it is prefix-stable so the Direct Plot
     picker can resolve click *k*'s color before click *k+1* exists.
+23. **A schematic net token and its simulator vector name are DIFFERENT
+    strings, and the ASE picker carries both** (issue 0154). An unlabeled net is
+    `#netN` in `wire[].node` but `netN` in the netlist (`V1 net1 GND`).
+    `ase::ui::dp_hilight` needs the **raw** form — `xschem hilight_netname`
+    finds `#net1` and returns 0 for `net1` — while `ase::ui::sod_expr` needs the
+    **stripped, lowercased** form, because `get_raw_index` never strips `#` and a
+    `.save v(#net1)` card makes ngspice **abort the whole analysis** (not just
+    skip the vector). `dp_queue(ex, kind, token)` already keeps them in separate
+    parameters; both `dp_hilight` call sites are `catch`-guarded, so conflating
+    them kills the color cue silently. Do the mapping in `sod_expr` and nowhere
+    else. Related: `xschem flylines at` is the picker's primary net resolver but
+    **excludes `#` nets by design** (fly-lines rule A6, `flyline.c` — do not
+    relax it); `ase::ui::sod_net_at` adds a `nets -selected` fallback gated to
+    WIRE hits. Do **not** reach for `xschem resolved_net` here: it resets the
+    interp result *before* `prepare_netlist_structs`, so its first call after any
+    struct invalidation returns `0net1` (the sibling `nets` / `net_members` verbs
+    carry the fix and its comment; `list_hilights` has the same wart).
 
 ---
 
@@ -527,6 +551,19 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
 
 Effort: S=hours, M=days, L=weeks. Impact in caps.
 
+0. **[S · MED] Fix `xschem resolved_net`'s first-call contamination.**
+   `Tcl_ResetResult(interp)` sits *before* `prepare_netlist_structs(0)` in the
+   `resolved_net` branch (`scheduler.c`), and prep leaves `"0"` in the result, so
+   the first call after any struct invalidation returns `0net1` / `0D`. Move the
+   reset after the prep — the sibling `nets` / `net_members` / `net` branches
+   already do exactly that, with the comment
+   `/* prepare_netlist_structs leaves "0" in result */`. `xschem list_hilights`
+   has the same wart. Blocks using `resolved_net` for hierarchy-qualified ASE
+   names (issue 0154). Two further `resolved_net` bugs found alongside it: a bus
+   is **truncated at a global element** (`my_strdup2` replaces where the normal
+   branch `my_mstrcat` appends — `{D,GND}` → `GND`), and the `#` strip runs once
+   on the whole token before `expandlabel`, so it **leaks on non-first bus
+   elements** (`{D,#net1}` → `D,#net1`). All three in `hilight.c`/`scheduler.c`.
 1. **[S · MED] `xschem get graph_flags` + cursor getters.** Add to the `get`
    dispatch (`scheduler.c` near ~3772). Lets `wave_viewer.tcl` drop `cva`/
    `cvb`/`cvr` mirrors (~136) and the access_cond desync risk. *Best ratio.*
@@ -568,10 +605,18 @@ Effort: S=hours, M=days, L=weeks. Impact in caps.
   `test_ase_plot.tcl` (Direct Plot; `PL` = the `-layer` highlight verbs),
   `test_wave_viewer.tcl` (`WB` = the LMB wave-bold gesture, issue 0152),
   `test_wave_modes.tcl` (plot modes / target strip, issue 0151; `M6`/`MG6c`/
-  `MG6d` = the trace-color policy, issue 0153), `test_ase_*` family. They
+  `MG6d` = the trace-color policy, issue 0153),
+  `test_ase_unnamed_net.tcl` (`AN*` = picking/naming of auto-named `#netN`
+  nets, issue 0154 — hermetic, writes its own fixture, needs no DISPLAY,
+  ngspice or ASE session), `test_ase_*` family. They
   `--pipe`/`--script` the built binary and diff against golden state. Pure
   Tcl helpers in `wave_viewer.tcl` (`graph_props`, `band_geometry`,
   `next_color`, `validate_rpn`, `interp_value`) are directly unit-testable.
+- **`tests/headless/test_flylines.sh` is run by NOTHING.** `full_audit.sh`
+  globs `test_*.tcl`; this one is a `.sh`. It owns the 43 fly-line rails —
+  including the three `A6` ones that pin the auto-named-net exclusion the ASE
+  picker must not relax (issue 0154). Run `sh tests/headless/test_flylines.sh`
+  by hand after any flyline or picker work.
 - **Green ≠ correct** — sabotage-verify that the changed C actually ran (see
   memory `green-but-hollow`). A graph test that never loaded a raw passes
   while drawing nothing.

@@ -360,6 +360,41 @@ Full detail: `doc/claude/issues/0153-trace-colors-and-picker-hilight.md`.
 - Unchanged: the **Add Trace… dialog** and **auto-plot** still ignore the plot
   mode and use per-graph `next_color`.
 
+## Auto-named nets are pickable (issue 0154, 2026-07-25)
+
+Full detail: `doc/claude/issues/0154-ase-cannot-plot-auto-named-net.md`.
+
+An UNLABELED net carries the engine's marker name `#netN` (`get_unnamed_node`,
+`netlist.c`) and the netlister emits it **without** the marker (`V1 net1 GND`).
+Clicking one in Select On Design / Direct Plot used to print the
+"v1 queues source currents only" notice and plot nothing. Two causes:
+
+- the picker resolved the net through `xschem flylines at`, and fly-lines rule
+  **A6 deliberately excludes `#` nets** (a `#netN` cluster is unique per physical
+  cluster, so a star for it is meaningless). **A6 is unchanged** — the overlay,
+  the query and `tests/headless/test_flylines.sh` keep it exactly as shipped. The
+  picker now has its own resolver, `ase::ui::sod_net_at`, which keeps `flylines
+  at` as the primary and falls back to `xschem nets -selected` **for WIRE hits
+  only** (a device body reports every net it touches, and a two-pin device shorted
+  onto one net reports exactly one — a length test alone would misread it as a
+  voltage pick and break the I6 "non-source click queues nothing" contract);
+- `sod_expr` wrapped the raw token, giving `v(#net1)`. It now strips the leading
+  `#` (mirroring `send_net_to_graph`, `hilight.c`). Not just a missing trace: a
+  `.save v(#net1)` card makes ngspice abort the whole analysis, killing every
+  other trace in the session.
+
+**The two names are NOT interchangeable and the split is load-bearing:**
+`xschem hilight_netname` finds `#net1` and does **not** find `net1`, so
+`dp_hilight` (the issue-0153 color cue) keeps the RAW token while only the
+expression is mapped. Both call sites are `catch`-guarded, so conflating them
+fails silently.
+
+`sod_expr` stays a **pure** string op — it is called with no design loaded
+(`test_ase_interact` H1) — rather than using `xschem resolved_net`, which is
+also contaminated on its first call (issue 0154's adjacent-defect list).
+Unchanged: a BUS pick still emits a single invalid `v(a[1:0])`, and descended
+picking still emits an unqualified name.
+
 ## X is shared, Y is per-strip (issue 0150, 2026-07-25)
 
 The stack is time-aligned: **any x change must hit every strip; y is

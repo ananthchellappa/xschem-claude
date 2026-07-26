@@ -838,8 +838,31 @@ proc ase::ui::arg_summary {row} {
 # `v(<net>)`, kind `current` + an instance name -> `i(<inst>)`. The token is
 # LOWERCASED: ngspice echoes `print` expressions lowercased and result_probe
 # matches the expr literally, so only a lowercase token can ever get a Value.
+#
+# The leading `#` of an AUTO-NAMED net is stripped (issue 0154). An unlabeled
+# net carries the engine's marker name `#netN` (get_unnamed_node, netlist.c) but
+# the netlister emits it WITHOUT the marker (`V1 net1 GND 1`), so `v(#net1)`
+# names nothing: `get_raw_index` misses it, `wviewer::validate_rpn` rejects it,
+# and — the worst arm — a `.save v(#net1)` card makes ngspice abort the entire
+# analysis ("no data saved for Transient analysis; analysis not run"), taking
+# every other trace in the session with it. This mirrors send_net_to_graph()
+# (hilight.c), the C path that sends highlighted nets to a graph: strip `#`,
+# then lowercase.
+#
+# Deliberately a PURE string op and NOT `xschem resolved_net` (the C helper
+# send_net_to_graph uses after the strip). Two reasons: this proc is called
+# with no design loaded (test_ase_interact H1), and `xschem resolved_net` is
+# contaminated on its first call after any netlist-struct invalidation — it
+# resets the interp result BEFORE prepare_netlist_structs, so the first answer
+# comes back as `0net1` (scheduler.c; the sibling `nets`/`net_members` verbs
+# already carry the fix and its comment). At top level, the only depth ASE runs
+# at (ase::netlist refuses a descended schematic), the two agree byte for byte.
+# The hierarchy-qualified form for descended picking is not attempted here —
+# see the issue doc.
 proc ase::ui::sod_expr {kind token} {
-  if {$kind eq {voltage}} { return "v([string tolower $token])" }
+  if {$kind eq {voltage}} {
+    return "v([string tolower [string trimleft $token #]])"
+  }
   return "i([string tolower $token])"
 }
 
@@ -1401,14 +1424,54 @@ proc ase::ui::sod_end {key} {
   }
 }
 
+# The net under a mode click, as the RAW schematic token (issue 0154).
+#
+# `xschem flylines at` is the primary resolver and stays first: it is read-only
+# and resolves wires, net labels and labeled pins through the very switch
+# hilight_net() uses (flyline_net_of, flyline.c), so every named net keeps its
+# shipped behavior byte for byte. It has one blind spot, deliberate for
+# fly-lines and wrong for signal picking — rule A6, "exclude auto-named nets"
+# (flyline.c: `if(netname[0] == '#') netname = NULL`). A `#netN` cluster is
+# unique per physical cluster and can never connect implicitly, so a fly-line
+# star for it would be meaningless; but it is a perfectly ordinary net to
+# probe, and inheriting the exclusion is what made clicking one print the
+# "source currents only" notice. A6 is NOT relaxed — the overlay, the query and
+# tests/headless/test_flylines.sh keep it exactly as shipped.
+#
+# The fallback reads the selection `select_at` already made, via
+# `xschem nets -selected` (cold-correct: that verb resets the interp result
+# AFTER prepare_netlist_structs, unlike `resolved_net`). Restricted to WIRE
+# hits on purpose: on a device BODY `nets -selected` reports every net the
+# device touches (2 for a vsource, 3 for a mosfet), and a two-pin device with
+# both pins on one net would report exactly one — so an llength test alone
+# would misclassify a non-source device click as a voltage pick and break the
+# "non-source click queues nothing" contract (test_ase_interact I6). A wire
+# lies on exactly one net by construction.
+#
+# Returns the token WITH its `#` and in its original case: dp_hilight needs
+# that form (`xschem hilight_netname net1` finds nothing, `#net1` works). The
+# simulator-side mapping belongs to sod_expr, and only there.
+proc ase::ui::sod_net_at {x y hit} {
+  set net {}
+  catch {set net [dict get [xschem flylines at $x $y] net]}
+  if {$net ne {}} { return $net }
+  if {[lindex $hit 0] ne {wire}} { return {} }
+  set rows {}
+  catch {set rows [xschem nets -selected]}
+  if {[llength $rows] != 1} { return {} }
+  set name {}
+  catch {set name [dict get [lindex $rows 0] name]}
+  return $name
+}
+
 # One mode click. Bare x/y (the canvas binding) read the last snapped mouse
 # position — kept current by the generic <Motion> binding that still flows to
 # C; tests pass explicit schematic coordinates (replayable). Classification
 # (D4): select_at miss -> nothing; source-class instance -> current output;
 # anything resolving to a net under the click (wires, net labels, labeled
-# pins — via the read-only flylines query) -> voltage output; else the v1
-# scope notice. select_at doubles as the Cadence-like click feedback and logs
-# its own replayable action-log line.
+# pins — via sod_net_at) -> voltage output; else the v1 scope notice.
+# select_at doubles as the Cadence-like click feedback and logs its own
+# replayable action-log line.
 proc ase::ui::sod_click {key {x {}} {y {}}} {
   variable sod
   if {![info exists sod($key,flavor)]} { return }
@@ -1428,8 +1491,7 @@ proc ase::ui::sod_click {key {x {}} {y {}}} {
     }
   }
   if {$kind eq {}} {
-    set net {}
-    catch {set net [dict get [xschem flylines at $x $y] net]}
+    set net [ase::ui::sod_net_at $x $y $hit]
     if {$net ne {}} {
       set kind voltage
       set token $net
