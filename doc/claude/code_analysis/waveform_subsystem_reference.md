@@ -577,6 +577,24 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
     `@spice_get_voltage` (`token.c:4224`, `:4718`) is scalar-only (`multip == 1`)
     and never saw this.
 
+26. **`#` is an ordinary label character to the parser, so it must be stripped PER
+    BUS ELEMENT, and the strip must stay LOOSE** (issue 0158, FIXED —
+    `hilight.c` ~2613). `#` sits in `parselabel.l`'s `LAB`/`LAB_NODASH`/`LAB_NUM`/
+    `IDX_LAB_NUM_SP`/`LAB_NUM_SP` classes (~162-173), so `expandlabel` passes it
+    through and *distributes* it over bracket bits (`#a[1:0]` → `#a[1],#a[0]`).
+    `resolved_net` used to strip once on the whole token before `expandlabel`, so
+    only element 0 was cleaned; descended, the survivor landed mid-name
+    (`{LOC,#x}` → `X1.LOC,X1.#x`). Three rules now hold: **(a)** strip inside the
+    loop, once per element; **(b)** keep it LOOSE — do *not* reach for 0156's
+    strict `is_auto_net_name()` here, because a user-authored `lab=#foo` was
+    measured to netlist as plain `foo`, so a strict test would disagree with the
+    netlist for exactly the names 0156 declared legal; **(c)** never strip a bare
+    `"#"` to `""` — the `,` separator is written regardless of what the element
+    produced, so an emptied element emits `a,`. Still leaking, deliberately not
+    fixed: a `#` arriving from an **instance attribute** via the `hier_attr`
+    lookup (`:2620`) is never stripped, since the strip precedes the lookup;
+    the portmap path is immune because `actions.c:3568-3572` strips at build time.
+
 ---
 
 ## 12. Improvement backlog (ranked, with where-to-touch)
@@ -593,9 +611,13 @@ Effort: S=hours, M=days, L=weeks. Impact in caps.
    `resolved_net` **truncated a bus at a global element** (`:2654` `my_strdup2`
    replaced where `:2656` `my_mstrcat` appends — `{D,GND}` → `GND`, and in fact
    `{A,B,GND,VCC}` → `VCC`); the global branch now appends without the `path2`
-   prefix. See landmine 25. Still open, same function, same audit: its `#` strip
-   runs once on the whole token before `expandlabel` (`:2602`), so it **leaks on
-   non-first bus elements** (`{D,#net1}` → `D,#net1`) → issue 0158.
+   prefix. See landmine 25. And **DONE — issue 0158**: its `#` strip ran once on
+   the whole token before `expandlabel` (`:2602`), so it **leaked on non-first bus
+   elements** (`{D,#net1}` → `D,#net1`, and descended `{LOC,#x}` → `X1.LOC,X1.#x`);
+   the strip is now per element inside the loop. See landmine 26. Still open from
+   the same reading: a `#` arriving from an **instance attribute** through
+   `hier_attr` (`:2620`) is never stripped, because the strip precedes the lookup —
+   measured `LOC=#foo` → `resolved_net {LOC}` → `#foo`.
 1. **[S · MED] `xschem get graph_flags` + cursor getters.** Add to the `get`
    dispatch (`scheduler.c` near ~3772). Lets `wave_viewer.tcl` drop `cva`/
    `cvb`/`cvr` mirrors (~136) and the access_cond desync risk. *Best ratio.*
@@ -644,6 +666,9 @@ Effort: S=hours, M=days, L=weeks. Impact in caps.
   `test_resolved_net_bus_global_0157.tcl` (`RB*` = `resolved_net`'s bus
   accumulation and the flat-global rule, issue 0157 — builds its own two-level
   hierarchy in `test_scratch`, has teeth in both arms),
+  `test_resolved_net_hash_bus_0158.tcl` (`HS*` = the per-element `#` strip and
+  why it stays loose, issue 0158; `HS0` reads the auto-net name out of
+  `xschem nets` rather than hardcoding `#net1`),
   `test_ase_*` family. They
   `--pipe`/`--script` the built binary and diff against golden state. Pure
   Tcl helpers in `wave_viewer.tcl` (`graph_props`, `band_geometry`,

@@ -218,8 +218,15 @@ All **VERIFIED first-hand**, all **pre-existing** and independent of this fix.
    function's own early return, where `rnet` really is fresh. It also reached
    netlist output through `translate()`'s `@#<pin>:resolved_net` and the waveform
    graph through `send_net_to_graph`, both of which iterate the `,`-list.)*
-4. **`resolved_net` leaks `#` on non-first bus elements** — the strip runs once on
-   the whole token before `expandlabel`: `{D,#net1}` → `D,#net1`.
+4. **`resolved_net` leaks `#` on non-first bus elements** → **FIXED, issue 0158.**
+   The strip runs once on the whole token before `expandlabel`: `{D,#net1}` →
+   `D,#net1`. *(Worse than stated: descended, the leaked `#` lands in the MIDDLE of
+   the answer, behind the hierarchy prefix — `{LOC,#x}` → `X1.LOC,X1.#x`, a name no
+   netlist or `.raw` contains. Fixed by stripping per element inside the loop; the
+   strip stays LOOSE, not `is_auto_net_name()`, because a user `lab=#foo` was
+   measured to netlist as plain `foo`. A third leak was found and NOT fixed: a
+   `#`-leading value arriving from an instance attribute via `hier_attr` is never
+   stripped, because the strip precedes the lookup — see 0158 for the measurement.)*
 5. **Two `lab=#foo` labels on one wire crash the binary** → **FIXED, issue 0156** — and the
    shape was wrong in both directions: the crash needs *a wire whose name starts with `#` plus a
    second label*, which fires for the engine's own `#net1`+`#net2` too, while a lone `#foo` is

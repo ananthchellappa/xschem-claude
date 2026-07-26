@@ -2599,7 +2599,6 @@ char *resolved_net(const char *net)
     dbg(1, "resolved_net(): net=%s\n", net);
     start_level = sch_waves_loaded();
     if(start_level == -1) start_level = 0;
-    if(net[0] == '#') net++;
     if(path) {
       /* skip path components that are above the level where raw file was loaded */
       while(*path && skip < start_level) {
@@ -2614,6 +2613,17 @@ char *resolved_net(const char *net)
       char *net_name = my_strtok_r(n_s1, ",", "", 0, &n_s2);
       level = xctx->currsch;
       n_s1 = NULL;
+      /* strip the auto-net marker PER ELEMENT. This used to run once on the whole
+       * token before expandlabel(), so only element 0 ever lost its '#'
+       * ({D,#net1} -> D,#net1; descended, the '#' even landed mid-name as
+       * X1.#net1) -- issue 0158. expandlabel() keeps '#' ('#' is in parselabel.l's
+       * label character class) and distributes it over bracket bits, so #a[1:0]
+       * still yields a[1],a[0]. The test stays LOOSE rather than using
+       * is_auto_net_name(): a user-authored lab=#foo netlists as plain 'foo', so
+       * this output-strip site must match that (issue 0156). Never strip a bare
+       * "#" to the empty string -- the "," below is written regardless, which
+       * would emit a stray separator. */
+      if(net_name && net_name[0] == '#' && net_name[1]) net_name++;
       my_strdup2(_ALLOC_ID_, &resolved_net, net_name);
       dbg(1, "resolved_net(): resolved_net=%s\n", resolved_net);
       while(level > start_level) { /* check if net passed by attribute instead of by port */
