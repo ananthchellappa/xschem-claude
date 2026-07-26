@@ -772,6 +772,27 @@ void get_inst_pin_coord(int i, int j, double *x, double *y)
   }
 }
 
+/* Is `s` the engine's own auto-generated net name, i.e. exactly "#net" followed by at least
+ * one digit? (issue 0156)
+ *
+ * '#' is the engine's PRIVATE marker for an auto-named net: set_unnamed_net() / set_unnamed_inst()
+ * mint "#net<N>" via get_unnamed_node(1,...), and the netlisters strip the '#' again. But nothing
+ * stops a user typing lab=#foo, nor a hand edit or a format converter putting an arbitrary '#'
+ * name in a file -- and '#' names round-trip through disk (the shipped libraries carry thousands
+ * of committed lab=#netN records). A bare `name[0]=='#'` test therefore does NOT mean "auto-named".
+ *
+ * Use this wherever the answer feeds atoi(name + 4): "#foo" + 4 lands on the NUL (or past it for a
+ * shorter name) and "#12345" + 4 silently yields 45, corrupting an unrelated node's multiplicity.
+ * Sites that merely STRIP the marker on the way to a netlist/display name are left alone -- they
+ * are cosmetic and correct for any '#' name. */
+int is_auto_net_name(const char *s)
+{
+  if(!s || s[0] != '#') return 0;
+  if(strncmp(s, "#net", 4)) return 0;
+  if(!isdigit((unsigned char)s[4])) return 0;   /* "#net" with no index is not an auto name */
+  return 1;
+}
+
 /* what==0 -> initialize  */
 /* what==1 -> get new node name, net##   */
 /* what==2 -> update multiplicity   */
@@ -801,7 +822,25 @@ int get_unnamed_node(int what, int mult,int node)
     xctx->node_mult[xctx->new_node]=mult;
     return xctx->new_node;
   }
-  else if(what==2) { /* update node multiplicity if given mult is lower */
+  /* Guard the node_mult[] accesses below (issue 0156). `node` is derived from a net NAME --
+   * atoi(name + 4) at the call sites -- so it is user-reachable and completely unvalidated.
+   * Two crashes came through here:
+   *   - node_mult is NULL whenever what==1 has not run yet. prepare_netlist_structs() frees it
+   *     (what==0) at its start and only refills it in name_unlabeled_nets(), which runs AFTER
+   *     name_nodes_of_pins_labels_and_propagate() -- so a second label on a wire already named
+   *     '#something' reached what==2 with node_mult == NULL. NULL deref.
+   *   - a large well-formed name (lab=#net99999999) indexes far past node_mult_size in the
+   *     vhdl/verilog declaration pass (node_hash.c, what==3). Out-of-bounds read.
+   * Returning 0 is the existing "unknown multiplicity" answer -- an in-range but never-assigned
+   * entry is 0 too (the array is zeroed on growth), and callers already treat mult<=1 as scalar. */
+  else if(what>=2) {   /* what>=2 == every path below that indexes node_mult */
+    if(!xctx->node_mult || node < 0 || node >= xctx->node_mult_size) {
+      dbg(1, "get_unnamed_node(): what=%d: node %d out of range (size=%d, mult=%s) -- ignored\n",
+             what, node, xctx->node_mult_size, xctx->node_mult ? "set" : "NULL");
+      return 0;
+    }
+  }
+  if(what==2) { /* update node multiplicity if given mult is lower */
     if(xctx->node_mult[node]==0) xctx->node_mult[node]=mult;
     else if(mult < xctx->node_mult[node]) xctx->node_mult[node]=mult;
     return 0;
@@ -967,7 +1006,10 @@ static void set_inst_node(int i, int j, const char *node)
 
   set_lab_or_pin_inst_attr(i, j, node);
 
-  if(node[0] == '#') { /* update multilicity of unnamed node */
+  /* update multiplicity of unnamed node. STRICT test (issue 0156): only the engine's own
+   * "#net<N>" carries an index at +4. A user-authored '#foo' used to land here too, and
+   * atoi("#12345" + 4) == 45 would silently retune an unrelated node's multiplicity. */
+  if(is_auto_net_name(inst[i].node[j])) {
     int pin_mult;
     expandlabel(get_tok_value(rect[j].prop_ptr, "name", 0), &pin_mult);
     get_unnamed_node(2, pin_mult * inst_mult, atoi((inst[i].node[j]) + 4));
@@ -1440,6 +1482,22 @@ static int name_nodes_of_pins_labels_and_propagate()
 
 
       my_strdup(_ALLOC_ID_, &inst[i].node[0], inst[i].lab);
+
+      /* '#' is reserved for the engine's auto names (issue 0156). A user-authored '#' label
+       * collides with that private namespace: it is excluded from fly-lines (rule A6), it is
+       * read as "regenerable" by the fluid-editing label guards, and its '#' is stripped on the
+       * way to the netlist, so it can silently alias a different net. Warn once per schematic,
+       * on the same print_erc gate and in the same style as the other checks in this loop. */
+      if(print_erc && inst[i].node[0] && inst[i].node[0][0] == '#' &&
+         !is_auto_net_name(inst[i].node[0])) {
+        char str[2048];
+        my_snprintf(str, S(str),
+          "Warning: instance: %s: net name '%s' starts with '#', which is reserved for "
+          "auto-named nets", inst[i].instname ? inst[i].instname : "?", inst[i].node[0]);
+        statusmsg(str,2);
+        inst[i].color = -PINLAYER;
+        xctx->hilight_nets=1;
+      }
 
 
       /* do not assign node if pin/label has no 'lab' attribute */

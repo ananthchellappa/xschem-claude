@@ -2343,6 +2343,7 @@ extern void set_tcl_netlist_type(void);
 extern void show_unconnected_pins(void);
 extern void auto_set_wire_bus(int start, int end);
 extern int prepare_netlist_structs(int for_netlist);
+extern int is_auto_net_name(const char *s); /* "#net<N>", the engine's auto name (issue 0156) */
 extern int skip_wire(int i);
 extern int skip_instance(int i,  int skip_short, int lvs_ignore);
 extern int shorted_instance(int i, int lvs_ignore);

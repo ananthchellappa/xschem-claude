@@ -11019,6 +11019,12 @@ proc addlabel::expand_names {s split_bus} {
 # ONE bus suffix `[i]` or `[hi:lo]` (digits, single colon). Angle brackets normalise to square first,
 # so `B<2:0>` is valid; `B{2:0]`, `C[2;0]`, `B[2:0` (unclosed) and a bare `[2:0]` are rejected.
 proc addlabel::name_ok {n} {
+  # '#' is reserved for the engine's auto-named nets (get_unnamed_node mints "#net<N>";
+  # issue 0156). A user-typed '#' name collides with that private namespace -- fly-lines
+  # rule A6 hides it, the fluid-editing guards read it as regenerable, and the netlister
+  # strips the '#', so it can alias a different net. Refuse it at the point of entry;
+  # existing files keep loading (thousands of committed lab=#netN records depend on that).
+  if {[string index $n 0] eq "#"} { return 0 }
   set n [string map {< \[ > \]} $n]
   return [regexp {^[^][{}<>;:]+(\[[0-9]+(:[0-9]+)?\])?$} $n]
 }

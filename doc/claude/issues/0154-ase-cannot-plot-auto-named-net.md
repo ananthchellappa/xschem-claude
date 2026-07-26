@@ -213,7 +213,13 @@ All **VERIFIED first-hand**, all **pre-existing** and independent of this fix.
    `{GND,D}` → `GND,D` is correct, so only element order exposes it.
 4. **`resolved_net` leaks `#` on non-first bus elements** — the strip runs once on
    the whole token before `expandlabel`: `{D,#net1}` → `D,#net1`.
-5. **Two `lab=#foo` labels on one wire crash the binary** — `FATAL: signal 11`,
+5. **Two `lab=#foo` labels on one wire crash the binary** → **FIXED, issue 0156** — and the
+   shape was wrong in both directions: the crash needs *a wire whose name starts with `#` plus a
+   second label*, which fires for the engine's own `#net1`+`#net2` too, while a lone `#foo` is
+   harmless. A second, independent crash (out-of-bounds, `lab=#net99999999` in VHDL/Verilog
+   netlisting) was found alongside. The `#` premise below is now **enforced**: `#` is reserved,
+   `is_auto_net_name()` is the strict test, and `addlabel::name_ok` refuses a user-typed `#`.
+   Original text: — `FATAL: signal 11`,
    reproduced. Backtrace: `set_inst_node` ← `name_attached_inst_to_net` ←
    `wirecheck` ← `name_attached_nets` ← `prepare_netlist_structs` ← `list_nets`.
    `src/netlist.c` does `atoi(node + 4)` for any `node[0]=='#'`, assuming the

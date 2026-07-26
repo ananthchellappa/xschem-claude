@@ -755,6 +755,18 @@ declaring any wiring feature done, convert to xfail tests when touching the area
     0136 defect 2). `doc/claude/issues/0139-*.md`, `test_fluid_second_gesture_body_cross_0139.tcl`
     (RED→GREEN 13/13, baseline fails exactly the 3 body-cross checks), wireedit 57/57, 0136 11/11.
 
+15. **A user-authored `#` label is read as regenerable by the fluid label guards** (issue 0156
+    spin-off, NOT fixed there). `fluid_wire_explicit_lab` (~:2945) returns
+    `lab[0] != '#' || strpbrk(lab, "[:")`, and the H2 doom guard (~:3196) exempts
+    `lab[0] == '#'` because "a #auto label regenerates". Both predate the 0156 policy that `#`
+    is *reserved* — a user CAN still have `lab=#foo` in an existing file (nothing rewrites it;
+    only `addlabel::name_ok` blocks NEW ones), and for such a wire these guards conclude the
+    label is disposable. A reshape can therefore **drop a real user label**. The fix is to swap
+    both tests to `is_auto_net_name()` (`netlist.c`, exported in `xschem.h`), which is strictly
+    `#net<digits>` — but it is a live behavior change in the fluid hot path, so it needs its own
+    RED test and the fluid suites as the gate. 0156 deliberately converted only the three
+    `atoi(name+4)` sites and left every other `#` test alone.
+
 Below-cut (quality, keep on radar): elbow legs through pin-less stationary bodies (no
 body class in `fluid_ml_hazards`); two moved devices sharing a channel (NULL node treated
 as same-net :5681-5707); bus quality debt accumulates monotonically (every cleaner

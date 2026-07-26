@@ -273,7 +273,7 @@ void print_vhdl_signals(FILE *fd)
       }
       if(ptr->d.port == 0 ) {
         found = 1;
-        if(ptr->token[0]=='#') {
+        if(is_auto_net_name(ptr->token)) {   /* STRICT: only "#net<N>" indexes at +4 (issue 0156) */
           mult=get_unnamed_node(3, 0,  atoi((ptr->token)+4) );
         }
         else {
@@ -332,7 +332,7 @@ void print_verilog_signals(FILE *fd)
     while(ptr) {
       if(ptr->d.port == 0 ) {
         found = 1;
-        if(ptr->token[0]=='#') {
+        if(is_auto_net_name(ptr->token)) {   /* STRICT: only "#net<N>" indexes at +4 (issue 0156) */
          mult=get_unnamed_node(3, 0,  atoi((ptr->token)+4) );
         }
         else {

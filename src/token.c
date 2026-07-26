@@ -4015,8 +4015,14 @@ const char *net_name(int i, int j, int *multip, int hash_prefix_unnamed_net, int
    if(pinname) my_free(_ALLOC_ID_, &pinname);
    if((xctx->inst[i].node[j])[0] == '#') /* unnamed net */
    {
-     /* get unnamed node multiplicity ( minimum multip found in circuit) */
-     *multip = get_unnamed_node(3, 0, atoi((xctx->inst[i].node[j])+4) );
+     /* Get unnamed node multiplicity (minimum multip found in circuit). The branch test stays
+      * LOOSE because the name emission below also strips the '#' for ANY such name -- but the
+      * INDEX is strict (issue 0156): only "#net<N>" carries an index at +4. A user-authored
+      * '#foo' used to reach atoi("o") == 0 here and silently borrow node 0's multiplicity,
+      * which could declare a scalar user net as a bus in the netlist. Treat it as scalar,
+      * the same fallback node_hash.c uses for a non-auto name. */
+     *multip = is_auto_net_name(xctx->inst[i].node[j]) ?
+                 get_unnamed_node(3, 0, atoi((xctx->inst[i].node[j])+4) ) : 1;
      dbg(2, "net_name(): node = %s  n=%d multip=%d\n",
      xctx->inst[i].node[j], atoi(xctx->inst[i].node[j]), *multip);
      if(hash_prefix_unnamed_net) {
