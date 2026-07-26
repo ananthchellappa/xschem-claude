@@ -95,6 +95,15 @@ int textclip(int x1,int y1,int x2,int y2,
  return 1;
 }
 
+/* issue 0151: suppress ON-SCREEN-only UI decorations (currently the ASE viewer's
+ * active-strip marker) while rendering to an export drawable. print_image() renders
+ * through draw(), not through the export-specific draw_graph() callers, so it cannot
+ * be gated by withholding draw_graph's flags bit 16 at the call site the way
+ * svg_embedded_graph()/ps_embedded_graph() are — draw() consults this flag instead.
+ * Bracketed like save_draw_grid/do_copy_area below; single-threaded, so a file
+ * static is enough. */
+static int draw_no_ui_decorations = 0;
+
 void print_image()
 {
   #if HAS_CAIRO == 0
@@ -126,7 +135,9 @@ void print_image()
   xctx->draw_pixmap=1;
   save = xctx->do_copy_area;
   xctx->do_copy_area=0;
+  draw_no_ui_decorations = 1; /* issue 0151: no active-strip marker in exported images */
   draw();
+  draw_no_ui_decorations = 0;
 
 
   #if HAS_CAIRO == 1 /* use cairo native support for png writing, no need to convert
@@ -3534,6 +3545,13 @@ void setup_graph_data(int i, int skip, Graph_ctx *gr)
   gr->logx = gr->logy = 0;
   gr->digital = 0;
   gr->rainbow = 0;
+  /* issue 0151: ASE viewer target-strip marker. Defaulted (and parsed) HERE,
+   * BEFORE the RECT_OUTSIDE early return below: gr is the SHARED
+   * xctx->graph_struct reused for every graph, so an off-screen graph that
+   * returned early would otherwise inherit the previous graph's value. */
+  gr->active = 0;
+  val = get_tok_value(r->prop_ptr,"active", 0);
+  if(val[0]) gr->active = atoi(val);
   gr->linewidth_mult = tclgetdoublevar("graph_linewidth_mult");
   xctx->graph_flags &= ~(128 | 256); /* clear hcursor flags */
   gr->hcursor1_y = gr->hcursor2_y = 0.0;
@@ -4545,6 +4563,10 @@ int find_closest_wave(int i, Graph_ctx *gr, int *node_number)
  * 128: draw y-cursor1
  * 256: draw y-cursor2
  *  8: all drawing, if not set do only XCopyArea / x-cursor if specified
+ * 16: ON-SCREEN draw: also paint the ASE viewer's active-strip marker when the
+ *     graph carries `active=1` (issue 0151). Set by draw_graph_all() and by the
+ *     interactive partial-redraw callers (callback.c, `xschem draw_graph`), NOT
+ *     by the SVG/PS export callers — a printed schematic carries no UI marker.
  * ct is a pointer used in windows for cairo
  */
 void draw_graph(int i, int flags, Graph_ctx *gr, void *ct)
@@ -4952,6 +4974,37 @@ void draw_graph(int i, int flags, Graph_ctx *gr, void *ct)
     /* hcursor2 */
     if(flags & 256) draw_hcursor(gr->hcursor2_y, 19, gr);
     bbox(END, 0.0, 0.0, 0.0, 0.0);
+  }
+  /* issue 0151: ASE waveform viewer ACTIVE-STRIP marker — a solid dull-yellow
+   * bar down the right edge of the target strip, full container height. Only
+   * the viewer ever writes the `active` prop token (wviewer::graph_props), and
+   * only while more than one strip is up, so ordinary schematic graphs are
+   * untouched. flags bit 16 = "on-screen draw": set by draw_graph_all and by
+   * the interactive partial-redraw callers, NOT by the SVG/PS export callers —
+   * a printed schematic must not carry a UI marker. Drawn here, inside
+   * draw_graph, because every partial graph repaint starts by refilling the
+   * whole container box (draw_graph_grid), which would erase anything painted
+   * from outside. */
+  if((flags & 16) && gr->active && has_x) {
+    double bx1, by1, bx2, by2;
+    int w = tclgetintvar("graph_active_strip_width");
+    dbg(1, "draw_graph(): active-strip marker on graph %d\n", i);
+    if(w <= 0) w = 5;
+    bx2 = gr->sx2;
+    bx1 = gr->sx2 - w;
+    by1 = gr->sy1;
+    by2 = gr->sy2;
+    /* screen-space clip: the GC has no clip mask, and 16-bit X coordinate
+     * fields wrap on huge off-screen values (draw_hilight_dot's lesson) */
+    if(rectclip(xctx->areax1, xctx->areay1, xctx->areax2, xctx->areay2,
+                &bx1, &by1, &bx2, &by2)) {
+      if(xctx->draw_window)
+        XFillRectangle(display, xctx->window, xctx->gc_graph_active,
+          (int)bx1, (int)by1, (unsigned int)(bx2 - bx1), (unsigned int)(by2 - by1));
+      if(xctx->draw_pixmap)
+        XFillRectangle(display, xctx->save_pixmap, xctx->gc_graph_active,
+          (int)bx1, (int)by1, (unsigned int)(bx2 - bx1), (unsigned int)(by2 - by1));
+    }
   }
   if(flags & 1) { /* copy save buffer to screen */
     if(!xctx->draw_window) {
@@ -5961,7 +6014,10 @@ void draw(void)
     if(!xctx->only_probes) drawgrid();
     /* 2: draw cursor 1
      * 4: draw cursor 2 */
-    draw_graph_all((xctx->graph_flags & (2 | 4)) + 8); /* xctx->graph_flags for cursors */
+    /* +16: on-screen draw -> the ASE viewer active-strip marker (issue 0151);
+     * dropped while print_image() renders an export drawable */
+    draw_graph_all((xctx->graph_flags & (2 | 4)) + 8 +
+                   (draw_no_ui_decorations ? 0 : 16)); /* xctx->graph_flags for cursors */
     draw_images_all();
 
     x1 = X_TO_XSCHEM(xctx->areax1);

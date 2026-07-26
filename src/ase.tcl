@@ -781,6 +781,63 @@ proc ase::direct_plot_for_current {} {
   return $key
 }
 
+# Ctrl-Shift-4 (issue 0151, doc/claude/specs/waveform_viewer_modes.md): change
+# the PLOT MODE of the waveform viewer belonging to the ASE-L session bound to
+# the CURRENT schematic, without leaving the design window. `mode` is
+# single | multi | invert (default invert — the chord flips). Resolution is
+# the Ctrl-4 path: design_of_current -> session_for_design -> the session key
+# IS the viewer token. Returns the resolved mode, or {} with an honest
+# ciw_echo when the current view is not a schematic, no session is bound, or
+# that session has no viewer WINDOW open (the mode is per-window state — there
+# is nothing to flip until the window exists).
+proc ase::plot_mode_for_current {{mode invert}} {
+  set d [ase::design_of_current]
+  if {$d eq {}} { return {} }
+  lassign $d lib cell view
+  set key [ase::session_for_design $lib $cell $view]
+  if {$key eq {}} {
+    if {[info commands ::ciw_echo] ne {}} {
+      catch {ciw_echo "ase: no ASE-L session for this design -- Launch ASE-L\
+ (Tools menu) or open its ngspice_state view first" error}
+    }
+    return {}
+  }
+  if {[wviewer::plot_mode $key] eq {}} {
+    if {[info commands ::ciw_echo] ne {}} {
+      catch {ciw_echo "ase: no waveform viewer open for $key -- open it first\
+ (ASE-L Tools > Waveform Viewer, or the ~ button)" error}
+    }
+    return {}
+  }
+  set new [wviewer::set_plot_mode $mode $key]
+  if {$new ne {} && [info commands ::ciw_echo] ne {}} {
+    catch {ciw_echo "ase: waveform viewer plot mode = $new ($key)"}
+  }
+  return $new
+}
+
+# The window NUMBER of the ASE-L window bound to the CURRENT schematic, or {}
+# (issue 0151). Same resolution chain as above; {} with an honest ciw_echo for
+# a non-schematic view, no bound session, or a session whose window is not
+# built (headless, or the session was only registered).
+proc ase::window_number_for_current {} {
+  set d [ase::design_of_current]
+  if {$d eq {}} { return {} }
+  lassign $d lib cell view
+  set key [ase::session_for_design $lib $cell $view]
+  if {$key eq {}} {
+    if {[info commands ::ciw_echo] ne {}} {
+      catch {ciw_echo "ase: no ASE-L session for this design" error}
+    }
+    return {}
+  }
+  set n [ase::ui::number_for $key]
+  if {$n eq {} && [info commands ::ciw_echo] ne {}} {
+    catch {ciw_echo "ase: session $key has no ASE-L window open" error}
+  }
+  return $n
+}
+
 # --- ngspice backend --------------------------------------------------------
 
 namespace eval ase::backend::ngspice {

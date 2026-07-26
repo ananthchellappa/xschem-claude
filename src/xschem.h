@@ -1062,6 +1062,10 @@ typedef struct {
   int rainbow; /* draw multiple datasets with incrementing colors */
   double linewidth_mult; /* multiply factor for waveforms line width */
   double hcursor1_y, hcursor2_y; /* hcursor positions */
+  int active; /* issue 0151: this graph is the ASE viewer's TARGET strip (prop token
+               * `active=1`) -> draw_graph paints the dull-yellow right-edge marker.
+               * Only the waveform viewer ever writes the token, so ordinary
+               * schematic graphs are unaffected. */
 } Graph_ctx;
 
 typedef struct {
@@ -1271,6 +1275,10 @@ typedef struct {
   GC gc_flyline;        /* fly-line overlay: dashed thin colored GC (flylines_color/width/dash) */
   GC gc_hilight;        /* net highlight scratch GC: reconfigured per wire from the
                          * NetHilightStyle (color+width+dash) at draw time */
+  GC gc_graph_active;   /* ASE waveform viewer active-strip marker: a solid dull-yellow
+                         * bar at the right edge of the TARGET graph (issue 0151,
+                         * doc/claude/specs/waveform_viewer_modes.md). Color from
+                         * graph_active_strip_color, set in build_colors(). */
   char **color_array;
   unsigned int color_index[256];
   XColor xcolor_array[256];

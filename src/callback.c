@@ -599,12 +599,12 @@ static int waves_callback(int event, int mx, int my, KeySym key, int button, int
         }
 
         if(save != gr->hilight_wave) {
-          draw_graph(i, 1 + 8 + (xctx->graph_flags & (2 | 4 | 128 | 256)), gr, NULL); /* draw data in graph box */
+          draw_graph(i, 1 + 8 + 16 + (xctx->graph_flags & (2 | 4 | 128 | 256)), gr, NULL); /* draw data in graph box */
         }
       /* button3 click on wave label */
       } else {
         if( edit_wave_attributes(2, i, gr)) {
-          draw_graph(i, 1 + 8 + (xctx->graph_flags & (2 | 4 | 128 | 256)), gr, NULL); /* draw data in graph box */
+          draw_graph(i, 1 + 8 + 16 + (xctx->graph_flags & (2 | 4 | 128 | 256)), gr, NULL); /* draw data in graph box */
           return 0;
         }
       }
@@ -1584,7 +1584,7 @@ static int waves_callback(int event, int mx, int my, KeySym key, int button, int
     } /* else if( event == ButtonRelease) */
     if(need_redraw || need_all_redraw || ( i == xctx->graph_master && need_redraw_master) ) {
       setup_graph_data(i, 0, gr);
-      draw_graph(i, 1 + 8 + (xctx->graph_flags & (4 | 2 | 128 | 256)), gr, NULL); /* draw data in each graph box */
+      draw_graph(i, 1 + 8 + 16 + (xctx->graph_flags & (4 | 2 | 128 | 256)), gr, NULL); /* draw data in each graph box */
     }
   } /* for(i=0; i< xctx->rects[GRIDLAYER]; i++ */
 

@@ -473,6 +473,10 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     <Button-4> <Button-5> <Shift-Button-4> <Shift-Button-5>
     <Control-Button-4> <Control-Button-5>
     <Shift-MouseWheel> <Control-MouseWheel>
+    <Button-2> <ButtonRelease-2> <B2-Motion>
+    <Shift-Button-1> <Shift-ButtonRelease-1> <Shift-B1-Motion>
+    <Alt-Button-1> <Alt-ButtonRelease-1> <Alt-B1-Motion>
+    <Button-1>
   }
   set stray {}
   foreach seq [bind $vdrw] {
@@ -489,8 +493,10 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   for {set i 0} {$i <= [$mb index end]} {incr i} {
     lappend labels [$mb entrycget $i -label]
   }
-  check "G2 cascade labels exactly File View Graph Cursors" $labels \
-    {File View Graph Cursors}
+  # Options joined the fixed cascade list with the plot modes (issue 0151);
+  # its contents are asserted in tests/headless/test_wave_modes.tcl (MG4)
+  check "G2 cascade labels exactly File View Graph Cursors Options" $labels \
+    {File View Graph Cursors Options}
   # item 12 flipped this leg: the item-11 placeholders were disabled, the
   # live core must leave NO Graph/Cursors entry disabled (also G17)
   set anydis 0
@@ -1307,6 +1313,207 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
 
     wviewer::set_graphs $tok [list $sg0]                     ;# back to 1 strip
     wviewer::regenerate $tok
+
+    # === CG (issue 0149): the graphs OWN the viewer window ====================
+    # No gesture in the viewer may scroll/pan the CANVAS — that slides the tiled
+    # graph stack around a bigger canvas and exposes blank space. Teeth for both
+    # reported holes: the arrow keys (bare = graph pan, modified = swallowed;
+    # previously forwarded and reaching view.scroll_* / the hard-coded origin pan
+    # / prev_tab-next_tab) and the middle button (the C canvas PAN gesture, which
+    # waves_selected explicitly refuses to graph-route). Every leg re-asserts the
+    # canvas baseline.
+
+    # CG-arrow-right / -left: bare Left/Right pan the graph X, through the
+    # PRODUCTION key_filter (KeyPress, T==2), not a helper shortcut.
+    ix_setrange $tok 0 10 -1 1
+    xschem new_schematic switch $vdrw
+    set ax1 [xschem getprop rect 2 0 x1]; set ax2 [xschem getprop rect 2 0 x2]
+    set ay1 [xschem getprop rect 2 0 y1]; set ay2 [xschem getprop rect 2 0 y2]
+    wviewer::key_filter $vdrw 2 10 10 65363 Right 0
+    xschem new_schematic switch $vdrw
+    set dx1 [expr {[xschem getprop rect 2 0 x1] - $ax1}]
+    set dx2 [expr {[xschem getprop rect 2 0 x2] - $ax2}]
+    check_true "CG-arrow-right pans graph x by one positive delta" \
+      [expr {abs($dx1 - $dx2) < 1e-9 && $dx1 > 1e-9}]
+    check_true "CG-arrow-right leaves y alone" \
+      [expr {[xschem getprop rect 2 0 y1] == $ay1 &&
+             [xschem getprop rect 2 0 y2] == $ay2}]
+    check_true "CG-arrow-right canvas == baseline (no canvas scroll)" \
+      [ix_canvas_ok $vdrw $cx0 $cy0 $cz0]
+
+    ix_setrange $tok 0 10 -1 1
+    xschem new_schematic switch $vdrw
+    set ax1 [xschem getprop rect 2 0 x1]; set ax2 [xschem getprop rect 2 0 x2]
+    wviewer::key_filter $vdrw 2 10 10 65361 Left 0
+    xschem new_schematic switch $vdrw
+    set dx1 [expr {[xschem getprop rect 2 0 x1] - $ax1}]
+    set dx2 [expr {[xschem getprop rect 2 0 x2] - $ax2}]
+    check_true "CG-arrow-left pans graph x by one negative delta" \
+      [expr {abs($dx1 - $dx2) < 1e-9 && $dx1 < -1e-9}]
+    check_true "CG-arrow-left canvas == baseline" [ix_canvas_ok $vdrw $cx0 $cy0 $cz0]
+
+    # CG-arrow-up / -down: bare Up/Down pan the graph Y
+    ix_setrange $tok 0 10 -1 1
+    xschem new_schematic switch $vdrw
+    set ay1 [xschem getprop rect 2 0 y1]; set ay2 [xschem getprop rect 2 0 y2]
+    set ax1 [xschem getprop rect 2 0 x1]; set ax2 [xschem getprop rect 2 0 x2]
+    wviewer::key_filter $vdrw 2 10 10 65362 Up 0
+    xschem new_schematic switch $vdrw
+    set dy1 [expr {[xschem getprop rect 2 0 y1] - $ay1}]
+    set dy2 [expr {[xschem getprop rect 2 0 y2] - $ay2}]
+    check_true "CG-arrow-up pans graph y by one positive delta" \
+      [expr {abs($dy1 - $dy2) < 1e-9 && $dy1 > 1e-9}]
+    check_true "CG-arrow-up leaves x alone" \
+      [expr {[xschem getprop rect 2 0 x1] == $ax1 &&
+             [xschem getprop rect 2 0 x2] == $ax2}]
+    check_true "CG-arrow-up canvas == baseline" [ix_canvas_ok $vdrw $cx0 $cy0 $cz0]
+
+    ix_setrange $tok 0 10 -1 1
+    xschem new_schematic switch $vdrw
+    set ay1 [xschem getprop rect 2 0 y1]; set ay2 [xschem getprop rect 2 0 y2]
+    wviewer::key_filter $vdrw 2 10 10 65364 Down 0
+    xschem new_schematic switch $vdrw
+    set dy1 [expr {[xschem getprop rect 2 0 y1] - $ay1}]
+    set dy2 [expr {[xschem getprop rect 2 0 y2] - $ay2}]
+    check_true "CG-arrow-down pans graph y by one negative delta" \
+      [expr {abs($dy1 - $dy2) < 1e-9 && $dy1 < -1e-9}]
+    check_true "CG-arrow-down canvas == baseline" [ix_canvas_ok $vdrw $cx0 $cy0 $cz0]
+
+    # CG-arrow-mod: Shift(1) / Ctrl(4) / Alt(8) + arrow are SWALLOWED — neither
+    # the graph NOR the canvas may move. Ctrl+Left/Right used to switch TABS and
+    # Alt+arrow used to pan the canvas origin outright.
+    foreach {mname mask} {shift 1 ctrl 4 alt 8} {
+      ix_setrange $tok 0 10 -1 1
+      xschem new_schematic switch $vdrw
+      set bx1 [xschem getprop rect 2 0 x1]; set bx2 [xschem getprop rect 2 0 x2]
+      set by1 [xschem getprop rect 2 0 y1]; set by2 [xschem getprop rect 2 0 y2]
+      foreach ks {65361 65362 65363 65364} {
+        wviewer::key_filter $vdrw 2 10 10 $ks Arrow $mask
+      }
+      xschem new_schematic switch $vdrw
+      check_true "CG-arrow-$mname graph range unchanged (swallowed)" \
+        [expr {[xschem getprop rect 2 0 x1] == $bx1 &&
+               [xschem getprop rect 2 0 x2] == $bx2 &&
+               [xschem getprop rect 2 0 y1] == $by1 &&
+               [xschem getprop rect 2 0 y2] == $by2}]
+      check_true "CG-arrow-$mname canvas == baseline" \
+        [ix_canvas_ok $vdrw $cx0 $cy0 $cz0]
+    }
+
+    # === CG-panx (issue 0150): X pans the WHOLE stack, Y stays per-strip ======
+    # Two strips, SAME x range, DIFFERENT y ranges. Shift+wheel (and the Left/
+    # Right arrows, which delegate to it) used to pan x on the pointed strip
+    # only, sliding one strip out of time-alignment with the rest. Y must stay
+    # independent: a vertical pan moves exactly ONE strip's y.
+    wviewer::add_graph $tok                                  ;# 2 strips again
+    proc cg_setpair {tok} {
+      set gs [dict get [wviewer::layout_for $tok] graphs]
+      set a [dict replace [lindex $gs 0] x1 0 x2 10 y1 -1 y2 1]
+      set b [dict replace [lindex $gs 1] x1 0 x2 10 y1 -2 y2 2]
+      wviewer::set_graphs $tok [list $a $b]
+      wviewer::regenerate $tok
+    }
+    proc cg_ranges {vdrw gi} {
+      xschem new_schematic switch $vdrw
+      list [xschem getprop rect 2 $gi x1] [xschem getprop rect 2 $gi x2] \
+           [xschem getprop rect 2 $gi y1] [xschem getprop rect 2 $gi y2]
+    }
+    cg_setpair $tok
+    lassign [cg_ranges $vdrw 0] p0x1 p0x2 p0y1 p0y2
+    lassign [cg_ranges $vdrw 1] p1x1 p1x2 p1y1 p1y2
+    check_true "CG-panx setup: 2 strips, same x, different y" \
+      [expr {$p0x1 == $p1x1 && $p0x2 == $p1x2 && $p0y2 != $p1y2}]
+    wviewer::wheel $tok $vdrw up shift
+    lassign [cg_ranges $vdrw 0] q0x1 q0x2 q0y1 q0y2
+    lassign [cg_ranges $vdrw 1] q1x1 q1x2 q1y1 q1y2
+    check_true "CG-panx shift+wheel moved strip 0 x by a positive delta" \
+      [expr {($q0x1 - $p0x1) > 1e-9 && abs(($q0x1 - $p0x1) - ($q0x2 - $p0x2)) < 1e-9}]
+    check_true "CG-panx strip 1 moved by the SAME x delta (stack stays aligned)" \
+      [expr {abs(($q1x1 - $p1x1) - ($q0x1 - $p0x1)) < 1e-9 &&
+             abs(($q1x2 - $p1x2) - ($q0x2 - $p0x2)) < 1e-9}]
+    check_true "CG-panx both strips still share one x window" \
+      [expr {abs($q0x1 - $q1x1) < 1e-9 && abs($q0x2 - $q1x2) < 1e-9}]
+    check_true "CG-panx y untouched on BOTH strips" \
+      [expr {$q0y1 == $p0y1 && $q0y2 == $p0y2 &&
+             $q1y1 == $p1y1 && $q1y2 == $p1y2}]
+    check_true "CG-panx canvas == baseline" [ix_canvas_ok $vdrw $cx0 $cy0 $cz0]
+
+    # the Left/Right arrows go through the same seam (production key_filter)
+    cg_setpair $tok
+    lassign [cg_ranges $vdrw 0] p0x1 p0x2 p0y1 p0y2
+    lassign [cg_ranges $vdrw 1] p1x1 p1x2 p1y1 p1y2
+    wviewer::key_filter $vdrw 2 10 10 65361 Left 0
+    lassign [cg_ranges $vdrw 0] q0x1 q0x2 q0y1 q0y2
+    lassign [cg_ranges $vdrw 1] q1x1 q1x2 q1y1 q1y2
+    check_true "CG-panx Left arrow moved strip 0 x negative" \
+      [expr {($q0x1 - $p0x1) < -1e-9}]
+    check_true "CG-panx Left arrow moved strip 1 by the SAME delta" \
+      [expr {abs(($q1x1 - $p1x1) - ($q0x1 - $p0x1)) < 1e-9 &&
+             abs(($q1x2 - $p1x2) - ($q0x2 - $p0x2)) < 1e-9}]
+
+    # Y independence: a vertical pan moves exactly ONE strip's y (whichever the
+    # pointer resolves to — the count is what matters), and no strip's x.
+    cg_setpair $tok
+    lassign [cg_ranges $vdrw 0] p0x1 p0x2 p0y1 p0y2
+    lassign [cg_ranges $vdrw 1] p1x1 p1x2 p1y1 p1y2
+    wviewer::wheel $tok $vdrw up 0
+    lassign [cg_ranges $vdrw 0] q0x1 q0x2 q0y1 q0y2
+    lassign [cg_ranges $vdrw 1] q1x1 q1x2 q1y1 q1y2
+    set moved 0
+    if {$q0y1 != $p0y1 || $q0y2 != $p0y2} { incr moved }
+    if {$q1y1 != $p1y1 || $q1y2 != $p1y2} { incr moved }
+    check "CG-panx vertical pan moved exactly ONE strip's y" $moved 1
+    check_true "CG-panx vertical pan left every x alone" \
+      [expr {$q0x1 == $p0x1 && $q0x2 == $p0x2 &&
+             $q1x1 == $p1x1 && $q1x2 == $p1x2}]
+    check_true "CG-panx vertical pan canvas == baseline" \
+      [ix_canvas_ok $vdrw $cx0 $cy0 $cz0]
+
+    rename cg_setpair {}
+    rename cg_ranges {}
+    set gs1 [dict get [wviewer::layout_for $tok] graphs]
+    wviewer::set_graphs $tok [list [lindex $gs1 0]]           ;# back to 1 strip
+    wviewer::regenerate $tok
+
+    # CG-binds: the canvas-only mouse gestures are bound to a swallow on THIS
+    # canvas (per-widget; other windows keep theirs)
+    foreach seq {<ButtonPress-2> <ButtonRelease-2> <B2-Motion>
+                 <Shift-ButtonPress-1> <Shift-ButtonRelease-1> <Shift-B1-Motion>
+                 <Alt-ButtonPress-1> <Alt-ButtonRelease-1> <Alt-B1-Motion>} {
+      check "CG-binds $seq swallowed" [string trim [bind $vdrw $seq]] break
+    }
+
+    # CG-mmb: a full synthetic MIDDLE-button press -> drag -> release. Without
+    # the swallow the press reaches handle_button_press -> start_pan_logged and
+    # the Button2Mask motion pans the canvas origin (the reported bug); with it
+    # the canvas cannot move. 0x200 = Button2Mask.
+    set W [winfo width $vdrw]; set H [winfo height $vdrw]
+    set mpx1 [expr {int(0.30 * $W)}]; set mpx2 [expr {int(0.70 * $W)}]
+    set mpy  [expr {int(0.50 * $H)}]
+    event generate $vdrw <ButtonPress-2>   -x $mpx1 -y $mpy
+    event generate $vdrw <Motion>          -x $mpx2 -y $mpy -state 0x200
+    event generate $vdrw <ButtonRelease-2> -x $mpx2 -y $mpy -state 0x200
+    update
+    check_true "CG-mmb middle-drag left the canvas at baseline (no pan)" \
+      [ix_canvas_ok $vdrw $cx0 $cy0 $cz0]
+
+    # CG-shift-b1: Shift+drag is the schematic rubber-band/copy gesture and
+    # Alt+B1 the unselect-at-pointer click — both canvas-only (waves_selected
+    # refuses to graph-route them). The swallow itself is witnessed by the
+    # CG-binds checks above; here we only assert the gesture is inert and, in
+    # particular, cannot move the canvas. (A selection witness would be HOLLOW:
+    # neither a shift rubber-band nor a shift-click inside the full-window graph
+    # rect selects it — probe-verified with the binds sabotaged, lastsel stayed
+    # 0 — so `lastsel == 0` would pass with the fix reverted.)
+    catch {xschem unselect_all}
+    event generate $vdrw <Shift-ButtonPress-1>   -x $mpx1 -y $mpy -state 1
+    event generate $vdrw <Motion>                -x $mpx2 -y $mpy -state 0x101
+    event generate $vdrw <Shift-ButtonRelease-1> -x $mpx2 -y $mpy -state 0x101
+    event generate $vdrw <Alt-ButtonPress-1>     -x $mpx1 -y $mpy -state 8
+    event generate $vdrw <Alt-ButtonRelease-1>   -x $mpx1 -y $mpy -state 0x108
+    update
+    xschem new_schematic switch $vdrw
+    check_true "CG-shift-b1 canvas == baseline" [ix_canvas_ok $vdrw $cx0 $cy0 $cz0]
 
     # --- IX-fit: Fit reframes the GRAPH data range, never the canvas ---------
     # PRIMARY teeth (the removed zoom_full): perturb the data range, Fit, and the

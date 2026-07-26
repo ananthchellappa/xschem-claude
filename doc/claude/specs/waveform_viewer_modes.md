@@ -1,0 +1,310 @@
+# Waveform Viewer plot modes — single-plot / multi-plot + target strip
+
+Status: SPEC (issue 0151), 2026-07-25
+Related: `doc/claude/specs/waveform_viewer.md` (the viewer's shipped UX contracts),
+`doc/claude/code_analysis/waveform_subsystem_reference.md` (subsystem map),
+`src/wave_viewer.tcl`, `src/ase.tcl`, `src/ase_window.tcl`, `src/draw.c`.
+
+## 1. What this adds
+
+A waveform viewer window gains a **plot mode**, deciding where signals sent
+from the schematic land:
+
+- **single-plot** — every signal of one plot gesture goes into the **target
+  strip** (one graph of the stack), appended to whatever it already holds.
+- **multi-plot** — each signal of the gesture gets **its own new strip**,
+  appended below the existing stack.
+
+Plus the machinery the mode needs: a per-window target strip, a click to move
+it, a dull-yellow marker showing it, Tcl get/set/invert commands, a viewer menu
+entry that logs a replayable line, and a schematic-side chord + window-number
+query that reach the viewer through its ASE-L session.
+
+## 2. Decisions (user, 2026-07-25)
+
+| # | Question | Decision |
+|---|---|---|
+| D1 | single-plot landing | **Append** into the target strip (never replace). Clearing stays explicit (Graph > Delete…). |
+| D2 | multi-plot landing | **Append N strips** below the existing stack. The ASE auto-plot graph and earlier Direct-Plot graphs are never touched. |
+| D3 | which paths obey the mode | **Direct Plot only** (Results > Direct Plot, Ctrl-4, and any future schematic plot command). ASE auto-plot keeps its shipped always-replace-into-one-`auto 1`-graph contract; the Add Trace… dialog keeps its explicit target combobox. |
+| D4 | active-strip indicator | **C, inside `draw_graph`** — a dedicated GC, exact dull-yellow RGB, drawn at the graph rect's right edge. The only option that survives partial graph redraws. |
+| D5 | persistence | **Mode and target both persist** in the ASE session's `viewer` state dict, after `graphs`. |
+| D6 | config default | `wviewer_plot_mode` defaults to **`single`**. |
+| D7 | schematic chord | **Ctrl-Shift-4** = invert the associated viewer's mode (next to Ctrl-4 = Direct Plot). |
+| D8 | indicator scope | **Viewer only** — gated by a prop token only the viewer writes, so the 127 shipped files with embedded graphs look unchanged. |
+
+## 3. Model
+
+### 3.1 Per-viewer state (`src/wave_viewer.tcl`)
+
+Two new namespace arrays, keyed by session token exactly like `sharedx`:
+
+- `wviewer::mode($token)` — `single` | `multi`.
+- `wviewer::target($token)` — integer strip index (model graph index).
+
+Initialised in `wviewer::open` (`mode` from the config var, `target` 0), torn
+down in `wviewer::forget`, overwritten by `wviewer::restore`.
+
+**Why arrays and not layout-dict keys:** the layout dict is rebuilt wholesale by
+`restore` and by `set_graphs`; mode/target are window properties, not graph
+properties, and follow the `sharedx` mirror precedent (menu `-variable` needs an
+array element anyway).
+
+There is exactly **one viewer window per ASE session token** (`wviewer::open`
+raises rather than opening a second) and an unbounded number of tokens, so
+"per-window mode" and "per-session mode" are the same thing here. Two viewer
+windows = two sessions = two independent modes.
+
+### 3.2 Config variable
+
+```tcl
+set_ne wviewer_plot_mode single      ;# src/wave_viewer.tcl, top of file
+```
+
+Sets the mode of **newly opened** viewer windows only. Read lazily, at
+`wviewer::open` time, so a `--script` rc (`cadence_style_rc`, headless tests)
+can still set it — the `ase_eng_notation` pattern (`src/ase.tcl:80`). An invalid
+value falls back to `single` (`wviewer::default_plot_mode`). Once a window is
+open, the per-window state is the authority; the global is never consulted again
+for that window.
+
+### 3.3 Target strip
+
+`wviewer::target_index {token}` is the only read seam: it clamps the stored
+value into `[0, ngraphs-1]` and returns 0 when the layout is empty, so a
+deleted strip can never leave a dangling target.
+
+Target changes:
+
+- **Click** — a `<ButtonPress-1>` anywhere in a strip makes that strip the
+  target (see §6).
+- **Command** — `wviewer::set_target_strip`.
+- **Never implicitly** — a multi-plot batch does *not* move the target to the
+  strips it created, and `Add Graph` does not move it either. The target moves
+  only when the user points at a strip or names one.
+
+## 4. Landing policy
+
+The policy is a PURE proc so it is unit-testable headless:
+
+```tcl
+wviewer::plan_plot {mode ngraphs target n}  ->  {new <count> targets {gi ...}}
+```
+
+| mode | layout | result |
+|---|---|---|
+| single | ≥1 strip | `new 0`, every signal → `target_index` |
+| single | 0 strips | `new 1`, every signal → strip 0 (the created one) |
+| multi | any | `new n`, signal *k* → strip `ngraphs + k` |
+
+`wviewer::plot_signals {token exprs}` applies it: create the planned strips via
+`add_graph`, then `add_trace` each expression at its planned index, returning a
+list of `{expr error}` pairs for the ones that failed (`add_trace` never
+throws — it returns a user-displayable string).
+
+`ase::ui::dp_finish` (`src/ase_window.tcl`) replaces its hard-wired
+`add_graph` + "last index" with one `wviewer::plot_signals` call. Its four
+early-return gates (op-only results, viewer-open failure, no raw yet, empty
+queue) are unchanged: an empty queue still leaves only a raised viewer.
+
+**Contract change, deliberate (D2):** item 13's "one NEW stacked graph per
+invocation" becomes mode-dependent. In single-plot mode a Direct Plot creates
+**no** new graph when the stack is non-empty; in multi-plot it creates **N**.
+
+## 5. The active-strip indicator
+
+- **Model → prop:** `wviewer::graph_props {G {active 0}}` appends `active=1`
+  when told to. `regenerate` passes `active 1` for the target strip **only when
+  the stack holds more than one strip** — one strip has no ambiguity to resolve,
+  so nothing is drawn (spec requirement, and it keeps the single-graph case
+  pixel-identical to today).
+- **Prop → C:** `setup_graph_data` parses the `active` token into a new
+  `Graph_ctx.active` field. The field is defaulted **before** the
+  `RECT_OUTSIDE` early return (landmine 11 — `xctx->graph_struct` is reused
+  across graphs, a stale value would leak onto an off-screen graph).
+- **Draw:** `draw_graph` fills a vertical bar at the container's right edge,
+  `(sx2-w, sy1)`–`(sx2, sy2)`, through a dedicated `xctx->gc_graph_active` GC,
+  into `xctx->window` and `xctx->save_pixmap` — the `draw_hilight_dot`
+  (`draw.c`) idiom, so the bar is repainted by every path that repaints the
+  graph, including the interactive partial redraws that erase anything drawn
+  from Tcl.
+- **Export gate:** drawing is gated on a **new `flags` bit 16** of
+  `draw_graph`, set only by the four on-screen callers (`draw_graph_all`,
+  `callback.c` ×3, `scheduler.c` `draw_graph` verb). The export callers
+  (`svg_embedded_graph`, `psprint.c` ×2) pass `8 + …` and so never draw it —
+  a printed schematic must not carry a UI marker.
+  **Image export needs a second gate:** `print_image()` (PNG/XPM, the
+  `xschem print png` verb) does not call `draw_graph` at all — it renders
+  through `draw()`, which *does* set bit 16, into `save_pixmap`, the very
+  drawable that gets encoded. It therefore brackets its `draw()` call with the
+  file-static `draw_no_ui_decorations`, which `draw()` consults when composing
+  the flags word (measured: 1945 marker pixels leaked into a PNG before this
+  gate, 0 after). Any future on-screen-only decoration drawn from `draw()` must
+  honour the same flag.
+- **Color / width:** Tcl vars `graph_active_strip_color` (default `#a0a000`,
+  a dull yellow) and `graph_active_strip_width` (default 5 screen px), resolved
+  in `build_colors()` via `find_best_color` — the `hover_highlight_color`
+  pattern (`xinit.c`), so a theme switch or `xschem build_colors` re-resolves it
+  and the user can retune it from an rc.
+
+**Not asserted by tests:** the pixels. Consistent with the viewer suite's
+standing note ("the actual PIXEL rendering of the waves is eyeball-only"), the
+tests assert the *token* plumbing (which rect carries `active=1`, when it is
+absent) and that a redraw with the token present returns rc 0. The C draw itself
+is sabotage-verified by hand and eyeball-checked.
+
+## 6. Click to re-target
+
+`strip_bindings` gains a `<ButtonPress-1>` binding on the viewer canvas:
+
+```tcl
+bind $wp <ButtonPress-1> {wviewer::click_target %W %x %y
+                          focus %W
+                          xschem callback %W %T %x %y 0 %b 0 %s
+                          break}
+```
+
+The manual forward is **required**: `<ButtonPress-1>` is more specific than the
+kept generic `<Button>`, so binding it would otherwise swallow the C engine's
+cursor-drag / graph-pan press. The forwarded substitution string is byte-for-byte
+the generic one from `set_bindings` (`src/xschem.tcl`), and the trailing `break`
+makes the outcome identical whether the generic binding lives on this widget's
+tag or the toplevel's (exactly one forward either way).
+
+`wviewer::click_target` resolves the strip with `wviewer::strip_at_pixel` (the
+`graphbb` registry hit-tested against the event's own pixel, converted with the
+inverse of `X_TO_SCREEN`) and does nothing when the pointer is outside every
+band or the strip is already the target. It deliberately does **not** use
+`graph_at_pointer`, which reads the C-tracked `mousex_snap` — stale for a press
+that had no preceding Motion.
+
+**A re-target must never regenerate.** `regenerate` re-places every rect from
+the Tcl model, and the C engine writes its own graph state (RMB box-zoom /
+graph-pan ranges, private cursors) straight into the rect prop where the model
+never sees it — so regenerating on a click would silently undo a zoom the user
+had just made with the mouse. Every other Tcl range mutator avoids that by
+freezing the live ranges first (`graph_range` / `apply_range`); a marker-only
+edit needs neither: `wviewer::move_marker` rewrites the `active` token in place
+on the two affected rects (empty value CLEARS it, so an inactive strip reads
+exactly as `regenerate` would have written it) and redraws.
+
+## 7. Command surface
+
+All are plain namespaced procs, typable in the CIW (`ciw_exec` does
+`uplevel #0`), and headless-safe (`{}` + `ciw_echo`, never a throw).
+
+| Command | Meaning |
+|---|---|
+| `wviewer::plot_mode ?token?` | current mode, or `{}` when no viewer resolves |
+| `wviewer::set_plot_mode <single\|multi\|invert> ?token?` | set/flip; returns the resolved mode or `{}` |
+| `wviewer::target_strip ?token?` | current target index, or `{}` |
+| `wviewer::set_target_strip <gi> ?token?` | move the target; returns the clamped index or `{}` |
+| `wviewer::current_token` | token of the viewer owning the current xschem window, else `{}` |
+| `ase::plot_mode_for_current ?mode?` | from a DESIGN window: flip (default `invert`) the mode of the viewer of the session bound to this design |
+| `ase::window_number_for_current` | from a DESIGN window: the Cadence window number of the associated ASE-L window |
+| `ase::ui::number_for <key>` | the ASE-L window number of a session key, or `{}` (public accessor for the private `wnum` dict) |
+
+**Omitted `token` = "the active waveform window"**: `wviewer::current_token`
+resolves `xschem get current_win_path` through `token_for_canvas`. The C context
+— not Tk focus — is the source of truth, matching every other per-window command
+in the tree.
+
+`invert` is resolved by the PURE helper `wviewer::resolve_mode {cur req}`, which
+also rejects garbage (`{}`) — so the request word never reaches storage
+unvalidated.
+
+### 7.1 Replayable logging
+
+`wviewer::set_plot_mode` logs, on an actual change only:
+
+```
+wviewer::set_plot_mode <resolved-mode> <token>
+```
+
+through the thin seam `wviewer::log_action` (the `slickprop::log_apply`
+pattern: one `catch {xschem log_action $line}`, so tests can hook it as a spy
+point). Two properties matter:
+
+- **the resolved mode is logged, never `invert`** — replaying a log must not
+  depend on the state at replay time;
+- **the token is always explicit** — replay must not depend on which window is
+  active.
+
+`log_action` mirrors into the CIW pane, which is what "logged in a replayable
+way in the CIW" means here. The same seam logs `wviewer::set_target_strip` on
+an actual change, including the click path (a plot sequence is only replayable
+if the target moves are in the log). Neither is logged when the value does not
+change, so a cursor drag that starts inside the current target is silent.
+
+## 8. Menu
+
+The viewer menubar gains an **Options** cascade (the cascade list in
+`build_menubar` is a fixed `foreach` pair list; Options is appended after
+Cursors), holding a **Plot Mode** submenu with one dynamic entry:
+
+- current mode `single` → label **`Set Multi-plot Mode`**
+- current mode `multi` → label **`Set Single-plot Mode`**
+
+The relabel runs from the submenu's `-postcommand` (`edit_menu_post` is the
+in-tree precedent for a state-dependent label), so the label is correct however
+the mode was last changed — menu, command, chord, or state restore. Invoking it
+calls `wviewer::set_plot_mode invert $token`, which performs the change and
+writes the replayable line.
+
+## 9. Schematic-side entry
+
+- **Ctrl-Shift-4** in `src/cadence_style_rc`, next to the Ctrl-4 Direct Plot
+  bind, ending in `break` (the same idiom that overrides C's `Ctrl+<digit>` =
+  select drawing layer). **The bind that actually fires is the SHIFTED
+  keysym**: a physical Ctrl+Shift+4 arrives as `dollar` on a US layout, so
+  `<Control-Shift-Key-4>` alone would never match — the same gotcha the rc
+  already documents for Ctrl-Shift-2 (`<Control-Key-at>`). Both forms are
+  bound; the `Key-4` one covers layouts where Shift-4 stays `4`:
+
+  ```tcl
+  bind .drw <Control-Key-dollar>  {ase::plot_mode_for_current invert; break}
+  bind .drw <Control-Shift-Key-4> {ase::plot_mode_for_current invert; break}
+  ```
+
+- `ase::plot_mode_for_current` resolves design → session (`design_of_current` +
+  `session_for_design`, the Ctrl-4 path) → the viewer token (= the session key)
+  → `wviewer::set_plot_mode`. Honest `ciw_echo` and `{}` for: not a schematic
+  view, no ASE-L session bound to this design, or **no viewer window open** for
+  that session (mode is per-window state; there is nothing to flip until the
+  window exists — the notice tells the user to open the viewer).
+
+- `ase::window_number_for_current` answers "which window number is my ASE-L
+  session?" — design → session → `ase::ui::number_for`. `{}` + `ciw_echo` when
+  no session or (headless) no window.
+
+## 10. Persistence
+
+`wviewer::snapshot` gains two keys, appended **after** `graphs`, keeping the
+documented byte-deterministic build order:
+
+```
+viewer {open 0|1 sharedx 0|1 rawfile {} graphs {…} mode single|multi target N}
+```
+
+`wviewer::restore` reads them with defaults (`default_plot_mode`, 0) so every
+state file written before this change loads unchanged. The closed-window
+snapshot arm (`dict replace $prev open 0`) carries them through untouched.
+
+The committed fixture `test_nfet_final.state` keeps `viewer {}` (a session that
+never opened a viewer), so the `test_ase_final` byte-identity round trip is
+unaffected.
+
+## 11. Non-goals / deferred
+
+- **Overlaid traces with per-trace y scaling** in single-plot mode. A strip
+  carries one `y1/y2` pair; single-plot means "one strip", not "one axis per
+  trace".
+- **Mode in the window title.** The title is asserted by the shipped suite; the
+  menu label and the yellow marker are the affordances for now.
+- **Auto-plot and the Add Trace… dialog obeying the mode** (D3) — auto-plot's
+  always-replace `auto 1` graph is a different policy axis.
+- **A viewer-window-number command** (`ase::window_number_for_current` covers
+  the ASE-L window, which is what was asked). The viewer is a normal editor
+  window, so `xschem get window_number` already answers it when the viewer is
+  the current context.
+- **Drag-to-reorder strips**, and a keyboard chord for target movement.

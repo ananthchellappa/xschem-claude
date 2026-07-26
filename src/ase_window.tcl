@@ -194,6 +194,17 @@ proc ase::ui::window_for {key} {
   return {}
 }
 
+# The Cadence-style window NUMBER of the session `key`'s ASE-L window (the N
+# of .aseN, allocated from the shared C counter at window build time), or {}
+# when the session has no window (headless, or never opened). Public
+# accessor for the private `wnum` dict — issue 0151, the schematic-side
+# `ase::window_number_for_current` query.
+proc ase::ui::number_for {key} {
+  variable wnum
+  if {[dict exists $wnum $key]} { return [dict get $wnum $key] }
+  return {}
+}
+
 # Build + show the session window (called by ase::open_state only when no
 # window exists for the key — this is the only place a window number is
 # consumed). Returns the toplevel path.
@@ -1502,11 +1513,14 @@ proc ase::ui::dp_finish {key queue} {
  traces are recorded and resolve after the run)"}
   }
   if {![llength $queue]} { return }
-  wviewer::add_graph $key
-  set gi [expr {[llength [dict get [wviewer::layout_for $key] graphs]] - 1}]
-  foreach ex $queue {
-    set err [wviewer::add_trace $key $gi $ex]
-    if {$err ne {}} { catch {ciw_echo "ase: cannot plot '$ex': $err" error} }
+  # issue 0151: WHERE the queued signals land is the viewer window's plot mode
+  # (doc/claude/specs/waveform_viewer_modes.md) — single-plot appends them all
+  # into the target strip, multi-plot gives each one its own new strip. The
+  # whole policy lives in wviewer::plot_signals; this side only reports the
+  # per-signal failures it returns.
+  foreach pair [wviewer::plot_signals $key $queue] {
+    lassign $pair ex err
+    catch {ciw_echo "ase: cannot plot '$ex': $err" error}
   }
 }
 

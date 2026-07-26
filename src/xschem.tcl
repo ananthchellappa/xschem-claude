@@ -15551,6 +15551,15 @@ set_ne auto_hilight_graph_nodes 0
 set_ne hover_highlight 1
 set_ne hover_highlight_color yellow
 set_ne hover_highlight_width 1
+## ASE waveform viewer active-strip marker (issue 0151,
+## doc/claude/specs/waveform_viewer_modes.md): the bar drawn down the right edge
+## of the viewer's TARGET strip while more than one strip is up. Color is an X
+## color name / #rrggbb resolved in build_colors (NOT a layer index, so the user's
+## layer palette cannot recolor it); width is screen px. Only graphs carrying the
+## viewer-written `active=1` prop token are marked — ordinary schematic graphs
+## never are, and the marker is never exported to SVG/PS.
+set_ne graph_active_strip_color #a0a000
+set_ne graph_active_strip_width 5
 set_ne use_tclreadline 1
 set_ne en_hilight_conn_inst 0
 ## xpm to png conversion

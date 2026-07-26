@@ -262,8 +262,14 @@ and the input-binding table already do everything the RMB path needs).
   the matching KeyRelease is swallowed) BEFORE the forward: `f`→`wviewer::fit`
   (fit is the only path that fits BOTH x and y), `Z`→`graph_zoom in`,
   `Ctrl-z`→`graph_zoom out`. An unknown canvas (`token_for_canvas` `{}`) falls
-  through to the old forward. Arrows still forward (the C over_graph
-  `graph.forward` already pans/zooms the graph X, not the canvas).
+  through to the old forward. ~~Arrows still forward~~ — **superseded by issue
+  0149**: forwarding them let the CANVAS own the gesture (off-graph bare arrow →
+  `view.scroll_*`; any modifier → `SET_MODMASK` → the hard-coded origin pan;
+  Ctrl+Left/Right → tab switch). Arrows are now intercepted too: bare Left/Right
+  = graph horizontal pan, bare Up/Down = graph vertical pan (`wviewer::arrow_pan`
+  → `wviewer::wheel`, the same ±5 % as the wheel); every modified arrow is
+  swallowed. Item-19's Up/Down X-zoom is gone — zoom has four affordances
+  already, an arrow means pan.
 - **`wviewer::fit` de-canvased (D5)**: its trailing `xschem zoom_full; xschem
   redraw` became `xschem redraw`. fullx/fullyzoom already fit the graph data
   range; item-18 pins the canvas, so Fit must not reframe the window.
@@ -284,6 +290,72 @@ and the input-binding table already do everything the RMB path needs).
   lesson: witness a synchronous state write, not a gesture/stacking race). IX-fit
   runs last because the S2 sabotage (re-inserting `zoom_full`) moves the canvas;
   the real code never does, so the single baseline holds for every leg.
+
+## Plot modes + target strip (issue 0151, 2026-07-25)
+
+Full contract: **`doc/claude/specs/waveform_viewer_modes.md`**. What it changes
+in the ledger above:
+
+- Item 13's "**ONE new stacked graph per invocation**" is now **mode
+  dependent**. `ase::ui::dp_finish` delegates to `wviewer::plot_signals`:
+  *single-plot* (the shipped default, `wviewer_plot_mode`) appends every queued
+  signal into the window's **target strip** and creates no graph; *multi-plot*
+  appends **one new strip per signal**. Empty queue is still a no-op.
+- The invariant "**Direct-Plot graphs and the auto graph never touch each
+  other**" is PRESERVED and is now enforced in code: the auto-plot graph is
+  never a landing site — single-plot treats "target == auto graph" like an
+  empty stack (append one strip, land there, and make it the target), because
+  auto-plot clears and rebuilds that graph after every run.
+- Auto-plot itself and the Add Trace… dialog **deliberately ignore the mode**.
+- New per-window state (`mode`, `target`) persists in the `viewer` state dict
+  as two keys appended **after** `graphs`; states written before 0151 load
+  unchanged (missing keys → the config default and strip 0).
+- The viewer menubar gained an **Options** cascade (Options > Plot Mode), so
+  the fixed cascade list is now `File View Graph Cursors Options`.
+- `<ButtonPress-1>` is now bound on the viewer canvas (re-target the strip,
+  then forward the press to the C engine verbatim + `break`); it joins the
+  keep-set survivors asserted by G1s.
+- The target strip is marked by a dull-yellow bar at its right edge, drawn by
+  the C engine from an `active=1` prop token, only while more than one strip is
+  up, only on screen (never in SVG/PS export).
+
+## X is shared, Y is per-strip (issue 0150, 2026-07-25)
+
+The stack is time-aligned: **any x change must hit every strip; y is
+independent per strip.** Uniform since 0150 — `wviewer::pan_x` (Shift+wheel and
+the Left/Right arrows) joins `wheel_zoom` (Ctrl+wheel, View>Zoom In/Out, `Z`,
+`Ctrl-z`, X on all + Y on the pointed strip, 0144/0145) in obeying it. Before
+0150 the horizontal pan moved only the pointed strip. Plain wheel / Up / Down
+pan y on the pointed strip alone, by design. Remaining per-strip x writers are
+the explicit ones: **Graph > Axes…** (one graph's form; `Shared X Axis` is the
+toggle that forces graph-0's x onto the rest at regenerate) and **Fit** (each
+strip to its own data).
+
+## The graphs OWN the viewer window (issue 0149, 2026-07-25)
+
+Contract, stated once: **no gesture in the viewer may move the canvas.** The
+graphs tile the viewport (item 18) and every zoom/pan verb edits graph ranges
+(item 19); a canvas pan/scroll slides that tiled stack inside a larger canvas and
+opens blank space, and it is NOT blocked by the readonly flag (readonly only
+refuses object mutation). Two survivors were closed in `strip_bindings` /
+`key_filter`, per-widget, pure Tcl:
+
+- **Middle button swallowed** (`<ButtonPress-2>`, `<ButtonRelease-2>`,
+  `<B2-Motion>`). `waves_selected` (callback.c:88-92) explicitly skips Button-2
+  so the schematic pan keeps working over on-canvas graphs — meaning MMB in the
+  viewer could only ever be `start_pan_logged()`. Ctrl+MMB (the
+  `edit.cycle_pin_type` chord, a readonly modal) dies with it.
+- **Arrows intercepted, never forwarded** (`wviewer::arrow_pan`): bare
+  Left/Right/Up/Down pan the graph, every modified arrow is swallowed. See the
+  item-19 note above for what each forwarded form used to do.
+- **`<Shift-…>`/`<Alt-Button-1>` triples swallowed** — rubber-band/copy-drag and
+  unselect-at-pointer, canvas-only by the same `waves_selected` skips.
+
+Not a hole (recorded in issue 0149): a graph rect can still be *selected* by a
+click in the 5 px `border` inset at a band edge — cosmetic; the drag-move itself
+is gated on `!xctx->readonly`, so nothing in the viewer can be moved or deleted.
+Making a graph "move" (swap strip positions) is future work, deliberately NOT a
+schematic move.
 
 ## Ctrl-4 schematic entry + status-line prompt (as shipped, 2026-07-24)
 

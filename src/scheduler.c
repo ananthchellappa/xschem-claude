@@ -2924,7 +2924,7 @@ static int xschem_cmds_d(Tcl_Interp *interp, int argc, const char *argv[], int *
            * 4: draw cursor 2
            * 128: draw hcursor 1
            * 256: draw hcursor 2 */
-          flags = 1 + 8 + (xctx->graph_flags & (2 + 4 + 128 + 256));
+          flags = 1 + 8 + 16 + (xctx->graph_flags & (2 + 4 + 128 + 256));
         }
         draw_graph(i, flags, &xctx->graph_struct, NULL);
       }

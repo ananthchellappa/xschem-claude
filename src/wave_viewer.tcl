@@ -24,13 +24,15 @@
 #     Windows-only per-widget Alt/Mod4 arms would otherwise reach editor
 #     verbs and their readonly modal), then installs wviewer::key_filter
 #     as the generic <KeyPress>/<KeyRelease> handler (allowlist:
-#     navigation always; the waves_callback key set only over a graph;
+#     Escape always; arrows = graph pan (0149); the waves_callback key set only over a graph;
 #     Ctrl-W = close; everything else silently swallowed — readonly alone
 #     would pop the readonly_block MODAL on every editing key). Button-3 is
 #     forwarded only over a graph (kills the schematic context menu, keeps
 #     the C engine's graph pan/zoom), double-clicks are swallowed entirely
 #     (D9: dbl-click would open graph_edit_properties whose writeback is
-#     readonly-rejected; Axes editing is item 12). Per-widget binds provably
+#     readonly-rejected; Axes editing is item 12). Button-2 (the canvas PAN
+#     gesture) and Shift/Alt+Button-1 are swallowed outright — issue 0149, the
+#     graphs OWN the window, no gesture may scroll the canvas. Per-widget binds provably
 #     cannot affect other windows. The editor TOOLBAR (the mouse-reachable
 #     editing surface pack_widgets shows on every new window) is
 #     pack-forgotten per-window in open — see the D2 fixup comment there.
@@ -88,8 +90,30 @@
 # layout into / rebuild it from the ASE state's `viewer` key — contract in
 # doc/claude/specs/waveform_viewer.md "Item 14 notes (as shipped)".
 #
+# ---- issue 0151 (plot modes) ----------------------------------------------
+# Contract: doc/claude/specs/waveform_viewer_modes.md. Each viewer window
+# carries a PLOT MODE (single|multi) and a TARGET STRIP. Signals sent from
+# the schematic (Direct Plot / Ctrl-4) land per the mode: single = all of
+# them appended into the target strip; multi = one NEW strip per signal,
+# appended after the existing stack. The policy itself is the PURE proc
+# wviewer::plan_plot; wviewer::plot_signals applies it. Mode + target are
+# per-window (arrays keyed by session token, the `sharedx` mirror shape),
+# seeded from the config var `wviewer_plot_mode` at open time, persisted in
+# the ASE state `viewer` dict, changed by Options > Plot Mode, the Tcl
+# commands (plot_mode / set_plot_mode / target_strip / set_target_strip) or
+# a canvas click, and logged replayably through wviewer::log_action. When
+# more than one strip is up, the target rect carries an `active=1` prop
+# token and the C engine paints a dull-yellow bar at its right edge
+# (draw.c, gated on draw_graph's on-screen flags bit 16).
+#
 # Pure Tcl, procs only at source time (safe under --nogui); ciw_echo only
 # under has_x. TIP-278: `variable` declarations, absolute names.
+
+# Initial plot mode of a NEWLY OPENED viewer window (single|multi). Read
+# LAZILY (at open time) so a `--script` rc — cadence_style_rc, headless
+# tests — can still set it; once a window is open its own per-window mode is
+# the authority. Invalid values fall back to `single`.
+set_ne wviewer_plot_mode single
 
 namespace eval wviewer {
   # session token -> {top .xN win_path .xN.drw}
@@ -137,6 +161,14 @@ namespace eval wviewer {
   variable cvb;     array set cvb {}
   variable cvr;     array set cvr {}
   variable sharedx; array set sharedx {}
+  # issue 0151: per-window PLOT MODE (single|multi) and TARGET STRIP (model
+  # graph index). Window properties, not graph properties — hence arrays
+  # keyed by session token like the mirrors above, NOT layout-dict keys (the
+  # layout dict is rebuilt wholesale by restore/set_graphs). `target` is
+  # stored raw and clamped on every read (wviewer::target_index), so
+  # deleting a strip can never leave a dangling target.
+  variable mode;    array set mode {}
+  variable target;  array set target {}
   # per-dialog transient state (D13), cleaned on OK/cancel/forget
   variable axl;     array set axl {}
   variable delmap;  array set delmap {}
@@ -198,6 +230,7 @@ proc wviewer::forget {token} {
   variable graphbb
   variable layouts
   variable cva; variable cvb; variable cvr; variable sharedx
+  variable mode; variable target
   variable axl; variable delmap
   variable cfgafter; variable fillwh
   if {[dict exists $windows $token]} {
@@ -209,6 +242,8 @@ proc wviewer::forget {token} {
   catch {unset cvb($token)}
   catch {unset cvr($token)}
   catch {unset sharedx($token)}
+  catch {unset mode($token)}
+  catch {unset target($token)}
   array unset axl ${token},*
   catch {unset delmap($token)}
   if {[info exists cfgafter($token)]} { catch {after cancel $cfgafter($token)} }
@@ -225,6 +260,7 @@ proc wviewer::open {token} {
   variable windows
   variable layouts
   variable cva; variable cvb; variable cvr; variable sharedx
+  variable mode; variable target
   if {[ase::session_state $token] eq {}} {
     if {[info exists ::has_x] && [info commands ::ciw_echo] ne {}} {
       ciw_echo "wviewer: unknown ASE session '$token'" error
@@ -286,6 +322,11 @@ proc wviewer::open {token} {
   set cvb($token) 0
   set cvr($token) 0
   set sharedx($token) 0
+  # issue 0151: the config var seeds THIS window's mode and nothing else —
+  # from here on the per-window value is the authority (restore overwrites
+  # both right after, when a state dict carries them)
+  set mode($token) [wviewer::default_plot_mode]
+  set target($token) 0
   # readout bar (D9): a BOTTOM BAR on the viewer toplevel (not an
   # always-on-top toplevel — WSLg raise/focus pain, receipts/06/11), built
   # hidden; shown automatically when a cursor is enabled and toggled by the
@@ -431,6 +472,83 @@ proc wviewer::set_graphs {token gs} {
   return {}
 }
 
+# --- plot modes (issue 0151) -------------------------------------------------
+# doc/claude/specs/waveform_viewer_modes.md. Four PURE procs (no Tk, no
+# `xschem` — directly unit-testable): the mode word resolver, the config-var
+# reader, the target clamp, and the landing policy itself. Everything with a
+# window or a side effect is built on top of these.
+
+# Resolve a requested mode word against the current one. `invert` flips,
+# `single`/`multi` set (case-insensitively), ANYTHING ELSE — including {} —
+# returns {} so a bad word can never reach storage. Callers treat {} as
+# "refused" and report it.
+proc wviewer::resolve_mode {cur req} {
+  set r [string tolower [string trim $req]]
+  switch -exact -- $r {
+    single  { return single }
+    multi   { return multi }
+    invert  { return [expr {$cur eq {multi} ? {single} : {multi}}] }
+  }
+  return {}
+}
+
+# The config var `wviewer_plot_mode` (initial mode of a NEW viewer window),
+# validated. Unset / empty / garbage -> single, the shipped default.
+proc wviewer::default_plot_mode {} {
+  if {![info exists ::wviewer_plot_mode]} { return single }
+  set m [wviewer::resolve_mode single $::wviewer_plot_mode]
+  if {$m eq {}} { return single }
+  return $m
+}
+
+# Clamp a stored target index into a layout of `n` graphs. Out of range, a
+# non-integer or an empty layout all collapse to 0 — the target is stored raw
+# and clamped on every read, so deleting strips can never dangle it.
+proc wviewer::target_clamp {gi n} {
+  if {$n <= 0} { return 0 }
+  if {![string is integer -strict $gi] || $gi < 0} { return 0 }
+  if {$gi >= $n} { return [expr {$n - 1}] }
+  return $gi
+}
+
+# THE landing policy. Given the mode, the current strip count, the stored
+# target, how many signals one plot gesture carries and the index of the
+# tool-owned auto-plot strip (-1 = none), return
+#   {new <how many strips to append> targets {<strip index per signal>}}
+# single -> everything into the (clamped) target; a strip is created ONLY
+#           when the stack is empty OR the target resolved to the AUTO-PLOT
+#           strip, and the signals go into the created one.
+# multi  -> one NEW strip per signal, appended AFTER the existing stack, in
+#           pick order; the target is irrelevant and is not moved.
+# Zero signals is a no-op in both modes (an empty Direct Plot gesture must
+# leave the raised viewer exactly as it was).
+#
+# WHY the auto-plot strip is excluded: it is REBUILT (traces cleared and
+# re-added) after every successful run — ase::ui::auto_plot, item 13's
+# always-replace contract. Landing hand-picked Direct-Plot traces there would
+# silently destroy them at the next run, and it would break the shipped
+# invariant that Direct-Plot graphs and the auto graph never touch each other
+# (doc/claude/specs/waveform_viewer.md, item 13 notes).
+proc wviewer::plan_plot {mode ngraphs target n {auto -1}} {
+  if {$n <= 0} { return [dict create new 0 targets {}] }
+  if {$mode eq {multi}} {
+    set t {}
+    for {set k 0} {$k < $n} {incr k} { lappend t [expr {$ngraphs + $k}] }
+    return [dict create new $n targets $t]
+  }
+  set gi [wviewer::target_clamp $target $ngraphs]
+  if {$ngraphs <= 0 || ($auto >= 0 && $gi == $auto)} {
+    # nothing usable to land in: append ONE strip and use it
+    set gi $ngraphs
+    set t {}
+    for {set k 0} {$k < $n} {incr k} { lappend t $gi }
+    return [dict create new 1 targets $t]
+  }
+  set t {}
+  for {set k 0} {$k < $n} {incr k} { lappend t $gi }
+  return [dict create new 0 targets $t]
+}
+
 # --- auto-plot graph (item 13, D4) -------------------------------------------
 # The ASE Plot-checkbox auto-plot rebuilds ONE dedicated graph after every
 # successful run (v1 always-replace). That graph carries an extra `auto 1`
@@ -560,7 +678,7 @@ proc wviewer::next_color {G} {
 # "name;vec" token whose inner quotes are BACKSLASH-escaped (the IN-MEMORY
 # prop form — save.c doubles the backslashes on file write); color = space-
 # separated per-trace color layer indices, count == trace count.
-proc wviewer::graph_props {G} {
+proc wviewer::graph_props {G {active 0}} {
   set x1 [wviewer::dget $G x1 {}]
   if {$x1 eq {}} { set x1 0 }
   set x2 [wviewer::dget $G x2 {}]
@@ -586,7 +704,14 @@ proc wviewer::graph_props {G} {
   }
   set node [join $ntoks "\n"]
   set color [join $ctoks { }]
-  return "flags=graph\ny1=$y1\ny2=$y2\nypos1=0\nypos2=2\ndivy=5\nsubdivy=1\nunity=1\nx1=$x1\nx2=$x2\ndivx=5\nsubdivx=1\nxlabmag=1.0\nylabmag=1.0\nlegendmag=1.0\nnode=\"$node\"\ncolor=\"$color\"\ndataset=-1\nunitx=1\nlogx=$logx\nlogy=$logy\n"
+  # issue 0151: `active=1` marks the TARGET strip. The token is written ONLY
+  # for the target and ONLY while more than one strip is up (regenerate
+  # decides) — the C engine paints a dull-yellow bar at the rect's right edge
+  # when it sees it. Absent token = no marker, so single-strip layouts and
+  # every non-viewer schematic graph render exactly as before.
+  set act {}
+  if {[string is true -strict $active] || $active eq {1}} { set act "active=1\n" }
+  return "flags=graph\ny1=$y1\ny2=$y2\nypos1=0\nypos2=2\ndivy=5\nsubdivy=1\nunity=1\nx1=$x1\nx2=$x2\ndivx=5\nsubdivx=1\nxlabmag=1.0\nylabmag=1.0\nlegendmag=1.0\nnode=\"$node\"\ncolor=\"$color\"\ndataset=-1\nunitx=1\nlogx=$logx\nlogy=$logy\n$act"
 }
 
 # PURE (D4): pre-validate a whitespace-separated RPN expression against the
@@ -669,6 +794,11 @@ proc wviewer::regenerate {token} {
   # (no fixed slot). viewport_rect switches to the viewer ctx and reads its live
   # zoom/origin + canvas size; band_geometry tiles that viewport.
   set n [llength $gs]
+  # issue 0151: the active-strip marker only exists while there is a choice to
+  # make — one strip is unambiguous, so no rect gets the `active` token and a
+  # single-graph viewer renders byte-identically to pre-0151.
+  set act_gi -1
+  if {$n > 1} { set act_gi [wviewer::target_index $token] }
   lassign [wviewer::viewport_rect $wp] vx1 vy1 vx2 vy2
   wviewer::with_edit $token {
     xschem clear_drawing
@@ -676,7 +806,8 @@ proc wviewer::regenerate {token} {
     foreach G_ $gs {
       lassign [wviewer::band_geometry $gi_ $n $vx1 $vy1 $vx2 $vy2] \
         rx1_ ry1_ rx2_ ry2_
-      wviewer::place_graph_rect $rx1_ $ry1_ $rx2_ $ry2_ [wviewer::graph_props $G_]
+      wviewer::place_graph_rect $rx1_ $ry1_ $rx2_ $ry2_ \
+        [wviewer::graph_props $G_ [expr {$gi_ == $act_gi}]]
       incr gi_
     }
     # blank (auto) ranges: let the ENGINE compute them into the rect attrs
@@ -797,7 +928,9 @@ proc wviewer::snapshot {token prev} {
     return [dict create open 1 \
                         sharedx [wviewer::dget $lay sharedx 0] \
                         rawfile {} \
-                        graphs  [wviewer::dget $lay graphs {}]]
+                        graphs  [wviewer::dget $lay graphs {}] \
+                        mode    [wviewer::plot_mode $token] \
+                        target  [wviewer::target_index $token]]
   }
   if {$prev eq {}} { return {} }
   return [dict replace $prev open 0]
@@ -821,11 +954,21 @@ proc wviewer::snapshot {token prev} {
 proc wviewer::restore {token vdict rawfile sim_type} {
   variable layouts
   variable sharedx
+  variable mode; variable target
   if {![wviewer::open $token]} { return 0 }
   set sx [wviewer::dget $vdict sharedx 0]
   dict set layouts $token \
     [dict create sharedx $sx graphs [wviewer::dget $vdict graphs {}]]
   set sharedx($token) $sx
+  # issue 0151: mode/target round-trip. Absent keys (every state file written
+  # before 0151) fall back to the config default and strip 0, so old states
+  # load unchanged. A garbage `mode` in a hand-edited state is rejected by
+  # resolve_mode the same way a bad command argument is.
+  set m [wviewer::resolve_mode single [wviewer::dget $vdict mode {}]]
+  if {$m eq {}} { set m [wviewer::default_plot_mode] }
+  set mode($token) $m
+  set target($token) [wviewer::target_clamp [wviewer::dget $vdict target 0] \
+                        [llength [wviewer::dget $vdict graphs {}]]]
   if {$rawfile ne {} && [file isfile $rawfile] \
       && [wviewer::switch_ctx $token]} {
     catch {xschem raw clear}
@@ -915,6 +1058,229 @@ proc wviewer::add_graph {token} {
   wviewer::set_graphs $token $gs
   wviewer::regenerate $token
   return 1
+}
+
+# --- plot mode / target strip: the window-facing surface (issue 0151) --------
+# doc/claude/specs/waveform_viewer_modes.md §7. Every command here is
+# CIW-typable, takes an OPTIONAL token (omitted = the viewer window that owns
+# the current xschem context) and is honest instead of throwing: {} plus a
+# ciw_echo when nothing resolves.
+
+# The replayable-log seam (the slickprop::log_apply pattern): one catch'd
+# `xschem log_action`, so a test can rename it and spy. log_action mirrors
+# into the CIW pane, which is what "logged replayably in the CIW" means.
+proc wviewer::log_action {line} {
+  catch {xschem log_action $line}
+}
+
+# The viewer token owning the CURRENT xschem context, or {}. The C context —
+# not Tk focus — is the source of truth for "the active window" everywhere in
+# this tree.
+proc wviewer::current_token {} {
+  if {[catch {xschem get current_win_path} wp]} { return {} }
+  if {$wp eq {}} { return {} }
+  return [wviewer::token_for_canvas $wp]
+}
+
+# Internal: {} token -> the active viewer window's token.
+proc wviewer::resolve_token {token} {
+  if {$token ne {}} { return $token }
+  return [wviewer::current_token]
+}
+
+# Current plot mode of a viewer window (single|multi), or {} when the token
+# resolves to no OPEN viewer (mode is per-window state; it does not exist
+# before the window does).
+proc wviewer::plot_mode {{token {}}} {
+  variable mode
+  set token [wviewer::resolve_token $token]
+  if {$token eq {} || ![info exists mode($token)]} { return {} }
+  return $mode($token)
+}
+
+# Set / flip the plot mode. `req` is single | multi | invert (case-
+# insensitive). Returns the RESOLVED mode, or {} when the window or the
+# request word is bad. Logs `wviewer::set_plot_mode <resolved> <token>` on an
+# actual change only — the resolved word (never `invert`) and the explicit
+# token, so replay does not depend on the state or the active window at
+# replay time.
+proc wviewer::set_plot_mode {req {token {}}} {
+  variable mode
+  set token [wviewer::resolve_token $token]
+  set cur [wviewer::plot_mode $token]
+  if {$cur eq {}} {
+    if {[info exists ::has_x] && [info commands ::ciw_echo] ne {}} {
+      ciw_echo "wviewer: no waveform viewer window to set the plot mode on" error
+    }
+    return {}
+  }
+  set new [wviewer::resolve_mode $cur $req]
+  if {$new eq {}} {
+    if {[info exists ::has_x] && [info commands ::ciw_echo] ne {}} {
+      ciw_echo "wviewer: bad plot mode '$req' (use single, multi or invert)" error
+    }
+    return {}
+  }
+  if {$new eq $cur} { return $cur }
+  set mode($token) $new
+  wviewer::log_action [list wviewer::set_plot_mode $new $token]
+  return $new
+}
+
+# The EFFECTIVE target strip index of `token`: the stored value clamped to the
+# live graph count (0 for an empty layout). The only read seam — a strip
+# deleted since the target was set can never dangle.
+proc wviewer::target_index {token} {
+  variable target
+  if {$token eq {} || ![info exists target($token)]} { return 0 }
+  set n [llength [dict get [wviewer::layout_for $token] graphs]]
+  return [wviewer::target_clamp $target($token) $n]
+}
+
+# Command form: the target strip of a viewer window, or {} when none resolves.
+proc wviewer::target_strip {{token {}}} {
+  variable target
+  set token [wviewer::resolve_token $token]
+  if {$token eq {} || ![info exists target($token)]} { return {} }
+  return [wviewer::target_index $token]
+}
+
+# Move the target strip. Returns the CLAMPED index actually in force, or {}
+# when no viewer resolves. Logged like the mode, and for the same reason: a
+# plot sequence is only replayable if the target moves are in the log. No
+# change -> no log line, so a click that lands on the current target is silent.
+#
+# The marker is moved by REWRITING THE `active` TOKEN IN PLACE, never by
+# regenerate. regenerate re-places every rect from the Tcl MODEL, and the C
+# engine writes its own graph state (RMB box-zoom / graph pan ranges, private
+# cursors) straight into the rect prop where the model never sees it — so
+# regenerating here would silently throw away a zoom the user just made with
+# the mouse, on EVERY re-target click. Every other Tcl range mutator avoids
+# that by freezing the live ranges first (graph_range/apply_range); a
+# marker-only edit does not need the model at all.
+proc wviewer::set_target_strip {gi {token {}}} {
+  variable target
+  set token [wviewer::resolve_token $token]
+  if {$token eq {} || ![info exists target($token)]} {
+    if {[info exists ::has_x] && [info commands ::ciw_echo] ne {}} {
+      ciw_echo "wviewer: no waveform viewer window to set the target strip on" error
+    }
+    return {}
+  }
+  set n [llength [dict get [wviewer::layout_for $token] graphs]]
+  set new [wviewer::target_clamp $gi $n]
+  set cur [wviewer::target_index $token]
+  set target($token) $new
+  if {$new eq $cur} { return $new }
+  wviewer::log_action [list wviewer::set_target_strip $new $token]
+  wviewer::move_marker $token $cur $new
+  return $new
+}
+
+# Repaint the active-strip marker after a target move: clear the `active` token
+# on `from`, set it on `to`, redraw. Only while more than one strip is up (one
+# strip has nothing to disambiguate — same rule regenerate applies). Rect
+# writes are readonly-gated, hence with_edit; a refused context switch (raised
+# semaphore) just leaves the marker until the next regenerate.
+proc wviewer::move_marker {token from to} {
+  variable windows
+  if {![dict exists $windows $token]} { return 0 }
+  set n [llength [dict get [wviewer::layout_for $token] graphs]]
+  if {[catch {
+    wviewer::with_edit $token {
+      if {$n > 1} {
+        if {$from ne $to && $from >= 0 && $from < $n} {
+          # empty value CLEARS the token (probe-verified), so an inactive strip
+          # reads exactly as regenerate would have written it: no `active` at all
+          xschem setprop -fast rect 2 $from active {}
+        }
+        if {$to >= 0 && $to < $n} {
+          xschem setprop -fast rect 2 $to active 1
+        }
+      }
+      xschem redraw
+    }
+  }]} { return 0 }
+  return 1
+}
+
+# Strip under a CANVAS PIXEL, from the graphbb registry, or -1. Pixel ->
+# schematic is the inverse of X_TO_SCREEN (xschem.h): x = px*zoom - xorigin
+# (viewport_rect uses the same identity). Deliberately NOT graph_at_pointer:
+# that one reads the C-tracked mousex_snap, which a synthetic press without a
+# preceding Motion leaves stale.
+proc wviewer::strip_at_pixel {wp px py} {
+  variable graphbb
+  if {![dict exists $graphbb $wp]} { return -1 }
+  if {[catch {xschem new_schematic switch $wp}]} { return -1 }
+  if {[xschem get current_win_path] ne $wp} { return -1 }
+  set zoom [xschem get zoom]
+  set mx [expr {$px * $zoom - [xschem get xorigin]}]
+  set my [expr {$py * $zoom - [xschem get yorigin]}]
+  set gi 0
+  foreach bb [dict get $graphbb $wp] {
+    lassign $bb bx1 by1 bx2 by2
+    if {$mx >= $bx1 && $mx <= $bx2 && $my >= $by1 && $my <= $by2} { return $gi }
+    incr gi
+  }
+  return -1
+}
+
+# <ButtonPress-1> on the viewer canvas: the clicked strip becomes the target.
+# Silent when the pointer is outside every band or the strip is already the
+# target. The C engine's own press handling (cursor grab / graph pan) is
+# forwarded by the binding, not by this proc.
+proc wviewer::click_target {W px py} {
+  set token [wviewer::token_for_canvas $W]
+  if {$token eq {}} { return {} }
+  set gi [wviewer::strip_at_pixel $W $px $py]
+  if {$gi < 0} { return {} }
+  if {$gi == [wviewer::target_index $token]} { return $gi }
+  return [wviewer::set_target_strip $gi $token]
+}
+
+# Land a batch of signals sent from the schematic (Direct Plot / Ctrl-4) per
+# the window's plot mode — the ONE seam ase::ui::dp_finish calls. Creates the
+# strips plan_plot asks for, then appends one trace per signal at its planned
+# index. Returns a list of {expr error} pairs for the signals that failed
+# (add_trace returns a message, never throws); {} = every signal landed.
+proc wviewer::plot_signals {token exprs} {
+  variable windows
+  if {![dict exists $windows $token]} {
+    return [list [list {} "unknown viewer window"]]
+  }
+  set gs [dict get [wviewer::layout_for $token] graphs]
+  set mode [wviewer::plot_mode $token]
+  set plan [wviewer::plan_plot $mode [llength $gs] \
+                               [wviewer::target_index $token] [llength $exprs] \
+                               [wviewer::auto_graph_index $token]]
+  for {set k 0} {$k < [dict get $plan new]} {incr k} {
+    wviewer::add_graph $token
+  }
+  # single-plot had to CREATE its landing strip (empty stack, or the target
+  # was the tool-owned auto-plot strip): that strip becomes the target, so the
+  # next gesture accumulates there instead of appending yet another strip.
+  # multi-plot never moves the target (spec §3.3).
+  if {$mode ne {multi} && [dict get $plan new] > 0} {
+    wviewer::set_target_strip [lindex [dict get $plan targets] 0] $token
+  }
+  set errs {}
+  foreach ex $exprs gi [dict get $plan targets] {
+    set err [wviewer::add_trace $token $gi $ex]
+    if {$err ne {}} { lappend errs [list $ex $err] }
+  }
+  return $errs
+}
+
+# Options > Plot Mode -postcommand: relabel the single entry with the mode it
+# would switch TO, so the label is right however the mode last changed (menu,
+# command, chord, state restore). The edit_menu_post pattern.
+proc wviewer::plot_mode_menu_post {token m} {
+  if {![winfo exists $m]} { return }
+  set cur [wviewer::plot_mode $token]
+  if {$cur eq {}} { set cur single }
+  set lab [expr {$cur eq {multi} ? {Set Single-plot Mode} : {Set Multi-plot Mode}}]
+  catch {$m entryconfigure 0 -label $lab}
 }
 
 # Graph > Shared X Axis checkbutton: mirror -> model + regenerate.
@@ -1298,10 +1664,49 @@ proc wviewer::wheel_zoom {token dir gi {px {}} {py {}}} {
   return $changed
 }
 
+# Horizontal (X) pan of the WHOLE stack — issue 0150. The X axis is shared: the
+# strips are time-aligned, so any x change must hit EVERY graph, or one strip
+# slides out of step with the rest (the user-reported Shift+wheel bug; the same
+# rule already governs zoom, wheel_zoom's X arm, 0144). Y is the opposite — each
+# strip carries its own signal scale and pans independently.
+# Each strip shifts by 5% of ITS OWN span (identical motion in the normal
+# shared-range case, proportional when the ranges differ), `dir` up|right = toward
+# larger x. Every axis is re-frozen at its read-back value first (D7) so
+# regenerate cannot autozoom an untouched axis away; ONE set_graphs + regenerate
+# for the whole sweep. Returns 1 when anything was written.
+proc wviewer::pan_x {token dir} {
+  variable windows
+  if {![dict exists $windows $token]} { return 0 }
+  set gs [dict get [wviewer::layout_for $token] graphs]
+  set n [llength $gs]
+  set changed 0
+  for {set t 0} {$t < $n} {incr t} {
+    lassign [wviewer::graph_range $token $t] ax1 ax2 ay1 ay2
+    set G [lindex $gs $t]
+    foreach {k v} [list x1 $ax1 x2 $ax2 y1 $ay1 y2 $ay2] {
+      if {$v ne {}} { dict set G $k $v }
+    }
+    if {$ax1 ne {} && $ax2 ne {}} {
+      set d [expr {0.05 * ($ax2 - $ax1)}]
+      if {$dir eq {down} || $dir eq {left}} { set d [expr {-$d}] }
+      dict set G x1 [expr {$ax1 + $d}]
+      dict set G x2 [expr {$ax2 + $d}]
+      set changed 1
+    }
+    set gs [lreplace $gs $t $t $G]
+  }
+  if {$changed} {
+    wviewer::set_graphs $token $gs
+    wviewer::regenerate $token
+  }
+  return $changed
+}
+
 # Viewer wheel handler (D1/D3/D7). `dir` in up|down, `mods` in 0|shift|ctrl:
 #   0     (plain) -> GRAPH vertical pan: shift y1/y2 by +-5% of the y span
 #                    (up = toward larger y / view moves up; down = opposite).
-#   shift          -> GRAPH horizontal pan: shift x1/x2 by +-5% of the x span.
+#   shift          -> GRAPH horizontal pan: shift x1/x2 by +-5% of the x span,
+#                    on EVERY strip (issue 0150 — X is the shared axis).
 #   ctrl           -> GRAPH zoom about center (wviewer::wheel_zoom): X on every
 #                    graph, Y on the POINTED graph only (issue 0144).
 # Acts on the pointed graph (graph_at_pointer). Reads the concrete range, applies
@@ -1314,11 +1719,10 @@ proc wviewer::wheel {token wp dir mods {px {}} {py {}}} {
   lassign [wviewer::graph_range $token $gi] x1 x2 y1 y2
   switch -- $mods {
     shift {
-      if {$x1 eq {} || $x2 eq {}} { return }
-      set d [expr {0.05 * ($x2 - $x1)}]
-      if {$dir eq {down}} { set d [expr {-$d}] }
-      set x1 [expr {$x1 + $d}]
-      set x2 [expr {$x2 + $d}]
+      # issue 0150: X is the SHARED axis of the stack — pan it on EVERY strip
+      # (wviewer::pan_x), never just the pointed one, exactly like the X arm of
+      # wheel_zoom (0144). Y stays per-strip (the `default` arm below).
+      return [wviewer::pan_x $token $dir]
     }
     ctrl {
       # X on every graph + Y on the pointed one, anchored at the pointer pixel
@@ -1365,6 +1769,36 @@ proc wviewer::wheel_bind {wp dir mods {px {}} {py {}}} {
   set token [wviewer::token_for_canvas $wp]
   if {$token eq {}} { return }
   wviewer::wheel $token $wp $dir $mods $px $py
+}
+
+# Arrow keys (issue 0149): pan the GRAPH in the arrow's direction, exactly the
+# wheel pan (`wviewer::wheel`, ±5% of the span) — Left/Right = the horizontal
+# (Shift+wheel) pan, on EVERY strip (0150: X is shared); Up/Down = the vertical
+# (plain wheel) pan, on the pointed strip only (Y is per-strip).
+# They are handled here and NEVER forwarded to the C canvas: the graphs own the
+# viewer window, so no gesture in it may scroll the canvas and expose blank space.
+# `s` is the event state mask: ANY of Shift(1)/Ctrl(4)/Alt(8) is SWALLOWED (0
+# returned) — those chords are canvas-only in C (SET_MODMASK makes waves_selected
+# skip, so they reach the hard-coded origin pan; Ctrl+Left/Right is tab switch)
+# and have no graph meaning. This deliberately replaces item 19's "arrows forward
+# to the C over_graph graph.forward" (whose Up/Down was an X zoom): zoom already
+# has four affordances (Ctrl+wheel, View menu, Z, Ctrl-z, all -> wheel_zoom), and
+# 4-way pan is what an arrow key means. Returns 1 when a pan was applied.
+proc wviewer::arrow_pan {token wp N s} {
+  if {$s & 13} { return 0 }                           ;# Shift|Control|Mod1
+  # NO trailing `;#` comments inside the switch body: its braced argument is a
+  # pattern/body WORD LIST, not a script — a comment there silently shifts every
+  # later pair (Right/Down fell through to `default` when this was first written).
+  # 65361 Left = view left, 65363 Right = view right (both the Shift+wheel
+  # horizontal pan); 65362 Up / 65364 Down = the plain-wheel vertical pan.
+  switch -- $N {
+    65361 { wviewer::wheel $token $wp down shift }
+    65363 { wviewer::wheel $token $wp up   shift }
+    65362 { wviewer::wheel $token $wp up   0 }
+    65364 { wviewer::wheel $token $wp down 0 }
+    default { return 0 }
+  }
+  return 1
 }
 
 # --- Graph menu dialogs (item 12, D3/D11/D13) --------------------------------
@@ -1678,8 +2112,8 @@ proc wviewer::over_graph {wp} {
 # <KeyRelease> binds on the viewer .drw ONLY. Allowlist:
 #   intercepted to the GRAPH (item 19, D4 — NOT forwarded to the C canvas-zoom
 #     keys): f = fit (x+y), Z = graph zoom in (X), Ctrl-z = graph zoom out (X);
-#   always forwarded: arrows (scroll / graph pan X), Escape (abort+redraw —
-#     NEVER closes, D10);
+#     arrows = 4-way graph pan (issue 0149 — modified arrows swallowed);
+#   always forwarded: Escape (abort+redraw — NEVER closes, D10);
 #   over a graph only: a b s m t A B (+ctrl) — the waves_callback key set;
 #   Ctrl-W: close the viewer (handled Tcl-side, swallowed);
 #   everything else: swallowed silently (readonly backstops any miss).
@@ -1707,14 +2141,24 @@ proc wviewer::key_filter {W T x y N K s} {
     } elseif {$N == 122 && ($s & 4)} {                ;# Ctrl-z = graph zoom out
       if {$T == 2} { wviewer::graph_zoom $tok19 out all $x $y }
       return
+    } elseif {$N >= 65361 && $N <= 65364} {           ;# Left Up Right Down
+      # issue 0149: the arrows PAN THE GRAPH and are never forwarded. Forwarding
+      # them let the C canvas own the gesture in three ways, all of which scroll
+      # the CANVAS and expose blank space around the graphs: off a graph the
+      # data-driven bare arrow is ACTX_CANVAS -> view.scroll_* ; ANY modifier
+      # makes waves_selected skip (SET_MODMASK) so Alt/Shift+arrow hit the
+      # hard-coded xorigin/yorigin pan (callback.c XK_Left..XK_Up); and
+      # Ctrl+Left/Right is prev_tab/next_tab. arrow_pan swallows every modified
+      # arrow and pans the graph for the bare ones.
+      if {$T == 2} { wviewer::arrow_pan $tok19 $W $N $s }
+      return
     }
   }
   set fwd 0
   if {$K eq {Escape}} {
     catch {destroy .ctxmenu}                          ;# mirror the editor bind
     set fwd 1
-  } elseif {$N == 102 || $N == 90 || ($N == 122 && ($s & 4)) ||
-            ($N >= 65361 && $N <= 65364)} {
+  } elseif {$N == 102 || $N == 90 || ($N == 122 && ($s & 4))} {
     set fwd 1
   } elseif {[lsearch -exact $graphkeys $N] >= 0 && [wviewer::over_graph $W]} {
     set fwd 1
@@ -1770,9 +2214,39 @@ proc wviewer::strip_bindings {wp} {
   bind $wp <KeyRelease> {wviewer::key_filter %W %T %x %y %N %K %s}
   bind $wp <ButtonPress-3>   {wviewer::btn3_filter %W %T %x %y 3 %s}
   bind $wp <ButtonRelease-3> {wviewer::btn3_filter %W %T %x %y 3 %s}
+  # issue 0151: clicking a strip makes it the TARGET (where signals sent from
+  # the schematic land in single-plot mode). <ButtonPress-1> is MORE SPECIFIC
+  # than the kept generic <Button>, so binding it would otherwise swallow the
+  # C engine's press (cursor grab / graph pan) — hence the manual forward,
+  # byte-for-byte the generic body from set_bindings (xschem.tcl), and the
+  # trailing `break`: exactly one forward whether the generic binding lives on
+  # this widget's tag or the toplevel's. The re-target runs FIRST so a press
+  # that starts a cursor drag still lands on the strip it was aimed at.
+  bind $wp <ButtonPress-1> {
+    wviewer::click_target %W %x %y
+    focus %W
+    xschem callback %W %T %x %y 0 %b 0 %s
+    break
+  }
   bind $wp <Double-Button-1> {break}                  ;# D9: no graph props dlg
   bind $wp <Double-Button-2> {break}
   bind $wp <Double-Button-3> {break}
+  # issue 0149: kill the canvas-only mouse gestures. Button-2 (MMB) is the
+  # schematic PAN gesture — waves_selected EXPLICITLY skips Button-2 press /
+  # release / drag-motion so it can never be graph-routed, and handle_button_press
+  # calls start_pan_logged(): in the viewer that slides the whole tiled graph
+  # stack around a bigger canvas and exposes blank space. Ctrl+MMB is the
+  # pin-type edit chord (a mutating action, i.e. a readonly modal). Shift+B1 and
+  # Alt+B1 are likewise canvas-only (waves_selected skips Shift+B1; Alt sets
+  # SET_MODMASK) and mean rubber-band/copy-drag and unselect-at-pointer — pure
+  # schematic-object gestures with no graph counterpart. All swallowed; plain
+  # Button-1 still reaches the C engine (cursor drag / graph pan). The bands tile
+  # the whole viewport (band_geometry), so a plain click always lands on a graph.
+  foreach seq {<ButtonPress-2> <ButtonRelease-2> <B2-Motion>
+               <Shift-ButtonPress-1> <Shift-ButtonRelease-1> <Shift-B1-Motion>
+               <Alt-ButtonPress-1> <Alt-ButtonRelease-1> <Alt-B1-Motion>} {
+    bind $wp $seq {break}
+  }
   # item 19 (D-B): wheel = GRAPH pan/zoom, mirroring cadence_style_rc on graph
   # content. On Tcl 8.6 / X11 the wheel arrives as Button-4 (up) / Button-5
   # (down); these more-specific binds PRE-EMPT the kept generic <Button> (which
@@ -1808,7 +2282,8 @@ proc wviewer::build_menubar {token top} {
   catch {destroy $mb}
   menu $mb -tearoff 0 -borderwidth 0 -takefocus 0 \
     -font AseLabelFont -background $panel -activebackground $header
-  foreach {label sub} {File file View view Graph graph Cursors cursors} {
+  foreach {label sub} {File file View view Graph graph Cursors cursors
+                       Options options} {
     $mb add cascade -label $label -menu $mb.$sub
     menu $mb.$sub -tearoff 0 -takefocus 0 \
       -font AseLabelFont -background $panel -activebackground $header
@@ -1852,5 +2327,16 @@ proc wviewer::build_menubar {token top} {
   $mb.cursors add checkbutton -label Readout \
     -variable ::wviewer::cvr($token) \
     -command [list wviewer::readout_show $token]
+  # Options > Plot Mode (issue 0151): ONE dynamic entry offering the OTHER
+  # mode. The label is rebuilt by the submenu's -postcommand, so it stays
+  # correct however the mode last changed (this menu, the Tcl commands, the
+  # Ctrl-Shift-4 chord on the design window, or a state restore). Invoking it
+  # goes through set_plot_mode, which writes the replayable log line.
+  menu $mb.options.plotmode -tearoff 0 -takefocus 0 \
+    -font AseLabelFont -background $panel -activebackground $header \
+    -postcommand [list wviewer::plot_mode_menu_post $token $mb.options.plotmode]
+  $mb.options.plotmode add command -label {Set Multi-plot Mode} \
+    -command [list wviewer::set_plot_mode invert $token]
+  $mb.options add cascade -label {Plot Mode} -menu $mb.options.plotmode
   $top configure -menu $mb
 }

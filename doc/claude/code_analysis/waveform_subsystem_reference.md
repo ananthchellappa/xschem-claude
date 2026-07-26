@@ -341,6 +341,22 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
   raised ctx semaphore (e.g. `ase::wait`'s vwait); `auto_plot` defers via
   `after idle` for exactly this reason (inline aimed clear/read at the DESIGN
   window — probe-verified data loss).
+- **Plot modes + target strip (issue 0151,
+  `doc/claude/specs/waveform_viewer_modes.md`).** Per-window `mode`
+  (`single|multi`, seeded from `wviewer_plot_mode`, default `single`) and
+  `target` arrays keyed by token, alongside the `sharedx` mirror; both persist
+  in the `viewer` state dict as trailing `mode`/`target` keys. The landing
+  policy is the PURE `plan_plot` (mode, ngraphs, target, n, **auto-graph
+  index**) applied by `plot_signals` — the one seam `ase::ui::dp_finish` calls.
+  **The auto-plot graph is never a landing site** (auto_plot clears it every
+  run), so single-plot with the target on it appends a strip instead.
+  Commands: `plot_mode` / `set_plot_mode` (single|multi|invert) /
+  `target_strip` / `set_target_strip` / `current_token`, all with an optional
+  token defaulting to the viewer owning the current xschem ctx; changes are
+  logged replayably via the `log_action` seam (**resolved** word + explicit
+  token, on real changes only). `<ButtonPress-1>` re-targets and then forwards
+  the press to C by hand (it is more specific than the kept generic `<Button>`,
+  so the forward is mandatory).
 
 ---
 
@@ -389,6 +405,12 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
 - **New cursor/marker:** a `graph_flags` bit (keep both legends in sync), a
   draw path, grab/move/set branches in `waves_callback`.
 - **New Tcl query on data:** branch under the `raw`/`raw_query` dispatch.
+- **New per-graph UI decoration (on-screen only):** a prop token written by
+  `wviewer::graph_props`, a `Graph_ctx` field parsed in `setup_graph_data`
+  (before the `RECT_OUTSIDE` return), a draw block in `draw_graph` gated on a
+  flags bit the on-screen callers set, and a dedicated GC created in
+  `create_gc` / freed in `free_gc` / coloured in `build_colors` from a Tcl
+  colour var (`gc_hover` is the worked example; issue 0151 is the second).
 - **New viewer op:** a pure model transform on `layouts` + `regenerate`
   (`wave_viewer.tcl`); persist via the `viewer` state dict snapshot/restore.
 
@@ -447,7 +469,16 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
     `regenerate`; canvas binds appended with `+`, never replaced; wheel bound
     as Button-4/5 with `break`. Getting these wrong writes stray `untitled~.sch`
     or leaks C canvas-box zoom through the viewer.
-18. **Zooming/annotating a graph marks the file dirty** — `graph_fullxzoom`/
+18. **`Graph_ctx.active` + `draw_graph` flags bit 16** (issue 0151). The
+    viewer's target-strip marker is a prop token `active=1` parsed in
+    `setup_graph_data` — parsed **before** the `RECT_OUTSIDE` early return,
+    because `gr` is the shared `xctx->graph_struct` and a stale value would
+    leak onto the next graph. It is painted only when `flags & 16` is set,
+    which the **on-screen** callers do (`draw_graph_all`, `callback.c` ×3, the
+    `xschem draw_graph` verb) and the **export** callers deliberately do not
+    (`svg_embedded_graph`, `psprint.c` ×2). A new on-screen `draw_graph` caller
+    must set bit 16 or the marker will blink out on that redraw path.
+19. **Zooming/annotating a graph marks the file dirty** — `graph_fullxzoom`/
     `fullyzoom` write `x1`/`x2`/`y1`/`y2` tokens via `subst_token`
     (`set_modify`). `create_graph.tcl` calls `set_modify 0` afterward.
 
@@ -495,7 +526,8 @@ Effort: S=hours, M=days, L=weeks. Impact in caps.
 ## 13. Testing waveform work
 
 - Headless raw/graph/viewer coverage lives in `tests/headless/`:
-  `test_ase_plot.tcl`, `test_wave_viewer.tcl`, `test_ase_*` family. They
+  `test_ase_plot.tcl`, `test_wave_viewer.tcl`, `test_wave_modes.tcl`
+  (plot modes / target strip, issue 0151), `test_ase_*` family. They
   `--pipe`/`--script` the built binary and diff against golden state. Pure
   Tcl helpers in `wave_viewer.tcl` (`graph_props`, `band_geometry`,
   `next_color`, `validate_rpn`, `interp_value`) are directly unit-testable.
@@ -515,6 +547,9 @@ Effort: S=hours, M=days, L=weeks. Impact in caps.
 
 - `doc/claude/specs/waveform_viewer.md` — ASE-L viewer feature decisions +
   as-shipped ledger (items 13/14/19). The authority on viewer UX contracts.
+- `doc/claude/specs/waveform_viewer_modes.md` — plot modes (single/multi),
+  target strip, the active-strip marker and the mode command surface
+  (issue 0151).
 - `waveform_display_explained.md` (this folder) — the plain-English tour.
 - Memory: `ase-l-plan`, `scheduler-letter-dispatch`, `green-but-hollow`,
   `gesture-test-full-sequence`, `wslg-dialog-open-repaint`.
