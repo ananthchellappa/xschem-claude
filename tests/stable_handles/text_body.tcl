@@ -98,9 +98,11 @@ xschem text 0 0 0 0 t0 {} 0.3 0
 set id4b [h_tid 0]
 check {TH4 recreated text gets a fresh id} {$id4a > 0 && $id4b > 0 && $id4a != $id4b}
 
-### TH5 — memory-undo round-trip. Graphical/text create is not undoable, so the
-### undoable cycle is delete->undo: delete dangles the id, undo restores the
-### SAME id (memory undo copies whole structs)
+### TH5 — memory-undo round-trip. Scripted graphical/text creates now push their
+### own undo checkpoint (issue 0127 coord-arm fix: rect/line/arc de1b75d4, text
+### residual), but TH5 keeps using the delete->undo cycle it was written around:
+### delete dangles the id, undo restores the SAME id (memory undo copies whole
+### structs)
 clean
 xschem undo_type memory
 xschem text 0 0 0 0 t0 {} 0.3 0

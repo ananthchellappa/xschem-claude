@@ -20,6 +20,8 @@
 # Needs X. Run under X with --pipe from src/:
 #   DISPLAY=:0 ./xschem --pipe -q --script ../tests/headless/test_create_instance.tcl
 
+source [file join [file dirname [info script]] scratch.tcl]
+
 set fail 0
 proc check {name ok detail} {
   global fail
@@ -52,8 +54,7 @@ proc pick {col txt handler} {
 # --- fixture: a library with a sym+sch cell, a sch-only cell, and a 2-level
 #     parent/child hierarchy for the ancestor-recursion test --------------------
 set hdr "v {xschem version=3.4.8RC file_version=1.3}"
-set tmp [file join [pwd] _mkinst_[pid]]
-file delete -force $tmp
+set tmp [test_scratch mkinst]
 touch $tmp/tlib/withsym/symbol/withsym.sym    $hdr
 touch $tmp/tlib/withsym/schematic/withsym.sch $hdr
 touch $tmp/tlib/schonly/schematic/schonly.sch $hdr
@@ -258,6 +259,5 @@ check "CI13e bare reopen keeps the last fields" [expr {$::ciform::cell eq {withs
 xschem abort_operation
 
 catch {destroy .ciform}; catch {destroy .mkinst}
-file delete -force $tmp
 if {$fail == 0} { puts "RESULT: ALL PASS" } else { puts "RESULT: $fail FAILED" }
 flush stdout

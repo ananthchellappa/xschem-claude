@@ -55,7 +55,10 @@ proc grab_drag_sch {bx by tx ty} {
   catch { update idletasks }
 }
 
-set ::RBTMP "/tmp/xschem_loop_rb_[pid].sch"
+# Round-trip scratch file. Own dir per test (0089 and 0088 used to write the SAME literal
+# /tmp name) and the helper removes it on every exit path -- issue 0148.
+source [file join [file dirname [info script]] scratch.tcl]
+set ::RBTMP [file join [test_scratch fluid_rev_0089] rb.sch]
 # Return list of {x1 y1 x2 y2 lab} for every wire whose lab matches $want (or all if want=="").
 proc net_wires {want} {
   file delete -force -- $::RBTMP

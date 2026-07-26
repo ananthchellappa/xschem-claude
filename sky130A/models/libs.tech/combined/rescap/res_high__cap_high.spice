@@ -1,0 +1,189 @@
+* SKY130 Spice File.
+.param
++ tol_nfom = -0.0483u
++ tol_pfom = -0.042u
++ tol_nw = -0.0483u
++ tol_poly = -0.0287u
++ tol_li = -0.014u
++ tol_m1 = -0.0175u
++ tol_m2 = -0.0175u
++ tol_m3 = -0.0455u
++ tol_m4 = -0.0455u
++ tol_m5 = -0.119u
++ tol_rdl = -0.0329u
+.param
++ rcn=296.1
++ rcp=789
++ rdn=128.4
++ rdp=218.7
++ rdn_hv=122.4
++ rdp_hv=212.7
++ rp1=53.52
++ rnw=2022
++ rl1=14.02
++ rm1=0.139
++ rm2=0.139
++ rm3=0.0533
++ rm4=0.0533
++ rm5=0.03361
++ rrdl=0.00633
++ rcp1=213.88
++ rcl1=18.61
++ rcvia=11.85
++ rcvia2=6.623
++ rcvia3=6.623
++ rcvia4=0.7377
++ rcrdlcon=0.00792
++ rspwres=4120
+* Interconnect Capacitance Parameters
+.param
++ cp1f = 1.55e-04  cp1fsw = 1.02e-10
++ cl1f = 4.97e-05  cl1fsw = 1.04e-10
++ cl1d = 7.09e-05  cl1dsw = 1.03e-10
++ cl1p1 = 1.74e-04  cl1p1sw = 1.02e-10
++ cm1f = 3.57e-05  cm1fsw = 1.32e-10
++ cm1d = 4.54e-05  cm1dsw = 1.31e-10
++ cm1p1 = 7.32e-05  cm1p1sw = 1.30e-10
++ cm1l1 = 2.15e-04  cm1l1sw = 1.26e-10
++ cm2f = 2.35e-05  cm2fsw = 1.33e-10
++ cm2d = 2.74e-05  cm2dsw = 1.32e-10
++ cm2p1 = 3.55e-05  cm2p1sw = 1.32e-10
++ cm2l1 = 5.23e-05  cm2l1sw = 1.31e-10
++ cm2m1 = 3.13e-04  cm2m1sw = 1.26e-10
++ cm3f = 1.63e-05  cm3fsw = 1.26e-10
++ cm3d = 1.81e-05  cm3dsw = 1.26e-10
++ cm3p1 = 2.13e-05  cm3p1sw = 1.25e-10
++ cm3l1 = 2.63e-05  cm3l1sw = 1.25e-10
++ cm3m1 = 4.52e-05  cm3m1sw = 1.23e-10
++ cm3m2 = 1.31e-04  cm3m2sw = 1.22e-10
++ cm4f = 1.07e-05  cm4fsw = 1.29e-10
++ cm4d = 1.14e-05  cm4dsw = 1.28e-10
++ cm4p1 = 1.26e-05  cm4p1sw = 1.28e-10
++ cm4l1 = 1.43e-05  cm4l1sw = 1.28e-10
++ cm4m1 = 1.85e-05  cm4m1sw = 1.27e-10
++ cm4m2 = 2.52e-05  cm4m2sw = 1.27e-10
++ cm4m3 = 1.91e-04  cm4m3sw = 1.25e-10
++ cm5f = 7.76e-06  cm5fsw = 9.43e-11
++ cm5d = 8.14e-06  cm5dsw = 9.41e-11
++ cm5p1 = 8.74e-06  cm5p1sw = 9.39e-11
++ cm5l1 = 9.48e-06  cm5l1sw = 9.37e-11
++ cm5m1 = 1.12e-05  cm5m1sw = 9.32e-11
++ cm5m2 = 1.33e-05  cm5m2sw = 9.29e-11
++ cm5m3 = 2.46e-05  cm5m3sw = 9.33e-11
++ cm5m4 = 1.15e-04  cm5m4sw = 1.13e-10
++ crdlf = 3.49e-06  crdlfsw = 7.63e-11
++ crdld = 3.57e-06  crdldsw = 7.61e-11
++ crdlp1 = 3.67e-06  crdlp1sw = 7.60e-11
++ crdll1 = 3.80e-06  crdll1sw = 7.59e-11
++ crdlm1 = 4.04e-06  crdlm1sw = 7.57e-11
++ crdlm2 = 4.29e-06  crdlm2sw = 7.54e-11
++ crdlm3 = 5.04e-06  crdlm3sw = 7.51e-11
++ crdlm4 = 6.01e-06  crdlm4sw = 7.48e-11
++ crdlm5 = 8.81e-06  crdlm5sw = 7.52e-11
++ cl1p1f = 3.29e-04  cl1p1fsw = 9.71e-11
++ cm1p1f = 2.29e-04  cm1p1fsw = 9.88e-11
++ cm2p1f = 1.91e-04  cm2p1fsw = 1.01e-10
++ cm3p1f = 1.76e-04  cm3p1fsw = 1.01e-10
++ cm4p1f = 1.67e-04  cm4p1fsw = 1.02e-10
++ cm5p1f = 1.64e-04  cm5p1fsw = 1.02e-10
++ crdlp1f = 1.58e-04  crdlp1fsw = 1.02e-10
++ cm1l1f = 2.66e-04  cm1l1fsw = 9.75e-11
++ cm1l1d = 2.87e-04  cm1l1dsw = 9.64e-11
++ cm1l1p1 = 3.91e-04  cm1l1p1sw = 9.52e-11
++ cm2l1f = 1.02e-04  cm2l1fsw = 1.01e-10
++ cm2l1d = 1.23e-04  cm2l1dsw = 9.99e-11
++ cm2l1p1 = 2.27e-04  cm2l1p1sw = 9.88e-11
++ cm3l1f = 7.60e-05  cm3l1fsw = 1.03e-10
++ cm3l1d = 9.72e-05  cm3l1dsw = 1.02e-10
++ cm3l1p1 = 2.01e-04  cm3l1p1sw = 1.01e-10
++ cm4l1f = 6.40e-05  cm4l1fsw = 1.03e-10
++ cm4l1d = 8.52e-05  cm4l1dsw = 1.02e-10
++ cm4l1p1 = 1.88e-04  cm4l1p1sw = 1.01e-10
++ cm5l1f = 5.92e-05  cm5l1fsw = 1.04e-10
++ cm5l1d = 8.04e-05  cm5l1dsw = 1.03e-10
++ cm5l1p1 = 1.84e-04  cm5l1p1sw = 1.02e-10
++ crdll1f = 5.35e-05  crdll1fsw = 1.04e-10
++ crdll1d = 7.47e-05  crdll1dsw = 1.03e-10
++ crdll1p1 = 1.78e-04  crdll1p1sw = 1.02e-10
++ cm2m1f = 3.49e-04  cm2m1fsw = 1.24e-10
++ cm2m1d = 3.58e-04  cm2m1dsw = 1.23e-10
++ cm2m1p1 = 3.86e-04  cm2m1p1sw = 1.21e-10
++ cm2m1l1 = 5.28e-04  cm2m1l1sw = 1.18e-10
++ cm3m1f = 8.09e-05  cm3m1fsw = 1.29e-10
++ cm3m1d = 9.07e-05  cm3m1dsw = 1.29e-10
++ cm3m1p1 = 1.18e-04  cm3m1p1sw = 1.25e-10
++ cm3m1l1 = 2.60e-04  cm3m1l1sw = 1.22e-10
++ cm4m1f = 5.42e-05  cm4m1fsw = 1.31e-10
++ cm4m1d = 6.39e-05  cm4m1dsw = 1.30e-10
++ cm4m1p1 = 9.17e-05  cm4m1p1sw = 1.27e-10
++ cm4m1l1 = 2.34e-04  cm4m1l1sw = 1.24e-10
++ cm5m1f = 4.68e-05  cm5m1fsw = 1.32e-10
++ cm5m1d = 5.66e-05  cm5m1dsw = 1.31e-10
++ cm5m1p1 = 8.43e-05  cm5m1p1sw = 1.28e-10
++ cm5m1l1 = 2.26e-04  cm5m1l1sw = 1.25e-10
++ crdlm1f = 3.97e-05  crdlm1fsw = 1.33e-10
++ crdlm1d = 4.95e-05  crdlm1dsw = 1.32e-10
++ crdlm1p1 = 7.72e-05  crdlm1p1sw = 1.28e-10
++ crdlm1l1 = 2.19e-04  crdlm1l1sw = 1.25e-10
++ cm3m2f = 1.55e-04  cm3m2fsw = 1.26e-10
++ cm3m2d = 1.59e-04  cm3m2dsw = 1.26e-10
++ cm3m2p1 = 1.67e-04  cm3m2p1sw = 1.25e-10
++ cm3m2l1 = 1.83e-04  cm3m2l1sw = 1.23e-10
++ cm3m2m1 = 4.44e-04  cm3m2m1sw = 1.20e-10
++ cm4m2f = 4.88e-05  cm4m2fsw = 1.31e-10
++ cm4m2d = 5.26e-05  cm4m2dsw = 1.30e-10
++ cm4m2p1 = 6.08e-05  cm4m2p1sw = 1.32e-10
++ cm4m2l1 = 7.75e-05  cm4m2l1sw = 1.28e-10
++ cm4m2m1 = 3.38e-04  cm4m2m1sw = 1.23e-10
++ cm5m2f = 3.68e-05  cm5m2fsw = 1.32e-10
++ cm5m2d = 4.07e-05  cm5m2dsw = 1.31e-10
++ cm5m2p1 = 4.89e-05  cm5m2p1sw = 1.32e-10
++ cm5m2l1 = 6.56e-05  cm5m2l1sw = 1.29e-10
++ cm5m2m1 = 3.26e-04  cm5m2m1sw = 1.24e-10
++ crdlm2f = 2.78e-05  crdlm2fsw = 1.33e-10
++ crdlm2d = 3.17e-05  crdlm2dsw = 1.33e-10
++ crdlm2p1 = 3.98e-05  crdlm2p1sw = 1.33e-10
++ crdlm2l1 = 5.66e-05  crdlm2l1sw = 1.29e-10
++ crdlm2m1 = 3.17e-04  crdlm2m1sw = 1.25e-10
++ cm4m3f = 2.08e-04  cm4m3fsw = 1.19e-10
++ cm4m3d = 2.09e-04  cm4m3dsw = 1.19e-10
++ cm4m3p1 = 2.13e-04  cm4m3p1sw = 1.19e-10
++ cm4m3l1 = 2.18e-04  cm4m3l1sw = 1.18e-10
++ cm4m3m1 = 2.37e-04  cm4m3m1sw = 1.16e-10
++ cm4m3m2 = 3.22e-04  cm4m3m2sw = 1.15e-10
++ cm5m3f = 4.08e-05  cm5m3fsw = 1.23e-10
++ cm5m3d = 4.26e-05  cm5m3dsw = 1.23e-10
++ cm5m3p1 = 4.58e-05  cm5m3p1sw = 1.22e-10
++ cm5m3l1 = 5.08e-05  cm5m3l1sw = 1.21e-10
++ cm5m3m1 = 6.98e-05  cm5m3m1sw = 1.20e-10
++ cm5m3m2 = 1.56e-04  cm5m3m2sw = 1.18e-10
++ crdlm3f = 2.13e-05  crdlm3fsw = 1.25e-10
++ crdlm3d = 2.31e-05  crdlm3dsw = 1.25e-10
++ crdlm3p1 = 2.63e-05  crdlm3p1sw = 1.25e-10
++ crdlm3l1 = 3.13e-05  crdlm3l1sw = 1.24e-10
++ crdlm3m1 = 5.02e-05  crdlm3m1sw = 1.22e-10
++ crdlm3m2 = 1.36e-04  crdlm3m2sw = 1.21e-10
++ cm5m4f = 1.26e-04  cm5m4fsw = 1.20e-10
++ cm5m4d = 1.26e-04  cm5m4dsw = 1.19e-10
++ cm5m4p1 = 1.27e-04  cm5m4p1sw = 1.19e-10
++ cm5m4l1 = 1.29e-04  cm5m4l1sw = 1.19e-10
++ cm5m4m1 = 1.33e-04  cm5m4m1sw = 1.19e-10
++ cm5m4m2 = 1.40e-04  cm5m4m2sw = 1.18e-10
++ cm5m4m3 = 3.06e-04  cm5m4m3sw = 1.16e-10
++ crdlm4f = 1.67e-05  crdlm4fsw = 1.28e-10
++ crdlm4d = 1.74e-05  crdlm4dsw = 1.27e-10
++ crdlm4p1 = 1.87e-05  crdlm4p1sw = 1.27e-10
++ crdlm4l1 = 2.03e-05  crdlm4l1sw = 1.27e-10
++ crdlm4m1 = 2.45e-05  crdlm4m1sw = 1.27e-10
++ crdlm4m2 = 3.12e-05  crdlm4m2sw = 1.26e-10
++ crdlm4m3 = 1.97e-04  crdlm4m3sw = 1.24e-10
++ crdlm5f = 1.66e-05  crdlm5fsw = 9.01e-11
++ crdlm5d = 1.70e-05  crdlm5dsw = 8.99e-11
++ crdlm5p1 = 1.76e-05  crdlm5p1sw = 8.98e-11
++ crdlm5l1 = 1.83e-05  crdlm5l1sw = 8.95e-11
++ crdlm5m1 = 2.00e-05  crdlm5m1sw = 8.92e-11
++ crdlm5m2 = 2.21e-05  crdlm5m2sw = 8.89e-11
++ crdlm5m3 = 3.34e-05  crdlm5m3sw = 8.95e-11
++ crdlm5m4 = 1.24e-04  crdlm5m4sw = 1.09e-10
+* P+ Poly Preres Parameters
+.include "sky130_fd_pr__model__res.model.spice"

@@ -22,6 +22,7 @@ proc bail {msg} { puts "FATAL: $msg : FAIL"; puts "OVERALL: notok"; exit 1 }
 set bin  [info nameofexecutable]
 set here [file normalize [file dirname [info script]]]
 set root [file normalize [file join $here .. ..]]
+source [file join $here scratch.tcl]
 set flop [file join $root xschem_library examples flop.sch]
 if {![file exists $flop]} { bail "fixture missing: $flop" }
 
@@ -41,8 +42,7 @@ proc gridsnap {v} { expr {round($v / $::cadsnap) * $::cadsnap} }
 set cx5 [gridsnap $cx5]; set cy5 [gridsnap $cy5]
 set cx1 [gridsnap $cx1]; set cy1 [gridsnap $cy1]
 
-set workroot [file join [pwd] descend_log_absorb_work.[pid]]
-file mkdir $workroot
+set workroot [test_scratch descend_log_absorb_work]
 set childn 0
 
 # Run an inner script in a fresh CHILD xschem with a private --logdir. Returns a dict
@@ -154,6 +154,5 @@ check "C6 miss: still at top level"           [marker [dict get $r -out] CS] 0
 check "C6 miss: logged nothing"               [llength [dict get $r -log]] 0
 
 # ---------------------------------------------------------------------------
-file delete -force $workroot
 if {$fail == 0} { puts "RESULT: ALL PASS ($npass checks)"; puts "OVERALL: ok"; exit 0 } \
 else { puts "RESULT: $fail FAILED ($npass passed)"; puts "OVERALL: notok"; exit 1 }

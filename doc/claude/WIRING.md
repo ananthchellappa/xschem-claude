@@ -223,6 +223,16 @@ Ordered passes per leg (gates in brackets):
 —— per gesture, after the attempt loop ——
 13. fluid_manhattanize_relay_diagonals                  [accepted relay only —
     that path had leg_ortho==0 and SKIPPED steps 5-10 entirely]
+13b. fluid_shove_body_crossing_backbone                 [0132 §11.9c/§11.9d; the COMPLEMENTARY path:
+    !diag_relay accepted pure-ortho, rot-free, startsel==0 — BODY-driven shove of an engulfed
+    same-net perpendicular backbone. Gate (§11.9d): same-net copper strictly INSIDE the body
+    along-span by > 1 grid — a pin MID-run (copper both sides) OR a ONE-SIDED inward feed (pin on
+    the run's END, diving through the body); a clean escape feed ≤1 grid inside declines. Runs
+    LIVE on every RUBBER step AND the real END (§11.9d: the body shoves its own copper on the
+    slightest drag, like the pin-driven shove, not only at release) — on CLEAN post-attempt-ladder
+    geometry; mem-snapshot + dual partition verify, exact revert. release==stepwise-safe: each
+    RUBBER step + END restore-to-pristine and re-derive, so the shove never accumulates. Do NOT
+    resite into the shared commit block — THAT dirty-state siting bred phantom merges (issue doc)]
 14. END finalizers: clear stretch state (exactly once — per-leg clearing = UAF),
     fluid_check_move_invariants → ROLLBACK-OR-REFUSE on a residual P2 short/dev-merge when
     `fluid_enforce_invariants` (hardening B3): restore the `enf_snap` pristine snapshot (taken at
@@ -263,11 +273,16 @@ Hard ordering edges (all documented in-code, all discovered by bugs):
 | `fluid_prune_shorting_anchor_tails` :3682 | 0104 | novel-span, no-pin free end, live deg≥1 | delete-only, greedy, commit only at full restore | restore-START (**geometric**) |
 | `fluid_remove_redundant_loops` :2761 | 0088 | chord + clean interior + novelty commit gate; START-cycle decline | delete-only fixpoint | preserve-entry (geometric) |
 | `fluid_prune_anchor_tails` :3577 | 0103 | **only !rotfree**; deg-0 free end at pristine junction | delete-only | preserve-entry |
-| `fluid_straighten_reversals` :3093 | 0089/0090/0096/0110/0111 | novel-SPAN, deg==1 corners, not prot[], no explicit lab | slide jog (near→far; 0111 pin-landing reschedule), tail retract | preserve-entry + foreign-merge guard |
+| `fluid_straighten_reversals` :3093 | 0089/0090/0096/0110/0111/**0137**/**0138** | novel-SPAN, deg==1 corners, not prot[], no explicit lab. **0137: ALSO admits a non-novel jog that is a moved-pin escape-stub OVERSHOOT (`fluid_jog_is_moved_pin_escape_overshoot`: same-side reversal, nearer neighbour on a MOVED pin, stub >1 grid, rot==flip==0) — min-copper compaction of the push-only pipeline's un-reclaimed retreat slack; the verified 0111 pin-landing slide then compacts it to the 1-grid escape.** **0138: the escape-overshoot admits EXPLICIT (named) nets too (buses excluded) — the slide is a same-net inward shorten the partition/foreign verify keeps rename-safe; the pass-1 explicit-lab skip is bypassed ONLY for a verified overshoot. Adds an OUTWARD SEARCH (pin+1,+2,… nearest verifying row, ≤8) so a sibling holding the 1-grid row (after_41: TRIANG at y=130) pushes the other net one grid out (CTRL1 y=140), and a mandatory BODY GUARD on every overshoot slide (else a named trunk shoved clear of a device — 0136 — gets pulled back THROUGH it).** | slide jog (near→far; 0111 pin-landing reschedule + 0138 outward search), tail retract | preserve-entry + foreign-merge + (0138) body guard |
 | `fluid_collapse_axis_overshoot_stub` :3362 | 0092 | brand-new dangle (START-deg==0); **deliberately not prot[]-gated** | shove riser or trim stub | preserve-entry |
 | `fluid_prune_novel_orphan_stub` :4085 | 0094-tail | `if(ripped)` only; free-end START-deg==0 | retract/delete | preserve-entry |
-| `insert_exit_stubs` :1816 | P3 | rot-free, one wire exactly on pin | slide leg 1 grid out along escape normal + stub | none (geometric construction) |
-| `fluid_manhattanize_relay_diagonals` :4214 (`fluid_try_reanchor` :4188) | 0107/0108 | accepted relay, entry partition-clean | re-anchor to live same-net copper, else L to stale anchor, else keep diagonal; stale-feed prune | restore-START per candidate |
+| `insert_exit_stubs` :1816 | P3 / 0132 / **0135 D2** | rot-free, one wire exactly on pin | slide the perpendicular pin-incident leg out along the escape normal + fill the pin gap with a stub. **DISTANCE: normally 1 grid; 0135 D2 — when the CURRENT feed leg grazes/crosses the moved instance's OWN pin-inclusive body (`graze`), OUTWARD-SEARCH `d=1..6` for the nearest row that clears the body AND shorts no foreign net (walks a grazing whole-TRANSLATED feed off its body edge — the two-leg/diagonal decomposition pure-translates a `SELECTED`-whole feed so the elbow/P6 layer never re-orients it, after_39 REF)** | **0132: DECLINE if stub/leg threads the own PIN-INCLUSIVE body (`fluid_seg_crosses_sel_body`, escape-normal exempt) — guards the `get_pin_escape_normal` text-inflated-bbox mis-pick on corner pins. 0134: DECLINE if the slid stub/leg touches a DIFFERENT-net-label wire (`fluid_seg_touches_foreign_lab`). 0135 D2 search per-distance: own-body-cross → continue; STATIONARY-body cross → BREAK/decline (local beautifier never detours a feed past another device — this is what stops R18's grazing feed from flinging 8 grids past C12 in the 0090 staircase); foreign short → continue (try a farther row → walks REF past LED's row). NON-grazing keeps `dmax==1` → byte-identical. NO partition snapshot: the slide never disconnects by construction (pin gap stubbed, corner + its wires dragged together); the foreign-lab guard is the short guard (as 0134); `mem_restore_slot` `unselect_all`s and would strip the pin loop's `.sel`. Unlabeled-foreign gap pre-existing/shared with 0134, B3-backstopped** |
+| `fluid_manhattanize_relay_diagonals` :4214 (`fluid_try_reanchor` :4188) | 0107/0108/0130/0133/0132 | accepted relay, entry partition-clean | re-anchor to live same-net copper (**0132: body-aware — reject a candidate whose leg crosses a moved body**), else `fluid_manh_route` (body-free L/Z/escaped-stub route around the PIN-INCLUSIVE body, else body-crossing, else keep diagonal); stale-feed prune; **then `fluid_reroute_body_crossing_feeds` (0132)** | restore-START per candidate |
+| `fluid_reroute_body_crossing_feeds` / `_delete_body_crossing_copper` / `_wire_end_on_moved_pin` / `_nearest_outside_body_anchor` / `_net_crosses_sel_body` :4520+ | 0132 (§11.9e P-D) | body dropped on its OWN copper: a moved pin's net crosses the body (2nd incremental drag) | re-route the pin feed to nearest same-net vertex OUTSIDE the union body box (`fluid_manh_route`), then verified-delete the redundant through-body backbone — **deletes even NAMED copper** when the pin partition is provably unchanged without it (§11.1 crack). **§11.9e: NEVER delete a wire whose endpoint is on a moved pin (`fluid_wire_end_on_moved_pin`) — that is the pin's own lead; when the pin sits inside the pin-inclusive box its lead MUST cross the box, and the partition-verify is fooled by a transient relay weld a later prune removes → the delete would orphan the pin (after_37 REF-net-drop)** | `fluid_manh_route` partition-verify + per-delete restore-START + moved-pin-lead protect |
+| `fluid_manh_route` / `_manh_commit_path` / `_manh_pushpath` :4498 | 0133 | manhattanize per relay diagonal | enumerate L / Z (grid channels) / escaped-stub L/Z, index-sort by (len,legs), commit first body-free (pref0) else any (pref1) | partition-verify + exact revert per candidate |
+| `fluid_shove_body_crossing_backbone` :6790 | 0132 §11.9c/§11.9d/**§11.9f**/**0135 D1** | LIVE every RUBBER step + real END on the `!diag_relay` pure-ortho path; **ALSO END-only on the `diag_relay` path (§11.9f) — invoked twice, once per axis, by scoping `xctx->delta[xy]` to a single axis (the internal pure-axis gate would else decline a diagonal); delta is read ONLY at that gate**, rot-free, startsel==0; **0135 D1 ESCAPE-SIDE gate (:7074): DECLINE when the moved pin's lead escape normal has a component ALONG the shove axis OPPOSING the relocation dir (`dirpos`) — the per-axis SPOOF makes `dirpos` mis-model a pin whose real escape is on the OTHER axis, so the rebuild lands the backbone one grid past the FAR body edge and drags the feed THROUGH the body (after_39 REF's horizontal feed shoved south to ct=100). Legit perp-backbone shoves have escape ⊥ shove-axis (en=0) → untouched**; owning inst ≥2 pins (1-pin symbols straddle the pin — CRITICAL over-fire, review wf_cff67bed); pin column strictly in OWN body; same-net perp copper strictly INSIDE the body along-span by **> 1 grid** (§11.9d: covers a pin MID-run *and* a ONE-SIDED inward feed with the pin on the run's END; excludes a clean escape feed leaving the body within a grid — the TRIANG +y exit); no pin on run; EVERY wire endpoint on run = plain same-net axis corner else DECLINE (bus/diag/foreign); new backbone welds no foreign copper, crosses no other moved / stationary body | BODY-driven shove: collapse run to pin, rebuild ONE backbone 1 grid past OWN body edge (not union — fling guard) spanning [pin..corners] (dead overhang dropped), translate attachments (pin-row overlap dedup), re-feed via jog; may reshape NAMED copper (§11.1 crack #2, prop copied) | mem-snapshot + restore-START name AND preserve-entry geometric, exact revert |
+| `fluid_shove_jog_separated_trunk` :7326 | **0136** (after_40); **0139** (after_42) | per-axis END on BOTH diag_relay + pure-ortho sites (same per-axis spoof as the shove); rot-free, startsel==0. The COMPLEMENT of the pin-incident shove: a body-threading same-net backbone NOT incident to any moved pin (one JOG off the pin column — the delta didn't align pin.col with trunk.col; after_35 aligned them → pin-incident shove fired instead). Gates: **PRE-EXISTING span** (`!fluid_wire_is_novel_span` — never a fresh reroute detour leg, wireedit_36 case j; **0139: OR `fluid_wire_pretracked_shrink` — re-admit a novel-span wire that is collinear INSIDE a start footprint AND has an endpoint on a MOVED pin's column, i.e. a pre-existing trunk a SECOND gesture merely SHRANK as its end tracked the pin (after_42 LED crossbar x2 90→80); a genuine detour leg is neither**); **LOAD-BEARING bridge** (dooming the run via `fluid_loop_partition` doomed-mask must change the pin partition — never a redundant user-ring/loop edge the body merely overlaps, wireedit_45 U/T; **0139: pin-partition is BLIND to a SINGLE-PIN net (after_42 `#net1` = LED pin + dead-end rail) → WIRE-level cut-edge fallback: flood touch-connectivity with the run doomed, a genuine bridge disconnects its attachments; a ring keeps them reachable via its other arc → still redundant**); **FOLLOW net** (a moved pin carries the node — only own copper, §11.1); no moved pin on run (shove's job), no fixed pin on run; attachments all plain same-net axis thin wires | TRANSLATE (not collapse): shift the run to `ct` = 1 grid past the crossed body edge (side the attachments lean toward first, then the other; body-free side wins — CTRL1 x=140→170), move each attachment's near end to ct. **0139: STEP `ct` grid-by-grid FURTHER out (bounded 12) when a NEIGHBOUR net's copper occupies the one-grid line (after_42: REF `#net2` crossbar straighten parked at y=−170, so `#net1` → y=−180); a BODY block still fails the side. The resulting rail mid-span crossing of the neighbour shares no endpoint → benign near-miss (0136 defect 2), verify-clean.** No new wires (named rail reshaped, never renamed) | body-free precheck (sel+stationary body, foreign-weld) THEN mem-snapshot + DOUBLE partition-verify (restore-START name AND preserve-entry geometric), exact revert |
+| `fluid_inst_body_box` / `_seg_crosses_sel_body` / `_union_sel_body_box` :4415 | 0130/0133 | manhattanize route pick | **PIN-INCLUSIVE** box = symbol no-text bbox (`sym->minx..maxy` rotated, spans all pins; excludes @name text); strict-interior crossing over SELECTED bodies WITH escape-normal exemption (box-centre dominant axis, NOT get_pin_escape_normal) | pure geometric (no verify) |
 
 Dangling-tail candidacy exists in **4 variants with deliberately different START-degree
 thresholds** — that split IS the domain contract (0103 deg-0 vs 0104 deg≥1, stated at
@@ -388,6 +403,14 @@ spec digest). Enforcement TODAY:
   (shorts + dev_merges) drives ROLLBACK-OR-REFUSE when `fluid_enforce_invariants` is set (the
   default). A short no healer can repair (named-rail blackout, degenerate relay) is REFUSED,
   not saved. Escape hatch: `set fluid_enforce_invariants 0` reverts to log-only.
+  Both P2 sub-signals are now **DELTA vs the gesture-START baseline**, not absolute: the
+  device-merge pass always was (compares `fluid_snap_pinnet[]` start-vs-end); the label-short pass
+  (`fluid_count_label_shorts`) was ABSOLUTE until issue 0123 and vetoed valid moves whenever ANY
+  pre-existing naming short existed on a FOREIGN net the gesture never touched. Now the pristine
+  enforce snapshot also captures `enf_short_base = fluid_count_label_shorts()`, and the gate refuses
+  on `max(0, end_shorts − base) + dev_merges`. Landmine: a schematic can carry a legit-looking
+  short at rest (multiple conflicting `lab_pin`/`ipin` names on one net); the gate must never punish
+  an unrelated move for it.
 - P1 disconnect: still **log-only** (Tcl var `fluid_last_move_disconnects`). NOT part of the
   refuse signal — a disconnect is visible (a dangling pin), the count is cascade-sensitive (§5),
   and the never-worse healers legitimately accept a baseline disconnect (test_wireedit_42).
@@ -463,13 +486,158 @@ declaring any wiring feature done, convert to xfail tests when touching the area
 9. **Rotation lacks the Layer-2/3 + exit-stub machinery** (gates :6788, :6933): rotated
    drops near a straddle save diagonals or shorted ortho where the translated twin routes
    clean; straighten can land arrivals ON a rotated pin (0111 reschedule is rot-gated off).
-   The 0110 un-gating argument applies verbatim — audit and un-gate.
+   The 0110 un-gating argument applies verbatim — audit and un-gate. **PARTLY MITIGATED (0130/0133)**:
+   the manhattanize pass — the only shaper on the accepted rotated relay — now runs `fluid_manh_route`,
+   which reshapes each relay diagonal into a body-free L / Z / escape-stub route around the
+   **PIN-INCLUSIVE** body (`fluid_inst_body_box` = symbol no-text bbox spanning all pins, with a
+   box-centre escape-normal exemption for pin feed legs), so the common rotated drag no longer saves
+   wires that thread under the pins or a leftover diagonal (test 0130, after_33). REMAINING gap:
+   (a) a **fully congested** layout (no body-free route verifies) still falls back to a body-crossing
+   route (never worse), the elbow/reroute/exit-stub layers stay gated off — un-gating is the complete
+   fix. ~~(b) second incremental drag onto own copper (after_32)~~ **FIXED (0132)**: the phase-1
+   re-anchor is now body-aware (rejects a candidate whose leg crosses a moved body → falls through to
+   `fluid_manh_route`), and a new END phase `fluid_reroute_body_crossing_feeds` re-routes each moved
+   pin whose net threads the body to an outside-body anchor then **verified-deletes** the redundant
+   through-body backbone (`fluid_delete_body_crossing_copper` — removes even NAMED copper when the pin
+   partition is provably unchanged without it, a first verified crack in the §11.1 blackout). Test
+   `test_fluid_rotate_second_drag_0132.tcl`. ~~(§11.9b) STILL OPEN — the PURE-ORTHO variant (after_34)~~
+   **FIXED (0132 §11.9b)**: the SAME body-on-own-copper defect via a plain +dx translation of an
+   already-rotated body (move_rot==0, accepts at attempt 0, `diag_relay==0`) NEVER reaches
+   `fluid_manhattanize_relay_diagonals` (trace: `manhattanize_relay_diagonals: SKIP`) so the 0132
+   reroute doesn't fire. ROOT CAUSE (traced, NOT the earlier `place_moved_wire` guess): `place_moved_wire`
+   lays a CLEAN +y feed (`100 80 100 90`); the END-cluster **`insert_exit_stubs`** then SLIDES it -x back
+   through the body because `get_pin_escape_normal`'s nearest-edge test on the TEXT-INFLATED `inst.x1..y2`
+   mis-picks a -x/Left normal for the rot-1 solar_ctl TRIANG pin (a corner pin of an asymmetric symbol),
+   so a route already exiting +y straight reads as "bends at the pin → slide". (The reverted hoist of
+   `fluid_reroute_body_crossing_feeds` to every accepted fluid stretch false-fired on ordinary 2-pin
+   moves and deleted legit copper — that whole approach was wrong; the real defect was never in the elbow
+   or a reroute.) FIX: a pin-inclusive body-box guard in `insert_exit_stubs` (move.c ~2046) — if the stub
+   or the slid leg would thread the moved instance's OWN `fluid_inst_body_box` (escape-normal exempt),
+   DECLINE the slide and keep the pre-slide over-the-top route. Never worse (P3 aesthetic pass; a TRUE
+   outward normal slides AWAY from the body and is exempt, so ordinary device feeds are untouched); gated
+   `fluid_editing` so the legacy `wire_exit_stub` feature is byte-identical. Test
+   `test_fluid_ortho_second_drag_0132.tcl` (P5 promoted xfail→hard check; XPASS), evidence
+   `before_10.sch`/`after_34.sch`. Regression: wireedit ALL PASS, all 15 `test_fluid_*` GREEN.
+   ~~(§11.9c) the CTRL1 sibling (after_35): BODY-driven backbone shove~~ **FIXED (0132 §11.9c)**: the
+   SAME gesture left a second defect on the OTHER pin — CTRL1's stationary vertical backbone
+   `N 140 -20 140 100` perpendicular to the move, engulfed by the advancing body (pin (140,80) landed
+   mid-run), threading it in the save. PIN-driven shove never matches (needs a parallel stub driven
+   past its junction), reroute/delete layers gated `diag_relay`. FIX: `fluid_shove_body_crossing_backbone`
+   (move.c) — a per-gesture real-END pass on the accepted PURE-ORTHO path (`!diag_relay`), sited AFTER
+   the attempt ladder + trim/cleanup/ownership-normalize on CLEAN committed geometry (an earlier
+   mid-gesture siting fought dirty transient state — phantom merges — and was reverted; timing IS the
+   fix). Gates: pure-axis, rot-free, `fluid_startsel_wires==0`, pin column strictly inside own body
+   box, same-net perpendicular THROUGH-RUN with copper strictly BOTH sides of the pin (excludes
+   one-sided escape feeds — the over-fire guard), no foreign pin on the run, no pin-less foreign weld.
+   REBUILD: collapse run to pin, ONE new backbone at `fluid_grid_above(body edge)` spanning only
+   [pin..attachment corners] (dead overhang DROPPED — shoving it would cross the foreign rail),
+   attachments translated, pin re-fed via jog; mem-snapshot + dual verify (restore-START name AND
+   preserve-entry geometric partition) with exact revert. Reshapes NAMED copper under verify (second
+   §11.1 crack; props copied from the run, never renamed). Test `test_fluid_ortho_ctrl1_shove_0132.tcl`
+   (P5 promoted xfail→hard; new P5b WHOLE-NET body-clearance invariant — the after_34 single-wire-check
+   lesson — sabotage-verified RED on after_35). Evidence `after_35.sch`/`after_35_fixed.sch`.
+   ~~(§11.9d) the SECOND-generation incremental drag (after_36): the one-sided inward feed~~
+   **FIXED (0132 §11.9d)**: every subsequent +dx drag re-engulfs the previously-shoved backbone and
+   lands the moved pin on the run's END (copper only on the body-interior side), so the feed threads
+   the WHOLE body to reach its rail yet reads as a "one-sided escape" — the after_35 shove's
+   strictly-both-sides over-fire guard DECLINED it and the through-body wire was saved (the user's
+   after_36 complaint, recreated on every incremental drag). ROOT CAUSE: the both-sides gate was a
+   crude proxy for "threads the body"; it rejected BOTH the CTRL1 inward feed (bad) and the TRIANG +y
+   escape (good). FIX: re-gate on `min(run_hi,ahi) − max(run_lo,alo) > grid` — same-net copper strictly
+   INSIDE the body along-span by more than one grid (the user's spec: own copper stays ≥1 grid outside
+   the body). A pin mid-run OR a one-sided inward feed both qualify; the TRIANG +y exit (2.5 < grid
+   inside) still declines. The downstream rebuild already handles a pin at the run END (span from
+   palong + corners, jog re-feed). Also (user request) the shove now fires LIVE on every RUBBER
+   live-commit step, not only at the LMB release — the `!commit_now` gate at the call site was dropped;
+   release==stepwise-safe because each RUBBER step and the real END both restore-to-pristine and
+   re-derive from the total delta (verified: FLUID_TRACE shows `bodyshove … SHOVED` under a
+   `what=RUBBER commit_now=1` step and again at `what=END`, identical result). Test
+   `test_fluid_ortho_ctrl1_shove_0132.tcl` drag-2 (was xfail, promoted to hard check + drag-2 P5b
+   whole-net clearance). Evidence `before_10.sch`/`after_36.sch`. Guards G1–G5
+   (`test_fluid_bodyshove_guards_0132.tcl`) unaffected — all first-drag pin-mid-run, identical gate.
+
+   ~~(§11.9e) the DIAGONAL drag (after_37, defect P-D "ref-net-drop"): a moved pin's OWN feed deleted~~
+   **FIXED (0132 §11.9e)**: a two-axis drag (delta +20,−10) whose pure-ortho X-then-Y decomposition
+   shorts + rolls back to the rigid `diag_relay` fallback. The fallback is repaired ONLY by
+   `fluid_manhattanize_relay_diagonals` (the whole `!diag_relay` ortho shove/END battery is gated off);
+   its post-accept cleanup `fluid_reroute_body_crossing_feeds` → `fluid_delete_body_crossing_copper`
+   DELETED REF's own feed `-60 -140 120 -140` because REF's pin (120,-140) lies strictly INSIDE the
+   pin-inclusive body box (under rot1 the symbol-left pins map to the box interior, so the lead must
+   cross the box — yet it is clear of the real device-body polygon at y=-140 vs body y[-120,50]). The
+   delete's partition-verify passed because a transient relay weld momentarily bridged REF to sibling
+   copper; a later prune removed the weld → REF ORPHANED, and the surviving LED net annexed #net1. It
+   SAVED silently because a P1 disconnect is not in the B3 refuse signal (`fluid_check_move_invariants`
+   returns `short_delta + dev_merges`, disconnects excluded — the documented log-only P1 design). ROOT CAUSE (from the
+   trace, NOT the static after-file): at the accepted state both nets were connected (partition_changed
+   =0); the corruption is entirely in the diag_relay cleanup's false-positive deletion. FIX:
+   `fluid_wire_end_on_moved_pin` — the delete NEVER removes a wire whose endpoint is exactly on a moved
+   (SELECTED) instance pin; that is the pin's lead and deleting it can only orphan the pin. Safe for the
+   §11.9b self-drop case (there the feed is re-routed body-free first so it is not a delete candidate;
+   the deleted stale backbone does not touch the pin). Reproduction NEEDS a real-X multi-motion gesture
+   (a single `move_objects` starts from pristine and does not accumulate the RUBBER history the END
+   cleanup consumes — it does not reproduce the orphan). Test
+   `test_fluid_diagonal_ref_drop_0132.tcl` (self-skips without DISPLAY; geometric pin-touch check —
+   `instance_net` reports a phantom auto-name for an orphaned pin and cannot tell connected from
+   orphaned). Verified: real gesture REF geom-connected 0→1 pre/post-fix, both top nets stay separate;
+   5 fluid suites green; wireedit 57/57. Evidence `before_10.sch`/`after_37.sch`.
+
+   ~~(§11.9f) the DIAGONAL drag (after_37, defects P-A/P-C): CTRL1 vertical left threading the body~~
+   **FIXED (0132 §11.9f)**: on the same diagonal drag the CTRL1 x=140 backbone (the moved pin lands on
+   it MID-SEGMENT) is left threading x1's body. The diag_relay cleanup
+   (`fluid_manhattanize_relay_diagonals` → `fluid_reroute_body_crossing_feeds`) can only RE-ROUTE a
+   moved pin's feed to an existing same-net vertex; the nearest outside-body vertex is IN-COLUMN
+   (140,100) so the feed never pulls past the body edge, and the verified delete reverts the vertical
+   as LOAD-BEARING (only path to the naming label l1). The sideways body-driven shove
+   (`fluid_shove_body_crossing_backbone`, §11.9c/d) is the one pass that fixes this — but it derives
+   its motion axis from `xctx->delta[xy]` and PURE-AXIS-gates itself off (returns 0) for a diagonal
+   delta (both nonzero). FIX: on the diag_relay branch, right AFTER the manhattanize (so wires are
+   already Manhattan), run the shove ONCE PER AXIS by scoping `xctx->deltax/deltay` to one axis at a
+   time (x-run: deltay→0; y-run: deltax→0; restored after). `delta` is read ONLY at the shove's
+   pure-axis gate (6833-6835, verified — every downstream gate uses xmove/pc/palong), so the spoof is
+   side-effect-free; each pass double-verifies with exact revert, so a pin whose run is on the other
+   axis, escapes the body within a grid, or would short is left byte-identical (never worse). END only
+   (rides under the END-only diag manhattanize). Result: CTRL1 shoved to x=160 (one grid past body
+   edge 150), pin re-fed via jog; REF/LED untouched (the y-run pass DECLINES REF's horizontal feed).
+   Test `test_fluid_diagonal_ref_drop_0132.tcl` extended with P-A/P-C body-clearance checks (same
+   gesture; 9 checks). Verified: CTRL1 SHOVED trace, ctrl1_shove 14/14 (ortho path untouched), P-D
+   preserved, wireedit 57/57.
+
+   ~~(§11.9g) the DIAGONAL drag (after_37, defect P-B): old-elbow overhangs left dangling~~
+   **FIXED (0132 §11.9g)**: the same diagonal drag leaves DANGLING named-copper stubs at the OLD
+   pin-riser elbows the moved pin vacated — TRIANG's `80 90 100 90` (free at 80,90) and CTRL1's elbow
+   (free at 120,100). The diag_relay stale-feed prune (0108, inside `fluid_manhattanize_relay_diagonals`)
+   that should retract these SKIPPED them via the §11.1 named-rail blackout
+   (`if(fluid_wire_explicit_lab(i)) continue;`): both overhangs carry an explicit lab. trim keeps each
+   fragment SPLIT at the riser T (100,90 / 140,100), so they are WHOLE stubs with no interior junction
+   → `fluid_retract_orphan_tail` reaches its DELETE branch, which refused named copper
+   (`&& !fluid_wire_explicit_lab(kw)`). FIX: (1) drop the prune's per-wire §11.1 gate so named copper
+   reaches the pruner (RETRACT is already name-safe — keeps the wire+lab, partition-verified); (2) add
+   `fluid_same_name_survivor(kw,ox,oy)` + an `allow_named_stale` param so the DELETE branch may remove a
+   named stub ONLY when its label survives on live copper touching the FAR end AND the partition is
+   preserved. The survivor check closes the pin-indexed partition-verify's blind spot (a pin-less named
+   net — a `lab=VDD` stub — is invisible to `fluid_loop_partition`, so partition-equal alone would let
+   the SOLE carrier of a name be deleted, silently dropping the label); requiring a same-lab survivor
+   guarantees the last carrier is never removed. Scoped by flag to the diag_relay prune ONLY (the other
+   two `fluid_retract_orphan_tail` callers pass 0 → byte-identical §11.1 delete-blackout); the per-end
+   gates (drag-orphaned NOW, not on a pin, START deg≥2 = was a real junction, never a user's deliberate
+   deg≤1 named-stub tip) scope it to genuinely stale elbows. Because the prune runs BEFORE the §11.9f
+   shove, it deletes the x=140 elbow tails first and the shove then moves a CLEAN CTRL1 to x=160 (no
+   residual dead branch). Result: TRIANG = `100 70 100 90`+`100 90 220 90`+`220 20 220 90`; CTRL1 =
+   `140 70 160 70`+`160 -20 160 70`+`160 -20 220 -20` — both clean. Test extended (12 checks; the 3 P-B
+   checks FAIL without this). Verified: ctrl1_shove 14/14, bodyshove_guards 14/14, rotate_body/second
+   green, wireedit 57/57 (incl wireedit_54 named-rail). ALL FOUR after_37 defects (P-A/P-B/P-C/P-D) fixed.
 10. **Mid-drag unguarded keys**: Delete and descend 'e' run during STARTMOVE (no
     `!(ui_state&STARTMOVE)` guard) → undo corruption / resurrected geometry / UAF class.
     Sweep the whole key dispatch.
 11. **Novelty laundering**: trim's split/weld makes untouched user copper read novel-span
     → straighten reshapes user detours (P7). Fix: id watermark (`id <= START counter` ⇒
     pre-existing) + sub-span-of-START-span test — both strict narrowings.
+    **Dual (0139, after_42)**: the OPPOSITE hazard — a MULTI-GESTURE drag SHRINKS a
+    pre-existing trunk (its end tracks a moved pin's column, per-gesture snapshot re-captured
+    each arm) so it reads novel and the jog-trunk shove WRONGLY skips it, leaving a body-cross.
+    Fix: `fluid_wire_pretracked_shrink` re-admits a novel wire that is collinear inside a
+    START footprint AND has an endpoint on a moved-pin column. Novelty is a two-sided gate:
+    over-fire (laundered user copper) AND under-fire (pin-tracked shrink) both bite.
 12. **rot180 relay-bend × manhattanize composition**: the 0102 midpoint bend's anchor-side
     half survives as a dangling saved diagonal (manhattanize gate needs an endpoint
     exactly on a SELECTED pin; stale-feed prune needs START-deg≥2; orphan-stub runs only
@@ -480,6 +648,112 @@ declaring any wiring feature done, convert to xfail tests when touching the area
     span on a label-only foreign net's wire endpoint welds it silently (pin-indexed
     verifies blind, backstop log-only). Same fix shape as the push-through's
     `fluid_pushthrough_new_foreign_contact`; needs its own RED test first.
+14. ~~**Ripup jogs the wrong pin → welds 1-grid-apart neighbor buses → cleanup deletes both
+    nets** (0134, after_38)~~ **FIXED (0134)** — but the *true* root was NOT the ripup jog
+    (static analysis mis-fingered it; runtime tracing corrected it, like 0132 P-D).
+    `doc/claude/issues/0134-*.md`. Diagonal drag (-20,-10) of a device with two NORTH-edge
+    input pins on parallel buses one grid apart (REF y=-140, LED y=-150). The accepted path is
+    END **attempt=0 (leg-split, `diag_relay=0`)**, and the wire that welds REF↔LED is
+    **`insert_exit_stubs` (:1996) sliding REF's exit leg one grid north (y=-140→y=-150) onto
+    LED's bus** — the documented no-short gap (comment ~:8500: the exit slide can shift a leg
+    one grid onto a DIFFERENT net's wire, caught log-only). It had only a body-cross decline,
+    no foreign-net decline. **FIX** (2 hunks, gated `fluid_editing`): (a) `insert_exit_stubs`
+    foreign-net guard — `fluid_seg_touches_foreign_lab` (:1996) + decline (:2094): DECLINE the
+    slide if the stub/leg touches a stationary wire of a different net label (P3, never worse);
+    (b) pure-ortho body-shove **per-axis spoof** (:8705): a diagonal drag now accepted on the
+    pure-ortho path needs `fluid_shove_body_crossing_backbone` fed ONE axis at a time (it
+    pure-axis-gates off a diagonal delta) — mirrors the §11.9f diag_relay site (:8680); restores
+    the after_37 CTRL1 x=160 shove that (a) exposed. RED test
+    `test_fluid_diagonal_neighbor_bus_0134.tcl` 10/10; ref_drop_0132 12/12; exit_stub_0111 20/20.
+    **0135 D1 (follow-on of hunk-2, FIXED)**: the per-axis spoof made the shove run on diagonal drags,
+    exposing an over-fire — on a SW diagonal (−10,+20) of solar_ctl the y-run shove dragged REF's
+    HORIZONTAL escape feed one grid past the FAR (south) body edge (`ct=100`), threading the whole body
+    (after_39). `dirpos` (motion "ahead") mis-models a pin whose real escape is on the other axis. FIX:
+    an escape-side decline gate in the shove (:7074) — DECLINE when the pin's lead escape normal opposes
+    the relocation dir along the shove axis; legit CTRL1 shoves (escape ⊥ shove axis) untouched.
+    `doc/claude/issues/0135-*.md`, test `test_fluid_diagonal_shove_throughbody_0135.tcl`. **0135 D2 (FIXED,
+    route-quality, candidate #1 / §11.9a)**: the same drag left REF's declined feed exiting perpendicular-WEST
+    grazing the body top, not NORTH along its lead normal. Root (trace, not static — the P6 hypothesis was
+    wrong, P6 is never called for REF): after leg-0 the `move_regrab_follow_set` re-selects REF's feed as
+    `SELECTED`-whole, so leg-1 takes `place_moved_wire`'s pure-translation branch and the fixture's horizontal
+    orientation is preserved (grazing once the body moves under it). FIX: `insert_exit_stubs` turns its
+    single-grid slide into an OUTWARD SEARCH `d=1..6` for grazing feeds (own-body → continue; STATIONARY body
+    → break/decline; foreign short → continue), walking REF past LED's y=−130 to a clean y=−140 north exit;
+    non-grazing keeps `dmax==1` byte-identical. Dissolves D1 at the source in this fixture. Test extended (9
+    checks, 3 D2 RED pre-fix); wireedit 57/57 (the STATIONARY-body break closed a 0090-staircase regression).
+    **STILL LATENT (no test reaches it after the fix, so NOT fixed):** the ripup jog
+    (`fluid_ripup_foreign_pin_short` :4220 → `fluid_jog_pin_off_backbone` :4071) CAN still jog
+    the wrong pin (walks pin-pairs **in index order**, reaches the non-invader first) and its
+    verify (:4188) is **pin-pair-indexed + single-pin-net BLIND** (orphaned/merged singleton
+    ids :2483 ≡ START singleton :2481 → `partition_changed()==0` masks an orphan/weld). Add its
+    foreign-touch + no-orphan guard WITH a test that forces attempt=1 before touching that
+    load-bearing function. **Route-quality (defect C) — ROOTED (candidate #1)**: `get_pin_escape_normal`
+    now derives the moved pin's outward normal from the symbol **lead geometry**
+    (`get_pin_lead_normal`, move.c: pin-rect-centre tip → the `L` lead line ending there → tip−inner,
+    rotated by the inst rot/flip) instead of the text-inflated-bbox nearest-edge PROXY, gated
+    `fluid_editing` (legacy `wire_exit_stub` path byte-identical; ambiguous/absent lead falls through
+    to the proxy). This feeds the P6 L-elbow bias (`fluid_p6_bias_ml`), so TRIANG (solar_ctl rot1,
+    symbol +x lead → world +y/south) exits VERTICALLY rather than staircasing — and nmos4 bulk `b`
+    (near-centre) now escapes +x (its lead) not the proxy's −y (into the body). The raw ml default
+    (`recompute_orthogonal_manhattanline` actions.c, |dx| vs |dy|, tie→ml=2) is unchanged but overridden
+    by the p6 bias when a lead resolves; `dir=in|out` (electrical) is NOT used. Test
+    `tests/headless/wireedit/test_wireedit_28_escape_normal.tcl`.
+15. ~~**Body engulfs a same-net trunk NOT incident to a moved pin → saved through the body** (0136,
+    after_40)~~ **FIXED (0136)**. SE diagonal drag (+60,+30) of solar_ctl; accepted END attempt=0
+    leg-split (`diag_relay=0`, pure-ortho). CTRL1 reaches its label through a STATIONARY x=140 trunk the
+    advancing body now engulfs, connected to the moved pin (150,100) through a JOG (150,130)→(140,130) —
+    so the trunk column x=140 is NOT any moved pin's column. `fluid_shove_body_crossing_backbone` is
+    pin-incident (seeds the run at the pin's OWN column :7056/:7067/:7077) → invisible (all pins decline
+    `corners=0`); the diag_relay reroute/delete is gated off on the ortho path AND its nearest-outside
+    anchor is the pin's own riser end (the §11.9f situation that needed a SHOVE, not a reroute). FIX: new
+    `fluid_shove_jog_separated_trunk` (pass catalog) — TRANSLATE a PRE-EXISTING, LOAD-BEARING (bridge),
+    jog-separated same-net trunk 1 grid past the crossed body edge (x=140→170) + re-anchor attachments,
+    body-free + DOUBLE-verified, exact revert. Two over-fires gated during dev: a NOVEL detour leg
+    (novelty gate, wireedit_36 j) and a REDUNDANT user-ring edge (bridge gate, wireedit_45 U/T).
+    `doc/claude/issues/0136-*.md`, test `test_fluid_jog_separated_trunk_0136.tcl` (RED→GREEN, self-skips
+    without X); wireedit 57/57. **DEFERRED (defect 2, `neighbor-net-riser-near-miss`):** REF's #net2
+    riser `130 -130 130 -110` crosses the LED #net1 rail at (130,-120) — a 4-way crossing, NOT a short
+    (no endpoint coincidence); a separate REF/LED routing near-miss, no test yet.
+    **NOTE (0136 defect 2, superseded analysis):** the REF/LED crossing is TOPOLOGICALLY FORCED, not a
+    routable defect — REF{pin,src} and LED{pin,src} interleave on the convex hull (the two nets are
+    LINKED), so a crossing is forced by the Jordan curve theorem for ANY routing; before_39 carried it
+    too (at (-50,-140), near the sources), the drag only RELOCATED it to the pin-exit. There is also no
+    invariant against different-net wire crossings (WIRING §9: P1/P2/P3/P4/P5-BODY/P6/P7 — none forbid a
+    wire-wire cross; a non-endpoint cross is electrically correct, drawn with no junction dot). Left as-is
+    (WONTFIX class): not an invariant violation, and unremovable without moving a fixed terminal.
+16. ~~**Push-only pipeline leaves un-reclaimed retreat slack → non-minimal copper** (0137)~~ **FIXED
+    (0137).** Minimum copper is a first-class goal on EVERY move, not just P3/P5 compliance. The
+    push-through slide shoves a moved pin's perpendicular jog OUT on approach but nothing pulls it IN on
+    retreat; the stretched escape stub becomes pre-existing copper the straightener's novelty gate
+    protects, so the overshoot grows 2·δ per round trip (before_41: up30/dn30 → copper 130 vs minimal 70,
+    unbounded). FIX: `fluid_jog_is_moved_pin_escape_overshoot` re-admits exactly that reversal shape into
+    `fluid_straighten_reversals`, whose verified 0111 pin-landing slide compacts it to the 1-grid escape;
+    narrow (moved pin only = P7 guard; rot==flip==0; reversal-only = shorten-safe), never worse by the
+    pass's own exact-revert verify. `doc/claude/issues/0137-*.md`,
+    `test_fluid_compact_escape_stub_0137.tcl` (RED→GREEN), wireedit 57/57.
+    **Extended by 0138 (FIXED):** the reclaim BAILED on explicit (named) nets, so `after_41`'s TRIANG/CTRL1
+    crossbars stayed stranded (y=150/160) while the auto `#net` pins compacted. Fix opens the escape-overshoot
+    to named nets (buses excluded; verify keeps it rename-safe), adds an OUTWARD SEARCH (nearest verifying
+    row when a sibling holds the 1-grid row → CTRL1 y=140) and a BODY GUARD on every overshoot slide (so the
+    named-net reclaim never plows a device — keeps 0136 fixed). `doc/claude/issues/0138-*.md`,
+    `test_fluid_compact_named_crossbar_0138.tcl` (RED→GREEN, 13/13), stable fixpoint. **STILL OPEN (min-copper
+    family):** multi-jog staircases whose whole run could shift. Extend the predicate family RED-first as
+    cases surface.
+17. ~~**Second gesture buries a pin-tracked trunk in the moved body** (0139, after_42)~~ **FIXED (0139).**
+    Sibling of 0136, SAME fixture/symbol/pass. A TWO-gesture drag of solar_ctl: gesture 1 drags the LED
+    `#net1` crossbar to y=−130 (clear then), gesture 2 advances the body top to y=−140 engulfing it; the
+    moved pin's stub stretches south to the trapped elbow (80,−130) → crossbar threads the body. The 0136
+    `fluid_shove_jog_separated_trunk` — the pass built for exactly this — declined for TWO independent
+    over-strict gates: (a) its `!fluid_wire_is_novel_span` PRE-EXISTING gate read the crossbar as
+    this-drag copper because gesture 2 SHRANK its span (x2 90→80, the end tracked the LED column; per-arm
+    snapshot re-capture — landmine 11 dual); (b) its pin-partition LOAD-BEARING gate is BLIND to a
+    SINGLE-PIN net (`#net1` = LED + dead-end rail). FIX (3 parts): `fluid_wire_pretracked_shrink`
+    re-admits a collinear-inside-START, endpoint-on-moved-pin-column shrink; a WIRE cut-edge fallback
+    (flood with run doomed) for the 1-pin case; and the side loop STEPS the target grid-by-grid past a
+    NEIGHBOUR net (REF `#net2` at y=−170 → `#net1` to y=−180). Result: crossbar y=−130→−180, body-clear,
+    nets distinct (the rail's mid-span crossing of #net2 at (−50,−170) shares no endpoint → benign, per
+    0136 defect 2). `doc/claude/issues/0139-*.md`, `test_fluid_second_gesture_body_cross_0139.tcl`
+    (RED→GREEN 13/13, baseline fails exactly the 3 body-cross checks), wireedit 57/57, 0136 11/11.
 
 Below-cut (quality, keep on radar): elbow legs through pin-less stationary bodies (no
 body class in `fluid_ml_hazards`); two moved devices sharing a channel (NULL node treated
@@ -517,7 +791,8 @@ the historical issues pre-user.
 
 `move.c`: move_objects :5986 (START :6009, RUBBER :6112, END :6154), place_moved_wire
 :1149, compute_wire_slide :1539, insert_exit_stubs :1816, escape normal
-get_pin_escape_normal :1896, snapshots :2262-2328, novelty :2432-2478, partition/verify
+get_pin_escape_normal :1896 (0134: lead-geometry primary source `get_pin_lead_normal` just above it,
+fluid-gated; proxy is the fallback), snapshots :2262-2328, novelty :2432-2478, partition/verify
 :2232/2378/2496/3641, healers (§4 table), obstacle router :5148, restore/discard
 :5935/5955, regrab :5975, invariant check :5869, FLTRACE :1986.
 Track-D gesture context: `typedef struct {...} Fluid_gesture` + the one instance `fluid_g`

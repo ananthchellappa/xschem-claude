@@ -10,7 +10,8 @@ set fail 0
 proc check {n ok d} { global fail; if {$ok} { puts "ok:   $n $d" } else { puts "FAIL: $n $d"; incr fail } }
 proc f0 {fld} { return [lindex [lindex $::net_hilight_style 0] $fld] }   ;# row 0, field fld
 
-set ::USER_CONF_DIR [file join [pwd] _nhecells_[pid]] ; file delete -force $::USER_CONF_DIR ; file mkdir $::USER_CONF_DIR
+source [file join [file dirname [info script]] scratch.tcl]
+set ::USER_CONF_DIR [test_scratch nhecells]
 
 # --- pure helpers -------------------------------------------------------------
 set names [nhse_rgb_names]
@@ -66,7 +67,6 @@ set ::nhse_v(0,4) 30.0 ; nhse_commit
 check "C17 angle 30.0 stored as int 30" [expr {[f0 4] == 30 && [f0 4] ne {30.0}}] "(=> [f0 4])"
 
 catch {destroy .nhse}
-file delete -force $::USER_CONF_DIR
 if {$fail == 0} { puts "RESULT: ALL PASS" } else { puts "RESULT: $fail FAILED" }
 flush stdout
 exit [expr {$fail == 0 ? 0 : 1}]

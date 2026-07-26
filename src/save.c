@@ -5392,8 +5392,9 @@ void make_schematic_symbol_from_sel(void)
     draw();
     /* self-log only on the real edit: a cancelled Save dialog (empty filename) or a
      * name equal to the current schematic skips this whole block -> no phantom line.
-     * Covers menu/script; the Ctrl+H registered action logs `xschem make_sch_from_sel`
-     * via Layer A on success (deduped by this line via actionlog_cmd_logged). */
+     * ONLY log site for every entry: menu/script subcommand AND the Ctrl+Shift+H registered
+     * action -- its actions.csv row is nolog (issue 0124), so dispatch's Layer A fallback
+     * never fires (it used to phantom-log a cancelled dialog). */
     log_action("xschem make_sch_from_sel");
   }
 }
@@ -5780,12 +5781,17 @@ void save_selection(int what)
  }
  fprintf(fd, "v {xschem version=%s file_version=%s}\n", XSCHEM_VERSION, XSCHEM_FILE_VERSION);
  fprintf(fd, "G { %.16g %.16g }\n", xctx->mousex_snap, xctx->mousey_snap);
+ /* cross-view paste (doc/claude/specs/crossview_copy_paste.md): record the source view
+  * type so merge_file can transform pins when pasting into the other view type. Comment
+  * lines are discarded by every loader, so old readers are unaffected. */
+ fprintf(fd, "#XSCHEM_CLIPBOARD_VIEW=%s\n", editing_symbol_view() ? "symbol" : "schematic");
  for(i=0;i<xctx->lastsel; ++i)
  {
    c = xctx->sel_array[i].col;n = xctx->sel_array[i].n;
    switch(xctx->sel_array[i].type)
    {
      case xTEXT:
+      if(xctx->text[n].owner_pin_id) break; /* P1 S3: synthesized pin-name views never persist */
       fprintf(fd, "T ");
       save_ascii_string(xctx->text[n].txt_ptr,fd, 0);
       fprintf(fd, " %.16g %.16g %hd %hd %.16g %.16g ",

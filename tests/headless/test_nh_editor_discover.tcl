@@ -10,6 +10,7 @@ proc check {name ok detail} {
   global fail
   if {$ok} { puts "ok:   $name $detail" } else { puts "FAIL: $name $detail"; incr fail }
 }
+source [file join [file dirname [info script]] scratch.tcl]
 set id tools.net_hilight_style_editor
 
 # --- headless: the action-table row exists and is well-formed -----------------
@@ -39,8 +40,7 @@ check "D2d editor row absent -> -1"                 [expr {[palette_emphasis_ind
 
 # --- GUI-only checks (Tk present) ---------------------------------------------
 if {![catch {winfo exists .}]} {
-  set ::USER_CONF_DIR [file join [pwd] _nhediscover_[pid]]
-  file delete -force $::USER_CONF_DIR ; file mkdir $::USER_CONF_DIR
+  set ::USER_CONF_DIR [test_scratch nhediscover]
 
   # stub launcher: opens .nhse, flips seen, writes the marker
   set ::net_hilight_editor_seen 0
@@ -72,8 +72,6 @@ if {![catch {winfo exists .}]} {
   set fg [expr {$ei >= 0 ? [.cmd_palette.l itemcget $ei -foreground] : {}}]
   check "D5 palette colors the editor row (seen=0)" [expr {$ei >= 0 && $fg ne {}}] "(ei=$ei fg=$fg)"
   catch {destroy .cmd_palette}
-
-  file delete -force $::USER_CONF_DIR
 } else {
   puts "note: Tk absent (--nogui) -> skipped GUI checks D3/D4/D5"
 }

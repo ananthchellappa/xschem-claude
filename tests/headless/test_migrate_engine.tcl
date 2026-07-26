@@ -18,10 +18,10 @@ proc slurp {f} { set fp [open $f r]; set d [read $fp]; close $fp; return $d }
 # Tcl error popup whenever the test was launched from anywhere but src/.
 set repo [file normalize [file join [file dirname [info script]] .. ..]]
 set tool [file join $repo tools/migrate/xschem_libmigrate.py]
+source [file join $repo tests headless scratch.tcl]
 
 # --- flat source fixture: real resistor symbol + a schematic referencing it ---
-set tmp [file join /tmp _migeng_[pid]]
-file delete -force $tmp
+set tmp [test_scratch migeng]
 file mkdir $tmp/src/devices $tmp/src/des
 file copy [file join $repo xschem_library/devices/res.sym]     $tmp/src/devices/res.sym
 file copy [file join $repo xschem_library/devices/lab_pin.sym] $tmp/src/devices/lab_pin.sym
@@ -59,7 +59,6 @@ set spice $tmp/tb.spice
 set ok [expr {[file exists $spice] && [regexp -line {^R1 A B 1k} [slurp $spice]]}]
 check "ME5 netlist correct (R1 A B 1k)" $ok {}
 
-file delete -force $tmp
 if {$fail == 0} { puts "RESULT: ALL PASS" } else { puts "RESULT: $fail FAILED" }
 flush stdout
 exit [expr {$fail == 0 ? 0 : 1}]

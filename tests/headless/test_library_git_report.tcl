@@ -39,10 +39,13 @@ proc gcommit {repo msg args} {
 }
 
 # --- fixtures (real temp dir, NOT under any git repo) -----------------------
+# Case E only holds OUTSIDE any repo, so redirect the scratch helper to $TMPDIR:
+# its default (tests/headless/.scratch) is inside this repo and `git rev-parse`
+# would find that root instead of "".
 set tmpbase [expr {[info exists env(TMPDIR)] && $env(TMPDIR) ne {} ? $env(TMPDIR) : "/tmp"}]
-set tmp [file join $tmpbase _libgitrep_[pid]]
-file delete -force $tmp
-file mkdir $tmp
+set ::env(XSCHEM_TEST_SCRATCH) [file join $tmpbase xschem_test_scratch]
+source [file join $here scratch.tcl]
+set tmp [test_scratch libgitrep]
 
 # Case C: one bigger repo, two registered libraries sharing its root.
 set big [file join $tmp big]
@@ -120,7 +123,6 @@ check "HS1 history shows the devices commit" [string match "*history-marker-devi
 check "HS2 examples history excludes the devices-only commit" [expr {![string match "*history-marker-devices*" [val {lib_git_history_report {examples}}]]}] "(=> [val {lib_git_history_report {examples}}])"
 check "HS3 not-under-git library history degrades gracefully" [string match "*not under git*" [val {lib_git_history_report {plainlib}}]] {}
 
-file delete -force $tmp
 if {$fail == 0} { puts "RESULT: ALL PASS" } else { puts "RESULT: $fail FAILED" }
 flush stdout
 exit [expr {$fail == 0 ? 0 : 1}]

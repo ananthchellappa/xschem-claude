@@ -1,0 +1,29 @@
+v {xschem version=2.9.8 file_version=1.2}
+K {type=subcircuit
+format="@name @pinlist @symname"
+template="name=x1"
+}
+T {@symname} -63 -6 0 0 0.3 0.3 {}
+T {@name} 135 -92 0 0 0.2 0.2 {}
+L 4 -130 -80 130 -80 {}
+L 4 -130 80 130 80 {}
+L 4 -130 -80 -130 80 {}
+L 4 130 -80 130 80 {}
+B 5 -152.5 -72.5 -147.5 -67.5 {show_pinname=true name_dx=25 name_dy=-4 name_size=0.2 name=instr[31:0] dir=in name=p1 }
+L 4 -150 -70 -130 -70 {}
+B 5 147.5 -72.5 152.5 -67.5 {show_pinname=true name_dx=-25 name_dy=-4 name_size=0.2 name_flip=1 name=branch dir=out name=p2 }
+L 4 130 -70 150 -70 {}
+B 5 147.5 -52.5 152.5 -47.5 {show_pinname=true name_dx=-25 name_dy=-4 name_size=0.2 name_flip=1 name=jump dir=out name=p3 }
+L 4 130 -50 150 -50 {}
+B 5 147.5 -32.5 152.5 -27.5 {show_pinname=true name_dx=-25 name_dy=-4 name_size=0.2 name_flip=1 name=mem_to_reg dir=out name=p5 }
+L 4 130 -30 150 -30 {}
+B 5 147.5 -12.5 152.5 -7.5 {show_pinname=true name_dx=-25 name_dy=-4 name_size=0.2 name_flip=1 name=mem_write dir=out name=p6 }
+L 4 130 -10 150 -10 {}
+B 5 147.5 7.5 152.5 12.5 {show_pinname=true name_dx=-25 name_dy=-4 name_size=0.2 name_flip=1 name=reg_dst dir=out name=p7 }
+L 4 130 10 150 10 {}
+B 5 147.5 27.5 152.5 32.5 {show_pinname=true name_dx=-25 name_dy=-4 name_size=0.2 name_flip=1 name=reg_write dir=out name=p8 }
+L 4 130 30 150 30 {}
+B 5 147.5 47.5 152.5 52.5 {show_pinname=true name_dx=-25 name_dy=-4 name_size=0.2 name_flip=1 name=alucontrol[2:0] dir=out name=p4 }
+L 4 130 50 150 50 {}
+B 5 147.5 67.5 152.5 72.5 {show_pinname=true name_dx=-25 name_dy=-4 name_size=0.2 name_flip=1 name=alu_src dir=out name=p9 }
+L 4 130 70 150 70 {}

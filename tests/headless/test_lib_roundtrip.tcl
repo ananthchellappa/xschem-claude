@@ -25,8 +25,8 @@ proc slurp {f} { set fp [open $f r]; set d [read $fp]; close $fp; return $d }
 # and from anywhere else the copy failed with a startup Tcl error popup that
 # blocked to the audit timeout (same class as test_migrate_engine).
 set repo [file normalize [file join [file dirname [info script]] .. ..]]
-set tmp [file join /tmp _rt_test_[pid]]
-file delete -force $tmp
+source [file join [file dirname [info script]] scratch.tcl]
+set tmp [test_scratch rt_test]
 file mkdir $tmp/tlib/myres/symbol
 file copy [file join $repo xschem_library/devices/res.sym] $tmp/tlib/myres/symbol/myres.sym
 set defs [file join $tmp library.defs]
@@ -56,7 +56,7 @@ set A [slurp $schA]
 # --- RT1 — the saved file carries the portable lib-qualified reference -------
 check "RT1 saved file has C {tlib/myres}" [regexp {C \{tlib/myres\}} $A] {}
 # --- RT1b — and NOT an absolute path or the on-disk view path (neither the
-#     launch dir nor the /tmp fixture tree may leak into a saved reference) ---
+#     launch dir nor the scratch fixture tree may leak into a saved reference) -
 check "RT1b ref is not absolute/view path" \
   [expr {![regexp {symbol/myres\.sym} $A] && [string first [pwd] $A] < 0 && [string first $tmp $A] < 0}] {}
 # --- RT1c — the legacy reference is preserved verbatim (mixed mode) ----------
@@ -96,7 +96,6 @@ set schC [file join $tmp roundtrip3.sch]
 xschem saveas $schC schematic
 check "RT6 ref still lib-qualified after netlist" [regexp {C \{tlib/myres\}} [slurp $schC]] {}
 
-file delete -force $tmp
 if {$fail == 0} { puts "RESULT: ALL PASS" } else { puts "RESULT: $fail FAILED" }
 flush stdout
 exit [expr {$fail == 0 ? 0 : 1}]

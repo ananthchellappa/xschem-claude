@@ -9,7 +9,8 @@ if {[catch {winfo exists .}]} { puts "RESULT: SKIP (needs Tk/X; run with DISPLAY
 set fail 0
 proc check {n ok d} { global fail; if {$ok} { puts "ok:   $n $d" } else { puts "FAIL: $n $d"; incr fail } }
 
-set ::USER_CONF_DIR [file join [pwd] _nhealign_[pid]] ; file delete -force $::USER_CONF_DIR ; file mkdir $::USER_CONF_DIR
+source [file join [file dirname [info script]] scratch.tcl]
+set ::USER_CONF_DIR [test_scratch nhealign]
 
 set ::net_hilight_style {{0 4 1 {6 4} 0 0 none 0} {1 17 2 {} 0 0 none 0} {2 red 1 {2 3} 0 0 none 0}}
 catch {xschem update_net_hilight_style}
@@ -44,7 +45,6 @@ for {set c 1} {$c < 8} {incr c} {
 }
 
 catch {destroy .nhse}
-file delete -force $::USER_CONF_DIR
 if {$fail == 0} { puts "RESULT: ALL PASS" } else { puts "RESULT: $fail FAILED" }
 flush stdout
 exit [expr {$fail == 0 ? 0 : 1}]

@@ -26,6 +26,13 @@
 #define SET_MODMASK ( (rstate & Mod1Mask) || (rstate & Mod4Mask) )
 #define EQUAL_MODMASK ( (rstate == Mod1Mask) || (rstate == Mod4Mask) )
 
+/* How far (in SCREEN PIXELS) a Button1 press may travel before its release stops
+ * counting as a click on a graph. Real mice jitter a pixel or two on a click, so a
+ * zero-travel test would lose clicks; a few pixels is far below any intentional drag.
+ * Converted to xschem units at the comparison with xctx->zoom (units per pixel).
+ * Issue 0152. */
+#define GRAPH_CLICK_TOL 3.0
+
 /* Read-only guard. If the current window is marked read-only (xctx->readonly,
  * which is per-window), warn the user with a modal dialog and return 1 so the
  * caller aborts the edit; return 0 when editing is allowed. Only object-mutating
@@ -554,6 +561,16 @@ static int waves_callback(int event, int mx, int my, KeySym key, int button, int
 
   dbg(1, "uistate=%d, graph_flags=%d\n", xctx->ui_state, xctx->graph_flags);
   /* if(event != -3 && !xctx->raw) return 0; */
+  /* The snap grid is a schematic concept and does not apply to graphs (issue
+   * 0143 — user: "snap grid does not apply to graph windows"). Override the
+   * snapped pointer with the raw one for ALL graph interaction (box-zoom
+   * rectangle, pan, region detection, cursors) so a drag can select any
+   * sub-region, not grid steps. waves_callback only ever mutates graph tokens /
+   * cursors, never schematic geometry, and callback() returns right after this
+   * handler (the next event recomputes the snap), so this override is safe and
+   * does not leak into schematic editing. */
+  xctx->mousex_snap = xctx->mousex;
+  xctx->mousey_snap = xctx->mousey;
   rstate = state; /* rstate does not have ShiftMask bit, so easier to test for KeyPress events */
   rstate &= ~ShiftMask; /* don't use ShiftMask, identifying characters is sufficient */
   #if HAS_CAIRO==1
@@ -571,32 +588,53 @@ static int waves_callback(int event, int mx, int my, KeySym key, int button, int
     /* determine if mouse pointer is below xaxis or left of yaxis in some graph */
     setup_graph_data(i, 0, gr);
 
-   /* check if user clicked on a wave or a wave label -> draw wave in bold */
-    if(event == ButtonPress && button == Button3) {
-      /* button3 click on a wave */
-      if(POINTINSIDE(xctx->mousex, xctx->mousey, gr->x1, gr->y1, gr->x2 , gr->y2)) {
-        int wcnt, save;
-        save = gr->hilight_wave;
-        find_closest_wave(i, gr, &wcnt);
-        if(gr->hilight_wave >= 0) {
-          gr->hilight_wave = -1;
-          my_strdup2(_ALLOC_ID_, &r->prop_ptr,
-                     subst_token(r->prop_ptr, "hilight_wave", my_itoa(gr->hilight_wave)));
-        } else {
-          gr->hilight_wave = wcnt;
-          my_strdup2(_ALLOC_ID_, &r->prop_ptr,
-                     subst_token(r->prop_ptr, "hilight_wave", my_itoa(gr->hilight_wave)));
-        }
+   /* Remember where a Button1 press landed, so its release can tell a CLICK from the
+    * end of a drag (issue 0152). Kept in dedicated fields -- see the xschem.h comment
+    * on graph_press_x for why mx/my_double_save cannot be used here. */
+    if(event == ButtonPress && button == Button1) {
+      xctx->graph_press_x = xctx->mousex;
+      xctx->graph_press_y = xctx->mousey;
+    }
 
-        if(save != gr->hilight_wave) {
-          draw_graph(i, 1 + 8 + (xctx->graph_flags & (2 | 4 | 128 | 256)), gr, NULL); /* draw data in graph box */
-        }
-      /* button3 click on wave label */
-      } else {
-        if( edit_wave_attributes(2, i, gr)) {
-          draw_graph(i, 1 + 8 + (xctx->graph_flags & (2 | 4 | 128 | 256)), gr, NULL); /* draw data in graph box */
-          return 0;
-        }
+   /* Toggle bold ("selected") rendering of the wave nearest the pointer.
+    *
+    * This is a plain LMB CLICK on the plot body: the RELEASE of a Button1 press that
+    * did not travel more than GRAPH_CLICK_TOL pixels. It used to be a Button3 PRESS,
+    * which meant every RMB press-drag box-zoom (issue 0142) also bolded whatever trace
+    * was nearest the press point -- the reported defect. A release-with-no-travel
+    * trigger cannot be produced by any drag gesture, so the class is closed rather
+    * than moved. Button3 inside the plot body is now box-zoom only.
+    *
+    * The click deliberately WINS over a cursor grab armed by the same press (user
+    * decision): with no travel no cursor moved, and the ButtonRelease arm in the
+    * per-graph loop below clears the grab flags regardless.
+    *
+    * Applies to every graph, on-canvas schematic graphs included, not just the ASE
+    * waveform viewer. doc/claude/issues/0152-graph-rmb-bolds-wave.md */
+    if(event == ButtonRelease && button == Button1 &&
+       POINTINSIDE(xctx->mousex, xctx->mousey, gr->x1, gr->y1, gr->x2 , gr->y2) &&
+       fabs(xctx->mousex - xctx->graph_press_x) <= GRAPH_CLICK_TOL * xctx->zoom &&
+       fabs(xctx->mousey - xctx->graph_press_y) <= GRAPH_CLICK_TOL * xctx->zoom) {
+      int wcnt, save;
+      save = gr->hilight_wave;
+      find_closest_wave(i, gr, &wcnt);
+      /* NOTE (pre-existing semantics, kept): the test is on the CURRENT bold wave, not
+       * on wcnt -- so while any wave is bold a click anywhere in the body un-bolds it,
+       * and only a click with nothing bold selects the closest wave. */
+      if(gr->hilight_wave >= 0) gr->hilight_wave = -1;
+      else                      gr->hilight_wave = wcnt;
+      my_strdup2(_ALLOC_ID_, &r->prop_ptr,
+                 subst_token(r->prop_ptr, "hilight_wave", my_itoa(gr->hilight_wave)));
+      if(save != gr->hilight_wave) {
+        draw_graph(i, 1 + 8 + 16 + (xctx->graph_flags & (2 | 4 | 128 | 256)), gr, NULL); /* draw data in graph box */
+      }
+    }
+    /* button3 click on a wave label (outside the plot body) -> wave attributes dialog */
+    else if(event == ButtonPress && button == Button3 &&
+            !POINTINSIDE(xctx->mousex, xctx->mousey, gr->x1, gr->y1, gr->x2 , gr->y2)) {
+      if( edit_wave_attributes(2, i, gr)) {
+        draw_graph(i, 1 + 8 + 16 + (xctx->graph_flags & (2 | 4 | 128 | 256)), gr, NULL); /* draw data in graph box */
+        return 0;
       }
     }
 
@@ -870,6 +908,10 @@ static int waves_callback(int event, int mx, int my, KeySym key, int button, int
       }
     }
     else if(event == -3 && button == Button1) {
+      /* issue 0152: a double-click is press,release,`-3`,release -- invalidate the click
+       * anchor so the trailing release does not also toggle the wave bold on top of the
+       * attributes/properties dialog this opens. */
+      xctx->graph_press_x = xctx->graph_press_y = -1e30;
       if(!edit_wave_attributes(1, i, gr)) {
         tclvareval("graph_edit_properties ", my_itoa(i), NULL);
       }
@@ -1003,8 +1045,10 @@ static int waves_callback(int event, int mx, int my, KeySym key, int button, int
       !xctx->graph_top /* && !xctx->graph_bottom */
     ) {
     xctx->ui_state |= GRAPHPAN;
-    if(!xctx->graph_left) xctx->mx_double_save = xctx->mousex_snap;
-    if(xctx->graph_left) xctx->my_double_save = xctx->mousey_snap;
+    /* box-zoom needs BOTH press coords: an interior RMB drag zooms X and Y */
+    xctx->mx_double_save = xctx->mousex_snap;
+    xctx->my_double_save = xctx->mousey_snap;
+    xctx->graph_rubber_active = 0; /* fresh gesture: no rubber rect drawn yet */
   }
   dbg(1, "graph_master=%d\n", xctx->graph_master);
 
@@ -1056,6 +1100,44 @@ static int waves_callback(int event, int mx, int my, KeySym key, int button, int
     }
 
     if(xx1 == xx2) xx2 += 1e-6;
+  }
+  /* RMB interior drag: draw the live box-zoom rubber rectangle (both axes). gr
+   * is set up for the master graph (above). Each motion erases the previous
+   * outline via the tiled GC (restores the graph pixmap under it) then draws the
+   * new one in the selection color, exactly like the schematic zoom_rectangle.
+   * Display-only: drawtemprect no-ops when !has_x, so the headless box-zoom math
+   * below is unaffected. */
+  if(event == MotionNotify && (state & Button3Mask) && (xctx->ui_state & GRAPHPAN) &&
+     xctx->graph_master >= 0 && !xctx->graph_left && !xctx->graph_top && !xctx->graph_bottom) {
+    double xlo = gr->x1 < gr->x2 ? gr->x1 : gr->x2;
+    double xhi = gr->x1 < gr->x2 ? gr->x2 : gr->x1;
+    double ylo = gr->y1 < gr->y2 ? gr->y1 : gr->y2;
+    double yhi = gr->y1 < gr->y2 ? gr->y2 : gr->y1;
+    double cx2 = xctx->mousex_snap, cy2 = xctx->mousey_snap;
+    if(cx2 < xlo) cx2 = xlo; if(cx2 > xhi) cx2 = xhi;   /* clamp to the plot box */
+    if(cy2 < ylo) cy2 = ylo; if(cy2 > yhi) cy2 = yhi;
+    if(xctx->graph_rubber_active) { /* erase the previous outline */
+      double ex1 = xctx->mx_double_save, ey1 = xctx->my_double_save;
+      double ex2 = xctx->graph_rubber_x, ey2 = xctx->graph_rubber_y;
+      RECTORDER(ex1, ey1, ex2, ey2);
+      drawtemprect(xctx->gctiled, NOW, ex1, ey1, ex2, ey2);
+    }
+    { /* draw the new outline */
+      double dx1 = xctx->mx_double_save, dy1 = xctx->my_double_save, dx2 = cx2, dy2 = cy2;
+      RECTORDER(dx1, dy1, dx2, dy2);
+      drawtemprect(xctx->gc[SELLAYER], NOW, dx1, dy1, dx2, dy2);
+    }
+    xctx->graph_rubber_x = cx2;
+    xctx->graph_rubber_y = cy2;
+    xctx->graph_rubber_active = 1;
+  }
+  /* Button3 release: erase the last rubber outline before the zoom redraw */
+  if(event == ButtonRelease && button == Button3 && xctx->graph_rubber_active) {
+    double ex1 = xctx->mx_double_save, ey1 = xctx->my_double_save;
+    double ex2 = xctx->graph_rubber_x, ey2 = xctx->graph_rubber_y;
+    RECTORDER(ex1, ey1, ex2, ey2);
+    drawtemprect(xctx->gctiled, NOW, ex1, ey1, ex2, ey2);
+    xctx->graph_rubber_active = 0;
   }
   /* loop: after having operated on the master graph do the others */
   for(i=0; i< xctx->rects[GRIDLAYER]; ++i) {
@@ -1450,21 +1532,50 @@ static int waves_callback(int event, int mx, int my, KeySym key, int button, int
         xctx->ui_state &= ~GRAPHPAN;
         xctx->graph_flags &= ~(16 | 32 | 512 | 1024); /* clear move cursor flags */
       }
-      /* zoom X area by mouse drag */
+      /* zoom X+Y area by mouse drag (box zoom): X window across all
+       * participating graphs (as before), Y window on the master graph only
+       * (Y is per-graph). The Y branch mirrors the left-margin Y zoom below. */
       else if(button == Button3 && (xctx->ui_state & GRAPHPAN) &&
               !xctx->graph_left && !xctx->graph_top) {
-        /* selected or locked or master */
-        if(r->sel || (same_sim_type && !(r->flags & 2)) || i == xctx->graph_master) {
-          if(xctx->mx_double_save != xctx->mousex_snap) {
-            clear_graphpan_at_end = 1;
-
-            /* xx1 and xx2 calculated for master graph above */
-            my_strdup(_ALLOC_ID_, &r->prop_ptr, subst_token(r->prop_ptr, "x1", dtoa(xx1)));
-            my_strdup(_ALLOC_ID_, &r->prop_ptr, subst_token(r->prop_ptr, "x2", dtoa(xx2)));
-            need_redraw = 1;
-          } else if(i == xctx->graph_master) {
-            clear_graphpan_at_end = 1;
+        int xmoved = (xctx->mx_double_save != xctx->mousex_snap);
+        int ymoved = (xctx->my_double_save != xctx->mousey_snap);
+        /* X: selected or locked or master */
+        if(xmoved && (r->sel || (same_sim_type && !(r->flags & 2)) || i == xctx->graph_master)) {
+          clear_graphpan_at_end = 1;
+          /* xx1 and xx2 calculated for master graph above */
+          my_strdup(_ALLOC_ID_, &r->prop_ptr, subst_token(r->prop_ptr, "x1", dtoa(xx1)));
+          my_strdup(_ALLOC_ID_, &r->prop_ptr, subst_token(r->prop_ptr, "x2", dtoa(xx2)));
+          need_redraw = 1;
+        }
+        /* Y: master graph only */
+        if(ymoved && i == xctx->graph_master) {
+          double byy1, byy2;
+          clear_graphpan_at_end = 1;
+          if(!gr->digital) {
+            byy1 = G_Y(xctx->my_double_save);
+            byy2 = G_Y(xctx->mousey_snap);
+            if(state & ShiftMask) {
+              if(byy1 < byy2) { double tmp = byy1; byy1 = byy2; byy2 = tmp; }
+            } else {
+              if(byy2 < byy1) { double tmp = byy1; byy1 = byy2; byy2 = tmp; }
+            }
+            my_strdup(_ALLOC_ID_, &r->prop_ptr, subst_token(r->prop_ptr, "y1", dtoa(byy1)));
+            my_strdup(_ALLOC_ID_, &r->prop_ptr, subst_token(r->prop_ptr, "y2", dtoa(byy2)));
+          } else {
+            byy1 = DG_Y(xctx->my_double_save);
+            byy2 = DG_Y(xctx->mousey_snap);
+            if(state & ShiftMask) {
+              if(byy1 < byy2) { double tmp = byy1; byy1 = byy2; byy2 = tmp; }
+            } else {
+              if(byy2 < byy1) { double tmp = byy1; byy1 = byy2; byy2 = tmp; }
+            }
+            my_strdup(_ALLOC_ID_, &r->prop_ptr, subst_token(r->prop_ptr, "ypos1", dtoa(byy1)));
+            my_strdup(_ALLOC_ID_, &r->prop_ptr, subst_token(r->prop_ptr, "ypos2", dtoa(byy2)));
           }
+          need_redraw = 1;
+        }
+        if(!xmoved && !ymoved && i == xctx->graph_master) {
+          clear_graphpan_at_end = 1;
         }
       }
       /* zoom Y area by mouse drag */
@@ -1505,7 +1616,7 @@ static int waves_callback(int event, int mx, int my, KeySym key, int button, int
     } /* else if( event == ButtonRelease) */
     if(need_redraw || need_all_redraw || ( i == xctx->graph_master && need_redraw_master) ) {
       setup_graph_data(i, 0, gr);
-      draw_graph(i, 1 + 8 + (xctx->graph_flags & (4 | 2 | 128 | 256)), gr, NULL); /* draw data in each graph box */
+      draw_graph(i, 1 + 8 + 16 + (xctx->graph_flags & (4 | 2 | 128 | 256)), gr, NULL); /* draw data in each graph box */
     }
   } /* for(i=0; i< xctx->rects[GRIDLAYER]; i++ */
 
@@ -1621,6 +1732,16 @@ static void end_move_copy_logged(int is_copy)
   double ax = xctx->x1, ay = xctx->y1;
   /* mirror the END early-return: click on elements without motion does nothing */
   int nothing = xctx->drag_elements && dx == 0. && dy == 0.;
+
+  /* issue 0122 E1: count a COMMITTED Add-Pin/Add-Wire-Label FORM drop for the Tcl form queue.
+   * end_move_copy_logged is the only commit funnel (aborts are deleted in a different path and
+   * never reach here; an off-copper net-label refusal returns from wire_label_try_commit() before
+   * calling us). Gate on sympin_preview -- set ONLY by the three form -place arms (add_sch_pin /
+   * add_symbol_pin / add_wire_label, scheduler.c) and still 1 here (cleared AFTER this funnel) --
+   * so a NON-form START_SYMPIN placement that also uses this machinery (place_net_label,
+   * add_graph, add_image, image paste) does NOT bump the count and cannot make an armed form
+   * spuriously drain. Bump BEFORE the nothing/early returns so even a no-motion drop is recorded. */
+  if((ui & START_SYMPIN) && xctx->sympin_preview) xctx->sympin_drops++;
 
   if(is_copy) copy_objects(END);
   else        move_objects(END, 0, 0, 0);
@@ -1788,7 +1909,12 @@ static void log_pan_end(void)
 {
   double dx = xctx->xorigin - pan_log_xorig;
   double dy = xctx->yorigin - pan_log_yorig;
-  if(dx != 0. || dy != 0.) log_action("xschem pan %.16g %.16g", dx, dy);
+  /* dx/dy are a VIEWPORT delta (origin shift), NOT a coordinate on the snap grid --
+   * the origin is arbitrary, so snap_to_grid() does not apply here (unlike the pivot
+   * verbs / select_at). Pan is view-only (never touches schematic/netlist), so the
+   * shift need not be grid-aligned; %.10g (was %.16g) only trims the float noise a
+   * mouse-pixel*zoom delta accrues, keeping the log readable. */
+  if(dx != 0. || dy != 0.) log_action("xschem pan %.10g %.10g", dx, dy);
 }
 
 /* Cadence net-label drop gate (doc/claude/specs/add_wire_label.md). The armed wire-label
@@ -2583,29 +2709,54 @@ static int check_menu_start_commands(int state, double c_snap, int mx, int my)
        * routed through the boundary (Refactor B atom 4). perform_action->run_core owns its own
        * rebuild+START+FLIP|ROTATELOCAL+END, so it must NOT nest inside the shared START/END below. */
       perform_action("flip_in_place", 0, NULL);
-    } else {
-      move_objects(START,0,0,0);
-      switch(t) {
-        case PENDING_TR_FLIP:
-          move_objects(FLIP,0,0,0);
-          log_action("xschem flip %.16g %.16g", xctx->mx_double_save, xctx->my_double_save);
-          break;
-        case PENDING_TR_FLIPV:
-          move_objects(ROTATE,0,0,0); move_objects(ROTATE,0,0,0); move_objects(FLIP,0,0,0);
-          log_action("xschem flipv %.16g %.16g", xctx->mx_double_save, xctx->my_double_save);
-          break;
-        case PENDING_TR_FLIPV_IP:
-          move_objects(ROTATE|ROTATELOCAL,0,0,0); move_objects(ROTATE|ROTATELOCAL,0,0,0);
-          move_objects(FLIP|ROTATELOCAL,0,0,0);
-          log_action("xschem flipv_in_place");
-          break;
-        case PENDING_TR_ROTATE:
-        default:
-          move_objects(ROTATE,0,0,0);
-          log_action("xschem rotate %.16g %.16g", xctx->mx_double_save, xctx->my_double_save);
-          break;
-      }
-      move_objects(END,0,0,0);
+    } else if(t == PENDING_TR_FLIPV_IP) {
+      /* flipv_in_place standalone (verb-noun deferred apply): routed through the boundary
+       * (Refactor B atom 5). perform_action->run_core owns its own rebuild+START+ROTATE|
+       * ROTATELOCAL x2 + FLIP|ROTATELOCAL + END (a net vertical mirror), so it must NOT nest
+       * inside the shared START/END below. */
+      perform_action("flipv_in_place", 0, NULL);
+    } else if(t == PENDING_TR_ROTATE) {
+      /* PENDING_TR_ROTATE pivot verb (verb-noun deferred apply): the deferred PIVOT rotate crosses
+       * the boundary like the _IP cases above, but carries the click-point pivot (mx/my_double_save,
+       * seeded just above from mousex/y_snap). PULLED OUT of the shared move_objects(START) … switch
+       * … move_objects(END) block below (Refactor B atom 6): perform_action->run_core owns its own
+       * rebuild+seed-pivot+START+ROTATE+END and must NOT nest inside the outer START/END. run_core
+       * re-seeds mx/my_double_save = mousex/y_snap from the argv pivot, so the effect is unchanged.
+       * The flip/flipv PIVOT cases followed in atoms 7/8 -- all six arms now cross the boundary. */
+      char sx[64], sy[64]; const char *av[4];
+      my_snprintf(sx, S(sx), "%.16g", xctx->mx_double_save);
+      my_snprintf(sy, S(sy), "%.16g", xctx->my_double_save);
+      av[0] = "xschem"; av[1] = "rotate"; av[2] = sx; av[3] = sy;
+      perform_action("rotate", 4, av);
+    } else if(t == PENDING_TR_FLIP) {
+      /* PENDING_TR_FLIP pivot verb (verb-noun deferred apply): the deferred PIVOT flip crosses the
+       * boundary like PENDING_TR_ROTATE above, carrying the click-point pivot (mx/my_double_save,
+       * seeded just above from mousex/y_snap). PULLED OUT of the shared move_objects(START) … switch
+       * … move_objects(END) block below (Refactor B atom 7): perform_action->run_core owns its own
+       * rebuild+seed-pivot+START+FLIP+END and must NOT nest inside the outer START/END. run_core
+       * re-seeds mx/my_double_save = mousex/y_snap from the argv pivot, so the effect is unchanged.
+       * The flipv PIVOT case followed in atom 8 (its own else-if arm just below). */
+      char sx[64], sy[64]; const char *av[4];
+      my_snprintf(sx, S(sx), "%.16g", xctx->mx_double_save);
+      my_snprintf(sy, S(sy), "%.16g", xctx->my_double_save);
+      av[0] = "xschem"; av[1] = "flip"; av[2] = sx; av[3] = sy;
+      perform_action("flip", 4, av);
+    } else if(t == PENDING_TR_FLIPV) {
+      /* PENDING_TR_FLIPV pivot verb (verb-noun deferred apply): the deferred PIVOT flipv crosses the
+       * boundary like PENDING_TR_FLIP above, carrying the click-point pivot (mx/my_double_save, seeded
+       * just above from mousex/y_snap). PULLED OUT of the (now removed) shared move_objects(START) …
+       * switch … move_objects(END) block (Refactor B atom 8, the LAST pivot form): perform_action->
+       * run_core owns its own rebuild+seed-pivot+START+ROTATE+ROTATE+FLIP+END (net vertical mirror)
+       * and must NOT nest inside an outer START/END. run_core re-seeds mx/my_double_save = mousex/
+       * y_snap from the argv pivot, so the effect is unchanged. With this pull the shared block is
+       * EMPTY and removed -- the whole verb-noun transform chain is now six boundary arms, one
+       * perform_action each. An unexpected t simply no-ops off the end of the chain (which is armed
+       * only for the six PENDING_TR_* transform values -- no spurious default re-added). */
+      char sx[64], sy[64]; const char *av[4];
+      my_snprintf(sx, S(sx), "%.16g", xctx->mx_double_save);
+      my_snprintf(sy, S(sy), "%.16g", xctx->my_double_save);
+      av[0] = "xschem"; av[1] = "flipv"; av[2] = sx; av[3] = sy;
+      perform_action("flipv", 4, av);
     }
     xctx->ui_state &= ~MENUSTART;
     xctx->ui_state2 = 0;
@@ -3419,7 +3570,20 @@ void toggle_stretch_cmd(void)
   log_action("xschem set enable_stretch %d", tclgetboolvar("enable_stretch"));
 }
 static int act_toggle_stretch(const ActionEvent *e) { (void)e; toggle_stretch_cmd(); return 1; }
-static int act_toggle_ignore(const ActionEvent *e) { (void)e; toggle_ignore(); return 1; }
+/* Refactor B atom 12: the equivalent Shift+T key routes through the perform_action
+ * boundary (not the raw toggle_ignore()), exactly like the '&'/Alt-U inline keys.
+ * perform_action's rc is DISCARDED -- an ActionEvent handler returns 1 (event handled),
+ * NOT perform_action's TCL_OK(0)/TCL_ERROR(1), so `return perform_action(...)` would
+ * break the handler contract. The readonly gate this key already had (the registry
+ * `mutates=1` field -> dispatch_input_action's readonly_block, kept) blocks it BEFORE
+ * this handler runs on a read-only cell, so perform_action's own gate is redundant
+ * belt-and-suspenders here (it is load-bearing for the menu/script BRANCH, which had
+ * none). The key ALSO already logged `xschem toggle_ignore` via Layer A (d->log_cmd
+ * from actions.csv, not-nolog); routing through the boundary moves that log onto
+ * core_log_action -- and log_action sets actionlog_cmd_logged, so dispatch's Layer A
+ * copy DEDUPS to exactly ONE line. Net: same gate, same single log line, now via the
+ * unified boundary mechanism. */
+static int act_toggle_ignore(const ActionEvent *e) { (void)e; perform_action("toggle_ignore", 0, NULL); return 1; }
 static int act_snap_half(const ActionEvent *e)   { (void)e; view_snap_change(0); return 1; }
 static int act_snap_double(const ActionEvent *e) { (void)e; view_snap_change(1); return 1; }
 static int act_toggle_colorscheme(const ActionEvent *e) {
@@ -4753,9 +4917,10 @@ static int connected_drag_group_transform(void)
  * selected, transform the WHOLE selection as one rigid body about its grid-snapped bounding-box
  * centre (Cadence "treat the selection as one object" -- an in-place group rotate/flip), NOT each
  * object spun about its own origin (the old unconditional ROTATELOCAL). A single object keeps the
- * per-object in-place transform about its own 0,0. `what` is ROTATE or FLIP. Self-logs the matching
- * replay verb (group -> `xschem rotate|flip x y`; single -> `xschem rotate_in_place|flip_in_place`).
- * Caller has ensured lastsel>0 and passed the readonly guard. */
+ * per-object in-place transform about its own 0,0. `what` is ROTATE or FLIP. Records the matching
+ * replay verb via the perform_action boundary (group ROTATE -> `xschem rotate x y`, Refactor B
+ * atom 6; group FLIP -> `xschem flip x y`, atom 7; single -> `xschem rotate_in_place|flip_in_place`,
+ * atoms 3/4). Caller has ensured lastsel>0 and passed the readonly guard. */
 static void standalone_group_transform(int what, double c_snap)
 {
   if(connected_drag_group_transform()) {
@@ -4763,12 +4928,34 @@ static void standalone_group_transform(int what, double c_snap)
     calc_drawing_bbox(&bb, 1);
     px = my_round(((bb.x1 + bb.x2) * 0.5) / c_snap) * c_snap;
     py = my_round(((bb.y1 + bb.y2) * 0.5) / c_snap) * c_snap;
-    xctx->mx_double_save = xctx->mousex_snap = px;
-    xctx->my_double_save = xctx->mousey_snap = py;
-    move_objects(START,0,0,0);
-    move_objects(what,0,0,0);           /* group form: ROTATELOCAL dropped -> shared pivot (x1,y1) */
-    move_objects(END,0,0,0);
-    log_action("xschem %s %.16g %.16g", (what & ROTATE) ? "rotate" : "flip", px, py);
+    if(what & ROTATE) {
+      /* GROUP rotate (issue 0116): the whole selection spins rigidly about the grid-snapped bbox
+       * centre px,py. Route through the mutation boundary (Refactor B atom 6) -- perform_action->
+       * run_core owns the readonly gate + the rebuild+seed-pivot(px,py)+START+ROTATE+END effect
+       * (ROTATELOCAL dropped -> shared pivot, exactly the old group form) + the ONE
+       * `xschem rotate px py` log (core_log_action). The pivot is passed as argv[2]/argv[3];
+       * run_core re-seeds mx/my_double_save = mousex/y_snap = px,py from it. readonly was already
+       * refused by the caller (readonly_block at the Alt-R key). */
+      char sx[64], sy[64]; const char *av[4];
+      my_snprintf(sx, S(sx), "%.16g", px);
+      my_snprintf(sy, S(sy), "%.16g", py);
+      av[0] = "xschem"; av[1] = "rotate"; av[2] = sx; av[3] = sy;
+      perform_action("rotate", 4, av);
+    } else {
+      /* GROUP flip (what == FLIP): the whole selection mirrors rigidly about the grid-snapped bbox
+       * centre px,py. Route through the mutation boundary (Refactor B atom 7) -- perform_action->
+       * run_core owns the readonly gate + the rebuild+seed-pivot(px,py)+START+FLIP+END effect
+       * (ROTATELOCAL dropped -> shared pivot, exactly the old group form) + the ONE
+       * `xschem flip px py` log (core_log_action). The pivot is passed as argv[2]/argv[3]; run_core
+       * re-seeds mx/my_double_save = mousex/y_snap = px,py from it. readonly was already refused by
+       * the caller (readonly_block at the Alt-F key). After atom 7 both group arms (ROTATE + FLIP)
+       * cross the boundary. */
+      char sx[64], sy[64]; const char *av[4];
+      my_snprintf(sx, S(sx), "%.16g", px);
+      my_snprintf(sy, S(sy), "%.16g", py);
+      av[0] = "xschem"; av[1] = "flip"; av[2] = sx; av[3] = sy;
+      perform_action("flip", 4, av);
+    }
   } else {
     /* single-object standalone in-place transform: route through the mutation boundary
      * (Refactor B atom 3 rotate_in_place, atom 4 flip_in_place). perform_action owns the
@@ -5119,14 +5306,19 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
             xctx->menu_pending_transform = PENDING_TR_FLIP;
             statusmsg("Flip: click an object to flip", 1);
           } else {
-            xctx->mx_double_save=xctx->mousex_snap;
-            xctx->my_double_save=xctx->mousey_snap;
-            move_objects(START,0,0,0);
-            move_objects(FLIP,0,0,0);
-            move_objects(END,0,0,0);
-            /* self-log Shift-F flip keyboard shortcut (issue 0068); pivot = the anchor
-             * move_objects used, matching the scheduler `xschem flip x0 y0` form. */
-            log_action("xschem flip %.16g %.16g", xctx->mx_double_save, xctx->my_double_save);
+            /* standalone Shift-F (single-inline apply, no group form): route through the mutation
+             * boundary (Refactor B atom 7, mirror of Shift-R atom 6). perform_action->run_core owns
+             * the readonly gate + the rebuild+seed-pivot+START+FLIP+END effect + the ONE
+             * `xschem flip x y` log (core_log_action). The pivot is the mouse-snap point, passed as
+             * argv[2]/argv[3]; run_core re-seeds mx/my_double_save = mousex/y_snap from it exactly as
+             * this block did. readonly was already refused by readonly_block() at the top of case 'F'
+             * (which also guards the raw gesture arms + the arming path). issue 0068's "Shift-F logs
+             * nothing" note is now stale -- Shift-F self-logs its pivot form via the boundary. */
+            char sx[64], sy[64]; const char *av[4];
+            my_snprintf(sx, S(sx), "%.16g", xctx->mousex_snap);
+            my_snprintf(sy, S(sy), "%.16g", xctx->mousey_snap);
+            av[0] = "xschem"; av[1] = "flip"; av[2] = sx; av[3] = sy;
+            perform_action("flip", 4, av);
           }
         }
       }
@@ -5649,12 +5841,19 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
             xctx->menu_pending_transform = PENDING_TR_ROTATE;
             statusmsg("Rotate: click an object to rotate", 1);
           } else {
-            xctx->mx_double_save=xctx->mousex_snap;
-            xctx->my_double_save=xctx->mousey_snap;
-            move_objects(START,0,0,0);
-            move_objects(ROTATE,0,0,0);
-            move_objects(END,0,0,0);
-            log_action("xschem rotate %.16g %.16g", xctx->mx_double_save, xctx->my_double_save);
+            /* standalone Shift-R (single-inline apply, no group form): route through the mutation
+             * boundary (Refactor B atom 6). perform_action->run_core owns the readonly gate + the
+             * rebuild+seed-pivot+START+ROTATE+END effect + the ONE `xschem rotate x y` log
+             * (core_log_action). The pivot is the mouse-snap point, passed as argv[2]/argv[3];
+             * run_core re-seeds mx/my_double_save = mousex/y_snap from it exactly as this block
+             * did. readonly was already refused by readonly_block() at the top of case 'R' (which
+             * also guards the raw gesture arms + the arming path). issue 0068's "Shift-R logs
+             * nothing" note is now stale -- Shift-R self-logs its pivot form via the boundary. */
+            char sx[64], sy[64]; const char *av[4];
+            my_snprintf(sx, S(sx), "%.16g", xctx->mousex_snap);
+            my_snprintf(sy, S(sy), "%.16g", xctx->mousey_snap);
+            av[0] = "xschem"; av[1] = "rotate"; av[2] = sx; av[3] = sy;
+            perform_action("rotate", 4, av);
           }
         }
 
@@ -5723,13 +5922,20 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
 
     case 'S':
       if(rstate == 0) { /* change element order */
-        int had_sel;
+        /* Refactor B atom 21: the Shift-S key routes through the perform_action boundary (not the
+         * raw change_elem_order(-1)) with av[2]="-1" -- the break_wires Ctrl-! FLAG-arg pattern. The
+         * inline rebuild_selected_array + had_sel gate + change_elem_order(-1) + log_action are GONE
+         * (run_core rebuilds/guards; core_log_action logs the ONE value-preserving
+         * `xschem change_elem_order -1` line). The semaphore>=2 + readonly_block() key self-guards
+         * STAY (like break_wires's '!'/Ctrl-! keys) -- readonly_block() keeps the read-only messageBox
+         * this legacy-switch key posted, which the boundary's silent TCL_ERROR would drop (an
+         * ActionEvent-style handler DISCARDS perform_action's rc and falls through to break, the
+         * toggle_ignore atom-12 event-handled contract). C89: av at block top. */
+        const char *av[3];
         if(xctx->semaphore >= 2) break;
         if(readonly_block()) break;
-        rebuild_selected_array();
-        had_sel = xctx->lastsel;   /* nothing selected -> no-op; don't log a phantom edit */
-        change_elem_order(-1);
-        if(had_sel) log_action("xschem change_elem_order -1"); /* self-log Shift-S (issue 0068) */
+        av[0] = "xschem"; av[1] = "change_elem_order"; av[2] = "-1";
+        perform_action("change_elem_order", 3, av);
       }
       else if(rstate == ControlMask) { /* save as schematic */
         if(xctx->semaphore >= 2) break;
@@ -5856,14 +6062,14 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
             xctx->menu_pending_transform = PENDING_TR_FLIPV_IP;
             statusmsg("Vertical flip in place: click an object to flip", 1);
           } else {
-            xctx->mx_double_save=xctx->mousex_snap;
-            xctx->my_double_save=xctx->mousey_snap;
-            move_objects(START,0,0,0);
-            move_objects(ROTATE|ROTATELOCAL,0,0,0);
-            move_objects(ROTATE|ROTATELOCAL,0,0,0);
-            move_objects(FLIP|ROTATELOCAL,0,0,0);
-            move_objects(END,0,0,0);
-            log_action("xschem flipv_in_place"); /* self-log Alt-V shortcut (issue 0068) */
+            /* standalone vertical flip-in-place: route through the mutation boundary (Refactor B
+             * atom 5). perform_action owns the readonly gate + the ONE `xschem flipv_in_place`
+             * log site + the rebuild+START+ROTATE|ROTATELOCAL x2 + FLIP|ROTATELOCAL+END effect.
+             * Unlike Alt-R/Alt-F, Alt-V has NO standalone_group_transform (no issue-0116 group
+             * form): the standalone apply is always the per-object in-place flip, so the WHOLE
+             * apply crosses the boundary here. ROTATELOCAL pivots each object about its own origin,
+             * so the mx/my_double_save previously seeded here was immaterial to the transform. */
+            perform_action("flipv_in_place", 0, NULL);
           }
         }
       }
@@ -5890,14 +6096,20 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
             xctx->menu_pending_transform = PENDING_TR_FLIPV;
             statusmsg("Vertical flip: click an object to flip", 1);
           } else {
-            xctx->mx_double_save=xctx->mousex_snap;
-            xctx->my_double_save=xctx->mousey_snap;
-            move_objects(START,0,0,0);
-            move_objects(ROTATE,0,0,0);
-            move_objects(ROTATE,0,0,0);
-            move_objects(FLIP,0,0,0);
-            move_objects(END,0,0,0);
-            log_action("xschem flipv %.16g %.16g", xctx->mx_double_save, xctx->my_double_save);
+            /* standalone Shift-V (single-inline apply, no group form): route through the mutation
+             * boundary (Refactor B atom 8, the LAST pivot form, mirror of Shift-F atom 7).
+             * perform_action->run_core owns the readonly gate + the rebuild+seed-pivot+START+
+             * ROTATE+ROTATE+FLIP+END effect (net vertical mirror) + the ONE `xschem flipv x y` log
+             * (core_log_action). The pivot is the mouse-snap point, passed as argv[2]/argv[3];
+             * run_core re-seeds mx/my_double_save = mousex/y_snap from it exactly as this block did.
+             * readonly was already refused by readonly_block() at the top of case 'V' (which also
+             * guards the raw gesture arms + the arming path). Unlike Alt-R/Alt-F, Shift-V has NO
+             * standalone_group_transform (no group form), so this is flipv's only key entry site. */
+            char sx[64], sy[64]; const char *av[4];
+            my_snprintf(sx, S(sx), "%.16g", xctx->mousex_snap);
+            my_snprintf(sy, S(sy), "%.16g", xctx->mousey_snap);
+            av[0] = "xschem"; av[1] = "flipv"; av[2] = sx; av[3] = sy;
+            perform_action("flipv", 4, av);
           }
         }
       }
@@ -6365,10 +6577,23 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
 
     case '#':
       if((state & ControlMask)) {
-        check_unique_names(1);
+        /* Ctrl+#: rename duplicates -- route through the mutation boundary (Refactor B atom 26):
+         * readonly gate (was NONE -- a read-only cell was silently RENAMED) + effect + the ONE
+         * `xschem check_unique_names 1` log (was UNLOGGED -- a 0068-class legacy-switch gap; no
+         * keybindings.csv row exists, so this case is the only handler). rc DISCARDED (the
+         * toggle_ignore §32 / Shift-S §41 event-handled contract). No semaphore/readonly_block
+         * added: this key never had them (sibling keys only KEPT pre-existing guards);
+         * scheduler_readonly_reject's ciw_echo is the read-only feedback. C89: av at block top. */
+        const char *av[3];
+        av[0] = "xschem"; av[1] = "check_unique_names"; av[2] = "1";
+        perform_action("check_unique_names", 3, av);
       }
       else {
+        /* #: duplicate highlight -- read-only-legal, stays RAW + gains its own log, mirroring the
+         * scheduler branch's mode-0 front (asymmetric split, atom 26). ADDITIVE coverage: this key
+         * logged nothing before. */
         check_unique_names(0);
+        log_action("xschem check_unique_names 0");
       }
       break;
 
@@ -6388,17 +6613,27 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
       break;
 
     case '!':
+      /* Route through the single mutation boundary (Refactor B atom 9, scheduler.c):
+       * it owns the effect (break_wires_at_pins, which owns its own undo/draw) + the
+       * ONE `xschem break_wires [1]` log site (core_log_action canonicalizes the FLAG).
+       * The key-specific semaphore>=2 re-entrancy guard and the readonly_block() guard
+       * stay here (the key guards itself first, like the transform keys); no inline
+       * break_wires_at_pins()/log_action() remains. The Ctrl-! form carries the remove
+       * FLAG in av[2]="1" (the arg is a flag, not a coordinate pivot -- so no snprintf
+       * of a mouse coord, unlike the pivot keys Shift-R/F/V). */
       if((state & ControlMask)) {
         if(xctx->semaphore >= 2) break;
         if(readonly_block()) break;
-        break_wires_at_pins(1);
-        log_action("xschem break_wires 1"); /* self-log Ctrl-! shortcut (issue 0068) */
+        {
+          const char *av[3];
+          av[0] = "xschem"; av[1] = "break_wires"; av[2] = "1";
+          perform_action("break_wires", 3, av);
+        }
       }
       else {
         if(xctx->semaphore >= 2) break;
         if(readonly_block()) break;
-        break_wires_at_pins(0);
-        log_action("xschem break_wires"); /* self-log '!' shortcut (issue 0068) */
+        perform_action("break_wires", 0, NULL);
       }
       break;
 
@@ -6577,14 +6812,30 @@ static void handle_button_press(int event, int state, int rstate, KeySym key, in
         * path: with STARTMOVE already cleared and mouse_moved reset to 0 at press, that path would
         * otherwise collapse a moved multi-selection down to the single object under the cursor. */
        int had_move = (xctx->ui_state & (STARTMOVE | STARTCOPY)) ? 1 : 0;
+       /* issue 0123: a placement click witness. If a preview is live but STARTMOVE is absent, this
+        * press will MISS end_place_move_copy_zoom (STARTMOVE branch) and, without the guard below,
+        * would be stolen by the fluid tip-grab -- the exact desync that mis-routed Add-Pin. */
+       if(fluid_trace_on() &&
+          ((xctx->ui_state & (PLACE_SYMBOL | PLACE_TEXT | START_SYMPIN)) || xctx->sympin_preview))
+         fltrace("FLTRACE press: placement-live ui=%s sympin_preview=%d STARTMOVE=%d\n",
+                 fltrace_uistate(xctx->ui_state), xctx->sympin_preview,
+                 (xctx->ui_state & STARTMOVE) ? 1 : 0);
        if(end_place_move_copy_zoom()) {
          if(had_move) xctx->place_click_committed = 1;
          return;
        }
      }
 
-     /* Button1Press to select objects */
-     if(!excl && !(xctx->ui_state & STARTSELECT)) {
+     /* Button1Press to select objects.
+      * issue 0123 (secondary): while a placement preview is LIVE (a symbol/pin/text/sympin drop
+      * following the cursor) a plain press must NEVER be captured by the fluid tip-grab / wire-add /
+      * shape-point grab in this block -- that path calls move_objects(START), starting a spurious
+      * wire-stretch (and tripping the leaked-armed fluid tripwire) whenever STARTMOVE has been
+      * desynced from the live placement flags. The legit drop is committed just above by
+      * end_place_move_copy_zoom() (STARTMOVE set => it returns first); this guard only bites in the
+      * desync window, where declining the grab is strictly safer than stealing the click. */
+     if(!excl && !(xctx->ui_state & STARTSELECT) &&
+        !(xctx->ui_state & (PLACE_SYMBOL | PLACE_TEXT | START_SYMPIN)) && !xctx->sympin_preview) {
        Selected sel;
        int already_selected = 0;
        int did_snapshot = 0;   /* cadence deferred-selection: pre-press selection was captured */

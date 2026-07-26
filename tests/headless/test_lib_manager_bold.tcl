@@ -32,11 +32,11 @@ proc pick {col name handler} {
   $t selection set $name; $t focus $name
   eval $handler
 }
+source [file join [file dirname [info script]] scratch.tcl]
 
 # --- fixture: a git-backed library (tracked + untracked cells/views) and a
 #     second library that is not under git at all ------------------------------
-set tmp [file join [pwd] _bold_[pid]]
-file delete -force $tmp
+set tmp [test_scratch bold]
 set glib [file join $tmp glib]
 touch $glib/and2/symbol/and2.sym    "v {and2 sym}\n"   ;# will be committed -> tracked
 ginit $glib
@@ -83,7 +83,6 @@ check "BD4b untracked view not bold"  [expr {[bold view schematic] == 0}] "(=> [
 check "BD5 cell pane lists both cells" [expr {[lsearch [items cell] and2] >= 0 && [lsearch [items cell] or3] >= 0}] "(=> [items cell])"
 
 catch {destroy .libmgr}
-file delete -force $tmp
 if {$fail == 0} { puts "RESULT: ALL PASS" } else { puts "RESULT: $fail FAILED" }
 flush stdout
 exit [expr {$fail == 0 ? 0 : 1}]

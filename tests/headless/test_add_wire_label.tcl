@@ -169,7 +169,8 @@ xschem abort_operation
 # F. Symbol-view guard (review #6): in a .sym view add_wire_label -place is a no-op -- it must NOT
 #    push an undo baseline or wipe the selection (place_symbol refuses instances there anyway).
 # ---------------------------------------------------------------------------
-set symf [file join [pwd] _awl_[pid].sym]
+source [file join [file dirname [info script]] scratch.tcl]
+set symf [file join [test_scratch awl_sym] awl.sym]
 set fh [open $symf w]
 puts $fh "v {xschem version=3.4.8RC file_version=1.3}"
 puts $fh "G {}"; puts $fh "K {type=subcircuit}"; puts $fh "V {}"; puts $fh "S {}"; puts $fh "E {}"

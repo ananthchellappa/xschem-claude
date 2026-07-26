@@ -27,7 +27,7 @@ namespace eval saveform {
   variable lib    ""
   variable cell   ""
   variable view   ""
-  variable type   "schematic"   ;# buffer editor type (schematic|symbol) -> extension
+  variable type   "schematic"   ;# buffer editor type (schematic|symbol|ngspice_state*) -> extension
   variable seed   ""            ;# the buffer's current filename (dialog seed)
   variable result ""            ;# what save_as_cellview_dialog returns to C
 }
@@ -44,7 +44,12 @@ proc saveform::resolve_target {lib cell view type} {
   }
   set lp [xschem library $lib]
   if {$lp eq {}} { error "no such library: $lib" }
-  set ext [expr {$type eq "symbol" ? "sym" : "sch"}]
+  if {[string match ngspice_state* $type]} {
+    # ASE simulation-state views (doc/claude/specs/ase_l.md): <cell>.state
+    set ext state
+  } else {
+    set ext [expr {$type eq "symbol" ? "sym" : "sch"}]
+  }
   set path [file join $lp $cell $view "$cell.$ext"]
   file mkdir [file dirname $path]      ;# create the cell/view dirs if missing
   return $path
@@ -68,7 +73,11 @@ proc saveform::prefill {seed type} {
   } else {
     set base [file rootname [file tail $seed]]
     if {![string match "untitled*" $base]} { set cell $base }
-    set view [expr {$type eq "symbol" ? "symbol" : "schematic"}]
+    if {[string match ngspice_state* $type]} {
+      set view $type
+    } else {
+      set view [expr {$type eq "symbol" ? "symbol" : "schematic"}]
+    }
   }
 }
 

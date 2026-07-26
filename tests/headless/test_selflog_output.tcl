@@ -363,11 +363,15 @@ set b [count_lines "xschem print_hilight_net 1"]
 xschem print_hilight_net 1
 check "print_hilight_net 1 (print) self-logs" [expr {[count_lines "xschem print_hilight_net 1"] > $b}]
 
-# add_pin_stubs is gated on added>0: nothing selected -> declines -> no line.
+# add_pin_stubs migrated onto the perform_action boundary under option (c) NO-OP-STILL-LOGS (atom 25):
+# a nothing-selected no-op is a TCL_OK success, so it STILL self-logs one line -- the old `if(added>0)`
+# suppression is intentionally dropped (the §30 floaters / §44 delete property). See
+# doc/claude/code_analysis/perform_action_atom25_add_pin_stubs_returnvalue_condlog_decision.md.
 xschem unselect_all
 set b [count_pfx "xschem add_pin_stubs"]
 xschem add_pin_stubs
-check "add_pin_stubs no-op logs nothing (added==0)" [expr {[count_pfx "xschem add_pin_stubs"] == $b}]
+check "add_pin_stubs no-op STILL logs +1 (atom 25 option c no-op-still-logs)" \
+  [expr {[count_pfx "xschem add_pin_stubs"] == $b + 1}]
 
 # --- 3j. `xschem set` config/content sets (issue 0066) -----------------------
 # The set branch splits three ways (issue 0066 §5): saved-content mutations MUST

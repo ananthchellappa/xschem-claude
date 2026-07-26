@@ -1,0 +1,52 @@
+# sky130A/cadence_style_rc
+# Launch:  xschem --script /path/to/sky130A/cadence_style_rc [cell.sch]
+#
+# Cadence-style sky130 design workarea. Layers three things:
+#   1. the repo's Cadence UX + keybindings + forms (find_helper Ctrl+Shift+G,
+#      instance_update Ctrl+Shift+I, connected stretch/move, crosshair, ...);
+#   2. the migrated sky130 library registry in ./xschem_libs (Library Manager);
+#   3. the sky130 SPICE models in ./models + the sky130 helper procs/menu.
+# See doc/claude/specs/sky130_workarea.md.
+
+# Anchor on this file's own directory (repo/sky130A), so the workarea is relocatable
+# within the repo.
+set _ws [file dirname [file normalize [info script]]]
+
+# --- 1. Cadence UX + keybindings + forms (from the repo) --------------------
+# The repo rc sets its own OA registry (xschem_libs_newsym); we override it below.
+source [file join $_ws .. src cadence_style_rc]
+
+# --- 2. Library registry = the migrated sky130 tree -------------------------
+# Registry-only (Cadence): the Library Manager shows exactly the DEFINEs in this
+# tree's library.defs (sky130_fd_pr, sky130_stdcells, sky130_tests, mips_cpu,
+# stdcells) plus devices -> ../../xschem_libs_newsym/devices.
+set XSCHEM_LIBRARY_DEFS [file join $_ws xschem_libs library.defs]
+set library_registry_defs_only 1
+set XSCHEM_LIBRARY_PATH {}
+set library_default_layout nested
+set launch_library_manager 1
+
+# --- 3. Models + sky130 helper procs ----------------------------------------
+# corner.sym emits  .lib $::SKYWATER_MODELS/sky130.lib.spice <corner>
+set ::SKYWATER_MODELS [file join $_ws models libs.tech combined]
+# ASE-L default corner: preload the sky130 tt models in every fresh session /
+# state view. Stored in the PORTABLE $::VAR form (ase::expand_path resolves it
+# at deck time) so state files stay git-portable.
+set ::ASE_DEFAULT_MODELS [list [list file {$::SKYWATER_MODELS/sky130.lib.spice} section tt]]
+# PDK/PDK_ROOT are referenced by a couple of the helper procs' status strings.
+if {![info exists ::env(PDK)]}      { set ::env(PDK) sky130A }
+source [file join $_ws sky130_procs.tcl]
+
+# Run the SKY130 menu builder after each window is created (append, don't clobber
+# any startup command the repo rc may have set).
+if {[info exists user_startup_commands]} {
+  append user_startup_commands "\nsky130_menupdk\n"
+} else {
+  set user_startup_commands "sky130_menupdk\n"
+}
+
+# ASE-L shows values in engineering notation (e.g. 104u). To recover
+# scientific notation, uncomment:
+# set ase_eng_notation 0
+
+unset _ws

@@ -21,8 +21,8 @@ proc nrows {body} {
 
 # Isolate from the real ~/.xschem: opening the editor auto-writes the seen marker, so point
 # USER_CONF_DIR at a throwaway dir (cleaned up at the end).
-set ::USER_CONF_DIR [file join [pwd] _nhetable_[pid]]
-file delete -force $::USER_CONF_DIR ; file mkdir $::USER_CONF_DIR
+source [file join [file dirname [info script]] scratch.tcl]
+set ::USER_CONF_DIR [test_scratch nhetable]
 
 set body .nhse.tbl.sf.body
 
@@ -52,7 +52,6 @@ update idletasks
 check "T11 reopen reflects external change (1 row)" [expr {[nrows $body] == 1}] "(=> [nrows $body])"
 
 catch {destroy .nhse}
-file delete -force $::USER_CONF_DIR
 if {$fail == 0} { puts "RESULT: ALL PASS" } else { puts "RESULT: $fail FAILED" }
 flush stdout
 exit [expr {$fail == 0 ? 0 : 1}]

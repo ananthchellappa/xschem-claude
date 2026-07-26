@@ -1062,6 +1062,10 @@ typedef struct {
   int rainbow; /* draw multiple datasets with incrementing colors */
   double linewidth_mult; /* multiply factor for waveforms line width */
   double hcursor1_y, hcursor2_y; /* hcursor positions */
+  int active; /* issue 0151: this graph is the ASE viewer's TARGET strip (prop token
+               * `active=1`) -> draw_graph paints the dull-yellow right-edge marker.
+               * Only the waveform viewer ever writes the token, so ordinary
+               * schematic graphs are unaffected. */
 } Graph_ctx;
 
 typedef struct {
@@ -1192,6 +1196,12 @@ typedef struct {
                        * (lab_pin) under the "must land on copper" drop constraint. Set together
                        * with sympin_preview at arm; cleared alongside it. When set, the drop gate
                        * (wire_label_try_commit) refuses a click that is not on a wire/inst pin. */
+  int sympin_drops;  /* issue 0122 E1: monotonic count of COMMITTED sympin drops (Add-Pin /
+                       * Add-Wire-Label). Bumped only in end_move_copy_logged (the single commit
+                       * funnel; aborts and off-copper label refusals never reach it). The Tcl
+                       * form procs snapshot `xschem get sympin_drops` at arm and compare after a
+                       * drop: an unchanged count means NO real drop happened (an external gesture
+                       * aborted the preview), so the queue/name entry must NOT drain. */
   Selected *sel_array;
   Selected first_sel; /* first selected instance (used as master when editing multiple objects) */
   int prep_net_structs;
@@ -1265,6 +1275,10 @@ typedef struct {
   GC gc_flyline;        /* fly-line overlay: dashed thin colored GC (flylines_color/width/dash) */
   GC gc_hilight;        /* net highlight scratch GC: reconfigured per wire from the
                          * NetHilightStyle (color+width+dash) at draw time */
+  GC gc_graph_active;   /* ASE waveform viewer active-strip marker: a solid dull-yellow
+                         * bar at the right edge of the TARGET graph (issue 0151,
+                         * doc/claude/specs/waveform_viewer_modes.md). Color from
+                         * graph_active_strip_color, set in build_colors(). */
   char **color_array;
   unsigned int color_index[256];
   XColor xcolor_array[256];
@@ -1478,8 +1492,16 @@ typedef struct {
   int graph_flags;
   int graph_master; /* graph where mouse operations are started, used to lock x-axis */
   int graph_top; /* regions of graph where mouse events occur */
-  int graph_bottom; 
+  int graph_bottom;
   int graph_left;
+  int graph_rubber_active; /* RMB interior-drag zoom-rubber rectangle in progress */
+  double graph_rubber_x, graph_rubber_y; /* last-drawn rubber moving corner (xschem coords) */
+  /* Button1 press anchor for the wave-bold CLICK test (issue 0152). Deliberately NOT
+   * mx/my_double_save: the Button1 graph drag-pan re-seeds those on every motion step
+   * (waves_callback save_mouse_at_end), so at the end of a long pan they equal the
+   * current pointer and a click test against them would fire. Set to the raw pointer
+   * on every Button1 press over a graph, invalidated by a double-click. */
+  double graph_press_x, graph_press_y;
   int graph_lastsel; /* last graph that was clicked (selected) */
   /*    */
   XSegment *biggridpoint;
@@ -1493,6 +1515,9 @@ typedef struct {
   int draw_single_layer;
   int draw_dots;
   int only_probes;
+  int no_grid; /* per-window grid/origin suppression (Waveform Viewer: the window
+                * reads as a graph, not a schematic). NOT mirrored in Tcl -- scoped
+                * to this ctx only; see doc/claude/specs/waveform_viewer.md item 18 */
   int menu_removed; /* fullscreen previous setting */
   double save_lw; /* used to save linewidth when selecting 'only_probes' view */
   int no_draw;
@@ -2039,6 +2064,8 @@ extern void mem_clear_undo(void);
 extern int load_schematic(int load_symbol, const char *fname, int reset_undo, int alert);
 /* check if filename already in an open window/tab */
 extern int get_tab_or_window_number(const char *win_path);
+/* next Cadence-style window number (window_numbering.md counter; ASE-L toplevels) */
+extern int allocate_window_number(void);
 extern void swap_tabs(void);
 extern void swap_windows(int dr);
 extern int check_loaded(const char *f, char *win_path);
@@ -2090,6 +2117,13 @@ extern void fluid_gesture_free(void);
  * unknown / MANUAL_SITE name. */
 extern int fluid_harness_snapshot_arm(void);
 extern int fluid_harness_run_pass(const char *name);
+/* FLUID_TRACE diagnostic (issue 0083/0123): on-flag, line writer, ui_state stringify, and the
+ * runtime start/stop used by the Help>Debug menu (`xschem fluid_trace start|stop`). */
+extern int fluid_trace_on(void);
+extern void fltrace(const char *fmt, ...);
+extern const char *fltrace_uistate(unsigned int s);
+extern const char *fltrace_runtime_start(const char *path);
+extern const char *fltrace_runtime_stop(void);
 extern void check_collapsing_objects();
 extern void redraw_w_a_l_r_p_z_rubbers(int force); /* redraw wire, arcs, line, polygon rubbers */
 extern void copy_objects(int what);
@@ -2263,6 +2297,10 @@ extern const char *expandlabel(const char *s, int *m);
 extern void parse(const char *s);
 extern void clear_expandlabel_data(void);
 extern void merge_file(int selection_load, const char ext[]);
+/* cross-view pin mapping helpers (paste.c; shared with set_pin_type in scheduler.c) */
+extern const char *pin_sym_dir(const char *name);
+extern const char *dir_pin_sym(const char *dir);
+extern const char *dir_literal(const char *d);
 extern void select_wire(int i, unsigned short select_mode, int fast, int override_lock);
 extern void select_element(int i, unsigned short select_mode, int fast, int override_lock);
 extern void select_pin(int i, int j, unsigned short select_mode, int fast);

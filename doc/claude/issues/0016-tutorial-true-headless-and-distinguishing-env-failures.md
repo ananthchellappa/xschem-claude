@@ -159,9 +159,27 @@ illusions collapsed. A bare `FATAL` count would never have revealed either.
 - **`-q` exits non-zero on fall-through.** An xschem `--script` that simply reaches
   end-of-file under `-q` exits with a non-zero code (observed rc=10), which Tcl
   `exec` reports as "child process exited abnormally." End headless test scripts with
-  an explicit `exit 0` on success so the runner gets a clean code. (Note:
+  an explicit `exit 0` on success so the runner gets a clean code.
+
+  **CORRECTED 2026-07-25 (see issue 0147).** This bullet used to add: *"note:
   `run_regression.tcl`'s last line has always thrown this benign error for the
-  `xschemtest.tcl` source-check; it is cosmetic and post-dates all real tests.)
+  `xschemtest.tcl` source-check; it is cosmetic and post-dates all real tests."*
+  That is true **only** of the rc=10 fall-through described above, on a run where
+  the binary actually launched. It is **wrong**, and was actively misleading, for
+  the *other* error the same line produces:
+
+  ```
+  couldn't execute "xschem": no such file or directory
+  ```
+
+  That one is **not** cosmetic — it means `$xschem_cmd` never resolved, so every
+  case in the whole run also failed to spawn (issue 0147). Dismissing it as
+  expected noise is exactly what let a fully non-functional suite look
+  "known-broken but fine" for weeks. Distinguish by the message: *"child process
+  exited abnormally"* = benign fall-through; *"couldn't execute"* / `exit 127` =
+  the binary was never found, and **nothing in that run means anything**.
+  (`run_regression.tcl` now `catch`es this line and records it as a FAIL instead
+  of aborting the interpreter.)
 
 - **Sourcing ≠ running.** `xschem --script xschemtest.tcl` only *defines* procs;
   the actual `xschemtest` call at the bottom of the file is commented out. So even

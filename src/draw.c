@@ -95,6 +95,15 @@ int textclip(int x1,int y1,int x2,int y2,
  return 1;
 }
 
+/* issue 0151: suppress ON-SCREEN-only UI decorations (currently the ASE viewer's
+ * active-strip marker) while rendering to an export drawable. print_image() renders
+ * through draw(), not through the export-specific draw_graph() callers, so it cannot
+ * be gated by withholding draw_graph's flags bit 16 at the call site the way
+ * svg_embedded_graph()/ps_embedded_graph() are — draw() consults this flag instead.
+ * Bracketed like save_draw_grid/do_copy_area below; single-threaded, so a file
+ * static is enough. */
+static int draw_no_ui_decorations = 0;
+
 void print_image()
 {
   #if HAS_CAIRO == 0
@@ -126,7 +135,9 @@ void print_image()
   xctx->draw_pixmap=1;
   save = xctx->do_copy_area;
   xctx->do_copy_area=0;
+  draw_no_ui_decorations = 1; /* issue 0151: no active-strip marker in exported images */
   draw();
+  draw_no_ui_decorations = 0;
 
 
   #if HAS_CAIRO == 1 /* use cairo native support for png writing, no need to convert
@@ -1143,8 +1154,11 @@ static void drawgrid()
    * of this function is only reached on the grid-ON path), so draw_selection() then stroked
    * the grey selection overlay dashed/broken -- the CTRL-G bug. The axis lines this sets up
    * are all drawn below the guard too, so nothing is lost on the grid-OFF path.
-   * See doc/claude/issues/0082-grid-toggle-corrupts-selection-gc.md */
-  if( !tclgetboolvar("draw_grid") || !has_x) return;
+   * See doc/claude/issues/0082-grid-toggle-corrupts-selection-gc.md
+   * xctx->no_grid stays FIRST (per-window grid-off, Waveform Viewer, item 18):
+   * it must short-circuit before the shared-GC dash setup below, exactly like the
+   * draw_grid guard it joins -- see doc/claude/specs/waveform_viewer.md. */
+  if( xctx->no_grid || !tclgetboolvar("draw_grid") || !has_x) return;
   #if DRAW_ALL_CAIRO==0
   if(axes) {
     dash_arr[0] = dash_arr[1] = (char) 3;
@@ -2889,8 +2903,19 @@ int graph_fullxzoom(int i, Graph_ctx *gr, int dataset)
     char *sim_type = NULL;
     int k, save_datasets = -1, save_npoints = -1;
     int autoload = 0;
+    int master;
     Raw *raw = NULL;
     const char *ptr;
+
+    /* xctx->graph_master is MOUSE state: waves_selected() sets it to -1 whenever the
+     * pointer is not over a graph (callback.c). A programmatic full zoom
+     * (`xschem setprop rect 2 n fullxzoom`, see doc/claude/specs/waveform_viewer.md)
+     * can therefore run with graph_master == -1 (or stale beyond the rect count after
+     * a canvas rebuild) and the unguarded xctx->rect[GRIDLAYER][xctx->graph_master]
+     * reads below walked off the array -> intermittent SIGSEGV. Out-of-range master ->
+     * treat the target graph as its own master. */
+    master = xctx->graph_master;
+    if(master < 0 || master >= xctx->rects[GRIDLAYER]) master = i;
 
     raw = xctx->raw;
     autoload = !strboolcmp(get_tok_value(r->prop_ptr,"autoload", 0), "true");
@@ -2903,7 +2928,7 @@ int graph_fullxzoom(int i, Graph_ctx *gr, int dataset)
       my_strdup2(_ALLOC_ID_, &custom_rawfile, ptr);
     }
     my_strdup2(_ALLOC_ID_, &sim_type, get_tok_value(r->prop_ptr,"sim_type", 0));
-    if((i == xctx->graph_master) && custom_rawfile[0]) {
+    if((i == master) && custom_rawfile[0]) {
       if(!extra_rawfile(autoload, custom_rawfile, sim_type[0] ? sim_type : xctx->raw->sim_type, -1.0, -1.0)) {
         if(custom_rawfile) my_free(_ALLOC_ID_, &custom_rawfile);
         if(sim_type) my_free(_ALLOC_ID_, &sim_type);
@@ -2913,9 +2938,9 @@ int graph_fullxzoom(int i, Graph_ctx *gr, int dataset)
     idx = get_raw_index(find_nth(get_tok_value(r->prop_ptr, "sweep", 0), ", ", "\"", 0, 1), NULL);
     dbg(1, "graph_fullxzoom(): sweep idx=%d\n", idx);
     if(idx < 0 ) idx = 0;
-    if(i != xctx->graph_master ) {
+    if(i != master ) {
 
-      ptr = get_tok_value(xctx->rect[GRIDLAYER][xctx->graph_master].prop_ptr,"rawfile", 0);
+      ptr = get_tok_value(xctx->rect[GRIDLAYER][master].prop_ptr,"rawfile", 0);
       if(!ptr[0]) {
         if(raw && raw->rawfile) my_strdup2(_ALLOC_ID_, &custom_rawfile, raw->rawfile);
         else  my_strdup2(_ALLOC_ID_, &custom_rawfile, "");
@@ -2924,7 +2949,7 @@ int graph_fullxzoom(int i, Graph_ctx *gr, int dataset)
       }
 
       my_strdup2(_ALLOC_ID_, &sim_type,
-        get_tok_value(xctx->rect[GRIDLAYER][xctx->graph_master].prop_ptr,"sim_type", 0));
+        get_tok_value(xctx->rect[GRIDLAYER][master].prop_ptr,"sim_type", 0));
       if(custom_rawfile[0]) {
         if(!extra_rawfile(autoload, custom_rawfile, sim_type[0] ? sim_type : xctx->raw->sim_type, -1.0, -1.0)) {
           if(custom_rawfile) my_free(_ALLOC_ID_, &custom_rawfile);
@@ -3520,6 +3545,13 @@ void setup_graph_data(int i, int skip, Graph_ctx *gr)
   gr->logx = gr->logy = 0;
   gr->digital = 0;
   gr->rainbow = 0;
+  /* issue 0151: ASE viewer target-strip marker. Defaulted (and parsed) HERE,
+   * BEFORE the RECT_OUTSIDE early return below: gr is the SHARED
+   * xctx->graph_struct reused for every graph, so an off-screen graph that
+   * returned early would otherwise inherit the previous graph's value. */
+  gr->active = 0;
+  val = get_tok_value(r->prop_ptr,"active", 0);
+  if(val[0]) gr->active = atoi(val);
   gr->linewidth_mult = tclgetdoublevar("graph_linewidth_mult");
   xctx->graph_flags &= ~(128 | 256); /* clear hcursor flags */
   gr->hcursor1_y = gr->hcursor2_y = 0.0;
@@ -4531,6 +4563,10 @@ int find_closest_wave(int i, Graph_ctx *gr, int *node_number)
  * 128: draw y-cursor1
  * 256: draw y-cursor2
  *  8: all drawing, if not set do only XCopyArea / x-cursor if specified
+ * 16: ON-SCREEN draw: also paint the ASE viewer's active-strip marker when the
+ *     graph carries `active=1` (issue 0151). Set by draw_graph_all() and by the
+ *     interactive partial-redraw callers (callback.c, `xschem draw_graph`), NOT
+ *     by the SVG/PS export callers — a printed schematic carries no UI marker.
  * ct is a pointer used in windows for cairo
  */
 void draw_graph(int i, int flags, Graph_ctx *gr, void *ct)
@@ -4938,6 +4974,37 @@ void draw_graph(int i, int flags, Graph_ctx *gr, void *ct)
     /* hcursor2 */
     if(flags & 256) draw_hcursor(gr->hcursor2_y, 19, gr);
     bbox(END, 0.0, 0.0, 0.0, 0.0);
+  }
+  /* issue 0151: ASE waveform viewer ACTIVE-STRIP marker — a solid dull-yellow
+   * bar down the right edge of the target strip, full container height. Only
+   * the viewer ever writes the `active` prop token (wviewer::graph_props), and
+   * only while more than one strip is up, so ordinary schematic graphs are
+   * untouched. flags bit 16 = "on-screen draw": set by draw_graph_all and by
+   * the interactive partial-redraw callers, NOT by the SVG/PS export callers —
+   * a printed schematic must not carry a UI marker. Drawn here, inside
+   * draw_graph, because every partial graph repaint starts by refilling the
+   * whole container box (draw_graph_grid), which would erase anything painted
+   * from outside. */
+  if((flags & 16) && gr->active && has_x) {
+    double bx1, by1, bx2, by2;
+    int w = tclgetintvar("graph_active_strip_width");
+    dbg(1, "draw_graph(): active-strip marker on graph %d\n", i);
+    if(w <= 0) w = 5;
+    bx2 = gr->sx2;
+    bx1 = gr->sx2 - w;
+    by1 = gr->sy1;
+    by2 = gr->sy2;
+    /* screen-space clip: the GC has no clip mask, and 16-bit X coordinate
+     * fields wrap on huge off-screen values (draw_hilight_dot's lesson) */
+    if(rectclip(xctx->areax1, xctx->areay1, xctx->areax2, xctx->areay2,
+                &bx1, &by1, &bx2, &by2)) {
+      if(xctx->draw_window)
+        XFillRectangle(display, xctx->window, xctx->gc_graph_active,
+          (int)bx1, (int)by1, (unsigned int)(bx2 - bx1), (unsigned int)(by2 - by1));
+      if(xctx->draw_pixmap)
+        XFillRectangle(display, xctx->save_pixmap, xctx->gc_graph_active,
+          (int)bx1, (int)by1, (unsigned int)(bx2 - bx1), (unsigned int)(by2 - by1));
+    }
   }
   if(flags & 1) { /* copy save buffer to screen */
     if(!xctx->draw_window) {
@@ -5947,7 +6014,10 @@ void draw(void)
     if(!xctx->only_probes) drawgrid();
     /* 2: draw cursor 1
      * 4: draw cursor 2 */
-    draw_graph_all((xctx->graph_flags & (2 | 4)) + 8); /* xctx->graph_flags for cursors */
+    /* +16: on-screen draw -> the ASE viewer active-strip marker (issue 0151);
+     * dropped while print_image() renders an export drawable */
+    draw_graph_all((xctx->graph_flags & (2 | 4)) + 8 +
+                   (draw_no_ui_decorations ? 0 : 16)); /* xctx->graph_flags for cursors */
     draw_images_all();
 
     x1 = X_TO_XSCHEM(xctx->areax1);

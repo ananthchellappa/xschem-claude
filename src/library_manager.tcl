@@ -427,8 +427,28 @@ proc libmgr::selection {} {
   return $out
 }
 
+# View-type dispatch table (the item-02/03 ASE dispatch seam,
+# doc/claude/specs/ase_l.md): which handler opens a view. When the resolved
+# datafile $path is given its EXTENSION is authoritative (codebase doctrine: a
+# view's editor type comes from its <cell>.<ext> datafile, not its label —
+# library_defs.tcl cellview_resolve), which makes both mismatch directions
+# safe: a view named 'mystate' holding a .state never reaches `xschem load`,
+# and a view named 'ngspice_state1' holding a .sch still opens in the editor.
+# Without a path the view NAME decides (ngspice_state* -> ASE). Returns the
+# handler `ase::open_state` (called as `<handler> $lib $cell $view`) or the
+# token `editor` (status-quo load arms).
+proc libmgr::view_handler {view {path {}}} {
+  if {$path ne {}} {
+    if {[file extension $path] eq {.state}} { return ase::open_state }
+    return editor
+  }
+  if {[string match ngspice_state* $view]} { return ase::open_state }
+  return editor
+}
+
 # open the selected view in its editor (schematic OR symbol), in a new window or
-# the current one per the "New window" checkbox.
+# the current one per the "New window" checkbox. Non-editor views (ASE
+# simulation states) divert to their view_handler instead.
 proc libmgr::open_view {args} {
   variable new_window
   set lcv [libmgr::current_view]
@@ -436,6 +456,12 @@ proc libmgr::open_view {args} {
   lassign $lcv lib cell view
   set f [xschem cellview_path "$lib/$cell" $view]
   if {$f eq {}} { .libmgr.status configure -text "no $view view for $lib/$cell"; return 0 }
+  # ASE dispatch: a non-editor view never reaches `xschem load`. Its arm logs
+  # NO action line (read-only viewer — same allowlist doctrine as do_history*/
+  # do_show_checkouts) and skips the deferred force_window_repaint below (no
+  # editor window was touched).
+  set handler [libmgr::view_handler $view $f]
+  if {$handler ne {editor}} { return [$handler $lib $cell $view] }
   # action-log: record the replayable open, DEDUP-GATED (reset + -emitted, the
   # menu_action_logged pattern). The C side already logs some arms itself -- the
   # `load -gui` pristine-window arm records `xschem load {f}` at the scheduler's
@@ -558,10 +584,22 @@ proc libmgr::refresh_after {{lib {}} {cell {}} {view {}}} {
 proc libmgr::open_view_ro {} {
   set lcv [libmgr::current_view]
   if {$lcv eq {}} return
+  lassign $lcv lib cell view
+  # Non-editor views (ASE simulation states): dispatch DIRECTLY with the
+  # read-only flag (ase::open_state's trailing arg, item 07 D7 — it records
+  # the session attr `readonly` that gates the ASE Save-As overwrite
+  # confirmation). Routing through libmgr::open_view would drop the flag,
+  # and the `xschem set readonly 1` below would wrongly mark the CURRENT
+  # schematic window read-only instead. Like the plain-open ASE arm this
+  # logs NO action line (read-only viewer allowlist doctrine).
+  if {[libmgr::view_handler $view [xschem cellview_path "$lib/$cell" $view]] ne {editor}} {
+    ase::open_state $lib $cell $view 1
+    libmgr::status "opened $lib/$cell/$view read-only"
+    return
+  }
   if {![libmgr::open_view]} return
   xschem set readonly 1
   xschem log_action "xschem set readonly 1"
-  lassign $lcv lib cell view
   libmgr::status "opened $lib/$cell/$view read-only"
 }
 
@@ -1200,7 +1238,8 @@ proc libmgr::view_dialog {title srclib srccell srcview} {
   return $res
 }
 
-# View name + editor type (schematic|symbol). Returns {name type} or {}.
+# View name + editor type (schematic|symbol|ngspice_state1 — the last seeds an
+# ASE simulation-state view, doc/claude/specs/ase_l.md). Returns {name type} or {}.
 proc libmgr::newview_dialog {lib cell} {
   variable dlg_done
   set d .libmgr.nv2
@@ -1211,7 +1250,7 @@ proc libmgr::newview_dialog {lib cell} {
   ttk::label $d.l1 -text "View name:"
   ttk::entry $d.name -width 28
   ttk::label $d.l2 -text "Editor type:"
-  ttk::combobox $d.type -state readonly -values {schematic symbol}
+  ttk::combobox $d.type -state readonly -values {schematic symbol ngspice_state1}
   $d.type set schematic
   ttk::frame $d.b
   ttk::button $d.b.ok     -text OK     -command {set libmgr::dlg_done 1}

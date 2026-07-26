@@ -696,8 +696,10 @@ proc library_copy_view {sl sc sv dl dc dv} {
   return ""
 }
 
-# Create a new empty view of a given editor type (schematic|symbol) under a free
-# name. The cell must already exist; the view must not.
+# Create a new empty view of a given editor type (schematic|symbol|
+# ngspice_state*) under a free name. The cell must already exist; the view must
+# not. An ngspice_state* type seeds an ASE simulation-state view instead of an
+# empty sch/sym body (doc/claude/specs/ase_l.md).
 proc library_new_view {lib cell view {type schematic}} {
   set lp [library_resolve $lib]
   if {$lp eq {}} { error "no such library: $lib" }
@@ -706,6 +708,16 @@ proc library_new_view {lib cell view {type schematic}} {
   set vd [file join $lp $cell $view]
   if {[file exists $vd]} { error "view already exists: $lib/$cell/$view" }
   file mkdir $vd
-  library_write_empty_cellfile [file join $vd "$cell.[expr {$type eq "symbol" ? "sym" : "sch"}]"]
+  if {[string match ngspice_state* $type]} {
+    # The datafile is a serialized ase state dict, seeded VALID (never an
+    # empty file — ase::state_load must not need an empty-file special case),
+    # with design pointing at the cell's schematic view. If that view only
+    # arrives later, ase::netlist errors cleanly — acceptable.
+    set st [ase::state_default]
+    dict set st design [list lib $lib cell $cell view schematic]
+    ase::state_save [file join $vd "$cell.state"] $st
+  } else {
+    library_write_empty_cellfile [file join $vd "$cell.[expr {$type eq "symbol" ? "sym" : "sch"}]"]
+  }
   return ""
 }

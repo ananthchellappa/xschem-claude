@@ -29,11 +29,11 @@ proc defs_has_define {defs name} {
   }
   return 0
 }
+source [file join [file dirname [info script]] scratch.tcl]
 
 # --- fixture: an "OA" tree. library.defs lives in the parent; the library
 #     subdirs (devices, examples) are what sits on the search path. ----------
-set tmp [file join [pwd] _lib0012_[pid]]
-file delete -force $tmp
+set tmp [test_scratch lib0012]
 set oa $tmp/oa
 file mkdir $oa/devices $oa/examples
 
@@ -151,6 +151,5 @@ set ::library_personal_defs 0
 # --- cleanup ---------------------------------------------------------------
 if {$saved_conf ne {}} { set ::USER_CONF_DIR $saved_conf } else { catch {unset ::USER_CONF_DIR} }
 catch {unset ::XSCHEM_LIBRARY_DEFS}
-file delete -force $tmp
 
 if {$fail} { puts "RESULT: $fail FAILED" } else { puts "RESULT: all passed" }

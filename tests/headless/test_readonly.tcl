@@ -23,9 +23,8 @@ proc emptysch {f} {
   close $fp
 }
 
-set tmp [file join [pwd] _ro_[pid]]
-file delete -force $tmp
-file mkdir $tmp
+source [file join [file dirname [info script]] scratch.tcl]
+set tmp [test_scratch ro]
 
 # === RO1 — get/set round-trip ===============================================
 emptysch $tmp/t.sch
@@ -70,7 +69,6 @@ toggle_readonly
 check "RO5b toggle off" [expr {[xschem get readonly] == 0}] "(=> [xschem get readonly])"
 
 file attributes $tmp/ro.sch -permissions 00644
-file delete -force $tmp
 if {$fail == 0} { puts "RESULT: ALL PASS" } else { puts "RESULT: $fail FAILED" }
 flush stdout
 exit [expr {$fail == 0 ? 0 : 1}]

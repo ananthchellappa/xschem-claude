@@ -37,10 +37,10 @@ proc latest_viewdata_text {} {
   if {$best eq "" || ![winfo exists $best.text]} { return "<none>" }
   return [$best.text get 1.0 end]
 }
+source [file join [file dirname [info script]] scratch.tcl]
 
 # --- fixture: a git-backed library with one untracked + one modified cell ----
-set tmp [file join [pwd] _maint_[pid]]
-file delete -force $tmp
+set tmp [test_scratch maint]
 set lib [file join $tmp glib]
 touch $lib/and2/symbol/and2.sym "v {and2 sym}\n"
 ginit $lib
@@ -102,7 +102,6 @@ check "MM6 cancel opens no report window" [expr {$after == $before}] "(before=$b
 
 catch {destroy .libmgr}
 catch {foreach w [winfo children .] { if {[string match {.view*} $w]} { destroy $w } }}
-file delete -force $tmp
 if {$fail == 0} { puts "RESULT: ALL PASS" } else { puts "RESULT: $fail FAILED" }
 flush stdout
 exit [expr {$fail == 0 ? 0 : 1}]

@@ -10,9 +10,8 @@ proc check {name ok detail} {
 }
 
 # Isolate from the real ~/.xschem: point USER_CONF_DIR at a throwaway dir.
-set tmp [file join [pwd] _nhepersist_[pid]]
-file delete -force $tmp
-file mkdir $tmp
+source [file join [file dirname [info script]] scratch.tcl]
+set tmp [test_scratch nhepersist]
 set ::USER_CONF_DIR $tmp
 
 # --- 1) the harmless "seen" marker -------------------------------------------
@@ -46,7 +45,6 @@ check "S2c conf sources cleanly" [expr {$rc3 == 0}] "(rc=$rc3 $e3)"
 check "S2d table round-trips exactly" [expr {$::net_hilight_style eq $want}] "(=> $::net_hilight_style)"
 check "S2e conf restores seen=1" [expr {$::net_hilight_editor_seen == 1}] "(=> $::net_hilight_editor_seen)"
 
-file delete -force $tmp
 if {$fail == 0} { puts "RESULT: ALL PASS" } else { puts "RESULT: $fail FAILED" }
 flush stdout
 exit [expr {$fail == 0 ? 0 : 1}]

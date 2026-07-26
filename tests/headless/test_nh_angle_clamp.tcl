@@ -13,7 +13,8 @@ proc check {name ok detail} {
 }
 
 # isolate from the real ~/.xschem (some startup paths touch it)
-set tmp [file join [pwd] _nhangle_[pid]] ; file delete -force $tmp ; file mkdir $tmp
+source [file join [file dirname [info script]] scratch.tcl]
+set tmp [test_scratch nhangle]
 set ::USER_CONF_DIR $tmp
 
 # capture the warning sink (hilight_style_warn -> ciw_echo when has_x)
@@ -46,6 +47,9 @@ set_style {0 4 8 {6 4} 50 0 none 0}
 check "W4 angle 50 still warns, clamped to 45" \
   [expr {[lsearch -glob $::warns {*out of range*clamped to 45*}] >= 0}] "(=> $::warns)"
 
+# silence the exit-time geometry write (xwin_exit -> store_geom); the scratch dir
+# itself is removed by test_scratch's exit hook.
+proc store_geom {args} {}
 if {$fail == 0} { puts "RESULT: ALL PASS" } else { puts "RESULT: $fail FAILED" }
 flush stdout
 exit [expr {$fail == 0 ? 0 : 1}]

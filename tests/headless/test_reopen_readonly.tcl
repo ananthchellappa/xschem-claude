@@ -10,7 +10,8 @@ set fail 0
 proc check {n ok d} { global fail; if {$ok} { puts "ok:   $n $d" } else { puts "FAIL: $n $d"; incr fail } }
 
 # ---- (1) core: `xschem load -readonly` forces read mode; plain load of a writable file is editable ----
-set dir [file join [pwd] _ro_[pid]] ; file delete -force $dir ; file mkdir $dir
+source [file join [file dirname [info script]] scratch.tcl]
+set dir [test_scratch ro]
 set f [file join $dir cell.sch]
 # a real, WRITABLE schematic (copy a library cell so load_schematic has valid content)
 set src [lindex [glob -nocomplain [file join [pwd] xschem_library devices *.sym]] 0]
@@ -59,7 +60,6 @@ check "R6 recent menu (setup_recent_menu) passes -readonly" \
 check "R7 File>Open stays editable (no -readonly in file_chooser_place)" \
   [regexp {xschem load -gui \$f\n} $tcl] {}
 
-file delete -force $dir
 if {$fail == 0} { puts "RESULT: ALL PASS" } else { puts "RESULT: $fail FAILED" }
 flush stdout
 exit [expr {$fail == 0 ? 0 : 1}]

@@ -10,7 +10,8 @@ set fail 0
 proc check {n ok d} { global fail; if {$ok} { puts "ok:   $n $d" } else { puts "FAIL: $n $d"; incr fail } }
 proc c0 {} { return [lindex [lindex [net_hilight_style_current] 0] 1] }   ;# row 0 color
 
-set ::USER_CONF_DIR [file join [pwd] _nhestg_[pid]] ; file delete -force $::USER_CONF_DIR ; file mkdir $::USER_CONF_DIR
+source [file join [file dirname [info script]] scratch.tcl]
+set ::USER_CONF_DIR [test_scratch nhestg]
 
 # Count ACTUAL C live-updates by wrapping the xschem command itself (the staged contract is exactly
 # "no xschem update_net_hilight_style runs until Apply/OK"). Counting nhse_apply_live alone is hollow:
@@ -54,7 +55,6 @@ check "ST7 OK closed the dialog" [expr {![winfo exists .nhse]}] {}
 rename xschem {} ; rename xschem_real xschem
 
 catch {destroy .nhse}
-file delete -force $::USER_CONF_DIR
 if {$fail == 0} { puts "RESULT: ALL PASS" } else { puts "RESULT: $fail FAILED" }
 flush stdout
 exit [expr {$fail == 0 ? 0 : 1}]

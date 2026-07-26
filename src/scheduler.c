@@ -184,17 +184,43 @@ static int scheduler_readonly_reject(Tcl_Interp *interp, const char *subcmd)
   return 1;
 }
 
+/* Forward decl: pin_scope_resolve() is defined below (after the xschem_cmds_a group) but
+ * run_core's apply_pin_prop arm (Refactor B atom 18) calls it above its definition. */
+static int pin_scope_resolve(const char *scope, int *primary_out, int **targets_out);
+
 /* run_core -- the EFFECT half of the perform_action boundary. Dispatches a
  * migrated verb to its raw core with no readonly check and no log_action of its
  * own (perform_action owns both). Returns TCL_OK on success. Migrated verbs so
  * far: trim_wires (Refactor B atom 1), align (atom 2), rotate_in_place (atom 3),
- * flip_in_place (atom 4); each is a bare no-arg verb. rotate_in_place/flip_in_place
- * are the mid-gesture-split verbs: ONLY their standalone (non-gesture) form crosses
- * this boundary -- the during-move/during-copy arms stay raw in the scheduler branch
- * + callback.c key and are logged at the move/copy END (issue 0069), never here
- * (see the branch comment below).
+ * flip_in_place (atom 4), flipv_in_place (atom 5) -- each a bare no-arg verb -- and
+ * the ARG-CARRYING pivot verbs rotate (atom 6, the FIRST), flip (atom 7) and flipv (atom 8,
+ * the LAST): each reads the shared pivot x0,y0 from argv[2]/argv[3] (falling back to the mouse
+ * coords). flipv is a net vertical mirror = 180 rotate + horizontal flip, so its arm is THREE
+ * move_objects calls (ROTATE, ROTATE, FLIP) about the shared pivot (NO ROTATELOCAL), not one.
+ * rotate/flip/flipv/rotate_in_place/flip_in_place/flipv_in_place are the mid-gesture-split verbs: ONLY
+ * their standalone (non-gesture) form crosses this boundary -- the during-move/during-
+ * copy arms stay raw in the scheduler branch + callback.c key and are logged at the
+ * move/copy END (issue 0069), never here (see the branch comment below).
+ * check_unique_names (atom 26) is the ASYMMETRIC split: only its mode-1 RENAME
+ * form crosses (the arm calls check_unique_names(1)); the mode-0 highlight is a
+ * read-only-legal LOGGED QUERY that stays raw in the branch front + '#' key.
+ * clear_drawing (atom 27) is a bare no-arg verb in the delete (atom 24) mold:
+ * silent -> logged + a NEW readonly gate; its core is a SHARED teardown
+ * primitive (load/undo-restore/window-teardown/clear_schematic/debug) whose
+ * seven raw C callers stay below the boundary, and the core stays SILENT.
+ * redo (atom 28) is the ZERO-DELTA consistency migration: the old branch was
+ * already boundary-shaped (inline reject + fixed bare log + reset-on-success),
+ * so gate and log consolidate with NO observable change; NO arity gate
+ * (tolerant argc preserved -- the old branch executed + logged bare at ANY
+ * argc) and NO push_undo (a redo is undo-stack NAVIGATION).
+ * undo (atom 29) is redo's argv-parsed F-shared twin (the same consistency
+ * class): its arm parses redo/set_modify from argv[2]/argv[3] with atoi
+ * defaults exactly as the old branch did (tolerant argc, NO arity gate, NO
+ * push_undo -- stack navigation) and its log is core_log_action's NORMALIZING
+ * undo arm (bare at argc==2, `xschem undo %d %d` else).
  * More verbs add an arm here as they move onto the boundary. argc/argv are unused
- * for a bare no-arg verb but carried for the general boundary shape (audit §4).
+ * for a bare no-arg verb but carry the pivot for an arg-carrying verb (rotate/flip/flipv); the
+ * general boundary shape (audit §4) is the same either way.
  * NB: only the VERB dispatch routes here -- the shared C functions BELOW a verb are
  * ALSO internal sub-steps of other operations (trim_wires() is called raw by
  * align()/move-END autotrim; maintain_wire_segments() is called raw by many edits),
@@ -251,7 +277,1220 @@ static int run_core(const char *verb, int argc, const char *argv[])
     move_objects(END,0,0,0);
     return TCL_OK;
   }
+  else if(!strcmp(verb, "flipv_in_place")) {
+    /* Refactor B atom 5: the STANDALONE (non-gesture) in-place VERTICAL flip. Byte-identical
+     * to the scheduler branch's standalone `else` body. A net vertical mirror = a 180 rotate
+     * + a horizontal flip, so it is THREE move_objects calls (ROTATE|ROTATELOCAL x2 then
+     * FLIP|ROTATELOCAL), NOT one -- the order matters (transpose is a real bug). move_objects
+     * (START/END) owns the undo push, so there is NO push_undo()/draw() here (adding one would
+     * double-push). ROTATELOCAL pivots each object about its OWN origin, so no pivot/mousex_snap
+     * seeding is needed. The during-move/during-copy arms are NOT here: they are mid-gesture
+     * sub-steps logged at move/copy END (issue 0069) and stay raw. */
+    rebuild_selected_array();
+    move_objects(START,0,0,0);
+    move_objects(ROTATE|ROTATELOCAL,0,0,0);
+    move_objects(ROTATE|ROTATELOCAL,0,0,0);
+    move_objects(FLIP|ROTATELOCAL,0,0,0);
+    move_objects(END,0,0,0);
+    return TCL_OK;
+  }
+  else if(!strcmp(verb, "rotate")) {
+    /* Refactor B atom 6: the STANDALONE (non-gesture) PIVOT rotate -- the FIRST arg-carrying verb
+     * on the boundary. Byte-identical to the scheduler branch's standalone `else` body:
+     * rebuild + seed the SHARED pivot into mx_double_save/mousex_snap + START + ROTATE + END.
+     * NO ROTATELOCAL (unlike rotate_in_place): the pivot is the single shared point x0,y0, not
+     * each object's own origin -- so the whole selection spins rigidly about x0,y0. The pivot is
+     * resolved from argv[2]/argv[3] (the scripted/Edit-menu-with-coords form) or the mouse coords
+     * (bare `xschem rotate`), EXACTLY as the branch used to before delegating here. move_objects
+     * (START/END) owns the undo push, so there is NO push_undo()/draw() here (adding one would
+     * double-push). Seeding mousex_snap = x0 also lets core_log_action (which runs AFTER this,
+     * perform_action = effect THEN log) read back the same pivot on the mouse-fallback path, so the
+     * logged line can never diverge from the applied transform. The during-move/during-copy arms
+     * are NOT here: they are mid-gesture sub-steps logged at move/copy END (0069) and stay raw. */
+    double x0 = xctx->mousex_snap, y0 = xctx->mousey_snap;
+    if(argc > 3) { x0 = atof(argv[2]); y0 = atof(argv[3]); }
+    rebuild_selected_array();
+    xctx->mx_double_save = xctx->mousex_snap = x0;
+    xctx->my_double_save = xctx->mousey_snap = y0;
+    move_objects(START,0,0,0);
+    move_objects(ROTATE,0,0,0);
+    move_objects(END,0,0,0);
+    return TCL_OK;
+  }
+  else if(!strcmp(verb, "flip")) {
+    /* Refactor B atom 7: the STANDALONE (non-gesture) PIVOT flip -- the SECOND arg-carrying verb on
+     * the boundary, a near-clone of the rotate arm above (atom 6). Byte-identical to the scheduler
+     * branch's standalone `else` body: rebuild + seed the SHARED pivot into mx_double_save/mousex_snap
+     * + START + FLIP + END. NO ROTATELOCAL (unlike flip_in_place): the pivot is the single shared point
+     * x0,y0, so the whole selection mirrors rigidly about the vertical line x=x0, not each object about
+     * its own origin. The pivot is resolved from argv[2]/argv[3] (the scripted/Edit-menu-with-coords
+     * form) or the mouse coords (bare `xschem flip`), EXACTLY as the branch used to before delegating
+     * here. move_objects(START/END) owns the undo push, so there is NO push_undo()/draw() here (adding
+     * one would double-push). Seeding mousex_snap = x0 also lets core_log_action (which runs AFTER this,
+     * perform_action = effect THEN log) read back the same pivot on the mouse-fallback path, so the
+     * logged line can never diverge from the applied transform. The during-move/during-copy arms are
+     * NOT here: they are mid-gesture sub-steps logged at move/copy END (0069) and stay raw. */
+    double x0 = xctx->mousex_snap, y0 = xctx->mousey_snap;
+    if(argc > 3) { x0 = atof(argv[2]); y0 = atof(argv[3]); }
+    rebuild_selected_array();
+    xctx->mx_double_save = xctx->mousex_snap = x0;
+    xctx->my_double_save = xctx->mousey_snap = y0;
+    move_objects(START,0,0,0);
+    move_objects(FLIP,0,0,0);
+    move_objects(END,0,0,0);
+    return TCL_OK;
+  }
+  else if(!strcmp(verb, "flipv")) {
+    /* Refactor B atom 8: the STANDALONE (non-gesture) PIVOT vertical-flip -- the THIRD and LAST
+     * arg-carrying pivot verb on the boundary, the MIRROR of the flip arm above (atom 7) exactly as
+     * flipv_in_place (atom 5) mirrored flip_in_place (atom 4). Byte-identical to the scheduler branch's
+     * standalone `else` body. A net vertical mirror = a 180 rotate + a horizontal flip, so it is THREE
+     * move_objects calls (ROTATE, ROTATE, FLIP), NOT one -- the order matters (a transpose or a dropped
+     * call is a real bug). NO ROTATELOCAL (unlike flipv_in_place): the pivot is the single shared point
+     * x0,y0, so the whole selection mirrors rigidly about the horizontal line y=y0, not each object about
+     * its own origin. The pivot is resolved from argv[2]/argv[3] (the scripted/Edit-menu-with-coords
+     * form) or the mouse coords (bare `xschem flipv`), EXACTLY as the branch used to before delegating
+     * here. move_objects(START/END) owns the undo push, so there is NO push_undo()/draw() here (adding
+     * one would double-push). Seeding mousex_snap = x0 also lets core_log_action (which runs AFTER this,
+     * perform_action = effect THEN log) read back the same pivot on the mouse-fallback path, so the
+     * logged line can never diverge from the applied transform. The during-move/during-copy arms are NOT
+     * here: they are mid-gesture sub-steps logged at move/copy END (0069) and stay raw. */
+    double x0 = xctx->mousex_snap, y0 = xctx->mousey_snap;
+    if(argc > 3) { x0 = atof(argv[2]); y0 = atof(argv[3]); }
+    rebuild_selected_array();
+    xctx->mx_double_save = xctx->mousex_snap = x0;
+    xctx->my_double_save = xctx->mousey_snap = y0;
+    move_objects(START,0,0,0);
+    move_objects(ROTATE,0,0,0);
+    move_objects(ROTATE,0,0,0);
+    move_objects(FLIP,0,0,0);
+    move_objects(END,0,0,0);
+    return TCL_OK;
+  }
+  else if(!strcmp(verb, "break_wires")) {
+    /* Refactor B atom 9: the FIRST NON-transform verb on the boundary, and the
+     * wire-surgery SIBLING of trim_wires (atom 1). break_wires breaks wires at the
+     * pins of the SELECTED instances (and at selected-wire endpoints); its arg is a
+     * FLAG (0/1 = split / split-and-remove), NOT a coordinate pivot -- so it is
+     * SIMPLER than the arg-carrying pivot verbs rotate/flip/flipv (atoms 6/7/8):
+     * one flag to thread, and there is NO mid-gesture split (break_wires is not a
+     * transform -- no STARTMOVE/STARTCOPY arms). `remove` is read from argv[2]
+     * IDENTICALLY to core_log_action, so the logged form can never diverge from the
+     * applied effect. The core break_wires_at_pins() OWNS its own undo (push_undo on
+     * first mutation) + draw() + set_modify, so there is NO push_undo()/draw() here --
+     * adding one would double-push (the atom-1 no-double-push rule). break_wires_at_pins()
+     * is called ONLY by this verb's own entry points (the scheduler branch + the two
+     * keys), so it IS the verb (1:1). NB the DISTINCT break_wires_at_point() (the
+     * Alt-Right wire_cut mouse gesture) and break_wires_at_attach_points() (the
+     * load/save auto-split) are SEPARATE functions and stay OFF this boundary. */
+    int remove = 0;
+    if(argc > 2) remove = atoi(argv[2]);
+    break_wires_at_pins(remove);
+    return TCL_OK;
+  }
+  else if(!strcmp(verb, "floaters_from_selected_inst")) {
+    /* Refactor B atom 10: the SECOND NON-transform verb, and the FIRST after the
+     * wire-surgery PAIR (trim_wires atom 1 + break_wires atom 9) completed the
+     * boundary. It is deliberately the CLEANEST next atom: a BARE no-arg verb (no
+     * coordinate pivot, no 0/1 flag, no mid-gesture split) -- even SIMPLER than
+     * break_wires -- so run_core takes no argc/argv, and the log falls to
+     * core_log_action's DEFAULT `xschem %s` form (NO per-verb branch, like the bare
+     * trim_wires/align/in-place verbs). The effect flattens each SELECTED instance's
+     * visible symbol texts into standalone floater texts (setting hide_texts + attach
+     * on the instance). The core floaters_from_selected_inst() (select.c) OWNS its own
+     * undo (push_undo on first mutation), set_modify and draw() -- so there is NO
+     * push_undo()/draw() here; adding one would DOUBLE-push (the atom-1 no-double-push
+     * rule, as with break_wires_at_pins atom 9). It is called ONLY by this verb's own
+     * scheduler branch (NO key, NO other C caller), so it is strictly 1:1 with the
+     * verb and the boundary/core_log_action is the single log site. */
+    floaters_from_selected_inst();
+    return TCL_OK;
+  }
+  else if(!strcmp(verb, "attach_labels")) {
+    /* Refactor B atom 11: the THIRD non-transform verb (after break_wires atom 9 +
+     * floaters atom 10). Its arg is a FLAG like break_wires -- `interactive` read
+     * from argv[2] (default 0) -- but the value carries THREE DISTINCT meanings
+     * (0 = silent place lab_pin, 1 = interactive dialog, 2 = the netlisting
+     * lab_show mode), so unlike break_wires (which canonicalizes any nonzero to 1)
+     * the value is PRESERVED, not collapsed. `interactive` is read from argv[2]
+     * IDENTICALLY to core_log_action, so the logged form can never diverge from the
+     * applied effect (the atom-9 FLAG-fidelity rule). The core attach_labels_to_inst()
+     * (actions.c) OWNS its own undo (place_symbol pushes it once via to_push_undo on
+     * the first placed label), set_modify(1) and draw() -- so there is NO push_undo()/
+     * draw() here; adding one would DOUBLE-push (the atom-1 no-double-push rule).
+     * attach_labels_to_inst() is NOT strictly 1:1: it is ALSO called RAW as a
+     * netlisting sub-step by show_unconnected_pins() (netlist.c, attach_labels_to_inst(2))
+     * and by the Shift+H interactive-DIALOG key (act_attach_labels, attach_labels_to_inst(1),
+     * a registered csv-nolog non-equivalent path). Both stay BELOW the boundary (raw core,
+     * no perform_action, no self-log) -- the boundary wraps the VERB DISPATCH, not the C fn
+     * (the trim_wires atom-1 sub-step rule). Only this scheduler branch (Symbol menu +
+     * scripted `xschem attach_labels [interactive]`) crosses. */
+    int interactive = 0;
+    if(argc > 2) interactive = atoi(argv[2]);
+    attach_labels_to_inst(interactive);
+    return TCL_OK;
+  }
+  else if(!strcmp(verb, "toggle_ignore")) {
+    /* Refactor B atom 12: the FIRST FRICTION-FREE-SCOUTED verb. The exhaustive
+     * classification in doc/claude/code_analysis/perform_action_boundary_migration_
+     * friction_analysis.md scored ALL 243 mutating scheduler verbs against 6 criteria
+     * and found exactly THREE friction-free ones; toggle_ignore is the cleanest. A
+     * BARE no-arg verb like floaters (atom 10): run_core takes no argc/argv and the
+     * log falls to core_log_action's DEFAULT `xschem %s` form (NO per-verb branch).
+     * The effect cycles the *_ignore attribute (none -> "true" -> "short" -> none) on
+     * the SELECTED instances AND wires, per the current netlist mode
+     * ({spice,verilog,vhdl,tedax,spectre}_ignore). toggle_ignore() (actions.c) OWNS its
+     * own undo (push_undo on the FIRST selected element), set_modify(1) and draw() --
+     * so there is NO push_undo()/draw() here; adding one would DOUBLE-push (the atom-1
+     * no-double-push rule). In a netlist mode where the attribute is undefined
+     * (attr==NULL, e.g. `set netlist_type symbol`) toggle_ignore() is a harmless NO-OP
+     * (no mutation, no push_undo, no draw) -- but the boundary STILL logs one line
+     * unconditionally (the floaters no-op-still-logs property, §30). It is called by
+     * ONLY two entry points -- this branch and the equivalent Shift+T key
+     * (act_toggle_ignore, callback.c), BOTH routed through the boundary -- so it is 1:1
+     * with the verb (NO shared-sub-step lock, unlike attach_labels atom 11). */
+    toggle_ignore();
+    return TCL_OK;
+  }
+  else if(!strcmp(verb, "reset_inst_prop")) {
+    /* Refactor B atom 13: the FIRST BENEFICIARY of the log-on-success boundary change
+     * (the shared-machinery half of this atom). reset_inst_prop resets an instance's
+     * property string from its symbol template (set_inst_prop, editprop.c). It is the
+     * FIRST VALIDATING verb on the boundary: it rejects a bad request with an early
+     * TCL_ERROR + Tcl_SetResult *before* any mutation -- exactly the shape the old
+     * unconditional-log boundary could not host (it would phantom-log the rejected
+     * call). The two validation gates MOVE here from the scheduler branch and stay
+     * BEFORE push_undo, so a bad arg mutates nothing and (via log-on-success) logs
+     * nothing. On success argv[2] is the instance referent (a name or a numeric index,
+     * resolved by get_instance) read IDENTICALLY to core_log_action's arm, so the
+     * logged line can never diverge from the reset one. The undo is a SINGLE push_undo
+     * (below), owned here -- there is no core fn that pushes, so unlike the
+     * self-undo verbs (toggle_ignore/floaters) this arm DOES push once (and only once).
+     * The old branch set the interp result to the instname on success; the boundary's
+     * success-path Tcl_ResetResult clears it (no caller consumes it -- verified), so
+     * this arm sets NO success result. */
+    char *translated_sym = NULL;
+    int sym_number = -1;
+    int inst;
+    if(argc < 3) {
+      Tcl_SetResult(interp, "xschem reset_inst_prop needs 1 more argument", TCL_STATIC);
+      return TCL_ERROR;
+    }
+    if((inst = get_instance(argv[2])) < 0 ) {
+      Tcl_SetResult(interp, "xschem reset_inst_prop: instance not found", TCL_STATIC);
+      return TCL_ERROR;
+    }
+    symbol_bbox(inst, &xctx->inst[inst].x1, &xctx->inst[inst].y1, &xctx->inst[inst].x2, &xctx->inst[inst].y2);
+    xctx->push_undo();
+    xctx->prep_hash_inst=0;
+    xctx->prep_net_structs=0;
+    xctx->prep_hi_structs=0;
+    hash_names(-1, XINSERT);
+    hash_names(inst, XDELETE);
+    set_inst_prop(inst);
+    my_strdup2(_ALLOC_ID_, &translated_sym, translate(inst, xctx->inst[inst].name));
+    sym_number=match_symbol(translated_sym);
+    if(sym_number > 0) {
+      delete_inst_node(inst);
+      xctx->inst[inst].ptr=sym_number;
+    }
+    set_inst_flags(&xctx->inst[inst]);
+    hash_names(inst, XINSERT);
+    /* new symbol bbox after prop changes (may change due to text length) */
+    symbol_bbox(inst, &xctx->inst[inst].x1, &xctx->inst[inst].y1, &xctx->inst[inst].x2, &xctx->inst[inst].y2);
+    set_modify(-2); /* reset floaters caches */
+    draw();
+    my_free(_ALLOC_ID_, &translated_sym);
+    return TCL_OK;
+  }
+  else if(!strcmp(verb, "reset_symbol")) {
+    /* Refactor B atom 22: the TWENTY-SECOND per-verb migration, the direct INLINE twin of
+     * reset_inst_prop (§33, atom 13) sitting a few arms above -- a VALIDATING verb whose two
+     * gates reject a bad call with an early TCL_ERROR BEFORE any mutation, so (via log-on-
+     * success) a rejected call mutates nothing and logs nothing. This is an ADDITIVE-LOG+GATE
+     * atom: the old branch had NEITHER a self-log NOR a readonly gate, so the migration ADDS
+     * BOTH -- a replay line AND the C-level read-only gate (a CORRECTNESS FIX: the old branch
+     * mutated a read-only cell). reset_symbol is a documented LOW-LEVEL batch sub-step: it
+     * merely swaps xctx->inst[...].name; the CALLER (fix_symbols, xschem.tcl) deletes symbols
+     * first and reload_symbols afterward.
+     * *** CRITICAL DIVERGENCE from the reset_inst_prop template: this arm must NOT push_undo
+     * and must NOT set_modify. *** fix_symbols brackets its whole remap loop in a SINGLE
+     * `xschem push_undo` before the foreach, so N per-instance reset_symbol calls that each
+     * pushed a slot would SHATTER that one-Ctrl-Z batch (one undo would revert only the last
+     * remap); and fix_symbols owns the set_modify(1) after the loop. The precedent for a
+     * no-undo/no-set_modify run_core arm is replace_symbol's fast-form (which skips both). The old
+     * branch already ended in Tcl_ResetResult on success (a BLANK result -- unlike reset_inst_prop,
+     * reset_symbol NEVER set the instname), and the boundary's success-path Tcl_ResetResult PRESERVES
+     * that blank result. C89: decls at block top. */
+    int inst;
+    if(argc != 4) {
+      Tcl_SetResult(interp, "xschem reset_symbol needs 2 additional arguments", TCL_STATIC);
+      return TCL_ERROR;
+    }
+    if((inst = get_instance(argv[2])) < 0 ) {
+      Tcl_SetResult(interp, "xschem reset_symbol: instance not found", TCL_STATIC);
+      return TCL_ERROR;
+    }
+    my_strdup(_ALLOC_ID_, &xctx->inst[inst].name, argv[3]);
+    return TCL_OK;
+  }
+  else if(!strcmp(verb, "replace_symbol")) {
+    /* Refactor B atom 14: the SECOND VALIDATING verb, and the FIRST per-verb migration
+     * to carry a FAST-FLAG log gate. It rides the atom-13 log-on-success boundary
+     * UNCHANGED -- this atom touches NO shared machinery. replace_symbol swaps an
+     * instance's symbol for another (delete_inst_node + inst.name = rel_sym_path(sym) +
+     * match_symbol + new_prop_string). The fast-flag parse + the two validation gates
+     * MOVE here from the scheduler branch and stay BEFORE push_undo: argc!=4 -> TCL_ERROR
+     * "needs 2 additional arguments", then get_instance(argv[2])<0 -> TCL_ERROR "instance
+     * not found" -- so a bad arg mutates nothing and (via log-on-success) logs nothing.
+     * The `fast` flag (argc>4 && argv[4]=="fast") is a MULTI-substitution machinery
+     * sub-mode: it SKIPS the single push_undo (exactly as the old branch did --
+     * `if(!fast) push_undo()`), and core_log_action SKIPS the log for it too (the atom-4
+     * save-fast axis: a replay sub-mode must not be logged). The `fast`/argv reads here
+     * MUST be identical to core_log_action's. set_modify(1) is kept; draw() stays
+     * COMMENTED-OUT -- replace_symbol relies on the CALLER to redraw (the old branch never
+     * drew; adding a draw() would change behaviour). There is no core fn that pushes undo,
+     * so (like reset_inst_prop, unlike the self-undo verbs) THIS arm owns the single
+     * push_undo, gated on !fast. The old branch set the interp result to the new instname
+     * on success; the boundary's success-path Tcl_ResetResult clears it (no caller
+     * consumes it -- verified), so this arm sets NO success result. */
+    int inst, fast = 0;
+    char symbol[PATH_MAX];
+    int sym_number, prefix;
+    char *name=NULL;
+    char *ptr=NULL;
+    char *sym = NULL;
+    if(argc > 4) {
+      argc = 4;
+      if(!strcmp(argv[4], "fast")) {
+        fast = 1;
+      }
+    }
+    if(argc != 4) {
+      Tcl_SetResult(interp, "xschem replace_symbol needs 2 additional arguments", TCL_STATIC);
+      return TCL_ERROR;
+    }
+    if((inst = get_instance(argv[2])) < 0 ) {
+      Tcl_SetResult(interp, "xschem replace_symbol: instance not found", TCL_STATIC);
+      return TCL_ERROR;
+    }
+    my_strncpy(symbol, argv[3], S(symbol));
+    if(!fast) {
+      xctx->push_undo();
+      xctx->prep_hash_inst=0;
+      xctx->prep_net_structs=0;
+      xctx->prep_hi_structs=0;
+    }
+    my_strdup(_ALLOC_ID_, &sym, tcl_hook2(symbol));
+    sym_number=match_symbol(sym);
+    my_free(_ALLOC_ID_, &sym);
+    if(sym_number>=0)
+    {
+      prefix=(get_tok_value(xctx->sym[sym_number].templ , "name",0))[0]; /* get new symbol prefix  */
+    }
+    else prefix = 'x';
+    delete_inst_node(inst); /* 20180208 fix crashing bug: delete node info if changing symbol */
+                         /* if number of pins is different we must delete these data *before* */
+                         /* changing ysmbol, otherwise i might end up deleting non allocated data. */
+    my_strdup2(_ALLOC_ID_, &xctx->inst[inst].name, rel_sym_path(symbol));
+    xctx->inst[inst].ptr=sym_number;
+    my_strdup(_ALLOC_ID_, &name, xctx->inst[inst].instname);
+    if(name && name[0] )
+    {
+      /* 20110325 only modify prefix if prefix not NUL */
+      if(prefix) name[0]=(char)prefix; /* change prefix if changing symbol type; */
+      my_strdup(_ALLOC_ID_, &ptr,subst_token(xctx->inst[inst].prop_ptr, "name", name) );
+      if(!fast) hash_names(-1, XINSERT);
+      hash_names(inst, XDELETE);
+      new_prop_string(inst, ptr,           /* sets also inst[].instname */
+         tclgetboolvar("disable_unique_names")); /* set new prop_ptr */
+      hash_names(inst, XINSERT);
+      set_inst_flags(&xctx->inst[inst]);
+      my_free(_ALLOC_ID_, &ptr);
+    }
+    my_free(_ALLOC_ID_, &name);
+    set_modify(1);
+    /* draw(); -- replace_symbol relies on the caller to redraw (old branch behaviour) */
+    return TCL_OK;
+  }
+  else if(!strcmp(verb, "show_unconnected_pins")) {
+    /* Refactor B atom 15: a BARE no-arg verb like floaters (atom 10) / toggle_ignore
+     * (atom 12) -- run_core takes no argc/argv and the log falls to core_log_action's
+     * DEFAULT `xschem %s` form (NO per-verb branch). It is the friction-free verb from
+     * the fresh atom-15 fan-out scout (the atom-14 validating shortlist was EXHAUSTED):
+     * always-mutating, 1:1, unconditional-log, no key. The effect selects every
+     * instance and places a lab_show.sym label on each UNCONNECTED pin. It is the
+     * SECOND verb to share the attach_labels_to_inst() core after atom 11: its core
+     * show_unconnected_pins() (netlist.c) calls attach_labels_to_inst(2) RAW, which
+     * OWNS the undo (place_symbol pushes it once via to_push_undo on the first placed
+     * label), set_modify(1) and draw() -- so there is NO push_undo()/draw() here;
+     * adding one would DOUBLE-push (the atom-1 no-double-push rule). That raw
+     * attach_labels_to_inst(2) call stays SILENT below the boundary (its log lives in
+     * core_log_action under the `attach_labels` verb, NOT inside the C fn -- the
+     * atom-11 shared-sub-step lock), so routing show_unconnected_pins double-logs
+     * NOTHING with the attach_labels verb. A no-unconnected-pins sheet is a harmless
+     * no-op (attach_labels_to_inst places nothing, no push_undo, no set_modify) but the
+     * boundary STILL logs one line unconditionally (the floaters no-op-still-logs
+     * property, §30). */
+    show_unconnected_pins();
+    return TCL_OK;
+  }
+  else if(!strcmp(verb, "embed_rawfile")) {
+    /* Refactor B atom 16: a HYBRID of reset_inst_prop (§33, the single-STRING referent +
+     * an argc gate) and floaters/show_unconnected_pins (§30/§35, the core OWNS its own
+     * undo). embed_rawfile base64-encodes a raw file into the single selected element's
+     * `spice_data` attribute. The `~/` expansion (via the home_dir global, reachable here)
+     * MOVES IN from the scheduler branch unchanged. The argc<3 gate is a VALIDATING-LITE
+     * early TCL_ERROR (BEFORE any mutation) -- the old branch SILENTLY no-op'd on a missing
+     * arg; the gate makes it error AND, via log-on-success, avoids phantom-logging a
+     * no-path call. There is NO push_undo/set_modify/draw here: the core embed_rawfile()
+     * (draw.c) OWNS the SINGLE push_undo + set_modify when it embeds (lastsel==1 &&
+     * ELEMENT); adding one would DOUBLE-push (the atom-1 rule). NB embed_rawfile() draws
+     * NOTHING (the old branch never drew), and a missing/non-regular file is a MUTATION
+     * (base64_from_file returns NULL -> subst_token BLANKS spice_data), not a failure, so
+     * the arm cannot pre-validate file existence -- the log records the PATH, replay
+     * re-reads it (wrinkle 3, the external-file replay caveat). C89: f declared at block
+     * top. */
+    char f[PATH_MAX + 100];
+    if(argc < 3) {
+      Tcl_SetResult(interp, "xschem embed_rawfile needs a file argument", TCL_STATIC);
+      return TCL_ERROR;
+    }
+    my_snprintf(f, S(f), "regsub {^~/} {%s} {%s/}", argv[2], home_dir);
+    tcleval(f);
+    my_strncpy(f, tclresult(), S(f));
+    embed_rawfile(f);
+    return TCL_OK;
+  }
+  else if(!strcmp(verb, "wire_cut")) {
+    /* Refactor B atom 17: the SILENT-MUTATOR twin of break_wires (atom 9, §29) -- the
+     * mouse-position wire cut (break_wires_at_point, check.c) that break_wires' §29 note
+     * already flagged as the SEPARATE gesture core kept OFF break_wires' boundary. It logged
+     * NOTHING before this atom. Only the SCRIPTED coord form crosses: the scheduler branch's
+     * argc>3 guard sends it here; the no-coord GESTURE-START form stays RAW in the branch
+     * (arms ui_state, no mutation), exactly the rotate/flip STARTMOVE-stays-raw split. The arg
+     * is numeric coords + a bareword `noalign` flag (NO Tcl_Merge -- no metacharacter referent).
+     * break_wires_at_point() OWNS a CONDITIONAL SINGLE push_undo (only when a wire is actually
+     * split) + its own draw, so there is NO push_undo/draw here -- adding one would double-push
+     * (the atom-1 rule); a point off any wire is a NO-OP (no push, no draw) that still returns
+     * success. Reached only via the branch's argc>3 guard, so argv[2]/argv[3] are always
+     * present; `align` is read from the args IDENTICALLY to core_log_action, so the logged form
+     * can never diverge from the applied cut. break_wires_at_point() returns void -> always
+     * TCL_OK (a no-op point-off-wire is a SUCCESS -> no-op-still-logs, §30). The interactive
+     * Alt-Right gesture (callback.c break_wires_at_point at gesture completion) stays RAW+silent
+     * under the chosen option (A) -- a pre-existing 0069-class gesture-drop gap this atom does
+     * NOT widen but does NOT close, deferred to a follow-up gesture-logging atom (audit §37).
+     * C89: decls at block top. */
+    int i, align = 1;
+    for(i = 2; i < argc; i++) if(!strcmp(argv[i], "noalign")) align = 0;
+    break_wires_at_point(atof(argv[2]), atof(argv[3]), align);
+    return TCL_OK;
+  }
+  else if(!strcmp(verb, "apply_pin_prop")) {
+    /* Refactor B atom 18: a HIGHER-FRICTION coverage gain (the friction-free pool is EMPTY) --
+     * a symbol-editor mutation that logged NOTHING and had NO C-level read-only gate before this
+     * atom, carrying an INLINE mutation body (not a shared core, so strictly 1:1 with the verb --
+     * C3) and TWO string referents. Follows the replace_symbol §34 template (a VALIDATING verb
+     * whose validation MOVES IN before its single push_undo, and whose TWO referents log via
+     * log_action_argv/Tcl_Merge) crossed with the reset_inst_prop §33 argc-gate. apply_pin_prop
+     * applies <prop> to the symbol PINLAYER rects named by <scope>, mirroring the pin branch of
+     * edit_rect_property without a dialog round-trip (cadence_pin_name_text.md; symbol_editor_
+     * apply_scope.md). The whole inline body MOVES here verbatim from the scheduler branch:
+     *   - the argc<3 VALIDATION is an early TCL_ERROR *before* any mutation, so (via log-on-
+     *     success, §33) a bad arg mutates nothing and logs nothing;
+     *   - pin_scope_resolve() is the SHARED READ-ONLY resolver (also used by pin_scope_prop_
+     *     uniform / the SP3 preview) -- it stays RAW below the boundary, does NOT mutate;
+     *   - the GUARD-PASS no-op (nothing would change) returns "0"+TCL_OK BEFORE push_undo -- NO
+     *     undo slot; under log-on-success it STILL logs one line (a no-op is a SUCCESS, §30/§32);
+     *   - else the SINGLE push_undo (owned here -- there is no self-undo core) + the apply loop
+     *     (set_different_token / pin_reorient / pin_view_apply) + set_modify(1) + draw().
+     * RESULT-DROPPED (verified): the old branch returned a MEANINGFUL "0"/"1" interp result; the
+     * boundary's success-path Tcl_ResetResult BLANKS it. The production consumer gfxform::do_apply
+     * DISCARDS the result; the two standalone tests that asserted it (symbol_pin_scope.tcl /
+     * pin_name_text.tcl) were updated to assert the EFFECT (a stronger oracle) -- so no caller
+     * regresses. The Tcl_SetResult("0"/"1") is kept here for a byte-faithful body; the boundary
+     * clears it on success (like reset_inst_prop's dropped instname, §33). C89: decls at block top. */
+    int i, n, change = 0, primary = -1, ntargets;
+    int *targets;
+    const char *scope, *newprop;
+    char *base = NULL;          /* primary pin's prop: the changed-fields baseline */
+    if(argc < 3) {
+      Tcl_SetResult(interp, "xschem apply_pin_prop needs: [scope] new_prop", TCL_STATIC);
+      return TCL_ERROR;
+    }
+    if(argc >= 4) { scope = argv[2]; newprop = argv[3]; }   /* apply_pin_prop <scope> <prop> */
+    else          { scope = "selected"; newprop = argv[2]; } /* apply_pin_prop <prop> (back-compat) */
+    ntargets = pin_scope_resolve(scope, &primary, &targets);
+    if(primary >= 0) my_strdup(_ALLOC_ID_, &base, xctx->rect[PINLAYER][primary].prop_ptr);
+    /* No pin primary (sel_array[0] is not a pin) but a scope like "all" still resolves
+     * targets: use the FIRST target as the changed-fields baseline so a fan can NEVER
+     * degenerate into a whole-prop overwrite that mass-renames every pin to the same
+     * string (the base==NULL else branch below). */
+    if(!base && ntargets > 0) my_strdup(_ALLOC_ID_, &base, xctx->rect[PINLAYER][targets[0]].prop_ptr);
+    /* guard pass: would applying change any target pin? avoid an empty undo slot */
+    for(i = 0; i < ntargets && !change; i++) {
+      char *cand = NULL;
+      n = targets[i];
+      my_strdup(_ALLOC_ID_, &cand, xctx->rect[PINLAYER][n].prop_ptr);
+      if(base) {
+        if(set_different_token(&cand, newprop, base)) change = 1;
+      } else {
+        my_strdup(_ALLOC_ID_, &cand, newprop);
+        if(!cand || !xctx->rect[PINLAYER][n].prop_ptr || strcmp(cand, xctx->rect[PINLAYER][n].prop_ptr)) change = 1;
+      }
+      my_free(_ALLOC_ID_, &cand);
+    }
+    if(!ntargets || !change) {
+      if(base) my_free(_ALLOC_ID_, &base);
+      my_free(_ALLOC_ID_, &targets);
+      Tcl_SetResult(interp, "0", TCL_STATIC);
+      return TCL_OK;
+    }
+    xctx->push_undo();
+    for(i = 0; i < ntargets; i++) {
+      char olddir[40];
+      n = targets[i];
+      my_snprintf(olddir, S(olddir), "%s", get_tok_value(xctx->rect[PINLAYER][n].prop_ptr, "dir", 0));
+      if(base) {
+        set_different_token(&xctx->rect[PINLAYER][n].prop_ptr, newprop, base);
+      } else {
+        my_strdup(_ALLOC_ID_, &xctx->rect[PINLAYER][n].prop_ptr, newprop);
+      }
+      set_rect_flags(&xctx->rect[PINLAYER][n]);
+      if(strcmp(olddir, get_tok_value(xctx->rect[PINLAYER][n].prop_ptr, "dir", 0))) pin_reorient(n);
+      pin_view_apply(n);   /* create/delete the name view per show_pinname, then sync it */
+    }
+    if(base) my_free(_ALLOC_ID_, &base);
+    my_free(_ALLOC_ID_, &targets);
+    set_modify(1);
+    draw();               /* a pin's name view is a separate object -> full redraw */
+    Tcl_SetResult(interp, "1", TCL_STATIC);
+    return TCL_OK;
+  }
+  else if(!strcmp(verb, "move_instance")) {
+    /* Refactor B atom 19: a HIGHER-FRICTION coverage gain (the friction-free pool is EMPTY) --
+     * a PURE SCRIPTED instance-reposition verb (`xschem move_instance inst x y rot flip [nodraw]
+     * [noundo]`, a `-` in any of x/y/rot/flip keeps the existing value) with an INLINE mutation
+     * body (not a shared core, so strictly 1:1 with the verb -- C3, like apply_pin_prop §38), a
+     * CONDITIONAL push_undo/draw (the noundo/nodraw C5 sub-mode) and an instance-name referent.
+     * The whole inline body MOVES here verbatim from the scheduler branch (which merely dropped
+     * the !xctx guard + its per-verb scheduler_readonly_reject, both now the boundary's):
+     *   - the argc<7 VALIDATION is an early TCL_ERROR *before* any mutation (the reset_inst_prop
+     *     §33 / embed_rawfile §36 shape). The old branch SILENTLY no-op'd on a short call
+     *     (`if(argc>6)` false -> nothing, TCL_OK); under log-on-success (§33) that would phantom-log
+     *     a useless line AND -- worse -- let a short call reach core_log_action, which reads
+     *     argv[3..6] and would read OUT OF BOUNDS (the embed_rawfile §36 argv[2]-NULL crash class).
+     *     The gate returns before both. Verified no caller relies on the silent no-op (pure scripted,
+     *     grep-clean);
+     *   - the nodraw/noundo flag parse (argc>7 -> scan argv[7..]);
+     *   - get_instance(argv[2])<0 -> TCL_ERROR "instance not found" (BEFORE the conditional push);
+     *   - `if(undo) push_undo()` -- ONE CONDITIONAL push, owned here (there is no self-undo core,
+     *     like reset_inst_prop/replace_symbol; a normal move pushes once, a `noundo` move pushes
+     *     NOTHING). Mirrors replace_symbol's !fast-gated push (§34) but the flag GATES ONLY the undo,
+     *     NOT the log (see core_log_action below);
+     *   - the dashed x/y/rot/flip sets (each gated on strcmp(argv[N],"-") != 0);
+     *   - symbol_bbox recompute + the prep_hash/net/hi flag resets;
+     *   - `if(dr) draw()`.
+     * NB there is NO set_modify(1) -- the old branch had none, and (verified: a move on a SAVED
+     * sheet leaves `modified`==0) adding one would change behaviour. NO success Tcl_SetResult
+     * either -- the branch set none (an incidental "0" leaks in from an internal tcleval on the
+     * mutation path; the boundary's success-path Tcl_ResetResult blanks it uniformly, and NO caller
+     * consumes it -- pure scripted). The original body declared `int i` twice in nested blocks (the
+     * flag loop counter + the instance index); flattened here to `i` (loop) + `inst` (index) at the
+     * block top (C89). */
+    int i, inst, undo = 1, dr = 1;
+    if(argc < 7) {
+      Tcl_SetResult(interp, "xschem move_instance needs: inst x y rot flip [nodraw] [noundo]", TCL_STATIC);
+      return TCL_ERROR;
+    }
+    for(i = 7; i < argc; i++) {
+      if(!strcmp(argv[i], "nodraw")) dr = 0;
+      if(!strcmp(argv[i], "noundo")) undo = 0;
+    }
+    if((inst = get_instance(argv[2])) < 0 ) {
+      Tcl_SetResult(interp, "xschem move_instance: instance not found", TCL_STATIC);
+      return TCL_ERROR;
+    }
+    if(undo) xctx->push_undo();
+    if(strcmp(argv[3], "-")) xctx->inst[inst].x0 = atof(argv[3]);
+    if(strcmp(argv[4], "-")) xctx->inst[inst].y0 = atof(argv[4]);
+    if(strcmp(argv[5], "-")) xctx->inst[inst].rot = (unsigned short)atoi(argv[5]);
+    if(strcmp(argv[6], "-")) xctx->inst[inst].flip = (unsigned short)atoi(argv[6]);
+    symbol_bbox(inst, &xctx->inst[inst].x1, &xctx->inst[inst].y1, &xctx->inst[inst].x2, &xctx->inst[inst].y2);
+    xctx->prep_hash_inst=0;
+    xctx->prep_net_structs=0;
+    xctx->prep_hi_structs=0;
+    if(dr) {
+      draw();
+    }
+    return TCL_OK;
+  }
+#if HAS_CAIRO==1
+  else if(!strcmp(verb, "image")) {
+    /* Refactor B atom 20 (audit §40): the MUTATING tail of `xschem image [invert|white_transp|
+     * black_transp|transp_white|transp_black|blend_white|blend_black|write_back]`, moved verbatim
+     * from the scheduler branch (which kept only the read-only-safe help/argc<3 replies IN FRONT of
+     * the boundary). HAS_CAIRO-gated because edit_image is `#if HAS_CAIRO==1`; on a no-cairo build
+     * the branch itself does not exist, so perform_action("image") is never reached. The branch's
+     * bare mutation (it had NO readonly gate) now sits under the boundary's ONE gate -- the
+     * correctness fix (pre-migration `image invert` mutated a read-only cell). Order preserved from
+     * the branch: the `No images selected` precondition (a MUTATION precondition, NOT a read-only-
+     * safe query -- it stays BELOW the boundary so a read-only cell REFUSES first; accepted message
+     * change on the readonly+nothing-selected corner), the flag parse, then the `if(what)` block:
+     * rebuild_selected_array, set_modify(1) ONLY when write_back (256) is set (a plain invert leaves
+     * modified==0 -- pinned on the pre-migration binary), the SINGLE push_undo, the edit_image loop
+     * over the selected GRIDLAYER image rects (flags&1024), draw(). Returns TCL_OK on BOTH the
+     * mutate AND the what==0 no-op (an unrecognized flag word) so the no-op still logs (§30), while
+     * `No images selected` returns TCL_ERROR so a failed precondition logs nothing (log-on-success).
+     * C89: the branch's `int n, i, c` + `int what` + `xRect *r` decls move here at block top. */
+    int n, i, c, what = 0;
+    xRect *r;
+    if(xctx->lastsel == 0) {
+      Tcl_SetResult(interp, "No images selected", TCL_STATIC);
+      return TCL_ERROR;
+    }
+    for(i = 2; i < argc; i++) {
+      if(!strcmp(argv[i], "invert"))       what |=   1;
+      if(!strcmp(argv[i], "white_transp")) what |=   2;
+      if(!strcmp(argv[i], "black_transp")) what |=   4;
+      if(!strcmp(argv[i], "transp_white")) what |=   8;
+      if(!strcmp(argv[i], "transp_black")) what |=  16;
+      if(!strcmp(argv[i], "blend_white"))  what |=  32;
+      if(!strcmp(argv[i], "blend_black"))  what |=  64;
+      if(!strcmp(argv[i], "write_back"))   what |= 256;
+    }
+    if(what) {
+      rebuild_selected_array();
+      if(what & 256) set_modify(1);
+      xctx->push_undo();
+      for(n = 0; n < xctx->lastsel; ++n) {
+        if(xctx->sel_array[n].type == xRECT) {
+          i = xctx->sel_array[n].n;
+          c = xctx->sel_array[n].col;
+          r = &xctx->rect[c][i];
+          if(c == GRIDLAYER && r->flags & 1024) {
+            edit_image(what, &xctx->rect[c][i]);
+          }
+        }
+      }
+      draw();
+    }
+    return TCL_OK;
+  }
+#endif
+  else if(!strcmp(verb, "change_elem_order")) {
+    /* Refactor B atom 21 (audit §41): reorders the z-order (array position) of the SELECTED
+     * object -- `xschem change_elem_order <n>` sets it to position n (n>=0), or n==-1 opens the
+     * interactive "Object Sequence number" input_line dialog (the Shift+S / Prop-menu form). Its
+     * arg is a value-carrying integer like attach_labels (atom 11), so core_log_action PRESERVES
+     * it with %d (not collapsed like break_wires atom 9). The core change_elem_order() (editprop.c)
+     * OWNS its own push_undo (on the first mutation, gated on `modified`) + set_modify(1) -- so
+     * there is NO push_undo/set_modify/draw here; adding one would DOUBLE-push (the atom-1
+     * no-double-push rule, as with break_wires/floaters/toggle_ignore). It rebuilds the selection
+     * itself and guards on lastsel==1, so a nothing-selected (or multi-selected) call is a harmless
+     * NO-OP. UNLIKE the §30 no-op-still-logs verbs (floaters/toggle_ignore), this verb PRESERVES the
+     * pre-migration had_sel LOG GATE (in core_log_action, `if(xctx->lastsel)`) -- §30 was REJECTED
+     * here because the verb is SELECTION-DEPENDENT and keeps its target selected, so a phantom
+     * empty-selection line would reorder a still-selected object on replay (adversarial-review MAJOR;
+     * the spec's form-split fallback, audit §41). TWO
+     * validation gates MOVE here from the branch and stay BEFORE the effect: the argc<3 gate (an
+     * early TCL_ERROR -- the old branch SILENTLY no-op'd on a missing arg; the gate ALSO prevents
+     * core_log_action from reading argv[2] OOB on a short call, the move_instance §39 crash class)
+     * and the `n >= 0 || n == -1` range gate (a bad n -- the old branch silently ignored it; now an
+     * early TCL_ERROR so, via log-on-success, a bad n mutates nothing AND logs nothing). `n` is read
+     * from argv[2] with the SAME atoi as core_log_action, so the logged form can never diverge from
+     * the applied reorder. NB change_elem_order() is NOT strictly 1:1: it is ALSO called RAW as a
+     * sub-step by the `instance_number inst <n>` scripted verb (scheduler.c) -- that caller stays
+     * BELOW the boundary (raw core, no perform_action, no self-log; it logged nothing before and
+     * still does), exactly the attach_labels atom-11 shared-sub-step rule. C89: n at block top. */
+    int n;
+    if(argc < 3) {
+      Tcl_SetResult(interp, "xschem change_elem_order needs an integer argument", TCL_STATIC);
+      return TCL_ERROR;
+    }
+    n = atoi(argv[2]);
+    if(!(n >= 0 || n == -1)) {
+      Tcl_SetResult(interp, "xschem change_elem_order: invalid order (need n >= 0 or -1)", TCL_STATIC);
+      return TCL_ERROR;
+    }
+    change_elem_order(n);
+    return TCL_OK;
+  }
+  else if(!strcmp(verb, "instance_number")) {
+    /* Refactor B atom 23 (audit §43): the MUTATE half of `xschem instance_number <inst> <n>`
+     * -- reorders the SELECTED instance's z-order (array position) to n. The QUERY form
+     * (argc==3, a read-only-safe position read-back) does NOT reach here: the scheduler branch
+     * keeps it RAW IN FRONT of the boundary (the image §40 query/mutate split), so run_core is
+     * entered ONLY via the branch's `if(argc>3)` delegation -- argc is therefore always >3 and
+     * argv[3] is always present. The two gates re-assert defensively BEFORE any mutation (an
+     * early TCL_ERROR -- and the argc<3 gate keeps the query branch's message in parity): argc<3
+     * -> "1 additional argument", get_instance(argv[2])<0 -> "instance not found". The effect is
+     * SELF-CONTAINED -- it unselect_all + select_element(argv[2]) itself, so its replay does NOT
+     * depend on the ambient selection (no had_sel/0005 dependence, unlike change_elem_order).
+     * *** NO push_undo and NO set_modify here: the shared change_elem_order() core (editprop.c)
+     * OWNS both -- it calls push_undo() on the mutate path (before setting its local `modified`)
+     * and set_modify(1) at the end (that set_modify gated on `modified`) -- so adding either here
+     * would DOUBLE-push (the atom-1 no-double-push rule, the atom-21 precedent). *** The raw
+     * change_elem_order(atoi(argv[3])) sub-step stays SILENT below the boundary (the atom-11
+     * shared-sub-step lock -- it is ALSO the `change_elem_order` verb's core, but a raw sub-step
+     * call must not self-log; instance_number logs its OWN `instance_number` line, NOT a
+     * `change_elem_order` line). The branch drew, so draw() is preserved.
+     *
+     * THE n >= 0 GATE (a replay-safety divergence from change_elem_order's `n >= 0 || n == -1`
+     * gate). change_elem_order(n<0) opens the interactive "Object Sequence number" input_line
+     * DIALOG (editprop.c) -- change_elem_order's VERB allows this (n==-1 is its Shift-S interactive
+     * form, whose logged `-1` line is the accepted interactive-replay class). instance_number is a
+     * PURE SCRIPTED verb (no key/menu/interactive entry), so it must NEVER reach that dialog: a
+     * scripted verb that opened a modal would WEDGE a headless action-log replay, and -- now that
+     * the mutate is LOGGED -- a `xschem instance_number <inst> <neg>` line would replay straight
+     * into that wedge. So n<0 is REJECTED here (early TCL_ERROR before any mutation -> via
+     * log-on-success it mutates nothing and logs nothing), keeping EVERY logged instance_number
+     * line a deterministic, dialog-free, faithfully-replayable reorder (n is read with the SAME
+     * atoi as core_log_action, so the logged form can never diverge from the applied reorder;
+     * an out-of-range n>=0 is clamped in-core and replays to the same clamp -- the atom-21 value-
+     * preserving property). C89: i at block top. */
+    int i;
+    if(argc < 3) {
+      Tcl_SetResult(interp, "xschem instance_number 1 additional argument", TCL_STATIC);
+      return TCL_ERROR;
+    }
+    if((i = get_instance(argv[2])) < 0 ) {
+      Tcl_SetResult(interp, "xschem instance_number: instance not found", TCL_STATIC);
+      return TCL_ERROR;
+    }
+    if(atoi(argv[3]) < 0) {
+      Tcl_SetResult(interp, "xschem instance_number: invalid order (need n >= 0)", TCL_STATIC);
+      return TCL_ERROR;
+    }
+    unselect_all(0);
+    select_element(i, SELECTED, 1, 1);
+    rebuild_selected_array();
+    change_elem_order(atoi(argv[3]));
+    draw();
+    return TCL_OK;
+  }
+  else if(!strcmp(verb, "delete")) {
+    /* Refactor B atom 24 (audit §44): a BARE no-arg mutating verb, the near-twin of toggle_ignore
+     * (atom 12) / floaters (atom 10) -- it deletes the current selection. The core delete()
+     * (select.c) OWNS its undo (push_undo on the first mutation, select.c:707), set_modify (788)
+     * and draw() (790), and returns VOID => the branch is always TCL_OK. So run_core adds NO
+     * push_undo()/draw() here -- adding one would DOUBLE-push (the atom-1 no-double-push rule).
+     *
+     * THE ONE FRICTION is the ARITY GATE (F-validate, the reset_inst_prop §33 argc-gate). The old
+     * scheduler branch acted only inside `if(argc==2)`, so a malformed `xschem delete <extra>` was
+     * a SILENT no-op returning TCL_OK. Under log-on-success (atom 13) that silent no-op would be
+     * PHANTOM-logged, so we validate argc==2 and return TCL_ERROR otherwise (mutating nothing,
+     * logging nothing -- the one deliberate behaviour tighten: malformed -> rejected, not silent).
+     * The bare `xschem delete` form logs via core_log_action's DEFAULT `xschem %s` arm (NO per-verb
+     * branch, like floaters/toggle_ignore). delete() reads NO x/y coords -> NOT a coordinate-replay
+     * form; it deletes the ambient selection, so its logged line replays against whatever is selected
+     * (the standard selection-dependent replay class).
+     *
+     * delete() is a benign SHARED primitive -- the cut verb (scheduler.c cut branch: save_selection
+     * + delete(1)), three preview re-arm teardowns (delete(0)), save.c, and the callback.c interactive
+     * gestures all call it RAW -- but it ROUTES NO VERBS through the boundary and stays raw below it;
+     * only the `delete` VERB crosses (the trim_wires atom-1 shared-sub-step rule, the attach_labels
+     * atom-11 shared-core rule). The two inline legacy-switch KEYS -- Ctrl-X (logs `xschem cut`) and
+     * XK_Delete (logs `xschem delete`), both in callback.c -- call delete() DIRECTLY and self-log;
+     * they NEVER reach this scheduler branch, so they stay untouched and cannot double-log (the
+     * shipped cut arrangement). The boundary's scheduler_readonly_reject also CONSOLIDATES the
+     * read-only gate that delete()'s own begin_edit() backstop (select.c:695) already provided --
+     * belt-and-suspenders, no behaviour change. */
+    if(argc != 2) {
+      Tcl_SetResult(interp, "xschem delete: too many arguments", TCL_STATIC);
+      return TCL_ERROR;
+    }
+    delete(1/*to_push_undo*/);
+    return TCL_OK;
+  }
+  else if(!strcmp(verb, "add_pin_stubs")) {
+    /* Refactor B atom 25 (audit §45; decision doc perform_action_atom25_add_pin_stubs_returnvalue_
+     * condlog_decision.md). Draws a wire stub + outward lab_pin net-label out of each selected/
+     * unconnected pin. The flags -prefix/-suffix/-inst-prefix are parsed here IDENTICALLY to
+     * core_log_action's arm (so the logged form can never diverge from the applied effect). The core
+     * add_pin_stubs() (actions.c) OWNS its single push_undo (on the first store) + set_modify + draw,
+     * so this arm adds NONE (the atom-1 no-double-push rule).
+     *
+     * OPTION (c) -- NO-OP-STILL-LOGS. The core returns `added` (stub count); the old branch gated its
+     * log on `if(added>0)`. That gate is INTENTIONALLY DROPPED here: `added==0` is a no-op SUCCESS
+     * (nothing unconnected to stub), NOT a failure -- exactly like floaters-nothing-selected (§30),
+     * toggle_ignore-attr==NULL (§32) and delete-nothing-selected (§44), all of which log their no-op
+     * under log-on-success. So this arm DISCARDS `added`, always returns TCL_OK, and the boundary logs
+     * one idempotent, replayable line unconditionally. The old success-path count interp-result is
+     * dropped (the boundary clears the interp on success; grep-verified NO Tcl caller consumes it --
+     * the Symbol-menu -command discards it, the SPACE key reads the C-fn int return, not the Tcl
+     * result; the apply_pin_prop §38 precedent). The boundary ADDS the C-level readonly gate the
+     * scripted verb NEVER HAD -- a correctness fix; the core keeps its OWN silent `if(readonly) return
+     * 0` for the SPACE key's pan-on-decline dual-use (callback.c act_add_pin_stubs stays RAW below the
+     * boundary, so it never double-logs -- the delete/cut F-2ndentry pattern). C89: decls at top. */
+    const char *prefix = "", *suffix = "";
+    int inst_prefix = 0, i;
+    for(i = 2; i < argc; ++i) {
+      if(!strcmp(argv[i], "-prefix") && i + 1 < argc) prefix = argv[++i];
+      else if(!strcmp(argv[i], "-suffix") && i + 1 < argc) suffix = argv[++i];
+      else if(!strcmp(argv[i], "-inst-prefix") || !strcmp(argv[i], "-inst_prefix")) inst_prefix = 1;
+    }
+    add_pin_stubs(prefix, suffix, inst_prefix);
+    return TCL_OK;
+  }
+  else if(!strcmp(verb, "check_unique_names")) {
+    /* Refactor B atom 26 (audit §46; decision doc perform_action_atom26_check_unique_names_
+     * asymmetric_split_decision.md): ONLY mode 1 (rename) crosses the boundary -- the branch
+     * delegates solely on argv[2]=="1". check_unique_names(1) (token.c) OWNS its undo (push_undo
+     * on the FIRST duplicate found, token.c:851) + set_modify(1) (875), so this arm adds NO
+     * push_undo/draw (the atom-1 no-double-push rule). Returns void => always TCL_OK; a
+     * no-duplicates run is a no-op SUCCESS that still logs one idempotent line (§30
+     * no-op-still-logs). Extra args beyond the "1" are ignored, exactly as the old branch did.
+     * Mode 0 (duplicate highlight) is the read-only-legal LOGGED QUERY: it stays RAW in the
+     * branch front + the '#' key with its own log_action (the asymmetric split -- see the
+     * branch comment). */
+    check_unique_names(1);
+    return TCL_OK;
+  }
+  else if(!strcmp(verb, "clear_drawing")) {
+    /* Refactor B atom 27 (audit §47; decision doc perform_action_atom27_clear_drawing_decision.md):
+     * a BARE no-arg mutating verb in the delete (atom 24) mold -- empties the current drawing but
+     * does NOT purge symbols. clear_drawing() (actions.c) is a SHARED teardown primitive (load_
+     * schematic, disk/memory undo restore, delete_schematic_data, clear_schematic = the separate
+     * `xschem clear` verb, debug) -- ALL callers stay RAW below the boundary and the core stays
+     * SILENT (a core log would spam every load/undo/close; audit §4 log-at-the-verb rule). Only
+     * this VERB crosses. NO push_undo/set_modify/draw exist anywhere on this path and NONE are
+     * added: destructive-with-no-undo is ACCEPTED shipped behaviour (the logged line replays
+     * faithfully but is irreversible -- decision doc §2); a push_undo here would be a behaviour
+     * change, not a migration (and the test's undo-depth detector would catch it).
+     * THE ONE FRICTION is the ARITY GATE (F-validate, the reset_inst_prop §33 argc-gate): the old
+     * branch acted only inside `if(argc==2)`, so `xschem clear_drawing <extra>` was a silent
+     * TCL_OK no-op that log-on-success would PHANTOM-log; validate argc==2 and reject otherwise
+     * (the one deliberate behaviour tighten). unselect_all(1) is the branch's original pre-step
+     * (selection torn down BEFORE the storage resets free the selected objects) -- kept, same
+     * order. Bare-verb log via core_log_action's DEFAULT `xschem %s` arm (NO per-verb branch).
+     * The boundary's scheduler_readonly_reject is NEW here -- a correctness fix (pre-migration a
+     * READ-ONLY view was silently emptied; the 0041/0051 class, like reset_symbol §42). */
+    if(argc != 2) {
+      Tcl_SetResult(interp, "xschem clear_drawing: too many arguments", TCL_STATIC);
+      return TCL_ERROR;
+    }
+    unselect_all(1);
+    clear_drawing();
+    return TCL_OK;
+  }
+  else if(!strcmp(verb, "redo")) {
+    /* Refactor B atom 28 (audit §48; decision doc perform_action_atom28_redo_decision.md): the
+     * ZERO-DELTA consistency migration -- the old branch was already boundary-shaped (inline
+     * readonly reject + fixed bare log + reset-on-success), so this arm changes NOTHING
+     * observable. pop_undo_keep_selection(1,1) (select.c, the issue-0095 selection-keeping
+     * wrapper over xctx->pop_undo) is undo-stack NAVIGATION: NO push_undo exists on this path
+     * and NONE is added (a push here would fire at cur<head and TRUNCATE the redo tail --
+     * save.c push_undo snaps head=++cur -- turning every redo into a no-op); set_modify is
+     * passed INTO the core. NO ARITY GATE -- deliberately unlike delete (§44)/clear_drawing
+     * (§47), whose OLD branches were if(argc==2) silent no-ops (phantom-log hazard): redo's old
+     * branch EXECUTES and logs bare at ANY argc, so tolerant argc is the preserved behaviour
+     * (the toggle_ignore §32 precedent) and the DEFAULT `xschem %s` log arm keeps the line
+     * byte-identical bare at every argc. An empty redo stack early-returns in-core = a no-op
+     * SUCCESS that still logs one idempotent line (§30) -- byte-identical to the old
+     * unconditional log. F-shared: run_core's undo arm below (atom 29) calls
+     * pop_undo_keep_selection(redo, set_modify) with argv-parsed ints (`xschem undo 1 1` = a
+     * redo with its OWN `xschem undo %d %d` log) -- the argv-parsed site, distinct
+     * verb, distinct line, no double-log path; the S7 exact-count rows lock both call sites. */
+    pop_undo_keep_selection(1, 1); /* issue 0007: keep selection across redo */
+    return TCL_OK;
+  }
+  else if(!strcmp(verb, "undo")) {
+    /* Refactor B atom 29 (audit §49; decision doc perform_action_atom29_undo_decision.md): the
+     * undo-family twin of redo (§48) -- the old branch was already boundary-shaped (inline
+     * readonly reject + normalized two-form log + reset-on-success), so gate and log consolidate
+     * with NO observable change. pop_undo_keep_selection(redo, set_modify) (select.c, the
+     * issue-0095 selection-keeping wrapper over xctx->pop_undo) is undo-stack NAVIGATION: NO
+     * push_undo is added here (the at-head push that arms the redo slot lives INSIDE the core,
+     * save.c pop_undo; a spurious push here would pop back the just-pushed state = a no-op undo).
+     * NO ARITY GATE -- tolerant argc is the preserved behaviour (§48 rule: an arity gate is a
+     * consequence of an OLD if(argc==N) silent no-op, which undo never had); extra args are
+     * consumed by the atoi defaults exactly as the old branch did. The redo flag passes through
+     * verbatim (0/4 undo, 1 redo, 2 peek -- save.c), so `xschem undo 1 1` IS a redo wearing the
+     * undo verb, logged as its OWN `xschem undo 1 1` line by core_log_action's NORMALIZING arm
+     * (which reads argv IDENTICALLY to this parse -- the rotate/break_wires/attach_labels
+     * invariant). An empty undo stack no-ops in-core (cur==tail early return) = a no-op SUCCESS
+     * that still logs one idempotent line (§30). F-shared: the redo arm above calls the SAME core
+     * fixed-arg (1, 1) -- distinct verb, distinct line, no double-log path; the S7 exact-count
+     * rows pin both call sites (this arm is now the ONE argv-parsed site). */
+    int redo = 0, set_modify = 1;
+    if(argc > 2) redo = atoi(argv[2]);
+    if(argc > 3) set_modify = atoi(argv[3]);
+    pop_undo_keep_selection(redo, set_modify); /* issue 0007: keep selection across undo */
+    return TCL_OK;
+  }
   return TCL_ERROR; /* unreachable: perform_action is only wired for the verbs above */
+}
+
+/* core_log_action -- the per-verb LOG-FORM half of the perform_action boundary (audit §4,
+ * Refactor A step-2 "log at the core" registry SEED, introduced by atom 6). Formats the ONE
+ * self-log line for a migrated verb. The bare no-arg verbs (trim_wires/align/rotate_in_place/
+ * flip_in_place/flipv_in_place/floaters_from_selected_inst/toggle_ignore/show_unconnected_pins/delete/
+ * clear_drawing/redo -- redo is atom 28, tolerant argc: the default arm ignores argv, so
+ * `xschem redo extra` still logs the byte-identical bare line) emit `xschem <verb>`
+ * byte-identically to the pre-atom-6 `log_action("xschem %s", verb)`; check_unique_names (atom 26)
+ * emits the FIXED literal `xschem check_unique_names 1` (only mode 1 crosses the boundary -- the
+ * mode-0 logged-query line lives raw-front in the branch + the '#' key, audit §46); undo (atom 29)
+ * has the NORMALIZING integer-pair arm (bare `xschem undo` at argc==2, atoi-canonical
+ * default-filled tail-dropped `xschem undo %d %d` else -- argv read IDENTICALLY to run_core's
+ * undo arm, byte-identical to the old branch's two forms); the arg-carrying pivot verbs rotate (atom 6), flip (atom 7) and
+ * flipv (atom 8) emit their pivot form `xschem rotate|flip|flipv <x0> <y0>`. The pivot is resolved
+ * from argv[2]/argv[3] (or the mouse coords as a fallback) IDENTICALLY to run_core's rotate/flip/flipv
+ * arm -- and run_core,
+ * which perform_action runs FIRST, has already seeded xctx->mousex_snap = x0, so even the
+ * mouse-fallback path logs exactly the pivot the effect used (both read the same argv, or the same
+ * seeded coord). This dispatcher is the minimal first form of the global registry; after atom 8 all
+ * three pivot forms (rotate/flip/flipv) plus the bare verbs are here. Do NOT reorder perform_action to log
+ * before running the effect: the fallback path
+ * depends on run_core seeding mousex_snap first. */
+static void core_log_action(const char *verb, int argc, const char *argv[])
+{
+  if(!strcmp(verb, "rotate")) {
+    /* The logged pivot is the EFFECTIVE coordinate (doc/claude/specs/select_at.md):
+     * the mouse-fallback path is mousex_snap, already grid-snapped by the callback
+     * (my_round(mousex/cadsnap)*cadsnap) -- routing it through snap_to_grid() is
+     * idempotent but normalizes -0 and, with %.10g, strips the residual float noise
+     * %.16g re-leaked (242.99999999999997 -> 243). The explicit-arg path stays
+     * verbatim (atof of argv, NOT snapped): a scripted `rotate 100 40` must replay
+     * byte-identically. %.10g is exact for real inputs (<=10 sig figs). */
+    double x0 = snap_to_grid(xctx->mousex_snap), y0 = snap_to_grid(xctx->mousey_snap);
+    if(argc > 3) { x0 = atof(argv[2]); y0 = atof(argv[3]); }
+    log_action("xschem rotate %.10g %.10g", x0, y0);
+  } else if(!strcmp(verb, "flip")) {
+    /* atom 7: the SECOND arg-carrying verb, mirror of rotate. Same pivot resolution
+     * (argv[2]/argv[3] else the mouse coord run_core just seeded) AND same effective-
+     * coordinate rule (snap_to_grid + %.10g on the mouse path, verbatim atof on the
+     * explicit-arg path -- see rotate above), so the logged `xschem flip x0 y0`
+     * always matches the applied mirror. NB the literal `flip %` (flip+space+%) does
+     * NOT match `flipv %` or `flip_in_place` -- flipv keeps its bare-verb `xschem %s`
+     * form until its own atom. */
+    double x0 = snap_to_grid(xctx->mousex_snap), y0 = snap_to_grid(xctx->mousey_snap);
+    if(argc > 3) { x0 = atof(argv[2]); y0 = atof(argv[3]); }
+    log_action("xschem flip %.10g %.10g", x0, y0);
+  } else if(!strcmp(verb, "flipv")) {
+    /* atom 8: the THIRD and LAST arg-carrying pivot verb, mirror of flip. Same pivot
+     * resolution (argv[2]/argv[3] else the mouse coord run_core just seeded) AND same
+     * effective-coordinate rule (snap_to_grid + %.10g on the mouse path, verbatim atof
+     * on the explicit-arg path -- see rotate above), so the logged `xschem flipv x0 y0`
+     * always matches the applied vertical mirror. NB the literal `flipv %`
+     * (flipv+space+%) does NOT match `flip %` (a `v` intervenes before the space) nor
+     * `flipv_in_place` -- the three are counted independently. */
+    double x0 = snap_to_grid(xctx->mousex_snap), y0 = snap_to_grid(xctx->mousey_snap);
+    if(argc > 3) { x0 = atof(argv[2]); y0 = atof(argv[3]); }
+    log_action("xschem flipv %.10g %.10g", x0, y0);
+  } else if(!strcmp(verb, "break_wires")) {
+    /* atom 9: the FIRST NON-transform verb, and the FIRST whose arg is a FLAG (0/1)
+     * rather than a coordinate pivot. `remove` is read from argv[2] IDENTICALLY to
+     * run_core's break_wires arm, and canonicalized to the two forms the UI emits:
+     * `xschem break_wires 1` (split-and-remove) vs bare `xschem break_wires` (split).
+     * break_wires_at_pins() reads remove as a BOOLEAN, so any non-zero argv[2] logs
+     * the canonical `1` form -> a deterministic, faithful replay. NB the literals
+     * `break_wires 1"` and `break_wires")` are counted independently by the grep guard
+     * (S7) so a re-scattered branch log of EITHER form fails closed; neither matches
+     * break_wires_at_pins / break_wires_at_point / break_wires_at_attach_points. */
+    int remove = 0;
+    if(argc > 2) remove = atoi(argv[2]);
+    if(remove) log_action("xschem break_wires 1");
+    else       log_action("xschem break_wires");
+  } else if(!strcmp(verb, "attach_labels")) {
+    /* atom 11: the arg is a FLAG `interactive` (default 0) read from argv[2]
+     * IDENTICALLY to run_core's attach_labels arm -- so the logged form always
+     * matches the applied effect. UNLIKE break_wires (which canonicalizes any
+     * nonzero to `1`), attach_labels's 0/1/2 carry DISTINCT meanings (0 = place
+     * lab_pin, 1 = interactive dialog, 2 = netlisting lab_show mode), so the actual
+     * value is PRESERVED with `%d`, not collapsed. For the canonical decimal-integer
+     * arg every live path emits (`xschem attach_labels` argc==2 / `xschem attach_labels
+     * <n>` argc>2) this is byte-identical to the old `log_action_argv(argc, argv)`; for a
+     * non-canonical or multi-token argv (`007`, `+2`, `2 foo`) the `%d` form logs exactly
+     * the value the effect's atoi consumed -- strictly MORE faithful than the raw-token
+     * log_action_argv, never a divergence from the applied effect (the atom-9 rule). The
+     * literal `attach_labels %` (space+%) and `attach_labels")` (quote+paren) are
+     * counted independently by the grep guard (S7). */
+    if(argc > 2) log_action("xschem attach_labels %d", atoi(argv[2]));
+    else         log_action("xschem attach_labels");
+  } else if(!strcmp(verb, "reset_inst_prop")) {
+    /* atom 13: the arg is the instance REFERENT argv[2] (a name or a numeric index),
+     * read IDENTICALLY to run_core's reset_inst_prop arm -- so the logged
+     * `xschem reset_inst_prop <ref>` self-contained line always names exactly the
+     * instance the effect reset (SELECTION-INDEPENDENT: the referent is in the line,
+     * not the current selection; replay re-resolves it via get_instance). This arm is
+     * reached ONLY on TCL_OK (perform_action gates core_log_action on success, atom 13),
+     * and run_core returns TCL_OK only after `argc<3` passed -- so argv[2] is always
+     * present here; a failed validation logs NOTHING.
+     * The referent is emitted via log_action_argv (Tcl_Merge), NOT a raw `%s` -- an
+     * arrayed/bussed instance name carries Tcl metacharacters (a real shipped case is
+     * `x2[3:0]`), and a raw `xschem reset_inst_prop x2[3:0]` line would replay `[3:0]` as
+     * a command substitution ("invalid command name 3:0"). Tcl_Merge brace-quotes it to
+     * `xschem reset_inst_prop {x2[3:0]}`, which replays back to the same argv[2]. Tcl_Merge
+     * quotes MINIMALLY, so a plain refdes (R1) logs byte-identically to `xschem
+     * reset_inst_prop R1`. This is the issue-0048 replay-safe name pattern (adversarial
+     * review of this atom flagged the raw-%s replay gap; the sibling `descend -inst %s`
+     * shares the latent gap and is left for its own change). */
+    const char *av[3];
+    av[0] = "xschem"; av[1] = verb; av[2] = argv[2];
+    log_action_argv(3, av);
+  } else if(!strcmp(verb, "reset_symbol")) {
+    /* atom 22: TWO referents -- the instance referent argv[2] (a name or numeric index) AND
+     * the symbol reference argv[3] -- read IDENTICALLY to run_core's reset_symbol arm, so the
+     * logged `xschem reset_symbol <inst> <symref>` self-contained line always names exactly the
+     * instance the effect remapped and the symbol it pointed at (SELECTION-INDEPENDENT: replay
+     * re-resolves argv[2] via get_instance). BOTH referents can carry Tcl metacharacters -- an
+     * arrayed/bussed instance name (`x2[3:0]`), a symref path with a space or bracket -- so BOTH
+     * are emitted via log_action_argv (Tcl_Merge), NOT a raw `%s`: a raw `x2[3:0]` would replay
+     * `[3:0]` as a command substitution (the atom-13 issue-0048 replay-safe lesson). Tcl_Merge
+     * quotes MINIMALLY, so a plain refdes+path logs byte-identically to `xschem reset_symbol R1
+     * devices/res.sym`. The array is named `rs` (NOT av/ev/pp/mi/im -- the §36 collision lesson)
+     * so its build/emit lines stay TEXTUALLY DISTINCT from every sibling's; a shared name would
+     * make each verb's count == 2, failing the exclusivity rows. Reached ONLY on TCL_OK
+     * (log-on-success), and run_core returns TCL_OK only after the argc!=4 + "instance not found"
+     * gates passed, so argv[2]/argv[3] are always present here; a failed validation logs nothing. */
+    const char *rs[4];
+    rs[0] = "xschem"; rs[1] = verb; rs[2] = argv[2]; rs[3] = argv[3];
+    log_action_argv(4, rs);
+  } else if(!strcmp(verb, "replace_symbol")) {
+    /* atom 14: the SECOND validating verb, and the FIRST per-verb log form to carry a
+     * FAST-FLAG GATE. The log is the SELF-CONTAINED `xschem replace_symbol <inst> <sym>`:
+     * BOTH the instance referent argv[2] (a name or numeric index) AND the symbol path
+     * argv[3] can carry Tcl metacharacters (an arrayed name `x2[3:0]`, a path with a
+     * space/bracket), so BOTH are emitted via log_action_argv (Tcl_Merge), NOT a raw `%s`
+     * -- the atom-13 arrayed-name replay lesson (a raw `x2[3:0]` would replay `[3:0]` as a
+     * command substitution). Tcl_Merge quotes MINIMALLY, so a plain refdes + path logs
+     * byte-identically to `xschem replace_symbol R1 devices/capa.sym`. Reached ONLY on
+     * TCL_OK (log-on-success), so a failed validation logs nothing. GATED on !fast: the
+     * fast form (argc>4 && argv[4]=="fast") is a multi-substitution machinery sub-mode
+     * that skips undo and MUST NOT be logged (the atom-4 save-fast axis); the argv reads
+     * here are IDENTICAL to run_core's, so the logged line can never diverge from the
+     * applied swap. NB run_core clamps its OWN local argc to 4, but core_log_action gets
+     * the ORIGINAL argc from perform_action, so the fast test reads the untouched argv. */
+    if(argc <= 4 || strcmp(argv[4], "fast")) {
+      const char *av[4];
+      av[0] = "xschem"; av[1] = verb; av[2] = argv[2]; av[3] = argv[3];
+      log_action_argv(4, av);
+    }
+  } else if(!strcmp(verb, "embed_rawfile")) {
+    /* atom 16: the arg is the RAW file-path referent argv[2] (a `~/...`, absolute or
+     * relative path), read here NOT the expanded form run_core derives -- so the logged
+     * `xschem embed_rawfile <path>` re-expands the `~/` IDENTICALLY on replay (arg-fidelity:
+     * run_core derives f from argv[2], replay re-derives it). Emitted via log_action_argv
+     * (Tcl_Merge), NOT a raw %s -- a path with a space/bracket/brace carries Tcl
+     * metacharacters (`sim [1].raw`) and a raw line would misparse on replay; Tcl_Merge
+     * brace-quotes it minimally (a plain path logs unbraced) -- the atom-13 replay-safe
+     * referent lesson. Reached ONLY on TCL_OK (log-on-success), and run_core returns TCL_OK
+     * only after the argc<3 gate passed, so argv[2] is always present here. The array is
+     * named `ev` (not `av`) so this build line stays TEXTUALLY DISTINCT from
+     * reset_inst_prop's byte-identical `av[...]` build -- the grep guard line-anchors both,
+     * and a shared name would make each verb's count == 2, failing the exclusivity rows. */
+    const char *ev[3];
+    ev[0] = "xschem"; ev[1] = verb; ev[2] = argv[2];
+    log_action_argv(3, ev);
+  } else if(!strcmp(verb, "wire_cut")) {
+    /* atom 17: a numeric COORD + bareword-FLAG log -- NOT log_action_argv (the coords are
+     * numeric, there is no Tcl metacharacter referent to brace-quote). TWO forms like
+     * break_wires (atom 9): the aligned `xschem wire_cut x y` and the `xschem wire_cut x y
+     * noalign`. Unlike the pivot verbs (rotate/flip snap the mouse coord + %.10g), wire_cut
+     * KEEPS %.16g and logs the RAW click coords argv[2]/argv[3] (NOT the snapped point
+     * break_wires_at_point computes): `align` is applied
+     * INSIDE the core (closest_point_calculation), so raw-coords + the flag replay IDENTICALLY
+     * (replay re-snaps to the same point). `align` is read here with the SAME loop as run_core's
+     * wire_cut arm, so the logged form can never diverge from the applied cut. Reached ONLY on
+     * TCL_OK (log-on-success) and only via the branch's argc>3 guard, so argv[2]/argv[3] are
+     * always present. NB the literal `wire_cut %` matches BOTH forms (the S7 total == 2), while
+     * `wire_cut %.16g %.16g noalign` (space+noalign before the quote) is DISTINCT from the
+     * aligned `wire_cut %.16g %.16g"` (quote-terminated) -- counted independently by the grep
+     * guard; and neither matches break_wires_at_point / _at_pins / _at_attach_points (an `_`
+     * follows). C89: decls at block top. */
+    int i, align = 1;
+    for(i = 2; i < argc; i++) if(!strcmp(argv[i], "noalign")) align = 0;
+    if(align) log_action("xschem wire_cut %.16g %.16g", atof(argv[2]), atof(argv[3]));
+    else      log_action("xschem wire_cut %.16g %.16g noalign", atof(argv[2]), atof(argv[3]));
+  } else if(!strcmp(verb, "apply_pin_prop")) {
+    /* atom 18: TWO referents like replace_symbol (§34), read IDENTICALLY to run_core's arm so the
+     * logged line can never diverge from the applied change. TWO forms mirror the branch's arg
+     * resolution: argc>=4 -> `xschem apply_pin_prop <scope> <prop>`, argc==3 -> the back-compat
+     * `xschem apply_pin_prop <prop>` (default "selected" scope). BOTH are emitted via log_action_argv
+     * (Tcl_Merge), NOT a raw %s: <prop> is a full pin-attribute string carrying spaces + brackets +
+     * possibly braces (name=X dir=in name_dx=20 ... foo=a[1]) -- a raw line would misparse on replay;
+     * <scope> is a bareword (current|selected|all) that Tcl_Merge logs unbraced (minimal quoting), so
+     * a plain form logs byte-identically. The array is named `pp` (NOT av/ev -- the §36 collision
+     * lesson) so its build/emit lines stay TEXTUALLY DISTINCT from reset_inst_prop's `av`, embed's
+     * `ev`, and replace_symbol's `av[3]`. Reached ONLY on TCL_OK (log-on-success), so the argc<3
+     * validation failure logs nothing. NB the argc==3 back-compat form replays against the CURRENT
+     * selection ("selected" scope) -- the accepted selection-dependent replay class (0005), same as
+     * floaters/attach_labels; the resolved pin set is deliberately NOT baked into the line. */
+    if(argc >= 4) {
+      const char *pp[4];
+      pp[0] = "xschem"; pp[1] = verb; pp[2] = argv[2]; pp[3] = argv[3];
+      log_action_argv(4, pp);
+    } else {
+      const char *pp[3];
+      pp[0] = "xschem"; pp[1] = verb; pp[2] = argv[2];
+      log_action_argv(3, pp);
+    }
+  } else if(!strcmp(verb, "move_instance")) {
+    /* atom 19: the FAITHFUL FULL-CALL log `xschem move_instance <inst> <x> <y> <rot> <flip>
+     * [nodraw] [noundo]`. Emitted via log_action_argv (Tcl_Merge), NOT a raw %s: the instance
+     * referent argv[2] can carry Tcl metacharacters (an arrayed/bussed name `x2[3:0]`), and a raw
+     * line would replay `[3:0]` as a command substitution -- the §33 replay-safe lesson. Tcl_Merge
+     * quotes MINIMALLY, so a plain refdes + numeric coords log byte-identically to
+     * `xschem move_instance R1 100 40 90 0`, while the dashes (`-`, keep-existing) and any braced
+     * name round-trip exactly.
+     *
+     * THE noundo/nodraw LOG DECISION (the load-bearing design call, resolved from the callers). Both
+     * flags are LOGGED FAITHFULLY -- the wire_cut `noalign` approach (§37), NOT the replace_symbol
+     * `fast` gate (§34). `fast` is a MULTI-substitution machinery sub-mode: replace_symbol is called
+     * as an internal sub-step of a larger logged op, so logging each `fast` call would DOUBLE-log ->
+     * it must be gated OUT of the log. move_instance has NO such internal caller -- it is a PURE
+     * SCRIPTED verb (grep-verified: no key/menu/palette/callback/C/Tcl caller anywhere), so nodraw/
+     * noundo are just faithful user args: a user who scripts `move_instance ... noundo` wants the
+     * replay to reproduce it (no undo slot on replay), exactly as they typed it. So they are logged,
+     * not gated. The flags are read here with the SAME loop as run_core's arm, so the logged form can
+     * never diverge from the applied effect, and are re-emitted in a CANONICAL order (nodraw before
+     * noundo) regardless of the input order -- the effect is order-independent (both are booleans),
+     * so the canonical line replays to the identical effect (the atom-9/-11 "log the value the effect
+     * consumed" rule).
+     *
+     * The array is named `mi` (NOT av/ev/pp/av[3] -- the §36 collision lesson) so its build/emit lines
+     * stay TEXTUALLY DISTINCT, and it is a FRESH build (NOT the bare `log_action_argv(argc, argv)`
+     * form, which recurs at three other scheduler.c sites -- add_pin_stubs/paste/... -- and could not
+     * be grep-pinned uniquely). `mi[9]` is sized for the max canonical call (xschem, move_instance,
+     * inst, x, y, rot, flip, nodraw, noundo = 9), and k never exceeds it. Reached ONLY on TCL_OK
+     * (log-on-success) and only after the argc<7 gate passed, so argv[2..6] are always present here;
+     * a failed validation logs NOTHING. C89: decls at block top. */
+    const char *mi[9];
+    int i, k = 0, undo = 1, dr = 1;
+    for(i = 7; i < argc; i++) {
+      if(!strcmp(argv[i], "nodraw")) dr = 0;
+      if(!strcmp(argv[i], "noundo")) undo = 0;
+    }
+    mi[k++] = "xschem"; mi[k++] = verb;
+    mi[k++] = argv[2]; mi[k++] = argv[3]; mi[k++] = argv[4]; mi[k++] = argv[5]; mi[k++] = argv[6];
+    if(!dr)   mi[k++] = "nodraw";
+    if(!undo) mi[k++] = "noundo";
+    log_action_argv(k, mi);
+#if HAS_CAIRO==1
+  } else if(!strcmp(verb, "image")) {
+    /* atom 20: the FAITHFUL RAW full-call log `xschem image <flag> [<flag>...]`. Unlike the
+     * fixed-arity mi[9]/pp[4]/av[3]/ev[3] arms, the flag COUNT is variable (1..8), so the array is
+     * sized to argc: the `xschem`/verb prefix is hardcoded (im[0]/im[1], the sibling idiom) and the
+     * flag tail argv[2..] is copied VERBATIM. RAW, NOT canonical-from-`what`: an unrecognized flag
+     * word yields what==0, and a canonical rebuild would collapse that no-op to a bare `xschem image`
+     * that REPLAYS as "Missing arguments" -- the raw echo round-trips the same no-op instead. Any
+     * recognized-flag call replays to the identical `what` regardless of order/dupes. The flags are
+     * barewords (no Tcl metacharacter), so log_action_argv/Tcl_Merge logs them unbraced ==
+     * byte-identical to the typed call. A fresh heap array named `im` (NOT the bare
+     * `log_action_argv(argc, argv)` form that recurs at three other scheduler.c sites, NOR av/ev/pp/mi
+     * -- the §36 collision lesson) keeps the build+emit grep-pinnable. Reached only on TCL_OK
+     * (log-on-success) and only past the branch's argc>=3 + non-help guard, so argv[2] is always
+     * present (argc>=3 -> im[0]/im[1] always valid). C89: decls at block top. */
+    const char **im = my_malloc(_ALLOC_ID_, (size_t)argc * sizeof(char *));
+    int j;
+    im[0] = "xschem"; im[1] = verb;
+    for(j = 2; j < argc; j++) im[j] = argv[j];
+    log_action_argv(argc, im);
+    my_free(_ALLOC_ID_, &im);
+#endif
+  } else if(!strcmp(verb, "change_elem_order")) {
+    /* atom 21: the arg is a value-carrying integer `n` read from argv[2] IDENTICALLY to run_core's
+     * change_elem_order arm -- so the logged `xschem change_elem_order %d` always matches the applied
+     * reorder. VALUE-PRESERVING with %d like attach_labels (atom 11), NOT collapsed like break_wires
+     * (atom 9): n is a position index whose exact value matters, and the branch logged the RAW n
+     * (before change_elem_order's internal clamp to instances-1), so replay re-clamps identically --
+     * log the value the user gave. It is a bare integer (no Tcl metacharacter), so
+     * log_action("...%d", atoi(argv[2])) is the right form (the attach_labels/break_wires template),
+     * NOT log_action_argv -- there is no referent to brace-quote, hence no av/ev/pp/mi/im array and no
+     * §36 collision. SINGLE form (no bare variant): the arg is REQUIRED (run_core's argc<3 gate is an
+     * early TCL_ERROR), so unlike attach_labels/break_wires there is no argc==2 bare line. Reached
+     * ONLY on TCL_OK (log-on-success) and only past run_core's argc<3 gate, so argv[2] is always
+     * present. The literal `change_elem_order %d` is UNIQUE (no other verb shares the prefix).
+     *
+     * THE had_sel LOG GATE (`if(xctx->lastsel)`): this verb PRESERVES the pre-migration had_sel gate
+     * rather than taking the §30 no-op-still-logs alignment -- a DELIBERATE per-verb exception (like
+     * replace_symbol's `fast` gate). §30 was REJECTED here because change_elem_order is SELECTION-
+     * DEPENDENT (0005 class) AND its core keeps the reordered object SELECTED (the array swap in
+     * editprop.c moves the .sel bit): a phantom empty-selection line would, on a whole-log replay
+     * where an intervening interactive deselect was NOT logged, find that object STILL selected and
+     * REORDER it -- a silent z-order divergence (adversarial-review MAJOR). The old branch/key gated
+     * the log on `had_sel = xctx->lastsel` taken BEFORE change_elem_order; change_elem_order() rebuilds
+     * the selection itself (run just now in run_core) and its swap does not change the COUNT, so
+     * xctx->lastsel here == that had_sel EXACTLY (0 = nothing selected -> skip the log; 1 or >1 ->
+     * log, matching the branch which logged even the multi-select no-op). Reading xctx state in
+     * core_log_action is the rotate/flip mousex_snap precedent -- run_core (which perform_action runs
+     * FIRST) has already established it. This locks test_selflog_output.tcl:190
+     * `change_elem_order (no sel) is nolog`. INVARIANT this equality relies on (adversarial-review
+     * note): NOTHING mutates xctx->lastsel between the effect and this log -- perform_action runs
+     * run_core then core_log_action back-to-back with only the rc/suppress checks between, and neither
+     * change_elem_order's push_undo/set_modify nor its post-entry work touches the selection COUNT (it
+     * rebuilds ONCE at entry and its swap moves the .sel bit with the struct). A future selection-
+     * mutating step added inside change_elem_order after that entry rebuild, or between the effect and
+     * this log, would break had_sel == lastsel and must re-capture the count explicitly. */
+    if(xctx->lastsel) log_action("xschem change_elem_order %d", atoi(argv[2]));
+  } else if(!strcmp(verb, "instance_number")) {
+    /* atom 23: TWO referents -- the instance referent argv[2] (a name or numeric index) AND the
+     * target position n argv[3] (a bareword integer) -- read IDENTICALLY to run_core's
+     * instance_number arm, so the logged `xschem instance_number <inst> <n>` self-contained line
+     * always names exactly the instance the effect reordered and the position it moved to. BOTH
+     * are emitted via log_action_argv (Tcl_Merge), NOT a raw `%s`: the instance name can carry Tcl
+     * metacharacters (an arrayed/bussed name `x2[3:0]`), and a raw line would replay `[3:0]` as a
+     * command substitution (the atom-13 issue-0048 replay-safe lesson); n is a bareword integer
+     * that Tcl_Merge logs unbraced. Tcl_Merge quotes MINIMALLY, so a plain refdes logs
+     * byte-identically to `xschem instance_number R1 3`. The array is named `ino` (av/ev/pp/mi/im/
+     * rs + replace_symbol's av[3] all taken -- the §36 collision lesson) so its build/emit stay
+     * TEXTUALLY DISTINCT from every sibling.
+     *
+     * NO had_sel GATE (a replay ADVANTAGE over change_elem_order, atom 21): instance_number's
+     * mutate is SELF-CONTAINED -- run_core did unselect_all + select_element(argv[2]) itself, so
+     * the log is UNCONDITIONAL on success (the selection is always the one it just made, never
+     * ambient; no phantom-line/0005 class). Reached ONLY on TCL_OK (log-on-success), and only via
+     * the branch's argc>3 delegation past run_core's gates, so argv[2]/argv[3] are always present. */
+    const char *ino[4];
+    ino[0] = "xschem"; ino[1] = verb; ino[2] = argv[2]; ino[3] = argv[3];
+    log_action_argv(4, ino);
+  } else if(!strcmp(verb, "add_pin_stubs")) {
+    /* atom 25: the FAITHFUL RAW full-call log `xschem add_pin_stubs [-prefix <s>] [-suffix <s>]
+     * [-inst-prefix]`. The flag COUNT is variable (0..5 tail words), so the array is sized to argc and
+     * the flag tail argv[2..] is copied VERBATIM -- the image im[] template (atom 20), NOT the fixed-
+     * arity av/pp/mi arms. The `xschem`/verb prefix is hardcoded (aps[0]/aps[1], the sibling idiom).
+     * A fresh heap array named `aps` (av/ev/pp/mi/im/rs/ino all taken -- the §36 collision lesson;
+     * and NOT the bare `log_action_argv(argc, argv)` form the old branch used, which recurs at paste/...
+     * and could not be grep-pinned uniquely). The flag words + their -prefix/-suffix VALUES may carry
+     * Tcl metacharacters, so log_action_argv/Tcl_Merge brace-quotes minimally (a plain word logs
+     * unbraced == byte-identical to the typed call). LOGGED UNCONDITIONALLY on TCL_OK -- option (c):
+     * add_pin_stubs always returns TCL_OK (added==0 is a no-op success), so a no-op logs one idempotent
+     * replayable line (the §30 floaters property); the old `if(added>0)` suppression is dropped. At
+     * argc==2 (bare verb) the loop copies nothing and this logs `xschem add_pin_stubs`. C89: decls at
+     * block top. */
+    const char **aps = my_malloc(_ALLOC_ID_, (size_t)argc * sizeof(char *));
+    int j;
+    aps[0] = "xschem"; aps[1] = verb;
+    for(j = 2; j < argc; j++) aps[j] = argv[j];
+    log_action_argv(argc, aps);
+    my_free(_ALLOC_ID_, &aps);
+  } else if(!strcmp(verb, "check_unique_names")) {
+    /* atom 26: FIXED literal -- only "1" ever crosses the boundary (the branch delegates solely
+     * argv[2]=="1"; the Ctrl+# key passes a literal "1"), and the OLD branch log canonicalized
+     * every call to "1"/"0" via its ?: -- so this literal is byte-identical to the pre-migration
+     * log for every argc/argv shape that reaches it. No flag array, no F-flagarg machinery.
+     * The mode-0 line is NOT here: it lives raw-front in the branch + the '#' key (the
+     * asymmetric logged-query split, §46). */
+    log_action("xschem check_unique_names 1");
+  } else if(!strcmp(verb, "undo")) {
+    /* atom 29: NORMALIZING arm -- byte-identical to the OLD branch's two log forms at every
+     * argc/argv. argv is read IDENTICALLY to run_core's undo arm (same defaults, same atoi), so
+     * the logged line can never diverge from the applied pop: `xschem undo 00 01` logs
+     * `xschem undo 0 1` (atoi canonicalization), `xschem undo 1` logs `xschem undo 1 1`
+     * (default fill -- replay preserves DIRECTION), `xschem undo 0 1 extra` logs
+     * `xschem undo 0 1` (tail drop). A raw-argv passthrough would diverge on all three; the
+     * default `%s` arm would flip `xschem undo 1 1` to a bare undo on replay -- a WRONG-direction
+     * replay. Reached ONLY on TCL_OK (log-on-success); bareword ints, no Tcl metachars, so
+     * log_action %d is replay-safe (no Tcl_Merge needed). */
+    int redo = 0, set_modify = 1;
+    if(argc > 2) redo = atoi(argv[2]);
+    if(argc > 3) set_modify = atoi(argv[3]);
+    if(argc == 2) log_action("xschem undo");
+    else          log_action("xschem undo %d %d", redo, set_modify);
+  } else {
+    log_action("xschem %s", verb);
+  }
 }
 
 /* perform_action -- the single mutation/command boundary (Refactor B, audit §4).
@@ -265,15 +1504,36 @@ static int run_core(const char *verb, int argc, const char *argv[])
  * The log site is gated on !actionlog_suppress -- the re-entrant depth counter
  * from the Refactor B foundation -- so a replayed / composite re-execution re-runs
  * the effect but does not re-log (log_action also honors the gate internally;
- * the explicit check documents the boundary contract). Uses the global interp. */
+ * the explicit check documents the boundary contract). The log line's SHAPE comes
+ * from core_log_action(verb, argc, argv) (atom 6): bare verbs -> `xschem <verb>`,
+ * the arg-carrying rotate -> `xschem rotate <x0> <y0>`. Effect THEN log, always:
+ * core_log_action's mouse-fallback pivot reads the coord run_core just seeded.
+ * Uses the global interp.
+ *
+ * LOG-ON-SUCCESS (Refactor B atom 13 -- the FIRST shared-machinery change): the log
+ * site AND the interp reset fire ONLY on rc == TCL_OK. This lets a VALIDATING verb --
+ * one whose run_core rejects a bad argument/precondition with Tcl_SetResult(...) +
+ * return TCL_ERROR *before* mutating (reset_inst_prop's `argc<3` / "instance not
+ * found", and the whole replace_symbol/load_backup/reset_symbol class it unblocks) --
+ * live on the boundary without being PHANTOM-logged: a rejected call records no
+ * replayable line. The guard MUST NOT be split from the Tcl_ResetResult: on the
+ * TCL_ERROR path run_core's error message must survive to the caller, so the reset is
+ * skipped on failure (resetting unconditionally here would blank the message -- the
+ * known C-side empty-error bug). The readonly early return above already keeps its own
+ * message for the same reason. INVARIANT: every verb already on the boundary returns
+ * TCL_OK on BOTH its success AND its no-op path (floaters nothing-selected,
+ * toggle_ignore attr==NULL) -- so log-on-success drops no existing log and PRESERVES
+ * the no-op-still-logs property (§30/§32); a no-op is a SUCCESS, not a failure. */
 int perform_action(const char *verb, int argc, const char *argv[])
 {
   int rc;
   if(!xctx) { Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR; }
   if(scheduler_readonly_reject(interp, verb)) return TCL_ERROR;   /* ONE readonly gate */
   rc = run_core(verb, argc, argv);                                /* the effect */
-  if(!actionlog_suppress) log_action("xschem %s", verb);          /* ONE log site */
-  Tcl_ResetResult(interp);
+  if(rc == TCL_OK) {   /* LOG-ON-SUCCESS + success-only reset (Refactor B atom 13) */
+    if(!actionlog_suppress) core_log_action(verb, argc, argv);    /* ONE log site (per-verb form) */
+    Tcl_ResetResult(interp);   /* clear on success ONLY -- preserve run_core's error message on TCL_ERROR */
+  }
   return rc;
 }
 
@@ -322,6 +1582,18 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
       }
     }
 
+    /* allocate_window_number
+     *   Hand out the next Cadence-style window number and advance the shared counter
+     *   (doc/claude/specs/window_numbering.md) -- the same monotonic, never-reused
+     *   sequence the editor birth sites consume via assign_window_number(). Lets
+     *   non-editor toplevels built in Tcl (the ASE-L session window,
+     *   doc/claude/specs/ase_l.md) claim a collision-free number. A verb, not a
+     *   `get`: it MUTATES the counter. */
+    else if(!strcmp(argv[1], "allocate_window_number"))
+    {
+      Tcl_SetResult(interp, my_itoa(allocate_window_number()), TCL_VOLATILE);
+    }
+
     /* apply_properties scope displayed_id new_prop old_prop [keep_name]
      *   Mid-session apply for the slick property form (P2 Apply / OK). Fans the
      *   change set (new_prop vs old_prop, changed-fields-only) to the instances
@@ -335,6 +1607,7 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
     {
       int modified, keep_name = 0;
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(scheduler_readonly_reject(interp, "apply_properties")) return TCL_ERROR;
       if(argc < 6) {
         Tcl_SetResult(interp,
           "xschem apply_properties needs: scope displayed_id new_prop old_prop [keep_name]", TCL_STATIC);
@@ -350,74 +1623,24 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
     /* apply_pin_prop [<scope>] <prop>
      *   Apply <prop> to the symbol pins (PINLAYER rects) named by <scope>, mirroring the pin
      *   branch of edit_rect_property but WITHOUT a dialog round-trip, so the pin/pinname
-     *   property forms can offer a live "Apply" that updates the canvas while staying open
-     *   (cadence_pin_name_text.md; scope = symbol_editor_apply_scope.md).
-     *   <scope> = current (primary pin only) | selected (all selected pins) | all (every pin
-     *   of the symbol), resolved by the shared pin_scope_targets(). If <scope> is omitted the
-     *   default is "selected" (back-compat with the pre-scope command and any replay logs).
-     *   Changed-fields-only is UNCONDITIONAL when a primary pin exists: the primary pin's prop
-     *   (sel_array[0]) is the diff baseline, so fanned pins keep their own unchanged tokens
-     *   (notably their distinct name=). No-op (no undo slot) when nothing would change; pushes
-     *   one undo; returns 1/0. */
+     *   property forms can offer a live "Apply" (cadence_pin_name_text.md; scope =
+     *   symbol_editor_apply_scope.md). <scope> = current | selected | all (default "selected").
+     * Routes through the single mutation boundary (Refactor B atom 18 -- a HIGHER-FRICTION
+     * coverage gain now the friction-free pool is EMPTY; the replace_symbol §34 two-referent
+     * VALIDATING template crossed with the reset_inst_prop §33 argc-gate): the readonly gate,
+     * the argc<3 "needs: [scope] new_prop" validation, the guard-pass no-op, the SINGLE
+     * push_undo + the inline apply loop (set_different_token/pin_reorient/pin_view_apply), and
+     * the ONE `xschem apply_pin_prop [<scope>] <prop>` log site (via core_log_action, both
+     * referents Tcl_Merge-quoted, LOGGED ONLY ON SUCCESS) all live in perform_action/run_core.
+     * The mutation body is INLINE (not a shared C fn) so it is strictly 1:1 with the verb (C3);
+     * pin_scope_resolve() is a SHARED read-only resolver that stays RAW below the boundary. The
+     * boundary ADDS the C-level read-only gate the scripted verb NEVER HAD (a correctness fix --
+     * the old scripted form mutated a read-only symbol view); the old success-path "0"/"1" interp
+     * result is dropped (the boundary clears the interp on success -- gfxform::do_apply discards
+     * it, and the two standalone tests were switched to assert the effect). No scattered
+     * readonly/log/push_undo here. */
     else if(!strcmp(argv[1], "apply_pin_prop"))
-    {
-      int i, n, change = 0, primary = -1, ntargets;
-      int *targets;
-      const char *scope, *newprop;
-      char *base = NULL;          /* primary pin's prop: the changed-fields baseline */
-      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
-      if(argc < 3) {
-        Tcl_SetResult(interp, "xschem apply_pin_prop needs: [scope] new_prop", TCL_STATIC);
-        return TCL_ERROR;
-      }
-      if(argc >= 4) { scope = argv[2]; newprop = argv[3]; }   /* apply_pin_prop <scope> <prop> */
-      else          { scope = "selected"; newprop = argv[2]; } /* apply_pin_prop <prop> (back-compat) */
-      ntargets = pin_scope_resolve(scope, &primary, &targets);
-      if(primary >= 0) my_strdup(_ALLOC_ID_, &base, xctx->rect[PINLAYER][primary].prop_ptr);
-      /* No pin primary (sel_array[0] is not a pin) but a scope like "all" still resolves
-       * targets: use the FIRST target as the changed-fields baseline so a fan can NEVER
-       * degenerate into a whole-prop overwrite that mass-renames every pin to the same
-       * string (the base==NULL else branch below). */
-      if(!base && ntargets > 0) my_strdup(_ALLOC_ID_, &base, xctx->rect[PINLAYER][targets[0]].prop_ptr);
-      /* guard pass: would applying change any target pin? avoid an empty undo slot */
-      for(i = 0; i < ntargets && !change; i++) {
-        char *cand = NULL;
-        n = targets[i];
-        my_strdup(_ALLOC_ID_, &cand, xctx->rect[PINLAYER][n].prop_ptr);
-        if(base) {
-          if(set_different_token(&cand, newprop, base)) change = 1;
-        } else {
-          my_strdup(_ALLOC_ID_, &cand, newprop);
-          if(!cand || !xctx->rect[PINLAYER][n].prop_ptr || strcmp(cand, xctx->rect[PINLAYER][n].prop_ptr)) change = 1;
-        }
-        my_free(_ALLOC_ID_, &cand);
-      }
-      if(!ntargets || !change) {
-        if(base) my_free(_ALLOC_ID_, &base);
-        my_free(_ALLOC_ID_, &targets);
-        Tcl_SetResult(interp, "0", TCL_STATIC);
-        return TCL_OK;
-      }
-      xctx->push_undo();
-      for(i = 0; i < ntargets; i++) {
-        char olddir[40];
-        n = targets[i];
-        my_snprintf(olddir, S(olddir), "%s", get_tok_value(xctx->rect[PINLAYER][n].prop_ptr, "dir", 0));
-        if(base) {
-          set_different_token(&xctx->rect[PINLAYER][n].prop_ptr, newprop, base);
-        } else {
-          my_strdup(_ALLOC_ID_, &xctx->rect[PINLAYER][n].prop_ptr, newprop);
-        }
-        set_rect_flags(&xctx->rect[PINLAYER][n]);
-        if(strcmp(olddir, get_tok_value(xctx->rect[PINLAYER][n].prop_ptr, "dir", 0))) pin_reorient(n);
-        pin_view_apply(n);   /* create/delete the name view per show_pinname, then sync it */
-      }
-      if(base) my_free(_ALLOC_ID_, &base);
-      my_free(_ALLOC_ID_, &targets);
-      set_modify(1);
-      draw();               /* a pin's name view is a separate object -> full redraw */
-      Tcl_SetResult(interp, "1", TCL_STATIC);
-    }
+      return perform_action("apply_pin_prop", argc, argv);
 
     /* add_symbol_pin [x y name dir [draw [noline]]]
      *   place a symbol pin.
@@ -734,27 +1957,18 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
     /* add_pin_stubs [-prefix <s>] [-suffix <s>] [-inst-prefix]
      *   For the current selection (individual pins, else whole instances' unconnected pins),
      *   draw a wire stub out of each pin + a lab_pin net-label at the far end. The net name is
-     *   [instname_ if -inst-prefix][-prefix]<pinname>[-suffix]. Returns the number of stubs added.
-     *   One undo. B5, doc/claude/specs/wire_stub_netlabel.md §4. */
+     *   [instname_ if -inst-prefix][-prefix]<pinname>[-suffix]. One undo. B5,
+     *   doc/claude/specs/wire_stub_netlabel.md §4.
+     * Routes through the single mutation boundary (Refactor B atom 25, run_core above): the readonly
+     * gate, the -prefix/-suffix/-inst-prefix flag parse, the add_pin_stubs() effect (core owns its
+     * undo+draw) and the ONE `xschem add_pin_stubs [flags]` log site (via core_log_action, LOGGED
+     * UNCONDITIONALLY on success -- option (c) no-op-still-logs) all live in perform_action/run_core.
+     * The old inline flag-parse + `if(added>0) log_action_argv` gate + the count Tcl_SetResult are GONE
+     * (the boundary owns the log; NO caller consumed the count). The SPACE key (act_add_pin_stubs,
+     * callback.c) stays RAW below the boundary -- it needs the C-fn int return for its pan-on-decline
+     * dual-use and never reaches this branch, so no double-log. */
     else if(!strcmp(argv[1], "add_pin_stubs"))
-    {
-      const char *prefix = "", *suffix = "";
-      int inst_prefix = 0, i, added;
-      char b[32];
-      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
-      for(i = 2; i < argc; ++i) {
-        if(!strcmp(argv[i], "-prefix") && i + 1 < argc) prefix = argv[++i];
-        else if(!strcmp(argv[i], "-suffix") && i + 1 < argc) suffix = argv[++i];
-        else if(!strcmp(argv[i], "-inst-prefix") || !strcmp(argv[i], "-inst_prefix")) inst_prefix = 1;
-      }
-      added = add_pin_stubs(prefix, suffix, inst_prefix);
-      my_snprintf(b, S(b), "%d", added);
-      /* self-log at core (0061): the Symbol menu item + script. Gate on added>0 --
-       * add_pin_stubs self-declines (read-only / nothing to stub) returning 0, so a
-       * no-op leaves no line. The SPACE key logs via its own registered action. */
-      if(added > 0) log_action_argv(argc, (const char *const *)argv);
-      Tcl_SetResult(interp, b, TCL_VOLATILE);
-    }
+      return perform_action("add_pin_stubs", argc, argv);
 
     /* align
      *   Align currently selected objects to current snap setting */
@@ -889,6 +2103,7 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
         int layer = atoi(argv[7]);
 
         if(layer >= 0 && layer < cadlayers) {
+          xctx->push_undo(); /* issue 0127: checkpoint like interactive new_arc; only when actually storing */
           store_arc(-1, x, y, r, a, b, layer, 0, prop);
           set_modify(1);
           Tcl_SetResult(interp, "1", TCL_STATIC);
@@ -908,15 +2123,22 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
      *   setting interactive=2 will place lab_show.sym labels on unconnected instance pins */
     else if(!strcmp(argv[1], "attach_labels"))
     {
-      int interactive = 0;
-      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
-
-      if(argc > 2) interactive = atoi(argv[2]);
-      attach_labels_to_inst(interactive);
-      log_action_argv(argc, (const char *const *)argv); /* self-log at core (0061):
-        Symbol menu + script. The Shift+H key runs the interactive dialog variant via
-        its registered action (csv-nolog), a separate non-equivalent path. */
-      Tcl_ResetResult(interp);
+      /* Route through the single mutation boundary (Refactor B atom 11, run_core above):
+       * the readonly gate (scheduler_readonly_reject) + the effect (attach_labels_to_inst,
+       * reading `interactive` from argv[2]) + the ONE `xschem attach_labels [interactive]`
+       * log site (core_log_action PRESERVES the 0/1/2 value -- byte-identical to the old
+       * log_action_argv for the canonical integer arg the UI emits, and strictly MORE
+       * faithful for a non-canonical token) all live in perform_action, dropping this branch's
+       * own `!xctx` guard (the boundary owns it) and its inline effect + self-log. The
+       * Symbol menu (hand-written `-command "xschem attach_labels"`, interactive=0) and the
+       * command palette reach here. The boundary ADDS a readonly gate this branch never had
+       * (a scattered 0041/0051 close): attach_labels always mutates -- every form (0/1/2)
+       * places label instances, none is a read-only-safe query -- so the all-or-nothing gate
+       * cannot over-reject (contrast check_unique_names, §30). The Shift+H key runs the
+       * interactive-DIALOG variant attach_labels_to_inst(1) via its registered action
+       * (csv-nolog, NON-equivalent) and stays OFF the boundary; the netlisting sub-step
+       * show_unconnected_pins() calls attach_labels_to_inst(2) raw and stays BELOW it. */
+      return perform_action("attach_labels", argc, argv);
     }
     else { *cmd_found = 0;}
   return TCL_OK;
@@ -952,18 +2174,16 @@ static int xschem_cmds_b(Tcl_Interp *interp, int argc, const char *argv[], int *
      *   all inside selected instances will be deleted */
     else if(!strcmp(argv[1], "break_wires"))
     {
-      int remove = 0;
-      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
-      if(scheduler_readonly_reject(interp, "break_wires")) return TCL_ERROR;
-      if(argc > 2) remove = atoi(argv[2]);
-      break_wires_at_pins(remove);
-      /* self-log at core: Tools menu + toolbar path (the '!'/Ctrl-'!' keys are handled
-       * inline in callback.c and log nothing -- issue 0068). break_wires_at_pins()
-       * reads `remove` as a boolean (!remove / if(remove)), so canonicalize to bare vs
-       * "1" -- the only two forms the UI emits -- for a faithful, deterministic replay. */
-      if(remove) log_action("xschem break_wires 1");
-      else       log_action("xschem break_wires");
-      Tcl_ResetResult(interp);
+      /* Route through the single mutation boundary (Refactor B atom 9, run_core above):
+       * the readonly gate (scheduler_readonly_reject) + the remove-FLAG effect
+       * (break_wires_at_pins, which owns its OWN push_undo/draw/set_modify) + the ONE
+       * `xschem break_wires [1]` log site (core_log_action canonicalizes the flag) all
+       * live in perform_action. The Tools/Edit menu, the toolbar, the command palette
+       * and scripted `xschem break_wires [1]` all reach here; the '!'/Ctrl-'!' keys
+       * reach the same boundary from callback.c. No inline readonly/effect/log here.
+       * This is the FIRST non-transform verb migrated (audit §29): the arg is a FLAG,
+       * not a pivot, and there is no mid-gesture split. */
+      return perform_action("break_wires", argc, argv);
     }
 
     /* build_colors
@@ -1100,25 +2320,18 @@ static int xschem_cmds_c(Tcl_Interp *interp, int argc, const char *argv[], int *
 
     /* change_elem_order n
      *   set selected object (instance, wire, line, rect, ...) to
-     *   position 'n' in its respective array */
+     *   position 'n' in its respective array
+     *   Refactor B atom 21 (audit §41): routes through the perform_action boundary.
+     *   run_core owns the argc<3 + `n >= 0 || n == -1` validation gates and the
+     *   change_elem_order(n) effect (the core OWNS its own push_undo + set_modify);
+     *   core_log_action owns the ONE value-preserving `xschem change_elem_order %d`
+     *   log site (which PRESERVES the pre-migration had_sel gate via `if(xctx->lastsel)` --
+     *   §30 no-op-still-logs was REJECTED for this SELECTION-DEPENDENT verb, see audit §41).
+     *   The equivalent Shift+S key (callback.c case 'S', hardcoded -1) routes through the
+     *   SAME boundary. No scattered readonly/log/push_undo remains here. */
     else if(!strcmp(argv[1], "change_elem_order"))
     {
-      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
-      if(scheduler_readonly_reject(interp, "change_elem_order")) return TCL_ERROR;
-      if(argc > 2) {
-        int n = atoi(argv[2]);
-        if(n >= 0 || n == -1) {
-          int had_sel;
-          rebuild_selected_array();
-          had_sel = xctx->lastsel;   /* selection BEFORE the op (which may clear it) */
-          change_elem_order(n);
-          /* self-log at core: covers the Prop menu + scripted form. The Shift+S key
-           * is handled inline in callback.c (case 'S') and logs there too (0068).
-           * change_elem_order reorders the SELECTED objects; with nothing selected
-           * it is a no-op, so don't record a phantom edit (matches set rectcolor). */
-          if(had_sel) log_action("xschem change_elem_order %d", n);
-        }
-      }
+      return perform_action("change_elem_order", argc, argv);
     }
 
     /* change_sch_path n <draw>
@@ -1189,15 +2402,17 @@ static int xschem_cmds_c(Tcl_Interp *interp, int argc, const char *argv[], int *
     else if(!strcmp(argv[1], "check_unique_names"))
     {
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
-      if(argc > 2 && !strcmp(argv[2], "1")) {
-        check_unique_names(1);
-      } else {
-        check_unique_names(0);
-      }
-      /* self-log at core (0061): Highlight menu + script. The mode arg (0 highlight /
-       * 1 rename) is deterministic, so both forms replay faithfully. The `#`/Ctrl+#
-       * keys are handled inline in callback.c (0068), a disjoint path. */
-      log_action("xschem check_unique_names %s", (argc > 2 && !strcmp(argv[2], "1")) ? "1" : "0");
+      if(argc > 2 && !strcmp(argv[2], "1"))
+        return perform_action("check_unique_names", argc, argv);  /* MUTATE: gate + effect + log(=1) */
+      /* mode 0: read-only-safe duplicate-refdes HIGHLIGHT stays RAW in front of the boundary
+       * (the all-or-nothing readonly gate would over-reject it on a read-only cell -- the image
+       * §40 / instance_number §43 split). UNLIKE those unlogged query fronts, mode 0 is a
+       * CURRENTLY-LOGGED replayable action, so it KEEPS its own log_action here (the asymmetric
+       * logged-query sub-shape, atom 26 / audit §46). Any argv[2] other than exact "1" -- and the
+       * bare argc==2 form -- lands here and logs the canonical "0", byte-identical to the old
+       * `%s`-with-?: site. */
+      check_unique_names(0);
+      log_action("xschem check_unique_names 0");
       Tcl_ResetResult(interp);
     }
 
@@ -1289,16 +2504,16 @@ static int xschem_cmds_c(Tcl_Interp *interp, int argc, const char *argv[], int *
     }
 
     /* clear_drawing
-     *   Clears drawing but does not purge symbols */
+     *   Clears drawing but does not purge symbols.
+     * Routes through the single mutation boundary (Refactor B atom 27, run_core above): the NEW
+     * readonly gate (was NONE -- a read-only view was silently emptied), the argc==2 arity
+     * validation (was a silent no-op), the unselect_all+clear_drawing effect and the ONE bare
+     * `xschem clear_drawing` log site (was SILENT) all live in perform_action/run_core. No undo
+     * exists on this path (accepted -- decision doc §2). The seven raw C teardown callers of
+     * clear_drawing() (load/undo-restore/window-teardown/clear_schematic/debug) stay raw + silent
+     * below the boundary and never reach this branch. */
     else if(!strcmp(argv[1], "clear_drawing"))
-    {
-      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
-      if(argc==2) {
-        unselect_all(1);
-        clear_drawing();
-      }
-      Tcl_ResetResult(interp);
-    }
+      return perform_action("clear_drawing", argc, argv);
 
     /* color_dim value
      *   Dim colors or brite colors depending on value parameter: -5 <= value <= 5 */
@@ -1547,17 +2762,15 @@ static int xschem_cmds_d(Tcl_Interp *interp, int argc, const char *argv[], int *
     }
 
     /* delete
-     *   Delete selection */
+     *   Delete selection.
+     * Routes through the single mutation boundary (Refactor B atom 24, run_core above): the
+     * readonly gate, the argc==2 arity validation, the delete() effect (core owns undo/draw) and
+     * the ONE `xschem delete` log site all live in perform_action/run_core. The old inline
+     * scheduler_readonly_reject + if(argc==2) log_action are GONE (the boundary owns both). Only
+     * this branch (menu Edit>Delete + scripted `xschem delete`) crosses; the Ctrl-X / XK_Delete
+     * inline keys (callback.c) stay raw + self-logging and never reach here (no double-log). */
     else if(!strcmp(argv[1], "delete"))
-    {
-      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
-      if(scheduler_readonly_reject(interp, "delete")) return TCL_ERROR;
-      if(argc==2) {
-        delete(1/*to_push_undo*/);
-        log_action("xschem delete"); /* self-log at core */
-      }
-      Tcl_ResetResult(interp);
-    }
+      return perform_action("delete", argc, argv);
 
     /* delete_files
      *   Bring up a file selector the user can use to delete files */
@@ -1711,7 +2924,7 @@ static int xschem_cmds_d(Tcl_Interp *interp, int argc, const char *argv[], int *
            * 4: draw cursor 2
            * 128: draw hcursor 1
            * 256: draw hcursor 2 */
-          flags = 1 + 8 + (xctx->graph_flags & (2 + 4 + 128 + 256));
+          flags = 1 + 8 + 16 + (xctx->graph_flags & (2 + 4 + 128 + 256));
         }
         draw_graph(i, flags, &xctx->graph_struct, NULL);
       }
@@ -1803,26 +3016,23 @@ static int xschem_cmds_e(Tcl_Interp *interp, int argc, const char *argv[], int *
     else if(!strcmp(argv[1], "edit_vi_prop"))
     {
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(scheduler_readonly_reject(interp, "edit_vi_prop")) return TCL_ERROR;
       edit_property(1);
       Tcl_ResetResult(interp);
     }
 
     /* embed_rawfile raw_file
      *   Embed base 64 encoded 'raw_file' into currently
-     *   selected element as a 'spice_data'
-     *   attribute. */
+     *   selected element as a 'spice_data' attribute.
+     *   Refactor B atom 16 (audit §36): routes through the perform_action boundary.
+     *   run_core owns the `~/` expansion + the argc<3 validation gate; the boundary owns
+     *   the ONE readonly gate (a CORRECTNESS FIX -- the old branch embedded on a read-only
+     *   cell) + the log-on-success self-log (log_action_argv on the RAW argv[2] path so a
+     *   metachar path replays and the `~/` form re-expands). The old !xctx guard + the
+     *   Tcl_ResetResult are the boundary's now; the old silent argc<=2 no-op becomes a
+     *   TCL_ERROR that (via log-on-success) records no phantom line. */
     else if(!strcmp(argv[1], "embed_rawfile"))
-    {
-      char f[PATH_MAX + 100];
-      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
-      if(argc > 2) {
-        my_snprintf(f, S(f),"regsub {^~/} {%s} {%s/}", argv[2], home_dir);
-        tcleval(f);
-        my_strncpy(f, tclresult(), S(f));
-        embed_rawfile(f);
-      }
-      Tcl_ResetResult(interp);
-    }
+      return perform_action("embed_rawfile", argc, argv);
 
     /* enable_layers
      *   Enable/disable layers depending on tcl array variable enable_layer() */
@@ -2059,32 +3269,28 @@ static int xschem_cmds_f(Tcl_Interp *interp, int argc, const char *argv[], int *
      *   if x0, y0 not given use mouse coordinates */
     else if(!strcmp(argv[1], "flip"))
     {
-      double x0 = xctx->mousex_snap;
-      double y0 = xctx->mousey_snap;
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
-      if(scheduler_readonly_reject(interp, "flip")) return TCL_ERROR;
-      if(argc > 3) {
-        x0 = atof(argv[2]);
-        y0 = atof(argv[3]);
-      }
+      /* flip-during-move/copy: mirror the whole in-flight selection about the shared gesture pivot.
+       * These two mid-gesture arms stay RAW -- they are sub-steps of a move/copy logged at that
+       * gesture's END (issue 0069), NOT the standalone verb, so they must NOT cross the
+       * perform_action boundary (routing them would spuriously emit `xschem flip x y` mid-drag and
+       * double-count the move-END line). They need no readonly gate: being in STARTMOVE/STARTCOPY
+       * means an edit is already in progress, impossible on a read-only schematic, and the only
+       * commit path `xschem move_objects end` is itself readonly-refused at the move_objects command
+       * gate (covering start/step/end/abort). */
       if(xctx->ui_state & STARTMOVE) move_objects(FLIP,0,0,0);
       else if(xctx->ui_state & STARTCOPY) copy_objects(FLIP);
-      else {
-        rebuild_selected_array();
-        xctx->mx_double_save = xctx->mousex_snap = x0;
-        xctx->my_double_save = xctx->mousey_snap = y0;
-        move_objects(START,0,0,0);
-        move_objects(FLIP,0, 0, 0);
-        move_objects(END,0,0,0);
-        /* self-log at core (standalone, non-gesture): covers the Edit-menu item,
-         * toolbar, context menu and any scripted `xschem flip` -- all of which
-         * funnel through here. The Shift-F key does NOT: it is handled inline in
-         * callback.c's legacy switch (case 'F') and logs nothing (issue 0068,
-         * un-migrated keys). During-move/copy flips are part of an unfinished
-         * gesture logged by the move END (issue 0069), not here. */
-        log_action("xschem flip %.16g %.16g", x0, y0);
-      }
-      Tcl_ResetResult(interp);
+      /* standalone verb: the single mutation boundary (Refactor B atom 7, run_core above) owns the
+       * readonly gate + the ONE `xschem flip x0 y0` log site (core_log_action formats the pivot) +
+       * the rebuild+seed-pivot+START+FLIP+END effect. run_core resolves the pivot from argv[2]/
+       * argv[3] (else the mouse coords) exactly as this branch used to, so passing the branch's own
+       * argc/argv straight through is byte-identical. The Edit menu (bare `xschem flip`), the context
+       * menu and the command palette reach here; the Shift-F key, the Alt-F group transform and the
+       * verb-noun apply reach the same boundary from callback.c, each carrying its own pivot. flip is
+       * the SECOND arg-carrying verb on the boundary, a near-clone of rotate (atom 6) -- issue 0068's
+       * "Shift-F logs nothing" note is now stale (Shift-F logs here too). */
+      else return perform_action("flip", argc, argv);
+      Tcl_ResetResult(interp);   /* only the mid-gesture arms fall through to here */
     }
 
     /* flip_in_place
@@ -2116,14 +3322,15 @@ static int xschem_cmds_f(Tcl_Interp *interp, int argc, const char *argv[], int *
      *   if x0, y0 not given use mouse coordinates */
     else if(!strcmp(argv[1], "flipv"))
     {
-      double x0 = xctx->mousex_snap;
-      double y0 = xctx->mousey_snap;
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
-      if(scheduler_readonly_reject(interp, "flipv")) return TCL_ERROR;
-      if(argc > 3) {
-        x0 = atof(argv[2]);
-        y0 = atof(argv[3]);
-      }
+      /* flipv-during-move/copy: a net vertical mirror = 180 rotate + horizontal flip of the whole
+       * in-flight selection about the shared gesture pivot. These two mid-gesture arms stay RAW --
+       * they are sub-steps of a move/copy logged at that gesture's END (issue 0069), NOT the
+       * standalone verb, so they must NOT cross the perform_action boundary (routing them would
+       * spuriously emit `xschem flipv x y` mid-drag and double-count the move-END line). They need no
+       * readonly gate: being in STARTMOVE/STARTCOPY means an edit is already in progress, impossible
+       * on a read-only schematic, and the only commit path `xschem move_objects end` is itself
+       * readonly-refused at the move_objects command gate (covering start/step/end/abort). */
       if(xctx->ui_state & STARTMOVE) {
         move_objects(ROTATE,0,0,0);
         move_objects(ROTATE,0,0,0);
@@ -2134,18 +3341,18 @@ static int xschem_cmds_f(Tcl_Interp *interp, int argc, const char *argv[], int *
         copy_objects(ROTATE);
         copy_objects(FLIP);
       }
-      else {
-        rebuild_selected_array();
-        xctx->mx_double_save = xctx->mousex_snap = x0;
-        xctx->my_double_save = xctx->mousey_snap = y0;
-        move_objects(START,0,0,0);
-        move_objects(ROTATE,0, 0, 0);
-        move_objects(ROTATE,0, 0, 0);
-        move_objects(FLIP,0, 0, 0);
-        move_objects(END,0,0,0);
-        log_action("xschem flipv %.16g %.16g", x0, y0); /* self-log at core (standalone only) */
-      }
-      Tcl_ResetResult(interp);
+      /* standalone verb: the single mutation boundary (Refactor B atom 8, run_core above) owns the
+       * readonly gate + the ONE `xschem flipv x0 y0` log site (core_log_action formats the pivot) +
+       * the rebuild+seed-pivot+START+ROTATE+ROTATE+FLIP+END effect (net vertical mirror). run_core
+       * resolves the pivot from argv[2]/argv[3] (else the mouse coords) exactly as this branch used
+       * to, so passing the branch's own argc/argv straight through is byte-identical. The Edit menu
+       * (bare `xschem flipv`), the context menu and the command palette reach here; the Shift-V key
+       * and the verb-noun apply reach the same boundary from callback.c, each carrying its own pivot.
+       * flipv is the THIRD and LAST arg-carrying pivot verb -- the mirror of flip (atom 7); after atom
+       * 8 the whole transform sextet (rotate/flip/flipv x pivot + in-place) is on the boundary. flipv
+       * has NO group form (unlike rotate/flip), so callback.c has only two entry sites, not three. */
+      else return perform_action("flipv", argc, argv);
+      Tcl_ResetResult(interp);   /* only the mid-gesture arms fall through to here */
     }
 
     /* flipv_in_place
@@ -2153,7 +3360,15 @@ static int xschem_cmds_f(Tcl_Interp *interp, int argc, const char *argv[], int *
     else if(!strcmp(argv[1], "flipv_in_place"))
     {
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
-      if(scheduler_readonly_reject(interp, "flipv_in_place")) return TCL_ERROR;
+      /* flipv-during-move/copy: a net vertical mirror = a 180 rotate + a horizontal flip, each
+       * object about its own centre. These two mid-gesture arms stay RAW -- they are sub-steps
+       * of a move/copy logged at that gesture's END (issue 0069), NOT the standalone verb, so
+       * they must NOT cross the perform_action boundary (routing them would spuriously emit
+       * `xschem flipv_in_place` mid-drag and double-count the move-END line). They need no
+       * readonly gate: being in STARTMOVE/STARTCOPY means an edit is already in progress, which
+       * a read-only schematic never permits, and the transform is preview-only -- push_undo/
+       * set_modify fire only in move_objects(END), which is itself readonly-refused at the
+       * move_objects command gate. */
       if(xctx->ui_state & STARTMOVE) {
         move_objects(ROTATE|ROTATELOCAL,0,0,0);
         move_objects(ROTATE|ROTATELOCAL,0,0,0);
@@ -2164,26 +3379,30 @@ static int xschem_cmds_f(Tcl_Interp *interp, int argc, const char *argv[], int *
         copy_objects(ROTATE|ROTATELOCAL);
         copy_objects(FLIP|ROTATELOCAL);
       }
-      else {
-        rebuild_selected_array();
-        move_objects(START,0,0,0);
-        move_objects(ROTATE|ROTATELOCAL,0,0,0);
-        move_objects(ROTATE|ROTATELOCAL,0,0,0);
-        move_objects(FLIP|ROTATELOCAL,0,0,0);
-        move_objects(END,0,0,0);
-        log_action("xschem flipv_in_place"); /* self-log at core (standalone only) */
-      }
-      Tcl_ResetResult(interp);
+      /* standalone verb: the single mutation boundary (Refactor B atom 5, run_core above) owns
+       * the readonly gate + the ONE `xschem flipv_in_place` log site + the rebuild+START+
+       * ROTATE|ROTATELOCAL x2 + FLIP|ROTATELOCAL + END effect. The Edit menu / context menu /
+       * command palette reach here via `xschem flipv_in_place`; the Alt-V key + verb-noun apply
+       * reach the same boundary from callback.c. Mirror of the flip_in_place branch above, but
+       * three move_objects calls (net vertical mirror) instead of one. */
+      else return perform_action("flipv_in_place", argc, argv);
+      Tcl_ResetResult(interp);   /* only the mid-gesture arms fall through to here */
     }
 
     /* floaters_from_selected_inst
      *   flatten to current level selected instance texts */
     else if(!strcmp(argv[1], "floaters_from_selected_inst"))
     {
-      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
-      floaters_from_selected_inst();
-      log_action("xschem floaters_from_selected_inst"); /* self-log at core (0061): Symbol menu + script */
-      Tcl_ResetResult(interp);
+      /* Route through the single mutation boundary (Refactor B atom 10, run_core above):
+       * the readonly gate + the flatten-texts effect (floaters_from_selected_inst, which
+       * owns its OWN push_undo/set_modify/draw) + the ONE bare `xschem floaters_from_selected_inst`
+       * log site (core_log_action's DEFAULT %s form) all live in perform_action. The Symbol
+       * menu (hand-written -command) and the command palette (raw) reach here via
+       * `xschem floaters_from_selected_inst`; there is NO key entry point. NB this branch
+       * NEVER HAD a scheduler_readonly_reject -- floaters mutates, so the boundary's generic
+       * gate CLOSES a scattered 0041/0051-class read-only gap (it now correctly refuses on a
+       * read-only cell), the one deliberate behaviour delta of this atom. */
+      return perform_action("floaters_from_selected_inst", argc, argv);
     }
 
     /* fluid_snapshot arm
@@ -2228,6 +3447,27 @@ static int xschem_cmds_f(Tcl_Interp *interp, int argc, const char *argv[], int *
       }
       my_snprintf(buf, S(buf), "%d", changed);
       Tcl_SetResult(interp, buf, TCL_VOLATILE);
+    }
+
+    /* fluid_trace start <path> | stop | status
+     *   Runtime FLUID_TRACE control for the Help>Debug menu (issue 0123). `start <path>` opens a
+     *   fresh (truncated) trace file and enables tracing; `stop` flush+closes and disables; `status`
+     *   reports on/off. start returns the open path (or "" on failure), stop the last path -- so the
+     *   caller can echo the filename in the CIW. No xctx needed: the trace file is process-global. */
+    else if(!strcmp(argv[1], "fluid_trace"))
+    {
+      if(argc > 2 && !strcmp(argv[2], "start")) {
+        const char *p = fltrace_runtime_start(argc > 3 ? argv[3] : NULL);
+        Tcl_SetResult(interp, (char *)(p ? p : ""), TCL_VOLATILE);
+      } else if(argc > 2 && !strcmp(argv[2], "stop")) {
+        const char *p = fltrace_runtime_stop();
+        Tcl_SetResult(interp, (char *)(p ? p : ""), TCL_VOLATILE);
+      } else if(argc > 2 && !strcmp(argv[2], "status")) {
+        Tcl_SetResult(interp, fluid_trace_on() ? "on" : "off", TCL_STATIC);
+      } else {
+        Tcl_SetResult(interp, "usage: xschem fluid_trace start <path> | stop | status", TCL_STATIC);
+        return TCL_ERROR;
+      }
     }
 
     /* flylines net <name> | at <x> <y>
@@ -2504,7 +3744,17 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
           }
           break;
           case 'e':
-          if(!strcmp(argv[2], "en_pin_select")) { /* 1 if clicking a pin selects it (pin_selection.md) */
+          if(!strcmp(argv[2], "editing_symbol_view")) {
+            /* 1 if the current view is a symbol (.sym), else 0. The AUTHORITATIVE test
+             * (checks the real loaded path xctx->sch[currsch]), unlike a `*.sym` match on
+             * `current_name`: a library-manager symbol displays as the extension-less
+             * "lib/cell" reference (rel_sym_path -> lib_qualified_rel), so a name-string
+             * match wrongly reports "schematic" and mis-routes the view-aware Add-Pin verb
+             * (addpin::place_verb) to add_sch_pin, a no-op in a symbol view. */
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            Tcl_SetResult(interp, my_itoa(editing_symbol_view()),TCL_VOLATILE);
+          }
+          else if(!strcmp(argv[2], "en_pin_select")) { /* 1 if clicking a pin selects it (pin_selection.md) */
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
             Tcl_SetResult(interp, my_itoa(xctx->en_pin_select),TCL_VOLATILE);
           }
@@ -2739,6 +3989,10 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
             else
               Tcl_SetResult(interp, "0",TCL_STATIC);
           }
+          else if(!strcmp(argv[2], "no_grid")) { /* per-window grid/origin suppression (item 18) */
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            Tcl_SetResult(interp, xctx->no_grid != 0 ? "1" : "0", TCL_STATIC);
+          }
           else if(!strcmp(argv[2], "ntabs")) { /* get number of additional tabs (0 = only one tab) */
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
             Tcl_SetResult(interp, my_itoa(get_window_count()), TCL_VOLATILE);
@@ -2845,6 +4099,10 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
           else if(!strcmp(argv[2], "semaphore")) { /* used for debug */
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
             Tcl_SetResult(interp, my_itoa(xctx->semaphore),TCL_VOLATILE);
+          }
+          else if(!strcmp(argv[2], "sympin_drops")) { /* issue 0122 E1: committed Add-Pin/Add-Wire-Label drop count */
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            Tcl_SetResult(interp, my_itoa(xctx->sympin_drops),TCL_VOLATILE);
           }
           else if(!strcmp(argv[2], "schname")) /* get full path of current sch. if 'n' given get sch of level 'n' */
           {
@@ -3579,6 +4837,44 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
       #endif
       Tcl_ResetResult(interp);
     }
+
+    /* graph_coord <graph_idx> <screen_x> <screen_y>
+     * Data-space coordinates `<dx> <dy>` of a CANVAS PIXEL inside graph
+     * <graph_idx> (a layer-2 rect with flags&1). The inverse of the draw
+     * transform: pixel -> xschem (X_TO_XSCHEM) -> graph data (G_X/G_Y), so it
+     * accounts for the plot box's 14% margins that only setup_graph_data knows.
+     * Added for the ASE viewer's POINTER-ANCHORED zoom (issue 0146): Tcl must not
+     * re-derive the margin math (the documented mirror/desync trap, see
+     * doc/claude/code_analysis/waveform_subsystem_reference.md §8).
+     * Returns {} for a bad index / non-graph rect, so callers can fall back.
+     * Uses a LOCAL Graph_ctx: never clobber xctx->graph_struct, which an active
+     * draw_graph may be using (landmine 11 in the same reference). */
+    else if(!strcmp(argv[1], "graph_coord"))
+    {
+      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      Tcl_ResetResult(interp);
+      if(argc > 4) {
+        i = atoi(argv[2]);
+        if(i >= 0 && i < xctx->rects[GRIDLAYER] && (xctx->rect[GRIDLAYER][i].flags & 1)) {
+          char res[100];
+          Graph_ctx gr_ctx;
+          Graph_ctx *gr = &gr_ctx;
+          double xx = X_TO_XSCHEM(atof(argv[3]));
+          double yy = Y_TO_XSCHEM(atof(argv[4]));
+          /* setup_graph_data() RETURNS EARLY for an off-screen graph (draw.c, the
+           * RECT_OUTSIDE test) WITHOUT computing the cx/dx/cy/dy transform, so
+           * zero it first and treat a still-zero scale as "no transform": G_X/G_Y
+           * divide by cx/cy, which would otherwise be a garbage/inf anchor. Empty
+           * result -> the caller zooms about centre instead. */
+          memset(&gr_ctx, 0, sizeof(gr_ctx));
+          setup_graph_data(i, 0, gr);
+          if(gr->cx != 0.0 && gr->cy != 0.0) {
+            my_snprintf(res, S(res), "%.16g %.16g", G_X(xx), G_Y(yy));
+            Tcl_SetResult(interp, res, TCL_VOLATILE); /* copies: stack buf is fine */
+          }
+        }
+      }
+    }
     else { *cmd_found = 0;}
   return TCL_OK;
 }
@@ -3829,20 +5125,32 @@ static int xschem_cmds_h(Tcl_Interp *interp, int argc, const char *argv[], int *
       net_hilight_interactive(1);
       Tcl_ResetResult(interp);
     }
-    /* hilight_instname [-fast] inst
+    /* hilight_instname [-fast] [-layer <n>] inst
      *   Highlight instance 'inst'
      * if '-fast' is specified do not redraw
-     *   'inst' can be an instance name or number */
+     *   'inst' can be an instance name or number
+     *   -layer <n>  highlight in the plain color of drawing layer n instead of the next
+     *               style from the net-hilight style table, and do NOT advance the style
+     *               cursor. Same mechanism and same rationale as hilight_netname -layer
+     *               (see there): a negative hilight value means "layer color, no style".
+     *               Used by the ASE Direct Plot signal picker to paint a current-probe
+     *               source body in the color its waveform trace will use. */
     else if(!strcmp(argv[1], "hilight_instname"))
     {
       const char *instname=NULL;
-      int i, fast = 0;
+      int i, fast = 0, layer = 0;
 
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
       for(i = 2; i < argc; i++) {
         if(argv[i][0] == '-') {
           if(!strcmp(argv[i], "-fast")) {
             fast = 1;
+          } else if(!strcmp(argv[i], "-layer") && i + 1 < argc) {
+            layer = atoi(argv[++i]);
+            if(layer <= 0 || layer >= cadlayers) {
+              Tcl_SetResult(interp, "hilight_instname: -layer must be in 1..cadlayers-1", TCL_STATIC);
+              return TCL_ERROR;
+            }
           }
         } else {
           instname = argv[i];
@@ -3853,10 +5161,14 @@ static int xschem_cmds_h(Tcl_Interp *interp, int argc, const char *argv[], int *
         int inst;
         char *type;
         int incr_hi;
+        int saved_col = xctx->hilight_color;
         xctx->enable_drill=0;
         incr_hi = tclgetboolvar("incr_hilight");
+        /* an explicit layer neither uses nor advances the style cursor */
+        if(layer) { xctx->hilight_color = -layer; incr_hi = 0; }
         prepare_netlist_structs(0);
         if((inst = get_instance(instname)) < 0 ) {
+          xctx->hilight_color = saved_col; /* restore on the error path too */
           Tcl_SetResult(interp, "xschem hilight_instname: instance not found", TCL_STATIC);
           return TCL_ERROR;
         } else {
@@ -3881,6 +5193,7 @@ static int xschem_cmds_h(Tcl_Interp *interp, int argc, const char *argv[], int *
             net_hilight_sync_descend_windows(); /* issue 0073: push into linked descend children */
           }
         }
+        xctx->hilight_color = saved_col; /* no-op unless -layer overrode it */
       }
       Tcl_ResetResult(interp);
     }
@@ -3905,9 +5218,23 @@ static int xschem_cmds_h(Tcl_Interp *interp, int argc, const char *argv[], int *
       Tcl_SetResult(interp, res, TCL_VOLATILE);
     }
 
-    /* hilight_netname [-fast] net
+    /* hilight_netname [-fast] [-style <n> | -layer <n>] net
      *   Highlight net name 'net'
-     *   if '-fast' is given do not redraw hilights after operation */
+     *   if '-fast' is given do not redraw hilights after operation
+     *   -style <n>  highlight with net-hilight-style index n (the style table decides
+     *               color/width/dash/animation); does not advance the style cursor
+     *   -layer <n>  highlight in the PLAIN COLOR OF DRAWING LAYER n, bypassing the style
+     *               table entirely (no width/dash/blink). Needed by callers that must
+     *               match a color chosen elsewhere in layer terms -- the ASE Direct Plot
+     *               signal picker paints each wire in the layer its waveform trace will
+     *               use (doc/claude/issues/0153-*), and layers 4/5 of the viewer palette
+     *               have no style-table entry at all (default styles cover layers >= 7
+     *               only, hilight.c default_net_hilight_styles). Implemented with the
+     *               NEGATIVE hilight value the engine already uses for this exact
+     *               purpose (get_color/hilight_pixel_of: value < 0 -> layer -value),
+     *               as draw.c's auto_hilight_graph_nodes path does via
+     *               hilight_graph_node(). Layer 0 is the background and is refused
+     *               (-0 == 0 == style 0). */
     else if(!strcmp(argv[1], "hilight_netname"))
     {
       int ret = 0, fast = 0, i, style = 0, have_style = 0;
@@ -3919,6 +5246,18 @@ static int xschem_cmds_h(Tcl_Interp *interp, int argc, const char *argv[], int *
             fast = 1;
           } else if(!strcmp(argv[i], "-style") && i + 1 < argc) {
             style = atoi(argv[++i]); /* explicit style index; does not advance the cursor */
+            if(style < 0) {
+              Tcl_SetResult(interp, "hilight_netname: -style index must be >= 0", TCL_STATIC);
+              return TCL_ERROR;
+            }
+            have_style = 1;
+          } else if(!strcmp(argv[i], "-layer") && i + 1 < argc) {
+            int layer = atoi(argv[++i]);
+            if(layer <= 0 || layer >= cadlayers) {
+              Tcl_SetResult(interp, "hilight_netname: -layer must be in 1..cadlayers-1", TCL_STATIC);
+              return TCL_ERROR;
+            }
+            style = -layer; /* negative hilight value = plain layer color, no style */
             have_style = 1;
           }
         } else {
@@ -3926,12 +5265,8 @@ static int xschem_cmds_h(Tcl_Interp *interp, int argc, const char *argv[], int *
           break;
         }
       }
-      if(have_style && style < 0) {
-        Tcl_SetResult(interp, "hilight_netname: -style index must be >= 0", TCL_STATIC);
-        return TCL_ERROR;
-      }
       if(net && have_style) {
-        /* highlight with an explicit style: set the cursor, then restore it so the
+        /* highlight with an explicit style/layer: set the cursor, then restore it so the
          * style cursor is neither used nor advanced (waveform-viewer / scripted bridge) */
         int saved = xctx->hilight_color;
         xctx->hilight_color = style;
@@ -3951,19 +5286,6 @@ static int xschem_cmds_h(Tcl_Interp *interp, int argc, const char *argv[], int *
  * matches no command in this group; early returns propagate unchanged. */
 static int xschem_cmds_i(Tcl_Interp *interp, int argc, const char *argv[], int *cmd_found)
 {
-    #if HAS_CAIRO==1
-    /* image [invert|white_transp|black_transp|transp_white|transp_black|write_back|
-     *        blend_white|blend_black]
-     *   Apply required changes to selected images
-     *   invert: invert colors
-     *   white_transp: transform white color to transparent (alpha=0)
-     *   black_transp: transform black color to transparent (alpha=0)
-     *   transp_white: transform transparent to white color
-     *   transp_black: transform transparent to black color
-     *   blend_white:  blend with white background and remove alpha
-     *   blend_black:  blend with black background and remove alpha
-     *   write_back:   write resulting image back into `image_data` attribute
-     */
     /* incr_hilight_color
      *   Step the net-highlight style cursor forward one (wrapping modulo the number
      *   of styles) and return the resulting style index. This normally happens
@@ -4015,11 +5337,35 @@ static int xschem_cmds_i(Tcl_Interp *interp, int argc, const char *argv[], int *
         Tcl_SetResult(interp, buf, TCL_VOLATILE);
       }
     }
+    #if HAS_CAIRO==1
+    /* image [invert|white_transp|black_transp|transp_white|transp_black|write_back|
+     *        blend_white|blend_black]
+     *   Apply required changes to selected images
+     *   invert: invert colors
+     *   white_transp: transform white color to transparent (alpha=0)
+     *   black_transp: transform black color to transparent (alpha=0)
+     *   transp_white: transform transparent to white color
+     *   transp_black: transform transparent to black color
+     *   blend_white:  blend with white background and remove alpha
+     *   blend_black:  blend with black background and remove alpha
+     *   write_back:   write resulting image back into `image_data` attribute
+     */
     else if(!strcmp(argv[1], "image"))
     {
-      int n, i, c;
-      int what = 0;
-      xRect *r;
+      /* Refactor B atom 20 (audit §40): the FIRST HAS_CAIRO-gated migration and the first verb with
+       * a read-only-SAFE query sub-form. Only the MUTATING tail routes through the boundary; the two
+       * pre-mutation read-only-safe replies stay RAW here IN FRONT of it -- `help` (a static usage
+       * string) and the argc<3 "Missing arguments" validation -- because the boundary's ONE readonly
+       * gate (scheduler.c:1031) is unconditional per-verb: routing `image help` through it would
+       * REFUSE a pure query on a read-only cell (the read-only-safe-query over-reject the atom-19
+       * handoff flagged). This is the wire_cut §37 form-split (coord form -> boundary, no-mutation
+       * gesture-start -> raw) applied to a query/mutate split. Everything past help -- the
+       * `No images selected` precondition, the flag parse, the CONDITIONAL push_undo + the
+       * edit_image loop over the selected GRIDLAYER image rects, set_modify-only-on-write_back, and
+       * the ONE faithful `xschem image <flag>...` log site -- lives in perform_action/run_core. The
+       * boundary ADDS the C read-only gate the verb NEVER HAD (a correctness fix: pre-migration
+       * `image invert` MUTATED a read-only cell). !xctx stays first to preserve the pre-migration
+       * precedence (not_avail BEFORE help). */
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
       if(argc < 3) {
         Tcl_SetResult(interp, "Missing arguments", TCL_STATIC);
@@ -4032,39 +5378,8 @@ static int xschem_cmds_i(Tcl_Interp *interp, int argc, const char *argv[], int *
             TCL_STATIC);
         return TCL_OK;
       }
-      if(xctx->lastsel == 0) {
-        Tcl_SetResult(interp, "No images selected", TCL_STATIC);
-        return TCL_ERROR;
-      }
-      for(i = 2; i < argc; i++) {
-        if(!strcmp(argv[i], "invert"))       what |=   1;
-        if(!strcmp(argv[i], "white_transp")) what |=   2;
-        if(!strcmp(argv[i], "black_transp")) what |=   4;
-        if(!strcmp(argv[i], "transp_white")) what |=   8;
-        if(!strcmp(argv[i], "transp_black")) what |=  16;
-        if(!strcmp(argv[i], "blend_white"))  what |=  32;
-        if(!strcmp(argv[i], "blend_black"))  what |=  64;
-        if(!strcmp(argv[i], "write_back"))   what |= 256;
-      }
-      if(what) {
-        rebuild_selected_array();
-        if(what & 256) set_modify(1);
-        xctx->push_undo();
-        for(n=0; n < xctx->lastsel; ++n) {
-          if(xctx->sel_array[n].type == xRECT) {
-            i = xctx->sel_array[n].n;
-            c = xctx->sel_array[n].col;
-            r = &xctx->rect[c][i];
-            if(c == GRIDLAYER && r->flags & 1024) {
-            edit_image(what, &xctx->rect[c][i]);
-            }
-          }
-        }
-        draw();
-      }
-      Tcl_ResetResult(interp);
+      return perform_action("image", argc, argv);
     }
-    else
     #endif
     /* instance sym_name x y rot flip [prop] [n]
      *   Place a new instance of symbol 'sym_name' at position x,y,
@@ -4074,32 +5389,33 @@ static int xschem_cmds_i(Tcl_Interp *interp, int argc, const char *argv[], int *
      *   if 'n' is given it must be 0 on first call
      *   and non zero on following calls
      *   It is used only for efficiency reasons if placing multiple instances */
-    if(!strcmp(argv[1], "instance"))
+    else if(!strcmp(argv[1], "instance"))
     {
+      int placed = 0; /* issue 0125: rc of place_symbol, 1-placed / 0-refused */
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
       if(scheduler_readonly_reject(interp, "instance")) return TCL_ERROR;
-      int placed = 0;
       if(argc==7) {
        /*           pos sym_name      x                y             rot       */
-        place_symbol(-1, argv[2], atof(argv[3]), atof(argv[4]), (short)atoi(argv[5]),
+        placed = place_symbol(-1, argv[2], atof(argv[3]), atof(argv[4]), (short)atoi(argv[5]),
                /* flip              prop draw first to_push_undo */
                (short)atoi(argv[6]),NULL,  3,   1,      1);
-        set_modify(1); placed = 1;
       } else if(argc==8) {
-        place_symbol(-1, argv[2], atof(argv[3]), atof(argv[4]), (short)atoi(argv[5]),
+        placed = place_symbol(-1, argv[2], atof(argv[3]), atof(argv[4]), (short)atoi(argv[5]),
                (short)atoi(argv[6]), argv[7], 3, 1, 1);
-        set_modify(1); placed = 1;
       } else if(argc==9) {
         int x = !(atoi(argv[8]));
-        place_symbol(-1, argv[2], atof(argv[3]), atof(argv[4]), (short)atoi(argv[5]),
+        placed = place_symbol(-1, argv[2], atof(argv[3]), atof(argv[4]), (short)atoi(argv[5]),
                (short)atoi(argv[6]), argv[7], 0, x, 1);
-        set_modify(1); placed = 1;
       }
+      /* issue 0125: a refusal (symbol-view guard, empty name, scope-ammeter bail) must not
+       * dirty the buffer; it used to set_modify(1) unconditionally and leak a stale result */
+      if(placed) set_modify(1);
       /* W3: a placed instance may drop a pin / net-label onto a wire -> split it into
        * inter-attachment segments (maintain = split + pin-aware merge); if it lands off any
        * wire nothing changes. Gated on autotrim_wires; place_symbol already pushed undo, so
        * this rides the same transaction. See doc/claude/specs/wire_segment_splitting.md (W3). */
       if(placed && tclgetboolvar("autotrim_wires")) maintain_wire_segments();
+      Tcl_SetResult(interp, placed ? "1" : "0", TCL_STATIC); /* issue 0125: 1-placed / 0-refused */
     }
 
     /* instance_bbox inst
@@ -4301,8 +5617,23 @@ static int xschem_cmds_i(Tcl_Interp *interp, int argc, const char *argv[], int *
     }
 
     /* instance_number inst [n]
-     *   Return the position of instance 'inst' in the instance array
-     *   If 'n' is given set indicated instance position to 'n' */
+     *   QUERY form (argc == 3): return the array position of instance 'inst'.
+     *   MUTATE form (argc  > 3): set instance 'inst' to array position 'n'.
+     *
+     *   Refactor B atom 23 (audit §43): a QUERY/MUTATE SPLIT (the image §40 template applied
+     *   to a query vs a mutation). ONLY the MUTATE form crosses the perform_action boundary --
+     *   the argc>3 tail delegates for the boundary's ONE readonly gate + the ONE self-logged
+     *   `xschem instance_number <inst> <n>` line. The read-only-SAFE QUERY form (argc==3) stays
+     *   RAW IN FRONT of the boundary: routing it through perform_action would (a) let the
+     *   boundary's unconditional readonly gate OVER-REJECT a pure position read-back on a
+     *   read-only cell, and (b) let its success-path Tcl_ResetResult WIPE the position result
+     *   that callers consume (`idx` in the tests, the z-order read-back). NOTE this verb owns
+     *   NO push_undo/set_modify -- the shared change_elem_order() core (editprop.c) brackets the
+     *   mutate (it calls push_undo() on the mutate path + set_modify(1), the latter gated on its
+     *   local `modified`); and that raw change_elem_order() sub-step stays SILENT below the
+     *   boundary (the atom-11 shared-sub-step
+     *   lock -- it logs nothing, the `instance_number` verb logs its own line). No scattered
+     *   readonly/log/push_undo remains here. */
     else if(!strcmp(argv[1], "instance_number"))
     {
       int i;
@@ -4315,15 +5646,9 @@ static int xschem_cmds_i(Tcl_Interp *interp, int argc, const char *argv[], int *
         Tcl_SetResult(interp, "xschem instance_number: instance not found", TCL_STATIC);
         return TCL_ERROR;
       }
-
-      if(argc > 3) {
-        unselect_all(0);
-        select_element(i, SELECTED, 1, 1);
-        rebuild_selected_array();
-        i = atoi(argv[3]);
-        change_elem_order(i);
-        draw();
-      }
+      /* MUTATE form: route through the boundary (readonly gate + self-log). */
+      if(argc > 3) return perform_action("instance_number", argc, argv);
+      /* QUERY form (argc == 3): read-only-safe array-position read-back, kept RAW in front. */
       Tcl_SetResult(interp, my_itoa(i), TCL_VOLATILE);
     }
 
@@ -4553,6 +5878,7 @@ static int xschem_cmds_l(Tcl_Interp *interp, int argc, const char *argv[], int *
         if(argc > 6) pos=atoi(argv[6]);
         if(argc > 7) prop_str = argv[7];
         if(argc > 8) draw = atoi(argv[8]);
+        xctx->push_undo(); /* issue 0127: checkpoint like interactive new_line + the wire coord arm */
         storeobject(pos, x1,y1,x2,y2,LINE,xctx->rectcolor,0,prop_str);
         if(draw) {
           save = xctx->draw_window; xctx->draw_window = 1;
@@ -5346,39 +6672,25 @@ static int xschem_cmds_m(Tcl_Interp *interp, int argc, const char *argv[], int *
     /* move_instance inst x y rot flip [nodraw] [noundo]
      *   resets instance coordinates, and rotaton/flip. A dash will keep existing value
      *   if 'nodraw' is given do not draw the moved instance
-     *   if 'noundo' is given operation is not undoable */
+     *   if 'noundo' is given operation is not undoable
+     * Routes through the perform_action boundary (Refactor B atom 19 -- the NINETEENTH per-verb
+     * migration, a HIGHER-FRICTION coverage gain now the friction-free pool is EMPTY; a PURE SCRIPTED
+     * instance-reposition verb with an INLINE mutation body, a CONDITIONAL noundo/nodraw push/draw (the
+     * C5 sub-mode) and an instance-name referent). run_core MOVES the WHOLE INLINE body IN -- the argc<7
+     * "needs: inst x y rot flip [nodraw] [noundo]" validation (early TCL_ERROR BEFORE any mutation, which
+     * also prevents an OOB argv read in core_log_action on a short call), the nodraw/noundo flag parse,
+     * the get_instance "instance not found" validation, the CONDITIONAL single push_undo (`if(undo)`,
+     * owned here -- no self-undo core), the dashed x/y/rot/flip sets, symbol_bbox + prep-flag resets, and
+     * the CONDITIONAL `if(dr) draw()`. core_log_action logs the FAITHFUL FULL CALL `xschem move_instance
+     * <inst> <x> <y> <rot> <flip> [nodraw] [noundo]` (via log_action_argv/Tcl_Merge, instance name
+     * metachar-safe, a `mi` array distinct from av/ev/pp; nodraw/noundo LOGGED not gated -- the wire_cut
+     * noalign approach, since there is NO internal machinery caller, unlike replace_symbol's fast) on
+     * success only. The mutation body is INLINE so it is strictly 1:1 with the verb (C3). The !xctx guard
+     * + the per-verb scheduler_readonly_reject are DROPPED (the boundary re-checks both -- a readonly
+     * CONSOLIDATION, not a new gate: the old branch already refused on a read-only cell, and the readonly
+     * guard test locks it). NO set_modify (the branch had none). No scattered readonly/log/push_undo here. */
     else if(!strcmp(argv[1], "move_instance"))
-    {
-      int undo = 1, dr = 1;
-      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
-      if(scheduler_readonly_reject(interp, "move_instance")) return TCL_ERROR;
-      if(argc > 7) {
-        int i;
-        for(i = 7; i < argc; i++) {
-          if(!strcmp(argv[i], "nodraw")) dr = 0;
-          if(!strcmp(argv[i], "noundo")) undo = 0;
-        }
-      }
-      if(argc > 6) {
-        int i;
-        if((i = get_instance(argv[2])) < 0 ) {
-          Tcl_SetResult(interp, "xschem move_instance: instance not found", TCL_STATIC);
-          return TCL_ERROR;
-        }
-        if(undo) xctx->push_undo();
-        if(strcmp(argv[3], "-")) xctx->inst[i].x0 = atof(argv[3]);
-        if(strcmp(argv[4], "-")) xctx->inst[i].y0 = atof(argv[4]);
-        if(strcmp(argv[5], "-")) xctx->inst[i].rot = (unsigned short)atoi(argv[5]);
-        if(strcmp(argv[6], "-")) xctx->inst[i].flip = (unsigned short)atoi(argv[6]);
-        symbol_bbox(i, &xctx->inst[i].x1, &xctx->inst[i].y1, &xctx->inst[i].x2, &xctx->inst[i].y2);
-        xctx->prep_hash_inst=0;
-        xctx->prep_net_structs=0;
-        xctx->prep_hi_structs=0;
-        if(dr) {
-          draw();
-        }
-      }
-    }
+      return perform_action("move_instance", argc, argv);
     /* move_objects [dx dy] [kissing] [stretch]
      *   Start a move operation on selection and let user terminate the operation in the GUI
      *   if kissing is given add nets to pins that touch other instances or nets
@@ -7697,6 +9009,7 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
         if(argc > 6) pos=atoi(argv[6]);
         if(argc > 7) prop_str = argv[7];
         if(argc > 8) draw = atoi(argv[8]);
+        xctx->push_undo(); /* issue 0127: checkpoint like interactive new_rect + the wire coord arm */
         storeobject(pos, x1,y1,x2,y2,xRECT,xctx->rectcolor,0,prop_str);
         if(draw) {
           int c = xctx->rectcolor;
@@ -7727,14 +9040,18 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
     }
 
     /* redo
-     *   Redo last undone action */
+     *   Redo last undone action.
+     *   Refactor B atom 28 (audit §48): routes through the perform_action boundary. The ONE
+     *   readonly gate (same scheduler_readonly_reject + "redo" verb string = byte-identical
+     *   message), the pop_undo_keep_selection(1,1) effect and the ONE bare `xschem redo` log
+     *   site (core_log_action's DEFAULT %s arm) all live in perform_action/run_core. Every
+     *   entry funnels here: the Shift+U key is a Tcl-funneled binding (edit.redo ->
+     *   `xschem redo; xschem redraw`, legacy case 'U' deleted), deduped via
+     *   actionlog_cmd_logged; menu/toolbar run the same compound; scripts call the verb.
+     *   Tolerant argc PRESERVED (extra args execute + log bare, as before -- no arity gate). */
     else if(!strcmp(argv[1], "redo"))
     {
-      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
-      if(scheduler_readonly_reject(interp, "redo")) return TCL_ERROR;
-      pop_undo_keep_selection(1, 1); /* issue 0007: keep selection across redo */
-      log_action("xschem redo"); /* self-log at core */
-      Tcl_ResetResult(interp);
+      return perform_action("redo", argc, argv);
     }
 
     /* redraw
@@ -7855,71 +9172,19 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
      *    on first call and 'fast' on next calls
      *   for faster operation.
      *   do a 'xschem redraw' at end to update screen
-     *   Example: xschem replace_symbol R3 capa.sym */
+     *   Example: xschem replace_symbol R3 capa.sym
+     * Routes through the single mutation boundary (Refactor B atom 14): the readonly
+     * gate, the fast-flag parse + the argc!=4 / "instance not found" validation, the
+     * (non-fast) push_undo + the symbol swap, and the ONE `xschem replace_symbol <inst>
+     * <sym>` log site (via core_log_action, LOGGED ONLY ON SUCCESS and ONLY when NOT
+     * fast) all live in perform_action/run_core. This is the SECOND VALIDATING verb on
+     * the boundary and the FIRST per-verb migration to carry a FAST-FLAG log gate: the
+     * fast form is a multi-substitution machinery/replay sub-mode that skips BOTH the
+     * undo and the log. No scattered readonly/log/push_undo here; the old success-path
+     * instname interp result is dropped (the boundary clears the interp on success; no
+     * caller consumed it). */
     else if(!strcmp(argv[1], "replace_symbol"))
-    {
-      int inst, fast = 0;
-      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
-      if(scheduler_readonly_reject(interp, "replace_symbol")) return TCL_ERROR;
-      if(argc > 4) {
-        argc = 4;
-        if(!strcmp(argv[4], "fast")) {
-          fast = 1;
-        }
-      }
-      if(argc!=4) {
-        Tcl_SetResult(interp, "xschem replace_symbol needs 2 additional arguments", TCL_STATIC);
-        return TCL_ERROR;
-      }
-      if((inst = get_instance(argv[2])) < 0 ) {
-        Tcl_SetResult(interp, "xschem replace_symbol: instance not found", TCL_STATIC);
-        return TCL_ERROR;
-      } else {
-        char symbol[PATH_MAX];
-        int sym_number, prefix;
-        char *name=NULL;
-        char *ptr=NULL;
-        char *sym = NULL;
-        my_strncpy(symbol, argv[3], S(symbol));
-        if(!fast) {
-          xctx->push_undo();
-          xctx->prep_hash_inst=0;
-          xctx->prep_net_structs=0;
-          xctx->prep_hi_structs=0;
-        }
-        my_strdup(_ALLOC_ID_, &sym, tcl_hook2(symbol));
-        sym_number=match_symbol(sym);
-        my_free(_ALLOC_ID_, &sym);
-        if(sym_number>=0)
-        {
-          prefix=(get_tok_value(xctx->sym[sym_number].templ , "name",0))[0]; /* get new symbol prefix  */
-        }
-        else prefix = 'x';
-        delete_inst_node(inst); /* 20180208 fix crashing bug: delete node info if changing symbol */
-                             /* if number of pins is different we must delete these data *before* */
-                             /* changing ysmbol, otherwise i might end up deleting non allocated data. */
-        my_strdup2(_ALLOC_ID_, &xctx->inst[inst].name, rel_sym_path(symbol));
-        xctx->inst[inst].ptr=sym_number;
-        my_strdup(_ALLOC_ID_, &name, xctx->inst[inst].instname);
-        if(name && name[0] )
-        {
-          /* 20110325 only modify prefix if prefix not NUL */
-          if(prefix) name[0]=(char)prefix; /* change prefix if changing symbol type; */
-          my_strdup(_ALLOC_ID_, &ptr,subst_token(xctx->inst[inst].prop_ptr, "name", name) );
-          if(!fast) hash_names(-1, XINSERT);
-          hash_names(inst, XDELETE);
-          new_prop_string(inst, ptr,           /* sets also inst[].instname */
-             tclgetboolvar("disable_unique_names")); /* set new prop_ptr */
-          hash_names(inst, XINSERT);
-          set_inst_flags(&xctx->inst[inst]);
-          my_free(_ALLOC_ID_, &ptr);
-        }
-        my_free(_ALLOC_ID_, &name);
-        set_modify(1);
-        /* draw(); */
-        Tcl_SetResult(interp, xctx->inst[inst].instname , TCL_VOLATILE);
-      }
-    }
+      return perform_action("replace_symbol", argc, argv);
 
     /* reset_caches
      *   Reset cached instance and symbol cached flags (inst->flags, sym->flags) */
@@ -7931,72 +9196,35 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
     }
 
     /* reset_inst_prop inst
-     *   Reset instance attribute string taking it from symbol template string */
+     *   Reset instance attribute string taking it from symbol template string.
+     * Routes through the single mutation boundary (Refactor B atom 13): the readonly
+     * gate, the argc<3 / "instance not found" validation, the single push_undo + the
+     * reset effect, and the ONE `xschem reset_inst_prop <ref>` log site (via
+     * core_log_action, LOGGED ONLY ON SUCCESS) all live in perform_action/run_core.
+     * This is the FIRST VALIDATING verb on the boundary -- the atom-13 log-on-success
+     * change is what lets its early-TCL_ERROR paths cross without being phantom-logged.
+     * No scattered readonly/log/push_undo here; the old success-path instname result is
+     * dropped (the boundary clears the interp on success; no caller consumed it). */
     else if(!strcmp(argv[1], "reset_inst_prop"))
-    {
-      char *translated_sym = NULL;
-      int sym_number = -1;
-      char *subst = NULL;
-      int inst;
-
-      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
-      if(scheduler_readonly_reject(interp, "reset_inst_prop")) return TCL_ERROR;
-      if(argc < 3) {
-        Tcl_SetResult(interp, "xschem reset_inst_prop needs 1 more argument", TCL_STATIC);
-        return TCL_ERROR;
-      }
-      if((inst = get_instance(argv[2])) < 0 ) {
-        Tcl_SetResult(interp, "xschem reset_inst_prop: instance not found", TCL_STATIC);
-        return TCL_ERROR;
-      }
-      symbol_bbox(inst, &xctx->inst[inst].x1, &xctx->inst[inst].y1, &xctx->inst[inst].x2, &xctx->inst[inst].y2);
-      xctx->push_undo();
-      xctx->prep_hash_inst=0;
-      xctx->prep_net_structs=0;
-      xctx->prep_hi_structs=0;
-
-      hash_names(-1, XINSERT);
-      hash_names(inst, XDELETE);
-      set_inst_prop(inst);
-
-      my_strdup2(_ALLOC_ID_, &translated_sym, translate(inst, xctx->inst[inst].name));
-      sym_number=match_symbol(translated_sym);
-
-      if(sym_number > 0) {
-        delete_inst_node(inst);
-        xctx->inst[inst].ptr=sym_number;
-      }
-      if(subst) my_free(_ALLOC_ID_, &subst);
-      set_inst_flags(&xctx->inst[inst]);
-      hash_names(inst, XINSERT);
-      /* new symbol bbox after prop changes (may change due to text length) */
-      symbol_bbox(inst, &xctx->inst[inst].x1, &xctx->inst[inst].y1, &xctx->inst[inst].x2, &xctx->inst[inst].y2);
-      set_modify(-2); /* reset floaters caches */
-      draw();
-      my_free(_ALLOC_ID_, &translated_sym);
-      Tcl_SetResult(interp, xctx->inst[inst].instname , TCL_VOLATILE);
-    }
+      return perform_action("reset_inst_prop", argc, argv);
 
     /* reset_symbol inst symref
-     *   This is a low level command, it merely changes the xctx->inst[...].name field.
-     *   It is caller responsibility to delete all symbols before and do a reload_symbols
-     *   afterward */
+     *   Low-level command: it merely swaps the xctx->inst[...].name field. It is the CALLER's
+     *   responsibility to delete all symbols before and do a reload_symbols afterward
+     *   (fix_symbols, xschem.tcl, does exactly this -- bracketing its remap loop in ONE
+     *   push_undo).
+     * Routes through the single mutation boundary (Refactor B atom 22 -- the direct INLINE twin
+     * of reset_inst_prop (atom 13); an ADDITIVE-LOG+GATE migration: the branch had NEITHER a
+     * self-log NOR a readonly gate, so the boundary ADDS both -- a replay line AND the read-only
+     * gate that closes a latent mutate-on-read-only bug). The readonly gate + the argc!=4 /
+     * "instance not found" validation + the my_strdup effect + the ONE `xschem reset_symbol
+     * <inst> <symref>` log site (via core_log_action, LOGGED ONLY ON SUCCESS) all live in
+     * perform_action/run_core. NOTE this verb owns NO push_undo/set_modify -- fix_symbols
+     * brackets the batch with a single undo, so a per-call push here would shatter it. No
+     * scattered readonly/log/push_undo here; the old success-path Tcl_ResetResult is the
+     * boundary's job now. */
     else if(!strcmp(argv[1], "reset_symbol"))
-    {
-      int inst;
-      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
-      if(argc!=4) {
-        Tcl_SetResult(interp, "xschem reset_symbol needs 2 additional arguments", TCL_STATIC);
-        return TCL_ERROR;
-      }
-      if((inst = get_instance(argv[2])) < 0 ) {
-        Tcl_SetResult(interp, "xschem reset_symbol: instance not found", TCL_STATIC);
-        return TCL_ERROR;
-      } else {
-        my_strdup(_ALLOC_ID_, &xctx->inst[inst].name, argv[3]);
-      }
-      Tcl_ResetResult(interp);
-    }
+      return perform_action("reset_symbol", argc, argv);
 
     /* resetwin create_pixmap clear_pixmap force w h   (full internal form)
      * resetwin w h                                     (fit form, issue 0035/0037)
@@ -8058,32 +9286,29 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
      *   if x0, y0 not given use mouse coordinates */
     else if(!strcmp(argv[1], "rotate"))
     {
-      double x0 = xctx->mousex_snap;
-      double y0 = xctx->mousey_snap;
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
-      if(scheduler_readonly_reject(interp, "rotate")) return TCL_ERROR;
-      if(argc > 3) {
-        x0 = atof(argv[2]);
-        y0 = atof(argv[3]);
-      }
-
+      /* rotate-during-move/copy: rotate the whole in-flight selection about the shared gesture
+       * pivot. These two mid-gesture arms stay RAW -- they are sub-steps of a move/copy logged
+       * at that gesture's END (issue 0069), NOT the standalone verb, so they must NOT cross the
+       * perform_action boundary (routing them would spuriously emit `xschem rotate x y` mid-drag
+       * and double-count the move-END line). They need no readonly gate: being in STARTMOVE/
+       * STARTCOPY means an edit is already in progress, impossible on a read-only schematic, and
+       * the only commit path `xschem move_objects end` is itself readonly-refused at the
+       * move_objects command gate (covering start/step/end/abort). */
       if(xctx->ui_state & STARTMOVE) move_objects(ROTATE,0,0,0);
       else if(xctx->ui_state & STARTCOPY) copy_objects(ROTATE);
-      else {
-        rebuild_selected_array();
-        xctx->mx_double_save = xctx->mousex_snap = x0;
-        xctx->my_double_save = xctx->mousey_snap = y0;
-        move_objects(START,0,0,0);
-        move_objects(ROTATE,0,0,0);
-        move_objects(END,0,0,0);
-        /* self-log at core (standalone, non-gesture): covers the Edit-menu item,
-         * toolbar, context menu and any scripted `xschem rotate`. The Shift-R key
-         * does NOT reach here -- it is handled inline in callback.c (case 'R') and
-         * logs nothing (issue 0068). Rotate-during-move is a gesture logged by the
-         * move END (issue 0069), not here. */
-        log_action("xschem rotate %.16g %.16g", x0, y0);
-      }
-      Tcl_ResetResult(interp);
+      /* standalone verb: the single mutation boundary (Refactor B atom 6, run_core above) owns the
+       * readonly gate + the ONE `xschem rotate x0 y0` log site (core_log_action formats the pivot)
+       * + the rebuild+seed-pivot+START+ROTATE+END effect. run_core resolves the pivot from
+       * argv[2]/argv[3] (else the mouse coords) exactly as this branch used to, so passing the
+       * branch's own argc/argv straight through is byte-identical -- and it fixes a latent order
+       * bug: the pivot is now read AFTER perform_action's !xctx guard, not before it. The Edit menu
+       * (bare `xschem rotate`), the context menu and the command palette reach here; the Shift-R
+       * key, the Alt-R group transform and the verb-noun apply reach the same boundary from
+       * callback.c, each carrying its own pivot. rotate is the FIRST arg-carrying verb on the
+       * boundary (issue 0068's "Shift-R logs nothing" note is now stale -- Shift-R logs here too). */
+      else return perform_action("rotate", argc, argv);
+      Tcl_ResetResult(interp);   /* only the mid-gesture arms fall through to here */
     }
 
     /* rotate_in_place
@@ -8935,6 +10160,10 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
             xctx->no_draw=s;
           }
+          else if(!strcmp(argv[2], "no_grid")) { /* per-window grid/origin suppression (item 18) */
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            xctx->no_grid = atoi(argv[3]) ? 1 : 0;
+          }
           else if(!strcmp(argv[2], "readonly")) { /* set window read-only (0 or 1); refresh title */
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
             xctx->readonly = atoi(argv[3]) ? 1 : 0;
@@ -9096,6 +10325,96 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
         set_modify(atoi(argv[2]));
       }
       Tcl_ResetResult(interp);
+    }
+    /* set_pin_type in|out|inout|-cycle [inst]
+     *   Cadence-parity pin-type editing (doc/claude/specs/pin_type_editing.md).
+     *   Schematic view: swaps devices/ipin|opin|iopin.sym on the named port instance
+     *   (or every SELECTED one), via `replace_symbol ... fast` so this branch owns ONE
+     *   undo slot for the whole call; lab/position/rotation are preserved.
+     *   Symbol view: rewrites dir= on every SELECTED PINLAYER pin rect (name view
+     *   geometry untouched). -cycle advances each target in->out->inout->in.
+     *   Returns the number of pins changed; a fully no-op call pushes no undo.
+     *   Logged raw on success; the inner fast replace_symbol calls self-suppress. */
+    else if(!strcmp(argv[1], "set_pin_type"))
+    {
+      int i, changed = 0, cycle, undo_done = 0, named = 0;
+      const char *want = NULL;
+      char nres[30];
+      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(scheduler_readonly_reject(interp, "set_pin_type")) return TCL_ERROR;
+      if(argc < 3) {
+        Tcl_SetResult(interp, "xschem set_pin_type needs in|out|inout|-cycle", TCL_STATIC);
+        return TCL_ERROR;
+      }
+      cycle = !strcmp(argv[2], "-cycle");
+      if(!cycle) {
+        if(!strcmp(argv[2], "in") || !strcmp(argv[2], "out") || !strcmp(argv[2], "inout")) {
+          want = argv[2];
+        } else {
+          Tcl_SetResult(interp, "xschem set_pin_type: bad type (in|out|inout|-cycle)", TCL_STATIC);
+          return TCL_ERROR;
+        }
+      }
+      if(!editing_symbol_view()) {
+        int first = 0, last = xctx->instances;
+        if(argc > 3) {
+          if((first = get_instance(argv[3])) < 0) {
+            Tcl_SetResult(interp, "xschem set_pin_type: instance not found", TCL_STATIC);
+            return TCL_ERROR;
+          }
+          if(!pin_sym_dir(xctx->inst[first].name)) {
+            Tcl_SetResult(interp, "xschem set_pin_type: not a port (ipin/opin/iopin) instance", TCL_STATIC);
+            return TCL_ERROR;
+          }
+          last = first + 1;
+          named = 1;
+        }
+        for(i = first; i < last; ++i) {
+          const char *cur, *tgt;
+          char num[30];
+          cur = pin_sym_dir(xctx->inst[i].name);
+          if(!cur) continue;
+          if(!named && xctx->inst[i].sel != SELECTED) continue;
+          if(cycle) tgt = !strcmp(cur, "in") ? "out" : !strcmp(cur, "out") ? "inout" : "in";
+          else tgt = want;
+          if(!strcmp(tgt, cur)) continue;
+          if(!undo_done) { xctx->push_undo(); undo_done = 1; }
+          my_snprintf(num, S(num), "%d", i);
+          tclvareval("xschem replace_symbol {", num, "} {", dir_pin_sym(tgt), "} fast", NULL);
+          ++changed;
+        }
+      } else {
+        if(argc > 3) {
+          Tcl_SetResult(interp, "xschem set_pin_type: named target only in schematic view", TCL_STATIC);
+          return TCL_ERROR;
+        }
+        for(i = 0; i < xctx->rects[PINLAYER]; ++i) {
+          xRect *r = &xctx->rect[PINLAYER][i];
+          const char *cur, *tgt;
+          if(r->sel != SELECTED) continue;
+          if(!get_tok_value(r->prop_ptr, "name", 0)[0]) continue;
+          if(!get_tok_value(r->prop_ptr, "dir", 0)[0]) continue;
+          cur = dir_literal(get_tok_value(r->prop_ptr, "dir", 0));
+          if(cycle) tgt = !strcmp(cur, "in") ? "out" : !strcmp(cur, "out") ? "inout" : "in";
+          else tgt = want;
+          if(!strcmp(tgt, cur)) continue;
+          if(!undo_done) { xctx->push_undo(); undo_done = 1; }
+          my_strdup(_ALLOC_ID_, &r->prop_ptr, subst_token(r->prop_ptr, "dir", tgt));
+          set_rect_flags(r);
+          ++changed;
+        }
+      }
+      if(changed) {
+        set_modify(1);
+        xctx->prep_hash_inst = 0;
+        xctx->prep_net_structs = 0;
+        xctx->prep_hi_structs = 0;
+        draw();
+        if(argc > 3) log_action("xschem set_pin_type %s {%s}", argv[2], argv[3]);
+        else log_action("xschem set_pin_type %s", argv[2]);
+      }
+      my_snprintf(nres, S(nres), "%d", changed);
+      Tcl_SetResult(interp, nres, TCL_VOLATILE);
     }
     /* setprop [-fast|-fastundo] instance|symbol|text|rect|wire ref tok [val]
      *
@@ -9647,13 +10966,18 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
         log_action_argv(argc, (const char *const *)argv);
     }
     /* show_unconnected_pins
-     *   Add a "lab_show.sym" to all instance pins that are not connected to anything */
+     *   Add a "lab_show.sym" to all instance pins that are not connected to anything.
+     *   Refactor B atom 15: routes through the perform_action boundary. The readonly
+     *   gate (NEW -- the branch never had one, a correctness fix; the old branch let
+     *   show_unconnected_pins place labels on a read-only cell) + the effect
+     *   (show_unconnected_pins, run_core) + the ONE `xschem show_unconnected_pins`
+     *   log site (core_log_action's DEFAULT bare `xschem %s` form) all live in
+     *   perform_action. The hilight menu / command palette invoke `xschem
+     *   show_unconnected_pins` verbatim -> this branch -> the boundary, with no
+     *   separate routing. The `!xctx` guard + the Tcl_ResetResult are DROPPED (the
+     *   boundary owns both -- Tcl_ResetResult on the success path only, atom 13). */
     else if(!strcmp(argv[1], "show_unconnected_pins") )
-    {
-      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
-      show_unconnected_pins();
-      Tcl_ResetResult(interp);
-    }
+      return perform_action("show_unconnected_pins", argc, argv);
     /* simulate [callback]
      *   Run a simulation (start simulator configured as default in
      *   Tools -> Configure simulators and tools)
@@ -10061,8 +11385,10 @@ static int xschem_cmds_t(Tcl_Interp *interp, int argc, const char *argv[], int *
       if(argc < 10) {Tcl_SetResult(interp,
           "xschem text requires 8 additional arguments", TCL_STATIC); return TCL_ERROR;}
 
+      xctx->push_undo(); /* issue 0127 residual: checkpoint like interactive place_text + the rect/line/arc coord arms */
       create_text(atoi(argv[9]), atof(argv[2]), atof(argv[3]), atoi(argv[4]), atoi(argv[5]),
                     argv[6], argv[7], atof(argv[8]), atof(argv[8]));
+      set_modify(1); /* issue 0127 residual: mark modified like the rect/line/arc coord arms */
       Tcl_ResetResult(interp);
     }
 
@@ -10136,13 +11462,18 @@ static int xschem_cmds_t(Tcl_Interp *interp, int argc, const char *argv[], int *
     }
 
     /* toggle_ignore
-     *   toggle *_ignore=true attribute on selected instances
-     *   * = {spice,verilog,vhdl,tedax} depending on current netlist mode */
+     *   toggle *_ignore={true,short} attribute on selected instances AND wires
+     *   * = {spice,verilog,vhdl,tedax,spectre} depending on current netlist mode.
+     * Refactor B atom 12: routes through the perform_action boundary -- the ONE
+     * readonly gate (this branch NEVER HAD one: a scattered 0041/0051 mutation-on-a-
+     * read-only-cell gap the boundary now CLOSES) + the ONE effect (run_core arm) + the
+     * ONE log site (core_log_action's DEFAULT `xschem %s` bare form -- this branch
+     * logged NOTHING before, so the boundary is a pure COVERAGE ADD) all live in
+     * perform_action. No scattered readonly/log/push_undo here. The equivalent Shift+T
+     * key (act_toggle_ignore, callback.c) routes through the SAME boundary. */
     else if(!strcmp(argv[1], "toggle_ignore"))
     {
-      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
-      toggle_ignore();
-      Tcl_ResetResult(interp);
+      return perform_action("toggle_ignore", argc, argv);
     }
 
     /* touch x1 y1 x2 y2 x0 y0
@@ -10251,24 +11582,21 @@ static int xschem_cmds_u(Tcl_Interp *interp, int argc, const char *argv[], int *
     }
 
     /* undo  [redo [set_modify]]
-         Undo last action. Optional integers redo and set_modify are passed to pop_undo() */
+     *   Undo last action. Optional integers redo and set_modify are passed to pop_undo()
+     *   (redo: 0/4 = undo, 1 = redo, 2 = peek -- so `xschem undo 1 1` performs a redo with its
+     *   own log line, distinct from the `redo` verb's).
+     *   Refactor B atom 29 (audit §49): routes through the perform_action boundary. The ONE
+     *   readonly gate (same scheduler_readonly_reject + "undo" verb string = byte-identical
+     *   message), the argv-parsed pop_undo_keep_selection effect and the ONE NORMALIZED log site
+     *   (core_log_action's undo arm: bare at argc==2, `xschem undo %d %d` else -- atoi-canonical,
+     *   default-filled, tail-dropped, exactly the old branch's forms) all live in
+     *   perform_action/run_core. Every entry funnels here: the `u` key is a Tcl-funneled binding
+     *   (edit.undo -> `xschem undo; xschem redraw`, legacy case 'u' deleted), deduped via
+     *   actionlog_cmd_logged; menu/toolbar run the same compound; scripts call the verb.
+     *   Tolerant argc PRESERVED (no arity gate -- every argc executes + logs, as before). */
     else if(!strcmp(argv[1], "undo"))
     {
-      int redo = 0, set_modify = 1;
-      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
-      if(scheduler_readonly_reject(interp, "undo")) return TCL_ERROR;
-      if(argc > 2) {
-        redo = atoi(argv[2]);
-      }
-      if(argc > 3) {
-        set_modify = atoi(argv[3]);
-      }
-      pop_undo_keep_selection(redo, set_modify); /* issue 0007: keep selection across undo */
-      /* self-log at core: bare form for the interactive case, explicit args when
-       * a caller passed the redo/set_modify variant, so replay is faithful. */
-      if(argc == 2) log_action("xschem undo");
-      else          log_action("xschem undo %d %d", redo, set_modify);
-      Tcl_ResetResult(interp);
+      return perform_action("undo", argc, argv);
     }
 
     /* undo_type disk|memory
@@ -10609,23 +11937,28 @@ static int xschem_cmds_w(Tcl_Interp *interp, int argc, const char *argv[], int *
      *   if noalign is given and is set to 'noalign' do not align the cut point to closest snap point */
     else if(!strcmp(argv[1], "wire_cut"))
     {
-      int i, align = 1;
+      /* Refactor B atom 17: SPLIT on the coord form. Only the SCRIPTED/replay coord form
+       * (argc>3 -- `xschem wire_cut x y [noalign]`) is a mutation and crosses the boundary;
+       * the no-coord GESTURE-START form (`xschem wire_cut [noalign]`, the two Alt-Right menu
+       * items) ARMS ui_state and mutates NOTHING, so it stays RAW here and logs NOTHING --
+       * exactly the rotate/flip STARTMOVE-stays-raw split (the during-gesture arm is silent,
+       * the standalone/scripted form crosses). The !xctx guard covers the gesture-START path
+       * (it dereferences xctx->ui_state); the coord form re-checks it inside perform_action
+       * (harmless redundancy). The interactive Alt-Right cut COMPLETION lives in callback.c
+       * (break_wires_at_point at mousex/y_snap) and stays RAW+silent under option (A) -- a
+       * pre-existing 0069-class gesture-drop gap, deferred to a follow-up (audit §37). */
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
-      for(i = 2; i < argc; i++) {
-        if(!strcmp(argv[i], "noalign")) align = 0;
-      }
       if(argc > 3) {
-        break_wires_at_point(atof(argv[2]), atof(argv[3]), align);
-      } else {
-        if(align) {
-          xctx->ui_state |= MENUSTART;
-          xctx->ui_state2 = MENUSTARTWIRECUT;
-        } else {
-          xctx->ui_state |= MENUSTART;
-          xctx->ui_state2 = MENUSTARTWIRECUT2;
+        return perform_action("wire_cut", argc, argv);   /* the scripted/replay coord MUTATION */
+      } else {                                            /* gesture START: arms ui_state, no mutation, no log */
+        int i, align = 1;
+        for(i = 2; i < argc; i++) {
+          if(!strcmp(argv[i], "noalign")) align = 0;
         }
+        xctx->ui_state |= MENUSTART;
+        xctx->ui_state2 = align ? MENUSTARTWIRECUT : MENUSTARTWIRECUT2;
+        Tcl_ResetResult(interp);
       }
-      Tcl_ResetResult(interp);
     }
 
     else { *cmd_found = 0;}

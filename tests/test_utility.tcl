@@ -21,7 +21,34 @@
 #  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
 
 set OS [lindex $tcl_platform(os) 0]
+
+# Resolve the xschem binary (issue 0147). Priority: $XSCHEM override, then the
+# IN-TREE build, then a bare name for an installed copy on PATH. Before this, the
+# bare name was the only option, so in an uninstalled dev workarea EVERY case
+# died on spawn -- headless cases as a synthesized "did not complete cleanly"
+# FAIL, golden cases as thousands of silent `exit 127` sh jobs -- and the suite
+# reported a mixture of phantom and hidden results.
+# The path MUST be absolute: it is interpolated into /bin/sh job strings that
+# `cd` elsewhere first (netlisting.tcl, open_close.tcl, create_save.tcl), so a
+# relative one would resolve against the wrong directory. `info script` is this
+# file, so the anchor holds no matter where the case was launched from. Mirrors
+# tests/headless/full_audit.sh's XSCHEM="${XSCHEM:-$REPO/src/xschem}".
 set xschem_cmd "xschem"
+if {[info exists env(XSCHEM)] && $env(XSCHEM) ne ""} {
+  # Only absolutise something that IS a path. A bare `XSCHEM=xschem` means "find
+  # it on PATH"; normalizing that would invent a bogus cwd-relative path and
+  # destroy the very fallback it asked for.
+  if {[string first / $env(XSCHEM)] >= 0} {
+    set xschem_cmd [file normalize $env(XSCHEM)]
+  } else {
+    set xschem_cmd $env(XSCHEM)
+  }
+} else {
+  set _xs_tree [file normalize \
+      [file join [file dirname [file normalize [info script]]] .. src xschem]]
+  if {[file executable $_xs_tree]} { set xschem_cmd $_xs_tree }
+  unset _xs_tree
+}
 
 # ---------------------------------------------------------------------------
 # Parallel-dispatch helpers (see doc/claude/suggestions/parallel_regression_tests.md).
@@ -111,13 +138,20 @@ proc comp_file {file1 file2} {
   return $equal
 }
 
+# Write <testname>.log for summarize_all. ALWAYS writes the log (issue 0147):
+# it used to bail silently when <testname>/gold was absent, which discarded
+# num_fatals too -- so a case in which every single job failed to even start
+# contributed NOTHING to the run's failure count. Now a missing gold dir is
+# reported as a non-counting NOGOLD line (absent baseline is a setup state, not a
+# regression) while FATALs are always emitted, and summarize_all counts those via
+# its ^FATAL pattern.
 proc print_results {testname pathlist num_fatals} {
 
-  if {[file exists ${testname}/gold]} {
     set a [catch "open \"$testname.log\" w" fd]
     if {$a} {
-      puts "Couldn't open $f"
+      puts "Couldn't open $testname.log"
     } else {
+     if {[file exists ${testname}/gold]} {
       set i 0
       set num_fail 0
       set num_gold 0
@@ -141,14 +175,19 @@ proc print_results {testname pathlist num_fatals} {
       }
       puts $fd "Summary:"
       puts $fd "Num failed: $num_fail      Num missing gold: $num_gold      Num passed: [expr $i-$num_fail-$num_gold]"
+     } else {
+      # No baseline to compare against: say so IN THE LOG (not just on stdout,
+      # where summarize_all can never see it). Deliberately not counted as a
+      # failure -- but any FATALs below still are.
+      puts $fd "NOGOLD: $testname has no gold/ directory -- [llength $pathlist]\
+ result file(s) produced, none verified.  Set results as gold please."
+      puts "No gold folder.  Set results as gold please."
+     }
       if {$num_fatals} {
         puts $fd "FATAL: $num_fatals.  Please search for FATAL in its output file for more detail"
       }
       close $fd
     }
-  } else {
-    puts "No gold folder.  Set results as gold please."
-  }
 }
 
 # Edit lines that change each time regression is ran

@@ -573,6 +573,9 @@ void create_gc(void)
   /* dedicated scratch GC for net highlights; foreground/width/dash are set per
    * wire at draw time from the active NetHilightStyle (see draw_hilight_wire). */
   xctx->gc_hilight = XCreateGC(display,xctx->window,0L,NULL);
+  /* dedicated GC for the ASE waveform viewer's active-strip marker (issue 0151);
+   * foreground set in build_colors() from graph_active_strip_color. */
+  xctx->gc_graph_active = XCreateGC(display,xctx->window,0L,NULL);
 }
 
 void free_gc()
@@ -586,6 +589,7 @@ void free_gc()
   XFreeGC(display,xctx->gc_hover);
   XFreeGC(display,xctx->gc_flyline);
   XFreeGC(display,xctx->gc_hilight);
+  XFreeGC(display,xctx->gc_graph_active);
 }
 
 /* Stamp the just-allocated context (global xctx) with the next Cadence-style window
@@ -597,6 +601,17 @@ void free_gc()
 static void assign_window_number(void)
 {
   xctx->window_number = window_number_counter++;
+}
+
+/* Hand out the next Cadence-style window number and advance the shared counter
+ * (doc/claude/specs/window_numbering.md): the allocator behind
+ * `xschem allocate_window_number`, letting non-editor toplevels built in Tcl (the
+ * ASE-L session window, doc/claude/specs/ase_l.md) claim numbers from the SAME
+ * monotonic, never-reused sequence assign_window_number() stamps on editor
+ * contexts -- so no future File>New Window can collide with them. */
+int allocate_window_number(void)
+{
+  return window_number_counter++;
 }
 
 static void alloc_xschem_data(const char *top_path, const char *win_path)
@@ -644,6 +659,9 @@ static void alloc_xschem_data(const char *top_path, const char *win_path)
   xctx->graph_top = 0;
   xctx->graph_bottom = 0;
   xctx->graph_left = 0;
+  /* issue 0152: wave-bold click anchor. A huge sentinel means "no live press", so a
+   * release that arrives without a preceding press can never read as a click. */
+  xctx->graph_press_x = xctx->graph_press_y = -1e30;
   xctx->graph_lastsel = -1;
   xctx->graph_struct.hilight_wave = -1; /* index of wave */
   xctx->wires = 0;
@@ -1277,6 +1295,17 @@ int build_colors(double dim, double dim_bg)
       XSetLineAttributes(display, xctx->gc_flyline, width, LineOnOffDash, LINECAP, LINEJOIN);
       dashes[0] = dash; dashes[1] = dash;
       XSetDashes(display, xctx->gc_flyline, 0, dashes, 2);
+    }
+    /* ASE waveform viewer active-strip marker GC (issue 0151,
+     * doc/claude/specs/waveform_viewer_modes.md): a SOLID bar at the right edge of
+     * the viewer's target strip. graph_active_strip_color is an X color name or
+     * "#rrggbb" (NOT a layer index, like gc_hover) so the dull yellow is stable
+     * whatever the user did to the layer palette; resolved here so a theme switch
+     * or an explicit `xschem build_colors` re-resolves it. */
+    if(has_x) {
+      const char *ac = tclgetvar("graph_active_strip_color");
+      if(!ac || !ac[0]) ac = "#a0a000";
+      XSetForeground(display, xctx->gc_graph_active, find_best_color((char *)ac));
     }
     if(has_x) for(i=0;i<cadlayers; ++i) {
 #ifdef __unix__

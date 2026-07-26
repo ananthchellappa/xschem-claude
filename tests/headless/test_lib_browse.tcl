@@ -14,10 +14,10 @@ proc check {name ok detail} {
   if {$ok} { puts "ok:   $name $detail" } else { puts "FAIL: $name $detail"; incr fail }
 }
 proc q {args} { if {[catch {xschem {*}$args} r]} { return "<no-cmd>" }; return $r }
+source [file join [file dirname [info script]] scratch.tcl]
 
 # --- fixture: lib 'tlib' with inv (both views), res (symbol only), buf (sch only)
-set tmp [file join [pwd] _browse_[pid]]
-file delete -force $tmp
+set tmp [test_scratch browse]
 proc touch {f} { file mkdir [file dirname $f]; set fp [open $f w]; puts $fp "v {xschem}"; close $fp }
 touch $tmp/tlib/inv/symbol/inv.sym
 touch $tmp/tlib/inv/schematic/inv.sch
@@ -58,7 +58,6 @@ check "LB6b flat cell symbol-only" [expr {[q cell_views flatlib fa] eq {symbol}}
 check "LB7 cellview_path resolves a flat cell" \
   [expr {[q cellview_path flatlib/fc symbol] eq "$tmp/flatlib/fc.sym"}] "(=> [q cellview_path flatlib/fc symbol])"
 
-file delete -force $tmp
 if {$fail == 0} { puts "RESULT: ALL PASS" } else { puts "RESULT: $fail FAILED" }
 flush stdout
 exit [expr {$fail == 0 ? 0 : 1}]

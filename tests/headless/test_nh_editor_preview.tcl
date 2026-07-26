@@ -62,7 +62,8 @@ if {[catch {winfo exists .}]} {
   exit [expr {$fail == 0 ? 0 : 1}]
 }
 
-set ::USER_CONF_DIR [file join [pwd] _nheprev_[pid]] ; file delete -force $::USER_CONF_DIR ; file mkdir $::USER_CONF_DIR
+source [file join [file dirname [info script]] scratch.tcl]
+set ::USER_CONF_DIR [test_scratch nheprev]
 
 # two rows so we can test focus tracking; row 0 solid red (non-blinking -> always visible)
 set ::net_hilight_style {{0 red 2 {} 0 0 none 0} {1 3 1 {6 4} 0 0 march_fwd 1}}
@@ -94,7 +95,6 @@ destroy .nhse
 update
 check "G7 preview tick cancelled on close" [expr {![info exists ::nhse_preview_after]}] {}
 
-file delete -force $::USER_CONF_DIR
 if {$fail == 0} { puts "RESULT: ALL PASS" } else { puts "RESULT: $fail FAILED" }
 flush stdout
 exit [expr {$fail == 0 ? 0 : 1}]

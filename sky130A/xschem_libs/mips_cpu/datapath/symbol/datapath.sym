@@ -1,0 +1,42 @@
+v {xschem version=3.4.5 file_version=1.2}
+K {type=subcircuit
+format="@name @pinlist @symname"
+template="name=x1"
+}
+
+T {@symname} -54 -6 0 0 0.3 0.3 {}
+T {@name} 135 -132 0 0 0.2 0.2 {}
+L 4 -130 -120 130 -120 {}
+L 4 -130 120 130 120 {}
+L 4 -130 -120 -130 120 {}
+L 4 130 -120 130 120 {}
+B 5 -152.5 -112.5 -147.5 -107.5 {show_pinname=true name_dx=25 name_dy=-4 name_size=0.2 name=clk dir=in}
+L 4 -150 -110 -130 -110 {}
+B 5 -152.5 -92.5 -147.5 -87.5 {show_pinname=true name_dx=25 name_dy=-4 name_size=0.2 name=rst dir=in}
+L 4 -150 -90 -130 -90 {}
+B 5 -152.5 -72.5 -147.5 -67.5 {show_pinname=true name_dx=25 name_dy=-4 name_size=0.2 name=alucontrol[2:0] dir=in}
+L 4 -150 -70 -130 -70 {}
+B 5 -152.5 -52.5 -147.5 -47.5 {show_pinname=true name_dx=25 name_dy=-4 name_size=0.2 name=alu_src dir=in}
+L 4 -150 -50 -130 -50 {}
+B 5 -152.5 -32.5 -147.5 -27.5 {show_pinname=true name_dx=25 name_dy=-4 name_size=0.2 name=branch dir=in}
+L 4 -150 -30 -130 -30 {}
+B 5 -152.5 -12.5 -147.5 -7.5 {show_pinname=true name_dx=25 name_dy=-4 name_size=0.2 name=jump dir=in}
+L 4 -150 -10 -130 -10 {}
+B 5 -152.5 7.5 -147.5 12.5 {show_pinname=true name_dx=25 name_dy=-4 name_size=0.2 name=mem_to_reg dir=in}
+L 4 -150 10 -130 10 {}
+B 5 -152.5 27.5 -147.5 32.5 {show_pinname=true name_dx=25 name_dy=-4 name_size=0.2 name=mem_write dir=in}
+L 4 -150 30 -130 30 {}
+B 5 147.5 -112.5 152.5 -107.5 {show_pinname=true name_dx=-25 name_dy=-4 name_size=0.2 name_flip=1 name=pc[31:0] verilog_type=reg dir=out}
+L 4 130 -110 150 -110 {}
+B 5 -152.5 47.5 -147.5 52.5 {show_pinname=true name_dx=25 name_dy=-4 name_size=0.2 name=reg_dst dir=in}
+L 4 -150 50 -130 50 {}
+B 5 147.5 -92.5 152.5 -87.5 {show_pinname=true name_dx=-25 name_dy=-4 name_size=0.2 name_flip=1 name=alu_result[31:0] dir=out}
+L 4 130 -90 150 -90 {}
+B 5 -152.5 67.5 -147.5 72.5 {show_pinname=true name_dx=25 name_dy=-4 name_size=0.2 name=reg_write dir=in}
+L 4 -150 70 -130 70 {}
+B 5 147.5 -72.5 152.5 -67.5 {show_pinname=true name_dx=-25 name_dy=-4 name_size=0.2 name_flip=1 name=write_data[31:0] dir=out}
+L 4 130 -70 150 -70 {}
+B 5 -152.5 87.5 -147.5 92.5 {show_pinname=true name_dx=25 name_dy=-4 name_size=0.2 name=instr[31:0] dir=in}
+L 4 -150 90 -130 90 {}
+B 5 -152.5 107.5 -147.5 112.5 {show_pinname=true name_dx=25 name_dy=-4 name_size=0.2 name=read_data[31:0] dir=in}
+L 4 -150 110 -130 110 {}

@@ -12,6 +12,8 @@
 # Run under X with --pipe from src/:
 #   DISPLAY=:0 ./xschem --pipe -q --script ../tests/headless/test_cellview_resolve.tcl
 
+source [file join [file dirname [info script]] scratch.tcl]
+
 set fail 0
 proc check {name ok detail} {
   global fail
@@ -23,8 +25,7 @@ proc cvp {ref view} {
 }
 
 # --- fixture: one new-layout library (newlib) + one legacy flat dir (flatlib) ---
-set tmp [file join [pwd] _cellview_test_[pid]]
-file delete -force $tmp
+set tmp [test_scratch cellview_test]
 file mkdir $tmp/newlib/inv/symbol $tmp/newlib/inv/schematic $tmp/flatlib
 proc touch {f} { set fp [open $f w]; puts $fp "v {xschem version=3.4.0 file_version=1.3}"; close $fp }
 touch $tmp/newlib/inv/symbol/inv.sym
@@ -89,7 +90,6 @@ check "CV11 alt-named schematic view resolves" \
 check "CV12 alt-named symbol view resolves" \
   [expr {[cvp newlib/inv sym_alt] eq "$tmp/newlib/inv/sym_alt/inv.sym"}] "(=> [cvp newlib/inv sym_alt])"
 
-file delete -force $tmp
 if {$fail == 0} { puts "RESULT: ALL PASS" } else { puts "RESULT: $fail FAILED" }
 flush stdout
 exit [expr {$fail == 0 ? 0 : 1}]

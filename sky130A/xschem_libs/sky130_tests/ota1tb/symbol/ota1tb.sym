@@ -1,0 +1,28 @@
+v {xschem version=3.4.6 file_version=1.2}
+G {}
+K {type=subcircuit
+format="@name @pinlist @symname"
+template="name=x1"
+}
+V {}
+S {}
+E {}
+L 4 -130 -60 -130 60 {}
+L 4 -90 -60 -90 -40 {}
+L 4 -150 -20 -130 -20 {}
+L 4 -150 20 -130 20 {}
+L 4 -10 0 10 0 {}
+L 4 -90 40 -90 60 {}
+L 4 -130 -60 -10 0 {}
+L 4 -130 60 -10 0 {}
+B 5 -92.5 -62.5 -87.5 -57.5 {show_pinname=true name_dx=5 name_dy=34 name_size=0.15 name_rot=2 name=VDD dir=in}
+B 5 -152.5 -22.5 -147.5 -17.5 {show_pinname=true name_dx=-5 name_dy=-14 name_size=0.15 name=minus dir=in}
+B 5 -152.5 17.5 -147.5 22.5 {show_pinname=true name_dx=-5 name_dy=6 name_size=0.15 name=plus dir=in}
+B 5 7.5 -2.5 12.5 2.5 {show_pinname=true name_dx=-35 name_dy=-4 name_size=0.15 name_flip=1 name=out dir=out}
+B 5 -92.5 57.5 -87.5 62.5 {show_pinname=true name_dx=-15 name_dy=-34 name_size=0.15 name=gnd dir=in}
+T {@symname} -105 -6 0 0 0.2 0.2 {}
+T {@name} -5 -22 0 0 0.15 0.15 {}
+T {ICMR: 0.85(max)
+GBW: 5MHz
+CL: 5pF
+Gain: 70dB} -110 -20 0 0 0.05 0.05 {}

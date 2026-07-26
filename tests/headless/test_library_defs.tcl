@@ -34,10 +34,11 @@ proc lib_listed {name path} {
   return 0
 }
 
+source [file join [file dirname [info script]] scratch.tcl]
+
 # --- fixture: a temp tree with a defs file (2 libs + 1 var-expanded) and a
 #     separately tagged library reachable via XSCHEM_LIBRARY_PATH ------------
-set tmp [file join [pwd] _libdefs_test_[pid]]
-file delete -force $tmp
+set tmp [test_scratch libdefs_test]
 file mkdir $tmp/liba $tmp/libb $tmp/varlib $tmp/tagged $tmp/tagged_noname
 
 set ::env(LIBDEFS_TESTVAR) $tmp
@@ -94,9 +95,6 @@ check "LD7 DEFINE beats tag of same name" [expr {[lib_path liba] eq "$tmp/liba"}
 set fp [open $defs a]; puts $fp "DEFINE rellib ./liba"; close $fp
 check "LD8 relative DEFINE path resolves to defs dir" \
   [expr {[lib_path rellib] eq [file normalize "$tmp/liba"]}] "(=> [lib_path rellib])"
-
-# --- cleanup ---------------------------------------------------------------
-file delete -force $tmp
 
 if {$fail == 0} { puts "RESULT: ALL PASS" } else { puts "RESULT: $fail FAILED" }
 flush stdout

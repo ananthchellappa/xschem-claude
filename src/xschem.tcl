@@ -2417,9 +2417,22 @@ proc key_binding {  s  d { win_path {.drw} } } {
 
 }
 
+# true if the external text editor configured in $editor (e.g. {gvim -f}) is
+# actually executable on this system. Callers fall back to the internal text
+# widgets when it is not, instead of popping a modal 'Can not execute' error.
+proc editor_exists {} {
+  global editor
+  return [expr {[auto_execok [lindex $editor 0]] ne {}}]
+}
+
 proc edit_file {filename} {
 
  global editor
+ if {![editor_exists]} {
+   # no external editor available: internal text window with a Save button
+   textwindow $filename
+   return {}
+ }
  # since $editor can be an executable with options (gvim -f) I *need* to use eval
  eval execute 0  $editor  $filename
  return {}
@@ -5387,6 +5400,11 @@ proc edit_netlist {netlist } {
 
  if { [regexp vim $editor] } { set ftype "-c \":set filetype=$netlist_type\"" } else { set ftype {} }
  if { [set_netlist_dir 0] ne "" } {
+   if {![editor_exists]} {
+     # no external editor available: internal text window with a Save button
+     textwindow [file join $netlist_dir $netlist]
+     return {}
+   }
    set save [pwd]
    cd $netlist_dir
    if {$OS == "Windows"} {
@@ -5658,7 +5676,9 @@ proc hi_descend_target_inst {inst} {
 }
 
 # Enumerate the views available for the cell behind instance $instname.
-# Returns a list of {viewname type abspath} rows, type in {schematic symbol}.
+# Returns a list of {viewname type abspath} rows, type in {schematic symbol
+# ngspice_state} (the last for ASE simulation-state views,
+# doc/claude/specs/ase_l.md — hi_descend_do routes those to ase::open_state).
 # Covers both the OpenAccess lib/cell/view layout (alternates like schematic_old)
 # and the legacy flat layout (default schematic + symbol).
 proc hi_descend_enum_views {instname} {
@@ -5676,7 +5696,11 @@ proc hi_descend_enum_views {instname} {
     foreach v [cell_views $lib $cell] {
       set p [cellview_resolve $lib $cell $v]
       if {$p eq {} || [lsearch -exact $seen $p] >= 0} { continue }
-      set ty [expr {[file extension $p] eq {.sch} ? "schematic" : "symbol"}]
+      switch -- [file extension $p] {
+        .sch    { set ty schematic }
+        .state  { set ty ngspice_state }
+        default { set ty symbol }
+      }
       lappend rows [list $v $ty $p]
       lappend seen $p
     }
@@ -5742,6 +5766,14 @@ proc hi_descend_iters {instname} {
 # vtype: schematic|symbol; iter: 1-based bit (leftmost=1), 1 for a plain instance;
 # mode: readonly|edit (read-only browse is the default).
 proc hi_descend_finish {instname vtype vpath iter mode} {
+  # Only schematic/symbol views descend. Anything else (e.g. an ngspice_state
+  # ASE view) is routed by hi_descend_do to its own handler before it can get
+  # here; refuse rather than fall into the binary schematic/symbol branch
+  # below, so no future direct caller can "descend" into a state file.
+  if {$vtype ni {schematic symbol}} {
+    ciw_echo "hi_descend: view type '$vtype' does not descend; open it from the Library Manager" error
+    return 0
+  }
   set lvl [xschem get currsch]
   if {$vtype eq {symbol}} {
     # descend_symbol has no return value; detect success by the hierarchy level rising,
@@ -5858,6 +5890,21 @@ proc hi_descend_do {instname view type target iter mode} {
     foreach r $rows { lappend names [lindex $r 0] }
     ciw_echo "hi_descend: no view \"$view\" for $instname (have: [join $names {, }])" error
     return 0
+  }
+  # ASE state views (doc/claude/specs/ase_l.md) do not descend: route to
+  # ase::open_state, ignoring target/iter/mode (meaningless for a state view).
+  # Intercepted HERE — the shared dialog + scripted entry — so no target arm
+  # (in particular hi_descend_newwin) can first open a window that would end
+  # up orphaned. lib/cell are derived exactly as hi_descend_enum_views did.
+  if {[lindex $row 1] eq {ngspice_state}} {
+    set rel [rel_sym_path [abs_sym_path [hi_descend_inst_sym $instname]]]
+    if {![regexp {^([^/]+)/([^/]+)$} $rel -> lib cell]} {
+      # cannot happen for rows the enum built (only its OA branch, gated by
+      # this very regexp, emits ngspice_state rows) — defensive only
+      ciw_echo "hi_descend: cannot derive lib/cell for the state view of $instname" error
+      return 0
+    }
+    return [ase::open_state $lib $cell [lindex $row 0]]
   }
   if {$iter eq {} || ![string is integer -strict $iter]} { set iter 1 }
   switch -- $target {
@@ -9550,6 +9597,21 @@ proc edit_vi_prop {txtlabel} {
   set netlist_type [xschem get netlist_type]
   set user_wants_copy_cell 0
   set tctx::rcode {}
+  if {![editor_exists]} {
+    # external editor missing: internal dialog, keeping the vi-path contract
+    # (rcode set to ok ONLY if the text really changed, retval untouched otherwise)
+    set prev $tctx::retval
+    xschem set semaphore [expr {[xschem get semaphore] +1}]
+    text_line $txtlabel 0 header
+    xschem set semaphore [expr {[xschem get semaphore] -1}]
+    if {$tctx::rcode ne {} && [string compare $tctx::retval $prev]} {
+      set tctx::rcode ok
+    } else {
+      set tctx::retval $prev
+      set tctx::rcode {}
+    }
+    return $tctx::rcode
+  }
   set filename .xschem_edit_file.[pid]
   if ![string compare $netlist_type "vhdl"] { set suffix vhd } else { set suffix v }
   set filename $filename.$suffix
@@ -9583,6 +9645,23 @@ proc edit_vi_netlist_prop {txtlabel} {
   set filename $filename.$suffix
   regsub -all {\\?"} $tctx::retval {"} tctx::retval
   regsub -all {\\?\\} $tctx::retval {\\} tctx::retval
+  if {![editor_exists]} {
+    # external editor missing: internal dialog on the unescaped text; on change
+    # re-escape and wrap in quotes exactly like the editor path below
+    set prev $tctx::retval
+    xschem set semaphore [expr {[xschem get semaphore] +1}]
+    text_line $txtlabel 0 header
+    xschem set semaphore [expr {[xschem get semaphore] -1}]
+    if {$tctx::rcode ne {} && [string compare $tctx::retval $prev]} {
+      regsub -all {(["\\])} $tctx::retval {\\\1} tctx::retval ;#"  editor is confused by the previous quote
+      set tctx::retval \"${tctx::retval}\"
+      set tctx::rcode ok
+    } else {
+      set tctx::retval $prev
+      set tctx::rcode {}
+    }
+    return $tctx::rcode
+  }
   write_data $tctx::retval $XSCHEM_TMP_DIR/$filename
   if { [regexp vim $editor] } { set ftype "\{-c :set filetype=$netlist_type\}" } else { set ftype {} }
   # since $editor can be an executable with options (gvim -f) I *need* to use eval
@@ -10545,6 +10624,10 @@ namespace eval addpin {
   # multi-name queue: pending = names not yet placed this pass; current = head (the armed one).
   variable pending        {}
   variable current        {}
+  # issue 0122 E1: `xschem get sympin_drops` snapshot taken when the current preview is armed.
+  # after_drop only advances/drains if the count actually rose (a real commit) -- so an external
+  # gesture that abandoned the preview cannot make a stray click consume an un-placed name.
+  variable drop_snap      0
 }
 
 proc addpin::status {msg} { catch {.addpin.status configure -text $msg} }
@@ -10573,9 +10656,13 @@ proc addpin::next_dir {d} {
 }
 
 # The C -place verb for the CURRENT view: schematic -> add_sch_pin (ipin/opin/iopin instances);
-# symbol (.sym) -> add_symbol_pin (PINLAYER pin rects). Filename test (editing_symbol_view()).
+# symbol (.sym) -> add_symbol_pin (PINLAYER pin rects). Ask the C `editing_symbol_view()` truth
+# (real loaded path), NOT a `*.sym` match on current_name: a library-manager symbol displays as
+# the extension-less "lib/cell" reference, so a name match wrongly picks add_sch_pin -- a no-op in
+# a symbol view -> the Add-Pin preview never arms and nothing is placed (was: existing / made
+# symbols dead while untitled.sym worked).
 proc addpin::place_verb {} {
-  return [expr {[string match {*.sym} [xschem get current_name]] ? "add_symbol_pin" : "add_sch_pin"}]
+  return [expr {[xschem get editing_symbol_view] ? "add_symbol_pin" : "add_sch_pin"}]
 }
 
 # Re-arm the next pin after each canvas drop, so placement continues until Esc. Appended
@@ -10589,7 +10676,7 @@ proc addpin::install_drop_hook {} {
   set hook_installed 1
 }
 proc addpin::after_drop {b} {
-  variable armed; variable pending; variable current
+  variable armed; variable pending; variable current; variable name; variable drop_snap
   if {$b != 1} return             ;# only a LEFT-click drops (Ctrl+MMB must not count)
   if {!$armed} return
   if {![winfo exists .addpin]} { set armed 0; return }
@@ -10597,9 +10684,22 @@ proc addpin::after_drop {b} {
   # if the Add-Wire-Label form is ALSO open and it (not us) armed the preview that just
   # committed, do NOT drain the pin queue (add_wire_label.md #8: cross-form drop cross-talk).
   if {[info exists ::sympin_place] && $::sympin_place ne {pin}} return
+  # issue 0122 E1: require a REAL commit. If the drop count did not rise, this ButtonRelease is
+  # not our pin drop -- e.g. the user started an unrelated canvas gesture (wire/move) that
+  # abandoned the preview (placing cleared, but armed/latch still ours). Do not consume a name;
+  # disarm and tell the user placement paused (E1-F2) -- editing the name or reopening re-arms.
+  if {[xschem get sympin_drops] == $drop_snap} {
+    set armed 0
+    addpin::status "placement paused (another action took over) -- edit the name or reopen to resume"
+    return
+  }
   # a drop completed -> advance the queue to the next typed name
   set pending [lrange $pending 1 end]
   set current [lindex $pending 0]
+  # Consume the just-placed name from the Pin Name entry so the field always shows what is still
+  # queued (e.g. "IN OUT VDD" -> "OUT VDD" after dropping IN). Setting the textvariable does not
+  # fire the entry's KeyRelease, so this does NOT re-trigger start_pass / rebuild the queue.
+  set name [join $pending " "]
   if {[string trim $current] ne {}} {
     addpin::arm                   ;# arm the next queued name
   } else {
@@ -10640,6 +10740,8 @@ proc addpin::arm {} {
   xschem [addpin::place_verb] -place ;# self-aborts the previous preview (no undo) and re-arms
   set ::sympin_place pin             ;# owner latch: this preview is a PIN (add_wire_label.md #8)
   set armed 1
+  variable drop_snap
+  set drop_snap [xschem get sympin_drops]  ;# issue 0122 E1: witness baseline for THIS preview
   set nleft [llength $pending]
   set more [expr {$nleft > 1 ? " (+[expr {$nleft-1}] queued)" : {}}]
   addpin::status "placing '$current' ($d)$more -- click to place; Ctrl+MMB cycles type; Esc finishes"
@@ -10653,11 +10755,35 @@ proc addpin::on_dir_change  {} { addpin::arm }
 # can place differently-typed pins from one queue without touching the Direction combobox.
 proc addpin::cycle_type {} {
   variable dir; variable current
-  if {![winfo exists .addpin]} return
-  if {![addpin::placing]} return       ;# only meaningful with a preview attached
-  if {[string trim $current] eq {}} return
-  set dir [addpin::next_dir $dir]      ;# the Direction combobox updates via -textvariable
-  addpin::arm                          ;# re-arm current name with the new direction/type
+  if {[info commands winfo] ne {} && [winfo exists .addpin] && [addpin::placing]} {
+    if {[string trim $current] eq {}} return
+    set dir [addpin::next_dir $dir]    ;# the Direction combobox updates via -textvariable
+    addpin::arm                        ;# re-arm current name with the new direction/type
+    return
+  }
+  # placed-pin fallback (doc/claude/specs/pin_type_editing.md): Ctrl+MMB cycles the type
+  # of the selected pin(s) in EITHER view (set_pin_type is view-aware); with no pin in
+  # the selection, click-select whatever is under the pointer and retry. Selection is
+  # left where it lands (click-acts-on-object), so a miss on empty canvas deselects.
+  if {[catch {xschem set_pin_type -cycle} n] || $n == 0} {
+    catch {
+      xschem unselect_all
+      xschem select_at [xschem get mousex_snap] [xschem get mousey_snap]
+      xschem set_pin_type -cycle
+    }
+  }
+}
+
+# issue 0122 E2: the Add-Pin and Add-Wire-Label forms share the single `.drw <Key-Escape>` slot.
+# grab_esc points that slot at THIS form -- called on open/raise so the form the user just focused
+# owns canvas-Esc. release_esc (on close) hands the slot BACK to the sibling form if it is still
+# open, else clears it -- so closing one form no longer kills the survivor's canvas-Esc.
+# SCOPE (0122-F3): like the whole form mechanism (the `.drw <ButtonRelease>` drop hook in
+# install_drop_hook, and the sibling ciform), this targets the MAIN window canvas `.drw` only --
+# not a detached window / non-first tab (`.xN.drw`). Pre-existing single-canvas assumption.
+proc addpin::grab_esc {}    { bind .drw <Key-Escape> {if {[winfo exists .addpin]} {addpin::escape; break}} }
+proc addpin::release_esc {} {
+  if {[winfo exists .addlabel]} { addlabel::grab_esc } else { catch {bind .drw <Key-Escape> {}} }
 }
 
 # Esc / Close: end placement and dismiss the form.
@@ -10667,12 +10793,107 @@ proc addpin::escape {} {
   addpin::abort_if_placing
   catch {destroy .addpin}
 }
-# Form destroyed by any means: abort an armed preview and restore the default canvas Esc.
+# Form destroyed by any means: abort an armed preview and hand canvas-Esc back to the sibling form.
+# Also wipe the Pin Name so a NEW invocation opens blank (never retains the previous names).
 proc addpin::on_destroy {} {
-  variable armed; variable last; variable pending; variable current
-  set armed 0; set last {}; set pending {}; set current {}
-  catch {bind .drw <Key-Escape> {}}
+  variable armed; variable last; variable pending; variable current; variable name
+  set armed 0; set last {}; set pending {}; set current {}; set name {}
+  catch {addpin::release_esc}
   addpin::abort_if_placing
+}
+
+# ---------------------------------------------------------------------------
+# schpin -- Edit Properties form for a schematic PORT instance (ipin/opin/iopin).
+# doc/claude/specs/pin_type_editing.md item 3: `q` on a pin instance opens THIS
+# form (routed from slickprop::edit_form) instead of the generic instance form,
+# mirroring the symbol editor's pin panel: Name (the lab= token) + Direction
+# combobox. Modeless like the slick form (M2). Apply: lab via `xschem setprop
+# instance`, direction via `xschem set_pin_type <dir> <inst>` (each its own undo
+# slot, v1 accepted). Sets tctx::applied for the C caller's contract.
+# ---------------------------------------------------------------------------
+namespace eval schpin {
+  variable inst {}   ;# instance name= captured at open (stable across applies)
+  variable name {}   ;# form Name field (the lab= token)
+  variable dir  {}   ;# form Direction label (input/output/inout)
+  variable name0 {}  ;# values at open / last apply, for change detection
+  variable dir0 {}
+}
+
+# symbol basename -> Direction label, and label -> set_pin_type token
+proc schpin::dir_of_sym {sym} {
+  # accept both 'ipin.sym' and the library-manager 'ipin' (lib/cell, no .sym) forms
+  switch -- [file rootname [file tail $sym]] {
+    ipin  { return input }
+    opin  { return output }
+    default   { return inout }
+  }
+}
+proc schpin::dirtok {lbl} {
+  set map {input in output out inout inout}
+  return [expr {[dict exists $map $lbl] ? [dict get $map $lbl] : {inout}}]
+}
+
+proc schpin::apply {} {
+  variable inst; variable name; variable dir; variable name0; variable dir0
+  if {$inst eq {}} return
+  set changed 0
+  if {$name ne $name0 && [string trim $name] ne {}} {
+    xschem setprop instance $inst lab [string trim $name]
+    set name0 $name
+    set changed 1
+  }
+  if {$dir ne $dir0} {
+    xschem set_pin_type [schpin::dirtok $dir] $inst
+    set dir0 $dir
+    set changed 1
+  }
+  if {$changed} {
+    set ::tctx::applied 1
+    catch {xschem redraw}
+  }
+}
+
+proc schpin::edit_form {} {
+  variable inst; variable name; variable dir; variable name0; variable dir0
+  global symbol
+  set ::tctx::rcode {}
+  if {[winfo exists .dialog]} { return {} }
+  catch {slickprop::init_fonts}
+  set inst  [xschem get_tok $::tctx::retval name 2]
+  set name  [xschem get_tok $::tctx::retval lab 2]
+  set dir   [schpin::dir_of_sym $symbol]
+  set name0 $name; set dir0 $dir
+  toplevel .dialog -class Dialog
+  wm title .dialog {Edit Pin}
+  set X [expr {[winfo pointerx .dialog] - 60}]
+  set Y [expr {[winfo pointery .dialog] - 35}]
+  wm geometry .dialog "+$X+$Y"
+  # header bar: slick convention (grey60 bold), like the symbol editor pin panel
+  set hdr "$inst  —  [file tail $symbol]"
+  if {[catch {label .dialog.hdr -text "  $hdr" -bg grey60 -anchor w -font slickPropHeader}]} {
+    label .dialog.hdr -text "  $hdr" -bg grey60 -anchor w
+  }
+  pack .dialog.hdr -side top -fill x
+  frame .dialog.f
+  grid [label .dialog.f.ln -text {Pin Name:} -anchor w] -row 0 -column 0 -sticky w -padx 4 -pady 4
+  grid [entry .dialog.f.en -textvariable schpin::name -width 24] -row 0 -column 1 -sticky we -padx 4
+  grid [label .dialog.f.ld -text {Direction:} -anchor w] -row 1 -column 0 -sticky w -padx 4 -pady 4
+  grid [ttk::combobox .dialog.f.cd -textvariable schpin::dir -state readonly \
+        -values {input output inout} -width 10] -row 1 -column 1 -sticky w -padx 4
+  bind .dialog.f.cd <Key> {combo_letter_cycle %W %A}
+  grid columnconfigure .dialog.f 1 -weight 1
+  pack .dialog.f -side top -fill x
+  frame .dialog.b
+  button .dialog.b.ok     -text OK     -command {schpin::apply; destroy .dialog}
+  button .dialog.b.apply  -text Apply  -command {schpin::apply}
+  button .dialog.b.cancel -text Cancel -command {destroy .dialog}
+  pack .dialog.b.ok .dialog.b.apply .dialog.b.cancel -side left -expand 1 -fill x
+  pack .dialog.b -side bottom -fill x -pady 3
+  bind .dialog <Return> {schpin::apply; destroy .dialog}
+  bind .dialog <Escape> {destroy .dialog}
+  raise .dialog
+  focus .dialog.f.en
+  return {}
 }
 
 proc addpin::open {} {
@@ -10682,6 +10903,7 @@ proc addpin::open {} {
   if {[winfo exists $w]} {
     raise_activate_toplevel $w
     focus $w.f.ename
+    addpin::grab_esc            ;# 0122 E2: re-focused form re-claims the shared canvas-Esc slot
     addpin::start_pass
     return
   }
@@ -10717,11 +10939,12 @@ proc addpin::open {} {
   # editing the name rebuilds the queue; picking a direction re-arms the current name
   bind $w.f.ename <KeyRelease>         {+addpin::on_name_change}
   bind $w.f.edir  <<ComboboxSelected>> {+addpin::on_dir_change}
-  # Esc ends placement AND dismisses the form. On the CANVAS only swallow Esc while a
-  # preview is actually armed (`break` pre-empts the generic <KeyPress> -> C dispatcher);
-  # when nothing is being placed, fall through so Esc still cancels an unrelated in-progress
-  # gesture (wire/move/...) the user may have started while this form is open.
-  bind .drw <Key-Escape> {if {[addpin::placing]} {addpin::escape; break}}
+  # Esc ends placement AND dismisses the form -- at any time, whether or not a preview is
+  # armed. Focus lands on the canvas after each drop, so Esc there must also close the form
+  # (mirror of the Add-Wire-Label form); dismiss whenever the form exists. `break` pre-empts
+  # the generic <KeyPress> -> C dispatcher so the same key does not also fire a canvas verb.
+  # grab_esc claims the shared canvas-Esc slot (0122 E2); on_destroy hands it back to the sibling.
+  addpin::grab_esc
   bind $w   <Key-Escape> {addpin::escape}
   bind $w   <Destroy>    {if {{%W} eq {.addpin}} {addpin::on_destroy}}
 
@@ -10749,6 +10972,7 @@ namespace eval addlabel {
   variable last           {}
   variable pending        {}
   variable current        {}
+  variable drop_snap      0   ;# issue 0122 E1: sympin_drops witness for the armed preview
 }
 
 proc addlabel::status {msg} { catch {.addlabel.status configure -style TLabel -text $msg} }
@@ -10810,7 +11034,7 @@ proc addlabel::install_drop_hook {} {
   set hook_installed 1
 }
 proc addlabel::after_drop {b} {
-  variable armed; variable pending; variable current; variable name
+  variable armed; variable pending; variable current; variable name; variable drop_snap
   if {$b != 1} return
   if {!$armed} return
   if {![winfo exists .addlabel]} { set armed 0; return }
@@ -10818,6 +11042,14 @@ proc addlabel::after_drop {b} {
   # if the Add-Pin form is ALSO open and it (not us) armed the committed preview, don't drain the
   # label queue (add_wire_label.md #8: cross-form drop cross-talk).
   if {[info exists ::sympin_place] && $::sympin_place ne {label}} return
+  # issue 0122 E1: require a REAL commit -- a stray ButtonRelease after an external gesture
+  # abandoned the preview must not consume a queued label (see addpin::after_drop). Disarm and
+  # tell the user placement paused (E1-F2); editing the name or reopening re-arms.
+  if {[xschem get sympin_drops] == $drop_snap} {
+    set armed 0
+    addlabel::status "placement paused (another action took over) -- edit the name or reopen to resume"
+    return
+  }
   set pending [lrange $pending 1 end]
   set current [lindex $pending 0]
   # Consume the just-placed name from the Label Name entry so the field always shows what is still
@@ -10867,6 +11099,8 @@ proc addlabel::arm {} {
   xschem add_wire_label -place   ;# self-aborts the previous preview (no undo) and re-arms
   set ::sympin_place label        ;# owner latch: this preview is a LABEL (add_wire_label.md #8)
   set armed 1
+  variable drop_snap
+  set drop_snap [xschem get sympin_drops]  ;# issue 0122 E1: witness baseline for THIS preview
   set nleft [llength $pending]
   set more [expr {$nleft > 1 ? " (+[expr {$nleft-1}] queued)" : {}}]
   addlabel::status "placing '$current'$more -- click ON a wire or pin to drop; Esc finishes"
@@ -10881,6 +11115,13 @@ proc addlabel::on_reject {} {
   addlabel::status "'$current' must land ON a wire or an instance pin -- move and click again"
 }
 
+# issue 0122 E2: shared `.drw <Key-Escape>` slot (see addpin::grab_esc). grab_esc claims it for
+# THIS form; release_esc hands it back to the sibling Add-Pin form if still open, else clears it.
+proc addlabel::grab_esc {}    { bind .drw <Key-Escape> {if {[winfo exists .addlabel]} {addlabel::escape; break}} }
+proc addlabel::release_esc {} {
+  if {[winfo exists .addpin]} { addpin::grab_esc } else { catch {bind .drw <Key-Escape> {}} }
+}
+
 # Esc / Close: end placement and dismiss the form.
 proc addlabel::escape {} {
   variable armed
@@ -10888,10 +11129,12 @@ proc addlabel::escape {} {
   addlabel::abort_if_placing
   catch {destroy .addlabel}
 }
+# Hand canvas-Esc back to the sibling form on close; wipe the Label Name so a NEW invocation opens
+# blank (never retains the previous names).
 proc addlabel::on_destroy {} {
-  variable armed; variable last; variable pending; variable current
-  set armed 0; set last {}; set pending {}; set current {}
-  catch {bind .drw <Key-Escape> {}}
+  variable armed; variable last; variable pending; variable current; variable name
+  set armed 0; set last {}; set pending {}; set current {}; set name {}
+  catch {addlabel::release_esc}
   addlabel::abort_if_placing
 }
 
@@ -10902,6 +11145,7 @@ proc addlabel::open {} {
   if {[winfo exists $w]} {
     raise_activate_toplevel $w
     focus $w.f.ename
+    addlabel::grab_esc          ;# 0122 E2: re-focused form re-claims the shared canvas-Esc slot
     addlabel::start_pass
     return
   }
@@ -10941,7 +11185,8 @@ proc addlabel::open {} {
   bind $w.f.ename <KeyRelease> {+addlabel::on_name_change}
   # Focus lands on the canvas after a drop, so Esc there must also close the form/command mode --
   # dismiss whenever the form exists, not only while a preview is still attached (queue drained).
-  bind .drw <Key-Escape> {if {[winfo exists .addlabel]} {addlabel::escape; break}}
+  # grab_esc claims the shared canvas-Esc slot (0122 E2); on_destroy hands it back to the sibling.
+  addlabel::grab_esc
   bind $w   <Key-Escape> {addlabel::escape}
   bind $w   <Destroy>    {if {{%W} eq {.addlabel}} {addlabel::on_destroy}}
 
@@ -12309,15 +12554,23 @@ proc tab_ctx_cmd {tab_but what} {
         cd $save
       }
     } elseif {$what eq {edit}} {
-      eval execute 0 $editor $filename
+      if {![editor_exists]} {
+        textwindow $filename
+      } else {
+        eval execute 0 $editor $filename
+      }
     } elseif {$what eq {netlist}} {
       set old [xschem get current_win_path]
       set save [pwd]
       xschem new_schematic switch $win_path {} 0 ;# no draw
       if {[file exists $netlist_dir] && [file exists "$netlist_dir/[xschem get netlist_name fallback]"]} {
-        cd $netlist_dir
-        eval execute 0 $editor \"[xschem get netlist_name fallback]\"
-        cd $save
+        if {![editor_exists]} {
+          textwindow [file join $netlist_dir [xschem get netlist_name fallback]]
+        } else {
+          cd $netlist_dir
+          eval execute 0 $editor \"[xschem get netlist_name fallback]\"
+          cd $save
+        }
       } else {
         if {[info exists has_x]} {
           alert_ {Netlist not existing, not yet generated} {} 0 0
@@ -13182,6 +13435,12 @@ proc quit_xschem { {force {}}} {
   # any OTHER open windows still get their own unsaved-data prompt via destroy_all.
   if {$force eq {}} {
     if {![hierarchy_close quit]} return
+    # item 16: prompt to save any dirty ASE-L session before exit; a Cancel on
+    # any aborts the quit. No-op when no ASE window is open (and when ase_window
+    # is not loaded), so normal quit / other windows are unaffected.
+    if {[info commands ase::ui::prompt_all_on_quit] ne {}} {
+      if {![ase::ui::prompt_all_on_quit]} return
+    }
     if {[xschem new_schematic ntabs] == 0} { set force force }
   }
   xschem new_schematic destroy_all $force
@@ -13853,6 +14112,12 @@ source $XSCHEM_SHAREDIR/library_manager.tcl
 source $XSCHEM_SHAREDIR/create_instance.tcl
 # Library/Cell/View Save-As form (doc/claude/specs/save_as_cellview.md)
 source $XSCHEM_SHAREDIR/save_as_form.tcl
+# ASE-L analog simulation environment core (doc/claude/specs/ase_l.md)
+source $XSCHEM_SHAREDIR/ase.tcl
+# ASE-L session window GUI (ase::ui; proc definitions only at source time)
+source $XSCHEM_SHAREDIR/ase_window.tcl
+# Waveform Viewer window shell (wviewer; doc/claude/specs/waveform_viewer.md)
+source $XSCHEM_SHAREDIR/wave_viewer.tcl
 # Slick per-field "Edit Properties" form (replaces the legacy raw-text dialog)
 source $XSCHEM_SHAREDIR/property_form.tcl
 # Alt-2 schematic<->symbol view toggle (action view.toggle_view_type;
@@ -13888,6 +14153,29 @@ foreach row $action_table {
 # (doc/claude/specs/action_logging.md section 3). Auto-opened for interactive sessions
 # in the build-widgets block below.
 source $XSCHEM_SHAREDIR/ciw.tcl
+
+# issue 0123: Help>Debug FLUID_TRACE control. Start picks a PID-named file in the system temp dir
+# and hands the path to the C side (`xschem fluid_trace start <path>`), then reports it in the CIW so
+# the user knows where to find it. Stop closes it. Portable temp-dir pick (TMPDIR/TEMP/TMP, else /tmp).
+proc fluid_trace_start {} {
+  set tdir /tmp
+  foreach v {TMPDIR TEMP TMP} {
+    if {[info exists ::env($v)] && $::env($v) ne {}} { set tdir $::env($v); break }
+  }
+  set fn [file join $tdir "xschem_fltrace_[pid].log"]
+  set path [xschem fluid_trace start $fn]
+  if {[info procs ciw_echo] ne {}} {
+    if {$path ne {}} { ciw_echo "FLUID trace STARTED -> $path" result } \
+    else { ciw_echo "FLUID trace: could NOT open $fn" error }
+  }
+}
+proc fluid_trace_stop {} {
+  set path [xschem fluid_trace stop]
+  if {[info procs ciw_echo] ne {}} {
+    if {$path ne {}} { ciw_echo "FLUID trace STOPPED -> $path" result } \
+    else { ciw_echo "FLUID trace stopped (no file was open)" result }
+  }
+}
 
 proc build_widgets { {topwin {} } } {
   global canvas_height canvas_width
@@ -13951,6 +14239,14 @@ proc build_widgets { {topwin {} } } {
   $topwin.menubar.help add command -label "Command palette" -command "command_palette $topwin" \
        -accelerator {Ctrl+Shift+P}
   $topwin.menubar.help add command -label "About XSCHEM" -command "about"
+  # issue 0123: runtime FLUID_TRACE control. Start opens a PID-named trace file and reports the
+  # name in the CIW; Stop flush+closes it. Lets a user capture a fluid-editing trace on demand
+  # without relaunching with FLUID_TRACE=... See doc/claude/WIRING.md.
+  $topwin.menubar.help add separator
+  menu $topwin.menubar.help.debug -tearoff 0 -takefocus 0
+  $topwin.menubar.help add cascade -label "Debug" -menu $topwin.menubar.help.debug
+  $topwin.menubar.help.debug add command -label "Start FLUID trace" -command {fluid_trace_start}
+  $topwin.menubar.help.debug add command -label "Stop FLUID trace"  -command {fluid_trace_stop}
 
   # File menu is generated from the action registry (actions.csv). The parent
   # menu widget $topwin.menubar.file is created above; submenus (Image export,
@@ -14378,6 +14674,7 @@ proc build_widgets { {topwin {} } } {
       -selectcolor $selectcolor -variable disable_unique_names
   $topwin.menubar.tools add command -label "Library Manager" -command "xschem library_manager"
   $topwin.menubar.tools add command -label "Net highlight styles..." -command {net_hilight_style_editor}
+  $topwin.menubar.tools add command -label "Launch ASE-L" -command "ase::launch_for_current"
   $topwin.menubar.tools add separator
   $topwin.menubar.tools add command -label "Insert text" -command "xschem place_text" -accelerator T
   $topwin.menubar.tools add command -label "Insert wire" -command "xschem wire" -accelerator W
@@ -15254,6 +15551,15 @@ set_ne auto_hilight_graph_nodes 0
 set_ne hover_highlight 1
 set_ne hover_highlight_color yellow
 set_ne hover_highlight_width 1
+## ASE waveform viewer active-strip marker (issue 0151,
+## doc/claude/specs/waveform_viewer_modes.md): the bar drawn down the right edge
+## of the viewer's TARGET strip while more than one strip is up. Color is an X
+## color name / #rrggbb resolved in build_colors (NOT a layer index, so the user's
+## layer palette cannot recolor it); width is screen px. Only graphs carrying the
+## viewer-written `active=1` prop token are marked — ordinary schematic graphs
+## never are, and the marker is never exported to SVG/PS.
+set_ne graph_active_strip_color #a0a000
+set_ne graph_active_strip_width 5
 set_ne use_tclreadline 1
 set_ne en_hilight_conn_inst 0
 ## xpm to png conversion

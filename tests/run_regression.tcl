@@ -34,7 +34,15 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                  "headless/test_fluid_editing" \
                  "headless/test_wire_split" \
                  "headless/test_sch_add_pin" \
-                 "headless/test_add_wire_label"]
+                 "headless/test_add_pin_lib_symbol_view" \
+                 "headless/test_add_wire_label" \
+                 "headless/test_crossview_paste" \
+                 "headless/test_pin_type_edit" \
+                 "headless/test_find_helper" \
+                 "headless/test_instance_update" \
+                 "headless/test_sky130a_libmgr" \
+                 "headless/test_gf180mcud_libmgr" \
+                 "headless/test_ciw_actionlog_output"]
 set log_fn "results.log"
 
 proc summarize_all {fn fd} {
@@ -46,12 +54,21 @@ proc summarize_all {fn fd} {
       if { [regexp {FAIL$} $line] || [regexp {GOLD\?$} $line] || [regexp {RESULT\?$} $line] || [regexp {^FATAL} $line]} {
         puts $fd $line
         incr num_fail
+      } elseif { [regexp {^NOGOLD} $line] } {
+        # Surface "this case verified NOTHING" in the summary without counting it
+        # as a regression (issue 0147). Without this, a case with no baseline
+        # reports a bare "Total num fail: 0" and reads exactly like a pass.
+        puts $fd $line
       }
     }
     puts $fd "Total num fail: $num_fail"
     close $fdread
   } else {
-    puts $fd "Couldn't open $fn to read"
+    # Fail CLOSED (issue 0147): print_results now always writes its log, so a
+    # missing one means the case died before reporting. This used to be a
+    # non-counting note, which is how 2654 dead jobs summarized as zero failures.
+    puts $fd "HARNESS: $fn missing -- case produced no log (never ran?): FAIL"
+    puts $fd "Total num fail: 1"
   }
 }
 
@@ -61,6 +78,11 @@ set a [catch "open \"$log_fn\" w" fd]
 if {!$a} {
 foreach tc $tcases {
     puts "Start source ${tc}.tcl"
+    # Drop any previous run's log FIRST (issue 0147): nothing else deletes it, so
+    # a stale <case>.log left on disk was re-grepped and its old FAILs replayed as
+    # if they were this run's -- and it survives a "reproduce on a clean baseline"
+    # recheck, which makes phantom failures look confirmed.
+    file delete -force ${tc}.log
     if {[catch {eval exec {tclsh ${tc}.tcl} > ${tc}_output.txt} msg]} {
       puts "Something seems to have gone wrong with $tc, but we will ignore it: $msg"
     }
@@ -79,7 +101,7 @@ foreach tc $tcases {
   foreach hc $hcases {
     puts "Start ${hc}.tcl (headless)"
     set childcode 0
-    if {[catch {eval exec {$xschem_cmd --nogui --pipe -q --script ${hc}.tcl} > ${hc}.log 2>@1} msg opt]} {
+    if {[catch {exec $xschem_cmd --nogui --pipe -q --script ${hc}.tcl > ${hc}.log 2>@1} msg opt]} {
       set ec [dict get $opt -errorcode]
       set childcode [expr {[lindex $ec 0] eq "CHILDSTATUS" ? [lindex $ec 2] : 1}]
     }
@@ -93,9 +115,20 @@ foreach tc $tcases {
     summarize_all ${hc}.log $fd
     puts "Finish ${hc}.tcl (headless)"
   }
+  # xschemtest.tcl: the broad functional/perf harness. GUARDED (issue 0147) --
+  # it used to run AFTER results.log was closed and with no catch, so any failure
+  # (e.g. an unresolvable binary) aborted the interpreter with a raw Tcl stack
+  # trace and never appeared in the summary at all. Now its outcome is recorded.
+  puts "Start xschemtest.tcl"
+  if {[catch {exec $xschem_cmd --nogui --pipe -q --script xschemtest.tcl \
+              > stefan_xschemtest.log 2>@1} msg]} {
+    puts $fd "xschemtest.tcl"
+    puts $fd "HARNESS: xschemtest.tcl did not run cleanly ($msg): FAIL"
+    puts $fd "Total num fail: 1"
+    puts "xschemtest.tcl FAILED: $msg"
+  }
+  puts "Finish xschemtest.tcl"
   close $fd
 } else {
   puts "Couldn't open $log_fn to write.  Investigate please."
 }
-
-exec $xschem_cmd --nogui --pipe -q --script xschemtest.tcl > stefan_xschemtest.log 2>@1

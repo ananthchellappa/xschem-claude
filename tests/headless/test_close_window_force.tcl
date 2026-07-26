@@ -18,11 +18,13 @@
 
 if {[catch {winfo exists .}]} { puts "RESULT: SKIP (needs Tk/X; real separate windows required)"; flush stdout; exit 0 }
 
+source [file join [file dirname [info script]] scratch.tcl]
+
 set fail 0
 proc check {n ok d} { global fail; if {$ok} { puts "ok:   $n $d" } else { puts "FAIL: $n $d"; incr fail } }
 proc drawmatch {} { expr {[xschem get drawwindowid] == [winfo id .drw]} }
 
-set dir [file join [pwd] _cw_[pid]] ; file delete -force $dir ; file mkdir $dir
+set dir [test_scratch cw]
 set lib [lindex [glob -nocomplain [file join [pwd] xschem_library *.sch] [file join [pwd] xschem_library * *.sch]] 0]
 set fa [file join $dir a.sch] ; set fb [file join $dir b.sch]
 file copy -force $lib $fa ; file copy -force $lib $fb
@@ -58,7 +60,6 @@ check "C6 surviving main draws into the LIVE main canvas (not the destroyed wind
 check "C7 close synchronously redrew the surviving window" [expr {$dc_after > $dc_before}] \
   "(drawcount $dc_before -> $dc_after)"
 
-file delete -force $dir
 if {$fail == 0} { puts "RESULT: ALL PASS" } else { puts "RESULT: $fail FAILED" }
 flush stdout
 exit [expr {$fail == 0 ? 0 : 1}]

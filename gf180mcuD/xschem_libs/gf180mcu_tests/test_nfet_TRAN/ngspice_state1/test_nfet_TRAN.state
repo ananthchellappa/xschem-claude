@@ -1,0 +1,14 @@
+version 1
+simulator ngspice
+design {lib gf180mcu_tests cell test_nfet_TRAN view schematic}
+rundir {}
+temperature 27
+models {{file {$::180MCU_MODELS/sm141064.ngspice} section typical} {file {$::180MCU_MODELS/sm141064.ngspice} section res_typical}}
+variables {{name Vgs value 3.3} {name Vds value 1.65}}
+analyses {{type op enabled 1} {type dc enabled 0} {type ac enabled 0} {type tran enabled 1 step 1n stop 200n}}
+outputs {{name id expr -i(v1) save 1 plot 0}}
+save_all_v 1
+save_all_i 0
+options {{name savecurrents value 1}}
+includes {{file {$::180MCU_MODELS/design.ngspice}}}
+viewer {open 1 sharedx 0 rawfile {} graphs {{traces {} logx 0 logy 0 x1 {} x2 {} y1 {} y2 {}} {traces {{expr v(g) name {} vec v(g) color 4} {expr v(d) name {} vec v(d) color 5}} logx 0 logy 0 x1 0 x2 2e-07 y1 0 y2 3.3}}}

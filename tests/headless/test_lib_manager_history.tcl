@@ -27,10 +27,10 @@ proc menu_labels {m} {
   return $out
 }
 proc has_label {m l} { return [expr {[lsearch -exact [menu_labels $m] $l] >= 0}] }
+source [file join [file dirname [info script]] scratch.tcl]
 
 # --- fixture: a git-backed library, two commits on and2/symbol --------------
-set tmp [file join [pwd] _hist_[pid]]
-file delete -force $tmp
+set tmp [test_scratch hist]
 set glib [file join $tmp glib]
 touch $glib/and2/symbol/and2.sym "v {and2 v1}\n"
 ginit $glib
@@ -93,7 +93,6 @@ check "HI4 non-git history degrades, never errors" [expr {$w2 eq "" || ([winfo e
 catch {destroy $w2}
 
 catch {destroy .libmgr}
-file delete -force $tmp
 if {$fail == 0} { puts "RESULT: ALL PASS" } else { puts "RESULT: $fail FAILED" }
 flush stdout
 exit [expr {$fail == 0 ? 0 : 1}]

@@ -64,7 +64,8 @@ check "after drop -> iopin committed" [string match {*iopin.sym} [inst0_sym]] 1
 # C. In a SYMBOL view, add_sch_pin is a no-op (schematic pins are instances,
 #    which a .sym view forbids). Build a tiny .sym fixture and load it.
 # ---------------------------------------------------------------------------
-set symf [file join [pwd] _sch_add_pin_[pid].sym]
+source [file join [file dirname [info script]] scratch.tcl]
+set symf [file join [test_scratch sch_add_pin_sym] sch_add_pin.sym]
 set fh [open $symf w]
 puts $fh "v {xschem version=3.4.8RC file_version=1.3}"
 puts $fh "G {}"

@@ -216,19 +216,24 @@ check "font: view wears it"      [xschem getprop text 0 font] Courier
 # ---------------------------------------------------------------------------
 # 10b. Live Apply (xschem apply_pin_prop): the pin/pinname forms' Apply commits to the
 #      selected pin(s) + redraws without closing. Idempotent (no-op -> no undo slot).
+#      NOTE (Refactor B atom 18): apply_pin_prop routes through the perform_action boundary,
+#      which clears the interp result on success -> it no longer returns "1"/"0". The applies
+#      are bare statements; the EFFECT checks below are the oracle, and idempotence is proven
+#      by "undo reverts size -> 0.2" (only true if the re-apply pushed NO undo slot). See
+#      tests/headless/test_perform_action_apply_pin_prop.tcl + audit §38.
 # ---------------------------------------------------------------------------
 xschem clear force symbol
 xschem add_symbol_pin 0 0 NN in 0
 xschem unselect_all; xschem select rect 5 0
 set base "name=NN dir=in show_pinname=true name_dx=25 name_dy=-5 name_size=0.2"
 set changed "name=NN dir=in show_pinname=true name_dx=25 name_dy=-5 name_size=0.4 name_font=Courier"
-check "apply: changed -> 1"      [xschem apply_pin_prop $changed] 1
+xschem apply_pin_prop $changed
 check "apply: size on pin"       [xschem getprop rect 5 0 name_size] 0.4
 check "apply: font on pin"       [xschem getprop rect 5 0 name_font] Courier
 check "apply: view wears font"   [xschem getprop text 0 font] Courier
-check "apply: re-apply -> 0"     [xschem apply_pin_prop $changed] 0
+xschem apply_pin_prop $changed   ;# re-apply is a no-op (idempotent; no undo slot)
 xschem undo
-check "apply: undo reverts size" [xschem getprop rect 5 0 name_size] 0.2
+check "apply: undo reverts size (re-apply pushed no undo -> idempotent)" [xschem getprop rect 5 0 name_size] 0.2
 # show_pinname=false via Apply removes the name view
 xschem apply_pin_prop "name=NN dir=in show_pinname=false name_dx=25 name_dy=-5 name_size=0.2"
 check "apply: hide removes view" [xschem get texts] 0

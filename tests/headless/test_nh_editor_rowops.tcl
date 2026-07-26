@@ -15,7 +15,8 @@ proc reseed {} {
   nhse_rebuild
 }
 
-set ::USER_CONF_DIR [file join [pwd] _nheops_[pid]] ; file delete -force $::USER_CONF_DIR ; file mkdir $::USER_CONF_DIR
+source [file join [file dirname [info script]] scratch.tcl]
+set ::USER_CONF_DIR [test_scratch nheops]
 
 set ::net_hilight_style {{0 red 1 {} 0 0 none 0} {1 green 1 {} 0 0 none 0} {2 blue 1 {} 0 0 none 0}}
 catch {xschem update_net_hilight_style}
@@ -63,7 +64,6 @@ reseed ; nhse_focus_set 0 ; nhse_op_move 1 ; nhse_op_move 1
 check "O12 ops chain (red ends at row 2)" [expr {[cols] eq {green blue red}}] "(=> [cols])"
 
 catch {destroy .nhse}
-file delete -force $::USER_CONF_DIR
 if {$fail == 0} { puts "RESULT: ALL PASS" } else { puts "RESULT: $fail FAILED" }
 flush stdout
 exit [expr {$fail == 0 ? 0 : 1}]

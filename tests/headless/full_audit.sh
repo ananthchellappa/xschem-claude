@@ -42,17 +42,31 @@ logdir_tests=" test_ciw test_ciw_autocomplete test_ciw_puts_capture test_hi_desc
   test_gesture_end_log test_phase3_mints test_lib_roundtrip test_selflog_output \
   test_altf5_ciw test_undo_link_symbols test_dblclick_connected_grow test_delete_cut_selflog \
   test_descend_goback_selflog test_save_reload_copy_selflog test_selflog_grep_guard \
+  test_key_make_sch_from_sel_log \
+  test_coordlog_precision \
   test_stdin_tcp_log test_libmgr_mutation_log test_nhse_mutation_log test_paste_at_log \
   test_shape_setprop_log test_sympin_drop_log test_cadence_window_hop_log \
   test_rotmove_drop_log test_netlist_log test_apply_hilight_log \
   test_toggle_editmode_log test_actionlog_suppress_gate test_perform_action_trim_wires \
   test_perform_action_align test_perform_action_rotate_in_place \
-  test_perform_action_flip_in_place "
+  test_perform_action_flip_in_place test_perform_action_flipv_in_place \
+  test_perform_action_rotate test_perform_action_flip test_perform_action_flipv \
+  test_perform_action_break_wires test_perform_action_floaters_from_selected_inst \
+  test_perform_action_attach_labels test_perform_action_toggle_ignore \
+  test_perform_action_reset_inst_prop test_perform_action_replace_symbol \
+  test_perform_action_show_unconnected_pins test_perform_action_embed_rawfile \
+  test_perform_action_wire_cut test_perform_action_apply_pin_prop \
+  test_perform_action_move_instance test_perform_action_image \
+  test_perform_action_change_elem_order test_perform_action_reset_symbol \
+  test_perform_action_instance_number test_perform_action_delete \
+  test_perform_action_add_pin_stubs test_perform_action_check_unique_names \
+  test_perform_action_clear_drawing test_perform_action_redo \
+  test_perform_action_undo "
 # Tests that must run true-headless (no X needed) -> --nogui
 # (test_make_symbol_dialog is designed for --nogui: under X its has_x-gated
 # open-in-new-window step runs, and the second make_symbol_dialog on the same
 # cell raises a blocking "already open" warning popup -> flaky FAIL/CRASH)
-nogui_tests=" test_nogui test_sweep_diff test_make_symbol_dialog "
+nogui_tests=" test_nogui test_sweep_diff test_make_symbol_dialog test_ase_core test_ase_final test_ase_final_gf180 "
 # test_nolog exercises --nolog mode explicitly
 nolog_tests=" test_nolog "
 
@@ -96,9 +110,43 @@ fi
 PASS=0 FAIL=0 CRASH=0 SKIP=0
 declare -A STATUS OUT
 
+# Scratch-leak detector (issue 0148). Tests mkdir a per-pid `_<tag>_<pid>` dir
+# and delete it on their last line, so any test that exits early, errors, or
+# crashes orphans one in the working tree -- invisible in `git status` because
+# .gitignore hides the pattern. Snapshot before/after, report what the run left
+# behind, and remove it. Every test now goes through tests/headless/scratch.tcl,
+# so the expected count is 0 and a leak is FATAL by default -- that enforcement
+# is the whole point of issue 0148 (the class recurred twice because nothing
+# checked). Set AUDIT_STRICT_SCRATCH=0 to downgrade it to a warning.
+scratch_snapshot() {
+  ls -1d "$REPO"/_*_[0-9]* "$REPO"/tests/_*_[0-9]* "$HERE"/_*_[0-9]* \
+         "$REPO"/src/_*_[0-9]* 2>/dev/null | sort
+}
+SCRATCH_BEFORE=$(scratch_snapshot)
+
+# GUI-test control gate: warn the user before the suite runs and give
+# Pause/Resume during it (tests/headless/gui_gate.sh). Fails open (no DISPLAY /
+# GUI_GATE=0 / no panel -> just runs). A Stop press aborts the remaining tests.
+# shellcheck source=/dev/null
+. "$HERE/gui_gate.sh" 2>/dev/null || true
+_ntests=${#files[@]}
+if type gate_start >/dev/null 2>&1; then
+  gate_start "full_audit: $_ntests tests ($(basename "${files[0]:-?}") ...)" || {
+    echo "gui_gate: stopped before start"; exit 3; }
+fi
+_gate_stopped=0
+
 for testfile in "${files[@]}"; do
   name=$(basename "$testfile" .tcl)
   [ -f "$testfile" ] || { echo "MISSING | $name"; STATUS[$name]=FAIL; OUT[$name]="no such test file"; ((FAIL++)); continue; }
+
+  # pause point BETWEEN atomic tests: the current test always finishes; the
+  # suite holds here while Paused, and breaks out cleanly on Stop.
+  if type gate_pause_point >/dev/null 2>&1; then
+    if ! gate_pause_point "full_audit | ${name} (next of ${_ntests})"; then
+      _gate_stopped=1; echo "gui_gate: STOP -> skipping remaining tests"; break
+    fi
+  fi
 
   if in_list "$name" "$logdir_tests"; then
     tmpd=$(mktemp -d)
@@ -133,6 +181,12 @@ for testfile in "${files[@]}"; do
   printf '%-8s | %s\n' "${STATUS[$name]}" "$name"
 done
 
+type gate_finish >/dev/null 2>&1 && gate_finish
+if [ "${_gate_stopped:-0}" = "1" ]; then
+  echo "RESULT: STOPPED by GUI-test control panel (partial: ${PASS} pass ${FAIL} fail ${SKIP} skip so far)"
+  exit 3
+fi
+
 # Wireedit suite: run_wireedit.sh exits nonzero on any FAIL or missing RESULT
 # line; its verdict is merged into the audit exit code so a wireedit regression
 # fails the audit (hardening plan step A3).
@@ -144,9 +198,21 @@ if [ "$run_wireedit" -eq 1 ]; then
   if [ "$WIREEDIT_RC" -eq 0 ]; then WIREEDIT_VERDICT="PASS"; else WIREEDIT_VERDICT="FAIL (rc=$WIREEDIT_RC)"; fi
 fi
 
+SCRATCH_LEAKED=$(comm -13 <(printf '%s\n' "$SCRATCH_BEFORE") <(scratch_snapshot))
+SCRATCH_N=0
+if [ -n "$SCRATCH_LEAKED" ]; then
+  SCRATCH_N=$(printf '%s\n' "$SCRATCH_LEAKED" | grep -c .)
+  echo "--------- scratch leaks ---------"
+  printf '%s\n' "$SCRATCH_LEAKED" | sed 's/^/LEAKED  | /'
+  # only ever remove paths this run created, never a glob
+  printf '%s\n' "$SCRATCH_LEAKED" | while IFS= read -r d; do [ -n "$d" ] && rm -rf -- "$d"; done
+  echo "(removed; convert the owning test to tests/headless/scratch.tcl -- issue 0148)"
+fi
+
 echo "========================================"
 echo "SUMMARY: $PASS pass  $FAIL fail  $CRASH crash/timeout  $SKIP skip  (total $((PASS+FAIL+CRASH+SKIP)))"
 echo "WIREEDIT: $WIREEDIT_VERDICT"
+echo "SCRATCH:  $SCRATCH_N leaked dir(s)"
 echo "========================================"
 
 if [ "$((FAIL+CRASH))" -gt 0 ]; then
@@ -162,6 +228,10 @@ fi
 # the expected pass floor; default 0 keeps local subset runs unchanged.
 if [ "$PASS" -lt "${AUDIT_MIN_PASS:-0}" ]; then
   echo "AUDIT_MIN_PASS: only $PASS pass < required ${AUDIT_MIN_PASS} -- treating as failure (hollow green)"
+  exit 1
+fi
+if [ "${AUDIT_STRICT_SCRATCH:-1}" = "1" ] && [ "$SCRATCH_N" -gt 0 ]; then
+  echo "AUDIT_STRICT_SCRATCH: $SCRATCH_N scratch dir(s) leaked into the working tree"
   exit 1
 fi
 exit 0

@@ -16,6 +16,7 @@ set ::ECHO {}
 proc ciw_echo {line {tag {}}} { lappend ::ECHO [list $tag $line] }
 source [file join $utils cadence_nav.tcl]
 source [file join $utils select_same_cell.tcl]
+source [file join $here headless scratch.tcl]
 
 set nfail 0
 proc check {desc got want} {
@@ -54,8 +55,7 @@ check "match view unreg o" [lindex [selsame::match view {{} {} /p/x_unreg} $ids]
 set src_res [abs_sym_path devices/res.sym]
 check "fixture: res.sym resolves" [expr {$src_res ne "" && [file exists $src_res]}] 1
 
-set tmp [file join [pwd] _selsame_[pid]]
-file delete -force $tmp
+set tmp [test_scratch selsame]
 file mkdir $tmp/tl/aa/symbol $tmp/tl/aa/sym_alt $tmp/tl/bb/symbol $tmp/tl/aa/schematic
 file copy $src_res $tmp/tl/aa/symbol/aa.sym
 file copy $src_res $tmp/tl/aa/sym_alt/aa.sym
@@ -114,8 +114,6 @@ set ::FAKE_SEL [list inst [expr {$base+2}]]
 set t [selsame::target]
 check "inst -> view mode"        [lindex $t 0] view
 check "inst view label"          [lindex $t 2] tl/aa/sym_alt
-
-file delete -force $tmp
 
 if {$nfail} { puts "select_same_cell: $nfail check(s): FAIL" } \
 else        { puts "select_same_cell: all checks PASS" }

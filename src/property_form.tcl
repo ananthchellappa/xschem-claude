@@ -383,6 +383,35 @@ proc slickprop::template_of {symbol} {
   return ""
 }
 
+# The cell-form customization namespace for <symbol>, or {} if the symbol does
+# not declare `edit_form=<ns>`. Reads the attr (load-on-throw: getprop throws when
+# the symbol is not loaded in the current context, so load_symbol + retry — a
+# loaded symbol without the attr returns {} with no throw, so no extra load on a
+# normal edit), then lazily sources the companion <symbol>.tcl (same path, .tcl
+# ext) so the cell's field_* procs exist. Returns the namespace WITH a leading ::
+# (so `${cf}::field_labels` resolves at global scope, not ::slickprop:: — TIP 278).
+proc slickprop::cellform_ns {symbol} {
+  set ef {}
+  if {[catch {xschem getprop symbol $symbol edit_form} r]} {
+    catch {
+      set abs [abs_sym_path $symbol]
+      catch {xschem load_symbol $abs}
+      set ef [string trim [xschem getprop symbol $abs edit_form]]
+    }
+  } else {
+    set ef [string trim $r]
+  }
+  if {$ef eq {}} { return {} }
+  set ns ::[string trimleft $ef :]
+  if {[info commands ${ns}::field_custom] eq {} && [info commands ${ns}::field_labels] eq {}} {
+    catch {
+      set tcl [file rootname [abs_sym_path $symbol]].tcl
+      if {[file readable $tcl]} { uplevel #0 [list source $tcl] }
+    }
+  }
+  return $ns
+}
+
 # Build the per-field rows for <prop>+<template> into the frame <parent>,
 # recording state in slickprop::cur. Each field is a label + a single-line entry.
 # A declared-but-unset attr shows its template default as a greyed placeholder
@@ -399,6 +428,16 @@ proc slickprop::build_fields {parent prop template} {
   set cur(orig) $prop
   set cur(tokens) {}
   set fields [slickprop::to_fields $prop $template]
+  # cell field customization from the symbol's `edit_form=<ns>` companion: friendly
+  # labels (cflabels: token->label) + tokens rendered by a cell widget (cfcustom).
+  set cf {}; set cflabels {}; set cfcustom {}
+  if {[info exists ::symbol] && $::symbol ne {}} {
+    set cf [slickprop::cellform_ns $::symbol]
+    if {$cf ne {}} {
+      if {[info commands ${cf}::field_labels] ne {}} { catch {set cflabels [${cf}::field_labels]} }
+      if {[info commands ${cf}::field_custom] ne {}} { catch {set cfcustom [${cf}::field_custom]} }
+    }
+  }
   set r 0
   set extras_started 0
   set has_name_field 0
@@ -440,9 +479,27 @@ proc slickprop::build_fields {parent prop template} {
       grid $parent.xlbl -row $r -column 1 -columnspan 2 -sticky w -pady {2 3} -padx 3
       incr r
     }
+    # cell custom widget for this token (e.g. a variable-length PWL editor): the
+    # cell owns a full-width sub-frame; its value is read back via ${cf}::field_get
+    # in slickprop::field_value. The rest of the form is unaffected.
+    if {[lsearch -exact $cfcustom $tok] >= 0} {
+      frame $parent.cf$r
+      grid $parent.cf$r -row $r -column 0 -columnspan 3 -sticky we -padx 2 -pady 4
+      catch {${cf}::field_build $tok $parent.cf$r $val}
+      set cur(entry,$tok)       {}
+      set cur(custom,$tok)      1
+      set cur(cf,$tok)          $cf
+      set cur(loaded,$tok)      $val
+      set cur(placeholder,$tok) 0
+      lappend cur(tokens) $tok
+      incr r
+      continue
+    }
+    set lbl $tok
+    if {[dict exists $cflabels $tok]} { set lbl [dict get $cflabels $tok] }
     # col 0: modified-cue dot | col 1: right-aligned label | col 2: monospace entry
     label $parent.i$r -text " " -width 2 -anchor center -font slickPropLabel -fg [slickprop::accent]
-    label $parent.l$r -text $tok -anchor e -font slickPropLabel
+    label $parent.l$r -text $lbl -anchor e -font slickPropLabel
     entry $parent.e$r -font slickPropValue -relief sunken -borderwidth 1 -width $ew
     grid $parent.i$r -row $r -column 0 -padx {2 0} -pady 4
     grid $parent.l$r -row $r -column 1 -sticky e -padx {2 8} -pady 4
@@ -504,6 +561,12 @@ proc slickprop::placeholder_out {tok default} {
 # The effective current value of a field's entry (a showing placeholder is empty).
 proc slickprop::field_value {tok} {
   variable cur
+  if {[info exists cur(custom,$tok)] && $cur(custom,$tok)} {
+    if {[info commands $cur(cf,$tok)::field_get] ne {}} {
+      set v {}; catch {set v [$cur(cf,$tok)::field_get $tok]}; return $v
+    }
+    return $cur(loaded,$tok)
+  }
   if {$cur(placeholder,$tok)} { return {} }
   return [$cur(entry,$tok) get]
 }
@@ -1178,6 +1241,19 @@ proc slickprop::edit_form {txtlabel} {
   global symbol prev_symbol no_change_attrs preserve_unchanged_attrs copy_cell
   global user_wants_copy_cell edit_prop_size edit_prop_pos edit_symbol_prop_new_sel
   variable nav
+  # port instances get the Cadence pin form (Name + Direction, matching the symbol
+  # editor's pin panel) instead of the generic instance form -- pin_type_editing.md
+  # accept both 'ipin.sym' and the library-manager 'ipin' (lib/cell, no .sym) forms
+  if {[file rootname [file tail $symbol]] in {ipin opin iopin}} {
+    return [schpin::edit_form]
+  }
+  # A cell can CUSTOMIZE (not replace) this generic Edit-Properties form: a symbol
+  # global attribute `edit_form=<ns>` names a namespace whose companion <symbol>.tcl
+  # (same path, .tcl ext) provides field_labels / field_custom / field_build /
+  # field_get — friendly labels and, for a token that needs a special widget (e.g.
+  # a variable-length PWL point list), an inline editor. The full form (Apply-to,
+  # Library/Cell/View, Name, all other fields) is unchanged; only the named fields
+  # are customized, in build_fields. See doc/claude/specs/cell_custom_form.md.
   variable cur   ;# link to ::slickprop::cur — a relative $slickprop::cur read in this proc body
                  ;# resolves to ::slickprop::slickprop::cur on Tcl 9 (TIP 278, no global fallback)
   set user_wants_copy_cell 0
@@ -1402,14 +1478,15 @@ proc slickprop::edit_form {txtlabel} {
   if {$sel_attr eq {}} { catch {set sel_attr [xschem getprop symbol $symbol select]} }
   set focused 0
   foreach a [list $sel_attr value lab name] {
-    if {$a ne {} && [info exists cur(entry,$a)]} {
+    if {$a ne {} && [info exists cur(entry,$a)] && $cur(entry,$a) ne {}} {
       set e $cur(entry,$a)
       focus $e; $e selection range 0 end; $e icursor end
       set focused 1; break
     }
   }
   if {!$focused && [llength $cur(tokens)]} {
-    focus $cur(entry,[lindex $cur(tokens) 0])
+    set e0 $cur(entry,[lindex $cur(tokens) 0])   ;# {} for a custom-widget token
+    if {$e0 ne {}} { catch {focus $e0} }
   }
 
   raise .dialog                 ;# M2: float in front initially (no transient), non-capturing

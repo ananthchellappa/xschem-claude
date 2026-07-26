@@ -49,9 +49,36 @@ tclsh run_regression.tcl        # runs all cases: create_save, open_close, netli
   `results.log` for `FAIL` / `GOLD?` / `FATAL`. To run one case, source its script
   directly (e.g. `tclsh netlisting.tcl`).
 - Tests invoke the built binary headless via `xschem ... --pipe -q --script <file>`.
+  `tests/test_utility.tcl` resolves it as **`$XSCHEM` → in-tree `src/xschem` →
+  `PATH`**, so an uninstalled dev tree works out of the box (issue 0147 — it used
+  to be a bare `xschem`, and with nothing installed the entire suite silently
+  no-op'd while still printing a plausible `results.log`).
+- **`create_save`, `open_close` and `netlisting` have no committed `gold/`
+  baseline**, so they can only report `NOGOLD` — they run the cases and produce
+  `<case>/results/`, but verify nothing until someone promotes a baseline. The
+  trustworthy signal is the headless cases (which do have
+  `tests/headless/gold/`), or running one directly:
+  `./src/xschem --nogui --pipe -q --script tests/headless/<t>.tcl`.
+- **Reading `results.log`:** a `FAIL` ending a line, `GOLD?`, `RESULT?` or a
+  leading `FATAL` is counted. `couldn't execute "xschem"` or `exit 127` anywhere
+  means the binary never launched and *nothing in that run is meaningful*
+  (issue 0016 Part 4 distinguishes this from the benign rc=10 fall-through).
 - `xschemtest.tcl` is a broader functional/perf harness, run as
   `xschem --script xschemtest.tcl` then calling `xschemtest`. Use `-d 3 -l log` to
   log allocations for leak checking.
+
+### GUI-test control gate (`tests/headless/full_audit.sh`)
+Running `full_audit.sh` under a real/WSLg `$DISPLAY` pops a **control panel**
+(`tests/headless/gui_gate_widget.tcl` via `wish`) that **warns before the
+suite runs** (Proceed / Snooze 5·15·30 min) and gives a **Pause/Resume toggle
++ Stop** during it — the GUI suite otherwise floods the display and makes the
+machine unusable. The gate lives in the harness (`gui_gate.sh`), **not** a
+Claude Code settings hook (a prior hook-based gate silently died when
+`settings.local.json` was rewritten — do NOT reintroduce it as a hook). Control
+dir `~/.claude/gui_test_gate/` is shared by the main session and all
+worktree/subagent runs, so one Pause pauses every suite. It **fails open** (no
+`DISPLAY`, `GUI_GATE=0`, or a closed panel → tests just run) so CI/headless is
+unaffected. Spec: `doc/claude/specs/gui_test_gate.md`.
 
 ## Architecture
 
