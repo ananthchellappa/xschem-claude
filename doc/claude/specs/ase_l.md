@@ -254,6 +254,17 @@ one-line notice and queue nothing. Queueing dedupes on the exact expression
 string: an existing row gets the flavor's plot/save flags ORed in, an
 identical re-queue writes nothing.
 
+**A locked object is READ-able** (issue 0160). `lock=true` makes an object
+unselectable, and since every edit acts on the selection, selection *is* the
+lock — there is no lock check in `move.c`/`actions.c`/any delete path. A
+read-only probe therefore resolves the net WITHOUT selecting: a click whose
+`xschem select_at` comes back empty still goes through classification (the
+`xschem flylines at` resolver already uses `override_lock=1`), and only ends
+the click if that finds nothing too. So a locked wire queues its net normally
+while staying unselected, and an empty-canvas miss-click stays silent. Do NOT
+"fix" this by giving `select_at` an override-lock switch — that would make
+locked objects deletable.
+
 **Bus picks open a bit-selection dialog** (issue 0159). A net with more than
 one bit is not one signal, and wrapping it whole produced an invalid vector —
 `A[1:0]` → `v(a[1:0])` — which src/ase.tcl interpolates verbatim into the

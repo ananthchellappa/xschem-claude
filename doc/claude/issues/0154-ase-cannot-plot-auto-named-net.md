@@ -253,10 +253,14 @@ All **VERIFIED first-hand**, all **pre-existing** and independent of this fix.
    **Select Bus Bits** dialog: the user picks which bits and in what order.
    Legacy `v(a[1:0])` rows expand on load, bracket form only, so a user's
    `v(a,b)` differential is never rewritten.)*
-7. **A `lock=true` wire is unpickable, silently.** `select_at` picks with
-   `override_lock=0` while `flylines at` uses `1`, so `sod_click`'s
-   `if {$hit eq {}} { return }` fires before any classification — not even the
-   notice.
+7. **A `lock=true` wire is unpickable, silently.** → **FIXED, issue 0160.**
+   `select_at` picks with `override_lock=0` while `flylines at` uses `1`, so
+   `sod_click`'s `if {$hit eq {}} { return }` fires before any classification —
+   not even the notice. *(Fixed by moving that return to the BOTTOM so an empty
+   hit still gets classified, NOT by overriding the lock: `lock` is enforced only
+   in `select.c` and `findnet.c`, with no check in any edit path, so selection IS
+   the lock and making a locked wire selectable would make it deletable. The
+   test's third sabotage is exactly that wrong fix.)*
 8. **Descended picking produces an unqualified name.** `sod_expr` has never
    path-prefixed. Latent only: `ase::netlist` already refuses to run a descended
    schematic, but the picking mode itself has no such guard.

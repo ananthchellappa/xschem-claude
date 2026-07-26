@@ -1629,8 +1629,23 @@ proc ase::ui::sod_click {key {x {}} {y {}}} {
   if {![info exists sod($key,flavor)]} { return }
   if {$x eq {}} { set x [xschem get mousex_snap] }
   if {$y eq {}} { set y [xschem get mousey_snap] }
+  # issue 0160: an EMPTY hit is not the end of the click. `xschem select_at`
+  # selects with override_lock=0, so a `lock=true` wire returns nothing even
+  # though its net resolves perfectly (`xschem flylines at` uses override_lock=1
+  # and never had a problem with it) — the pick died before classification, so
+  # not even the notice below fired.
+  #
+  # The fix is deliberately NOT to override the lock here. `lock` is enforced in
+  # exactly two files, select.c and findnet.c; there is no lock check in move.c,
+  # actions.c or any delete path, because every edit acts on the SELECTION.
+  # Selection IS the lock, so making a locked wire selectable would make it
+  # deletable. A read-only probe must resolve the net WITHOUT selecting the
+  # object, which is precisely what falling through to sod_net_at does.
+  #
+  # The empty-hit return therefore moves to the bottom (see `$hit eq {}` there),
+  # where it only ends a click that classified as nothing — so an empty-canvas
+  # click stays silent exactly as before.
   set hit [xschem select_at $x $y]
-  if {$hit eq {}} { return }
   set kind {}
   set token {}
   if {[lindex $hit 0] eq {instance}} {
@@ -1650,6 +1665,10 @@ proc ase::ui::sod_click {key {x {}} {y {}}} {
     }
   }
   if {$kind eq {}} {
+    # nothing under the cursor at all (empty canvas): stay silent, as before
+    # this became the late return — a pick mode that scolded every miss-click
+    # would be noise (issue 0160).
+    if {$hit eq {}} { return }
     catch {ciw_echo "ase: v1 queues source currents only — click a wire, a\
  net label or a voltage source/ammeter"}
     return
