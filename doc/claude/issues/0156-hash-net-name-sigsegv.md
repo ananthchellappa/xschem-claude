@@ -149,7 +149,10 @@ of the design call) and reported by ERC (decision (c)) — never rewritten, neve
     is therefore still read as regenerable by the fluid-editing passes. That is a **real
     remaining defect** — it can drop a user's label during a reshape — but it is a behavior change
     in the fluid hot path and belongs in its own issue with the fluid suites as the gate. Not
-    fixed here.
+    fixed here. → **FIXED, issue 0162** (both swapped to `is_auto_net_name()`). It was worse than
+    "drops a label": `fluid_wire_explicit_lab` is the universal named-copper decline for 12 call
+    sites, so every de-shorter could reshape a `#foo` net. The H2 half turned out to have no
+    observable behavior at all — see 0162 for the sweep that established that.
 - **No test tooth for the strictness at `set_inst_node` specifically.** `E1`/`E2` pin the
   *predicate*; the sabotage that loosens it is caught there, but I could not construct a fixture
   that observes the multiplicity corruption (`atoi("#12345"+4) == 45`) end to end.
