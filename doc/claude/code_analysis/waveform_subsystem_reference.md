@@ -590,10 +590,12 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
     measured to netlist as plain `foo`, so a strict test would disagree with the
     netlist for exactly the names 0156 declared legal; **(c)** never strip a bare
     `"#"` to `""` — the `,` separator is written regardless of what the element
-    produced, so an emptied element emits `a,`. Still leaking, deliberately not
-    fixed: a `#` arriving from an **instance attribute** via the `hier_attr`
-    lookup (`:2620`) is never stripped, since the strip precedes the lookup;
-    the portmap path is immune because `actions.c:3568-3572` strips at build time.
+    produced, so an emptied element emits `a,`. Still open (**issue 0163**): the
+    attribute-resolution lookup at `:2630` — `get_tok_value` over the parent
+    instance's WHOLE property string — is unguarded, so any attribute named like a
+    child net replaces that net (`value=1k` → `1k`), and a `#` in the value is
+    never stripped since the strip precedes the lookup. The portmap path is immune
+    because `actions.c:3568-3572` strips at build time.
 
 ---
 
@@ -615,9 +617,12 @@ Effort: S=hours, M=days, L=weeks. Impact in caps.
    the whole token before `expandlabel` (`:2602`), so it **leaked on non-first bus
    elements** (`{D,#net1}` → `D,#net1`, and descended `{LOC,#x}` → `X1.LOC,X1.#x`);
    the strip is now per element inside the loop. See landmine 26. Still open from
-   the same reading: a `#` arriving from an **instance attribute** through
-   `hier_attr` (`:2620`) is never stripped, because the strip precedes the lookup —
-   measured `LOC=#foo` → `resolved_net {LOC}` → `#foo`.
+   the same reading → **issue 0163**: the attribute-resolution lookup at `:2630`
+   is unguarded, so **any** instance attribute whose name matches a child net name
+   replaces it (measured: child net `value` + instance `value=1k` → `1k`;
+   `spice_ignore` → `false`), and a `#` in such a value is never stripped
+   (`LOC=#foo` → `resolved_net {LOC}` → `#foo`) because the strip precedes the
+   lookup.
 1. **[S · MED] `xschem get graph_flags` + cursor getters.** Add to the `get`
    dispatch (`scheduler.c` near ~3772). Lets `wave_viewer.tcl` drop `cva`/
    `cvb`/`cvr` mirrors (~136) and the access_cond desync risk. *Best ratio.*

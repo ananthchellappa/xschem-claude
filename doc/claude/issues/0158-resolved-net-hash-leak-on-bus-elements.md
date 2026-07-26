@@ -166,7 +166,7 @@ rather than hardcoding `#net1`, so a renumbering fails the witness instead of sk
 - The `hier_attr` (`get_tok_value` on an instance property) resolution path is not covered by a
   leg: the fixture resolves through the **portmap**. See the separate finding below.
 
-## Found while fixing this, NOT fixed — a third `#` leak, from an instance attribute
+## Found while fixing this, NOT fixed — a third `#` leak, from an instance attribute → **issue 0163**
 
 The strip runs *before* the hierarchy lookups (as it always did for element 0), so a value that
 arrives *from* a lookup is never stripped. The `hier_attr` path — `get_tok_value` on the parent
@@ -181,7 +181,9 @@ Measured on the 0158 fixture with the instance carrying `LOC=#foo A=#bar`, desce
 
 Pre-existing and untouched by this fix — the same escape existed for element 0 before it. It is a
 different source from 0158's (the *input token* vs a *resolved value*), and the portmap path is
-already immune because `actions.c:3568-3572` strips when the map is built, so the plausible fix is
-to strip the `hier_attr` value at `:2620` the same way. Not bundled here: it needs its own RED leg
-and its own judgement about whether an attribute-passed `#foo` should netlist as `foo` (a user
-`lab=#foo` does — measured above — which argues yes).
+already immune because `actions.c:3568-3572` strips when the map is built.
+
+Opened as **issue 0163**, which also records the bigger problem found on the same line: that
+attribute lookup is completely unguarded, so **any** instance attribute whose name collides with a
+child net name silently replaces it — measured, a child net called `value` on an instance carrying
+`value=1k` resolves to `1k`, and `spice_ignore` resolves to `false`.
