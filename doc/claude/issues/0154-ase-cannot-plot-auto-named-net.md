@@ -207,10 +207,17 @@ All **VERIFIED first-hand**, all **pre-existing** and independent of this fix.
    keeps the field *count* intact. The **no-arg** form appends `entry->path + 1`
    (empty at top level) directly onto the token, so the `0` glues to a **net
    name**: `xschem list_hilights` → `0OUT`. A wrong answer, not a cosmetic one.
-3. **`resolved_net` truncates a bus at a global element.** The global branch uses
-   `my_strdup2` (replaces the accumulator) where the normal branch uses
-   `my_mstrcat` (appends): `xschem resolved_net {D,GND}` → `GND`, dropping `D`.
-   `{GND,D}` → `GND,D` is correct, so only element order exposes it.
+3. **`resolved_net` truncates a bus at a global element.** → **FIXED, issue 0157.**
+   The global branch uses `my_strdup2` (replaces the accumulator) where the normal
+   branch uses `my_mstrcat` (appends): `xschem resolved_net {D,GND}` → `GND`,
+   dropping `D`. `{GND,D}` → `GND,D` is correct, so only element order exposes it.
+   *(Understated: it is not only the trailing case — **every** element resolved
+   before **any** global is discarded, along with the `,` already appended for it,
+   so `{A,B,GND,VCC}` → `VCC`. The global branch only ever needed to skip the
+   `path2` prefix, since globals are flat; the replace looks copied from the
+   function's own early return, where `rnet` really is fresh. It also reached
+   netlist output through `translate()`'s `@#<pin>:resolved_net` and the waveform
+   graph through `send_net_to_graph`, both of which iterate the `,`-list.)*
 4. **`resolved_net` leaks `#` on non-first bus elements** — the strip runs once on
    the whole token before `expandlabel`: `{D,#net1}` → `D,#net1`.
 5. **Two `lab=#foo` labels on one wire crash the binary** → **FIXED, issue 0156** — and the

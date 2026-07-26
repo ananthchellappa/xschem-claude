@@ -2651,7 +2651,10 @@ char *resolved_net(const char *net)
       dbg(1, "path2=%s level=%d start_level=%d\n", path2, level, start_level);
 
       if(record_global_node(3, NULL, resolved_net)) {
-        my_strdup2(_ALLOC_ID_, &rnet, resolved_net);
+        /* a global net is flat: append it WITHOUT the path2 hierarchy prefix. Must
+         * APPEND -- my_strdup2() here REPLACED the accumulator, so any global at
+         * k>0 discarded every bus element resolved before it (issue 0157). */
+        my_mstrcat(_ALLOC_ID_, &rnet, resolved_net, NULL);
       } else {
         my_mstrcat(_ALLOC_ID_, &rnet, path2, resolved_net, NULL);
       }

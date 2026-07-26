@@ -560,6 +560,23 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
     The same class can still exist in any *other* function that runs a `catch`
     eval and whose caller appends; only prep's callers were swept.
 
+25. **`resolved_net()` builds a bus answer by APPENDING, and a global element is
+    the one that must append *without* the path prefix** (issue 0157, FIXED —
+    `hilight.c` ~2653). The per-element loop accumulates into `rnet` with
+    `my_mstrcat` + a `,` between elements; the global branch used `my_strdup2`,
+    which **replaces**, so any global at `k>0` discarded every element resolved
+    before it *and* the comma already written for it (`{A,B,GND,VCC}` → `VCC`).
+    Two invariants now hold and both are load-bearing, in opposite directions:
+    the answer has exactly `mult` `,`-separated items (every consumer —
+    `send_net_to_graph` `hilight.c:1595`, `translate()`'s `@#<pin>:resolved_net`
+    `token.c:4253` — iterates them with `count_items`/`find_nth`), **and** a
+    global is emitted flat, with no `X1.` prefix, because `record_global_node` is
+    precisely the "this name has no hierarchy" predicate. Do not "simplify" the
+    two branches into one. The whole-net early return at `hilight.c:2586` is a
+    different case: `rnet` is `NULL` there, so a replace is correct.
+    `@spice_get_voltage` (`token.c:4224`, `:4718`) is scalar-only (`multip == 1`)
+    and never saw this.
+
 ---
 
 ## 12. Improvement backlog (ranked, with where-to-touch)
@@ -572,12 +589,13 @@ Effort: S=hours, M=days, L=weeks. Impact in caps.
    because the per-site remedy had already leaked: c99beb26 patched `net` /
    `nets` / `net_members` and missed `resolved_net`, `list_hilights` **and
    `instance_nodemap`** (the third site was not in the 0154 report). See
-   landmine 24 for the two masks that hid it. Still open, both in `hilight.c`
-   and found in the same audit: `resolved_net` **truncates a bus at a global
-   element** (`:2654` `my_strdup2` replaces where `:2656` `my_mstrcat` appends —
-   `{D,GND}` → `GND`) → issue 0157, and its `#` strip runs once on the whole
-   token before `expandlabel` (`:2602`), so it **leaks on non-first bus
-   elements** (`{D,#net1}` → `D,#net1`) → issue 0158.
+   landmine 24 for the two masks that hid it. Also **DONE — issue 0157**:
+   `resolved_net` **truncated a bus at a global element** (`:2654` `my_strdup2`
+   replaced where `:2656` `my_mstrcat` appends — `{D,GND}` → `GND`, and in fact
+   `{A,B,GND,VCC}` → `VCC`); the global branch now appends without the `path2`
+   prefix. See landmine 25. Still open, same function, same audit: its `#` strip
+   runs once on the whole token before `expandlabel` (`:2602`), so it **leaks on
+   non-first bus elements** (`{D,#net1}` → `D,#net1`) → issue 0158.
 1. **[S · MED] `xschem get graph_flags` + cursor getters.** Add to the `get`
    dispatch (`scheduler.c` near ~3772). Lets `wave_viewer.tcl` drop `cva`/
    `cvb`/`cvr` mirrors (~136) and the access_cond desync risk. *Best ratio.*
@@ -622,7 +640,11 @@ Effort: S=hours, M=days, L=weeks. Impact in caps.
   `MG6d` = the trace-color policy, issue 0153),
   `test_ase_unnamed_net.tcl` (`AN*` = picking/naming of auto-named `#netN`
   nets, issue 0154 — hermetic, writes its own fixture, needs no DISPLAY,
-  ngspice or ASE session), `test_ase_*` family. They
+  ngspice or ASE session),
+  `test_resolved_net_bus_global_0157.tcl` (`RB*` = `resolved_net`'s bus
+  accumulation and the flat-global rule, issue 0157 — builds its own two-level
+  hierarchy in `test_scratch`, has teeth in both arms),
+  `test_ase_*` family. They
   `--pipe`/`--script` the built binary and diff against golden state. Pure
   Tcl helpers in `wave_viewer.tcl` (`graph_props`, `band_geometry`,
   `next_color`, `validate_rpn`, `interp_value`) are directly unit-testable.
