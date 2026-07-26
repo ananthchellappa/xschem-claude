@@ -1699,6 +1699,18 @@ int prepare_netlist_structs(int for_netl)
   dbg(1, "prepare_netlist_structs(): returning\n");
   /* avoid below call: it in turn calls prepare_netlist_structs(), too many side effects */
   /* propagate_hilights(1, 0, XINSERT_NOREPLACE);*/
+  /* Leave the interp result CLEAN (issue 0155). The side-effect Tcl evals above -- notably
+   * set_modify(-2)'s has_x-gated tclvareval("catch {...}") menu recolor in actions.c -- leave
+   * "0" (the value of `catch`) in the result, so every `xschem` verb that calls prep and then
+   * APPENDS its answer emitted a stray leading "0" on its first (cold) call under a GUI:
+   * `resolved_net OUT` -> "0OUT", `list_hilights` -> "0OUT", `instance_nodemap V1` -> "0V1 p ...".
+   * Fixing it here rather than at each caller kills the class: commit c99beb26 patched
+   * `net` / `nets` / `net_members` one at a time and missed three more sites. Nothing in this
+   * function's chain sets a result any caller reads (netlist.c has no Tcl_SetResult /
+   * Tcl_AppendResult at all), and the early returns at the top never dirtied the result, so
+   * this is a clean-up, not a contract change.
+   * See doc/claude/issues/0155-prep-netlist-structs-interp-result-contamination.md */
+  Tcl_ResetResult(interp);
   return err;
 }
 

@@ -390,7 +390,9 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
   (`xschem_cmds_n`) — net descriptors `{name {<tok>} nwires N npins M anchor {..}}`.
   `-selected` restricts to the current selection and **rebuilds it first, so a
   COLD call is correct**; these verbs reset the interp result AFTER
-  `prepare_netlist_structs`, which `xschem resolved_net` does not (landmine 23).
+  `prepare_netlist_structs`. `resolved_net` / `list_hilights` / `instance_nodemap`
+  did not, and were corrupted on a cold GUI call until issue 0155 moved the reset
+  into prep itself (landmine 24).
   `sod_net_at` uses `nets -selected` as its auto-named-net fallback (issue 0154).
 - `xschem add_graph` (~1887, sets `graph_lastsel`), `xschem draw_graph <i>`,
   `xschem get graph_lastsel` (~3772), `xschem cursor <which> <on>` (~2689),
@@ -540,10 +542,23 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
     else. Related: `xschem flylines at` is the picker's primary net resolver but
     **excludes `#` nets by design** (fly-lines rule A6, `flyline.c` — do not
     relax it); `ase::ui::sod_net_at` adds a `nets -selected` fallback gated to
-    WIRE hits. Do **not** reach for `xschem resolved_net` here: it resets the
-    interp result *before* `prepare_netlist_structs`, so its first call after any
-    struct invalidation returns `0net1` (the sibling `nets` / `net_members` verbs
-    carry the fix and its comment; `list_hilights` has the same wart).
+    WIRE hits. Do **not** reach for `xschem resolved_net` here even now that its
+    contamination is fixed (issue 0155, landmine 24): `sod_expr` must stay a pure
+    string op, because `test_ase_interact` H1 calls it with **no design loaded**.
+
+24. **`prepare_netlist_structs()` used to leave `"0"` in the interp result**
+    (issue 0155, FIXED — `Tcl_ResetResult` at the tail of the function,
+    `netlist.c`). The `"0"` was the value of the `catch {...}` in `set_modify(-2)`'s
+    menu recolor (`actions.c`), so every verb that called prep and then *appended*
+    its answer emitted a stray leading `0` — `resolved_net OUT` → `0OUT`,
+    `list_hilights` → `0OUT`, `instance_nodemap V1` → `0V1 p …`. **Two masks kept
+    it hidden and both still matter when testing anything on this path:** the
+    dirtying eval is `has_x`-gated, so the **`--nogui` arm cannot reproduce it**;
+    and prep early-returns when already prepped, so only the **first (cold)** call
+    after a load or invalidation was wrong. `prep(0)` does not warm a `prep(1)`
+    consumer — `xschem nets` then `xschem list_hilights` was still contaminated.
+    The same class can still exist in any *other* function that runs a `catch`
+    eval and whose caller appends; only prep's callers were swept.
 
 ---
 
@@ -551,19 +566,18 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
 
 Effort: S=hours, M=days, L=weeks. Impact in caps.
 
-0. **[S · MED] Fix `xschem resolved_net`'s first-call contamination.**
-   `Tcl_ResetResult(interp)` sits *before* `prepare_netlist_structs(0)` in the
-   `resolved_net` branch (`scheduler.c`), and prep leaves `"0"` in the result, so
-   the first call after any struct invalidation returns `0net1` / `0D`. Move the
-   reset after the prep — the sibling `nets` / `net_members` / `net` branches
-   already do exactly that, with the comment
-   `/* prepare_netlist_structs leaves "0" in result */`. `xschem list_hilights`
-   has the same wart. Blocks using `resolved_net` for hierarchy-qualified ASE
-   names (issue 0154). Two further `resolved_net` bugs found alongside it: a bus
-   is **truncated at a global element** (`my_strdup2` replaces where the normal
-   branch `my_mstrcat` appends — `{D,GND}` → `GND`), and the `#` strip runs once
-   on the whole token before `expandlabel`, so it **leaks on non-first bus
-   elements** (`{D,#net1}` → `D,#net1`). All three in `hilight.c`/`scheduler.c`.
+0. ~~**[S · MED] Fix `xschem resolved_net`'s first-call contamination.**~~
+   **DONE — issue 0155.** Fixed at the source instead of per call site
+   (`Tcl_ResetResult` at the tail of `prepare_netlist_structs`, `netlist.c`),
+   because the per-site remedy had already leaked: c99beb26 patched `net` /
+   `nets` / `net_members` and missed `resolved_net`, `list_hilights` **and
+   `instance_nodemap`** (the third site was not in the 0154 report). See
+   landmine 24 for the two masks that hid it. Still open, both in `hilight.c`
+   and found in the same audit: `resolved_net` **truncates a bus at a global
+   element** (`:2654` `my_strdup2` replaces where `:2656` `my_mstrcat` appends —
+   `{D,GND}` → `GND`) → issue 0157, and its `#` strip runs once on the whole
+   token before `expandlabel` (`:2602`), so it **leaks on non-first bus
+   elements** (`{D,#net1}` → `D,#net1`) → issue 0158.
 1. **[S · MED] `xschem get graph_flags` + cursor getters.** Add to the `get`
    dispatch (`scheduler.c` near ~3772). Lets `wave_viewer.tcl` drop `cva`/
    `cvb`/`cvr` mirrors (~136) and the access_cond desync risk. *Best ratio.*

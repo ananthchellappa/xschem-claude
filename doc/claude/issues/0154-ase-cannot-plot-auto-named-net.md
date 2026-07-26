@@ -189,17 +189,24 @@ stands.**
 
 All **VERIFIED first-hand**, all **pre-existing** and independent of this fix.
 
-1. **`xschem resolved_net` is contaminated on its first call.**
+1. **`xschem resolved_net` is contaminated on its first call.** → **FIXED, issue 0155.**
    `src/scheduler.c` calls `Tcl_ResetResult(interp)` *before*
    `prepare_netlist_structs(0)`, then `Tcl_AppendResult`s the answer — and
    `prepare_netlist_structs` leaves `"0"` in the result. First call after a load:
    `xschem resolved_net D` → `0D`; second → `D`. One-line fix, and three sibling
    verbs in the same file already carry it with the literal comment
    `/* prepare_netlist_structs leaves "0" in result */`. This is why the fix above
-   avoids `resolved_net`.
+   avoids `resolved_net`. *(0155 fixed it at the source — the reset now lives at
+   the tail of prep — and found a third victim, `xschem instance_nodemap`.
+   `sod_expr` still must not use `resolved_net`: it has to stay pure for
+   `test_ase_interact` H1, which calls it with no design loaded.)*
 2. **Same class in `xschem list_hilights`** — the first call prints the path as
    `0.` instead of `.` (reproduced with this change stashed). Cosmetic;
-   field-parsing consumers like `hl_val` are unaffected.
+   field-parsing consumers like `hl_val` are unaffected. → **FIXED, issue 0155 —
+   and "cosmetic" was wrong.** That holds only for the `all` form, where `0.`
+   keeps the field *count* intact. The **no-arg** form appends `entry->path + 1`
+   (empty at top level) directly onto the token, so the `0` glues to a **net
+   name**: `xschem list_hilights` → `0OUT`. A wrong answer, not a cosmetic one.
 3. **`resolved_net` truncates a bus at a global element.** The global branch uses
    `my_strdup2` (replaces the accumulator) where the normal branch uses
    `my_mstrcat` (appends): `xschem resolved_net {D,GND}` → `GND`, dropping `D`.
