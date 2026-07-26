@@ -299,6 +299,26 @@ Add-Output dialog. The comma form is left alone, which costs nothing:
 `.save v(d,e)` does not abort a run (measured). A comma bus picked on the
 *schematic* still splits, because there the token is known to be a net.
 
+**A pick while DESCENDED is hierarchy-qualified** (issue 0161). Picking is
+allowed at any depth; only the RUN is top-only (`ase::netlist` compares
+`xschem get schname` against the design path, and descending changes
+`schname` to the child — there is no `currsch` guard). The queued expression
+is always **top-relative**, so a pick made while descended stays correct
+after ascending to run.
+
+The qualification happens in `ase::ui::sod_qualify`, called from `sod_click`
+per picked bit; `ase::ui::sod_expr` stays a PURE string wrap (it is called
+with no design loaded). At `currsch == 0` it is the identity, so every
+top-level expression is unchanged byte for byte. Voltages go through
+`xschem resolved_net` rather than a path string-prefix, because a port
+resolves UP to the parent's net (`A` → `TOPNET`), a dangling port stops at
+the level that names it (`B` → `x1.net1`), and a global stays flat
+(`0` → `0`) — none of which a prefix can express. Currents mirror
+`send_current_to_graph()`: `i(v.<path>.<name>)` descended, `i(<name>)` at
+the top, which is how ngspice names a nested branch (`v.x1.x2.v1#branch`).
+The 0153 colour cue keeps the RAW schematic token — `hilight_netname` wants
+the schematic's name, not the simulator's.
+
 ### Menu tree (v2)
 - **Launch** — placeholder menu, ignore for now.
 - **Session** — Design Window (raise-or-open the attached schematic window —

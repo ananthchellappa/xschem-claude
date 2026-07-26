@@ -261,9 +261,17 @@ All **VERIFIED first-hand**, all **pre-existing** and independent of this fix.
    in `select.c` and `findnet.c`, with no check in any edit path, so selection IS
    the lock and making a locked wire selectable would make it deletable. The
    test's third sabotage is exactly that wrong fix.)*
-8. **Descended picking produces an unqualified name.** `sod_expr` has never
-   path-prefixed. Latent only: `ase::netlist` already refuses to run a descended
-   schematic, but the picking mode itself has no such guard.
+8. **Descended picking produces an unqualified name.** → **FIXED, issue 0161.**
+   `sod_expr` has never path-prefixed. Latent only: `ase::netlist` already refuses to run a
+   descended schematic, but the picking mode itself has no such guard. *(Two corrections from
+   measuring it: the refusal is NOT a `currsch` guard — `ase::netlist` compares
+   `xschem get schname` against the design path, and descending changes `schname` to the
+   child; and the fix is real hierarchy support, not a guard. The token is qualified in a new
+   `ase::ui::sod_qualify` called from `sod_click`, so `sod_expr` stays the pure wrap H1
+   asserts. Voltages go through `xschem resolved_net`, never a path string-prefix: a port
+   resolves UP to the parent net, a dangling port stops one level up, and a global stays
+   flat — measured. Currents mirror `send_current_to_graph`: `i(v.<path>.<name>)`, which is
+   how ngspice-42 names a nested branch.)*
 
 ## Also worth knowing (not a defect)
 

@@ -616,6 +616,29 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
     and needs **no loaded design**, so it is safe inside the pure ASE helpers
     where `xschem resolved_net` is not.
 
+28. **A hierarchical node name cannot be built by string-prefixing the path**
+    (issue 0161). ASE picking at `currsch>0` used to emit `v(mid)` for what
+    ngspice calls `v(x1.x2.mid)`; the fix qualifies the token in
+    `ase::ui::sod_qualify` (`ase_window.tcl`), called from `sod_click` — **not**
+    in `sod_expr`, which must stay pure for `test_ase_interact` H1. Four facts,
+    all measured on `tests/headless/fixtures/ase_hier` at depth 2, say the
+    prefix must come from `xschem resolved_net` and not from `sch_path`: a
+    **port** resolves UP to the parent's net (`A` → `TOPNET`, no prefix at all);
+    a port **dangling** one level up stops there (`B` → `x1.net1`, ONE prefix
+    level); a **global** is flat (`0` → `0`); and the `#` marker is stripped per
+    element (landmine 26). Currents have no resolver, so that arm mirrors
+    `send_current_to_graph()` (`hilight.c:1720`): `i(v.<lowercased sch_path>
+    <name>)` descended, bare `i(<name>)` at the top — ngspice-42 names the
+    branch `v1#branch` at the top but `v.x1.x2.v1#branch` nested, so the two
+    forms differ structurally, and `get_raw_index`'s `i(v.x` fixup
+    (`save.c:1700`) is the other half of the same convention. Two inherited
+    limits ride along: `resolved_net` measures its path from
+    `sch_waves_loaded()`, so an expr queued while a raw is loaded BELOW the top
+    is relative to that raw; and issue 0163's unguarded attribute lookup is now
+    on the pick path too. Also note the ASE-cannot-run-descended guard is **not**
+    a `currsch` test — `ase::netlist` compares `xschem get schname` against the
+    design path, and descending changes `schname` to the child.
+
 ---
 
 ## 12. Improvement backlog (ranked, with where-to-touch)

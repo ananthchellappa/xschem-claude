@@ -855,15 +855,62 @@ proc ase::ui::arg_summary {row} {
 # contaminated on its first call after any netlist-struct invalidation — it
 # resets the interp result BEFORE prepare_netlist_structs, so the first answer
 # comes back as `0net1` (scheduler.c; the sibling `nets`/`net_members` verbs
-# already carry the fix and its comment). At top level, the only depth ASE runs
-# at (ase::netlist refuses a descended schematic), the two agree byte for byte.
-# The hierarchy-qualified form for descended picking is not attempted here —
-# see the issue doc.
+# already carry the fix and its comment). At top level the two agree byte for
+# byte. Descended, they do NOT — and that is `sod_qualify`'s job below, not this
+# proc's: the token arrives here already hierarchy-qualified (issue 0161), so
+# this stays the pure wrap H1 asserts.
 proc ase::ui::sod_expr {kind token} {
   if {$kind eq {voltage}} {
     return "v([string tolower [string trimleft $token #]])"
   }
   return "i([string tolower $token])"
+}
+
+# The simulator's name for a token picked at hierarchy depth (issue 0161).
+# Identity at the top level, so every shipped top-level expression is unchanged
+# byte for byte; only a descended pick moves.
+#
+# This is where the pick path becomes IMPURE, and that is deliberate: sod_expr
+# is called with no design loaded (test_ase_interact H1) and must stay a string
+# op, while a correct hierarchical name can only come from the engine. Measured
+# on tests/headless/fixtures/ase_hier (xschem netlist -> ngspice-42 -b), the raw
+# carries `x1.x2.mid` and `v.x1.x2.v1#branch`, and `.save v(x1.x2.mid)
+# i(v.x1.x2.v1)` is accepted verbatim — which is exactly what the two arms
+# below produce.
+#
+# VOLTAGE — `xschem resolved_net`, never a Tcl path-prefix. A path-prefix would
+# be wrong four ways that the C already handles:
+#   - a child PORT is not `x1.A`, it is the PARENT's net (`A` -> `TOPNET`);
+#   - a port left dangling one level up stops there (`B` -> `x1.net1`, ONE
+#     prefix level, not two);
+#   - a global net is flat and never prefixed (`0` -> `0`);
+#   - the `#` auto-name marker is stripped per bus element (issue 0158).
+# Called per BIT, after sod_pick_tokens/bus_dialog (issue 0159) have split a bus,
+# so the comma-list arm of resolved_net never fires here.
+#
+# CURRENT — no such resolver exists for instance names, so this mirrors
+# send_current_to_graph() (hilight.c:1720): `i(` + `v.` + the lowercased
+# sch_path + the name, and the bare `i(name)` at the top.
+#
+# Known limits, both inherited rather than introduced (see the issue doc):
+# resolved_net measures its path from `sch_waves_loaded()`, so an expression
+# queued while a raw is loaded BELOW the top is relative to that raw; and
+# resolved_net still trusts any parent instance attribute whose name matches a
+# child net (issue 0163).
+proc ase::ui::sod_qualify {kind token} {
+  if {$token eq {}} { return $token }
+  if {[catch {xschem get currsch} lvl]} { return $token }
+  if {![string is integer -strict $lvl] || $lvl <= 0} { return $token }
+  if {$kind eq {voltage}} {
+    if {[catch {xschem resolved_net $token} rn] || $rn eq {}} { return $token }
+    return $rn
+  }
+  set path {}
+  ## sch_path is `.x1.x2.` — drop the leading dot, keep the trailing one so the
+  ## name concatenates straight onto it.
+  catch {set path [string range [xschem get sch_path] 1 end]}
+  if {$path eq {}} { return $token }
+  return "v.[string tolower $path]$token"
 }
 
 # Split a possibly-bussed net token into its individual bits (issue 0159).
@@ -1684,9 +1731,15 @@ proc ase::ui::sod_click {key {x {}} {y {}}} {
   # pick comes back as the single original token, so the common path is unchanged.
   set toks [ase::ui::sod_pick_tokens $key $kind $token]
   if {![llength $toks]} { return }
+  # issue 0161: a pick at currsch>0 named a node the simulator does not have
+  # (`v(mid)` for what ngspice calls `v(x1.x2.mid)`). sod_qualify resolves the
+  # token against the hierarchy HERE, at the impure click site, so sod_expr can
+  # stay the pure string wrap H1 asserts. Identity at the top level. Note the
+  # 0153 colour cue below still gets the RAW `$token`: `hilight_netname` wants
+  # the schematic's own name, not the simulator's.
   set first 1
   foreach t $toks {
-    set ex [ase::ui::sod_expr $kind $t]
+    set ex [ase::ui::sod_expr $kind [ase::ui::sod_qualify $kind $t]]
     if {[info exists sod($key,mode)] && $sod($key,mode) eq {plot}} {
       # 0153's schematic cue: colour the picked object ONCE, in the first
       # trace's colour. The bus is a single wire, so N cues would just repaint
