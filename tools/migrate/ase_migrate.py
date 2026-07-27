@@ -981,7 +981,13 @@ class LibraryMigrator(object):
     def __init__(self, libroot, pdk, libname=None, hoist_sources=False):
         self.libroot = libroot
         self.pdk = pdk
+        # The state's `design` must name the library the MIGRATED cell lives in,
+        # not the one it came from: ASE resolves lib/cell/view out of the
+        # registry, so a source-library name sends Session > Design Window back
+        # to the cluttered original. Unless the caller names the library, it is
+        # taken from the DESTINATION root in migrate_all() below.
         self.libname = libname or os.path.basename(os.path.normpath(libroot))
+        self.libname_explicit = libname is not None
         self.hoist_sources = hoist_sources
         self.cells = []          # [(cellname, CellMigrator), ...]
         self.skipped = []        # [(cellname, reason), ...]
@@ -1010,7 +1016,10 @@ class LibraryMigrator(object):
         """Migrate every scanned cell. One bad cell is recorded in `failed` and
         skipped — it must not abort the library walk and strand the rest."""
         results = []
+        if not self.libname_explicit:          # the destination library owns the
+            self.libname = os.path.basename(os.path.normpath(out_root))
         for cell, cm in self.cells:
+            cm.libname = self.libname          # migrated cell, so it names it
             try:
                 cm.migrate()
                 cm.write(os.path.join(out_root, cell), dry_run=dry_run)
@@ -1174,7 +1183,8 @@ def main(argv=None):
     src.add_argument("--sch", help="a single cluttered <cell>.sch to migrate")
     src.add_argument("--library", help="a lib/cell/view library root; migrate every testbench cell")
     ap.add_argument("--out", help="destination root (a cell root for --sch, a lib root for --library)")
-    ap.add_argument("--lib", help="library name for the state design= (default: inferred)")
+    ap.add_argument("--lib", help="library name for the state design= "
+                                  "(default: the DESTINATION library's name)")
     ap.add_argument("--hoist-sources", action="store_true",
                     help="lift numeric vsource values into named design variables (heuristic)")
     ap.add_argument("--dry-run", action="store_true", help="report only; write nothing")
@@ -1204,15 +1214,18 @@ def main(argv=None):
             return 1
         return 0
 
-    lib, cell = _guess_lib_cell(args.sch)
-    lib = args.lib or lib
-    cm = CellMigrator(_read(args.sch), pdk, lib, cell,
-                      hoist_sources=args.hoist_sources).migrate()
+    _srclib, cell = _guess_lib_cell(args.sch)
     # --out is a LIBRARY-ROOT directory (consistent with --library): the cell is
     # written under out_root/<cell>/{schematic,ngspice_state1}, so a registry
     # DEFINE <lib> out_root resolves <lib>/<cell> for Launch-ASE-L and --verify.
     out_root = args.out or (os.path.dirname(os.path.dirname(
         os.path.dirname(os.path.abspath(args.sch)))) + "_ase")
+    # the state's design= names the DESTINATION library (see LibraryMigrator):
+    # ASE resolves lib/cell/view from the registry, and the source name would
+    # point Session > Design Window back at the cluttered cell.
+    lib = args.lib or os.path.basename(os.path.normpath(out_root))
+    cm = CellMigrator(_read(args.sch), pdk, lib, cell,
+                      hoist_sources=args.hoist_sources).migrate()
     out_cellroot = os.path.join(out_root, cell)
     sch, stt = cm.write(out_cellroot, dry_run=args.dry_run)
     print("%s %s/%s" % ("DRY-RUN" if args.dry_run else "migrated", lib, cell))

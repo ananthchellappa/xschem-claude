@@ -1,6 +1,6 @@
 version 1
 simulator ngspice
-design {lib sky130_tests cell charge_pump2 view schematic}
+design {lib sky130_tests_ase cell charge_pump2 view schematic}
 rundir {}
 temperature 27
 models {}

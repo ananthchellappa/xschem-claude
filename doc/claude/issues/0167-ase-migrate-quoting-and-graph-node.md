@@ -139,6 +139,31 @@ harmless, so the rule is just "has a `[`"), and `result_probe` accepts the quote
 echoes back. Tests: `tests/headless/test_ase_print_bracket_0167.tcl` (12 checks, PB10-PB12 drive
 real ngspice); sabotage-verified — reverting `print_arg` to the identity turns 5 of them red.
 
+## Round 4 — the state pointed back at the cluttered cell
+
+Reported from the GUI: open `sky130_tests_ase/tb_bandgap/ngspice_state1`, then **Session > Design
+Window**, and it loads
+`sky130A/xschem_libs/sky130_tests/tb_bandgap/schematic/tb_bandgap.sch` — the *cluttered*
+original, not the migrated one.
+
+`LibraryMigrator` defaulted its library name to `basename(libroot)`, i.e. the **source**
+library, and that name went straight into the state's `design {lib … cell … view schematic}`.
+ASE resolves the design through `xschem cellview_path <lib>/<cell> <view>`
+(`ase::ui::design_path`, `src/ase_window.tcl:3100`), so every migrated state resolved back into
+the tree it came from — the state view and its schematic were never associated.
+
+The library name now comes from the **destination** root (`migrate_all(out_root)` for `--library`,
+the computed `out_root` for `--sch`); an explicit `--lib` still wins. Verified through the real
+`xschem cellview_path` under `sky130A/cadence_style_rc`:
+
+```
+tb_bandgap -> .../sky130A/xschem_libs/sky130_tests_ase/tb_bandgap/schematic/tb_bandgap.sch
+   exists=1  is_ase_tree=1
+```
+
+`sky130A/xschem_libs/sky130_tests_ase` was regenerated (48 states, `design` lib now
+`sky130_tests_ase`, all still `state_load`/`state_serialize` byte-identical). Tests L6/L7.
+
 ## Known, not fixed here
 
 * `ase::state_load` runs `ase::expand_bus_outputs`, which clones a row's `name` when it expands a

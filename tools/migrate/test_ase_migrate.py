@@ -513,6 +513,20 @@ if HAVE:
         lm2 = m.LibraryMigrator(os.path.join(tmp, "lib"), m.PDKS["sky130"]).scan()
         lm2.migrate_all(os.path.join(tmp, "dry"), dry_run=True)
         check("L4 dry-run writes nothing", not os.path.exists(os.path.join(tmp, "dry")))
+        # the state's design= must name the DESTINATION library — ASE resolves
+        # lib/cell/view from the registry, so the SOURCE name would send
+        # Session > Design Window back to the cluttered original
+        cmg = [cm for name, cm in lm.cells if name == "good"][0]
+        check("L6 design= names the destination library",
+              cmg.state["design"] == ["lib", "out", "cell", "good",
+                                      "view", "schematic"],
+              str(cmg.state["design"]))
+        lmx = m.LibraryMigrator(os.path.join(tmp, "lib"), m.PDKS["sky130"],
+                                libname="mylib").scan()
+        lmx.migrate_all(os.path.join(tmp, "out2"), dry_run=True)
+        check("L7 an explicit --lib still wins",
+              lmx.cells[0][1].state["design"][1] == "mylib",
+              str(lmx.cells[0][1].state["design"]))
         # ...but it must still SERIALIZE, or a dry run is a false all-clear
         cmd = [cm for name, cm in lm2.cells if name == "good"][0]
         real = m.serialize_state

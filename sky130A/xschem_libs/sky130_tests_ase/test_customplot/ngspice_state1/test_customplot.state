@@ -1,6 +1,6 @@
 version 1
 simulator ngspice
-design {lib sky130_tests cell test_customplot view schematic}
+design {lib sky130_tests_ase cell test_customplot view schematic}
 rundir {}
 temperature 27
 models {{file {$::SKYWATER_MODELS/sky130.lib.spice} section tt}}
