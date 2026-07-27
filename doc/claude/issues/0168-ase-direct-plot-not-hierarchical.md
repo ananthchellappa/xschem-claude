@@ -139,7 +139,8 @@ contains the path; the raise body is factored into `ase::ui::raise_window_entry`
    top-relative, so they stay correct after ascending.
 3. **`launch_for_current` is not hierarchy-aware, by design** (see above). Tools >
    Launch ASE-L on a descended view registers a session for the cellview on screen.
-4. Not eyeballed interactively: driven programmatically in both arms.
+4. ~~Not eyeballed interactively~~ — **eyeballed by the user 2026-07-27, works**
+   (run → descend → Ctrl-4 / Results > Direct Plot). Retired.
 
 ## Bycatch (NOT fixed here)
 
