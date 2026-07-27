@@ -2573,6 +2573,35 @@ void select_hilight_net(void)
 }
 
 
+/* 'extra' is a symbol's extra= attribute: the whitespace separated list of attribute
+ * names the netlister treats as NODES rather than as instance parameters -- see
+ * src/token.c ("extra is the list of attributes NOT to consider as instance
+ * parameters"), where print_spice_subckt_nodes() emits them as subckt ports and
+ * get_sym_template() keeps them out of the parameter list. Measured on the stock
+ * library: xschem_library/rom8k/lvnot.sym carries extra="VCCPIN VSSPIN" and netlists
+ * as `.subckt lvnot y a VCCPIN VSSPIN` / `x10 FN DDN vcc vss lvnot`.
+ * Those, and only those, are the attributes that may rebind a net name in
+ * resolved_net() -- see doc/claude/issues/0163-resolved-net-instance-attribute-lookup.md
+ * The match is on WHOLE tokens, unlike the strstr() the netlister uses internally, so a
+ * net named "EXTRA" can not be let through by an "EXTRANET" entry. */
+static int attr_is_extra_node(const char *extra, const char *name)
+{
+  size_t l;
+  const char *p;
+
+  if(!extra || !name || !name[0]) return 0;
+  l = strlen(name);
+  p = extra;
+  while(*p) {
+    while(*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r') ++p;
+    if(!*p) break;
+    if(!strncmp(p, name, l) &&
+       (p[l] == '\0' || p[l] == ' ' || p[l] == '\t' || p[l] == '\n' || p[l] == '\r')) return 1;
+    while(*p && *p != ' ' && *p != '\t' && *p != '\n' && *p != '\r') ++p;
+  }
+  return 0;
+}
+
 /* returns the full path name of "net" recursively resolving port connections
  * propagating lower level nets to upper levels.
  * "net" can be a bussed net.
@@ -2627,8 +2656,28 @@ char *resolved_net(const char *net)
       my_strdup2(_ALLOC_ID_, &resolved_net, net_name);
       dbg(1, "resolved_net(): resolved_net=%s\n", resolved_net);
       while(level > start_level) { /* check if net passed by attribute instead of by port */
-        const char *ptr = get_tok_value(xctx->hier_attr[level - 1].prop_ptr, resolved_net, 0);
+        const char *ptr;
+        /* ONLY an attribute the parent symbol declares in its extra= list may rebind a
+         * net. hier_attr[].prop_ptr is the parent instance's ENTIRE property string, so
+         * an ungated get_tok_value() let ANY attribute spelled like the net replace it:
+         * a child net `value` came back as the instance's value=1k, `spice_ignore` as
+         * false, `name` as the instance name, `m`/`wn` as device parameters. Measured on
+         * the stock library too: rom8k/rom2_predec1's x9[15:0] carries a stray
+         * VSSBPIN=VSS that lvnor2.sym's extra= does not list, and lvnor2.sch's VSSBPIN
+         * wires (local nets, no such subckt port) resolved to VSS -- issue 0163.
+         * sym_extra is captured next to prop_ptr at every write site (actions.c,
+         * save.c, spice_netlist.c, spectre_netlist.c) and was, until now, read nowhere. */
+        if(!attr_is_extra_node(xctx->hier_attr[level - 1].sym_extra, resolved_net)) break;
+        ptr = get_tok_value(xctx->hier_attr[level - 1].prop_ptr, resolved_net, 0);
         if(ptr && ptr[0]) {
+          /* strip the auto-net marker off the attribute VALUE as well. The strip further
+           * up runs on the name going IN, before this lookup, so a binding like
+           * EXTRANET=#foo used to come back out with the '#' still attached, and nothing
+           * downstream removes it -- get_raw_index() never strips '#' (waveform-reference
+           * landmine 23), so the trace is silently not found. LOOSE rather than
+           * is_auto_net_name(), and never down to the empty string, for exactly the
+           * reasons given at the input strip above (issues 0156, 0158). */
+          if(ptr[0] == '#' && ptr[1]) ++ptr;
           my_strdup2(_ALLOC_ID_, &resolved_net, ptr);
           dbg(1, "lcc[%d].prop_ptr=%s\n", level - 1, xctx->hier_attr[level - 1].prop_ptr);
           dbg(1, "resolved_net(): resolved_net=%s\n", resolved_net);

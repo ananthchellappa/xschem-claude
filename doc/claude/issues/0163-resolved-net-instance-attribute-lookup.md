@@ -1,8 +1,8 @@
 # 0163 — `resolved_net()` trusts any instance attribute whose name matches a net name
 
-Status: **OPEN**
+Status: **FIXED**
 Area: `src/hilight.c` (`resolved_net`, the attribute-resolution loop at `:2629-2640`)
-Tests: none yet
+Tests: `tests/headless/test_resolved_net_attr_scope_0163.tcl` (33 checks, both arms)
 Found: while fixing 0158 (the `#`-per-element strip), both symptoms measured first-hand
 Related: 0157, 0158 (the two defects already fixed in the same function), 0156 (the `#`-reserved
 policy), 0154 (the audit these all came out of)
@@ -90,25 +90,115 @@ an attribute.
 Worth noting: the measurements above were taken on a **plain subcircuit** instance, not an LCC one.
 The lookup does not check which kind it is, so it fires either way.
 
-## Not yet decided
+## What the loop is actually for — `extra=`, not LCC
 
-1. **How should the lookup be narrowed?** Options, roughly in increasing ambition:
-   - leave it alone and only fix the `#` (cheapest, fixes Problem 2 only);
-   - skip attribute names that are known non-net fields (`name`, `value`, `model`,
-     `spice_ignore`, …) — a denylist, which will always be incomplete;
-   - only consult the attribute path when the instance really is an LCC one, which is what the
-     comment says it is for — needs a reliable "is this LCC" test at this point in the code;
-   - require the value to look like a net name before accepting it.
-2. **Should the `#` be stripped off the attribute value?** The parallel case argues yes: a
-   user-authored `lab=#foo` was measured (issue 0158) to netlist as plain `foo`, and the portmap
-   path already strips. If so the fix is one strip on `ptr` before or after `my_strdup2`, kept
-   LOOSE for the same reason 0158's is loose.
-3. **How reachable is Problem 1 in a real design?** It needs a child net whose name collides with a
-   parent-instance attribute name. `value` makes that plausible rather than theoretical, but no
-   real-world case has been found yet — a sweep of the shipped libraries and
-   `tests/`/`xschem_library` designs for child nets named like common attributes would settle it,
-   and would also tell us whether a fix is a silent improvement or a behavior change someone
-   depends on.
+The `dbg()` line's "lcc" is only the struct's type name (`Lcc *hier_attr`), not a statement about
+which instances the loop serves. The real feature is the **`extra=`** symbol attribute, documented
+upstream at `doc/xschem_man/symbol_property_syntax.html:284-305`:
+
+> This property specifies that some parameters defined in the format string are to be considered as
+> additional pins. This allows to realize inherited connections, a kind of hidden pins with
+> connections passed as parameters.
+
+— with a worked example that is literally `format="@name @pinlist @VCCPIN @VSSPIN @symname ..."`,
+`template="... VCCPIN=VCC VSSPIN=VSS"`, `extra="VCCPIN VSSPIN"`. `src/token.c` says the same thing
+from the netlister's side: *"extra is the list of attributes NOT to consider as instance
+parameters"*; `print_spice_subckt_nodes()` emits them as subckt ports and `get_sym_template()` keeps
+them out of the parameter list. The two upstream commits that created and extended this loop
+(`60c523072` "resolve nets passed to symbols via attributes", `c5705e28f` "resolve multiple levels
+of port-by-attribute propagation") name the same feature.
+
+Measured on the stock library, `xschem_library/rom8k/lvnot.sym` carries `extra="VCCPIN VSSPIN"` and
+netlists as
+
+```
+.subckt lvnot y a VCCPIN VSSPIN     wn=10u lln=1.2u wp=10u lp=1.2u
+x10 FN DDN vcc vss lvnot wn=8.4u lln=2.4u wp=8.4u lp=2.4u
+```
+
+so descending into `x10`, `resolved_net VCCPIN` → `vcc` is **correct and must keep working**. The
+same descend also gave `m` → `1`, `wn` → `8.4u`, `lp` → `2.4u`, which are parameters, not nets —
+the identical mechanism, hijacking, and harmless there only because `lvnot.sch` has no net named
+`m`/`wn`/`lp`.
+
+An "is this an LCC instance" test was considered and is **not available**: nothing reachable at
+`hilight.c:2629` distinguishes an LCC level from a plain subcircuit level. `hier_attr[].prop_ptr` is
+just the instance property string in both cases, `.templ` exists for both, and `.symname` is always
+`NULL` on `xctx->hier_attr` (written only in `load_sym_def`'s local `lcc` array, `save.c:5279`).
+
+## Reachability (measured, sweep of every committed `.sch`/`.sym`, `.claude/worktrees` excluded)
+
+Corpus 881 `.sch` + 3447 `.sym`; 24797 instance records, of which only ~1525 have a child schematic
+at all. Strict sweep — *a parent instance carrying an attribute whose name is a net inside that
+instance's own child schematic*:
+
+- **932 hits** (404 after de-mirroring `xschem_library` / `xschem_libs_newsym` /
+  `xschem_libraries_oa`, which are three copies of the same rom8k + ngspice designs).
+- All 932 use only **four** attribute names: `VCCPIN`, `VSSPIN`, `VCCBPIN`, `VSSBPIN`.
+- **926 are declared bindings** — the child symbol's `extra=` names them. These are the feature.
+- **6 are not**: an instance sets `VSSBPIN=VSS` on `lvnor2` (`xschem_library/rom8k/rom2_predec1.sch:92`,
+  `rom2_predec3.sch`, + their mirrored copies) while `lvnor2.sym` declares only `VCCPIN VSSPIN`, and
+  `lvnor2.sch:29,33` really are wires labelled `VSSBPIN`. `.subckt lvnor2 y a b VCCPIN VSSPIN` has
+  no `VSSBPIN` port, so those wires are local nets. Verified at runtime, descended into `x9[15]`:
+  `resolved_net VSSBPIN` → `VSS` (wrong; `x9[15].VSSBPIN` is right, and `net1` in the same schematic
+  correctly returned `x9[15].net1`).
+- **Zero accidental collisions** — no committed design has a child net named `value`, `m`, `model`,
+  `spice_ignore`, `w`, `l`, … Near misses exist (`m` is a net in 4 schematics and an attribute on
+  3050 instances, but those cells are never instantiated).
+
+Loose upper bound, ignoring the parent/child relation: 16 colliding names, 4700 triples. A denylist
+was rejected on these numbers — 516 distinct attribute names vs 1328 distinct net names.
+
+**Problem 2 is not reachable from any committed design**: of 44794 non-empty instance attribute
+values, exactly 7 start with `#`, all of them the same disabled `xxxspiceprefix=#D#`, none colliding
+with a child net. It is a real defect with test teeth, but no shipped design exercises it.
+
+## Fix
+
+`src/hilight.c`. New static `attr_is_extra_node(extra, name)` — an **exact whitespace-token** match
+(deliberately not the `strstr()` the netlister uses internally, so a net named `EXTRA` cannot be let
+through by an `EXTRANET` entry). The loop now does
+
+```c
+if(!attr_is_extra_node(xctx->hier_attr[level - 1].sym_extra, resolved_net)) break;
+ptr = get_tok_value(xctx->hier_attr[level - 1].prop_ptr, resolved_net, 0);
+if(ptr && ptr[0]) {
+  if(ptr[0] == '#' && ptr[1]) ++ptr;   /* LOOSE, never down to "" -- 0156/0158 */
+  ...
+```
+
+`sym_extra` was already captured next to `prop_ptr` at **all four** write sites (`actions.c:3585`,
+`save.c:5592`, `spice_netlist.c:477`, `spectre_netlist.c:363`) and, before this fix, was read
+nowhere — the only other reference is a commented-out line at `token.c:2973`.
+
+`break` (rather than `level--`) is the right exit: it is the same exit the "attribute not found"
+arm already took, and it leaves `level` for the portmap loop that follows.
+
+**`extra=` is the complete declaration channel.** Swept every symbol whose `format=` references a
+single-`@` token that is also a net name in its schematic and is neither a pin nor in `extra=`:
+**0 hits**. (`@@X` is a *pin* reference and resolves through the portmap, untouched by this gate.)
+
+## Verification
+
+- **RED first**: the test failed 12 legs / passed 21 before the fix, on a binary rebuilt from
+  `git checkout HEAD -- src/hilight.c` (trap 12 — not a stash). 33/33 after, in both the `--nogui`
+  and the `--pipe`+`DISPLAY` arm.
+- **Sabotage matrix, both directions**, each patch pattern-asserted in python (trap 4):
+  revert the gate → 10 legs fail; revert the `#` strip → 2 fail; gate always refuses → 9 fail;
+  strip unconditionally → 1 fails (the bare `#`); `strstr` instead of exact match → 2 fail.
+  **No half of the fix is toothless.**
+- **Netlist-neutral**: 201 stock designs netlisted with the true pre-fix and the fixed binary are
+  byte-identical apart from the output directory baked into one `.include` path.
+- Adjacent suites green: 0155 (12), 0156 (23), 0157 (19), 0158 (21), 0159 (22), 0160 (16), 0161 (21),
+  `test_ase_unnamed_net` (28), `test_ase_core` (66), `test_ase_final` (28), `test_ase_final_gf180`
+  (33), the 58-file wireedit suite, and the 752-job netlisting regression (which has no gold, so the
+  netlist diff above is the real check).
+
+## Left undone — see issue 0164
+
+`resolved_net` reads only `prop_ptr`; the netlister falls back to the symbol **template** when the
+instance omits the attribute (`token.c:3247`), and `hier_attr[].templ` is captured for exactly that.
+No committed design hits it, so it was split out rather than folded in.
 
 ## Reproduce
 

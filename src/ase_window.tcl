@@ -895,8 +895,10 @@ proc ase::ui::sod_expr {kind token} {
 # Known limits, both inherited rather than introduced (see the issue doc):
 # resolved_net measures its path from `sch_waves_loaded()`, so an expression
 # queued while a raw is loaded BELOW the top is relative to that raw; and
-# resolved_net still trusts any parent instance attribute whose name matches a
-# child net (issue 0163).
+# resolved_net resolves a net through a parent instance attribute only when the
+# parent symbol declares that attribute in its `extra=` list (issue 0163 scoped
+# it to that; issue 0164 is the remaining gap — the symbol TEMPLATE default for
+# such an attribute is still not consulted).
 proc ase::ui::sod_qualify {kind token} {
   if {$token eq {}} { return $token }
   if {[catch {xschem get currsch} lvl]} { return $token }

@@ -590,12 +590,9 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
     measured to netlist as plain `foo`, so a strict test would disagree with the
     netlist for exactly the names 0156 declared legal; **(c)** never strip a bare
     `"#"` to `""` — the `,` separator is written regardless of what the element
-    produced, so an emptied element emits `a,`. Still open (**issue 0163**): the
-    attribute-resolution lookup at `:2630` — `get_tok_value` over the parent
-    instance's WHOLE property string — is unguarded, so any attribute named like a
-    child net replaces that net (`value=1k` → `1k`), and a `#` in the value is
-    never stripped since the strip precedes the lookup. The portmap path is immune
-    because `actions.c:3568-3572` strips at build time.
+    produced, so an emptied element emits `a,`. The portmap path is immune because
+    `actions.c:3568-3572` strips at build time; the attribute path got its own
+    strip in issue 0163 — see landmine 29.
 
 27. **A `.save` card ngspice cannot parse is fatal ONLY when it is the sole
     `.save`** (issue 0159, measured ngspice-42). This corrects the sweeping
@@ -634,10 +631,38 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
     (`save.c:1700`) is the other half of the same convention. Two inherited
     limits ride along: `resolved_net` measures its path from
     `sch_waves_loaded()`, so an expr queued while a raw is loaded BELOW the top
-    is relative to that raw; and issue 0163's unguarded attribute lookup is now
-    on the pick path too. Also note the ASE-cannot-run-descended guard is **not**
+    is relative to that raw; and the attribute lookup (landmine 29) is now on the
+    pick path too. Also note the ASE-cannot-run-descended guard is **not**
     a `currsch` test — `ase::netlist` compares `xschem get schname` against the
     design path, and descending changes `schname` to the child.
+
+29. **Only an `extra=`-declared attribute may rebind a net name** (issue 0163,
+    FIXED — `hilight.c` ~2629, gate `attr_is_extra_node()`). `resolved_net`'s
+    first move at each level is "maybe the parent passed this net down as an
+    attribute", and `hier_attr[].prop_ptr` is the parent instance's WHOLE property
+    string, so an ungated `get_tok_value` let **any** attribute spelled like a
+    child net replace it — measured `value` → `1k`, `spice_ignore` → `false`,
+    `name` → `X1`, and on the stock library `m` → `1`, `wn` → `8.4u`. The lookup
+    is not junk: it implements `extra=`, upstream's "hidden pins with connections
+    passed as parameters" (`doc/xschem_man/symbol_property_syntax.html:284-305`;
+    `token.c` "extra is the list of attributes NOT to consider as instance
+    parameters"), which `print_spice_subckt_nodes()` turns into real subckt ports
+    — `rom8k/lvnot.sym` `extra="VCCPIN VSSPIN"` → `.subckt lvnot y a VCCPIN
+    VSSPIN`. Four rules now hold: **(a)** gate on
+    `xctx->hier_attr[level-1].sym_extra`, which was already captured next to
+    `prop_ptr` at all four write sites (`actions.c`, `save.c`, `spice_netlist.c`,
+    `spectre_netlist.c`) and until 0163 was read nowhere; **(b)** the membership
+    test is an EXACT whitespace-token match, not the `strstr()` the netlister uses
+    internally, so a net `EXTRA` cannot ride in on an `EXTRANET` entry; **(c)**
+    strip a leading `#` off the accepted VALUE too — the strip at `:2625` runs on
+    the name going IN, before this lookup, and nothing downstream removes it;
+    **(d)** there is NO usable "is this an LCC instance" test at this point — the
+    `dbg()` line's "lcc" is only the struct's type name (`Lcc *hier_attr`), and
+    `.symname` is always `NULL` on `xctx->hier_attr`. Still open (**issue 0164**):
+    the gate reads only `prop_ptr`, while the netlister falls back to the symbol
+    TEMPLATE when the instance omits the attribute (`token.c:3247`), so an
+    instance relying on `template="... VCCPIN=VCC"` resolves to `X1.VCCPIN` where
+    the netlist says `VCC`. `hier_attr[].templ` is already captured for it.
 
 ---
 
@@ -658,13 +683,21 @@ Effort: S=hours, M=days, L=weeks. Impact in caps.
    prefix. See landmine 25. And **DONE — issue 0158**: its `#` strip ran once on
    the whole token before `expandlabel` (`:2602`), so it **leaked on non-first bus
    elements** (`{D,#net1}` → `D,#net1`, and descended `{LOC,#x}` → `X1.LOC,X1.#x`);
-   the strip is now per element inside the loop. See landmine 26. Still open from
-   the same reading → **issue 0163**: the attribute-resolution lookup at `:2630`
-   is unguarded, so **any** instance attribute whose name matches a child net name
-   replaces it (measured: child net `value` + instance `value=1k` → `1k`;
-   `spice_ignore` → `false`), and a `#` in such a value is never stripped
-   (`LOC=#foo` → `resolved_net {LOC}` → `#foo`) because the strip precedes the
-   lookup.
+   the strip is now per element inside the loop. See landmine 26. And **DONE —
+   issue 0163**: the attribute-resolution lookup at `:2630` was unguarded, so
+   **any** instance attribute whose name matched a child net name replaced it
+   (measured: child net `value` + instance `value=1k` → `1k`; `spice_ignore` →
+   `false`; `name` → `X1`), and a `#` in such a value was never stripped
+   (`LOC=#foo` → `#foo`). It is now gated on the parent symbol's `extra=` list —
+   the one channel that declares an attribute to be a NODE — and the accepted
+   value gets the same loose `#` strip. See landmine 29. A sweep of every
+   committed design found 932 attribute/net collisions, 926 of them declared
+   `extra=` bindings (the feature) and 6 stray, with **zero** accidental
+   `value`/`m`/`model` hijacks; netlist output over 201 stock designs is
+   byte-identical across the fix. **Still open from the same reading → issue
+   0164**: the loop reads only `prop_ptr` and never the symbol TEMPLATE, so an
+   instance that omits an `extra=` attribute and relies on its template default
+   resolves to `X1.VCCPIN` where the netlist says `VCC`.
 1. **[S · MED] `xschem get graph_flags` + cursor getters.** Add to the `get`
    dispatch (`scheduler.c` near ~3772). Lets `wave_viewer.tcl` drop `cva`/
    `cvb`/`cvr` mirrors (~136) and the access_cond desync risk. *Best ratio.*
