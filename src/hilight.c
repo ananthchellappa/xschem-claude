@@ -2669,6 +2669,20 @@ char *resolved_net(const char *net)
          * save.c, spice_netlist.c, spectre_netlist.c) and was, until now, read nowhere. */
         if(!attr_is_extra_node(xctx->hier_attr[level - 1].sym_extra, resolved_net)) break;
         ptr = get_tok_value(xctx->hier_attr[level - 1].prop_ptr, resolved_net, 0);
+        /* When the INSTANCE does not carry the attribute at all, the node comes from the
+         * symbol TEMPLATE default, and the netlister says so: translate() does exactly
+         * this two-step (token.c ~5206). Without it an instance relying on
+         * template="... VCCPIN=VCC" resolved to X1.VCCPIN while the netlist said VCC, and
+         * the trace was silently not found -- issue 0164.
+         * The guard is `!xctx->tok_size`, i.e. "the token is ABSENT from the instance
+         * attributes", NOT "its value is empty", again mirroring translate(). Measured:
+         * an instance carrying VCCPIN="" gets NO node in the netlist -- it does not
+         * inherit the default -- so a present-but-empty attribute must stop the walk here
+         * rather than fall through to the template.
+         * get_tok_value() returns a pointer into a STATIC buffer, so this call invalidates
+         * the previous one; that is fine because the previous value is known empty, but do
+         * not rewrite this as `a[0] ? a : b` with both calls live at once. */
+        if(!xctx->tok_size) ptr = get_tok_value(xctx->hier_attr[level - 1].templ, resolved_net, 0);
         if(ptr && ptr[0]) {
           /* Do NOT strip a leading '#' off the value here, unlike the input strip above
            * and unlike the portmap path (actions.c:3568-3572). MEASURED, ngspice-42: an

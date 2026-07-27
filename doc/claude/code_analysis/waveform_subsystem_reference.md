@@ -665,11 +665,15 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
     strip on the opposite premise and reverted it once measured;
     **(d)** there is NO usable "is this an LCC instance" test at this point — the
     `dbg()` line's "lcc" is only the struct's type name (`Lcc *hier_attr`), and
-    `.symname` is always `NULL` on `xctx->hier_attr`. Still open (**issue 0164**):
-    the gate reads only `prop_ptr`, while the netlister falls back to the symbol
-    TEMPLATE when the instance omits the attribute (`token.c:3247`), so an
-    instance relying on `template="... VCCPIN=VCC"` resolves to `X1.VCCPIN` where
-    the netlist says `VCC`. `hier_attr[].templ` is already captured for it.
+    `.symname` is always `NULL` on `xctx->hier_attr`; and **(e)** when the
+    attribute is ABSENT from the instance, fall back to
+    `hier_attr[level-1].templ`, because the netlister does — `translate()` at
+    `token.c` ~5206 is the exact two-step this mirrors (issue 0164, FIXED). The
+    fallback guard is `!xctx->tok_size` ("token absent"), NOT `!ptr[0]` ("value
+    empty"): measured, an instance carrying `VCCPIN=""` gets NO node in the
+    netlist, so present-but-empty must stop the walk rather than inherit. Do not
+    copy the tEDAx chain at `token.c:3245-3247` — it has an extra
+    `net:<pinnumber>` step and the looser `!val[0]` guard.
 
 ---
 
@@ -701,10 +705,14 @@ Effort: S=hours, M=days, L=weeks. Impact in caps.
    committed design found 932 attribute/net collisions, 926 of them declared
    `extra=` bindings (the feature) and 6 stray, with **zero** accidental
    `value`/`m`/`model` hijacks; netlist output over 201 stock designs is
-   byte-identical across the fix. **Still open from the same reading → issue
-   0164**: the loop reads only `prop_ptr` and never the symbol TEMPLATE, so an
-   instance that omits an `extra=` attribute and relies on its template default
-   resolves to `X1.VCCPIN` where the netlist says `VCC`.
+   byte-identical across the fix. And **DONE — issue 0164**: the loop read only
+   `prop_ptr` and never the symbol TEMPLATE, so an instance that omitted an
+   `extra=` attribute and relied on its template default resolved to `X1.VCCPIN`
+   where the netlist said `VCC`; it now falls back to `hier_attr[].templ` exactly
+   as `translate()` does. Also **corrected in 0163**: the `#` strip that shipped
+   on the accepted value was reverted — measured, an `extra=` value reaches the
+   subckt call line verbatim and ngspice names that node `#hfoo`, a *different*
+   node from the `hfoo` a wire labelled `#hfoo` produces. See landmine 29.
 1. **[S · MED] `xschem get graph_flags` + cursor getters.** Add to the `get`
    dispatch (`scheduler.c` near ~3772). Lets `wave_viewer.tcl` drop `cva`/
    `cvb`/`cvr` mirrors (~136) and the access_cond desync risk. *Best ratio.*
