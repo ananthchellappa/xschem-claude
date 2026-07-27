@@ -2608,6 +2608,22 @@ static int attr_is_extra_node(const char *extra, const char *name)
  * caller *MUST* free returned string */
 char *resolved_net(const char *net)
 {
+  return resolved_net_from(net, -1);
+}
+
+/* Same, with an EXPLICIT top of the resolution: the returned name is measured from
+ * hierarchy level "from_level" instead of from wherever a raw file happens to be
+ * loaded. from_level < 0 keeps the shipped behavior (sch_waves_loaded(), i.e. the
+ * level the current raw was loaded at, else the top).
+ *
+ * ASE-L needs the explicit form (issue 0168): a Direct Plot pick made while
+ * descended must be named the way the SESSION's deck names it, and that deck's top
+ * is the session's design -- which is a property of the session, not of whatever
+ * raw the schematic window has loaded. With no raw loaded the two agree (both 0),
+ * which is why every shipped caller can keep passing -1.
+ * caller *MUST* free returned string */
+char *resolved_net_from(const char *net, int from_level)
+{
   char *rnet = NULL;
   Str_hashentry *entry;
 
@@ -2626,8 +2642,10 @@ char *resolved_net(const char *net)
     char *path = xctx->sch_path[level] + 1, *path2 = NULL, *path2_ptr = NULL;
 
     dbg(1, "resolved_net(): net=%s\n", net);
-    start_level = sch_waves_loaded();
+    if(from_level >= 0) start_level = from_level;
+    else start_level = sch_waves_loaded();
     if(start_level == -1) start_level = 0;
+    if(start_level > xctx->currsch) start_level = xctx->currsch;
     if(path) {
       /* skip path components that are above the level where raw file was loaded */
       while(*path && skip < start_level) {

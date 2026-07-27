@@ -254,6 +254,22 @@ one-line notice and queue nothing. Queueing dedupes on the exact expression
 string: an existing row gets the flavor's plot/save flags ORed in, an
 identical re-queue writes nothing.
 
+**Picking works from a DESCENDED schematic** (issue 0168). Run, descend into an
+instance, and Direct Plot (Ctrl-4 or Results > Direct Plot) probes its internals:
+the session is resolved by walking the hierarchy stack from the current level up
+to the top and taking the NEAREST ancestor that owns one, so the parent's session
+— the one that ran the simulation — is found even though the descended cell has
+none of its own (`ase::session_for_current`). Queued names are measured from the
+level of THAT session's design, so they match its deck: `v(x1.x2.mid)` under a
+top-level session, `v(x2.mid)` under a session bound to the mid cell. Results >
+Direct Plot also raises the window that is descended into the design instead of
+re-opening the top elsewhere. Two limits ride along: the node must be in the raw
+(Direct Plot deliberately writes no `.save` rows, so probe internals with no
+explicit outputs or with Save-All-Voltages on), and RUNNING is still top-only —
+`ase::netlist` requires the design to be the current schematic, so ascend before
+Run. `Tools > Launch ASE-L` is deliberately NOT hierarchy-aware: it binds a
+session to the cellview actually on screen.
+
 **A locked object is READ-able** (issue 0160). `lock=true` makes an object
 unselectable, and since every edit acts on the selection, selection *is* the
 lock — there is no lock check in `move.c`/`actions.c`/any delete path. A

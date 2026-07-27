@@ -898,20 +898,68 @@ proc ase::ui::sod_expr {kind token} {
 # resolved_net resolves a net through a parent instance attribute only when the
 # parent symbol declares that attribute in its `extra=` list (issue 0163), taking
 # the symbol TEMPLATE default when the instance omits it (issue 0164).
-proc ase::ui::sod_qualify {kind token} {
+#
+# `baselvl` (issue 0168) is the hierarchy level the name is measured FROM: the
+# level at which the SESSION's own design sits in this window's stack, since that
+# design is the top of the deck the expression is written into. 0 (the default)
+# is the shipped meaning, "the window's top", and every top-level session keeps
+# its byte-for-byte behavior. It matters once a session is bound to an
+# intermediate cell: descended two levels under a session on the MID cell, the
+# node ngspice knows is `x2.mid`, not `x1.x2.mid`.
+proc ase::ui::sod_qualify {kind token {baselvl 0}} {
   if {$token eq {}} { return $token }
   if {[catch {xschem get currsch} lvl]} { return $token }
-  if {![string is integer -strict $lvl] || $lvl <= 0} { return $token }
+  if {![string is integer -strict $baselvl] || $baselvl < 0} { set baselvl 0 }
+  ## at (or above) the session's own level there is no path to add
+  if {![string is integer -strict $lvl] || $lvl <= $baselvl} { return $token }
   if {$kind eq {voltage}} {
-    if {[catch {xschem resolved_net $token} rn] || $rn eq {}} { return $token }
+    if {[catch {xschem resolved_net $token $baselvl} rn] || $rn eq {}} { return $token }
     return $rn
   }
-  set path {}
-  ## sch_path is `.x1.x2.` — drop the leading dot, keep the trailing one so the
-  ## name concatenates straight onto it.
-  catch {set path [string range [xschem get sch_path] 1 end]}
+  set path [ase::ui::sod_rel_path $baselvl]
   if {$path eq {}} { return $token }
   return "v.[string tolower $path]$token"
+}
+
+# The instance path from hierarchy level `baselvl` down to the current level,
+# `x2.` style — the current sch_path (`.x1.x2.`) with the base level's own
+# sch_path (`.x1.`) stripped off the front. Plain prefix arithmetic is sound here
+# and NOT for nets: an instance path is a pure prefix chain, while a net can
+# resolve UP through a port and stop at any level (which is why the voltage arm
+# above hands the level to the engine instead). Empty when the two agree or the
+# prefix does not match.
+proc ase::ui::sod_rel_path {baselvl} {
+  set cur {}
+  catch {set cur [xschem get sch_path]}
+  if {$cur eq {}} { return {} }
+  set base {}
+  catch {set base [xschem get sch_path $baselvl]}
+  if {$base eq {} || [string first $base $cur] != 0} {
+    ## no usable base: fall back to the whole path, minus its leading dot
+    return [string range $cur 1 end]
+  }
+  return [string range $cur [string length $base] end]
+}
+
+# Where the session's OWN design sits in this window's hierarchy stack (issue
+# 0168) — the `baselvl` sod_qualify measures names from. 0 (the window's top)
+# whenever the session's design is not in the stack at all, which keeps a
+# scripted/stubbed pick (an unknown key, no design resolvable) on the shipped
+# path. Recomputed per click rather than latched when the mode was armed, so
+# descending or ascending WHILE the pick mode is up stays correct.
+proc ase::ui::sod_base_level {key} {
+  set dpath {}
+  catch {set dpath [ase::ui::design_path $key]}
+  if {$dpath eq {}} { return 0 }
+  set lvl 0
+  catch {set lvl [xschem get currsch]}
+  if {![string is integer -strict $lvl] || $lvl <= 0} { return 0 }
+  for {set l $lvl} {$l >= 0} {incr l -1} {
+    set p {}
+    catch {set p [xschem get schname $l]}
+    if {$p ne {} && [file normalize $p] eq $dpath} { return $l }
+  }
+  return 0
 }
 
 # Split a possibly-bussed net token into its individual bits (issue 0159).
@@ -1738,9 +1786,13 @@ proc ase::ui::sod_click {key {x {}} {y {}}} {
   # stay the pure string wrap H1 asserts. Identity at the top level. Note the
   # 0153 colour cue below still gets the RAW `$token`: `hilight_netname` wants
   # the schematic's own name, not the simulator's.
+  # issue 0168: names are measured from the level of the SESSION's own design in
+  # this window's stack, not blindly from the window's top — a pick made under a
+  # session bound to an intermediate cell must match THAT session's deck.
+  set base [ase::ui::sod_base_level $key]
   set first 1
   foreach t $toks {
-    set ex [ase::ui::sod_expr $kind [ase::ui::sod_qualify $kind $t]]
+    set ex [ase::ui::sod_expr $kind [ase::ui::sod_qualify $kind $t $base]]
     if {[info exists sod($key,mode)] && $sod($key,mode) eq {plot}} {
       # 0153's schematic cue: colour the picked object ONCE, in the first
       # trace's colour. The bus is a single wire, so N cues would just repaint
@@ -3117,18 +3169,41 @@ proc ase::ui::design_path {key} {
 # window held the design, else 0. WSLg/Weston drops bare `raise` restack
 # requests, so this goes through the shared withdraw/deiconify re-map helper
 # raise_activate_toplevel (issue 0054 lesson — LibMgr/CIW use it too).
+#
+# A window DESCENDED into the design counts (issue 0168). Its `current_name` is
+# the child, so an exact-name scan alone declared the design "not open anywhere"
+# and design_window re-loaded the top into another window — throwing away the
+# hierarchy the user had navigated to, which is exactly where they wanted to
+# Direct-Plot. The 7th `xschem windows` field is the window's whole stack, so a
+# descended window is now matched on any level of it. Exact `current_name`
+# matches still WIN (first loop): a window actually showing the design is the
+# better answer, and that ordering keeps the shipped behavior byte for byte.
 proc ase::ui::raise_design_editor {dpath} {
-  foreach e [xschem windows] {
+  set wins [xschem windows]
+  foreach e $wins {
     if {[file normalize [lindex $e 4]] eq $dpath} {
-      xschem new_schematic switch [lindex $e 0]
-      set tp [lindex $e 1]
-      if {$tp eq {}} { set tp . }
-      raise_activate_toplevel $tp
-      catch {focus $tp}
-      return 1
+      return [ase::ui::raise_window_entry $e]
+    }
+  }
+  foreach e $wins {
+    foreach s [lindex $e 6] {
+      if {$s ne {} && [file normalize $s] eq $dpath} {
+        return [ase::ui::raise_window_entry $e]
+      }
     }
   }
   return 0
+}
+
+# Make the window described by an `xschem windows` entry current + frontmost.
+# Always returns 1 (the caller has already decided this window is the one).
+proc ase::ui::raise_window_entry {e} {
+  xschem new_schematic switch [lindex $e 0]
+  set tp [lindex $e 1]
+  if {$tp eq {}} { set tp . }
+  raise_activate_toplevel $tp
+  catch {focus $tp}
+  return 1
 }
 
 # Session > Design Window: raise the editor window already holding the design,

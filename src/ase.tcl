@@ -773,6 +773,81 @@ proc ase::session_for_design {lib cell view} {
   return {}
 }
 
+# The ASE-L session bound to the current schematic OR to any of its ANCESTORS in
+# the hierarchy stack (issue 0168). Returns {key level lib cell view}, or {}.
+#
+# The whole point of the walk: after a run the user DESCENDS into an instance to
+# probe its internals, and the descended cell has no session of its own -- the
+# session that ran the simulation is one (or five) levels up. `design_of_current`
+# only ever sees `xschem get schname`, i.e. the CHILD, so every descended Ctrl-4 /
+# Results > Direct Plot died on "no ASE-L session for this design" with the right
+# session sitting in the stack above it.
+#
+# NEAREST ancestor wins, not the top: a session bound to an intermediate cell
+# simulates THAT cell as its deck's top, so node names for a pick below it must be
+# measured from there (`level` is exactly that measuring stick -- see
+# ase::ui::sod_base_level, which recomputes it from the session side). With the
+# usual single session on the top design both rules agree.
+#
+# A level that resolves to no registered cellview (a child from outside every
+# library) is SKIPPED, not fatal -- it is a perfectly ordinary thing to descend
+# into, and its parent may still hold the session. All errors are swallowed here
+# on purpose; ase::no_session_notice does the one honest report at the end.
+proc ase::session_for_current {} {
+  set lvl 0
+  catch {set lvl [xschem get currsch]}
+  if {![string is integer -strict $lvl] || $lvl < 0} { set lvl 0 }
+  for {set l $lvl} {$l >= 0} {incr l -1} {
+    set p {}
+    catch {set p [xschem get schname $l]}
+    if {$p eq {}} { continue }
+    if {[catch {ase::design_of_path [file normalize $p]} d]} { continue }
+    lassign $d lib cell view
+    set key [ase::session_for_design $lib $cell $view]
+    if {$key ne {}} { return [list $key $l $lib $cell $view] }
+  }
+  return {}
+}
+
+# The single honest report for "session_for_current found nothing", shared by all
+# its callers (issue 0168). Two distinct failures, two distinct messages:
+#   - NO level of the stack resolves to a schematic design (a symbol view, an
+#     unsaved buffer, a hierarchy entirely outside every library): re-raise
+#     design_of_path's own wording for the current view, exactly as
+#     design_of_current always did;
+#   - some level does resolve but none owns a session: say so, and say that the
+#     parents were searched too, so a descended user is not left thinking the
+#     parent's session was ignored.
+proc ase::no_session_notice {} {
+  if {[info commands ::ciw_echo] eq {}} { return }
+  set lvl 0
+  catch {set lvl [xschem get currsch]}
+  if {![string is integer -strict $lvl] || $lvl < 0} { set lvl 0 }
+  set resolved 0
+  for {set l $lvl} {$l >= 0} {incr l -1} {
+    set p {}
+    catch {set p [xschem get schname $l]}
+    if {$p ne {} && ![catch {ase::design_of_path [file normalize $p]}]} {
+      set resolved 1
+      break
+    }
+  }
+  if {!$resolved} {
+    set p {}
+    catch {set p [file normalize [xschem get schname]]}
+    if {[catch {ase::design_of_path $p} r]} { catch {ciw_echo $r error} }
+    return
+  }
+  if {$lvl > 0} {
+    catch {ciw_echo "ase: no ASE-L session for this design nor for any of its\
+ $lvl parent level(s) -- Launch ASE-L (Tools menu) or open its ngspice_state\
+ view first" error}
+  } else {
+    catch {ciw_echo "ase: no ASE-L session for this design -- Launch ASE-L\
+ (Tools menu) or open its ngspice_state view first" error}
+  }
+}
+
 # Register a BLANK untitled session bound to design {lib cell schview} (Tools >
 # Launch ASE-L). Distinct from session_open (which loads a .state file): NO file
 # on disk (path {}), state = state_default (already carrying ::ASE_DEFAULT_MODELS
@@ -820,27 +895,20 @@ proc ase::launch_for_current {} {
 }
 
 # Ctrl-4 (Cadence "select signals to plot"): enter ASE Direct Plot for the
-# session bound to the CURRENT schematic, without going through the ASE window's
-# Results menu. Resolves the current design -> its ASE session
-# (design_of_current + session_for_design, the launch_for_current precedent),
-# then hands off to ase::ui::direct_plot -- the click mode where a wire/net-label
+# session bound to the CURRENT schematic -- or, once descended, to the nearest
+# ANCESTOR of it (issue 0168) -- without going through the ASE window's Results
+# menu. Resolution is ase::session_for_current, which walks the hierarchy stack;
+# it then hands off to ase::ui::direct_plot -- the click mode where a wire/net-label
 # queues a voltage trace, a source/ammeter queues a current trace, and ESC plots
 # the queue into the session's waveform viewer (opening it if closed). Honest
-# no-op with a ciw_echo when the current view is not a schematic
-# (design_of_current already reported it) or has no ASE session yet. Headless-safe:
-# the Tk click mode is behind the has_x guard. Returns the session key, or {}.
+# no-op with a ciw_echo when the current view is not a schematic or nothing in
+# the stack has an ASE session yet (ase::no_session_notice tells the two apart).
+# Headless-safe: the Tk click mode is behind the has_x guard. Returns the session
+# key, or {}.
 proc ase::direct_plot_for_current {} {
-  set d [ase::design_of_current]
-  if {$d eq {}} { return {} }
-  lassign $d lib cell view
-  set key [ase::session_for_design $lib $cell $view]
-  if {$key eq {}} {
-    if {[info commands ::ciw_echo] ne {}} {
-      catch {ciw_echo "ase: no ASE-L session for this design -- Launch ASE-L\
- (Tools menu) or open its ngspice_state view first" error}
-    }
-    return {}
-  }
+  set r [ase::session_for_current]
+  if {$r eq {}} { ase::no_session_notice; return {} }
+  set key [lindex $r 0]
   if {[info exists ::has_x]} { ase::ui::direct_plot $key 0 }
   return $key
 }
@@ -849,23 +917,15 @@ proc ase::direct_plot_for_current {} {
 # the PLOT MODE of the waveform viewer belonging to the ASE-L session bound to
 # the CURRENT schematic, without leaving the design window. `mode` is
 # single | multi | invert (default invert — the chord flips). Resolution is
-# the Ctrl-4 path: design_of_current -> session_for_design -> the session key
+# the Ctrl-4 path: ase::session_for_current (hierarchy-aware) -> the session key
 # IS the viewer token. Returns the resolved mode, or {} with an honest
 # ciw_echo when the current view is not a schematic, no session is bound, or
 # that session has no viewer WINDOW open (the mode is per-window state — there
 # is nothing to flip until the window exists).
 proc ase::plot_mode_for_current {{mode invert}} {
-  set d [ase::design_of_current]
-  if {$d eq {}} { return {} }
-  lassign $d lib cell view
-  set key [ase::session_for_design $lib $cell $view]
-  if {$key eq {}} {
-    if {[info commands ::ciw_echo] ne {}} {
-      catch {ciw_echo "ase: no ASE-L session for this design -- Launch ASE-L\
- (Tools menu) or open its ngspice_state view first" error}
-    }
-    return {}
-  }
+  set r [ase::session_for_current]
+  if {$r eq {}} { ase::no_session_notice; return {} }
+  set key [lindex $r 0]
   if {[wviewer::plot_mode $key] eq {}} {
     if {[info commands ::ciw_echo] ne {}} {
       catch {ciw_echo "ase: no waveform viewer open for $key -- open it first\
@@ -885,16 +945,9 @@ proc ase::plot_mode_for_current {{mode invert}} {
 # a non-schematic view, no bound session, or a session whose window is not
 # built (headless, or the session was only registered).
 proc ase::window_number_for_current {} {
-  set d [ase::design_of_current]
-  if {$d eq {}} { return {} }
-  lassign $d lib cell view
-  set key [ase::session_for_design $lib $cell $view]
-  if {$key eq {}} {
-    if {[info commands ::ciw_echo] ne {}} {
-      catch {ciw_echo "ase: no ASE-L session for this design" error}
-    }
-    return {}
-  }
+  set r [ase::session_for_current]
+  if {$r eq {}} { ase::no_session_notice; return {} }
+  set key [lindex $r 0]
   set n [ase::ui::number_for $key]
   if {$n eq {} && [info commands ::ciw_echo] ne {}} {
     catch {ciw_echo "ase: session $key has no ASE-L window open" error}

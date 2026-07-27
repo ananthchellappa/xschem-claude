@@ -9247,17 +9247,25 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
       Tcl_ResetResult(interp);
     }
 
-    /* resolved_net [net]
+    /* resolved_net [net [level]]
      *   if 'net' is given  return its topmost full hierarchy name
      *   else returns the topmost full hierarchy name of selected net/pin/label.
-     *   Nets connected to I/O ports are mapped to upper level recursively */
+     *   Nets connected to I/O ports are mapped to upper level recursively.
+     *   'level' (issue 0168) names the hierarchy level the returned path is
+     *   measured FROM (0 = the window's top). Omitted / negative keeps the
+     *   shipped behavior: measure from the level the loaded raw belongs to
+     *   (sch_waves_loaded()), else from the top. ASE-L passes the level of the
+     *   design its session simulates, so a pick made while descended is named
+     *   the way THAT deck names it. */
     else if(!strcmp(argv[1], "resolved_net"))
     {
       const char *net = NULL;
       char  *rn = NULL;
+      int from_level = -1;
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
       Tcl_ResetResult(interp);
       prepare_netlist_structs(0);
+      if(argc > 3) from_level = atoi(argv[3]);
       if(argc > 2) {
         net = argv[2];
       } else if(xctx->lastsel == 1) {
@@ -9276,7 +9284,7 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
           }
         }
       }
-      rn = resolved_net(net);
+      rn = resolved_net_from(net, from_level);
       Tcl_AppendResult(interp, rn, NULL);
       my_free(_ALLOC_ID_, &rn);
     }
@@ -11802,16 +11810,29 @@ static int xschem_cmds_w(Tcl_Interp *interp, int argc, const char *argv[], int *
       for(i = 0; i < MAX_NEW_WINDOWS; ++i) {
         const char *wp, *tp, *nm;
         char xwin[32], wnum[16];
-        Tcl_Obj *entry;
+        int lvl;
+        Tcl_Obj *entry, *hier;
         ctx = get_window_ctx(i, &wp);
         if(!ctx) continue;
         tp = (ctx->top_path && ctx->top_path[0]) ? ctx->top_path : ".";
         nm = ctx->sch[ctx->currsch] ? ctx->sch[ctx->currsch] : "";
         my_snprintf(xwin, S(xwin), "%lu", (unsigned long)ctx->window);
         my_snprintf(wnum, S(wnum), "%d", ctx->window_number);
-        /* {win_path top_path group xwindow current_name number}; group == tp for now
-         * (Phase 0). 'number' is the Cadence-style stable window number
-         * (doc/claude/specs/window_numbering.md) appended as a 6th trailing field. */
+        /* the window's whole hierarchy STACK, sch[0] (the top) .. sch[currsch] (what
+         * is on screen). 'current_name' above is only the last element, so a window
+         * DESCENDED into a design was invisible to every "which window holds X?"
+         * scan -- issue 0168, where ASE-L's Results > Direct Plot re-opened the top
+         * elsewhere instead of picking in the window the user had navigated. */
+        hier = Tcl_NewListObj(0, NULL);
+        for(lvl = 0; lvl <= ctx->currsch && lvl < CADMAXHIER; ++lvl) {
+          Tcl_ListObjAppendElement(interp, hier,
+            Tcl_NewStringObj(ctx->sch[lvl] ? ctx->sch[lvl] : "", -1));
+        }
+        /* {win_path top_path group xwindow current_name number hier}; group == tp for
+         * now (Phase 0). 'number' is the Cadence-style stable window number
+         * (doc/claude/specs/window_numbering.md) appended as a 6th trailing field,
+         * 'hier' the stack above as a 7th. Both are APPENDED, so every existing
+         * `lindex $e 0..5` consumer is unaffected. */
         entry = Tcl_NewListObj(0, NULL);
         Tcl_ListObjAppendElement(interp, entry, Tcl_NewStringObj(wp, -1));
         Tcl_ListObjAppendElement(interp, entry, Tcl_NewStringObj(tp, -1));
@@ -11819,6 +11840,7 @@ static int xschem_cmds_w(Tcl_Interp *interp, int argc, const char *argv[], int *
         Tcl_ListObjAppendElement(interp, entry, Tcl_NewStringObj(xwin, -1));
         Tcl_ListObjAppendElement(interp, entry, Tcl_NewStringObj(nm, -1));
         Tcl_ListObjAppendElement(interp, entry, Tcl_NewStringObj(wnum, -1));
+        Tcl_ListObjAppendElement(interp, entry, hier);
         Tcl_ListObjAppendElement(interp, result, entry);
       }
       Tcl_SetObjResult(interp, result);

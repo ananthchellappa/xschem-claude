@@ -122,6 +122,9 @@ name are different values and 0154 already separated the two slots.
    raw is loaded BELOW the top is relative to THAT raw, not to ASE's own top-level deck. ASE
    loads its raw at the top, so its own flow is consistent; a user who loads a raw at depth and
    then picks can queue a name the ASE deck will not produce. Not reachable from ASE's own UI.
+   **RETIRED for the ASE path by issue 0168**: `resolved_net` now takes an explicit start
+   level (`resolved_net_from`), and `sod_qualify` passes the level of the session's own
+   design, so the answer no longer depends on where a raw happens to be loaded.
 2. **`resolved_net` still trusts any parent instance attribute matching a child net name**
    (issue 0163, open). A child net named like an instance attribute resolves to the attribute's
    VALUE. That defect is now on the ASE pick path too — fixing 0163 fixes it here for free.

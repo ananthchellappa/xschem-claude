@@ -675,6 +675,34 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
     copy the tEDAx chain at `token.c:3245-3247` — it has an extra
     `net:<pinnumber>` step and the looser `!val[0]` guard.
 
+30. **"Which design is this?" is a question about the STACK, not the top of it**
+    (issue 0168). Two shipped identity checks read only the *current* level and
+    both broke Direct Plot the moment a user descended:
+    `ase::design_of_current` → `xschem get schname` (the CHILD once descended, so
+    the parent's session was declared not to exist), and
+    `ase::ui::raise_design_editor` → `lindex $e 4` of `xschem windows`
+    (`ctx->sch[ctx->currsch]`, so a window descended INTO the design looked like it
+    was not holding it, and `design_window` re-opened the top elsewhere). The
+    replacements walk: `ase::session_for_current` (`ase.tcl`) climbs
+    `xschem get schname $l` from `currsch` to 0 taking the **nearest** ancestor
+    with a session, and `xschem windows` now carries the whole stack as a **7th**
+    field (appended — every `lindex $e 0..5` consumer is untouched). A level that
+    resolves to no registered cellview is skipped, not fatal.
+    The nearest-ancestor rule has a consequence: the session's design may sit at
+    level N>0, and **every name must then be measured from N**, not from the
+    window's top. That is what `ase::ui::sod_base_level` computes and what
+    `xschem resolved_net <net> ?level?` / `resolved_net_from()` (`hilight.c`) take
+    — the C used to measure from `sch_waves_loaded()`, i.e. from wherever a raw
+    happened to be loaded, which is a property of the *window*, not of the deck the
+    expression is written into (this also retires landmine 28's first inherited
+    limit for the ASE path). Currents use `ase::ui::sod_rel_path` (sch_path prefix
+    subtraction) instead: an instance path is a pure prefix chain, a net is not.
+    Orthogonal trap, and the likelier user-visible one: Direct Plot writes **no**
+    `.save` rows by design, so a descended internal node is only plottable if the
+    run put it in the raw — no explicit outputs at all, or the Save-All-Voltages
+    flag (`.save all`). Otherwise the pick is correct and the trace is simply
+    absent.
+
 ---
 
 ## 12. Improvement backlog (ranked, with where-to-touch)
