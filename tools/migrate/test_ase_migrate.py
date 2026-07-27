@@ -177,6 +177,19 @@ if HAVE:
     else:
         print("skip: S7/S8 tclsh differential (no tclsh)")
 
+    # S9: the leading-`#` rule applies to element 0 only, at every nesting level
+    # (`list #a b` -> `{#a} b`; `list b #a` -> `b #a`), and the MASK form keeps
+    # already-balanced braces while escaping `]`/`"`.
+    check("S9a #-quoting at index 0 of a nested list",
+          m._struct_to_str([["#a", "b"], "c"]) == "{{#a} b} c",
+          repr(m._struct_to_str([["#a", "b"], "c"])))
+    check("S9b # elsewhere is ordinary",
+          m._struct_to_str(["b", "#a"]) == "b #a",
+          repr(m._struct_to_str(["b", "#a"])))
+    check("S9c MASK keeps balanced braces, escapes ] and \"",
+          m._tcl_conv("a]b{c}d") == "a\\]b{c}d" and m._tcl_conv("a\"b") == "a\\\"b",
+          repr(m._tcl_conv("a]b{c}d")))
+
 # --------------------------------------------------------------------------- #
 # 2. SpiceDeck: embedded gf180 models block + a control command block
 # --------------------------------------------------------------------------- #
@@ -384,6 +397,95 @@ if HAVE:
           len(set(names)) == len(names), str(names))
 
 # --------------------------------------------------------------------------- #
+# 6b2. probe-card grammar: `vs`/`title`/`xlimit` are display clauses on
+#      plot/print ONLY — on `save` they are ordinary net names
+# --------------------------------------------------------------------------- #
+if HAVE:
+    d = m.SpiceDeck()
+    d.parse(".save vs vd vg\n.control\nsave vs\n"
+            "plot v(a) vs time xlimit 0 1n title mytitle xlog\n"
+            "plot i(@m1[id]) v(clk)+2\n.endc\n")
+    got = [e for e, _p in d.outputs]
+    check("P10 `vs` is a NET NAME on .save/save (not a display clause)",
+          got.count("vs") == 2 and "vd" in got and "vg" in got, str(got))
+    check("P11 plot display clauses dropped, loudly",
+          "time" not in got and "mytitle" not in got and "xlimit" not in got
+          and "xlog" not in got and "0" not in got
+          and any("x-axis selector" in w for w in d.warnings), str(got))
+    check("P12 i(@dev[param]) not touched at parse time",
+          "i(@m1[id])" in got, str(got))
+    check("P13 offset stripped from a parenthesised signal too",
+          "v(clk)" in got and "v(clk)+2" not in got, str(got))
+
+    # `i(@dev[param])` is not a vector; ngspice: "no such function as i"
+    cmx = m.CellMigrator(CL, m.PDKS["sky130"], "l", "c")
+    cmx.report = m.MigrationReport()
+    outs = cmx._outputs(m.SpiceDeck(), [("i(@m1[id])", 1, None),
+                                        ("@m1[id]", 1, None)])
+    check("P14 i(@dev[param]) rewritten to @dev[param] and deduped",
+          [o[3] for o in outs] == ["@m1[id]"]
+          and any("not a vector" in w for w in cmx.report.warnings), str(outs))
+
+    # option names may be hyphenated (Xyce `.options NONLIN-TRAN`)
+    d = m.SpiceDeck()
+    d.parse(".options NONLIN-TRAN MAXSTEP=200\n.include /opt/my models/x.lib\n")
+    check("P15 hyphenated option kept", ("NONLIN-TRAN", None) in d.options,
+          str(d.options))
+    check("P16 unquoted include path with spaces kept whole",
+          d.includes == ["/opt/my models/x.lib"], str(d.includes))
+
+# --------------------------------------------------------------------------- #
+# 6b3. graph rows: constants, empty fields, collapsed ';', quoting
+# --------------------------------------------------------------------------- #
+if HAVE:
+    w = []
+    check("G10 reference-line constant is not a signal",
+          m.graph_outputs("node=\"-; 0.9\"", w) == []
+          and any("reference-line" in x for x in w), str(w))
+    w = []
+    check("G11 `a;;b` collapses like find_nth does",
+          m.graph_outputs("node=\"a;;b\"", w) == [("b", 1, "a")], str(w))
+    w = []
+    check("G12 empty expression row reported, not silently dropped",
+          m.graph_outputs("node=\"v(a);\"", w) == []
+          and any("no expression" in x for x in w), str(w))
+    check("G13 bus with an empty label keeps every bit",
+          m.graph_outputs("node=\";a,b\"") == [("a", 1, None), ("b", 1, None)],
+          str(m.graph_outputs("node=\";a,b\"")))
+    # `\"` inside a row: the escape is consumed by _graph_rows, the quote is data
+    check("G14 escaped quote inside a row does not split it",
+          len(m._graph_rows('a\\"b\nc')) == 2, str(m._graph_rows('a\\"b\nc')))
+    # a bus alias must never become an output name (M33)
+    outs = m.graph_outputs("node=\"CIN;cin\"")
+    cmn = m.CellMigrator(CL, m.PDKS["sky130"], "l", "c")
+    cmn.report = m.MigrationReport()
+    st = cmn._outputs(m.SpiceDeck(), outs)
+    check("G15 graph alias becomes the output NAME, not a signal",
+          st == [["name", "CIN", "expr", "cin", "save", "1", "plot", "1"]],
+          str(st))
+    # an alias that would need a _2 suffix loses to the expr-derived name
+    st = cmn._outputs(m.SpiceDeck(), [("vth2", 1, None), ("f2", 1, "vth2")])
+    check("G16 colliding alias yields to the expr-derived name",
+          [o[1] for o in st] == ["vth2", "f2"], str(st))
+
+# --------------------------------------------------------------------------- #
+# 6b4. output names: identifier shape, uniqueness, discriminating tail
+# --------------------------------------------------------------------------- #
+if HAVE:
+    long3 = ["@m.xm11.xsky130_fd_pr__pfet_g5v0d16v0.msky130_fd_pr__pfet_base[%s]"
+             % p for p in ("gm", "id", "vth")]
+    names = [m._mk_name(e, i) for i, e in enumerate(long3, 1)]
+    check("N1 over-long names keep their discriminating tail",
+          len(set(names)) == 3 and names[0].endswith("gm")
+          and names[2].endswith("vth"), str(names))
+    check("N2 names are capped", all(len(n) <= m._NAME_MAX for n in names))
+    used = set()
+    check("N3 leading digit gets a letter prefix",
+          m._mk_name("0.9", 1, used) == "o09", m._mk_name("0.9", 2, set()))
+    check("N4 duplicates get a stable suffix",
+          [m._mk_name("v(a)", 1, used), m._mk_name("va", 2, used)] == ["va", "va_2"])
+
+# --------------------------------------------------------------------------- #
 # 6c. library walk: one bad cell must not abort the rest; dry-run must serialize
 # --------------------------------------------------------------------------- #
 if HAVE:
@@ -411,6 +513,20 @@ if HAVE:
         lm2 = m.LibraryMigrator(os.path.join(tmp, "lib"), m.PDKS["sky130"]).scan()
         lm2.migrate_all(os.path.join(tmp, "dry"), dry_run=True)
         check("L4 dry-run writes nothing", not os.path.exists(os.path.join(tmp, "dry")))
+        # ...but it must still SERIALIZE, or a dry run is a false all-clear
+        cmd = [cm for name, cm in lm2.cells if name == "good"][0]
+        real = m.serialize_state
+        m.serialize_state = lambda *a, **k: (_ for _ in ()).throw(
+            m.MigrationError("serializer reached"))
+        try:
+            hit = False
+            try:
+                cmd.write(os.path.join(tmp, "dry2"), dry_run=True)
+            except m.MigrationError as e:
+                hit = "serializer reached" in str(e)
+        finally:
+            m.serialize_state = real
+        check("L5 dry-run still exercises the serializer", hit)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

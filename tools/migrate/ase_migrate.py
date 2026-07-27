@@ -201,10 +201,23 @@ _KEEP_CONTROL = frozenset((
     "noise", "disto", "pz", "tf", "sp"))
 
 
-# option names ngspice would accept; anything else is a stray token, not an option
-_OPT_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-# `plot sig+2` is a DISPLAY offset, not a signal — `.save sig+2` is not valid
-_PLOT_OFFSET_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_.\[\]]*)([+-]\d+(?:\.\d+)?)$")
+# option names ngspice/Xyce accept (`NONLIN-TRAN` is real); anything else is a
+# stray token, not an option
+_OPT_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_.\-]*$")
+# `plot sig+2` / `plot v(clk)+2` is a DISPLAY offset, not a signal — `.save sig+2`
+# is not a valid vector
+_PLOT_OFFSET_RE = re.compile(
+    r"^([A-Za-z_][A-Za-z0-9_.\[\]]*(?:\([^()]*\))?)([+-]\d+(?:\.\d+)?)$")
+# ngspice `plot`/`print` display keywords — never signals. Probed against
+# ngspice-42: `plot xlog response` plots `response` only.
+_PLOT_FLAGS = frozenset(("xlog", "ylog", "loglog", "linear", "polar", "smith",
+                         "smithgrid", "nogrid", "samep", "retraceplot"))
+_PLOT_KW1 = frozenset(("title", "xlabel", "ylabel", "xdelta", "ydelta",
+                       "xcompress", "xindices"))
+_PLOT_KW2 = frozenset(("xlimit", "ylimit"))
+# `i(@dev[param])` is not an ngspice vector — the device-parameter form is bare
+# `@dev[param]` (probed: `print i(@m1[id])` -> "no such function as i")
+_IDEV_RE = re.compile(r"^i\((@[^()]*\[[A-Za-z0-9_]+\])\)$", re.I)
 
 
 def _unquote(tok):
@@ -244,27 +257,57 @@ def _split_ws(text):
     return toks
 
 
-def _probe_tokens(line):
+def _probe_tokens(line, warn=None, display=False):
     """Probe expressions of a `save`/`print`/`plot`/`.save` line: quoted groups
-    honoured, shell redirection (`print del > result.txt`) and an ngspice
-    `vs <xvector>` clause removed — neither is a signal to save."""
+    honoured, shell redirection (`print del > result.txt`) removed.
+
+    `display` marks the `plot`/`print` grammar, which additionally has display
+    clauses (`vs <xvector>`, `xlimit a b`, `title t`, `xlog`, …) that are not
+    signals. They are NOT dropped on `save`/`.save`/`.probe`, where `vs` and
+    `title` are ordinary net names."""
+    warn = [] if warn is None else warn
     toks = _split_ws(line)[1:]
     out = []
     i = 0
     while i < len(toks):
         t = toks[i]
+        low = t.lower()
         if t in (">", ">>"):
             i += 2                                   # `> file`
             continue
         if t.startswith(">"):
             i += 1                                   # `>file`
             continue
-        if t.lower() == "vs":
-            i += 2                                   # `vs time` x-axis selector
+        if display and low == "vs":
+            warn.append("plot x-axis selector dropped: vs %s"
+                        % (toks[i + 1] if i + 1 < len(toks) else ""))
+            i += 2                                   # `vs time`
+            continue
+        if display and low in _PLOT_FLAGS:
+            warn.append("plot display flag dropped: %s" % t)
+            i += 1
+            continue
+        if display and low in _PLOT_KW1:
+            warn.append("plot display option dropped: %s" % " ".join(toks[i:i + 2]))
+            i += 2
+            continue
+        if display and low in _PLOT_KW2:
+            warn.append("plot display option dropped: %s" % " ".join(toks[i:i + 3]))
+            i += 3
             continue
         out.append(_unquote(t))
         i += 1
     return out
+
+
+def _normalize_expr(expr, warn):
+    """Map a probe expression onto a form ngspice can actually `.save`."""
+    mo = _IDEV_RE.match(expr)
+    if mo:
+        warn.append("i(@dev[param]) is not a vector, saving %s instead: %s"
+                    % (mo.group(1), expr))
+        return mo.group(1)
+    return expr
 
 
 class SpiceDeck(object):
@@ -332,10 +375,17 @@ class SpiceDeck(object):
                 self.includes.append(toks[1])      # `.lib file` (whole-file) ~ include
             return
         if low.startswith(".include") or low.startswith(".inc "):
-            toks = [_unquote(t) for t in _split_ws(line)]
-            if len(toks) >= 2:
-                self.includes.append(toks[1])
-                if len(toks) > 2:
+            parts = line.split(None, 1)
+            rest = parts[1].strip() if len(parts) == 2 else ""
+            if not rest:
+                return
+            toks = _split_ws(rest)
+            if len(toks) == 1 or not rest[0] in "\"'":
+                # an UNQUOTED path may legally contain spaces -> rest of line
+                self.includes.append(_unquote(rest) if len(toks) == 1 else rest)
+            else:
+                self.includes.append(_unquote(toks[0]))
+                if len(toks) > 1:
                     self.warnings.append("extra .include tokens dropped: %s" % line)
             return
         if low.startswith(".param"):
@@ -345,7 +395,7 @@ class SpiceDeck(object):
             self._parse_options(line.split(None, 1)[1] if len(line.split()) > 1 else "")
             return
         if low.startswith(".save") or low.startswith(".probe"):
-            for e in _probe_tokens(line):
+            for e in _probe_tokens(line, self.warnings):    # no display clauses
                 self._add_output(e, 0)
             return
         if low.startswith(".temp"):
@@ -377,11 +427,13 @@ class SpiceDeck(object):
             self._parse_analysis(line)
             return
         if head in ("save", "print"):
-            for e in _probe_tokens(line):
+            # `save` takes vectors only — `vs`/`vd`/`vg` are ordinary net names
+            # there. Only `print`/`plot` have the display grammar.
+            for e in _probe_tokens(line, self.warnings, display=(head == "print")):
                 self._add_output(e, 0)
             return
         if head == "plot":
-            for e in _probe_tokens(line):
+            for e in _probe_tokens(line, self.warnings, display=True):
                 mo = _PLOT_OFFSET_RE.match(e)
                 if mo:                       # `plot clk+2` — +2 is a screen offset
                     self.warnings.append(
@@ -527,17 +579,25 @@ def _row_outputs(row, warn):
         warn.append("graph dataset/rawfile selector dropped: %%%s" % tail.strip())
     fields = core.split(";")
     label = fields[0].strip() if len(fields) > 1 else None
-    raw = fields[1] if len(fields) > 1 else core
-    if len(fields) > 2:
+    # find_nth() collapses runs of separators, so `a;;b` gives the expression `b`
+    tail = [f for f in fields[1:] if f.strip()]
+    if len(tail) > 1:
         warn.append("graph row truncated at its 2nd ';' (as xschem does): %s" % row)
+    if len(fields) > 1:
+        raw = tail[0] if tail else ""
+    else:
+        raw = core
     if len(fields) > 1 and "," in raw:                          # BUS row
-        bits = [b for b in _BUS_BIT_SEP_RE.split(_graph_unescape(core)) if b][1:]
+        # keep index 0 out (it is the bus label) WITHOUT filtering empties first,
+        # else `;a,b` would lose bit `a` with the empty label field
+        bits = [b for b in _BUS_BIT_SEP_RE.split(_graph_unescape(core))[1:] if b]
         if len(bits) > 32:
             warn.append("graph bus %s expanded to %d single-bit outputs"
                         % (label or "?", len(bits)))
         return [(b, 1, None) for b in bits]
     raw = raw.strip()
     if not raw:
+        warn.append("graph row carries no expression, dropped: %s" % row)
         return []
     if re.search(r"(?<!\\)[ \t]", raw):                         # RPN expression
         toks = [_graph_unescape(t) for t in re.split(r"(?<!\\)[ \t]+", raw)]
@@ -546,7 +606,14 @@ def _row_outputs(row, warn):
         warn.append("graph expression not saveable as one vector, keeping its "
                     "operands (%s): %s" % (", ".join(operands) or "none", raw))
         return [(t, 1, None) for t in operands]
-    return [(_graph_unescape(raw), 1, label)]                   # plain signal
+    expr = _graph_unescape(raw)                                 # plain signal
+    if _RPN_NUM_RE.match(expr):
+        # a constant reference line (`-; 0.9`) is not a vector: ngspice aborts
+        # the analysis on `.save 0.9` when nothing else got saved
+        warn.append("graph reference-line constant is not a signal, dropped: %s"
+                    % row)
+        return []
+    return [(expr, 1, label)]
 
 
 def graph_outputs(props, warn=None):
@@ -620,6 +687,8 @@ def classify(rec):
 
 _VSOURCE_CELLS = frozenset(("vsource", "isource", "vpulse", "ipulse"))
 _NUM_RE = re.compile(r"^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$")
+# `$NAME` without the `::` qualifier — ase::expand_path cannot resolve it
+_UNQUAL_VAR_RE = re.compile(r"\$(?!::)\{?([A-Za-z_][A-Za-z0-9_]*)")
 
 
 class MigrationReport(object):
@@ -744,6 +813,15 @@ class CellMigrator(object):
         for f in ("models", "variables", "outputs", "options", "includes"):
             if st[f]:
                 self.report.extracted[f] = len(st[f])
+        # ase::expand_path substitutes at GLOBAL level, so `$PDK_ROOT/...` only
+        # resolves if ::PDK_ROOT exists — an unqualified name (or one the
+        # workarea rc never sets) makes render_deck hard-error at Run time.
+        for f, path in ([("models", m[1]) for m in st["models"]]
+                        + [("includes", i[1]) for i in st["includes"]]):
+            for var in _UNQUAL_VAR_RE.findall(path):
+                self.report.warnings.append(
+                    "%s path uses unqualified $%s (ase::expand_path resolves at "
+                    "global level): %s" % (f, var, path))
         return st
 
     @staticmethod
@@ -773,7 +851,7 @@ class CellMigrator(object):
         seen = {}
         order = []
         for item in list(deck.outputs) + list(g_outputs):
-            expr, plot = item[0], item[1]
+            expr, plot = _normalize_expr(item[0], self.report.warnings), item[1]
             label = item[2] if len(item) > 2 else None     # graph legend alias
             if expr in seen:
                 if plot:                        # a plotted node upgrades plot flag
@@ -788,7 +866,14 @@ class CellMigrator(object):
         used = set()
         for i, expr in enumerate(order, 1):
             e = seen[expr]
-            name = _mk_name(e["label"] or expr, i, used)
+            name = None
+            if e["label"]:                  # the graph legend alias, if it is free
+                cand = _mk_name(e["label"], i)
+                if cand not in used:        # an alias that would need a _2 suffix
+                    name = cand             # reads worse than the expr-derived name
+                    used.add(cand)
+            if name is None:
+                name = _mk_name(expr, i, used)
             out.append(["name", name, "expr", e["expr"], "save", "1",
                         "plot", e["plot"]])
         return out
@@ -852,7 +937,12 @@ def _mk_name(expr, i, used=None):
     accepts (`^[A-Za-z_][A-Za-z0-9_]*$`, src/ase_window.tcl) and UNIQUE within
     the state — ase::result_probe keys its results dict by name, so a duplicate
     silently shadowed another output's value."""
-    base = re.sub(r"[^A-Za-z0-9]", "", expr)[:_NAME_MAX]
+    base = re.sub(r"[^A-Za-z0-9]", "", expr)
+    if len(base) > _NAME_MAX:
+        # keep the TAIL too: for `@m.x11.msky130_fd_pr__pfet…_base[gm|id|vth]`
+        # the discriminating part is the suffix, and a head-only cut left three
+        # identical names that the _2/_3 dedupe then made indistinguishable
+        base = base[:_NAME_MAX - 12] + base[-12:]
     if not base:
         base = "o%d" % i
     if base[0].isdigit():

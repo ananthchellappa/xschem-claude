@@ -83,3 +83,46 @@ with **no state view**, and stranded the remaining 22 cells unmigrated.
 `--library` over both shipped workareas now completes: `sky130_tests` 48 cells,
 `gf180mcu_tests` 59 cells, exit 0, no failures. The gated integration leg still reproduces the
 cluttered cell's operating point exactly (`Id_before == Id_after == 4.843529e-04`).
+
+All 107 emitted `.state` files are **canonical for the real loader**: `ase::state_load` +
+`ase::state_serialize` inside `src/xschem` is byte-identical for every one, every sub-element
+`llength`-parses at depth 2-3, and all 1483 output rows carry unique identifier-shaped names.
+The clean `.sch` is byte-for-byte unchanged from the pre-fix tool in **all 107** cells — the diff
+touches state extraction only. Of the 296 expressions the old code emitted and the new one drops,
+all 296 are attributable (quoted header rows no longer shredded 162, aliases 33, RPN
+numbers/operators/functions 67, `%N` 8, redirects 2, `vs` selectors 4) and none is a real
+plottable vector.
+
+## Round 2 — defects found by verifying the fix
+
+The first pass introduced one regression and left several adjacent defects; all fixed in the
+follow-up commit:
+
+* **Regression:** `_probe_tokens` treated `vs` as an x-axis keyword on *every* probe card, so
+  `.save vs vd vg` silently lost two signals — `vs`/`vd`/`vg` are ordinary net names in a MOSFET
+  bench. The display grammar (`vs`, `xlimit`, `title`, `xlog`, …) now applies only to
+  `plot`/`print`, and every dropped clause warns.
+* A constant reference-line row (`-; 0.9`) became an output; ngspice aborts the analysis on
+  `.save 0.9` when nothing else got saved. Now dropped with a warning (3 cells).
+* `i(@dev[param])` is not an ngspice vector (`no such function as i`); it is rewritten to the bare
+  `@dev[param]` form, which also collapses the duplicate row in `sky130_oscillator` (5 cells).
+* `_NAME_MAX` truncated `…_base[gm|id|vth]` to three identical heads that the `_2`/`_3` dedupe
+  then made indistinguishable — the cap now keeps the discriminating tail.
+* A graph alias that would need a uniquifying suffix now yields to the expr-derived name
+  (`f2` beats `vth2_2`).
+* `_OPT_NAME_RE` rejected legitimate hyphenated options (`.options NONLIN-TRAN`); an unquoted
+  `.include` path containing spaces was truncated where the old code kept it.
+* Bus row `;a,b` lost bit `a` when the label field was empty; `a;;b` returned nothing with a
+  warning that misdescribed it (`find_nth` collapses separator runs — it plots `b`).
+* An `includes`/`models` path using an unqualified `$VAR` (`$PDK_ROOT/…`, `$::SKYWATER_STDCELLS`)
+  now warns: `ase::expand_path` substitutes at global level, so `render_deck` hard-errors at Run
+  time. 7 sky130A cells are affected — a property of those source schematics, not of the migrator.
+
+## Known, not fixed here
+
+* `render_deck` emits `print a[0]` for bracketed vector names; ngspice parses `[0]` as a
+  subscript, so 1109 of 1488 `print` lines yield no value and `ase::result_probe` sees nothing
+  (`print "a[0]"` is the working form). That is an `src/ase.tcl` defect, not a migrator one.
+* `ase::state_load` runs `ase::expand_bus_outputs`, which clones a row's `name` when it expands a
+  `v(d[1:0])` range — such a state is not byte-stable under load→save and gains duplicate names.
+  No migrated cell emits a range expr today, so it is dormant.
