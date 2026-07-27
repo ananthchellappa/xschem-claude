@@ -9,8 +9,19 @@ The new list :
 5. Telescopic moving instance across hierarchical boundaries (wait and see - something even CDNS can't do :)
 6. Symbol generator with Cadence UX
 7. Efficiency coach / key promoter / notification menu (visit to find out where you will benefit from using shortcuts)
-8. Be able to copy pins from schematic to symbol (something Tanner Tools S-Edit provides but CDNS doesn't. Yes, Tanner is very difficult to use, but this is something that does have value once in a w)
+8. Be able to copy pins from schematic to symbol (something Tanner Tools S-Edit provides but CDNS doesn't. Yes, Tanner is very difficult to use, but this is something that does have value once in a w) DONE! Claude Code
 9. Cadence UX Search and Replace utility.
+10. WV: Rubber-band zoom only X or Y with SHIFT-LMB-press-drag on axis
+11. WV: Context menu to split/combine strips (and log to CIW!). And delete/add strip
+12. WV: Context menu on a trace - be able to move to new strip (and log command!)
+13. WV: CTRL-A to select all traces. Select and delete traces
+14. WV: Support for markers with same UX as Cadence - m key press adds M<N>x_val,y_val. If d key pressed after adding a marker, a difference-marker (del_x,del_y,slope) will be added. Markers will have callout lines from point on trace they are marking and may be dragged.
+15. WV: Always start with one blank graph element. CTRL-D will wipe window clean, return to one blank graph. CTRL-N will add a new waveform viewer sub-window
+16. WV: Support for customizable legend position
+17. WV: Cursor on trace based on current mouse-position, with x,y (not mouse coords, trace x,y) reported on status bar
+18. WV: Signal browser with search (wildcard, regex) and cross-probing (that is, you can go to that location from/to schematic that is associated with the ASE-L session)
+19. WV: Integration of Carsten Wulff's cicwave (cross-probing and control from schematic, basically)
+
 
 The old list (what was posted on Go Fund Me a year ago) :
 
