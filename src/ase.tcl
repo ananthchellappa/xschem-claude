@@ -992,7 +992,7 @@ namespace eval ase::backend::ngspice {
     }
     foreach o [ase::state_get $state outputs] {
       if {[ase::state_get $o save 0] eq {1}} {
-        lappend lines "print [dict get $o expr]"
+        lappend lines "print [ase::backend::ngspice::print_arg [dict get $o expr]]"
       }
     }
     # waveform-viewer raw artifact (item 11 D3): with a .control block,
@@ -1042,11 +1042,28 @@ namespace eval ase::backend::ngspice {
     return [file join [ase::rundir $state] ${cell}_ase.raw]
   }
 
+  # `print` argument for an output expression. ngspice's expression parser reads
+  # the `[0]` in `print a[0]` as a SUBSCRIPT of a vector named `a`, so a bus-bit
+  # name prints nothing at all — "Warning from checkvalid: vector a is not
+  # available or has zero length" (measured, ngspice-42; `print v(a[0])`,
+  # `print {a[0]}` and `print a\[0\]` fail the same way). Double-quoting makes it
+  # a literal vector name: `print "a[0]"` prints `"a[0]" = 1.500000e+00`. The
+  # `.save` side is NOT affected — `.save a[0]` saves the vector correctly — and
+  # quoting a `@dev[param]` name is harmless (measured), so the rule is simply:
+  # a bracketed expression is quoted. result_probe below accepts the quoted
+  # label ngspice then echoes.
+  proc print_arg {ex} {
+    if {[string first {[} $ex] < 0} { return $ex }
+    if {[string first {"} $ex] >= 0} { return $ex }   ;# hand-quoted already
+    return "\"$ex\""
+  }
+
   # Parse `<expr> = <float>` lines out of the log text (e.g.
-  # `-i(v1) = 4.096837e-04`) -> results dict, for every state output whose
-  # line appears. Keyed by the output's `name` when present and non-empty,
-  # else by its `expr` (UI v2: the Outputs pane needs a Value for unnamed
-  # rows too); outputs without an `expr` are skipped.
+  # `-i(v1) = 4.096837e-04`, or `"a[0]" = 1.5` for a print_arg-quoted bit)
+  # -> results dict, for every state output whose line appears. Keyed by the
+  # output's `name` when present and non-empty, else by its `expr` (UI v2: the
+  # Outputs pane needs a Value for unnamed rows too); outputs without an `expr`
+  # are skipped.
   proc result_probe {state logtext} {
     set results [dict create]
     foreach o [ase::state_get $state outputs] {
@@ -1056,7 +1073,7 @@ namespace eval ase::backend::ngspice {
         set rkey [dict get $o name]
       }
       regsub -all {\W} [dict get $o expr] {\\&} esc
-      set pat [format {^\s*%s\s*=\s*([-+]?[0-9.]+(?:[eE][-+]?[0-9]+)?)\s*$} $esc]
+      set pat [format {^\s*"?%s"?\s*=\s*([-+]?[0-9.]+(?:[eE][-+]?[0-9]+)?)\s*$} $esc]
       if {[regexp -line $pat $logtext -> val]} {
         dict set results $rkey $val
       }

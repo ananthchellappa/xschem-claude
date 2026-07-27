@@ -118,11 +118,29 @@ follow-up commit:
   now warns: `ase::expand_path` substitutes at global level, so `render_deck` hard-errors at Run
   time. 7 sky130A cells are affected — a property of those source schematics, not of the migrator.
 
+## Round 3 — the `print` half of the deck (`src/ase.tcl`)
+
+Verification also turned up a defect on the ASE side, made reachable in bulk by the bus expansion
+above: `render_deck` interpolated an output expr verbatim into `print <expr>`, and ngspice's
+expression parser reads the `[0]` of `print a[0]` as a **subscript** of a vector named `a`:
+
+```
+print a[0]      -> Warning from checkvalid: vector a is not available or has zero length
+print "a[0]"    -> "a[0]" = 1.500000e+00
+```
+
+`print v(a[0])`, `print {a[0]}` and `print a\[0\]` all fail the same way (measured, ngspice-42);
+the `.save` side was always fine. So **1109 of 1488 `print` lines produced nothing** and
+`ase::result_probe` — which scrapes `<expr> = <float>` out of the log — left the Outputs pane
+blank for every bus bit.
+
+`ase::backend::ngspice::print_arg` now quotes a bracketed expression (quoting `@dev[param]` is
+harmless, so the rule is just "has a `[`"), and `result_probe` accepts the quoted label ngspice
+echoes back. Tests: `tests/headless/test_ase_print_bracket_0167.tcl` (12 checks, PB10-PB12 drive
+real ngspice); sabotage-verified — reverting `print_arg` to the identity turns 5 of them red.
+
 ## Known, not fixed here
 
-* `render_deck` emits `print a[0]` for bracketed vector names; ngspice parses `[0]` as a
-  subscript, so 1109 of 1488 `print` lines yield no value and `ase::result_probe` sees nothing
-  (`print "a[0]"` is the working form). That is an `src/ase.tcl` defect, not a migrator one.
 * `ase::state_load` runs `ase::expand_bus_outputs`, which clones a row's `name` when it expands a
   `v(d[1:0])` range — such a state is not byte-stable under load→save and gains duplicate names.
   No migrated cell emits a range expr today, so it is dormant.
