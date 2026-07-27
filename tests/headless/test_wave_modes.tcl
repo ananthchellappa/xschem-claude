@@ -263,6 +263,127 @@ check "M6 plan_colors single is prefix-stable" \
   [pcall {wviewer::plan_colors [list [m6_g {}]] single {0 0}}] [lrange $m6fs 0 1]
 rename m6_g {}
 
+# --- M7: strip drag reordering, the PURE half -------------------------------
+# doc/claude/specs/waveform_viewer_modes.md §12. `to` is the FINAL index the
+# moved strip occupies, which is NOT an insertion slot whenever the move goes
+# downward — every caller and the replay log read it the first way, so it is
+# pinned here with the spec's own worked example first.
+check "M7 the spec example: A B C D, 1 -> 3" \
+  [pcall {wviewer::reorder_graphs {A B C D} 1 3}] {A C D B}
+
+# every meaningful from/to permutation of a four-element list, by construction:
+# the moved element must land AT `to`, and the others must keep their relative
+# order. Computing the expectation independently (filter + insert) keeps this
+# from being a restatement of the implementation.
+proc m7_expect {lst from to} {
+  set el [lindex $lst $from]
+  set rest {}
+  set i 0
+  foreach e $lst { if {$i != $from} { lappend rest $e }; incr i }
+  return [linsert $rest $to $el]
+}
+set m7bad 0
+set m7n 0
+for {set f 0} {$f < 4} {incr f} {
+  for {set t 0} {$t < 4} {incr t} {
+    incr m7n
+    set got [pcall {}]
+    set got [wviewer::reorder_graphs {A B C D} $f $t]
+    set exp [expr {$f == $t ? {A B C D} : [m7_expect {A B C D} $f $t]}]
+    if {$got ne $exp} { incr m7bad; puts "  M7 mismatch $f->$t: {$got} != {$exp}" }
+    # and the moved element really is at index `to`
+    if {[lindex $got $t] ne [lindex {A B C D} $f]} { incr m7bad }
+  }
+}
+check "M7 all 16 from/to permutations of a 4-strip list" [list $m7n $m7bad] {16 0}
+rename m7_expect {}
+
+check "M7 up by one"          [pcall {wviewer::reorder_graphs {A B C D} 2 1}] {A C B D}
+check "M7 down by one"        [pcall {wviewer::reorder_graphs {A B C D} 1 2}] {A C B D}
+check "M7 up by several"      [pcall {wviewer::reorder_graphs {A B C D} 3 1}] {A D B C}
+check "M7 down by several"    [pcall {wviewer::reorder_graphs {A B C D} 0 3}] {B C D A}
+check "M7 first to last"      [pcall {wviewer::reorder_graphs {A B C D} 0 3}] {B C D A}
+check "M7 last to first"      [pcall {wviewer::reorder_graphs {A B C D} 3 0}] {D A B C}
+check "M7 from == to is identity" [pcall {wviewer::reorder_graphs {A B C D} 2 2}] {A B C D}
+check "M7 out-of-range from -> unchanged" \
+  [pcall {wviewer::reorder_graphs {A B C D} 4 0}] {A B C D}
+check "M7 out-of-range to -> unchanged" \
+  [pcall {wviewer::reorder_graphs {A B C D} 0 9}] {A B C D}
+check "M7 negative index -> unchanged" \
+  [pcall {wviewer::reorder_graphs {A B C D} -1 2}] {A B C D}
+check "M7 non-integer index -> unchanged" \
+  [pcall {wviewer::reorder_graphs {A B C D} x 2}] {A B C D}
+check "M7 empty list -> unchanged" [pcall {wviewer::reorder_graphs {} 0 0}] {}
+
+# reordered_index: an index that named a graph BEFORE the move must name the
+# SAME graph after it. Checked against the lists themselves, so it cannot drift
+# from reorder_graphs.
+set m7ri {}
+foreach i {0 1 2 3} { lappend m7ri [pcall {wviewer::reordered_index $i 1 3}] }
+check "M7 reordered_index for the moved graph (1 -> 3)" [lindex $m7ri 1] 3
+check "M7 reordered_index for the graphs crossed by the move" \
+  [list [lindex $m7ri 2] [lindex $m7ri 3]] {1 2}
+check "M7 reordered_index for an unaffected graph" [lindex $m7ri 0] 0
+set m7ri2 {}
+foreach i {0 1 2 3} { lappend m7ri2 [pcall {wviewer::reordered_index $i 3 0}] }
+check "M7 reordered_index, upward move (3 -> 0)" $m7ri2 {1 2 3 0}
+check "M7 reordered_index is identity for from == to" \
+  [pcall {wviewer::reordered_index 2 1 1}] 2
+check "M7 reordered_index passes a non-integer through" \
+  [pcall {wviewer::reordered_index x 1 3}] x
+# exhaustive identity check: for every permutation, reordered_index must point
+# at the element it pointed at before
+set m7bad2 0
+for {set f 0} {$f < 4} {incr f} {
+  for {set t 0} {$t < 4} {incr t} {
+    set moved [wviewer::reorder_graphs {A B C D} $f $t]
+    for {set i 0} {$i < 4} {incr i} {
+      set ni [wviewer::reordered_index $i $f $t]
+      if {[lindex $moved $ni] ne [lindex {A B C D} $i]} { incr m7bad2 }
+    }
+  }
+}
+check "M7 reordered_index tracks IDENTITY across all permutations" $m7bad2 0
+
+# the dictionary moves WHOLE: traces, their order, colors and the `auto 1`
+# marker ride along untouched (the "do not reconstruct the graph field by
+# field" contract)
+set m7ga [dict merge [wviewer::empty_graph] [dict create auto 1]]
+set m7gb [dict replace [wviewer::empty_graph] traces [list \
+  [dict create expr {v(a)} name {} vec {v(a)} color 4] \
+  [dict create expr {v(b)} name bee vec {v(b)} color 9]]]
+set m7gc [wviewer::empty_graph]
+set m7moved [pcall {wviewer::reorder_graphs [list $m7ga $m7gb $m7gc] 1 0}]
+check "M7 the moved strip's dict is byte-identical" [lindex $m7moved 0] $m7gb
+check "M7 trace order inside the moved strip is unchanged" \
+  [list [dict get [lindex [dict get [lindex $m7moved 0] traces] 0] expr] \
+        [dict get [lindex [dict get [lindex $m7moved 0] traces] 1] expr]] {v(a) v(b)}
+check "M7 trace colors inside the moved strip are unchanged" \
+  [pcall {wviewer::graph_colors [lindex $m7moved 0]}] {4 9}
+proc m7_auto_at {gs} {
+  set gi 0
+  foreach G $gs {
+    if {[wviewer::dget $G auto 0] eq {1}} { return $gi }
+    incr gi
+  }
+  return -1
+}
+check "M7 `auto 1` stays on the SAME dict (now at index 1)" \
+  [pcall {m7_auto_at $m7moved}] 1
+check "M7 the auto strip's dict is byte-identical too" [lindex $m7moved 1] $m7ga
+rename m7_auto_at {}
+
+# the reorder handle: graph_props marks every viewer strip
+set m7p [pcall {wviewer::graph_props [wviewer::empty_graph]}]
+check_true "M7 graph_props emits reorder_handle=1" \
+  [regexp -line {^reorder_handle=1$} $m7p]
+# hilight_wave round-trips only when the model carries it (absent stays absent)
+check_true "M7 graph_props omits hilight_wave when the model has none" \
+  [expr {![string match {*hilight_wave*} $m7p]}]
+check_true "M7 graph_props emits a captured hilight_wave" \
+  [regexp -line {^hilight_wave=2$} \
+    [pcall {wviewer::graph_props [dict replace [wviewer::empty_graph] hilight_wave 2]}]]
+
 # ============================================================================
 # GUI legs
 # ============================================================================
@@ -652,6 +773,336 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   check "MG9 missing mode key falls back to the config default" \
     [pcall {wviewer::plot_mode $tok}] single
   check "MG9 missing target key falls back to 0" [pcall {wviewer::target_strip $tok}] 0
+
+  # --- MG14: strip drag-to-reorder -------------------------------------------
+  # doc/claude/specs/waveform_viewer_modes.md §12. Two halves, both with teeth:
+  # the MODEL mutation (wviewer::move_strip) and the real Tk press/motion/release
+  # GESTURE through the shipped bindings.
+  #
+  # Every synthetic button event carries an explicitly increasing -time: two
+  # presses inside Tk's double-click window collapse into <Double-Button-1>,
+  # which the viewer binds to {break}, and the second press then never happens
+  # (the issue-0152 lesson, `wb_ev` in test_wave_viewer.tcl).
+  set ::mg14t 400000
+  proc mg14_ev {w seq args} {
+    set ::mg14t [expr {$::mg14t + 1000}]
+    eval [list event generate $w $seq -time $::mg14t] $args
+  }
+  # a 4-strip fixture where every strip is identifiable by its single trace
+  proc mg14_fixture {tok} {
+    set gs {}
+    foreach s {0 1 2 3} {
+      lappend gs [dict replace [wviewer::empty_graph] traces \
+        [list [dict create expr "v(s$s)" name {} vec "v(s$s)" color 4]]]
+    }
+    wviewer::set_graphs $tok $gs
+    wviewer::regenerate $tok
+  }
+  # the model's trace names, top to bottom
+  proc mg14_order {tok} {
+    set out {}
+    foreach G [dict get [wviewer::layout_for $tok] graphs] {
+      lappend out [wviewer::dget [lindex [dict get $G traces] 0] vec {}]
+    }
+    return $out
+  }
+  # the same thing read back off the CANVAS RECTS, so model and rects cannot
+  # silently disagree (the reorder is only real if the rects moved too)
+  proc mg14_rect_order {vdrw n} {
+    xschem new_schematic switch $vdrw
+    set out {}
+    for {set i 0} {$i < $n} {incr i} {
+      lappend out [string trim [xschem getprop rect 2 $i node] {"}]
+    }
+    return $out
+  }
+
+  catch {wviewer::close $tok}; update
+  pcall {wviewer::open $tok}
+  set vtop [wviewer::window_for $tok]; set vdrw $vtop.drw
+  viewer_ready $vtop
+  pcall {wviewer::set_plot_mode single $tok}
+  mg14_fixture $tok
+  set H [winfo height $vdrw]
+  set W [winfo width $vdrw]
+
+  check "MG14 fixture: four strips, top to bottom" \
+    [mg14_order $tok] {v(s0) v(s1) v(s2) v(s3)}
+  check "MG14 the rects agree with the model" [mg14_rect_order $vdrw 4] \
+    {v(s0) v(s1) v(s2) v(s3)}
+  check_true "MG14 every viewer rect carries the reorder handle token" \
+    [expr {[xschem getprop rect 2 0 reorder_handle] == 1 &&
+           [xschem getprop rect 2 3 reorder_handle] == 1}]
+
+  # -- the model mutation ------------------------------------------------------
+  pcall {wviewer::set_target_strip 1 $tok}
+  set nlog [llength $::wvm_log]
+  check "MG14 move_strip returns the final index" [pcall {wviewer::move_strip 3 0 $tok}] 0
+  check "MG14 bottom strip moved to the top" \
+    [mg14_order $tok] {v(s3) v(s0) v(s1) v(s2)}
+  check "MG14 the rects moved with it" [mg14_rect_order $vdrw 4] \
+    {v(s3) v(s0) v(s1) v(s2)}
+  check "MG14 graphbb has one band per strip, in order" \
+    [llength [dict get $::wviewer::graphbb $vdrw]] 4
+  check "MG14 a DIFFERENT target strip keeps its identity (1 -> 2)" \
+    [pcall {wviewer::target_strip $tok}] 2
+  check "MG14 exactly ONE log line, fully resolved" \
+    [list [expr {[llength $::wvm_log] - $nlog}] [lindex $::wvm_log end]] \
+    [list 1 "wviewer::move_strip 3 0 $tok"]
+
+  # the target FOLLOWS the strip it names when that strip is the one moved
+  pcall {wviewer::set_target_strip 0 $tok}
+  pcall {wviewer::move_strip 0 3 $tok}
+  check "MG14 top strip moved to the bottom" \
+    [mg14_order $tok] {v(s0) v(s1) v(s2) v(s3)}
+  check "MG14 the target followed the MOVED strip" [pcall {wviewer::target_strip $tok}] 3
+
+  # middle strip, both directions
+  pcall {wviewer::move_strip 1 2 $tok}
+  check "MG14 middle strip down by one" [mg14_order $tok] {v(s0) v(s2) v(s1) v(s3)}
+  pcall {wviewer::move_strip 2 1 $tok}
+  check "MG14 middle strip back up by one" [mg14_order $tok] {v(s0) v(s1) v(s2) v(s3)}
+
+  # refusals: no mutation, no log
+  set nlog [llength $::wvm_log]
+  check "MG14 from == to returns the index" [pcall {wviewer::move_strip 2 2 $tok}] 2
+  check "MG14 out-of-range index is refused" [pcall {wviewer::move_strip 0 9 $tok}] {}
+  check "MG14 non-integer index is refused" [pcall {wviewer::move_strip x 0 $tok}] {}
+  check "MG14 unknown token is refused" [pcall {wviewer::move_strip 0 1 no/such/tok}] {}
+  check "MG14 none of the refusals logged" [llength $::wvm_log] $nlog
+  check "MG14 none of the refusals reordered" \
+    [mg14_order $tok] {v(s0) v(s1) v(s2) v(s3)}
+
+  # -- live C-written state survives the move ----------------------------------
+  # The engine writes pan/zoom ranges and the bold-trace index STRAIGHT into the
+  # rect prop where the model never sees them; move_strip regenerates, so
+  # without capture_live_graph_state it would throw them away. Written here
+  # exactly as waves_callback does (the MG7b idiom).
+  wviewer::with_edit $tok {
+    xschem setprop -fast rect 2 3 x1 3
+    xschem setprop -fast rect 2 3 x2 4
+    xschem setprop -fast rect 2 3 y1 -2
+    xschem setprop -fast rect 2 3 y2 7
+    xschem setprop -fast rect 2 3 hilight_wave 0
+  }
+  pcall {wviewer::move_strip 3 0 $tok}
+  xschem new_schematic switch $vdrw
+  check "MG14 the moved strip is on top" [lindex [mg14_order $tok] 0] {v(s3)}
+  check "MG14 live x1/x2 survived the reorder" \
+    [list [xschem getprop rect 2 0 x1] [xschem getprop rect 2 0 x2]] {3 4}
+  check "MG14 live y1/y2 survived the reorder" \
+    [list [xschem getprop rect 2 0 y1] [xschem getprop rect 2 0 y2]] {-2 7}
+  check "MG14 live hilight_wave survived the reorder" \
+    [xschem getprop rect 2 0 hilight_wave] 0
+  check "MG14 a strip that was never bolded gets NO hilight_wave token" \
+    [xschem getprop rect 2 1 hilight_wave] {}
+
+  # -- auto-plot identity ------------------------------------------------------
+  set gsa [dict get [wviewer::layout_for $tok] graphs]
+  wviewer::set_graphs $tok \
+    [lreplace $gsa 2 2 [dict merge [lindex $gsa 2] [dict create auto 1]]]
+  wviewer::regenerate $tok
+  check "MG14 auto strip is at index 2" [pcall {wviewer::auto_graph_index $tok}] 2
+  pcall {wviewer::move_strip 2 0 $tok}
+  check "MG14 the `auto 1` marker rode along with its dict" \
+    [pcall {wviewer::auto_graph_index $tok}] 0
+  pcall {wviewer::move_strip 0 3 $tok}
+  check "MG14 ... and again, downward" [pcall {wviewer::auto_graph_index $tok}] 3
+
+  # -- persistence -------------------------------------------------------------
+  mg14_fixture $tok
+  pcall {wviewer::move_strip 3 0 $tok}
+  set snap14 [pcall {wviewer::snapshot $tok {}}]
+  catch {wviewer::close $tok}; update
+  pcall {wviewer::restore $tok $snap14 {} {}}
+  set vtop [wviewer::window_for $tok]; set vdrw $vtop.drw
+  viewer_ready $vtop
+  check "MG14 the reordered order survived save/restore" \
+    [mg14_order $tok] {v(s3) v(s0) v(s1) v(s2)}
+
+  # -- the GESTURE, through the shipped bindings -------------------------------
+  check_true "MG14 <B1-Motion> is bound on the viewer canvas" \
+    [string match {*wviewer::strip_drag_motion*} [bind $vdrw <B1-Motion>]]
+  check_true "MG14 <ButtonRelease-1> is bound on the viewer canvas" \
+    [string match {*wviewer::strip_drag_release*} [bind $vdrw <ButtonRelease-1>]]
+  check_true "MG14 the press bind runs the drag seam first" \
+    [string match {*wviewer::strip_drag_press*} [bind $vdrw <ButtonPress-1>]]
+
+  mg14_fixture $tok
+  set H [winfo height $vdrw]
+  set W [winfo width $vdrw]
+  # Band midpoints are the drop boundaries, so the gesture legs must aim at a
+  # pixel unambiguously PAST the destination's midpoint — landing exactly ON it
+  # is the boundary case and rounding decides it. `d` is that few-pixel overshoot
+  # in the direction of travel (+ dragging down, - dragging up); d 0 = "somewhere
+  # inside band k", which is all a press needs. Read from the SAME source the
+  # hit-test uses, so canvas geometry cannot make the leg lie.
+  proc mg14_mid {vdrw k {d 0}} {
+    set bb [lindex [wviewer::strip_bands_px $vdrw] $k]
+    return [expr {int(([lindex $bb 1] + [lindex $bb 3]) / 2.0) + $d}]
+  }
+  set hx [expr {$W - 7}]                  ;# inside the 14 px handle zone
+  set bx [expr {int($W * 0.4)}]           ;# empty waveform body, far from it
+
+  check "MG14 strip_handle_at_pixel finds the handle of band 2" \
+    [pcall {wviewer::strip_handle_at_pixel $vdrw $hx [mg14_mid $vdrw 2]}] 2
+  check "MG14 strip_handle_at_pixel says -1 in the body" \
+    [pcall {wviewer::strip_handle_at_pixel $vdrw $bx [mg14_mid $vdrw 2]}] -1
+  check "MG14 strip_drop_index: dragging 3 up past band 1's midpoint" \
+    [pcall {wviewer::strip_drop_index $vdrw [mg14_mid $vdrw 1 -3] 3}] 1
+  check "MG14 strip_drop_index: dragging 0 down past band 2's midpoint" \
+    [pcall {wviewer::strip_drop_index $vdrw [mg14_mid $vdrw 2 3] 0}] 2
+  check "MG14 strip_drop_index: short of the midpoint does NOT select it" \
+    [pcall {wviewer::strip_drop_index $vdrw [mg14_mid $vdrw 2 -3] 0}] 1
+  check "MG14 strip_drop_index clamps above the stack" \
+    [pcall {wviewer::strip_drop_index $vdrw -500 3}] 0
+  check "MG14 strip_drop_index clamps below the stack" \
+    [pcall {wviewer::strip_drop_index $vdrw [expr {$H + 500}] 0}] 3
+
+  # HANDLE drag: bottom strip to the top
+  pcall {wviewer::set_target_strip 3 $tok}   ;# already the target -> no target log
+  set nlog [llength $::wvm_log]
+  mg14_ev $vdrw <ButtonPress-1> -x $hx -y [mg14_mid $vdrw 3]
+  foreach k {2 1 0} {
+    mg14_ev $vdrw <B1-Motion> -x $hx -y [mg14_mid $vdrw $k -3] -state 0x100
+  }
+  mg14_ev $vdrw <ButtonRelease-1> -x $hx -y [mg14_mid $vdrw 0 -3] -state 0x100
+  update
+  check "MG14 handle drag moved the bottom strip to the top" \
+    [mg14_order $tok] {v(s3) v(s0) v(s1) v(s2)}
+  check "MG14 the rects followed" [mg14_rect_order $vdrw 4] \
+    {v(s3) v(s0) v(s1) v(s2)}
+  check "MG14 the target followed the dragged strip" \
+    [pcall {wviewer::target_strip $tok}] 0
+  check "MG14 the drag logged exactly one resolved move_strip" \
+    [list [expr {[llength $::wvm_log] - $nlog}] [lindex $::wvm_log end]] \
+    [list 1 "wviewer::move_strip 3 0 $tok"]
+  check "MG14 no drop-bar feedback is left behind" \
+    [xschem getprop rect 2 0 reorder_handle] 1
+
+  # EMPTY-BODY drag (no handle involved): top strip to the bottom. This is the
+  # leg that would stay green if only the handle worked.
+  mg14_fixture $tok
+  pcall {wviewer::set_target_strip 2 $tok}   ;# NOT the strip about to be dragged
+  set nlog [llength $::wvm_log]
+  mg14_ev $vdrw <ButtonPress-1> -x $bx -y [mg14_mid $vdrw 0]
+  foreach k {1 2 3} {
+    mg14_ev $vdrw <B1-Motion> -x $bx -y [mg14_mid $vdrw $k 3] -state 0x100
+  }
+  mg14_ev $vdrw <ButtonRelease-1> -x $bx -y [mg14_mid $vdrw 3 3] -state 0x100
+  update
+  check "MG14 empty-body drag moved the top strip to the bottom" \
+    [mg14_order $tok] {v(s1) v(s2) v(s3) v(s0)}
+  # the press re-targeted (strip 0), so replay needs that line BEFORE the move
+  check "MG14 a target change is logged before the move" \
+    [lrange $::wvm_log $nlog end] \
+    [list "wviewer::set_target_strip 0 $tok" "wviewer::move_strip 0 3 $tok"]
+  check "MG14 the target ended up on the moved strip" \
+    [pcall {wviewer::target_strip $tok}] 3
+
+  # middle strip, both directions, through the gesture
+  mg14_fixture $tok
+  mg14_ev $vdrw <ButtonPress-1> -x $hx -y [mg14_mid $vdrw 1]
+  mg14_ev $vdrw <B1-Motion> -x $hx -y [mg14_mid $vdrw 2 3] -state 0x100
+  mg14_ev $vdrw <ButtonRelease-1> -x $hx -y [mg14_mid $vdrw 2 3] -state 0x100
+  update
+  check "MG14 gesture: middle strip DOWN by one" \
+    [mg14_order $tok] {v(s0) v(s2) v(s1) v(s3)}
+  mg14_ev $vdrw <ButtonPress-1> -x $hx -y [mg14_mid $vdrw 2]
+  mg14_ev $vdrw <B1-Motion> -x $hx -y [mg14_mid $vdrw 1 -3] -state 0x100
+  mg14_ev $vdrw <ButtonRelease-1> -x $hx -y [mg14_mid $vdrw 1 -3] -state 0x100
+  update
+  check "MG14 gesture: middle strip UP by one" \
+    [mg14_order $tok] {v(s0) v(s1) v(s2) v(s3)}
+
+  # clamp: drag well past the top / bottom of the stack
+  mg14_ev $vdrw <ButtonPress-1> -x $hx -y [mg14_mid $vdrw 2]
+  mg14_ev $vdrw <B1-Motion> -x $hx -y -400 -state 0x100
+  mg14_ev $vdrw <ButtonRelease-1> -x $hx -y -400 -state 0x100
+  update
+  check "MG14 dragging above the stack clamps to first" \
+    [mg14_order $tok] {v(s2) v(s0) v(s1) v(s3)}
+  mg14_ev $vdrw <ButtonPress-1> -x $hx -y [mg14_mid $vdrw 0]
+  mg14_ev $vdrw <B1-Motion> -x $hx -y [expr {$H + 400}] -state 0x100
+  mg14_ev $vdrw <ButtonRelease-1> -x $hx -y [expr {$H + 400}] -state 0x100
+  update
+  check "MG14 dragging below the stack clamps to last" \
+    [mg14_order $tok] {v(s0) v(s1) v(s3) v(s2)}
+
+  # -- the NON-moves: sub-threshold, same-position, cancelled ------------------
+  # target parked on the strip these legs grab, so a press cannot add a
+  # set_target_strip line and blur the "logs nothing" assertions
+  mg14_fixture $tok
+  pcall {wviewer::set_target_strip 1 $tok}
+  set nlog [llength $::wvm_log]
+  mg14_ev $vdrw <ButtonPress-1> -x $hx -y [mg14_mid $vdrw 1]
+  mg14_ev $vdrw <B1-Motion> -x $hx -y [expr {[mg14_mid $vdrw 1] + 2}] -state 0x100
+  mg14_ev $vdrw <ButtonRelease-1> -x $hx -y [expr {[mg14_mid $vdrw 1] + 2}] -state 0x100
+  update
+  check "MG14 sub-threshold motion does not reorder" \
+    [mg14_order $tok] {v(s0) v(s1) v(s2) v(s3)}
+  check "MG14 sub-threshold motion logs nothing" [llength $::wvm_log] $nlog
+
+  # a real drag that comes back to where it started
+  mg14_ev $vdrw <ButtonPress-1> -x $hx -y [mg14_mid $vdrw 1]
+  mg14_ev $vdrw <B1-Motion> -x $hx -y [mg14_mid $vdrw 2 3] -state 0x100
+  mg14_ev $vdrw <B1-Motion> -x $hx -y [mg14_mid $vdrw 1] -state 0x100
+  mg14_ev $vdrw <ButtonRelease-1> -x $hx -y [mg14_mid $vdrw 1] -state 0x100
+  update
+  check "MG14 a drop at the original position is a no-op" \
+    [mg14_order $tok] {v(s0) v(s1) v(s2) v(s3)}
+  check "MG14 a no-op drop logs nothing" [llength $::wvm_log] $nlog
+
+  # ESC mid-drag
+  mg14_ev $vdrw <ButtonPress-1> -x $hx -y [mg14_mid $vdrw 1]
+  mg14_ev $vdrw <B1-Motion> -x $hx -y [mg14_mid $vdrw 3 3] -state 0x100
+  check_true "MG14 a drag is armed and active before ESC" \
+    [expr {$::wviewer::drag_active($tok) == 1}]
+  event generate $vdrw <KeyPress> -keysym Escape
+  update
+  check "MG14 ESC cancelled the drag (state reset)" \
+    [list $::wviewer::drag_from($tok) $::wviewer::drag_to($tok) \
+          $::wviewer::drag_active($tok)] {-1 -1 0}
+  check "MG14 ESC restored the pointer" [$vdrw cget -cursor] {}
+  check "MG14 ESC cleared the drop-bar feedback" \
+    [xschem getprop rect 2 3 reorder_handle] 1
+  mg14_ev $vdrw <ButtonRelease-1> -x $hx -y [mg14_mid $vdrw 3 3] -state 0x100
+  update
+  check "MG14 the cancelled drag changed nothing" \
+    [mg14_order $tok] {v(s0) v(s1) v(s2) v(s3)}
+  check "MG14 the cancelled drag logged nothing" [llength $::wvm_log] $nlog
+
+  # -- drop feedback is painted, and never regenerates the stack ---------------
+  mg14_ev $vdrw <ButtonPress-1> -x $hx -y [mg14_mid $vdrw 1]
+  mg14_ev $vdrw <B1-Motion> -x $hx -y [mg14_mid $vdrw 2 3] -state 0x100
+  update
+  xschem new_schematic switch $vdrw
+  check "MG14 the destination strip carries the drop bar (3 = bottom edge)" \
+    [xschem getprop rect 2 2 reorder_handle] 3
+  check "MG14 non-destination strips keep the plain grip" \
+    [list [xschem getprop rect 2 1 reorder_handle] \
+          [xschem getprop rect 2 3 reorder_handle]] {1 1}
+  check "MG14 the model is NOT mutated during the drag" \
+    [mg14_order $tok] {v(s0) v(s1) v(s2) v(s3)}
+  mg14_ev $vdrw <B1-Motion> -x $hx -y [mg14_mid $vdrw 0 -3] -state 0x100
+  update
+  xschem new_schematic switch $vdrw
+  check "MG14 the bar moves with the destination (2 = top edge, moving up)" \
+    [list [xschem getprop rect 2 0 reorder_handle] \
+          [xschem getprop rect 2 2 reorder_handle]] {2 1}
+  mg14_ev $vdrw <ButtonRelease-1> -x $hx -y [mg14_mid $vdrw 0 -3] -state 0x100
+  update
+  check "MG14 the drag committed after the feedback legs" \
+    [mg14_order $tok] {v(s1) v(s0) v(s2) v(s3)}
+  check "MG14 viewer buffer still readonly + unmodified" \
+    [list [xschem get readonly] [xschem get modified]] {1 0}
+
+  rename mg14_ev {}
+  rename mg14_fixture {}
+  rename mg14_order {}
+  rename mg14_rect_order {}
+  rename mg14_mid {}
+  unset ::mg14t
 
   # --- MG12: the REAL Direct Plot finish path honours the mode ----------------
   # (teeth for the ONE production wiring: ase::ui::dp_finish. Driving only

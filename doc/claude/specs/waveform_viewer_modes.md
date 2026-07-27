@@ -1,6 +1,6 @@
 # Waveform Viewer plot modes — single-plot / multi-plot + target strip
 
-Status: SPEC (issue 0151), 2026-07-25
+Status: SPEC (issue 0151), 2026-07-25; §12 drag-to-reorder added 2026-07-27
 Related: `doc/claude/specs/waveform_viewer.md` (the viewer's shipped UX contracts),
 `doc/claude/code_analysis/waveform_subsystem_reference.md` (subsystem map),
 `src/wave_viewer.tcl`, `src/ase.tcl`, `src/ase_window.tcl`, `src/draw.c`.
@@ -22,6 +22,10 @@ Plus the machinery the mode needs: a per-window target strip, a click to move
 it, a dull-yellow marker showing it, Tcl get/set/invert commands, a viewer menu
 entry that logs a replayable line, and a schematic-side chord + window-number
 query that reach the viewer through its ASE-L session.
+
+**And, since 2026-07-27, strips can be DRAGGED up and down the stack with LMB**
+— see §12, which also records the LMB/MMB ownership split it required (the graph
+pan moved from LMB to MMB).
 
 ## 2. Decisions (user, 2026-07-25)
 
@@ -254,6 +258,7 @@ All are plain namespaced procs, typable in the CIW (`ciw_exec` does
 | `wviewer::set_plot_mode <single\|multi\|invert> ?token?` | set/flip; returns the resolved mode or `{}` |
 | `wviewer::target_strip ?token?` | current target index, or `{}` |
 | `wviewer::set_target_strip <gi> ?token?` | move the target; returns the clamped index or `{}` |
+| `wviewer::move_strip <from> <to> ?token?` | reorder strips (§12); returns the final index or `{}` |
 | `wviewer::current_token` | token of the viewer owning the current xschem window, else `{}` |
 | `ase::plot_mode_for_current ?mode?` | from a DESIGN window: flip (default `invert`) the mode of the viewer of the session bound to this design |
 | `ase::window_number_for_current` | from a DESIGN window: the Cadence window number of the associated ASE-L window |
@@ -362,4 +367,215 @@ unaffected.
   the ASE-L window, which is what was asked). The viewer is a normal editor
   window, so `xschem get window_number` already answers it when the viewer is
   the current context.
-- **Drag-to-reorder strips**, and a keyboard chord for target movement.
+- **A keyboard chord for target movement.**
+- **LMB trace-to-strip dragging** — the 10-pixel trace exclusion zone (§12)
+  is reserved for it, but nothing implements it yet.
+
+## 12. Drag-to-reorder strips (2026-07-27)
+
+A strip is one graph of `wviewer::layouts` — its traces, colors, axis settings
+and any `auto 1` marker. It can now be dragged up or down the stack with LMB.
+Reordering never touches the order of traces *inside* a strip.
+
+### 12.1 The gesture
+
+| | |
+|---|---|
+| Where LMB grabs | the **reorder handle** (always) or **empty waveform body** |
+| Handle | the rightmost **14 screen pixels** of every strip, full band height, with a three-bar grip drawn in it by the C engine (`GRAPH_REORDER_HANDLE_W`, `src/xschem.h`) |
+| Trace exclusion zone | **10 screen pixels** around every displayed trace — LMB there stays with the C engine, and is reserved for future LMB trace-to-strip dragging |
+| Cursor exclusion | a press that grabbed an x/y cursor keeps the whole drag, wherever it landed |
+| Movement threshold | **more than 3 pixels** of vertical travel starts the drag |
+| Destination | crossing another strip's vertical **midpoint** selects that strip; past the top/bottom of the stack **clamps** to first/last |
+| Commit | LMB release |
+| Cancel | **Escape** |
+| No-ops | a click below the threshold, and a drop back at the original position — neither mutates, neither logs |
+
+The handle is a *fixed pixel* width, not a fraction of the strip, so it stays
+the same size at any canvas zoom; the same is true of the trace exclusion zone,
+which is measured by the engine (§12.4) rather than approximated from the strip
+geometry in Tcl.
+
+### 12.2 Model operations
+
+```tcl
+wviewer::reorder_graphs  {graphs from to}   ;# PURE
+wviewer::reordered_index {index from to}    ;# PURE
+wviewer::move_strip      {from to ?token?}  ;# THE mutation
+```
+
+`to` is the **final index the moved strip occupies**, not an insertion slot:
+
+```text
+graphs = A B C D ;  from 1 , to 3  ->  A C D B
+```
+
+`reordered_index` maps an index that identified a graph *before* the move to the
+index of the *same* graph after it — that is how the target strip follows graph
+**identity** instead of staying attached to a numeric slot.
+
+`move_strip` resolves the token, validates both indices, returns without
+mutating when `from == to`, verifies the context switch, **captures the live
+C-written graph state** (§12.3), reorders the list, remaps the stored target
+with `reordered_index`, regenerates **exactly once**, and writes **exactly one**
+fully-resolved log line. It returns the final index, or `{}` on failure. The
+moved dictionary carries its traces, colors, axis settings, `auto 1` identity
+and any future per-graph key for free — it is never rebuilt field by field.
+
+### 12.3 Preserving live C-written state
+
+`regenerate` re-places every rect **from the Tcl model**, and the C engine
+writes its own results (MMB graph pan, RMB box-zoom, the LMB wave-bold) straight
+into the rect prop text where the model never sees them. A reorder must not undo
+a pan.
+
+```tcl
+wviewer::capture_live_graph_state {token}
+```
+
+folds `x1 x2 y1 y2 hilight_wave` back from every live rect into the model first.
+`graph_props` emits `hilight_wave` **only when the model carries it**, so a strip
+nobody ever bolted keeps generating exactly the props it did before. Cursors are
+not captured: the viewer creates its graphs with `flags=graph`, not
+`private_cursor`, so cursor positions are global and survive a rect rebuild
+untouched — if that ever changes, `cursor1_x`/`cursor2_x`/`hcursor1_y`/
+`hcursor2_y` join the list. The helper aborts cleanly when `switch_ctx` fails;
+it never reads a rect prop from an unverified context.
+
+Shared X is unaffected: with `sharedx` on, all strips already hold the same live
+X range, so a different graph becoming index 0 changes nothing.
+
+### 12.4 Hit testing and gesture seams
+
+```tcl
+wviewer::strip_bands_px        {wp}                  ;# graphbb -> canvas pixels
+wviewer::strip_handle_at_pixel {canvas px py}
+wviewer::strip_drop_index      {canvas py ?from?}
+wviewer::strip_at_pixel_inset  {canvas px py ?inset?}
+wviewer::near_wave_at          {wp gi px py ?tol?}
+wviewer::cursor_grabbed        {wp}
+wviewer::strip_drag_press      {W x y state}
+wviewer::strip_drag_motion     {W x y state}
+wviewer::strip_drag_release    {W x y state}
+wviewer::strip_drag_cancel     {W}
+```
+
+All of them take the **event's own `%x`/`%y`**. `graph_at_pointer` is
+deliberately not used for press or release: it reads the C mouse-position
+mirror, which is stale for a press with no preceding Motion (the `strip_at_pixel`
+precedent, §6).
+
+`strip_drop_index`'s optional `from` is what makes the midpoint rule symmetric —
+without the grabbed strip's identity, "the last midpoint crossed" is biased
+downward and an upward drag proposes a move one strip too early. Omitted, it
+falls back to "the band whose midpoint is nearest".
+
+Two C-backed queries answer the exclusion questions, because neither can be
+honestly approximated in Tcl:
+
+```tcl
+xschem get graph_near_wave <graph_idx> <px> <py> ?tol?   ;# default tol 10
+xschem get graph_flags
+```
+
+`graph_near_wave` (`draw.c`) walks the graph's own transform and raw data and
+returns 1 only when the pixel is within `tol` **screen pixels** of a drawn trace
+— a real point-to-segment distance, unlike `find_closest_wave`, which has no
+threshold at all. It answers 0 for digital strips and bus traces (their rendering
+is a band/ribbon, not a polyline), so the whole body is reorder space there.
+`graph_flags` exposes the session cursor-mode word so the press seam can tell
+"this press grabbed a cursor" from "this landed on empty space" (reference
+backlog #1). Both fail closed.
+
+Transient per-window drag state lives in `drag_from` / `drag_to` / `drag_y0` /
+`drag_active`, created in `open`, dropped by `forget`, **never serialized**.
+
+### 12.5 Bindings and interaction ownership
+
+| Gesture | Owner |
+|---|---|
+| LMB on empty body / the handle | **Tcl** — target + strip reorder |
+| LMB within 10 px of a trace, or a cursor grab | **C** — cursor drag/move, trace pick, wave-bold click |
+| **MMB** drag | **C** — graph pan (data ranges; the canvas never moves) |
+| RMB drag | **C** — box zoom (unchanged) |
+
+`<ButtonPress-1>` runs `strip_drag_press` first; when it does not consume the
+event the pre-existing issue-0151 body runs verbatim (target change, focus, C
+callback, `break`). `<B1-Motion>` and `<ButtonRelease-1>` are **more specific**
+than the kept generic `<Motion>`/`<ButtonRelease>`, so their non-drag paths
+forward the original event to `xschem callback` exactly once — and the release
+also does the readout refresh that was appended to the generic bind.
+
+**The graph pan moved from LMB to MMB** (`callback.c`): `waves_selected` no
+longer skips Button2, `GRAPHPAN` starts on Button2 as well, and the pan motion
+arms test `Button2Mask`. This is engine-wide — MMB over an on-canvas schematic
+graph now pans that graph instead of the canvas; off a graph MMB is still the
+canvas pan, and a canvas pan already in flight is protected by the `STARTPAN`
+entry in `waves_selected`'s exclusion mask. In the viewer, `btn2_filter`
+forwards MMB but accepts the **press** only well inside a strip, so it can never
+reach `start_pan_logged` and slide the tiled canvas (the issue-0149 invariant);
+Ctrl/Alt+MMB stay inert.
+
+`wviewer::key_filter` cancels an in-flight drag on Escape **before** its normal
+Escape forward (D10 keeps ESC reaching C for its abort+redraw).
+
+### 12.6 Feedback
+
+The `reorder_handle` prop token drives all of it, parsed in `setup_graph_data`
+**before** the `RECT_OUTSIDE` early return (landmine 11) and drawn in
+`draw_graph` under the on-screen **flags bit 16** only, exactly like the
+active-strip marker — no grip or drop bar ever reaches SVG/PS/PNG export:
+
+| value | drawn |
+|---|---|
+| 1 | the grip (every viewer strip; `graph_props` writes this) |
+| 2 | grip + a drop bar along the strip's **top** edge (drag going up) |
+| 3 | grip + a drop bar along the strip's **bottom** edge (drag going down) |
+
+2 and 3 are transient: Tcl rewrites the token in place on the two affected rects
+when the prospective destination changes — **not on every Motion**, and never a
+regenerate (which would undo a live pan, the `move_marker` argument of §6) — and
+clears it on commit or cancel. The pointer becomes `sb_v_double_arrow` while the
+drag is active and is restored on both exits.
+
+### 12.7 Persistence and logging
+
+No schema change: snapshots already serialize the graph list in order, so the new
+order persists for free.
+
+The log records **committed state changes only** — never Motion, never a
+cancelled drag, never a no-op drop:
+
+```tcl
+wviewer::set_target_strip 0 <token>     ;# only when the press moved the target
+wviewer::move_strip 3 0 <token>
+```
+
+The target line comes first when the press changed the target, because replaying
+`move_strip` alone against a *different* pre-existing target would remap the
+wrong strip. The internal `reordered_index` remap emits **no** second target
+line: it is a consequence of `move_strip`, not a separate user action. Both go
+through the `wviewer::log_action` seam, following the `set_plot_mode` /
+`set_target_strip` conventions (resolved words, explicit token).
+
+### 12.8 Tests
+
+`tests/headless/test_wave_modes.tcl` — `M7` (pure: all 16 from/to permutations
+of a four-strip list, up/down by one and several, first↔last, `from == to`,
+invalid and non-integer indices, `reordered_index` identity tracking across every
+permutation, byte-identical moved dicts, `auto 1`, the `reorder_handle` and
+`hilight_wave` tokens) and `MG14` (a real viewer: model/rect/`graphbb` agreement,
+target following both cases, live `x1/x2/y1/y2/hilight_wave` survival, auto-plot
+identity, save/restore, and full Tk press/motion/release drags from the handle
+*and* from empty body — clamping, sub-threshold, no-op drop, Escape, drop-bar
+feedback, exactly-one-log-line).
+
+`tests/headless/test_wave_viewer.tcl` — `SD` (the LMB seam, with real raw data:
+the screen-pixel semantics of `graph_near_wave`, a near-trace click still bolds,
+a near-trace drag never reorders, the same drag from empty space does, a cursor
+press-drag-release still moves the cursor and never reorders) and `WB-mmb-drag`
+(MMB pans the graph range, LMB no longer does, the canvas stays put).
+
+Not asserted, consistent with the standing note in §5: the **pixels** of the grip
+and the drop bar. What is asserted is the token plumbing and that a redraw with
+the tokens present returns rc 0.

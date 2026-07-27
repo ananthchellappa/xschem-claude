@@ -88,15 +88,17 @@ static int waves_selected(int event, KeySym key, int state, int button)
    * This is useful on touchpads with TappingDragLock enabled */
   else if(graph_use_ctrl_key && !(state & ControlMask) && !(xctx->ui_state & GRAPHPAN)) skip = 1;
   else if(SET_MODMASK) skip = 1;
-  /* Button2 (middle) is the canvas pan gesture (handle_button_press), so its
-   * press/drag/release must never be treated as graph-targeted: panning has to
-   * work with the pointer over a waveform graph too. (If the pan gesture is ever
-   * migrated to the binding table like zoom-rect was, these skips go with it.) */
-  else if(event == MotionNotify && (state & Button2Mask)) skip = 1;
+  /* Button2 (middle) OVER A GRAPH is the GRAPH pan (waves_callback), not the
+   * schematic canvas pan. It used to be skipped here so handle_button_press ->
+   * start_pan_logged always got it; the graph pan then lived on Button1 drag,
+   * which collides with everything precise LMB now has to do over a strip
+   * (cursor grab, wave-bold click, and the ASE viewer's drag-to-reorder seam —
+   * doc/claude/specs/waveform_viewer_modes.md). MMB does not need trace-level
+   * precision, so the two swapped: LMB no longer pans a graph, MMB does.
+   * Off a graph MMB still pans the canvas exactly as before — this returns 0
+   * there and handle_button_press takes over. */
   else if(event == MotionNotify && (state & Button1Mask) && (state & ShiftMask)) skip = 1;
-  else if(event == ButtonPress && button == Button2) skip = 1;
   else if(event == ButtonPress && button == Button1 && (state & ShiftMask) ) skip = 1;
-  else if(event == ButtonRelease && button == Button2) skip = 1;
   /* else if(event == KeyPress && (state & ShiftMask)) skip = 1; */
   else if(!skip) for(i=0; i< xctx->rects[GRIDLAYER]; ++i) {
     double lmargin;
@@ -1038,9 +1040,15 @@ static int waves_callback(int event, int mx, int my, KeySym key, int button, int
     } /* key == 't' */
   } /* if((i = xctx->graph_master) >= 0 && ((r = &xctx->rect[GRIDLAYER][i])->flags & 1)) */
 
-  /* save mouse position when doing pan operations */
+  /* save mouse position when doing pan operations.
+   * Button2 joined the set when the graph pan moved off LMB: GRAPHPAN is what
+   * keeps waves_selected routing the whole drag to the graph and what latches
+   * graph_left/graph_top/graph_bottom at press time (the `goto finish` above).
+   * Button1 stays in the set: it still owns cursor drags and the wave-bold
+   * click, both of which need that same routing latch. */
   if(
-      ( event == ButtonPress && (button == Button1 || button == Button3)) &&
+      ( event == ButtonPress &&
+        (button == Button1 || button == Button2 || button == Button3)) &&
       !(xctx->ui_state & GRAPHPAN) &&
       !xctx->graph_top /* && !xctx->graph_bottom */
     ) {
@@ -1054,8 +1062,9 @@ static int waves_callback(int event, int mx, int my, KeySym key, int button, int
 
   finish:
 
-  /* parameters for absolute positioning by mouse drag in bottom graph area */
-  if( xctx->raw && event == MotionNotify && (state & Button1Mask) && xctx->graph_bottom ) {
+  /* parameters for absolute positioning by mouse drag in bottom graph area
+   * (Button2 since the pan moved off LMB — this IS a graph-range move) */
+  if( xctx->raw && event == MotionNotify && (state & Button2Mask) && xctx->graph_bottom ) {
     int idx;
     int dset;
     double wwx1, wwx2, pp, delta, ccx, ddx;
@@ -1162,7 +1171,11 @@ static int waves_callback(int event, int mx, int my, KeySym key, int button, int
     }
     my_free(_ALLOC_ID_, &curr_sim_type);
 
-    if(event == MotionNotify && (state & Button1Mask) && !xctx->graph_bottom &&
+    /* THE graph pan: drag the data window. Button2 (MMB), not Button1 — LMB over
+     * a strip is reserved for precise interaction and, in the ASE viewer, for
+     * drag-to-reorder. The cursor-move flags stay in the guard: a MMB drag while
+     * a cursor is grabbed must not also pan. */
+    if(event == MotionNotify && (state & Button2Mask) && !xctx->graph_bottom &&
       !(xctx->graph_flags & (16 | 32 | 512 | 1024))) {
       double delta;
       /* vertical move of waveforms */
@@ -1512,8 +1525,8 @@ static int waves_callback(int event, int mx, int my, KeySym key, int button, int
         }
       } /* raw->values */
     } /* key == 'f' */
-    /* absolute positioning by mouse drag in bottom graph area */
-    else if(event == MotionNotify && (state & Button1Mask) && xctx->graph_bottom ) {
+    /* absolute positioning by mouse drag in bottom graph area (MMB, see above) */
+    else if(event == MotionNotify && (state & Button2Mask) && xctx->graph_bottom ) {
       if(xctx->raw && xctx->raw->values) {
         /* selected or locked or master */
         if(r->sel || (same_sim_type && !(r->flags & 2)) || i == xctx->graph_master) {

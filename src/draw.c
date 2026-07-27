@@ -3552,6 +3552,12 @@ void setup_graph_data(int i, int skip, Graph_ctx *gr)
   gr->active = 0;
   val = get_tok_value(r->prop_ptr,"active", 0);
   if(val[0]) gr->active = atoi(val);
+  /* strip drag-reorder affordance: 1 = grip, 2 = grip + TOP drop bar,
+   * 3 = grip + BOTTOM drop bar. Same early-default rule as `active` above and
+   * for the same reason (shared xctx->graph_struct, off-screen early return). */
+  gr->reorder_handle = 0;
+  val = get_tok_value(r->prop_ptr,"reorder_handle", 0);
+  if(val[0]) gr->reorder_handle = atoi(val);
   gr->linewidth_mult = tclgetdoublevar("graph_linewidth_mult");
   xctx->graph_flags &= ~(128 | 256); /* clear hcursor flags */
   gr->hcursor1_y = gr->hcursor2_y = 0.0;
@@ -4553,6 +4559,195 @@ int find_closest_wave(int i, Graph_ctx *gr, int *node_number)
   return closest_dataset;
 }
 
+/* Screen-pixel distance from point (px,py) to the segment (ax,ay)-(bx,by). */
+static double graph_point_seg_dist(double px, double py,
+                                   double ax, double ay, double bx, double by)
+{
+  double vx = bx - ax, vy = by - ay;
+  double c1, c2, t, dx, dy;
+  c2 = vx * vx + vy * vy;
+  if(c2 <= 0.0) {
+    dx = px - ax; dy = py - ay;
+    return sqrt(dx * dx + dy * dy);
+  }
+  c1 = (px - ax) * vx + (py - ay) * vy;
+  t = c1 / c2;
+  if(t < 0.0) t = 0.0;
+  else if(t > 1.0) t = 1.0;
+  dx = px - (ax + t * vx);
+  dy = py - (ay + t * vy);
+  return sqrt(dx * dx + dy * dy);
+}
+
+/* Is the CANVAS PIXEL (px, py) within `tol` SCREEN PIXELS of a displayed trace
+ * of graph `i`? Returns 1/0 (0 also for a bad index, a non-graph rect, an
+ * off-screen graph or no loaded data).
+ *
+ * The ASE waveform viewer's LMB seam (drag-to-reorder strips,
+ * doc/claude/specs/waveform_viewer_modes.md): empty waveform-body space belongs
+ * to strip reordering, a fixed pixel band around every trace stays owned by the
+ * C engine's precise interactions (cursor grab, wave-bold). The exclusion has to
+ * be measured through the ENGINE's own transform — Tcl approximating it from the
+ * strip bbox would drift the moment margins, log axes or ranges change.
+ *
+ * Unlike find_closest_wave() this is a real distance, in screen pixels, to the
+ * drawn POLYLINE (point-to-segment, not just |dy| at the nearest sample), it has
+ * a threshold, and it uses the coordinates the caller passes rather than the
+ * C mouse-position mirror (which is stale for a press with no preceding Motion).
+ *
+ * Uses a LOCAL Graph_ctx: never clobber xctx->graph_struct, which an active
+ * draw_graph may be using (landmine 11,
+ * doc/claude/code_analysis/waveform_subsystem_reference.md).
+ *
+ * DOCUMENTED LIMITS: digital strips and bus traces answer 0 (their rendering is
+ * a band/ribbon, not a polyline — the whole body is then reorder space), and the
+ * search is capped by the graph's own x window, exactly like the draw. */
+int graph_near_wave(int i, double px, double py, double tol)
+{
+  Graph_ctx gr_ctx;
+  Graph_ctx *gr = &gr_ctx;
+  char *node = NULL, *sweep = NULL;
+  char *saven, *saves, *nptr, *sptr;
+  const char *ntok, *stok;
+  char *ntok_copy = NULL;
+  char *express = NULL;
+  char *custom_rawfile = NULL;
+  char *sim_type = NULL;
+  const char *ptr;
+  xRect *r;
+  int sweep_idx = 0, idx, expression, autoload, near = 0;
+  int node_dataset = -1;
+  double start, end;
+
+  if(!xctx) return 0;
+  if(i < 0 || i >= xctx->rects[GRIDLAYER]) return 0;
+  r = &xctx->rect[GRIDLAYER][i];
+  if(!(r->flags & 1)) return 0;
+  if(!xctx->raw || sch_waves_loaded() == -1) return 0;
+  memset(&gr_ctx, 0, sizeof(gr_ctx));
+  setup_graph_data(i, 0, gr);
+  /* setup_graph_data() returns early for an off-screen graph without computing
+   * the transform (the RECT_OUTSIDE test); a zero scale means "no transform" */
+  if(gr->scx == 0.0 || gr->scy == 0.0) return 0;
+  if(gr->digital) return 0;
+  if(tol < 0.0) tol = 0.0;
+
+  autoload = !strboolcmp(get_tok_value(r->prop_ptr,"autoload", 0), "true");
+  if(autoload == 0) autoload = 2;
+  else if(autoload == 1) autoload = 33;
+
+  my_strdup2(_ALLOC_ID_, &node, get_tok_value(r->prop_ptr,"node", 0));
+  my_strdup2(_ALLOC_ID_, &sweep, get_tok_value(r->prop_ptr,"sweep", 0));
+  ptr = get_tok_value(r->prop_ptr,"rawfile", 0);
+  if(!ptr[0]) {
+    if(xctx->raw->rawfile) my_strdup2(_ALLOC_ID_, &custom_rawfile, xctx->raw->rawfile);
+    else my_strdup2(_ALLOC_ID_, &custom_rawfile, "");
+  } else {
+    my_strdup2(_ALLOC_ID_, &custom_rawfile, ptr);
+  }
+  my_strdup2(_ALLOC_ID_, &sim_type, get_tok_value(r->prop_ptr,"sim_type", 0));
+
+  start = (gr->gx1 <= gr->gx2) ? gr->gx1 : gr->gx2;
+  end   = (gr->gx1 <= gr->gx2) ? gr->gx2 : gr->gx1;
+
+  nptr = node;
+  sptr = sweep;
+  while(!near && (ntok = my_strtok_r(nptr, "\n", "\"", 4, &saven)) ) {
+    char *nd = NULL;
+    int valid_rawfile = 1;
+    if(strstr(ntok, ",")) {
+      if(find_nth(ntok, ";,", "\"", 0, 2)[0]) continue; /* bus signal: skip */
+    }
+    stok = my_strtok_r(sptr, "\t\n ", "\"", 0, &saves);
+    nptr = sptr = NULL;
+    if(custom_rawfile[0]) {
+      if(extra_rawfile(autoload, custom_rawfile,
+         sim_type[0] ? sim_type : (xctx->raw->sim_type ? xctx->raw->sim_type : NULL),
+         -1.0, -1.0) == 0) {
+        valid_rawfile = 0;
+      }
+    }
+    if(stok && stok[0]) {
+      sweep_idx = get_raw_index(stok, NULL);
+      if(sweep_idx == -1) sweep_idx = 0;
+    }
+    my_strdup2(_ALLOC_ID_, &nd, find_nth(ntok, "%", "\"", 0, 2));
+    if(nd[0]) {
+      int pos = 1;
+      if(isonlydigit(find_nth(nd, "\n ", "\"", 0, 1))) pos = 2;
+      if(pos == 2) node_dataset = atoi(nd);
+      else node_dataset = -1;
+      my_strdup(_ALLOC_ID_, &ntok_copy, find_nth(ntok, "%", "\"", 4, 1));
+    } else {
+      node_dataset = -1;
+      my_strdup(_ALLOC_ID_, &ntok_copy, ntok);
+    }
+    my_free(_ALLOC_ID_, &nd);
+
+    idx = -1;
+    expression = 0;
+    if(xctx->raw->values) {
+      if(strstr(ntok_copy, ";")) {
+        my_strdup2(_ALLOC_ID_, &express, find_nth(ntok_copy, ";", "\"", 0, 2));
+      } else {
+        my_strdup2(_ALLOC_ID_, &express, ntok_copy);
+      }
+      if(strpbrk(express, " \n\t")) expression = 1;
+    }
+    if(expression) idx = xctx->raw->nvars; /* the scratch column (values has nvars+1) */
+    else if(express) idx = get_raw_index(express, NULL);
+
+    if(sch_waves_loaded() != -1 && valid_rawfile && idx != -1) {
+      int p, dset, ofs = 0, ofs_end;
+      double xx, yy, prev_sx = 0.0, prev_sy = 0.0;
+      int have_prev;
+      for(dset = 0; dset < xctx->raw->datasets && !near; dset++) {
+        SPICE_DATA *gvx = xctx->raw->values[sweep_idx];
+        SPICE_DATA *gvy;
+        ofs_end = ofs + xctx->raw->npoints[dset];
+        if(node_dataset != -1 && node_dataset != dset) { ofs = ofs_end; continue; }
+        if(expression) plot_raw_custom_data(sweep_idx, ofs, ofs_end - 1, express, NULL);
+        gvy = xctx->raw->values[idx];
+        have_prev = 0;
+        for(p = ofs; p < ofs_end; p++) {
+          double sx, sy;
+          if(gr->logx) xx = mylog10(gvx[p]); else xx = gvx[p];
+          if(gr->logy) yy = mylog10(gvy[p]); else yy = gvy[p];
+          if(xx < start || xx > end) { have_prev = 0; continue; }
+          sx = S_X(xx);
+          sy = S_Y(yy);
+          /* a non-finite screen coordinate cannot be near anything and would
+           * poison the distance arithmetic */
+          if(!(sx > -1e9 && sx < 1e9 && sy > -1e9 && sy < 1e9)) { have_prev = 0; continue; }
+          if(have_prev) {
+            if(graph_point_seg_dist(px, py, prev_sx, prev_sy, sx, sy) <= tol) {
+              near = 1;
+              break;
+            }
+          } else if(fabs(sx - px) <= tol && fabs(sy - py) <= tol) {
+            near = 1;
+            break;
+          }
+          prev_sx = sx;
+          prev_sy = sy;
+          have_prev = 1;
+        }
+        ofs = ofs_end;
+      }
+    }
+    if(express) my_free(_ALLOC_ID_, &express);
+  }
+
+  if(sch_waves_loaded() != -1 && custom_rawfile[0]) extra_rawfile(5, NULL, NULL, -1.0, -1.0);
+  my_free(_ALLOC_ID_, &custom_rawfile);
+  my_free(_ALLOC_ID_, &sim_type);
+  if(ntok_copy) my_free(_ALLOC_ID_, &ntok_copy);
+  my_free(_ALLOC_ID_, &node);
+  my_free(_ALLOC_ID_, &sweep);
+  dbg(1, "graph_near_wave(): graph=%d px=%g py=%g tol=%g -> %d\n", i, px, py, tol, near);
+  return near;
+}
+
 
 /* flags:
  *  1: do final XCopyArea (copy 2nd buffer areas to screen)
@@ -5004,6 +5199,55 @@ void draw_graph(int i, int flags, Graph_ctx *gr, void *ct)
       if(xctx->draw_pixmap)
         XFillRectangle(display, xctx->save_pixmap, xctx->gc_graph_active,
           (int)bx1, (int)by1, (unsigned int)(bx2 - bx1), (unsigned int)(by2 - by1));
+    }
+  }
+  /* Strip drag-reorder affordance (ASE waveform viewer only — the
+   * `reorder_handle` prop token is written by wviewer::graph_props and by
+   * nothing else). Same on-screen gate as the active-strip marker above:
+   * flags bit 16, so SVG/PS/PNG export never carries it.
+   *   >=1 : the GRIP — three short bars in the strip's right margin, the
+   *         discoverable "grab me to move this strip" target. Its hit zone is
+   *         GRAPH_REORDER_HANDLE_W screen pixels wide (mirrored in Tcl).
+   *   ==2 : plus a drop bar along the strip's TOP edge    (drag going up)
+   *   ==3 : plus a drop bar along the strip's BOTTOM edge (drag going down)
+   * 2/3 are transient drag feedback: Tcl rewrites the token on the two affected
+   * rects when the prospective destination changes (never on every Motion) and
+   * clears it on commit/cancel. */
+  if((flags & 16) && gr->reorder_handle && has_x) {
+    double hx1, hy1, hx2, hy2;
+    double cy = (gr->sy1 + gr->sy2) / 2.0;
+    int k;
+    /* grip bars: 8 px wide, 2 px thick, 4 px pitch, left of the 5 px active
+     * marker so the two never overlap on the target strip */
+    for(k = -1; k <= 1; k++) {
+      hx1 = gr->sx2 - GRAPH_REORDER_HANDLE_W + 1;
+      hx2 = hx1 + 8;
+      hy1 = cy + k * 4 - 1;
+      hy2 = hy1 + 2;
+      if(rectclip(xctx->areax1, xctx->areay1, xctx->areax2, xctx->areay2,
+                  &hx1, &hy1, &hx2, &hy2)) {
+        if(xctx->draw_window)
+          XFillRectangle(display, xctx->window, xctx->gc[GRIDLAYER],
+            (int)hx1, (int)hy1, (unsigned int)(hx2 - hx1), (unsigned int)(hy2 - hy1));
+        if(xctx->draw_pixmap)
+          XFillRectangle(display, xctx->save_pixmap, xctx->gc[GRIDLAYER],
+            (int)hx1, (int)hy1, (unsigned int)(hx2 - hx1), (unsigned int)(hy2 - hy1));
+      }
+    }
+    if(gr->reorder_handle == 2 || gr->reorder_handle == 3) {
+      hx1 = gr->sx1;
+      hx2 = gr->sx2;
+      if(gr->reorder_handle == 2) { hy1 = gr->sy1; hy2 = gr->sy1 + GRAPH_REORDER_DROPBAR_H; }
+      else                        { hy1 = gr->sy2 - GRAPH_REORDER_DROPBAR_H; hy2 = gr->sy2; }
+      if(rectclip(xctx->areax1, xctx->areay1, xctx->areax2, xctx->areay2,
+                  &hx1, &hy1, &hx2, &hy2)) {
+        if(xctx->draw_window)
+          XFillRectangle(display, xctx->window, xctx->gc_graph_active,
+            (int)hx1, (int)hy1, (unsigned int)(hx2 - hx1), (unsigned int)(hy2 - hy1));
+        if(xctx->draw_pixmap)
+          XFillRectangle(display, xctx->save_pixmap, xctx->gc_graph_active,
+            (int)hx1, (int)hy1, (unsigned int)(hx2 - hx1), (unsigned int)(hy2 - hy1));
+      }
     }
   }
   if(flags & 1) { /* copy save buffer to screen */

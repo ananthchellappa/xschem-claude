@@ -120,6 +120,29 @@
 # The action is logged replayably through the same log_action seam as the mode
 # and target commands.
 #
+# ---- strip drag-to-reorder (2026-07-27) ------------------------------------
+# Contract: doc/claude/specs/waveform_viewer_modes.md §12. LMB drags a whole
+# STRIP (one graph dict of `layouts` — traces, colors, axes and any `auto 1`
+# marker) up or down the stack; the traces INSIDE it never change order. Two
+# grab surfaces: the 14-screen-pixel reorder HANDLE at the strip's right edge
+# (the C engine draws a grip there from the `reorder_handle` prop token) and
+# EMPTY waveform body. A fixed 10-screen-pixel zone around every trace, and any
+# press that grabbed a cursor, stay with the C engine — cursor drags, trace
+# picking and the wave-bold click are untouched (that seam is reserved for
+# future LMB trace-to-strip dragging). >3 px of vertical travel starts the drag,
+# crossing another strip's midpoint picks it, release commits, Escape cancels; a
+# sub-threshold click and a drop back at the origin do nothing and log nothing.
+# The model side is PURE (`reorder_graphs`, `reordered_index`) under ONE
+# authoritative mutation, `move_strip`, which first folds the live C-written
+# rect state back into the model (`capture_live_graph_state`) so the regenerate
+# cannot undo a pan/zoom/bold, remaps the target by IDENTITY, regenerates once
+# and writes one replayable line.
+# THE GRAPH PAN MOVED FROM LMB TO MMB to make room (callback.c, engine-wide);
+# in this window MMB is forwarded by `btn2_filter` instead of swallowed, and it
+# still cannot reach the schematic canvas pan (issue 0149's invariant holds).
+# Two read-only C verbs back the seam: `xschem get graph_near_wave` (real
+# screen-pixel distance to a drawn trace) and `xschem get graph_flags`.
+#
 # Pure Tcl, procs only at source time (safe under --nogui); ciw_echo only
 # under has_x. TIP-278: `variable` declarations, absolute names.
 
@@ -186,6 +209,21 @@ namespace eval wviewer {
   # per-dialog transient state (D13), cleaned on OK/cancel/forget
   variable axl;     array set axl {}
   variable delmap;  array set delmap {}
+  # strip drag-reorder (doc/claude/specs/waveform_viewer_modes.md §12): TRANSIENT
+  # per-window gesture state, keyed by session token. Created in open, dropped by
+  # forget, NEVER serialized (a half-finished drag is not part of a saved layout).
+  #   drag_from   = model index of the strip the press grabbed (-1 = not armed)
+  #   drag_to     = prospective destination index while dragging
+  #   drag_y0     = press y in canvas pixels (the movement-threshold anchor)
+  #   drag_active = 1 once the drag passed the threshold and owns the pointer
+  variable drag_from;   array set drag_from {}
+  variable drag_to;     array set drag_to {}
+  variable drag_y0;     array set drag_y0 {}
+  variable drag_active; array set drag_active {}
+  # 1 while a plain MMB press was accepted as a GRAPH pan (btn2_filter). The
+  # press is what decides; the motions and the release just follow it, so a
+  # press the filter refused can never leak a canvas pan mid-gesture.
+  variable mmb;         array set mmb {}
   # issue 0171: 1 once the `WaveViewer` bindtag defaults have been installed
   # (install_default_binds is called on every viewer open and must be a no-op
   # after the first — re-installing would undo an in-session remap).
@@ -249,6 +287,8 @@ proc wviewer::forget {token} {
   variable layouts
   variable cva; variable cvb; variable cvr; variable sharedx
   variable mode; variable target
+  variable drag_from; variable drag_to; variable drag_y0; variable drag_active
+  variable mmb
   variable axl; variable delmap
   variable cfgafter; variable fillwh
   if {[dict exists $windows $token]} {
@@ -262,6 +302,11 @@ proc wviewer::forget {token} {
   catch {unset sharedx($token)}
   catch {unset mode($token)}
   catch {unset target($token)}
+  catch {unset drag_from($token)}
+  catch {unset drag_to($token)}
+  catch {unset drag_y0($token)}
+  catch {unset drag_active($token)}
+  catch {unset mmb($token)}
   array unset axl ${token},*
   catch {unset delmap($token)}
   if {[info exists cfgafter($token)]} { catch {after cancel $cfgafter($token)} }
@@ -279,6 +324,8 @@ proc wviewer::open {token} {
   variable layouts
   variable cva; variable cvb; variable cvr; variable sharedx
   variable mode; variable target
+  variable drag_from; variable drag_to; variable drag_y0; variable drag_active
+  variable mmb
   if {[ase::session_state $token] eq {}} {
     if {[info exists ::has_x] && [info commands ::ciw_echo] ne {}} {
       ciw_echo "wviewer: unknown ASE session '$token'" error
@@ -345,6 +392,12 @@ proc wviewer::open {token} {
   # both right after, when a state dict carries them)
   set mode($token) [wviewer::default_plot_mode]
   set target($token) 0
+  # strip drag-reorder: disarmed
+  set drag_from($token) -1
+  set drag_to($token) -1
+  set drag_y0($token) 0
+  set drag_active($token) 0
+  set mmb($token) 0
   # readout bar (D9): a BOTTOM BAR on the viewer toplevel (not an
   # always-on-top toplevel — WSLg raise/focus pain, receipts/06/11), built
   # hidden; shown automatically when a cursor is enabled and toggled by the
@@ -873,7 +926,22 @@ proc wviewer::graph_props {G {active 0}} {
   # every non-viewer schematic graph render exactly as before.
   set act {}
   if {[string is true -strict $active] || $active eq {1}} { set act "active=1\n" }
-  return "flags=graph\ny1=$y1\ny2=$y2\nypos1=0\nypos2=2\ndivy=5\nsubdivy=1\nunity=1\nx1=$x1\nx2=$x2\ndivx=5\nsubdivx=1\nxlabmag=1.0\nylabmag=1.0\nlegendmag=1.0\nnode=\"$node\"\ncolor=\"$color\"\ndataset=-1\nunitx=1\nlogx=$logx\nlogy=$logy\n$act"
+  # The BOLD trace (`hilight_wave`) is written into the rect by the C engine
+  # (the LMB wave-bold click, issue 0152) and only reaches the model through
+  # capture_live_graph_state. Emit it ONLY when the model actually carries a
+  # value: an absent key must stay absent, not become `hilight_wave=-1`, so a
+  # graph that was never clicked keeps rendering byte-identically to pre-reorder.
+  set hw {}
+  set hwv [wviewer::dget $G hilight_wave {}]
+  if {$hwv ne {} && [string is integer -strict $hwv]} { set hw "hilight_wave=$hwv\n" }
+  # The strip drag-reorder GRIP (right margin). Written unconditionally here, so
+  # it marks exactly the viewer's own strips — graph_props is the viewer's rect
+  # generator and nothing else uses it, which is what "viewer graphs only" means
+  # (the 127 shipped schematics with embedded graphs never see the token). The
+  # transient values 2/3 (drop-destination bar) are NOT written here: they are
+  # setprop'd onto the two affected rects during a drag and cleared on
+  # commit/cancel, so a regenerate always lands back on a plain grip.
+  return "flags=graph\ny1=$y1\ny2=$y2\nypos1=0\nypos2=2\ndivy=5\nsubdivy=1\nunity=1\nx1=$x1\nx2=$x2\ndivx=5\nsubdivx=1\nxlabmag=1.0\nylabmag=1.0\nlegendmag=1.0\nnode=\"$node\"\ncolor=\"$color\"\ndataset=-1\nunitx=1\nlogx=$logx\nlogy=$logy\nreorder_handle=1\n$hw$act"
 }
 
 # PURE (D4): pre-validate a whitespace-separated RPN expression against the
@@ -1405,6 +1473,473 @@ proc wviewer::click_target {W px py} {
   if {$gi < 0} { return {} }
   if {$gi == [wviewer::target_index $token]} { return $gi }
   return [wviewer::set_target_strip $gi $token]
+}
+
+# --- strip drag reordering ---------------------------------------------------
+# doc/claude/specs/waveform_viewer_modes.md §12. A STRIP is one graph of
+# `layouts`, traces and all; reordering it is therefore a list move on the model
+# graph list and nothing else. The dictionary carries its traces, colors, axis
+# settings, the `auto 1` marker and any future per-graph key for free — never
+# rebuild a graph field by field here.
+#
+# Three layers, deliberately separated so the policy is unit-testable headless:
+#   PURE      reorder_graphs / reordered_index  (list math, no window)
+#   MODEL     move_strip                        (the ONE authoritative mutation)
+#   GESTURE   strip_drag_press/motion/release   (Tk bindings, pixels)
+
+# PURE: move element `from` of `graphs` so that it ENDS UP at index `to`.
+#   A B C D, from 1, to 3  ->  A C D B
+# `to` is the FINAL index of the moved element, not an insertion slot: the two
+# differ whenever the move goes downward, and every caller/test in this tree
+# reads it the first way. Out-of-range or non-integer indices return the list
+# UNCHANGED (a pure list op has no channel to report an error, and the callers
+# validate; move_strip is where a bad index is refused loudly).
+proc wviewer::reorder_graphs {graphs from to} {
+  set n [llength $graphs]
+  if {![string is integer -strict $from] || ![string is integer -strict $to]} {
+    return $graphs
+  }
+  if {$from < 0 || $from >= $n || $to < 0 || $to >= $n || $from == $to} {
+    return $graphs
+  }
+  set el [lindex $graphs $from]
+  return [linsert [lreplace $graphs $from $from] $to $el]
+}
+
+# PURE: where the graph that sat at `index` BEFORE a `from`->`to` move sits
+# AFTER it. This is how the target strip (and any other index-held reference)
+# follows graph IDENTITY instead of staying attached to a numeric slot.
+#   move 1->3 in {A B C D}: 1->3 (the moved one), 2->1, 3->2, 0->0
+proc wviewer::reordered_index {index from to} {
+  foreach v [list $index $from $to] {
+    if {![string is integer -strict $v]} { return $index }
+  }
+  if {$index == $from} { return $to }
+  if {$from < $to} {
+    if {$index > $from && $index <= $to} { return [expr {$index - 1}] }
+  } elseif {$from > $to} {
+    if {$index >= $to && $index < $from} { return [expr {$index + 1}] }
+  }
+  return $index
+}
+
+# Fold the state the C engine wrote straight into the live rects back into the
+# Tcl model, so a regenerate cannot undo it.
+#
+# WHY this exists: `regenerate` re-places every rect FROM the model, and the C
+# waveform engine writes its own results (MMB graph pan, RMB box-zoom, the LMB
+# wave-bold) into the rect prop text where the model never sees them. Any Tcl
+# op that regenerates must therefore freeze the live values first — the same
+# rule graph_range/apply_range follow for zoom, generalized. Without it a
+# reorder would silently throw away the pan the user just made.
+#
+# Reads x1/x2/y1/y2 and hilight_wave. An ABSENT/-1 hilight_wave DELETES the
+# model key rather than storing -1, so a strip nobody ever clicked keeps
+# generating exactly the props it did before (graph_props emits the token only
+# when the key is present). Cursors are NOT captured: the viewer creates its
+# graphs with `flags=graph`, not `private_cursor`, so cursor positions are
+# global (xctx->graph_cursor1_x/2_x) and survive a rect rebuild untouched — if
+# that ever changes, cursor1_x/cursor2_x/hcursor1_y/hcursor2_y join this list.
+# Returns 1, or 0 on an unknown token / refused context switch (never read a
+# rect prop from an unverified context).
+proc wviewer::capture_live_graph_state {token} {
+  variable windows
+  if {![dict exists $windows $token]} { return 0 }
+  if {![wviewer::switch_ctx $token]} { return 0 }
+  set gs [dict get [wviewer::layout_for $token] graphs]
+  set out {}
+  set gi 0
+  foreach G $gs {
+    foreach tok {x1 x2 y1 y2} {
+      set v {}
+      catch {set v [xschem getprop rect 2 $gi $tok]}
+      if {[string is double -strict $v]} { dict set G $tok $v }
+    }
+    set hw {}
+    catch {set hw [xschem getprop rect 2 $gi hilight_wave]}
+    if {[string is integer -strict $hw] && $hw >= 0} {
+      dict set G hilight_wave $hw
+    } elseif {[dict exists $G hilight_wave]} {
+      set G [dict remove $G hilight_wave]
+    }
+    lappend out $G
+    incr gi
+  }
+  wviewer::set_graphs $token $out
+  return 1
+}
+
+# THE authoritative strip move. `to` is the FINAL index the strip ends up at.
+# Returns that index, or {} on failure (unknown viewer, bad index, busy ctx).
+#
+# Steps, in this order and for these reasons:
+#   1. resolve + validate both indices against the LIVE graph count
+#   2. from == to -> return without mutating and WITHOUT logging (a drop back
+#      where it started is not a state change; a replay must not contain it)
+#   3. verify the context switch (capture reads rect props; switch_ctx silently
+#      no-ops under a raised semaphore — landmine 17)
+#   4. capture the live C-written state, so the regenerate below cannot undo a
+#      pan/zoom/bold made with the mouse
+#   5. reorder the graph list — one list move, dictionary carried whole
+#   6. remap the stored TARGET with reordered_index, in place. NOT through
+#      set_target_strip: that would emit a SECOND replay-log line for an index
+#      change that is an internal consequence of this one command
+#   7. exactly ONE regenerate (which re-places the rects and repaints `active=1`
+#      on the reordered target)
+#   8. exactly ONE fully-resolved log line
+# The `auto 1` marker rides along inside the moved dictionary — the auto-plot
+# graph is an ordinary strip as far as ordering is concerned.
+proc wviewer::move_strip {from to {token {}}} {
+  variable windows
+  variable target
+  set token [wviewer::resolve_token $token]
+  if {$token eq {} || ![dict exists $windows $token]} {
+    if {[info exists ::has_x] && [info commands ::ciw_echo] ne {}} {
+      ciw_echo "wviewer: no waveform viewer window to reorder strips in" error
+    }
+    return {}
+  }
+  set gs [dict get [wviewer::layout_for $token] graphs]
+  set n [llength $gs]
+  foreach v [list $from $to] {
+    if {![string is integer -strict $v] || $v < 0 || $v >= $n} {
+      if {[info exists ::has_x] && [info commands ::ciw_echo] ne {}} {
+        ciw_echo "wviewer: bad strip index '$v' (0..[expr {$n - 1}])" error
+      }
+      return {}
+    }
+  }
+  if {$from == $to} { return $to }
+  if {![wviewer::switch_ctx $token]} { return {} }
+  wviewer::capture_live_graph_state $token
+  set gs [dict get [wviewer::layout_for $token] graphs]
+  wviewer::set_graphs $token [wviewer::reorder_graphs $gs $from $to]
+  if {[info exists target($token)]} {
+    set target($token) \
+      [wviewer::reordered_index [wviewer::target_index $token] $from $to]
+  }
+  wviewer::regenerate $token
+  wviewer::log_action [list wviewer::move_strip $from $to $token]
+  return $to
+}
+
+# --- drag hit testing (canvas PIXELS) ----------------------------------------
+# All of these take the EVENT's own %x/%y. graph_at_pointer is deliberately NOT
+# used: it reads the C mouse-position mirror, which is stale for a press that
+# had no preceding Motion (the strip_at_pixel precedent, issue 0151).
+
+# The graphbb bands of viewer canvas `wp` as CANVAS PIXEL rects
+# {px1 py1 px2 py2}, in model order. Inverts X_TO_SCREEN (xschem.h):
+# pixel = (schematic + origin) / zoom. {} on an unknown canvas / refused switch.
+proc wviewer::strip_bands_px {wp} {
+  variable graphbb
+  if {![dict exists $graphbb $wp]} { return {} }
+  if {[catch {xschem new_schematic switch $wp}]} { return {} }
+  if {[xschem get current_win_path] ne $wp} { return {} }
+  set zoom [xschem get zoom]
+  if {$zoom == 0} { return {} }
+  set xo [xschem get xorigin]
+  set yo [xschem get yorigin]
+  set out {}
+  foreach bb [dict get $graphbb $wp] {
+    lassign $bb bx1 by1 bx2 by2
+    lappend out [list [expr {($bx1 + $xo) / $zoom}] [expr {($by1 + $yo) / $zoom}] \
+                      [expr {($bx2 + $xo) / $zoom}] [expr {($by2 + $yo) / $zoom}]]
+  }
+  return $out
+}
+
+# Index of the strip whose REORDER HANDLE is under canvas pixel (px,py), else -1.
+# The handle is the rightmost GRAPH_REORDER_HANDLE_W = 14 SCREEN PIXELS of the
+# band, full band height — a fixed pixel width (not a fraction of the strip) so
+# the target stays the same size at any canvas zoom. MIRRORED IN C: draw.c draws
+# the grip inside this zone from the same constant in xschem.h; change both.
+# Index of the strip containing canvas pixel (px,py) with `inset` screen pixels
+# trimmed off every side, else -1. The inset is what keeps the MMB graph pan off
+# the seam: waves_selected (callback.c) hit-tests the graph rect with a 5-pixel
+# inner border, so a press in that outermost band is NOT graph-routed and would
+# reach the schematic canvas pan instead — the exact gesture issue 0149 removed
+# from this window. 8 px covers the 5-pixel border at tk scaling 1.5.
+proc wviewer::strip_at_pixel_inset {canvas px py {inset 8}} {
+  set gi 0
+  foreach bb [wviewer::strip_bands_px $canvas] {
+    lassign $bb bx1 by1 bx2 by2
+    if {$px >= $bx1 + $inset && $px <= $bx2 - $inset && \
+        $py >= $by1 + $inset && $py <= $by2 - $inset} { return $gi }
+    incr gi
+  }
+  return -1
+}
+
+proc wviewer::strip_handle_at_pixel {canvas px py} {
+  set gi 0
+  foreach bb [wviewer::strip_bands_px $canvas] {
+    lassign $bb bx1 by1 bx2 by2
+    if {$py >= $by1 && $py <= $by2 && $px >= $bx2 - 14 && $px <= $bx2} { return $gi }
+    incr gi
+  }
+  return -1
+}
+
+# The prospective DESTINATION index for a drag whose pointer is at canvas pixel
+# row `py`. Band MIDPOINTS are the boundaries: dragging DOWN, the destination
+# becomes strip k once the pointer passes k's midpoint; dragging UP, likewise in
+# the other direction. Dragging past the top or the bottom of the stack clamps
+# to the first / last strip.
+#
+# `from` (the grabbed strip) makes the rule SYMMETRIC — without it "the last
+# midpoint crossed" is biased downward and an upward drag would propose a move
+# one strip too early. Omitted (-1, the pure form) it falls back to "the band
+# whose midpoint is nearest", which is what a caller with no gesture context
+# wants. -1 when the canvas has no bands.
+proc wviewer::strip_drop_index {canvas py {from -1}} {
+  set mids {}
+  foreach bb [wviewer::strip_bands_px $canvas] {
+    lassign $bb bx1 by1 bx2 by2
+    lappend mids [expr {($by1 + $by2) / 2.0}]
+  }
+  set n [llength $mids]
+  if {$n <= 0} { return -1 }
+  if {![string is integer -strict $from] || $from < 0 || $from >= $n} {
+    set best 0
+    set bd {}
+    for {set k 0} {$k < $n} {incr k} {
+      set d [expr {abs($py - [lindex $mids $k])}]
+      if {$bd eq {} || $d < $bd} { set bd $d; set best $k }
+    }
+    return $best
+  }
+  if {$py < [lindex $mids $from]} {
+    for {set k 0} {$k < $n} {incr k} {
+      if {[lindex $mids $k] >= $py} { return $k }
+    }
+    return [expr {$n - 1}]
+  }
+  for {set k [expr {$n - 1}]} {$k >= 0} {incr k -1} {
+    if {[lindex $mids $k] <= $py} { return $k }
+  }
+  return 0
+}
+
+# 1 when canvas pixel (px,py) is within `tol` screen pixels of a drawn trace of
+# strip `gi` — the TRACE EXCLUSION ZONE. Answered by the C engine
+# (`xschem get graph_near_wave`, draw.c) off its own transform and the raw data:
+# approximating it in Tcl from the strip geometry would drift the moment
+# margins, log axes or ranges change. Fails CLOSED (0 = "empty space") so a
+# missing verb or an errored query cannot lock the user out of reordering.
+proc wviewer::near_wave_at {wp gi px py {tol 10}} {
+  if {[catch {xschem new_schematic switch $wp}]} { return 0 }
+  set r 0
+  catch {set r [xschem get graph_near_wave $gi $px $py $tol]}
+  if {$r eq {} || ![string is integer -strict $r]} { return 0 }
+  return [expr {$r ? 1 : 0}]
+}
+
+# 1 when the press just handed to C armed a CURSOR move (graph_flags bits 16/32
+# = x-cursor A/B grabbed, 512/1024 = y-cursor 1/2 grabbed). A cursor grab is a
+# precise LMB interaction that can start anywhere in the strip, including far
+# from every trace, so the trace exclusion zone alone would steal it.
+proc wviewer::cursor_grabbed {wp} {
+  if {[catch {xschem new_schematic switch $wp}]} { return 0 }
+  set f 0
+  catch {set f [xschem get graph_flags]}
+  if {![string is integer -strict $f]} { return 0 }
+  return [expr {($f & (16 | 32 | 512 | 1024)) ? 1 : 0}]
+}
+
+# --- drag feedback (transient, on-screen only) -------------------------------
+
+# Paint the prospective destination: clear the bar on `old`, put one on `new`.
+# The bar rides on the SAME `reorder_handle` prop token as the grip (2 = bar on
+# the strip's TOP edge, 3 = on its BOTTOM edge — the edge the dragged strip will
+# arrive at, so the result reads off the screen), rewritten IN PLACE on the two
+# affected rects and redrawn. Never a regenerate: regenerate re-places every rect
+# from the model and would undo a live pan/zoom on every Motion (the
+# move_marker argument, issue 0151), and mutating the stack mid-drag is exactly
+# what the spec forbids. `new == from` means "back where it started" -> no bar.
+proc wviewer::drag_feedback {token old new from} {
+  variable windows
+  if {![dict exists $windows $token]} { return 0 }
+  set n [llength [dict get [wviewer::layout_for $token] graphs]]
+  if {[catch {
+    wviewer::with_edit $token {
+      if {$old >= 0 && $old < $n} {
+        xschem setprop -fast rect 2 $old reorder_handle 1
+      }
+      if {$new >= 0 && $new < $n && $new != $from} {
+        xschem setprop -fast rect 2 $new reorder_handle \
+          [expr {$new < $from ? 2 : 3}]
+      }
+      xschem redraw
+    }
+  }]} { return 0 }
+  return 1
+}
+
+# Disarm: clear any drop bar, restore the pointer, forget the gesture. Safe to
+# call when nothing is armed (every exit path funnels through it).
+proc wviewer::strip_drag_reset {token} {
+  variable windows
+  variable drag_from; variable drag_to; variable drag_y0; variable drag_active
+  set had 0
+  if {[info exists drag_from($token)] && $drag_from($token) >= 0} { set had 1 }
+  if {$had && [info exists drag_to($token)] && $drag_to($token) >= 0} {
+    wviewer::drag_feedback $token $drag_to($token) -1 $drag_from($token)
+  }
+  set drag_from($token) -1
+  set drag_to($token) -1
+  set drag_y0($token) 0
+  set drag_active($token) 0
+  if {[dict exists $windows $token]} {
+    catch {[dict get $windows $token win_path] configure -cursor {}}
+  }
+  return $had
+}
+
+# --- gesture seams (Tk bindings) ---------------------------------------------
+# Each returns 1 when it CONSUMED the event (the binding then only `break`s) and
+# 0 when it did not (the binding falls back to the pre-existing behaviour —
+# target change, focus, C callback, break — byte for byte).
+
+# <ButtonPress-1>. Resolves the strip from the event's own pixel, makes it the
+# target, hands the press to the C engine VERBATIM, and then decides whether
+# this press also arms a reorder:
+#   - on the reorder HANDLE (right margin): always arms;
+#   - elsewhere in the strip: arms only when the press landed on EMPTY waveform
+#     space — not within the trace exclusion zone, and not on a press that just
+#     grabbed a cursor. Those keep belonging to the C engine, so cursor drags,
+#     cursor moves, trace picking and the wave-bold click are unchanged.
+# The press is forwarded in BOTH cases, so the C engine's own bookkeeping
+# (GRAPHPAN, the click anchor graph_press_x/y) stays consistent with what the
+# matching release will do; the handle sits in the graph's right MARGIN, outside
+# the plot body, so that forward can never produce a stray wave-bold.
+# Modified presses (Shift/Ctrl/Alt) are not ours: Shift/Alt+B1 are swallowed by
+# strip_bindings and Ctrl+B1 is the C engine's graph_use_ctrl_key arm.
+proc wviewer::strip_drag_press {W px py state} {
+  variable drag_from; variable drag_to; variable drag_y0; variable drag_active
+  set token [wviewer::token_for_canvas $W]
+  if {$token eq {}} { return 0 }
+  if {$state & 13} { return 0 }                       ;# Shift|Control|Mod1
+  set gi [wviewer::strip_at_pixel $W $px $py]
+  if {$gi < 0} { return 0 }
+  wviewer::strip_drag_reset $token                    ;# a stale arm must never survive
+  catch {focus $W}
+  wviewer::set_target_strip $gi $token
+  xschem callback $W 4 $px $py 0 1 0 $state
+  if {[wviewer::strip_handle_at_pixel $W $px $py] != $gi} {
+    if {[wviewer::near_wave_at $W $gi $px $py]} { return 1 }
+    if {[wviewer::cursor_grabbed $W]} { return 1 }
+  }
+  set drag_from($token) $gi
+  set drag_to($token) $gi
+  set drag_y0($token) $py
+  set drag_active($token) 0
+  return 1
+}
+
+# <B1-Motion>. Below the 3-pixel vertical threshold the motion still belongs to
+# the C engine (hover measurement, an in-flight cursor drag), so it is NOT
+# consumed. Past the threshold the drag owns the pointer: the motion is
+# swallowed, the pointer becomes a vertical-move cursor, and the prospective
+# destination is repainted ONLY when it actually changes — never a model
+# mutation, never a regenerate, per Motion event.
+proc wviewer::strip_drag_motion {W px py state} {
+  variable drag_from; variable drag_to; variable drag_y0; variable drag_active
+  set token [wviewer::token_for_canvas $W]
+  if {$token eq {}} { return 0 }
+  if {![info exists drag_from($token)] || $drag_from($token) < 0} { return 0 }
+  set from $drag_from($token)
+  if {!$drag_active($token)} {
+    if {abs($py - $drag_y0($token)) <= 3} { return 0 }
+    set drag_active($token) 1
+    catch {$W configure -cursor sb_v_double_arrow}
+  }
+  set to [wviewer::strip_drop_index $W $py $from]
+  if {$to < 0} { set to $from }
+  if {$to != $drag_to($token)} {
+    set old $drag_to($token)
+    set drag_to($token) $to
+    wviewer::drag_feedback $token $old $to $from
+  }
+  return 1
+}
+
+# <ButtonRelease-1>. Always hands the release to C (it is what clears GRAPHPAN
+# and any armed cursor grab, and what completes a no-travel wave-bold click) and
+# always refreshes the readout — this binding pre-empts the generic
+# <ButtonRelease> that used to do both. A drag that PASSED the threshold and
+# landed somewhere else then commits exactly one move_strip; a drop back on the
+# origin, a sub-threshold press-release and a press that never armed all commit
+# nothing and log nothing.
+proc wviewer::strip_drag_release {W px py state} {
+  variable drag_from; variable drag_to; variable drag_active
+  set token [wviewer::token_for_canvas $W]
+  if {$token eq {}} { return 0 }
+  set armed [expr {[info exists drag_from($token)] && $drag_from($token) >= 0}]
+  set active 0
+  set from -1
+  set to -1
+  if {$armed} {
+    set active $drag_active($token)
+    set from $drag_from($token)
+    set to $drag_to($token)
+  }
+  wviewer::strip_drag_reset $token
+  xschem callback $W 5 $px $py 0 1 0 $state
+  if {$active && $to >= 0 && $to != $from} {
+    # catch: move_strip regenerates, and with_edit ERRORS on a refused context
+    # switch (raised semaphore). Inside a Tk binding that would pop bgerror's
+    # stack-trace modal over the viewer; a refused reorder must just not happen.
+    catch {wviewer::move_strip $from $to $token}
+  }
+  catch {wviewer::readout_refresh $token}
+  return 1
+}
+
+# Escape while dragging: abandon the move, restore the pointer and the drop-bar
+# feedback, keep the stack exactly as it was. Returns 1 when a drag was armed.
+proc wviewer::strip_drag_cancel {W} {
+  set token [wviewer::token_for_canvas $W]
+  if {$token eq {}} { return 0 }
+  return [wviewer::strip_drag_reset $token]
+}
+
+# Plain MIDDLE-button press / drag / release: the GRAPH pan.
+#
+# MMB used to be swallowed outright in this window (issue 0149) because it was
+# the schematic CANVAS pan and panning the canvas slides the whole tiled graph
+# stack around and exposes blank space. It now IS the graph pan (callback.c:
+# waves_selected no longer skips Button2, and the pan motion arm moved from
+# Button1Mask to Button2Mask), which pans the DATA RANGES and leaves the canvas
+# pinned — so it is forwarded instead.
+#
+# The PRESS decides, and only the press: it is accepted only when it lands
+# `inset` pixels inside a strip, so it cannot fall in the seam where
+# waves_selected refuses to graph-route and start_pan_logged would take over.
+# The motions and the release then follow that decision, so a refused press can
+# never leak a half-canvas-pan. Ctrl+MMB (the pin-type edit chord, a mutating
+# action) and Alt+MMB stay swallowed.
+proc wviewer::btn2_filter {W T px py state} {
+  variable mmb
+  set token [wviewer::token_for_canvas $W]
+  if {$token eq {}} { return }
+  if {$T == 4} {
+    set mmb($token) 0
+    if {$state & 12} { return }                       ;# Control | Mod1
+    if {[wviewer::strip_at_pixel_inset $W $px $py] < 0} { return }
+    set mmb($token) 1
+    catch {focus $W}
+  }
+  if {![info exists mmb($token)] || !$mmb($token)} { return }
+  if {$T == 6} {
+    xschem callback $W $T $px $py 0 0 0 $state        ;# Motion: no button arg
+  } else {
+    xschem callback $W $T $px $py 0 2 0 $state
+  }
+  if {$T == 5} {
+    set mmb($token) 0
+    catch {wviewer::readout_refresh $token}
+  }
 }
 
 # Land a batch of signals sent from the schematic (Direct Plot / Ctrl-4) per
@@ -2448,6 +2983,9 @@ proc wviewer::key_filter {W T x y N K s} {
   }
   set fwd 0
   if {$K eq {Escape}} {
+    # abandon an in-flight strip drag BEFORE the normal forward (D10 keeps ESC
+    # forwarded to C for its abort+redraw; the cancel is additive)
+    if {$T == 2} { wviewer::strip_drag_cancel $W }
     catch {destroy .ctxmenu}                          ;# mirror the editor bind
     set fwd 1
   } elseif {$N == 102 || $N == 90 || ($N == 122 && ($s & 4))} {
@@ -2523,31 +3061,55 @@ proc wviewer::strip_bindings {wp} {
   # trailing `break`: exactly one forward whether the generic binding lives on
   # this widget's tag or the toplevel's. The re-target runs FIRST so a press
   # that starts a cursor drag still lands on the strip it was aimed at.
+  # strip drag-reorder: the press seam runs FIRST and reports whether it took
+  # the event. When it did it has already done the re-target, the focus and the
+  # C forward itself; when it did not (no strip under the pointer, a modified
+  # press, a foreign canvas) the pre-existing issue-0151 body runs verbatim.
   bind $wp <ButtonPress-1> {
-    wviewer::click_target %W %x %y
-    focus %W
-    xschem callback %W %T %x %y 0 %b 0 %s
+    if {![wviewer::strip_drag_press %W %x %y %s]} {
+      wviewer::click_target %W %x %y
+      focus %W
+      xschem callback %W %T %x %y 0 %b 0 %s
+    }
+    break
+  }
+  # <B1-Motion> and <ButtonRelease-1> are MORE SPECIFIC than the kept generic
+  # <Motion>/<ButtonRelease>, so binding them pre-empts those — every non-drag
+  # path here must forward the original event to C exactly once (and the release
+  # must also do the readout refresh that was appended to the generic bind).
+  bind $wp <B1-Motion> {
+    if {![wviewer::strip_drag_motion %W %x %y %s]} {
+      xschem callback %W %T %x %y 0 0 0 %s
+    }
+    break
+  }
+  bind $wp <ButtonRelease-1> {
+    if {![wviewer::strip_drag_release %W %x %y %s]} {
+      xschem callback %W %T %x %y 0 %b 0 %s
+      wviewer::readout_refresh [wviewer::token_for_canvas %W]
+    }
     break
   }
   bind $wp <Double-Button-1> {break}                  ;# D9: no graph props dlg
   bind $wp <Double-Button-2> {break}
   bind $wp <Double-Button-3> {break}
-  # issue 0149: kill the canvas-only mouse gestures. Button-2 (MMB) is the
-  # schematic PAN gesture — waves_selected EXPLICITLY skips Button-2 press /
-  # release / drag-motion so it can never be graph-routed, and handle_button_press
-  # calls start_pan_logged(): in the viewer that slides the whole tiled graph
-  # stack around a bigger canvas and exposes blank space. Ctrl+MMB is the
-  # pin-type edit chord (a mutating action, i.e. a readonly modal). Shift+B1 and
-  # Alt+B1 are likewise canvas-only (waves_selected skips Shift+B1; Alt sets
-  # SET_MODMASK) and mean rubber-band/copy-drag and unselect-at-pointer — pure
-  # schematic-object gestures with no graph counterpart. All swallowed; plain
-  # Button-1 still reaches the C engine (cursor drag / graph pan). The bands tile
+  # issue 0149: kill the canvas-only mouse gestures. Shift+B1 and Alt+B1 are
+  # canvas-only (waves_selected skips Shift+B1; Alt sets SET_MODMASK) and mean
+  # rubber-band/copy-drag and unselect-at-pointer — pure schematic-object
+  # gestures with no graph counterpart, so they stay swallowed. The bands tile
   # the whole viewport (band_geometry), so a plain click always lands on a graph.
-  foreach seq {<ButtonPress-2> <ButtonRelease-2> <B2-Motion>
-               <Shift-ButtonPress-1> <Shift-ButtonRelease-1> <Shift-B1-Motion>
+  foreach seq {<Shift-ButtonPress-1> <Shift-ButtonRelease-1> <Shift-B1-Motion>
                <Alt-ButtonPress-1> <Alt-ButtonRelease-1> <Alt-B1-Motion>} {
     bind $wp $seq {break}
   }
+  # Button-2 (MMB) is no longer swallowed: it IS the graph pan now (the C pan
+  # moved off LMB, which the strip drag-reorder seam needs). btn2_filter accepts
+  # the press only well inside a strip, so it can still never reach
+  # start_pan_logged and slide the canvas. Ctrl/Alt+MMB remain inert (the
+  # pin-type edit chord is a mutating action, i.e. a readonly modal).
+  bind $wp <ButtonPress-2>   {wviewer::btn2_filter %W %T %x %y %s; break}
+  bind $wp <B2-Motion>       {wviewer::btn2_filter %W %T %x %y %s; break}
+  bind $wp <ButtonRelease-2> {wviewer::btn2_filter %W %T %x %y %s; break}
   # item 19 (D-B): wheel = GRAPH pan/zoom, mirroring cadence_style_rc on graph
   # content. On Tcl 8.6 / X11 the wheel arrives as Button-4 (up) / Button-5
   # (down); these more-specific binds PRE-EMPT the kept generic <Button> (which

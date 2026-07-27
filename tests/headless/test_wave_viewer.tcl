@@ -486,7 +486,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     <Button-2> <ButtonRelease-2> <B2-Motion>
     <Shift-Button-1> <Shift-ButtonRelease-1> <Shift-B1-Motion>
     <Alt-Button-1> <Alt-ButtonRelease-1> <Alt-B1-Motion>
-    <Button-1>
+    <Button-1> <B1-Motion> <ButtonRelease-1>
   }
   set stray {}
   foreach seq [bind $vdrw] {
@@ -1486,17 +1486,25 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     wviewer::regenerate $tok
 
     # CG-binds: the canvas-only mouse gestures are bound to a swallow on THIS
-    # canvas (per-widget; other windows keep theirs)
-    foreach seq {<ButtonPress-2> <ButtonRelease-2> <B2-Motion>
-                 <Shift-ButtonPress-1> <Shift-ButtonRelease-1> <Shift-B1-Motion>
+    # canvas (per-widget; other windows keep theirs). Button-2 LEFT this set when
+    # the graph pan moved off LMB (strip drag-reorder): it is now forwarded
+    # through btn2_filter, which is what CG-mmb2 below exercises. What must still
+    # hold for MMB is the OUTCOME, not the swallow — the canvas never moves.
+    foreach seq {<Shift-ButtonPress-1> <Shift-ButtonRelease-1> <Shift-B1-Motion>
                  <Alt-ButtonPress-1> <Alt-ButtonRelease-1> <Alt-B1-Motion>} {
       check "CG-binds $seq swallowed" [string trim [bind $vdrw $seq]] break
     }
+    foreach seq {<ButtonPress-2> <ButtonRelease-2> <B2-Motion>} {
+      check_true "CG-binds $seq routed through btn2_filter" \
+        [string match {*wviewer::btn2_filter*} [bind $vdrw $seq]]
+    }
 
-    # CG-mmb: a full synthetic MIDDLE-button press -> drag -> release. Without
-    # the swallow the press reaches handle_button_press -> start_pan_logged and
-    # the Button2Mask motion pans the canvas origin (the reported bug); with it
-    # the canvas cannot move. 0x200 = Button2Mask.
+    # CG-mmb: a full synthetic MIDDLE-button press -> drag -> release. It must
+    # never move the CANVAS: pre-0149 the press reached handle_button_press ->
+    # start_pan_logged and the Button2Mask motion panned the canvas origin. It is
+    # now the GRAPH pan instead (btn2_filter forwards it, callback.c pans data
+    # ranges), so the canvas stays pinned for the opposite reason — assert the
+    # canvas invariant here, the data-range effect in CG-mmb2. 0x200 = Button2Mask.
     set W [winfo width $vdrw]; set H [winfo height $vdrw]
     set mpx1 [expr {int(0.30 * $W)}]; set mpx2 [expr {int(0.70 * $W)}]
     set mpy  [expr {int(0.50 * $H)}]
@@ -1611,11 +1619,15 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
         [expr {([xschem getprop rect 2 0 x2] - [xschem getprop rect 2 0 x1]) <
                ($wbx2 - $wbx1) - 1e-9}]
 
-      # WB-lmb-drag: the SAME hazard on the new trigger — a Button1 drag is the
-      # graph pan, and its release must not read as a click. The teeth for using
-      # dedicated graph_press_x/y instead of mx/my_double_save, which the pan
-      # re-seeds on every motion step (waves_callback save_mouse_at_end): with
-      # mx_double_save this leg bolds. Asserts the pan happened too.
+      # WB-lmb-drag: the SAME hazard on the new trigger — a Button1 drag must not
+      # have its release read as a click. The teeth for using dedicated
+      # graph_press_x/y instead of mx/my_double_save (which the pan re-seeded on
+      # every motion step, waves_callback save_mouse_at_end).
+      # CONTRACT CHANGE (strip drag-reorder): LMB no longer pans the graph — the
+      # pan moved to MMB so LMB can own precise interaction and strip reordering.
+      # So this leg now asserts the pan did NOT happen, and WB-mmb-drag below
+      # asserts that MMB does it instead. Both together are the teeth: without the
+      # second one "no pan" would also pass with the gesture silently dead.
       wb_reset $tok
       wviewer::fit $tok
       xschem new_schematic switch $vdrw
@@ -1626,11 +1638,31 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
       }
       wb_ev $vdrw <ButtonRelease-1> -x $bpx2 -y $bpy -state 0x100
       update
-      check "WB-lmb-drag graph pan does NOT bold" [wb_bold $vdrw] -1
+      check "WB-lmb-drag LMB drag does NOT bold" [wb_bold $vdrw] -1
       xschem new_schematic switch $vdrw
-      check_true "WB-lmb-drag really did pan (x1 moved)" \
-        [expr {abs([xschem getprop rect 2 0 x1] - $wbp1) > 1e-12}]
+      check_true "WB-lmb-drag LMB no longer pans the graph range" \
+        [expr {abs([xschem getprop rect 2 0 x1] - $wbp1) <= 1e-12}]
       check_true "WB-lmb-drag canvas == baseline" [ix_canvas_ok $vdrw $cx0 $cy0 $cz0]
+
+      # WB-mmb-drag: the pan, on its new button. A plain MMB press-drag-release
+      # inside the strip must move the graph's x range and leave the CANVAS put
+      # (the issue-0149 invariant: no gesture in this window scrolls the canvas).
+      wb_reset $tok
+      wviewer::fit $tok
+      xschem new_schematic switch $vdrw
+      set wbp2 [xschem getprop rect 2 0 x1]
+      wb_ev $vdrw <ButtonPress-2> -x $bpx -y $bpy
+      foreach fx {0.55 0.60 0.65 0.70} {
+        wb_ev $vdrw <B2-Motion> -x [expr {int($fx * $W)}] -y $bpy -state 0x200
+      }
+      wb_ev $vdrw <ButtonRelease-2> -x $bpx2 -y $bpy -state 0x200
+      update
+      xschem new_schematic switch $vdrw
+      check_true "WB-mmb-drag MMB really pans the graph range (x1 moved)" \
+        [expr {abs([xschem getprop rect 2 0 x1] - $wbp2) > 1e-12}]
+      check_true "WB-mmb-drag canvas == baseline (graph pan, not canvas pan)" \
+        [ix_canvas_ok $vdrw $cx0 $cy0 $cz0]
+      check "WB-mmb-drag MMB drag does not bold" [wb_bold $vdrw] -1
 
       # WB-legend: Button3 OUTSIDE the plot body is the SEPARATE, per-trace legend
       # affordance (edit_wave_attributes(2,...), draw.c) — it bolds the trace whose
@@ -1653,6 +1685,138 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
       wb_ev $vdrw <ButtonRelease-1> -x $bpx -y $wbly -state 0x100
       update
       check "WB-legend LMB on the legend does not bold (body-only)" [wb_bold $vdrw] -1
+
+      # === SD: the LMB SEAM between the C engine and strip drag-reorder =======
+      # doc/claude/specs/waveform_viewer_modes.md §12. Empty waveform space
+      # belongs to strip reordering; a fixed screen-pixel band around every trace
+      # — and any press that grabbed a cursor — stays with the C engine. These
+      # legs need REAL data (the exclusion is answered by the engine off the raw)
+      # and a two-strip stack (a reorder needs somewhere to go).
+      set sd_save [dict get [wviewer::layout_for $tok] graphs]
+      wviewer::set_graphs $tok [list [lindex $sd_save 0] [wviewer::empty_graph]]
+      wviewer::regenerate $tok
+      wviewer::fit $tok
+      xschem new_schematic switch $vdrw
+      proc sd_order {tok} {
+        set out {}
+        foreach G [dict get [wviewer::layout_for $tok] graphs] {
+          set tr [dict get $G traces]
+          lappend out [expr {[llength $tr] ? [dict get [lindex $tr 0] vec] : {-}}]
+        }
+        return $out
+      }
+      proc sd_near {vdrw gi px py tol} {
+        xschem new_schematic switch $vdrw
+        return [xschem get graph_near_wave $gi $px $py $tol]
+      }
+      set W [winfo width $vdrw]; set H [winfo height $vdrw]
+      set sdx [expr {int(0.5 * $W)}]
+      # scan strip 0's band for a pixel row that sits ON the trace
+      set sdy {}
+      for {set y 2} {$y < $H / 2} {incr y 2} {
+        if {[sd_near $vdrw 0 $sdx $y 3]} { set sdy $y; break }
+      }
+      check_true "SD1 a pixel ON the trace was found in strip 0" [expr {$sdy ne {}}]
+      if {$sdy ne {}} {
+        # the query is a real SCREEN-PIXEL distance: a row 12 px away answers 1
+        # for a 16 px tolerance and 0 for a 4 px one. That is what makes the
+        # exclusion zone independent of canvas zoom and of the data ranges —
+        # nothing here is derived from the strip's geometry.
+        set sdfar [expr {$sdy + 12}]
+        check "SD1 12 px off the trace, tol 16 -> near" [sd_near $vdrw 0 $sdx $sdfar 16] 1
+        check "SD1 12 px off the trace, tol 4  -> not near" [sd_near $vdrw 0 $sdx $sdfar 4] 0
+        check "SD1 a row far above the trace is empty space" \
+          [sd_near $vdrw 0 $sdx 2 10] 0
+
+        # SD2: a near-trace LMB CLICK still reaches C and bolds (the press seam
+        # forwards every press verbatim, whatever it decides about arming)
+        wb_reset $tok
+        wb_ev $vdrw <ButtonPress-1>   -x $sdx -y $sdy
+        wb_ev $vdrw <ButtonRelease-1> -x $sdx -y $sdy -state 0x100
+        update
+        check "SD2 near-trace LMB click still bolds (C got press+release)" \
+          [wb_bold $vdrw] 0
+        wb_reset $tok
+
+        # SD3: a near-trace LMB press-DRAG must NOT reorder — that seam is
+        # reserved for the C engine (and for future trace-to-strip dragging)
+        set sdorder [sd_order $tok]
+        wb_ev $vdrw <ButtonPress-1> -x $sdx -y $sdy
+        foreach fy {0.55 0.65 0.80} {
+          wb_ev $vdrw <B1-Motion> -x $sdx -y [expr {int($fy * $H)}] -state 0x100
+        }
+        wb_ev $vdrw <ButtonRelease-1> -x $sdx -y [expr {int(0.80 * $H)}] -state 0x100
+        update
+        check "SD3 a press inside the trace zone never arms a reorder" \
+          [sd_order $tok] $sdorder
+        check_true "SD3 ... and left no drag armed" \
+          [expr {$::wviewer::drag_from($tok) == -1}]
+      }
+
+      # SD4: the SAME gesture from EMPTY waveform space DOES reorder. Strip 1 is
+      # traceless, so every pixel in it is empty space. Without this leg SD3
+      # would pass with reordering broken outright.
+      set sdb [wviewer::strip_bands_px $vdrw]
+      set sdm0 [expr {int(([lindex [lindex $sdb 0] 1] + [lindex [lindex $sdb 0] 3]) / 2.0)}]
+      set sdm1 [expr {int(([lindex [lindex $sdb 1] 1] + [lindex [lindex $sdb 1] 3]) / 2.0)}]
+      check "SD4 fixture: the data strip is on top" [sd_order $tok] {i(v1) -}
+      wb_ev $vdrw <ButtonPress-1> -x $sdx -y $sdm1
+      wb_ev $vdrw <B1-Motion> -x $sdx -y [expr {$sdm0 - 3}] -state 0x100
+      wb_ev $vdrw <ButtonRelease-1> -x $sdx -y [expr {$sdm0 - 3}] -state 0x100
+      update
+      check "SD4 an empty-space drag reordered the stack" [sd_order $tok] {- i(v1)}
+      check_true "SD4 canvas == baseline (the drag never scrolled it)" \
+        [ix_canvas_ok $vdrw $cx0 $cy0 $cz0]
+      # put it back
+      wb_ev $vdrw <ButtonPress-1> -x $sdx -y $sdm0
+      wb_ev $vdrw <B1-Motion> -x $sdx -y [expr {$sdm1 + 3}] -state 0x100
+      wb_ev $vdrw <ButtonRelease-1> -x $sdx -y [expr {$sdm1 + 3}] -state 0x100
+      update
+      check "SD4 and back again" [sd_order $tok] {i(v1) -}
+
+      # SD5: a press that GRABBED A CURSOR keeps the whole drag, even though the
+      # pointer is nowhere near a trace. A cursor can be parked anywhere in the
+      # strip, so the trace-proximity gate alone would steal cursor dragging —
+      # the press seam also asks the engine whether it just armed a cursor move
+      # (`xschem get graph_flags`). Park cursor A exactly under the press pixel
+      # so the grab is certain, then drag DIAGONALLY: enough vertical travel to
+      # pass the reorder threshold, enough horizontal travel to move the cursor.
+      set sdcx [expr {int(0.35 * $W)}]
+      set sdcy [expr {int(0.10 * $H)}]        ;# high in strip 0, off the trace
+      check "SD5 the press pixel is empty space as far as traces go" \
+        [sd_near $vdrw 0 $sdcx $sdcy 10] 0
+      xschem new_schematic switch $vdrw
+      set sdc [xschem graph_coord 0 $sdcx $sdcy]
+      if {[llength $sdc] == 2} {
+        set ::wviewer::cva($tok) 1
+        wviewer::cursor_toggle $tok 1
+        xschem new_schematic switch $vdrw
+        xschem set cursor1_x [lindex $sdc 0]
+        xschem redraw
+        set sdc0 [xschem get cursor1_x]
+        set sdorder [sd_order $tok]
+        wb_ev $vdrw <ButtonPress-1> -x $sdcx -y $sdcy
+        foreach f {0.2 0.3 0.4} {
+          wb_ev $vdrw <B1-Motion> -x [expr {int(($sdcx + $f * $W))}] \
+            -y [expr {int($sdcy + $f * $H)}] -state 0x100
+        }
+        wb_ev $vdrw <ButtonRelease-1> -x [expr {int($sdcx + 0.4 * $W)}] \
+          -y [expr {int($sdcy + 0.4 * $H)}] -state 0x100
+        update
+        xschem new_schematic switch $vdrw
+        check_true "SD5 the cursor drag moved cursor A" \
+          [expr {abs([xschem get cursor1_x] - $sdc0) > 1e-15}]
+        check "SD5 a cursor drag never reorders the stack" [sd_order $tok] $sdorder
+        set ::wviewer::cva($tok) 0
+        wviewer::cursor_toggle $tok 1
+      } else {
+        puts "SKIPPED: SD5 (graph_coord unavailable)"
+      }
+
+      rename sd_order {}
+      rename sd_near {}
+      wviewer::set_graphs $tok $sd_save
+      wviewer::regenerate $tok
 
       rename wb_bold {}
       rename wb_reset {}

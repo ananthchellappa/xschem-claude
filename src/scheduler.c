@@ -3783,6 +3783,41 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
             Tcl_SetResult(interp, my_itoa(xctx->graph_lastsel),TCL_VOLATILE);
           }
+          /* xschem get graph_flags
+           * The per-session graph interaction flag word (xctx->graph_flags): bits
+           * 2/4 = x-cursor A/B drawn, 16/32 = x-cursor A/B being MOVED (grabbed),
+           * 64 = measurement tooltip, 128/256 = y-cursor 1/2 drawn, 512/1024 =
+           * y-cursor 1/2 being moved. Authoritative legend: callback.c
+           * (waves_callback's header comment). NOT xRect.flags, which is the
+           * per-graph type/lock word (landmine 6).
+           * Added so the ASE viewer's LMB drag-to-reorder seam can tell "this
+           * press grabbed a cursor" from "this press landed on empty waveform
+           * space" without mirroring cursor state in Tcl (reference backlog #1).
+           * Reads a scalar, no side effects — safe to call from a binding. */
+          else if(!strcmp(argv[2], "graph_flags")) {
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            Tcl_SetResult(interp, my_itoa((int)xctx->graph_flags), TCL_VOLATILE);
+          }
+          /* xschem get graph_near_wave <graph_idx> <px> <py> [tol]
+           * 1 when the CANVAS PIXEL (px,py) is within `tol` screen pixels
+           * (default 10) of a displayed trace of graph <graph_idx>, else 0.
+           * Uses the engine's own transform + raw data (draw.c graph_near_wave),
+           * so the caller never re-derives the plot box margins in Tcl.
+           * The ASE viewer's trace-exclusion zone: near-trace LMB stays with the
+           * C engine (cursor grab, wave-bold), empty body space belongs to strip
+           * drag-reordering. Deliberately takes the EVENT's pixels rather than the
+           * C mouse mirror, which is stale for a press with no preceding Motion. */
+          else if(!strcmp(argv[2], "graph_near_wave")) {
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            if(argc > 5) {
+              double tol = (argc > 6) ? atof(argv[6]) : 10.0;
+              Tcl_SetResult(interp,
+                my_itoa(graph_near_wave(atoi(argv[3]), atof(argv[4]), atof(argv[5]), tol)),
+                TCL_VOLATILE);
+            } else {
+              Tcl_SetResult(interp, "0", TCL_STATIC);
+            }
+          }
           else if(!strcmp(argv[2], "gridlayer")) { /* layer number for grid */
             Tcl_SetResult(interp, my_itoa(GRIDLAYER),TCL_VOLATILE);
           }

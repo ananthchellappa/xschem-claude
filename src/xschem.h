@@ -383,6 +383,16 @@ typedef int Tcl_Size;
 
 #define RECT_TOUCH(xa,ya,xb,yb,x1,y1,x2,y2)  (!(xa > x2 || xb < x1 || ya > y2 || yb < y1))
 
+/* ASE waveform-viewer strip drag-reorder affordance, in SCREEN PIXELS (fixed
+ * regardless of canvas zoom, so the target stays usable at any zoom level).
+ * GRAPH_REORDER_HANDLE_W is the width of the grab zone at the strip's right
+ * edge; GRAPH_REORDER_DROPBAR_H the thickness of the transient drop-destination
+ * bar. MIRRORED IN TCL: wviewer::strip_handle_at_pixel / the drag feedback in
+ * src/wave_viewer.tcl -- change both or the drawn grip and the hit-test drift
+ * apart. doc/claude/specs/waveform_viewer_modes.md */
+#define GRAPH_REORDER_HANDLE_W  14
+#define GRAPH_REORDER_DROPBAR_H  4
+
 #define ROTATION(rot, flip, x0, y0, x, y, rx, ry) \
 { \
   double xxtmp = (flip ? 2 * x0 -x : x); \
@@ -1066,6 +1076,14 @@ typedef struct {
                * `active=1`) -> draw_graph paints the dull-yellow right-edge marker.
                * Only the waveform viewer ever writes the token, so ordinary
                * schematic graphs are unaffected. */
+  int reorder_handle; /* strip drag-reorder affordance (prop token `reorder_handle`),
+                       * written by the ASE viewer only:
+                       *   1 = draw the grip in the right margin (every viewer strip)
+                       *   2 = grip + a drop bar along the strip's TOP edge
+                       *   3 = grip + a drop bar along the strip's BOTTOM edge
+                       * 2/3 are TRANSIENT drag feedback (prospective destination).
+                       * Like `active`, on-screen only (draw_graph flags bit 16).
+                       * doc/claude/specs/waveform_viewer_modes.md */
 } Graph_ctx;
 
 typedef struct {
@@ -1702,6 +1720,7 @@ extern int sch_waves_loaded(void);
 extern int edit_wave_attributes(int what, int i, Graph_ctx *gr);
 extern void draw_graph(int i, int flags, Graph_ctx *gr, void *ct);
 extern int find_closest_wave(int i, Graph_ctx *gr, int *node_number);
+extern int graph_near_wave(int i, double px, double py, double tol);
 extern void setup_graph_data(int i, int skip, Graph_ctx *gr);
 extern int graph_fullyzoom(xRect *r,  Graph_ctx *gr, int graph_dataset);
 extern int graph_fullxzoom(int i, Graph_ctx *gr, int dataset);

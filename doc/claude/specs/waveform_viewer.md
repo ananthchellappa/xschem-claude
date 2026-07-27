@@ -417,10 +417,16 @@ refuses object mutation). Two survivors were closed in `strip_bindings` /
 `key_filter`, per-widget, pure Tcl:
 
 - **Middle button swallowed** (`<ButtonPress-2>`, `<ButtonRelease-2>`,
-  `<B2-Motion>`). `waves_selected` (callback.c:88-92) explicitly skips Button-2
+  `<B2-Motion>`). `waves_selected` (callback.c:88-92) explicitly skipped Button-2
   so the schematic pan keeps working over on-canvas graphs — meaning MMB in the
   viewer could only ever be `start_pan_logged()`. Ctrl+MMB (the
   `edit.cycle_pin_type` chord, a readonly modal) dies with it.
+  **SUPERSEDED 2026-07-27** (strip drag-reorder, below): MMB over a graph is now
+  the GRAPH pan — `waves_selected` no longer skips it and the pan motion arm
+  moved from `Button1Mask` to `Button2Mask` — so it is forwarded through
+  `wviewer::btn2_filter` instead of swallowed. The contract above is unchanged:
+  the filter accepts the **press** only well inside a strip, so it can still
+  never reach `start_pan_logged`, and Ctrl/Alt+MMB stay inert.
 - **Arrows intercepted, never forwarded** (`wviewer::arrow_pan`): bare
   Left/Right/Up/Down pan the graph, every modified arrow is swallowed. See the
   item-19 note above for what each forwarded form used to do.
@@ -430,8 +436,9 @@ refuses object mutation). Two survivors were closed in `strip_bindings` /
 Not a hole (recorded in issue 0149): a graph rect can still be *selected* by a
 click in the 5 px `border` inset at a band edge — cosmetic; the drag-move itself
 is gated on `!xctx->readonly`, so nothing in the viewer can be moved or deleted.
-Making a graph "move" (swap strip positions) is future work, deliberately NOT a
-schematic move.
+Making a graph "move" (swap strip positions) shipped on 2026-07-27 as strip
+drag-reorder (below) — and, as anticipated here, it is deliberately NOT a
+schematic move: it is a list move on the Tcl model followed by a regenerate.
 
 ## Ctrl-4 schematic entry + status-line prompt (as shipped, 2026-07-24)
 
@@ -542,6 +549,40 @@ owning the current xschem context, like the 0151 mode/target commands); also
   viewer plus three picks reads exactly like three successive gestures would.
 - **Tests:** `tests/headless/test_wave_clear_all.tcl` (`CA*` no-window, `CG*`
   GUI) — 67 checks, sabotage-verified. Documented in `src/cadence_style_rc`.
+
+## Strip drag-to-reorder (2026-07-27)
+
+Full contract: `doc/claude/specs/waveform_viewer_modes.md` §12. As shipped:
+
+- **LMB drags a whole strip up or down the stack.** A strip is one graph dict of
+  `wviewer::layouts` — traces, colors, axis settings and any `auto 1` marker move
+  as one list element; the order of traces *inside* a strip never changes.
+- **Two grab surfaces:** a **14-screen-pixel handle** at the strip's right edge
+  (the C engine draws a three-bar grip in it, prop token `reorder_handle`) and
+  **empty waveform body**. A fixed **10-screen-pixel zone around every trace**,
+  and any press that grabbed a cursor, stay with the C engine — cursor drags,
+  trace picking and the LMB wave-bold click (issue 0152) are unchanged. That seam
+  is deliberately reserved for future LMB trace-to-strip dragging.
+- **The gesture:** >3 px of vertical travel starts it; crossing another strip's
+  midpoint selects it; past the ends it clamps; release commits; **Escape
+  cancels**; a sub-threshold click and a drop back at the origin do nothing and
+  log nothing. The destination is shown by a bar on the edge the strip will
+  arrive at, painted by rewriting `reorder_handle` on the two affected rects —
+  never by regenerating the stack.
+- **`wviewer::move_strip <from> <to> ?token?`** is the one authoritative
+  mutation, with pure `reorder_graphs` / `reordered_index` underneath. It
+  captures the live C-written rect state first
+  (`wviewer::capture_live_graph_state`: `x1 x2 y1 y2 hilight_wave`), so a reorder
+  cannot undo a pan/zoom/bold the user just made with the mouse; it remaps the
+  target with `reordered_index` so the marker follows graph IDENTITY; it
+  regenerates once and logs one resolved line (preceded by a `set_target_strip`
+  line only when the press actually moved the target).
+- **The graph pan moved from LMB to MMB** (`callback.c`, engine-wide) to free LMB
+  for this. Two new read-only verbs back the seam: `xschem get graph_near_wave`
+  (real screen-pixel distance to a drawn trace) and `xschem get graph_flags`.
+- **Tests:** `test_wave_modes.tcl` `M7`/`MG14` and `test_wave_viewer.tcl` `SD*` +
+  `WB-mmb-drag` — sabotage-verified against 9 independent breakages. The grip and
+  drop-bar PIXELS are eyeball-only, like the wave rendering itself.
 
 ## Non-goals (v1)
 

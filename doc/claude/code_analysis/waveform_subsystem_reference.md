@@ -375,6 +375,32 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
   token, on real changes only). `<ButtonPress-1>` re-targets and then forwards
   the press to C by hand (it is more specific than the kept generic `<Button>`,
   so the forward is mandatory).
+- **Strip drag-to-reorder + the LMB/MMB split (2026-07-27,
+  `doc/claude/specs/waveform_viewer_modes.md` §12).** A strip is one graph dict of
+  `layouts`, so reordering it is a LIST MOVE (`reorder_graphs`, PURE) plus a
+  `regenerate` — never a schematic move of the rect, and never a field-by-field
+  rebuild (the dict carries traces, colors, axes, `auto 1` and any future key).
+  `move_strip {from to ?token?}` is the one mutation: `to` is the **final index**
+  the strip occupies, not an insertion slot. Three things it must do in order and
+  that a new caller must not skip: **capture_live_graph_state** first (the C
+  engine writes MMB pan / RMB box-zoom ranges and the wave-bold `hilight_wave`
+  STRAIGHT into the rect prop where the model never sees them, and `regenerate`
+  re-places every rect FROM the model — the `move_marker`/`graph_range` argument,
+  generalized); remap the stored target with the PURE `reordered_index` **in
+  place**, not through `set_target_strip`, or replay gets a second target line for
+  an internal consequence; and log exactly one resolved line, preceded by a
+  `set_target_strip` line only when the press really moved the target.
+  The gesture seams (`strip_drag_press/motion/release/cancel`) hit-test with the
+  EVENT's own pixels via `strip_bands_px` — **never `graph_at_pointer`**, whose C
+  mouse mirror is stale for a press with no preceding Motion. The press forwards
+  to C verbatim in every case and then decides whether to also arm: it refuses
+  inside the 10-px trace zone (`xschem get graph_near_wave`) and when the press
+  grabbed a cursor (`xschem get graph_flags` bits 16/32/512/1024). `<B1-Motion>`
+  and `<ButtonRelease-1>` are MORE SPECIFIC than the kept generic
+  `<Motion>`/`<ButtonRelease>`, so their non-drag paths must forward exactly once
+  and the release must also do the readout refresh the generic bind carried.
+  **The graph pan moved from LMB to MMB in `callback.c` and that is engine-wide**
+  — see landmine 31.
 - **Clear All + the `WaveViewer` bindtag (issue 0171,
   `doc/claude/specs/waveform_viewer.md`).** `clear_all ?token?` drops every graph
   and trace and leaves ONE `empty_graph` (target back to 0), KEEPING the plot
@@ -406,6 +432,15 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
   so callers get the plot-box (14% margin) transform without mirroring it in Tcl. Uses a
   LOCAL `Graph_ctx` (landmine 11); `{}` on a bad index / non-graph rect. Added for the
   viewer's pointer-anchored zoom (issue 0146); partially covers backlog #7.
+- `xschem get graph_flags` (`xschem_cmds_g`) — the per-session graph interaction
+  flag word (`xctx->graph_flags`; bits 16/32 = x-cursor A/B GRABBED, 512/1024 =
+  y-cursor grabbed — authoritative legend in `callback.c`). **Not** `xRect.flags`
+  (landmine 6). Added 2026-07-27 for the viewer's drag-reorder press seam.
+- `xschem get graph_near_wave <graph_idx> <px> <py> [tol]` (`xschem_cmds_g`) —
+  1/0: is that CANVAS PIXEL within `tol` (default 10) **screen pixels** of a drawn
+  trace of that graph? Backed by `graph_near_wave()` (`draw.c`), which uses the
+  engine's own transform + raw data. The ASE viewer's trace-exclusion zone. See
+  landmine 33 for how it differs from `find_closest_wave` and what it refuses.
 - `xschem hilight_netname [-fast] [-style <n> | -layer <n>] <net>` and
   `xschem hilight_instname [-fast] [-layer <n>] <inst>` (`xschem_cmds_h`) —
   `-layer` highlights in the PLAIN color of a drawing layer (the negative-value
@@ -735,6 +770,59 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
     flag (`.save all`). Otherwise the pick is correct and the trace is simply
     absent.
 
+31. **The graph PAN is on MMB, not LMB, and that change is ENGINE-WIDE**
+    (2026-07-27, strip drag-reorder). `waves_selected` used to `skip` Button2
+    press/motion/release so `handle_button_press` -> `start_pan_logged()` always
+    got it; the graph pan lived on `Button1Mask` motion. LMB over a strip now has
+    too much to do (cursor grab + move, trace pick, the issue-0152 wave-bold
+    click, and the ASE viewer's drag-to-reorder), so the two swapped: the Button2
+    skips are gone, `GRAPHPAN` also starts on Button2, and **both** pan motion
+    arms (the main one and the `graph_bottom` absolute-positioning one) test
+    `Button2Mask`. Consequences to know before touching this:
+    **(a)** it applies to on-canvas schematic graphs too — MMB over an embedded
+    graph pans the GRAPH, not the canvas;
+    **(b)** off a graph MMB is still the canvas pan, and a canvas pan already in
+    flight is protected because `STARTPAN` is in `waves_selected`'s `excl` mask —
+    do not remove it;
+    **(c)** Button1 stays in the `GRAPHPAN` start set: it still owns cursor drags
+    and the wave-bold click, both of which need that routing latch (and the latch
+    is also what freezes `graph_left`/`graph_top`/`graph_bottom` at press time);
+    **(d)** the cursor-move guard `!(graph_flags & (16|32|512|1024))` stays on the
+    pan arm — a MMB drag while a cursor is grabbed must not also pan;
+    **(e)** in the ASE viewer MMB is no longer swallowed (issue 0149) but
+    forwarded by `wviewer::btn2_filter`, which accepts the **press** only well
+    inside a strip. That inset exists because `waves_selected` hit-tests with a
+    5-px inner `border`: a press in that seam is NOT graph-routed and would reach
+    `start_pan_logged` and slide the tiled canvas. The press decides; the motions
+    and the release follow its decision, so a refused press cannot leak a
+    half-canvas-pan mid-gesture.
+
+32. **`reorder_handle` is a second on-screen-only decoration and follows the
+    `active` rules exactly** (2026-07-27). Parsed in `setup_graph_data` **before**
+    the `RECT_OUTSIDE` early return (landmine 11 — `xctx->graph_struct` is shared,
+    a stale value leaks onto the next graph) and drawn in `draw_graph` gated on
+    **flags bit 16**, so SVG/PS never see it and `print_image()`'s
+    `draw_no_ui_decorations` gate covers PNG. Values: `1` grip, `2` grip + TOP
+    drop bar, `3` grip + BOTTOM drop bar. **2 and 3 are transient drag feedback**
+    written by `setprop` on the two affected rects — `wviewer::graph_props` only
+    ever emits `1`, so any `regenerate` lands back on a plain grip and a drag
+    cannot leave a bar behind. The handle's hit zone is `GRAPH_REORDER_HANDLE_W`
+    (`xschem.h`) and it is **MIRRORED IN TCL** in
+    `wviewer::strip_handle_at_pixel` — change both or the drawn grip and the
+    clickable target drift apart.
+
+33. **`graph_near_wave()` is not `find_closest_wave()`** (2026-07-27). It answers
+    "is this pixel within N SCREEN PIXELS of a drawn trace", with a real
+    point-to-segment distance, a threshold, a LOCAL `Graph_ctx` (landmine 11) and
+    the CALLER's pixels. `find_closest_wave()` has **no distance threshold at
+    all**, measures only |Δy| at the nearest sample, and reads the C mouse mirror
+    (`xctx->mousex/mousey`) — it can never implement an exclusion zone. Documented
+    limits of the new one, both deliberate: **digital strips and bus traces answer
+    0** (their rendering is a band/ribbon, not a polyline, so the whole body is
+    reorder space there), and the scan is capped by the graph's own x window,
+    exactly like the draw. It fails closed — a missing verb or an errored query
+    reads as "empty space", never as "locked out".
+
 ---
 
 ## 12. Improvement backlog (ranked, with where-to-touch)
@@ -773,9 +861,12 @@ Effort: S=hours, M=days, L=weeks. Impact in caps.
    on the accepted value was reverted — measured, an `extra=` value reaches the
    subckt call line verbatim and ngspice names that node `#hfoo`, a *different*
    node from the `hfoo` a wire labelled `#hfoo` produces. See landmine 29.
-1. **[S · MED] `xschem get graph_flags` + cursor getters.** Add to the `get`
-   dispatch (`scheduler.c` near ~3772). Lets `wave_viewer.tcl` drop `cva`/
-   `cvb`/`cvr` mirrors (~136) and the access_cond desync risk. *Best ratio.*
+1. **[S · MED] `xschem get graph_flags` + cursor getters.** *(PARTIAL:
+   `xschem get graph_flags` now exists — added 2026-07-27 so the viewer's LMB
+   drag-reorder seam can tell a cursor grab from empty space, `scheduler.c`
+   `get` dispatch case 'g'. The cursor-POSITION getters that would let
+   `wave_viewer.tcl` drop the `cva`/`cvb`/`cvr` mirrors (~136) are still open.)*
+   *Best ratio.*
 2. **[S · MED] Cache per-dataset offsets on `Raw`.** Prefix-sum of `npoints[]`
    at load (`raw_read` ~1002, struct ~953); index it in `get_raw_value`
    (~2323) instead of re-summing per fetch. Hot-path win, no model change.
@@ -812,9 +903,15 @@ Effort: S=hours, M=days, L=weeks. Impact in caps.
 
 - Headless raw/graph/viewer coverage lives in `tests/headless/`:
   `test_ase_plot.tcl` (Direct Plot; `PL` = the `-layer` highlight verbs),
-  `test_wave_viewer.tcl` (`WB` = the LMB wave-bold gesture, issue 0152),
+  `test_wave_viewer.tcl` (`WB` = the LMB wave-bold gesture, issue 0152, plus
+  `WB-mmb-drag` = the pan on its new button; `SD*` = the LMB seam between the C
+  engine and strip drag-reorder — trace-proximity in screen pixels, cursor-grab
+  exclusion, empty-space drag),
   `test_wave_modes.tcl` (plot modes / target strip, issue 0151; `M6`/`MG6c`/
-  `MG6d` = the trace-color policy, issue 0153),
+  `MG6d` = the trace-color policy, issue 0153; **`M7`/`MG14` = strip
+  drag-to-reorder**, 2026-07-27 — `M7` is pure list/index math, `MG14` drives the
+  real Tk press/motion/release through the shipped bindings and pins the log
+  shape; the LMB seam itself is `test_wave_viewer.tcl` `SD*`, which needs a raw),
   `test_wave_clear_all.tcl` (`CA*`/`CG*` = Clear All + the `WaveViewer`
   bindtag, issue 0171; `CG6` pins the rc-remap contract — rc wins, `{break}`
   disables — `CG4` that the tag survives a `strip_bindings` re-sweep, and `CG8`
