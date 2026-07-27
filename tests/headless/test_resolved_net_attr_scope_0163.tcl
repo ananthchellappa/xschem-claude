@@ -13,9 +13,13 @@
 #   resolved_net {spice_ignore} -> false     (should be X1.spice_ignore)
 #   resolved_net {name}         -> X1        (should be X1.name)
 #
-# and a '#' in such a value survived, because 0158's strip runs on the name going IN,
-# before this lookup: LOC=#foo gave `#foo`, which get_raw_index never finds, so the
-# waveform trace is silently missing.
+# The issue doc's second symptom -- a '#' in such a value coming back out with the '#'
+# still attached -- turned out NOT to be a defect. MEASURED, ngspice-42: an extra= value
+# reaches the subckt call line VERBATIM (`X1 topn #hfoo c`) and ngspice names that node
+# `#hfoo`, while a wire LABELLED `#hfoo` netlists as plain `hfoo` -- two different,
+# unconnected nodes in one deck (hfoo 0.0V, #hfoo 1.0V). So verbatim is the right answer
+# here; the portmap path strips only because a pin-passed `#net1` really is `net1`
+# downstream. A strip was shipped and reverted once measured. AS1b/AS13/AS18 pin it.
 #
 # The lookup is NOT junk: it implements the `extra=` idiom. A symbol's extra= attribute
 # is the list of attributes the netlister treats as NODES rather than instance parameters
@@ -38,8 +42,8 @@
 #              extra entry must all stop hijacking.
 #   AS8-AS12   controls the fix must NOT move: the extra-listed binding still resolves,
 #              the port path, the global, and a plain local net.
-#   AS13-AS15  the '#' strip on the attribute VALUE (problem 2), incl. the degenerate
-#              lone "#" which must not become the empty string (0158 HS12/HS13's rule).
+#   AS13-AS15  the '#' on the attribute VALUE (problem 2). It is kept VERBATIM -- the
+#              netlist witness AS1b is why.
 #   AS16-AS18  bus elements: hijack, legit binding and '#' strip, each per element.
 #   AS19-AS20  a symbol with NO extra= at all blocks every attribute.
 #   AS21-AS23  depth 2: the level walk, both the hijack and the legit chain.
@@ -268,6 +272,15 @@ check "AS1 (fixture witness) extra= names really are subckt PORTS" \
   [expr {[regexp {^\.subckt a0163_child A EXTRANET EXTRA2 EXTRA3\M} $subline] ? 1 : 0}] 1
 check "AS2 (fixture witness) a NON-extra attribute is a parameter, not a port" \
   [expr {[regexp {\mvalue=} $subline] ? 1 : 0}] 1
+# AS1b is the whole justification for keeping the '#': the netlister passes an extra=
+# value onto the CALL LINE verbatim, and ngspice-42 then names that node `#foo`. A wire
+# labelled `#foo` netlists as plain `foo` -- a DIFFERENT node.
+set callline ""
+foreach ln [split $txt \n] {
+  if {[string match "X1 *" $ln]} { set callline $ln ; break }
+}
+check "AS1b (fixture witness) an extra= value reaches the call line VERBATIM, '#' and all" \
+  [expr {[string match {*#foo*} $callline] ? 1 : 0}] 1
 
 # --- AS24  not descended ------------------------------------------------------
 check "AS24 (control) at the top level the attribute loop is not entered at all" \
@@ -303,9 +316,9 @@ check "AS12 (control) an auto-named net still gets stripped and prefixed" \
   [xschem resolved_net {#x}] {X1.x}
 
 # --- AS13-AS15  the '#' on the attribute VALUE (problem 2) --------------------
-check "AS13 a '#' in an extra= attribute value is stripped (loose, like 0158)" \
-  [xschem resolved_net EXTRA2] {foo}
-check "AS14 a lone '#' value is NOT stripped to the empty string" \
+check "AS13 a '#' in an extra= attribute value is kept VERBATIM" \
+  [xschem resolved_net EXTRA2] {#foo}
+check "AS14 (control) a lone '#' value is passed through untouched" \
   [xschem resolved_net EXTRA3] {#}
 check "AS15 (control) exactly one '#' comes off" \
   [xschem resolved_net EXTRANET] {TOPN}
@@ -315,8 +328,8 @@ check "AS16 a hijacked element inside a bus" \
   [xschem resolved_net {value,LOC}] {X1.value,X1.LOC}
 check "AS17 a legit binding inside a bus" \
   [xschem resolved_net {EXTRANET,LOC}] {TOPN,X1.LOC}
-check "AS18 the '#' strip applies per element, after a global" \
-  [xschem resolved_net {GND,EXTRA2}] {GND,foo}
+check "AS18 the verbatim value survives per element, after a global" \
+  [xschem resolved_net {GND,EXTRA2}] {GND,#foo}
 
 # --- AS21-AS23  depth 2 --------------------------------------------------------
 xschem unselect_all

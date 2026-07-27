@@ -156,7 +156,7 @@ names vs 1328 distinct net names.
 
 **Problem 2 is not reachable from any committed design**: of 68016 non-empty instance attribute
 values, exactly 7 start with `#`, all of them the same disabled `xxxspiceprefix=#D#`, none colliding
-with a child net. It is a real defect with test teeth, but no shipped design exercises it.
+with a child net. It also turned out not to be a defect at all — see the Correction below.
 
 ## Fix
 
@@ -168,7 +168,7 @@ through by an `EXTRANET` entry). The loop now does
 if(!attr_is_extra_node(xctx->hier_attr[level - 1].sym_extra, resolved_net)) break;
 ptr = get_tok_value(xctx->hier_attr[level - 1].prop_ptr, resolved_net, 0);
 if(ptr && ptr[0]) {
-  if(ptr[0] == '#' && ptr[1]) ++ptr;   /* LOOSE, never down to "" -- 0156/0158 */
+  my_strdup2(_ALLOC_ID_, &resolved_net, ptr);   /* value taken VERBATIM -- see below */
   ...
 ```
 
@@ -183,14 +183,43 @@ arm already took, and it leaves `level` for the portmap loop that follows.
 single-`@` token that is also a net name in its schematic and is neither a pin nor in `extra=`:
 **0 hits**. (`@@X` is a *pin* reference and resolves through the portmap, untouched by this gate.)
 
+## Correction — Problem 2 was not a defect, and the strip shipped here was reverted
+
+The fix as first committed (75da344e) also stripped a leading `#` off the accepted attribute
+value, on the issue doc's premise that "nothing downstream strips it … so the trace is simply not
+found, silently". **That premise is false for this path.** Measured, ngspice-42, one deck:
+
+```
+V1 topn 0 1
+X1 topn #hfoo c      <- an extra= value reaches the CALL LINE verbatim, '#' and all
+R9 hfoo  0    1k     <- a wire LABELLED #hfoo netlists as plain hfoo
+
+   hfoo    0.0V      <- the label's node
+   #hfoo   1.0V      <- the binding's node        TWO DISTINCT, UNCONNECTED NODES
+```
+
+So the child's port really is on node `#hfoo`. Stripping did not clean up a name — it named a
+*different* node, and because `get_raw_index()` never strips `#` either, it would have resolved
+to that wrong node rather than failing loudly.
+
+The portmap path strips (`actions.c:3568-3572`) for a reason that does not transfer: a net passed
+through a *pin* as `#net1` really is `net1` everywhere downstream. Each path must follow its own
+path's netlist. The strip was reverted; legs AS1b/AS13/AS18 pin the verbatim behaviour, with AS1b
+reading the `#` back out of the generated call line so the justification is in the fixture, not
+just in this doc.
+
+(xschem's own netlister is internally inconsistent here — the label path strips and the extra path
+does not, so one spelling yields two nodes. That is an upstream issue, not one this fix creates,
+and resolved_net's job is to report what the netlist actually did.)
+
 ## Verification
 
 - **RED first**: the test failed 12 legs / passed 21 before the fix, on a binary rebuilt from
   `git checkout HEAD -- src/hilight.c` (trap 12 — not a stash). 33/33 after, in both the `--nogui`
   and the `--pipe`+`DISPLAY` arm.
 - **Sabotage matrix, both directions**, each patch pattern-asserted in python (trap 4):
-  revert the gate → 10 legs fail; revert the `#` strip → 2 fail; gate always refuses → 9 fail;
-  strip unconditionally → 1 fails (the bare `#`); `strstr` instead of exact match → 2 fail.
+  revert the gate → 10 legs fail; gate always refuses → 9 fail; `strstr` instead of exact match →
+  2 fail; and, after the Correction, **re-adding** the `#` strip → 2 fail (AS13, AS18).
   **No half of the fix is toothless.**
 - **Netlist-neutral**: 201 stock designs netlisted with the true pre-fix and the fixed binary are
   byte-identical apart from the output directory baked into one `.include` path.

@@ -654,8 +654,15 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
     `spectre_netlist.c`) and until 0163 was read nowhere; **(b)** the membership
     test is an EXACT whitespace-token match, not the `strstr()` the netlister uses
     internally, so a net `EXTRA` cannot ride in on an `EXTRANET` entry; **(c)**
-    strip a leading `#` off the accepted VALUE too — the strip at `:2625` runs on
-    the name going IN, before this lookup, and nothing downstream removes it;
+    do NOT strip a leading `#` off the accepted VALUE — measured, ngspice-42: an
+    `extra=` value reaches the subckt CALL LINE verbatim (`X1 topn #hfoo c`) and
+    ngspice names that node `#hfoo`, while a wire LABELLED `#hfoo` netlists as
+    plain `hfoo`, so in one deck they are two distinct unconnected nodes
+    (`hfoo` 0.0V, `#hfoo` 1.0V). A strip here names the WRONG node, and
+    `get_raw_index()` — which never strips `#` — would resolve to it rather than
+    fail. The portmap path strips only because a pin-passed `#net1` really is
+    `net1` downstream; each path follows its own path's netlist. 0163 shipped a
+    strip on the opposite premise and reverted it once measured;
     **(d)** there is NO usable "is this an LCC instance" test at this point — the
     `dbg()` line's "lcc" is only the struct's type name (`Lcc *hier_attr`), and
     `.symname` is always `NULL` on `xctx->hier_attr`. Still open (**issue 0164**):

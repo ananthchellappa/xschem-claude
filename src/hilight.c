@@ -2670,14 +2670,18 @@ char *resolved_net(const char *net)
         if(!attr_is_extra_node(xctx->hier_attr[level - 1].sym_extra, resolved_net)) break;
         ptr = get_tok_value(xctx->hier_attr[level - 1].prop_ptr, resolved_net, 0);
         if(ptr && ptr[0]) {
-          /* strip the auto-net marker off the attribute VALUE as well. The strip further
-           * up runs on the name going IN, before this lookup, so a binding like
-           * EXTRANET=#foo used to come back out with the '#' still attached, and nothing
-           * downstream removes it -- get_raw_index() never strips '#' (waveform-reference
-           * landmine 23), so the trace is silently not found. LOOSE rather than
-           * is_auto_net_name(), and never down to the empty string, for exactly the
-           * reasons given at the input strip above (issues 0156, 0158). */
-          if(ptr[0] == '#' && ptr[1]) ++ptr;
+          /* Do NOT strip a leading '#' off the value here, unlike the input strip above
+           * and unlike the portmap path (actions.c:3568-3572). MEASURED, ngspice-42: an
+           * extra= value is passed onto the subckt call line VERBATIM (`X1 topn #hfoo c`),
+           * and ngspice names that node `#hfoo`. A wire LABELLED `#hfoo` netlists as plain
+           * `hfoo` -- so in one deck the two are DIFFERENT, unconnected nodes:
+           *   hfoo 0.0V (from the label)   #hfoo 1.0V (from the binding)
+           * Stripping here would therefore not clean up a name, it would name the wrong
+           * node, and get_raw_index() -- which never strips '#' -- would resolve it to that
+           * wrong node rather than fail. Each path must follow its OWN path's netlist: the
+           * portmap strips because a pin-passed `#net1` really is `net1` downstream; this
+           * one must not. Issue 0163 shipped a strip here on the opposite premise and it
+           * was reverted once measured. */
           my_strdup2(_ALLOC_ID_, &resolved_net, ptr);
           dbg(1, "lcc[%d].prop_ptr=%s\n", level - 1, xctx->hier_attr[level - 1].prop_ptr);
           dbg(1, "resolved_net(): resolved_net=%s\n", resolved_net);
