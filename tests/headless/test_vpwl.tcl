@@ -37,6 +37,19 @@ catch {xschem load_symbol $symsym}
 check "symbol edit_form ns"   [symattr $symsym edit_form] vpwl
 check "symbol netlist format" [symattr $symsym format]    {@name @pinlist @DC PWL(@pwl )}
 
+# The `pwl` default is a QUOTED multi-word value nested inside the already-quoted
+# `template="..."`, so the K {...} block must write the inner quotes as `\\"`, not
+# `\"`: the file reader unescapes ONE level, so a single backslash leaves a bare
+# quote in the stored property and the template silently truncates at it
+# (`name=V1 DC=0 pwl=0`, plus junk `0`/`1n`/`1` tokens in the symbol's global
+# prop). Stock devices/{asrc,switch,title,isource_table}.sym all use `\\"`.
+# Read the template from the SYMBOL — the build_fields legs below pass a literal
+# template string, so they cannot see this.
+check "symbol template keeps the quoted pwl default" \
+  [symattr $symsym template] {name=V1 DC=0 pwl="0 0 1n 1"}
+check "symbol global prop has no junk tokens" \
+  [xschem list_tokens [xschem getprop symbol $symsym] 0] {type format template edit_form}
+
 # --- netlist: DC + PWL, spaced `pwl` survives save/netlist/setprop ----------
 set sch [file join $scratch tb.sch]
 set f [open $sch w]
@@ -52,6 +65,17 @@ set nl [read [set fp [open [file join $scratch tb.spice] r]]][close $fp]
 check_match "netlist V line DC + PWL" $nl {(?i)V1 \S+ \S+ 0\.5 PWL\(0 0 1n 1 2n 0 ?\)}
 xschem setprop instance V1 pwl {5 5 6n 6}
 check "get_tok back the spaced pwl" [xschem getprop instance V1 pwl] {5 5 6n 6}
+
+# a freshly PLACED vpwl must carry the template's PWL default (the truncation
+# above is invisible on a hand-written instance line — only placement copies the
+# template), and it must survive a save/reload round trip
+xschem clear force
+catch {xschem instance $symsym 100 100 0 0}
+check "placed instance carries the PWL default" [xschem getprop instance V1 pwl] {0 0 1n 1}
+set psch [file join $scratch placed.sch]
+xschem saveas $psch
+xschem load $psch
+check "PWL default survives save+reload"        [xschem getprop instance V1 pwl] {0 0 1n 1}
 
 # --- generic-form integration: build_fields relabels DC + renders pwl as the
 #     dynamic editor, and field_value reads it back (GUI-gated) ---------------

@@ -42,8 +42,19 @@ proc netlist_of {scratch symsym instprops} {
 catch {xschem load_symbol $ipwlsym}
 check "ipwl edit_form ns"     [symattr $ipwlsym edit_form] ipwl
 check "ipwl type isource"     [symattr $ipwlsym type] isource
+# quoted multi-word default nested in the quoted template: the inner quotes must be
+# `\\"` in the K {...} block (the reader unescapes one level) or the template
+# truncates to `pwl=0` and a placed ipwl loses its default points. Same defect the
+# v* twin carries — see the long note in test_vpwl.tcl.
+check "ipwl template keeps the quoted pwl default" \
+  [symattr $ipwlsym template] {name=I1 DC=0 pwl="0 0 1n 1m"}
+check "ipwl global prop has no junk tokens" \
+  [xschem list_tokens [xschem getprop symbol $ipwlsym] 0] {type format template edit_form}
 set nl [netlist_of $scratch $ipwlsym {name=I1 DC=1u pwl="0 0 1n 1m 2n 0"}]
 check_match "ipwl netlist I-line DC + PWL" $nl {(?i)I1 \S+ \S+ 1u PWL\(0 0 1n 1m 2n 0 ?\)}
+xschem clear force
+catch {xschem instance $ipwlsym 100 100 0 0}
+check "placed ipwl carries the PWL default" [xschem getprop instance I1 pwl] {0 0 1n 1m}
 
 # --- ipulse (isource, friendly-labelled static fields) ----------------------
 catch {xschem load_symbol $ipulsesym}
