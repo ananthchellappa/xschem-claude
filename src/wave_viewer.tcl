@@ -106,6 +106,20 @@
 # token and the C engine paints a dull-yellow bar at its right edge
 # (draw.c, gated on draw_graph's on-screen flags bit 16).
 #
+# ---- issue 0171 (Clear All / Ctrl-D) ---------------------------------------
+# `wviewer::clear_all ?token?` deletes every graph and every trace of a viewer
+# window and leaves ONE empty strip — "start from scratch". Window OPTIONS are
+# deliberately kept: the plot mode (single|multi), Shared X, the cursor mirrors
+# and the ATTACHED RAW DATA all survive, so the next pick plots without a
+# re-run. The default key is Ctrl-D, bound on the shared `WaveViewer` BINDTAG
+# (wviewer::install_default_binds) rather than on the canvas widget, because
+# strip_bindings sweeps every widget-level sequence and an rc file must be able
+# to remap the key BEFORE any viewer window exists:
+#   bind WaveViewer <Control-Key-d> {break}                      ;# drop default
+#   bind WaveViewer <Control-Key-r> {wviewer::clear_all_at %W; break}
+# The action is logged replayably through the same log_action seam as the mode
+# and target commands.
+#
 # Pure Tcl, procs only at source time (safe under --nogui); ciw_echo only
 # under has_x. TIP-278: `variable` declarations, absolute names.
 
@@ -172,6 +186,10 @@ namespace eval wviewer {
   # per-dialog transient state (D13), cleaned on OK/cancel/forget
   variable axl;     array set axl {}
   variable delmap;  array set delmap {}
+  # issue 0171: 1 once the `WaveViewer` bindtag defaults have been installed
+  # (install_default_binds is called on every viewer open and must be a no-op
+  # after the first — re-installing would undo an in-session remap).
+  variable tagbinds 0
   # item 18 (graph-fills-win): <Configure> refit bookkeeping, per session token.
   # cfgafter = the pending `after idle` id (coalesces resize storms); fillwh =
   # the canvas pixel size {W H} the last regenerate filled at (so on_configure
@@ -1368,6 +1386,94 @@ proc wviewer::plot_signals {token exprs {colors {}}} {
   return $errs
 }
 
+# --- Clear All (issue 0171) --------------------------------------------------
+
+# Delete EVERYTHING in the viewer of `token` and start from scratch: one empty
+# strip remains, so the window still reads as a graph window and the next
+# Direct Plot has somewhere to land (plan_plot's empty-stack arm would create
+# one anyway — leaving zero strips would just render a blank canvas until the
+# next gesture).
+#
+# KEPT, by design — a clear is about CONTENT, not about the window's setup:
+#   - the plot mode (single|multi): explicitly retained, so a user working in
+#     multi-plot keeps working in multi-plot after a clear;
+#   - Shared X and the cursor/readout mirrors (window options, same argument);
+#   - the ATTACHED RAW DATA. `xschem raw clear` would also kill every `raw add`
+#     expression vector and force a re-run before anything could be plotted
+#     again; the point of a clear is to re-pick signals from the SAME results.
+# GONE: every graph, every trace, and the `auto 1` marker with them — the next
+# auto-plot run then APPENDS its own strip (ensure_auto_graph) instead of
+# adopting the survivor. Keeping the marker on the survivor would make the one
+# visible strip tool-owned, and item 13's always-replace rebuild would silently
+# wipe anything the user hand-picked into it (plan_plot excludes exactly that
+# strip for the same reason).
+#
+# The target strip resets to 0 — the only strip there is.
+#
+# Optional token like every other command in this section ({} = the viewer
+# window owning the current xschem context). Returns 1, or {} plus a CIW error
+# when no viewer resolves. Logged replayably on EVERY successful call, unlike
+# set_plot_mode/set_target_strip's change-only rule: a clear is a destructive
+# gesture, and a replay that skipped a "redundant" one would rebuild a
+# different window whenever the gesture was not in fact redundant.
+proc wviewer::clear_all {{token {}}} {
+  variable windows
+  variable layouts
+  variable target
+  set token [wviewer::resolve_token $token]
+  if {$token eq {} || ![dict exists $windows $token]} {
+    if {[info exists ::has_x] && [info commands ::ciw_echo] ne {}} {
+      ciw_echo "wviewer: no waveform viewer window to clear" error
+    }
+    return {}
+  }
+  set lay [wviewer::layout_for $token]
+  dict set lay graphs [list [wviewer::empty_graph]]
+  dict set layouts $token $lay
+  set target($token) 0
+  wviewer::regenerate $token
+  wviewer::log_action [list wviewer::clear_all $token]
+  return 1
+}
+
+# The Ctrl-D binding body (issue 0171). Resolves the token from the EVENT's
+# canvas (%W), not from the current xschem context: a key can arrive on a
+# viewer Tk has focused before the C side switched context to it, and clearing
+# "whatever context is current" would then wipe the wrong window. Silent (no
+# CIW error) on a foreign canvas — the tag only ever sits on viewer canvases,
+# but a stale registry entry must not turn a keystroke into an error message.
+proc wviewer::clear_all_at {W} {
+  set token [wviewer::token_for_canvas $W]
+  if {$token eq {}} { return {} }
+  return [wviewer::clear_all $token]
+}
+
+# Install the viewer's default key bindings on the shared `WaveViewer` BINDTAG
+# (issue 0171). Not on the canvas widget: strip_bindings sweeps every
+# widget-level sequence on a viewer canvas (including anything
+# clone_canvas_bindings copied from the main `.drw`), and a tag is the one
+# binding table an rc file can reach before any viewer window exists. The tag
+# is inserted right after the widget in bindtags, so key_filter keeps first
+# refusal; key_filter never `break`s, so the tag binding still fires for keys
+# it swallows.
+#
+# Remapping from an rc file (~/.xschem/xschemrc, cadence_style_rc, --script):
+#   bind WaveViewer <Control-Key-d> {break}                      ;# drop default
+#   bind WaveViewer <Control-Key-r> {wviewer::clear_all_at %W; break}
+# An rc that binds a sequence itself WINS: defaults are installed once, at the
+# first viewer open, and only for a sequence nothing has bound yet. Disable
+# with `{break}`, NOT `{}` — an empty script DELETES the binding, which reads
+# exactly like "never bound" and would be re-defaulted here.
+proc wviewer::install_default_binds {} {
+  variable tagbinds
+  if {$tagbinds} { return 0 }
+  set tagbinds 1
+  if {[bind WaveViewer <Control-Key-d>] eq {}} {
+    bind WaveViewer <Control-Key-d> {wviewer::clear_all_at %W; break}
+  }
+  return 1
+}
+
 # Options > Plot Mode -postcommand: relabel the single entry with the mode it
 # would switch TO, so the label is right however the mode last changed (menu,
 # command, chord, state restore). The edit_menu_post pattern.
@@ -2306,6 +2412,15 @@ proc wviewer::strip_bindings {wp} {
   foreach seq [bind $wp] {
     if {[lsearch -exact $keepseqs $seq] < 0} { bind $wp $seq {} }
   }
+  # issue 0171: the viewer's OWN key defaults (Ctrl-D = Clear All) live on the
+  # shared `WaveViewer` bindtag, which the sweep above cannot reach and an rc
+  # file can bind before any viewer exists. Inserted at index 1 — right after
+  # the widget itself — so the widget-level filters below keep first refusal
+  # and the Canvas class bindings still come last.
+  wviewer::install_default_binds
+  if {[lsearch -exact [bindtags $wp] WaveViewer] < 0} {
+    bindtags $wp [linsert [bindtags $wp] 1 WaveViewer]
+  }
   bind $wp <KeyPress>   {wviewer::key_filter %W %T %x %y %N %K %s}
   bind $wp <KeyRelease> {wviewer::key_filter %W %T %x %y %N %K %s}
   bind $wp <ButtonPress-3>   {wviewer::btn3_filter %W %T %x %y 3 %s}
@@ -2409,6 +2524,11 @@ proc wviewer::build_menubar {token top} {
     -command [list wviewer::delete_dialog $token]
   $mb.graph add command -label {Axes...} \
     -command [list wviewer::axes_dialog $token]
+  # issue 0171: the menu twin of the Ctrl-D bindtag default. The accelerator
+  # LABEL is static text (Tk does not dispatch it) — an rc that remaps the tag
+  # binding changes the key, not this label.
+  $mb.graph add command -label {Clear All} -accelerator Ctrl+D \
+    -command [list wviewer::clear_all $token]
   $mb.graph add checkbutton -label {Shared X Axis} \
     -variable ::wviewer::sharedx($token) \
     -command [list wviewer::sharedx_toggle $token]

@@ -490,6 +490,49 @@ recompile (decision: pure-Tcl `.drw` bind, defer device-pin terminal currents).
   fires [sabotage-verified], prompt shows/returns via pump/clears, no-session honest
   no-op). 124 checks green.
 
+## Clear All (issue 0171, 2026-07-27)
+
+**Ctrl-D in the viewer deletes every graph and every trace and leaves ONE empty
+strip.** Command: `wviewer::clear_all ?token?` (optional token, {} = the viewer
+owning the current xschem context, like the 0151 mode/target commands); also
+**Graph > Clear All** (accelerator `Ctrl+D`) and CIW-typable.
+
+- **Kept by design:** the plot mode (single/multi — the explicit request), Shared
+  X, the cursor/readout mirrors, and the **attached raw data**. Clearing the raw
+  would also kill every `xschem raw add` expression vector and force a re-run;
+  the point of a clear is re-picking signals from the *same* results.
+- **Gone:** all graphs, all traces, and the `auto 1` marker with them. The
+  survivor is a plain `empty_graph`, never the auto-plot strip: item 13's
+  always-replace rebuild would silently wipe hand-picked traces landed there
+  (the reason `plan_plot` already excludes it as a landing site). A later
+  auto-plot run appends its own strip and leaves the empty one at index 0.
+- **Target strip** resets to 0.
+- **Logged replayably on every successful call** through the `log_action` seam —
+  `wviewer::clear_all <token>`, resolved and explicit. Unlike `set_plot_mode` /
+  `set_target_strip` (change-only), a redundant clear IS logged: a destructive
+  gesture dropped from a replay rebuilds a different window.
+- **The key is on a BINDTAG, not the canvas.** `strip_bindings` sweeps every
+  widget-level sequence on a viewer canvas, so neither a widget default nor the
+  repo's usual `bind .drw ...` rc idiom survives into the viewer. The default is
+  installed once (first viewer open) on the shared **`WaveViewer`** tag, which
+  `strip_bindings` inserts at bindtags index 1 — after the widget (so
+  `key_filter` keeps first refusal; it never `break`s, so a swallowed key still
+  reaches the tag) and before the `Canvas` class. rc remap:
+
+  ```tcl
+  bind WaveViewer <Control-Key-d> {break}                      ;# drop the default
+  bind WaveViewer <Control-Key-r> {wviewer::clear_all_at %W; break}
+  ```
+
+  An rc binding **wins** (defaults are only installed for a sequence nothing has
+  bound). Disable with `{break}`, never `{}` — an empty script deletes the
+  binding, which reads as "never bound" and gets re-defaulted. `clear_all_at`
+  takes the token from the EVENT's canvas (`%W`), not the current C context: Tk
+  focus can lead the context switch, and clearing "whatever is current" would
+  wipe the wrong window.
+- **Tests:** `tests/headless/test_wave_clear_all.tcl` (`CA*` no-window, `CG*`
+  GUI) — 54 checks, sabotage-verified. Documented in `src/cadence_style_rc`.
+
 ## Non-goals (v1)
 
 Digital lanes, sweep-family selector, cursor backannotate-to-schematic,

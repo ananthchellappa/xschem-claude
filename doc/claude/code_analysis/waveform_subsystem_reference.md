@@ -362,6 +362,20 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
   token, on real changes only). `<ButtonPress-1>` re-targets and then forwards
   the press to C by hand (it is more specific than the kept generic `<Button>`,
   so the forward is mandatory).
+- **Clear All + the `WaveViewer` bindtag (issue 0171,
+  `doc/claude/specs/waveform_viewer.md`).** `clear_all ?token?` drops every graph
+  and trace and leaves ONE `empty_graph` (target back to 0), KEEPING the plot
+  mode, `sharedx`, the cursor mirrors and the **loaded raw** (a `raw clear` would
+  kill the `raw add` vectors and force a re-run); the `auto 1` marker goes, so
+  the next auto-plot APPENDS its strip. Logged on EVERY successful call, not
+  change-only. **Viewer key defaults do not live on the canvas** — `strip_bindings`
+  sweeps every widget-level sequence — but on the shared **`WaveViewer` bindtag**
+  (`install_default_binds`, one-shot; inserted at bindtags index 1 so `key_filter`,
+  which never `break`s, keeps first refusal). That tag is the ONLY rc-reachable
+  viewer binding table: `bind WaveViewer <seq> {wviewer::clear_all_at %W; break}`,
+  disabled with `{break}` (an empty script deletes the binding and gets
+  re-defaulted). `clear_all_at` resolves the token from `%W`, never the current
+  ctx. Any new viewer key belongs here, not in `key_filter`'s hardcoded arms.
 
 ---
 
@@ -433,6 +447,11 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
   colour var (`gc_hover` is the worked example; issue 0151 is the second).
 - **New viewer op:** a pure model transform on `layouts` + `regenerate`
   (`wave_viewer.tcl`); persist via the `viewer` state dict snapshot/restore.
+- **New viewer KEY (issue 0171):** a `<seq>` row in
+  `wviewer::install_default_binds` (the `WaveViewer` bindtag), guarded by
+  `[bind WaveViewer <seq>] eq {}` so an rc keeps winning, plus a `%W`-resolving
+  wrapper like `clear_all_at`. NOT a `key_filter` arm (those are the C-forward
+  and intercept cases) and NOT a `bind $wp` — `strip_bindings` sweeps that.
 
 ---
 
@@ -783,6 +802,9 @@ Effort: S=hours, M=days, L=weeks. Impact in caps.
   `test_wave_viewer.tcl` (`WB` = the LMB wave-bold gesture, issue 0152),
   `test_wave_modes.tcl` (plot modes / target strip, issue 0151; `M6`/`MG6c`/
   `MG6d` = the trace-color policy, issue 0153),
+  `test_wave_clear_all.tcl` (`CA*`/`CG*` = Clear All + the `WaveViewer`
+  bindtag, issue 0171; `CG6` pins the rc-remap contract — rc wins, `{break}`
+  disables — and `CG4` that the tag survives a `strip_bindings` re-sweep),
   `test_ase_unnamed_net.tcl` (`AN*` = picking/naming of auto-named `#netN`
   nets, issue 0154 — hermetic, writes its own fixture, needs no DISPLAY,
   ngspice or ASE session),
