@@ -529,38 +529,87 @@ proc wviewer::target_clamp {gi n} {
   return $gi
 }
 
+# PURE: the indices of the strips a plot batch may REUSE instead of creating a
+# new one — the strips that hold NO traces and are not the tool-owned auto-plot
+# strip — in index order (issue 0171 follow-up).
+proc wviewer::empty_graph_indices {gs {auto -1}} {
+  set out {}
+  set gi 0
+  foreach G $gs {
+    if {$gi != $auto && ![llength [wviewer::dget $G traces {}]]} { lappend out $gi }
+    incr gi
+  }
+  return $out
+}
+
 # THE landing policy. Given the mode, the current strip count, the stored
-# target, how many signals one plot gesture carries and the index of the
-# tool-owned auto-plot strip (-1 = none), return
+# target, how many signals one plot gesture carries, the index of the
+# tool-owned auto-plot strip (-1 = none) and the REUSABLE empty strips
+# (`empty_graph_indices`, {} = none), return
 #   {new <how many strips to append> targets {<strip index per signal>}}
-# single -> everything into the (clamped) target; a strip is created ONLY
-#           when the stack is empty OR the target resolved to the AUTO-PLOT
-#           strip, and the signals go into the created one.
-# multi  -> one NEW strip per signal, appended AFTER the existing stack, in
-#           pick order; the target is irrelevant and is not moved.
+# single -> everything into the (clamped) target; a landing strip is needed
+#           only when the stack is empty OR the target resolved to the
+#           AUTO-PLOT strip, and then an empty strip is REUSED if there is one,
+#           else one is appended.
+# multi  -> one strip per signal in pick order: the empty strips first (in
+#           index order), then NEW ones appended after the existing stack.
 # Zero signals is a no-op in both modes (an empty Direct Plot gesture must
 # leave the raised viewer exactly as it was).
 #
-# WHY the auto-plot strip is excluded: it is REBUILT (traces cleared and
-# re-added) after every successful run — ase::ui::auto_plot, item 13's
-# always-replace contract. Landing hand-picked Direct-Plot traces there would
-# silently destroy them at the next run, and it would break the shipped
-# invariant that Direct-Plot graphs and the auto graph never touch each other
+# WHY empty strips are reused (issue 0171 follow-up): Clear All leaves exactly
+# one empty strip, and Graph > Add Graph makes one on request. Appending past
+# it — what multi-plot used to do unconditionally — left a blank band pinned at
+# the top of the window and shrank every real strip for nothing. An empty strip
+# is a place to plot, so a plot gesture fills it. Filling is by INDEX order, so
+# pick order still reads top-to-bottom.
+#
+# WHY the auto-plot strip is excluded (both from the target and from the
+# reusable set): it is REBUILT (traces cleared and re-added) after every
+# successful run — ase::ui::auto_plot, item 13's always-replace contract.
+# Landing hand-picked Direct-Plot traces there would silently destroy them at
+# the next run, and it would break the shipped invariant that Direct-Plot
+# graphs and the auto graph never touch each other
 # (doc/claude/specs/waveform_viewer.md, item 13 notes).
-proc wviewer::plan_plot {mode ngraphs target n {auto -1}} {
+proc wviewer::plan_plot {mode ngraphs target n {auto -1} {empties {}}} {
   if {$n <= 0} { return [dict create new 0 targets {}] }
+  # defensive: keep only in-range, non-auto, deduped indices, lowest first —
+  # the callers derive this list from the model, but plan_plot is the pure
+  # policy and a bad index here would silently plot into nothing
+  set free {}
+  foreach gi $empties {
+    if {[string is integer -strict $gi] && $gi >= 0 && $gi < $ngraphs \
+        && $gi != $auto && [lsearch -exact $free $gi] < 0} {
+      lappend free $gi
+    }
+  }
+  set free [lsort -integer $free]
   if {$mode eq {multi}} {
     set t {}
-    for {set k 0} {$k < $n} {incr k} { lappend t [expr {$ngraphs + $k}] }
-    return [dict create new $n targets $t]
+    set new 0
+    for {set k 0} {$k < $n} {incr k} {
+      if {[llength $free]} {
+        lappend t [lindex $free 0]
+        set free [lrange $free 1 end]
+      } else {
+        lappend t [expr {$ngraphs + $new}]
+        incr new
+      }
+    }
+    return [dict create new $new targets $t]
   }
   set gi [wviewer::target_clamp $target $ngraphs]
   if {$ngraphs <= 0 || ($auto >= 0 && $gi == $auto)} {
-    # nothing usable to land in: append ONE strip and use it
-    set gi $ngraphs
+    # the target is unusable: reuse an empty strip if there is one, else append
+    if {[llength $free]} {
+      set gi [lindex $free 0]
+      set new 0
+    } else {
+      set gi $ngraphs
+      set new 1
+    }
     set t {}
     for {set k 0} {$k < $n} {incr k} { lappend t $gi }
-    return [dict create new 1 targets $t]
+    return [dict create new $new targets $t]
   }
   set t {}
   for {set k 0} {$k < $n} {incr k} { lappend t $gi }
@@ -761,9 +810,10 @@ proc wviewer::predict_colors {token n} {
   set gs [dict get [wviewer::layout_for $token] graphs]
   set mode [wviewer::plot_mode $token]
   if {$mode eq {}} { set mode [wviewer::default_plot_mode] }
+  set auto [wviewer::auto_graph_index $token]
   set plan [wviewer::plan_plot $mode [llength $gs] \
                                [wviewer::target_index $token] $n \
-                               [wviewer::auto_graph_index $token]]
+                               $auto [wviewer::empty_graph_indices $gs $auto]]
   return [wviewer::plan_colors $gs $mode [dict get $plan targets]]
 }
 
@@ -1361,9 +1411,10 @@ proc wviewer::plot_signals {token exprs {colors {}}} {
   }
   set gs [dict get [wviewer::layout_for $token] graphs]
   set mode [wviewer::plot_mode $token]
+  set auto [wviewer::auto_graph_index $token]
   set plan [wviewer::plan_plot $mode [llength $gs] \
                                [wviewer::target_index $token] [llength $exprs] \
-                               [wviewer::auto_graph_index $token]]
+                               $auto [wviewer::empty_graph_indices $gs $auto]]
   if {![llength $colors]} {
     # `gs` is the PRE-batch strip list, which is what plan_colors expects
     set colors [wviewer::plan_colors $gs $mode [dict get $plan targets]]
@@ -1371,11 +1422,14 @@ proc wviewer::plot_signals {token exprs {colors {}}} {
   for {set k 0} {$k < [dict get $plan new]} {incr k} {
     wviewer::add_graph $token
   }
-  # single-plot had to CREATE its landing strip (empty stack, or the target
-  # was the tool-owned auto-plot strip): that strip becomes the target, so the
-  # next gesture accumulates there instead of appending yet another strip.
-  # multi-plot never moves the target (spec §3.3).
-  if {$mode ne {multi} && [dict get $plan new] > 0} {
+  # single-plot: the strip the batch actually landed in becomes the target, so
+  # the next gesture accumulates there. This matters whenever the stored target
+  # was unusable and plan_plot resolved elsewhere — a strip it CREATED (empty
+  # stack / target was the tool-owned auto strip) or, since the 0171 follow-up,
+  # an empty strip it REUSED. Idempotent otherwise: set_target_strip is a no-op
+  # (and logs nothing) when the index does not change. multi-plot never moves
+  # the target (spec §3.3).
+  if {$mode ne {multi} && [llength [dict get $plan targets]]} {
     wviewer::set_target_strip [lindex [dict get $plan targets] 0] $token
   }
   set errs {}

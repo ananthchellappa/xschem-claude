@@ -12,8 +12,10 @@ from the schematic land:
 
 - **single-plot** — every signal of one plot gesture goes into the **target
   strip** (one graph of the stack), appended to whatever it already holds.
-- **multi-plot** — each signal of the gesture gets **its own new strip**,
-  appended below the existing stack.
+- **multi-plot** — each signal of the gesture gets **its own strip**: the
+  EMPTY strips already on screen first (index order), then new ones appended
+  below the existing stack (the empty-strip reuse is the issue 0171 follow-up,
+  §4).
 
 Plus the machinery the mode needs: a per-window target strip, a click to move
 it, a dull-yellow marker showing it, Tcl get/set/invert commands, a viewer menu
@@ -25,7 +27,7 @@ query that reach the viewer through its ASE-L session.
 | # | Question | Decision |
 |---|---|---|
 | D1 | single-plot landing | **Append** into the target strip (never replace). Clearing stays explicit (Graph > Delete…). |
-| D2 | multi-plot landing | **Append N strips** below the existing stack. The ASE auto-plot graph and earlier Direct-Plot graphs are never touched. |
+| D2 | multi-plot landing | **One strip per signal.** Reuse the EMPTY strips first (index order), append the rest below the existing stack (empty-strip reuse added by the issue 0171 follow-up, 2026-07-27). The ASE auto-plot graph and strips that hold traces are never touched. |
 | D3 | which paths obey the mode | **Direct Plot only** (Results > Direct Plot, Ctrl-4, and any future schematic plot command). ASE auto-plot keeps its shipped always-replace-into-one-`auto 1`-graph contract; the Add Trace… dialog keeps its explicit target combobox. |
 | D4 | active-strip indicator | **C, inside `draw_graph`** — a dedicated GC, exact dull-yellow RGB, drawn at the graph rect's right edge. The only option that survives partial graph redraws. |
 | D5 | persistence | **Mode and target both persist** in the ASE session's `viewer` state dict, after `graphs`. |
@@ -80,22 +82,42 @@ Target changes:
   target (see §6).
 - **Command** — `wviewer::set_target_strip`.
 - **Never implicitly** — a multi-plot batch does *not* move the target to the
-  strips it created, and `Add Graph` does not move it either. The target moves
-  only when the user points at a strip or names one.
+  strips it created or reused, and `Add Graph` does not move it either. The
+  target moves only when the user points at a strip, names one, or a
+  **single-plot** batch had to resolve elsewhere because the stored target was
+  unusable (empty stack, or the target was the tool-owned auto strip) — then it
+  follows the strip the signals actually landed in, so the next gesture
+  accumulates there. Clear All resets it to 0, the only strip left.
 
 ## 4. Landing policy
 
 The policy is a PURE proc so it is unit-testable headless:
 
 ```tcl
-wviewer::plan_plot {mode ngraphs target n}  ->  {new <count> targets {gi ...}}
+wviewer::plan_plot {mode ngraphs target n {auto -1} {empties {}}}
+                                            ->  {new <count> targets {gi ...}}
 ```
+
+`empties` = `wviewer::empty_graph_indices {gs {auto -1}}`, the strips holding NO
+traces and not the tool-owned auto strip, in index order. Both callers
+(`plot_signals`, `predict_colors`) derive it from the live model; `plan_plot`
+re-sanitizes it (in-range, non-auto, deduped, sorted) because it is the policy.
 
 | mode | layout | result |
 |---|---|---|
-| single | ≥1 strip | `new 0`, every signal → `target_index` |
-| single | 0 strips | `new 1`, every signal → strip 0 (the created one) |
-| multi | any | `new n`, signal *k* → strip `ngraphs + k` |
+| single | ≥1 strip, usable target | `new 0`, every signal → `target_index` |
+| single | 0 strips, or target = the auto strip | reuse the first empty strip if there is one (`new 0`), else `new 1` and use the created strip |
+| multi | any | signal *k* → the *k*-th empty strip while any remain, then appended strips `ngraphs`, `ngraphs+1`, … ; `new` = how many were appended |
+
+**Empty-strip reuse (issue 0171 follow-up, 2026-07-27).** An empty strip is a
+place to plot, so a plot gesture fills it instead of appending past it. Without
+this, Clear All (issue 0171) and Graph > Add Graph left a blank band pinned at
+the top of the window that no plotting could ever fill, shrinking every real
+strip. Filling is by INDEX order, so pick order still reads top-to-bottom. In
+single-plot mode an explicit, usable target still wins over any empty strip —
+reuse only resolves the case where the target is unusable. `plot_signals` moves
+the target to whatever strip the batch actually landed in (single mode only,
+idempotent, so no spurious log line).
 
 `wviewer::plot_signals {token exprs {colors {}}}` applies it: create the planned
 strips via `add_graph`, then `add_trace` each expression at its planned index,
@@ -126,7 +148,9 @@ queue) are unchanged: an empty queue still leaves only a raised viewer.
 
 **Contract change, deliberate (D2):** item 13's "one NEW stacked graph per
 invocation" becomes mode-dependent. In single-plot mode a Direct Plot creates
-**no** new graph when the stack is non-empty; in multi-plot it creates **N**.
+**no** new graph when the stack is non-empty; in multi-plot it creates one per
+signal **minus the empty strips it reused** (issue 0171 follow-up) — so a viewer
+just cleared with Ctrl-D ends up with exactly *n* strips, not *n+1*.
 
 ## 5. The active-strip indicator
 

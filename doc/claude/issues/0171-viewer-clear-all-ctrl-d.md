@@ -117,6 +117,52 @@ asserts it reproduces the state.
 - **Not asserted, stated:** pixels. That a cleared viewer *renders* as one empty
   grid is eyeball-only, like every other wave rendering.
 
-## 6. Eyeball status
+## 6. Follow-up (same day): the cleared strip must GET USED
+
+Reported after the first drop, verbatim:
+
+> I open a Waveform Viewer and that has plots, do CTRL-D to clear it and have
+> just one graph element. Then, in the schematic window, I do CTRL-SHIFT-4 to go
+> into multi-plot mode. Then, I do CTRL-4 to enter select-signals-to-plot command
+> mode, and choose some signals. When I press ESC, they are plotted, but, in the
+> Waveform Window, there is one empty strip at the top
+
+Correct, and not really a Clear-All bug: **multi-plot appended unconditionally**
+(`plan_plot`, issue 0151 D2), so the cleared strip — or any strip made with
+Graph > Add Graph — could never be filled and stayed as a blank band, shrinking
+every real strip. Single-plot hid it because it lands in the target, which
+`clear_all` resets to that very strip.
+
+**Fixed in the landing policy, not in `clear_all`:** an empty strip is a place
+to plot, so a batch fills the empty strips first (index order) and appends only
+what is left over.
+
+- new PURE `wviewer::empty_graph_indices {gs {auto -1}}` — strips with no traces,
+  excluding the auto strip;
+- `wviewer::plan_plot` gains a 6th optional arg `empties` (omitted = none, so
+  every pre-existing call site and test keeps its old meaning) and re-sanitizes
+  it — in-range, non-auto, deduped, sorted;
+- multi: signal *k* → *k*-th empty strip while any remain, then appended strips.
+  Single: an explicit usable target still wins; reuse only resolves the
+  "target unusable" case (empty stack / target is the auto strip);
+- both callers (`plot_signals`, `predict_colors`) pass the same list, so the
+  Direct Plot picker's predicted colors cannot drift from what lands;
+- `plot_signals` now moves the target (single mode) to the strip the batch
+  actually landed in, reused or created — idempotent, so no spurious log line.
+
+Result for the reported flow: clear → multi-plot → 3 signals → **3 strips, no
+blank band**, first pick on top.
+
+**Tests:** `test_wave_clear_all.tcl` `CG8` (the flow end-to-end, plus a
+fixture-teeth check that the pre-clear model really held traces);
+`test_wave_modes.tcl` `M3` (7 new pure legs incl. the Clear-All shape and the
+sanitizing), new `M3b` (`empty_graph_indices`), and `MG6`/`MG12` **updated to
+the new contract** — they asserted the old unconditional append, and `MG7` now
+builds its own 4-strip fixture instead of inheriting whatever the landing policy
+left. 67 + 193 checks green; test_wave_viewer 292 and test_ase_plot 145
+untouched. Sabotage: forcing the reusable set to {} → 5 red in the clear test,
+8 in the modes test.
+
+## 7. Eyeball status
 
 PENDING — not yet confirmed by the user in a real interactive session.

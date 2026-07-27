@@ -354,7 +354,13 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
   policy is the PURE `plan_plot` (mode, ngraphs, target, n, **auto-graph
   index**) applied by `plot_signals` — the one seam `ase::ui::dp_finish` calls.
   **The auto-plot graph is never a landing site** (auto_plot clears it every
-  run), so single-plot with the target on it appends a strip instead.
+  run), so single-plot with the target on it appends a strip instead — or, since
+  the 0171 follow-up, REUSES an empty one: `plan_plot`'s 6th arg `empties`
+  (`empty_graph_indices` = traceless, non-auto strips) is filled before anything
+  is appended, in index order, in BOTH modes. Multi-plot used to append
+  unconditionally, so a strip left by Clear All or Add Graph was a permanent
+  blank band. `plot_signals` and `predict_colors` must pass the SAME list or the
+  picker's painted color drifts from the trace it predicts.
   Commands: `plot_mode` / `set_plot_mode` (single|multi|invert) /
   `target_strip` / `set_target_strip` / `current_token`, all with an optional
   token defaulting to the viewer owning the current xschem ctx; changes are
@@ -804,7 +810,9 @@ Effort: S=hours, M=days, L=weeks. Impact in caps.
   `MG6d` = the trace-color policy, issue 0153),
   `test_wave_clear_all.tcl` (`CA*`/`CG*` = Clear All + the `WaveViewer`
   bindtag, issue 0171; `CG6` pins the rc-remap contract — rc wins, `{break}`
-  disables — and `CG4` that the tag survives a `strip_bindings` re-sweep),
+  disables — `CG4` that the tag survives a `strip_bindings` re-sweep, and `CG8`
+  that the cleared strip is REUSED by the next plot batch; the policy itself is
+  `test_wave_modes.tcl` `M3`/`M3b`),
   `test_ase_unnamed_net.tcl` (`AN*` = picking/naming of auto-named `#netN`
   nets, issue 0154 — hermetic, writes its own fixture, needs no DISPLAY,
   ngspice or ASE session),

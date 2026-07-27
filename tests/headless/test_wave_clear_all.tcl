@@ -30,6 +30,11 @@
 #        made (the "rc wins" rule — rc files run before the first viewer open)
 #   CG7  Graph > Clear All: the menu entry exists with the Ctrl+D accelerator
 #        and invoking it clears
+#   CG8  the follow-up defect: the strip a clear leaves behind must be USED by
+#        the next plot gesture, not appended past — clear -> multi-plot -> 3
+#        signals must give 3 strips with no blank band, in pick order, with the
+#        picker's predicted colors intact (the landing policy itself is pinned
+#        by test_wave_modes M3/M3b/MG6/MG12)
 #
 # NOT asserted (stated, not hidden): pixels. That a cleared viewer *renders* as
 # one empty grid is eyeball-only, exactly like every other wave rendering
@@ -140,11 +145,10 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
                                    [wviewer::empty_graph] \
                                    [wviewer::empty_graph]]
     wviewer::ensure_auto_graph $tok
-    wviewer::add_trace $tok 0 {v(a)}
-    wviewer::add_trace $tok 0 {v(b)}
-    wviewer::add_trace $tok 1 {v(c)}
-    wviewer::add_trace $tok 2 {v(d)}
-    wviewer::add_trace $tok 3 {v(e)}
+    foreach {gi vec} {0 vec_a 0 vec_b 1 vec_c 2 vec_d 3 vec_e} {
+      set e [wviewer::add_trace $tok $gi $vec]
+      if {$e ne {}} { puts "  fill_viewer: add_trace $vec -> $e" }
+    }
     wviewer::regenerate $tok
   }
 
@@ -173,11 +177,27 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   # no .raw file): `xschem raw new <name> <type> <sweepvar> <start> <end> <step>`
   xschem new_schematic switch $vdrw
   pcall {xschem raw new wvclear.raw dc vsweep 0 1.0 0.1}
+  # real vectors to plot: add_trace VALIDATES a trace against the loaded raw's
+  # variable list, so a fixture built from names the raw does not know would
+  # silently record nothing and every "cleared it" assertion below would pass
+  # against an already-empty model (green-but-hollow). Each is a derived vector
+  # (`raw add <name> <rpn>`), which is also what makes them real columns.
+  foreach v {vec_a vec_b vec_c vec_d vec_e p1 p2 p3 s1 s2 t1} {
+    pcall {xschem raw add $v "vsweep 1 +"}
+  }
+  set rawvars [split [pcall {xschem raw list}] "\n"]
+  check_true "CG0 the fixture raw knows the vectors the traces use" \
+    [expr {[lsearch -exact $rawvars vec_a] >= 0 && [lsearch -exact $rawvars p1] >= 0}]
   set raw_before [list [pcall {xschem raw sim_type}] [pcall {xschem raw points}]]
 
   # --- CG1: the clear itself -------------------------------------------------
   fill_viewer $tok
   check "CG1 fixture has 4 strips" [ngraphs $tok] 4
+  # teeth: the fixture must really HOLD traces, else "it is empty afterwards"
+  # would pass against a model that was empty all along
+  check "CG1 fixture strips actually hold traces" \
+    [list [ntraces $tok 0] [ntraces $tok 1] [ntraces $tok 2] [ntraces $tok 3]] \
+    {2 1 1 1}
   check "CG1 fixture has an auto-plot strip" [pcall {wviewer::auto_graph_index $tok}] 3
   pcall {wviewer::set_target_strip 2 $tok}
   check "CG1 fixture target is strip 2" [pcall {wviewer::target_strip $tok}] 2
@@ -332,6 +352,59 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     check "CG7 exactly one log line per menu use" \
       [expr {[llength $::wvc_log] - $nlog}] 1
   }
+
+  # --- CG8: the cleared strip GETS USED (reported follow-up) -----------------
+  # The exact reported flow: a viewer with plots -> Ctrl-D -> Ctrl-Shift-4
+  # (multi-plot) -> Ctrl-4, pick 3 signals, ESC. Pre-fix multi-plot appended
+  # past the cleared strip and left a blank band pinned at the top of the
+  # window. Driven at the plot_signals seam (the one ase::ui::dp_finish calls;
+  # test_wave_modes MG12 drives the real dp_finish for both arms).
+  proc cg_colors {tok} {
+    set out {}
+    foreach G [dict get [wviewer::layout_for $tok] graphs] {
+      foreach tr [dict get $G traces] { lappend out [dict get $tr color] }
+    }
+    return $out
+  }
+  proc cg_expr {tok gi ti} {
+    set G [lindex [dict get [wviewer::layout_for $tok] graphs] $gi]
+    return [dict get [lindex [dict get $G traces] $ti] expr]
+  }
+  fill_viewer $tok
+  pcall {wviewer::clear_all $tok}
+  pcall {wviewer::set_plot_mode multi $tok}
+  check "CG8 cleared viewer has one empty strip" \
+    [list [ngraphs $tok] [ntraces $tok 0]] {1 0}
+  set pre [pcall {wviewer::predict_colors $tok 3}]
+  check "CG8 no per-signal errors" \
+    [pcall {wviewer::plot_signals $tok {p1 p2 p3}}] {}
+  check "CG8 3 signals -> exactly 3 strips (the cleared one was REUSED)" \
+    [ngraphs $tok] 3
+  check "CG8 no strip is left empty" \
+    [pcall {wviewer::empty_graph_indices \
+              [dict get [wviewer::layout_for $tok] graphs]}] {}
+  check "CG8 pick order reads top-down (strip 0 = first pick)" \
+    [pcall {cg_expr $tok 0 0}] {p1}
+  check "CG8 strip 2 = last pick" [pcall {cg_expr $tok 2 0}] {p3}
+  xschem new_schematic switch $vdrw
+  check "CG8 three rects on the canvas, no blank band" [xschem get rects 2] 3
+  check "CG8 the picker's predicted colors still match what landed" \
+    $pre [pcall {cg_colors $tok}]
+  check "CG8 multi-plot still gave every trace its own color" \
+    [llength [lsort -unique [pcall {cg_colors $tok}]]] 3
+  # single-plot after a clear: everything into the cleared strip, still 1 strip
+  pcall {wviewer::clear_all $tok}
+  pcall {wviewer::set_plot_mode single $tok}
+  pcall {wviewer::plot_signals $tok {s1 s2}}
+  check "CG8 single-plot fills the cleared strip, creates nothing" \
+    [list [ngraphs $tok] [ntraces $tok 0]] {1 2}
+  # a SECOND multi gesture, now that nothing is empty, appends as before
+  pcall {wviewer::set_plot_mode multi $tok}
+  pcall {wviewer::plot_signals $tok {t1}}
+  check "CG8 with no empty strip left, multi-plot APPENDS" \
+    [list [ngraphs $tok] [ntraces $tok 1]] {2 1}
+  rename cg_colors {}
+  rename cg_expr {}
 
   rename wviewer::log_action {}
   rename wviewer::__real_log_action wviewer::log_action

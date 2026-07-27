@@ -530,8 +530,16 @@ owning the current xschem context, like the 0151 mode/target commands); also
   takes the token from the EVENT's canvas (`%W`), not the current C context: Tk
   focus can lead the context switch, and clearing "whatever is current" would
   wipe the wrong window.
+- **The strip a clear leaves behind GETS USED** (follow-up, same day). Landing
+  now reuses EMPTY strips before appending — `wviewer::empty_graph_indices` +
+  `plan_plot`'s 6th arg, full contract in
+  `doc/claude/specs/waveform_viewer_modes.md` §4. Without it multi-plot appended
+  past the cleared strip and left a blank band pinned at the top of the window
+  (the reported symptom); `Graph > Add Graph`'s strip had the same fate. The
+  auto strip is still never a landing site, and an explicit usable target still
+  beats reuse.
 - **Tests:** `tests/headless/test_wave_clear_all.tcl` (`CA*` no-window, `CG*`
-  GUI) — 54 checks, sabotage-verified. Documented in `src/cadence_style_rc`.
+  GUI) — 67 checks, sabotage-verified. Documented in `src/cadence_style_rc`.
 
 ## Non-goals (v1)
 
