@@ -146,10 +146,15 @@ instance's own child schematic*:
   `spice_ignore`, `w`, `l`, … Near misses exist (`m` is a net in 4 schematics and an attribute on
   3050 instances, but those cells are never instantiated).
 
-Loose upper bound, ignoring the parent/child relation: 16 colliding names, 4700 triples. A denylist
-was rejected on these numbers — 516 distinct attribute names vs 1328 distinct net names.
+Loose upper bound, ignoring the parent/child relation: **15** names that can actually fire
+(`C COUT CTRL L1 VCC VCCBPIN VCCPIN VM VNN VSSBPIN VSSPIN gnd in m outp` — three further raw
+matches, `IN`/`data`/`result`, occur only as valueless bare tokens, which `get_tok_value` cannot
+return), across 4700 valued attribute occurrences. 3050 of those 4700 (65%) are `m` alone, and `m`
+is a net only in `diode_1.sch`, which is never instantiated anywhere in the corpus — so the largest
+near miss cannot meet its net. A denylist was rejected on these numbers: 516 distinct attribute
+names vs 1328 distinct net names.
 
-**Problem 2 is not reachable from any committed design**: of 44794 non-empty instance attribute
+**Problem 2 is not reachable from any committed design**: of 68016 non-empty instance attribute
 values, exactly 7 start with `#`, all of them the same disabled `xxxspiceprefix=#D#`, none colliding
 with a child net. It is a real defect with test teeth, but no shipped design exercises it.
 
