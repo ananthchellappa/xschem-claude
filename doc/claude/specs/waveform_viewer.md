@@ -537,7 +537,9 @@ owning the current xschem context, like the 0151 mode/target commands); also
   past the cleared strip and left a blank band pinned at the top of the window
   (the reported symptom); `Graph > Add Graph`'s strip had the same fate. The
   auto strip is still never a landing site, and an explicit usable target still
-  beats reuse.
+  beats reuse. Multi-plot also grows the stack UPWARD now: created strips go on
+  top and a batch reads newest-first (`v1 v2 v3` -> `v3` topmost), so a cleared
+  viewer plus three picks reads exactly like three successive gestures would.
 - **Tests:** `tests/headless/test_wave_clear_all.tcl` (`CA*` no-window, `CG*`
   GUI) — 67 checks, sabotage-verified. Documented in `src/cadence_style_rc`.
 

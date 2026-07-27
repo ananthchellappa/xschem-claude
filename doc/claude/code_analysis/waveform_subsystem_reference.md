@@ -360,7 +360,14 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
   is appended, in index order, in BOTH modes. Multi-plot used to append
   unconditionally, so a strip left by Clear All or Add Graph was a permanent
   blank band. `plot_signals` and `predict_colors` must pass the SAME list or the
-  picker's painted color drifts from the trace it predicts.
+  picker's painted color drifts from the trace it predicts. Multi-plot grows the
+  stack UPWARD (2026-07-27): created strips go at the FRONT of the model list and
+  a batch is laid out newest-first (`v1 v2 v3` -> `v3` on top). `plan_plot`
+  encodes that in the INDICES — its multi targets are **post-insert** — and
+  `plot_signals` does the actual front-insert AND shifts the stored target by the
+  same amount, because inserting renumbers every strip already on the canvas.
+  A caller that appends instead scrambles the batch. Model order is therefore
+  NOT pick order: compare colors per signal, never by walking the strips.
   Commands: `plot_mode` / `set_plot_mode` (single|multi|invert) /
   `target_strip` / `set_target_strip` / `current_token`, all with an optional
   token defaulting to the viewer owning the current xschem ctx; changes are

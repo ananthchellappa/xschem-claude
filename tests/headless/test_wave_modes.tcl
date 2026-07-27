@@ -9,8 +9,9 @@
 #     M2 wviewer::default_plot_mode config var -> initial mode, invalid -> single
 #     M3 wviewer::plan_plot         THE landing policy: single = all signals into
 #                                   the (clamped) target, no new strip unless the
-#                                   stack is empty; multi = one NEW strip per
-#                                   signal, appended after the existing ones
+#                                   stack is empty; multi = one strip per signal,
+#                                   reusing empty strips, new ones on TOP, batch
+#                                   newest-first (last pick topmost)
 #     M4 wviewer::target_clamp      stale/negative target never escapes range
 #     M5 wviewer::graph_props       emits `active=1` ONLY when asked (the C
 #                                   indicator's only Tcl-side witness)
@@ -120,13 +121,15 @@ check "M3 single clamps a stale high target" \
   [pcall {wviewer::plan_plot single 2 7 1}] {new 0 targets 1}
 check "M3 single clamps a negative target" \
   [pcall {wviewer::plan_plot single 3 -2 1}] {new 0 targets 0}
-# multi: one NEW strip per signal, appended AFTER the existing stack
-check "M3 multi/2 strips/3 signals appends 3" \
-  [pcall {wviewer::plan_plot multi 2 0 3}] {new 3 targets {2 3 4}}
+# multi: one strip per signal, NEW strips inserted at the TOP, and the batch
+# reads newest-first (last pick topmost). Targets are POST-insert indices: the
+# new strips take 0..new-1 and everything already up slides down by `new`.
+check "M3 multi/2 strips/3 signals inserts 3 on top, last pick topmost" \
+  [pcall {wviewer::plan_plot multi 2 0 3}] {new 3 targets {2 1 0}}
 check "M3 multi/0 strips/1 signal" \
   [pcall {wviewer::plan_plot multi 0 0 1}] {new 1 targets 0}
 check "M3 multi ignores the target" \
-  [pcall {wviewer::plan_plot multi 2 1 2}] {new 2 targets {2 3}}
+  [pcall {wviewer::plan_plot multi 2 1 2}] {new 2 targets {1 0}}
 # empty gesture creates nothing in either mode
 check "M3 single/0 signals is a no-op"  [pcall {wviewer::plan_plot single 2 1 0}] {new 0 targets {}}
 check "M3 multi/0 signals is a no-op"   [pcall {wviewer::plan_plot multi 2 1 0}]  {new 0 targets {}}
@@ -139,20 +142,20 @@ check "M3 single lands normally when the target is NOT the auto strip" \
   [pcall {wviewer::plan_plot single 2 1 1 0}] {new 0 targets 1}
 check "M3 auto strip elsewhere in the stack does not disturb the plan" \
   [pcall {wviewer::plan_plot single 3 2 1 0}] {new 0 targets 2}
-check "M3 multi ignores the auto strip too (always appends)" \
-  [pcall {wviewer::plan_plot multi 1 0 2 0}] {new 2 targets {1 2}}
+check "M3 multi ignores the auto strip too (never lands there)" \
+  [pcall {wviewer::plan_plot multi 1 0 2 0}] {new 2 targets {1 0}}
 # EMPTY-STRIP REUSE (issue 0171 follow-up): a strip with no traces is a place to
 # plot, so a batch fills the empty ones (in index order) before appending. The
 # 6th argument is that list (wviewer::empty_graph_indices); omitted = none, which
 # is why every leg above still describes the pre-change behavior.
-check "M3 multi reuses one empty strip, then appends" \
-  [pcall {wviewer::plan_plot multi 2 0 3 -1 {1}}] {new 2 targets {1 2 3}}
-check "M3 multi fills empties in INDEX order (pick order reads top-down)" \
-  [pcall {wviewer::plan_plot multi 4 0 2 -1 {3 1}}] {new 0 targets {1 3}}
-check "M3 multi with more empties than signals appends nothing" \
+check "M3 multi reuses one empty strip, the rest go on top" \
+  [pcall {wviewer::plan_plot multi 2 0 3 -1 {1}}] {new 2 targets {3 1 0}}
+check "M3 multi fills empties too, still newest-first" \
+  [pcall {wviewer::plan_plot multi 4 0 2 -1 {3 1}}] {new 0 targets {3 1}}
+check "M3 multi with more empties than signals creates nothing" \
   [pcall {wviewer::plan_plot multi 3 0 1 -1 {0 2}}] {new 0 targets 0}
-check "M3 multi: the Clear All shape (1 empty strip, 3 signals)" \
-  [pcall {wviewer::plan_plot multi 1 0 3 -1 {0}}] {new 2 targets {0 1 2}}
+check "M3 multi: the Clear All shape (1 empty strip, 3 signals) - v3 on top" \
+  [pcall {wviewer::plan_plot multi 1 0 3 -1 {0}}] {new 2 targets {2 1 0}}
 check "M3 single reuses an empty strip instead of appending past the auto one" \
   [pcall {wviewer::plan_plot single 2 0 2 0 {1}}] {new 0 targets {1 1}}
 check "M3 single still appends when the only free strip IS the auto one" \
@@ -162,11 +165,11 @@ check "M3 an explicit, usable target beats an empty strip elsewhere" \
 # the reusable set is sanitized: out-of-range, negative, non-integer, the auto
 # strip and duplicates can never become landing sites
 check "M3 out-of-range / bogus empties are ignored" \
-  [pcall {wviewer::plan_plot multi 2 0 1 -1 {9 -1 x}}] {new 1 targets 2}
+  [pcall {wviewer::plan_plot multi 2 0 1 -1 {9 -1 x}}] {new 1 targets 0}
 check "M3 the auto strip is never reusable even if listed" \
-  [pcall {wviewer::plan_plot multi 2 0 1 1 {1}}] {new 1 targets 2}
+  [pcall {wviewer::plan_plot multi 2 0 1 1 {1}}] {new 1 targets 0}
 check "M3 duplicate empties are deduped" \
-  [pcall {wviewer::plan_plot multi 2 0 2 -1 {1 1}}] {new 1 targets {1 2}}
+  [pcall {wviewer::plan_plot multi 2 0 2 -1 {1 1}}] {new 1 targets {2 0}}
 
 # --- M3b: which strips are reusable (wviewer::empty_graph_indices) -----------
 proc m3_g {ntr} {
@@ -425,29 +428,33 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   set errs [pcall {wviewer::plot_signals $tok {v(x) v(y)}}]
   check "MG6 no per-signal errors" $errs {}
   set gs [dict get [wviewer::layout_for $tok] graphs]
-  # CONTRACT CHANGE (issue 0171 follow-up): multi-plot fills EMPTY strips first
-  # (in index order), and only then appends. Strip 1 of this fixture is empty,
-  # so the first pick lands there and only the second pick creates a strip —
-  # 3 strips, not 4. Pre-change an empty strip stayed empty forever and the
-  # window kept a blank band (the reported Clear-All symptom).
-  check "MG6 the EMPTY strip is reused, only the rest appended" [llength $gs] 3
-  check "MG6 pre-existing strip 0 (has traces) untouched" \
-    [llength [dict get [lindex $gs 0] traces]] 1
-  check "MG6 the reused empty strip 1 holds the first pick" \
-    [llength [dict get [lindex $gs 1] traces]] 1
-  check "MG6 new strip 2 holds exactly one trace" \
-    [llength [dict get [lindex $gs 2] traces]] 1
-  check "MG6 signal order preserved (strip 1 = first pick)" \
-    [dict get [lindex [dict get [lindex $gs 1] traces] 0] expr] {v(x)}
-  check "MG6 signal order preserved (strip 2 = second pick)" \
-    [dict get [lindex [dict get [lindex $gs 2] traces] 0] expr] {v(y)}
-  check "MG6 multi-plot does NOT move the target" [pcall {wviewer::target_strip $tok}] 0
-  # with no empty strip left, multi-plot appends again (the unchanged half)
+  # CONTRACT (issue 0171 follow-up + the 2026-07-27 order request): multi-plot
+  # REUSES empty strips, puts the strips it must create at the TOP, and lays the
+  # batch out newest-first. Fixture: strip 0 holds v(keep), strip 1 is empty. So
+  # v(x) reuses the empty strip and v(y) gets a new TOP strip:
+  #   0 = v(y) (last pick, newest)   1 = v(keep) (pushed down)   2 = v(x)
+  check "MG6 one strip per signal: 1 reused + 1 created" [llength $gs] 3
+  check "MG6 the LAST pick is on top" \
+    [dict get [lindex [dict get [lindex $gs 0] traces] 0] expr] {v(y)}
+  check "MG6 the pre-existing strip slid down, untouched" \
+    [dict get [lindex [dict get [lindex $gs 1] traces] 0] expr] {v(keep)}
+  check "MG6 the first pick sits in the reused empty strip, at the bottom" \
+    [dict get [lindex [dict get [lindex $gs 2] traces] 0] expr] {v(x)}
+  check "MG6 every landing strip holds exactly one trace" \
+    [list [llength [dict get [lindex $gs 0] traces]] \
+          [llength [dict get [lindex $gs 2] traces]]] {1 1}
+  # the target still names the SAME strip it named before the insert (it was
+  # strip 0 = v(keep), which is now strip 1) — multi-plot never RE-targets, but
+  # inserting on top renumbers, and the marker must not drift to another strip
+  check "MG6 the target follows its strip through the insert" \
+    [pcall {wviewer::target_strip $tok}] 1
+  # with no empty strip left, a further pick creates its strip on top
   pcall {wviewer::plot_signals $tok {v(z)}}
   set gs [dict get [wviewer::layout_for $tok] graphs]
-  check "MG6 nothing empty left -> the next pick APPENDS" [llength $gs] 4
-  check "MG6 the appended strip holds it" \
-    [dict get [lindex [dict get [lindex $gs 3] traces] 0] expr] {v(z)}
+  check "MG6 nothing empty left -> a new TOP strip" [llength $gs] 4
+  check "MG6 the new strip is strip 0" \
+    [dict get [lindex [dict get [lindex $gs 0] traces] 0] expr] {v(z)}
+  check "MG6 and the target followed again" [pcall {wviewer::target_strip $tok}] 2
 
   # --- MG6c: the reported defect, end to end (issue 0153) --------------------
   # Drive plot_signals in MULTI mode with no explicit colors and read the colors
@@ -469,7 +476,10 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   check "MG6c multi-plot assigned 3 colors" [llength $mgc] 3
   check "MG6c multi-plot colors are all DIFFERENT" \
     [llength [lsort -unique $mgc]] 3
-  check "MG6c and they are the palette head onwards" $mgc {4 5 7}
+  # colors are handed out in PICK order (4 5 7); the strips read newest-first
+  # since 2026-07-27, so walking the model top-down yields them reversed
+  check "MG6c palette head onwards, in pick order (model reads newest-first)" \
+    $mgc {7 5 4}
 
   # a SECOND multi gesture must not restart the cycle over colors already up
   pcall {wviewer::plot_signals $tok {v(m4)}}
@@ -497,6 +507,16 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   # The picker paints the schematic from predict_colors BEFORE the plot happens;
   # if the two ever diverged the wire and its trace would disagree. Asserted for
   # both modes, against the live window state.
+  # the color of signal k must be compared BY SIGNAL, not by walking the model:
+  # multi-plot lays a batch out newest-first, so model order != pick order
+  proc mg_color_of {tok ex} {
+    foreach G [dict get [wviewer::layout_for $tok] graphs] {
+      foreach tr [dict get $G traces] {
+        if {[dict get $tr expr] eq $ex} { return [dict get $tr color] }
+      }
+    }
+    return {}
+  }
   foreach m {single multi} {
     wviewer::set_graphs $tok [list [wviewer::empty_graph]]
     wviewer::regenerate $tok
@@ -504,10 +524,13 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     pcall {wviewer::set_target_strip 0 $tok}
     set pre [pcall {wviewer::predict_colors $tok 3}]
     pcall {wviewer::plot_signals $tok {v(p1) v(p2) v(p3)}}
-    check "MG6d $m predicted colors == assigned colors" $pre [pcall {mg_colors $tok}]
+    set got {}
+    foreach ex {v(p1) v(p2) v(p3)} { lappend got [pcall {mg_color_of $tok $ex}] }
+    check "MG6d $m predicted colors == assigned colors (per signal)" $pre $got
     check_true "MG6d $m predicted 3 distinct colors" \
       [expr {[llength [lsort -unique $pre]] == 3}]
   }
+  rename mg_color_of {}
   check "MG6d predict_colors 0 signals -> {}" [pcall {wviewer::predict_colors $tok 0}] {}
   check "MG6d predict_colors rejects a non-number" \
     [pcall {wviewer::predict_colors $tok x}] {}
@@ -641,19 +664,24 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   pcall {wviewer::set_target_strip 0 $tok}
   pcall {ase::ui::dp_finish $tok {v(m1) v(m2)}}
   set gs [dict get [wviewer::layout_for $tok] graphs]
-  # one signal per strip is the multi contract; since the 0171 follow-up the two
-  # EMPTY strips of this fixture ARE those strips, so nothing is appended
+  # one signal per strip is the multi contract; the two EMPTY strips of this
+  # fixture ARE those strips (0171 follow-up), and the batch reads newest-first
   check "MG12 multi mode: dp_finish put ONE SIGNAL PER STRIP" [llength $gs] 2
-  check "MG12 strip 0 holds the first pick" \
-    [dict get [lindex [dict get [lindex $gs 0] traces] 0] expr] {v(m1)}
-  check "MG12 strip 1 holds the second pick" \
-    [dict get [lindex [dict get [lindex $gs 1] traces] 0] expr] {v(m2)}
-  # with nothing empty left, the next gesture appends one strip per signal
+  check "MG12 the LAST pick is on top" \
+    [dict get [lindex [dict get [lindex $gs 0] traces] 0] expr] {v(m2)}
+  check "MG12 the first pick is below it" \
+    [dict get [lindex [dict get [lindex $gs 1] traces] 0] expr] {v(m1)}
+  # with nothing empty left, the next gesture creates its strips ON TOP
   pcall {ase::ui::dp_finish $tok {v(m3) v(m4)}}
   set gs [dict get [wviewer::layout_for $tok] graphs]
-  check "MG12 multi mode APPENDS when no strip is free" [llength $gs] 4
-  check "MG12 new strip 2 holds one trace" [llength [dict get [lindex $gs 2] traces]] 1
-  check "MG12 new strip 3 holds one trace" [llength [dict get [lindex $gs 3] traces]] 1
+  check "MG12 multi mode creates one strip per signal when none is free" \
+    [llength $gs] 4
+  check "MG12 the newest gesture is on top, newest-first" \
+    [list [dict get [lindex [dict get [lindex $gs 0] traces] 0] expr] \
+          [dict get [lindex [dict get [lindex $gs 1] traces] 0] expr]] {v(m4) v(m3)}
+  check "MG12 the earlier strips were pushed down, intact" \
+    [list [dict get [lindex [dict get [lindex $gs 2] traces] 0] expr] \
+          [dict get [lindex [dict get [lindex $gs 3] traces] 0] expr]] {v(m2) v(m1)}
   # same call, single mode -> everything into the target, no new strip
   wviewer::set_graphs $tok [list [wviewer::empty_graph] [wviewer::empty_graph]]
   wviewer::regenerate $tok

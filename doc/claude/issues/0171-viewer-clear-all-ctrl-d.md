@@ -142,8 +142,8 @@ what is left over.
 - `wviewer::plan_plot` gains a 6th optional arg `empties` (omitted = none, so
   every pre-existing call site and test keeps its old meaning) and re-sanitizes
   it — in-range, non-auto, deduped, sorted;
-- multi: signal *k* → *k*-th empty strip while any remain, then appended strips.
-  Single: an explicit usable target still wins; reuse only resolves the
+- multi: the batch takes up to *n* empty strips plus however many it must
+  create; single: an explicit usable target still wins, reuse only resolves the
   "target unusable" case (empty stack / target is the auto strip);
 - both callers (`plot_signals`, `predict_colors`) pass the same list, so the
   Direct Plot picker's predicted colors cannot drift from what lands;
@@ -151,7 +151,34 @@ what is left over.
   actually landed in, reused or created — idempotent, so no spurious log line.
 
 Result for the reported flow: clear → multi-plot → 3 signals → **3 strips, no
-blank band**, first pick on top.
+blank band**.
+
+### 6b. Second follow-up (same day): newest on top
+
+Requested right after: *"in multi-plot mode, new strips are on top (not bottom)
+… v1, v2, v3 — v3 will be on top, not v1"*. So a multi-plot gesture now grows the
+stack **upward**, and the batch is laid out **newest-first**: `v1 v2 v3` reads
+`v3, v2, v1` top-down.
+
+`plan_plot`'s multi arm now computes its landing sites in the **post-insert**
+index space (created strips are `0..new-1`, everything already on the canvas is
+`+new`) and deals the picks **bottom-up** — pick *k* takes the *k*-th site from
+the bottom. It cannot carry an "insert at the top" flag without changing the
+result dict shape every caller and test compares, so the insert lives in the
+indices and **`plot_signals` performs the actual front-insert**; a caller that
+appended would scramble the batch. Because inserting renumbers every strip,
+`plot_signals` also shifts the stored target by `new` — multi-plot still never
+RE-targets, but the marker must not drift onto a different strip.
+
+Two consequences worth knowing: the model's strip order is **no longer pick
+order**, so a test comparing predicted vs assigned trace colors must pair them
+**per signal** (`MG6d`, `CG8` now do); and with Shared X on, the x-range master
+(strip 0 at regenerate time) is the newest strip rather than the oldest.
+
+Tests: `M3` multi legs rewritten to the new indices, `MG6`/`MG12` to the new
+layout, `CG8` asserts `p3, p2, p1` top-down. Sabotage: dealing top-down instead
+of bottom-up → 2 + 14 red; appending instead of front-inserting → MG6 red plus a
+hard abort on the scrambled model.
 
 **Tests:** `test_wave_clear_all.tcl` `CG8` (the flow end-to-end, plus a
 fixture-teeth check that the pre-clear model really held traces);

@@ -13,9 +13,10 @@ from the schematic land:
 - **single-plot** — every signal of one plot gesture goes into the **target
   strip** (one graph of the stack), appended to whatever it already holds.
 - **multi-plot** — each signal of the gesture gets **its own strip**: the
-  EMPTY strips already on screen first (index order), then new ones appended
-  below the existing stack (the empty-strip reuse is the issue 0171 follow-up,
-  §4).
+  EMPTY strips already on screen are reused first, the rest are created **at the
+  TOP** of the stack, and the batch reads **newest-first** — picking `v1 v2 v3`
+  leaves `v3` on top and `v1` at the bottom (empty-strip reuse + newest-first
+  ordering are the issue 0171 follow-ups, §4).
 
 Plus the machinery the mode needs: a per-window target strip, a click to move
 it, a dull-yellow marker showing it, Tcl get/set/invert commands, a viewer menu
@@ -27,7 +28,7 @@ query that reach the viewer through its ASE-L session.
 | # | Question | Decision |
 |---|---|---|
 | D1 | single-plot landing | **Append** into the target strip (never replace). Clearing stays explicit (Graph > Delete…). |
-| D2 | multi-plot landing | **One strip per signal.** Reuse the EMPTY strips first (index order), append the rest below the existing stack (empty-strip reuse added by the issue 0171 follow-up, 2026-07-27). The ASE auto-plot graph and strips that hold traces are never touched. |
+| D2 | multi-plot landing | **One strip per signal.** Reuse the EMPTY strips first; create the rest at the **TOP** of the stack, newest-first within the batch (`v1 v2 v3` -> `v3` topmost). Both refinements: issue 0171 follow-ups, 2026-07-27. The ASE auto-plot graph and strips that hold traces are never touched. |
 | D3 | which paths obey the mode | **Direct Plot only** (Results > Direct Plot, Ctrl-4, and any future schematic plot command). ASE auto-plot keeps its shipped always-replace-into-one-`auto 1`-graph contract; the Add Trace… dialog keeps its explicit target combobox. |
 | D4 | active-strip indicator | **C, inside `draw_graph`** — a dedicated GC, exact dull-yellow RGB, drawn at the graph rect's right edge. The only option that survives partial graph redraws. |
 | D5 | persistence | **Mode and target both persist** in the ASE session's `viewer` state dict, after `graphs`. |
@@ -106,18 +107,31 @@ re-sanitizes it (in-range, non-auto, deduped, sorted) because it is the policy.
 | mode | layout | result |
 |---|---|---|
 | single | ≥1 strip, usable target | `new 0`, every signal → `target_index` |
-| single | 0 strips, or target = the auto strip | reuse the first empty strip if there is one (`new 0`), else `new 1` and use the created strip |
-| multi | any | signal *k* → the *k*-th empty strip while any remain, then appended strips `ngraphs`, `ngraphs+1`, … ; `new` = how many were appended |
+| single | 0 strips, or target = the auto strip | reuse the first empty strip if there is one (`new 0`), else `new 1` and use the strip appended at the bottom |
+| multi | any | landing sites = up to *n* empty strips (index order) + `new` = the shortfall, created at the TOP. Sites are expressed in the **post-insert** index space (new strips are `0..new-1`, everything already up is `+new`) and handed out **bottom-up**: pick *k* takes the *k*-th site from the bottom, so the LAST pick is topmost |
 
 **Empty-strip reuse (issue 0171 follow-up, 2026-07-27).** An empty strip is a
 place to plot, so a plot gesture fills it instead of appending past it. Without
 this, Clear All (issue 0171) and Graph > Add Graph left a blank band pinned at
 the top of the window that no plotting could ever fill, shrinking every real
-strip. Filling is by INDEX order, so pick order still reads top-to-bottom. In
-single-plot mode an explicit, usable target still wins over any empty strip —
+strip. Which empty strips are used is decided in index order; how the picks are
+DEALT over the resulting sites is newest-first (below). In single-plot mode an explicit, usable target still wins over any empty strip —
 reuse only resolves the case where the target is unusable. `plot_signals` moves
 the target to whatever strip the batch actually landed in (single mode only,
 idempotent, so no spurious log line).
+
+**Newest-first, new strips on top (2026-07-27 request).** A multi-plot gesture
+now grows the stack UPWARD: the strips it creates go in front of the model list
+and the batch is laid out so the last signal picked is the topmost. `plan_plot`
+cannot carry an "insert at the top" flag without changing the result dict every
+caller and test compares, so it encodes the insert in the INDICES — its multi
+targets are post-insert — and **`plot_signals` is the half that actually inserts
+them at the front**. A caller that appended instead would scramble the batch.
+Inserting renumbers everything already on the canvas, so `plot_signals` also
+shifts the stored target by the same amount: multi-plot still never RE-targets,
+but the marker must not drift onto a different strip. Consequence to know: with
+Shared X on, strip 0 (the x-range master at regenerate time) is now the newest
+strip rather than the oldest.
 
 `wviewer::plot_signals {token exprs {colors {}}}` applies it: create the planned
 strips via `add_graph`, then `add_trace` each expression at its planned index,

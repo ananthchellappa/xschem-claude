@@ -550,11 +550,20 @@ proc wviewer::empty_graph_indices {gs {auto -1}} {
 # single -> everything into the (clamped) target; a landing strip is needed
 #           only when the stack is empty OR the target resolved to the
 #           AUTO-PLOT strip, and then an empty strip is REUSED if there is one,
-#           else one is appended.
-# multi  -> one strip per signal in pick order: the empty strips first (in
-#           index order), then NEW ones appended after the existing stack.
+#           else one is APPENDED (bottom).
+# multi  -> one strip per signal: the empty strips are reused first, the rest
+#           are NEW strips inserted at the TOP of the stack, and the batch reads
+#           NEWEST-FIRST — the LAST signal picked takes the topmost landing
+#           strip, the first picked the bottom-most (2026-07-27 request).
 # Zero signals is a no-op in both modes (an empty Direct Plot gesture must
 # leave the raised viewer exactly as it was).
+#
+# **multi targets are in the POST-INSERT index space.** plan_plot cannot say
+# "insert at the top" in its result without changing the dict shape every caller
+# and test compares, so it says it in the INDICES: the `new` strips are 0..new-1
+# and every strip already on the canvas is +new. `plot_signals` is what actually
+# inserts them at the front (and shifts the stored target so the marker stays on
+# the strip it was on). A caller that appends instead would scramble the batch.
 #
 # WHY empty strips are reused (issue 0171 follow-up): Clear All leaves exactly
 # one empty strip, and Graph > Add Graph makes one on request. Appending past
@@ -584,16 +593,21 @@ proc wviewer::plan_plot {mode ngraphs target n {auto -1} {empties {}}} {
   }
   set free [lsort -integer $free]
   if {$mode eq {multi}} {
+    # at most n empty strips are reused; the shortfall becomes NEW top strips
+    set reuse [lrange $free 0 [expr {$n - 1}]]
+    set new [expr {$n - [llength $reuse]}]
+    # landing sites in the POST-insert space: the new strips take 0..new-1,
+    # every reused strip slides down by `new`
+    set sites {}
+    for {set k 0} {$k < $new} {incr k} { lappend sites $k }
+    foreach gi $reuse { lappend sites [expr {$gi + $new}] }
+    set sites [lsort -integer $sites]
+    # newest on top: pick k takes the k-th site FROM THE BOTTOM, so the last
+    # signal of the gesture ends up topmost and the batch reads newest-first
     set t {}
-    set new 0
+    set last [expr {[llength $sites] - 1}]
     for {set k 0} {$k < $n} {incr k} {
-      if {[llength $free]} {
-        lappend t [lindex $free 0]
-        set free [lrange $free 1 end]
-      } else {
-        lappend t [expr {$ngraphs + $new}]
-        incr new
-      }
+      lappend t [lindex $sites [expr {$last - $k}]]
     }
     return [dict create new $new targets $t]
   }
@@ -1419,8 +1433,24 @@ proc wviewer::plot_signals {token exprs {colors {}}} {
     # `gs` is the PRE-batch strip list, which is what plan_colors expects
     set colors [wviewer::plan_colors $gs $mode [dict get $plan targets]]
   }
-  for {set k 0} {$k < [dict get $plan new]} {incr k} {
-    wviewer::add_graph $token
+  # create the strips the plan asked for. WHERE they go is mode-dependent and is
+  # the other half of plan_plot's index contract: multi-plot puts new strips at
+  # the TOP (newest first, 2026-07-27 request) — which renumbers everything
+  # already on the canvas, so the stored target is shifted by the same amount to
+  # keep the marker on the strip it was on. single-plot appends at the bottom,
+  # where its own targets say it does.
+  set nnew [dict get $plan new]
+  if {$nnew > 0} {
+    set fresh {}
+    for {set k 0} {$k < $nnew} {incr k} { lappend fresh [wviewer::empty_graph] }
+    if {$mode eq {multi}} {
+      variable target
+      set cur [wviewer::target_index $token]
+      wviewer::set_graphs $token [concat $fresh $gs]
+      if {[llength $gs]} { set target($token) [expr {$cur + $nnew}] }
+    } else {
+      wviewer::set_graphs $token [concat $gs $fresh]
+    }
   }
   # single-plot: the strip the batch actually landed in becomes the target, so
   # the next gesture accumulates there. This matters whenever the stored target
@@ -1436,6 +1466,12 @@ proc wviewer::plot_signals {token exprs {colors {}}} {
   foreach ex $exprs gi [dict get $plan targets] col $colors {
     set err [wviewer::add_trace $token $gi $ex {} $col]
     if {$err ne {}} { lappend errs [list $ex $err] }
+  }
+  # every add_trace regenerates on success, so the canvas normally already
+  # matches the model; when the whole batch failed (bad exprs, no raw) the
+  # strips created above would otherwise exist only in the model
+  if {$nnew > 0 && [llength $errs] == [llength $exprs]} {
+    wviewer::regenerate $token
   }
   return $errs
 }

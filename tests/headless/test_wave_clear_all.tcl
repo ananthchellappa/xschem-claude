@@ -32,9 +32,10 @@
 #        and invoking it clears
 #   CG8  the follow-up defect: the strip a clear leaves behind must be USED by
 #        the next plot gesture, not appended past — clear -> multi-plot -> 3
-#        signals must give 3 strips with no blank band, in pick order, with the
-#        picker's predicted colors intact (the landing policy itself is pinned
-#        by test_wave_modes M3/M3b/MG6/MG12)
+#        signals must give 3 strips with no blank band, laid out NEWEST-FIRST
+#        (last pick on top, 2026-07-27), with the picker's predicted colors
+#        intact per signal (the landing policy itself is pinned by
+#        test_wave_modes M3/M3b/MG6/MG12)
 #
 # NOT asserted (stated, not hidden): pixels. That a cleared viewer *renders* as
 # one empty grid is eyeball-only, exactly like every other wave rendering
@@ -370,6 +371,15 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     set G [lindex [dict get [wviewer::layout_for $tok] graphs] $gi]
     return [dict get [lindex [dict get $G traces] $ti] expr]
   }
+  # by SIGNAL, not by model order: multi-plot lays a batch out newest-first
+  proc cg_color_of {tok ex} {
+    foreach G [dict get [wviewer::layout_for $tok] graphs] {
+      foreach tr [dict get $G traces] {
+        if {[dict get $tr expr] eq $ex} { return [dict get $tr color] }
+      }
+    }
+    return {}
+  }
   fill_viewer $tok
   pcall {wviewer::clear_all $tok}
   pcall {wviewer::set_plot_mode multi $tok}
@@ -383,13 +393,15 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   check "CG8 no strip is left empty" \
     [pcall {wviewer::empty_graph_indices \
               [dict get [wviewer::layout_for $tok] graphs]}] {}
-  check "CG8 pick order reads top-down (strip 0 = first pick)" \
-    [pcall {cg_expr $tok 0 0}] {p1}
-  check "CG8 strip 2 = last pick" [pcall {cg_expr $tok 2 0}] {p3}
+  # newest-first (2026-07-27): picking p1 p2 p3 must read p3 p2 p1 top-down
+  check "CG8 the LAST pick is the TOP strip" [pcall {cg_expr $tok 0 0}] {p3}
+  check "CG8 the middle pick is in the middle" [pcall {cg_expr $tok 1 0}] {p2}
+  check "CG8 the FIRST pick is the bottom strip" [pcall {cg_expr $tok 2 0}] {p1}
   xschem new_schematic switch $vdrw
   check "CG8 three rects on the canvas, no blank band" [xschem get rects 2] 3
-  check "CG8 the picker's predicted colors still match what landed" \
-    $pre [pcall {cg_colors $tok}]
+  check "CG8 the picker's predicted colors still match what landed (per signal)" \
+    $pre [list [pcall {cg_color_of $tok p1}] [pcall {cg_color_of $tok p2}] \
+               [pcall {cg_color_of $tok p3}]]
   check "CG8 multi-plot still gave every trace its own color" \
     [llength [lsort -unique [pcall {cg_colors $tok}]]] 3
   # single-plot after a clear: everything into the cleared strip, still 1 strip
@@ -398,13 +410,14 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   pcall {wviewer::plot_signals $tok {s1 s2}}
   check "CG8 single-plot fills the cleared strip, creates nothing" \
     [list [ngraphs $tok] [ntraces $tok 0]] {1 2}
-  # a SECOND multi gesture, now that nothing is empty, appends as before
+  # a SECOND multi gesture, now that nothing is empty, creates its strip ON TOP
   pcall {wviewer::set_plot_mode multi $tok}
   pcall {wviewer::plot_signals $tok {t1}}
-  check "CG8 with no empty strip left, multi-plot APPENDS" \
-    [list [ngraphs $tok] [ntraces $tok 1]] {2 1}
+  check "CG8 with no empty strip left, the new strip goes on TOP" \
+    [list [ngraphs $tok] [pcall {cg_expr $tok 0 0}] [ntraces $tok 1]] {2 t1 2}
   rename cg_colors {}
   rename cg_expr {}
+  rename cg_color_of {}
 
   rename wviewer::log_action {}
   rename wviewer::__real_log_action wviewer::log_action
