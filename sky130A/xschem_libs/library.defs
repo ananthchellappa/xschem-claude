@@ -10,3 +10,4 @@ DEFINE sky130_stdcells sky130_stdcells
 DEFINE sky130_tests sky130_tests
 DEFINE mips_cpu mips_cpu
 DEFINE stdcells stdcells
+DEFINE sky130_tests_ase sky130_tests_ase
