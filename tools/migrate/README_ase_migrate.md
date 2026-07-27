@@ -94,6 +94,25 @@ migration report's warnings**, so you can port it by hand. The per-cell report
 (printed by the CLI) lists what was kept, extracted, dropped, hoisted, and every
 warning.
 
+### Graph `node=` is a trace mini-language, not a list of signals
+
+A `flags=graph` block's `node=` is parsed with xschem's own grammar (`draw_graph()`
+`src/draw.c`, `doc/xschem_man/graphs.html`,
+`doc/claude/code_analysis/waveform_subsystem_reference.md` §2.5) — rows separated by
+**newline only**, `"` quoting a row, `\` escaping the next character:
+
+| `node=` row | becomes |
+|---|---|
+| `v(out)` | one output `v(out)` |
+| `CIN;cin` | one output `cin`, **named** `CIN` (text before `;` is the legend label) |
+| `S0;s0[3],s0[2],\`⏎`s0[1],s0[0]` | a **bus**: one output per bit (the trailing `\` is a line continuation, not a token) |
+| `x1.zminus x1.plus -` | an RPN expression — not a `.save`-able vector, so its **operands** are saved and the expression is reported |
+| `TEMPERAT%0` | `TEMPERAT`; the `%N` dataset selector has no ASE equivalent and is reported |
+| `tcleval(...)` | refused (evaluated at draw time) and reported |
+
+A wide bus expands to one output per bit and says so in the report — e.g.
+`sky130_tests/test_carry_lookahead` yields 1089 bit outputs from its four buses.
+
 ---
 
 ## Output the tool produces

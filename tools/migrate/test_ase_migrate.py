@@ -12,7 +12,9 @@ cluttered and the migrated cell through xschem+ngspice and compare Id) is gated
 on ./src/xschem and ngspice being present; it self-skips otherwise.
 """
 import os
+import re
 import shutil
+import subprocess
 import sys
 import tempfile
 
@@ -86,6 +88,95 @@ if HAVE:
     check("S5 spaced -> braced",
           m._tcl_conv("a b c") == "{a b c}")
 
+    # S6: values that used to RAISE "out of domain" now convert like Tcl does.
+    check("S6a trailing backslash escapes (was MigrationError)",
+          m._tcl_conv("s0[255],s0[254],\\") == "s0\\[255\\],s0\\[254\\],\\\\",
+          repr(m._tcl_conv("s0[255],s0[254],\\")))
+    check("S6b interior backslash braces",
+          m._tcl_conv("a\\b") == "{a\\b}", repr(m._tcl_conv("a\\b")))
+    check("S6c unbalanced open brace escapes",
+          m._tcl_conv("{1.8") == "\\{1.8", repr(m._tcl_conv("{1.8")))
+    check("S6d misordered braces escape (count test was not enough)",
+          m._tcl_conv("a}b{c") == "a\\}b\\{c", repr(m._tcl_conv("a}b{c")))
+    check("S6e balanced braces stay bare",
+          m._tcl_conv("a{b}c") == "a{b}c", repr(m._tcl_conv("a{b}c")))
+    check("S6f windows path escapes",
+          m._tcl_conv("C:\\models\\x.lib") == "{C:\\models\\x.lib}",
+          repr(m._tcl_conv("C:\\models\\x.lib")))
+
+    # S7: DIFFERENTIAL — every _tcl_conv result must equal Tcl's own [list $v],
+    # for hand-picked pathological values plus a deterministic sweep. This is
+    # the contract (byte-identical to ase::state_serialize); tclsh is the oracle.
+    TCLSH = shutil.which("tclsh")
+    if TCLSH:
+        vals = ["", "plain", "a b", "a\\b", "a\\", "a\\\\", "{1.8", "a}b{c",
+                "a{b}c", "a]b", 'x;y "q"', "v($vdd)[3]", "#lead", "a#c",
+                "s0[255],s0[254],\\", "-i(v1)", "$::X/y.z", "a\tb", "a\nb",
+                "C:\\models\\x.lib", "{", "}", "\\", '"', "a\\\nb", "[x]",
+                "{a b}", '"quoted"', "\\{b}", "a{b\\}"]
+        alpha = "ab{}[]$;\"\\ \t#,()01"
+        seed = 12345                       # deterministic LCG, no RNG dependency
+        for _ in range(600):
+            seed = (1103515245 * seed + 12345) % (1 << 31)
+            ln = 1 + (seed >> 16) % 6
+            s = []
+            for _k in range(ln):
+                seed = (1103515245 * seed + 12345) % (1 << 31)
+                s.append(alpha[(seed >> 16) % len(alpha)])
+            vals.append("".join(s))
+        # each line is hex of "\x01"+value, so the EMPTY value still has a line
+        drv = ("foreach hx [split [string trim [read stdin]] \\n] {\n"
+               "  set v [encoding convertfrom utf-8 [binary format H* $hx]]\n"
+               "  set v [string range $v 1 end]\n"
+               "  puts [binary encode hex [encoding convertto utf-8 [list $v]]]\n"
+               "}\n")
+        stdin = "\n".join(("\x01" + v).encode().hex() for v in vals) + "\n"
+        # values travel as hex so no shell/Tcl quoting layer can distort them
+        with tempfile.NamedTemporaryFile("w", suffix=".tcl", delete=False) as tf:
+            tf.write(drv)
+            drvpath = tf.name
+        try:
+            p = subprocess.run([TCLSH, drvpath], input=stdin, text=True,
+                               capture_output=True)
+            got = [bytes.fromhex(h).decode() for h in p.stdout.split()]
+        finally:
+            os.unlink(drvpath)
+        if len(got) != len(vals):
+            check("S7 tclsh differential ran", False,
+                  "got %d/%d lines: %s" % (len(got), len(vals), p.stderr[:200]))
+        else:
+            bad = [(v, m._tcl_conv(v), w) for v, w in zip(vals, got)
+                   if m._tcl_conv(v) != w]
+            check("S7 _tcl_conv == Tcl [list $v] for %d values" % len(vals),
+                  not bad, "" if not bad else "first 3 mismatches: %r" % bad[:3])
+            # and the nested form the serializer actually emits
+            nested = [["name", v, "value", "x"] for v in vals[:40]]
+            with tempfile.NamedTemporaryFile("w", suffix=".tcl",
+                                             delete=False) as tf:
+                tf.write("foreach hx [split [string trim [read stdin]] \\n] {\n"
+                         "  set v [encoding convertfrom utf-8 "
+                         "[binary format H* $hx]]\n"
+                         "  set v [string range $v 1 end]\n"
+                         "  puts [binary encode hex [encoding convertto utf-8 "
+                         "[list [list name $v value x]]]]\n}\n")
+                drvpath = tf.name
+            try:
+                stdin2 = "\n".join(("\x01" + v).encode().hex()
+                                   for v in vals[:40]) + "\n"
+                p2 = subprocess.run([TCLSH, drvpath], input=stdin2, text=True,
+                                    capture_output=True)
+                got2 = [bytes.fromhex(h).decode() for h in p2.stdout.split()]
+            finally:
+                os.unlink(drvpath)
+            badn = [(n, m._tcl_conv(m._struct_to_str(n)), w)
+                    for n, w in zip(nested, got2)
+                    if m._tcl_conv(m._struct_to_str(n)) != w]
+            check("S8 nested list quoting == Tcl [list [list ...]]",
+                  len(got2) == 40 and not badn,
+                  "" if not badn else "first: %r" % (badn[:1],))
+    else:
+        print("skip: S7/S8 tclsh differential (no tclsh)")
+
 # --------------------------------------------------------------------------- #
 # 2. SpiceDeck: embedded gf180 models block + a control command block
 # --------------------------------------------------------------------------- #
@@ -126,13 +217,69 @@ if HAVE:
           {"type": "tran", "enabled": "1", "step": "1n", "stop": "1u"})
 
 # --------------------------------------------------------------------------- #
-# 3. graph block -> plotted outputs
+# 3. graph block -> plotted outputs (the `node=` trace mini-language, see
+#    draw_graph() src/draw.c and doc/claude/issues/0167-*.md)
 # --------------------------------------------------------------------------- #
 if HAVE:
+    # `alias;expr` is ONE trace: legend `i(vd)`, signal `v(out)`. (This check
+    # used to assert both halves were signals — that was the wrong grammar.)
     gprops = "flags=graph\ny1=-1\ny2=1\nnode=\"i(vd); v(out)\"\ncolor=4"
     outs = m.graph_outputs(gprops)
-    check("G1 graph nodes recovered",
-          outs == [("i(vd)", 1), ("v(out)", 1)], str(outs))
+    check("G1 alias;expr -> one output, alias is the label",
+          outs == [("v(out)", 1, "i(vd)")], str(outs))
+
+    # rows are newline-separated; `"` quotes a row; a trailing `\` is a
+    # CONTINUATION, never a token (this is the value that used to abort the
+    # whole sky130_tests library run)
+    w = []
+    outs = m.graph_outputs("flags=graph\nnode=\"S0;s0[2],s0[1],\\ s0[0]\ncin\"", w)
+    check("G2 bus row expands to its bits, continuation absorbed",
+          outs == [("s0[2]", 1, None), ("s0[1]", 1, None), ("s0[0]", 1, None),
+                   ("cin", 1, None)], str(outs))
+    check("G3 no token keeps a stray backslash",
+          all("\\" not in o[0] for o in outs), str(outs))
+
+    w = []
+    outs = m.graph_outputs("flags=graph\nnode=\"x1.zminus x1.plus -\"", w)
+    check("G4 RPN expression contributes its operands, loudly",
+          outs == [("x1.zminus", 1, None), ("x1.plus", 1, None)]
+          and any("operands" in x for x in w), "%s %s" % (outs, w))
+
+    w = []
+    outs = m.graph_outputs("flags=graph\nnode=\"TEMPERAT%0\"", w)
+    check("G5 %dataset selector stripped + warned",
+          outs == [("TEMPERAT", 1, None)] and any("%0" in x for x in w),
+          "%s %s" % (outs, w))
+
+    w = []
+    outs = m.graph_outputs("flags=graph\nnode=tcleval(v(@#0:x))", w)
+    check("G6 tcleval node not guessed at", outs == [] and len(w) == 1, str(w))
+
+    # the real offender, end to end
+    cl = os.path.join(REPO, "sky130A", "xschem_libs", "sky130_tests",
+                      "test_carry_lookahead", "schematic",
+                      "test_carry_lookahead.sch")
+    if os.path.isfile(cl):
+        with open(cl) as f:
+            cmc = m.CellMigrator(f.read(), m.PDKS["sky130"], "sky130_tests",
+                                 "test_carry_lookahead").migrate()
+        txt = m.serialize_state(cmc.state, m.SCHEMA_KEYS)
+        exprs = [o[3] for o in cmc.state["outputs"]]
+        check("G7 test_carry_lookahead serializes (was MigrationError)",
+              txt.startswith("version 1"))
+        # 9 rows -> 1089 real bits (256 a + 256 b + 1 cin + 32 s2 + 32 s1
+        # + 256 s3 + 256 s0) plus the placeholder signal `xxx` the two
+        # "NN bit; xxx" header rows name (xschem would try to plot it too).
+        check("G8 all 1089 bus bits recovered, no aliases/backslashes",
+              len(exprs) == 1090 and "A" not in exprs and "S0" not in exprs
+              and "xxx" in exprs and all("\\" not in e for e in exprs),
+              "%d exprs" % len(exprs))
+        check("G9 output names unique and identifier-shaped",
+              len(set(o[1] for o in cmc.state["outputs"])) == len(exprs)
+              and all(re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", o[1])
+                      for o in cmc.state["outputs"]))
+    else:
+        print("skip: test_carry_lookahead fixture missing")
 
 # --------------------------------------------------------------------------- #
 # 4. classify
@@ -195,6 +342,77 @@ if HAVE:
           str(cmh.state["variables"]))
     check("H2 clean sch references the var, not the literal",
           "value=V1" in cmh.clean_sch and "value=1.65" not in cmh.clean_sch)
+
+# --------------------------------------------------------------------------- #
+# 6b. deck-parser robustness (values that used to be shredded or mis-mapped)
+# --------------------------------------------------------------------------- #
+if HAVE:
+    d = m.SpiceDeck()
+    d.parse(".param p={1.8 * 2} q=3\n"
+            ".include \"/opt/my models/x.lib\"\n"
+            ".temp TEMPVAR\n"
+            ".opton wnflag=1\n"
+            ".options save all\n"
+            ".control\nprint del > result.txt\nplot clk+2 v(a) vs time\n.endc\n")
+    check("P1 braced .param value kept whole (spaces and all)",
+          ("p", "{1.8 * 2}") in d.params, str(d.params))
+    check("P2 quoted include path kept whole",
+          d.includes == ["/opt/my models/x.lib"], str(d.includes))
+    check("P3 non-numeric .temp refused + warned",
+          d.temperature is None and any(".temp" in w for w in d.warnings),
+          str(d.temperature))
+    check("P4 .opton not parsed as an .op analysis",
+          "op" not in d.analyses, str(d.analyses))
+    check("P5 `.options save all` -> blanket save_all_v",
+          d.save_all_v and not any(n in ("save", "all") for n, _v in d.options),
+          str(d.options))
+    check("P6 shell redirect not an output",
+          not any(e in (">", "result.txt") for e, _p in d.outputs),
+          str(d.outputs))
+    check("P7 plot display offset reduced to the signal",
+          ("clk", 1) in d.outputs and ("clk+2", 1) not in d.outputs,
+          str(d.outputs))
+    check("P8 `vs <xvector>` clause not an output",
+          not any(e in ("vs", "time") for e, _p in d.outputs), str(d.outputs))
+
+    # duplicate names must not survive: result_probe keys results by name
+    cmn = m.CellMigrator(CL, m.PDKS["sky130"], "l", "c")
+    outs = cmn._outputs(m.SpiceDeck(), [("i(curr)", 1, None), ("i(curr)\"", 1, None),
+                                        ("v(a)", 1, None), ("va", 1, None)])
+    names = [o[1] for o in outs]
+    check("P9 colliding output names disambiguated",
+          len(set(names)) == len(names), str(names))
+
+# --------------------------------------------------------------------------- #
+# 6c. library walk: one bad cell must not abort the rest; dry-run must serialize
+# --------------------------------------------------------------------------- #
+if HAVE:
+    tmp = tempfile.mkdtemp(prefix="ase_mig_lib_")
+    try:
+        for cell, sch in (("good", CL), ("bad", CL)):
+            d = os.path.join(tmp, "lib", cell, "schematic")
+            os.makedirs(d)
+            with open(os.path.join(d, cell + ".sch"), "w") as f:
+                f.write(sch)
+        lm = m.LibraryMigrator(os.path.join(tmp, "lib"), m.PDKS["sky130"]).scan()
+        boom = [cm for name, cm in lm.cells if name == "bad"][0]
+        boom.migrate = lambda: (_ for _ in ()).throw(m.MigrationError("boom"))
+        res = lm.migrate_all(os.path.join(tmp, "out"))
+        check("L1 good cell migrated despite the bad one",
+              [c for c, _r in res] == ["good"], str([c for c, _r in res]))
+        check("L2 bad cell recorded, not raised",
+              len(lm.failed) == 1 and "boom" in lm.failed[0][1], str(lm.failed))
+        check("L3 good cell wrote BOTH views",
+              os.path.isfile(os.path.join(tmp, "out", "good", "schematic",
+                                          "good.sch"))
+              and os.path.isfile(os.path.join(tmp, "out", "good",
+                                              "ngspice_state1", "good.state")))
+        # dry-run: serializes (so it catches serializer errors) but writes nothing
+        lm2 = m.LibraryMigrator(os.path.join(tmp, "lib"), m.PDKS["sky130"]).scan()
+        lm2.migrate_all(os.path.join(tmp, "dry"), dry_run=True)
+        check("L4 dry-run writes nothing", not os.path.exists(os.path.join(tmp, "dry")))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
 
 # --------------------------------------------------------------------------- #
 # 7. INTEGRATION — migrate the real gf180 before-cell, verify Id (gated)
