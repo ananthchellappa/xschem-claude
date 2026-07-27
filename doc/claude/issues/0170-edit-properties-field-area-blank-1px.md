@@ -109,5 +109,6 @@ Neighbours green: `test_vpwl` 21, `test_isources` 14, `test_vpulse` 11,
 `test_editprop_preserve`, `test_pin_type_edit` 19, `test_getprop_index_bounds` 8,
 `test_perform_action_apply_pin_prop`.
 
-Confirmed interactively by the user: the probe's "nudge 1" (re-issuing `itemconfigure inner
--width`) made every field appear instantly in the live session.
+Confirmed interactively by the user, twice: first the probe's "nudge 1" (re-issuing
+`itemconfigure inner -width`) made every field appear instantly in the live session, and
+then the shipped fix — the form comes up populated on a normal open (2026-07-27).
