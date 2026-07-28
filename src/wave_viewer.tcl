@@ -162,6 +162,17 @@
 # pick is `xschem get graph_trace_at` (draw.c graph_wave_at), the same engine
 # machinery as graph_near_wave with the identity of the trace kept.
 #
+# ---- undo / redo of viewer edits (2026-07-28) ------------------------------
+# `u` undoes and `U` (Shift-u) redoes the model edits above — a strip reorder or
+# a trace move — on the shared `WaveViewer` bindtag, remappable from an rc the
+# same way Ctrl-D is. NOT the C undo stack: the viewer buffer is readonly and its
+# rects are regenerated wholesale from the Tcl model, so the history is a stack
+# of MODEL SNAPSHOTS ({graphs target}) pushed by the mutating command itself,
+# AFTER capture_live_graph_state so a pan/zoom/bold made with the mouse comes
+# back with the undone edit. Window OPTIONS (plot mode, sharedx, cursors, the
+# loaded raw) are deliberately outside a snapshot. Any future model mutation
+# becomes undoable by calling `wviewer::push_undo` at the same point.
+#
 # Pure Tcl, procs only at source time (safe under --nogui); ciw_echo only
 # under has_x. TIP-278: `variable` declarations, absolute names.
 
@@ -254,6 +265,14 @@ namespace eval wviewer {
   variable tdrag_x0;     array set tdrag_x0 {}
   variable tdrag_y0;     array set tdrag_y0 {}
   variable tdrag_active; array set tdrag_active {}
+  # UNDO / REDO of viewer model edits (2026-07-28): per-window stacks of MODEL
+  # SNAPSHOTS ({graphs target}), newest last. Transient like the drag state —
+  # created on open, dropped by forget, NEVER serialized: a saved layout carries
+  # the state, not the history that produced it.
+  variable undo_hist;   array set undo_hist {}
+  variable redo_hist;   array set redo_hist {}
+  # how many edits back `u` can go, per window
+  variable undo_depth 50
   # 1 while a plain MMB press was accepted as a GRAPH pan (btn2_filter). The
   # press is what decides; the motions and the release just follow it, so a
   # press the filter refused can never leak a canvas pan mid-gesture.
@@ -340,7 +359,8 @@ proc wviewer::forget {token} {
   catch {unset drag_to($token)}
   catch {unset drag_y0($token)}
   catch {unset drag_active($token)}
-  foreach a {tdrag_gi tdrag_ti tdrag_to tdrag_x0 tdrag_y0 tdrag_active} {
+  foreach a {tdrag_gi tdrag_ti tdrag_to tdrag_x0 tdrag_y0 tdrag_active
+             undo_hist redo_hist} {
     catch {unset ::wviewer::${a}($token)}
   }
   catch {unset mmb($token)}
@@ -436,6 +456,8 @@ proc wviewer::open {token} {
   set drag_active($token) 0
   # trace drag between strips: disarmed
   wviewer::trace_drag_clear $token
+  # a freshly opened window has nothing to undo
+  wviewer::clear_history $token
   set mmb($token) 0
   # readout bar (D9): a BOTTOM BAR on the viewer toplevel (not an
   # always-on-top toplevel — WSLg raise/focus pain, receipts/06/11), built
@@ -1238,6 +1260,9 @@ proc wviewer::restore {token vdict rawfile sim_type} {
   set mode($token) $m
   set target($token) [wviewer::target_clamp [wviewer::dget $vdict target 0] \
                         [llength [wviewer::dget $vdict graphs {}]]]
+  # the model has just been replaced wholesale: any undo point describes a
+  # layout this window no longer has
+  wviewer::clear_history $token
   if {$rawfile ne {} && [file isfile $rawfile] \
       && [wviewer::switch_ctx $token]} {
     catch {xschem raw clear}
@@ -1651,6 +1676,7 @@ proc wviewer::move_strip {from to {token {}}} {
   if {$from == $to} { return $to }
   if {![wviewer::switch_ctx $token]} { return {} }
   wviewer::capture_live_graph_state $token
+  wviewer::push_undo $token           ;# AFTER the capture: `u` restores the view
   set gs [dict get [wviewer::layout_for $token] graphs]
   wviewer::set_graphs $token [wviewer::reorder_graphs $gs $from $to]
   if {[info exists target($token)]} {
@@ -2130,6 +2156,7 @@ proc wviewer::move_trace {from_gi from_ti to_gi {token {}}} {
   if {$from_gi == $to_gi} { return $from_ti }
   if {![wviewer::switch_ctx $token]} { return {} }
   wviewer::capture_live_graph_state $token
+  wviewer::push_undo $token           ;# AFTER the capture: `u` restores the view
   set gs [dict get [wviewer::layout_for $token] graphs]
   wviewer::set_graphs $token \
     [wviewer::move_trace_in_graphs $gs $from_gi $from_ti $to_gi]
@@ -2138,6 +2165,134 @@ proc wviewer::move_trace {from_gi from_ti to_gi {token {}}} {
   wviewer::log_action [list wviewer::move_trace $from_gi $from_ti $to_gi $token]
   set dgs [dict get [wviewer::layout_for $token] graphs]
   return [expr {[llength [wviewer::dget [lindex $dgs $to_gi] traces {}]] - 1}]
+}
+
+# --- undo / redo of viewer model edits ---------------------------------------
+# `u` undoes, `U` (Shift-u) redoes, bound on the shared `WaveViewer` bindtag
+# like Clear All (issue 0171) — NOT on the canvas, which strip_bindings sweeps.
+#
+# A viewer edit is a change to the TCL MODEL (the `layouts` graph list + the
+# target strip), not a schematic edit: the viewer buffer is readonly, its rects
+# are regenerated wholesale from that model, and the C undo stack is about
+# schematic objects. So the history here is a stack of MODEL SNAPSHOTS taken by
+# the mutating command itself, and undo is "put that snapshot back and
+# regenerate". Nothing else can be layered on the C undo without making the
+# readonly buffer editable.
+#
+# What is (and is not) in a snapshot: the graph list carries traces, colors,
+# axis ranges, `auto`, `hilight_wave` — everything durable — plus the target
+# index. The window OPTIONS (plot mode, sharedx, cursor mirrors, the loaded raw)
+# are deliberately outside it: they are not edits of the plot content, and an
+# undo that silently flipped the plot mode would be a surprise.
+#
+# Snapshots are taken AFTER capture_live_graph_state, so "what the user was
+# looking at" (a mouse pan/zoom, the bold trace) is what comes back.
+
+# The undoable state of `token`: {graphs target}.
+proc wviewer::state_snapshot {token} {
+  return [list [dict get [wviewer::layout_for $token] graphs] \
+               [wviewer::target_index $token]]
+}
+
+# Put a snapshot back and redraw. One regenerate, like every other model write.
+proc wviewer::state_apply {token snap} {
+  variable target
+  lassign $snap gs tgt
+  wviewer::set_graphs $token $gs
+  if {[string is integer -strict $tgt]} { set target($token) $tgt }
+  wviewer::regenerate $token
+  return 1
+}
+
+# Record the CURRENT state as an undo point. Called by a mutating command after
+# capture_live_graph_state and before it changes anything; a new edit drops the
+# redo branch, the usual linear-history rule. Returns 1 when a point was pushed.
+proc wviewer::push_undo {token} {
+  variable windows
+  variable undo_hist; variable redo_hist; variable undo_depth
+  if {![dict exists $windows $token]} { return 0 }
+  lappend undo_hist($token) [wviewer::state_snapshot $token]
+  if {[llength $undo_hist($token)] > $undo_depth} {
+    set undo_hist($token) \
+      [lrange $undo_hist($token) end-[expr {$undo_depth - 1}] end]
+  }
+  set redo_hist($token) {}
+  return 1
+}
+
+# Drop both stacks (open / forget / any point where the history would describe
+# a model the window no longer has).
+proc wviewer::clear_history {token} {
+  variable undo_hist; variable redo_hist
+  set undo_hist($token) {}
+  set redo_hist($token) {}
+  return {}
+}
+
+# How many steps are available, as {undo redo} — the test/UI seam.
+proc wviewer::history_depth {{token {}}} {
+  variable undo_hist; variable redo_hist
+  set token [wviewer::resolve_token $token]
+  if {$token eq {}} { return {0 0} }
+  set u 0; set r 0
+  if {[info exists undo_hist($token)]} { set u [llength $undo_hist($token)] }
+  if {[info exists redo_hist($token)]} { set r [llength $redo_hist($token)] }
+  return [list $u $r]
+}
+
+# Shared body of undo/redo: `dir` is `undo` or `redo`. Pops one snapshot off its
+# own stack, pushes the CURRENT state onto the other one (so the pair is
+# symmetric and repeatable), applies it, logs one resolved line. Returns 1, or
+# {} when there is nothing to do / no viewer / a busy ctx.
+proc wviewer::history_step {dir token} {
+  variable windows
+  variable undo_hist; variable redo_hist
+  set token [wviewer::resolve_token $token]
+  if {$token eq {} || ![dict exists $windows $token]} {
+    if {[info exists ::has_x] && [info commands ::ciw_echo] ne {}} {
+      ciw_echo "wviewer: no waveform viewer window to $dir in" error
+    }
+    return {}
+  }
+  if {$dir eq {undo}} {
+    upvar #0 ::wviewer::undo_hist from ::wviewer::redo_hist to
+  } else {
+    upvar #0 ::wviewer::redo_hist from ::wviewer::undo_hist to
+  }
+  if {![info exists from($token)] || ![llength $from($token)]} {
+    if {[info exists ::has_x] && [info commands ::ciw_echo] ne {}} {
+      ciw_echo "wviewer: nothing to $dir"
+    }
+    return {}
+  }
+  if {![wviewer::switch_ctx $token]} { return {} }
+  # freeze what the mouse wrote into the rects first, so the state pushed on the
+  # opposite stack is the one the user is actually looking at
+  wviewer::capture_live_graph_state $token
+  set snap [lindex $from($token) end]
+  set from($token) [lrange $from($token) 0 end-1]
+  lappend to($token) [wviewer::state_snapshot $token]
+  wviewer::state_apply $token $snap
+  wviewer::log_action [list wviewer::$dir $token]
+  return 1
+}
+
+# Undo / redo the last viewer model edit (strip reorder, trace move). Optional
+# token like every other viewer command; {} when there is nothing to do.
+proc wviewer::undo {{token {}}} { return [wviewer::history_step undo $token] }
+proc wviewer::redo {{token {}}} { return [wviewer::history_step redo $token] }
+
+# %W-resolving wrappers for the WaveViewer bindtag (the clear_all_at pattern:
+# resolve the window the KEY went to, never the current xschem ctx).
+proc wviewer::undo_at {W} {
+  set token [wviewer::token_for_canvas $W]
+  if {$token eq {}} { return {} }
+  return [wviewer::undo $token]
+}
+proc wviewer::redo_at {W} {
+  set token [wviewer::token_for_canvas $W]
+  if {$token eq {}} { return {} }
+  return [wviewer::redo $token]
 }
 
 # The NODE index of the trace of strip `gi` under canvas pixel (px,py), or -1 —
@@ -2484,6 +2639,15 @@ proc wviewer::install_default_binds {} {
   set tagbinds 1
   if {[bind WaveViewer <Control-Key-d>] eq {}} {
     bind WaveViewer <Control-Key-d> {wviewer::clear_all_at %W; break}
+  }
+  # undo / redo of viewer model edits (2026-07-28). `u` and Shift-u are inert in
+  # this window otherwise: key_filter forwards only the waves_callback key set
+  # (a b s m t A B), so nothing is being taken away from the C engine.
+  if {[bind WaveViewer <Key-u>] eq {}} {
+    bind WaveViewer <Key-u> {wviewer::undo_at %W; break}
+  }
+  if {[bind WaveViewer <Key-U>] eq {}} {
+    bind WaveViewer <Key-U> {wviewer::redo_at %W; break}
   }
   return 1
 }

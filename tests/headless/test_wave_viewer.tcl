@@ -1921,10 +1921,57 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
           [xschem getprop rect 2 1 hilight_wave] 0
         check "TD6 the emptied source has no bold marker left" \
           [xschem getprop rect 2 0 hilight_wave] {}
-        # back to the SD fixture shape
+
+        # TD7: the whole user story — drag the trace, then press `u`. The key is
+        # on the WaveViewer bindtag and the undo restores the MODEL snapshot the
+        # drag pushed, so this is the gesture and the history wired together
+        # (MG16 drives the history through the commands, this drives it through
+        # the real gesture and the real key).
+        # gather the traces from WHEREVER the last leg left them (the strip they
+        # sit in depends on how many undos ran) and put the fixture back
+        set tdall {}
+        foreach G [dict get [wviewer::layout_for $tok] graphs] {
+          foreach tr [wviewer::dget $G traces {}] { lappend tdall $tr }
+        }
         wviewer::set_graphs $tok [list \
-          [dict replace [wviewer::empty_graph] sdid A traces \
-            [dict get [lindex [dict get [wviewer::layout_for $tok] graphs] 1] traces]] \
+          [dict replace [wviewer::empty_graph] sdid A traces $tdall] \
+          [dict replace [wviewer::empty_graph] sdid B]]
+        wviewer::regenerate $tok
+        wviewer::fit $tok
+        wviewer::clear_history $tok
+        check "TD7 fixture back: the trace is on the top strip" \
+          [sd_order $tok] {i(v1) -}
+        wb_ev $vdrw <ButtonPress-1> -x $sdx -y $sdy
+        foreach fy {0.60 0.80} {
+          wb_ev $vdrw <B1-Motion> -x $sdx -y [expr {int($fy * $H)}] -state 0x100
+        }
+        wb_ev $vdrw <ButtonRelease-1> -x $sdx -y [expr {int(0.80 * $H)}] -state 0x100
+        update
+        check "TD7 the drag moved the trace" [sd_order $tok] {- i(v1)}
+        check "TD7 the drag pushed one undo point" \
+          [lindex [wviewer::history_depth $tok] 0] 1
+        focus -force $vdrw
+        update
+        event generate $vdrw <KeyPress> -keysym u
+        update
+        check "TD7 `u` undid the trace drag" [sd_order $tok] {i(v1) -}
+        check "TD7 the strips were never reordered by any of it" [sd_ids $tok] {A B}
+        event generate $vdrw <KeyPress> -keysym U -state 1
+        update
+        check "TD7 Shift-u redid it" [sd_order $tok] {- i(v1)}
+        event generate $vdrw <KeyPress> -keysym u
+        update
+        check "TD7 ... and `u` again undoes it once more" [sd_order $tok] {i(v1) -}
+
+        # back to the SD fixture shape
+        # gather the traces from WHEREVER the last leg left them (the strip they
+        # sit in depends on how many undos ran) and put the fixture back
+        set tdall {}
+        foreach G [dict get [wviewer::layout_for $tok] graphs] {
+          foreach tr [wviewer::dget $G traces {}] { lappend tdall $tr }
+        }
+        wviewer::set_graphs $tok [list \
+          [dict replace [wviewer::empty_graph] sdid A traces $tdall] \
           [dict replace [wviewer::empty_graph] sdid B]]
         wviewer::regenerate $tok
         wviewer::fit $tok

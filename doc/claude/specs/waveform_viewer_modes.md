@@ -715,3 +715,82 @@ each index, independently of *which trace* is in it — on a two-strip stack a
 trace move and a strip reorder are otherwise indistinguishable), alias/color
 preservation down to the rect tokens, one log line, the sub-threshold click still
 bolding, Escape cancelling, and the bold marker following the trace across.
+
+---
+
+## 14. Undo / redo of viewer edits (2026-07-28)
+
+The two drags of §12 and §13 are **edits**, so they get a history: `u` undoes,
+`U` (Shift-u) redoes.
+
+### 14.1 Why it is not the C undo stack
+
+A viewer edit changes the **Tcl model** (`wviewer::layouts` — the graph list —
+plus the target strip). The rects are regenerated wholesale from that model, the
+viewer buffer is held `readonly`, and the C undo stack is about schematic
+objects. So the history is a per-window stack of **model snapshots**, and undo is
+"put that snapshot back and regenerate" — one more model write like every other.
+
+A snapshot is `{graphs target}`. The graph list already carries traces, colors,
+axis ranges, `auto` and `hilight_wave`, so everything durable rides along. Window
+**options** — plot mode, Shared X, the cursor mirrors, the loaded raw — are
+deliberately *outside* it: they are not edits of the plot content, and an undo
+that silently flipped the plot mode would be a surprise.
+
+Snapshots are taken **after `capture_live_graph_state`**, so the pan/zoom/bold
+the user made with the mouse before the edit comes back with the undo instead of
+being replaced by whatever the model last remembered.
+
+### 14.2 Surface
+
+```tcl
+wviewer::undo ?token?            ;# -> 1, or {} when there is nothing to undo
+wviewer::redo ?token?
+wviewer::history_depth ?token?   ;# -> {undo redo}, the test/UI seam
+wviewer::push_undo token         ;# record the current state as an undo point
+wviewer::clear_history token
+```
+
+`push_undo` is the extension seam: **any** future model mutation becomes undoable
+by calling it right after its `capture_live_graph_state`. Today's callers are
+`move_strip` and `move_trace`. A new edit clears the redo branch (linear
+history); the stack is capped at `wviewer::undo_depth` (50) per window.
+
+The history is transient — created on open, dropped by `forget`, cleared by
+`restore` (which replaces the model wholesale) and never serialized: a saved
+layout carries the state, not the history that produced it.
+
+Both commands log one resolved line through the usual seam:
+
+```tcl
+wviewer::undo <token>
+wviewer::redo <token>
+```
+
+### 14.3 Keys
+
+On the shared **`WaveViewer` bindtag**, exactly like Clear All (§ issue 0171) —
+not on the canvas, which `strip_bindings` sweeps:
+
+```tcl
+bind WaveViewer <Key-u> {wviewer::undo_at %W; break}
+bind WaveViewer <Key-U> {wviewer::redo_at %W; break}
+```
+
+Both are installed only when the sequence is still unbound, so an rc keeps
+winning and `{break}` disables. `u`/`U` were inert in this window before —
+`key_filter` forwards only the `waves_callback` key set (`a b s m t A B`) — so
+nothing is taken away from the C engine. `undo_at`/`redo_at` resolve the token
+from `%W`, never from the current xschem context.
+
+### 14.4 Tests
+
+`tests/headless/test_wave_modes.tcl` `MG16`: empty-history refusals (no mutation,
+no log), a reorder undone and redone with the target and the **rects** following,
+a trace move undone and redone, LIFO across three mixed edits back to the
+original layout, a new edit dropping the redo branch, mouse-written zoom and bold
+surviving an undo, the depth cap, `restore` clearing the history, and the real
+`u`/`U` keys through the bindtag including the rc-remap and `{break}` contracts.
+
+`tests/headless/test_wave_viewer.tcl` `TD7`: the whole user story with real raw
+data — drag a trace to another strip, press `u`, press `U`, press `u` again.

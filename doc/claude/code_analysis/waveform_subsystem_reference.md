@@ -414,6 +414,17 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
   index mapping). The C pick is `xschem get graph_trace_at`. Everything
   index-shaped here is in NODE space — landmine 34, which also carries the
   empty-destination range-blanking rule and the bold-marker hand-off.
+- **Undo/redo of viewer edits (2026-07-28,
+  `doc/claude/specs/waveform_viewer_modes.md` §14).** `u` / `U` on the
+  `WaveViewer` bindtag. **Not the C undo stack** — a viewer edit changes the TCL
+  MODEL and the buffer is readonly, so the history is a per-window stack of model
+  SNAPSHOTS (`{graphs target}`) pushed by the mutating command itself, right
+  after its `capture_live_graph_state` (so a mouse pan/zoom/bold comes back with
+  the undone edit). `wviewer::push_undo` is the extension seam: any new model
+  mutation becomes undoable by calling it at the same point; today that is
+  `move_strip` and `move_trace`. Window OPTIONS (plot mode, sharedx, cursors, the
+  raw) are outside a snapshot on purpose. Transient: cleared on open, `forget`
+  and `restore`, never serialized.
 - **Clear All + the `WaveViewer` bindtag (issue 0171,
   `doc/claude/specs/waveform_viewer.md`).** `clear_all ?token?` drops every graph
   and trace and leaves ONE `empty_graph` (target back to 0), KEEPING the plot
@@ -514,7 +525,10 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
   `create_gc` / freed in `free_gc` / coloured in `build_colors` from a Tcl
   colour var (`gc_hover` is the worked example; issue 0151 is the second).
 - **New viewer op:** a pure model transform on `layouts` + `regenerate`
-  (`wave_viewer.tcl`); persist via the `viewer` state dict snapshot/restore.
+  (`wave_viewer.tcl`); persist via the `viewer` state dict snapshot/restore. If
+  it is an EDIT, call `wviewer::capture_live_graph_state` then
+  `wviewer::push_undo` before mutating — that is all `u`/`U` need (§14 of the
+  modes spec).
 - **New viewer KEY (issue 0171):** a `<seq>` row in
   `wviewer::install_default_binds` (the `WaveViewer` bindtag), guarded by
   `[bind WaveViewer <seq>] eq {}` so an rc keeps winning, plus a `%W`-resolving
@@ -955,7 +969,8 @@ Effort: S=hours, M=days, L=weeks. Impact in caps.
   2026-07-28 — real raw + full Tk press/motion/release, with an inert `sdid` key
   per strip so "which strip is at index k" is witnessed independently of "which
   trace is in it", the only way to tell a trace move from a strip reorder on a
-  two-strip stack),
+  two-strip stack; `TD7` = drag a trace then press `u`/`U`, the undo user story
+  end to end),
   `test_wave_modes.tcl` (plot modes / target strip, issue 0151; `M6`/`MG6c`/
   `MG6d` = the trace-color policy, issue 0153; **`M7`/`MG14` = strip
   drag-to-reorder**, 2026-07-27 — `M7` is pure list/index math, `MG14` drives the
@@ -963,7 +978,10 @@ Effort: S=hours, M=days, L=weeks. Impact in caps.
   shape; the LMB seam itself is `test_wave_viewer.tcl` `SD*`, which needs a raw;
   `M8`/`MG15` = the same split for the TRACE move, 2026-07-28 — `M8` pure
   (list move, node/model index mapping, hilight remap, empty-destination range
-  blanking), `MG15` the `move_trace` mutation against real rects, no raw needed),
+  blanking), `MG15` the `move_trace` mutation against real rects, no raw needed;
+  **`MG16` = undo/redo of viewer edits**, 2026-07-28 — history semantics,
+  live-state survival, the depth cap, `restore` clearing it, and the real `u`/`U`
+  keys with the rc-remap and `{break}` contracts),
   `test_wave_clear_all.tcl` (`CA*`/`CG*` = Clear All + the `WaveViewer`
   bindtag, issue 0171; `CG6` pins the rc-remap contract — rc wins, `{break}`
   disables — `CG4` that the tag survives a `strip_bindings` re-sweep, and `CG8`

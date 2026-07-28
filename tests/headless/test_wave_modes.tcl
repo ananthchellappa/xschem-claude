@@ -1339,6 +1339,157 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     [xschem getprop rect 2 2 hilight_wave] {}
   check "MG15 viewer buffer still readonly + unmodified" \
     [list [xschem get readonly] [xschem get modified]] {1 0}
+  # --- MG16: undo / redo of viewer model edits (`u` / Shift-u) ---------------
+  # doc/claude/specs/waveform_viewer_modes.md §14. A viewer edit is a change to
+  # the TCL MODEL, so the history is a stack of model snapshots — not the C undo
+  # stack, which is about schematic objects and cannot run on a readonly buffer.
+  mg14_fixture $tok
+  wviewer::clear_history $tok
+  pcall {wviewer::set_target_strip 1 $tok}
+  check "MG16 a fresh fixture has no history" [pcall {wviewer::history_depth $tok}] {0 0}
+  check "MG16 nothing to undo -> {}" [pcall {wviewer::undo $tok}] {}
+  check "MG16 nothing to redo -> {}" [pcall {wviewer::redo $tok}] {}
+  set nlog [llength $::wvm_log]
+  check "MG16 a refused undo logs nothing" [llength $::wvm_log] $nlog
+
+  # a strip reorder, undone and redone
+  pcall {wviewer::move_strip 3 0 $tok}
+  check "MG16 the reorder happened" [mg14_order $tok] {v(s3) v(s0) v(s1) v(s2)}
+  check "MG16 the edit pushed exactly one undo point" \
+    [pcall {wviewer::history_depth $tok}] {1 0}
+  check "MG16 undo returns 1" [pcall {wviewer::undo $tok}] 1
+  check "MG16 undo put the strip order back" [mg14_order $tok] {v(s0) v(s1) v(s2) v(s3)}
+  check "MG16 undo restored the TARGET too" [pcall {wviewer::target_strip $tok}] 1
+  check "MG16 the undone edit is now redoable" \
+    [pcall {wviewer::history_depth $tok}] {0 1}
+  check "MG16 undo is logged replayably" [lindex $::wvm_log end] "wviewer::undo $tok"
+  check "MG16 redo returns 1" [pcall {wviewer::redo $tok}] 1
+  check "MG16 redo re-applied the reorder" [mg14_order $tok] {v(s3) v(s0) v(s1) v(s2)}
+  check "MG16 redo restored the target the edit left" \
+    [pcall {wviewer::target_strip $tok}] 2
+  check "MG16 redo is logged replayably" [lindex $::wvm_log end] "wviewer::redo $tok"
+  check "MG16 the redone edit is undoable again" \
+    [pcall {wviewer::history_depth $tok}] {1 0}
+  # the RECTS follow, not just the model
+  check "MG16 undo/redo moved the rects too" [mg14_rect_order $vdrw 4] \
+    {v(s3) v(s0) v(s1) v(s2)}
+
+  # a trace move, undone
+  mg14_fixture $tok
+  wviewer::clear_history $tok
+  proc mg16_traces {tok} {
+    set out {}
+    foreach G [dict get [wviewer::layout_for $tok] graphs] {
+      set v {}
+      foreach tr [wviewer::dget $G traces {}] { lappend v [wviewer::dget $tr vec {}] }
+      lappend out $v
+    }
+    return $out
+  }
+  set mg16before [pcall {mg16_traces $tok}]
+  pcall {wviewer::move_trace 3 0 0 $tok}
+  check "MG16 the trace move happened" \
+    [pcall {mg16_traces $tok}] {{v(s0) v(s3)} v(s1) v(s2) {}}
+  pcall {wviewer::undo $tok}
+  check "MG16 undo put the trace back on its own strip" \
+    [pcall {mg16_traces $tok}] $mg16before
+  xschem new_schematic switch $vdrw
+  check "MG16 ... and the rect node tokens agree" \
+    [string map {\" {}} [xschem getprop rect 2 3 node]] {v(s3)}
+  pcall {wviewer::redo $tok}
+  check "MG16 redo moved it again" \
+    [pcall {mg16_traces $tok}] {{v(s0) v(s3)} v(s1) v(s2) {}}
+
+  # LIFO across mixed edits, all the way back
+  mg14_fixture $tok
+  wviewer::clear_history $tok
+  pcall {wviewer::move_strip 0 1 $tok}
+  pcall {wviewer::move_trace 2 0 3 $tok}
+  pcall {wviewer::move_strip 3 0 $tok}
+  check "MG16 three edits, three undo points" \
+    [lindex [pcall {wviewer::history_depth $tok}] 0] 3
+  pcall {wviewer::undo $tok}
+  pcall {wviewer::undo $tok}
+  pcall {wviewer::undo $tok}
+  check "MG16 undoing every edit returns the original layout" \
+    [list [mg14_order $tok] [pcall {mg16_traces $tok}]] \
+    [list {v(s0) v(s1) v(s2) v(s3)} {v(s0) v(s1) v(s2) v(s3)}]
+  check "MG16 the stack is empty and everything is redoable" \
+    [pcall {wviewer::history_depth $tok}] {0 3}
+
+  # a NEW edit drops the redo branch (linear history)
+  pcall {wviewer::move_strip 1 2 $tok}
+  check "MG16 a new edit cleared the redo branch" \
+    [pcall {wviewer::history_depth $tok}] {1 0}
+  check "MG16 redo after that is refused" [pcall {wviewer::redo $tok}] {}
+
+  # the live C-written state comes back with the undo (the capture contract:
+  # push_undo runs AFTER capture_live_graph_state)
+  mg14_fixture $tok
+  wviewer::clear_history $tok
+  wviewer::with_edit $tok {
+    xschem setprop -fast rect 2 0 x1 3
+    xschem setprop -fast rect 2 0 x2 4
+    xschem setprop -fast rect 2 0 hilight_wave 0
+  }
+  pcall {wviewer::move_strip 0 3 $tok}
+  pcall {wviewer::undo $tok}
+  xschem new_schematic switch $vdrw
+  check "MG16 the mouse-made zoom survived the undo" \
+    [list [xschem getprop rect 2 0 x1] [xschem getprop rect 2 0 x2]] {3 4}
+  check "MG16 the mouse-made bold survived the undo" \
+    [xschem getprop rect 2 0 hilight_wave] 0
+
+  # depth cap
+  set mg16d $::wviewer::undo_depth
+  set ::wviewer::undo_depth 3
+  mg14_fixture $tok
+  wviewer::clear_history $tok
+  foreach p {{0 1} {1 2} {2 3} {3 0} {0 1}} {
+    pcall {wviewer::move_strip [lindex $p 0] [lindex $p 1] $tok}
+  }
+  check "MG16 the undo stack is capped at undo_depth" \
+    [lindex [pcall {wviewer::history_depth $tok}] 0] 3
+  set ::wviewer::undo_depth $mg16d
+
+  # a restore replaces the model wholesale, so the history must go
+  mg14_fixture $tok
+  pcall {wviewer::move_strip 0 1 $tok}
+  set mg16snap [pcall {wviewer::snapshot $tok {}}]
+  pcall {wviewer::restore $tok $mg16snap {} {}}
+  set vtop [wviewer::window_for $tok]; set vdrw $vtop.drw
+  viewer_ready $vtop
+  check "MG16 restore cleared the history" [pcall {wviewer::history_depth $tok}] {0 0}
+
+  # the KEYS, on the shared WaveViewer bindtag (issue 0171's mechanism)
+  check_true "MG16 `u` is bound on the WaveViewer bindtag" \
+    [string match {*wviewer::undo_at*} [bind WaveViewer <Key-u>]]
+  check_true "MG16 Shift-u is bound to redo" \
+    [string match {*wviewer::redo_at*} [bind WaveViewer <Key-U>]]
+  check_true "MG16 the tag is on the viewer canvas" \
+    [expr {[lsearch -exact [bindtags $vdrw] WaveViewer] >= 0}]
+  mg14_fixture $tok
+  wviewer::clear_history $tok
+  pcall {wviewer::move_strip 3 0 $tok}
+  focus -force $vdrw
+  update
+  event generate $vdrw <KeyPress> -keysym u
+  update
+  check "MG16 the `u` KEY undid the reorder" [mg14_order $tok] {v(s0) v(s1) v(s2) v(s3)}
+  event generate $vdrw <KeyPress> -keysym U -state 1
+  update
+  check "MG16 the Shift-u KEY redid it" [mg14_order $tok] {v(s3) v(s0) v(s1) v(s2)}
+  # an rc that rebinds the key must win, and `{break}` must disable it
+  set mg16u [bind WaveViewer <Key-u>]
+  bind WaveViewer <Key-u> {break}
+  wviewer::install_default_binds
+  check "MG16 an rc remap of `u` survives install_default_binds" \
+    [bind WaveViewer <Key-u>] {break}
+  event generate $vdrw <KeyPress> -keysym u
+  update
+  check "MG16 the disabled key does nothing" [mg14_order $tok] {v(s3) v(s0) v(s1) v(s2)}
+  bind WaveViewer <Key-u> $mg16u
+  rename mg16_traces {}
   rename mg15_traces {}
 
   rename mg14_ev {}
