@@ -392,6 +392,9 @@ typedef int Tcl_Size;
  * apart. doc/claude/specs/waveform_viewer_modes.md */
 #define GRAPH_REORDER_HANDLE_W  14
 #define GRAPH_REORDER_DROPBAR_H  4
+/* thickness of the frame that marks the strip a dragged TRACE would land in
+ * (`reorder_handle=4`, transient drag feedback like the drop bar above) */
+#define GRAPH_TRACE_DROP_W       3
 
 #define ROTATION(rot, flip, x0, y0, x, y, rx, ry) \
 { \
@@ -1721,6 +1724,7 @@ extern int edit_wave_attributes(int what, int i, Graph_ctx *gr);
 extern void draw_graph(int i, int flags, Graph_ctx *gr, void *ct);
 extern int find_closest_wave(int i, Graph_ctx *gr, int *node_number);
 extern int graph_near_wave(int i, double px, double py, double tol);
+extern int graph_wave_at(int i, double px, double py, double tol);
 extern void setup_graph_data(int i, int skip, Graph_ctx *gr);
 extern int graph_fullyzoom(xRect *r,  Graph_ctx *gr, int graph_dataset);
 extern int graph_fullxzoom(int i, Graph_ctx *gr, int dataset);

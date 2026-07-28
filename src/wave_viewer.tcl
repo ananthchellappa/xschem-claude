@@ -143,6 +143,25 @@
 # Two read-only C verbs back the seam: `xschem get graph_near_wave` (real
 # screen-pixel distance to a drawn trace) and `xschem get graph_flags`.
 #
+# ---- trace drag BETWEEN strips (2026-07-28) --------------------------------
+# Contract: doc/claude/specs/waveform_viewer_modes.md §13. The other half of the
+# LMB seam: press ON a trace (the 10-px zone the strip reorder refuses), drag,
+# release over another strip -> the trace MOVES there, keeping its expression,
+# alias, vector and color, and landing at the END of the destination's list. The
+# pointer becomes the GRAB HAND (`hand2`) on the press, the destination strip is
+# framed while the pointer is over it (`reorder_handle=4`), >3 px of travel in
+# either axis starts the drag, and a drop on the source strip / outside every
+# strip / a sub-threshold click all commit nothing and log nothing — so the
+# issue-0152 wave-bold click still works exactly as before. A press that grabbed
+# a CURSOR still wins over the trace grab (a cursor can be parked on a trace).
+# Model side is PURE (`node_index_of_trace` / `trace_index_of_node` /
+# `node_count` / `remap_hilight_after_trace_move` / `move_trace_in_graphs`) under
+# ONE authoritative mutation, `move_trace`, which follows move_strip's ordering
+# contract exactly (capture live state -> mutate -> one regenerate -> one log
+# line). The source strip stays even when it ends up empty. The C verb behind the
+# pick is `xschem get graph_trace_at` (draw.c graph_wave_at), the same engine
+# machinery as graph_near_wave with the identity of the trace kept.
+#
 # Pure Tcl, procs only at source time (safe under --nogui); ciw_echo only
 # under has_x. TIP-278: `variable` declarations, absolute names.
 
@@ -220,6 +239,21 @@ namespace eval wviewer {
   variable drag_to;     array set drag_to {}
   variable drag_y0;     array set drag_y0 {}
   variable drag_active; array set drag_active {}
+  # TRACE drag between strips (same spec, §13): TRANSIENT per-window state, same
+  # lifetime rules as the strip-drag arrays above. A press can arm AT MOST one of
+  # the two gestures — on a trace it arms this one, on empty body space the strip
+  # reorder — so the two state sets never both hold a live drag.
+  #   tdrag_gi   = model index of the strip the trace was picked up from (-1 = off)
+  #   tdrag_ti   = model TRACE index inside that strip
+  #   tdrag_to   = prospective destination strip index
+  #   tdrag_x0/y0 = press pixel (the movement-threshold anchor)
+  #   tdrag_active = 1 once the drag passed the threshold and owns the pointer
+  variable tdrag_gi;     array set tdrag_gi {}
+  variable tdrag_ti;     array set tdrag_ti {}
+  variable tdrag_to;     array set tdrag_to {}
+  variable tdrag_x0;     array set tdrag_x0 {}
+  variable tdrag_y0;     array set tdrag_y0 {}
+  variable tdrag_active; array set tdrag_active {}
   # 1 while a plain MMB press was accepted as a GRAPH pan (btn2_filter). The
   # press is what decides; the motions and the release just follow it, so a
   # press the filter refused can never leak a canvas pan mid-gesture.
@@ -306,6 +340,9 @@ proc wviewer::forget {token} {
   catch {unset drag_to($token)}
   catch {unset drag_y0($token)}
   catch {unset drag_active($token)}
+  foreach a {tdrag_gi tdrag_ti tdrag_to tdrag_x0 tdrag_y0 tdrag_active} {
+    catch {unset ::wviewer::${a}($token)}
+  }
   catch {unset mmb($token)}
   array unset axl ${token},*
   catch {unset delmap($token)}
@@ -397,6 +434,8 @@ proc wviewer::open {token} {
   set drag_to($token) -1
   set drag_y0($token) 0
   set drag_active($token) 0
+  # trace drag between strips: disarmed
+  wviewer::trace_drag_clear $token
   set mmb($token) 0
   # readout bar (D9): a BOTTOM BAR on the viewer toplevel (not an
   # always-on-top toplevel — WSLg raise/focus pain, receipts/06/11), built
@@ -1823,12 +1862,21 @@ proc wviewer::strip_drag_press {W px py state} {
   set gi [wviewer::strip_at_pixel $W $px $py]
   if {$gi < 0} { return 0 }
   wviewer::strip_drag_reset $token                    ;# a stale arm must never survive
+  wviewer::trace_drag_reset $token
   catch {focus $W}
   wviewer::set_target_strip $gi $token
   xschem callback $W 4 $px $py 0 1 0 $state
   if {[wviewer::strip_handle_at_pixel $W $px $py] != $gi} {
-    if {[wviewer::near_wave_at $W $gi $px $py]} { return 1 }
-    if {[wviewer::cursor_grabbed $W]} { return 1 }
+    # inside the trace zone the press is NOT a reorder. It is either a cursor
+    # grab (the C engine's, and it wins — a cursor can be parked on top of a
+    # trace) or a grab of the trace itself, which arms the trace drag.
+    set ni [wviewer::trace_at $W $gi $px $py]
+    set curs [wviewer::cursor_grabbed $W]
+    if {$ni >= 0} {
+      if {!$curs} { wviewer::trace_drag_arm $W $token $gi $px $py $ni }
+      return 1
+    }
+    if {$curs} { return 1 }
   }
   set drag_from($token) $gi
   set drag_to($token) $gi
@@ -1847,6 +1895,9 @@ proc wviewer::strip_drag_motion {W px py state} {
   variable drag_from; variable drag_to; variable drag_y0; variable drag_active
   set token [wviewer::token_for_canvas $W]
   if {$token eq {}} { return 0 }
+  # a press arms EITHER a trace drag or a strip reorder, never both; the trace
+  # one is asked first because it is the more specific gesture
+  if {[wviewer::trace_drag_motion $W $px $py $state]} { return 1 }
   if {![info exists drag_from($token)] || $drag_from($token) < 0} { return 0 }
   set from $drag_from($token)
   if {!$drag_active($token)} {
@@ -1886,6 +1937,9 @@ proc wviewer::strip_drag_release {W px py state} {
   }
   wviewer::strip_drag_reset $token
   xschem callback $W 5 $px $py 0 1 0 $state
+  # the trace drop reads (and clears) its own state; it is a no-op unless this
+  # press armed a trace drag that passed the threshold
+  wviewer::trace_drag_drop $W
   if {$active && $to >= 0 && $to != $from} {
     # catch: move_strip regenerates, and with_edit ERRORS on a refused context
     # switch (raised semaphore). Inside a Tk binding that would pop bgerror's
@@ -1901,7 +1955,342 @@ proc wviewer::strip_drag_release {W px py state} {
 proc wviewer::strip_drag_cancel {W} {
   set token [wviewer::token_for_canvas $W]
   if {$token eq {}} { return 0 }
-  return [wviewer::strip_drag_reset $token]
+  set a [wviewer::strip_drag_reset $token]
+  set b [wviewer::trace_drag_reset $token]
+  return [expr {$a || $b}]
+}
+
+# --- trace drag BETWEEN strips -----------------------------------------------
+# doc/claude/specs/waveform_viewer_modes.md §13. Press ON a trace, drag, release
+# over another strip: the trace moves there, keeping its expression, alias,
+# vector and color. It is the twin of the strip drag above and reuses its whole
+# shape — PURE model math, ONE authoritative mutation, a gesture layer that only
+# ever speaks pixels — and it owns the seam the strip drag deliberately refused
+# (the 10-px zone around every trace). The two can never both be armed: the press
+# arms exactly one of them, by where it landed.
+#
+# The source strip is left in place even when it ends up empty (deleting it would
+# renumber the stack behind the user's back and lose its axis settings), and the
+# trace lands at the END of the destination's list.
+
+# PURE: the NODE index of model trace `ti` of graph dict `G` — its position in
+# the `node` prop token, which is what the C engine counts (hilight_wave,
+# find_closest_wave, graph_wave_at). The two differ whenever a trace carries an
+# empty `vec`: graph_props SKIPS those when it builds the token, so they occupy a
+# model slot and no node slot. -1 when `ti` is out of range or is itself such a
+# trace.
+proc wviewer::node_index_of_trace {G ti} {
+  if {![string is integer -strict $ti] || $ti < 0} { return -1 }
+  set trs [wviewer::dget $G traces {}]
+  if {$ti >= [llength $trs]} { return -1 }
+  if {[wviewer::dget [lindex $trs $ti] vec {}] eq {}} { return -1 }
+  set ni 0
+  for {set k 0} {$k < $ti} {incr k} {
+    if {[wviewer::dget [lindex $trs $k] vec {}] ne {}} { incr ni }
+  }
+  return $ni
+}
+
+# PURE: how many of `G`'s traces reach the `node` prop token (i.e. carry a
+# non-empty `vec`) — the length of the C-side index space, hence the node index
+# an appended trace will occupy.
+proc wviewer::node_count {G} {
+  set n 0
+  foreach tr [wviewer::dget $G traces {}] {
+    if {[wviewer::dget $tr vec {}] ne {}} { incr n }
+  }
+  return $n
+}
+
+# PURE: the inverse — model trace index of NODE index `ni` of graph dict `G`,
+# or -1. This is the mapping a C answer (graph_trace_at, hilight_wave) must go
+# through before it indexes the model.
+proc wviewer::trace_index_of_node {G ni} {
+  if {![string is integer -strict $ni] || $ni < 0} { return -1 }
+  set n 0
+  set ti 0
+  foreach tr [wviewer::dget $G traces {}] {
+    if {[wviewer::dget $tr vec {}] ne {}} {
+      if {$n == $ni} { return $ti }
+      incr n
+    }
+    incr ti
+  }
+  return -1
+}
+
+# PURE: how a graph's stored `hilight_wave` (a NODE index) must be rewritten when
+# the trace at node index `moved_ni` leaves that graph. Returns the new value, or
+# {} when the graph must lose its highlight entirely (the bold trace is the one
+# that left — the destination picks the highlight up instead). `hw` {} in, {} out.
+proc wviewer::remap_hilight_after_trace_move {hw moved_ni} {
+  if {![string is integer -strict $hw]} { return {} }
+  if {![string is integer -strict $moved_ni] || $moved_ni < 0} { return $hw }
+  if {$hw == $moved_ni} { return {} }
+  if {$hw > $moved_ni} { return [expr {$hw - 1}] }
+  return $hw
+}
+
+# PURE: move trace `from_ti` of graph `from_gi` to the END of graph `to_gi`'s
+# trace list. Returns the new graph list; an out-of-range index, a non-integer or
+# from_gi == to_gi returns the list UNCHANGED (a pure list op has no error
+# channel — move_trace is where a bad index is refused loudly).
+#
+# The trace DICTIONARY is carried whole, exactly like reorder_graphs carries a
+# graph dict: expr, name, vec, color and any future per-trace key ride along and
+# nothing is rebuilt field by field. `hilight_wave` (the C-written bold marker) is
+# remapped on BOTH graphs, because it is stored per graph in node-index space and
+# both index spaces shift.
+proc wviewer::move_trace_in_graphs {graphs from_gi from_ti to_gi} {
+  set n [llength $graphs]
+  foreach v [list $from_gi $from_ti $to_gi] {
+    if {![string is integer -strict $v]} { return $graphs }
+  }
+  if {$from_gi < 0 || $from_gi >= $n || $to_gi < 0 || $to_gi >= $n} { return $graphs }
+  if {$from_gi == $to_gi} { return $graphs }
+  set S [lindex $graphs $from_gi]
+  set D [lindex $graphs $to_gi]
+  set strs [wviewer::dget $S traces {}]
+  if {$from_ti < 0 || $from_ti >= [llength $strs]} { return $graphs }
+  set tr [lindex $strs $from_ti]
+  # node indices measured BEFORE the move, on the graphs as they stand
+  set moved_ni [wviewer::node_index_of_trace $S $from_ti]
+  set dst_ni [wviewer::node_count $D]        ;# where the appended trace lands
+  set src_hw [wviewer::dget $S hilight_wave {}]
+  set hw [wviewer::remap_hilight_after_trace_move $src_hw $moved_ni]
+  # {} out of the remap means EITHER "there was no highlight" OR "the bold trace
+  # is the one that left" — only the second hands the highlight to the destination
+  set moved_was_bold [expr {[string is integer -strict $src_hw] &&
+                            $moved_ni >= 0 && $src_hw == $moved_ni}]
+  set S [dict replace $S traces [lreplace $strs $from_ti $from_ti]]
+  # a destination that was EMPTY gets its ranges blanked, i.e. put back to
+  # `auto`: an empty strip's stored x1/x2/y1/y2 are whatever the last fit left
+  # (capture_live_graph_state freezes the live rect, so they are never blank by
+  # the time we get here), and a µA trace dropped into a 0..2 V window is drawn
+  # off-screen — the user sees an empty strip and thinks the drop failed.
+  # regenerate re-autozooms every blank range, which is exactly what a trace
+  # landing in a fresh strip gets from add_trace/plot_signals.
+  if {![llength [wviewer::dget $D traces {}]]} {
+    set D [dict replace $D x1 {} x2 {} y1 {} y2 {}]
+  }
+  set D [dict replace $D traces [linsert [wviewer::dget $D traces {}] end $tr]]
+  if {$hw eq {}} {
+    set S [dict remove $S hilight_wave]
+    if {$moved_was_bold} { set D [dict replace $D hilight_wave $dst_ni] }
+  } else {
+    set S [dict replace $S hilight_wave $hw]
+  }
+  set graphs [lreplace $graphs $from_gi $from_gi $S]
+  return [lreplace $graphs $to_gi $to_gi $D]
+}
+
+# THE authoritative trace move. Returns the trace's index in the DESTINATION, or
+# {} on failure (unknown viewer, bad index, busy ctx).
+#
+# Same ordering contract as move_strip, for the same reasons:
+#   1. resolve + validate every index against the LIVE model
+#   2. from_gi == to_gi -> return without mutating and WITHOUT logging (dropping
+#      a trace back on its own strip is not a state change)
+#   3. verify the context switch (capture reads rect props; switch_ctx silently
+#      no-ops under a raised semaphore — landmine 17)
+#   4. capture the live C-written state FIRST, so the regenerate below cannot
+#      undo a pan/zoom/bold made with the mouse
+#   5. the pure move, dictionary carried whole
+#   6. the DESTINATION becomes the target strip, set IN PLACE — not through
+#      set_target_strip, which would emit a second replay-log line for what is an
+#      internal consequence of this one command
+#   7. exactly ONE regenerate, exactly ONE fully-resolved log line
+proc wviewer::move_trace {from_gi from_ti to_gi {token {}}} {
+  variable windows
+  variable target
+  set token [wviewer::resolve_token $token]
+  if {$token eq {} || ![dict exists $windows $token]} {
+    if {[info exists ::has_x] && [info commands ::ciw_echo] ne {}} {
+      ciw_echo "wviewer: no waveform viewer window to move a trace in" error
+    }
+    return {}
+  }
+  set gs [dict get [wviewer::layout_for $token] graphs]
+  set n [llength $gs]
+  foreach v [list $from_gi $to_gi] {
+    if {![string is integer -strict $v] || $v < 0 || $v >= $n} {
+      if {[info exists ::has_x] && [info commands ::ciw_echo] ne {}} {
+        ciw_echo "wviewer: bad strip index '$v' (0..[expr {$n - 1}])" error
+      }
+      return {}
+    }
+  }
+  set nt [llength [wviewer::dget [lindex $gs $from_gi] traces {}]]
+  if {![string is integer -strict $from_ti] || $from_ti < 0 || $from_ti >= $nt} {
+    if {[info exists ::has_x] && [info commands ::ciw_echo] ne {}} {
+      ciw_echo "wviewer: bad trace index '$from_ti' on strip $from_gi (0..[expr {$nt - 1}])" error
+    }
+    return {}
+  }
+  if {$from_gi == $to_gi} { return $from_ti }
+  if {![wviewer::switch_ctx $token]} { return {} }
+  wviewer::capture_live_graph_state $token
+  set gs [dict get [wviewer::layout_for $token] graphs]
+  wviewer::set_graphs $token \
+    [wviewer::move_trace_in_graphs $gs $from_gi $from_ti $to_gi]
+  set target($token) $to_gi
+  wviewer::regenerate $token
+  wviewer::log_action [list wviewer::move_trace $from_gi $from_ti $to_gi $token]
+  set dgs [dict get [wviewer::layout_for $token] graphs]
+  return [expr {[llength [wviewer::dget [lindex $dgs $to_gi] traces {}]] - 1}]
+}
+
+# The NODE index of the trace of strip `gi` under canvas pixel (px,py), or -1 —
+# the C engine's own answer (`xschem get graph_trace_at`, draw.c graph_wave_at),
+# measured in screen pixels through the engine's transform. Fails CLOSED (-1 =
+# "no trace here") so a missing verb or an errored query degrades to the previous
+# behaviour instead of grabbing something.
+proc wviewer::trace_at {wp gi px py {tol 10}} {
+  if {[catch {xschem new_schematic switch $wp}]} { return -1 }
+  set r -1
+  catch {set r [xschem get graph_trace_at $gi $px $py $tol]}
+  if {![string is integer -strict $r]} { return -1 }
+  return $r
+}
+
+# Paint the prospective destination strip of a trace drag: clear the frame on
+# `old`, put one on `new`. Rides the SAME `reorder_handle` prop token as the grip
+# and the strip drop bar (value 4 = frame around the whole strip — the target is
+# the strip, not one of its edges), rewritten IN PLACE on the affected rects and
+# redrawn. Never a regenerate (it would undo a live pan/zoom on every Motion) and
+# never a model mutation. `new == from` means "back where it started" -> no frame.
+proc wviewer::trace_drag_feedback {token old new from} {
+  variable windows
+  if {![dict exists $windows $token]} { return 0 }
+  set n [llength [dict get [wviewer::layout_for $token] graphs]]
+  if {[catch {
+    wviewer::with_edit $token {
+      if {$old >= 0 && $old < $n} {
+        xschem setprop -fast rect 2 $old reorder_handle 1
+      }
+      if {$new >= 0 && $new < $n && $new != $from} {
+        xschem setprop -fast rect 2 $new reorder_handle 4
+      }
+      xschem redraw
+    }
+  }]} { return 0 }
+  return 1
+}
+
+# Zero the transient state (no feedback, no cursor work) — the initializer.
+proc wviewer::trace_drag_clear {token} {
+  variable tdrag_gi; variable tdrag_ti; variable tdrag_to
+  variable tdrag_x0; variable tdrag_y0; variable tdrag_active
+  set tdrag_gi($token) -1
+  set tdrag_ti($token) -1
+  set tdrag_to($token) -1
+  set tdrag_x0($token) 0
+  set tdrag_y0($token) 0
+  set tdrag_active($token) 0
+  return {}
+}
+
+# Disarm: clear any drop frame, restore the pointer, forget the gesture. Safe to
+# call when nothing is armed (every exit path funnels through it). Returns 1 when
+# a drag WAS armed.
+proc wviewer::trace_drag_reset {token} {
+  variable windows
+  variable tdrag_gi; variable tdrag_to
+  set had 0
+  if {[info exists tdrag_gi($token)] && $tdrag_gi($token) >= 0} { set had 1 }
+  if {$had && [info exists tdrag_to($token)] && $tdrag_to($token) >= 0} {
+    wviewer::trace_drag_feedback $token $tdrag_to($token) -1 $tdrag_gi($token)
+  }
+  wviewer::trace_drag_clear $token
+  if {[dict exists $windows $token]} {
+    catch {[dict get $windows $token win_path] configure -cursor {}}
+  }
+  return $had
+}
+
+# Arm a trace drag from a press that landed ON a trace of strip `gi`. Called by
+# strip_drag_press (which has already re-targeted and forwarded the press to C)
+# for exactly the presses the strip reorder refuses. Returns 1 when a trace was
+# picked up.
+#
+# The pointer becomes the GRAB HAND right here, on the press — not at the drag
+# threshold — because that is the affordance: pressing a trace means you are
+# holding it (the Acrobat pan-hand precedent). A press that turns out to be a
+# plain click (the wave-bold toggle) restores it on release, unchanged.
+proc wviewer::trace_drag_arm {W token gi px py {ni {}}} {
+  variable windows
+  variable tdrag_gi; variable tdrag_ti; variable tdrag_to
+  variable tdrag_x0; variable tdrag_y0; variable tdrag_active
+  if {![string is integer -strict $ni]} { set ni [wviewer::trace_at $W $gi $px $py] }
+  if {$ni < 0} { return 0 }
+  set gs [dict get [wviewer::layout_for $token] graphs]
+  if {$gi < 0 || $gi >= [llength $gs]} { return 0 }
+  set ti [wviewer::trace_index_of_node [lindex $gs $gi] $ni]
+  if {$ti < 0} { return 0 }
+  set tdrag_gi($token) $gi
+  set tdrag_ti($token) $ti
+  set tdrag_to($token) $gi
+  set tdrag_x0($token) $px
+  set tdrag_y0($token) $py
+  set tdrag_active($token) 0
+  catch {$W configure -cursor hand2}
+  return 1
+}
+
+# <B1-Motion> while a trace drag is armed. Below the 3-pixel click tolerance the
+# motion still belongs to the C engine (hover measurement), so it is NOT consumed
+# — a press that ends up being a click behaves exactly as before. Past it the drag
+# owns the pointer: the motion is swallowed, the pointer stays the grab hand and
+# the prospective destination is repainted ONLY when it actually changes.
+# Returns 1 when the event was consumed.
+proc wviewer::trace_drag_motion {W px py state} {
+  variable tdrag_gi; variable tdrag_to
+  variable tdrag_x0; variable tdrag_y0; variable tdrag_active
+  set token [wviewer::token_for_canvas $W]
+  if {$token eq {}} { return 0 }
+  if {![info exists tdrag_gi($token)] || $tdrag_gi($token) < 0} { return 0 }
+  set from $tdrag_gi($token)
+  if {!$tdrag_active($token)} {
+    if {abs($px - $tdrag_x0($token)) <= 3 && abs($py - $tdrag_y0($token)) <= 3} {
+      return 0
+    }
+    set tdrag_active($token) 1
+    catch {$W configure -cursor hand2}
+  }
+  # the destination simply FOLLOWS THE POINTER: the strip it is over, or (outside
+  # every band) none, which the release reads as "cancel"
+  set to [wviewer::strip_at_pixel $W $px $py]
+  if {$to != $tdrag_to($token)} {
+    set old $tdrag_to($token)
+    set tdrag_to($token) $to
+    wviewer::trace_drag_feedback $token $old $to $from
+  }
+  return 1
+}
+
+# <ButtonRelease-1> while a trace drag is armed. The caller (strip_drag_release)
+# has already handed the release to C — the wave-bold click and any cursor
+# bookkeeping are untouched. A drag that PASSED the threshold and ended over a
+# DIFFERENT strip commits exactly one move_trace; a drop on the source strip, a
+# drop outside every strip and a sub-threshold click commit nothing and log
+# nothing. Returns the destination trace index when a move happened, else {}.
+proc wviewer::trace_drag_drop {W} {
+  variable tdrag_gi; variable tdrag_ti; variable tdrag_to; variable tdrag_active
+  set token [wviewer::token_for_canvas $W]
+  if {$token eq {}} { return {} }
+  if {![info exists tdrag_gi($token)] || $tdrag_gi($token) < 0} { return {} }
+  set from $tdrag_gi($token)
+  set ti $tdrag_ti($token)
+  set to $tdrag_to($token)
+  set active $tdrag_active($token)
+  wviewer::trace_drag_reset $token
+  if {!$active || $to < 0 || $to == $from} { return {} }
+  # catch: move_trace regenerates, and with_edit ERRORS on a refused context
+  # switch (raised semaphore). Inside a Tk binding that would pop bgerror's
+  # stack-trace modal over the viewer; a refused move must just not happen.
+  set r {}
+  catch {set r [wviewer::move_trace $from $ti $to $token]}
+  return $r
 }
 
 # Plain MIDDLE-button press / drag / release: the GRAPH pan.

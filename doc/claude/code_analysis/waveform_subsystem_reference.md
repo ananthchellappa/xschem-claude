@@ -401,6 +401,19 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
   and the release must also do the readout refresh the generic bind carried.
   **The graph pan moved from LMB to MMB in `callback.c` and that is engine-wide**
   — see landmine 31.
+- **Trace drag BETWEEN strips (2026-07-28,
+  `doc/claude/specs/waveform_viewer_modes.md` §13).** The other half of that same
+  LMB seam: a press INSIDE the 10-px trace zone (the one the reorder refuses)
+  picks that trace up — the pointer becomes `hand2` on the PRESS, >3 px of travel
+  starts the drag, the destination strip follows the pointer and is framed
+  (`reorder_handle=4`), release over a DIFFERENT strip commits, everything else
+  (same strip, sub-threshold, Escape) commits and logs nothing so the issue-0152
+  wave-bold click is untouched. A cursor grab still beats the trace grab.
+  `move_trace` is the one mutation and repeats `move_strip`'s ordering contract
+  verbatim; the model side is PURE (`move_trace_in_graphs` plus the node/model
+  index mapping). The C pick is `xschem get graph_trace_at`. Everything
+  index-shaped here is in NODE space — landmine 34, which also carries the
+  empty-destination range-blanking rule and the bold-marker hand-off.
 - **Clear All + the `WaveViewer` bindtag (issue 0171,
   `doc/claude/specs/waveform_viewer.md`).** `clear_all ?token?` drops every graph
   and trace and leaves ONE `empty_graph` (target back to 0), KEEPING the plot
@@ -441,6 +454,13 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
   trace of that graph? Backed by `graph_near_wave()` (`draw.c`), which uses the
   engine's own transform + raw data. The ASE viewer's trace-exclusion zone. See
   landmine 33 for how it differs from `find_closest_wave` and what it refuses.
+- `xschem get graph_trace_at <graph_idx> <px> <py> [tol]` (`xschem_cmds_g`) — the
+  same query with the IDENTITY kept: the **node index** (position in the `node`
+  token, the `hilight_wave` / `find_closest_wave` index space) of the nearest
+  trace within `tol`, else -1. Backed by `graph_wave_at()` (`draw.c`);
+  `graph_near_wave()` is now a one-line wrapper over it, so "the zone reordering
+  refuses" and "the trace you picked up" are the same boundary by construction.
+  Added 2026-07-28 for the viewer's drag-a-trace-to-another-strip gesture.
 - `xschem hilight_netname [-fast] [-style <n> | -layer <n>] <net>` and
   `xschem hilight_instname [-fast] [-layer <n>] <inst>` (`xschem_cmds_h`) —
   `-layer` highlights in the PLAIN color of a drawing layer (the negative-value
@@ -803,7 +823,9 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
     a stale value leaks onto the next graph) and drawn in `draw_graph` gated on
     **flags bit 16**, so SVG/PS never see it and `print_image()`'s
     `draw_no_ui_decorations` gate covers PNG. Values: `1` grip, `2` grip + TOP
-    drop bar, `3` grip + BOTTOM drop bar. **2 and 3 are transient drag feedback**
+    drop bar, `3` grip + BOTTOM drop bar, `4` grip + a FRAME around the whole
+    strip (the destination of a dragged TRACE, landmine 34). **2/3/4 are
+    transient drag feedback**
     written by `setprop` on the two affected rects — `wviewer::graph_props` only
     ever emits `1`, so any `regenerate` lands back on a plain grip and a drag
     cannot leave a bar behind. The handle's hit zone is `GRAPH_REORDER_HANDLE_W`
@@ -821,7 +843,30 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
     0** (their rendering is a band/ribbon, not a polyline, so the whole body is
     reorder space there), and the scan is capped by the graph's own x window,
     exactly like the draw. It fails closed — a missing verb or an errored query
-    reads as "empty space", never as "locked out".
+    reads as "empty space", never as "locked out". Since 2026-07-28 it is a
+    one-line wrapper over `graph_wave_at()` (landmine 34), which returns the
+    trace's index instead of a boolean — do not re-implement the distance scan.
+
+34. **A trace's MODEL index and its NODE index are different spaces, and every C
+    answer is in the second one** (2026-07-28, trace drag between strips).
+    `wviewer::graph_props` SKIPS a trace whose `vec` is empty when it builds the
+    `node` token, so such a trace occupies a model slot and no node slot;
+    `hilight_wave`, `find_closest_wave()`'s `node_number` and the new
+    `graph_trace_at` all count NODES. `node_index_of_trace` / `trace_index_of_node`
+    / `node_count` (`wave_viewer.tcl`, PURE) are the mapping and everything that
+    crosses the boundary must go through them. Two more rules the trace move
+    carries, both measured: **(a)** an EMPTY destination strip gets its
+    `x1/x2/y1/y2` blanked back to auto, because `capture_live_graph_state` has
+    just frozen whatever window the last fit left on it and a µA trace dropped
+    into a 0–2 V window is drawn off-screen — the drop looks like it failed;
+    a destination that already holds traces keeps its window. **(b)** the bold
+    marker follows its trace: the source's `hilight_wave` is cleared and the
+    destination is bolded at the appended node index, while an unrelated
+    destination highlight survives. `move_trace` otherwise repeats `move_strip`'s
+    ordering contract exactly (capture live state FIRST, target remapped IN PLACE,
+    one regenerate, one log line) — see landmine 32's neighbours and
+    `doc/claude/specs/waveform_viewer_modes.md` §13. The drop-target feedback is
+    `reorder_handle=4` and obeys all of landmine 32's rules.
 
 ---
 
@@ -906,12 +951,19 @@ Effort: S=hours, M=days, L=weeks. Impact in caps.
   `test_wave_viewer.tcl` (`WB` = the LMB wave-bold gesture, issue 0152, plus
   `WB-mmb-drag` = the pan on its new button; `SD*` = the LMB seam between the C
   engine and strip drag-reorder — trace-proximity in screen pixels, cursor-grab
-  exclusion, empty-space drag),
+  exclusion, empty-space drag; **`TD*` = dragging a TRACE between strips**,
+  2026-07-28 — real raw + full Tk press/motion/release, with an inert `sdid` key
+  per strip so "which strip is at index k" is witnessed independently of "which
+  trace is in it", the only way to tell a trace move from a strip reorder on a
+  two-strip stack),
   `test_wave_modes.tcl` (plot modes / target strip, issue 0151; `M6`/`MG6c`/
   `MG6d` = the trace-color policy, issue 0153; **`M7`/`MG14` = strip
   drag-to-reorder**, 2026-07-27 — `M7` is pure list/index math, `MG14` drives the
   real Tk press/motion/release through the shipped bindings and pins the log
-  shape; the LMB seam itself is `test_wave_viewer.tcl` `SD*`, which needs a raw),
+  shape; the LMB seam itself is `test_wave_viewer.tcl` `SD*`, which needs a raw;
+  `M8`/`MG15` = the same split for the TRACE move, 2026-07-28 — `M8` pure
+  (list move, node/model index mapping, hilight remap, empty-destination range
+  blanking), `MG15` the `move_trace` mutation against real rects, no raw needed),
   `test_wave_clear_all.tcl` (`CA*`/`CG*` = Clear All + the `WaveViewer`
   bindtag, issue 0171; `CG6` pins the rc-remap contract — rc wins, `{break}`
   disables — `CG4` that the tag survives a `strip_bindings` re-sweep, and `CG8`
@@ -947,7 +999,11 @@ Effort: S=hours, M=days, L=weeks. Impact in caps.
   two identical `event generate <ButtonPress-N>` calls close together are
   collapsed by Tk into `<Double-Button-N>`, which the viewer binds to `{break}`,
   so the second press never reaches C at all (issue 0152; `wb_ev` in
-  `test_wave_viewer.tcl` is the pattern).
+  `test_wave_viewer.tcl` is the pattern). A generated **KeyPress** needs a
+  `focus -force $canvas; update` first: it is delivered to the FOCUS window, and
+  under WSLg the viewer loses focus between legs — without it the Escape-cancel
+  legs (`MG14`, `TD5`) silently never reach `key_filter` and fail ~1 run in 2.
+  That flake predates the trace-drag work; both legs now force focus.
 - `test_nh_angle_*` etc. create per-pid scratch dirs under `[pwd]`; the
   `_*_[0-9]*/` gitignore + end-cleanup pattern is the convention (commit
   `cf57955c`).

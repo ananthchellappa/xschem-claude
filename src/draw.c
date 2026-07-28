@@ -4579,16 +4579,21 @@ static double graph_point_seg_dist(double px, double py,
   return sqrt(dx * dx + dy * dy);
 }
 
-/* Is the CANVAS PIXEL (px, py) within `tol` SCREEN PIXELS of a displayed trace
- * of graph `i`? Returns 1/0 (0 also for a bad index, a non-graph rect, an
- * off-screen graph or no loaded data).
+/* Which displayed trace of graph `i` passes within `tol` SCREEN PIXELS of the
+ * CANVAS PIXEL (px, py)? Returns the trace's NODE INDEX (its position in the
+ * `node` prop token, counted like find_closest_wave()'s node_number — bus
+ * entries occupy an index even though they are never hit-tested), or -1 when
+ * nothing is within `tol` (also for a bad index, a non-graph rect, an
+ * off-screen graph or no loaded data). When more than one trace qualifies the
+ * NEAREST one wins.
  *
- * The ASE waveform viewer's LMB seam (drag-to-reorder strips,
- * doc/claude/specs/waveform_viewer_modes.md): empty waveform-body space belongs
- * to strip reordering, a fixed pixel band around every trace stays owned by the
- * C engine's precise interactions (cursor grab, wave-bold). The exclusion has to
- * be measured through the ENGINE's own transform — Tcl approximating it from the
- * strip bbox would drift the moment margins, log axes or ranges change.
+ * The ASE waveform viewer's LMB seam (drag-to-reorder strips + drag a trace to
+ * another strip, doc/claude/specs/waveform_viewer_modes.md): empty waveform-body
+ * space belongs to strip reordering, a fixed pixel band around every trace is
+ * the trace's own — the C engine's precise interactions (cursor grab, wave-bold)
+ * plus the Tcl trace-to-strip drag. The zone has to be measured through the
+ * ENGINE's own transform — Tcl approximating it from the strip bbox would drift
+ * the moment margins, log axes or ranges change.
  *
  * Unlike find_closest_wave() this is a real distance, in screen pixels, to the
  * drawn POLYLINE (point-to-segment, not just |dy| at the nearest sample), it has
@@ -4599,10 +4604,10 @@ static double graph_point_seg_dist(double px, double py,
  * draw_graph may be using (landmine 11,
  * doc/claude/code_analysis/waveform_subsystem_reference.md).
  *
- * DOCUMENTED LIMITS: digital strips and bus traces answer 0 (their rendering is
+ * DOCUMENTED LIMITS: digital strips and bus traces answer -1 (their rendering is
  * a band/ribbon, not a polyline — the whole body is then reorder space), and the
  * search is capped by the graph's own x window, exactly like the draw. */
-int graph_near_wave(int i, double px, double py, double tol)
+int graph_wave_at(int i, double px, double py, double tol)
 {
   Graph_ctx gr_ctx;
   Graph_ctx *gr = &gr_ctx;
@@ -4615,21 +4620,23 @@ int graph_near_wave(int i, double px, double py, double tol)
   char *sim_type = NULL;
   const char *ptr;
   xRect *r;
-  int sweep_idx = 0, idx, expression, autoload, near = 0;
+  int sweep_idx = 0, idx, expression, autoload;
   int node_dataset = -1;
+  int wcnt = -1, best_wave = -1;
+  double best_dist = 0.0;
   double start, end;
 
-  if(!xctx) return 0;
-  if(i < 0 || i >= xctx->rects[GRIDLAYER]) return 0;
+  if(!xctx) return -1;
+  if(i < 0 || i >= xctx->rects[GRIDLAYER]) return -1;
   r = &xctx->rect[GRIDLAYER][i];
-  if(!(r->flags & 1)) return 0;
-  if(!xctx->raw || sch_waves_loaded() == -1) return 0;
+  if(!(r->flags & 1)) return -1;
+  if(!xctx->raw || sch_waves_loaded() == -1) return -1;
   memset(&gr_ctx, 0, sizeof(gr_ctx));
   setup_graph_data(i, 0, gr);
   /* setup_graph_data() returns early for an off-screen graph without computing
    * the transform (the RECT_OUTSIDE test); a zero scale means "no transform" */
-  if(gr->scx == 0.0 || gr->scy == 0.0) return 0;
-  if(gr->digital) return 0;
+  if(gr->scx == 0.0 || gr->scy == 0.0) return -1;
+  if(gr->digital) return -1;
   if(tol < 0.0) tol = 0.0;
 
   autoload = !strboolcmp(get_tok_value(r->prop_ptr,"autoload", 0), "true");
@@ -4652,9 +4659,13 @@ int graph_near_wave(int i, double px, double py, double tol)
 
   nptr = node;
   sptr = sweep;
-  while(!near && (ntok = my_strtok_r(nptr, "\n", "\"", 4, &saven)) ) {
+  while( (ntok = my_strtok_r(nptr, "\n", "\"", 4, &saven)) ) {
     char *nd = NULL;
     int valid_rawfile = 1;
+    /* the counter tracks the node's POSITION in the list, so it must advance
+     * for every entry including the bus ones skipped below (find_closest_wave()
+     * counts the same way, and hilight_wave is in that index space) */
+    wcnt++;
     if(strstr(ntok, ",")) {
       if(find_nth(ntok, ";,", "\"", 0, 2)[0]) continue; /* bus signal: skip */
     }
@@ -4700,8 +4711,9 @@ int graph_near_wave(int i, double px, double py, double tol)
     if(sch_waves_loaded() != -1 && valid_rawfile && idx != -1) {
       int p, dset, ofs = 0, ofs_end;
       double xx, yy, prev_sx = 0.0, prev_sy = 0.0;
+      double nd_min = -1.0; /* smallest distance found for THIS node */
       int have_prev;
-      for(dset = 0; dset < xctx->raw->datasets && !near; dset++) {
+      for(dset = 0; dset < xctx->raw->datasets && nd_min != 0.0; dset++) {
         SPICE_DATA *gvx = xctx->raw->values[sweep_idx];
         SPICE_DATA *gvy;
         ofs_end = ofs + xctx->raw->npoints[dset];
@@ -4710,7 +4722,7 @@ int graph_near_wave(int i, double px, double py, double tol)
         gvy = xctx->raw->values[idx];
         have_prev = 0;
         for(p = ofs; p < ofs_end; p++) {
-          double sx, sy;
+          double sx, sy, d;
           if(gr->logx) xx = mylog10(gvx[p]); else xx = gvx[p];
           if(gr->logy) yy = mylog10(gvy[p]); else yy = gvy[p];
           if(xx < start || xx > end) { have_prev = 0; continue; }
@@ -4720,19 +4732,24 @@ int graph_near_wave(int i, double px, double py, double tol)
            * poison the distance arithmetic */
           if(!(sx > -1e9 && sx < 1e9 && sy > -1e9 && sy < 1e9)) { have_prev = 0; continue; }
           if(have_prev) {
-            if(graph_point_seg_dist(px, py, prev_sx, prev_sy, sx, sy) <= tol) {
-              near = 1;
-              break;
-            }
-          } else if(fabs(sx - px) <= tol && fabs(sy - py) <= tol) {
-            near = 1;
-            break;
+            d = graph_point_seg_dist(px, py, prev_sx, prev_sy, sx, sy);
+          } else {
+            double ddx = sx - px, ddy = sy - py;
+            d = sqrt(ddx * ddx + ddy * ddy);
           }
+          if(nd_min < 0.0 || d < nd_min) nd_min = d;
           prev_sx = sx;
           prev_sy = sy;
           have_prev = 1;
+          if(nd_min == 0.0) break; /* cannot do better */
         }
         ofs = ofs_end;
+      }
+      /* strictly nearer wins, so overlapping traces resolve to the topmost
+       * match by distance and, on a tie, to the FIRST node in the list */
+      if(nd_min >= 0.0 && nd_min <= tol && (best_wave < 0 || nd_min < best_dist)) {
+        best_wave = wcnt;
+        best_dist = nd_min;
       }
     }
     if(express) my_free(_ALLOC_ID_, &express);
@@ -4744,8 +4761,18 @@ int graph_near_wave(int i, double px, double py, double tol)
   if(ntok_copy) my_free(_ALLOC_ID_, &ntok_copy);
   my_free(_ALLOC_ID_, &node);
   my_free(_ALLOC_ID_, &sweep);
-  dbg(1, "graph_near_wave(): graph=%d px=%g py=%g tol=%g -> %d\n", i, px, py, tol, near);
-  return near;
+  dbg(1, "graph_wave_at(): graph=%d px=%g py=%g tol=%g -> %d (dist=%g)\n",
+      i, px, py, tol, best_wave, best_dist);
+  return best_wave;
+}
+
+/* 1 when canvas pixel (px,py) is within `tol` screen pixels of ANY displayed
+ * trace of graph `i`, else 0 — the trace EXCLUSION ZONE, expressed on top of
+ * graph_wave_at() so the boundary the viewer refuses to reorder in is by
+ * construction the same one it picks a trace from. */
+int graph_near_wave(int i, double px, double py, double tol)
+{
+  return graph_wave_at(i, px, py, tol) >= 0 ? 1 : 0;
 }
 
 
@@ -5210,7 +5237,10 @@ void draw_graph(int i, int flags, Graph_ctx *gr, void *ct)
    *         GRAPH_REORDER_HANDLE_W screen pixels wide (mirrored in Tcl).
    *   ==2 : plus a drop bar along the strip's TOP edge    (drag going up)
    *   ==3 : plus a drop bar along the strip's BOTTOM edge (drag going down)
-   * 2/3 are transient drag feedback: Tcl rewrites the token on the two affected
+   *   ==4 : plus a FRAME around the whole strip — the destination of a trace
+   *         being dragged out of another strip (the whole strip is the target
+   *         there, not one of its edges, so the feedback is a frame not a bar)
+   * 2/3/4 are transient drag feedback: Tcl rewrites the token on the affected
    * rects when the prospective destination changes (never on every Motion) and
    * clears it on commit/cancel. */
   if((flags & 16) && gr->reorder_handle && has_x) {
@@ -5247,6 +5277,32 @@ void draw_graph(int i, int flags, Graph_ctx *gr, void *ct)
         if(xctx->draw_pixmap)
           XFillRectangle(display, xctx->save_pixmap, xctx->gc_graph_active,
             (int)hx1, (int)hy1, (unsigned int)(hx2 - hx1), (unsigned int)(hy2 - hy1));
+      }
+    }
+    if(gr->reorder_handle == 4) {
+      /* four filled bars, not an XDrawRectangle: the GC line width is shared
+       * state and a frame drawn as four fills clips like everything else here */
+      int e;
+      for(e = 0; e < 4; e++) {
+        switch(e) {
+          case 0: hx1 = gr->sx1; hx2 = gr->sx2;
+                  hy1 = gr->sy1; hy2 = gr->sy1 + GRAPH_TRACE_DROP_W; break;
+          case 1: hx1 = gr->sx1; hx2 = gr->sx2;
+                  hy1 = gr->sy2 - GRAPH_TRACE_DROP_W; hy2 = gr->sy2; break;
+          case 2: hx1 = gr->sx1; hx2 = gr->sx1 + GRAPH_TRACE_DROP_W;
+                  hy1 = gr->sy1; hy2 = gr->sy2; break;
+          default: hx1 = gr->sx2 - GRAPH_TRACE_DROP_W; hx2 = gr->sx2;
+                  hy1 = gr->sy1; hy2 = gr->sy2; break;
+        }
+        if(rectclip(xctx->areax1, xctx->areay1, xctx->areax2, xctx->areay2,
+                    &hx1, &hy1, &hx2, &hy2)) {
+          if(xctx->draw_window)
+            XFillRectangle(display, xctx->window, xctx->gc_graph_active,
+              (int)hx1, (int)hy1, (unsigned int)(hx2 - hx1), (unsigned int)(hy2 - hy1));
+          if(xctx->draw_pixmap)
+            XFillRectangle(display, xctx->save_pixmap, xctx->gc_graph_active,
+              (int)hx1, (int)hy1, (unsigned int)(hx2 - hx1), (unsigned int)(hy2 - hy1));
+        }
       }
     }
   }

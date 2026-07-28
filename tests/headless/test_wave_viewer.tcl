@@ -1692,8 +1692,15 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
       # — and any press that grabbed a cursor — stays with the C engine. These
       # legs need REAL data (the exclusion is answered by the engine off the raw)
       # and a two-strip stack (a reorder needs somewhere to go).
+      # each strip carries an INERT identity key, so "which strip is at index k"
+      # can be witnessed independently of "which trace is in strip k" — on a
+      # two-strip stack a trace move and a strip reorder produce the same
+      # sd_order, and only sd_ids tells them apart (the model dict is free-form;
+      # regenerate/graph_props read known keys only, so `sdid` changes nothing)
       set sd_save [dict get [wviewer::layout_for $tok] graphs]
-      wviewer::set_graphs $tok [list [lindex $sd_save 0] [wviewer::empty_graph]]
+      wviewer::set_graphs $tok [list \
+        [dict replace [lindex $sd_save 0] sdid A] \
+        [dict replace [wviewer::empty_graph] sdid B]]
       wviewer::regenerate $tok
       wviewer::fit $tok
       xschem new_schematic switch $vdrw
@@ -1702,6 +1709,13 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
         foreach G [dict get [wviewer::layout_for $tok] graphs] {
           set tr [dict get $G traces]
           lappend out [expr {[llength $tr] ? [dict get [lindex $tr 0] vec] : {-}}]
+        }
+        return $out
+      }
+      proc sd_ids {tok} {
+        set out {}
+        foreach G [dict get [wviewer::layout_for $tok] graphs] {
+          lappend out [wviewer::dget $G sdid ?]
         }
         return $out
       }
@@ -1738,19 +1752,189 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
           [wb_bold $vdrw] 0
         wb_reset $tok
 
-        # SD3: a near-trace LMB press-DRAG must NOT reorder — that seam is
-        # reserved for the C engine (and for future trace-to-strip dragging)
-        set sdorder [sd_order $tok]
+        # === TD: dragging a TRACE from one strip to another ==================
+        # doc/claude/specs/waveform_viewer_modes.md §13. The seam SD3 used to
+        # merely RESERVE ("a near-trace press is not a reorder") now carries a
+        # gesture of its own: press ON the trace, drag onto another strip,
+        # release -> the trace moves there. Both witnesses are needed and they
+        # are independent: sd_order says WHICH TRACE is in each strip, sd_ids
+        # says WHICH STRIP is at each index. A trace move changes the first and
+        # never the second; a strip reorder does the opposite. On a two-strip
+        # stack sd_order alone cannot tell them apart.
+        set ::td_log {}
+        rename wviewer::log_action wviewer::__td_real_log
+        proc wviewer::log_action {line} { lappend ::td_log $line }
+
+        set tdids [sd_ids $tok]
+        check "TD fixture: the traced strip is on top, ids A B" \
+          [list [sd_order $tok] $tdids] {{i(v1) -} {A B}}
+        wviewer::set_target_strip 0 $tok    ;# so the press itself logs nothing
+        set ::td_log {}
         wb_ev $vdrw <ButtonPress-1> -x $sdx -y $sdy
+        check "TD1 the press over a trace shows the GRAB HAND pointer" \
+          [$vdrw cget -cursor] hand2
+        check_true "TD1 the press armed a TRACE drag and NOT a strip reorder" \
+          [expr {$::wviewer::tdrag_gi($tok) == 0 && $::wviewer::tdrag_ti($tok) == 0 &&
+                 $::wviewer::drag_from($tok) == -1}]
         foreach fy {0.55 0.65 0.80} {
+          wb_ev $vdrw <B1-Motion> -x $sdx -y [expr {int($fy * $H)}] -state 0x100
+        }
+        update
+        xschem new_schematic switch $vdrw
+        check "TD1 the destination strip is framed as the drop target" \
+          [xschem getprop rect 2 1 reorder_handle] 4
+        check "TD1 the source strip keeps the plain grip" \
+          [xschem getprop rect 2 0 reorder_handle] 1
+        check "TD1 the model is NOT mutated during the drag" \
+          [sd_order $tok] {i(v1) -}
+        wb_ev $vdrw <ButtonRelease-1> -x $sdx -y [expr {int(0.80 * $H)}] -state 0x100
+        update
+        check "TD1 the trace moved to the strip it was dropped on" \
+          [sd_order $tok] {- i(v1)}
+        check "TD1 the STRIPS themselves did not reorder" [sd_ids $tok] $tdids
+        check "TD1 the drop-target frame is gone" \
+          [list [xschem getprop rect 2 0 reorder_handle] \
+                [xschem getprop rect 2 1 reorder_handle]] {1 1}
+        check "TD1 the pointer is restored on release" [$vdrw cget -cursor] {}
+        check "TD1 exactly ONE log line, fully resolved" \
+          [list [llength $::td_log] [lindex $::td_log end]] \
+          [list 1 "wviewer::move_trace 0 0 1 $tok"]
+        check "TD1 the DESTINATION strip became the target" \
+          [wviewer::target_strip $tok] 1
+        check "TD1 no drag state survived the drop" \
+          [list $::wviewer::tdrag_gi($tok) $::wviewer::tdrag_active($tok)] {-1 0}
+        check "TD1 viewer buffer still readonly + unmodified" \
+          [list [xschem get readonly] [xschem get modified]] {1 0}
+
+        # TD2: the same gesture upward, which also puts the fixture back. The
+        # press pixel is found by scanning the LOWER band for the trace, so this
+        # leg cannot pass by accident on a stale coordinate.
+        set sdy2 {}
+        for {set y [expr {int(0.55 * $H)}]} {$y < $H - 2} {incr y 2} {
+          if {[sd_near $vdrw 1 $sdx $y 3]} { set sdy2 $y; break }
+        }
+        check_true "TD2 a pixel ON the moved trace was found in the lower strip" \
+          [expr {$sdy2 ne {}}]
+        if {$sdy2 ne {}} {
+          set ::td_log {}
+          wb_ev $vdrw <ButtonPress-1> -x $sdx -y $sdy2
+          foreach fy {0.40 0.25 0.15} {
+            wb_ev $vdrw <B1-Motion> -x $sdx -y [expr {int($fy * $H)}] -state 0x100
+          }
+          wb_ev $vdrw <ButtonRelease-1> -x $sdx -y [expr {int(0.15 * $H)}] -state 0x100
+          update
+          check "TD2 the trace moved back up" [sd_order $tok] {i(v1) -}
+          check "TD2 the strips still did not reorder" [sd_ids $tok] $tdids
+          check "TD2 one log line for the upward move" \
+            [list [llength $::td_log] [lindex $::td_log end]] \
+            [list 1 "wviewer::move_trace 1 0 0 $tok"]
+        }
+
+        # TD3: the trace's own attributes ride along. Written into the model
+        # first (a name + a non-default color), then dragged for real.
+        set tdgs [dict get [wviewer::layout_for $tok] graphs]
+        set tdtr [dict replace [lindex [dict get [lindex $tdgs 0] traces] 0] \
+                    name plotme color 12]
+        wviewer::set_graphs $tok \
+          [lreplace $tdgs 0 0 [dict replace [lindex $tdgs 0] traces [list $tdtr]]]
+        wviewer::regenerate $tok
+        wviewer::fit $tok
+        set ::td_log {}
+        wb_ev $vdrw <ButtonPress-1> -x $sdx -y $sdy
+        foreach fy {0.60 0.80} {
           wb_ev $vdrw <B1-Motion> -x $sdx -y [expr {int($fy * $H)}] -state 0x100
         }
         wb_ev $vdrw <ButtonRelease-1> -x $sdx -y [expr {int(0.80 * $H)}] -state 0x100
         update
-        check "SD3 a press inside the trace zone never arms a reorder" \
-          [sd_order $tok] $sdorder
-        check_true "SD3 ... and left no drag armed" \
-          [expr {$::wviewer::drag_from($tok) == -1}]
+        set tdland [lindex [dict get [lindex [dict get \
+          [wviewer::layout_for $tok] graphs] 1] traces] 0]
+        check "TD3 the moved trace dict is byte-identical" $tdland $tdtr
+        xschem new_schematic switch $vdrw
+        check "TD3 the destination RECT carries the alias and the color" \
+          [list [string map {\" {}} [xschem getprop rect 2 1 node]] \
+                [string map {\" {}} [xschem getprop rect 2 1 color]]] \
+          [list "plotme;i(v1)" 12]
+        # put it back and drop the decoration again
+        wviewer::set_graphs $tok [list \
+          [dict replace [wviewer::empty_graph] sdid A traces [list \
+            [dict replace $tdtr name {} color 4]]] \
+          [dict replace [wviewer::empty_graph] sdid B]]
+        wviewer::regenerate $tok
+        wviewer::fit $tok
+
+        # TD4: a press-release that does NOT travel is still the wave-bold
+        # CLICK — the gesture must not steal it (issue 0152 stays intact).
+        wviewer::set_target_strip 0 $tok    ;# the press must add no target line
+        set ::td_log {}
+        wb_reset $tok
+        wb_ev $vdrw <ButtonPress-1>   -x $sdx -y $sdy
+        wb_ev $vdrw <ButtonRelease-1> -x $sdx -y $sdy -state 0x100
+        update
+        check "TD4 a sub-threshold click still bolds the trace" [wb_bold $vdrw] 0
+        check "TD4 ... and moved nothing" [sd_order $tok] {i(v1) -}
+        check "TD4 ... and logged nothing" [llength $::td_log] 0
+        check "TD4 ... and restored the pointer" [$vdrw cget -cursor] {}
+        wb_reset $tok
+
+        # TD5: ESC mid-drag abandons the move and restores everything.
+        set ::td_log {}
+        wb_ev $vdrw <ButtonPress-1> -x $sdx -y $sdy
+        wb_ev $vdrw <B1-Motion> -x $sdx -y [expr {int(0.80 * $H)}] -state 0x100
+        update
+        check_true "TD5 a trace drag is active before ESC" \
+          [expr {$::wviewer::tdrag_active($tok) == 1}]
+        # focus first: a generated KeyPress goes to the FOCUS window, and under
+        # WSLg the viewer can lose focus between legs — without this the ESC leg
+        # silently never reaches key_filter (the MG14 lesson)
+        focus -force $vdrw
+        update
+        event generate $vdrw <KeyPress> -keysym Escape
+        update
+        check "TD5 ESC cleared the drag state" \
+          [list $::wviewer::tdrag_gi($tok) $::wviewer::tdrag_to($tok) \
+                $::wviewer::tdrag_active($tok)] {-1 -1 0}
+        check "TD5 ESC restored the pointer" [$vdrw cget -cursor] {}
+        xschem new_schematic switch $vdrw
+        check "TD5 ESC cleared the drop-target frame" \
+          [xschem getprop rect 2 1 reorder_handle] 1
+        wb_ev $vdrw <ButtonRelease-1> -x $sdx -y [expr {int(0.80 * $H)}] -state 0x100
+        update
+        check "TD5 the cancelled drag moved nothing" [sd_order $tok] {i(v1) -}
+        check "TD5 the cancelled drag logged nothing" [llength $::td_log] 0
+
+        # TD6: the BOLD marker follows its trace across the strips. The engine
+        # writes hilight_wave straight into the rect, so this is also the
+        # capture_live_graph_state leg of the gesture.
+        wb_reset $tok
+        wb_ev $vdrw <ButtonPress-1>   -x $sdx -y $sdy
+        wb_ev $vdrw <ButtonRelease-1> -x $sdx -y $sdy -state 0x100
+        update
+        check "TD6 the trace is bold before the drag" [wb_bold $vdrw] 0
+        wb_ev $vdrw <ButtonPress-1> -x $sdx -y $sdy
+        foreach fy {0.60 0.80} {
+          wb_ev $vdrw <B1-Motion> -x $sdx -y [expr {int($fy * $H)}] -state 0x100
+        }
+        wb_ev $vdrw <ButtonRelease-1> -x $sdx -y [expr {int(0.80 * $H)}] -state 0x100
+        update
+        xschem new_schematic switch $vdrw
+        check "TD6 the destination strip carries the bold marker" \
+          [xschem getprop rect 2 1 hilight_wave] 0
+        check "TD6 the emptied source has no bold marker left" \
+          [xschem getprop rect 2 0 hilight_wave] {}
+        # back to the SD fixture shape
+        wviewer::set_graphs $tok [list \
+          [dict replace [wviewer::empty_graph] sdid A traces \
+            [dict get [lindex [dict get [wviewer::layout_for $tok] graphs] 1] traces]] \
+          [dict replace [wviewer::empty_graph] sdid B]]
+        wviewer::regenerate $tok
+        wviewer::fit $tok
+        rename wviewer::log_action {}
+        rename wviewer::__td_real_log wviewer::log_action
+        unset ::td_log
+      } else {
+        # loud, because everything from SD2 to TD6 lives inside this guard: a
+        # broken hit-test makes SD1 fail and the rest VANISH rather than fail
+        puts "SKIPPED: SD2/SD3/TD* (no pixel on the trace was found)"
       }
 
       # SD4: the SAME gesture from EMPTY waveform space DOES reorder. Strip 1 is
@@ -1765,6 +1949,8 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
       wb_ev $vdrw <ButtonRelease-1> -x $sdx -y [expr {$sdm0 - 3}] -state 0x100
       update
       check "SD4 an empty-space drag reordered the stack" [sd_order $tok] {- i(v1)}
+      check "SD4 the STRIPS moved (not their traces) — the TD counterpart" \
+        [sd_ids $tok] {B A}
       check_true "SD4 canvas == baseline (the drag never scrolled it)" \
         [ix_canvas_ok $vdrw $cx0 $cy0 $cz0]
       # put it back
@@ -1773,6 +1959,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
       wb_ev $vdrw <ButtonRelease-1> -x $sdx -y [expr {$sdm1 + 3}] -state 0x100
       update
       check "SD4 and back again" [sd_order $tok] {i(v1) -}
+      check "SD4 ... strips back in their original order too" [sd_ids $tok] {A B}
 
       # SD5: a press that GRABBED A CURSOR keeps the whole drag, even though the
       # pointer is nowhere near a trace. A cursor can be parked anywhere in the
@@ -1814,6 +2001,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
       }
 
       rename sd_order {}
+      rename sd_ids {}
       rename sd_near {}
       wviewer::set_graphs $tok $sd_save
       wviewer::regenerate $tok

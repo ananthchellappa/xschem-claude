@@ -579,3 +579,139 @@ press-drag-release still moves the cursor and never reorders) and `WB-mmb-drag`
 Not asserted, consistent with the standing note in §5: the **pixels** of the grip
 and the drop bar. What is asserted is the token plumbing and that a redraw with
 the tokens present returns rc 0.
+
+---
+
+## 13. Drag a trace between strips (2026-07-28)
+
+The other half of the LMB seam §12 opened. Press **on a trace**, drag onto
+another strip, release: the trace moves there. The strips themselves never
+reorder, and the traces inside a strip keep their order.
+
+The two gestures are mutually exclusive by *where the press landed* — empty
+waveform body (or the handle) reorders strips, the 10-screen-pixel zone around a
+drawn trace picks that trace up — so one press arms exactly one of them.
+
+### 13.1 The gesture
+
+- **Press on a trace** arms the move and turns the pointer into the grab hand
+  (`hand2`, the Acrobat pan-hand affordance the user asked for). The press is
+  still forwarded to C verbatim, so the engine's own bookkeeping (`GRAPHPAN`, the
+  click anchor `graph_press_x/y`) stays consistent with the release.
+- A press that **grabbed a cursor** still wins: a cursor can be parked on top of
+  a trace, and cursor dragging is the more precise interaction.
+- **> 3 px of travel in either axis** (the click tolerance `GRAPH_CLICK_TOL`)
+  starts the drag; from then on Motion is consumed, so no C hover/pan/cursor
+  work happens under it.
+- The **destination follows the pointer**: the strip its pixel is inside, from
+  `strip_at_pixel` — the event's own coordinates, never `graph_at_pointer`
+  (§12.4).
+- **Release over a different strip commits.** A drop on the source strip, a drop
+  outside every strip, a sub-threshold click and Escape all commit nothing and
+  log nothing — so the issue-0152 wave-bold click still works exactly as before.
+- The moved trace keeps its **expression, alias, vector and color** and lands at
+  the **end** of the destination's trace list. A duplicate is allowed (duplicate
+  traces are already representable).
+- The **source strip stays** even when it ends up empty: deleting it would
+  renumber the stack behind the user's back and lose its axis settings.
+
+### 13.2 Model operations
+
+Pure, headless-testable, in `wave_viewer.tcl`:
+
+| proc | what |
+|---|---|
+| `node_count G` | how many of `G`'s traces reach the `node` token |
+| `node_index_of_trace G ti` | model trace index → C **node** index |
+| `trace_index_of_node G ni` | the inverse |
+| `remap_hilight_after_trace_move hw moved_ni` | the bold-marker index math |
+| `move_trace_in_graphs graphs from_gi from_ti to_gi` | the list move itself |
+
+The **model index and the node index are not the same space**: `graph_props`
+skips a trace with an empty `vec` when it builds the `node` token, so such a
+trace occupies a model slot and no node slot. Every C answer (`graph_trace_at`,
+`hilight_wave`) is in node space and must go through the mapping before it
+indexes the model.
+
+`move_trace_in_graphs` carries the trace **dictionary whole** — never rebuild it
+field by field — and does two things beyond the list move:
+
+- **`hilight_wave` on both graphs.** The bold trace leaving decrements nothing
+  and instead clears the source marker and re-bolds the trace at its new node
+  index in the destination; a bold trace *above* the moved one shifts down by
+  one; an unrelated destination highlight is preserved.
+- **An empty destination's ranges are blanked** (`x1/x2/y1/y2` → `{}` = auto).
+  `capture_live_graph_state` has just frozen the live rect, so an empty strip's
+  stored window is whatever the last fit left it; a µA trace dropped into a
+  0–2 V window would be drawn off-screen and the drop would look like it failed.
+  `regenerate` re-autozooms blank ranges — the same treatment a trace landing in
+  a fresh strip gets from `add_trace`/`plot_signals`. A destination that already
+  holds traces keeps the window the user is looking at.
+
+### 13.3 The one mutation
+
+```tcl
+wviewer::move_trace {from_gi from_ti to_gi ?token?}   ;# -> destination trace index, or {}
+```
+
+Same ordering contract as `move_strip` (§12.2/§12.3), for the same reasons:
+validate against the live model → `from_gi == to_gi` returns without mutating or
+logging → verified `switch_ctx` → **`capture_live_graph_state` first** → the pure
+move → the **destination becomes the target strip**, set *in place* (not through
+`set_target_strip`, which would emit a second replay line for an internal
+consequence) → exactly one `regenerate` → exactly one fully-resolved log line:
+
+```tcl
+wviewer::move_trace 0 2 1 <token>
+```
+
+### 13.4 Hit testing
+
+```tcl
+xschem get graph_trace_at <graph_idx> <px> <py> ?tol?    ;# node index, or -1
+```
+
+Backed by `graph_wave_at()` (`draw.c`), which is `graph_near_wave()` with the
+identity of the trace kept — the same point-to-segment screen-pixel distance,
+threshold, local `Graph_ctx` and caller-supplied pixels; **nearest wins**, ties
+go to the first node in the list. `graph_near_wave()` is now a one-line wrapper
+over it, so the zone the strip reorder refuses and the zone a trace is picked up
+from are by construction the same boundary. Same documented limits: digital
+strips and bus traces answer -1, and the scan is capped by the graph's x window.
+It fails closed in Tcl (`trace_at` → -1) so a missing verb degrades to the
+previous behaviour instead of grabbing something.
+
+### 13.5 Feedback
+
+A fourth `reorder_handle` value, following the §12.6 rules exactly (parsed before
+the `RECT_OUTSIDE` return, drawn under flags bit 16 only, transient, never
+written by `graph_props`):
+
+| value | drawn |
+|---|---|
+| 4 | grip + a **frame** around the whole strip — the trace's drop target |
+
+A frame rather than an edge bar because the whole strip is the target here, not
+one of its edges. Rewritten in place on the affected rects only when the
+prospective destination changes, cleared on commit/cancel, never a regenerate.
+
+### 13.6 Tests
+
+`tests/headless/test_wave_modes.tcl` — `M8` (pure: first/middle/last trace,
+append order, emptied-but-kept source, three-strip isolation, byte-identical
+trace dicts, duplicates, every refusal, the node/model index mapping and its
+round trip, the `hilight_wave` remap in all four cases, the empty-destination
+range blanking) and `MG15` (a real viewer, no raw needed: return value, model and
+**rect** agreement, one resolved log line, the destination becoming the target,
+every refusal logging and mutating nothing, live `x1/x2/y1/y2/hilight_wave`
+survival, the bold marker following its trace).
+
+`tests/headless/test_wave_viewer.tcl` — `TD` (real raw data, full Tk
+press/motion/release through the shipped bindings): the grab-hand pointer on
+press, a trace drag armed instead of a strip reorder, the drop-target frame
+appearing and clearing, the model untouched mid-drag, the move down and back up,
+strip identity unchanged throughout (an `sdid` key witnesses *which strip* is at
+each index, independently of *which trace* is in it — on a two-strip stack a
+trace move and a strip reorder are otherwise indistinguishable), alias/color
+preservation down to the rect tokens, one log line, the sub-threshold click still
+bolding, Escape cancelling, and the bold marker following the trace across.

@@ -3818,6 +3818,26 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
               Tcl_SetResult(interp, "0", TCL_STATIC);
             }
           }
+          /* xschem get graph_trace_at <graph_idx> <px> <py> [tol]
+           * The NODE INDEX (position in the graph's `node` prop token, the same
+           * index space as `hilight_wave` / find_closest_wave's node_number) of
+           * the trace passing within `tol` screen pixels (default 10) of the
+           * CANVAS PIXEL (px,py); -1 when none is that close. Nearest wins.
+           * Same engine-side machinery as graph_near_wave above (draw.c
+           * graph_wave_at), which is the same query without the identity: the
+           * ASE viewer uses this one to pick up a trace and drag it onto another
+           * strip. Read-only: no highlight, no prop mutation, no redraw. */
+          else if(!strcmp(argv[2], "graph_trace_at")) {
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            if(argc > 5) {
+              double tol = (argc > 6) ? atof(argv[6]) : 10.0;
+              Tcl_SetResult(interp,
+                my_itoa(graph_wave_at(atoi(argv[3]), atof(argv[4]), atof(argv[5]), tol)),
+                TCL_VOLATILE);
+            } else {
+              Tcl_SetResult(interp, "-1", TCL_STATIC);
+            }
+          }
           else if(!strcmp(argv[2], "gridlayer")) { /* layer number for grid */
             Tcl_SetResult(interp, my_itoa(GRIDLAYER),TCL_VOLATILE);
           }

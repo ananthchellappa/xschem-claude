@@ -384,6 +384,167 @@ check_true "M7 graph_props emits a captured hilight_wave" \
   [regexp -line {^hilight_wave=2$} \
     [pcall {wviewer::graph_props [dict replace [wviewer::empty_graph] hilight_wave 2]}]]
 
+# --- M8: dragging a TRACE between strips, the PURE half ----------------------
+# doc/claude/specs/waveform_viewer_modes.md §13. The model op is "remove the
+# trace dict from the source, append it to the destination" — the strip list and
+# the strip order never change. The subtle half is `hilight_wave`: it is stored
+# per graph in the C engine's NODE index space (position in the `node` prop
+# token), so BOTH graphs' values shift when a trace crosses.
+proc m8_tr {vec {color 4} {name {}}} {
+  return [dict create expr $vec name $name vec $vec color $color]
+}
+proc m8_g {args} {
+  set trs {}
+  foreach v $args { lappend trs [m8_tr $v] }
+  return [dict replace [wviewer::empty_graph] traces $trs]
+}
+# vec list per strip, the compact witness used below
+proc m8_vecs {gs} {
+  set out {}
+  foreach G $gs {
+    set v {}
+    foreach tr [wviewer::dget $G traces {}] { lappend v [wviewer::dget $tr vec {}] }
+    lappend out $v
+  }
+  return $out
+}
+
+set m8base [list [m8_g v(a) v(b) v(c)] [m8_g v(x)]]
+check "M8 first trace of the source moves" \
+  [pcall {m8_vecs [wviewer::move_trace_in_graphs $m8base 0 0 1]}] {{v(b) v(c)} {v(x) v(a)}}
+check "M8 middle trace of the source moves" \
+  [pcall {m8_vecs [wviewer::move_trace_in_graphs $m8base 0 1 1]}] {{v(a) v(c)} {v(x) v(b)}}
+check "M8 last trace of the source moves" \
+  [pcall {m8_vecs [wviewer::move_trace_in_graphs $m8base 0 2 1]}] {{v(a) v(b)} {v(x) v(c)}}
+check "M8 the destination always APPENDS (never inserts)" \
+  [pcall {m8_vecs [wviewer::move_trace_in_graphs \
+     [wviewer::move_trace_in_graphs $m8base 0 0 1] 0 0 1]}] {v(c) {v(x) v(a) v(b)}}
+check "M8 upward move (strip 1 -> strip 0) works the same" \
+  [pcall {m8_vecs [wviewer::move_trace_in_graphs $m8base 1 0 0]}] {{v(a) v(b) v(c) v(x)} {}}
+check "M8 a single-trace source is left EMPTY, never deleted" \
+  [pcall {llength [wviewer::move_trace_in_graphs $m8base 1 0 0]}] 2
+check "M8 three strips: the untouched one is not disturbed" \
+  [pcall {m8_vecs [wviewer::move_trace_in_graphs \
+     [list [m8_g v(a)] [m8_g v(m)] [m8_g v(z)]] 0 0 2]}] {{} v(m) {v(z) v(a)}}
+
+# the trace DICTIONARY is carried whole — expression, alias, vector and color
+set m8rich [list [dict replace [wviewer::empty_graph] traces [list \
+    [m8_tr {v(a)} 4] \
+    [dict create expr {v(out) 2 *} name doubled vec expr1 color 12]]] \
+  [wviewer::empty_graph]]
+set m8moved [pcall {wviewer::move_trace_in_graphs $m8rich 0 1 1}]
+check "M8 the moved trace dict is byte-identical" \
+  [lindex [dict get [lindex $m8moved 1] traces] 0] \
+  [lindex [dict get [lindex $m8rich 0] traces] 1]
+check "M8 ... which means expr/name/vec/color all survived" \
+  [list [dict get [lindex [dict get [lindex $m8moved 1] traces] 0] expr] \
+        [dict get [lindex [dict get [lindex $m8moved 1] traces] 0] name] \
+        [dict get [lindex [dict get [lindex $m8moved 1] traces] 0] vec] \
+        [dict get [lindex [dict get [lindex $m8moved 1] traces] 0] color]] \
+  {{v(out) 2 *} doubled expr1 12}
+check "M8 the destination's OTHER keys (axes, logx) are untouched" \
+  [dict get [lindex $m8moved 1] logx] [dict get [lindex $m8rich 1] logx]
+# an EMPTY destination goes back to `auto` ranges, so the dropped trace is
+# actually visible (regenerate re-autozooms a blank range); a destination that
+# already holds traces keeps the ranges the user is looking at
+set m8rng [list [m8_g v(a)] [dict replace [m8_g] x1 0 x2 1 y1 -1 y2 5]]
+set m8rngd [lindex [pcall {wviewer::move_trace_in_graphs $m8rng 0 0 1}] 1]
+check "M8 an empty destination's ranges are blanked (auto-zoom on drop)" \
+  [list [dict get $m8rngd x1] [dict get $m8rngd x2] \
+        [dict get $m8rngd y1] [dict get $m8rngd y2]] {{} {} {} {}}
+set m8rng2 [list [m8_g v(a)] [dict replace [m8_g v(k)] x1 0 x2 1 y1 -1 y2 5]]
+set m8rngd2 [lindex [pcall {wviewer::move_trace_in_graphs $m8rng2 0 0 1}] 1]
+check "M8 a destination that already has traces keeps its ranges" \
+  [list [dict get $m8rngd2 x1] [dict get $m8rngd2 x2] \
+        [dict get $m8rngd2 y1] [dict get $m8rngd2 y2]] {0 1 -1 5}
+check "M8 the SOURCE's ranges are never touched" \
+  [dict get [lindex [pcall {wviewer::move_trace_in_graphs \
+     [list [dict replace [m8_g v(a) v(b)] y2 9] [m8_g]] 0 0 1}] 0] y2] 9
+
+check "M8 a duplicate landing in the destination is allowed" \
+  [pcall {m8_vecs [wviewer::move_trace_in_graphs \
+     [list [m8_g v(a)] [m8_g v(a)]] 0 0 1]}] {{} {v(a) v(a)}}
+
+# refusals (a pure list op has no error channel: refuse == return unchanged)
+check "M8 same-strip move is a no-op" \
+  [pcall {m8_vecs [wviewer::move_trace_in_graphs $m8base 0 1 0]}] [m8_vecs $m8base]
+check "M8 out-of-range source strip -> unchanged" \
+  [pcall {m8_vecs [wviewer::move_trace_in_graphs $m8base 5 0 1]}] [m8_vecs $m8base]
+check "M8 out-of-range destination strip -> unchanged" \
+  [pcall {m8_vecs [wviewer::move_trace_in_graphs $m8base 0 0 7]}] [m8_vecs $m8base]
+check "M8 out-of-range trace index -> unchanged" \
+  [pcall {m8_vecs [wviewer::move_trace_in_graphs $m8base 0 9 1]}] [m8_vecs $m8base]
+check "M8 negative trace index -> unchanged" \
+  [pcall {m8_vecs [wviewer::move_trace_in_graphs $m8base 0 -1 1]}] [m8_vecs $m8base]
+check "M8 non-integer index -> unchanged" \
+  [pcall {m8_vecs [wviewer::move_trace_in_graphs $m8base 0 x 1]}] [m8_vecs $m8base]
+check "M8 empty strip list -> unchanged" \
+  [pcall {wviewer::move_trace_in_graphs {} 0 0 1}] {}
+
+# model index <-> NODE index. They differ only for a trace with an empty `vec`,
+# which graph_props SKIPS when it writes the `node` token — so such a trace
+# occupies a model slot and no node slot.
+set m8gap [dict replace [wviewer::empty_graph] traces [list \
+  [m8_tr {v(a)}] [dict create expr {} name {} vec {} color 4] [m8_tr {v(c)}]]]
+check "M8 node_count ignores vec-less traces" [pcall {wviewer::node_count $m8gap}] 2
+check "M8 node_index_of_trace skips the vec-less trace" \
+  [list [pcall {wviewer::node_index_of_trace $m8gap 0}] \
+        [pcall {wviewer::node_index_of_trace $m8gap 2}]] {0 1}
+check "M8 node_index_of_trace of a vec-less trace is -1" \
+  [pcall {wviewer::node_index_of_trace $m8gap 1}] -1
+check "M8 node_index_of_trace out of range is -1" \
+  [pcall {wviewer::node_index_of_trace $m8gap 9}] -1
+check "M8 trace_index_of_node is the exact inverse" \
+  [list [pcall {wviewer::trace_index_of_node $m8gap 0}] \
+        [pcall {wviewer::trace_index_of_node $m8gap 1}]] {0 2}
+check "M8 trace_index_of_node past the end is -1" \
+  [pcall {wviewer::trace_index_of_node $m8gap 2}] -1
+check "M8 trace_index_of_node of garbage is -1" \
+  [pcall {wviewer::trace_index_of_node $m8gap x}] -1
+# round trip on a plain graph: node index == model index
+set m8rt 0
+for {set i 0} {$i < 3} {incr i} {
+  set G [m8_g v(a) v(b) v(c)]
+  if {[wviewer::trace_index_of_node $G [wviewer::node_index_of_trace $G $i]] != $i} {
+    incr m8rt
+  }
+}
+check "M8 index round-trip on a gap-free strip" $m8rt 0
+
+# hilight_wave (the C-written BOLD marker) remapping
+check "M8 a bold trace BELOW the moved one keeps its index" \
+  [pcall {wviewer::remap_hilight_after_trace_move 0 2}] 0
+check "M8 a bold trace ABOVE the moved one shifts down by one" \
+  [pcall {wviewer::remap_hilight_after_trace_move 2 0}] 1
+check "M8 the bold trace itself moving clears the source highlight" \
+  [pcall {wviewer::remap_hilight_after_trace_move 1 1}] {}
+check "M8 no highlight stays no highlight" \
+  [pcall {wviewer::remap_hilight_after_trace_move {} 1}] {}
+check "M8 a vec-less move (-1) leaves the highlight alone" \
+  [pcall {wviewer::remap_hilight_after_trace_move 2 -1}] 2
+
+set m8hl [list [dict replace [m8_g v(a) v(b) v(c)] hilight_wave 2] \
+               [dict replace [m8_g v(x)] hilight_wave 0]]
+set m8r [pcall {wviewer::move_trace_in_graphs $m8hl 0 0 1}]
+check "M8 moving a trace above the bold one decrements the source's marker" \
+  [dict get [lindex $m8r 0] hilight_wave] 1
+check "M8 ... and the destination's unrelated highlight is preserved" \
+  [dict get [lindex $m8r 1] hilight_wave] 0
+set m8r2 [pcall {wviewer::move_trace_in_graphs $m8hl 0 2 1}]
+check "M8 moving the BOLD trace clears the source marker" \
+  [dict exists [lindex $m8r2 0] hilight_wave] 0
+check "M8 ... and bolds it at its new node index in the destination" \
+  [dict get [lindex $m8r2 1] hilight_wave] 1
+set m8r3 [pcall {wviewer::move_trace_in_graphs \
+  [list [m8_g v(a) v(b)] [m8_g v(x)]] 0 0 1}]
+check "M8 a source with no marker never gains one, and neither does the dest" \
+  [list [dict exists [lindex $m8r3 0] hilight_wave] \
+        [dict exists [lindex $m8r3 1] hilight_wave]] {0 0}
+
+rename m8_tr {}
+rename m8_g {}
+rename m8_vecs {}
+
 # ============================================================================
 # GUI legs
 # ============================================================================
@@ -1058,6 +1219,11 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   mg14_ev $vdrw <B1-Motion> -x $hx -y [mg14_mid $vdrw 3 3] -state 0x100
   check_true "MG14 a drag is armed and active before ESC" \
     [expr {$::wviewer::drag_active($tok) == 1}]
+  # focus the canvas first: a generated KeyPress is delivered to the FOCUS
+  # window, and under WSLg the viewer can lose focus between legs — without
+  # this the ESC leg is flaky (it silently never reaches key_filter)
+  focus -force $vdrw
+  update
   event generate $vdrw <KeyPress> -keysym Escape
   update
   check "MG14 ESC cancelled the drag (state reset)" \
@@ -1096,6 +1262,84 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     [mg14_order $tok] {v(s1) v(s0) v(s2) v(s3)}
   check "MG14 viewer buffer still readonly + unmodified" \
     [list [xschem get readonly] [xschem get modified]] {1 0}
+
+  # --- MG15: move a TRACE between strips, the MODEL mutation ------------------
+  # doc/claude/specs/waveform_viewer_modes.md §13. The gesture half needs REAL
+  # raw data (the pick is a C hit-test against the drawn polyline) and lives in
+  # test_wave_viewer.tcl `TD*`; wviewer::move_trace itself does not, so its
+  # contract is pinned here next to move_strip's.
+  proc mg15_traces {tok} {
+    set out {}
+    foreach G [dict get [wviewer::layout_for $tok] graphs] {
+      set v {}
+      foreach tr [wviewer::dget $G traces {}] { lappend v [wviewer::dget $tr vec {}] }
+      lappend out $v
+    }
+    return $out
+  }
+  mg14_fixture $tok
+  pcall {wviewer::set_target_strip 1 $tok}
+  set nlog [llength $::wvm_log]
+  check "MG15 move_trace returns the DESTINATION trace index" \
+    [pcall {wviewer::move_trace 3 0 0 $tok}] 1
+  check "MG15 the trace left strip 3 and landed at the end of strip 0" \
+    [pcall {mg15_traces $tok}] {{v(s0) v(s3)} v(s1) v(s2) {}}
+  check "MG15 the strip COUNT is unchanged (an emptied strip stays)" \
+    [llength [dict get [wviewer::layout_for $tok] graphs]] 4
+  xschem new_schematic switch $vdrw
+  check "MG15 the rects agree: strip 0 now carries both nodes" \
+    [split [string map {\" {}} [xschem getprop rect 2 0 node]] "\n"] {v(s0) v(s3)}
+  check "MG15 ... and the emptied strip has an empty node token" \
+    [string map {\" {}} [xschem getprop rect 2 3 node]] {}
+  check "MG15 exactly ONE log line, fully resolved" \
+    [list [expr {[llength $::wvm_log] - $nlog}] [lindex $::wvm_log end]] \
+    [list 1 "wviewer::move_trace 3 0 0 $tok"]
+  check "MG15 the DESTINATION strip became the target" \
+    [pcall {wviewer::target_strip $tok}] 0
+
+  # refusals: no mutation, no log
+  mg14_fixture $tok
+  set nlog [llength $::wvm_log]
+  check "MG15 same-strip drop returns the trace index" \
+    [pcall {wviewer::move_trace 1 0 1 $tok}] 0
+  check "MG15 out-of-range strip is refused" [pcall {wviewer::move_trace 0 0 9 $tok}] {}
+  check "MG15 out-of-range trace is refused" [pcall {wviewer::move_trace 0 5 1 $tok}] {}
+  check "MG15 non-integer trace index is refused" [pcall {wviewer::move_trace 0 x 1 $tok}] {}
+  check "MG15 unknown token is refused" [pcall {wviewer::move_trace 0 0 1 no/such/tok}] {}
+  check "MG15 none of the refusals logged" [llength $::wvm_log] $nlog
+  check "MG15 none of the refusals moved anything" \
+    [pcall {mg15_traces $tok}] {v(s0) v(s1) v(s2) v(s3)}
+
+  # live C-written state survives (the capture_live_graph_state contract, the
+  # same one move_strip has: the engine writes pan/zoom/bold into the RECT)
+  mg14_fixture $tok
+  wviewer::with_edit $tok {
+    xschem setprop -fast rect 2 1 x1 3
+    xschem setprop -fast rect 2 1 x2 4
+    xschem setprop -fast rect 2 1 y1 -2
+    xschem setprop -fast rect 2 1 y2 7
+    xschem setprop -fast rect 2 0 hilight_wave 0
+  }
+  pcall {wviewer::move_trace 2 0 1 $tok}
+  xschem new_schematic switch $vdrw
+  check "MG15 live x1/x2 of the destination survived the move" \
+    [list [xschem getprop rect 2 1 x1] [xschem getprop rect 2 1 x2]] {3 4}
+  check "MG15 live y1/y2 survived too" \
+    [list [xschem getprop rect 2 1 y1] [xschem getprop rect 2 1 y2]] {-2 7}
+  check "MG15 an unrelated strip's bold survived" \
+    [xschem getprop rect 2 0 hilight_wave] 0
+  # the BOLD trace itself moving: the highlight follows it to the destination
+  mg14_fixture $tok
+  wviewer::with_edit $tok {xschem setprop -fast rect 2 2 hilight_wave 0}
+  pcall {wviewer::move_trace 2 0 0 $tok}
+  xschem new_schematic switch $vdrw
+  check "MG15 the bold trace kept its bold at its new node index" \
+    [xschem getprop rect 2 0 hilight_wave] 1
+  check "MG15 the emptied source lost its bold marker" \
+    [xschem getprop rect 2 2 hilight_wave] {}
+  check "MG15 viewer buffer still readonly + unmodified" \
+    [list [xschem get readonly] [xschem get modified]] {1 0}
+  rename mg15_traces {}
 
   rename mg14_ev {}
   rename mg14_fixture {}
