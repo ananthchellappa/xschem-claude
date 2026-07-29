@@ -15526,6 +15526,20 @@ set_ne flylines_dash 4
 # autostart the Library Manager window at launch (doc/claude/specs/library_manager_launch.md)
 set_ne launch_library_manager 0
 set_ne snap_cursor 0
+# viewer plan item 9: the DIAMOND SNAP CURSOR that sticks to the nearest sample
+# of the nearest trace while the pointer hovers a waveform graph, and publishes
+# that sample through `xschem get graph_snap` (item 10's status bar reads it).
+# OFF by default and turned on per window by the ASE viewer: the pick walks
+# every sample of every trace of the strip, so it is not something to leave
+# running on every schematic with an embedded graph.
+# ARMING IS PER WINDOW (`xschem set graph_snap_cursor 1`, the no_grid
+# precedent), not via a global -- these two vars are only the sizes.
+# There is no proximity threshold: the snap is active whenever the pointer is
+# inside a strip's PLOT BOX (the rectangle delineated by the two axes and the
+# two lines opposite them), and it lands on the nearest sample of the nearest
+# trace however far that trace is.
+#   graph_snap_cursor_size  half-diagonal of the diamond, screen pixels
+set_ne graph_snap_cursor_size 5
 set_ne orthogonal_wiring 0
 # wire-editing Phase 6 (Issue E): preserve a one-grid stub out of each moved pin along
 # its outward normal before the route's first bend. Biggest rubber-band behavior change,

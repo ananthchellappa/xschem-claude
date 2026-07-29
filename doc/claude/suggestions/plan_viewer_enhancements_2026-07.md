@@ -143,27 +143,25 @@ under each. The question text is kept for the rationale.
 
 ---
 
-## ⚠ UN-EYEBALLED — auto-proceeded, review still owed
+## Review ledger
 
 The build loop raises a review panel after each item and **auto-proceeds after
 30 minutes** so an item finished at 02:00 does not stall until morning
-(`doc/claude/specs/review_gate.md`). Anything that went through on the timeout
-rather than on a human verdict is listed here until it has actually been
+(`doc/claude/specs/review_gate.md`). Anything that goes through on the timeout
+rather than on a human verdict is carried here until it has actually been
 looked at. **This list is the debt; do not let it grow silently.**
 
-| item | commit | raised | outcome |
-|---|---|---|---|
-| 5 — `e` deletes empty strips | `6ac7219e` | 2026-07-29 | ✅ **REVIEWED** (verdict PROCEED) |
-| 1 — legend size + weight | `b36fa980` | 2026-07-29 | ✅ **REVIEWED** — rejected the all-bold half, corrected below |
-| 1 correction — bold marks the selected trace only | `d40a3934` | 2026-07-29 | ⚠ **AUTO-PROCEEDED, un-eyeballed** |
-| 2 — grid density | `9dea8c0e` | 2026-07-29 | ⚠ **AUTO-PROCEEDED, un-eyeballed** |
+| item | commit | outcome |
+|---|---|---|
+| 5 — `e` deletes empty strips | `6ac7219e` | ✅ REVIEWED (PROCEED) |
+| 1 — legend size + weight | `b36fa980` | ✅ REVIEWED — **rejected the all-bold half** |
+| 1 correction — bold marks the selected trace only | `d40a3934` | ✅ EYEBALLED OK 2026-07-29 |
+| 2 — grid density (**touched `drawline`**) | `9dea8c0e` | ✅ EYEBALLED OK 2026-07-29 |
+| 3 — Ctrl-G grid toggle | `0d648465` | ✅ EYEBALLED OK 2026-07-29 |
 
-**The highest-value thing in this list**: item 2 had to modify `drawline`,
-which every line drawn in the program goes through (~86 call sites). The wave
-suites pass 1833 checks and X11's dash semantics make the wrapper provably
-equivalent, but *"no dashed line anywhere in xschem looks different"* is a claim
-the test suite structurally cannot make — there is no way to read back an X GC's
-dash list. It wants one human glance at an ordinary schematic.
+**Debt: none outstanding.** The `drawline` change in item 2 — the one thing the
+suite structurally could not verify, since nothing here can read back an X GC's
+dash pattern — has now been confirmed by eye against ordinary schematics.
 
 ---
 
@@ -585,7 +583,55 @@ and assert the per-strip vec lists, the migrated markers token and the migrated
 ---
 
 ### Item 9 — diamond snap cursor on the nearest trace
-- [ ] **9. Diamond snap cursor**
+- [x] **9. Diamond snap cursor** — **DONE 2026-07-29.** `draw_graph_snap_cursor`
+      / `graph_snap_clear` in draw.c, per-context arming
+      (`xschem set graph_snap_cursor`), the publish seam
+      `xschem get graph_snap`, armed by the viewer at open.
+      `tests/headless/test_wave_snap.tcl` 15 nogui / 28 DISPLAY.
+
+> **⚠ THE LETTER-DISPATCH LANDMINE BIT BOTH HALVES OF THE NEW VERB.**
+> `xschem get` groups its sub-keys by FIRST LETTER, and `xschem set` splits on
+> `argv[2][0] < 'n'`. A `g` key filed in the wrong half is **silently
+> unreachable** — no error, `xschem set graph_snap_cursor 1` just did nothing
+> and the getter kept returning 0. Both halves were mis-filed on the first try.
+> `SP5` is now the regression leg. (`[[scheduler-letter-dispatch]]` covers the
+> top-level subcommands; this is the same trap one level down, inside
+> `get`/`set`.)
+>
+> **The plan's cost warning was right, and the fix it suggested was not quite
+> enough.** `pos_changed` in `draw_snap_cursor` suppresses the REPAINT but not
+> the QUERY; since `graph_point_at` is the expensive part, item 9 needs a brake
+> on the mouse PIXEL before the query runs, plus the sample-unchanged test to
+> suppress the repaint. Both are in.
+>
+> **Not mentioned by the section: arming must be per CONTEXT** (the `no_grid`
+> precedent), not a global Tcl var — `graph_point_at` is shared with the ~127
+> embedded schematic graphs. And the obvious test for that (`SG1`, read the
+> getter in each window) is HOLLOW: the getter reports the field whatever the
+> pump consults. Measured — that sabotage left `SG1` green and merely shrank
+> the suite. `SS6` is the leg that bites.
+>
+> **Bit 16 turned out to be unnecessary**: the cadence paints with
+> `draw_pixmap = 0`, so the glyph never enters `save_pixmap` and cannot reach an
+> export at all — structurally stronger than the flags bit.
+>
+> **⚠ TWO DEFECTS SHIPPED PAST A FULLY GREEN SUITE, both caught by eye:**
+> 1. **The diamond left a TRAIL.** Erasing by re-stroking with `xctx->gctiled`
+>    is the shipped *schematic* path but does not remove the glyph in a viewer
+>    window; only a full redraw (`f`) cleared it. Fixed by copying the patch
+>    back from `save_pixmap` — the fallback `erase_snap_cursor` itself uses
+>    where the tiled fill is known broken.
+> 2. **The gate was proximity, not the plot box.** The pointer had to pass
+>    within ~20 px of a trace. The spec is: anywhere inside the rectangle
+>    delineated by the two axes and the two lines opposite them, snap to the
+>    nearest sample of the nearest trace *however far away it is*. Fixed with
+>    `graph_plotbox_at()`; `graph_point_at`'s threshold is now unreachable.
+>
+> **The lesson, and it is the important one for the items still to come:** this
+> suite's own header says the glyph is eyeball-only, and the item was reported
+> DONE without the eyeball. Everything the tests could reach was right; the
+> thing the user sees was wrong, twice. For any item whose deliverable is
+> pixels, "suites green" is a precondition for asking, never an answer.
 
 **Verdict: EASY-to-MODERATE.** The query is **100 % shipped**; this is a rendering
 and repaint-cadence job.

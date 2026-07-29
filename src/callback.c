@@ -5098,8 +5098,16 @@ static void handle_motion_notify(int event, KeySym key, int state, int rstate, i
     xctx->mouse_inside = 1;
     if( waves_selected(event, key, state, button)) {
       waves_callback(event, mx, my, key, button, aux, state);
+      /* viewer plan item 9: the diamond snap cursor rides the graph motion
+       * pump, AFTER waves_callback so an armed gesture has already updated
+       * ui_state and the snap yields to it on this very event rather than one
+       * event late. */
+      if(event == MotionNotify) draw_graph_snap_cursor(mx, my);
       return;
     }
+    /* pointer left every graph (still inside the canvas): drop the snap glyph,
+     * or it would sit frozen on the last sample it found */
+    graph_snap_clear();
     if(draw_xhair) {
       draw_crosshair(1, state); /* when moving mouse: first action is delete crosshair, will be drawn later */
     }
@@ -8071,6 +8079,7 @@ int callback(const char *win_path, int event, int mx, int my, KeySym key, int bu
      xctx->mouse_inside = 0;
      draw_hover(0); /* erase the hover outline when the pointer leaves the canvas */
      draw_flylines(0); /* drop the fly-line overlay state on leave (mouse_inside==0) */
+     graph_snap_clear(); /* item 9: and the graph snap diamond */
      break;
 
    case EnterNotify:

@@ -1345,6 +1345,22 @@ typedef struct {
   int scope_hi_n;       /* number of objects in the overlay (0 = inactive) */
   int scope_hi_alloc;   /* allocated capacity of the two arrays above */
   GC gc_hover;          /* hover (awareness) highlight: dashed thin colored GC */
+  /* viewer plan item 9: the diamond SNAP CURSOR that sticks to the nearest
+   * sample of the nearest trace while the pointer hovers a graph. Every field
+   * is 0-at-rest on purpose -- xctx is one my_calloc, so a 0 default is free
+   * and a non-zero sentinel would have to be written in three places
+   * (alloc_xschem_data, clear_drawing, and the teardown).
+   * NOT part of any export: the whole cadence draws with draw_pixmap = 0, so
+   * the glyph exists only in the window and cannot reach a print/SVG at all --
+   * a stronger guarantee than the flags-bit-16 rule it would otherwise need. */
+  int graph_snap_on;        /* 1 = a diamond is currently PAINTED */
+  int graph_snap_gi;        /* graph index it belongs to */
+  int graph_snap_wave;      /* node index of the trace it snapped to */
+  double graph_snap_sx, graph_snap_sy; /* screen px of the painted diamond */
+  double graph_snap_x, graph_snap_y;   /* RAW sample values -- item 10's readout.
+                                        * RAW, never mylog10()'d: landmine 35. */
+  int graph_snap_prev_mx, graph_snap_prev_my; /* last mouse pixel QUERIED */
+  int graph_snap_have_prev; /* prev_mx/my hold a real query */
   int hover_type;       /* hover highlight: currently-outlined object type (0 = none) */
   int hover_n;          /* hover highlight: its array index */
   int hover_col;        /* hover highlight: its layer (graphical types) */
@@ -1637,6 +1653,14 @@ typedef struct {
   int draw_single_layer;
   int draw_dots;
   int only_probes;
+  int graph_snap; /* viewer plan item 9: per-window arming of the diamond snap
+                   * cursor. PER CONTEXT, not a global Tcl var, for the same
+                   * reason no_grid is: draw_graph_variables/graph_point_at are
+                   * shared with every embedded schematic graph in the tree, and
+                   * the pick walks every sample of every trace -- arming it
+                   * globally would put that cost on schematics that never asked
+                   * for it. 0 for every context alloc_xschem_data creates; the
+                   * ASE viewer sets it on its own window and never clears it. */
   int no_grid; /* per-window grid/origin suppression (Waveform Viewer: the window
                 * reads as a graph, not a schematic). NOT mirrored in Tcl -- scoped
                 * to this ctx only; see doc/claude/specs/waveform_viewer.md item 18 */
@@ -2064,6 +2088,11 @@ extern void drawline(int c, int what, double x1,double y1,double x2,double y2, d
 extern void drawline_duty(int c, int what, double x1,double y1,double x2,double y2,
                           double bus, int dash, int dash_off, void *ct);
 extern void draw_xhair_line(GC gc, int size, double linex1, double liney1, double linex2, double liney2);
+/* viewer plan item 9: the graph snap cursor. draw_graph_snap_cursor() is the
+ * hover pump (query + repaint); graph_snap_clear() erases and disarms. */
+extern int  graph_plotbox_at(int i, double px, double py);
+extern void draw_graph_snap_cursor(int mx, int my);
+extern void graph_snap_clear(void);
 extern void draw_string(int layer,int what, const char *str, short rot, short flip, int hcenter, int vcenter,
        double x1, double y1, double xscale, double yscale);
 extern void get_sym_text_size(int inst, int text_n, double *xscale, double *yscale);

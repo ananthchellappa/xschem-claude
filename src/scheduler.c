@@ -3893,6 +3893,26 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
               if(xctx->rect[GRIDLAYER][gi].flags & 1) cnt++;
             Tcl_SetResult(interp, my_itoa(cnt), TCL_VOLATILE);
           }
+          /* viewer plan item 9: the snap cursor's current pick, for item 10's
+           * status bar. "<graph-index> <node-index> <x> <y>" with x/y the RAW
+           * sample values, or "" when nothing is snapped. Read-only, and it
+           * NEVER runs the query itself -- it reports what the hover pump last
+           * found, so polling it from Tcl costs nothing. */
+          else if(!strcmp(argv[2], "graph_snap")) {
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            if(!xctx->graph_snap_on) {
+              Tcl_SetResult(interp, "", TCL_STATIC);
+            } else {
+              char s[200];
+              my_snprintf(s, S(s), "%d %d %.10g %.10g", xctx->graph_snap_gi,
+                          xctx->graph_snap_wave, xctx->graph_snap_x, xctx->graph_snap_y);
+              Tcl_SetResult(interp, s, TCL_VOLATILE);
+            }
+          }
+          else if(!strcmp(argv[2], "graph_snap_cursor")) { /* item 9: per-window snap arming */
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            Tcl_SetResult(interp, xctx->graph_snap != 0 ? "1" : "0", TCL_STATIC);
+          }
           else if(!strcmp(argv[2], "gridlayer")) { /* layer number for grid */
             Tcl_SetResult(interp, my_itoa(GRIDLAYER),TCL_VOLATILE);
           }
@@ -10226,6 +10246,13 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
              * read-only guard. C int, not tcl-mirrored (globals.c). */
             actionlog_suppress = atoi(argv[3]);
             if(actionlog_suppress < 0) actionlog_suppress = 0;
+          }
+          else if(!strcmp(argv[2], "graph_snap_cursor")) { /* item 9: per-window snap arming */
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            xctx->graph_snap = atoi(argv[3]) ? 1 : 0;
+            /* disarming must also take the painted glyph down, or it would sit
+             * frozen on the canvas with no pump left to erase it */
+            if(!xctx->graph_snap) graph_snap_clear();
           }
           else if(!strcmp(argv[2], "cadgrid")) { /* set cad grid (default: 20) */
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}

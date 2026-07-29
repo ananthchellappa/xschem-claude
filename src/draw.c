@@ -4737,6 +4737,216 @@ static double graph_point_seg_dist(double px, double py,
  *
  * Uses a LOCAL Graph_ctx: never clobber xctx->graph_struct, which an active
  * draw_graph may be using (landmine 11). */
+
+/* Is the CANVAS PIXEL (px, py) inside graph `i`'s PLOT BOX -- the rectangle
+ * delineated by the two axes and the two lines opposite them? 0 for a bad
+ * index, a non-graph rect, an off-screen graph, a digital strip or no loaded
+ * data.
+ *
+ * This is what decides whether the snap cursor is active, and it is NOT a
+ * distance to a trace: inside the box the diamond snaps to the nearest sample
+ * of the nearest trace HOWEVER FAR that trace is. The first cut used
+ * graph_point_at's `tol` as the gate, so the pointer had to pass within ~20 px
+ * of a trace before anything appeared -- reported as "the mouse pointer needs
+ * to be too close to the trace".
+ *
+ * ⚠ gr->cy is NEGATIVE (landmine 3), so S_Y(gy1) and S_Y(gy2) come back in the
+ * opposite order to S_X(gx1)/S_X(gx2). Both pairs are normalised rather than
+ * assumed.
+ *
+ * Uses a LOCAL Graph_ctx and brackets graph_flags' hcursor bits exactly as
+ * graph_point_at does (landmines 11 and 37) -- this is a query and must not
+ * leave the session describing a strip nobody is hovering. */
+int graph_plotbox_at(int i, double px, double py)
+{
+  Graph_ctx gr_ctx;
+  Graph_ctx *gr = &gr_ctx;
+  xRect *r;
+  int saveflags;
+  double ax1, ax2, ay1, ay2, t;
+
+  if(!xctx) return 0;
+  if(i < 0 || i >= xctx->rects[GRIDLAYER]) return 0;
+  r = &xctx->rect[GRIDLAYER][i];
+  if(!(r->flags & 1)) return 0;
+  if(!xctx->raw || sch_waves_loaded() == -1) return 0;
+  memset(&gr_ctx, 0, sizeof(gr_ctx));
+  saveflags = xctx->graph_flags & (128 | 256);
+  setup_graph_data(i, 0, gr);
+  xctx->graph_flags = (xctx->graph_flags & ~(128 | 256)) | saveflags;
+  if(gr->scx == 0.0 || gr->scy == 0.0) return 0;  /* off-screen: no transform */
+  if(gr->digital) return 0;                       /* graph_point_at refuses these too */
+
+  ax1 = S_X(gr->gx1); ax2 = S_X(gr->gx2);
+  ay1 = S_Y(gr->gy1); ay2 = S_Y(gr->gy2);
+  if(ax1 > ax2) { t = ax1; ax1 = ax2; ax2 = t; }
+  if(ay1 > ay2) { t = ay1; ay1 = ay2; ay2 = t; }
+  return (px >= ax1 && px <= ax2 && py >= ay1 && py <= ay2);
+}
+
+/* ---- viewer plan item 9: the diamond SNAP CURSOR -------------------------
+ *
+ * While the pointer hovers a waveform graph, a small diamond sticks to the
+ * NEAREST SAMPLE of the nearest trace, and the sample's raw x/y are published
+ * for the status bar (item 10) through `xschem get graph_snap`.
+ *
+ * The query is 100% shipped: graph_point_at() already returns the identity of
+ * the nearest sample, with hit.sx/hit.sy in SCREEN PIXELS and hit.x/hit.y as
+ * the RAW values (landmine 35 -- never the mylog10()'d ones, which clamp a
+ * zero sample to -35 and would read back as 1e-35).
+ *
+ * The cadence is draw_snap_cursor()'s (callback.c ~2422), minus its
+ * X_TO_SCREEN calls because the hit is already screen: window only
+ * (draw_pixmap = 0), erase the old glyph with gctiled, draw the new one,
+ * restore. Because nothing is ever written to save_pixmap, the glyph cannot
+ * reach a print or an SVG -- which is what the flags-bit-16 "UI chrome" rule
+ * exists to guarantee elsewhere, obtained here for free.
+ *
+ * ⚠ COST. graph_point_at() walks every sample of every trace of the strip,
+ * and item 9 runs it on BARE HOVER rather than during a drag. Two brakes:
+ * the query is skipped entirely unless the mouse PIXEL changed (the repaint
+ * early-out in draw_snap_cursor suppresses the paint but not the query -- that
+ * is not enough here), and it never runs while any gesture is armed. */
+
+/* The glyph: four segments, top->right->bottom->left->top, in SCREEN pixels.
+ * draw_snap_cursor_shape() (callback.c) draws the same diamond but takes
+ * schematic coordinates; this one is fed straight from GraphPointHit. */
+static void graph_snap_shape(GC gc, double sx, double sy, int size)
+{
+  double l = sx - size, r = sx + size, t = sy - size, b = sy + size;
+  draw_xhair_line(gc, size, sx, t,  r,  sy);
+  draw_xhair_line(gc, size, r,  sy, sx, b);
+  draw_xhair_line(gc, size, sx, b,  l,  sy);
+  draw_xhair_line(gc, size, l,  sy, sx, t);
+}
+
+/* Erase the diamond at (sx, sy) by copying that patch of save_pixmap back over
+ * the window.
+ *
+ * ⚠ NOT the gctiled stroke that draw_snap_cursor()/erase_snap_cursor() use on
+ * this platform. That is the SHIPPED erase for the schematic snap cursor and it
+ * is guarded there by `fix_broken_tiled_fill || !_unix` -- but with
+ * FIX_BROKEN_TILED_FILL undefined (the default) the guard picks the tiled
+ * stroke, and in a VIEWER window that stroke does not remove the glyph: the
+ * diamond left a TRAIL across the strip, and only a full redraw (`f` = fit)
+ * cleared it. Reported from a real session, and the reason this function exists
+ * instead of a one-line call to graph_snap_shape(xctx->gctiled, ...).
+ *
+ * The copy-back is what erase_snap_cursor() itself falls back to on platforms
+ * where the tiled fill is known broken, so this is not a new mechanism -- it is
+ * the reliable one of the two, used unconditionally. save_pixmap is maintained
+ * by the ordinary double-buffered draw(), and the glyph is never written into
+ * it (draw_pixmap is 0 for the whole cadence), so the patch underneath is
+ * always the clean plot. */
+static void graph_snap_erase(double sx, double sy, int size)
+{
+  int lw = INT_LINE_W(xctx->lw);
+  int x = (int)sx - lw - size;
+  int y = (int)sy - lw - size;
+  unsigned int wh = (unsigned int)(2 * lw + 2 * size);
+  MyXCopyArea(display, xctx->save_pixmap, xctx->window, xctx->gc[0],
+              x, y, wh, wh, x, y);
+}
+
+/* Erase the painted diamond (if any) and disarm. Safe to call at any time and
+ * any number of times -- LeaveNotify, a gesture starting, the pointer moving
+ * off every graph, and clear_drawing() all funnel through here. */
+void graph_snap_clear(void)
+{
+  int size;
+  if(!has_x) { xctx->graph_snap_on = 0; return; }
+  if(xctx->graph_snap_on) {
+    size = tclgetintvar("graph_snap_cursor_size");
+    if(size < 1) size = 4;
+    graph_snap_erase(xctx->graph_snap_sx, xctx->graph_snap_sy, size);
+  }
+  xctx->graph_snap_on = 0;
+  xctx->graph_snap_gi = 0;
+  xctx->graph_snap_wave = 0;
+  xctx->graph_snap_have_prev = 0;
+}
+
+/* The hover pump. (mx, my) is the raw canvas pixel from the MotionNotify. */
+void draw_graph_snap_cursor(int mx, int my)
+{
+  GraphPointHit hit;
+  int i, size, found = 0, gi = -1;
+  int prev_pixmap, prev_window;
+
+  if(!has_x) return;
+  /* Off by default and armed PER CONTEXT (`xschem set graph_snap_cursor 1`),
+   * not by a global Tcl var -- the pick walks every sample of every trace, and
+   * graph_point_at is shared with every embedded schematic graph in the tree.
+   * The no_grid precedent, for the same blast-radius reason. */
+  if(!xctx->graph_snap) { graph_snap_clear(); return; }
+  /* YIELD to every armed gesture. A marker drag, a strip or trace drag, a
+   * cursor drag, a graph pan and a box zoom all own the pointer while they
+   * run, and a diamond chasing the samples underneath them is noise at best.
+   * ui_state != 0 is deliberately the broadest possible test: in a read-only
+   * viewer canvas it is 0 at rest, so anything set means a gesture. */
+  if(xctx->ui_state || xctx->graph_marker_dragmode) { graph_snap_clear(); return; }
+  if(!xctx->mouse_inside) { graph_snap_clear(); return; }
+
+  /* THE BRAKE. graph_point_at() walks every sample of every trace, so the
+   * query itself -- not just the repaint -- has to be skipped when the pointer
+   * has not actually moved. Motion events repeat freely (autorepeat, tablet
+   * jitter, a redraw pump), and draw_snap_cursor()'s pos_changed test guards
+   * only the paint. */
+  if(xctx->graph_snap_have_prev &&
+     mx == xctx->graph_snap_prev_mx && my == xctx->graph_snap_prev_my) return;
+  xctx->graph_snap_prev_mx = mx;
+  xctx->graph_snap_prev_my = my;
+  xctx->graph_snap_have_prev = 1;
+
+  /* THE GATE IS THE PLOT BOX, NOT A DISTANCE TO A TRACE. Inside the box the
+   * diamond snaps to the nearest sample of the nearest trace however far away
+   * that trace is; outside it there is no snap at all. graph_point_at's `tol`
+   * is therefore handed a value nothing can exceed -- the ranking it does
+   * (nearest trace by point-to-segment distance, then nearest sample on it) is
+   * what we want, the threshold is not.
+   * Strips do not overlap, so at most one box contains the pointer; the loop
+   * still ranks, so a future overlapping layout degrades gracefully. */
+  for(i = 0; i < xctx->rects[GRIDLAYER]; ++i) {
+    GraphPointHit h;
+    if(!(xctx->rect[GRIDLAYER][i].flags & 1)) continue;   /* not a graph */
+    if(!graph_plotbox_at(i, (double)mx, (double)my)) continue;
+    if(graph_point_at(i, (double)mx, (double)my, 1e30, -1, -1, &h)) {
+      if(!found || h.dist < hit.dist) { hit = h; found = 1; gi = i; }
+    }
+  }
+
+  if(!found) { graph_snap_clear(); return; }
+
+  /* Nothing to repaint when the snapped SAMPLE has not changed: the pointer
+   * can move several pixels and still resolve to the same sample, which is the
+   * whole point of a snap cursor. */
+  if(xctx->graph_snap_on && gi == xctx->graph_snap_gi &&
+     hit.wave == xctx->graph_snap_wave &&
+     hit.sx == xctx->graph_snap_sx && hit.sy == xctx->graph_snap_sy) return;
+
+  size = tclgetintvar("graph_snap_cursor_size");
+  if(size < 1) size = 4;
+  if(xctx->graph_snap_on) {
+    graph_snap_erase(xctx->graph_snap_sx, xctx->graph_snap_sy, size);
+  }
+  prev_pixmap = xctx->draw_pixmap;
+  prev_window = xctx->draw_window;
+  xctx->draw_pixmap = 0;   /* window only: the glyph must never enter save_pixmap,
+                            * or the copy-back erase above would restore it */
+  xctx->draw_window = 1;
+  graph_snap_shape(xctx->gc[xctx->crosshair_layer], hit.sx, hit.sy, size);
+  xctx->draw_pixmap = prev_pixmap;
+  xctx->draw_window = prev_window;
+
+  xctx->graph_snap_on = 1;
+  xctx->graph_snap_gi = gi;
+  xctx->graph_snap_wave = hit.wave;
+  xctx->graph_snap_sx = hit.sx;
+  xctx->graph_snap_sy = hit.sy;
+  xctx->graph_snap_x = hit.x;   /* RAW -- landmine 35 */
+  xctx->graph_snap_y = hit.y;
+}
+
 int graph_point_at(int i, double px, double py, double tol,
                    int restrict_wave, int restrict_dataset, GraphPointHit *hit)
 {

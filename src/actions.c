@@ -1865,6 +1865,12 @@ int set_rect_extraptr(int what, xRect *drptr)
 
 void clear_drawing(void)
 {
+  /* viewer plan item 9: the snap diamond belongs to the drawing that is going
+   * away. Nothing to erase (the window is about to be repainted wholesale) --
+   * just disarm, or the next hover would try to gctiled-erase a glyph at a
+   * stale screen position. */
+  xctx->graph_snap_on = 0;
+  xctx->graph_snap_have_prev = 0;
  int i,j;
  /* the document is being torn down (load / clear / new / undo reload): any in-flight
   * Add-Pin cursor preview is now invalid, so drop the flag (cadence_pin_name_text.md

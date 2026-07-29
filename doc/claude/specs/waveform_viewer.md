@@ -550,6 +550,89 @@ owning the current xschem context, like the 0151 mode/target commands); also
 - **Tests:** `tests/headless/test_wave_clear_all.tcl` (`CA*` no-window, `CG*`
   GUI) — 67 checks, sabotage-verified. Documented in `src/cadence_style_rc`.
 
+## Diamond snap cursor (viewer plan item 9, 2026-07-29)
+
+**While the pointer hovers a waveform graph, a diamond sticks to the nearest
+SAMPLE of the nearest trace**, and that sample is published for the status bar
+(item 10) as `xschem get graph_snap` → `"<graph-index> <node-index> <x> <y>"`,
+or `""` when nothing is snapped.
+
+- **THE GATE IS THE PLOT BOX, NOT A DISTANCE TO A TRACE.** While the pointer is
+  anywhere inside the rectangle delineated by the two axes and the two lines
+  opposite them, the diamond snaps to the nearest sample of the nearest trace
+  **however far away that trace is**; outside the box there is no snap.
+  `graph_plotbox_at()` is the gate and `graph_point_at()` is handed a threshold
+  nothing can exceed — its *ranking* is wanted, its *threshold* is not.
+  ⚠ The first cut used `graph_point_at`'s `tol` as the gate, so the pointer had
+  to pass within ~20 px of a trace before anything appeared. Reported from a
+  real session: *"the mouse pointer needs to be too close to the trace"*.
+  `graph_plotbox_at` brackets `graph_flags` and uses a local `Graph_ctx` exactly
+  as `graph_point_at` does (landmines 11 and 37), and **normalises both axis
+  pairs** because `gr->cy` is negative (landmine 3) so the y screen bounds come
+  back reversed.
+- **The query was 100% shipped.** `graph_point_at()` already returns the
+  nearest sample with `hit.sx`/`hit.sy` in **screen pixels** and `hit.x`/`hit.y`
+  as the **raw** values — landmine 35 is handled inside it, so a zero sample
+  cannot come back as `1e-35`. This item is a rendering and repaint-cadence job
+  plus a publish seam, as the plan predicted.
+- **⚠ THE ERASE COPIES BACK FROM `save_pixmap`**, and must not be the `gctiled`
+  stroke that `draw_snap_cursor`/`erase_snap_cursor` use on this platform. That
+  stroke is the shipped *schematic* erase, guarded there by
+  `fix_broken_tiled_fill || !_unix`; with `FIX_BROKEN_TILED_FILL` undefined (the
+  default) the guard picks the stroke, and **in a viewer window the stroke does
+  not remove the glyph** — the diamond left a TRAIL across the strip and only a
+  full redraw (`f` = fit) cleared it. Reported from a real session. The
+  copy-back is the fallback `erase_snap_cursor` itself uses where the tiled fill
+  is known broken; it is the reliable one of the two, so it is used
+  unconditionally. This is also why the glyph must never be written into
+  `save_pixmap`: the copy-back would restore the diamond it was meant to erase.
+- **Arming is PER CONTEXT** (`xschem set graph_snap_cursor 1`), the `no_grid`
+  precedent — **not** a global Tcl var. `graph_point_at` walks every sample of
+  every trace, and it is shared with the ~127 shipped schematics that embed a
+  graph; arming globally would put that cost on every one of them. The ASE
+  viewer sets it on its own window at open and never clears it.
+  ⚠ `SG1` alone does **not** protect this: the getter reports `xctx->graph_snap`
+  whatever the *pump* consults, so re-arming the pump from a global leaves
+  `SG1` green. `SS6` is the leg that bites — verified by sabotage.
+- **Two brakes on the per-hover cost.** The query is skipped entirely unless the
+  mouse **pixel** changed (`draw_snap_cursor`'s `pos_changed` guards only the
+  *paint* — not enough when the query is the expensive part), and the repaint is
+  skipped when the snapped **sample** is unchanged, which is the common case:
+  the pointer moves several pixels and still resolves to the same sample.
+- **It yields to every armed gesture** — marker drag, strip drag, trace drag,
+  cursor drag, graph pan, box zoom. The test is `xctx->ui_state ||
+  xctx->graph_marker_dragmode`, deliberately the broadest available: in a
+  read-only viewer canvas `ui_state` is 0 at rest, so anything set means a
+  gesture owns the pointer. The hook sits **after** `waves_callback` so a
+  gesture starting on this very event is already reflected.
+- **Window-only, so it cannot reach an export at all.** The whole cadence runs
+  with `draw_pixmap = 0`, so the glyph never enters `save_pixmap`. That is a
+  stronger guarantee than the `flags & 16` "UI chrome" rule it would otherwise
+  need, and it is obtained structurally rather than by remembering a bit.
+- **Cleared** on LeaveNotify, when the pointer moves off every graph, when a
+  gesture arms, when disarmed, and in `clear_drawing()`. Every field is
+  0-at-rest so the single `my_calloc` of `xctx` is the only initialisation
+  needed.
+- **⚠ The letter-dispatch landmine bit both halves of the verb.** `xschem get`
+  groups sub-keys by first letter and `xschem set` splits on
+  `argv[2][0] < 'n'`; a `g` key filed in the wrong half is **silently**
+  unreachable — no error, the setter simply does nothing. `SP5` is the
+  regression leg.
+- **Tests:** `tests/headless/test_wave_snap.tcl` — 22 nogui / 38 DISPLAY,
+  sabotage-verified. The DISPLAY arm sweeps real `<Motion>` events to find the
+  box, asserts the published `y` equals `2*x` for a `vv = vsweep*2` fixture
+  (which is what proves the values are raw rather than screen or log-mapped),
+  then walks a VERTICAL line through the box and asserts the snapping band
+  covers **most of the sweep** — a box gate snaps on ~78% of it, a proximity
+  gate on ~7%. ⚠ That leg first used a magic `> 12` count and a 20-px proximity
+  band sampled every 3 px yields ~13, so the sabotage squeaked past it and the
+  leg proved nothing; it is a FRACTION now.
+- **⚠ THE GLYPH IS EYEBALL-ONLY, and that is not a formality.** Both defects
+  above — the trail and the proximity gate — shipped past a fully green suite,
+  because everything the suite can reach (the query, the publish seam, the
+  arming, the yields) was correct while the thing the user actually sees was
+  not. A green run here is necessary and nowhere near sufficient.
+
 ## Grid on/off — Ctrl-G (viewer plan item 3, 2026-07-29)
 
 **Ctrl-G shows/hides the graph grid of the active viewer window.** Command:

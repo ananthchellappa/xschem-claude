@@ -525,6 +525,11 @@ proc wviewer::open {token} {
   # never cleared; alloc_xschem_data zeroes it for every other ctx. The window
   # now reads as a graph, not a schematic.
   xschem set no_grid 1
+  # viewer plan item 9: arm the diamond snap cursor for THIS window only. Per
+  # context (the no_grid precedent) because the pick walks every sample of
+  # every trace, and graph_point_at is shared with every embedded schematic
+  # graph in the tree.
+  catch {xschem set graph_snap_cursor 1}
   dict set windows $token [dict create top $top win_path $wp]
   wviewer::build_menubar $token $top
   wviewer::strip_bindings $wp
