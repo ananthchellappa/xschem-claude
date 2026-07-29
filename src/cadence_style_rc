@@ -295,6 +295,20 @@ bind .drw <Control-Shift-Key-4> {ase::plot_mode_for_current invert; break}
 #                       1 = DEFAULT (shown). Anything not a boolean -> 1.
 # set wviewer_grid_show 1
 #
+# --- waveform viewer: mid-drag shrink preview (viewer plan item 6) -----------
+# While a trace is being DRAGGED to another strip (LMB press on the trace, drag,
+# drop on another strip) it is drawn vertically shrunk about the plot box
+# centre, so the pointer visibly carries something and the dragged trace stops
+# being confusable with the ones it passes over. The STRIP reorder drag gets no
+# preview (decision D-E).
+# Purely on-screen: no prop token, no model write, no undo point, and exports
+# always draw the trace at full size.
+#   wviewer_drag_shrink  the vertical scale of the dragged trace while the drag
+#                        is live. 0.9 = DEFAULT (the requested 10 % shrink).
+#                        1.0 turns the effect off without disabling the drag.
+#                        Anything outside (0, 1] falls back to 0.9.
+# set wviewer_drag_shrink 0.9
+#
 # NOTE Ctrl-G in a SCHEMATIC window still toggles the dot grid (draw_grid,
 # below) -- these do not collide: the viewer key is on the WaveViewer bindtag,
 # which schematic canvases do not carry, and the viewer suppresses the dot grid

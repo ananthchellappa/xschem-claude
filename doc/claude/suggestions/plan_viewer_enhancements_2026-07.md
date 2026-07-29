@@ -161,7 +161,8 @@ looked at. **This list is the debt; do not let it grow silently.**
 | 9 — diamond snap cursor | `56edb7ec` | ✅ EYEBALLED OK 2026-07-29 — **after two rejected rounds** (trail; proximity gate) |
 | 10 — viewer status bar | `ab1dcb47` | ✅ EYEBALLED OK 2026-07-29 |
 | 7 — RMB trace context menu | `50c3537f` | ⚠ PROCEED, panel closed with no notes — **pixels not confirmed by eye** |
-| 8 — RMB strip context menu (**touched `scheduler.c`**) | *(pending)* | ⏳ awaiting review |
+| 8 — RMB strip context menu (**touched `scheduler.c`**) | `6ca278c6` | ✅ REVIEWED (PROCEED) — pixels still eyeball-only |
+| — `wviewer::open` intermittent (found by item 8's soak) | `5ddb8361` | ✅ REVIEWED with item 8 |
 
 **Debt: item 7.** Its panel was closed without a verdict, which the gate maps to
 PROCEED, so nothing here has confirmed that the menu *looks* right or lands under
@@ -489,8 +490,34 @@ the remapped target, `modified == 0`, and one log line.
 
 ---
 
-### Item 6 — mid-drag 10 % shrink preview of the dragged trace
-- [ ] **6. Drag shrink preview**
+### ⚠ Item 6 — mid-drag 10 % shrink preview of the dragged trace
+- [x] **6. Drag shrink preview** — **DONE 2026-07-29.** Three transient `xctx`
+      fields + `gr->preview_wave`, applied in `draw_graph_points`; the
+      `xschem set/get graph_preview` verb pair; `wviewer::drag_preview_arm` /
+      `_clear` + the `wviewer_drag_shrink` knob. Contract:
+      `doc/claude/specs/waveform_viewer.md` §"Mid-drag shrink preview".
+      Suite `tests/headless/test_wave_drag_preview.tcl` — 46 DISPLAY / 18 nogui.
+
+> **⚠ ONE CORRECTION AND ONE HONEST GAP.**
+>
+> **(1) The route recommendation is backwards.** The section says "pick the
+> second unless profiling says otherwise" and the second is the affine shortcut
+> that scales `gr->scx`/`gr->sdx` — which the same bullet then warns writes into
+> the shared `xctx->graph_struct` (landmine 11) and needs every early exit inside
+> the wave body to restore. The **per-point** route was taken instead: one
+> multiply-add per sample, inside the loop that was already touching every
+> sample, with no shared state to restore and no early-exit obligation. There is
+> nothing to profile — the affine version saves arithmetic the loop was doing
+> anyway.
+>
+> **(2) The pixel effect is NOT sabotage-verified, and cannot be.** The Tcl half
+> (arming, the node-index mapping, teardown, the rc knob) is, four ways. But the
+> scaling happens between `S_Y()` and `XDrawLines`, with no seam to spy and no
+> pixel readback, so **deleting the C render line leaves the suite green**. The
+> plan's own test seam — `graph_trace_at` unchanged while armed — is in and
+> passing, but it proves the preview does NOT move the drop-target maths, which
+> is the opposite property. Whether the trace visibly shrinks is an eyeball item
+> and nothing else.
 
 **Verdict: MODERATE.** Blocked on **D-E**. ~40 lines of C across 3 sites plus a
 setter verb and 2 Tcl call sites. Nothing architecturally novel.

@@ -1132,6 +1132,13 @@ typedef struct {
                    * no longer distinctive: it is drawn bold ITALIC.
                    * Unlike `active`/`reorder_handle` this is durable CONTENT,
                    * not chrome — it belongs in exports. */
+  int preview_wave; /* viewer plan item 6: NODE index of the trace to draw
+                     * SHRUNK (the mid-drag preview), or -1. Unlike every field
+                     * above it does NOT come from a prop token — it is written
+                     * by draw_graph from the transient xctx preview state, and
+                     * only when flags & 16 (on-screen chrome), so it can never
+                     * reach an export. Compared against `wcnt` exactly like
+                     * hilight_wave, which is the same index space. */
 } Graph_ctx;
 
 /* One waveform marker (doc/claude/specs/graph_markers.md). Persisted in the
@@ -1640,6 +1647,18 @@ typedef struct {
                                                       * (the scratch's own x/y are rewritten
                                                       * on the first motion event) */
   GraphMarker graph_marker_scratch; /* live drag state, substituted by the renderer */
+  /* viewer plan item 6: the mid-drag SHRINK PREVIEW of the trace being dragged
+   * to another strip. The marker-scratch idea applied to a polyline: the
+   * renderer scales the previewed trace's y values on the fly, so a motion
+   * event costs no allocation, no model write and no undo point.
+   * `graph_preview_scale` is the ARM: 0.0 means off, which is the free calloc
+   * default (a -1 sentinel would not be), so the other two are only meaningful
+   * when it is non-zero. Transient CHROME — draw_graph applies it only for
+   * flags & 16, so every export draws the trace unshrunk.
+   * Reset in graph_preview_clear(), clear_drawing() and alloc_xschem_data(). */
+  double graph_preview_scale; /* 0.0 = no preview armed; else the y scale factor */
+  int graph_preview_gi;       /* rect[GRIDLAYER] index the preview is bound to */
+  int graph_preview_wave;     /* NODE index within that graph (the wcnt space) */
   int graph_lastsel; /* last graph that was clicked (selected) */
   /*    */
   XSegment *biggridpoint;

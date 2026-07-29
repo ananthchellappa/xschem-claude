@@ -3348,6 +3348,10 @@ static void draw_graph_points(int idx, int first, int last,
   double c = 0 /* , c1 */;
   Raw *raw = xctx->raw;
   register SPICE_DATA *gv;
+  /* viewer plan item 6: the mid-drag shrink preview of THIS trace. Same
+   * selection test set_thick_waves uses, on the same index space. */
+  int preview = 0;
+  double prev_c = 0.0, prev_s = 1.0;
 
   if(!raw) {
     dbg(0, "draw_graph_points(): no raw struct allocated\n");
@@ -3367,6 +3371,18 @@ static void draw_graph_points(int idx, int first, int last,
     }
   }
   digital = gr->digital;
+  /* Shrink about the PLOT BOX's vertical centre, in SCREEN units.
+   * ⚠ gr->cy is NEGATIVE (landmine 3), so S_Y(gy1) and S_Y(gy2) come back in
+   * the opposite order to their data values -- taking the MEAN sidesteps the
+   * ordering entirely rather than assuming it.
+   * Analog only: the arming query (graph_wave_at) refuses digital strips, so a
+   * digital trace can never be picked up and never previewed; scaling one about
+   * the box centre would also drag it out of its own lane. */
+  if(!digital && gr->preview_wave == wcnt && xctx->graph_preview_scale != 0.0) {
+    preview = 1;
+    prev_c = (S_Y(gr->gy1) + S_Y(gr->gy2)) * 0.5;
+    prev_s = xctx->graph_preview_scale;
+  }
   if(digital) {
     s1 = DIG_NWAVES; /* 1/DIG_NWAVES  waveforms fit in graph if unscaled vertically */
     s2 = DIG_SPACE; /* (DIG_NWAVES - DIG_SPACE) spacing between traces */
@@ -3397,10 +3413,15 @@ static void draw_graph_points(int idx, int first, int last,
     } else {
       /* Build poly y array. Translate from graph coordinates to screen coordinates  */
       if(gr->logy) yy = mylog10(yy);
+      yy = S_Y(yy);
+      /* item 6: scale BEFORE the clamp. A rail-clamped sample scaled afterwards
+       * would shrink from the rail instead of from its true position and put a
+       * visible kink where the trace leaves the box. */
+      if(preview) yy = prev_c + (yy - prev_c) * prev_s;
       #if !defined(__unix__)
-      yy = CLIP(S_Y(yy), Y_TO_SCREEN(gr->y1), Y_TO_SCREEN(gr->y2));
+      yy = CLIP(yy, Y_TO_SCREEN(gr->y1), Y_TO_SCREEN(gr->y2));
       #else
-      yy = CLIP(S_Y(yy), -30000, 30000); /* only clip to 16 bit signed short limits */
+      yy = CLIP(yy, -30000, 30000); /* only clip to 16 bit signed short limits */
       #endif
       point[poly_npoints].y = (short)yy;
     }
@@ -3603,6 +3624,13 @@ void setup_graph_data(int i, int skip, Graph_ctx *gr)
   gr->active = 0;
   val = get_tok_value(r->prop_ptr,"active", 0);
   if(val[0]) gr->active = atoi(val);
+  /* viewer plan item 6: the mid-drag shrink preview. NOT a prop token — it is
+   * armed from xctx by draw_graph, which is the only caller that knows the
+   * flags. Defaulted here, before the RECT_OUTSIDE early return, for exactly
+   * the same shared-graph_struct reason as `active` above: without it a QUERY
+   * that calls setup_graph_data (graph_point_at, graph_plotbox_at, ...) would
+   * leave the previous graph's preview armed in the shared struct. */
+  gr->preview_wave = -1;
   /* strip drag-reorder affordance: 1 = grip, 2 = grip + TOP drop bar,
    * 3 = grip + BOTTOM drop bar. Same early-default rule as `active` above and
    * for the same reason (shared xctx->graph_struct, off-screen early return). */
@@ -6421,6 +6449,20 @@ void draw_graph(int i, int flags, Graph_ctx *gr, void *ct)
   if(xctx->only_probes) return;
   if(RECT_OUTSIDE( gr->sx1, gr->sy1, gr->sx2, gr->sy2,
       xctx->areax1, xctx->areay1, xctx->areax2, xctx->areay2)) return;
+
+  /* viewer plan item 6: arm the mid-drag SHRINK PREVIEW for this graph. Done
+   * here rather than in setup_graph_data because this is the only place that
+   * has BOTH the graph index and the flags, and the flags decide it:
+   * bit 16 is on-screen CHROME, stripped from every export (landmine 18), so a
+   * printed or SVG'd schematic always gets the trace at full size. `has_x`
+   * because a preview is a thing you look at.
+   * The scale is read straight from xctx at draw time (a scalar, not the shared
+   * graph_struct), so a motion event only has to write three numbers. */
+  gr->preview_wave = -1;
+  if((flags & 16) && has_x && xctx->graph_preview_scale != 0.0 &&
+     i == xctx->graph_preview_gi) {
+    gr->preview_wave = xctx->graph_preview_wave;
+  }
 
   if(r->flags & 4) { /* private_cursor */
     const char *s = get_tok_value(r->prop_ptr, "cursor1_x", 0);

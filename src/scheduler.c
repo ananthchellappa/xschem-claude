@@ -3932,6 +3932,20 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
               Tcl_SetResult(interp, s, TCL_VOLATILE);
             }
           }
+          /* xschem get graph_preview
+           * Viewer plan item 6, the read-back seam: `<gi> <wave> <scale>` while
+           * a shrink preview is armed, else the single word `0`. */
+          else if(!strcmp(argv[2], "graph_preview")) {
+            char s[128];
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            if(xctx->graph_preview_scale == 0.0) {
+              Tcl_SetResult(interp, "0", TCL_STATIC);
+            } else {
+              my_snprintf(s, S(s), "%d %d %.10g", xctx->graph_preview_gi,
+                          xctx->graph_preview_wave, xctx->graph_preview_scale);
+              Tcl_SetResult(interp, s, TCL_VOLATILE);
+            }
+          }
           else if(!strcmp(argv[2], "graph_snap_cursor")) { /* item 9: per-window snap arming */
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
             Tcl_SetResult(interp, xctx->graph_snap != 0 ? "1" : "0", TCL_STATIC);
@@ -10276,6 +10290,30 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
             /* disarming must also take the painted glyph down, or it would sit
              * frozen on the canvas with no pump left to erase it */
             if(!xctx->graph_snap) graph_snap_clear();
+          }
+          /* xschem set graph_preview <gi> <wave> <scale>
+           * xschem set graph_preview 0            -> disarm
+           * Viewer plan item 6: draw NODE <wave> of graph <gi> vertically
+           * shrunk by <scale> about the plot box centre, on screen only. Purely
+           * transient: no prop token, no model write, no undo point, and
+           * draw_graph applies it only for flags & 16 so no export sees it.
+           * A scale of 0 (or a short argument list) disarms, which is also the
+           * calloc default -- there is no sentinel to maintain.
+           * Caller redraws; this does not, so a motion event can arm and repaint
+           * in one place. */
+          else if(!strcmp(argv[2], "graph_preview")) {
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            if(argc > 5) {
+              xctx->graph_preview_gi = atoi(argv[3]);
+              xctx->graph_preview_wave = atoi(argv[4]);
+              xctx->graph_preview_scale = atof(argv[5]);
+            } else {
+              xctx->graph_preview_scale = 0.0;
+            }
+            if(xctx->graph_preview_scale == 0.0) {
+              xctx->graph_preview_gi = 0;
+              xctx->graph_preview_wave = 0;
+            }
           }
           else if(!strcmp(argv[2], "cadgrid")) { /* set cad grid (default: 20) */
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}

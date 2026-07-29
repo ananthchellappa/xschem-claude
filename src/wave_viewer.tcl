@@ -268,6 +268,15 @@ set_ne wviewer_grid_dash_off 3
 # (grid shown), the shipped look.
 set_ne wviewer_grid_show 1
 
+# Mid-drag shrink preview of the trace being dragged to another strip (viewer
+# plan item 6, decision D-E: the TRACE drag, not the strip reorder). The
+# vertical scale applied to that one trace while the drag is live, about the
+# plot box centre. 0.9 = the requested 10 % shrink; 1.0 disables the effect
+# without disabling the drag. Anything outside (0, 1] falls back to 0.9.
+# Not a per-rect token: it is transient CHROME (draw_graph bit 16), never
+# written to a rect and never exported.
+set_ne wviewer_drag_shrink 0.9
+
 namespace eval wviewer {
   # session token -> {top .xN win_path .xN.drw}
   variable windows [dict create]
@@ -3441,6 +3450,11 @@ proc wviewer::trace_drag_reset {token} {
   variable tdrag_gi; variable tdrag_to
   set had 0
   if {[info exists tdrag_gi($token)] && $tdrag_gi($token) >= 0} { set had 1 }
+  # item 6: take the shrink preview down FIRST, so the single redraw inside
+  # trace_drag_feedback below already paints the trace at full size. Doing it
+  # after would leave a shrunk trace on screen until the next repaint on the
+  # paths where no feedback frame was ever painted.
+  if {$had} { catch {wviewer::drag_preview_clear $token} }
   if {$had && [info exists tdrag_to($token)] && $tdrag_to($token) >= 0} {
     wviewer::trace_drag_feedback $token $tdrag_to($token) -1 $tdrag_gi($token)
   }
@@ -3486,8 +3500,59 @@ proc wviewer::trace_drag_arm {W token gi px py {ni {}}} {
 # owns the pointer: the motion is swallowed, the pointer stays the grab hand and
 # the prospective destination is repainted ONLY when it actually changes.
 # Returns 1 when the event was consumed.
+# --- mid-drag shrink preview (viewer plan item 6) -----------------------------
+# doc/claude/specs/waveform_viewer.md. While a trace is being dragged to another
+# strip it is drawn vertically shrunk, so the pointer visibly carries something.
+#
+# It is RENDER STATE ONLY — three numbers in xctx, no prop token, no model
+# write, no undo point, and draw_graph applies it only for `flags & 16`, so no
+# export ever sees a shrunk trace. That is the marker-scratch idea
+# (graph_markers.md §3.5) applied to a polyline: a motion event costs nothing.
+
+# The shrink factor. rc-overridable; 0.9 = the requested 10 %.
+# Out-of-range or unparseable values fall back to the default rather than
+# arming something silly (0 would disarm, a negative would mirror the trace).
+proc wviewer::drag_shrink {} {
+  set d 0.9
+  if {![info exists ::wviewer_drag_shrink]} { return $d }
+  set v [string trim $::wviewer_drag_shrink]
+  if {![string is double -strict $v]} { return $d }
+  if {$v <= 0.0 || $v > 1.0} { return $d }
+  return $v
+}
+
+# Arm the preview for MODEL trace `ti` of strip `gi`, and repaint. The C side
+# speaks NODE indices (the hilight_wave / graph_trace_at space), so the model
+# index has to go through trace_index_of_node's inverse first — mixing the two
+# would shrink a different trace whenever any trace carries an empty `vec`.
+# Returns 1 when a preview was armed.
+proc wviewer::drag_preview_arm {token gi ti} {
+  variable windows
+  if {![dict exists $windows $token]} { return 0 }
+  set gs [dict get [wviewer::layout_for $token] graphs]
+  if {$gi < 0 || $gi >= [llength $gs]} { return 0 }
+  set ni [wviewer::node_index_of_trace [lindex $gs $gi] $ti]
+  if {$ni < 0} { return 0 }                    ;# a vec-less trace draws nothing
+  if {![wviewer::switch_ctx $token]} { return 0 }
+  if {[catch {xschem set graph_preview $gi $ni [wviewer::drag_shrink]}]} { return 0 }
+  catch {xschem redraw}
+  return 1
+}
+
+# Disarm and repaint. Idempotent, and cheap enough to call on every teardown
+# path — `set graph_preview 0` on an unarmed context is a no-op. The redraw is
+# what puts the trace back at full size, so it must not be skipped.
+proc wviewer::drag_preview_clear {token} {
+  variable windows
+  if {![dict exists $windows $token]} { return 0 }
+  if {![wviewer::switch_ctx $token]} { return 0 }
+  if {[catch {xschem set graph_preview 0}]} { return 0 }
+  catch {xschem redraw}
+  return 1
+}
+
 proc wviewer::trace_drag_motion {W px py state} {
-  variable tdrag_gi; variable tdrag_to
+  variable tdrag_gi; variable tdrag_to; variable tdrag_ti
   variable tdrag_x0; variable tdrag_y0; variable tdrag_active
   set token [wviewer::token_for_canvas $W]
   if {$token eq {}} { return 0 }
@@ -3499,6 +3564,12 @@ proc wviewer::trace_drag_motion {W px py state} {
     }
     set tdrag_active($token) 1
     catch {$W configure -cursor hand2}
+    # viewer plan item 6 (decision D-E: the TRACE drag, not the strip reorder):
+    # the moment the gesture becomes a drag, the trace being carried is drawn
+    # vertically shrunk, so it reads as "picked up" and stops being confusable
+    # with the traces it is passing over. Armed ONCE, here, not on every motion:
+    # it is pure render state and nothing about it changes as the pointer moves.
+    wviewer::drag_preview_arm $token $from $tdrag_ti($token)
   }
   # the destination simply FOLLOWS THE POINTER: the strip it is over, or (outside
   # every band) none, which the release reads as "cancel"

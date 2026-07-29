@@ -1112,6 +1112,63 @@ a CIW error on a refusal.
   dropping the target shift, and dropping the trace exclusion each turn legs red;
   reversing the dispatcher order does not, which is why the comment there says so.
 
+## Mid-drag shrink preview (viewer plan item 6, 2026-07-29)
+
+**While a trace is being dragged to another strip it is drawn vertically shrunk
+about the plot box centre**, so the pointer visibly carries something and the
+dragged trace stops being confusable with the ones it passes over. Decision D-E:
+the **TRACE** drag (LMB press on a trace → drop on another strip). The strip
+reorder drag gets no preview.
+
+- **Render state only.** Three transient `xctx` numbers —
+  `graph_preview_scale` / `_gi` / `_wave` — and nothing else: no prop token, no
+  model write, no undo point, no log line. That is the marker-scratch idea
+  (`graph_markers.md` §3.5) applied to a polyline instead of a marker record, so
+  a motion event costs nothing. Armed **once**, when the gesture passes the 3 px
+  threshold, because nothing about it changes as the pointer moves.
+- **`graph_preview_scale == 0.0` is the ARM**, and it is the free `my_calloc`
+  default — the other two fields are only meaningful when it is non-zero. That
+  is deliberate: a `-1` sentinel would have to be maintained in
+  `alloc_xschem_data()` *and* `clear_drawing()`, and forgetting one is the
+  shipped bug class. Both reset it anyway, explicitly, so a future non-zero
+  default cannot slip in silently.
+- **Chrome, not content**: `draw_graph` applies it only for `flags & 16`
+  (landmine 18), so **no export ever draws a shrunk trace**. It also needs
+  `has_x` — a preview is a thing you look at. `setup_graph_data` defaults
+  `gr->preview_wave` to -1 **before** the `RECT_OUTSIDE` early return, the shared
+  `graph_struct` rule, so a query that calls it cannot inherit the previous
+  graph's arming.
+- **The scaling is per-point, applied BEFORE the clamp**:
+  `y = c + (y - c) * s` on the screen y, where `c` is the plot box centre. After
+  the clamp a rail-clipped sample would shrink *from the rail* and put a visible
+  kink where the trace leaves the box.
+  ⚠ **`gr->cy` is negative** (landmine 3), so `S_Y(gy1)` and `S_Y(gy2)` come back
+  in the opposite order to their data values — the centre is their **mean**,
+  which sidesteps the ordering instead of assuming it.
+- **Analog only.** The arming query (`graph_wave_at`) refuses digital and bus
+  strips, so such a trace can never be picked up and never previewed; scaling one
+  about the box centre would also drag it out of its own lane.
+- **NODE index, not model trace index.** The C side speaks the
+  `hilight_wave`/`graph_trace_at` space, so `drag_preview_arm` maps the model
+  index through `node_index_of_trace` first. The two diverge as soon as any trace
+  carries an empty `vec`.
+- **Knob**: `wviewer_drag_shrink`, default `0.9` (the requested 10 %). `1.0`
+  turns the effect off without disabling the drag; anything outside `(0, 1]`
+  falls back — `0` would disarm and a negative would mirror the trace.
+- **The regression guard the plan asked for**: `graph_trace_at` answers are
+  asserted **unchanged** while a preview is armed. The preview is visual only, so
+  the drop-target maths must not move under it.
+- **Tests:** `tests/headless/test_wave_drag_preview.tcl` — `DP*`/`DN*`/`DV*`
+  (**18 checks** under `--nogui`, including the `xschem set/get graph_preview`
+  round-trip), `DG1..DG7` GUI; **46 checks** on the DISPLAY arm.
+  ⚠ **What no leg covers: that the trace actually looks smaller.** Nothing here
+  can read pixels back, and unlike the arming there is no seam to spy — the
+  scaling happens between `S_Y()` and `XDrawLines`. The Tcl half is
+  sabotage-verified four ways (no arm on drag, arming with the model index, no
+  disarm on reset, ignoring the rc knob); **the C render line itself is
+  eyeball-only and was not sabotage-verified**, because no assertion could have
+  caught it.
+
 ## Strip drag-to-reorder (2026-07-27)
 
 Full contract: `doc/claude/specs/waveform_viewer_modes.md` §12. As shipped:

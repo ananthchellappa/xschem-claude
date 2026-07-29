@@ -673,6 +673,12 @@ static void alloc_xschem_data(const char *top_path, const char *win_path)
   xctx->graph_marker_draggraph = -1;
   xctx->graph_marker_moved = 0;
   xctx->graph_marker_press_x = xctx->graph_marker_press_y = -1e30;
+  /* viewer plan item 6: the shrink preview. 0.0 IS "off", so the my_calloc
+   * already covers it — written explicitly anyway, beside the marker state it
+   * belongs with, so a future non-zero default cannot slip in silently. */
+  xctx->graph_preview_scale = 0.0;
+  xctx->graph_preview_gi = 0;
+  xctx->graph_preview_wave = 0;
   xctx->graph_lastsel = -1;
   xctx->graph_struct.hilight_wave = -1; /* index of wave */
   xctx->wires = 0;

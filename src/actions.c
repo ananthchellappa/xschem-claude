@@ -1895,6 +1895,12 @@ void clear_drawing(void)
  xctx->graph_marker_dragnum = -1;
  xctx->graph_marker_draggraph = -1;
  xctx->graph_marker_moved = 0;
+ /* viewer plan item 6: the mid-drag shrink preview is transient chrome bound to
+  * a graph index that this clear is about to invalidate. Left armed it would
+  * shrink whatever trace happened to land at that index next. */
+ xctx->graph_preview_scale = 0.0;
+ xctx->graph_preview_gi = 0;
+ xctx->graph_preview_wave = 0;
  del_inst_table();
  del_wire_table();
  my_free(_ALLOC_ID_, &xctx->schtedaxprop);
