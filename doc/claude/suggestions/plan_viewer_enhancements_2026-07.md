@@ -323,7 +323,35 @@ its `markers` key, `modified` is still 0 (with_edit discipline held), and
 ---
 
 ### Item 5 — remappable `e` deletes all empty strips in the active window
-- [ ] **5. `e` delete empty strips**
+- [x] **5. `e` delete empty strips** — **DONE 2026-07-29.**
+      `wviewer::remove_graphs` / `index_after_removal` /
+      `empty_strips_to_delete` (pure), `delete_empty_strips` / `_at`, the
+      `WaveViewer` bare-`e` default, the Graph-menu twin, the
+      `src/cadence_style_rc` block, spec §"Delete Empty Strips", and the new
+      `tests/headless/test_wave_empty_strips.tcl` — **94 DISPLAY / 28 nogui**,
+      sabotage-verified four ways.
+
+> **⚠ ONE THING THIS SECTION GOT WRONG, and one trap it did not mention:**
+>
+> 1. **"reordered_index is for MOVES and does not cover deletion" — right, but
+>    the reason matters more than the fact.** `target_index` **clamps** every
+>    read to the live strip count, so on the obvious fixture (empty strips at
+>    the bottom of the stack) the clamp alone lands on exactly the index the
+>    remap would have produced — **deleting the remap outright still passed a
+>    10-leg target group.** Measured, not theorised: sabotage run 2 was green.
+>    The fixture has to be built so the two answers differ (8 strips, empties at
+>    1 and 3, target 5 → 3 while the clamp would say 5).
+> 2. **A marker record needs ≥ 9 fields** (`num wave dset point x y prev ldx
+>    ldy`) — `markers_line_fields` refuses anything shorter, so a short
+>    hand-planted fixture reads as "no markers at all" and the whole marker
+>    group passes vacuously. And a marker planted in the MODEL only is wiped
+>    before the deletion sees it: `capture_live_graph_state` re-reads `markers`
+>    from the RECT PROPS, so the fixture must `regenerate` first.
+>
+> Confirmed as written: the pure half already existed, `empty_graph_indices`'s
+> `auto` argument was exactly one argument away from D-D, and `move_strip`'s
+> contract transferred verbatim. `set_target_strip` was correctly avoided (it
+> would emit a second replay-log line).
 
 **Verdict: MODERATE.** Blocked on **D-C** and **D-D**. The pure half already
 exists.

@@ -1875,6 +1875,80 @@ proc wviewer::reordered_index {index from to} {
   return $index
 }
 
+# --- strip DELETION, the pure half (viewer plan item 5) ----------------------
+# The move-time procs above have deletion twins, and they are genuinely
+# different arithmetic: a move preserves the element count, a deletion does not,
+# so reordered_index cannot serve here however close it looks.
+
+# PURE: `graphs` with the elements at `indices` removed. Out-of-range and
+# non-integer entries are ignored, duplicates are harmless. Removal runs TOP
+# DOWN (indices sorted decreasing) so an lreplace can never shift an index that
+# has not been used yet — the discipline delete_ok already uses for traces.
+proc wviewer::remove_graphs {graphs indices} {
+  set n [llength $graphs]
+  set kill {}
+  foreach i $indices {
+    if {[string is integer -strict $i] && $i >= 0 && $i < $n} { lappend kill $i }
+  }
+  foreach i [lsort -integer -decreasing -unique $kill] {
+    set graphs [lreplace $graphs $i $i]
+  }
+  return $graphs
+}
+
+# PURE: where the graph that sat at `index` BEFORE the removal of `removed`
+# sits AFTER it — the deletion twin of reordered_index, and how a stored target
+# follows graph IDENTITY instead of staying attached to a numeric slot.
+#   remove {1 2} from {A B C D}:  0 -> 0,  3 -> 1
+# An index that was ITSELF removed answers with the slot the following strip
+# now occupies (the strip that took its place), which for the last strip is one
+# past the end. That is deliberate and safe: target_index runs every read
+# through target_clamp, so "one past the end" resolves to the last survivor
+# rather than dangling.
+# Duplicates in `removed` are counted ONCE — a doubled index would otherwise
+# shift the answer twice and silently move the target up a strip.
+proc wviewer::index_after_removal {index removed} {
+  if {![string is integer -strict $index]} { return $index }
+  set seen {}
+  set below 0
+  foreach r $removed {
+    if {![string is integer -strict $r]} continue
+    if {[lsearch -exact $seen $r] >= 0} continue
+    lappend seen $r
+    if {$r < $index} { incr below }
+  }
+  return [expr {$index - $below}]
+}
+
+# PURE: the strips `e` deletes — every traceless strip, minus two exceptions.
+# Both exceptions are user decisions recorded in
+# doc/claude/suggestions/plan_viewer_enhancements_2026-07.md; they live here,
+# in a pure proc, so they can be asserted headless with literal lists.
+#
+# D-D, SPARE THE AUTO-PLOT STRIP: it is REBUILT after every simulation run
+# (traces cleared, then re-added — item 13's always-replace contract), so it is
+# legitimately traceless BETWEEN runs. Deleting it would destroy tool state the
+# user cannot see, and the next run would silently append a fresh one.
+# `empty_graph_indices` already takes the exclusion as its `auto` argument;
+# callers pass wviewer::auto_graph_index, and -1 means "no auto strip".
+#
+# D-C, KEEP ONE: right after Ctrl-D the model is exactly ONE empty strip, so a
+# literal "delete every empty strip" would empty the window. That would not
+# crash — regenerate handles n == 0 and `graphs {}` is the legal fresh-open
+# state — but clear_all deliberately maintains a one-strip invariant and `e`
+# must not quietly break it. When every strip would go, index 0 is spared: the
+# lowest index, which is where clear_all's own survivor sits.
+# Consequence, and the intended one: `e` on a window holding a single empty
+# strip returns an EMPTY kill list, which the mutating proc treats as a no-op
+# and does not log.
+proc wviewer::empty_strips_to_delete {gs {auto -1}} {
+  set kill [wviewer::empty_graph_indices $gs $auto]
+  if {[llength $kill] > 0 && [llength $kill] >= [llength $gs]} {
+    set kill [lrange $kill 1 end]
+  }
+  return $kill
+}
+
 # Fold the state the C engine wrote straight into the live rects back into the
 # Tcl model, so a regenerate cannot undo it.
 #
@@ -3179,6 +3253,97 @@ proc wviewer::delete_all_markers_at {W} {
   return $res
 }
 
+# --- Delete Empty Strips (viewer plan item 5) --------------------------------
+
+# Delete every EMPTY strip in a viewer window. Returns the NUMBER deleted, 0
+# when there was nothing to delete, or {} plus a CIW error when no viewer
+# resolves.
+#
+# "Empty" = holds no traces, is not the tool-owned auto-plot strip (decision
+# D-D) and is not the last strip standing (decision D-C). Both exceptions live
+# in the PURE `empty_strips_to_delete`, where they are assertable headless.
+#
+# A strip is just a dict in the layout's `graphs` list, so this is a LIST REMOVE
+# plus a regenerate — never a schematic delete of the rect. regenerate re-places
+# every rect from the model, and the surplus rects go with it.
+#
+# ORDERING — move_strip's contract verbatim (read its header for the why):
+#   validate -> refuse a no-op WITHOUT mutating and WITHOUT logging -> verified
+#   switch_ctx -> capture the live C-written state -> push_undo -> mutate ->
+#   remap the stored target IN PLACE -> exactly ONE regenerate -> exactly ONE
+#   log line.
+# Snapshot-after-mutate is the shipped bug class this order exists to prevent:
+# it makes `u` restore the very thing it was meant to undo. The target is
+# remapped in place rather than through set_target_strip because that would
+# emit a SECOND replay-log line for an index change that is an internal
+# consequence of this one command.
+#
+# MARKERS (doc/claude/specs/graph_markers.md §9): a traceless strip should hold
+# no markers, but the model is not its only writer, so this does not trust that
+# — it reuses delete_ok's bookkeeping. The marker numbers on the doomed strips
+# are collected and swept out of the SURVIVORS' `prev` links, because a delta
+# block whose partner number is gone degrades to a plain callout with no
+# indication at all.
+#
+# No `with_edit`: unlike delete_all_markers this calls no C mutation verb that
+# the read-only viewer would refuse — it is a Tcl model edit plus a regenerate,
+# exactly like move_strip, which is also bare.
+proc wviewer::delete_empty_strips {{token {}}} {
+  variable windows
+  variable target
+  set token [wviewer::resolve_token $token]
+  if {$token eq {} || ![dict exists $windows $token]} {
+    if {[info exists ::has_x] && [info commands ::ciw_echo] ne {}} {
+      ciw_echo "wviewer: no waveform viewer window to delete empty strips in" error
+    }
+    return {}
+  }
+  set gs [dict get [wviewer::layout_for $token] graphs]
+  set kill [wviewer::empty_strips_to_delete $gs [wviewer::auto_graph_index $token]]
+  # No-op discipline, move_strip's `from == to` rule: nothing to delete means no
+  # mutation, no undo point, no repaint and NO log line for a replay to re-run.
+  # This is also the D-C answer for a window holding one empty strip.
+  if {![llength $kill]} { return 0 }
+  if {![wviewer::switch_ctx $token]} { return {} }
+  # capture only rewrites per-graph VALUES (ranges, bold, markers) and carries a
+  # 1:1 rect/model guard — it never adds or removes a graph, so the indices in
+  # `kill` survive it. Re-read the list anyway, as move_strip does, so the
+  # dictionaries below are the captured ones.
+  wviewer::capture_live_graph_state $token
+  wviewer::push_undo $token           ;# AFTER the capture: `u` restores the view
+  set gs [dict get [wviewer::layout_for $token] graphs]
+  set gone {}
+  foreach gi $kill {
+    foreach n [wviewer::markers_numbers [wviewer::dget [lindex $gs $gi] markers {}]] {
+      lappend gone $n
+    }
+  }
+  wviewer::set_graphs $token \
+    [wviewer::markers_sweep_numbers [wviewer::remove_graphs $gs $kill] $gone]
+  if {[info exists target($token)]} {
+    set target($token) \
+      [wviewer::index_after_removal [wviewer::target_index $token] $kill]
+  }
+  wviewer::regenerate $token
+  # A selected marker that lived on a doomed strip now points at nothing —
+  # clear_all's reset, narrowed to the only case that can actually dangle.
+  # regenerate left the viewer as the current context.
+  if {[llength $gone]} { catch {xschem graph_marker select -none} }
+  wviewer::log_action [list wviewer::delete_empty_strips $token]
+  return [llength $kill]
+}
+
+# The bare-`e` binding body — the clear_all_at pattern: resolve the token from
+# the EVENT's canvas (%W), never from the current xschem context, because a key
+# can arrive on a viewer Tk has focused before the C side switched context to
+# it, and deleting strips in "whatever context is current" would then edit the
+# wrong window. Silent on a foreign canvas.
+proc wviewer::delete_empty_strips_at {W} {
+  set token [wviewer::token_for_canvas $W]
+  if {$token eq {}} { return {} }
+  return [wviewer::delete_empty_strips $token]
+}
+
 # Install the viewer's default key bindings on the shared `WaveViewer` BINDTAG
 # (issue 0171). Not on the canvas widget: strip_bindings sweeps every
 # widget-level sequence on a viewer canvas (including anything
@@ -3192,6 +3357,7 @@ proc wviewer::delete_all_markers_at {W} {
 #   bind WaveViewer <Control-Key-d> {break}                      ;# drop default
 #   bind WaveViewer <Control-Key-r> {wviewer::clear_all_at %W; break}
 #   bind WaveViewer <Control-Key-e> {break}                      ;# item 4 too
+#   bind WaveViewer <Key-e> {break}                              ;# item 5 too
 # An rc that binds a sequence itself WINS: defaults are installed once, at the
 # first viewer open, and only for a sequence nothing has bound yet. Disable
 # with `{break}`, NOT `{}` — an empty script DELETES the binding, which reads
@@ -3212,6 +3378,19 @@ proc wviewer::install_default_binds {} {
   # The `break` keeps it that way whatever the tags below this one carry.
   if {[bind WaveViewer <Control-Key-e>] eq {}} {
     bind WaveViewer <Control-Key-e> {wviewer::delete_all_markers_at %W; break}
+  }
+  # Delete Empty Strips (viewer plan item 5). Bare `e`, and the collision check
+  # is clean on all three of the paths a key can reach this window by:
+  #   * keysym 101 is NOT in `graphkeys` {97 98 100 115 109 116 65 66 77}, so
+  #     key_filter forwards nothing and the C dispatcher never sees it — in the
+  #     SCHEMATIC bare `e` is descend_schematic (callback.c case 'e',
+  #     rstate == 0), which must not happen in a viewer;
+  #   * no rc binds <Key-e> on .drw, so clone_canvas_bindings has nothing to
+  #     copy onto a viewer canvas (unlike Ctrl-E above, which it does clone and
+  #     strip_bindings has to sweep);
+  #   * the `break` keeps it that way whatever the tags below this one carry.
+  if {[bind WaveViewer <Key-e>] eq {}} {
+    bind WaveViewer <Key-e> {wviewer::delete_empty_strips_at %W; break}
   }
   # undo / redo of viewer model edits (2026-07-28). `u` and Shift-u are inert in
   # this window otherwise: key_filter forwards only the waves_callback key set
@@ -4393,6 +4572,11 @@ proc wviewer::build_menubar {token top} {
   # separates it from Clear All right above.
   $mb.graph add command -label {Delete All Markers} -accelerator Ctrl+E \
     -command [list wviewer::delete_all_markers $token]
+  # viewer plan item 5: the menu twin of the bare-`e` bindtag default. Removes
+  # empty STRIPS only — every trace survives by definition, and neither the
+  # auto-plot strip (D-D) nor the last strip standing (D-C) is a candidate.
+  $mb.graph add command -label {Delete Empty Strips} -accelerator e \
+    -command [list wviewer::delete_empty_strips $token]
   $mb.graph add checkbutton -label {Shared X Axis} \
     -variable ::wviewer::sharedx($token) \
     -command [list wviewer::sharedx_toggle $token]

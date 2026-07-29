@@ -245,6 +245,17 @@ bind .drw <Control-Shift-Key-4> {ase::plot_mode_for_current invert; break}
 # bind WaveViewer <Control-Key-d> {break}
 # bind WaveViewer <Control-Key-r> {wviewer::clear_all_at %W; break}
 
+# `e` INSIDE the waveform viewer : Delete Empty Strips -- remove every strip
+# that holds no traces, tidying the stack after deleting traces or after a plot
+# batch left a blank band. Two strips are never touched: the tool-owned
+# auto-plot strip (it is traceless BETWEEN simulation runs by design) and the
+# last strip standing, so the window is never left with nothing. `e` on a window
+# holding a single empty strip therefore does nothing at all.
+# Also Graph > Delete Empty Strips. Same bindtag rules as Ctrl-D above -- a line
+# here WINS over the shipped default:
+# bind WaveViewer <Key-e> {break}
+# bind WaveViewer <Key-y> {wviewer::delete_empty_strips_at %W; break}
+
 # Descend opens the child schematic READ-ONLY by default (browse mode). To edit,
 # press Ctrl-2 after descending, use the "Descend schematic (edit)" right-click
 # item, or View > Toggle Read Only.

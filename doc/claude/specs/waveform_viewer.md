@@ -550,6 +550,79 @@ owning the current xschem context, like the 0151 mode/target commands); also
 - **Tests:** `tests/headless/test_wave_clear_all.tcl` (`CA*` no-window, `CG*`
   GUI) — 67 checks, sabotage-verified. Documented in `src/cadence_style_rc`.
 
+## Delete Empty Strips (viewer plan item 5, 2026-07-29)
+
+**Bare `e` in the viewer deletes every strip that holds no traces.** Command:
+`wviewer::delete_empty_strips ?token?` (optional token, {} = the viewer owning
+the current xschem context); also **Graph > Delete Empty Strips** (accelerator
+`e`) and CIW-typable. Returns the NUMBER deleted, `0` for a no-op, `{}` plus a
+CIW error when no viewer resolves.
+
+- **Two strips are never candidates**, both by user decision:
+  - **the auto-plot strip (D-D).** It is *rebuilt* after every simulation run
+    (traces cleared, then re-added — item 13's always-replace contract), so it
+    is legitimately traceless *between* runs. Deleting it would destroy tool
+    state the user cannot see. `empty_graph_indices` already takes the exclusion
+    as its `auto` argument.
+  - **the last strip standing (D-C).** Right after `Ctrl-D` the model is exactly
+    one empty strip, so a literal reading would empty the window. That would not
+    crash — `regenerate` handles `n == 0` and `graphs {}` is the legal fresh-open
+    state — but `clear_all` deliberately maintains a one-strip invariant. When
+    every strip would go, index 0 is spared, which is where `clear_all`'s own
+    survivor sits. **Consequence:** `e` on a window holding a single empty strip
+    is a no-op that returns without mutating and **without logging**, the
+    `move_strip` `from == to` rule.
+- **A strip is a dict in the layout's `graphs` list**, so this is a list remove
+  plus a `regenerate` — never a schematic delete of the rect. `regenerate`
+  re-places every rect from the model and the surplus rects go with it.
+- **Ordering: `move_strip`'s contract verbatim** — validate → refuse a no-op
+  without logging → verified `switch_ctx` → `capture_live_graph_state` →
+  `push_undo` → mutate → remap the stored target **in place** → ONE `regenerate`
+  → ONE log line. Snapshot-after-mutate is the shipped bug class this order
+  exists to prevent.
+- **The stored target follows graph IDENTITY**, through the new PURE
+  `wviewer::index_after_removal` — the deletion twin of `reordered_index`, which
+  cannot serve here (a move preserves the element count, a deletion does not).
+  A target that was *itself* deleted answers with the slot its follower moved
+  into; `target_index` clamps every read, so it can never dangle.
+  ⚠ **That clamp is also why this is easy to test hollow**: on a fixture whose
+  empty strips sit at the bottom, the clamp alone lands on the same index the
+  remap would have produced. `EG4` uses an 8-strip fixture with the empties at 1
+  and 3 specifically so the two answers differ, and asserts that.
+- **Markers** (`graph_markers.md` §9): a traceless strip *should* hold no
+  markers, but the model is not its only writer, so `delete_ok`'s bookkeeping is
+  reused — the doomed strips' marker numbers are swept out of the survivors'
+  `prev` links, because a delta block whose partner is gone degrades to a plain
+  callout with no indication at all.
+- **No `with_edit`**: unlike `delete_all_markers` this calls no C mutation verb
+  the read-only viewer would refuse. Tcl model edit + regenerate, like
+  `move_strip`, which is also bare.
+- **The key is on the `WaveViewer` BINDTAG**, same rules and same rc-wins
+  guarantee as Clear All above:
+
+  ```tcl
+  bind WaveViewer <Key-e> {break}                              ;# drop the default
+  bind WaveViewer <Key-y> {wviewer::delete_empty_strips_at %W; break}
+  ```
+
+  **Collision check, clean on all three paths a key can reach this window by:**
+  keysym 101 is **not** in `graphkeys` `{97 98 100 115 109 116 65 66 77}`, so
+  `key_filter` forwards nothing and the C dispatcher never sees it (in the
+  *schematic*, bare `e` is `descend_schematic`, `callback.c` `case 'e'` with
+  `rstate == 0`); no rc binds `<Key-e>` on `.drw`, so `clone_canvas_bindings`
+  has nothing to copy in (unlike `Ctrl-E`, which it does clone and
+  `strip_bindings` has to sweep); and the `break` holds whatever the lower tags
+  carry.
+- **Pure half, all headless-assertable**: `wviewer::remove_graphs`,
+  `wviewer::index_after_removal`, `wviewer::empty_strips_to_delete` (where D-C
+  and D-D live, so both decisions are pinned by assertions rather than by a
+  comment).
+- **Tests:** `tests/headless/test_wave_empty_strips.tcl` — `EP*` pure (28 under
+  `--nogui`), `EN*` no-window, `EG1..EG11` GUI; **94 checks** on the DISPLAY arm.
+  Sabotage-verified four ways: removing the D-C clause, dropping the target
+  remap, moving `push_undo` after the mutation, and skipping the marker sweep
+  each turn legs red.
+
 ## Strip drag-to-reorder (2026-07-27)
 
 Full contract: `doc/claude/specs/waveform_viewer_modes.md` §12. As shipped:
