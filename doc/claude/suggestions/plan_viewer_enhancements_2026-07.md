@@ -143,6 +143,30 @@ under each. The question text is kept for the rationale.
 
 ---
 
+## ⚠ UN-EYEBALLED — auto-proceeded, review still owed
+
+The build loop raises a review panel after each item and **auto-proceeds after
+30 minutes** so an item finished at 02:00 does not stall until morning
+(`doc/claude/specs/review_gate.md`). Anything that went through on the timeout
+rather than on a human verdict is listed here until it has actually been
+looked at. **This list is the debt; do not let it grow silently.**
+
+| item | commit | raised | outcome |
+|---|---|---|---|
+| 5 — `e` deletes empty strips | `6ac7219e` | 2026-07-29 | ✅ **REVIEWED** (verdict PROCEED) |
+| 1 — legend size + weight | `b36fa980` | 2026-07-29 | ✅ **REVIEWED** — rejected the all-bold half, corrected below |
+| 1 correction — bold marks the selected trace only | `d40a3934` | 2026-07-29 | ⚠ **AUTO-PROCEEDED, un-eyeballed** |
+| 2 — grid density | `9dea8c0e` | 2026-07-29 | ⚠ **AUTO-PROCEEDED, un-eyeballed** |
+
+**The highest-value thing in this list**: item 2 had to modify `drawline`,
+which every line drawn in the program goes through (~86 call sites). The wave
+suites pass 1833 checks and X11's dash semantics make the wrapper provably
+equivalent, but *"no dashed line anywhere in xschem looks different"* is a claim
+the test suite structurally cannot make — there is no way to read back an X GC's
+dash list. It wants one human glance at an ordinary schematic.
+
+---
+
 ## The items
 
 ### ⚠ Item 1 — legend font too small; match the axis numbers
@@ -283,7 +307,26 @@ possibly `src/draw.c`.
 ---
 
 ### Item 3 — remappable Ctrl-G toggles the grid in the active viewer
-- [ ] **3. Ctrl-G grid toggle**
+- [x] **3. Ctrl-G grid toggle** — **DONE 2026-07-29.** `Graph_ctx.grid` + the
+      `grid` token, `wviewer::grid_toggle`/`_at`/`grid_shown`, the
+      `WaveViewer` Ctrl-G default, a Graph-menu CHECKBUTTON,
+      `wviewer_grid_show`, rc block, spec §"Grid on/off". `GT*` in
+      `test_wave_grid.tcl`: 44 nogui / 80 DISPLAY.
+
+> **⚠ "Then gate `draw_graph_grid`'s body" WOULD HAVE BROKEN THE PLOT.** That
+> function also draws the background, the bounding box, the tick marks, **the
+> axis NUMBERS** and the zero lines. Gating the body takes the numbers with it
+> and leaves a plot nobody can read. Only the four dashed-line calls are gated.
+>
+> Two things the section got right and one it did not mention: the `active=1`
+> precedent transferred exactly (default before `RECT_OUTSIDE`), and the
+> bindtag/rc-wins recipe was correct. Not mentioned: the grid flag is a WINDOW
+> property, so it belongs in the layout dict beside `sharedx` and must reach
+> `graph_props` as an ARGUMENT — reading it from a namespace global would make
+> the rect generator impure, the same objection that shaped item 2's
+> `drawline` split. Also: the menu twin has to be a **checkbutton** whose
+> `-command` SETS the value Tk already wrote; toggling again inverts twice and
+> the menu looks dead.
 
 **Verdict: MODERATE.** Blocked on **D-A**. Binding half is trivial; the feature
 half needs a small C change because **there is no grid on/off switch anywhere in

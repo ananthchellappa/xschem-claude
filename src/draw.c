@@ -3482,6 +3482,11 @@ static void draw_graph_grid(Graph_ctx *gr, void *ct)
    * same 4-pixel period, half the lit pixels.
    * dash_on stays 0 when dash_size is 0 -- at that zoom the grid is solid, and
    * a solid line has no duty cycle to halve. */
+  /* viewer plan item 3: `grid=0` (Ctrl-G) suppresses the DASHED LINES ONLY.
+   * The background, the bounding box, the tick marks, the axis NUMBERS and the
+   * zero lines are all drawn by this function too and all survive -- a plot
+   * with no readable axis is not a useful thing to toggle to. The plan said
+   * "gate draw_graph_grid's body"; that would have taken the numbers with it. */
   dash_on = (int)dash_size;
   dash_off = (int)dash_size;
   if(gr->griddash > 0 && dash_on > 0) {
@@ -3511,12 +3516,14 @@ static void draw_graph_grid(Graph_ctx *gr, void *ct)
         subwx = wx + deltax * (double)k / ((double)gr->subdivx + 1.0);
       if(!axis_within_range(subwx, gr->gx1, gr->gx2, deltax, gr->subdivx)) continue;
       if(axis_end(subwx, deltax, gr->gx2)) break;
-      drawline_duty(GRIDLAYER, ADD, W_X(subwx),   W_Y(gr->gy2), W_X(subwx),   W_Y(gr->gy1), 0.0, dash_on, dash_off, ct);
+      if(gr->grid)
+        drawline_duty(GRIDLAYER, ADD, W_X(subwx),   W_Y(gr->gy2), W_X(subwx),   W_Y(gr->gy1), 0.0, dash_on, dash_off, ct);
     }
     if(!axis_within_range(wx, gr->gx1, gr->gx2, deltax, gr->subdivx)) continue;
     if(axis_end(wx, deltax, gr->gx2)) break;
     /* swap order of gy1 and gy2 since grap y orientation is opposite to xorg orientation */
-    drawline_duty(GRIDLAYER, ADD, W_X(wx),   W_Y(gr->gy2), W_X(wx),   W_Y(gr->gy1), 0.0, dash_on, dash_off, ct);
+    if(gr->grid)
+      drawline_duty(GRIDLAYER, ADD, W_X(wx),   W_Y(gr->gy2), W_X(wx),   W_Y(gr->gy1), 0.0, dash_on, dash_off, ct);
     drawline(GRIDLAYER, ADD, W_X(wx),   W_Y(gr->gy1), W_X(wx),   W_Y(gr->gy1) + mark_size, 0.0, 0, ct); /* axis marks */
     /* X-axis labels */
     if(gr->logx)
@@ -3544,11 +3551,13 @@ static void draw_graph_grid(Graph_ctx *gr, void *ct)
           subwy = wy + deltay * (double)k / ((double)gr->subdivy + 1.0);
         if(!axis_within_range(subwy, gr->gy1, gr->gy2, deltay, gr->subdivy)) continue;
         if(axis_end(subwy, deltay, gr->gy2)) break;
-        drawline_duty(GRIDLAYER, ADD, W_X(gr->gx1), W_Y(subwy),   W_X(gr->gx2), W_Y(subwy), 0.0, dash_on, dash_off, ct);
+        if(gr->grid)
+          drawline_duty(GRIDLAYER, ADD, W_X(gr->gx1), W_Y(subwy),   W_X(gr->gx2), W_Y(subwy), 0.0, dash_on, dash_off, ct);
       }
       if(!axis_within_range(wy, gr->gy1, gr->gy2, deltay, gr->subdivy)) continue;
       if(axis_end(wy, deltay, gr->gy2)) break;
-      drawline_duty(GRIDLAYER, ADD, W_X(gr->gx1), W_Y(wy),   W_X(gr->gx2), W_Y(wy), 0.0, dash_on, dash_off, ct);
+      if(gr->grid)
+        drawline_duty(GRIDLAYER, ADD, W_X(gr->gx1), W_Y(wy),   W_X(gr->gx2), W_Y(wy), 0.0, dash_on, dash_off, ct);
       drawline(GRIDLAYER, ADD, W_X(gr->gx1) - mark_size, W_Y(wy),   W_X(gr->gx1), W_Y(wy), 0.0, 0, ct); /* axis marks */
       /* Y-axis labels */
       if(gr->logy)
@@ -3617,6 +3626,12 @@ void setup_graph_data(int i, int skip, Graph_ctx *gr)
   val = get_tok_value(r->prop_ptr,"griddash", 0);
   if(val[0]) gr->griddash = atoi(val);
   if(gr->griddash < 0 || gr->griddash > 32) gr->griddash = 0;
+  /* viewer plan item 3: grid on/off (Ctrl-G in the viewer). DEFAULT 1 -- an
+   * absent token must mean "draw the grid", or every schematic graph in the
+   * tree would lose its grid. Same early-default rule as the tokens above. */
+  gr->grid = 1;
+  val = get_tok_value(r->prop_ptr,"grid", 0);
+  if(val[0]) gr->grid = atoi(val) ? 1 : 0;
   gr->linewidth_mult = tclgetdoublevar("graph_linewidth_mult");
   xctx->graph_flags &= ~(128 | 256); /* clear hcursor flags */
   gr->hcursor1_y = gr->hcursor2_y = 0.0;

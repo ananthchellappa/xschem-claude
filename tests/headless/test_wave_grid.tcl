@@ -158,9 +158,87 @@ check_true "GB4 griddash is defaulted BEFORE the RECT_OUTSIDE early return" \
          [string first "if(RECT_OUTSIDE(gr->sx1, gr->sy1, gr->sx2, gr->sy2," $csrc]}]
 
 # ============================================================================
+# GT* — item 3: Ctrl-G toggles the grid (pure + source legs)
+# ============================================================================
+set save_gs [expr {[info exists ::wviewer_grid_show] ? $::wviewer_grid_show : {}}]
+
+check "GT1 the shipped default shows the grid" [pcall {wviewer::default_grid_show}] 1
+check "GT2 an rc can start a window grid-OFF" \
+  [pcall {set ::wviewer_grid_show 0; wviewer::default_grid_show}] 0
+foreach {tag v} {GT3 bogus GT4 {} GT5 2.5} {
+  set ::wviewer_grid_show $v
+  check "$tag garbage '$v' falls back to grid ON" [pcall {wviewer::default_grid_show}] 1
+}
+set ::wviewer_grid_show 1
+
+# The token is emitted ONLY when the grid is OFF -- an absent `grid` token means
+# "draw it", which is what every non-viewer graph in the tree relies on, and it
+# keeps a grid-on window's rects byte-identical to pre-item-3.
+set Gg [wviewer::empty_graph]
+check_true "GT6 grid ON emits NO grid token at all" \
+  [expr {[string first "grid=" [pcall {wviewer::graph_props $Gg 0 1}]] < 0}]
+check_true "GT7 grid OFF emits grid=0" \
+  [expr {[string first "grid=0" [pcall {wviewer::graph_props $Gg 0 0}]] >= 0}]
+# ...and the flag arrives as an ARGUMENT, not from a namespace global: the same
+# objection that shaped item 2's drawline split. If someone later reaches for a
+# global here, the two legs above still pass but this one goes red.
+check_true "GT8 graph_props takes the grid flag as a parameter" \
+  [expr {[llength [info args wviewer::graph_props]] == 3
+         && [lindex [info args wviewer::graph_props] 2] eq {grid}}]
+check "GT9 ...and it defaults to ON, so old call sites are unchanged" \
+  [lindex [info default wviewer::graph_props grid dflt; set dflt] 0] 1
+
+check "GT10 grid_shown on no token is ON (never a mystery-off)" \
+  [pcall {wviewer::grid_shown {}}] 1
+check "GT11 grid_toggle with no viewer -> {} (no throw)" \
+  [pcall {wviewer::grid_toggle}] {}
+check "GT12 grid_toggle_at on a non-viewer canvas -> {} (no throw)" \
+  [pcall {wviewer::grid_toggle_at .drw}] {}
+
+# the C half: gated lines, and the default that keeps every other graph's grid
+check "GT13 exactly the four DASHED grid lines are gated" \
+  [regexp -all {if\(gr->grid\)} $csrc] 4
+check_true "GT14 grid defaults to 1 (an absent token draws the grid)" \
+  [regexp {gr->grid = 1;} $csrc]
+check_true "GT15 grid is defaulted BEFORE the RECT_OUTSIDE early return" \
+  [expr {[string first "gr->grid = 1;" $csrc] <
+         [string first "if(RECT_OUTSIDE(gr->sx1, gr->sy1, gr->sx2, gr->sy2," $csrc]}]
+# the axis numbers must NOT be gated -- "gate draw_graph_grid's body" would have
+# taken them with it, leaving an unreadable plot
+check_true "GT16 the axis NUMBERS are drawn outside the grid gate" \
+  [regexp {if\(gr->grid\)\s*\n\s*drawline_duty} $csrc]
+check "GT17 no draw_string call sits behind the grid gate" \
+  [regexp -all {if\(gr->grid\)\s*\n\s*draw_string} $csrc] 0
+
+if {$save_gs ne {}} { set ::wviewer_grid_show $save_gs }
+
+# ============================================================================
 # GG* — GUI legs (self-SKIP without a usable DISPLAY)
 # ============================================================================
 if {[info exists ::has_x] && [info commands winfo] ne {}} {
+
+  # WSLg-robust key delivery: a bare `event generate` loses the key when the
+  # focus round-trip has not completed (measured ~1 run in 5, see
+  # test_wave_modes MG16). Gate on Tk reporting the canvas as focus owner and
+  # retry until the effect shows.
+  proc send_key {w ev done} {
+    for {set i 0} {$i < 200} {incr i} {
+      update
+      if {[uplevel 1 [list expr $done]]} { return 1 }
+      if {![winfo exists $w]} { return 0 }
+      focus -force $w
+      update
+      if {[uplevel 1 [list expr $done]]} { return 1 }
+      if {[focus -displayof $w] eq $w} {
+        event generate $w $ev
+        update
+        if {[uplevel 1 [list expr $done]]} { return 1 }
+      }
+      after 50
+    }
+    puts "  send_key: $ev delivery to $w never confirmed (WSLg focus stall)"
+    return 0
+  }
 
   proc viewer_ready {top} {
     for {set i 0} {$i < 300} {incr i} {
@@ -221,6 +299,91 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   # but a crash or a bad GC would surface here)
   check "GG4 a redraw with the reduced grid returns clean" \
     [pcall {wviewer::in_ctx $tok {xschem redraw}}] {}
+
+  # --- item 3: Ctrl-G toggles the grid ---------------------------------------
+  set ::wvg_log {}
+  rename wviewer::log_action wviewer::__real_log_action
+  proc wviewer::log_action {line} { lappend ::wvg_log $line }
+
+  check "GT20 the window starts with the grid ON" [pcall {wviewer::grid_shown $tok}] 1
+  check "GT20 ...and its rects carry NO grid token" \
+    [pcall {xschem getprop rect 2 0 grid}] {}
+  set nlog [llength $::wvg_log]
+  check "GT21 toggle returns the NEW state" [pcall {wviewer::grid_toggle {} $tok}] 0
+  xschem new_schematic switch $vdrw
+  check "GT21 every rect gained grid=0" \
+    [list [pcall {xschem getprop rect 2 0 grid}] \
+          [pcall {xschem getprop rect 2 1 grid}]] {0 0}
+  check "GT21 exactly one replayable line logged" \
+    [expr {[llength $::wvg_log] - $nlog}] 1
+  check "GT21 the line carries the explicit state and token" \
+    [lindex $::wvg_log end] "wviewer::grid_toggle 0 $tok"
+  check "GT22 toggling back returns 1" [pcall {wviewer::grid_toggle {} $tok}] 1
+  xschem new_schematic switch $vdrw
+  check "GT22 the token is REMOVED again, not left as grid=1" \
+    [pcall {xschem getprop rect 2 0 grid}] {}
+  # a window option, not model content: no undo point, buffer untouched
+  check "GT23 the toggle is NOT an undo point (window option, not content)" \
+    [pcall {wviewer::history_depth $tok}] {0 0}
+  check "GT23 the buffer is not modified" [xschem get modified] 0
+  # change-only rule: a redundant set logs nothing
+  set nlog [llength $::wvg_log]
+  check "GT24 setting the state it already has is a no-op" \
+    [pcall {wviewer::grid_toggle 1 $tok}] 1
+  check "GT24 ...and logs nothing" [expr {[llength $::wvg_log] - $nlog}] 0
+  check "GT25 a bad want value is refused" [pcall {wviewer::grid_toggle bogus $tok}] {}
+  # the menu mirror must track the model however the state changed
+  check "GT26 the menu mirror follows the model" \
+    [expr {$::wviewer::gridshow($tok)}] 1
+  pcall {wviewer::grid_toggle {} $tok}
+  check "GT26 ...after a toggle too" [expr {$::wviewer::gridshow($tok)}] 0
+  pcall {wviewer::grid_toggle 1 $tok}
+
+  # the binding seam + a REAL Ctrl-G
+  check "GT27 Ctrl-G is on the WaveViewer tag by default" \
+    [expr {[bind WaveViewer <Control-Key-g>] ne {}}] 1
+  check_true "GT27 it calls grid_toggle_at with the event's canvas" \
+    [string match {*wviewer::grid_toggle_at %W*} [bind WaveViewer <Control-Key-g>]]
+  wviewer::strip_bindings $vdrw
+  check_true "GT27 it survives the strip_bindings sweep" \
+    [expr {[bind WaveViewer <Control-Key-g>] ne {}}]
+  check "GT27 Ctrl-G is NOT on the canvas widget itself" \
+    [bind $vdrw <Control-Key-g>] {}
+  set gdelivered [send_key $vdrw <Control-Key-g> {[wviewer::grid_shown $tok] == 0}]
+  if {!$gdelivered} {
+    puts "SKIPPED: GT28 real-key leg (focus never confirmed)"
+  } else {
+    check "GT28 a REAL Ctrl-G turned the grid off" [pcall {wviewer::grid_shown $tok}] 0
+    check "GT28 the key gesture logs like the command" \
+      [lindex $::wvg_log end] "wviewer::grid_toggle 0 $tok"
+    send_key $vdrw <Control-Key-g> {[wviewer::grid_shown $tok] == 1}
+    check "GT28 and back on" [pcall {wviewer::grid_shown $tok}] 1
+  }
+
+  # the Graph-menu checkbutton twin
+  set gm $vtop.wvmenubar.graph
+  if {[winfo exists $gm]} {
+    set gidx -1
+    for {set i 0} {$i <= [$gm index end]} {incr i} {
+      if {[catch {$gm entrycget $i -label} lb]} continue
+      if {$lb eq {Grid}} { set gidx $i; break }
+    }
+    check_true "GT29 the Graph menu has a Grid entry" [expr {$gidx >= 0}]
+    if {$gidx >= 0} {
+      check "GT29 it is a checkbutton, not a command" [$gm type $gidx] checkbutton
+      check "GT29 it advertises Ctrl+G" [$gm entrycget $gidx -accelerator] Ctrl+G
+      $gm invoke $gidx
+      check "GT29 invoking it turned the grid off" [pcall {wviewer::grid_shown $tok}] 0
+      $gm invoke $gidx
+      check "GT29 ...and back on (the mirror did not invert twice)" \
+        [pcall {wviewer::grid_shown $tok}] 1
+    }
+  } else {
+    puts "SKIPPED: GT29 (viewer menubar not found)"
+  }
+
+  rename wviewer::log_action {}
+  rename wviewer::__real_log_action wviewer::log_action
 
   catch {wviewer::close $tok}
   }

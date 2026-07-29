@@ -550,6 +550,50 @@ owning the current xschem context, like the 0151 mode/target commands); also
 - **Tests:** `tests/headless/test_wave_clear_all.tcl` (`CA*` no-window, `CG*`
   GUI) — 67 checks, sabotage-verified. Documented in `src/cadence_style_rc`.
 
+## Grid on/off — Ctrl-G (viewer plan item 3, 2026-07-29)
+
+**Ctrl-G shows/hides the graph grid of the active viewer window.** Command:
+`wviewer::grid_toggle ?want? ?token?` (`want` {} = invert, else 0/1), also
+**Graph > Grid** (a **checkbutton**, accelerator `Ctrl+G`). Returns the new
+state, or `{}` plus a CIW error. Initial state from `wviewer_grid_show`
+(default 1).
+
+- **⚠ Only the DASHED LINES go.** The plan said "gate `draw_graph_grid`'s
+  body" — that function also draws the background, the bounding box, the tick
+  marks, **the axis numbers** and the zero lines, so gating the body would
+  leave a plot with no readable axis. Only the four dashed-line calls are
+  gated; `GT16`/`GT17` assert that no `draw_string` sits behind the gate.
+- **`grid` is a WINDOW property, not a strip property** — it lives in the
+  layout dict beside `sharedx`, and is passed **as an argument** to
+  `graph_props` (like `active`), *not* read from a namespace global. Making
+  the rect generator impure is the same objection that shaped item 2's
+  `drawline` split.
+- **The token is emitted ONLY when OFF.** An absent `grid` token means "draw
+  it", which is what every non-viewer graph in the tree relies on, and it keeps
+  a grid-on window's rects byte-identical to pre-item-3 — the
+  `hilight_wave`/`markers` "absent means absent" rule. (Contrast `legendbold`,
+  whose 0 *must* be written because its default is not the shipped value.)
+  In C, `gr->grid` defaults to **1** and is set before the `RECT_OUTSIDE` early
+  return.
+- **Not an undo point.** This is a window OPTION (like plot mode, sharedx,
+  cursors), and window options are deliberately outside the model snapshot —
+  so no `push_undo`, no `capture`, matching `sharedx_toggle`/`set_plot_mode`.
+  It keeps the rest of the contract: refuse-a-no-op-without-logging, verified
+  `switch_ctx`, ONE regenerate, ONE log line.
+- **The menu mirror is PUSHED, not polled.** `sync_grid_mirror` runs on every
+  change, so the checkbutton is right however the state changed (key, command,
+  restore) — the staleness `plot_mode_menu_post` has to solve with a
+  `-postcommand`. The `-command` **sets** the value Tk already wrote rather
+  than toggling again, or the menu would invert twice and appear dead.
+- **Collision check — clean.** Ctrl-G in a schematic toggles the global
+  `draw_grid` via `bind .drw` in `src/cadence_style_rc`; a `WaveViewer` bindtag
+  binding cannot reach it, `strip_bindings` sweeps the cloned widget binds, and
+  the viewer sets `no_grid 1` on its context for life so the dot grid was never
+  drawn in this window anyway.
+- **Tests:** `tests/headless/test_wave_grid.tcl` `GT*` — 44 nogui / 80 DISPLAY
+  including a real Ctrl-G, the sweep-survival seam, the menu checkbutton's type
+  and double-invert, the change-only log rule and "not an undo point".
+
 ## Graph grid density (viewer plan item 2, 2026-07-29)
 
 **The graph grid keeps every line and every colour but lights half as many

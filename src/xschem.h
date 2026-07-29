@@ -1108,6 +1108,14 @@ typedef struct {
                        * 2/3 are TRANSIENT drag feedback (prospective destination).
                        * Like `active`, on-screen only (draw_graph flags bit 16).
                        * doc/claude/specs/waveform_viewer_modes.md */
+  int grid;       /* viewer plan item 3: 0 = do not draw this graph's dashed
+                   * GRID LINES. Prop token `grid`, written by the ASE viewer
+                   * only (Ctrl-G). The axes, the box, the tick marks, the axis
+                   * NUMBERS and the zero lines are NOT part of this -- turning
+                   * the grid off must leave the plot readable, so only the
+                   * dashed interior lines go. Defaults to 1, and like the
+                   * tokens below it must be set before the RECT_OUTSIDE early
+                   * return (shared xctx->graph_struct). */
   int griddash;   /* viewer plan item 2 / decision D-B: the OFF run of the graph
                    * grid's dash pattern, in pixels, against a 1-pixel ON run.
                    * 0 = the shipped 2-on/2-off (50% duty); 3 = 1-on/3-off,

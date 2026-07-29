@@ -262,6 +262,12 @@ set_ne wviewer_legend_bold 0
 # shared with every embedded schematic graph in the tree.
 set_ne wviewer_grid_dash_off 3
 
+# Initial grid visibility of a NEWLY OPENED viewer window (viewer plan item 3).
+# Ctrl-G toggles it live per window; this is only the starting value, read
+# lazily at open time like wviewer_plot_mode. Anything not a boolean -> 1
+# (grid shown), the shipped look.
+set_ne wviewer_grid_show 1
+
 namespace eval wviewer {
   # session token -> {top .xN win_path .xN.drw}
   variable windows [dict create]
@@ -315,6 +321,8 @@ namespace eval wviewer {
   variable cvb;     array set cvb {}
   variable cvr;     array set cvr {}
   variable sharedx; array set sharedx {}
+  # viewer plan item 3: Graph > Grid checkbutton mirror, per window
+  variable gridshow; array set gridshow {}
   # issue 0151: per-window PLOT MODE (single|multi) and TARGET STRIP (model
   # graph index). Window properties, not graph properties — hence arrays
   # keyed by session token like the mirrors above, NOT layout-dict keys (the
@@ -451,6 +459,7 @@ proc wviewer::forget {token} {
   catch {unset cvb($token)}
   catch {unset cvr($token)}
   catch {unset sharedx($token)}
+  catch {unset gridshow($token)}
   catch {unset mode($token)}
   catch {unset target($token)}
   catch {unset drag_from($token)}
@@ -477,7 +486,7 @@ proc wviewer::forget {token} {
 proc wviewer::open {token} {
   variable windows
   variable layouts
-  variable cva; variable cvb; variable cvr; variable sharedx
+  variable cva; variable cvb; variable cvr; variable sharedx; variable gridshow
   variable mode; variable target
   variable drag_from; variable drag_to; variable drag_y0; variable drag_active
   variable mmb
@@ -542,6 +551,7 @@ proc wviewer::open {token} {
   set cvb($token) 0
   set cvr($token) 0
   set sharedx($token) 0
+  set gridshow($token) [wviewer::default_grid_show]
   # issue 0151: the config var seeds THIS window's mode and nothing else —
   # from here on the per-window value is the authority (restore overwrites
   # both right after, when a state dict carries them)
@@ -1011,6 +1021,16 @@ proc wviewer::legend_bold {} {
 # (item 3's on/off toggle), reachable by mistake from a typo here otherwise.
 # Anything non-integer falls back to the default rather than to 0: a typo
 # should not silently restore the heavy grid the user asked to be rid of.
+# The config var `wviewer_grid_show` -> the INITIAL value of a window's grid
+# flag. Not the live state: once a window is open, its own layout key is the
+# authority (the default_plot_mode precedent).
+proc wviewer::default_grid_show {} {
+  if {![info exists ::wviewer_grid_show]} { return 1 }
+  set v [string trim $::wviewer_grid_show]
+  if {[string is boolean -strict $v]} { return [expr {[string is true -strict $v] ? 1 : 0}] }
+  return 1
+}
+
 proc wviewer::grid_dash_off {} {
   set d 3
   if {![info exists ::wviewer_grid_dash_off]} { return $d }
@@ -1351,7 +1371,7 @@ proc wviewer::predict_colors {token n} {
 # "name;vec" token whose inner quotes are BACKSLASH-escaped (the IN-MEMORY
 # prop form — save.c doubles the backslashes on file write); color = space-
 # separated per-trace color layer indices, count == trace count.
-proc wviewer::graph_props {G {active 0}} {
+proc wviewer::graph_props {G {active 0} {grid 1}} {
   set x1 [wviewer::dget $G x1 {}]
   if {$x1 eq {}} { set x1 0 }
   set x2 [wviewer::dget $G x2 {}]
@@ -1424,7 +1444,18 @@ proc wviewer::graph_props {G {active 0}} {
   set lmag [wviewer::legend_textmag]
   set lbold [wviewer::legend_bold]
   set gdash [wviewer::grid_dash_off]
-  return "flags=graph\ny1=$y1\ny2=$y2\nypos1=0\nypos2=2\ndivy=5\nsubdivy=1\nunity=1\nx1=$x1\nx2=$x2\ndivx=5\nsubdivx=1\nxlabmag=1.0\nylabmag=1.0\nlegendmag=$lmag\nlegendbold=$lbold\ngriddash=$gdash\nnode=\"$node\"\ncolor=\"$color\"\ndataset=-1\nunitx=1\nlogx=$logx\nlogy=$logy\nreorder_handle=1\n$hw$mk$act"
+  set gshow [expr {$grid ? {} : "grid=0\n"}]
+  # viewer plan item 3: grid on/off is a WINDOW property, not a strip property,
+  # so it arrives as an ARGUMENT (like `active`) rather than being read out of
+  # the graph dict -- and explicitly NOT out of a namespace global, which would
+  # make this generator impure and is the same objection that shaped the
+  # drawline split in item 2.
+  # Emitted ONLY when OFF. An absent token means "draw the grid", which is what
+  # every non-viewer graph in the tree relies on, and it keeps a grid-on
+  # window's rects byte-identical to pre-item-3 (the hilight_wave/markers
+  # "absent means absent" rule; unlike legendbold, whose 0 must be written
+  # because its default is the non-shipped value).
+  return "flags=graph\ny1=$y1\ny2=$y2\nypos1=0\nypos2=2\ndivy=5\nsubdivy=1\nunity=1\nx1=$x1\nx2=$x2\ndivx=5\nsubdivx=1\nxlabmag=1.0\nylabmag=1.0\nlegendmag=$lmag\nlegendbold=$lbold\ngriddash=$gdash\n${gshow}node=\"$node\"\ncolor=\"$color\"\ndataset=-1\nunitx=1\nlogx=$logx\nlogy=$logy\nreorder_handle=1\n$hw$mk$act"
 }
 
 # PURE (D4): pre-validate a whitespace-separated RPN expression against the
@@ -1520,7 +1551,8 @@ proc wviewer::regenerate {token} {
       lassign [wviewer::band_geometry $gi_ $n $vx1 $vy1 $vx2 $vy2] \
         rx1_ ry1_ rx2_ ry2_
       wviewer::place_graph_rect $rx1_ $ry1_ $rx2_ $ry2_ \
-        [wviewer::graph_props $G_ [expr {$gi_ == $act_gi}]]
+        [wviewer::graph_props $G_ [expr {$gi_ == $act_gi}] \
+           [wviewer::grid_shown $token]]
       incr gi_
     }
     # blank (auto) ranges: let the ENGINE compute them into the rect attrs
@@ -3300,6 +3332,92 @@ proc wviewer::clear_all {{token {}}} {
   return 1
 }
 
+# --- grid on/off (viewer plan item 3) ----------------------------------------
+
+# The live grid flag of `token`'s window: 1 = the dashed grid lines are drawn.
+# A layout that predates item 3 has no `grid` key, so an ABSENT key reads as
+# the rc default rather than as 0 -- a restored saved state must not come back
+# with its grid mysteriously off.
+proc wviewer::grid_shown {token} {
+  if {$token eq {}} { return 1 }
+  set lay [wviewer::layout_for $token]
+  if {![dict exists $lay grid]} { return [wviewer::default_grid_show] }
+  return [expr {[dict get $lay grid] ? 1 : 0}]
+}
+
+# Toggle (or set) the grid of a viewer window. `want` {} = invert, else 0/1.
+# Returns the NEW state, or {} plus a CIW error when no viewer resolves.
+#
+# Lighter than move_strip's contract on purpose, and the difference is
+# principled: this changes a WINDOW OPTION, not the model's content. Window
+# options (plot mode, sharedx, cursors, the loaded raw) are deliberately
+# OUTSIDE the undo snapshot -- see the undo/redo header -- so there is no
+# push_undo and no capture here, exactly as sharedx_toggle and set_plot_mode
+# do it. What it does share: refuse-a-no-op-without-logging, verified
+# switch_ctx, ONE regenerate, ONE log line.
+proc wviewer::grid_toggle {{want {}} {token {}}} {
+  variable windows
+  variable layouts
+  set token [wviewer::resolve_token $token]
+  if {$token eq {} || ![dict exists $windows $token]} {
+    if {[info exists ::has_x] && [info commands ::ciw_echo] ne {}} {
+      ciw_echo "wviewer: no waveform viewer window to toggle the grid in" error
+    }
+    return {}
+  }
+  set cur [wviewer::grid_shown $token]
+  if {$want eq {}} {
+    set new [expr {$cur ? 0 : 1}]
+  } elseif {[string is boolean -strict $want]} {
+    set new [expr {[string is true -strict $want] ? 1 : 0}]
+  } else {
+    if {[info exists ::has_x] && [info commands ::ciw_echo] ne {}} {
+      ciw_echo "wviewer: bad grid state '$want' (expected 0/1 or {})" error
+    }
+    return {}
+  }
+  # no-op discipline: set_plot_mode's change-only rule (this is a window
+  # option, not a destructive gesture like clear_all, so a redundant call is
+  # not worth a replay line).
+  if {$new == $cur} { return $cur }
+  if {![wviewer::switch_ctx $token]} { return {} }
+  set lay [wviewer::layout_for $token]
+  dict set lay grid $new
+  dict set layouts $token $lay
+  wviewer::sync_grid_mirror $token
+  wviewer::regenerate $token
+  wviewer::log_action [list wviewer::grid_toggle $new $token]
+  return $new
+}
+
+# Keep the Graph-menu checkbutton's variable in step with the model, so the
+# menu is right however the state last changed (key, command, state restore) --
+# the plot_mode_menu_post problem, solved by pushing instead of polling.
+proc wviewer::sync_grid_mirror {token} {
+  variable gridshow
+  set gridshow($token) [wviewer::grid_shown $token]
+}
+
+# Graph > Grid checkbutton -command. Tk has ALREADY written the new value into
+# the mirror variable by the time this runs, so it must SET that value -- a
+# plain toggle here would invert twice and the menu would appear dead.
+proc wviewer::grid_toggle_from_menu {token} {
+  variable gridshow
+  set want [expr {[info exists gridshow($token)] && $gridshow($token) ? 1 : 0}]
+  set r [wviewer::grid_toggle $want $token]
+  # a refused toggle (busy context) must not leave the checkbutton lying
+  if {$r eq {}} { wviewer::sync_grid_mirror $token }
+  return $r
+}
+
+# The Ctrl-G binding body — the clear_all_at pattern (resolve the window the
+# KEY went to, never the current xschem ctx).
+proc wviewer::grid_toggle_at {W} {
+  set token [wviewer::token_for_canvas $W]
+  if {$token eq {}} { return {} }
+  return [wviewer::grid_toggle {} $token]
+}
+
 # The Ctrl-D binding body (issue 0171). Resolves the token from the EVENT's
 # canvas (%W), not from the current xschem context: a key can arrive on a
 # viewer Tk has focused before the C side switched context to it, and clearing
@@ -3525,6 +3643,16 @@ proc wviewer::install_default_binds {} {
   #   * the `break` keeps it that way whatever the tags below this one carry.
   if {[bind WaveViewer <Key-e>] eq {}} {
     bind WaveViewer <Key-e> {wviewer::delete_empty_strips_at %W; break}
+  }
+  # Grid on/off (viewer plan item 3). COLLISION CHECK: Ctrl-G in the SCHEMATIC
+  # toggles the global `draw_grid` (src/cadence_style_rc), but that is a
+  # `bind .drw` -- a WaveViewer bindtag binding cannot reach it, the viewer
+  # canvas does not carry .drw's bindings (strip_bindings sweeps the clones),
+  # and the global draw_grid is irrelevant here anyway: the viewer sets
+  # `no_grid 1` on its context for life, so the schematic dot grid was never
+  # drawn in this window. The `break` keeps the key from travelling further.
+  if {[bind WaveViewer <Control-Key-g>] eq {}} {
+    bind WaveViewer <Control-Key-g> {wviewer::grid_toggle_at %W; break}
   }
   # undo / redo of viewer model edits (2026-07-28). `u` and Shift-u are inert in
   # this window otherwise: key_filter forwards only the waves_callback key set
@@ -4714,6 +4842,13 @@ proc wviewer::build_menubar {token top} {
   $mb.graph add checkbutton -label {Shared X Axis} \
     -variable ::wviewer::sharedx($token) \
     -command [list wviewer::sharedx_toggle $token]
+  # viewer plan item 3: the menu twin of the Ctrl-G bindtag default. A
+  # checkbutton, not a command, because unlike Clear All this is a STATE --
+  # and its variable is PUSHED by sync_grid_mirror on every change rather than
+  # polled by a -postcommand, so it cannot go stale when the key is used.
+  $mb.graph add checkbutton -label {Grid} -accelerator Ctrl+G \
+    -variable ::wviewer::gridshow($token) \
+    -command [list wviewer::grid_toggle_from_menu $token]
   # Cursors menu (item 12, live): engine x-cursors driven absolutely from
   # the Tcl mirrors (D1/D8)
   $mb.cursors add checkbutton -label {Cursor A} \
