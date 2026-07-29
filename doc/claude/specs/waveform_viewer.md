@@ -938,6 +938,109 @@ CIW error when no viewer resolves.
   remap, moving `push_undo` after the mutation, and skipping the marker sweep
   each turn legs red.
 
+## Trace context menu — RMB → Move to Separate Strip (viewer plan item 7, 2026-07-29)
+
+**A right-click that does not travel, on a trace inside the plot body, posts a
+menu whose one entry gives that trace a strip of its own.** Command:
+`wviewer::move_trace_to_new_strip <from_gi> <from_ti> ?token?` (optional token,
+`{}` = the viewer owning the current xschem context), CIW-typable and logged
+replayably. Returns the index of the **new** strip, `{}` plus a CIW error on a
+refusal.
+
+- **The gesture is a CLICK, posted on the `ButtonRelease-3`** — not a hold
+  timer, and not the press. The item-7 recon enumerated all eight Button-3 sites
+  in a viewer window and *measured* that a bare RMB click in the plot body is a
+  no-op today, so a click-menu is a pure addition. Posting on the release,
+  **after** `btn3_filter` has already forwarded that release to C, dissolves the
+  three hazards the plan expected to mitigate:
+  - **GRAPHPAN leak** — no grab exists during press→release, so the real release
+    reaches C and `GRAPHPAN` clears on its normal path.
+  - **Rubber-rect leak** — `callback.c` ~1460 erases the box-zoom outline on that
+    same release, before the menu appears.
+  - **The modal numeric-cursor `input_line`** is on the **press**
+    (`callback.c` ~1097), which this design never touches.
+- ⚠ **The travel tolerance is ZERO, and that is not tidiness.** The obvious
+  choice — `GRAPH_CLICK_TOL`, the 3 px the LMB wave-bold click uses — is wrong
+  here, because Button1 has no box zoom to collide with and Button3 does. The
+  engine's box-zoom gate is **exact equality** on the raw pointer
+  (`xmoved = (mx_double_save != mousex_snap)`, `callback.c` ~1871), and graph
+  interaction deliberately disables the snap grid (`callback.c` ~810, issue
+  0143) — so a release **one pixel** from its press has already committed a
+  zoom. A 3 px tolerance posted the menu on top of one, and the gate then ran
+  against the post-zoom geometry: probe-verified, the menu simply vanished
+  because the trace had moved out from under the pointer. Zero makes menu and
+  box zoom mutually exclusive by construction.
+- **Gate**, all rungs failing closed (`wviewer::trace_menu_pick`, returns
+  `{gi ti}` in MODEL index space or `{-1 -1}`): inside a strip →
+  `node_count >= 2` → a trace within `graph_trace_at`'s tolerance → a live model
+  trace index. The `node_count` rung mirrors the command's own refusal: a menu
+  offering an entry the command will refuse is worse than no menu.
+  - **Empty waveform space is deliberately not claimed** — that is item 8's.
+  - ⚠ **Digital and bus strips get no menu at all**, and that is the engine's
+    answer rather than a choice: `graph_wave_at` documents "digital strips and
+    bus traces answer -1 (their rendering is a band/ribbon, not a polyline)"
+    (`draw.c` ~4711), so `trace_at` misses everywhere on such a strip. It is the
+    same limit the LMB trace drag already lives with, and the two must not
+    diverge.
+  - **A press made while a MARKER drag was armed keeps the whole gesture.** A
+    non-Button1 release *aborts* that drag (`callback.c` ~866), so a menu there
+    would be a side effect of cancelling something else. The arm can only be
+    seen on the **press**, so `btn3_filter` records it (`b3mk`) and refuses on
+    the release; `trace_menu_pick` stays a question about geometry alone.
+  - **A modified RMB is refused** (`state & 13` = Shift|Control|Mod1, the
+    `strip_drag_press` mask). On a release `%s` reports the pre-release state, so
+    Button3Mask is set and must be ignored.
+  - **A release with no recorded press posts nothing.** That is also what makes
+    the second half of a double-RMB inert: `<Double-Button-3>` is `{break}`, so
+    the second *press* never reaches the filter, and the second *release* finds
+    the record already dropped.
+- **The payload is `move_trace` plus ONE `linsert`**, and deliberately **not**
+  `add_graph` — which regenerates on the spot and takes neither an undo point nor
+  a log line, so a strip created that way would land between the capture and the
+  mutation and split one gesture into two half-states. The new strip goes
+  **directly below the source** (D-F's reading-order rule, which item 8's split
+  will follow), and the move itself is the shipped PURE
+  `wviewer::move_trace_in_graphs`: marker migration, the `hilight_wave` hand-off
+  and the empty-destination range blanking all come from there, with no new index
+  math.
+- **Ordering: `move_strip`'s contract verbatim** — validate → refuse without
+  logging → verified `switch_ctx` → `capture_live_graph_state` → `push_undo` →
+  insert + pure move → target **in place** → ONE `regenerate` → ONE log line.
+- **The NEW strip becomes the target**, `move_trace` step 6 verbatim (the
+  destination is the target), set in place rather than through
+  `set_target_strip`, which would emit a second replay-log line for an internal
+  consequence of one command.
+  ⚠ **`target_index` clamps every read**, so this is easy to test hollow: on a
+  shallow stack "the new strip is the target" is also what a command that never
+  touched the target would answer. `TG4` uses a five-strip fixture with the
+  target on strip 4 and the source on strip 1 specifically so the two differ.
+- **No `with_edit`**: no C mutation verb the read-only viewer would refuse. Tcl
+  model edit plus `regenerate`, like `move_strip` and `move_trace`.
+- **The menu widget** is a real Tk `menu` on the viewer TOPLEVEL
+  (`$top.wvtracemenu`) — out of reach of the canvas binding sweep — rebuilt on
+  every post, because its entries carry *this* click's indices. Entry 0 is a
+  disabled header naming the picked trace by the legend's own rule
+  (`wviewer::trace_label`): a click near two traces resolves to the nearest, and
+  the user is entitled to see which. `tk_popup` supplies the grab, Escape and
+  click-away; `wviewer::trace_menu_unpost` drops it, and `forget` calls it so a
+  grab can never outlive its window.
+- **No menubar twin.** Unlike every other item here, the operation needs a trace
+  under the pointer, which a menubar entry does not have. The context menu is the
+  whole surface.
+- **Known boundary, recorded rather than desired**: an RMB press within 10 px of
+  a drawn cursor *and* on a trace opens the modal numeric-cursor `input_line`
+  first; the menu then posts when it is dismissed. Escape closes it. Closing this
+  would need a C-side cursor-proximity query (the `graph_near_wave` precedent),
+  and the press path is unchanged either way.
+- **Tests:** `tests/headless/test_wave_trace_menu.tcl` — `TP*` pure + `TN*`
+  no-window (**34 checks** under `--nogui`), `TG1..TG11` GUI; **128 checks** on
+  the DISPLAY arm. `tk_popup` is spied rather than called in the gesture legs: a
+  live popup takes a global grab that would swallow every later leg's events.
+  Sabotage-verified seven ways — restoring the 3 px tolerance, inserting at the
+  end instead of below the source, dropping the `>= 2` refusal at the command
+  and again at the gate, keeping the press record past the release, removing the
+  marker rung, and skipping the target write each turn legs red.
+
 ## Strip drag-to-reorder (2026-07-27)
 
 Full contract: `doc/claude/specs/waveform_viewer_modes.md` §12. As shipped:

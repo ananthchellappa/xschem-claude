@@ -160,6 +160,7 @@ looked at. **This list is the debt; do not let it grow silently.**
 | 3 — Ctrl-G grid toggle | `0d648465` | ✅ EYEBALLED OK 2026-07-29 |
 | 9 — diamond snap cursor | `56edb7ec` | ✅ EYEBALLED OK 2026-07-29 — **after two rejected rounds** (trail; proximity gate) |
 | 10 — viewer status bar | `ab1dcb47` | ✅ EYEBALLED OK 2026-07-29 |
+| 7 — RMB trace context menu | *(pending)* | ⏳ awaiting review |
 
 **Debt: none outstanding.** The `drawline` change in item 2 — the one thing the
 suite structurally could not verify, since nothing here can read back an X GC's
@@ -519,8 +520,52 @@ worth having.
 
 ---
 
-### Item 7 — RMB context menu on a trace → "move to separate strip"
-- [ ] **7. Trace context menu**
+### ⚠ Item 7 — RMB context menu on a trace → "move to separate strip"
+- [x] **7. Trace context menu** — **DONE 2026-07-29.**
+      `wviewer::move_trace_to_new_strip` + the `trace_menu_pick`/`_build`/
+      `_post`/`_unpost` quartet + the rewritten `btn3_filter`, all in
+      `wave_viewer.tcl`. Pure Tcl; no C change. Contract:
+      `doc/claude/specs/waveform_viewer.md` §"Trace context menu".
+      Suite `tests/headless/test_wave_trace_menu.tcl` — 128 DISPLAY / 34 nogui.
+
+> **⚠ THREE PLAN CORRECTIONS, all found while building. Read them before item 8,
+> which inherits this gesture layer wholesale.**
+>
+> **(1) The travel tolerance is ZERO, not `GRAPH_CLICK_TOL`.** The recon block
+> below cites the LMB wave-bold click (`callback.c` ~879, 3 px) as the precedent
+> for the travel test. It is the wrong precedent, and following it shipped a
+> defect that the suite caught: **Button1 has no box zoom to collide with, and
+> Button3 does.** The engine's Button-3 box-zoom gate is *exact equality* —
+> `xmoved = (xctx->mx_double_save != xctx->mousex_snap)` (`callback.c` ~1871) —
+> and `mousex_snap` **is the raw pointer** in graph interaction, because the snap
+> grid is deliberately disabled there (`callback.c` ~810, issue 0143). So a
+> release ONE pixel from its press has already committed a box zoom. With a 3 px
+> tolerance the menu posted on top of that zoom, and the gate then ran against
+> the post-zoom geometry — the trace had moved out from under the pointer and the
+> menu silently did not appear. The measurement quoted below ("a bare RMB click
+> is a no-op") is exactly right and exactly as narrow as it sounds: it holds at
+> zero travel and nowhere else.
+>
+> **(2) The stored-target shift is unreachable, so it was not written.** The
+> section below says to shift the target through the insert with `plot_signals`'
+> arithmetic. It cannot apply: `move_trace` step 6 makes the DESTINATION the
+> target, and this command inherits that rule, so the shift would be overwritten
+> on the next line. The insert-twin of `index_after_removal` is therefore
+> **still owed by item 8**, whose split adopts no single destination and does
+> need it.
+>
+> **(3) Landmine 33 points the other way for THIS gate.** Item 8's note below is
+> right that `near_wave` answers 0 across a digital/bus body. The consequence for
+> item 7 is not "the menu appears everywhere" but the opposite: `graph_wave_at`
+> documents "digital strips and bus traces answer -1" (`draw.c` ~4711), so
+> `trace_at` misses everywhere and **item 7's menu never appears on such a
+> strip**. Same limit the LMB trace drag already has; recorded in the spec as
+> stated behaviour rather than closed.
+>
+> Two things the section did not anticipate and that are now in the shipped gate:
+> a press made while a **marker drag** was armed is refused (the release aborts
+> that drag — a menu there would be a side effect of cancelling something else),
+> and the arm can only be observed on the **press**, so `btn3_filter` records it.
 
 **Verdict: MODERATE.** The payload is ~30 lines on three shipped PURE primitives
 and the gate predicate already exists. **All** the difficulty is in the RMB
@@ -796,4 +841,9 @@ y remap); do **not** copy its toplevel.
 5. **9** (unblocks 10; also builds the getter 10 needs)
 6. **10** — after 9
 7. **7** → **8** (7 pays the RMB plumbing cost; 8 is then nearly free) — needs D-F
+   — **7 DONE 2026-07-29.** The plumbing 8 inherits: `btn3_filter`'s press
+   record + **zero**-travel test, the modifier and marker-arm refusals,
+   `trace_menu_build`/`_post`/`_unpost`. What 8 still owes: its own gate (empty
+   space instead of a trace), `split_graph_in_graphs`, and the insert-twin of
+   `index_after_removal` that item 7 turned out not to need (correction (2)).
 8. **6** last (pure polish, highest pixel risk, lowest user cost if deferred) — needs D-E

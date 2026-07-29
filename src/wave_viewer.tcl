@@ -372,6 +372,17 @@ namespace eval wviewer {
   # press is what decides; the motions and the release just follow it, so a
   # press the filter refused can never leak a canvas pan mid-gesture.
   variable mmb;         array set mmb {}
+  # Button-3 CLICK detection (viewer plan item 7): the press pixel of the
+  # in-flight RMB gesture, keyed by CANVAS WIDGET rather than by session token
+  # — the press and the release are two events on one widget, and the widget is
+  # what both of them carry. Unset again on the release, so a release with no
+  # recorded press (a button that went down elsewhere, a replayed lone event)
+  # can never be read as a no-travel click.
+  variable b3x0;        array set b3x0 {}
+  variable b3y0;        array set b3y0 {}
+  # ... and whether a MARKER drag was armed when that press landed, which only
+  # the press can see (the release's forward to C aborts the arm).
+  variable b3mk;        array set b3mk {}
   # issue 0171: 1 once the `WaveViewer` bindtag defaults have been installed
   # (install_default_binds is called on every viewer open and must be a no-op
   # after the first — re-installing would undo an in-session remap).
@@ -439,8 +450,16 @@ proc wviewer::forget {token} {
   variable mmb
   variable axl; variable delmap
   variable cfgafter; variable fillwh
+  variable b3x0; variable b3y0; variable b3mk
   if {[dict exists $windows $token]} {
     set wp_ [dict get $windows $token win_path]
+    # item 7: take down a posted context menu BEFORE the window goes, so its
+    # tk_popup grab cannot outlive the widget it was taken on, and drop the
+    # widget-keyed press state with the widget it belongs to.
+    catch {wviewer::trace_menu_unpost $token}
+    catch {unset b3x0($wp_)}
+    catch {unset b3y0($wp_)}
+    catch {unset b3mk($wp_)}
     # a destroyed strip must not leave a selected-marker number pointing at
     # nothing (doc/claude/specs/graph_markers.md). graph_marker_sel lives in
     # xctx, i.e. PER WINDOW, and this runs during teardown where the current
@@ -2787,6 +2806,18 @@ proc wviewer::node_count {G} {
   return $n
 }
 
+# PURE: the name the LEGEND shows for trace dict `tr` — the alias when it has a
+# distinct one, else the vector. Deliberately the SAME rule graph_props applies
+# when it builds the `node` token (the `$nm ne {} && $nm ne $vec` test), so the
+# context menu names a trace exactly the way its own strip labels it. {} for a
+# trace that reaches no node slot at all.
+proc wviewer::trace_label {tr} {
+  set vec [wviewer::dget $tr vec {}]
+  set nm  [wviewer::dget $tr name {}]
+  if {$nm ne {} && $nm ne $vec} { return $nm }
+  return $vec
+}
+
 # PURE: the inverse — model trace index of NODE index `ni` of graph dict `G`,
 # or -1. This is the mapping a C answer (graph_trace_at, hilight_wave) must go
 # through before it indexes the model.
@@ -2944,6 +2975,99 @@ proc wviewer::move_trace {from_gi from_ti to_gi {token {}}} {
   wviewer::log_action [list wviewer::move_trace $from_gi $from_ti $to_gi $token]
   set dgs [dict get [wviewer::layout_for $token] graphs]
   return [expr {[llength [wviewer::dget [lindex $dgs $to_gi] traces {}]] - 1}]
+}
+
+# --- give one trace a strip of its own (viewer plan item 7) -------------------
+# doc/claude/specs/waveform_viewer.md. The payload behind the RMB context menu
+# below, and a CIW-typable command in its own right.
+#
+# It is `move_trace` with ONE extra step — a `linsert` of an `empty_graph` — and
+# it deliberately does NOT call `add_graph`: add_graph regenerates on the spot
+# and takes neither an undo point nor a log line, so a strip created that way
+# would land between this command's capture and its mutation and split one
+# gesture into two half-states (the very failure the move_strip ordering
+# contract exists to prevent).
+#
+# The new strip goes DIRECTLY BELOW the source, which is decision D-F's
+# reading-order rule (the same one item 8's split will follow). The move itself
+# is the shipped PURE `move_trace_in_graphs`, which is where marker migration,
+# the `hilight_wave` hand-off and the empty-destination range blanking come
+# from — nothing here does index math on markers.
+#
+# Same ordering contract as move_strip / move_trace, for the same reasons:
+#   1. resolve + validate every index against the LIVE model
+#   2. REFUSE, without mutating and without logging, when the strip carries
+#      fewer than two DRAWN traces: a lone trace already has a strip to itself,
+#      and "separating" it would only leave an empty strip behind. This is the
+#      authoritative half of the menu gate, so a hand-typed call is refused too
+#   3. verify the context switch (capture reads rect props; switch_ctx silently
+#      no-ops under a raised semaphore — landmine 17)
+#   4. capture the live C-written state FIRST, so the regenerate below cannot
+#      undo a pan/zoom/bold made with the mouse
+#   5. insert the empty strip, then the pure move, dictionary carried whole
+#   6. the NEW strip becomes the target strip, set IN PLACE — move_trace step 6
+#      verbatim (the destination is the target), and not through
+#      set_target_strip, which would emit a second replay-log line for what is
+#      an internal consequence of this one command
+#   7. exactly ONE regenerate, exactly ONE fully-resolved log line
+#
+# ⚠ PLAN DEVIATION (recorded in plan_viewer_enhancements_2026-07.md): the plan
+# asked for the stored target to be SHIFTED through the insert with
+# plot_signals' arithmetic. That shift is unreachable here — step 6 overwrites
+# the target with the destination index, exactly as the twin command does — so
+# the shift helper is left for item 8, whose multi-strip split does not adopt a
+# single destination. Shifting AND overwriting would be dead code.
+#
+# Returns the index of the NEW strip, or {} on failure/refusal.
+proc wviewer::move_trace_to_new_strip {from_gi from_ti {token {}}} {
+  variable windows
+  variable target
+  set token [wviewer::resolve_token $token]
+  if {$token eq {} || ![dict exists $windows $token]} {
+    if {[info exists ::has_x] && [info commands ::ciw_echo] ne {}} {
+      ciw_echo "wviewer: no waveform viewer window to move a trace in" error
+    }
+    return {}
+  }
+  set gs [dict get [wviewer::layout_for $token] graphs]
+  set n [llength $gs]
+  if {![string is integer -strict $from_gi] || $from_gi < 0 || $from_gi >= $n} {
+    if {[info exists ::has_x] && [info commands ::ciw_echo] ne {}} {
+      ciw_echo "wviewer: bad strip index '$from_gi' (0..[expr {$n - 1}])" error
+    }
+    return {}
+  }
+  set G [lindex $gs $from_gi]
+  set nt [llength [wviewer::dget $G traces {}]]
+  if {![string is integer -strict $from_ti] || $from_ti < 0 || $from_ti >= $nt} {
+    if {[info exists ::has_x] && [info commands ::ciw_echo] ne {}} {
+      ciw_echo "wviewer: bad trace index '$from_ti' on strip $from_gi (0..[expr {$nt - 1}])" error
+    }
+    return {}
+  }
+  if {[wviewer::node_count $G] < 2} {
+    if {[info exists ::has_x] && [info commands ::ciw_echo] ne {}} {
+      ciw_echo "wviewer: strip $from_gi has nothing to separate (one drawn trace)" error
+    }
+    return {}
+  }
+  if {![wviewer::switch_ctx $token]} { return {} }
+  wviewer::capture_live_graph_state $token
+  wviewer::push_undo $token           ;# AFTER the capture: `u` restores the view
+  # re-read: the capture writes the live ranges back into the model, and the
+  # insert below must not be applied to the pre-capture list
+  set gs [dict get [wviewer::layout_for $token] graphs]
+  set at [expr {$from_gi + 1}]
+  # the insert is BELOW the source, so `from_gi` still addresses the source
+  # afterwards and no source-side index needs remapping
+  set gs [linsert $gs $at [wviewer::empty_graph]]
+  wviewer::set_graphs $token \
+    [wviewer::move_trace_in_graphs $gs $from_gi $from_ti $at]
+  set target($token) $at
+  wviewer::regenerate $token
+  wviewer::log_action \
+    [list wviewer::move_trace_to_new_strip $from_gi $from_ti $token]
+  return $at
 }
 
 # --- undo / redo of viewer model edits ---------------------------------------
@@ -4752,9 +4876,216 @@ proc wviewer::key_filter {W T x y N K s} {
 # dropped: it would swallow RMB whenever the mouse-position mirror lagged the
 # tiling, and there is no longer any off-graph region to protect (the schematic
 # context menu is already killed by the sweep). Never swallow RMB here.
-proc wviewer::btn3_filter {W T x y b s} {
-  if {$T == 4} { catch {focus $W} }                   ;# ButtonPress focuses
+# --- RMB context menu on a trace (viewer plan item 7) -------------------------
+# doc/claude/specs/waveform_viewer.md. A right-click that does NOT travel, on a
+# trace inside the plot body, posts a small menu whose one entry gives that
+# trace a strip of its own.
+#
+# WHY A CLICK AND NOT A HOLD (the recon of every Button-3 site in this window,
+# plan_viewer_enhancements_2026-07.md item 7): a bare RMB click in the plot body
+# is MEASURED to be a no-op today — with no motion `graph_rubber_active` stays 0
+# and no zoom is committed — so a click-menu is a pure addition rather than a
+# replacement. Posting it on the RELEASE, after btn3_filter has already handed
+# that release to C, dissolves the three hazards the plan worried about instead
+# of mitigating them: no grab exists during press->release so GRAPHPAN clears on
+# its normal path; the box-zoom rubber rectangle is erased by the same release
+# (callback.c ~1460) BEFORE the menu appears; and the modal numeric-cursor
+# input_line is on the PRESS (callback.c ~1097), which this design never touches.
+#
+# Known boundary, recorded rather than desired: an RMB press within 10 px of a
+# drawn cursor AND on a trace opens that modal first; the menu then posts when
+# it is dismissed. Escape closes it. Closing this would need a C-side
+# cursor-proximity query (the graph_near_wave precedent) and the press path is
+# unchanged either way, so it is left out of this item.
+
+# The Button-3 click travel tolerance, in CANVAS PIXELS: ZERO.
+#
+# ⚠ NOT GRAPH_CLICK_TOL, and the difference is load-bearing. That constant
+# (callback.c:34, 3 px) gates the Button-1 wave-bold click, and Button1 has no
+# box zoom to collide with. Button3 does, and the engine's gate on it is EXACT
+# EQUALITY: `xmoved = (xctx->mx_double_save != xctx->mousex_snap)`
+# (callback.c ~1871), where `mousex_snap` is the RAW pointer, because graph
+# interaction deliberately disables the snap grid (callback.c ~810, issue
+# 0143). So a release even ONE pixel from its press commits a box zoom — and a
+# menu posted on a 1-3 px "click" would appear on top of one.
+#
+# Zero makes the two mutually exclusive by construction: the menu posts exactly
+# when the release changed nothing, which is the case the item-7 recon
+# measured. Probe-verified rather than reasoned: a 2-pixel wobble posted no
+# menu because the engine had already zoomed the x range out from under the
+# gate, and the trace was no longer where the pointer was.
+proc wviewer::b3_click_tol {} { return 0 }
+
+# 1 when the Button-3 press of the gesture in flight on canvas `W` landed while
+# a MARKER drag was armed. Recorded on the press and read on the release,
+# because the release's forward to C aborts that arm (callback.c ~866: a
+# non-Button1 release calls graph_marker_drag_abort) and by gate time the
+# engine would answer 0. Absent record -> 0, like every other predicate here.
+proc wviewer::b3_marker_armed {W} {
+  variable b3mk
+  if {![info exists b3mk($W)]} { return 0 }
+  return [expr {$b3mk($W) ? 1 : 0}]
+}
+
+# The GATE. Which trace, if any, an RMB click at canvas pixel (px,py) is
+# offering a menu for: {gi ti} in MODEL index space, or {-1 -1} for "no menu
+# here". Every predicate fails CLOSED, so a missing verb or a refused context
+# switch degrades to the pre-item-7 behaviour (no menu) rather than to a menu
+# aimed at the wrong trace.
+#
+# Three refusals, in cost order:
+#   - not inside a strip at all (the bands tile the window, so this is rare,
+#     but a click during a resize storm can land outside every band);
+#   - the strip carries fewer than two DRAWN traces — mirrors
+#     move_trace_to_new_strip's own refusal, because a menu that posts an entry
+#     the command will refuse is worse than no menu;
+#   - no trace within `graph_trace_at`'s tolerance of the pointer. This is what
+#     keeps the menu off empty waveform space, which item 8 will claim.
+#
+# ⚠ DIGITAL AND BUS STRIPS HAVE NO MENU, and that is the engine's answer, not a
+# choice made here: `graph_wave_at` documents "digital strips and bus traces
+# answer -1 (their rendering is a band/ribbon, not a polyline)" (draw.c ~4711),
+# so `trace_at` misses everywhere on such a strip and this gate refuses. It is
+# the same limit the LMB trace drag already lives with, and the two must not
+# diverge. (Landmine 33 states the consequence for the OTHER gate: because
+# near-wave is 0 across such a body, the whole strip reads as empty waveform
+# space — which is item 8's territory, not item 7's.)
+proc wviewer::trace_menu_pick {W px py} {
+  set token [wviewer::token_for_canvas $W]
+  if {$token eq {}} { return {-1 -1} }
+  # NOTE: the marker-drag refusal is NOT here. A marker gesture owns its whole
+  # sequence (doc/claude/specs/graph_markers.md) and a non-Button1 release
+  # ABORTS an armed marker drag, so a menu posted on that release would be a
+  # side effect of cancelling something else — but that is a fact about the
+  # PRESS, which only the gesture layer sees. btn3_filter records it and
+  # refuses there; this gate stays a question about geometry alone, answerable
+  # from a pixel with no gesture in flight.
+  set gi [wviewer::strip_at_pixel $W $px $py]
+  if {$gi < 0} { return {-1 -1} }
+  set gs [dict get [wviewer::layout_for $token] graphs]
+  if {$gi >= [llength $gs]} { return {-1 -1} }
+  set G [lindex $gs $gi]
+  if {[wviewer::node_count $G] < 2} { return {-1 -1} }
+  set ni [wviewer::trace_at $W $gi $px $py]
+  if {$ni < 0} { return {-1 -1} }
+  set ti [wviewer::trace_index_of_node $G $ni]
+  if {$ti < 0} { return {-1 -1} }
+  return [list $gi $ti]
+}
+
+# Build (do not post) the context menu for trace `ti` of strip `gi`. Returns the
+# menu widget path, or {} when there is no window to hang it on.
+#
+# It lives on the viewer TOPLEVEL, not on the canvas: strip_bindings sweeps the
+# canvas's bindings wholesale and a menu child there would be one more thing to
+# reason about, while a toplevel child is torn down by Tk with the window.
+#
+# REBUILT on every post. The entries carry THIS click's indices, and an entry
+# left over from the previous click would move the wrong trace — the same
+# argument that makes the drag feedback re-read the model on every motion.
+# The first entry is a disabled header naming the trace the gate picked, using
+# the legend's own naming rule: a click near two traces resolves to the nearest,
+# and the user is entitled to see which one that was before invoking anything.
+proc wviewer::trace_menu_build {token gi ti} {
+  variable windows
+  if {![dict exists $windows $token]} { return {} }
+  set top [dict get $windows $token top]
+  if {![winfo exists $top]} { return {} }
+  set gs [dict get [wviewer::layout_for $token] graphs]
+  if {$gi < 0 || $gi >= [llength $gs]} { return {} }
+  set trs [wviewer::dget [lindex $gs $gi] traces {}]
+  if {$ti < 0 || $ti >= [llength $trs]} { return {} }
+  set lab [wviewer::trace_label [lindex $trs $ti]]
+  set m $top.wvtracemenu
+  # `menu` ERRORS on an existing path, so the destroy is not tidiness: without
+  # it the second post would fail and this proc would return {} for ever.
+  catch {destroy $m}
+  catch {ase::theme}                                  ;# ensure named fonts
+  if {[catch {menu $m -tearoff 0 -takefocus 0}]} { return {} }
+  # the ASE look is applied SEPARATELY and catch'd on its own: a menu with the
+  # wrong palette is still a working menu, and configure keeps the theme values
+  # out of an `eval` (a colour or font name with a space would re-parse).
+  catch {
+    $m configure -font AseLabelFont -background [ase::theme panel] \
+                 -activebackground [ase::theme header]
+  }
+  if {$lab ne {}} {
+    $m add command -label $lab -state disabled
+    $m add separator
+  }
+  $m add command -label {Move to Separate Strip} \
+    -command [list wviewer::move_trace_to_new_strip $gi $ti $token]
+  return $m
+}
+
+# Post the menu for an RMB click at canvas pixel (px,py), at ROOT pixel
+# (rx,ry) — the event's %X/%Y; when they are not supplied they are derived from
+# the canvas origin. Returns 1 when a menu was posted, 0 when the gate refused
+# or Tk could not post: the seam a test drives instead of a real button.
+proc wviewer::trace_menu_post {W px py {rx -1} {ry -1}} {
+  set token [wviewer::token_for_canvas $W]
+  if {$token eq {}} { return 0 }
+  lassign [wviewer::trace_menu_pick $W $px $py] gi ti
+  if {$gi < 0} { return 0 }
+  set m [wviewer::trace_menu_build $token $gi $ti]
+  if {$m eq {} || ![winfo exists $m]} { return 0 }
+  if {$rx < 0 || $ry < 0} {
+    if {[catch {
+      set rx [expr {[winfo rootx $W] + $px}]
+      set ry [expr {[winfo rooty $W] + $py}]
+    }]} { return 0 }
+  }
+  if {[catch {tk_popup $m $rx $ry}]} { return 0 }
+  return 1
+}
+
+# Take the menu down and drop the grab tk_popup took. Idempotent, and safe when
+# nothing was ever posted. Returns 1 when a menu widget was there to remove.
+proc wviewer::trace_menu_unpost {token} {
+  variable windows
+  if {![dict exists $windows $token]} { return 0 }
+  set top [dict get $windows $token top]
+  set m $top.wvtracemenu
+  if {![winfo exists $m]} { return 0 }
+  catch {$m unpost}
+  catch {grab release $m}
+  catch {destroy $m}
+  return 1
+}
+
+proc wviewer::btn3_filter {W T x y b s {rx -1} {ry -1}} {
+  variable b3x0; variable b3y0; variable b3mk
+  if {$T == 4} {                                      ;# ButtonPress focuses
+    catch {focus $W}
+    set b3x0($W) $x
+    set b3y0($W) $y
+    # BEFORE the forward below, which aborts an armed marker drag
+    set b3mk($W) [wviewer::marker_grabbed $W]
+  }
+  # C FIRST, unconditionally — this is what makes the menu safe (see the block
+  # comment above): by the time the gate below runs, the engine has already
+  # erased any rubber rectangle and cleared GRAPHPAN on its normal release path.
   xschem callback $W $T $x $y 0 $b 0 $s
+  if {$T != 5} { return }
+  set had [info exists b3x0($W)]
+  set x0 0; set y0 0
+  if {$had} { set x0 $b3x0($W); set y0 $b3y0($W) }
+  set armed [wviewer::b3_marker_armed $W]
+  # the record is dropped HERE, on the release, whatever happens next: a second
+  # release with no press of its own (the <Double-Button-3> `{break}` swallows
+  # the second PRESS but not the second release) must not read as a click
+  unset -nocomplain b3x0($W) b3y0($W) b3mk($W)
+  if {!$had || $armed} { return }
+  # `s` on a ButtonRelease reports the state BEFORE the release, so Button3Mask
+  # is set here; 13 = Shift|Control|Mod1 only, the same modifier refusal the
+  # strip drag-reorder press applies. A modified RMB belongs to whatever else
+  # claims it, never to this menu.
+  if {$s & 13} { return }
+  set tol [wviewer::b3_click_tol]
+  if {abs($x - $x0) > $tol || abs($y - $y0) > $tol} { return }
+  # a menu is a mutation surface, and this runs inside a Tk binding: an error
+  # here would pop bgerror's stack trace over the viewer
+  catch {wviewer::trace_menu_post $W $x $y $rx $ry}
 }
 
 # Replace/override the editor bindings on the viewer canvas `wp` (per-widget:
@@ -4791,8 +5122,12 @@ proc wviewer::strip_bindings {wp} {
   }
   bind $wp <KeyPress>   {wviewer::key_filter %W %T %x %y %N %K %s}
   bind $wp <KeyRelease> {wviewer::key_filter %W %T %x %y %N %K %s}
-  bind $wp <ButtonPress-3>   {wviewer::btn3_filter %W %T %x %y 3 %s}
-  bind $wp <ButtonRelease-3> {wviewer::btn3_filter %W %T %x %y 3 %s}
+  # %X/%Y (ROOT pixels) are passed for the item-7 context menu, which tk_popup
+  # places in root coordinates. They are trailing OPTIONAL arguments so the
+  # six-argument call shape stays valid — test_wave_viewer drives btn3_filter
+  # directly with it.
+  bind $wp <ButtonPress-3>   {wviewer::btn3_filter %W %T %x %y 3 %s %X %Y}
+  bind $wp <ButtonRelease-3> {wviewer::btn3_filter %W %T %x %y 3 %s %X %Y}
   # issue 0151: clicking a strip makes it the TARGET (where signals sent from
   # the schematic land in single-plot mode). <ButtonPress-1> is MORE SPECIFIC
   # than the kept generic <Button>, so binding it would otherwise swallow the
