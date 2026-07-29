@@ -1112,7 +1112,18 @@ int raw_deletevar(const char *name)
   }
   raw->nvars--;
   my_realloc(_ALLOC_ID_, &raw->names, sizeof(char *) * raw->nvars);
-  my_realloc(_ALLOC_ID_, &raw->values, sizeof(SPICE_DATA *) * raw->nvars + 1);
+  /* (nvars + 1), NOT nvars + 1 byte: `values` carries nvars+1 columns, the last
+   * being the scratch column custom-wave expressions are evaluated into
+   * (landmine 1). The old precedence bug shrank the array to 8*nvars+1 bytes,
+   * truncating that slot away; the next `raw add` grew it back and wrote into
+   * what was uninitialised memory -- valgrind: "Invalid write of size 8" in
+   * plot_raw_custom_data <- raw_add_vector, then SIGSEGV. It survived under
+   * plain glibc only because the shrinking realloc happened to stay in place.
+   * Pre-existing (upstream 7a45497b) and backlog item 3 of
+   * doc/claude/code_analysis/waveform_subsystem_reference.md; fixed here
+   * because tests/headless/test_wave_markers.tcl is the tree's first caller of
+   * `xschem raw del`. */
+  my_realloc(_ALLOC_ID_, &raw->values, sizeof(SPICE_DATA *) * (raw->nvars + 1));
   ret = 1;
   return ret;
 }
