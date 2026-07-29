@@ -94,6 +94,40 @@ eqck "T6 -> TIMEOUT" "$(echo "$out" | head -1)" "DECISION: TIMEOUT"
 n=$(ls "$G"/req "$G"/body "$G"/hold "$G"/deadline "$G"/reply 2>/dev/null | grep -cv '^$\|:$')
 eqck "T7 no leftovers in the control dir" "$n" "0"
 
+# T8 a panel that dies mid-wait is RELAUNCHED, not treated as "review over".
+# This is not hypothetical: the panel died on its own during the first real
+# use of the gate, the wait ended NOGATE, and the item went unreviewed with no
+# trace of why (wish's output was going to /dev/null). Both halves are fixed —
+# the relaunch here, and widget.log below.
+G2="$TMP/revive"
+( for i in $(seq 1 80); do
+    id=$(ls "$G2/req" 2>/dev/null | head -1)
+    if [ -n "$id" ]; then
+      p1=$(cat "$G2/widget.pid" 2>/dev/null)
+      kill -9 "$p1" 2>/dev/null; rm -f "$G2/widget.pid"     # panel dies hard
+      for j in $(seq 1 60); do
+        p2=$(cat "$G2/widget.pid" 2>/dev/null)
+        if [ -n "$p2" ] && [ "$p2" != "$p1" ] && kill -0 "$p2" 2>/dev/null; then
+          echo REVIVED > "$TMP/revive.flag"; break
+        fi
+        sleep 0.3
+      done
+      # answer through the NEW panel, proving the request survived the death
+      printf 'PROCEED\nafter revival' > "$G2/reply/$id.t"; mv "$G2/reply/$id.t" "$G2/reply/$id"
+      return 0 2>/dev/null || exit 0
+    fi
+    sleep 0.3
+  done ) &
+out="$("$SELF/review_gate.sh" --dir "$G2" --label "T8 revive" --timeout 90 2>/dev/null)"; rc=$?
+wait
+eqck "T8 a killed panel is relaunched, not abandoned" "$(cat "$TMP/revive.flag" 2>/dev/null)" "REVIVED"
+eqck "T8 the request survived the death -> PROCEED, not NOGATE" \
+  "$(echo "$out" | head -1)" "DECISION: PROCEED"
+eqck "T8 exit 0" "$rc" "0"
+eqck "T8 the notes typed after revival came back" "$(echo "$out" | tail -1)" "after revival"
+ck "T8 the panel's output is captured for diagnosis, not /dev/null" \
+  "$([ -f "$G2/widget.log" ] && echo 1 || echo 0)"
+
 echo "=== WIDGET arm ==="
 W="$TMP/w"; mkdir -p "$W"/{req,body,reply,hold,deadline}
 printf 'BTN item' > "$W/req/777"; printf 'body' > "$W/body/777"

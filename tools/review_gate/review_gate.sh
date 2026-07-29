@@ -70,19 +70,39 @@ _alive() {
 
 _ensure_widget() {
   _alive && return 0
+  # NEVER /dev/null. The first time this panel died on its own the gate did the
+  # right thing and failed open — and there was no way to find out WHY, because
+  # wish's stderr had been discarded. A gate that fails open silently and
+  # untraceably is a gate that quietly stops being a gate. The log is truncated
+  # per launch, so it cannot grow without bound.
+  local log="$DIR/widget.log"
   # setsid: the panel is a singleton meant to outlive the request that spawned
   # it. Left in the caller's process group, the routine teardown of a
   # background task (kill -TERM -<pgid>) takes the panel with it — measured on
   # the GUI-test gate, same fix. A stale pid file loses the singleton race
   # harmlessly; _alive kill -0's it.
   if command -v setsid >/dev/null 2>&1; then
-    ( setsid wish "$SELF_DIR/review_gate_widget.tcl" "$DIR" >/dev/null 2>&1 & )
+    ( setsid wish "$SELF_DIR/review_gate_widget.tcl" "$DIR" >"$log" 2>&1 & )
   else
-    ( wish "$SELF_DIR/review_gate_widget.tcl" "$DIR" >/dev/null 2>&1 & )
+    ( wish "$SELF_DIR/review_gate_widget.tcl" "$DIR" >"$log" 2>&1 & )
   fi
   local i
   for i in $(seq 1 20); do _alive && return 0; sleep 0.15; done
   _alive
+}
+
+# A panel that dies mid-wait used to end the review outright ("panel gone,
+# proceeding"). That is the correct FALLBACK but a poor first response: the
+# request is still pending, the user has still not seen it, and relaunching
+# costs one process. Try once to bring it back, and only give up — failing
+# open, as always — if it will not stay up.
+_revive_widget() {
+  rm -f "$DIR/widget.pid"
+  _ensure_widget || return 1
+  # re-arm the countdown: the user cannot answer during the window in which
+  # there was no window to answer in.
+  [ "$TIMEOUT" -gt 0 ] 2>/dev/null && printf '%s' "$(( $(date +%s) + TIMEOUT ))" > "$DEAD"
+  return 0
 }
 
 # Pop the panel where the user actually IS. Under a virtual-desktop manager
@@ -160,9 +180,20 @@ while true; do
   fi
 
   # A dead panel must not strand the request: the user cannot answer a window
-  # that is not there.
+  # that is not there. But try to bring it back FIRST — a panel that died on
+  # its own (it has happened) should cost a relaunch, not the whole review.
+  # Only one revival, so a panel that cannot stay up degrades to fail-open
+  # instead of spinning.
   if ! _alive; then
-    echo "review_gate: panel gone, proceeding" >&2
+    if [ "${_revived:-0}" = "0" ]; then
+      _revived=1
+      echo "review_gate: panel died, relaunching once" >&2
+      if _revive_widget; then
+        sleep 1
+        continue
+      fi
+    fi
+    echo "review_gate: panel gone, proceeding (see $DIR/widget.log)" >&2
     cleanup
     emit NOGATE
     exit 0
