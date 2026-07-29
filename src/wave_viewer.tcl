@@ -226,10 +226,23 @@ set_ne wviewer_plot_mode single
 # embedded schematic graph in the tree (~127 of them ship), and decision D-G is
 # that they must not move.
 set_ne wviewer_legend_textmag 1.63
-# 1 = draw every legend entry in the bold face (prop token `legendbold=1`).
-# The bolded wave (issue 0152) was the ONLY bold entry before this, so with
-# every entry bold it needs a different cue: draw.c gives it bold ITALIC.
-set_ne wviewer_legend_bold 1
+# 1 = draw EVERY legend entry in the bold face (prop token `legendbold=1`).
+#
+# DEFAULT 0, BY REVIEW 2026-07-29. The plan's recorded decision was "both size
+# and boldness — every legend entry bold", and that is what shipped first. Seen
+# on screen the user's verdict was the opposite: *"the legend is always bolded.
+# We want same font size as axis, but bolding only when the associated trace is
+# selected"*. So the SIZE change stands and the weight goes back to the issue
+# 0152 rule — bold marks the SELECTED trace, which is information, where
+# bolding everything is just weight.
+#
+# The knob stays, because the all-bold look is one rc line away for anyone who
+# wants it. At 0 the C side takes the pre-existing conditional-bold path
+# unchanged (`hilight_wave == wcnt`, upright), so this is byte-identical to
+# what shipped before item 1 except for the size. At 1 the bolded wave needs a
+# different cue — bold is no longer distinctive — and draw.c gives it bold
+# ITALIC.
+set_ne wviewer_legend_bold 0
 
 namespace eval wviewer {
   # session token -> {top .xN win_path .xN.drw}
@@ -960,14 +973,16 @@ proc wviewer::legend_textmag {} {
 }
 
 # The config var `wviewer_legend_bold` -> the `legendbold` prop token, as a
-# strict 0/1. Anything unrecognised is the shipped default, 1 (bold): the whole
-# point of item 1 is that the legend reads at the weight of the axis numbers,
-# so a typo in an rc must not silently turn the feature off.
+# strict 0/1. Anything unrecognised falls back to the shipped default, 0 —
+# which is the CONSERVATIVE direction here: 0 is the long-standing issue-0152
+# behaviour (bold marks the selected trace), so a typo in an rc leaves the
+# viewer looking the way it always has rather than silently restyling every
+# legend entry.
 proc wviewer::legend_bold {} {
-  if {![info exists ::wviewer_legend_bold]} { return 1 }
+  if {![info exists ::wviewer_legend_bold]} { return 0 }
   set v [string trim $::wviewer_legend_bold]
   if {[string is boolean -strict $v]} { return [expr {[string is true -strict $v] ? 1 : 0}] }
-  return 1
+  return 0
 }
 
 # Clamp a stored target index into a layout of `n` graphs. Out of range, a

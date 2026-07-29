@@ -127,12 +127,19 @@ under each. The question text is kept for the rationale.
       rc-overridable Tcl var. **This supersedes the "new C helper" recommendation
       in item 1 below** — see the ⚠ PLAN CORRECTION there.
 
-- [x] **Item 1 "same weight"** — **→ DECIDED: BOTH size and boldness.** Legend
-      text is enlarged to match the axis numbers **and** every legend entry is
-      drawn `CAIRO_FONT_WEIGHT_BOLD`. ⚠ The user was told and accepted that this
-      **erases the issue-0152 bold-wave cue** (today only the bolded wave's legend
-      entry is bold); a replacement cue for the bolded wave must be proposed when
-      item 1 is built.
+- [x] **Item 1 "same weight"** — ~~DECIDED: BOTH size and boldness~~
+      **→ REVERSED ON REVIEW 2026-07-29.** The original decision was that legend
+      text be enlarged to match the axis numbers **and** every entry drawn
+      `CAIRO_FONT_WEIGHT_BOLD`, accepting that this erases the issue-0152
+      bold-wave cue. That shipped, was eyeballed, and was rejected:
+      *"the legend is always bolded. We want same font size as axis, but bolding
+      only when the associated trace is selected."*
+      **Final: the SIZE change stands; the WEIGHT reverts to issue 0152** (bold
+      marks the selected trace). `wviewer_legend_bold` defaults to 0 and the
+      all-bold look plus its bold-italic cue survive as an opt-in.
+      **Lesson for the remaining items:** a decision about how something LOOKS
+      is provisional until it has been looked at. Ship the knob, default it to
+      the conservative side, and let the eyeball settle it.
 
 ---
 

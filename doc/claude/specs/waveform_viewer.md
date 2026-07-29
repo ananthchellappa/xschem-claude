@@ -554,8 +554,19 @@ owning the current xschem context, like the 0151 mode/target commands); also
 
 **The viewer legend is drawn at the size of the Y-axis numbers and in the bold
 face.** Two rc-overridable vars, `wviewer_legend_textmag` (default **1.63**) and
-`wviewer_legend_bold` (default **1**), read lazily at strip-template time and
+`wviewer_legend_bold` (default **0**), read lazily at strip-template time and
 folded into the per-rect prop tokens `legendmag` / `legendbold`.
+
+> **⚠ REVERSED BY REVIEW, 2026-07-29.** The plan's recorded decision was "both
+> size and boldness — every legend entry drawn `CAIRO_FONT_WEIGHT_BOLD`", and
+> that is what shipped first. Seen on screen the verdict was the opposite:
+> *"the legend is always bolded. We want same font size as axis, but bolding
+> only when the associated trace is selected."* So **the size change stands and
+> the weight reverts to the issue-0152 rule** — bold marks the SELECTED trace,
+> which carries information, where bolding everything is just weight. The knob
+> survives (`wviewer_legend_bold 1` restores the all-bold look), and at the 0
+> default the C side takes the pre-existing conditional-bold path unchanged.
+> **The bold-italic cue below therefore only applies at `legendbold 1`.**
 
 **⚠ The reported symptom named the wrong field.** The ASE legend is **not**
 `gr->txtsizelegend` — `graph_props` never emits `vlegend`, `legend` or
@@ -606,10 +617,11 @@ asked for — and only **0.61×** the Y numbers. Hence **1.63 = 1.368e-3 / 8.4e-
   them; this one is generated, and emitting the 0 is what makes an rc that
   turns the bold *off* take effect on a regenerate instead of leaving the old
   value in the rect.
-- **The replacement cue for issue 0152.** The bolded wave's cue *was* "its
-  legend entry is the only bold one" — with every entry bold that is gone. On a
-  `legendbold` graph the bolded wave is distinguished by **slant**: bold italic
-  against bold upright. One token in the existing toy-font call, no new drawing
+- **The replacement cue for issue 0152 — only needed at `legendbold 1`.** The
+  bolded wave's cue *is* "its legend entry is the only bold one"; that only
+  breaks down when every entry is bold. On a `legendbold=1` graph the bolded
+  wave is therefore distinguished by **slant**: bold italic against bold
+  upright. At the 0 default nothing about the weight changes at all. One token in the existing toy-font call, no new drawing
   code, and no layout change (entries sit in fixed per-node slots, so nothing
   shifts). Without `legendbold` the shipped conditional-bold behaviour is
   byte-identical.

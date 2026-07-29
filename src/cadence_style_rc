@@ -265,13 +265,14 @@ bind .drw <Control-Shift-Key-4> {ase::plot_mode_for_current invert; break}
 #                           value that matches the Y-axis numbers at the
 #                           viewer's divy=5; clamped to 0.25 .. 6.0, anything
 #                           else falls back to the default.
-#   wviewer_legend_bold     1 = every legend entry bold (default). With every
-#                           entry bold the BOLDED WAVE (click a trace) can no
-#                           longer be "the bold one", so it is drawn bold
-#                           ITALIC instead. Set 0 for the old look, where only
-#                           the bolded wave's entry is bold.
+#   wviewer_legend_bold     0 = DEFAULT: bold marks the SELECTED trace only
+#                           (click a trace to bold it), which is the
+#                           long-standing behaviour -- only the SIZE changed.
+#                           1 = every legend entry bold; the selected trace is
+#                           then drawn bold ITALIC, since bold no longer
+#                           distinguishes it.
 # set wviewer_legend_textmag 1.63
-# set wviewer_legend_bold 1
+# set wviewer_legend_bold 0
 
 # Descend opens the child schematic READ-ONLY by default (browse mode). To edit,
 # press Ctrl-2 after descending, use the "Descend schematic (edit)" right-click

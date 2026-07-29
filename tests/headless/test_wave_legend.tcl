@@ -90,7 +90,12 @@ set save_bold [expr {[info exists ::wviewer_legend_bold]    ? $::wviewer_legend_
 
 check "LP1 the shipped default is the Y-axis match, 1.63" \
   [pcall {wviewer::legend_textmag}] 1.63
-check "LP1 and the shipped default is BOLD" [pcall {wviewer::legend_bold}] 1
+# By REVIEW 2026-07-29 the default is 0: the size change stands, but bold goes
+# back to marking the SELECTED trace only (issue 0152). The user's words on
+# seeing it: "we want same font size as axis, but bolding only when the
+# associated trace is selected".
+check "LP1 the shipped default is NOT all-bold (bold marks the selection)" \
+  [pcall {wviewer::legend_bold}] 0
 # the derivation, asserted so a future edit to either constant is caught:
 # txtsizelab = 8.4e-4*rh*legendmag must equal txtsizey = 1.368e-3*rh at divy=5
 check_true "LP1 1.63 really does match txtsizey/txtsizelab (within 1%)" \
@@ -121,28 +126,31 @@ foreach {tag v exp} {LP13 0 0  LP14 1 1  LP15 true 1  LP16 false 0
 }
 foreach {tag v} {LP19 {} LP20 maybe LP21 2.5} {
   set ::wviewer_legend_bold $v
-  check "$tag unrecognised '$v' keeps the feature ON (fails safe)" \
-    [pcall {wviewer::legend_bold}] 1
+  check "$tag unrecognised '$v' falls back to the conservative 0" \
+    [pcall {wviewer::legend_bold}] 0
 }
-set ::wviewer_legend_bold 1
+set ::wviewer_legend_bold 0
 
 # --- the tokens graph_props emits ---
 set G [wviewer::empty_graph]
 set props [pcall {wviewer::graph_props $G}]
 check "LP22 graph_props emits legendmag from the var, not the old 1.0" \
   [tokof $props legendmag] 1.63
-check "LP23 graph_props emits legendbold" [tokof $props legendbold] 1
+check "LP23 graph_props emits legendbold" [tokof $props legendbold] 0
 # teeth: the token must TRACK the var, not be a second hard-coded constant
 set ::wviewer_legend_textmag 3.0
-set ::wviewer_legend_bold 0
+set ::wviewer_legend_bold 1
 set props [pcall {wviewer::graph_props $G}]
 check "LP24 legendmag tracks the var" [tokof $props legendmag] 3.0
-check "LP25 legendbold=0 is EMITTED, not omitted (so an rc can turn it off)" \
-  [tokof $props legendbold] 0
-check_true "LP25 the token is really present in the string" \
+check "LP25 legendbold tracks the var too" [tokof $props legendbold] 1
+# emitted even at the 0 default, never omitted: an rc that turns the all-bold
+# look ON and then OFF again must take effect on a regenerate, not leave the
+# old value sitting in the rect
+set ::wviewer_legend_bold 0
+set props [pcall {wviewer::graph_props $G}]
+check_true "LP25 legendbold=0 is EMITTED, not omitted" \
   [expr {[string first "legendbold=0" $props] >= 0}]
 set ::wviewer_legend_textmag 1.63
-set ::wviewer_legend_bold 1
 # nothing else in the template moved
 set props [pcall {wviewer::graph_props $G}]
 check "LP26 the axis mags are untouched (only the LEGEND was too small)" \
@@ -188,27 +196,27 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   check "LG1 strip 0 carries the enlarged legendmag" \
     [pcall {xschem getprop rect 2 0 legendmag}] 1.63
   check "LG1 strip 0 carries legendbold" \
-    [pcall {xschem getprop rect 2 0 legendbold}] 1
+    [pcall {xschem getprop rect 2 0 legendbold}] 0
   check "LG1 EVERY strip carries them, not just the first" \
     [list [pcall {xschem getprop rect 2 1 legendmag}] \
-          [pcall {xschem getprop rect 2 1 legendbold}]] {1.63 1}
+          [pcall {xschem getprop rect 2 1 legendbold}]] {1.63 0}
 
   # --- LG2: an rc override reaches the rects ---------------------------------
   set ::wviewer_legend_textmag 2.0
-  set ::wviewer_legend_bold 0
+  set ::wviewer_legend_bold 1
   wviewer::regenerate $tok
   xschem new_schematic switch $vdrw
   check "LG2 an rc-set textmag reaches the rect" \
     [pcall {xschem getprop rect 2 0 legendmag}] 2.0
-  check "LG2 an rc-set bold=0 reaches the rect" \
-    [pcall {xschem getprop rect 2 0 legendbold}] 0
+  check "LG2 an rc-set bold=1 (opt-in all-bold) reaches the rect" \
+    [pcall {xschem getprop rect 2 0 legendbold}] 1
   set ::wviewer_legend_textmag 1.63
-  set ::wviewer_legend_bold 1
+  set ::wviewer_legend_bold 0
   wviewer::regenerate $tok
   xschem new_schematic switch $vdrw
-  check "LG2 and it goes back" \
+  check "LG2 and it goes back to the defaults" \
     [list [pcall {xschem getprop rect 2 0 legendmag}] \
-          [pcall {xschem getprop rect 2 0 legendbold}]] {1.63 1}
+          [pcall {xschem getprop rect 2 0 legendbold}]] {1.63 0}
 
   # --- LG4: the tokens survive a capture round trip --------------------------
   # capture_live_graph_state re-reads the rects into the model; a regenerate
@@ -220,7 +228,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   check "LG4 legendmag survives capture + regenerate" \
     [pcall {xschem getprop rect 2 0 legendmag}] 1.63
   check "LG4 legendbold survives capture + regenerate" \
-    [pcall {xschem getprop rect 2 0 legendbold}] 1
+    [pcall {xschem getprop rect 2 0 legendbold}] 0
   check "LG4 the viewer buffer is still not modified" [xschem get modified] 0
 
   catch {wviewer::close $tok}
