@@ -952,6 +952,14 @@ void copy_objects(int what)
                    xctx->rx2+xctx->deltax, xctx->ry2+xctx->deltay,xRECT, c, SELECTED, xctx->rect[c][n].prop_ptr);
         l = xctx->rects[c] - 1;
         flip_rotate_ellipse(&xctx->rect[c][l], xctx->move_rot, xctx->move_flip);
+        /* The prop_ptr was cloned verbatim just above, so a copied GRAPH would
+         * carry the ORIGINAL marker numbers -- and window-wide uniqueness is what
+         * graph_marker_find / `prev` / the selection / delete all rest on. This
+         * is the second duplication door; the first is merge_box (paste.c).
+         * Note the ordering differs from merge_box's: storeobject has ALREADY
+         * registered the new rect here, so the numbering scan sees it and the
+         * base comes out above both copies. doc/claude/specs/graph_markers.md */
+        if(xctx->rect[c][l].flags & 1) graph_marker_renumber_rect(&xctx->rect[c][l]);
         break;
 
        case xTEXT:

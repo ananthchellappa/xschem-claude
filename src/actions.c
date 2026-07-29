@@ -1875,6 +1875,20 @@ void clear_drawing(void)
  xctx->sympin_preview = 0;
  xctx->wirelabel_preview = 0;
  xctx->graph_lastsel = -1;
+ /* Waveform markers: the selection is a NUMBER, and the same xctx is reused by
+  * `xschem clear`, File>Open in the same tab, `xschem load` and the disk-undo
+  * reload. A surviving selection would silently latch onto whatever marker in
+  * the NEW document happens to carry that number -- the M1 case, i.e. the
+  * common one -- drawing a selection ring the user never asked for and letting
+  * Delete destroy that marker. Any in-flight drag dies with the document too.
+  * doc/claude/specs/graph_markers.md */
+ xctx->graph_marker_sel = -1;
+ xctx->graph_marker_selgraph = -1;
+ xctx->graph_marker_drag = 0;
+ xctx->graph_marker_dragmode = GRAPH_MARKER_MODE_NONE;
+ xctx->graph_marker_dragnum = -1;
+ xctx->graph_marker_draggraph = -1;
+ xctx->graph_marker_moved = 0;
  del_inst_table();
  del_wire_table();
  my_free(_ALLOC_ID_, &xctx->schtedaxprop);

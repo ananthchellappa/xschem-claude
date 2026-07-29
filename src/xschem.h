@@ -396,6 +396,27 @@ typedef int Tcl_Size;
  * (`reorder_handle=4`, transient drag feedback like the drop bar above) */
 #define GRAPH_TRACE_DROP_W       3
 
+/* Waveform markers (doc/claude/specs/graph_markers.md). Tolerances are SCREEN
+ * PIXELS, fixed regardless of canvas zoom, like the reorder handle above.
+ * These live in the header (not draw.c) because graph_marker_press() in
+ * callback.c needs GRAPH_MARKER_TOL -- callback.c's own GRAPH_CLICK_TOL is
+ * file-private. MIRRORED in tests/headless/test_wave_markers.tcl. */
+#define GRAPH_MARKERS_MAX      512  /* max marker records per graph rect */
+#define GRAPH_MARKER_TOL       8.0  /* anchor/label grab radius on a press */
+#define GRAPH_MARKER_PICK_TOL 20.0  /* "is there a trace near the pointer" on m / d */
+
+/* xctx->graph_marker_dragmode -- the EFFECTIVE mode of an armed gesture,
+ * latched at PRESS TIME from the selection state and never re-read afterwards.
+ * xctx->graph_marker_drag keeps its original meaning, "what was GRABBED"
+ * (0/1/2), because `xschem get graph_marker_drag`, wviewer::marker_grabbed and
+ * wviewer::strip_drag_release all read it; THIS says what the gesture DOES,
+ * which since the selected-text drag is no longer the same question. */
+#define GRAPH_MARKER_MODE_NONE   0
+#define GRAPH_MARKER_MODE_ANCHOR 1  /* slide the anchor along its own trace */
+#define GRAPH_MARKER_MODE_LABEL  2  /* move the callout; the anchor stays put */
+#define GRAPH_MARKER_MODE_RIGID  3  /* SELECTED + text drag: translate the whole
+                                     * marker; the label offset is frozen */
+
 #define ROTATION(rot, flip, x0, y0, x, y, rx, ry) \
 { \
   double xxtmp = (flip ? 2 * x0 -x : x); \
@@ -1089,6 +1110,37 @@ typedef struct {
                        * doc/claude/specs/waveform_viewer_modes.md */
 } Graph_ctx;
 
+/* One waveform marker (doc/claude/specs/graph_markers.md). Persisted in the
+ * graph rect's `markers` prop token, one record per line, fields in this order.
+ * x/y are the UNSCALED sample values -- never mylog10()'ed even on a log axis,
+ * see landmine 35 -- and are guaranteed FINITE by the create/move ops, so the
+ * token alphabet stays numeric and cannot be broken by a "nan"/"inf" spelling.
+ * ldx/ldy are the label offset as a FRACTION of gr->w / gr->h: the only space
+ * stable under canvas zoom, strip resize AND axis autozoom. */
+typedef struct {
+  int num;         /* window-wide marker number, >= 1 (the N in "M<N>") */
+  int wave;        /* NODE index in the owning graph's `node` token (landmine 34) */
+  int dataset;     /* REAL raw dataset index, NOT find_closest_wave's sweepvar_wrap */
+  int point;       /* ABSOLUTE index into raw->values[*][] */
+  double x, y;     /* the sample, unscaled, finite */
+  int prev;        /* partner marker NUMBER for the delta block, 0 = none */
+  double ldx, ldy; /* label offset, fraction of gr->w / gr->h */
+} GraphMarker;
+
+/* Full identity of ONE sample picked by graph_point_at(). */
+typedef struct {
+  int wave;        /* node index (the hilight_wave / graph_trace_at index space) */
+  int dataset;     /* REAL raw dataset index */
+  int point;       /* ABSOLUTE index into raw->values[*][] */
+  int idx;         /* raw column actually read (== raw->nvars for an expression) */
+  int expression;  /* 1 when the trace is an RPN expression (scratch column) */
+  int sweep_idx;   /* raw column of this trace's sweep variable */
+  double x, y;     /* UNSCALED sample values, captured INSIDE the sample loop */
+  double sx, sy;   /* screen pixels of the sample (log-space mapped, S_X/S_Y) */
+  double dist;     /* point distance in pixels from the query pixel */
+  double seg_dist; /* point-to-SEGMENT distance -- the metric traces are RANKED on */
+} GraphPointHit;
+
 typedef struct {
   int savew, saveh;
   double savexor, saveyor, savezoom, savelw;
@@ -1523,6 +1575,31 @@ typedef struct {
    * current pointer and a click test against them would fire. Set to the raw pointer
    * on every Button1 press over a graph, invalidated by a double-click. */
   double graph_press_x, graph_press_y;
+  /* Waveform markers (doc/claude/specs/graph_markers.md). ALL TRANSIENT: the
+   * durable state is the rect's `markers` prop token.
+   * graph_marker_sel is a marker NUMBER (window-wide numbering) scoped by
+   * graph_marker_selgraph, so a Delete pressed over another strip cannot eat it.
+   * The drag is scratch-based: the record being dragged lives in
+   * graph_marker_scratch and the renderer substitutes it, so a whole gesture is
+   * ONE undo point, zero allocations per motion event, and ESC is a flag clear. */
+  int graph_marker_sel;       /* selected marker number, -1 = none */
+  int graph_marker_selgraph;  /* rect[GRIDLAYER] index owning the selection, -1 = none */
+  int graph_marker_drag;      /* what was GRABBED: 0 none, 1 the ANCHOR, 2 the LABEL.
+                               * This is the value `xschem get graph_marker_drag`
+                               * exports; do NOT overload it -- see dragmode below. */
+  int graph_marker_dragmode;  /* what the gesture DOES: GRAPH_MARKER_MODE_*, latched
+                               * at press from the selection state (a text drag on a
+                               * SELECTED marker is drag==2 but mode==RIGID) */
+  int graph_marker_dragnum;   /* marker number being dragged */
+  int graph_marker_draggraph; /* rect[GRIDLAYER] index the drag is bound to */
+  int graph_marker_moved;     /* travel exceeded GRAPH_CLICK_TOL -> it is a drag, not a click */
+  double graph_marker_press_x, graph_marker_press_y; /* press anchor, schematic units */
+  double graph_marker_ldx0, graph_marker_ldy0;       /* label offset at press time */
+  double graph_marker_x0, graph_marker_y0;           /* anchor SAMPLE at press time, the
+                                                      * origin a RIGID drag translates from
+                                                      * (the scratch's own x/y are rewritten
+                                                      * on the first motion event) */
+  GraphMarker graph_marker_scratch; /* live drag state, substituted by the renderer */
   int graph_lastsel; /* last graph that was clicked (selected) */
   /*    */
   XSegment *biggridpoint;
@@ -1725,6 +1802,28 @@ extern void draw_graph(int i, int flags, Graph_ctx *gr, void *ct);
 extern int find_closest_wave(int i, Graph_ctx *gr, int *node_number);
 extern int graph_near_wave(int i, double px, double py, double tol);
 extern int graph_wave_at(int i, double px, double py, double tol);
+/* --- waveform markers, doc/claude/specs/graph_markers.md --- */
+extern int  graph_point_at(int i, double px, double py, double tol,
+                           int restrict_wave, int restrict_dataset, GraphPointHit *hit);
+extern int  graph_markers_parse(const char *prop_ptr, GraphMarker **arr, int *n);
+extern void graph_markers_format(char **dest, const GraphMarker *arr, int n);
+extern void graph_markers_store(xRect *r, const GraphMarker *arr, int n);
+extern int  graph_marker_next_number(void);
+extern int  graph_marker_max_number(void);
+extern int  graph_marker_find(int num, int *graph_idx, GraphMarker *out);
+extern int  graph_marker_text(int num, char *dest, int destsize);
+extern int  graph_marker_at(int i, double px, double py, double tol, int *part);
+extern int  graph_marker_create(int i, double px, double py, int delta);
+extern int  graph_marker_create_at(int i, int wave, int dataset, int point, int delta);
+extern int  graph_marker_delete(int num);
+extern int  graph_marker_delete_all(int graph_idx);
+extern int  graph_marker_delete_selected(void);
+extern int  graph_marker_move(int num, double px, double py);
+extern int  graph_marker_anchor_at(int num, int dataset, int point);
+extern int  graph_marker_label_offset(int num, double ldx, double ldy);
+extern int  graph_marker_select(int num, int graph_idx);
+extern int  graph_marker_renumber_rect(xRect *r);
+extern void graph_marker_notify(void);
 extern void setup_graph_data(int i, int skip, Graph_ctx *gr);
 extern int graph_fullyzoom(xRect *r,  Graph_ctx *gr, int graph_dataset);
 extern int graph_fullxzoom(int i, Graph_ctx *gr, int dataset);

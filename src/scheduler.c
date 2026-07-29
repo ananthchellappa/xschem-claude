@@ -2914,7 +2914,11 @@ static int xschem_cmds_d(Tcl_Interp *interp, int argc, const char *argv[], int *
     {
       int flags;
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
-      if(argc > 2) {
+      /* has_x: --nogui has no window, no pixmap and no GCs, and draw_graph goes
+       * straight to Xlib -> SIGSEGV (pre-existing, found while testing waveform
+       * markers). Range: both setup_graph_data() and draw_graph() dereference
+       * rect[GRIDLAYER][i] unchecked. Both are now no-ops rather than crashes. */
+      if(argc > 2 && has_x && atoi(argv[2]) >= 0 && atoi(argv[2]) < xctx->rects[GRIDLAYER]) {
         int i = atoi(argv[2]);
         setup_graph_data(i, 0,  &xctx->graph_struct);
         if(argc > 3) {
@@ -3837,6 +3841,57 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
             } else {
               Tcl_SetResult(interp, "-1", TCL_STATIC);
             }
+          }
+          /* ---- waveform markers, doc/claude/specs/graph_markers.md ----
+           * Four read-only getters, all FAIL SOFT (a sentinel + TCL_OK on a
+           * short or bad query, never an error): the ASE viewer wraps them in
+           * `catch` + `string is integer -strict` and must be able to treat a
+           * missing/erroring verb as "nothing there", never as "locked out". */
+
+          /* xschem get graph_marker_at <graph_idx> <px> <py> [tol]
+           * Which marker is under that CANVAS PIXEL, and WHICH PART of it:
+           * "" (nothing) | "<num> anchor" | "<num> label". The part matters
+           * because the two drive DIFFERENT drags -- the anchor slides along its
+           * trace, the label just moves. Default tol = GRAPH_MARKER_TOL. */
+          else if(!strcmp(argv[2], "graph_marker_at")) {
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            if(argc > 5) {
+              int part = 0, num;
+              double tol = (argc > 6) ? atof(argv[6]) : GRAPH_MARKER_TOL;
+              num = graph_marker_at(atoi(argv[3]), atof(argv[4]), atof(argv[5]), tol, &part);
+              if(num > 0 && part) {
+                char res[80];
+                my_snprintf(res, S(res), "%d %s", num, part == 1 ? "anchor" : "label");
+                Tcl_SetResult(interp, res, TCL_VOLATILE);
+              } else {
+                Tcl_ResetResult(interp);
+              }
+            } else {
+              Tcl_ResetResult(interp);
+            }
+          }
+          /* xschem get graph_marker_drag -> 0 none | 1 anchor drag | 2 label drag.
+           * The cursor_grabbed twin: the ASE press seam consults it to decide
+           * that C owns the whole gesture. */
+          else if(!strcmp(argv[2], "graph_marker_drag")) {
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            Tcl_SetResult(interp, my_itoa(xctx->graph_marker_drag), TCL_VOLATILE);
+          }
+          /* xschem get graph_marker_sel -> the selected marker number, -1 = none */
+          else if(!strcmp(argv[2], "graph_marker_sel")) {
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            Tcl_SetResult(interp, my_itoa(xctx->graph_marker_sel), TCL_VOLATILE);
+          }
+          /* xschem get graph_rects -> how many layer-2 rects are GRAPHS.
+           * Not the same as `xschem get rects 2` (every rect on the layer): the
+           * ASE marker push hook uses this for its model<->rect 1:1 guard, and a
+           * single stray non-graph GRIDLAYER rect would permanently disable it. */
+          else if(!strcmp(argv[2], "graph_rects")) {
+            int gi, cnt = 0;
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            for(gi = 0; gi < xctx->rects[GRIDLAYER]; gi++)
+              if(xctx->rect[GRIDLAYER][gi].flags & 1) cnt++;
+            Tcl_SetResult(interp, my_itoa(cnt), TCL_VOLATILE);
           }
           else if(!strcmp(argv[2], "gridlayer")) { /* layer number for grid */
             Tcl_SetResult(interp, my_itoa(GRIDLAYER),TCL_VOLATILE);
@@ -4928,6 +4983,133 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
             Tcl_SetResult(interp, res, TCL_VOLATILE); /* copies: stack buf is fine */
           }
         }
+      }
+    }
+
+    /* xschem graph_marker <sub> ...   (doc/claude/specs/graph_markers.md)
+     *
+     * The MUTATING half of the marker surface -- fails LOUD (usage + TCL_ERROR),
+     * unlike the `xschem get graph_marker_*` getters which fail soft. Must live
+     * in xschem_cmds_g: the top-level dispatch is on argv[1][0], so a verb in the
+     * wrong first-letter function is reachable only as "invalid command".
+     *
+     * Persistence needs no verb of its own -- `xschem getprop/setprop rect 2 <i>
+     * markers` already round-trips the multi-line token exactly.
+     *
+     *   add       <gi> <px> <py> [-delta]              -> new number | {}
+     *   add_at    <gi> <wave> <dset> <point> [-delta]  -> new number | {}
+     *   anchor    <num> <dset> <point>                 -> 1|0
+     *   move      <num> <px> <py>                      -> 1|0
+     *   label     <num> <ldx> <ldy>                    -> 1|0
+     *   delete    <num> | -all [<gi>]                  -> 1|0 | count
+     *   select    <num> [<gi>] | -none                 -> the new selection
+     *   list      [<gi>]  -> {{num graph wave dset point x y prev ldx ldy} ...}
+     *   text      <num>   -> the rendered label (embedded newlines)
+     */
+    else if(!strcmp(argv[1], "graph_marker"))
+    {
+      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(argc < 3) {
+        Tcl_SetResult(interp, "xschem graph_marker: usage: add|add_at|anchor|move|label|"
+                              "delete|select|list|text ...", TCL_STATIC);
+        return TCL_ERROR;
+      }
+      /* `select` is pure UI state, `list`/`text` are queries: not readonly-gated.
+       * Everything else mutates content and is (the ASE viewer defeats the gate
+       * deliberately through wviewer::with_edit, the established pattern). */
+      if(strcmp(argv[2], "select") && strcmp(argv[2], "list") && strcmp(argv[2], "text")) {
+        if(scheduler_readonly_reject(interp, "graph_marker")) return TCL_ERROR;
+      }
+      Tcl_ResetResult(interp);
+      if(!strcmp(argv[2], "add") && argc > 5) {
+        int delta = (argc > 6 && !strcmp(argv[6], "-delta"));
+        int num = graph_marker_create(atoi(argv[3]), atof(argv[4]), atof(argv[5]), delta);
+        /* reset on refusal too: the engine's extra_rawfile() does a tclvareval
+         * internally and leaves the substituted filename in the interp result,
+         * so "" is only really "" if we clear it here */
+        if(num > 0) Tcl_SetResult(interp, my_itoa(num), TCL_VOLATILE);
+        else Tcl_ResetResult(interp);
+      }
+      else if(!strcmp(argv[2], "add_at") && argc > 6) {
+        int delta = (argc > 7 && !strcmp(argv[7], "-delta"));
+        int num = graph_marker_create_at(atoi(argv[3]), atoi(argv[4]), atoi(argv[5]),
+                                         atoi(argv[6]), delta);
+        if(num > 0) Tcl_SetResult(interp, my_itoa(num), TCL_VOLATILE);
+        else Tcl_ResetResult(interp);
+      }
+      else if(!strcmp(argv[2], "anchor") && argc > 5) {
+        Tcl_SetResult(interp,
+          my_itoa(graph_marker_anchor_at(atoi(argv[3]), atoi(argv[4]), atoi(argv[5]))),
+          TCL_VOLATILE);
+      }
+      else if(!strcmp(argv[2], "move") && argc > 5) {
+        Tcl_SetResult(interp,
+          my_itoa(graph_marker_move(atoi(argv[3]), atof(argv[4]), atof(argv[5]))),
+          TCL_VOLATILE);
+      }
+      else if(!strcmp(argv[2], "label") && argc > 5) {
+        Tcl_SetResult(interp,
+          my_itoa(graph_marker_label_offset(atoi(argv[3]), atof(argv[4]), atof(argv[5]))),
+          TCL_VOLATILE);
+      }
+      else if(!strcmp(argv[2], "delete") && argc > 3) {
+        if(!strcmp(argv[3], "-all")) {
+          int gi = (argc > 4) ? atoi(argv[4]) : -1;
+          Tcl_SetResult(interp, my_itoa(graph_marker_delete_all(gi)), TCL_VOLATILE);
+        } else {
+          Tcl_SetResult(interp, my_itoa(graph_marker_delete(atoi(argv[3]))), TCL_VOLATILE);
+        }
+      }
+      else if(!strcmp(argv[2], "select") && argc > 3) {
+        int res;
+        if(!strcmp(argv[3], "-none")) res = graph_marker_select(-1, -1);
+        else res = graph_marker_select(atoi(argv[3]), (argc > 4) ? atoi(argv[4]) : xctx->graph_master);
+        Tcl_SetResult(interp, my_itoa(res), TCL_VOLATILE);
+      }
+      else if(!strcmp(argv[2], "list")) {
+        int gi, want = (argc > 3) ? atoi(argv[3]) : -1;
+        Tcl_Obj *lst = Tcl_NewListObj(0, NULL);
+        for(gi = 0; gi < xctx->rects[GRIDLAYER]; gi++) {
+          GraphMarker *a = NULL;
+          int n = 0, k;
+          if(!(xctx->rect[GRIDLAYER][gi].flags & 1)) continue;
+          if(want >= 0 && want != gi) continue;
+          n = graph_markers_parse(xctx->rect[GRIDLAYER][gi].prop_ptr, &a, &n);
+          for(k = 0; k < n; k++) {
+            char buf[128];
+            Tcl_Obj *rec = Tcl_NewListObj(0, NULL);
+            Tcl_ListObjAppendElement(interp, rec, Tcl_NewIntObj(a[k].num));
+            Tcl_ListObjAppendElement(interp, rec, Tcl_NewIntObj(gi));
+            Tcl_ListObjAppendElement(interp, rec, Tcl_NewIntObj(a[k].wave));
+            Tcl_ListObjAppendElement(interp, rec, Tcl_NewIntObj(a[k].dataset));
+            Tcl_ListObjAppendElement(interp, rec, Tcl_NewIntObj(a[k].point));
+            /* %.17g, not Tcl's 6-significant-digit default: this is the seam the
+             * tests assert exactness against */
+            my_snprintf(buf, S(buf), "%.17g", a[k].x);
+            Tcl_ListObjAppendElement(interp, rec, Tcl_NewStringObj(buf, -1));
+            my_snprintf(buf, S(buf), "%.17g", a[k].y);
+            Tcl_ListObjAppendElement(interp, rec, Tcl_NewStringObj(buf, -1));
+            Tcl_ListObjAppendElement(interp, rec, Tcl_NewIntObj(a[k].prev));
+            my_snprintf(buf, S(buf), "%.10g", a[k].ldx);
+            Tcl_ListObjAppendElement(interp, rec, Tcl_NewStringObj(buf, -1));
+            my_snprintf(buf, S(buf), "%.10g", a[k].ldy);
+            Tcl_ListObjAppendElement(interp, rec, Tcl_NewStringObj(buf, -1));
+            Tcl_ListObjAppendElement(interp, lst, rec);
+          }
+          if(a) my_free(_ALLOC_ID_, &a);
+        }
+        Tcl_SetObjResult(interp, lst);
+      }
+      else if(!strcmp(argv[2], "text") && argc > 3) {
+        char buf[512];
+        if(graph_marker_text(atoi(argv[3]), buf, S(buf)))
+          Tcl_SetResult(interp, buf, TCL_VOLATILE);
+        else Tcl_ResetResult(interp);
+      }
+      else {
+        Tcl_SetResult(interp, "xschem graph_marker: usage: add|add_at|anchor|move|label|"
+                              "delete|select|list|text ...", TCL_STATIC);
+        return TCL_ERROR;
       }
     }
     else { *cmd_found = 0;}

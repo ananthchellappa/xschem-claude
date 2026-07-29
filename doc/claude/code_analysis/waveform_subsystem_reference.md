@@ -43,11 +43,11 @@ is recomputed each draw. Nothing waveform-specific exists in the file format.
 | File | Role in this subsystem |
 |---|---|
 | `src/save.c` | **The `.raw` parser and `Raw` data model owner.** `raw_read`, `read_dataset`, `read_raw_data_block`, `extra_rawfile`, `get_raw_value`, `get_raw_index`, `table_read`, `new_rawfile`, `raw_add_vector`/`raw_deletevar`/`raw_renamevar`, `update_op`, `free_rawfile`. Also `save_box`/`load_box` (graph rect persistence). |
-| `src/draw.c` | **The render engine.** `draw_graph_all`, `setup_graph_data`, `draw_graph`, `draw_graph_grid`, `draw_graph_points`, `draw_graph_bus_points`, `draw_graph_variables`, `draw_cursor*`, `show_node_measures`, `get_bus_value`, `graph_fullxzoom`/`graph_fullyzoom`, `find_closest_wave`, `edit_wave_attributes`, `sch_waves_loaded`, `svg_embedded_graph`. |
-| `src/callback.c` | **On-canvas interaction.** `waves_selected` (gate/hit-test), `waves_callback` (gesture engine), `backannotate_at_cursor_b_pos`, the input-binding table (`init_input_bindings`, `act_graph_forward`, `current_input_ctx`, `dispatch_input_action`), and ~11 inline `if(waves_selected){waves_callback}` guards. |
-| `src/scheduler.c` | **Tcl verb surface.** `raw`/`raw_query` block, `raw_read`/`raw_clear`/`raw_read_from_attr`, `add_graph`, `annotate_op`, `cursor`, `get graph_lastsel`, `setprop rect` special tokens (fullxzoom/fullyzoom). |
+| `src/draw.c` | **The render engine.** `draw_graph_all`, `setup_graph_data`, `draw_graph`, `draw_graph_grid`, `draw_graph_points`, `draw_graph_bus_points`, `draw_graph_variables`, `draw_cursor*`, `show_node_measures`, `get_bus_value`, `graph_fullxzoom`/`graph_fullyzoom`, `find_closest_wave`, `edit_wave_attributes`, `sch_waves_loaded`, `svg_embedded_graph`. **Also the whole waveform-MARKER engine** (`graph_point_at` and its `graph_wave_at`/`graph_near_wave` wrappers, `graph_markers_parse/format/store`, `graph_marker_*`, `draw_graph_markers`, `graph_marker_notify`) — it lives here because the `W_*`/`S_*`/`G_*` macros textually need a local `Graph_ctx *gr`. See `doc/claude/specs/graph_markers.md`. |
+| `src/callback.c` | **On-canvas interaction.** `waves_selected` (gate/hit-test), `waves_callback` (gesture engine), `backannotate_at_cursor_b_pos`, the marker gesture helpers (`graph_marker_press`/`_drag_to`/`_release`/`_drag_abort`), the input-binding table (`init_input_bindings`, `act_graph_forward`, `current_input_ctx`, `dispatch_input_action`), and 15 inline `if(waves_selected){waves_callback}` guards. |
+| `src/scheduler.c` | **Tcl verb surface.** `raw`/`raw_query` block, `raw_read`/`raw_clear`/`raw_read_from_attr`, `add_graph`, `annotate_op`, `cursor`, `get graph_lastsel`, `get graph_flags`/`graph_near_wave`/`graph_trace_at`/`graph_marker_*`/`graph_rects`, the `graph_marker` sub-verb family, `setprop rect` special tokens (fullxzoom/fullyzoom). |
 | `src/token.c` | `translate()` `@spice_get_voltage`/`@spice_get_node` → substitutes `cursor_b_val[]` into symbol text (C back-annotation display). |
-| `src/xschem.h` | `Raw` struct (~953-976), `Graph_ctx` (~1028-1067), `SPICE_DATA` (`#define` = `double`, ~483), coord macros `W_*`/`S_*`/`DS_*`/`G_*`/`DG_*` (~442-458), `xctx` graph fields (`raw`, `extra_raw_arr`, `graph_flags`, `graph_master`, `graph_lastsel`, `graph_cursor1_x/2_x`, `graph_struct`). |
+| `src/xschem.h` | `Raw` struct (~975-998), `Graph_ctx` (~1051-1099), `GraphMarker`/`GraphPointHit` (~1108-1130), `SPICE_DATA` (`#define` = `double`, ~505), coord macros `W_*`/`S_*`/`DS_*`/`G_*`/`DG_*` (~465-480), graph constants `GRAPH_REORDER_HANDLE_W`/`GRAPH_TRACE_DROP_W`/`GRAPH_MARKERS_MAX`/`GRAPH_MARKER_TOL`/`GRAPH_MARKER_PICK_TOL` (~388-406), `xctx` graph fields (`raw`, `extra_raw_arr`, `graph_flags`, `graph_master`, `graph_lastsel`, `graph_cursor1_x/2_x`, `graph_struct`, `graph_marker_*`). |
 | `src/wave_viewer.tcl` | **ASE Waveform Viewer** — a real read-only editor window driven by a pure-Tcl model. See §8 and the spec. |
 | `src/xschem.tcl` | Sim launch (`simulate`, `execute`), `sim()` array + simconf dialog, native graph editor `graph_edit_properties`, `graph_add_nodes_from_list`, `load_raw`/`waves`. |
 | `src/ngspice_backannotate.tcl` | Legacy pure-Tcl `.raw` op reader → `ngspice::ngspice_data`. Largely vestigial; `update_op` writes the same array. |
@@ -59,7 +59,7 @@ is recomputed each draw. Nothing waveform-specific exists in the file format.
 
 ## 2. Data model
 
-### 2.1 `Raw` — the in-memory dataset (`xschem.h` ~953-976)
+### 2.1 `Raw` — the in-memory dataset (`xschem.h` ~975-998)
 
 One `Raw` = one `(rawfile, sim_type)` dataset-group. Fields:
 
@@ -86,7 +86,7 @@ One `Raw` = one `(rawfile, sim_type)` dataset-group. Fields:
 `SPICE_DATA` is hardcoded `double` (the `float` path is nominal only —
 struct, `fread`, and all math assume `double`).
 
-### 2.2 The registry (`xctx`, `xschem.h` ~1462-1469)
+### 2.2 The registry (`xctx`, `xschem.h` ~1529-1541)
 
 - `xctx->raw` — the single **currently-active** `Raw*`.
 - `xctx->extra_raw_arr[]` (+ `extra_raw_n`/`extra_raw_size`/`extra_idx`/
@@ -120,7 +120,7 @@ struct, `fread`, and all math assume `double`).
   samples are **never** saved — only the `rawfile=` path (or a base64
   `spice_data` embed via `embed_rawfile`/`raw_read_from_attr`).
 
-### 2.4 `Graph_ctx` — transient render context (`xschem.h` ~1028-1067)
+### 2.4 `Graph_ctx` — transient render context (`xschem.h` ~1051-1099)
 
 Single shared instance `xctx->graph_struct`. **Rebuilt per graph per draw** by
 `setup_graph_data()`. Holds decoded flags, data window `gx1..gy2`, plot box
@@ -133,7 +133,7 @@ storage** — everything durable round-trips through `prop_ptr`.
 
 `node` is a `"`-quoted, **newline-separated** list, one entry per trace. Each
 entry's meaning is set by **punctuation** (parsed in `draw_graph`
-~4660-4761 and `find_closest_wave`):
+~6019-6130 and `find_closest_wave`):
 
 - bare `v(out)` → scalar node
 - `,` inside → **bus** (`alias;sig[3],sig[2],...`) → `draw_graph_bus_points`
@@ -145,7 +145,9 @@ entry's meaning is set by **punctuation** (parsed in `draw_graph`
 
 `color=` and `sweep=` are **separate, space-separated, positional** lists
 indexed against `node`. They can desync silently (tolerated by cycling
-defaults; no integrity check). Editing traces = rewriting the whole `node`
+defaults; no integrity check), and a **short `sweep` list carries its last
+entry forward** for every remaining trace — which is why every walker must
+consume the sweep token before it skips an entry (landmine 38). Editing traces = rewriting the whole `node`
 string, not appending records. In-memory alias inner quotes are
 single-backslash-escaped; **`save.c` doubles the backslashes on file write**.
 
@@ -189,36 +191,66 @@ single-backslash-escaped; **`save.c` doubles the backslashes on file write**.
 
 ## 4. Render pipeline (draw.c)
 
-`draw()` → `draw_graph_all((graph_flags & (2|4)) + 8)` (~4972) iterates
-`rect[GRIDLAYER]` with `flags&1`; per graph: `setup_graph_data(i,...)` →
-`draw_graph(i,...)`.
+`draw()` → `draw_graph_all((graph_flags & (2|4)) + 8 + …)` (call ~7470, fn
+~6476) iterates `rect[GRIDLAYER]` with `flags&1`; per graph:
+`setup_graph_data(i,...)` → `draw_graph(i,...)`.
 
-- `setup_graph_data` (~3523): reads tokens → `Graph_ctx`; 14% margins; text
+- `setup_graph_data` (~3534): reads tokens → `Graph_ctx`; 14% margins; text
   sizes; transform coeffs. **`cy = -h/gh` is NEGATIVE** (xschem/screen Y grows
-  down, data Y grows up). Early-returns if off-screen.
-- `draw_graph` (~4550): resolves cursor A/B (global `graph_cursor1_x/2_x`, or
+  down, data Y grows up). Early-returns if off-screen — landmine 37 has the two
+  reasons it is unsafe to call as a query.
+- `draw_graph` (~5924): resolves cursor A/B (global `graph_cursor1_x/2_x`, or
   per-rect token if `flags&4`); `draw_graph_grid` under `flags&8`; tokenizes
   `node`; sets a bbox clip (`bbox(SET,...)`, `select.c`); per node, loops
   datasets/samples, detects DC sweep wraps / window-exit to split polylines,
   fills `point[].x = CLIP(S_X(xx), ±30000)`; dispatches to
   `draw_graph_points` (scalar) or `draw_graph_bus_points` (bus); then cursors
-  + `show_node_measures`.
-- `draw_graph_points` (~3302): fills `point[].y` (analog `S_Y`, or digital
+  + `show_node_measures`; then `draw_graph_markers` under `flags&8` (~6344) and
+  the `flags&16` on-screen chrome (active-strip bar, reorder grip).
+- `draw_graph_points` (~3313): fills `point[].y` (analog `S_Y`, or digital
   `DS_Y` band rescale `yy=c+yy*s2`, or `mylog10` for logy), `CLIP`s to short,
   `XDrawLines` to **both** `window` and `save_pixmap`, chunked at
   **`MAX_POLY_POINTS`=65536** (Xlib limit, not perf — last point of each chunk
   repeated as first of next). Modes 1/2 = histogram bars.
-- `draw_graph_bus_points` (~3217) + `get_bus_value` (~2784): multi-bit bus as
+- `draw_graph_bus_points` (~3228) + `get_bus_value` (~2795): multi-bit bus as
   two rails + hex labels; per-bit threshold `vthl`/`vthh` (20%/80%); `X` on
   transition. **Fixed 1024-char `busval`/`old_busval` buffers** (fruit #7).
-- Cursors: `draw_cursor`/`draw_cursor_difference` (x), `draw_hcursor*` (y),
-  `show_node_measures` (~3996) interpolates node value at cursor A.
-- Export (raster only): `svg_embedded_graph` (~5536, base64 PNG),
+- Cursors: `draw_cursor` (~3758)/`draw_cursor_difference` (~3783) (x),
+  `draw_hcursor*` (y), `show_node_measures` (~4020) interpolates node value at
+  cursor A.
+- Picking: `find_closest_wave` (~4350, no threshold, reads the C mouse mirror)
+  vs `graph_point_at` (~4654, caller pixels + a real screen-pixel
+  point-to-segment threshold) — landmine 33. `graph_wave_at` (~4881) and
+  `graph_near_wave` (~4891) are thin wrappers over `graph_point_at`.
+  All three resolve the `sweep` token BEFORE any skip — landmine 38.
+  `graph_point_at` also brackets `graph_flags` 128\|256 (landmine 37) and
+  unwinds its `extra_rawfile` switch **only when the switch took** (landmine 40).
+- Markers (`doc/claude/specs/graph_markers.md`): `graph_markers_parse` (~4927,
+  **never truncates** — the 512 cap is a creation bound) … `graph_marker_notify`
+  (~5961); parse-once pool `graph_markers_collect` (~5093), label core
+  `graph_marker_text_rec` (~5139) with `graph_marker_text` (~5211) a by-number
+  wrapper over it, renderer `draw_graph_markers` (~5311), hit-test
+  `graph_marker_at` (~5387), **callout geometry `graph_marker_label_box` — THE
+  single source of truth, called by the renderer AND the hit-tester so the drawn
+  box and the clickable box cannot disagree** (with `graph_marker_pad_box` for
+  the padding and `graph_marker_txtsize` for the one font size both callers must
+  share; anything that changes the box goes INSIDE that function, never at a call
+  site), data read `graph_marker_sample` (~5536,
+  bails when its raw switch fails — the pixel path already did),
+  the read-only gate `graph_marker_ro_refuse` (~5624), and the window-wide
+  dangling-`prev` sweep `graph_marker_clear_prev_n` (~5747) with
+  `graph_marker_clear_prev` (~5774) a one-element wrapper over it.
+  **The sweep is ONE pass for the whole doomed set**, not one pass per number:
+  it must be window-wide (a partial `delete -all <gi>` leaves partners on the
+  other strips), so the per-number form is O(deleted × surviving) — the same
+  full-window-rescan-per-record shape the parse-once pool exists to remove.
+  Measured: `delete -all` at 4000 markers took 10 s, now 41 ms.
+- Export (raster only): `svg_embedded_graph` (~7040, base64 PNG),
   `ps_embedded_graph` (`psprint.c` ~253, ASCII85 JPEG q40, needs
   HAS_LIBJPEG+HAS_CAIRO). Traces/grid are raw **Xlib**; only text + export
   rasterization use cairo.
 
-**Coordinate macros** (`xschem.h` ~442-458): `W_X`/`W_Y` graph→xschem,
+**Coordinate macros** (`xschem.h` ~465-480): `W_X`/`W_Y` graph→xschem,
 `S_X`/`S_Y`/`DS_Y` graph→screen, `G_X`/`G_Y`/`DG_Y` inverse. **They reference a
 local `Graph_ctx *gr`** and assume `setup_graph_data()` ran for the right
 graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
@@ -227,22 +259,37 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
 
 ## 5. Interaction (callback.c)
 
-- **Pre-emption layer, not a mode.** ~11 inline
+- **Pre-emption layer, not a mode.** 15 inline
   `if(waves_selected(...)){ waves_callback(...); return; }` guards, one per
   event type. A new event path needs the guard added or graphs won't respond
   there.
-- `waves_selected` (~65): **side-effectful gate/hit-test.** Skips if a
+- `waves_selected` (~77): **side-effectful gate/hit-test.** Skips if a
   schematic gesture is pending (STARTZOOM/RECT/WIRE/MOVE/... mask), if
   `graph_use_ctrl_key` && Ctrl up, if Alt held; **deliberately lets Button2
   pan and Shift+Button1 through** to canvas. `POINTINSIDE` (5px border) per
   graph rect; hit → `graph_master=i`, tcross cursor, return 1; miss →
   `graph_master=-1`, drop GRAPHPAN, return 0. **Cannot be used as a pure
   predicate.**
-- `waves_callback` (~540): the gesture engine. Operates on `graph_master`
-  first (**LMB-click wave-bold** via `find_closest_wave` — issue 0152, see
-  landmine 20; RMB-on-legend per-trace bold via `edit_wave_attributes`, hover
-  measurement tooltip via `G_X`/`G_Y`, cursor
-  grab within 10px, numeric cursor set, `a`/`b`/`s`/`m`/`t` keys), then loops
+- `waves_callback` (~724): the gesture engine. Operates on `graph_master`
+  first (**waveform-MARKER press/motion/release, which pre-empts everything
+  below it** — `doc/claude/specs/graph_markers.md` §7; **LMB-click wave-bold**
+  via `find_closest_wave` — issue 0152, see landmine 20; RMB-on-legend
+  per-trace bold via `edit_wave_attributes`, hover measurement tooltip via
+  `G_X`/`G_Y`, cursor grab within 10px, numeric cursor set,
+  `a`/`b`/`s`/`t` keys plus `m` = create marker, `d` = create marker with a
+  delta block, and `M` = the measurement tooltip **relocated off `m`**. A marker
+  is durable CONTENT, so the three mutating keys `m`/`d`/`Delete` ARE refused in
+  a read-only buffer — but **not here**: the arms call the ops unguarded and the
+  gate is `graph_marker_ro_refuse()` down in the mutating primitives
+  (`draw.c` ~5624), as a NON-MODAL `ciw_echo`. Two reasons, both learned the
+  hard way: `readonly_block()` pops a MODAL and a modal on a keystroke deadlocks
+  any script that drives the refusal path (it hung the marker suite under a real
+  `$DISPLAY`); and the key arms do not cover the DRAG-COMMIT path
+  (`graph_marker_release` → `anchor_at`/`label_offset` → `graph_marker_update`),
+  which reaches no key arm at all and would otherwise let a MOUSE gesture edit a
+  read-only buffer permanently, with no undo point. The read-only ASE viewer
+  gets through by forwarding those keys — **and the marker-drag release** —
+  inside `wviewer::with_edit`), then loops
   all graphs: participation test `r->sel || (same_sim_type && !(flags&2)) ||
   i==graph_master`; wheel zoom/pan, arrow pan/zoom, `f`=fit, drag pan,
   Button3-drag **XY box-zoom** (issue 0142: interior drag zooms x1/x2 across
@@ -256,19 +303,43 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
   per-session cursor/measure modes (bits 2/4=draw A/B, 16/32=move A/B,
   64=tooltip, 128/256=draw hcursor1/2, 512/1024=move hcursor). `xRect.flags`
   = per-graph type/lock (1/2/4). The **authoritative `graph_flags` legend is
-  `callback.c` ~527-539**; the `xschem.h` ~1475 one is incomplete (stops at
-  64).
-- `graph_master` (`xschem.h` ~1485) = MOUSE state, tracks pointer, can be −1
-  or stale. `graph_lastsel` (~1489) = last CLICKED/added, persists — **this**
+  `callback.c` ~703-715**; the `xschem.h` ~1544 one is incomplete (stops at
+  64). A marker drag deliberately sets **no** `graph_flags` bit — it has its own
+  `xctx->graph_marker_*` fields, exposed as `xschem get graph_marker_drag`, and
+  the MMB-pan / RMB-rubber guards had to grow an explicit `!graph_marker_drag`
+  term because the `graph_flags` term cannot see it.
+  **`graph_marker_drag` and `graph_marker_dragmode` are two different questions.**
+  `drag` is what was GRABBED (0/1/2) and is the exported, Tcl-visible value —
+  `wviewer::marker_grabbed`, `wviewer::strip_drag_release`'s `with_edit` bracket,
+  `scheduler.c`'s `part == 1 ? "anchor" : "label"` and ~27 test assertions all
+  rest on it. `dragmode` is what the gesture DOES (`GRAPH_MARKER_MODE_*`),
+  latched at press from the selection state, C-internal, and it is what the
+  release commits on. Do not overload `drag` with a third value.
+- `graph_master` (`xschem.h` ~1554) = MOUSE state, tracks pointer, can be −1
+  or stale. `graph_lastsel` (~1582) = last CLICKED/added, persists — **this**
   is the trace-add target. Don't confuse them.
+- `backannotate_at_cursor_b_pos` (~425); marker gesture helpers
+  `graph_marker_press` (~567) / `_drag_to` (~610) / `_drag_clear` (~664) /
+  `_drag_abort` (~674) / `_release` (~684). `_drag_abort` is called at **every**
+  fresh Button1 press (~784, where `graph_press_x/y` is seeded), not only on
+  release: the ASE viewer binds `<Shift-ButtonRelease-1>` /
+  `<Alt-ButtonRelease-1>` to a bare `{break}`, so a modifier-held release never
+  reaches C and the release-side teardown cannot run. `_drag_to` is the fourth
+  site that brackets `graph_flags` 128\|256 around `setup_graph_data`
+  (landmine 37) — it runs once per motion event.
 - Adding a trace: **no drag-onto-graph gesture.** Highlight nets →
-  `act_highlight_send_waveform` (~3520) → `hilight.c` send →
+  `act_highlight_send_waveform` (~3894) → `hilight.c` send →
   `graph_add_nodes_from_list` (`xschem.tcl` ~4312) appends to
   `graph_lastsel`'s `node`.
-- Data-driven bindings: `init_input_bindings` (~3913) seeds ACTX_OVER_GRAPH
-  rows → `graph.forward` (`act_graph_forward` → `waves_callback`).
-  `current_input_ctx` (~4103) picks ctx via `waves_selected()`. To add a graph
-  key you need **both** the branch in `waves_callback` **and** the binding row.
+- Data-driven bindings: `init_input_bindings` (~4287) seeds ACTX_OVER_GRAPH
+  rows → `graph.forward` (`act_graph_forward` ~3802 → `waves_callback`).
+  `current_input_ctx` (~4485) picks ctx via `waves_selected()`. To add a graph
+  key you need **both** the branch in `waves_callback` **and** the binding row —
+  *unless* the key already has an inline `waves_selected` guard in
+  `handle_key_press` (`m`, `M`, `Delete` do), in which case a row would make
+  that guard dead code. `d` needed the row (`ACTX_OVER_GRAPH`, mirrored in
+  `keybindings.csv` as `key,100,0,graph,graph.forward,`); `Delete` deliberately
+  did **not**, because a row would consume it over a graph unconditionally.
 
 ---
 
@@ -422,9 +493,18 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
   after its `capture_live_graph_state` (so a mouse pan/zoom/bold comes back with
   the undone edit). `wviewer::push_undo` is the extension seam: any new model
   mutation becomes undoable by calling it at the same point; today that is
-  `move_strip` and `move_trace`. Window OPTIONS (plot mode, sharedx, cursors, the
-  raw) are outside a snapshot on purpose. Transient: cleared on open, `forget`
-  and `restore`, never serialized.
+  `move_strip`, `move_trace` and `marker_changed`. Window OPTIONS (plot mode,
+  sharedx, cursors, the raw) are outside a snapshot on purpose. Transient:
+  cleared on open, `forget` and `restore`, never serialized.
+  **The ordering is *capture → push_undo → mutate*, all three, in that order.**
+  `marker_changed` is the case that shows why each is load-bearing: without the
+  capture, one `u` after creating a marker also reverted an unrelated pan; with
+  the capture but no `skip_markers` argument it would fold the new marker into
+  the model *before* snapshotting it, so `u` would restore the very marker it
+  was meant to remove — which is the same defect as pushing after the mutation,
+  arriving by the other door. Hence `capture_live_graph_state {token
+  {skip_markers 0}}`: a mutating command captures the live state it did **not**
+  produce and leaves out the one key it is about to write.
 - **Clear All + the `WaveViewer` bindtag (issue 0171,
   `doc/claude/specs/waveform_viewer.md`).** `clear_all ?token?` drops every graph
   and trace and leaves ONE `empty_graph` (target back to 0), KEEPING the plot
@@ -472,6 +552,59 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
   `graph_near_wave()` is now a one-line wrapper over it, so "the zone reordering
   refuses" and "the trace you picked up" are the same boundary by construction.
   Added 2026-07-28 for the viewer's drag-a-trace-to-another-strip gesture.
+  Since the marker work, **both** are thin wrappers over `graph_point_at()`,
+  which keeps the whole sample identity (node, real dataset, absolute point,
+  raw x/y) — one scan, three answers. Its x/y are RAW, never log-space:
+  landmine 35.
+- **Waveform markers** (`doc/claude/specs/graph_markers.md`, 2026-07-28). Four
+  read-only getters in `xschem_cmds_g`, all **fail SOFT** (a sentinel +
+  `TCL_OK` on a short or bad query, never an error — the ASE viewer wraps them
+  in `catch` + `string is integer -strict` and must read a missing verb as
+  "nothing there", never as "locked out"):
+  - `xschem get graph_marker_at <graph_idx> <px> <py> [tol]` — which marker is
+    under that CANVAS PIXEL and **which part**: `""` | `"<num> anchor"` |
+    `"<num> label"`. The part matters because the two drive DIFFERENT drags
+    (anchor slides along its trace, label just moves). Default `tol` =
+    `GRAPH_MARKER_TOL` (8 screen px). Returns `""` under `--nogui` (no cairo
+    context, hence no measurable label box). Being a query it saves and restores
+    `graph_flags` bits 128\|256 around its `setup_graph_data` call — landmine 37,
+    which by now has **four** such bracket sites, not one.
+  - `xschem get graph_marker_drag` — `0` none | `1` anchor drag armed | `2`
+    label drag armed. The `graph_flags`/`cursor_grabbed` twin: the viewer's
+    press seam consults it to decide that C owns the whole gesture.
+  - `xschem get graph_marker_sel` — the selected marker NUMBER, `-1` = none.
+    The number is the whole identity: `xctx->graph_marker_selgraph` exists only
+    as a repaint hint, because a rect index goes stale on a strip reorder or a
+    multi-plot prepend, and the `Delete` gate re-resolves the owning strip with
+    `graph_marker_find()`.
+  - `xschem get graph_rects` — how many layer-2 rects are GRAPHS. **Not**
+    `xschem get rects 2`, which is every rect on the layer: the marker push
+    hook uses this for its model↔rect 1:1 guard, and a single stray non-graph
+    `GRIDLAYER` rect would permanently disable it.
+- `xschem graph_marker <sub> ...` (`xschem_cmds_g`, top level) — the marker
+  mutations, which **fail LOUD** (unknown sub-verb → usage string +
+  `TCL_ERROR`). Every sub-verb except `select`/`list`/`text` is
+  **readonly-rejected** by `scheduler_readonly_reject()` before the primitive
+  runs. That is a **separate gate** from the one the keys and the mouse hit
+  (`graph_marker_ro_refuse()` in `draw.c`, a non-modal `ciw_echo`) — deliberately
+  so: a script wants a catchable error, a gesture must not raise a modal. The
+  ASE viewer defeats both deliberately through `wviewer::with_edit`, the
+  established pattern.
+
+  | sub-verb | args | result |
+  |---|---|---|
+  | `add` | `<gi> <px> <py> [-delta]` | new marker number, or `{}` |
+  | `add_at` | `<gi> <wave> <dset> <point> [-delta]` | new number, or `{}` — the **data-addressed** creator, headless-testable and the form `log_action` writes |
+  | `anchor` | `<num> <dset> <point>` | `1`/`0` |
+  | `move` | `<num> <px> <py>` | `1`/`0` — pixel re-snap along the marker's own trace + dataset |
+  | `label` | `<num> <ldx> <ldy>` | `1`/`0` — label offset only |
+  | `delete` | `<num>` \| `-all [<gi>]` | `1`/`0` \| count; both forms clear `prev == <removed>` window-wide via **one** `graph_marker_clear_prev_n()` pass over the whole doomed set, including a **partial** `-all <gi>`, which otherwise left deltas dangling on the strips it did not touch |
+  | `select` | `<num> [<gi>]` \| `-none` | the new selection (pure UI state: no token write, no undo, no modify) |
+  | `list` | `[<gi>]` | list of 10-element sublists `{num graph wave dset point x y prev ldx ldy}`, `x`/`y` at `%.17g` — **the exactness seam** |
+  | `text` | `<num>` | the rendered callout string, embedded `\n` |
+
+  Persistence needs no verb: `getprop`/`setprop rect 2 <gi> markers` already
+  round-trips the multi-line value byte-for-byte.
 - `xschem hilight_netname [-fast] [-style <n> | -layer <n>] <net>` and
   `xschem hilight_instname [-fast] [-layer <n>] <inst>` (`xschem_cmds_h`) —
   `-layer` highlights in the PLAIN color of a drawing layer (the negative-value
@@ -487,12 +620,24 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
   did not, and were corrupted on a cold GUI call until issue 0155 moved the reset
   into prep itself (landmine 24).
   `sod_net_at` uses `nets -selected` as its auto-named-net fallback (issue 0154).
-- `xschem add_graph` (~1887, sets `graph_lastsel`), `xschem draw_graph <i>`,
-  `xschem get graph_lastsel` (~3772), `xschem cursor <which> <on>` (~2689),
-  `xschem annotate_op`, `xschem embed_rawfile`.
+- `xschem add_graph` (~1887, sets `graph_lastsel`), `xschem draw_graph <i>`
+  (~2913), `xschem get graph_lastsel` (~3772), `xschem cursor <which> <on>`
+  (~2689), `xschem annotate_op`, `xschem embed_rawfile`.
+- **`xschem draw_graph <i>` used to be a two-way SIGSEGV** (pre-existing, found
+  while testing markers, fixed 2026-07-28). Under `--nogui` there is no window,
+  no pixmap and no GCs, and this verb goes straight to Xlib; and both
+  `setup_graph_data()` and `draw_graph()` dereference `rect[GRIDLAYER][i]`
+  **unchecked**, so any out-of-range or negative index crashed too. The branch
+  now requires `has_x` **and** `0 <= i < xctx->rects[GRIDLAYER]`, and is a silent
+  no-op otherwise (`Tcl_ResetResult`, never an error) — a headless test may call
+  it freely. If you add another verb that reaches a `draw_*` function, copy this
+  guard: `has_x` is the only thing separating the drawing engine from a crash in
+  the `--nogui` arm the whole headless suite runs in.
 - `xschem setprop rect 2 <i> <tok> <val>` — generic graph-token mutate;
-  fullxzoom/fullyzoom special-cased at ~10500/10508 (**hardcoded `c==2`** —
-  graphs on any other layer get no special handling).
+  fullxzoom/fullyzoom special-cased at ~10822/10830 (**hardcoded `c==2`** —
+  graphs on any other layer get no special handling). The dirty flag comes from
+  this branch's own `if(change_done) set_modify(1)` (~10880), **not** from the
+  zoom helpers — landmine 19.
 - New verb? Put it in the matching first-letter dispatch fn or it's silently
   unreachable (see memory `scheduler-letter-dispatch`).
 
@@ -515,8 +660,41 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
   the worked example.
 - **New graph gesture/key:** branch in `waves_callback` **and** an
   ACTX_OVER_GRAPH row in `init_input_bindings`. Respect the participation test.
-- **New cursor/marker:** a `graph_flags` bit (keep both legends in sync), a
-  draw path, grab/move/set branches in `waves_callback`.
+- **New CURSOR (a session-wide, non-persisted overlay):** a `graph_flags` bit
+  (keep both legends in sync — landmine 6), a draw path, and grab/move/set
+  branches in `waves_callback`. This recipe is **only** right for transient
+  session state. It is the WRONG answer for anything durable: `graph_flags` is
+  per-session, is not saved, cannot carry an identity, and its legend is already
+  a maintenance liability.
+- **New durable per-graph ANNOTATION (a marker, a note, a region):** it is
+  CONTENT, so it follows the "New graph attribute" recipe, not the cursor one —
+  a `token=value` on the graph rect (so it persists, pastes, undoes and exports
+  for free), parsed **in the renderer** rather than in `setup_graph_data` (no
+  `Graph_ctx` field, therefore no stale-value-leaks-onto-the-next-graph hazard,
+  landmine 11), drawn under **flags bit 8 (content), never bit 16 (UI chrome)** —
+  bit 16 is stripped from every export path, and a printed schematic must carry
+  the user's annotations. Transient interaction state (what is selected, what is
+  being dragged) goes in dedicated `xctx` fields exposed through a dedicated
+  `xschem get` scalar, **not** in a new `graph_flags` bit. If the ASE viewer must
+  see it, add a C→Tcl **push** hook: `wviewer::regenerate` re-places every rect
+  from the Tcl model and a plain window resize calls it, so a pull-only mirror
+  loses the annotation on resize (§8 of the spec). Worked example, with the
+  Button1 precedence table, the token grammar and the node-index remap rules:
+  `doc/claude/specs/graph_markers.md`; see also landmines 35-40.
+  Four more obligations the marker work only discovered on a second pass, all of
+  them cheap up front and expensive later: **renumber in BOTH duplication doors**
+  (landmine 39); **reset the transient state in `clear_drawing()`**, because the
+  same `xctx` is reused by `xschem clear`, File>Open in the tab, `xschem load`
+  and the disk-undo reload, so a surviving id latches onto whatever object in the
+  NEW document carries it; **refuse it in a read-only buffer, but gate the
+  MUTATING PRIMITIVE, not the key arm** (content that lands in a read-only
+  buffer carries no undo point — `push_undo` is skipped — and `xschem undo` is
+  itself readonly-rejected, so it is untakeable-back; the key arm is the wrong
+  place because it misses every mouse commit path, and `readonly_block()` is the
+  wrong refusal because its modal deadlocks any script driving that path — use
+  the feature's own non-blocking `ciw_echo`); and
+  **parse the window ONCE per operation** if records can reference each other,
+  or the redraw, the hit-test *and* the delete sweep all go O(N²).
 - **New Tcl query on data:** branch under the `raw`/`raw_query` dispatch.
 - **New per-graph UI decoration (on-screen only):** a prop token written by
   `wviewer::graph_props`, a `Graph_ctx` field parsed in `setup_graph_data`
@@ -540,7 +718,11 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
 ## 11. Landmines (verify against these before editing)
 
 1. **`values` has `nvars+1` columns** — the last is scratch. Any column loop
-   must respect the +1 (`free_rawfile` loops `<= nvars`).
+   *and every (re)allocation* must respect the +1 (`free_rawfile` loops
+   `<= nvars`). The worked failure is `raw_deletevar` (`save.c` ~1126, §12
+   backlog item 3, fixed 2026-07-28): `sizeof(SPICE_DATA *) * raw->nvars + 1`
+   parses as `(sizeof * nvars) + 1`, dropped the scratch slot, and the next
+   `raw add` wrote past the allocation — heap corruption, not a warning.
 2. **AC packs 4 columns/var** at `(i<<2)+k` (mag/ph/re/im), `nvars` is 4×.
    Never assume `names[i]` maps 1:1 to source variables for AC.
 3. **`cy` is negative**; grid code swaps `gy1`/`gy2` in places. Sign mistakes
@@ -590,6 +772,19 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
     `regenerate`; canvas binds appended with `+`, never replaced; wheel bound
     as Button-4/5 with `break`. Getting these wrong writes stray `untitled~.sch`
     or leaks C canvas-box zoom through the viewer.
+    **"All mutation" includes mutation the C engine performs on the viewer's
+    behalf.** Two seams forward raw C events inside `with_edit`, and both exist
+    only because the thing on the other side writes durable content:
+    `key_filter` for `m`/`d`/`Delete` (KeyPress only), and
+    `strip_drag_release` for `<ButtonRelease-1>` **when
+    `xschem get graph_marker_drag` > 0** — that is the release a marker drag
+    commits on. The release bracket is conditional on purpose: `with_edit` is a
+    context switch plus four state writes, too heavy for every mouse release,
+    and every *other* thing that release does (cursor drop, wave-bold, box-zoom,
+    end-of-pan) writes view state the engine has always been allowed to put in a
+    read-only rect (landmine 19). Any new C gesture that writes a durable token
+    needs its own such bracket — and `with_edit` **errors** on a refused context
+    switch, so inside a Tk binding it must be `catch`ed.
 18. **`Graph_ctx.active` + `draw_graph` flags bit 16** (issue 0151). The
     viewer's target-strip marker is a prop token `active=1` parsed in
     `setup_graph_data` — parsed **before** the `RECT_OUTSIDE` early return,
@@ -599,9 +794,32 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
     `xschem draw_graph` verb) and the **export** callers deliberately do not
     (`svg_embedded_graph`, `psprint.c` ×2). A new on-screen `draw_graph` caller
     must set bit 16 or the marker will blink out on that redraw path.
-19. **Zooming/annotating a graph marks the file dirty** — `graph_fullxzoom`/
-    `fullyzoom` write `x1`/`x2`/`y1`/`y2` tokens via `subst_token`
-    (`set_modify`). `create_graph.tcl` calls `set_modify 0` afterward.
+19. **A graph GESTURE does NOT mark the file dirty, and does NOT push undo.**
+    (This landmine used to say the opposite; corrected 2026-07-28 by
+    measurement.) `graph_fullxzoom` (`draw.c` ~2895) and `graph_fullyzoom`
+    (~3004) contain **no `set_modify` at all**, and the whole of
+    `waves_callback` (`callback.c` ~706-1868) contains **zero `set_modify(1)`
+    and zero `push_undo()`** — its only `set_modify` calls are the five
+    `set_modify(-2)` floater-cache refreshes. So every pan, box-zoom, cursor
+    move, wave-bold and `f`-fit rewrites `prop_ptr` tokens **silently**: no
+    dirty flag, no undo point, no save prompt.
+    The real dirty mechanism on this path is **`setprop`'s own
+    `if(change_done) set_modify(1)`** (`scheduler.c` ~10880), which fires
+    regardless of `-fast` — and note the `fullxzoom`/`fullyzoom` branches never
+    set `change_done`, so even `xschem setprop rect 2 n fullxzoom` leaves the
+    file clean. `create_graph.tcl`'s `xschem set_modify 0` is still needed, but
+    because `xschem rect` calls `set_modify(1)` unconditionally
+    (`scheduler.c` ~9251), not because of `fullxzoom`.
+    **Consequence for anything NEW that writes durable graph content:** copying
+    "whatever the existing graph writes do" means the content is **lost on close
+    with no prompt and no undo**. Waveform markers therefore do the opposite on
+    purpose — `xctx->push_undo()` (skipped when `xctx->readonly`) *before* the
+    prop write and `set_modify(1)` after, on create / delete / drag-**commit**
+    only; mid-drag motion does neither, because the drag lives in
+    `xctx->graph_marker_scratch` and never touches the token.
+    (`set_modify`'s `ro_suppress`, `actions.c` ~189, means this still cannot
+    dirty a read-only buffer or trigger an autosave, which is what lets the
+    read-only ASE viewer carry markers.)
 20. **A graph gesture must not be triggered on a PRESS that a drag also starts**
     (issue 0152). The wave-bold toggle used to fire on Button3 *press*, so every
     RMB press-drag box-zoom (0142) bolded a trace. It is now the **release of a
@@ -882,11 +1100,208 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
     `doc/claude/specs/waveform_viewer_modes.md` §13. The drop-target feedback is
     `reorder_handle=4` and obeys all of landmine 32's rules.
 
+35. **A picked sample's x/y must be returned RAW, never in log space**
+    (2026-07-28, waveform markers). The pickers COMPARE in log space —
+    `xx = mylog10(gvx[p])` — because `gr->gx1..gy2`, and hence `S_X`/`S_Y`, are
+    themselves log-space for a log axis (`setup_graph_data`; `graph_fullxzoom`
+    writes already-`mylog10`'ed `x1`/`x2`). Every *displayed* number is the
+    linear value, so the measurement tooltip and all nine cursor writes apply
+    `pow(10, ·)` on the way out. **That round trip is correct only for the
+    tooltip**, which starts from a mouse pixel with no raw counterpart. Applying
+    it to a PICKED SAMPLE is both redundant and **lossy**: `mylog10(x)` is
+    hard-clamped to `-35` for `x <= 0` (`editprop.c` ~26-30), so a zero or
+    negative sample comes back as `1e-35`. Return `gvx[p]`/`gvy[p]` directly —
+    which is why `GraphPointHit.x/y` are documented as "captured INSIDE the
+    sample loop" and are separate from `sx`/`sy`. Delta and slope arithmetic
+    must likewise use the raw values: a slope computed in log space is not
+    `dy/dx`.
+
+36. **The `graph_top` margin silently disables the GRAPHPAN ROUTING LATCH**
+    (2026-07-28, waveform markers). `waves_callback` sets `xctx->graph_top = 1`
+    for any press whose **snapped** y is above the plot box (`callback.c`
+    ~938-942), and the `GRAPHPAN` latch (~1288-1300) is gated on
+    `!xctx->graph_top`. **`GRAPHPAN` is not a pan** — it is the *routing* latch:
+    `waves_selected` uses it to keep an in-flight drag routed to the graph after
+    the pointer leaves the strip (`check = (ui_state & GRAPHPAN) ||
+    POINTINSIDE(...)`) and to **freeze `graph_master`**. So any new LMB gesture
+    whose grab target can live in a strip's MARGIN loses its release silently —
+    no error, no log line, the drag just evaporates. Two rules, apply both:
+    keep the grab target inside the **plot box**, **and** add the gesture's own
+    in-flight flag to the latch condition (the marker drag did:
+    `(!xctx->graph_top || xctx->graph_marker_drag)`). The second is not
+    redundant, because `graph_top` is computed from `mousey_snap` while a hit
+    test uses the **unsnapped** pointer, so a coarse grid can put a boundary
+    press on the wrong side of the two tests.
+
+37. **`setup_graph_data()` is not safe as a QUERY** (2026-07-28, waveform
+    markers). Two independent traps, both real:
+    **(a)** it **returns EARLY for an off-screen graph** (the `RECT_OUTSIDE`
+    test, `draw.c` ~3607) — *before* it parses `unitx` (~3633), `unity`,
+    `xlabmag`, `divx/divy`, `logx` (~3664), `logy`, `y1/y2`, `digital`,
+    `dataset`, the margins and the whole transform. Anything read out of `gr`
+    after that point is a **default**, not the rect's value. (Only the fields
+    defaulted+parsed *above* the return — `active`, `reorder_handle`,
+    `hcursor1_y`/`hcursor2_y`, `linewidth_mult` — are trustworthy, and only
+    because landmine 18 put them there deliberately.)
+    **(b)** it has a **side effect on shared session state**: it unconditionally
+    does `xctx->graph_flags &= ~(128|256)` and re-sets those hcursor bits from
+    the rect's tokens (~3562-3572).
+    So a query that needs a graph's axis tokens must read them **off the rect
+    directly** with `get_tok_value`, not through a scratch `Graph_ctx`. This was
+    a real bug, caught in the marker label formatter: `graph_marker_text()`
+    printed `M2:0,0` for a marker on a graph scrolled off-screen, because
+    `gr->unitx`/`gr->logx` were never parsed. `graph_marker_text_rec()` (the
+    label core it became) now reads `logx`/`unitx`/`unity` straight from
+    `r->prop_ptr`. (Callers that DO need the transform — `graph_point_at`,
+    `graph_marker_at`, `graph_marker_create`, `graph_marker_drag_to`,
+    `graph_coord` — keep the `gr->scx == 0.0 || gr->scy == 0.0` "no transform"
+    gate instead, which is the correct way to detect that the early return
+    fired. `graph_coord` uses `gr->cx`/`gr->cy` for the same purpose.)
+    **A query that must call it anyway has to put (b) back**, with
+    `saveflags = graph_flags & (128|256)` … restore around the call. **Four**
+    sites do, and the fix landed on them one at a time as each turned out to be
+    reachable: `graph_marker_at()` (`draw.c` ~5418 — reachable from
+    `xschem get graph_marker_at` with the pointer nowhere near that strip, the
+    original case), `graph_point_at()` (~4687 — backs the `graph_trace_at` /
+    `graph_near_wave` verbs *and* runs once per motion event inside a marker
+    anchor drag), `graph_marker_create()` (~5689 — it only wants `gr->digital`,
+    but pays the side effect anyway) and `graph_marker_drag_to()`
+    (`callback.c` ~633 — provably a no-op today, because GRAPHPAN freezes
+    `graph_master` for the whole drag and `graph_marker_draggraph` is that same
+    graph, but the bracket is two lines and the invariant should not rest on
+    that). **`graph_coord` (`scheduler.c` ~4962) still does NOT bracket** — it
+    is a pure Tcl query on an arbitrary graph index and has exactly the exposure
+    `graph_marker_at` had. Small, self-contained follow-up. Any new query on this
+    pattern owes the same two lines.
+
+38. **The `sweep` list CARRIES ITS LAST ENTRY FORWARD, so resolve the sweep
+    token BEFORE any `continue`** (2026-07-28, waveform markers). `sweep=` is a
+    positional list indexed against `node=` (§2.5) and it is routinely
+    **shorter** — one entry for a whole graph is the common case. The walkers
+    implement "carry forward" implicitly: `stok = my_strtok_r(sptr, ...)` returns
+    NULL once the list runs out, and the `if(stok && stok[0])` guard simply
+    leaves `sweep_idx` at its previous value. That only works if **every** node
+    entry pulls from the sweep list on every iteration.
+    Any `continue` placed above that pull silently breaks it, and the failure is
+    never an error — it is a **wrong column**, usually column 0 (`sweep_idx`'s
+    initial value), i.e. "nothing found" or "found against the wrong x". Three
+    walkers have been bitten:
+    **(a)** `find_closest_wave` and **(b)** `graph_point_at` — the *bus* skip
+    (`continue` on a `,` entry) jumped the pull, so every trace after a bus was
+    measured against the previous entry's sweep variable (that half is fixed in
+    both, together with the infinite loop the same `continue` caused — §12's DONE
+    callout);
+    **(c)** `graph_point_at` again and `graph_wave_resolve` — the
+    `restrict_wave` skip (`if(restrict_wave >= 0 && wcnt != restrict_wave)
+    continue;`) is *below* the pull for exactly this reason. It was above it, and
+    then every RESTRICTED walk — which is **every marker anchor drag** — fell
+    back to raw column 0 and found nothing: `xschem graph_marker move` returned
+    0, the record never changed, and no message was printed anywhere.
+    Rule: in any per-node walk, `stok = my_strtok_r(sptr, ...)`, `nptr = sptr =
+    NULL` and the `sweep_idx` update come **first**, before the bus test, before
+    any restriction test, before anything that can `continue`. `draw_graph` has
+    always done it this way, which is why the draw and the pickers used to
+    disagree.
+
+39. **A rect's `prop_ptr` is duplicated by TWO paths, and anything carrying a
+    UNIQUE ID in a prop token must renumber in both** (2026-07-28, waveform
+    markers). The doors are `merge_box()` (`paste.c` ~254 — the clipboard/paste
+    merge) and `copy_objects()` (`move.c` ~962 — the `c`-key copy, and every
+    copy-with-transform). Both clone the source string **verbatim**, so a token
+    holding an identity produces two objects claiming the same one.
+    Markers hit this twice: the paste door was found first, the copy door only
+    after review, and a `c`-key copy of a graph then produced two markers
+    numbered 1 and two numbered 2 — which breaks `graph_marker_find`, the `prev`
+    partner links, the selection and the delete, all of which rest on window-wide
+    uniqueness.
+    **The two call sites are NOT symmetric — note the ordering.** In `merge_box`
+    the renumber runs *before* `gfx_register` bumps `xctx->rects[c]`, so the new
+    rect is still invisible to a window-wide numbering scan; in `copy_objects`
+    `storeobject()` has **already** registered it, so the scan sees it and the
+    computed base comes out above *both* copies. Either way the base must be
+    computed **once per rect** and reused for every record on it — recomputing
+    per record hands them all the same number in the first case, and marches them
+    upward for no reason in the second.
+    There is no shared chokepoint, so a third duplication path would inherit the
+    bug in silence. Grep both function names when adding an id-bearing token.
+
+40. **`extra_rawfile(5, ...)` is a SWAP, not a stack pop — restore only if the
+    switch took** (2026-07-28, waveform markers). `save.c` (~1373-1378)
+    implements mode 5 as
+    `tmp = extra_idx; extra_idx = extra_prev_idx; extra_prev_idx = tmp;`.
+    There is no depth counter and no "no-op if we never switched": an
+    **unpaired** mode-5 call does not return you to where you were, it silently
+    repoints `xctx->raw` at the previous slot and leaves it there.
+    So every `extra_rawfile(<switch>, ...)` / `extra_rawfile(5, ...)` pair must
+    be guarded by a local flag recording whether the switch **succeeded**:
+
+    ```c
+    int switched = 0;
+    ...
+    if(extra_rawfile(autoload, file, type, -1.0, -1.0) != 0) switched = 1;
+    ...
+    if(switched) extra_rawfile(5, NULL, NULL, -1.0, -1.0);
+    ```
+
+    `graph_point_at()` (`draw.c` ~4718/~4868) and `graph_marker_sample()`
+    (~5566/~5592) both do. `graph_point_at` is what made this reachable: when a
+    graph carries no `rawfile=` token it synthesises one from
+    `xctx->raw->rawfile`, so it *attempts* a switch on essentially every call.
+    Measured before the flag: a **pure hover query** on a graph whose `rawfile=`
+    does not resolve flipped `xctx->raw` on every single call — one toggle of
+    the session's current raw per motion event, with nothing written and nothing
+    logged.
+    The sibling rule is that a caller whose switch FAILED must also **refuse to
+    read**, not fall through onto whatever raw is current: `graph_point_at` sets
+    `valid_rawfile = 0` and skips every node; `graph_marker_sample()` now bails
+    with `ok = 0` for the same reason (it used to read anyway, so the pixel path
+    and the data path disagreed on an unresolvable graph).
+    **`find_closest_wave` (~4350) has BOTH open defects** and is the one place
+    left to fix: it still switches at graph level (~4418) *and again per node*
+    (~4445) while restoring exactly once (~4563), and that single restore is
+    gated on `custom_rawfile[0]` — i.e. on "we intended to switch", not on "the
+    switch took". Same self-contained hoist as the §12 DONE-callout item 3, plus
+    a `switched` flag.
+    Related but distinct from landmine 13 (`extra_idx` desync between
+    `raw_read` and `extra_rawfile`) — this one desyncs a *balanced-looking*
+    caller.
+
 ---
 
 ## 12. Improvement backlog (ranked, with where-to-touch)
 
 Effort: S=hours, M=days, L=weeks. Impact in caps.
+
+> **ALREADY FIXED — do not "re-fix", and do not undo.** Four pre-existing defects
+> in the trace pickers were fixed as prerequisites of the waveform-marker work
+> (2026-07-28), because `graph_point_at()` is a refactor of `graph_wave_at` and
+> would otherwise have inherited all four verbatim. Bugs 1 and 2 were fixed in
+> **both** pickers, and `find_closest_wave`'s node loop now carries a "keep the
+> two in sync" comment — if you touch one, check the other.
+> 1. **Infinite loop when a graph's FIRST `node` entry is a bus.** The bus
+>    `continue` fired *before* `nptr = sptr = NULL`, and `my_strtok_r` re-seeds
+>    from the head of the string whenever `str != NULL` — so the same bus token
+>    was returned forever. Both the sweep-token consumption and the NULLing now
+>    happen **above** the bus test. Symptom was a hang, not a wrong answer.
+> 2. **A bus entry did not consume its `sweep` token**, so every trace *after* a
+>    bus was measured against the previous entry's sweep variable. Same edit
+>    fixes it; `draw_graph` has always consumed the token for every entry, bus
+>    included, which is why the draw and the pick disagreed.
+> 3. **`extra_rawfile()` was switched PER NODE but restored ONCE**, so on a graph
+>    with ≥ 2 non-bus nodes the trailing `extra_rawfile(5, ...)` unwinds only one
+>    level of the switch. `rawfile`/`sim_type` are GRAPH-level tokens, so
+>    `graph_point_at` now makes the single switch **before** the node loop, and
+>    unwinds it only when the switch actually took (landmine 40).
+>    **Still open in `find_closest_wave`**, which keeps its per-node call
+>    (`draw.c` ~4418 + ~4445, one restore at ~4563 gated on intent rather than
+>    success) — an identical hoist plus a `switched` flag there is a small,
+>    self-contained follow-up.
+> 4. **`find_closest_wave` read an uninitialised `ofs_end`.** `int p, dset, ofs,
+>    ofs_end;` had no initialiser, `if(node_dataset != -1 && node_dataset !=
+>    dset) goto done;` jumped **over** the `ofs_end = ofs + npoints[dset];`
+>    assignment, and `done:` is `ofs = ofs_end;`. On `dset == 0` that is an
+>    uninitialised read and thereafter a stale one. `ofs_end` is now computed
+>    **before** the dataset-skip `goto`. `graph_wave_at` always had this right.
 
 0. ~~**[S · MED] Fix `xschem resolved_net`'s first-call contamination.**~~
    **DONE — issue 0155.** Fixed at the source instead of per call site
@@ -929,9 +1344,21 @@ Effort: S=hours, M=days, L=weeks. Impact in caps.
 2. **[S · MED] Cache per-dataset offsets on `Raw`.** Prefix-sum of `npoints[]`
    at load (`raw_read` ~1002, struct ~953); index it in `get_raw_value`
    (~2323) instead of re-summing per fetch. Hot-path win, no model change.
-3. **[S · MED] Fix `raw_deletevar` realloc sizing** (`save.c` ~1115):
-   `sizeof(SPICE_DATA*) * raw->nvars + 1` → `* (raw->nvars + 1)`. Latent
-   under-alloc / heap corruption on `raw del`.
+3. ~~**[S · MED] Fix `raw_deletevar` realloc sizing.**~~
+   **DONE — 2026-07-28, with the waveform-marker work** (`save.c` ~1126).
+   `sizeof(SPICE_DATA *) * raw->nvars + 1` → `sizeof(SPICE_DATA *) *
+   (raw->nvars + 1)`: an operator-precedence bug, not an off-by-one. `values`
+   carries `nvars+1` columns, the last being the scratch column custom-wave
+   expressions are evaluated into (landmine 1), and the buggy form asked for
+   `8*nvars + 1` **bytes** — truncating that slot away. The next `raw add` then
+   grew the array back and wrote into what had been uninitialised memory:
+   valgrind "Invalid write of size 8" in `plot_raw_custom_data` ←
+   `raw_add_vector`, then SIGSEGV. It survived under plain glibc only because
+   the shrinking realloc happened to stay in place, which is why it sat here as
+   a *latent* item for so long. Pre-existing (upstream 7a45497b); it surfaced
+   now because `tests/headless/test_wave_markers.tcl` is the tree's **first and
+   only caller of `xschem raw del`**. The fix carries a comment at the call site
+   naming this backlog item — leave it there.
 4. **[S · LOW] Bound bus-value buffers** (`draw.c` ~3229 `busval`/`old_busval`,
    `get_bus_value` ~2784) by `n_bits` instead of fixed 1024.
 5. **[S · LOW] Trace-list integrity check** — when writing `node`/`color`/
@@ -999,6 +1426,58 @@ Effort: S=hours, M=days, L=weeks. Impact in caps.
   `test_ase_bus_bits_0159.tcl` (`BB*` = the Select Bus Bits dialog, the
   `sod_bits` split and the legacy-state migration, issue 0159; the dialog and
   real-click groups self-SKIP without a DISPLAY),
+  `test_wave_markers.tcl` (waveform markers,
+  `doc/claude/specs/graph_markers.md` — **NOT YET COMMITTED as of 2026-07-28**:
+  the C and Tcl sides shipped ahead of it, so until it lands the marker legs of
+  the three suites above are the only cover. Three groups, split by what they
+  need, because the file must still be useful under `--nogui`:
+  **`MK*`** = no DISPLAY, no raw — pure Tcl (`markers_valid`/`_decode`/
+  `_encode` round trips incl. a 17-significant-digit `x`, the `{}`→0 contract,
+  rejection of `"`/`\`/`;`/`tcleval(`/`nan`/`inf`/8-field/tab, 10-field forward
+  tolerance, `markers_drop_number` and the cross-strip `prev` sweep, both node
+  remaps, `graph_props`'s four emission arms, snapshot/restore purity) **plus**
+  pure C token math through `setprop`/`getprop`/`graph_marker list` and the
+  window-wide number allocator, **plus** the two hang/UB regressions the
+  refactor fixed (a graph whose FIRST `node` entry is a bus must RETURN, and a
+  `%<n>` dataset selector that skips dataset 0 must be stable), **plus** all
+  four getters under `--nogui` asserting no crash;
+  **`MR*`** = a raw + a graph, no gestures (hermetic `xschem raw new`/`raw add`,
+  never ngspice) — create/delete/renumber, snap-to-a-real-sample, delta text,
+  the EXPRESSION-trace read (the leg that pins `plot_raw_custom_data`'s dataset
+  window; a bare `get_raw_value` reads the global volatile scratch column),
+  `regenerate` **and window-resize** survival (the leg that proves the PUSH
+  hook, not just the capture), viewer undo removing the marker from the **rect**
+  as well as the model, file save/load precision, paste renumbering with a
+  **two**-record rect, C undo/redo on both `undo_type`s, and every refusal;
+  **`MX*`** = full Tk press/motion/release under a real DISPLAY — `m`/`d`/`M`
+  key behaviour and the bit-64 collision witness, click-to-select vs the
+  wave-bold, anchor drag vs label drag (assert **both** halves of each: the
+  thing that changed AND an inert witness that did not), the top-edge label drag
+  that regressed the `graph_top`/GRAPHPAN fix, the reorder grip still working
+  with a marker present, B2/B3 chord suppression and stale-arm teardown, ESC
+  cancel, `Delete` scoping, and viewer `u`/`U`.
+  **`MF*`** = one named leg per post-review fix (spec §11's hardening table).
+  Most are data-addressable and run in BOTH arms: the restricted-walk anchor
+  move on a graph whose `sweep` list is shorter than its `node` list
+  (landmine 38), a `>512`-record token surviving a mutating op intact, a
+  multi-raw graph committing the *graph's* value AND refusing outright when the
+  graph's `rawfile=` does not resolve, a partial `delete -all` leaving no
+  dangling `prev`, `xschem get graph_marker_at` not disturbing `graph_flags`
+  128\|256, delete-after-reorder finding the right strip, the `c`-key copy
+  producing unique numbers, `clear_drawing` dropping the selection, and
+  `xschem draw_graph` surviving `--nogui`. The display half covers the
+  stale-arm-at-press teardown (it reproduces solely through a modifier-held
+  ButtonRelease, the case Tk never delivers to C), the read-only refusal on
+  both the key path and the drag-commit ops, and the viewer still working
+  through `with_edit` at both seams — `key_filter` for the keys,
+  `strip_drag_release` for the release. Two things are deliberately NOT
+  asserted and say so in the legs' own comments, because no verb can observe
+  them: the drag readout tracking the anchor rather than freezing, and the
+  repaint scope of a cross-strip selection change. Both are eyeball-only.
+  **`MZ*`/`MA0`** = the harness's own invariants: an erroring leg FAILS rather
+  than aborting the file, the run asserts its expected check count so silent
+  coverage loss is itself a failure, and the run asserts the environment it
+  believes it is in),
   `test_ase_*` family. They
   `--pipe`/`--script` the built binary and diff against golden state. Pure
   Tcl helpers in `wave_viewer.tcl` (`graph_props`, `band_geometry`,
@@ -1034,7 +1513,14 @@ Effort: S=hours, M=days, L=weeks. Impact in caps.
   as-shipped ledger (items 13/14/19). The authority on viewer UX contracts.
 - `doc/claude/specs/waveform_viewer_modes.md` — plot modes (single/multi),
   target strip, the active-strip marker and the mode command surface
-  (issue 0151).
+  (issue 0151), plus strip drag-to-reorder (§12), trace drag between strips
+  (§13) and viewer undo/redo (§14).
+- `doc/claude/specs/graph_markers.md` — Cadence-style waveform MARKERS: the
+  `markers` prop token, the `m`/`d`/`M`/`Delete` keys, the anchor/label drags,
+  the full Button1 precedence in both contexts, the `xschem graph_marker` verb
+  family and the C→Tcl push hook. The worked example for "a new durable
+  per-graph annotation" (§10) and the origin of landmines 35-40, the correction
+  to landmine 19 and the fix for backlog item 3 (landmine 1).
 - `waveform_display_explained.md` (this folder) — the plain-English tour.
 - Memory: `ase-l-plan`, `scheduler-letter-dispatch`, `green-but-hollow`,
   `gesture-test-full-sequence`, `wslg-dialog-open-repaint`.

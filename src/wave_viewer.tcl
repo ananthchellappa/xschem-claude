@@ -192,10 +192,17 @@ namespace eval wviewer {
   # the viewer canvas holds ONLY wviewer-created graph rects, so the registry
   # is authoritative.
   variable graphbb [dict create]
-  # keysyms of the waves_callback key set (a b s m t A B) — forwarded ONLY
+  # keysyms of the waves_callback key set (a b d s m t A B M) — forwarded ONLY
   # over a graph; outside graphs these are editor verbs (m=move, t=text ...)
   # and must do nothing, silently.
-  variable graphkeys {97 98 115 109 116 65 66}
+  # 100 (`d`) and 77 (`M`) joined for waveform markers
+  # (doc/claude/specs/graph_markers.md): `m` now CREATES a marker, `d` creates
+  # one with a delta block against the previous marker, and the measurement
+  # tooltip moved from `m` to `M`. Delete (65535) is deliberately NOT here —
+  # membership means UNCONDITIONAL forwarding, and an unguarded Delete would
+  # land on the C canvas delete (readonly_block modal). It gets its own
+  # doubly-gated arm in key_filter instead.
+  variable graphkeys {97 98 100 115 109 116 65 66 77}
   # Canvas sequences the strip sweep KEEPS, in the canonical spellings `bind`
   # reports (<KeyPress> -> <Key>, <ButtonPress> -> <Button>, <Key-i> -> bare
   # `i`, <Shift-Insert> -> <Shift-Key-Insert> — probe-verified): the
@@ -345,7 +352,18 @@ proc wviewer::forget {token} {
   variable axl; variable delmap
   variable cfgafter; variable fillwh
   if {[dict exists $windows $token]} {
-    dict unset graphbb [dict get $windows $token win_path]
+    set wp_ [dict get $windows $token win_path]
+    # a destroyed strip must not leave a selected-marker number pointing at
+    # nothing (doc/claude/specs/graph_markers.md). graph_marker_sel lives in
+    # xctx, i.e. PER WINDOW, and this runs during teardown where the current
+    # context is whatever happens to be up — so reset only when the context IS
+    # still this viewer, otherwise we would clear an unrelated window's
+    # selection. C already fails safe (delete_selected returns 0 when the number
+    # does not resolve); this is the tidy-up, not the guarantee.
+    catch {
+      if {[xschem get current_win_path] eq $wp_} { xschem graph_marker select -none }
+    }
+    dict unset graphbb $wp_
     dict unset windows $token
   }
   dict unset layouts $token
@@ -604,6 +622,242 @@ proc wviewer::set_graphs {token gs} {
   return {}
 }
 
+# --- waveform markers: the `markers` token (doc/claude/specs/graph_markers.md) -
+# A marker is durable annotation living in the graph rect's `markers` prop
+# token, one record per LINE, nine space-separated ALL-NUMERIC fields:
+#
+#   <num> <wave> <dset> <point> <x> <y> <prev> <ldx> <ldy>
+#
+# num   window-wide marker number (the N in "M<N>"), >= 1
+# wave  NODE index in this graph's `node` token — the index space every C
+#       answer speaks (hilight_wave, graph_trace_at), NOT the model trace index
+# dset  real raw dataset;  point  absolute index into raw->values[*][]
+# x y   the cached sample, UNSCALED, written by C at %.17g
+# prev  partner marker NUMBER for a delta block, 0 = none. It is a NUMBER and
+#       not an index because the partner may live in a DIFFERENT strip
+# ldx ldy  label offset as a FRACTION of the plot box w/h, C writes %.10g
+#
+# The alphabet is numeric-only on purpose: subst_token does not escape an
+# embedded `"` or `\` (one stray quote silently destroys every token after it),
+# and tcl_hook2 EXECUTES any value starting with `tcleval(`. The predicates
+# below therefore reject anything outside [-+0-9.eE], which also excludes the
+# letters of `nan`/`inf` — C refuses non-finite values at creation, so those can
+# only arrive from a hand-edited file.
+#
+# Everything in this block is PURE (no Tk, no `xschem`) and directly testable.
+
+# PURE: 1 when `v` is one legal field of a marker record. The character class IS
+# the safety property — see the block comment. Deliberately NOT `string is
+# double`: Tcl accepts "Inf" and "NaN" there.
+proc wviewer::markers_num_ok {v} {
+  return [regexp {^[-+]?[0-9.][0-9.eE+-]*$} $v]
+}
+
+# PURE: the fields of one record line, or {} when the line is not a record.
+# THE single splitter — markers_valid and markers_decode share it so they can
+# never disagree about the alphabet. Extra spaces are tolerated (C's sscanf
+# tolerates them too); a tab is not, because get_tok_value's SPACE() macro
+# terminates a value at one and the token would come back truncated.
+proc wviewer::markers_line_fields {line} {
+  set f {}
+  foreach t [split $line { }] {
+    if {$t eq {}} { continue }
+    if {![wviewer::markers_num_ok $t]} { return {} }
+    lappend f $t
+  }
+  if {[llength $f] < 9} { return {} }
+  return $f
+}
+
+# PURE: is `s` a structurally valid whole `markers` value?
+#
+# {} RETURNS 0, and that is load-bearing, not defensive: an empty string has no
+# lines, so an "every line is a record" predicate is vacuously TRUE on it, and
+# graph_props would then stamp `markers=""` onto every strip that was never
+# marked. That also creates two inequivalent spellings of "no markers" — `xschem
+# rect … $props` stores props verbatim while subst_token/setprop DELETES a token
+# given an empty value.
+#
+# This is a WHOLE-TOKEN, all-or-nothing predicate because it guards EMISSION
+# (graph_props / capture / marker_changed), where the C parser has already
+# guaranteed that only well-formed records reached the token. markers_decode is
+# the per-record twin used on the TRANSFORM paths.
+proc wviewer::markers_valid {s} {
+  if {$s eq {}} { return 0 }
+  foreach line [split $s "\n"] {
+    if {![llength [wviewer::markers_line_fields $line]]} { return 0 }
+  }
+  return 1
+}
+
+# PURE: token -> list of record dicts {num wave dset point x y prev ldx ldy
+# extra}. BAD LINES ARE DROPPED, the rest kept — matching the C parser, which
+# drops a short record and keeps the others.
+#
+# x/y/ldx/ldy are kept as the ORIGINAL STRINGS, never converted. Tcl's default
+# %g is 6 significant digits and a single round trip through `format`/`expr`
+# would truncate C's %.17g sample identity — see the precision contract. The
+# five INTEGER fields are normalised through `scan %d` so that later arithmetic
+# on them cannot hit Tcl's leading-zero-is-octal rule in `expr`.
+# `extra` carries any 10th+ field verbatim (forward tolerance), so
+# encode(decode(s)) is byte-identical for every value this accepts.
+proc wviewer::markers_decode {s} {
+  set out {}
+  if {$s eq {}} { return $out }
+  foreach line [split $s "\n"] {
+    set f [wviewer::markers_line_fields $line]
+    if {![llength $f]} { continue }
+    set bad 0
+    foreach k {0 1 2 3 6} {
+      if {![string is integer -strict [lindex $f $k]]} { set bad 1; break }
+    }
+    if {$bad} { continue }
+    lappend out [dict create \
+      num   [scan [lindex $f 0] %d] \
+      wave  [scan [lindex $f 1] %d] \
+      dset  [scan [lindex $f 2] %d] \
+      point [scan [lindex $f 3] %d] \
+      x     [lindex $f 4] \
+      y     [lindex $f 5] \
+      prev  [scan [lindex $f 6] %d] \
+      ldx   [lindex $f 7] \
+      ldy   [lindex $f 8] \
+      extra [lrange $f 9 end]]
+  }
+  return $out
+}
+
+# PURE: the inverse. Re-emits x/y/ldx/ldy VERBATIM — no `format`, no `expr` (see
+# markers_decode). An empty record list gives {}, i.e. "no token", which is what
+# graph_props and setprop both read as "delete it".
+proc wviewer::markers_encode {recs} {
+  set lines {}
+  foreach r $recs {
+    set f [list [dict get $r num] [dict get $r wave] [dict get $r dset] \
+                [dict get $r point] [dict get $r x] [dict get $r y] \
+                [dict get $r prev] [dict get $r ldx] [dict get $r ldy]]
+    foreach e [wviewer::dget $r extra {}] { lappend f $e }
+    lappend lines [join $f { }]
+  }
+  return [join $lines "\n"]
+}
+
+# PURE: the marker NUMBERS a token carries, in record order. The seam the
+# deletion paths use to learn which numbers just disappeared, so they can sweep
+# the dangling `prev` links those numbers leave behind on OTHER strips.
+proc wviewer::markers_numbers {s} {
+  set out {}
+  foreach r [wviewer::markers_decode $s] { lappend out [dict get $r num] }
+  return $out
+}
+
+# PURE: remove record `num` from `s` AND zero every `prev` that pointed at it.
+#
+# Both halves matter. The C graph_marker_delete clears dangling prev links, but
+# NONE of the Tcl deletion paths (delete_ok, clear_graph_traces) go through it —
+# they rewrite the token directly. A dangling prev degrades a delta block to a
+# plain callout with no indication at all (graph_marker_text simply omits the
+# block when the partner does not resolve), so the sweep has to live here too.
+proc wviewer::markers_drop_number {s num} {
+  if {$s eq {}} { return {} }
+  if {![string is integer -strict $num] || $num < 1} { return $s }
+  set out {}
+  foreach r [wviewer::markers_decode $s] {
+    if {[dict get $r num] == $num} { continue }
+    if {[dict get $r prev] == $num} { dict set r prev 0 }
+    lappend out $r
+  }
+  return [wviewer::markers_encode $out]
+}
+
+# PURE: apply markers_drop_number for every number in `nums` to every graph of
+# `gs` — the window-wide `prev` sweep, since a delta partner may live in another
+# strip. A graph with no `markers` key is left ALONE (never given an empty one);
+# a graph whose token empties out loses the key entirely, keeping "absent means
+# absent" true all the way through graph_props.
+proc wviewer::markers_sweep_numbers {gs nums} {
+  if {![llength $nums]} { return $gs }
+  set out {}
+  foreach G $gs {
+    if {[dict exists $G markers]} {
+      set mk [dict get $G markers]
+      foreach n $nums { set mk [wviewer::markers_drop_number $mk $n] }
+      if {$mk eq {}} {
+        set G [dict remove $G markers]
+      } else {
+        set G [dict replace $G markers $mk]
+      }
+    }
+    lappend out $G
+  }
+  return $out
+}
+
+# PURE: how ONE stored node index survives the deletion of the node indices in
+# `doomed`. Returns {} when the node itself is doomed, else the index shifted
+# down by however many doomed nodes sat strictly BELOW it. Shared by the marker
+# remap and the `hilight_wave` fix in delete_ok.
+proc wviewer::remap_node_after_trace_delete {ni doomed} {
+  if {![string is integer -strict $ni] || $ni < 0} { return {} }
+  set below 0
+  foreach d $doomed {
+    if {$d == $ni} { return {} }
+    if {$d < $ni} { incr below }
+  }
+  return [expr {$ni - $below}]
+}
+
+# PURE: markers of the SOURCE and DESTINATION graphs after the trace at node
+# index `moved_ni` moves out of the source and lands at node index `dst_ni` of
+# the destination. Returns {new_src_token new_dst_token}.
+#
+# A marker whose wave IS the moved node MIGRATES with its trace rather than
+# dying — the same rule `hilight_wave` follows in move_trace_in_graphs, and the
+# reason markers must never live in a strip-index-keyed side table. Its
+# dset/point/x/y stay valid: the trace kept its raw column, only the node
+# INDEX moved. Markers above the hole shift down by one; markers below are
+# untouched; the destination's own markers are untouched because the trace is
+# APPENDED. `prev` may now cross strips — already legal, it is a number.
+proc wviewer::remap_markers_after_trace_move {src_mk dst_mk moved_ni dst_ni} {
+  foreach v [list $moved_ni $dst_ni] {
+    if {![string is integer -strict $v] || $v < 0} { return [list $src_mk $dst_mk] }
+  }
+  set keep {}
+  set dst [wviewer::markers_decode $dst_mk]
+  foreach r [wviewer::markers_decode $src_mk] {
+    set w [dict get $r wave]
+    if {$w == $moved_ni} {
+      dict set r wave $dst_ni
+      lappend dst $r
+    } else {
+      if {$w > $moved_ni} { dict set r wave [expr {$w - 1}] }
+      lappend keep $r
+    }
+  }
+  return [list [wviewer::markers_encode $keep] [wviewer::markers_encode $dst]]
+}
+
+# PURE: markers of one graph after the node indices in `doomed_nis` are deleted
+# from it. A marker on a doomed trace is DROPPED (unlike a move, nothing is left
+# for it to annotate); every survivor shifts down by the number of doomed nodes
+# strictly below it. Callers must then sweep the dropped NUMBERS window-wide
+# with markers_sweep_numbers — this proc cannot, it only sees one graph.
+proc wviewer::remap_markers_after_trace_delete {mk doomed_nis} {
+  set doomed {}
+  foreach ni $doomed_nis {
+    if {[string is integer -strict $ni] && $ni >= 0} { lappend doomed [scan $ni %d] }
+  }
+  if {![llength $doomed] || $mk eq {}} { return $mk }
+  set out {}
+  foreach r [wviewer::markers_decode $mk] {
+    set w [wviewer::remap_node_after_trace_delete [dict get $r wave] $doomed]
+    if {$w eq {}} { continue }
+    dict set r wave $w
+    lappend out $r
+  }
+  return [wviewer::markers_encode $out]
+}
+
 # --- plot modes (issue 0151) -------------------------------------------------
 # doc/claude/specs/waveform_viewer_modes.md. Four PURE procs (no Tk, no
 # `xschem` — directly unit-testable): the mode word resolver, the config-var
@@ -783,8 +1037,18 @@ proc wviewer::clear_graph_traces {token gi} {
   if {![string is integer -strict $gi] || $gi < 0 || $gi >= [llength $gs]} {
     return 0
   }
-  set G [dict replace [lindex $gs $gi] traces {}]
-  wviewer::set_graphs $token [lreplace $gs $gi $gi $G]
+  set G [lindex $gs $gi]
+  # every trace goes, so every node index this strip's markers and its bold-wave
+  # marker referred to is gone: drop BOTH keys rather than leave them dangling at
+  # indices that no longer exist (`hilight_wave` has never been remapped on this
+  # path — a latent bug fixed here alongside the marker rule).
+  set gone [wviewer::markers_numbers [wviewer::dget $G markers {}]]
+  set G [dict remove [dict replace $G traces {}] markers hilight_wave]
+  set gs [lreplace $gs $gi $gi $G]
+  # the numbers that just disappeared may be the `prev` partner of a delta block
+  # on ANOTHER strip — markers are numbered window-wide, so the sweep is too
+  set gs [wviewer::markers_sweep_numbers $gs $gone]
+  wviewer::set_graphs $token $gs
   return 1
 }
 
@@ -995,6 +1259,19 @@ proc wviewer::graph_props {G {active 0}} {
   set hw {}
   set hwv [wviewer::dget $G hilight_wave {}]
   if {$hwv ne {} && [string is integer -strict $hwv]} { set hw "hilight_wave=$hwv\n" }
+  # Waveform markers (doc/claude/specs/graph_markers.md). Same deal as
+  # `hilight_wave` above: written into the rect by the C engine and folded back
+  # into the model by wviewer::marker_changed (the C push hook). Emitted ONLY
+  # when the model carries a NON-EMPTY, STRUCTURALLY VALID value — an absent key
+  # must stay absent, so a strip that was never marked renders byte-identically
+  # to pre-marker (test_wave_modes M5/M7 pin that shape). The `$mkv ne {}` test
+  # is not redundant with markers_valid: see the {}-returns-0 contract there.
+  # The value needs no escaping beyond the outer quotes (numeric-only alphabet),
+  # and it NEEDS those quotes because it contains spaces and newlines, which
+  # get_tok_value's SPACE() macro would otherwise read as end-of-value.
+  set mk {}
+  set mkv [wviewer::dget $G markers {}]
+  if {$mkv ne {} && [wviewer::markers_valid $mkv]} { set mk "markers=\"$mkv\"\n" }
   # The strip drag-reorder GRIP (right margin). Written unconditionally here, so
   # it marks exactly the viewer's own strips — graph_props is the viewer's rect
   # generator and nothing else uses it, which is what "viewer graphs only" means
@@ -1002,7 +1279,7 @@ proc wviewer::graph_props {G {active 0}} {
   # transient values 2/3 (drop-destination bar) are NOT written here: they are
   # setprop'd onto the two affected rects during a drag and cleared on
   # commit/cancel, so a regenerate always lands back on a plain grip.
-  return "flags=graph\ny1=$y1\ny2=$y2\nypos1=0\nypos2=2\ndivy=5\nsubdivy=1\nunity=1\nx1=$x1\nx2=$x2\ndivx=5\nsubdivx=1\nxlabmag=1.0\nylabmag=1.0\nlegendmag=1.0\nnode=\"$node\"\ncolor=\"$color\"\ndataset=-1\nunitx=1\nlogx=$logx\nlogy=$logy\nreorder_handle=1\n$hw$act"
+  return "flags=graph\ny1=$y1\ny2=$y2\nypos1=0\nypos2=2\ndivy=5\nsubdivy=1\nunity=1\nx1=$x1\nx2=$x2\ndivx=5\nsubdivx=1\nxlabmag=1.0\nylabmag=1.0\nlegendmag=1.0\nnode=\"$node\"\ncolor=\"$color\"\ndataset=-1\nunitx=1\nlogx=$logx\nlogy=$logy\nreorder_handle=1\n$hw$mk$act"
 }
 
 # PURE (D4): pre-validate a whitespace-separated RPN expression against the
@@ -1606,11 +1883,23 @@ proc wviewer::reordered_index {index from to} {
 # that ever changes, cursor1_x/cursor2_x/hcursor1_y/hcursor2_y join this list.
 # Returns 1, or 0 on an unknown token / refused context switch (never read a
 # rect prop from an unverified context).
-proc wviewer::capture_live_graph_state {token} {
+#
+# `skip_markers` 1 leaves the markers key alone. marker_changed needs that: it
+# wants the LIVE ranges/bold folded in before it takes its undo snapshot, but
+# the snapshot must still hold the PRE-change markers, or `u` would restore the
+# very marker it was meant to remove.
+proc wviewer::capture_live_graph_state {token {skip_markers 0}} {
   variable windows
   if {![dict exists $windows $token]} { return 0 }
   if {![wviewer::switch_ctx $token]} { return 0 }
   set gs [dict get [wviewer::layout_for $token] graphs]
+  # Same 1:1 rect/model guard marker_changed carries, and for a stronger reason:
+  # this path also DELETES (an absent token takes the `dict remove` branch), so a
+  # count desync would attach one strip's state to another model graph AND wipe
+  # the keys of every model graph past the last rect.
+  set nrect -1
+  catch {set nrect [xschem get graph_rects]}
+  if {[string is integer -strict $nrect] && $nrect != [llength $gs]} { return 0 }
   set out {}
   set gi 0
   foreach G $gs {
@@ -1626,9 +1915,110 @@ proc wviewer::capture_live_graph_state {token} {
     } elseif {[dict exists $G hilight_wave]} {
       set G [dict remove $G hilight_wave]
     }
+    # markers (doc/claude/specs/graph_markers.md), same absent-means-absent
+    # shape as hilight_wave right above. The guard is STRUCTURAL
+    # (markers_valid), not `string is` — the value is a multi-line record list.
+    # This is the PULL half; it only runs on the three paths that call this
+    # proc, which is exactly why the C engine also PUSHES (marker_changed).
+    if {!$skip_markers} {
+      set mk {}
+      catch {set mk [xschem getprop rect 2 $gi markers]}
+      if {$mk ne {} && [wviewer::markers_valid $mk]} {
+        dict set G markers $mk
+      } elseif {[dict exists $G markers]} {
+        set G [dict remove $G markers]
+      }
+    }
     lappend out $G
     incr gi
   }
+  wviewer::set_graphs $token $out
+  return 1
+}
+
+# --- the C -> Tcl marker push hook -------------------------------------------
+
+# Called by draw.c graph_marker_notify() after every marker create / delete /
+# drag-COMMIT — never per motion event. A GLOBAL proc because the C side calls
+# it through tcleval() with no namespace context; the body is one delegation.
+# Return codes, which C logs when they are neither 1 nor 2:
+#   1 model updated   2 not a viewer window (nothing to do)
+#   0 bailed          -1 a Tcl error was caught here
+# A silent bail resurfaces much later as "my markers vanished on resize" with no
+# diagnostic anywhere, so every non-success is reported.
+proc graph_marker_changed {} {
+  set r 0
+  if {[catch {set r [wviewer::marker_changed]} e]} {
+    if {[info exists ::has_x] && [info commands ::ciw_echo] ne {}} {
+      catch {ciw_echo "wviewer: marker push failed: $e" error}
+    }
+    return -1
+  }
+  return $r
+}
+
+# Fold every graph rect's live `markers` token back into the model.
+#
+# WHY A PUSH AND NOT A PULL. wviewer::regenerate does `xschem clear_drawing` and
+# re-places every rect from graph_props, and it is called from ~18 sites —
+# including configure_apply, i.e. a plain WINDOW RESIZE. Only three of those
+# first call capture_live_graph_state. A pull-only design therefore loses every
+# marker the moment the user resizes the window, with no action that reads as
+# destructive. Pushing on change keeps the model current at all times.
+#
+# READ-ONLY on the schematic side (getprop only), so it needs no with_edit: it
+# writes nothing into the rects, only into the Tcl model.
+proc wviewer::marker_changed {} {
+  set wp {}
+  catch {set wp [xschem get current_win_path]}
+  if {$wp eq {}} { return 0 }
+  set token [wviewer::token_for_canvas $wp]
+  if {$token eq {}} { return 2 }        ;# not a viewer window: legitimately nothing to do
+  set gs [dict get [wviewer::layout_for $token] graphs]
+  # index-space safety: the rects and the model must be 1:1 right now. They
+  # always are at hook time (no regenerate is in flight), but a mismatch has to
+  # BAIL rather than attach strip 0's markers to a different model graph.
+  # `graph_rects` counts GRAPH rects — deliberately not `xschem get rects 2`,
+  # which is every layer-2 rect, so one stray non-graph rect would permanently
+  # disable the hook.
+  set nrect -1
+  catch {set nrect [xschem get graph_rects]}
+  if {$nrect != [llength $gs]} {
+    if {[info exists ::has_x] && [info commands ::ciw_echo] ne {}} {
+      catch {ciw_echo "wviewer: marker push skipped (rects=$nrect model=[llength $gs])" error}
+    }
+    return 0
+  }
+  # Fold the live rect state (MMB pan / RMB box-zoom ranges, the wave-bold) into
+  # the model FIRST, exactly as move_strip and move_trace do, so the undo
+  # snapshot below is "what the user was looking at" and one `u` does not also
+  # revert an unrelated pan. `skip_markers 1`: the markers are the change being
+  # recorded, and capturing them here would put them INSIDE the restore point.
+  wviewer::capture_live_graph_state $token 1
+  set gs [dict get [wviewer::layout_for $token] graphs]
+  set out {}
+  set gi 0
+  set changed 0
+  foreach G $gs {
+    set mk {}
+    catch {set mk [xschem getprop rect 2 $gi markers]}
+    if {$mk ne {} && [wviewer::markers_valid $mk]} {
+      if {[wviewer::dget $G markers {}] ne $mk} { set changed 1 }
+      dict set G markers $mk
+    } elseif {[dict exists $G markers]} {
+      set G [dict remove $G markers]
+      set changed 1
+    }
+    lappend out $G
+    incr gi
+  }
+  if {!$changed} { return 1 }          ;# no phantom undo point for a no-op notify
+  # UNDO POINT FIRST. push_undo records the CURRENT state as the restore point
+  # ("called by a mutating command BEFORE it changes anything") and history_step
+  # pops that snapshot and applies it. Snapshotting AFTER set_graphs would store
+  # the POST-marker model, so `u` would restore the very marker it was meant to
+  # remove. Shipped order: move_strip, move_trace.
+  wviewer::push_undo $token
   wviewer::set_graphs $token $out
   return 1
 }
@@ -1812,6 +2202,32 @@ proc wviewer::cursor_grabbed {wp} {
   return [expr {($f & (16 | 32 | 512 | 1024)) ? 1 : 0}]
 }
 
+# 1 when the press just handed to C armed a MARKER drag (1 = the anchor slides
+# along its trace, 2 = the label moves). The cursor_grabbed twin, and read the
+# same way: `xschem get graph_marker_drag` answers for the CURRENT xctx, so with
+# two viewer/editor windows open an unswitched read answers for the wrong one —
+# hence the switch first. Fails CLOSED (0 = "no marker here") so a missing verb
+# or an errored query degrades to the pre-marker behaviour.
+proc wviewer::marker_grabbed {wp} {
+  if {[catch {xschem new_schematic switch $wp}]} { return 0 }
+  set d 0
+  catch {set d [xschem get graph_marker_drag]}
+  if {![string is integer -strict $d]} { return 0 }
+  return [expr {$d ? 1 : 0}]
+}
+
+# The window-wide number of the SELECTED marker, or -1 for none / any error.
+# Same context rule and same fail-closed rule as marker_grabbed above: -1 means
+# "nothing selected", which is what the Delete gate in key_filter must conclude
+# when it cannot get a trustworthy answer.
+proc wviewer::marker_selected {wp} {
+  if {[catch {xschem new_schematic switch $wp}]} { return -1 }
+  set n -1
+  catch {set n [xschem get graph_marker_sel]}
+  if {![string is integer -strict $n]} { return -1 }
+  return $n
+}
+
 # --- drag feedback (transient, on-screen only) -------------------------------
 
 # Paint the prospective destination: clear the bar on `old`, put one on `new`.
@@ -1893,6 +2309,21 @@ proc wviewer::strip_drag_press {W px py state} {
   wviewer::set_target_strip $gi $token
   xschem callback $W 4 $px $py 0 1 0 $state
   if {[wviewer::strip_handle_at_pixel $W $px $py] != $gi} {
+    # A press that armed a MARKER drag belongs to C for the WHOLE gesture, and
+    # it must arm NEITHER Tcl gesture. This is not optional
+    # (doc/claude/specs/graph_markers.md): a marker ANCHOR sits ON a trace by
+    # construction, so trace_at below would return >= 0 and a >3 px drag would
+    # move the TRACE to another strip instead of sliding the marker; a marker
+    # LABEL sits in empty waveform space, where trace_at misses and
+    # cursor_grabbed is 0, so the STRIP REORDER would arm and a >3 px vertical
+    # drag would reorder the whole stack. Both failures are silent.
+    #
+    # It sits INSIDE the handle test, not before it, so the reorder GRIP keeps
+    # unconditional first refusal — graph_marker_press declines the grip column
+    # itself, so marker_grabbed can never be 1 for a press the grip owns.
+    # Marker before cursor (below) is deliberate: an anchor is a smaller, more
+    # intentional target than a full-height cursor line.
+    if {[wviewer::marker_grabbed $W]} { return 1 }
     # inside the trace zone the press is NOT a reorder. It is either a cursor
     # grab (the C engine's, and it wins — a cursor can be parked on top of a
     # trace) or a grab of the trace itself, which arms the trace drag.
@@ -1962,7 +2393,27 @@ proc wviewer::strip_drag_release {W px py state} {
     set to $drag_to($token)
   }
   wviewer::strip_drag_reset $token
-  xschem callback $W 5 $px $py 0 1 0 $state
+  # A MARKER drag commits on this release, and a marker is durable content that
+  # the C ops refuse to write into a read-only buffer — which this window is,
+  # for its whole life. So the release is forwarded inside with_edit whenever a
+  # marker gesture is armed, exactly as key_filter does for m / d / Delete.
+  # Only then: with_edit is a context switch plus four state writes, far too
+  # heavy for every mouse release, and every OTHER thing this release does
+  # (cursor drop, wave-bold, box-zoom, the pan) writes view state that the
+  # engine has always been allowed to put in a read-only rect.
+  # A plain marker CLICK (select) does not mutate, but it comes through the same
+  # armed flag and the bracket is harmless there.
+  set mk 0
+  catch {set mk [xschem get graph_marker_drag]}
+  if {[string is integer -strict $mk] && $mk > 0} {
+    if {[catch {wviewer::with_edit $token {xschem callback $W 5 $px $py 0 1 0 $state}} emk]} {
+      if {[info exists ::has_x] && [info commands ::ciw_echo] ne {}} {
+        catch {ciw_echo "wviewer: marker drag refused: $emk" error}
+      }
+    }
+  } else {
+    xschem callback $W 5 $px $py 0 1 0 $state
+  }
   # the trace drop reads (and clears) its own state; it is a no-op unless this
   # press armed a trace drag that passed the threshold
   wviewer::trace_drag_drop $W
@@ -2084,6 +2535,14 @@ proc wviewer::move_trace_in_graphs {graphs from_gi from_ti to_gi} {
   set dst_ni [wviewer::node_count $D]        ;# where the appended trace lands
   set src_hw [wviewer::dget $S hilight_wave {}]
   set hw [wviewer::remap_hilight_after_trace_move $src_hw $moved_ni]
+  # markers are stored per graph in the SAME node-index space, so both index
+  # spaces shifting means both marker tokens have to be rewritten. A marker on
+  # the moved trace MIGRATES with it (doc/claude/specs/graph_markers.md) —
+  # measured off the graphs as they stand, i.e. BEFORE the trace list edits
+  # below, exactly like moved_ni/dst_ni above.
+  lassign [wviewer::remap_markers_after_trace_move \
+             [wviewer::dget $S markers {}] [wviewer::dget $D markers {}] \
+             $moved_ni $dst_ni] src_mk dst_mk
   # {} out of the remap means EITHER "there was no highlight" OR "the bold trace
   # is the one that left" — only the second hands the highlight to the destination
   set moved_was_bold [expr {[string is integer -strict $src_hw] &&
@@ -2105,6 +2564,18 @@ proc wviewer::move_trace_in_graphs {graphs from_gi from_ti to_gi} {
     if {$moved_was_bold} { set D [dict replace $D hilight_wave $dst_ni] }
   } else {
     set S [dict replace $S hilight_wave $hw]
+  }
+  # absent-means-absent on both sides: an emptied token drops the key rather
+  # than storing "", so graph_props keeps emitting nothing for that strip
+  if {$src_mk eq {}} {
+    set S [dict remove $S markers]
+  } else {
+    set S [dict replace $S markers $src_mk]
+  }
+  if {$dst_mk eq {}} {
+    set D [dict remove $D markers]
+  } else {
+    set D [dict replace $D markers $dst_mk]
   }
   set graphs [lreplace $graphs $from_gi $from_gi $S]
   return [lreplace $graphs $to_gi $to_gi $D]
@@ -2601,6 +3072,11 @@ proc wviewer::clear_all {{token {}}} {
   dict set layouts $token $lay
   set target($token) 0
   wviewer::regenerate $token
+  # every strip is gone, so a selected marker number now points at nothing.
+  # `empty_graph` has no `markers` key, so the markers themselves die by
+  # construction; only the UI selection (xctx state, not content) needs the
+  # explicit reset. regenerate left the viewer as the current context.
+  catch {xschem graph_marker select -none}
   wviewer::log_action [list wviewer::clear_all $token]
   return 1
 }
@@ -3352,19 +3828,65 @@ proc wviewer::delete_ok {token} {
   }
   set out {}
   set gi 0
+  # marker numbers that disappear here, for the window-wide `prev` sweep below:
+  # deleting a strip or a trace kills its markers, and a delta block whose
+  # partner number is gone degrades to a plain callout with NO indication
+  # (graph_marker_text just omits the block), so the links must be zeroed.
+  set gone {}
   foreach G [dict get [wviewer::layout_for $token] graphs] {
-    if {[lsearch -exact $delg $gi] >= 0} { incr gi; continue }
+    if {[lsearch -exact $delg $gi] >= 0} {
+      foreach n [wviewer::markers_numbers [wviewer::dget $G markers {}]] {
+        lappend gone $n
+      }
+      incr gi
+      continue
+    }
     if {[dict exists $delt $gi]} {
       set trs [dict get $G traces]
+      # NODE indices of the doomed traces, measured on the graph as it stands —
+      # they are what markers and hilight_wave are stored in, and they must be
+      # taken BEFORE any trace leaves the list
+      set doomed {}
+      foreach ti [dict get $delt $gi] {
+        set ni [wviewer::node_index_of_trace $G $ti]
+        if {$ni >= 0} { lappend doomed $ni }
+      }
       foreach ti [lsort -integer -decreasing [dict get $delt $gi]] {
         set trs [lreplace $trs $ti $ti]
       }
       set G [dict replace $G traces $trs]
+      if {[llength $doomed]} {
+        set mk [wviewer::dget $G markers {}]
+        if {$mk ne {}} {
+          set nmk [wviewer::remap_markers_after_trace_delete $mk $doomed]
+          set kept [wviewer::markers_numbers $nmk]
+          foreach n [wviewer::markers_numbers $mk] {
+            if {[lsearch -exact $kept $n] < 0} { lappend gone $n }
+          }
+          if {$nmk eq {}} {
+            set G [dict remove $G markers]
+          } else {
+            set G [dict replace $G markers $nmk]
+          }
+        }
+        # this path has never remapped `hilight_wave` either — a pre-existing
+        # latent bug: deleting a trace below the bold one left the bold marker
+        # pointing one node too high
+        set hw [wviewer::dget $G hilight_wave {}]
+        if {[string is integer -strict $hw]} {
+          set nhw [wviewer::remap_node_after_trace_delete $hw $doomed]
+          if {$nhw eq {}} {
+            set G [dict remove $G hilight_wave]
+          } else {
+            set G [dict replace $G hilight_wave $nhw]
+          }
+        }
+      }
     }
     lappend out $G
     incr gi
   }
-  wviewer::set_graphs $token $out
+  wviewer::set_graphs $token [wviewer::markers_sweep_numbers $out $gone]
   catch {unset delmap($token)}
   destroy $w
   wviewer::regenerate $token
@@ -3544,10 +4066,45 @@ proc wviewer::key_filter {W T x y N K s} {
   } elseif {$N == 102 || $N == 90 || ($N == 122 && ($s & 4))} {
     set fwd 1
   } elseif {[lsearch -exact $graphkeys $N] >= 0 && [wviewer::over_graph $W]} {
+    # graphkeys membership is otherwise unconditional on modifiers, which is
+    # right for a/b/s (Ctrl+a, Ctrl+b, Ctrl+s are real ctx=graph rows in
+    # keybindings.csv). `d` is the one member with a live collision: Ctrl-D is
+    # the viewer's Clear All on the WaveViewer bindtag, and there is NO ctx=graph
+    # row for Ctrl+d — so a forward falls through to the schematic `case 'd'`,
+    # whose ControlMask branch is delete_files(), a MODAL FILE DIALOG over a
+    # readonly viewer. Refusing the forward leaves the tag binding to clear.
+    set fwd [expr {!($N == 100 && ($s & 4))}]
+  } elseif {$N == 65535 && [wviewer::over_graph $W] && [wviewer::marker_selected $W] >= 0} {
+    # Delete removes the SELECTED waveform marker
+    # (doc/claude/specs/graph_markers.md). DOUBLY gated, and deliberately NOT a
+    # `graphkeys` member: membership means UNCONDITIONAL forwarding, and a
+    # Delete that reached C with nothing selected would land on the canvas
+    # delete verb — readonly_block() and a modal in a readonly viewer. C applies
+    # the same scope test on its side (the pointer must be over the strip that
+    # owns the selection), so a stale selection cannot make this fire either.
     set fwd 1
   }
   if {$fwd} {
-    xschem callback $W $T $x $y $N 0 0 $s
+    # m / d / Delete are the three MUTATING graph keys (waveform markers are
+    # durable content, doc/claude/specs/graph_markers.md), and the C arms now
+    # refuse them in a read-only buffer — which this window is, for its whole
+    # life. Forward them inside with_edit, the same bracket every other viewer
+    # mutation uses: readonly 0, run, set_modify 0, readonly 1. Everything else
+    # (a b s M t A B, cursors and the tooltip) writes only view state and is
+    # forwarded raw, exactly as before. KeyPress only: KeyRelease is a no-op in
+    # the C dispatcher, and a second with_edit cycle per keystroke is waste.
+    set tokm [wviewer::token_for_canvas $W]
+    if {$T == 2 && $tokm ne {} && ($N == 109 || $N == 100 || $N == 65535)} {
+      # with_edit ERRORS OUT loudly on a refused context switch; inside a Tk
+      # binding that must not propagate, so it is caught and reported.
+      if {[catch {wviewer::with_edit $tokm {xschem callback $W $T $x $y $N 0 0 $s}} emk]} {
+        if {[info exists ::has_x] && [info commands ::ciw_echo] ne {}} {
+          catch {ciw_echo "wviewer: marker key refused: $emk" error}
+        }
+      }
+    } else {
+      xschem callback $W $T $x $y $N 0 0 $s
+    }
     # item 12 (D8): a/b/s reached the C waves_callback (they are forwarded
     # only over a graph) — flip the Tcl cursor mirror + refresh the readout
     if {$T == 2 && ($N == 97 || $N == 98 || $N == 115)} {

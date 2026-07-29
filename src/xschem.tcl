@@ -15566,6 +15566,22 @@ set_ne hover_highlight_width 1
 ## never are, and the marker is never exported to SVG/PS.
 set_ne graph_active_strip_color #a0a000
 set_ne graph_active_strip_width 5
+## Waveform-marker callout colour (doc/claude/specs/graph_markers.md). Unlike the
+## active-strip marker above this IS a drawing-layer index, because a marker is
+## durable CONTENT drawn with the ordinary layer GCs and exported like a trace.
+## Layer 7 avoids the cursor colours (1, 3), the hcursor colours (15, 19), the
+## grid/selection layer (2) and the usual first trace colour (4).
+## Out-of-range values are clamped in C (gc[] is indexed unchecked).
+set_ne graph_marker_color 7
+## Marker callout font size, as a multiplier on the graph's Y-axis numbering
+## size (gr->txtsizey). Not txtsizex, the X-axis numbering size the callout used
+## to borrow: BOTH are clamped, and txtsizex's clamp is the BOTTOM MARGIN --
+## where the X-axis numbers are drawn, and nothing to do with a callout drawn
+## inside the plot box -- so the callout font collapsed with strip height and
+## fell below draw_string's 3-px "too small" floor in a tall stack of strips.
+## Raise this if the readout is still too small for your display; the value is
+## clamped in C to 0.1 .. 10 because it feeds the HIT box as well as the glyphs.
+set_ne graph_marker_textmag 1.0
 set_ne use_tclreadline 1
 set_ne en_hilight_conn_inst 0
 ## xpm to png conversion

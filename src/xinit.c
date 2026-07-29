@@ -662,6 +662,17 @@ static void alloc_xschem_data(const char *top_path, const char *win_path)
   /* issue 0152: wave-bold click anchor. A huge sentinel means "no live press", so a
    * release that arrives without a preceding press can never read as a click. */
   xctx->graph_press_x = xctx->graph_press_y = -1e30;
+  /* waveform markers (doc/claude/specs/graph_markers.md): all transient, and the
+   * -1 sentinels are meaningful, so they are set explicitly rather than relying
+   * on the my_calloc of xctx. */
+  xctx->graph_marker_sel = -1;
+  xctx->graph_marker_selgraph = -1;
+  xctx->graph_marker_drag = 0;
+  xctx->graph_marker_dragmode = GRAPH_MARKER_MODE_NONE;
+  xctx->graph_marker_dragnum = -1;
+  xctx->graph_marker_draggraph = -1;
+  xctx->graph_marker_moved = 0;
+  xctx->graph_marker_press_x = xctx->graph_marker_press_y = -1e30;
   xctx->graph_lastsel = -1;
   xctx->graph_struct.hilight_wave = -1; /* index of wave */
   xctx->wires = 0;

@@ -4398,11 +4398,20 @@ int find_closest_wave(int i, Graph_ctx *gr, int *node_number)
     char *nd = NULL;
     int valid_rawfile = 1;
     wcnt++;
+    /* Consume this entry's sweep token and clear the strtok seeds BEFORE the bus
+     * skip. Two bugs used to live in the old ordering (both also fixed in
+     * graph_point_at(), keep the two in sync):
+     *   - `continue` before `nptr = NULL` restarted my_strtok_r from the head of
+     *     `node` (it re-seeds whenever str != NULL, util.c), so a graph whose
+     *     FIRST node entry is a bus looped forever;
+     *   - a bus entry did not consume its `sweep` token, so every trace after a
+     *     bus was measured against the previous entry's sweep variable.
+     * draw_graph() consumes the sweep token for every entry, bus included. */
+    stok = my_strtok_r(sptr, "\t\n ", "\"", 0, &saves);
+    nptr = sptr = NULL;
     if(strstr(ntok, ",")) {
       if(find_nth(ntok, ";,", "\"", 0, 2)[0]) continue; /* bus signal: skip */
     }
-    stok = my_strtok_r(sptr, "\t\n ", "\"", 0, &saves);
-    nptr = sptr = NULL;
     dbg(1, "ntok=%s\n", ntok);
 
     if(custom_rawfile[0]) {
@@ -4486,8 +4495,11 @@ int find_closest_wave(int i, Graph_ctx *gr, int *node_number)
         register SPICE_DATA *gvx = xctx->raw->values[sweep_idx];
         register SPICE_DATA *gv0 = xctx->raw->values[0];
         register SPICE_DATA *gvy;
-        if(node_dataset != -1 && node_dataset != dset) goto done;
+        /* ofs_end MUST be computed before the dataset-skip goto: `done:` does
+         * `ofs = ofs_end;`, so skipping dataset 0 used to read an uninitialized
+         * ofs_end and thereafter a stale one. graph_point_at() gets this right. */
         ofs_end = ofs + xctx->raw->npoints[dset];
+        if(node_dataset != -1 && node_dataset != dset) goto done;
         if(expression) plot_raw_custom_data(sweep_idx, ofs, ofs_end - 1, express, NULL);
         gvy = xctx->raw->values[idx];
         dbg(1, "find_closest_wave(): dset=%d\n", dset);
@@ -4579,13 +4591,19 @@ static double graph_point_seg_dist(double px, double py,
   return sqrt(dx * dx + dy * dy);
 }
 
-/* Which displayed trace of graph `i` passes within `tol` SCREEN PIXELS of the
- * CANVAS PIXEL (px, py)? Returns the trace's NODE INDEX (its position in the
- * `node` prop token, counted like find_closest_wave()'s node_number — bus
- * entries occupy an index even though they are never hit-tested), or -1 when
- * nothing is within `tol` (also for a bad index, a non-graph rect, an
- * off-screen graph or no loaded data). When more than one trace qualifies the
- * NEAREST one wins.
+/* The trace/sample picking family. Three public entry points, ONE traversal:
+ *
+ *   graph_point_at()  the engine: nearest SAMPLE (trace + dataset + point + x/y)
+ *   graph_wave_at()   which displayed trace of graph `i` passes within `tol`
+ *                     SCREEN PIXELS of the CANVAS PIXEL (px, py)? Returns the
+ *                     trace's NODE INDEX (its position in the `node` prop token,
+ *                     counted like find_closest_wave()'s node_number — bus
+ *                     entries occupy an index even though they are never
+ *                     hit-tested), or -1 when nothing is within `tol` (also for
+ *                     a bad index, a non-graph rect, an off-screen graph or no
+ *                     loaded data). When more than one trace qualifies the
+ *                     NEAREST one wins.
+ *   graph_near_wave() the same question as a boolean: the exclusion zone.
  *
  * The ASE waveform viewer's LMB seam (drag-to-reorder strips + drag a trace to
  * another strip, doc/claude/specs/waveform_viewer_modes.md): empty waveform-body
@@ -4607,10 +4625,38 @@ static double graph_point_seg_dist(double px, double py,
  * DOCUMENTED LIMITS: digital strips and bus traces answer -1 (their rendering is
  * a band/ribbon, not a polyline — the whole body is then reorder space), and the
  * search is capped by the graph's own x window, exactly like the draw. */
-int graph_wave_at(int i, double px, double py, double tol)
+/* The generalized picker every one of the three answers above is built on.
+ * Returns 1 when a trace of graph `i` passes within `tol` SCREEN PIXELS of the
+ * canvas pixel (px, py), filling *hit with the identity of the NEAREST SAMPLE on
+ * that trace; 0 otherwise (*hit untouched).
+ *
+ * Trace RANKING is unchanged from the original graph_wave_at(): point-to-SEGMENT
+ * distance, strictly-nearer wins, ties go to the first node in the list. The ASE
+ * trace-exclusion zone, the issue-0152 wave-bold and the trace-drag pick all
+ * depend on exactly that. The nearest SAMPLE is tracked independently, by plain
+ * point distance, because a marker anchors to a real data point, not to a place
+ * on a segment.
+ *
+ * restrict_wave >= 0    confine the search to that node index (a marker drag
+ *                       slides along its OWN trace and nothing else)
+ * restrict_dataset >= 0 confine it to that raw dataset
+ *
+ * hit->x / hit->y are the RAW gvx[p]/gvy[p], NEVER the mylog10()'ed ones: the
+ * log mapping is only for the screen transform, and mylog10() clamps x <= 0 to
+ * -35, so a round trip through pow(10,.) would turn a zero sample into 1e-35
+ * (landmine 35). They are also captured INSIDE the sample loop and never
+ * re-read afterwards: for an expression trace values[nvars] is a single global
+ * scratch column that plot_raw_custom_data() rewrites for every dataset, so a
+ * post-loop read would return whatever the LAST dataset left there.
+ *
+ * Uses a LOCAL Graph_ctx: never clobber xctx->graph_struct, which an active
+ * draw_graph may be using (landmine 11). */
+int graph_point_at(int i, double px, double py, double tol,
+                   int restrict_wave, int restrict_dataset, GraphPointHit *hit)
 {
   Graph_ctx gr_ctx;
   Graph_ctx *gr = &gr_ctx;
+  GraphPointHit best;
   char *node = NULL, *sweep = NULL;
   char *saven, *saves, *nptr, *sptr;
   const char *ntok, *stok;
@@ -4623,20 +4669,28 @@ int graph_wave_at(int i, double px, double py, double tol)
   int sweep_idx = 0, idx, expression, autoload;
   int node_dataset = -1;
   int wcnt = -1, best_wave = -1;
+  int valid_rawfile = 1, switched = 0, saveflags;
   double best_dist = 0.0;
   double start, end;
 
-  if(!xctx) return -1;
-  if(i < 0 || i >= xctx->rects[GRIDLAYER]) return -1;
+  if(!xctx) return 0;
+  if(i < 0 || i >= xctx->rects[GRIDLAYER]) return 0;
   r = &xctx->rect[GRIDLAYER][i];
-  if(!(r->flags & 1)) return -1;
-  if(!xctx->raw || sch_waves_loaded() == -1) return -1;
+  if(!(r->flags & 1)) return 0;
+  if(!xctx->raw || sch_waves_loaded() == -1) return 0;
   memset(&gr_ctx, 0, sizeof(gr_ctx));
+  memset(&best, 0, sizeof(best));
+  /* landmine 37: setup_graph_data() rewrites graph_flags' hcursor bits from the
+   * rect it is given. This is a query (the `graph_trace_at`/`graph_near_wave`
+   * verbs, and one call per motion event during a marker drag), so it must not
+   * leave the session describing a strip nobody is hovering. */
+  saveflags = xctx->graph_flags & (128 | 256);
   setup_graph_data(i, 0, gr);
+  xctx->graph_flags = (xctx->graph_flags & ~(128 | 256)) | saveflags;
   /* setup_graph_data() returns early for an off-screen graph without computing
    * the transform (the RECT_OUTSIDE test); a zero scale means "no transform" */
-  if(gr->scx == 0.0 || gr->scy == 0.0) return -1;
-  if(gr->digital) return -1;
+  if(gr->scx == 0.0 || gr->scy == 0.0) return 0;
+  if(gr->digital) return 0;
   if(tol < 0.0) tol = 0.0;
 
   autoload = !strboolcmp(get_tok_value(r->prop_ptr,"autoload", 0), "true");
@@ -4654,6 +4708,19 @@ int graph_wave_at(int i, double px, double py, double tol)
   }
   my_strdup2(_ALLOC_ID_, &sim_type, get_tok_value(r->prop_ptr,"sim_type", 0));
 
+  /* `rawfile`/`sim_type` are GRAPH-level tokens, so the switch is made once, not
+   * once per node: the per-node form re-switched an already-switched raw and the
+   * single extra_rawfile(5,...) below then restored only one level of it. */
+  if(custom_rawfile[0]) {
+    if(extra_rawfile(autoload, custom_rawfile,
+       sim_type[0] ? sim_type : (xctx->raw->sim_type ? xctx->raw->sim_type : NULL),
+       -1.0, -1.0) == 0) {
+      valid_rawfile = 0;
+    } else {
+      switched = 1;
+    }
+  }
+
   start = (gr->gx1 <= gr->gx2) ? gr->gx1 : gr->gx2;
   end   = (gr->gx1 <= gr->gx2) ? gr->gx2 : gr->gx1;
 
@@ -4661,27 +4728,30 @@ int graph_wave_at(int i, double px, double py, double tol)
   sptr = sweep;
   while( (ntok = my_strtok_r(nptr, "\n", "\"", 4, &saven)) ) {
     char *nd = NULL;
-    int valid_rawfile = 1;
     /* the counter tracks the node's POSITION in the list, so it must advance
      * for every entry including the bus ones skipped below (find_closest_wave()
      * counts the same way, and hilight_wave is in that index space) */
     wcnt++;
+    /* consume the sweep token and clear the strtok seeds BEFORE the bus skip --
+     * see the matching comment in find_closest_wave(): `continue` with nptr
+     * still non-NULL re-seeds my_strtok_r from the head of `node` and loops
+     * forever on a leading bus entry, and a bus that does not consume its sweep
+     * token shifts every following trace onto the wrong sweep variable. */
+    stok = my_strtok_r(sptr, "\t\n ", "\"", 0, &saves);
+    nptr = sptr = NULL;
     if(strstr(ntok, ",")) {
       if(find_nth(ntok, ";,", "\"", 0, 2)[0]) continue; /* bus signal: skip */
     }
-    stok = my_strtok_r(sptr, "\t\n ", "\"", 0, &saves);
-    nptr = sptr = NULL;
-    if(custom_rawfile[0]) {
-      if(extra_rawfile(autoload, custom_rawfile,
-         sim_type[0] ? sim_type : (xctx->raw->sim_type ? xctx->raw->sim_type : NULL),
-         -1.0, -1.0) == 0) {
-        valid_rawfile = 0;
-      }
-    }
+    /* the sweep column must be resolved for EVERY entry before the restriction
+     * skip: a `sweep` list shorter than the `node` list carries its last entry
+     * forward (stok comes back NULL and sweep_idx keeps its value), so skipping
+     * first made a restricted walk -- i.e. every anchor drag -- fall back to raw
+     * column 0 and find nothing. graph_wave_resolve() has the same ordering. */
     if(stok && stok[0]) {
       sweep_idx = get_raw_index(stok, NULL);
       if(sweep_idx == -1) sweep_idx = 0;
     }
+    if(restrict_wave >= 0 && wcnt != restrict_wave) continue;
     my_strdup2(_ALLOC_ID_, &nd, find_nth(ntok, "%", "\"", 0, 2));
     if(nd[0]) {
       int pos = 1;
@@ -4711,18 +4781,29 @@ int graph_wave_at(int i, double px, double py, double tol)
     if(sch_waves_loaded() != -1 && valid_rawfile && idx != -1) {
       int p, dset, ofs = 0, ofs_end;
       double xx, yy, prev_sx = 0.0, prev_sy = 0.0;
-      double nd_min = -1.0; /* smallest distance found for THIS node */
+      double nd_min = -1.0;   /* smallest SEGMENT distance found for THIS node */
+      double nd_pdist = -1.0; /* smallest POINT distance found for THIS node */
+      double nd_x = 0.0, nd_y = 0.0, nd_sx = 0.0, nd_sy = 0.0;
+      int nd_dataset = 0, nd_point = 0;
       int have_prev;
-      for(dset = 0; dset < xctx->raw->datasets && nd_min != 0.0; dset++) {
+      for(dset = 0; dset < xctx->raw->datasets; dset++) {
         SPICE_DATA *gvx = xctx->raw->values[sweep_idx];
         SPICE_DATA *gvy;
         ofs_end = ofs + xctx->raw->npoints[dset];
         if(node_dataset != -1 && node_dataset != dset) { ofs = ofs_end; continue; }
-        if(expression) plot_raw_custom_data(sweep_idx, ofs, ofs_end - 1, express, NULL);
+        if(restrict_dataset >= 0 && restrict_dataset != dset) { ofs = ofs_end; continue; }
+        /* plot_raw_custom_data() returns -1 on a malformed/overflowing RPN
+         * WITHOUT touching the scratch column, so measuring afterwards would
+         * compare against whatever expression was evaluated last. */
+        if(expression &&
+           plot_raw_custom_data(sweep_idx, ofs, ofs_end - 1, express, NULL) < 0) {
+          ofs = ofs_end;
+          continue;
+        }
         gvy = xctx->raw->values[idx];
         have_prev = 0;
         for(p = ofs; p < ofs_end; p++) {
-          double sx, sy, d;
+          double sx, sy, d, ddx, ddy, pd;
           if(gr->logx) xx = mylog10(gvx[p]); else xx = gvx[p];
           if(gr->logy) yy = mylog10(gvy[p]); else yy = gvy[p];
           if(xx < start || xx > end) { have_prev = 0; continue; }
@@ -4731,39 +4812,76 @@ int graph_wave_at(int i, double px, double py, double tol)
           /* a non-finite screen coordinate cannot be near anything and would
            * poison the distance arithmetic */
           if(!(sx > -1e9 && sx < 1e9 && sy > -1e9 && sy < 1e9)) { have_prev = 0; continue; }
+          ddx = sx - px;
+          ddy = sy - py;
+          pd = sqrt(ddx * ddx + ddy * ddy);
           if(have_prev) {
             d = graph_point_seg_dist(px, py, prev_sx, prev_sy, sx, sy);
           } else {
-            double ddx = sx - px, ddy = sy - py;
-            d = sqrt(ddx * ddx + ddy * ddy);
+            d = pd;
           }
           if(nd_min < 0.0 || d < nd_min) nd_min = d;
+          /* the nearest SAMPLE, tracked independently of the ranking metric and
+           * frozen HERE -- values[] must not be read again after this loop */
+          if(nd_pdist < 0.0 || pd < nd_pdist) {
+            nd_pdist = pd;
+            nd_x = gvx[p];   /* RAW, not the log-mapped xx */
+            nd_y = gvy[p];   /* RAW, not the log-mapped yy */
+            nd_sx = sx;
+            nd_sy = sy;
+            nd_dataset = dset;
+            nd_point = p;
+          }
           prev_sx = sx;
           prev_sy = sy;
           have_prev = 1;
-          if(nd_min == 0.0) break; /* cannot do better */
         }
         ofs = ofs_end;
       }
       /* strictly nearer wins, so overlapping traces resolve to the topmost
        * match by distance and, on a tie, to the FIRST node in the list */
-      if(nd_min >= 0.0 && nd_min <= tol && (best_wave < 0 || nd_min < best_dist)) {
+      if(nd_min >= 0.0 && nd_min <= tol && nd_pdist >= 0.0 &&
+         (best_wave < 0 || nd_min < best_dist)) {
         best_wave = wcnt;
         best_dist = nd_min;
+        best.wave = wcnt;
+        best.dataset = nd_dataset;
+        best.point = nd_point;
+        best.idx = idx;
+        best.expression = expression;
+        best.sweep_idx = sweep_idx;
+        best.x = nd_x;
+        best.y = nd_y;
+        best.sx = nd_sx;
+        best.sy = nd_sy;
+        best.dist = nd_pdist;
+        best.seg_dist = nd_min;
       }
     }
     if(express) my_free(_ALLOC_ID_, &express);
   }
 
-  if(sch_waves_loaded() != -1 && custom_rawfile[0]) extra_rawfile(5, NULL, NULL, -1.0, -1.0);
+  /* Restore ONLY if the switch actually took. extra_rawfile mode 5 is a SWAP of
+   * extra_idx <-> extra_prev_idx, not a stack pop, so an unpaired call silently
+   * repoints the session's current raw -- measured: a pure hover query on a
+   * graph whose `rawfile=` does not resolve flipped xctx->raw on every call. */
+  if(switched) extra_rawfile(5, NULL, NULL, -1.0, -1.0);
   my_free(_ALLOC_ID_, &custom_rawfile);
   my_free(_ALLOC_ID_, &sim_type);
   if(ntok_copy) my_free(_ALLOC_ID_, &ntok_copy);
   my_free(_ALLOC_ID_, &node);
   my_free(_ALLOC_ID_, &sweep);
-  dbg(1, "graph_wave_at(): graph=%d px=%g py=%g tol=%g -> %d (dist=%g)\n",
+  dbg(1, "graph_point_at(): graph=%d px=%g py=%g tol=%g -> wave %d (dist=%g)\n",
       i, px, py, tol, best_wave, best_dist);
-  return best_wave;
+  if(best_wave < 0) return 0;
+  if(hit) *hit = best;
+  return 1;
+}
+
+int graph_wave_at(int i, double px, double py, double tol)
+{
+  GraphPointHit h;
+  return graph_point_at(i, px, py, tol, -1, -1, &h) ? h.wave : -1;
 }
 
 /* 1 when canvas pixel (px,py) is within `tol` screen pixels of ANY displayed
@@ -4773,6 +4891,1196 @@ int graph_wave_at(int i, double px, double py, double tol)
 int graph_near_wave(int i, double px, double py, double tol)
 {
   return graph_wave_at(i, px, py, tol) >= 0 ? 1 : 0;
+}
+
+/* ===========================================================================
+ * Waveform markers — doc/claude/specs/graph_markers.md
+ *
+ * A marker is DURABLE CONTENT, not UI chrome: it is a `markers` prop token on
+ * the graph rect, so it rides save/reload, copy/paste and undo for free, and it
+ * is rendered under draw_graph's flags bit 8 (never bit 16), so it appears in
+ * SVG/PNG export exactly like a trace does.
+ *
+ *   markers="<num> <wave> <dset> <point> <x> <y> <prev> <ldx> <ldy>[\n...]"
+ *
+ * All fields are numeric on purpose: subst_token() does not escape a quote or a
+ * backslash, so an alphabet without them cannot corrupt the following tokens,
+ * and it dodges tcl_hook2's "a value starting with tcleval( is executed".
+ * x/y are written with %.17g because they must identify the EXACT sample -- the
+ * house dtoa() is %.8g and would re-snap a reloaded marker onto a neighbour.
+ * =========================================================================== */
+
+#if HAS_CAIRO==1
+#define GRAPH_DELTA_STR "\316\224"  /* UTF-8 U+0394 GREEK CAPITAL LETTER DELTA */
+#else
+/* the vector font maps every byte > 127 to '?' INDEPENDENTLY (draw_string), so a
+ * cairo-less build must degrade to ASCII rather than render "??" */
+#define GRAPH_DELTA_STR "D"
+#endif
+
+#define GRAPH_MARKER_FINITE(v) ((v) > -1e308 && (v) < 1e308)
+
+/* Parse the `markers` token of a prop string into a freshly allocated array.
+ * Returns the record count (also written to *n); the caller my_free()s *arr.
+ * A malformed record is DROPPED and the rest are kept -- the same per-record
+ * tolerance wviewer::markers_decode has. */
+int graph_markers_parse(const char *prop_ptr, GraphMarker **arr, int *n)
+{
+  char *val = NULL, *save = NULL, *ptr;
+  const char *tok;
+  GraphMarker *a = NULL;
+  int cnt = 0, size = 0;
+
+  if(arr) *arr = NULL;
+  if(n) *n = 0;
+  if(!prop_ptr) return 0;
+  /* get_tok_value() returns a SHARED static buffer and my_strtok_r() mutates
+   * its input: copy first (draw_graph does the same for `node`) */
+  my_strdup2(_ALLOC_ID_, &val, get_tok_value(prop_ptr, "markers", 0));
+  if(!val || !val[0]) {
+    if(val) my_free(_ALLOC_ID_, &val);
+    return 0;
+  }
+  ptr = val;
+  while( (tok = my_strtok_r(ptr, "\n", "", 0, &save)) ) {
+    GraphMarker m;
+    ptr = NULL;
+    memset(&m, 0, sizeof(m));
+    if(sscanf(tok, "%d %d %d %d %lf %lf %d %lf %lf",
+              &m.num, &m.wave, &m.dataset, &m.point,
+              &m.x, &m.y, &m.prev, &m.ldx, &m.ldy) < 9) {
+      dbg(0, "graph_markers_parse(): dropping malformed marker record |%s|\n", tok);
+      continue;
+    }
+    if(!GRAPH_MARKER_FINITE(m.x) || !GRAPH_MARKER_FINITE(m.y) ||
+       !GRAPH_MARKER_FINITE(m.ldx) || !GRAPH_MARKER_FINITE(m.ldy)) {
+      dbg(0, "graph_markers_parse(): dropping non-finite marker record |%s|\n", tok);
+      continue;
+    }
+    /* NO cap here, deliberately. GRAPH_MARKERS_MAX bounds CREATION only.
+     * Truncating on the read side would be data destruction, not a guard: every
+     * mutating op rewrites the whole token from this array, so the first
+     * keystroke on a hand-edited or foreign file carrying more than the cap
+     * would silently and irreversibly drop the excess. Memory stays proportional
+     * to the file, like every other object array. */
+    if(cnt >= size) {
+      size += 16;
+      my_realloc(_ALLOC_ID_, &a, (size_t)size * sizeof(GraphMarker));
+    }
+    a[cnt++] = m;
+  }
+  my_free(_ALLOC_ID_, &val);
+  if(arr) *arr = a;
+  else if(a) my_free(_ALLOC_ID_, &a);
+  if(n) *n = cnt;
+  return cnt;
+}
+
+/* Build the token VALUE (no `markers=` prefix, no quoting -- subst_token quotes
+ * a value containing spaces/newlines by itself). *dest is NULL for n == 0. */
+void graph_markers_format(char **dest, const GraphMarker *arr, int n)
+{
+  int k;
+  char line[256];
+
+  if(!dest) return;
+  if(*dest) my_free(_ALLOC_ID_, dest);
+  if(n <= 0 || !arr) return;
+  for(k = 0; k < n; k++) {
+    my_snprintf(line, S(line), "%s%d %d %d %d %.17g %.17g %d %.10g %.10g",
+                k ? "\n" : "", arr[k].num, arr[k].wave, arr[k].dataset, arr[k].point,
+                arr[k].x, arr[k].y, arr[k].prev, arr[k].ldx, arr[k].ldy);
+    if(k == 0) my_strdup2(_ALLOC_ID_, dest, line);
+    else my_strcat(_ALLOC_ID_, dest, line);
+  }
+}
+
+/* Write the array back into the rect. An empty array DELETES the token (that is
+ * subst_token's empty-value branch), so "never marked" and "all markers removed"
+ * are the same representation. */
+void graph_markers_store(xRect *r, const GraphMarker *arr, int n)
+{
+  char *buf = NULL;
+
+  if(!r) return;
+  graph_markers_format(&buf, arr, n);
+  my_strdup2(_ALLOC_ID_, &r->prop_ptr, subst_token(r->prop_ptr, "markers", buf ? buf : ""));
+  if(buf) my_free(_ALLOC_ID_, &buf);
+  /* cheapest correct convention after any direct prop_ptr write; provably a
+   * no-op for this token (set_rect_flags reads only `flags`) */
+  set_rect_flags(r);
+}
+
+/* Highest marker number in the WHOLE window (0 when there are none). No counter
+ * is kept anywhere: a rect deleted, undone, pasted or regenerated can then never
+ * desync the numbering. */
+int graph_marker_max_number(void)
+{
+  int i, k, n, max = 0;
+
+  if(!xctx) return 0;
+  for(i = 0; i < xctx->rects[GRIDLAYER]; i++) {
+    GraphMarker *a = NULL;
+    xRect *r = &xctx->rect[GRIDLAYER][i];
+    if(!(r->flags & 1)) continue;
+    n = graph_markers_parse(r->prop_ptr, &a, &n);
+    for(k = 0; k < n; k++) if(a[k].num > max) max = a[k].num;
+    if(a) my_free(_ALLOC_ID_, &a);
+  }
+  return max;
+}
+
+int graph_marker_next_number(void)
+{
+  return graph_marker_max_number() + 1;
+}
+
+/* Locate marker `num` anywhere in the window. A delta's partner may live in a
+ * DIFFERENT strip, which is why this is window-wide. */
+int graph_marker_find(int num, int *graph_idx, GraphMarker *out)
+{
+  int i, k, n;
+
+  if(!xctx || num <= 0) return 0;
+  for(i = 0; i < xctx->rects[GRIDLAYER]; i++) {
+    GraphMarker *a = NULL;
+    xRect *r = &xctx->rect[GRIDLAYER][i];
+    if(!(r->flags & 1)) continue;
+    n = graph_markers_parse(r->prop_ptr, &a, &n);
+    for(k = 0; k < n; k++) {
+      if(a[k].num == num) {
+        if(graph_idx) *graph_idx = i;
+        if(out) *out = a[k];
+        my_free(_ALLOC_ID_, &a);
+        return 1;
+      }
+    }
+    if(a) my_free(_ALLOC_ID_, &a);
+  }
+  return 0;
+}
+
+/* One value, engineering-formatted the way the MEASUREMENT TOOLTIP does it
+ * (callback.c): ev_precision on both branches. draw_cursor hardcodes 5 on the
+ * plain branch -- a marker is a readout the user explicitly asked for, so it
+ * follows the tooltip. Deliberate, documented divergence. */
+static void graph_marker_fmt(char *dest, int destsize, double v, double unit, int suffix, int prec)
+{
+  if(unit != 1.0 && unit != 0.0 && suffix) {
+    /* plain sprintf, NOT my_snprintf: without HAS_SNPRINTF the house
+     * my_snprintf is a minimal reimplementation that does not understand the
+     * `*` precision, so "%.*g" made it consume the int `prec` AS THE DOUBLE
+     * (measured: "700.0000000000001136868377216160297393798828125" and a
+     * swallowed suffix). draw_cursor()/the measurement tooltip use raw sprintf
+     * here for exactly this reason. prec is clamped by the caller, so the
+     * longest possible output is ~24 chars + the suffix. */
+    sprintf(dest, "%.*g%c", prec, unit * v, suffix);
+  }
+  else my_snprintf(dest, destsize, "%s", dtoa_eng(v, prec));
+}
+
+/* Every marker in the window, parsed ONCE, with the rect each lives on.
+ * The renderer and the hit-tester build this once per call and resolve delta
+ * partners out of it: doing a graph_marker_find() per record instead re-parsed
+ * every rect in the window per marker and made both operations O(N^2) -- 512
+ * markers (the shipped cap) measured at ~220 ms per redraw AND per mouse press.
+ * Caller my_free()s *arr. */
+typedef struct {
+  GraphMarker m;
+  int graph;
+} GraphMarkerRef;
+
+static int graph_markers_collect(GraphMarkerRef **arr, int *n)
+{
+  int i, k, cnt = 0, size = 0;
+  GraphMarkerRef *a = NULL;
+
+  if(arr) *arr = NULL;
+  if(n) *n = 0;
+  if(!xctx) return 0;
+  for(i = 0; i < xctx->rects[GRIDLAYER]; i++) {
+    GraphMarker *b = NULL;
+    int m = 0;
+    xRect *r = &xctx->rect[GRIDLAYER][i];
+    if(!(r->flags & 1)) continue;
+    m = graph_markers_parse(r->prop_ptr, &b, &m);
+    for(k = 0; k < m; k++) {
+      if(cnt >= size) {
+        size += 32;
+        my_realloc(_ALLOC_ID_, &a, (size_t)size * sizeof(GraphMarkerRef));
+      }
+      a[cnt].m = b[k];
+      a[cnt].graph = i;
+      cnt++;
+    }
+    if(b) my_free(_ALLOC_ID_, &b);
+  }
+  if(arr) *arr = a;
+  else if(a) my_free(_ALLOC_ID_, &a);
+  if(n) *n = cnt;
+  return cnt;
+}
+
+/* Render a marker RECORD's label into dest. Returns 1 on success.
+ *
+ * Takes the record, not a number, so the renderer can pass the LIVE DRAG
+ * SCRATCH: re-deriving from the number would read the rect's stored token,
+ * which is deliberately not written until the release, and the callout would
+ * then keep showing the pre-drag x/y, dx/dy and slope while the anchor slides
+ * -- i.e. the readout, the entire reason a marker exists, would be frozen for
+ * the whole gesture.
+ *
+ * `pool` (may be NULL) is the pre-parsed window used to resolve the delta
+ * partner without a fresh full-window scan.
+ *
+ * dtoa_eng() returns a SHARED static buffer, so every value is staged into its
+ * own local before assembly -- two dtoa_eng calls in one sprintf print the same
+ * number twice. */
+static int graph_marker_text_rec(const GraphMarker *mp, int gi,
+                                 const GraphMarkerRef *pool, int npool,
+                                 char *dest, int destsize)
+{
+  GraphMarker m, p;
+  xRect *r;
+  int pgi = -1, havep = 0;
+  int prec, logx, sufx, sufy;
+  double unitx, unity;
+  const char *val;
+  char sx[80], sy[80], sdx[80], sdy[80], ssl[80];
+
+  if(!dest || destsize <= 0) return 0;
+  dest[0] = '\0';
+  if(!xctx || !mp) return 0;
+  if(gi < 0 || gi >= xctx->rects[GRIDLAYER]) return 0;
+  m = *mp;
+  /* a getter must not write xctx->ev_precision (draw_graph owns that) */
+  prec = tclgetintvar("ev_precision");
+  if(prec <= 0) prec = 5;
+  /* clamped so graph_marker_fmt's sprintf can never outgrow its 80-byte buffer
+   * (17 significant digits already round-trips a double exactly) */
+  if(prec > 17) prec = 17;
+  /* the axis units are read straight off the rect rather than through
+   * setup_graph_data(): that returns EARLY for an off-screen graph (RECT_OUTSIDE)
+   * without ever reaching the unitx/unity parse, and it has the side effect of
+   * rewriting xctx->graph_flags' hcursor bits -- neither is wanted in a query
+   * that can be called from a Tcl verb outside any draw. */
+  r = &xctx->rect[GRIDLAYER][gi];
+  val = get_tok_value(r->prop_ptr, "logx", 0);
+  logx = (val[0] == '1');
+  val = get_tok_value(r->prop_ptr, "unitx", 0);
+  sufx = val[0];
+  unitx = get_unit(val);
+  if(logx) { /* AC: the y axis carries no unit suffix, mirroring setup_graph_data */
+    sufy = 0;
+    unity = 1.0;
+  } else {
+    val = get_tok_value(r->prop_ptr, "unity", 0);
+    sufy = val[0];
+    unity = get_unit(val);
+  }
+  graph_marker_fmt(sx, S(sx), m.x, unitx, sufx, prec);
+  graph_marker_fmt(sy, S(sy), m.y, unity, sufy, prec);
+  if(m.prev >= 1) {
+    if(pool) {
+      int k;
+      for(k = 0; k < npool; k++) {
+        if(pool[k].m.num == m.prev) { p = pool[k].m; pgi = pool[k].graph; havep = 1; break; }
+      }
+    } else {
+      havep = graph_marker_find(m.prev, &pgi, &p);
+    }
+  }
+  (void) pgi;
+  if(havep) {
+    double dx = m.x - p.x;
+    double dy = m.y - p.y;
+    graph_marker_fmt(sdx, S(sdx), dx, unitx, sufx, prec);
+    graph_marker_fmt(sdy, S(sdy), dy, unity, sufy, prec);
+    /* exact compare: both operands are exact doubles read out of the raw */
+    if(dx == 0.0) my_snprintf(ssl, S(ssl), "undef");
+    else my_snprintf(ssl, S(ssl), "%s", dtoa_eng(dy / dx, prec));
+    my_snprintf(dest, destsize, "M%d:%s,%s\n%sx:%s,%sy:%s\nslope:%s",
+                m.num, sx, sy, GRAPH_DELTA_STR, sdx, GRAPH_DELTA_STR, sdy, ssl);
+  } else {
+    my_snprintf(dest, destsize, "M%d:%s,%s", m.num, sx, sy);
+  }
+  return 1;
+}
+
+/* The by-number wrapper: the Tcl `graph_marker text` verb and the tests. */
+int graph_marker_text(int num, char *dest, int destsize)
+{
+  GraphMarker m;
+  int gi = -1;
+
+  if(!dest || destsize <= 0) return 0;
+  dest[0] = '\0';
+  if(!graph_marker_find(num, &gi, &m)) return 0;
+  return graph_marker_text_rec(&m, gi, NULL, 0, dest, destsize);
+}
+
+/* Callout box padding, as a fraction of ONE text LINE -- not of the whole text
+ * block, or a 3-line delta callout would be padded three times as much as a
+ * plain one -- with a floor in SCREEN pixels so a callout on a short stacked
+ * strip still gets breathing room. */
+#define GRAPH_MARKER_PADX     0.40
+#define GRAPH_MARKER_PADY     0.22
+#define GRAPH_MARKER_PADX_MIN 2.0
+#define GRAPH_MARKER_PADY_MIN 1.5
+
+/* drawrect()/drawline()/drawarc() turn their `bus` argument into
+ * XLINEWIDTH(bus * xctx->mooz), which TRUNCATES toward zero. xctx->mooz is a
+ * stored double equal to fl(1/zoom), NOT a symbolic reciprocal, so n * zoom *
+ * mooz can land one ulp below n and truncate to n-1 (measured: 1.9999999999999998
+ * for 13.9% of zoom values at n = 2, which silently erased the selection cue).
+ * The +0.25 rounds that back and stays far below n+1. */
+#define GRAPH_MARKER_PX(n) (((n) + 0.25) * xctx->zoom)
+
+/* Marker stroke weights, in SCREEN PIXELS, for the leader line, the callout
+ * outline and the selection ring. 1 px is the FLOOR of this path: XLINEWIDTH
+ * clamps (int)0 to 1 whenever change_lw is set, DRAW_ALL_CAIRO is 0 so there is
+ * no sub-pixel stroking available, and an X11 line width of 0 is the "thin
+ * line" special case (1 px, fast algorithm), not invisible. */
+#define GRAPH_MARKER_LW     1.0
+#define GRAPH_MARKER_LW_SEL 2.0
+
+/* Inflate the raw text box into the CALLOUT box, so the glyphs do not touch the
+ * border. Applied INSIDE graph_marker_label_box(), immediately after EVERY
+ * text_bbox() call, and that placement is the whole point: the four-candidate
+ * fit test, the shove-back-inside and the hit test must all see the SAME box.
+ * Padding in the renderer alone would desync the drawn box from the clickable
+ * one, which is the exact class the shared function exists to prevent --
+ * enlarging the clickable area along with the drawn one is intended.
+ *
+ * lx/ly are deliberately NOT touched. text_bbox()'s (x,y) names the TOP-LEFT of
+ * the text block (rot=0/flip=0/hcenter=0/vcenter=0, so tx1 == lx exactly), and
+ * draw_string() re-derives its own box from that same (x,y) and never sees this
+ * one -- so a SYMMETRIC inflation leaves the glyphs exactly where they were and
+ * visually centres them in the padded box. An asymmetric pad would not. */
+static void graph_marker_pad_box(int nlines, double *tx1, double *ty1,
+                                 double *tx2, double *ty2)
+{
+  double lineh = *ty2 - *ty1;
+  double padx, pady;
+
+  if(nlines > 1) lineh /= nlines;
+  padx = lineh * GRAPH_MARKER_PADX;
+  pady = lineh * GRAPH_MARKER_PADY;
+  /* xctx->zoom is world units per pixel, so these floors are screen pixels */
+  if(padx < GRAPH_MARKER_PADX_MIN * xctx->zoom) padx = GRAPH_MARKER_PADX_MIN * xctx->zoom;
+  if(pady < GRAPH_MARKER_PADY_MIN * xctx->zoom) pady = GRAPH_MARKER_PADY_MIN * xctx->zoom;
+  *tx1 -= padx; *tx2 += padx;
+  *ty1 -= pady; *ty2 += pady;
+}
+
+/* THE marker label font size. The renderer's draw_string() and the hit-tester's
+ * text_bbox() must agree exactly or the drawn text and the clickable box come
+ * out different sizes, so both go through here (they used to name gr->txtsizex
+ * independently -- a latent desync).
+ *
+ * The base is gr->txtsizey, the Y-AXIS numbering size, and that is a deliberate
+ * change from the gr->txtsizex it used to be. Neither raw coefficient (0.0070
+ * for x, 0.0095 for y) is what actually governs: BOTH are clamped, txtsizex by
+ * `marginy * 0.0065` and txtsizey by `marginx * 0.004`. The txtsizex clamp binds
+ * for every strip wider than 1.25x its height -- i.e. every realistic one -- so
+ * the callout font was governed by the BOTTOM MARGIN, the band of container
+ * below the plot box where the X-axis numbers live and which has nothing to do
+ * with a callout drawn INSIDE the plot box. It therefore collapsed with strip
+ * height: measured on a default 800x500 canvas, 23.7 screen px for a single
+ * strip, 5.9 px in a 4-stack and 2.96 px in an 8-stack -- below draw_string()'s
+ * own 3-px "too small" floor, i.e. an invisible callout that was still
+ * clickable. The txtsizey clamp stops binding at aspect >= 2.44, so in any
+ * stack it is exactly 1.5033x larger (4.45 px at 8 strips, above the floor),
+ * while on a single tall strip the two agree to within 1.6%.
+ *
+ * graph_marker_textmag scales it and is CLAMPED for the same reason
+ * graph_marker_color is: this value feeds text_bbox and therefore the HIT box,
+ * so a wild rc value would enlarge the clickable area, not merely the glyphs. */
+static double graph_marker_txtsize(Graph_ctx *gr)
+{
+  double mag = tclgetdoublevar("graph_marker_textmag");
+  /* the >=/<= form also rejects nan, which fails every comparison */
+  if(!(mag >= 0.1) || !(mag <= 10.0)) mag = 1.0;
+  return gr->txtsizey * mag;
+}
+
+/* THE single source of truth for callout geometry, used by BOTH the renderer and
+ * the hit-tester so the drawn box and the clickable box can never disagree.
+ * Everything is in XSCHEM (world) coordinates. Returns 0 when there is nothing
+ * to draw or hit (anchor outside the plot box). `txtsize` comes from
+ * graph_marker_txtsize(), computed ONCE per call by each caller.
+ *
+ * The label is clamped to the PLOT box, not the container: the container's right
+ * margin is the ASE strip-reorder grip's hit zone, and its top margin is where
+ * xctx->graph_top disables the GRAPHPAN routing latch (landmine 36). */
+static int graph_marker_label_box(const GraphMarker *m, Graph_ctx *gr, const char *lab,
+                                  double txtsize,
+                                  double *ax, double *ay, double *lx, double *ly,
+                                  double *tx1, double *ty1, double *tx2, double *ty2)
+{
+  double mx = gr->logx ? mylog10(m->x) : m->x;
+  double my = gr->logy ? mylog10(m->y) : m->y;
+  double cand[4][2];
+  int nlines = 1, k;
+  double dtmp;
+
+  *ax = W_X(mx);
+  *ay = W_Y(my);
+  if(!POINTINSIDE(*ax, *ay, gr->x1, gr->y1, gr->x2, gr->y2)) return 0;
+
+  cand[0][0] =  m->ldx; cand[0][1] =  m->ldy;
+  cand[1][0] =  m->ldx; cand[1][1] = -m->ldy;
+  cand[2][0] = -m->ldx; cand[2][1] =  m->ldy;
+  cand[3][0] = -m->ldx; cand[3][1] = -m->ldy;
+  for(k = 0; k < 4; k++) {
+    *lx = *ax + cand[k][0] * gr->w;
+    *ly = *ay + cand[k][1] * gr->h;
+    text_bbox(lab, txtsize, txtsize, 0, 0, 0, 0, *lx, *ly, tx1, ty1, tx2, ty2, &nlines, &dtmp);
+    /* the fit test judges the PADDED box: the drawn border is what must stay
+     * inside the plot box, not the glyphs */
+    graph_marker_pad_box(nlines, tx1, ty1, tx2, ty2);
+    if(*tx1 >= gr->x1 && *tx2 <= gr->x2 && *ty1 >= gr->y1 && *ty2 <= gr->y2) return 1;
+  }
+  /* nothing fits: take the primary placement and shove it back inside. The pad
+   * goes on BEFORE the shove for the same reason -- §4.1 of the spec rests on
+   * the callout never reaching the top margin (where xctx->graph_top disables
+   * the GRAPHPAN routing latch) nor the reorder-grip column. */
+  *lx = *ax + m->ldx * gr->w;
+  *ly = *ay + m->ldy * gr->h;
+  text_bbox(lab, txtsize, txtsize, 0, 0, 0, 0, *lx, *ly, tx1, ty1, tx2, ty2, &nlines, &dtmp);
+  graph_marker_pad_box(nlines, tx1, ty1, tx2, ty2);
+  if(*tx1 < gr->x1) *lx += gr->x1 - *tx1;
+  if(*tx2 > gr->x2) *lx -= *tx2 - gr->x2;
+  if(*ty1 < gr->y1) *ly += gr->y1 - *ty1;
+  if(*ty2 > gr->y2) *ly -= *ty2 - gr->y2;
+  text_bbox(lab, txtsize, txtsize, 0, 0, 0, 0, *lx, *ly, tx1, ty1, tx2, ty2, &nlines, &dtmp);
+  graph_marker_pad_box(nlines, tx1, ty1, tx2, ty2);
+  return 1;
+}
+
+/* The marker colour layer, clamped: gc[c] is indexed UNCHECKED by every drawing
+ * primitive, so an out-of-range rc value would be an out-of-bounds read. */
+static int graph_marker_color(void)
+{
+  int col = tclgetintvar("graph_marker_color");
+  if(col < 0 || col >= cadlayers) col = 7 < cadlayers ? 7 : 0;
+  return col;
+}
+
+/* Install the same cairo toy face draw_graph_all() uses, so a label MEASURED by
+ * graph_marker_at() (which can be called from a Tcl verb, outside any draw) and
+ * a label DRAWN by draw_graph_markers() come out the same size. Returns 1 when
+ * a matching graph_marker_font_restore() is required. */
+static int graph_marker_font_install(void)
+{
+#if HAS_CAIRO==1
+  if(has_x && xctx->cairo_ctx) {
+    cairo_save(xctx->cairo_ctx);
+    cairo_save(xctx->cairo_save_ctx);
+    xctx->cairo_font = cairo_toy_font_face_create("Sans-Serif",
+                         CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
+    cairo_set_font_face(xctx->cairo_ctx, xctx->cairo_font);
+    cairo_set_font_face(xctx->cairo_save_ctx, xctx->cairo_font);
+    cairo_font_face_destroy(xctx->cairo_font);
+    return 1;
+  }
+#endif
+  return 0;
+}
+
+static void graph_marker_font_restore(int installed)
+{
+#if HAS_CAIRO==1
+  if(installed) {
+    cairo_restore(xctx->cairo_ctx);
+    cairo_restore(xctx->cairo_save_ctx);
+  }
+#else
+  (void) installed;
+#endif
+}
+
+/* Paint every marker of graph `i`, on top of the traces. Called from draw_graph
+ * under flags bit 8. */
+static void draw_graph_markers(int i, xRect *r, Graph_ctx *gr)
+{
+  GraphMarker *a = NULL;
+  GraphMarkerRef *pool = NULL;
+  int n = 0, np = 0, k, col, font, need_pool = 0;
+  double lw, tsz;
+
+  n = graph_markers_parse(r->prop_ptr, &a, &n);
+  if(n <= 0) {
+    if(a) my_free(_ALLOC_ID_, &a);
+    return;
+  }
+  /* the window-wide pool is only needed to resolve DELTA partners, which may
+   * live on another strip -- build it lazily so a plain-marker strip costs one
+   * parse, not one per record */
+  for(k = 0; k < n; k++) if(a[k].prev >= 1) { need_pool = 1; break; }
+  if(need_pool) np = graph_markers_collect(&pool, &np);
+  col = graph_marker_color();
+  /* once per strip, not once per record: it reads a Tcl var, and draw_graph_all
+   * loops every graph rect on every pan, zoom, cursor move and repaint */
+  tsz = graph_marker_txtsize(gr);
+  font = graph_marker_font_install();
+  for(k = 0; k < n; k++) {
+    GraphMarker m = a[k];
+    double ax, ay, lx, ly, tx1, ty1, tx2, ty2, ex, ey;
+    char lab[512];
+    int selected;
+
+    /* live drag: the scratch record replaces the stored one until the release
+     * commits it, so a motion event costs no allocation and no undo point.
+     * The label is built FROM THAT RECORD, so the readout tracks the anchor
+     * while it slides instead of freezing at the pre-drag sample. */
+    if(xctx->graph_marker_drag && i == xctx->graph_marker_draggraph &&
+       m.num == xctx->graph_marker_dragnum) {
+      m = xctx->graph_marker_scratch;
+    }
+    if(!graph_marker_text_rec(&m, i, pool, np, lab, S(lab))) {
+      my_snprintf(lab, S(lab), "M%d", m.num);
+    }
+    if(!graph_marker_label_box(&m, gr, lab, tsz, &ax, &ay, &lx, &ly, &tx1, &ty1, &tx2, &ty2)) continue;
+    /* Number ONLY, not `&& i == graph_marker_selgraph`: numbering is window-wide
+     * and unique, so the number already identifies exactly one marker, whereas
+     * selgraph is a rect INDEX that goes stale the moment a strip is reordered
+     * or a multi-plot batch prepends one. It stays a hint (see the Delete gate,
+     * which re-resolves the owner) and is never a correctness input. */
+    selected = (m.num == xctx->graph_marker_sel);
+    /* "selected" is stroke WEIGHT, not a different layer: SELLAYER == GRIDLAYER
+     * so a selection colour here would be the grid colour, and drawgrid()
+     * mutates that shared GC's dash style (issue 0082).
+     *
+     * BOTH states are now an EXPLICIT fixed pixel width. The unselected case
+     * used to pass 0.0, which is not a zero width at all: drawrect/drawline
+     * take their `else` branch and inherit the GC's resting width,
+     * XLINEWIDTH(xctx->lw), and xctx->lw is 1.125 * mooz -- 1 px only while
+     * zoom >= 0.5625. Zoomed into an on-canvas graph the unselected outline
+     * grew to 2, 3, 4 ... 10 px, and at zoom <= 0.375 it was HEAVIER than the
+     * selected one, inverting the cue. Pinning it at 1 px halves it or better
+     * wherever it was heavy, makes "selected reads heavier" true at every zoom,
+     * and matches the dot and ring, which have always been fixed pixel sizes.
+     * 1 px is the floor of this path -- see GRAPH_MARKER_LW. */
+    lw = selected ? GRAPH_MARKER_PX(GRAPH_MARKER_LW_SEL) : GRAPH_MARKER_PX(GRAPH_MARKER_LW);
+    /* leader line first, so the opaque label box paints over its tail */
+    ex = (tx1 + tx2) * 0.5;
+    ey = (ay < ty1) ? ty1 : ((ay > ty2) ? ty2 : (ty1 + ty2) * 0.5);
+    if(ax < tx1) ex = tx1;
+    else if(ax > tx2) ex = tx2;
+    drawline(col, NOW, ax, ay, ex, ey, lw, 0, NULL);
+    filledrect(0, NOW, tx1, ty1, tx2, ty2, 2, -1, -1);
+    /* the outline is ALWAYS drawn: filledrect returns early when the global fill
+     * pattern is off (Ctrl+=) and for a box under ~3 world units */
+    drawrect(col, NOW, tx1, ty1, tx2, ty2, lw, 0, -1, -1);
+    /* the SAME tsz graph_marker_label_box() measured with: the drawn glyphs and
+     * the clickable box must not be able to come out different sizes */
+    draw_string(col, NOW, lab, 0, 0, 0, 0, lx, ly, tsz, tsz);
+    /* xctx->zoom is world-units-per-pixel, so these are fixed pixel sizes */
+    filledarc(col, NOW, ax, ay, 3.0 * xctx->zoom, 0, 360);
+    if(selected) drawarc(col, NOW, ax, ay, 6.0 * xctx->zoom, 0, 360, 0, lw, 0);
+  }
+  graph_marker_font_restore(font);
+  if(pool) my_free(_ALLOC_ID_, &pool);
+  my_free(_ALLOC_ID_, &a);
+}
+
+/* Which marker is under the CANVAS PIXEL (px, py) of graph `i`?
+ * Returns the marker NUMBER (0 = none) and sets *part to 1 (anchor) or 2 (label)
+ * -- the two answers drive DIFFERENT drags, which is the whole reason this
+ * returns a part rather than a boolean.
+ *
+ * Deliberately does NOT inherit graph_wave_at()'s `!xctx->raw` gate: a marker
+ * still DRAWS when the raw is unloaded (its x/y are cached), so it must stay
+ * selectable, draggable and deletable, or a schematic opened without its raw
+ * would carry permanently stuck annotations. */
+int graph_marker_at(int i, double px, double py, double tol, int *part)
+{
+  Graph_ctx gr_ctx;
+  Graph_ctx *gr = &gr_ctx;
+  GraphMarker *a = NULL;
+  GraphMarkerRef *pool = NULL;
+  xRect *r;
+  int n = 0, np = 0, k, font, need_pool = 0, saveflags;
+  int best = 0, best_part = 0;
+  double best_d = 0.0;
+  double wx, wy, tsz;
+
+  if(part) *part = 0;
+  if(!xctx) return 0;
+  if(i < 0 || i >= xctx->rects[GRIDLAYER]) return 0;
+  r = &xctx->rect[GRIDLAYER][i];
+  if(!(r->flags & 1)) return 0;
+#if HAS_CAIRO==1
+  /* --nogui has no cairo context, hence no measurable label box (and no pointer
+   * either): answer "nothing", never crash. */
+  if(!has_x || !xctx->cairo_ctx) return 0;
+#endif
+  n = graph_markers_parse(r->prop_ptr, &a, &n);
+  if(n <= 0) {
+    if(a) my_free(_ALLOC_ID_, &a);
+    return 0;
+  }
+  memset(&gr_ctx, 0, sizeof(gr_ctx));
+  /* setup_graph_data() REWRITES graph_flags' hcursor bits from the rect it is
+   * given (landmine 37). This is a pure query, also reachable from a Tcl verb,
+   * so it must not leave the session describing a strip nobody is hovering. */
+  saveflags = xctx->graph_flags & (128 | 256);
+  setup_graph_data(i, 0, gr);
+  xctx->graph_flags = (xctx->graph_flags & ~(128 | 256)) | saveflags;
+  if(gr->scx == 0.0 || gr->scy == 0.0) {
+    my_free(_ALLOC_ID_, &a);
+    return 0;
+  }
+  if(tol < 0.0) tol = 0.0;
+  wx = X_TO_XSCHEM(px);
+  wy = Y_TO_XSCHEM(py);
+  for(k = 0; k < n; k++) if(a[k].prev >= 1) { need_pool = 1; break; }
+  if(need_pool) np = graph_markers_collect(&pool, &np);
+  tsz = graph_marker_txtsize(gr); /* once, like the renderer -- see draw_graph_markers */
+  font = graph_marker_font_install();
+  /* ANCHORS FIRST: a hit on the dot must beat the label box even if they overlap.
+   * This pass reads only ax/ay, so the callout padding cannot steal an anchor hit. */
+  for(k = 0; k < n; k++) {
+    double ax, ay, lx, ly, tx1, ty1, tx2, ty2, d, sx, sy;
+    char lab[512];
+    if(!graph_marker_text_rec(&a[k], i, pool, np, lab, S(lab)))
+      my_snprintf(lab, S(lab), "M%d", a[k].num);
+    if(!graph_marker_label_box(&a[k], gr, lab, tsz, &ax, &ay, &lx, &ly, &tx1, &ty1, &tx2, &ty2)) continue;
+    sx = X_TO_SCREEN(ax);
+    sy = Y_TO_SCREEN(ay);
+    d = sqrt((sx - px) * (sx - px) + (sy - py) * (sy - py));
+    if(d <= tol && (best == 0 || d < best_d)) {
+      best = a[k].num;
+      best_part = 1;
+      best_d = d;
+    }
+  }
+  if(!best) {
+    for(k = n - 1; k >= 0; k--) { /* last drawn is on top */
+      double ax, ay, lx, ly, tx1, ty1, tx2, ty2;
+      char lab[512];
+      if(!graph_marker_text_rec(&a[k], i, pool, np, lab, S(lab)))
+        my_snprintf(lab, S(lab), "M%d", a[k].num);
+      if(!graph_marker_label_box(&a[k], gr, lab, tsz, &ax, &ay, &lx, &ly, &tx1, &ty1, &tx2, &ty2)) continue;
+      if(POINTINSIDE(wx, wy, tx1, ty1, tx2, ty2)) {
+        best = a[k].num;
+        best_part = 2;
+        break;
+      }
+    }
+  }
+  graph_marker_font_restore(font);
+  if(pool) my_free(_ALLOC_ID_, &pool);
+  my_free(_ALLOC_ID_, &a);
+  if(part) *part = best_part;
+  return best;
+}
+
+/* Resolve node index `wave` of graph rect `r` to the raw column that feeds it.
+ * Mirrors the per-node walk of graph_point_at(), including the sweep-token
+ * consumption for bus entries. Returns 1 on success. The caller my_free()s
+ * *express when it is non-NULL. */
+static int graph_wave_resolve(xRect *r, int wave, int *idx, int *expression,
+                              int *sweep_idx, char **express, int *node_dataset)
+{
+  char *node = NULL, *sweep = NULL, *ntok_copy = NULL, *ex = NULL;
+  char *saven, *saves, *nptr, *sptr;
+  const char *ntok, *stok;
+  int wcnt = -1, found = 0;
+  int sw = 0, nds = -1;
+
+  if(!r || wave < 0 || !xctx || !xctx->raw) return 0;
+  my_strdup2(_ALLOC_ID_, &node, get_tok_value(r->prop_ptr, "node", 0));
+  my_strdup2(_ALLOC_ID_, &sweep, get_tok_value(r->prop_ptr, "sweep", 0));
+  nptr = node;
+  sptr = sweep;
+  while( (ntok = my_strtok_r(nptr, "\n", "\"", 4, &saven)) ) {
+    char *nd = NULL;
+    wcnt++;
+    stok = my_strtok_r(sptr, "\t\n ", "\"", 0, &saves);
+    nptr = sptr = NULL;
+    if(strstr(ntok, ",")) {
+      if(find_nth(ntok, ";,", "\"", 0, 2)[0]) continue; /* bus: skip */
+    }
+    if(stok && stok[0]) {
+      sw = get_raw_index(stok, NULL);
+      if(sw == -1) sw = 0;
+    }
+    if(wcnt != wave) continue;
+    my_strdup2(_ALLOC_ID_, &nd, find_nth(ntok, "%", "\"", 0, 2));
+    if(nd[0]) {
+      int pos = 1;
+      if(isonlydigit(find_nth(nd, "\n ", "\"", 0, 1))) pos = 2;
+      nds = (pos == 2) ? atoi(nd) : -1;
+      my_strdup(_ALLOC_ID_, &ntok_copy, find_nth(ntok, "%", "\"", 4, 1));
+    } else {
+      nds = -1;
+      my_strdup(_ALLOC_ID_, &ntok_copy, ntok);
+    }
+    my_free(_ALLOC_ID_, &nd);
+    if(strstr(ntok_copy, ";")) my_strdup2(_ALLOC_ID_, &ex, find_nth(ntok_copy, ";", "\"", 0, 2));
+    else my_strdup2(_ALLOC_ID_, &ex, ntok_copy);
+    found = 1;
+    break;
+  }
+  if(found) {
+    int isexpr = (ex && strpbrk(ex, " \n\t")) ? 1 : 0;
+    int ix = isexpr ? xctx->raw->nvars : (ex ? get_raw_index(ex, NULL) : -1);
+    if(ix == -1) found = 0;
+    if(idx) *idx = ix;
+    if(expression) *expression = isexpr;
+    if(sweep_idx) *sweep_idx = sw;
+    if(node_dataset) *node_dataset = nds;
+  }
+  if(express && found) *express = ex;
+  else if(ex) my_free(_ALLOC_ID_, &ex);
+  if(ntok_copy) my_free(_ALLOC_ID_, &ntok_copy);
+  my_free(_ALLOC_ID_, &node);
+  my_free(_ALLOC_ID_, &sweep);
+  return found;
+}
+
+/* Read the (x, y) of ABSOLUTE raw point `point` of node `wave` of graph `i`.
+ * An EXPRESSION trace lives in the single GLOBAL scratch column values[nvars],
+ * so its dataset window must be re-evaluated before the read -- a bare
+ * get_raw_value() there returns whatever expression was plotted last. */
+static int graph_marker_sample(int i, int wave, int dataset, int point, double *x, double *y)
+{
+  xRect *r;
+  char *express = NULL;
+  char *custom_rawfile = NULL, *sim_type = NULL;
+  const char *ptr;
+  int idx = -1, expression = 0, sweep_idx = 0, node_dataset = -1;
+  int dset = 0, ofs = 0, ofs_end = 0, ok = 0, autoload, switched = 0;
+
+  if(!xctx || !xctx->raw || !xctx->raw->values) return 0;
+  if(sch_waves_loaded() == -1) return 0;
+  if(i < 0 || i >= xctx->rects[GRIDLAYER]) return 0;
+  r = &xctx->rect[GRIDLAYER][i];
+  if(!(r->flags & 1)) return 0;
+  /* Switch to the graph's OWN raw first, exactly as graph_point_at() does.
+   * Without this the pixel path (which switches) and this data path (which did
+   * not) disagreed on a multi-raw graph: the drag previewed samples from the
+   * graph's rawfile and then committed values read out of whatever raw happened
+   * to be current -- or silently failed when the node name is absent there.
+   * graph_marker_release() commits EVERY anchor drag through here. */
+  autoload = !strboolcmp(get_tok_value(r->prop_ptr, "autoload", 0), "true");
+  if(autoload == 0) autoload = 2;
+  else if(autoload == 1) autoload = 33;
+  ptr = get_tok_value(r->prop_ptr, "rawfile", 0);
+  if(ptr[0]) {
+    my_strdup2(_ALLOC_ID_, &custom_rawfile, ptr);
+    my_strdup2(_ALLOC_ID_, &sim_type, get_tok_value(r->prop_ptr, "sim_type", 0));
+    if(extra_rawfile(autoload, custom_rawfile,
+       sim_type[0] ? sim_type : (xctx->raw->sim_type ? xctx->raw->sim_type : NULL),
+       -1.0, -1.0) != 0) {
+      switched = 1;
+    } else {
+      /* the pixel path (graph_point_at) skips every node when the graph's raw
+       * cannot be resolved; the data path must agree rather than quietly read
+       * the values out of whatever raw is current */
+      goto done;
+    }
+  }
+  if(!xctx->raw || !xctx->raw->values) goto done;
+  if(point < 0 || point >= xctx->raw->allpoints) goto done;
+  if(!graph_wave_resolve(r, wave, &idx, &expression, &sweep_idx, &express, &node_dataset)) goto done;
+  for(dset = 0; dset < xctx->raw->datasets; dset++) {
+    ofs_end = ofs + xctx->raw->npoints[dset];
+    if(point >= ofs && point < ofs_end) break;
+    ofs = ofs_end;
+  }
+  if(dset >= xctx->raw->datasets) goto done;
+  if(dataset >= 0 && dataset != dset) goto done;
+  if(expression) {
+    if(plot_raw_custom_data(sweep_idx, ofs, ofs_end - 1, express, NULL) >= 0) ok = 1;
+  } else ok = 1;
+  if(ok) {
+    if(x) *x = xctx->raw->values[sweep_idx][point];
+    if(y) *y = xctx->raw->values[idx][point];
+  }
+  done:
+  if(switched) extra_rawfile(5, NULL, NULL, -1.0, -1.0); /* switch back */
+  if(express) my_free(_ALLOC_ID_, &express);
+  if(custom_rawfile) my_free(_ALLOC_ID_, &custom_rawfile);
+  if(sim_type) my_free(_ALLOC_ID_, &sim_type);
+  return ok;
+}
+
+static void graph_marker_refuse(const char *msg)
+{
+  if(has_x) tclvareval("if {[info procs ciw_echo] ne {}} {ciw_echo {", msg, "}}", NULL);
+  dbg(1, "graph_marker: %s\n", msg);
+}
+
+/* THE read-only gate for markers, and the only one: 1 = refuse.
+ *
+ * It lives down here, in the mutating primitives, rather than in the key arms,
+ * so it also covers the DRAG-COMMIT path (graph_marker_release ->
+ * anchor_at/label_offset -> graph_marker_update), which reaches no key arm at
+ * all and would otherwise let a mouse gesture permanently edit a read-only
+ * buffer -- with NO undo point, because push_undo is skipped when readonly, and
+ * `xschem undo` is itself readonly-rejected.
+ *
+ * A marker is durable CONTENT, unlike hilight_wave / cursor positions / the
+ * axis ranges, which the graph engine has always written into read-only rects.
+ *
+ * The refusal is NON-BLOCKING (ciw_echo), like every other marker refusal --
+ * deliberately not readonly_block()'s modal, which on a keystroke deadlocks any
+ * script driving the refusal path.
+ *
+ * The ASE viewer is readonly for its whole life by construction and gets
+ * through because wviewer::key_filter forwards m/d/Delete inside
+ * wviewer::with_edit, the bracket every other viewer mutation already uses. */
+static int graph_marker_ro_refuse(void)
+{
+  if(!xctx || !xctx->readonly) return 0;
+  graph_marker_refuse("xschem: read-only, markers cannot be edited "
+                      "(Edit > Make Editable to enable editing)");
+  return 1;
+}
+
+/* Append one marker record to graph `i`. Shared tail of the pixel- and
+ * data-addressed creators. Returns the new marker number, 0 on refusal. */
+static int graph_marker_add_record(int i, int wave, int dataset, int point,
+                                   double x, double y, int delta)
+{
+  xRect *r = &xctx->rect[GRIDLAYER][i];
+  GraphMarker *a = NULL;
+  GraphMarker m;
+  int n = 0, prev;
+
+  if(graph_marker_ro_refuse()) return 0;
+  if(!GRAPH_MARKER_FINITE(x) || !GRAPH_MARKER_FINITE(y)) {
+    graph_marker_refuse("xschem: cannot mark a non-finite sample");
+    return 0;
+  }
+  n = graph_markers_parse(r->prop_ptr, &a, &n);
+  if(n >= GRAPH_MARKERS_MAX) {
+    if(a) my_free(_ALLOC_ID_, &a);
+    graph_marker_refuse("xschem: too many markers on this graph");
+    return 0;
+  }
+  /* the delta partner is the most recently created marker, resolved BEFORE the
+   * new number is allocated (so `d` on an empty window makes a plain marker) */
+  prev = delta ? graph_marker_max_number() : 0;
+  memset(&m, 0, sizeof(m));
+  m.num = graph_marker_next_number();
+  m.wave = wave;
+  m.dataset = dataset;
+  m.point = point;
+  m.x = x;
+  m.y = y;
+  m.prev = prev;
+  m.ldx = 0.06;
+  m.ldy = -0.09;
+  my_realloc(_ALLOC_ID_, &a, (size_t)(n + 1) * sizeof(GraphMarker));
+  a[n++] = m;
+  if(!xctx->readonly) xctx->push_undo();
+  graph_markers_store(r, a, n);
+  my_free(_ALLOC_ID_, &a);
+  set_modify(1);
+  graph_marker_notify();
+  log_action("xschem graph_marker add_at %d %d %d %d%s\n",
+             i, wave, dataset, point, delta ? " -delta" : "");
+  return m.num;
+}
+
+int graph_marker_create(int i, double px, double py, int delta)
+{
+  GraphPointHit hit;
+  Graph_ctx gr_ctx;
+  Graph_ctx *gr = &gr_ctx;
+  int saveflags;
+
+  if(!xctx) return 0;
+  if(i < 0 || i >= xctx->rects[GRIDLAYER]) return 0;
+  if(!(xctx->rect[GRIDLAYER][i].flags & 1)) return 0;
+  memset(&gr_ctx, 0, sizeof(gr_ctx));
+  saveflags = xctx->graph_flags & (128 | 256);   /* landmine 37, as above */
+  setup_graph_data(i, 1, gr);
+  xctx->graph_flags = (xctx->graph_flags & ~(128 | 256)) | saveflags;
+  if(gr->digital) {
+    graph_marker_refuse("xschem: markers are not supported on digital strips");
+    return 0;
+  }
+  if(!graph_point_at(i, px, py, GRAPH_MARKER_PICK_TOL, -1, -1, &hit)) {
+    graph_marker_refuse("xschem: no trace near the pointer");
+    return 0;
+  }
+  return graph_marker_add_record(i, hit.wave, hit.dataset, hit.point, hit.x, hit.y, delta);
+}
+
+int graph_marker_create_at(int i, int wave, int dataset, int point, int delta)
+{
+  double x = 0.0, y = 0.0;
+
+  if(!xctx) return 0;
+  if(i < 0 || i >= xctx->rects[GRIDLAYER]) return 0;
+  if(!(xctx->rect[GRIDLAYER][i].flags & 1)) return 0;
+  if(!graph_marker_sample(i, wave, dataset, point, &x, &y)) {
+    graph_marker_refuse("xschem: cannot resolve that trace/point");
+    return 0;
+  }
+  return graph_marker_add_record(i, wave, dataset, point, x, y, delta);
+}
+
+/* Rewrite one marker record in place. `store` 0 = scratch only (no token write). */
+static int graph_marker_update(int num, const GraphMarker *upd)
+{
+  int gi = -1, k, n = 0;
+  GraphMarker *a = NULL;
+  xRect *r;
+
+  if(!xctx || num <= 0) return 0;
+  if(graph_marker_ro_refuse()) return 0;
+  if(!graph_marker_find(num, &gi, NULL)) return 0;
+  r = &xctx->rect[GRIDLAYER][gi];
+  n = graph_markers_parse(r->prop_ptr, &a, &n);
+  for(k = 0; k < n; k++) {
+    if(a[k].num == num) {
+      a[k] = *upd;
+      if(!xctx->readonly) xctx->push_undo();
+      graph_markers_store(r, a, n);
+      my_free(_ALLOC_ID_, &a);
+      set_modify(1);
+      graph_marker_notify();
+      return 1;
+    }
+  }
+  if(a) my_free(_ALLOC_ID_, &a);
+  return 0;
+}
+
+/* A delta rendered against a ghost is a bug: clear every `prev` pointing at
+ * `num`, window-wide (the partner may live in another strip). Shared by the
+ * single delete and by delete -all. */
+static void graph_marker_clear_prev_n(const int *nums, int nnums)
+{
+  int i, k, j;
+
+  if(!xctx || !nums || nnums <= 0) return;
+  /* ONE pass over the window for the WHOLE set, not one pass per number: a
+   * partial `delete -all <gi>` leaves the other strips populated, and the
+   * per-number form was O(deleted x surviving records) -- measured 10 s at 4000
+   * markers, i.e. the same full-window-rescan-per-record shape the renderer's
+   * pool was introduced to remove. */
+  for(i = 0; i < xctx->rects[GRIDLAYER]; i++) {
+    GraphMarker *b = NULL;
+    int m = 0, changed = 0;
+    xRect *rr = &xctx->rect[GRIDLAYER][i];
+    if(!(rr->flags & 1)) continue;
+    m = graph_markers_parse(rr->prop_ptr, &b, &m);
+    for(k = 0; k < m; k++) {
+      if(b[k].prev <= 0) continue;
+      for(j = 0; j < nnums; j++) {
+        if(b[k].prev == nums[j]) { b[k].prev = 0; changed = 1; break; }
+      }
+    }
+    if(changed) graph_markers_store(rr, b, m);
+    if(b) my_free(_ALLOC_ID_, &b);
+  }
+}
+
+static void graph_marker_clear_prev(int num)
+{
+  graph_marker_clear_prev_n(&num, 1);
+}
+
+int graph_marker_delete(int num)
+{
+  int gi = -1, k, n = 0, w = 0;
+  GraphMarker *a = NULL;
+  xRect *r;
+
+  if(!xctx || num <= 0) return 0;
+  if(graph_marker_ro_refuse()) return 0;
+  if(!graph_marker_find(num, &gi, NULL)) return 0;
+  if(!xctx->readonly) xctx->push_undo();
+  r = &xctx->rect[GRIDLAYER][gi];
+  n = graph_markers_parse(r->prop_ptr, &a, &n);
+  for(k = 0; k < n; k++) if(a[k].num != num) a[w++] = a[k];
+  graph_markers_store(r, a, w);
+  if(a) my_free(_ALLOC_ID_, &a);
+  graph_marker_clear_prev(num);
+  if(xctx->graph_marker_sel == num) {
+    xctx->graph_marker_sel = -1;
+    xctx->graph_marker_selgraph = -1;
+  }
+  set_modify(1);
+  graph_marker_notify();
+  log_action("xschem graph_marker delete %d\n", num);
+  return 1;
+}
+
+int graph_marker_delete_all(int graph_idx)
+{
+  int i, k, n = 0, cnt = 0, pushed = 0;
+  int *gone = NULL, ngone = 0;
+
+  if(!xctx) return 0;
+  if(graph_marker_ro_refuse()) return 0;
+  for(i = 0; i < xctx->rects[GRIDLAYER]; i++) {
+    GraphMarker *a = NULL;
+    xRect *r = &xctx->rect[GRIDLAYER][i];
+    if(!(r->flags & 1)) continue;
+    if(graph_idx >= 0 && graph_idx != i) continue;
+    n = graph_markers_parse(r->prop_ptr, &a, &n);
+    if(n > 0) {
+      if(!pushed) {
+        if(!xctx->readonly) xctx->push_undo();
+        pushed = 1;
+      }
+      /* remember what vanished so the dangling prev links can be swept below --
+       * a partial delete -all leaves deltas on the strips it did not touch */
+      my_realloc(_ALLOC_ID_, &gone, (size_t)(ngone + n) * sizeof(int));
+      for(k = 0; k < n; k++) gone[ngone++] = a[k].num;
+      cnt += n;
+      graph_markers_store(r, NULL, 0);
+    }
+    if(a) my_free(_ALLOC_ID_, &a);
+  }
+  graph_marker_clear_prev_n(gone, ngone);
+  if(gone) my_free(_ALLOC_ID_, &gone);
+  if(cnt) {
+    xctx->graph_marker_sel = -1;
+    xctx->graph_marker_selgraph = -1;
+    set_modify(1);
+    graph_marker_notify();
+    log_action("xschem graph_marker delete -all %d\n", graph_idx);
+  }
+  return cnt;
+}
+
+/* Returns 0 WITHOUT touching anything when nothing is selected -- that is what
+ * lets the Delete key fall through to its historical canvas behaviour. */
+int graph_marker_delete_selected(void)
+{
+  if(!xctx || xctx->graph_marker_sel < 0) return 0;
+  return graph_marker_delete(xctx->graph_marker_sel);
+}
+
+int graph_marker_move(int num, double px, double py)
+{
+  GraphMarker m;
+  GraphPointHit hit;
+  int gi = -1;
+
+  if(!xctx || num <= 0) return 0;
+  if(!graph_marker_find(num, &gi, &m)) return 0;
+  /* a huge tolerance so a drag can never "lose" the marker; the two restrictions
+   * keep it sliding along its OWN trace, within its own sweep */
+  if(!graph_point_at(gi, px, py, 1e30, m.wave, m.dataset, &hit)) return 0;
+  m.dataset = hit.dataset;
+  m.point = hit.point;
+  m.x = hit.x;
+  m.y = hit.y;
+  if(!graph_marker_update(num, &m)) return 0;
+  log_action("xschem graph_marker anchor %d %d %d\n", num, m.dataset, m.point);
+  return 1;
+}
+
+int graph_marker_anchor_at(int num, int dataset, int point)
+{
+  GraphMarker m;
+  int gi = -1;
+  double x = 0.0, y = 0.0;
+
+  if(!xctx || num <= 0) return 0;
+  if(!graph_marker_find(num, &gi, &m)) return 0;
+  if(!graph_marker_sample(gi, m.wave, dataset, point, &x, &y)) return 0;
+  if(!GRAPH_MARKER_FINITE(x) || !GRAPH_MARKER_FINITE(y)) return 0;
+  m.dataset = dataset;
+  m.point = point;
+  m.x = x;
+  m.y = y;
+  if(!graph_marker_update(num, &m)) return 0;
+  log_action("xschem graph_marker anchor %d %d %d\n", num, dataset, point);
+  return 1;
+}
+
+int graph_marker_label_offset(int num, double ldx, double ldy)
+{
+  GraphMarker m;
+  int gi = -1;
+
+  if(!xctx || num <= 0) return 0;
+  if(!GRAPH_MARKER_FINITE(ldx) || !GRAPH_MARKER_FINITE(ldy)) return 0;
+  if(!graph_marker_find(num, &gi, &m)) return 0;
+  if(ldx < -2.0) ldx = -2.0;
+  if(ldx >  2.0) ldx =  2.0;
+  if(ldy < -2.0) ldy = -2.0;
+  if(ldy >  2.0) ldy =  2.0;
+  m.ldx = ldx;
+  m.ldy = ldy;
+  if(!graph_marker_update(num, &m)) return 0;
+  log_action("xschem graph_marker label %d %.10g %.10g\n", num, ldx, ldy);
+  return 1;
+}
+
+/* Pure UI state: no token write, no undo, no modify. */
+int graph_marker_select(int num, int graph_idx)
+{
+  if(!xctx) return -1;
+  if(num < 0) {
+    xctx->graph_marker_sel = -1;
+    xctx->graph_marker_selgraph = -1;
+  } else {
+    xctx->graph_marker_sel = num;
+    xctx->graph_marker_selgraph = graph_idx;
+  }
+  return xctx->graph_marker_sel;
+}
+
+/* Give every marker of a freshly pasted rect a unique number. `base` is computed
+ * ONCE: merge_box runs BEFORE gfx_register bumps xctx->rects[], so the rect
+ * being merged is invisible to graph_marker_next_number()'s scan and calling it
+ * per record would hand every record the same number. `prev` links are cleared
+ * (a cross-rect number map is not visible from a per-rect callback). */
+int graph_marker_renumber_rect(xRect *r)
+{
+  GraphMarker *a = NULL;
+  int n = 0, k, base;
+
+  if(!xctx || !r || !(r->flags & 1)) return 0;
+  n = graph_markers_parse(r->prop_ptr, &a, &n);
+  if(n <= 0) {
+    if(a) my_free(_ALLOC_ID_, &a);
+    return 0;
+  }
+  base = graph_marker_next_number();
+  for(k = 0; k < n; k++) {
+    a[k].num = base + k;
+    a[k].prev = 0;
+  }
+  graph_markers_store(r, a, n);
+  my_free(_ALLOC_ID_, &a);
+  return n;
+}
+
+/* Push a marker change into the ASE waveform viewer's Tcl model.
+ *
+ * WHY A PUSH AND NOT A PULL: wviewer::regenerate clears the canvas and re-places
+ * every rect from the Tcl model, and it is called from ~18 sites -- including a
+ * plain WINDOW RESIZE (configure_apply) -- of which only three first fold live
+ * rect state back into the model. A pull-only design therefore loses every
+ * marker on a resize, with no user action that reads as destructive.
+ *
+ * Result codes from the Tcl side: 1 model updated, 2 not a viewer window
+ * (nothing to do), 0 the viewer proc bailed, -1 a Tcl error was caught. A silent
+ * bail would resurface much later as "my markers vanished", so it is logged. */
+void graph_marker_notify(void)
+{
+  const char *res;
+
+  if(!has_x) return;
+  tcleval("if {[llength [info commands graph_marker_changed]]} "
+          "{ if {[catch {graph_marker_changed} __gmr]} { set __gmr -1 }; set __gmr } "
+          "else { list 2 }");
+  res = tclresult();
+  if(res && res[0] && strcmp(res, "1") && strcmp(res, "2"))
+    dbg(0, "graph_marker_notify(): ASE marker push did NOT land (result=%s)\n", res);
 }
 
 
@@ -5195,6 +6503,27 @@ void draw_graph(int i, int flags, Graph_ctx *gr, void *ct)
     if(flags & 128) draw_hcursor(gr->hcursor1_y, 15, gr);
     /* hcursor2 */
     if(flags & 256) draw_hcursor(gr->hcursor2_y, 19, gr);
+    bbox(END, 0.0, 0.0, 0.0, 0.0);
+  }
+  /* Waveform markers (doc/claude/specs/graph_markers.md). Painted here, LAST of
+   * the content, so they sit on top of traces, legend and cursors, and before
+   * the flags-bit-16 UI chrome and the final buffer copy.
+   *
+   * Gated on bit 8 (CONTENT), never bit 16: markers are user annotations and
+   * must appear in SVG/PNG export, unlike the active-strip marker and the
+   * reorder grip below.
+   *
+   * The cheap token test comes FIRST: draw_graph_all loops every graph rect on
+   * every redraw, and bbox(SET_INSIDE) reprograms the X clip mask across the
+   * whole GC set. A separate bbox scope is used rather than appending to the
+   * cursor block above because markers must be paintable independently of the
+   * cursor flags -- and bbox(START) is not re-entrant (a nested START pops a
+   * modal Tcl alert on every redraw), hence strictly after the bbox(END). */
+  if((flags & 8) && get_tok_value(r->prop_ptr, "markers", 0)[0]) {
+    bbox(START, 0.0, 0.0, 0.0, 0.0);
+    bbox(ADD, gr->rx1, gr->ry1, gr->rx2, gr->ry2);
+    bbox(SET_INSIDE, 0.0, 0.0, 0.0, 0.0);
+    draw_graph_markers(i, r, gr);
     bbox(END, 0.0, 0.0, 0.0, 0.0);
   }
   /* issue 0151: ASE waveform viewer ACTIVE-STRIP marker — a solid dull-yellow
