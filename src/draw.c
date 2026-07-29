@@ -3351,7 +3351,8 @@ static void draw_graph_points(int idx, int first, int last,
   /* viewer plan item 6: the mid-drag shrink preview of THIS trace. Same
    * selection test set_thick_waves uses, on the same index space. */
   int preview = 0;
-  double prev_c = 0.0, prev_s = 1.0;
+  double prev_c = 0.0, prev_cx = 0.0, prev_s = 1.0;
+  short *prev_savex = NULL; /* the un-shrunk x values, restored after drawing */
 
   if(!raw) {
     dbg(0, "draw_graph_points(): no raw struct allocated\n");
@@ -3380,7 +3381,8 @@ static void draw_graph_points(int idx, int first, int last,
    * the box centre would also drag it out of its own lane. */
   if(!digital && gr->preview_wave == wcnt && xctx->graph_preview_scale != 0.0) {
     preview = 1;
-    prev_c = (S_Y(gr->gy1) + S_Y(gr->gy2)) * 0.5;
+    prev_c  = (S_Y(gr->gy1) + S_Y(gr->gy2)) * 0.5;
+    prev_cx = (S_X(gr->gx1) + S_X(gr->gx2)) * 0.5;
     prev_s = xctx->graph_preview_scale;
   }
   if(digital) {
@@ -3426,6 +3428,23 @@ static void draw_graph_points(int idx, int first, int last,
       point[poly_npoints].y = (short)yy;
     }
     poly_npoints++;
+  }
+  /* item 6: the X half of the shrink (review 2026-07-29: "shrink in both X and
+   * Y, not just Y"). Y is scaled per sample in the loop above because this
+   * function owns the y array; X is NOT ours -- point[].x is built by the
+   * caller and, unlike y, is not necessarily rewritten for every wave. So it is
+   * scaled IN PLACE and restored verbatim below from the saved shorts, which is
+   * exact (no inverse-transform rounding) and safe however the caller reuses the
+   * array. One allocation per drawn frame of one dragged trace. */
+  if(preview && poly_npoints > 0) {
+    prev_savex = my_malloc(_ALLOC_ID_, (size_t)poly_npoints * sizeof(short));
+    if(prev_savex) {
+      for(p = 0; p < poly_npoints; p++) {
+        prev_savex[p] = point[p].x;
+        point[p].x = (short)CLIP(prev_cx + (point[p].x - prev_cx) * prev_s,
+                                 -30000, 30000);
+      }
+    }
   }
   set_thick_waves(1, wcnt, wave_col, gr);
   if(digital || gr->mode == 0) { /* Line */
@@ -3478,6 +3497,11 @@ static void draw_graph_points(int idx, int first, int last,
   }
 
   set_thick_waves(0, wcnt, wave_col, gr);
+  /* item 6: hand the caller's x array back exactly as it was found */
+  if(prev_savex) {
+    for(p = 0; p < poly_npoints; p++) point[p].x = prev_savex[p];
+    my_free(_ALLOC_ID_, &prev_savex);
+  }
   /* } else dbg(1, "skipping wave: %s\n", raw->names[idx]); */
   for(p=0;p<cadlayers; ++p) {
     XSetLineAttributes(display, xctx->gc[p], XLINEWIDTH(xctx->lw), LineSolid, LINECAP , LINEJOIN);

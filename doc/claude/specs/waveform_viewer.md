@@ -1114,11 +1114,19 @@ a CIW error on a refusal.
 
 ## Mid-drag shrink preview (viewer plan item 6, 2026-07-29)
 
-**While a trace is being dragged to another strip it is drawn vertically shrunk
-about the plot box centre**, so the pointer visibly carries something and the
-dragged trace stops being confusable with the ones it passes over. Decision D-E:
-the **TRACE** drag (LMB press on a trace → drop on another strip). The strip
+**While a trace is being dragged to another strip it is drawn shrunk in BOTH
+axes about the plot box centre**, so the pointer visibly carries something and
+the dragged trace stops being confusable with the ones it passes over. Decision
+D-E: the **TRACE** drag (LMB press on a trace → drop on another strip). The strip
 reorder drag gets no preview.
+
+⚠ **REVISED ON REVIEW 2026-07-29.** It shipped as a 10 % shrink in **Y only**,
+which is what the plan asked for, and was rejected on sight: *"shrink should be
+in both X and Y, not just Y. Bump up the shrink to 30 %."* Y-only reads as a
+gain change rather than a pick-up, and 10 % is below the threshold where the eye
+notices at all. Final: **both axes, `wviewer_drag_shrink` default `0.7`.**
+Item 1's lesson again — a decision about how something looks is provisional
+until it has been looked at.
 
 - **Render state only.** Three transient `xctx` numbers —
   `graph_preview_scale` / `_gi` / `_wave` — and nothing else: no prop token, no
@@ -1138,13 +1146,20 @@ reorder drag gets no preview.
   `gr->preview_wave` to -1 **before** the `RECT_OUTSIDE` early return, the shared
   `graph_struct` rule, so a query that calls it cannot inherit the previous
   graph's arming.
-- **The scaling is per-point, applied BEFORE the clamp**:
-  `y = c + (y - c) * s` on the screen y, where `c` is the plot box centre. After
-  the clamp a rail-clipped sample would shrink *from the rail* and put a visible
-  kink where the trace leaves the box.
+- **Y is scaled per-point, BEFORE the clamp**: `y = c + (y - c) * s` on the
+  screen y, where `c` is the plot box centre. After the clamp a rail-clipped
+  sample would shrink *from the rail* and put a visible kink where the trace
+  leaves the box.
   ⚠ **`gr->cy` is negative** (landmine 3), so `S_Y(gy1)` and `S_Y(gy2)` come back
   in the opposite order to their data values — the centre is their **mean**,
-  which sidesteps the ordering instead of assuming it.
+  which sidesteps the ordering instead of assuming it. Same for x.
+- **X is scaled IN PLACE and restored**, not per-point, because
+  `draw_graph_points` does not own that array: `point[].x` is built by the caller
+  and — unlike y, which this function rewrites for every wave — is not
+  necessarily rebuilt per wave. So the previewed trace's x values are saved,
+  scaled, drawn and put back **verbatim from the saved shorts**. Restoring by
+  inverse transform would round; restoring from the copy cannot. One allocation
+  per drawn frame of one dragged trace, and only while a drag is live.
 - **Analog only.** The arming query (`graph_wave_at`) refuses digital and bus
   strips, so such a trace can never be picked up and never previewed; scaling one
   about the box centre would also drag it out of its own lane.
@@ -1152,9 +1167,10 @@ reorder drag gets no preview.
   `hilight_wave`/`graph_trace_at` space, so `drag_preview_arm` maps the model
   index through `node_index_of_trace` first. The two diverge as soon as any trace
   carries an empty `vec`.
-- **Knob**: `wviewer_drag_shrink`, default `0.9` (the requested 10 %). `1.0`
-  turns the effect off without disabling the drag; anything outside `(0, 1]`
-  falls back — `0` would disarm and a negative would mirror the trace.
+- **Knob**: `wviewer_drag_shrink`, default `0.7` (a 30 % shrink, applied to X
+  and Y alike). `1.0` turns the effect off without disabling the drag; anything
+  outside `(0, 1]` falls back — `0` would disarm and a negative would mirror the
+  trace.
 - **The regression guard the plan asked for**: `graph_trace_at` answers are
   asserted **unchanged** while a preview is armed. The preview is visual only, so
   the drop-target maths must not move under it.

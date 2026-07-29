@@ -271,11 +271,13 @@ set_ne wviewer_grid_show 1
 # Mid-drag shrink preview of the trace being dragged to another strip (viewer
 # plan item 6, decision D-E: the TRACE drag, not the strip reorder). The
 # vertical scale applied to that one trace while the drag is live, about the
-# plot box centre. 0.9 = the requested 10 % shrink; 1.0 disables the effect
+# plot box centre. 0.7 = a 30 % shrink in BOTH axes (review 2026-07-29:
+# "shrink in both X and Y, not just Y"; 10 % was too subtle to read); 1.0
+# disables the effect
 # without disabling the drag. Anything outside (0, 1] falls back to 0.9.
 # Not a per-rect token: it is transient CHROME (draw_graph bit 16), never
 # written to a rect and never exported.
-set_ne wviewer_drag_shrink 0.9
+set_ne wviewer_drag_shrink 0.7
 
 namespace eval wviewer {
   # session token -> {top .xN win_path .xN.drw}
@@ -3513,7 +3515,7 @@ proc wviewer::trace_drag_arm {W token gi px py {ni {}}} {
 # Out-of-range or unparseable values fall back to the default rather than
 # arming something silly (0 would disarm, a negative would mirror the trace).
 proc wviewer::drag_shrink {} {
-  set d 0.9
+  set d 0.7
   if {![info exists ::wviewer_drag_shrink]} { return $d }
   set v [string trim $::wviewer_drag_shrink]
   if {![string is double -strict $v]} { return $d }

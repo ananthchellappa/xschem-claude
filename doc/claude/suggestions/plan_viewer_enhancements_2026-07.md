@@ -163,7 +163,7 @@ looked at. **This list is the debt; do not let it grow silently.**
 | 7 — RMB trace context menu | `50c3537f` | ⚠ PROCEED, panel closed with no notes — **pixels not confirmed by eye** |
 | 8 — RMB strip context menu (**touched `scheduler.c`**) | `6ca278c6` | ✅ REVIEWED (PROCEED) — pixels still eyeball-only |
 | — `wviewer::open` intermittent (found by item 8's soak) | `5ddb8361` | ✅ REVIEWED with item 8 |
-| 6 — mid-drag shrink preview (**touched `draw.c`**) | `9727791a` | ⏳ awaiting review — **the pixel effect is the ONLY check that exists** |
+| 6 — mid-drag shrink preview (**touched `draw.c`**) | `9727791a` | ✅ REVIEWED — **rejected Y-only and 10 %**; both axes at 30 % in the follow-up |
 
 **ALL TEN ITEMS ARE NOW BUILT AND COMMITTED** (2026-07-29). Order run:
 4, 5, 1, 2, 3, 9, 10, 7, 8, 6.
@@ -524,6 +524,16 @@ the remapped target, `modified == 0`, and one log line.
 > sample, with no shared state to restore and no early-exit obligation. There is
 > nothing to profile — the affine version saves arithmetic the loop was doing
 > anyway.
+>
+> **(1b) Y-ONLY AND 10 % WERE BOTH WRONG, and only the eyeball could say so.**
+> The section asks for a "10 % shrink" and describes scaling y about the plot-box
+> centre. That shipped, was looked at, and was rejected: *"shrink should be in
+> both X and Y, not just Y. Bump up the shrink to 30 %."* A Y-only squeeze reads
+> as a gain change rather than a pick-up, and 10 % is below the threshold where
+> the eye notices at all. Final: both axes, `wviewer_drag_shrink` default 0.7.
+> This is item 1's lesson for the third time — **ship the knob, default it
+> conservatively, and let the eyeball settle it** — except that here the
+> conservative default was itself the thing that was wrong.
 >
 > **(2) The pixel effect is NOT sabotage-verified, and cannot be.** The Tcl half
 > (arming, the node-index mapping, teardown, the rc knob) is, four ways. But the

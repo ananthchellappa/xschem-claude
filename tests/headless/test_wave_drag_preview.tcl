@@ -5,7 +5,7 @@
 #
 # The feature: while a trace is being dragged to another strip (decision D-E:
 # the TRACE drag, not the strip reorder) it is drawn vertically shrunk about the
-# plot box centre. Render state only — three transient xctx numbers, no prop
+# plot box centre, in BOTH axes. Render state only — three transient xctx numbers, no prop
 # token, no model write, no undo point, and never in an export.
 #
 # What is asserted here:
@@ -70,8 +70,8 @@ if {[catch {
 # ============================================================================
 # DP* — the rc knob
 # ============================================================================
-check "DP1 the default shrink is 0.9 (the requested 10 %)" \
-  [wviewer::drag_shrink] 0.9
+check "DP1 the default shrink is 0.7 (a 30 % shrink, review 2026-07-29)" \
+  [wviewer::drag_shrink] 0.7
 set ::wviewer_drag_shrink 0.75
 check "DP2 an rc value in range is used" [wviewer::drag_shrink] 0.75
 set ::wviewer_drag_shrink 1.0
@@ -83,10 +83,10 @@ foreach {v why} {0 {0 would disarm rather than shrink}
                  abc {unparseable}
                  {} {empty}} {
   set ::wviewer_drag_shrink $v
-  check "DP4 '$v' falls back to the default ($why)" [wviewer::drag_shrink] 0.9
+  check "DP4 '$v' falls back to the default ($why)" [wviewer::drag_shrink] 0.7
 }
 unset ::wviewer_drag_shrink
-check "DP5 with the var unset the default stands" [wviewer::drag_shrink] 0.9
+check "DP5 with the var unset the default stands" [wviewer::drag_shrink] 0.7
 
 # ============================================================================
 # DN* — no window needed
