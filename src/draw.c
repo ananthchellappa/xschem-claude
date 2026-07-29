@@ -1403,8 +1403,32 @@ void draw_xhair_line(GC gc, int size, double linex1, double liney1, double linex
   }
 }
 
+/* The historical drawline: an on-run and an off-run of the SAME length, i.e. a
+ * 50% duty cycle. Kept as the name every one of its ~86 call sites uses, now a
+ * one-line delegate. X11 treats a dash list {d} of length 1 and {d,d} of
+ * length 2 identically (the pattern alternates on/off through the list and
+ * repeats), so this is exactly equivalent to what it did before -- no call site
+ * changes behaviour. */
 void drawline(int c, int what, double linex1, double liney1, double linex2, double liney2,
               double bus, int dash, void *ct)
+{
+  drawline_duty(c, what, linex1, liney1, linex2, liney2, bus, dash, dash, ct);
+}
+
+/* drawline with an independent OFF run, so a caller can ask for a duty cycle
+ * other than 50% -- e.g. the waveform graph grid's 1-on/3-off, which halves the
+ * lit pixels without removing a single grid line (viewer plan item 2,
+ * decision D-B).
+ *
+ * Split out as a wrapper + core rather than by adding a parameter to drawline
+ * itself, and rather than by having a mutable global consulted inside the
+ * primitive: drawline is the most shared drawing routine in the program, and a
+ * global would be the same landmine class as the shared xctx->graph_struct --
+ * it would leak onto every later line through any early return.
+ *
+ * dash_off <= 0 means "same as dash", the historical behaviour. */
+void drawline_duty(int c, int what, double linex1, double liney1, double linex2, double liney2,
+              double bus, int dash, int dash_off, void *ct)
 {
   static int i = 0;
 #ifndef __unix__
@@ -1471,8 +1495,9 @@ void drawline(int c, int what, double linex1, double liney1, double linex2, doub
   if( clip(&x1,&y1,&x2,&y2) )
   {
    if(dash) {
-     dash_arr[0] = dash_arr[1] = (char)dash;
-     XSetDashes(display, xctx->gc[c], 0, dash_arr, 1);
+     dash_arr[0] = (char)dash;
+     dash_arr[1] = (char)(dash_off > 0 ? dash_off : dash);
+     XSetDashes(display, xctx->gc[c], 0, dash_arr, 2);
      XSetLineAttributes (display, xctx->gc[c], width, xDashType, xCap, xJoin);
    } else if(bus > 0.0) {
      XSetLineAttributes (display, xctx->gc[c], width, LineSolid, CapProjecting, JoinMiter);
@@ -1498,8 +1523,9 @@ void drawline(int c, int what, double linex1, double liney1, double linex2, doub
   if( clip(&x1,&y1,&x2,&y2) )
   {
    if(dash) {
-     dash_arr[0] = dash_arr[1] = (char) dash;
-     XSetDashes(display, xctx->gc[c], 0, dash_arr, 1);
+     dash_arr[0] = (char)dash;
+     dash_arr[1] = (char)(dash_off > 0 ? dash_off : dash);
+     XSetDashes(display, xctx->gc[c], 0, dash_arr, 2);
      XSetLineAttributes (display, xctx->gc[c], width, xDashType, xCap, xJoin);
    } else {
      XSetLineAttributes (display, xctx->gc[c], width, LineSolid, LINECAP, LINEJOIN);
@@ -3441,11 +3467,27 @@ static void draw_graph_grid(Graph_ctx *gr, void *ct)
 {
   double deltax, startx, deltay, starty, wx,wy,  dash_size;
   int j, k;
+  int dash_on, dash_off;
   double mark_size = gr->marginy/10.0;
 
   /* calculate dash length for grid lines */
   dash_size = 1.5 * xctx->mooz;
   dash_size = dash_size < 1.0 ? 0.0: (dash_size > 3.0 ? 3.0 : 2.0);
+  /* viewer plan item 2 (decision D-B): "the grid is too heavy -- halve its
+   * pixel density". Of the three readings, the chosen one keeps EVERY grid line
+   * and its colour and halves the DUTY CYCLE instead. XSetDashes here has
+   * always been called with a 1-element list, which makes the on-run and the
+   * off-run equal -- a 50% duty cycle. `griddash` (per-rect, viewer-only) is
+   * the OFF run against a 1-pixel ON run, so griddash=3 gives 1-on/3-off: the
+   * same 4-pixel period, half the lit pixels.
+   * dash_on stays 0 when dash_size is 0 -- at that zoom the grid is solid, and
+   * a solid line has no duty cycle to halve. */
+  dash_on = (int)dash_size;
+  dash_off = (int)dash_size;
+  if(gr->griddash > 0 && dash_on > 0) {
+    dash_on = 1;
+    dash_off = gr->griddash;
+  }
 
   /* clipping everything outside container area */
   /* background */
@@ -3469,12 +3511,12 @@ static void draw_graph_grid(Graph_ctx *gr, void *ct)
         subwx = wx + deltax * (double)k / ((double)gr->subdivx + 1.0);
       if(!axis_within_range(subwx, gr->gx1, gr->gx2, deltax, gr->subdivx)) continue;
       if(axis_end(subwx, deltax, gr->gx2)) break;
-      drawline(GRIDLAYER, ADD, W_X(subwx),   W_Y(gr->gy2), W_X(subwx),   W_Y(gr->gy1), 0.0, (int)dash_size, ct);
+      drawline_duty(GRIDLAYER, ADD, W_X(subwx),   W_Y(gr->gy2), W_X(subwx),   W_Y(gr->gy1), 0.0, dash_on, dash_off, ct);
     }
     if(!axis_within_range(wx, gr->gx1, gr->gx2, deltax, gr->subdivx)) continue;
     if(axis_end(wx, deltax, gr->gx2)) break;
     /* swap order of gy1 and gy2 since grap y orientation is opposite to xorg orientation */
-    drawline(GRIDLAYER, ADD, W_X(wx),   W_Y(gr->gy2), W_X(wx),   W_Y(gr->gy1), 0.0, (int)dash_size, ct);
+    drawline_duty(GRIDLAYER, ADD, W_X(wx),   W_Y(gr->gy2), W_X(wx),   W_Y(gr->gy1), 0.0, dash_on, dash_off, ct);
     drawline(GRIDLAYER, ADD, W_X(wx),   W_Y(gr->gy1), W_X(wx),   W_Y(gr->gy1) + mark_size, 0.0, 0, ct); /* axis marks */
     /* X-axis labels */
     if(gr->logx)
@@ -3502,11 +3544,11 @@ static void draw_graph_grid(Graph_ctx *gr, void *ct)
           subwy = wy + deltay * (double)k / ((double)gr->subdivy + 1.0);
         if(!axis_within_range(subwy, gr->gy1, gr->gy2, deltay, gr->subdivy)) continue;
         if(axis_end(subwy, deltay, gr->gy2)) break;
-        drawline(GRIDLAYER, ADD, W_X(gr->gx1), W_Y(subwy),   W_X(gr->gx2), W_Y(subwy), 0.0, (int)dash_size, ct);
+        drawline_duty(GRIDLAYER, ADD, W_X(gr->gx1), W_Y(subwy),   W_X(gr->gx2), W_Y(subwy), 0.0, dash_on, dash_off, ct);
       }
       if(!axis_within_range(wy, gr->gy1, gr->gy2, deltay, gr->subdivy)) continue;
       if(axis_end(wy, deltay, gr->gy2)) break;
-      drawline(GRIDLAYER, ADD, W_X(gr->gx1), W_Y(wy),   W_X(gr->gx2), W_Y(wy), 0.0, (int)dash_size, ct);
+      drawline_duty(GRIDLAYER, ADD, W_X(gr->gx1), W_Y(wy),   W_X(gr->gx2), W_Y(wy), 0.0, dash_on, dash_off, ct);
       drawline(GRIDLAYER, ADD, W_X(gr->gx1) - mark_size, W_Y(wy),   W_X(gr->gx1), W_Y(wy), 0.0, 0, ct); /* axis marks */
       /* Y-axis labels */
       if(gr->logy)
@@ -3567,6 +3609,14 @@ void setup_graph_data(int i, int skip, Graph_ctx *gr)
   gr->legendbold = 0;
   val = get_tok_value(r->prop_ptr,"legendbold", 0);
   if(val[0]) gr->legendbold = atoi(val);
+  /* viewer plan item 2 (D-B): grid dash OFF run. Same early-default rule and
+   * the same reason as the three tokens above -- shared xctx->graph_struct,
+   * off-screen early return. Clamped to what XSetDashes can carry (a dash
+   * element is an unsigned char and must be non-zero); 0 = shipped pattern. */
+  gr->griddash = 0;
+  val = get_tok_value(r->prop_ptr,"griddash", 0);
+  if(val[0]) gr->griddash = atoi(val);
+  if(gr->griddash < 0 || gr->griddash > 32) gr->griddash = 0;
   gr->linewidth_mult = tclgetdoublevar("graph_linewidth_mult");
   xctx->graph_flags &= ~(128 | 256); /* clear hcursor flags */
   gr->hcursor1_y = gr->hcursor2_y = 0.0;

@@ -274,6 +274,16 @@ bind .drw <Control-Shift-Key-4> {ase::plot_mode_for_current invert; break}
 # set wviewer_legend_textmag 1.63
 # set wviewer_legend_bold 0
 
+# Waveform-viewer GRID density. The dashed grid inside each strip used to light
+# half its pixels (a 2-on/2-off dash); it now lights a quarter (1-on/3-off),
+# which makes the traces stand out without removing a single grid line or
+# changing its colour. Viewer-only, like the legend vars above.
+#   wviewer_grid_dash_off   the OFF run in pixels against a 1-pixel ON run.
+#                           3 = DEFAULT (1-on/3-off, half the old density).
+#                           0 = the old grid, exactly. Bigger = sparser.
+#                           Clamped 0..32; anything else falls back to 3.
+# set wviewer_grid_dash_off 3
+
 # Descend opens the child schematic READ-ONLY by default (browse mode). To edit,
 # press Ctrl-2 after descending, use the "Descend schematic (edit)" right-click
 # item, or View > Toggle Read Only.

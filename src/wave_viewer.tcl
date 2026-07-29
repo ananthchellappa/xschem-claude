@@ -244,6 +244,24 @@ set_ne wviewer_legend_textmag 1.63
 # ITALIC.
 set_ne wviewer_legend_bold 0
 
+# ---- graph grid density (viewer plan item 2, decision D-B) -----------------
+# "The grid is too heavy -- reduce its pixel density by 50%." Three readings
+# were possible and they look quite different: halve the LINE COUNT (drop the
+# subdivisions), halve the DUTY CYCLE, or dim the COLOUR. D-B chose the duty
+# cycle: every grid line stays, in its own colour, but half as many of its
+# pixels are lit.
+#
+# draw.c has always called XSetDashes with a ONE-element dash list, which makes
+# the on-run and the off-run equal -- a 50% duty cycle (2-on/2-off at the usual
+# zoom). This var is the OFF run against a 1-pixel ON run, so the default 3
+# gives 1-on/3-off: the same 4-pixel period, half the lit pixels. 0 restores the
+# shipped pattern exactly.
+#
+# Per-rect token (`griddash`), emitted only by the viewer's own strip generator,
+# for the same blast-radius reason as the legend vars above: draw_graph_grid is
+# shared with every embedded schematic graph in the tree.
+set_ne wviewer_grid_dash_off 3
+
 namespace eval wviewer {
   # session token -> {top .xN win_path .xN.drw}
   variable windows [dict create]
@@ -985,6 +1003,23 @@ proc wviewer::legend_bold {} {
   return 0
 }
 
+# The config var `wviewer_grid_dash_off` -> the `griddash` prop token, as a
+# clamped integer. 0 = the shipped 2-on/2-off grid; N>0 = 1-on/N-off.
+#
+# Clamped 0..32 because a dash-list element is an unsigned char in X and an
+# absurd off-run would simply erase the grid -- which is a different feature
+# (item 3's on/off toggle), reachable by mistake from a typo here otherwise.
+# Anything non-integer falls back to the default rather than to 0: a typo
+# should not silently restore the heavy grid the user asked to be rid of.
+proc wviewer::grid_dash_off {} {
+  set d 3
+  if {![info exists ::wviewer_grid_dash_off]} { return $d }
+  set v [string trim $::wviewer_grid_dash_off]
+  if {![string is integer -strict $v]} { return $d }
+  if {$v < 0 || $v > 32} { return $d }
+  return $v
+}
+
 # Clamp a stored target index into a layout of `n` graphs. Out of range, a
 # non-integer or an empty layout all collapse to 0 — the target is stored raw
 # and clamped on every read, so deleting strips can never dangle it.
@@ -1388,7 +1423,8 @@ proc wviewer::graph_props {G {active 0}} {
   # class that hilight_wave/markers belong to.
   set lmag [wviewer::legend_textmag]
   set lbold [wviewer::legend_bold]
-  return "flags=graph\ny1=$y1\ny2=$y2\nypos1=0\nypos2=2\ndivy=5\nsubdivy=1\nunity=1\nx1=$x1\nx2=$x2\ndivx=5\nsubdivx=1\nxlabmag=1.0\nylabmag=1.0\nlegendmag=$lmag\nlegendbold=$lbold\nnode=\"$node\"\ncolor=\"$color\"\ndataset=-1\nunitx=1\nlogx=$logx\nlogy=$logy\nreorder_handle=1\n$hw$mk$act"
+  set gdash [wviewer::grid_dash_off]
+  return "flags=graph\ny1=$y1\ny2=$y2\nypos1=0\nypos2=2\ndivy=5\nsubdivy=1\nunity=1\nx1=$x1\nx2=$x2\ndivx=5\nsubdivx=1\nxlabmag=1.0\nylabmag=1.0\nlegendmag=$lmag\nlegendbold=$lbold\ngriddash=$gdash\nnode=\"$node\"\ncolor=\"$color\"\ndataset=-1\nunitx=1\nlogx=$logx\nlogy=$logy\nreorder_handle=1\n$hw$mk$act"
 }
 
 # PURE (D4): pre-validate a whitespace-separated RPN expression against the

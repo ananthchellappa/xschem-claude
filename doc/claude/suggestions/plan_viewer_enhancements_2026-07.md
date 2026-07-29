@@ -225,7 +225,27 @@ Files: `src/draw.c`, `src/xschem.tcl`, `doc/claude/specs/waveform_viewer.md`.
 ---
 
 ### Item 2 — grid too heavy; config var + 50 % density + rc comment
-- [ ] **2. Grid density knob**
+- [x] **2. Grid density knob** — **DONE 2026-07-29.** `wviewer_grid_dash_off`
+      (default 3) -> new per-rect `griddash` token; dash duty 2-on/2-off ->
+      1-on/3-off; `src/cadence_style_rc` block, spec §"Graph grid density",
+      `tests/headless/test_wave_grid.tcl` 27 nogui + GG* on DISPLAY.
+
+> **⚠ WHAT THIS SECTION MISSED: the change lands in `drawline`, not just in
+> `draw_graph_grid`.** D-B is right that the dash plumbing is the target, but
+> `XSetDashes` is called from inside `drawline` — the most shared drawing
+> routine in the program, ~86 call sites — and it takes a **single `dash` int**,
+> so a 1-on/3-off pattern is not expressible without touching it. Resolved by
+> splitting it into a `drawline_duty(..., dash, dash_off, ...)` core plus a
+> `drawline` wrapper delegating `(dash, dash)`; X11 treats a 1-element dash list
+> `{d}` and a 2-element `{d,d}` identically, so every existing call site is
+> byte-identical. A mutable global consulted inside the primitive was rejected —
+> same landmine class as the shared `graph_struct`, leaking through early
+> returns.
+>
+> Also worth recording: a blanket textual replace of
+> `drawline(GRIDLAYER, ADD,` caught **8 nine-argument calls** (axis marks, box
+> delimiters, zero lines) that must stay solid and stay on the old signature.
+> They are not grid lines and have no duty cycle.
 
 **Verdict: MODERATE.** Blocked on **D-A** and **D-B**.
 

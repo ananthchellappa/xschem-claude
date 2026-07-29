@@ -1108,6 +1108,14 @@ typedef struct {
                        * 2/3 are TRANSIENT drag feedback (prospective destination).
                        * Like `active`, on-screen only (draw_graph flags bit 16).
                        * doc/claude/specs/waveform_viewer_modes.md */
+  int griddash;   /* viewer plan item 2 / decision D-B: the OFF run of the graph
+                   * grid's dash pattern, in pixels, against a 1-pixel ON run.
+                   * 0 = the shipped 2-on/2-off (50% duty); 3 = 1-on/3-off,
+                   * which halves the lit pixels WITHOUT removing a grid line or
+                   * changing its colour. Prop token `griddash`, written by the
+                   * ASE viewer only -- draw_graph_grid is shared with every
+                   * embedded schematic graph, so this must not be a global
+                   * (same reasoning as legendbold below). */
   int legendbold; /* viewer plan item 1: draw EVERY legend entry in the bold face
                    * (prop token `legendbold=1`), written by the ASE viewer only —
                    * draw_graph_variables is shared with every embedded schematic
@@ -2043,6 +2051,10 @@ extern int find_closest_pin(double mx, double my, Selected *r);
 extern int find_closest_net_or_symbol_pin(double mx,double my, double *x, double *y);
 
 extern void drawline(int c, int what, double x1,double y1,double x2,double y2, double bus, int dash, void *ct);
+/* drawline with an independent OFF run (dash_off <= 0 = same as dash, i.e.
+ * drawline's historical 50% duty cycle). See draw.c. */
+extern void drawline_duty(int c, int what, double x1,double y1,double x2,double y2,
+                          double bus, int dash, int dash_off, void *ct);
 extern void draw_xhair_line(GC gc, int size, double linex1, double liney1, double linex2, double liney2);
 extern void draw_string(int layer,int what, const char *str, short rot, short flip, int hcenter, int vcenter,
        double x1, double y1, double xscale, double yscale);

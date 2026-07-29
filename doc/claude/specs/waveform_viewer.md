@@ -550,6 +550,53 @@ owning the current xschem context, like the 0151 mode/target commands); also
 - **Tests:** `tests/headless/test_wave_clear_all.tcl` (`CA*` no-window, `CG*`
   GUI) — 67 checks, sabotage-verified. Documented in `src/cadence_style_rc`.
 
+## Graph grid density (viewer plan item 2, 2026-07-29)
+
+**The graph grid keeps every line and every colour but lights half as many
+pixels**: the dash duty cycle goes from 2-on/2-off to 1-on/3-off. One
+rc-overridable var, `wviewer_grid_dash_off` (default **3**), read lazily at
+strip-template time and folded into a new per-rect prop token `griddash`.
+
+- **Which grid (D-A).** The *graph* grid (`draw_graph_grid`, `draw.c` ~3440),
+  not the schematic dot grid — `wave_viewer.tcl` already does
+  `xschem set no_grid 1` on the viewer ctx for life, so the dot grid is not
+  present in a waveform window at all.
+- **Which reading of "reduce pixel density by 50%" (D-B).** Not the line count
+  (`subdiv` 1→0) and not the colour: the **duty cycle**. `XSetDashes` had always
+  been called with a **one-element** dash list, which makes the on-run and the
+  off-run equal — a 50% duty cycle. `griddash` is the OFF run against a
+  **1-pixel ON run**, so the default 3 gives 1-on/3-off: *the same 4-pixel
+  period, half the lit pixels*. `griddash=0` restores the shipped pattern
+  exactly.
+- **⚠ This needed a change to `drawline`, the most shared drawing routine in
+  the program** (~86 call sites), because a 1-on/3-off pattern needs a
+  two-element dash list and `drawline` took a single `dash` int. It was split
+  into a `drawline_duty(..., dash, dash_off, ...)` core plus a `drawline`
+  wrapper delegating with `(dash, dash)`. **X11 treats a 1-element list `{d}`
+  and a 2-element `{d,d}` identically** — the pattern alternates on/off through
+  the list and repeats — so every existing call site is byte-identical.
+  The alternative considered and rejected: a mutable global consulted *inside*
+  the primitive. That is the same landmine class as the shared
+  `xctx->graph_struct` — it would leak onto every later line through any early
+  return.
+- **Blast radius.** `draw_graph_grid` is shared with every embedded schematic
+  graph, so the knob is a **per-rect token** emitted only by `graph_props`, the
+  viewer's own rect generator. The C `add_graph` template has no `griddash`.
+  Defaulted **before the `RECT_OUTSIDE` early return** like `active` /
+  `reorder_handle` / `legendbold` (shared `graph_struct`, landmine 37a), and
+  clamped in C as well as in Tcl.
+- **The axis marks, the box delimiters and the zero lines are solid** and stay
+  solid — they pass `dash = 0` and are not part of the grid's duty cycle.
+- **`dash_on` stays 0 when `dash_size` is 0**: at that zoom the grid is already
+  solid, and a solid line has no duty cycle to halve.
+- **Tests:** `tests/headless/test_wave_grid.tcl` — 27 under `--nogui` (`GP*`
+  clamp + token, `GD*` the drawline split incl. a tripwire on the wrapper's
+  exact shape, `GB*` blast radius) plus the `GG*` rect legs on DISPLAY.
+  **⚠ The PIXELS are eyeball-only**: there is no C→Tcl getter for a
+  `Graph_ctx` field and no way to read back an X GC's dash list. The
+  behavioural evidence for the `drawline` refactor is the rest of the wave
+  suites staying green.
+
 ## Legend text size + weight (viewer plan item 1, 2026-07-29)
 
 **The viewer legend is drawn at the size of the Y-axis numbers and in the bold
