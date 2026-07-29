@@ -8,7 +8,7 @@ The waveform-viewer enhancement plan
 (`doc/claude/suggestions/plan_viewer_enhancements_2026-07.md`) is **complete —
 all ten items built, tested and committed.**
 
-**State.** Branch `fluid-editing`, HEAD `9727791a`, **17 commits ahead of
+**State.** Branch `fluid-editing`, HEAD `780bd468`, **19 commits ahead of
 `github/fluid-editing`, nothing pushed — do not push unless I say so.**
 Order run: 4, 5, 1, 2, 3, 9, 10, 7, 8, 6.
 
@@ -19,7 +19,8 @@ Order run: 4, 5, 1, 2, 3, 9, 10, 7, 8, 6.
 | `50c3537f` | item 7 — RMB a trace → "Move to Separate Strip" |
 | `5ddb8361` | **fix**: `wviewer::open` intermittently opened onto the main window |
 | `6ca278c6` | item 8 — RMB empty strip space → "Split Strip" (+ `xschem get graph_plotbox_at`) |
-| `9727791a` | item 6 — the dragged trace shrinks 10 % while you carry it |
+| `9727791a` | item 6 — the dragged trace shrinks while you carry it |
+| `780bd468` | item 6 round 2 — **both axes, 30 %** (review rejected Y-only at 10 %) |
 
 Suites: `test_wave_trace_menu` 128/34, `test_wave_split_strip` 122/38,
 `test_wave_drag_preview` 46/18. Full wave battery 12/12 at unchanged counts
@@ -31,6 +32,8 @@ viewer 349, clear_all 68, ase_plot 145).
 The plan's review ledger carries the detail. In short, **~300 green checks across
 three suites and not one of them can see a pixel**:
 
+- **Item 6 round 2** (`780bd468`) — the gate was raised and is still open when
+  this was written. Both-axes-at-30 % is unconfirmed.
 - **Items 7 and 8** — the suites spy `tk_popup` rather than posting for real (a
   live popup takes a global grab and swallows the rest of the run), so "the menu
   looks right and lands under the pointer" is unchecked.
