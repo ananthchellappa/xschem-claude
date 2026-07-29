@@ -15,12 +15,26 @@
 #   $GATE_DIR/status/<pid>   "<suite> | <i>/<N> <testname>" live status line.
 #   $GATE_DIR/widget.pid     this process's pid (liveness / singleton lock).
 #
-# The gate ASKS but never blocks forever: a waiting suite arms a 2-minute
-# auto-start countdown ($GUI_GATE_AUTOSTART seconds overrides; 0 disables) and
-# runs when it expires. The panel is here to warn the user who is AT the desk,
-# not to strand a suite behind a dialog nobody is there to click. Snooze pushes
-# the deadline out; Pause freezes it — an explicit "I am here, hold off" — and
-# is also how you stop the flood once a suite is running.
+# THE ONE RULE: the only thing that holds tests up indefinitely is a user
+# PAUSE. Everything else self-releases.
+#   * a waiting suite arms a 2-minute auto-start countdown
+#     ($GUI_GATE_AUTOSTART seconds overrides; 0 disables) and runs when it
+#     expires — the panel warns the user who is AT the desk, it must never
+#     strand a suite behind a dialog nobody is there to click;
+#   * Snooze pushes that deadline out, it does not remove it;
+#   * PAUSE freezes it — an explicit "I am here, hold off" — and is also how you
+#     stop the flood once a suite is already running;
+#   * STOP is per-suite and SELF-CLEARS once the suites it aborted have drained.
+#     It used to persist in the control file, so one Stop press silently made
+#     every future suite exit 3 forever — a hold nobody asked for.
+#
+# ATTENTION: the panel is useless if it opens on a virtual desktop the user is
+# not looking at. `raise`/-topmost only act within a desktop, and there is no
+# portable way to ask a window manager which desktop a window is on, so the
+# shell side RELAUNCHES this process when a suite wants go-ahead (see
+# _gate_attention in gui_gate.sh) — a fresh window maps on the CURRENT desktop.
+# This process does the in-desktop half: deiconify, raise, force focus, bell and
+# a brief flash, on startup and whenever a NEW request appears.
 #
 # The shell side FAILS OPEN if this process dies, so a crashed panel never
 # blocks testing forever. Design: doc/claude/specs/gui_test_gate.md.
@@ -156,8 +170,30 @@ proc do_toggle_pause {} {
 proc do_stop   {} {
   global REQDIR
   write_control STOP
+  set ::stop_since [clock seconds]
   # also release anyone blocked at the go-ahead so they can exit
   foreach r [pending_reqs] { catch {file delete [file join $REQDIR $r]} }
+}
+
+# ---- attention -----------------------------------------------------------
+# Make the panel impossible to miss ON THIS DESKTOP. The cross-desktop half is
+# the shell side's relaunch (_gate_attention); this is everything a live
+# process can do for itself. All of it is `catch`ed: a window manager that
+# refuses focus-stealing must not take the panel down with it.
+proc flash {n} {
+  set c [expr {$n % 2 ? "#7a2b2b" : "#3a2b2b"}]
+  catch {.top configure -bg $c}
+  catch {.top.h configure -bg $c}
+  catch {.top.msg configure -bg $c}
+  if {$n > 0} { after 180 [list flash [expr {$n - 1}]] }
+}
+proc attention {} {
+  catch {wm deiconify .}
+  catch {wm attributes . -topmost 1}
+  catch {raise .}
+  catch {focus -force .}
+  catch {bell}
+  flash 7
 }
 
 # ---- poll loop -----------------------------------------------------------
@@ -174,6 +210,32 @@ proc refresh {} {
   set reqs [pending_reqs]
   set nctrl [read_control]
   set now [clock seconds]
+
+  # A request that was not there last tick is a NEW suite asking — grab the
+  # user's attention. Compared as a set, so one suite finishing while another
+  # waits does not re-flash, and a suite that is merely still waiting does not
+  # re-flash every 300 ms.
+  foreach r $reqs {
+    if {[lsearch -exact $::seen_reqs $r] < 0} { attention ; break }
+  }
+  set ::seen_reqs $reqs
+
+  # STOP is per-suite, not a mode. Once the suites it aborted have drained
+  # (no live status files, nothing waiting) put the control file back to RUN,
+  # or the next suite to call gate_start would exit 3 having never been told
+  # to stop. The grace period covers suites that have not yet reached their
+  # next pause point and so have not read the STOP.
+  if {$nctrl eq "STOP"} {
+    if {![info exists ::stop_since]} { set ::stop_since $now }
+    set running [llength [glob -nocomplain -directory $STATUSDIR *]]
+    if {$running == 0 && [llength $reqs] == 0 && $now - $::stop_since >= 5} {
+      write_control RUN
+      unset ::stop_since
+      set nctrl RUN
+    }
+  } elseif {[info exists ::stop_since]} {
+    unset ::stop_since
+  }
 
   if {[llength $reqs] == 0} {
     # nothing waiting -> nothing to count down to
@@ -218,7 +280,7 @@ proc refresh {} {
     .go.s5  configure -state normal
     .go.s15 configure -state normal
     .go.s30 configure -state normal
-    wm attributes . -topmost 1
+    catch {wm attributes . -topmost 1}
     catch {raise .}
   } else {
     .top.msg configure -fg #a5d6a7 -text "No suite waiting for go-ahead."
@@ -276,5 +338,11 @@ proc on_close {} {
   exit 0
 }
 wm protocol . WM_DELETE_WINDOW on_close
+
+# The shell side relaunches this process precisely so a fresh window maps on the
+# desktop the user is looking at — so announce ourselves the moment we are up,
+# not only once a request has been noticed by the poll loop.
+set ::seen_reqs {}
+after 120 attention
 
 refresh

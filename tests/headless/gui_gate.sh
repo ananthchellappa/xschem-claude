@@ -43,12 +43,67 @@ _gate_widget_alive() {
 _gate_ensure_widget() {
   _gate_widget_alive && return 0
   mkdir -p "$GATE_DIR/req" "$GATE_DIR/status"
-  # a stale pid file loses the singleton race harmlessly; launch detached
-  ( wish "$_GATE_SELF_DIR/gui_gate_widget.tcl" "$GATE_DIR" >/dev/null 2>&1 & )
+  # A plain `( wish ... & )` leaves the panel in the LAUNCHING SUITE'S process
+  # group, so anything that kills that group -- which is how a background/CI
+  # task is normally torn down when it finishes -- kills the panel too. Measured:
+  # `kill -TERM -<pgid>` after a suite ended took the widget with it and left a
+  # stale widget.pid behind (dead process, no WM_DELETE_WINDOW, so none of
+  # on_close's cleanup ran). The panel is a SINGLETON meant to outlive every
+  # individual suite, so it gets its own session. A stale pid file loses the
+  # singleton race harmlessly: _gate_widget_alive kill -0's it.
+  if command -v setsid >/dev/null 2>&1; then
+    ( setsid wish "$_GATE_SELF_DIR/gui_gate_widget.tcl" "$GATE_DIR" >/dev/null 2>&1 & )
+  else
+    ( wish "$_GATE_SELF_DIR/gui_gate_widget.tcl" "$GATE_DIR" >/dev/null 2>&1 & )
+  fi
   # wait briefly for it to write its pid
   local i
   for i in $(seq 1 20); do _gate_widget_alive && return 0; sleep 0.15; done
   _gate_widget_alive
+}
+
+_gate_control() { cat "$GATE_DIR/control" 2>/dev/null; }
+
+# _gate_attention — make sure the panel is visible ON THE DESKTOP THE USER IS
+# LOOKING AT. A panel nobody sees is worse than no panel: the suite still waits
+# out its countdown and then floods a display the user never got to defend.
+#
+# Under a virtual-desktop manager (the user runs VirtuaWin) a window created on
+# desktop A is simply not reachable from desktop B — `raise` and -topmost act
+# WITHIN a desktop, and there is no portable way to ask which desktop a window
+# is on, let alone move it. So the only reliable way to pop the panel where the
+# user actually is, is to RELAUNCH it: a fresh window maps on the current
+# desktop. The user authorised the kill explicitly.
+#
+# NEVER while PAUSED. Pause is the one state that means "I am here, hold off",
+# and a dead panel FAILS OPEN by design (gate_pause_point returns 0 when the
+# widget is gone) — so killing it mid-pause would march every held suite
+# straight through the hold. Not raising a paused panel costs nothing: the user
+# who pressed Pause is by definition at the desk.
+#
+# A plain TERM is deliberate: the widget's WM_DELETE_WINDOW handler releases
+# every pending request (closing the panel must not wedge a suite), and running
+# that here would let this suite through ungated. TERM kills it outright.
+_gate_attention() {
+  [ "$(_gate_control)" = "PAUSE" ] && return 0
+
+  # don't thrash when several suites start within moments of each other
+  local stamp="$GATE_DIR/last_raise" now prev
+  now="$(date +%s)"
+  if [ -f "$stamp" ]; then
+    prev="$(cat "$stamp" 2>/dev/null || echo 0)"
+    [ "$((now - prev))" -lt 10 ] && return 0
+  fi
+  printf '%s' "$now" > "$stamp"
+
+  if _gate_widget_alive; then
+    local wp i; wp="$(cat "$GATE_DIR/widget.pid" 2>/dev/null)"
+    kill "$wp" 2>/dev/null
+    for i in $(seq 1 10); do _gate_widget_alive || break; sleep 0.1; done
+    _gate_widget_alive && kill -9 "$wp" 2>/dev/null
+    rm -f "$GATE_DIR/widget.pid"
+  fi
+  _gate_ensure_widget
 }
 
 # gate_start "<label>" — block until acked (Proceed) / snooze-expired.
@@ -56,21 +111,37 @@ gate_start() {
   _gate_enabled || return 0
   local label="${1:-test suite ($_GATE_PID)}"
   mkdir -p "$GATE_DIR/req" "$GATE_DIR/status"
-  if ! _gate_ensure_widget; then
-    echo "gui_gate: panel unavailable, proceeding without gate" >&2
-    return 0
+
+  # A STOP already standing when we arrive was aimed at some EARLIER suite --
+  # this one has never been told to stop, and the control file outlives the
+  # process that was stopped. Left alone it would make every future suite exit
+  # 3 forever: a hold no user asked for, which breaks the rule that only PAUSE
+  # holds tests up. Clear it; a Stop pressed while we wait is caught below.
+  if [ "$(_gate_control)" = "STOP" ]; then
+    printf '%s' RUN > "$GATE_DIR/control" 2>/dev/null
   fi
-  # (re)arm the go-ahead request for THIS suite -> the panel warns for every
-  # suite (user choice). Blocks until the panel removes our request file.
+
+  # Arm the go-ahead request for THIS suite BEFORE touching the panel, so that
+  # the (possibly just-relaunched) widget sees it on its very first poll and
+  # flashes for it immediately.
   local req="$GATE_DIR/req/$_GATE_PID"
   printf '%s' "$label" > "$req"
+
+  # pop the panel onto the desktop the user is actually looking at
+  _gate_attention
+
+  if ! _gate_ensure_widget; then
+    echo "gui_gate: panel unavailable, proceeding without gate" >&2
+    rm -f "$req"
+    return 0
+  fi
   echo "gui_gate: '$label' waiting for go-ahead in the control panel..." >&2
   while [ -f "$req" ]; do
     _gate_widget_alive || { echo "gui_gate: panel gone, proceeding" >&2; rm -f "$req"; break; }
     sleep 0.3
   done
   # Stop pressed while we were waiting?
-  [ "$(cat "$GATE_DIR/control" 2>/dev/null)" = "STOP" ] && return 2
+  [ "$(_gate_control)" = "STOP" ] && return 2
   return 0
 }
 
