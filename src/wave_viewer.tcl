@@ -530,12 +530,43 @@ proc wviewer::open {token} {
   # fresh open (D4): real toplevel + untitled buffer in BOTH window models;
   # the empty file arg always takes the new_schematic("create_window") arm
   # (the pristine-untitled reuse arm only fires for non-empty paths)
+  # ⚠ VERIFY THE CONTEXT FOLLOWED, do not assume it (landmine 17, the rule this
+  # file applies everywhere else and did not apply here). `-window` always
+  # CREATES the toplevel, but the switch to it is a switch_window, which
+  # silently no-ops under a raised semaphore — so `current_win_path` comes back
+  # as the OLD window perhaps a third of the time (measured: 3 of 10 fresh
+  # processes, identical inputs, with `.x1` present in `winfo children .` while
+  # the context was still `.drw`). Everything downstream then derived top = "."
+  # and built `..wvmenubar`, and `wviewer::open` threw
+  # `invalid command name "..wvmenubar"` out of build_menubar.
+  set before [xschem get current_win_path]
+  set tops0 [winfo children .]
   xschem load_new_window -window {}
   set wp [xschem get current_win_path]
+  if {$wp eq $before} {
+    # the window exists but the context did not follow: find the toplevel that
+    # was not there before and switch to it EXPLICITLY, verifying as we go
+    foreach t [winfo children .] {
+      if {[lsearch -exact $tops0 $t] >= 0} continue
+      if {![winfo exists $t.drw]} continue
+      catch {xschem new_schematic switch $t.drw}
+      if {[xschem get current_win_path] eq "$t.drw"} { set wp $t.drw; break }
+    }
+  }
   # derive the toplevel from win_path (.xN.drw -> .xN) rather than
   # `xschem get top_path`, which reports {} under the tabbed interface
   regsub {\.drw$} $wp {} top
   if {$top eq {}} { set top . }
+  # A viewer on the ROOT window cannot work: its widgets are `$top.<name>`, and
+  # for `.` that concatenates to `..<name>`, which is not a legal Tk path. Rather
+  # than throw out of build_menubar, refuse cleanly — the caller already treats
+  # 0 as "no viewer" and says so in the CIW.
+  if {$top eq {.}} {
+    if {[info commands ::ciw_echo] ne {}} {
+      ciw_echo "wviewer: could not give the waveform viewer its own window" error
+    }
+    return 0
+  }
   # D1: readonly for the window's life — modified becomes unsettable, so no
   # save prompt can ever appear on close
   xschem set readonly 1
