@@ -3822,6 +3822,29 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
               Tcl_SetResult(interp, "0", TCL_STATIC);
             }
           }
+          /* xschem get graph_plotbox_at <graph_idx> <px> <py>
+           * 1 when the CANVAS PIXEL (px,py) is inside graph <graph_idx>'s PLOT
+           * BOX -- the rectangle delineated by the two axes and the two lines
+           * opposite them -- else 0. NOT a distance to a trace: the whole
+           * interior answers 1, the legend/label margins around it answer 0.
+           * Exposes draw.c's graph_plotbox_at (viewer plan item 9's snap-cursor
+           * gate) unchanged, INCLUDING its refusals: a bad index, a non-graph
+           * rect, an off-screen graph, a DIGITAL strip or no loaded data all
+           * answer 0.
+           * The ASE viewer's strip context menu (item 8) uses it to stay OUT of
+           * the label margin, where a Button3 press is already the wave
+           * attributes dialog (callback.c ~896). Tcl cannot re-derive the box:
+           * the margins come from the engine's own transform. */
+          else if(!strcmp(argv[2], "graph_plotbox_at")) {
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            if(argc > 5) {
+              Tcl_SetResult(interp,
+                my_itoa(graph_plotbox_at(atoi(argv[3]), atof(argv[4]), atof(argv[5]))),
+                TCL_VOLATILE);
+            } else {
+              Tcl_SetResult(interp, "0", TCL_STATIC);
+            }
+          }
           /* xschem get graph_trace_at <graph_idx> <px> <py> [tol]
            * The NODE INDEX (position in the graph's `node` prop token, the same
            * index space as `hilight_wave` / find_closest_wave's node_number) of

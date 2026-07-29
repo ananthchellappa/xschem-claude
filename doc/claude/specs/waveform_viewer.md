@@ -1041,6 +1041,77 @@ refusal.
   and again at the gate, keeping the press record past the release, removing the
   marker rung, and skipping the target write each turn legs red.
 
+## Strip context menu — RMB → Split Strip (viewer plan item 8, 2026-07-29)
+
+**A right-click that does not travel, on waveform space with no trace under it,
+posts a menu whose one entry splits that strip into one strip per drawn trace.**
+Command: `wviewer::split_strip <gi> ?token?`, plus **Graph > Split Strip**, which
+acts on the **target** strip (the one carrying the active bar — a menubar entry
+has no pointer position to resolve). Returns the NUMBER of new strips, `{}` plus
+a CIW error on a refusal.
+
+- **Decision D-F**: node 0 **keeps** the original strip; the remaining drawn
+  traces get new strips inserted directly **below** it, in order — a strip
+  reading `a, b, c` becomes three strips reading `a, b, c` top to bottom. A full
+  split, not a one-trace peel-off. Traces carrying an empty `vec` reach no node
+  slot, so they are not traces for this purpose and stay with node 0.
+- **The core is a LOOP over the shipped `move_trace_in_graphs`**, not fresh index
+  math, and that is the whole point: every iteration gets the marker migration,
+  the `hilight_wave` hand-off and the empty-destination range blanking for free,
+  so `graph_markers.md` §9's obligations are discharged **by construction**.
+  Nothing in `split_graph_in_graphs` touches a marker record.
+  Two ordering rules make that safe: **every destination strip is created
+  first**, so node *k*'s destination is `gi + k` and never moves under the loop;
+  and the traces move **descending**, from the last node to node 1, because
+  removing node *k* renumbers only the nodes above it — which are already placed.
+  Ascending renumbers the remaining work on every step (sabotage-verified: it
+  scrambles the result).
+- **Ordering: `move_strip`'s contract verbatim**, with the same refusal rule — a
+  strip with fewer than two drawn traces is already split, so the command
+  returns without mutating and **without logging**, and the menu gate mirrors it.
+- **The target follows graph IDENTITY** through the new PURE
+  `wviewer::index_after_insert` — the **insert** twin of `index_after_removal`,
+  and `plot_signals`' multi-plot `cur + nnew` arithmetic generalised to an
+  arbitrary insertion point. Unlike item 7 there is no single destination to
+  adopt, so the target stays on whatever strip it was on; the source strip does
+  not move, so a target that *was* the split strip stays with node 0.
+  ⚠ Same clamp trap as everywhere else: `SG4` puts the target *below* the split
+  on a four-strip stack specifically so the shifted and unshifted answers differ.
+- **Gate** (`wviewer::strip_menu_pick`, returns the strip index or -1), all rungs
+  failing closed: inside a strip → **inside the PLOT BOX** → `node_count >= 2` →
+  **no** trace under the pointer.
+  - ⚠ **The plot-box rung is not decoration, it closes a real collision.** The
+    first cut asked only "no trace here", which the **legend/label margin** at
+    the top of every band also satisfies — and a Button3 **press** there is
+    already the wave-attributes dialog (`callback.c` ~896), so the menu posted on
+    top of it. Tcl cannot re-derive the box (the margins come out of the engine's
+    transform), so this exposes `draw.c`'s existing `graph_plotbox_at` — item 9's
+    snap-cursor gate — as a new read-only getter, **`xschem get graph_plotbox_at
+    <gi> <px> <py>`**. The C function is used unchanged.
+  - **The trace rung is what makes the two menus partition the body**: the strip
+    gate refuses any pixel the trace gate accepts, by asking `trace_at` itself.
+    `wviewer::ctx_menu_post` also offers the trace menu first, but that ordering
+    is a second line of defence, not the separator — reversing it leaves the
+    suite green.
+- ⚠ **Digital and bus strips get NO context menu at all**, and this is the
+  answer to the plan's open question about landmine 33. Both engine queries
+  refuse them: `graph_wave_at` because their rendering is a band/ribbon rather
+  than a polyline (`draw.c` ~4711), and `graph_plotbox_at` for the same reason
+  (`if(gr->digital) return 0`). So neither menu fires there. Recorded rather than
+  closed: relaxing it means relaxing `graph_plotbox_at`, which would also change
+  item 9's snap cursor.
+- **Everything else is item 7's plumbing, unchanged**: the same no-travel
+  `ButtonRelease-3` with a **zero**-pixel tolerance, the same modifier and
+  marker-arm refusals, the same press record, and the same
+  `ctx_menu_widget`/`_drop`/`_popup` helpers (the trace menu was refactored onto
+  them; its widget path and proc signatures are unchanged).
+- **Tests:** `tests/headless/test_wave_split_strip.tcl` — `SP*` pure + `SN*`
+  no-window (**38 checks** under `--nogui`), `SG1..SG11` GUI; **122 checks** on
+  the DISPLAY arm. Sabotage-verified five ways — dropping the plot-box rung
+  (which reproduces the margin collision), running the split loop ascending,
+  dropping the target shift, and dropping the trace exclusion each turn legs red;
+  reversing the dispatcher order does not, which is why the comment there says so.
+
 ## Strip drag-to-reorder (2026-07-27)
 
 Full contract: `doc/claude/specs/waveform_viewer_modes.md` §12. As shipped:

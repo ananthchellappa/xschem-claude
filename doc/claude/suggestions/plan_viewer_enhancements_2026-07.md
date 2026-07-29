@@ -160,9 +160,16 @@ looked at. **This list is the debt; do not let it grow silently.**
 | 3 — Ctrl-G grid toggle | `0d648465` | ✅ EYEBALLED OK 2026-07-29 |
 | 9 — diamond snap cursor | `56edb7ec` | ✅ EYEBALLED OK 2026-07-29 — **after two rejected rounds** (trail; proximity gate) |
 | 10 — viewer status bar | `ab1dcb47` | ✅ EYEBALLED OK 2026-07-29 |
-| 7 — RMB trace context menu | *(pending)* | ⏳ awaiting review |
+| 7 — RMB trace context menu | `50c3537f` | ⚠ PROCEED, panel closed with no notes — **pixels not confirmed by eye** |
+| 8 — RMB strip context menu (**touched `scheduler.c`**) | *(pending)* | ⏳ awaiting review |
 
-**Debt: none outstanding.** The `drawline` change in item 2 — the one thing the
+**Debt: item 7.** Its panel was closed without a verdict, which the gate maps to
+PROCEED, so nothing here has confirmed that the menu *looks* right or lands under
+the pointer — the one thing the suite structurally cannot check, since it spies
+`tk_popup` rather than posting for real. Carry it until someone right-clicks a
+trace.
+
+The `drawline` change in item 2 — the one thing the
 suite structurally could not verify, since nothing here can read back an X GC's
 dash pattern — has now been confirmed by eye against ordinary schematics.
 
@@ -643,8 +650,51 @@ from a *drag*, before writing any menu code.
 
 ---
 
-### Item 8 — RMB context menu on empty strip space → "split current strip"
-- [ ] **8. Strip context menu**
+### ⚠ Item 8 — RMB context menu on empty strip space → "split current strip"
+- [x] **8. Strip context menu** — **DONE 2026-07-29.**
+      `wviewer::split_graph_in_graphs` / `split_strip` / `split_target_strip` +
+      the `strip_menu_*` quartet + `ctx_menu_post`, and the PURE
+      `index_after_insert` item 7 turned out not to need. One C addition:
+      `xschem get graph_plotbox_at`, a read-only wrapper of the existing
+      `draw.c graph_plotbox_at`. Contract:
+      `doc/claude/specs/waveform_viewer.md` §"Strip context menu".
+      Suite `tests/headless/test_wave_split_strip.tcl` — 122 DISPLAY / 38 nogui.
+
+> **⚠ TWO CORRECTIONS.**
+>
+> **(1) The gate needs a THIRD predicate the section does not list: inside the
+> PLOT BOX.** "`strip_at_pixel >= 0` and no trace under the pointer" is
+> satisfied by the **legend/label margin** at the top of every band — and a
+> Button3 *press* there is already the wave-attributes dialog (`callback.c`
+> ~896), so the menu posted on top of it. Caught by the suite, not by reasoning.
+> The LMB strip reorder does not have this problem because it acts on the press
+> and the band is genuinely its territory; an RMB menu is not. Tcl cannot
+> re-derive the box, so this exposes `draw.c`'s existing `graph_plotbox_at`
+> (item 9's snap-cursor gate) as `xschem get graph_plotbox_at` and uses it
+> unchanged.
+>
+> **(2) Landmine 33, decided: neither menu fires on a digital or bus strip.**
+> The section asks whether item 8 firing everywhere on such a strip is
+> acceptable. It does not fire there at all: `graph_plotbox_at` refuses digital
+> strips for the same reason `graph_wave_at` does. So the honest answer to the
+> open question is "explicit refusal, inherited from the engine". Relaxing it
+> means relaxing `graph_plotbox_at`, which would also change item 9's snap
+> cursor — out of scope here, recorded in the spec.
+>
+> One thing the section got exactly right and worth keeping: implementing the
+> split as a **descending loop over `move_trace_in_graphs`** rather than fresh
+> index math. Sabotaging the loop to ascend scrambles 21 checks; nothing about
+> markers had to be written at all.
+>
+> **The 10-run soak earned its keep.** It failed 3 of 10 with
+> `invalid command name "..wvmenubar"` — a PRE-EXISTING intermittent in
+> `wviewer::open`, live since `cd332719`, that no single run reproduces.
+> `xschem load_new_window -window {}` always creates the toplevel but the switch
+> to it is a `switch_window`, which no-ops under a raised semaphore, so
+> `current_win_path` came back as the OLD window about a third of the time and
+> every viewer widget path became `..<name>`. Fixed separately in `5ddb8361`
+> (verify the switch and retry, refuse cleanly if it still lands on the root) —
+> item 8 only exposed it.
 
 **Verdict: MODERATE**, and **nearly free once item 7 lands** — it shares 100 % of
 the gesture plumbing. Blocked on **D-F**. **Sequence after item 7.**

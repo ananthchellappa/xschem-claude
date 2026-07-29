@@ -457,6 +457,7 @@ proc wviewer::forget {token} {
     # tk_popup grab cannot outlive the widget it was taken on, and drop the
     # widget-keyed press state with the widget it belongs to.
     catch {wviewer::trace_menu_unpost $token}
+    catch {wviewer::strip_menu_unpost $token}
     catch {unset b3x0($wp_)}
     catch {unset b3y0($wp_)}
     catch {unset b3mk($wp_)}
@@ -2193,6 +2194,28 @@ proc wviewer::index_after_removal {index removed} {
   return [expr {$index - $below}]
 }
 
+# PURE: where the graph that sat at `index` BEFORE `count` strips were inserted
+# at `at` sits AFTER — the INSERT twin of index_after_removal above, and
+# plot_signals' multi-plot arithmetic (`cur + nnew`, ~3306) generalised to an
+# arbitrary insertion point.
+#   insert 2 at 1 in {A B C}:  0 -> 0,  1 -> 3,  2 -> 4
+# An index EQUAL to `at` shifts, because the inserted strips take that slot and
+# push the incumbent down — the opposite convention to index_after_removal's
+# "answer with the slot your follower took", and right for the same reason: in
+# both cases the answer is where the ORIGINAL graph ended up.
+#
+# ⚠ Item 7 does NOT use this, though the plan said it would: a single-trace
+# separate-strip move makes the DESTINATION the target (move_trace step 6), so
+# the shift would be overwritten. Item 8's split has no single destination and
+# leaves the target on whatever strip it was on, which is what this is for.
+proc wviewer::index_after_insert {index at {count 1}} {
+  if {![string is integer -strict $index]} { return $index }
+  if {![string is integer -strict $at]} { return $index }
+  if {![string is integer -strict $count] || $count <= 0} { return $index }
+  if {$index >= $at} { return [expr {$index + $count}] }
+  return $index
+}
+
 # PURE: the strips `e` deletes — every traceless strip, minus two exceptions.
 # Both exceptions are user decisions recorded in
 # doc/claude/suggestions/plan_viewer_enhancements_2026-07.md; they live here,
@@ -3101,6 +3124,119 @@ proc wviewer::move_trace_to_new_strip {from_gi from_ti {token {}}} {
   return $at
 }
 
+# --- split one strip into one strip per trace (viewer plan item 8) ------------
+# doc/claude/specs/waveform_viewer.md. The payload behind the RMB context menu
+# on EMPTY waveform space, and a CIW-typable command in its own right.
+#
+# PURE: strip `gi` of `graphs` becomes N strips, one per DRAWN trace.
+# Decision D-F: node 0 KEEPS the original strip and the remaining traces get new
+# strips inserted directly BELOW it, in order — so a strip reading a, b, c
+# becomes three strips reading a, b, c top to bottom. A full split, not a
+# one-trace peel-off. Returns the list UNCHANGED for a bad index or a strip with
+# fewer than two drawn traces (a pure list op has no error channel; split_strip
+# is where a refusal is reported).
+#
+# Implemented as a LOOP OVER THE SHIPPED move_trace_in_graphs rather than as
+# fresh index math, which is the whole point: every iteration gets the marker
+# migration, the hilight_wave hand-off and the empty-destination range blanking
+# for free, and graph_markers.md §9's obligations are discharged BY
+# CONSTRUCTION. Nothing here touches a marker record.
+#
+# Two ordering rules make that safe:
+#   - every destination strip is created FIRST, so the destination index of
+#     node k is simply gi + k and never moves under the loop;
+#   - the traces are moved DESCENDING, from the last node to node 1. Removing
+#     node k renumbers only the nodes ABOVE k — which are already placed — so
+#     the node indices still to come stay valid. Ascending would renumber the
+#     remaining work on every step.
+#
+# Traces carrying an empty `vec` reach no node slot and are left in the source
+# strip: they are invisible, so "one strip per trace" can only mean per DRAWN
+# trace, and node_count is the count that matters everywhere else too.
+proc wviewer::split_graph_in_graphs {graphs gi} {
+  if {![string is integer -strict $gi]} { return $graphs }
+  set n [llength $graphs]
+  if {$gi < 0 || $gi >= $n} { return $graphs }
+  set nc [wviewer::node_count [lindex $graphs $gi]]
+  if {$nc < 2} { return $graphs }
+  # the new strips first — all identical, so inserting them one at a time at the
+  # same slot is order-independent
+  for {set k 1} {$k < $nc} {incr k} {
+    set graphs [linsert $graphs [expr {$gi + 1}] [wviewer::empty_graph]]
+  }
+  for {set k [expr {$nc - 1}]} {$k >= 1} {incr k -1} {
+    set ti [wviewer::trace_index_of_node [lindex $graphs $gi] $k]
+    if {$ti < 0} { continue }
+    set graphs [wviewer::move_trace_in_graphs $graphs $gi $ti [expr {$gi + $k}]]
+  }
+  return $graphs
+}
+
+# THE authoritative strip split. Returns the NUMBER of new strips created, or
+# {} on failure/refusal.
+#
+# Same ordering contract as move_strip / move_trace / move_trace_to_new_strip:
+#   1. resolve + validate the index against the LIVE model
+#   2. REFUSE, without mutating and without logging, a strip with fewer than two
+#      drawn traces — it is already split. The menu gate mirrors this
+#   3. verified switch_ctx  4. capture  5. push_undo  6. the pure split
+#   7. shift the stored TARGET through the insert, IN PLACE (index_after_insert,
+#      NOT reordered_index, which is for count-preserving moves) — a split has
+#      no single destination to adopt, so the target keeps pointing at the strip
+#      it was on. The source strip itself does not move, so a target that WAS
+#      the split strip stays on it
+#   8. exactly ONE regenerate, exactly ONE fully-resolved log line
+proc wviewer::split_strip {gi {token {}}} {
+  variable windows
+  variable target
+  set token [wviewer::resolve_token $token]
+  if {$token eq {} || ![dict exists $windows $token]} {
+    if {[info exists ::has_x] && [info commands ::ciw_echo] ne {}} {
+      ciw_echo "wviewer: no waveform viewer window to split a strip in" error
+    }
+    return {}
+  }
+  set gs [dict get [wviewer::layout_for $token] graphs]
+  set n [llength $gs]
+  if {![string is integer -strict $gi] || $gi < 0 || $gi >= $n} {
+    if {[info exists ::has_x] && [info commands ::ciw_echo] ne {}} {
+      ciw_echo "wviewer: bad strip index '$gi' (0..[expr {$n - 1}])" error
+    }
+    return {}
+  }
+  set nc [wviewer::node_count [lindex $gs $gi]]
+  if {$nc < 2} {
+    if {[info exists ::has_x] && [info commands ::ciw_echo] ne {}} {
+      ciw_echo "wviewer: strip $gi is already split (one drawn trace)" error
+    }
+    return {}
+  }
+  if {![wviewer::switch_ctx $token]} { return {} }
+  wviewer::capture_live_graph_state $token
+  wviewer::push_undo $token           ;# AFTER the capture: `u` restores the view
+  set gs [dict get [wviewer::layout_for $token] graphs]
+  wviewer::set_graphs $token [wviewer::split_graph_in_graphs $gs $gi]
+  if {[info exists target($token)]} {
+    set target($token) [wviewer::index_after_insert \
+      [wviewer::target_index $token] [expr {$gi + 1}] [expr {$nc - 1}]]
+  }
+  wviewer::regenerate $token
+  wviewer::log_action [list wviewer::split_strip $gi $token]
+  return [expr {$nc - 1}]
+}
+
+# The menubar twin's payload: split the TARGET strip. Unlike item 7 — whose
+# operation needs a trace under the pointer and so has no menubar form — a
+# split acts on a whole strip, and the target IS the window's current strip
+# (issue 0151: it carries the dull-yellow active bar, so the user can see which
+# one this will act on). Logs the RESOLVED index through split_strip, so a
+# replay does not depend on where the target happened to be.
+proc wviewer::split_target_strip {{token {}}} {
+  set token [wviewer::resolve_token $token]
+  if {$token eq {}} { return {} }
+  return [wviewer::split_strip [wviewer::target_index $token] $token]
+}
+
 # --- undo / redo of viewer model edits ---------------------------------------
 # `u` undoes, `U` (Shift-u) redoes, bound on the shared `WaveViewer` bindtag
 # like Clear All (issue 0171) — NOT on the canvas, which strip_bindings sweeps.
@@ -3234,6 +3370,24 @@ proc wviewer::redo_at {W} {
 # measured in screen pixels through the engine's transform. Fails CLOSED (-1 =
 # "no trace here") so a missing verb or an errored query degrades to the previous
 # behaviour instead of grabbing something.
+# 1 when canvas pixel (px,py) is inside strip `gi`'s PLOT BOX — the rectangle
+# between the axes, NOT the whole band: the legend/label margins answer 0. The
+# engine's own answer (`xschem get graph_plotbox_at`, draw.c graph_plotbox_at,
+# the item-9 snap-cursor gate), because the margins come out of the engine's
+# transform and Tcl re-deriving them would drift the moment they change.
+#
+# Fails CLOSED (0 = "not in the box") so a missing verb or an errored query
+# degrades to no menu rather than to a menu over the wave labels. It inherits
+# the C refusals wholesale: an off-screen graph, no loaded data and — the one
+# that shows — a DIGITAL or bus strip all answer 0.
+proc wviewer::plotbox_at {wp gi px py} {
+  if {[catch {xschem new_schematic switch $wp}]} { return 0 }
+  set r 0
+  catch {set r [xschem get graph_plotbox_at $gi $px $py]}
+  if {![string is integer -strict $r]} { return 0 }
+  return [expr {$r ? 1 : 0}]
+}
+
 proc wviewer::trace_at {wp gi px py {tol 10}} {
   if {[catch {xschem new_schematic switch $wp}]} { return -1 }
   set r -1
@@ -5004,12 +5158,64 @@ proc wviewer::trace_menu_pick {W px py} {
   return [list $gi $ti]
 }
 
-# Build (do not post) the context menu for trace `ti` of strip `gi`. Returns the
-# menu widget path, or {} when there is no window to hang it on.
+# A fresh, empty, ASE-themed context menu called `name` on the viewer TOPLEVEL
+# of `token`, or {} when there is no window to hang it on. Shared by the trace
+# menu (item 7) and the strip menu (item 8).
 #
-# It lives on the viewer TOPLEVEL, not on the canvas: strip_bindings sweeps the
+# It lives on the TOPLEVEL, not on the canvas: strip_bindings sweeps the
 # canvas's bindings wholesale and a menu child there would be one more thing to
 # reason about, while a toplevel child is torn down by Tk with the window.
+proc wviewer::ctx_menu_widget {token name} {
+  variable windows
+  if {![dict exists $windows $token]} { return {} }
+  set top [dict get $windows $token top]
+  if {![winfo exists $top]} { return {} }
+  set m $top.$name
+  # `menu` ERRORS on an existing path, so the destroy is not tidiness: without
+  # it the second post would fail and the caller would return {} for ever.
+  catch {destroy $m}
+  catch {ase::theme}                                  ;# ensure named fonts
+  if {[catch {menu $m -tearoff 0 -takefocus 0}]} { return {} }
+  # the ASE look is applied SEPARATELY and catch'd on its own: a menu with the
+  # wrong palette is still a working menu, and configure keeps the theme values
+  # out of an `eval` (a colour or font name with a space would re-parse).
+  catch {
+    $m configure -font AseLabelFont -background [ase::theme panel] \
+                 -activebackground [ase::theme header]
+  }
+  return $m
+}
+
+# Take a context menu down and drop the grab tk_popup took. Idempotent, and safe
+# when nothing was ever posted. Returns 1 when a widget was there to remove.
+proc wviewer::ctx_menu_drop {token name} {
+  variable windows
+  if {![dict exists $windows $token]} { return 0 }
+  set m [dict get $windows $token top].$name
+  if {![winfo exists $m]} { return 0 }
+  catch {$m unpost}
+  catch {grab release $m}
+  catch {destroy $m}
+  return 1
+}
+
+# Post `m` for a click at canvas pixel (px,py) of `W`, at ROOT pixel (rx,ry) —
+# the event's %X/%Y; when they are not supplied they are derived from the canvas
+# origin. Returns 1 when Tk posted it.
+proc wviewer::ctx_menu_popup {W m px py rx ry} {
+  if {$m eq {} || ![winfo exists $m]} { return 0 }
+  if {$rx < 0 || $ry < 0} {
+    if {[catch {
+      set rx [expr {[winfo rootx $W] + $px}]
+      set ry [expr {[winfo rooty $W] + $py}]
+    }]} { return 0 }
+  }
+  if {[catch {tk_popup $m $rx $ry}]} { return 0 }
+  return 1
+}
+
+# Build (do not post) the context menu for trace `ti` of strip `gi`. Returns the
+# menu widget path, or {} when there is no window to hang it on.
 #
 # REBUILT on every post. The entries carry THIS click's indices, and an entry
 # left over from the previous click would move the wrong trace — the same
@@ -5027,19 +5233,8 @@ proc wviewer::trace_menu_build {token gi ti} {
   set trs [wviewer::dget [lindex $gs $gi] traces {}]
   if {$ti < 0 || $ti >= [llength $trs]} { return {} }
   set lab [wviewer::trace_label [lindex $trs $ti]]
-  set m $top.wvtracemenu
-  # `menu` ERRORS on an existing path, so the destroy is not tidiness: without
-  # it the second post would fail and this proc would return {} for ever.
-  catch {destroy $m}
-  catch {ase::theme}                                  ;# ensure named fonts
-  if {[catch {menu $m -tearoff 0 -takefocus 0}]} { return {} }
-  # the ASE look is applied SEPARATELY and catch'd on its own: a menu with the
-  # wrong palette is still a working menu, and configure keeps the theme values
-  # out of an `eval` (a colour or font name with a space would re-parse).
-  catch {
-    $m configure -font AseLabelFont -background [ase::theme panel] \
-                 -activebackground [ase::theme header]
-  }
+  set m [wviewer::ctx_menu_widget $token wvtracemenu]
+  if {$m eq {}} { return {} }
   if {$lab ne {}} {
     $m add command -label $lab -state disabled
     $m add separator
@@ -5058,30 +5253,100 @@ proc wviewer::trace_menu_post {W px py {rx -1} {ry -1}} {
   if {$token eq {}} { return 0 }
   lassign [wviewer::trace_menu_pick $W $px $py] gi ti
   if {$gi < 0} { return 0 }
-  set m [wviewer::trace_menu_build $token $gi $ti]
-  if {$m eq {} || ![winfo exists $m]} { return 0 }
-  if {$rx < 0 || $ry < 0} {
-    if {[catch {
-      set rx [expr {[winfo rootx $W] + $px}]
-      set ry [expr {[winfo rooty $W] + $py}]
-    }]} { return 0 }
-  }
-  if {[catch {tk_popup $m $rx $ry}]} { return 0 }
-  return 1
+  return [wviewer::ctx_menu_popup $W \
+            [wviewer::trace_menu_build $token $gi $ti] $px $py $rx $ry]
 }
 
-# Take the menu down and drop the grab tk_popup took. Idempotent, and safe when
-# nothing was ever posted. Returns 1 when a menu widget was there to remove.
+# Take the trace menu down. Idempotent, safe when nothing was ever posted.
 proc wviewer::trace_menu_unpost {token} {
+  return [wviewer::ctx_menu_drop $token wvtracemenu]
+}
+
+# --- RMB context menu on EMPTY strip space -> Split Strip (item 8) ------------
+# The twin of the trace menu above, sharing 100 % of its gesture plumbing: the
+# same no-travel ButtonRelease-3, the same modifier and marker-arm refusals, the
+# same press record. Only the gate and the payload differ.
+#
+# The two menus PARTITION the strip body: the trace menu claims the fixed pixel
+# band around every drawn trace, this one claims everything else — exactly the
+# split the LMB gestures already make, where a press on a trace drags the trace
+# and a press on empty waveform space reorders the strip.
+#
+# ⚠ ON A DIGITAL OR BUS STRIP THIS MENU OWNS THE WHOLE BODY, and that is
+# landmine 33 working FOR us rather than against: the engine answers "no trace
+# here" everywhere on such a strip (`graph_wave_at` returns -1 for a band/ribbon
+# rendering, draw.c ~4711), so the trace menu never fires there and this one
+# always does. Splitting is meaningful for a digital strip — one bus per strip
+# is exactly what a user wants — so the pair still serves the whole strip
+# between them. Stated in the spec, not silently inherited.
+
+# The GATE: the strip an RMB click at canvas pixel (px,py) is offering to split,
+# or -1. Fails closed at every rung, like trace_menu_pick.
+#   - inside a strip;
+#   - NO trace under the pointer (that is the trace menu's, and asking it first
+#     is what keeps the two mutually exclusive);
+#   - at least two drawn traces, mirroring split_strip's own refusal — a strip
+#     with one trace is already split.
+proc wviewer::strip_menu_pick {W px py} {
+  set token [wviewer::token_for_canvas $W]
+  if {$token eq {}} { return -1 }
+  set gi [wviewer::strip_at_pixel $W $px $py]
+  if {$gi < 0} { return -1 }
+  if {![wviewer::plotbox_at $W $gi $px $py]} { return -1 }
+  set gs [dict get [wviewer::layout_for $token] graphs]
+  if {$gi >= [llength $gs]} { return -1 }
+  if {[wviewer::node_count [lindex $gs $gi]] < 2} { return -1 }
+  if {[wviewer::trace_at $W $gi $px $py] >= 0} { return -1 }
+  return $gi
+}
+
+# Build (do not post) the context menu for strip `gi`. Same rebuild-per-post
+# rule and same disabled-header convention as the trace menu; the header counts
+# the traces, because "Split Strip" on a strip you cannot see the whole of
+# should say how many strips you are about to get.
+proc wviewer::strip_menu_build {token gi} {
   variable windows
-  if {![dict exists $windows $token]} { return 0 }
-  set top [dict get $windows $token top]
-  set m $top.wvtracemenu
-  if {![winfo exists $m]} { return 0 }
-  catch {$m unpost}
-  catch {grab release $m}
-  catch {destroy $m}
-  return 1
+  if {![dict exists $windows $token]} { return {} }
+  set gs [dict get [wviewer::layout_for $token] graphs]
+  if {$gi < 0 || $gi >= [llength $gs]} { return {} }
+  set nc [wviewer::node_count [lindex $gs $gi]]
+  set m [wviewer::ctx_menu_widget $token wvstripmenu]
+  if {$m eq {}} { return {} }
+  $m add command -label "Strip [expr {$gi + 1}] — $nc traces" -state disabled
+  $m add separator
+  $m add command -label {Split Strip} \
+    -command [list wviewer::split_strip $gi $token]
+  return $m
+}
+
+# Post the strip menu for an RMB click. Same contract and same test seam as
+# trace_menu_post: 1 when posted, 0 when the gate refused.
+proc wviewer::strip_menu_post {W px py {rx -1} {ry -1}} {
+  set token [wviewer::token_for_canvas $W]
+  if {$token eq {}} { return 0 }
+  set gi [wviewer::strip_menu_pick $W $px $py]
+  if {$gi < 0} { return 0 }
+  return [wviewer::ctx_menu_popup $W \
+            [wviewer::strip_menu_build $token $gi] $px $py $rx $ry]
+}
+
+proc wviewer::strip_menu_unpost {token} {
+  return [wviewer::ctx_menu_drop $token wvstripmenu]
+}
+
+# The ONE context-menu entry point of the RMB click. Returns 1 when either menu
+# posted.
+#
+# The two gates already PARTITION the strip body — the strip gate refuses any
+# pixel the trace gate accepts, by asking `trace_at` itself — so this ordering is
+# a second line of defence rather than the thing that separates them, and
+# sabotaging it green-lights nothing (probe-verified: reversing the two lines
+# leaves the suite green). The partition itself is what SG8 pins. Asking the more
+# specific menu first is kept anyway, because a future rung that widened the
+# strip gate would otherwise silently start swallowing trace clicks.
+proc wviewer::ctx_menu_post {W px py {rx -1} {ry -1}} {
+  if {[wviewer::trace_menu_post $W $px $py $rx $ry]} { return 1 }
+  return [wviewer::strip_menu_post $W $px $py $rx $ry]
 }
 
 proc wviewer::btn3_filter {W T x y b s {rx -1} {ry -1}} {
@@ -5116,7 +5381,7 @@ proc wviewer::btn3_filter {W T x y b s {rx -1} {ry -1}} {
   if {abs($x - $x0) > $tol || abs($y - $y0) > $tol} { return }
   # a menu is a mutation surface, and this runs inside a Tk binding: an error
   # here would pop bgerror's stack trace over the viewer
-  catch {wviewer::trace_menu_post $W $x $y $rx $ry}
+  catch {wviewer::ctx_menu_post $W $x $y $rx $ry}
 }
 
 # Replace/override the editor bindings on the viewer canvas `wp` (per-widget:
@@ -5297,6 +5562,12 @@ proc wviewer::build_menubar {token top} {
   # auto-plot strip (D-D) nor the last strip standing (D-C) is a candidate.
   $mb.graph add command -label {Delete Empty Strips} -accelerator e \
     -command [list wviewer::delete_empty_strips $token]
+  # viewer plan item 8: the menubar twin of the RMB-on-empty-space entry. It
+  # acts on the TARGET strip — the one carrying the active bar — because a
+  # menubar entry has no pointer position to resolve. No accelerator: the
+  # gesture is a right-click, not a key.
+  $mb.graph add command -label {Split Strip} \
+    -command [list wviewer::split_target_strip $token]
   $mb.graph add checkbutton -label {Shared X Axis} \
     -variable ::wviewer::sharedx($token) \
     -command [list wviewer::sharedx_toggle $token]
