@@ -159,6 +159,7 @@ looked at. **This list is the debt; do not let it grow silently.**
 | 2 — grid density (**touched `drawline`**) | `9dea8c0e` | ✅ EYEBALLED OK 2026-07-29 |
 | 3 — Ctrl-G grid toggle | `0d648465` | ✅ EYEBALLED OK 2026-07-29 |
 | 9 — diamond snap cursor | `56edb7ec` | ✅ EYEBALLED OK 2026-07-29 — **after two rejected rounds** (trail; proximity gate) |
+| 10 — viewer status bar | `ab1dcb47` | ✅ EYEBALLED OK 2026-07-29 |
 
 **Debt: none outstanding.** The `drawline` change in item 2 — the one thing the
 suite structurally could not verify, since nothing here can read back an X GC's
@@ -551,6 +552,49 @@ with zero new index math. Shift the stored `target` by the insert using
 **Do first**: enumerate every current Button-3 binding in `wave_viewer.tcl` and
 every Button3 arm in `waves_callback`, and decide how a *hold* is distinguished
 from a *drag*, before writing any menu code.
+
+> **✅ RECON DONE 2026-07-29 — and it changes the recommended gesture.**
+>
+> **Every Button-3 site in a viewer window:**
+>
+> | | site | trigger | effect |
+> |---|---|---|---|
+> | A | `callback.c` ~896 | B3 press **outside** the plot box (a wave label) | `edit_wave_attributes` dialog |
+> | B | `callback.c` ~1097 | B3 press within 10 px of a drawn cursor | **modal** `input_line` |
+> | C | `callback.c` ~1356 | any B1/B2/B3 press, `!graph_top` | latches `GRAPHPAN`, saves press coords, clears the rubber flag |
+> | D | `callback.c` ~1413 | B3 + `GRAPHPAN`, interior | computes the box-zoom range |
+> | E | `callback.c` ~1429 | B3 **motion** + `GRAPHPAN`, interior | paints the rubber rectangle |
+> | F | `callback.c` ~1460 | B3 **release** + `graph_rubber_active` | erases the rubber rectangle |
+> | G | `wave_viewer.tcl` ~4794 | `<ButtonPress-3>`/`<ButtonRelease-3>` | `btn3_filter` → `xschem callback` |
+> | H | `wave_viewer.tcl` ~4835 | `<Double-Button-3>` | `{break}` |
+>
+> **MEASURED: a bare RMB click in the plot body is a NO-OP today.** Probe —
+> record `x1`/`x2`, generate `<ButtonPress-3>` then `<ButtonRelease-3>` at the
+> same pixel, re-read: `0 1` → `0 1` → `0 1`. With no motion
+> `graph_rubber_active` stays 0 and no zoom is committed, so the
+> `if(xx1 == xx2) xx2 += 1e-6` line never reaches the apply loop.
+>
+> **⇒ USE A CLICK, NOT A HOLD, AND POST ON THE RELEASE.** The section proposes
+> a hold timer plus "hand-forward event 5 before posting the menu" to work
+> around the three hazards. Posting on the **no-travel ButtonRelease-3**,
+> *after* `btn3_filter` has already forwarded the event to C, avoids all three
+> **structurally** instead of mitigating them:
+> - **Hazard 1 (GRAPHPAN leak)** — there is no grab during press→release, so
+>   the real `ButtonRelease-3` is never swallowed and `GRAPHPAN` clears on its
+>   normal path.
+> - **Hazard 2 (rubber-rect leak)** — site F erases the rectangle on that same
+>   release, before the menu is posted.
+> - **Hazard 3 (the modal `input_line`)** — it is on the **press** (site B), and
+>   this design never touches the press at all.
+>
+> The travel test has a precedent in this very file: the LMB wave-bold click
+> uses `xctx->graph_press_x/y` against `GRAPH_CLICK_TOL` (`callback.c` ~879),
+> and the comment there records that B3 *used* to work this way before it became
+> box-zoom-only. Tcl can do the same test with the `%x`/`%y` it already receives
+> in `btn3_filter`.
+>
+> Remaining risk is now ordinary, not gestural: the menu must not appear when
+> the click was a real box-zoom drag, and must not appear outside a trace.
 
 ---
 
