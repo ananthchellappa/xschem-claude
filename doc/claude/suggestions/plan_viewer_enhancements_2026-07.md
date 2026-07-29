@@ -163,7 +163,8 @@ looked at. **This list is the debt; do not let it grow silently.**
 | 7 — RMB trace context menu | `50c3537f` | ⚠ PROCEED, panel closed with no notes — **pixels not confirmed by eye** |
 | 8 — RMB strip context menu (**touched `scheduler.c`**) | `6ca278c6` | ✅ REVIEWED (PROCEED) — pixels still eyeball-only |
 | — `wviewer::open` intermittent (found by item 8's soak) | `5ddb8361` | ✅ REVIEWED with item 8 |
-| 6 — mid-drag shrink preview (**touched `draw.c`**) | `9727791a` | ✅ REVIEWED — **rejected Y-only and 10 %**; both axes at 30 % in the follow-up |
+| 6 — mid-drag shrink preview (**touched `draw.c`**) | `9727791a` | ✅ REVIEWED — **rejected Y-only and 10 %** |
+| 6 round 2 — both axes at 30 % | `780bd468` | ⚠ **TIMEOUT, went through unreviewed — NOT eyeballed** |
 
 **ALL TEN ITEMS ARE NOW BUILT AND COMMITTED** (2026-07-29). Order run:
 4, 5, 1, 2, 3, 9, 10, 7, 8, 6.
