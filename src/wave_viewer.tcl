@@ -120,6 +120,17 @@
 # The action is logged replayably through the same log_action seam as the mode
 # and target commands.
 #
+# ---- Delete All Markers / Ctrl-E (viewer plan item 4) ----------------------
+# `wviewer::delete_all_markers ?token?` removes every waveform marker from
+# every strip of a viewer window (doc/claude/specs/graph_markers.md). The
+# graphs, the traces and the ranges all survive — this deletes ANNOTATION, not
+# content, which is exactly what makes it a different verb from Clear All.
+# Default key Ctrl-E on the same `WaveViewer` BINDTAG, remappable the same way.
+# One `wviewer::delete_all_markers <token>` log line and nothing else: the C
+# core self-logs `xschem graph_marker delete -all -1`, which is NOT replayable
+# into a viewer (the arm is readonly-rejected and a sourced log would ABORT on
+# the TCL_ERROR), so the C line is suppressed for the duration of the call.
+#
 # ---- strip drag-to-reorder (2026-07-27) ------------------------------------
 # Contract: doc/claude/specs/waveform_viewer_modes.md §12. LMB drags a whole
 # STRIP (one graph dict of `layouts` — traces, colors, axes and any `auto 1`
@@ -3093,6 +3104,81 @@ proc wviewer::clear_all_at {W} {
   return [wviewer::clear_all $token]
 }
 
+# Delete every waveform marker in a viewer window (viewer plan item 4,
+# doc/claude/specs/graph_markers.md). Returns the NUMBER deleted, 0 when there
+# was nothing to delete, or {} plus a CIW error when no viewer resolves.
+#
+# Everything except the log line comes for free from the C verb:
+#   * the MODEL is rewritten by the push hook (graph_marker_notify ->
+#     graph_marker_changed -> wviewer::marker_changed), which takes its
+#     `dict remove $G markers` branch on every emptied strip — so this proc
+#     must NOT write the model itself;
+#   * the UNDO POINT is pushed by that same hook, exactly once for the whole
+#     sweep (the C side notifies once, not per strip) — so this proc must NOT
+#     call push_undo/capture_live_graph_state either, or `u` would need two
+#     presses to undo one gesture.
+# It does have to REPAINT: graph_marker_delete_all() only rewrites the props
+# and notifies (the C key path in callback.c:6720 does its own draw()), and the
+# hook's set_graphs is a pure model write. No regenerate — the rects are already
+# right, and a regenerate would throw away a live pan/zoom.
+#
+# THE LOG. The core self-logs `xschem graph_marker delete -all -1`, and that
+# line is not replayable into a viewer: scheduler.c readonly-rejects the arm and
+# returns TCL_ERROR, which ABORTS a sourced action log rather than warning. So
+# the C line is suppressed and ONE `wviewer::delete_all_markers <token>` is
+# emitted instead — the clear_all/set_plot_mode pattern. The `pop` is
+# UNCONDITIONAL: with_edit THROWS on a refused context switch, and a leaked
+# push would leave the global depth counter raised and silently kill the action
+# log for the rest of the session.
+proc wviewer::delete_all_markers {{token {}}} {
+  variable windows
+  set token [wviewer::resolve_token $token]
+  if {$token eq {} || ![dict exists $windows $token]} {
+    if {[info exists ::has_x] && [info commands ::ciw_echo] ne {}} {
+      ciw_echo "wviewer: no waveform viewer window to delete markers in" error
+    }
+    return {}
+  }
+  set cnt 0
+  xschem log_action -suppress push
+  # with_edit's own result is always 1 ("the bracket ran"), so the count has to
+  # come back through a variable in THIS scope (the MR1v idiom).
+  set code [catch {
+    wviewer::with_edit $token {set cnt [xschem graph_marker delete -all]}
+  } err]
+  xschem log_action -suppress pop
+  if {$code} { return -code error $err }
+  if {![string is integer -strict $cnt]} { set cnt 0 }
+  # no-op discipline (the move_strip `from == to` rule): nothing was deleted, so
+  # nothing changed — no repaint, and NO log line for a replay to re-run.
+  if {$cnt <= 0} { return 0 }
+  # PROBE-MEASURED (`-d 1`, which makes draw() log itself): 0 draw() calls
+  # across the whole delete without this line, 1 with it. graph_marker_delete_all
+  # only rewrites the props + notifies (the C key path in callback.c:6720 calls
+  # draw() itself), and the hook's set_graphs is a pure model write — so without
+  # this the deleted markers stay painted until something else redraws.
+  wviewer::in_ctx $token {xschem redraw}
+  wviewer::log_action [list wviewer::delete_all_markers $token]
+  return $cnt
+}
+
+# The Ctrl-E binding body — the clear_all_at pattern (resolve the window the KEY
+# went to, never the current xschem ctx). CAUGHT, unlike clear_all_at: this one
+# can propagate a with_edit "context busy" error, and an error escaping a Tk
+# binding pops a bgerror dialog over a read-only viewer. Reported the same way
+# key_filter reports a refused marker key.
+proc wviewer::delete_all_markers_at {W} {
+  set token [wviewer::token_for_canvas $W]
+  if {$token eq {}} { return {} }
+  if {[catch {wviewer::delete_all_markers $token} res]} {
+    if {[info exists ::has_x] && [info commands ::ciw_echo] ne {}} {
+      catch {ciw_echo "wviewer: delete all markers refused: $res" error}
+    }
+    return {}
+  }
+  return $res
+}
+
 # Install the viewer's default key bindings on the shared `WaveViewer` BINDTAG
 # (issue 0171). Not on the canvas widget: strip_bindings sweeps every
 # widget-level sequence on a viewer canvas (including anything
@@ -3105,6 +3191,7 @@ proc wviewer::clear_all_at {W} {
 # Remapping from an rc file (~/.xschem/xschemrc, cadence_style_rc, --script):
 #   bind WaveViewer <Control-Key-d> {break}                      ;# drop default
 #   bind WaveViewer <Control-Key-r> {wviewer::clear_all_at %W; break}
+#   bind WaveViewer <Control-Key-e> {break}                      ;# item 4 too
 # An rc that binds a sequence itself WINS: defaults are installed once, at the
 # first viewer open, and only for a sequence nothing has bound yet. Disable
 # with `{break}`, NOT `{}` — an empty script DELETES the binding, which reads
@@ -3115,6 +3202,16 @@ proc wviewer::install_default_binds {} {
   set tagbinds 1
   if {[bind WaveViewer <Control-Key-d>] eq {}} {
     bind WaveViewer <Control-Key-d> {wviewer::clear_all_at %W; break}
+  }
+  # Delete All Markers (viewer plan item 4). Ctrl-E is the schematic's
+  # `go_back` in the legacy C switch (callback.c case 'e') and in
+  # cadence_style_rc (`bind .drw <Control-Key-e> {cadence::return_one_level}`,
+  # cloned onto every new canvas by clone_canvas_bindings) — but neither reaches
+  # a viewer: strip_bindings sweeps the cloned widget-level bind, and key_filter
+  # forwards nothing for keysym 101, so the C dispatcher never sees it either.
+  # The `break` keeps it that way whatever the tags below this one carry.
+  if {[bind WaveViewer <Control-Key-e>] eq {}} {
+    bind WaveViewer <Control-Key-e> {wviewer::delete_all_markers_at %W; break}
   }
   # undo / redo of viewer model edits (2026-07-28). `u` and Shift-u are inert in
   # this window otherwise: key_filter forwards only the waves_callback key set
@@ -4291,6 +4388,11 @@ proc wviewer::build_menubar {token top} {
   # binding changes the key, not this label.
   $mb.graph add command -label {Clear All} -accelerator Ctrl+D \
     -command [list wviewer::clear_all $token]
+  # viewer plan item 4: the menu twin of the Ctrl-E bindtag default. Deletes
+  # the ANNOTATION only — every graph, trace and range survives, which is what
+  # separates it from Clear All right above.
+  $mb.graph add command -label {Delete All Markers} -accelerator Ctrl+E \
+    -command [list wviewer::delete_all_markers $token]
   $mb.graph add checkbutton -label {Shared X Axis} \
     -variable ::wviewer::sharedx($token) \
     -command [list wviewer::sharedx_toggle $token]

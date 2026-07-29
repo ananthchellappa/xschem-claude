@@ -1266,6 +1266,36 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
     `raw_read` and `extra_rawfile`) — this one desyncs a *balanced-looking*
     caller.
 
+41. **The C→Tcl marker push hook is `has_x`-gated, so NOTHING about the viewer
+    model or the viewer undo stack is observable under `--nogui`** (2026-07-29,
+    viewer plan item 4). `graph_marker_notify()` (`draw.c` ~6073) opens with
+
+    ```c
+    if(!has_x) return;
+    ```
+
+    and it is the *only* route by which a C-side marker mutation reaches Tcl:
+    `graph_marker_notify` → `::graph_marker_changed` → `wviewer::marker_changed`,
+    which rewrites the strip's model dict **and** pushes the single undo point
+    (§8). Under `--nogui` that whole chain is dead code, so after a headless
+    `xschem graph_marker delete -all` the rects are correct while the Tcl model
+    still carries its stale `markers` key, and `wviewer::history_depth` never
+    moves.
+
+    The consequence for **tests** is the one that bites: a plan or a leg that
+    says "assert the model lost its `markers` key" or "assert `u` brings them
+    back" is a **DISPLAY-arm** assertion, full stop. Written into the `--nogui`
+    arm it does not fail — it asserts the *pre-mutation* state and passes for
+    entirely the wrong reason. `tests/headless/test_wave_markers.tcl` splits the
+    `MD` group on exactly this line (engine half after MF5, viewer half inside
+    the `has_x` gate) and says so in its header.
+
+    A second consequence for **wrappers**: a Tcl proc must not "helpfully" write
+    the model itself to paper over the headless gap. In a real (DISPLAY)
+    session the hook has already written it, and the second write lands *after*
+    the hook's `push_undo` — the snapshot-after-mutate bug class, where `u`
+    restores the very thing it was meant to undo.
+
 ---
 
 ## 12. Improvement backlog (ranked, with where-to-touch)

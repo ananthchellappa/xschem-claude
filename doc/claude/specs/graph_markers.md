@@ -396,6 +396,79 @@ be both the marker and the tooltip. `M` has no such collision in either mode.
 leave-the-graph stop, the `<Leave>` bind) stay wired; losing the only key that
 can *set* bit 64 would make the whole tooltip render block dead code.
 
+### 6.1.1 `Ctrl-E` — Delete All Markers (ASE viewer only)
+
+Viewer plan item 4. In an ASE waveform viewer window `Ctrl-E` removes **every**
+marker from **every** strip. The graphs, the traces, the ranges and the attached
+raw data are all untouched — this deletes *annotation*, which is exactly what
+separates it from `Ctrl-D` (Clear All, issue 0171), the entry it sits next to in
+the Graph menu (`Delete All Markers`, accelerator `Ctrl+E`).
+
+It is **not** a graph key and **not** a binding row. It lives on the shared
+`WaveViewer` bindtag, installed by `wviewer::install_default_binds`:
+
+```tcl
+bind WaveViewer <Control-Key-e> {wviewer::delete_all_markers_at %W; break}
+```
+
+Same rules as `Ctrl-D`: an rc file that binds the sequence first **wins**
+(defaults are only installed for a sequence nothing has bound yet), `{break}`
+disables it, `{}` does not (an empty script *deletes* the binding, which reads
+as "never bound" and would be re-defaulted). `%W`, not the current context: a
+key can arrive on a viewer Tk has focused before the C side switched to it.
+
+**Three collisions, all already resolved, and all now regression-guarded**
+(`tests/headless/test_wave_markers.tcl`, group `MD`):
+
+* `cadence_style_rc:189` binds `<Control-Key-e>` on `.drw`
+  (`cadence::return_one_level`) and `clone_canvas_bindings` copies it onto every
+  new canvas — including the viewer's. `wviewer::strip_bindings` sweeps every
+  widget-level sequence that is not in `keepseqs`, so the clone is gone before
+  the tag is ever consulted. Leg MD9 asserts `bind $vdrw <Control-Key-e>` is
+  empty *on a live viewer canvas*: a future `keepseqs` addition would otherwise
+  silently steal the key back, and a widget-level bind is more specific than a
+  tag one.
+* `callback.c` `case 'e'` + `ControlMask` → `go_back(1)` is a hardcoded legacy
+  switch arm, not a row. It is unreachable here because `key_filter` forwards
+  only the `graphkeys` allowlist and `e` (101) is not a member (leg MD9), and
+  because the tag binding `break`s.
+* `key_filter` runs on the widget, i.e. *before* the tag, but it never `break`s,
+  so the tag binding still fires for the keys it swallows.
+
+**What the wrapper does, and — more importantly — what it must not do.**
+`wviewer::delete_all_markers ?token?` returns the number deleted, `0` when there
+was nothing to delete, `{}` + a CIW line when no viewer resolves.
+
+* The **model** rewrite and the **undo point** both come from the push hook
+  (§8): the C verb notifies **once** for the whole sweep, `marker_changed` takes
+  its `dict remove $G markers` branch on every emptied strip, sets `changed` and
+  pushes exactly one point. A `push_undo`/`set_graphs` in the wrapper would give
+  a phantom second point and `u` would need two presses.
+* The **repaint** is the wrapper's job, and only the wrapper's.
+  `graph_marker_delete_all()` rewrites the props and notifies, nothing else (its
+  keyboard caller, `callback.c` `case XK_Delete`, calls `draw()` itself), and the
+  hook's `set_graphs` is a pure model write. Probe-measured with `-d 1` (which
+  makes `draw()` log itself): **0** `draw()` calls across the whole delete
+  without the wrapper's `xschem redraw`, **1** with it. Not a `regenerate` — the
+  rects are already correct and a regenerate would throw away a live pan/zoom.
+* The **no-op** returns `0` without repainting and **without logging**, the
+  `move_strip` `from == to` rule: a drop that changed nothing must not enter a
+  replay.
+
+**The log line is rewritten, not merely mirrored.** The core self-logs
+`xschem graph_marker delete -all -1`, and that line is *not replayable into a
+viewer*: `scheduler.c` readonly-rejects every `graph_marker` sub-verb except
+`select`/`list`/`text`, so a sourced log would hit a `TCL_ERROR` and **abort**
+rather than warn. So the wrapper brackets the verb in
+`xschem log_action -suppress push` / `pop` and emits one
+`wviewer::delete_all_markers <token>` instead — the `clear_all` pattern. The
+`pop` is **unconditional**: `with_edit` throws on a refused context switch, and
+a leaked push leaves the *global* depth counter raised, silently killing the
+action log for the rest of the session. Leg MD3 stages both halves in a child
+process launched with `--logdir` (the suite itself runs `--nolog`, where
+`util.c:493` returns before writing anything), with `xschem copy` after a
+deliberately refused call as the leak canary.
+
 ### 6.2 Mouse
 
 | gesture | result |
@@ -1393,6 +1466,8 @@ erroring.
 | `capture_live_graph_state {token {skip_markers 0}}` | *not pure* — folds live rect state (ranges, `hilight_wave`, `markers`) back into the model. `skip_markers 1` leaves the `markers` key alone: `marker_changed` needs the ranges but must **not** capture the change it is about to record (§8). Carries `marker_changed`'s rect/model 1:1 guard, and needs it more, because this path also **deletes** keys. |
 | `::graph_marker_changed` | *not pure* — the **global** C entry point. Delegates; `-1` on a caught error. |
 | `marker_changed` | *not pure* — **the load-bearing piece** (§8). Order is *capture (skip_markers) → push_undo → set_graphs*. |
+| `delete_all_markers {{token {}}}` | *not pure* — §6.1.1. `with_edit` + `xschem graph_marker delete -all`, inside a `log_action -suppress push`/`pop` bracket whose `pop` is unconditional. Returns the count · `0` no-op (no repaint, **no log line**) · `{}` no viewer. Repaints (`xschem redraw`); does **not** touch the model, push undo, or regenerate — the push hook does all three. Propagates `with_edit`'s "context busy" error. |
+| `delete_all_markers_at {W}` | *not pure* — the `WaveViewer` `Ctrl-E` body, the `clear_all_at` pattern. Resolves the token from `%W`, `{}` on a foreign canvas. **Catches**, unlike `clear_all_at`: an error escaping a Tk binding pops a `bgerror` box over a read-only viewer. |
 | `key_filter` (the m/d/Delete arms) | *not pure* — forwards those three keysyms, KeyPress only, inside `with_edit`, because the primitives they reach are readonly-gated (§6.6). |
 | `strip_drag_release` (the marker arm) | *not pure* — forwards `<ButtonRelease-1>` inside `with_edit` **only when `xschem get graph_marker_drag` > 0**, because that is the release a marker drag commits on. Every other release still goes raw: `with_edit` is too heavy to pay per release, and nothing else the release does writes durable content (§7.3). |
 
@@ -1414,6 +1489,10 @@ erroring.
   `copy_objects` (the `c`-key copy).
 * The ASE push hook, the model mirror, the node-index remaps, the window-wide
   `prev` sweep, and viewer `u`/`U` undo of a marker change.
+* **Delete All Markers** — `Ctrl-E` on the `WaveViewer` bindtag plus the Graph
+  menu entry, `wviewer::delete_all_markers ?token?` /
+  `wviewer::delete_all_markers_at %W`, one rewritten log line, one undo point
+  (the hook's), one repaint (§6.1.1). No C change was needed.
 
 **Callout polish** (a later pass; the first three are appearance, the fourth is
 behaviour):

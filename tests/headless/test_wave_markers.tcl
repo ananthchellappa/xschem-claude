@@ -65,6 +65,24 @@
 #        value. Four of them (MF1, MF4, MF12, MF13a) were proved red by
 #        temporarily reverting exactly that hunk in src/ and re-running.
 #
+#   MD*  Delete All Markers / Ctrl-E (viewer plan item 4,
+#        doc/claude/specs/graph_markers.md §6.1.1). Split like the MF group,
+#        for a REASON the plan got wrong: it claimed the feature was fully
+#        headless, but draw.c:6077 `if(!has_x) return` means
+#        graph_marker_notify never fires under --nogui, so NOTHING about the
+#        model or the undo point can be asserted in that arm.
+#          * MD1/MD2 (the C verb, its count, its no-op, and the wrapper's
+#            no-viewer answers) run in BOTH arms, right after MF5;
+#          * MD3 is the ACTION LOG, and it runs in both arms by launching a
+#            CHILD `--nogui --logdir` process — this suite runs --nolog, so
+#            actionlog_fp is NULL and util.c:493 returns before writing, which
+#            would make an in-process log assertion pass vacuously whatever the
+#            code did. The child also proves the suppress `pop` survives a
+#            THROWING body, with `xschem copy` as the leak canary;
+#          * MD4..MD12 (model, undo, repaint, the binding seam, rc
+#            remappability, the menu) need the ASE viewer and sit after MF16,
+#            leaving MF16's fixture behind them for the MX group.
+#
 # NOT asserted (stated, not hidden):
 #   * PIXELS. That a marker *renders* as a dot + leader + boxed callout is
 #     eyeball-only, exactly like the wave rendering itself (test_wave_viewer.tcl
@@ -151,6 +169,24 @@
 #                                                mid-drag and MX7h selects
 #                                                mid-drag, so the two directions
 #                                                fail independently.
+#   S16 drop the `log_action -suppress`          MD3 "the raw C self-log line is
+#       bracket from delete_all_markers          ABSENT" — the unreplayable line
+#                                                reappears in the child's log
+#   S17 move the suppress `pop` BELOW the        MD3 "a self-logging verb AFTER
+#       `if {$code} {return -code error}`,       the throwing call still logs" —
+#       i.e. LEAK it when the body throws        the canary vanishes, and with it
+#                                                every later line in the session
+#   S18 drop the wrapper's `xschem redraw`       MD5 "repainted the viewer canvas
+#                                                exactly once" (0 draws) — the
+#                                                only leg in this file that can
+#                                                see a repaint at all
+#   S19 drop the `if {$cnt <= 0} {return 0}`     MD3 (2 wviewer:: lines, not 1),
+#       no-op gate                               MD6 "logs nothing"
+#   S20 add a wviewer::push_undo to the          MD5 "exactly ONE undo point",
+#       wrapper (the phantom second point)       MD6, MD7 x3 — one `u` stops
+#                                                undoing the delete
+#   S21 drop the `bind WaveViewer                MD9 x3, MD10 x3, MD11, MD12
+#       <Control-Key-e>` default
 #
 # KNOWN SABOTAGE WITH NO RED LEG, stated rather than papered over:
 #   apply the callout padding AFTER the plot-box clamp in graph_marker_label_box
@@ -1378,6 +1414,127 @@ check "MF5 delete -all with no index removes everything" \
   [pcall {xschem graph_marker delete -all}] 3
 check "MF5 ... leaving nothing to dangle" [pcall {mk_nums}] {}
 
+# ============================================================================
+# MD — Delete All Markers / Ctrl-E (viewer plan item 4), ENGINE HALF
+# ============================================================================
+# The user-facing verb is `wviewer::delete_all_markers ?token?` on the
+# `WaveViewer` bindtag's Ctrl-E; it is a thin wrapper over the C
+# `xschem graph_marker delete -all` proved here, plus a log line (MD3) and — in
+# a real viewer — the push hook's model update and undo point (MD4.. below,
+# DISPLAY only: draw.c:6077 `if(!has_x) return` means graph_marker_notify never
+# fires under --nogui, so NONE of the model/undo behaviour can be asserted in
+# this arm. The plan's "fully headless" claim is wrong and this split is the
+# correction).
+
+# --- MD1: the window-wide delete and its NO-OP rule ------------------------
+# The wrapper's whole contract rests on the count: > 0 means "something really
+# changed" (repaint + log one line), 0 means "nothing happened" and must leave
+# no trace at all — the move_strip `from == to` rule.
+mk_reset
+pcall {mk_graph 0 0 800 400}
+pcall {mk_graph 0 1000 800 1400}
+pcall {xschem setprop rect 2 0 markers [mk_rec 1 0 0 3 0.3 1.3]}
+pcall {xschem setprop rect 2 1 markers "[mk_rec 2 0 0 7 0.7 1.7]\n[mk_rec 3 0 0 9 0.9 1.9]"}
+check "MD1 fixture: three markers spread over two strips" [pcall {mk_nums}] {1 2 3}
+check "MD1 the window-wide delete reports how many it removed" \
+  [pcall {xschem graph_marker delete -all}] 3
+check "MD1 ... and the window is empty" [pcall {mk_nums}] {}
+check "MD1 ... on BOTH rects, as an ABSENT token (not an empty one)" \
+  [pcall {list [xschem getprop rect 2 0 markers] [xschem getprop rect 2 1 markers]}] {{} {}}
+check "MD1 the strips themselves SURVIVED — this is annotation, not Clear All" \
+  [pcall {xschem get graph_rects}] 2
+check "MD1 a second call deletes nothing and says 0 (the wrapper's no-op gate)" \
+  [pcall {xschem graph_marker delete -all}] 0
+check "MD1 ... and the window is still empty" [pcall {mk_nums}] {}
+
+# --- MD2: the Tcl surface with no viewer to act on -------------------------
+# Both arms: at this point in the file no viewer window is registered, so this
+# is the "honest instead of throwing" contract every wviewer command carries.
+check "MD2 wviewer::delete_all_markers is defined" \
+  [pcall {llength [info procs ::wviewer::delete_all_markers]}] 1
+check "MD2 ... and so is its %W shim" \
+  [pcall {llength [info procs ::wviewer::delete_all_markers_at]}] 1
+check "MD2 no viewer resolves -> {} (never an error, never a delete)" \
+  [pcall {wviewer::delete_all_markers}] {}
+check "MD2 an unknown token -> {} too" [pcall {wviewer::delete_all_markers NOSUCH}] {}
+check "MD2 the shim on a canvas that is not a viewer -> {}, silently" \
+  [pcall {wviewer::delete_all_markers_at .drw}] {}
+
+# --- MD3: the ACTION LOG, staged in a CHILD process ------------------------
+# Two things have to be true of the log and NEITHER is observable here: this
+# suite runs with --nolog, so actionlog_fp is NULL and util.c:493 returns before
+# anything is written. So the assertions run in a child launched with --logdir,
+# which is the only honest way to make them (the alternative — a leg that reads
+# an unopened log — passes vacuously whatever the code does).
+#   (a) the C core self-logs `xschem graph_marker delete -all -1`, which is NOT
+#       replayable into a viewer: scheduler.c:5021 readonly-rejects the arm and
+#       returns TCL_ERROR, which ABORTS a sourced log instead of warning. The
+#       wrapper must suppress it and emit ONE wviewer:: line instead.
+#   (b) the suppress `pop` must run even when the body THROWS (with_edit errors
+#       out on a refused context switch). A leaked push raises the GLOBAL depth
+#       counter and silently kills the action log for the rest of the session —
+#       so the canary is `xschem copy` (the suppress-gate atom's canary verb)
+#       run AFTER a deliberately refused call.
+# The child fakes a one-entry viewer registry pointing at the launch canvas:
+# with_edit needs only `win_path`, and current_win_path is `.drw` under --nogui.
+set mdchild [file join $scratch md_child.tcl]
+set mdlogd  [file join $scratch mdlog]
+file delete -force $mdlogd
+file mkdir $mdlogd
+set mdfh [open $mdchild w]
+puts $mdfh {# written by tests/headless/test_wave_markers.tcl, leg MD3
+dict set ::wviewer::windows MDTOK win_path .drw
+xschem set rectcolor 2
+xschem rect 0 0 800 400 -1 {flags=graph} 0
+xschem rect 0 1000 800 1400 -1 {flags=graph} 0
+xschem setprop rect 2 0 markers {1 0 0 3 0.3 1.3 0 0.06 -0.09}
+xschem setprop rect 2 1 markers {2 0 0 7 0.7 1.7 0 0.06 -0.09}
+puts "child real=[wviewer::delete_all_markers MDTOK]"
+puts "child noop=[wviewer::delete_all_markers MDTOK]"
+# with_edit leaves the buffer read-only for life, so re-seeding needs the flag
+xschem set readonly 0
+xschem setprop rect 2 0 markers {3 0 0 3 0.3 1.3 0 0.06 -0.09}
+rename wviewer::switch_ctx wviewer::__md_real_switch
+proc wviewer::switch_ctx {token} { return 0 }        ;# force with_edit to throw
+puts "child threw=[catch {wviewer::delete_all_markers MDTOK}]"
+rename wviewer::switch_ctx {}
+rename wviewer::__md_real_switch wviewer::switch_ctx
+xschem copy
+puts MD-CHILD-DONE
+exit 0}
+close $mdfh
+# 2>@1 so xschem's own stderr chatter is not mistaken by exec for a failure
+set mdrc [catch {exec [info nameofexecutable] --nogui --pipe -q \
+                      --logdir $mdlogd --script $mdchild 2>@1} mdout]
+set mdlines {}
+foreach mdf [lsort [glob -nocomplain [file join $mdlogd *]]] {
+  if {![catch {open $mdf r} mdh]} {
+    foreach mdl [split [read $mdh] "\n"] { lappend mdlines $mdl }
+    close $mdh
+  }
+}
+proc md_count {lines pat} {
+  set n 0
+  foreach l $lines { if {[string match $pat $l]} { incr n } }
+  return $n
+}
+if {$mdrc || ![string match {*MD-CHILD-DONE*} $mdout]} {
+  note "MD3 child output: [string range $mdout end-400 end]"
+}
+check_true "MD3 the --logdir child ran to its end" \
+  [expr {$mdrc == 0 && [string match {*MD-CHILD-DONE*} $mdout]}]
+check "MD3 the child really had a log open" \
+  [expr {[llength $mdlines] > 0 ? {ok} : {NO LOG FILE}}] ok
+check "MD3 exactly ONE wviewer:: line for three calls (real + no-op + refused)" \
+  [md_count $mdlines {wviewer::delete_all_markers *}] 1
+check "MD3 ... fully resolved, naming the token it acted on" \
+  [md_count $mdlines {wviewer::delete_all_markers MDTOK}] 1
+check "MD3 the raw C self-log line is ABSENT (it would abort a replay)" \
+  [md_count $mdlines {*graph_marker delete*}] 0
+check "MD3 a self-logging verb AFTER the throwing call still logs\
+ (the suppress pop is unconditional)" [md_count $mdlines {xschem copy}] 1
+rename md_count {}
+
 # --- MF6: the parser is NOT capped; only CREATION is ------------------------
 # 520 records is 8 past GRAPH_MARKERS_MAX (512). Before the fix `list` reported
 # 512 and — the real damage — the first mutating op rewrote the token from the
@@ -2399,6 +2556,247 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     [pcall {mk_close [wviewer::dget [lindex [mk_graphs $tok] 0] x1 {}] $mf16pan}]
   check_true "MF16 ... on the rect as well" \
     [pcall {mk_close [xschem new_schematic switch $vdrw; xschem getprop rect 2 0 x1] $mf16pan}]
+  mk_fixture $tok
+
+  # ==========================================================================
+  # MD (viewer half) — Delete All Markers / Ctrl-E, viewer plan item 4
+  # ==========================================================================
+  # Everything the wrapper does NOT do itself is what this group pins down: the
+  # model rewrite and the single undo point both come from the push hook, and
+  # asserting them here is what stops a future "helpful" push_undo /
+  # set_graphs being added to the proc (that would give a phantom second point
+  # and `u` would need two presses). Runs after MF16's mk_fixture, i.e. from a
+  # clean two-strip/two-trace/empty-history state, and puts one back at the end
+  # so the MX group below sees exactly what it always saw.
+
+  # spy on the replayable-log seam (the MX group's idiom, borrowed early)
+  set ::mdvlog {}
+  rename wviewer::log_action wviewer::__mdv_real_log
+  proc wviewer::log_action {line} { lappend ::mdvlog $line }
+
+  # --- MD4: fixture — a marker on EACH strip ---------------------------
+  set mdn1 {}; set mdn2 {}
+  catch {wviewer::with_edit $tok {set mdn1 [xschem graph_marker add_at 0 0 0 5]}}
+  catch {wviewer::with_edit $tok {set mdn2 [xschem graph_marker add_at 1 0 0 5]}}
+  check "MD4 one marker on each of the two strips" [list $mdn1 $mdn2] {1 2}
+  xschem new_schematic switch $vdrw
+  set mdtok0 [pcall {xschem getprop rect 2 0 markers}]
+  set mdtok1 [pcall {xschem getprop rect 2 1 markers}]
+  check_true "MD4 both rects carry a token" \
+    [expr {[wviewer::markers_valid $mdtok0] && [wviewer::markers_valid $mdtok1]}]
+  check "MD4 the push hook put both into the MODEL" \
+    [pcall {list [mk_model_mk $tok 0] [mk_model_mk $tok 1]}] [list $mdtok0 $mdtok1]
+  pcall {wviewer::clear_history $tok}
+  set ::mdvlog {}
+
+  # --- MD5: the delete itself ------------------------------------------
+  # THE REPAINT SEAM. Neither half of the delete redraws: the C verb only
+  # rewrites the props and notifies (its keyboard caller in callback.c:6720 does
+  # its own draw()), and the push hook's set_graphs is a pure model write —
+  # probe-measured with `-d 1`, which makes draw() log itself: 0 draw() calls
+  # across the whole delete without the wrapper's `xschem redraw`, 1 with it. An
+  # execution trace on the `xschem` command is the only seam a test can see that
+  # through, and without this leg dropping the repaint would go unnoticed (the
+  # deleted markers stay on screen until something else redraws).
+  set ::mdredraw 0
+  proc md_trace {cmd op} { if {[lindex $cmd 1] eq {redraw}} { incr ::mdredraw } }
+  trace add execution xschem enter md_trace
+  check "MD5 delete_all_markers returns the number it removed" \
+    [pcall {wviewer::delete_all_markers $tok}] 2
+  catch {trace remove execution xschem enter md_trace}
+  rename md_trace {}
+  check "MD5 ... and repainted the viewer canvas exactly once" $::mdredraw 1
+  check "MD5 no marker is left anywhere in the window" \
+    [pcall {xschem new_schematic switch $vdrw; xschem graph_marker list}] {}
+  check "MD5 strip 0's model dict LOST its markers key" \
+    [pcall {dict exists [lindex [mk_graphs $tok] 0] markers}] 0
+  check "MD5 ... and so did strip 1's" \
+    [pcall {dict exists [lindex [mk_graphs $tok] 1] markers}] 0
+  check "MD5 the strips, their traces and their order all SURVIVED" \
+    [pcall {list [llength [mk_graphs $tok]] [mk_ids $tok] [mk_order $tok]}] {2 {A B} {v_a v_b}}
+  check "MD5 the read-only discipline held: the buffer is NOT modified" \
+    [pcall {xschem new_schematic switch $vdrw; xschem get modified}] 0
+  check "MD5 ... and the viewer is read-only again" [pcall {xschem get readonly}] 1
+  check "MD5 exactly ONE undo point — the hook's, with no second one added here" \
+    [pcall {wviewer::history_depth $tok}] {1 0}
+  check "MD5 exactly one replayable log line" [llength $::mdvlog] 1
+  check "MD5 ... naming the proc and the RESOLVED token" \
+    [lindex $::mdvlog 0] "wviewer::delete_all_markers $tok"
+
+  # --- MD6: the no-op leaves NOTHING behind ----------------------------
+  set ::mdvlog {}
+  check "MD6 a second call deletes nothing and reports 0" \
+    [pcall {wviewer::delete_all_markers $tok}] 0
+  check "MD6 ... and logs nothing (a no-op must not enter a replay)" \
+    [llength $::mdvlog] 0
+  check "MD6 ... and pushes no undo point" [pcall {wviewer::history_depth $tok}] {1 0}
+
+  # --- MD7: undo restores the markers to BOTH the model and the rects --
+  set ::mdvlog {}
+  check "MD7 undo runs" [pcall {wviewer::undo $tok}] 1
+  check "MD7 undo restored both strips' markers to the MODEL, byte-identically" \
+    [pcall {list [mk_model_mk $tok 0] [mk_model_mk $tok 1]}] [list $mdtok0 $mdtok1]
+  check "MD7 ... and onto the RECTS (the model -> graph_props -> rect round trip)" \
+    [pcall {xschem new_schematic switch $vdrw
+            list [xschem getprop rect 2 0 markers] [xschem getprop rect 2 1 markers]}] \
+    [list $mdtok0 $mdtok1]
+  check "MD7 ONE press was enough — the delete pushed one point, not two" \
+    [pcall {wviewer::history_depth $tok}] {0 1}
+  check "MD7 redo deletes them again, in the model" \
+    [pcall {wviewer::redo $tok
+            list [dict exists [lindex [mk_graphs $tok] 0] markers] \
+                 [dict exists [lindex [mk_graphs $tok] 1] markers]}] {0 0}
+  check "MD7 ... and on the rects" \
+    [pcall {xschem new_schematic switch $vdrw; xschem graph_marker list}] {}
+
+  # --- MD8: a REFUSED context switch is an error, and logs nothing -----
+  # with_edit throws rather than mutate somebody else's schematic; the wrapper
+  # lets that propagate but must still have popped its suppress scope (the
+  # log half of that is MD3, in a child with a real log open).
+  set ::mdvlog {}
+  catch {wviewer::with_edit $tok {xschem graph_marker add_at 0 0 0 5}}
+  rename wviewer::switch_ctx wviewer::__mdv_real_switch
+  proc wviewer::switch_ctx {token} { return 0 }
+  set mderr [catch {wviewer::delete_all_markers $tok} mdmsg]
+  rename wviewer::switch_ctx {}
+  rename wviewer::__mdv_real_switch wviewer::switch_ctx
+  check "MD8 a refused context switch propagates as an error" $mderr 1
+  check_true "MD8 ... saying so" [string match {*context busy*} $mdmsg]
+  check "MD8 ... and nothing was logged for it" [llength $::mdvlog] 0
+  check "MD8 ... and the marker is untouched" \
+    [pcall {xschem new_schematic switch $vdrw; llength [xschem graph_marker list]}] 1
+  # the %W shim CATCHES it (an error escaping a Tk binding pops a bgerror box)
+  rename wviewer::switch_ctx wviewer::__mdv_real_switch
+  proc wviewer::switch_ctx {token} { return 0 }
+  check "MD8 the binding shim swallows it and answers {}" \
+    [pcall {wviewer::delete_all_markers_at $vdrw}] {}
+  rename wviewer::switch_ctx {}
+  rename wviewer::__mdv_real_switch wviewer::switch_ctx
+  check "MD8 the shim resolves %W to THIS viewer's token and deletes" \
+    [pcall {wviewer::delete_all_markers_at $vdrw}] 1
+  check "MD8 ... logging the resolved token, not the canvas" \
+    [lindex $::mdvlog end] "wviewer::delete_all_markers $tok"
+
+  # --- MD9: the binding seam (the test_wave_clear_all CG4 clone) -------
+  check_true "MD9 Ctrl-E is bound on the WaveViewer tag by default" \
+    [expr {[bind WaveViewer <Control-Key-e>] ne {}}]
+  check_true "MD9 the default calls delete_all_markers_at with the EVENT's canvas" \
+    [string match {*wviewer::delete_all_markers_at %W*} [bind WaveViewer <Control-Key-e>]]
+  wviewer::strip_bindings $vdrw
+  check_true "MD9 the tag binding survives a re-sweep" \
+    [expr {[bind WaveViewer <Control-Key-e>] ne {}}]
+  check "MD9 the sweep does not duplicate the tag" \
+    [llength [lsearch -all -exact [bindtags $vdrw] WaveViewer]] 1
+  # THE cadence_style_rc:189 GUARD. `bind .drw <Control-Key-e>
+  # {cadence::return_one_level}` is cloned onto every new canvas by
+  # clone_canvas_bindings, and a widget-level bind is MORE SPECIFIC than the tag
+  # — if a future keepseqs change let it survive the sweep it would silently
+  # steal Ctrl-E from the viewer and ascend the hierarchy instead.
+  check "MD9 Ctrl-E is NOT bound on the canvas widget itself (the rc clone is swept)" \
+    [bind $vdrw <Control-Key-e>] {}
+  # ...but that one is only a POST-OPEN SNAPSHOT and it passes TRIVIALLY: this
+  # suite never sources cadence_style_rc, so no widget-level clone ever landed
+  # on this canvas for the sweep to remove, and the leg above would stay green
+  # with strip_bindings' sweep disabled entirely. Bind the clone by hand and
+  # re-sweep, so the assertion actually observes the mechanism it names — this
+  # is the leg a future `keepseqs` addition has to go red on.
+  bind $vdrw <Control-Key-e> {cadence::return_one_level; break}
+  wviewer::strip_bindings $vdrw
+  check "MD9 a hand-planted widget-level Ctrl-E really IS swept (the mechanism,\
+ not a snapshot)" [bind $vdrw <Control-Key-e>] {}
+  # the other route to the C go_back (callback.c case 'e' + ControlMask) is
+  # key_filter's forwarding allowlist, which `e` is deliberately not in
+  check_true "MD9 keysym 101 (e) is not a graphkeys member, so nothing is forwarded" \
+    [expr {[lsearch -exact $::wviewer::graphkeys 101] < 0}]
+
+  # --- MD10: a REAL Ctrl-E on the canvas -------------------------------
+  # Constant check count whatever the WSLg focus does: a stall falls back to the
+  # tag binding's own body and says so, exactly like send_key_fb further down.
+  set ::mdvlog {}
+  catch {wviewer::with_edit $tok {xschem graph_marker add_at 0 0 0 5}}
+  catch {wviewer::with_edit $tok {xschem graph_marker add_at 1 0 0 5}}
+  check "MD10 two markers to delete" \
+    [pcall {xschem new_schematic switch $vdrw; llength [xschem graph_marker list]}] 2
+  # `send_key` (the WSLg focus-retry sender) is not defined until the MX
+  # preamble below, so this is its short form. A stall falls back to running the
+  # TAG BINDING'S OWN SCRIPT with %W substituted — Tk's own dispatch, minus Tk —
+  # so the leg still exercises the shipped binding and the check count is
+  # constant however the display behaves.
+  set mdkey 0
+  for {set mdi 0} {$mdi < 60} {incr mdi} {
+    update
+    if {![dict exists [lindex [mk_graphs $tok] 0] markers]} { set mdkey 1; break }
+    catch {wm deiconify $vtop}
+    catch {raise $vtop}
+    catch {event generate $vtop <FocusIn> -detail NotifyAncestor}
+    focus -force $vtop
+    focus -force $vdrw
+    update
+    if {[focus -displayof $vdrw] eq $vdrw} { event generate $vdrw <Control-Key-e> }
+    update
+    after 20
+  }
+  if {!$mdkey} {
+    note "Tk Ctrl-E delivery stalled (WSLg focus) — running the tag binding's own script"
+    catch {uplevel #0 [string map [list %W $vdrw] [bind WaveViewer <Control-Key-e>]]}
+  }
+  check "MD10 Ctrl-E deleted every marker (Tk route or the tag body)" \
+    [pcall {xschem new_schematic switch $vdrw; xschem graph_marker list}] {}
+  check "MD10 ... in the model too" \
+    [pexpr {![dict exists [lindex [mk_graphs $tok] 0] markers] &&
+            ![dict exists [lindex [mk_graphs $tok] 1] markers]}] 1
+  check "MD10 the gesture logs the same single line the command does" \
+    [lindex $::mdvlog end] "wviewer::delete_all_markers $tok"
+  # the go_back witness: Ctrl-E is `return_one_level` everywhere else in the tree
+  check "MD10 the viewer did NOT ascend/close (Ctrl-E never reached go_back)" \
+    [pcall {list [xschem get current_win_path] [xschem get graph_rects]}] [list $vdrw 2]
+
+  # --- MD11: rc REMAPPABILITY (the CG6 (c) clone) ----------------------
+  bind WaveViewer <Control-Key-e> {break}
+  set ::wviewer::tagbinds 0
+  check "MD11 install_default_binds runs once per session" \
+    [pcall {wviewer::install_default_binds}] 1
+  check "MD11 an rc binding is NOT overwritten by the defaults" \
+    [bind WaveViewer <Control-Key-e>] {break}
+  check "MD11 a second call is a no-op" [pcall {wviewer::install_default_binds}] 0
+  check_true "MD11 remapping Ctrl-E left the OTHER defaults alone" \
+    [expr {[string match {*clear_all_at*} [bind WaveViewer <Control-Key-d>]] &&
+           [string match {*undo_at*} [bind WaveViewer <Key-u>]]}]
+  # restore the shipped default for the MX group and anything after it
+  bind WaveViewer <Control-Key-e> {}
+  set ::wviewer::tagbinds 0
+  pcall {wviewer::install_default_binds}
+  check_true "MD11 shipped default restored" \
+    [string match {*delete_all_markers_at*} [bind WaveViewer <Control-Key-e>]]
+
+  # --- MD12: Graph > Delete All Markers (the CG7 clone) ----------------
+  set mdmb $vtop.wvmenubar
+  set mdgi -1
+  set mdci -1
+  for {set i 0} {$i <= [$mdmb.graph index end]} {incr i} {
+    if {[catch {$mdmb.graph entrycget $i -label} lab]} { continue }
+    if {$lab eq {Delete All Markers}} { set mdgi $i }
+    if {$lab eq {Clear All}} { set mdci $i }
+  }
+  check_true "MD12 the Graph menu carries a Delete All Markers entry" [expr {$mdgi >= 0}]
+  check "MD12 ... immediately after Clear All" [expr {$mdgi - $mdci}] 1
+  check "MD12 ... labelled with the Ctrl+E accelerator" \
+    [pcall {$mdmb.graph entrycget $mdgi -accelerator}] Ctrl+E
+  check "MD12 ... and wired to the resolved token" \
+    [pcall {$mdmb.graph entrycget $mdgi -command}] "wviewer::delete_all_markers $tok"
+  catch {wviewer::with_edit $tok {xschem graph_marker add_at 0 0 0 5}}
+  check "MD12 a marker to delete" \
+    [pcall {xschem new_schematic switch $vdrw; llength [xschem graph_marker list]}] 1
+  pcall {$mdmb.graph invoke $mdgi}
+  check "MD12 invoking the entry deletes it" \
+    [pcall {xschem new_schematic switch $vdrw; xschem graph_marker list}] {}
+
+  # hand the log seam and the fixture back exactly as they were found
+  rename wviewer::log_action {}
+  rename wviewer::__mdv_real_log wviewer::log_action
+  foreach mdv {mdn1 mdn2 mdtok0 mdtok1 mderr mdmsg mdkey mdi mdmb mdgi mdci} {
+    catch {unset $mdv}
+  }
   mk_fixture $tok
 
   # ==========================================================================
@@ -3718,9 +4116,9 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
 # the new numbers here. That is the point -- the constant is the thing that
 # makes silent coverage loss impossible, so it has to be maintained by hand.
 # These are the counts BEFORE the two MZ legs themselves, so the RESULT line
-# reads two higher (607 / 310).
-set ::mk_expect_x     639   ;# DISPLAY arm: MK + MR + MF + MR-viewer + MX
-set ::mk_expect_nogui 308   ;# --nogui arm: MK + the engine half of MR/MF
+# reads two higher (711 / 328).
+set ::mk_expect_x     710   ;# DISPLAY arm: MK + MR + MF + MD + MR-viewer + MX
+set ::mk_expect_nogui 326   ;# --nogui arm: MK + the engine half of MR/MF/MD
 set mkexp [expr {$::mk_ran_x ? $::mk_expect_x : $::mk_expect_nogui}]
 set mkgot [expr {$npass + $fail}]
 check "MZ1 the [expr {$::mk_ran_x ? {DISPLAY} : {--nogui}}] arm ran its full\
