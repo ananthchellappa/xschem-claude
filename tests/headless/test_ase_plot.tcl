@@ -530,7 +530,19 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
       foreach tr $dtr {
         if {[wviewer::dget $tr vec {}] eq {v(d)}} { set p4tc [wviewer::dget $tr color {}] }
       }
-      check "P4 v(d) trace color == the color painted on the wire" $p4tc [expr {-$p4hl}]
+      # $p4hl comes from the wire click above, which is the leg that flakes under
+      # WSLg (the click occasionally lands on nothing and hl_val returns {}).
+      # `expr {-$p4hl}` on {} THROWS, and the throw escapes to the file-level
+      # catch — so one flaked click used to abort the remaining ~56 checks and
+      # the suite reported "4 FAILED (85 passed)" instead of "1 FAILED (144)".
+      # Fail this leg locally instead; the earlier legs already reported the
+      # real problem.
+      if {[string is integer -strict $p4hl]} {
+        check "P4 v(d) trace color == the color painted on the wire" $p4tc [expr {-$p4hl}]
+      } else {
+        check "P4 v(d) trace color == the color painted on the wire" \
+          "no wire highlight to compare against (p4hl={$p4hl})" {}
+      }
       xschem new_schematic switch $cv
       check "P4 the wire highlight PERSISTS past ESC" [hl_val D] $p4hl
       # the two picks must not share a color (they are two different signals)

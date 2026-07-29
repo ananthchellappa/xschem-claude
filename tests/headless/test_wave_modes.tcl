@@ -1468,16 +1468,60 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     [string match {*wviewer::redo_at*} [bind WaveViewer <Key-U>]]
   check_true "MG16 the tag is on the viewer canvas" \
     [expr {[lsearch -exact [bindtags $vdrw] WaveViewer] >= 0}]
+  # ⚠ These legs used a BARE `event generate` + one `update`, and they flaked
+  # about 1 run in 5 — measured, in isolation, on an idle machine, and worse
+  # under load (a full-suite batch turned two of them red). Generated KeyPress
+  # events go to the DISPLAY's focus window and the WSLg focus round-trip is
+  # ASYNCHRONOUS, so a key delivered before Tk owns the focus is simply lost.
+  # The repo already has the answer (test_wave_clear_all.tcl's send_key,
+  # test_ase_plot.tcl's ESC loop): gate every generate on Tk reporting the
+  # canvas as focus owner, and retry until the effect is observed.
+  proc mg16_key {w keysym state done} {
+    for {set i 0} {$i < 200} {incr i} {
+      update
+      if {[uplevel 1 [list expr $done]]} { return 1 }
+      if {![winfo exists $w]} { return 0 }
+      focus -force $w
+      update
+      if {[uplevel 1 [list expr $done]]} { return 1 }
+      if {[focus -displayof $w] eq $w} {
+        if {$state eq {}} {
+          event generate $w <KeyPress> -keysym $keysym
+        } else {
+          event generate $w <KeyPress> -keysym $keysym -state $state
+        }
+        update
+        if {[uplevel 1 [list expr $done]]} { return 1 }
+      }
+      after 50
+    }
+    return 0
+  }
+  # The NEGATIVE leg has no effect to wait for, so retry-until-effect cannot
+  # apply. Confirm the focus — which is the part that flakes — then deliver
+  # once. Without this the leg passes for the wrong reason whenever the key was
+  # never delivered at all.
+  proc mg16_key_once {w keysym} {
+    for {set i 0} {$i < 100} {incr i} {
+      update
+      if {[winfo exists $w] && [focus -displayof $w] eq $w} {
+        event generate $w <KeyPress> -keysym $keysym
+        update
+        return 1
+      }
+      focus -force $w
+      update
+      after 20
+    }
+    return 0
+  }
+
   mg14_fixture $tok
   wviewer::clear_history $tok
   pcall {wviewer::move_strip 3 0 $tok}
-  focus -force $vdrw
-  update
-  event generate $vdrw <KeyPress> -keysym u
-  update
+  mg16_key $vdrw u {} {[mg14_order $tok] eq {v(s0) v(s1) v(s2) v(s3)}}
   check "MG16 the `u` KEY undid the reorder" [mg14_order $tok] {v(s0) v(s1) v(s2) v(s3)}
-  event generate $vdrw <KeyPress> -keysym U -state 1
-  update
+  mg16_key $vdrw U 1 {[mg14_order $tok] eq {v(s3) v(s0) v(s1) v(s2)}}
   check "MG16 the Shift-u KEY redid it" [mg14_order $tok] {v(s3) v(s0) v(s1) v(s2)}
   # an rc that rebinds the key must win, and `{break}` must disable it
   set mg16u [bind WaveViewer <Key-u>]
@@ -1485,8 +1529,8 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   wviewer::install_default_binds
   check "MG16 an rc remap of `u` survives install_default_binds" \
     [bind WaveViewer <Key-u>] {break}
-  event generate $vdrw <KeyPress> -keysym u
-  update
+  check_true "MG16 the disabled-key probe was actually delivered" \
+    [pcall {mg16_key_once $vdrw u}]
   check "MG16 the disabled key does nothing" [mg14_order $tok] {v(s3) v(s0) v(s1) v(s2)}
   bind WaveViewer <Key-u> $mg16u
   rename mg16_traces {}
