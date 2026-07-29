@@ -49,8 +49,10 @@ So the first job of the next session is an **eyeball pass**, not more code:
 2. Right-click empty waveform space → "Split Strip". Check it does **not** appear
    over the wave labels above the plot box (that collision is what
    `graph_plotbox_at` was added to close).
-3. Drag a trace between strips → does it visibly shrink? Is 10 % right?
-   (`wviewer_drag_shrink`, `1.0` disables the effect.)
+3. Drag a trace between strips → does it visibly shrink in **both** axes? Is
+   30 % right? (`wviewer_drag_shrink`, default `0.7`; `1.0` disables the
+   effect.) Round 1 shipped Y-only at 10 % and was rejected on sight; round 2
+   is `780bd468` and **has not been looked at yet**.
 
 ## Two decisions I deferred to you
 
