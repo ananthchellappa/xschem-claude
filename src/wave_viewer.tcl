@@ -193,6 +193,44 @@
 # the authority. Invalid values fall back to `single`.
 set_ne wviewer_plot_mode single
 
+# ---- legend text size + weight (viewer plan item 1) ------------------------
+# The ASE legend was reported as too small next to the axis numbers. It is NOT
+# `txtsizelegend` (that is the VERTICAL legend path, which this viewer never
+# enables) but `txtsizelab`, and the numbers come out of setup_graph_data
+# (draw.c ~3707-3733) like this, for a strip of container height rh with the
+# template's divx/divy = 5:
+#
+#   marginy    = rh * 0.14
+#   txtsizelab = marginy * 0.006 * legendmag  = 8.4e-4 * rh * legendmag
+#   txtsizex   = min(w/divx*0.0070, marginy*0.0065) * xlabmag
+#              = 9.1e-4 * rh              (the bottom-margin clamp always binds)
+#   txtsizey   = min(h/divy*0.0095, marginx*0.004) * ylabmag
+#              = 1.368e-3 * rh            (h = rh - 2*marginy = 0.72*rh)
+#
+# So at legendmag 1.0 the legend is 0.92x the X numbers and only 0.61x the Y
+# numbers. WHICH axis numbers "match the axis numbers" means therefore decides
+# the value, and the two readings are not close: matching X needs 1.083 —
+# an 8% change nobody could see, which cannot be what "too small" asked for —
+# while matching Y needs 1.368e-3/8.4e-4 = 1.63. Hence the default below.
+#
+# ⚠ The match is exact only at the template's divy=5: txtsizey scales as
+# 1/divy while txtsizelab does not, so a strip edited to divy=10 in the Graph
+# dialog has axis numbers half the size and the legend then overshoots. Making
+# it exact for every divy would mean computing txtsizelab FROM txtsizey in C,
+# which is the "new C helper" route decision D-G deliberately rejected in
+# favour of driving the existing per-rect `legendmag` token from here.
+#
+# Both are read LAZILY (at strip-template time), so an rc — cadence_style_rc,
+# ~/.xschem/xschemrc, a --script test — can still set them. Per-rect tokens,
+# so ONLY viewer strips are affected: draw_graph_variables is shared with every
+# embedded schematic graph in the tree (~127 of them ship), and decision D-G is
+# that they must not move.
+set_ne wviewer_legend_textmag 1.63
+# 1 = draw every legend entry in the bold face (prop token `legendbold=1`).
+# The bolded wave (issue 0152) was the ONLY bold entry before this, so with
+# every entry bold it needs a different cue: draw.c gives it bold ITALIC.
+set_ne wviewer_legend_bold 1
+
 namespace eval wviewer {
   # session token -> {top .xN win_path .xN.drw}
   variable windows [dict create]
@@ -898,6 +936,40 @@ proc wviewer::default_plot_mode {} {
   return $m
 }
 
+# The config var `wviewer_legend_textmag` -> the `legendmag` prop token, CLAMPED
+# (viewer plan item 1). Unset / empty / non-numeric / out of range all fall back
+# to the 1.63 default, the value that matches the Y-axis numbers at the
+# template's divy=5 — see the derivation where the var is defined.
+#
+# The clamp form is `>=` / `<=` deliberately, NOT `<` / `>`: those are FALSE for
+# a NaN, so a NaN would slip through both tests and reach the rect props, where
+# atof() would hand setup_graph_data a NaN txtsizelab and the strip would render
+# nothing at all. `string is double` accepts "NaN" and "Inf", so it cannot be
+# the guard on its own. Same shape as the shipped graph_marker_txtsize clamp.
+#
+# 0.25 .. 6.0: below 0.25 the text is sub-pixel at any usable strip height,
+# above 6.0 one legend entry is wider than its per-node slot and the entries
+# overprint each other.
+proc wviewer::legend_textmag {} {
+  set d 1.63
+  if {![info exists ::wviewer_legend_textmag]} { return $d }
+  set v [string trim $::wviewer_legend_textmag]
+  if {![string is double -strict $v]} { return $d }
+  if {!($v >= 0.25) || !($v <= 6.0)} { return $d }
+  return $v
+}
+
+# The config var `wviewer_legend_bold` -> the `legendbold` prop token, as a
+# strict 0/1. Anything unrecognised is the shipped default, 1 (bold): the whole
+# point of item 1 is that the legend reads at the weight of the axis numbers,
+# so a typo in an rc must not silently turn the feature off.
+proc wviewer::legend_bold {} {
+  if {![info exists ::wviewer_legend_bold]} { return 1 }
+  set v [string trim $::wviewer_legend_bold]
+  if {[string is boolean -strict $v]} { return [expr {[string is true -strict $v] ? 1 : 0}] }
+  return 1
+}
+
 # Clamp a stored target index into a layout of `n` graphs. Out of range, a
 # non-integer or an empty layout all collapse to 0 — the target is stored raw
 # and clamped on every read, so deleting strips can never dangle it.
@@ -1290,7 +1362,18 @@ proc wviewer::graph_props {G {active 0}} {
   # transient values 2/3 (drop-destination bar) are NOT written here: they are
   # setprop'd onto the two affected rects during a drag and cleared on
   # commit/cancel, so a regenerate always lands back on a plain grip.
-  return "flags=graph\ny1=$y1\ny2=$y2\nypos1=0\nypos2=2\ndivy=5\nsubdivy=1\nunity=1\nx1=$x1\nx2=$x2\ndivx=5\nsubdivx=1\nxlabmag=1.0\nylabmag=1.0\nlegendmag=1.0\nnode=\"$node\"\ncolor=\"$color\"\ndataset=-1\nunitx=1\nlogx=$logx\nlogy=$logy\nreorder_handle=1\n$hw$mk$act"
+  # Legend text size + weight (viewer plan item 1). Both are per-rect tokens
+  # emitted HERE and nowhere else, which is exactly what confines them to viewer
+  # strips (decision D-G: the shared draw_graph_variables must keep rendering
+  # the ~127 embedded schematic graphs unchanged). `legendmag` already existed
+  # and is what setup_graph_data multiplies txtsizelab by; `legendbold` is new.
+  # `legendbold=0` is emitted rather than omitted so an rc that turns the bold
+  # OFF takes effect on a regenerate instead of leaving the previous value in
+  # the rect — the token is cheap and this is not the "absent means absent"
+  # class that hilight_wave/markers belong to.
+  set lmag [wviewer::legend_textmag]
+  set lbold [wviewer::legend_bold]
+  return "flags=graph\ny1=$y1\ny2=$y2\nypos1=0\nypos2=2\ndivy=5\nsubdivy=1\nunity=1\nx1=$x1\nx2=$x2\ndivx=5\nsubdivx=1\nxlabmag=1.0\nylabmag=1.0\nlegendmag=$lmag\nlegendbold=$lbold\nnode=\"$node\"\ncolor=\"$color\"\ndataset=-1\nunitx=1\nlogx=$logx\nlogy=$logy\nreorder_handle=1\n$hw$mk$act"
 }
 
 # PURE (D4): pre-validate a whitespace-separated RPN expression against the

@@ -3558,6 +3558,15 @@ void setup_graph_data(int i, int skip, Graph_ctx *gr)
   gr->reorder_handle = 0;
   val = get_tok_value(r->prop_ptr,"reorder_handle", 0);
   if(val[0]) gr->reorder_handle = atoi(val);
+  /* viewer plan item 1: draw EVERY legend entry bold, not just the bolded
+   * wave's. A per-rect token, not a global, for the D-G blast-radius reason:
+   * draw_graph_variables is shared by every graph in the tree including ~127
+   * shipped schematics with embedded graphs, and only the ASE viewer template
+   * emits this. Same early-default rule as `active`/`reorder_handle` above and
+   * for the same reason (shared xctx->graph_struct, off-screen early return). */
+  gr->legendbold = 0;
+  val = get_tok_value(r->prop_ptr,"legendbold", 0);
+  if(val[0]) gr->legendbold = atoi(val);
   gr->linewidth_mult = tclgetdoublevar("graph_linewidth_mult");
   xctx->graph_flags &= ~(128 | 256); /* clear hcursor flags */
   gr->hcursor1_y = gr->hcursor2_y = 0.0;
@@ -3991,10 +4000,22 @@ static void draw_graph_variables(int wcnt, int wave_color, int n_nodes, int swee
         #endif
       }
     } else {
+      /* viewer plan item 1. `legendbold` (ASE viewer strips only) draws EVERY
+       * entry bold so the legend reads at the weight of the axis numbers. That
+       * erases the issue-0152 cue, which WAS "the bolded wave's entry is the
+       * only bold one" — so on a legendbold graph the bolded wave is
+       * distinguished by SLANT instead: bold italic against bold upright. One
+       * token in the existing toy-font call, no new drawing code and no layout
+       * change (the entries sit in fixed per-node slots, so nothing shifts).
+       * Without legendbold the shipped behaviour is untouched, which is what
+       * keeps the ~127 embedded schematic graphs out of this. */
       #if HAS_CAIRO == 1
-      if(gr->hilight_wave == wcnt) {
+      if(gr->legendbold || gr->hilight_wave == wcnt) {
         xctx->cairo_font =
-              cairo_toy_font_face_create("Sans-Serif", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_BOLD);
+              cairo_toy_font_face_create("Sans-Serif",
+                (gr->legendbold && gr->hilight_wave == wcnt) ?
+                   CAIRO_FONT_SLANT_ITALIC : CAIRO_FONT_SLANT_NORMAL,
+                CAIRO_FONT_WEIGHT_BOLD);
         cairo_set_font_face(xctx->cairo_ctx, xctx->cairo_font);
         cairo_set_font_face(xctx->cairo_save_ctx, xctx->cairo_font);
         cairo_font_face_destroy(xctx->cairo_font);
@@ -4004,7 +4025,7 @@ static void draw_graph_variables(int wcnt, int wave_color, int n_nodes, int swee
       draw_string(wave_color, NOW, tmpstr, 0, 0, 0, 0,
           gr->rx1 + 2 + gr->rw / n_nodes * wcnt, gr->ry1, gr->txtsizelab, gr->txtsizelab);
       #if HAS_CAIRO == 1
-      if(gr->hilight_wave == wcnt) {
+      if(gr->legendbold || gr->hilight_wave == wcnt) {
         xctx->cairo_font =
               cairo_toy_font_face_create("Sans-Serif", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
         cairo_set_font_face(xctx->cairo_ctx, xctx->cairo_font);

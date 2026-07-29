@@ -139,7 +139,38 @@ under each. The question text is kept for the rationale.
 ## The items
 
 ### ⚠ Item 1 — legend font too small; match the axis numbers
-- [ ] **1. Legend font**
+- [x] **1. Legend font** — **DONE 2026-07-29.** `wviewer_legend_textmag` (1.63)
+      + `wviewer_legend_bold` (1) -> the per-rect `legendmag` / new `legendbold`
+      tokens; every legend entry bold, the issue-0152 bolded wave now **bold
+      ITALIC**; `src/cadence_style_rc` block, spec §"Legend text size + weight",
+      `tests/headless/test_wave_legend.tcl` **44 DISPLAY / 33 nogui**.
+
+> **⚠ TWO CORRECTIONS TO THIS SECTION, both material:**
+>
+> 1. **The landmine below does not apply on the route D-G chose.**
+>    `show_node_measures` draws the value at `ry1 + txtsizelab*60` sized
+>    `txtsizelab*0.8` — **both already proportional to `txtsizelab`** — and
+>    `legendmag` multiplies `txtsizelab` itself (`draw.c`:3718). Name, offset
+>    and value scale together; the ratio is unchanged. The overlap would only
+>    have happened via the "new C helper" that scaled the name alone, which
+>    D-G rejected. No work was needed here at all.
+> 2. **"Match the axis numbers" is under-determined and the readings are far
+>    apart.** Legend `8.4e-4*rh`, X numbers `9.1e-4*rh`, Y numbers
+>    `1.368e-3*rh`. Matching X = **1.083**, an 8% change that is invisible —
+>    which cannot be what "too small" meant — so the Y match (**1.63**) is the
+>    only reading consistent with the complaint. ⚠ Exact only at the template's
+>    `divy=5`: `txtsizey` scales as `1/divy`, `txtsizelab` does not.
+>
+> Also: the bold had to be a **new per-rect token** (`legendbold`), not an
+> unconditional C change — the section's own D-G blast-radius reasoning covers
+> the SIZE but the boldness needed the same treatment, and did not have it.
+> Defaulted before the `RECT_OUTSIDE` early return, `active`-style.
+>
+> **Test-seam note:** "a pure Tcl leg on the new var's existence + clamp" was
+> an underestimate of what is observable. The prop TOKENS are readable with
+> `xschem getprop rect 2 <gi> legendmag|legendbold`, so the tokens reaching the
+> rects, surviving a capture round trip, and being ABSENT from the C
+> `add_graph` template are all assertable. Only the pixels are eyeball-only.
 
 > **⚠ PREMISE CORRECTION.** The ASE legend is **not** `gr->txtsizelegend`.
 > `wave_viewer.tcl` ~1282 never emits `vlegend`, `legend` or `digital`, so

@@ -550,6 +550,86 @@ owning the current xschem context, like the 0151 mode/target commands); also
 - **Tests:** `tests/headless/test_wave_clear_all.tcl` (`CA*` no-window, `CG*`
   GUI) — 67 checks, sabotage-verified. Documented in `src/cadence_style_rc`.
 
+## Legend text size + weight (viewer plan item 1, 2026-07-29)
+
+**The viewer legend is drawn at the size of the Y-axis numbers and in the bold
+face.** Two rc-overridable vars, `wviewer_legend_textmag` (default **1.63**) and
+`wviewer_legend_bold` (default **1**), read lazily at strip-template time and
+folded into the per-rect prop tokens `legendmag` / `legendbold`.
+
+**⚠ The reported symptom named the wrong field.** The ASE legend is **not**
+`gr->txtsizelegend` — `graph_props` never emits `vlegend`, `legend` or
+`digital`, so `draw_graph_variables` takes its final `else` branch and draws the
+signal name with **`gr->txtsizelab`** (`draw.c` ~4025). `txtsizelegend` only runs
+on the *vertical* legend path, which this viewer never enables.
+
+**Which axis numbers?** They are not one size, and the two readings are far
+apart. From `setup_graph_data` (`draw.c` ~3707-3733), for a strip of container
+height `rh` at the template's `divx`/`divy` = 5:
+
+| | formula | value |
+|---|---|---|
+| legend | `marginy * 0.006 * legendmag`, `marginy = rh*0.14` | `8.4e-4 * rh` |
+| X numbers | `min(w/divx*0.0070, marginy*0.0065)` — the margin clamp always binds | `9.1e-4 * rh` |
+| Y numbers | `min(h/divy*0.0095, marginx*0.004)`, `h = rh - 2*marginy` | `1.368e-3 * rh` |
+
+So at `legendmag` 1.0 the legend is already **0.92×** the X numbers — matching
+those would be an 8% change nobody could see, which cannot be what "too small"
+asked for — and only **0.61×** the Y numbers. Hence **1.63 = 1.368e-3 / 8.4e-4**.
+
+- **⚠ The match is exact only at `divy = 5`**, the template's value. `txtsizey`
+  scales as `1/divy` while `txtsizelab` does not, so a strip edited to
+  `divy = 10` in the Graph dialog has axis numbers half the size and the legend
+  then overshoots. Making it exact for every `divy` means computing
+  `txtsizelab` **from** `txtsizey` in C — the "new C helper" route decision D-G
+  deliberately rejected in favour of driving the existing `legendmag` token.
+- **The plan's overlap landmine does not apply on this route.**
+  `show_node_measures` draws the cursor-1 value under the name at
+  `gr->ry1 + gr->txtsizelab * 60`, sized `gr->txtsizelab * 0.8` (`draw.c`
+  ~4126) — **both already proportional to `txtsizelab`**, and `legendmag`
+  multiplies `txtsizelab` itself (`draw.c` :3718). Name, offset and value scale
+  together and the spacing ratio is unchanged. A helper that scaled only the
+  name *would* have collided; this does not.
+- **Blast radius (decision D-G).** `draw_graph_variables` is shared by every
+  graph in the tree, including the ~127 shipped schematics with embedded
+  graphs. The size rides the pre-existing per-rect `legendmag`, and the bold is
+  a **new per-rect token `legendbold`** — *not* a global — parsed into
+  `Graph_ctx` beside `active`/`reorder_handle` and, like them, defaulted
+  **before the `RECT_OUTSIDE` early return** (landmine 37a: `graph_struct` is
+  shared, so an off-screen graph that returned early would inherit the previous
+  graph's value). `graph_props` is the only emitter, and it is the viewer's own
+  rect generator — so on-canvas schematic graphs are untouched, and the C
+  `add_graph` template (`scheduler.c` ~1909) still says `legendmag=1.0` with no
+  `legendbold` at all.
+- **`legendbold=0` is EMITTED, not omitted**, unlike `hilight_wave`/`markers`.
+  Those belong to the "absent means absent" class because the C engine writes
+  them; this one is generated, and emitting the 0 is what makes an rc that
+  turns the bold *off* take effect on a regenerate instead of leaving the old
+  value in the rect.
+- **The replacement cue for issue 0152.** The bolded wave's cue *was* "its
+  legend entry is the only bold one" — with every entry bold that is gone. On a
+  `legendbold` graph the bolded wave is distinguished by **slant**: bold italic
+  against bold upright. One token in the existing toy-font call, no new drawing
+  code, and no layout change (entries sit in fixed per-node slots, so nothing
+  shifts). Without `legendbold` the shipped conditional-bold behaviour is
+  byte-identical.
+- **Clamps.** `legend_textmag` accepts 0.25 .. 6.0 and falls back to 1.63
+  otherwise. The comparison form is `>=` / `<=`, **not** `<` / `>`: both `<`
+  and `>` are FALSE for a NaN, so the negated form would let a NaN through,
+  `atof()` would hand `setup_graph_data` a NaN `txtsizelab` and the strip would
+  render nothing at all. `string is double` accepts `NaN`/`Inf`, so it cannot be
+  the guard on its own. `legend_bold` fails **safe**: anything unrecognised
+  keeps the feature on.
+- **Tests:** `tests/headless/test_wave_legend.tcl` — `LP*` pure (33 under
+  `--nogui`, incl. the four non-finite legs), `LG1`/`LG2`/`LG4` the tokens
+  reaching and surviving on the rects, `LG3` the blast radius asserted against
+  the C and Tcl sources. 44 checks on the DISPLAY arm.
+  **⚠ The PIXELS are eyeball-only** and the suite says so in its header: there
+  is no C→Tcl getter for any `Graph_ctx` txtsize field, and the ASE legend is
+  not hit-tested (`edit_wave_attributes` only hit-tests the vlegend strip and
+  the digital labels), so "the text is bigger" and "the bolded wave is italic"
+  cannot be asserted. Everything up to the renderer's door is.
+
 ## Delete Empty Strips (viewer plan item 5, 2026-07-29)
 
 **Bare `e` in the viewer deletes every strip that holds no traces.** Command:

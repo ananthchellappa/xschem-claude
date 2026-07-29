@@ -1108,6 +1108,14 @@ typedef struct {
                        * 2/3 are TRANSIENT drag feedback (prospective destination).
                        * Like `active`, on-screen only (draw_graph flags bit 16).
                        * doc/claude/specs/waveform_viewer_modes.md */
+  int legendbold; /* viewer plan item 1: draw EVERY legend entry in the bold face
+                   * (prop token `legendbold=1`), written by the ASE viewer only —
+                   * draw_graph_variables is shared with every embedded schematic
+                   * graph in the tree, so this must not be a global. The bolded
+                   * wave (issue 0152) then needs a different cue, since bold is
+                   * no longer distinctive: it is drawn bold ITALIC.
+                   * Unlike `active`/`reorder_handle` this is durable CONTENT,
+                   * not chrome — it belongs in exports. */
 } Graph_ctx;
 
 /* One waveform marker (doc/claude/specs/graph_markers.md). Persisted in the
