@@ -158,6 +158,7 @@ looked at. **This list is the debt; do not let it grow silently.**
 | 1 correction — bold marks the selected trace only | `d40a3934` | ✅ EYEBALLED OK 2026-07-29 |
 | 2 — grid density (**touched `drawline`**) | `9dea8c0e` | ✅ EYEBALLED OK 2026-07-29 |
 | 3 — Ctrl-G grid toggle | `0d648465` | ✅ EYEBALLED OK 2026-07-29 |
+| 9 — diamond snap cursor | `56edb7ec` | ✅ EYEBALLED OK 2026-07-29 — **after two rejected rounds** (trail; proximity gate) |
 
 **Debt: none outstanding.** The `drawline` change in item 2 — the one thing the
 suite structurally could not verify, since nothing here can read back an X GC's
@@ -676,7 +677,22 @@ probably needed anyway for item 10 — build it here and test it here.
 ---
 
 ### Item 10 — waveform-window status bar: plot mode + diamond cursor x,y
-- [ ] **10. Viewer status bar**
+- [x] **10. Viewer status bar** — **DONE 2026-07-29.** Private `$top.wvstatus`,
+      PURE `wviewer::status_text`, `wviewer::status_refresh` on the kept generic
+      `<Motion>`, the mode PUSHED from `set_plot_mode`, the editor status bar
+      `pack forget`'d per window. `ST*` legs in `test_wave_snap.tcl`.
+
+> **The section's warnings were all correct** — do not repurpose
+> `$top.statusbar`, copy the `wvreadout` pattern, `-before $top.drw`, push from
+> `set_plot_mode`, and call it `Plot:` not `MODE:`. Each is now a test leg.
+>
+> **⚠ ONE TRAP IT COULD NOT HAVE KNOWN: `wviewer::in_ctx` uses `uplevel #0`.**
+> A `set` inside its script body creates a GLOBAL; the caller's local stays
+> empty. The status bar showed the plot mode and never a coordinate until the
+> value was taken through the **return** instead. `wviewer::with_edit` uses
+> `uplevel 1` and DOES reach the caller's scope — which is exactly what
+> `delete_all_markers`' count relies on — so the two brackets behave
+> differently and nothing warns you.
 
 **Verdict: MODERATE.** **Sequence after item 9** — the x,y does not exist until
 item 9 lands.

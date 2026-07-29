@@ -550,6 +550,55 @@ owning the current xschem context, like the 0151 mode/target commands); also
 - **Tests:** `tests/headless/test_wave_clear_all.tcl` (`CA*` no-window, `CG*`
   GUI) — 67 checks, sabotage-verified. Documented in `src/cadence_style_rc`.
 
+## Viewer status bar (viewer plan item 10, 2026-07-29)
+
+**Each viewer window carries its own bottom status bar** showing the plot mode
+and, while the item-9 diamond is snapped, that sample's x and y:
+`Plot: single    x: 1.5u    y: 900m`.
+
+- **⚠ It is NOT `$top.statusbar`.** `statusmsg()` (`scheduler.c` ~49) and
+  `update_statusbar()` (`callback.c` ~7994) rewrite that bar's slots from C on
+  **every GUI event**, addressed by `xctx->top_path` — so anything written into
+  it here would be silently overwritten on the next mouse move.
+  `ase::ui::select_on_design` already fought this and pays an 80 ms re-assert
+  pump for it; one of those in the tree is enough. The viewer builds a private
+  `$top.wvstatus` and `pack forget`s the editor bar for the window's life, the
+  same per-window treatment the toolbar already gets.
+- **Packed `-side bottom -fill x -before $top.drw`**, the rule `readout_show`
+  uses, so the bar takes its height from the canvas rather than squeezing it.
+- **The formatting is a PURE proc**, `wviewer::status_text {mode x y}` — no Tk,
+  no `xschem` — so the whole formatting half is assertable headless. Values go
+  through `ase::format_value` (engineering notation, and it returns
+  non-numerics verbatim so `{}`/`Inf`/`NaN` cannot throw).
+- **⚠ The label is `Plot:`, never `MODE:`.** The shipped editor bar already
+  carries a field literally labelled `MODE:` (`xschem.tcl` ~14908) and that one
+  is the **netlisting** mode. Two contradictory MODEs in one window is worse
+  than no status bar.
+- **The mode is PUSHED, not polled**: `set_plot_mode` — the one mutation site —
+  refreshes immediately after the model write, so the bar is right however the
+  mode changed (Options menu, `ase::plot_mode_for_current`, the chord, state
+  restore). The menu's own label is pull-only via `-postcommand`; without the
+  push the bar would go stale silently.
+- **The position rides the motion pump.** The snapped sample changes on a
+  C-side motion event with no Tcl hook, so the bar appends to the **kept
+  generic `<Motion>`** — never a more-specific sequence, which would preempt
+  the generic editor bind (the readout's `<ButtonRelease>` comment applies
+  verbatim). `status_refresh` never throws, and only touches Tk when the string
+  actually changed, because it runs on every mouse move.
+- **Item 10 does not compute the position.** It consumes item 9's published
+  contract, `xschem get graph_snap`.
+- **⚠ `wviewer::in_ctx` runs its script with `uplevel #0`** — GLOBAL level — so
+  a `set` inside the script body creates a *global* and the caller's local is
+  untouched. Take the value through the **return** instead.
+  (`wviewer::with_edit` uses `uplevel 1` and *does* reach the caller's scope,
+  which is what `delete_all_markers`' count relies on. **The two brackets
+  differ and the difference is silent.**) Measured: the bar showed the plot
+  mode and never a coordinate.
+- **Tests:** `ST*` in `tests/headless/test_wave_snap.tcl` — 14 pure legs under
+  `--nogui` plus the widget half on DISPLAY (`cget -text`, the editor bar
+  hidden, the push, and the position dropping outside the plot box).
+  Sabotage-verified three ways.
+
 ## Diamond snap cursor (viewer plan item 9, 2026-07-29)
 
 **While the pointer hovers a waveform graph, a diamond sticks to the nearest

@@ -547,6 +547,11 @@ proc wviewer::open {token} {
   # detached editor menubar and the fullscreen toggle key never reaches the
   # C callback (key_filter swallows it).
   catch {pack forget $top.toolbar}
+  # item 10: and the editor's own status bar. Same per-window reasoning as the
+  # toolbar above -- it is a schematic-editor surface (netlisting mode, snap,
+  # grid, the selection counter) that means nothing in a waveform window, and
+  # the viewer puts its own bar in its place.
+  catch {pack forget $top.statusbar}
   # item 12: fresh per-window model + cursor mirrors (forget cleared any
   # previous window's state for this token)
   if {![dict exists $layouts $token]} {
@@ -590,6 +595,26 @@ proc wviewer::open {token} {
   # dragging (Tk most-specific-wins; the item-11 sweep exists for exactly
   # this class).
   bind $wp <ButtonRelease> "+[list wviewer::readout_refresh $token]"
+  # viewer plan item 10: the window's OWN status bar (plot mode + the snapped
+  # sample from item 9). It is a private frame, deliberately NOT the editor's
+  # $top.statusbar: statusmsg() and update_statusbar() rewrite that bar's slots
+  # from C on EVERY GUI event, addressed by xctx->top_path, so anything written
+  # into it here would be silently overwritten on the next mouse move.
+  # ase::ui::select_on_design already fought that and pays an 80 ms re-assert
+  # pump for it; one of those in the tree is enough.
+  frame $top.wvstatus -background [ase::theme panel]
+  label $top.wvstatus.l -anchor w -font AseEntryFont \
+    -background [ase::theme panel] -text {}
+  pack $top.wvstatus.l -side left -fill x -expand 1
+  # -before $top.drw is the rule readout_show uses: packed bottom-first the bar
+  # takes its height from the canvas instead of squeezing it.
+  pack $top.wvstatus -side bottom -fill x -before $top.drw
+  # The snapped sample changes on MOTION, which is a C-side event with no Tcl
+  # hook — so the bar rides the motion pump. APPEND to the KEPT generic
+  # <Motion> (never a more-specific sequence, which would preempt the generic
+  # editor bind: the readout's <ButtonRelease> comment applies verbatim).
+  bind $wp <Motion> "+[list wviewer::status_refresh $token]"
+  wviewer::status_refresh $token
   # item 18: refit the graph(s) to the new viewport on any canvas resize so the
   # graph ALWAYS fills the window. APPEND (never replace) — <Configure> is in
   # keepseqs and the editor's own resize handler (resetwin+draw) MUST keep
@@ -1026,6 +1051,28 @@ proc wviewer::legend_bold {} {
 # (item 3's on/off toggle), reachable by mistake from a typo here otherwise.
 # Anything non-integer falls back to the default rather than to 0: a typo
 # should not silently restore the heavy grid the user asked to be rid of.
+# PURE (viewer plan item 10): the viewer status-bar text for a plot mode and a
+# snapped sample. `x`/`y` {} = nothing snapped. No Tk, no xschem — the whole
+# formatting half is assertable headless, which is the point of splitting it
+# from the widget.
+#
+# ⚠ THE LABEL IS "Plot:", NOT "MODE:". The shipped editor status bar already
+# carries a field literally labelled `MODE:` (xschem.tcl ~14908) and that one is
+# the NETLISTING mode. Two contradictory MODEs in one window is worse than no
+# status bar at all.
+#
+# Values go through ase::format_value, which is the engineering-notation
+# formatter the rest of ASE uses (and which returns non-numerics verbatim, so a
+# {} or an Inf cannot throw here).
+proc wviewer::status_text {mode x y} {
+  if {$mode eq {}} { set mode single }
+  set out "Plot: $mode"
+  if {$x ne {} && $y ne {}} {
+    append out "    x: [ase::format_value $x]    y: [ase::format_value $y]"
+  }
+  return $out
+}
+
 # The config var `wviewer_grid_show` -> the INITIAL value of a window's grid
 # flag. Not the live state: once a window is open, its own layout key is the
 # authority (the default_plot_mode precedent).
@@ -1882,6 +1929,11 @@ proc wviewer::set_plot_mode {req {token {}}} {
   }
   if {$new eq $cur} { return $cur }
   set mode($token) $new
+  # item 10: PUSH the status bar from the ONE mutation site, immediately after
+  # the model write. The Options-menu label is pull-only (-postcommand); without
+  # this push the status bar would go stale whenever the mode changed by any
+  # other route (ase::plot_mode_for_current, state restore, the chord).
+  catch {wviewer::status_refresh $token}
   wviewer::log_action [list wviewer::set_plot_mode $new $token]
   return $new
 }
@@ -3814,6 +3866,41 @@ proc wviewer::readout_show {token} {
 # every model trace (dedup by vec), eng-formatted via ase::format_value.
 # MUST never throw: it is appended to the canvas <ButtonRelease> bind
 # (an error there would pop Tk's bgerror modal), hence the catches.
+# Write the item-10 status bar. NEVER THROWS: it rides the motion pump, and an
+# error there would pop a bgerror dialog on every mouse move (readout_refresh's
+# discipline, and the reason every widget touch below is guarded).
+#
+# The snapped sample is READ from item 9's published contract
+# (`xschem get graph_snap` -> "gi wave x y", "" when nothing is snapped). Item
+# 10 does not compute a position: item 9 owns that.
+proc wviewer::status_refresh {token} {
+  variable windows
+  if {![dict exists $windows $token]} { return }
+  set top [dict get $windows $token top]
+  set w $top.wvstatus.l
+  if {[catch {winfo exists $w} e] || !$e} { return }
+  set m [wviewer::plot_mode $token]
+  if {$m eq {}} { set m [wviewer::default_plot_mode] }
+  set x {}; set y {}
+  # in_ctx, not a bare get: the snap is per-context state and the pointer may be
+  # over one viewer while another owns the current context.
+  #
+  # ⚠ TAKE THE VALUE THROUGH THE RETURN, never by setting a variable inside the
+  # script body. `wviewer::in_ctx` runs its script with `uplevel #0` -- GLOBAL
+  # level -- so a `set` in there creates a global and the caller's local is
+  # untouched. (`wviewer::with_edit` uses `uplevel 1` and DOES reach the
+  # caller's scope, which is the shape the `delete_all_markers` count relies on;
+  # the two brackets differ and the difference is silent.) Measured: the status
+  # bar showed the plot mode and never a coordinate.
+  set snap {}
+  catch { set snap [wviewer::in_ctx $token {xschem get graph_snap}] }
+  if {[llength $snap] == 4} { set x [lindex $snap 2]; set y [lindex $snap 3] }
+  set txt [wviewer::status_text $m $x $y]
+  # only touch Tk when the string actually changed: this runs on every motion
+  # event, and a -text configure is not free.
+  if {[catch {$w cget -text} cur] || $cur ne $txt} { catch {$w configure -text $txt} }
+}
+
 proc wviewer::readout_refresh {token} {
   variable windows
   variable cva; variable cvb

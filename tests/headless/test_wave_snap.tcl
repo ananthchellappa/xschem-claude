@@ -188,6 +188,40 @@ check_true "SS5 clear_drawing() disarms the snap" \
   [regexp {xctx->graph_snap_on = 0;} $asrc]
 
 # ============================================================================
+# ST* — item 10: the viewer STATUS BAR (pure half)
+# ============================================================================
+# The formatting is split from the widget precisely so this half needs no
+# DISPLAY at all.
+check "ST1 mode only, nothing snapped" [pcall {wviewer::status_text single {} {}}] \
+  {Plot: single}
+check "ST2 multi mode" [pcall {wviewer::status_text multi {} {}}] {Plot: multi}
+check "ST3 a snapped sample is appended, engineering-formatted" \
+  [pcall {wviewer::status_text single 1.5e-6 0.9}] {Plot: single    x: 1.5u    y: 900m}
+check "ST4 negatives and milli" [pcall {wviewer::status_text multi 1e-3 -2.5}] \
+  {Plot: multi    x: 1m    y: -2.5}
+check "ST5 zero is a value, not 'nothing snapped'" \
+  [pcall {wviewer::status_text single 0 0}] {Plot: single    x: 0    y: 0}
+check "ST6 an empty mode falls back to single" [pcall {wviewer::status_text {} {} {}}] \
+  {Plot: single}
+# half a coordinate is not a coordinate
+check "ST7 x without y shows no position" [pcall {wviewer::status_text single 1 {}}] \
+  {Plot: single}
+check "ST7 y without x shows no position" [pcall {wviewer::status_text single {} 1}] \
+  {Plot: single}
+# ⚠ THE LABEL. The shipped editor bar already has a field literally labelled
+# MODE:, and that one is the NETLISTING mode. Two contradictory MODEs in one
+# window is worse than no status bar.
+check "ST8 the label is 'Plot:', never 'MODE:'" \
+  [expr {[string first "MODE:" [wviewer::status_text single 1 2]] < 0}] 1
+check_true "ST8 ...and it does say Plot:" \
+  [string match "Plot: *" [wviewer::status_text single 1 2]]
+# never throws: it rides the motion pump
+foreach {tag xx yy} {ST9 abc 1 ST10 1 abc ST11 Inf 1 ST12 NaN NaN} {
+  check_true "$tag non-numeric '$xx'/'$yy' does not throw" \
+    [expr {![string match ERR:* [pcall {wviewer::status_text single $xx $yy}]]}]
+}
+
+# ============================================================================
 # SG* — DISPLAY
 # ============================================================================
 if {[info exists ::has_x] && [info commands winfo] ne {}} {
@@ -307,6 +341,34 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     # restore a valid snap for the legs below
     event generate $vdrw <Motion> -x $okx -y $oky
     update
+
+    # --- item 10: the status bar WIDGET half ---------------------------------
+    set sb $vtop.wvstatus.l
+    check_true "ST20 the viewer built its own status bar" \
+      [expr {[winfo exists $sb] && [winfo ismapped $sb]}]
+    # it must NOT be the editor's own bar: statusmsg()/update_statusbar() rewrite
+    # that one from C on every GUI event and would silently clobber us
+    check_true "ST20 the editor status bar is hidden in this window" \
+      [expr {![winfo ismapped $vtop.statusbar]}]
+    # a hover published a sample, so the bar must be showing it
+    event generate $vdrw <Motion> -x $okx -y $oky
+    update
+    set txt [pcall {$sb cget -text}]
+    check_true "ST21 the bar shows the plot mode" [string match "Plot: *" $txt]
+    check_true "ST21 ...and the snapped x/y" \
+      [expr {[string first "x:" $txt] >= 0 && [string first "y:" $txt] >= 0}]
+    # the mode is PUSHED from the one mutation site, not polled
+    pcall {wviewer::set_plot_mode multi $tok}
+    check_true "ST22 changing the mode pushes the bar (no motion needed)" \
+      [string match "Plot: multi*" [pcall {$sb cget -text}]]
+    pcall {wviewer::set_plot_mode single $tok}
+    check_true "ST22 ...and back" \
+      [string match "Plot: single*" [pcall {$sb cget -text}]]
+    # moving outside the plot box drops the position but keeps the mode
+    event generate $vdrw <Motion> -x $okx -y 1
+    update
+    set txt2 [pcall {$sb cget -text}]
+    check "ST23 outside the box the position is dropped" $txt2 {Plot: single}
 
     # disarming clears the published pick as well as the glyph
     pcall {xschem set graph_snap_cursor 0}
