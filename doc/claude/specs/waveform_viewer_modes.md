@@ -880,11 +880,11 @@ of trace names above it; "margins" is everything else inside the strip rect
 | MMB drag | anywhere on a graph | **C** | graph pan |
 | RMB press-drag | the body | **C** | box zoom |
 | RMB **click** | on a trace, in the body | **Tcl** | the trace context menu (item 7) |
-| RMB **press** | a legend entry | **C** | TOGGLES that entry's membership — the same thing Ctrl+LMB does |
+| RMB **click** | a legend entry | **Tcl** | the trace context menu for that entry's trace (issue 0178) |
 | RMB click | empty body | **Tcl** | the strip context menu (item 8) |
 | Shift+LMB, Alt+LMB | anywhere | — | swallowed by `strip_bindings` (issue 0149) |
 
-Four rules that are easy to get wrong and are asserted:
+Five rules that are easy to get wrong and are asserted:
 
 1. **Only the plot BODY clears.** A click that hits neither picking surface
    changes nothing, which is why the C arm carries `on_body` separately from
@@ -893,7 +893,19 @@ Four rules that are easy to get wrong and are asserted:
    whole window. A plain click never deselects what it lands on (0174 D3).
 3. **Ctrl+click never sweeps the other strips.** That is precisely how a
    selection spanning two strips is built.
-4. **Every row above is computed from RAW pixels, and nothing on this canvas is
+4. **RMB means CONTEXT MENU everywhere on this canvas** (issue 0178). The legend
+   used to be the one exception: its press fell through to the C engine, whose
+   Button3-outside-the-plot-box arm toggles the trace's membership — a second
+   button for Ctrl+LMB, and the thing the 0177 eyeball reported. A trace has two
+   picking surfaces and every other gesture already honours both, so the trace
+   menu's gate now accepts a legend entry and `wviewer::btn3_filter` swallows the
+   unmodified press so the engine never sees it. **Selection on the legend is
+   LMB's and Ctrl+LMB's alone.** The C arm is untouched, so graphs embedded in a
+   SCHEMATIC — which have no context menus — keep the toggle.
+   A single-trace strip posts no menu (the `>= 2 traces` rung, shared with the
+   body) and no longer toggles either: RMB is simply inert there, as it already
+   is on the axis margins.
+5. **Every row above is computed from RAW pixels, and nothing on this canvas is
    grid-quantised** (issue 0177). The viewer window's context carries `no_snap`,
    so `callback()` computes `mousex_snap`/`mousey_snap` as honest copies of
    `mousex`/`mousey` *at the source* — the guarantee is structural, not a local

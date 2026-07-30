@@ -1,6 +1,8 @@
 # 0177 — the waveform viewer must have NO schematic snap grid, anywhere
 
-**Status:** FIXED (2026-07-30), eyeball pending.
+**Status:** FIXED (2026-07-30), **EYEBALLED PASS** — with one unrelated
+observation carried to issue 0178 (RMB on a legend entry was toggling the
+selection instead of opening the trace context menu).
 **Branch:** `fluid-editing`. Reported at the 0175 eyeball, which passed with this
 one exception.
 

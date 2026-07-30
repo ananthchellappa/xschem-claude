@@ -1071,7 +1071,19 @@ static int waves_callback(int event, int mx, int my, KeySym key, int button, int
        * cross-strip sweep fired. */
       if(selchg) need_redraw_master = 1;
     }
-    /* button3 click on a wave label (outside the plot body) -> wave attributes dialog */
+    /* Button3 press on a wave label (outside the plot body) -> TOGGLE that
+     * trace's membership of the selection. NOT the wave-attributes dialog, which
+     * this comment claimed for years: `what == 2` has been the toggle since the
+     * selection became a set (issue 0175, draw.c edit_wave_attributes), and
+     * before that it was a plain hilight_wave toggle. The dialog is `what == 1`,
+     * on the double-click arm below.
+     *
+     * ⚠ THIS IS FOR GRAPHS EMBEDDED IN A SCHEMATIC (issue 0178). The ASE
+     * waveform viewer no longer reaches it: an unmodified Button3 PRESS on a
+     * legend entry is swallowed by wviewer::btn3_filter, which posts the TRACE
+     * CONTEXT MENU on the release instead -- the legend was the one region of
+     * that window where RMB was not a context menu, reported at the 0177
+     * eyeball. An embedded graph has no context menus, so it keeps this. */
     else if(event == ButtonPress && button == Button3 &&
             !POINTINSIDE(xctx->mousex, xctx->mousey, gr->x1, gr->y1, gr->x2 , gr->y2)) {
       if( edit_wave_attributes(2, i, gr)) {

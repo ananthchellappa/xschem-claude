@@ -5757,17 +5757,24 @@ proc wviewer::b3_marker_armed {W} {
 #   - the strip carries fewer than two DRAWN traces — mirrors
 #     move_trace_to_new_strip's own refusal, because a menu that posts an entry
 #     the command will refuse is worse than no menu;
-#   - no trace within `graph_trace_at`'s tolerance of the pointer. This is what
-#     keeps the menu off empty waveform space, which item 8 will claim.
+#   - no trace within `graph_trace_at`'s tolerance of the pointer AND no LEGEND
+#     entry there either. Between them these keep the menu off empty waveform
+#     space, which item 8 will claim.
 #
-# ⚠ DIGITAL AND BUS STRIPS HAVE NO MENU, and that is the engine's answer, not a
-# choice made here: `graph_wave_at` documents "digital strips and bus traces
-# answer -1 (their rendering is a band/ribbon, not a polyline)" (draw.c ~4711),
-# so `trace_at` misses everywhere on such a strip and this gate refuses. It is
-# the same limit the LMB trace drag already lives with, and the two must not
-# diverge. (Landmine 33 states the consequence for the OTHER gate: because
-# near-wave is 0 across such a body, the whole strip reads as empty waveform
-# space — which is item 8's territory, not item 7's.)
+# ⚠ DIGITAL AND BUS STRIPS: NO MENU IN THE BODY, BUT ONE ON THE LEGEND (issue
+# 0178 corrected this entry, which used to say they had no menu at all).
+# `graph_wave_at` documents "digital strips and bus traces answer -1 (their
+# rendering is a band/ribbon, not a polyline)" (draw.c), so `trace_at` misses
+# across their whole body and the body half of this gate refuses — the same limit
+# the LMB trace drag lives with, and the two must not diverge. (Landmine 33
+# states the consequence for the OTHER gate: near-wave is 0 across such a body,
+# so the whole body reads as empty waveform space, item 8's territory.)
+# The LEGEND half is different by design: `graph_legend_at` deliberately does NOT
+# refuse digital strips, and has its own digital layout, precisely because there
+# the legend is the ONLY way to name a trace at all (the same reasoning that gave
+# the legend its LMB select in 0175). So a digital or bus strip with >= 2 traces
+# now DOES get "Move to Separate Strip" from its legend, and
+# `move_trace_to_new_strip` has no digital refusal, so the entry works.
 proc wviewer::trace_menu_pick {W px py} {
   set token [wviewer::token_for_canvas $W]
   if {$token eq {}} { return {-1 -1} }
@@ -5785,10 +5792,42 @@ proc wviewer::trace_menu_pick {W px py} {
   set G [lindex $gs $gi]
   if {[wviewer::node_count $G] < 2} { return {-1 -1} }
   set ni [wviewer::trace_at $W $gi $px $py]
+  # THE LEGEND IS THE SECOND WAY IN (issue 0178). A trace has two picking
+  # surfaces -- its stroke in the body and its name in the legend -- and every
+  # other gesture already honours both (LMB click selects from either since
+  # 0175). RMB did not: on the legend it fell through to the C engine, whose
+  # Button3-outside-the-plot-box arm TOGGLES the trace's selection. That made the
+  # legend the only place in the viewer where RMB was not a context menu, and it
+  # is what the 0177 eyeball reported.
+  #
+  # Ordered stroke-first so a legend that ever overlapped a drawn trace would
+  # resolve to the trace, matching the LMB arm in callback.c (which tests
+  # `on_body` first for the same reason). They do not overlap today -- the legend
+  # sits outside the plot box by construction -- so this is an ordering that
+  # cannot currently be observed, kept because the alternative is a silent
+  # ambiguity if the layout ever changes.
+  if {$ni < 0} { set ni [wviewer::legend_at $W $gi $px $py] }
   if {$ni < 0} { return {-1 -1} }
   set ti [wviewer::trace_index_of_node $G $ni]
   if {$ti < 0} { return {-1 -1} }
   return [list $gi $ti]
+}
+
+# Which strip/NODE a canvas pixel's LEGEND ENTRY names, as {gi ni}, or {-1 -1}.
+#
+# The gate btn3_filter uses to decide that the VIEWER claims an RMB press rather
+# than letting it reach the C engine (issue 0178). Deliberately NOT
+# trace_menu_pick: this question is "is this pixel a legend entry at all", with
+# no `node_count >= 2` rung. A single-trace strip has a legend the C engine would
+# still toggle on, and the viewer has to claim that press too -- otherwise RMB on
+# the legend would keep toggling on exactly the strips where no menu can post,
+# which is the inconsistency being removed, just moved somewhere harder to see.
+proc wviewer::legend_slot_at {W px py} {
+  set gi [wviewer::strip_at_pixel $W $px $py]
+  if {$gi < 0} { return {-1 -1} }
+  set ni [wviewer::legend_at $W $gi $px $py]
+  if {$ni < 0} { return {-1 -1} }
+  return [list $gi $ni]
 }
 
 # A fresh, empty, ASE-themed context menu called `name` on the viewer TOPLEVEL
@@ -5970,13 +6009,20 @@ proc wviewer::strip_menu_unpost {token} {
 # The ONE context-menu entry point of the RMB click. Returns 1 when either menu
 # posted.
 #
-# The two gates already PARTITION the strip body — the strip gate refuses any
-# pixel the trace gate accepts, by asking `trace_at` itself — so this ordering is
-# a second line of defence rather than the thing that separates them, and
-# sabotaging it green-lights nothing (probe-verified: reversing the two lines
-# leaves the suite green). The partition itself is what SG8 pins. Asking the more
-# specific menu first is kept anyway, because a future rung that widened the
-# strip gate would otherwise silently start swallowing trace clicks.
+# The two gates still PARTITION the pointer, now over TWO regions rather than
+# one (issue 0178). Inside the PLOT BODY it is the original split: the strip gate
+# refuses any pixel the trace gate accepts, by asking `trace_at` itself. Over the
+# LEGEND BAND the trace gate accepts (via `legend_at`) and the strip gate cannot
+# compete at all, because it requires `plotbox_at` and the legend is outside the
+# plot box by construction. So the two are disjoint on both regions, by two
+# different mechanisms — check BOTH when touching either gate.
+#
+# This ordering is therefore a second line of defence rather than the thing that
+# separates them, and sabotaging it green-lights nothing (probe-verified:
+# reversing the two lines leaves the suite green). The partition itself is what
+# SG8 pins. Asking the more specific menu first is kept anyway, because a future
+# rung that widened the strip gate would otherwise silently start swallowing
+# trace clicks.
 proc wviewer::ctx_menu_post {W px py {rx -1} {ry -1}} {
   if {[wviewer::trace_menu_post $W $px $py $rx $ry]} { return 1 }
   return [wviewer::strip_menu_post $W $px $py $rx $ry]
@@ -5991,10 +6037,54 @@ proc wviewer::btn3_filter {W T x y b s {rx -1} {ry -1}} {
     # BEFORE the forward below, which aborts an armed marker drag
     set b3mk($W) [wviewer::marker_grabbed $W]
   }
-  # C FIRST, unconditionally — this is what makes the menu safe (see the block
-  # comment above): by the time the gate below runs, the engine has already
-  # erased any rubber rectangle and cleared GRAPHPAN on its normal release path.
-  xschem callback $W $T $x $y 0 $b 0 $s
+  # C FIRST — this is what makes the menu safe (see the block comment above): by
+  # the time the gate below runs, the engine has already erased any rubber
+  # rectangle and cleared GRAPHPAN on its normal release path.
+  #
+  # ⚠ ONE EXCEPTION, AND ONLY ON THE PRESS (issue 0178): a press on a LEGEND
+  # ENTRY is the viewer's, not the engine's. C's Button3 arm for a press outside
+  # the plot box TOGGLES that trace's selection membership
+  # (`edit_wave_attributes(2, ...)`, callback.c), which is a second button for
+  # Ctrl+LMB and made the legend the only region of the viewer where RMB was not
+  # a context menu. Swallowing the press here is how the viewer claims it —
+  # exactly what strip_drag_press already does for LMB — and it leaves the C
+  # engine untouched, so on-canvas SCHEMATIC graphs (which have no context menus
+  # of their own) keep the toggle they have always had.
+  #
+  # ⚠ EVERY MODIFIER STATE, NOT JUST THE UNMODIFIED PRESS. The first cut copied
+  # the `$s & 13` refusal from the menu gate below, and that left the whole
+  # reported defect alive under a modifier: neither C's Button3 routing
+  # (`waves_selected`, which ignores modifiers for Button3) nor the toggle arm
+  # itself tests `state`, so Ctrl+RMB and Shift+RMB on a legend name went on
+  # selecting and deselecting it — silently, because the release gate then
+  # refuses to post a menu for exactly those modifiers. A modified RMB on the
+  # legend is now simply INERT, which is what "a modified RMB belongs to whatever
+  # else claims it" means when nothing claims it.
+  #
+  # WHY SKIPPING THE PRESS IS SAFE — and NOT for the reason first written here.
+  # It is NOT "the press is outside the plot box so it arms no GRAPHPAN": the
+  # GRAPHPAN latch (callback.c) has no plot-box test at all, and `graph_top`
+  # suppresses it only for the band ABOVE the plot box — the `vlegend` and
+  # `digital` legend layouts sit to the LEFT of it, where `graph_top` is 0 and a
+  # Button3 press WOULD latch. What actually kept the old press inert on a legend
+  # HIT is the `return 0` C takes as soon as `edit_wave_attributes` succeeds,
+  # before the latch. So on a legend hit the engine only ever did the toggle, and
+  # not forwarding is equivalent to it having done nothing. ⚠ THE COROLLARY:
+  # do NOT widen this swallow to the axis margins on the same argument — there
+  # `edit_wave_attributes` misses, the latch DOES fire, mx/my_double_save is
+  # written, and the still-forwarded release would commit a box zoom.
+  #
+  # The release is always forwarded, and the press record above is written either
+  # way, so the no-travel click test is unaffected.
+  #
+  # FAIL-OPEN, deliberately: `legend_slot_at` answers -1 when the band registry
+  # is empty or the context switch is refused, and the press is then forwarded —
+  # i.e. it degrades to the old toggle rather than swallowing a press that might
+  # have been a box zoom. Failing closed would break RMB box-zoom on the body,
+  # which is the more costly mistake.
+  set b3own 0
+  if {$T == 4 && [lindex [wviewer::legend_slot_at $W $x $y] 0] >= 0} { set b3own 1 }
+  if {!$b3own} { xschem callback $W $T $x $y 0 $b 0 $s }
   if {$T != 5} { return }
   set had [info exists b3x0($W)]
   set x0 0; set y0 0

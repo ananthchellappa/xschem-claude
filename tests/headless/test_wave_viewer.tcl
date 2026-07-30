@@ -1757,26 +1757,46 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
         [ix_canvas_ok $vdrw $cx0 $cy0 $cz0]
       check "WB-mmb-drag MMB drag does not bold" [wb_bold $vdrw] -1
 
-      # WB-legend: Button3 OUTSIDE the plot body is the per-trace legend
-      # affordance (edit_wave_attributes(2,...), draw.c) — it toggles the trace
-      # whose label was hit, and issue 0174 left it alone: only the imprecise
-      # "closest wave to the press point" toggle inside the plot body moved to
-      # LMB. This leg is the no-collateral-damage witness.
+      # WB-legend: what the two buttons do on a legend entry.
       # ⚠ ISSUE 0175 CHANGED THE LMB HALF. The last leg of this block used to
       # assert that an LMB click on the legend does NOTHING ("body-only"); a
       # legend click now SELECTS that trace, which is the feature 0175 was asked
       # for, so the leg asserts the new answer. The 0152 `WB-legend` row is
       # superseded accordingly.
+      # ⚠ ISSUE 0178 CHANGED THE RMB HALF, and these two legs asserted the exact
+      # behaviour that was REPORTED AS WRONG at the 0177 eyeball: "RMB click on
+      # legend name is selecting a trace and RMB click legend of selected trace
+      # is deselecting it". Button3 outside the plot body still reaches
+      # edit_wave_attributes(2,...) in the C engine — that is how graphs EMBEDDED
+      # IN A SCHEMATIC still work — but the ASE viewer no longer forwards such a
+      # press: wviewer::btn3_filter swallows it and posts the TRACE CONTEXT MENU
+      # on the release instead, so RMB means "context menu" everywhere on this
+      # canvas. Selection on the legend is LMB's and Ctrl+LMB's alone.
+      # These legs now assert the NEW contract; the menu side of it is covered in
+      # test_wave_trace_menu.tcl TR1-TR5, which is where that feature lives.
       wb_reset $tok
       set wbly [expr {int(0.03 * $H)}]      ;# above the plot box (14% top margin)
       wb_ev $vdrw <ButtonPress-3>   -x $bpx -y $wbly
       wb_ev $vdrw <ButtonRelease-3> -x $bpx -y $wbly -state 0x400
       update
-      check "WB-legend RMB on the legend still bolds that trace" [wb_bold $vdrw] 0
-      wb_ev $vdrw <ButtonPress-3>   -x $bpx -y $wbly
-      wb_ev $vdrw <ButtonRelease-3> -x $bpx -y $wbly -state 0x400
+      catch {wviewer::trace_menu_unpost $tok} ; update
+      check "WB-legend RMB on the legend does NOT bold (0178)" [wb_bold $vdrw] -1
+      # ...and it does not toggle one that IS bold, either: select with LMB (the
+      # button that owns selection now), then RMB the same entry twice.
+      wb_ev $vdrw <ButtonPress-1>   -x $bpx -y $wbly
+      wb_ev $vdrw <ButtonRelease-1> -x $bpx -y $wbly -state 0x100
       update
-      check "WB-legend second legend RMB un-bolds" [wb_bold $vdrw] -1
+      check "WB-legend (control) LMB DOES bold it, so the pixel is a legend entry" \
+        [wb_bold $vdrw] 0
+      foreach _wbi {1 2} {
+        wb_ev $vdrw <ButtonPress-3>   -x $bpx -y $wbly
+        wb_ev $vdrw <ButtonRelease-3> -x $bpx -y $wbly -state 0x400
+        update
+        catch {wviewer::trace_menu_unpost $tok} ; update
+      }
+      check "WB-legend two legend RMBs leave the selection alone (0178)" \
+        [wb_bold $vdrw] 0
+      wb_reset $tok
       # issue 0175: an LMB click on a legend entry SELECTS that trace. Teeth: the
       # pixel is the same one the RMB legs above just proved is a legend entry, so
       # a leg that passed because "nothing is there" is not available.

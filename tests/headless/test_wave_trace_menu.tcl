@@ -429,12 +429,23 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     return {}
   }
   # ... and one the engine says holds NO trace, for the refusal legs
+  # EMPTY WAVEFORM SPACE means empty PLOT BODY, not merely "a pixel with no trace
+  # on it". ⚠ The plotbox_at rung is load-bearing (issue 0178): without it this
+  # walks the strip from the top and returns a LEGEND pixel, because the legend
+  # band is inside the strip and carries no drawn trace. That used to be
+  # indistinguishable from body space -- both refused every gate -- but the
+  # legend is now the trace menu's second picking surface, so a legend pixel
+  # answers {0 n} and TG7's "empty waveform space refuses" leg went red pointing
+  # at the helper rather than at the code. It is also exactly the region item 8's
+  # own gate excludes (`strip_menu_pick` requires plotbox_at), so this now agrees
+  # with the thing it is testing against.
   proc find_empty_px {vdrw gi} {
     set W [winfo width $vdrw]; set H [winfo height $vdrw]
     foreach fx {0.50 0.40 0.60} {
       set px [expr {int($fx * $W)}]
       for {set py 2} {$py < $H} {incr py 2} {
         if {[wviewer::strip_at_pixel $vdrw $px $py] != $gi} { continue }
+        if {![wviewer::plotbox_at $vdrw $gi $px $py]} { continue }
         if {[wviewer::trace_at $vdrw $gi $px $py] < 0} { return [list $px $py] }
       }
     }
@@ -1596,6 +1607,133 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     check "TS6 a click in the AXIS MARGIN owns no trace and changes nothing" \
       [ts_sels $vdrw] {0 -}
   }
+  }
+
+  # --- TR*: RMB on a LEGEND entry is the TRACE MENU, not a selection toggle --
+  # (issue 0178, found at the 0177 eyeball)
+  #
+  # The legend used to be the ONE region of the viewer where RMB was not a
+  # context menu: the press fell through btn3_filter to the C engine, whose
+  # Button3-outside-the-plot-box arm calls edit_wave_attributes(2, ...) and
+  # TOGGLES that trace's membership -- a second button for Ctrl+LMB. RMB now
+  # never means "selection" on this canvas any more -- it is a context menu where
+  # one can post, and inert where one cannot (a 1-trace strip's legend, the axis
+  # margins, and any MODIFIED RMB). Selection on the legend
+  # belongs to LMB / Ctrl+LMB alone (TS6 above).
+  #
+  # The change is TCL-ONLY and deliberately so: the C arm is untouched, so
+  # on-canvas SCHEMATIC graphs -- which have no context menus of their own --
+  # keep the toggle they have always had.
+  set trx1 [ts_slot_center $vdrw 0 $tsrow 1]
+  if {$trx1 eq {}} {
+    puts "SKIPPED: TR* (legend slot centre not found)"
+  } else {
+    # the GATE: a legend pixel resolves to {strip node}, a body pixel does not
+    check "TR1 legend_slot_at resolves a legend entry to {strip node}" \
+      [pcall {wviewer::legend_slot_at $vdrw $trx1 $tsrow}] {0 1}
+    check "TR1 ...and a plot-BODY pixel is not a legend slot" \
+      [pcall {wviewer::legend_slot_at $vdrw [lindex $ts2 0] [lindex $ts2 1]}] {-1 -1}
+    check "TR1 ...and neither is a pixel off every strip" \
+      [pcall {wviewer::legend_slot_at $vdrw -50 -50}] {-1 -1}
+
+    # the trace menu's gate now accepts the legend, and names the SAME trace the
+    # legend entry does
+    check "TR2 trace_menu_pick accepts a legend entry" \
+      [pcall {wviewer::trace_menu_pick $vdrw $trx1 $tsrow}] \
+      [list 0 [wviewer::trace_index_of_node \
+                 [lindex [dict get [wviewer::layout_for $tok] graphs] 0] 1]]
+    # ⚠ THE PARTITION, which now holds by TWO different mechanisms and so has to
+    # be checked on BOTH regions: in the body the strip gate refuses whatever
+    # trace_at accepts; over the legend it cannot compete at all, because it
+    # requires plotbox_at. Losing either limb means both menus post on one click.
+    check "TR2 the strip menu still refuses the legend (the partition holds)" \
+      [pcall {wviewer::strip_menu_pick $vdrw $trx1 $tsrow}] -1
+
+    # THE REPORTED BEHAVIOUR, through the REAL gesture. A full unmodified
+    # <ButtonPress-3>/<ButtonRelease-3> on a legend entry must leave the
+    # selection exactly as it found it -- empty when it was empty, and (the half
+    # that names the report) UNCHANGED when that very trace was already selected.
+    # ⚠ THE GESTURE MUST WITNESS BOTH HALVES AT ONCE. Asserting only "the
+    # selection did not change" is satisfied just as well by RMB-on-the-legend
+    # doing NOTHING AT ALL, which is a distinct and equally wrong outcome (break
+    # the release-side post and that is exactly what happens). So every real
+    # gesture below reports the menu too, and `tr_rmb` takes the post witness
+    # from `trace_menu_unpost`'s own return -- it answers 1 precisely when a menu
+    # widget was there to take down.
+    proc tr_rmb {vdrw tok px py {st 0}} {
+      tm_ev $vdrw <ButtonPress-3>   -x $px -y $py -state $st
+      tm_ev $vdrw <ButtonRelease-3> -x $px -y $py -state [expr {$st | 0x400}]
+      update
+      set posted 0
+      catch {set posted [wviewer::trace_menu_unpost $tok]}
+      update
+      return $posted
+    }
+    ts_reset $tok $vdrw
+    set trposted [tr_rmb $vdrw $tok $trx1 $tsrow]
+    check "TR3 RMB on a legend entry does NOT select" [ts_sels $vdrw] {- -}
+    check "TR3 ...and it DID post the trace menu (not merely do nothing)" \
+      $trposted 1
+    ts_click $vdrw $trx1 $tsrow
+    check "TR3 (control) an LMB click on the same entry DOES select" \
+      [ts_sels $vdrw] {1 -}
+    set trposted2 [tr_rmb $vdrw $tok $trx1 $tsrow]
+    check "TR3 RMB on the legend of a SELECTED trace does NOT deselect it" \
+      [ts_sels $vdrw] {1 -}
+    check "TR3 ...and that one posted a menu too" $trposted2 1
+
+    # ⚠ A MODIFIED RMB MUST NOT TOGGLE EITHER, and the first cut of this fix let
+    # it: the swallow copied the menu gate's `$s & 13` refusal, so Ctrl+RMB and
+    # Shift+RMB still reached C -- whose Button3 routing and toggle arm both
+    # ignore `state` -- and went on select/deselecting the trace SILENTLY,
+    # because the release gate then refuses to post a menu for those very
+    # modifiers. The whole reported defect, alive under a modifier. It is inert
+    # now: no toggle, no menu.
+    foreach {trname trmask} {Ctrl 0x4 Shift 0x1 Alt 0x8} {
+      ts_reset $tok $vdrw
+      ts_click $vdrw $trx1 $tsrow
+      set trm [tr_rmb $vdrw $tok $trx1 $tsrow $trmask]
+      check "TR4 $trmask ($trname)+RMB on a selected legend entry does NOT deselect" \
+        [ts_sels $vdrw] {1 -}
+      check "TR4 ...and posts no menu either (it is inert)" $trm 0
+    }
+
+    # the menu the gesture posts is BUILT for the legend entry's own trace: the
+    # header entry carries that trace's label, so a gate that resolved to the
+    # wrong trace -- or to strip 0 trace 0 by accident -- shows up here
+    ts_reset $tok $vdrw
+    tm_ev $vdrw <ButtonPress-3>   -x $trx1 -y $tsrow -state 0
+    tm_ev $vdrw <ButtonRelease-3> -x $trx1 -y $tsrow -state 0x400
+    update
+    set trti [wviewer::trace_index_of_node \
+                [lindex [dict get [wviewer::layout_for $tok] graphs] 0] 1]
+    set trwant [wviewer::trace_label [lindex [wviewer::dget \
+                  [lindex [dict get [wviewer::layout_for $tok] graphs] 0] traces {}] $trti]]
+    # trace_menu_build only emits the disabled header when the trace HAS a label,
+    # so a label-less fixture trace would make entry 0 the command instead -- skip
+    # rather than assert a mismatch that says nothing about the gate
+    if {$trwant eq {}} {
+      puts "SKIPPED: TR4 header-label leg (the picked trace carries no label)"
+    } else {
+      set trgot {}
+      catch {set trgot [$vtop.wvtracemenu entrycget 0 -label]}
+      check "TR4 the posted menu's header names the legend entry's own trace" \
+        $trgot $trwant
+    }
+    catch {wviewer::trace_menu_unpost $tok} ; update
+
+    # the swallow is scoped to the PRESS, and to legend pixels only
+    set fp [open [file join $repo src wave_viewer.tcl] r]; set trsrc [read $fp]; close $fp
+    check_true "TR5 only the PRESS is claimed, and only on a legend slot" \
+      [regexp {if \{\$T == 4 && \[lindex \[wviewer::legend_slot_at \$W \$x \$y\] 0\] >= 0\} \{ set b3own 1 \}} $trsrc]
+    check_true "TR5 ...and the forward is skipped only for a claimed press" \
+      [regexp {if \{!\$b3own\} \{ xschem callback \$W \$T \$x \$y 0 \$b 0 \$s \}} $trsrc]
+    check "TR5 ...with NO modifier exemption (that hole shipped once)" \
+      [regexp -all {\$T == 4 && !\(\$s & 13\)} $trsrc] 0
+    # the C engine is untouched, so embedded schematic graphs keep the toggle
+    set fp [open [file join $repo src callback.c] r]; set trc [read $fp]; close $fp
+    check_true "TR5 the C legend toggle still exists (embedded schematic graphs)" \
+      [regexp {edit_wave_attributes\(2, i, gr\)} $trc]
   }
 
   # --- TS7: the witness is a NODE index (trap 5) ---------------------------
