@@ -1,8 +1,9 @@
 # GUI-test control gate — warn / Snooze / Pause the headless GUI test suite
 
-Status: SHIPPED **v3** (2026-07-29; v2 2026-07-25, v1 2026-07-22)
+Status: SHIPPED **v4** (2026-07-30; v3 2026-07-29, v2 2026-07-25, v1 2026-07-22)
 Files: tests/headless/gui_gate_widget.tcl, tests/headless/gui_gate.sh,
 wired into tests/headless/full_audit.sh **and tests/headless/run_suites.sh**.
+Self-test: tests/headless/test_gui_gate_revive.sh.
 
 ## THE ONE RULE (v3)
 
@@ -36,6 +37,8 @@ because the hook was simply gone).
 - **Fails open**: no `DISPLAY`, `GUI_GATE=0`, `wish` missing, or a
   dead/again-unlaunchable panel → the suite just runs, never wedged. (Proven:
   killing the panel mid-wait prints `panel gone, proceeding` and the tests run.)
+  **v4 caveat:** failing open is the *last* resort, not the first. A dead panel
+  is now revived before that fallback is taken — see "Mid-suite panel death".
 - **Singleton `wish` panel**: first suite launches it via a pid/liveness file;
   later suites reuse it.
 - **Launched with `setsid`, in its OWN process group (v3).** A plain
@@ -62,7 +65,19 @@ because the hook was simply gone).
 - `snooze_until` — epoch deadline; while set, the panel shows a countdown and
   auto-proceeds at expiry. One deadline serves BOTH the default auto-start
   countdown and a user Snooze (they differ only in length and wording), which
-  is why the file keeps its original name.
+  is why the file keeps its original name. **Known defect (open):** the panel
+  *writes* this file but never *reads* it back at startup, so a relaunch — which
+  `_gate_attention` does routinely — silently downgrades a user's Snooze 30m to
+  a fresh 2-minute autostart.
+- `events.log` — v4. Timestamped shell-side trail: panel launched / launch
+  failed / death detected / revived / fail-open taken. Capped at ~200 lines.
+  **This is the durable record**; `widget.log` is not (below).
+- `widget.log` — v4. The panel's own stdout+stderr, replacing `>/dev/null 2>&1`.
+  Truncated on *every* launch, so a revive erases the log of the death that
+  caused it — which is exactly how the sibling review gate ended up holding a
+  0-byte log of a real panel death. Good for "why won't it start", useless for
+  "what killed it"; that is what `events.log` is for.
+- `last_revive` — v4. Throttle stamp for `_gate_revive_widget`.
 
 ## Shell API (`gui_gate.sh`)
 
@@ -71,9 +86,82 @@ because the hook was simply gone).
   waiting. **Warns before EVERY suite** (user choice): each suite re-arms a
   request.
 - `gate_pause_point "<status>"` — call BETWEEN atomic tests: writes status,
-  holds while `control==PAUSE` (the in-flight test always finishes first),
-  returns 2 on `STOP`.
+  **revives a dead panel (v4)**, holds while `control==PAUSE` (the in-flight
+  test always finishes first), returns 2 on `STOP`.
 - `gate_finish` — remove this suite's status/request files.
+
+## Mid-suite panel death (v4) — the panel must come BACK
+
+v1–v3 could only ever *build* a panel from `gate_start`. `_gate_ensure_widget`
+was reachable from nowhere else (`gate_start` directly, or via
+`_gate_attention`), and `gate_start` runs **once per suite invocation**
+(`run_suites.sh:76`, `full_audit.sh:152`). A panel that died *between* suites was
+therefore rebuilt by the next `gate_start` and nobody ever noticed the gap. A
+panel that died *during* one stayed dead until the run ended.
+
+Worse, the one function that runs for the whole life of a suite was blind to it:
+`gate_pause_point` tested liveness **only inside its `PAUSE` branch**, so in the
+normal `RUN` state it never asked.
+
+**How it happened (2026-07-30, measured).** WSLg's Xwayland aborts on its own —
+`(EE) Fatal server error: (EE) request could not be marshaled: can't send file
+descriptor`, SIGABRT, `weston.log: xserver exited, code 134` — **three times in
+one nine-hour session** (07:44:03, 07:50:37, 08:16:32), each after a *lull*, so
+it is not load-proportional and not the suite's fault. Every X client dies with
+the server, and a Tk client dies badly: libX11's `_XDefaultIOError` simply
+`exit(1)`s and Tk installs no `XSetIOErrorHandler`, so `WM_DELETE_WINDOW` never
+fires and `on_close` never runs. **The signature of this death is a stale
+`widget.pid` plus an untouched `control` file** — `on_close` would have deleted
+one and rewritten the other.
+
+Two of those aborts landed between suites and went unnoticed. The third landed
+3 minutes into a 150-run soak: **27 minutes of GUI flood with no Pause button**,
+which is precisely the failure this gate exists to prevent.
+
+v4:
+
+- **`_gate_revive_widget`** — drops the stale pid file and relaunches.
+  **Throttled (`last_revive`, default 30 s, `GUI_GATE_REVIVE_EVERY`), never
+  once-only**: three aborts in one session, and a soak outlives several.
+- **Called from `gate_pause_point`, ahead of reading `control`** — between every
+  test, for the suite's whole life. Its result is deliberately discarded:
+  turning a missing panel into a *blocked* suite would breach the one rule.
+- **Also called from `gate_start`'s wait loop**, before the `panel gone,
+  proceeding` fallback — the user has still never seen that request.
+- **Only a CRASHED panel is revived, never a CLOSED one.** The two are
+  distinguishable, and it is the same signature that identified the 07-30 death:
+  `on_close` deletes `widget.pid`; a signalled or X-severed panel cannot run
+  `on_close` and leaves the file behind. So `_gate_revive_widget` returns early
+  when `widget.pid` is **absent** — closing the panel means "get out of the way"
+  (see Panel, above), and bringing it back one pause point later would be the
+  gate arguing with the user.
+- **Reviving while `control==PAUSE` is correct**, and is not a contradiction of
+  "never relaunch while paused" under Attention below. That rule forbids
+  *killing a live* panel (which would fail-open every held suite). Restoring a
+  *dead* one hands the user their Pause back.
+- **The reborn panel is SILENT.** `attention` (`focus -force` + `bell`) now only
+  fires on startup if a request is actually pending. A mid-suite revive has
+  none, and grabbing focus there would steal the keyboard from the xschem window
+  a running test is driving with `event generate` — trading a missing panel for
+  a new class of test flake. `gate_start` still announces itself: it writes
+  `req/<pid>` *before* the relaunch, deliberately.
+- **`_gate_widget_alive` checks IDENTITY, not just `kill -0`** — the pid must
+  match a `/proc/<pid>/cmdline` containing `gui_gate_widget` (an unreadable
+  `/proc` is accepted; unverifiable ≠ wrong). `widget.pid` outlives both the
+  process and the boot while pids recycle, and believing a recycled pid is the
+  one failure the gate cannot survive: `_gate_ensure_widget` no-ops, no panel
+  ever launches, `gate_start` spins **forever**, and `_gate_attention` TERMs then
+  SIGKILLs an innocent bystander.
+
+**Not fixed here:** the Xwayland abort itself (a WSLg fd-marshalling bug in
+software-render mode — `Failed to initialize glamor, falling back to sw`). Treat
+any long-lived X client on this box as mortal.
+
+**Still open after v4:** `snooze_until` is write-only (see Control protocol);
+no `trap` in `gate_start`, so an interrupted suite orphans `status/<pid>` and
+blocks STOP self-clearing; and nothing forces a bare
+`src/xschem --script` invocation through the gate at all — the gate is advisory,
+which is why `run_suites.sh` is mandatory rather than merely recommended.
 
 ## Panel (`gui_gate_widget.tcl`, run by `wish`)
 

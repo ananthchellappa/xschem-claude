@@ -33,11 +33,53 @@ _gate_enabled() {
   return 0
 }
 
+# _gate_log — a timestamped, shell-side event trail (panel launched / died /
+# revived / fail-open taken).
+#
+# The panel's own stderr (widget.log, below) is NOT enough on its own:
+# _gate_ensure_widget truncates that file on every launch, so a revive destroys
+# the record of the death that caused it. Measured on the sibling review gate --
+# it had stderr capture, its panel really did die and relaunch, and the log was
+# 0 bytes minutes later. This file is the thing that turns "the panel vanished
+# and nobody knows why" into a one-line answer.
+#
+# Capped, so a long soak cannot grow it without bound.
+_gate_log() {
+  local f="$GATE_DIR/events.log" n
+  mkdir -p "$GATE_DIR" 2>/dev/null
+  printf '%s [%s] %s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z' 2>/dev/null)" \
+         "$_GATE_PID" "$*" >> "$f" 2>/dev/null
+  n="$(wc -l < "$f" 2>/dev/null || echo 0)"
+  if [ "${n:-0}" -gt 400 ] 2>/dev/null; then
+    tail -n 200 "$f" > "$f.tmp" 2>/dev/null && mv -f "$f.tmp" "$f" 2>/dev/null
+  fi
+  return 0
+}
+
+# _gate_widget_alive — is OUR panel running? Identity, not merely liveness.
+#
+# `kill -0` alone trusts a pid file that outlives both the process and the boot.
+# pids recycle: the counter restarts at every WSL boot while widget.pid persists
+# across boots, so a stale file can name a live, innocent process within hours.
+# Believing that would be the one failure this gate cannot survive --
+# _gate_ensure_widget would no-op, no panel would ever launch, and gate_start's
+# wait loop would spin FOREVER (nothing deletes the req, liveness never fails):
+# the exact inverse of the fail-open contract. _gate_attention would also TERM
+# and then SIGKILL that innocent process.
+#
+# An unreadable /proc is accepted, not treated as a mismatch: unverifiable is
+# not the same as wrong, and guessing "dead" there would launch a second panel
+# on every single call.
 _gate_widget_alive() {
   local pf="$GATE_DIR/widget.pid"
   [ -f "$pf" ] || return 1
   local wp; wp="$(cat "$pf" 2>/dev/null)"
-  [ -n "$wp" ] && kill -0 "$wp" 2>/dev/null
+  [ -n "$wp" ] || return 1
+  kill -0 "$wp" 2>/dev/null || return 1
+  if [ -r "/proc/$wp/cmdline" ]; then
+    tr '\0' ' ' < "/proc/$wp/cmdline" 2>/dev/null | grep -q gui_gate_widget || return 1
+  fi
+  return 0
 }
 
 _gate_ensure_widget() {
@@ -51,15 +93,69 @@ _gate_ensure_widget() {
   # on_close's cleanup ran). The panel is a SINGLETON meant to outlive every
   # individual suite, so it gets its own session. A stale pid file loses the
   # singleton race harmlessly: _gate_widget_alive kill -0's it.
+  # NEVER /dev/null. The panel died mid-suite on 2026-07-30 and there was no way
+  # to find out why, because wish's stderr had been discarded -- the one line
+  # that would have named the killer ("X connection to :0 broken") went nowhere.
+  # Truncated per launch, so it cannot grow without bound; the durable trail is
+  # events.log (_gate_log), which a relaunch does not erase.
+  local log="$GATE_DIR/widget.log"
   if command -v setsid >/dev/null 2>&1; then
-    ( setsid wish "$_GATE_SELF_DIR/gui_gate_widget.tcl" "$GATE_DIR" >/dev/null 2>&1 & )
+    ( setsid wish "$_GATE_SELF_DIR/gui_gate_widget.tcl" "$GATE_DIR" >"$log" 2>&1 & )
   else
-    ( wish "$_GATE_SELF_DIR/gui_gate_widget.tcl" "$GATE_DIR" >/dev/null 2>&1 & )
+    ( wish "$_GATE_SELF_DIR/gui_gate_widget.tcl" "$GATE_DIR" >"$log" 2>&1 & )
   fi
   # wait briefly for it to write its pid
   local i
-  for i in $(seq 1 20); do _gate_widget_alive && return 0; sleep 0.15; done
+  for i in $(seq 1 20); do
+    _gate_widget_alive && { _gate_log "panel launched pid=$(cat "$GATE_DIR/widget.pid" 2>/dev/null)"; return 0; }
+    sleep 0.15
+  done
+  _gate_log "panel launch FAILED (see $log)"
   _gate_widget_alive
+}
+
+# _gate_revive_widget — bring the panel back MID-SUITE.
+#
+# Why this has to exist: WSLg's Xwayland aborts on its own
+# ("(EE) request could not be marshaled: can't send file descriptor", SIGABRT --
+# three times in one nine-hour session on 2026-07-30). Every X client dies with
+# it, and a Tk client dies BADLY: libX11's default I/O error handler simply
+# exit(1)s and Tk installs none, so WM_DELETE_WINDOW never runs, on_close never
+# runs, and the panel leaves a stale widget.pid behind.
+#
+# Until this existed, _gate_ensure_widget was reachable ONLY from gate_start --
+# which runs once per suite invocation. A panel that died BETWEEN suites was
+# quietly rebuilt by the next gate_start and nobody noticed; a panel that died
+# DURING one stayed dead. Measured: 27 minutes of a 150-run soak with no Pause
+# button, which is the exact scenario this whole gate was built to prevent.
+#
+# THROTTLED, never once-only: three aborts in one session, and a soak outlives
+# several. GUI_GATE_REVIVE_EVERY overrides the interval (seconds).
+_gate_revive_widget() {
+  # ONLY revive a panel that CRASHED, never one the user closed.
+  #
+  # Those two are distinguishable, and the distinction is the whole forensic
+  # signature of the 07-30 death: on_close (WM_DELETE_WINDOW) deletes
+  # widget.pid, whereas a signalled/X-severed panel cannot run on_close at all
+  # and leaves the file behind. So a MISSING widget.pid means "the user shut me
+  # down" -- which the spec defines as "get out of the way" -- and resurrecting
+  # it one pause point later would be the gate arguing with the user.
+  [ -f "$GATE_DIR/widget.pid" ] || return 1
+
+  local stamp="$GATE_DIR/last_revive" now prev
+  now="$(date +%s)"
+  if [ -f "$stamp" ]; then
+    prev="$(cat "$stamp" 2>/dev/null || echo 0)"
+    [ "$((now - prev))" -lt "${GUI_GATE_REVIVE_EVERY:-30}" ] && return 1
+  fi
+  printf '%s' "$now" > "$stamp"
+  _gate_log "panel death detected -- reviving"
+  # drop the corpse's pid file first, or _gate_ensure_widget's own liveness
+  # check could race a pid that is being reaped
+  rm -f "$GATE_DIR/widget.pid"
+  if _gate_ensure_widget; then _gate_log "panel revived"; return 0; fi
+  _gate_log "revive FAILED -- suite continues UNGATED"
+  return 1
 }
 
 _gate_control() { cat "$GATE_DIR/control" 2>/dev/null; }
@@ -137,7 +233,15 @@ gate_start() {
   fi
   echo "gui_gate: '$label' waiting for go-ahead in the control panel..." >&2
   while [ -f "$req" ]; do
-    _gate_widget_alive || { echo "gui_gate: panel gone, proceeding" >&2; rm -f "$req"; break; }
+    if ! _gate_widget_alive; then
+      # A panel that dies while a suite waits is not "the gate is over": the
+      # user has still never seen this request. Try to bring it back, and only
+      # fall through to the fail-open contract if it will not stay up.
+      if ! _gate_revive_widget; then
+        _gate_log "panel gone during gate_start -- proceeding ungated"
+        echo "gui_gate: panel gone, proceeding" >&2; rm -f "$req"; break
+      fi
+    fi
     sleep 0.3
   done
   # Stop pressed while we were waiting?
@@ -151,6 +255,19 @@ gate_pause_point() {
   local status="${1:-}"
   mkdir -p "$GATE_DIR/status"
   printf '%s' "$status" > "$GATE_DIR/status/$_GATE_PID"
+
+  # THE hole this closes. Liveness used to be tested ONLY inside the PAUSE
+  # branch below, so in the normal RUN state a suite never noticed that its
+  # panel had died -- and nothing anywhere brought one back before the next
+  # gate_start, which does not come until the next suite. This function is the
+  # only gate code that runs for the whole life of a suite, so the check belongs
+  # here, ahead of reading `control`.
+  #
+  # Best-effort BY CONSTRUCTION: the result is deliberately discarded. A gate
+  # that turned a missing panel into a blocked suite would have broken its own
+  # one rule to fix a lesser bug.
+  _gate_widget_alive || _gate_revive_widget || true
+
   while true; do
     local c; c="$(cat "$GATE_DIR/control" 2>/dev/null)"
     case "$c" in

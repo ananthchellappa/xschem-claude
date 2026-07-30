@@ -341,8 +341,17 @@ wm protocol . WM_DELETE_WINDOW on_close
 
 # The shell side relaunches this process precisely so a fresh window maps on the
 # desktop the user is looking at — so announce ourselves the moment we are up,
-# not only once a request has been noticed by the poll loop.
+# not only once a request has been noticed by the poll loop. gate_start writes
+# req/<pid> BEFORE it relaunches us, so that path still announces itself.
+#
+# But ONLY when something is actually waiting. A MID-SUITE revive (the shell's
+# _gate_revive_widget, after the X server aborted and took the panel down with
+# it) has no pending request — and there `attention`'s `focus -force` would
+# steal the keyboard from the xschem window a running test is driving with
+# `event generate`, turning the fix for a missing panel into a new class of test
+# flake. Coming back silently is exactly right in that case: the suite was
+# already running, nobody needs waking, the Pause button simply exists again.
 set ::seen_reqs {}
-after 120 attention
+after 120 { if {[llength [pending_reqs]] > 0} { attention } }
 
 refresh
