@@ -755,6 +755,27 @@ from a *drag*, before writing any menu code.
       `graph_is_empty` bug was caught for real (`dict exists` is lenient on a
       non-dict, so the well-formedness test had to be made explicit).
       ⚠ **Menu pixels still un-eyeballed** — unchanged by this.
+- [x] **8 follow-up ROUND 2 — D3 REVISED: RELOCATE the empty strip.**
+      **DONE 2026-07-29**, after the round-1 build was driven for real and
+      **reported as a defect**. Round 1 could consume only the strip at exactly
+      `gi + 1`, which almost never fires. The repro (log `/tmp/Xschem.log.1`):
+      three strips of one trace each → drag strip 1's trace onto strip 2 (strip 1
+      goes empty) → split strip 2. Strip 2 is bottom-most, so `gi + 1` does not
+      exist, the free strip is **above**, and round 1 inserted a fourth strip next
+      to a blank one.
+      **v2 takes the nearest empty strip anywhere (D1's order) and RELOCATES it**
+      below the split strip: D-F's reading order survives because the strip is
+      *moved*, not filled in place, and the count does not grow while an empty
+      strip exists. `plan_split` now reports `{ok take src at block new}`; the
+      target remap became the PURE `target_after_split` (a REMOVAL then an
+      insertion — a bare `index_after_insert` is now wrong, and a target that IS
+      the relocated strip follows it by identity). D2's cap is shared with item 7.
+      Suite **221 DISPLAY / 80 nogui**; `SG12` is the reported repro end to end.
+      Five fresh sabotages, each red in a different place.
+      ⚠ **The lesson, for the record:** the round-1 decision (D3 "adjacent only")
+      was mine to recommend and was approved, but it was only *reasoned* about —
+      one real gesture sequence showed it fires almost never. A decision about
+      *where* something lands is worth driving before it is called done.
 
 > **⚠ TWO CORRECTIONS.**
 >

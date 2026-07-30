@@ -938,9 +938,10 @@ CIW error when no viewer resolves.
   only `vec`-less traces draws nothing and is still **not** empty: `e` leaves it
   alone, and neither gesture may consume it.
 - **⚠ Interaction with the item 7/8 reuse (2026-07-29): those gestures CONSUME
-  empty strips**, so after one there is less for `e` to find — asserted from both
-  sides (`TG18`, `SG18`). Nothing about `e` changed: D-C still spares the last
-  strip and D-D still spares the auto-plot strip.
+  empty strips** — item 7 moves a trace into one, item 8 *relocates* one into its
+  destination run — so after either there is less for `e` to find. Asserted from
+  both sides (`TG18`, `SG18`). Nothing about `e` changed: D-C still spares the
+  last strip and D-D still spares the auto-plot strip.
 - **Tests:** `tests/headless/test_wave_empty_strips.tcl` — `EP*` pure (28 under
   `--nogui`), `EN*` no-window, `EG1..EG11` GUI; **94 checks** on the DISPLAY arm.
   Sabotage-verified four ways: removing the D-C clause, dropping the target
@@ -1123,37 +1124,50 @@ with reuse may be **0**, still a success — `{}` plus a CIW error on a refusal.
   becomes three strips reading `a, b, c` top to bottom. A full split, not a
   one-trace peel-off. Traces carrying an empty `vec` reach no node slot, so they
   are not traces for this purpose and stay with node 0.
-- **REUSE BEFORE CREATE (2026-07-29), and deliberately NARROWER than item 7's.**
-  An empty strip already sitting **immediately below** the split strip is
-  *consumed* and only the shortfall inserted. The whole decision is the PURE
-  `wviewer::plan_split` → `{ok reuse at new}`, called by both
-  `split_graph_in_graphs` (the model op) and `split_strip` (the target
-  arithmetic), so the two cannot disagree about how many strips were inserted.
-  - **D3, only `gi + 1` counts — NOT `gi - 1`, and not "any empty strip".** The
-    asymmetry with item 7 is intentional: a split produces a *contiguous* run
-    reading node 0, 1, 2 … downward, so a strip taken from above would put node 1
-    above node 0 and break the very reading order D-F exists to preserve, and one
-    taken from far below would tear the run apart. Adjacency is what makes the
-    reused strip the same slot an inserted one would have occupied.
-  - **D4, one adjacent slot cannot satisfy `nc - 1`:** the adjacent empty strip
-    takes **node 1** and the remaining `nc - 2` strips are inserted after it (at
-    `gi + 2`), so the run is still `gi .. gi + nc - 1` in reading order.
-  - **`nc == 2` therefore inserts NOTHING**, and `split_strip` returns **0**.
-    ⚠ **0 is a SUCCESS, not a refusal** — it mutates, it takes an undo point and
-    it logs; only `{}` means nothing happened. A caller testing `if {!$n}` would
-    read a legitimate split as a failure.
-  - **The auto-plot strip is never consumed** (D-D), and "empty" is
+- **REUSE BEFORE CREATE (2026-07-29): the split RELOCATES an empty strip.** The
+  whole decision is the PURE `wviewer::plan_split` -> `{ok take src at block new}`,
+  called by both `split_graph_in_graphs` (the model op) and `split_strip` (the
+  target remap), so the two cannot disagree about what moved where.
+  - ⚠ **D3 was REVISED the same day, after the first cut was driven for real.**
+    v1 could consume only the strip at *exactly* `gi + 1` ("adjacency in place"),
+    and that almost never fires. The reported repro: three strips of one trace
+    each, drag strip 1's trace down onto strip 2 (strip 1 goes empty), then split
+    strip 2 — it is bottom-most, so `gi + 1` does not exist, the free strip sits
+    **above** it, and v1 inserted a fourth strip right next to a blank one.
+  - **D3 (v2): the nearest empty strip in the WHOLE stack is taken** — D1's order,
+    nearest below first, then nearest above — **and RELOCATED into the destination
+    run** rather than filled where it lies. That reconciles the two constraints
+    which made v1 narrow: D-F's reading order survives because the strip is
+    *moved* to below the split strip (nothing ends up above node 0 — filling an
+    empty strip above **in place** is what would break it, and that stays
+    forbidden), and the strip count does not grow while any empty strip exists.
+    Relocation preserves the relative order of every *other* strip: lifting one
+    strip out and re-inserting it lower down moves only itself.
+  - **D4, the shortfall:** a split needs `nc - 1` destination strips; as many as
+    are available are relocated (nearest first, taking the slots nearest the
+    source) and only the shortfall is created. **Zero created is normal** —
+    `nc == 2` with one empty strip anywhere creates nothing at all.
+  - **`split_strip` then returns 0.** ⚠ **0 is a SUCCESS, not a refusal** — it
+    mutates, it takes an undo point and it logs; only `{}` means nothing happened.
+    A caller testing `if {!$n}` would read a legitimate split as a failure.
+  - **The auto-plot strip is never taken** (D-D), and "empty" is
     `wviewer::graph_is_empty` — **zero MODEL traces**, the same definition item 7,
     `plan_plot` and `e` use, failing closed on a malformed entry.
-  - **D5, the target shift must use the plan's ACTUAL `at`/`new`**, not `gi + 1`
-    and `nc - 1`: with a reused strip the inserts start one slot lower and there
-    is one fewer of them (zero when `nc == 2`), so the old arithmetic pushed the
-    target one strip too far. `SG16` separates all three answers — correct 5, old
-    arithmetic 6, clamp alone 4 — on one fixture.
+  - **D2's distance cap is shared** with item 7 (`reuse_max_distance`, OFF by
+    default): both gestures now travel, so one config governs both.
+  - **D5, the target remap is a REMOVAL then an insertion** — the PURE
+    `wviewer::target_after_split`, never a bare `index_after_insert`: relocating a
+    strip from above the split lifts every strip below it up one slot *before* the
+    destination block goes in, and a target that **is** the relocated strip
+    follows it into its slot by identity. The insertion count is the whole
+    `block` (`nc - 1`), not the created count.
+    ⚠ `SG16` separates the correct answer from the clamp-alone answer but **not**
+    from the bare-insert answer (on a six-strip stack the clamp pulls 6 back to
+    5); **`SG12` is the leg that catches a bare `index_after_insert`**, and `SP48`
+    pins the arithmetic itself.
   - **Replay stays deterministic**: the logged line is still `split_strip <gi>
-    <token>` with no reuse decision in it, which is sound because `plan_split` is
-    a pure function of the model a replay reproduces. Asserted in `SG17`, not
-    assumed.
+    <token>` with no plan in it, which is sound because `plan_split` is a pure
+    function of the model a replay reproduces. Asserted in `SG17`, not assumed.
 - **The core is a LOOP over the shipped `move_trace_in_graphs`**, not fresh index
   math, and that is the whole point: every iteration gets the marker migration,
   the `hilight_wave` hand-off and the empty-destination range blanking for free,
@@ -1162,8 +1176,10 @@ with reuse may be **0**, still a success — `{}` plus a CIW error on a refusal.
   also what makes reuse free: a consumed strip's stale ranges go back to `auto`,
   so `regenerate` re-autozooms it like a fresh one.)
   Two ordering rules make that safe: **every destination strip is in place
-  first** — inserted, or reused where an empty one already sat — so node *k*'s
-  destination is `gi + k` and never moves under the loop;
+  first** — created, or relocated from elsewhere in the stack — so node *k*'s
+  destination is `src + k` and never moves under the loop (`src` is the split
+  strip's index *after* the relocations are lifted out, which is why `plan_split`
+  reports it rather than leaving the loop to recompute `gi`);
   and the traces move **descending**, from the last node to node 1, because
   removing node *k* renumbers only the nodes above it — which are already placed.
   Ascending renumbers the remaining work on every step (sabotage-verified: it
@@ -1208,19 +1224,23 @@ with reuse may be **0**, still a success — `{}` plus a CIW error on a refusal.
   `ctx_menu_widget`/`_drop`/`_popup` helpers (the trace menu was refactored onto
   them; its widget path and proc signatures are unchanged).
 - **Tests:** `tests/headless/test_wave_split_strip.tcl` — `SP*` pure + `SN*`
-  no-window (**72 checks** under `--nogui`), `SG1..SG18` GUI; **211 checks** on
+  no-window (**80 checks** under `--nogui`), `SG1..SG18` GUI; **221 checks** on
   the DISPLAY arm. Sabotage-verified five ways — dropping the plot-box rung
   (which reproduces the margin collision), running the split loop ascending,
   dropping the target shift, and dropping the trace exclusion each turn legs red;
   reversing the dispatcher order does not, which is why the comment there says so.
-  ⚠ **The reuse legs (`SG12..SG18`) carry the same hollowness risk as item 7's**
-  and answer it the same way: the strip **COUNT** (reuse inserts fewer strips, or
-  none) and strip **IDENTITY** (an inert `smid` key, so a created strip reads back
-  as `-`). Five more sabotages: never reuse → `SG12/13/16/17/18` + `SP33/34/42-49`
-  red; reuse unconditionally → red at `SP11` (it moves a trace into the sentinel,
-  the fail-open `graph_is_empty` bug that leg caught for real); allowing `gi - 1`
-  → `SG14` + `SP35`; the old `gi+1`/`nc-1` target arithmetic → `SG16`; dropping
-  the auto exclusion → `SG15`. The `e` interaction is asserted in `SG18`.
+  ⚠ **The relocation legs (`SG12..SG18`) carry the same hollowness risk as item
+  7's** and answer it the same way: the strip **COUNT** (relocation never grows the
+  stack while an empty strip exists) and strip **IDENTITY** (an inert `smid` key,
+  so a created strip reads back as `-`). `SG12` *is* the reported repro, driven end
+  to end. Five more sabotages, each red somewhere different: never relocate →
+  `SG12/13/14/16/17/18` + 11 `SP*`; not shifting `src` through the removal →
+  `SG12/14/16` + 7 `SP*`; above-before-below → `SG14` + `SP35/36/37/46`; a bare
+  `index_after_insert` for the target → `SG12` + `SP48`; dropping the auto
+  exclusion → `SG15` + `SP38`. The `e` interaction is asserted in `SG18`.
+  (An earlier v1-era sabotage worth keeping on record: making reuse
+  unconditional went red at `SP11` by moving a trace *into* a non-dict sentinel —
+  that is how the fail-open `graph_is_empty` bug was caught for real.)
 
 ## Mid-drag shrink preview (viewer plan item 6, 2026-07-29)
 
