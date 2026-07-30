@@ -296,6 +296,11 @@ Full waveform battery, DISPLAY arm, one pass: **14/15**, every count as pinned
 `test_wave_drag_preview` 46, `test_ase_persist` 109, `test_ase_unnamed_net` 28,
 `test_ase_window` 166) plus this issue's two: `test_wave_viewer` 349 → **356**,
 `test_wave_trace_menu` 223 → **243**. nogui unchanged: 48 / 71.
+(Both re-verified against the committed code on 2026-07-30 — 356 / 243, ALL
+PASS. The first attempt at that re-verification was worthless: WSLg had stopped
+mapping toplevels, so every GUI leg SKIPPED and the suites reported
+"ALL PASS (73 checks)" / "ALL PASS (72 checks)". ⚠ **A green line is not a green
+suite — always read the check COUNT.**)
 
 **10× soak of the whole battery: 136/150.** The 14 non-passes are six *different*
 suites failing six *different* legs at about 1-in-10 each, all of the
@@ -313,13 +318,36 @@ produces — a real defect fails the same leg every time:
 | `W3` double-click editor | 1/10 | ASE window dialog |
 | `NORESULT` ×2 of 150 | — | harness "binary never reported"; the same scripts exit 0 run directly |
 
-⚠ **Honest gap.** A 10× pristine control was started for the five suites other
-than `test_wave_trace_menu` and **did not finish** — WSLg stopped mapping
-toplevels partway through and every GUI leg began self-skipping
-(`test_wave_viewer` 356 → 73, `test_wave_trace_menu` 243 → 72, both still
-"ALL PASS" because the legs SKIP). So those five 1-in-10 rates are argued
-structurally, not measured against pristine. `TG9`'s 4/10 pristine rate WAS
-measured. Re-run the control when the display is healthy.
+**The pristine control, 2026-07-30.** Run in a `git worktree` at the pre-0174
+commit (verified pristine: zero occurrences of `GRAPH_TRACE_PICK_TOL`), NOT by
+stashing — an interrupted stash cycle leaves the tree sitting on pristine code,
+which is how the first attempt at this control ended. 10× the five suites other
+than `test_wave_trace_menu`: **46/50**.
+
+| leg | pristine | verdict |
+|---|---|---|
+| `AN8 empty-space click queues nothing -> {v(short)}` | **1/10, byte-identical** | flake, confirmed directly |
+| `MF1 the anchor really SLID` | **1/10** | flake, confirmed directly |
+| `test_ase_window` | **2/10** (`W6c Ctrl-W destroyed the log window`) | the suite has flaky legs on pristine; the soak's `W3` is the same family |
+| `SG6` / `ST21` (`test_wave_snap`) | 0/10 | see below |
+| `MG13` (`test_wave_modes`) | 0/10 | see below |
+
+`SG6`/`ST21` and `MG13` did not recur — but neither did they on a follow-up
+**15× of both suites on the 0174 build: 30/30**. One occurrence in 25 runs of
+each suite on this code, zero in 10 on pristine. n is too small to separate those
+two rates, so the argument that closes it is **reachability, not statistics**:
+
+- `SG6`/`ST21` drive a `<Motion>` sweep and read `xschem get graph_snap`. No
+  Button1, no ButtonRelease — they never enter the arm that changed. The snap
+  path is `graph_plotbox_at` + `graph_point_at` at tol `1e30`, and neither
+  function was touched.
+- `MG13` resolves a Tk keysym string (`<Control-Key-dollar>`). No C graph code at
+  all; it is the `wslg-key-delivery-flakes` family.
+
+The only behavioural deltas in this commit are the ButtonRelease+Button1 arm and
+`find_closest_wave`'s `*node_number` ordering (a no-op for its one surviving
+caller, which reads the return value). The `scheduler.c` edits replace the
+literal `10.0` with a `#define` of the same value — identical semantics.
 
 ## Manual sequence (this is a POINTER behaviour — the suite cannot close it)
 
