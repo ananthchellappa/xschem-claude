@@ -1164,6 +1164,30 @@ proc wviewer::target_clamp {gi n} {
   return $gi
 }
 
+# PURE: is model strip `G` EMPTY? THE one definition of "empty strip", shared by
+# every rule that consumes or deletes one: the plot-batch reuse (plan_plot), `e`
+# (empty_strips_to_delete), and the two 2026-07-29 gesture reuses
+# (reuse_strip_for_trace_move, plan_split).
+#
+# ⚠ EMPTY MEANS **ZERO MODEL TRACES**, not `node_count == 0`. A strip holding
+# only `vec`-less traces reaches no node slot, so it draws nothing — but it is
+# NOT empty here, and must not be consumed or deleted: the trace dicts are real
+# model state the user can still edit into something drawable. The two counts
+# differ exactly there, which is why both gestures test this and not node_count.
+#
+# Fails CLOSED on anything that is not a well-formed dict: a malformed entry is
+# never "an empty strip you may take". (The model is always dicts; the guard
+# also lets a test stack carry inert non-dict sentinels either side of the strip
+# under test — the SP11-SP14 precedent.)
+# ⚠ The well-formedness test has to be EXPLICIT: `dict exists` is lenient, so
+# `dget` answers "no traces key" for a non-dict instead of erroring, and a
+# fail-open here would have let the split move a trace INTO the malformed entry
+# (caught by SP11's sentinels the moment the reuse arm landed).
+proc wviewer::graph_is_empty {G} {
+  if {[catch {dict size $G}]} { return 0 }
+  return [expr {[llength [wviewer::dget $G traces {}]] ? 0 : 1}]
+}
+
 # PURE: the indices of the strips a plot batch may REUSE instead of creating a
 # new one — the strips that hold NO traces and are not the tool-owned auto-plot
 # strip — in index order (issue 0171 follow-up).
@@ -1171,7 +1195,7 @@ proc wviewer::empty_graph_indices {gs {auto -1}} {
   set out {}
   set gi 0
   foreach G $gs {
-    if {$gi != $auto && ![llength [wviewer::dget $G traces {}]]} { lappend out $gi }
+    if {$gi != $auto && [wviewer::graph_is_empty $G]} { lappend out $gi }
     incr gi
   }
   return $out
@@ -3046,18 +3070,74 @@ proc wviewer::move_trace {from_gi from_ti to_gi {token {}}} {
 # doc/claude/specs/waveform_viewer.md. The payload behind the RMB context menu
 # below, and a CIW-typable command in its own right.
 #
-# It is `move_trace` with ONE extra step — a `linsert` of an `empty_graph` — and
-# it deliberately does NOT call `add_graph`: add_graph regenerates on the spot
-# and takes neither an undo point nor a log line, so a strip created that way
-# would land between this command's capture and its mutation and split one
-# gesture into two half-states (the very failure the move_strip ordering
-# contract exists to prevent).
+# REUSE BEFORE CREATE (2026-07-29 request, decisions D1/D2). An empty strip is a
+# place to put a trace, so this gesture FILLS one when the stack already has one
+# instead of inserting a second blank band beside it — the same reasoning
+# `plan_plot` records for plot batches (issue 0171's follow-up, see its header):
+# appending past an existing empty strip pinned a blank band on the window and
+# shrank every real strip for nothing. Only when there is no reusable empty
+# strip is one inserted, and then still directly below the source (D-F).
 #
-# The new strip goes DIRECTLY BELOW the source, which is decision D-F's
-# reading-order rule (the same one item 8's split will follow). The move itself
+# D1, WHICH empty strip when several are free: the NEAREST one BELOW the source,
+# else — only when none is below — the nearest one ABOVE. "Below" is D-F's
+# reading-order direction and matches where an inserted strip would have gone;
+# "nearest" keeps the trace close to where it was picked up. The direction
+# preference is STRICT: an empty strip below wins even when one above is nearer.
+#
+# D2, distance: a far empty strip IS taken (the user's request, and consistent
+# with `e`, which treats every empty strip alike wherever it sits). The optional
+# cap below exists for the "the trace teleported" reading and is OFF by default.
+proc wviewer::reuse_max_distance {} {
+  if {![info exists ::wviewer_reuse_max_distance]} { return 0 }
+  set v [string trim $::wviewer_reuse_max_distance]
+  if {![string is integer -strict $v] || $v < 0} { return 0 }
+  return $v
+}
+
+# PURE: the index of the existing empty strip a single-trace separate-strip move
+# should CONSUME, or -1 when there is none and one must be inserted. `auto` is
+# the tool-owned auto-plot strip (`auto_graph_index`, -1 = none), which is never
+# consumable — see the D-D note on empty_strips_to_delete: it is traceless
+# BETWEEN runs and item 13 rebuilds it after every one, so a trace parked there
+# is silently destroyed at the next run.
+#
+# `maxdist` > 0 caps |candidate - from_gi| (D2's optional cap); 0 = no cap, the
+# default. The cap is applied BEFORE D1's below-then-above preference, so a
+# capped-out strip below does not block a reachable one above.
+proc wviewer::reuse_strip_for_trace_move {gs from_gi {auto -1} {maxdist 0}} {
+  if {![string is integer -strict $from_gi]} { return -1 }
+  if {![string is integer -strict $maxdist] || $maxdist < 0} { set maxdist 0 }
+  set below -1
+  set above -1
+  # empty_graph_indices is ascending, so the FIRST candidate past the source is
+  # the nearest below it and the LAST one before it is the nearest above
+  foreach gi [wviewer::empty_graph_indices $gs $auto] {
+    if {$gi == $from_gi} continue        ;# the source has traces; belt and braces
+    if {$maxdist > 0 && abs($gi - $from_gi) > $maxdist} continue
+    if {$gi > $from_gi} {
+      if {$below < 0} { set below $gi }
+    } else {
+      set above $gi
+    }
+  }
+  if {$below >= 0} { return $below }
+  return $above
+}
+
+# It is `move_trace` with ONE extra step — a `linsert` of an `empty_graph`, and
+# only when no empty strip was there to reuse — and it deliberately does NOT
+# call `add_graph`: add_graph regenerates on the spot and takes neither an undo
+# point nor a log line, so a strip created that way would land between this
+# command's capture and its mutation and split one gesture into two half-states
+# (the very failure the move_strip ordering contract exists to prevent).
+#
+# An INSERTED strip goes DIRECTLY BELOW the source, which is decision D-F's
+# reading-order rule (the same one item 8's split follows). The move itself
 # is the shipped PURE `move_trace_in_graphs`, which is where marker migration,
 # the `hilight_wave` hand-off and the empty-destination range blanking come
-# from — nothing here does index math on markers.
+# from — nothing here does index math on markers. That blanking is also what
+# makes REUSE free: a reused strip's stale x1/x2/y1/y2 go back to `auto`, so
+# regenerate re-autozooms it exactly as it does a fresh one.
 #
 # Same ordering contract as move_strip / move_trace, for the same reasons:
 #   1. resolve + validate every index against the LIVE model
@@ -3069,9 +3149,10 @@ proc wviewer::move_trace {from_gi from_ti to_gi {token {}}} {
 #      no-ops under a raised semaphore — landmine 17)
 #   4. capture the live C-written state FIRST, so the regenerate below cannot
 #      undo a pan/zoom/bold made with the mouse
-#   5. insert the empty strip, then the pure move, dictionary carried whole
-#   6. the NEW strip becomes the target strip, set IN PLACE — move_trace step 6
-#      verbatim (the destination is the target), and not through
+#   5. pick the empty strip to REUSE (pure, D1/D2) and insert one only when
+#      there is none, then the pure move, dictionary carried whole
+#   6. the DESTINATION becomes the target strip, set IN PLACE — move_trace step 6
+#      verbatim (the destination is the target, reused or new), and not through
 #      set_target_strip, which would emit a second replay-log line for what is
 #      an internal consequence of this one command
 #   7. exactly ONE regenerate, exactly ONE fully-resolved log line
@@ -3081,9 +3162,18 @@ proc wviewer::move_trace {from_gi from_ti to_gi {token {}}} {
 # plot_signals' arithmetic. That shift is unreachable here — step 6 overwrites
 # the target with the destination index, exactly as the twin command does — so
 # the shift helper is left for item 8, whose multi-strip split does not adopt a
-# single destination. Shifting AND overwriting would be dead code.
+# single destination. Shifting AND overwriting would be dead code. (The reuse
+# arm needs no shift at all: nothing is inserted, so no index moves.)
 #
-# Returns the index of the NEW strip, or {} on failure/refusal.
+# REPLAY DETERMINISM: the log line carries the source indices only, never the
+# resolved destination — so a replay recomputes the reuse decision. That is
+# sound because the decision is a PURE function of the model
+# (reuse_strip_for_trace_move + auto_graph_index) and a replay reaches the same
+# model, and it is asserted, not assumed (TG17: undo, replay the logged line,
+# compare strip identities).
+#
+# Returns the index of the DESTINATION strip — an existing empty strip when one
+# was reused, otherwise the newly inserted one — or {} on failure/refusal.
 proc wviewer::move_trace_to_new_strip {from_gi from_ti {token {}}} {
   variable windows
   variable target
@@ -3122,10 +3212,16 @@ proc wviewer::move_trace_to_new_strip {from_gi from_ti {token {}}} {
   # re-read: the capture writes the live ranges back into the model, and the
   # insert below must not be applied to the pre-capture list
   set gs [dict get [wviewer::layout_for $token] graphs]
-  set at [expr {$from_gi + 1}]
-  # the insert is BELOW the source, so `from_gi` still addresses the source
-  # afterwards and no source-side index needs remapping
-  set gs [linsert $gs $at [wviewer::empty_graph]]
+  # D1/D2: consume an existing empty strip when the stack has one (never the
+  # auto-plot strip — D-D), else insert one
+  set at [wviewer::reuse_strip_for_trace_move $gs $from_gi \
+            [wviewer::auto_graph_index $token] [wviewer::reuse_max_distance]]
+  if {$at < 0} {
+    set at [expr {$from_gi + 1}]
+    # the insert is BELOW the source, so `from_gi` still addresses the source
+    # afterwards and no source-side index needs remapping
+    set gs [linsert $gs $at [wviewer::empty_graph]]
+  }
   wviewer::set_graphs $token \
     [wviewer::move_trace_in_graphs $gs $from_gi $from_ti $at]
   set target($token) $at
@@ -3140,12 +3236,14 @@ proc wviewer::move_trace_to_new_strip {from_gi from_ti {token {}}} {
 # on EMPTY waveform space, and a CIW-typable command in its own right.
 #
 # PURE: strip `gi` of `graphs` becomes N strips, one per DRAWN trace.
-# Decision D-F: node 0 KEEPS the original strip and the remaining traces get new
-# strips inserted directly BELOW it, in order — so a strip reading a, b, c
-# becomes three strips reading a, b, c top to bottom. A full split, not a
-# one-trace peel-off. Returns the list UNCHANGED for a bad index or a strip with
-# fewer than two drawn traces (a pure list op has no error channel; split_strip
-# is where a refusal is reported).
+# Decision D-F: node 0 KEEPS the original strip and the remaining traces get
+# strips directly BELOW it, in order — so a strip reading a, b, c becomes three
+# strips reading a, b, c top to bottom. A full split, not a one-trace peel-off.
+# Those strips are inserted, EXCEPT that an empty strip already sitting at
+# `gi + 1` is consumed instead of adding one beside it (D3/D4, plan_split).
+# Returns the list UNCHANGED for a bad index or a strip with fewer than two drawn
+# traces (a pure list op has no error channel; split_strip is where a refusal is
+# reported).
 #
 # Implemented as a LOOP OVER THE SHIPPED move_trace_in_graphs rather than as
 # fresh index math, which is the whole point: every iteration gets the marker

@@ -587,6 +587,28 @@ worth having.
       `wave_viewer.tcl`. Pure Tcl; no C change. Contract:
       `doc/claude/specs/waveform_viewer.md` §"Trace context menu".
       Suite `tests/headless/test_wave_trace_menu.tcl` — 128 DISPLAY / 34 nogui.
+- [x] **7 follow-up — REUSE AN EMPTY STRIP INSTEAD OF INSERTING ONE.**
+      **DONE 2026-07-29** (user request, same day). The gesture now consumes an
+      existing empty strip **anywhere** in the stack and inserts only when there
+      is none, which is issue 0171's plot-batch reuse (`plan_plot`) applied to
+      this gesture. New PURE `wviewer::graph_is_empty` (**the** definition of
+      empty — zero MODEL traces — now shared by this, item 8, `plan_plot` and
+      item 5's `e`), `wviewer::reuse_strip_for_trace_move` (the D1/D2 choice) and
+      `wviewer::reuse_max_distance` (D2's optional cap, **default OFF**).
+      Decisions recorded in the spec: **D1** nearest below, else nearest above,
+      strictly (below wins even when above is nearer); **D2** a far strip IS
+      taken, cap available but off; **D5** the destination is still the target.
+      The auto-plot strip stays excluded (D-D). Return value is now "the
+      destination", which may be a pre-existing strip.
+      Suite grew to **223 DISPLAY / 71 nogui** — `TG12..TG18`, every reuse leg
+      asserting the strip COUNT *and* an inert per-strip identity key, because
+      "consume the strip at `from_gi + 1`" and "insert one there" produce an
+      identical-looking model. Five extra sabotages, each red in a different
+      place (never reuse; reuse unconditionally; above-before-below; auto
+      exclusion dropped; insert-arm index written to the target).
+      ⚠ **Still un-eyeballed, and this does not change that** — see the debt
+      list above. The reuse is a *model* change, so the suite can see it; what
+      remains unseen is item 7's menu itself.
 
 > **⚠ THREE PLAN CORRECTIONS, all found while building. Read them before item 8,
 > which inherits this gesture layer wholesale.**

@@ -944,8 +944,9 @@ CIW error when no viewer resolves.
 menu whose one entry gives that trace a strip of its own.** Command:
 `wviewer::move_trace_to_new_strip <from_gi> <from_ti> ?token?` (optional token,
 `{}` = the viewer owning the current xschem context), CIW-typable and logged
-replayably. Returns the index of the **new** strip, `{}` plus a CIW error on a
-refusal.
+replayably. Returns the index of the **destination** strip — an existing empty
+strip when one was reused, otherwise the newly inserted one — `{}` plus a CIW
+error on a refusal.
 
 - **The gesture is a CLICK, posted on the `ButtonRelease-3`** — not a hold
   timer, and not the press. The item-7 recon enumerated all eight Button-3 sites
@@ -997,12 +998,58 @@ refusal.
 - **The payload is `move_trace` plus ONE `linsert`**, and deliberately **not**
   `add_graph` — which regenerates on the spot and takes neither an undo point nor
   a log line, so a strip created that way would land between the capture and the
-  mutation and split one gesture into two half-states. The new strip goes
+  mutation and split one gesture into two half-states. An inserted strip goes
   **directly below the source** (D-F's reading-order rule, which item 8's split
-  will follow), and the move itself is the shipped PURE
+  follows), and the move itself is the shipped PURE
   `wviewer::move_trace_in_graphs`: marker migration, the `hilight_wave` hand-off
   and the empty-destination range blanking all come from there, with no new index
   math.
+- **REUSE BEFORE CREATE (2026-07-29).** When the stack already holds an empty
+  strip, the trace is moved **into it** and nothing is inserted. Same rationale
+  `plan_plot` records for plot batches (issue 0171's follow-up): an empty strip
+  *is* a place to put a trace, and appending past one pins a blank band on the
+  window and shrinks every real strip for nothing. `wviewer::empty_graph_indices`
+  supplies the candidates and the whole choice is the PURE
+  `wviewer::reuse_strip_for_trace_move` (headless-assertable with literal lists);
+  `-1` means "insert one".
+  - **EMPTY means ZERO MODEL TRACES**, not `node_count == 0` — stated here rather
+    than left implied, because the two differ: a strip holding only `vec`-less
+    traces draws nothing yet is **not** empty and must never be consumed or
+    deleted. `wviewer::graph_is_empty` is now the single definition, shared by
+    this gesture, item 8's split, `plan_plot`'s reuse and `e`'s kill list. It
+    fails **closed** on a malformed entry (⚠ `dict exists` is lenient — it
+    answers 0 for a non-dict instead of erroring, so the well-formedness test has
+    to be explicit; without it the split moved a trace *into* a non-dict).
+  - **D1, WHICH empty strip when several are free:** the **nearest below** the
+    source, else — only when none is below — the **nearest above**. "Below" is
+    D-F's reading-order direction and is where an inserted strip would have gone;
+    "nearest" keeps the trace close to where it was picked up. The direction
+    preference is **strict**: an empty strip below wins even when one above is
+    nearer (`TP35`).
+  - **D2, distance: a FAR empty strip is taken.** Deliberate — it is what was
+    asked for, and it matches `e`, which treats every empty strip alike wherever
+    it sits. The "trace teleported seven strips away" reading is answered by an
+    optional cap, `wviewer::reuse_max_distance` (`::wviewer_reuse_max_distance`),
+    **OFF by default** (0 = no cap) and applied *before* D1's direction
+    preference so a capped-out strip below does not block a reachable one above.
+  - **D5, the target:** unchanged — the **destination** becomes the target strip,
+    reused or new (`move_trace` step 6). The reuse arm needs no index remap at
+    all: nothing is inserted, so nothing moves.
+  - **The auto-plot strip is never consumed** (D-D, the `e` rule): it is
+    traceless *between* runs and item 13 rebuilds it after every one, so a trace
+    parked there is silently destroyed at the next run. The exclusion is
+    `empty_graph_indices`' `auto` argument, fed from `wviewer::auto_graph_index`.
+  - **Autozoom comes for free**: `move_trace_in_graphs` blanks an empty
+    destination's `x1/x2/y1/y2` back to `auto`, so a *reused* strip's stale
+    ranges go too and `regenerate` re-fits it exactly as it does a fresh one.
+  - **Boundary, recorded not closed:** a traceless strip *should* hold no
+    markers, but the model is not its only writer — a stale `markers`/
+    `hilight_wave` key on a reused strip would now annotate whatever lands there.
+    Identical exposure to the shipped `plan_plot` reuse arm; not made worse here.
+  - **Replay stays deterministic** and it is asserted, not assumed: the log line
+    carries the source indices only, so a replay *recomputes* the choice — sound
+    because the choice is a pure function of the model a replay reproduces
+    (`TG17` undoes, replays the logged line and compares strip identities).
 - **Ordering: `move_strip`'s contract verbatim** — validate → refuse without
   logging → verified `switch_ctx` → `capture_live_graph_state` → `push_undo` →
   insert + pure move → target **in place** → ONE `regenerate` → ONE log line.
@@ -1033,13 +1080,25 @@ refusal.
   would need a C-side cursor-proximity query (the `graph_near_wave` precedent),
   and the press path is unchanged either way.
 - **Tests:** `tests/headless/test_wave_trace_menu.tcl` — `TP*` pure + `TN*`
-  no-window (**34 checks** under `--nogui`), `TG1..TG11` GUI; **128 checks** on
+  no-window (**71 checks** under `--nogui`), `TG1..TG18` GUI; **223 checks** on
   the DISPLAY arm. `tk_popup` is spied rather than called in the gesture legs: a
   live popup takes a global grab that would swallow every later leg's events.
   Sabotage-verified seven ways — restoring the 3 px tolerance, inserting at the
   end instead of below the source, dropping the `>= 2` refusal at the command
   and again at the gate, keeping the press record past the release, removing the
   marker rung, and skipping the target write each turn legs red.
+  ⚠ **The reuse legs (`TG12..TG18`) are the ones that go hollow the most
+  easily**: consuming the strip at `from_gi + 1` and inserting one there leave the
+  trace at the same index, so a leg checking only `vecs_at` passes either way.
+  Both discriminators are asserted on every reuse leg — the strip **COUNT**
+  (reuse never grows the stack) and strip **IDENTITY** (an inert `tmid` key per
+  fixture strip, so a strip the gesture *created* reads back as `-`; the
+  `test_wave_viewer.tcl` SD legs set the precedent). Sabotage-verified five more
+  ways: never reuse → `TG12/13/16/17/18` red; reuse unconditionally →
+  `TP31/33-45` + `TG1` red; above-before-below → `TP35`; dropping the auto
+  exclusion → `TG15`; writing the insert-arm index to the target → `TG13`.
+  The `e` interaction is asserted too (`TG18`): a consumed strip is one `e` no
+  longer finds, and D-C (never delete the last strip) still holds.
 
 ## Strip context menu — RMB → Split Strip (viewer plan item 8, 2026-07-29)
 

@@ -191,6 +191,132 @@ check "TP26 the B3 click tolerance is ZERO (menu and box zoom are exclusive)" \
 check "TP27 no recorded press -> no marker arm (fails closed)" \
   [wviewer::b3_marker_armed .no/such/canvas] 0
 
+# --- REUSE an existing empty strip instead of inserting one (D1/D2) ----------
+# The whole reuse decision is the PURE wviewer::reuse_strip_for_trace_move, so
+# every rung of D1/D2 is assertable here with literal lists and no window.
+#
+# ⚠ These legs are the ones that CANNOT go hollow: "consume the strip at gi + 1"
+# and "insert a strip at gi + 1" leave the trace at the same index, so the
+# discriminators are the strip COUNT and the strip IDENTITY (the inert `tpid`
+# key below — the model dict is free-form and graph_props reads known keys only).
+proc tp_e {id} { return [dict replace [wviewer::empty_graph] tpid $id] }
+proc tp_s {id args} {
+  set trs {}
+  set c 4
+  foreach v $args { lappend trs [tp_trace $v $c]; incr c }
+  return [dict create traces $trs logx 0 logy 0 x1 0 x2 1 y1 0 y2 2 tpid $id]
+}
+proc tp_ids {gs} {
+  set out {}
+  foreach G $gs { lappend out [wviewer::dget $G tpid -] }
+  return $out
+}
+
+# the shared definition of "empty" (stated, not implied): ZERO MODEL TRACES
+check "TP28 a fresh strip is empty" [wviewer::graph_is_empty [wviewer::empty_graph]] 1
+check "TP28 a strip with a drawn trace is not" \
+  [wviewer::graph_is_empty [tp_s X va]] 0
+check "TP29 a strip holding only vec-less traces is NOT empty (zero MODEL traces)" \
+  [wviewer::graph_is_empty [dict create traces \
+     [list [dict create expr {} name {} vec {} color 7]]]] 0
+check_true "TP29 ... and node_count would have called it empty (the two differ)" \
+  [expr {[wviewer::node_count [dict create traces \
+     [list [dict create expr {} name {} vec {} color 7]]]] == 0}]
+check "TP30 a malformed entry fails CLOSED (never consumable)" \
+  [wviewer::graph_is_empty SENTINEL] 0
+
+# D1: nearest BELOW, else nearest ABOVE, else insert
+check "TP31 no empty strip anywhere -> -1, so one must be inserted" \
+  [wviewer::reuse_strip_for_trace_move [list [tp_s A va vb] [tp_s B vc]] 0] -1
+check "TP32 the empty strip directly below is consumed" \
+  [wviewer::reuse_strip_for_trace_move [list [tp_s A va vb] [tp_e B]] 0] 1
+check "TP33 with two below, the NEAREST below wins" \
+  [wviewer::reuse_strip_for_trace_move \
+     [list [tp_s A va vb] [tp_s B vc] [tp_e C] [tp_e D]] 0] 2
+check "TP34 nothing below -> the nearest ABOVE" \
+  [wviewer::reuse_strip_for_trace_move \
+     [list [tp_e A] [tp_e B] [tp_s C va vb] [tp_s D vc]] 2] 1
+check "TP35 D1 tie-break: BELOW wins even when the one above is NEARER" \
+  [wviewer::reuse_strip_for_trace_move \
+     [list [tp_e A] [tp_s B va vb] [tp_s C vc] [tp_s D vd] [tp_e E]] 1] 4
+check "TP36 with two above and none below, the nearest above wins" \
+  [wviewer::reuse_strip_for_trace_move \
+     [list [tp_e A] [tp_e B] [tp_s C va vb]] 2] 1
+# D-D: the auto-plot strip is rebuilt after every run, so a trace parked there is
+# silently destroyed — it is never consumable, exactly as `e` never deletes it
+check "TP37 the only empty strip is the AUTO strip -> -1 (D-D)" \
+  [wviewer::reuse_strip_for_trace_move [list [tp_s A va vb] [tp_e B]] 0 1] -1
+check "TP38 the auto strip is skipped and another empty strip taken" \
+  [wviewer::reuse_strip_for_trace_move \
+     [list [tp_s A va vb] [tp_e B] [tp_e C]] 0 1] 2
+check "TP38 an auto strip ABOVE does not block the one below" \
+  [wviewer::reuse_strip_for_trace_move \
+     [list [tp_e A] [tp_s B va vb] [tp_e C]] 1 0] 2
+# D2: distance
+check "TP39 a FAR empty strip IS taken (D2, no cap by default)" \
+  [wviewer::reuse_strip_for_trace_move \
+     [list [tp_s A va vb] [tp_s B vc] [tp_s C vd] [tp_s D ve] \
+           [tp_s E vf] [tp_s F vg] [tp_s G vh] [tp_e H]] 0] 7
+check "TP40 the optional cap refuses it (cap 2)" \
+  [wviewer::reuse_strip_for_trace_move \
+     [list [tp_s A va vb] [tp_s B vc] [tp_s C vd] [tp_e D]] 0 -1 2] -1
+check "TP40 ... and accepts one inside the cap" \
+  [wviewer::reuse_strip_for_trace_move \
+     [list [tp_s A va vb] [tp_s B vc] [tp_e C] [tp_e D]] 0 -1 2] 2
+check "TP41 the cap applies BEFORE the direction preference" \
+  [wviewer::reuse_strip_for_trace_move \
+     [list [tp_e A] [tp_s B va vb] [tp_s C vc] [tp_s D vd] [tp_e E]] 1 -1 2] 0
+check "TP42 cap 0 is OFF, not 'distance must be 0'" \
+  [wviewer::reuse_strip_for_trace_move \
+     [list [tp_s A va vb] [tp_s B vc] [tp_e C]] 0 -1 0] 2
+check "TP42 a negative cap is refused, not applied" \
+  [wviewer::reuse_strip_for_trace_move \
+     [list [tp_s A va vb] [tp_s B vc] [tp_e C]] 0 -1 -3] 2
+# the cap's config reader (D2 default OFF — it must stay off until asked for)
+check "TP43 the cap config default is 0 (OFF)" [wviewer::reuse_max_distance] 0
+set ::wviewer_reuse_max_distance 3
+check "TP43 a set value is honoured" [wviewer::reuse_max_distance] 3
+set ::wviewer_reuse_max_distance junk
+check "TP43 junk falls back to OFF" [wviewer::reuse_max_distance] 0
+set ::wviewer_reuse_max_distance -2
+check "TP43 a negative value falls back to OFF" [wviewer::reuse_max_distance] 0
+unset ::wviewer_reuse_max_distance
+check "TP43 unset is OFF again" [wviewer::reuse_max_distance] 0
+# candidate hygiene
+check "TP44 a strip of vec-less traces is not a candidate" \
+  [wviewer::reuse_strip_for_trace_move \
+     [list [tp_s A va vb] [dict create traces \
+        [list [dict create expr {} name {} vec {} color 7]] tpid B]] 0] -1
+check "TP45 a non-integer source index -> -1 (no throw)" \
+  [pcall {wviewer::reuse_strip_for_trace_move [list [tp_e A]] x}] -1
+check "TP45 an empty stack -> -1" [wviewer::reuse_strip_for_trace_move {} 0] -1
+# REPLAY DETERMINISM: the log line carries no destination, so a replay recomputes
+# the decision — which is only sound because the decision is a pure function of
+# the model. Asserted rather than assumed.
+set tpr [list [tp_e A] [tp_s B va vb] [tp_s C vc] [tp_e D]]
+check_true "TP46 the same model gives the same answer twice (replay-safe)" \
+  [expr {[wviewer::reuse_strip_for_trace_move $tpr 1] eq
+         [wviewer::reuse_strip_for_trace_move $tpr 1]}]
+
+# --- the COMPOSITION, reuse arm: count and identity are the discriminators ---
+set tpg [list [tp_s A va vb vc] [dict replace [tp_e B] y1 -5 y2 -4] [tp_s C vd]]
+set tpat [wviewer::reuse_strip_for_trace_move $tpg 0]
+check "TP47 the reuse picks strip 1" $tpat 1
+set tpmv [wviewer::move_trace_in_graphs $tpg 0 1 $tpat]
+check "TP47 the STRIP COUNT is unchanged — nothing was created" [llength $tpmv] 3
+check "TP47 and the strips are the same strips (identity, not arithmetic)" \
+  [tp_ids $tpmv] {A B C}
+check "TP48 the trace landed in the strip that was already there" \
+  [tp_vecs [lindex $tpmv 1]] {vb}
+check "TP48 the source kept the rest, in order" [tp_vecs [lindex $tpmv 0]] {va vc}
+check "TP49 the REUSED strip's stale ranges were blanked (autozoom for free)" \
+  [list [wviewer::dget [lindex $tpmv 1] y1 {}] [wviewer::dget [lindex $tpmv 1] y2 {}]] {{} {}}
+# teeth: the insert arm produces a stack the same leg can tell apart, so a
+# "reuse always" and an "insert always" implementation cannot both pass
+set tpins [wviewer::move_trace_in_graphs [linsert $tpg 1 [wviewer::empty_graph]] 0 1 1]
+check "TP49 the insert arm grows the stack instead" [llength $tpins] 4
+check "TP49 ... and pushes the pre-existing empty strip down" [tp_ids $tpins] {A - B C}
+
 # ============================================================================
 # TN* — no window needed
 # ============================================================================
@@ -741,6 +867,190 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     catch {unset ::wviewer::b3y0($vdrw)}
     catch {unset ::wviewer::b3mk($vdrw)}
   }
+
+  # --- TG12..TG18: REUSE an existing empty strip (D1/D2) ---------------------
+  #
+  # ⚠ THE HOLLOWNESS TRAP. When the free empty strip happens to sit at
+  # from_gi + 1, "consume it" and "insert one there" leave the same trace at the
+  # same index — a leg that only checks `vecs_at` passes either way. Two
+  # discriminators, used on every leg below:
+  #   1. the STRIP COUNT: reuse leaves `ngraphs` alone, an insert grows it;
+  #   2. STRIP IDENTITY: every fixture strip carries an inert `tmid` key, so a
+  #      strip the gesture CREATED reads back as `-` and the pre-existing ones
+  #      keep their letters (the SD legs of test_wave_viewer.tcl, same reason —
+  #      regenerate/graph_props read known keys only, so tmid changes nothing).
+  # These legs need no pixel, so they live OUTSIDE the find_trace_px guard.
+  proc fill_spec {tok spec {auto -1}} {
+    set gs {}
+    foreach _ $spec { lappend gs [wviewer::empty_graph] }
+    wviewer::set_graphs $tok $gs
+    set gi 0
+    foreach vecs $spec {
+      foreach v $vecs {
+        set e [wviewer::add_trace $tok $gi $v]
+        if {$e ne {}} { puts "  fill_spec: add_trace $v -> $e" }
+      }
+      incr gi
+    }
+    # the identity keys go on AFTER the traces (add_trace rewrites the strip dict)
+    set out {}
+    set gi 0
+    foreach G [dict get [wviewer::layout_for $tok] graphs] {
+      set G [dict replace $G tmid [string index ABCDEFGH $gi]]
+      if {$gi == $auto} { set G [dict replace $G auto 1] }
+      lappend out $G
+      incr gi
+    }
+    wviewer::set_graphs $tok $out
+    wviewer::regenerate $tok
+    wviewer::fit $tok
+    wviewer::set_target_strip 0 $tok
+  }
+  proc tmids {tok} {
+    set out {}
+    foreach G [dict get [wviewer::layout_for $tok] graphs] {
+      lappend out [wviewer::dget $G tmid -]
+    }
+    return $out
+  }
+  proc kill_list {tok} {
+    return [wviewer::empty_strips_to_delete \
+              [dict get [wviewer::layout_for $tok] graphs] \
+              [wviewer::auto_graph_index $tok]]
+  }
+
+  # TG12: the empty strip directly below is CONSUMED, not doubled
+  fill_spec $tok {{vec_a vec_b vec_c} {} {vec_d}}
+  check "TG12 fixture: three traces, an EMPTY strip below it, then one" \
+    [profile $tok] {3 0 1}
+  check "TG12 fixture identities" [tmids $tok] {A B C}
+  # plant absurd ranges on the empty strip and get them into the RECT, so the
+  # blanking leg below has teeth (capture_live_graph_state folds the live rect
+  # back into the model before the move, so a model-only plant proves nothing)
+  set gs [dict get [wviewer::layout_for $tok] graphs]
+  wviewer::set_graphs $tok \
+    [lreplace $gs 1 1 [dict replace [lindex $gs 1] y1 -5.0 y2 -4.0]]
+  wviewer::regenerate $tok
+  xschem new_schematic switch $vdrw
+  check "TG12 fixture: the absurd range really reached the rect" \
+    [xschem getprop rect 2 1 y1] -5.0
+  check "TG12 the destination is the strip that was already there" \
+    [pcall {wviewer::move_trace_to_new_strip 0 1 $tok}] 1
+  check "TG12 the STRIP COUNT did not grow — nothing was inserted" [ngraphs $tok] 3
+  check "TG12 and they are the SAME strips (identity, not arithmetic)" \
+    [tmids $tok] {A B C}
+  check "TG12 the moved trace is in the consumed strip" [vecs_at $tok 1] vec_b
+  check "TG12 the source kept the other two, in order" [vecs_at $tok 0] {vec_a vec_c}
+  check "TG12 the strip below is untouched" [vecs_at $tok 2] vec_d
+  check "TG12 the DESTINATION is the target (step 6, reused or new)" \
+    [pcall {wviewer::target_strip $tok}] 1
+  set gs [dict get [wviewer::layout_for $tok] graphs]
+  check "TG12 the consumed strip's stale ranges were blanked (autozoom for free)" \
+    [list [wviewer::dget [lindex $gs 1] y1 {}] [wviewer::dget [lindex $gs 1] y2 {}]] {{} {}}
+  xschem new_schematic switch $vdrw
+  check "TG12 the rect count agrees with the model" [xschem get rects 2] 3
+  check "TG12 the consumed strip's RECT carries the trace" \
+    [string match {*vec_b*} [xschem getprop rect 2 1 node]] 1
+  check "TG12 and the source rect no longer does" \
+    [string match {*vec_b*} [xschem getprop rect 2 0 node]] 0
+  check_true "TG12 regenerate re-autozoomed it (the rect range is not the plant)" \
+    [expr {[xschem getprop rect 2 1 y1] != -5.0}]
+  check "TG12 buffer NOT left modified (read-only viewer discipline)" \
+    [xschem get modified] 0
+
+  # TG13: nothing empty below -> the nearest empty strip ABOVE (D1)
+  fill_spec $tok {{} {vec_a vec_b vec_c} {vec_d}}
+  check "TG13 fixture: the empty strip is ABOVE the source" [profile $tok] {0 3 1}
+  check "TG13 the strip above is consumed" \
+    [pcall {wviewer::move_trace_to_new_strip 1 1 $tok}] 0
+  check "TG13 the strip count is unchanged" [ngraphs $tok] 3
+  check "TG13 the same strips, in the same order" [tmids $tok] {A B C}
+  check "TG13 the trace went UP into it" [vecs_at $tok 0] vec_b
+  check "TG13 the source kept the rest" [vecs_at $tok 1] {vec_a vec_c}
+  check "TG13 the target followed the destination upward" \
+    [pcall {wviewer::target_strip $tok}] 0
+
+  # TG14: with nothing to reuse the old behaviour stands — INSERT below (D-F)
+  fill_spec $tok {{vec_a vec_b vec_c} {vec_d}}
+  check "TG14 fixture has no empty strip" [kill_list $tok] {}
+  check "TG14 the new strip goes directly below the source" \
+    [pcall {wviewer::move_trace_to_new_strip 0 1 $tok}] 1
+  check "TG14 the strip count GREW by one" [ngraphs $tok] 3
+  check "TG14 the created strip has no identity, the others keep theirs" \
+    [tmids $tok] {A - B}
+  check "TG14 the trace is in the created strip" [vecs_at $tok 1] vec_b
+  check "TG14 the strip that was below slid down" [vecs_at $tok 2] vec_d
+
+  # TG15: the AUTO-plot strip is never consumed (D-D) — item 13 rebuilds it after
+  # every run, so a trace parked there is silently destroyed at the next one
+  fill_spec $tok {{vec_a vec_b vec_c} {} {vec_d}} 1
+  check "TG15 fixture: strip 1 is the auto-plot strip, and it is traceless" \
+    [list [pcall {wviewer::auto_graph_index $tok}] [profile $tok]] {1 {3 0 1}}
+  check "TG15 the move INSERTS rather than consuming the auto strip" \
+    [pcall {wviewer::move_trace_to_new_strip 0 1 $tok}] 1
+  check "TG15 the strip count grew" [ngraphs $tok] 4
+  check "TG15 the auto strip was pushed down, not filled" \
+    [pcall {wviewer::auto_graph_index $tok}] 2
+  check "TG15 it is still traceless" [vecs_at $tok 2] {}
+  check "TG15 the trace is in the new strip" [vecs_at $tok 1] vec_b
+  check "TG15 identities: a created strip between A and the auto strip" \
+    [tmids $tok] {A - B C}
+
+  # TG16: D2 — a FAR empty strip is taken by default, and the optional cap is OFF
+  fill_spec $tok {{vec_a vec_b vec_c} {vec_d} {vec_d} {vec_d} {}}
+  check "TG16 fixture: the only empty strip is four strips away" \
+    [kill_list $tok] 4
+  check "TG16 the far empty strip IS consumed (D2 default: no cap)" \
+    [pcall {wviewer::move_trace_to_new_strip 0 1 $tok}] 4
+  check "TG16 the strip count is unchanged" [ngraphs $tok] 5
+  check "TG16 the same strips" [tmids $tok] {A B C D E}
+  check "TG16 the trace travelled to it" [vecs_at $tok 4] vec_b
+  # the cap exists for the "the trace teleported" reading; it is OFF unless asked
+  fill_spec $tok {{vec_a vec_b vec_c} {vec_d} {vec_d} {vec_d} {}}
+  set ::wviewer_reuse_max_distance 2
+  check "TG16 with the cap on, the far strip is refused and one is inserted" \
+    [pcall {wviewer::move_trace_to_new_strip 0 1 $tok}] 1
+  check "TG16 so the stack grew" [ngraphs $tok] 6
+  check "TG16 and the far empty strip is still empty" [vecs_at $tok 5] {}
+  unset ::wviewer_reuse_max_distance
+  check "TG16 the cap is OFF again" [pcall {wviewer::reuse_max_distance}] 0
+
+  # TG17: the log line is unchanged, so a REPLAY must recompute the same reuse
+  # decision from the model. Asserted, not assumed.
+  fill_spec $tok {{vec_a vec_b vec_c} {} {vec_d}}
+  set nlog [llength $::tm_log]
+  check "TG17 the move reused strip 1" \
+    [pcall {wviewer::move_trace_to_new_strip 0 1 $tok}] 1
+  check "TG17 exactly one line logged" [expr {[llength $::tm_log] - $nlog}] 1
+  check "TG17 the line is the unchanged shape (no reuse decision in it)" \
+    [lindex $::tm_log end] "wviewer::move_trace_to_new_strip 0 1 $tok"
+  set replay [lindex $::tm_log end]
+  set post_ids [tmids $tok]
+  set post_prof [profile $tok]
+  check_true "TG17 one undo restores the model" \
+    [expr {[pcall {wviewer::undo $tok}] ne {ERR}}]
+  check "TG17 the undo put the empty strip back" \
+    [list [profile $tok] [tmids $tok]] {{3 0 1} {A B C}}
+  pcall {uplevel #0 $replay}
+  check "TG17 the replay reproduced the state EXACTLY (same reuse decision)" \
+    [list [profile $tok] [tmids $tok] [ngraphs $tok]] \
+    [list $post_prof $post_ids 3]
+
+  # TG18: the interaction with `e` (item 5) — reuse consumes the very strip `e`
+  # would have deleted, so there is less for `e` to find afterwards
+  fill_spec $tok {{vec_a vec_b vec_c} {} {}}
+  check "TG18 before the move, `e` would delete both empty strips" \
+    [kill_list $tok] {1 2}
+  check "TG18 the move consumes the NEAREST of them" \
+    [pcall {wviewer::move_trace_to_new_strip 0 1 $tok}] 1
+  check "TG18 one empty strip is left for `e`" [kill_list $tok] 2
+  check "TG18 `e` deletes exactly that one" [pcall {wviewer::delete_empty_strips $tok}] 1
+  check "TG18 leaving the two strips that hold traces" \
+    [list [profile $tok] [tmids $tok]] {{2 1} {A B}}
+  check "TG18 and `e` is then a no-op" [pcall {wviewer::delete_empty_strips $tok}] 0
+  # D-C still holds: `e` never empties the window, whatever reuse did before it
+  check "TG18 D-C: a window of one empty strip still keeps it" \
+    [wviewer::empty_strips_to_delete [list [wviewer::empty_graph]]] {}
 
   rename wviewer::log_action {}
   rename wviewer::__real_log_action wviewer::log_action
