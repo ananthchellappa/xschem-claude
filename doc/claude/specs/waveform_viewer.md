@@ -932,6 +932,15 @@ CIW error when no viewer resolves.
   `wviewer::index_after_removal`, `wviewer::empty_strips_to_delete` (where D-C
   and D-D live, so both decisions are pinned by assertions rather than by a
   comment).
+- **"Empty" is `wviewer::graph_is_empty` — ZERO MODEL TRACES**, and since
+  2026-07-29 it is shared with the two gesture reuses below (items 7 and 8) and
+  with `plan_plot`'s reuse arm, so all four agree by construction. A strip holding
+  only `vec`-less traces draws nothing and is still **not** empty: `e` leaves it
+  alone, and neither gesture may consume it.
+- **⚠ Interaction with the item 7/8 reuse (2026-07-29): those gestures CONSUME
+  empty strips**, so after one there is less for `e` to find — asserted from both
+  sides (`TG18`, `SG18`). Nothing about `e` changed: D-C still spares the last
+  strip and D-D still spares the auto-plot strip.
 - **Tests:** `tests/headless/test_wave_empty_strips.tcl` — `EP*` pure (28 under
   `--nogui`), `EN*` no-window, `EG1..EG11` GUI; **94 checks** on the DISPLAY arm.
   Sabotage-verified four ways: removing the D-C clause, dropping the target
@@ -1106,21 +1115,55 @@ error on a refusal.
 posts a menu whose one entry splits that strip into one strip per drawn trace.**
 Command: `wviewer::split_strip <gi> ?token?`, plus **Graph > Split Strip**, which
 acts on the **target** strip (the one carrying the active bar — a menubar entry
-has no pointer position to resolve). Returns the NUMBER of new strips, `{}` plus
-a CIW error on a refusal.
+has no pointer position to resolve). Returns the NUMBER of **new** strips — which
+with reuse may be **0**, still a success — `{}` plus a CIW error on a refusal.
 
 - **Decision D-F**: node 0 **keeps** the original strip; the remaining drawn
-  traces get new strips inserted directly **below** it, in order — a strip
-  reading `a, b, c` becomes three strips reading `a, b, c` top to bottom. A full
-  split, not a one-trace peel-off. Traces carrying an empty `vec` reach no node
-  slot, so they are not traces for this purpose and stay with node 0.
+  traces get strips directly **below** it, in order — a strip reading `a, b, c`
+  becomes three strips reading `a, b, c` top to bottom. A full split, not a
+  one-trace peel-off. Traces carrying an empty `vec` reach no node slot, so they
+  are not traces for this purpose and stay with node 0.
+- **REUSE BEFORE CREATE (2026-07-29), and deliberately NARROWER than item 7's.**
+  An empty strip already sitting **immediately below** the split strip is
+  *consumed* and only the shortfall inserted. The whole decision is the PURE
+  `wviewer::plan_split` → `{ok reuse at new}`, called by both
+  `split_graph_in_graphs` (the model op) and `split_strip` (the target
+  arithmetic), so the two cannot disagree about how many strips were inserted.
+  - **D3, only `gi + 1` counts — NOT `gi - 1`, and not "any empty strip".** The
+    asymmetry with item 7 is intentional: a split produces a *contiguous* run
+    reading node 0, 1, 2 … downward, so a strip taken from above would put node 1
+    above node 0 and break the very reading order D-F exists to preserve, and one
+    taken from far below would tear the run apart. Adjacency is what makes the
+    reused strip the same slot an inserted one would have occupied.
+  - **D4, one adjacent slot cannot satisfy `nc - 1`:** the adjacent empty strip
+    takes **node 1** and the remaining `nc - 2` strips are inserted after it (at
+    `gi + 2`), so the run is still `gi .. gi + nc - 1` in reading order.
+  - **`nc == 2` therefore inserts NOTHING**, and `split_strip` returns **0**.
+    ⚠ **0 is a SUCCESS, not a refusal** — it mutates, it takes an undo point and
+    it logs; only `{}` means nothing happened. A caller testing `if {!$n}` would
+    read a legitimate split as a failure.
+  - **The auto-plot strip is never consumed** (D-D), and "empty" is
+    `wviewer::graph_is_empty` — **zero MODEL traces**, the same definition item 7,
+    `plan_plot` and `e` use, failing closed on a malformed entry.
+  - **D5, the target shift must use the plan's ACTUAL `at`/`new`**, not `gi + 1`
+    and `nc - 1`: with a reused strip the inserts start one slot lower and there
+    is one fewer of them (zero when `nc == 2`), so the old arithmetic pushed the
+    target one strip too far. `SG16` separates all three answers — correct 5, old
+    arithmetic 6, clamp alone 4 — on one fixture.
+  - **Replay stays deterministic**: the logged line is still `split_strip <gi>
+    <token>` with no reuse decision in it, which is sound because `plan_split` is
+    a pure function of the model a replay reproduces. Asserted in `SG17`, not
+    assumed.
 - **The core is a LOOP over the shipped `move_trace_in_graphs`**, not fresh index
   math, and that is the whole point: every iteration gets the marker migration,
   the `hilight_wave` hand-off and the empty-destination range blanking for free,
   so `graph_markers.md` §9's obligations are discharged **by construction**.
-  Nothing in `split_graph_in_graphs` touches a marker record.
-  Two ordering rules make that safe: **every destination strip is created
-  first**, so node *k*'s destination is `gi + k` and never moves under the loop;
+  Nothing in `split_graph_in_graphs` touches a marker record. (That blanking is
+  also what makes reuse free: a consumed strip's stale ranges go back to `auto`,
+  so `regenerate` re-autozooms it like a fresh one.)
+  Two ordering rules make that safe: **every destination strip is in place
+  first** — inserted, or reused where an empty one already sat — so node *k*'s
+  destination is `gi + k` and never moves under the loop;
   and the traces move **descending**, from the last node to node 1, because
   removing node *k* renumbers only the nodes above it — which are already placed.
   Ascending renumbers the remaining work on every step (sabotage-verified: it
@@ -1165,11 +1208,19 @@ a CIW error on a refusal.
   `ctx_menu_widget`/`_drop`/`_popup` helpers (the trace menu was refactored onto
   them; its widget path and proc signatures are unchanged).
 - **Tests:** `tests/headless/test_wave_split_strip.tcl` — `SP*` pure + `SN*`
-  no-window (**38 checks** under `--nogui`), `SG1..SG11` GUI; **122 checks** on
+  no-window (**72 checks** under `--nogui`), `SG1..SG18` GUI; **211 checks** on
   the DISPLAY arm. Sabotage-verified five ways — dropping the plot-box rung
   (which reproduces the margin collision), running the split loop ascending,
   dropping the target shift, and dropping the trace exclusion each turn legs red;
   reversing the dispatcher order does not, which is why the comment there says so.
+  ⚠ **The reuse legs (`SG12..SG18`) carry the same hollowness risk as item 7's**
+  and answer it the same way: the strip **COUNT** (reuse inserts fewer strips, or
+  none) and strip **IDENTITY** (an inert `smid` key, so a created strip reads back
+  as `-`). Five more sabotages: never reuse → `SG12/13/16/17/18` + `SP33/34/42-49`
+  red; reuse unconditionally → red at `SP11` (it moves a trace into the sentinel,
+  the fail-open `graph_is_empty` bug that leg caught for real); allowing `gi - 1`
+  → `SG14` + `SP35`; the old `gi+1`/`nc-1` target arithmetic → `SG16`; dropping
+  the auto exclusion → `SG15`. The `e` interaction is asserted in `SG18`.
 
 ## Mid-drag shrink preview (viewer plan item 6, 2026-07-29)
 

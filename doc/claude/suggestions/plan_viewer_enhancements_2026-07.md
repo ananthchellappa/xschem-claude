@@ -165,6 +165,8 @@ looked at. **This list is the debt; do not let it grow silently.**
 | — `wviewer::open` intermittent (found by item 8's soak) | `5ddb8361` | ✅ REVIEWED with item 8 |
 | 6 — mid-drag shrink preview (**touched `draw.c`**) | `9727791a` | ✅ REVIEWED — **rejected Y-only and 10 %** |
 | 6 round 2 — both axes at 30 % | `780bd468` | ⚠ **TIMEOUT, went through unreviewed — NOT eyeballed** |
+| 7 follow-up — reuse an empty strip (any, D1/D2) | see `git log` (2026-07-29, after `37df1512`) | model change, suite-visible; item 7's MENU still un-eyeballed |
+| 8 follow-up — reuse the adjacent empty strip (D3/D4) | see `git log` (same day) | model change, suite-visible; item 8's MENU still un-eyeballed |
 
 **ALL TEN ITEMS ARE NOW BUILT AND COMMITTED** (2026-07-29). Order run:
 4, 5, 1, 2, 3, 9, 10, 7, 8, 6.
@@ -734,6 +736,25 @@ from a *drag*, before writing any menu code.
       `draw.c graph_plotbox_at`. Contract:
       `doc/claude/specs/waveform_viewer.md` §"Strip context menu".
       Suite `tests/headless/test_wave_split_strip.tcl` — 122 DISPLAY / 38 nogui.
+- [x] **8 follow-up — REUSE THE ADJACENT EMPTY STRIP.** **DONE 2026-07-29**
+      (user request, same day). New PURE `wviewer::plan_split` →
+      `{ok reuse at new}`, called by both `split_graph_in_graphs` and
+      `split_strip` so the model op and the target arithmetic cannot disagree.
+      **Deliberately narrower than item 7's reuse** (the asymmetry is the user's,
+      not a slip): **D3** only `gi + 1` is eligible — an empty strip above would
+      put node 1 above node 0 and break the reading order D-F exists for; **D4**
+      that one slot takes node 1 and the remaining `nc - 2` are inserted at
+      `gi + 2`, so `nc == 2` inserts **nothing** and `split_strip` returns **0**,
+      which is a **success** (it mutates, logs and takes an undo point — only `{}`
+      is a refusal); **D5** the target shift now uses the plan's ACTUAL `at`/`new`
+      (the old `gi + 1`/`nc - 1` pushed the target one strip too far).
+      Suite grew to **211 DISPLAY / 72 nogui** — `SG12..SG18`, same
+      count-plus-identity discipline as item 7's. Five extra sabotages, each red
+      somewhere different; notably "reuse unconditionally" goes red at `SP11` by
+      moving a trace *into* a non-dict sentinel, which is how the fail-open
+      `graph_is_empty` bug was caught for real (`dict exists` is lenient on a
+      non-dict, so the well-formedness test had to be made explicit).
+      ⚠ **Menu pixels still un-eyeballed** — unchanged by this.
 
 > **⚠ TWO CORRECTIONS.**
 >

@@ -3252,8 +3252,9 @@ proc wviewer::move_trace_to_new_strip {from_gi from_ti {token {}}} {
 # CONSTRUCTION. Nothing here touches a marker record.
 #
 # Two ordering rules make that safe:
-#   - every destination strip is created FIRST, so the destination index of
-#     node k is simply gi + k and never moves under the loop;
+#   - every destination strip is IN PLACE FIRST (inserted, or reused where an
+#     empty strip already sat — D4), so the destination index of node k is
+#     simply gi + k and never moves under the loop;
 #   - the traces are moved DESCENDING, from the last node to node 1. Removing
 #     node k renumbers only the nodes ABOVE k — which are already placed — so
 #     the node indices still to come stay valid. Ascending would renumber the
@@ -3262,16 +3263,55 @@ proc wviewer::move_trace_to_new_strip {from_gi from_ti {token {}}} {
 # Traces carrying an empty `vec` reach no node slot and are left in the source
 # strip: they are invisible, so "one strip per trace" can only mean per DRAWN
 # trace, and node_count is the count that matters everywhere else too.
-proc wviewer::split_graph_in_graphs {graphs gi} {
-  if {![string is integer -strict $gi]} { return $graphs }
-  set n [llength $graphs]
-  if {$gi < 0 || $gi >= $n} { return $graphs }
+#
+# REUSE BEFORE CREATE (2026-07-29 request, decisions D3/D4), the same rationale
+# plan_plot's header records for plot batches: an empty strip is a place to put a
+# trace, so the split fills one rather than inserting a blank band next to it.
+#
+# D3, ONLY the strip IMMEDIATELY BELOW (`gi + 1`) is eligible — deliberately
+# narrower than the single-trace move's "any empty strip anywhere". A split
+# produces a CONTIGUOUS run of strips reading node 0, 1, 2 … downward (D-F); an
+# empty strip taken from above would put node 1 above node 0 and break the very
+# reading order D-F exists to preserve, and one taken from far below would tear
+# the run apart. Adjacency is what makes the reused strip the SAME slot an
+# inserted one would have occupied.
+#
+# D4, ONE adjacent slot cannot satisfy a split that needs `nc - 1`: the adjacent
+# empty strip takes node 1 and the remaining `nc - 2` strips are inserted after
+# it (at `gi + 2`), so the run is still gi..gi+nc-1 in reading order. With
+# `nc == 2` that means ZERO inserts — a legitimate split that changes the strip
+# count not at all (split_strip returns 0 and still logs; see there).
+#
+# `plan_split` is the whole reuse decision, PURE and assertable with literal
+# lists: {ok 0|1  reuse <gi+1 | -1>  at <insertion point>  new <how many>}.
+# split_strip calls it too, so the model op and the target arithmetic cannot
+# disagree about how many strips were really inserted.
+proc wviewer::plan_split {gs gi {auto -1}} {
+  set none [dict create ok 0 reuse -1 at 0 new 0]
+  if {![string is integer -strict $gi]} { return $none }
+  set n [llength $gs]
+  if {$gi < 0 || $gi >= $n} { return $none }
+  set nc [wviewer::node_count [lindex $gs $gi]]
+  if {$nc < 2} { return $none }
+  set at [expr {$gi + 1}]
+  # D-D: the auto-plot strip is traceless between runs and item 13 rebuilds it,
+  # so it is never consumable — the same exclusion `e` and plan_plot carry
+  if {$at < $n && $at != $auto && [wviewer::graph_is_empty [lindex $gs $at]]} {
+    return [dict create ok 1 reuse $at at [expr {$gi + 2}] new [expr {$nc - 2}]]
+  }
+  return [dict create ok 1 reuse -1 at $at new [expr {$nc - 1}]]
+}
+
+proc wviewer::split_graph_in_graphs {graphs gi {auto -1}} {
+  set plan [wviewer::plan_split $graphs $gi $auto]
+  if {![dict get $plan ok]} { return $graphs }
   set nc [wviewer::node_count [lindex $graphs $gi]]
-  if {$nc < 2} { return $graphs }
+  set at [dict get $plan at]
   # the new strips first — all identical, so inserting them one at a time at the
-  # same slot is order-independent
-  for {set k 1} {$k < $nc} {incr k} {
-    set graphs [linsert $graphs [expr {$gi + 1}] [wviewer::empty_graph]]
+  # same slot is order-independent. With a reused strip below, `at` is gi + 2 and
+  # this is the SHORTFALL only (D4); the reused strip is already in place.
+  for {set k 0} {$k < [dict get $plan new]} {incr k} {
+    set graphs [linsert $graphs $at [wviewer::empty_graph]]
   }
   for {set k [expr {$nc - 1}]} {$k >= 1} {incr k -1} {
     set ti [wviewer::trace_index_of_node [lindex $graphs $gi] $k]
@@ -3281,20 +3321,38 @@ proc wviewer::split_graph_in_graphs {graphs gi} {
   return $graphs
 }
 
-# THE authoritative strip split. Returns the NUMBER of new strips created, or
+# THE authoritative strip split. Returns the NUMBER of NEW strips created, or
 # {} on failure/refusal.
+#
+# ⚠ **0 IS A SUCCESS, not a refusal** (D4). A two-trace strip with an empty strip
+# already below it splits by CONSUMING that strip and inserting nothing, so the
+# count of new strips is zero while a real state change happened: it mutates, it
+# takes an undo point and it LOGS. Only `{}` means "nothing happened". Callers
+# testing the return must test for {} — `if {!$n}` would read a legitimate split
+# as a failure.
 #
 # Same ordering contract as move_strip / move_trace / move_trace_to_new_strip:
 #   1. resolve + validate the index against the LIVE model
 #   2. REFUSE, without mutating and without logging, a strip with fewer than two
 #      drawn traces — it is already split. The menu gate mirrors this
-#   3. verified switch_ctx  4. capture  5. push_undo  6. the pure split
+#   3. verified switch_ctx  4. capture  5. push_undo  6. the pure split, whose
+#      reuse decision comes from the PURE plan_split (D3/D4) — called here too,
+#      on the same graph list, so the target arithmetic below and the model op
+#      cannot disagree about how many strips were really inserted
 #   7. shift the stored TARGET through the insert, IN PLACE (index_after_insert,
 #      NOT reordered_index, which is for count-preserving moves) — a split has
 #      no single destination to adopt, so the target keeps pointing at the strip
 #      it was on. The source strip itself does not move, so a target that WAS
-#      the split strip stays on it
+#      the split strip stays on it.
+#      ⚠ The shift MUST use the plan's ACTUAL insertion point and count, not
+#      `gi + 1` and `nc - 1`: with a reused strip the inserts start one slot
+#      lower and there is one fewer of them (zero when nc == 2), and the old
+#      arithmetic would push the target one strip too far
 #   8. exactly ONE regenerate, exactly ONE fully-resolved log line
+#
+# REPLAY DETERMINISM: the logged line is `split_strip <gi> <token>` — unchanged,
+# carrying no reuse decision — and that stays correct because plan_split is a
+# pure function of the model a replay reproduces. Asserted (SG16), not assumed.
 proc wviewer::split_strip {gi {token {}}} {
   variable windows
   variable target
@@ -3324,14 +3382,16 @@ proc wviewer::split_strip {gi {token {}}} {
   wviewer::capture_live_graph_state $token
   wviewer::push_undo $token           ;# AFTER the capture: `u` restores the view
   set gs [dict get [wviewer::layout_for $token] graphs]
-  wviewer::set_graphs $token [wviewer::split_graph_in_graphs $gs $gi]
+  set auto [wviewer::auto_graph_index $token]
+  set plan [wviewer::plan_split $gs $gi $auto]
+  wviewer::set_graphs $token [wviewer::split_graph_in_graphs $gs $gi $auto]
   if {[info exists target($token)]} {
     set target($token) [wviewer::index_after_insert \
-      [wviewer::target_index $token] [expr {$gi + 1}] [expr {$nc - 1}]]
+      [wviewer::target_index $token] [dict get $plan at] [dict get $plan new]]
   }
   wviewer::regenerate $token
   wviewer::log_action [list wviewer::split_strip $gi $token]
-  return [expr {$nc - 1}]
+  return [dict get $plan new]
 }
 
 # The menubar twin's payload: split the TARGET strip. Unlike item 7 — whose
