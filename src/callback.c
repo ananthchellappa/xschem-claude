@@ -858,7 +858,19 @@ static int waves_callback(int event, int mx, int my, KeySym key, int button, int
     * per-graph loop below clears the grab flags regardless.
     *
     * Applies to every graph, on-canvas schematic graphs included, not just the ASE
-    * waveform viewer. doc/claude/issues/0152-graph-rmb-bolds-wave.md */
+    * waveform viewer. doc/claude/issues/0152-graph-rmb-bolds-wave.md
+    *
+    * Issue 0174 made the PICK precise and the toggle per-trace. Two tests gate
+    * this arm and they answer different questions -- keep both:
+    *   - GRAPH_CLICK_TOL (3 px * zoom, WORLD units) below: is this release a
+    *     click or the end of a drag? The double-click arm (~1199) poisons
+    *     graph_press_x/y with -1e30 to make this unsatisfiable, which is what
+    *     stops a double-click from bolding underneath the wave dialog -- so this
+    *     gate must stay on those two fields;
+    *   - GRAPH_TRACE_PICK_TOL (10 SCREEN px) inside: is the click on a trace?
+    * POINTINSIDE still reads the schematic-space mouse mirror because the arm is
+    * plot-BODY-only (the legend margins are Button3's, ~896) and that contract is
+    * unchanged. */
     /* A marker gesture owns its own release and MUST come first: the wave-bold
      * arm below is a release-only travel test with no knowledge of what the
      * press hit, so a no-travel marker SELECT would also toggle hilight_wave.
@@ -880,14 +892,48 @@ static int waves_callback(int event, int mx, int my, KeySym key, int button, int
        fabs(xctx->mousey - xctx->graph_press_y) <= GRAPH_CLICK_TOL * xctx->zoom) {
       int wcnt, save;
       save = gr->hilight_wave;
-      find_closest_wave(i, gr, &wcnt);
-      /* NOTE (pre-existing semantics, kept): the test is on the CURRENT bold wave, not
-       * on wcnt -- so while any wave is bold a click anywhere in the body un-bolds it,
-       * and only a click with nothing bold selects the closest wave. */
-      if(gr->hilight_wave >= 0) gr->hilight_wave = -1;
-      else                      gr->hilight_wave = wcnt;
-      my_strdup2(_ALLOC_ID_, &r->prop_ptr,
-                 subst_token(r->prop_ptr, "hilight_wave", my_itoa(gr->hilight_wave)));
+      /* WHICH trace, if any, the click is on -- a real point-to-segment distance
+       * in SCREEN PIXELS through the engine's own transform, capped at
+       * GRAPH_TRACE_PICK_TOL, answering the trace's NODE index or -1
+       * (issue 0174). It replaces find_closest_wave(), which had no threshold at
+       * all: it minimised |dy| at the nearest sample and returned the winner
+       * however far away it was, so "click near a trace" was really "click
+       * anywhere in the plot body" (measured: 714 of 776 body rows of a
+       * three-trace strip are more than 10 px from every trace, and a click on
+       * every one of them bolted something).
+       *
+       * This is the SAME query, at the SAME tolerance, that the RMB trace menu
+       * and the LMB trace drag already gate on -- the asymmetry (precise menu,
+       * imprecise select, same pixel, same strip) was the reported defect.
+       *
+       * It takes the EVENT's own pixels, not xctx->mousex/mousey: the C mouse
+       * mirror is schematic-space and is stale for a press with no preceding
+       * Motion (landmine 33), and graph_wave_at wants canvas pixels. It also
+       * uses a LOCAL Graph_ctx and brackets the hcursor flag bits (landmines 11
+       * and 37), so it cannot disturb `gr`, which an active draw may be using.
+       *
+       * Digital strips and bus traces answer -1 by construction (their rendering
+       * is a band/ribbon, not a polyline). That loses nothing: find_closest_wave()
+       * refused both too -- but it refused by returning BEFORE writing
+       * *node_number, so `wcnt` was read uninitialised and the garbage was
+       * persisted into the hilight_wave token (measured: -1859984240 on a digital
+       * strip and with no raw loaded). The refusal is now a clean no-op. */
+      wcnt = graph_wave_at(i, (double)mx, (double)my, GRAPH_TRACE_PICK_TOL);
+      /* A MISS changes nothing at all -- not even the token. Empty plot-body
+       * space is the strip drag-reorder gesture, so "a miss clears the
+       * selection" would mean a drag that fails its travel threshold silently
+       * deselects (issue 0174 D2). A HIT on the trace that is already bold
+       * un-bolds it, which is exactly what the per-trace legend affordance
+       * already does (edit_wave_attributes(2, ...), draw.c) -- the two surfaces
+       * used to disagree, and the body one could never move the selection from
+       * trace A to trace B: it tested the CURRENT bold rather than the picked
+       * one, so the click that should have picked B just cleared A (D3). */
+      if(wcnt >= 0) {
+        if(gr->hilight_wave == wcnt) gr->hilight_wave = -1;
+        else                         gr->hilight_wave = wcnt;
+        my_strdup2(_ALLOC_ID_, &r->prop_ptr,
+                   subst_token(r->prop_ptr, "hilight_wave", my_itoa(gr->hilight_wave)));
+      }
       if(save != gr->hilight_wave) {
         draw_graph(i, 1 + 8 + 16 + (xctx->graph_flags & (2 | 4 | 128 | 256)), gr, NULL); /* draw data in graph box */
       }

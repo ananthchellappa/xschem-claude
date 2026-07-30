@@ -396,6 +396,27 @@ typedef int Tcl_Size;
  * (`reorder_handle=4`, transient drag feedback like the drop bar above) */
 #define GRAPH_TRACE_DROP_W       3
 
+/* How close, in SCREEN PIXELS, a canvas pixel has to be to a drawn trace for
+ * that trace to be PICKED -- the one number every trace-picking surface on a
+ * strip shares (issue 0174). Point-to-segment distance through the engine's own
+ * transform (graph_wave_at, draw.c), so it is a real distance and NOT scaled by
+ * canvas zoom: the distance itself already carries xctx->mooz.
+ *
+ * Four surfaces answer with it and MUST keep agreeing -- three picking surfaces
+ * on one strip disagreeing about "close enough" is the next bug report:
+ *   - the LMB wave-bold click            (callback.c, the waves_callback arm)
+ *   - the RMB trace context menu         (wviewer::trace_menu_pick)
+ *   - the LMB trace drag between strips  (wviewer::strip_drag_press)
+ *   - the RMB strip menu's negative gate (wviewer::strip_menu_pick)
+ * MIRRORED IN TCL as the `{tol 10}` proc defaults of wviewer::trace_at and
+ * wviewer::near_wave_at (src/wave_viewer.tcl) and as the documented default of
+ * `xschem get graph_trace_at` / `graph_near_wave` -- change all of them together.
+ *
+ * ⚠ NOT GRAPH_CLICK_TOL (callback.c, 3.0). That one is the click-vs-drag TRAVEL
+ * test and is compared in WORLD units (`* xctx->zoom`); it is a different
+ * question and the double-click interlock depends on it unchanged. */
+#define GRAPH_TRACE_PICK_TOL  10.0
+
 /* Waveform markers (doc/claude/specs/graph_markers.md). Tolerances are SCREEN
  * PIXELS, fixed regardless of canvas zoom, like the reorder handle above.
  * These live in the header (not draw.c) because graph_marker_press() in

@@ -83,6 +83,17 @@
 #       Legs: LMB click bolds/un-bolds; RMB click and RMB box-zoom leave it
 #       alone (and the zoom still happens); an LMB drag-pan does not bold (and
 #       the pan still happens); the per-trace LEGEND RMB is unchanged.
+#       ISSUE 0174 made the pick PRECISE: a click bolds a trace only within
+#       GRAPH_TRACE_PICK_TOL (10) SCREEN PIXELS of it, and re-clicking the same
+#       trace is what un-bolds. So the click pixel is now SCANNED (the engine's
+#       own graph_trace_at) instead of being a fixed fraction of the widget —
+#       (0.50W, 0.50H) is about 0.30*H from this fixture's only trace, which is
+#       precisely how the old leg passed against a pick with no threshold.
+#       WB-precise* are the new legs: a plot-body click far from every trace
+#       bolds NOTHING and does not clear an existing bold either (empty body is
+#       the strip drag-reorder gesture). This fixture has ONE trace, so the
+#       multi-trace half — moving the selection from trace A to trace B in one
+#       click — lives in test_wave_trace_menu.tcl's TB* block.
 #
 # Honest assertability (spec D8): headless/GUI legs can assert raw
 # points/vars/sim_type, layer-2 rect count/props, redraw rc 0 and
@@ -1578,20 +1589,83 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
       set bpx2 [expr {int(0.70 * $W)}]      ;# a drag away from it
       set bpy  [expr {int(0.50 * $H)}]
 
+      # issue 0174: the pick is a real SCREEN-PIXEL distance to the trace
+      # (GRAPH_TRACE_PICK_TOL, 10), so the click pixel can no longer be a fixed
+      # fraction of the widget. Scan for one the ENGINE agrees is on the trace,
+      # and one inside the PLOT BOX that is far from every trace. Both scanned
+      # rather than assumed: the strip geometry follows the WM's window size,
+      # and a hard-coded fraction is exactly what let the pre-0174 WB-click leg
+      # pass against a pick with no threshold at all — measured, (0.50W, 0.50H)
+      # on this fixture sits about 0.30*H away from the only trace.
+      # plotbox_at keeps the far pixel out of the legend/label margin, which is
+      # Button3's territory (WB-legend below).
+      proc wb_at {vdrw gi px py {tol 10}} {
+        xschem new_schematic switch $vdrw
+        set r -1
+        catch {set r [xschem get graph_trace_at $gi $px $py $tol]}
+        if {![string is integer -strict $r]} { return -1 }
+        return $r
+      }
+      set wbony {}       ;# a row ON the trace
+      set wboffy {}      ;# a row inside the box but > 10 px from every trace
+      for {set y 2} {$y < $H} {incr y 1} {
+        if {![wviewer::plotbox_at $vdrw 0 $bpx $y]} { continue }
+        if {[wb_at $vdrw 0 $bpx $y] >= 0} {
+          if {$wbony eq {}} { set wbony $y }
+        } elseif {$wboffy eq {} && [wb_at $vdrw 0 $bpx $y 1e30] >= 0} {
+          set wboffy $y
+        }
+      }
+      check_true "WB-precise a pixel ON the trace was found" [expr {$wbony ne {}}]
+      check_true "WB-precise a plot-box pixel FAR from every trace was found" \
+        [expr {$wboffy ne {}}]
+      if {$wbony eq {}} { set wbony $bpy }
+      if {$wboffy eq {}} { set wboffy $bpy }
+
       wb_reset $tok
       check "WB-setup nothing bold to start" [wb_bold $vdrw] -1
 
-      # WB-click: press+release at the SAME pixel bolds the closest wave, and a
-      # second click clears it (the pre-existing toggle semantics, kept).
-      wb_ev $vdrw <ButtonPress-1>   -x $bpx -y $bpy
-      wb_ev $vdrw <ButtonRelease-1> -x $bpx -y $bpy -state 0x100
+      # WB-click: press+release at the SAME pixel, ON the trace, bolds it; a
+      # second click on the same trace clears it (D3 — the per-trace toggle,
+      # which is also what the legend affordance has always done).
+      wb_ev $vdrw <ButtonPress-1>   -x $bpx -y $wbony
+      wb_ev $vdrw <ButtonRelease-1> -x $bpx -y $wbony -state 0x100
       update
-      check "WB-click LMB click bolds the closest wave (trace 0)" [wb_bold $vdrw] 0
-      wb_ev $vdrw <ButtonPress-1>   -x $bpx -y $bpy
-      wb_ev $vdrw <ButtonRelease-1> -x $bpx -y $bpy -state 0x100
+      check "WB-click LMB click ON a trace bolds it (trace 0)" [wb_bold $vdrw] 0
+      wb_ev $vdrw <ButtonPress-1>   -x $bpx -y $wbony
+      wb_ev $vdrw <ButtonRelease-1> -x $bpx -y $wbony -state 0x100
       update
       check "WB-click second LMB click un-bolds" [wb_bold $vdrw] -1
       check_true "WB-click canvas == baseline" [ix_canvas_ok $vdrw $cx0 $cy0 $cz0]
+
+      # WB-precise (issue 0174): THE leg that fails on the pre-fix code. A click
+      # inside the plot body but more than the pick tolerance from every trace
+      # must select NOTHING — the old pick had no threshold and bolted the
+      # nearest trace however far away, so "in the vicinity of a trace" was
+      # really "anywhere in the plot body".
+      # Teeth: the same pixel with an enormous tolerance DOES find a trace, so
+      # -1 at the shipping tolerance means "far", not "this strip has no data".
+      check_true "WB-precise the far pixel is FAR, not data-less (huge tol hits)" \
+        [expr {[wb_at $vdrw 0 $bpx $wboffy 1e30] >= 0}]
+      check "WB-precise ... and the shipping tolerance calls it empty" \
+        [wb_at $vdrw 0 $bpx $wboffy] -1
+      wb_reset $tok
+      wb_ev $vdrw <ButtonPress-1>   -x $bpx -y $wboffy
+      wb_ev $vdrw <ButtonRelease-1> -x $bpx -y $wboffy -state 0x100
+      update
+      check "WB-precise a click far from every trace bolds NOTHING" [wb_bold $vdrw] -1
+      # ... and it must not CLEAR either (D2): empty plot-body space is the strip
+      # drag-reorder gesture, so "a miss clears" would make a drag that fails its
+      # travel threshold silently deselect.
+      wb_ev $vdrw <ButtonPress-1>   -x $bpx -y $wbony
+      wb_ev $vdrw <ButtonRelease-1> -x $bpx -y $wbony -state 0x100
+      update
+      check "WB-precise a trace is bold before the far click" [wb_bold $vdrw] 0
+      wb_ev $vdrw <ButtonPress-1>   -x $bpx -y $wboffy
+      wb_ev $vdrw <ButtonRelease-1> -x $bpx -y $wboffy -state 0x100
+      update
+      check "WB-precise a far click leaves the existing bold alone" [wb_bold $vdrw] 0
+      wb_reset $tok
 
       # WB-rmb-click: THE reported defect, minimal form. An RMB press+release in
       # the plot body must leave the bold alone (it is box-zoom only now).
@@ -2056,6 +2130,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
       rename wb_bold {}
       rename wb_reset {}
       rename wb_ev {}
+      rename wb_at {}
       unset ::wbt
       # leave strip 0 trace-free again so IX-fit sees the same shape as before
       set wbgs [dict get [wviewer::layout_for $tok] graphs]

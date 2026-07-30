@@ -4502,13 +4502,20 @@ int find_closest_wave(int i, Graph_ctx *gr, int *node_number)
   char *sim_type = NULL;
   const char *ptr;
 
+  /* Written FIRST, before either refusal (issue 0174). Both early returns used
+   * to leave *node_number untouched, and the one caller that reads it
+   * (callback.c's wave-bold arm) passed an uninitialised local -- so a body
+   * click on a digital strip, or with no raw loaded, persisted stack garbage
+   * into the graph's hilight_wave token (measured: -1859984240). That caller no
+   * longer uses this function, but the contract "always writes *node_number"
+   * belongs here, not at the call site. */
+  *node_number = -1;
   if(!xctx->raw) {
     dbg(0, "find_closest_wave(): no raw struct allocated\n");
     return -1;
   }
   if(gr->digital) return -1;
 
-  *node_number = -1;
   autoload = !strboolcmp(get_tok_value(r->prop_ptr,"autoload", 0), "true");
   if(autoload == 0) autoload = 2; /* 2: switch */
   else if(autoload == 1) autoload = 33; /* 1: read, 32: no_warning */

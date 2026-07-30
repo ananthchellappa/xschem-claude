@@ -3804,7 +3804,9 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
           }
           /* xschem get graph_near_wave <graph_idx> <px> <py> [tol]
            * 1 when the CANVAS PIXEL (px,py) is within `tol` screen pixels
-           * (default 10) of a displayed trace of graph <graph_idx>, else 0.
+           * (default GRAPH_TRACE_PICK_TOL, 10 -- the one tolerance every
+           * trace-picking surface on a strip shares, xschem.h) of a displayed
+           * trace of graph <graph_idx>, else 0.
            * Uses the engine's own transform + raw data (draw.c graph_near_wave),
            * so the caller never re-derives the plot box margins in Tcl.
            * The ASE viewer's trace-exclusion zone: near-trace LMB stays with the
@@ -3814,7 +3816,7 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
           else if(!strcmp(argv[2], "graph_near_wave")) {
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
             if(argc > 5) {
-              double tol = (argc > 6) ? atof(argv[6]) : 10.0;
+              double tol = (argc > 6) ? atof(argv[6]) : GRAPH_TRACE_PICK_TOL;
               Tcl_SetResult(interp,
                 my_itoa(graph_near_wave(atoi(argv[3]), atof(argv[4]), atof(argv[5]), tol)),
                 TCL_VOLATILE);
@@ -3848,8 +3850,10 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
           /* xschem get graph_trace_at <graph_idx> <px> <py> [tol]
            * The NODE INDEX (position in the graph's `node` prop token, the same
            * index space as `hilight_wave` / find_closest_wave's node_number) of
-           * the trace passing within `tol` screen pixels (default 10) of the
-           * CANVAS PIXEL (px,py); -1 when none is that close. Nearest wins.
+           * the trace passing within `tol` screen pixels (default
+           * GRAPH_TRACE_PICK_TOL, 10 -- shared with the RMB trace menu, the LMB
+           * trace drag and the LMB wave-bold click, xschem.h) of the CANVAS
+           * PIXEL (px,py); -1 when none is that close. Nearest wins.
            * Same engine-side machinery as graph_near_wave above (draw.c
            * graph_wave_at), which is the same query without the identity: the
            * ASE viewer uses this one to pick up a trace and drag it onto another
@@ -3857,7 +3861,7 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
           else if(!strcmp(argv[2], "graph_trace_at")) {
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
             if(argc > 5) {
-              double tol = (argc > 6) ? atof(argv[6]) : 10.0;
+              double tol = (argc > 6) ? atof(argv[6]) : GRAPH_TRACE_PICK_TOL;
               Tcl_SetResult(interp,
                 my_itoa(graph_wave_at(atoi(argv[3]), atof(argv[4]), atof(argv[5]), tol)),
                 TCL_VOLATILE);

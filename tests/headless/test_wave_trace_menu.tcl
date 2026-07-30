@@ -36,6 +36,24 @@
 #        STILL zoom), a modified B3, and a release with no recorded press
 #   TG11 no collateral damage: the B3 box zoom and the LMB wave-bold click are
 #        unchanged by the new release arm
+#   TB*  (issue 0174) the LMB wave-bold pick is PRECISE and PER-TRACE. This file
+#        owns graph_trace_at-gated picking and is the only suite with a LIVE
+#        multi-trace strip, so the two defects that need one live here:
+#        TB-far  a click more than the pick tolerance from every trace selects
+#                NOTHING (with teeth: a huge tol at the same pixel still hits,
+#                so -1 means "far", not "no data") — defect (a);
+#        TB-move a click on trace B while trace A is selected MOVES the
+#                selection, in ONE click with nothing in between — defect (b);
+#        TB-same re-clicking the selected trace un-selects it (D3);
+#        TB-keep a far click leaves the existing selection alone (D2);
+#        TB-agree the C click arm and graph_trace_at agree on every scanned row
+#                of the plot box — one shared tolerance, not two that overlap;
+#        TB-node the witness is a NODE index, proved on a fixture carrying a
+#                vec-less trace so MODEL and NODE indices diverge (landmine 34);
+#        TB-digital / TB-noraw a body click writes no uninitialised garbage into
+#                hilight_wave on the two paths find_closest_wave refused early;
+#        TB-clean the gesture is view state: no modify, no undo point (landmine 19).
+#        test_wave_viewer.tcl's WB* block keeps the single-trace precision legs.
 #
 # NOT asserted (stated, not hidden): pixels. That the menu is legible and lands
 # under the pointer is eyeball-only, like every other wave rendering. tk_popup
@@ -866,6 +884,239 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     catch {unset ::wviewer::b3x0($vdrw)}
     catch {unset ::wviewer::b3y0($vdrw)}
     catch {unset ::wviewer::b3mk($vdrw)}
+
+    # === TB (issue 0174): the LMB wave-bold pick is PRECISE and PER-TRACE ====
+    #
+    # Two defects, both previously documented as out of scope by issue 0152:
+    #   (a) find_closest_wave() had NO distance threshold — it minimised |dy| at
+    #       the nearest sample and returned the winner however far away, so a
+    #       click anywhere in the plot body bolted something. Measured on this
+    #       fixture before the fix: 714 of 776 pixel rows of the centre column
+    #       are more than 10 px from every trace, and every one of them bolted a
+    #       trace.
+    #   (b) the toggle tested the CURRENT bold, not the trace just picked, so the
+    #       selection could never move from trace A to trace B: the click that
+    #       should have picked B cleared A instead. Measured: -1 -> click node 0
+    #       -> 0 -> click node 2 -> -1 (not 2).
+    # Plus one found by measuring: find_closest_wave() returned from BOTH its
+    # early exits without writing *node_number, so a body click on a digital
+    # strip or with no raw loaded persisted stack garbage into hilight_wave
+    # (measured: -1859984240).
+    #
+    # These legs live here rather than only in test_wave_viewer.tcl's WB* block
+    # because this is the file that owns graph_trace_at-gated picking AND the
+    # only one with a live multi-trace strip: WB*'s fixture has a single trace
+    # on strip 0, where "picks the nearest" and "picks node 0" are the same
+    # answer and neither defect is witnessable. WB* keeps the single-trace
+    # precision legs; the multi-trace semantics are here.
+    #
+    # ⚠ HOLLOWNESS. "it picks the nearest trace" is not the test — a leg that
+    # only ever clicks ON a trace passes against the thresholdless pick too. The
+    # load-bearing legs are TB-far (a click far from everything picks NOTHING)
+    # and TB-move (A -> B in ONE click, nothing in between).
+
+    # A pixel the engine agrees is on node `want` of strip `gi`, or {}.
+    # find_trace_px's scan, with the node index as an input rather than an
+    # output — the three fixture traces (vsweep+1/+3/+5) are parallel and well
+    # separated after a fit, so one column finds all three.
+    proc tb_px_for_node {vdrw gi want} {
+      set W [winfo width $vdrw]; set H [winfo height $vdrw]
+      foreach fx {0.50 0.40 0.60 0.30 0.70} {
+        set px [expr {int($fx * $W)}]
+        for {set py 2} {$py < $H} {incr py 1} {
+          if {[wviewer::trace_at $vdrw $gi $px $py] == $want} { return [list $px $py] }
+        }
+      }
+      return {}
+    }
+    # ... and one INSIDE the plot box that is more than the pick tolerance from
+    # every trace. plotbox_at is required so the scan cannot hand back the
+    # legend/label margin, where LMB means something else entirely.
+    proc tb_far_px {vdrw gi} {
+      set W [winfo width $vdrw]; set H [winfo height $vdrw]
+      set px [expr {int(0.50 * $W)}]
+      for {set py 2} {$py < $H} {incr py 1} {
+        if {![wviewer::plotbox_at $vdrw $gi $px $py]} { continue }
+        if {[wviewer::trace_at $vdrw $gi $px $py] >= 0} { continue }
+        return [list $px $py]
+      }
+      return {}
+    }
+    proc tb_bold {vdrw} {
+      xschem new_schematic switch $vdrw
+      set v [pcall {xschem getprop rect 2 0 hilight_wave}]
+      if {$v eq {} || [string match ERR:* $v]} { return {} }
+      return $v
+    }
+    proc tb_reset {tok} {
+      wviewer::with_edit $tok {xschem setprop rect 2 0 hilight_wave -1}
+    }
+    proc tb_click {vdrw px py} {
+      tm_ev $vdrw <ButtonPress-1>   -x $px -y $py
+      tm_ev $vdrw <ButtonRelease-1> -x $px -y $py -state 0x100
+      update
+    }
+
+    set W [winfo width $vdrw]; set H [winfo height $vdrw]
+
+    # The fixture grows a VEC-LESS trace at model index 1, so MODEL and NODE
+    # index spaces diverge (landmine 34): without it "picks the trace under the
+    # pointer" and "picks model index N" are the same answer and the witness
+    # proves nothing. graph_props skips a vec-less trace when building the
+    # `node` token, so nothing is drawn for it. The plant is the
+    # test_wave_drag_preview.tcl fill_viewer precedent.
+    fill_viewer $tok
+    set tbgs [dict get [wviewer::layout_for $tok] graphs]
+    set tbG  [lindex $tbgs 0]
+    set tbtr [linsert [wviewer::dget $tbG traces {}] 1 \
+                [dict create expr {} name {} vec {} color 7]]
+    wviewer::set_graphs $tok [lreplace $tbgs 0 0 [dict replace $tbG traces $tbtr]]
+    wviewer::regenerate $tok
+    wviewer::fit $tok
+    update
+    set tbG [lindex [dict get [wviewer::layout_for $tok] graphs] 0]
+    check "TB0 four MODEL traces, three NODE slots (landmine 34)" \
+      [list [llength [wviewer::dget $tbG traces {}]] [wviewer::node_count $tbG]] {4 3}
+    check "TB0 node 1 is MODEL index 2 — the spaces have diverged" \
+      [wviewer::trace_index_of_node $tbG 1] 2
+
+    set tb0 [tb_px_for_node $vdrw 0 0]
+    set tb2 [tb_px_for_node $vdrw 0 2]
+    set tbf [tb_far_px $vdrw 0]
+    if {![llength $tb0] || ![llength $tb2] || ![llength $tbf]} {
+      puts "SKIPPED: TB legs (no separated trace pixels — window too small to plot in)"
+    } else {
+      check_true "TB0 a pixel on node 0, a pixel on node 2 and a far body pixel were found" \
+        [expr {[llength $tb0] && [llength $tb2] && [llength $tbf]}]
+
+      # --- TB-far: defect (a). THE leg that fails on the old code. ------------
+      # Teeth: the same pixel with an enormous tolerance DOES find a trace, so
+      # -1 at the shipping tolerance means "far from every trace", not "this
+      # strip has no data" — which is how this leg would otherwise pass against
+      # a pick that was simply broken.
+      lassign $tbf tbfx tbfy
+      check_true "TB-far the far pixel is FAR, not data-less (a huge tol still hits)" \
+        [expr {[wviewer::trace_at $vdrw 0 $tbfx $tbfy 1e30] >= 0}]
+      check "TB-far ... and the shipping tolerance calls it empty" \
+        [wviewer::trace_at $vdrw 0 $tbfx $tbfy] -1
+      tb_reset $tok
+      tb_click $vdrw $tbfx $tbfy
+      check "TB-far a click far from every trace selects NOTHING" [tb_bold $vdrw] -1
+
+      # --- TB-move: defect (b). A -> B in ONE click, nothing in between. ------
+      lassign $tb0 tb0x tb0y
+      lassign $tb2 tb2x tb2y
+      tb_reset $tok
+      tb_click $vdrw $tb0x $tb0y
+      check "TB-move a click on node 0 selects node 0" [tb_bold $vdrw] 0
+      tb_click $vdrw $tb2x $tb2y
+      check "TB-move a click on node 2 MOVES the selection there (one click)" \
+        [tb_bold $vdrw] 2
+
+      # --- TB-same: D3, the only LMB way to deselect --------------------------
+      tb_click $vdrw $tb2x $tb2y
+      check "TB-same re-clicking the selected trace un-selects it" [tb_bold $vdrw] -1
+
+      # --- TB-keep: D2, empty body space must not clear -----------------------
+      # Empty plot-body space is the strip drag-reorder gesture, so a click that
+      # cleared would mean a drag failing its travel threshold silently
+      # deselects.
+      tb_reset $tok
+      tb_click $vdrw $tb0x $tb0y
+      check "TB-keep node 0 is selected before the far click" [tb_bold $vdrw] 0
+      tb_click $vdrw $tbfx $tbfy
+      check "TB-keep a far click leaves the existing selection alone" [tb_bold $vdrw] 0
+
+      # --- TB-agree: the shared tolerance -------------------------------------
+      # The C click arm and graph_trace_at must answer the same question at the
+      # same pixel — three picking surfaces on one strip disagreeing about
+      # "close enough" is the next bug report. Scanned across the whole column,
+      # not spot-checked, so a tolerance that merely OVERLAPS cannot pass.
+      set tbdiff 0
+      set tbrows 0
+      for {set py 2} {$py < $H} {incr py 7} {
+        if {![wviewer::plotbox_at $vdrw 0 $tbfx $py]} { continue }
+        incr tbrows
+        set want [wviewer::trace_at $vdrw 0 $tbfx $py]
+        tb_reset $tok
+        tb_click $vdrw $tbfx $py
+        if {[tb_bold $vdrw] != $want} { incr tbdiff }
+      }
+      check_true "TB-agree the scan covered the plot box" [expr {$tbrows > 10}]
+      check "TB-agree the click arm and graph_trace_at agree on every row" $tbdiff 0
+
+      # --- TB-node: the witness is a NODE index -------------------------------
+      # node 2 is MODEL index 3 in this fixture, so a picker that answered in
+      # model space would have written 3 here.
+      tb_reset $tok
+      tb_click $vdrw $tb2x $tb2y
+      set tbG [lindex [dict get [wviewer::layout_for $tok] graphs] 0]
+      check "TB-node the selected trace is node 2 = MODEL index 3" \
+        [list [tb_bold $vdrw] [wviewer::trace_index_of_node $tbG [tb_bold $vdrw]]] {2 3}
+
+      # --- TB-clean: landmine 19 — selection is VIEW state --------------------
+      lassign [wviewer::history_depth $tok] tbu0 tbr0
+      tb_reset $tok
+      tb_click $vdrw $tb0x $tb0y
+      xschem new_schematic switch $vdrw
+      check "TB-clean the gesture left the buffer unmodified" [xschem get modified] 0
+      lassign [wviewer::history_depth $tok] tbu1 tbr1
+      check "TB-clean the gesture took no undo point" [expr {$tbu1 - $tbu0}] 0
+
+      # --- TB-digital: D5 --------------------------------------------------
+      # graph_wave_at answers -1 across a digital strip's whole body by design
+      # (a band/ribbon is not a polyline). Nothing is lost: find_closest_wave
+      # refused digital strips too, but it refused by returning BEFORE writing
+      # *node_number, so the caller's uninitialised local was persisted into the
+      # token. `digital` is set on the RECT and not through the model — the
+      # viewer's graph_props has no digital key — so no regenerate may run
+      # between here and the restore.
+      tb_reset $tok
+      wviewer::with_edit $tok {xschem setprop rect 2 0 digital 1; xschem redraw}
+      update
+      xschem new_schematic switch $vdrw
+      check "TB-digital the strip really is digital" \
+        [xschem getprop rect 2 0 digital] 1
+      set tbbad 0
+      foreach fy {0.20 0.35 0.50 0.65 0.80} {
+        tb_reset $tok
+        tb_click $vdrw $tbfx [expr {int($fy * $H)}]
+        if {[tb_bold $vdrw] != -1} { incr tbbad }
+      }
+      check "TB-digital a body click on a digital strip selects nothing, and writes no garbage" \
+        $tbbad 0
+      wviewer::with_edit $tok {xschem setprop rect 2 0 digital 0; xschem redraw}
+      update
+
+      # --- TB-noraw: the other uninitialised-read path ------------------------
+      tb_reset $tok
+      xschem new_schematic switch $vdrw
+      pcall {xschem raw clear}
+      update
+      set tbbad 0
+      foreach fy {0.25 0.50 0.75} {
+        tb_reset $tok
+        tb_click $vdrw $tbfx [expr {int($fy * $H)}]
+        if {[tb_bold $vdrw] != -1} { incr tbbad }
+      }
+      check "TB-noraw a body click with no raw loaded selects nothing, and writes no garbage" \
+        $tbbad 0
+      # put the fixture's raw back for anything downstream
+      xschem new_schematic switch $vdrw
+      pcall {xschem raw new wvtm.raw dc vsweep 0 1.0 0.02}
+      foreach {v ex} {vec_a {vsweep 1 +} vec_b {vsweep 3 +} vec_c {vsweep 5 +}
+                      vec_d {vsweep 7 +}} {
+        pcall {xschem raw add $v $ex}
+      }
+      check_true "TB-noraw the fixture raw is back" \
+        [expr {[lsearch -exact [split [pcall {xschem raw list}] "\n"] vec_a] >= 0}]
+    }
+    rename tb_px_for_node {}
+    rename tb_far_px {}
+    rename tb_bold {}
+    rename tb_reset {}
+    rename tb_click {}
+    fill_viewer $tok
   }
 
   # --- TG12..TG18: REUSE an existing empty strip (D1/D2) ---------------------

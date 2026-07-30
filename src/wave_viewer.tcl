@@ -2711,6 +2711,9 @@ proc wviewer::strip_drop_index {canvas py {from -1}} {
 # approximating it in Tcl from the strip geometry would drift the moment
 # margins, log axes or ranges change. Fails CLOSED (0 = "empty space") so a
 # missing verb or an errored query cannot lock the user out of reordering.
+# ⚠ the default MIRRORS GRAPH_TRACE_PICK_TOL (src/xschem.h, 10 screen px) --
+# the single tolerance the wave-bold click, the trace menu, the trace drag and
+# the strip-menu gate all share. Change both or the surfaces drift apart.
 proc wviewer::near_wave_at {wp gi px py {tol 10}} {
   if {[catch {xschem new_schematic switch $wp}]} { return 0 }
   set r 0
@@ -3742,6 +3745,10 @@ proc wviewer::plotbox_at {wp gi px py} {
   return [expr {$r ? 1 : 0}]
 }
 
+# ⚠ the default MIRRORS GRAPH_TRACE_PICK_TOL (src/xschem.h, 10 screen px). Since
+# issue 0174 the C-side LMB wave-bold click picks with the SAME number, so this
+# proc and that arm agree about "close enough" by construction; three picking
+# surfaces on one strip disagreeing is the next bug report.
 proc wviewer::trace_at {wp gi px py {tol 10}} {
   if {[catch {xschem new_schematic switch $wp}]} { return -1 }
   set r -1

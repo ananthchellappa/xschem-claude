@@ -273,7 +273,8 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
 - `waves_callback` (~724): the gesture engine. Operates on `graph_master`
   first (**waveform-MARKER press/motion/release, which pre-empts everything
   below it** — `doc/claude/specs/graph_markers.md` §7; **LMB-click wave-bold**
-  via `find_closest_wave` — issue 0152, see landmine 20; RMB-on-legend
+  via `graph_wave_at` at `GRAPH_TRACE_PICK_TOL` — issues 0152 and 0174, see
+  landmines 20 and 33 (it used `find_closest_wave` until 0174); RMB-on-legend
   per-trace bold via `edit_wave_attributes`, hover measurement tooltip via
   `G_X`/`G_Y`, cursor grab within 10px, numeric cursor set,
   `a`/`b`/`s`/`t` keys plus `m` = create marker, `d` = create marker with a
@@ -827,13 +828,25 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
     The press anchor is `xctx->graph_press_x/y`, **never**
     `mx/my_double_save`: the Button1 drag-pan **re-seeds** those on every motion
     step (`save_mouse_at_end`, end of `waves_callback`), so at the end of a long
-    pan they equal the release point and a click test against them fires. Also
-    note `find_closest_wave()` has **no distance threshold** — "near a trace" is
-    really "anywhere in the plot body" — and the toggle tests the *currently*
-    bold wave, not the one just found (a click anywhere un-bolds whatever is
-    bold). RMB inside the plot body is box-zoom only; RMB on a **legend** entry
-    is a separate, per-trace bold (`edit_wave_attributes(2,...)`) and is
+    pan they equal the release point and a click test against them fires. That
+    anchor also carries the DOUBLE-click interlock: the `-3` arm poisons it with
+    `-1e30` so the trailing release cannot pass the travel test and bold
+    underneath the wave dialog — a replacement gate on different fields silently
+    loses that. RMB inside the plot body is box-zoom only; RMB on a **legend**
+    entry is a separate, per-trace bold (`edit_wave_attributes(2,...)`) and is
     unchanged.
+    ⚠ **Two clauses of this entry were CORRECTED by issue 0174 (2026-07-29).**
+    It used to add that `find_closest_wave()` has no distance threshold, so
+    "near a trace" was really "anywhere in the plot body", and that the toggle
+    tests the *currently* bold wave rather than the one just found. Both were
+    true, both were the next bug report, and both are now fixed: the arm picks
+    with `graph_wave_at()` at `GRAPH_TRACE_PICK_TOL` (10 screen px, landmine 33)
+    off the EVENT's canvas pixels, and compares the trace it just picked, so a
+    click on trace B while A is bold MOVES the selection. Two tolerances now sit
+    in this one arm and they answer different questions — `GRAPH_CLICK_TOL`
+    (3 px × `xctx->zoom`, WORLD units) is click-vs-drag travel;
+    `GRAPH_TRACE_PICK_TOL` (10 SCREEN px, never zoom-scaled) is
+    distance-to-trace. Do not merge them.
 21. **Highlight values >= 0 are STYLE indices, not layers** (issue 0153).
     `get_hilight_style` indexes the net-hilight style table, whose default rows
     map style *i* to `active_layer[i]` = layers **>= 7 only**. A **negative**
@@ -1078,6 +1091,29 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
     reads as "empty space", never as "locked out". Since 2026-07-28 it is a
     one-line wrapper over `graph_wave_at()` (landmine 34), which returns the
     trace's index instead of a boolean — do not re-implement the distance scan.
+    **Updated 2026-07-29 (issue 0174): the "no exclusion zone" note now has a
+    FIXED caller.** The LMB wave-bold click no longer uses `find_closest_wave()`
+    at all — it picks with `graph_wave_at(i, mx, my, GRAPH_TRACE_PICK_TOL)` off
+    the EVENT's canvas pixels, so all four trace-picking surfaces on a strip (the
+    click, `trace_menu_pick`, `strip_drag_press`, `strip_menu_pick`) now share
+    one tolerance, `#define GRAPH_TRACE_PICK_TOL 10.0` in `xschem.h`. Change that
+    and the two `{tol 10}` proc defaults in `wave_viewer.tcl` together.
+    Consequences worth knowing before touching this again:
+    (i) **digital and bus strips.** They now select NOTHING on a body click.
+    Nothing was lost: `find_closest_wave()` refused digital (`draw.c` ~4509) and
+    skipped bus entries (~4550) already — but it refused by returning BEFORE
+    `*node_number = -1`, and the caller's local was uninitialised, so the click
+    persisted stack garbage into the `hilight_wave` token (measured:
+    `-1859984240`, on a digital strip and with no raw loaded). `*node_number` is
+    now written above both early exits; a query that returns early still owes its
+    out-params a value.
+    (ii) `find_closest_wave()` **still exists and still has no threshold** — the
+    `t` dataset-track arm (`callback.c` ~1341) uses its RETURN value (the
+    dataset), never `node_number`. Do not delete it, and do not add a threshold
+    to it: `t` genuinely wants "nearest, however far".
+    (iii) a MISS writes nothing, not even the token — empty body space belongs to
+    the strip drag-reorder, so clearing on a miss would let a refused drag
+    deselect. See `doc/claude/issues/0174-trace-pick-needs-proximity.md`.
 
 34. **A trace's MODEL index and its NODE index are different spaces, and every C
     answer is in the second one** (2026-07-28, trace drag between strips).

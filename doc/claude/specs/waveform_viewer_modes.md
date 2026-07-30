@@ -520,6 +520,26 @@ Transient per-window drag state lives in `drag_from` / `drag_to` / `drag_y0` /
 | LMB within 10 px of a trace, or a cursor grab | **C** — cursor drag/move, trace pick, wave-bold click |
 | **MMB** drag | **C** — graph pan (data ranges; the canvas never moves) |
 | RMB drag | **C** — box zoom (unchanged) |
+| LMB **click** (release, no travel) within 10 px of a trace | **C** — selects that trace; re-clicking it de-selects |
+| LMB **click** further than 10 px from every trace | **C** — no-op: selects nothing and clears nothing |
+
+**The precise-pick rule (issue 0174).** The wave-bold click is a *pick*, not a
+"nearest wins" — it uses `graph_wave_at()` at `GRAPH_TRACE_PICK_TOL`
+(`src/xschem.h`, 10 screen px), the same query at the same tolerance that
+`trace_menu_pick`, `strip_drag_press` and `strip_menu_pick` already gate on. One
+number for every trace-picking surface on a strip: they were allowed to diverge
+once (a precise RMB menu and an imprecise LMB select, same strip, same pixel)
+and that divergence *was* the bug report. The click also compares the trace it
+just picked, so a click on trace B while trace A is selected **moves** the
+selection; only a click on the already-selected trace clears it.
+
+A miss changes **nothing** — not even the `hilight_wave` token. That is load
+bearing: empty plot-body space is the strip drag-reorder gesture in the row
+above, so a miss that cleared would mean a drag failing its travel threshold
+silently deselects. Digital strips and bus traces answer -1 across their whole
+body (a band/ribbon is not a polyline), which loses nothing — the pre-0174 pick
+refused them too, it just refused by writing an uninitialised value into the
+token.
 
 `<ButtonPress-1>` runs `strip_drag_press` first; when it does not consume the
 event the pre-existing issue-0151 body runs verbatim (target change, focus, C
