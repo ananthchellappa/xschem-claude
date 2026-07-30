@@ -165,20 +165,28 @@ looked at. **This list is the debt; do not let it grow silently.**
 | — `wviewer::open` intermittent (found by item 8's soak) | `5ddb8361` | ✅ REVIEWED with item 8 |
 | 6 — mid-drag shrink preview (**touched `draw.c`**) | `9727791a` | ✅ REVIEWED — **rejected Y-only and 10 %** |
 | 6 round 2 — both axes at 30 % | `780bd468` | ⚠ **TIMEOUT, went through unreviewed — NOT eyeballed** |
-| 7 follow-up — reuse an empty strip (any, D1/D2) | see `git log` (2026-07-29, after `37df1512`) | model change, suite-visible; item 7's MENU still un-eyeballed |
-| 8 follow-up — reuse the adjacent empty strip (D3/D4) | see `git log` (same day) | model change, suite-visible; item 8's MENU still un-eyeballed |
+| 7 follow-up — reuse an empty strip (any, D1/D2) | `8ac4ea0b` | ✅ EYEBALLED OK 2026-07-29 |
+| 8 follow-up — reuse the adjacent empty strip (D3/D4) | `1fd61bca` | ⚠ SUPERSEDED — D3 fired almost never; **reported as a defect** |
+| 8 follow-up round 2 — RELOCATE the empty strip (D3 v2) | `9b03489a` | ✅ EYEBALLED OK 2026-07-29 — *"Working ok. Eyeball result pass"* |
 
 **ALL TEN ITEMS ARE NOW BUILT AND COMMITTED** (2026-07-29). Order run:
 4, 5, 1, 2, 3, 9, 10, 7, 8, 6.
 
 **Debt, and it is all of one kind — pixels nobody has looked at yet:**
 
-- **Item 7.** Its panel was closed without a verdict, which the gate maps to
-  PROCEED, so nothing has confirmed that the menu *looks* right or lands under
-  the pointer. The suite spies `tk_popup` rather than posting for real (a live
-  popup grabs and swallows the rest of the run), so this is structurally
-  uncheckable here.
-- **Item 8.** PROCEED, but the same `tk_popup` limitation applies to its menu.
+- **Items 7 and 8: CLEARED 2026-07-29.** The reuse follow-up was driven by hand
+  through the real RMB menus (that is where `/tmp/Xschem.log.1` came from — the
+  `move_trace_to_new_strip` / `split_strip` lines can only be produced by the
+  context menus or Graph > Split Strip), and the verdict on the round-2 relocation
+  was *"Working ok. Eyeball result pass"*. So both menus have now posted under a
+  real pointer and been looked at, which the suites structurally cannot do
+  (`tk_popup` is spied — a live popup grabs and swallows the rest of the run).
+  ⚠ What is confirmed is the **gesture and the resulting layout**, not a
+  pixel-by-pixel review of the menu widget.
+- ⚠ **Item 6 round 2 (`780bd468`) is NOT covered by that pass** — it is a
+  different gesture (mid-drag shrink of the dragged trace) and nobody has watched
+  it. It remains the one open eyeball item, and it is the one with no automated
+  check at all.
 - **Item 6 is the worst of the three, and deliberately so.** The shrink itself
   has **no** automated check and cannot have one: the scaling sits between
   `S_Y()` and `XDrawLines`, so deleting it leaves all 46 checks green. Everything
@@ -186,7 +194,8 @@ looked at. **This list is the debt; do not let it grow silently.**
   an eyeball item.**
 
 Three green suites, ~300 checks between them, and not one of them can see. Do not
-let the counts read as confirmation.
+let the counts read as confirmation. (Two of the three have since been driven by
+hand and passed; **item 6 round 2 is the one still standing on counts alone.**)
 
 The `drawline` change in item 2 — the one thing the
 suite structurally could not verify, since nothing here can read back an X GC's
