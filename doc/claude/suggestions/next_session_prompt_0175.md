@@ -2,9 +2,10 @@
 # trace selected (Ctrl-click add / remove)
 
 Repo `/home/qflow/dev/xschem/claude_1/xschem`, branch `fluid-editing`.
-**Do 0174 first** (`next_session_prompt_0174.md`, precise body picking) — this
-issue assumes it has shipped and reads its issue file for what the LMB body arm
-now does. Never push.
+**0174 HAS SHIPPED** (2026-07-30, commits `a094552a` + `7e6272c9`, unpushed).
+Read `doc/claude/issues/0174-trace-pick-needs-proximity.md` FIRST for what the
+LMB body arm now does — in particular its defect (d) and D2/D3, which were
+reversed at review and are the ground this issue builds on. Never push.
 
 ## The asks, as reported
 
@@ -245,8 +246,11 @@ is the whole risk in this issue, and it is D1.
 6. **Count the `WB*` legs and every `getprop ... hilight_wave` assertion before
    you start** — if D1 changes the token, all of them change, which is expected,
    but a silent drop must be visible. Today: `test_wave_modes` 28 mentions,
-   `test_wave_markers` 26, `test_wave_trace_menu` 18, `test_wave_split_strip` 12,
-   `test_wave_viewer` 8.
+   `test_wave_markers` 26, `test_wave_trace_menu` 27, `test_wave_split_strip` 12,
+   `test_wave_viewer` 8, `test_wave_legend` 0. (trace_menu went 18 -> 27 with
+   0174's `TB*` block; its `TB-cross` legs witness the WHOLE STACK via
+   `tb_bolds`, and a per-strip token needs exactly that — a single-rect witness
+   is how 0174's cross-strip defect hid from a green suite.)
 7. Sabotage-verify, each turning **different** legs red: (a) legend query off by
    one slot; (b) Ctrl-click replaces instead of adds; (c) Ctrl-click on a selected
    trace re-adds instead of removing; (d) legend query fed snapped coords;
@@ -255,9 +259,9 @@ is the whole risk in this issue, and it is D1.
 
 ## Tests
 
-- `tests/headless/test_wave_trace_menu.tcl` (**223** / **71**) — owns hit-test
+- `tests/headless/test_wave_trace_menu.tcl` (**249** / **71**) — owns hit-test
   gating and fail-closed rungs. The legend query and its refusals go here.
-- `tests/headless/test_wave_viewer.tcl` (**349** / **48**) — owns the `WB*`
+- `tests/headless/test_wave_viewer.tcl` (**356** / **48**) — owns the `WB*`
   selection legs. Multi-select and Ctrl-click go here.
 - `tests/headless/test_wave_legend.tcl` (**44** / **33**) — owns legend geometry
   and `legendmag`/`legendbold`. The D4 drawing-cue plumbing goes here.
@@ -267,15 +271,26 @@ is the whole risk in this issue, and it is D1.
 Full battery, must stay green at these counts (DISPLAY / nogui):
 `test_wave_snap` 59/36, `test_wave_grid` 80/44, `test_wave_legend` 44/33,
 `test_wave_empty_strips` 94/28, `test_wave_modes` 410/137,
-`test_wave_markers` 712/328, `test_wave_viewer` 349/48,
+`test_wave_markers` 712/328, `test_wave_viewer` 356/48,
 `test_wave_clear_all` 68/3, `test_ase_plot` 150/30,
-`test_wave_trace_menu` 223/71, `test_wave_split_strip` 221/80,
+`test_wave_trace_menu` 249/71, `test_wave_split_strip` 221/80,
 `test_wave_drag_preview` 46/18, `test_ase_persist` 109/17,
 `test_ase_unnamed_net` 28/28, `test_ase_window` 166/31.
-(Counts shift by whatever 0174 added — take the post-0174 numbers as the
-baseline and say so.)
+(These ARE the post-0174 numbers, measured 2026-07-30 — 0174 took
+`test_wave_viewer` 349 -> 356 and `test_wave_trace_menu` 223 -> 249.)
 
-⚠ `test_ase_plot`'s gesture legs flake 1-2 in 10 under WSLg and always have.
+⚠ **Known WSLg flakes — measured on PRISTINE code, do not chase them.**
+`test_ase_plot`'s gesture legs (P4/P6/P8/P9) flake 1-2 in 10 and always have.
+`test_wave_trace_menu`'s `TG9 it was posted in ROOT coordinates` flakes **4 in
+10** (measured against a pristine worktree). `test_ase_window`'s `W3`/`W6c` and
+`test_wave_markers`' `MF0`/`MF1` flake ~1 in 10. All are synthetic-gesture,
+focus, or scan-found-nothing failures. If one goes red, judge whether the leg is
+upstream of what you touched, then re-run — do not "fix" it.
+
+⚠ **A green line is not a green suite — read the check COUNT.** When WSLg stops
+mapping toplevels, every GUI leg self-SKIPs and the suite still prints
+`RESULT: ALL PASS`, at 73 checks instead of 356. This wasted a verification pass
+during 0174.
 Judge upstream/downstream, then re-run.
 
 ## Process
