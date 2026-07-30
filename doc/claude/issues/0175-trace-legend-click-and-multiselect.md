@@ -428,6 +428,21 @@ luck, not a fix — do not read it as a change.
 
 ## Not verified
 
+- ⚠ **FOUND AT EYEBALL, 2026-07-30 — the schematic SNAP GRID is still visible on
+  the legend.** The user's verdict was "implementation seems ok except that the
+  snap grid seems to be at play when it comes to clicking on the legend text",
+  with the broader point that a viewer canvas has no business having a snap grid
+  at all. **Measured immediately after the report, and it is NOT the pick
+  arithmetic:** a full synthetic press+release through the production bindings
+  selects the same legend entry at `cadsnap 400` as at `cadsnap 10`, and so does
+  a body click. So whatever it is, it is something a REAL pointer does that a
+  synthetic event does not — the motion path, a snapped readout, or the
+  schematic crosshair / snap cursor being drawn over the legend band. Carried to
+  **issue 0177**, prompt in
+  `doc/claude/suggestions/next_session_prompt_0177.md`.
+  The hollowness gap that let it ship is named there too: `TL4` asserts the
+  QUERY is snap-immune and nothing drives a real gesture — or a HOVER — under a
+  coarse grid.
 - **Pixels.** That N bold strokes and N bold-italic legend entries actually read
   as "these are selected" is eyeball-only (D4). The manual sequence is handed
   over with this issue.
