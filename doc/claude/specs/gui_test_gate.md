@@ -1,9 +1,12 @@
 # GUI-test control gate — warn / Snooze / Pause the headless GUI test suite
 
-Status: SHIPPED **v4** (2026-07-30; v3 2026-07-29, v2 2026-07-25, v1 2026-07-22)
+Status: SHIPPED **v5** (2026-07-30; v4 2026-07-30, v3 2026-07-29, v2 2026-07-25,
+v1 2026-07-22)
 Files: tests/headless/gui_gate_widget.tcl, tests/headless/gui_gate.sh,
-wired into tests/headless/full_audit.sh **and tests/headless/run_suites.sh**.
-Self-test: tests/headless/test_gui_gate_revive.sh.
+wired into tests/headless/full_audit.sh **and tests/headless/run_suites.sh**,
+plus tests/headless/gated_xschem.sh (enrolment wrapper for bare loops).
+Self-tests: tests/headless/test_gui_gate_revive.sh (v4),
+tests/headless/test_gui_gate_batch.sh (v5).
 
 ## THE ONE RULE (v3)
 
@@ -157,11 +160,79 @@ v4:
 software-render mode — `Failed to initialize glamor, falling back to sw`). Treat
 any long-lived X client on this box as mortal.
 
-**Still open after v4:** `snooze_until` is write-only (see Control protocol);
-no `trap` in `gate_start`, so an interrupted suite orphans `status/<pid>` and
-blocks STOP self-clearing; and nothing forces a bare
-`src/xschem --script` invocation through the gate at all — the gate is advisory,
-which is why `run_suites.sh` is mandatory rather than merely recommended.
+## The approval window (v5) — "batch the batches"
+
+The gate warned before EVERY suite. Right for one big run, wrong for how testing
+actually happens: forty tiny suites of a couple of seconds each meant forty
+Proceed presses — or, with nobody at the desk, **forty two-minute autostart
+waits to run about two minutes of tests**. The gate was costing an order of
+magnitude more time than the tests it guarded, which is its own kind of "stops
+being a gate": the pressure is all towards `GUI_GATE=0`.
+
+**Proceed gained siblings: `Allow 30m` / `Allow 2h`.** They write an epoch into
+`allow_until`; while that is in the future `gate_start` returns *immediately* —
+no `req` file, no countdown, no `_gate_attention` relaunch. Approve once, walk
+away, and a whole batch runs back to back.
+
+- **Approving does not give up control.** `control` is read at every pause
+  point, so Pause and Stop govern an approved batch exactly as before. That is
+  the point of approving it: you leave *because* you can still stop it.
+- `gate_start` under a window still ensures a panel exists — **quietly**, with
+  no attention grab. A batch running with no panel would be the very flood this
+  gate exists to prevent.
+- **Allow is enabled even with nothing waiting**, so you can approve *before*
+  launching a soak and never be prompted at all.
+- **PAUSE freezes the window** as it freezes the countdown: an approved hour is
+  an hour of *tests*, and burning it while everything is held would expire the
+  window the user is waiting to use.
+- `grant_count` — how many suites the window has admitted, shown in the panel
+  ("7 suites have run so far") so an open window is never invisible.
+- `Revoke` closes it; a malformed or expired `allow_until` is ignored, never
+  treated as a blank cheque.
+
+## The hard brake (v5) — authority over runs that never enrolled
+
+Pause and Stop only reach suites that *called* the gate. A bare
+`for i in 1..12; do ./src/xschem --script t.tcl; done` never does, so the panel
+could only watch a flood it had no authority over.
+
+- The **Running suites** list now also shows every `xschem` process the panel
+  did not launch, tagged `UNGATED` (argv[0] basename match, so paths that merely
+  run through `.../xschem/...` do not count).
+- **`Halt N xschem`** SIGSTOPs them all; the button flips to **`Resume N
+  xschem`** (SIGCONT). **`Kill`** unlocks only once something is halted, and
+  confirms first — it SIGCONTs before SIGTERM, since a stopped process never
+  reaches its handler.
+- This is a **brake, not a graceful pause**: halted runs fail or time out, and a
+  frozen X client can leave the display sluggish until resumed. Correct when the
+  alternative is an unusable PC; hence the separate colour and the always-there
+  Resume.
+- `GUI_GATE_BRAKE_NAME` retargets it — the self-test aims it at a throwaway
+  process so it can never SIGSTOP the user's real windows.
+
+**`gated_xschem.sh`** is the other half: a drop-in for `./src/xschem` that
+enrols the run, so the habitual bare loop becomes gated by changing one word.
+With an approval window open, such a loop runs unprompted.
+
+## Two defects found while building v5 (both would have killed the panel)
+
+- **`/proc/<pid>/cmdline` parsed as a Tcl list.** `lindex` on that string throws
+  `list element in quotes followed by...` the instant any process on the box has
+  a quote in its arguments — which is most of the time. It threw inside
+  `refresh`, i.e. it killed the panel *at startup*. Command lines are arbitrary
+  text: split on the NUL separator into a real list, never `lindex` foreign
+  text.
+- **The poll loop could die silently.** `after 300 refresh` was the *last*
+  statement of the body, so any throw skipped the re-arm — leaving a panel that
+  kept its pid and its window, looked perfectly healthy to `_gate_widget_alive`,
+  and had stopped reading `req/` and `control` altogether. A suite would then
+  block at `gate_start` forever behind a frozen countdown. `refresh` is now a
+  wrapper that `catch`es the body, logs to `widget.log`, and **re-arms
+  unconditionally**.
+
+**Still open after v5:** nothing *forces* a bare `src/xschem --script` through
+the gate — `gated_xschem.sh` and `run_suites.sh` must be chosen. Enforcement
+would need a check inside the binary; the brake is the compensating control.
 
 ## Panel (`gui_gate_widget.tcl`, run by `wish`)
 

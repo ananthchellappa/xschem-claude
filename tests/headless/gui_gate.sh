@@ -202,11 +202,48 @@ _gate_attention() {
   _gate_ensure_widget
 }
 
-# gate_start "<label>" — block until acked (Proceed) / snooze-expired.
+# _gate_grant_live — is a user APPROVAL WINDOW currently open?
+#
+# The gate warns before EVERY suite, which is right for one big run and wrong
+# for the way testing is actually done: forty tiny suites, each a couple of
+# seconds long, meant one Proceed press each -- or, with nobody at the desk,
+# forty two-minute autostart waits to run about two minutes of tests. The gate
+# was costing an order of magnitude more time than the tests it guarded.
+#
+# So Proceed gained siblings: "Allow 30m"/"Allow 2h" write an epoch into
+# allow_until, and while that is in the future a suite starts WITHOUT asking --
+# no request, no countdown, no panel relaunch. The user approves once and walks
+# away. Pause and Stop are untouched by this: they are read at every pause
+# point, so an approved batch is still fully controllable (that is the whole
+# point of approving it and leaving).
+#
+# The panel owns this file; the shell only ever reads it.
+_gate_grant_live() {
+  local f="$GATE_DIR/allow_until" until now
+  [ -f "$f" ] || return 1
+  until="$(cat "$f" 2>/dev/null)"
+  case "${until:-}" in ''|*[!0-9]*) return 1 ;; esac
+  now="$(date +%s)"
+  [ "$now" -lt "$until" ]
+}
+
+# gate_start "<label>" — block until acked (Proceed) / snooze-expired / covered
+# by an approval window.
 gate_start() {
   _gate_enabled || return 0
   local label="${1:-test suite ($_GATE_PID)}"
   mkdir -p "$GATE_DIR/req" "$GATE_DIR/status"
+
+  # An interrupted suite (Ctrl-C, `timeout`, a worktree being torn down) used to
+  # orphan status/<pid> forever. The panel then lists a suite that is not
+  # running, and -- because STOP only self-clears once no status file remains --
+  # never puts `control` back to RUN, which silently resurrects the v2 bug where
+  # one Stop press made every future suite exit 3. Only install the trap if the
+  # caller has not set its own; stealing a script's EXIT handler would be worse
+  # than the leak.
+  if [ -z "$(trap -p EXIT)" ]; then trap 'gate_finish' EXIT; fi
+  if [ -z "$(trap -p INT)"  ]; then trap 'gate_finish' INT;  fi
+  if [ -z "$(trap -p TERM)" ]; then trap 'gate_finish' TERM; fi
 
   # A STOP already standing when we arrive was aimed at some EARLIER suite --
   # this one has never been told to stop, and the control file outlives the
@@ -215,6 +252,22 @@ gate_start() {
   # holds tests up. Clear it; a Stop pressed while we wait is caught below.
   if [ "$(_gate_control)" = "STOP" ]; then
     printf '%s' RUN > "$GATE_DIR/control" 2>/dev/null
+  fi
+
+  # An open approval window covers this suite: start at once, ask nothing.
+  # Still ensure a panel exists -- QUIETLY, no _gate_attention -- because the
+  # whole bargain is "approve once, walk away, and keep Pause/Stop". A batch
+  # running with no panel would be exactly the flood this gate exists to
+  # prevent. (Ensuring one here is not the mid-suite revive and does not
+  # contradict it: a NEW suite has always built a panel if none was up.)
+  if _gate_grant_live; then
+    local gc; gc="$(cat "$GATE_DIR/grant_count" 2>/dev/null || echo 0)"
+    case "$gc" in ''|*[!0-9]*) gc=0 ;; esac
+    printf '%s' "$((gc + 1))" > "$GATE_DIR/grant_count" 2>/dev/null
+    _gate_ensure_widget >/dev/null 2>&1
+    _gate_log "approval window open -- '$label' starts without asking"
+    echo "gui_gate: approved batch window open, starting '$label' (no prompt)" >&2
+    return 0
   fi
 
   # Arm the go-ahead request for THIS suite BEFORE touching the panel, so that
