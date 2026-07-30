@@ -1,8 +1,16 @@
 # 0173 — Ctrl-Shift-4 (viewer plot-mode toggle from the schematic) left the xschem CONTEXT on the viewer window
 
-**Status: FIXED** (2026-07-29). `src/wave_viewer.tcl`.
+**Status: FIXED and CLOSED** (2026-07-29). `src/wave_viewer.tcl`, commit `e990738c`.
 Tests: `tests/headless/test_wave_modes.tcl` M9 + MG17, `tests/headless/test_ase_plot.tcl`
-P6b + one P9 leg.
+P6b + one P9 leg. Review gate: PROCEED.
+
+**Eyeballed by the reporter on the original repro — *"That bug is fixed. Eyeball
+test pass"*.** That verdict is not a formality here, it is the only thing that
+could close this issue: two of the three symptoms are pixels (a window title, a
+crosshair that tracks or does not) and the third is which window a click lands
+in. No suite in this tree can see any of them. What the 27 new checks prove is
+that the CONTEXT and the TITLE are right at the instant of the gesture, with the
+FocusIn repair paths held off — the mechanism, not the appearance.
 
 ## Symptoms as reported
 
