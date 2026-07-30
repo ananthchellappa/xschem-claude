@@ -539,6 +539,12 @@ graph rect; without that, a click on strip B left strip A's trace bold too. A
 miss clears everything. Deselecting a SINGLE trace while keeping the rest is
 Ctrl+click, which is also the only way to add to a selection — 0175.
 
+⚠ **This table is the REORDER section's view of ownership and it is no longer
+complete.** Since issue 0175 the selection is a SET, the LEGEND is a second
+picking surface, and Ctrl+LMB adds/removes. **§15 carries the full LMB/RMB
+ownership table for the viewer canvas** and supersedes the two selection rows
+above; everything else here still stands.
+
 Clearing on a miss does **not** collide with the strip drag-reorder that owns the
 same pixels: the two are separated by the TRAVEL test, not by the pick. A real
 reorder drag travels well past `GRAPH_CLICK_TOL` (3 px) and its release never
@@ -845,3 +851,118 @@ surviving an undo, the depth cap, `restore` clearing the history, and the real
 
 `tests/headless/test_wave_viewer.tcl` `TD7`: the whole user story with real raw
 data — drag a trace to another strip, press `u`, press `U`, press `u` again.
+
+## 15. Trace SELECTION (2026-07-30, issue 0175)
+
+The selection is a **SET of traces**, held **per window**, stored **per strip**,
+and queried as a fold across the strips. It is view state: no dirty flag, no
+undo point, no log line (landmine 19).
+
+### 15.1 The full LMB/RMB ownership table for the viewer canvas
+
+This is the table future work reads. "Body" is the plot box; "legend" is the band
+of trace names above it; "margins" is everything else inside the strip rect
+(axis numbers, the reorder grip).
+
+| gesture | where | owner | effect |
+|---|---|---|---|
+| LMB press-drag (> 3 px) | empty body / the grip | **Tcl** | strip drag-REORDER (§12) |
+| LMB press-drag (> 3 px) | within 10 px of a trace | **Tcl** | trace drag between strips (§13) |
+| LMB press-drag | on a cursor / a marker | **C** | cursor drag, marker anchor/label drag |
+| LMB **click** (no travel) | within 10 px of a trace | **C** | the selection BECOMES that trace |
+| LMB **click** | empty body | **C** | the selection is CLEARED |
+| LMB **click** | a legend entry | **C** | the selection BECOMES that trace |
+| LMB **click** | a margin owning no entry | **C** | **nothing** |
+| **Ctrl**+LMB click | a trace, or a legend entry | **C** | ADD it, or REMOVE it if already selected |
+| **Ctrl**+LMB click | anywhere that owns no trace | **C** | **nothing** — Ctrl never clears |
+| LMB **double**-click | a legend entry (embedded graphs) | **C** | the wave dialog; the selection is unchanged |
+| LMB double-click | anywhere (viewer) | **Tcl** | swallowed (`{break}`, D9) |
+| MMB drag | anywhere on a graph | **C** | graph pan |
+| RMB press-drag | the body | **C** | box zoom |
+| RMB **click** | on a trace, in the body | **Tcl** | the trace context menu (item 7) |
+| RMB **press** | a legend entry | **C** | TOGGLES that entry's membership — the same thing Ctrl+LMB does |
+| RMB click | empty body | **Tcl** | the strip context menu (item 8) |
+| Shift+LMB, Alt+LMB | anywhere | — | swallowed by `strip_bindings` (issue 0149) |
+
+Three rules that are easy to get wrong and are asserted:
+
+1. **Only the plot BODY clears.** A click that hits neither picking surface
+   changes nothing, which is why the C arm carries `on_body` separately from
+   "the pick answered -1".
+2. **A plain click COLLAPSES the selection** to the one trace clicked, across the
+   whole window. A plain click never deselects what it lands on (0174 D3).
+3. **Ctrl+click never sweeps the other strips.** That is precisely how a
+   selection spanning two strips is built.
+
+### 15.2 Storage — two tokens, one writer
+
+```
+hilight_wave=0            the FIRST selected NODE index, or -1. Grammar unchanged.
+sel_waves="0 2"           the WHOLE set, ascending, no duplicates.
+                          Emitted ONLY when two or more traces are selected.
+```
+
+`hilight_wave` is always the head of the set. `graph_sel_waves_get/set/toggle`
+(`draw.c`) are the only readers/writers of the pair on the C side and
+`wviewer::model_sel` / `model_sel_set` are its model-side mirror, so the two
+tokens cannot drift.
+
+A 0- or 1-trace selection emits **no** `sel_waves` at all, so a strip that was
+never Ctrl-clicked serialises byte-identically to pre-0175 and an older build
+reads it exactly as before. An older build reading a two-trace selection bolds
+the first one and ignores the unknown token. No `XSCHEM_FILE_VERSION` bump — an
+additive optional rect token, like `active` / `markers` / `legendbold`. The full
+compatibility statement is in
+`doc/claude/issues/0175-trace-legend-click-and-multiselect.md` D1.
+
+In memory the set lives in `Graph_ctx.sel_wave[GRAPH_MAX_SEL_WAVES]` +
+`n_sel_waves` — a FIXED array, because six call sites build a local `Graph_ctx`
+and let it die on return.
+
+### 15.3 The legend is a picking surface
+
+`graph_legend_at(i, px, py)` → NODE index or -1, exposed as
+`xschem get graph_legend_at` and wrapped by `wviewer::legend_at`. Raw screen
+pixels, LOCAL `Graph_ctx`, hcursor bits bracketed, fails closed. All three legend
+layouts. It does **not** refuse digital strips: their body answers -1 everywhere,
+so the legend is the only way to select a trace there.
+
+The legend and the plot body are **disjoint** surfaces of one strip — neither
+answers where the other does — and they no longer live in different coordinate
+spaces at the call site (see landmine 43 for what they used to do).
+
+### 15.4 Drawing
+
+Every selected trace gets exactly the cue one selected trace has always had: a
+thick stroke, and a bold legend entry (bold **italic** where `legendbold` is on,
+viewer plan item 1). There is no separate cue for the head of the set.
+
+Implementation rule: **every draw-side "is this trace selected" test goes through
+`wave_is_hilighted(gr, wcnt)`.** A surviving bare `gr->hilight_wave == wcnt`
+renders a Ctrl-selected trace thin while the token says it is selected, and no
+leg that selects one trace can see it — `test_wave_legend.tcl` `LS5` asserts it
+at source level.
+
+### 15.5 Lifetime
+
+Captured by `capture_live_graph_state`, emitted by `graph_props`, carried by
+`wviewer::snapshot`/`restore` and by the viewer undo stack. `sel_waves` follows
+`hilight_wave` exactly, including the absent-means-absent rule.
+
+The capture is **required**, not optional: `regenerate` rebuilds every rect from
+the model and runs from ~18 sites including a plain window RESIZE, so without it
+a multi-select would silently collapse to one trace on the next resize.
+
+Structural edits remap the set rather than dropping it — a stale node index bolds
+the WRONG trace, which is worse than losing the selection. A trace moved to
+another strip takes its selected-ness with it and is **added** to whatever the
+destination already had selected.
+
+### 15.6 Tests
+
+`tests/headless/test_wave_trace_menu.tcl` `TL*` (the query: slots, the slot
+BOUNDARY, the refusals, the raw-pixels contract) and `TS*` (the set: add, remove,
+collapse, window-wide, the legend, the NODE index space, survival across a
+regenerate). `tests/headless/test_wave_legend.tcl` `LS*` (the pure set algebra,
+the token emission, the blast radius, the source-level D4 leg).
+`tests/headless/test_wave_viewer.tcl` `WB-legend` (legend LMB selects).

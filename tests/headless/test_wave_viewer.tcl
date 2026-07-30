@@ -1608,6 +1608,19 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
         if {![string is integer -strict $r]} { return -1 }
         return $r
       }
+      # ⚠ RESCAN, do not reuse: the legs between here and the end of the WB block
+      # ZOOM (WB-rmb-drag) and PAN (WB-mmb-drag) the graph, so a row that was
+      # trace-free when the block started can have a trace on it later. A stale
+      # "far" pixel silently becomes an ON-trace pixel and the leg using it
+      # asserts the opposite of what it means to.
+      proc wb_far_row {vdrw gi px H} {
+        for {set y 2} {$y < $H} {incr y 1} {
+          if {![wviewer::plotbox_at $vdrw $gi $px $y]} { continue }
+          if {[wb_at $vdrw $gi $px $y] >= 0} { continue }
+          if {[wb_at $vdrw $gi $px $y 1e30] >= 0} { return $y }
+        }
+        return {}
+      }
       set wbony {}       ;# a row ON the trace
       set wboffy {}      ;# a row inside the box but > 10 px from every trace
       for {set y 2} {$y < $H} {incr y 1} {
@@ -1744,11 +1757,16 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
         [ix_canvas_ok $vdrw $cx0 $cy0 $cz0]
       check "WB-mmb-drag MMB drag does not bold" [wb_bold $vdrw] -1
 
-      # WB-legend: Button3 OUTSIDE the plot body is the SEPARATE, per-trace legend
-      # affordance (edit_wave_attributes(2,...), draw.c) — it bolds the trace whose
-      # label was hit, and it is deliberately UNCHANGED by this issue: only the
-      # imprecise "closest wave to the press point" toggle inside the plot body
-      # moved to LMB. This leg is the no-collateral-damage witness.
+      # WB-legend: Button3 OUTSIDE the plot body is the per-trace legend
+      # affordance (edit_wave_attributes(2,...), draw.c) — it toggles the trace
+      # whose label was hit, and issue 0174 left it alone: only the imprecise
+      # "closest wave to the press point" toggle inside the plot body moved to
+      # LMB. This leg is the no-collateral-damage witness.
+      # ⚠ ISSUE 0175 CHANGED THE LMB HALF. The last leg of this block used to
+      # assert that an LMB click on the legend does NOTHING ("body-only"); a
+      # legend click now SELECTS that trace, which is the feature 0175 was asked
+      # for, so the leg asserts the new answer. The 0152 `WB-legend` row is
+      # superseded accordingly.
       wb_reset $tok
       set wbly [expr {int(0.03 * $H)}]      ;# above the plot box (14% top margin)
       wb_ev $vdrw <ButtonPress-3>   -x $bpx -y $wbly
@@ -1759,12 +1777,32 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
       wb_ev $vdrw <ButtonRelease-3> -x $bpx -y $wbly -state 0x400
       update
       check "WB-legend second legend RMB un-bolds" [wb_bold $vdrw] -1
-      # boundary, recorded rather than desired: the new LMB click acts on the plot
-      # BODY only, so an LMB click on the legend does nothing (as before).
+      # issue 0175: an LMB click on a legend entry SELECTS that trace. Teeth: the
+      # pixel is the same one the RMB legs above just proved is a legend entry, so
+      # a leg that passed because "nothing is there" is not available.
       wb_ev $vdrw <ButtonPress-1>   -x $bpx -y $wbly
       wb_ev $vdrw <ButtonRelease-1> -x $bpx -y $wbly -state 0x100
       update
-      check "WB-legend LMB on the legend does not bold (body-only)" [wb_bold $vdrw] -1
+      check "WB-legend LMB on the legend SELECTS that trace (0175)" [wb_bold $vdrw] 0
+      # ... and it REPLACES rather than toggles, exactly like a body click (D3):
+      # a second plain click on the same entry keeps it selected
+      wb_ev $vdrw <ButtonPress-1>   -x $bpx -y $wbly
+      wb_ev $vdrw <ButtonRelease-1> -x $bpx -y $wbly -state 0x100
+      update
+      check "WB-legend a second plain legend click KEEPS it selected" [wb_bold $vdrw] 0
+      # ... while a plain click on the plot body FAR from every trace still
+      # clears, so the legend arm did not swallow the body arm. The far row is
+      # RE-SCANNED here: the RMB zoom and the MMB pan above have moved the data
+      # since the block's opening scan.
+      set wbfar2 [wb_far_row $vdrw 0 $bpx $H]
+      check_true "WB-legend a far body row was re-scanned after the zoom/pan" \
+        [expr {$wbfar2 ne {}}]
+      if {$wbfar2 ne {}} {
+        wb_ev $vdrw <ButtonPress-1>   -x $bpx -y $wbfar2
+        wb_ev $vdrw <ButtonRelease-1> -x $bpx -y $wbfar2 -state 0x100
+        update
+        check "WB-legend the body arm still clears after a legend select" [wb_bold $vdrw] -1
+      }
 
       # === SD: the LMB SEAM between the C engine and strip drag-reorder =======
       # doc/claude/specs/waveform_viewer_modes.md §12. Empty waveform space

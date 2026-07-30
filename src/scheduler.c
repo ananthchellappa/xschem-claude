@@ -3858,6 +3858,31 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
            * graph_wave_at), which is the same query without the identity: the
            * ASE viewer uses this one to pick up a trace and drag it onto another
            * strip. Read-only: no highlight, no prop mutation, no redraw. */
+          /* xschem get graph_legend_at <graph_idx> <px> <py>
+           * The NODE INDEX of the LEGEND entry under the CANVAS PIXEL (px,py),
+           * or -1. The legend's own hit test, extracted out of
+           * edit_wave_attributes() by issue 0175 so both mouse buttons and Tcl
+           * share one answer -- before that it existed only fused to the
+           * Button3 action, which is why two comments in wave_viewer.tcl used to
+           * say the engine had "no C hit-test API" for the legend.
+           * All THREE legend layouts (vertical, digital, horizontal). It does
+           * NOT refuse digital strips, unlike graph_plotbox_at / graph_trace_at:
+           * a digital strip's body answers -1 everywhere, so its legend is the
+           * only place a trace can be picked at all.
+           * ⚠ The `node` token, hence this index space, counts NODES, not model
+           * traces (landmine 34). Fails closed: a bad index, a non-graph rect,
+           * an off-screen graph, `legend=0` or a strip with no `node` token all
+           * answer -1. Read-only: no highlight, no prop mutation, no redraw. */
+          else if(!strcmp(argv[2], "graph_legend_at")) {
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            if(argc > 5) {
+              Tcl_SetResult(interp,
+                my_itoa(graph_legend_at(atoi(argv[3]), atof(argv[4]), atof(argv[5]))),
+                TCL_VOLATILE);
+            } else {
+              Tcl_SetResult(interp, "-1", TCL_STATIC);
+            }
+          }
           else if(!strcmp(argv[2], "graph_trace_at")) {
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
             if(argc > 5) {

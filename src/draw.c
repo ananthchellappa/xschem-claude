@@ -2894,6 +2894,172 @@ static SPICE_DATA **get_bus_idx_array(const char *ntok, int *n_bits)
   return idx_arr;
 }
 
+/* ---- trace SELECTION (issue 0175) -----------------------------------------
+ *
+ * The selection of one strip is a SET of NODE indices (landmine 34), stored in
+ * the graph rect across two prop tokens that are always written together:
+ *
+ *   hilight_wave=<n>     the FIRST selected node, or -1. Grammar and sentinel
+ *                        unchanged since forever -- every older build, the SVG
+ *                        and PS exporters and the ~127 embedded schematic
+ *                        graphs keep reading exactly what they always read.
+ *   sel_waves="<n> <n>"  the WHOLE set, ascending, no duplicates. Written ONLY
+ *                        when two or more traces are selected, so a strip that
+ *                        was never Ctrl-clicked serialises byte-identically to
+ *                        pre-0175 (the absent-means-absent rule `active` and
+ *                        `markers` already follow).
+ *
+ * An older build reading a new file therefore bolds the FIRST selected trace and
+ * ignores `sel_waves` as an unknown token -- fewer bold traces, never a wrong
+ * one, never a parse error. A new build reading an old file sees no `sel_waves`
+ * and takes the {hilight_wave} fallback. No XSCHEM_FILE_VERSION bump: an
+ * additive optional rect token is exactly how `active` / `markers` /
+ * `reorder_handle` / `legendbold` / `griddash` were all added.
+ *
+ * These four functions are the ONLY readers/writers of that pair, which is what
+ * stops the two tokens drifting apart. */
+
+/* Is NODE index `wcnt` part of graph `gr`'s selection? THE draw-side test:
+ * every `gr->hilight_wave == wcnt` comparison in this file goes through it, or
+ * a Ctrl-selected second trace renders thin while the token says it is bold. */
+int wave_is_hilighted(Graph_ctx *gr, int wcnt)
+{
+  int k;
+  if(!gr || wcnt < 0) return 0;
+  /* a list, when present, is the WHOLE truth -- hilight_wave is its first
+   * element and adding it again here would only mask a writer bug */
+  if(gr->n_sel_waves > 0) {
+    for(k = 0; k < gr->n_sel_waves; ++k) if(gr->sel_wave[k] == wcnt) return 1;
+    return 0;
+  }
+  return gr->hilight_wave == wcnt;
+}
+
+/* Parse graph rect `i`'s selection into `out` (at most `max` entries, ascending,
+ * de-duplicated); returns how many were written, 0 for "nothing selected".
+ *
+ * ⚠ An ABSENT token is not index 0. A bare atoi("") says 0 and would report a
+ * strip that was never clicked as having node 0 selected -- the same trap issue
+ * 0174's cross-strip sweep documents. Both tokens are tested for a non-empty
+ * value before they are converted. */
+int graph_sel_waves_get(int i, int *out, int max)
+{
+  const char *s;
+  xRect *r;
+  int n = 0, hw;
+  if(!xctx || !out || max <= 0) return 0;
+  if(i < 0 || i >= xctx->rects[GRIDLAYER]) return 0;
+  r = &xctx->rect[GRIDLAYER][i];
+  if(!(r->flags & 1)) return 0;
+  s = get_tok_value(r->prop_ptr, "sel_waves", 0);
+  while(*s && n < max) {
+    int v, dup, k;
+    while(*s == ' ' || *s == '\t' || *s == '\n') ++s;
+    if(!*s) break;
+    /* fail closed on garbage -- and a LONE '-' is garbage, not node 0 */
+    if(*s == '-') { if(s[1] < '0' || s[1] > '9') break; }
+    else if(*s < '0' || *s > '9') break;
+    v = atoi(s);
+    while(*s && *s != ' ' && *s != '\t' && *s != '\n') ++s;
+    if(v < 0) continue;
+    for(dup = 0, k = 0; k < n; ++k) if(out[k] == v) { dup = 1; break; }
+    if(!dup) out[n++] = v;
+  }
+  if(n > 0) {
+    /* ascending: an insertion sort on <= 64 ints that are nearly always already
+     * ordered (the writer emits them sorted) */
+    int a, b;
+    for(a = 1; a < n; ++a) {
+      int v = out[a];
+      for(b = a - 1; b >= 0 && out[b] > v; --b) out[b + 1] = out[b];
+      out[b + 1] = v;
+    }
+    return n;
+  }
+  s = get_tok_value(r->prop_ptr, "hilight_wave", 0);
+  if(!s[0]) return 0;
+  hw = atoi(s);
+  if(hw < 0) return 0;
+  out[0] = hw;
+  return 1;
+}
+
+/* Write the selection back onto graph rect `i`. n <= 0 clears it. Returns 1 when
+ * the prop string actually changed, so a click that selects what was already
+ * selected does not churn it (and does not force a redraw).
+ *
+ * `sel_waves` is REMOVED, not set to an empty value, for a selection of 0 or 1 --
+ * subst_token(.., NULL) is the documented removal, and leaving `sel_waves=""`
+ * behind would make every single-select rect differ from a pre-0175 one. */
+int graph_sel_waves_set(int i, const int *waves, int n)
+{
+  xRect *r;
+  const char *cur;
+  char buf[GRAPH_MAX_SEL_WAVES * 12 + 1];
+  int k, pos = 0, changed = 0;
+  if(!xctx) return 0;
+  if(i < 0 || i >= xctx->rects[GRIDLAYER]) return 0;
+  r = &xctx->rect[GRIDLAYER][i];
+  if(!(r->flags & 1)) return 0;
+  if(n > GRAPH_MAX_SEL_WAVES) n = GRAPH_MAX_SEL_WAVES;
+  /* hilight_wave: the head of the selection, or -1 */
+  {
+    const char *want = (n > 0 && waves) ? my_itoa(waves[0]) : "-1";
+    cur = get_tok_value(r->prop_ptr, "hilight_wave", 0);
+    if(strcmp(cur, want)) {
+      my_strdup2(_ALLOC_ID_, &r->prop_ptr, subst_token(r->prop_ptr, "hilight_wave", want));
+      changed = 1;
+    }
+  }
+  buf[0] = '\0';
+  if(n >= 2 && waves) {
+    for(k = 0; k < n; ++k) {
+      const char *d = my_itoa(waves[k]);
+      size_t l = strlen(d);
+      if(pos + l + 2 >= sizeof(buf)) break;
+      if(pos) buf[pos++] = ' ';
+      memcpy(buf + pos, d, l);
+      pos += (int)l;
+    }
+    buf[pos] = '\0';
+  }
+  cur = get_tok_value(r->prop_ptr, "sel_waves", 0);
+  if(strcmp(cur, buf)) {
+    my_strdup2(_ALLOC_ID_, &r->prop_ptr,
+               subst_token(r->prop_ptr, "sel_waves", buf[0] ? buf : NULL));
+    changed = 1;
+  }
+  return changed;
+}
+
+/* Ctrl+click: add NODE index `wcnt` to graph `i`'s selection if it is absent,
+ * remove it if it is present. Returns 1 when something changed.
+ *
+ * The cap is a REFUSAL, not a silent drop: at GRAPH_MAX_SEL_WAVES the 65th add
+ * leaves the selection exactly as it was (a removal always still works). */
+int graph_sel_waves_toggle(int i, int wcnt)
+{
+  int sel[GRAPH_MAX_SEL_WAVES], n, k, at = -1;
+  if(wcnt < 0) return 0;
+  n = graph_sel_waves_get(i, sel, GRAPH_MAX_SEL_WAVES);
+  for(k = 0; k < n; ++k) if(sel[k] == wcnt) { at = k; break; }
+  if(at >= 0) {
+    for(k = at; k < n - 1; ++k) sel[k] = sel[k + 1];
+    --n;
+  } else {
+    if(n >= GRAPH_MAX_SEL_WAVES) {
+      dbg(0, "graph_sel_waves_toggle(): graph %d already holds %d selected traces, refusing\n",
+          i, n);
+      return 0;
+    }
+    /* keep ascending: insert in place rather than appending + re-sorting */
+    for(k = n; k > 0 && sel[k - 1] > wcnt; --k) sel[k] = sel[k - 1];
+    sel[k] = wcnt;
+    ++n;
+  }
+  return graph_sel_waves_set(i, sel, n);
+}
+
 /* what == 1: set thick lines,
  * what == 0: restore default
  */
@@ -2904,14 +3070,14 @@ static void set_thick_waves(int what, int wcnt, int wave_col, Graph_ctx *gr)
   valuemask = GCLineWidth;
   dbg(1, "set_thick_waves(): what=%d\n", what);
   if(what) {
-      if(gr->hilight_wave == wcnt) {
+      if(wave_is_hilighted(gr, wcnt)) {
          int min = (int) tk_scaling * 2;
          values.line_width = XLINEWIDTH(2.4 * gr->linewidth_mult * xctx->lw);
          if(values.line_width < min) values.line_width = min;
          XChangeGC(display, xctx->gc[wave_col], valuemask, &values);
       }
   } else {
-      if(gr->hilight_wave == wcnt) {
+      if(wave_is_hilighted(gr, wcnt)) {
          values.line_width = XLINEWIDTH(gr->linewidth_mult * xctx->lw);
          XChangeGC(display, xctx->gc[wave_col], valuemask, &values);
       }
@@ -3740,6 +3906,19 @@ void setup_graph_data(int i, int skip, Graph_ctx *gr)
   val=get_tok_value(r->prop_ptr,"hilight_wave", 0);
   if(val[0]) gr->hilight_wave = atoi(val);
   else gr->hilight_wave = -1;
+  /* ... and the REST of the selection when there is more than one (issue 0175).
+   * Parsed right beside hilight_wave and therefore under the same caveat: this
+   * is BELOW the RECT_OUTSIDE early return (landmine 37a), so an off-screen
+   * graph leaves both fields holding the previous graph's values -- harmless
+   * because draw_graph draws nothing for such a graph, and true of hilight_wave
+   * since long before this. graph_sel_waves_get() re-reads the tokens off the
+   * RECT for anything that must be right off-screen too.
+   *
+   * It is deliberately NOT collapsed to "0 when there is only one": a
+   * hand-edited `sel_waves=3 hilight_wave=-1` must render node 3 bold, i.e. the
+   * PARSE has to win over the scalar wherever the two disagree, and the
+   * one-element case is exactly where that shows. */
+  gr->n_sel_waves = graph_sel_waves_get(i, gr->sel_wave, GRAPH_MAX_SEL_WAVES);
 
   /* legend */
   gr->legend = 1;
@@ -4059,7 +4238,7 @@ static void draw_graph_variables(int wcnt, int wave_color, int n_nodes, int swee
       yt = gr->y1 + (double)wcnt / (double)n_nodes * (gr->h) ;
       if(!(flags & 2)) { /* NOT cursor1 with measures */
         #if HAS_CAIRO == 1
-        if(gr->hilight_wave == wcnt) {
+        if(wave_is_hilighted(gr, wcnt)) {
           xctx->cairo_font =
                 cairo_toy_font_face_create("Sans-Serif", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_BOLD);
           cairo_set_font_face(xctx->cairo_ctx, xctx->cairo_font);
@@ -4073,7 +4252,7 @@ static void draw_graph_variables(int wcnt, int wave_color, int n_nodes, int swee
         draw_string(wave_color, NOW, tmpstr, 0, 0, 0, 0,
           xt, yt, gr->txtsizelegend, gr->txtsizelegend);
         #if HAS_CAIRO == 1
-        if(gr->hilight_wave == wcnt) {
+        if(wave_is_hilighted(gr, wcnt)) {
           xctx->cairo_font =
                 cairo_toy_font_face_create("Sans-Serif", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
           cairo_set_font_face(xctx->cairo_ctx, xctx->cairo_font);
@@ -4094,7 +4273,7 @@ static void draw_graph_variables(int wcnt, int wave_color, int n_nodes, int swee
 
       if(yt <= gr->ypos2 && yt >= gr->ypos1) {
         #if HAS_CAIRO == 1
-        if(gr->hilight_wave == wcnt) {
+        if(wave_is_hilighted(gr, wcnt)) {
           xctx->cairo_font =
                 cairo_toy_font_face_create("Sans-Serif", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_BOLD);
           cairo_set_font_face(xctx->cairo_ctx, xctx->cairo_font);
@@ -4107,7 +4286,7 @@ static void draw_graph_variables(int wcnt, int wave_color, int n_nodes, int swee
           xt, DW_Y(yt), gr->digtxtsizelab * gr->magy, gr->digtxtsizelab * gr->magy);
         dbg(1, "draw_graph_variables(): h=%g, posh=%g, gh=%g\n", gr->h, gr->posh, gr->gh);
         #if HAS_CAIRO == 1
-        if(gr->hilight_wave == wcnt) {
+        if(wave_is_hilighted(gr, wcnt)) {
           xctx->cairo_font =
                 cairo_toy_font_face_create("Sans-Serif", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
           cairo_set_font_face(xctx->cairo_ctx, xctx->cairo_font);
@@ -4127,10 +4306,10 @@ static void draw_graph_variables(int wcnt, int wave_color, int n_nodes, int swee
        * Without legendbold the shipped behaviour is untouched, which is what
        * keeps the ~127 embedded schematic graphs out of this. */
       #if HAS_CAIRO == 1
-      if(gr->legendbold || gr->hilight_wave == wcnt) {
+      if(gr->legendbold || wave_is_hilighted(gr, wcnt)) {
         xctx->cairo_font =
               cairo_toy_font_face_create("Sans-Serif",
-                (gr->legendbold && gr->hilight_wave == wcnt) ?
+                (gr->legendbold && wave_is_hilighted(gr, wcnt)) ?
                    CAIRO_FONT_SLANT_ITALIC : CAIRO_FONT_SLANT_NORMAL,
                 CAIRO_FONT_WEIGHT_BOLD);
         cairo_set_font_face(xctx->cairo_ctx, xctx->cairo_font);
@@ -4142,7 +4321,7 @@ static void draw_graph_variables(int wcnt, int wave_color, int n_nodes, int swee
       draw_string(wave_color, NOW, tmpstr, 0, 0, 0, 0,
           gr->rx1 + 2 + gr->rw / n_nodes * wcnt, gr->ry1, gr->txtsizelab, gr->txtsizelab);
       #if HAS_CAIRO == 1
-      if(gr->legendbold || gr->hilight_wave == wcnt) {
+      if(gr->legendbold || wave_is_hilighted(gr, wcnt)) {
         xctx->cairo_font =
               cairo_toy_font_face_create("Sans-Serif", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
         cairo_set_font_face(xctx->cairo_ctx, xctx->cairo_font);
@@ -4221,7 +4400,7 @@ static void show_node_measures(int measure_p, double measure_x, double measure_p
       if(!bus_msb) my_snprintf(str, S(str), "%s\n(%s)", alias_ptr, tmpstr);
       else my_snprintf(str, S(str), "%s", alias_ptr);
       #if HAS_CAIRO == 1
-      if(gr->hilight_wave == wcnt) {
+      if(wave_is_hilighted(gr, wcnt)) {
         xctx->cairo_font =
               cairo_toy_font_face_create("Sans-Serif", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_BOLD);
         cairo_set_font_face(xctx->cairo_ctx, xctx->cairo_font);
@@ -4232,7 +4411,7 @@ static void show_node_measures(int measure_p, double measure_x, double measure_p
       draw_string(wave_color, NOW, str, 0, 0, 0, 0,
          xt, yt, gr->txtsizey * gr->magy * 0.4, gr->txtsizey * gr->magy * 0.4);
       #if HAS_CAIRO == 1
-      if(gr->hilight_wave == wcnt) {
+      if(wave_is_hilighted(gr, wcnt)) {
         xctx->cairo_font =
               cairo_toy_font_face_create("Sans-Serif", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
         cairo_set_font_face(xctx->cairo_ctx, xctx->cairo_font);
@@ -4280,68 +4459,47 @@ int embed_rawfile(const char *rawfile)
   return res;
 }
 
-/* when double clicking in a graph if this happens on a wave label
- * what == 1:
- *   look up the wave and call tcl "graph_edit_wave <graph> <wave>"
- *   with graph index and wave index
- * what == 2:
- *   look up the wave and draw in bold
- * return 1 if a wave was found
- */
-int edit_wave_attributes(int what, int i, Graph_ctx *gr)
+/* ---- the LEGEND hit test (issue 0175 D5) ----------------------------------
+ *
+ * Which legend entry is under a point? Three layouts, and the arithmetic below
+ * is the SAME arithmetic draw_graph_variables() uses to place the entries -- the
+ * horizontal slot formula in particular is literally the draw's
+ * `gr->rx1 + 2 + gr->rw / n_nodes * wcnt`, so the drawn label and its clickable
+ * target cannot drift apart.
+ *
+ * This used to live INSIDE edit_wave_attributes(), triplicated once per layout
+ * and fused to that function's action, which is why the legend had no query
+ * anybody else could call and why two comments in wave_viewer.tcl claimed the
+ * engine had "no C hit-test API". It is now a pure function with two callers:
+ * the Button3 arm below (through edit_wave_attributes) and the Button1 arm in
+ * callback.c, which is what makes the two buttons agree on where an entry is by
+ * construction.
+ *
+ * Takes XSCHEM (schematic) coordinates, because that is the space the legend
+ * boxes are computed in -- gr->rx1/ry1/rw/rh are xschem coordinates while
+ * S_X/S_Y (graph_wave_at, graph_plotbox_at) are SCREEN PIXELS. The two picking
+ * surfaces of one strip genuinely do not share a coordinate space; the
+ * conversion is graph_legend_at()'s job and is done exactly once, there.
+ *
+ * `gr` must already be set up for graph `i`. Returns the NODE index or -1. */
+static int legend_slot_hit(Graph_ctx *gr, const char *node, double xx, double yy)
 {
-  char *node = NULL, *color = NULL, *sweep = NULL;
-  int sweep_idx = 0;
-  int n_nodes; /* number of variables to display in a single graph */
-  char *saven, *savec, *saves, *nptr, *cptr, *sptr;
-  const char *ntok, *ctok, *stok;
-  int wcnt = 0, ret = 0;
-  xRect *r = &xctx->rect[GRIDLAYER][i];
-
-  /* get plot data */
-  my_strdup2(_ALLOC_ID_, &node, get_tok_value(r->prop_ptr,"node", 0));
-  my_strdup2(_ALLOC_ID_, &color, get_tok_value(r->prop_ptr,"color", 0));
-  my_strdup2(_ALLOC_ID_, &sweep, get_tok_value(r->prop_ptr,"sweep", 0));
-  nptr = node;
-  cptr = color;
-  sptr = sweep;
+  int wcnt, n_nodes;
+  if(!gr || !node || !node[0]) return -1;
+  /* `legend=0` draws no entries at all, so there is nothing to hit. The
+   * triplicated in-place version did not test this and would happily pick an
+   * INVISIBLE entry; both buttons now refuse together, which is the whole point
+   * of there being one query. */
+  if(!gr->legend) return -1;
   n_nodes = count_items(node, "\n", "\"");
-  /* process each node given in "node" attribute, get also associated color/sweep var if any */
-  while( (ntok = my_strtok_r(nptr, "\n", "\"", 0, &saven)) ) {
-    ctok = my_strtok_r(cptr, " ", "", 0, &savec);
-    stok = my_strtok_r(sptr, "\t\n ", "\"", 0, &saves);
-    nptr = cptr = sptr = NULL;
-    dbg(1, "ntok=%s ctok=%s\n", ntok, ctok? ctok: "<NULL>");
-    if(stok && stok[0]) {
-      sweep_idx = get_raw_index(stok, NULL);
-      if( sweep_idx == -1) sweep_idx = 0;
-    }
+  if(n_nodes <= 0) return -1;
+  for(wcnt = 0; wcnt < n_nodes; ++wcnt) {
     if(gr->vlegend && !gr->digital) {
       double xt1 = gr->rx1 + 5;
       double xt2 = gr->x1 - 5;
       double yt1 = gr->y1 + (double)wcnt / (double)n_nodes * (gr->h);
       double yt2 = yt1 + 1.0 / (double)n_nodes * (gr->h);
-      if(POINTINSIDE(xctx->mousex_snap, xctx->mousey_snap, xt1, yt1, xt2, yt2)) {
-        char s[30];
-        ret = 1;
-        if(what == 1) {
-          int save = gr->hilight_wave;
-          my_snprintf(s, S(s), "%d %d", i, wcnt);
-          gr->hilight_wave = wcnt;
-          tclvareval("graph_edit_wave ", s, NULL);
-          gr->hilight_wave = save;
-        } else {
-           if(gr->hilight_wave == wcnt) {
-             gr->hilight_wave = -1;
-             my_strdup2(_ALLOC_ID_, &r->prop_ptr,
-                        subst_token(r->prop_ptr, "hilight_wave", my_itoa(gr->hilight_wave)));
-           } else {
-             gr->hilight_wave = wcnt;
-             my_strdup2(_ALLOC_ID_, &r->prop_ptr,
-                        subst_token(r->prop_ptr, "hilight_wave", my_itoa(gr->hilight_wave)));
-           }
-        }
-      }
+      if(POINTINSIDE(xx, yy, xt1, yt1, xt2, yt2)) return wcnt;
     } else if(gr->digital) {
       double xt1 = gr->rx1; /* <-- waves_selected() is more restrictive than this */
       double xt2 = gr->x1 - 20 * gr->txtsizelab;
@@ -4353,61 +4511,115 @@ int edit_wave_attributes(int what, int i, Graph_ctx *gr)
         double tmp = DW_Y(yt1);
         yt1 = DW_Y(yt2);
         yt2 = tmp;
-        if(POINTINSIDE(xctx->mousex_snap, xctx->mousey_snap, xt1, yt1, xt2, yt2)) {
-          char s[30];
-          ret = 1;
-          if(what == 1) {
-            int save = gr->hilight_wave;
-            my_snprintf(s, S(s), "%d %d", i, wcnt);
-            gr->hilight_wave = wcnt;
-            tclvareval("graph_edit_wave ", s, NULL);
-            gr->hilight_wave = save;
-          } else {
-             if(gr->hilight_wave == wcnt) {
-               gr->hilight_wave = -1;
-               my_strdup2(_ALLOC_ID_, &r->prop_ptr,
-                          subst_token(r->prop_ptr, "hilight_wave", my_itoa(gr->hilight_wave)));
-             } else {
-               gr->hilight_wave = wcnt;
-               my_strdup2(_ALLOC_ID_, &r->prop_ptr,
-                          subst_token(r->prop_ptr, "hilight_wave", my_itoa(gr->hilight_wave)));
-             }
-          }
-        }
+        if(POINTINSIDE(xx, yy, xt1, yt1, xt2, yt2)) return wcnt;
       }
     } else {
       double xt1 = gr->rx1 + 2 + gr->rw / n_nodes * wcnt;
       double yt1 = gr->ry1;
       double xt2 = xt1 + gr->rw / n_nodes;
       double yt2 = gr->y1;
-      if(POINTINSIDE(xctx->mousex_snap, xctx->mousey_snap, xt1, yt1, xt2, yt2)) {
-        char s[50];
-        ret = 1;
-        if(what == 1) {
-          int save = gr->hilight_wave;
-          my_snprintf(s, S(s), "%d %d", i, wcnt);
-          gr->hilight_wave = wcnt;
-          tclvareval("graph_edit_wave ", s, NULL);
-          gr->hilight_wave = save;
-        } else {
-          if(gr->hilight_wave == wcnt) {
-            gr->hilight_wave = -1;
-            my_strdup2(_ALLOC_ID_, &r->prop_ptr,
-                       subst_token(r->prop_ptr, "hilight_wave", my_itoa(gr->hilight_wave)));
-          } else {
-            gr->hilight_wave = wcnt;
-            my_strdup2(_ALLOC_ID_, &r->prop_ptr,
-                       subst_token(r->prop_ptr, "hilight_wave", my_itoa(gr->hilight_wave)));
-          }
-        }
-      }
+      if(POINTINSIDE(xx, yy, xt1, yt1, xt2, yt2)) return wcnt;
     }
-    ++wcnt;
-  } /* while( (ntok = my_strtok_r(nptr, "\n\t ", "", 0, &saven)) ) */
-  my_free(_ALLOC_ID_, &node);
-  my_free(_ALLOC_ID_, &color);
-  my_free(_ALLOC_ID_, &sweep);
+  }
+  return -1;
+}
+
+/* The public query: which legend entry of graph `i` sits under the CANVAS PIXEL
+ * (px, py)? NODE index, or -1.
+ *
+ * ⚠ RAW PIXELS, never xctx->mousex_snap. The in-place version this replaces
+ * tested the GRID-SNAPPED mouse mirror, which for the two waves_callback callers
+ * happens to be harmless (waves_callback overwrites mousex_snap with mousex at
+ * its head, issue 0143) but is wrong for anything else -- with a coarse snap a
+ * pointer sitting on entry 2 tests as entry 1. Taking the event's own pixels
+ * closes that for good and matches graph_wave_at / graph_plotbox_at.
+ *
+ * Fails closed exactly like graph_plotbox_at: a bad index, a non-graph rect, an
+ * off-screen graph or a strip with no `node` token all answer -1, never a
+ * plausible 0. Uses a LOCAL Graph_ctx and brackets graph_flags' hcursor bits
+ * (landmines 11 and 37) -- it is a query and must not leave the session
+ * describing a strip nobody is pointing at.
+ *
+ * Unlike graph_plotbox_at it does NOT refuse digital strips: the digital legend
+ * has its own working layout, and on a digital strip the legend is the only way
+ * to select a trace at all (graph_wave_at answers -1 across the whole body). */
+int graph_legend_at(int i, double px, double py)
+{
+  Graph_ctx gr_ctx;
+  Graph_ctx *gr = &gr_ctx;
+  xRect *r;
+  const char *node;
+  int saveflags, ret;
+  double xx, yy;
+
+  if(!xctx) return -1;
+  if(i < 0 || i >= xctx->rects[GRIDLAYER]) return -1;
+  r = &xctx->rect[GRIDLAYER][i];
+  if(!(r->flags & 1)) return -1;
+  node = get_tok_value(r->prop_ptr, "node", 0);
+  if(!node[0]) return -1;
+  memset(&gr_ctx, 0, sizeof(gr_ctx));
+  saveflags = xctx->graph_flags & (128 | 256);
+  setup_graph_data(i, 0, gr);
+  xctx->graph_flags = (xctx->graph_flags & ~(128 | 256)) | saveflags;
+  if(gr->scx == 0.0 || gr->scy == 0.0) return -1;   /* off-screen: no transform */
+  /* SCREEN -> XSCHEM. The inverse of X_TO_SCREEN/Y_TO_SCREEN (xschem.h): the
+   * legend boxes are in xschem coordinates and the caller speaks canvas pixels. */
+  xx = px / xctx->mooz - xctx->xorigin;
+  yy = py / xctx->mooz - xctx->yorigin;
+  /* get_tok_value's buffer is reused by setup_graph_data, so re-read `node` */
+  node = get_tok_value(r->prop_ptr, "node", 0);
+  ret = legend_slot_hit(gr, node, xx, yy);
+  dbg(1, "graph_legend_at(): graph=%d px=%g py=%g -> node %d\n", i, px, py, ret);
   return ret;
+}
+
+/* Act on the legend entry under the pointer.
+ *
+ * what == 1: open the wave dialog for it ("graph_edit_wave <graph> <wave>")
+ * what == 2: TOGGLE that trace's membership of the selection (issue 0175 D7).
+ *            Before 0175 the selection was a scalar and this was a plain
+ *            hilight_wave toggle; toggling MEMBERSHIP is a strict superset --
+ *            byte-identical whenever the selection holds at most one trace --
+ *            and it is what makes RMB-on-legend and Ctrl+LMB-on-legend the same
+ *            gesture on two buttons. It deliberately does NOT sweep the other
+ *            strips: it never did, and now that a multi-trace selection is legal
+ *            that stops being an inconsistency.
+ * returns 1 if a wave was found (the caller then redraws / stops routing).
+ *
+ * All three legend layouts, and the geometry, now live in legend_slot_hit()
+ * above -- this function used to carry all of it three times over. */
+int edit_wave_attributes(int what, int i, Graph_ctx *gr)
+{
+  const char *node;
+  int wcnt;
+  xRect *r = &xctx->rect[GRIDLAYER][i];
+
+  node = get_tok_value(r->prop_ptr, "node", 0);
+  if(!node[0]) return 0;
+  /* the pointer mirror, NOT the event pixels: this is the shipped contract of
+   * both callers (a Button3 press and the double-click arm), and inside
+   * waves_callback mousex_snap/mousey_snap have already been overwritten with
+   * the UNsnapped mousex/mousey at the head of the function (issue 0143), so
+   * these are raw coordinates despite the field names. */
+  wcnt = legend_slot_hit(gr, node, xctx->mousex_snap, xctx->mousey_snap);
+  if(wcnt < 0) return 0;
+  if(what == 1) {
+    char s[50];
+    int save = gr->hilight_wave;
+    my_snprintf(s, S(s), "%d %d", i, wcnt);
+    gr->hilight_wave = wcnt;
+    tclvareval("graph_edit_wave ", s, NULL);
+    gr->hilight_wave = save;
+  } else {
+    if(graph_sel_waves_toggle(i, wcnt)) {
+      /* keep the live Graph_ctx in step with the tokens just written -- the
+       * caller redraws with THIS gr and would otherwise paint the old state */
+      gr->n_sel_waves = graph_sel_waves_get(i, gr->sel_wave, GRAPH_MAX_SEL_WAVES);
+      gr->hilight_wave = gr->n_sel_waves ? gr->sel_wave[0] : -1;
+    }
+  }
+  return 1;
 }
 
 /* derived from draw_graph(), used to calculate y range of custom equation graph data,

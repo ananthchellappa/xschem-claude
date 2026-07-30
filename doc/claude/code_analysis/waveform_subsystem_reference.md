@@ -1409,6 +1409,67 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
     proc**: comparing only the final title string passes just as happily on
     corrupted-and-repaired as on never-corrupted.
 
+43. **The LEGEND has a C hit test — it always did — but it was fused into an
+    ACTION and keyed off GRID-SNAPPED XSCHEM coordinates, while the trace hit
+    test takes RAW SCREEN pixels. The two picking surfaces of one strip did not
+    share a coordinate space** (2026-07-30, issue 0175).
+
+    Two comments in `wave_viewer.tcl` said the engine had *"no C hit-test API"*
+    for the legend and both were wrong when written. What was missing was a
+    standalone QUERY: the hit test lived inside `edit_wave_attributes(what, i,
+    gr)` (`draw.c`), **triplicated once per legend layout** (vertical, digital,
+    horizontal) and reachable only from a Button3 press. It is now the static
+    `legend_slot_hit()` plus the public `graph_legend_at(i, px, py)`
+    (`xschem get graph_legend_at`, `wviewer::legend_at`), and BOTH mouse buttons
+    plus Tcl go through it — the ~100 lines of duplicated geometry are gone and
+    the drawn label and its clickable target cannot drift apart.
+
+    ⚠ **The coordinate trap, which is the reusable half.** `gr->rx1/ry1/rw/rh`
+    are **XSCHEM coordinates** (`xschem.h`: *"container rectangle, xschem
+    coordinates"*), so the legend boxes are computed there; `graph_wave_at` /
+    `graph_plotbox_at` compare **SCREEN PIXELS** via `S_X`/`S_Y`. The in-place
+    version tested `xctx->mousex_snap` / `mousey_snap` — the grid-SNAPPED
+    schematic-space mouse mirror — so with a coarse grid a pointer sitting on
+    entry 2 tests as entry 1. That is *neutralised* for its two `waves_callback`
+    callers, because `waves_callback` overwrites `mousex_snap` with `mousex` at
+    its head (issue 0143), but it was never a contract anything else could rely
+    on. `graph_legend_at` takes the CALLER's pixels and converts once
+    (`px / xctx->mooz - xctx->xorigin`), matching every other picking query.
+    Any new picking surface on a strip owes the same: state which space it takes,
+    and take the event's pixels.
+
+    Three more properties worth knowing before touching it:
+    **(a)** it does NOT refuse digital strips, unlike `graph_plotbox_at` and
+    `graph_trace_at` — a digital strip's body answers -1 everywhere (issue 0174
+    D5), so its legend is the only place a trace can be picked at all;
+    **(b)** it refuses `legend=0`, which the triplicated version did not — it
+    would happily pick an entry that is not drawn;
+    **(c)** it fails closed on a bad index / non-graph rect / off-screen graph /
+    absent `node` token, and uses a LOCAL `Graph_ctx` with the hcursor bits
+    bracketed (landmines 11 and 37), like every other query on this pattern.
+
+    **And the selection it drives is now a SET.** `hilight_wave` is still a
+    single int and still means "the first selected NODE index, or -1"; a second
+    optional token `sel_waves="0 2"` carries the whole set and is emitted ONLY
+    when two or more are selected, so a strip that was never Ctrl-clicked
+    serialises byte-identically to pre-0175 and an older build bolds the first
+    selected trace instead of choking. `graph_sel_waves_get/set/toggle` are the
+    only readers/writers of the pair in C, `wviewer::model_sel` /
+    `model_sel_set` on the model side — the two tokens cannot drift because
+    nothing else touches them.
+    ⚠ **Every draw-side comparison must be `wave_is_hilighted(gr, wcnt)`, never
+    a bare `gr->hilight_wave == wcnt`.** There were 11 such comparisons in
+    `draw.c` (the trace stroke, the per-node draw, all three legend faces
+    including item 1's bold-vs-bold-italic distinction). A single missed one
+    renders a Ctrl-selected trace THIN while the token says it is selected, and
+    no test that only ever selects one trace can see it —
+    `test_wave_legend.tcl` `LS5` asserts it at source level for that reason.
+    In memory the set is a FIXED array in `Graph_ctx`
+    (`sel_wave[GRAPH_MAX_SEL_WAVES]`), never a malloc'ed pointer: six call sites
+    build a LOCAL `Graph_ctx` and let it die on return, and a pointer field would
+    leak on each of them once per hover motion event.
+    Spec: `doc/claude/specs/waveform_viewer_modes.md` §15.
+
 ---
 
 ## 12. Improvement backlog (ranked, with where-to-touch)

@@ -53,12 +53,12 @@ proc tokof {props tok} {
 # comments that explain it — and a naive [regexp -all] over the whole file counts
 # those, which is exactly what the first version of LG3 did (it reported 3 and
 # failed). Comment lines are dropped before counting.
-proc count_emitters {path} {
+proc count_emitters {path {tok legendbold=}} {
   set fp [open $path r]; set src [read $fp]; close $fp
   set n 0
   foreach line [split $src "\n"] {
     if {[regexp {^\s*#} $line]} { continue }
-    incr n [regexp -all {legendbold=} $line]
+    incr n [regexp -all -- $tok $line]
   }
   return $n
 }
@@ -157,6 +157,129 @@ check "LP26 the axis mags are untouched (only the LEGEND was too small)" \
   [list [tokof $props xlabmag] [tokof $props ylabmag]] {1.0 1.0}
 check "LP27 divy is still 5 — the value 1.63 is derived from it" \
   [tokof $props divy] 5
+
+# ============================================================================
+# LS* — issue 0175: the SELECTION CUE's plumbing (pure, runs in BOTH arms)
+# ============================================================================
+# D4: N selected traces get exactly the cue ONE selected trace has always had —
+# a thick stroke and a bold legend entry (bold ITALIC where legendbold is on,
+# which is why this suite owns it: the item-1 slant cue and the selection cue
+# are the same pixel decision, and they have to keep reading against each other).
+#
+# ⚠ WHAT THIS SUITE STILL CANNOT SEE: the pixels. "two entries look bold" is
+# eyeball-only for the same reason LP/LG are. What is asserted is everything up
+# to the renderer's door — the pure set algebra, the two-token emission, and the
+# SOURCE-LEVEL guarantee that every draw-side comparison goes through the set
+# test rather than the scalar (a single missed `==` renders a Ctrl-selected
+# trace thin, which is precisely the D4 failure and is invisible to any leg that
+# only ever selects one trace).
+
+# --- LS1: sel_waves_norm is a real normaliser -------------------------------
+check "LS1 an empty value is an empty selection" [wviewer::sel_waves_norm {}] {}
+check "LS1 a plain list survives" [wviewer::sel_waves_norm {0 2}] {0 2}
+check "LS1 it SORTS" [wviewer::sel_waves_norm {2 0 1}] {0 1 2}
+check "LS1 it de-duplicates" [wviewer::sel_waves_norm {2 0 2}] {0 2}
+check "LS1 negatives are dropped, not kept as sentinels" \
+  [wviewer::sel_waves_norm {-1 3}] 3
+check "LS1 garbage words are dropped" [wviewer::sel_waves_norm {0 x 2}] {0 2}
+check "LS1 newlines and tabs separate too" [wviewer::sel_waves_norm "1\n0\t2"] {0 1 2}
+check "LS1 an all-garbage value is an empty selection, never {0}" \
+  [wviewer::sel_waves_norm {nan junk}] {}
+
+# --- LS2: model_sel / model_sel_set, the two-token rule ----------------------
+check "LS2 a graph with neither key has nothing selected" \
+  [wviewer::model_sel [wviewer::empty_graph]] {}
+check "LS2 hilight_wave alone is a one-element selection" \
+  [wviewer::model_sel [dict replace [wviewer::empty_graph] hilight_wave 3]] 3
+check "LS2 hilight_wave -1 is NOT a selection of node -1" \
+  [wviewer::model_sel [dict replace [wviewer::empty_graph] hilight_wave -1]] {}
+check "LS2 sel_waves WINS over the scalar wherever they disagree" \
+  [wviewer::model_sel [dict replace [wviewer::empty_graph] \
+     hilight_wave 9 sel_waves {0 2}]] {0 2}
+set lsG [wviewer::model_sel_set [wviewer::empty_graph] {2 0}]
+check "LS2 writing a 2-element set stores the head in hilight_wave" \
+  [dict get $lsG hilight_wave] 0
+check "LS2 ... and the sorted set in sel_waves" [dict get $lsG sel_waves] {0 2}
+set lsG1 [wviewer::model_sel_set $lsG {1}]
+check "LS2 shrinking to ONE drops sel_waves entirely (absent means absent)" \
+  [list [dict get $lsG1 hilight_wave] [dict exists $lsG1 sel_waves]] {1 0}
+set lsG0 [wviewer::model_sel_set $lsG {}]
+check "LS2 emptying drops BOTH keys, never writes -1" \
+  [list [dict exists $lsG0 hilight_wave] [dict exists $lsG0 sel_waves]] {0 0}
+check "LS2 the pair round-trips" \
+  [wviewer::model_sel [wviewer::model_sel_set [wviewer::empty_graph] {3 1 1}]] {1 3}
+
+# --- LS3: the structural remaps keep the SET honest --------------------------
+# stale node indices after a delete/move would bold the WRONG traces, which is
+# strictly worse than losing the selection
+check "LS3 a move drops the trace that left and shifts the ones above it" \
+  [wviewer::remap_sel_after_trace_move {0 1 3} 1] {0 2}
+check "LS3 nothing below the hole moves" \
+  [wviewer::remap_sel_after_trace_move {0 1} 2] {0 1}
+check "LS3 a delete drops every doomed index and closes the gaps" \
+  [wviewer::remap_sel_after_trace_delete {0 1 2} 1] {0 1}
+check "LS3 deleting every selected trace empties the selection" \
+  [wviewer::remap_sel_after_trace_delete {1} 1] {}
+check "LS3 an empty selection remaps to an empty selection" \
+  [list [wviewer::remap_sel_after_trace_move {} 0] \
+        [wviewer::remap_sel_after_trace_delete {} 0]] {{} {}}
+
+# --- LS4: what graph_props emits --------------------------------------------
+set lsP [pcall {wviewer::graph_props [wviewer::empty_graph]}]
+check_true "LS4 a graph with no selection emits NO sel_waves token" \
+  [expr {[string first "sel_waves" $lsP] < 0}]
+set lsP [pcall {wviewer::graph_props [dict replace [wviewer::empty_graph] hilight_wave 1]}]
+check_true "LS4 a ONE-trace selection still emits no sel_waves token" \
+  [expr {[string first "sel_waves" $lsP] < 0}]
+check "LS4 ... and its hilight_wave is unchanged from pre-0175" \
+  [tokof $lsP hilight_wave] 1
+set lsP [pcall {wviewer::graph_props [dict replace [wviewer::empty_graph] \
+                  hilight_wave 0 sel_waves {0 2}]}]
+check "LS4 a two-trace selection emits sel_waves, QUOTED (it holds a space)" \
+  [tokof $lsP sel_waves] {"0 2"}
+check "LS4 ... with hilight_wave still the head, so an older build bolds one" \
+  [tokof $lsP hilight_wave] 0
+# byte order: sel_waves sits directly after hilight_wave and before markers, so
+# a regenerate produces a deterministic string (the documented emission order)
+set lsP [pcall {wviewer::graph_props [dict replace [wviewer::empty_graph] \
+                  hilight_wave 0 sel_waves {0 2} markers {1 0 0 3 0.5 0.5 0 0 0}]}]
+check_true "LS4 the emission order is hilight_wave, sel_waves, markers" \
+  [expr {[string first "hilight_wave=" $lsP] < [string first "sel_waves=" $lsP] &&
+         [string first "sel_waves=" $lsP] < [string first "markers=" $lsP]}]
+# a junk value must not reach the rect as junk
+set lsP [pcall {wviewer::graph_props [dict replace [wviewer::empty_graph] \
+                  hilight_wave 0 sel_waves {0 junk}]}]
+check_true "LS4 a set that normalises to ONE entry emits no sel_waves token" \
+  [expr {[string first "sel_waves" $lsP] < 0}]
+
+# --- LS5: BLAST RADIUS + the draw-side comparison ----------------------------
+# (a) the C add_graph template — every one of the ~127 embedded schematic
+#     graphs is born from it — must NOT have gained the token
+set fp [open [file join $repo src scheduler.c] r]; set lssrc [read $fp]; close $fp
+check "LS5 the C add_graph template has NO sel_waves token" \
+  [regexp -all {"sel_waves} $lssrc] 0
+# (b) exactly ONE emitter in the Tcl, the viewer's own generator
+check "LS5 exactly one emitter of sel_waves= in the Tcl" \
+  [pcall {count_emitters [file join $repo src wave_viewer.tcl] {sel_waves=}}] 1
+# (c) THE D4 LEG. Every draw-side "is this trace selected" test must go through
+#     wave_is_hilighted(), which reads the SET. A surviving bare
+#     `gr->hilight_wave == wcnt` in draw.c is a trace that renders thin while the
+#     token says it is selected — the exact D4 failure, and invisible to any
+#     leg that only ever selects one trace.
+set fp [open [file join $repo src draw.c] r]; set lsd [read $fp]; close $fp
+set lsbare {}
+set lscalls 0
+foreach line [split $lsd "\n"] {
+  if {[regexp {^\s*[*/]} $line]} { continue }          ;# comment/prose lines
+  if {[string first "gr->hilight_wave == wcnt" $line] >= 0} { lappend lsbare [string trim $line] }
+  if {[string first "wave_is_hilighted(gr, wcnt)" $line] >= 0} { incr lscalls }
+}
+# the ONLY surviving scalar comparison in draw.c is wave_is_hilighted()'s own
+# fallback body — every call site goes through the helper
+check "LS5 the only bare `gr->hilight_wave == wcnt` left is the helper's own body" \
+  $lsbare [list {return gr->hilight_wave == wcnt;}]
+check_true "LS5 ... and every draw-side comparison became a wave_is_hilighted() call" \
+  [expr {$lscalls >= 11}]
 
 # ============================================================================
 # LG* — GUI legs (self-SKIP without a usable DISPLAY)

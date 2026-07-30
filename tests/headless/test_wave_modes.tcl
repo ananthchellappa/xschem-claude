@@ -533,8 +533,25 @@ check "M8 ... and the destination's unrelated highlight is preserved" \
 set m8r2 [pcall {wviewer::move_trace_in_graphs $m8hl 0 2 1}]
 check "M8 moving the BOLD trace clears the source marker" \
   [dict exists [lindex $m8r2 0] hilight_wave] 0
-check "M8 ... and bolds it at its new node index in the destination" \
-  [dict get [lindex $m8r2 1] hilight_wave] 1
+# ⚠ ISSUE 0175 CHANGED THIS. The selection is a SET now, so the migrating trace
+# is ADDED to whatever the destination already had selected instead of replacing
+# it — this fixture's destination carries an unrelated highlight at node 0, and
+# the leg above ("the destination's unrelated highlight is preserved") already
+# says that highlight has no reason to die. It survives here too, and the
+# migrating trace joins it at node 1. `hilight_wave` is the HEAD of the set.
+check "M8 ... and the destination picks it up at its new node index (0175: as a SET)" \
+  [wviewer::model_sel [lindex $m8r2 1]] {0 1}
+check "M8 ... with hilight_wave as the head, so an older build still bolds one" \
+  [dict get [lindex $m8r2 1] hilight_wave] 0
+check "M8 ... and sel_waves carries the pair" \
+  [dict get [lindex $m8r2 1] sel_waves] {0 1}
+# teeth: a destination with NO highlight of its own gets exactly the one trace,
+# and no sel_waves key at all — so "always adds a second entry" cannot pass
+set m8r2b [pcall {wviewer::move_trace_in_graphs \
+  [list [dict replace [m8_g v(a) v(b) v(c)] hilight_wave 2] [m8_g v(x)]] 0 2 1}]
+check "M8 ... a destination with nothing selected gets just the migrant" \
+  [list [dict get [lindex $m8r2b 1] hilight_wave] \
+        [dict exists [lindex $m8r2b 1] sel_waves]] {1 0}
 set m8r3 [pcall {wviewer::move_trace_in_graphs \
   [list [m8_g v(a) v(b)] [m8_g v(x)]] 0 0 1}]
 check "M8 a source with no marker never gains one, and neither does the dest" \

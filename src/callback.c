@@ -887,11 +887,37 @@ static int waves_callback(int event, int mx, int my, KeySym key, int button, int
       need_redraw_master = 1;
     }
     else if(event == ButtonRelease && button == Button1 &&
-       POINTINSIDE(xctx->mousex, xctx->mousey, gr->x1, gr->y1, gr->x2 , gr->y2) &&
        fabs(xctx->mousex - xctx->graph_press_x) <= GRAPH_CLICK_TOL * xctx->zoom &&
        fabs(xctx->mousey - xctx->graph_press_y) <= GRAPH_CLICK_TOL * xctx->zoom) {
-      int wcnt, save;
-      save = gr->hilight_wave;
+      int wcnt;
+      /* TWO picking surfaces, one gesture (issue 0175). The plot BODY answers
+       * with graph_wave_at (proximity to a drawn trace); the LEGEND answers with
+       * graph_legend_at (which per-node slot the pointer is in). They are
+       * mutually exclusive by construction -- the legend sits outside the plot
+       * box -- and a click that is in neither (an axis margin, the reorder grip)
+       * must change NOTHING, which is why `on_body` is carried separately
+       * instead of being folded into `wcnt < 0`.
+       *
+       * ⚠ The body test used to be part of this `else if` condition. It moved
+       * inside so a legend click reaches the arm at all; the TRAVEL test stays in
+       * the condition, because it is what the double-click interlock rides on
+       * (the -3 arm poisons graph_press_x/y with -1e30) and what separates a
+       * click from the end of a strip drag-reorder. */
+      int on_body = POINTINSIDE(xctx->mousex, xctx->mousey, gr->x1, gr->y1, gr->x2 , gr->y2);
+      /* Ctrl+click ADDS to / REMOVES from the selection instead of replacing it
+       * (issue 0175). Measured before choosing the modifier: Ctrl+B1 over a graph
+       * does today exactly what a plain B1 does -- wviewer::strip_drag_press
+       * declines a modified press and forwards it verbatim, and this arm never
+       * looked at `state` -- so nothing is being taken away. The one other
+       * meaning ControlMask carries over a graph is waves_selected's locked-rect
+       * bypass (~line 116), which only concerns rects carrying `lock=true`; the
+       * ASE viewer never writes that token. See 0175 D3. */
+      int ctrl = (state & ControlMask) ? 1 : 0;
+      /* Did the SELECTION change? Not "did hilight_wave change" -- since 0175
+       * the selection is a SET, and collapsing {0,2} to {0} or adding node 5
+       * behind node 2 both leave the scalar alone while changing every pixel.
+       * The redraw has to key off the set. */
+      int selchg = 0;
       /* WHICH trace, if any, the click is on -- a real point-to-segment distance
        * in SCREEN PIXELS through the engine's own transform, capped at
        * GRAPH_TRACE_PICK_TOL, answering the trace's NODE index or -1
@@ -919,65 +945,90 @@ static int waves_callback(int event, int mx, int my, KeySym key, int button, int
        * persisted into the hilight_wave token (measured: -1859984240 on a digital
        * strip and with no raw loaded). The refusal now just reads as "no trace
        * here", which on such a strip means a click clears the selection. */
-      wcnt = graph_wave_at(i, (double)mx, (double)my, GRAPH_TRACE_PICK_TOL);
-      /* THE SELECTION BECOMES WHAT THE CLICK PICKED. That is the whole rule, and
-       * `wcnt` is already -1 on a miss, so one assignment covers all of it
-       * (issue 0174 D2/D3, settled by the user at review):
-       *   - on another trace  -> the selection MOVES there (the reported defect);
-       *   - on empty body      -> the selection is CLEARED;
-       *   - on the trace that is already selected -> it STAYS selected. A plain
-       *     click never deselects what it lands on. Cadence behaviour, and it is
-       *     what leaves room for 0175: de-selecting one trace becomes Ctrl+click,
-       *     which is also the only way to ADD to a selection.
-       *
-       * ⚠ Clearing on a miss and the strip drag-reorder do NOT collide, because
-       * they are separated by the travel test above, not by this branch: a real
-       * reorder drag travels well past GRAPH_CLICK_TOL, so its release never
-       * reaches here at all. Only a press-release that moved less than 3 px
-       * clears -- which is a click by any definition.
-       *
-       * Written only when it actually changes: a click in empty space with
-       * nothing selected must not churn the prop string. */
-      if(gr->hilight_wave != wcnt) {
-        gr->hilight_wave = wcnt;
-        my_strdup2(_ALLOC_ID_, &r->prop_ptr,
-                   subst_token(r->prop_ptr, "hilight_wave", my_itoa(gr->hilight_wave)));
+      if(on_body) {
+        wcnt = graph_wave_at(i, (double)mx, (double)my, GRAPH_TRACE_PICK_TOL);
+      } else {
+        /* THE LEGEND (issue 0175). Clicking an entry's text selects its trace --
+         * asked for directly, and on a DIGITAL or bus strip it is the only way
+         * there is, because graph_wave_at answers -1 across their whole body.
+         * The SAME query the Button3 legend arm below uses, so the two buttons
+         * cannot disagree about where an entry is. Raw event pixels, like
+         * graph_wave_at above and for the same reason. -1 for the axis margins
+         * and the reorder grip, which own no trace and must change nothing. */
+        wcnt = graph_legend_at(i, (double)mx, (double)my);
       }
-      /* THE SELECTION IS ONE TRACE IN THE WHOLE WINDOW, NOT ONE PER STRIP.
-       *
-       * `hilight_wave` is a PER-RECT prop token, so everything above only ever
-       * touches the strip under the pointer. Without this sweep, selecting a
-       * trace on strip A and then clicking one on strip B leaves BOTH bold --
-       * the same "the selection cannot move" defect this issue is about, just
-       * across strips instead of within one. Reported at review: "clicking on
-       * another trace SHOULD deselect all currently selected traces", and
-       * likewise for a click on empty space.
-       *
-       * A token that is ABSENT means nothing is bold there -- it must not be
-       * read as index 0, which is what a bare atoi("") would give.
-       *
-       * The cleared strips are repainted by the all-graphs loop further down
-       * (`need_all_redraw`), which does its own setup_graph_data(k, 0, gr) per
-       * rect and so re-reads the token we just rewrote. Doing it here instead
-       * would mean calling setup_graph_data on a non-master rect with the SHARED
-       * xctx->graph_struct that this arm is still using (landmines 11 and 37). */
-      {
-        int k;
-        for(k = 0; k < xctx->rects[GRIDLAYER]; ++k) {
-          xRect *rk = &xctx->rect[GRIDLAYER][k];
-          const char *hw;
-          if(k == i) continue;
-          if(!(rk->flags & 1)) continue;               /* 1: graph, 3: graph_unlocked */
-          hw = get_tok_value(rk->prop_ptr, "hilight_wave", 0);
-          if(!hw[0] || atoi(hw) < 0) continue;         /* absent or already clear */
-          my_strdup2(_ALLOC_ID_, &rk->prop_ptr,
-                     subst_token(rk->prop_ptr, "hilight_wave", "-1"));
-          need_all_redraw = 1;
+      if(ctrl) {
+        /* CTRL+CLICK: ADD an unselected trace, REMOVE a selected one, and touch
+         * NOTHING else -- not the other strips (a window-wide selection is built
+         * up across strips exactly this way) and not the selection at all when
+         * the click missed. "Ctrl+click on empty space clears everything" would
+         * make the modifier useless for its one job. */
+        if(wcnt >= 0 && graph_sel_waves_toggle(i, wcnt)) selchg = 1;
+      } else if(on_body || wcnt >= 0) {
+        /* THE SELECTION BECOMES WHAT THE CLICK PICKED, AND ONLY THAT. One
+         * assignment covers the whole rule (issue 0174 D2/D3, settled by the
+         * user at review; issue 0175 adds the COLLAPSE half):
+         *   - on another trace -> the selection MOVES there (0174's defect);
+         *   - on empty BODY    -> the selection is CLEARED;
+         *   - on the trace that is already selected -> it STAYS selected. A
+         *     plain click never deselects what it lands on;
+         *   - with several traces selected -> it collapses to the one clicked.
+         * A plain click on a legend entry that is NOT a hit (wcnt < 0 and not on
+         * the body: an axis margin, the grip) falls out of this branch entirely
+         * and changes nothing -- only the plot body clears.
+         *
+         * ⚠ Clearing on a body miss and the strip drag-reorder do NOT collide:
+         * they are separated by the travel test in the condition above, not by
+         * this branch. A real reorder drag travels well past GRAPH_CLICK_TOL and
+         * its release never reaches here.
+         *
+         * graph_sel_waves_set writes BOTH tokens and answers "did anything
+         * change", so a click that re-picks what was already picked does not
+         * churn the prop string. */
+        if(graph_sel_waves_set(i, &wcnt, wcnt >= 0 ? 1 : 0)) selchg = 1;
+        /* THE SELECTION IS ONE SET IN THE WHOLE WINDOW, NOT ONE PER STRIP.
+         *
+         * `hilight_wave`/`sel_waves` are PER-RECT prop tokens, so everything
+         * above only ever touches the strip under the pointer. Without this
+         * sweep, selecting a trace on strip A and then clicking one on strip B
+         * leaves BOTH bold -- the same "the selection cannot move" defect one
+         * level up. Reported at 0174's review: "clicking on another trace SHOULD
+         * deselect all currently selected traces", and likewise for empty space.
+         * Ctrl+click deliberately does NOT run it: that is how a selection
+         * spanning two strips is built.
+         *
+         * An ABSENT token means nothing is bold there -- it must not be read as
+         * index 0, which is what a bare atoi("") would give. `sel_waves` is only
+         * ever present alongside a non-negative `hilight_wave` (graph_sel_waves_set
+         * writes the pair), so testing the scalar covers both.
+         *
+         * The cleared strips are repainted by the all-graphs loop further down
+         * (`need_all_redraw`), which does its own setup_graph_data(k, 0, gr) per
+         * rect and so re-reads the tokens just rewritten. Doing it here instead
+         * would mean calling setup_graph_data on a non-master rect with the
+         * SHARED xctx->graph_struct this arm is still using (landmines 11/37). */
+        {
+          int k;
+          for(k = 0; k < xctx->rects[GRIDLAYER]; ++k) {
+            xRect *rk = &xctx->rect[GRIDLAYER][k];
+            const char *hw;
+            if(k == i) continue;
+            if(!(rk->flags & 1)) continue;             /* 1: graph, 3: graph_unlocked */
+            hw = get_tok_value(rk->prop_ptr, "hilight_wave", 0);
+            if(!hw[0] || atoi(hw) < 0) continue;       /* absent or already clear */
+            if(graph_sel_waves_set(k, NULL, 0)) need_all_redraw = 1;
+          }
         }
       }
-      if(save != gr->hilight_wave && !need_all_redraw) {
-        draw_graph(i, 1 + 8 + 16 + (xctx->graph_flags & (2 | 4 | 128 | 256)), gr, NULL); /* draw data in graph box */
-      }
+      /* Repaint through need_redraw_master rather than the inline draw_graph
+       * this arm used to do: the per-graph loop at the tail re-runs
+       * setup_graph_data(i, 0, gr) first, so the redraw reads back the tokens
+       * just written instead of relying on this arm having patched every field
+       * of the SHARED xctx->graph_struct by hand (it now writes two of them,
+       * hilight_wave and sel_wave[], and forgetting one is a silent stale
+       * render). need_all_redraw already covers the whole stack when the
+       * cross-strip sweep fired. */
+      if(selchg) need_redraw_master = 1;
     }
     /* button3 click on a wave label (outside the plot body) -> wave attributes dialog */
     else if(event == ButtonPress && button == Button3 &&

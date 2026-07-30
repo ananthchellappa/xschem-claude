@@ -73,9 +73,19 @@
 # pre-validated Tcl-side against the save.c token table).
 # Graph menu (D3/D5/D11/D13): Add Graph, Add Trace... (expression entry +
 # raw-vars listbox; RPN exprs materialize as raw vectors via `xschem raw
-# add`, D5), Delete... (listbox of graphs+traces — canvas legend click-
-# select has no C hit-test API, receipts/11), Axes... (ranges + log
-# toggles), Shared X Axis. All dialogs = ase::ui scaffold (ESC-cancel by
+# add`, D5), Delete... (listbox of graphs+traces — the BULK path; per-trace
+# selection is a click, see below), Axes... (ranges + log
+# toggles), Shared X Axis.
+# ⚠ CORRECTED 2026-07-30 (issue 0175). The old wording here and in
+# delete_dialog said "canvas legend click-select has no C hit-test API
+# (receipts/11: rect descriptors carry no coordinates)". That was wrong even
+# when it was written: the hit test shipped, fused into the ACTION of
+# draw.c's edit_wave_attributes() and reachable only from a Button3 press on
+# the legend. Issue 0175 extracted it as a pure query, `graph_legend_at`
+# (`xschem get graph_legend_at <gi> <px> <py>` -> NODE index or -1, wrapped
+# here by wviewer::legend_at), and put an LMB arm on it. Clicking a legend
+# entry now selects that trace; Ctrl+click adds/removes it. The Delete
+# listbox stays as the bulk path. All dialogs = ase::ui scaffold (ESC-cancel by
 # construction) + ase theme.
 # Cursors menu (D1/D2/D8/D9): Cursor A/B drive the ENGINE x-cursors
 # (`xschem cursor 1|2`, graph_flags bits 2/4, drawn by plain redraw);
@@ -1447,7 +1457,9 @@ proc wviewer::clear_graph_traces {token gi} {
   # indices that no longer exist (`hilight_wave` has never been remapped on this
   # path — a latent bug fixed here alongside the marker rule).
   set gone [wviewer::markers_numbers [wviewer::dget $G markers {}]]
-  set G [dict remove [dict replace $G traces {}] markers hilight_wave]
+  # `sel_waves` (issue 0175) rides with `hilight_wave` here for the same reason:
+  # every node index is gone, so both keys go rather than dangle.
+  set G [dict remove [dict replace $G traces {}] markers hilight_wave sel_waves]
   set gs [lreplace $gs $gi $gi $G]
   # the numbers that just disappeared may be the `prev` partner of a delta block
   # on ANOTHER strip — markers are numbered window-wide, so the sweep is too
@@ -1663,6 +1675,19 @@ proc wviewer::graph_props {G {active 0} {grid 1}} {
   set hw {}
   set hwv [wviewer::dget $G hilight_wave {}]
   if {$hwv ne {} && [string is integer -strict $hwv]} { set hw "hilight_wave=$hwv\n" }
+  # ... and the REST of the selection when there is more than one (issue 0175,
+  # Ctrl+click multi-select). Exactly the same deal as `hilight_wave` above —
+  # written by the C click arm, folded back by capture_live_graph_state — with
+  # one extra rule that is the whole compatibility story: emitted ONLY when the
+  # set holds TWO OR MORE. A 0- or 1-trace selection is expressed entirely by
+  # `hilight_wave`, so every strip that was never Ctrl-clicked serialises
+  # byte-identically to pre-0175 and an older build reading the file bolds the
+  # first selected trace instead of choking. The value needs the quotes: it
+  # contains spaces, which get_tok_value's SPACE() macro would read as
+  # end-of-value.
+  set sw {}
+  set swv [wviewer::sel_waves_norm [wviewer::dget $G sel_waves {}]]
+  if {[llength $swv] >= 2} { set sw "sel_waves=\"[join $swv { }]\"\n" }
   # Waveform markers (doc/claude/specs/graph_markers.md). Same deal as
   # `hilight_wave` above: written into the rect by the C engine and folded back
   # into the model by wviewer::marker_changed (the C push hook). Emitted ONLY
@@ -1706,7 +1731,7 @@ proc wviewer::graph_props {G {active 0} {grid 1}} {
   # window's rects byte-identical to pre-item-3 (the hilight_wave/markers
   # "absent means absent" rule; unlike legendbold, whose 0 must be written
   # because its default is the non-shipped value).
-  return "flags=graph\ny1=$y1\ny2=$y2\nypos1=0\nypos2=2\ndivy=5\nsubdivy=1\nunity=1\nx1=$x1\nx2=$x2\ndivx=5\nsubdivx=1\nxlabmag=1.0\nylabmag=1.0\nlegendmag=$lmag\nlegendbold=$lbold\ngriddash=$gdash\n${gshow}node=\"$node\"\ncolor=\"$color\"\ndataset=-1\nunitx=1\nlogx=$logx\nlogy=$logy\nreorder_handle=1\n$hw$mk$act"
+  return "flags=graph\ny1=$y1\ny2=$y2\nypos1=0\nypos2=2\ndivy=5\nsubdivy=1\nunity=1\nx1=$x1\nx2=$x2\ndivx=5\nsubdivx=1\nxlabmag=1.0\nylabmag=1.0\nlegendmag=$lmag\nlegendbold=$lbold\ngriddash=$gdash\n${gshow}node=\"$node\"\ncolor=\"$color\"\ndataset=-1\nunitx=1\nlogx=$logx\nlogy=$logy\nreorder_handle=1\n$hw$sw$mk$act"
 }
 
 # PURE (D4): pre-validate a whitespace-separated RPN expression against the
@@ -2444,6 +2469,20 @@ proc wviewer::capture_live_graph_state {token {skip_markers 0}} {
     } elseif {[dict exists $G hilight_wave]} {
       set G [dict remove $G hilight_wave]
     }
+    # the REST of the selection (issue 0175), same absent-means-absent shape.
+    # It must be captured or a multi-select would silently collapse to one trace
+    # on the next regenerate — and regenerate runs on a plain window RESIZE.
+    # (`hilight_wave` has always had that same exposure on the ~15 regenerate
+    # sites that do NOT capture first; selection is view state, landmine 19, so
+    # this deliberately does not grow a C push hook the way markers needed one.)
+    set sw {}
+    catch {set sw [xschem getprop rect 2 $gi sel_waves]}
+    set swl [wviewer::sel_waves_norm $sw]
+    if {[llength $swl] >= 2} {
+      dict set G sel_waves $swl
+    } elseif {[dict exists $G sel_waves]} {
+      set G [dict remove $G sel_waves]
+    }
     # markers (doc/claude/specs/graph_markers.md), same absent-means-absent
     # shape as hilight_wave right above. The guard is STRUCTURAL
     # (markers_valid), not `string is` — the value is a multi-line record list.
@@ -3052,6 +3091,60 @@ proc wviewer::remap_hilight_after_trace_move {hw moved_ni} {
   return $hw
 }
 
+# --- the SELECTION as a SET, in the model (issue 0175) -----------------------
+# The model stores the selection in the same two keys the rect does — the whole
+# set in `sel_waves` when it holds two or more, the head in `hilight_wave`
+# always — so these two are the model-side mirror of draw.c's
+# graph_sel_waves_get/set and the ONLY place that pair is composed/decomposed.
+# Everything structural below then works on a plain list.
+
+# PURE: the effective selection of model graph dict `G`, as a NODE-index list.
+proc wviewer::model_sel {G} {
+  set l [wviewer::sel_waves_norm [wviewer::dget $G sel_waves {}]]
+  if {[llength $l]} { return $l }
+  set hw [wviewer::dget $G hilight_wave {}]
+  if {[string is integer -strict $hw] && $hw >= 0} { return [list $hw] }
+  return {}
+}
+
+# PURE: write selection `sel` back into `G`. An EMPTY selection drops BOTH keys
+# rather than storing -1/"" (the absent-means-absent rule graph_props relies on),
+# and a 1-element one drops `sel_waves` so a strip that is back to a single
+# selected trace serialises byte-identically to pre-0175.
+proc wviewer::model_sel_set {G sel} {
+  set sel [wviewer::sel_waves_norm $sel]
+  if {![llength $sel]} { return [dict remove $G hilight_wave sel_waves] }
+  set G [dict replace $G hilight_wave [lindex $sel 0]]
+  if {[llength $sel] >= 2} { return [dict replace $G sel_waves $sel] }
+  return [dict remove $G sel_waves]
+}
+
+# PURE: how a SET of selected node indices is rewritten when the trace at node
+# index `moved_ni` leaves the graph — per element, through the scalar rule above,
+# dropping the one that left. The caller decides whether the destination picks it
+# up (it does, at its new node index).
+proc wviewer::remap_sel_after_trace_move {sel moved_ni} {
+  set out {}
+  foreach v $sel {
+    set n [wviewer::remap_hilight_after_trace_move $v $moved_ni]
+    if {$n ne {}} { lappend out $n }
+  }
+  return $out
+}
+
+# PURE: the same for a DELETE of the node indices in `doomed` — per element
+# through remap_node_after_trace_delete, dropping every index that died.
+# Without this a multi-selection would keep stale indices after a delete and
+# bold the WRONG traces, which is strictly worse than losing the selection.
+proc wviewer::remap_sel_after_trace_delete {sel doomed} {
+  set out {}
+  foreach v $sel {
+    set n [wviewer::remap_node_after_trace_delete $v $doomed]
+    if {$n ne {}} { lappend out $n }
+  }
+  return $out
+}
+
 # PURE: move trace `from_ti` of graph `from_gi` to the END of graph `to_gi`'s
 # trace list. Returns the new graph list; an out-of-range index, a non-integer or
 # from_gi == to_gi returns the list UNCHANGED (a pure list op has no error
@@ -3059,9 +3152,9 @@ proc wviewer::remap_hilight_after_trace_move {hw moved_ni} {
 #
 # The trace DICTIONARY is carried whole, exactly like reorder_graphs carries a
 # graph dict: expr, name, vec, color and any future per-trace key ride along and
-# nothing is rebuilt field by field. `hilight_wave` (the C-written bold marker) is
-# remapped on BOTH graphs, because it is stored per graph in node-index space and
-# both index spaces shift.
+# nothing is rebuilt field by field. The SELECTION (`hilight_wave` + `sel_waves`,
+# the C-written bold markers, issue 0175) is remapped on BOTH graphs, because it
+# is stored per graph in node-index space and both index spaces shift.
 proc wviewer::move_trace_in_graphs {graphs from_gi from_ti to_gi} {
   set n [llength $graphs]
   foreach v [list $from_gi $from_ti $to_gi] {
@@ -3077,8 +3170,11 @@ proc wviewer::move_trace_in_graphs {graphs from_gi from_ti to_gi} {
   # node indices measured BEFORE the move, on the graphs as they stand
   set moved_ni [wviewer::node_index_of_trace $S $from_ti]
   set dst_ni [wviewer::node_count $D]        ;# where the appended trace lands
-  set src_hw [wviewer::dget $S hilight_wave {}]
-  set hw [wviewer::remap_hilight_after_trace_move $src_hw $moved_ni]
+  # The selection is a SET since issue 0175, so the hand-off is per element:
+  # every selected node index that STAYS shifts down past the hole, the one that
+  # LEFT is dropped here and re-added to the destination below. For a
+  # single-trace selection this is exactly what the scalar rule always did.
+  set src_sel [wviewer::model_sel $S]
   # markers are stored per graph in the SAME node-index space, so both index
   # spaces shifting means both marker tokens have to be rewritten. A marker on
   # the moved trace MIGRATES with it (doc/claude/specs/graph_markers.md) —
@@ -3087,10 +3183,10 @@ proc wviewer::move_trace_in_graphs {graphs from_gi from_ti to_gi} {
   lassign [wviewer::remap_markers_after_trace_move \
              [wviewer::dget $S markers {}] [wviewer::dget $D markers {}] \
              $moved_ni $dst_ni] src_mk dst_mk
-  # {} out of the remap means EITHER "there was no highlight" OR "the bold trace
-  # is the one that left" — only the second hands the highlight to the destination
-  set moved_was_bold [expr {[string is integer -strict $src_hw] &&
-                            $moved_ni >= 0 && $src_hw == $moved_ni}]
+  # was the trace that is leaving one of the SELECTED ones? Only then does the
+  # destination pick it up — a source whose selection did not include it just
+  # shifts its remaining indices past the hole.
+  set moved_was_bold [expr {$moved_ni >= 0 && [lsearch -exact $src_sel $moved_ni] >= 0}]
   set S [dict replace $S traces [lreplace $strs $from_ti $from_ti]]
   # a destination that was EMPTY gets its ranges blanked, i.e. put back to
   # `auto`: an empty strip's stored x1/x2/y1/y2 are whatever the last fit left
@@ -3103,11 +3199,14 @@ proc wviewer::move_trace_in_graphs {graphs from_gi from_ti to_gi} {
     set D [dict replace $D x1 {} x2 {} y1 {} y2 {}]
   }
   set D [dict replace $D traces [linsert [wviewer::dget $D traces {}] end $tr]]
-  if {$hw eq {}} {
-    set S [dict remove $S hilight_wave]
-    if {$moved_was_bold} { set D [dict replace $D hilight_wave $dst_ni] }
-  } else {
-    set S [dict replace $S hilight_wave $hw]
+  set S [wviewer::model_sel_set $S [wviewer::remap_sel_after_trace_move $src_sel $moved_ni]]
+  # the destination ADDS the migrating trace to whatever it already had selected
+  # rather than replacing it: a selection has been window-wide since issue 0174
+  # and multi-trace since 0175, so an unrelated highlight on the destination has
+  # no reason to die because something landed next to it. `dst_ni` is the node
+  # count taken BEFORE the append, so no existing destination index shifts.
+  if {$moved_was_bold} {
+    set D [wviewer::model_sel_set $D [concat [wviewer::model_sel $D] [list $dst_ni]]]
   }
   # absent-means-absent on both sides: an emptied token drops the key rather
   # than storing "", so graph_props keeps emitting nothing for that strip
@@ -3755,6 +3854,55 @@ proc wviewer::trace_at {wp gi px py {tol 10}} {
   catch {set r [xschem get graph_trace_at $gi $px $py $tol]}
   if {![string is integer -strict $r]} { return -1 }
   return $r
+}
+
+# Which LEGEND entry of strip `gi` is under canvas pixel (px,py)? NODE index
+# (landmine 34) or -1. The legend's counterpart to trace_at, and the same
+# fail-closed contract: a missing verb, an errored query or a non-integer answer
+# all read as "no entry there", never as "locked out".
+#
+# ⚠ The legend and the plot body are DIFFERENT picking surfaces of one strip and
+# they do not overlap: inside the plot box this answers -1 and trace_at does the
+# work; in the legend band it is the other way round. Nothing needs to choose
+# between them — the C click arm asks whichever one owns the pixel.
+proc wviewer::legend_at {wp gi px py} {
+  if {[catch {xschem new_schematic switch $wp}]} { return -1 }
+  set r -1
+  catch {set r [xschem get graph_legend_at $gi $px $py]}
+  if {![string is integer -strict $r]} { return -1 }
+  return $r
+}
+
+# PURE: normalise a `sel_waves` token value (issue 0175) to a clean ascending
+# list of NODE indices — the Tcl mirror of draw.c's graph_sel_waves_get parse, so
+# the model and the engine agree on what a selection IS. Garbage, negatives and
+# duplicates are dropped rather than passed on; {} in, {} out.
+proc wviewer::sel_waves_norm {v} {
+  set out {}
+  foreach t [split [string map {"\n" { } "\t" { }} $v] { }] {
+    if {$t eq {}} { continue }
+    if {![string is integer -strict $t]} { continue }
+    if {$t < 0} { continue }
+    if {[lsearch -exact $out $t] >= 0} { continue }
+    lappend out $t
+  }
+  return [lsort -integer $out]
+}
+
+# The whole selection of strip `gi` as a NODE-index list, read off the RECT.
+# {} when nothing is selected. Composes the two tokens the way the engine does:
+# `sel_waves` when it carries two or more, else `hilight_wave` when it is >= 0.
+# An ABSENT hilight_wave is NOT node 0 (a bare atoi("") would say it is).
+proc wviewer::selected_waves {wp gi} {
+  if {[catch {xschem new_schematic switch $wp}]} { return {} }
+  set sw {}
+  catch {set sw [xschem getprop rect 2 $gi sel_waves]}
+  set l [wviewer::sel_waves_norm $sw]
+  if {[llength $l]} { return $l }
+  set hw {}
+  catch {set hw [xschem getprop rect 2 $gi hilight_wave]}
+  if {[string is integer -strict $hw] && $hw >= 0} { return [list $hw] }
+  return {}
 }
 
 # Paint the prospective destination strip of a trace drag: clear the frame on
@@ -5151,10 +5299,15 @@ proc wviewer::add_trace_ok {token} {
 
 # Graph > Delete… (D3): ONE listbox with a row per graph ("graph N") and
 # per trace ("graph N: name (expr)"), extended selection; OK deletes the
-# selected traces and/or whole graphs from the model + regenerate. Chosen
-# selection model for v1: canvas-legend click-select has no C hit-test API
-# (receipts/11: rect descriptors carry no coordinates) — the listbox is
-# the honest v1.
+# selected traces and/or whole graphs from the model + regenerate.
+# ⚠ CORRECTED 2026-07-30 (issue 0175). This used to justify the listbox with
+# "canvas-legend click-select has no C hit-test API (receipts/11: rect
+# descriptors carry no coordinates)". The engine DID have the hit test — it
+# was fused into edit_wave_attributes()' Button3 action, with no standalone
+# query — and 0175 extracted it as `xschem get graph_legend_at` and gave it
+# an LMB arm, so a trace IS click-selectable now (Ctrl+click for several).
+# The listbox survives as the BULK path: it can reach whole graphs and
+# vec-less traces, neither of which has a clickable legend entry.
 proc wviewer::delete_dialog {token} {
   variable windows
   variable delmap
@@ -5266,15 +5419,13 @@ proc wviewer::delete_ok {token} {
         }
         # this path has never remapped `hilight_wave` either — a pre-existing
         # latent bug: deleting a trace below the bold one left the bold marker
-        # pointing one node too high
-        set hw [wviewer::dget $G hilight_wave {}]
-        if {[string is integer -strict $hw]} {
-          set nhw [wviewer::remap_node_after_trace_delete $hw $doomed]
-          if {$nhw eq {}} {
-            set G [dict remove $G hilight_wave]
-          } else {
-            set G [dict replace $G hilight_wave $nhw]
-          }
+        # pointing one node too high. Since issue 0175 the selection is a SET, so
+        # the remap runs per element and a selected trace that was deleted simply
+        # leaves the set (stale indices would bold the WRONG traces).
+        set sel [wviewer::model_sel $G]
+        if {[llength $sel]} {
+          set G [wviewer::model_sel_set $G \
+                   [wviewer::remap_sel_after_trace_delete $sel $doomed]]
         }
       }
     }

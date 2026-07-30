@@ -417,6 +417,22 @@ typedef int Tcl_Size;
  * question and the double-click interlock depends on it unchanged. */
 #define GRAPH_TRACE_PICK_TOL  10.0
 
+/* How many traces of ONE strip can be selected at once (issue 0175, Ctrl+click
+ * multi-select). The cap is on the SELECTED COUNT, not on the node index: the
+ * selection lives in a fixed-size array inside Graph_ctx, so node 200 of a strip
+ * can be selected while only 64 traces can be selected together.
+ *
+ * ⚠ Fixed array, deliberately NOT a malloc'ed pointer. SIX call sites build a
+ * LOCAL Graph_ctx and let it die on return (graph_plotbox_at, graph_point_at,
+ * graph_marker_at, graph_marker_create, graph_marker_drag_to in draw.c/callback.c
+ * and raw_read's gr_ctx in save.c); a pointer field would leak on every one of
+ * them, once per hover motion event. 64 ints is 256 bytes on a struct that has
+ * one global instance and a handful of stack ones.
+ *
+ * A bitmask (the option not taken) would have capped the node INDEX at 32 and
+ * silently mis-rendered node 40 -- see doc/claude/issues/0175-*.md D1. */
+#define GRAPH_MAX_SEL_WAVES     64
+
 /* Waveform markers (doc/claude/specs/graph_markers.md). Tolerances are SCREEN
  * PIXELS, fixed regardless of canvas zoom, like the reorder handle above.
  * These live in the header (not draw.c) because graph_marker_press() in
@@ -1112,7 +1128,22 @@ typedef struct {
   int mode; /* default:0   0:Line, 1:HistoV, 2:HistoH */
   double txtsizelab, digtxtsizelab, txtsizey, txtsizex, txtsizelegend;
   int dataset;
-  int hilight_wave; /* wave index */
+  int hilight_wave; /* NODE index of the FIRST selected wave, -1 = none. Prop token
+                     * `hilight_wave`. Since issue 0175 this is the head of a
+                     * possibly longer selection (sel_wave[] below) and NOT the
+                     * whole of it -- read it through wave_is_hilighted(), never
+                     * with a bare `== wcnt`, or a Ctrl-selected second trace
+                     * renders thin. Its grammar and its -1 sentinel are
+                     * UNCHANGED, which is what keeps every existing .sch and
+                     * every older build reading this rect correctly. */
+  int sel_wave[GRAPH_MAX_SEL_WAVES]; /* issue 0175: the WHOLE selection, NODE indices,
+                     * ascending, no duplicates. Prop token `sel_waves` ("0 2"),
+                     * written ONLY when two or more traces are selected -- a 0- or
+                     * 1-element selection is expressed entirely by hilight_wave, so
+                     * a strip that was never Ctrl-clicked serialises byte-identically
+                     * to pre-0175 (the `active`/`markers` absent-means-absent rule).
+                     * n_sel_waves == 0 means "no list": fall back to hilight_wave. */
+  int n_sel_waves;
   int logx, logy;
   int rainbow; /* draw multiple datasets with incrementing colors */
   double linewidth_mult; /* multiply factor for waveforms line width */
@@ -1890,6 +1921,24 @@ extern void draw_graph(int i, int flags, Graph_ctx *gr, void *ct);
 extern int find_closest_wave(int i, Graph_ctx *gr, int *node_number);
 extern int graph_near_wave(int i, double px, double py, double tol);
 extern int graph_wave_at(int i, double px, double py, double tol);
+/* Trace SELECTION (issue 0175). The set lives in the graph rect's `hilight_wave`
+ * + `sel_waves` prop tokens; these three are the ONLY sanctioned readers/writers
+ * of that pair, so the two tokens can never drift apart.
+ *   graph_sel_waves_get   parse rect `i`'s selection into `out` (up to `max`
+ *                         entries); returns how many, 0 when nothing is selected.
+ *   graph_sel_waves_set   write it back; n == 0 clears both tokens. Returns 1
+ *                         when the rect's prop string actually changed.
+ *   graph_sel_waves_toggle  Ctrl+click: add `wcnt` if absent, remove it if
+ *                         present. Returns 1 when it changed something.
+ * wave_is_hilighted() is the DRAW-side test and replaces every `gr->hilight_wave
+ * == wcnt` comparison. */
+extern int  graph_sel_waves_get(int i, int *out, int max);
+extern int  graph_sel_waves_set(int i, const int *waves, int n);
+extern int  graph_sel_waves_toggle(int i, int wcnt);
+extern int  wave_is_hilighted(Graph_ctx *gr, int wcnt);
+/* Which LEGEND entry of graph `i` is under the CANVAS PIXEL (px, py)? The NODE
+ * index, or -1. Fails closed. doc/claude/issues/0175-*.md D5. */
+extern int  graph_legend_at(int i, double px, double py);
 /* --- waveform markers, doc/claude/specs/graph_markers.md --- */
 extern int  graph_point_at(int i, double px, double py, double tol,
                            int restrict_wave, int restrict_dataset, GraphPointHit *hit);

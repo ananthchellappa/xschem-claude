@@ -1714,11 +1714,20 @@ if {[info exists ::has_x] && [info commands winfo] ne {} && [winfo exists .drw]}
   # from any trace and with no marker part under it (the MX0 landmine applies
   # here too -- a pixel near a strip edge is not claimed by the graph and the
   # key falls through to the schematic handler)
+  # ⚠ `graph_plotbox_at` is REQUIRED, not belt-and-braces (issue 0175). `band` is
+  # the whole graph RECT, so without it this scan hands back the first row below
+  # by1+25 where no trace passes -- which on a strip whose traces are near the top
+  # is the LABEL MARGIN, i.e. the legend. A Button1 click there is no longer
+  # "empty space": since 0175 it picks the legend entry under it (and a Button3
+  # press there has been the wave-attributes dialog since forever). The same
+  # requirement `tb_far_px` carries in test_wave_trace_menu.tcl, for the same
+  # reason: "empty WAVEFORM space" means inside the plot box.
   proc mf_empty_px {gi band} {
     if {[llength $band] != 4} { return {} }
     lassign $band bx1 by1 bx2 by2
     set cx [expr {($bx1 + $bx2) / 2}]
     for {set y [expr {$by1 + 25}]} {$y < $by2 - 25} {incr y 3} {
+      if {![xschem get graph_plotbox_at $gi $cx $y]} continue
       if {[xschem get graph_near_wave $gi $cx $y 25]} continue
       if {[xschem get graph_marker_at $gi $cx $y 12] ne {}} continue
       return [list $cx $y]

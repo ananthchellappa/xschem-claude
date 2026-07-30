@@ -1189,6 +1189,435 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     fill_viewer $tok
   }
 
+  # ==========================================================================
+  # TL* / TS* — issue 0175: the LEGEND is a picking surface, and the selection
+  # holds MORE THAN ONE trace
+  # ==========================================================================
+  #
+  # Two features, one fixture, because both need what only this suite has: a
+  # LIVE strip carrying three drawn traces PLUS a vec-less one, so MODEL and
+  # NODE index spaces genuinely diverge (landmine 34).
+  #
+  #   TL*  `xschem get graph_legend_at <gi> <px> <py>` — the legend hit test.
+  #        It always existed, fused into the ACTION of draw.c's
+  #        edit_wave_attributes() and reachable only from a Button3 press;
+  #        0175 extracted it as a pure query so both mouse buttons and Tcl share
+  #        one answer. Slot arithmetic, the SLOT BOUNDARY, the refusals, and the
+  #        RAW-PIXELS contract.
+  #   TS*  the SELECTION as a SET: Ctrl+click adds, Ctrl+click on a selected
+  #        trace removes, a plain click COLLAPSES to the one clicked, and the set
+  #        is window-wide (Ctrl spans strips, a plain click does not).
+  #
+  # ⚠ HOLLOWNESS — every one of these is a leg that would otherwise be skipped:
+  #   (1) a multi-select leg must assert the SET, not the COUNT: {0 2} and {0 1}
+  #       are both "two selected", and `llength == 2` passes on the wrong one;
+  #   (2) the Ctrl REMOVE must be driven from a >= 2-element selection, or
+  #       "removed the right one" and "cleared everything" are the same state;
+  #   (3) the query needs a SLOT-BOUNDARY leg on a >= 3-entry strip: a one-entry
+  #       strip has a single slot spanning the whole width and proves nothing
+  #       about `rw / n_nodes * wcnt`;
+  #   (4) the query must be fed RAW pixels, not the C mouse mirror — asserted by
+  #       parking the pointer on a DIFFERENT entry and querying a third one;
+  #   (5) the witness is a NODE index, on a fixture where node != model index.
+
+  # the fixture, planted here rather than inherited: the TB block's teardown runs
+  # a plain fill_viewer, which drops the vec-less trace that trap (5) needs.
+  fill_viewer $tok
+  set tsgs [dict get [wviewer::layout_for $tok] graphs]
+  set tsG0 [lindex $tsgs 0]
+  set tstr [linsert [wviewer::dget $tsG0 traces {}] 1 \
+              [dict create expr {} name {} vec {} color 7]]
+  wviewer::set_graphs $tok [lreplace $tsgs 0 0 [dict replace $tsG0 traces $tstr]]
+  wviewer::regenerate $tok
+  wviewer::fit $tok
+  update
+
+  # every strip's SELECTION SET at once — the witness for everything below.
+  # `-` is a strip with nothing selected, which must never read as node 0.
+  proc ts_sels {vdrw} {
+    xschem new_schematic switch $vdrw
+    set o {}
+    for {set k 0} {$k < [xschem get rects 2]} {incr k} {
+      set s [wviewer::selected_waves $vdrw $k]
+      lappend o [expr {[llength $s] ? $s : "-"}]
+    }
+    return $o
+  }
+  # the RAW token pair, so the two-token contract is asserted directly and not
+  # only through the composed reader
+  proc ts_tokens {vdrw gi} {
+    xschem new_schematic switch $vdrw
+    set h {}; catch {set h [xschem getprop rect 2 $gi hilight_wave]}
+    set s {}; catch {set s [xschem getprop rect 2 $gi sel_waves]}
+    return [list $h $s]
+  }
+  proc ts_reset {tok vdrw} {
+    xschem new_schematic switch $vdrw
+    set n [xschem get rects 2]
+    wviewer::with_edit $tok {
+      for {set k 0} {$k < $n} {incr k} {
+        xschem setprop rect 2 $k hilight_wave -1
+        catch {xschem setprop rect 2 $k sel_waves {}}
+      }
+    }
+  }
+  # `st` is the modifier mask on the PRESS; 0x4 is ControlMask. The release
+  # carries it too, plus Button1Mask (0x100), exactly as X reports it.
+  proc ts_click {vdrw px py {st 0}} {
+    tm_ev $vdrw <ButtonPress-1>   -x $px -y $py -state $st
+    tm_ev $vdrw <ButtonRelease-1> -x $px -y $py -state [expr {$st | 0x100}]
+    update
+  }
+  proc ts_px_for_node {vdrw gi want} {
+    set W [winfo width $vdrw]; set H [winfo height $vdrw]
+    foreach fx {0.50 0.40 0.60 0.30 0.70} {
+      set px [expr {int($fx * $W)}]
+      for {set py 2} {$py < $H} {incr py 1} {
+        if {[wviewer::trace_at $vdrw $gi $px $py] == $want} { return [list $px $py] }
+      }
+    }
+    return {}
+  }
+  proc ts_far_px {vdrw gi} {
+    set W [winfo width $vdrw]; set H [winfo height $vdrw]
+    set px [expr {int(0.50 * $W)}]
+    for {set py 2} {$py < $H} {incr py 1} {
+      if {![wviewer::plotbox_at $vdrw $gi $px $py]} { continue }
+      if {[wviewer::trace_at $vdrw $gi $px $py] >= 0} { continue }
+      return [list $px $py]
+    }
+    return {}
+  }
+  # the legend BAND of strip `gi`: the last canvas row above its plot box.
+  # Derived from the engine's own plot-box query, never a fraction of the widget
+  # — the strip geometry follows the WM's window size.
+  proc ts_legend_row {vdrw gi} {
+    set W [winfo width $vdrw]; set H [winfo height $vdrw]
+    set px [expr {int(0.5 * $W)}]
+    for {set py 0} {$py < $H} {incr py} {
+      if {[wviewer::plotbox_at $vdrw $gi $px $py]} { return [expr {$py - 1}] }
+    }
+    return -1
+  }
+  # the first x at which the legend answer rises above `from`, scanning right —
+  # a real slot boundary, FOUND rather than computed from the formula under test
+  proc ts_boundary {vdrw gi row from} {
+    set W [winfo width $vdrw]
+    for {set x 0} {$x < $W} {incr x} {
+      if {[wviewer::legend_at $vdrw $gi $x $row] > $from} { return $x }
+    }
+    return -1
+  }
+  # the CENTRE x of legend slot `n` — the midpoint of the run of columns the
+  # engine assigns to that entry. Clicks use this, never a fixed fraction: the
+  # outermost columns of the band sit within waves_selected's 5-px routing
+  # border, where a press never reaches the graph at all (a leg driven from
+  # there passes for the wrong reason).
+  proc ts_slot_center {vdrw gi row n} {
+    set W [winfo width $vdrw]
+    set lo -1; set hi -1
+    for {set x 0} {$x < $W} {incr x} {
+      if {[wviewer::legend_at $vdrw $gi $x $row] != $n} { continue }
+      if {$lo < 0} { set lo $x }
+      set hi $x
+    }
+    if {$lo < 0} { return {} }
+    return [expr {($lo + $hi) / 2}]
+  }
+  # a pixel in the strip's LEFT AXIS MARGIN: inside the rect (so the press really
+  # is routed to this graph), outside the plot box, and on no legend slot
+  proc ts_axis_margin_px {vdrw gi py} {
+    set W [winfo width $vdrw]
+    for {set x 0} {$x < $W} {incr x} {
+      if {![wviewer::plotbox_at $vdrw $gi $x $py]} { continue }
+      if {$x < 12} { return {} }
+      set mx [expr {$x - 4}]
+      if {[wviewer::legend_at $vdrw $gi $mx $py] >= 0} { return {} }
+      return $mx
+    }
+    return {}
+  }
+
+  set tsrow [ts_legend_row $vdrw 0]
+  set tsW   [winfo width $vdrw]
+  set ts0   [ts_px_for_node $vdrw 0 0]
+  set ts1   [ts_px_for_node $vdrw 0 1]
+  set ts2   [ts_px_for_node $vdrw 0 2]
+  set tsf   [ts_far_px $vdrw 0]
+  set tsq0  [ts_px_for_node $vdrw 1 0]
+
+  check_true "TL0 the legend band of strip 0 was located" [expr {$tsrow > 0}]
+  if {$tsrow <= 0} {
+    puts "SKIPPED: TL*/TS* (no legend band found — window too small)"
+  } else {
+
+  # --- TL1: the slot arithmetic --------------------------------------------
+  set tsL0 [wviewer::legend_at $vdrw 0 [expr {int(0.02 * $tsW)}] $tsrow]
+  set tsL1 [wviewer::legend_at $vdrw 0 [expr {int(0.50 * $tsW)}] $tsrow]
+  set tsL2 [wviewer::legend_at $vdrw 0 [expr {int(0.98 * $tsW)}] $tsrow]
+  check "TL1 the far left of the legend band is entry 0" $tsL0 0
+  check "TL1 the middle is entry 1" $tsL1 1
+  check "TL1 the far right is entry 2" $tsL2 2
+  # TEETH: three DIFFERENT answers across one band is what a single-slot (or a
+  # constant-0) implementation cannot produce
+  check "TL1 the three columns really give three different entries" \
+    [lsort -unique [list $tsL0 $tsL1 $tsL2]] {0 1 2}
+
+  # --- TL2: the SLOT BOUNDARY (hollowness trap 3) --------------------------
+  # An off-by-one slot is invisible to any leg that clicks slot CENTRES. This
+  # walks to the first x where the answer changes and asserts the pixel on either
+  # side of it, so a `wcnt` shifted by one moves the boundary and turns this red
+  # while every centre leg above stays green.
+  set tsb [ts_boundary $vdrw 0 $tsrow 0]
+  check_true "TL2 a 0->1 slot boundary was found inside the band" \
+    [expr {$tsb > 0 && $tsb < $tsW}]
+  if {$tsb > 0} {
+    check "TL2 the pixel just LEFT of the boundary is still entry 0" \
+      [wviewer::legend_at $vdrw 0 [expr {$tsb - 1}] $tsrow] 0
+    check "TL2 the boundary pixel itself is entry 1" \
+      [wviewer::legend_at $vdrw 0 $tsb $tsrow] 1
+    # ... and it sits about a THIRD of the way across: the slot width is
+    # rw/n_nodes, so with three entries the first boundary cannot be at halfway
+    check_true "TL2 the boundary is near 1/3 of the width, not 1/2" \
+      [expr {$tsb > 0.25 * $tsW && $tsb < 0.42 * $tsW}]
+  }
+
+  # --- TL3: the refusals — all fail CLOSED, never a plausible 0 ------------
+  if {[llength $ts0]} {
+    check "TL3 inside the plot box there is no legend entry" \
+      [wviewer::legend_at $vdrw 0 [lindex $ts0 0] [lindex $ts0 1]] -1
+  }
+  check "TL3 a bad graph index refuses" [wviewer::legend_at $vdrw 99 100 $tsrow] -1
+  check "TL3 a negative graph index refuses" [wviewer::legend_at $vdrw -1 100 $tsrow] -1
+  check "TL3 a pixel far below every strip refuses" \
+    [wviewer::legend_at $vdrw 0 [expr {int(0.5 * $tsW)}] 100000] -1
+  check "TL3 the raw verb with too few arguments answers -1, it does not error" \
+    [pcall {xschem get graph_legend_at 0}] -1
+  # the two picking surfaces of one strip are DISJOINT: neither answers where the
+  # other does
+  check "TL3 trace_at answers nothing in the legend band" \
+    [wviewer::trace_at $vdrw 0 [expr {int(0.5 * $tsW)}] $tsrow] -1
+
+  # --- TL4: RAW pixels, not the C mouse mirror (hollowness trap 4) ---------
+  # The in-place hit test this query replaces read xctx->mousex_snap — the
+  # GRID-SNAPPED schematic-space mouse mirror. A query that inherited that would
+  # answer for wherever the POINTER is, not for the pixel it was handed. Park the
+  # pointer on entry 0 and ask about entry 2: a mirror-reading query says 0.
+  tm_ev $vdrw <Motion> -x [expr {int(0.02 * $tsW)}] -y $tsrow
+  update
+  check "TL4 with the pointer parked on entry 0, a query about entry 2 says 2" \
+    [wviewer::legend_at $vdrw 0 [expr {int(0.98 * $tsW)}] $tsrow] 2
+  # ... and a COARSE snap grid does not move any answer either: with snap 400 a
+  # pointer in slot 2 snaps into a neighbouring slot, so a snapped-coordinate
+  # query would report the neighbour
+  set tssnap [pcall {set ::cadsnap}]
+  set tsraw {}
+  if {[string is double -strict $tssnap]} {
+    catch {
+      xschem set cadsnap 400
+      set tsraw [list [wviewer::legend_at $vdrw 0 [expr {int(0.02 * $tsW)}] $tsrow] \
+                      [wviewer::legend_at $vdrw 0 [expr {int(0.50 * $tsW)}] $tsrow] \
+                      [wviewer::legend_at $vdrw 0 [expr {int(0.98 * $tsW)}] $tsrow]]
+    }
+    catch {xschem set cadsnap $tssnap}
+    check "TL4 a coarse snap grid does not move the legend answers" $tsraw {0 1 2}
+  } else {
+    puts "SKIPPED: TL4 snap half (cadsnap unreadable)"
+  }
+
+  if {![llength $ts0] || ![llength $ts2] || ![llength $tsf]} {
+    puts "SKIPPED: TS* (no separated trace pixels — window too small to plot in)"
+  } else {
+
+  # --- TS1: Ctrl+click ADDS, and the witness is the SET --------------------
+  ts_reset $tok $vdrw
+  check "TS1 nothing selected to start" [ts_sels $vdrw] {- -}
+  ts_click $vdrw [lindex $ts0 0] [lindex $ts0 1]
+  check "TS1 a plain body click selects one trace" [ts_sels $vdrw] {0 -}
+  ts_click $vdrw [lindex $ts2 0] [lindex $ts2 1] 0x4
+  check "TS1 CTRL+click ADDS the second trace (the SET, not the count)" \
+    [ts_sels $vdrw] {{0 2} -}
+  # the TWO-TOKEN contract, asserted directly: hilight_wave is the HEAD (so an
+  # older build still bolds a real trace) and sel_waves carries the whole set
+  check "TS1 hilight_wave is the head and sel_waves is the set" \
+    [ts_tokens $vdrw 0] {0 {0 2}}
+  # teeth for trap (1): adding the MIDDLE trace must give {0 1 2}, in order — an
+  # append-without-ordering would read {0 2 1} and a count check would not care
+  if {[llength $ts1]} {
+    ts_click $vdrw [lindex $ts1 0] [lindex $ts1 1] 0x4
+    check "TS1 a third CTRL+click gives the SET {0 1 2}, in order" \
+      [ts_sels $vdrw] {{0 1 2} -}
+  }
+
+  # --- TS2: Ctrl+click on a SELECTED trace REMOVES it (trap 2) -------------
+  # driven from a >= 2-element selection, so "removed the right one" and
+  # "cleared everything" are distinguishable states
+  ts_reset $tok $vdrw
+  ts_click $vdrw [lindex $ts0 0] [lindex $ts0 1]
+  ts_click $vdrw [lindex $ts2 0] [lindex $ts2 1] 0x4
+  check "TS2 two traces selected before the remove" [ts_sels $vdrw] {{0 2} -}
+  ts_click $vdrw [lindex $ts2 0] [lindex $ts2 1] 0x4
+  check "TS2 CTRL+click on a selected trace removes THAT ONE, not all" \
+    [ts_sels $vdrw] {0 -}
+  check "TS2 ... and sel_waves is GONE, not left as a one-element list" \
+    [ts_tokens $vdrw 0] {0 {}}
+  ts_click $vdrw [lindex $ts0 0] [lindex $ts0 1] 0x4
+  check "TS2 CTRL+click on the last selected trace empties the selection" \
+    [ts_sels $vdrw] {- -}
+  # teeth: removing the OTHER member leaves the OTHER survivor, so the two
+  # removals are not interchangeable
+  ts_reset $tok $vdrw
+  ts_click $vdrw [lindex $ts0 0] [lindex $ts0 1]
+  ts_click $vdrw [lindex $ts2 0] [lindex $ts2 1] 0x4
+  ts_click $vdrw [lindex $ts0 0] [lindex $ts0 1] 0x4
+  check "TS2 removing the OTHER one leaves node 2, not node 0" [ts_sels $vdrw] {2 -}
+
+  # --- TS3: a PLAIN click COLLAPSES the selection --------------------------
+  ts_reset $tok $vdrw
+  ts_click $vdrw [lindex $ts0 0] [lindex $ts0 1]
+  ts_click $vdrw [lindex $ts2 0] [lindex $ts2 1] 0x4
+  check "TS3 two selected before the plain click" [ts_sels $vdrw] {{0 2} -}
+  ts_click $vdrw [lindex $ts0 0] [lindex $ts0 1]
+  check "TS3 a plain click on a SELECTED trace collapses to just that one" \
+    [ts_sels $vdrw] {0 -}
+  ts_click $vdrw [lindex $ts2 0] [lindex $ts2 1] 0x4
+  ts_click $vdrw [lindex $ts2 0] [lindex $ts2 1]
+  check "TS3 ... and on the OTHER selected trace, to that one" [ts_sels $vdrw] {2 -}
+  ts_click $vdrw [lindex $ts0 0] [lindex $ts0 1] 0x4
+  ts_click $vdrw [lindex $tsf 0] [lindex $tsf 1]
+  check "TS3 a plain click on EMPTY body clears the whole set" [ts_sels $vdrw] {- -}
+
+  # --- TS4: CTRL never clears, and it is still VIEW state ------------------
+  ts_reset $tok $vdrw
+  ts_click $vdrw [lindex $ts0 0] [lindex $ts0 1]
+  ts_click $vdrw [lindex $ts2 0] [lindex $ts2 1] 0x4
+  ts_click $vdrw [lindex $tsf 0] [lindex $tsf 1] 0x4
+  check "TS4 CTRL+click on empty body leaves the selection alone" \
+    [ts_sels $vdrw] {{0 2} -}
+  lassign [wviewer::history_depth $tok] tsu0 tsr0
+  set tslog0 [llength $::tm_log]
+  ts_click $vdrw [lindex $ts0 0] [lindex $ts0 1] 0x4
+  lassign [wviewer::history_depth $tok] tsu1 tsr1
+  check "TS4 a CTRL selection change took no undo point (landmine 19)" \
+    [expr {$tsu1 - $tsu0}] 0
+  xschem new_schematic switch $vdrw
+  check "TS4 ... and left the buffer unmodified" [xschem get modified] 0
+  check "TS4 ... and logged nothing (0176 must replay explicit indices, not state)" \
+    [expr {[llength $::tm_log] - $tslog0}] 0
+
+  # --- TS5: the set is WINDOW-WIDE ----------------------------------------
+  if {![llength $tsq0]} {
+    puts "SKIPPED: TS5 (no trace pixel found in strip 1)"
+  } else {
+    ts_reset $tok $vdrw
+    ts_click $vdrw [lindex $ts0 0] [lindex $ts0 1]
+    ts_click $vdrw [lindex $tsq0 0] [lindex $tsq0 1] 0x4
+    check "TS5 CTRL across strips ADDS instead of moving the selection" \
+      [ts_sels $vdrw] {0 0}
+    ts_click $vdrw [lindex $ts2 0] [lindex $ts2 1]
+    check "TS5 a plain click collapses the WHOLE WINDOW to the one clicked" \
+      [ts_sels $vdrw] {2 -}
+    # a multi-select on strip 0 is cleared by a plain click on strip 1 too — the
+    # witness has to be the whole stack, never one rect (0174 defect (d))
+    ts_click $vdrw [lindex $ts0 0] [lindex $ts0 1]
+    ts_click $vdrw [lindex $ts2 0] [lindex $ts2 1] 0x4
+    ts_click $vdrw [lindex $tsq0 0] [lindex $tsq0 1]
+    check "TS5 a plain click on ANOTHER strip clears a multi-select here" \
+      [ts_sels $vdrw] {- 0}
+  }
+
+  # --- TS6: the LEGEND drives all of it too --------------------------------
+  set tsx0 [ts_slot_center $vdrw 0 $tsrow 0]
+  set tsx2 [ts_slot_center $vdrw 0 $tsrow 2]
+  check_true "TS6 the centre column of legend entries 0 and 2 was located" \
+    [expr {$tsx0 ne {} && $tsx2 ne {} && $tsx0 != $tsx2}]
+  if {$tsx0 eq {} || $tsx2 eq {}} {
+    puts "SKIPPED: TS6 (legend slot centres not found)"
+  } else {
+  ts_reset $tok $vdrw
+  ts_click $vdrw $tsx0 $tsrow
+  check "TS6 a plain legend click selects that entry's trace" [ts_sels $vdrw] {0 -}
+  ts_click $vdrw $tsx2 $tsrow 0x4
+  check "TS6 CTRL on another legend entry ADDS it" [ts_sels $vdrw] {{0 2} -}
+  ts_click $vdrw $tsx2 $tsrow 0x4
+  check "TS6 CTRL on a selected legend entry REMOVES it" [ts_sels $vdrw] {0 -}
+  ts_click $vdrw $tsx2 $tsrow
+  check "TS6 a plain legend click COLLAPSES to that entry" [ts_sels $vdrw] {2 -}
+  # the two surfaces agree about which trace they mean: selecting entry 2 from
+  # the legend and picking node 2 in the body land on the same node
+  ts_reset $tok $vdrw
+  ts_click $vdrw $tsx2 $tsrow
+  set tsvia_legend [ts_sels $vdrw]
+  ts_reset $tok $vdrw
+  ts_click $vdrw [lindex $ts2 0] [lindex $ts2 1]
+  check "TS6 the legend and the body select the SAME trace" \
+    $tsvia_legend [ts_sels $vdrw]
+  # a click on the legend ROW that owns no entry changes NOTHING: only the plot
+  # BODY clears
+  set tsmx [ts_axis_margin_px $vdrw 0 [lindex $tsf 1]]
+  if {$tsmx eq {}} {
+    puts "SKIPPED: TS6 axis-margin leg (no margin pixel found)"
+  } else {
+    ts_reset $tok $vdrw
+    ts_click $vdrw $tsx0 $tsrow
+    ts_click $vdrw $tsmx [lindex $tsf 1]
+    check "TS6 a click in the AXIS MARGIN owns no trace and changes nothing" \
+      [ts_sels $vdrw] {0 -}
+  }
+  }
+
+  # --- TS7: the witness is a NODE index (trap 5) ---------------------------
+  # the fixture carries a vec-less trace at MODEL index 1, so node 2 is model
+  # index 3 — a selection reported in model space would say 3
+  set tsGm [lindex [dict get [wviewer::layout_for $tok] graphs] 0]
+  check "TS7 the fixture has 4 model traces and 3 node slots (landmine 34)" \
+    [list [llength [wviewer::dget $tsGm traces {}]] [wviewer::node_count $tsGm]] {4 3}
+  ts_reset $tok $vdrw
+  ts_click $vdrw [lindex $ts0 0] [lindex $ts0 1]
+  ts_click $vdrw [lindex $ts2 0] [lindex $ts2 1] 0x4
+  check "TS7 the selected NODE indices map to MODEL indices 0 and 3" \
+    [list [wviewer::trace_index_of_node $tsGm 0] \
+          [wviewer::trace_index_of_node $tsGm 2]] {0 3}
+
+  # --- TS8: the selection survives a REGENERATE ----------------------------
+  # regenerate rebuilds every rect from the model, and it runs on a plain window
+  # RESIZE. Without capture_live_graph_state carrying `sel_waves` a multi-select
+  # would silently collapse to one trace the next time the user resized.
+  ts_reset $tok $vdrw
+  ts_click $vdrw [lindex $ts0 0] [lindex $ts0 1]
+  ts_click $vdrw [lindex $ts2 0] [lindex $ts2 1] 0x4
+  wviewer::capture_live_graph_state $tok
+  check "TS8 the model captured the whole set" \
+    [wviewer::model_sel [lindex [dict get [wviewer::layout_for $tok] graphs] 0]] {0 2}
+  wviewer::regenerate $tok
+  update
+  check "TS8 and it survived the regenerate, in the rect" [ts_sels $vdrw] {{0 2} -}
+  check "TS8 ... in both tokens" [ts_tokens $vdrw 0] {0 {0 2}}
+  # TEETH: a SINGLE selection must NOT grow a sel_waves token on the way
+  # through — that is what keeps a never-Ctrl-clicked strip byte-identical to
+  # pre-0175 and readable by an older build
+  ts_reset $tok $vdrw
+  ts_click $vdrw [lindex $ts0 0] [lindex $ts0 1]
+  wviewer::capture_live_graph_state $tok
+  wviewer::regenerate $tok
+  update
+  check "TS8 a single-trace selection carries NO sel_waves token" \
+    [ts_tokens $vdrw 0] {0 {}}
+  }
+  }
+
+  rename ts_sels {}
+  rename ts_tokens {}
+  rename ts_reset {}
+  rename ts_click {}
+  rename ts_px_for_node {}
+  rename ts_far_px {}
+  rename ts_legend_row {}
+  rename ts_boundary {}
+  rename ts_slot_center {}
+  rename ts_axis_margin_px {}
+  fill_viewer $tok
+
   # --- TG12..TG18: REUSE an existing empty strip (D1/D2) ---------------------
   #
   # ⚠ THE HOLLOWNESS TRAP. When the free empty strip happens to sit at

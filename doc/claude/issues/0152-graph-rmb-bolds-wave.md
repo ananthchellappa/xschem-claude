@@ -112,7 +112,18 @@ sequences through the shipped bindings, never a lone synthetic callback:
 | `WB-rmb-click` | RMB click in the body leaves the bold alone |
 | `WB-rmb-drag` | RMB press-drag box-zoom leaves the bold alone **and still zooms** |
 | `WB-lmb-drag` | a Button1 drag-pan does not bold **and still pans** |
-| `WB-legend` | legend RMB still bolds that trace / un-bolds; legend LMB does not |
+| `WB-legend` | legend RMB still bolds that trace / un-bolds; ~~legend LMB does not~~ **SUPERSEDED — see below** |
+
+⚠ **The `WB-legend` row's second clause is SUPERSEDED by issue 0175
+(2026-07-30).** *"legend LMB does not [bold]"* was true here and was recorded as
+a boundary rather than a decision. It is no longer true: a legend LMB click
+**selects** that trace, Ctrl+LMB adds/removes it, and the leg in
+`test_wave_viewer.tcl` asserts the new answer. The RMB half of the row still
+stands, with one refinement — RMB on a legend entry now toggles that entry's
+MEMBERSHIP of a possibly multi-trace selection, which is byte-identical to this
+issue's behaviour whenever at most one trace is selected. The row is marked, not
+deleted: it is the record of what the button meant between 0152 and 0175. See
+`doc/claude/issues/0175-trace-legend-click-and-multiselect.md`, D5/D7.
 
 Sabotage-verified:
 
