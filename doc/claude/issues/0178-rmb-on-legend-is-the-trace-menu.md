@@ -1,7 +1,9 @@
 # 0178 — RMB on a legend entry is the TRACE CONTEXT MENU, not a selection toggle
 
-**Status:** FIXED (2026-07-30), eyeball pending.
-**Branch:** `fluid-editing`. Found at the 0177 eyeball, which passed.
+**Status:** FIXED and **EYEBALLED PASS** (2026-07-30). CLOSED.
+**Branch:** `fluid-editing`, commit `7562406d`, unpushed. Found at the 0177
+eyeball, which also passed. Review gate: PROCEED — *"All good. Eyeball result
+pass"*.
 
 > The only thing I notice: RMB click on legend name is selecting a trace and RMB
 > click legend of selected trace is deselecting it.
@@ -181,9 +183,21 @@ both refused every gate, but now a legend pixel answers `{0 n}`. The helper gain
 a `plotbox_at` rung, which is exactly the region item 8's own gate excludes, so
 the fixture now agrees with the thing it tests against.
 
-## 5. Not verified / eyeball
+## 5. Verified / not verified
 
-- That the posted menu appears **under the pointer** on the legend (Tk `post`
-  geometry) is eyeball-only, as it already was for the body.
+**EYEBALLED PASS, 2026-07-30.** The menu posts on a legend name, names that
+trace, and neither a plain nor a modified RMB changes the selection.
+
+Still not verified, and deliberately left:
+
 - RMB on the legend of a graph **embedded in a schematic** still toggles. Not
   re-checked interactively; the C arm is byte-identical and `TR5` pins it.
+- **Digital and bus strips gained a legend menu** ("Move to Separate Strip")
+  they never had — a side effect of `graph_legend_at` not refusing them, kept
+  because on such a strip the legend is the only way to name a trace. **No test
+  leg covers it; the fixture is analog.** The cheapest way to close this is a
+  digital fixture in `test_wave_trace_menu` asserting `trace_menu_pick` answers
+  on the legend and `-1` across the body.
+- A single-trace strip's legend is inert on RMB (no toggle, no menu). Recorded
+  as a decision, not an accident: the menu's one action is meaningless there,
+  and leaving the toggle would move the inconsistency somewhere harder to find.
