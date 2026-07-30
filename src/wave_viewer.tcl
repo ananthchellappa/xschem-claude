@@ -38,7 +38,15 @@
 #     pack-forgotten per-window in open — see the D2 fixup comment there.
 #   - D6 title `Waveforms <design cell> (<state view>)`, re-asserted after
 #     every readonly toggle (`xschem set readonly` rewrites the wm title via
-#     set_modify(-1)) and on FocusIn.
+#     set_modify(-1)) and on FocusIn. ⚠ A CONTEXT SWITCH INTO THIS WINDOW
+#     clobbers the title the same way and for the same reason: the C
+#     switch_window (xinit.c) also ends in set_modify(-1), and this buffer is a
+#     nameless untitled one, so the title becomes
+#     `xschem [N] - untitled.sch (read-only)`. FocusIn was the ONLY repair, so
+#     the damage survived until the pointer happened to enter the window
+#     (issue 0173 -- the reported "hovering over the viewer fixes the title").
+#     Hence wviewer::enter_ctx/leave_ctx: switching into a viewer is a LOAN,
+#     verified both ways, and the restore re-asserts this title.
 #   - D7 menubar: a NEW menu $top.wvmenubar replaces the editor menubar on
 #     this toplevel only; the detached editor $top.menubar widget stays ALIVE
 #     (set_modify's catch-guarded entryconfigure calls keep resolving).
@@ -404,6 +412,14 @@ namespace eval wviewer {
   # re-fills ONLY when the size actually changed). Cleaned on forget.
   variable cfgafter; array set cfgafter {}
   variable fillwh;   array set fillwh {}
+  # issue 0173: how many times wviewer::leave_ctx could NOT put the xschem
+  # context back where enter_ctx found it (a `new_schematic switch` refused
+  # under a raised semaphore — landmine 17). Diagnostic only: a refused restore
+  # is left refused, never retried, because every caller is a status/redraw path
+  # that must not break the keystroke it rides on. Non-zero here means some
+  # window is holding a semaphore across a viewer refresh, which is worth
+  # knowing but is not itself actionable at the call site.
+  variable ctx_restore_refused 0
 }
 
 # The viewer title (D6): `Waveforms <design cell> (<state view>)`. Cell from
@@ -717,13 +733,42 @@ proc wviewer::close {token} {
   return 1
 }
 
-# Switch to the viewer's context and run `script` at global level (the View
-# menu wrappers — navigation verbs are not readonly-gated).
+# Run `script` at global level with the viewer's context current, then PUT THE
+# CONTEXT BACK where it was (the View menu wrappers — navigation verbs are not
+# readonly-gated).
+#
+# issue 0173: this used to be a bare `new_schematic switch` with no restore, and
+# every one of its callers is a refresh or a redraw that has no business moving
+# the current context — three `{xschem redraw}` wrappers plus `status_refresh`,
+# which after 0173 does not call it at all. When the caller was the SCHEMATIC side
+# (`ase::plot_mode_for_current` -> set_plot_mode -> status_refresh -> here) the
+# context stayed on the viewer after the keystroke, so the next click in the
+# schematic window was dispatched against the viewer's xctx and the viewer's
+# title had been rewritten to `xschem [N] - untitled.sch (read-only)` by
+# set_modify(-1). enter_ctx/leave_ctx are the save/restore bracket; both halves
+# VERIFY, per landmine 17.
+#
+# Behaviour change worth knowing: a REFUSED switch (semaphore raised) now runs
+# nothing and returns {}, where before it ran the script against whatever
+# foreign context happened to be current — a `redraw` of the wrong window, a
+# `graph_snap` from the wrong window. Callers already treat {} as "no answer".
+#
+# ⚠ A CALLER THAT WANTS A VALUE OUT MUST TAKE IT THROUGH THE RETURN, never by
+# setting a variable inside the script body. The body runs at `uplevel #0` —
+# GLOBAL level — so a `set` in there creates a global and the caller's local is
+# untouched. (`wviewer::with_edit` uses `uplevel 1` and DOES reach the caller's
+# scope, which is the shape the `delete_all_markers` count relies on; the two
+# brackets differ and the difference is silent.) Measured symptom of getting it
+# wrong: the status bar showed the plot mode and never a coordinate.
 proc wviewer::in_ctx {token script} {
   variable windows
   if {![dict exists $windows $token]} { return }
-  xschem new_schematic switch [dict get $windows $token win_path]
-  uplevel #0 $script
+  set ticket [wviewer::enter_ctx $token]
+  if {![lindex $ticket 0]} { return }
+  set code [catch {uplevel #0 $script} res]
+  wviewer::leave_ctx $token $ticket
+  if {$code} { return -code error $res }
+  return $res
 }
 
 # Switch the current context to `token`'s viewer canvas and VERIFY the
@@ -740,6 +785,74 @@ proc wviewer::switch_ctx {token} {
   set wp [dict get $windows $token win_path]
   xschem new_schematic switch $wp
   return [expr {[xschem get current_win_path] eq $wp}]
+}
+
+# --- issue 0173: switching INTO a viewer is a LOAN, not a move ----------------
+# A `new_schematic switch` is not a cheap read: on the window interface
+# switch_window (xinit.c ~1784) runs save_ctx/restore_ctx/housekeeping_ctx and
+# ends in `set_modify(-1)`, which REWRITES THE TARGET WINDOW'S wm TITLE
+# (actions.c ~241) from that buffer's own name — and the viewer's buffer is a
+# nameless read-only untitled one, so the viewer's title becomes
+# `xschem [N] - untitled.sch (read-only)`. Nothing repairs that except the
+# viewer's own `bind $top <FocusIn> +wviewer::retitle` (:703), which is why the
+# reported symptom was "hovering over the viewer fixes the title".
+#
+# So a Tcl helper that has to READ or DRAW something in a viewer must (a) put
+# the context back where it found it, and (b) re-assert the viewer's title.
+# enter_ctx/leave_ctx are that bracket. `with_edit` (:862) is the mutation
+# equivalent and already re-asserts the title; it deliberately does NOT restore
+# the context, because its callers are viewer-side gestures that were already
+# there — see the audit table in doc/claude/issues/0173-*.md.
+
+# Enter `token`'s viewer context, remembering where the context came from.
+# Returns a two-element TICKET {ok prev}:
+#   ok   = 1 when the viewer's context is current, 0 when the switch was REFUSED
+#          (landmine 17: `new_schematic switch` silently no-ops while the current
+#          context's semaphore is raised, so it must be VERIFIED, never assumed).
+#   prev = the win_path to restore, or {} when there is nothing to undo — either
+#          because the viewer was ALREADY current (the switch never happened, so
+#          no title was clobbered) or because the switch was refused.
+# Callers must bail out on ok==0 and must hand the whole ticket to leave_ctx.
+proc wviewer::enter_ctx {token} {
+  variable windows
+  if {![dict exists $windows $token]} { return {0 {}} }
+  set wp [dict get $windows $token win_path]
+  set prev {}
+  catch {set prev [xschem get current_win_path]}
+  # Cannot read where we are -> REFUSE, do not move. `current_win_path` really can
+  # be transiently empty during window alloc/teardown (scheduler.c ~9380 documents
+  # exactly that state), and switching with no restore target would clobber the
+  # viewer's title with nothing to put back — an irreversible move, which is the
+  # one thing this bracket exists to prevent. Skipping one refresh is the cheap
+  # side of that trade.
+  if {$prev eq {}} { return {0 {}} }
+  # already there: switch_window's own `already there` early return (xinit.c
+  # ~1797) would no-op anyway, but taking the fast path here also keeps `prev`
+  # empty, so leave_ctx knows there is no title to repair.
+  if {$prev eq $wp} { return {1 {}} }
+  if {![wviewer::switch_ctx $token]} { return {0 {}} }
+  return [list 1 $prev]
+}
+
+# The other half of enter_ctx: put the context back where the ticket says it came
+# from and re-assert the viewer's title. VERIFIED both ways (landmine 17) — a
+# restore that assumes success is the same bug in reverse. A refused restore is
+# LEFT refused: no retry, no loop, no error. Every caller is a status/redraw path
+# riding a keystroke or the motion pump, and throwing there pops bgerror; the
+# refusal is counted in wviewer::ctx_restore_refused instead. Returns 1 when the
+# context is back where it belongs (including "there was nothing to restore").
+proc wviewer::leave_ctx {token ticket} {
+  variable ctx_restore_refused
+  set prev [lindex $ticket 1]
+  if {$prev eq {}} { return 1 }           ;# never switched -> nothing to undo
+  set ok 0
+  catch {xschem new_schematic switch $prev}
+  catch {set ok [expr {[xschem get current_win_path] eq $prev}]}
+  # unconditional: the switch INTO the viewer already clobbered its title, and
+  # that damage outlives a refused restore.
+  wviewer::retitle $token
+  if {!$ok} { incr ctx_restore_refused }
+  return $ok
 }
 
 # Run `script` (caller's scope) against the viewer buffer with editing
@@ -4494,18 +4607,33 @@ proc wviewer::status_refresh {token} {
   set m [wviewer::plot_mode $token]
   if {$m eq {}} { set m [wviewer::default_plot_mode] }
   set x {}; set y {}
-  # in_ctx, not a bare get: the snap is per-context state and the pointer may be
-  # over one viewer while another owns the current context.
-  #
-  # ⚠ TAKE THE VALUE THROUGH THE RETURN, never by setting a variable inside the
-  # script body. `wviewer::in_ctx` runs its script with `uplevel #0` -- GLOBAL
-  # level -- so a `set` in there creates a global and the caller's local is
-  # untouched. (`wviewer::with_edit` uses `uplevel 1` and DOES reach the
-  # caller's scope, which is the shape the `delete_all_markers` count relies on;
-  # the two brackets differ and the difference is silent.) Measured: the status
-  # bar showed the plot mode and never a coordinate.
+  # The snap is READ ONLY WHEN THIS VIEWER'S CONTEXT IS ALREADY CURRENT — issue
+  # 0173. It used to go through `wviewer::in_ctx`, which switched the context to
+  # the viewer, and (pre-0173) never switched back; the Ctrl-Shift-4 path
+  # (ase::plot_mode_for_current -> set_plot_mode -> here) therefore left the C
+  # context on the viewer while the user was still in the schematic. in_ctx now
+  # restores, but the right answer on this path is to not switch AT ALL:
+  #   - the snap is per-context state that describes where the POINTER is. The
+  #     pointer is over this viewer exactly when the motion pump inside it is
+  #     what called us — and by then the C canvas <Motion> handler (bound before
+  #     our `+` handler) has already made this viewer current. So the
+  #     already-current test is not a restriction, it IS the "pointer is here"
+  #     test.
+  #   - on every OTHER caller (set_plot_mode's push, the open-time seed) the
+  #     pointer is elsewhere, the snap would be stale or foreign, and the switch
+  #     would buy a title rewrite plus a save_ctx/restore_ctx round trip for a
+  #     value we then throw away.
+  # The MODE half of the status bar needs no context at all: wviewer::plot_mode
+  # is a plain Tcl array read, so the item-10 PUSH contract still holds from any
+  # window. Only x/y go blank when we are not the current context, which is what
+  # the pre-0173 code effectively displayed anyway (measured then: the status bar
+  # showed the mode and never a coordinate).
   set snap {}
-  catch { set snap [wviewer::in_ctx $token {xschem get graph_snap}] }
+  set cur {}
+  catch {set cur [xschem get current_win_path]}
+  if {$cur ne {} && $cur eq [dict get $windows $token win_path]} {
+    catch {set snap [xschem get graph_snap]}
+  }
   if {[llength $snap] == 4} { set x [lindex $snap 2]; set y [lindex $snap 3] }
   set txt [wviewer::status_text $m $x $y]
   # only touch Tk when the string actually changed: this runs on every motion
@@ -4520,41 +4648,59 @@ proc wviewer::readout_refresh {token} {
   set top [dict get $windows $token top]
   set bar $top.wvreadout
   if {[catch {winfo exists $bar} e] || !$e} { return }
-  set wp [dict get $windows $token win_path]
-  xschem new_schematic switch $wp
-  set vecs {}
-  set disps {}
-  foreach G [dict get [wviewer::layout_for $token] graphs] {
-    foreach tr [dict get $G traces] {
-      set vec [wviewer::dget $tr vec {}]
-      if {$vec eq {} || [lsearch -exact $vecs $vec] >= 0} { continue }
-      lappend vecs $vec
-      set nm [wviewer::dget $tr name {}]
-      if {$nm eq {}} { set nm $vec }
-      lappend disps $nm
-    }
-  }
-  foreach {which letter} {1 a 2 b} {
-    if {$which == 1} {
-      set on [expr {[info exists cva($token)] && $cva($token)}]
-    } else {
-      set on [expr {[info exists cvb($token)] && $cvb($token)}]
-    }
-    set line {}
-    if {$on} {
-      set x {}
-      catch {set x [xschem get cursor${which}_x]}
-      if {$x ne {}} {
-        set line "[string toupper $letter]: x=[ase::format_value $x]"
-        foreach vec $vecs disp $disps {
-          set y {}
-          catch {set y [wviewer::interp_value $vec $x]}
-          if {$y ne {}} { append line "   $disp=[ase::format_value $y]" }
-        }
+  # issue 0173: this really does need the viewer's context (`xschem get
+  # cursorN_x` and interp_value's `xschem raw` reads are both per-context), so
+  # unlike status_refresh it cannot just decline to switch — it BORROWS the
+  # context and gives it back. Same defect as in_ctx before the fix: the bare
+  # `new_schematic switch $wp` here left the context on the viewer, and
+  # readout_refresh is reachable from the schematic side through the regenerate
+  # tail that Direct Plot drives. A refused switch means the readout goes
+  # unrefreshed for one gesture, which is strictly better than reading another
+  # window's cursors.
+  set ticket [wviewer::enter_ctx $token]
+  if {![lindex $ticket 0]} { return }
+  # the body is BRACKETED: the restore has to run even if something in it throws.
+  # This proc is appended to a <ButtonRelease> bind and is documented never to
+  # throw, and a body that escaped past leave_ctx would leak the context — which
+  # is issue 0173 all over again, from a path nobody would think to look at.
+  # `catch` evaluates in this scope, so the locals and `variable`s below still
+  # resolve normally.
+  catch {
+    set vecs {}
+    set disps {}
+    foreach G [dict get [wviewer::layout_for $token] graphs] {
+      foreach tr [dict get $G traces] {
+        set vec [wviewer::dget $tr vec {}]
+        if {$vec eq {} || [lsearch -exact $vecs $vec] >= 0} { continue }
+        lappend vecs $vec
+        set nm [wviewer::dget $tr name {}]
+        if {$nm eq {}} { set nm $vec }
+        lappend disps $nm
       }
     }
-    catch {$bar.$letter configure -text $line}
+    foreach {which letter} {1 a 2 b} {
+      if {$which == 1} {
+        set on [expr {[info exists cva($token)] && $cva($token)}]
+      } else {
+        set on [expr {[info exists cvb($token)] && $cvb($token)}]
+      }
+      set line {}
+      if {$on} {
+        set x {}
+        catch {set x [xschem get cursor${which}_x]}
+        if {$x ne {}} {
+          set line "[string toupper $letter]: x=[ase::format_value $x]"
+          foreach vec $vecs disp $disps {
+            set y {}
+            catch {set y [wviewer::interp_value $vec $x]}
+            if {$y ne {}} { append line "   $disp=[ase::format_value $y]" }
+          }
+        }
+      }
+      catch {$bar.$letter configure -text $line}
+    }
   }
+  wviewer::leave_ctx $token $ticket
   return {}
 }
 

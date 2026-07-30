@@ -545,6 +545,27 @@ rename m8_tr {}
 rename m8_g {}
 rename m8_vecs {}
 
+# --- M9: the context-loan TICKET (issue 0173) --------------------------------
+# wviewer::enter_ctx / wviewer::leave_ctx are the save/restore bracket every
+# viewer-side READ goes through so that switching INTO a viewer stops being a
+# one-way move. These shapes need no window and no DISPLAY; the legs that need a
+# real switch (and a real title to clobber) are MG17, and they are DISPLAY-only
+# on purpose — set_modify's title rewrite is `has_x`-gated.
+check "M9 an unknown token yields a REFUSED ticket, with nothing to restore" \
+  [pcall {wviewer::enter_ctx no/such/token}] {0 {}}
+check "M9 a nothing-to-restore ticket makes leave_ctx a successful no-op" \
+  [pcall {wviewer::leave_ctx no/such/token {1 {}}}] 1
+# ... and specifically it must not "helpfully" retitle: on that path no switch
+# happened, so no title was clobbered, and a repair would hide a real leak from
+# the MG17 spy.
+set ::m9_retitle 0
+rename wviewer::retitle wviewer::__m9_real_retitle
+proc wviewer::retitle {token} { incr ::m9_retitle }
+pcall {wviewer::leave_ctx no/such/token {1 {}}}
+check "M9 a no-op restore does not touch the title either" $::m9_retitle 0
+rename wviewer::retitle {}
+rename wviewer::__m9_real_retitle wviewer::retitle
+
 # ============================================================================
 # GUI legs
 # ============================================================================
@@ -1607,6 +1628,129 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   check_true "MG13 cadence_style_rc binds the form that actually fires" \
     [regexp {bind \.drw <Control-Key-dollar>\s+\{ase::plot_mode_for_current} \
        [read [set fh [open [file join $repo src cadence_style_rc] r]]][close $fh]]
+
+  # --- MG17: the chord must not LEAK the xschem context (issue 0173) ----------
+  # Reported: pressing Ctrl-Shift-4 in the SCHEMATIC window (a) rewrote the
+  # VIEWER's title to `xschem [N] - untitled.sch (read-only)` and (b) made the
+  # next click in the schematic act on the viewer. Both are one defect —
+  # wviewer::status_refresh read `graph_snap` through wviewer::in_ctx, which
+  # switched the C context to the viewer and never switched back; the C
+  # switch_window ends in set_modify(-1), whose whole job is to rewrite the
+  # target window's wm title.
+  #
+  # ⚠ NO `update` BETWEEN THE TOGGLE AND THE ASSERTIONS, and the omission is
+  # LOAD-BEARING. The viewer carries `bind $top <FocusIn> +wviewer::retitle`
+  # (wave_viewer.tcl, in `open`) and the editor carries the Tcl `switch_window` FocusIn
+  # handler (xschem.tcl ~13757) — BOTH repair exactly this damage. An `update`
+  # here would let a queued FocusIn run first and the leg would then pass on a
+  # defect that was repaired rather than on one that never happened. Everything
+  # that needs settling is settled BEFORE the toggle.
+  #
+  # ⚠ DISPLAY-arm only, and not by accident: set_modify's title rewrite is
+  # `has_x`-gated (actions.c ~242) and there is no viewer window under --nogui.
+  # The headless half of this fix is M9.
+  #
+  # ⚠ MG10 below is the green-but-hollow leg this bug hid behind for two weeks:
+  # it already drives `ase::plot_mode_for_current invert` and asserts the
+  # returned mode, and it never looked at the context or the title.
+  set vtop [wviewer::window_for $tok]; set vdrw $vtop.drw
+  viewer_ready $vtop
+  # the SCHEMATIC owns the context, exactly as in the repro (explicit, so this
+  # group does not inherit whatever window the previous group left current)
+  catch {xschem new_schematic switch .drw}
+  xschem load $schfile
+  update
+  set mg17_win   [xschem get current_win_path]
+  set mg17_title [wviewer::title_for $tok]
+  wm title $vtop $mg17_title            ;# known-good starting point
+  check "MG17 the schematic owns the context before the chord" $mg17_win .drw
+  # The retitle SPY is what makes the title leg honest: it proves the title was
+  # NEVER CORRUPTED, instead of corrupted-and-repaired. A leg that only compares
+  # the final string passes either way.
+  set ::mg17_retitle 0
+  rename wviewer::retitle wviewer::__mg17_real_retitle
+  proc wviewer::retitle {token} {
+    incr ::mg17_retitle
+    wviewer::__mg17_real_retitle $token
+  }
+
+  set mg17_nlog [llength $::wvm_log]
+  set mg17_mode [pcall {ase::plot_mode_for_current invert}]
+  # ---- assertions. Do not insert `update` above this line. ----
+  # one gesture, one log line: the fix must not have added a second (a
+  # notify_window_active or a bookkeeping line would show up right here)
+  check "MG17 the chord still logs exactly one line" \
+    [expr {[llength $::wvm_log] - $mg17_nlog}] 1
+  check "MG17 ... and it is the plot-mode line, with the resolved word" \
+    [lindex $::wvm_log end] "wviewer::set_plot_mode $mg17_mode $tok"
+  check_true "MG17 the chord still resolves a mode (the flip is untouched)" \
+    [expr {$mg17_mode eq {single} || $mg17_mode eq {multi}}]
+  check "MG17 the chord LEFT THE CONTEXT ON THE SCHEMATIC" \
+    [xschem get current_win_path] $mg17_win
+  check "MG17 the viewer still has its own title" [wm title $vtop] $mg17_title
+  check "MG17 ... and that title was never corrupted (no repair ran)" \
+    $::mg17_retitle 0
+  check "MG17 the mode really did change on the VIEWER" \
+    [pcall {wviewer::plot_mode $tok}] $mg17_mode
+  # the status bar is still PUSHED from the one mutation site (item 10), and the
+  # mode half of it needs no context at all
+  check_true "MG17 the status bar shows the new mode after a cross-window flip" \
+    [string match "*$mg17_mode*" [$vtop.wvstatus.l cget -text]]
+
+  # in_ctx BORROWS the context and gives it back (D4). Called with the SCHEMATIC
+  # current it does switch — so here the title IS clobbered and the spy must see
+  # exactly ONE repair. That asymmetry with the chord above is the whole point of
+  # D1(a): the chord path no longer switches at all, so it has nothing to repair.
+  set ::mg17_retitle 0
+  check "MG17 in_ctx runs its script in the VIEWER's context" \
+    [pcall {wviewer::in_ctx $tok {xschem get current_win_path}}] $vdrw
+  check "MG17 in_ctx put the context back where it found it" \
+    [xschem get current_win_path] $mg17_win
+  check "MG17 in_ctx re-asserted the viewer title it clobbered, once" \
+    $::mg17_retitle 1
+  check "MG17 ... so the title is right without any FocusIn repair" \
+    [wm title $vtop] $mg17_title
+
+  # readout_refresh has the same defect and the same fix (D5): it genuinely needs
+  # the viewer ctx (cursorN_x and interp_value's raw reads are per-context), so it
+  # borrows instead of declining.
+  set ::mg17_retitle 0
+  pcall {wviewer::readout_refresh $tok}
+  check "MG17 readout_refresh put the context back too" \
+    [xschem get current_win_path] $mg17_win
+  check "MG17 readout_refresh left the viewer title correct" \
+    [wm title $vtop] $mg17_title
+
+  # A REFUSED switch (landmine 17: `new_schematic switch` silently no-ops while
+  # the current context's semaphore is raised) must run NOTHING — pre-0173 in_ctx
+  # would have run the script against whatever foreign window was current.
+  rename wviewer::switch_ctx wviewer::__mg17_real_switch
+  proc wviewer::switch_ctx {token} { return 0 }
+  set ::mg17_ran 0
+  check "MG17 a refused switch makes in_ctx return {}" \
+    [pcall {wviewer::in_ctx $tok {set ::mg17_ran 1; expr 42}}] {}
+  check "MG17 ... having run nothing at all" $::mg17_ran 0
+  check "MG17 ... and left the context exactly where it was" \
+    [xschem get current_win_path] $mg17_win
+  rename wviewer::switch_ctx {}
+  rename wviewer::__mg17_real_switch wviewer::switch_ctx
+
+  # A refused RESTORE is the same landmine in reverse. It is counted for
+  # diagnosis, never retried and never thrown (every caller rides a keystroke or
+  # the motion pump, where a throw pops bgerror). A win_path no window owns is a
+  # switch the C side must refuse.
+  set mg17_refused $::wviewer::ctx_restore_refused
+  check "MG17 a refused restore reports failure instead of pretending" \
+    [pcall {wviewer::leave_ctx $tok {1 .no.such.drw}}] 0
+  check "MG17 ... and is recorded once, for diagnosis" \
+    [expr {$::wviewer::ctx_restore_refused - $mg17_refused}] 1
+  check "MG17 ... and leaves the context alone rather than looping on it" \
+    [xschem get current_win_path] $mg17_win
+  check "MG17 ... while still repairing the title the entry clobbered" \
+    [wm title $vtop] $mg17_title
+
+  rename wviewer::retitle {}
+  rename wviewer::__mg17_real_retitle wviewer::retitle
 
   # --- MG10: schematic-side entry points --------------------------------------
   xschem load $schfile

@@ -1295,6 +1295,67 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
     session the hook has already written it, and the second write lands *after*
     the hook's `push_undo` — the snapshot-after-mutate bug class, where `u`
     restores the very thing it was meant to undo.
+42. **A context switch REWRITES THE TARGET WINDOW'S TITLE, and the viewer repairs
+    that only on FocusIn — so any Tcl that switches into a viewer must restore the
+    context AND re-assert the title** (2026-07-29, issue 0173). This is the
+    reusable half of that bug and it generalises past the viewer.
+
+    `xschem new_schematic switch <win_path>` looks like a cheap pointer swap. On
+    the window interface it is not: `switch_window` (`xinit.c` ~1784, always
+    entered with `tcl_ctx == 1` from Tcl) runs `save_ctx` / `restore_ctx` /
+    `housekeeping_ctx` / `reconfigure_layers_button {}` and ends in
+
+    ```c
+    set_modify(-1); /* sets window title */
+    ```
+
+    whose `mod == -1` arm exists *only* to `wm title` the now-current window from
+    its own buffer name (`actions.c` ~241-266). The viewer's buffer is a nameless
+    read-only untitled one, so switching into a viewer stamps it
+    `xschem [N] - untitled.sch (read-only)`. Nothing repairs that except the
+    viewer's own `bind $top <FocusIn> "+wviewer::retitle $token"` — which is why
+    the reported symptom was *"hovering over the viewer fixes the title"*. Two
+    pieces of collateral ride along, both aimed at the ROOT window regardless of
+    which window you switched to: `reconfigure_layers_button {}` recolours `.`'s
+    Layers menu entry from the *new* context's `rectcolor`, and
+    `housekeeping_ctx` writes a hardcoded `.statusbar.7 configure -text
+    $netlist_type`.
+
+    Two early returns matter and they return **opposite** values while doing
+    equally nothing: `if(xctx->semaphore) return 1` (the landmine-17 refusal) and
+    `if(!strcmp(win_path, xctx->current_win_path)) return 0` (already there).
+    The already-there case is free — no title rewrite, no Tcl round trip — which
+    is what makes a "restore to where you found it" bracket cost nothing on a
+    caller that was already in the right context.
+
+    So the shape for any Tcl that needs to READ or DRAW in another window is a
+    ticket, not a switch: capture `xschem get current_win_path`, switch with
+    verification, run, switch back **with verification**, re-assert the target's
+    title. `wviewer::enter_ctx` / `wviewer::leave_ctx` (`wave_viewer.tcl`) are
+    that bracket; `wviewer::switch_ctx` remains the deliberate one-way verified
+    switch for destructive callers, and `with_edit` the mutation bracket that
+    re-asserts the title but intentionally leaves the context on the viewer.
+
+    **A leaked context does not look like a leaked context.** In issue 0173 the
+    user reported "the schematic window loses focus", and no `focus`, `raise` or
+    `raise_dialog` call existed anywhere in the chain. What they saw was the
+    schematic canvas going *inert*: `handle_motion_notify` (`callback.c`
+    ~5083-5093) drops any motion whose `win_path != xctx->current_win_path`, so
+    the crosshair and snap cursor freeze mid-canvas; `update_statusbar()`
+    addresses `xctx->top_path.statusbar.*` so the status line stops being
+    written; and `callback()` dispatches on the global `xctx`, while
+    `handle_window_switching` does not switch on KeyPress/ButtonPress. Recovery
+    needs an **EnterNotify**, not focus — with `mouse_follows_focus` defaulting
+    to 1 the FocusIn arm is skipped entirely (`callback.c` ~7945-7951), which is
+    why "click away to another window and back" was the only thing that fixed it.
+
+    **For tests:** the context leg (`xschem get current_win_path`) is assertable
+    in BOTH arms, but the title leg is `has_x`-gated inside `set_modify` and is
+    therefore **DISPLAY-arm only** — same split as landmine 41. And both FocusIn
+    repair paths will mask the whole defect, so a leg must assert with **no
+    `update`** between the gesture and the assertion, and must **spy the retitle
+    proc**: comparing only the final title string passes just as happily on
+    corrupted-and-repaired as on never-corrupted.
 
 ---
 

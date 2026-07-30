@@ -337,6 +337,28 @@ writes the replayable line.
   session?" — design → session → `ase::ui::number_for`. `{}` + `ciw_echo` when
   no session or (headless) no window.
 
+- **The chord GUARANTEES that the schematic keeps the context and the viewer
+  keeps its title** (issue 0173). Ctrl-Shift-4 is fired from the design window
+  and the design window is where the user still is, so the whole path now
+  performs **zero** `new_schematic switch` calls: `wviewer::status_refresh` reads
+  `xschem get graph_snap` only when that viewer's context is already current (the
+  motion pump inside the viewer — which is the only place the snap is ever
+  fresh, since the C hover pump refuses to run for a non-current window). The
+  MODE half of the status bar needs no context at all, so the item-10 PUSH
+  contract is unaffected.
+
+  Pre-0173 the read went through `wviewer::in_ctx`, which switched into the
+  viewer and stayed there. The consequences were not obviously context-shaped:
+  the viewer's title became `xschem [N] - untitled.sch (read-only)` (the C
+  switch ends in `set_modify(-1)`, whose job is the title), the next click in the
+  schematic acted on the viewer, and the schematic canvas went inert in a way
+  that read as lost focus. See the issue file for the full mechanism.
+
+  Any future Tcl on this path that must read or draw inside the viewer uses the
+  `wviewer::enter_ctx` / `wviewer::leave_ctx` ticket — verified both ways
+  (landmine 17), restores the context, re-asserts the viewer title — never a bare
+  `new_schematic switch`.
+
 ## 10. Persistence
 
 `wviewer::snapshot` gains two keys, appended **after** `graphs`, keeping the

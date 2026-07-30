@@ -197,6 +197,12 @@ Three green suites, ~300 checks between them, and not one of them can see. Do no
 let the counts read as confirmation. (Two of the three have since been driven by
 hand and passed; **item 6 round 2 is the one still standing on counts alone.**)
 
+> **Still open as of 2026-07-29, after issue 0173.** Issue 0173 (Ctrl-Shift-4
+> leaked the xschem context) touched `wviewer::in_ctx`, `status_refresh` and
+> `readout_refresh` — none of them on the item-6 mid-drag shrink path, so **item 6
+> round 2 (`780bd468`) is untouched and still un-eyeballed.** It has not been
+> cleared by anything since.
+
 The `drawline` change in item 2 — the one thing the
 suite structurally could not verify, since nothing here can read back an X GC's
 dash pattern — has now been confirmed by eye against ordinary schematics.
