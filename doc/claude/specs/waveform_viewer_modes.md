@@ -520,8 +520,8 @@ Transient per-window drag state lives in `drag_from` / `drag_to` / `drag_y0` /
 | LMB within 10 px of a trace, or a cursor grab | **C** — cursor drag/move, trace pick, wave-bold click |
 | **MMB** drag | **C** — graph pan (data ranges; the canvas never moves) |
 | RMB drag | **C** — box zoom (unchanged) |
-| LMB **click** (release, no travel) within 10 px of a trace | **C** — selects that trace; re-clicking it de-selects |
-| LMB **click** further than 10 px from every trace | **C** — no-op: selects nothing and clears nothing |
+| LMB **click** (release, no travel) within 10 px of a trace | **C** — that trace becomes THE selection, anywhere in the window; re-clicking it keeps it |
+| LMB **click** further than 10 px from every trace | **C** — clears the selection |
 
 **The precise-pick rule (issue 0174).** The wave-bold click is a *pick*, not a
 "nearest wins" — it uses `graph_wave_at()` at `GRAPH_TRACE_PICK_TOL`
@@ -533,11 +533,20 @@ and that divergence *was* the bug report. The click also compares the trace it
 just picked, so a click on trace B while trace A is selected **moves** the
 selection; only a click on the already-selected trace clears it.
 
-A miss changes **nothing** — not even the `hilight_wave` token. That is load
-bearing: empty plot-body space is the strip drag-reorder gesture in the row
-above, so a miss that cleared would mean a drag failing its travel threshold
-silently deselects. Digital strips and bus traces answer -1 across their whole
-body (a band/ribbon is not a polyline), which loses nothing — the pre-0174 pick
+**The selection is ONE TRACE IN THE WINDOW, not one per strip.** `hilight_wave`
+is a per-RECT prop token, so the arm additionally clears it on every *other*
+graph rect; without that, a click on strip B left strip A's trace bold too. A
+miss clears everything. Deselecting a SINGLE trace while keeping the rest is
+Ctrl+click, which is also the only way to add to a selection — 0175.
+
+Clearing on a miss does **not** collide with the strip drag-reorder that owns the
+same pixels: the two are separated by the TRAVEL test, not by the pick. A real
+reorder drag travels well past `GRAPH_CLICK_TOL` (3 px) and its release never
+reaches this arm; only a press-release that moved less than that clears, which is
+a click by any definition.
+
+Digital strips and bus traces answer -1 across their whole body (a band/ribbon is
+not a polyline), so a click there clears. That loses nothing — the pre-0174 pick
 refused them too, it just refused by writing an uninitialised value into the
 token.
 

@@ -917,24 +917,65 @@ static int waves_callback(int event, int mx, int my, KeySym key, int button, int
        * refused both too -- but it refused by returning BEFORE writing
        * *node_number, so `wcnt` was read uninitialised and the garbage was
        * persisted into the hilight_wave token (measured: -1859984240 on a digital
-       * strip and with no raw loaded). The refusal is now a clean no-op. */
+       * strip and with no raw loaded). The refusal now just reads as "no trace
+       * here", which on such a strip means a click clears the selection. */
       wcnt = graph_wave_at(i, (double)mx, (double)my, GRAPH_TRACE_PICK_TOL);
-      /* A MISS changes nothing at all -- not even the token. Empty plot-body
-       * space is the strip drag-reorder gesture, so "a miss clears the
-       * selection" would mean a drag that fails its travel threshold silently
-       * deselects (issue 0174 D2). A HIT on the trace that is already bold
-       * un-bolds it, which is exactly what the per-trace legend affordance
-       * already does (edit_wave_attributes(2, ...), draw.c) -- the two surfaces
-       * used to disagree, and the body one could never move the selection from
-       * trace A to trace B: it tested the CURRENT bold rather than the picked
-       * one, so the click that should have picked B just cleared A (D3). */
-      if(wcnt >= 0) {
-        if(gr->hilight_wave == wcnt) gr->hilight_wave = -1;
-        else                         gr->hilight_wave = wcnt;
+      /* THE SELECTION BECOMES WHAT THE CLICK PICKED. That is the whole rule, and
+       * `wcnt` is already -1 on a miss, so one assignment covers all of it
+       * (issue 0174 D2/D3, settled by the user at review):
+       *   - on another trace  -> the selection MOVES there (the reported defect);
+       *   - on empty body      -> the selection is CLEARED;
+       *   - on the trace that is already selected -> it STAYS selected. A plain
+       *     click never deselects what it lands on. Cadence behaviour, and it is
+       *     what leaves room for 0175: de-selecting one trace becomes Ctrl+click,
+       *     which is also the only way to ADD to a selection.
+       *
+       * ⚠ Clearing on a miss and the strip drag-reorder do NOT collide, because
+       * they are separated by the travel test above, not by this branch: a real
+       * reorder drag travels well past GRAPH_CLICK_TOL, so its release never
+       * reaches here at all. Only a press-release that moved less than 3 px
+       * clears -- which is a click by any definition.
+       *
+       * Written only when it actually changes: a click in empty space with
+       * nothing selected must not churn the prop string. */
+      if(gr->hilight_wave != wcnt) {
+        gr->hilight_wave = wcnt;
         my_strdup2(_ALLOC_ID_, &r->prop_ptr,
                    subst_token(r->prop_ptr, "hilight_wave", my_itoa(gr->hilight_wave)));
       }
-      if(save != gr->hilight_wave) {
+      /* THE SELECTION IS ONE TRACE IN THE WHOLE WINDOW, NOT ONE PER STRIP.
+       *
+       * `hilight_wave` is a PER-RECT prop token, so everything above only ever
+       * touches the strip under the pointer. Without this sweep, selecting a
+       * trace on strip A and then clicking one on strip B leaves BOTH bold --
+       * the same "the selection cannot move" defect this issue is about, just
+       * across strips instead of within one. Reported at review: "clicking on
+       * another trace SHOULD deselect all currently selected traces", and
+       * likewise for a click on empty space.
+       *
+       * A token that is ABSENT means nothing is bold there -- it must not be
+       * read as index 0, which is what a bare atoi("") would give.
+       *
+       * The cleared strips are repainted by the all-graphs loop further down
+       * (`need_all_redraw`), which does its own setup_graph_data(k, 0, gr) per
+       * rect and so re-reads the token we just rewrote. Doing it here instead
+       * would mean calling setup_graph_data on a non-master rect with the SHARED
+       * xctx->graph_struct that this arm is still using (landmines 11 and 37). */
+      {
+        int k;
+        for(k = 0; k < xctx->rects[GRIDLAYER]; ++k) {
+          xRect *rk = &xctx->rect[GRIDLAYER][k];
+          const char *hw;
+          if(k == i) continue;
+          if(!(rk->flags & 1)) continue;               /* 1: graph, 3: graph_unlocked */
+          hw = get_tok_value(rk->prop_ptr, "hilight_wave", 0);
+          if(!hw[0] || atoi(hw) < 0) continue;         /* absent or already clear */
+          my_strdup2(_ALLOC_ID_, &rk->prop_ptr,
+                     subst_token(rk->prop_ptr, "hilight_wave", "-1"));
+          need_all_redraw = 1;
+        }
+      }
+      if(save != gr->hilight_wave && !need_all_redraw) {
         draw_graph(i, 1 + 8 + 16 + (xctx->graph_flags & (2 | 4 | 128 | 256)), gr, NULL); /* draw data in graph box */
       }
     }

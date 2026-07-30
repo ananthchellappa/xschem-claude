@@ -841,8 +841,21 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
     tests the *currently* bold wave rather than the one just found. Both were
     true, both were the next bug report, and both are now fixed: the arm picks
     with `graph_wave_at()` at `GRAPH_TRACE_PICK_TOL` (10 screen px, landmine 33)
-    off the EVENT's canvas pixels, and compares the trace it just picked, so a
-    click on trace B while A is bold MOVES the selection. Two tolerances now sit
+    off the EVENT's canvas pixels, and the selection simply BECOMES what the
+    click picked (`wcnt`, already -1 on a miss). One assignment: a click on
+    another trace moves the selection, a click on empty body clears it, and a
+    click on the already-selected trace KEEPS it — a plain click never deselects
+    what it lands on (that is 0175's Ctrl+click, which is also the only way to
+    add to a selection).
+    ⚠ **`hilight_wave` is a PER-RECT token, so this arm also sweeps every OTHER
+    graph rect and clears it.** Without that, selecting on strip A and clicking
+    on strip B leaves both bold — the same defect one level up, and it is
+    invisible to any leg that witnesses a single rect. An ABSENT token means
+    nothing is bold there; `atoi("")` would read it as node 0 and clear a strip
+    that was never selected. The cleared strips are repainted by the all-graphs
+    loop via `need_all_redraw`, NOT inline — an inline repaint would need
+    `setup_graph_data` on a non-master rect with the shared `xctx->graph_struct`
+    the arm is still holding (landmines 11 and 37). Two tolerances now sit
     in this one arm and they answer different questions — `GRAPH_CLICK_TOL`
     (3 px × `xctx->zoom`, WORLD units) is click-vs-drag travel;
     `GRAPH_TRACE_PICK_TOL` (10 SCREEN px, never zoom-scaled) is
@@ -1111,9 +1124,12 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
     `t` dataset-track arm (`callback.c` ~1341) uses its RETURN value (the
     dataset), never `node_number`. Do not delete it, and do not add a threshold
     to it: `t` genuinely wants "nearest, however far".
-    (iii) a MISS writes nothing, not even the token — empty body space belongs to
-    the strip drag-reorder, so clearing on a miss would let a refused drag
-    deselect. See `doc/claude/issues/0174-trace-pick-needs-proximity.md`.
+    (iii) a MISS CLEARS the selection. The worry that this collides with the
+    strip drag-reorder (which owns the same pixels) is unfounded: the two are
+    separated by the TRAVEL test, not by the pick — a real reorder drag travels
+    past `GRAPH_CLICK_TOL` (3 px) and its release never reaches the arm, so only
+    a no-travel click clears. See
+    `doc/claude/issues/0174-trace-pick-needs-proximity.md`.
 
 34. **A trace's MODEL index and its NODE index are different spaces, and every C
     answer is in the second one** (2026-07-28, trace drag between strips).

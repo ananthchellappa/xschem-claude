@@ -90,8 +90,10 @@
 #       (0.50W, 0.50H) is about 0.30*H from this fixture's only trace, which is
 #       precisely how the old leg passed against a pick with no threshold.
 #       WB-precise* are the new legs: a plot-body click far from every trace
-#       bolds NOTHING and does not clear an existing bold either (empty body is
-#       the strip drag-reorder gesture). This fixture has ONE trace, so the
+#       bolds NOTHING and CLEARS whatever was bold, while a click on the
+#       already-bold trace KEEPS it (both settled by the user at review — a
+#       plain click never deselects what it lands on; that is 0175's Ctrl+click).
+#       This fixture has ONE trace, so the
 #       multi-trace half — moving the selection from trace A to trace B in one
 #       click — lives in test_wave_trace_menu.tcl's TB* block.
 #
@@ -1626,8 +1628,9 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
       check "WB-setup nothing bold to start" [wb_bold $vdrw] -1
 
       # WB-click: press+release at the SAME pixel, ON the trace, bolds it; a
-      # second click on the same trace clears it (D3 — the per-trace toggle,
-      # which is also what the legend affordance has always done).
+      # second click on the SAME trace leaves it bold (D3, settled at review:
+      # a plain click never deselects what it lands on — Cadence behaviour, and
+      # de-selecting one trace becomes 0175's Ctrl+click).
       wb_ev $vdrw <ButtonPress-1>   -x $bpx -y $wbony
       wb_ev $vdrw <ButtonRelease-1> -x $bpx -y $wbony -state 0x100
       update
@@ -1635,8 +1638,9 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
       wb_ev $vdrw <ButtonPress-1>   -x $bpx -y $wbony
       wb_ev $vdrw <ButtonRelease-1> -x $bpx -y $wbony -state 0x100
       update
-      check "WB-click second LMB click un-bolds" [wb_bold $vdrw] -1
+      check "WB-click a second click on the same trace KEEPS it bold" [wb_bold $vdrw] 0
       check_true "WB-click canvas == baseline" [ix_canvas_ok $vdrw $cx0 $cy0 $cz0]
+      wb_reset $tok
 
       # WB-precise (issue 0174): THE leg that fails on the pre-fix code. A click
       # inside the plot body but more than the pick tolerance from every trace
@@ -1654,9 +1658,11 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
       wb_ev $vdrw <ButtonRelease-1> -x $bpx -y $wboffy -state 0x100
       update
       check "WB-precise a click far from every trace bolds NOTHING" [wb_bold $vdrw] -1
-      # ... and it must not CLEAR either (D2): empty plot-body space is the strip
-      # drag-reorder gesture, so "a miss clears" would make a drag that fails its
-      # travel threshold silently deselect.
+      # ... and it CLEARS an existing selection (D2, settled at review). It does
+      # not collide with the strip drag-reorder that also owns empty body space:
+      # the two are separated by the TRAVEL test, not by this arm — a real
+      # reorder drag travels well past GRAPH_CLICK_TOL and its release never
+      # reaches the arm at all. WB-lmb-drag below is that half.
       wb_ev $vdrw <ButtonPress-1>   -x $bpx -y $wbony
       wb_ev $vdrw <ButtonRelease-1> -x $bpx -y $wbony -state 0x100
       update
@@ -1664,7 +1670,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
       wb_ev $vdrw <ButtonPress-1>   -x $bpx -y $wboffy
       wb_ev $vdrw <ButtonRelease-1> -x $bpx -y $wboffy -state 0x100
       update
-      check "WB-precise a far click leaves the existing bold alone" [wb_bold $vdrw] 0
+      check "WB-precise a far click CLEARS the selection" [wb_bold $vdrw] -1
       wb_reset $tok
 
       # WB-rmb-click: THE reported defect, minimal form. An RMB press+release in

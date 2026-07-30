@@ -18,9 +18,10 @@
 > there are multiple traces on a strip, it is only ever possible to select the
 > very first trace that was plotted.
 
-## What it actually was — THREE defects, all measured
+## What it actually was — FOUR defects, all measured
 
-The recon named two. A third fell out of measuring them. Everything below is a
+The recon named two. A third fell out of measuring them, and a fourth out of the
+review. Everything below is a
 number off a running binary (`--nolog --script` probe, ASE viewer, one strip,
 three separated ramp traces `vsweep+1 / +3 / +5`, 1000x776 canvas), not a
 reading of the source.
@@ -93,6 +94,31 @@ Stack garbage, written through `subst_token` into the graph rect's persisted
 `hilight_wave` token. Not a crash — `draw_graph` just never matches it — but it
 is undefined behaviour and it rides a save.
 
+### (d) The selection is per-STRIP, so it cannot move between strips either
+
+Raised by the user at review, after (a)-(c) were already fixed and committed:
+
+> clicking on another trace SHOULD deselect all currently selected traces
+>
+> [and] It is currently true only if the two traces are within the same strip
+
+`hilight_wave` is a **per-rect prop token**, and the arm only ever touches
+`xctx->rect[GRIDLAYER][xctx->graph_master]` — the strip under the pointer. So
+even with (b) fixed, selecting a trace on strip A and then clicking one on strip
+B left BOTH bold. Measured, two strips with two traces each, as
+`{strip0 strip1}`:
+
+```
+start                        -> {-1 -1}
+click a trace on strip 0     -> { 0 -1}
+click a trace on strip 1     -> { 0  0}    <- both bold; wanted {-1 0}
+```
+
+This is the same "the selection cannot move" defect as (b), one level up. It is
+also why the within-strip legs alone were not enough: `tb_bold` reads strip 0,
+and every leg written against it passes while strip 1 keeps a stale bold. The
+witness for these legs has to be the WHOLE STACK (`tb_bolds`).
+
 ### The asymmetry that made it a bug report
 
 `graph_wave_at(i, px, py, tol)` (`draw.c` ~5229, via `graph_point_at`) already
@@ -126,24 +152,38 @@ The literal was instead promoted to `#define GRAPH_TRACE_PICK_TOL 10.0` in
 `xschem.h` beside the marker tolerances and used from both C sites; the two Tcl
 proc defaults are commented as mirroring it.
 
-### D2 — a click in empty plot-body space LEAVES the selection alone
+### D2 — a click in empty plot-body space CLEARS the selection
 
-Empty body space is also the strip drag-reorder gesture (§12.5), so "clears"
-would mean a drag that fails its travel threshold silently deselects. With the
-arm acting only on a hit this is free: a miss now writes **nothing at all**, not
-even the token, so there is no path by which a refused drag can clear.
+⚠ **REVERSED AT REVIEW (2026-07-30).** I originally decided *leave it alone*,
+reasoning that empty body space is also the strip drag-reorder gesture (§12.5)
+so "clears" would mean a drag that fails its travel threshold silently
+deselects. The user's decision: **"clicking on empty space SHOULD deselect all
+currently selected traces."**
 
-### D3 — clicking the already-selected trace toggles it OFF
+The worry was unfounded and I should have checked it instead of designing around
+it: the two gestures are separated by the **travel test**, not by this branch. A
+real reorder drag travels well past `GRAPH_CLICK_TOL` (3 px), so its release
+never reaches the wave-bold arm at all. The only thing that clears is a
+press-release that moved less than 3 px — which is a click by any definition.
+`WB-lmb-drag` is the leg that holds the drag half of that.
 
-Cadence keeps it selected, and that was the starting position, but two things
-outweigh it:
+### D3 — clicking the already-selected trace KEEPS it selected
 
-1. with D2 = leave-alone, keep-selected would leave **no LMB way to deselect at
-   all** — the only remaining one would be the legend RMB;
-2. the per-trace legend affordance (`edit_wave_attributes(2, ...)`, `draw.c`
-   ~4334/4366/4393) is *already* `if(hilight_wave == wcnt) -1 else wcnt`. The
-   body click and the legend click were two picking surfaces on one strip
-   disagreeing about the toggle; this closes that too.
+⚠ **REVERSED AT REVIEW (2026-07-30).** I originally chose toggle-off, on the
+grounds that with D2 = leave-alone there would otherwise be **no LMB way to
+deselect at all**. The user's decision: **"clicking on a selected trace should
+not deselect it"** — Cadence behaviour, which was the starting position and
+which I talked myself out of.
+
+Both halves of my argument fell with D2. Deselecting everything is now a click
+on empty space, and deselecting ONE trace is 0175's Ctrl+click:
+
+> if a few traces are selected and user clicks on A trace, then only the
+> recently clicked-on trace will be selected. It takes a CTRL+click to add to
+> selection. CTRL+Click on a selected trace will also deselect that trace.
+
+So a plain click never deselects what it lands on — that affordance belongs to
+Ctrl+click, and reserving it here is what leaves room for 0175.
 
 **WB leg count before starting: 18** (`test_wave_viewer.tcl`, lines 1551-1687).
 D3 turns **zero** of them red — the WB fixture carries a single trace, so
@@ -182,20 +222,44 @@ legend RMB already works there, it has its own digital layout.
 
 ```c
       wcnt = graph_wave_at(i, (double)mx, (double)my, GRAPH_TRACE_PICK_TOL);
-      if(wcnt >= 0) {
-        if(gr->hilight_wave == wcnt) gr->hilight_wave = -1;
-        else                         gr->hilight_wave = wcnt;
+      /* the selection BECOMES what the click picked; wcnt is -1 on a miss */
+      if(gr->hilight_wave != wcnt) {
+        gr->hilight_wave = wcnt;
         my_strdup2(_ALLOC_ID_, &r->prop_ptr,
                    subst_token(r->prop_ptr, "hilight_wave", my_itoa(gr->hilight_wave)));
       }
-      if(save != gr->hilight_wave) { draw_graph(...); }
+      /* ... and it is ONE trace in the WINDOW: clear every other graph rect */
+      for(k = 0; k < xctx->rects[GRIDLAYER]; ++k) {
+        xRect *rk = &xctx->rect[GRIDLAYER][k];
+        const char *hw;
+        if(k == i || !(rk->flags & 1)) continue;
+        hw = get_tok_value(rk->prop_ptr, "hilight_wave", 0);
+        if(!hw[0] || atoi(hw) < 0) continue;   /* ABSENT is not index 0 */
+        my_strdup2(_ALLOC_ID_, &rk->prop_ptr,
+                   subst_token(rk->prop_ptr, "hilight_wave", "-1"));
+        need_all_redraw = 1;
+      }
+      if(save != gr->hilight_wave && !need_all_redraw) { draw_graph(...); }
 ```
+
+One assignment covers D2, D3 and the reported defect at once, because
+`graph_wave_at` already answers -1 on a miss. The cross-strip sweep is the
+separate half (defect (d)).
 
 - `mx`/`my` are **`waves_callback`'s own parameters** — the event's canvas
   pixels. Not `xctx->mousex/mousey`, which are schematic-space and stale for a
   press with no preceding Motion (landmine 33), and which `graph_wave_at` would
   not accept anyway.
-- the prop write moved **inside** the hit branch (D2).
+- the prop write happens only when the value actually **changes**, so a click in
+  empty space with nothing selected does not churn the prop string.
+- the cleared strips are repainted by the existing all-graphs loop
+  (`need_all_redraw`, `callback.c` ~1520), which runs its own
+  `setup_graph_data(k, 0, gr)` per rect. Doing the repaint inline would mean
+  calling `setup_graph_data` on a non-master rect with the SHARED
+  `xctx->graph_struct` this arm is still holding (landmines 11 and 37).
+- an **absent** `hilight_wave` token means nothing is bold there. A bare
+  `atoi("")` would read it as node 0 and "clear" a strip that was never
+  selected — the check is `hw[0] && atoi(hw) >= 0`.
 - `graph_wave_at` uses a LOCAL `Graph_ctx` and brackets the hcursor flag bits
   (landmines 11 and 37), so it cannot disturb `gr`.
 - **Unchanged, deliberately:** `POINTINSIDE` (the arm is plot-BODY-only; the
@@ -223,15 +287,16 @@ otherwise untouched and is **not** deleted.
 | `WB-click` (retargeted) | a click ON the trace bolds it; a second one clears it |
 | `TB-far` (test_wave_trace_menu) | defect (a): a far click selects NOTHING |
 | `TB-move` | defect (b): a click on trace B while A is selected MOVES the selection, in ONE click |
-| `TB-same` | D3: re-clicking the selected trace un-selects it |
-| `TB-keep` | D2: a far click leaves the existing selection alone |
+| `TB-same` | D3: re-clicking the selected trace KEEPS it selected |
+| `TB-clear` | D2: a far click CLEARS the selection |
+| `TB-cross` | defect (d): the selection is one trace in the WINDOW — a click on strip B clears strip A, and empty space on B clears everything. Witness is the whole stack (`tb_bolds`), never one rect |
 | `TB-agree` | the C click arm and `graph_trace_at` agree on EVERY scanned row of the plot box |
 | `TB-node` | the witness is a NODE index (node 2 = MODEL index 3 on a fixture with a vec-less trace) |
 | `TB-digital` / `TB-noraw` | defect (c): no uninitialised garbage on either early-exit path |
 | `TB-clean` | landmine 19: no modify, no undo point |
 
 Counts: `test_wave_viewer` **349 → 356** DISPLAY, 48 nogui unchanged;
-`test_wave_trace_menu` **223 → 243** DISPLAY, 71 nogui unchanged.
+`test_wave_trace_menu` **223 → 249** DISPLAY, 71 nogui unchanged.
 
 **Anti-hollowness.** "It picks the nearest trace" is not the test — a leg that
 only clicks ON a trace passes against the thresholdless pick too. `TB-far` and
@@ -258,6 +323,14 @@ a **vec-less** trace at model index 1 so MODEL and NODE index spaces diverge
 | (c) defect (c) restored (`*node_number` unwritten again) | `TB-digital`, `TB-noraw` — **and nothing else** |
 | tol forced to 0 | `WB-click`, `WB-precise` ×2, `SD2`, `TD4`, `TD6` ×2, `TG11`, `TB-move` ×2, `TB-keep` ×2, `TB-agree`, `TB-node` — the pre-existing legs guard the tolerance too |
 | MASTER: the whole pre-0174 arm restored | the union of (a) and (b) |
+
+After the review reversed D2/D3 and added (d), re-verified:
+
+| sabotage | red legs |
+|---|---|
+| (f) cross-strip sweep removed | the four `TB-cross` legs — **and nothing else**. Measured pre-fix state: `{0 0}`, both strips bold |
+| (g) a click on the selected trace deselects again | `TB-same`, `TB-cross` re-click, `WB-click a second click on the same trace KEEPS it bold` |
+| (h) a miss changes nothing (the pre-review D2) | `TB-clear`, `WB-precise a far click CLEARS the selection` |
 
 A model-index sabotage is **not expressible**: `hilight_wave` and
 `graph_wave_at` are both NODE-space in C and the model space exists only in Tcl,
@@ -363,10 +436,12 @@ one strip** and Fit (`f`) so they are separated.
 | 1 | click on trace A | A goes bold | — |
 | 2 | **click on trace B (no click in between)** | B goes bold, A goes thin | ❌ nothing bold — that was the bug |
 | 3 | click on trace C | C bold, B thin | ❌ selection stuck on A or B |
-| 4 | click on C again | nothing bold | — |
-| 5 | click well **between** two traces, in the middle of the plot body | **nothing changes** | ❌ a trace bolds |
-| 6 | select A, then click in empty body space | **A stays bold** | ❌ A un-bolds |
-| 7 | with A bold, press-drag from empty body space to another strip and drop | strips reorder as before, **A still bold** | ❌ A un-bolds |
+| 4 | click on C again | **C stays bold** (a plain click never deselects) | ❌ C un-bolds |
+| 5 | click well **between** two traces, in the middle of the plot body | **everything un-bolds** | ❌ a trace bolds |
+| 6 | select A, then click in empty body space | **A un-bolds** | ❌ A stays bold |
+| 7 | with A bold, press-drag from empty body space to another strip and drop | strips reorder as before, **A still bold** — a real drag is not a click | ❌ A un-bolds |
+| 7b | **two strips**: select a trace on strip 1, then click a trace on strip 2 | strip 1 goes thin, strip 2 bold — **never both** | ❌ both stay bold |
+| 7c | with a trace bold on strip 1, click empty space on strip 2 | **strip 1 un-bolds** | ❌ strip 1 stays bold |
 | 8 | click ~5 px above/below a trace | it bolds (10 px band) | — |
 | 9 | click ~25 px away from every trace | nothing | ❌ something bolds |
 | 10 | RMB on a trace → the trace menu; LMB on the same pixel | both act on the **same** trace | ❌ they disagree |
@@ -374,8 +449,10 @@ one strip** and Fit (`f`) so they are separated.
 | 12 | on an **embedded schematic graph** (`xschem_library/examples/test_ne555.sch`), click in the body away from every trace | nothing bolds | ❌ a trace bolds (D4: this changed too) |
 | 13 | on a **digital** strip (an embedded graph with `digital=1`), click anywhere in the body | nothing bolds, and the graph does not misdraw | ❌ anything bolds |
 
-Step 2 is the reported defect. Step 5 is the other one. Steps 6/7 are D2, step 4
-is D3, step 12 is D4, step 13 is D5.
+Step 2 is the reported defect within a strip; **7b is the same defect across
+strips** (defect (d)). Step 5 is the proximity half. Steps 5/6/7c are D2, step 4
+is D3, step 12 is D4, step 13 is D5. Step 7 is the one that would break if D2 had
+been implemented by clearing on anything other than a no-travel click.
 
 ## Not verified
 

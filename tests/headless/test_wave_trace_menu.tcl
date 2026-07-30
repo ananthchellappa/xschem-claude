@@ -44,8 +44,11 @@
 #                so -1 means "far", not "no data") — defect (a);
 #        TB-move a click on trace B while trace A is selected MOVES the
 #                selection, in ONE click with nothing in between — defect (b);
-#        TB-same re-clicking the selected trace un-selects it (D3);
-#        TB-keep a far click leaves the existing selection alone (D2);
+#        TB-same re-clicking the selected trace KEEPS it selected (D3);
+#        TB-clear a far click CLEARS the selection (D2);
+#        TB-cross the selection is ONE TRACE IN THE WINDOW, not one per strip —
+#                hilight_wave is a per-RECT token, so a click on strip B used to
+#                leave strip A's bold standing; the witness is the whole stack;
 #        TB-agree the C click arm and graph_trace_at agree on every scanned row
 #                of the plot box — one shared tolerance, not two that overlap;
 #        TB-node the witness is a NODE index, proved on a fixture carrying a
@@ -951,6 +954,26 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     proc tb_reset {tok} {
       wviewer::with_edit $tok {xschem setprop rect 2 0 hilight_wave -1}
     }
+    # every strip's hilight_wave at once — the witness for the CROSS-STRIP legs.
+    # `-` means the token is absent (nothing bold), which must never be read as
+    # node 0 (landmine 34's neighbour: a bare atoi("") would say 0).
+    proc tb_bolds {vdrw} {
+      xschem new_schematic switch $vdrw
+      set o {}
+      for {set k 0} {$k < [xschem get rects 2]} {incr k} {
+        set v {}
+        catch {set v [xschem getprop rect 2 $k hilight_wave]}
+        lappend o [expr {$v eq {} ? "-" : $v}]
+      }
+      return $o
+    }
+    proc tb_reset_all {tok vdrw} {
+      xschem new_schematic switch $vdrw
+      set n [xschem get rects 2]
+      wviewer::with_edit $tok {
+        for {set k 0} {$k < $n} {incr k} { xschem setprop rect 2 $k hilight_wave -1 }
+      }
+    }
     proc tb_click {vdrw px py} {
       tm_ev $vdrw <ButtonPress-1>   -x $px -y $py
       tm_ev $vdrw <ButtonRelease-1> -x $px -y $py -state 0x100
@@ -1013,19 +1036,64 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
       check "TB-move a click on node 2 MOVES the selection there (one click)" \
         [tb_bold $vdrw] 2
 
-      # --- TB-same: D3, the only LMB way to deselect --------------------------
+      # --- TB-same: D3 — a plain click never deselects what it lands on -------
+      # Settled by the user at review. Cadence behaviour, and it is what leaves
+      # room for 0175: de-selecting ONE trace becomes Ctrl+click, which is also
+      # the only way to add to a selection.
       tb_click $vdrw $tb2x $tb2y
-      check "TB-same re-clicking the selected trace un-selects it" [tb_bold $vdrw] -1
+      check "TB-same re-clicking the selected trace KEEPS it selected" [tb_bold $vdrw] 2
 
-      # --- TB-keep: D2, empty body space must not clear -----------------------
-      # Empty plot-body space is the strip drag-reorder gesture, so a click that
-      # cleared would mean a drag failing its travel threshold silently
-      # deselects.
+      # --- TB-clear: D2 — empty body space clears -----------------------------
+      # Also settled at review. This does NOT collide with the strip
+      # drag-reorder that owns the same pixels: the two are separated by the
+      # TRAVEL test in C, not by the pick — a real reorder drag travels well past
+      # GRAPH_CLICK_TOL (3 px) and its release never reaches the wave-bold arm.
+      # Only a press-release that moved less than that clears, which is a click
+      # by any definition. test_wave_viewer.tcl's WB-lmb-drag owns the drag half.
       tb_reset $tok
       tb_click $vdrw $tb0x $tb0y
-      check "TB-keep node 0 is selected before the far click" [tb_bold $vdrw] 0
+      check "TB-clear node 0 is selected before the far click" [tb_bold $vdrw] 0
       tb_click $vdrw $tbfx $tbfy
-      check "TB-keep a far click leaves the existing selection alone" [tb_bold $vdrw] 0
+      check "TB-clear a far click CLEARS the selection" [tb_bold $vdrw] -1
+
+      # --- TB-cross: the selection is ONE TRACE IN THE WINDOW -----------------
+      # hilight_wave is a PER-RECT token, so everything above only proves the
+      # rule WITHIN one strip. Reported at review: selecting a trace on strip A
+      # and then clicking one on strip B left BOTH bold — the same "the
+      # selection cannot move" defect, across strips. The witness has to be the
+      # whole stack (tb_bolds), never one rect: `tb_bold` alone reads strip 0 and
+      # would pass while strip 1 kept a stale bold.
+      # fill_viewer puts vec_d alone on strip 1, plus the vec-less plant on 0.
+      set tbs1 {}
+      for {set py 2} {$py < $H} {incr py 1} {
+        if {[wviewer::trace_at $vdrw 1 $tbfx $py] == 0} { set tbs1 [list $tbfx $py]; break }
+      }
+      set tbe1 {}
+      for {set py 2} {$py < $H} {incr py 1} {
+        if {![wviewer::plotbox_at $vdrw 1 $tbfx $py]} { continue }
+        if {[wviewer::trace_at $vdrw 1 $tbfx $py] >= 0} { continue }
+        set tbe1 [list $tbfx $py]; break
+      }
+      if {![llength $tbs1] || ![llength $tbe1]} {
+        puts "SKIPPED: TB-cross (no trace/empty pixel found in strip 1)"
+      } else {
+        tb_reset_all $tok $vdrw
+        check "TB-cross nothing bold anywhere to start" [tb_bolds $vdrw] {-1 -1}
+        tb_click $vdrw $tb0x $tb0y
+        check "TB-cross a click on strip 0 bolds there and nowhere else" \
+          [tb_bolds $vdrw] {0 -1}
+        tb_click $vdrw [lindex $tbs1 0] [lindex $tbs1 1]
+        check "TB-cross a click on strip 1 MOVES the selection off strip 0" \
+          [tb_bolds $vdrw] {-1 0}
+        tb_click $vdrw [lindex $tbs1 0] [lindex $tbs1 1]
+        check "TB-cross re-clicking it keeps it, and strip 0 stays clear" \
+          [tb_bolds $vdrw] {-1 0}
+        tb_click $vdrw $tb0x $tb0y
+        check "TB-cross and back the other way" [tb_bolds $vdrw] {0 -1}
+        tb_click $vdrw [lindex $tbe1 0] [lindex $tbe1 1]
+        check "TB-cross empty space on ANOTHER strip clears the selection too" \
+          [tb_bolds $vdrw] {-1 -1}
+      }
 
       # --- TB-agree: the shared tolerance -------------------------------------
       # The C click arm and graph_trace_at must answer the same question at the
@@ -1114,7 +1182,9 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     rename tb_px_for_node {}
     rename tb_far_px {}
     rename tb_bold {}
+    rename tb_bolds {}
     rename tb_reset {}
+    rename tb_reset_all {}
     rename tb_click {}
     fill_viewer $tok
   }
