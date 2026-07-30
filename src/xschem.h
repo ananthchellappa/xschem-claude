@@ -1735,6 +1735,28 @@ typedef struct {
   int no_grid; /* per-window grid/origin suppression (Waveform Viewer: the window
                 * reads as a graph, not a schematic). NOT mirrored in Tcl -- scoped
                 * to this ctx only; see doc/claude/specs/waveform_viewer.md item 18 */
+  int no_snap; /* THIS CANVAS HAS NO SCHEMATIC SNAP GRID (issue 0177). Per window,
+                * exactly like no_grid above and for the same reason: `cadsnap` is a
+                * GLOBAL Tcl var that the waveform viewer has no business sharing, and
+                * the grid is a property of the SURFACE, not of the handler that
+                * happens to be reading the pointer.
+                *
+                * Set it and three things become true for this context, at the source
+                * and therefore for every present and future reader:
+                *   - callback() computes mousex_snap/mousey_snap UNSNAPPED (they stay
+                *     honest copies of mousex/mousey) instead of rounding to cadsnap;
+                *   - draw_crosshair() is not drawn -- it paints AT mousex_snap
+                *     (callback.c ~2646), so on a grid it IS the snap grid made visible,
+                *     which is precisely what the 0177 reporter saw over the legend;
+                *   - draw_snap_cursor() is not drawn -- it snaps to the nearest net or
+                *     symbol pin, and a waveform canvas has neither.
+                *
+                * This REPLACES the per-handler override strategy issue 0143 started
+                * (waves_callback still carries its own, because an ordinary SCHEMATIC
+                * window can embed graphs and that context is NOT no_snap).
+                * 0 for every context alloc_xschem_data creates; the ASE viewer sets it
+                * on its own window and never clears it.
+                * See doc/claude/issues/0177-viewer-has-no-snap-grid.md */
   int menu_removed; /* fullscreen previous setting */
   double save_lw; /* used to save linewidth when selecting 'only_probes' view */
   int no_draw;

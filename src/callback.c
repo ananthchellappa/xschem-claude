@@ -82,9 +82,36 @@ static int waves_selected(int event, KeySym key, int state, int button)
   int is_inside = 0, skip = 0;
   static unsigned int excl = STARTZOOM | STARTRECT | STARTLINE | STARTWIRE |
                              STARTPAN | STARTSELECT | STARTMOVE | STARTCOPY;
-  int draw_xhair = tclgetboolvar("draw_crosshair");
-  int border;
-  border = (int)(5.0 * tk_scaling); /* fixed number of screen pixels */
+  /* the crosshair is suppressed on a no_snap canvas (issue 0177), and this local
+   * ALSO picks the cursor shape below -- with crosshair_size 0 the `draw_xhair`
+   * arm hides the pointer entirely (`-cursor none`) on the assumption that a
+   * crosshair is standing in for it. On a viewer nothing would be, so the pointer
+   * would simply vanish. Read the property here, at call time. */
+  int draw_xhair = tclgetboolvar("draw_crosshair") && !xctx->no_snap;
+  double border;
+  /* THE INSET IS IN SCREEN PIXELS AND IT HAS TO BE CONVERTED (issue 0177).
+   *
+   * This margin is what keeps a graph from swallowing pointer events right at its
+   * rect edge, so the rect itself stays selectable/grabbable on a schematic canvas.
+   * The intent has always been "a fixed number of screen pixels" -- but the value
+   * was subtracted from r->x1/r->y1/r->x2/r->y2, which are XSCHEM units, with no
+   * conversion. 1 screen pixel is xctx->zoom xschem units (X_TO_XSCHEM), so the
+   * inset was off by 1/zoom.
+   *
+   * MEASURED on the shipping ASE viewer (1000x776 canvas, zoom 0.2738,
+   * tk_scaling 1.334): (int)(5.0*1.334) = 6 xschem units = 21.9 canvas pixels, a
+   * 3.3x overshoot. That band contains the TOP OF THE LEGEND -- legend_slot_hit()
+   * starts its horizontal slots at gr->ry1, the rect top itself (draw.c ~4518) --
+   * so the top 22 pixels of every legend entry answered the QUERY correctly and
+   * then had the press routed to the schematic canvas instead of the graph: the
+   * click selected nothing, and the pointer picked up the schematic crosshair.
+   * The (int) cast also floored the value, which at tk_scaling 1.0 quietly made it
+   * 5 units rather than 5 pixels.
+   *
+   * Converting restores the documented intent. At zoom ~1 (an embedded schematic
+   * graph at normal magnification) the value barely moves; it is only the
+   * zoomed-out end -- which is where the viewer lives -- that was wrong. */
+  border = 5.0 * tk_scaling * xctx->zoom;
   rstate = state; /* rstate does not have ShiftMask bit, so easier to test for KeyPress events */
   rstate &= ~ShiftMask; /* don't use ShiftMask, identifying characters is sufficient */
   if(xctx->ui_state & excl) skip = 1;
@@ -806,7 +833,21 @@ static int waves_callback(int event, int mx, int my, KeySym key, int button, int
    * sub-region, not grid steps. waves_callback only ever mutates graph tokens /
    * cursors, never schematic geometry, and callback() returns right after this
    * handler (the next event recomputes the snap), so this override is safe and
-   * does not leak into schematic editing. */
+   * does not leak into schematic editing.
+   *
+   * ⚠ ITS SCOPE, STATED HONESTLY (issue 0177). This covers exactly the code
+   * reached THROUGH waves_callback and nothing else. It said "safe and does not
+   * leak", which is true, but the useful question is the other one: what does it
+   * NOT reach? Everything that runs when waves_selected() DECLINES the event --
+   * which on a strip includes the band just inside the rect edge, and therefore
+   * the top of the LEGEND. On the ASE waveform viewer that hole is now closed one
+   * level up: the window sets `xschem set no_snap 1` and callback() computes both
+   * fields unsnapped at the source (~8200), so this assignment is a no-op there.
+   *
+   * It is NOT redundant and must stay: an ordinary SCHEMATIC window can embed
+   * graphs, waves_callback runs on those too, and that context is not no_snap --
+   * its grid is real and wanted everywhere except inside a graph. This line is
+   * what keeps 0143's promise for them. */
   xctx->mousex_snap = xctx->mousex;
   xctx->mousey_snap = xctx->mousey;
   rstate = state; /* rstate does not have ShiftMask bit, so easier to test for KeyPress events */
@@ -1494,9 +1535,17 @@ static int waves_callback(int event, int mx, int my, KeySym key, int button, int
       ( event == ButtonPress &&
         (button == Button1 || button == Button2 || button == Button3)) &&
       !(xctx->ui_state & GRAPHPAN) &&
-      /* graph_top is computed from the SNAPPED pointer while a marker hit-test
-       * uses the raw one, so on a coarse grid a boundary press can land on the
-       * wrong side of the two tests. GRAPHPAN is not a pan here -- it is the
+      /* ⚠ THE STATED REASON WAS WRONG AND IS CORRECTED HERE (issue 0177). This
+       * used to say graph_top is computed from the SNAPPED pointer while the
+       * marker hit test uses the raw one. It is not: the 0143 override at the
+       * head of this function un-snaps both fields before any branch, and
+       * nothing rewrites them before the margin computation, so the two read the
+       * SAME coordinate and no grid setting can separate them. The real gap is a
+       * TOLERANCE one -- graph_marker_press hit-tests within GRAPH_MARKER_TOL
+       * (8 screen px) of the anchor, so a press up to 8 px ABOVE the plot box
+       * still grabs a marker anchored just inside it while graph_top is already
+       * 1. The extra term is therefore still required; only its justification
+       * changes. GRAPHPAN is not a pan here -- it is the
        * ROUTING latch (waves_selected keeps an in-flight drag routed and freezes
        * graph_master with it), so an armed marker drag must always get it or the
        * release is silently dropped. Provably a no-op when nothing is armed. */
@@ -2564,6 +2613,17 @@ static void draw_snap_cursor(int action) {
   int prev_draw_pixmap = xctx->draw_pixmap;
 
   if (!xctx->mouse_inside) return;  /* Early exit if mouse is outside */
+  /* NOT A CONCEPT ON A no_snap CANVAS (issue 0177): this glyph snaps to the
+   * nearest net or symbol pin, and a waveform canvas has neither -- with nothing
+   * found, find_closest_net_or_symbol_pin() falls back to mousex_snap/mousey_snap
+   * (findnet.c ~208), i.e. it paints the grid.
+   * ⚠ THE TEST BELONGS HERE, NOT IN THE CALLERS' `snap_cursor` LOCALS. Those are
+   * computed at the TOP of callback(), BEFORE handle_window_switching() may
+   * reassign xctx -- so on the EnterNotify that switches into (or out of) a
+   * viewer they describe the PREVIOUS context. And the cadence 'z' arm calls this
+   * directly without consulting any local at all. A test inside the drawer is
+   * evaluated at call time, on the right context, from every site there is. */
+  if (xctx->no_snap) return;
   snapcursor_size = tclgetintvar("snap_cursor_size");
   pos_changed = (xctx->mousex_snap != xctx->prev_gridx) || (xctx->mousey_snap != xctx->prev_gridy);
   /* Save current drawing context */
@@ -2643,6 +2703,22 @@ void draw_crosshair(int what, int state)
   sdp = xctx->draw_pixmap;
 
   if(!xctx->mouse_inside) return;
+  /* NOT A CONCEPT ON A no_snap CANVAS (issue 0177). This is drawn AT
+   * mousex_snap/mousey_snap (just below), so on a grid it is the snap grid made
+   * visible -- which is what the 0177 reporter saw hopping over the waveform
+   * legend. It is also a schematic pointer aid on a surface that has no
+   * schematic geometry.
+   * ⚠ THE TEST BELONGS HERE, NOT IN THE CALLERS. draw() itself ends with
+   * `if(tclgetboolvar("draw_crosshair")) draw_crosshair(7, 0);` (draw.c ~8433),
+   * and move.c has three more such sites -- none of them consults callback()'s
+   * `draw_xhair` local. Gating only the local would suppress every ERASE path
+   * while leaving those PAINT paths live: a crosshair stroked on the waveform at
+   * each full redraw that then never moves and never clears, not even on Leave.
+   * (Measured as a regression against the first cut of this fix.) The callers'
+   * locals are also computed before handle_window_switching() may reassign xctx,
+   * so they can describe the wrong context; a test here is evaluated at call
+   * time on the right one. */
+  if(xctx->no_snap) return;
   mx = xctx->mousex_snap;
   my = xctx->mousey_snap;
   if( ( (xctx->ui_state & (MENUSTART | STARTWIRE) ) || xctx->ui_state == 0 ) &&
@@ -5168,7 +5244,12 @@ static void handle_enter_notify(int draw_xhair, int crosshair_size)
     struct stat buf;
     dbg(2, "callback(): Enter event, ui_state=%d\n", xctx->ui_state);
     xctx->mouse_inside = 1;
-    if(draw_xhair) {
+    /* `-cursor none` is only safe when a crosshair is standing in for the pointer.
+     * On a no_snap canvas (issue 0177) none is drawn, so the pointer would just
+     * vanish -- and the caller's draw_xhair local is computed BEFORE the context
+     * switch this very event may have performed, so the property has to be read
+     * here rather than trusted from the argument. */
+    if(draw_xhair && !xctx->no_snap) {
       if(crosshair_size == 0) {
         tclvareval(xctx->top_path, ".drw configure -cursor none" , NULL);
       }
@@ -8112,6 +8193,15 @@ int callback(const char *win_path, int event, int mx, int my, KeySym key, int bu
   double c_snap;
   int tabbed_interface = tclgetboolvar("tabbed_interface");
   int enable_stretch = tclgetboolvar("enable_stretch");
+  /* ⚠ THESE TWO ARE NOT WHERE THE issue-0177 no_snap TEST GOES, and the first cut
+   * of that fix put it here, wrongly. They are initialisers, so they run BEFORE
+   * handle_window_switching() below may reassign xctx -- on the EnterNotify that
+   * switches into or out of a waveform viewer they would describe the PREVIOUS
+   * context. And they do not reach draw()'s own crosshair call (draw.c ~8433) or
+   * move.c's three, so gating them would kill the erase paths and leave the paint
+   * paths live. The property is tested inside draw_crosshair()/draw_snap_cursor()
+   * instead, at call time. What these locals still legitimately decide is the
+   * CURSOR SHAPE, and that decision does consult no_snap where it is made. */
   int draw_xhair = tclgetboolvar("draw_crosshair");
   int crosshair_size = tclgetintvar("crosshair_size");
   int infix_interface = tclgetboolvar("infix_interface");
@@ -8191,8 +8281,30 @@ int callback(const char *win_path, int event, int mx, int my, KeySym key, int bu
   }
   xctx->mousex=X_TO_XSCHEM(mx);
   xctx->mousey=Y_TO_XSCHEM(my);
-  xctx->mousex_snap=my_round(xctx->mousex / c_snap) * c_snap;
-  xctx->mousey_snap=my_round(xctx->mousey / c_snap) * c_snap;
+  /* THE SNAP GRID IS A PROPERTY OF THE CANVAS, AND IT IS DECIDED HERE (issue 0177).
+   *
+   * These four lines run for every event on every window, so this is the ONE place
+   * where "this surface has no schematic snap grid" can be expressed once and cover
+   * every downstream reader -- present and future. Issue 0143 instead overrode the
+   * two fields locally at the head of waves_callback(), which was correct but only
+   * for code reached THROUGH that handler: anything that runs when waves_selected()
+   * DECLINES the event still saw a grid-snapped schematic coordinate. On the ASE
+   * viewer that was measurable and visible -- see the 0177 issue file for the
+   * numbers -- because waves_selected() refuses a band just inside the strip rect
+   * that contains the top of the LEGEND, and in that band handle_motion_notify()
+   * falls through to the schematic arm and draws the crosshair AT mousex_snap.
+   *
+   * On a no_snap canvas the two "_snap" fields are simply honest copies of the raw
+   * pointer. Every reader keeps working; none of them gets a grid. waves_callback's
+   * own override stays, because an ordinary SCHEMATIC window can embed graphs and
+   * that context is not no_snap. */
+  if(xctx->no_snap) {
+    xctx->mousex_snap=xctx->mousex;
+    xctx->mousey_snap=xctx->mousey;
+  } else {
+    xctx->mousex_snap=my_round(xctx->mousex / c_snap) * c_snap;
+    xctx->mousey_snap=my_round(xctx->mousey / c_snap) * c_snap;
+  }
 
   if(abs(mx-xctx->mx_save) > 8 || abs(my-xctx->my_save) > 8 ) {
     my_snprintf(str, S(str), "mouse = %.16g %.16g - selected: %d path: %s",

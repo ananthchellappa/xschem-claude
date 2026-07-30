@@ -605,6 +605,22 @@ proc wviewer::open {token} {
     }
     return 0
   }
+  # ⚠ EVERYTHING BELOW STAMPS PER-CONTEXT C STATE, SO VERIFY THE CONTEXT ONCE
+  # MORE HERE (issue 0177 review). The landmine-17 comment above records that the
+  # switch is MEASURED to no-op ~3 times in 10 under a raised semaphore, and the
+  # recovery loop's own `xschem new_schematic switch` can fail the same way. The
+  # only guard until now was `$top eq {.}`, which catches the ROOT window and
+  # nothing else — so if the previously-current window was a DETACHED editor
+  # `.xN`, all four settings below (readonly, no_grid, no_snap, graph_snap_cursor)
+  # would be branded onto a real schematic the user is editing: it would go
+  # read-only, lose its grid AND lose its snap. Refusing is strictly better than
+  # that, and the caller already treats 0 as "no viewer" and says so in the CIW.
+  if {[xschem get current_win_path] ne $wp} {
+    if {[info commands ::ciw_echo] ne {}} {
+      ciw_echo "wviewer: the waveform window did not take the context, refusing" error
+    }
+    return 0
+  }
   # D1: readonly for the window's life — modified becomes unsettable, so no
   # save prompt can ever appear on close
   xschem set readonly 1
@@ -613,6 +629,16 @@ proc wviewer::open {token} {
   # never cleared; alloc_xschem_data zeroes it for every other ctx. The window
   # now reads as a graph, not a schematic.
   xschem set no_grid 1
+  # issue 0177: and NO SCHEMATIC SNAP GRID for this window, ever. The viewer is
+  # built on a schematic window and had been inheriting the snap machinery
+  # piecemeal, patched one code path at a time (0143 did waves_callback). This is
+  # the property instead of another override: the C side computes
+  # mousex_snap/mousey_snap unsnapped at the SOURCE for this context, and drops
+  # the two schematic pointer glyphs (the crosshair, which paints AT the snapped
+  # coordinate, and the snap cursor, which snaps to nets and pins the viewer does
+  # not have). Same per-ctx shape as no_grid above, and for the same reason:
+  # `cadsnap` is a GLOBAL that a waveform canvas has no business sharing.
+  catch {xschem set no_snap 1}
   # viewer plan item 9: arm the diamond snap cursor for THIS window only. Per
   # context (the no_grid precedent) because the pick walks every sample of
   # every trace, and graph_point_at is shared with every embedded schematic

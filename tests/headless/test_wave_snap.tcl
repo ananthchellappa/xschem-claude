@@ -188,6 +188,113 @@ check_true "SS5 clear_drawing() disarms the snap" \
   [regexp {xctx->graph_snap_on = 0;} $asrc]
 
 # ============================================================================
+# SN* — issue 0177: THE VIEWER CANVAS HAS NO SCHEMATIC SNAP GRID
+# ============================================================================
+# The property, not another override. `xctx->no_snap` is a per-context flag that
+# callback() consults where mousex_snap/mousey_snap are BORN, so every present
+# and future reader on that canvas sees an unsnapped pointer -- instead of each
+# handler having to remember to un-snap for itself (which is what issue 0143 did,
+# and it only ever covered code reached through waves_callback).
+#
+# WHAT ESCAPED, and why these legs exist: the reporter saw "the snap grid at play
+# when clicking on the legend text". 0175's own suite had a green leg next to an
+# unasserted neighbour -- test_wave_trace_menu TL4 proves the legend QUERY is
+# snap-immune, but nothing drove a real Tk gesture under a coarse grid and
+# nothing at all covered HOVER.
+
+check "SN1 a fresh context has NO no_snap" [pcall {xschem get no_snap}] 0
+check "SN2 it round-trips" [pcall {xschem set no_snap 1; xschem get no_snap}] 1
+check "SN3 any non-zero means armed" \
+  [pcall {xschem set no_snap 7; xschem get no_snap}] 1
+check "SN4 disarming round-trips" [pcall {xschem set no_snap 0; xschem get no_snap}] 0
+# ⚠ THE LETTER-DISPATCH LANDMINE (see SP5): `xschem set` splits on
+# argv[2][0] < 'n' and `xschem get` groups by first letter. An 'n' key in the
+# wrong half is SILENTLY unreachable -- the setter just does nothing.
+check "SN5 the setter really reaches the C side (not silently unreachable)" \
+  [pcall {xschem set no_snap 1
+          set a [xschem get no_snap]
+          xschem set no_snap 0
+          list $a [xschem get no_snap]}] {1 0}
+
+set fp [open [file join $repo src callback.c] r]; set cbsrc [read $fp]; close $fp
+
+# THE SOURCE OF TRUTH. The whole point of 0177 is that the decision is taken
+# ONCE, at the place the two fields are computed, rather than being undone
+# afterwards by whichever handler happens to remember. If this branch is ever
+# replaced by another downstream override the property stops being a property.
+check_true "SN6 callback() branches on no_snap where mousex_snap is BORN" \
+  [regexp {if\(xctx->no_snap\) \{\s*\n\s*xctx->mousex_snap=xctx->mousex;\s*\n\s*xctx->mousey_snap=xctx->mousey;} $cbsrc]
+check_true "SN6 ...and the grid arithmetic is the OTHER arm, not the default" \
+  [regexp {\} else \{\s*\n\s*xctx->mousex_snap=my_round\(xctx->mousex / c_snap\) \* c_snap;} $cbsrc]
+
+# ⚠ 0143's LOCAL OVERRIDE MUST SURVIVE. It is NOT superseded: an ordinary
+# SCHEMATIC window can embed graphs, waves_callback runs on those too, and that
+# context is not no_snap -- its grid is real and wanted everywhere except inside
+# a graph. tests/headless/test_graph_box_zoom_xy.tcl drives exactly that case on
+# .drw and goes red the moment this line is deleted "because no_snap replaces
+# it". It does not.
+check_true "SN7 waves_callback's own 0143 un-snap is still there (embedded graphs)" \
+  [regexp {xctx->mousex_snap = xctx->mousex;\s*\n\s*xctx->mousey_snap = xctx->mousey;} $cbsrc]
+
+# NEITHER SCHEMATIC POINTER GLYPH IS A VIEWER CONCEPT. draw_crosshair() paints AT
+# mousex_snap, so on a grid it IS the snap grid made visible; draw_snap_cursor()
+# snaps to the nearest net or symbol pin, of which a waveform canvas has none.
+#
+# ⚠ THE TEST MUST BE INSIDE THE DRAWERS, NOT IN THEIR CALLERS' LOCALS -- and the
+# first cut of this fix put it in the locals, which was wrong twice over:
+#   - draw() itself ends with `if(tclgetboolvar("draw_crosshair"))
+#     draw_crosshair(7, 0);` (draw.c) and move.c has three more such sites, none
+#     of which consults callback()'s draw_xhair. Gating only the local suppressed
+#     every ERASE path and left those PAINT paths live: a crosshair stroked on
+#     the waveform at each full redraw that then never moved and never cleared;
+#   - callback()'s locals are INITIALISERS, so they run before
+#     handle_window_switching() may reassign xctx -- on the EnterNotify that
+#     switches into or out of a viewer they describe the PREVIOUS context.
+# With the test inside the drawer, an ungated CALL SITE is harmless by
+# construction -- which is the property being bought, since there are five of
+# them outside this file and nothing stops a sixth.
+check_true "SN8 draw_crosshair itself refuses on a no_snap canvas" \
+  [regexp {if\(xctx->no_snap\) return;\s*\n\s*mx = xctx->mousex_snap;} $cbsrc]
+check_true "SN8 draw_snap_cursor itself refuses on a no_snap canvas" \
+  [regexp {if \(xctx->no_snap\) return;\s*\n\s*snapcursor_size = tclgetintvar} $cbsrc]
+# the call sites this structurally covers, and could not have covered from a
+# callback.c local: they are in OTHER FILES
+set fp [open [file join $repo src draw.c] r]; set dsrc [read $fp]; close $fp
+set fp [open [file join $repo src move.c] r]; set msrc [read $fp]; close $fp
+check_true "SN8 draw() has its own ungated crosshair call (hence the drawer gate)" \
+  [regexp {tclgetboolvar\("draw_crosshair"\)\) draw_crosshair\(7, 0\)} $dsrc]
+check_true "SN8 ...and move.c has more of them" \
+  [expr {[regexp -all {draw_crosshair\(3, 0\)} $msrc] >= 3}]
+# the CURSOR SHAPE is the one thing the callers still decide, and `-cursor none`
+# would hide the pointer with no crosshair standing in for it
+check_true "SN8 waves_selected reads the property for the cursor shape" \
+  [regexp {int draw_xhair = tclgetboolvar\("draw_crosshair"\) && !xctx->no_snap;} $cbsrc]
+check_true "SN8 ...and so does handle_enter_notify, at call time" \
+  [regexp {if\(draw_xhair && !xctx->no_snap\) \{} $cbsrc]
+# ⚠ AND THE LOCALS MUST STAY UNGATED, or the erase/paint asymmetry comes back
+check "SN8 callback()'s locals do NOT carry the test (wrong context, wrong reach)" \
+  [count_code $cbsrc {tclgetboolvar\("snap_cursor"\) && !xctx->no_snap}] 0
+
+# ⚠ THE UNITS BUG THAT PUT THE LEGEND OUT OF REACH. waves_selected() insets the
+# strip rect by a margin whose comment always said "screen pixels" -- but the
+# value was subtracted from r->x1/r->y1, which are XSCHEM units, with no
+# conversion. 1 screen pixel is xctx->zoom xschem units (X_TO_XSCHEM), so the
+# inset was 1/zoom too wide: MEASURED 21.9 canvas px instead of 6.7 on a
+# 1000x776 viewer at zoom 0.2738. legend_slot_hit() starts its horizontal slots
+# at gr->ry1 -- the rect top itself -- so that band swallowed the top of every
+# legend entry: the query answered correctly and the press went to the schematic
+# canvas instead of the graph.
+check_true "SN9 the graph-routing inset is converted to xschem units" \
+  [regexp {border = 5\.0 \* tk_scaling \* xctx->zoom;} $cbsrc]
+check "SN9 ...and the un-converted integer form is gone" \
+  [count_code $cbsrc {border = \(int\)\(5\.0 \* tk_scaling\);}] 0
+
+# and the viewer window actually asks for the property
+set fp [open [file join $repo src wave_viewer.tcl] r]; set wvsrc [read $fp]; close $fp
+check_true "SN10 wviewer::open arms no_snap on its own window" \
+  [regexp {xschem set no_snap 1} $wvsrc]
+
+# ============================================================================
 # ST* — item 10: the viewer STATUS BAR (pure half)
 # ============================================================================
 # The formatting is split from the widget precisely so this half needs no
@@ -374,6 +481,186 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     pcall {xschem set graph_snap_cursor 0}
     check "SG5 disarming clears the published pick" [pcall {xschem get graph_snap}] {}
     pcall {xschem set graph_snap_cursor 1}
+
+    # ========================================================================
+    # SNG* — issue 0177 on a REAL canvas
+    # ========================================================================
+    # THE BLAST-RADIUS PAIR, exactly the shape of SG1. no_snap is per CONTEXT:
+    # the viewer must answer 1 and every schematic window must answer 0. A
+    # global would take the grid away from ordinary schematic editing, which is
+    # the one thing this change must not do.
+    xschem new_schematic switch $vdrw
+    check "SNG1 the viewer window has no snap grid" [pcall {xschem get no_snap}] 1
+    xschem new_schematic switch .drw
+    check "SNG1 the MAIN schematic window still has one (per-ctx, not global)" \
+      [pcall {xschem get no_snap}] 0
+    xschem new_schematic switch $vdrw
+
+    # A SNAPPED MIRROR IS AN EXACT MULTIPLE OF cadsnap. That is the assertion to
+    # make, and it is the one a coalesced <Motion> cannot fake: comparing the
+    # mirror against the pixel the loop THINKS it just sent reads a dropped
+    # event as "snapped", but a lagged snapped value is still on the grid and a
+    # lagged raw one still is not. (Measured under WSLg: ~2% of generated motion
+    # events are coalesced away, which is enough to make the naive form flap.)
+    proc snap_on_grid {v m} { expr {abs($v - round($v/double($m))*$m) < 1e-9} }
+    # ⚠ cadsnap IS PER-CONTEXT STATE (tctx::global_list, src/xschem.tcl), so
+    # `new_schematic switch` SAVES AND RESTORES it. Setting it before a switch
+    # and expecting the value to survive is the mistake this comment exists to
+    # stop: it silently reverts to the target window's own 10 and the leg then
+    # measures a fine grid while claiming to measure a coarse one. Set it AFTER
+    # every switch, and restore it per arm.
+    set sn_save [pcall {set ::cadsnap}]
+    set ::cadsnap 400
+    set sn_ongrid 0; set sn_rows 0
+    for {set yy 2} {$yy < $H - 2} {incr yy 5} {
+      event generate $vdrw <Motion> -x [expr {int($W*0.42)}] -y $yy
+      update
+      set sx [pcall {xschem get mousex_snap}]; set sy [pcall {xschem get mousey_snap}]
+      if {![string is double -strict $sx] || ![string is double -strict $sy]} continue
+      incr sn_rows
+      if {[snap_on_grid $sx 400] && [snap_on_grid $sy 400]} { incr sn_ongrid }
+    }
+    check_true "SNG2 the sweep actually read the mirror" [expr {$sn_rows > 50}]
+    # ⚠ EVERY row, not most: the legend band, the axis margins, the reorder grip
+    # and the rect-edge inset are all on this column, and the whole point of a
+    # canvas PROPERTY is that none of them is special.
+    check "SNG2 no pixel of the viewer canvas lands the pointer on the grid" \
+      $sn_ongrid 0
+
+    # THE OTHER HALF, and the reason it is here: nothing in the tree asserted
+    # that a SCHEMATIC canvas still snaps, so a flag that leaked onto .drw would
+    # have been caught only implicitly, by whichever gesture suite happened to
+    # depend on an exact drag delta. This is the direct witness.
+    xschem new_schematic switch .drw
+    set sn_msave [pcall {set ::cadsnap}]
+    set ::cadsnap 400
+    update
+    set sn_mongrid 0; set sn_mrows 0
+    for {set yy 120} {$yy < 380} {incr yy 7} {
+      event generate .drw <Motion> -x 300 -y $yy
+      update
+      set sx [pcall {xschem get mousex_snap}]; set sy [pcall {xschem get mousey_snap}]
+      if {![string is double -strict $sx] || ![string is double -strict $sy]} continue
+      incr sn_mrows
+      if {[snap_on_grid $sx 400] && [snap_on_grid $sy 400]} { incr sn_mongrid }
+    }
+    check_true "SNG3 the schematic sweep actually read the mirror" \
+      [expr {$sn_mrows > 20}]
+    check "SNG3 the schematic canvas still snaps EVERY pointer position" \
+      $sn_mongrid $sn_mrows
+    set ::cadsnap $sn_msave
+    xschem new_schematic switch $vdrw
+    set ::cadsnap $sn_save
+
+    # THREE traces, so the legend has three distinguishable slots to click. The
+    # SG*/ST* fixture above deliberately holds ONE (it is testing the diamond,
+    # which needs a trace, not a legend), and with n_nodes==1 every x in the band
+    # answers slot 0 -- which would make the "same entry under a coarse grid" leg
+    # unable to tell a right answer from a stuck one.
+    pcall {xschem raw add vv2 "vsweep 3 *"}
+    pcall {xschem raw add vv3 "vsweep 4 *"}
+    pcall {wviewer::add_trace $tok 0 vv2}
+    pcall {wviewer::add_trace $tok 0 vv3}
+    wviewer::regenerate $tok
+    xschem new_schematic switch $vdrw
+    update
+    set W [winfo width $vdrw]; set H [winfo height $vdrw]
+
+    # ------------------------------------------------------------------------
+    # THE ESCAPE ITSELF: a full Tk gesture on the legend, under a coarse grid.
+    # ------------------------------------------------------------------------
+    # What 0175's probe omitted was the <Motion> -- and the user's hand did not.
+    # The gesture below is Motion -> Press -> a 1-px jitter -> Release, because
+    # that is what a real click is; a press and release at byte-identical
+    # coordinates is not reachable with a hand on a mouse.
+    proc sn_legend_click {vdrw px py} {
+      catch {xschem setprop -fast rect 2 0 hilight_wave {}}
+      catch {xschem setprop -fast rect 2 0 sel_waves {}}
+      focus -force $vdrw
+      event generate $vdrw <Motion> -x $px -y $py ; update
+      event generate $vdrw <ButtonPress-1> -x $px -y $py ; update
+      event generate $vdrw <Motion> -x [expr {$px+1}] -y $py ; update
+      event generate $vdrw <ButtonRelease-1> -x [expr {$px+1}] -y $py ; update
+      return [xschem getprop rect 2 0 hilight_wave]
+    }
+    # Resolve the legend BAND (every canvas row whose slots answer 0/1/2) rather
+    # than hard-coding a row: the horizontal layout spans gr->ry1..gr->y1, whose
+    # pixel height is 14% of the strip and therefore window-dependent.
+    set sn_band {}
+    for {set yy 0} {$yy < int($H*0.5)} {incr yy} {
+      set a [pcall {xschem get graph_legend_at 0 [expr {int($W*0.12)}] $yy}]
+      set b [pcall {xschem get graph_legend_at 0 [expr {int($W*0.72)}] $yy}]
+      if {$a eq "0" && $b eq "2"} { lappend sn_band $yy }
+    }
+    # ⚠ CLICK IN THE MIDDLE OF THE BAND, NOT AT ITS TOP EDGE. The first row that
+    # answers the legend query is the rect's own top edge, and waves_selected
+    # deliberately keeps a small inset there so the rect stays grabbable on a
+    # schematic canvas -- so the topmost legend rows legitimately do not route to
+    # the graph. SNG6 below is the leg that measures how many rows that costs;
+    # this one is about the entries themselves.
+    set sn_row {}
+    if {[llength $sn_band] > 8} {
+      set sn_row [lindex $sn_band [expr {[llength $sn_band] / 2}]]
+    }
+    if {$sn_row eq {}} {
+      puts "SKIPPED: SNG4+ (no legend band resolved -- WSLg geometry)"
+    } else {
+      set sn_fine {}
+      set ::cadsnap 10
+      foreach frac {0.12 0.42 0.72} {
+        lappend sn_fine [sn_legend_click $vdrw [expr {int($W*$frac)}] $sn_row]
+      }
+      set sn_coarse {}
+      set ::cadsnap 400
+      foreach frac {0.12 0.42 0.72} {
+        lappend sn_coarse [sn_legend_click $vdrw [expr {int($W*$frac)}] $sn_row]
+      }
+      set ::cadsnap $sn_save
+      check "SNG4 a real gesture on each legend entry selects that entry" \
+        $sn_fine {0 1 2}
+      # THE REGRESSION LEG. With a 40x coarser grid the SAME entry must come
+      # back -- not "an entry", the same one.
+      check "SNG4 ...and a 40x coarser snap grid changes nothing" \
+        $sn_coarse $sn_fine
+
+      # ------------------------------------------------------------------
+      # HOVER over the legend band. Nothing covered this at all before 0177.
+      # ------------------------------------------------------------------
+      # The readable witness for the routing decision is the CURSOR: waves_selected
+      # sets `tcross` when it takes the event for the graph and resets it when it
+      # declines, and declining is exactly what sends the pointer down the
+      # schematic arm (graph_snap_clear, then the crosshair at mousex_snap, then
+      # draw_hover). So `tcross` over the whole legend band is the assertion that
+      # no schematic pointer ornament can be drawn there.
+      event generate $vdrw <Motion> -x [expr {int($W*0.42)}] -y $sn_row ; update
+      check "SNG5 a legend hover is routed to the GRAPH (tcross cursor)" \
+        [pcall {$vdrw cget -cursor}] tcross
+      # ...and the item-9 diamond yields there, because the legend is outside the
+      # plot box: the legend band draws NOTHING under the pointer.
+      check "SNG5 ...and nothing is snapped over the legend (outside the box)" \
+        [pcall {xschem get graph_snap}] {}
+
+      # THE BAND THE UNITS BUG CREATED. Walk the legend column from the rect's
+      # top edge down and count how many legend rows route to the schematic
+      # canvas. Pre-fix that band was 22 px deep on this geometry; the intended
+      # 5-screen-px inset is ~7. Asserting a FRACTION rather than a pixel keeps
+      # the leg honest across window sizes and tk scalings.
+      set sn_dead 0
+      foreach yy $sn_band {
+        event generate $vdrw <Motion> -x [expr {int($W*0.42)}] -y $yy ; update
+        if {[pcall {$vdrw cget -cursor}] ne "tcross"} { incr sn_dead }
+      }
+      check_true "SNG6 the legend band was walked" [expr {[llength $sn_band] > 20}]
+      # 5*tk_scaling SCREEN px is a handful of rows whatever the zoom. Before the
+      # conversion it was 1/zoom times wider -- MEASURED 22 rows on a 1000x776
+      # viewer at zoom 0.2738, which is where the reporter's clicks were landing.
+      check_true "SNG6 the rect-edge inset costs only a few legend rows, not tens" \
+        [expr {$sn_dead <= 12}]
+      # ...and it must not eat the band either: the inset is a margin, not a lid.
+      check_true "SNG6 most of the legend band routes to the graph" \
+        [expr {double([llength $sn_band] - $sn_dead) / [llength $sn_band] > 0.8}]
+      event generate $vdrw <Motion> -x $okx -y $oky ; update
+    }
   }
 
   catch {wviewer::close $tok}

@@ -4189,6 +4189,15 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
             Tcl_SetResult(interp, xctx->no_grid != 0 ? "1" : "0", TCL_STATIC);
           }
+          /* xschem get no_snap
+           * per-window "this canvas has no schematic snap grid" (issue 0177).
+           * The blast-radius witness for the whole feature: a viewer window answers 1
+           * and every schematic window answers 0, so a test can prove the property is
+           * scoped to the context rather than global. */
+          else if(!strcmp(argv[2], "no_snap")) {
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            Tcl_SetResult(interp, xctx->no_snap != 0 ? "1" : "0", TCL_STATIC);
+          }
           else if(!strcmp(argv[2], "ntabs")) { /* get number of additional tabs (0 = only one tab) */
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
             Tcl_SetResult(interp, my_itoa(get_window_count()), TCL_VOLATILE);
@@ -10525,6 +10534,16 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
           else if(!strcmp(argv[2], "no_grid")) { /* per-window grid/origin suppression (item 18) */
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
             xctx->no_grid = atoi(argv[3]) ? 1 : 0;
+          }
+          /* xschem set no_snap 0|1
+           * "this canvas has no schematic snap grid" (issue 0177). PER CONTEXT, like
+           * no_grid above -- `cadsnap` is a global the waveform viewer has no business
+           * sharing. Consulted at the SOURCE in callback() (where mousex_snap is born)
+           * and by the two schematic pointer glyphs, so setting it once covers every
+           * downstream reader instead of one override per handler. */
+          else if(!strcmp(argv[2], "no_snap")) {
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            xctx->no_snap = atoi(argv[3]) ? 1 : 0;
           }
           else if(!strcmp(argv[2], "readonly")) { /* set window read-only (0 or 1); refresh title */
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}

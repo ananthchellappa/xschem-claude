@@ -443,6 +443,20 @@ luck, not a fix — do not read it as a change.
   The hollowness gap that let it ship is named there too: `TL4` asserts the
   QUERY is snap-immune and nothing drives a real gesture — or a HOVER — under a
   coarse grid.
+  **CLOSED by issue 0177 (2026-07-30).** Measured mechanism: `waves_selected()`
+  insets each strip rect by a margin computed in SCREEN pixels but applied to
+  XSCHEM coordinates — 21.9 canvas px instead of 6.7 at the viewer's zoom — and
+  that band sits on top of the legend, which `legend_slot_hit()` starts at the
+  rect's own top edge. Inside it the event never reaches `waves_callback`, so
+  0143's local un-snap never runs and the schematic arm paints `draw_crosshair()`
+  **at** the grid-snapped mirror. Invisible on the shipped defaults, live on the
+  reporter's `cadence_style_rc` (`draw_crosshair 1`, `snap_cursor 1`). Fixed by a
+  per-context `no_snap` property tested at the source, plus the units conversion.
+  The hollowness gap is closed by `test_wave_snap` `SNG4` (a real
+  Motion→Press→jitter→Release under a 40x grid) and `SNG5` (the first hover leg
+  the viewer has ever had); `TL4` itself had to be repaired, because once
+  `no_snap` is armed `cadsnap` no longer perturbs that canvas and the leg would
+  have gone **hollow rather than red**.
 - **Pixels.** That N bold strokes and N bold-italic legend entries actually read
   as "these are selected" is eyeball-only (D4). The manual sequence is handed
   over with this issue.

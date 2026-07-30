@@ -297,7 +297,12 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
   participating graphs + y1/y2 on the master, with a live rubber rect via
   `drawtemprect`/`gctiled`; left-margin drag = Y-only). **No snap grid in
   graphs** (issue 0143): `waves_callback` overrides `mousex_snap`/`mousey_snap`
-  with the raw pointer at entry, so every graph gesture is unsnapped.
+  with the raw pointer at entry, so every graph gesture **reached through that
+  handler** is unsnapped — which is not the same as "on a graph" and was read as
+  if it were for two issues (landmine 44). The ASE waveform viewer no longer
+  relies on it: its context sets `no_snap`, and `callback()` computes both fields
+  unsnapped at the SOURCE for that window (issue 0177). The override above still
+  covers graphs EMBEDDED IN A SCHEMATIC, whose context keeps its grid.
   **Writes results into `prop_ptr` tokens via
   `subst_token`, then `draw_graph()`.**
 - **Two different flag words — do not confuse:** `xctx->graph_flags` =
@@ -1169,10 +1174,16 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
     `dy/dx`.
 
 36. **The `graph_top` margin silently disables the GRAPHPAN ROUTING LATCH**
-    (2026-07-28, waveform markers). `waves_callback` sets `xctx->graph_top = 1`
-    for any press whose **snapped** y is above the plot box (`callback.c`
-    ~938-942), and the `GRAPHPAN` latch (~1288-1300) is gated on
-    `!xctx->graph_top`. **`GRAPHPAN` is not a pan** — it is the *routing* latch:
+    (2026-07-28, waveform markers; line numbers and the snap clause **corrected**
+    2026-07-30, issue 0177). `waves_callback` sets `xctx->graph_top = 1` for any
+    press whose y is above the plot box — `mousey_snap < W_Y(gr->gy2)`, and
+    `W_Y(gy2)` *is* `gr->y1`, the plot-box top edge (`callback.c` ~1160;
+    `graph_left`/`graph_bottom` follow immediately) — and the `GRAPHPAN` latch
+    (~1510, the flag set just below) is gated on
+    `!xctx->graph_top`. All three margin flags are latched at PRESS time: the
+    `if(ui_state & GRAPHPAN) goto finish;` just above the computation jumps past
+    both it *and* the latch, so every later motion event in the drag reuses the
+    press's verdict. **`GRAPHPAN` is not a pan** — it is the *routing* latch:
     `waves_selected` uses it to keep an in-flight drag routed to the graph after
     the pointer leaves the strip (`check = (ui_state & GRAPHPAN) ||
     POINTINSIDE(...)`) and to **freeze `graph_master`**. So any new LMB gesture
@@ -1181,9 +1192,20 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
     keep the grab target inside the **plot box**, **and** add the gesture's own
     in-flight flag to the latch condition (the marker drag did:
     `(!xctx->graph_top || xctx->graph_marker_drag)`). The second is not
-    redundant, because `graph_top` is computed from `mousey_snap` while a hit
-    test uses the **unsnapped** pointer, so a coarse grid can put a boundary
-    press on the wrong side of the two tests.
+    redundant — but **not for the reason this entry used to give** (corrected
+    2026-07-30, issue 0177). Since issue 0143 `waves_callback` overwrites
+    `mousex_snap`/`mousey_snap` with the raw pointer at its head,
+    unconditionally and before any branch, and nothing writes them again before
+    the margin computation — so `graph_top` and the marker hit test read the
+    **same** coordinate and no grid setting can put a boundary press on opposite
+    sides of them. What survives is a **tolerance** gap: `graph_marker_press`
+    hit-tests with `GRAPH_MARKER_TOL` (8.0 screen px) around the anchor, so a
+    press up to 8 px ABOVE the plot-box top still grabs a marker anchored just
+    inside it while `graph_top` is already 1 — and without the extra term that
+    release is silently dropped. (The routing consumer is `waves_selected`'s
+    `check = (ui_state & GRAPHPAN) || POINTINSIDE(...)`, which reads the
+    unsnapped `xctx->mousex`/`mousey` and always did.) See landmine 44 for the
+    surfaces the 0143 override does **not** reach.
 
 37. **`setup_graph_data()` is not safe as a QUERY** (2026-07-28, waveform
     markers). Two independent traps, both real:
@@ -1469,6 +1491,55 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
     build a LOCAL `Graph_ctx` and let it die on return, and a pointer field would
     leak on each of them once per hover motion event.
     Spec: `doc/claude/specs/waveform_viewer_modes.md` §15.
+
+44. **"No snap grid in graphs" was a HANDLER-LOCAL override, not a property of
+    the canvas — and the difference is a whole region of every strip**
+    (2026-07-30, issue 0177). `xctx->mousex_snap`/`mousey_snap` are BORN
+    grid-quantised at the top of `callback()`
+    (`mousex_snap = my_round(mousex / c_snap) * c_snap`, `c_snap` =
+    `tclgetdoublevar("cadsnap")`), for **every event on every window**. Issue
+    0143 undid that at the head of `waves_callback()` — which covers exactly the
+    code reached THROUGH that handler and nothing else.
+    ⚠ **The useful question is not "is this override safe" (it is) but "what
+    does it not reach".** Everything that runs when `waves_selected()` DECLINES
+    the event. That includes a band just inside every strip rect, which contains
+    **the top of the LEGEND** (`legend_slot_hit` starts its horizontal slots at
+    `gr->ry1`, the rect top itself). In that band the schematic arm of
+    `handle_motion_notify` runs and paints `draw_crosshair()` **at**
+    `mousex_snap` — the snap grid, made visible, over the legend and nowhere
+    else. Measured, and it is what the 0175 eyeball reported. Eight further
+    grid-quantised surfaces were reachable the same way, including
+    `wviewer::graph_at_pointer` (the wheel's strip target, `wave_viewer.tcl`)
+    and `wviewer::over_graph` (the `a`/`b`/`s`/`m`/`t`/Delete key gate) — both
+    Tcl, both reading `xschem get mousex_snap`, both wrong near a band boundary.
+    **The fix is a per-context flag, `xctx->no_snap`, tested at the SOURCE** —
+    the one place that covers every present and future reader. Same shape as
+    `no_grid` and `graph_snap`, same blast-radius reasoning, armed by
+    `wviewer::open`. 0143's local override **stays**: an ordinary schematic
+    window can embed graphs, `waves_callback` runs on those too, and that
+    context is not `no_snap`.
+    ⚠ **A canvas property must be tested inside the DRAWER, never in the
+    caller's local.** The first cut gated `callback()`'s `draw_xhair` /
+    `snap_cursor` locals and that was wrong twice: `draw()` itself ends with
+    `if(tclgetboolvar("draw_crosshair")) draw_crosshair(7, 0);` (`draw.c`) and
+    `move.c` has three more such sites, none of which consults those locals — so
+    every ERASE path went dead while the PAINT paths stayed live, leaving an
+    orphaned crosshair on the waveform after each full redraw. And the locals
+    are INITIALISERS, evaluated before `handle_window_switching()` may reassign
+    `xctx`, so on the EnterNotify that switches into or out of a viewer they
+    describe the previous context. `draw_crosshair()`/`draw_snap_cursor()` now
+    carry the test themselves.
+    ⚠ **`waves_selected()`'s rect inset was in the wrong units** and had been
+    since it was written: `border = (int)(5.0 * tk_scaling)` is documented as
+    "screen pixels" but is subtracted from `r->x1`/`r->y1`, which are XSCHEM
+    units. One screen pixel is `xctx->zoom` xschem units, so the inset was
+    `1/zoom` too wide — MEASURED 21.9 canvas px where 6.7 were intended, which
+    is what put the legend's top rows out of reach of a click at all. Now
+    `border = 5.0 * tk_scaling * xctx->zoom`. This one is NOT viewer-scoped: it
+    changes the grab margin of embedded schematic graphs too, in the direction
+    of the value the comment always claimed.
+    Issue: `doc/claude/issues/0177-viewer-has-no-snap-grid.md` (per-region hover
+    table in §3).
 
 ---
 

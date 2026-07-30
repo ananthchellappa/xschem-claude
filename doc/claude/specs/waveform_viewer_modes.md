@@ -884,7 +884,7 @@ of trace names above it; "margins" is everything else inside the strip rect
 | RMB click | empty body | **Tcl** | the strip context menu (item 8) |
 | Shift+LMB, Alt+LMB | anywhere | — | swallowed by `strip_bindings` (issue 0149) |
 
-Three rules that are easy to get wrong and are asserted:
+Four rules that are easy to get wrong and are asserted:
 
 1. **Only the plot BODY clears.** A click that hits neither picking surface
    changes nothing, which is why the C arm carries `on_body` separately from
@@ -893,6 +893,32 @@ Three rules that are easy to get wrong and are asserted:
    whole window. A plain click never deselects what it lands on (0174 D3).
 3. **Ctrl+click never sweeps the other strips.** That is precisely how a
    selection spanning two strips is built.
+4. **Every row above is computed from RAW pixels, and nothing on this canvas is
+   grid-quantised** (issue 0177). The viewer window's context carries `no_snap`,
+   so `callback()` computes `mousex_snap`/`mousey_snap` as honest copies of
+   `mousex`/`mousey` *at the source* — the guarantee is structural, not a local
+   overwrite inside `waves_callback` that each new code path has to repeat (which
+   is what issue 0143 gave, and what let the snap grid reach the top of the
+   legend band; see landmine 44). The same property suppresses the two schematic
+   pointer glyphs, `draw_crosshair` and `draw_snap_cursor` — neither is a viewer
+   concept and the first paints *at* the snapped coordinate.
+
+### 15.7 What a HOVER draws, by region (issue 0177)
+
+No row of this table says "the schematic crosshair", and that is the contract.
+
+| region | routed to | drawn under the pointer on a plain hover |
+|---|---|---|
+| plot body | graph | the item-9 diamond, on the nearest sample of the nearest trace |
+| legend band | graph | **nothing** (the diamond gates on the plot box) |
+| left / bottom axis margin | graph | **nothing** |
+| the strip reorder grip | graph | **nothing** — the three grip bars are static, not hover feedback |
+| the rect-edge inset (5 screen px) and outside every rect | schematic canvas | **nothing**; `draw_hover` may outline the rect |
+
+The last row is the margin that keeps a graph rect grabbable at all. It is
+`5 * tk_scaling` **screen** pixels — before 0177 the conversion was missing and
+it was that many XSCHEM units, i.e. `1/zoom` times wider (measured 22 canvas px
+on a 1000x776 viewer), which swallowed the top of every legend entry.
 
 ### 15.2 Storage — two tokens, one writer
 
@@ -929,7 +955,10 @@ so the legend is the only way to select a trace there.
 
 The legend and the plot body are **disjoint** surfaces of one strip — neither
 answers where the other does — and they no longer live in different coordinate
-spaces at the call site (see landmine 43 for what they used to do).
+spaces at the call site (see landmine 43 for what they used to do). Neither is
+snapped either: the viewer's context sets `no_snap`, so `mousex_snap`/`mousey_snap`
+are raw copies of `mousex`/`mousey` everywhere in that window, not only inside
+`waves_callback` (issue 0177, landmine 44).
 
 ### 15.4 Drawing
 

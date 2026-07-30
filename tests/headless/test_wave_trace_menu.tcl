@@ -1410,17 +1410,49 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   # ... and a COARSE snap grid does not move any answer either: with snap 400 a
   # pointer in slot 2 snaps into a neighbouring slot, so a snapped-coordinate
   # query would report the neighbour
+  #
+  # ⚠ THIS HALF HAS TO DISARM no_snap TO KEEP ITS TEETH (issue 0177). Since 0177
+  # the viewer canvas is a `no_snap` context: callback() computes
+  # mousex_snap/mousey_snap unsnapped there, so `cadsnap` no longer perturbs
+  # anything on this window and the sabotage this leg is built to catch -- a
+  # query that reads the mouse mirror instead of its own arguments -- would sail
+  # straight through. Dropping the property for the duration of the probe puts a
+  # genuinely grid-snapped mirror back under the query, which is the only state
+  # in which the assertion means what its name says. The viewer's own behaviour
+  # under a coarse grid is covered by test_wave_snap SNG2/SNG4, with the property
+  # left armed.
   set tssnap [pcall {set ::cadsnap}]
+  set tsnosnap [pcall {xschem get no_snap}]
   set tsraw {}
   if {[string is double -strict $tssnap]} {
     catch {
       xschem set cadsnap 400
+      catch {xschem set no_snap 0}
+      # Prove the disarm took, i.e. that the "coarse grid" this leg claims to be
+      # testing under actually exists on this canvas.
+      # ⚠ THE WITNESS MOTION HAS TO LAND WHERE waves_selected DECLINES IT. A
+      # motion anywhere the graph owns is routed to waves_callback, which
+      # un-snaps both mirrors at its head (issue 0143) whatever no_snap says --
+      # so a probe inside the strip can never see a snapped mirror and the
+      # witness would fail for the wrong reason (measured: it did). Canvas (1,1)
+      # is inside the rect-edge inset, which is the one part of the window the
+      # schematic arm still handles.
+      tm_ev $vdrw <Motion> -x 1 -y 1
+      update
+      set tsmirror [pcall {xschem get mousex_snap}]
       set tsraw [list [wviewer::legend_at $vdrw 0 [expr {int(0.02 * $tsW)}] $tsrow] \
                       [wviewer::legend_at $vdrw 0 [expr {int(0.50 * $tsW)}] $tsrow] \
                       [wviewer::legend_at $vdrw 0 [expr {int(0.98 * $tsW)}] $tsrow]]
     }
     catch {xschem set cadsnap $tssnap}
+    catch {xschem set no_snap $tsnosnap}
+    if {[info exists tsmirror] && [string is double -strict $tsmirror]} {
+      check_true "TL4 the probe really ran under a coarse grid (mirror is on it)" \
+        [expr {abs($tsmirror - round($tsmirror/400.0)*400.0) < 1e-9}]
+    }
     check "TL4 a coarse snap grid does not move the legend answers" $tsraw {0 1 2}
+    check "TL4 ...and the viewer got its no_snap property back" \
+      [pcall {xschem get no_snap}] $tsnosnap
   } else {
     puts "SKIPPED: TL4 snap half (cadsnap unreadable)"
   }
