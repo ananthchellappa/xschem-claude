@@ -15,6 +15,23 @@ now does. Never push.
 Two things, and the second is the one with teeth: **today the selection cannot
 hold two traces at all.**
 
+⚠ **What 0174 round 2 already settled, so you do not re-decide it** (its review
+produced the plain-click rules directly):
+
+> clicking on a selected trace should not deselect it
+> clicking on empty space SHOULD deselect all currently selected traces
+> clicking on another trace SHOULD deselect all currently selected traces
+> if a few traces are selected and user clicks on A trace, then, only the
+> recently clicked-on trace will be selected.
+> It takes a CTRL+click to add to selection.
+> CTRL+Click on a selected trace will also deselect that trace.
+
+The first three are SHIPPED (0174, incl. the cross-strip sweep). The last three
+are THIS issue. Note what that means for the plain click once multi-select
+exists: it must **collapse** the selection to the one trace clicked — which the
+current one-assignment arm plus the cross-strip sweep already does for a scalar,
+and which whatever D1 picks must preserve.
+
 ## The recon is done. VERIFY it, do not re-derive it
 
 ### 1. Legend hit-testing is NOT missing. It is shipped, and fused to the wrong button
@@ -137,12 +154,22 @@ is the whole risk in this issue, and it is D1.
   new code renders as in an older build; and, if you pick (a), how the `-1`
   "none" sentinel coexists with a list. A silent format change here is the worst
   outcome available in this issue.
-- **D2: is the selection per-STRIP or per-WINDOW?** `hilight_wave` is per-rect, so
-  it is per-strip today. Ctrl-click across two strips must either be allowed
-  (window-wide selection, stored per-strip, queried as a fold) or refused. I lean
-  **window-wide, stored per-strip** — the storage is already per-strip and 0176's
-  DEL wants one window-wide answer. If you refuse cross-strip, say what a
-  Ctrl-click on another strip does (nothing? moves the selection?).
+- **D2: is the selection per-STRIP or per-WINDOW?** ✅ **ALREADY SETTLED — by
+  0174 round 2, so this is no longer an open question, only a constraint.**
+  `hilight_wave` is still stored per-rect, but the SELECTION is now **one trace
+  per WINDOW**: the LMB body arm clears the token on every other graph rect, so a
+  plain click on strip B de-selects whatever was bold on strip A. It was reported
+  at 0174's review — "clicking on another trace SHOULD deselect all currently
+  selected traces ... It is currently true only if the two traces are within the
+  same strip" — and measured as `{0 0}` (both strips bold) before the fix.
+  So: **window-wide selection, stored per-strip, queried as a fold** is what
+  exists. Ctrl-click across strips must ADD to that fold rather than reset it, and
+  the plain-click sweep in `callback.c` is the code you are extending, not
+  replacing. ⚠ Whatever multi-selection representation D1 picks, the sweep has to
+  keep working: it currently walks `xctx->rect[GRIDLAYER]` writing
+  `hilight_wave=-1`, and treats an ABSENT token as "nothing bold" (never as node
+  0 — `atoi("")` would say 0). See
+  `doc/claude/issues/0174-trace-pick-needs-proximity.md` defect (d).
 - **D3: is Ctrl+Button1 actually free on the viewer canvas?** ⚠ **Measure this,
   do not assume.** Issue 0149 swallowed Shift+B1 and Alt+B1 outright; `strip_bindings`
   sweeps the canvas; `waves_selected` (`callback.c`) has deliberate Button2 and
