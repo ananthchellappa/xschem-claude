@@ -164,7 +164,7 @@ looked at. **This list is the debt; do not let it grow silently.**
 | 8 — RMB strip context menu (**touched `scheduler.c`**) | `6ca278c6` | ✅ REVIEWED (PROCEED) — pixels still eyeball-only |
 | — `wviewer::open` intermittent (found by item 8's soak) | `5ddb8361` | ✅ REVIEWED with item 8 |
 | 6 — mid-drag shrink preview (**touched `draw.c`**) | `9727791a` | ✅ REVIEWED — **rejected Y-only and 10 %** |
-| 6 round 2 — both axes at 30 % | `780bd468` | ⚠ **TIMEOUT, went through unreviewed — NOT eyeballed** |
+| 6 round 2 — both axes at 30 % | `780bd468` | ✅ EYEBALLED OK 2026-07-29 — *"It's eyeball done and pass"* |
 | 7 follow-up — reuse an empty strip (any, D1/D2) | `8ac4ea0b` | ✅ EYEBALLED OK 2026-07-29 |
 | 8 follow-up — reuse the adjacent empty strip (D3/D4) | `1fd61bca` | ⚠ SUPERSEDED — D3 fired almost never; **reported as a defect** |
 | 8 follow-up round 2 — RELOCATE the empty strip (D3 v2) | `9b03489a` | ✅ EYEBALLED OK 2026-07-29 — *"Working ok. Eyeball result pass"* |
@@ -172,9 +172,11 @@ looked at. **This list is the debt; do not let it grow silently.**
 **ALL TEN ITEMS ARE NOW BUILT AND COMMITTED** (2026-07-29). Order run:
 4, 5, 1, 2, 3, 9, 10, 7, 8, 6.
 
-**Debt, and it is all of one kind — pixels nobody has looked at yet:**
+**Debt: NONE. Every pixel deliverable in this plan has now been looked at
+(2026-07-29).** The history of how is worth keeping, because three of the ten
+items reversed on sight and no suite here caught any of them:
 
-- **Items 7 and 8: CLEARED 2026-07-29.** The reuse follow-up was driven by hand
+- **Items 7 and 8: CLEARED.** The reuse follow-up was driven by hand
   through the real RMB menus (that is where `/tmp/Xschem.log.1` came from — the
   `move_trace_to_new_strip` / `split_strip` lines can only be produced by the
   context menus or Graph > Split Strip), and the verdict on the round-2 relocation
@@ -183,29 +185,24 @@ looked at. **This list is the debt; do not let it grow silently.**
   (`tk_popup` is spied — a live popup grabs and swallows the rest of the run).
   ⚠ What is confirmed is the **gesture and the resulting layout**, not a
   pixel-by-pixel review of the menu widget.
-- ⚠ **Item 6 round 2 (`780bd468`) is NOT covered by that pass** — it is a
-  different gesture (mid-drag shrink of the dragged trace) and nobody has watched
-  it. It remains the one open eyeball item, and it is the one with no automated
-  check at all.
-- **Item 6 is the worst of the three, and deliberately so.** The shrink itself
-  has **no** automated check and cannot have one: the scaling sits between
+- **Item 6 round 2 (`780bd468`): CLEARED** — *"It's eyeball done and pass"*. This
+  was the last one standing, and it stood alone for a while: it landed in a
+  session that timed out, so its review panel never came up.
+- **Item 6 was the worst of the three, and deliberately so.** The shrink has
+  **no** automated check and cannot have one: the scaling sits between
   `S_Y()` and `XDrawLines`, so deleting it leaves all 46 checks green. Everything
-  the suite proves is plumbing. **Whether the trace visibly shrinks is entirely
-  an eyeball item.**
+  its suite proves is plumbing. **Whether the trace visibly shrank was entirely an
+  eyeball item, and only the eyeball closed it.**
 
 Three green suites, ~300 checks between them, and not one of them can see. Do not
-let the counts read as confirmation. (Two of the three have since been driven by
-hand and passed; **item 6 round 2 is the one still standing on counts alone.**)
-
-> **Still open as of 2026-07-29, after issue 0173.** Issue 0173 (Ctrl-Shift-4
-> leaked the xschem context) touched `wviewer::in_ctx`, `status_refresh` and
-> `readout_refresh` — none of them on the item-6 mid-drag shrink path, so **item 6
-> round 2 (`780bd468`) is untouched and still un-eyeballed.** It has not been
-> cleared by anything since.
+let the counts read as confirmation — that lesson outlives this plan. The
+correction rate here was **3 items in 10 reversed on sight** (item 1's all-bold
+legend, item 9's snap cursor after two rounds, item 6's Y-only 10 % shrink), every
+one of them green before it was rejected.
 
 The `drawline` change in item 2 — the one thing the
 suite structurally could not verify, since nothing here can read back an X GC's
-dash pattern — has now been confirmed by eye against ordinary schematics.
+dash pattern — has also been confirmed by eye against ordinary schematics.
 
 ---
 
