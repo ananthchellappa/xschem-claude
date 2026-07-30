@@ -396,6 +396,36 @@ pair stayed GREEN under (a): a uniform shift moves the boundary but does not
 remove it. The *"near 1/3 of the width, not 1/2"* leg is what catches that, and
 it is the reason the boundary block has three legs and not two.
 
+## Suites
+
+Full waveform battery, DISPLAY arm: **15/15**, every count as pinned
+(`test_wave_snap` 59, `test_wave_grid` 80, `test_wave_empty_strips` 94,
+`test_wave_markers` 712, `test_wave_clear_all` 68, `test_ase_plot` 150,
+`test_wave_split_strip` 221, `test_wave_drag_preview` 46, `test_ase_persist` 109,
+`test_ase_unnamed_net` 28, `test_ase_window` 166) plus the four this issue moved:
+`test_wave_trace_menu` 249 → **300**, `test_wave_legend` 44 → **77**,
+`test_wave_viewer` 356 → **359**, `test_wave_modes` 410 → **413**.
+nogui arm **5/5**: `test_wave_legend` 33 → **66**, `test_wave_modes` 137 → **140**,
+`test_wave_markers` 328, `test_wave_viewer` 48, `test_wave_trace_menu` 71.
+
+**10× soak of the whole battery: 146/150.** (0174's was 136/150 on the same
+machine.) The four non-passes are four *different* legs in three *different*
+suites, each at 1-in-10, and every one of them is a documented WSLg
+synthetic-gesture or keysym family that is upstream of everything changed here:
+
+| leg | rate | why it is not this issue |
+|---|---|---|
+| `test_ase_plot` P4/P6 | 1/10 | the documented always-flaky ESC + wire-click Direct-Plot legs. Schematic side; never enters `waves_callback` |
+| `MG13 Ctrl+Shift+4 resolves to <Control-Key-dollar>` | 1/10 | Tk keysym string resolution. No C graph code at all. Also 1/10 in 0174's soak |
+| `MF1 the anchor really SLID` | 1/10 | **measured 1/10 on PRISTINE code** during 0174's control run |
+| `MX9 nothing was logged` | 1/10 | a synthetic `<Key-Escape>` that arrived late, so the drag was not cancelled and the release COMMITTED the marker move (which logs). With `graph_marker_drag` still set the release is taken by the MARKER branch — the wave-select arm is the `else if` below it and never runs |
+
+⚠ **`TG9`, the 4-in-10 pristine flake, did not fire in these ten runs.** That is
+luck, not a fix — do not read it as a change.
+
+**Zero failures in 150 runs from any leg this issue added** (`TL*`, `TS*`,
+`LS*`, the retargeted `WB-legend`).
+
 ## Not verified
 
 - **Pixels.** That N bold strokes and N bold-italic legend entries actually read
