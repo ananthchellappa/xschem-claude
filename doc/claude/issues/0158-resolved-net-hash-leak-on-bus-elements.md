@@ -90,7 +90,7 @@ reddens 12 legs.
 
 **It happens BEFORE the hierarchy lookups**, which is what element 0 already did — the
 `hier_attr`/`portmap` resolution has always seen a stripped name. The portmap path cannot
-re-introduce a `#` afterwards, because portmap *values* are stripped at `actions.c:3568-3572` when
+re-introduce a `#` afterwards, because portmap *values* are stripped at `actions.c:3594-3599` when
 the map is built. The `hier_attr` path **can** — see the separate finding at the end of this file;
 that escape is pre-existing, was equally true for element 0, and is deliberately not fixed here.
 
@@ -181,7 +181,7 @@ Measured on the 0158 fixture with the instance carrying `LOC=#foo A=#bar`, desce
 
 Pre-existing and untouched by this fix — the same escape existed for element 0 before it. It is a
 different source from 0158's (the *input token* vs a *resolved value*), and the portmap path is
-already immune because `actions.c:3568-3572` strips when the map is built.
+already immune because `actions.c:3594-3599` strips when the map is built.
 
 Opened as **issue 0163**, which also records the bigger problem found on the same line: that
 attribute lookup is completely unguarded, so **any** instance attribute whose name collides with a

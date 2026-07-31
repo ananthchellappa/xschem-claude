@@ -113,7 +113,7 @@ prefix) and `GND`.
 > Fixture trap: the parent wire must land on the pin **rect centre** (`-20,0` for `X1` at the
 > origin, from `B 5 -22.5 -2.5 -17.5 2.5`). The first draft ended it at `-22,0`, so `A` dangled
 > onto an auto-named `#net1` and `RB15` was asserting `X1.LOC,GND,net1` — an accident that also
-> quietly depended on the `#` strip at `actions.c:3570` (`single_n_ptr = single_n + 1` when
+> quietly depended on the `#` strip at `actions.c:3596` (`single_n_ptr = single_n + 1` when
 > building the portmap). Caught in review; the leg now asserts the intended `X1.LOC,GND,TOP` and
 > `RB15a` pins the port→parent resolution on its own.
 

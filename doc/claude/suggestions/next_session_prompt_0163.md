@@ -84,7 +84,7 @@ subcircuits too — that is how both symptoms were measured.
   1. How to narrow the lookup: leave it and only fix `#` · denylist the known non-net fields ·
      gate on "is this really an LCC instance" · require the value to look like a net name.
   2. Whether to strip the `#` off the attribute value (the portmap path already strips at build
-     time, `actions.c:3568-3572`, and a user `lab=#foo` netlists as plain `foo`).
+     time, `actions.c:3594-3599`, and a user `lab=#foo` netlists as plain `foo`).
   3. How reachable (a) is in a real design. **Do this sweep first and bring me the number**: look
      for child nets named like common instance attributes (`value`, `name`, `model`, `m`,
      `spice_ignore`, `w`, `l`, …) across xschem_library/, xschem_libs_newsym/, tests/, sky130A/,

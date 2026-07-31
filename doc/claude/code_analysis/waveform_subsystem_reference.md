@@ -964,7 +964,7 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
     netlist for exactly the names 0156 declared legal; **(c)** never strip a bare
     `"#"` to `""` — the `,` separator is written regardless of what the element
     produced, so an emptied element emits `a,`. The portmap path is immune because
-    `actions.c:3568-3572` strips at build time; the attribute path got its own
+    `actions.c:3594-3599` strips at build time; the attribute path got its own
     strip in issue 0163 — see landmine 29.
 
 27. **A `.save` card ngspice cannot parse is fatal ONLY when it is the sole

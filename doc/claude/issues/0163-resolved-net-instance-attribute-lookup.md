@@ -66,7 +66,7 @@ empty with no error. In a netlist card it names a net that does not exist.
 This is pre-existing, not something 0158 introduced — before 0158 the same escape applied to the
 first element of a bus. The other route into this function, the **portmap** (nets passed properly
 through pins), is already immune, because it strips the `#` when the map is built
-(`src/actions.c:3568-3572`).
+(`src/actions.c:3594-3599`).
 
 ## Where it is
 
@@ -202,7 +202,7 @@ So the child's port really is on node `#hfoo`. Stripping did not clean up a name
 *different* node, and because `get_raw_index()` never strips `#` either, it would have resolved
 to that wrong node rather than failing loudly.
 
-The portmap path strips (`actions.c:3568-3572`) for a reason that does not transfer: a net passed
+The portmap path strips (`actions.c:3594-3599`) for a reason that does not transfer: a net passed
 through a *pin* as `#net1` really is `net1` everywhere downstream. Each path must follow its own
 path's netlist. The strip was reverted; legs AS1b/AS13/AS18 pin the verbatim behaviour, with AS1b
 reading the `#` back out of the generated call line so the justification is in the fixture, not

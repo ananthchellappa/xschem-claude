@@ -2703,7 +2703,7 @@ char *resolved_net_from(const char *net, int from_level)
         if(!xctx->tok_size) ptr = get_tok_value(xctx->hier_attr[level - 1].templ, resolved_net, 0);
         if(ptr && ptr[0]) {
           /* Do NOT strip a leading '#' off the value here, unlike the input strip above
-           * and unlike the portmap path (actions.c:3568-3572). MEASURED, ngspice-42: an
+           * and unlike the portmap path (actions.c:3594-3599). MEASURED, ngspice-42: an
            * extra= value is passed onto the subckt call line VERBATIM (`X1 topn #hfoo c`),
            * and ngspice names that node `#hfoo`. A wire LABELLED `#hfoo` netlists as plain
            * `hfoo` -- so in one deck the two are DIFFERENT, unconnected nodes:

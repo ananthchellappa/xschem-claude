@@ -33,8 +33,9 @@ window", "the open question", "File > Open" and so on in prose. Match the
 
 | issue | one line |
 |---|---|
-| **0165** | netlist hash node with two names. Prompt rewritten (see above). |
+| **0165** | netlist hash node with two names. Issue doc **re-measured and corrected 2026-07-30** (7 wrong claims fixed, all five backends measured). Blocked on decisions D1-D4 from the user. |
 | **0166** | resolved net ignores the containing cell template. Spawned by 0164 shipping incomplete. |
+| **0179** | tEDAx netlist **segfaults** on `extra=` without `extra_pinnumber=`. Found while measuring 0165 D3; minimally reproduced, no fix attempted. |
 
 ## Viewer / waveform thread
 
