@@ -1506,6 +1506,30 @@ static int name_nodes_of_pins_labels_and_propagate()
         xctx->hilight_nets=1;
       }
 
+      /* A label whose expansion COLLAPSES to nothing -- a re-multiplied zero-multiplicity
+       * list ("2*(0*a)", "0*a*2") or a bus range with a zero/negative repetition count
+       * ("a[3:0:1:0]", "a[3:0:1:-1]") -- used to segfault expandlabel(). It now falls back
+       * to the original label text with multiplicity -1 (parselabel.l:150-153), which is
+       * silent: the node the label was meant to name simply never appears. Warn once per
+       * schematic, on the same print_erc gate and in the same style as the checks above.
+       * expandlabel_collapsed (parselabel.l) is set ONLY by the new guards, never by the
+       * long-standing harmless forms ("0*a", "a*0", "0*a,b", "(a,b)*0"), so schematics that
+       * work today are not nagged. See doc/claude/issues/
+       * 0182-expandlabel-zero-negative-multiplicity-crash.md */
+      if(print_erc && inst[i].node[0]) {
+        int collapse_mult;
+        expandlabel(inst[i].node[0], &collapse_mult);
+        if(expandlabel_collapsed) {
+          char str[2048];
+          my_snprintf(str, S(str),
+            "Warning: instance: %s: net name '%s' has a zero-width sub-expression and "
+            "expands to nothing; it names no node",
+            inst[i].instname ? inst[i].instname : "?", inst[i].node[0]);
+          statusmsg(str,2);
+          inst[i].color = -PINLAYER;
+          xctx->hilight_nets=1;
+        }
+      }
 
       /* do not assign node if pin/label has no 'lab' attribute */
       #if 0

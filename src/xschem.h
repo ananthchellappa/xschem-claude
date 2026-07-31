@@ -1860,6 +1860,7 @@ extern int text_ps;
 extern double cadhalfdotsize;
 extern char bus_char[];
 extern int yyparse_error;
+extern int expandlabel_collapsed; /* issue 0182, defined in parselabel.l */
 extern char *xschem_executable;
 extern double tk_scaling;
 extern Tcl_Interp *interp;
