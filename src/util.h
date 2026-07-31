@@ -33,6 +33,9 @@ extern int my_strncpy(char *d, const char *s, size_t n);
 extern int strboolcmp(const char *str, const char *boolean);
 extern size_t my_fgets_skip(FILE *fd);
 extern size_t my_mstrcat(int id, char **str, const char *append_str, ...);
+/* append one key=value attribute, writing an EMPTY value as key="" (issue 0183) */
+extern size_t my_mstrcat_tok(int id, char **str, const char *key, const char *value,
+                             const char *tail);
 extern size_t my_snprintf(char *str, size_t size, const char *fmt, ...);
 extern size_t my_strcat(int id, char **, const char *);
 extern size_t my_strcat2(int id, char **, const char *);

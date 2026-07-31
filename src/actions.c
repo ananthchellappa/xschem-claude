@@ -1523,7 +1523,14 @@ int create_pin(double x, double y, const char *name, const char *dir, unsigned s
   my_snprintf(nums, S(nums),
     " show_pinname=true name_dx=%g name_dy=%g name_size=%g%s",
     dx, dy, size, flip ? " name_flip=1" : "");
-  my_mstrcat(_ALLOC_ID_, &prop, "name=", name, " dir=", dir, nums, NULL);
+  /* `name` may legitimately be "" -- the guard above turns a NULL into one, and the
+   * argc>5 form of `xschem add_symbol_pin` (scheduler.c:1677) passes argv[4] through
+   * unguarded, unlike the other two callers. An unquoted empty value would make
+   * get_tok_value() read " dir=in" as the NAME and leave the rect with no `dir` at
+   * all -- and dir drives netlist port direction, ERC and set_pin_type. Issue 0183.
+   * `dir` needs no such care: it is forced non-empty a few lines above. */
+  my_mstrcat_tok(_ALLOC_ID_, &prop, "name", name, NULL);
+  my_mstrcat(_ALLOC_ID_, &prop, " dir=", dir, nums, NULL);
   storeobject(-1, x - 2.5, y - 2.5, x + 2.5, y + 2.5, xRECT, PINLAYER, sel, prop);
   my_free(_ALLOC_ID_, &prop);
   ri = xctx->rects[PINLAYER] - 1;
@@ -2623,7 +2630,12 @@ int place_symbol(int pos, const char *symbol_name, double x, double y, short rot
 
     my_strdup(_ALLOC_ID_, &xctx->inst[n].prop_ptr,
           subst_token(xctx->inst[n].prop_ptr, "attach", xctx->inst[n].instname));
-    my_mstrcat(_ALLOC_ID_, &prop, "name=", xctx->inst[n].instname, "\n", NULL);
+    /* instname is "" (never NULL -- set_inst_flags() fills it via my_strdup2 +
+     * get_tok_value) when the scope symbol's template carries no name= token. An
+     * unquoted empty value here would make the floater's `name` swallow the whole
+     * "flags=graph,unlocked" line below, so the rect would not be a graph at all.
+     * Issue 0183. */
+    my_mstrcat_tok(_ALLOC_ID_, &prop, "name", xctx->inst[n].instname, "\n");
     my_mstrcat(_ALLOC_ID_, &prop, "flags=graph,unlocked\n", NULL);
     my_mstrcat(_ALLOC_ID_, &prop, "lock=1\n", NULL);
     my_mstrcat(_ALLOC_ID_, &prop, "color=8\n", NULL);
@@ -3199,7 +3211,14 @@ void get_additional_symbols(int what)
           my_strdup2(_ALLOC_ID_, &sym, add_ext(rel_sym_path(sch), ".sym"));
         }
 
-        my_mstrcat(_ALLOC_ID_, &symname_attr, "symname=", get_cell(sym, 0), NULL);
+        /* get_cell() returns "" whenever the basename is nothing but an extension --
+         * `schematic=foo/` yields sym == "foo/.sym", and get_trailing_path()
+         * (token.c:1434-1440) NUL-terminates at the '.' and then returns the text after
+         * the '/'. Measured reachable: that instance logs `has_included_subcircuit: :`
+         * with an empty cell name. Unquoted, the empty symname would swallow the whole
+         * " symref=..." that follows and translate3() would resolve @symname to the
+         * symref and @symref to nothing. Issue 0183. */
+        my_mstrcat_tok(_ALLOC_ID_, &symname_attr, "symname", get_cell(sym, 0), NULL);
         my_mstrcat(_ALLOC_ID_, &symname_attr, " symref=", get_sym_name(i, 9999, 1, 1), NULL);
         my_strdup(_ALLOC_ID_, &spice_sym_def,
             translate3(spice_sym_def, 1, xctx->inst[i].prop_ptr,

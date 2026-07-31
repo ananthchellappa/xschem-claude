@@ -41,6 +41,15 @@ src/actions.c:1726:  my_mstrcat(_ALLOC_ID_, res, "{", type, " ", idxbuf, " {", n
 > followed by whitespace as "the value is the next token". So the empty case IS a hazard,
 > just a different one, and **this audit did not sweep for it**. See issue 0183 and
 > `doc/claude/suggestions/next_session_prompt_0183.md`, which carries the candidate list.
+>
+> **That sweep has since been RUN and issue 0183 is FIXED** (2026-07-31). Three producers
+> swallowed a following token and were repaired via the new
+> `my_mstrcat_tok()` (`util.c`), which writes an empty value as the quoted `key=""`;
+> six more emit a *trailing* `key=`, which reads back as absent and steals nothing, and
+> are recorded unfixed. Full result table in
+> `doc/claude/issues/0183-empty-name-value-swallows-next-property-line.md`.
+> **When building a property string, prefer `my_mstrcat_tok()` over a bare
+> `"key="`, value pair whenever the value can be empty and anything follows it.**
 
 ## Why an EMPTY string is not the same hazard *to `my_mstrcat`*
 
