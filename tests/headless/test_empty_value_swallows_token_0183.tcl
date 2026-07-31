@@ -70,6 +70,8 @@
 #   EC*  create_symbol() (xschem.tcl): a scripting entry point that writes a .sym
 #   EA*  make_sym.awk / make_sym_lcc.awk: "make symbol from schematic"
 #   ER*  the quoted empty value survives save + reload, in both a .sym and a .sch
+#   EV*  make_sch_from_vhdl.awk: a wrapped port declaration
+#   EX*  viewdraw_import.awk: a pin with no label text
 #   EW*  the BLANK variant: whitespace and ';' are empty to the tokenizer too
 #   EN*  the non-defects, pinned so they stay non-defects
 #
@@ -559,6 +561,82 @@ xschem load $wsym
 set wi [pin_with_empty_name]
 check "EW4 create_symbol treats a blank list element as empty, not as a name" \
   [expr {$wi < 0 ? "NOTFOUND" : [rtok 5 $wi dir]}] {in 1}
+
+# --- EV: make_sch_from_vhdl.awk, the VHDL importer -----------------------------
+# It emits `{name=p0 sig_type=<type> lab=<port> }`. A port declaration WRAPPED over
+# two lines -- legal VHDL, and common in wide port lists --
+#
+#     CLK : in
+#       std_logic;
+#
+# leaves $4 empty on the line that decides the direction, so sig_type is empty and
+# swallows `lab=CLK`: the generated schematic's port has NO net name. Measured
+# pre-fix: sig_type=<<lab=CLK>> with lab absent. The signal branch of print_sch()
+# already quoted its sig_type, so quoting was this file's own existing idiom.
+# The script is a /bin/sh wrapper around a gawk program and writes <entity>.sch
+# into the CURRENT directory, hence the sh -c cd.
+set vhdlawk [file join $repo src make_sch_from_vhdl.awk]
+if {[catch {exec sh -c {command -v gawk}} gawkpath]} {
+  puts "SKIP: gawk not installed -- EV legs (make_sch_from_vhdl.awk) not run"
+} else {
+  write_file [file join $scratch wrapped.vhdl] "library ieee;
+use ieee.std_logic_1164.all;
+
+entity wrapped is
+  port (
+    CLK : in
+      std_logic;
+    Q : out std_logic
+  );
+end wrapped;
+
+architecture rtl of wrapped is
+begin
+end rtl;"
+  set vres [catch {exec sh -c "cd [file join $scratch] && sh $vhdlawk wrapped.vhdl"} vmsg]
+  set vsch [file join $scratch wrapped.sch]
+  set vprop {}
+  if {[file exists $vsch]} {
+    set f [open $vsch r]; set vtxt [read $f]; close $f
+    # the ipin instance line; its property block runs to the closing brace
+    regexp {C \{devices/ipin\}[^\{]*\{([^\}]*)\}} $vtxt -> vprop
+  }
+  check "EV1 the VHDL converter ran and emitted the wrapped-declaration port" \
+    [list $vres [expr {$vprop eq {} ? "EMPTY" : "ok"}]] {0 ok}
+  check "EV2 an empty sig_type does not eat the port's lab" [tok $vprop lab] {CLK 1}
+  check "EV3 ...and reads back as present-and-empty" [tok $vprop sig_type] {{} 1}
+  check "EV4 the well-formed port on the next line is untouched" \
+    [expr {[regexp {C \{devices/opin\}[^\{]*\{([^\}]*)\}} $vtxt -> voprop] ?
+           [list [tok $voprop sig_type] [tok $voprop lab]] : "NOTFOUND"}] \
+    {{std_logic 1} {Q 1}}
+}
+
+# --- EX: viewdraw_import.awk, the ViewDraw importer ----------------------------
+# `b = b " {name=" pin_name " dir=" pin_dir "}"`, with pin_name = $10 of the pin's
+# `L` (label) line. A pin whose L line carries no text_label field gives $10 == ""
+# and the imported symbol pin loses its direction entirely. Measured pre-fix on the
+# SHIPPED fixture with its label stripped: {name= dir=in} -> name=<<dir=in>>, no dir.
+set vdawk [file join $repo xschem_library viewdraw_import viewdraw_import.awk]
+set vdlib [file join $repo xschem_library viewdraw_import xschem_lib]
+set vdsrc [file join $repo xschem_library viewdraw_import test sym INPUT.1]
+if {![file exists $vdsrc]} {
+  puts "SKIP: viewdraw fixture missing -- EX legs not run"
+} else {
+  set f [open $vdsrc rb]; set vdtxt [read $f]; close $f
+  # drop the trailing text_label field from the L line, keeping the CRLF endings
+  set vdtxt [string map [list "L 17 7 5 0 9 0 1 0 IN\r" "L 17 7 5 0 9 0 1 0\r"] $vdtxt]
+  set vdin [file join $scratch NOLABEL.1]
+  set f [open $vdin wb]; puts -nonewline $f $vdtxt; close $f
+  set xres [catch {exec awk -f $vdawk $vdin $vdlib} xout]
+  set xprop {}
+  foreach l [split $xout \n] {
+    if {[regexp {^B 5 .*\{(name=.*)\}$} $l -> p]} { set xprop $p }
+  }
+  check "EX1 the ViewDraw converter ran and emitted the pin box" \
+    [list $xres [expr {$xprop eq {} ? "EMPTY" : "ok"}]] {0 ok}
+  check "EX2 a label-less pin does not eat its dir token" [tok $xprop dir] {in 1}
+  check "EX3 ...and its name reads back as present-and-empty" [tok $xprop name] {{} 1}
+}
 
 # --- EN: the non-defects, pinned ----------------------------------------------
 # actions.c:1426 builds "name=l0 lab=", netname, " text_size_0=", szbuf -- which

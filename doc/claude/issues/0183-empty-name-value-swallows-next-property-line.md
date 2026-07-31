@@ -1,14 +1,15 @@
 # 0183 — an empty attribute value swallows the next property token
 
-Status: **FIXED** 2026-07-31 — **ten** producers repaired over three sweeps. The first
+Status: **FIXED** 2026-07-31 — **twelve** producers repaired over three sweeps. The first
 sweep ran as five slices and two died on API errors; their re-run held three of the first
 six defects. A third, pattern-agnostic sweep then found four more — the two on the "make symbol
 from schematic" path, which is the most reachable of the lot, and the gEDA importer.
 Area: `src/token.c` (`str_is_blank()`), `src/util.c` (`my_mstrcat_tok()`), `src/actions.c` (`create_pin()`,
 `place_symbol()`, `get_additional_symbols()`), `src/save.c`, `src/token.c`,
 `src/xschem.tcl` (`schpins_to_sympins()`, `create_symbol()`),
-`src/make_sym.awk`, `src/make_sym_lcc.awk`, `src/gschemtoxschem.awk`
-Tests: `tests/headless/test_empty_value_swallows_token_0183.tcl` — **62 checks**
+`src/make_sym.awk`, `src/make_sym_lcc.awk`, `src/gschemtoxschem.awk`,
+`src/make_sch_from_vhdl.awk`, `xschem_library/viewdraw_import/viewdraw_import.awk`
+Tests: `tests/headless/test_empty_value_swallows_token_0183.tcl` — **69 checks**
 Found: 2026-07-31, by the `my_mstrcat` NULL-vararg audit that issue 0180 spawned
 Related: `doc/claude/code_analysis/my_mstrcat_null_vararg_audit.md`, 0180
 
@@ -80,8 +81,8 @@ varargs (`util.c:783`), which is exactly what produces the bare `key=` in the fi
 so wrapping the variable in `"\"" , value, "\""` would not help.
 
 It lives in `util.c` rather than `actions.c` because the class is not file-local, and that
-turned out to be the right call: the ten repaired sites are spread over `actions.c`,
-`save.c`, `token.c`, `xschem.tcl` and three awk scripts. The four sites that do not build
+turned out to be the right call: the twelve repaired sites are spread over `actions.c`,
+`save.c`, `token.c`, `xschem.tcl` and five awk scripts. The six sites that do not build
 their string with `my_mstrcat` — `save.c`'s `my_snprintf`, the Tcl `puts`, the awk
 `printf` — each write the quoted empty form inline instead.
 
@@ -389,18 +390,53 @@ exercising component attributes (including values with spaces, which take the
 under the pre-fix and post-fix scripts. The output only changes where a value is actually
 empty.
 
+### Sites 11 and 12 — the VHDL and ViewDraw importers
+
+Both were recorded as "empty case not constructible" and then constructed. Neither needed
+exotic input.
+
+**`make_sch_from_vhdl.awk`** emits `{name=p0 sig_type=<type> lab=<port> }`. A port
+declaration **wrapped over two lines** — legal VHDL, ordinary in wide port lists — leaves
+`$4` empty on the line that decides the direction, so `sig_type` is empty and eats the
+port's label:
+
+```vhdl
+CLK : in
+  std_logic;
+```
+```
+pre-fix   {name=p0 sig_type= lab=CLK }   ->  sig_type == "lab=CLK", lab ABSENT
+post-fix  {name=p0 sig_type="" lab=CLK } ->  both correct
+```
+
+A port with no net name in the generated schematic is a silent disconnection. Eight
+emission sites (four in `print_sch()`, four in `print_signals()`) now go through a
+`blank_attr()` helper, covering the `lab=` value as well as the type — and quoting was
+already this file's own idiom: the `signal` branch of `print_sch()` writes
+`sig_type=\"" sig_type "\""` for exactly this reason.
+
+**`viewdraw_import.awk:308`** builds `{name=<pin_name> dir=<pin_dir>}` with
+`pin_name = $10` of the pin's `L` (label) line. A pin whose `L` line carries no
+`text_label` field gives `$10 == ""`, and the imported symbol pin loses its direction.
+Measured on the **shipped** fixture `test/sym/INPUT.1` with its label field stripped:
+`{name= dir=in}` → `name` == `dir=in`, no `dir`. `dir` itself needs no care — it is forced
+to a default a few lines above.
+
+Legs **EV1–EV4** and **EX1–EX3**. The EV legs skip with a visible `SKIP:` line if `gawk`
+is absent, since that script is a `/bin/sh` wrapper around a gawk program.
+
+*Regression:* both converters produce **byte-identical output** before and after, over the
+whole shipped ViewDraw corpus (42 files: `test/`, `test2/`, `rotation.1`, `align.1`) and a
+four-file VHDL corpus including `xschem_library/examples/loading.vhdl` and a structural
+entity with generics, buses and a component instantiation. The only VHDL difference is the
+output **directory name**, which `print_signals()` stamps into every instance path from
+`basename($PWD)` — the same embedded-path trap `netlist_diff.sh` documents.
+
 **Recorded, deliberately unfixed:**
 
-| script | sites | why recorded |
+| script | site | why recorded |
 |---|---|---|
-| `src/make_sch_from_vhdl.awk` | `:919 :931 :940 :949` `print_sch()`, `:1031 :1049 :1063 :1077` `print_signals()` — `sig_type=` / `generic_type=` | needs a VHDL input where a signal or generic has no type; not constructed |
-| `xschem_library/viewdraw_import/viewdraw_import.awk` | `:308` `name=` (`dir=` is trailing → mild) | same, for viewdraw input |
 | `src/gschemtoxschem.awk:634` | slotted `pinnumber=` | genuinely **last** in the block, so it steals nothing. It is however committed proof that the converter emits bare `key=` into real output: `xschem_library/gschem_import/sym/lm324-1.sym:60`, `lm2902-1.sym:60` and `max4662-2.sym:66` each carry one |
-
-The fix shape for the first two is the one used everywhere else — write `key=""` when the
-value is empty, one line per site. They are left for a decision rather than edited blind:
-unlike gschemtoxschem, I could not reproduce their empty case end to end, and a wrong edit
-to a converter only surfaces when someone imports.
 
 **`place_sym_pins.tcl:38`** (`xschem rect … "name=$name dir=$dir"`) is real in shape but its
 `$name` comes from `foreach {name num} $pinlist` over a two-column pin-list file, where an
@@ -485,7 +521,7 @@ rather than stored, but a `.sym` written by `create_pin` keeps it permanently.
 
 ## Verification
 
-* `tests/headless/test_empty_value_swallows_token_0183.tcl` — 62 checks. **RED verified**
+* `tests/headless/test_empty_value_swallows_token_0183.tcl` — 69 checks. **RED verified**
   against the pre-fix binary: **12 FAILED / 23 passed**; after the fix, 35/35.
   (Re-verified independently on 2026-07-31 by rebuilding a true pre-fix binary from
   `bf5bfde0` — the six changed files restored with `git show <sha>:src/<f> > src/<f>`,
