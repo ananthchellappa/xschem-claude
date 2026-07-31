@@ -270,8 +270,10 @@ function endfile(f) {
   # lab= gives an empty label_pin, which is exactly what "make symbol from
   # schematic" hands us. `name=""` reads back as present-and-empty and leaves the
   # following token alone. Issue 0183.
-  nametok = (label_pin[i] == "") ? "\"\"" : label_pin[i]
-  gentok  = (sig_type == "")     ? "\"\"" : sig_type
+  # a value of nothing but separator characters is blank to get_tok_value() too --
+  # ';' is one of them, see str_is_blank() in token.c -- so test for that, not for "".
+  nametok = (label_pin[i] ~ /^[ \t\n;]*$/) ? "\"\"" : label_pin[i]
+  gentok  = (sig_type     ~ /^[ \t\n;]*$/) ? "\"\"" : sig_type
 
   if(dir=="generic")
   {

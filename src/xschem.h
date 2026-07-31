@@ -2547,6 +2547,8 @@ extern void print_vhdl_element(FILE *fd, int inst);
 extern void print_verilog_element(FILE *fd, int inst);
 extern int get_inst_pin_number(int inst, const char *pin_name);
 extern const char *get_tok_value(const char *s,const char *tok,int with_quotes);
+/* NULL, empty, or all separator chars -- a value a producer MUST quote (issue 0183) */
+extern int str_is_blank(const char *s);
 extern const char *list_tokens(const char *s, int with_quotes);
 extern char **parse_cmd_string(const char *cmd, int *argc);
 extern double get_attr_val(const char *str);

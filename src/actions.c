@@ -1417,8 +1417,12 @@ int add_pin_stubs(const char *prefix, const char *suffix, int inst_prefix)
     if(inst_prefix && instname[0]) my_mstrcat(_ALLOC_ID_, &netname, instname, "_", NULL);
     my_mstrcat(_ALLOC_ID_, &netname, prefix, pinname, suffix, NULL); /* empty parts are skipped */
     /* a nameless pin with no prefix/suffix yields an empty net name: skip it rather than drop
-     * a blank lab= net-label (which would name the empty net / error at netlist time). */
-    if(!netname || !netname[0]) { my_free(_ALLOC_ID_, &netname); continue; }
+     * a blank lab= net-label (which would name the empty net / error at netlist time).
+     * str_is_blank(), not netname[0]: a prefix of " " over a nameless pin passed the old
+     * test and emitted `name=l0 lab=  text_size_0=0.2`, whose lab reads back as
+     * "text_size_0=0.2" with text_size_0 destroyed. Measured via
+     * `xschem add_pin_stubs -prefix { }`. Issue 0183. */
+    if(str_is_blank(netname)) { my_free(_ALLOC_ID_, &netname); continue; }
     /* stub wire: pin (start) -> stub end */
     storeobject(-1, g.x1, g.y1, g.x2, g.y2, WIRE, 0, 0, NULL);
     /* lab_pin at the stub end, oriented so the text reads outward; unique name via uniquify */

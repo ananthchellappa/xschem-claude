@@ -44,12 +44,22 @@
 #     Measured pre-fix: the embedded graph floater reads
 #     name=<<flags=graph,unlocked>> with flags=<<>>, so it is not a graph.
 #
-# NOT a defect, though it looks like a textbook one: actions.c:1426
+# Half a defect: actions.c:1426
 # `"name=l0 lab=", netname ? netname : "", " text_size_0=", szbuf`. The
-# `if(!netname || !netname[0]) { ...; continue; }` five lines above it means the
-# empty case never reaches the concatenation. EN1 pins that, so a future
-# refactor that drops the guard fails here rather than shipping a wire label
-# whose `lab` has eaten `text_size_0`.
+# `if(!netname || !netname[0]) { ...; continue; }` five lines above it stops the
+# EMPTY case from reaching the concatenation -- but it did NOT stop the BLANK
+# case, and `xschem add_pin_stubs -prefix { }` over a nameless pin measured
+# lab=<<text_size_0=0.2>> with text_size_0 destroyed. The guard now tests
+# str_is_blank(). EN1 pins it, so a future refactor that drops the guard fails
+# here rather than shipping a wire label whose `lab` has eaten `text_size_0`.
+#
+# --- the BLANK variant --------------------------------------------------------
+# A value made only of SEPARATOR characters is empty to get_tok_value() as well,
+# and SPACE() (token.c:24) counts ';' as one alongside space, tab and newline. So
+# `key= ` and `key=;` destroy the next token exactly like `key=` does. The first
+# round of this fix tested value[0] / eq {} / == "" and caught none of them; the
+# producers now use str_is_blank(), which lives next to SPACE() so the two cannot
+# drift apart. EW legs.
 #
 # --- legs ---------------------------------------------------------------------
 #   ET*  the tokenizer, characterised. Guard rail on the producer-vs-tokenizer
@@ -60,6 +70,7 @@
 #   EC*  create_symbol() (xschem.tcl): a scripting entry point that writes a .sym
 #   EA*  make_sym.awk / make_sym_lcc.awk: "make symbol from schematic"
 #   ER*  the quoted empty value survives save + reload, in both a .sym and a .sch
+#   EW*  the BLANK variant: whitespace and ';' are empty to the tokenizer too
 #   EN*  the non-defects, pinned so they stay non-defects
 #
 # Run either arm:
@@ -470,6 +481,84 @@ check "EG8 both empties read back as present-and-empty" \
 set gtmpl [xschem get_tok [xschem get schsymbolprop] template]
 check "EG9 an empty template attribute does not eat the next one" \
   [list [tok $gtmpl value] [tok $gtmpl footprint]] {{{} 1} {0805 1}}
+
+# --- EW: a WHITESPACE-only value is just as empty, and slipped past every guard -
+# The first round of this fix tested emptiness as `value[0]` (C), `eq {}` (Tcl) and
+# `== ""` (awk). None of them catches a value made only of SEPARATOR characters,
+# which get_tok_value() treats identically to "" -- and SPACE() in token.c counts
+# ';' as a separator alongside space, tab and newline. So `key= ` followed by
+# another token destroys that token exactly like `key=` does. The producers now
+# test str_is_blank() (token.c, next to SPACE() so the two cannot drift).
+check "EW0 a single space value eats the next token, like an empty one" \
+  [tok "name= \ndir=in\n" name] {dir=in 1}
+check "EW0b a SEMICOLON does too -- SPACE() counts it as a separator" \
+  [tok "name=;\ndir=in\n" name] {dir=in 1}
+check "EW0c ...and in both cases the eaten token is gone" \
+  [list [tok "name= \ndir=in\n" dir] [tok "name=;\ndir=in\n" dir]] {{{} 0} {{} 0}}
+
+# create_pin, through the shared my_mstrcat_tok helper.
+# Measured pre-fix: name=<<dir=in>> and dir GONE.
+xschem clear force
+xschem set netlist_type symbol
+xschem add_symbol_pin 0 100 { } in
+check "EW1 a pin named with one SPACE keeps its dir" [rtok 5 0 dir] {in 1}
+check "EW1b ...and its name reads back as present-and-empty" [rtok 5 0 name] {{} 1}
+
+# add_pin_stubs: its guard is meant to SKIP a pin that yields no net name. A
+# whitespace prefix over a nameless pin passed the old `!netname[0]` test and
+# emitted `name=l0 lab=  text_size_0=0.2`, destroying text_size_0.
+write_file [file join $scratch nameless.sym] "v {xschem version=3.4.8RC file_version=1.3}
+G {}
+K {type=subcircuit}
+V {}
+S {}
+E {}
+L 4 -50 -50 50 -50 {}
+B 5 -52.5 -2.5 -47.5 2.5 {}"
+write_file [file join $scratch stubtop.sch] "v {xschem version=3.4.8RC file_version=1.3}
+G {}
+K {}
+V {}
+S {}
+E {}
+C {nameless.sym} 0 0 0 0 {name=U1}"
+set XSCHEM_LIBRARY_PATH "$scratch:[file join $repo xschem_library]"
+xschem clear force
+xschem load [file join $scratch stubtop.sch]
+xschem select_all
+set stuberr [catch {xschem add_pin_stubs -prefix { }} stubmsg]
+check "EW2 a blank prefix over a nameless pin adds NO label (the guard's own intent)" \
+  [list $stuberr [xschem get instances]] {0 1}
+
+# save.c's LCC path, where the blank arrives from a schematic pin written lab=" ".
+write_file [file join $scratch wschild.sch] "v {xschem version=3.4.8RC file_version=1.3}
+G {}
+K {}
+V {}
+S {}
+E {}
+C {devices/ipin.sym} 0 0 0 0 {name=p1 lab=GOOD}
+C {devices/ipin.sym} 0 -20 0 0 {name=p2 lab=\" \"}"
+write_file [file join $scratch wsparent.sch] "v {xschem version=3.4.8RC file_version=1.3}
+G {}
+K {}
+V {}
+S {}
+E {}
+C {[file join $scratch wschild.sch]} 300 0 0 0 {name=X1}"
+xschem clear force
+xschem load [file join $scratch wsparent.sch]
+check "EW3 a pin labelled with one SPACE keeps its dir through symbol generation" \
+  [xschem pinlist X1 dir] {{ {0} {in} } { {1} {in} }}
+
+# create_symbol, the Tcl side.
+set wsym [file join $scratch wscreated.sym]
+set wsres [create_symbol $wsym [list A { } B] {Q} {}]
+xschem clear force
+xschem load $wsym
+set wi [pin_with_empty_name]
+check "EW4 create_symbol treats a blank list element as empty, not as a name" \
+  [expr {$wi < 0 ? "NOTFOUND" : [rtok 5 $wi dir]}] {in 1}
 
 # --- EN: the non-defects, pinned ----------------------------------------------
 # actions.c:1426 builds "name=l0 lab=", netname, " text_size_0=", szbuf -- which

@@ -4443,8 +4443,10 @@ static void add_pinlayer_boxes(int *lastr, xRect **bb,
    * no lab= produced a synthesised symbol pin with no `dir` at all. Measured on the LCC
    * path (a .sch instantiated directly as a symbol): pinlist reported name=<<dir=in>>,
    * dir=<<>>. Emit the quoted empty form instead; the +30 slack below covers the two
-   * extra characters. Issue 0183. */
-  if(!label[0]) label = "\"\"";
+   * extra characters. A WHITESPACE-only lab is blank to the tokenizer too -- a pin
+   * written lab=" " measured the same lost dir -- so the test is str_is_blank(),
+   * not label[0]. Issue 0183. */
+  if(str_is_blank(label)) label = "\"\"";
   save = strlen(label)+30;
   pin_label = my_malloc(_ALLOC_ID_, save);
   pin_label[0] = '\0';

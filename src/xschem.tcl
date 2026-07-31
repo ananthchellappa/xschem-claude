@@ -8321,8 +8321,10 @@ proc schpins_to_sympins {} {
       ## as the name, so a pin with `lab=` would land in the generated symbol with no
       ## `dir` at all. `name=""` reads back as present-and-empty and leaves dir alone.
       ## Issue 0183.
+      ## a value made only of separator chars is blank to get_tok_value() too -- ';'
+      ## counts as one, see str_is_blank() in token.c -- so trim before testing.
       set labtok $lab
-      if {$labtok eq {}} { set labtok {""} }
+      if {[string trim $labtok " \t\n;"] eq {}} { set labtok {""} }
       puts $fd "B 5 $pinx1 $piny1 $pinx2 $piny2 \{name=$labtok dir=$dir\}"
       puts $fd "L 4 $linex1 $liney1 $linex2 $liney2 \{\}"
       puts $fd "T \{$lab\} $textx0 $texty0 $rot $textflip 0.2 0.2 \{\}"
@@ -8395,9 +8397,10 @@ proc create_symbol {name {in {}} {out {}} {inout {}}} {
   ## produced `B 5 ... {name= dir=in}`, which reads back as name=<<dir=in>>, dir absent.
   ## `name=""` reads back as present-and-empty and leaves dir alone. Issue 0183.
   ## The pin is still emitted rather than skipped: the caller passed a list element, and
-  ## the pin count and geometry are part of this proc's contract.
+  ## the pin count and geometry are part of this proc's contract. A value of nothing but
+  ## separator characters is blank to the tokenizer as well, hence the trim.
   foreach pin $in { ;# create all input pins on the left
-    set pintok $pin ; if {$pintok eq {}} { set pintok {""} }
+    set pintok $pin ; if {[string trim $pintok " \t\n;"] eq {}} { set pintok {""} }
     puts $fd "B 5 [expr {$x - 2.5}] [expr {$y - 2.5}] [expr {$x + 2.5}] [expr {$y + 2.5}] {name=$pintok dir=in}"
     puts $fd "T {$pin} [expr {$x + 25}] [expr {$y - 6}] 0 0 0.2 0.2 {}"
     puts $fd "L 4 $x $y [expr {$x + 20}] $y {}"
@@ -8406,14 +8409,14 @@ proc create_symbol {name {in {}} {out {}} {inout {}}} {
   set x 150
   set y 0
   foreach pin $out { ;# create all out pins on the top right
-    set pintok $pin ; if {$pintok eq {}} { set pintok {""} }   ;# issue 0183, see above
+    set pintok $pin ; if {[string trim $pintok " \t\n;"] eq {}} { set pintok {""} }  ;# issue 0183
     puts $fd "B 5 [expr {$x - 2.5}] [expr {$y - 2.5}] [expr {$x + 2.5}] [expr {$y + 2.5}] {name=$pintok dir=out}"
     puts $fd "T {$pin} [expr {$x - 25}] [expr {$y - 6}] 0 1 0.2 0.2 {}"
     puts $fd "L 4 [expr {$x - 20}] $y $x $y {}"
     incr y 20
   }
   foreach pin $inout { ;# create all inout pins on the bottom right
-    set pintok $pin ; if {$pintok eq {}} { set pintok {""} }   ;# issue 0183, see above
+    set pintok $pin ; if {[string trim $pintok " \t\n;"] eq {}} { set pintok {""} }  ;# issue 0183
     puts $fd "B 5 [expr {$x - 2.5}] [expr {$y - 2.5}] [expr {$x + 2.5}] [expr {$y + 2.5}] {name=$pintok dir=inout}"
     puts $fd "T {$pin} [expr {$x - 25}] [expr {$y - 6}] 0 1 0.2 0.2 {}"
     puts $fd "L 7 [expr {$x - 20}] $y $x $y {}"

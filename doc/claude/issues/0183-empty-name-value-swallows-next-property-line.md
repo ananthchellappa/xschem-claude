@@ -4,11 +4,11 @@ Status: **FIXED** 2026-07-31 — **ten** producers repaired over three sweeps. T
 sweep ran as five slices and two died on API errors; their re-run held three of the first
 six defects. A third, pattern-agnostic sweep then found four more — the two on the "make symbol
 from schematic" path, which is the most reachable of the lot, and the gEDA importer.
-Area: `src/util.c` (`my_mstrcat_tok()`), `src/actions.c` (`create_pin()`,
+Area: `src/token.c` (`str_is_blank()`), `src/util.c` (`my_mstrcat_tok()`), `src/actions.c` (`create_pin()`,
 `place_symbol()`, `get_additional_symbols()`), `src/save.c`, `src/token.c`,
 `src/xschem.tcl` (`schpins_to_sympins()`, `create_symbol()`),
 `src/make_sym.awk`, `src/make_sym_lcc.awk`, `src/gschemtoxschem.awk`
-Tests: `tests/headless/test_empty_value_swallows_token_0183.tcl` — **54 checks**
+Tests: `tests/headless/test_empty_value_swallows_token_0183.tcl` — **62 checks**
 Found: 2026-07-31, by the `my_mstrcat` NULL-vararg audit that issue 0180 spawned
 Related: `doc/claude/code_analysis/my_mstrcat_null_vararg_audit.md`, 0180
 
@@ -313,11 +313,15 @@ Recorded, deliberately unfixed — all verified by hand:
 | `token.c:1263` | caller's `tok` | trailing |
 | `xschem.tcl` ×4, `place_pins.tcl`, `place_sym_pins.tcl`, `utils/toggle_pins_netlabels.tcl` | `lab` / `name` | trailing, or the value could not be shown to be empty |
 
-**`actions.c:1426` is NOT a defect**, though it is the textbook shape and was the prompt's
-top suspect: `"name=l0 lab=", netname ? netname : "", " text_size_0=", szbuf`. The
-`if(!netname || !netname[0]) { …; continue; }` five lines above means the empty case never
-reaches the concatenation. The `? :` there guards NULL, not empty. Leg **EN1** pins the
-guard, since that is what a future refactor would remove.
+**`actions.c:1426` was filed as NOT a defect and that was only half right.** It is the
+textbook shape and was the prompt's top suspect:
+`"name=l0 lab=", netname ? netname : "", " text_size_0=", szbuf`. The
+`if(!netname || !netname[0]) { …; continue; }` five lines above does stop the **empty**
+case from ever reaching the concatenation — but not the **blank** case, and
+`xschem add_pin_stubs -prefix { }` over a nameless pin measured
+`lab=<<text_size_0=0.2>>` with `text_size_0` destroyed. See "The BLANK variant" below;
+the guard now tests `str_is_blank()`. Leg **EN1** pins the guard, since that is what a
+future refactor would remove.
 
 `paste.c:105` and `editprop.c:1125` were raised by the sweep and **refuted** on
 verification.
@@ -402,20 +406,61 @@ to a converter only surfaces when someone imports.
 `$name` comes from `foreach {name num} $pinlist` over a two-column pin-list file, where an
 empty name needs a literal `{}` in the file. Recorded, not fixed.
 
-### Two of the three `actions.c` findings this round were confidently wrong
+## The BLANK variant — whitespace and `;` are empty too, and slipped past every guard
 
-Worth recording because it is the same trap as last round, from the opposite direction:
+The first round of this fix tested emptiness as `value[0]` in C, `eq {}` in Tcl and `== ""`
+in awk. **None of those catches a value made only of separator characters**, and
+`get_tok_value()` treats such a value exactly like `""` — it skips every separator after
+the `=` and takes the next token as the value. `SPACE()` (`token.c:24`) counts **`;`** as a
+separator as well as space, tab and newline, so `key=;` is as destructive as `key=`.
+Measured on all of them: space, tab, newline, `;`, and any mix.
 
-* `actions.c:1532` was reported as an unfixed `"name=", name, " dir="` — it has said
-  `my_mstrcat_tok(_ALLOC_ID_, &prop, "name", name, NULL);` since the first commit of this
-  issue. The agent quoted pre-fix code it had not read.
-* `actions.c:1426` was reported as **surviving** verification ("the value is NOT last") —
-  true and irrelevant, because `if(!netname || !netname[0]) { …; continue; }` five lines
-  above means the value cannot be empty. The original refutation stands; leg EN1 pins it.
-* `actions.c:1533` (`dir`) was correctly refuted: `if(!dir || !dir[0]) dir = "inout";`.
+Three routes measured live on the round-3 code, i.e. **after** the empty case was closed:
 
-Both wrong claims were caught by reading the file. Nothing in a sweep report is usable
-until the line has been looked at.
+```
+xschem add_symbol_pin 0 100 { } in      ->  name=<<dir=in>>   dir ABSENT
+child.sch pin written  lab=" "          ->  LCC pin: name=<<dir=in>>, dir ABSENT
+xschem add_pin_stubs -prefix { }        ->  lab=<<text_size_0=0.2>>, text_size_0 ABSENT
+   (over a pin with no name= token, e.g. xschem_library/viewdraw_import/xschem_lib/nmos.sym)
+```
+
+Fix: `str_is_blank()` in **`token.c`**, deliberately next to `SPACE()` so the two cannot
+drift apart, used by `my_mstrcat_tok()` (which covers all four of its call sites),
+`save.c`'s LCC path, and `add_pin_stubs`'s own skip guard. The Tcl and awk producers use
+the equivalent trim/regexp. Legs **EW0–EW4**.
+
+`add_pin_stubs` is the one whose behaviour changes rather than whose output is quoted: its
+guard already said "skip a pin that yields no net name rather than drop a blank `lab=`",
+and a blank net name is now what that means.
+
+### Correction: the two `actions.c` findings were RIGHT, and I dismissed them once
+
+Recorded because the mistake was mine, not the sweep's. Both were flagged, both looked
+wrong against the code, and both were real:
+
+* `actions.c:1426` — I refuted it by reading `if(!netname || !netname[0]) { …; continue; }`
+  five lines above and concluding the value cannot be empty. True of the **empty** case,
+  false of the **blank** case: a `-prefix " "` walks straight through that test. The
+  measurement above is the proof. The guard now uses `str_is_blank()`.
+* `actions.c:1532` — I dismissed it as quoting pre-fix code, because an intermediate
+  verdict argued only that "the value is NOT last". The final report quoted the *current*
+  `my_mstrcat_tok(...)` line and located the defect in the **shared helper's `value[0]`
+  test**, which is exactly right and holed all four call sites at once.
+* `actions.c:1533` (`dir`) was correctly refuted: `if(!dir || !dir[0]) dir = "inout";` — and
+  that one survives the blank variant too, since `dir` is compared against a fixed set.
+
+The lesson is not "trust the agents" — one of them did quote code it had not read, in the
+earlier round. It is that a partial verdict read mid-run is not the finding, and a
+refutation is only as good as the case it actually tested. Leg EN1 still pins the guard;
+it now pins the blank form of it.
+
+### Pre-existing, NOT this bug, found while measuring the blank variant
+
+`make_sym.awk`'s `process_line()` extracts the label with `sub(/[ }].*$/,"",pin_label)`,
+which truncates at the first space — so a schematic pin written `lab=" x"` yields the single
+character `"` and the generated symbol gets `{name=" dir=in "}`. Identical before and after
+this fix, so it is a **quoted-value parsing** defect in the converter, not a member of this
+class. `schpins_to_sympins`'s `regsub {[\} ].*}` has the same shape.
 
 ## The defect PERSISTS IN THE SAVED FILE — and the fix survives a round-trip
 
@@ -440,7 +485,7 @@ rather than stored, but a `.sym` written by `create_pin` keeps it permanently.
 
 ## Verification
 
-* `tests/headless/test_empty_value_swallows_token_0183.tcl` — 54 checks. **RED verified**
+* `tests/headless/test_empty_value_swallows_token_0183.tcl` — 62 checks. **RED verified**
   against the pre-fix binary: **12 FAILED / 23 passed**; after the fix, 35/35.
   (Re-verified independently on 2026-07-31 by rebuilding a true pre-fix binary from
   `bf5bfde0` — the six changed files restored with `git show <sha>:src/<f> > src/<f>`,

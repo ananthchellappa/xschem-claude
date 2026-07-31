@@ -410,7 +410,9 @@ FNR==1{
 # in '=' (foo=bar=) is left alone.
 function quote_empty_attr(s)
 {
-  if(s ~ /^[^=]+=$/) return s "\"\""
+  # blank = empty OR nothing but separator characters (';' included, see
+  # str_is_blank() in token.c); normalise the trailing blanks away too.
+  if(s ~ /^[^=]+=[ \t;]*$/) { sub(/=[ \t;]*$/, "=\"\"", s); return s }
   return s
 }
 
@@ -424,7 +426,7 @@ function escape_chars(s,     a, b)
   sub(/"/, "\\\\\\\\", b) # prefix " with 2 backslashes
   # empty value -> the quoted empty form, in this function's escaping convention.
   # Issue 0183, see quote_empty_attr() above.
-  if(s ~ /^[^=]+=$/) b = "\\\\\"\\\\\""
+  if(s ~ /^[^=]+=[ \t;]*$/) b = "\\\\\"\\\\\""
   if(b ~ / /) {
     b = "\\\\\"" b "\\\\\"" # escape " inside string with 2 backslashes
   }
@@ -631,7 +633,7 @@ END{
     for(j = 1; j <= nattr; j++) {
       # issue 0183: an empty value would swallow the NEXT pin attribute
       attr_string = attr_string pin_attr[idx,j] "=" \
-                    (pin_value[idx,j] == "" ? "\"\"" : pin_value[idx,j]) "\n"
+                    (pin_value[idx,j] ~ /^[ \t;]*$/ ? "\"\"" : pin_value[idx,j]) "\n"
     }
 
 

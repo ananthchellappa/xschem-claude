@@ -314,8 +314,9 @@ function endfile(f,     a) {
   vhdt = sig_type ? (" sig_type=" sig_type) : ""
   # see make_sym.awk: an empty value swallows the token after it, and this script
   # writes the .sym to disk. Issue 0183.
-  nametok = (label_pin[i] == "") ? "\"\"" : label_pin[i]
-  gentok  = (sig_type == "")     ? "\"\"" : sig_type
+  # blank = nothing but separator chars, see str_is_blank() in token.c
+  nametok = (label_pin[i] ~ /^[ \t\n;]*$/) ? "\"\"" : label_pin[i]
+  gentok  = (sig_type     ~ /^[ \t\n;]*$/) ? "\"\"" : sig_type
 
   if(dir=="generic")
   {

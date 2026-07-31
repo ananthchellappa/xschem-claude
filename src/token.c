@@ -25,6 +25,25 @@
 
 enum status {TOK_BEGIN, TOK_TOKEN, TOK_SEP, TOK_VALUE, TOK_END, TOK_ENDTOK};
 
+/* True when `s` holds nothing get_tok_value() would ever read as a value: NULL, empty,
+ * or made up entirely of separator characters. It lives here, next to SPACE(), so the
+ * two cannot drift apart -- and note SPACE() counts ';' as a separator as well as the
+ * obvious whitespace, so `key=;` is every bit as destructive as `key=`.
+ *
+ * A producer must quote such a value. Unquoted, the state machine below leaves TOK_SEP
+ * on every one of those characters and takes the NEXT TOKEN as the value, so `name= `
+ * followed by `dir=in` yields name=="dir=in" and no `dir` attribute at all. Measured on
+ * space, tab, newline, ';' and mixes of them; only key="" is safe. Issue 0183. */
+int str_is_blank(const char *s)
+{
+  if(!s) return 1;
+  while(*s) {
+    if(!SPACE(*s)) return 0;
+    ++s;
+  }
+  return 1;
+}
+
 unsigned int str_hash(const char *tok)
 {
   register unsigned int hash = 5381;

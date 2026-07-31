@@ -816,6 +816,9 @@ size_t my_mstrcat(int id, char **str, const char *add, ...)
  * my_mstrcat() SKIPS an empty argument and keeps walking its varargs (see above),
  * which is exactly what produces the bare `key=` in the first place.
  *
+ * A value that is NULL, empty, or nothing but separator characters (see str_is_blank()
+ * in token.c) is written as the quoted empty form.
+ *
  * `tail`, if non-NULL, is appended after the value -- typically the "\n" or " "
  * separating this attribute from the next. Callers whose value is provably
  * non-empty do not need this and can keep using my_mstrcat() directly. */
@@ -823,8 +826,11 @@ size_t my_mstrcat_tok(int id, char **str, const char *key, const char *value, co
 {
   size_t s;
   s = my_mstrcat(id, str, key, "=", NULL);
-  if(value && value[0]) s = my_mstrcat(id, str, value, NULL);
-  else                  s = my_mstrcat(id, str, "\"\"", NULL);
+  /* str_is_blank(), not value[0]: a value made only of separator characters is just as
+   * empty to get_tok_value() as "" is, and swallows the next token exactly the same way.
+   * `xschem add_symbol_pin 0 100 { } in` measured `name=<<dir=in>>` with dir GONE. */
+  if(!str_is_blank(value)) s = my_mstrcat(id, str, value, NULL);
+  else                     s = my_mstrcat(id, str, "\"\"", NULL);
   if(tail && tail[0])   s = my_mstrcat(id, str, tail, NULL);
   return s;
 }
