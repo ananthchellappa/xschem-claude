@@ -1,6 +1,6 @@
 # 0176 — DEL deletes whatever is selected: a marker, or a trace and its markers
 
-- **Status:** FIXED (2026-07-30)
+- **Status:** FIXED + EYEBALLED, CLOSED (2026-07-30)
 - **Area:** `src/wave_viewer.tcl` — new `wviewer::delete_in_graphs` (PURE),
   `wviewer::delete_items` (THE mutation), `wviewer::marker_graph_at`,
   `wviewer::delete_selection_at` (the DEL body); `wviewer::delete_ok` reduced to a
@@ -63,17 +63,19 @@ selection reported as `0` with no undo point and no log line.
 
 ## Decisions
 
-### D1 — both kinds selected: **delete both**, as one gesture ⚠ FLAGGED
+### D1 — both kinds selected: **delete both**, as one gesture ✔ CONFIRMED
 
 The two selection models are independent (`graph_marker_sel` vs 0175's
 `hilight_wave`/`sel_waves`), so "a marker AND traces are selected" is reachable.
 The user's rule read literally is *delete whatever is selected*, so both go — one
 capture, one undo point, one log line, one regenerate (D5).
 
-⚠ **This is the reading that destroys two kinds of thing from one keystroke.**
-It is flagged for the eyeball; if it feels wrong it inverts to marker-first,
-which is a two-line change in `delete_selection_at` (drop `pairs` when `marks` is
-non-empty) and the sabotage run already measured which legs move (`MQ3`).
+It is the reading that destroys two kinds of thing from one keystroke, so it was
+flagged for the eyeball rather than assumed. **Eyeballed 2026-07-30: PASS — the
+user confirmed the behaviour.** The alternative reading is not needed and is not
+kept alive as an option; should it ever be wanted it is a two-line change in
+`delete_selection_at` (drop `pairs` when `marks` is non-empty) and the sabotage
+run already measured which legs move (`MQ3`).
 
 `MQ3` is the leg: a trace on strip 1 and a marker on strip 0 both selected, DEL
 over strip 0, and the count comes back **2**.
@@ -351,9 +353,13 @@ retargeting `MF11b` was required, not cosmetic: the PRISTINE `MF11b` fails
 against this branch's `wave_viewer.tcl` with exactly `{4} (exp {3})` — the one
 extra viewer log line that Delete now emits.
 
-## For the eyeball
+## The eyeball — PASSED (2026-07-30)
 
-The sequence that matters, and the one D1 hangs on:
+Run on the sequence below, including step 5 (the D1 case). No defects reported;
+`0176` is CLOSED. The sequence is kept because it is the manual regression check
+for this feature — this is the one gesture in the viewer that destroys user data
+from a single keystroke.
+
 
 1. Plot two or three traces into one strip, and a couple more into a second.
 2. Put a marker on a trace of strip 0 (`m`), and a **delta** marker on a trace of
@@ -364,5 +370,5 @@ The sequence that matters, and the one D1 hangs on:
 4. Press **`u`**. → the trace and its marker come back **together**, and the
    neighbouring trace's marker is still on the right trace.
 5. Now select a marker (click it) *and* a trace (Ctrl+click its legend), and
-   press DEL. → **both** go, and one `u` brings both back. **This is D1.** If it
-   reads wrong, say so and it inverts to marker-first.
+   press DEL. → **both** go, and one `u` brings both back. **This is D1, and it
+   is the reading the user confirmed.**
