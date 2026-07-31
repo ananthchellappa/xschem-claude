@@ -1,11 +1,14 @@
 # 0183 — an empty attribute value swallows the next property token
 
-Status: **FIXED** 2026-07-31 — **six** producers repaired. The class sweep completed on the
-second attempt (two of five slices died on API errors the first time), and the three sites
-it turned up on the re-run include the most reachable instance of the whole class.
+Status: **FIXED** 2026-07-31 — **ten** producers repaired over three sweeps. The first
+sweep ran as five slices and two died on API errors; their re-run held three of the first
+six defects. A third, pattern-agnostic sweep then found four more — the two on the "make symbol
+from schematic" path, which is the most reachable of the lot, and the gEDA importer.
 Area: `src/util.c` (`my_mstrcat_tok()`), `src/actions.c` (`create_pin()`,
-`place_symbol()`, `get_additional_symbols()`)
-Tests: `tests/headless/test_empty_value_swallows_token_0183.tcl` — **28 checks**
+`place_symbol()`, `get_additional_symbols()`), `src/save.c`, `src/token.c`,
+`src/xschem.tcl` (`schpins_to_sympins()`, `create_symbol()`),
+`src/make_sym.awk`, `src/make_sym_lcc.awk`, `src/gschemtoxschem.awk`
+Tests: `tests/headless/test_empty_value_swallows_token_0183.tcl` — **54 checks**
 Found: 2026-07-31, by the `my_mstrcat` NULL-vararg audit that issue 0180 spawned
 Related: `doc/claude/code_analysis/my_mstrcat_null_vararg_audit.md`, 0180
 
@@ -76,8 +79,11 @@ must be part of a **literal**: `my_mstrcat` SKIPS an empty argument and keeps wa
 varargs (`util.c:783`), which is exactly what produces the bare `key=` in the first place,
 so wrapping the variable in `"\"" , value, "\""` would not help.
 
-It lives in `util.c` rather than `actions.c` because the class is not file-local — but note
-that all three repaired sites happen to be in `actions.c`.
+It lives in `util.c` rather than `actions.c` because the class is not file-local, and that
+turned out to be the right call: the ten repaired sites are spread over `actions.c`,
+`save.c`, `token.c`, `xschem.tcl` and three awk scripts. The four sites that do not build
+their string with `my_mstrcat` — `save.c`'s `my_snprintf`, the Tcl `puts`, the awk
+`printf` — each write the quoted empty form inline instead.
 
 ### Site 1 — `create_pin()`, the WORSE one, and not the reported site
 
@@ -209,9 +215,68 @@ extra characters.
   generator. `$lab` is scraped with `regsub` and is `""` for a pin written `lab=`, giving
   the same `name=` eats `dir=` shape in generated symbol text.
 
-*Separate latent bug noticed there and NOT fixed:* `$lab` is only assigned inside
+*Separate latent bug noticed there:* `$lab` is only assigned inside
 `if {[regexp {lab=} $i]}`, so a clipboard pin line with no `lab=` token at all leaves `$lab`
-holding the **previous** pin's value. That is a stale-carry-over bug, not a tokenizer one.
+holding the **previous** pin's value. That is a stale-carry-over bug, not a tokenizer one —
+filed and fixed as **0185**, which also found that an unlabelled *first* pin throws
+`can't read "lab": no such variable` after the clipboard file has already been truncated.
+It is what makes the empty `$lab` this issue quotes reachable at all.
+
+### Site 7 — `create_symbol()` (`src/xschem.tcl`), a scripting entry point that writes a `.sym`
+
+```tcl
+foreach pin $in { ;# create all input pins on the left
+  puts $fd "B 5 … {name=$pin dir=in}"
+```
+
+`create_symbol <file> {in…} {out…} {inout…}` is a documented user-facing proc — its own
+comment carries the example `create_symbol test.sym {CLK RST D} {Q QB} {VCC VSS}` — with
+**no in-repo callers**, so nothing else covers it. An empty element in any of the three
+lists wrote `name= dir=in` straight into the `.sym` on disk. Measured pre-fix:
+
+```
+create_symbol s.sym {A {} B} {Q} {IO}
+  ->  B 5 -152.5 17.5 -147.5 22.5 {name= dir=in}
+  ->  reloaded: rect5[1] name=<<dir=in>>, dir ABSENT (found=0)
+```
+
+Fixed in all three loops. The pin is still emitted rather than skipped — the caller passed
+a list element, and the pin count and geometry are part of the proc's contract. Legs
+**EC1–EC5**.
+
+### Sites 8 and 9 — `make_sym.awk` / `make_sym_lcc.awk`, i.e. "make symbol from schematic"
+
+**The most reachable site of the whole class, and no sweep had ever looked at an awk
+script.** `make_symbol` (`xschem.tcl:8455`) shells out to `src/make_sym.awk`; the LCC
+variant to `src/make_sym_lcc.awk`. Both build the pin block by concatenating the literal
+`name=`, then `label_pin[i]`, then the literal ` dir=in`:
+
+```awk
+src/make_sym.awk:282        " {name=" label_pin[i] vhdt vert " dir=in" >sym
+src/make_sym_lcc.awk:334    (the same, plus a trailing space)
+```
+
+`label_pin` is the schematic pin's `lab=`, and `process_line()` sets `pin_label=""` when the
+line has none — the everyday unlabelled-pin case. Measured on the shipped scripts, no
+fixture beyond a three-pin schematic:
+
+```
+C {devices/ipin.sym} 0 -20 0 0 {name=p2}        (no lab=)
+
+pre-fix   B 5 -202.5 -12.5 -197.5 -7.5 {name= dir=in}
+post-fix  B 5 -202.5 -12.5 -197.5 -7.5 {name="" dir=in}
+```
+
+So: draw a schematic, leave one pin unlabelled, Symbol → Make Symbol, and the generated
+`.sym` has a pin with no direction — written to disk and kept. Both scripts also emit
+`generic_type=` from a possibly-empty `sig_type` in the `dir=="generic"` branch, followed by
+` value=…` or the pin's own props; that is quoted too. Legs **EA1–EA5**, which are the only
+coverage either script has.
+
+*Noticed, not chased:* `make_sym_lcc.awk` emits the source pin's own props after the
+generated ones, so the LCC output carries **two** `name=` tokens
+(`{name=GOOD dir=in name=p1 }`). `get_tok_value()` takes the first, so it is not this bug,
+but it is not obviously intended either.
 
 ## The class sweep — completed, but only on the second attempt
 
@@ -257,10 +322,130 @@ guard, since that is what a future refactor would remove.
 `paste.c:105` and `editprop.c:1125` were raised by the sweep and **refuted** on
 verification.
 
+## The THIRD sweep — and what the first two structurally could not see
+
+Re-run 2026-07-31 as six slices, deliberately **pattern-agnostic** (the first pass keyed on
+`my_mstrcat` and missed a `my_snprintf` site) and covering the files no earlier slice had
+ever named: `flyline.c`, `in_memory_undo.c`, `hash_iterator.c`, `icon.c`, `cairo_jpg.c`,
+`rawtovcd.c`, the generated parsers — **and everything outside `src/*.c` and `src/*.tcl`**.
+
+That last slice is where the yield was. The awk converters are shipped toolchain invoked
+from Tcl, they write `.sym` and `.sch` files, and **no sweep had ever looked at one**. Three
+producers came out of it (sites 7, 8, 9 above) and the two that matter are on the
+"make symbol from schematic" path.
+
+| slice | scope | result |
+|---|---|---|
+| actions-edit | `actions.c editprop.c store.c check.c move.c` | 3 raised, **all 3 wrong** — see below |
+| save-token | `save.c token.c netlist.c node_hash.c hilight.c findnet.c` | clean |
+| ui-c | `scheduler.c callback.c xinit.c draw.c paste.c clip.c select.c` | clean |
+| never-swept-c | the 6 never-covered files + the backends + `util.c main.c …` | clean |
+| tcl | `src/*.tcl utils/*.tcl` | `create_symbol` ×3 (**site 7**), `place_sym_pins.tcl:38` |
+| outside-src | `src/*.awk`, `src/utile/`, `XSchemWin/`, `xschem_library/**` | **sites 8 and 9**, plus the converter family below |
+
+### Site 10 — `gschemtoxschem.awk`, the gEDA/lepton import path
+
+This one was nearly recorded-and-left, on the grounds that its empty values come from
+third-party input I could not fabricate faithfully. That was wrong: the route reproduces in
+four lines of gEDA text, and the harm is worse than a lost attribute.
+
+The converter copies attributes **verbatim** out of the gEDA file. An input carrying
+
+```
+refdes=R5 / value= / device=RESISTOR / footprint=0805
+```
+
+converts to `{name=R5\nvalue=\ndevice=RESISTOR\nfootprint=0805\n}`, and measured through
+xschem's own reader: `value` == `device=RESISTOR`, **`device` absent**. `resistor-1.sym`'s
+spice format is `@value`, so that instance netlists as `R5 n1 n2 device=RESISTOR`.
+
+The symbol path is worse still — one empty attribute per pin destroys two:
+
+```
+pinnumber= / pinseq=1 / pinlabel= / pintype=in
+
+pre-fix   {pinnumber=  pinseq=1  name=  dir=in}  ->  pinseq GONE and dir GONE
+post-fix  {pinnumber="" pinseq=1 name="" dir=in} ->  all four present
+```
+
+Four sites fixed, via a new `quote_empty_attr()` helper next to `escape_chars()`:
+component attributes (`:301`), the symbol/global block (`:141`), the pin `attr_string`
+loop (`:615`), and `template=` — the last inside `escape_chars()` itself, in that
+function's doubled-backslash convention, mirroring how it already escapes a value
+containing spaces. Verified that xschem reads the result: `template="device=\"\"
+value=\"\" footprint=0805 "` gives `device` and `value` present-and-empty with
+`footprint` intact. Legs **EG1–EG9**.
+
+The helper tests `/^[^=]+=$/`, not `/=$/`, so a value that legitimately ends in `=`
+(`foo=bar=`) is left alone.
+
+*Regression check, since no gEDA corpus exists on this machine:* a hand-built input
+exercising component attributes (including values with spaces, which take the
+`escape_chars` quoting path), symbol attributes, and pins converts **byte-identically**
+under the pre-fix and post-fix scripts. The output only changes where a value is actually
+empty.
+
+**Recorded, deliberately unfixed:**
+
+| script | sites | why recorded |
+|---|---|---|
+| `src/make_sch_from_vhdl.awk` | `:919 :931 :940 :949` `print_sch()`, `:1031 :1049 :1063 :1077` `print_signals()` — `sig_type=` / `generic_type=` | needs a VHDL input where a signal or generic has no type; not constructed |
+| `xschem_library/viewdraw_import/viewdraw_import.awk` | `:308` `name=` (`dir=` is trailing → mild) | same, for viewdraw input |
+| `src/gschemtoxschem.awk:634` | slotted `pinnumber=` | genuinely **last** in the block, so it steals nothing. It is however committed proof that the converter emits bare `key=` into real output: `xschem_library/gschem_import/sym/lm324-1.sym:60`, `lm2902-1.sym:60` and `max4662-2.sym:66` each carry one |
+
+The fix shape for the first two is the one used everywhere else — write `key=""` when the
+value is empty, one line per site. They are left for a decision rather than edited blind:
+unlike gschemtoxschem, I could not reproduce their empty case end to end, and a wrong edit
+to a converter only surfaces when someone imports.
+
+**`place_sym_pins.tcl:38`** (`xschem rect … "name=$name dir=$dir"`) is real in shape but its
+`$name` comes from `foreach {name num} $pinlist` over a two-column pin-list file, where an
+empty name needs a literal `{}` in the file. Recorded, not fixed.
+
+### Two of the three `actions.c` findings this round were confidently wrong
+
+Worth recording because it is the same trap as last round, from the opposite direction:
+
+* `actions.c:1532` was reported as an unfixed `"name=", name, " dir="` — it has said
+  `my_mstrcat_tok(_ALLOC_ID_, &prop, "name", name, NULL);` since the first commit of this
+  issue. The agent quoted pre-fix code it had not read.
+* `actions.c:1426` was reported as **surviving** verification ("the value is NOT last") —
+  true and irrelevant, because `if(!netname || !netname[0]) { …; continue; }` five lines
+  above means the value cannot be empty. The original refutation stands; leg EN1 pins it.
+* `actions.c:1533` (`dir`) was correctly refuted: `if(!dir || !dir[0]) dir = "inout";`.
+
+Both wrong claims were caught by reading the file. Nothing in a sweep report is usable
+until the line has been looked at.
+
+## The defect PERSISTS IN THE SAVED FILE — and the fix survives a round-trip
+
+Every leg above reads the **in-memory** property string, which leaves the obvious question
+unanswered: does `key=""` survive `save` + reload, or does the writer strip the quotes and
+put a bare `key=` back on disk? Measured — it survives, and the written file text is
+
+```
+B 5 -2.5 97.5 2.5 102.5 {name="" dir=in show_pinname=true name_dx=25 ...}
+B 2 20 -125 130 -25 {name=""\nflags=graph,unlocked\nlock=1\n...}
+```
+
+with `dir` / `flags` reading back present and correct after a reload of both the `.sym` and
+the `.sch`. Legs **ER1–ER4**.
+
+The same round-trip run against the **pre-fix** binary is the sharper result: `dir` is
+**absent after reload too** (`{} 0`, not merely empty), and the reloaded `name` is
+`dir=in`. So the pre-fix corruption was never a display artefact of the in-memory string —
+it was **written to the file**, and any cell saved by an affected build carries it. That
+matters for the LCC path in particular, where the damaged pin is regenerated on every load
+rather than stored, but a `.sym` written by `create_pin` keeps it permanently.
+
 ## Verification
 
-* `tests/headless/test_empty_value_swallows_token_0183.tcl` — 31 checks. **RED verified**
-  against the pre-fix binary: **8 FAILED / 23 passed**; after the fix, 31/31.
+* `tests/headless/test_empty_value_swallows_token_0183.tcl` — 54 checks. **RED verified**
+  against the pre-fix binary: **12 FAILED / 23 passed**; after the fix, 35/35.
+  (Re-verified independently on 2026-07-31 by rebuilding a true pre-fix binary from
+  `bf5bfde0` — the six changed files restored with `git show <sha>:src/<f> > src/<f>`,
+  worktree only, per the trap below. The 8 pre-existing legs reproduced exactly; ER1–ER4
+  are new and fail pre-fix, so they are not vacuous.)
 * `tests/netlist_diff/netlist_diff.sh <pre-fix>` — **BYTE-IDENTICAL (920 netlists)**,
   945 runs per arm, 0 errors. Property strings feed every backend, so this is the leg that
   matters most for a producer-side change.

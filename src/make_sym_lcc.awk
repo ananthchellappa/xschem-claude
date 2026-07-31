@@ -312,11 +312,15 @@ function endfile(f,     a) {
   verilog_type=verilog_pin[i]
   vert = verilog_type ? (" verilog_type=" verilog_type) : ""
   vhdt = sig_type ? (" sig_type=" sig_type) : ""
+  # see make_sym.awk: an empty value swallows the token after it, and this script
+  # writes the .sym to disk. Issue 0183.
+  nametok = (label_pin[i] == "") ? "\"\"" : label_pin[i]
+  gentok  = (sig_type == "")     ? "\"\"" : sig_type
 
   if(dir=="generic")
   {
    printf "B 3 " (x_pin[i]-size) " " (y_pin[i]-size) " " (x_pin[i]+size) " " (y_pin[i]+size) \
-         " {name=" label_pin[i] " generic_type=" sig_type " " >sym
+         " {name=" nametok " generic_type=" gentok " " >sym
    if(value !="") printf "value=" value " " >sym
    printf props_pin[i] > sym
    printf "}\n" >sym
@@ -327,7 +331,7 @@ function endfile(f,     a) {
   if(dir=="ipin")
   {
    printf "B 5 " (x_pin[i]-size) " " (y_pin[i]-size) " " (x_pin[i]+size) " " (y_pin[i]+size) \
-         " {name=" label_pin[i] vhdt vert " dir=in " >sym
+         " {name=" nametok vhdt vert " dir=in " >sym
    if(value !="") printf "value=" value " " >sym
    printf props_pin[i] > sym
    printf "}\n" >sym
@@ -338,7 +342,7 @@ function endfile(f,     a) {
   if(dir=="opin")
   {
    printf "B 5 " (x_pin[i]-size) " " (y_pin[i]-size) " " (x_pin[i]+size) " " (y_pin[i]+size) \
-         " {name=" label_pin[i] vhdt vert " dir=out " >sym
+         " {name=" nametok vhdt vert " dir=out " >sym
    if(value !="") printf "value=" value " " >sym
    printf props_pin[i] > sym
    printf "}\n" >sym
@@ -349,7 +353,7 @@ function endfile(f,     a) {
   if(dir=="iopin")
   {
    printf "B 5 " (x_pin[i]-size) " " (y_pin[i]-size) " " (x_pin[i]+size) " " (y_pin[i]+size) \
-         " {name=" label_pin[i] vhdt vert " dir=inout " >sym
+         " {name=" nametok vhdt vert " dir=inout " >sym
    if(value !="") printf "value=" value " " >sym
    printf props_pin[i] > sym
    printf "}\n" >sym

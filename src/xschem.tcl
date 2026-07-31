@@ -8389,8 +8389,16 @@ proc create_symbol {name {in {}} {out {}} {inout {}}} {
   puts $fd {K {type=subcircuit format="@name @pinlist @symname" template="name=X1"}}
   set x -150
   set y 0
+  ## An empty element in any of the three pin lists writes `name= dir=in`, and
+  ## get_tok_value() then reads " dir=in" as the NAME -- so the .sym this proc writes to
+  ## disk carries a pin with no direction at all. Measured: `create_symbol s.sym {A {} B}`
+  ## produced `B 5 ... {name= dir=in}`, which reads back as name=<<dir=in>>, dir absent.
+  ## `name=""` reads back as present-and-empty and leaves dir alone. Issue 0183.
+  ## The pin is still emitted rather than skipped: the caller passed a list element, and
+  ## the pin count and geometry are part of this proc's contract.
   foreach pin $in { ;# create all input pins on the left
-    puts $fd "B 5 [expr {$x - 2.5}] [expr {$y - 2.5}] [expr {$x + 2.5}] [expr {$y + 2.5}] {name=$pin dir=in}"
+    set pintok $pin ; if {$pintok eq {}} { set pintok {""} }
+    puts $fd "B 5 [expr {$x - 2.5}] [expr {$y - 2.5}] [expr {$x + 2.5}] [expr {$y + 2.5}] {name=$pintok dir=in}"
     puts $fd "T {$pin} [expr {$x + 25}] [expr {$y - 6}] 0 0 0.2 0.2 {}"
     puts $fd "L 4 $x $y [expr {$x + 20}] $y {}"
     incr y 20
@@ -8398,13 +8406,15 @@ proc create_symbol {name {in {}} {out {}} {inout {}}} {
   set x 150
   set y 0
   foreach pin $out { ;# create all out pins on the top right
-    puts $fd "B 5 [expr {$x - 2.5}] [expr {$y - 2.5}] [expr {$x + 2.5}] [expr {$y + 2.5}] {name=$pin dir=out}"
+    set pintok $pin ; if {$pintok eq {}} { set pintok {""} }   ;# issue 0183, see above
+    puts $fd "B 5 [expr {$x - 2.5}] [expr {$y - 2.5}] [expr {$x + 2.5}] [expr {$y + 2.5}] {name=$pintok dir=out}"
     puts $fd "T {$pin} [expr {$x - 25}] [expr {$y - 6}] 0 1 0.2 0.2 {}"
     puts $fd "L 4 [expr {$x - 20}] $y $x $y {}"
     incr y 20
   }
   foreach pin $inout { ;# create all inout pins on the bottom right
-    puts $fd "B 5 [expr {$x - 2.5}] [expr {$y - 2.5}] [expr {$x + 2.5}] [expr {$y + 2.5}] {name=$pin dir=inout}"
+    set pintok $pin ; if {$pintok eq {}} { set pintok {""} }   ;# issue 0183, see above
+    puts $fd "B 5 [expr {$x - 2.5}] [expr {$y - 2.5}] [expr {$x + 2.5}] [expr {$y + 2.5}] {name=$pintok dir=inout}"
     puts $fd "T {$pin} [expr {$x - 25}] [expr {$y - 6}] 0 1 0.2 0.2 {}"
     puts $fd "L 7 [expr {$x - 20}] $y $x $y {}"
     incr y 20

@@ -138,7 +138,7 @@ FNR==1{
             if($0 ~/=OUTPUT/) {pin = 1; sub(/=.*/, "=opin"); template_attrs = template_attrs "lab=xxx "}
             if($0 ~/=IO/) {pin = 1; sub(/=.*/, "=iopin"); template_attrs = template_attrs "lab=xxx "}
             if(is_symbol && has_schematic) global_attrs = "type=subcircuit\n" global_attrs
-            else global_attrs = $0 "\n" global_attrs
+            else global_attrs = quote_empty_attr($0) "\n" global_attrs  # issue 0183
           }
           $0 = save
           if(show == 1) {
@@ -298,7 +298,7 @@ FNR==1{
 
             }
             gsub(/ /, "\\\\\\\\ ", $0) # prefix spaces with double backslash
-            propstring = propstring $0 "\n"
+            propstring = propstring quote_empty_attr($0) "\n"   # issue 0183
             # print propstring > "/dev/stderr"
           }
           getline
@@ -400,6 +400,20 @@ FNR==1{
   } # while(1)
 }
 
+# An attribute whose value is EMPTY swallows the attribute that follows it:
+# get_tok_value() skips the whitespace after '=' and takes the next token as the
+# value, so `value=` followed by `device=RESISTOR` yields value=="device=RESISTOR"
+# and NO device attribute at all. Measured on a gEDA import: a resistor whose spice
+# format is "@value" then netlists as `R5 n1 n2 device=RESISTOR`. `key=""` reads back
+# as present-and-empty and leaves the next attribute alone. Issue 0183.
+# The test is deliberately `^[^=]+=$` and not `=$`, so a value that legitimately ends
+# in '=' (foo=bar=) is left alone.
+function quote_empty_attr(s)
+{
+  if(s ~ /^[^=]+=$/) return s "\"\""
+  return s
+}
+
 function escape_chars(s,     a, b)
 {
   a=b=s
@@ -408,6 +422,9 @@ function escape_chars(s,     a, b)
   if(s!~/=/) b = ""
 
   sub(/"/, "\\\\\\\\", b) # prefix " with 2 backslashes
+  # empty value -> the quoted empty form, in this function's escaping convention.
+  # Issue 0183, see quote_empty_attr() above.
+  if(s ~ /^[^=]+=$/) b = "\\\\\"\\\\\""
   if(b ~ / /) {
     b = "\\\\\"" b "\\\\\"" # escape " inside string with 2 backslashes
   }
@@ -612,7 +629,9 @@ END{
     nattr = pin_nattr[idx]
     attr_string=""
     for(j = 1; j <= nattr; j++) {
-      attr_string = attr_string pin_attr[idx,j] "=" pin_value[idx,j] "\n"
+      # issue 0183: an empty value would swallow the NEXT pin attribute
+      attr_string = attr_string pin_attr[idx,j] "=" \
+                    (pin_value[idx,j] == "" ? "\"\"" : pin_value[idx,j]) "\n"
     }
 
 

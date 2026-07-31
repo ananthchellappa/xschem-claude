@@ -56,6 +56,10 @@
 #        decision; these must pass before AND after any producer fix.
 #   EP*  create_pin(): a nameless pin keeps its dir
 #   EF*  place_symbol(): a nameless scope symbol's floater keeps its flags
+#   EL*  add_pinlayer_boxes() (save.c): the LCC path, a .sch used as a symbol
+#   EC*  create_symbol() (xschem.tcl): a scripting entry point that writes a .sym
+#   EA*  make_sym.awk / make_sym_lcc.awk: "make symbol from schematic"
+#   ER*  the quoted empty value survives save + reload, in both a .sym and a .sch
 #   EN*  the non-defects, pinned so they stay non-defects
 #
 # Run either arm:
@@ -272,6 +276,200 @@ check "EL1 an unlabelled schematic pin keeps its dir through symbol generation" 
   [xschem pinlist X1 dir] {{ {0} {in} } { {1} {in} }}
 check "EL2 ...and its name reads back as empty, not as the dir token" \
   [xschem pinlist X1 name] {{ {0} {GOOD} } { {1} {} }}
+
+# read one attribute of a rect as {value found}; `found` is what separates an
+# attribute that is present and empty from one that is not there at all.
+proc rtok {layer n t} {
+  set v [xschem getprop rect $layer $n $t]
+  return [list $v [expr {[xschem get_tok_size] ? 1 : 0}]]
+}
+
+# --- EC: create_symbol, a scripting entry point that WRITES A .sym -------------
+# `create_symbol <file> {in…} {out…} {inout…}` (src/xschem.tcl) is a documented
+# user-facing scripting proc with no in-repo callers, so nothing else covers it.
+# It emits one `B 5 … {name=$pin dir=…}` per list element, and an EMPTY element
+# wrote `name= dir=in` straight into the .sym on disk -- the generated pin then
+# reads back as name=<<dir=in>> with NO dir at all. Persisted, unlike the LCC
+# path which regenerates its pins on every load. Measured pre-fix:
+#     B 5 -152.5 17.5 -147.5 22.5 {name= dir=in}   ->  rect5[1] dir absent (found=0)
+set csym [file join $scratch created.sym]
+set csres [create_symbol $csym {A {} B} {Q} {IO}]
+xschem clear force
+xschem load $csym
+check "EC1 create_symbol writes one pin box per list element" \
+  [list $csres [xschem get rects 5]] {1 5}
+check "EC2 an EMPTY pin name does not eat the dir token" [rtok 5 1 dir] {in 1}
+check "EC3 ...and reads back as present-and-empty" [rtok 5 1 name] {{} 1}
+check "EC4 the named pins either side are untouched" \
+  [list [rtok 5 0 name] [rtok 5 2 name]] {{A 1} {B 1}}
+check "EC5 the out and inout branches are unharmed" \
+  [list [rtok 5 3 dir] [rtok 5 4 dir]] {{out 1} {inout 1}}
+
+# --- ER: the quoted empty value must SURVIVE a save + reload -------------------
+# The whole fix rests on `key=""` being written out and read back as PRESENT with
+# an empty value. If save.c ever strips or re-quotes it, the file on disk goes
+# back to a bare `key=` and the fix evaporates the moment the cell is reloaded --
+# and every leg above would still be green, because they all read the IN-MEMORY
+# property string. So round-trip it through the real writer and reader, on both
+# file kinds: a .sym (create_pin, PINLAYER rect) and a .sch (place_symbol's
+# floater, layer 2). Measured file text: `B 5 ... {name="" dir=in ...}`.
+xschem clear force
+xschem set netlist_type symbol
+xschem add_symbol_pin 0 100 {} in
+set rtsym [file join $scratch roundtrip.sym]
+xschem saveas $rtsym
+xschem clear force
+xschem load $rtsym
+check "ER1 a nameless symbol pin RELOADS with its dir intact" [rtok 5 0 dir] {in 1}
+check "ER2 ...and its name is still PRESENT and empty, not absent" [rtok 5 0 name] {{} 1}
+
+xschem clear force
+xschem set netlist_type spice
+xschem instance devices/scope.sym 0 0 0 0 {lock=1}
+set rtsch [file join $scratch roundtrip.sch]
+xschem saveas $rtsch
+xschem clear force
+xschem load $rtsch
+check "ER3 a nameless scope floater RELOADS with flags=graph,unlocked" \
+  [rtok 2 0 flags] {graph,unlocked 1}
+check "ER4 ...and its name is still PRESENT and empty" [rtok 2 0 name] {{} 1}
+
+# --- EA: the awk symbol generators, which WRITE A .sym FROM A SCHEMATIC --------
+# `make_symbol` (xschem.tcl:8455) shells out to src/make_sym.awk, and the LCC
+# variant to src/make_sym_lcc.awk. Both build the pin property block as
+#     the literal `name=`, then label_pin[i], then vhdt, vert, then ` dir=in`.
+# label_pin is the schematic pin's lab= -- empty for an unlabelled pin, the
+# same everyday case as the EL legs above. So "make symbol from schematic" on a
+# schematic with one unlabelled pin wrote `{name= dir=in}` into the .sym ON DISK
+# and the pin had no direction at all. Measured pre-fix on both scripts.
+# This is the only coverage either script has, so the legs also assert the
+# generator ran at all (a pin count) rather than trusting an empty file.
+set awksch [file join $scratch awkgen.sch]
+write_file $awksch "v {xschem version=3.4.8RC file_version=1.3}
+G {}
+K {}
+V {}
+S {}
+E {}
+C {devices/ipin.sym} 0 0 0 0 {name=p1 lab=GOOD}
+C {devices/ipin.sym} 0 -20 0 0 {name=p2}
+C {devices/opin.sym} 0 -40 0 0 {name=p3 lab=OUT1}"
+
+set awkbin [file join $repo src make_sym.awk]
+set awksym [file join $scratch awkgen_out.sym]
+set awkerr [catch {exec awk -v outsym=$awksym -f $awkbin 200 $awksch} awkmsg]
+xschem clear force
+if {[file exists $awksym]} { xschem load $awksym }
+# pins come out ordered by y, so the unlabelled p2 is not index 1 -- find it by
+# asking which box has no name rather than assuming a position.
+proc pin_with_empty_name {} {
+  set n [xschem get rects 5]
+  for {set i 0} {$i < $n} {incr i} {
+    if {[lindex [rtok 5 $i name] 0] eq {}} { return $i }
+  }
+  return -1
+}
+check "EA1 make_sym.awk generated all three pins" \
+  [list $awkerr [xschem get rects 5]] {0 3}
+set ei [pin_with_empty_name]
+check "EA2 the unlabelled pin exists and its name is PRESENT and empty" \
+  [expr {$ei < 0 ? "NOTFOUND" : [rtok 5 $ei name]}] {{} 1}
+check "EA3 ...and it kept its dir" \
+  [expr {$ei < 0 ? "NOTFOUND" : [rtok 5 $ei dir]}] {in 1}
+
+# make_sym_lcc.awk derives its output name from the input: <rootname>.sym
+set lccsch [file join $scratch lccgen.sch]
+file copy -force $awksch $lccsch
+set lccsym [file join $scratch lccgen.sym]
+set lccerr [catch {exec awk -f [file join $repo src make_sym_lcc.awk] $lccsch} lccmsg]
+xschem clear force
+if {[file exists $lccsym]} { xschem load $lccsym }
+check "EA4 make_sym_lcc.awk generated all three pins" \
+  [list $lccerr [xschem get rects 5]] {0 3}
+set li [pin_with_empty_name]
+check "EA5 the unlabelled pin keeps its dir there too" \
+  [expr {$li < 0 ? "NOTFOUND" : [rtok 5 $li dir]}] {in 1}
+
+# --- EG: gschemtoxschem.awk, the gEDA/lepton import path -----------------------
+# The converter copies attributes VERBATIM out of the gEDA file, so an empty one
+# in the input becomes an empty one in the xschem property block -- and eats the
+# attribute after it. This is user data, not xschem code, so the empty value is
+# entirely ordinary. doc/xschem_man/tutorial_gschemtoxschem.html tells the user to
+# run the script over their whole gEDA library, and
+# xschem_library/gschem_import/convert_script does the same over the lepton-eda
+# examples. Measured pre-fix on the component path:
+#   value= between refdes=R5 and device=RESISTOR
+#     -> value == "device=RESISTOR" and `device` GONE, so a resistor whose spice
+#        format is @value netlists as `R5 n1 n2 device=RESISTOR`.
+# and on the symbol path, an empty pinnumber ate pinseq AND an empty pinlabel ate
+# the pin's dir.
+set gsch [file join $scratch geda_in.sch]
+write_file $gsch "v 20130925 2
+C 3670 5470 1 0 0 resistor-1.sym
+\{
+T 3770 5570 5 10 1 1 0 0 1
+refdes=R5
+T 3770 5600 5 10 0 0 0 0 1
+value=
+T 3770 5630 5 10 0 0 0 0 1
+device=RESISTOR
+T 3770 5660 5 10 0 0 0 0 1
+footprint=0805
+\}"
+set gawk [file join $repo src gschemtoxschem.awk]
+set gconv [file join $scratch geda_out.sch]
+set gerr [catch {exec awk -f $gawk $gsch} gout]
+if {!$gerr} { write_file $gconv $gout }
+# pull the instance's {...} property block out of the converted text and ask the
+# real tokenizer what it sees -- the symbol it references does not exist here, so
+# loading the schematic would prove nothing.
+set gprop {}
+if {[regexp {C \{resistor-1\.sym\} [^\{]*\{(.*?)\n\}} $gout -> gprop]} {}
+check "EG1 the converter ran and produced an instance property block" \
+  [list $gerr [expr {$gprop eq {} ? "EMPTY" : "ok"}]] {0 ok}
+check "EG2 an empty attribute does not eat the NEXT attribute" \
+  [tok $gprop device] {RESISTOR 1}
+check "EG3 ...and itself reads back as present-and-empty" [tok $gprop value] {{} 1}
+check "EG4 the attributes either side are untouched" \
+  [list [tok $gprop name] [tok $gprop footprint]] {{R5 1} {0805 1}}
+
+# The symbol path, which is self-contained enough to load for real.
+set gsym [file join $scratch geda_in.sym]
+write_file $gsym "v 20130925 2
+P 0 200 200 200 1 0 0
+\{
+T 100 250 5 8 0 1 0 0 1
+pinnumber=
+T 100 250 5 8 0 1 0 0 1
+pinseq=1
+T 0 200 5 8 0 1 0 0 1
+pinlabel=
+T 0 200 5 8 0 1 0 0 1
+pintype=in
+\}
+T 0 0 8 10 0 0 0 0 1
+device=
+T 0 0 8 10 0 0 0 0 1
+value=
+T 0 0 8 10 0 0 0 0 1
+footprint=0805"
+set gsymconv [file join $scratch geda_out.sym]
+set gserr [catch {exec awk -f $gawk $gsym} gsout]
+if {!$gserr} { write_file $gsymconv $gsout }
+xschem clear force
+if {[file exists $gsymconv]} { xschem load $gsymconv }
+check "EG5 the converted symbol has its pin" \
+  [list $gserr [xschem get rects 5]] {0 1}
+# pre-fix: pinnumber ate pinseq, and the pin's name (from the empty pinlabel) ate dir.
+check "EG6 an empty pinnumber does not eat pinseq" [rtok 5 0 pinseq] {1 1}
+check "EG7 an empty pin name does not eat dir" [rtok 5 0 dir] {in 1}
+check "EG8 both empties read back as present-and-empty" \
+  [list [rtok 5 0 pinnumber] [rtok 5 0 name]] {{{} 1} {{} 1}}
+# the template= path goes through escape_chars(), which writes the quotes in the
+# template's own doubled-backslash convention -- check xschem's reader agrees.
+set gtmpl [xschem get_tok [xschem get schsymbolprop] template]
+check "EG9 an empty template attribute does not eat the next one" \
+  [list [tok $gtmpl value] [tok $gtmpl footprint]] {{{} 1} {0805 1}}
 
 # --- EN: the non-defects, pinned ----------------------------------------------
 # actions.c:1426 builds "name=l0 lab=", netname, " text_size_0=", szbuf -- which
