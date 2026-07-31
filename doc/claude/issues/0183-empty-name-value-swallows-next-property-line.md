@@ -64,25 +64,70 @@ name  lock color
 
 `flags` is not a token in that string.
 
-## Why it is filed rather than patched
+## DECIDED 2026-07-31 — fix the producer; the tokenizer is not broken
 
-There are two defensible fixes and they are not equivalent:
+The two candidate fixes were:
 
 1. **At the producer** — `actions.c:2626` should not emit a `name=` token with an empty
-   value at all (skip the token, or emit `name=""`). Narrow, safe, and leaves the
-   tokenizer alone.
-2. **At the tokenizer** — an empty value terminated by a newline should be read as empty,
-   not as "continues on the next line".
+   value (skip it, or emit `name=""`).
+2. **At the tokenizer** — an empty value terminated by whitespace should be read as empty,
+   not as "the value is the next token".
 
-(2) is the real bug but it is a change to the **property grammar**, which every `.sch`
-and `.sym` in existence is written against, and a schematic somewhere may rely on
-`attr=` + newline meaning what it means today. That is not a call to make from one
-narrow repro.
+**(2) is off the table, on evidence.** The whitespace-skip is deliberate and load-bearing
+in a shipped library file — `xschem_library/ngspice_verilog_cosim/tb_sar_adc.sch:176`
+(and `sar_adc.sch:78`) contain
 
-Narrow in practice either way: all three shipped scope symbols
+```
+C {dac_bridge.sym} 330 -160 0 0 {name=A2 dac_bridge_model= dac_buff
+```
+
+where the author wrote a space after `=` and means the value `dac_buff`. Measured:
+`xschem get_tok "…dac_bridge_model= dac_buff…" dac_bridge_model` → `dac_buff`. So
+`key= value` is part of the grammar in practice, and changing it would break that file
+and any user schematic written the same way.
+
+**The grammar has a way to say "empty": `key=""`.** Measured — it reads back as present
+with an empty value, and the token after it parses normally. That is what a producer
+should emit.
+
+## Characterised — 11 measured cases
+
+`xschem get_tok <str> <tok>` is a pure wrapper over `get_tok_value()`; `xschem
+get_tok_size` returns 0 when the token was not found at all.
+
+| property string | result |
+|---|---|
+| `name=\nflags=graph,unlocked\nlock=1\n` | `name` = `flags=graph,unlocked`, `flags` **not found** |
+| `name= flags=graph,unlocked lock=1` | identical — **a space behaves like a newline** |
+| `name=\tflags=graph,unlocked` | identical — **a tab too** |
+| `name=""\nflags=graph,unlocked\n` | `name` = `` (found), `flags` = `graph,unlocked` |
+| `flags=…\nname=\n` | `name` = ``, **found = 0** |
+| `a=1\nname=\nflags=graph\nb=2\n` | `name` = `flags=graph`; `a` and `b` unharmed |
+| `lab=\nvalue=1k\n` | `lab` = `value=1k` — **not specific to `name`** |
+| `name=\nlab=\nvalue=1k\n` | `name` = `lab=`; `value` still `1k` — **exactly one token eaten** |
+| `name=\n\nflags=graph\n` | a blank line does not stop it |
+| `name=` | `name` = ``, **found = 0** |
+| `name=g1\nflags=…\n` | control — both correct |
+
+So: general to every attribute, triggered by any whitespace, consumes exactly one
+following token, and avoidable by quoting. A trailing `key=` at end-of-string reports
+**found = 0** — an empty value at the end is indistinguishable from an absent attribute,
+which is a separate quirk worth knowing if you test `xctx->tok_size`.
+
+## The class this belongs to
+
+The reported site is narrow — all three shipped scope symbols
 (`xschem_library/devices/scope.sym:24`, `scope2.sym:24`, `scope_ammeter.sym:24`) carry
-`template="name=l1"`, so this needs a user- or generator-authored `type=scope` symbol
-whose template omits `name=`.
+`template="name=l1"`, so it needs a hand-authored symbol. **The class may not be narrow.**
+Any `my_mstrcat` that builds `"key="` + a possibly-empty value + more tokens has it.
+`actions.c:1426` is the first to check: its `netname ? netname : ""` NULL guard produces
+exactly this empty value, followed by ` text_size_0=`, in wire-label creation.
+
+`doc/claude/code_analysis/my_mstrcat_null_vararg_audit.md` swept those 150 sites for
+**NULL** arguments and cleared empty strings as harmless. That is true of `my_mstrcat` and
+misleading for its callers; the audit carries a correction pointing here, and the sweep for
+this class has **not** been run. Candidate list is in
+`doc/claude/suggestions/next_session_prompt_0183.md`.
 
 ## Not a `my_mstrcat` NULL truncation
 

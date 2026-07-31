@@ -34,7 +34,15 @@ src/actions.c:1426:  my_mstrcat(_ALLOC_ID_, &prop, "name=l0 lab=", netname ? net
 src/actions.c:1726:  my_mstrcat(_ALLOC_ID_, res, "{", type, " ", idxbuf, " {", name ? name : "", "}}", NULL);
 ```
 
-## Why an EMPTY string is not the same hazard
+> **⚠ CORRECTION, added 2026-07-31.** The section below is right about `my_mstrcat` and
+> wrong as advice to its callers. `my_mstrcat` skipping an empty argument is harmless *to
+> `my_mstrcat`* — but for a caller building a **property string** it is exactly how you
+> get `key=` with nothing after it, and XSCHEM's property tokenizer reads an empty value
+> followed by whitespace as "the value is the next token". So the empty case IS a hazard,
+> just a different one, and **this audit did not sweep for it**. See issue 0183 and
+> `doc/claude/suggestions/next_session_prompt_0183.md`, which carries the candidate list.
+
+## Why an EMPTY string is not the same hazard *to `my_mstrcat`*
 
 Worth stating, because it is the single fact that clears most of the 150:
 
@@ -134,7 +142,10 @@ paid for itself by turning up an unrelated defect the reading would never have f
 1. Any argument that is not a string literal, a `get_tok_value()` result, or something
    filled by `my_strdup2` needs `x ? x : ""`. `my_strdup` is the trap: it NULLs its
    destination for an **empty** source, not just an absent one.
-2. Empty is fine, NULL is not. `my_mstrcat` skips `""` and keeps going.
+2. NULL truncates; empty does not. But **empty is not therefore safe** — if you are
+   building `"key="`, an empty value emits a bare `key=` and the property tokenizer then
+   reads the *next* token as its value (issue 0183). Write `"key=\""`, `val`, `"\""` or
+   skip the token entirely.
 3. If you are building a **structured** string — a braced Tcl row, a `key=value` property,
    a path — say so in a comment, because that is what turns a silent truncation into a
    consumer-side failure someone will debug from the wrong end.
