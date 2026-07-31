@@ -89,24 +89,61 @@ safe only because both sides use `my_strdup2`.
   only on the `mult == -1` coupling above. If anyone ever changes
   `expandlabel()`'s NULL path to leave `*m` alone, this becomes a crash.
 
-## One real defect found, not fixed, not this class
+## A latent fragility in `list_nets()` — mechanism real, reachability NOT shown
 
-`list_nets()`, `src/node_hash.c:391-393`. The returned token can be NULL (an
-instance whose `lab` is the empty string expands to `""` with `mult == 1`: one
-iteration, zero tokens), and it is passed to
-`my_mstrcat(_ALLOC_ID_, &result, "{", lab, " ", type, "}\n", NULL)`.
-`my_mstrcat` walks its varargs with `while(append_str)`, so a NULL `lab` is
-silently taken as the **list terminator**: only `{` is appended and the closing
-` <type>}` is lost. No crash — but `result` goes straight to Tcl
-(`scheduler.c:6339`), so `xschem list_nets` returns a string with an unbalanced
-brace and any `foreach`/`lindex` over it dies with *unmatched open brace in
-list*.
+**Corrected 2026-07-30 after measuring.** The first version of this file called
+this "one real defect found". That was an agent's claim published before I had
+run it. On measurement the mechanism is real but I could not reach it, so it is
+recorded here as fragility, not as a defect, and no issue was filed.
 
-Reachability is narrow — `prepare_netlist_structs()` back-fills `lab` for any
-pin with a NULL node, so it needs a hand-crafted symbol (`type=ipin`, zero
-`PINLAYER` rects, at least one `GENERICLAYER` rect). Reported as output
-corruption, not a crash, and left for someone to decide whether it is worth an
-issue.
+`list_nets()`, `src/node_hash.c:388-393`:
+
+```c
+my_strdup2(_ALLOC_ID_, &pin_node, expandlabel(xctx->inst[i].lab, &mult));
+p_n_s1 = pin_node;
+for(k = 1; k <= mult; ++k) {
+  lab = my_strtok_r(p_n_s1, ",", "", 0, &p_n_s2);
+  p_n_s1 = NULL;
+  my_mstrcat(_ALLOC_ID_, result, "{", lab, " ", type, "}\n", NULL);   /* lab may be NULL */
+}
+```
+
+**Both halves of the mechanism are confirmed by measurement:**
+
+- `xschem expandlabel {}` returns `""` **with `mult == 1`** — measured. So an
+  empty `lab` gives one loop iteration over a string with zero tokens, and
+  `my_strtok_r` returns NULL (`util.c:189`).
+- `my_mstrcat` (`util.c:768`) walks its varargs with `do { … } while(append_str)`,
+  so a NULL argument is taken as the **list terminator**. Only `{` would be
+  appended; the closing ` <type>}` would be lost. No crash (the `append_str[0]`
+  deref is never reached), but `result` goes straight to Tcl
+  (`scheduler.c:6339`), so the caller would get an unbalanced brace and any
+  `foreach`/`lindex` over it would die with *unmatched open brace in list*.
+
+**What I could not do is get `inst[i].lab` to be `""` at that point.** Five
+constructions, all balanced:
+
+| construction | result |
+|---|---|
+| `ipin` with `lab=` (empty) | `{lab=net1 ipin}` — back-filled |
+| `ipin` with no `lab=` at all | `{net1 ipin}` — back-filled |
+| dangling `ipin`, empty lab, nothing attached | `{lab=net1 ipin}` — back-filled |
+| `type=ipin` symbol with **zero** `PINLAYER` rects | no pin entry emitted at all |
+| same, plus a `GENERICLAYER` rect | no pin entry emitted at all |
+
+The last two are the hand-crafted shape the earlier version of this file named as
+the way in. They do not work: with no pin rect, `xctx->inst[i].node` is NULL and
+the guard at `node_hash.c:387` (`type && xctx->inst[i].node && IS_PIN(type)`)
+rejects the instance before the loop. So the two sides close on each other — an
+instance that HAS a node gets its `lab` back-filled by
+`prepare_netlist_structs()` (called unconditionally at `node_hash.c:383`), and an
+instance that does NOT have a node never enters the loop.
+
+**Status: not a filed issue.** "I could not reproduce it in five tries" is not
+the same as "unreachable", so the note stays: if anyone ever loosens the
+`inst[i].node` guard, or adds a path that reaches `list_nets` without
+`prepare_netlist_structs()`, this becomes live. A one-line `if(!lab) continue;`
+before `node_hash.c:393` would close it permanently and cost nothing.
 
 ## If you are adding a `my_strtok_r` loop
 

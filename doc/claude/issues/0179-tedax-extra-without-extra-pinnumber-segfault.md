@@ -119,6 +119,11 @@ coupled to a `mult` that goes `-1` on the same path. **This site is the tree's o
 two cursors over two lists — and it had a guard on the first cursor and none on the second. The rule
 worth carrying forward is *a lockstep pair needs a guard per cursor, not per loop*.
 
+The audit also examined a suspected `xschem list_nets` output-corruption defect
+(`node_hash.c:388-393`). Mechanism confirmed by measurement, reachability NOT —
+five constructions all came back balanced. Recorded there as latent fragility,
+deliberately not filed.
+
 ## Reproduce
 
 Symbol:
