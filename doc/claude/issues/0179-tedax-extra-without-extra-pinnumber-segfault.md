@@ -121,8 +121,7 @@ worth carrying forward is *a lockstep pair needs a guard per cursor, not per loo
 
 The audit also examined a suspected `xschem list_nets` output-corruption defect
 (`node_hash.c:388-393`). Mechanism confirmed by measurement, reachability NOT —
-five constructions all came back balanced. Recorded there as latent fragility,
-deliberately not filed.
+five constructions all came back balanced. Filed as **0180**, with that status stated literally.
 
 ## Reproduce
 

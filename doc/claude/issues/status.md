@@ -34,6 +34,7 @@ window", "the open question", "File > Open" and so on in prose. Match the
 | issue | one line |
 |---|---|
 | **0166** | resolved net ignores the containing cell template. Spawned by 0164 shipping incomplete. |
+| **0180** | a NULL token truncates the Tcl list `xschem list_nets` returns. Mechanism measured, trigger UNPROVEN — read the status line literally. Prompt: `next_session_prompt_0180.md`. |
 
 ## Viewer / waveform thread
 
@@ -105,8 +106,8 @@ touching anything that creates, moves, deletes or reroutes wires.
   (`node_hash.c:388-393`, a NULL token silently terminating a `my_mstrcat`
   vararg list). The mechanism is real and measured, but **five attempts failed to
   reach it** — `prepare_netlist_structs()` back-fills the lab of any pin that has
-  a node, and a pin with no node never enters the loop. Recorded in the audit as
-  latent fragility, deliberately NOT filed as an issue.
+  a node, and a pin with no node never enters the loop. **Filed as 0180** with
+  that status stated literally, since the fix is one line.
 - The two suites that flake under WSLg and **must not be "fixed"** are recorded
   in their own notes: `test_ase_plot`'s gesture legs, `test_wave_trace_menu`'s
   TG9, and `test_wave_markers`' `MF1` (load- and timing-sensitive; a paired

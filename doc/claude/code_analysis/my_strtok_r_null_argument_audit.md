@@ -139,11 +139,10 @@ instance that HAS a node gets its `lab` back-filled by
 `prepare_netlist_structs()` (called unconditionally at `node_hash.c:383`), and an
 instance that does NOT have a node never enters the loop.
 
-**Status: not a filed issue.** "I could not reproduce it in five tries" is not
-the same as "unreachable", so the note stays: if anyone ever loosens the
-`inst[i].node` guard, or adds a path that reaches `list_nets` without
-`prepare_netlist_structs()`, this becomes live. A one-line `if(!lab) continue;`
-before `node_hash.c:393` would close it permanently and cost nothing.
+**Status: filed as issue 0180** (`doc/claude/issues/0180-list-nets-null-token-truncates-tcl-list.md`),
+explicitly as a measured mechanism with an unproven trigger. "I could not reproduce it in five
+tries" is not "unreachable", and the fix is one line, so it is worth closing rather than leaving as
+a footnote here. Session prompt: `doc/claude/suggestions/next_session_prompt_0180.md`.
 
 ## If you are adding a `my_strtok_r` loop
 
