@@ -1,7 +1,8 @@
 # 0182 — `expandlabel()` segfaults on zero- and negative-multiplicity label expressions
 
-Status: **OPEN** — reachable, measured, **not fixed**; the fix needs a semantic decision
-(see "Why this is not a one-line guard").
+Status: **OPEN** — reachable, measured, **not fixed**. The semantic decision the fix
+needed has now been made (see "Decided"); session prompt:
+`doc/claude/suggestions/next_session_prompt_0182.md`.
 Area: `src/expandlabel.y` — `expandlabel_strmult()`, `expandlabel_strmult2()`, `expandlabel_strbus*()`
 Tests: none yet
 Found: 2026-07-31, by the label battery run for issue 0180's Phase 1
@@ -64,7 +65,28 @@ The same four of these that are expressible as an instance attribute
 `xschem list_nets` over a schematic containing them, not merely the `expandlabel`
 command.
 
-## Why this is not a one-line guard
+## Decided (2026-07-31)
+
+The three questions below were put to the user and answered. These are now inputs, not
+options:
+
+1. **Zero-collapse follows the `0*a` precedent.** `2*(0*a)`, `(0*a)*2`, `0*a*2`, `2*0*a`,
+   `a[3:0:1:0]`, `a[0:0:0:0]` must end up doing exactly what `0*a` and `a*0` already do:
+   `expandlabel()` returns **the original input string** with **`*m == -1`**. Chosen
+   because it is already the rule, so nothing downstream learns a new case. *Rejected:*
+   a real zero-width bus (`""` with `m == 0`), and treating the zero cases as errors.
+2. **A negative multiplier is a typo.** `-1*a` goes down the existing `yyparse_error`
+   path. *Rejected:* silently clamping negative to zero.
+3. **Warn once per schematic**, in the style of the `'#'`-label warning from issue 0165.
+   *Rejected:* fixing it silently; warning only during netlisting.
+
+Note that (1) is **already implemented by the existing fall-through** at
+`parselabel.l:133-142` — a NULL `dest_string.str` yields the original text and `m = -1`.
+So the work is to stop the crash and let a NULL propagate, not to write new semantics.
+(3) is the genuinely open part: `expandlabel()` is called on every redraw, so the warning
+cannot live there; the 0165 `print_erc` gate at `netlist.c:1426` is the shape to copy.
+
+## Why this was not a one-line guard
 
 Adding `if(!s) return expandlabel_strdup("");` to `expandlabel_strmult{,2}()` stops the
 fault, but it also **decides what these expressions mean**, and that decision reaches the
