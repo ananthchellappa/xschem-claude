@@ -4533,12 +4533,20 @@ proc wviewer::delete_empty_strips {{token {}}} {
       lappend gone $n
     }
   }
+  # the target is read BEFORE the mutation — split_strip's rule, and it matters
+  # for the same reason it matters in delete_items: `target_index` clamps its
+  # answer against the LIVE strip count, so reading it after `set_graphs` shrinks
+  # a target sitting at or past the new end TWICE (once by the clamp, once by
+  # `index_after_removal`) and the target lands one strip too low. This proc had
+  # the read on the wrong side of the mutation until issue 0176 found the same
+  # mistake in its own new code — see that issue's "second incidental repair".
+  set tgt {}
+  if {[info exists target($token)]} {
+    set tgt [wviewer::index_after_removal [wviewer::target_index $token] $kill]
+  }
   wviewer::set_graphs $token \
     [wviewer::markers_sweep_numbers [wviewer::remove_graphs $gs $kill] $gone]
-  if {[info exists target($token)]} {
-    set target($token) \
-      [wviewer::index_after_removal [wviewer::target_index $token] $kill]
-  }
+  if {$tgt ne {}} { set target($token) $tgt }
   wviewer::regenerate $token
   # A selected marker that lived on a doomed strip now points at nothing —
   # clear_all's reset, narrowed to the only case that can actually dangle.
@@ -4557,6 +4565,324 @@ proc wviewer::delete_empty_strips_at {W} {
   set token [wviewer::token_for_canvas $W]
   if {$token eq {}} { return {} }
   return [wviewer::delete_empty_strips $token]
+}
+
+# --- deleting traces, strips and markers (issue 0176) ------------------------
+# doc/claude/issues/0176-del-deletes-selection.md.
+#
+# Until 0176 the ONLY code in this tree that deleted an individual trace was
+# `delete_ok`, welded to the Delete dialog's listbox — and it carried NO
+# push_undo, NO log_action and no target remap, so a dialog delete was neither
+# undoable nor replayable. The DEL key needs exactly that machinery, and writing
+# a second deleter is how the two drift apart, so the body was lifted out whole:
+# `delete_in_graphs` is the pure list + marker + selection math, `delete_items`
+# is the ONE authoritative mutation, and both the dialog and the key go through
+# it. The dialog is repaired as a consequence — see the issue file.
+
+# PURE: the graph list after removing the WHOLE graphs whose indices are in
+# `delg` and, per surviving graph, the MODEL trace indices in `delt` (a dict
+# gi -> {ti ...}). Returns `{newgraphs gone}`, where `gone` lists the marker
+# NUMBERS that disappeared: the caller must sweep those window-wide with
+# `markers_sweep_numbers`, because a delta block's `prev` partner may live in a
+# strip this proc left alone and this proc only ever sees one graph at a time.
+#
+# Every index is read in the PRE-deletion space: the walk keeps its own `gi`
+# counter over the ORIGINAL list, and the per-graph trace removal is
+# highest-index-first, so no caller has to compensate for its own deletions
+# (issue 0176 D6 — the property that makes the logged pairs replayable).
+#
+# A trace delete has THREE index consequences and all three are here:
+#   1. a marker ON a doomed trace is DROPPED — unlike a move, nothing is left
+#      for it to annotate (`remap_markers_after_trace_delete`);
+#   2. every marker and every SELECTED node in the same graph that sat above a
+#      doomed node shifts DOWN by the number of doomed nodes strictly below it —
+#      a stale index annotates/bolds the WRONG trace, which is worse than losing
+#      the marker or the selection;
+#   3. the dropped marker NUMBERS have to be swept window-wide (the caller).
+proc wviewer::delete_in_graphs {gs delg delt} {
+  set out {}
+  set gone {}
+  set gi 0
+  foreach G $gs {
+    if {[lsearch -exact $delg $gi] >= 0} {
+      foreach n [wviewer::markers_numbers [wviewer::dget $G markers {}]] {
+        lappend gone $n
+      }
+      incr gi
+      continue
+    }
+    if {[dict exists $delt $gi]} {
+      set trs [dict get $G traces]
+      # NODE indices of the doomed traces, measured on the graph as it stands —
+      # they are what markers and the selection are stored in, and they must be
+      # taken BEFORE any trace leaves the list (landmine 34: a vec-less trace
+      # occupies a model slot and no node slot, so the two spaces differ)
+      set doomed {}
+      foreach ti [dict get $delt $gi] {
+        set ni [wviewer::node_index_of_trace $G $ti]
+        if {$ni >= 0} { lappend doomed $ni }
+      }
+      foreach ti [lsort -integer -decreasing [dict get $delt $gi]] {
+        set trs [lreplace $trs $ti $ti]
+      }
+      set G [dict replace $G traces $trs]
+      if {[llength $doomed]} {
+        set mk [wviewer::dget $G markers {}]
+        if {$mk ne {}} {
+          set nmk [wviewer::remap_markers_after_trace_delete $mk $doomed]
+          set kept [wviewer::markers_numbers $nmk]
+          foreach n [wviewer::markers_numbers $mk] {
+            if {[lsearch -exact $kept $n] < 0} { lappend gone $n }
+          }
+          if {$nmk eq {}} {
+            set G [dict remove $G markers]
+          } else {
+            set G [dict replace $G markers $nmk]
+          }
+        }
+        # the SELECTION is a SET since issue 0175, so the remap runs per element
+        # and a selected trace that was deleted simply leaves the set
+        set sel [wviewer::model_sel $G]
+        if {[llength $sel]} {
+          set G [wviewer::model_sel_set $G \
+                   [wviewer::remap_sel_after_trace_delete $sel $doomed]]
+        }
+      }
+    }
+    lappend out $G
+    incr gi
+  }
+  return [list $out $gone]
+}
+
+# THE authoritative delete — the Delete dialog's OK button and the DEL key are
+# its only callers. Returns the NUMBER of things removed (strips + traces +
+# markers), 0 for a no-op, or {} plus a CIW message when it refuses.
+#
+#   graphs   strip indices to remove WHOLE   (the dialog's; DEL always passes {})
+#   pairs    {gi ti} MODEL index pairs       (the traces)
+#   markers  marker NUMBERS to remove too    (DEL's marker arm; {} otherwise)
+#   token    the viewer window, {} = the active one
+#
+# ORDERING — move_strip's contract verbatim (read its header for the why):
+#   validate LOUDLY -> refuse a no-op WITHOUT mutating and WITHOUT logging ->
+#   verified switch_ctx -> capture the live C-written state -> push_undo ->
+#   mutate -> remap the stored target IN PLACE -> exactly ONE regenerate ->
+#   exactly ONE log line.
+# Snapshot-after-mutate is the shipped bug class that order exists to prevent:
+# it makes `u` restore the very thing it was meant to undo. The capture is what
+# puts the live markers and the mouse-written pan/zoom INSIDE the restore point,
+# so one `u` brings the traces and their markers back together.
+#
+# ONE undo point and ONE log line per GESTURE, not per trace (D5): three
+# selected traces are one `u` and one replayable line.
+#
+# WHY THE MARKER HALF IS A MODEL EDIT AND NOT THE C `graph_marker delete` VERB.
+# Every other Tcl deletion path in this file (delete_ok, clear_graph_traces,
+# delete_empty_strips) already rewrites the token directly, and
+# `markers_drop_number` reproduces both of `graph_marker_delete`'s effects
+# exactly: the record goes, and every surviving `prev` that pointed at it is
+# zeroed (a dangling `prev` degrades a delta block to a plain callout with NO
+# indication at all). Routing through the verb instead would cost four things
+# and buy none: it is readonly-rejected so it would need `with_edit`; it
+# self-logs `xschem graph_marker delete N`, which is readonly-rejected AGAIN on
+# replay and aborts the whole `source` (exactly why delete_all_markers brackets
+# it in `log_action -suppress`); it pushes a C undo point onto a read-only
+# scratch buffer; and it reaches the Tcl model ONLY through the `has_x`-gated
+# notify hook (landmine 41), so under --nogui the rect would lose the marker,
+# the model would not, and the `set_graphs` + `regenerate` below would put it
+# straight back. Behaviour is unchanged, the mechanism is the shipped one.
+#
+# No `with_edit` for the same reason as delete_empty_strips: nothing here calls
+# a C mutation verb that the read-only viewer buffer would refuse.
+proc wviewer::delete_items {graphs pairs {markers {}} {token {}}} {
+  variable windows
+  variable target
+  set token [wviewer::resolve_token $token]
+  if {$token eq {} || ![dict exists $windows $token]} {
+    if {[info exists ::has_x] && [info commands ::ciw_echo] ne {}} {
+      ciw_echo "wviewer: no waveform viewer window to delete in" error
+    }
+    return {}
+  }
+  set gs [dict get [wviewer::layout_for $token] graphs]
+  set n [llength $gs]
+  # Validate LOUDLY, the move_trace rule: a bad index is a caller bug, and
+  # silently dropping one would delete a DIFFERENT trace on a replay.
+  set delg {}
+  foreach gi $graphs {
+    if {![string is integer -strict $gi] || $gi < 0 || $gi >= $n} {
+      if {[info exists ::has_x] && [info commands ::ciw_echo] ne {}} {
+        ciw_echo "wviewer: bad strip index '$gi' (0..[expr {$n - 1}])" error
+      }
+      return {}
+    }
+    if {[lsearch -exact $delg $gi] < 0} { lappend delg $gi }
+  }
+  set delt [dict create]
+  set ntr 0
+  foreach p $pairs {
+    if {[llength $p] != 2} {
+      if {[info exists ::has_x] && [info commands ::ciw_echo] ne {}} {
+        ciw_echo "wviewer: bad trace pair '$p' (expected {gi ti})" error
+      }
+      return {}
+    }
+    lassign $p gi ti
+    if {![string is integer -strict $gi] || $gi < 0 || $gi >= $n} {
+      if {[info exists ::has_x] && [info commands ::ciw_echo] ne {}} {
+        ciw_echo "wviewer: bad strip index '$gi' (0..[expr {$n - 1}])" error
+      }
+      return {}
+    }
+    set cnt [llength [wviewer::dget [lindex $gs $gi] traces {}]]
+    if {![string is integer -strict $ti] || $ti < 0 || $ti >= $cnt} {
+      if {[info exists ::has_x] && [info commands ::ciw_echo] ne {}} {
+        ciw_echo "wviewer: bad trace index '$ti' on strip $gi (0..[expr {$cnt - 1}])" error
+      }
+      return {}
+    }
+    # a trace inside a strip that is going WHOLE is already covered, and a
+    # duplicate pair would lreplace twice and take an innocent neighbour with it
+    if {[lsearch -exact $delg $gi] >= 0} { continue }
+    if {[dict exists $delt $gi] && [lsearch -exact [dict get $delt $gi] $ti] >= 0} { continue }
+    dict lappend delt $gi $ti
+    incr ntr
+  }
+  # Marker numbers are kept only when they exist RIGHT NOW, so a stale number
+  # can neither inflate the count nor put a phantom line in the replay log. The
+  # model is the reference because the C push hook keeps it current at all times
+  # (that is what marker_changed is for); a number the hook never delivered is
+  # left alone rather than guessed at.
+  set live {}
+  foreach G $gs {
+    foreach nm [wviewer::markers_numbers [wviewer::dget $G markers {}]] { lappend live $nm }
+  }
+  set delm {}
+  foreach nm $markers {
+    if {![string is integer -strict $nm]} { continue }
+    if {[lsearch -exact $live $nm] < 0} { continue }
+    if {[lsearch -exact $delm $nm] < 0} { lappend delm $nm }
+  }
+  # the pairs as they will actually be applied — normalised, deduped, with the
+  # strip-swallowed ones dropped. This, not the caller's raw list, is what gets
+  # logged, so replaying the line reproduces this run exactly.
+  set dpairs {}
+  foreach gi [lsort -integer [dict keys $delt]] {
+    foreach ti [lsort -integer [dict get $delt $gi]] { lappend dpairs [list $gi $ti] }
+  }
+  set nitems [expr {[llength $delg] + $ntr + [llength $delm]}]
+  # No-op discipline, move_strip's `from == to` rule: nothing to delete means no
+  # mutation, no undo point, no repaint and NO log line for a replay to re-run.
+  if {$nitems == 0} { return 0 }
+  if {![wviewer::switch_ctx $token]} { return {} }
+  # capture only rewrites per-graph VALUES (ranges, the selection, markers) and
+  # carries a 1:1 rect/model guard — it never adds or removes a graph or a
+  # trace, so every index validated above survives it. Re-read the list anyway,
+  # as move_strip and delete_empty_strips do, so the dictionaries below are the
+  # captured ones.
+  wviewer::capture_live_graph_state $token
+  wviewer::push_undo $token           ;# AFTER the capture: `u` restores the view
+  set gs [dict get [wviewer::layout_for $token] graphs]
+  # THE TARGET IS READ BEFORE THE MUTATION — `split_strip`'s rule, and this is
+  # the one place move_strip's contract must NOT be copied literally. move_strip
+  # remaps after mutating, which is safe there because a reorder never changes
+  # the graph COUNT; a delete does, and `target_index` clamps its answer against
+  # the LIVE count. Read after `set_graphs` and a target sitting at or past the
+  # new end is shrunk twice — once by the clamp, once by `index_after_removal` —
+  # so deleting strip 0 of a 3-strip stack targeted at strip 2 lands the target
+  # on 0 instead of 1, and the active bar plus the next single-plot signal go to
+  # the wrong strip. The remap is expressed in the PRE-deletion index space,
+  # which is what `delg` speaks.
+  set tgt {}
+  if {[llength $delg] && [info exists target($token)]} {
+    set tgt [wviewer::index_after_removal [wviewer::target_index $token] $delg]
+  }
+  lassign [wviewer::delete_in_graphs $gs $delg $delt] out gone
+  foreach nm $delm { lappend gone $nm }
+  # ONE sweep does both jobs: markers_drop_number REMOVES the record whose
+  # number is in `gone` (that is the marker arm) and zeroes every surviving
+  # `prev` that pointed at one (that is the window-wide dangling-link sweep the
+  # per-graph remap above cannot do).
+  wviewer::set_graphs $token [wviewer::markers_sweep_numbers $out $gone]
+  # the stored TARGET is written in place, never through set_target_strip: that
+  # would emit a SECOND replay line for an index change that is an internal
+  # consequence of this one command. delete_ok never remapped at all — a strip
+  # deleted below the target left the target pointing one strip too high.
+  if {$tgt ne {}} { set target($token) $tgt }
+  wviewer::regenerate $token
+  # A selected marker that just died points at nothing — clear_all's reset,
+  # narrowed to the only case that can dangle. regenerate left the viewer as the
+  # current context.
+  if {[llength $gone]} { catch {xschem graph_marker select -none} }
+  wviewer::log_action [list wviewer::delete_items $delg $dpairs $delm $token]
+  return $nitems
+}
+
+# The graph rect whose `markers` token carries number `num`, or -1 — the Tcl
+# mirror of C's `graph_marker_find`, and read off the RECTS rather than the
+# model for the same reason C re-resolves it: it is the live truth. Used only to
+# reproduce the Delete key's strip-scope test. Fails CLOSED (-1 = "nowhere"), so
+# an errored query reads as "no marker to delete here".
+proc wviewer::marker_graph_at {wp num} {
+  if {![string is integer -strict $num] || $num < 1} { return -1 }
+  if {[catch {xschem new_schematic switch $wp}]} { return -1 }
+  set n -1
+  catch {set n [xschem get graph_rects]}
+  if {![string is integer -strict $n]} { return -1 }
+  for {set gi 0} {$gi < $n} {incr gi} {
+    set mk {}
+    catch {set mk [xschem getprop rect 2 $gi markers]}
+    if {[lsearch -exact [wviewer::markers_numbers $mk] $num] >= 0} { return $gi }
+  }
+  return -1
+}
+
+# The DEL-key body (issue 0176): delete WHATEVER is selected on viewer canvas
+# `W` — the selected marker, the selected traces, or BOTH — as ONE gesture, one
+# undo point and one log line. `px`/`py` are the KeyPress pointer position and
+# are needed only to reproduce the C Delete arm's strip-scope test on the marker.
+#
+# Returns the number of things deleted, 0 when nothing was selected, or {} on a
+# foreign canvas / a refused context. The 0 case is load-bearing: key_filter
+# must NOT forward a Delete that deletes nothing, because C's `case XK_Delete`
+# falls through to the canvas delete verb — `readonly_block()` and a modal
+# dialog over a read-only viewer (D2).
+#
+# The token is resolved from the EVENT's canvas (%W), never from the current
+# xschem context — the clear_all_at pattern: a key can arrive on a viewer Tk has
+# focused before the C side switched context to it.
+proc wviewer::delete_selection_at {W px py} {
+  set token [wviewer::token_for_canvas $W]
+  if {$token eq {}} { return {} }
+  set gs [dict get [wviewer::layout_for $token] graphs]
+  # THE TRACES: the live selection, read off the rects the way every other
+  # selection consumer does (it is view state the C engine owns), mapped from
+  # NODE index to MODEL trace index — landmine 34, they are different spaces.
+  set pairs {}
+  set gi 0
+  foreach G $gs {
+    foreach ni [wviewer::selected_waves $W $gi] {
+      set ti [wviewer::trace_index_of_node $G $ni]
+      if {$ti >= 0} { lappend pairs [list $gi $ti] }
+    }
+    incr gi
+  }
+  # THE MARKER: C's own gate, reproduced rather than loosened — a marker is
+  # selected AND the pointer is over the strip that OWNS it (callback.c
+  # `case XK_Delete`: `graph_marker_find(sel, &sgi, NULL) && sgi == graph_master`,
+  # where waves_selected has just set graph_master from the pointer). Both
+  # queries fail CLOSED, so an untrustworthy answer reads as "nothing to delete".
+  set marks {}
+  set msel [wviewer::marker_selected $W]
+  if {$msel >= 0} {
+    set mg [wviewer::marker_graph_at $W $msel]
+    if {$mg >= 0 && $mg == [wviewer::strip_at_pixel $W $px $py]} { lappend marks $msel }
+  }
+  # D2: nothing selected -> nothing happens, and in particular nothing reaches C
+  if {![llength $pairs] && ![llength $marks]} { return 0 }
+  # D4: whole-strip delete is not DEL's job — `graphs` is always empty here.
+  return [wviewer::delete_items {} $pairs $marks $token]
 }
 
 # Install the viewer's default key bindings on the shared `WaveViewer` BINDTAG
@@ -5382,6 +5708,18 @@ proc wviewer::delete_cancel {token} {
   }
 }
 
+# The OK button. Since issue 0176 this is only a DECODER: it turns the listbox
+# selection into the `{graph gi}` / `{trace gi ti}` entries `delmap` recorded and
+# hands them to `wviewer::delete_items`, which owns the whole mutation — the
+# capture, the undo point, the marker cascade, the window-wide number sweep, the
+# target remap, the single regenerate and the single replayable log line.
+#
+# All of that except the cascade and the sweep is NEW here: this path had never
+# pushed an undo point and had never logged, so deleting traces through the
+# dialog was neither undoable nor replayable. That was a pre-existing defect,
+# repaired on the way — doc/claude/issues/0176-del-deletes-selection.md.
+#
+# The dialog is destroyed BEFORE the mutation so it cannot sit over the repaint.
 proc wviewer::delete_ok {token} {
   variable windows
   variable delmap
@@ -5391,77 +5729,18 @@ proc wviewer::delete_ok {token} {
   set map {}
   if {[info exists delmap($token)]} { set map $delmap($token) }
   set delg {}
-  set delt [dict create]
+  set pairs {}
   foreach idx [$w.items curselection] {
     set ent [lindex $map $idx]
     if {[lindex $ent 0] eq {graph}} {
       lappend delg [lindex $ent 1]
     } elseif {[lindex $ent 0] eq {trace}} {
-      dict lappend delt [lindex $ent 1] [lindex $ent 2]
+      lappend pairs [list [lindex $ent 1] [lindex $ent 2]]
     }
   }
-  set out {}
-  set gi 0
-  # marker numbers that disappear here, for the window-wide `prev` sweep below:
-  # deleting a strip or a trace kills its markers, and a delta block whose
-  # partner number is gone degrades to a plain callout with NO indication
-  # (graph_marker_text just omits the block), so the links must be zeroed.
-  set gone {}
-  foreach G [dict get [wviewer::layout_for $token] graphs] {
-    if {[lsearch -exact $delg $gi] >= 0} {
-      foreach n [wviewer::markers_numbers [wviewer::dget $G markers {}]] {
-        lappend gone $n
-      }
-      incr gi
-      continue
-    }
-    if {[dict exists $delt $gi]} {
-      set trs [dict get $G traces]
-      # NODE indices of the doomed traces, measured on the graph as it stands —
-      # they are what markers and hilight_wave are stored in, and they must be
-      # taken BEFORE any trace leaves the list
-      set doomed {}
-      foreach ti [dict get $delt $gi] {
-        set ni [wviewer::node_index_of_trace $G $ti]
-        if {$ni >= 0} { lappend doomed $ni }
-      }
-      foreach ti [lsort -integer -decreasing [dict get $delt $gi]] {
-        set trs [lreplace $trs $ti $ti]
-      }
-      set G [dict replace $G traces $trs]
-      if {[llength $doomed]} {
-        set mk [wviewer::dget $G markers {}]
-        if {$mk ne {}} {
-          set nmk [wviewer::remap_markers_after_trace_delete $mk $doomed]
-          set kept [wviewer::markers_numbers $nmk]
-          foreach n [wviewer::markers_numbers $mk] {
-            if {[lsearch -exact $kept $n] < 0} { lappend gone $n }
-          }
-          if {$nmk eq {}} {
-            set G [dict remove $G markers]
-          } else {
-            set G [dict replace $G markers $nmk]
-          }
-        }
-        # this path has never remapped `hilight_wave` either — a pre-existing
-        # latent bug: deleting a trace below the bold one left the bold marker
-        # pointing one node too high. Since issue 0175 the selection is a SET, so
-        # the remap runs per element and a selected trace that was deleted simply
-        # leaves the set (stale indices would bold the WRONG traces).
-        set sel [wviewer::model_sel $G]
-        if {[llength $sel]} {
-          set G [wviewer::model_sel_set $G \
-                   [wviewer::remap_sel_after_trace_delete $sel $doomed]]
-        }
-      }
-    }
-    lappend out $G
-    incr gi
-  }
-  wviewer::set_graphs $token [wviewer::markers_sweep_numbers $out $gone]
   catch {unset delmap($token)}
   destroy $w
-  wviewer::regenerate $token
+  return [wviewer::delete_items $delg $pairs {} $token]
 }
 
 # Graph > Axes… (D13): per-graph x/y min/max entries (blank = auto) +
@@ -5589,6 +5868,8 @@ proc wviewer::over_graph {wp} {
 #     arrows = 4-way graph pan (issue 0149 — modified arrows swallowed);
 #   always forwarded: Escape (abort+redraw — NEVER closes, D10);
 #   over a graph only: a b s m t A B (+ctrl) — the waves_callback key set;
+#   Delete: intercepted to the SELECTION over a graph, never forwarded
+#     (issue 0176 — the marker, the traces, or both);
 #   Ctrl-W: close the viewer (handled Tcl-side, swallowed);
 #   everything else: swallowed silently (readonly backstops any miss).
 proc wviewer::key_filter {W T x y N K s} {
@@ -5646,27 +5927,44 @@ proc wviewer::key_filter {W T x y N K s} {
     # whose ControlMask branch is delete_files(), a MODAL FILE DIALOG over a
     # readonly viewer. Refusing the forward leaves the tag binding to clear.
     set fwd [expr {!($N == 100 && ($s & 4))}]
-  } elseif {$N == 65535 && [wviewer::over_graph $W] && [wviewer::marker_selected $W] >= 0} {
-    # Delete removes the SELECTED waveform marker
-    # (doc/claude/specs/graph_markers.md). DOUBLY gated, and deliberately NOT a
-    # `graphkeys` member: membership means UNCONDITIONAL forwarding, and a
-    # Delete that reached C with nothing selected would land on the canvas
-    # delete verb — readonly_block() and a modal in a readonly viewer. C applies
-    # the same scope test on its side (the pointer must be over the strip that
-    # owns the selection), so a stale selection cannot make this fire either.
-    set fwd 1
+  }
+  # Delete deletes WHATEVER is selected — the selected marker, the selected
+  # traces, or both (issue 0176, doc/claude/issues/0176-del-deletes-selection.md).
+  # It is handled ENTIRELY Tcl-side and is NEVER forwarded, which is a
+  # strengthening of the rule the old marker-only arm already lived by:
+  # Delete is deliberately not a `graphkeys` member (membership means
+  # UNCONDITIONAL forwarding), because a Delete that reaches C with nothing to
+  # delete lands on the canvas delete verb — `readonly_block()` and a modal
+  # dialog over a read-only viewer. The old arm forwarded when a marker was
+  # selected ANYWHERE in the window and let C's own strip-scope test decide; a
+  # marker selected on a DIFFERENT strip therefore fell straight through to that
+  # modal. `delete_selection_at` reproduces the scope test in Tcl and the
+  # fall-through is now unreachable.
+  if {$N == 65535 && [wviewer::over_graph $W]} {
+    if {$T == 2} {
+      # an error must not escape a Tk binding (it pops bgerror over a read-only
+      # viewer) — the delete_all_markers_at pattern
+      if {[catch {wviewer::delete_selection_at $W $x $y} edel]} {
+        if {[info exists ::has_x] && [info commands ::ciw_echo] ne {}} {
+          catch {ciw_echo "wviewer: delete refused: $edel" error}
+        }
+      }
+    }
+    return
   }
   if {$fwd} {
-    # m / d / Delete are the three MUTATING graph keys (waveform markers are
-    # durable content, doc/claude/specs/graph_markers.md), and the C arms now
-    # refuse them in a read-only buffer — which this window is, for its whole
-    # life. Forward them inside with_edit, the same bracket every other viewer
+    # m / d are the MUTATING graph keys that still reach C (waveform markers are
+    # durable content, doc/claude/specs/graph_markers.md), and the C arms refuse
+    # them in a read-only buffer — which this window is, for its whole life.
+    # Forward them inside with_edit, the same bracket every other viewer
     # mutation uses: readonly 0, run, set_modify 0, readonly 1. Everything else
     # (a b s M t A B, cursors and the tooltip) writes only view state and is
     # forwarded raw, exactly as before. KeyPress only: KeyRelease is a no-op in
     # the C dispatcher, and a second with_edit cycle per keystroke is waste.
+    # ⚠ Delete (65535) used to be the third member and is NOT one any more: it
+    # never reaches C at all since issue 0176 (the block just above owns it).
     set tokm [wviewer::token_for_canvas $W]
-    if {$T == 2 && $tokm ne {} && ($N == 109 || $N == 100 || $N == 65535)} {
+    if {$T == 2 && $tokm ne {} && ($N == 109 || $N == 100)} {
       # with_edit ERRORS OUT loudly on a refused context switch; inside a Tk
       # binding that must not propagate, so it is caught and reported.
       if {[catch {wviewer::with_edit $tokm {xschem callback $W $T $x $y $N 0 0 $s}} emk]} {

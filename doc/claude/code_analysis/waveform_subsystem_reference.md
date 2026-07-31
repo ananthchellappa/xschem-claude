@@ -781,7 +781,7 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
     **"All mutation" includes mutation the C engine performs on the viewer's
     behalf.** Two seams forward raw C events inside `with_edit`, and both exist
     only because the thing on the other side writes durable content:
-    `key_filter` for `m`/`d`/`Delete` (KeyPress only), and
+    `key_filter` for `m`/`d` (KeyPress only), and
     `strip_drag_release` for `<ButtonRelease-1>` **when
     `xschem get graph_marker_drag` > 0** — that is the release a marker drag
     commits on. The release bracket is conditional on purpose: `with_edit` is a
@@ -791,6 +791,29 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
     read-only rect (landmine 19). Any new C gesture that writes a durable token
     needs its own such bracket — and `with_edit` **errors** on a refused context
     switch, so inside a Tk binding it must be `catch`ed.
+    ⚠ **`Delete` (65535) was the third bracketed key and is one no longer**
+    (issue 0176). It is not forwarded to C from the viewer *at all*: it deletes
+    the SELECTION — the selected marker, the selected traces, or both — through
+    `wviewer::delete_selection_at` → `delete_items`, which is a pure Tcl model
+    edit and therefore needs no bracket, exactly like `move_strip` and
+    `delete_empty_strips`. Two things came with that and are worth carrying
+    forward when the next key is tempted to forward:
+      * **A trace delete has THREE index consequences**, and missing any one of
+        them is a silent data bug. The marker ON a doomed trace is DROPPED;
+        every marker and every SELECTED node in the same graph above the hole
+        shifts DOWN by the doomed count below it; and the dropped marker
+        NUMBERS must be swept **window-wide**, because a delta block's `prev`
+        partner may live in a strip the deletion never touched and a dangling
+        `prev` degrades the block to a plain callout with no indication at all.
+        `delete_in_graphs` + `markers_sweep_numbers` are the two halves.
+      * **Deleting a marker through the C verb is the wrong reflex in Tcl.**
+        `xschem graph_marker delete N` is readonly-rejected at the scheduler, it
+        self-logs a line that is readonly-rejected AGAIN on replay and aborts the
+        `source`, it pushes a C undo point onto a read-only scratch buffer, and
+        it reaches the Tcl model only through the `has_x`-gated notify hook
+        (landmine 41) — so headless the rect loses the marker, the model does
+        not, and the next `regenerate` puts it straight back. Every Tcl deletion
+        path rewrites the token instead, via `markers_drop_number`.
 18. **`Graph_ctx.active` + `draw_graph` flags bit 16** (issue 0151). The
     viewer's target-strip marker is a prop token `active=1` parsed in
     `setup_graph_data` — parsed **before** the `RECT_OUTSIDE` early return,
@@ -1363,6 +1386,17 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
     entirely the wrong reason. `tests/headless/test_wave_markers.tcl` splits the
     `MD` group on exactly this line (engine half after MF5, viewer half inside
     the `has_x` gate) and says so in its header.
+
+    **The same split, for a second and independent reason: Tk** (2026-07-30,
+    issue 0176). Any viewer command that ends in `wviewer::regenerate` goes
+    through `viewport_rect` → `winfo width`, and under `--nogui` there is no Tk
+    at all — so the whole command layer is DISPLAY-only however the fixture is
+    built, `has_x` hook or no hook. `wviewer::delete_items` is the case in point.
+    The half that CAN be asserted in both arms is the pure list/index math
+    (`delete_in_graphs`), and it lives in a different file
+    (`test_wave_modes.tcl`'s `DT` group) for exactly that reason. When splitting
+    a new group, ask BOTH questions: does it observe C-pushed model state, and
+    does it call anything that regenerates?
 
     A second consequence for **wrappers**: a Tcl proc must not "helpfully" write
     the model itself to paper over the headless gap. In a real (DISPLAY)

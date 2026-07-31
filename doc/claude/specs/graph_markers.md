@@ -38,7 +38,7 @@ through a **push hook from C into Tcl** (§8).
 | D3 | Create keys | `m` = plain marker, `d` = marker + delta block against the most recently created marker. The measurement tooltip **moves from `m` to `M`**. |
 | D4 | Delete | Click a marker to **select** it, then `Delete` while the pointer is over that strip. Plus `xschem graph_marker delete`. |
 | D5 | Label offset space | A **fraction of the plot box** (§4). Not screen pixels, not world units, not data units. |
-| D6 | Read-only buffers | A marker is durable **content**, so every mutating path refuses one — but the gate is **`graph_marker_ro_refuse()` inside the mutating primitives** (`draw.c`), *not* `readonly_block()` in the key arms, and the refusal is a **non-modal `ciw_echo`**, not a modal. The verb surface keeps its own, separate `scheduler_readonly_reject()` on every `xschem graph_marker` sub-verb except `select`, `list` and `text`. The ASE viewer — readonly for its whole life by construction — gets through the one way every other viewer mutation does: `key_filter` forwards `m`/`d`/`Delete`, and `strip_drag_release` forwards the marker-drag **release**, inside `wviewer::with_edit`. §6.6. |
+| D6 | Read-only buffers | A marker is durable **content**, so every mutating path refuses one — but the gate is **`graph_marker_ro_refuse()` inside the mutating primitives** (`draw.c`), *not* `readonly_block()` in the key arms, and the refusal is a **non-modal `ciw_echo`**, not a modal. The verb surface keeps its own, separate `scheduler_readonly_reject()` on every `xschem graph_marker` sub-verb except `select`, `list` and `text`. The ASE viewer — readonly for its whole life by construction — gets through the one way every other viewer mutation does: `key_filter` forwards `m`/`d`, and `strip_drag_release` forwards the marker-drag **release**, inside `wviewer::with_edit`. §6.6. (⚠ `Delete` was a third forwarded key until issue 0176; it is now handled entirely Tcl-side and needs no bracket.) |
 | D7 | Dirty / undo | Create, delete and drag-**commit** each do `push_undo()` + `set_modify(1)`. Mid-drag motion does neither. This deliberately **diverges** from every other graph write (landmine 19). |
 | D8 | Rendering source | The **cached** `x`/`y` only — the renderer never touches `xctx->raw`. The **label** is built from the *record* the renderer is about to draw, not re-derived from its number, so a live drag reads out the sliding sample (§6.5). |
 | D9 | Selection | One marker at a time, held in `xctx` (transient, never in the token), identified by its **number alone**. Numbers are window-wide unique, so the number already names exactly one marker; `graph_marker_selgraph` is a **hint** for repainting, never a correctness input (§3.5). |
@@ -360,7 +360,7 @@ be unconditional. Reference doc landmine 40.
 | `m` | measurement tooltip (`graph_flags ^= 64`) | **create a marker** at the sample nearest the pointer |
 | `d` | fell through to the canvas `deselect_mode` (there was no `ACTX_OVER_GRAPH` row) | **create a marker with a delta block** against the most recently created marker |
 | `M` (Shift+m) | broken — no waves guard, ran `readonly_block()` + the cadence schematic move | **the measurement tooltip**, relocated |
-| `Delete` | deletes the schematic selection | **deletes the selected marker** when one is selected *in the strip under the pointer*; otherwise unchanged |
+| `Delete` | deletes the schematic selection | **deletes the selected marker** when one is selected *in the strip under the pointer*; otherwise unchanged. ⚠ In the **ASE viewer** this is now only ONE of two arms — see below |
 | `d` **off** a graph | deselect-one mode | unchanged — this is a context split, not a key change |
 
 `m`/`M` need no binding row: the inline `waves_selected` guards in
@@ -376,6 +376,34 @@ graph.forward` row would consume the key over a graph unconditionally and
 silently break "select a graph rect, hover it, press Delete → the graph is
 deleted". It is an inline guard at the top of `case XK_Delete:` that falls
 through when `graph_marker_delete_selected()` returns 0.
+
+#### ⚠ In the ASE viewer, Delete has TWO arms since issue 0176
+
+`doc/claude/issues/0176-del-deletes-selection.md`. On an **on-canvas schematic
+graph** everything above is unchanged, byte for byte. In the **viewer**, Delete
+deletes *whatever is selected* — the selected marker, the selected TRACES
+(issue 0175's selection), or **both**, as one gesture, one undo point and one
+replayable log line. Deleting a trace takes its markers with it.
+
+Two things about the marker arm that this section must not be read as
+contradicting:
+
+- **Its behaviour is unchanged, including the strip-scope test.** What changed is
+  the path. `wviewer::key_filter` no longer forwards Delete to C at all; the
+  viewer's own `wviewer::delete_selection_at` reproduces the
+  `graph_marker_find(sel) == graph_master` scope test in Tcl
+  (`wviewer::marker_graph_at` vs `wviewer::strip_at_pixel`) and the deletion is a
+  MODEL edit through `markers_drop_number` — the same primitive every other Tcl
+  deletion path in `wave_viewer.tcl` already uses, and the one that zeroes
+  dangling `prev` links window-wide. 0176 D8 lists the four measured reasons the
+  C verb is not used there (readonly rejection, a self-logged line that aborts a
+  replay, a C undo push on a scratch buffer, and the `has_x`-gated notify hook).
+- **The C fall-through is now unreachable from the viewer.** Because nothing is
+  forwarded, `if(xctx->ui_state & SELECTION) { readonly_block(); ... }` can no
+  longer be reached by a Delete in that window. Before 0176 it *was* reachable:
+  the old Tcl gate tested `marker_selected >= 0` window-wide with no strip test,
+  so a marker selected on a different strip forwarded, C refused on scope, and a
+  modal dialog appeared over the read-only viewer.
 
 All three mutating arms (`m`, `d`, `Delete`) are read-only gated — but **not in
 the arm**. The arms call the ops unguarded; the refusal happens further down, in
@@ -888,11 +916,14 @@ It is readonly for its whole life by construction and has always mutated through
 one bracket, `wviewer::with_edit` — readonly 0, run, `set_modify 0`, readonly 1.
 Two seams open it for markers:
 
-* **`wviewer::key_filter`** forwards exactly three keysyms (`109` `m`, `100`
-  `d`, `65535` `Delete`), **KeyPress only**, inside `with_edit`. Everything else
+* **`wviewer::key_filter`** forwards exactly two keysyms (`109` `m`, `100` `d`),
+  **KeyPress only**, inside `with_edit`. Everything else
   it forwards (`a b s M t A B`, cursors, the tooltip) writes only view state and
   goes raw, as before. KeyRelease is excluded because it is a no-op in the C
   dispatcher and a second `with_edit` cycle per keystroke is pure waste.
+  ⚠ `65535` `Delete` was the third until issue 0176. It is no longer forwarded
+  on any path and therefore needs no bracket: it reaches no C mutation verb — it
+  deletes through the viewer's own model edit (`waveform_viewer_modes.md` §16).
 * **`wviewer::strip_drag_release`** forwards the `<ButtonRelease-1>` inside
   `with_edit` **when — and only when — `xschem get graph_marker_drag` > 0**,
   because that is the release the drag commits on (§7.3).
@@ -1105,24 +1136,32 @@ through `key_filter` → `strip_drag_cancel` → the forward → C's
   `set fwd [expr {!($N == 100 && ($s & 4))}]`, leaving Ctrl-D to the
   `WaveViewer` bindtag's Clear All. `M` needs no such gate: `case 'M'` is
   `rstate == 0`-only.
-* `Delete` (65535) is deliberately **not** a `graphkeys` member. It gets its own
-  **doubly-gated** arm — `over_graph` **and** `marker_selected >= 0` — because an
-  unguarded Delete reaching C with nothing selected would land on the canvas
-  delete verb, whose own `readonly_block()` *is* a modal in a readonly viewer.
-  (That is the one place a `readonly_block()` modal is still reachable from this
-  path, and the whole point of the second gate is that it never is.) C applies
-  the same scope test on its side, so a stale selection cannot make it fire
-  either.
+* `Delete` (65535) is deliberately **not** a `graphkeys` member, and **since
+  issue 0176 it is not forwarded to C from this window at all.** It gets its own
+  arm, gated on `over_graph`, which hands the whole gesture to
+  `wviewer::delete_selection_at` — the marker, the selected traces, or both
+  (§6.1's "TWO arms" box, and `waveform_viewer_modes.md` §16). Membership or an
+  unguarded forward would land a Delete on the canvas delete verb, whose own
+  `readonly_block()` *is* a modal in a readonly viewer; not forwarding at all
+  makes that unreachable rather than merely unlikely.
+  ⚠ **Superseded text, kept because the reasoning still applies to any NEW key:**
+  the arm used to be *doubly* gated — `over_graph` **and**
+  `marker_selected >= 0` — and forwarded, relying on C's own strip-scope test to
+  refuse a marker selected on another strip. That refusal fell **through** to the
+  canvas delete verb, so the modal was reachable after all. The scope test now
+  lives in Tcl (`marker_graph_at` vs `strip_at_pixel`, 0176 D9) and nothing is
+  forwarded.
 
 Neither `m` nor `d` belongs on the `WaveViewer` bindtag: `key_filter` never
 `break`s, so a tag binding would fire *in addition* to the forward (two actions
 per press), and the tag has no way to test "the pointer is over a graph".
 
-**Those same three keysyms are forwarded inside `wviewer::with_edit`** (and
-KeyPress only), because the mutating primitives they reach call
-`graph_marker_ro_refuse()` and the viewer buffer is read-only for its whole
-life. Every other forwarded key still goes raw. §6.6 has the full rule and the
-failure it prevents.
+**Both remaining keysyms — `m` and `d` — are forwarded inside
+`wviewer::with_edit`** (and KeyPress only), because the mutating primitives they
+reach call `graph_marker_ro_refuse()` and the viewer buffer is read-only for its
+whole life. Every other forwarded key still goes raw. §6.6 has the full rule and
+the failure it prevents. (`Delete` was the third until 0176 and needs no bracket
+now: it calls no C mutation verb.)
 
 ### 7.4 Stale arms, and repainting the strip you are NOT on
 
@@ -1255,7 +1294,8 @@ and no node slot). Every model mutation that shifts node indices needs a rule:
 |---|---|---|
 | `move_trace` / `move_trace_in_graphs` | **yes, in two graphs** | `remap_markers_after_trace_move {src_mk dst_mk moved_ni dst_ni}` → `{new_src new_dst}`. On the **source**: `wave == moved_ni` **MIGRATES** to the destination with `wave = dst_ni` (the marker follows its trace — the same rule `hilight_wave` obeys); `wave > moved_ni` decrements; below unchanged. On the **destination**: existing markers untouched, because the trace is *appended*. `dset`/`point`/`x`/`y` stay valid — the trace kept its raw column, only the index moved. `prev` may now cross strips, which is already legal. |
 | `move_strip` / `reorder_graphs` | no (whole dicts move) | **nothing.** Markers ride inside the graph dict exactly like `auto` and `hilight_wave`. This is precisely why markers must **never** live in a strip-index-keyed side table. |
-| `delete_ok` (the Delete dialog) | **yes** | `remap_markers_after_trace_delete {mk doomed_nis}`: drop every marker whose `wave` is doomed, decrement each survivor by the number of doomed nodes strictly below it. Doomed **node** indices are taken via `node_index_of_trace` **before any trace leaves the list**. Then sweep the dropped numbers window-wide (below). |
+| `delete_in_graphs` — the ONE trace/strip deleter, reached from the Delete dialog **and** the DEL key (issue 0176) | **yes** | `remap_markers_after_trace_delete {mk doomed_nis}`: drop every marker whose `wave` is doomed, decrement each survivor by the number of doomed nodes strictly below it. Doomed **node** indices are taken via `node_index_of_trace` **before any trace leaves the list**. Then sweep the dropped numbers window-wide (below). A whole strip contributes all of its numbers to the sweep and nothing else. ⚠ Was `delete_ok`'s inline loop until 0176. |
+| `delete_items`' MARKER argument (DEL with a marker selected) | no | the number simply joins the same `gone` list, so `markers_sweep_numbers` deletes the record **and** zeroes every `prev` that pointed at it in one pass. The C `graph_marker_delete` verb is deliberately not used — 0176 D8. |
 | `clear_graph_traces` (the auto-plot rebuild) | wipes all traces | `dict remove $G markers` (and `hilight_wave`), then a window-wide sweep for each removed number. |
 | `clear_all` | replaces with `empty_graph` | **nothing** — `empty_graph` has no `markers` key, so it is all gone by construction; but reset `xschem graph_marker select -none`. |
 | `plot_signals`, `add_trace`, `add_graph`, `display_raw` | append-only | **nothing.** Multi-plot `plot_signals` *prepends* strips, which renumbers strip indices — dict-held markers are safe by construction. |
@@ -1468,7 +1508,11 @@ erroring.
 | `marker_changed` | *not pure* — **the load-bearing piece** (§8). Order is *capture (skip_markers) → push_undo → set_graphs*. |
 | `delete_all_markers {{token {}}}` | *not pure* — §6.1.1. `with_edit` + `xschem graph_marker delete -all`, inside a `log_action -suppress push`/`pop` bracket whose `pop` is unconditional. Returns the count · `0` no-op (no repaint, **no log line**) · `{}` no viewer. Repaints (`xschem redraw`); does **not** touch the model, push undo, or regenerate — the push hook does all three. Propagates `with_edit`'s "context busy" error. |
 | `delete_all_markers_at {W}` | *not pure* — the `WaveViewer` `Ctrl-E` body, the `clear_all_at` pattern. Resolves the token from `%W`, `{}` on a foreign canvas. **Catches**, unlike `clear_all_at`: an error escaping a Tk binding pops a `bgerror` box over a read-only viewer. |
-| `key_filter` (the m/d/Delete arms) | *not pure* — forwards those three keysyms, KeyPress only, inside `with_edit`, because the primitives they reach are readonly-gated (§6.6). |
+| `key_filter` (the m/d arms) | *not pure* — forwards those two keysyms, KeyPress only, inside `with_edit`, because the primitives they reach are readonly-gated (§6.6). ⚠ `Delete` was the third until issue 0176 and is **not forwarded at all** any more. |
+| `marker_graph_at {wp num}` | *not pure* — the graph rect whose `markers` token carries `num`, or **-1**. The Tcl mirror of C's `graph_marker_find`, read off the RECTS for the same reason C re-resolves it, and the half of the Delete key's strip-scope test that 0176 had to bring into Tcl. Fails closed. |
+| `delete_selection_at {W px py}` | *not pure* — THE DEL body (0176). Collects the selected traces (`selected_waves` → `trace_index_of_node`) and the selected marker when `marker_graph_at == strip_at_pixel`, then calls `delete_items` once. `0` when nothing is selected — and that `0` is load-bearing: it is why nothing reaches C. |
+| `delete_items {graphs pairs ?markers? ?token?}` | *not pure* — THE authoritative delete, shared by the Delete dialog and the DEL key. capture → `push_undo` → `delete_in_graphs` → window-wide `markers_sweep_numbers` (which also performs the marker arm) → target remap → ONE `regenerate` → ONE log line. Returns the count · `0` no-op · `{}` refused. |
+| `delete_in_graphs {gs delg delt}` | **PURE** — → `{newgraphs gone}`. §9's whole trace-delete rule, lifted out of `delete_ok` by 0176 so the key and the dialog share it. |
 | `strip_drag_release` (the marker arm) | *not pure* — forwards `<ButtonRelease-1>` inside `with_edit` **only when `xschem get graph_marker_drag` > 0**, because that is the release a marker drag commits on. Every other release still goes raw: `with_edit` is too heavy to pay per release, and nothing else the release does writes durable content (§7.3). |
 
 ---
@@ -1493,6 +1537,11 @@ erroring.
   menu entry, `wviewer::delete_all_markers ?token?` /
   `wviewer::delete_all_markers_at %W`, one rewritten log line, one undo point
   (the hook's), one repaint (§6.1.1). No C change was needed.
+* **Delete deletes whatever is selected, in the viewer** (issue 0176) — the
+  marker arm above, the 0175 trace selection, or both, as one gesture. The
+  cascade (a marker on a deleted trace is dropped), the survivor remap and the
+  window-wide number sweep all come from §9, unchanged. Delete is no longer
+  forwarded to C from that window at all. Again no C change was needed.
 
 **Callout polish** (a later pass; the first three are appearance, the fourth is
 behaviour):
@@ -1523,7 +1572,7 @@ defect that was reachable from the UI, not a tidy-up):
 | 12 | `clear_drawing()` resets the selection + the drag fields | the same `xctx` is reused by load/open/clear/disk-undo, so the selection latched onto the new document's M1 (§3.5). |
 | 13 | `copy_objects()` renumbers a copied graph rect | the `c`-key copy produced two M1s and two M2s (D10). |
 | 14 | `capture_live_graph_state $token 1` before `push_undo` in `marker_changed` | one `u` after creating a marker also reverted an unrelated pan/zoom/bold (§8). |
-| 15 | `key_filter` forwards `m`/`d`/`Delete` inside `with_edit`, **and `strip_drag_release` forwards the release inside it when a marker drag is armed** | the companion to 11: without the key half the readonly viewer would lose marker *creates*, without the release half it would lose every anchor and label **drag** — which reaches no key arm at all (§6.6, §7.3). |
+| 15 | `key_filter` forwards `m`/`d` inside `with_edit` (`Delete` too, until issue 0176 stopped forwarding it), **and `strip_drag_release` forwards the release inside it when a marker drag is armed** | the companion to 11: without the key half the readonly viewer would lose marker *creates*, without the release half it would lose every anchor and label **drag** — which reaches no key arm at all (§6.6, §7.3). |
 | 16 | `graph_point_at()` / `graph_marker_sample()` unwind `extra_rawfile` **only if the switch took** (`switched` flag) | mode 5 is a **swap**, not a stack pop, so an unpaired call repoints the session's raw: a pure hover query on a graph whose `rawfile=` does not resolve flipped `xctx->raw` on every call (§5.2, landmine 40). |
 
 * **Six** pre-existing bugs fixed as prerequisites. Four live in the trace

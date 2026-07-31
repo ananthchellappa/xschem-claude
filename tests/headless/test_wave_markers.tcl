@@ -83,6 +83,20 @@
 #            remappability, the menu) need the ASE viewer and sit after MF16,
 #            leaving MF16's fixture behind them for the MX group.
 #
+#   MQ*  DEL deletes WHATEVER is selected — the marker, the traces, or BOTH
+#        (issue 0176, doc/claude/issues/0176-del-deletes-selection.md). DISPLAY
+#        ONLY, and for a Tk reason rather than MD's has_x one:
+#        `wviewer::delete_items` ends in a `regenerate`, i.e. `winfo width`, so
+#        the command layer cannot run without Tk at all. The half that DOES run
+#        in both arms is the pure index/marker/selection math, and it lives in
+#        test_wave_modes.tcl's DT group — deliberately, because a leg written
+#        into the nogui arm here would assert the PRE-mutation state and pass
+#        for entirely the wrong reason (landmine 41's lesson, applied to Tk).
+#        Routing is asserted BOTH ways (marker-only MQ1, trace-only MQ2,
+#        both MQ3), the cascade and the window-wide `prev` sweep have their own
+#        legs, and MQ4/MQ5 pin the two refusals with an execution trace on
+#        `xschem` proving nothing reached C.
+#
 # NOT asserted (stated, not hidden):
 #   * PIXELS. That a marker *renders* as a dot + leader + boxed callout is
 #     eyeball-only, exactly like the wave rendering itself (test_wave_viewer.tcl
@@ -2809,6 +2823,529 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   mk_fixture $tok
 
   # ==========================================================================
+  # MQ — DEL deletes WHATEVER is selected (issue 0176)
+  # ==========================================================================
+  # doc/claude/issues/0176-del-deletes-selection.md. The Delete key used to
+  # delete only a selected MARKER; it now deletes the selected marker, the
+  # selected TRACES, or both, as one gesture / one undo point / one log line.
+  #
+  # ⚠ THIS GROUP IS DISPLAY-ONLY, AND THAT IS LANDMINE 41, NOT A CONVENIENCE.
+  # `wviewer::delete_items` ends in `wviewer::regenerate`, which goes through
+  # `viewport_rect` -> `winfo width`; under --nogui there is no Tk at all, so the
+  # command layer cannot run headless whatever the fixture does. The half that
+  # CAN run in both arms is the pure list/marker/selection math, and it lives in
+  # test_wave_modes.tcl's DT group — deliberately, because a leg written into the
+  # nogui arm here would assert the PRE-mutation state and pass for entirely the
+  # wrong reason. Same split, same reason, as MD above.
+  #
+  # The meat drives `wviewer::delete_selection_at` (the shipping DEL body)
+  # DIRECTLY rather than through a generated key: `key_filter`'s gate reads
+  # `over_graph`, i.e. the C mouse mirror, and a synthetic pointer is the flaky
+  # part of this suite under WSLg. The gate itself, the wiring, and one real
+  # generated Delete are asserted separately (MQ9/MQ10), so the direct calls are
+  # not hollow — they are the same proc the binding reaches.
+
+  set ::mqlog {}
+  rename wviewer::log_action wviewer::__mq_real_log
+  proc wviewer::log_action {line} { lappend ::mqlog $line }
+
+  # two more raw columns, so strip 0 can hold THREE traces — a survivor-remap
+  # leg needs a marker BELOW and a marker ABOVE the doomed node
+  check "MQ0 v_c/v_d are real columns" \
+    [pcall {xschem new_schematic switch $vdrw
+            list [xschem raw add v_c {vsweep 3 +}] [xschem raw add v_d {vsweep 4 +}]}] {1 1}
+
+  proc mq_tr {v c} { return [dict create expr $v name {} vec $v color $c] }
+  # strip 0: v_a v_b v_c   (node indices 0 1 2)      strip 1: v_d  (node 0)
+  proc mq_layout {tok} {
+    wviewer::set_graphs $tok [list \
+      [dict replace [wviewer::empty_graph] sdid A traces \
+         [list [mq_tr v_a 4] [mq_tr v_b 5] [mq_tr v_c 6]]] \
+      [dict replace [wviewer::empty_graph] sdid B traces [list [mq_tr v_d 7]]]]
+    wviewer::regenerate $tok
+    wviewer::fit $tok
+    xschem new_schematic switch $::vdrw
+  }
+  # the three markers, created through the REAL C verb so the push hook keeps the
+  # model current (a hand-written rect token would not be in the model, and
+  # delete_items validates the marker numbers it is given against the model):
+  #   1  strip 0, node 1 (ON v_b, the trace the trace-legs delete)  -> DROPPED
+  #   2  strip 1, node 0, prev = 1  -> SURVIVES, and its `prev` must be zeroed
+  #                                    by the WINDOW-WIDE sweep
+  #   3  strip 0, node 2 (ON v_c, above the hole) -> SURVIVES, wave 2 -> 1
+  proc mq_marks {tok} {
+    set a {}; set b {}; set c {}
+    catch {wviewer::with_edit $tok {set a [xschem graph_marker add_at 0 1 0 5]}}
+    catch {wviewer::with_edit $tok {set b [xschem graph_marker add_at 1 0 0 6 -delta]}}
+    catch {wviewer::with_edit $tok {set c [xschem graph_marker add_at 0 2 0 7]}}
+    return [list $a $b $c]
+  }
+  # rebuild the whole fixture and hand back a clean history / empty log
+  proc mq_setup {tok} {
+    xschem new_schematic switch $::vdrw
+    catch {wviewer::with_edit $tok {xschem graph_marker delete -all}}
+    mq_layout $tok
+    set nums [mq_marks $tok]
+    catch {xschem graph_marker select -none}
+    wviewer::clear_history $tok
+    set ::mqlog {}
+    xschem new_schematic switch $::vdrw
+    return $nums
+  }
+  # the whole model, compressed to what this group cares about: the vecs of each
+  # strip and each strip's marker token
+  proc mq_state {tok} {
+    set out {}
+    foreach G [mk_graphs $tok] {
+      set vs {}
+      foreach tr [wviewer::dget $G traces {}] { lappend vs [wviewer::dget $tr vec ?] }
+      lappend out [list $vs [wviewer::dget $G markers {}]]
+    }
+    return $out
+  }
+  # write a SELECTION into the model and push it onto the rects, the way a click
+  # would leave it (selection is view state the C engine owns; this is the
+  # deterministic equivalent — issue 0175 storage, model_sel_set is its writer)
+  proc mq_select {tok sels} {
+    set gs [mk_graphs $tok]
+    set out {}
+    set gi 0
+    foreach G $gs {
+      set s {}
+      if {[dict exists $sels $gi]} { set s [dict get $sels $gi] }
+      lappend out [wviewer::model_sel_set $G $s]
+      incr gi
+    }
+    wviewer::set_graphs $tok $out
+    wviewer::regenerate $tok
+    xschem new_schematic switch $::vdrw
+  }
+  # the centre pixel of strip `gi` — never an EDGE (waves_selected insets every
+  # rect by 5*tk_scaling, and a key aimed at the seam falls through to the
+  # SCHEMATIC handler where a/b/s/t/m open modal dialogs and hang a headless run)
+  proc mq_mid {gi} {
+    set bands [wviewer::strip_bands_px $::vdrw]
+    if {$gi < 0 || $gi >= [llength $bands]} { return {-1 -1} }
+    lassign [lindex $bands $gi] x1 y1 x2 y2
+    return [list [expr {int(($x1 + $x2) / 2)}] [expr {int(($y1 + $y2) / 2)}]]
+  }
+  # DEL through the shipping body, with the pointer coordinates the KeyPress
+  # would have carried
+  proc mq_del {tok gi} {
+    lassign [mq_mid $gi] px py
+    set r [pcall {wviewer::delete_selection_at $::vdrw $px $py}]
+    update
+    catch {xschem new_schematic switch $::vdrw}
+    return $r
+  }
+  # The same, with the `xschem callback` spy armed around the CALL ONLY.
+  # ⚠ The window must not include `update`: a queued <Motion>/<Enter> dispatched
+  # there reaches the canvas bindings, which call `xschem callback` for reasons
+  # that have nothing to do with Delete — MEASURED as a spurious count of 1 on a
+  # run where the delete itself was correct. Arming around the proc call keeps
+  # the leg about the forward and nothing else.
+  proc mq_cb_trace {cmd op} { if {[lindex $cmd 1] eq {callback}} { incr ::mqcb } }
+  proc mq_del_spy {tok gi} {
+    lassign [mq_mid $gi] px py
+    set ::mqcb 0
+    trace add execution xschem enter mq_cb_trace
+    set r [pcall {wviewer::delete_selection_at $::vdrw $px $py}]
+    catch {trace remove execution xschem enter mq_cb_trace}
+    update
+    catch {xschem new_schematic switch $::vdrw}
+    return $r
+  }
+
+  # --- MQ1: routing (a) — a MARKER selected, no traces -----------------
+  # the arm that must NOT change: the marker goes, every trace stays.
+  set mqn [mq_setup $tok]
+  check "MQ1 fixture: three markers, numbered 1 2 3" $mqn {1 2 3}
+  check "MQ1 fixture: 3 traces on strip 0, 1 on strip 1" \
+    [pcall {mq_state $tok}] [list [list {v_a v_b v_c} [mk_model_mk $tok 0]] \
+                                  [list {v_d} [mk_model_mk $tok 1]]]
+  # `graph_marker list` fields are `num gi wave dset point x y prev ldx ldy` —
+  # NOT the token's field order (it has no `gi`), so wave is 2 and prev is 7
+  check "MQ1 marker 2 is a DELTA whose partner is marker 1" [pcall {mk_field 2 7}] 1
+  pcall {xschem graph_marker select 3 0}
+  check "MQ1 marker 3 is the selected one" [pcall {xschem get graph_marker_sel}] 3
+  check "MQ1 DEL over strip 0 reports ONE thing deleted" [mq_del $tok 0] 1
+  check "MQ1 the selected marker is gone, the other two are not" [pcall {mk_nums}] {1 2}
+  check "MQ1 not one trace was touched" \
+    [pcall {list [llength [wviewer::dget [lindex [mk_graphs $tok] 0] traces {}]] \
+                 [llength [wviewer::dget [lindex [mk_graphs $tok] 1] traces {}]]}] {3 1}
+  check "MQ1 exactly ONE undo point for the gesture" \
+    [pcall {wviewer::history_depth $tok}] {1 0}
+  check "MQ1 exactly one replayable log line, with EXPLICIT resolved targets" \
+    [list [llength $::mqlog] [lindex $::mqlog 0]] \
+    [list 1 "wviewer::delete_items {} {} 3 $tok"]
+  check "MQ1 the marker selection was reset (it pointed at a dead marker)" \
+    [pcall {xschem get graph_marker_sel}] -1
+  check "MQ1 one `u` brings it back" [pcall {wviewer::undo $tok}] 1
+  check "MQ1 ... to the model" [pcall {lsort [wviewer::markers_numbers [mk_model_mk $tok 0]]}] {1 3}
+  check "MQ1 ... and onto the rects" [pcall {lsort -integer [mk_nums]}] {1 2 3}
+
+  # --- MQ2: routing (b) + THE CASCADE + THE WINDOW-WIDE SWEEP ----------
+  # THE teeth of this issue. Delete the trace that carries marker 1 and assert
+  # all three index consequences at once: the marker ON it is dropped, the
+  # marker ABOVE it in the SAME strip shifts down, and the delta partner on the
+  # OTHER strip has its now-dangling `prev` zeroed.
+  mq_setup $tok
+  check "MQ2 before: marker 1 sits on node 1, marker 3 on node 2" \
+    [pcall {list [mk_field 1 2] [mk_field 3 2]}] {1 2}
+  pcall {mq_select $tok [dict create 0 {1}]}
+  check "MQ2 exactly one trace is selected, and it is v_b (node 1)" \
+    [pcall {list [wviewer::selected_waves $vdrw 0] [wviewer::selected_waves $vdrw 1]}] {1 {}}
+  check "MQ2 no marker is selected" [pcall {xschem get graph_marker_sel}] -1
+  set ::mqlog {}
+  pcall {wviewer::clear_history $tok}
+  check "MQ2 DEL reports ONE thing deleted" [mq_del $tok 0] 1
+  check "MQ2 the trace is gone and its neighbours are not" \
+    [pcall {set vs {}
+            foreach tr [wviewer::dget [lindex [mk_graphs $tok] 0] traces {}] {
+              lappend vs [wviewer::dget $tr vec ?] }
+            set vs}] {v_a v_c}
+  check "MQ2 the OTHER strip is untouched" \
+    [pcall {set vs {}
+            foreach tr [wviewer::dget [lindex [mk_graphs $tok] 1] traces {}] {
+              lappend vs [wviewer::dget $tr vec ?] }
+            set vs}] {v_d}
+  check "MQ2 CASCADE: the marker ON the deleted trace is gone" \
+    [pcall {lsort -integer [mk_nums]}] {2 3}
+  check "MQ2 SURVIVOR REMAP: the marker above the hole shifted 2 -> 1" \
+    [pcall {mk_field 3 2}] 1
+  check "MQ2 WINDOW-WIDE SWEEP: the delta partner on the OTHER strip was zeroed" \
+    [pcall {mk_field 2 7}] 0
+  check "MQ2 ... and that partner itself survived, on its own node" \
+    [pcall {list [mk_field 2 1] [mk_field 2 2]}] {1 0}
+  check "MQ2 the selection is empty — the selected trace died" \
+    [pcall {list [wviewer::selected_waves $vdrw 0] [wviewer::selected_waves $vdrw 1]}] {{} {}}
+  check "MQ2 exactly ONE undo point" [pcall {wviewer::history_depth $tok}] {1 0}
+  check "MQ2 exactly one log line, naming the MODEL {gi ti} pair explicitly" \
+    [list [llength $::mqlog] [lindex $::mqlog 0]] \
+    [list 1 "wviewer::delete_items {} {{0 1}} {} $tok"]
+  set mq2after [pcall {mq_state $tok}]
+  check "MQ2 one `u` brings the trace AND its marker back together" \
+    [pcall {wviewer::undo $tok
+            list [llength [wviewer::dget [lindex [mk_graphs $tok] 0] traces {}]] \
+                 [lsort -integer [mk_nums]]}] {3 {1 2 3}}
+  check "MQ2 ... with the survivor's index and the partner's link restored" \
+    [pcall {list [mk_field 3 2] [mk_field 2 7]}] {2 1}
+
+  # --- MQ3: routing (c) — BOTH kinds selected (D1) ---------------------
+  # One keystroke, two kinds of thing, ONE undo point and ONE log line. Flagged
+  # for the eyeball: if "delete both" reads wrong it inverts to marker-first.
+  mq_setup $tok
+  pcall {mq_select $tok [dict create 1 {0}]}      ;# v_d, the ONLY trace of strip 1
+  pcall {xschem graph_marker select 3 0}          ;# a marker on strip 0
+  check "MQ3 a trace on strip 1 AND a marker on strip 0 are selected" \
+    [pcall {list [wviewer::selected_waves $vdrw 1] [xschem get graph_marker_sel]}] {0 3}
+  set ::mqlog {}
+  pcall {wviewer::clear_history $tok}
+  check "MQ3 DEL over strip 0 reports TWO things deleted (the marker + the trace)" \
+    [mq_del $tok 0] 2
+  # marker 3 was ASKED for; marker 2 lived ON v_d and went with it as a CASCADE,
+  # which is a consequence and is deliberately not part of the count
+  check "MQ3 the asked-for marker went, and so did the one riding the trace" \
+    [pcall {lsort -integer [mk_nums]}] 1
+  check "MQ3 ... and so did the trace, on the OTHER strip" \
+    [pcall {llength [wviewer::dget [lindex [mk_graphs $tok] 1] traces {}]}] 0
+  check "MQ3 D3: the strip that lost its last trace STAYS (that is bare `e`'s job)" \
+    [pcall {list [llength [mk_graphs $tok]] [xschem get graph_rects]}] {2 2}
+  check "MQ3 ONE undo point for the whole gesture, not one per kind" \
+    [pcall {wviewer::history_depth $tok}] {1 0}
+  check "MQ3 ONE log line, carrying both payloads" \
+    [list [llength $::mqlog] [lindex $::mqlog 0]] \
+    [list 1 "wviewer::delete_items {} {{1 0}} 3 $tok"]
+  check "MQ3 one `u` brings BOTH back" \
+    [pcall {wviewer::undo $tok
+            list [llength [wviewer::dget [lindex [mk_graphs $tok] 1] traces {}]] \
+                 [lsort -integer [mk_nums]]}] {1 {1 2 3}}
+
+  # --- MQ4: D2 — nothing selected is a NO-OP that never reaches C ------
+  # A leg that only checked "no crash" would pass on a readonly modal, so this
+  # spies the forward itself: `xschem callback` must not be called at all.
+  mq_setup $tok
+  pcall {mq_select $tok [dict create]}
+  pcall {xschem graph_marker select -none}
+  pcall {wviewer::clear_history $tok}
+  set ::mqlog {}
+  set mq4before [pcall {mq_state $tok}]
+  set mq4r [mq_del_spy $tok 0]
+  check "MQ4 DEL with nothing selected reports 0" $mq4r 0
+  check "MQ4 ... and NEVER forwarded to C (the canvas delete verb is a readonly modal)" \
+    $::mqcb 0
+  check "MQ4 ... the model is byte-identical" [pcall {mq_state $tok}] $mq4before
+  check "MQ4 ... no undo point was pushed" [pcall {wviewer::history_depth $tok}] {0 0}
+  check "MQ4 ... and nothing was logged for a replay to re-run" [llength $::mqlog] 0
+
+  # --- MQ5: the marker arm still honours C's STRIP SCOPE ---------------
+  # callback.c's XK_Delete requires `graph_marker_find(sel) == graph_master` —
+  # the pointer must be over the strip that owns the selected marker.
+  # delete_selection_at reproduces that rather than loosening it. This ALSO
+  # closes a latent wart: the old arm forwarded on a window-wide selection and
+  # let C refuse, and C's refusal fell through to the canvas delete verb.
+  mq_setup $tok
+  pcall {mq_select $tok [dict create]}
+  pcall {xschem graph_marker select 3 0}          ;# marker 3 lives on strip 0
+  pcall {wviewer::clear_history $tok}
+  set ::mqlog {}
+  set mq5before [pcall {mq_state $tok}]
+  set mq5r [mq_del_spy $tok 1]                    ;# ... but the pointer is on strip 1
+  check "MQ5 DEL on the WRONG strip deletes nothing" $mq5r 0
+  check "MQ5 ... the marker survives" [pcall {lsort -integer [mk_nums]}] {1 2 3}
+  check "MQ5 ... nothing reached C (no fall-through to the readonly modal)" $::mqcb 0
+  check "MQ5 ... no undo point, no log line" \
+    [list [pcall {wviewer::history_depth $tok}] [llength $::mqlog]] {{0 0} 0}
+  check "MQ5 ... and the model is byte-identical" [pcall {mq_state $tok}] $mq5before
+  check "MQ5 the SAME gesture on the OWNING strip does delete it (the A/B control)" \
+    [list [mq_del $tok 0] [pcall {lsort -integer [mk_nums]}]] {1 {1 2}}
+
+  # --- MQ6: delete_items' own refusals and no-op discipline ------------
+  mq_setup $tok
+  pcall {wviewer::clear_history $tok}
+  set ::mqlog {}
+  check "MQ6 an empty request is a 0, not a mutation" \
+    [pcall {wviewer::delete_items {} {} {} $tok}] 0
+  check "MQ6 an out-of-range strip index is refused LOUDLY ({}, not a wrong delete)" \
+    [pcall {wviewer::delete_items {9} {} {} $tok}] {}
+  check "MQ6 an out-of-range trace index is refused" \
+    [pcall {wviewer::delete_items {} {{0 9}} {} $tok}] {}
+  check "MQ6 a malformed pair is refused" \
+    [pcall {wviewer::delete_items {} {{0}} {} $tok}] {}
+  check "MQ6 a marker number that does not exist is DROPPED, not counted" \
+    [pcall {wviewer::delete_items {} {} {99} $tok}] 0
+  check "MQ6 none of those pushed an undo point or logged" \
+    [list [pcall {wviewer::history_depth $tok}] [llength $::mqlog]] {{0 0} 0}
+  check "MQ6 a duplicate pair deletes ONE trace, not two" \
+    [pcall {wviewer::delete_items {} {{0 1} {0 1}} {} $tok}] 1
+  check "MQ6 ... leaving the neighbours alone" \
+    [pcall {set vs {}
+            foreach tr [wviewer::dget [lindex [mk_graphs $tok] 0] traces {}] {
+              lappend vs [wviewer::dget $tr vec ?] }
+            set vs}] {v_a v_c}
+  check "MQ6 ... and the log line carries the DEDUPED pair list" \
+    [lindex $::mqlog end] "wviewer::delete_items {} {{0 1}} {} $tok"
+
+  # --- MQ7: the logged line REPLAYS to the same model ------------------
+  # A line that named "the selection" instead of explicit pairs would pass every
+  # equality check above and fail here — a replay has no selection state at all
+  # (issue 0175 D8).
+  mq_setup $tok
+  pcall {mq_select $tok [dict create 0 {1}]}
+  set ::mqlog {}
+  pcall {wviewer::clear_history $tok}
+  pcall {mq_del $tok 0}
+  set mq7line [lindex $::mqlog 0]
+  set mq7want [pcall {mq_state $tok}]
+  mq_setup $tok                                   ;# a fresh, identical viewer state
+  pcall {xschem graph_marker select -none}        ;# ... and NO selection this time
+  pcall {mq_select $tok [dict create]}
+  set ::mqlog {}
+  check "MQ7 the recorded line replays without error" [pcall {eval $mq7line}] 1
+  check "MQ7 ... and lands on the same model, with no selection to guide it" \
+    [pcall {mq_state $tok}] $mq7want
+
+  # --- MQ8: undo/redo across the whole gesture -------------------------
+  mq_setup $tok
+  pcall {mq_select $tok [dict create 0 {1}]}
+  pcall {wviewer::clear_history $tok}
+  set mq8before [pcall {mq_state $tok}]
+  pcall {mq_del $tok 0}
+  set mq8after [pcall {mq_state $tok}]
+  check "MQ8 undo restores the pre-delete model exactly" \
+    [pcall {wviewer::undo $tok; mq_state $tok}] $mq8before
+  check "MQ8 ... and it is now redoable" [pcall {wviewer::history_depth $tok}] {0 1}
+  check "MQ8 redo deletes it again, identically" \
+    [pcall {wviewer::redo $tok; mq_state $tok}] $mq8after
+  check "MQ8 the rects followed the model both ways" \
+    [pcall {xschem new_schematic switch $vdrw
+            list [xschem getprop rect 2 0 node] [lsort -integer [mk_nums]]}] \
+    [list {v_a
+v_c} {2 3}]
+
+  # --- MQ9: the GATE — over_graph, the wiring, and the graphkeys rule --
+  check_true "MQ9 <KeyPress> on the viewer canvas still routes to key_filter\
+ (the direct calls above are the same proc)" \
+    [string match {*wviewer::key_filter*} [bind $vdrw <KeyPress>]]
+  check_true "MQ9 Delete is NOT a graphkeys member (membership = unconditional\
+ forwarding, and a forwarded Delete lands on the canvas delete verb)" \
+    [expr {[lsearch -exact $::wviewer::graphkeys 65535] < 0}]
+  mq_setup $tok
+  pcall {mq_select $tok [dict create 0 {1}]}
+  pcall {wviewer::clear_history $tok}
+  set ::mqlog {}
+  set mq9before [pcall {mq_state $tok}]
+  # ⚠ MEASURED, and it decides how D7 can be tested at all: since item 18 the
+  # strips TILE the whole viewport, so `graphbb` covers every canvas pixel and
+  # there is NO off-graph region to park the pointer in — `over_graph` answers 1
+  # even at pixel (3,3). A leg that moves the pointer to a corner and expects a
+  # refusal therefore never presses anything and passes vacuously (it did, on the
+  # first draft of this group). The gate is asserted at its SEAM instead: stub
+  # `over_graph` to 0, which is exactly what the shipped proc answers when the C
+  # context is on another window, and drive the real key_filter.
+  check "MQ9 the viewer canvas is fully tiled, so there is no off-graph pixel\
+ to park a pointer in (this is why D7 is asserted at the seam)" \
+    [pcall {xschem new_schematic switch $vdrw
+            catch {event generate $vdrw <Motion> -x 3 -y 3 -time [incr ::wbt 1000]}
+            update
+            xschem new_schematic switch $vdrw
+            wviewer::over_graph $vdrw}] 1
+  set ::mqcb 0
+  rename wviewer::over_graph wviewer::__mq_real_over_graph
+  proc wviewer::over_graph {wp} { return 0 }
+  trace add execution xschem enter mq_cb_trace
+  pcall {wviewer::key_filter $vdrw 2 3 3 65535 Delete 0}
+  catch {trace remove execution xschem enter mq_cb_trace}   ;# BEFORE the update
+  update
+  rename wviewer::over_graph {}
+  rename wviewer::__mq_real_over_graph wviewer::over_graph
+  check "MQ9 D7: with over_graph refusing, DEL does nothing — even though a\
+ trace IS selected and the same key deletes it a line later" \
+    [pcall {xschem new_schematic switch $vdrw; mq_state $tok}] $mq9before
+  check "MQ9 ... and it is not forwarded to C either" $::mqcb 0
+  check "MQ9 nothing was logged and no undo point was pushed" \
+    [list [pcall {wviewer::history_depth $tok}] [llength $::mqlog]] {{0 0} 0}
+  # THE A/B CONTROL — without it the leg above passes on a DEL that is broken
+  # for some entirely different reason. Same key, same selection, gate restored.
+  check "MQ9 the SAME key with over_graph restored DOES delete it (the control)" \
+    [mq_del $tok 0] 1
+  check "MQ9 ... so the refusal above really was the gate" \
+    [pcall {llength [wviewer::dget [lindex [mk_graphs $tok] 0] traces {}]}] 2
+
+  # --- MQ10: a REAL Delete keystroke, end to end -----------------------
+  # The MD10 shape: try Tk, and if WSLg focus swallows it drive the shipping
+  # binding's own script, so the check count is constant either way.
+  mq_setup $tok
+  pcall {mq_select $tok [dict create 0 {1}]}
+  pcall {wviewer::clear_history $tok}
+  set ::mqlog {}
+  lassign [mq_mid 0] mqpx mqpy
+  set mqdone 0
+  for {set mqi 0} {$mqi < 60} {incr mqi} {
+    update
+    if {[llength [wviewer::dget [lindex [mk_graphs $tok] 0] traces {}]] == 2} {
+      set mqdone 1; break
+    }
+    catch {wm deiconify $vtop}
+    catch {raise $vtop}
+    catch {event generate $vtop <FocusIn> -detail NotifyAncestor}
+    focus -force $vtop
+    focus -force $vdrw
+    catch {xschem new_schematic switch $vdrw}
+    catch {event generate $vdrw <Motion> -x $mqpx -y $mqpy -time [incr ::wbt 1000]}
+    update
+    catch {xschem new_schematic switch $vdrw}
+    if {[focus -displayof $vdrw] eq $vdrw} {
+      catch {event generate $vdrw <Key-Delete> -x $mqpx -y $mqpy -time [incr ::wbt 1000]}
+    }
+    update
+    after 20
+  }
+  if {!$mqdone} {
+    note "Tk Delete delivery stalled (WSLg focus) — running the shipping handler"
+    catch {xschem new_schematic switch $vdrw}
+    catch {event generate $vdrw <Motion> -x $mqpx -y $mqpy -time [incr ::wbt 1000]}
+    update
+    catch {xschem new_schematic switch $vdrw}
+    pcall {wviewer::key_filter $vdrw 2 $mqpx $mqpy 65535 Delete 0}
+    update
+  }
+  catch {xschem new_schematic switch $vdrw}
+  check "MQ10 a real Delete deleted the selected trace (Tk route or the handler)" \
+    [pcall {set vs {}
+            foreach tr [wviewer::dget [lindex [mk_graphs $tok] 0] traces {}] {
+              lappend vs [wviewer::dget $tr vec ?] }
+            set vs}] {v_a v_c}
+  check "MQ10 ... taking its marker with it" [pcall {lsort -integer [mk_nums]}] {2 3}
+  check "MQ10 ... and logging the same single line the command does" \
+    [list [llength $::mqlog] [lindex $::mqlog end]] \
+    [list 1 "wviewer::delete_items {} {{0 1}} {} $tok"]
+  check "MQ10 ... and one `u` is enough" \
+    [pcall {wviewer::undo $tok
+            llength [wviewer::dget [lindex [mk_graphs $tok] 0] traces {}]}] 3
+
+  # --- MQ11: D5 — ONE undo point and ONE log line for MANY traces ------
+  # The leg every other MQ leg cannot be: they all delete exactly one trace, so
+  # "per gesture" and "per trace" are indistinguishable there and a deleter that
+  # logged (or pushed) once per trace would pass the whole group. MEASURED: a
+  # sabotage that emits one line per pair is INVISIBLE without this leg.
+  mq_setup $tok
+  pcall {mq_select $tok [dict create 0 {0 2}]}       ;# v_a AND v_c, one gesture
+  check "MQ11 two traces of the same strip are selected" \
+    [pcall {wviewer::selected_waves $vdrw 0}] {0 2}
+  pcall {wviewer::clear_history $tok}
+  set ::mqlog {}
+  check "MQ11 DEL reports TWO traces deleted" [mq_del $tok 0] 2
+  check "MQ11 both went, and the one between them stayed" \
+    [pcall {set vs {}
+            foreach tr [wviewer::dget [lindex [mk_graphs $tok] 0] traces {}] {
+              lappend vs [wviewer::dget $tr vec ?] }
+            set vs}] {v_b}
+  check "MQ11 the marker on the surviving trace shifted 1 -> 0" \
+    [pcall {list [lsort -integer [mk_nums]] [mk_field 1 2]}] {{1 2} 0}
+  check "MQ11 ONE undo point for TWO traces (per gesture, not per trace)" \
+    [pcall {wviewer::history_depth $tok}] {1 0}
+  check "MQ11 ONE log line for TWO traces, carrying both pairs" \
+    [list [llength $::mqlog] [lindex $::mqlog 0]] \
+    [list 1 "wviewer::delete_items {} {{0 0} {0 2}} {} $tok"]
+  check "MQ11 one `u` brings BOTH traces and BOTH markers back" \
+    [pcall {wviewer::undo $tok
+            list [llength [wviewer::dget [lindex [mk_graphs $tok] 0] traces {}]] \
+                 [lsort -integer [mk_nums]] [mk_field 1 2]}] {3 {1 2 3} 1}
+
+  # --- MQ12: the TARGET survives a whole-strip delete --------------------
+  # The dialog can delete a whole strip; DEL cannot (D4). Nothing asserted the
+  # stored target afterwards, and the first draft of delete_items got it WRONG in
+  # a way no other leg could see: it read `target_index` AFTER `set_graphs`, and
+  # `target_index` clamps against the LIVE strip count — so a target sitting at
+  # or past the new end was shrunk TWICE, once by the clamp and once by
+  # `index_after_removal`. `split_strip` already reads before its mutation and
+  # says why; this leg is what makes the two agree.
+  # The teeth are the CLAMPED case: target = the LAST strip, delete strip 0.
+  mq_setup $tok
+  pcall {wviewer::set_graphs $tok [linsert [mk_graphs $tok] end \
+           [dict replace [wviewer::empty_graph] sdid C]]
+         wviewer::regenerate $tok}
+  check "MQ12 fixture: three strips" [pcall {llength [mk_graphs $tok]}] 3
+  pcall {wviewer::set_target_strip 2 $tok}
+  check "MQ12 the LAST strip is the target" [pcall {wviewer::target_strip $tok}] 2
+  pcall {wviewer::clear_history $tok}
+  check "MQ12 deleting strip 0 removes it" \
+    [pcall {list [wviewer::delete_items {0} {} {} $tok] [llength [mk_graphs $tok]]}] {1 2}
+  check "MQ12 the target FOLLOWED its strip (it is now index 1, not 0)" \
+    [pcall {wviewer::target_strip $tok}] 1
+  check "MQ12 ... and it is still the same strip (the inert witness proves it)" \
+    [pcall {wviewer::dget [lindex [mk_graphs $tok] [wviewer::target_strip $tok]] sdid ?}] C
+  check "MQ12 a target BELOW the deleted strip does not move" \
+    [pcall {mq_setup $tok
+            wviewer::set_target_strip 0 $tok
+            wviewer::delete_items {1} {} {} $tok
+            wviewer::target_strip $tok}] 0
+  check "MQ12 undo restores the strip, and the target with it" \
+    [pcall {mq_setup $tok
+            wviewer::set_target_strip 1 $tok
+            wviewer::clear_history $tok
+            wviewer::delete_items {0} {} {} $tok
+            wviewer::undo $tok
+            list [llength [mk_graphs $tok]] [wviewer::target_strip $tok]}] {2 1}
+
+  # hand the log seam and the fixture back exactly as they were found
+  catch {trace remove execution xschem enter mq_cb_trace}
+  rename wviewer::log_action {}
+  rename wviewer::__mq_real_log wviewer::log_action
+  foreach mqp {mq_tr mq_layout mq_marks mq_setup mq_state mq_select mq_mid mq_del
+               mq_del_spy mq_cb_trace} {
+    catch {rename $mqp {}}
+  }
+  foreach mqv {mqn mq2after mq4before mq4r mq5before mq5r mq7line mq7want
+               mq8before mq8after mq9before mq9off mqpx mqpy mqdone mqi} {
+    catch {unset $mqv}
+  }
+  catch {wviewer::with_edit $tok {xschem graph_marker delete -all}}
+  catch {xschem graph_marker select -none}
+  mk_fixture $tok
+
+  # ==========================================================================
   # MX* — full Tk gesture sequences
   # ==========================================================================
 
@@ -4040,15 +4577,32 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   check "MF11b a RAW C forward of `d` is refused too" [pcall {llength [mk_list 0]}] 1
   pcall {wviewer::key_filter $vdrw 2 $mxx $mf11y 100 d 0}
   check "MF11b ... and key_filter creates the delta marker" [pcall {llength [mk_list 0]}] 2
-  # Delete: the third bracketed key
+  check "MF11b no viewer log line for the m/d halves (not a reorder, not a move)" \
+    [llength $::mxlog] $mf11log
+  # Delete used to be the third with_edit-bracketed FORWARD. Since issue 0176 it
+  # is not forwarded at all — key_filter owns it and deletes through the viewer's
+  # own MODEL edit (wviewer::delete_selection_at -> delete_items), so unlike m/d
+  # it is an undoable, replayable viewer command and DOES emit one log line. The
+  # RAW-forward half is unchanged and still refused.
+  # The gesture also deletes SELECTED TRACES now, so this leg has to be explicit
+  # about there being none — otherwise it would silently be testing a trace
+  # delete as well and the marker count would be measuring the wrong thing.
+  set mf11gs {}
+  foreach mf11G [mk_graphs $tok] { lappend mf11gs [wviewer::model_sel_set $mf11G {}] }
+  pcall {wviewer::set_graphs $tok $mf11gs; wviewer::regenerate $tok}
+  pcall {xschem new_schematic switch $vdrw}
+  check "MF11b no trace is selected, so Delete is purely the marker arm (0176)" \
+    [pcall {list [wviewer::selected_waves $vdrw 0] [wviewer::selected_waves $vdrw 1]}] {{} {}}
+  set mf11log2 [llength $::mxlog]
   pcall {xschem new_schematic switch $vdrw; xschem graph_marker select 2 0}
+  mk_prep_at $mxx $mf11y
   pcall {xschem callback $vdrw 2 $mxx $mf11y 65535 0 0 0}
   check "MF11b a RAW C forward of Delete is refused" [pcall {llength [mk_list 0]}] 2
   pcall {wviewer::key_filter $vdrw 2 $mxx $mf11y 65535 Delete 0}
   check "MF11b ... and key_filter deletes the selected marker" \
     [pcall {llength [mk_list 0]}] 1
-  check "MF11b no viewer log line for any of it (not a reorder, not a trace move)" \
-    [llength $::mxlog] $mf11log
+  check "MF11b Delete, unlike m/d, logs exactly ONE viewer line (issue 0176)" \
+    [expr {[llength $::mxlog] - $mf11log2}] 1
 
   } mxgerr]} {
     puts "FAIL: MX group ABORTED: $mxgerr : FAIL"
@@ -4125,8 +4679,8 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
 # the new numbers here. That is the point -- the constant is the thing that
 # makes silent coverage loss impossible, so it has to be maintained by hand.
 # These are the counts BEFORE the two MZ legs themselves, so the RESULT line
-# reads two higher (711 / 328).
-set ::mk_expect_x     710   ;# DISPLAY arm: MK + MR + MF + MD + MR-viewer + MX
+# reads two higher (803 / 328).
+set ::mk_expect_x     801   ;# DISPLAY arm: MK + MR + MF + MD + MQ + MR-viewer + MX
 set ::mk_expect_nogui 326   ;# --nogui arm: MK + the engine half of MR/MF/MD
 set mkexp [expr {$::mk_ran_x ? $::mk_expect_x : $::mk_expect_nogui}]
 set mkgot [expr {$npass + $fail}]

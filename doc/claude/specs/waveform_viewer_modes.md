@@ -809,9 +809,23 @@ wviewer::clear_history token
 ```
 
 `push_undo` is the extension seam: **any** future model mutation becomes undoable
-by calling it right after its `capture_live_graph_state`. Today's callers are
-`move_strip` and `move_trace`. A new edit clears the redo branch (linear
-history); the stack is capped at `wviewer::undo_depth` (50) per window.
+by calling it right after its `capture_live_graph_state`. A new edit clears the
+redo branch (linear history); the stack is capped at `wviewer::undo_depth` (50)
+per window.
+
+The mutations that participate today:
+
+| mutation | notes |
+|---|---|
+| `move_strip` (§12) | the drag-reorder |
+| `move_trace` / `move_trace_to_new_strip` (§13) | trace between strips |
+| `split_strip` | |
+| `delete_empty_strips` | bare `e` |
+| `marker_changed` (the C push hook) | the undo point for **every** marker create/delete/drag, `delete_all_markers` included — the wrapper never pushes one itself |
+| **`delete_items`** (§16, issue 0176) | the ONE trace/strip/marker deleter, shared by the Delete dialog and the DEL key. ⚠ Its dialog half had NO undo point and NO log line before 0176 — a pre-existing defect repaired by the extraction, not by this feature |
+
+`clear_all` and `plot_signals` deliberately do **not**: they replace the whole
+plot rather than editing it.
 
 The history is transient — created on open, dropped by `forget`, cleared by
 `restore` (which replaces the model wholesale) and never serialized: a saved
@@ -883,6 +897,7 @@ of trace names above it; "margins" is everything else inside the strip rect
 | RMB **click** | a legend entry | **Tcl** | the trace context menu for that entry's trace (issue 0178) |
 | RMB click | empty body | **Tcl** | the strip context menu (item 8) |
 | Shift+LMB, Alt+LMB | anywhere | — | swallowed by `strip_bindings` (issue 0149) |
+| **`Delete`** (the one KEY row) | over a graph | **Tcl** | deletes the selection — the marker, the traces, or both (§16, issue 0176). Never forwarded to C |
 
 Five rules that are easy to get wrong and are asserted:
 
@@ -1007,3 +1022,104 @@ collapse, window-wide, the legend, the NODE index space, survival across a
 regenerate). `tests/headless/test_wave_legend.tcl` `LS*` (the pure set algebra,
 the token emission, the blast radius, the source-level D4 leg).
 `tests/headless/test_wave_viewer.tcl` `WB-legend` (legend LMB selects).
+
+---
+
+## 16. `Delete` deletes the SELECTION (2026-07-30, issue 0176)
+
+`doc/claude/issues/0176-del-deletes-selection.md`. One rule, keyed on **what
+kind of thing is selected** — not a priority ladder between two owners:
+
+> Delete should delete whatever is selected. If that is a marker, delete it. If
+> it is a trace, delete the trace and its associated markers.
+
+### 16.1 The rule
+
+| what is selected | what `Delete` does |
+|---|---|
+| a MARKER (and the pointer is over the strip that owns it) | that marker |
+| one or more TRACES (§15's selection, window-wide) | those traces, **and every marker on them** |
+| both | both, as ONE gesture (D1 — flagged at review) |
+| nothing | **nothing**, and in particular nothing reaches the C engine |
+
+The cascade is not new behaviour bolted on: it is the documented semantics of
+`remap_markers_after_trace_delete`, which the Delete dialog has always used.
+
+### 16.2 The one mutation
+
+```tcl
+wviewer::delete_items {graphs pairs ?markers? ?token?}   ;# -> count | 0 | {}
+```
+
+`graphs` = whole strip indices (the dialog's; **DEL always passes `{}`**, D4),
+`pairs` = `{gi ti}` **MODEL** index pairs, `markers` = marker NUMBERS.
+
+Same ordering contract as `move_strip` (§12.2/§12.3), for the same reasons:
+validate LOUDLY → a no-op returns without mutating **and without logging** →
+verified `switch_ctx` → **`capture_live_graph_state` first** → `push_undo` → the
+pure `delete_in_graphs` → the window-wide `markers_sweep_numbers` → the target
+remapped *in place* → exactly one `regenerate` → exactly one log line:
+
+```tcl
+wviewer::delete_items {} {{0 1} {0 2}} {3} <token>
+```
+
+The capture is what puts the live markers *and* the mouse-written pan/zoom inside
+the restore point, so **one `u` brings the traces and their markers back
+together**.
+
+**One undo point and one log line per GESTURE**, not per trace (D5). Three
+selected traces are a single `u`.
+
+**The pairs in the log line are the normalised ones** — deduped, with pairs
+inside a doomed strip dropped — and they are stable against the deletions the
+line itself performs: `delete_in_graphs` walks the ORIGINAL list with its own
+`gi` counter and removes traces highest-index-first, so every index is in the
+pre-mutation space (D6). A replay has **no selection state at all** (§15, 0175
+D8), which is why the line can never say "the selection".
+
+### 16.3 The marker arm is a MODEL edit, and the scope test moved to Tcl
+
+`key_filter` no longer forwards `Delete` to C on any path. Two consequences,
+both deliberate:
+
+- The marker deletion goes through `markers_drop_number` — the primitive every
+  other Tcl deletion path in `wave_viewer.tcl` already uses, and the one that
+  zeroes dangling `prev` links window-wide. So the marker's number simply joins
+  the `gone` list and rides the same sweep the cascade already needed. 0176 D8
+  lists the four measured reasons the C verb is wrong here (readonly rejection, a
+  self-logged line that aborts a replay, a C undo push on a scratch buffer, and
+  the `has_x`-gated notify hook).
+- C's strip-scope test (`graph_marker_find(sel) == graph_master`) is
+  **reproduced**, not loosened: `wviewer::marker_graph_at` vs
+  `wviewer::strip_at_pixel` of the KeyPress coordinates (D9).
+
+Because nothing is forwarded, C's `case XK_Delete` fall-through —
+`readonly_block()` and a modal dialog over a read-only viewer — is unreachable
+from this window. It **was** reachable before 0176.
+
+### 16.4 What Delete deliberately does not do
+
+- It does **not** delete a strip that loses its last trace (D3). Tidying the
+  stack is bare `e`, and it is the user's gesture to make.
+- It does **not** delete whole strips (D4). That is the Delete dialog's job.
+- It does **not** fire off a graph: `over_graph` is required, as it always was
+  for the marker arm (D7).
+
+### 16.5 Tests
+
+`tests/headless/test_wave_modes.tcl` `DT*` — the PURE half (`delete_in_graphs`):
+the cascade, the survivor remap, the `gone` numbers, the selection set, and the
+vec-less-trace index space (landmine 34). **Both arms.**
+
+`tests/headless/test_wave_markers.tcl` `MQ*` — the command layer: routing both
+ways and both together, the live cascade + window-wide sweep, undo/redo, the log
+line, the replay, the two refusals (each with an execution trace on `xschem`
+proving zero `callback` calls), and one real `Delete` keystroke. **DISPLAY
+only** — `delete_items` ends in a `regenerate`, i.e. `winfo`, so the command
+layer cannot run under `--nogui` whatever the fixture does. A leg written into
+the nogui arm would assert the pre-mutation state and pass for the wrong reason.
+
+`tests/headless/test_wave_viewer.tcl` `G14b` — the Delete dialog, which gained
+undo, redo, a replayable log line, a target remap and a no-op discipline as a
+consequence of the extraction.

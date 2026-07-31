@@ -562,6 +562,109 @@ rename m8_tr {}
 rename m8_g {}
 rename m8_vecs {}
 
+# --- DT: deleting traces and strips, the PURE half (issue 0176) --------------
+# doc/claude/issues/0176-del-deletes-selection.md. `wviewer::delete_in_graphs`
+# is the body lifted out of the Delete dialog's OK button so the DEL key can
+# reach it too. It is the whole index story of a trace delete, and it is the
+# half that CAN be asserted in BOTH arms — the command layer on top of it
+# (`delete_items`) ends in a `regenerate`, i.e. `winfo`, so it is DISPLAY-only
+# and lives in test_wave_markers.tcl's MQ group (landmine 41's split, applied to
+# Tk rather than to has_x). A leg written the other way round would assert the
+# pre-mutation state and pass for the wrong reason.
+#
+# Three consequences per deleted trace, and every one of them has a leg:
+#   1. a marker ON the doomed trace is DROPPED
+#   2. markers and SELECTED nodes above the hole shift DOWN
+#   3. the dropped NUMBERS come back in `gone` for the caller's window-wide sweep
+proc dt_tr {v} { return [dict create expr $v name {} vec $v color 4] }
+proc dt_g {args} {
+  set trs {}
+  foreach v $args { lappend trs [dt_tr $v] }
+  return [dict replace [wviewer::empty_graph] traces $trs]
+}
+proc dt_vecs {G} {
+  set out {}
+  foreach tr [wviewer::dget $G traces {}] { lappend out [wviewer::dget $tr vec ?] }
+  return $out
+}
+proc dt_rec {num wave {prev 0}} { return "$num $wave 0 3 0.3 1.3 $prev 0.06 -0.09" }
+
+# strip 0: a b c (nodes 0 1 2) with markers 1@node1 and 3@node2;
+# strip 1: x     (node 0)      with marker  2@node0, prev = 1 (a cross-strip delta)
+set dtbase [list \
+  [dict replace [dt_g v(a) v(b) v(c)] markers "[dt_rec 1 1]\n[dt_rec 3 2]"] \
+  [dict replace [dt_g v(x)] markers [dt_rec 2 0 1]]]
+
+check "DT1 nothing to delete returns the list UNCHANGED and no gone numbers" \
+  [pcall {wviewer::delete_in_graphs $dtbase {} [dict create]}] [list $dtbase {}]
+
+set dt2 [pcall {wviewer::delete_in_graphs $dtbase {} [dict create 0 {1}]}]
+check "DT2 the doomed trace leaves, its neighbours do not" \
+  [pcall {dt_vecs [lindex [lindex $dt2 0] 0]}] {v(a) v(c)}
+check "DT2 CASCADE: the marker ON it is dropped, the one above it survives" \
+  [pcall {wviewer::markers_numbers [dict get [lindex [lindex $dt2 0] 0] markers]}] 3
+check "DT2 SURVIVOR REMAP: that marker's wave shifted 2 -> 1" \
+  [pcall {lindex [split [dict get [lindex [lindex $dt2 0] 0] markers] { }] 1}] 1
+check "DT2 the dropped NUMBER comes back for the window-wide sweep" \
+  [lindex $dt2 1] 1
+check "DT2 the OTHER strip is untouched by this proc (the sweep is the caller's)" \
+  [pcall {list [dt_vecs [lindex [lindex $dt2 0] 1]] \
+               [dict get [lindex [lindex $dt2 0] 1] markers]}] \
+  [list {v(x)} [dt_rec 2 0 1]]
+check "DT2 ... and markers_sweep_numbers is what zeroes the dangling prev" \
+  [pcall {dict get [lindex [wviewer::markers_sweep_numbers \
+            [lindex $dt2 0] [lindex $dt2 1]] 1] markers}] [dt_rec 2 0 0]
+
+# deleting the LAST marker-carrying trace must remove the key, not leave ""
+set dt3 [pcall {wviewer::delete_in_graphs $dtbase {} [dict create 0 {1 2}]}]
+check "DT3 two traces go in one call, highest index first (no off-by-one)" \
+  [pcall {dt_vecs [lindex [lindex $dt3 0] 0]}] {v(a)}
+check "DT3 absent-means-absent: an emptied token drops the KEY" \
+  [pcall {dict exists [lindex [lindex $dt3 0] 0] markers}] 0
+check "DT3 both numbers are reported gone" [lsort -integer [lindex $dt3 1]] {1 3}
+
+# a WHOLE strip: its markers are all `gone`, and it leaves the list
+set dt4 [pcall {wviewer::delete_in_graphs $dtbase {1} [dict create]}]
+check "DT4 the strip is removed" [llength [lindex $dt4 0]] 1
+check "DT4 ... and its marker number is reported gone" [lindex $dt4 1] 2
+
+# the SELECTION (issue 0175) is a SET and is remapped per element
+set dtsel [list [wviewer::model_sel_set [dt_g v(a) v(b) v(c)] {0 2}] [dt_g v(x)]]
+set dt5 [pcall {wviewer::delete_in_graphs $dtsel {} [dict create 0 {1}]}]
+check "DT5 a selected node ABOVE the hole shifts down, the one below does not" \
+  [pcall {wviewer::model_sel [lindex [lindex $dt5 0] 0]}] {0 1}
+set dt6 [pcall {wviewer::delete_in_graphs $dtsel {} [dict create 0 {0}]}]
+check "DT6 a SELECTED trace that dies simply leaves the set" \
+  [pcall {wviewer::model_sel [lindex [lindex $dt6 0] 0]}] 1
+check "DT6 ... and a one-element set drops sel_waves (pre-0175 byte identity)" \
+  [pcall {dict exists [lindex [lindex $dt6 0] 0] sel_waves}] 0
+set dt7 [pcall {wviewer::delete_in_graphs $dtsel {} [dict create 0 {0 2}]}]
+check "DT7 an emptied selection drops BOTH keys rather than storing -1" \
+  [pcall {list [dict exists [lindex [lindex $dt7 0] 0] hilight_wave] \
+               [dict exists [lindex [lindex $dt7 0] 0] sel_waves]}] {0 0}
+
+# landmine 34: a vec-less trace occupies a MODEL slot and NO node slot, so the
+# two index spaces differ and the marker remap must use the node one
+set dtnv [list [dict replace [wviewer::empty_graph] traces \
+            [list [dt_tr v(a)] [dict create expr {} name {} vec {} color 4] \
+                  [dt_tr v(b)]] markers [dt_rec 1 1]]]
+check "DT8 a vec-less trace occupies no node slot (v(b) is node 1, model 2)" \
+  [pcall {list [wviewer::node_index_of_trace [lindex $dtnv 0] 2] \
+               [wviewer::node_index_of_trace [lindex $dtnv 0] 0]}] {1 0}
+set dt8 [pcall {wviewer::delete_in_graphs $dtnv {} [dict create 0 {1}]}]
+check "DT8 deleting the VEC-LESS trace shifts no marker (it was never a node)" \
+  [pcall {dict get [lindex [lindex $dt8 0] 0] markers}] [dt_rec 1 1]
+set dt9 [pcall {wviewer::delete_in_graphs $dtnv {} [dict create 0 {2}]}]
+check "DT9 deleting MODEL trace 2 drops the marker on NODE 1, not on node 2" \
+  [pcall {dict exists [lindex [lindex $dt9 0] 0] markers}] 0
+
+# a graph with no markers must never GAIN the key
+set dt10 [pcall {wviewer::delete_in_graphs [list [dt_g v(a) v(b)]] {} [dict create 0 {0}]}]
+check "DT10 a marker-free graph never gains a markers key" \
+  [pcall {list [dict exists [lindex [lindex $dt10 0] 0] markers] [lindex $dt10 1]}] {0 {}}
+
+foreach dtp {dt_tr dt_g dt_vecs dt_rec} { rename $dtp {} }
+
 # --- M9: the context-loan TICKET (issue 0173) --------------------------------
 # wviewer::enter_ctx / wviewer::leave_ctx are the save/restore bracket every
 # viewer-side READ goes through so that switching INTO a viewer stops being a

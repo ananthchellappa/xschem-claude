@@ -358,6 +358,30 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   check_true "EG4 the clamp alone would have given a DIFFERENT answer" \
     [expr {[wviewer::target_clamp 5 6] != 3}]
 
+  # --- EG4b: the target BEYOND the surviving count — the clamped case -------
+  # ⚠ EG4 above is still one step short, and the shortfall was found by the
+  # issue-0176 review. Its target (5) is BELOW the surviving count (6), so
+  # `target_index`'s clamp is inert and reading the target after the mutation
+  # gives the same answer as reading it before. Push the target to the LAST
+  # strip and the clamp bites: read after `set_graphs` and it truncates 7 -> 5
+  # BEFORE index_after_removal subtracts the two deletions below, landing on 3 —
+  # a strip the target was never on. The read now happens before the mutation
+  # (delete_empty_strips, and delete_items which copied it).
+  fill_wide $tok
+  pcall {wviewer::set_target_strip 7 $tok}
+  check "EG4b the target is the LAST strip, past the count that will survive" \
+    [pcall {wviewer::target_strip $tok}] 7
+  pcall {wviewer::delete_empty_strips $tok}
+  check "EG4b the target followed its strip to index 5" \
+    [pcall {wviewer::target_strip $tok}] 5
+  check "EG4b and index 5 is the strip that held 2 traces, as strip 7 did" \
+    [ntraces $tok 5] 2
+  # teeth: name the WRONG answer explicitly, so a regression cannot look benign
+  check_true "EG4b a post-mutation read would have answered 3 — a different strip,\
+ with a different trace count" \
+    [expr {[wviewer::index_after_removal [wviewer::target_clamp 7 6] {1 3}] == 3
+           && [ntraces $tok 3] != 2}]
+
   # a target that is ITSELF deleted must land on a live strip, never dangle
   fill_wide $tok
   pcall {wviewer::set_target_strip 3 $tok}

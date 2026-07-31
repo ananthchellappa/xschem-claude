@@ -779,10 +779,27 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
       set want "graph 1: $var1 ($var1)"
       set ri [lsearch -exact $rows $want]
       check_true "G14 trace row found in the Delete listbox" [expr {$ri >= 0}]
+      # --- G14b: the dialog is UNDOABLE and REPLAYABLE (issue 0176) ---------
+      # It was neither until 0176: `delete_ok` had no push_undo and no
+      # log_action, so a dialog delete could not be taken back and could not be
+      # replayed. That was a PRE-EXISTING defect, repaired by routing the
+      # dialog through `wviewer::delete_items` — the same proc the DEL key
+      # uses. These legs are what stop it regressing to a bare model write.
+      set ::g14log {}
+      rename wviewer::log_action wviewer::__g14_real_log
+      proc wviewer::log_action {line} { lappend ::g14log $line }
+      wviewer::clear_history $tok
+      # the MODEL trace index behind that listbox ROW — the log line names the
+      # model, not the widget, which is exactly what makes it replayable
+      set g14ent [lindex $wviewer::delmap($tok) $ri]
+      set ri1 [lindex $g14ent 2]
+      check "G14b the picked row decodes to a trace of graph 1" \
+        [lrange $g14ent 0 1] {trace 1}
       $w.items selection clear 0 end
       $w.items selection set $ri
-      wviewer::delete_ok $tok
+      set g14n [wviewer::delete_ok $tok]
       xschem new_schematic switch $vdrw
+      check "G14b OK reports the one thing it deleted" $g14n 1
       check_true "G14 deleted trace gone from the node attr" \
         [expr {[string first $var1 [xschem getprop rect 2 1 node]] < 0}]
       set g1 [lindex [dict get [wviewer::layout_for $tok] graphs] 1]
@@ -790,6 +807,31 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
         [llength [dict get $g1 traces]] 1
       check "G14 surviving trace is db1" \
         [dict get [lindex [dict get $g1 traces] 0] vec] db1
+      check "G14b the dialog delete pushed exactly ONE undo point" \
+        [wviewer::history_depth $tok] {1 0}
+      check "G14b ... and logged exactly one line, with EXPLICIT model indices" \
+        [list [llength $::g14log] [lindex $::g14log 0]] \
+        [list 1 "wviewer::delete_items {} {{1 $ri1}} {} $tok"]
+      check "G14b `u` puts the trace back" \
+        [list [wviewer::undo $tok] \
+              [llength [dict get [lindex [dict get [wviewer::layout_for $tok] graphs] 1] traces]]] \
+        {1 2}
+      check "G14b ... and `U` takes it away again" \
+        [list [wviewer::redo $tok] \
+              [llength [dict get [lindex [dict get [wviewer::layout_for $tok] graphs] 1] traces]]] \
+        {1 1}
+      # an OK with nothing selected is a no-op: no undo point, no log line
+      set ::g14log {}
+      wviewer::clear_history $tok
+      set w2 [wviewer::delete_dialog $tok]
+      $w2.items selection clear 0 end
+      check "G14b OK with an empty selection deletes nothing" \
+        [wviewer::delete_ok $tok] 0
+      check "G14b ... and pushes no undo point and logs nothing" \
+        [list [wviewer::history_depth $tok] [llength $::g14log]] {{0 0} 0}
+      rename wviewer::log_action {}
+      rename wviewer::__g14_real_log wviewer::log_action
+      xschem new_schematic switch $vdrw
       # whole-graph delete: graph 1 disappears, graph 0 re-stacks from y 0
       set w [wviewer::delete_dialog $tok]
       set rows {}
