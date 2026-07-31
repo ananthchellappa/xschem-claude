@@ -1,7 +1,7 @@
 # 0183 — an empty attribute value swallows the next property token
 
-Status: **FIXED** 2026-07-31 — three producers repaired; the class sweep is done and
-recorded below.
+Status: **FIXED** 2026-07-31 — three producers repaired. The class sweep is **partial**:
+three of five slices completed, two died on API errors and are recorded as NOT SWEPT below.
 Area: `src/util.c` (`my_mstrcat_tok()`), `src/actions.c` (`create_pin()`,
 `place_symbol()`, `get_additional_symbols()`)
 Tests: `tests/headless/test_empty_value_swallows_token_0183.tcl` — **28 checks**
@@ -104,8 +104,7 @@ src/actions.c   my_mstrcat(_ALLOC_ID_, &prop, "name=", xctx->inst[n].instname, "
 src/actions.c   my_mstrcat(_ALLOC_ID_, &prop, "flags=graph,unlocked\n", NULL);
 ```
 
-`instname` is `""` (never NULL — `set_inst_flags()` fills it via `my_strdup2` +
-`get_tok_value`) when a `type=scope` symbol's `template=` carries no `name=`. Measured
+`instname` is `""` when a `type=scope` symbol's `template=` carries no `name=`. Measured
 pre-fix, on a floater rect at layer 2 (GRIDLAYER):
 
 ```
@@ -114,6 +113,30 @@ pre-fix, on a floater rect at layer 2 (GRIDLAYER):
 ```
 
 The floater loses `flags=graph`, so it is not treated as a graph.
+
+**It does NOT need a hand-authored symbol.** The session prompt recorded as established
+that all three shipped scope symbols carry `template="name=l1"`, so the reported site
+"needs a hand-authored symbol". That is **wrong**: the template is not consulted when the
+caller supplies `inst_props`. `xschem instance <sym> x y r f <props>` (argc == 8) hands
+`argv[7]` straight to `place_symbol()` as `inst_props`, and `new_prop_string()` then derives
+`instname` from *that* string — with no `name=` in it, `instname` is `""` whatever the
+template says. Measured pre-fix on the **stock** symbol:
+
+```
+xschem instance devices/scope.sym 0 0 0 0 {lock=1}
+   ->  rect2 name=<<flags=graph,unlocked>>   flags=<<>>   lock=<<1>>
+```
+
+Leg **EF5** is that case, and it is the strongest leg in the file: one scriptable command,
+stock library, no fixture.
+
+There is also a claimed second route in which `instname` is **NULL** rather than `""` (when
+`inst_props == NULL` and `set_inst_prop()` skips `new_prop_string()` because the template
+has no `name=`). NULL is `my_mstrcat`'s end-of-list sentinel, so the trailing `"\n"` would
+be dropped too and the whole floater would collapse to one token. That route was **not
+reproduced here**; it is noted because `my_mstrcat_tok()` handles it either way — it tests
+`value && value[0]`, and appends `tail` in its own call rather than as a vararg after a
+possibly-NULL value.
 
 *Checked before choosing `name=""` over omitting the line:* the two readers of a floater's
 `name` are `unselect_attached_floaters()` (`callback.c:5211`, tests
@@ -147,9 +170,24 @@ inferred from measured tokenizer law, not reproduced. Legs **ET13/ET13b** pin th
 at the level that *is* measurable — the exact string the site would build, and what
 `get_tok_value` does to it — rather than claiming a reproduction that was never obtained.
 
-## The class sweep — done
+## The class sweep — PARTIAL, two slices never ran
 
-Swept every property-string producer in `src/*.c` and `src/*.tcl`. The rule applied:
+The sweep was split into five slices. **Three completed; two died on API errors and were
+never swept**, so the class is not cleared:
+
+| slice | scope | status |
+|---|---|---|
+| actions | `src/actions.c` | swept |
+| edit | `paste.c clip.c move.c select.c store.c editprop.c check.c` | swept |
+| rest_c | `scheduler.c callback.c xinit.c draw.c flyline.c in_memory_undo.c` + the `*_netlist.c` backends, `psprint.c svgdraw.c options.c font.c util.c globals.c main.c` | swept |
+| **token_save** | **`token.c save.c netlist.c node_hash.c hilight.c findnet.c`** | **NOT SWEPT** |
+| **tcl** | **`src/*.tcl` (xschem.tcl ~12k lines, place_pins.tcl, create_graph.tcl, …)** | **NOT SWEPT** |
+
+`token.c` and `save.c` in particular are where property strings are *built and written*, so
+that gap is not a minor one. Anyone continuing this should sweep those two slices before
+treating the class as closed.
+
+Of the slices that did run, the rule applied was:
 
 * **fix it** when an empty value would SWALLOW a following token;
 * **record it** when the empty value is the LAST thing in the string, because a trailing
@@ -175,8 +213,8 @@ verification.
 
 ## Verification
 
-* `tests/headless/test_empty_value_swallows_token_0183.tcl` — 28 checks. **RED verified**
-  against the pre-fix binary: **5 FAILED / 23 passed**; after the fix, 28/28.
+* `tests/headless/test_empty_value_swallows_token_0183.tcl` — 29 checks. **RED verified**
+  against the pre-fix binary: **6 FAILED / 23 passed**; after the fix, 29/29.
 * `tests/netlist_diff/netlist_diff.sh <pre-fix>` — **BYTE-IDENTICAL (920 netlists)**,
   945 runs per arm, 0 errors. Property strings feed every backend, so this is the leg that
   matters most for a producer-side change.

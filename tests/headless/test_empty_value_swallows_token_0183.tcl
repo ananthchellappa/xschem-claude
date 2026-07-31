@@ -213,6 +213,25 @@ check "EF3 ...and its name reads back as empty, not as the flags token" \
 check "EF4 the tokens after flags are untouched" \
   [list [xschem getprop rect 2 0 lock] [xschem getprop rect 2 0 color]] {1 8}
 
+# EF5 is the leg that matters: this needs NO hand-authored symbol. All three
+# shipped scope symbols carry template="name=l1", which is why the bug was
+# originally believed to need a custom .sym -- but the template is not consulted
+# when the caller supplies inst_props. `xschem instance <sym> x y r f <props>`
+# (argc==8) hands argv[7] straight to place_symbol as inst_props, and
+# new_prop_string() then sets instname from THAT string; with no name= in it,
+# instname is "" regardless of the template. So the reported defect is reachable
+# with the STOCK library, from one scriptable command.
+# Measured pre-fix on devices/scope.sym: name=<<flags=graph,unlocked>>, flags=<<>>.
+xschem clear force
+set XSCHEM_LIBRARY_PATH [file join $repo xschem_library]
+check "EF5 the SHIPPED devices/scope.sym, placed with inst_props lacking a name=" \
+  [expr {[catch {xschem instance devices/scope.sym 0 0 0 0 {lock=1}} eshipped] ? "ERR:$eshipped" : \
+         [list [xschem getprop instance 0 name] \
+               [xschem getprop rect 2 0 name] \
+               [xschem getprop rect 2 0 flags] \
+               [xschem getprop rect 2 0 lock]]}] \
+  {{} {} graph,unlocked 1}
+
 # --- EN: the non-defects, pinned ----------------------------------------------
 # actions.c:1426 builds "name=l0 lab=", netname, " text_size_0=", szbuf -- which
 # is the exact defect shape -- but actions.c:1421 refuses an empty netname five
