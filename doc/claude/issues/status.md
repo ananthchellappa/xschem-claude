@@ -84,6 +84,12 @@ touching anything that creates, moves, deletes or reroutes wires.
 ## Not open, but worth knowing
 
 - **Nothing is blocked.** Every item above is independently startable.
+- **EYEBALL PENDING on 0165 and 0179** — both are committed, both are fully
+  covered by tests, neither has been seen by a human.
+  `doc/claude/suggestions/eyeball_0165_0179.md` has the steps, the fixture
+  generator (`tests/eyeball/make_0165_0179_fixture.tcl`), a before/after recipe,
+  and one open design question: the label-side warning highlights the offending
+  instance on canvas and the new binding-side one does not.
 - **0165 was CLOSED on 2026-07-30**: issue doc re-measured (7 wrong claims), then
   D1-D4 answered `warn / loose / no backend changes / resolved_net unchanged` and
   the ERC warning shipped. 15-leg test, RED-first against a true pre-fix binary,

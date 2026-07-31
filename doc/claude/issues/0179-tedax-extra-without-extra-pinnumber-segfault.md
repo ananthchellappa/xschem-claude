@@ -1,6 +1,7 @@
 # 0179 — tEDAx netlist SEGFAULTS on a symbol with `extra=` but no `extra_pinnumber=`
 
 Status: **FIXED** 2026-07-30 (found the same day while measuring 0165 D3).
+**EYEBALL PENDING** — see `doc/claude/suggestions/eyeball_0165_0179.md`.
 Area: `src/token.c` `print_tedax_element()`, `src/util.c` `my_strtok_r()`
 Tests: `tests/headless/test_tedax_extra_pinnumber_0179.tcl` — 10 legs
 Related: 0165 (the measurement that turned it up), 0156

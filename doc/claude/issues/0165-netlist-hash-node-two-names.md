@@ -1,6 +1,8 @@
 # 0165 — one `#`-leading name becomes TWO nodes in the netlist, depending on how it arrived
 
 Status: **FIXED** 2026-07-30 — D1-D4 decided by the user, ERC warning shipped, output unchanged.
+**EYEBALL PENDING**: never seen by a human. Steps + fixture + one open design question
+(canvas highlight parity) in `doc/claude/suggestions/eyeball_0165_0179.md`.
 Area: the netlist emission sites that pass a name through verbatim, vs the ones that strip `#`.
 Tests: `tests/headless/test_hash_extra_node_warn_0165.tcl` — 15 legs. Two older files assert the
 CURRENT, unstripped behaviour and stay green *because* the decision was "warn, don't rewrite":
