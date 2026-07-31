@@ -1460,7 +1460,14 @@ static int name_nodes_of_pins_labels_and_propagate()
       if(strcmp(type,"label")) {  /* instance is a port (not a label) */
         port=1;
         /* 20071204 only define a dir property if instance is not a label */
-        if(for_netlist)
+        /* The enclosing guard tests inst[i].node, which reset_node_data_and_rehash()
+         * (netlist.c:1636-1640) allocates when rects[PINLAYER] + rects[GENERICLAYER] > 0.
+         * A pin-type symbol carrying ONLY generic rects therefore has a node array but no
+         * rect[PINLAYER] at all, and rect[PINLAYER][0] is an unconditional deref of a NULL
+         * array -- a hard SIGSEGV on `xschem list_nets` / netlist. `dir` is already "" from
+         * the my_strdup2 above, which is what a pin with no pin rect should report.
+         * See doc/claude/issues/0181-pin-symbol-no-pinlayer-rect-null-deref.md */
+        if(for_netlist && xctx->sym[inst[i].ptr].rects[PINLAYER] > 0)
           my_strdup2(_ALLOC_ID_, &dir,
               get_tok_value(xctx->sym[inst[i].ptr].rect[PINLAYER][0].prop_ptr, "dir",0));
       }
