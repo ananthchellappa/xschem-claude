@@ -8258,9 +8258,23 @@ proc schpins_to_sympins {} {
   foreach i $lines {
     set ii [split [regexp -all -inline {\S+} $i]]
     if {[regexp {^C \{.*(i|o|io)pin} $i ]} {
+      ## `lab` and `dir` are each assigned only when their own regexp matches, inside
+      ## a loop over every clipboard line -- so they used to CARRY OVER. A pin with no
+      ## lab= token took the PREVIOUS pin's name (two symbol pins called the same
+      ## thing), and if the very first pin had none the proc died with
+      ## `can't read "lab": no such variable` AFTER the clipboard file had already been
+      ## truncated by the [open ... w] above, destroying the copy and generating
+      ## nothing. Reset both per line. Issue 0185.
+      set lab {}
+      set dir {}
       if {[regexp {ipin} [lindex $ii 1]]} { set dir in }
       if {[regexp {opin} [lindex $ii 1]]} { set dir out }
       if {[regexp {iopin} [lindex $ii 1]]} { set dir inout }
+      ## The outer regexp matches (i|o|io)pin ANYWHERE in the line, so a non-pin
+      ## instance whose properties merely mention one -- `lab=ipin` on a lab_pin --
+      ## reaches here with no direction. It is not a pin: skip it rather than emit a
+      ## phantom one carrying the previous pin's dir. Issue 0185.
+      if {$dir eq {}} { continue }
       set rot [lindex $ii 4]
       set flip [lindex $ii 5]
       while {1} {
