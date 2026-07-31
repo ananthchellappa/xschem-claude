@@ -105,11 +105,19 @@ No netlist-diff run was needed. Pre-fix, every input the change touches either c
 input for which the fix could alter existing output. Leg TX7b additionally pins the aligned
 `extra=`/`extra_pinnumber=` case as byte-identical across a re-run.
 
-## Still open, not fixed here
+## The sweep this implied — DONE, and it came back empty
 
-The same uninitialised-`saveptr` pattern should be swept for elsewhere: `my_strtok_r()` gives no
-diagnostic for a `NULL` first argument, so every call whose first argument can be `NULL` is the same
-bug. Not attempted — it is a separate sweep, not a crash fix.
+`my_strtok_r()` gives no diagnostic for a `NULL` first argument, so every call whose first argument
+can be `NULL` is the same bug. All 48 call sites across 10 files were audited on 2026-07-30:
+**this site was the only reachable one.** Write-up, including why each of the others is safe and
+which two are safe by the thinnest of margins, is in
+`doc/claude/code_analysis/my_strtok_r_null_argument_audit.md`.
+
+The short version: nearly every other tokenizer input is filled by `my_strdup2` (which allocates
+`""` and never NULLs its destination) rather than `my_strdup`, or is guarded by an `if(x)`, or is
+coupled to a `mult` that goes `-1` on the same path. **This site is the tree's only lockstep PAIR** —
+two cursors over two lists — and it had a guard on the first cursor and none on the second. The rule
+worth carrying forward is *a lockstep pair needs a guard per cursor, not per loop*.
 
 ## Reproduce
 

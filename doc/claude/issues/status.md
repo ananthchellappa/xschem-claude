@@ -98,8 +98,13 @@ touching anything that creates, moves, deletes or reroutes wires.
 - **0179 was found and FIXED on 2026-07-30** while measuring 0165's D3: the tEDAx
   netlister segfaulted on a symbol with `extra=` and no `extra_pinnumber=`.
   10-leg test, sabotage-verified in both directions. Zero committed designs hit
-  it. It leaves one sweep behind — every `my_strtok_r()` call whose first
-  argument can be NULL is the same bug, and that has NOT been done.
+  it. The sweep it implied is now **DONE and empty**: all 48 `my_strtok_r()`
+  call sites audited, 0179 was the only reachable one —
+  `doc/claude/code_analysis/my_strtok_r_null_argument_audit.md`. That audit did
+  turn up one unrelated output-corruption defect in `xschem list_nets`
+  (`node_hash.c:391-393`, a NULL token silently terminating a `my_mstrcat`
+  vararg list, leaving an unbalanced brace in the Tcl result). Narrow
+  reachability, not filed, recorded in the audit.
 - The two suites that flake under WSLg and **must not be "fixed"** are recorded
   in their own notes: `test_ase_plot`'s gesture legs, `test_wave_trace_menu`'s
   TG9, and `test_wave_markers`' `MF1` (load- and timing-sensitive; a paired
