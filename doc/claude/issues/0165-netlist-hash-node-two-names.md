@@ -1,10 +1,12 @@
 # 0165 — one `#`-leading name becomes TWO nodes in the netlist, depending on how it arrived
 
-Status: **OPEN** — awaiting decisions D1-D4 (see "Not yet decided").
+Status: **FIXED** 2026-07-30 — D1-D4 decided by the user, ERC warning shipped, output unchanged.
 Area: the netlist emission sites that pass a name through verbatim, vs the ones that strip `#`.
-Tests: **not "none"** — `tests/headless/test_resolved_net_attr_scope_0163.tcl` (AS1b, AS13, AS18)
-and `tests/headless/test_resolved_net_templ_fallback_0164.tcl` (TF2, TF3, TF4, TF11, TF18, TF19)
-already assert the CURRENT, unstripped behaviour. See "What a fix would redden".
+Tests: `tests/headless/test_hash_extra_node_warn_0165.tcl` — 15 legs. Two older files assert the
+CURRENT, unstripped behaviour and stay green *because* the decision was "warn, don't rewrite":
+`test_resolved_net_attr_scope_0163.tcl` (AS1b, AS13, AS18) and
+`test_resolved_net_templ_fallback_0164.tcl` (TF2, TF3, TF4, TF11, TF18, TF19).
+See "What a fix would redden" — nothing did.
 Found: while fixing 0164, measuring what `resolved_net` must match (issue 0163's Correction)
 Related: 0163 (the strip that was reverted because of this), 0158, 0156 (the `#`-reserved policy),
 **0179** (a tEDAx segfault found while measuring this issue's D3)
@@ -246,7 +248,66 @@ Reach: 1366 files under `xschem_library/` carry `tedax_format`, 529 of those als
 but **zero** stock symbols pair `type=subcircuit` with `tedax_format`, which is why neither the dead
 branch nor the crash has ever been seen.
 
-## Not yet decided
+## DECIDED 2026-07-30, and shipped
+
+The user answered all four: **D1 warn · D2 loose · D3 no backend changes · D4 `resolved_net`
+unchanged.**
+
+What shipped: `warn_hash_extra_node()` in `src/token.c`, called from `print_spice_element()` and
+`print_spectre_element()` at the point where the resolved value first exists — after the
+`is_expr()` evaluation, immediately before the emission. It takes the RESOLVED value, never
+`get_tok_value(prop_ptr, tok, 0)`: the value comes out of up to four `translate3()` rounds and may
+arrive by `@`-forwarding, from the symbol template, from the containing cell's template, or from an
+`expr()`. It is gated on the symbol's `extra=` list through `attr_is_extra_node()` — which was
+`static` in `hilight.c` and is now shared, deliberately, so `resolved_net()` and the netlister
+cannot drift on what "`extra=` declares a node" means. A binding may be a bus, so every
+comma-separated element is checked. Loose, in the exact shape of `netlist.c:1491-1492`: warn on any
+leading `#` that is not the engine's own `#net<N>`. The helper saves and restores `xctx->tok_size`
+so an ERC observer can never be the reason a netlist value goes missing.
+
+### The evidence
+
+- **Output-neutral, measured**: `tests/netlist_diff/netlist_diff.sh` (new, committed) netlists all
+  189 `xschem_library` designs in all five backends with a true pre-fix binary and with the fixed
+  one, back to back: **920 generated netlists, byte-identical**. Sabotage-checked — perturbing one
+  word of an emitted header makes the harness report differences, so the green is not vacuous.
+- **Transcript-neutral, measured**: the same 189 designs × spice + spectre = 378 netlist runs
+  produce **zero** of these warnings and zero errors, exactly as the "every committed `lab=#…` is
+  `#net<digits>`" fact predicts.
+- **RED-first against a TRUE pre-fix binary** (`git checkout HEAD -- …`, rebuild, copy out, run with
+  `XSCHEM_SHAREDIR`): 8 of the 15 legs fail. The 7 that pass in both arms are the controls and the
+  output-neutrality legs — which is what makes them controls.
+- **Sabotage-verified four ways, each hitting a different leg group**: dropping the `extra=` gate
+  reddens HW6/HW7; dropping `!is_auto_net_name()` reddens HW4; reading the raw attribute instead of
+  the resolved value reddens HW9/HW10; checking only the head of the value instead of each bus
+  element reddens HW11. No half of the check is dead.
+
+  (A first attempt at the raw-vs-resolved sabotage reddened 8 legs rather than 2, because passing
+  `get_tok_value()`'s result straight in as an argument let the helper's own `get_tok_value(…,
+  "extra", …)` clobber that STATIC buffer before it was read. The honest sabotage copies the raw
+  value to a local first. Worth recording: it is the same static-buffer landmine 0164 hit.)
+
+### Why "warn" and not "strip", in one line
+
+A strip would not even fix the shape measured in "[WAS WRONG] The node is unreachable" above: the
+child's `.subckt` port list keeps its own `#` (`token.c:2098`) and so does the top-level one
+(`spice_netlist.c:375`), so the port would stay split from its body. Stripping properly means ~15
+emission sites across five backends. The warning covers all of them at once and moves no bytes.
+
+### What was deliberately NOT wired, and why
+
+Verilog, VHDL and tEDAx get no warning. Verilog's leak is a hard **syntax error** (`#` is the delay
+operator) so it cannot be silent; VHDL turns `extra=` tokens into **generics, not nodes**; tEDAx is
+a niche format whose `extra=` path was, until 0179, a segfault. SPICE and Spectre are the two that
+silently produce a second node, and they are the two that warn. If that judgement is revisited,
+`warn_hash_extra_node()` is a standalone helper — one call site each.
+
+The **pin-name** half of this issue (a symbol pin `name=#pfoo` yielding `.subckt c A #pfoo` over a
+body that says `pfoo`) gets no new warning either, because `netlist.c:1491` already fires on it in
+practice — MEASURED, the `#pfoo` iopin in the child schematic trips it. Leg HW3 pins that the
+label-side warning still fires, so "the label half is already covered" cannot quietly expire.
+
+## The original "Not yet decided" — kept for the record
 
 1. **D1 — strip on the binding side, or warn and leave output alone?** Stripping makes the paths
    agree. **But it CHANGES NETLIST OUTPUT** — unlike 0163 and 0164, which were verified

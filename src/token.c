@@ -2344,6 +2344,80 @@ int has_token(const char *s, const char *tok)
   return ret;
 }
 
+/* ERC for issue 0165: an `extra=`-declared NODE bound to a name starting with '#'.
+ *
+ * '#' is the engine's private marker for an auto-named net. A wire LABELLED `#foo`
+ * netlists as plain `foo` -- every wire/instance connection goes through net_name(),
+ * which strips. But an `extra=` binding is a "hidden pin" passed as an instance
+ * ATTRIBUTE, and its resolved value is written onto the subcircuit call line VERBATIM
+ * (print_spice_element's generic @token branch, and print_spectre_element's). So one
+ * spelling the user wrote once becomes two unconnected nodes -- measured, ngspice-42:
+ * `X1 topn #hfoo c` and `R9 hfoo 0 1k` give `hfoo` 0.0V and `#hfoo` 1.0V in one deck.
+ *
+ * Decided (0165 D1-D4): WARN, do not rewrite. Stripping here would not actually fix
+ * the shape -- the child's .subckt PORT list keeps its own '#' too (token.c:2098,
+ * spice_netlist.c:375), so the port would still be split from its body -- and it would
+ * change netlist output at ~15 emission sites across five backends. The warning covers
+ * all of them at once and is output-neutral.
+ *
+ * LOOSE, and in the same style/severity as the existing '#'-name warning at
+ * netlist.c:1491: warn on any leading '#' that is NOT the engine's own "#net<N>". The
+ * two warnings are complements -- that one fires on the LABEL half of this trap and
+ * cannot reach the binding half, because it sits behind an IS_LABEL_OR_PIN gate reading
+ * inst[i].node[0], a slot a binding never occupies.
+ *
+ * Take the RESOLVED value, not get_tok_value(prop_ptr, tok, 0): the value is produced by
+ * up to four translate3() rounds and may come from `HN=@FOO` forwarding, a template
+ * default, the containing cell's template, or an expr(). Reading the raw attribute would
+ * miss every one of those.
+ *
+ * Gate on the symbol's extra= list so this stays a check about NODES rather than about
+ * every instance parameter -- a `model=#foo` is not a net and is not our business.
+ * attr_is_extra_node() is hilight.c's, shared deliberately: resolved_net() and this must
+ * agree on what "extra= declares a node" means.
+ *
+ * A binding may be a bus, so check every comma-separated element (issue 0158 established
+ * that a '#' hides per element, not only at the head of the value). */
+static void warn_hash_extra_node(int inst, const char *tokname, const char *value)
+{
+  const char *extra, *p, *e;
+  char elem[256];
+  char str[2048];
+  size_t n;
+  size_t saved_tok_size;
+
+  if(!tokname || !tokname[0] || !value || !value[0]) return;
+  if(!strchr(value, '#')) return;                     /* cheap reject: the common case */
+  /* get_tok_value() overwrites xctx->tok_size, which the callers use as their
+   * "token ABSENT" signal. They both latch it into token_exists BEFORE calling here,
+   * so this is safe today -- restore it anyway so an ERC observer can never become
+   * the reason a netlist value goes missing if the call site ever moves. */
+  saved_tok_size = xctx->tok_size;
+  extra = get_tok_value(xctx->sym[xctx->inst[inst].ptr].prop_ptr, "extra", 0);
+  if(!attr_is_extra_node(extra, tokname)) { xctx->tok_size = saved_tok_size; return; }
+  xctx->tok_size = saved_tok_size;
+  p = value;
+  while(*p) {
+    e = p;
+    while(*e && *e != ',') ++e;
+    if(*p == '#') {
+      n = (size_t)(e - p);
+      if(n >= sizeof(elem)) n = sizeof(elem) - 1;
+      memcpy(elem, p, n);
+      elem[n] = '\0';
+      if(!is_auto_net_name(elem)) {
+        my_snprintf(str, S(str),
+          "Warning: instance: %s: attribute %s=%s binds a node whose name starts with '#', "
+          "which is reserved for auto-named nets: the binding reaches the netlist verbatim "
+          "while a wire labelled the same way is stripped, so the two are DIFFERENT nodes",
+          xctx->inst[inst].instname ? xctx->inst[inst].instname : "?", tokname, elem);
+        statusmsg(str, 2);
+      }
+    }
+    p = *e ? e + 1 : e;
+  }
+}
+
 int print_spice_element(FILE *fd, int inst)
 {
   int i=0, multip, itmp;
@@ -2656,6 +2730,7 @@ int print_spice_element(FILE *fd, int inst)
         if(is_expr(value)) {
           value =  eval_expr(value);
         }
+        warn_hash_extra_node(inst, token + 1, value);   /* ERC, issue 0165 */
         /* token=%xxxx and xxxx is not defined in prop_ptr or template: return xxxx */
         if(!token_exists && token[0] =='%') {
           my_mstrcat(_ALLOC_ID_, &result, token + 1, NULL);
@@ -3048,6 +3123,7 @@ int print_spectre_element(FILE *fd, int inst)
         if(is_expr(value)) {
           value =  eval_expr(value);
         }
+        warn_hash_extra_node(inst, token + 1, value);   /* ERC, issue 0165 */
         /* token=%xxxx and xxxx is not defined in prop_ptr or template: return xxxx */
         if(!token_exists && token[0] =='%') {
           my_mstrcat(_ALLOC_ID_, &result, token + 1, NULL);

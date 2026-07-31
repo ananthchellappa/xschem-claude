@@ -33,7 +33,6 @@ window", "the open question", "File > Open" and so on in prose. Match the
 
 | issue | one line |
 |---|---|
-| **0165** | netlist hash node with two names. Issue doc **re-measured and corrected 2026-07-30** (7 wrong claims fixed, all five backends measured). Blocked on decisions D1-D4 from the user. |
 | **0166** | resolved net ignores the containing cell template. Spawned by 0164 shipping incomplete. |
 
 ## Viewer / waveform thread
@@ -84,9 +83,12 @@ touching anything that creates, moves, deletes or reroutes wires.
 
 ## Not open, but worth knowing
 
-- **0165 IS blocked** — on decisions D1-D4 from the user (strip vs warn, strict
-  vs loose, which backends, and whether `resolved_net` moves with it). Everything
-  else above is independently startable.
+- **Nothing is blocked.** Every item above is independently startable.
+- **0165 was CLOSED on 2026-07-30**: issue doc re-measured (7 wrong claims), then
+  D1-D4 answered `warn / loose / no backend changes / resolved_net unchanged` and
+  the ERC warning shipped. 15-leg test, RED-first against a true pre-fix binary,
+  four sabotages. Output neutrality is measured, not argued — 920 netlists
+  byte-identical.
 - **0179 was found and FIXED on 2026-07-30** while measuring 0165's D3: the tEDAx
   netlister segfaulted on a symbol with `extra=` and no `extra_pinnumber=`.
   10-leg test, sabotage-verified in both directions. Zero committed designs hit
@@ -97,6 +99,12 @@ touching anything that creates, moves, deletes or reroutes wires.
   TG9, and `test_wave_markers`' `MF1` (load- and timing-sensitive; a paired
   control on 2026-07-30 measured 0/8 on this branch while an unpaired soak had
   shown 6/30 — the difference was machine load, not the tree).
+- **A committed netlist-diff harness finally exists**:
+  `tests/netlist_diff/netlist_diff.sh <old-binary>`. It netlists every
+  `xschem_library` design in all five backends with two binaries back to back and
+  diffs them, with the three traps (autosave `~.sch` tops, the output dir
+  embedded in `.include` lines, `git stash` on a clean tree) documented in its
+  header. 0163, 0164 and 0165 each rebuilt this from scratch.
 - The GUI-test control gate governs every DISPLAY suite run. Press
   **Allow 30m / Allow 2h** once instead of Proceed per suite, and never use a
   bare `for` loop — `tests/headless/run_suites.sh` or `gated_xschem.sh`.

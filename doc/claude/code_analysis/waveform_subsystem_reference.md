@@ -1047,7 +1047,24 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
     netlist, so present-but-empty must stop the walk rather than inherit. Do not
     copy the tEDAx chain at `token.c:3245-3247` — it has an extra
     `net:<pinnumber>` step and the looser `!val[0]` guard.
-    **(f)** `extra=` has a SIBLING list, `extra_pinnumber=`, and the tEDAx
+    **(f)** the netlister side now WARNS on what (c) refuses to rewrite: an
+    `extra=`-declared node bound to a `#`-leading name is an ERC warning
+    (`warn_hash_extra_node()`, `token.c`, called from `print_spice_element()` and
+    `print_spectre_element()`), because a strip would not fix the shape — the
+    child's `.subckt` PORT list keeps its own `#` too (`token.c:2098`,
+    `spice_netlist.c:375`), so the port stays split from its body, and stripping
+    properly means ~15 emission sites in five backends (issue 0165, D1 warn / D2
+    loose / D3 no backend changes / D4 resolved_net unchanged). Two consequences
+    for anyone editing this area: `attr_is_extra_node()` is **no longer static** —
+    `resolved_net()` and the netlister share it deliberately so they cannot drift
+    on what "`extra=` declares a node" means; and the check reads the RESOLVED
+    value, never `get_tok_value(prop_ptr, tok, 0)`, or it misses `@`-forwarding,
+    template defaults and `expr()`. Output neutrality is now MEASURABLE rather
+    than argued: `tests/netlist_diff/netlist_diff.sh` diffs 920 generated
+    netlists (189 designs x 5 backends) between two binaries, and is the harness
+    that had to be rebuilt from scratch for 0163, 0164 and 0165 before anyone
+    committed it.
+    **(g)** `extra=` has a SIBLING list, `extra_pinnumber=`, and the tEDAx
     backend walks the two in LOCKSTEP with a `my_strtok_r()` cursor each
     (`print_tedax_element()`, `token.c` ~3234). Nothing keeps them the same
     length, and `my_strdup()` leaves its destination NULL for an absent

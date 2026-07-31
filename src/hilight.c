@@ -2583,8 +2583,12 @@ void select_hilight_net(void)
  * Those, and only those, are the attributes that may rebind a net name in
  * resolved_net() -- see doc/claude/issues/0163-resolved-net-instance-attribute-lookup.md
  * The match is on WHOLE tokens, unlike the strstr() the netlister uses internally, so a
- * net named "EXTRA" can not be let through by an "EXTRANET" entry. */
-static int attr_is_extra_node(const char *extra, const char *name)
+ * net named "EXTRA" can not be let through by an "EXTRANET" entry.
+ *
+ * Not static: token.c's netlister-side ERC check (issue 0165) must decide "is this
+ * @token an extra=-declared NODE, or an ordinary instance parameter?" using exactly
+ * the same rule, and two copies of that rule would drift. */
+int attr_is_extra_node(const char *extra, const char *name)
 {
   size_t l;
   const char *p;
