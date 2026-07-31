@@ -8303,7 +8303,13 @@ proc schpins_to_sympins {} {
       lassign [order $linex1 $liney1 $linex2 $liney2] linex1 liney1 linex2 liney2
       lassign [rotation $x0 $y0 $textx0 $texty0 $rot $flip] textx0 texty0
       foreach {textx0 texty0} [rotation $x0 $y0 $textx0 $texty0 $rot $flip] break
-      puts $fd "B 5 $pinx1 $piny1 $pinx2 $piny2 \{name=$lab dir=$dir\}"
+      ## An UNQUOTED empty value makes get_tok_value() read the following " dir=..."
+      ## as the name, so a pin with `lab=` would land in the generated symbol with no
+      ## `dir` at all. `name=""` reads back as present-and-empty and leaves dir alone.
+      ## Issue 0183.
+      set labtok $lab
+      if {$labtok eq {}} { set labtok {""} }
+      puts $fd "B 5 $pinx1 $piny1 $pinx2 $piny2 \{name=$labtok dir=$dir\}"
       puts $fd "L 4 $linex1 $liney1 $linex2 $liney2 \{\}"
       puts $fd "T \{$lab\} $textx0 $texty0 $rot $textflip 0.2 0.2 \{\}"
     }

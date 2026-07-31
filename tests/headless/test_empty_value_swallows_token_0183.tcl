@@ -232,6 +232,47 @@ check "EF5 the SHIPPED devices/scope.sym, placed with inst_props lacking a name=
                [xschem getprop rect 2 0 lock]]}] \
   {{} {} graph,unlocked 1}
 
+# --- EL: the LCC symbol-generation path ---------------------------------------
+# add_pinlayer_boxes() (save.c) synthesises a symbol PINLAYER rect for each
+# ipin/opin/iopin instance when a .sch is instantiated DIRECTLY as a symbol:
+#
+#     label = get_tok_value(prop_ptr, "lab", 0);          /* "" when absent */
+#     my_snprintf(pin_label, save, "name=%s dir=in ", label);
+#
+# so an unlabelled pin produced "name= dir=in " and the synthesised pin had NO
+# dir. This is the most reachable instance of the whole class -- no scripted
+# command, no hand-authored symbol, just a schematic with an unlabelled pin used
+# as a subcircuit. It was MISSED by the first pass of the fix, because the sweep
+# slice covering save.c died on an API error and was only re-run afterwards.
+# `xschem pinlist <inst> <token>` reads exactly these rects.
+proc write_file {path body} { set f [open $path w]; puts $f $body; close $f }
+write_file [file join $scratch child.sch] "v {xschem version=3.4.8RC file_version=1.3}
+G {}
+K {}
+V {}
+S {}
+E {}
+N 0 0 100 0 {}
+N 0 100 100 100 {}
+C {devices/ipin.sym} 0 0 0 0 {name=p1 lab=GOOD}
+C {devices/ipin.sym} 0 100 0 0 {name=p2 lab=}"
+write_file [file join $scratch parent.sch] "v {xschem version=3.4.8RC file_version=1.3}
+G {}
+K {}
+V {}
+S {}
+E {}
+C {child.sch} 300 0 0 0 {name=X1}"
+set XSCHEM_LIBRARY_PATH "$scratch:[file join $repo xschem_library]"
+xschem clear force
+xschem load [file join $scratch parent.sch]
+# Both pins are asserted together: the LABELLED one is the control that catches a
+# fix which repairs dir by mangling the name, and pin order pins which is which.
+check "EL1 an unlabelled schematic pin keeps its dir through symbol generation" \
+  [xschem pinlist X1 dir] {{ {0} {in} } { {1} {in} }}
+check "EL2 ...and its name reads back as empty, not as the dir token" \
+  [xschem pinlist X1 name] {{ {0} {GOOD} } { {1} {} }}
+
 # --- EN: the non-defects, pinned ----------------------------------------------
 # actions.c:1426 builds "name=l0 lab=", netname, " text_size_0=", szbuf -- which
 # is the exact defect shape -- but actions.c:1421 refuses an empty netname five

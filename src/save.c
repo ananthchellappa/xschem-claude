@@ -4438,6 +4438,13 @@ static void add_pinlayer_boxes(int *lastr, xRect **bb,
   RECTORDER(bb[PINLAYER][i].x1, bb[PINLAYER][i].y1, bb[PINLAYER][i].x2, bb[PINLAYER][i].y2);
   bb[PINLAYER][i].prop_ptr = NULL;
   label = get_tok_value(prop_ptr, "lab", 0);
+  /* get_tok_value() returns "" for an absent lab, and an UNQUOTED empty value makes
+   * get_tok_value() read the following " dir=in" as the NAME -- so a schematic pin with
+   * no lab= produced a synthesised symbol pin with no `dir` at all. Measured on the LCC
+   * path (a .sch instantiated directly as a symbol): pinlist reported name=<<dir=in>>,
+   * dir=<<>>. Emit the quoted empty form instead; the +30 slack below covers the two
+   * extra characters. Issue 0183. */
+  if(!label[0]) label = "\"\"";
   save = strlen(label)+30;
   pin_label = my_malloc(_ALLOC_ID_, save);
   pin_label[0] = '\0';

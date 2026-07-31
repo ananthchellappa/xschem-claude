@@ -1913,7 +1913,10 @@ static int has_included_subcircuit(int inst, int symbol, char **result)
     if(!symname[0]) {
       my_strdup2(_ALLOC_ID_, &symname, xctx->sym[symbol].name);
     }
-    my_mstrcat(_ALLOC_ID_, &symname_attr, "symname=", get_cell(symname, 0), NULL);
+    /* twin of the site in get_additional_symbols() (actions.c): get_cell() returns ""
+     * when the basename is nothing but an extension, and an unquoted empty symname would
+     * swallow the " symref=..." that follows. Issue 0183. */
+    my_mstrcat_tok(_ALLOC_ID_, &symname_attr, "symname", get_cell(symname, 0), NULL);
     my_mstrcat(_ALLOC_ID_, &symname_attr, " symref=", get_sym_name(inst, 9999, 1, 1), NULL);
     translated_sym_def = translate3(spice_sym_def, 1, xctx->inst[inst].prop_ptr,
                                                       xctx->sym[symbol].templ,

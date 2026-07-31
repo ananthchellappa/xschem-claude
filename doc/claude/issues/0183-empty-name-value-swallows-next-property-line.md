@@ -1,7 +1,8 @@
 # 0183 — an empty attribute value swallows the next property token
 
-Status: **FIXED** 2026-07-31 — three producers repaired. The class sweep is **partial**:
-three of five slices completed, two died on API errors and are recorded as NOT SWEPT below.
+Status: **FIXED** 2026-07-31 — **six** producers repaired. The class sweep completed on the
+second attempt (two of five slices died on API errors the first time), and the three sites
+it turned up on the re-run include the most reachable instance of the whole class.
 Area: `src/util.c` (`my_mstrcat_tok()`), `src/actions.c` (`create_pin()`,
 `place_symbol()`, `get_additional_symbols()`)
 Tests: `tests/headless/test_empty_value_swallows_token_0183.tcl` — **28 checks**
@@ -170,24 +171,66 @@ inferred from measured tokenizer law, not reproduced. Legs **ET13/ET13b** pin th
 at the level that *is* measurable — the exact string the site would build, and what
 `get_tok_value` does to it — rather than claiming a reproduction that was never obtained.
 
-## The class sweep — PARTIAL, two slices never ran
+### Site 4 — `add_pinlayer_boxes()`, the MOST reachable one, and initially MISSED
 
-The sweep was split into five slices. **Three completed; two died on API errors and were
-never swept**, so the class is not cleared:
+```c
+src/save.c   label = get_tok_value(prop_ptr, "lab", 0);      /* "" when absent */
+src/save.c   my_snprintf(pin_label, save, "name=%s dir=in ", label);
+```
 
-| slice | scope | status |
-|---|---|---|
-| actions | `src/actions.c` | swept |
-| edit | `paste.c clip.c move.c select.c store.c editprop.c check.c` | swept |
-| rest_c | `scheduler.c callback.c xinit.c draw.c flyline.c in_memory_undo.c` + the `*_netlist.c` backends, `psprint.c svgdraw.c options.c font.c util.c globals.c main.c` | swept |
-| **token_save** | **`token.c save.c netlist.c node_hash.c hilight.c findnet.c`** | **NOT SWEPT** |
-| **tcl** | **`src/*.tcl` (xschem.tcl ~12k lines, place_pins.tcl, create_graph.tcl, …)** | **NOT SWEPT** |
+This synthesises a symbol `PINLAYER` rect for every `ipin`/`opin`/`iopin` instance when a
+`.sch` is instantiated **directly as a symbol** (the LCC path, from `load_sym_def()`). An
+unlabelled pin produced `"name= dir=in "`, so the generated symbol pin had **no `dir` at
+all**. Measured with `xschem pinlist`:
 
-`token.c` and `save.c` in particular are where property strings are *built and written*, so
-that gap is not a minor one. Anyone continuing this should sweep those two slices before
-treating the class as closed.
+```
+parent.sch:  C {child.sch} 300 0 0 0 {name=X1}
+child.sch:   ipin lab=GOOD  and  ipin lab=      (empty)
 
-Of the slices that did run, the rule applied was:
+pre-fix   PINS_NAME = { {0} {GOOD} } { {1} {dir=in} }     PINS_DIR = { {0} {in} } { {1} {} }
+post-fix  PINS_NAME = { {0} {GOOD} } { {1} {} }           PINS_DIR = { {0} {in} } { {1} {in} }
+```
+
+No scripted command, no hand-authored symbol — just a schematic with an unlabelled pin used
+as a subcircuit. **This is the most reachable instance of the class and the first pass of
+the fix missed it entirely**, because the sweep slice covering `save.c` died on an API error
+and only ran on a re-run. Legs **EL1/EL2**.
+
+`my_snprintf` is used here rather than `my_mstrcat`, so the fix is `if(!label[0]) label =
+"\"\"";` ahead of the three branches; the existing `strlen(label)+30` slack covers the two
+extra characters.
+
+### Sites 5 and 6 — the twin `symname=` and the Tcl symbol generator
+
+* `token.c` `has_included_subcircuit()` — the exact twin of site 3, same
+  `"symname=", get_cell(...)` followed by `" symref="`. Fixing only one of the two copies
+  would have been an inconsistency; both now use `my_mstrcat_tok()`.
+* `xschem.tcl` — `puts $fd "B 5 … \{name=$lab dir=$dir\}"` in the clipboard-to-symbol
+  generator. `$lab` is scraped with `regsub` and is `""` for a pin written `lab=`, giving
+  the same `name=` eats `dir=` shape in generated symbol text.
+
+*Separate latent bug noticed there and NOT fixed:* `$lab` is only assigned inside
+`if {[regexp {lab=} $i]}`, so a clipboard pin line with no `lab=` token at all leaves `$lab`
+holding the **previous** pin's value. That is a stale-carry-over bug, not a tokenizer one.
+
+## The class sweep — completed, but only on the second attempt
+
+The sweep ran as five slices. On the first attempt **two died on API errors and swept
+nothing**; they were re-run and completed.
+
+| slice | scope | first attempt | re-run |
+|---|---|---|---|
+| actions | `src/actions.c` | swept | — |
+| edit | `paste.c clip.c move.c select.c store.c editprop.c check.c` | swept | — |
+| rest_c | `scheduler.c callback.c xinit.c draw.c` + the `*_netlist.c` backends, `psprint.c svgdraw.c options.c font.c util.c globals.c main.c` | swept | — |
+| token_save | `token.c save.c netlist.c node_hash.c hilight.c findnet.c` | **DIED** | swept |
+| tcl | `src/*.tcl`, `utils/*.tcl` | **DIED** | swept |
+
+**The two dead slices held three of the six defects, including the worst one.** That is
+worth remembering: a sweep that reports "no findings" because it never ran looks exactly
+like a sweep that found nothing.
+
+Of all five slices, the rule applied was:
 
 * **fix it** when an empty value would SWALLOW a following token;
 * **record it** when the empty value is the LAST thing in the string, because a trailing
@@ -201,6 +244,9 @@ Recorded, deliberately unfixed — all verified by hand:
 | `spectre_netlist.c:555` | `symname` | identical shape to the above |
 | `draw.c:297` | `image_data` | trailing; empty only if `base64_encode` failed |
 | `actions.c` ×3 | `lab` | trailing in `place_sch_pin` / `place_wire_label` / the wire-label builder |
+| `save.c:5487` | `lab` | trailing |
+| `token.c:1263` | caller's `tok` | trailing |
+| `xschem.tcl` ×4, `place_pins.tcl`, `place_sym_pins.tcl`, `utils/toggle_pins_netlabels.tcl` | `lab` / `name` | trailing, or the value could not be shown to be empty |
 
 **`actions.c:1426` is NOT a defect**, though it is the textbook shape and was the prompt's
 top suspect: `"name=l0 lab=", netname ? netname : "", " text_size_0=", szbuf`. The
@@ -213,8 +259,8 @@ verification.
 
 ## Verification
 
-* `tests/headless/test_empty_value_swallows_token_0183.tcl` — 29 checks. **RED verified**
-  against the pre-fix binary: **6 FAILED / 23 passed**; after the fix, 29/29.
+* `tests/headless/test_empty_value_swallows_token_0183.tcl` — 31 checks. **RED verified**
+  against the pre-fix binary: **8 FAILED / 23 passed**; after the fix, 31/31.
 * `tests/netlist_diff/netlist_diff.sh <pre-fix>` — **BYTE-IDENTICAL (920 netlists)**,
   945 runs per arm, 0 errors. Property strings feed every backend, so this is the leg that
   matters most for a producer-side change.
