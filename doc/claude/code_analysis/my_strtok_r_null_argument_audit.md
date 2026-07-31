@@ -144,6 +144,21 @@ explicitly as a measured mechanism with an unproven trigger. "I could not reprod
 tries" is not "unreachable", and the fix is one line, so it is worth closing rather than leaving as
 a footnote here. Session prompt: `doc/claude/suggestions/next_session_prompt_0180.md`.
 
+> **UPDATE 2026-07-31 — it IS reachable, and this section's conclusion was wrong.**
+> The trigger is a pin-type symbol with **zero `PINLAYER` rects and at least one
+> `GENERICLAYER` rect**: `reset_node_data_and_rehash()` allocates `inst[i].node` on
+> `PINLAYER + GENERICLAYER > 0` (`netlist.c:1636-1640`) while the lab back-fill walks only
+> `PINLAYER` (`netlist.c:1611`), so the instance has a node array *and* an empty lab.
+> Measured, `xschem list_nets` returned the single character `{`.
+>
+> The five constructions above did not miss because the guards close on each other. They
+> missed because **a different bug crashed the process first** — `netlist.c:1463-1465`
+> derefs `rect[PINLAYER][0]` unconditionally for any non-label pin, inside the
+> `prepare_netlist_structs(1)` call at the head of `list_nets()`. Through `exec`, a
+> segfault and an empty net list look identical. That crash is issue 0181, and both are
+> fixed. The generalisation sweep this section asked for is
+> `my_mstrcat_null_vararg_audit.md` — 150 sites, and like this one it came back empty.
+
 ## If you are adding a `my_strtok_r` loop
 
 1. Use `my_strdup2`, or guard the pointer with `if(x)`. Do not rely on the reader
