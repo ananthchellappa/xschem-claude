@@ -3126,7 +3126,8 @@ void print_tedax_element(FILE *fd, int inst)
  char *numslots=NULL;
  const char *extra_token, *extra_token_val;
  char *extra_ptr;
- char *extra_pinnumber_token, *extra_pinnumber_ptr;
+ const char *extra_pinnumber_token;
+ char *extra_pinnumber_ptr;
  char *saveptr1, *saveptr2;
  const char *tmp;
  int instance_based=0;
@@ -3232,9 +3233,20 @@ void print_tedax_element(FILE *fd, int inst)
      /* fprintf(errfp, "extra_pinnumber: |%s|\n", extra_pinnumber); */
      /* fprintf(errfp, "extra: |%s|\n", extra); */
      for(extra_ptr = extra, extra_pinnumber_ptr = extra_pinnumber; ; extra_ptr=NULL, extra_pinnumber_ptr=NULL) {
-       extra_pinnumber_token=my_strtok_r(extra_pinnumber_ptr, " ", "", 0, &saveptr1);
+       /* extra= and extra_pinnumber= are walked in LOCKSTEP, but nothing keeps the two lists
+        * the same length -- and my_strdup() leaves its destination NULL for an absent or empty
+        * source, so a symbol carrying extra= and no extra_pinnumber= arrives here with
+        * extra_pinnumber == NULL. my_strtok_r() only assigns *saveptr inside its `if(str)`
+        * first-call branch, so a NULL first argument runs `while(**saveptr ...)` on an
+        * UNINITIALISED saveptr1 -- an uncontrolled deref, and a segfault in practice. The
+        * `extra` side is safe only by accident: the loop is entered only when extra != NULL.
+        * Guard the call, and give a missing number the same placeholder the pin loop above
+        * uses for a missing `pinnumber` attribute rather than passing NULL to "%s". Issue 0179. */
+       extra_pinnumber_token = extra_pinnumber ?
+              my_strtok_r(extra_pinnumber_ptr, " ", "", 0, &saveptr1) : NULL;
        extra_token=my_strtok_r(extra_ptr, " ", "", 0, &saveptr2);
        if(!extra_token) break;
+       if(!extra_pinnumber_token) extra_pinnumber_token = "--UNDEF--";
        /* fprintf(errfp, "extra_pinnumber_token: |%s|\n", extra_pinnumber_token); */
        /* fprintf(errfp, "extra_token: |%s|\n", extra_token); */
        instance_based=0;

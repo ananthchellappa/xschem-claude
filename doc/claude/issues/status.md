@@ -35,7 +35,6 @@ window", "the open question", "File > Open" and so on in prose. Match the
 |---|---|
 | **0165** | netlist hash node with two names. Issue doc **re-measured and corrected 2026-07-30** (7 wrong claims fixed, all five backends measured). Blocked on decisions D1-D4 from the user. |
 | **0166** | resolved net ignores the containing cell template. Spawned by 0164 shipping incomplete. |
-| **0179** | tEDAx netlist **segfaults** on `extra=` without `extra_pinnumber=`. Found while measuring 0165 D3; minimally reproduced, no fix attempted. |
 
 ## Viewer / waveform thread
 
@@ -85,7 +84,14 @@ touching anything that creates, moves, deletes or reroutes wires.
 
 ## Not open, but worth knowing
 
-- **Nothing is blocked.** Every item above is independently startable.
+- **0165 IS blocked** — on decisions D1-D4 from the user (strip vs warn, strict
+  vs loose, which backends, and whether `resolved_net` moves with it). Everything
+  else above is independently startable.
+- **0179 was found and FIXED on 2026-07-30** while measuring 0165's D3: the tEDAx
+  netlister segfaulted on a symbol with `extra=` and no `extra_pinnumber=`.
+  10-leg test, sabotage-verified in both directions. Zero committed designs hit
+  it. It leaves one sweep behind — every `my_strtok_r()` call whose first
+  argument can be NULL is the same bug, and that has NOT been done.
 - The two suites that flake under WSLg and **must not be "fixed"** are recorded
   in their own notes: `test_ase_plot`'s gesture legs, `test_wave_trace_menu`'s
   TG9, and `test_wave_markers`' `MF1` (load- and timing-sensitive; a paired

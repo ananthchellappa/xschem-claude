@@ -239,8 +239,8 @@ Revision 1 said the tEDAx `conn` emission "is unreachable for subcircuits". Wron
 3. **A `type=subcircuit` symbol with `tedax_format` and `extra=` but no `extra_pinnumber=` segfaults
    the tEDAx netlister.** `extra_pinnumber` is `NULL`, so `my_strtok_r(NULL, …, &saveptr1)` runs with
    `saveptr1` uninitialised (`token.c:3129`, `:3234`) and `util.c:168` dereferences garbage.
-   Reproduced minimally; filed as **0179**. Adding `extra_pinnumber="9"` or removing `extra=` both
-   make it survive.
+   Reproduced minimally; filed and FIXED as **0179** (`tests/headless/test_tedax_extra_pinnumber_0179.tcl`).
+   Adding `extra_pinnumber="9"` or removing `extra=` both made it survive.
 
 Reach: 1366 files under `xschem_library/` carry `tedax_format`, 529 of those also carry `extra=`;
 but **zero** stock symbols pair `type=subcircuit` with `tedax_format`, which is why neither the dead

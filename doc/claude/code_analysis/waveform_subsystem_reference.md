@@ -1047,6 +1047,20 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
     netlist, so present-but-empty must stop the walk rather than inherit. Do not
     copy the tEDAx chain at `token.c:3245-3247` — it has an extra
     `net:<pinnumber>` step and the looser `!val[0]` guard.
+    **(f)** `extra=` has a SIBLING list, `extra_pinnumber=`, and the tEDAx
+    backend walks the two in LOCKSTEP with a `my_strtok_r()` cursor each
+    (`print_tedax_element()`, `token.c` ~3234). Nothing keeps them the same
+    length, and `my_strdup()` leaves its destination NULL for an absent
+    attribute — so `extra=` without `extra_pinnumber=` used to hand
+    `my_strtok_r()` a NULL first argument, which skips its `if(str)` first-call
+    branch and dereferences an UNINITIALISED `saveptr` (issue 0179, FIXED: guard
+    the call and default a missing number to `"--UNDEF--"`, as the pin loop nine
+    lines above already does). Two things generalise. `my_strtok_r()` gives NO
+    diagnostic for a NULL first argument, so every call whose first argument can
+    be NULL is the same bug. And this backend's `%s` sites are not
+    NULL-tolerant: passing the NULL token onward instead of the placeholder
+    segfaults too (measured by sabotage), so both halves of that fix are
+    load-bearing.
 
 30. **"Which design is this?" is a question about the STACK, not the top of it**
     (issue 0168). Two shipped identity checks read only the *current* level and
@@ -1631,8 +1645,9 @@ Effort: S=hours, M=days, L=weeks. Impact in caps.
    (measured: child net `value` + instance `value=1k` → `1k`; `spice_ignore` →
    `false`; `name` → `X1`), and a `#` in such a value was never stripped
    (`LOC=#foo` → `#foo`). It is now gated on the parent symbol's `extra=` list —
-   the one channel that declares an attribute to be a NODE — and the accepted
-   value gets the same loose `#` strip. See landmine 29. A sweep of every
+   the one channel that declares an attribute to be a NODE. The accepted value
+   is NOT stripped: a `#` strip shipped with 0163 and was reverted once measured
+   (see the "corrected in 0163" note below, and landmine 29 rule (c)). A sweep of every
    committed design found 932 attribute/net collisions, 926 of them declared
    `extra=` bindings (the feature) and 6 stray, with **zero** accidental
    `value`/`m`/`model` hijacks; netlist output over 201 stock designs is

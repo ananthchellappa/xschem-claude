@@ -1,8 +1,8 @@
 # 0179 — tEDAx netlist SEGFAULTS on a symbol with `extra=` but no `extra_pinnumber=`
 
-Status: **OPEN** (found 2026-07-30 while measuring 0165 D3; no fix attempted yet)
+Status: **FIXED** 2026-07-30 (found the same day while measuring 0165 D3).
 Area: `src/token.c` `print_tedax_element()`, `src/util.c` `my_strtok_r()`
-Tests: none yet
+Tests: `tests/headless/test_tedax_extra_pinnumber_0179.tcl` — 10 legs
 Related: 0165 (the measurement that turned it up), 0156
 
 ## What happens
@@ -71,16 +71,44 @@ Even if the deref is survived, `extra_pinnumber_token` stays `NULL` and is then 
 `extra_pinnumber=`. It is latent, and a user hand-writing a `tedax_format` on a symbol that already
 has `extra=` is the way in.
 
-## Fix shape (not yet decided)
+## The fix
 
-The minimal correct change is to initialise both save pointers and to give the loop a NULL-safe
-token, e.g. treat a missing `extra_pinnumber` the same way the pin loop treats a missing
-`pinnumber` — `"--UNDEF--"` (`:3217`). Whether the whole `conn` line should be suppressed instead of
-emitted with `--UNDEF--` is a product decision, not a crash-fix one.
+Two lines in `print_tedax_element()`, plus one declaration:
 
-Note the same uninitialised-`saveptr` pattern should be swept for elsewhere: `my_strtok_r()` gives no
+- guard the cursor so `my_strtok_r()` is never called with a NULL first argument
+  (`extra_pinnumber ? my_strtok_r(...) : NULL`);
+- default a missing number to the same placeholder the pin loop nine lines above already uses for a
+  missing `pinnumber` attribute — `"--UNDEF--"` (`:3217`) — instead of passing NULL to `"%s"`;
+- `extra_pinnumber_token` becomes `const char *` so it can hold the literal.
+
+Emitting `--UNDEF--` rather than suppressing the `conn` line is deliberate: it matches the existing
+pin loop, and a silently-dropped connection is worse than a visibly-undefined one.
+
+### Both halves are load-bearing — measured, not assumed
+
+Sabotage-verified in both directions on the built binary:
+
+| sabotage | result |
+|---|---|
+| drop the NULL guard, keep the `--UNDEF--` default | TX2/TX3 red (`signal 11`); TX4/TX5 stay green — the short-list arm has `saveptr1` initialised and is covered by the default alone |
+| keep the guard, drop the `--UNDEF--` default | TX2/TX3/TX4/TX5 all red, **all with `signal 11`** |
+
+The second result is the surprise worth recording: this backend's `%s` sites are **not**
+NULL-tolerant, so handing the NULL token onward crashes just as hard as the uninitialised
+`saveptr` did. Neither half is cosmetic.
+
+### Behaviour neutrality
+
+No netlist-diff run was needed. Pre-fix, every input the change touches either crashed at
+`my_strtok_r` or crashed at the `"%s"` — a crashed run emits no netlist at all — so there is no
+input for which the fix could alter existing output. Leg TX7b additionally pins the aligned
+`extra=`/`extra_pinnumber=` case as byte-identical across a re-run.
+
+## Still open, not fixed here
+
+The same uninitialised-`saveptr` pattern should be swept for elsewhere: `my_strtok_r()` gives no
 diagnostic for a `NULL` first argument, so every call whose first argument can be `NULL` is the same
-bug.
+bug. Not attempted — it is a separate sweep, not a crash fix.
 
 ## Reproduce
 
