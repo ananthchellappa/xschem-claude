@@ -1367,10 +1367,10 @@ the closed form, with `xschem graph_coord` as an independent pixel→data
 transform), `AV*` the apply — **witnessing every rect**, `AL*` the log line and
 its replay in a `--logdir` child process, `AS*` the source-level
 one-formula-one-home tripwire; `AG*` the real C gesture and `AX*` the ASE viewer
-seam under DISPLAY. **190 checks in the `--nogui` arm, 308 with a display**
-(2026-08-01, after §18's five groups were added to the same file; the count
-before them was 128 / 196, and the "119 / 173" this line used to carry was stale
-from the first draft).
+seam under DISPLAY. **200 checks in the `--nogui` arm, 338 with a display**
+(2026-08-01, after §18's five groups were added to the same file and then
+extended by its repair pass; the count before §18 was 128 / 196, and the
+"119 / 173" this line used to carry was stale from the first draft).
 
 ---
 
@@ -1544,14 +1544,20 @@ regression surface) but their comment is corrected.
 
 ### 18.6 Tests
 
-Five new groups in `tests/headless/test_wave_axis_zoom.tcl` (128 → **190**
-`--nogui`, 196 → **308** with a display):
+Five new groups in `tests/headless/test_wave_axis_zoom.tcl` (128 → **200**
+`--nogui`, 196 → **338** with a display):
 
 * **`CW*`** — the map and its verb, BOTH arms. Fail-soft on six bad queries; both
   endpoints against the closed form; the WIDTH leg kept **separate** from the
   FIXED-POINT leg so SAB-1 can kill one and not the other; the round trip; the
   other axis byte-identical on **every** rect; propagation; edge pinning; the
   out-of-extent clamp.
+  `CW10`/`CW11` are the **log-axis** legs (PLAN Q6): `logx=1` / `logy=1` staged
+  at `-3..0`, the anchored form re-derived in log space, both bounds asserted to
+  stay inside the token range (a `pow(10,·)` on either end leaves it) and the
+  fixed point re-measured through `graph_coord`. Log correctness here is by
+  *inheritance* — nothing in `graph_axis_wheel_map()` mentions a logarithm — and
+  these are the only legs that hold that inheritance to account.
 * **`CD*`** — the digital window, BOTH arms, staged **disjoint** (`y 0..2.5`,
   `ypos 10..14`). `CD2` must be a **REVERSE** drag: `graph_axis_map`'s forward
   branch collapses to `lo = q` for any window and literally cannot see which one
@@ -1571,16 +1577,52 @@ Five new groups in `tests/headless/test_wave_axis_zoom.tcl` (128 → **190**
   witnesses for the MEASURED table above, `graph_use_ctrl_key`, a non-zero strip
   index (the Y half is decisive — Y never propagates), and a `--logdir` GUI child
   that proves the GESTURE self-logged one replayable line.
+  `CE12`/`CE13` cover **Ctrl+Shift** (state 5), which is the `!(state &
+  ShiftMask)` term's only reason to exist. `CE12` asserts the chord still gives
+  the shipped Shift window byte for byte; that is decisive in the **Y** margin
+  and *not* in the X margin, where the per-graph loop reloads `gr->gx1/gx2` from
+  `master_gx1/master_gx2` and the Shift arm overwrites the suppressed arm's write
+  with an identical result. `CE13` is the leg that sees the X margin: it rides in
+  `CE9`'s child (the same `--logdir` process — a second GUI child restacks the
+  parent canvas under WSLg and flaked the `AX*`/`CV*` pixel scans ~1 run in 8)
+  and asserts the two Ctrl+Shift wheels added **no** `graph_axis_zoom` line to
+  the log. Measured: 1 line shipped, 3 with the term deleted.
 * **`CV*`** — the ASE viewer seam on a live viewer, DISPLAY only, through the
   shipped `<Control-Button-4>` bind with a `<Motion>` first. Single-axis on both
   margins, the body unchanged, survives a `regenerate`, no undo point, and the
   fixed point.
+  `CV7` is D-33's decisive leg and needs its own fixture: `CV1`'s two strips are
+  staged to the *identical* window, and there a per-strip anchor and "strip 0's
+  answer broadcast to every strip" produce the same numbers. `CV7` stages
+  `0..1.0` and `0..2.0` (`sharedx` is 0, so `regenerate` leaves them alone),
+  compares each strip against **its own** `graph_axis_wheel_map` answer and
+  re-measures the fixed point on strip 1. `CV8` is `CE10`'s viewer counterpart:
+  the Y margin of **strip 1**, with `wviewer::graph_at_pointer` asserted to
+  resolve 1 — `wheel_zoom`'s y branch is gated on `$t == $gi`, and every other
+  viewer leg points at strip 0. Its probe pixel is **asked for, not predicted**
+  (`cv_yprobe` walks left from the plot box until `graph_axis_at` says `y`, and
+  re-scans if it cannot find one): `az_ymargin`'s midpoint is pure geometry and
+  `graph_axis_at` has four refusals geometry cannot see, and a `<Configure>`
+  delivered by any `update` re-lays the viewer out. With a predicted midpoint the
+  leg answered `NONE` on ~1 standalone run in 3, the gesture degraded to the body
+  zoom, and **only** the "every strip's x1/x2 unchanged" leg noticed — the Y legs
+  pass either way, because the body zoom scales Y by the same `K`.
 
-Seven named sabotages, each verified to kill its target and be reverted:
+Eleven named sabotages, each verified to kill its target and be reverted:
 SAB-1 (centre anchor) → the fixed-point legs, **not** the width leg;
 SAB-2 (zoom both axes in the arm) → the other-axis witnesses;
 SAB-3 (fire regardless of region) → the body-unchanged witness;
 SAB-4 (delete the digital branch) → `CD*` and `CS4`;
 SAB-5 (drift the Tcl literal) → `CS2`, and nothing else in either arm;
 SAB-6 (viewer drops the axis argument) → `CV1`/`CV2`'s single-axis legs;
-SAB-7 (drop `!wheel_axis_done`) → the X-margin engine legs, `CE1b` first.
+SAB-7 (drop `!wheel_axis_done`) → the X-margin engine legs, `CE1b` first;
+SAB-8 (drop `!(state & ShiftMask)` from the arm) → `CE13`'s two log legs,
+`CE12`'s Y-margin leg and `CE9`'s two line-count legs — and **not** any X-margin
+window leg, which is exactly why `CE13` had to be a log assertion;
+SAB-9 (viewer's X arm asks C for `$gi` instead of `$t`) → `CV7`'s two per-strip
+legs **only** — `CV1` stays green, which is the fixture coincidence `CV7` exists
+to break;
+SAB-10 (viewer's Y branch gated on `$t == 0`) → `CV8`'s two legs only;
+SAB-11 (`pow(10,·)` the anchor `q` on a log axis) → `CW10`/`CW11`'s six log legs
+and nothing else — the width leg inside `CW10` survives, the same asymmetry
+SAB-1 exploits.

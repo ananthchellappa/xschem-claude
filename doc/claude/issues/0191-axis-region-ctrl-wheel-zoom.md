@@ -131,7 +131,8 @@ of the range per round trip; matching them would have bought only a
 ## 3. TESTS
 
 `tests/headless/test_wave_axis_zoom.tcl` (0190's suite), five new groups:
-**128 → 190** checks in the `--nogui` arm, **196 → 308** with a display.
+**128 → 200** checks in the `--nogui` arm, **196 → 338** with a display
+(190 / 308 at first commit; the repair pass below added the rest).
 
 `CW*` the map and its verb (fail-soft, the closed form, the WIDTH leg kept
 separate from the FIXED-POINT leg, the round trip, the other axis byte-identical
@@ -143,7 +144,7 @@ graph plus every "unchanged" regression witness from the measured table above,
 gesture self-logged one replayable line; `CV*` the live ASE viewer through the
 shipped `<Control-Button-4>` bind.
 
-Seven named sabotages, each applied, verified and reverted:
+Eleven named sabotages, each applied, verified and reverted:
 
 | # | sabotage | killed |
 |---|---|---|
@@ -154,6 +155,65 @@ Seven named sabotages, each applied, verified and reverted:
 | SAB-5 | drift the Tcl `0.8` to `0.75` | `CS2` **only**, in both arms |
 | SAB-6 | viewer drops the `axis` argument | `CV1`/`CV2`'s single-axis legs |
 | SAB-7 | drop `!wheel_axis_done` | `CE1b` (named) and every other X-margin engine leg — the clobbering pan destroys the whole window, so the blast radius is unavoidable |
+| SAB-8 | drop `&& !(state & ShiftMask)` from the arm | `CE13`'s two log legs, `CE12`'s Y-margin leg, `CE9`'s two line-count legs — and **no** X-margin window leg |
+| SAB-9 | viewer X arm asks C for `$gi` instead of `$t` | `CV7`'s two per-strip legs **only**; `CV1` stays green |
+| SAB-10 | viewer Y branch gated on `$t == 0` | `CV8`'s two legs only |
+| SAB-11 | `pow(10,·)` the anchor `q` on a log axis | `CW10`/`CW11`'s six log legs only; `CW10`'s width leg survives |
+
+### 3.1 The repair pass (2026-08-01, after the adversarial verifier)
+
+Four holes, each now closed by a leg that a named sabotage kills:
+
+1. **`!(state & ShiftMask)` had zero coverage.** No test anywhere in
+   `tests/headless` sent a Ctrl+Shift wheel over a graph — every `ce_click` call
+   site used state 0, 1 or 4 and `cv_wheel` was hard-coded to `-state 4`.
+   Deleting the term left both arms fully green. It is **not** inert: the
+   suppressed arm applies on its way past and `graph_axis_zoom()` self-logs.
+   In the **X** margin the final window is byte-identical anyway, because the
+   per-graph loop reloads `gr->gx1/gx2` from `master_gx1/master_gx2` (captured
+   *before* the master block) and the Shift arm overwrites with the same numbers
+   — an accident of ordering, not an assertion. In the **Y** margin it is
+   visible, because `setup_graph_data` re-reads `y1`/`y2` from the tokens the
+   suppressed arm just wrote. `CE12` asserts the window in three chords (X up, X
+   down, Y up) and `CE13` asserts the log: 1 line shipped, 3 sabotaged.
+2. **`CV1`'s fixture could not see D-33.** Both strips were staged to the
+   identical `0..1.0`, where "each strip anchored in its own window" and "strip
+   0's answer broadcast" give the same numbers — precisely the case D-33 is
+   about. `CV7` stages `0..1.0` and `0..2.0` and names which answer each strip
+   got.
+3. **The viewer's per-object state was witnessed on one object.**
+   `wviewer::wheel_zoom`'s y branch is gated on `$t == $gi` with `$gi` from
+   `wviewer::graph_at_pointer`, and `CV2` was the only Y-margin viewer leg —
+   pointing at strip 0. `CV8` is `CE10`'s viewer counterpart and asserts
+   `graph_at_pointer` resolves 1 before it wheels.
+4. **PLAN Q6 (log axes) was implemented by inheritance and never asserted for
+   the WHEEL map.** `AM9` sets `logx` on the *drag* map only. `CW10`/`CW11` set
+   `logx` / `logy`, re-derive the anchored form in log space, assert neither
+   bound left the `-3..0` token range and re-measure the fixed point.
+
+Two fixture lessons, both measured, both now carried by the code:
+
+* a **predicted** margin pixel is not good enough for a leg that runs late in a
+  long-lived viewer session. `CV8`'s Y probe is found by asking
+  (`cv_yprobe` → `graph_axis_at`), with a re-scan, because `az_ymargin`'s
+  midpoint is geometry and `graph_axis_at` has four refusals geometry cannot see
+  — and any `update` can deliver a `<Configure>` that re-lays the viewer out.
+  With the midpoint the gesture silently degraded to the body zoom on ~1 run in 3
+  and **only** the "every strip's x1/x2 unchanged" leg saw it (the body zoom
+  scales Y by the same `K`, so every Y leg passed);
+* the pre-existing `CV1`–`CV6` legs still use the probe pixels cached at `CV0`
+  and carry the same exposure. Not touched here (out of this repair's scope), but
+  recorded: a `CV3`/`CV4`/`CV7` failure showing "X unchanged, Y zoomed" is that
+  flake, not a product defect.
+
+One structural change came out of it: `CE13` rides in `CE9`'s `--logdir` child
+rather than opening a second one. A second GUI child put another toplevel on the
+display, and under WSLg that restacked/resized the parent canvas often enough to
+land the `AX*`/`CV*` cached probe pixels on the wrong strip about **1 run in 8**
+(measured both ways: 8/8 green before, 7/8 and 3/4 with the extra child, 10/10
+after merging it). `CE9`'s `celine` also now takes the **first** matching log
+line, not the last, so its replay legs stay an independent statement about the
+plain-Ctrl gesture.
 
 ---
 

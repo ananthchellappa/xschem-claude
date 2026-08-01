@@ -1,8 +1,12 @@
 # ovb01 item 04 — axis-region CTRL+wheel zoom — decision doc
 
-**Status: IMPLEMENTED (2026-08-01).** Every decision below was implemented as
-written; the suite is `tests/headless/test_wave_axis_zoom.tcl` at **190** checks
-`--nogui` / **308** with a display (was 128 / 196), all seven sabotages verified.
+**Status: IMPLEMENTED (2026-08-01), REPAIRED (2026-08-01).** Every decision below
+was implemented as written; the suite is `tests/headless/test_wave_axis_zoom.tcl`
+at **200** checks `--nogui` / **338** with a display (was 128 / 196; 190 / 308 at
+first commit), all **eleven** sabotages verified. SAB-8..SAB-11 and §7's second
+table came out of the adversarial verifier's four findings — see
+`doc/claude/issues/0191-…md` §3.1 for what each hole was and why the window alone
+could not close SAB-8.
 Issue: `doc/claude/issues/0191-axis-region-ctrl-wheel-zoom.md`. Spec:
 `doc/claude/specs/waveform_viewer_modes.md` §18. Two implementation findings the
 scout could not have had, both recorded in §18.6 / landmine 47(d): a
@@ -630,6 +634,24 @@ With `K` read out of `src/xschem.h` at run time (never a frozen copy):
 | SAB-5 | change `wviewer::wheel_zoom`'s `0.8` literal to `0.75` | the mirrored-constant leg (`CS2`) |
 | SAB-6 | in `wviewer::wheel`'s `ctrl` arm, drop the `axis` argument (always both axes) | the viewer single-axis legs (`CV1`/`CV2`) |
 | SAB-7 | remove `&& !wheel_axis_done` from the two plain-wheel arms | the "the margin zoom is not also a pan" leg (`CE1b`) |
+
+### 7.1 Added by the repair pass (2026-08-01)
+
+| # | sabotage | must kill, and nothing else |
+|---|---|---|
+| SAB-8 | in the `callback.c` arm, delete `&& !(state & ShiftMask)` | `CE13`'s two log legs, `CE12`'s Y-margin leg, `CE9`'s two line-count legs. **No X-margin window leg moves** — the Shift arm downstream recomputes from the pre-zoom `master_gx1/gx2` and overwrites with the same numbers, which is why `CE13` had to be an assertion about the LOG |
+| SAB-9 | `wviewer::wheel_zoom`'s X arm asks C for `$gi` instead of `$t` | `CV7`'s two per-strip legs only. `CV1` stays green: its two strips carry the identical window, so a broadcast and a per-strip anchor agree — the fixture coincidence `CV7` exists to break |
+| SAB-10 | `wviewer::wheel_zoom`'s Y branch gated on `$t == 0` | `CV8`'s two legs only. `CV2` stays green: it points at strip 0 |
+| SAB-11 | `q = pow(10.0, q)` on a log axis in `graph_axis_wheel_map` | `CW10`/`CW11`'s six log legs only. `CW10`'s WIDTH leg survives — the same anchor-vs-width asymmetry SAB-1 exploits |
+
+**D-33's fixture requirement, learned here.** The decision says the viewer calls
+the map per strip so each is anchored "in its OWN window at the same pointer
+pixel — the same answer when the windows agree and the right one when they do
+not". Every leg written for it staged the two strips to the *same* window, i.e.
+exactly the half of the sentence that cannot distinguish the two readings. A
+decision whose whole content is "and the right one when they differ" needs a
+fixture in which they differ; `CV7` is that fixture (`0..1.0` and `0..2.0`,
+`sharedx` 0 so `regenerate` leaves them alone).
 
 ---
 

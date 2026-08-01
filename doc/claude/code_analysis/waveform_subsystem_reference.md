@@ -1978,6 +1978,21 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
     if/else chain in a DIFFERENT loop (the master block vs the per-graph loop
     below `finish:`), so an `else if` does not exclude them.
 
+    **A modifier guard in the master block can be load-bearing and still leave
+    every window byte-identical.** Measured while closing 0191's `!(state &
+    ShiftMask)` hole: with the term deleted, a Ctrl+Shift wheel in the **X**
+    margin runs the new arm, applies through `graph_axis_zoom()` *and* leaves the
+    same numbers behind, because the per-graph loop below opens with
+    `gr->gx1 = gr->master_gx1; gr->gx2 = gr->master_gx2;` (~1932) — values
+    captured in the master block **before** the arm ran — and the Shift arm then
+    overwrites `x1`/`x2` from those pre-zoom values. The **Y** margin is the
+    opposite: `setup_graph_data(i, 1, gr)` skips only x, so `gy1`/`gy2` are
+    re-read from the tokens the suppressed arm just wrote and the double apply
+    *is* visible. So a guard on an X-writing arm here can only be witnessed by
+    something other than the window — the replay LOG (`graph_axis_zoom()`
+    self-logs one line) is the assertion that sees it, and that also makes the
+    guard load-bearing for replay fidelity.
+
 ---
 
 ## 12. Improvement backlog (ranked, with where-to-touch)
