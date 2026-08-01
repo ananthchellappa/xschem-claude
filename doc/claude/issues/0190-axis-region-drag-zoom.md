@@ -236,3 +236,48 @@ The rubber band's pixels; the drag *feel*; whether the tick labels are still
 legible after a zoom; the (absent) pointer-cursor change during the drag; and
 whether losing the axis margins from the viewer's strip reorder is noticeable in
 use.
+
+---
+
+## 6. FOLLOW-UP: D-19's digital branch was documented and never implemented
+
+Recorded 2026-08-01 while implementing issue **0191** (the CTRL+wheel twin of
+this gesture), which needed the identical sub-answer and therefore had to look.
+
+D-19 said a digital strip's Y is the `ypos1`/`ypos2` band "through `DG_Y`". The
+**apply** did that — `graph_axis_zoom()` reads `digital` straight off the rect
+and writes `ypos1`/`ypos2`. The **map** did not: `graph_axis_map()` resolved the
+Y window as
+
+```c
+    e1 = S_Y(gr->gy1); e2 = S_Y(gr->gy2);
+    A = gr->gy1; B = gr->gy2;
+```
+
+unconditionally — the analog window and the analog transform.
+
+**MEASURED at `826e1b60`** on a digital strip with `y1=0 y2=2.5 ypos1=0 ypos2=4`:
+
+```
+xschem get graph_axis_at  0 22 526        -> y
+xschem get graph_axis_map 0 y  526 267    -> 0.34586281243181671 1.9021063678409851
+```
+
+Both endpoints lie inside `[0, 2.5]`, and `graph_axis_zoom` then put them into a
+band whose real extent is `[0, 4]`. A full-height left-margin drag on a digital
+strip therefore mis-zoomed it by ~2.6× and anchored in the wrong place.
+
+**Corrected in 0191**, not as an opportunistic fix but because the new formula
+asks the same question and a second copy of a known-wrong resolution is landmine
+45(a)/47(b): the resolution is now one shared helper, `graph_axis_window()`
+(static, `src/draw.c`), called by `graph_axis_map()` **and**
+`graph_axis_wheel_map()`, with the digital branch using `ypos1`/`ypos2` + `DS_Y`
+and the inverse using `DG_Y`. `test_wave_axis_zoom.tcl`'s `CD2` leg is the first
+assertion that makes D-19 true — and it had to be written as a **REVERSE** drag:
+the forward branch is `lo = A + ua*R` with `ua = (q - A)/R`, which collapses to
+`lo = q` for any window, so a forward-drag leg cannot see which window was used
+at all (measured — it stayed green with the digital branch deleted).
+
+**Why this suite never caught it:** `AZ11` only *queries* a digital strip's
+region and `AV5` only calls the *verb* on one with hand-supplied bounds. Nothing
+drove the MAP on a digital strip until 0191.

@@ -903,6 +903,10 @@ of trace names above it; "margins" is everything else inside the strip rect
 | LMB **double**-click | a legend entry (embedded graphs) | **C** | the wave dialog; the selection is unchanged |
 | LMB **double**-click | **on a marker** (viewer) | **Tcl seam, C policy** | selects that marker **and**, for a difference marker, the reference its deltas are derived from (issue 0189, `graph_markers.md` D13). `wviewer::marker_dblclick_at` asks `xschem get graph_marker_at` and delegates the policy to `xschem graph_marker select -pair`, then `xschem redraw`. Still `break`s |
 | LMB double-click | anywhere else (viewer) | **Tcl** | swallowed (`{break}`, D9) — the `break` is **unconditional**, so no graph-properties dialog can ever appear over a read-only viewer |
+| **Ctrl**+wheel | the **bottom (X-number) margin** | **Tcl seam, C maths** | zoom **X only**, on every strip, anchored at the pointer (§18, issue 0191). The viewer asks `xschem get graph_axis_at` for the region and `xschem get graph_axis_wheel_map` for the window; it hit-tests and computes nothing |
+| **Ctrl**+wheel | the **left (Y-number) margin** | **Tcl seam, C maths** | zoom **Y only**, on the pointed strip, anchored at the pointer (§18) |
+| **Ctrl**+wheel | the body, the legend, the grip | **Tcl** | **unchanged**: X on every strip **and** Y on the pointed one, `wviewer::zoom_about` (issue 0144/0146). A `NONE` region answer falls through to exactly this |
+| plain / Shift wheel | anywhere | **Tcl** | **unchanged**: Y pan / X pan of the stack |
 | MMB drag | anywhere on a graph | **C** | graph pan |
 | RMB press-drag | the body | **C** | box zoom |
 | RMB **click** | on a trace, in the body | **Tcl** | the trace context menu (item 7) |
@@ -1179,6 +1183,11 @@ only that axis. It lives in the **C engine**, beside the Button3 box zoom it is
 the twin of — so schematic-embedded graphs get it too — and the ASE viewer needs
 exactly one rung, carrying no geometry.
 
+> **See also §18**, the WHEEL twin of this gesture (issue 0191): CTRL+wheel in
+> the same two margins zooms the same axis about the pointer. It reuses
+> `graph_axis_at()` and `graph_axis_zoom()` verbatim and shares the axis-window
+> resolution with this section's map through `graph_axis_window()`.
+
 ### 17.1 The gesture
 
 | | |
@@ -1264,6 +1273,20 @@ a scratch `Graph_ctx`: `setup_graph_data()` parses it *below* its off-screen
 early return (landmine 37a), so an off-screen digital strip would otherwise get
 `y1`/`y2` written into it.
 
+> ⚠ **CORRECTED 2026-08-01 (issue 0191).** The paragraph above described only the
+> **apply**. Decision D-19 also said the MAP computes a digital strip's Y
+> "through `DG_Y`" — and it did not: `graph_axis_map()` resolved the Y window
+> from `gy1`/`gy2` and `S_Y` unconditionally, so on a digital strip it answered
+> in the **analog** window while `graph_axis_zoom()` wrote the result into a band
+> with a different extent. MEASURED at `826e1b60`, `y1=0 y2=2.5 ypos1=0 ypos2=4`:
+> `xschem get graph_axis_map 0 y 636 310` → `0 1.6437`. A full-height left-margin
+> drag on a digital strip therefore mis-zoomed it by ~2.6×, anchored in the wrong
+> place. Item 04 (§18) needed the identical resolution for its own formula, so it
+> is now a single shared helper — `graph_axis_window()` in `draw.c`, called by
+> **both** maps, with the digital branch written correctly (`ypos1`/`ypos2` and
+> `DS_Y`, inverted by `DG_Y`). §18's `CD2` leg is the first assertion that makes
+> D-19 true.
+
 ### 17.4 No dirty flag, no C undo, no viewer undo — and one log line
 
 A zoom is **view state**. `graph_axis_zoom()` calls neither `set_modify()` nor
@@ -1344,4 +1367,220 @@ the closed form, with `xschem graph_coord` as an independent pixel→data
 transform), `AV*` the apply — **witnessing every rect**, `AL*` the log line and
 its replay in a `--logdir` child process, `AS*` the source-level
 one-formula-one-home tripwire; `AG*` the real C gesture and `AX*` the ASE viewer
-seam under DISPLAY. 119 checks in the `--nogui` arm, 173 with a display.
+seam under DISPLAY. **190 checks in the `--nogui` arm, 308 with a display**
+(2026-08-01, after §18's five groups were added to the same file; the count
+before them was 128 / 196, and the "119 / 173" this line used to carry was stale
+from the first draft).
+
+---
+
+## 18. Axis-region CTRL+wheel zoom (2026-08-01, issue 0191)
+
+**CTRL+wheel** in a strip's **axis-number margin** — the same two regions §17
+gave to the LMB drag — zooms **that axis only**, about the pointer: the data
+coordinate under the pointer keeps its screen pixel.
+
+The user's ask, verbatim:
+
+> In the axis regions - where the LMB press-and-drag for zoom is supported,
+> CTRL+Scroll_wheel will support zoom in/out for THAT AXIS ONLY. Zooming will be
+> around the mouse pointer. That is, the point(s) on the trace(s) that are at x1
+> (position of the mouse pointer) will remain there after zoom.
+
+It lives on **both** surfaces with **one formula in C**: a new arm in
+`waves_callback()` serves schematic-embedded graphs, and the ASE viewer — which
+binds every wheel sequence with a `break` and never forwards — consumes the same
+formula as a query and writes its own Tcl model. Decision doc:
+`doc/claude/code_analysis/ovb01_04_axis_region_ctrl_wheel_zoom_decision.md`
+(D-25…D-40).
+
+### 18.1 The gesture
+
+| | |
+|---|---|
+| Where | the **bottom margin** (X tick numbers) → X; the **left margin** (Y tick numbers) → Y. `graph_axis_at()`, unchanged and unwidened — §17.1's table of refusals applies verbatim, including the bottom-left corner answering Y |
+| Modifier | **Ctrl**, and `!(state & ShiftMask)`: Ctrl+Shift+wheel keeps the shipped Shift zoom |
+| Direction | wheel **up** = zoom IN (multiply the range by `K`), wheel **down** = zoom OUT (divide by `K`) |
+| Step | `GRAPH_AXIS_WHEEL_FACTOR = 0.8` (`src/xschem.h`), **mirrored in Tcl** as `wviewer::wheel_zoom`'s `f` literal, both carrying a change-both comment |
+| `graph_use_ctrl_key` | **the arm is gated OFF** in that mode (D-32). There Ctrl is the graph *access* modifier — `waves_selected` refuses every graph event without it — so taking Ctrl+wheel would leave the mode with no graph wheel pan at all. Default is `0`, so the feature is on out of the box |
+| Cursors / markers | irrelevant: those are *drag* grabs armed by a Button1 press, and a wheel during an in-flight drag is already short-circuited by `if(ui_state & GRAPHPAN) goto finish` |
+| GRAPHPAN latch | **no term owed**. The latch admits `Button1 \|\| Button2 \|\| Button3` only, so a Button4/5 press never enters it, and a wheel is one event with no release to lose |
+| Off-screen / empty / no raw | allowed for empty and no-raw (pure geometry, §17's D-20); an **off-screen** strip is refused by the shipped `gr->scx == 0.0 \|\| gr->scy == 0.0` sentinel and the verb answers `{}` |
+| Dirty flag / undo | none, on either path (§18.4) |
+
+**What every other chord keeps doing — MEASURED**, not read off a comment. Three
+comments in the tree said Ctrl+wheel over a graph was a canvas pan or a canvas
+zoom; it is neither, and `xorigin`/`yorigin`/`zoom` did not move in any of the
+twelve trials:
+
+| chord | plot BODY | bottom (X) margin | left (Y) margin |
+|---|---|---|---|
+| plain wheel | graph X **pan** ±0.05·gw | graph X **pan** | graph Y **pan** ±gh/divy |
+| Shift+wheel | graph X **zoom**, anchored, ×0.8 in / **×1.2** out | same | graph Y **zoom**, anchored |
+| **Ctrl+wheel, before 0191** | graph X pan — byte-identical to the plain wheel | graph X pan | graph Y pan |
+| **Ctrl+wheel, after 0191** | **unchanged** (still the X pan) | **X zoom, anchored** | **Y zoom, anchored** |
+
+"Unchanged in the body" therefore means *"still panning the graph"*, not *"still
+panning the canvas"*. That distinction is what the `wheel_axis_done` flag exists
+for: the plain-wheel arms stand down **only** when the axis zoom actually fired,
+which happens only when `graph_axis_at()` found a margin AND the map answered.
+
+### 18.2 The maths, and the fixed-point invariant
+
+With `[A, B]` the axis's current window, `R = B - A`, `e1`/`e2` the plot box's
+pixel extent along that axis, `p` the pointer's canvas pixel **clamped to
+`[e1, e2]`**, and `K = GRAPH_AXIS_WHEEL_FACTOR`:
+
+```
+  f  = wheel-up ? K : 1/K          the range MULTIPLIER
+  q  = G_axis(p)                   the data coordinate under the pointer
+  u  = (q - A) / R                 0..1
+  R2 = R * f
+  lo = q - u * R2                  <-- THE ANCHOR TERM
+  hi = lo + R2
+  if(hi == lo) hi += 1e-6          the shipped idiom
+```
+
+**The invariant, and the only assertion that matters:**
+`(q - lo) / (hi - lo) == u`. Substituting: `(q - (q - u·R2))/R2 = u`. ∎ So `q`
+sits at the same fraction of the window and therefore at the same screen pixel.
+
+**Why `lo = q - u·R2` and not `lo = A + (R - R2)/2`.** The second form has the
+right WIDTH and the wrong POSITION. It passes "the range shrank by K", it passes
+"both endpoints moved", and it fails only a test that measures where `q` ended
+up. Measured under SAB-1: the centre form left the width leg (`CW2`) green and
+killed nine fixed-point / closed-form legs. **A probe pixel at the box CENTRE
+cannot tell the two apart** — at `u = 0.5` they agree — which is why every leg in
+the suite probes at 25 % of the extent.
+
+Two worked checks, which are also two legs:
+
+* **round trip.** `in` then `out` at the same pixel: `R → R·K → R·K·(1/K) = R`,
+  and `lo` returns to `A` because `u` is unchanged (the anchor is a fixed point
+  of both steps). The shipped Shift+wheel arms are ×0.8 / ×1.2 and lose 4 % of
+  the range per round trip; this one is exact to the token format.
+* **pointer at an edge.** `p = e1 ⇒ u = 0 ⇒ lo = q = A`: the window pins that
+  edge and only the other one moves.
+
+**Log axes:** nothing special. `gr->gx1..gy2` and `G_X`/`G_Y` are *already* in
+log space when `logx`/`logy` is set; applying a `pow(10, ·)` here would
+double-convert (landmine 35 from the other side, §17's D-18 verbatim).
+
+**No `GRAPH_AXIS_ZOOM_MAX_FACTOR`** (D-34). That constant guards the *drag*
+map's `R / |s|`, a division by a user-controlled span that can approach zero and
+put an `inf` into `x1`/`x2` permanently. `R * f` divides nothing: repeated clicks
+shrink `R` geometrically and cannot reach zero in finite steps, and `hi == lo`
+catches the denormal end.
+
+**The axis WINDOW has one home.** `graph_axis_window(gr, axis, &A, &B, &e1, &e2)`
+(static, `draw.c`) answers *"what is this axis's window and what pixel extent
+does it occupy"* for **both** maps, normalising both pairs low-first (`gr->cy` is
+negative — landmine 3). Its digital branch is what makes §17.3's D-19 true; see
+the correction box there.
+
+### 18.3 Where it applies: X propagates, Y does not
+
+Identical to §17.3, because it is the same apply — `graph_axis_zoom()`,
+unchanged. X writes `x1`/`x2` on the pointed rect **and every PARTICIPATING
+rect**; Y writes `y1`/`y2` — or `ypos1`/`ypos2` on a digital strip — on the
+pointed rect only.
+
+On the **viewer** path the loop is `wviewer::wheel_zoom`'s own: X on every strip,
+Y on `gi`. Each strip's new window is asked of C **per strip** (D-33), so each is
+anchored in its own window at the same pointer pixel — the same answer when the
+windows agree and the right answer when they do not. A strip the verb answers
+`{}` for is left **completely unchanged**; it never falls back to `zoom_about`,
+which would be a second formula answering for one gesture.
+
+### 18.4 No dirty flag, no C undo, no viewer undo — and one log line
+
+All four decided as §17.4 decided them (D-35 = D-14/D-15/D-16 verbatim):
+
+* no `set_modify()` and no `push_undo()` — a zoom is view state, the whole of
+  `waves_callback` contains zero of either (landmine 19), and the ASE viewer's
+  buffer is read-only for life so a dirty flag there would be a lie;
+* no `wviewer::push_undo`, no `capture_live_graph_state`, no `with_edit` — window
+  view state is deliberately outside a viewer undo snapshot (§14.1), and a single
+  `u` after a zoom would otherwise revert an unrelated model edit.
+
+**Logging is asymmetric, on purpose (D-37).** The **C engine** path logs exactly
+one `xschem graph_axis_zoom <gi> x|y <lo> <hi>` line at `%.17g` — for free,
+because it applies through `graph_axis_zoom()` — and replaying that one line
+reproduces the whole propagation. The **viewer** path logs **nothing**, exactly
+like `wviewer::wheel_zoom`, `pan_x` and `graph_zoom` today: the viewer's
+`log_action` seam is for MODEL mutations (`move_strip`, `move_trace`,
+`set_target_strip`, `clear_all`), ranges are not in that class, and adding a line
+to one arm of one modifier would make a replayed session inconsistent with
+itself.
+
+**The viewer path SURVIVES a `regenerate`** — a deliberate difference from §17
+(D-36). There is Tcl in this gesture's loop (the viewer owns the wheel bind), so
+writing the model costs nothing and avoids two Ctrl+wheel gestures with different
+lifetimes three lines apart.
+
+### 18.5 Surface
+
+| what | where |
+|---|---|
+| `GRAPH_AXIS_WHEEL_FACTOR 0.8` | `src/xschem.h`, next to `GRAPH_AXIS_ZOOM_MAX_FACTOR`. **MIRRORED IN TCL** |
+| `graph_axis_window()` (static, NEW) | `src/draw.c`, above `graph_axis_map()`. The one home for the axis window + its pixel extent; called by both maps |
+| `graph_axis_wheel_map(i, axis, p, dir, &lo, &hi)` (NEW) | `src/draw.c`, after `graph_axis_map()`. THE wheel formula; `dir` is `+1` in / `-1` out and the factor lives **inside**, so the constant has one home and a suite driving the verb drives the product's own step |
+| the engine arm | `src/callback.c`, a new `else if` after the Button3 numeric-cursor arm in `waves_callback`'s master block, plus the `wheel_axis_done` local and `&& !wheel_axis_done` on the two plain-wheel arms |
+| `xschem get graph_axis_wheel_map <gi> x\|y <p> in\|out` | `src/scheduler.c`, `xschem_cmds_g`'s `get` `case 'g':`, beside `graph_axis_map`. Fails **soft** (`{}` + `TCL_OK`) |
+| `xschem graph_axis_zoom` | **unchanged**, and it is THE apply for both maps |
+| `wviewer::axis_wheel_window {token gi axis p dir}` (NEW) | `src/wave_viewer.tcl`. Asks C, fails closed to `{}`. The viewer computes no geometry (§17's D-22, not reopened) |
+| `wviewer::wheel_zoom`'s new trailing `{axis {}}` | `{}` = today's body zoom byte for byte; `x`/`y` = the single-axis arms. Every pre-0191 caller passes nothing |
+| `wviewer::wheel`'s `ctrl` arm | one new rung: ask `xschem get graph_axis_at` with the **event's own** `%x`/`%y` and pass the answer down |
+| binds | **none added**. `<Control-Button-4/5>` and `<Control-MouseWheel>` were already bound |
+
+**Why the arm is in `waves_callback` and not the binding table** — landmine 48.
+`handle_button_press()` opens with an inline
+`if(waves_selected(...)) { waves_callback(...); return; }` and
+`handle_mouse_wheel()` is reached fourteen branches later, so for **any** wheel
+press over a graph the function has already returned. The four
+`ACTX_OVER_GRAPH` wheel rows in `init_input_bindings` are unreachable dead code;
+they are kept (removing them has its own `xschem bind` / `keybindings.csv`
+regression surface) but their comment is corrected.
+
+### 18.6 Tests
+
+Five new groups in `tests/headless/test_wave_axis_zoom.tcl` (128 → **190**
+`--nogui`, 196 → **308** with a display):
+
+* **`CW*`** — the map and its verb, BOTH arms. Fail-soft on six bad queries; both
+  endpoints against the closed form; the WIDTH leg kept **separate** from the
+  FIXED-POINT leg so SAB-1 can kill one and not the other; the round trip; the
+  other axis byte-identical on **every** rect; propagation; edge pinning; the
+  out-of-extent clamp.
+* **`CD*`** — the digital window, BOTH arms, staged **disjoint** (`y 0..2.5`,
+  `ypos 10..14`). `CD2` must be a **REVERSE** drag: `graph_axis_map`'s forward
+  branch collapses to `lo = q` for any window and literally cannot see which one
+  was used — measured, a forward leg stayed green under SAB-4. `CD3`'s oracle is
+  an independent Tcl transform (both transforms share the plot box, so the
+  fraction `graph_coord` gives is the fraction in `ypos` space); `graph_coord`
+  itself is the WRONG oracle here.
+* **`CS*`** — source-level one-home tripwires: the anchored expression appears
+  once in `draw.c` and nowhere else, the wheel map is called exactly once from
+  each of `callback.c`/`scheduler.c`, `graph_axis_window(` appears exactly 3
+  times, the digital decision exactly once, neither formula body still contains
+  `S_X(`/`S_Y(`/`DS_Y(`, and the C `#define` equals the Tcl literal. `CS3` (with
+  the viewer open) asserts `wviewer::zoom_about` and `graph_axis_wheel_map` agree
+  numerically — and asserts the proc IS defined, never a silent skip.
+* **`CE*`** — the real C gesture on an embedded graph, DISPLAY only, through
+  `xschem callback .drw 4 <px> <py> 0 <4|5> 0 4`. Includes the three regression
+  witnesses for the MEASURED table above, `graph_use_ctrl_key`, a non-zero strip
+  index (the Y half is decisive — Y never propagates), and a `--logdir` GUI child
+  that proves the GESTURE self-logged one replayable line.
+* **`CV*`** — the ASE viewer seam on a live viewer, DISPLAY only, through the
+  shipped `<Control-Button-4>` bind with a `<Motion>` first. Single-axis on both
+  margins, the body unchanged, survives a `regenerate`, no undo point, and the
+  fixed point.
+
+Seven named sabotages, each verified to kill its target and be reverted:
+SAB-1 (centre anchor) → the fixed-point legs, **not** the width leg;
+SAB-2 (zoom both axes in the arm) → the other-axis witnesses;
+SAB-3 (fire regardless of region) → the body-unchanged witness;
+SAB-4 (delete the digital branch) → `CD*` and `CS4`;
+SAB-5 (drift the Tcl literal) → `CS2`, and nothing else in either arm;
+SAB-6 (viewer drops the axis argument) → `CV1`/`CV2`'s single-axis legs;
+SAB-7 (drop `!wheel_axis_done`) → the X-margin engine legs, `CE1b` first.

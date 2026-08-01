@@ -5064,6 +5064,11 @@ int graph_plotbox_at(int i, double px, double py)
  * and a feature whose feedback and whose commit each compute the same thing
  * will drift -- landmine 45(a). Exposing the map as `xschem get graph_axis_map`
  * is also what lets a headless suite assert BOTH endpoints of a zoom.
+ *
+ * Issue 0191 (§18) added the WHEEL twin of the map, graph_axis_wheel_map(), in
+ * the same shape and reusing graph_axis_at() and graph_axis_zoom() verbatim --
+ * plus graph_axis_window(), the one home for "what is this axis's window and
+ * what pixel extent does it occupy", which both formulas now call.
  */
 
 /* Which axis-number MARGIN of graph `i` is the CANVAS PIXEL (px, py) in?
@@ -5143,6 +5148,57 @@ int graph_axis_at(int i, double px, double py)
   return GRAPH_AXIS_NONE;  /* top margin, right margin */
 }
 
+/* WHAT IS THIS AXIS'S WINDOW, AND WHAT PIXEL EXTENT DOES IT OCCUPY?
+ *
+ * The ONE home for that question (issue 0191 D-29), called by BOTH formulas --
+ * graph_axis_map() (the item-0190 drag) and graph_axis_wheel_map() (the CTRL
+ * wheel). `gr` must already have been through the caller's own
+ * setup_graph_data() + 128|256 bracket. Writes the data window to *A/*B and the
+ * screen-pixel extent of that window along `axis` to *e1/*e2, both pairs
+ * normalised low-first.
+ *
+ * ⚠ THE DIGITAL BRANCH IS WHY THIS EXISTS. graph_axis_zoom() writes a digital
+ * strip's Y into ypos1/ypos2, not y1/y2 (the RMB left-margin arm's rule), but
+ * graph_axis_map() used to resolve the Y window from gy1/gy2 and S_Y
+ * UNCONDITIONALLY. MEASURED before this change, on a strip with y1=0 y2=2.5
+ * ypos1=0 ypos2=4: `xschem get graph_axis_map 0 y 636 310` answered
+ * `0 1.6437` -- inside the ANALOG window -- and the apply then put that into a
+ * band whose real extent is 0..4. So 0190's own decision D-19 ("Y writes
+ * ypos1/ypos2 through DG_Y") was documented and not implemented. One helper,
+ * written correctly, rather than a second copy of a known-wrong resolution:
+ * landmine 45(a)/47(b).
+ *
+ * ⚠ gr->cy (and gr->dcy) are NEGATIVE (landmine 3), so the Y pixel pair comes
+ * back inverted -- S_Y(gy1) is the BOTTOM pixel. Both pairs are normalised here,
+ * once, so neither caller has to remember it.
+ *
+ * ⚠ The three branches assign LOCALS and the out-parameters are written once at
+ * the end, rather than the shorter `*A = ...` form: a line beginning with `*`
+ * is what a C comment continuation looks like, and the source-level tripwires
+ * this file's suite runs (test_wave_axis_zoom.tcl, az_count_code) skip exactly
+ * those lines -- so the digital branch would have been invisible to CS4. The
+ * same reason graph_axis_map's `zlo` and graph_axis_wheel_map's are named
+ * locals. */
+static void graph_axis_window(Graph_ctx *gr, int axis,
+                              double *A, double *B, double *e1, double *e2)
+{
+  double a, b, f1, f2, t;
+
+  if(axis == GRAPH_AXIS_X) {
+    a = gr->gx1; b = gr->gx2;
+    f1 = S_X(gr->gx1); f2 = S_X(gr->gx2);
+  } else if(gr->digital) {
+    a = gr->ypos1; b = gr->ypos2;
+    f1 = DS_Y(gr->ypos1); f2 = DS_Y(gr->ypos2);
+  } else {
+    a = gr->gy1; b = gr->gy2;
+    f1 = S_Y(gr->gy1); f2 = S_Y(gr->gy2);
+  }
+  if(f1 > f2) { t = f1; f1 = f2; f2 = t; }
+  if(a  > b)  { t = a;  a  = b;  b  = t;  }
+  *A = a; *B = b; *e1 = f1; *e2 = f2;
+}
+
 /* THE MAP. `p0` (press) and `p1` (release) are CANVAS PIXELS along `axis`: px
  * for GRAPH_AXIS_X, py for GRAPH_AXIS_Y. On success writes the new data window
  * to *lo / *hi and returns 1.
@@ -5195,7 +5251,7 @@ int graph_axis_map(int i, int axis, double p0, double p1,
   Graph_ctx *gr = &gr_ctx;
   xRect *r;
   int saveflags;
-  double e1, e2, t, A, B, R, ua, ub, s, f, R2, zlo;
+  double e1, e2, A, B, R, ua, ub, s, f, R2, zlo;
 
   if(!xctx || !lo || !hi) return 0;
   if(axis != GRAPH_AXIS_X && axis != GRAPH_AXIS_Y) return 0;
@@ -5208,15 +5264,7 @@ int graph_axis_map(int i, int axis, double p0, double p1,
   xctx->graph_flags = (xctx->graph_flags & ~(128 | 256)) | saveflags;
   if(gr->scx == 0.0 || gr->scy == 0.0) return 0;  /* off-screen: no transform */
 
-  if(axis == GRAPH_AXIS_X) {
-    e1 = S_X(gr->gx1); e2 = S_X(gr->gx2);
-    A = gr->gx1; B = gr->gx2;
-  } else {
-    e1 = S_Y(gr->gy1); e2 = S_Y(gr->gy2);   /* cy < 0: e1 is the BOTTOM pixel */
-    A = gr->gy1; B = gr->gy2;
-  }
-  if(e1 > e2) { t = e1; e1 = e2; e2 = t; }
-  if(A > B)   { t = A;  A = B;  B = t;  }
+  graph_axis_window(gr, axis, &A, &B, &e1, &e2);
   R = B - A;
   if(R == 0.0 || e2 == e1) return 0;
   /* clamp both ends to the plot extent -- an overshoot commits (D-11) */
@@ -5224,9 +5272,15 @@ int graph_axis_map(int i, int axis, double p0, double p1,
   if(p1 < e1) p1 = e1; if(p1 > e2) p1 = e2;
   /* click, not drag: no write, no log */
   if(fabs(p1 - p0) <= clicktol) return 0;
+  /* the pixel->data inverse MUST match the transform graph_axis_window used for
+   * the extent, or the map is self-inconsistent on a digital strip: DS_Y's
+   * inverse is DG_Y, never G_Y */
   if(axis == GRAPH_AXIS_X) {
     ua = (G_X(X_TO_XSCHEM(p0)) - A) / R;
     ub = (G_X(X_TO_XSCHEM(p1)) - A) / R;
+  } else if(gr->digital) {
+    ua = (DG_Y(Y_TO_XSCHEM(p0)) - A) / R;
+    ub = (DG_Y(Y_TO_XSCHEM(p1)) - A) / R;
   } else {
     ua = (G_Y(Y_TO_XSCHEM(p0)) - A) / R;
     ub = (G_Y(Y_TO_XSCHEM(p1)) - A) / R;
@@ -5249,6 +5303,87 @@ int graph_axis_map(int i, int axis, double p0, double p1,
   }
   if(*hi == *lo) *hi += 1e-6;        /* the shipped idiom (callback.c box zoom) */
   dbg(1, "graph_axis_map: graph=%d axis=%d p0=%g p1=%g -> %g %g\n", i, axis, p0, p1, *lo, *hi);
+  return 1;
+}
+
+/* THE WHEEL MAP (issue 0191, doc/claude/specs/waveform_viewer_modes.md §18) --
+ * one CTRL+wheel click in an axis-number margin, anchored at the pointer.
+ * `p` is the pointer's CANVAS PIXEL along `axis`; `dir` is +1 in / -1 out.
+ *
+ * The maths, and it IS the specification:
+ *
+ *   A,B,R  the current window (graph_axis_window, shared with the drag map)
+ *   q      = G_axis(p)                the data coordinate under the pointer
+ *   u      = (q - A) / R              its fraction of the window, 0..1
+ *   f      = dir > 0 ? K : 1/K        K = GRAPH_AXIS_WHEEL_FACTOR
+ *   R2     = R * f
+ *   lo     = q - u * R2               THE ANCHOR
+ *   hi     = lo + R2
+ *
+ * Invariant: (q - lo)/(hi - lo) == u, so q keeps its fraction of the window and
+ * therefore its SCREEN PIXEL -- which is the whole user ask ("the point on the
+ * trace at the mouse pointer will remain there after zoom"). N clicks in and N
+ * clicks out restore the window exactly, because f and 1/f are exact inverses
+ * and q is a fixed point of both steps; the shipped Shift+wheel arms
+ * (callback.c) are x0.8 / x1.2 and lose 4% per round trip.
+ *
+ * NO GRAPH_AXIS_ZOOM_MAX_FACTOR here (D-34), deliberately: that constant guards
+ * the drag map's `R / |s|`, a division by a user-controlled span that can
+ * approach zero. R * f divides nothing, and repeated clicks shrink R
+ * geometrically without ever reaching it in finite steps -- `hi == lo` catches
+ * the denormal end, exactly as the shipped box zoom does.
+ *
+ * `p` is CLAMPED to the plot extent (D-11, the drag map's rule): a pointer 2 px
+ * outside the box still zooms, it does not silently refuse. Log axes need
+ * nothing special -- gr space IS log space (landmine 35 from the other side).
+ * Local Graph_ctx + the 128|256 bracket, like every query on this pattern. */
+int graph_axis_wheel_map(int i, int axis, double p, int dir,
+                         double *lo, double *hi)
+{
+  Graph_ctx gr_ctx;
+  Graph_ctx *gr = &gr_ctx;
+  xRect *r;
+  int saveflags;
+  double A, B, R, e1, e2, q, u, f, R2, zlo;
+
+  if(!xctx || !lo || !hi) return 0;
+  if(axis != GRAPH_AXIS_X && axis != GRAPH_AXIS_Y) return 0;
+  if(i < 0 || i >= xctx->rects[GRIDLAYER]) return 0;
+  r = &xctx->rect[GRIDLAYER][i];
+  if(!(r->flags & 1)) return 0;
+  memset(&gr_ctx, 0, sizeof(gr_ctx));
+  saveflags = xctx->graph_flags & (128 | 256);
+  setup_graph_data(i, 0, gr);
+  xctx->graph_flags = (xctx->graph_flags & ~(128 | 256)) | saveflags;
+  if(gr->scx == 0.0 || gr->scy == 0.0) return 0;  /* off-screen: no transform */
+
+  graph_axis_window(gr, axis, &A, &B, &e1, &e2);
+  R = B - A;
+  if(R == 0.0 || e2 == e1) return 0;
+  if(p < e1) p = e1; if(p > e2) p = e2;
+  /* same rule as the drag map: DS_Y's inverse is DG_Y on a digital strip */
+  if(axis == GRAPH_AXIS_X) {
+    q = G_X(X_TO_XSCHEM(p));
+  } else if(gr->digital) {
+    q = DG_Y(Y_TO_XSCHEM(p));
+  } else {
+    q = G_Y(Y_TO_XSCHEM(p));
+  }
+  u = (q - A) / R;
+  f = (dir > 0) ? GRAPH_AXIS_WHEEL_FACTOR : 1.0 / GRAPH_AXIS_WHEEL_FACTOR;
+  R2 = R * f;
+  /* THE ANCHOR, and the only place it is written. Drop the `- u * R2` term and
+   * the new range still has the right WIDTH -- every "the range shrank" leg
+   * passes while the window has slid sideways. Landmine 45(a)/47(b); a named
+   * local rather than `*lo = ...` so the expression sits on a line a
+   * source-level tripwire can count (the count_code idiom skips lines starting
+   * with `*`, which is what a C comment continuation looks like). */
+  zlo = q - u * R2;
+  *lo = zlo;
+  *hi = zlo + R2;
+  if(*hi == *lo) *hi += 1e-6;        /* the shipped idiom (callback.c box zoom) */
+  dbg(1, "graph_axis_wheel_map: graph=%d axis=%d p=%g dir=%d -> %g %g\n",
+      i, axis, p, dir, *lo, *hi);
   return 1;
 }
 

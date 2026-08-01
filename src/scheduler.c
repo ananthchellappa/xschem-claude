@@ -3970,6 +3970,38 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
               }
             }
           }
+          /* xschem get graph_axis_wheel_map <graph_idx> x|y <p> in|out
+           * The new data window `{lo hi}` ONE CTRL+wheel click at canvas pixel
+           * <p> along that axis produces, or {} for an unknown axis word, an
+           * unknown direction word, a bad index, a non-graph rect or a graph
+           * with no transform (issue 0191, §18).
+           * THE FORMULA SEAM, exactly as graph_axis_map above: the Ctrl+wheel
+           * arm in callback.c and this getter call the same
+           * graph_axis_wheel_map(), so a headless suite driving this verb drives
+           * the gesture's own arithmetic -- including the ANCHOR, which is what
+           * a width-only implementation gets wrong and what no "the range
+           * shrank" assertion can see.
+           * ⚠ The DIRECTION WORD is the input, never a factor: the step lives in
+           * GRAPH_AXIS_WHEEL_FACTOR inside the formula, so the constant has
+           * exactly one home and this seam cannot drive a different step size
+           * from the product (landmine 45(a)). */
+          else if(!strcmp(argv[2], "graph_axis_wheel_map")) {
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            Tcl_ResetResult(interp);
+            if(argc > 6) {
+              int ax = GRAPH_AXIS_NONE, dir = 0;
+              double lo = 0.0, hi = 0.0;
+              if(!strcmp(argv[4], "x")) ax = GRAPH_AXIS_X;
+              else if(!strcmp(argv[4], "y")) ax = GRAPH_AXIS_Y;
+              if(!strcmp(argv[6], "in") || !strcmp(argv[6], "up")) dir = 1;
+              else if(!strcmp(argv[6], "out") || !strcmp(argv[6], "down")) dir = -1;
+              if(dir && graph_axis_wheel_map(atoi(argv[3]), ax, atof(argv[5]), dir, &lo, &hi)) {
+                char res[100];
+                my_snprintf(res, S(res), "%.17g %.17g", lo, hi);
+                Tcl_SetResult(interp, res, TCL_VOLATILE); /* copies: stack buf is fine */
+              }
+            }
+          }
           /* xschem get graph_axis_drag
            * What the last press ARMED: "" (nothing) | "x" | "y". The
            * `graph_marker_drag` twin, and read the same way: the ASE viewer's

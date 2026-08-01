@@ -332,6 +332,18 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
   same reason the marker drag did (landmine 36): the Y region is "left of the
   plot box, anywhere in the container", so a top-left-corner press on a strip
   with no legend entry there arms with `graph_top` already 1.
+  **CTRL+WHEEL in the same two margins = an axis-only zoom about the pointer**
+  (issue 0191, `doc/claude/specs/waveform_viewer_modes.md` §18). A new `else if`
+  in the SAME chain as the Button1 cursor grab and the Button3 numeric cursor,
+  gated on `(state & ControlMask) && !(state & ShiftMask) && !graph_use_ctrl_key`,
+  with `graph_axis_at()` as the region oracle and `graph_axis_wheel_map()` +
+  `graph_axis_zoom()` for the rest. It has to live here and NOT in the binding
+  table — landmine 48. A `NONE` region answer falls through to the plain-wheel
+  pan, which is the whole "the body is unchanged" contract; the local
+  `wheel_axis_done` is what carries it, because the plain-wheel arms are a
+  DIFFERENT if/else chain in the per-graph loop below `finish:` and an `else if`
+  cannot reach them. No GRAPHPAN term is owed here (the latch admits
+  Button1/2/3 only, so a Button4/5 press never enters it).
   **Writes results into `prop_ptr` tokens via
   `subst_token`, then `draw_graph()`.**
 - **Two different flag words — do not confuse:** `xctx->graph_flags` =
@@ -610,6 +622,18 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
     `callback.c` and the verb below both call the same `graph_axis_map()`, so a
     headless suite driving this verb drives the gesture's own arithmetic —
     including BOTH endpoints, which is what a width-only zoom-out gets wrong.
+  - `xschem get graph_axis_wheel_map <gi> x|y <p> in|out` — the same shape for
+    the CTRL+WHEEL (issue 0191, §18): `{lo hi}` for ONE click at canvas pixel
+    `p`, `{}` for an unknown axis word, an unknown direction word, a bad index,
+    a non-graph rect or no transform. Backed by `graph_axis_wheel_map()`
+    (`draw.c`), which both the `callback.c` arm and this getter call — so a
+    headless suite driving the verb drives the gesture's own arithmetic,
+    including the ANCHOR (`lo = q - u*R2`), which is the only thing a
+    "the range shrank" assertion cannot see. ⚠ The **direction word** is the
+    input, never a factor: `GRAPH_AXIS_WHEEL_FACTOR` lives inside the formula so
+    it has one home, and the suite reads the `#define` out of `src/xschem.h`
+    rather than freezing a copy. The axis WINDOW itself comes from
+    `graph_axis_window()`, shared with `graph_axis_map()` — landmine 47(d).
   - `xschem get graph_axis_drag` — what the last press ARMED. The
     `graph_marker_drag` twin; `wviewer::axis_grabbed` is the only thing the ASE
     viewer knows about the axis regions (it hit-tests nothing).
@@ -746,6 +770,18 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
   and the reason the suite carries a source-level leg counting the expression.
   Then read landmine 47 before choosing which pixels the region owns: the
   margins are already occupied.
+  **The WHEEL variant** (issue 0191, §18) reuses the SAME query and the SAME
+  apply and adds only a second formula (`graph_axis_wheel_map()` +
+  `xschem get graph_axis_wheel_map`). Four things it teaches:
+  (1) the arm goes in `waves_callback`, **never** in the binding table — landmine
+  48; (2) the new arm must explicitly stand the OLDER wheel arms down
+  (`wheel_axis_done`), because they live in a different if/else chain in a
+  different loop, and it must do so **only when the gesture actually fired** or
+  the "unchanged elsewhere" contract breaks; (3) take the direction as a WORD and
+  keep the step constant inside the formula, so the suite drives the product's
+  own step; (4) if two formulas now ask the same sub-question (here: *what is
+  this axis's window?*), factor it — landmine 47(d), where doing so exposed a
+  shipped digital-strip defect.
 - **New CURSOR (a session-wide, non-persisted overlay):** a `graph_flags` bit
   (keep both legends in sync — landmine 6), a draw path, and grab/move/set
   branches in `waves_callback`. This recipe is **only** right for transient
@@ -1866,11 +1902,81 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
     above the box top, and a drag armed with `graph_top == 1` loses its release
     silently.
 
+    **(d) THE AXIS WINDOW ALSO HAS ONE HOME, and its digital branch was wrong
+    for one release** (added 2026-08-01, issue 0191). Both formulas must answer
+    *"what is this axis's window, and what pixel extent does it occupy?"*, and
+    the shipped answer resolved Y from `gy1`/`gy2` and `S_Y` **unconditionally**
+    while `graph_axis_zoom()` wrote the result into `ypos1`/`ypos2` on a digital
+    strip. MEASURED at `826e1b60` on `y1=0 y2=2.5 ypos1=0 ypos2=4`:
+    `xschem get graph_axis_map 0 y 636 310` → `0 1.6437` — the analog window,
+    applied to a band of extent `0..4`. Decision D-19 was documented and never
+    implemented. It is now `graph_axis_window(gr, axis, &A, &B, &e1, &e2)`
+    (static, `draw.c`), called by `graph_axis_map()` and
+    `graph_axis_wheel_map()`, with the digital branch written correctly
+    (`ypos1`/`ypos2` + `DS_Y`, inverted by `DG_Y` — keep the forward and inverse
+    transforms consistent or the map is self-inconsistent).
+    ⚠ Two test lessons paid for in blood there:
+      * write the three branches into LOCALS and assign the out-parameters once
+        at the end. A line beginning with `*` is skipped by the `count_code`
+        tripwire (it looks like a C comment continuation), so `*e1 = DS_Y(...)`
+        made the digital branch **invisible to its own source-level leg**;
+      * a **FORWARD** drag cannot see which window the map used at all.
+        `graph_axis_map`'s forward branch is `lo = A + ua*R` with
+        `ua = (q - A)/R`, which collapses to `lo = q` for ANY `[A, B]`. Only the
+        REVERSE branch (`R/|s|`) depends on the window. Measured: a forward-drag
+        digital leg stayed green with the whole digital branch deleted.
+
     Spec: `doc/claude/specs/waveform_viewer_modes.md` §17 (+ §12.1 and §15.1);
     decision doc `doc/claude/code_analysis/ovb01_03_axis_region_drag_zoom_decision.md`;
     issue `doc/claude/issues/0190-axis-region-drag-zoom.md`.
     Suite: `tests/headless/test_wave_axis_zoom.tcl` — `AZ*`/`AM*`/`AV*`/`AL*`/`AS*`
     both arms, `AG*`/`AX*` display.
+
+48. **A WHEEL event over a graph NEVER reaches the binding table.** (issue 0191,
+    2026-08-01.) `handle_button_press()` (`callback.c` ~7473) opens with the
+    inline guard
+
+    ```c
+       if(waves_selected(event, key, state, button)) {
+         waves_callback(event, mx, my, key, button, aux, state);
+         return;
+       }
+    ```
+
+    and `handle_mouse_wheel()` is only reached **fourteen branches later**
+    (~7541). So for any wheel press whose pointer is inside a graph rect,
+    `waves_selected()` returns 1, `waves_callback()` runs, and the function
+    returns. Three consequences, all of which cost time to discover:
+
+    * the four `ACTX_OVER_GRAPH` wheel rows seeded in `init_input_bindings`
+      (~4807) are **unreachable dead code**. `handle_mouse_wheel` computes its
+      `ctx` from the same `waves_selected()` that already declined, so `ctx` can
+      only ever be `ACTX_CANVAS` by the time `dispatch_input_action()` runs.
+      **A binding row is not a way to add or change an over-graph wheel
+      gesture** — the arm has to go inside `waves_callback`;
+    * three source comments said otherwise and all three are now corrected:
+      `callback.c`'s binding-table comment ("Ctrl-wheel … stays canvas pan",
+      true only OFF a graph) and `wave_viewer.tcl`'s ("Ctrl+wheel is hard-pinned
+      to CANVAS zoom (callback.c:4417)", wrong on both counts and citing a line
+      that no longer exists);
+    * MEASURED, embedded graph, `graph_use_ctrl_key = 0`, each chord fired as
+      `xschem callback .drw 4/5 <px> <py> 0 <4|5> 0 <state>`:
+
+      | chord | plot BODY | bottom (X) margin | left (Y) margin |
+      |---|---|---|---|
+      | plain | graph X **pan** ±0.05·gw | graph X pan | graph Y **pan** ±gh/divy |
+      | Shift | graph X **zoom**, anchored, ×0.8 in / ×1.2 out | same | graph Y zoom, anchored |
+      | Ctrl (before 0191) | graph X pan — **byte-identical to plain** | graph X pan | graph Y pan |
+
+      `xorigin`/`yorigin`/`zoom` never moved in any of the twelve trials: **the
+      canvas is not involved at all once the pointer is over a strip.**
+
+    The corollary for "leave X unchanged" requirements: *unchanged* has to be
+    asserted against the MEASUREMENT, not against the comment, or the regression
+    witness passes vacuously. And a new modifier arm in that chain owes the older
+    arms an explicit stand-down flag (`wheel_axis_done`) — they are a DIFFERENT
+    if/else chain in a DIFFERENT loop (the master block vs the per-graph loop
+    below `finish:`), so an `else if` does not exclude them.
 
 ---
 

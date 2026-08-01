@@ -896,8 +896,13 @@ check "AS1 graph_axis_map is CALLED from scheduler.c exactly once" \
   [az_count_code $assched {graph_axis_map\(}] 1
 check "AS1 graph_axis_map appears in draw.c exactly once (its definition; it\
  does not call itself)" [az_count_code $asdraw {graph_axis_map\(}] 1
-check "AS1 graph_axis_zoom (THE apply) is called from callback.c exactly once" \
-  [az_count_code $ascb {graph_axis_zoom\(}] 1
+# TWO call sites in callback.c since issue 0191: the LMB drag's release arm and
+# the CTRL+wheel arm. Both are gestures and both go through THE apply -- that is
+# the invariant, not the count. A third would mean a new gesture arrived without
+# a leg here; zero would mean a gesture grew its own subst_token copy.
+check "AS1 graph_axis_zoom (THE apply) is called from callback.c exactly twice\
+ (the 0190 drag release and the 0191 CTRL+wheel arm)" \
+  [az_count_code $ascb {graph_axis_zoom\(}] 2
 check "AS1 ...and from scheduler.c exactly once" \
   [az_count_code $assched {graph_axis_zoom\(}] 1
 # the neighbouring invariants this item promised not to break
@@ -942,6 +947,512 @@ check "AS3 draw.c -- which owns the formula -- knows nothing about either name" 
   [az_count_code $asdraw {GRAPH_CLICK_TOL|graph_click_tol}] 0
 
 } azserr]} { check "AS* group ran to its end" "ERR:$azserr" ok }
+
+# ============================================================================
+# CW* — the CTRL+WHEEL map and its verb (BOTH arms) — issue 0191, §18
+# ============================================================================
+# One CTRL+wheel click in an axis-number margin zooms THAT AXIS ONLY, anchored
+# at the pointer:
+#     q = G_axis(p), u = (q - A)/R, R2 = R * f, lo = q - u*R2, hi = lo + R2
+# with f = K (in) or 1/K (out), K = GRAPH_AXIS_WHEEL_FACTOR read out of
+# src/xschem.h. The INVARIANT, and the only thing the user asked for, is that q
+# keeps its screen pixel: (q - lo)/(hi - lo) == u.
+#
+# ⚠ EVERY probe pixel here is OFF-CENTRE, deliberately at 25 % of the plot
+# extent. At the CENTRE the anchored form and a zoom-about-centre form agree to
+# 4 decimal places, so a centred leg cannot tell them apart and SAB-1 would pass
+# straight through it. That is the whole distinction this group exists to make.
+set ::cwK [az_define [file join $repo src xschem.h] GRAPH_AXIS_WHEEL_FACTOR]
+check_true "CC1 GRAPH_AXIS_WHEEL_FACTOR was read out of src/xschem.h: {$::cwK}\
+ (staging with teeth: every CW/CD leg below compares against it)" \
+  [pexpr {[string is double -strict "$::cwK"] && $::cwK > 0.0 && $::cwK < 1.0}]
+if {![string is double -strict "$::cwK"]} {
+  set ::cwK 0.8; stall "GRAPH_AXIS_WHEEL_FACTOR unreadable"
+}
+if {[catch {
+
+az_reset
+pcall {xschem raw clear}
+pcall {xschem raw new azzoom.raw dc vsweep 0 1.0 0.1}
+pcall {xschem raw add v_a {vsweep 1 +}}
+pcall {az_graph 0 0 800 400}
+pcall {xschem setprop rect 2 0 node "v_a"}
+pcall {az_graph 0 500 800 900}
+pcall {xschem setprop rect 2 1 node "v_a"}
+pcall {az_graph 0 1000 800 1400 {}}   ;# a layer-2 rect that is NOT a graph
+pcall {xschem unselect_all}
+# re-stage the two analog strips to the window every leg computes against, and
+# drop the dirty flag the setprops raise (AV6 owns the "a setprop DOES dirty"
+# control; these legs are about the zoom)
+proc cw_stage {} {
+  for {set i 0} {$i < 2} {incr i} {
+    foreach {t v} {x1 0 x2 1.0 y1 0 y2 2.5 ypos1 0 ypos2 2} {
+      pcall {xschem setprop rect 2 $i $t $v}
+    }
+  }
+  pcall {xschem set_modify 0}
+}
+# the box/margin pixels, re-derived together -- a zoom cannot move them (the
+# plot box is geometry, not data) but they are re-scanned after every zooming
+# leg anyway, exactly like az_scan does for the AZ/AM groups
+proc cw_scan {} {
+  global cwband cwbox cwxm cwym
+  set cwband [az_band 0 0 800 400]
+  if {[llength $cwband] != 4} { set cwband {-1 -1 -1 -1} }
+  set cwbox  [az_box 0 $cwband]
+  if {[llength $cwbox] != 4} { set cwbox {-1 -1 -1 -1} }
+  set cwxm [az_xmargin $cwbox $cwband]
+  set cwym [az_ymargin $cwbox $cwband]
+  if {[llength $cwxm] != 2} { set cwxm {-1 -1} }
+  if {[llength $cwym] != 2} { set cwym {-1 -1} }
+}
+cw_stage
+az_reestablish
+cw_scan
+lassign $cwbox  cbx1 cby1 cbx2 cby2
+lassign $cwband cux1 cuy1 cux2 cuy2
+set ccx [expr {($cbx1 + $cbx2) / 2}]
+set ccy [expr {($cby1 + $cby2) / 2}]
+set cbw [expr {$cbx2 - $cbx1}]
+set cbh [expr {$cby2 - $cby1}]
+set CA  [pcall {xschem getprop rect 2 0 x1}]
+set CB  [pcall {xschem getprop rect 2 0 x2}]
+set CR  [pexpr {$CB - $CA}]
+set CYA [pcall {xschem getprop rect 2 0 y1}]
+set CYB [pcall {xschem getprop rect 2 0 y2}]
+set CYR [pexpr {$CYB - $CYA}]
+# the OFF-CENTRE probe pixels (see the group header)
+set cwpx [expr {$cbx1 + int($cbw * 0.25)}]
+set cwpy [expr {$cby2 - int($cbh * 0.25)}]
+check_true "CW0 the CW fixture scanned and its window is the one every leg\
+ computes against (box=$cwbox band=$cwband x $CA..$CB y $CYA..$CYB)" \
+  [pexpr {$cbx1 >= 0 && $cbw > 60 && $cbh > 40 && $CR > 0 && $CYR > 0}]
+check_true "CW0 the probe pixels are really OFF-CENTRE (teeth: at the centre a\
+ zoom-about-centre form is indistinguishable from the anchored one)\
+ px=$cwpx cx=$ccx py=$cwpy cy=$ccy" \
+  [pexpr {abs($cwpx - $ccx) > $cbw * 0.15 && abs($cwpy - $ccy) > $cbh * 0.15}]
+if {$cbx1 < 0} { stall "CW* pixel scan came up empty" }
+
+# --- CW0: the verb exists and fails SOFT ------------------------------------
+check_true "CW0 the verb answers a 2-element window for a good query" \
+  [pexpr {[llength [xschem get graph_axis_wheel_map 0 x $cwpx in]] == 2}]
+check "CW0 a bad graph index answers {}" \
+  [pcall {xschem get graph_axis_wheel_map 99 x $cwpx in}] {}
+check "CW0 a negative graph index answers {}" \
+  [pcall {xschem get graph_axis_wheel_map -1 x $cwpx in}] {}
+check "CW0 a NON-GRAPH layer-2 rect answers {}" \
+  [pcall {xschem get graph_axis_wheel_map 2 x $cwpx in}] {}
+check "CW0 an unknown axis word answers {}" \
+  [pcall {xschem get graph_axis_wheel_map 0 q $cwpx in}] {}
+check "CW0 an unknown direction word answers {}" \
+  [pcall {xschem get graph_axis_wheel_map 0 x $cwpx sideways}] {}
+check "CW0 a short query answers {}" \
+  [pcall {xschem get graph_axis_wheel_map 0 x $cwpx}] {}
+check "CW0 ...and none of those was a Tcl ERROR (fail soft, like every other\
+ graph_* getter the viewer wraps in catch)" \
+  [pcall {list [catch {xschem get graph_axis_wheel_map 99 x 1 in}] \
+               [catch {xschem get graph_axis_wheel_map 0 q 1 in}] \
+               [catch {xschem get graph_axis_wheel_map 0 x}]}] {0 0 0}
+
+# --- CW1: BOTH endpoints against the closed form ----------------------------
+# `q` comes from `xschem graph_coord`, an INDEPENDENT pixel->data transform (a
+# different C function), so what is under test here is the anchored map itself.
+set cwq  [az_coord 0 $cwpx $ccy 0]
+set cwu  [pexpr {($cwq - $CA) / $CR}]
+set cwR2 [pexpr {$CR * $::cwK}]
+set cwlo [pexpr {$cwq - $cwu * $cwR2}]
+set cwm  [pcall {xschem get graph_axis_wheel_map 0 x $cwpx in}]
+check_true "CW1 wheel-IN lo == q - u*R2 (map=$cwm q=$cwq u=$cwu)" \
+  [pexpr {[az_close [lindex $cwm 0] $cwlo 1e-9 $CR]}]
+check_true "CW1 wheel-IN hi == lo + R2 (map=$cwm)" \
+  [pexpr {[az_close [lindex $cwm 1] [expr {$cwlo + $cwR2}] 1e-9 $CR]}]
+
+# --- CW2: the WIDTH only. This leg must SURVIVE SAB-1 -----------------------
+# Kept separate from CW3 on purpose: a zoom-about-centre implementation has the
+# right WIDTH and the wrong POSITION, so a suite whose only zoom assertion is
+# this one passes while the window slides sideways.
+set cwmi [pcall {xschem get graph_axis_wheel_map 0 x $cwpx in}]
+set cwmo [pcall {xschem get graph_axis_wheel_map 0 x $cwpx out}]
+check_true "CW2 one click IN multiplies the range by K=$::cwK (map=$cwmi)" \
+  [pexpr {[az_close [expr {[lindex $cwmi 1] - [lindex $cwmi 0]}] \
+                    [expr {$CR * $::cwK}] 1e-12 $CR]}]
+check_true "CW2 one click OUT divides it by K (map=$cwmo)" \
+  [pexpr {[az_close [expr {[lindex $cwmo 1] - [lindex $cwmo 0]}] \
+                    [expr {$CR / $::cwK}] 1e-12 $CR]}]
+
+# --- CW3: THE FIXED POINT ---------------------------------------------------
+# The decisive leg, and the whole user ask: after the zoom, the data coordinate
+# under the pointer is at the SAME canvas pixel. Asked of graph_coord before and
+# after, so nothing about the map is reused as its own oracle.
+# ⚠ The tolerance is 1e-6 OF THE RANGE, not 1e-9: graph_axis_zoom writes the
+# tokens through dtoa (8 significant digits), so the round trip through the rect
+# quantises the window at ~5e-9 relative. The map's own exactness is CW1's job
+# (1e-9, no token in the loop). A zoom-about-centre form misses by 0.05 here --
+# 6 % of the new range and ~60000x this tolerance.
+cw_stage
+cw_scan
+set cwqb [az_coord 0 $cwpx $ccy 0]
+set cwm3 [pcall {xschem get graph_axis_wheel_map 0 x $cwpx in}]
+pcall {xschem graph_axis_zoom 0 x [lindex $cwm3 0] [lindex $cwm3 1]}
+set cwqa [az_coord 0 $cwpx $ccy 0]
+check_true "CW3 the apply really narrowed the window (teeth: x=[pcall {list [xschem getprop rect 2 0 x1] [xschem getprop rect 2 0 x2]}])" \
+  [pexpr {[az_close [expr {[xschem getprop rect 2 0 x2] - [xschem getprop rect 2 0 x1]}] \
+                    [expr {$CR * $::cwK}] 1e-6 $CR]}]
+check_true "CW3 THE FIXED POINT: the data x under the pointer pixel is\
+ unchanged (before=$cwqb after=$cwqa)" \
+  [pexpr {[az_close $cwqa $cwqb 1e-6 $CR]}]
+
+# --- CW4: the same pair for Y in the left margin ----------------------------
+cw_stage
+cw_scan
+set cwqy  [az_coord 0 $ccx $cwpy 1]
+set cwuy  [pexpr {($cwqy - $CYA) / $CYR}]
+set cwR2y [pexpr {$CYR * $::cwK}]
+set cwloy [pexpr {$cwqy - $cwuy * $cwR2y}]
+set cwm4  [pcall {xschem get graph_axis_wheel_map 0 y $cwpy in}]
+check_true "CW4 Y wheel-IN lo == q - u*R2 (map=$cwm4 q=$cwqy u=$cwuy)" \
+  [pexpr {[az_close [lindex $cwm4 0] $cwloy 1e-9 $CYR]}]
+check_true "CW4 Y wheel-IN hi == lo + R2 (map=$cwm4)" \
+  [pexpr {[az_close [lindex $cwm4 1] [expr {$cwloy + $cwR2y}] 1e-9 $CYR]}]
+set cwqyb [az_coord 0 $ccx $cwpy 1]
+pcall {xschem graph_axis_zoom 0 y [lindex $cwm4 0] [lindex $cwm4 1]}
+set cwqya [az_coord 0 $ccx $cwpy 1]
+check_true "CW4 THE FIXED POINT on Y (before=$cwqyb after=$cwqya)" \
+  [pexpr {[az_close $cwqya $cwqyb 1e-6 $CYR]}]
+
+# --- CW5: the ROUND TRIP ----------------------------------------------------
+# in then out at the SAME pixel restores the window. This is the payoff of a
+# REVERSIBLE factor (D-27): the shipped Shift+wheel arms are x0.8 in / x1.2 out
+# and lose 4 % of the range per round trip -- 5e-2, which is 6e4 x this
+# tolerance. The tolerance is again dtoa's 8 significant digits, not the maths.
+cw_stage
+cw_scan
+set cw5m1 [pcall {xschem get graph_axis_wheel_map 0 x $cwpx in}]
+pcall {xschem graph_axis_zoom 0 x [lindex $cw5m1 0] [lindex $cw5m1 1]}
+set cw5m2 [pcall {xschem get graph_axis_wheel_map 0 x $cwpx out}]
+pcall {xschem graph_axis_zoom 0 x [lindex $cw5m2 0] [lindex $cw5m2 1]}
+check_true "CW5 in-then-out restored x1 (A=$CA got=[pcall {xschem getprop rect 2 0 x1}])" \
+  [pexpr {[az_close [xschem getprop rect 2 0 x1] $CA 1e-6 $CR]}]
+check_true "CW5 ...and x2 (B=$CB got=[pcall {xschem getprop rect 2 0 x2}])" \
+  [pexpr {[az_close [xschem getprop rect 2 0 x2] $CB 1e-6 $CR]}]
+check_true "CW5 ...and it really left the window in between (teeth: otherwise\
+ this leg passes when neither click did anything)" \
+  [pexpr {[az_close [expr {[lindex $cw5m1 1] - [lindex $cw5m1 0]}] \
+                    [expr {$CR * $::cwK}] 1e-9 $CR] &&
+          abs([lindex $cw5m1 0] - $CA) > $CR * 0.01}]
+
+# --- CW6: the OTHER axis is byte-identical, on EVERY rect -------------------
+cw_stage
+cw_scan
+set cw6b [az_windows]
+set cw6m [pcall {xschem get graph_axis_wheel_map 0 x $cwpx in}]
+pcall {xschem graph_axis_zoom 0 x [lindex $cw6m 0] [lindex $cw6m 1]}
+set cw6a [az_windows]
+check_true "CW6 the X zoom really wrote (teeth)" \
+  [pexpr {[lindex $cw6b 0 0] ne [lindex $cw6a 0 0]}]
+check "CW6 an X zoom leaves EVERY rect's y1 y2 ypos1 ypos2 byte-identical" \
+  [pcall {set o {}; foreach row $cw6a { lappend o [lrange $row 2 5] }; set o}] \
+  [pcall {set o {}; foreach row $cw6b { lappend o [lrange $row 2 5] }; set o}]
+cw_stage
+cw_scan
+set cw6b2 [az_windows]
+set cw6m2 [pcall {xschem get graph_axis_wheel_map 0 y $cwpy in}]
+pcall {xschem graph_axis_zoom 0 y [lindex $cw6m2 0] [lindex $cw6m2 1]}
+set cw6a2 [az_windows]
+check_true "CW6 the Y zoom really wrote (teeth)" \
+  [pexpr {[lindex $cw6b2 0 2] ne [lindex $cw6a2 0 2]}]
+check "CW6 a Y zoom leaves EVERY rect's x1 x2 byte-identical" \
+  [pcall {set o {}; foreach row $cw6a2 { lappend o [lrange $row 0 1] }; set o}] \
+  [pcall {set o {}; foreach row $cw6b2 { lappend o [lrange $row 0 1] }; set o}]
+
+# --- CW7: X propagates, Y does not ------------------------------------------
+cw_stage
+cw_scan
+set cw7m [pcall {xschem get graph_axis_wheel_map 0 x $cwpx in}]
+pcall {xschem graph_axis_zoom 0 x [lindex $cw7m 0] [lindex $cw7m 1]}
+check_true "CW7 the X zoom PROPAGATED to the participating rect 1\
+ (r0=[pcall {list [xschem getprop rect 2 0 x1] [xschem getprop rect 2 0 x2]}]\
+ r1=[pcall {list [xschem getprop rect 2 1 x1] [xschem getprop rect 2 1 x2]}])" \
+  [pexpr {[xschem getprop rect 2 1 x1] eq [xschem getprop rect 2 0 x1] &&
+          [xschem getprop rect 2 1 x2] eq [xschem getprop rect 2 0 x2] &&
+          [xschem getprop rect 2 0 x1] ne "0"}]
+cw_stage
+cw_scan
+set cw7y1 [pcall {list [xschem getprop rect 2 1 y1] [xschem getprop rect 2 1 y2]}]
+set cw7m2 [pcall {xschem get graph_axis_wheel_map 0 y $cwpy in}]
+pcall {xschem graph_axis_zoom 0 y [lindex $cw7m2 0] [lindex $cw7m2 1]}
+check_true "CW7 the Y zoom wrote rect 0 (teeth)" \
+  [pexpr {[xschem getprop rect 2 0 y1] ne "0"}]
+check "CW7 ...and did NOT propagate to rect 1" \
+  [pcall {list [xschem getprop rect 2 1 y1] [xschem getprop rect 2 1 y2]}] $cw7y1
+
+# --- CW8: the pointer AT the plot-box edge pins that edge -------------------
+# p = e1 => u = 0 => lo == A; p = e2 => u = 1 => hi == B. The tolerance is 2 % of
+# R because the SCANNED edges are the outermost INTEGER pixels inside the
+# extent, up to a pixel short of it (AM3's reason, verbatim).
+cw_stage
+cw_scan
+set cw8l [pcall {xschem get graph_axis_wheel_map 0 x $cbx1 in}]
+set cw8r [pcall {xschem get graph_axis_wheel_map 0 x $cbx2 in}]
+check_true "CW8 pointer at the LEFT plot edge pins lo at A (map=$cw8l A=$CA)" \
+  [pexpr {[az_close [lindex $cw8l 0] $CA 0.02 $CR]}]
+check_true "CW8 pointer at the RIGHT plot edge pins hi at B (map=$cw8r B=$CB)" \
+  [pexpr {[az_close [lindex $cw8r 1] $CB 0.02 $CR]}]
+
+# --- CW9: a pixel outside the plot extent is CLAMPED, not refused -----------
+set cw9 [pcall {xschem get graph_axis_wheel_map 0 x [expr {$cbx2 + 50}] in}]
+check_true "CW9 a pixel 50 px past the right edge still answers (D-11: it\
+ commits, it does not silently refuse)" [pexpr {[llength $cw9] == 2}]
+# the tolerance is 2 % of R for AM3/AM10's reason: the SCANNED right edge is the
+# outermost INTEGER pixel inside the extent, up to a pixel short of the true e2
+# the clamp uses, so the two answers differ by one pixel's worth of data
+check_true "CW9 ...and gives (to one scanned pixel) the same window as one AT\
+ the edge (edge=$cw8r past=$cw9)" \
+  [pexpr {[az_close [lindex $cw9 0] [lindex $cw8r 0] 0.02 $CR] &&
+          [az_close [lindex $cw9 1] [lindex $cw8r 1] 0.02 $CR]}]
+check_true "CW9 ...and it is NOT simply refusing and echoing the edge query:\
+ both endpoints are finite and the range is R*K" \
+  [pexpr {[az_close [expr {[lindex $cw9 1] - [lindex $cw9 0]}] \
+                    [expr {$CR * $::cwK}] 1e-9 $CR]}]
+
+} cwerr]} { check "CW* group ran to its end" "ERR:$cwerr" ok }
+
+# ============================================================================
+# CD* — the DIGITAL axis window (BOTH arms) — D-29
+# ============================================================================
+# A digital strip's Y is the ypos1/ypos2 BAND, not y1/y2: graph_axis_zoom has
+# always written ypos there, but graph_axis_map computed the window from y1/y2
+# and S_Y unconditionally, so item 0190's own D-19 was documented and never
+# implemented. MEASURED before this change, on y1=0 y2=2.5 ypos1=0 ypos2=4:
+# `xschem get graph_axis_map 0 y 636 310` -> `0 1.6437`, i.e. the ANALOG window.
+# The two ranges are staged DISJOINT here (0..2.5 and 10..14) so no answer can be
+# in both and no leg can pass by accident.
+if {[catch {
+
+az_reset
+pcall {xschem raw clear}
+pcall {xschem raw new azzoom.raw dc vsweep 0 1.0 0.1}
+pcall {xschem raw add v_a {vsweep 1 +}}
+pcall {az_graph 0 0 800 400}
+pcall {xschem setprop rect 2 0 node "v_a"}
+pcall {xschem unselect_all}
+foreach {cdt cdv} {x1 0 x2 1.0 y1 0 y2 2.5 ypos1 10 ypos2 14} {
+  pcall {xschem setprop rect 2 0 $cdt $cdv}
+}
+az_reestablish
+# ⚠ the plot box is scanned with digital=0 and the strip is made digital
+# AFTERWARDS. graph_plotbox_at refuses digital strips, and the digital box is
+# TALLER at the top (setup_graph_data: y1 = ry1 + marginy*0.4 for digital,
+# ry1 + marginy otherwise; the bottom edge y2 is identical), so the analog scan
+# is a strict SUBSET of the digital extent -- every pixel taken from it is
+# inside the digital plot box too and the map's clamp cannot bite.
+set cdband [az_band 0 0 800 400]
+if {[llength $cdband] != 4} { set cdband {-1 -1 -1 -1} }
+set cdbox [az_box 0 $cdband]
+if {[llength $cdbox] != 4} { set cdbox {-1 -1 -1 -1} }
+lassign $cdbox dbx1 dby1 dbx2 dby2
+set dccx [expr {($dbx1 + $dbx2) / 2}]
+set dbh  [expr {$dby2 - $dby1}]
+set cdpy [expr {$dby2 - int($dbh * 0.25)}]     ;# OFF-CENTRE, as in CW
+pcall {xschem setprop rect 2 0 digital 1}
+pcall {xschem set_modify 0}
+check_true "CD0 the digital fixture: box scanned before digital=1\
+ (box=$cdbox py=$cdpy) and the two windows are DISJOINT (y 0..2.5, ypos 10..14)" \
+  [pexpr {$dbx1 >= 0 && $dbh > 40 && $cdpy > $dby1 && $cdpy < $dby2 &&
+          [xschem getprop rect 2 0 digital] == 1 &&
+          [xschem getprop rect 2 0 ypos1] == 10}]
+check "CD0 graph_plotbox_at now refuses the strip (teeth: this is exactly why\
+ the box had to be scanned first)" \
+  [pcall {xschem get graph_plotbox_at 0 $dccx $cdpy}] 0
+if {$dbx1 < 0} { stall "CD* pixel scan came up empty" }
+
+# The INDEPENDENT Tcl transform, pixel -> DIGITAL (ypos) value.
+# ⚠ `graph_coord` is the WRONG oracle on a digital strip: it inverts the ANALOG
+# transform (G_Y) and answers in 0..2.5. But both transforms share the plot box
+# EXACTLY -- W_Y(y1) == DW_Y(ypos1) == the box's bottom edge and
+# W_Y(y2) == DW_Y(ypos2) == its top (setup_graph_data: dcy = -h/posh,
+# ddy = y2 - ypos1*dcy) -- so the FRACTION graph_coord gives is the same fraction
+# in ypos space. Nothing here reuses DG_Y, which is the C code under test.
+proc cd_qdig {px py} {
+  set a [az_coord 0 $px $py 1]
+  if {![string is double -strict $a]} { return {} }
+  set y1 [xschem getprop rect 2 0 y1]
+  set y2 [xschem getprop rect 2 0 y2]
+  set p1 [xschem getprop rect 2 0 ypos1]
+  set p2 [xschem getprop rect 2 0 ypos2]
+  if {$y2 == $y1} { return {} }
+  return [expr {$p1 + ($a - $y1) / ($y2 - $y1) * ($p2 - $p1)}]
+}
+
+# --- CD1: the WHEEL map answers in the ypos band ----------------------------
+set cdm1 [pcall {xschem get graph_axis_wheel_map 0 y $cdpy in}]
+check_true "CD1 graph_axis_wheel_map y answers INSIDE ypos1..ypos2 = 10..14\
+ (map=$cdm1)" \
+  [pexpr {[llength $cdm1] == 2 &&
+          [lindex $cdm1 0] > 9.0 && [lindex $cdm1 0] < 15.0 &&
+          [lindex $cdm1 1] > 9.0 && [lindex $cdm1 1] < 15.0}]
+check_true "CD1 ...and OUTSIDE y1..y2 = 0..2.5, so it cannot be the analog\
+ window by accident (map=$cdm1)" \
+  [pexpr {[lindex $cdm1 0] > 2.5 && [lindex $cdm1 1] > 2.5}]
+
+# --- CD2: the DRAG map, now on the same shared helper (makes D-19 true) -----
+# ⚠ IT MUST BE A **REVERSE** DRAG, and this is not a detail: graph_axis_map's
+# FORWARD branch is `lo = A + ua*R` with `ua = (q - A)/R`, which collapses to
+# `lo = q` for ANY window. A forward drag therefore cannot see which window the
+# map used at all -- measured under SAB-4, where a forward leg stayed green while
+# the digital branch was deleted. The reverse branch scales by `R/|s|` and does
+# depend on it. The expectation is az_expect (the closed form the AM group is
+# built on) evaluated on the YPOS window, and the teeth are that the same closed
+# form on the ANALOG window gives a completely different answer.
+set cdp0 [expr {$dby1 + 5}]
+set cdp1 [expr {$dby2 - int($dbh * 0.25)}]
+set cdq0 [pcall {cd_qdig $dccx $cdp0}]
+set cdq1 [pcall {cd_qdig $dccx $cdp1}]
+set cdm2 [pcall {xschem get graph_axis_map 0 y $cdp0 $cdp1}]
+set cde2 [pcall {az_expect 10.0 14.0 $cdq0 $cdq1}]
+set cdw2 [pcall {az_expect 0.0 2.5 $cdq0 $cdq1}]
+check_true "CD2 the digital drag probe is a REVERSE drag between two distinct\
+ ypos values (teeth: q0=$cdq0 q1=$cdq1)" \
+  [pexpr {[string is double -strict "$cdq0"] && [string is double -strict "$cdq1"] &&
+          $cdq0 > $cdq1 + 1.0 && $cdq0 < 14.001 && $cdq1 > 9.999}]
+check_true "CD2 graph_axis_map y == the closed form on the YPOS window\
+ (map=$cdm2 expect=$cde2) -- the leg that makes §17.3's D-19 true for the first\
+ time" \
+  [pexpr {[llength $cdm2] == 2 &&
+          [az_close [lindex $cdm2 0] [lindex $cde2 0] 1e-6 4.0] &&
+          [az_close [lindex $cdm2 1] [lindex $cde2 1] 1e-6 4.0]}]
+check_true "CD2 ...and NOT the closed form on the analog y1/y2 window, which is\
+ what it answered before this item (that=$cdw2)" \
+  [pexpr {abs([lindex $cdm2 0] - [lindex $cdw2 0]) > 1.0}]
+
+# --- CD3: the fixed point ON THE DIGITAL STRIP ------------------------------
+# through cd_qdig above, never graph_coord directly
+set cdqb [pcall {cd_qdig $dccx $cdpy}]
+check_true "CD3 the independent Tcl transform lands in the ypos band (teeth:\
+ q=$cdqb)" [pexpr {[string is double -strict "$cdqb"] && $cdqb > 10.0 && $cdqb < 14.0}]
+check_true "CD3 ...and the map agrees with it: (q-lo)/(hi-lo) == (q-A)/(B-A)\
+ (map=$cdm1 q=$cdqb)" \
+  [pexpr {[az_close [expr {($cdqb - [lindex $cdm1 0]) /
+                           ([lindex $cdm1 1] - [lindex $cdm1 0])}] \
+                    [expr {($cdqb - 10.0) / 4.0}] 1e-6 1.0]}]
+pcall {xschem graph_axis_zoom 0 y [lindex $cdm1 0] [lindex $cdm1 1]}
+set cdqa [pcall {cd_qdig $dccx $cdpy}]
+check_true "CD3 THE FIXED POINT on the digital strip (before=$cdqb\
+ after=$cdqa)" [pexpr {[az_close $cdqa $cdqb 1e-6 4.0]}]
+
+# --- CD4: the apply writes ypos and leaves y1/y2 alone ----------------------
+check_true "CD4 ypos1/ypos2 were written and narrowed by K\
+ (ypos=[pcall {list [xschem getprop rect 2 0 ypos1] [xschem getprop rect 2 0 ypos2]}])" \
+  [pexpr {[az_close [expr {[xschem getprop rect 2 0 ypos2] -
+                           [xschem getprop rect 2 0 ypos1]}] \
+                    [expr {4.0 * $::cwK}] 1e-6 4.0]}]
+check "CD4 ...and y1/y2 are byte-identical" \
+  [pcall {list [xschem getprop rect 2 0 y1] [xschem getprop rect 2 0 y2]}] {0 2.5}
+
+} cderr]} { check "CD* group ran to its end" "ERR:$cderr" ok }
+
+# ============================================================================
+# CS* — source-level one-home tripwires (BOTH arms; CS3 is DISPLAY-only)
+# ============================================================================
+if {[catch {
+
+set csdraw  [az_slurp [file join $repo src draw.c]]
+set cscb    [az_slurp [file join $repo src callback.c]]
+set cssched [az_slurp [file join $repo src scheduler.c]]
+set csview  [az_slurp [file join $repo src wave_viewer.tcl]]
+check_true "CS0 the four sources were read" \
+  [pexpr {[string length $csdraw] > 1000 && [string length $cscb] > 1000 &&
+          [string length $cssched] > 1000 && [string length $csview] > 1000}]
+
+# --- CS1: the anchor and the two call sites ---------------------------------
+check "CS1 the anchored WHEEL expression appears in draw.c exactly ONCE" \
+  [az_count_code $csdraw {q - u \* R2}] 1
+check "CS1 graph_axis_wheel_map is CALLED from callback.c exactly once" \
+  [az_count_code $cscb {graph_axis_wheel_map\(}] 1
+check "CS1 ...and from scheduler.c exactly once" \
+  [az_count_code $cssched {graph_axis_wheel_map\(}] 1
+check "CS1 neither carries a copy of the anchored expression" \
+  [expr {[az_count_code $cscb {q - u \* R2}] +
+         [az_count_code $cssched {q - u \* R2}]}] 0
+check "CS1 the wheel FACTOR has exactly one home in C: draw.c uses it, the\
+ gesture and the verb pass a DIRECTION word instead" \
+  [list [az_count_code $csdraw {GRAPH_AXIS_WHEEL_FACTOR}] \
+        [az_count_code $cscb  {GRAPH_AXIS_WHEEL_FACTOR}] \
+        [az_count_code $cssched {GRAPH_AXIS_WHEEL_FACTOR}]] {2 0 0}
+
+# --- CS2: the MIRRORED constant ---------------------------------------------
+# src/xschem.h's GRAPH_AXIS_WHEEL_FACTOR and wviewer::wheel_zoom's `f` literal
+# are the same number in two languages -- the viewer's BODY zoom still computes
+# its own window with zoom_about while its MARGIN arms take theirs from C, so a
+# drift would make one gesture step differently depending on where the pointer
+# is. This is the GRAPH_REORDER_HANDLE_W precedent, and both sides carry a
+# "change both" comment.
+proc cs_tcl_factor {src} {
+  set inproc 0
+  foreach line [split $src "\n"] {
+    if {[string match "proc wviewer::wheel_zoom *" [string trimleft $line]]} {
+      set inproc 1
+      continue
+    }
+    if {!$inproc} continue
+    if {[regexp {set f +\[expr +\{[^?]*\? *([-+0-9.eE]+) *:} $line -> v]} {
+      if {[string is double -strict $v]} { return $v }
+    }
+  }
+  return {}
+}
+set cstcl [pcall {cs_tcl_factor $csview}]
+check_true "CS2 the Tcl-side factor was parsed out of wviewer::wheel_zoom\
+ (teeth: {$cstcl})" \
+  [pexpr {[string is double -strict "$cstcl"] && $cstcl > 0.0 && $cstcl < 1.0}]
+check "CS2 GRAPH_AXIS_WHEEL_FACTOR (src/xschem.h) == wviewer::wheel_zoom's f\
+ literal (src/wave_viewer.tcl)" \
+  [pexpr {"$::cwK" eq "$cstcl" ? 1 : 0}] 1
+check_true "CS2 ...and BOTH sides carry a change-both warning next to the\
+ literal (the GRAPH_REORDER_HANDLE_W precedent)" \
+  [pexpr {[regexp -all {MIRRORED IN TCL} [az_slurp [file join $repo src xschem.h]]] > 0 &&
+          [regexp -all {MIRRORED IN C} $csview] > 0}]
+
+# --- CS4: the axis WINDOW has one home, and it knows about digital ----------
+check "CS4 graph_axis_window appears in draw.c exactly 3 times (one definition\
+ + one call from each formula)" [az_count_code $csdraw {graph_axis_window\(}] 3
+check "CS4 the digital/ypos decision is made exactly ONCE" \
+  [az_count_code $csdraw {DS_Y\(gr->ypos1\)}] 1
+# the body of a function, from its signature to the first bare closing brace in
+# column 1 -- the AS2 idiom
+proc cs_body {src sig} {
+  set st [string first $sig $src]
+  if {$st < 0} { return {} }
+  set tail [string range $src $st end]
+  if {[regexp {(?s)^(.*?\n\})\n} $tail -> b]} { return $b }
+  return {}
+}
+set cswb [pcall {cs_body $csdraw "int graph_axis_wheel_map(int i, int axis"}]
+set csmb [pcall {cs_body $csdraw "int graph_axis_map(int i, int axis"}]
+check_true "CS4 both formula bodies were located (teeth for the next leg)" \
+  [pexpr {[string length $cswb] > 300 && [string length $csmb] > 300 &&
+          [string first "graph_axis_window(" $cswb] > 0 &&
+          [string first "graph_axis_window(" $csmb] > 0}]
+check "CS4 ...and NEITHER formula resolves the window itself any more: no\
+ S_X(/S_Y(/DS_Y( survives in either body" \
+  [pexpr {[regexp -all {S_X\(|S_Y\(|DS_Y\(} $cswb] +
+          [regexp -all {S_X\(|S_Y\(|DS_Y\(} $csmb]}] 0
+# ⚠ az_count_code skips C comment leaders, not Tcl's `#`. This is the Tcl form.
+proc cs_count_tcl {src pat} {
+  set n 0
+  foreach line [split $src "\n"] {
+    if {[string index [string trimleft $line] 0] eq "#"} { continue }
+    incr n [regexp -all $pat $line]
+  }
+  return $n
+}
+check "CS4 the viewer asks C for the window in exactly ONE place and derives\
+ nothing itself (D-22: no second copy of the plot-box geometry in Tcl)" \
+  [pcall {cs_count_tcl $csview {graph_axis_wheel_map}}] 1
+check "CS4 ...and carries no copy of the anchored expression" \
+  [pcall {cs_count_tcl $csview {q - u \* R2}}] 0
+
+} cserr]} { check "CS* group ran to its end" "ERR:$cserr" ok }
 
 # ============================================================================
 # AG* — the real C gesture on an on-canvas schematic graph (DISPLAY only)
@@ -1201,6 +1712,350 @@ check "AG13 ...and neither gesture dirtied the buffer" [pcall {xschem get modifi
 } azgerr]} { check "AG* group ran to its end" "ERR:$azgerr" ok }
 } else {
   puts "SKIPPED: AG* (no DISPLAY / no .drw canvas)"
+}
+
+# ============================================================================
+# CE* — the real CTRL+WHEEL gesture on an on-canvas graph (DISPLAY only)
+# ============================================================================
+# `xschem callback .drw 4 <px> <py> 0 <4|5> 0 <state>`: ButtonPress of Button4
+# (wheel up) / Button5 (wheel down), state 4 = ControlMask, 1 = ShiftMask.
+# MEASURED at HEAD, before this item, and every "unchanged" leg below asserts
+# the measurement rather than a comment (three comments in the tree said the
+# canvas panned or zoomed; it does neither):
+#   chord        plot BODY              X margin          Y margin
+#   plain        graph X pan +-0.05*gw  graph X pan       graph Y pan +-gh/divy
+#   Shift        graph X zoom x0.8/x1.2 same              graph Y zoom
+#   Ctrl         graph X pan (== plain) graph X pan       graph Y pan
+# and xorigin/yorigin/zoom never moved in any of the twelve trials.
+if {$::az_have_x && [winfo exists .drw]} {
+if {[catch {
+
+proc ce_move   {x y {st 0}} { xschem callback .drw 6 $x $y 0 0 0 $st }
+proc ce_wheel  {x y btn st} { xschem callback .drw 4 $x $y 0 $btn 0 $st }
+proc ce_unlatch {} {
+  catch {xschem callback .drw 2 2 2 65307 0 0 0}
+  catch {xschem callback .drw 5 2 2 0 1 0 256}
+  catch {xschem callback .drw 6 2 2 0 0 0 0}
+  catch {xschem unselect_all}
+}
+# one wheel click, with the Motion that precedes it in a real gesture (the C
+# mouse mirror is stale for an event with no preceding Motion)
+proc ce_click {x y btn st} {
+  ce_unlatch
+  ce_move  $x $y $st
+  ce_wheel $x $y $btn $st
+}
+proc ce_win {gi} {
+  set o {}
+  foreach t {x1 x2 y1 y2} { lappend o [xschem getprop rect 2 $gi $t] }
+  return $o
+}
+proc ce_canvas {} {
+  return [list [xschem get xorigin] [xschem get yorigin] [xschem get zoom]]
+}
+
+az_reset
+pcall {xschem raw clear}
+pcall {xschem raw new azzoom.raw dc vsweep 0 1.0 0.1}
+pcall {xschem raw add v_a {vsweep 1 +}}
+pcall {az_graph 0 0 800 400}
+pcall {xschem setprop rect 2 0 node "v_a"}
+pcall {az_graph 0 500 800 900}
+pcall {xschem setprop rect 2 1 node "v_a"}
+pcall {xschem unselect_all}
+proc ce_stage {} {
+  foreach i {0 1} {
+    foreach {t v} {x1 0 x2 1.0 y1 0 y2 2.5} { pcall {xschem setprop rect 2 $i $t $v} }
+  }
+  pcall {xschem set_modify 0}
+}
+ce_stage
+az_reestablish
+az_scan
+lassign $azbox  ebx1 eby1 ebx2 eby2
+lassign $azband eux1 euy1 eux2 euy2
+lassign $azxm   exmx exmy
+lassign $azym   eymx eymy
+set ecx [expr {($ebx1 + $ebx2) / 2}]
+set ecy [expr {($eby1 + $eby2) / 2}]
+set ebw [expr {$ebx2 - $ebx1}]
+# ⚠ OFF-CENTRE, for CW's reason: at the box centre the anchored map and a
+# zoom-about-centre map agree and CE2 could not tell them apart.
+set epx [expr {$ebx1 + int($ebw * 0.25)}]
+set EA  [pcall {xschem getprop rect 2 0 x1}]
+set EB  [pcall {xschem getprop rect 2 0 x2}]
+set ER  [pexpr {$EB - $EA}]
+check_true "CE0 the CE fixture scanned: box=$azbox xm=$azxm ym=$azym probe\
+ px=$epx (off-centre by [expr {abs($epx - $ecx)}] px)" \
+  [pexpr {$ebx1 >= 0 && $ebw > 60 && $exmx >= 0 && $eymx >= 0 &&
+          abs($epx - $ecx) > $ebw * 0.15 && $ER > 0}]
+if {$ebx1 < 0 || $exmx < 0 || $eymx < 0} { stall "CE* pixel scan came up empty" }
+
+# --- CE1/CE1b: CTRL+wheel-up in the X margin --------------------------------
+ce_stage
+set ce1m [pcall {xschem get graph_axis_wheel_map 0 x $epx in}]
+set ce1q [az_coord 0 $epx $ecy 0]
+pcall {ce_click $epx $exmy 4 4}
+set ce1w [pcall {ce_win 0}]
+check_true "CE1 CTRL+wheel-up in the X margin narrowed the X window by exactly\
+ K=$::cwK (window=$ce1w)" \
+  [pexpr {[az_close [expr {[lindex $ce1w 1] - [lindex $ce1w 0]}] \
+                    [expr {$ER * $::cwK}] 1e-6 $ER]}]
+check_true "CE1b ...and it is EXACTLY graph_axis_wheel_map's answer, so the\
+ gesture did not ALSO pan (map=$ce1m window=$ce1w)" \
+  [pexpr {[az_close [lindex $ce1w 0] [lindex $ce1m 0] 1e-6 $ER] &&
+          [az_close [lindex $ce1w 1] [lindex $ce1m 1] 1e-6 $ER]}]
+set ce2q [az_coord 0 $epx $ecy 0]
+check_true "CE2 THE FIXED POINT: the data x under the pointer pixel is\
+ unchanged (before=$ce1q after=$ce2q)" \
+  [pexpr {[az_close $ce2q $ce1q 1e-6 $ER]}]
+check "CE1 ...and the Y window is byte-identical" \
+  [list [lindex $ce1w 2] [lindex $ce1w 3]] {0 2.5}
+
+# --- CE3: CTRL+wheel in the Y margin ----------------------------------------
+ce_stage
+set ce3b [az_windows]
+pcall {ce_click $eymx $ecy 4 4}
+set ce3a [az_windows]
+check_true "CE3 CTRL+wheel-up in the Y margin narrowed rect 0's Y window by K\
+ (y=[pcall {list [xschem getprop rect 2 0 y1] [xschem getprop rect 2 0 y2]}])" \
+  [pexpr {[az_close [expr {[xschem getprop rect 2 0 y2] -
+                           [xschem getprop rect 2 0 y1]}] \
+                    [expr {2.5 * $::cwK}] 1e-6 2.5]}]
+check "CE3 ...on the pointed rect ONLY (rect 1's y1/y2 untouched)" \
+  [pcall {list [xschem getprop rect 2 1 y1] [xschem getprop rect 2 1 y2]}] {0 2.5}
+check "CE3 ...and EVERY rect's x1/x2 is byte-identical" \
+  [pcall {set o {}; foreach row $ce3a { lappend o [lrange $row 0 1] }; set o}] \
+  [pcall {set o {}; foreach row $ce3b { lappend o [lrange $row 0 1] }; set o}]
+
+# --- CE4: wheel-DOWN is the inverse -----------------------------------------
+ce_stage
+pcall {ce_click $epx $exmy 5 4}
+set ce4w [pcall {ce_win 0}]
+check_true "CE4 CTRL+wheel-DOWN widens the X window by 1/K (window=$ce4w)" \
+  [pexpr {[az_close [expr {[lindex $ce4w 1] - [lindex $ce4w 0]}] \
+                    [expr {$ER / $::cwK}] 1e-6 $ER]}]
+pcall {ce_click $epx $exmy 4 4}
+set ce4r [pcall {ce_win 0}]
+check_true "CE4 ...and out-then-in restores the window (got=$ce4r want=$EA $EB)" \
+  [pexpr {[az_close [lindex $ce4r 0] $EA 1e-6 $ER] &&
+          [az_close [lindex $ce4r 1] $EB 1e-6 $ER]}]
+
+# --- CE5: CTRL+wheel in the plot BODY is UNCHANGED --------------------------
+# MEASURED at HEAD: a graph X PAN of 0.05*gw, byte-identical to a plain wheel,
+# with the canvas untouched. NOT a canvas pan (callback.c's binding-table comment
+# said so) and NOT a canvas zoom (wave_viewer.tcl's said so). Both were wrong
+# over a graph -- landmine 48.
+ce_stage
+set ce5c [pcall {ce_canvas}]
+pcall {ce_click $ecx $ecy 4 4}
+set ce5w [pcall {ce_win 0}]
+check "CE5 CTRL+wheel-up in the plot BODY still PANS X by 0.05*gw, it does not\
+ zoom" [list [lindex $ce5w 0] [lindex $ce5w 1]] {0.05 1.05}
+check "CE5 ...and left Y alone" \
+  [list [lindex $ce5w 2] [lindex $ce5w 3]] {0 2.5}
+check "CE5 ...and never touched the CANVAS (xorigin/yorigin/zoom)" \
+  [pcall {ce_canvas}] $ce5c
+
+# --- CE6/CE7: the other chords in the margins are UNCHANGED (D-31) ----------
+ce_stage
+pcall {ce_click $epx $exmy 4 0}
+check "CE6 a PLAIN wheel in the X margin still pans X by 0.05*gw" \
+  [pcall {list [xschem getprop rect 2 0 x1] [xschem getprop rect 2 0 x2]}] {0.05 1.05}
+ce_stage
+pcall {ce_click $eymx $ecy 4 0}
+check_true "CE6 a PLAIN wheel in the Y margin still pans Y (window kept its\
+ WIDTH, so it panned and did not zoom: y=[pcall {list [xschem getprop rect 2 0 y1] [xschem getprop rect 2 0 y2]}])" \
+  [pexpr {[xschem getprop rect 2 0 y1] != 0 &&
+          [az_close [expr {[xschem getprop rect 2 0 y2] -
+                           [xschem getprop rect 2 0 y1]}] 2.5 1e-6 2.5]}]
+ce_stage
+pcall {ce_click $epx $exmy 4 1}
+set ce7i [pcall {ce_win 0}]
+ce_stage
+pcall {ce_click $epx $exmy 5 1}
+set ce7o [pcall {ce_win 0}]
+check_true "CE7 SHIFT+wheel in the X margin still zooms X by the SHIPPED\
+ 0.2-of-the-range step: x0.8 in (=$ce7i)" \
+  [pexpr {[az_close [expr {[lindex $ce7i 1] - [lindex $ce7i 0]}] \
+                    [expr {$ER * 0.8}] 1e-4 $ER]}]
+check_true "CE7 ...and x1.2 out, deliberately NOT 1/K -- the shipped arm is not\
+ reversible and this item did not change it (=$ce7o)" \
+  [pexpr {[az_close [expr {[lindex $ce7o 1] - [lindex $ce7o 0]}] \
+                    [expr {$ER * 1.2}] 1e-4 $ER]}]
+
+# --- CE8: no dirty flag (D-35) ----------------------------------------------
+ce_stage
+pcall {ce_click $epx $exmy 4 4}
+pcall {ce_click $eymx $ecy 4 4}
+check "CE8 after two CTRL+wheel zooms the buffer is still modified 0 (a zoom is\
+ view state: no set_modify, no undo point)" [pcall {xschem get modified}] 0
+
+# --- CE10: the same gesture on a strip whose index is NOT 0 -----------------
+# The Y half is the decisive one: Y never propagates, so "rect 1 moved and rect
+# 0 did not" can only mean the arm followed the POINTED strip (the AG13 lesson).
+set ce10band [az_band 0 500 800 900]
+set ce10box  [az_box 1 $ce10band]
+set ce10xm   [az_xmargin $ce10box $ce10band]
+set ce10ym   [az_ymargin $ce10box $ce10band]
+if {[llength $ce10box] != 4} { set ce10box {-1 -1 -1 -1} }
+if {[llength $ce10xm] != 2} { set ce10xm {-1 -1} }
+if {[llength $ce10ym] != 2} { set ce10ym {-1 -1} }
+lassign $ce10box e1x1 e1y1 e1x2 e1y2
+lassign $ce10xm  e1mx e1my
+lassign $ce10ym  e1yx e1yy
+set e1cy [expr {($e1y1 + $e1y2) / 2}]
+check_true "CE10 strip 1 was scanned: box=$ce10box xm=$ce10xm ym=$ce10ym" \
+  [pexpr {$e1x1 >= 0 && $e1mx >= 0 && $e1yx >= 0 && $e1x2 - $e1x1 > 60}]
+if {$e1x1 < 0 || $e1mx < 0 || $e1yx < 0} { stall "CE10 strip-1 pixel scan came up empty" }
+ce_stage
+pcall {ce_click $e1yx $e1cy 4 4}
+check_true "CE10 a CTRL+wheel in STRIP 1's Y margin zoomed RECT 1\
+ (y=[pcall {list [xschem getprop rect 2 1 y1] [xschem getprop rect 2 1 y2]}])" \
+  [pexpr {[az_close [expr {[xschem getprop rect 2 1 y2] -
+                           [xschem getprop rect 2 1 y1]}] \
+                    [expr {2.5 * $::cwK}] 1e-6 2.5]}]
+check "CE10 ...and left RECT 0's y1/y2 byte-identical, so the arm followed the\
+ POINTED strip and not index 0" \
+  [pcall {list [xschem getprop rect 2 0 y1] [xschem getprop rect 2 0 y2]}] {0 2.5}
+ce_stage
+pcall {ce_click $e1mx $e1my 4 4}
+check_true "CE10 a CTRL+wheel in STRIP 1's X margin zoomed rect 1 AND\
+ propagated to rect 0 (r1=[pcall {ce_win 1}] r0=[pcall {ce_win 0}])" \
+  [pexpr {[xschem getprop rect 2 0 x1] eq [xschem getprop rect 2 1 x1] &&
+          [xschem getprop rect 2 0 x2] eq [xschem getprop rect 2 1 x2] &&
+          [az_close [expr {[xschem getprop rect 2 1 x2] -
+                           [xschem getprop rect 2 1 x1]}] \
+                    [expr {$ER * $::cwK}] 1e-6 $ER]}]
+
+# --- CE11: graph_use_ctrl_key reserves Ctrl for ACCESS (D-32) ---------------
+set ce11save 0
+catch {set ce11save $::graph_use_ctrl_key}
+check "CE11 the mode starts OFF, so the feature is on out of the box (teeth)" \
+  $ce11save 0
+ce_stage
+pcall {set ::graph_use_ctrl_key 1}
+check "CE11 the mode is really on now (teeth: the C side reads this Tcl var\
+ through tclgetboolvar on every event)" [pcall {set ::graph_use_ctrl_key}] 1
+pcall {ce_click $epx $exmy 4 4}
+check "CE11 with graph_use_ctrl_key=1 a CTRL+wheel in the X margin PANS, it\
+ does not zoom -- Ctrl is the ACCESS modifier there, not a gesture selector" \
+  [pcall {list [xschem getprop rect 2 0 x1] [xschem getprop rect 2 0 x2]}] {0.05 1.05}
+pcall {set ::graph_use_ctrl_key $ce11save}
+check "CE11 ...and the mode was restored" [pcall {set ::graph_use_ctrl_key}] $ce11save
+ce_stage
+
+# --- CE9: the gesture self-logs one replayable line -------------------------
+# A --logdir CHILD, as the AL group does, but this one needs a real DISPLAY
+# because the gesture goes through .drw. The pixel scan happens IN THE CHILD:
+# its canvas is not this process's, so a pixel computed here would mean nothing
+# there. The helper procs are shipped over by source text rather than retyped.
+proc ce_proc_src {name} {
+  set as {}
+  foreach a [info args $name] {
+    if {[info default $name $a d]} { lappend as [list $a $d] } else { lappend as $a }
+  }
+  return [list proc $name $as [info body $name]]
+}
+set cehelpers {}
+foreach p {az_band az_box az_xmargin az_ymargin} {
+  append cehelpers [ce_proc_src $p] "\n"
+}
+set cec1 [file join $scratch ce_child1.tcl]
+set ced1 [file join $scratch celog1]
+file delete -force $ced1
+file mkdir $ced1
+set cefix "set no_recent_files 1
+$cehelpers
+xschem raw clear
+xschem raw new cezoom.raw dc vsweep 0 1.0 0.1
+xschem raw add v_a {vsweep 1 +}
+xschem set rectcolor 2
+xschem rect 0 0 800 400 -1 {flags=graph} 0
+xschem rect 0 1000 800 1400 -1 {flags=graph} 0
+xschem unselect_all
+foreach i {0 1} {
+  xschem setprop rect 2 \$i node v_a
+  foreach {t v} {x1 0 x2 1.0 y1 0 y2 2.5} { xschem setprop rect 2 \$i \$t \$v }
+}
+xschem set_modify 0"
+al_child $cec1 "$cefix
+catch {wm deiconify .}
+catch {raise .}
+for {set i 0} {\$i < 200} {incr i} {
+  catch {update}
+  if {\[winfo exists .drw] && \[winfo ismapped .drw]} break
+  after 20
+}
+catch {xschem zoom_full}
+catch {update}
+set band \[az_band 0 0 800 400]
+set box  \[az_box 0 \$band]
+set xm   \[az_xmargin \$box \$band]
+if {\[llength \$box] != 4 || \[llength \$xm] != 2} { puts CE-CHILD-NOBOX; exit 0 }
+lassign \$box bx1 by1 bx2 by2
+lassign \$xm  mx my
+set px \[expr {\$bx1 + int((\$bx2 - \$bx1) * 0.25)}]
+xschem callback .drw 6 \$px \$my 0 0 0 4
+xschem callback .drw 4 \$px \$my 0 4 0 4
+puts \"child r0=\[xschem getprop rect 2 0 x1] \[xschem getprop rect 2 0 x2]\"
+puts \"child r1=\[xschem getprop rect 2 1 x1] \[xschem getprop rect 2 1 x2]\"
+puts CE-CHILD-DONE
+exit 0"
+set cerc [catch {exec [info nameofexecutable] --pipe -q \
+                      --logdir $ced1 --script $cec1 2>@1} ceout]
+set celines {}
+foreach cef [lsort [glob -nocomplain [file join $ced1 *]]] {
+  foreach cel [split [az_slurp $cef] "\n"] { lappend celines $cel }
+}
+if {$cerc || ![string match {*CE-CHILD-DONE*} $ceout]} {
+  note "CE child output: [string range $ceout end-500 end]"
+  stall "CE gesture child did not reach its sentinel"
+}
+check "CE9 the --logdir GUI child ran the gesture to its end" \
+  [expr {[string match {*CE-CHILD-DONE*} $ceout] ? 1 : 0}] 1
+check "CE9 the GESTURE self-logged EXACTLY ONE graph_axis_zoom line" \
+  [al_count $celines {xschem graph_axis_zoom 0 x *}] 1
+check "CE9 ...and no y line, and no pixel query was logged" \
+  [expr {[al_count $celines {xschem graph_axis_zoom * y *}] +
+         [al_count $celines {*graph_axis_wheel_map*}] +
+         [al_count $celines {*graph_axis_at*}]}] 0
+set celine {}
+foreach cel $celines { if {[string match {xschem graph_axis_zoom *} $cel]} { set celine $cel } }
+set cer0 {}; set cer1 {}
+foreach cel [split $ceout "\n"] {
+  if {[string match {child r0=*} $cel]} { set cer0 [string range $cel 9 end] }
+  if {[string match {child r1=*} $cel]} { set cer1 [string range $cel 9 end] }
+}
+check_true "CE9 the child's gesture really zoomed AND propagated (teeth:\
+ r0=$cer0 r1=$cer1)" \
+  [pexpr {$cer0 ne {} && $cer0 ne {0 1.0} && $cer1 eq $cer0}]
+set cec2 [file join $scratch ce_child2.tcl]
+al_child $cec2 "$cefix
+$celine
+puts \"replay r0=\[xschem getprop rect 2 0 x1] \[xschem getprop rect 2 0 x2]\"
+puts \"replay r1=\[xschem getprop rect 2 1 x1] \[xschem getprop rect 2 1 x2]\"
+puts CE-REPLAY-DONE
+exit 0"
+set cerc2 [catch {exec [info nameofexecutable] --nogui --pipe -q --nolog \
+                       --script $cec2 2>@1} ceout2]
+set cep0 {}; set cep1 {}
+foreach cel [split $ceout2 "\n"] {
+  if {[string match {replay r0=*} $cel]} { set cep0 [string range $cel 10 end] }
+  if {[string match {replay r1=*} $cel]} { set cep1 [string range $cel 10 end] }
+}
+if {$cerc2 || ![string match {*CE-REPLAY-DONE*} $ceout2]} {
+  note "CE replay output: [string range $ceout2 end-400 end]"
+  stall "CE replay child did not reach its sentinel"
+}
+check "CE9 the replay child ran to its end" \
+  [expr {[string match {*CE-REPLAY-DONE*} $ceout2] ? 1 : 0}] 1
+check "CE9 replaying the ONE logged line reproduces rect 0's window" $cep0 $cer0
+check "CE9 ...and rect 1's, so the line carries the whole propagation" $cep1 $cer1
+
+} ceerr]} { check "CE* group ran to its end" "ERR:$ceerr" ok }
+} else {
+  puts "SKIPPED: CE* (no DISPLAY / no .drw canvas)"
 }
 
 # ============================================================================
@@ -1494,6 +2349,162 @@ update
 check "AX8 wviewer::history_depth did not move (D-15: a zoom is view state)" \
   [pcall {wviewer::history_depth $tok}] $ax8d
 ax_reset_arms $tok
+
+# ========================================================================
+# CV* — the ASE viewer's CTRL+wheel (issue 0191), on the SAME live viewer
+# ========================================================================
+# The viewer owns every wheel sequence (`bind $wp <Control-Button-4> ... break`)
+# and never forwards to C, so this half of the feature is Tcl: wviewer::wheel's
+# ctrl arm asks C which REGION the pointer is in and passes the answer to
+# wviewer::wheel_zoom, which takes each strip's new window from
+# `xschem get graph_axis_wheel_map` -- one formula, in C, for both surfaces.
+# Every wheel is preceded by a <Motion> so graph_at_pointer is not stale (D-38),
+# and carries -state 4 (ControlMask) so the shipped <Control-Button-N> bind fires.
+if {[catch {
+
+proc cv_wheel {w x y up} {
+  ax_ev $w <Motion> -x $x -y $y
+  ax_ev $w [expr {$up ? {<Button-4>} : {<Button-5>}}] -x $x -y $y -state 4
+  update
+}
+proc cv_wins {n} {
+  ax_ctx
+  set o {}
+  for {set i 0} {$i < $n} {incr i} {
+    set row {}
+    foreach t {x1 x2 y1 y2} { lappend row [xschem getprop rect 2 $i $t] }
+    lappend o $row
+  }
+  return $o
+}
+# re-stage BOTH strips to a known window, through the MODEL (the viewer's own
+# source of truth) so regenerate cannot autozoom it away
+proc cv_stage {tok} {
+  set gs [dict get [wviewer::layout_for $tok] graphs]
+  set out {}
+  foreach G $gs {
+    foreach {k v} {x1 0 x2 1.0 y1 0 y2 2.5} { dict set G $k $v }
+    lappend out $G
+  }
+  wviewer::set_graphs $tok $out
+  wviewer::regenerate $tok
+  update
+  ax_ctx
+}
+ax_reset_arms $tok
+cv_stage $tok
+ax_scan $tok
+lassign $axbox  cvbx1 cvby1 cvbx2 cvby2
+lassign $axxm   cvxmx cvxmy
+lassign $axym   cvymx cvymy
+set cvcx [expr {($cvbx1 + $cvbx2) / 2}]
+set cvcy [expr {($cvby1 + $cvby2) / 2}]
+set cvbw [expr {$cvbx2 - $cvbx1}]
+set cvpx [expr {$cvbx1 + int($cvbw * 0.25)}]     ;# OFF-CENTRE, as everywhere
+check_true "CV0 the viewer strip was (re)scanned and both strips are staged to\
+ 0..1 / 0..2.5 (box=$axbox xm=$axxm ym=$axym px=$cvpx)" \
+  [pexpr {$cvbx1 >= 0 && $cvxmx >= 0 && $cvymx >= 0 && $cvbw > 60 &&
+          abs($cvpx - $cvcx) > $cvbw * 0.15 &&
+          [xschem getprop rect 2 0 x1] == 0 && [xschem getprop rect 2 1 x2] == 1.0}]
+check "CV0 the scanned bottom-margin pixel really is the X region (teeth: the\
+ whole gesture hangs off C's answer here)" \
+  [pcall {xschem get graph_axis_at 0 $cvxmx $cvxmy}] x
+
+# --- CV1: X margin -> X on every strip, Y untouched everywhere --------------
+set cv1b [pcall {cv_wins 2}]
+set cv1m [pcall {ax_ctx; xschem get graph_axis_wheel_map 0 x $cvpx in}]
+cv_wheel $vdrw $cvpx $cvxmy 1
+set cv1a [pcall {cv_wins 2}]
+check_true "CV1 CTRL+wheel in the X margin zoomed X on strip 0 by exactly the C\
+ map (map=$cv1m before=$cv1b after=$cv1a)" \
+  [pexpr {[az_close [lindex $cv1a 0 0] [lindex $cv1m 0] 1e-6 1.0] &&
+          [az_close [lindex $cv1a 0 1] [lindex $cv1m 1] 1e-6 1.0]}]
+check_true "CV1 ...and on EVERY strip (X is the shared axis of the stack)" \
+  [pexpr {[az_close [lindex $cv1a 1 0] [lindex $cv1m 0] 1e-6 1.0] &&
+          [az_close [lindex $cv1a 1 1] [lindex $cv1m 1] 1e-6 1.0]}]
+check "CV1 ...and left EVERY strip's y1/y2 unchanged" \
+  [pcall {set o {}; foreach row $cv1a { lappend o [lrange $row 2 3] }; set o}] \
+  [pcall {set o {}; foreach row $cv1b { lappend o [lrange $row 2 3] }; set o}]
+
+# --- CV2: Y margin -> Y on the pointed strip only, X untouched --------------
+cv_stage $tok
+ax_scan $tok
+set cv2b [pcall {cv_wins 2}]
+cv_wheel $vdrw $cvymx $cvcy 1
+set cv2a [pcall {cv_wins 2}]
+check_true "CV2 CTRL+wheel in the Y margin narrowed strip 0's Y by K=$::cwK\
+ (before=$cv2b after=$cv2a)" \
+  [pexpr {[az_close [expr {[lindex $cv2a 0 3] - [lindex $cv2a 0 2]}] \
+                    [expr {2.5 * $::cwK}] 1e-6 2.5]}]
+check "CV2 ...on the POINTED strip only (strip 1's y1/y2 unchanged)" \
+  [lrange [lindex $cv2a 1] 2 3] [lrange [lindex $cv2b 1] 2 3]
+check "CV2 ...and left EVERY strip's x1/x2 unchanged" \
+  [pcall {set o {}; foreach row $cv2a { lappend o [lrange $row 0 1] }; set o}] \
+  [pcall {set o {}; foreach row $cv2b { lappend o [lrange $row 0 1] }; set o}]
+
+# --- CV3: the plot BODY is UNCHANGED: both axes, as it has been since 0144 --
+cv_stage $tok
+ax_scan $tok
+set cv3b [pcall {cv_wins 2}]
+cv_wheel $vdrw $cvcx $cvcy 1
+set cv3a [pcall {cv_wins 2}]
+check_true "CV3 CTRL+wheel in the plot BODY still zooms X on EVERY strip AND Y\
+ on the pointed one (before=$cv3b after=$cv3a)" \
+  [pexpr {[lindex $cv3a 0 0] ne [lindex $cv3b 0 0] &&
+          [lindex $cv3a 1 0] ne [lindex $cv3b 1 0] &&
+          [lindex $cv3a 0 2] ne [lindex $cv3b 0 2]}]
+check "CV3 ...and Y still does NOT follow onto the other strip" \
+  [lrange [lindex $cv3a 1] 2 3] [lrange [lindex $cv3b 1] 2 3]
+
+# --- CV4: it went into the MODEL, not just the rect (D-36) ------------------
+cv_stage $tok
+ax_scan $tok
+cv_wheel $vdrw $cvpx $cvxmy 1
+set cv4a [pcall {cv_wins 2}]
+pcall {wviewer::regenerate $tok}
+update
+set cv4r [pcall {cv_wins 2}]
+check_true "CV4 the zoom really wrote (teeth)" \
+  [pexpr {[lindex $cv4a 0 0] ne "0"}]
+check "CV4 a regenerate (what a window resize does) does NOT discard it -- the\
+ viewer wrote its Tcl MODEL, like its body zoom does" $cv4r $cv4a
+
+# --- CV5/CV6: no undo point, and the fixed point ----------------------------
+cv_stage $tok
+ax_scan $tok
+set cv5d [pcall {wviewer::history_depth $tok}]
+set cv6qb [pcall {ax_ctx; az_coord 0 $cvpx $cvcy 0}]
+cv_wheel $vdrw $cvpx $cvxmy 1
+check "CV5 wviewer::history_depth did not move (D-35: a zoom is view state and\
+ is deliberately outside a viewer undo snapshot)" \
+  [pcall {wviewer::history_depth $tok}] $cv5d
+set cv6qa [pcall {ax_ctx; az_coord 0 $cvpx $cvcy 0}]
+check_true "CV6 THE FIXED POINT in the viewer: the data x under the pointer\
+ pixel is unchanged (before=$cv6qb after=$cv6qa)" \
+  [pexpr {[az_close $cv6qa $cv6qb 1e-6 1.0]}]
+check "CV6 ...and the viewer buffer is still modified 0 / readonly 1" \
+  [pcall {ax_ctx; list [xschem get modified] [xschem get readonly]}] {0 1}
+
+# --- CS3: the two anchored implementations agree NUMERICALLY ----------------
+# wviewer::zoom_about (the viewer's BODY zoom) and graph_axis_wheel_map (C, the
+# margin zoom) are two anchored scales that must give the same window for the
+# same strip, pixel and factor -- otherwise one gesture would step differently
+# depending on where in the strip the pointer was. Run HERE because
+# wviewer::zoom_about only exists once wave_viewer.tcl is sourced.
+cv_stage $tok
+ax_scan $tok
+check_true "CS3 wviewer::zoom_about is DEFINED (never a silent skip)" \
+  [pexpr {[llength [info procs ::wviewer::zoom_about]] == 1}]
+set cs3q [pcall {ax_ctx; az_coord 0 $cvpx $cvcy 0}]
+set cs3c [pcall {ax_ctx; xschem get graph_axis_wheel_map 0 x $cvpx in}]
+set cs3t [pcall {wviewer::zoom_about 0 1.0 $cs3q $::cwK}]
+check_true "CS3 zoom_about(0,1,q=$cs3q,K) == graph_axis_wheel_map\
+ (tcl=$cs3t c=$cs3c)" \
+  [pexpr {[az_close [lindex $cs3t 0] [lindex $cs3c 0] 1e-9 1.0] &&
+          [az_close [lindex $cs3t 1] [lindex $cs3c 1] 1e-9 1.0]}]
+
+} cverr]} { check "CV* group ran to its end" "ERR:$cverr" ok }
+
 catch {wviewer::close $tok}
 set ::az_ran_x 1
 }

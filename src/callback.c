@@ -937,6 +937,11 @@ static int waves_callback(int event, int mx, int my, KeySym key, int button, int
   int save_mouse_at_end = 0, clear_graphpan_at_end = 0;
   int track_dset = -2; /* used to find dataset of closest wave to mouse if 't' is pressed */
   int mkpress = 0; /* graph_marker_press() verdict: 1 armed, -1 deselected, 0 not ours */
+  /* issue 0191: the CTRL+wheel axis zoom consumed this event, so the plain wheel
+   * PAN arms below must stand down -- and *only* then, which is what keeps
+   * CTRL+wheel over the plot BODY behaving exactly as it does today (a graph X
+   * pan of 0.05*gw, MEASURED, byte-identical to a plain wheel). */
+  int wheel_axis_done = 0;
   xRect *r = NULL;
   int access_cond = !graph_use_ctrl_key || (state & ControlMask);
 
@@ -1510,6 +1515,50 @@ static int waves_callback(int event, int mx, int my, KeySym key, int button, int
         need_redraw_master = 1;
       }
     }
+    /* CTRL+WHEEL IN AN AXIS-NUMBER MARGIN = a zoom of THAT AXIS ONLY, anchored
+     * at the pointer (issue 0191, doc/claude/specs/waveform_viewer_modes.md
+     * §18). The wheel twin of the LMB drag armed ~100 lines above, sharing its
+     * region oracle (graph_axis_at) and its apply (graph_axis_zoom).
+     *
+     * ⚠ WHY IT IS HERE AND NOT A BINDING ROW (landmine 48). A wheel press whose
+     * pointer is over a graph NEVER reaches handle_mouse_wheel(): the inline
+     * `if(waves_selected(...)) { waves_callback(...); return; }` at the head of
+     * handle_button_press pre-empts it fourteen branches earlier, so the four
+     * ACTX_OVER_GRAPH wheel rows in init_input_bindings are unreachable dead
+     * code and a modifier's over-graph wheel behaviour can only be decided in
+     * here.
+     *
+     * !(state & ShiftMask): Ctrl+Shift+wheel keeps the shipped Shift zoom arms
+     *   below, which are already pointer-anchored (a different, non-reversible
+     *   0.2-of-the-range step -- see GRAPH_AXIS_WHEEL_FACTOR).
+     * !graph_use_ctrl_key: in that mode Ctrl IS the graph ACCESS modifier
+     *   (waves_selected, access_cond above, and handle_mouse_wheel's own
+     *   reservation), so every graph gesture holds it and taking Ctrl+wheel
+     *   would leave the mode with no graph wheel pan at all (D-32).
+     * No GRAPHPAN term is owed (landmine 36): that latch admits Button1/2/3
+     *   only, so a Button4/5 press never enters it, and a wheel is one event
+     *   with no release to lose. An in-flight drag is already short-circuited by
+     *   the `goto finish` above.
+     * graph_axis_at() is the region oracle and a NONE answer means "fall through
+     *   to the pan below", which is the whole body-unchanged contract: only a
+     *   real margin hit sets wheel_axis_done.
+     * need_all_redraw, not need_fullredraw: X propagates so every rect must
+     *   repaint, the per-graph loop's draw_graph(i, 1+8+16+...) repaints the
+     *   background, grid and axis NUMBERS under bit 8, and there is no rubber
+     *   band to erase. */
+    else if(event == ButtonPress && (button == Button4 || button == Button5) &&
+            (state & ControlMask) && !(state & ShiftMask) && !graph_use_ctrl_key) {
+      int ax = graph_axis_at(i, (double)mx, (double)my);
+      if(ax != GRAPH_AXIS_NONE) {
+        double p = (ax == GRAPH_AXIS_X) ? (double)mx : (double)my;
+        double lo = 0.0, hi = 0.0;
+        if(graph_axis_wheel_map(i, ax, p, button == Button4 ? 1 : -1, &lo, &hi)) {
+          graph_axis_zoom(i, ax, lo, hi);
+          wheel_axis_done = 1;
+          need_all_redraw = 1;
+        }
+      }
+    }
     else if(event == -3 && button == Button1) {
       int mnum, mpart = 0;
       /* issue 0152: a double-click is press,release,`-3`,release -- invalidate the click
@@ -1952,7 +2001,14 @@ static int waves_callback(int event, int mx, int my, KeySym key, int button, int
       }
     }
 
-    else if(event == ButtonPress && button == Button5 && !(state & ShiftMask)) {
+    /* `!wheel_axis_done`: the CTRL+wheel axis zoom in the master block above
+     * already consumed this event (issue 0191). It is a DIFFERENT if/else chain
+     * and a different loop, so without this term the margin zoom would also pan.
+     * The flag is set ONLY when graph_axis_at() found a margin AND the map
+     * answered, so CTRL+wheel over the plot body still pans exactly as it does
+     * today -- that is the whole body-unchanged contract. */
+    else if(event == ButtonPress && button == Button5 && !(state & ShiftMask) &&
+            !wheel_axis_done) {
       double delta;
       /* vertical move of waveforms with mouse wheel */
       if(xctx->graph_left) {
@@ -1989,7 +2045,8 @@ static int waves_callback(int event, int mx, int my, KeySym key, int button, int
         }
       }
     }
-    else if(event == ButtonPress && button == Button4 && !(state & ShiftMask))  {
+    else if(event == ButtonPress && button == Button4 && !(state & ShiftMask) &&
+            !wheel_axis_done)  {
       double delta;
       /* vertical move of waveforms with mouse wheel */
       if(xctx->graph_left) {
@@ -4801,9 +4858,24 @@ static void init_input_bindings(void)
   /* Ctrl+Middle-click cycles the pin direction/type while placing (schematic_add_pin.md).
    * Button2-pan requires state==0, so this exact-Ctrl chord never collides with the pan. */
   set_input_binding(DEV_BUTTON, Button2,   ControlMask, ACTX_CANVAS, "edit.cycle_pin_type");
-  /* over a waveform graph, the no-modifier and Shift wheel drive the graph
-   * (the old inline waves_selected routing, now data). Ctrl-wheel never did, so
-   * it has no over_graph row and stays canvas pan. */
+  /* ⚠ THESE FOUR ROWS ARE UNREACHABLE, and the claim they used to carry
+   * ("Ctrl-wheel never did, so it has no over_graph row and stays canvas pan")
+   * was wrong over a graph -- landmine 48 in
+   * doc/claude/code_analysis/waveform_subsystem_reference.md.
+   *
+   * handle_button_press() opens with an inline
+   * `if(waves_selected(...)) { waves_callback(...); return; }`, and
+   * handle_mouse_wheel() is only reached FOURTEEN branches later. So for any
+   * wheel press whose pointer is inside a graph rect the function has already
+   * returned, and handle_mouse_wheel's own ctx -- computed from that same
+   * waves_selected() -- can then only ever be ACTX_CANVAS. A binding row is
+   * therefore NOT a way to add or change an over-graph wheel gesture: that is
+   * decided inside waves_callback (see the CTRL+wheel axis zoom, issue 0191).
+   * MEASURED: Ctrl+wheel over a strip is a graph X PAN, byte-identical to the
+   * plain wheel, and xorigin/yorigin/zoom never move.
+   *
+   * The rows are kept, not deleted: they are inert, and removing them has its
+   * own regression surface (`xschem bind` / keybindings.csv round-trip). */
   set_input_binding(DEV_WHEEL, WHEEL_UP,   0,         ACTX_OVER_GRAPH, "graph.forward");
   set_input_binding(DEV_WHEEL, WHEEL_DOWN, 0,         ACTX_OVER_GRAPH, "graph.forward");
   set_input_binding(DEV_WHEEL, WHEEL_UP,   ShiftMask, ACTX_OVER_GRAPH, "graph.forward");

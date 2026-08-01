@@ -474,6 +474,18 @@ typedef int Tcl_Size;
  * map (that is the whole point of graph_axis_map). */
 #define GRAPH_AXIS_ZOOM_MAX_FACTOR 1000.0
 
+/* Range MULTIPLIER of one CTRL+wheel click in an axis-number margin (issue
+ * 0191, doc/claude/specs/waveform_viewer_modes.md §18). Wheel-up multiplies the
+ * axis window by this; wheel-down divides by it, so N clicks in followed by N
+ * clicks out restore the window EXACTLY -- unlike the shipped Shift+wheel arms
+ * (callback.c), whose 0.2-of-the-range step is x0.8 in / x1.2 out and loses 4%
+ * per round trip.
+ * ⚠ MIRRORED IN TCL: wviewer::wheel_zoom's `f` (src/wave_viewer.tcl) carries the
+ * same literal because the viewer's BODY zoom still computes its own window with
+ * wviewer::zoom_about. Change BOTH -- tests/headless/test_wave_axis_zoom.tcl CS2
+ * reads the two out of source and asserts they are equal. */
+#define GRAPH_AXIS_WHEEL_FACTOR 0.8
+
 /* xctx->graph_marker_dragmode -- the EFFECTIVE mode of an armed gesture,
  * latched at PRESS TIME from the selection state and never re-read afterwards.
  * xctx->graph_marker_drag keeps its original meaning, "what was GRABBED"
@@ -2295,6 +2307,21 @@ extern int  graph_axis_at(int i, double px, double py);
  * logx/logy is set (landmine 35 from the other side: do NOT pow(10,.) here). */
 extern int  graph_axis_map(int i, int axis, double p0, double p1,
                            double *lo, double *hi, double clicktol);
+/* THE WHEEL formula's one home (issue 0191, §18), the twin of the map above.
+ * `p` is a CANVAS PIXEL along `axis` (px for X, py for Y) -- the pointer -- and
+ * `dir` is +1 for one click IN, -1 for one click OUT. Writes the new data window
+ * to *lo/*hi and returns 1; returns 0 for a bad index / a non-graph rect / no
+ * transform / a degenerate window.
+ * The factor lives INSIDE (GRAPH_AXIS_WHEEL_FACTOR) rather than being an
+ * argument, so the constant has exactly one home and a suite driving
+ * `xschem get graph_axis_wheel_map` is driving the product's own step size.
+ * THE FIXED POINT IS THE SPECIFICATION: the data coordinate under `p` keeps its
+ * fraction of the window and therefore its screen pixel. lo = q - u*R2 is that
+ * anchor; a width-only form has the right WIDTH in the wrong PLACE and passes
+ * every "the range shrank" assertion. Log axes need nothing special -- gr space
+ * IS log space when logx/logy is set (landmine 35 from the other side). */
+extern int  graph_axis_wheel_map(int i, int axis, double p, int dir,
+                                 double *lo, double *hi);
 /* The click-vs-drag TRAVEL threshold in SCREEN PIXELS, i.e. what the gesture
  * hands graph_axis_map() as `clicktol`. The constant behind it (callback.c's
  * GRAPH_CLICK_TOL) stays file-private -- in this header it would read as

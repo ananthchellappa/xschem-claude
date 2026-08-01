@@ -5358,12 +5358,21 @@ proc wviewer::fit {token} {
 # content, NOT the canvas: every pan/zoom edits the graph rect's range tokens
 # (x1/x2/y1/y2) via the model + regenerate, leaving canvas xorigin/yorigin/zoom
 # untouched (item-18 pins them). Forwarding the wheel to the C waveform handler
-# was rejected (D1): plain wheel there is a HORIZONTAL body pan (callback.c
-# :1157-1168) and Ctrl+wheel is hard-pinned to CANVAS zoom (callback.c:4417) —
-# both contradict the user's ask. Pure Tcl setprop/getprop keeps it
-# deterministic (item-17 lesson: witness a synchronous state write, not a
-# gesture). RMB stays on the C engine (btn3_filter) — the engine already does
-# graph x-zoom-to-box and leaves the canvas pinned.
+# was rejected (D1): plain wheel there is a HORIZONTAL body pan, which
+# contradicts the user's ask. Pure Tcl setprop/getprop keeps it deterministic
+# (item-17 lesson: witness a synchronous state write, not a gesture). RMB stays
+# on the C engine (btn3_filter) — the engine already does graph x-zoom-to-box and
+# leaves the canvas pinned.
+#
+# ⚠ CORRECTED 2026-08-01 (issue 0191). This used to say "Ctrl+wheel is
+# hard-pinned to CANVAS zoom (callback.c:4417)". Wrong twice over: the cited line
+# no longer exists, and over a GRAPH Ctrl+wheel is neither the canvas nor a zoom.
+# MEASURED: it reaches waves_callback and is a graph X PAN of 0.05*gw,
+# byte-identical to a plain wheel, with xorigin/yorigin/zoom untouched — because
+# handle_button_press's inline waves_selected guard pre-empts handle_mouse_wheel
+# for every wheel press over a strip (landmine 48). What that means for THIS
+# proc: forwarding was still the wrong call, but the reason is the pan, not a
+# canvas zoom.
 
 # Index of the graph band under the viewer pointer (mousex_snap/mousey_snap),
 # iterating graphbb($wp) exactly like over_graph; fallback 0 when there is
@@ -5437,6 +5446,30 @@ proc wviewer::zoom_about {lo hi a f} {
   return [list [expr {$a - ($a - $lo) * $f}] [expr {$a + ($hi - $a) * $f}]]
 }
 
+# ONE CTRL+wheel click's new window for strip `gi`'s `axis` (x|y), anchored at
+# canvas pixel `p`, `dir` in in|out — straight from C (issue 0191, §18).
+#
+# The viewer computes NOTHING here: the anchored map, the plot-box geometry and
+# the step size all live in graph_axis_wheel_map() (src/draw.c), so the ASE
+# viewer's margin zoom and an embedded schematic graph's cannot disagree. The
+# same rule as wviewer::axis_grabbed (D-22): ask C, never re-derive the 14%
+# margins in Tcl.
+# Fails CLOSED to {}: a missing verb, a refused ctx switch, a strip with no
+# transform. The caller must then leave that strip COMPLETELY unchanged rather
+# than fall back to a second formula.
+proc wviewer::axis_wheel_window {token gi axis p dir} {
+  if {$p eq {} || ![string is double -strict $p]} { return {} }
+  if {![wviewer::switch_ctx $token]} { return {} }
+  set w {}
+  catch {set w [xschem get graph_axis_wheel_map $gi $axis $p $dir]}
+  if {[llength $w] != 2} { return {} }
+  foreach v $w {
+    if {![string is double -strict $v] || [string match -nocase {*inf*} $v] ||
+        [string match -nocase {*nan*} $v]} { return {} }
+  }
+  return $w
+}
+
 # Ctrl+wheel zoom (D1, REVISED by issue 0144 — was X-only on the pointed graph).
 # Zoom about center by 0.8 (in) / 1/0.8 (out): the X window on EVERY graph, so
 # the stacked strips stay time-aligned; the Y window ONLY on graph `gi`, the
@@ -5451,12 +5484,34 @@ proc wviewer::zoom_about {lo hi a f} {
 # consistent under sharedx 0 and 1. Separate from `wviewer::wheel` as the
 # synchronous-write seam tests drive directly (item-17 lesson).
 # Returns 1 when anything was written, else 0.
-proc wviewer::wheel_zoom {token dir gi {px {}} {py {}}} {
+#
+# `axis` (issue 0191, §18) narrows the gesture to ONE axis when the pointer is in
+# a strip's axis-number margin:
+#   {}  the shipped BODY zoom, byte for byte: X on every strip and Y on `gi`,
+#       both through wviewer::zoom_about. Every pre-0191 caller passes nothing
+#       (wviewer::wheel's body case, wviewer::graph_zoom for the View menu / Z /
+#       Ctrl-z) and is untouched.
+#   x   X only, on every strip, each strip's new window taken from C.
+#   y   Y only, on `gi` only, same source.
+# The axis arms take their window from `xschem get graph_axis_wheel_map`
+# (D-25/D-28) so the viewer and the embedded-graph gesture cannot drift apart:
+# ONE anchored formula, in C, with GRAPH_AXIS_WHEEL_FACTOR as its only step. The
+# body arm deliberately keeps zoom_about — changing shipped behaviour is out of
+# this item's scope — and the two agree numerically, which the suite's CS3 leg
+# asserts against wviewer::zoom_about directly.
+# A strip the verb answers {} for is left COMPLETELY unchanged; it never falls
+# back to zoom_about, which would be a second formula answering for one gesture.
+proc wviewer::wheel_zoom {token dir gi {px {}} {py {}} {axis {}}} {
   variable windows
   if {![dict exists $windows $token]} { return 0 }
   set gs [dict get [wviewer::layout_for $token] graphs]
   set n [llength $gs]
+  # ⚠ MIRRORED IN C: src/xschem.h GRAPH_AXIS_WHEEL_FACTOR carries this same 0.8,
+  # because the axis arms below take their window from the C formula while this
+  # body arm computes its own with zoom_about. Change BOTH — test_wave_axis_zoom's
+  # CS2 leg reads the two out of source and asserts they are equal.
   set f [expr {($dir eq {up} || $dir eq {in}) ? 0.8 : 1 / 0.8}]
+  set wdir [expr {($dir eq {up} || $dir eq {in}) ? {in} : {out}}]
   # ANCHOR (issue 0146): the data point under the pointer must stay put, like the
   # schematic's view_zoom. `graph_coord` (C) inverts the draw transform for the
   # POINTED strip — Tcl must not re-derive the plot box's margins. The x anchor
@@ -5488,17 +5543,38 @@ proc wviewer::wheel_zoom {token dir gi {px {}} {py {}}} {
     foreach {k v} [list x1 $ax1 x2 $ax2 y1 $ay1 y2 $ay2] {
       if {$v ne {}} { dict set G $k $v }
     }
-    if {$ax1 ne {} && $ax2 ne {}} {
-      lassign [wviewer::zoom_about $ax1 $ax2 $anx $f] nx1 nx2
-      dict set G x1 $nx1
-      dict set G x2 $nx2
-      set changed 1
-    }
-    if {$t == $gi && $ay1 ne {} && $ay2 ne {}} {
-      lassign [wviewer::zoom_about $ay1 $ay2 $any $f] ny1 ny2
-      dict set G y1 $ny1
-      dict set G y2 $ny2
-      set changed 1
+    if {$axis eq {x}} {
+      # issue 0191: X only, on every strip, anchored at $px. Per STRIP, so each
+      # is anchored in its OWN window at the same pointer pixel — the same answer
+      # when the windows agree and the right one when they do not (D-33).
+      set w [wviewer::axis_wheel_window $token $t x $px $wdir]
+      if {[llength $w] == 2} {
+        dict set G x1 [lindex $w 0]
+        dict set G x2 [lindex $w 1]
+        set changed 1
+      }
+    } elseif {$axis eq {y}} {
+      if {$t == $gi} {
+        set w [wviewer::axis_wheel_window $token $t y $py $wdir]
+        if {[llength $w] == 2} {
+          dict set G y1 [lindex $w 0]
+          dict set G y2 [lindex $w 1]
+          set changed 1
+        }
+      }
+    } else {
+      if {$ax1 ne {} && $ax2 ne {}} {
+        lassign [wviewer::zoom_about $ax1 $ax2 $anx $f] nx1 nx2
+        dict set G x1 $nx1
+        dict set G x2 $nx2
+        set changed 1
+      }
+      if {$t == $gi && $ay1 ne {} && $ay2 ne {}} {
+        lassign [wviewer::zoom_about $ay1 $ay2 $any $f] ny1 ny2
+        dict set G y1 $ny1
+        dict set G y2 $ny2
+        set changed 1
+      }
     }
     set gs [lreplace $gs $t $t $G]
   }
@@ -5552,8 +5628,10 @@ proc wviewer::pan_x {token dir} {
 #                    (up = toward larger y / view moves up; down = opposite).
 #   shift          -> GRAPH horizontal pan: shift x1/x2 by +-5% of the x span,
 #                    on EVERY strip (issue 0150 — X is the shared axis).
-#   ctrl           -> GRAPH zoom about center (wviewer::wheel_zoom): X on every
-#                    graph, Y on the POINTED graph only (issue 0144).
+#   ctrl           -> GRAPH zoom (wviewer::wheel_zoom), anchored at the pointer:
+#                    X on every graph, Y on the POINTED graph only (issue 0144)
+#                    — EXCEPT in a strip's axis-number MARGIN, where it zooms
+#                    THAT AXIS ONLY (issue 0191, §18); C decides the region.
 # Acts on the pointed graph (graph_at_pointer). Reads the concrete range, applies
 # the delta, freezes ALL FOUR (D7). A `{}` target axis (nothing to pan/zoom) is
 # a no-op.
@@ -5571,8 +5649,19 @@ proc wviewer::wheel {token wp dir mods {px {}} {py {}}} {
     }
     ctrl {
       # X on every graph + Y on the pointed one, anchored at the pointer pixel
-      # (0146); writes + regenerates itself
-      wviewer::wheel_zoom $token $dir $gi $px $py
+      # (0146); writes + regenerates itself.
+      #
+      # issue 0191: in a strip's AXIS-NUMBER margin, Ctrl+wheel zooms THAT AXIS
+      # ONLY, still anchored at the pointer. C owns the geometry — the viewer
+      # hit-tests nothing (D-22/D-38), and a stale mouse mirror can only make
+      # this answer {} and degrade to the shipped both-axes zoom, never pick the
+      # wrong strip. %x/%y (the EVENT's own pixels) go to C, not mousex_snap.
+      set ax {}
+      if {[wviewer::switch_ctx $token]} {
+        catch {set ax [xschem get graph_axis_at $gi $px $py]}
+      }
+      if {$ax ne {x} && $ax ne {y}} { set ax {} }
+      wviewer::wheel_zoom $token $dir $gi $px $py $ax
       return
     }
     default {
