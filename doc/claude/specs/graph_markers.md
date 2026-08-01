@@ -41,7 +41,8 @@ through a **push hook from C into Tcl** (§8).
 | D6 | Read-only buffers | A marker is durable **content**, so every mutating path refuses one — but the gate is **`graph_marker_ro_refuse()` inside the mutating primitives** (`draw.c`), *not* `readonly_block()` in the key arms, and the refusal is a **non-modal `ciw_echo`**, not a modal. The verb surface keeps its own, separate `scheduler_readonly_reject()` on every `xschem graph_marker` sub-verb except `select`, `list` and `text`. The ASE viewer — readonly for its whole life by construction — gets through the one way every other viewer mutation does: `key_filter` forwards `m`/`d`, and `strip_drag_release` forwards the marker-drag **release**, inside `wviewer::with_edit`. §6.6. (⚠ `Delete` was a third forwarded key until issue 0176; it is now handled entirely Tcl-side and needs no bracket.) |
 | D7 | Dirty / undo | Create, delete and drag-**commit** each do `push_undo()` + `set_modify(1)`. Mid-drag motion does neither. This deliberately **diverges** from every other graph write (landmine 19). |
 | D8 | Rendering source | The **cached** `x`/`y` only — the renderer never touches `xctx->raw`. The **label** is built from the *record* the renderer is about to draw, not re-derived from its number, so a live drag reads out the sliding sample (§6.5). |
-| D9 | Selection | One marker at a time, held in `xctx` (transient, never in the token), identified by its **number alone**. Numbers are window-wide unique, so the number already names exactly one marker; `graph_marker_selgraph` is a **hint** for repainting, never a correctness input (§3.5). |
+| D9 | Selection | A **SET of marker numbers**, held in `xctx` (transient, **never in the token**), each member identified by its **number alone**. `xctx->graph_marker_sel` is the **HEAD** of that set and keeps its exact old meaning, so `xschem get graph_marker_sel`, every `graph_marker select` return value and `wviewer::marker_selected` are byte-for-byte unchanged; the whole set is `xctx->graph_marker_sel_set[]` / `graph_marker_n_sel`, read with `xschem get graph_marker_sel_set`. Numbers are window-wide unique, so a number already names exactly one marker; `graph_marker_selgraph` is a **hint** for repainting, never a correctness input (§3.5). Issue 0189 widened this from one marker to a set; up to 0189 it was one. |
+| D13 | Double-click on a marker | Selects it **and**, when it is a *difference* marker whose `prev` partner still resolves, the one marker its deltas are derived from. **The immediate pair only** — never the chain, and never the reverse direction (`prev` is a back-pointer and N deltas may share one reference). It **SETS** the selection: it never toggles and never accumulates. A plain marker, or one whose reference is gone, selects alone and silently. Both parts accept it (anchor and callout). Issue 0189. |
 | D10 | Copy / paste | Renumber; clear all `prev` links. **Two** duplication doors, not one: `merge_box` (`paste.c`, the paste/clipboard path) and `copy_objects` (`move.c`, the `c`-key copy). |
 | D12 | What gates `m`/`d` | The strip's **PLOT BOX** (`graph_plotbox_at()`), not a distance to a trace — and the sample is then the nearest one on the nearest trace *however far*, `graph_point_at(..., 1e30, -1, -1, ...)`. That is **byte-for-byte the pair of calls `draw_graph_snap_cursor()` makes**, so the marker cannot land anywhere but under the item-9 diamond: the glyph that shows *which* sample would be marked and the key that marks it are one gate, by construction. Outside the box — the legend band, either axis-number margin, the reorder grip column — no diamond is drawn (`waveform_viewer_modes.md` §15.7) and the key refuses. Trace **selection** keeps its 10-px `GRAPH_TRACE_PICK_TOL` proximity: picking a trace with a mouse is an aim, pressing `m` is a declaration. Issue 0188; until it, creation gated on a 20-px `GRAPH_MARKER_PICK_TOL` that no longer exists. |
 | D11 | What a TEXT drag does | It **depends on the selection**, latched at PRESS. Unselected → move the callout (unchanged). Selected → **rigid translation**: the anchor re-snaps to a real sample on its own trace and the label offset is frozen, so the whole marker moves. `graph_marker_drag` keeps its 0/1/2 "what was grabbed" contract; a **separate** `graph_marker_dragmode` says what the gesture does. §6.2.1. |
@@ -154,18 +155,47 @@ record a future version widened.
 
 **Selection.** It is UI state, not content: saving it would mean a reloaded
 schematic opens with a marker mysteriously highlighted. It lives in
-`xctx->graph_marker_sel` (the marker **number**, `-1` = none) and
-`xctx->graph_marker_selgraph` (the rect index that owned it *at selection time*).
+`xctx->graph_marker_sel` (the **HEAD** of the selection, a marker **number**,
+`-1` = none), `xctx->graph_marker_sel_set[GRAPH_MARKER_MAX_SEL]` +
+`xctx->graph_marker_n_sel` (the **whole set**, head first, in selection order —
+issue 0189) and `xctx->graph_marker_selgraph` (the rect index that owned the
+head *at selection time*).
 
-**The number alone identifies the selection.** Numbering is window-wide and
-unique, so `sel` already names exactly one marker; `selgraph` is a **rect
+⚠ **This is deliberately NOT the issue-0175 trace model, and "mirror 0175" is
+the wrong instinct here.** Trace bold *is* per-rect render state carried in the
+`hilight_wave` token, which `sel_waves` extends. Markers have no such head
+token to extend: the marker analogue of `hilight_wave` is a **session field**.
+So the set stays in `xctx` at every size, `clear_drawing()` resets it, and **no
+prop_ptr byte changes under any selection**, one member or two.
+
+The invariants, enforced in the ONE writer `graph_marker_select_set()`:
+`n_sel == 0` ⟺ `sel == -1`; `n_sel >= 1` ⟹ `sel == sel_set[0]`; no duplicates,
+no entries `<= 0`, capped at `GRAPH_MARKER_MAX_SEL` (8, C-only, nothing to
+mirror in Tcl — Tcl reads the list from the getter). Order is **selection
+order**, not ascending: the head is the marker the user acted on, and it drives
+`selgraph`, the `Delete` scope gate and the unchanged getter.
+
+**The number alone identifies each member.** Numbering is window-wide and
+unique, so a number already names exactly one marker; `selgraph` is a **rect
 index**, and a rect index goes stale the moment a strip is reordered or a
-multi-plot batch prepends one. So the renderer tests `m.num ==
-graph_marker_sel` and nothing else, and the `Delete` gate **re-resolves** the
-owning strip with `graph_marker_find()` before comparing it to `graph_master`.
-Reading `selgraph` as truth put the ring on one strip and fired the delete from
-another. It survives only as the repaint hint `graph_marker_release()` uses to
-decide whether a redraw has to cover more than the master strip (§7.4).
+multi-plot batch prepends one. So the renderer tests **set membership by number**
+(`graph_marker_is_selected(m.num)`) and nothing else — which is also what lets a
+cross-strip pair render selected on two different bands — and the `Delete` gate
+**re-resolves** the owning strip of the **head** with `graph_marker_find()`
+before comparing it to `graph_master`. Reading `selgraph` as truth put the ring
+on one strip and fired the delete from another. It survives only as the repaint
+hint `graph_marker_release()` uses to decide whether a redraw has to cover more
+than the master strip (§7.4).
+
+**Every "is this marker selected" test goes through
+`graph_marker_is_selected()`** — never a bare `== xctx->graph_marker_sel`. There
+are four such sites (the renderer, the rigid-drag latch, the click toggle, and
+the delete's drop-from-the-set), and a missed one renders a selected partner in
+the unselected style with no leg that selects a single marker able to see it.
+The only sanctioned bare readers of the HEAD are the getter
+(`scheduler.c`), the `Delete` strip-scope gate and the repaint-scope hint
+(`callback.c`), plus the writer's own body. Asserted at SOURCE level by `MS13`
+in `tests/headless/test_wave_markers.tcl`.
 
 **And it dies with the document.** `clear_drawing()` (`actions.c`) resets `sel`,
 `selgraph` and all four drag fields, because the *same* `xctx` is reused by
@@ -177,10 +207,12 @@ asked for and letting `Delete` destroy it. The cost is that an ASE `regenerate`
 is the right trade: a regenerate rebuilds every rect from the model, so "the
 selection survives it" was never more than an accident of storage.
 
-The full transient set is `graph_marker_sel`, `selgraph`, `drag`, **`dragmode`**
+The full transient set is `graph_marker_sel`, **`sel_set`**, **`n_sel`**,
+`selgraph`, `drag`, **`dragmode`**
 (§6.2.1), `dragnum`, `draggraph`, `moved`, `press_x`/`press_y`, `ldx0`/`ldy0`,
 **`x0`/`y0`** and `scratch`. Note it has **two** reset classes, which predates
-this work: the gesture-state half (`drag`, `dragmode`, `dragnum`, `draggraph`,
+this work: the gesture-state half (`n_sel` — issue 0189 — plus `drag`,
+`dragmode`, `dragnum`, `draggraph`,
 `moved`) is reset at all three sites — `graph_marker_drag_clear()`,
 `clear_drawing()`, `alloc_xschem_data()` — while the press-time *payload*
 (`ldx0`/`ldy0`, `x0`/`y0`, `scratch`) is reset at none of them, and is safe only
@@ -361,7 +393,7 @@ be unconditional. Reference doc landmine 40.
 | `m` | measurement tooltip (`graph_flags ^= 64`) | **create a marker** — **anywhere inside the strip's PLOT BOX**, at the sample the item-9 diamond snap cursor has snapped to (D12, issue 0188) |
 | `d` | fell through to the canvas `deselect_mode` (there was no `ACTX_OVER_GRAPH` row) | **create a marker with a delta block** against the most recently created marker — same plot-box gate, same snapped sample |
 | `M` (Shift+m) | broken — no waves guard, ran `readonly_block()` + the cadence schematic move | **the measurement tooltip**, relocated |
-| `Delete` | deletes the schematic selection | **deletes the selected marker** when one is selected *in the strip under the pointer*; otherwise unchanged. ⚠ In the **ASE viewer** this is now only ONE of two arms — see below |
+| `Delete` | deletes the schematic selection | **deletes the WHOLE marker selection** when the HEAD is selected *in the strip under the pointer* — one gesture, **ONE undo point**, however many members and however many strips they live on (issue 0189: `graph_marker_delete_selected()` pushes once and then calls a no-push `graph_marker_delete_1()` per member, each of which still self-logs its own `xschem graph_marker delete <n>` line). Otherwise unchanged. ⚠ In the **ASE viewer** this is now only ONE of two arms — see below |
 | `d` **off** a graph | deselect-one mode | unchanged — this is a context split, not a key change |
 
 `m`/`M` need no binding row: the inline `waves_selected` guards in
@@ -502,7 +534,8 @@ deliberately refused call as the leak canary.
 
 | gesture | result |
 |---|---|
-| LMB **click** on the anchor or the callout (travel ≤ `GRAPH_CLICK_TOL`, 3 px) | **select** that marker; a second click on the already-selected one deselects |
+| LMB **click** on the anchor or the callout (travel ≤ `GRAPH_CLICK_TOL`, 3 px) | **select** that marker; a second click on the already-selected one deselects — *but only when it is the whole selection*. With a **pair** selected the click is disambiguating, so it **COLLAPSES** to the one clicked (the issue-0174 D3 rule for traces), and a second click then still deselects (issue 0189) |
+| LMB **double-click** on the anchor or the callout | **select that marker and, for a difference marker, the reference its deltas are derived from** — the immediate pair only. It **SETS**: a repeat double-click leaves the same pair selected, and the first click's ordinary single-select still happens and is then widened. The `-3` arm poisons `graph_press_x/y` first, so the trailing release cannot also wave-bold (issue 0189, D13) |
 | LMB **click** on empty graph space | **deselect** (see below) |
 | LMB **press-drag-release on the ANCHOR** | slide the anchor **along its own trace, within its own dataset**, snapping to real samples |
 | LMB **press-drag-release on the TEXT**, marker **not selected** | move the callout; the anchor does not move |
@@ -515,12 +548,13 @@ the issue-0152 wave-bold. Below the threshold `graph_marker_drag_to()` does
 nothing at all, so a 1-px jitter never visibly re-snaps the anchor only to be
 discarded as a click.
 
-Deselecting on a miss is load-bearing, not tidiness: `graph_marker_sel` is
-window-wide, so a stale selection would let a later `Delete` over any strip eat
-the marker instead of the schematic selection. The full lifetime is: **set** only
-by a no-travel release on a marker; **cleared** by a press over a graph that hits
-no marker, by a second click on the same marker, by `graph_marker_delete` of that
-number, by `graph_marker_delete_all` when it removed anything, by
+Deselecting on a miss is load-bearing, not tidiness: the selection is
+window-wide, so a stale one would let a later `Delete` over any strip eat
+the marker instead of the schematic selection. The full lifetime is: **set**
+by a no-travel release on a marker, by a double-click (which sets the *pair*)
+and by `xschem graph_marker select -pair|-set`; **cleared** by a press over a
+graph that hits no marker, by a second click on the sole selected marker, by
+`graph_marker_delete` of that number (which drops just that member), by `graph_marker_delete_all` when it removed anything, by
 `xschem graph_marker select -none`, by `clear_drawing()` — i.e. by any document
 swap and by every ASE `regenerate` (§3.5) — and (viewer-side) by `clear_all` and
 `forget`.
@@ -899,7 +933,7 @@ key arms instead. Both halves of that were wrong, for independent reasons:
 |---|---|
 | `graph_marker_add_record()` | every create — both `graph_marker_create()` (pixel, the `m`/`d` keys) and `graph_marker_create_at()` (data-addressed, the verb and the action log) |
 | `graph_marker_update()` | every record rewrite — `graph_marker_move()`, `graph_marker_anchor_at()`, `graph_marker_label_offset()`, i.e. **the whole drag-commit path** |
-| `graph_marker_delete()` | the single delete, hence also `graph_marker_delete_selected()` and the `Delete` key |
+| `graph_marker_delete_1()` | the single delete engine, hence the public `graph_marker_delete()` (`push` 1) and every member of `graph_marker_delete_selected()` (`push` 0), i.e. the `Delete` key. `graph_marker_delete_selected()` **also** refuses once up front, so a read-only multi-delete gets ONE CIW line, not one per member (issue 0189) |
 | `graph_marker_delete_all()` | `delete -all`, whole-window or per-strip |
 
 **Three mutating helpers are deliberately NOT gated**, and the reason is in each
@@ -917,10 +951,14 @@ case that a gate there would be either unreachable or wrong:
   it runs, a rect has already been cloned into the document; refusing to
   renumber it there would leave duplicate marker numbers, which is strictly
   worse than the paste that should never have happened.
-* `graph_marker_select()` — pure UI state (§3.5): no token write, no
-  `push_undo`, no `set_modify`. Selecting and deselecting a marker in a
+* `graph_marker_select()` / `graph_marker_select_set()` /
+  `graph_marker_select_pair()` — pure UI state (§3.5): no token write, no
+  `push_undo`, no `set_modify`, and no `log_action` either (trace selection does
+  not log, `waveform_viewer_modes.md` §15; the replay-critical marker operations
+  already name explicit numbers). Selecting and deselecting a marker in a
   read-only buffer is correct and must keep working, or `Delete` could not even
-  report *why* it refuses.
+  report *why* it refuses — and it is what lets the read-only ASE viewer
+  pair-select on a double-click with no `with_edit` bracket at all.
 
 #### The ASE viewer still works
 
@@ -993,6 +1031,25 @@ the pointer leaves the strip, and `if(!(ui_state & GRAPHPAN)) graph_master = i;`
 | 7 | Button3 numeric cursor set | not Button1 |
 | 8 | `a` / `b` / `s` / `M` / `m` / `d` / `t` keys | now in the same `else` chain |
 | 9 | `GRAPHPAN` latch | now `(!graph_top \|\| graph_marker_drag)` — **runs after a marker press even in the top margin, by design** |
+
+**DOUBLE-CLICK (`event == -3`, Button1)** — a separate rung in the same
+`else` chain, reached only when rung 5 did not arm (a `-3` is never a
+`ButtonPress`, so `mkpress` is 0 by construction):
+
+| rung | what | after issue 0189 |
+|---|---|---|
+| 1 | poison `graph_press_x/y` with `-1e30` (issue 0152) | unchanged — and it is what stops the trailing release wave-bolding under the double-click |
+| **2** | **`graph_marker_at(i, mx, my, GRAPH_MARKER_TOL, &part)`** | **NEW.** A hit on either part → `graph_marker_select_pair()` + `need_all_redraw` (the partner may live on another strip) |
+| 3 | `edit_wave_attributes(1, i, gr)` — legend → the wave dialog | now the `else` of rung 2 |
+| 4 | `graph_edit_properties` | now the `else` of rung 3 |
+
+**Marker before the dialogs is mandatory, not a preference.** A marker anchor
+sits *on a trace* by construction and a callout is clamped inside the plot box
+(§4.1), so without rung 2 a double-click aimed at a marker reaches
+`graph_edit_properties`. Rung 2 deliberately does **not** decline the
+reorder-grip column the way `graph_marker_press()` does (§7.2 press rung 5): the
+grip owns no double-click gesture, and the overlap only exists on a very narrow
+strip, where selecting the marker under the pointer is the right answer anyway.
 
 `graph_marker_press()` **declines outright** any pixel with
 `X_TO_SCREEN(mousex) >= gr->sx2 - GRAPH_REORDER_HANDLE_W` when
@@ -1074,6 +1131,26 @@ widget-level sequence. `<ButtonPress-1>` runs `wviewer::strip_drag_press`:
 | 7 | `trace_at` (`graph_trace_at`, 10 px) → trace drag | unchanged |
 | 8 | `cursor_grabbed` (`graph_flags & (16\|32\|512\|1024)`) → C cursor grab | unchanged |
 | 9 | strip reorder | unchanged |
+
+`<Double-Button-1>` is **more specific** than `<ButtonPress-1>`, so the second
+press of a double-click never reaches `strip_drag_press` or C at all; the second
+*release* still does. That binding used to be a bare `{break}` (*"D9: no graph
+props dlg"*). Since issue 0189 it is
+`{wviewer::marker_dblclick_at %W %x %y; break}`:
+
+* the `break` is **unconditional** — D9 (no graph-properties dialog over a
+  read-only viewer) must survive for every non-marker double-click, and
+  forwarding `-3` to C from here would let a Tcl/C hit-test disagreement open
+  `.graphdialog` over the viewer, the exact fall-through class issue 0176 closed
+  for `Delete`;
+* `marker_dblclick_at` resolves the token from `%W` (never the current ctx — the
+  `clear_all_at` rule), asks `xschem get graph_marker_at`, and on a hit runs
+  `xschem graph_marker select -pair` + `xschem redraw`;
+* it is **not** wrapped in `with_edit`, unlike every neighbouring marker seam:
+  `select` writes no token, pushes no undo point, sets no modify flag and is one
+  of the three sub-verbs the scheduler exempts from its readonly reject. The
+  bracket would cost a context switch plus four state writes on a click and hide
+  the fact that this path is not a mutation.
 
 **Rung 6 is not optional.** Without it, both failure modes are *silent*:
 
@@ -1466,7 +1543,8 @@ out"):
 |---|---|
 | `xschem get graph_marker_at <gi> <px> <py> [tol]` | `""` · `"<num> anchor"` · `"<num> label"` (default `tol` = `GRAPH_MARKER_TOL`) |
 | `xschem get graph_marker_drag` | `0` none · `1` anchor drag armed · `2` label drag armed |
-| `xschem get graph_marker_sel` | the selected marker number, `-1` = none |
+| `xschem get graph_marker_sel` | the selected marker number, `-1` = none — the **HEAD** of the set, unchanged by issue 0189 |
+| `xschem get graph_marker_sel_set` | the WHOLE selection as marker numbers, **head first**, space separated (`"2 1"`); `""` when nothing is selected (issue 0189) |
 | `xschem get graph_rects` | count of layer-2 rects with `flags & 1` — **not** `xschem get rects 2` |
 
 **Mutations — fail LOUD** (`xschem graph_marker <sub>`, top-level in
@@ -1486,8 +1564,8 @@ defeats both the same way, through `wviewer::with_edit`.
 | `anchor` | `<num> <dset> <point>` | `1`/`0` |
 | `move` | `<num> <px> <py>` | `1`/`0` |
 | `label` | `<num> <ldx> <ldy>` | `1`/`0` |
-| `delete` | `<num>` \| `-all [<gi>]` | `1`/`0` \| count |
-| `select` | `<num> [<gi>]` \| `-none` | the new selection |
+| `delete` | `<num>` \| `-all [<gi>]` \| `-selected` | `1`/`0` \| count \| count — `-selected` removes the whole set under **ONE** undo point (issue 0189) and is readonly-**rejected** like every other `delete` form |
+| `select` | `<num> [<gi>]` \| `-none` \| `-pair <num> [<gi>]` \| `-set <n1> [<n2> …]` | **always the new HEAD**, for every form (`-none` still answers `-1`). Read the whole set with `xschem get graph_marker_sel_set`. `-pair` applies the double-click policy (D13); `-set` is permissive and dedupes, keeping the order given. All four forms ride the `select` readonly **exemption**, which is what lets the read-only viewer pair-select without a `with_edit` bracket |
 | `list` | `[<gi>]` | Tcl list of 10-element sublists `{num graph wave dset point x y prev ldx ldy}`, `x`/`y` at `%.17g` — **the exactness seam** |
 | `text` | `<num>` | the rendered label, embedded `\n` |
 
@@ -1638,12 +1716,27 @@ defect that was reachable from the UI, not a tidy-up):
      `tests/headless/test_wave_markers.tcl` is the tree's **first and only
      caller of `xschem raw del`**.
 
+**Multi-marker selection — the PAIR case (issue 0189, 2026-08-01).** The
+selection became a **SET** (`xctx->graph_marker_sel_set[GRAPH_MARKER_MAX_SEL]` +
+`graph_marker_n_sel`) with `graph_marker_sel` kept as its head, and a
+**double-click on a difference marker selects it and the reference its deltas
+are derived from** (D13). `Delete` then removes the whole set as one gesture
+with **one** undo point, on the C key path and on the viewer's `delete_items`
+path alike.
+
+Scope, stated honestly: **pair only**. There is still no rubber band, no
+Ctrl+click accumulation, no chained or reverse delta selection. `GRAPH_MARKER_MAX_SEL`
+is 8 purely so a future Ctrl+click needs no header edit.
+
+The thing the old Deferred entry flagged as "decide it first" — *it changes verb
+result shapes* — was deliberately decided as **no change**: every
+`graph_marker select` form still returns the HEAD, `-none` still answers `-1`,
+`xschem get graph_marker_sel` and `wviewer::marker_selected` are byte-for-byte
+what they were, and the set is read through a **new** getter
+(`xschem get graph_marker_sel_set`). ~27 shipped assertions rest on that.
+
 ### Deferred — explicitly, not oversights
 
-* **Multi-marker selection.** `graph_marker_sel` holds one number. Cadence allows
-  rubber-band selection of several. Making it a list turns `Delete` into a loop
-  — contained, but it changes verb result shapes, so it should be decided before
-  those are relied on.
 * **An explicit `xschem graph_marker resnap` verb.** Markers render from the
   cached `x`/`y` (§5) and therefore do **not** follow a re-simulation. Re-deriving
   on every redraw is the wrong fix; a deliberate `resnap` is the right one.

@@ -3948,10 +3948,25 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
             Tcl_SetResult(interp, my_itoa(xctx->graph_marker_drag), TCL_VOLATILE);
           }
-          /* xschem get graph_marker_sel -> the selected marker number, -1 = none */
+          /* xschem get graph_marker_sel -> the selected marker number, -1 = none.
+           * THE HEAD of the set below; unchanged by issue 0189 on purpose. */
           else if(!strcmp(argv[2], "graph_marker_sel")) {
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
             Tcl_SetResult(interp, my_itoa(xctx->graph_marker_sel), TCL_VOLATILE);
+          }
+          /* xschem get graph_marker_sel_set -> the WHOLE selection as marker
+           * numbers, HEAD FIRST, space separated ("2 1"); "" when nothing is
+           * selected (issue 0189). Never an error -- fails soft like its four
+           * neighbours. The set is UI state and is never in a prop token. */
+          else if(!strcmp(argv[2], "graph_marker_sel_set")) {
+            int k;
+            char nbuf[32];
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            Tcl_ResetResult(interp);
+            for(k = 0; k < xctx->graph_marker_n_sel; k++) {
+              my_snprintf(nbuf, S(nbuf), "%d", xctx->graph_marker_sel_set[k]);
+              Tcl_AppendElement(interp, nbuf);
+            }
           }
           /* xschem get graph_rects -> how many layer-2 rects are GRAPHS.
            * Not the same as `xschem get rects 2` (every rect on the layer): the
@@ -5123,10 +5138,17 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
      *   anchor    <num> <dset> <point>                 -> 1|0
      *   move      <num> <px> <py>                      -> 1|0
      *   label     <num> <ldx> <ldy>                    -> 1|0
-     *   delete    <num> | -all [<gi>]                  -> 1|0 | count
-     *   select    <num> [<gi>] | -none                 -> the new selection
+     *   delete    <num> | -all [<gi>] | -selected      -> 1|0 | count | count
+     *   select    <num> [<gi>] | -none                 -> the new selection HEAD
+     *             | -pair <num> [<gi>] | -set <n1> ... -> ditto (issue 0189)
      *   list      [<gi>]  -> {{num graph wave dset point x y prev ldx ldy} ...}
      *   text      <num>   -> the rendered label (embedded newlines)
+     *
+     * The SELECTION IS A SET since issue 0189, held in xctx and never in a
+     * token. Every `select` form still returns the HEAD -- read the whole set
+     * with `xschem get graph_marker_sel_set`. `-pair` adds the `prev` partner
+     * of a difference marker when it resolves; `delete -selected` removes the
+     * whole set under ONE undo point.
      */
     else if(!strcmp(argv[1], "graph_marker"))
     {
@@ -5178,6 +5200,11 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
         if(!strcmp(argv[3], "-all")) {
           int gi = (argc > 4) ? atoi(argv[4]) : -1;
           Tcl_SetResult(interp, my_itoa(graph_marker_delete_all(gi)), TCL_VOLATILE);
+        /* -selected: the whole selection, ONE undo point (issue 0189). Exists so
+         * the multi-delete, its undo-point count and its `prev` sweep are
+         * assertable in BOTH test arms -- the C Delete key path is DISPLAY-only. */
+        } else if(!strcmp(argv[3], "-selected")) {
+          Tcl_SetResult(interp, my_itoa(graph_marker_delete_selected()), TCL_VOLATILE);
         } else {
           Tcl_SetResult(interp, my_itoa(graph_marker_delete(atoi(argv[3]))), TCL_VOLATILE);
         }
@@ -5185,7 +5212,25 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
       else if(!strcmp(argv[2], "select") && argc > 3) {
         int res;
         if(!strcmp(argv[3], "-none")) res = graph_marker_select(-1, -1);
+        /* -pair: the double-click policy, scriptable. Adds the `prev` partner
+         * only when it resolves -- the immediate pair, never the chain. */
+        else if(!strcmp(argv[3], "-pair")) {
+          if(argc > 4)
+            res = graph_marker_select_pair(atoi(argv[4]),
+                    (argc > 5) ? atoi(argv[5]) : xctx->graph_master);
+          else res = xctx->graph_marker_sel;
+        }
+        /* -set: an explicit list, permissive like `select <num>` (D-18). It
+         * dedupes and caps; the ORDER given is the selection order. */
+        else if(!strcmp(argv[3], "-set")) {
+          int nums[GRAPH_MARKER_MAX_SEL];
+          int k, n = 0;
+          for(k = 4; k < argc && n < GRAPH_MARKER_MAX_SEL; k++) nums[n++] = atoi(argv[k]);
+          res = graph_marker_select_set(nums, n, xctx->graph_master);
+        }
         else res = graph_marker_select(atoi(argv[3]), (argc > 4) ? atoi(argv[4]) : xctx->graph_master);
+        /* EVERY form answers the HEAD, including -pair/-set: the set is read
+         * with `xschem get graph_marker_sel_set` (D-16). */
         Tcl_SetResult(interp, my_itoa(res), TCL_VOLATILE);
       }
       else if(!strcmp(argv[2], "list")) {

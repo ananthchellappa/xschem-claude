@@ -890,7 +890,8 @@ of trace names above it; "margins" is everything else inside the strip rect
 | **Ctrl**+LMB click | a trace, or a legend entry | **C** | ADD it, or REMOVE it if already selected |
 | **Ctrl**+LMB click | anywhere that owns no trace | **C** | **nothing** — Ctrl never clears |
 | LMB **double**-click | a legend entry (embedded graphs) | **C** | the wave dialog; the selection is unchanged |
-| LMB double-click | anywhere (viewer) | **Tcl** | swallowed (`{break}`, D9) |
+| LMB **double**-click | **on a marker** (viewer) | **Tcl seam, C policy** | selects that marker **and**, for a difference marker, the reference its deltas are derived from (issue 0189, `graph_markers.md` D13). `wviewer::marker_dblclick_at` asks `xschem get graph_marker_at` and delegates the policy to `xschem graph_marker select -pair`, then `xschem redraw`. Still `break`s |
+| LMB double-click | anywhere else (viewer) | **Tcl** | swallowed (`{break}`, D9) — the `break` is **unconditional**, so no graph-properties dialog can ever appear over a read-only viewer |
 | MMB drag | anywhere on a graph | **C** | graph pan |
 | RMB press-drag | the body | **C** | box zoom |
 | RMB **click** | on a trace, in the body | **Tcl** | the trace context menu (item 7) |
@@ -899,7 +900,7 @@ of trace names above it; "margins" is everything else inside the strip rect
 | Shift+LMB, Alt+LMB | anywhere | — | swallowed by `strip_bindings` (issue 0149) |
 | **`Delete`** (the one KEY row) | over a graph | **Tcl** | deletes the selection — the marker, the traces, or both (§16, issue 0176). Never forwarded to C |
 
-Five rules that are easy to get wrong and are asserted:
+Six rules that are easy to get wrong and are asserted:
 
 1. **Only the plot BODY clears.** A click that hits neither picking surface
    changes nothing, which is why the C arm carries `on_body` separately from
@@ -929,6 +930,16 @@ Five rules that are easy to get wrong and are asserted:
    legend band; see landmine 44). The same property suppresses the two schematic
    pointer glyphs, `draw_crosshair` and `draw_snap_cursor` — neither is a viewer
    concept and the first paints *at* the snapped coordinate.
+
+6. **The double-click SETS the marker selection; it never toggles.** The first
+   click of it still does its ordinary single-select and the second **widens**
+   that to the pair — so double-clicking an already-selected difference marker
+   (whose first click *deselected* it, per `graph_markers.md` §6.2) still ends
+   with the pair selected, and a repeat double-click leaves it there. The
+   companion rule on the single click: with a **pair** selected, a plain click on
+   a member **collapses** to that one member (rule 2's trace behaviour); the
+   shipped "click the already-selected one to deselect" survives only for a
+   selection of exactly one. Issue 0189.
 
 ### 15.7 What a HOVER draws, by region (issue 0177)
 
@@ -1048,7 +1059,7 @@ kind of thing is selected** — not a priority ladder between two owners:
 
 | what is selected | what `Delete` does |
 |---|---|
-| a MARKER (and the pointer is over the strip that owns it) | that marker |
+| a MARKER (and the pointer is over the strip that owns **the head**) | the **whole marker selection** — with issue 0189 that can be a difference marker *and* its reference, on two different strips. The scope gate stays on the HEAD (`graph_markers.md` D9): when the head is in scope the whole set goes. `delete_items` already dedupes, filters to live numbers and gives ONE undo point and ONE log line, so the viewer half was a one-line change |
 | one or more TRACES (§15's selection, window-wide) | those traces, **and every marker on them** |
 | both | both, as ONE gesture (D1 — flagged at review) |
 | nothing | **nothing**, and in particular nothing reaches the C engine |

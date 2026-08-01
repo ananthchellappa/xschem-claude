@@ -610,7 +610,7 @@ static int graph_marker_press(int i, Graph_ctx *gr, xRect *r)
     /* A press on empty graph space DESELECTS. Without this a stale window-wide
      * selection would make a later Delete over any strip eat the marker instead
      * of the schematic selection. */
-    if(xctx->graph_marker_sel >= 0) {
+    if(xctx->graph_marker_n_sel > 0) {
       graph_marker_select(-1, -1);
       return -1; /* the ring must be erased, possibly on another strip */
     }
@@ -632,7 +632,7 @@ static int graph_marker_press(int i, Graph_ctx *gr, xRect *r)
    *
    * The three early returns above (the reorder-grip refusal, and the two
    * empty-space arms) latch nothing -- they are not our gesture. */
-  if(part == 2 && num == xctx->graph_marker_sel)
+  if(part == 2 && graph_marker_is_selected(num))
     xctx->graph_marker_dragmode = GRAPH_MARKER_MODE_RIGID;
   else
     xctx->graph_marker_dragmode = part;
@@ -787,8 +787,13 @@ static int graph_marker_release(void)
       graph_marker_label_offset(num, m.ldx, m.ldy);
     return 0;
   }
-  /* a plain CLICK selects; clicking the already-selected marker deselects */
-  if(xctx->graph_marker_sel == num) graph_marker_select(-1, -1);
+  /* A plain CLICK selects. Clicking the ALREADY-SELECTED marker deselects, as
+   * it always has -- but only when it is the WHOLE selection. With a pair
+   * selected (issue 0189) the click is DISAMBIGUATING, so it COLLAPSES to the
+   * one clicked (the issue-0174 D3 rule for traces), and a second click on it
+   * then still deselects. */
+  if(graph_marker_is_selected(num) && xctx->graph_marker_n_sel == 1)
+    graph_marker_select(-1, -1);
   else graph_marker_select(num, gi);
   return (oldsel >= 0 && oldgraph != gi);
 }
@@ -1383,11 +1388,24 @@ static int waves_callback(int event, int mx, int my, KeySym key, int button, int
       }
     }
     else if(event == -3 && button == Button1) {
+      int mnum, mpart = 0;
       /* issue 0152: a double-click is press,release,`-3`,release -- invalidate the click
        * anchor so the trailing release does not also toggle the wave bold on top of the
        * attributes/properties dialog this opens. */
       xctx->graph_press_x = xctx->graph_press_y = -1e30;
-      if(!edit_wave_attributes(1, i, gr)) {
+      /* A DOUBLE-CLICK ON A MARKER selects it and, when it carries a delta
+       * block, the marker its deltas are derived from (issue 0189). It must be
+       * tested BEFORE the wave dialog: a marker ANCHOR sits on a trace by
+       * construction and a callout is clamped inside the plot box, so this
+       * double-click otherwise reaches graph_edit_properties. need_all_redraw
+       * because the partner may live on a different strip -- the selection is by
+       * NUMBER and is deliberately not scoped to one rect. */
+      mnum = graph_marker_at(i, (double)mx, (double)my, GRAPH_MARKER_TOL, &mpart);
+      if(mnum > 0 && mpart) {
+        graph_marker_select_pair(mnum, i);
+        need_all_redraw = 1;
+      }
+      else if(!edit_wave_attributes(1, i, gr)) {
         tclvareval("graph_edit_properties ", my_itoa(i), NULL);
       }
     }

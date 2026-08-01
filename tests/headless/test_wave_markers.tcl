@@ -881,6 +881,272 @@ check "MK12 graph_marker delete -all with nothing there -> 0" \
   [pcall {xschem graph_marker delete -all}] 0
 
 # ============================================================================
+# MS* — the SELECTION SET and the pair policy (issue 0189).
+# No raw, no DISPLAY, no gestures: both arms run every leg. Records are written
+# straight into the `markers` token with setprop, exactly as MK7 does, because
+# selection, the `prev` walk and the delete never read a sample.
+# ============================================================================
+
+# the whole selection, head first ("" = nothing selected)
+proc ms_set {} { return [pcall {xschem get graph_marker_sel_set}] }
+# the head, as the shipped getter answers it
+proc ms_sel {} { return [pcall {xschem get graph_marker_sel}] }
+# `prev` (field 7) of every marker in the window, in list order
+proc ms_prevs {args} {
+  set out {}
+  foreach r [eval [list xschem graph_marker list] $args] { lappend out [lindex $r 7] }
+  return $out
+}
+# stage rect0 = M1(prev 0), M2(prev 1), M3(prev 2); rect1 = empty
+proc ms_stage_chain {} {
+  mk_reset
+  mk_graph 0 0 800 400
+  mk_graph 0 1000 800 1400
+  xschem setprop rect 2 0 markers \
+    "[mk_rec 1 0 0 10 0.1 0.2 0]\n[mk_rec 2 0 0 20 0.3 0.4 1]\n[mk_rec 3 0 0 30 0.5 0.6 2]"
+  xschem graph_marker select -none
+  xschem set_modify 0
+}
+
+# --- MS0: the staging really took (a FAIL here, never a skip) ---------------
+pcall {ms_stage_chain}
+check "MS0 two graph rects staged" [pcall {xschem get graph_rects}] 2
+check "MS0 the hand-written records are visible to C" [pcall {mk_nums}] {1 2 3}
+check "MS0 ... with the intended prev links (M2<-M1, M3<-M2)" [pcall {ms_prevs}] {0 1 2}
+check "MS0 they are all on rect 0, rect 1 is empty" \
+  [pcall {list [llength [xschem graph_marker list 0]] [llength [xschem graph_marker list 1]]}] {3 0}
+
+# --- MS1: THE ITEM. a difference marker pair-selects with its reference -----
+check "MS1 `select -pair 2` returns the HEAD, not the list" \
+  [pcall {xschem graph_marker select -pair 2}] 2
+check "MS1 `xschem get graph_marker_sel` is still the head" [ms_sel] 2
+check "MS1 the SET is the pair, HEAD FIRST (not sorted)" [ms_set] {2 1}
+
+# --- MS2: a plain marker pair-selects alone (D-4) ---------------------------
+check "MS2 `select -pair 1` on a marker with no delta block -> just it" \
+  [pcall {xschem graph_marker select -pair 1; ms_set}] {1}
+
+# --- MS3: the shipped forms are byte-for-byte unchanged (INV-8) -------------
+check "MS3 `select 2` still returns 2" [pcall {xschem graph_marker select 2}] 2
+check "MS3 ... and the set is that one number" [ms_set] {2}
+check "MS3 `select -none` still returns -1" [pcall {xschem graph_marker select -none}] -1
+check "MS3 ... and clears the head" [ms_sel] -1
+check "MS3 ... and empties the set (INV-1)" [ms_set] {}
+
+# --- MS5: never transitive (INV-4, D-6) -------------------------------------
+check "MS5 chain M1<-M2<-M3: `select -pair 3` takes the IMMEDIATE pair only" \
+  [pcall {xschem graph_marker select -pair 3; ms_set}] {3 2}
+check_true "MS5 ... and 1 is NOT in it" \
+  [expr {[lsearch -exact [ms_set] 1] < 0}]
+
+# --- MS6: one direction only (D-7) ------------------------------------------
+check "MS6 `select -pair 1` while M2.prev==1 selects the reference ALONE" \
+  [pcall {xschem graph_marker select -pair 1; ms_set}] {1}
+
+# --- MS11: -set dedupes, keeps order, and is permissive (D-18) --------------
+check "MS11 `select -set 2 2 1` dedupes and keeps the order given" \
+  [pcall {xschem graph_marker select -set 2 2 1; ms_set}] {2 1}
+check "MS11 ... and returns the head" [pcall {xschem graph_marker select -set 3 1}] 3
+check "MS11 a number no record carries is ACCEPTED (permissive, like `select <n>`)" \
+  [pcall {xschem graph_marker select -set 91 92; ms_set}] {91 92}
+
+# --- MS12: delete -selected with an empty selection is a no-op --------------
+pcall {xschem graph_marker select -none}
+check "MS12 `delete -selected` with nothing selected -> 0" \
+  [pcall {xschem graph_marker delete -selected}] 0
+check "MS12 ... and nothing was deleted" [pcall {mk_nums}] {1 2 3}
+
+# --- MS4: the reference was DELETED -> the delta selects alone (D-5) --------
+pcall {ms_stage_chain}
+check "MS4 deleting M1 sweeps M2's prev to 0" \
+  [pcall {xschem graph_marker delete 1; ms_prevs}] {0 2}
+check "MS4 `select -pair 2` on the orphan selects just it, silently" \
+  [pcall {xschem graph_marker select -pair 2; ms_set}] {2}
+
+# --- MS4b: a DANGLING prev (a number no record carries) ---------------------
+mk_reset
+pcall {mk_graph 0 0 800 400}
+pcall {xschem setprop rect 2 0 markers "[mk_rec 2 0 0 20 0.3 0.4 77]"}
+check "MS4b the dangling link really is in the token" [pcall {ms_prevs}] {77}
+check "MS4b `select -pair` resolves nothing and selects the one number" \
+  [pcall {xschem graph_marker select -pair 2; ms_set}] {2}
+check "MS4b ... with no error raised" \
+  [pcall {catch {xschem graph_marker select -pair 2}}] 0
+
+# --- MS7-MS10: the CROSS-STRIP pair -----------------------------------------
+proc ms_stage_cross {} {
+  mk_reset
+  mk_graph 0 0 800 400
+  mk_graph 0 1000 800 1400
+  xschem setprop rect 2 0 markers "[mk_rec 1 0 0 10 0.1 0.2 0]"
+  xschem setprop rect 2 1 markers "[mk_rec 2 0 0 20 0.3 0.4 1]"
+  xschem graph_marker select -none
+  xschem set_modify 0
+}
+pcall {ms_stage_cross}
+check "MS7 M1 is on rect 0 and M2 on rect 1 (different strips)" \
+  [pcall {list [mk_nums 0] [mk_nums 1]}] {1 2}
+check "MS7 the pair spans the two rects" \
+  [pcall {xschem graph_marker select -pair 2; ms_set}] {2 1}
+check "MS7 the head is the marker that was double-clicked" [ms_sel] 2
+
+# --- MS8: NO TOKEN, EVER (INV-5 / D-1) --------------------------------------
+# The strongest available form: the WHOLE serialised buffer, not just the
+# `markers` token — a selection token written anywhere on the rect shows up.
+pcall {ms_stage_cross}
+set ms8t0 [pcall {xschem getprop rect 2 0 markers}]
+set ms8t1 [pcall {xschem getprop rect 2 1 markers}]
+set ms8fa [file join $scratch ms8a.sch]
+set ms8fb [file join $scratch ms8b.sch]
+pcall {xschem saveas $ms8fa schematic}
+check "MS8 the buffer is clean before the selection" [pcall {xschem get modified}] 0
+# the two-marker selection is staged with `-set`, NOT `-pair`: this leg's
+# subject is "no token at any selection SIZE", and staging it through the pair
+# policy would make the whole leg collapse whenever that policy is the thing
+# broken -- which is precisely what MS1/MS5/MS7 are for.
+pcall {xschem graph_marker select -set 2 1}
+check "MS8 a two-marker selection is really in effect" [ms_set] {2 1}
+check "MS8 selecting does NOT set the modify flag" [pcall {xschem get modified}] 0
+check "MS8 rect 0's markers token is byte-identical" \
+  [pcall {xschem getprop rect 2 0 markers}] $ms8t0
+check "MS8 rect 1's markers token is byte-identical" \
+  [pcall {xschem getprop rect 2 1 markers}] $ms8t1
+check "MS8 no sel_markers-style token appeared on rect 0" \
+  [pcall {xschem getprop rect 2 0 sel_markers}] {}
+check "MS8 no sel_markers-style token appeared on rect 1" \
+  [pcall {xschem getprop rect 2 1 sel_markers}] {}
+# the pair form takes the same vow
+pcall {xschem graph_marker select -pair 2}
+check "MS8 the -pair form does not dirty the buffer either" [pcall {xschem get modified}] 0
+pcall {xschem saveas $ms8fb schematic}
+set ms8A [pcall {set f [open $ms8fa r]; set d [read $f]; close $f; set d}]
+set ms8B [pcall {set f [open $ms8fb r]; set d [read $f]; close $f; set d}]
+check_true "MS8 the whole serialised buffer is BYTE-identical across the selection" \
+  [expr {$ms8A eq $ms8B && [string length $ms8A] > 0}]
+
+# --- MS9: delete -selected removes the whole set, across both rects ---------
+pcall {ms_stage_cross}
+pcall {xschem graph_marker select -pair 2}
+check "MS9 `delete -selected` returns the COUNT" \
+  [pcall {xschem graph_marker delete -selected}] 2
+check "MS9 rect 0's record is gone" [pcall {mk_nums 0}] {}
+check "MS9 rect 1's record is gone too (the partner on the OTHER strip)" \
+  [pcall {mk_nums 1}] {}
+check "MS9 the head is cleared" [ms_sel] -1
+check "MS9 the set is empty" [ms_set] {}
+
+# --- MS10: ONE undo point for the whole gesture (INV-6) ---------------------
+# This is the leg that dies if undo is pushed per delete.
+pcall {xschem undo}
+check "MS10 ONE undo restores rect 0's record" [pcall {mk_nums 0}] {1}
+check "MS10 ... and rect 1's, in the same undo step" [pcall {mk_nums 1}] {2}
+check "MS10 ... with the delta link intact" [pcall {ms_prevs 1}] {1}
+
+# --- MS14: select is UI state, delete is content (the readonly split) -------
+pcall {ms_stage_cross}
+pcall {xschem set readonly 1}
+check "MS14 the buffer really is read-only" [pcall {xschem get readonly}] 1
+check "MS14 `select -pair` is NOT rejected (pure UI state)" \
+  [pcall {catch {xschem graph_marker select -pair 2}}] 0
+check "MS14 ... and it really selected (the head moved)" [ms_sel] 2
+check "MS14 `delete -selected` IS rejected by the scheduler" \
+  [pcall {catch {xschem graph_marker delete -selected}}] 1
+check "MS14 ... and nothing was deleted" [pcall {list [mk_nums 0] [mk_nums 1]}] {1 2}
+pcall {xschem set readonly 0}
+check "MS14 read-only lifted again" [pcall {xschem get readonly}] 0
+
+# --- MS13: THE SOURCE-LEVEL LEG (INV-7, the LS5 idiom) ----------------------
+# Every "is this marker selected" test must go through graph_marker_is_selected().
+# A surviving bare `== xctx->graph_marker_sel` renders a selected PARTNER in the
+# unselected style, and no leg that selects one marker can see it — exactly the
+# LS5/D4 failure mode for traces. Counted on CODE lines only (count_code): the
+# comment blocks here deliberately quote the very string being counted.
+proc ms_count_code {src pat} {
+  set n 0
+  foreach line [split $src "\n"] {
+    set t [string trimleft $line]
+    if {[string index $t 0] eq "*"} { continue }
+    if {[string range $t 0 1] eq "/*" || [string range $t 0 1] eq "//"} { continue }
+    incr n [regexp -all $pat $line]
+  }
+  return $n
+}
+# the CODE lines of one C function body, by its exact signature line
+proc ms_fnbody {src sig} {
+  set out {}
+  set in 0
+  foreach line [split $src "\n"] {
+    if {!$in} {
+      if {[string first $sig $line] == 0} { set in 1 }
+      continue
+    }
+    lappend out $line
+    if {$line eq "\}"} { break }
+  }
+  return [join $out "\n"]
+}
+set fp [open [file join $repo src draw.c] r];     set ms13d [read $fp]; close $fp
+set fp [open [file join $repo src callback.c] r]; set ms13c [read $fp]; close $fp
+# `\M` = end-of-word, so graph_marker_sel_set / _selgraph do NOT match
+set ms13pat {xctx->graph_marker_sel\M}
+
+set ms13draw [ms_fnbody $ms13d {static void draw_graph_markers(}]
+check_true "MS13 the draw_graph_markers() body was located" \
+  [expr {[string length $ms13draw] > 200}]
+check "MS13 draw_graph_markers() has NO bare graph_marker_sel comparison left" \
+  [ms_count_code $ms13draw $ms13pat] 0
+check "MS13 ... and it asks the predicate exactly once" \
+  [ms_count_code $ms13draw {graph_marker_is_selected\(}] 1
+
+set ms13press [ms_fnbody $ms13c {static int graph_marker_press(}]
+check_true "MS13 the graph_marker_press() body was located" \
+  [expr {[string length $ms13press] > 200}]
+check "MS13 the RIGID drag latch has no bare graph_marker_sel comparison" \
+  [ms_count_code $ms13press $ms13pat] 0
+check "MS13 ... it asks the predicate" \
+  [ms_count_code $ms13press {graph_marker_is_selected\(}] 1
+
+set ms13rel [ms_fnbody $ms13c {static int graph_marker_release(}]
+check_true "MS13 the graph_marker_release() body was located" \
+  [expr {[string length $ms13rel] > 200}]
+check "MS13 the click toggle has no bare graph_marker_sel comparison" \
+  [ms_count_code $ms13rel $ms13pat] 1
+check "MS13 ... i.e. only the repaint-scope hint (`int oldsel = ...`) survives" \
+  [ms_count_code $ms13rel {int oldsel = xctx->graph_marker_sel;}] 1
+check "MS13 ... and the toggle itself asks the predicate" \
+  [ms_count_code $ms13rel {graph_marker_is_selected\(}] 1
+
+# THE EXACT SANCTIONED SET of surviving bare readers/writers, whole-file.
+# draw.c: only the one WRITER, graph_marker_select_set(), may name the head.
+set ms13dl {}
+foreach line [split $ms13d "\n"] {
+  set t [string trimleft $line]
+  if {[string index $t 0] eq "*"} { continue }
+  if {[string range $t 0 1] eq "/*"} { continue }
+  if {[regexp $ms13pat $line]} { lappend ms13dl [string trim $line] }
+}
+check "MS13 draw.c names the head ONLY inside graph_marker_select_set()" $ms13dl \
+  [list {xctx->graph_marker_sel = w ? xctx->graph_marker_sel_set[0] : -1;} \
+        {return xctx->graph_marker_sel;}]
+# callback.c: the three sanctioned HEAD readers of decision doc 2.3 — the
+# repaint-scope hint and the two lines of the Delete strip-scope gate (D-9).
+set ms13cl {}
+foreach line [split $ms13c "\n"] {
+  set t [string trimleft $line]
+  if {[string index $t 0] eq "*"} { continue }
+  if {[string range $t 0 1] eq "/*"} { continue }
+  if {[regexp $ms13pat $line]} { lappend ms13cl [string trim $line] }
+}
+check "MS13 callback.c keeps exactly the 3 sanctioned HEAD readers" $ms13cl \
+  [list {int oldsel = xctx->graph_marker_sel;} \
+        {if(rstate == 0 && xctx->graph_marker_sel >= 0 &&} \
+        {if(graph_marker_find(xctx->graph_marker_sel, &sgi, NULL) &&}]
+
+# leave the fixture the way MR* below has always found it
+mk_reset
+pcall {xschem set_modify 0}
+
+# ============================================================================
 # MR* — a raw + a graph, no gestures. The engine half runs in BOTH arms.
 # ============================================================================
 mk_reset
@@ -2688,6 +2954,113 @@ ui_state=[pcall {xschem get ui_state}] rects=[pcall {xschem get graph_rects}]"
     [pcall {mk_close [lindex $mp22m 6] [lindex $mp22s 3]}]
   pcall {xschem set graph_snap_cursor 0}
   pcall {xschem graph_marker delete -all}
+  pcall {xschem setprop rect 2 1 hilight_wave -1}
+
+  # --- MS-X5: the `-3` double-click arm on an EMBEDDED graph (issue 0189) --
+  # The C half of the gesture, driven the way xschem.tcl:13939 drives it
+  # (`xschem callback %W -3 %x %y 0 %b 0 %s`). The dialog is SPIED rather than
+  # allowed to open: graph_edit_properties is non-modal, but a spy makes the
+  # negative half deterministic and leaves no toplevel behind.
+  mf_ready {MS-X5}
+  pcall {xschem graph_marker delete -all}
+  set ::ms_dlg 0
+  rename graph_edit_properties __ms_saved_gep
+  proc graph_edit_properties {i} { set ::ms_dlg [expr {$::ms_dlg + 1}] }
+  if {[catch {
+    # DATA-ADDRESSED creation (add_at), not pixel-addressed: `add` snaps to the
+    # nearest sample, and two pixels less than one sample apart land on the SAME
+    # point -- which makes the two anchors coincide and the hit-test can then
+    # only ever answer the lower-numbered one. Points 3 and 7 of the 11-point
+    # grid are unambiguously distinct AND put both anchors in the middle of the
+    # plot box, clear of the `border = 5 * tk_scaling` rim that waves_selected()
+    # insets the rect by (the landmine mx_arm's stall message names).
+    pcall {xschem graph_marker add_at 0 0 0 3}
+    pcall {xschem graph_marker add_at 0 0 0 7 -delta}
+    set ms5l [pcall {xschem graph_marker list 0}]
+    check "MS-X5 two markers on strip 0" [llength $ms5l] 2
+    check "MS-X5 the second carries a delta block against the first" \
+      [pcall {list [lindex [lindex $ms5l 1] 7] [llength $ms5l]}] \
+      [pcall {list [lindex [lindex $ms5l 0] 0] 2}]
+    check "MS-X5 ... and they sit on DIFFERENT samples" \
+      [pcall {list [lindex [lindex $ms5l 0] 4] [lindex [lindex $ms5l 1] 4]}] {3 7}
+    set ms5num [pcall {lindex [lindex $ms5l 1] 0}]
+    set ms5ref [pcall {lindex [lindex $ms5l 0] 0}]
+    # scan the DELTA marker's anchor pixel with the engine's own hit-tester,
+    # inside strip 0's band (mfb0) -- never predicted from where it "should" be.
+    # The 25-px inset keeps the pixel out of the rim above: graph_marker_at
+    # answers there but no press is ever routed to the graph.
+    set ms5p {}
+    lassign $mfb0 m5x1 m5y1 m5x2 m5y2
+    if {[string is integer -strict $m5y2]} {
+      for {set m5y [expr {$m5y1 + 25}]} {$m5y <= $m5y2 - 25 && $ms5p eq {}} {incr m5y 2} {
+        for {set m5x [expr {$m5x1 + 25}]} {$m5x <= $m5x2 - 25} {incr m5x 2} {
+          set m5r [pcall {xschem get graph_marker_at 0 $m5x $m5y 8}]
+          if {[lindex $m5r 0] == $ms5num && [lindex $m5r 1] eq {anchor}} {
+            set ms5p [list $m5x $m5y]; break
+          }
+        }
+      }
+    }
+    check_true "MS-X5 the delta marker's anchor pixel was found {$ms5p}" \
+      [pexpr {[llength $ms5p] == 2}]
+    # a corner pixel no marker can occupy, so a failed scan still RUNS the
+    # gesture and lets its own assertions fail loudly (the mk_px contract --
+    # that helper itself lives in the viewer block and is not visible here)
+    if {[llength $ms5p] != 2} { set ms5p {2 2} }
+    lassign $ms5p ms5px ms5py
+    pcall {xschem graph_marker select -none}
+    pcall {mf_move $ms5px $ms5py}
+    note "MS-X5 at ($ms5px,$ms5py):\
+ marker_at={[pcall {xschem get graph_marker_at 0 $ms5px $ms5py 8}]}\
+ plotbox=[pcall {xschem get graph_plotbox_at 0 $ms5px $ms5py}] band=$mfb0"
+    pcall {xschem callback .drw -3 $ms5px $ms5py 0 1 0 0}
+    check "MS-X5 the `-3` on a marker anchor selects the PAIR" \
+      [pcall {xschem get graph_marker_sel_set}] [list $ms5num $ms5ref]
+    check "MS-X5 ... and never reached graph_edit_properties" $::ms_dlg 0
+    check "MS-X5 ... and wrote nothing to the rect" \
+      [pcall {xschem getprop rect 2 0 sel_markers}] {}
+    # THE CONTROL: the same event at an empty plot-box pixel still opens the
+    # dialog exactly once and selects nothing -- so the leg above cannot pass
+    # because the `-3` never arrived.
+    pcall {xschem graph_marker select -none}
+    pcall {mf_move $mfe1x $mfe1y}
+    pcall {xschem callback .drw -3 $mfe1x $mfe1y 0 1 0 0}
+    check "MS-X5 control: the same `-3` on empty plot space opens the dialog ONCE" \
+      $::ms_dlg 1
+    check "MS-X5 control: ... and selected nothing" \
+      [pcall {xschem get graph_marker_sel_set}] {}
+
+    # --- MS-X6: the C `Delete` KEY path over an embedded graph -----------
+    # The other half of D-8. The viewer's Delete goes through the Tcl
+    # delete_items path (MS-X4); THIS is the one that reaches
+    # graph_marker_delete_selected() through the XK_Delete arm, whose strip-scope
+    # gate is still decided on the HEAD (D-9) -- so a pair whose partner lives
+    # elsewhere still goes as a whole.
+    pcall {mf_move $ms5px $ms5py}
+    pcall {xschem callback .drw -3 $ms5px $ms5py 0 1 0 0}
+    check "MS-X6 the pair is selected before the keystroke" \
+      [pcall {xschem get graph_marker_sel_set}] [list $ms5num $ms5ref]
+    pcall {xschem set_modify 0}
+    pcall {mf_key $ms5px $ms5py 65535}
+    check "MS-X6 the Delete KEY removed BOTH members" \
+      [pcall {llength [xschem graph_marker list 0]}] 0
+    check "MS-X6 ... and cleared the selection" \
+      [pcall {xschem get graph_marker_sel_set}] {}
+    pcall {xschem undo}
+    check "MS-X6 ONE undo brings both back (one undo point per gesture)" \
+      [pcall {llength [xschem graph_marker list 0]}] 2
+    check "MS-X6 ... with the delta link intact" \
+      [pcall {lindex [lindex [xschem graph_marker list 0] 1] 7}] $ms5ref
+  } ms5err]} {
+    puts "FAIL: MS-X5 ABORTED: $ms5err : FAIL"
+    incr fail
+  }
+  rename graph_edit_properties {}
+  rename __ms_saved_gep graph_edit_properties
+  catch {destroy .graphdialog}
+  unset -nocomplain ::ms_dlg
+  pcall {xschem graph_marker delete -all}
+  pcall {xschem setprop rect 2 0 hilight_wave -1}
   pcall {xschem setprop rect 2 1 hilight_wave -1}
 
   # --- MF3: the window is parsed ONCE per operation -----------------------
@@ -5191,6 +5564,193 @@ v_c} {2 3}]
   check "MF11b Delete, unlike m/d, logs exactly ONE viewer line (issue 0176)" \
     [expr {[llength $::mxlog] - $mf11log2}] 1
 
+  # --- MS-X*: the DOUBLE-CLICK pair select in the viewer (issue 0189) ----
+  # wb_ev bumps -time by 1000 ms per event, precisely so two presses are never
+  # collapsed into a <Double-Button-1>. This gesture needs the opposite: the
+  # SECOND press must land inside Tk's NEARBY_MS (500) / NEARBY_PIXELS (5)
+  # window of the FIRST one, so it stamps its own times and reuses one pixel.
+  proc ms_ev {w seq dt args} {
+    set ::wbt [expr {$::wbt + $dt}]
+    eval [list event generate $w $seq -time $::wbt] $args
+    update
+  }
+  # press + release, both at (x,y). `gap` is the ms between this press and the
+  # PREVIOUS event -- 1000 for an independent click, ~80 for the second half of
+  # a double-click.
+  proc ms_click {w x y gap} {
+    ms_ev $w <ButtonPress-1>   $gap -x $x -y $y
+    ms_ev $w <ButtonRelease-1> 50   -x $x -y $y -state 0x100
+  }
+  # the whole four-event double-click at ONE pixel
+  proc ms_dbl {w x y} {
+    ms_click $w $x $y 1000
+    ms_click $w $x $y 80
+  }
+  # the SELECTION SET of the viewer context
+  proc ms_vset {} {
+    xschem new_schematic switch $::vdrw
+    return [xschem get graph_marker_sel_set]
+  }
+  proc ms_vsel {} {
+    xschem new_schematic switch $::vdrw
+    return [xschem get graph_marker_sel]
+  }
+  # centroid pixel of marker `num`'s `want` part (anchor|label) on strip `gi`,
+  # found with the engine's OWN hit-tester at GRAPH_MARKER_TOL -- so a pixel
+  # this returns is one the PRESS reads the same way (the mk_parts contract,
+  # narrowed to a named marker because this group stages TWO of them).
+  # The 25-px inset is load-bearing, not tidiness: waves_selected() insets every
+  # graph rect by `border = 5 * tk_scaling` and refuses a press inside that rim
+  # (the landmine mx_arm's stall message names), while graph_marker_at answers
+  # there quite happily -- so an un-inset scan hands back a pixel whose press
+  # never reaches C at all.
+  proc ms_part_of {gi num want} {
+    set bands [wviewer::strip_bands_px $::vdrw]
+    if {$gi >= [llength $bands]} { return {} }
+    lassign [lindex $bands $gi] bx1 by1 bx2 by2
+    set bx1 [expr {int($bx1) + 25}]; set by1 [expr {int($by1) + 25}]
+    set bx2 [expr {int($bx2) - 25}]; set by2 [expr {int($by2) - 25}]
+    xschem new_schematic switch $::vdrw
+    set xs {}; set ys {}
+    for {set y $by1} {$y <= $by2} {incr y 2} {
+      for {set x $bx1} {$x <= $bx2} {incr x 2} {
+        set r [xschem get graph_marker_at $gi $x $y 8]
+        if {$r eq {}} continue
+        if {[lindex $r 0] != $num || [lindex $r 1] ne $want} continue
+        lappend xs $x; lappend ys $y
+      }
+    }
+    if {![llength $xs]} { return {} }
+    set sx 0; set sy 0
+    foreach v $xs { incr sx $v }
+    foreach v $ys { incr sy $v }
+    return [list [expr {$sx / [llength $xs]}] [expr {$sy / [llength $ys]}]]
+  }
+  # add a marker through with_edit, DATA-addressed. `add` (pixel-addressed)
+  # snaps to the nearest sample, so two pixels less than one sample apart land
+  # on the SAME point -- the two anchors then coincide and graph_marker_at, which
+  # takes the NEAREST anchor, can only ever answer the lower-numbered one.
+  proc ms_wadd_at {tok gi wave dset point {delta {}}} {
+    set r {}
+    if {$delta eq {}} {
+      wviewer::with_edit $tok {set r [xschem graph_marker add_at $gi $wave $dset $point]}
+    } else {
+      wviewer::with_edit $tok {set r [xschem graph_marker add_at $gi $wave $dset $point -delta]}
+    }
+    return $r
+  }
+
+  mx_ready {MS-X}
+  pcall {mk_wdel $tok}
+  pcall {wviewer::fit $tok}
+  pcall {xschem new_schematic switch $vdrw; xschem graph_marker select -none}
+  # points 3 and 7 of the 11-point grid: distinct samples, and both anchors land
+  # in the middle of the plot box rather than against a rim
+  check "MS-X0 the REFERENCE marker M1 was placed" \
+    [pcall {ms_wadd_at $tok 0 0 0 3}] 1
+  check "MS-X0 the DIFFERENCE marker M2 was placed with -delta" \
+    [pcall {ms_wadd_at $tok 0 0 0 7 -delta}] 2
+  set msl [pcall {mk_list 0}]
+  check "MS-X0 two markers on strip 0" [llength $msl] 2
+  check "MS-X0 M2 carries a delta block against M1" \
+    [pcall {lindex [lindex $msl 1] 7}] 1
+  check "MS-X0 ... and they sit on DIFFERENT samples" \
+    [pcall {list [lindex [lindex $msl 0] 4] [lindex [lindex $msl 1] 4]}] {3 7}
+  set msA2 [mx_scan {MS-X M2 anchor} $tok {ms_part_of 0 2 anchor}]
+  check_true "MS-X0 M2's anchor pixel was found by the engine hit-tester" \
+    [pexpr {[llength $msA2] == 2}]
+  set msAx [mk_px $msA2 0]
+  set msAy [mk_px $msA2 1]
+  pcall {mk_bold_reset $tok}
+  set msbold [pcall {mk_bold}]
+  set mslog [llength $::mxlog]
+  catch {destroy .graphdialog}
+
+  # --- MS-X1: the gesture, split at the first release ------------------
+  mx_ready {MS-X1}
+  pcall {xschem new_schematic switch $vdrw; xschem graph_marker select -none}
+  pcall {ms_ev $vdrw <ButtonPress-1> 1000 -x $msAx -y $msAy}
+  # the staging assertion the rest of the group rests on: the pixel really is
+  # one C claims, and the press armed the marker gesture rather than the strip
+  # reorder / a cursor grab
+  check "MS-X1a the first press armed the marker gesture (part 1, the anchor)" \
+    [pcall {xschem new_schematic switch $vdrw; xschem get graph_marker_drag}] 1
+  pcall {ms_ev $vdrw <ButtonRelease-1> 50 -x $msAx -y $msAy -state 0x100}
+  check "MS-X1a the FIRST click still SINGLE-selects (D-14)" [pcall {ms_vsel}] 2
+  check "MS-X1a ... and the set holds just that one number" [pcall {ms_vset}] {2}
+  pcall {ms_click $vdrw $msAx $msAy 80}
+  check "MS-X1b the double-click WIDENS it to the pair" [pcall {ms_vset}] {2 1}
+  check "MS-X1b ... with the clicked marker as the head" [pcall {ms_vsel}] 2
+  check "MS-X1c the trailing release did NOT wave-bold (the -1e30 poison holds)" \
+    [pcall {mk_bold}] $msbold
+  check "MS-X1d no graph-properties dialog appeared (D9 intact)" \
+    [pcall {winfo exists .graphdialog}] 0
+  check "MS-X1e the viewer buffer is still unmodified / readonly (no with_edit)" \
+    [pcall {xschem new_schematic switch $vdrw; list [xschem get modified] [xschem get readonly]}] \
+    {0 1}
+  check "MS-X1e ... and selecting emitted no viewer log line (D-17)" \
+    [llength $::mxlog] $mslog
+  check "MS-X1e ... and wrote no token onto the rect" \
+    [pcall {xschem new_schematic switch $vdrw; xschem getprop rect 2 0 sel_markers}] {}
+  # it SETS, it never toggles: a second double-click leaves the same pair
+  mx_ready {MS-X1f}
+  pcall {ms_dbl $vdrw $msAx $msAy}
+  check "MS-X1f a SECOND double-click leaves the pair selected (it SETS)" \
+    [pcall {ms_vset}] {2 1}
+  check "MS-X1f ... still no dialog" [pcall {winfo exists .graphdialog}] 0
+
+  # --- MS-X2: double-click on empty plot body --------------------------
+  mx_ready {MS-X2}
+  set mse [pcall {mx_empty_row}]
+  if {![string is integer -strict $mse]} {
+    stall "MS-X2 no empty plot-box row found -- the negative leg has nothing to aim at"
+    set mse $msy
+  }
+  check_true "MS-X2 an empty plot-box pixel was scanned ($mxx,$mse)" \
+    [pexpr {[string is integer -strict $mse]}]
+  pcall {ms_dbl $vdrw $mxx $mse}
+  check "MS-X2 a double-click on empty waveform space selects nothing" \
+    [pcall {ms_vset}] {}
+  check "MS-X2 ... and still opens no graph-properties dialog (D9)" \
+    [pcall {winfo exists .graphdialog}] 0
+
+  # --- MS-X3: double-click a PLAIN marker ------------------------------
+  mx_ready {MS-X3}
+  set msA1 [mx_scan {MS-X3 M1 anchor} $tok {ms_part_of 0 1 anchor}]
+  check_true "MS-X3 M1's anchor pixel was found" [pexpr {[llength $msA1] == 2}]
+  pcall {ms_dbl $vdrw [mk_px $msA1 0] [mk_px $msA1 1]}
+  check "MS-X3 a marker with no delta block selects ALONE (D-4)" \
+    [pcall {ms_vset}] {1}
+
+  # --- MS-X4: Delete removes the whole pair, ONE undo point ------------
+  mx_ready {MS-X4}
+  pcall {wviewer::clear_history $tok}
+  pcall {ms_dbl $vdrw $msAx $msAy}
+  check "MS-X4 the pair is selected before the keystroke" [pcall {ms_vset}] {2 1}
+  set msdepth [lindex [pcall {wviewer::history_depth $tok}] 0]
+  set msn [pcall {llength [mk_list 0]}]
+  mk_prep_at $msAx $msAy
+  check_true "MS-X4 the Delete keystroke was delivered" \
+    [send_key_fb $vdrw [list <Key-Delete> -x $msAx -y $msAy] \
+       {[llength [mk_list 0]] < $msn} \
+       {wviewer::key_filter $vdrw 2 $msAx $msAy 65535 Delete 0} \
+       {mk_prep_at $msAx $msAy}]
+  check "MS-X4 Delete removed BOTH members of the pair" [pcall {llength [mk_list 0]}] 0
+  check "MS-X4 ... and cleared the selection" [pcall {ms_vset}] {}
+  check "MS-X4 the whole gesture is ONE undo point" \
+    [expr {[lindex [pcall {wviewer::history_depth $tok}] 0] - $msdepth}] 1
+  check_true "MS-X4 one `u` was delivered" \
+    [send_key_fb $vdrw [list <Key-u> -x $msAx -y $msAy] \
+       {[llength [mk_list 0]] > 0} {wviewer::undo_at $vdrw} {mk_prep_ctx}]
+  check "MS-X4 one `u` brings BOTH markers back" [pcall {llength [mk_list 0]}] 2
+  check "MS-X4 ... with the delta link intact" \
+    [pcall {lindex [lindex [mk_list 0] 1] 7}] 1
+  pcall {mk_wdel $tok}
+  pcall {xschem new_schematic switch $vdrw; xschem graph_marker select -none}
+  foreach msp {ms_ev ms_click ms_dbl ms_vset ms_vsel ms_part_of ms_wadd_at} {
+    catch {rename $msp {}}
+  }
+
   } mxgerr]} {
     puts "FAIL: MX group ABORTED: $mxgerr : FAIL"
     incr fail
@@ -5266,9 +5826,9 @@ v_c} {2 3}]
 # the new numbers here. That is the point -- the constant is the thing that
 # makes silent coverage loss impossible, so it has to be maintained by hand.
 # These are the counts BEFORE the two MZ legs themselves, so the RESULT line
-# reads two higher (870 / 373).
-set ::mk_expect_x     868   ;# DISPLAY arm: MK + MR + MF + MP + MD + MQ + MR-viewer + MX
-set ::mk_expect_nogui 371   ;# --nogui arm: MK + MP + the engine half of MR/MF/MD
+# reads two higher (979 / 437).
+set ::mk_expect_x     977   ;# DISPLAY arm: MK + MS + MR + MF + MP + MD + MQ + MR-viewer + MX
+set ::mk_expect_nogui 435   ;# --nogui arm: MK + MS + MP + the engine half of MR/MF/MD
 set mkexp [expr {$::mk_ran_x ? $::mk_expect_x : $::mk_expect_nogui}]
 set mkgot [expr {$npass + $fail}]
 check "MZ1 the [expr {$::mk_ran_x ? {DISPLAY} : {--nogui}}] arm ran its full\

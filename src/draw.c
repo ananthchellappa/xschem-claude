@@ -6013,8 +6013,11 @@ static void draw_graph_markers(int i, xRect *r, Graph_ctx *gr)
      * and unique, so the number already identifies exactly one marker, whereas
      * selgraph is a rect INDEX that goes stale the moment a strip is reordered
      * or a multi-plot batch prepends one. It stays a hint (see the Delete gate,
-     * which re-resolves the owner) and is never a correctness input. */
-    selected = (m.num == xctx->graph_marker_sel);
+     * which re-resolves the owner) and is never a correctness input.
+     * Since issue 0189 the test is SET MEMBERSHIP, through the one predicate --
+     * which is also why a cross-strip pair (a difference marker and its
+     * reference on another band) can both render selected at all. */
+    selected = graph_marker_is_selected(m.num);
     /* "selected" is stroke WEIGHT, not a different layer: SELLAYER == GRIDLAYER
      * so a selection colour here would be the grid colour, and drawgrid()
      * mutates that shared GC's dash style (issue 0082).
@@ -6476,7 +6479,103 @@ static void graph_marker_clear_prev(int num)
   graph_marker_clear_prev_n(&num, 1);
 }
 
-int graph_marker_delete(int num)
+/* ---- THE SELECTION (issue 0189) -------------------------------------------
+ * It is a SET of marker NUMBERS, head first, held in xctx and NEVER in a prop
+ * token: selection is UI state and must die with the document
+ * (graph_markers.md 3.5 / D9). xctx->graph_marker_sel is kept as the HEAD, so
+ * `xschem get graph_marker_sel`, this file's Delete scope gate and
+ * wviewer::marker_selected are byte-for-byte unchanged.
+ *
+ * These five functions are the ONLY readers/writers of the pair of fields
+ * (plus the three sanctioned HEAD readers: the getter in scheduler.c, the
+ * Delete scope gate and the repaint-scope hint in callback.c). That is what
+ * stopped the two issue-0175 trace tokens drifting, and it is what the
+ * source-level MS13 leg asserts. */
+
+/* THE predicate. Every "is this marker selected" test in the tree goes through
+ * it -- a bare `== xctx->graph_marker_sel` renders a selected partner in the
+ * unselected style and no leg that selects ONE marker can see it. */
+int graph_marker_is_selected(int num)
+{
+  int k;
+  if(!xctx || num <= 0) return 0;
+  for(k = 0; k < xctx->graph_marker_n_sel; k++)
+    if(xctx->graph_marker_sel_set[k] == num) return 1;
+  return 0;
+}
+
+/* THE writer. Drops <= 0, dedupes, caps at GRAPH_MARKER_MAX_SEL, keeps the
+ * given ORDER (selection order, not sorted) and re-derives the head.
+ * Pure UI state: no token write, no undo point, no modify flag, no log line
+ * (D-17 -- trace selection does not log either). */
+int graph_marker_select_set(const int *nums, int n, int graph_idx)
+{
+  int k, w = 0;
+  if(!xctx) return -1;
+  for(k = 0; k < n && w < GRAPH_MARKER_MAX_SEL; k++) {
+    int j, dup = 0;
+    if(nums[k] <= 0) continue;
+    for(j = 0; j < w; j++) if(xctx->graph_marker_sel_set[j] == nums[k]) dup = 1;
+    if(dup) continue;
+    xctx->graph_marker_sel_set[w++] = nums[k];
+  }
+  xctx->graph_marker_n_sel = w;
+  xctx->graph_marker_sel = w ? xctx->graph_marker_sel_set[0] : -1;
+  xctx->graph_marker_selgraph = w ? graph_idx : -1;
+  return xctx->graph_marker_sel;
+}
+
+/* The shipped single-selection form, now a one-line wrapper. Its contract and
+ * its return value are byte-identical to before the set existed. */
+int graph_marker_select(int num, int graph_idx)
+{
+  if(!xctx) return -1;
+  if(num < 0) return graph_marker_select_set(NULL, 0, -1);
+  return graph_marker_select_set(&num, 1, graph_idx);
+}
+
+/* THE POLICY behind the double-click: select `num` and, when it is a DIFFERENCE
+ * marker whose partner still resolves, the one marker its deltas are derived
+ * from. The IMMEDIATE pair only -- never the chain (D-6) and never the reverse
+ * direction (D-7): `prev` is a back-pointer and N deltas may share one
+ * reference. An unresolvable partner is silent (D-5): graph_marker_clear_prev_n
+ * already zeroes dangling links on every delete, so a dangling one only comes
+ * from a hand-edited or foreign token. It SETS; it never toggles. */
+int graph_marker_select_pair(int num, int graph_idx)
+{
+  int nums[2], n = 1, owner = -1;
+  GraphMarker m;
+
+  if(!xctx || num <= 0) return graph_marker_select(-1, -1);
+  /* permissive, exactly like the shipped `select <num>`: an unknown number is
+   * still selected (it simply renders no ring) */
+  if(!graph_marker_find(num, &owner, &m)) return graph_marker_select(num, graph_idx);
+  nums[0] = num;
+  if(m.prev >= 1 && graph_marker_find(m.prev, NULL, NULL)) {
+    nums[1] = m.prev;
+    n = 2;
+  }
+  return graph_marker_select_set(nums, n, owner);
+}
+
+/* remove one number from the set, keeping the order of the survivors. Used by
+ * the delete path: a deleted marker cannot stay selected. */
+static void graph_marker_sel_drop(int num)
+{
+  int k, w = 0, keep[GRAPH_MARKER_MAX_SEL];
+  int gi;
+  if(!xctx) return;
+  gi = xctx->graph_marker_selgraph;
+  for(k = 0; k < xctx->graph_marker_n_sel; k++)
+    if(xctx->graph_marker_sel_set[k] != num) keep[w++] = xctx->graph_marker_sel_set[k];
+  if(w == xctx->graph_marker_n_sel) return;
+  graph_marker_select_set(keep, w, gi);
+}
+
+/* The engine of the two public delete forms. `push` is 0 when the CALLER
+ * already pushed one undo point for the whole gesture -- a multi-marker delete
+ * owes exactly ONE, or a one-key gesture would need two `u` to take back. */
+static int graph_marker_delete_1(int num, int push)
 {
   int gi = -1, k, n = 0, w = 0;
   GraphMarker *a = NULL;
@@ -6485,21 +6584,23 @@ int graph_marker_delete(int num)
   if(!xctx || num <= 0) return 0;
   if(graph_marker_ro_refuse()) return 0;
   if(!graph_marker_find(num, &gi, NULL)) return 0;
-  if(!xctx->readonly) xctx->push_undo();
+  if(push && !xctx->readonly) xctx->push_undo();
   r = &xctx->rect[GRIDLAYER][gi];
   n = graph_markers_parse(r->prop_ptr, &a, &n);
   for(k = 0; k < n; k++) if(a[k].num != num) a[w++] = a[k];
   graph_markers_store(r, a, w);
   if(a) my_free(_ALLOC_ID_, &a);
   graph_marker_clear_prev(num);
-  if(xctx->graph_marker_sel == num) {
-    xctx->graph_marker_sel = -1;
-    xctx->graph_marker_selgraph = -1;
-  }
+  graph_marker_sel_drop(num);
   set_modify(1);
   graph_marker_notify();
   log_action("xschem graph_marker delete %d\n", num);
   return 1;
+}
+
+int graph_marker_delete(int num)
+{
+  return graph_marker_delete_1(num, 1);
 }
 
 int graph_marker_delete_all(int graph_idx)
@@ -6532,8 +6633,7 @@ int graph_marker_delete_all(int graph_idx)
   graph_marker_clear_prev_n(gone, ngone);
   if(gone) my_free(_ALLOC_ID_, &gone);
   if(cnt) {
-    xctx->graph_marker_sel = -1;
-    xctx->graph_marker_selgraph = -1;
+    graph_marker_select_set(NULL, 0, -1);
     set_modify(1);
     graph_marker_notify();
     log_action("xschem graph_marker delete -all %d\n", graph_idx);
@@ -6541,12 +6641,28 @@ int graph_marker_delete_all(int graph_idx)
   return cnt;
 }
 
-/* Returns 0 WITHOUT touching anything when nothing is selected -- that is what
+/* Deletes the WHOLE selection as ONE gesture with ONE undo point (issue 0189 /
+ * D-8): a Delete that needed two `u` to take back is the defect this shape
+ * exists to prevent. Each member still self-logs its own
+ * `xschem graph_marker delete <n>` line, so a replay reproduces the deletions
+ * by explicit number.
+ *
+ * Returns 0 WITHOUT touching anything when nothing is selected -- that is what
  * lets the Delete key fall through to its historical canvas behaviour. */
 int graph_marker_delete_selected(void)
 {
-  if(!xctx || xctx->graph_marker_sel < 0) return 0;
-  return graph_marker_delete(xctx->graph_marker_sel);
+  int nums[GRAPH_MARKER_MAX_SEL];
+  int k, n, cnt = 0;
+
+  if(!xctx || xctx->graph_marker_n_sel <= 0) return 0;
+  if(graph_marker_ro_refuse()) return 0;   /* ONE CIW line, not one per member */
+  /* COPY the set before the loop: graph_marker_sel_drop() mutates it as the
+   * records go, so iterating it in place would skip every other member. */
+  n = xctx->graph_marker_n_sel;
+  for(k = 0; k < n; k++) nums[k] = xctx->graph_marker_sel_set[k];
+  if(!xctx->readonly) xctx->push_undo();
+  for(k = 0; k < n; k++) cnt += graph_marker_delete_1(nums[k], 0);
+  return cnt;
 }
 
 int graph_marker_move(int num, double px, double py)
@@ -6605,20 +6721,6 @@ int graph_marker_label_offset(int num, double ldx, double ldy)
   if(!graph_marker_update(num, &m)) return 0;
   log_action("xschem graph_marker label %d %.10g %.10g\n", num, ldx, ldy);
   return 1;
-}
-
-/* Pure UI state: no token write, no undo, no modify. */
-int graph_marker_select(int num, int graph_idx)
-{
-  if(!xctx) return -1;
-  if(num < 0) {
-    xctx->graph_marker_sel = -1;
-    xctx->graph_marker_selgraph = -1;
-  } else {
-    xctx->graph_marker_sel = num;
-    xctx->graph_marker_selgraph = graph_idx;
-  }
-  return xctx->graph_marker_sel;
 }
 
 /* Give every marker of a freshly pasted rect a unique number. `base` is computed

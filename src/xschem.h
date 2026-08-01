@@ -448,6 +448,15 @@ typedef int Tcl_Size;
 #define GRAPH_MARKERS_MAX      512  /* max marker records per graph rect */
 #define GRAPH_MARKER_TOL       8.0  /* anchor/label grab radius on a press */
 
+/* The marker SELECTION is a SET (issue 0189). Bound it in the header because
+ * draw.c holds the array and callback.c copies it. 8 is headroom: the
+ * double-click builds one or two, and the cap exists so the field can be a
+ * FIXED array -- xctx is reset, never freed, at clear_drawing() and
+ * alloc_xschem_data(), and a pointer would add a free path for nothing.
+ * NOT mirrored in Tcl: Tcl reads the list from `xschem get
+ * graph_marker_sel_set` and never needs the cap. */
+#define GRAPH_MARKER_MAX_SEL     8
+
 /* xctx->graph_marker_dragmode -- the EFFECTIVE mode of an armed gesture,
  * latched at PRESS TIME from the selection state and never re-read afterwards.
  * xctx->graph_marker_drag keeps its original meaning, "what was GRABBED"
@@ -1687,7 +1696,15 @@ typedef struct {
    * The drag is scratch-based: the record being dragged lives in
    * graph_marker_scratch and the renderer substitutes it, so a whole gesture is
    * ONE undo point, zero allocations per motion event, and ESC is a flag clear. */
-  int graph_marker_sel;       /* selected marker number, -1 = none */
+  int graph_marker_sel;       /* selected marker number, -1 = none. THE HEAD of the
+                               * set below, kept as a distinct field because the
+                               * getter, the Delete scope gate and the repaint hint
+                               * all read exactly it (issue 0189). */
+  int graph_marker_sel_set[GRAPH_MARKER_MAX_SEL]; /* the WHOLE selection, marker
+                              * NUMBERS, HEAD FIRST (selection order, not sorted).
+                              * NEVER a prop token: selection is UI state and dies
+                              * with the document (graph_markers.md 3.5). */
+  int graph_marker_n_sel;     /* 0 <=> graph_marker_sel == -1 */
   int graph_marker_selgraph;  /* rect[GRIDLAYER] index owning the selection, -1 = none */
   int graph_marker_drag;      /* what was GRABBED: 0 none, 1 the ANCHOR, 2 the LABEL.
                                * This is the value `xschem get graph_marker_drag`
@@ -2003,6 +2020,9 @@ extern int  graph_marker_move(int num, double px, double py);
 extern int  graph_marker_anchor_at(int num, int dataset, int point);
 extern int  graph_marker_label_offset(int num, double ldx, double ldy);
 extern int  graph_marker_select(int num, int graph_idx);
+extern int  graph_marker_is_selected(int num);
+extern int  graph_marker_select_set(const int *nums, int n, int graph_idx);
+extern int  graph_marker_select_pair(int num, int graph_idx);
 extern int  graph_marker_renumber_rect(xRect *r);
 extern void graph_marker_notify(void);
 extern void setup_graph_data(int i, int skip, Graph_ctx *gr);

@@ -277,6 +277,14 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
   landmines 20 and 33 (it used `find_closest_wave` until 0174); RMB-on-legend
   per-trace bold via `edit_wave_attributes`, hover measurement tooltip via
   `G_X`/`G_Y`, cursor grab within 10px, numeric cursor set,
+  the **`-3` DOUBLE-CLICK arm, which since issue 0189 tests for a MARKER FIRST**
+  (`graph_marker_at` at `GRAPH_MARKER_TOL` -> `graph_marker_select_pair()` +
+  `need_all_redraw`, because the partner may live on another strip) and only then
+  falls through to `edit_wave_attributes` / `graph_edit_properties` -- a marker
+  anchor sits on a trace by construction and a callout is clamped inside the plot
+  box, so without that rung a double-click aimed at a marker opened the
+  graph-properties dialog; the `-1e30` poison line above it is untouched and is
+  what still stops the trailing release wave-bolding (landmine 46),
   `a`/`b`/`s`/`t` keys plus `m` = create marker, `d` = create marker with a
   delta block, and `M` = the measurement tooltip **relocated off `m`**.
   ⚠ `m`/`d` gate on the strip's **PLOT BOX**, not on a distance to a trace
@@ -588,7 +596,13 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
     The number is the whole identity: `xctx->graph_marker_selgraph` exists only
     as a repaint hint, because a rect index goes stale on a strip reorder or a
     multi-plot prepend, and the `Delete` gate re-resolves the owning strip with
-    `graph_marker_find()`.
+    `graph_marker_find()`. Since issue 0189 it is the **HEAD** of a selection
+    SET and keeps its exact old meaning and shape.
+  - `xschem get graph_marker_sel_set` — the WHOLE selection as marker numbers,
+    **head first**, space separated (`"2 1"`); `""` for none (issue 0189). The
+    set is `xctx->graph_marker_sel_set[GRAPH_MARKER_MAX_SEL]` +
+    `graph_marker_n_sel`, held in `xctx` and **never** in a prop token — see
+    landmine 46(b) for why this is NOT the 0175 trace model.
   - `xschem get graph_rects` — how many layer-2 rects are GRAPHS. **Not**
     `xschem get rects 2`, which is every rect on the layer: the marker push
     hook uses this for its model↔rect 1:1 guard, and a single stray non-graph
@@ -610,8 +624,8 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
   | `anchor` | `<num> <dset> <point>` | `1`/`0` |
   | `move` | `<num> <px> <py>` | `1`/`0` — pixel re-snap along the marker's own trace + dataset |
   | `label` | `<num> <ldx> <ldy>` | `1`/`0` — label offset only |
-  | `delete` | `<num>` \| `-all [<gi>]` | `1`/`0` \| count; both forms clear `prev == <removed>` window-wide via **one** `graph_marker_clear_prev_n()` pass over the whole doomed set, including a **partial** `-all <gi>`, which otherwise left deltas dangling on the strips it did not touch |
-  | `select` | `<num> [<gi>]` \| `-none` | the new selection (pure UI state: no token write, no undo, no modify) |
+  | `delete` | `<num>` \| `-all [<gi>]` \| `-selected` | `1`/`0` \| count \| count (`-selected`, issue 0189, removes the whole selection under **ONE** undo point); both forms clear `prev == <removed>` window-wide via **one** `graph_marker_clear_prev_n()` pass over the whole doomed set, including a **partial** `-all <gi>`, which otherwise left deltas dangling on the strips it did not touch |
+  | `select` | `<num> [<gi>]` \| `-none` \| `-pair <num> [<gi>]` \| `-set <n1> ...` | **always the new HEAD**, for every form (`-none` still answers `-1`) — pure UI state: no token write, no undo, no modify, no log line. `-pair` is the double-click policy (add the `prev` partner iff it resolves; immediate pair only, never the chain, never the reverse); `-set` is permissive, dedupes and keeps the order given |
   | `list` | `[<gi>]` | list of 10-element sublists `{num graph wave dset point x y prev ldx ldy}`, `x`/`y` at `%.17g` — **the exactness seam** |
   | `text` | `<num>` | the rendered callout string, embedded `\n` |
 
@@ -1655,6 +1669,67 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
     `doc/claude/issues/0188-marker-create-gate-is-proximity-not-plot-box.md`.
     Suite: `tests/headless/test_wave_markers.tcl` group `MP*` (both arms),
     `MP20`-`MP22` (display) and the inverted `MX4`/`MX4b`.
+
+46. **The marker SELECTION is a SET, it is deliberately NOT a prop token, and a
+    multi-object delete owes ONE undo point** (2026-08-01, issue 0189).
+    Three reusable lessons from one feature.
+
+    **(a) Every "is *this one* selected" test goes through
+    `graph_marker_is_selected()`.** There are exactly FOUR such sites — the
+    renderer's `selected = ...` in `draw_graph_markers()` (`draw.c`), the
+    RIGID-drag latch in `graph_marker_press()` and the click toggle in
+    `graph_marker_release()` (`callback.c`), and the delete's drop-from-the-set —
+    plus one "is ANYTHING selected" (`graph_marker_n_sel > 0`). A surviving bare
+    `== xctx->graph_marker_sel` renders a selected PARTNER in the *unselected*
+    style, and **no behavioural leg that selects a single marker can see it**:
+    with `n_sel == 1` the bare comparison and the predicate agree exactly. That
+    is why the assertion has to be at SOURCE level (`MS13`, the `LS5` idiom from
+    `test_wave_legend.tcl`, counting on CODE lines only with `count_code`), and
+    why it asserts the *exact* surviving set rather than a `>= N` count: the
+    three sanctioned bare HEAD readers are the getter (`scheduler.c`), the
+    `Delete` strip-scope gate and the repaint-scope hint (`callback.c`).
+    ⚠ The trace precedent (landmine 43, issue 0175) had **eleven** bare sites.
+    Markers have four. Look for the sites, do not import the number.
+
+    **(b) It is NOT a prop token, unlike the 0175 trace selection — and
+    "mirror 0175 exactly" is the wrong instinct.** Trace bold *is* per-rect
+    render state, carried in the `hilight_wave` token that `sel_waves` extends.
+    The marker analogue of `hilight_wave` is `xctx->graph_marker_sel`, a
+    **session field**: `graph_markers.md` §3.5 says selection is UI state that
+    must die with the document, and `clear_drawing()` resets it precisely so a
+    reloaded schematic does not open with a marker mysteriously ringed. So the
+    set lives in `xctx` at every size (a fixed `int[GRAPH_MARKER_MAX_SEL]`, never
+    a pointer — `xctx` is reset, not freed, and a pointer would add a free path
+    to `clear_drawing()` for nothing), and **no `prop_ptr` byte changes under any
+    selection**. `n_sel` joins the *gesture-state* reset class (both
+    `actions.c:clear_drawing()` and `xinit.c:alloc_xschem_data()`), not the
+    press-time-payload class — §3.5 documents that there are two.
+    The regression witness is the strongest available form: `MS8` compares the
+    **whole serialised buffer** before and after a two-marker selection, not just
+    the `markers` token.
+
+    **(c) A multi-object delete owes exactly ONE undo point — split the
+    primitive, never loop the public form.** `graph_marker_delete()` became a
+    one-line wrapper over `static graph_marker_delete_1(num, push)`;
+    `graph_marker_delete_selected()` refuses read-only **once** (one CIW line,
+    not one per member), COPIES the set into a local (the drop-from-the-set
+    mutates it as records go — iterating it in place skips every other member),
+    pushes undo once, then calls the no-push form per member. Each member still
+    self-logs its own `xschem graph_marker delete <n>` line, so replay is by
+    explicit number and needs no selection state. A one-key gesture that took two
+    `u` to undo is the defect this shape prevents; `SAB-5` is its sabotage.
+
+    Compatibility rule that made the whole thing cheap: **the head keeps its
+    meaning**. `xschem get graph_marker_sel`, every `graph_marker select` return
+    value (including the new `-pair`/`-set` forms) and `wviewer::marker_selected`
+    are byte-for-byte unchanged; the set is read through a NEW getter
+    (`xschem get graph_marker_sel_set`). ~27 shipped assertions rest on that.
+
+    Spec: `doc/claude/specs/graph_markers.md` D9 + D13 + §3.5 + §7.2/§7.3;
+    `doc/claude/specs/waveform_viewer_modes.md` §15.1 + §16; issue
+    `doc/claude/issues/0189-dblclick-delta-marker-selects-pair.md`.
+    Suite: `tests/headless/test_wave_markers.tcl` group `MS*` (both arms) and
+    `MS-X1`-`MS-X6` (display).
 
 ---
 

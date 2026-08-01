@@ -1913,6 +1913,8 @@ void clear_drawing(void)
   * Delete destroy that marker. Any in-flight drag dies with the document too.
   * doc/claude/specs/graph_markers.md */
  xctx->graph_marker_sel = -1;
+ xctx->graph_marker_n_sel = 0;   /* issue 0189: a surviving SET latches exactly as a
+                                  * surviving head does -- same reset class */
  xctx->graph_marker_selgraph = -1;
  xctx->graph_marker_drag = 0;
  xctx->graph_marker_dragmode = GRAPH_MARKER_MODE_NONE;

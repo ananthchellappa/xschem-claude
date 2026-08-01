@@ -2835,6 +2835,54 @@ proc wviewer::marker_selected {wp} {
   return $n
 }
 
+# The WHOLE marker selection as a list of numbers, HEAD FIRST, or {} for none /
+# any error (issue 0189). marker_selected above is its head and keeps its own
+# meaning — the Delete SCOPE gate is still decided on the head, this is only
+# what that gate then hands to delete_items. Same context rule and same
+# fail-closed rule: {} means "nothing to delete", never "locked out".
+proc wviewer::marker_selection {wp} {
+  if {[catch {xschem new_schematic switch $wp}]} { return {} }
+  set l {}
+  catch {set l [xschem get graph_marker_sel_set]}
+  if {[catch {llength $l}]} { return {} }
+  set out {}
+  foreach n $l { if {[string is integer -strict $n] && $n > 0} { lappend out $n } }
+  return $out
+}
+
+# LMB DOUBLE-CLICK (issue 0189). On a marker: select it and, when it is a
+# difference marker whose reference resolves, that reference too — the C policy
+# `graph_marker select -pair` decides, so the viewer and the on-canvas graph
+# cannot disagree about what a double-click means. Returns 1 when a marker was
+# hit, 0 otherwise; the CALLER breaks unconditionally either way, because D9
+# (no graph-properties dialog over a read-only viewer) must survive for every
+# non-marker double-click.
+#
+# NO with_edit bracket, deliberately, unlike every neighbouring marker seam:
+# `select` writes no token, pushes no undo point and sets no modify flag, and it
+# is one of the three sub-verbs scheduler.c exempts from the readonly reject.
+# Bracketing it would push a context switch plus four state writes onto a click
+# AND hide the fact that this path is not a mutation.
+# The token comes from %W, never the current ctx (the clear_all_at rule).
+proc wviewer::marker_dblclick_at {W px py} {
+  set token [wviewer::token_for_canvas $W]
+  if {$token eq {}} { return 0 }
+  if {[catch {xschem new_schematic switch $W}]} { return 0 }
+  set gi [wviewer::strip_at_pixel $W $px $py]
+  if {![string is integer -strict $gi] || $gi < 0} { set gi 0 }
+  set hit {}
+  catch {set hit [xschem get graph_marker_at $gi $px $py]}
+  set num [lindex $hit 0]
+  set part [lindex $hit 1]
+  if {![string is integer -strict $num] || $num <= 0} { return 0 }
+  if {$part ne {anchor} && $part ne {label}} { return 0 }
+  catch {xschem graph_marker select -pair $num $gi}
+  # the repaint the Tcl wrapper owes (the delete_all_markers_at precedent): the
+  # partner may be on ANOTHER strip, so it is the whole window, not one rect
+  catch {xschem redraw}
+  return 1
+}
+
 # --- drag feedback (transient, on-screen only) -------------------------------
 
 # Paint the prospective destination: clear the bar on `old`, put one on `new`.
@@ -4883,11 +4931,17 @@ proc wviewer::delete_selection_at {W px py} {
   # `case XK_Delete`: `graph_marker_find(sel, &sgi, NULL) && sgi == graph_master`,
   # where waves_selected has just set graph_master from the pointer). Both
   # queries fail CLOSED, so an untrustworthy answer reads as "nothing to delete".
+  # The gate stays on the HEAD (0189 D-9): when the head is in scope the WHOLE
+  # set goes, partners on other strips included — delete_items already dedupes,
+  # filters to live numbers and gives ONE undo point and ONE log line.
   set marks {}
   set msel [wviewer::marker_selected $W]
   if {$msel >= 0} {
     set mg [wviewer::marker_graph_at $W $msel]
-    if {$mg >= 0 && $mg == [wviewer::strip_at_pixel $W $px $py]} { lappend marks $msel }
+    if {$mg >= 0 && $mg == [wviewer::strip_at_pixel $W $px $py]} {
+      set marks [wviewer::marker_selection $W]
+      if {![llength $marks]} { set marks [list $msel] }
+    }
   }
   # D2: nothing selected -> nothing happens, and in particular nothing reaches C
   if {![llength $pairs] && ![llength $marks]} { return 0 }
@@ -6492,7 +6546,12 @@ proc wviewer::strip_bindings {wp} {
     }
     break
   }
-  bind $wp <Double-Button-1> {break}                  ;# D9: no graph props dlg
+  # D9: no graph props dlg. Since issue 0189 a double-click ON A MARKER also
+  # pair-selects it; everything else is still swallowed. The `break` is
+  # UNCONDITIONAL — D9 must hold for every non-marker double-click, and
+  # forwarding -3 to C from here would let a Tcl/C hit-test disagreement open
+  # .graphdialog over a read-only viewer.
+  bind $wp <Double-Button-1> {wviewer::marker_dblclick_at %W %x %y; break}
   bind $wp <Double-Button-2> {break}
   bind $wp <Double-Button-3> {break}
   # issue 0149: kill the canvas-only mouse gestures. Shift+B1 and Alt+B1 are

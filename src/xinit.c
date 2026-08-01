@@ -666,6 +666,7 @@ static void alloc_xschem_data(const char *top_path, const char *win_path)
    * -1 sentinels are meaningful, so they are set explicitly rather than relying
    * on the my_calloc of xctx. */
   xctx->graph_marker_sel = -1;
+  xctx->graph_marker_n_sel = 0;   /* issue 0189: 0 <=> graph_marker_sel == -1 */
   xctx->graph_marker_selgraph = -1;
   xctx->graph_marker_drag = 0;
   xctx->graph_marker_dragmode = GRAPH_MARKER_MODE_NONE;
