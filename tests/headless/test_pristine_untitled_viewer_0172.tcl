@@ -48,6 +48,22 @@
 # schematics read-only in several places (descend read-only, the reopen shortcuts) and a
 # read-only buffer is not in itself a bad reuse target.
 #
+# COVERAGE (2026-07-31 follow-up). Every clause of the predicate now has legs that go
+# red when that clause alone is neutralised -- measured by rebuilding with each one
+# constant-false in turn (table in the issue doc):
+#
+#   wave_viewer  -> F5 F6          modified   -> W-win W-tab M1
+#   instances    -> S20 S21        wires      -> S17 S18
+#   texts        -> S4 S5          rects      -> S1 S2
+#   lines        -> S8 S9          polygons   -> S11 S12      arcs -> S14 S15
+#   loop bound (`i < cadlayers`) -> S8 S9 S11 S12 S14 S15, because those legs place
+#     their object on the TOP layer (sized from `xschem get cadlayers`, not hard-coded);
+#     with the bound cut to 3 they all go red while the layer-2 legs stay green.
+#   untitled basename -> test_pristine_untitled_basename UT1 (not this file).
+#   currsch != 0 -> NOTHING goes red: an unreachable-in-practice clause, since a
+#     descended buffer is named after a real file and the basename clause refuses it
+#     anyway. Pre-existing, left alone, recorded rather than faked.
+#
 # Run either arm (X not required):
 #   ./src/xschem --nogui --pipe -q --nolog --script tests/headless/test_pristine_untitled_viewer_0172.tcl
 #   ./src/xschem        --pipe -q --nolog --script tests/headless/test_pristine_untitled_viewer_0172.tcl
@@ -63,17 +79,28 @@ source [file join $here scratch.tcl]
 set scratch [test_scratch pristine_untitled_0172]
 
 # A real schematic to open: two wires, so "did it land here?" is unambiguous.
-set real [file join $scratch real.sch]
-set fh [open $real w]
-puts $fh "v {xschem version=3.4.5 file_version=1.2}"
-puts $fh "G {}"
-puts $fh "K {}"
-puts $fh "V {}"
-puts $fh "S {}"
-puts $fh "E {}"
-puts $fh "N 0 0 100 0 {lab=A}"
-puts $fh "N 0 20 100 20 {lab=B}"
-close $fh
+#
+# ONE FILE PER BLOCK, never a shared one (trap: `new_schematic create` switches to the
+# window that already holds an open file instead of creating a new one, so a second block
+# opening the SAME path can find no new window and read exactly like the defect). Under X
+# that is not hypothetical: with every block sharing one real.sch the W-win fixture leg
+# failed 3 runs out of 3 (and the pre-extension version 1 in 3) with `other=.drw
+# main=.drw` -- no second window to swap with. Headless it never showed.
+proc mkreal {tag} {
+  global scratch
+  set f [file join $scratch "real_$tag.sch"]
+  set fh [open $f w]
+  puts $fh "v {xschem version=3.4.5 file_version=1.2}"
+  puts $fh "G {}"
+  puts $fh "K {}"
+  puts $fh "V {}"
+  puts $fh "S {}"
+  puts $fh "E {}"
+  puts $fh "N 0 0 100 0 {lab=A}"
+  puts $fh "N 0 20 100 20 {lab=B}"
+  close $fh
+  return $f
+}
 
 # Reset to ONE window holding a fresh untitled buffer, with every per-context flag this
 # test touches cleared. The flags are sticky across `clear force` by design (measured:
@@ -102,6 +129,27 @@ proc brand_viewer {{flag 1}} {
 
 proc tail_of_current {} { return [file tail [xschem get schname]] }
 
+# Wait for the context to follow a freshly created window.
+#
+# Under X, `load_new_window` creates the toplevel and the context switch lands through Tk
+# events, so a leg that reads `current_win_path` on the next line can still see the OLD
+# window while `ntabs` has already gone up -- measured 2 runs in 6 (`W-win` fixture and
+# `M1`, the two legs whose buffer is `modified`). Headless there are no events, the switch
+# is synchronous, and this returns on the first pass. Never used where the leg expects the
+# open to be reused IN PLACE (P1, R1): there the window must NOT change, and waiting for a
+# change that must not happen would just burn the timeout.
+proc wait_switch {oldwin {timeout 2000}} {
+  set waited 0
+  while {$waited < $timeout} {
+    catch {update}
+    if {[xschem get current_win_path] ne $oldwin} break
+    after 25
+    incr waited 25
+  }
+  catch {update}
+  return [xschem get current_win_path]
+}
+
 if {[catch {
 
 # ---- F: the flag itself -------------------------------------------------------------
@@ -123,8 +171,8 @@ check "F4 the flag clears again" \
 reset
 catch {xschem set wave_viewer 1}
 set vwin [xschem get current_win_path]
-xschem load_new_window $real      ;# not pristine (flagged) -> a new window
-set nwin [xschem get current_win_path]
+xschem load_new_window [mkreal f] ;# not pristine (flagged) -> a new window
+set nwin [wait_switch $vwin]
 check "F5 branding is per context: the NEW window is not a viewer" \
   [expr {$nwin ne $vwin && [xschem get wave_viewer] eq "0"}] \
   "(vwin=$vwin nwin=$nwin get=[xschem get wave_viewer])"
@@ -142,18 +190,20 @@ reset
 brand_viewer
 set vwin [xschem get current_win_path]
 set ntabs0 [xschem get ntabs]
+set vreal [mkreal v]
 check "V0 the branded buffer looks exactly like is_pristine_untitled()'s target" \
   [expr {[xschem get instances] == 0 && [xschem get wires] == 0 &&
          [xschem get modified] == 0 && [xschem get rects 2] == 1 &&
          [string match {untitled*} [tail_of_current]]}] \
   "(inst=[xschem get instances] wires=[xschem get wires] modified=[xschem get modified] rects2=[xschem get rects 2] sch=[tail_of_current])"
 
-xschem load_new_window $real
+xschem load_new_window $vreal
+wait_switch $vwin
 
 check "V1 the open created a NEW window/tab instead of reusing the viewer" \
   [expr {[xschem get ntabs] == $ntabs0 + 1}] "(ntabs $ntabs0 -> [xschem get ntabs])"
 check "V2 the schematic landed in that new window" \
-  [expr {[xschem get current_win_path] ne $vwin && [tail_of_current] eq "real.sch" &&
+  [expr {[xschem get current_win_path] ne $vwin && [tail_of_current] eq [file tail $vreal] &&
          [xschem get wires] == 2}] \
   "(win=[xschem get current_win_path] sch=[tail_of_current] wires=[xschem get wires])"
 
@@ -180,7 +230,8 @@ reset
 brand_viewer 0                    ;# same shape, NO wave_viewer flag
 set swin [xschem get current_win_path]
 set ntabs0 [xschem get ntabs]
-xschem load_new_window $real
+xschem load_new_window [mkreal s1]
+wait_switch $swin
 check "S1 an unbranded buffer holding a graph rect is not reused either" \
   [expr {[xschem get ntabs] == $ntabs0 + 1 && [xschem get current_win_path] ne $swin}] \
   "(ntabs $ntabs0 -> [xschem get ntabs] win=[xschem get current_win_path])"
@@ -200,7 +251,8 @@ check "S3 the text buffer is otherwise pristine-shaped" \
   [expr {[xschem get texts] == 1 && [xschem get instances] == 0 && [xschem get wires] == 0 &&
          [xschem get modified] == 0}] \
   "(texts=[xschem get texts] modified=[xschem get modified])"
-xschem load_new_window $real
+xschem load_new_window [mkreal s3]
+wait_switch $twin
 check "S4 a buffer holding only a TEXT is not reused" \
   [expr {[xschem get ntabs] == $ntabs0 + 1 && [xschem get current_win_path] ne $twin}] \
   "(ntabs $ntabs0 -> [xschem get ntabs] win=[xschem get current_win_path])"
@@ -209,22 +261,154 @@ check "S5 ...and its text survived" \
   [expr {[xschem get texts] == 1 && [xschem get wires] == 0}] \
   "(texts=[xschem get texts] wires=[xschem get wires])"
 
+# ---- S6..S15: the OTHER per-layer arrays, on the HIGHEST layer ----------------------
+# The predicate scans rects/lines/polygons/arcs over `cadlayers` entries. S1/S2 (a graph
+# rect) and S3/S5 (a text) between them covered rects and texts only, both on layer 2 --
+# so the line, polygon and arc clauses shipped with NO leg, and nothing proved the loop
+# bound was `cadlayers` rather than "whatever layer the legs happen to use". These legs
+# place each remaining object type on the TOP layer, sized from `xschem get cadlayers`
+# rather than hard-coded, and assert the object is STILL THERE after the open: "a new
+# window appeared" alone also happens when the load fails outright.
+set toplayer [expr {[xschem get cadlayers] - 1}]
+check "S6 the top layer is a real, non-zero layer the older legs do not touch" \
+  [expr {$toplayer > 2}] "(cadlayers=[xschem get cadlayers] toplayer=$toplayer)"
+
+# LINE on the top layer (`xschem line` draws on `rectcolor`; draw=0, no X needed).
+reset
+xschem set rectcolor $toplayer
+xschem line 0 0 100 0 -1 {} 0
+xschem set_modify 0
+set gwin [xschem get current_win_path]
+set ntabs0 [xschem get ntabs]
+check "S7 the line buffer is otherwise pristine-shaped" \
+  [expr {[xschem get lines $toplayer] == 1 && [xschem get instances] == 0 &&
+         [xschem get wires] == 0 && [xschem get texts] == 0 &&
+         [xschem get rects $toplayer] == 0 && [xschem get modified] == 0}] \
+  "(lines$toplayer=[xschem get lines $toplayer] modified=[xschem get modified])"
+xschem load_new_window [mkreal g]
+wait_switch $gwin
+check "S8 a buffer holding only a LINE is not reused" \
+  [expr {[xschem get ntabs] == $ntabs0 + 1 && [xschem get current_win_path] ne $gwin}] \
+  "(ntabs $ntabs0 -> [xschem get ntabs] win=[xschem get current_win_path])"
+catch {xschem new_schematic switch $gwin}
+check "S9 ...and the line survived on layer $toplayer" \
+  [expr {[xschem get current_win_path] eq $gwin && [xschem get lines $toplayer] == 1 &&
+         [xschem get wires] == 0 && [string match {untitled*} [tail_of_current]]}] \
+  "(lines$toplayer=[xschem get lines $toplayer] wires=[xschem get wires] sch=[tail_of_current])"
+
+# POLYGON on the top layer (`xschem polygon` also draws on `rectcolor`).
+reset
+xschem set rectcolor $toplayer
+xschem polygon 0 0 100 0 50 100
+xschem set_modify 0
+set hwin [xschem get current_win_path]
+set ntabs0 [xschem get ntabs]
+check "S10 the polygon buffer is otherwise pristine-shaped" \
+  [expr {[xschem get polygons $toplayer] == 1 && [xschem get instances] == 0 &&
+         [xschem get wires] == 0 && [xschem get texts] == 0 &&
+         [xschem get lines $toplayer] == 0 && [xschem get modified] == 0}] \
+  "(polygons$toplayer=[xschem get polygons $toplayer] modified=[xschem get modified])"
+xschem load_new_window [mkreal h]
+wait_switch $hwin
+check "S11 a buffer holding only a POLYGON is not reused" \
+  [expr {[xschem get ntabs] == $ntabs0 + 1 && [xschem get current_win_path] ne $hwin}] \
+  "(ntabs $ntabs0 -> [xschem get ntabs] win=[xschem get current_win_path])"
+catch {xschem new_schematic switch $hwin}
+check "S12 ...and the polygon survived on layer $toplayer" \
+  [expr {[xschem get current_win_path] eq $hwin && [xschem get polygons $toplayer] == 1 &&
+         [xschem get wires] == 0 && [string match {untitled*} [tail_of_current]]}] \
+  "(polygons$toplayer=[xschem get polygons $toplayer] wires=[xschem get wires] sch=[tail_of_current])"
+
+# ARC on the top layer (`xschem arc x y r a b layer` takes its layer explicitly).
+# The survival assertion needs `xschem get arcs <n>`, which did NOT exist -- an unknown
+# `get` answers the empty string with rc 0 (trap 2), so this leg would have been silently
+# vacuous. The getter was added next to `rects`/`lines`/`polygons` in the `case 'a'`
+# group of `xschem get` (src/scheduler.c); this leg is also its only guard.
+reset
+xschem arc 0 0 50 0 180 $toplayer
+xschem set_modify 0
+set awin [xschem get current_win_path]
+set ntabs0 [xschem get ntabs]
+check "S13 the arc buffer is otherwise pristine-shaped, and `get arcs` answers" \
+  [expr {[xschem get arcs $toplayer] == 1 && [xschem get instances] == 0 &&
+         [xschem get wires] == 0 && [xschem get texts] == 0 &&
+         [xschem get rects $toplayer] == 0 && [xschem get modified] == 0}] \
+  "(arcs$toplayer=[xschem get arcs $toplayer] modified=[xschem get modified])"
+xschem load_new_window [mkreal a]
+wait_switch $awin
+check "S14 a buffer holding only an ARC is not reused" \
+  [expr {[xschem get ntabs] == $ntabs0 + 1 && [xschem get current_win_path] ne $awin}] \
+  "(ntabs $ntabs0 -> [xschem get ntabs] win=[xschem get current_win_path])"
+catch {xschem new_schematic switch $awin}
+check "S15 ...and the arc survived on layer $toplayer" \
+  [expr {[xschem get current_win_path] eq $awin && [xschem get arcs $toplayer] == 1 &&
+         [xschem get wires] == 0 && [string match {untitled*} [tail_of_current]]}] \
+  "(arcs$toplayer=[xschem get arcs $toplayer] wires=[xschem get wires] sch=[tail_of_current])"
+
+# ---- S16..S21: the instances/wires clause, with `modified` cleared -------------------
+# The ORIGINAL `instances != 0 || wires != 0` clause had no leg either: every other leg
+# either leaves the buffer empty or trips a different clause, and once a real schematic
+# is loaded the basename clause refuses anyway. Measured by deleting the line: nothing
+# went red (Task 2). These two legs are the ones that hold it -- a wire, and an instance,
+# in an *untitled* buffer with `modified` forced back to 0, which is exactly the state
+# `xschem set_modify 0` (or the viewer's D1 contract) leaves behind.
+reset
+xschem wire 0 0 100 0
+xschem set_modify 0
+set dwin [xschem get current_win_path]
+set ntabs0 [xschem get ntabs]
+check "S16 the wire buffer is untitled, unmodified and holds exactly one wire" \
+  [expr {[xschem get wires] == 1 && [xschem get instances] == 0 &&
+         [xschem get modified] == 0 && [string match {untitled*} [tail_of_current]]}] \
+  "(wires=[xschem get wires] modified=[xschem get modified] sch=[tail_of_current])"
+xschem load_new_window [mkreal d1]
+wait_switch $dwin
+check "S17 a buffer holding only a WIRE is not reused" \
+  [expr {[xschem get ntabs] == $ntabs0 + 1 && [xschem get current_win_path] ne $dwin}] \
+  "(ntabs $ntabs0 -> [xschem get ntabs] win=[xschem get current_win_path])"
+catch {xschem new_schematic switch $dwin}
+check "S18 ...and the wire survived (still 1, not the 2 wires of real.sch)" \
+  [expr {[xschem get current_win_path] eq $dwin && [xschem get wires] == 1 &&
+         [string match {untitled*} [tail_of_current]]}] \
+  "(wires=[xschem get wires] sch=[tail_of_current])"
+
+reset
+xschem instance devices/lab_pin.sym 0 0 0 0 {name=l1 lab=A}
+xschem set_modify 0
+set iwin [xschem get current_win_path]
+set ntabs0 [xschem get ntabs]
+check "S19 the instance buffer is untitled, unmodified and holds exactly one instance" \
+  [expr {[xschem get instances] == 1 && [xschem get wires] == 0 &&
+         [xschem get modified] == 0 && [string match {untitled*} [tail_of_current]]}] \
+  "(inst=[xschem get instances] modified=[xschem get modified] sch=[tail_of_current])"
+xschem load_new_window [mkreal d2]
+wait_switch $iwin
+check "S20 a buffer holding only an INSTANCE is not reused" \
+  [expr {[xschem get ntabs] == $ntabs0 + 1 && [xschem get current_win_path] ne $iwin}] \
+  "(ntabs $ntabs0 -> [xschem get ntabs] win=[xschem get current_win_path])"
+catch {xschem new_schematic switch $iwin}
+check "S21 ...and the instance survived" \
+  [expr {[xschem get current_win_path] eq $iwin && [xschem get instances] == 1 &&
+         [xschem get wires] == 0 && [string match {untitled*} [tail_of_current]]}] \
+  "(inst=[xschem get instances] wires=[xschem get wires] sch=[tail_of_current])"
+
 # ---- P: THE BEHAVIOUR THAT MUST NOT CHANGE -----------------------------------------
 # A genuinely pristine untitled scratch buffer is still consumed in place: that is the
 # specced editor behaviour (doc/claude/specs/load_window_routing.md), not an accident.
 reset
 set pwin [xschem get current_win_path]
 set ntabs0 [xschem get ntabs]
+set preal [mkreal p]
 check "P0 the buffer is genuinely empty" \
   [expr {[xschem get instances] == 0 && [xschem get wires] == 0 && [xschem get texts] == 0 &&
          [xschem get rects 2] == 0 && [xschem get modified] == 0}] \
   "(rects2=[xschem get rects 2] texts=[xschem get texts])"
-xschem load_new_window $real
+xschem load_new_window $preal
 check "P1 a pristine untitled buffer is STILL reused in place (no new window)" \
   [expr {[xschem get ntabs] == $ntabs0 && [xschem get current_win_path] eq $pwin}] \
   "(ntabs $ntabs0 -> [xschem get ntabs] win=[xschem get current_win_path])"
 check "P2 ...and it now holds the opened schematic" \
-  [expr {[tail_of_current] eq "real.sch" && [xschem get wires] == 2}] \
+  [expr {[tail_of_current] eq [file tail $preal] && [xschem get wires] == 2}] \
   "(sch=[tail_of_current] wires=[xschem get wires])"
 
 # ---- R: read-only is NOT the guard --------------------------------------------------
@@ -236,10 +420,11 @@ reset
 xschem set readonly 1
 set rwin [xschem get current_win_path]
 set ntabs0 [xschem get ntabs]
-xschem load_new_window $real
+set rreal [mkreal r]
+xschem load_new_window $rreal
 check "R1 a read-only but genuinely pristine untitled buffer is still reused" \
   [expr {[xschem get ntabs] == $ntabs0 && [xschem get current_win_path] eq $rwin &&
-         [tail_of_current] eq "real.sch"}] \
+         [tail_of_current] eq [file tail $rreal]}] \
   "(ntabs $ntabs0 -> [xschem get ntabs] sch=[tail_of_current])"
 
 # ---- W: closing the MAIN window must not brand the surviving editor canvas ----------
@@ -258,8 +443,8 @@ foreach {tag tabbed} {W-win 0 W-tab 1} {
   # the main buffer must be NON-pristine, or the open is reused in place and there is no
   # second window to swap with -- and `xschem exit force` with none would exit the process
   xschem set_modify 1
-  xschem load_new_window $real
-  set other [xschem get current_win_path]
+  xschem load_new_window [mkreal $tag]
+  set other [wait_switch $main]
   if {$other eq $main} {
     check "$tag fixture: a second window/tab exists to swap with" 0 "(other=$other main=$main)"
   } else {
@@ -285,7 +470,8 @@ set mwin [xschem get current_win_path]
 set ntabs0 [xschem get ntabs]
 check "M0 the buffer is modified" [expr {[xschem get modified] == 1}] \
   "(modified=[xschem get modified])"
-xschem load_new_window $real
+xschem load_new_window [mkreal m]
+wait_switch $mwin
 check "M1 a MODIFIED buffer is not reused (pre-existing behaviour, unchanged)" \
   [expr {[xschem get ntabs] == $ntabs0 + 1 && [xschem get current_win_path] ne $mwin}] \
   "(ntabs $ntabs0 -> [xschem get ntabs])"
@@ -293,10 +479,10 @@ check "M1 a MODIFIED buffer is not reused (pre-existing behaviour, unchanged)" \
 } err]} { puts "FATAL: $err" ; incr fail }
 
 # Trap 1: a wrong `xschem get <thing>` aborts the script and every leg after it
-# "passes" by never running. 25 is the full count -- if the banner says fewer, legs
+# "passes" by never running. 41 is the full count -- if the banner says fewer, legs
 # were skipped, whatever they printed.
-if {$npass + $fail != 25} {
-  puts "FAIL: leg count is [expr {$npass + $fail}], expected 25 -- legs were skipped"
+if {$npass + $fail != 41} {
+  puts "FAIL: leg count is [expr {$npass + $fail}], expected 41 -- legs were skipped"
   incr fail
 }
 

@@ -3626,6 +3626,25 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
           if(!strcmp(argv[2], "actionlog_filename")) { /* path of the open action log, empty if disabled */
             Tcl_SetResult(interp, actionlog_filename, TCL_VOLATILE);
           }
+          /* the sibling of `get rects` / `get lines` / `get polygons`, which existed;
+           * `get arcs` did not, so a Tcl caller asking for an arc count got the empty
+           * string with rc 0 (an unknown `get` does not error). Added for the issue-0172
+           * emptiness legs, which must assert the arc they placed survived the open. */
+          else if(!strcmp(argv[2], "arcs")) { /* (xschem get arcs n) number of arcs on layer 'n' */
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            if(argc > 3) {
+              int c = atoi(argv[3]);
+              if(c >=0 && c < cadlayers) {
+                Tcl_SetResult(interp, my_itoa(xctx->arcs[c]),TCL_VOLATILE);
+              } else {
+                Tcl_SetResult(interp, "xschem get arcs n: layer number out of range", TCL_STATIC);
+                return TCL_ERROR;
+              }
+            } else {
+              Tcl_SetResult(interp, "xschem get arcs n: give a layer number", TCL_STATIC);
+              return TCL_ERROR;
+            }
+          }
           break;
 
           case 'b':
@@ -6187,10 +6206,27 @@ static int is_pristine_untitled(void)
    * callers (the `xschem load -gui` routing, `load_new_window <file>`, and
    * `load_new_window` via the file dialog) so all three doors close at once and the
    * next caller cannot reintroduce the hijack. */
-  if(xctx->wave_viewer) return 0;
-  if(xctx->currsch != 0) return 0;
-  if(xctx->modified) return 0;
-  if(xctx->instances != 0 || xctx->wires != 0) return 0;
+  /* Every refusal names itself at dbg level 1: "why did opening a file give me a new
+   * window instead of reusing my blank one?" must be one `xschem -d 1` away, not an
+   * afternoon of git log. Level 1 costs nothing in normal use (dbg() returns
+   * immediately when debug_var < level). */
+  if(xctx->wave_viewer) {
+    dbg(1, "is_pristine_untitled(): NO -- this window is a waveform viewer\n");
+    return 0;
+  }
+  if(xctx->currsch != 0) {
+    dbg(1, "is_pristine_untitled(): NO -- not top level (currsch=%d)\n", xctx->currsch);
+    return 0;
+  }
+  if(xctx->modified) {
+    dbg(1, "is_pristine_untitled(): NO -- buffer is modified\n");
+    return 0;
+  }
+  if(xctx->instances != 0 || xctx->wires != 0) {
+    dbg(1, "is_pristine_untitled(): NO -- buffer has content (instances=%d wires=%d)\n",
+        xctx->instances, xctx->wires);
+    return 0;
+  }
   /* ...and "pristine" means the buffer is actually EMPTY, not merely free of instances
    * and wires (issue 0172). Drawing normally sets `modified`, which is what used to
    * make the rest of the object arrays redundant -- but any path that clears it (the
@@ -6198,16 +6234,40 @@ static int is_pristine_untitled(void)
    * with content in it to the next open, silently. rects/lines/polygons/arcs are
    * per-layer counters, so this is a per-layer scan; a freshly created untitled buffer
    * is 0 in every one of them (measured, startup and after `xschem clear force`). */
-  if(xctx->texts != 0) return 0;
-  for(i = 0; i < cadlayers; i++) {
-    if(xctx->rects && xctx->rects[i]) return 0;
-    if(xctx->lines && xctx->lines[i]) return 0;
-    if(xctx->polygons && xctx->polygons[i]) return 0;
-    if(xctx->arcs && xctx->arcs[i]) return 0;
+  if(xctx->texts != 0) {
+    dbg(1, "is_pristine_untitled(): NO -- buffer has %d text object(s)\n", xctx->texts);
+    return 0;
   }
-  if(!xctx->sch[xctx->currsch]) return 0;   /* NULL-safe (issue 0023) */
-  return (xctx->sch[xctx->currsch][0] == '\0' ||
-          is_untitled_basename(xctx->sch[xctx->currsch]));
+  for(i = 0; i < cadlayers; i++) {
+    if(xctx->rects && xctx->rects[i]) {
+      dbg(1, "is_pristine_untitled(): NO -- %d rect(s) on layer %d\n", xctx->rects[i], i);
+      return 0;
+    }
+    if(xctx->lines && xctx->lines[i]) {
+      dbg(1, "is_pristine_untitled(): NO -- %d line(s) on layer %d\n", xctx->lines[i], i);
+      return 0;
+    }
+    if(xctx->polygons && xctx->polygons[i]) {
+      dbg(1, "is_pristine_untitled(): NO -- %d polygon(s) on layer %d\n", xctx->polygons[i], i);
+      return 0;
+    }
+    if(xctx->arcs && xctx->arcs[i]) {
+      dbg(1, "is_pristine_untitled(): NO -- %d arc(s) on layer %d\n", xctx->arcs[i], i);
+      return 0;
+    }
+  }
+  if(!xctx->sch[xctx->currsch]) {           /* NULL-safe (issue 0023) */
+    dbg(1, "is_pristine_untitled(): NO -- no schematic name\n");
+    return 0;
+  }
+  {
+    int pristine = (xctx->sch[xctx->currsch][0] == '\0' ||
+                    is_untitled_basename(xctx->sch[xctx->currsch]));
+    dbg(1, "is_pristine_untitled(): %s -- empty buffer named \"%s\"%s\n",
+        pristine ? "YES" : "NO", xctx->sch[xctx->currsch],
+        pristine ? " (reused in place)" : " (not an untitled basename)");
+    return pristine;
+  }
 }
 
 /* `xschem l...` commands, moved verbatim from the xschem() dispatcher

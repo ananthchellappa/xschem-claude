@@ -74,8 +74,20 @@ that has had `set_modify 0` applied to it with content in place.
 
 `readonly` is deliberately **not** part of the test: this branch opens ordinary
 schematics read-only (descend read-only, the reopen shortcuts) and those are still fair
-reuse targets. Guards: `tests/headless/test_pristine_untitled_viewer_0172.tcl` (no X)
-and `test_wave_clear_all.tcl` CG9/CG10 (need X).
+reuse targets. Guards: `tests/headless/test_pristine_untitled_viewer_0172.tcl` (no X,
+**41 checks** — one clause of the predicate → one named set of legs, each verified by
+rebuilding with that clause neutralised; table in the issue doc) and
+`test_wave_clear_all.tcl` CG9/CG10 (need X).
+
+The viewer is not the only buffer this affects: `create_graph` (`src/create_graph.tcl`)
+draws a title text and a graph rect into the current buffer and then clears `modified`
+so the session can quit without a save prompt. That is a shipped helper leaving exactly
+the hijackable state in a window with no viewer brand — it is the workflow the
+object-array half of the predicate protects.
+
+**Why did my open get a new window?** Every refusal names its clause at `dbg` level 1:
+run `xschem -d 1` and look for `is_pristine_untitled(): NO -- ...` (the accepting path
+prints `YES -- empty buffer named "..." (reused in place)`).
 
 There is a **fourth** door that the predicate does not govern: `ask_new_file()`
 (`src/actions.c`), entered from `xschem load` with no filename and from Ctrl-O / Alt-O.
