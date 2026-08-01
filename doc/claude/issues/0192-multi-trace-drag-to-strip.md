@@ -161,6 +161,27 @@ and the shrink factor / maths / knob.
 
 ---
 
+## 5b. EYEBALLED — PASS (2026-08-01)
+
+Verified by the user on a real ASE waveform window: *"all working as expected.
+No issues seen. Legibility OK."* That closes all four items of §6:
+
+1. **N traces really do render shrunk at once.**
+2. **`0.7` is right for a BUNDLE too.** It had only ever been tuned on a single
+   trace (2026-07-29). No retune requested; the knob
+   (`set ::wviewer_drag_shrink <0..1>`, read fresh per drag by
+   `wviewer::drag_shrink`) stays at its default.
+3. **D-50 ACCEPTED** — traces on different source strips shrinking about **their
+   own** strip's centre, in place, does read as "I am carrying these". The
+   rejected alternative (a pointer-following ghost of the bundle) stays rejected;
+   it would be a new feature, not a tweak.
+4. **Legible** at real viewer window sizes: destination frame + N shrunk traces +
+   `hand2` cursor together.
+
+The behavioural clauses were exercised in the same pass, including **D-44** — the
+drop back onto the pressed strip, which was broken in `5648fe6f` and fixed in the
+fixup below.
+
 ## 6. WHAT NO CHECK CAN SEE
 
 The move, the selection remap, the undo, the logging and the *arming* of the

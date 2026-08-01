@@ -165,6 +165,19 @@ line each sabotage edits, so it cannot survive its own sabotage.)
   `set_modify(1)` — `graph_marker_add_record` is untouched, so replay is
   unaffected by definition.
 
+## 4b. EYEBALLED — PASS (2026-08-01)
+
+The user verified this **on a real ASE waveform window**: *"I tested on a regular
+waveform window and it works clean."* The **removed 20-px halo is accepted** — see
+§5, which raised it as the one judgement call no check could make.
+
+**Scope ruling made at the same time, worth honouring in future work:** the
+*embedded-graph-in-a-regular-schematic-window* case is **not a concern** —
+*"I honestly don't care about that scenario. If users wish to submit tickets on
+that case, we can address."* The gate lives in the shared primitive
+`graph_marker_create()`, so embedded graphs get the behaviour for free and the
+suite still covers them; but do not spend effort on that surface unprompted.
+
 ## 5. NOT ASSERTED — for the eyeball
 
 Behavioural, not visual: two consequences are judgement calls no check can make.
