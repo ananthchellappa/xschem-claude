@@ -659,9 +659,12 @@ waveform body (or the handle) reorders strips, the 10-screen-pixel zone around a
 drawn trace picks that trace up — so one press arms exactly one of them.
 
 > **Extended by §19 (issue 0192).** Everything below still describes the gesture
-> exactly, with one refinement: when the pressed trace is part of a multi-trace
-> SELECTION, the drag carries the WHOLE selection rather than the one trace, and
-> the drop calls `move_traces` instead of `move_trace`. A press on an
+> exactly, with two refinements: when the pressed trace is part of a multi-trace
+> SELECTION, (a) the drag carries the WHOLE selection rather than the one trace,
+> and the drop calls `move_traces` instead of `move_trace`; (b) "a drop on the
+> source strip commits nothing" becomes "a drop where nothing would move commits
+> nothing" — with a selection spanning strips, dropping back on the pressed
+> strip moves the OTHER strips' traces in (§19.1.2). A press on an
 > **unselected** trace is byte-for-byte this section, log line included.
 
 ### 13.1 The gesture
@@ -766,6 +769,10 @@ written by `graph_props`):
 A frame rather than an edge bar because the whole strip is the target here, not
 one of its edges. Rewritten in place on the affected rects only when the
 prospective destination changes, cleared on commit/cancel, never a regenerate.
+The frame appears exactly when a drop there **would commit** something — for a
+single trace that is "any strip but its own", which is what this section always
+said; for a multi-trace drag it is `movable_pairs` (§19.1.2), the same predicate
+the release uses.
 
 ### 13.6 Tests
 
@@ -1683,13 +1690,15 @@ join.
 | PRESS on a trace | §13's arm, unchanged — `hand2` on the press, the press forwarded to C verbatim | a cursor grab, a marker grab and an axis grab all still win first |
 | PRESS decides **the moving set** | in the live selection ⇒ the whole window-wide selection; not in it ⇒ that trace alone (**D-41**) | see 19.1.1 |
 | > 3 px travel | the drag owns the pointer, and the shrink preview is armed **once**, for **every** carried trace | 19.5 |
-| motion | the destination follows the pointer; `reorder_handle=4` frames it | §13.5, unchanged |
-| RELEASE over another strip | every carried trace that is not already there moves to it | 19.3 |
-| release on the source, outside every strip, sub-threshold, or Escape | commits nothing, logs nothing, takes the preview down | §13.1's rule, unchanged |
+| motion | the destination follows the pointer; `reorder_handle=4` frames it **exactly when a drop there would commit** | 19.1.2 |
+| RELEASE over **any** strip | every carried trace that is not already there moves to it — including a release back on the strip the PRESS landed on | 19.3, and 19.1.2 |
+| release outside every strip, sub-threshold, or Escape | commits nothing, logs nothing, takes the preview down | §13.1's rule, unchanged |
 
 **The refusals**, all inherited: a drop where **nothing** would move (every
-carried trace is already on the destination, or the destination *is* the source)
-mutates nothing, logs nothing and takes no undo point.
+carried trace is already on the destination) mutates nothing, logs nothing and
+takes no undo point. For a single-trace drag that is exactly §13.1's "a drop on
+the source strip commits nothing", because the source strip *is* the whole
+carried set.
 
 #### 19.1.1 Why the set is decided at PRESS time
 
@@ -1709,6 +1718,33 @@ extend the selection, does not collapse it and does not clear it — the gesture
 ignores it. Silently extending a selection on a press is the class of surprise
 0174 D3 already ruled against for clicks.
 
+#### 19.1.2 The destination may be the PRESSED strip (D-44)
+
+`movable_pairs`, not `to == from`, decides — one PURE predicate, read by the
+drop, by the refusal and by the drop-target frame, so the frame can never
+promise a move the release then refuses:
+
+```tcl
+wviewer::movable_pairs {pairs to_gi}   ;# the carried pairs whose gi != to_gi
+```
+
+A selection spanning strips 0 and 1, pressed on strip 0 and dropped back on
+strip 0, moves strip 1's traces IN and leaves strip 0's exactly where they are —
+D-44's rule with no exception for the strip the gesture started on. The
+`reorder_handle=4` frame follows the same answer, so during such a drag the
+pressed strip *does* get framed (it would commit); during an all-on-one-strip
+drag no strip is ever framed, because no drop would commit anything.
+
+⚠ **This is a fix to what `5648fe6f` shipped.** That commit refused the whole
+gesture on `$to == $from` **before** the `movable` filter ran, so the case above
+committed nothing and logged nothing while this section, D-44 and PLAN.md §05
+question 3 all said otherwise. `trace_drag_arm` now also starts `tdrag_to` at
+`-1` ("no destination decided yet") instead of at the pressed index, so the
+first motion inside the pressed strip is a real destination change and paints
+the frame. Legs: `MM14` (the drop and both frame states) and `MM8` (the negative
+frame) in `test_wave_trace_menu.tcl`, `MV13` (the predicate) in
+`test_wave_modes.tcl`.
+
 ### 19.2 Model operations
 
 Pure, headless-testable, in `wave_viewer.tcl`:
@@ -1716,6 +1752,7 @@ Pure, headless-testable, in `wave_viewer.tcl`:
 | proc | what |
 |---|---|
 | `selection_pairs W` | the window-wide selection as MODEL `{gi ti}` pairs, ascending. **THE ONE FOLD** of `selected_waves` across every strip (D-53) — `delete_selection_at` was rewired onto it, so there is exactly one such loop in the file. Crosses NODE→MODEL space through `trace_index_of_node` (landmine 34) |
+| `movable_pairs pairs to_gi` | **PURE**. The carried pairs a drop on `to_gi` would actually move — the whole of D-44's "already there ⇒ stays put" rule, and the gesture layer's one "would anything happen" question (19.1.2). A FILTER only: sorting and de-duplication stay in the fold below, so the logged pair order has one home |
 | `move_traces_in_graphs graphs pairs to_gi` | **PURE**. Normalise, then FOLD `move_trace_in_graphs` over the result |
 
 **Normalisation** (this is what gets logged, D-57): integers, in range,
@@ -1847,9 +1884,18 @@ test — the `gi` term is pixels-only and is unreachable any other way.
 
 | suite | group | arms | what |
 |---|---|---|---|
-| `tests/headless/test_wave_modes.tcl` | `MV1`-`MV12` | **both** | the PURE fold: order, cross-strip, `gi == to_gi`, dict identity, the SELECTION set, markers + no dangling `prev`, **the index-adjustment teeth (MV8)**, range blanking, a vec-less source, the refusals, dedupe |
+| `tests/headless/test_wave_modes.tcl` | `MV1`-`MV13` | **both** | the PURE fold: order, cross-strip, `gi == to_gi`, dict identity, the SELECTION set, markers + no dangling `prev`, **the index-adjustment teeth (MV8)**, range blanking, a vec-less source, the refusals, dedupe — plus `MV13`, `movable_pairs`, the drop's own predicate (§19.1.2) |
 | `tests/headless/test_wave_drag_preview.tcl` | `DV8`-`DV12`, `DM0`-`DM6` | verb legs **both**, gesture legs DISPLAY | the C storage (head byte-identical, the new getter, the cap read out of `xschem.h`, odd-argument tolerance) and the multi arm end to end, plus the source-level one-writer/one-predicate leg |
-| `tests/headless/test_wave_trace_menu.tcl` | `MM0`-`MM13` | DISPLAY | the whole gesture on a THREE-strip fixture with inert `sdid` identities and a NON-CONTIGUOUS 2-of-3 selection built through the shipped Ctrl+click bindings |
+| `tests/headless/test_wave_trace_menu.tcl` | `MM0`-`MM14` | DISPLAY | the whole gesture on a THREE-strip fixture with inert `sdid` identities, a **vec-less trace at MODEL index 1 of strip 0** so NODE and MODEL space diverge, and a NON-CONTIGUOUS 2-of-3 selection built through the shipped Ctrl+click bindings |
+
+⚠ **The fixture's vec-less plant is load-bearing** and was added by this item's
+fixup. Without it MODEL index == NODE index everywhere, and the end-to-end chain
+`trace_at` (NODE) → `trace_index_of_node` → `selection_pairs` (MODEL) →
+`move_traces` (MODEL) passes with an identity *or a broken* mapping. Measured:
+`selection_pairs` sabotaged to use the node index as a model index leaves the
+pre-fixup suite `ALL PASS (381)` and kills **13** legs of the fixed-up one. With
+the plant, `MM7`'s singular log line reads `move_trace 0 2 2` — node 1 is model
+2 — so every logged pair is itself a witness that the crossing happened.
 
 `test_wave_viewer.tcl`'s `TD*` fixture is one trace plus one empty strip and
 cannot host a multi-selection; it stays the **single-trace regression witness**
@@ -1868,6 +1914,16 @@ the selection unconditionally) → `DM3` + `MM7`, `MM1` green; SAB-8 (one log li
 per pair) → `MM4` and the log legs of `MM5`/`MM6`; SAB-9 (fold descending) →
 `MV2` + `MM1`'s order leg (and, on a 0-and-2 fixture, their arrival counts too —
 a descending fold computes a negative index and the second move is refused).
+
+Four more from the fixup, each verified the same way: **S1** (restore the
+`$to == $from` refusal in `trace_drag_drop`) → exactly 5 `MM14` legs, everything
+else green; **S2** (`trace_drag_feedback` frames unconditionally) → exactly
+`MM8`'s negative frame leg, `test_wave_viewer.tcl` still 368; **S3**
+(`selection_pairs` uses the node index as a model index) → 13 legs on the
+fixed-up fixture and **`ALL PASS (381)` on the pre-fixup one** — the fixture-gap
+measurement; **S4** (`movable_pairs` drops its already-there filter) → 3 `MV13`
+legs + `MM8`'s frame leg, while `MM8`'s model legs stay green because the PURE
+`move_traces_in_graphs` refuses the no-op independently.
 
 **What no assertion can reach** (the honest list): that N traces actually RENDER
 shrunk at once — nothing headless reads pixels, and there is no seam between

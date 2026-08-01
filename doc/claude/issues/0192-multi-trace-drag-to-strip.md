@@ -75,6 +75,14 @@ NORMALISED pairs.
 **The drop dispatches.** Exactly the pressed trace ⇒ the shipped
 `wviewer::move_trace` (and its shipped log line); anything else ⇒ `move_traces`.
 
+**What a drop REFUSES is decided by `movable_pairs`, not by `to == from`**
+(added in the fixup below). The carried pairs whose `gi` is not the destination
+are what moves; only an EMPTY result refuses. So a drop back on the strip the
+press landed on is a normal drop when the selection spans other strips — those
+traces move in and the pressed strip's own stay put (D-44) — and the
+`reorder_handle=4` frame reads the same predicate, so it is lit exactly when a
+release would commit.
+
 **The shrink preview became a SET**, in the `graph_marker_sel` shape:
 `graph_preview_scale`/`_gi`/`_wave` stay as the HEAD, joined by
 `graph_preview_set_gi[GRAPH_MAX_PREVIEW_WAVES]` / `_set_wave[]` /
@@ -138,9 +146,9 @@ src/xinit.c         alloc_xschem_data(): reset graph_preview_n
 src/wave_viewer.tcl selection_pairs, tdrag_pairs, trace_drag_arm/clear/motion/drop,
                     drag_preview_arm_set, move_traces_in_graphs, move_traces,
                     delete_selection_at rewired onto selection_pairs
-tests/headless/test_wave_modes.tcl         MV1-MV12   (both arms)
+tests/headless/test_wave_modes.tcl         MV1-MV13   (both arms)
 tests/headless/test_wave_drag_preview.tcl  DV8-DV12, DM0-DM6
-tests/headless/test_wave_trace_menu.tcl    MM0-MM13   (display)
+tests/headless/test_wave_trace_menu.tcl    MM0-MM14   (display)
 doc/claude/specs/waveform_viewer_modes.md  §19 (new), the §15.1 row, the §13 cross-ref
 doc/claude/specs/waveform_viewer.md        the item-6 "arm is a SET" revision block
 doc/claude/code_analysis/waveform_subsystem_reference.md  landmine 49, §8, §9, §13
@@ -170,3 +178,38 @@ preview are all asserted. These are not, and this is why the item is `[E]`:
    carrying these"** when the selection spans several source strips (D-50).
 4. **Whether the destination frame plus N shrunk traces is legible** at the sizes
    a real viewer window uses.
+
+---
+
+## 7. FIXUP (adversarial review of `5648fe6f`)
+
+**Defect: D-44 was not implemented, and the doc claimed it was.**
+`trace_drag_drop` refused on `!$active || $to < 0 || $to == $from` **before** the
+`movable` filter ran, so a drop back on the strip the press landed on committed
+nothing and logged nothing — even with the selection spanning other strips whose
+traces should have moved in. PLAN.md §05 question 3 and D-44 both say the
+opposite, and the decision doc recorded no deviation. No leg covered it: `MM8` is
+the all-on-one-strip case (nothing could move anyway) and `MM6` drops on strip 1,
+never on the pressed strip.
+
+**Repair (implement the clause, not re-negotiate it).**
+`wviewer::movable_pairs {pairs to_gi}` is now the ONE predicate — read by the
+drop, by the refusal and by the drop-target frame. `$to == $from` is gone;
+`!$active` and `$to < 0` still refuse outright. `trace_drag_feedback` takes the
+carried pairs instead of the press strip, and `trace_drag_arm` starts `tdrag_to`
+at `-1` ("no destination decided yet") so the first motion inside the pressed
+strip is a real destination change and paints the frame.
+
+**Second defect: the `MM*` fixture had no vec-less trace**, so MODEL index ==
+NODE index in every `MM` leg and the end-to-end `trace_at` → `trace_index_of_node`
+→ `selection_pairs` → `move_traces` chain would have passed with a broken
+mapping. `mmspec` now carries one (`-` in the spec, planted at MODEL index 1 of
+strip 0). Measured both ways: with `selection_pairs` sabotaged to use the node
+index as a model index, the pre-fixup suite is `ALL PASS (381)` and the fixed-up
+one is `13 FAILED (384)`.
+
+New legs: `MV13` (9 pure checks, `test_wave_modes.tcl`), `MM14` (12 checks) and
+`MM8`'s three added checks (`test_wave_trace_menu.tcl`). Counts after:
+`test_wave_modes` 212 / 485, `test_wave_trace_menu` 397,
+`test_wave_drag_preview` 43 / 94, `test_wave_viewer` **368, unchanged** (D-42's
+single-trace regression witness).

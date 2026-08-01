@@ -4194,22 +4194,53 @@ proc wviewer::selection_pairs {W} {
   return $out
 }
 
+# PURE: the subset of MODEL {gi ti} `pairs` that a drop on strip `to_gi` would
+# actually MOVE — D-44, and THE one place the rule is expressed. A carried trace
+# that is already on the destination stays exactly where it is (re-appending it
+# would silently reorder a strip the user did not ask to reorder), so the
+# destination being one of the SOURCE strips — including the strip the press
+# itself landed on — is not a refusal: the traces that are elsewhere still move
+# in. It is only when this comes back EMPTY that the drop is a no-op.
+#
+# Malformed pairs and a bad `to_gi` are dropped here rather than diagnosed: this
+# is the gesture layer's "would anything happen" question. `move_traces` still
+# validates every surviving pair LOUDLY against the live model.
+proc wviewer::movable_pairs {pairs to_gi} {
+  if {![string is integer -strict $to_gi] || $to_gi < 0} { return {} }
+  set out {}
+  foreach p $pairs {
+    if {[llength $p] != 2} { continue }
+    if {[lindex $p 0] == $to_gi} { continue }
+    lappend out $p
+  }
+  return $out
+}
+
 # Paint the prospective destination strip of a trace drag: clear the frame on
 # `old`, put one on `new`. Rides the SAME `reorder_handle` prop token as the grip
 # and the strip drop bar (value 4 = frame around the whole strip — the target is
 # the strip, not one of its edges), rewritten IN PLACE on the affected rects and
 # redrawn. Never a regenerate (it would undo a live pan/zoom on every Motion) and
-# never a model mutation. `new == from` means "back where it started" -> no frame.
-proc wviewer::trace_drag_feedback {token old new from} {
+# never a model mutation.
+#
+# `pairs` is the MODEL {gi ti} set the gesture is carrying, and the frame appears
+# exactly when dropping HERE would commit something — i.e. when `movable_pairs`
+# is non-empty. That is the same predicate the drop itself uses, so the frame can
+# never promise a move that the release then refuses, nor stay dark for one it
+# performs. For the single-trace drag it reduces to the shipped rule ("back where
+# it started -> no frame"); for a selection spanning several strips the pressed
+# strip DOES get framed, because the traces from the other strips move into it.
+proc wviewer::trace_drag_feedback {token old new pairs} {
   variable windows
   if {![dict exists $windows $token]} { return 0 }
   set n [llength [dict get [wviewer::layout_for $token] graphs]]
+  set moves [llength [wviewer::movable_pairs $pairs $new]]
   if {[catch {
     wviewer::with_edit $token {
       if {$old >= 0 && $old < $n} {
         xschem setprop -fast rect 2 $old reorder_handle 1
       }
-      if {$new >= 0 && $new < $n && $new != $from} {
+      if {$new >= 0 && $new < $n && $moves} {
         xschem setprop -fast rect 2 $new reorder_handle 4
       }
       xschem redraw
@@ -4247,7 +4278,9 @@ proc wviewer::trace_drag_reset {token} {
   # paths where no feedback frame was ever painted.
   if {$had} { catch {wviewer::drag_preview_clear $token} }
   if {$had && [info exists tdrag_to($token)] && $tdrag_to($token) >= 0} {
-    wviewer::trace_drag_feedback $token $tdrag_to($token) -1 $tdrag_gi($token)
+    # `new` is -1 here, so no frame is ever painted and the carried set is
+    # irrelevant to this call — {} says so rather than passing a stale one
+    wviewer::trace_drag_feedback $token $tdrag_to($token) -1 {}
   }
   wviewer::trace_drag_clear $token
   if {[dict exists $windows $token]} {
@@ -4294,7 +4327,11 @@ proc wviewer::trace_drag_arm {W token gi px py {ni {}}} {
   if {[lsearch -exact $sel [list $gi $ti]] >= 0} { set tdrag_pairs($token) $sel }
   set tdrag_gi($token) $gi
   set tdrag_ti($token) $ti
-  set tdrag_to($token) $gi
+  # -1 = "no destination decided yet", the same value trace_drag_clear uses. It
+  # used to be `$gi`, which made the first motion inside the PRESSED strip look
+  # like "nothing changed" and so skipped the feedback call — invisible while a
+  # drop on that strip was refused outright, wrong once it can commit (D-44).
+  set tdrag_to($token) -1
   set tdrag_x0($token) $px
   set tdrag_y0($token) $py
   set tdrag_active($token) 0
@@ -4390,6 +4427,13 @@ proc wviewer::trace_drag_motion {W px py state} {
   if {$token eq {}} { return 0 }
   if {![info exists tdrag_gi($token)] || $tdrag_gi($token) < 0} { return 0 }
   set from $tdrag_gi($token)
+  # the MODEL set this gesture is carrying, decided at press time. Both the
+  # shrink preview and the drop-target frame read it, so it is resolved ONCE
+  # here — a second reconstruction would be a second copy of the fallback.
+  set pset [list [list $from $tdrag_ti($token)]]
+  if {[info exists tdrag_pairs($token)] && [llength $tdrag_pairs($token)]} {
+    set pset $tdrag_pairs($token)
+  }
   if {!$tdrag_active($token)} {
     if {abs($px - $tdrag_x0($token)) <= 3 && abs($py - $tdrag_y0($token)) <= 3} {
       return 0
@@ -4404,10 +4448,6 @@ proc wviewer::trace_drag_motion {W px py state} {
     # issue 0192: EVERY carried trace shrinks, so the arm takes the whole moving
     # set decided at press time — one trace when the press was not on a selected
     # one, which is the shipped single-trace case with n = 1.
-    set pset [list [list $from $tdrag_ti($token)]]
-    if {[info exists tdrag_pairs($token)] && [llength $tdrag_pairs($token)]} {
-      set pset $tdrag_pairs($token)
-    }
     wviewer::drag_preview_arm_set $token $pset
   }
   # the destination simply FOLLOWS THE POINTER: the strip it is over, or (outside
@@ -4416,7 +4456,7 @@ proc wviewer::trace_drag_motion {W px py state} {
   if {$to != $tdrag_to($token)} {
     set old $tdrag_to($token)
     set tdrag_to($token) $to
-    wviewer::trace_drag_feedback $token $old $to $from
+    wviewer::trace_drag_feedback $token $old $to $pset
   }
   return 1
 }
@@ -4424,9 +4464,18 @@ proc wviewer::trace_drag_motion {W px py state} {
 # <ButtonRelease-1> while a trace drag is armed. The caller (strip_drag_release)
 # has already handed the release to C — the wave-bold click and any cursor
 # bookkeeping are untouched. A drag that PASSED the threshold and ended over a
-# DIFFERENT strip commits exactly one move_trace; a drop on the source strip, a
-# drop outside every strip and a sub-threshold click commit nothing and log
-# nothing. Returns the destination trace index when a move happened, else {}.
+# strip commits the traces that are not already on that strip; a drop outside
+# every strip, a sub-threshold click and a drop where NOTHING would move commit
+# nothing and log nothing. Returns the destination trace index when a move
+# happened, else {}.
+#
+# ⚠ THE DESTINATION MAY BE THE PRESSED STRIP. `movable_pairs` decides, not
+# `to == from`: with a selection spanning several strips, a drop back on the
+# strip the press landed on moves the OTHER strips' traces in and leaves the
+# pressed one where it is (D-44). Refusing on `to == from` — which is what
+# 5648fe6f shipped — short-circuits that whole gesture, and the single-strip
+# selection it was meant to cover is already a no-op through the empty
+# `movable`. The other two terms (`!$active`, `$to < 0`) still refuse outright.
 proc wviewer::trace_drag_drop {W} {
   variable tdrag_gi; variable tdrag_ti; variable tdrag_to; variable tdrag_active
   variable tdrag_pairs
@@ -4442,16 +4491,11 @@ proc wviewer::trace_drag_drop {W} {
     set pairs $tdrag_pairs($token)
   }
   wviewer::trace_drag_reset $token          ;# reads before it clears
-  if {!$active || $to < 0 || $to == $from} { return {} }
+  if {!$active || $to < 0} { return {} }
   # issue 0192: what actually MOVES is the carried set minus whatever is already
   # on the destination (D-44) — a trace that is there does not move, and a drop
   # where nothing would move commits nothing and logs nothing.
-  set movable {}
-  foreach p $pairs {
-    if {[llength $p] != 2} { continue }
-    if {[lindex $p 0] == $to} { continue }
-    lappend movable $p
-  }
+  set movable [wviewer::movable_pairs $pairs $to]
   if {![llength $movable]} { return {} }
   # catch: both mutations regenerate, and with_edit ERRORS on a refused context
   # switch (raised semaphore). Inside a Tk binding that would pop bgerror's

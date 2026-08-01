@@ -2123,6 +2123,36 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
     **both** the `gi` and the node index — that `gi` term affects pixels only and
     is unreachable by any behavioural leg.
 
+    **(e) A gesture's REFUSAL must be computed from the same predicate as its
+    COMMIT — and a shorthand for "nothing would happen" outlives its truth.**
+    `trace_drag_drop` shipped with `!$active || $to < 0 || $to == $from` guarding
+    the drop, a guard inherited verbatim from the SINGLE-trace gesture where
+    "the destination is the strip I pressed on" and "nothing would move" are the
+    same statement. Once the gesture carries a SET they stop being the same, and
+    the shorthand silently refused a whole legal gesture (a selection spanning
+    strips, dropped back on the pressed one) while the design doc, the spec and
+    PLAN.md all described it working. The repair is one PURE predicate —
+    `movable_pairs {pairs to_gi}`, the carried pairs whose `gi` is not the
+    destination — read by the drop, by the refusal AND by the `reorder_handle=4`
+    frame, so the frame can never promise a move the release refuses. Generalise:
+    when a gesture goes from one object to N, re-derive every early-return term
+    from the SET; a term that reads an attribute of the pressed object
+    (`$to == $from`, `$gi`, `$ti`) is the suspect. The frame also needed
+    `tdrag_to` to start at `-1` rather than at the pressed index — a "current
+    value" seeded from the press suppresses the first real change event.
+
+    **(f) A gesture fixture where two INDEX SPACES coincide tests neither.** The
+    `MM*` fixture originally carried no vec-less trace, so MODEL index == NODE
+    index on every strip and the whole crossing chain — `trace_at` (NODE) →
+    `trace_index_of_node` → `selection_pairs` (MODEL) → `move_traces` (MODEL) —
+    passed with an identity mapping. Measured: `selection_pairs` sabotaged to
+    use the node index as a model index left that suite `ALL PASS (381)`; with
+    one vec-less trace planted at MODEL index 1 of strip 0 the same sabotage
+    kills **13** legs, and `MM7`'s log line (`move_trace 0 2 2`, node 1 = model
+    2) becomes a witness of the crossing on its own. The pure legs having
+    covered the divergence (`MV10`, `DM0`/`DM3`) is NOT the same cover: they
+    exercise the fold and the arm, never the gesture end to end.
+
     ⚠ **What the arm decides, it decides at PRESS time.** The release is
     forwarded to C *before* `trace_drag_drop` runs, and a no-travel release
     collapses the selection to the clicked trace (issue 0174 D3). A drop-time read

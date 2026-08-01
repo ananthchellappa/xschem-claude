@@ -1989,6 +1989,14 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   # ⚠ WHY THE SELECTION IS BUILT WITH mm_click. Through the SHIPPED bindings, at
   # found pixels — never by writing hilight_wave/sel_waves by hand, or the leg
   # asserts against a selection the real gesture could not have produced.
+  # ⚠ WHY THE FIXTURE CARRIES A VEC-LESS TRACE (`-` in the spec, landmine 34).
+  # Without one, MODEL index == NODE index on every strip, and the whole chain
+  # the gesture runs on — trace_at (NODE) -> trace_index_of_node -> selection_pairs
+  # (MODEL) -> move_traces (MODEL) — passes with an identity or a broken mapping.
+  # With the plant at MODEL index 1 of strip 0, node 1 is model 2 and node 2 is
+  # model 3, so every logged pair below is a witness that the crossing happened:
+  # MM7's singular line reads `move_trace 0 2 2`, and an unconverted gesture would
+  # log `0 1 2` and move vec_b's neighbour instead.
   xschem new_schematic switch $vdrw
   pcall {xschem raw add vec_e {vsweep 9 +}}
 
@@ -1999,16 +2007,28 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     set gi 0
     foreach vecs $spec {
       foreach v $vecs {
+        if {$v eq "-"} { continue }        ;# the vec-less plant, inserted below
         set e [wviewer::add_trace $tok $gi $v]
         if {$e ne {}} { puts "  mm_fill: add_trace $v -> $e" }
       }
       incr gi
     }
-    # the identity keys go on AFTER the traces (add_trace rewrites the dict)
+    # the identity keys AND the vec-less plants go on AFTER the traces
+    # (add_trace rewrites the strip dict, so anything written before is lost).
+    # The inserts run in ASCENDING spec position, which is exactly where each `-`
+    # must end up: every earlier insert has already shifted the tail right.
     set out {}
     set gi 0
     foreach G [dict get [wviewer::layout_for $tok] graphs] {
-      lappend out [dict replace $G sdid [string index ABCDEFGH $gi]]
+      set trs [wviewer::dget $G traces {}]
+      set k 0
+      foreach v [lindex $spec $gi] {
+        if {$v eq "-"} {
+          set trs [linsert $trs $k [dict create expr {} name {} vec {} color 7]]
+        }
+        incr k
+      }
+      lappend out [dict replace $G sdid [string index ABCDEFGH $gi] traces $trs]
       incr gi
     }
     wviewer::set_graphs $tok $out
@@ -2135,7 +2155,9 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     return {}
   }
 
-  set mmspec {{vec_a vec_b vec_c} {vec_d} {vec_e}}
+  # strip 0: vec_a(model 0/node 0) <vec-less>(model 1) vec_b(2/1) vec_c(3/2)
+  # strip 1: vec_d(0/0)   strip 2: vec_e(0/0)
+  set mmspec {{vec_a - vec_b vec_c} {vec_d} {vec_e}}
   mm_fill $tok $mmspec
   set mmP0 [mm_px_for_node $vdrw 0 0]
   set mmP1 [mm_px_for_node $vdrw 0 1]
@@ -2154,8 +2176,14 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     lassign $mmP1 mmx1 mmy1
     lassign $mmP2 mmx2 mmy2
     lassign $mmP1_0 mmxd mmyd
-    check "MM0 fixture: three strips, identities A B C" \
-      [list [profile $tok] [mm_sdids $tok]] {{3 1 1} {A B C}}
+    check "MM0 fixture: three strips, identities A B C, the plant on strip 0" \
+      [list [profile $tok] [mm_sdids $tok] [vecs_at $tok 0]] \
+      {{4 1 1} {A B C} {vec_a {} vec_b vec_c}}
+    check "MM0 ... so NODE space and MODEL space really diverge on strip 0" \
+      [list [pcall {wviewer::trace_index_of_node \
+                      [lindex [dict get [wviewer::layout_for $tok] graphs] 0] 1}] \
+            [pcall {wviewer::trace_index_of_node \
+                      [lindex [dict get [wviewer::layout_for $tok] graphs] 0] 2}]] {2 3}
 
     # --- MM1: the whole selection travels ---------------------------------
     mm_reset $tok $vdrw
@@ -2171,10 +2199,11 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     mm_drag $vdrw $mmx0 $mmy0 $mmDX $mmDY2
     check "MM1 both selected traces arrived on strip 2, in SOURCE order" \
       [vecs_at $tok 2] {vec_e vec_a vec_c}
-    check "MM1 strip 0 kept its third trace, and only that" [vecs_at $tok 0] vec_b
+    check "MM1 strip 0 kept its unselected trace and the plant, and only those" \
+      [vecs_at $tok 0] {{} vec_b}
     check "MM1 strip 1 is untouched" [vecs_at $tok 1] vec_d
     check "MM1 the strip IDENTITIES are unchanged (a move, not a reorder)" \
-      [list [profile $tok] [mm_sdids $tok]] {{1 1 3} {A B C}}
+      [list [profile $tok] [mm_sdids $tok]] {{2 1 3} {A B C}}
 
     # --- MM2: the SELECTION followed, witnessed on EVERY strip -------------
     check "MM2 the selection followed to the destination's appended nodes" \
@@ -2198,8 +2227,8 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     # --- MM4: exactly ONE log line, with the NORMALISED pairs --------------
     set mmnew [mm_muts $mmlog0]
     check "MM4 the whole gesture logged exactly ONE mutation line" [llength $mmnew] 1
-    check "MM4 ... and it is move_traces with the normalised pairs and the token" \
-      [lindex $mmnew 0] [list wviewer::move_traces {{0 0} {0 2}} 2 $tok]
+    check "MM4 ... and it is move_traces with the normalised MODEL pairs and the token" \
+      [lindex $mmnew 0] [list wviewer::move_traces {{0 0} {0 3}} 2 $tok]
 
     # --- MM3: exactly ONE undo point --------------------------------------
     lassign [wviewer::history_depth $tok] mmu1 mmr1
@@ -2208,7 +2237,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     check "MM3 one `u` returns 1" [pcall {wviewer::undo $tok}] 1
     check "MM3 ... and it put every trace back" \
       [list [vecs_at $tok 0] [vecs_at $tok 1] [vecs_at $tok 2]] \
-      {{vec_a vec_b vec_c} vec_d vec_e}
+      {{vec_a {} vec_b vec_c} vec_d vec_e}
     check "MM3 ... and the selection with them" [mm_sels $vdrw] {{0 2} - -}
     lassign [wviewer::history_depth $tok] mmu2 mmr2
     check "MM3 the depth moved by exactly 1 (not by the trace count)" \
@@ -2217,7 +2246,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     # --- MM4 (replay): the logged line reproduces this run -----------------
     check "MM4 replaying the logged line from the pre-move state" \
       [pcall {eval [lindex $mmnew 0]; list [vecs_at $tok 0] [vecs_at $tok 2]}] \
-      {vec_b {vec_e vec_a vec_c}}
+      {{{} vec_b} {vec_e vec_a vec_c}}
     check "MM4 ... reproduces the layout exactly" \
       [dict get [wviewer::layout_for $tok] graphs] $mmpost
 
@@ -2242,11 +2271,11 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     set mmlog0 [llength $::tm_log]
     mm_drag $vdrw $mmx0 $mmy0 $mmDX $mmDY2
     check "MM5 both sources are correctly reduced" \
-      [list [vecs_at $tok 0] [vecs_at $tok 1]] {{vec_b vec_c} {}}
+      [list [vecs_at $tok 0] [vecs_at $tok 1]] {{{} vec_b vec_c} {}}
     check "MM5 ... and both traces arrived, ascending by (gi, ti)" \
       [vecs_at $tok 2] {vec_e vec_a vec_d}
     check "MM5 the emptied source strip SURVIVES (D-51)" \
-      [list [profile $tok] [mm_sdids $tok]] {{2 0 3} {A B C}}
+      [list [profile $tok] [mm_sdids $tok]] {{3 0 3} {A B C}}
     check "MM5 one mutation line, carrying the cross-strip pairs" \
       [mm_muts $mmlog0] [list [list wviewer::move_traces {{0 0} {1 0}} 2 $tok]]
 
@@ -2270,9 +2299,9 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     mm_drag $vdrw $mmx0 $mmy0 $mmDX $mmDY1
     check "MM6 the destination's own selected trace stayed at its index" \
       [vecs_at $tok 1] {vec_d vec_a vec_c}
-    check "MM6 ... the other source is reduced" [vecs_at $tok 0] vec_b
+    check "MM6 ... the other source is reduced" [vecs_at $tok 0] {{} vec_b}
     check "MM6 ONE mutation line, and its pairs EXCLUDE the already-there one" \
-      [mm_muts $mmlog0] [list [list wviewer::move_traces {{0 0} {0 2}} 1 $tok]]
+      [mm_muts $mmlog0] [list [list wviewer::move_traces {{0 0} {0 3}} 1 $tok]]
 
     # --- MM7: a press on an UNSELECTED trace moves only it (D-41) ---------
     # and it logs the SINGULAR wviewer::move_trace line, which is a REPLAY
@@ -2294,11 +2323,19 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     set mmlog0 [llength $::tm_log]
     mm_drag $vdrw $mmx1 $mmy1 $mmDX $mmDY2
     check "MM7 only the pressed (unselected) trace moved" \
-      [list [vecs_at $tok 0] [vecs_at $tok 2]] {{vec_a vec_c} {vec_e vec_b}}
-    check "MM7 ... and it logged the SINGULAR shipped line" \
-      [mm_muts $mmlog0] [list [list wviewer::move_trace 0 1 2 $tok]]
+      [list [vecs_at $tok 0] [vecs_at $tok 2]] {{vec_a {} vec_c} {vec_e vec_b}}
+    # NODE 1 is MODEL 2 on this fixture: the singular line naming index 2 is the
+    # witness that trace_at's answer was crossed into model space (landmine 34)
+    check "MM7 ... and it logged the SINGULAR shipped line, by MODEL index" \
+      [mm_muts $mmlog0] [list [list wviewer::move_trace 0 2 2 $tok]]
 
-    # --- MM8: a SAME-STRIP drop with a multi-selection is a no-op ---------
+    # --- MM8: a same-strip drop where NOTHING could move is a no-op -------
+    # The whole selection lives on the pressed strip, so a drop back on it has
+    # nothing to move — and, unlike MM14 below, that is the ONLY reason it
+    # commits nothing. Driven with explicit events rather than mm_drag so the
+    # NEGATIVE half of the drop-target frame is witnessed mid-gesture: the frame
+    # tracks "would a drop here commit", so it must be gone once the pointer
+    # comes back to the strip everything is already on.
     mm_fill $tok $mmspec
     set mmP0 [mm_px_for_node $vdrw 0 0]
     set mmP2 [mm_px_for_node $vdrw 0 2]
@@ -2310,13 +2347,84 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     mm_reset $tok $vdrw
     mm_click $vdrw $mmx0 $mmy0
     mm_click $vdrw $mmx2 $mmy2 0x4
+    check "MM8 staging: the whole selection is on the PRESSED strip" \
+      [mm_sels $vdrw] {{0 2} - -}
     set mmlog0 [llength $::tm_log]
     lassign [wviewer::history_depth $tok] mmu0 mmr0
-    mm_drag $vdrw $mmx0 $mmy0 $mmDX $mmDY0
-    check "MM8 nothing moved" [profile $tok] {3 1 1}
+    tm_ev $vdrw <ButtonPress-1> -x $mmx0 -y $mmy0
+    tm_ev $vdrw <B1-Motion> -x $mmDX -y $mmDY2 -state 0x100    ;# out to strip 2
+    update
+    tm_ev $vdrw <B1-Motion> -x $mmDX -y $mmDY0 -state 0x100    ;# and back home
+    update
+    check_true "MM8 mid-drag: the gesture really passed the 3-px threshold" \
+      [expr {$::wviewer::tdrag_active($tok) == 1}]
+    xschem new_schematic switch $vdrw
+    check "MM8 mid-drag: NO drop frame anywhere — a drop here would commit nothing" \
+      [list [pcall {xschem getprop rect 2 0 reorder_handle}] \
+            [pcall {xschem getprop rect 2 1 reorder_handle}] \
+            [pcall {xschem getprop rect 2 2 reorder_handle}]] {1 1 1}
+    tm_ev $vdrw <ButtonRelease-1> -x $mmDX -y $mmDY0 -state 0x100
+    update
+    check "MM8 nothing moved" [profile $tok] {4 1 1}
     check "MM8 nothing was logged" [mm_muts $mmlog0] {}
     check "MM8 no undo point was taken" \
       [expr {[lindex [wviewer::history_depth $tok] 0] - $mmu0}] 0
+
+    # --- MM14: a drop back on the PRESSED strip still moves the others in --
+    # PLAN.md §05 question 3 and D-44: "the destination is one of the source
+    # strips? -> traces already there stay put; the others move in". The pressed
+    # strip is one of the source strips, and nothing about it is special.
+    # ⚠ THIS IS THE LEG THAT 5648fe6f FAILED: `trace_drag_drop` refused on
+    # `$to == $from` BEFORE the movable filter ran, so this whole gesture
+    # committed nothing and logged nothing while the doc claimed the opposite.
+    # MM8 above cannot see it (everything is on one strip, so nothing could move
+    # anyway) and MM6 drops on strip 1, never on the strip it pressed.
+    mm_fill $tok $mmspec
+    set mmP0 [mm_px_for_node $vdrw 0 0]
+    set mmP1_0 [mm_px_for_node $vdrw 1 0]
+    set mmDY0 [mm_dropy $vdrw 0]
+    check "MM14 staging: pixels re-found" \
+      [list [llength $mmP0] [llength $mmP1_0] [expr {$mmDY0 ne {} ? 2 : 0}]] {2 2 2}
+    lassign $mmP0 mmx0 mmy0
+    lassign $mmP1_0 mmxd mmyd
+    mm_reset $tok $vdrw
+    mm_click $vdrw $mmx0 $mmy0
+    mm_click $vdrw $mmxd $mmyd 0x4
+    check "MM14 staging: the selection SPANS the pressed strip and strip 1" \
+      [mm_sels $vdrw] {0 0 -}
+    set mmlog0 [llength $::tm_log]
+    lassign [wviewer::history_depth $tok] mmu0 mmr0
+    tm_ev $vdrw <ButtonPress-1> -x $mmx0 -y $mmy0
+    tm_ev $vdrw <B1-Motion> -x $mmDX -y $mmDY2 -state 0x100    ;# out to strip 2
+    update
+    xschem new_schematic switch $vdrw
+    check "MM14 mid-drag: strip 2 wears the frame on the way past" \
+      [pcall {xschem getprop rect 2 2 reorder_handle}] 4
+    tm_ev $vdrw <B1-Motion> -x $mmDX -y $mmDY0 -state 0x100    ;# back onto strip 0
+    update
+    check_true "MM14 mid-drag: the gesture really passed the 3-px threshold" \
+      [expr {$::wviewer::tdrag_active($tok) == 1}]
+    xschem new_schematic switch $vdrw
+    check "MM14 mid-drag: the PRESSED strip wears the frame — a drop here commits" \
+      [list [pcall {xschem getprop rect 2 0 reorder_handle}] \
+            [pcall {xschem getprop rect 2 2 reorder_handle}]] {4 1}
+    tm_ev $vdrw <ButtonRelease-1> -x $mmDX -y $mmDY0 -state 0x100
+    update
+    check "MM14 strip 1's trace moved IN, appended at the end" \
+      [vecs_at $tok 0] {vec_a {} vec_b vec_c vec_d}
+    check "MM14 ... the pressed trace stayed exactly where it was (no re-append)" \
+      [lindex [vecs_at $tok 0] 0] vec_a
+    check "MM14 ... its source is emptied and SURVIVES, strip 2 is untouched" \
+      [list [profile $tok] [mm_sdids $tok] [vecs_at $tok 2]] {{5 0 1} {A B C} vec_e}
+    check "MM14 the selection followed: the arrival joins the one already there" \
+      [mm_sels $vdrw] {{0 3} - -}
+    check "MM14 ONE mutation line, naming only the pair that actually moved" \
+      [mm_muts $mmlog0] [list [list wviewer::move_traces {{1 0}} 0 $tok]]
+    check "MM14 exactly ONE undo point" \
+      [expr {[lindex [wviewer::history_depth $tok] 0] - $mmu0}] 1
+    check "MM14 one `u` puts it back" \
+      [list [pcall {wviewer::undo $tok}] [vecs_at $tok 0] [vecs_at $tok 1]] \
+      {1 {vec_a {} vec_b vec_c} vec_d}
 
     # --- MM9: a sub-threshold press-release is still the wave-bold click --
     mm_fill $tok $mmspec
@@ -2333,7 +2441,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     mm_click $vdrw $mmx2 $mmy2
     check "MM9 the shipped no-travel click still COLLAPSES the selection" \
       [mm_sels $vdrw] {2 - -}
-    check "MM9 nothing moved" [profile $tok] {3 1 1}
+    check "MM9 nothing moved" [profile $tok] {4 1 1}
     check "MM9 nothing was logged and no undo point was taken" \
       [list [mm_muts $mmlog0] \
             [expr {[lindex [wviewer::history_depth $tok] 0] - $mmu0}]] {{} 0}
@@ -2367,12 +2475,12 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     check "MM10 the pointer is restored" [pcall {$vdrw cget -cursor}] {}
     check "MM10 nothing moved, nothing logged, no undo point" \
       [list [profile $tok] [mm_muts $mmlog0] \
-            [expr {[lindex [wviewer::history_depth $tok] 0] - $mmu0}]] {{3 1 1} {} 0}
+            [expr {[lindex [wviewer::history_depth $tok] 0] - $mmu0}]] {{4 1 1} {} 0}
     tm_ev $vdrw <ButtonRelease-1> -x $mmDX -y $mmDY2 -state 0x100
     update
 
     # --- MM11: an EMPTY destination is put back to AUTO ranges (D-55) -----
-    mm_fill $tok {{vec_a vec_b vec_c} {vec_d} {}}
+    mm_fill $tok {{vec_a - vec_b vec_c} {vec_d} {}}
     # give the empty strip a deliberately WRONG stored window, the state
     # capture_live_graph_state would have frozen onto it
     set mmgs [dict get [wviewer::layout_for $tok] graphs]

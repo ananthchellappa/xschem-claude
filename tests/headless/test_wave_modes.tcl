@@ -889,6 +889,34 @@ set mv12 [pcall {wviewer::move_traces_in_graphs $mvbase {{0 1} {0 1}} 1}]
 check "MV12 a repeated pair moves its trace exactly once" \
   [mv_vecs $mv12] {{v(a) v(c)} {v(x) v(b)}}
 
+# --- MV13: `movable_pairs`, the DROP's own predicate (D-44) -----------------
+# The gesture layer asks ONE question — "would dropping here move anything?" —
+# and the drop, the refusal and the drop-target frame all read the same answer.
+# ⚠ THE LEG THAT MATTERS is the first one: the destination is the strip the
+# PRESS landed on, and the traces that are elsewhere still move in. The shipped
+# 5648fe6f refused that whole gesture on a `to == from` test taken BEFORE this
+# filter ran, contradicting D-44 and PLAN.md §05 question 3.
+check "MV13 the destination being a SOURCE strip drops only the pairs already there" \
+  [pcall {wviewer::movable_pairs {{0 0} {0 2} {1 0}} 0}] {{1 0}}
+check "MV13 ... and the pressed strip is not special: the same answer for `to` = 1" \
+  [pcall {wviewer::movable_pairs {{0 0} {0 2} {1 0}} 1}] {{0 0} {0 2}}
+check "MV13 a destination that is on NO source strip carries the whole set" \
+  [pcall {wviewer::movable_pairs {{0 0} {1 0}} 2}] {{0 0} {1 0}}
+check "MV13 every pair already on the destination -> {} (the no-op drop)" \
+  [pcall {wviewer::movable_pairs {{1 0} {1 2}} 1}] {}
+check "MV13 an empty carried set -> {}" [pcall {wviewer::movable_pairs {} 0}] {}
+check "MV13 a negative destination -> {} (the drop outside every strip)" \
+  [pcall {wviewer::movable_pairs {{0 0} {1 0}} -1}] {}
+check "MV13 a non-integer destination -> {}" \
+  [pcall {wviewer::movable_pairs {{0 0} {1 0}} z}] {}
+check "MV13 a malformed pair is dropped, the good ones survive" \
+  [pcall {wviewer::movable_pairs {{0} {1 0} {2 0 0}} 3}] {{1 0}}
+# it FILTERS, it does not normalise: sorting and de-duplication belong to
+# move_traces_in_graphs (MV2/MV12), and doing them twice would put the log line's
+# pair order in two places at once
+check "MV13 the caller's order and duplicates are passed through untouched" \
+  [pcall {wviewer::movable_pairs {{1 0} {0 2} {0 2}} 2}] {{1 0} {0 2} {0 2}}
+
 foreach mvp {mv_tr mv_g mv_vecs mv_rec mv_mk} { rename $mvp {} }
 
 # --- M9: the context-loan TICKET (issue 0173) --------------------------------

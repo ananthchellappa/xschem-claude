@@ -6,6 +6,19 @@
 for the receipt and `doc/claude/issues/0192-multi-trace-drag-to-strip.md` for the
 issue write-up. Verdict **[E]** — §11's eyeball list is non-empty by design (the
 shrink is pure pixels).
+⚠ **A FIXUP COMMIT FOLLOWED**, after an adversarial review of `5648fe6f` found
+**D-44 not implemented** in the one case where the destination is the strip the
+PRESS landed on — the code refused the whole gesture on `$to == $from`, this
+document claimed the opposite, and no leg covered it. The clause is now
+implemented (`wviewer::movable_pairs`), not re-negotiated; see the ⚠ block in
+D-44, spec §19.1.2, and the fixup section of the receipt. The same fixup closed
+a fixture gap the review named: the `MM*` gesture fixture carried no vec-less
+trace, so NODE index == MODEL index in every `MM` leg and the end-to-end
+`trace_at -> trace_index_of_node -> selection_pairs -> move_traces` chain would
+have passed with a broken mapping. **Measured, both ways:** with
+`selection_pairs` sabotaged to use the node index as a model index, the
+committed suite is `ALL PASS (381)` and the fixed-up one is `13 FAILED (384)`.
+
 Three notes where implementation refined this document, all recorded in the
 receipt: (i) §7's *"SAB-4 kills MV-8 and only MV-8"* is unachievable given the
 `MV1` the prompt specifies — `MV1` itself moves two traces out of one source, so
@@ -347,6 +360,31 @@ would reorder a strip the user did not ask to reorder.
 *Rejected:* re-appending same-strip traces so the whole selection ends up
 contiguous at the bottom (a hidden reorder — §12's first sentence says a strip's
 internal trace order is never touched by a drag).
+
+⚠ **AND THE PRESSED STRIP IS NOT AN EXCEPTION** — this clause covers the case
+where the destination is the strip the PRESS landed on, not merely "some other
+source strip". Pressing a trace on strip 0 with the selection also holding a
+trace on strip 1, and releasing back over strip 0, moves strip 1's trace IN and
+leaves strip 0's where it is.
+
+`5648fe6f` **did not implement that**: `trace_drag_drop` refused on
+`!$active || $to < 0 || $to == $from` **before** the `movable` filter ran, so the
+`$to == $from` term short-circuited the whole gesture and the drop committed
+nothing and logged nothing. It was invisible to the suite — `MM8` is the
+all-on-one-strip case (nothing could move anyway) and `MM6` drops on strip 1,
+never on the pressed strip — and the deviation was recorded nowhere, so the
+design doc of record and the shipped code contradicted each other.
+
+**Fixed in this item's fixup commit** (direction (a): implement the clause).
+`movable_pairs` — a new PURE predicate — is now the single answer read by the
+drop, by the refusal and by the `reorder_handle=4` frame; only `!$active` and
+`$to < 0` still refuse outright, and the single-strip selection the `to == from`
+term was standing in for is already a no-op through an empty `movable`.
+`trace_drag_arm` starts `tdrag_to` at `-1` instead of the pressed index, so the
+first motion inside the pressed strip is a real destination change and paints
+the frame. Legs: `MV13` (`test_wave_modes.tcl`, the predicate — 9 checks),
+`MM14` (`test_wave_trace_menu.tcl`, the end-to-end drop plus both frame states)
+and `MM8` (extended with the negative frame leg). Spec: §19.1.2, new.
 
 ### D-45. Order in the destination.
 **Recommendation taken.** Appended at the end, in **source order** = ascending by
