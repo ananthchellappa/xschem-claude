@@ -1757,6 +1757,21 @@ typedef struct {
                 * 0 for every context alloc_xschem_data creates; the ASE viewer sets it
                 * on its own window and never clears it.
                 * See doc/claude/issues/0177-viewer-has-no-snap-grid.md */
+  int wave_viewer; /* THIS CONTEXT IS A WAVEFORM VIEWER, NOT A SCHEMATIC (issue 0172).
+                * Per window, exactly like no_grid / no_snap above. The viewer is built
+                * on an ordinary schematic window and is indistinguishable from a
+                * pristine untitled scratch buffer by SHAPE: top level, named untitled,
+                * no instances, no wires (its content is graph rects), and `modified`
+                * permanently 0 because wviewer::with_edit (contract D1) ends every
+                * mutation with `xschem set_modify 0`. is_pristine_untitled() therefore
+                * offered a live viewer as a reuse target, and a real schematic was
+                * loaded INTO it -- destroying its graph rects while the window kept its
+                * WaveViewer bindtag and menubar, after which Ctrl-D wipes the document.
+                * This flag is the honest oracle: a viewer is excluded because it IS
+                * one, not because of what it happens to contain.
+                * 0 for every context alloc_xschem_data creates; the ASE viewer sets it
+                * on its own window and never clears it.
+                * See doc/claude/issues/0172-viewer-buffer-hijacked-by-pristine-untitled-reuse.md */
   int menu_removed; /* fullscreen previous setting */
   double save_lw; /* used to save linewidth when selecting 'only_probes' view */
   int no_draw;

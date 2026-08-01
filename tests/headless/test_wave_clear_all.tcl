@@ -36,6 +36,12 @@
 #        (last pick on top, 2026-07-27), with the picker's predicted colors
 #        intact per signal (the landing policy itself is pinned by
 #        test_wave_modes M3/M3b/MG6/MG12)
+#   CG9  issue 0172: a REAL viewer window is not offered to `load_new_window` as a
+#        pristine-untitled reuse target — wviewer::open brands the context
+#        (`xschem get wave_viewer` == 1) and the open goes to a NEW window with the
+#        viewer's graph rects intact. The mechanism-level guard is headless, in
+#        tests/headless/test_pristine_untitled_viewer_0172.tcl; this leg is what
+#        proves the branding actually happens in production
 #
 # NOT asserted (stated, not hidden): pixels. That a cleared viewer *renders* as
 # one empty grid is eyeball-only, exactly like every other wave rendering
@@ -419,6 +425,75 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   rename cg_expr {}
   rename cg_color_of {}
 
+  # --- CG9: issue 0172 — a REAL viewer is not a pristine-untitled reuse target ------
+  # `is_pristine_untitled()` (src/scheduler.c) used to accept a live viewer as a scratch
+  # buffer to load over — it is top level, named untitled, has no instances and no
+  # wires, and `with_edit` (D1) keeps `modified` at 0 forever — so File>Open landed a
+  # user schematic INSIDE this window, destroying its graph rects while the WaveViewer
+  # bindtag stayed on: the very next Ctrl-D (CG1 above) then wiped the document.
+  # The mechanism-level guard is headless (tests/headless/test_pristine_untitled_viewer_0172.tcl,
+  # which imitates a viewer by stamping the flags). THIS leg is the one that proves
+  # `wviewer::open` itself stamps `wave_viewer`, i.e. that the C-side refusal is armed in
+  # production rather than only in the test's imitation.
+  xschem new_schematic switch $vdrw
+  check_true "CG9 wviewer::open branded the viewer context (wave_viewer)" \
+    [expr {[xschem get wave_viewer] eq "1"}]
+  set cg9_sch [file join $scratch cg9_real.sch]
+  set cg9_fh [open $cg9_sch w]
+  puts $cg9_fh "v {xschem version=3.4.5 file_version=1.2}"
+  foreach cg9_l {G K V S E} { puts $cg9_fh "$cg9_l {}" }
+  puts $cg9_fh "N 0 0 100 0 {lab=A}"
+  close $cg9_fh
+  set cg9_rects [xschem get rects 2]
+  set cg9_tabs [xschem get ntabs]
+  check_true "CG9 the viewer holds rects and no wires before the open" \
+    [expr {$cg9_rects > 0 && [xschem get wires] == 0}]
+  xschem load_new_window $cg9_sch
+  check_true "CG9 the open created a NEW window, it did not reuse the viewer" \
+    [expr {[xschem get ntabs] == $cg9_tabs + 1 && [xschem get current_win_path] ne $vdrw}]
+  xschem new_schematic switch $vdrw
+  check_true "CG9 the viewer still holds its own buffer and its graph rects" \
+    [expr {[xschem get rects 2] == $cg9_rects && [xschem get wires] == 0 &&
+           [string match {untitled*} [file tail [xschem get schname]]]}]
+  update
+
+  # --- CG10: issue 0172, the FOURTH door — `xschem load` with no filename ----------
+  # `ask_new_file()` (actions.c) is the File>Open C path and the only door that never
+  # consults `is_pristine_untitled()`: with `open_in_new_window` 0 (the shipping
+  # default) its in-place arm calls load_schematic() unconditionally, so the predicate's
+  # viewer refusal cannot reach it. It is entered by `xschem load` with NO argument —
+  # the CIW rewrite only adds `-gui` to a load that HAS one — so a typed bare `xschem
+  # load` while the viewer holds the context used to clobber it. Fixed in ask_new_file
+  # itself: a `wave_viewer` context forces the new-window arm.
+  # The dialog is stubbed, exactly as test_load_window_routing stubs ask_save.
+  set ::new_file_browser 0
+  set ::open_in_new_window 0
+  rename load_file_dialog __real_load_file_dialog
+  proc load_file_dialog {args} { return $::cg10_file }
+  # a DIFFERENT file from CG9's: `new_schematic create` resolves a file that is already
+  # open by switching to the window holding it instead of making a new one, which would
+  # leave `ntabs` unmoved and read exactly like the hijack this leg is looking for
+  set ::cg10_file [file join $scratch cg10_real.sch]
+  set cg10_fh [open $::cg10_file w]
+  puts $cg10_fh "v {xschem version=3.4.5 file_version=1.2}"
+  foreach cg10_l {G K V S E} { puts $cg10_fh "$cg10_l {}" }
+  puts $cg10_fh "N 0 40 100 40 {lab=C}"
+  close $cg10_fh
+  xschem new_schematic switch $vdrw
+  set cg10_rects [xschem get rects 2]
+  set cg10_tabs [xschem get ntabs]
+  check_true "CG10 the viewer holds rects before the bare load" [expr {$cg10_rects > 0}]
+  pcall {xschem load}
+  check_true "CG10 bare `xschem load` did not load into the viewer" \
+    [expr {[xschem get ntabs] == $cg10_tabs + 1 && [xschem get current_win_path] ne $vdrw}]
+  xschem new_schematic switch $vdrw
+  check_true "CG10 the viewer still holds its graph rects afterwards" \
+    [expr {[xschem get rects 2] == $cg10_rects && [xschem get wires] == 0 &&
+           [string match {untitled*} [file tail [xschem get schname]]]}]
+  rename load_file_dialog {}
+  rename __real_load_file_dialog load_file_dialog
+  update
+
   rename wviewer::log_action {}
   rename wviewer::__real_log_action wviewer::log_action
   catch {wviewer::close $tok}
@@ -426,6 +501,13 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   }
 } else {
   puts "SKIPPED: CG* GUI legs (no usable DISPLAY)"
+  # Say what is NOT covered on this arm rather than letting a 3-check ALL PASS imply the
+  # whole file ran: CG9/CG10 are the ONLY guards for two parts of the issue-0172 fix
+  # (that wviewer::open really brands the context, and that ask_new_file refuses to load
+  # in place over a viewer), and full_audit's is_pass() scores this file PASS with every
+  # CG leg skipped. The mechanism-level guard that does run headless is
+  # tests/headless/test_pristine_untitled_viewer_0172.tcl.
+  puts "NOTE: CG9/CG10 (issue 0172 viewer-hijack guards) need X and did not run"
 }
 
 } bigerr]} {

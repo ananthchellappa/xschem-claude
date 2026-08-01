@@ -686,6 +686,19 @@ void ask_new_file(int in_new_window, char *filename)
     char f[PATH_MAX]; /*  overflow safe 20161125 */
 
     if(!has_x) return;
+    /* issue 0172: NEVER load in place over a waveform-viewer window. This is the fourth
+     * door into the current buffer and the only one that does not go through
+     * is_pristine_untitled() at all -- the in-place arm below calls load_schematic()
+     * unconditionally, so the predicate's viewer refusal cannot protect it. A viewer is
+     * a schematic buffer with the WaveViewer bindtag and menubar on it; a schematic
+     * loaded into one is then edited by the viewer's own keys (Ctrl-D wipes it).
+     * Reachable from `xschem load` with no filename (the CIW rewrite only adds -gui to
+     * a load that HAS an argument) while the viewer holds the context. Not reachable
+     * from the viewer's own keyboard -- wviewer::key_filter does not forward Ctrl-O and
+     * the viewer's File menu has only Close -- but the fix belongs here rather than in
+     * an argument about who can press what. Redirect to the new-window arm, which goes
+     * through load_new_window and therefore through the (fixed) predicate. */
+    if(xctx && xctx->wave_viewer) in_new_window = 1;
     if(!(in_new_window || tclgetboolvar("open_in_new_window")) && xctx->modified) {
       if(save(1, 0) == -1 ) return; /*  user cancels save, so do nothing. */
     }

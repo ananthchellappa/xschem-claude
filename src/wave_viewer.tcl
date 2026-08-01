@@ -644,6 +644,16 @@ proc wviewer::open {token} {
   # every trace, and graph_point_at is shared with every embedded schematic
   # graph in the tree.
   catch {xschem set graph_snap_cursor 1}
+  # issue 0172: and MARK THIS CONTEXT AS A VIEWER, not a schematic. A viewer buffer is
+  # indistinguishable from a pristine untitled scratch buffer by shape -- top level,
+  # named untitled, no instances, no wires, and `modified` permanently 0 because the D1
+  # with_edit contract ends every mutation with `xschem set_modify 0` -- so
+  # is_pristine_untitled() offered this live window to the next File>Open as a reuse
+  # target and the user's schematic was loaded INTO the viewer, destroying its graph
+  # rects while the window kept its WaveViewer bindtag and menubar (Ctrl-D then wipes
+  # the document). Same per-ctx shape as the four above; alloc_xschem_data zeroes it for
+  # every other context, and it is never cleared -- a viewer stays a viewer.
+  catch {xschem set wave_viewer 1}
   dict set windows $token [dict create top $top win_path $wp]
   wviewer::build_menubar $token $top
   wviewer::strip_bindings $wp

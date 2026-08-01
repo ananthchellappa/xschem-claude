@@ -4473,7 +4473,15 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
           }
           break;
           case 'w':
-          if(!strcmp(argv[2], "wirelayer")) { /* layer used for wires */
+          /* xschem get wave_viewer
+           * per-window "this context is a waveform viewer, not a schematic" (issue
+           * 0172). Set by wviewer::open; the witness a test uses to prove that a
+           * viewer window is excluded from the pristine-untitled reuse path while
+           * every schematic window still answers 0. */
+          if(!strcmp(argv[2], "wave_viewer")) {
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            Tcl_SetResult(interp, xctx->wave_viewer != 0 ? "1" : "0", TCL_STATIC);
+          } else if(!strcmp(argv[2], "wirelayer")) { /* layer used for wires */
             Tcl_SetResult(interp, my_itoa(WIRELAYER), TCL_VOLATILE);
           } else if(!strcmp(argv[2], "wires")) { /* number of wires */
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
@@ -6166,10 +6174,37 @@ static int is_untitled_basename(const char *path)
  * reused (their work is preserved; the open goes to a new window/tab instead). */
 static int is_pristine_untitled(void)
 {
+  int i;
   if(!xctx) return 0;
+  /* issue 0172: a waveform-viewer window is NEVER a reuse target. It is a schematic
+   * buffer by construction -- top level, named untitled, no instances, no wires -- and
+   * wviewer::with_edit (contract D1) ends every mutation with `xschem set_modify 0`, so
+   * `modified` is 0 for the buffer's whole life: a viewer never ages out of "pristine"
+   * the way a scratch buffer does the moment the user draws in it. A real schematic was
+   * therefore loaded INTO a live viewer, destroying its graph rects and leaving the
+   * document under the viewer's bindtag and menubar, where Ctrl-D (wviewer::clear_all)
+   * wipes it. The test lives HERE, in the shared predicate, rather than in the three
+   * callers (the `xschem load -gui` routing, `load_new_window <file>`, and
+   * `load_new_window` via the file dialog) so all three doors close at once and the
+   * next caller cannot reintroduce the hijack. */
+  if(xctx->wave_viewer) return 0;
   if(xctx->currsch != 0) return 0;
   if(xctx->modified) return 0;
   if(xctx->instances != 0 || xctx->wires != 0) return 0;
+  /* ...and "pristine" means the buffer is actually EMPTY, not merely free of instances
+   * and wires (issue 0172). Drawing normally sets `modified`, which is what used to
+   * make the rest of the object arrays redundant -- but any path that clears it (the
+   * viewer's D1 contract; a script calling `xschem set_modify 0`) then handed a buffer
+   * with content in it to the next open, silently. rects/lines/polygons/arcs are
+   * per-layer counters, so this is a per-layer scan; a freshly created untitled buffer
+   * is 0 in every one of them (measured, startup and after `xschem clear force`). */
+  if(xctx->texts != 0) return 0;
+  for(i = 0; i < cadlayers; i++) {
+    if(xctx->rects && xctx->rects[i]) return 0;
+    if(xctx->lines && xctx->lines[i]) return 0;
+    if(xctx->polygons && xctx->polygons[i]) return 0;
+    if(xctx->arcs && xctx->arcs[i]) return 0;
+  }
   if(!xctx->sch[xctx->currsch]) return 0;   /* NULL-safe (issue 0023) */
   return (xctx->sch[xctx->currsch][0] == '\0' ||
           is_untitled_basename(xctx->sch[xctx->currsch]));
@@ -10544,6 +10579,17 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
           else if(!strcmp(argv[2], "no_snap")) {
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
             xctx->no_snap = atoi(argv[3]) ? 1 : 0;
+          }
+          /* xschem set wave_viewer 0|1
+           * "this context is a waveform viewer, not a schematic" (issue 0172). PER
+           * CONTEXT, like no_grid / no_snap above, and stamped by wviewer::open in the
+           * same block. Read by is_pristine_untitled(), which refuses to hand a viewer
+           * to an open as a reuse target. Settable from Tcl both because that is where
+           * the viewer is built and because it is what lets a regression test brand a
+           * buffer as a viewer HEADLESSLY, with no Tk and no DISPLAY. */
+          else if(!strcmp(argv[2], "wave_viewer")) {
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            xctx->wave_viewer = atoi(argv[3]) ? 1 : 0;
           }
           else if(!strcmp(argv[2], "readonly")) { /* set window read-only (0 or 1); refresh title */
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}

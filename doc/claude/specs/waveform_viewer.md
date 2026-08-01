@@ -440,6 +440,47 @@ Making a graph "move" (swap strip positions) shipped on 2026-07-27 as strip
 drag-reorder (below) — and, as anticipated here, it is deliberately NOT a
 schematic move: it is a list move on the Tcl model followed by a regenerate.
 
+## A viewer context says so: `wave_viewer` (issue 0172, 2026-07-31)
+
+`wviewer::open` stamps a **fifth** per-context C flag next to `readonly` (D1),
+`no_grid` (item 18), `no_snap` (issue 0177) and `graph_snap_cursor` (item 9):
+
+```tcl
+catch {xschem set wave_viewer 1}
+```
+
+Why a flag and not an inference: the viewer is built on an ordinary schematic window and
+is **indistinguishable from a pristine untitled scratch buffer by shape** — top level,
+named `untitled.sch`, no instances, no wires (its content is graph *rects*) — and D1
+makes that permanent, because `with_edit` ends every mutation with `xschem set_modify 0`
+so `modified` is 0 for the buffer's life. `is_pristine_untitled()` (`scheduler.c`), the
+predicate behind the "reuse the current window" rule, therefore offered a **live viewer**
+as a reuse target: File>Open loaded a user schematic *into* the viewer window, destroying
+its graph rects, and the window kept its `WaveViewer` bindtag and menubar — so the next
+`Ctrl-D` (Clear All) wiped the user's document. `xctx->wave_viewer` makes the refusal
+honest: a viewer is excluded because it *is* one.
+
+Rules that come with it:
+
+- **Stamped inside the same block as the other four**, below that block's
+  `[xschem get current_win_path] ne $wp` refusal — never above it, or a detached editor
+  that took the context by accident would be branded a viewer.
+- **Never cleared.** A viewer stays a viewer for the window's life;
+  `alloc_xschem_data()`'s `my_calloc` gives every other context 0 for free.
+- **Settable from Tcl**, which is what lets a regression test brand a buffer as a viewer
+  headlessly — `tests/headless/test_pristine_untitled_viewer_0172.tcl` needs no Tk and no
+  `DISPLAY`. `test_wave_clear_all.tcl` CG9 (needs X) is the leg that proves
+  `wviewer::open` really stamps it in production.
+- **`ask_new_file()` reads it too** (`src/actions.c`): that path — `xschem load` with no
+  filename, Ctrl-O / Alt-O — never consulted `is_pristine_untitled()` at all and loaded
+  in place over whatever the current context held, so the flag is what makes it choose
+  the new-window arm for a viewer. CG10 is its guard. Not reachable from the viewer's own
+  keyboard (`key_filter` does not forward `o`, and the viewer's File menu has only Close)
+  but reachable by typing `xschem load` in the CIW while the viewer holds the context.
+
+See `doc/claude/issues/0172-viewer-buffer-hijacked-by-pristine-untitled-reuse.md` and
+`doc/claude/specs/load_window_routing.md` ("What pristine means").
+
 ## Ctrl-4 schematic entry + status-line prompt (as shipped, 2026-07-24)
 
 Keyboard entry to item-13 Direct Plot straight from the DESIGN window, so the
