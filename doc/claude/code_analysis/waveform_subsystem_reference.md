@@ -968,6 +968,16 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
     (3 px × `xctx->zoom`, WORLD units) is click-vs-drag travel;
     `GRAPH_TRACE_PICK_TOL` (10 SCREEN px, never zoom-scaled) is
     distance-to-trace. Do not merge them.
+    ⚠ `GRAPH_CLICK_TOL` itself is used in TWO spaces. The arms whose
+    operands are world coordinates write `* xctx->zoom` (this one, and the
+    marker click at `callback.c:710`/`:711`); the axis-region drag zoom (0190)
+    passes it BARE to `graph_axis_map()`, whose `p0`/`p1` are canvas
+    PIXELS. Same 3 screen px either way — different operand space. The
+    `#define` stays file-private to `callback.c` (in the header it would
+    read as `GRAPH_TRACE_PICK_TOL`'s twin), and the one out-of-file caller,
+    the `xschem get graph_axis_map` getter, takes the value from the
+    `graph_click_tol()` accessor — never a second literal, or the seam the
+    axis-zoom suite drives could disagree with the gesture silently.
 21. **Highlight values >= 0 are STYLE indices, not layers** (issue 0153).
     `get_hilight_style` indexes the net-hilight style table, whose default rows
     map style *i* to `active_layer[i]` = layers **>= 7 only**. A **negative**

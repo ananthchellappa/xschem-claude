@@ -3941,15 +3941,19 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
           }
           /* xschem get graph_axis_map <graph_idx> x|y <p0> <p1>
            * The new data window `{lo hi}` a drag from canvas pixel <p0> to <p1>
-           * along that axis produces, or {} when the travel is <= 3 screen
-           * pixels / the index is bad / the graph has no transform. THE FORMULA
-           * SEAM: the release arm in callback.c and the graph_axis_zoom verb
-           * both call the same graph_axis_map(), so a headless suite driving
-           * this verb is driving the gesture's own arithmetic -- including BOTH
-           * endpoints, which is what a width-only implementation gets wrong.
-           * The 3.0 is callback.c's file-private GRAPH_CLICK_TOL (the
-           * click-vs-drag travel test); it is deliberately not in the header,
-           * because it answers a different question from GRAPH_TRACE_PICK_TOL. */
+           * along that axis produces, or {} when the travel is at or below the
+           * click threshold / the index is bad / the graph has no transform.
+           * THE FORMULA SEAM: the release arm in callback.c and the
+           * graph_axis_zoom verb both call the same graph_axis_map(), so a
+           * headless suite driving this verb is driving the gesture's own
+           * arithmetic -- including BOTH endpoints, which is what a width-only
+           * implementation gets wrong.
+           * ⚠ The threshold comes from graph_click_tol(), NOT from a literal
+           * here. It is the same number the gesture passes (callback.c's
+           * file-private GRAPH_CLICK_TOL, kept out of the header so it is not
+           * read as GRAPH_TRACE_PICK_TOL's twin); a copy of the VALUE at this
+           * seam would let the getter and the gesture disagree silently, which
+           * is landmine 45(a) and exactly what the AS* legs exist to prevent. */
           else if(!strcmp(argv[2], "graph_axis_map")) {
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
             Tcl_ResetResult(interp);
@@ -3959,7 +3963,7 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
               if(argv[4][0] == 'x') ax = GRAPH_AXIS_X;
               else if(argv[4][0] == 'y') ax = GRAPH_AXIS_Y;
               if(graph_axis_map(atoi(argv[3]), ax, atof(argv[5]), atof(argv[6]),
-                                &lo, &hi, 3.0)) {
+                                &lo, &hi, graph_click_tol())) {
                 char res[100];
                 my_snprintf(res, S(res), "%.17g %.17g", lo, hi);
                 Tcl_SetResult(interp, res, TCL_VOLATILE); /* copies: stack buf is fine */

@@ -29,9 +29,37 @@
 /* How far (in SCREEN PIXELS) a Button1 press may travel before its release stops
  * counting as a click on a graph. Real mice jitter a pixel or two on a click, so a
  * zero-travel test would lose clicks; a few pixels is far below any intentional drag.
- * Converted to xschem units at the comparison with xctx->zoom (units per pixel).
- * Issue 0152. */
+ * Issue 0152.
+ *
+ * ⚠ TWO SPACES, one constant. The older arms (:710/:711 the marker click,
+ * :1047/:1048 the wave-bold click) compare distances that are already in XSCHEM
+ * WORLD units, so they write `GRAPH_CLICK_TOL * xctx->zoom` (zoom is world units
+ * per pixel). The axis-region drag zoom (issue 0190) hands it to
+ * graph_axis_map(), whose p0/p1 are RAW CANVAS PIXELS, so it passes the bare
+ * constant -- multiplying there would compare pixels against world units. The
+ * meaning is the same 3 screen pixels either way; only the space of the operands
+ * differs. Decision-doc correction 3 in
+ * doc/claude/code_analysis/ovb01_03_axis_region_drag_zoom_decision.md. */
 #define GRAPH_CLICK_TOL 3.0
+
+/* THE click-vs-drag threshold, for the one caller that is not in this file.
+ * `xschem get graph_axis_map` (scheduler.c) is the seam a headless suite drives
+ * the axis-zoom formula through, and it must drive it with the SAME threshold
+ * the gesture at the ButtonRelease arm uses -- a second literal 3.0 over there
+ * is landmine 45(a) in its purest form: one number, two homes, and no
+ * behavioural leg can see them disagree (raise this #define and the gesture
+ * changes while the getter does not).
+ *
+ * The #define itself stays FILE-PRIVATE on purpose (landmine 20: in the header
+ * it would sit next to GRAPH_TRACE_PICK_TOL and be read as its twin, which it is
+ * not -- that one is a 10-px PICKING radius, this one is a TRAVEL threshold).
+ * An accessor exports the value without exporting the confusion.
+ *
+ * ⚠ Returns SCREEN PIXELS, unscaled -- see the note on the #define above. */
+double graph_click_tol(void)
+{
+  return GRAPH_CLICK_TOL;
+}
 
 /* waveform-marker gesture helpers, defined just above waves_callback().
  * Forward-declared because waves_selected() (further up) must be able to drop an
@@ -1818,7 +1846,11 @@ static int waves_callback(int event, int mx, int my, KeySym key, int button, int
    * click-vs-drag threshold, the clamp and the direction test -- this arm must
    * not second-guess any of them, and must NOT carry its own copy of the formula
    * (landmine 45(a); the `xschem graph_axis_zoom` verb replays through the same
-   * graph_axis_zoom() this calls). No set_modify, no push_undo: landmine 19. */
+   * graph_axis_zoom() this calls). No set_modify, no push_undo: landmine 19.
+   *
+   * ⚠ GRAPH_CLICK_TOL goes in BARE here, not `* xctx->zoom` as at :710/:711 and
+   * :1047/:1048. p0/p1 are canvas PIXELS (mx/my), not world coordinates, so the
+   * threshold is compared in pixel space -- see the note on the #define. */
   if(event == ButtonRelease && button == Button1 && xctx->graph_axis_drag) {
     int ax = xctx->graph_axis_drag;
     int gi = xctx->graph_axis_draggraph;

@@ -1188,7 +1188,7 @@ exactly one rung, carrying no geometry.
 | Corner rule | the bottom-**left** corner answers **Y**, matching the shipped RMB left-margin arm, which tests `graph_left` first and never consults `graph_bottom` |
 | Cursor exclusion | a press that grabbed an x/y cursor keeps the whole drag (§12.1/§13.1); the axis drag arms LAST and only when `!(graph_flags & (16\|32\|512\|1024))` |
 | Marker exclusion | a marker press pre-empts the whole block already (`mkpress`), so no code change was needed for it |
-| Movement threshold | more than **3 screen pixels** of travel *on the dragged axis's own component*, `GRAPH_CLICK_TOL` |
+| Movement threshold | more than **3 screen pixels** of travel *on the dragged axis's own component*, `GRAPH_CLICK_TOL`. ⚠ Handed to `graph_axis_map()` in **raw screen pixels** — the older uses of that constant in `callback.c` are `× xctx->zoom` (WORLD units) because their operands are world coordinates; `p0`/`p1` here are canvas pixels. The value has ONE home: the `#define` stays file-private to `callback.c` and the `xschem get graph_axis_map` getter reads it through `graph_click_tol()` rather than repeating the literal |
 | Feedback | a live rubber **band** spanning the plot box across the other axis — `drawtemprect` with `gctiled`/`gc[SELLAYER]` and `graph_rubber_*`, exactly like the Button3 rubber. **Not** a prop token and **not** `draw_graph` bit 16 |
 | Release outside the box | **clamped** to the plot extent and committed, never silently cancelled |
 | Commit | LMB release |

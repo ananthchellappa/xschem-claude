@@ -5,15 +5,18 @@
 was re-read from source that day; the PLAN.md item notes were re-verified claim by
 claim and **six of them are corrected in §5**.
 
-**Status:** IMPLEMENTED (2026-08-01). Every decision below was taken as
-recorded; the implementation prompt
+**Status:** IMPLEMENTED (2026-08-01), then REPAIRED after an adversarial review
+(fixup commit; see the issue file §3.1). Every decision below was taken as
+recorded **except D-9's `× xctx->zoom`, which is correction 3 below**; the
+implementation prompt
 (`doc/claude/overnight_batch_2026_08_01/prompts/03_axis-region-drag-zoom.md`)
 was executed in full — six named sabotages verified, suite
-`tests/headless/test_wave_axis_zoom.tcl` (119 checks `--nogui` / 173 with a
-display). Issue file: `doc/claude/issues/0190-axis-region-drag-zoom.md`; spec:
+`tests/headless/test_wave_axis_zoom.tcl` (**128 checks `--nogui` / 196 with a
+display** after the repair; 119/173 as first committed). Issue file:
+`doc/claude/issues/0190-axis-region-drag-zoom.md`; spec:
 `doc/claude/specs/waveform_viewer_modes.md` §17.
 
-**Two corrections found during implementation** (both recorded in the issue
+**Three corrections found during implementation** (all recorded in the issue
 file, §3):
 
 1. **§3.3's "the GRAPHPAN latch needs no change" is WRONG.** The Y region is
@@ -26,6 +29,18 @@ file, §3):
    `Graph_ctx` as §3.2 implies. `setup_graph_data()` parses `digital` *below* its
    off-screen early return (landmine 37a), so an off-screen digital strip
    answered 0 and the Y write landed in `y1`/`y2`. Caught by the `AV5` leg.
+3. **D-9's "`× xctx->zoom`" is WRONG and the code correctly does not do it.**
+   `graph_axis_map()` compares raw SCREEN PIXELS against the threshold, because
+   its `p0`/`p1` *are* canvas pixels — scaling them would compare pixels against
+   world units. PLAN Q4 asks for "3 screen px", so the implementation is right
+   and the decision row was not. The real consequence is one the row did not
+   anticipate: `GRAPH_CLICK_TOL` now means two different things inside
+   `callback.c` — every older use (`:710`/`:711`, `:1047`/`:1048`, and the
+   comment at `:1022` says so explicitly) is `* xctx->zoom`, i.e. WORLD units.
+   The `#define`, the accessor and the new call site each carry an explicit note
+   naming the space they are in. (Found by the post-commit review, together with
+   the fact that the `xschem get graph_axis_map` seam was carrying its own
+   literal copy of the value — see D-9 below and issue §3.1.)
 
 ---
 
@@ -394,7 +409,7 @@ ESC — `graph_axis_drag_abort()` next to `graph_marker_drag_abort()` in
 | D-6 | Legend vs axis drag? | **The legend wins**: `graph_axis_at` returns NONE wherever `graph_legend_at >= 0`. | For `vlegend=1` and for digital strips the legend *is* the left margin (`draw.c:4501`, `:4508`). The ASE viewer emits no `vlegend` (`wave_viewer.tcl:1770`), so viewer strips are unaffected — but the ~127 embedded schematic graphs are not all horizontal-legend. | Refusing `vlegend`/`digital` strips wholesale (would also kill their X axis, which has no conflict). |
 | D-7 | The bottom-LEFT corner: X or Y? | **Y.** | Matches the shipped RMB arm, whose Y branch tests `graph_left && !graph_top` and never consults `graph_bottom` (`callback.c:2129`). One precedence rule in the file, not two. | X-wins; refusing the corner (a dead 14×14 hole users would find). |
 | D-8 | `sharedx` stacks — X on one strip or all? | **All**, via the shipped participation test `r->sel \|\| (same_sim_type && !(r->flags & 2)) \|\| i == graph_master`, evaluated inside `graph_axis_zoom`. Y is always the one strip. | Identical to MMB pan, RMB box zoom and the arrow-key pans. **It is not the viewer's `sharedx` flag** — see §5.4. | Consulting `sharedx` from C (a Tcl-side window option C cannot see); X on the master only (would desynchronise a time-aligned stack). |
-| D-9 | Click-vs-drag threshold? | `GRAPH_CLICK_TOL` (3.0, `callback.c:34`) × `xctx->zoom`, on the **dragged axis's own component**, tested inside `graph_axis_map`. Sub-threshold ⇒ no write, no log. | The same constant the strip drag, the trace drag and the wave-bold click use; the axis's own component because a Y drag has no meaningful X travel. | A new constant; testing both components (a pure X drag with 4 px of hand tremor in Y would then be judged on the wrong axis). |
+| D-9 | Click-vs-drag threshold? | `GRAPH_CLICK_TOL` (3.0, `callback.c`) in **raw SCREEN PIXELS** — **NOT** `× xctx->zoom`, see correction 3 in the Status block — on the **dragged axis's own component**, tested inside `graph_axis_map`. Sub-threshold ⇒ no write, no log. The value has ONE home: the `#define` stays file-private to `callback.c` (landmine 20) and the only other caller, `xschem get graph_axis_map`, reads it through the `graph_click_tol()` accessor rather than repeating the literal (landmine 45(a) applied to a constant — leg `AS3`). | The same constant the strip drag, the trace drag and the wave-bold click use; the axis's own component because a Y drag has no meaningful X travel; pixels because `p0`/`p1` are pixels. | A new constant; testing both components (a pure X drag with 4 px of hand tremor in Y would then be judged on the wrong axis); a second literal at the getter (the getter is the seam the whole `AM` group drives, so a copy there means the suite and the product can disagree with no leg going red — which is exactly what the first commit shipped). |
 | D-10 | Rubber-band preview? | **Yes** — `drawtemprect` with `gctiled`/`gc[SELLAYER]` and `graph_rubber_*`, a band spanning the plot box across the un-dragged axis. **Not** a prop token under `draw_graph` bit 16. | §5.1: the C-side live rubber has never gone through `draw_graph`; `reorder_handle=2/3/4` is the *Tcl*-driven feedback path. Reusing the shipped mechanism gets the erase bookkeeping and the `!has_x` no-op for free. | A new `reorder_handle` value (would need Tcl to rewrite a token per motion event for a gesture Tcl does not own). |
 | D-11 | Release outside the window? | **Clamp** to the plot-box extent inside `graph_axis_map` and commit. | PLAN Q10; also what the RMB rubber already does with its moving corner (`callback.c:1652-1653`). `GRAPHPAN` keeps the drag routed to the graph after the pointer leaves it (landmine 36), so the release does arrive. | Cancelling (a drag that overshoots by 2 px would silently do nothing). |
 | D-12 | Degenerate / explosive zoom-out? | Clamp `\|s\|` at `1/GRAPH_AXIS_ZOOM_MAX_FACTOR` (1000.0, new `#define` in `xschem.h`, **not** mirrored in Tcl). Also the shipped `hi == lo ⇒ hi += 1e-6` guard. | Never divide by zero; D-9's 3-px threshold normally binds first (max factor ≈ plot width / 3), so the clamp is a backstop, not a policy. | No clamp (an `inf` range poisons the tokens permanently); a small factor like 100 (would silently cap a legitimate 4-px-drag zoom-out on a narrow strip). |

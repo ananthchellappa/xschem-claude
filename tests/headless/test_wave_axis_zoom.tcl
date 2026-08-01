@@ -229,6 +229,28 @@ proc az_slurp {p} {
   close $h
   return $s
 }
+# The NUMERIC value of a #define, read straight out of the C source.
+#
+# WHY, and it is not tidiness: both constants this suite depends on are TUNABLES
+# the issue file invites an eyeball to re-tune (the click-vs-drag travel and the
+# zoom-out backstop). A leg that freezes a COPY of the value stops testing the
+# product the moment somebody turns the knob: it either keeps passing against a
+# number the code no longer uses, or it goes red for a change that was correct.
+# Reading the define means the legs assert the constant's EFFECT -- raise
+# GRAPH_CLICK_TOL and AM7 follows it; lower GRAPH_AXIS_ZOOM_MAX_FACTOR and AM8
+# and AM12 follow it -- while a REBUILD-less edit, or a code path that ignores
+# the constant, still goes red.
+# {} when the define is missing or is not a number: the caller FAILS, never skips.
+proc az_define {path name} {
+  set src [az_slurp $path]
+  if {$src eq {}} { return {} }
+  foreach line [split $src "\n"] {
+    if {[regexp "^\\s*#define\\s+$name\\s+(\[-+0-9.eE\]+)\\s*\$" $line -> v]} {
+      if {[string is double -strict $v]} { return $v }
+    }
+  }
+  return {}
+}
 # every graph rect's x1 x2 y1 y2 ypos1 ypos2, as one comparable list -- the
 # "witness EVERY rect" primitive
 proc az_windows {} {
@@ -258,11 +280,27 @@ proc az_expect {A B ca cb} {
   set s  [expr {$ub - $ua}]
   if {$s > 0.0} { return [list [expr {$A + $ua * $R}] [expr {$A + $ub * $R}]] }
   set f [expr {-$s}]
-  if {$f < 1.0 / 1000.0} { set f [expr {1.0 / 1000.0}] }
+  # the backstop, read from xschem.h -- never a frozen copy of its value
+  if {$f < 1.0 / $::az_maxf} { set f [expr {1.0 / $::az_maxf}] }
   set R2 [expr {$R / $f}]
   set lo [expr {$A - $ub * $R2}]
   return [list $lo [expr {$lo + $R2}]]
 }
+
+# ---- the two TUNABLE constants, read from the source they live in ----------
+# AC1 is a staging leg with teeth: if either parse came up empty every leg that
+# uses it would silently compare against {} and the file would unwind on the
+# first expr. Both are asserted to be present, numeric and sane BEFORE any group
+# runs. See az_define above for why they are read rather than hardcoded.
+set az_ctol [az_define [file join $repo src callback.c] GRAPH_CLICK_TOL]
+set az_maxf [az_define [file join $repo src xschem.h]   GRAPH_AXIS_ZOOM_MAX_FACTOR]
+check_true "AC1 GRAPH_CLICK_TOL was read out of src/callback.c: {$az_ctol}" \
+  [pexpr {[string is double -strict "$az_ctol"] && $az_ctol > 0 && $az_ctol < 100}]
+check_true "AC1 GRAPH_AXIS_ZOOM_MAX_FACTOR was read out of src/xschem.h:\
+ {$az_maxf}" \
+  [pexpr {[string is double -strict "$az_maxf"] && $az_maxf > 1.0}]
+if {![string is double -strict "$az_ctol"]} { set az_ctol 3.0; stall "GRAPH_CLICK_TOL unreadable" }
+if {![string is double -strict "$az_maxf"]} { set az_maxf 1000.0; stall "GRAPH_AXIS_ZOOM_MAX_FACTOR unreadable" }
 
 # ============================================================================
 # AZ* — the region query (BOTH arms)
@@ -513,26 +551,38 @@ check_true "AM6 the reverse Y drag really ZOOMED OUT" \
   [pexpr {([lindex $m6 1] - [lindex $m6 0]) > $YR * 1.2}]
 
 # --- AM7: the click/drag boundary, BOTH sides -------------------------------
-check "AM7 travel of exactly 3 px is a CLICK: no answer" \
-  [pcall {xschem get graph_axis_map 0 x $bcx [expr {$bcx + 3}]}] {}
-check "AM7 ...and 3 px the other way too" \
-  [pcall {xschem get graph_axis_map 0 x $bcx [expr {$bcx - 3}]}] {}
-check_true "AM7 travel of 4 px is a DRAG: an answer" \
-  [pexpr {[llength [xschem get graph_axis_map 0 x $bcx [expr {$bcx + 4}]]] == 2}]
-check_true "AM7 ...and 4 px the other way too" \
-  [pexpr {[llength [xschem get graph_axis_map 0 x $bcx [expr {$bcx - 4}]]] == 2}]
+# The boundary pixels come from GRAPH_CLICK_TOL itself ($az_ctol, parsed out of
+# callback.c), not from a frozen 3/4. That is what ties this leg to the SEAM the
+# getter drives: `xschem get graph_axis_map` passes graph_click_tol() -- the
+# gesture's own threshold -- so raising the #define and rebuilding moves both
+# the product and this leg, while raising it in ONE of the two places (the defect
+# this replaces: scheduler.c used to carry its own literal 3.0) goes red here.
+set amc  [expr {int($az_ctol)}]
+set amc1 [expr {$amc + 1}]
+check "AM7 travel of exactly GRAPH_CLICK_TOL ($amc px) is a CLICK: no answer" \
+  [pcall {xschem get graph_axis_map 0 x $bcx [expr {$bcx + $amc}]}] {}
+check "AM7 ...and $amc px the other way too" \
+  [pcall {xschem get graph_axis_map 0 x $bcx [expr {$bcx - $amc}]}] {}
+check_true "AM7 travel of $amc1 px is a DRAG: an answer" \
+  [pexpr {[llength [xschem get graph_axis_map 0 x $bcx [expr {$bcx + $amc1}]]] == 2}]
+check_true "AM7 ...and $amc1 px the other way too" \
+  [pexpr {[llength [xschem get graph_axis_map 0 x $bcx [expr {$bcx - $amc1}]]] == 2}]
 
 # --- AM8: the zoom-out clamp keeps the answer finite ------------------------
-set m8 [pcall {xschem get graph_axis_map 0 x $bcx [expr {$bcx - 4}]}]
+set m8 [pcall {xschem get graph_axis_map 0 x $bcx [expr {$bcx - $amc1}]}]
 # purely the CLAMP question -- finiteness and the bound. Direction and anchoring
 # are AM2/AM4/AM6's job, deliberately: a leg that mixes the two dies for the
 # wrong sabotage and stops telling you which defect you have.
-check_true "AM8 a 4-px reverse drag on a wide box is FINITE (map=$m8)" \
+check_true "AM8 a $amc1-px reverse drag on a wide box is FINITE (map=$m8)" \
   [pexpr {[string is double -strict [lindex $m8 0]] &&
           [string is double -strict [lindex $m8 1]] &&
           abs([lindex $m8 0]) < 1e300 && abs([lindex $m8 1]) < 1e300}]
-check_true "AM8 ...and spans no more than R * GRAPH_AXIS_ZOOM_MAX_FACTOR" \
-  [pexpr {abs([lindex $m8 1] - [lindex $m8 0]) <= $R * 1000.0 * 1.000001}]
+# the bound is R * the define's CURRENT value: lower GRAPH_AXIS_ZOOM_MAX_FACTOR
+# below plot_width/$amc1 without rebuilding and this goes red, which is the point
+# -- the old form hardcoded 1000.0 and could not see the constant move at all.
+check_true "AM8 ...and spans no more than R * GRAPH_AXIS_ZOOM_MAX_FACTOR\
+ ($az_maxf)" \
+  [pexpr {abs([lindex $m8 1] - [lindex $m8 0]) <= $R * $az_maxf * 1.000001}]
 
 # --- AM9: a LOG axis maps in LOG space, with no pow(10,.) -------------------
 foreach {azt azv} {logx 1 x1 -3 x2 0} { pcall {xschem setprop rect 2 0 $azt $azv} }
@@ -574,6 +624,41 @@ check "AM11 an off-screen graph has no transform, so the map answers {}" \
   [pcall {xschem get graph_axis_map $azoff x 10 200}] {}
 check "AM11 ...and so does the region query" \
   [pcall {xschem get graph_axis_at $azoff 10 200}] {}
+
+# --- AM12: the zoom-out clamp actually BINDS, and binds AT the constant ------
+# AM8 only bounds the answer from above, and on a normal strip the click
+# threshold binds long before the backstop does (max factor ~ plot_width /
+# GRAPH_CLICK_TOL), so until this leg NOTHING in the suite ever entered the clamp
+# arm -- the `f < 1/GRAPH_AXIS_ZOOM_MAX_FACTOR` line was dead code as far as the
+# tests were concerned. This leg runs it: a graph rect sized off the CURRENT zoom
+# so its plot box is ~5 * maxf * (tol+1) screen pixels wide, where a
+# just-over-threshold reverse drag is a zoom-out of thousands of x.
+# The assertion is EQUALITY with R * GRAPH_AXIS_ZOOM_MAX_FACTOR, BOTH SIDES,
+# against the value parsed out of xschem.h: deleting the clamp, mis-signing it,
+# or lowering the #define without rebuilding all go red, while re-tuning the
+# #define and rebuilding stays green and keeps asserting the new value.
+set amwhalf [pexpr {int(5.0 * $az_maxf * $amc1 * [xschem get zoom])}]
+pcall {az_graph -$amwhalf 0 $amwhalf 400}
+pcall {xschem unselect_all}
+set azwide [pexpr {[xschem get rects 2] - 1}]
+foreach {azt azv} {x1 0 x2 1.0 y1 0 y2 2.5} {
+  pcall {xschem setprop rect 2 $azwide $azt $azv}
+}
+set amwR [pexpr {[xschem getprop rect 2 $azwide x2] - [xschem getprop rect 2 $azwide x1]}]
+# the plot extent in SCREEN PIXELS, from the INDEPENDENT graph_coord transform
+# (data-per-pixel over a 100-px baseline) -- never predicted from the rect
+set amwslope [pexpr {abs([az_coord $azwide 400 $bcy 0] - [az_coord $azwide 300 $bcy 0]) / 100.0}]
+set amwext [pexpr {$amwslope > 0 ? $amwR / $amwslope : 0}]
+set amwfac [pexpr {$amwext / $amc1}]
+check_true "AM12 the wide strip's plot extent is $amwext px, so an unclamped\
+ $amc1-px reverse drag would zoom out ${amwfac}x -- the clamp ($az_maxf) IS the\
+ binding constraint here, not the click threshold (teeth)" \
+  [pexpr {$amwfac > $az_maxf * 2.0}]
+set m12 [pcall {xschem get graph_axis_map $azwide x 400 [expr {400 - $amc1}]}]
+check_true "AM12 the clamped reverse drag spans EXACTLY R *\
+ GRAPH_AXIS_ZOOM_MAX_FACTOR (map=$m12 R=$amwR maxf=$az_maxf)" \
+  [pexpr {[az_close [expr {[lindex $m12 1] - [lindex $m12 0]}] \
+                    [expr {$amwR * $az_maxf}] 1e-9]}]
 
 } azmerr]} { check "AM* group ran to its end" "ERR:$azmerr" ok }
 
@@ -835,6 +920,27 @@ check "AS2 graph_axis_zoom does NOT set_modify and does NOT push_undo\
  (landmine 19: a graph gesture is view state)" \
   [regexp -all {set_modify|push_undo} $asbody] 0
 
+# --- AS3: ONE home for the click-vs-drag THRESHOLD too ----------------------
+# AS1 proves the two call sites of graph_axis_map() share the FORMULA. They must
+# also share its THRESHOLD, and for a while they did not: scheduler.c passed a
+# literal 3.0 while callback.c passed GRAPH_CLICK_TOL, so the seam the whole AM
+# group is driven through carried its own copy of the number. Nothing could see
+# it -- raise the #define and the gesture needs 7 px while the getter still
+# answers at 4, and every AM leg stays green. That is landmine 45(a) with the
+# constant instead of the maths. The accessor graph_click_tol() is now the one
+# home; these legs stop a copy from growing back.
+check "AS3 the getter takes the threshold from callback.c's accessor" \
+  [az_count_code $assched {graph_click_tol\(\)}] 1
+check "AS3 ...and hands graph_axis_map NO numeric literal in its place" \
+  [az_count_code $assched {&lo, *&hi, *[-+0-9.]}] 0
+check "AS3 the accessor is defined exactly once, and in callback.c (where the\
+ #define it exports lives)" \
+  [az_count_code $ascb {^double graph_click_tol\(void\)$}] 1
+check "AS3 ...and callback.c still passes the #define itself to graph_axis_map" \
+  [az_count_code $ascb {graph_axis_map\(.*GRAPH_CLICK_TOL|GRAPH_CLICK_TOL\)\)}] 1
+check "AS3 draw.c -- which owns the formula -- knows nothing about either name" \
+  [az_count_code $asdraw {GRAPH_CLICK_TOL|graph_click_tol}] 0
+
 } azserr]} { check "AS* group ran to its end" "ERR:$azserr" ok }
 
 # ============================================================================
@@ -1024,6 +1130,74 @@ check_true "AG11 ...and rect 1's x1/x2 FOLLOWED it" \
 check "AG12 after the whole AG block the buffer is still modified 0" \
   [pcall {xschem get modified}] 0
 
+# --- AG13: the same gesture on a strip whose index is NOT 0 -----------------
+# Every AG leg above presses inside RECT 0's margins. AZ11 only QUERIES a
+# non-zero index and AV5 only calls the VERB on one, so the press -> arm ->
+# release path had never been driven off index 0 at all: a
+# graph_axis_press_arm(0, ...)-style hardcode, or a graph_master /
+# graph_axis_draggraph mix-up, would have been invisible to the whole suite.
+# The DECISIVE half is the Y gesture -- Y touches its own rect only, so "rect 1
+# moved and rect 0 did not" can only mean the arm followed the pressed strip.
+set ag13band [az_band 0 500 800 900]
+set ag13box  [az_box 1 $ag13band]
+set ag13xmp  [az_xmargin $ag13box $ag13band]
+set ag13ymp  [az_ymargin $ag13box $ag13band]
+if {[llength $ag13box] != 4} { set ag13box {-1 -1 -1 -1} }
+if {[llength $ag13xmp] != 2} { set ag13xmp {-1 -1} }
+if {[llength $ag13ymp] != 2} { set ag13ymp {-1 -1} }
+lassign $ag13box g1x1 g1y1 g1x2 g1y2
+lassign $ag13xmp g1mx g1my
+lassign $ag13ymp g1yx g1yy
+check_true "AG13 strip 1 was scanned: box=$ag13box xm=$ag13xmp ym=$ag13ymp" \
+  [pexpr {$g1x1 >= 0 && $g1mx >= 0 && $g1yx >= 0 && $g1x2 - $g1x1 > 60}]
+if {$g1x1 < 0 || $g1mx < 0 || $g1yx < 0} { stall "AG13 strip-1 pixel scan came up empty" }
+check "AG13 the scanned bottom-margin pixel is STRIP 1's X region (teeth)" \
+  [pcall {xschem get graph_axis_at 1 $g1mx $g1my}] x
+check "AG13 ...and strip 0 does not claim that pixel at all" \
+  [pcall {xschem get graph_axis_at 0 $g1mx $g1my}] {}
+check "AG13 the scanned left-margin pixel is STRIP 1's Y region (teeth)" \
+  [pcall {xschem get graph_axis_at 1 $g1yx $g1yy}] y
+# re-stage both windows, then clear the dirty flag those setprops raise (AV6's
+# control leg: a plain setprop DOES dirty, the gesture does not)
+foreach i {0 1} {
+  foreach {azt azv} {x1 0 x2 1.0 y1 0 y2 2.5} { pcall {xschem setprop rect 2 $i $azt $azv} }
+}
+pcall {xschem set_modify 0}
+# (a) Y on strip 1 -- its own rect ONLY
+set ag13y0 [pcall {list [xschem getprop rect 2 0 y1] [xschem getprop rect 2 0 y2]}]
+ag_unlatch
+pcall {ag_press $g1yx $g1yy}
+check "AG13 a left-margin press on STRIP 1 arms the Y axis drag" \
+  [pcall {xschem get graph_axis_drag}] y
+set ag13ym [pcall {xschem get graph_axis_map 1 y $g1yy [expr {$g1y1 + 15}]}]
+pcall {ag_drag $g1yx [expr {$g1y1 + 15}]}
+pcall {ag_rel  $g1yx [expr {$g1y1 + 15}]}
+check_true "AG13 ...and the release committed the map onto RECT 1\
+ (map=$ag13ym got=[pcall {list [xschem getprop rect 2 1 y1] [xschem getprop rect 2 1 y2]}])" \
+  [pexpr {[az_close [xschem getprop rect 2 1 y1] [lindex $ag13ym 0] 1e-6] &&
+          [az_close [xschem getprop rect 2 1 y2] [lindex $ag13ym 1] 1e-6]}]
+check "AG13 ...leaving rect 0's y1/y2 byte-identical (Y never propagates, so\
+ the arm really followed the PRESSED strip and not index 0)" \
+  [pcall {list [xschem getprop rect 2 0 y1] [xschem getprop rect 2 0 y2]}] $ag13y0
+# (b) X on strip 1 -- rect 1 is the master and rect 0 must FOLLOW it
+ag_unlatch
+pcall {ag_press $g1mx $g1my}
+check "AG13 a bottom-margin press on STRIP 1 arms the X axis drag" \
+  [pcall {xschem get graph_axis_drag}] x
+set ag13xm2 [pcall {xschem get graph_axis_map 1 x $g1mx [expr {$g1x2 - 15}]}]
+pcall {ag_drag [expr {$g1x2 - 15}] $g1my}
+pcall {ag_rel  [expr {$g1x2 - 15}] $g1my}
+check_true "AG13 ...and the release committed the map onto RECT 1\
+ (map=$ag13xm2 got=[pcall {list [xschem getprop rect 2 1 x1] [xschem getprop rect 2 1 x2]}])" \
+  [pexpr {[az_close [xschem getprop rect 2 1 x1] [lindex $ag13xm2 0] 1e-6] &&
+          [az_close [xschem getprop rect 2 1 x2] [lindex $ag13xm2 1] 1e-6]}]
+check_true "AG13 ...and rect 0 FOLLOWED it, so propagation runs off a non-zero\
+ master too (rect0=[pcall {list [xschem getprop rect 2 0 x1] [xschem getprop rect 2 0 x2]}])" \
+  [pexpr {[az_close [xschem getprop rect 2 0 x1] [xschem getprop rect 2 1 x1] 1e-9] &&
+          [az_close [xschem getprop rect 2 0 x2] [xschem getprop rect 2 1 x2] 1e-9]}]
+check "AG13 ...and the arm is back to nothing" [pcall {xschem get graph_axis_drag}] {}
+check "AG13 ...and neither gesture dirtied the buffer" [pcall {xschem get modified}] 0
+
 } azgerr]} { check "AG* group ran to its end" "ERR:$azgerr" ok }
 } else {
   puts "SKIPPED: AG* (no DISPLAY / no .drw canvas)"
@@ -1050,6 +1224,69 @@ proc ax_ev {w seq args} {
 }
 set ::axt 0
 
+# A CONFIRMED context switch to the viewer canvas.
+#
+# `xschem new_schematic switch $w` on its own is not enough, and this suite
+# measured it: any `update` after the switch can deliver a stray EnterNotify on
+# the main editor window, whose handle_window_switching (callback.c) puts the C
+# context BACK -- and from then on every `xschem getprop rect 2 k ...` in this
+# group reads the SCHEMATIC's rects while the leg believes it is reading the
+# viewer's. It presents as a product failure ("node -> {v_a v_a}", "readonly ->
+# 0") and is nothing of the sort; standalone it cost ~1 run in 12.
+# Switch, CONFIRM through current_win_path -- the same test wviewer::over_graph
+# gates every graph key on -- and never leave an `update` between the last
+# confirmation and the measurement that depends on it.
+proc ax_ctx {} {
+  for {set i 0} {$i < 100} {incr i} {
+    catch {xschem new_schematic switch $::vdrw}
+    if {[pcall {xschem get current_win_path}] eq $::vdrw} { return 1 }
+    catch {update}
+    after 20
+  }
+  note "ax_ctx: the C context never settled on $::vdrw"
+  return 0
+}
+
+# A synthetic KeyPress that is actually DELIVERED.
+#
+# A generated KeyPress goes to the DISPLAY's focus window and the WSLg focus
+# round-trip is asynchronous, so a bare `event generate <Key-...>` with no focus
+# set is simply dropped a good fraction of the time. AX7's ESC used to be sent
+# that way and it was the suite's whole flake budget: measured over 30 standalone
+# runs during review, 8 went red on exactly these two AX7 legs, 7 of 10 inside
+# one bad window. Every other wave suite in this directory sends keys through a
+# focus-retry loop; this is that loop, shaped like test_wave_markers' send_key.
+#
+# The loop is gated on the RESULT predicate (evaluated in the CALLER's scope),
+# not on `focus -displayof` agreeing: under WSLg the X input focus can sit
+# outside the application entirely and `focus -force` cannot take it back, so
+# gating the SEND on confirmed focus deadlocks. Sending a key that goes nowhere
+# is harmless; not noticing that it went nowhere is not, which is why the caller
+# checks the return value. Resending ESC is idempotent -- the second one cancels
+# an already-cancelled drag.
+proc ax_send_key {w ev done {maxtries 100}} {
+  set top [winfo toplevel $w]
+  for {set i 0} {$i < $maxtries} {incr i} {
+    update
+    if {[uplevel 1 [list expr $done]]} { return 1 }
+    if {![winfo exists $w]} { after 50; continue }
+    catch {wm deiconify $top}
+    catch {raise $top}
+    catch {event generate $top <FocusIn> -detail NotifyAncestor}
+    focus -force $top
+    focus -force $w
+    update
+    if {[uplevel 1 [list expr $done]]} { return 1 }
+    set ::axt [expr {$::axt + 1000}]
+    eval [list event generate $w] $ev [list -time $::axt]
+    update
+    if {[uplevel 1 [list expr $done]]} { return 1 }
+    after 50
+  }
+  note "ax_send_key: $ev to $w never took effect ($maxtries tries)"
+  return 0
+}
+
 set st [ase::state_load $statefile]
 dict set st rundir [file join $scratch run]
 set sstate [file join $scratch session.state]
@@ -1059,12 +1296,14 @@ ase::session_open $tok $sstate
 check "AX0 wviewer::open returns 1" [pcall {wviewer::open $tok}] 1
 set vtop [wviewer::window_for $tok]
 set vdrw $vtop.drw
+set ::vdrw $vdrw
 if {![viewer_ready $vtop]} {
   puts "SKIPPED: AX* (viewer canvas never mapped)"
   catch {wviewer::close $tok}
 } else {
 
-xschem new_schematic switch $vdrw
+check "AX0 the C context settled on the viewer canvas (teeth: every AX leg\
+ below reads rect 2 k of whatever context is current)" [pcall {ax_ctx}] 1
 pcall {xschem raw clear}
 check "AX0 hermetic raw in the viewer ctx" \
   [pcall {xschem raw new axzoom.raw dc vsweep 0 1.0 0.1}] 1
@@ -1087,10 +1326,9 @@ proc ax_fixture {tok} {
   wviewer::regenerate $tok
   wviewer::fit $tok
   catch {wviewer::clear_history $tok}
-  xschem new_schematic switch $::vdrw
   update
+  ax_ctx     ;# LAST, and confirmed: the update above can lose the context
 }
-set ::vdrw $vdrw
 ax_fixture $tok
 check "AX0 two strips, two graph rects, both carrying their trace" \
   [pcall {list [llength [dict get [wviewer::layout_for $tok] graphs]] \
@@ -1107,7 +1345,7 @@ check "AX0 the viewer buffer is readonly" [pcall {xschem get readonly}] 1
 # file. NEVER predicted from the rect.
 proc ax_scan {tok} {
   global axbox axband axxm axym
-  xschem new_schematic switch $::vdrw
+  ax_ctx
   set bands [pcall {wviewer::strip_bands_px $::vdrw}]
   set axband {-1 -1 -1 -1}
   if {[llength $bands] >= 1} {
@@ -1136,10 +1374,11 @@ check "AX0 the scanned left-margin pixel really is the Y region (teeth)" \
 
 proc ax_reset_arms {tok} {
   catch {wviewer::strip_drag_cancel $::vdrw}
-  catch {xschem new_schematic switch $::vdrw}
+  ax_ctx
   catch {xschem callback $::vdrw 5 2 2 0 1 0 256}
   catch {xschem callback $::vdrw 6 2 2 0 0 0 0}
   update
+  ax_ctx     ;# the update above is exactly where the context gets lost
 }
 proc ax_drag_from {tok} {
   if {[catch {set v $wviewer::drag_from($tok)}]} { return -1 }
@@ -1147,7 +1386,7 @@ proc ax_drag_from {tok} {
   return $v
 }
 proc ax_win {gi} {
-  xschem new_schematic switch $::vdrw
+  ax_ctx
   set out {}
   foreach t {x1 x2 y1 y2} { lappend out [xschem getprop rect 2 $gi $t] }
   return $out
@@ -1160,7 +1399,7 @@ check "AX1 strip_drag_press consumed the bottom-margin press" $ax1r 1
 check "AX1 ...via the axis rung: axis_grabbed is 1" \
   [pcall {wviewer::axis_grabbed $vdrw}] 1
 check "AX1 ...and the strip reorder did NOT arm" [pcall {ax_drag_from $tok}] -1
-pcall {xschem new_schematic switch $vdrw; xschem callback $vdrw 5 $axmx $axmy 0 1 0 256}
+pcall {ax_ctx; xschem callback $vdrw 5 $axmx $axmy 0 1 0 256}
 ax_reset_arms $tok
 
 # --- AX2/AX3: the full viewer gesture through the SHIPPED bindings ----------
@@ -1206,29 +1445,39 @@ ax_reset_arms $tok
 check "AX4 a plot-BODY press still arms the strip reorder" \
   [pcall {wviewer::strip_drag_press $vdrw $ax4x $ax4y 0; ax_drag_from $tok}] 0
 check "AX4 ...and armed no axis drag" [pcall {wviewer::axis_grabbed $vdrw}] 0
-pcall {xschem new_schematic switch $vdrw; xschem callback $vdrw 5 $ax4x $ax4y 0 1 0 256}
+pcall {ax_ctx; xschem callback $vdrw 5 $ax4x $ax4y 0 1 0 256}
 ax_reset_arms $tok
 set ax5x [expr {[lindex $axband 2] - 5}]
 set ax5g [pcall {wviewer::strip_handle_at_pixel $vdrw $ax5x $ax4y}]
 check "AX5 the grip column is strip 0's (teeth)" $ax5g 0
 check "AX5 a grip press still arms the strip reorder" \
   [pcall {wviewer::strip_drag_press $vdrw $ax5x $ax4y 0; ax_drag_from $tok}] 0
-pcall {xschem new_schematic switch $vdrw
+pcall {ax_ctx
        xschem callback $vdrw 5 $ax5x $ax4y 0 1 0 256}
 ax_reset_arms $tok
 
 # --- AX6: the viewer buffer is untouched ------------------------------------
-xschem new_schematic switch $vdrw
+ax_ctx
 check "AX6 the viewer buffer is still modified 0" [pcall {xschem get modified}] 0
 check "AX6 ...and still readonly 1" [pcall {xschem get readonly}] 1
 
 # --- AX7: ESC during a viewer axis drag -------------------------------------
+# ⚠ The ESC goes through ax_send_key, NOT ax_ev. Button events are generated
+# straight at the named widget and always land; a KeyPress goes to the display's
+# FOCUS window, and this leg is the only key send in the file. Sent bare it was
+# dropped on ~1 standalone run in 4 and both AX7 checks then failed together (no
+# cancel, so the trailing release committed the zoom). The retry loop is gated on
+# the arm actually clearing, and its return value is asserted below so a leg that
+# never received its probe cannot pass quietly.
 ax_reset_arms $tok
 set ax7w [pcall {ax_win 0}]
 ax_ev $vdrw <ButtonPress-1> -x $axmx -y $axmy
 check "AX7 the axis drag armed (teeth)" [pcall {wviewer::axis_grabbed $vdrw}] 1
 ax_ev $vdrw <B1-Motion> -x [expr {$axmx + 40}] -y $axmy -state 256
-ax_ev $vdrw <Key-Escape>
+set ax7k [ax_send_key $vdrw [list <Key-Escape> -x [expr {$axmx + 40}] -y $axmy] \
+            {[wviewer::axis_grabbed $::vdrw] == 0}]
+check "AX7 the ESC was actually DELIVERED (a swallowed key would leave the arm\
+ up and fail the next two legs for the wrong reason)" $ax7k 1
 update
 check "AX7 ESC cleared the arm" [pcall {wviewer::axis_grabbed $vdrw}] 0
 ax_ev $vdrw <ButtonRelease-1> -x [expr {$axmx + 40}] -y $axmy -state 256

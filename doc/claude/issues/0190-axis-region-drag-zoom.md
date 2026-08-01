@@ -135,7 +135,7 @@ plot box (contrast `GRAPH_REORDER_HANDLE_W`, which *is* mirrored and carries a
   `case 'g':` and the fail-loud top-level verb.
 * `src/wave_viewer.tcl` — `wviewer::axis_grabbed` and one rung.
 
-Two things measured while implementing, both recorded rather than assumed:
+Three things measured while implementing, all recorded rather than assumed:
 
 1. **The GRAPHPAN latch DID need the extra term.** The prompt expected it not to.
    Both margins are usually `graph_top == 0`, but the Y region is "left of the
@@ -148,23 +148,74 @@ Two things measured while implementing, both recorded rather than assumed:
    off-screen early return (landmine 37a), so an off-screen digital strip
    answered 0 and the Y write went into `y1`/`y2`. Caught by the `AV5` leg
    before the fixture was re-fitted.
+3. **`GRAPH_CLICK_TOL` goes into `graph_axis_map()` in SCREEN PIXELS, not
+   `× xctx->zoom`.** Decision D-9 records "`GRAPH_CLICK_TOL` (3.0) × `xctx->zoom`"
+   and the code does not multiply — correctly: PLAN Q4 asks for "3 *screen* px"
+   and `graph_axis_map`'s `p0`/`p1` are canvas pixels, so scaling them would
+   compare pixels against world units. The consequence is that the constant now
+   means two things inside `callback.c` — every older use (`:710`/`:711`,
+   `:1047`/`:1048`) is `* xctx->zoom`, i.e. WORLD units — so the `#define` and
+   both call sites carry an explicit note saying which space they are in.
+
+### 3.1 Post-review repair (fixup commit)
+
+An adversarial re-read of the commit found four things, three of them fixed here
+and one already true:
+
+* **The suite was not reliably green.** `AX7`'s `<Key-Escape>` was a bare
+  `event generate` with no focus set — the only key send in the file, and the
+  only wave suite in `tests/headless/` with no `focus -force` anywhere. Measured
+  standalone: 8 red runs in 30, 7 of 10 inside one bad window, always the two
+  `AX7` legs (a swallowed ESC leaves the arm up, so the trailing release commits
+  the zoom). It now goes through `ax_send_key`, the retry-until-the-arm-clears
+  sender the other wave suites use, and the leg **asserts that the key was
+  delivered** so a lost probe can never read as a pass. A second, independent
+  flake found while re-soaking: the AX group's `xschem new_schematic switch`
+  calls were unconfirmed, so a stray `EnterNotify` on the main editor during any
+  `update` put the C context back and `AX0` then measured the *schematic's*
+  rects (`node -> {v_a v_a}`, `readonly -> 0`) — ~1 run in 12. Every switch in
+  the group now goes through `ax_ctx`, which confirms `current_win_path`.
+* **The `xschem get graph_axis_map` seam carried its own copy of the
+  click-vs-drag threshold** — `scheduler.c` passed a literal `3.0` while the
+  gesture passed `GRAPH_CLICK_TOL`, so raising the `#define` would have moved the
+  product and not the seam the whole `AM` group is driven through, with no leg
+  going red. That is landmine 45(a) with the constant instead of the maths. The
+  value now has one home: `graph_click_tol()` in `callback.c` (the `#define`
+  stays file-private — in the header it reads as `GRAPH_TRACE_PICK_TOL`'s twin,
+  landmine 20). `AS3` counts the seam and `AM7` now takes its boundary pixels
+  from the parsed `#define`.
+* **Two tunable constants were frozen as literals in the suite.**
+  `GRAPH_AXIS_ZOOM_MAX_FACTOR` was hardcoded as `1000.0` in `az_expect` and in
+  `AM8`'s one-sided bound, so re-tuning the `#define` — which the eyeball list
+  invites — could not make any leg go red. Both constants are now read out of the
+  source by `az_define`, and `AM12` makes the clamp **actually bind** (a strip
+  whose plot box is thousands of pixels wide) and asserts the clamped span
+  equals `R × GRAPH_AXIS_ZOOM_MAX_FACTOR` on **both** sides.
+* **Coverage gap, now closed:** no leg drove the C press/arm/release path on a
+  strip whose rect index is not 0 (`AZ11` only *queried* index 2, `AV5` only
+  called the *verb* on index 4), so a `graph_axis_press_arm(0, ...)` hardcode or
+  a `graph_master`/`graph_axis_draggraph` mix-up would have been invisible.
+  `AG13` presses in **strip 1's** margins; the Y half is the decisive one,
+  because Y never propagates, so "rect 1 moved and rect 0 did not" can only mean
+  the arm followed the pressed strip. Probed by hand first: the behaviour was
+  already correct, so this is a missing witness, not a defect.
 
 ---
 
 ## 4. WHAT DEFENDS IT
 
-`tests/headless/test_wave_axis_zoom.tcl` — 119 checks in the `--nogui` arm, 173
+`tests/headless/test_wave_axis_zoom.tcl` — 128 checks in the `--nogui` arm, 196
 with a display. Auto-discovered by `full_audit.sh`.
 
 | group | arm | defends |
 |---|---|---|
 | `AZ*` | both | the region and its four refusals, the corner rule, fail-closed, `vlegend`, a **digital** strip, and **no raw loaded** (the leg that dies if `graph_plotbox_at`'s raw gate is ever copied in) |
-| `AM*` | both | both endpoints of both maths, the full-extent and half-extent worked checks, the 3/4-px boundary from both sides, the zoom-out clamp, the log axis, the release clamp, fail-soft |
+| `AM*` | both | both endpoints of both maths, the full-extent and half-extent worked checks, the click/drag boundary from both sides **at the parsed `GRAPH_CLICK_TOL`**, the zoom-out clamp **both as a bound (`AM8`) and as an exact equality on a strip wide enough to make it bind (`AM12`)**, the log axis, the release clamp, fail-soft |
 | `AV*` | both | the apply — **witnessing every rect**: X propagates, `unlocked` does not follow, a foreign `sim_type` does not follow, Y is per-graph, digital Y is `ypos1/2`, `modified` stays 0 *with a control leg proving the probe can reach 1*, and read-only still applies |
 | `AL*` | both | exactly one log line per commit, in the verb form, with data bounds; and **replaying that line reproduces both rects' windows** |
-| `AS*` | both | the anchored expression appears once in `draw.c`, `graph_axis_map()` is called once from `callback.c` and once from `scheduler.c`, `GRAPH_CLICK_TOL` stayed file-private, and `graph_axis_zoom()`'s body contains no `set_modify`/`push_undo` |
-| `AG*` | display | the real C gesture: what arms and what does not (body, legend, grip, **and a press that grabbed a cursor — asserting both that no axis drag armed and that `graph_flags & 512` really was set**), the two full gestures, the sub-threshold no-op, ESC mid-drag, X-propagates/Y-does-not, and `modified` still 0 |
-| `AX*` | display | the ASE viewer seam through the **shipped bindings**: a margin press does not arm the reorder and does not change the strip order (inert `sdid` witness), a body press and a grip press still do, the buffer stays `modified 0` / `readonly 1`, ESC cancels, and `history_depth` does not move |
+| `AS*` | both | the anchored expression appears once in `draw.c`, `graph_axis_map()` is called once from `callback.c` and once from `scheduler.c`, `GRAPH_CLICK_TOL` stayed file-private, **the getter takes its threshold from `graph_click_tol()` and carries no numeric copy of it (`AS3`)**, and `graph_axis_zoom()`'s body contains no `set_modify`/`push_undo` |
+| `AG*` | display | the real C gesture: what arms and what does not (body, legend, grip, **and a press that grabbed a cursor — asserting both that no axis drag armed and that `graph_flags & 512` really was set**), the two full gestures, the sub-threshold no-op, ESC mid-drag, X-propagates/Y-does-not, `modified` still 0, **and the whole press/arm/release path on a strip whose rect index is NOT 0 (`AG13`)** |
+| `AX*` | display | the ASE viewer seam through the **shipped bindings**: a margin press does not arm the reorder and does not change the strip order (inert `sdid` witness), a body press and a grip press still do, the buffer stays `modified 0` / `readonly 1`, ESC cancels (**through the focus-retry sender, with the delivery itself asserted**), and `history_depth` does not move. Every context switch in the group is confirmed by `ax_ctx` |
 
 Six named sabotages, each verified to fail exactly its target and no more:
 invert the direction test (kills the four reverse-drag groups and `AG8`, leaves

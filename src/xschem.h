@@ -2295,6 +2295,15 @@ extern int  graph_axis_at(int i, double px, double py);
  * logx/logy is set (landmine 35 from the other side: do NOT pow(10,.) here). */
 extern int  graph_axis_map(int i, int axis, double p0, double p1,
                            double *lo, double *hi, double clicktol);
+/* The click-vs-drag TRAVEL threshold in SCREEN PIXELS, i.e. what the gesture
+ * hands graph_axis_map() as `clicktol`. The constant behind it (callback.c's
+ * GRAPH_CLICK_TOL) stays file-private -- in this header it would read as
+ * GRAPH_TRACE_PICK_TOL's twin and it is not (landmine 20) -- but the ONE other
+ * caller of graph_axis_map(), the `xschem get graph_axis_map` getter, must use
+ * the same number the gesture does or the suite driving that getter is driving
+ * a different threshold from the product (landmine 45(a)). Accessor, not a
+ * second #define. */
+extern double graph_click_tol(void);
 /* THE APPLY, in one place, shared by the gesture and by `xschem graph_axis_zoom`.
  * X writes x1/x2 on rect `i` AND on every PARTICIPATING rect (the shipped
  * predicate of the MMB pan / RMB box zoom); Y writes y1/y2 -- or ypos1/ypos2 on
