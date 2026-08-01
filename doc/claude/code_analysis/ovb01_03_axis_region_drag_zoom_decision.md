@@ -5,16 +5,28 @@
 was re-read from source that day; the PLAN.md item notes were re-verified claim by
 claim and **six of them are corrected in §5**.
 
-**Status:** IMPLEMENTED (2026-08-01), then REPAIRED after an adversarial review
-(fixup commit; see the issue file §3.1). Every decision below was taken as
-recorded **except D-9's `× xctx->zoom`, which is correction 3 below**; the
-implementation prompt
+**Status:** IMPLEMENTED (2026-08-01), then REPAIRED TWICE after adversarial
+review (two fixup commits; see the issue file §3.1 and §3.2). Every decision
+below was taken as recorded **except D-9's `× xctx->zoom`, which is correction 3
+below**; the implementation prompt
 (`doc/claude/overnight_batch_2026_08_01/prompts/03_axis-region-drag-zoom.md`)
 was executed in full — six named sabotages verified, suite
-`tests/headless/test_wave_axis_zoom.tcl` (**128 checks `--nogui` / 196 with a
-display** after the repair; 119/173 as first committed). Issue file:
-`doc/claude/issues/0190-axis-region-drag-zoom.md`; spec:
+`tests/headless/test_wave_axis_zoom.tcl` (**200 checks `--nogui` / 361 with a
+display** after the second repair, which shares the file with issue 0191's
+CTRL-wheel groups; 128/196 after the first, 119/173 as first committed). Issue
+file: `doc/claude/issues/0190-axis-region-drag-zoom.md`; spec:
 `doc/claude/specs/waveform_viewer_modes.md` §17.
+
+**Correction 1 below is now WATCHED, and it spawned a real defect fix.** The
+second review found that the GRAPHPAN latch term had zero coverage — deleting it
+left every check green — because every gesture leg released *inside* the strip,
+where the right and the wrong engine give the same answer. `AG14` is the leg
+that discriminates: press in the TOP-LEFT corner of a legend-less strip
+(`graph_top` already 1), release LEFT of the container band, assert the commit
+**and** `ui_state & GRAPHPAN` after the press. Chasing the same line's second
+job turned up a genuine bug — an abandoned axis arm poisoning the next
+plot-body drag — closed by one line in `waves_selected()` and watched by `AG15`.
+Both are written up in the issue file §3.2.
 
 **Three corrections found during implementation** (all recorded in the issue
 file, §3):
@@ -573,6 +585,22 @@ grab, §12.1), the empty body and the legend band.
     viewer buffer stays `modified 0` / `readonly 1`.
 17. Source-level: the anchored map appears **once** in `draw.c` — the gesture and
     the verb share `graph_axis_map()` (landmine 45(a), the `LS5` idiom).
+18. **The GRAPHPAN ROUTING LATCH grew `|| xctx->graph_axis_drag` and that term is
+    watched** (`AG14`, added by the second repair). A press in the TOP-LEFT
+    corner of a strip owning no legend entry arms Y with `graph_top` already 1;
+    the leg asserts `ui_state & GRAPHPAN` right after that press **and** that a
+    release taken LEFT of the container band still commits the map. Every other
+    gesture leg releases inside the strip, where `waves_selected`'s POINTINSIDE
+    arm re-finds the graph on its own and a latch-less engine behaves
+    identically — which is exactly why the term read as covered and was not.
+19. **An ABANDONED arm does not survive into the next gesture** (`AG15`).
+    `waves_selected`'s `if(!is_inside)` branch now drops an armed axis drag as
+    it already dropped an armed marker drag. Reachable, and measured: adding
+    Shift mid-drag takes one of the function's `skip` routes, which leaves
+    `is_inside` 0 with GRAPHPAN still set; the stale arm then survived the
+    release too, and `graph_axis_press_arm()` returns early rather than clearing
+    it when the next press is not in a margin, so a following plain LMB drag in
+    the PLOT BODY committed a zoom from the abandoned press position.
 
 ---
 

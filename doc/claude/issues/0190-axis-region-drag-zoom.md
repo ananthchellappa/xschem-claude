@@ -127,8 +127,9 @@ plot box (contrast `GRAPH_REORDER_HANDLE_W`, which *is* mirrored and carries a
 * `src/callback.c` — `graph_axis_drag_clear/_abort/_press_arm` + the band
   geometry helper; the arm at the end of the cursor-grab block; the motion band
   beside the Button3 rubber (and the reciprocal `!graph_axis_drag` term in that
-  rubber's guard); the release in `finish:`; the `abort_operation()` hook; and
-  `|| xctx->graph_axis_drag` in the GRAPHPAN latch.
+  rubber's guard); the release in `finish:`; the `abort_operation()` hook;
+  `|| xctx->graph_axis_drag` in the GRAPHPAN latch; and (second repair, §3.2)
+  `graph_axis_drag_abort()` in `waves_selected()`'s `if(!is_inside)` branch.
 * `src/actions.c`, `src/xinit.c` — the three fields join the gesture-state reset
   class (`clear_drawing()` and `alloc_xschem_data()`).
 * `src/scheduler.c` — three fail-soft getters in `xschem_cmds_g`'s `get`
@@ -200,12 +201,80 @@ and one already true:
   the arm followed the pressed strip. Probed by hand first: the behaviour was
   already correct, so this is a missing witness, not a defect.
 
+### 3.2 Second post-review repair — the latch term, and the defect behind it
+
+A second adversarial review found that **§3 item 1's own headline correction —
+`|| xctx->graph_axis_drag` in the GRAPHPAN routing latch — had ZERO coverage**.
+Deleting the term left the whole suite green. That is the item's most-documented
+line: the commit message headlines it, the decision doc's Status block calls it
+correction 1, and `waveform_subsystem_reference.md`'s landmine says the gesture
+"DOES owe the GRAPHPAN routing latch".
+
+**Why every existing leg was blind to it.** All of `AG*` and `AX*` release
+*inside* the strip they pressed in. There `waves_selected`'s POINTINSIDE arm
+re-finds the graph on its own, `graph_master` is still set and the release
+reaches `waves_callback` **whether or not the latch fired** — the correct engine
+and the broken one give the same answer, so no leg could discriminate. This is
+the PROBE PLACEMENT rule of `doc/claude/overnight_batch_2026_08_01/PLAN.md`: a
+leg driven from a path where the right and the wrong implementation agree is not
+a leg.
+
+**`AG14`, the leg that discriminates**, needs both halves of the disagreement:
+
+* `graph_top` must already be 1 at the press, or the latch fires on its
+  `!graph_top` term anyway. `graph_axis_at`'s Y region is "left of the plot box,
+  ANYWHERE in the container", so the **TOP-LEFT corner** is a Y region whose
+  press sits above the plot box. It only answers `y` on a strip owning no legend
+  entry there — with a `node` token the horizontal legend's slot 0 spans
+  `rx1+2 .. rx1+rw/n` across the whole top band (`legend_slot_hit`) and
+  `graph_axis_at` declines. Hence a third fixture strip carrying **no `node`
+  token**, with `graph_legend_at` asserted `-1` at the corner as a teeth leg.
+* the release must **leave the strip**, so nothing but the latch can route it
+  back: left of the container band, at 1/4 of the plot box's height.
+
+It asserts `ui_state & GRAPHPAN` immediately after the press (the term itself),
+then that the outside release still commits `graph_axis_map`'s answer, and that
+`y1` really went negative. Measured: clean `0 2.5 -> -7.519 2.5`; with the term
+deleted `0 2.5 -> 0 2.5`, silently. Note which leg does **not** die under that
+sabotage — "…and its hi": the map's `hi` is 2.5 and the untouched window's `y2`
+is 2.5 too, so the `lo` endpoint and the "really zoomed OUT" leg are what carry
+the assertion.
+
+**The defect the second job of that line was hiding.** `waves_selected`'s
+`if(!is_inside)` branch dropped an armed MARKER drag and not an armed AXIS drag.
+That reads unreachable — GRAPHPAN keeps the pointer-outside case out of the
+branch, which is `AG14`'s case exactly — but **every `skip = 1` clause jumps the
+rect loop entirely**, leaving `is_inside` 0 with GRAPHPAN still set. Adding
+Shift mid-drag is one such clause (`event == MotionNotify && Button1Mask &&
+ShiftMask`). Measured on the shipped binary:
+
+1. LMB press in a strip's left margin → Y drag armed, GRAPHPAN latched;
+2. Shift arrives mid-drag → the skip route runs the `!is_inside` branch, which
+   cleared GRAPHPAN and aborted a marker drag but **left the axis arm up**;
+3. the release is swallowed by the same skip, so the arm is still up;
+4. `graph_axis_press_arm()` does not clear it either — it returns early when the
+   new press is not in a margin;
+5. a following plain LMB press-drag in the **PLOT BODY**, which owns no axis
+   gesture at all, committed a zoom from the abandoned press position:
+   `y1/y2 0..2.5 -> 1.2537228..2.3920389`.
+
+Fix: one line, `graph_axis_drag_abort();` beside `graph_marker_drag_abort();`.
+`AG15` drives the whole sequence with **no ESC anywhere** (`abort_operation()`
+clears the arm and would mask it), asserts GRAPHPAN is gone as its teeth that
+the branch really ran, then that the arm went with it, then that the following
+body drag commits nothing on any strip.
+
+Both sabotages verified against the committed source: deleting the latch term
+kills exactly 3 `AG14` legs; deleting the abort kills exactly 3 `AG15` legs.
+Suite after: **361 checks with a display / 200 `--nogui`**.
+
 ---
 
 ## 4. WHAT DEFENDS IT
 
-`tests/headless/test_wave_axis_zoom.tcl` — 128 checks in the `--nogui` arm, 196
-with a display. Auto-discovered by `full_audit.sh`.
+`tests/headless/test_wave_axis_zoom.tcl` — 200 checks in the `--nogui` arm, 361
+with a display (the file also carries issue 0191's CTRL-wheel groups
+`CW*`/`CD*`/`CS*`/`CE*`). Auto-discovered by `full_audit.sh`.
 
 | group | arm | defends |
 |---|---|---|
@@ -214,7 +283,7 @@ with a display. Auto-discovered by `full_audit.sh`.
 | `AV*` | both | the apply — **witnessing every rect**: X propagates, `unlocked` does not follow, a foreign `sim_type` does not follow, Y is per-graph, digital Y is `ypos1/2`, `modified` stays 0 *with a control leg proving the probe can reach 1*, and read-only still applies |
 | `AL*` | both | exactly one log line per commit, in the verb form, with data bounds; and **replaying that line reproduces both rects' windows** |
 | `AS*` | both | the anchored expression appears once in `draw.c`, `graph_axis_map()` is called once from `callback.c` and once from `scheduler.c`, `GRAPH_CLICK_TOL` stayed file-private, **the getter takes its threshold from `graph_click_tol()` and carries no numeric copy of it (`AS3`)**, and `graph_axis_zoom()`'s body contains no `set_modify`/`push_undo` |
-| `AG*` | display | the real C gesture: what arms and what does not (body, legend, grip, **and a press that grabbed a cursor — asserting both that no axis drag armed and that `graph_flags & 512` really was set**), the two full gestures, the sub-threshold no-op, ESC mid-drag, X-propagates/Y-does-not, `modified` still 0, **and the whole press/arm/release path on a strip whose rect index is NOT 0 (`AG13`)** |
+| `AG*` | display | the real C gesture: what arms and what does not (body, legend, grip, **and a press that grabbed a cursor — asserting both that no axis drag armed and that `graph_flags & 512` really was set**), the two full gestures, the sub-threshold no-op, ESC mid-drag, X-propagates/Y-does-not, `modified` still 0, the whole press/arm/release path on a strip whose rect index is NOT 0 (`AG13`), **the GRAPHPAN routing-latch term itself — top-left-corner press, release OUTSIDE the strip (`AG14`, §3.2)** — and **an abandoned arm not poisoning the next plot-body drag (`AG15`, §3.2)** |
 | `AX*` | display | the ASE viewer seam through the **shipped bindings**: a margin press does not arm the reorder and does not change the strip order (inert `sdid` witness), a body press and a grip press still do, the buffer stays `modified 0` / `readonly 1`, ESC cancels (**through the focus-retry sender, with the delivery itself asserted**), and `history_depth` does not move. Every context switch in the group is confirmed by `ax_ctx` |
 
 Six named sabotages, each verified to fail exactly its target and no more:

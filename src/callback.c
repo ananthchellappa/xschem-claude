@@ -207,6 +207,20 @@ static int waves_selected(int event, KeySym key, int state, int button)
     /* defensive: during a real marker drag GRAPHPAN forces `check` true so this
      * branch cannot run, but a stray release of another button could reach it */
     graph_marker_drag_abort();
+    /* The axis-region drag zoom's twin (issue 0190), and NOT defensive -- this
+     * one was MEASURED reachable, by the `skip` route rather than the geometry
+     * one. GRAPHPAN does keep the pointer-outside case out of here, but every
+     * `skip = 1` clause above jumps the whole rect loop, leaving is_inside 0
+     * with GRAPHPAN still set: hold LMB down in a margin and add Shift, and
+     * `event == MotionNotify && Button1Mask && ShiftMask` skips, so this branch
+     * runs, clears GRAPHPAN and dropped the marker drag -- but left the AXIS arm
+     * up. The stale arm then survived the release (the same skip keeps
+     * waves_callback out) and graph_axis_press_arm() does not clear it either:
+     * it returns early when the new press is not in a margin. The next plain LMB
+     * press-drag in the PLOT BODY -- which owns no axis gesture at all -- then
+     * committed a zoom from the abandoned press position. Measured before the
+     * fix: y1/y2 0..2.5 -> 1.2537228..2.3920389 on a body drag. Leg AG15. */
+    graph_axis_drag_abort();
     xctx->ui_state &= ~GRAPHPAN; /* terminate ongoing GRAPHPAN to avoid deadlocks */
     if(draw_xhair) {
       if(tclgetintvar("crosshair_size") == 0) {

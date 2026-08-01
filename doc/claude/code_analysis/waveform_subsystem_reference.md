@@ -1901,6 +1901,30 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
     region defined as "left of the plot box, anywhere in the container" reaches
     above the box top, and a drag armed with `graph_top == 1` loses its release
     silently.
+    ⚠⚠ **AND THE LATCH TERM IS ALMOST UNTESTABLE BY ACCIDENT** — it shipped with
+    zero coverage and a green suite (found 2026-08-01 by an adversarial re-read,
+    closed by `AG14`). A gesture leg that releases **inside** the strip cannot
+    see the term at all: `waves_selected`'s POINTINSIDE arm re-finds the graph on
+    its own, `graph_master` is still set, and the release reaches
+    `waves_callback` whether the latch fired or not. Both halves are required —
+    press in the **TOP-LEFT corner of a strip owning no legend entry** (a `node`
+    token puts the horizontal legend's slot 0 across the whole top band, so
+    `graph_axis_at` declines it) so `graph_top` is already 1, **and** release
+    **outside the container band** so nothing but the latch can route it back.
+    Assert `xschem get ui_state & 32768` right after the press as well as the
+    commit.
+    ⚠⚠ The same line is load-bearing twice, and the second job hid a real bug.
+    `waves_selected`'s `if(!is_inside)` branch aborts an armed marker drag; it
+    must abort an armed AXIS drag too. It looks unreachable — GRAPHPAN keeps the
+    pointer-outside case out of it — but **every `skip = 1` clause jumps the rect
+    loop**, leaving `is_inside` 0 with GRAPHPAN still set. Adding Shift mid-drag
+    is one (`MotionNotify && Button1Mask && ShiftMask`). Measured before the fix:
+    the abandoned arm survived the shift AND the release, `graph_axis_press_arm()`
+    returns early rather than clearing it when the next press is not in a margin,
+    and a following plain LMB drag in the **plot body** committed a zoom from the
+    abandoned press position (`y1/y2 0..2.5 -> 1.2537228..2.3920389`). Leg
+    `AG15`, and it must contain **no ESC** — `abort_operation()` clears the arm
+    and masks the whole thing.
 
     **(d) THE AXIS WINDOW ALSO HAS ONE HOME, and its digital branch was wrong
     for one release** (added 2026-08-01, issue 0191). Both formulas must answer

@@ -1542,6 +1542,10 @@ proc ag_drag  {x y} { xschem callback .drw 6 $x $y 0 0 0 256 }
 proc ag_rel   {x y} { xschem callback .drw 5 $x $y 0 1 0 256 }
 proc ag_move  {x y} { xschem callback .drw 6 $x $y 0 0 0 0 }
 proc ag_key   {x y n} { xschem callback .drw 2 $x $y $n 0 0 0 }
+# 257 = Button1Mask | ShiftMask: a drag with Shift added mid-gesture. This is
+# one of waves_selected()'s `skip` clauses, i.e. the route that reaches its
+# !is_inside branch WITHOUT the pointer having left the strip. AG15's lever.
+proc ag_shdrag {x y} { xschem callback .drw 6 $x $y 0 0 0 257 }
 # drop a stale ui_state latch: GRAPHPAN (32768) freezes graph_master and makes
 # waves_callback `goto finish` before the arm; a schematic latch makes
 # waves_selected skip the graph entirely. Either turns the NEXT press into a
@@ -1782,6 +1786,146 @@ check_true "AG13 ...and rect 0 FOLLOWED it, so propagation runs off a non-zero\
           [az_close [xschem getprop rect 2 0 x2] [xschem getprop rect 2 1 x2] 1e-9]}]
 check "AG13 ...and the arm is back to nothing" [pcall {xschem get graph_axis_drag}] {}
 check "AG13 ...and neither gesture dirtied the buffer" [pcall {xschem get modified}] 0
+
+# --- AG14: the GRAPHPAN ROUTING LATCH, and the release that LEAVES the strip -
+#
+# THE PROBE-PLACEMENT LESSON OF THIS ITEM, in one leg. Every AG/AX gesture above
+# releases INSIDE the strip it pressed in -- and there the correct engine and one
+# missing the `|| xctx->graph_axis_drag` term in the GRAPHPAN latch
+# (callback.c, the routing latch of landmine 36) give the SAME answer, because
+# waves_selected's POINTINSIDE arm re-finds the strip on its own and the release
+# reaches waves_callback either way. Deleting that term therefore left all 338
+# checks green while silently breaking a real, reachable gesture. A leg driven
+# from a path where the right and the wrong implementation agree is not a leg.
+#
+# The path where they disagree needs BOTH halves:
+#   (a) graph_top must already be 1 at the press, or the latch fires on its
+#       `!graph_top` term regardless. graph_axis_at's Y region is "left of the
+#       plot box, ANYWHERE in the container", so the TOP-LEFT corner is a Y
+#       region whose press sits ABOVE the plot box -- graph_top = 1. It only
+#       answers Y on a strip that owns no legend entry there: with a `node`
+#       token the horizontal legend's slot 0 spans rx1+2 .. rx1+rw/n across the
+#       whole top band (legend_slot_hit, draw.c), and graph_axis_at declines it.
+#       Hence a third strip carrying NO `node` token.
+#   (b) the release must LEAVE the strip, so that nothing but the latch can
+#       route it back. Released to the LEFT of the container band, at 1/4 of the
+#       plot box's height.
+# Without the term: no GRAPHPAN, waves_selected answers 0 for the release,
+# waves_callback never runs, and the zoom is silently dropped.
+pcall {az_graph 0 1000 800 1400}
+foreach {azt azv} {x1 0 x2 1.0 y1 0 y2 2.5} { pcall {xschem setprop rect 2 2 $azt $azv} }
+pcall {xschem unselect_all}
+pcall {xschem set_modify 0}
+az_reestablish
+set ag14band [az_band 0 1000 800 1400]
+set ag14box  [az_box 2 $ag14band]
+if {[llength $ag14band] != 4} { set ag14band {-1 -1 -1 -1} }
+if {[llength $ag14box]  != 4} { set ag14box  {-1 -1 -1 -1} }
+lassign $ag14band a4ux1 a4uy1 a4ux2 a4uy2
+lassign $ag14box  a4bx1 a4by1 a4bx2 a4by2
+# the TOP-LEFT corner: half way into the left margin, half way up the top margin
+set a4px [expr {($a4ux1 + $a4bx1) / 2}]
+set a4py [expr {($a4uy1 + $a4by1) / 2}]
+# the release: LEFT of the container band, at 1/4 of the box height
+set a4rx [expr {$a4ux1 - 6 > 0 ? $a4ux1 - 6 : 2}]
+set a4ry [expr {$a4by1 + ($a4by2 - $a4by1) / 4}]
+check_true "AG14 the legend-less third strip scanned: band=$ag14band box=$ag14box\
+ press=($a4px,$a4py) release=($a4rx,$a4ry)" \
+  [pexpr {$a4bx1 >= 0 && $a4bx2 - $a4bx1 > 60 && $a4by2 - $a4by1 > 40 &&
+          $a4bx1 - $a4ux1 >= 6 && $a4by1 - $a4uy1 >= 6}]
+if {$a4bx1 < 0} { stall "AG14 strip-2 pixel scan came up empty" }
+check "AG14 that strip really owns no legend entry at the corner (teeth: with a\
+ `node` token the horizontal legend claims the whole top band and this is {})" \
+  [pcall {xschem get graph_legend_at 2 $a4px $a4py}] -1
+check "AG14 the TOP-LEFT corner is the strip's Y region" \
+  [pcall {xschem get graph_axis_at 2 $a4px $a4py}] y
+check_true "AG14 ...and it is ABOVE the plot box, so the press latches\
+ graph_top = 1 (press y=$a4py, plot-box top=$a4by1)" [pexpr {$a4py < $a4by1}]
+check_true "AG14 the release pixel is LEFT of the container band, i.e. OUTSIDE\
+ the strip ($a4rx < $a4ux1)" [pexpr {$a4rx < $a4ux1}]
+check "AG14 ...and no strip of the fixture claims it" \
+  [pcall {list [xschem get graph_axis_at 0 $a4rx $a4ry] \
+               [xschem get graph_axis_at 1 $a4rx $a4ry] \
+               [xschem get graph_axis_at 2 $a4rx $a4ry]}] {{} {} {}}
+set ag14m  [pcall {xschem get graph_axis_map 2 y $a4py $a4ry}]
+set ag14w0 [pcall {list [xschem getprop rect 2 0 y1] [xschem getprop rect 2 0 y2] \
+                        [xschem getprop rect 2 1 y1] [xschem getprop rect 2 1 y2]}]
+ag_unlatch
+pcall {ag_press $a4px $a4py}
+check "AG14 the corner press arms the Y axis drag" \
+  [pcall {xschem get graph_axis_drag}] y
+check_true "AG14 ...and it LATCHED GRAPHPAN even though graph_top is already 1 --\
+ THE ROUTING-LATCH TERM ITSELF (ui_state=[pcall {xschem get ui_state}], bit 15)" \
+  [pexpr {[string is integer -strict [pcall {xschem get ui_state}]] &&
+          ([pcall {xschem get ui_state}] & 32768)}]
+pcall {ag_drag $a4rx $a4ry}
+pcall {ag_rel  $a4rx $a4ry}
+check_true "AG14 a release OUTSIDE the strip still COMMITTED the map's lo\
+ (map=$ag14m got=[pcall {list [xschem getprop rect 2 2 y1] [xschem getprop rect 2 2 y2]}])" \
+  [pexpr {[az_close [xschem getprop rect 2 2 y1] [lindex $ag14m 0] 1e-6]}]
+check_true "AG14 ...and its hi" \
+  [pexpr {[az_close [xschem getprop rect 2 2 y2] [lindex $ag14m 1] 1e-6]}]
+check_true "AG14 ...and it really zoomed OUT (y1 went negative)" \
+  [pexpr {[xschem getprop rect 2 2 y1] < 0.0}]
+check "AG14 ...and the arm is back to nothing" [pcall {xschem get graph_axis_drag}] {}
+check "AG14 ...and the other two strips are byte-identical (Y never propagates)" \
+  [pcall {list [xschem getprop rect 2 0 y1] [xschem getprop rect 2 0 y2] \
+               [xschem getprop rect 2 1 y1] [xschem getprop rect 2 1 y2]}] $ag14w0
+
+# --- AG15: an ABANDONED arm must not poison the NEXT gesture ----------------
+#
+# waves_selected's `if(!is_inside)` branch drops an armed MARKER drag; it did not
+# drop an armed AXIS drag. That looks unreachable -- GRAPHPAN keeps the
+# pointer-outside case out of the branch (AG14 above is exactly that case) -- but
+# every `skip = 1` clause jumps the rect loop entirely, leaving is_inside 0 with
+# GRAPHPAN still set. Adding Shift mid-drag is one such clause
+# (`event == MotionNotify && Button1Mask && ShiftMask`).
+#
+# MEASURED before the fix: the abandoned arm survived the shift AND the release
+# (the same skip keeps waves_callback out), and graph_axis_press_arm() does not
+# clear it either -- it returns early when the new press is not in a margin. The
+# next plain LMB press-drag in the PLOT BODY, which owns no axis gesture at all,
+# then committed a zoom from the abandoned press position: y1/y2 0..2.5 ->
+# 1.2537228..2.3920389.  NO ESC anywhere in this leg: abort_operation() clears
+# the arm and would mask the whole thing.
+foreach i {0 1 2} {
+  foreach {azt azv} {x1 0 x2 1.0 y1 0 y2 2.5} { pcall {xschem setprop rect 2 $i $azt $azv} }
+}
+pcall {xschem set_modify 0}
+set a5px [expr {($a4ux1 + $a4bx1) / 2}]
+set a5py [expr {($a4by1 + $a4by2) / 2}]
+set a5uy [expr {$a4by1 + 15}]
+set a5cx [expr {($a4bx1 + $a4bx2) / 2}]
+check "AG15 the staging pixel is strip 2's left margin (teeth)" \
+  [pcall {xschem get graph_axis_at 2 $a5px $a5py}] y
+check "AG15 ...and the body pixel is NOT an axis region (teeth)" \
+  [pcall {xschem get graph_axis_at 2 $a5cx $a5py}] {}
+ag_unlatch
+set ag15w [az_windows]
+pcall {ag_press $a5px $a5py}
+check "AG15 the margin press armed the Y axis drag (teeth)" \
+  [pcall {xschem get graph_axis_drag}] y
+check_true "AG15 ...and latched GRAPHPAN (teeth)" \
+  [pexpr {[pcall {xschem get ui_state}] & 32768}]
+pcall {ag_shdrag $a5px $a5uy}
+check_true "AG15 the Shift+B1 motion really took waves_selected's SKIP route --\
+ GRAPHPAN is gone, so the !is_inside branch ran (teeth)" \
+  [pexpr {!([pcall {xschem get ui_state}] & 32768)}]
+check "AG15 ...and the ABANDONED axis arm went with it" \
+  [pcall {xschem get graph_axis_drag}] {}
+pcall {ag_rel $a5px $a5uy}
+check "AG15 the release after the abandon commits nothing" [az_windows] $ag15w
+pcall {xschem unselect_all}
+set ag15b [az_windows]
+pcall {ag_press $a5cx $a5py}
+check "AG15 a following PLOT-BODY press arms nothing (a stale arm would still\
+ read `y` here)" [pcall {xschem get graph_axis_drag}] {}
+pcall {ag_drag $a5cx $a5uy}
+pcall {ag_rel  $a5cx $a5uy}
+check "AG15 ...and the plot-BODY drag commits NO zoom on any strip (before the\
+ abort it committed the abandoned press's)" [az_windows] $ag15b
+ag_unlatch
+check "AG15 ...and none of it dirtied the buffer" [pcall {xschem get modified}] 0
 
 } azgerr]} { check "AG* group ran to its end" "ERR:$azgerr" ok }
 } else {
