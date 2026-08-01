@@ -131,8 +131,10 @@ of the range per round trip; matching them would have bought only a
 ## 3. TESTS
 
 `tests/headless/test_wave_axis_zoom.tcl` (0190's suite), five new groups:
-**128 → 200** checks in the `--nogui` arm, **196 → 338** with a display
-(190 / 308 at first commit; the repair pass below added the rest).
+**128 → 200** checks in the `--nogui` arm, **196 → 370** with a display
+(190 / 308 at first commit; 200 / 338 after the first repair pass; 361 once
+0190's own fixup landed its `AG14`/`AG15` legs in the same file; 370 after the
+second repair pass, §3.2).
 
 `CW*` the map and its verb (fail-soft, the closed form, the WIDTH leg kept
 separate from the FIXED-POINT leg, the round trip, the other axis byte-identical
@@ -144,7 +146,7 @@ graph plus every "unchanged" regression witness from the measured table above,
 gesture self-logged one replayable line; `CV*` the live ASE viewer through the
 shipped `<Control-Button-4>` bind.
 
-Eleven named sabotages, each applied, verified and reverted:
+Thirteen named sabotages, each applied, verified and reverted:
 
 | # | sabotage | killed |
 |---|---|---|
@@ -159,6 +161,8 @@ Eleven named sabotages, each applied, verified and reverted:
 | SAB-9 | viewer X arm asks C for `$gi` instead of `$t` | `CV7`'s two per-strip legs **only**; `CV1` stays green |
 | SAB-10 | viewer Y branch gated on `$t == 0` | `CV8`'s two legs only |
 | SAB-11 | `pow(10,·)` the anchor `q` on a log axis | `CW10`/`CW11`'s six log legs only; `CW10`'s width leg survives |
+| SAB-12 | `(double)my` → `(double)mx` in the arm's `p` (the **Y** branch is handed the **X** pixel) | `CE3b`, `CE3c`, `CE10`'s map leg — and **no** width leg, no "other axis untouched" leg, no "other strip untouched" leg. Before §3.2: **nothing**, 361/361 green |
+| SAB-13 | `$py` → `$px` in `wviewer::wheel_zoom`'s y arm | `CV2b`, `CV2c` **only**. Before §3.2: **nothing**, 361/361 green |
 
 ### 3.1 The repair pass (2026-08-01, after the adversarial verifier)
 
@@ -214,6 +218,85 @@ land the `AX*`/`CV*` cached probe pixels on the wrong strip about **1 run in 8**
 after merging it). `CE9`'s `celine` also now takes the **first** matching log
 line, not the last, so its replay legs stay an independent statement about the
 plain-Ctrl gesture.
+
+### 3.2 The second repair pass — the Y half of the gesture was unwitnessed
+
+A second adversarial verifier found **one** hole, and it is the trap this file
+documents on its X legs and then walked into on its Y legs.
+
+**The evidence.** Two ONE-TOKEN sabotages of shipped source left the suite
+completely green — `ALL PASS (361)` under a display, `ALL PASS (200)` `--nogui`,
+reproduced 4/4 and 3/3 here before anything was changed:
+
+* `src/callback.c`, the CTRL+wheel arm:
+  `double p = (ax == GRAPH_AXIS_X) ? (double)mx : (double)my;` →
+  `... : (double)mx;`. The Y branch hands the formula the pointer's **x** pixel,
+  which `graph_axis_wheel_map` then clamps to the **y** plot extent — so the Y
+  zoom anchors at the top edge of the window instead of under the pointer.
+  MEASURED: `CE3`'s Y window became `0.49155036 2.4915504` where the anchored
+  answer is `0.12405346 2.12405346` — a 0.37 error, **18 % of the new range**.
+* `src/wave_viewer.tcl`, `wviewer::wheel_zoom`'s y arm:
+  `wviewer::axis_wheel_window $token $t y $py $wdir` → `... $px $wdir`.
+  MEASURED: `CV2`'s Y window became `0.39775414 2.39775414` where the anchored
+  answer is `0.12440898 2.12440898`.
+
+**Why nothing saw it.** Every Y-margin probe pixel in the file came from
+`az_ymargin`, whose y is `(by1 + by2) / 2` — the plot box's vertical **CENTRE**,
+u = 0.5 — and at u = 0.5 the anchored form `lo = q - u·R2` and a zoom about the
+window's centre `lo = A + (R - R2)/2` are numerically **identical**. `CW0` and
+`CE0` both carried an explicit teeth leg asserting the **X** probe is off-centre,
+with the reason spelled out; `CE3`, `CE10`'s Y leg, `CV2` and `CV8` all fired at
+the centre-y. Those four legs asserted only that the window's WIDTH became `R·K`,
+that the other axis did not move, and that the other strip did not move — and all
+three survive an arbitrarily wrong anchor. Neither of the two assertions the X
+legs carry (byte-equality with `xschem get graph_axis_wheel_map`, and the fixed
+point) existed on Y at all.
+
+**What was added** — test file only, `src/` byte-identical:
+
+| leg | what it asserts | killed by |
+|---|---|---|
+| `CE0` (2 legs) | the Y probe `$epy = eby2 - int(ebh*0.25)` is off-centre, and C itself calls `($eymx,$epy)` strip 0's Y region | staging errors |
+| `CE3b` | the applied Y window is byte-for-byte `graph_axis_wheel_map`'s answer **for the pointer's own y pixel** | SAB-12 |
+| `CE3c` | THE FIXED POINT on Y: `graph_coord`'s data y at that pixel is unchanged across the gesture | SAB-12 |
+| `CE10` (map leg) | the same byte-equality on a strip whose index is **not** 0, at its own off-centre y | SAB-12 |
+| `CV2` (teeth) | the viewer probe's `u` is more than 0.1 away from 0.5 — stated in **data** space, so no box re-scan can drift it | staging errors |
+| `CV2` (region) | C itself calls that probe pixel strip 0's Y region, so the gesture below really is the margin gesture | staging errors |
+| `CV2b` | the viewer's applied Y window is byte-for-byte the C map's answer for `$py` | SAB-13 |
+| `CV2c` | THE FIXED POINT on Y in the viewer | SAB-13 |
+
+`cv_yprobe` gained a `fracs` argument — a LIST of heights tried in order, not one
+number. `CV2` passes an **off-centre-only** list and goes RED if none of them
+lands (it must never quietly degrade to a centre probe, which is the whole point
+of the leg); `CV8`, which is about WHICH STRIP moved and does not care about the
+anchor, takes the default list whose last resort is 0.5. The list is not
+decoration: MEASURED, a single 0.25 height found no Y pixel at all on **strip 1**
+about 1 run in 3 while strip 0 was fine 11/11, the probe came back `{}` and the
+gesture then fired at `(-1,-1)`. `az_xmargin` and `az_ymargin` keep returning the
+centre — they are the right thing for a REGION leg — but now carry a ⚠ block
+naming the trap, the measurement, and the rule, so the next leg written on them
+cannot inherit the blindness silently.
+
+**The width legs deliberately survive both sabotages**, exactly as `CW2` survives
+SAB-1. That asymmetry is the whole design of this suite: a wrong anchor produces
+a window of exactly the right *width* in the wrong *place*.
+
+`--nogui` is unchanged at **200** (the `CE*`/`CV*` groups need a display);
+the display arm goes **361 → 370**, soaked **16/16** after the probe list landed
+(23/24 counting the run that exposed the flake below).
+
+**One pre-existing WSLg flake, seen once in 24 and NOT introduced here.** In that
+run `cv_strip 1` answered `{}` for twelve consecutive retries with an `update`
+between each, i.e. **strip 1 was persistently unscannable** — the viewer window
+came up too short and the strip fell outside the transform, so
+`graph_axis_wheel_map` refused it through the `scx == 0.0` sentinel and strip 1's
+window never moved. Its first casualty is `CV7`'s *"strip 1 was scanned for its
+own fixed-point probe"* leg, which §3.1 added and this pass did not touch; `CV8`
+and (through `cv_yprobe`) any strip-1 probe follow. The signature is therefore
+**`CV7` + `CV8` failing together with an empty scan in the message**, and it is
+the same family as `test_launch_context`'s 1×1 window geometry. A retry does not
+help — the bad layout persists for the life of that viewer — so it is recorded
+rather than papered over.
 
 ---
 

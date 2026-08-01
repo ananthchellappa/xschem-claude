@@ -1,12 +1,19 @@
 # ovb01 item 04 — axis-region CTRL+wheel zoom — decision doc
 
-**Status: IMPLEMENTED (2026-08-01), REPAIRED (2026-08-01).** Every decision below
-was implemented as written; the suite is `tests/headless/test_wave_axis_zoom.tcl`
-at **200** checks `--nogui` / **338** with a display (was 128 / 196; 190 / 308 at
-first commit), all **eleven** sabotages verified. SAB-8..SAB-11 and §7's second
-table came out of the adversarial verifier's four findings — see
+**Status: IMPLEMENTED (2026-08-01), REPAIRED TWICE (2026-08-01).** Every decision
+below was implemented as written; the suite is
+`tests/headless/test_wave_axis_zoom.tcl` at **200** checks `--nogui` / **370**
+with a display (was 128 / 196; 190 / 308 at first commit; 200 / 338 after the
+first repair; 361 once item 03's own fixup landed `AG14`/`AG15` in the same
+file), all **thirteen** sabotages verified. SAB-8..SAB-11 and §7.1 came out of
+the first adversarial verifier's four findings — see
 `doc/claude/issues/0191-…md` §3.1 for what each hole was and why the window alone
-could not close SAB-8.
+could not close SAB-8. **SAB-12/SAB-13 and §7.2 came out of the second
+verifier's single finding: the Y half of the gesture was unwitnessed on BOTH
+paths because every Y probe pixel sat at the plot box's vertical CENTRE, where
+an anchored zoom and a zoom about the window's centre are numerically identical
+— two one-token sabotages of shipped source left all 361 checks green. See
+§3.2 of the issue.** `src/` is unchanged by both repair passes.
 Issue: `doc/claude/issues/0191-axis-region-ctrl-wheel-zoom.md`. Spec:
 `doc/claude/specs/waveform_viewer_modes.md` §18. Two implementation findings the
 scout could not have had, both recorded in §18.6 / landmine 47(d): a
@@ -643,6 +650,39 @@ With `K` read out of `src/xschem.h` at run time (never a frozen copy):
 | SAB-9 | `wviewer::wheel_zoom`'s X arm asks C for `$gi` instead of `$t` | `CV7`'s two per-strip legs only. `CV1` stays green: its two strips carry the identical window, so a broadcast and a per-strip anchor agree — the fixture coincidence `CV7` exists to break |
 | SAB-10 | `wviewer::wheel_zoom`'s Y branch gated on `$t == 0` | `CV8`'s two legs only. `CV2` stays green: it points at strip 0 |
 | SAB-11 | `q = pow(10.0, q)` on a log axis in `graph_axis_wheel_map` | `CW10`/`CW11`'s six log legs only. `CW10`'s WIDTH leg survives — the same anchor-vs-width asymmetry SAB-1 exploits |
+
+### 7.2 Added by the SECOND repair pass (2026-08-01)
+
+| # | sabotage | must kill, and nothing else |
+|---|---|---|
+| SAB-12 | in the `callback.c` arm, `double p = (ax == GRAPH_AXIS_X) ? (double)mx : (double)mx;` — the Y branch handed the X pixel | `CE3b`, `CE3c` and `CE10`'s map leg **only**. Every width leg, every "the other axis is byte-identical" leg and every "the other strip did not move" leg stays GREEN — they cannot see an anchor error, which is the point |
+| SAB-13 | `wviewer::wheel_zoom`'s y arm passes `$px` where it should pass `$py` | `CV2b`, `CV2c` **only** |
+
+**§6's assertion 2 was true of X and vacuous on Y, and that is the lesson.**
+The table in §6 lists the fixed point as "the only assertion that matters", and
+the X legs carry it. The Y legs did not — not because anyone decided they should
+not, but because the pixel they fired at came from a helper (`az_ymargin`) whose
+y is the plot box's **CENTRE**. At u = 0.5 the anchored form and a
+zoom-about-centre form give the same two numbers, so on Y the file measured only
+assertion 1 (the width) and assertion 6 (the other axis / other rect). Both
+survive an arbitrarily wrong anchor: MEASURED, an 18 %-of-range error in the Y
+window with all 361 checks green.
+
+The repair is probe placement, not new product code: `$epy = eby2 - int(ebh*0.25)`
+on the C path, `cv_yprobe`'s new `fracs` **list** on the viewer path (`CV2` passes
+off-centre heights only and goes red if none lands; `CV8`, which is about which
+STRIP moved, takes the default list that ends at 0.5), each with a teeth leg
+asserting the off-centre-ness — the CV one stated in **data** space
+(`|u - 0.5| > 0.1`) so no box re-scan can drift it — and then the two assertions
+the X legs already had. `az_xmargin`/`az_ymargin` keep returning the centre (they
+are correct for a REGION leg) and now carry a ⚠ block naming the trap.
+
+**Why the height is a list.** A single 0.25 height found no Y-margin pixel at all
+on **strip 1** about 1 run in 3 (strip 0 was fine 11/11): which heights of the
+left margin `graph_axis_at` claims depends on the layout of the moment, and
+`graph_legend_at` declines first for whatever band the legend occupies. Asking
+rather than predicting is 0190's rule; asking at more than one height is the same
+rule one level down.
 
 **D-33's fixture requirement, learned here.** The decision says the viewer calls
 the map per strip so each is anchored "in its OWN window at the same pointer

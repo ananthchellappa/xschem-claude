@@ -2017,6 +2017,31 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
     self-logs one line) is the assertion that sees it, and that also makes the
     guard load-bearing for replay fidelity.
 
+    **AND THE PROBE PIXEL: the plot box's CENTRE cannot witness an ANCHOR.**
+    (Second repair pass, 2026-08-01 — the same file, the same helper, the same
+    afternoon.) `test_wave_axis_zoom.tcl`'s `az_xmargin`/`az_ymargin` return a
+    margin pixel whose ALONG-THE-AXIS coordinate is `(bx1+bx2)/2` /
+    `(by1+by2)/2`, i.e. the box centre, u = 0.5. At u = 0.5 the anchored form
+    `lo = q - u·R2` and a zoom about the window's centre `lo = A + (R-R2)/2`
+    produce the SAME two numbers, so a gesture leg fired there can only ever see
+    the new window's **width**. Every Y-margin leg in the file sat on that pixel
+    (the X legs did not, and carried an explicit teeth leg saying why), and the
+    result was that **two one-token sabotages of shipped source left all 361
+    checks green**: `double p = (ax == GRAPH_AXIS_X) ? (double)mx : (double)my;`
+    → `... : (double)mx;` in the C arm (0.24 off, 12 % of the range) and
+    `axis_wheel_window $token $t y $py $wdir` → `... $px $wdir` in
+    `wviewer::wheel_zoom`'s y arm (0.20 off). A leg that asserts only a
+    magnitude — a width, "the other axis did not move", "the other strip did not
+    move" — survives an arbitrarily wrong anchor. Assert **both endpoints**
+    (byte-equality with the primitive's own getter for the pixel the gesture was
+    fired at) **and** the fixed point, from an **off-centre** pixel, with a teeth
+    leg asserting it IS off centre. Those two helpers keep returning the centre
+    (correct for a REGION leg) and now carry a ⚠ block; `cv_yprobe` takes a LIST
+    of candidate heights, off-centre first, because — MEASURED — which heights of
+    the left margin `graph_axis_at` claims depends on the layout of the moment
+    (`graph_legend_at` declines first for the legend's own band), and a single
+    0.25 height found nothing at all on strip 1 about 1 run in 3.
+
 ---
 
 ## 12. Improvement backlog (ranked, with where-to-touch)

@@ -190,6 +190,30 @@ proc az_box {gi band} {
   while {$y2 < 20000 && [xschem get graph_plotbox_at $gi $cx [expr {$y2 + 1}]]} { incr y2 }
   return [list $x1 $y1 $x2 $y2]
 }
+# ⚠⚠ PROBE PLACEMENT -- READ BEFORE USING EITHER OF THE NEXT TWO HELPERS.
+#
+# Both return a pixel whose ALONG-THE-AXIS coordinate is the plot box's CENTRE:
+# az_xmargin's x is (bx1+bx2)/2 and az_ymargin's y is (by1+by2)/2. That is the
+# right thing for a REGION leg ("is this pixel in the X margin?") and the WRONG
+# thing for any leg that measures WHERE a zoom anchored, because at the centre
+# u = 0.5 and the anchored form `lo = q - u*R2` and the zoom-about-CENTRE form
+# `lo = A + (R-R2)/2` are numerically IDENTICAL. A leg driven from here can only
+# ever see the WIDTH of the new window; an arbitrarily wrong anchor walks past it.
+#
+# MEASURED (issue 0191's adversarial verifier): with every Y gesture leg firing
+# at az_ymargin's centre-y, `(double)my` -> `(double)mx` in callback.c's arm and
+# `$py` -> `$px` in wviewer::wheel_zoom's y arm -- one token each -- left ALL 361
+# checks green, with the Y window landing 0.24 (C) and 0.20 (viewer) away from
+# the anchored answer, i.e. ~12 % and ~10 % of its range.
+#
+# So: a gesture leg takes the margin's OTHER coordinate from here and its own
+# axis coordinate from an off-centre expression (`bx1 + int(w*0.25)`,
+# `by2 - int(h*0.25)`), asserts that it IS off centre, and then asserts BOTH
+# endpoints -- the fixed point and byte-equality with the primitive's own getter.
+# CW0/CE0/CE10/CV2 carry those teeth legs; CE3/CE10/CV2/CV8 are the Y-side users
+# and cv_yprobe's `frac` keeps the viewer off-centre by construction.
+# PLAN.md's universal test discipline, "PROBE PLACEMENT", is this paragraph.
+#
 # The BOTTOM-margin probe pixel: the plot box's centre-x, half way down the gap
 # between the box's bottom edge and the container band's bottom. Derived, not
 # predicted. {} when there is no such gap (the caller FAILS, never skips).
@@ -202,6 +226,8 @@ proc az_xmargin {box band} {
 }
 # The LEFT-margin probe pixel: half way across the gap between the container
 # band's left edge and the plot box's left edge, at the box's centre-y.
+# ⚠ The y IS THE BOX CENTRE -- see the PROBE PLACEMENT block above az_xmargin
+# before using this as the anchor pixel of a Y zoom.
 proc az_ymargin {box band} {
   if {[llength $box] != 4 || [llength $band] != 4} { return {} }
   lassign $box bx1 by1 bx2 by2
@@ -1997,9 +2023,20 @@ lassign $azym   eymx eymy
 set ecx [expr {($ebx1 + $ebx2) / 2}]
 set ecy [expr {($eby1 + $eby2) / 2}]
 set ebw [expr {$ebx2 - $ebx1}]
+set ebh [expr {$eby2 - $eby1}]
 # ⚠ OFF-CENTRE, for CW's reason: at the box centre the anchored map and a
 # zoom-about-centre map agree and CE2 could not tell them apart.
 set epx [expr {$ebx1 + int($ebw * 0.25)}]
+# ⚠ AND THE SAME FOR Y, which this file learned the hard way. `$ecy` -- the
+# az_ymargin pixel every Y gesture leg used to fire at -- is the box's vertical
+# CENTRE, so `(double)my` -> `(double)mx` in callback.c's arm (the Y branch
+# handing the formula the X pixel, which the map then clamps to the plot extent)
+# left the whole suite GREEN with the Y window 0.24 out of place -- 12 % of its
+# range. `$epy` is 25 % up from the box's bottom edge, i.e. u = 0.25, where the
+# anchored answer and every centre-ish answer differ. CE0's teeth leg below
+# asserts that, and CE3 asserts the two things a width leg cannot see: the fixed
+# point and byte-equality with graph_axis_wheel_map.
+set epy [expr {$eby2 - int($ebh * 0.25)}]
 set EA  [pcall {xschem getprop rect 2 0 x1}]
 set EB  [pcall {xschem getprop rect 2 0 x2}]
 set ER  [pexpr {$EB - $EA}]
@@ -2007,6 +2044,13 @@ check_true "CE0 the CE fixture scanned: box=$azbox xm=$azxm ym=$azym probe\
  px=$epx (off-centre by [expr {abs($epx - $ecx)}] px)" \
   [pexpr {$ebx1 >= 0 && $ebw > 60 && $exmx >= 0 && $eymx >= 0 &&
           abs($epx - $ecx) > $ebw * 0.15 && $ER > 0}]
+check_true "CE0 the Y probe pixel is really OFF-CENTRE too (teeth: at the box\
+ centre an anchored Y zoom and a zoom about ANY other point of the window are\
+ indistinguishable by width) py=$epy cy=$ecy h=$ebh" \
+  [pexpr {$ebh > 40 && abs($epy - $ecy) > $ebh * 0.15}]
+check "CE0 ...and C itself calls (\$eymx,\$epy) = ($eymx,$epy) strip 0's Y\
+ region, so the gesture below really is the margin gesture" \
+  [pcall {xschem get graph_axis_at 0 $eymx $epy}] y
 if {$ebx1 < 0 || $exmx < 0 || $eymx < 0} { stall "CE* pixel scan came up empty" }
 
 # --- CE1/CE1b: CTRL+wheel-up in the X margin --------------------------------
@@ -2031,15 +2075,38 @@ check "CE1 ...and the Y window is byte-identical" \
   [list [lindex $ce1w 2] [lindex $ce1w 3]] {0 2.5}
 
 # --- CE3: CTRL+wheel in the Y margin ----------------------------------------
+# The Y twin of CE1/CE1b/CE2, and it must carry the SAME two assertions those
+# three do, at an OFF-CENTRE pixel (`$epy`, not `$ecy`):
+#   CE3b  the window is byte-for-byte graph_axis_wheel_map's own answer for the
+#         pixel the gesture was fired at -- the leg that names WHICH pixel the
+#         arm handed the formula;
+#   CE3c  the fixed point -- the data y under the pointer keeps its screen pixel,
+#         which IS the user's ask.
+# Neither is implied by the width leg below: a wrong anchor gives a window of
+# exactly the right WIDTH in the wrong PLACE. MEASURED with the Y branch handing
+# the formula `mx`: width still 2.0 (green), window 0.4916..2.4916 where the
+# anchored answer is 0.125..2.125.
 ce_stage
 set ce3b [az_windows]
-pcall {ce_click $eymx $ecy 4 4}
+set ce3m [pcall {xschem get graph_axis_wheel_map 0 y $epy in}]
+set ce3q [pexpr {[az_coord 0 $ecx $epy 1]}]
+pcall {ce_click $eymx $epy 4 4}
 set ce3a [az_windows]
 check_true "CE3 CTRL+wheel-up in the Y margin narrowed rect 0's Y window by K\
  (y=[pcall {list [xschem getprop rect 2 0 y1] [xschem getprop rect 2 0 y2]}])" \
   [pexpr {[az_close [expr {[xschem getprop rect 2 0 y2] -
                            [xschem getprop rect 2 0 y1]}] \
                     [expr {2.5 * $::cwK}] 1e-6 2.5]}]
+check_true "CE3b ...and it is EXACTLY graph_axis_wheel_map's answer for the\
+ pointer's OWN y pixel $epy, so the arm anchored where the pointer is\
+ (map=$ce3m window=[pcall {list [xschem getprop rect 2 0 y1] [xschem getprop rect 2 0 y2]}])" \
+  [pexpr {[llength $ce3m] == 2 &&
+          [az_close [xschem getprop rect 2 0 y1] [lindex $ce3m 0] 1e-6 2.5] &&
+          [az_close [xschem getprop rect 2 0 y2] [lindex $ce3m 1] 1e-6 2.5]}]
+set ce3qa [pexpr {[az_coord 0 $ecx $epy 1]}]
+check_true "CE3c THE FIXED POINT on Y: the data y under the pointer pixel is\
+ unchanged (before=$ce3q after=$ce3qa)" \
+  [pexpr {[string is double -strict "$ce3q"] && [az_close $ce3qa $ce3q 1e-6 2.5]}]
 check "CE3 ...on the pointed rect ONLY (rect 1's y1/y2 untouched)" \
   [pcall {list [xschem getprop rect 2 1 y1] [xschem getprop rect 2 1 y2]}] {0 2.5}
 check "CE3 ...and EVERY rect's x1/x2 is byte-identical" \
@@ -2123,16 +2190,27 @@ lassign $ce10box e1x1 e1y1 e1x2 e1y2
 lassign $ce10xm  e1mx e1my
 lassign $ce10ym  e1yx e1yy
 set e1cy [expr {($e1y1 + $e1y2) / 2}]
-check_true "CE10 strip 1 was scanned: box=$ce10box xm=$ce10xm ym=$ce10ym" \
-  [pexpr {$e1x1 >= 0 && $e1mx >= 0 && $e1yx >= 0 && $e1x2 - $e1x1 > 60}]
+# OFF-CENTRE, for CE0's reason -- this is the file's other Y gesture probe and
+# it must not be the one place the centre-y blindness survives.
+set e1py [expr {$e1y2 - int(($e1y2 - $e1y1) * 0.25)}]
+check_true "CE10 strip 1 was scanned: box=$ce10box xm=$ce10xm ym=$ce10ym\
+ probe py=$e1py (off-centre by [expr {abs($e1py - $e1cy)}] px)" \
+  [pexpr {$e1x1 >= 0 && $e1mx >= 0 && $e1yx >= 0 && $e1x2 - $e1x1 > 60 &&
+          abs($e1py - $e1cy) > ($e1y2 - $e1y1) * 0.15}]
 if {$e1x1 < 0 || $e1mx < 0 || $e1yx < 0} { stall "CE10 strip-1 pixel scan came up empty" }
 ce_stage
-pcall {ce_click $e1yx $e1cy 4 4}
+set ce10m [pcall {xschem get graph_axis_wheel_map 1 y $e1py in}]
+pcall {ce_click $e1yx $e1py 4 4}
 check_true "CE10 a CTRL+wheel in STRIP 1's Y margin zoomed RECT 1\
  (y=[pcall {list [xschem getprop rect 2 1 y1] [xschem getprop rect 2 1 y2]}])" \
   [pexpr {[az_close [expr {[xschem getprop rect 2 1 y2] -
                            [xschem getprop rect 2 1 y1]}] \
                     [expr {2.5 * $::cwK}] 1e-6 2.5]}]
+check_true "CE10 ...to EXACTLY graph_axis_wheel_map's answer for RECT 1 at that\
+ pixel (map=$ce10m window=[pcall {list [xschem getprop rect 2 1 y1] [xschem getprop rect 2 1 y2]}])" \
+  [pexpr {[llength $ce10m] == 2 &&
+          [az_close [xschem getprop rect 2 1 y1] [lindex $ce10m 0] 1e-6 2.5] &&
+          [az_close [xschem getprop rect 2 1 y2] [lindex $ce10m 1] 1e-6 2.5]}]
 check "CE10 ...and left RECT 0's y1/y2 byte-identical, so the arm followed the\
  POINTED strip and not index 0" \
   [pcall {list [xschem getprop rect 2 0 y1] [xschem getprop rect 2 0 y2]}] {0 2.5}
@@ -2752,6 +2830,24 @@ proc cv_strip {k} {
 # rather than by predicting: re-scan the strip and walk left from the plot box
 # until `graph_axis_at` agrees.
 #
+# ⚠ THE HEIGHT IS A LIST, AND THE OFF-CENTRE ONES COME FIRST. `az_ymargin`'s y is
+# (by1+by2)/2 -- u = 0.5 -- where an anchored zoom and a zoom about the window's
+# centre give the SAME two numbers, so a leg fired there can only see the new
+# window's WIDTH. MEASURED: with every viewer Y leg on that pixel, `$py` -> `$px`
+# in wviewer::wheel_zoom's y arm left ALL 361 checks green with the Y window ~0.20
+# out of place. `fracs` are fractions of the box HEIGHT up from its bottom edge,
+# tried in order, so 0.25 gives u = 0.25.
+#
+# ⚠ AND WHY IT IS A LIST rather than one number. Which HEIGHTS of the left margin
+# `graph_axis_at` claims depends on the layout of the moment -- `graph_legend_at`
+# owns whatever band the strip's legend occupies and declines first. MEASURED: a
+# single 0.25 height found no Y pixel at all on STRIP 1 about 1 run in 3 (strip 0
+# was fine 11/11), the probe came back {} and the gesture then fired at (-1,-1).
+# So a caller that NEEDS off-centre passes an off-centre-only list and lets the
+# leg go red if none of them lands; a caller that only needs *a* Y pixel (CV8,
+# which is about WHICH STRIP moved) takes the default, whose last resort is the
+# centre. See the PROBE PLACEMENT block above az_xmargin.
+#
 # ⚠ WHY THE SCAN IS INSIDE THE LOOP. `az_ymargin`'s midpoint is geometry, and
 # `graph_axis_at` has four refusals the geometry cannot see (the container rect,
 # the reorder grip column, and `graph_legend_at` -- for a vlegend/digital strip
@@ -2762,16 +2858,19 @@ proc cv_strip {k} {
 # the body zoom, and only CV8's "every strip's x1/x2 unchanged" leg saw it --
 # the Y legs pass either way, because the body zoom scales Y by the same K.
 # Returns {x y} or {} (the caller FAILS, never skips).
-proc cv_yprobe {k {tries 12}} {
+proc cv_yprobe {k {fracs {0.25 0.3 0.2 0.35 0.7 0.75 0.5}} {tries 12}} {
   for {set n 0} {$n < $tries} {incr n} {
     set s [cv_strip $k]
     if {[llength $s] == 3} {
       lassign [lindex $s 0] bx1 by1 bx2 by2
-      lassign [lindex $s 2] mx my
+      lassign [lindex $s 2] mx mymid
       set lo [expr {2 * $mx - $bx1}]   ;# the band's left edge, back out of the midpoint
       ax_ctx
-      for {set x [expr {$bx1 - 2}]} {$x > $lo} {incr x -1} {
-        if {[pcall {xschem get graph_axis_at $k $x $my}] eq {y}} { return [list $x $my] }
+      foreach f $fracs {
+        set my [expr {$by2 - int(($by2 - $by1) * $f)}]
+        for {set x [expr {$bx1 - 2}]} {$x > $lo} {incr x -1} {
+          if {[pcall {xschem get graph_axis_at $k $x $my}] eq {y}} { return [list $x $my] }
+        }
       }
     }
     update
@@ -2815,15 +2914,51 @@ check "CV1 ...and left EVERY strip's y1/y2 unchanged" \
   [pcall {set o {}; foreach row $cv1b { lappend o [lrange $row 2 3] }; set o}]
 
 # --- CV2: Y margin -> Y on the pointed strip only, X untouched --------------
+# The viewer's Y twin of CV1/CV6, and like CE3 it must carry the two assertions a
+# width leg cannot make. The pixel comes from cv_yprobe (OFF-CENTRE, and C itself
+# confirms the region) rather than from az_ymargin's centre-y: that centre-y is
+# where `$py` -> `$px` in wviewer::wheel_zoom's y arm hid, all 361 checks green.
 cv_stage $tok
 ax_scan $tok
+# OFF-CENTRE HEIGHTS ONLY -- no 0.5 fallback. If none of them lands, `$cv2p` is
+# {} and the teeth leg below goes RED; it must never quietly become a centre
+# probe, which is the whole thing this leg exists to stop.
+set cv2p [cv_yprobe 0 {0.25 0.3 0.2 0.35 0.15 0.7 0.75}]
+set cv2yx -1 ; set cv2yy -1
+if {[llength $cv2p] == 2} {
+  lassign $cv2p cv2yx cv2yy
+} else {
+  stall "CV2 never got an OFF-CENTRE strip-0 Y-margin probe"
+}
+check "CV2 C calls the probe pixel ($cv2yx,$cv2yy) strip 0's Y region" \
+  [pcall {ax_ctx; xschem get graph_axis_at 0 $cv2yx $cv2yy}] y
+set cv2m  [pcall {ax_ctx; xschem get graph_axis_wheel_map 0 y $cv2yy in}]
+set cv2qb [pcall {ax_ctx; az_coord 0 $cvcx $cv2yy 1}]
+# The teeth, stated in DATA space rather than pixels so no box re-scan can drift
+# it: u = (q - A)/R is the pointer's fraction of the 0..2.5 window, and at
+# u = 0.5 the anchored answer and a zoom about the window's centre coincide.
+set cv2u [pexpr {($cv2qb - 0.0) / 2.5}]
+check_true "CV2 the probe is really OFF-CENTRE in the window: u=$cv2u (teeth:\
+ at u=0.5 an anchored Y zoom and a zoom about the window's centre give the SAME\
+ two numbers and CV2b/CV2c below could not tell them apart)" \
+  [pexpr {[string is double -strict "$cv2u"] && abs($cv2u - 0.5) > 0.1}]
 set cv2b [pcall {cv_wins 2}]
-cv_wheel $vdrw $cvymx $cvcy 1
+cv_wheel $vdrw $cv2yx $cv2yy 1
 set cv2a [pcall {cv_wins 2}]
+set cv2qa [pcall {ax_ctx; az_coord 0 $cvcx $cv2yy 1}]
 check_true "CV2 CTRL+wheel in the Y margin narrowed strip 0's Y by K=$::cwK\
  (before=$cv2b after=$cv2a)" \
   [pexpr {[az_close [expr {[lindex $cv2a 0 3] - [lindex $cv2a 0 2]}] \
                     [expr {2.5 * $::cwK}] 1e-6 2.5]}]
+check_true "CV2b ...and it is EXACTLY the C map's answer for the pointer's OWN y\
+ pixel $cv2yy, so the viewer arm passed \$py and not \$px (map=$cv2m\
+ after=[lrange [lindex $cv2a 0] 2 3])" \
+  [pexpr {[llength $cv2m] == 2 &&
+          [az_close [lindex $cv2a 0 2] [lindex $cv2m 0] 1e-6 2.5] &&
+          [az_close [lindex $cv2a 0 3] [lindex $cv2m 1] 1e-6 2.5]}]
+check_true "CV2c THE FIXED POINT on Y in the viewer: the data y under the\
+ pointer pixel is unchanged (before=$cv2qb after=$cv2qa)" \
+  [pexpr {[string is double -strict "$cv2qb"] && [az_close $cv2qa $cv2qb 1e-6 2.5]}]
 check "CV2 ...on the POINTED strip only (strip 1's y1/y2 unchanged)" \
   [lrange [lindex $cv2a 1] 2 3] [lrange [lindex $cv2b 1] 2 3]
 check "CV2 ...and left EVERY strip's x1/x2 unchanged" \

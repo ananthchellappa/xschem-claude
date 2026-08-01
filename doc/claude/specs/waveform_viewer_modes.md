@@ -1367,10 +1367,11 @@ the closed form, with `xschem graph_coord` as an independent pixel→data
 transform), `AV*` the apply — **witnessing every rect**, `AL*` the log line and
 its replay in a `--logdir` child process, `AS*` the source-level
 one-formula-one-home tripwire; `AG*` the real C gesture and `AX*` the ASE viewer
-seam under DISPLAY. **200 checks in the `--nogui` arm, 338 with a display**
+seam under DISPLAY. **200 checks in the `--nogui` arm, 370 with a display**
 (2026-08-01, after §18's five groups were added to the same file and then
-extended by its repair pass; the count before §18 was 128 / 196, and the
-"119 / 173" this line used to carry was stale from the first draft).
+extended by its two repair passes, and after `AG14`/`AG15` were added by this
+section's own; the count before §18 was 128 / 196, and the "119 / 173" this line
+used to carry was stale from the first draft).
 
 ---
 
@@ -1545,7 +1546,24 @@ regression surface) but their comment is corrected.
 ### 18.6 Tests
 
 Five new groups in `tests/headless/test_wave_axis_zoom.tcl` (128 → **200**
-`--nogui`, 196 → **338** with a display):
+`--nogui`, 196 → **370** with a display; the display arm includes §17.6's own
+`AG14`/`AG15`):
+
+> ⚠ **PROBE PLACEMENT, and this section walked into it.** Every Y-margin probe
+> pixel in the file came from `az_ymargin`, whose y is the plot box's vertical
+> **centre** — u = 0.5, where the anchored form `lo = q - u·R2` and a zoom about
+> the window's centre `lo = A + (R-R2)/2` give the SAME two numbers. The X legs
+> carried an explicit teeth leg saying so; the Y legs did not. Consequence,
+> MEASURED: `(double)my` → `(double)mx` in the C arm and `$py` → `$px` in
+> `wviewer::wheel_zoom`'s y arm — one token each — left **all 361 checks green**
+> with the Y window 0.24 / 0.20 away from the anchored answer. The Y legs
+> asserted only the new window's WIDTH, that the other axis did not move and that
+> the other strip did not move, and all three survive an arbitrarily wrong
+> anchor. Closed by `CE3b`/`CE3c`/`CE10`'s map leg and `CV2b`/`CV2c`, each fired
+> at an off-centre pixel with a teeth leg asserting the off-centre-ness
+> (`cv_yprobe` now takes a LIST of heights: `CV2` passes off-centre ones only and
+> goes red if none lands, `CV8` takes the default list that ends at the centre).
+> SAB-12 / SAB-13 below.
 
 * **`CW*`** — the map and its verb, BOTH arms. Fail-soft on six bad queries; both
   endpoints against the closed form; the WIDTH leg kept **separate** from the
@@ -1608,7 +1626,7 @@ Five new groups in `tests/headless/test_wave_axis_zoom.tcl` (128 → **200**
   zoom, and **only** the "every strip's x1/x2 unchanged" leg noticed — the Y legs
   pass either way, because the body zoom scales Y by the same `K`.
 
-Eleven named sabotages, each verified to kill its target and be reverted:
+Thirteen named sabotages, each verified to kill its target and be reverted:
 SAB-1 (centre anchor) → the fixed-point legs, **not** the width leg;
 SAB-2 (zoom both axes in the arm) → the other-axis witnesses;
 SAB-3 (fire regardless of region) → the body-unchanged witness;
@@ -1625,4 +1643,9 @@ to break;
 SAB-10 (viewer's Y branch gated on `$t == 0`) → `CV8`'s two legs only;
 SAB-11 (`pow(10,·)` the anchor `q` on a log axis) → `CW10`/`CW11`'s six log legs
 and nothing else — the width leg inside `CW10` survives, the same asymmetry
-SAB-1 exploits.
+SAB-1 exploits;
+SAB-12 (`(double)my` → `(double)mx` in the arm's `p`, so the **Y** branch is
+handed the **X** pixel) → `CE3b`, `CE3c` and `CE10`'s map leg **only**; every
+width / other-axis / other-strip leg stays green, which is the point;
+SAB-13 (`$py` → `$px` in `wviewer::wheel_zoom`'s y arm) → `CV2b`, `CV2c` only.
+Both were green-across-the-board before the second repair pass.
