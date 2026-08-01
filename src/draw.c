@@ -5055,6 +5055,274 @@ int graph_plotbox_at(int i, double px, double py)
   return (px >= ax1 && px <= ax2 && py >= ay1 && py <= ay2);
 }
 
+/* ---- axis-region drag zoom (issue 0190) ----------------------------------
+ *
+ * doc/claude/specs/waveform_viewer_modes.md §17. Three functions, deliberately:
+ * graph_axis_at() answers WHICH margin a pixel is in, graph_axis_map() is THE
+ * formula and graph_axis_zoom() is THE apply. The formula has one home because
+ * the gesture (callback.c) and the replayable verb (scheduler.c) both need it
+ * and a feature whose feedback and whose commit each compute the same thing
+ * will drift -- landmine 45(a). Exposing the map as `xschem get graph_axis_map`
+ * is also what lets a headless suite assert BOTH endpoints of a zoom.
+ */
+
+/* Which axis-number MARGIN of graph `i` is the CANVAS PIXEL (px, py) in?
+ * GRAPH_AXIS_X = the bottom margin (the X tick numbers), GRAPH_AXIS_Y = the
+ * left margin (the Y tick numbers), GRAPH_AXIS_NONE = neither.
+ *
+ * The regions are derived from the PLOT BOX (gr->x1/x2/y1/y2) and the CONTAINER
+ * (gr->sx1..sy2), never from marginx/marginy: the right plot edge is
+ * rx2 - 0.35*marginx and the top edge is one of three formulas depending on
+ * digital/vlegend (setup_graph_data above), so re-deriving the regions from the
+ * margin widths would re-implement three special cases and drift.
+ *
+ * Four refusals, in order, and each one belongs to an owner that was there
+ * first:
+ *   - inside the plot box: that is the traces' / the reorder's / the marker's;
+ *   - outside the container rect: not this strip at all;
+ *   - the reorder GRIP column, at every height: graph_marker_press() gives it
+ *     the same unconditional first refusal (callback.c), and so does the Tcl
+ *     seam (wviewer::strip_handle_at_pixel);
+ *   - any pixel graph_legend_at() claims: for vlegend=1 and for digital strips
+ *     the legend IS the left margin (legend_slot_hit above).
+ * The bottom-LEFT corner answers Y, matching the shipped RMB left-margin arm,
+ * which tests graph_left first and never consults graph_bottom (callback.c).
+ *
+ * ⚠ Deliberately UNLIKE graph_plotbox_at, which this otherwise copies: no
+ * loaded-raw requirement and no digital refusal (decisions D-19/D-20). This is
+ * pure geometry -- setup_graph_data produces a valid transform from the tokens
+ * alone (gx1=0, gx2=1e-6 defaults) -- and both axes are meaningful on a digital
+ * strip: X is x1/x2, Y is the ypos1/ypos2 band the RMB left-margin arm already
+ * writes. Copying that raw gate would make the whole region silently dead
+ * before the first simulation.
+ *
+ * ⚠ gr->cy is NEGATIVE (landmine 3), so S_Y(gy1) and S_Y(gy2) come back in the
+ * opposite order to the S_X pair. Both pairs are normalised, never assumed.
+ *
+ * Uses a LOCAL Graph_ctx and brackets graph_flags' hcursor bits (landmines 11
+ * and 37) -- it is a query and must not leave the session describing a strip
+ * nobody is pointing at. Fails closed: bad index, non-graph rect, off-screen. */
+int graph_axis_at(int i, double px, double py)
+{
+  Graph_ctx gr_ctx;
+  Graph_ctx *gr = &gr_ctx;
+  xRect *r;
+  int saveflags;
+  double ax1, ax2, ay1, ay2, cx1, cx2, cy1, cy2, t;
+
+  if(!xctx) return GRAPH_AXIS_NONE;
+  if(i < 0 || i >= xctx->rects[GRIDLAYER]) return GRAPH_AXIS_NONE;
+  r = &xctx->rect[GRIDLAYER][i];
+  if(!(r->flags & 1)) return GRAPH_AXIS_NONE;
+  memset(&gr_ctx, 0, sizeof(gr_ctx));
+  saveflags = xctx->graph_flags & (128 | 256);
+  setup_graph_data(i, 0, gr);
+  xctx->graph_flags = (xctx->graph_flags & ~(128 | 256)) | saveflags;
+  if(gr->scx == 0.0 || gr->scy == 0.0) return GRAPH_AXIS_NONE; /* off-screen */
+
+  ax1 = S_X(gr->gx1); ax2 = S_X(gr->gx2);
+  ay1 = S_Y(gr->gy1); ay2 = S_Y(gr->gy2);
+  if(ax1 > ax2) { t = ax1; ax1 = ax2; ax2 = t; }
+  if(ay1 > ay2) { t = ay1; ay1 = ay2; ay2 = t; }
+  /* 1: the plot box itself is somebody else's */
+  if(px >= ax1 && px <= ax2 && py >= ay1 && py <= ay2) return GRAPH_AXIS_NONE;
+  /* 2: outside the container rect (sx1..sy2 are computed BEFORE the RECT_OUTSIDE
+   * early return, so they are trustworthy whenever the transform is) */
+  cx1 = gr->sx1; cx2 = gr->sx2;
+  cy1 = gr->sy1; cy2 = gr->sy2;
+  if(cx1 > cx2) { t = cx1; cx1 = cx2; cx2 = t; }
+  if(cy1 > cy2) { t = cy1; cy1 = cy2; cy2 = t; }
+  if(px < cx1 || px > cx2 || py < cy1 || py > cy2) return GRAPH_AXIS_NONE;
+  /* 3: the reorder grip owns its column at EVERY height, unconditionally */
+  if(gr->reorder_handle && px >= cx2 - GRAPH_REORDER_HANDLE_W) return GRAPH_AXIS_NONE;
+  /* 4: the vertical / digital legend IS the left margin */
+  if(graph_legend_at(i, px, py) >= 0) return GRAPH_AXIS_NONE;
+  /* 5/6: left wins over below, so the bottom-left corner is Y */
+  if(px < ax1) return GRAPH_AXIS_Y;
+  if(py > ay2) return GRAPH_AXIS_X;
+  return GRAPH_AXIS_NONE;  /* top margin, right margin */
+}
+
+/* THE MAP. `p0` (press) and `p1` (release) are CANVAS PIXELS along `axis`: px
+ * for GRAPH_AXIS_X, py for GRAPH_AXIS_Y. On success writes the new data window
+ * to *lo / *hi and returns 1.
+ *
+ * Returns 0 -- and writes nothing -- for a bad index, a non-graph rect, an
+ * off-screen graph, an unknown axis, or a travel of `clicktol` SCREEN PIXELS or
+ * less. The threshold is a parameter rather than a constant here because the
+ * 3.0 belongs to callback.c's file-private GRAPH_CLICK_TOL, which answers the
+ * click-vs-drag question and must not be confused with GRAPH_TRACE_PICK_TOL
+ * (landmine 20's warning is exactly why it is file-private).
+ *
+ * The maths, once:
+ *
+ *   A = min(g_lo, g_hi), B = max(...), R = B - A     the CURRENT window
+ *   u(p) = (G_axis(p) - A) / R                       a pixel, normalised 0..1
+ *   ua = u(p0), ub = u(p1), s = ub - ua
+ *
+ *   s > 0  (forward drag: X left->right, Y upward)  ZOOM IN
+ *       lo = A + ua*R,  hi = A + ub*R
+ *       i.e. exactly the two data coordinates the press and the release land on.
+ *   s < 0  (reverse drag)                            ZOOM OUT
+ *       R2 = R / |s|,  lo = A - ub*R2,  hi = lo + R2
+ *       i.e. the CURRENT window ends up occupying the screen span between the
+ *       release and the press. The `- ub*R2` term is the ANCHOR: without it the
+ *       new range has the right WIDTH and the wrong POSITION, which passes every
+ *       "the range grew" assertion. That is why both endpoints are asserted.
+ *
+ * Two worked checks, which are also two legs of the suite:
+ *   - a FULL-EXTENT reverse drag leaves the window unchanged: ua=1, ub=0, s=-1,
+ *     R2=R, lo = A - 0 = A, hi = A + R = B. (Note this is precisely the case
+ *     the anchor term vanishes in -- hence the other checks.)
+ *   - a HALF-EXTENT reverse drag from the far edge: ua=1, ub=0.5, s=-0.5,
+ *     R2=2R, lo = A - 0.5*2R = A - R, hi = A + R.
+ *
+ * ⚠ Everything runs in `gr` space, which IS log space when logx/logy is set --
+ * gr->gx1..gy2 and G_X/G_Y are already log-mapped there. The shipped box zoom
+ * writes dtoa(G_X(...)) straight into x1/x2 with no pow(10,.) for the same
+ * reason; applying one here would double-convert (landmine 35 from the other
+ * side, decision D-18).
+ *
+ * ⚠ p0/p1 are CLAMPED to the plot extent (decision D-11): a drag that overshoots
+ * the box by 2 px must commit, not silently cancel. GRAPHPAN keeps the drag
+ * routed to the graph after the pointer leaves the strip, so the release arrives.
+ *
+ * Local Graph_ctx + the 128|256 bracket, like every query on this pattern. */
+int graph_axis_map(int i, int axis, double p0, double p1,
+                   double *lo, double *hi, double clicktol)
+{
+  Graph_ctx gr_ctx;
+  Graph_ctx *gr = &gr_ctx;
+  xRect *r;
+  int saveflags;
+  double e1, e2, t, A, B, R, ua, ub, s, f, R2, zlo;
+
+  if(!xctx || !lo || !hi) return 0;
+  if(axis != GRAPH_AXIS_X && axis != GRAPH_AXIS_Y) return 0;
+  if(i < 0 || i >= xctx->rects[GRIDLAYER]) return 0;
+  r = &xctx->rect[GRIDLAYER][i];
+  if(!(r->flags & 1)) return 0;
+  memset(&gr_ctx, 0, sizeof(gr_ctx));
+  saveflags = xctx->graph_flags & (128 | 256);
+  setup_graph_data(i, 0, gr);
+  xctx->graph_flags = (xctx->graph_flags & ~(128 | 256)) | saveflags;
+  if(gr->scx == 0.0 || gr->scy == 0.0) return 0;  /* off-screen: no transform */
+
+  if(axis == GRAPH_AXIS_X) {
+    e1 = S_X(gr->gx1); e2 = S_X(gr->gx2);
+    A = gr->gx1; B = gr->gx2;
+  } else {
+    e1 = S_Y(gr->gy1); e2 = S_Y(gr->gy2);   /* cy < 0: e1 is the BOTTOM pixel */
+    A = gr->gy1; B = gr->gy2;
+  }
+  if(e1 > e2) { t = e1; e1 = e2; e2 = t; }
+  if(A > B)   { t = A;  A = B;  B = t;  }
+  R = B - A;
+  if(R == 0.0 || e2 == e1) return 0;
+  /* clamp both ends to the plot extent -- an overshoot commits (D-11) */
+  if(p0 < e1) p0 = e1; if(p0 > e2) p0 = e2;
+  if(p1 < e1) p1 = e1; if(p1 > e2) p1 = e2;
+  /* click, not drag: no write, no log */
+  if(fabs(p1 - p0) <= clicktol) return 0;
+  if(axis == GRAPH_AXIS_X) {
+    ua = (G_X(X_TO_XSCHEM(p0)) - A) / R;
+    ub = (G_X(X_TO_XSCHEM(p1)) - A) / R;
+  } else {
+    ua = (G_Y(Y_TO_XSCHEM(p0)) - A) / R;
+    ub = (G_Y(Y_TO_XSCHEM(p1)) - A) / R;
+  }
+  s = ub - ua;
+  if(s > 0.0) {                      /* zoom IN */
+    *lo = A + ua * R;
+    *hi = A + ub * R;
+  } else {                           /* zoom OUT, anchored */
+    f = -s;
+    if(f < 1.0 / GRAPH_AXIS_ZOOM_MAX_FACTOR) f = 1.0 / GRAPH_AXIS_ZOOM_MAX_FACTOR;
+    R2 = R / f;
+    /* THE ANCHORED ZOOM-OUT, and the only place it is written. A named local
+     * rather than `*lo = ...` so the expression sits on a line a source-level
+     * tripwire can count (tests/headless/test_wave_axis_zoom.tcl AS1 skips
+     * lines beginning with `*`, which is how a C comment continuation looks). */
+    zlo = A - ub * R2;
+    *lo = zlo;
+    *hi = zlo + R2;
+  }
+  if(*hi == *lo) *hi += 1e-6;        /* the shipped idiom (callback.c box zoom) */
+  dbg(1, "graph_axis_map: graph=%d axis=%d p0=%g p1=%g -> %g %g\n", i, axis, p0, p1, *lo, *hi);
+  return 1;
+}
+
+/* THE APPLY, shared by the gesture (callback.c) and by `xschem graph_axis_zoom`.
+ * Returns 1 when at least one token was written.
+ *
+ * X propagates: rect `i` AND every PARTICIPATING rect, reproducing the shipped
+ * predicate of the MMB pan / RMB box zoom / arrow pans verbatim --
+ *   r->sel || (same_sim_type && !(r->flags & 2)) || k == i
+ * where same_sim_type additionally requires the MASTER (`i`) not to be
+ * `unlocked` and the two sim_type tokens to match. ⚠ This is NOT the viewer's
+ * `sharedx` flag, which the C engine cannot see: propagation has always come
+ * from this predicate, and wviewer::graph_props never emits `unlocked`, so in
+ * the viewer X follows every strip of the same sim_type whatever sharedx says.
+ * Y is per-graph and touches rect `i` only.
+ *
+ * A DIGITAL strip's Y is the ypos1/ypos2 band, not y1/y2 -- mirroring the RMB
+ * left-margin arm (callback.c).
+ *
+ * NO set_modify and NO push_undo: landmine 19 -- a graph gesture is view state,
+ * every pan/box-zoom/fit already rewrites these tokens silently, and the ASE
+ * viewer's buffer is read-only for life so a dirty flag there would be a lie.
+ * Exactly ONE log_action line, in the VERB form, so a replay reproduces the
+ * whole propagation from one line (log_action is a plain varargs printf, so
+ * %.17g is fine here -- my_snprintf is not and must not be used for it). */
+int graph_axis_zoom(int i, int axis, double lo, double hi)
+{
+  xRect *r, *rk;
+  int k, wrote = 0;
+
+  if(!xctx) return 0;
+  if(axis != GRAPH_AXIS_X && axis != GRAPH_AXIS_Y) return 0;
+  if(i < 0 || i >= xctx->rects[GRIDLAYER]) return 0;
+  r = &xctx->rect[GRIDLAYER][i];
+  if(!(r->flags & 1)) return 0;
+  if(axis == GRAPH_AXIS_X) {
+    int master_locked = !(r->flags & 2);
+    char *master_sim = NULL;
+    my_strdup2(_ALLOC_ID_, &master_sim, get_tok_value(r->prop_ptr, "sim_type", 0));
+    for(k = 0; k < xctx->rects[GRIDLAYER]; ++k) {
+      int same_sim_type = 0;
+      rk = &xctx->rect[GRIDLAYER][k];
+      if(!(rk->flags & 1)) continue;
+      if(master_locked && !strcmp(master_sim, get_tok_value(rk->prop_ptr, "sim_type", 0))) {
+        same_sim_type = 1;
+      }
+      if(rk->sel || (same_sim_type && !(rk->flags & 2)) || k == i) {
+        my_strdup(_ALLOC_ID_, &rk->prop_ptr, subst_token(rk->prop_ptr, "x1", dtoa(lo)));
+        my_strdup(_ALLOC_ID_, &rk->prop_ptr, subst_token(rk->prop_ptr, "x2", dtoa(hi)));
+        wrote = 1;
+      }
+    }
+    my_free(_ALLOC_ID_, &master_sim);
+  } else {
+    /* `digital` is read straight OFF THE RECT, never through a scratch
+     * Graph_ctx: setup_graph_data() parses it BELOW its off-screen early return
+     * (landmine 37a), so an off-screen strip would answer 0 and this would
+     * silently write y1/y2 into a digital graph. Measured, while writing the
+     * suite: the AV5 leg failed exactly that way. */
+    const char *dv = get_tok_value(r->prop_ptr, "digital", 0);
+    int digital = dv[0] ? atoi(dv) : 0;
+    my_strdup(_ALLOC_ID_, &r->prop_ptr,
+              subst_token(r->prop_ptr, digital ? "ypos1" : "y1", dtoa(lo)));
+    my_strdup(_ALLOC_ID_, &r->prop_ptr,
+              subst_token(r->prop_ptr, digital ? "ypos2" : "y2", dtoa(hi)));
+    wrote = 1;
+  }
+  if(wrote) {
+    log_action("xschem graph_axis_zoom %d %s %.17g %.17g\n",
+               i, axis == GRAPH_AXIS_X ? "x" : "y", lo, hi);
+  }
+  return wrote;
+}
+
 /* ---- viewer plan item 9: the diamond SNAP CURSOR -------------------------
  *
  * While the pointer hovers a waveform graph, a small diamond sticks to the

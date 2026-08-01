@@ -674,6 +674,12 @@ static void alloc_xschem_data(const char *top_path, const char *win_path)
   xctx->graph_marker_draggraph = -1;
   xctx->graph_marker_moved = 0;
   xctx->graph_marker_press_x = xctx->graph_marker_press_y = -1e30;
+  /* issue 0190: the axis-region drag zoom arm. GRAPH_AXIS_NONE is 0 so the
+   * my_calloc already covers it -- written explicitly anyway, beside the marker
+   * state it belongs with, and because -1 (draggraph) is a real sentinel. */
+  xctx->graph_axis_drag = GRAPH_AXIS_NONE;
+  xctx->graph_axis_draggraph = -1;
+  xctx->graph_axis_press = 0.0;
   /* viewer plan item 6: the shrink preview. 0.0 IS "off", so the my_calloc
    * already covers it — written explicitly anyway, beside the marker state it
    * belongs with, so a future non-zero default cannot slip in silently. */

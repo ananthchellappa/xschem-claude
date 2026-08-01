@@ -37,6 +37,9 @@
  * Forward-declared because waves_selected() (further up) must be able to drop an
  * armed gesture, and abort_operation() must too. */
 static void graph_marker_drag_abort(void);
+/* Its axis-region drag zoom twin (issue 0190), forward-declared for the same
+ * reason: abort_operation() (further up) has to be able to drop an armed drag. */
+static void graph_axis_drag_abort(void);
 
 /* Read-only guard. If the current window is marked read-only (xctx->readonly,
  * which is per-window), warn the user with a modal dialog and return 1 so the
@@ -258,6 +261,11 @@ void abort_operation(int deselect)
    * substituting the scratch record the moment the flag clears, and
    * abort_operation already redraws (doc/claude/specs/graph_markers.md) */
   graph_marker_drag_abort();
+  /* ...and an armed axis-region drag zoom (issue 0190): the release then commits
+   * nothing, and the draw() at the end of this function repaints over the rubber
+   * band. XK_Escape has no waves_selected guard, so this is reached from the ASE
+   * viewer too (wviewer::key_filter forwards ESC after cancelling its own drag). */
+  graph_axis_drag_abort();
   tcleval("set constr_mv 0" );
   dbg(1, "abort_operation(): Escape: ui_state=%d, last_command=%d\n", xctx->ui_state, xctx->last_command);
   xctx->constr_mv=0;
@@ -798,6 +806,81 @@ static int graph_marker_release(void)
   return (oldsel >= 0 && oldgraph != gi);
 }
 
+/* ---- axis-region drag zoom (issue 0190) gesture helpers -------------------
+ *
+ * doc/claude/specs/waveform_viewer_modes.md §17. LMB press-drag in a strip's
+ * bottom (X-number) or left (Y-number) margin zooms that axis only. The three
+ * pieces of geometry live in draw.c -- graph_axis_at() (which margin),
+ * graph_axis_map() (THE formula) and graph_axis_zoom() (THE apply) -- and this
+ * file only arms, paints the rubber band and commits. The map is NEVER inlined
+ * here: it is shared with `xschem graph_axis_zoom`'s replay and with
+ * `xschem get graph_axis_map`, and two copies would drift (landmine 45(a)). */
+
+/* Drop an armed axis drag. Does NOT erase the rubber band -- the caller either
+ * erases it first (the release) or redraws over it (abort_operation's draw()). */
+static void graph_axis_drag_clear(void)
+{
+  if(!xctx) return;
+  xctx->graph_axis_drag = GRAPH_AXIS_NONE;
+  xctx->graph_axis_draggraph = -1;
+  xctx->graph_axis_press = 0.0;
+}
+
+/* ESC / abort_operation hook, the graph_marker_drag_abort() twin. */
+static void graph_axis_drag_abort(void)
+{
+  if(xctx && xctx->graph_axis_drag) {
+    graph_axis_drag_clear();
+    xctx->graph_rubber_active = 0; /* abort_operation() ends in draw() */
+  }
+}
+
+/* The band the live rubber outline covers, in XSCHEM coordinates (what
+ * drawtemprect takes, like the Button3 box-zoom rubber it sits beside). The
+ * dragged axis runs press -> `moving`; the OTHER axis spans the whole plot box,
+ * which is what makes it read as "this slice of the x axis" rather than a box.
+ * Both ends clamped to the plot box, exactly as the Button3 rubber clamps its
+ * moving corner. `gr` must be set up for the dragged graph. */
+static void graph_axis_band(Graph_ctx *gr, int ax, double moving,
+                            double *bx1, double *by1, double *bx2, double *by2)
+{
+  double p0, a1, b1, a2, b2;
+  double xlo = gr->x1 < gr->x2 ? gr->x1 : gr->x2;
+  double xhi = gr->x1 < gr->x2 ? gr->x2 : gr->x1;
+  double ylo = gr->y1 < gr->y2 ? gr->y1 : gr->y2;
+  double yhi = gr->y1 < gr->y2 ? gr->y2 : gr->y1;
+
+  if(ax == GRAPH_AXIS_X) {
+    p0 = X_TO_XSCHEM(xctx->graph_axis_press);
+    if(p0 < xlo) p0 = xlo; if(p0 > xhi) p0 = xhi;
+    if(moving < xlo) moving = xlo; if(moving > xhi) moving = xhi;
+    a1 = p0; a2 = moving; b1 = ylo; b2 = yhi;
+  } else {
+    p0 = Y_TO_XSCHEM(xctx->graph_axis_press);
+    if(p0 < ylo) p0 = ylo; if(p0 > yhi) p0 = yhi;
+    if(moving < ylo) moving = ylo; if(moving > yhi) moving = yhi;
+    a1 = xlo; a2 = xhi; b1 = p0; b2 = moving;
+  }
+  RECTORDER(a1, b1, a2, b2);
+  *bx1 = a1; *by1 = b1; *bx2 = a2; *by2 = b2;
+}
+
+/* Arm on a Button1 press, from the EVENT's own canvas pixels (never
+ * xctx->mousex/mousey -- landmine 43: every picking query on a strip takes the
+ * caller's pixels and converts once). graph_axis_at() does all the deciding,
+ * including declining the reorder grip and the legend. */
+static void graph_axis_press_arm(int i, int mx, int my)
+{
+  int ax = graph_axis_at(i, (double)mx, (double)my);
+  if(ax == GRAPH_AXIS_NONE) return;
+  xctx->graph_axis_drag = ax;
+  xctx->graph_axis_draggraph = i;
+  xctx->graph_axis_press = (ax == GRAPH_AXIS_X) ? (double)mx : (double)my;
+  xctx->graph_rubber_active = 0; /* fresh gesture: nothing drawn yet */
+  dbg(1, "graph_axis_press_arm(): graph=%d axis=%d press=%g\n",
+      i, ax, xctx->graph_axis_press);
+}
+
 /* process user input (arrow keys for now) when only graphs are selected */
 
 /* xctx->graph_flags:
@@ -1289,6 +1372,18 @@ static int waves_callback(int event, int mx, int my, KeySym key, int button, int
           xctx->graph_flags |= 32; /* Start move cursor2 */
         }
       }
+      /* The axis-region drag zoom (issue 0190) arms LAST, and only when this
+       * same press grabbed no cursor. A cursor's LINE crosses the margin and its
+       * numeric READOUT is DRAWN there -- draw_cursor (draw.c) spans
+       * gr->ry1..gr->ry2 and labels at gr->ry2-1, draw_hcursor spans
+       * rx1+10..rx2-10 and labels at gr->rx1+5 -- so a press there really can be
+       * aimed at the cursor, and "a press that grabbed a cursor keeps the whole
+       * drag" is the shipped rule (waveform_viewer_modes.md §12.1/§13.1). The
+       * four grab tests above have NO plot-box confinement, which is exactly why
+       * this has to be a test and not an assumption.
+       * A press on a MARKER pre-empts this whole block already (mkpress above),
+       * and the reorder grip / the legend are declined inside graph_axis_at(). */
+      if(!(xctx->graph_flags & (16 | 32 | 512 | 1024))) graph_axis_press_arm(i, mx, my);
     }
     else if(event == ButtonPress && button == Button3) {
       /* Numerically set cursor position */
@@ -1579,7 +1674,17 @@ static int waves_callback(int event, int mx, int my, KeySym key, int button, int
        * ROUTING latch (waves_selected keeps an in-flight drag routed and freezes
        * graph_master with it), so an armed marker drag must always get it or the
        * release is silently dropped. Provably a no-op when nothing is armed. */
-      (!xctx->graph_top || xctx->graph_marker_drag) /* && !xctx->graph_bottom */
+      /* ⚠ AND an armed AXIS-REGION drag zoom (issue 0190), for the SAME reason,
+       * MEASURED rather than assumed. The two axis regions are mostly
+       * graph_top == 0 -- the bottom margin always is, and so is the left margin
+       * at plot-box heights -- but the region graph_axis_at() calls Y is "left of
+       * the plot box, anywhere in the container", so a press in the TOP-LEFT
+       * corner of a strip that owns no legend entry there (legend=0, or no `node`
+       * token yet) arms a Y drag with graph_top already 1. Without this term that
+       * drag's release is silently dropped: GRAPHPAN is the ROUTING latch
+       * (landmine 36), not a pan. */
+      (!xctx->graph_top || xctx->graph_marker_drag || xctx->graph_axis_drag)
+      /* && !xctx->graph_bottom */
     ) {
     xctx->ui_state |= GRAPHPAN;
     /* box-zoom needs BOTH press coords: an interior RMB drag zooms X and Y */
@@ -1648,6 +1753,8 @@ static int waves_callback(int event, int mx, int my, KeySym key, int button, int
   if(event == MotionNotify && (state & Button3Mask) && (xctx->ui_state & GRAPHPAN) &&
      !xctx->graph_marker_drag && /* a B1+B3 chord must not move a marker AND
      paint the box-zoom rubber (same class as the MMB pan guard above) */
+     !xctx->graph_axis_drag &&   /* ...nor an axis-region drag zoom (issue 0190):
+     the reciprocal of the term in that arm's own guard just below */
      xctx->graph_master >= 0 && !xctx->graph_left && !xctx->graph_top && !xctx->graph_bottom) {
     double xlo = gr->x1 < gr->x2 ? gr->x1 : gr->x2;
     double xhi = gr->x1 < gr->x2 ? gr->x2 : gr->x1;
@@ -1678,6 +1785,60 @@ static int waves_callback(int event, int mx, int my, KeySym key, int button, int
     RECTORDER(ex1, ey1, ex2, ey2);
     drawtemprect(xctx->gctiled, NOW, ex1, ey1, ex2, ey2);
     xctx->graph_rubber_active = 0;
+  }
+  /* AXIS-REGION DRAG ZOOM (issue 0190): the live band, the twin of the Button3
+   * rubber above and using the same gctiled-erase / gc[SELLAYER]-draw /
+   * graph_rubber_* bookkeeping. It spans the whole plot box across the axis NOT
+   * being dragged, so it reads as "this slice of the x axis" rather than a box.
+   * Display-only: drawtemprect no-ops when !has_x, so the headless map/apply
+   * below is unaffected. graph_master is frozen for the whole drag by GRAPHPAN,
+   * so it is also the guard that keeps `gr` pointing at the dragged strip. */
+  if(event == MotionNotify && (state & Button1Mask) && !(state & Button3Mask) &&
+     xctx->graph_axis_drag && !xctx->graph_marker_drag &&
+     xctx->graph_master >= 0 && xctx->graph_master == xctx->graph_axis_draggraph) {
+    double nb1, nb2, nb3, nb4;
+    double moving = (xctx->graph_axis_drag == GRAPH_AXIS_X) ?
+                    xctx->mousex_snap : xctx->mousey_snap;
+    if(xctx->graph_rubber_active) { /* erase the previous outline */
+      double eb1, eb2, eb3, eb4;
+      graph_axis_band(gr, xctx->graph_axis_drag,
+                      xctx->graph_axis_drag == GRAPH_AXIS_X ?
+                        xctx->graph_rubber_x : xctx->graph_rubber_y,
+                      &eb1, &eb2, &eb3, &eb4);
+      drawtemprect(xctx->gctiled, NOW, eb1, eb2, eb3, eb4);
+    }
+    graph_axis_band(gr, xctx->graph_axis_drag, moving, &nb1, &nb2, &nb3, &nb4);
+    drawtemprect(xctx->gc[SELLAYER], NOW, nb1, nb2, nb3, nb4);
+    xctx->graph_rubber_x = moving;
+    xctx->graph_rubber_y = moving;
+    xctx->graph_rubber_active = 1;
+  }
+  /* Button1 release with an axis drag armed: erase the band, disarm, and commit
+   * whatever graph_axis_map() makes of the press/release pair. The map owns the
+   * click-vs-drag threshold, the clamp and the direction test -- this arm must
+   * not second-guess any of them, and must NOT carry its own copy of the formula
+   * (landmine 45(a); the `xschem graph_axis_zoom` verb replays through the same
+   * graph_axis_zoom() this calls). No set_modify, no push_undo: landmine 19. */
+  if(event == ButtonRelease && button == Button1 && xctx->graph_axis_drag) {
+    int ax = xctx->graph_axis_drag;
+    int gi = xctx->graph_axis_draggraph;
+    double p0 = xctx->graph_axis_press;
+    double p1 = (ax == GRAPH_AXIS_X) ? (double)mx : (double)my;
+    double lo = 0.0, hi = 0.0;
+    if(xctx->graph_rubber_active && xctx->graph_master >= 0 &&
+       xctx->graph_master == gi) {
+      double eb1, eb2, eb3, eb4;
+      graph_axis_band(gr, ax, ax == GRAPH_AXIS_X ?
+                      xctx->graph_rubber_x : xctx->graph_rubber_y,
+                      &eb1, &eb2, &eb3, &eb4);
+      drawtemprect(xctx->gctiled, NOW, eb1, eb2, eb3, eb4);
+    }
+    xctx->graph_rubber_active = 0;
+    graph_axis_drag_clear();
+    if(graph_axis_map(gi, ax, p0, p1, &lo, &hi, GRAPH_CLICK_TOL)) {
+      graph_axis_zoom(gi, ax, lo, hi);
+      need_fullredraw = 1;
+    }
   }
   /* loop: after having operated on the master graph do the others */
   for(i=0; i< xctx->rects[GRIDLAYER]; ++i) {

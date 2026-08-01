@@ -418,6 +418,15 @@ the same size at any canvas zoom; the same is true of the trace exclusion zone,
 which is measured by the engine (§12.4) rather than approximated from the strip
 geometry in Tcl.
 
+**The two AXIS-NUMBER MARGINS have left the reorder zone (2026-08-01, issue
+0190, §17).** They were never in the sentence above — the grab is "the reorder
+handle (always) or empty waveform body" — but `strip_at_pixel` tests the whole
+band, so a press on the X or Y tick numbers armed the reorder anyway. It now
+zooms that axis instead. **The handle and the empty body are unchanged**, and so
+is every exclusion listed above: a cursor grab, a marker press and the grip all
+still win in the margins, which is why the viewer learns about the change by
+asking C what the press armed rather than by hit-testing (§17.5).
+
 ### 12.2 Model operations
 
 ```tcl
@@ -882,6 +891,8 @@ of trace names above it; "margins" is everything else inside the strip rect
 |---|---|---|---|
 | LMB press-drag (> 3 px) | empty body / the grip | **Tcl** | strip drag-REORDER (§12) |
 | LMB press-drag (> 3 px) | within 10 px of a trace | **Tcl** | trace drag between strips (§13) |
+| LMB press-drag (> 3 px) | the **bottom (X-number) margin** | **C** | zoom X on every PARTICIPATING strip (§17, issue 0190) |
+| LMB press-drag (> 3 px) | the **left (Y-number) margin** | **C** | zoom Y on that strip only (§17) |
 | LMB press-drag | on a cursor / a marker | **C** | cursor drag, marker anchor/label drag |
 | LMB **click** (no travel) | within 10 px of a trace | **C** | the selection BECOMES that trace |
 | LMB **click** | empty body | **C** | the selection is CLEARED |
@@ -940,6 +951,19 @@ Six rules that are easy to get wrong and are asserted:
    a member **collapses** to that one member (rule 2's trace behaviour); the
    shipped "click the already-selected one to deselect" survives only for a
    selection of exactly one. Issue 0189.
+
+7. **A cursor grab and the reorder GRIP both still win in the margins, and the
+   viewer learns that by asking C, not by hit-testing** (issue 0190, §17). An
+   axis margin is not free real estate: an x-cursor's line is drawn `ry1..ry2`
+   and its numeric readout at `ry2-1` — *in* the bottom margin — and an
+   hcursor's line spans `rx1+10..rx2-10` with its readout at `rx1+5`, *in* the
+   left margin; the grip owns its right 14 px at every height; and for
+   `vlegend=1` and for digital strips the LEGEND *is* the left margin. So the
+   axis drag arms LAST, only when the same press grabbed no cursor, and
+   `graph_axis_at()` itself declines the grip column and any pixel
+   `graph_legend_at()` claims. `wviewer::strip_drag_press` adds exactly one rung
+   for all of that — `if {[wviewer::axis_grabbed $W]} { return 1 }` — because C
+   has already decided by the time it runs (§17.5).
 
 ### 15.7 What a HOVER draws, by region (issue 0177)
 
@@ -1145,3 +1169,179 @@ the nogui arm would assert the pre-mutation state and pass for the wrong reason.
 `tests/headless/test_wave_viewer.tcl` `G14b` — the Delete dialog, which gained
 undo, redo, a replayable log line, a target remap and a no-op discipline as a
 consequence of the extraction.
+
+---
+
+## 17. Axis-region drag zoom (2026-08-01, issue 0190)
+
+An LMB press-and-drag in a strip's **axis-number margin** zooms that axis, and
+only that axis. It lives in the **C engine**, beside the Button3 box zoom it is
+the twin of — so schematic-embedded graphs get it too — and the ASE viewer needs
+exactly one rung, carrying no geometry.
+
+### 17.1 The gesture
+
+| | |
+|---|---|
+| Where LMB grabs | the **bottom margin** (where the X tick numbers are drawn) for X; the **left margin** (the Y tick numbers) for Y |
+| Refusals | the plot box, everything outside the container rect, the reorder **grip** column (right 14 px, every height), and any pixel `graph_legend_at()` claims — for `vlegend=1` and for digital strips the legend *is* the left margin |
+| Corner rule | the bottom-**left** corner answers **Y**, matching the shipped RMB left-margin arm, which tests `graph_left` first and never consults `graph_bottom` |
+| Cursor exclusion | a press that grabbed an x/y cursor keeps the whole drag (§12.1/§13.1); the axis drag arms LAST and only when `!(graph_flags & (16\|32\|512\|1024))` |
+| Marker exclusion | a marker press pre-empts the whole block already (`mkpress`), so no code change was needed for it |
+| Movement threshold | more than **3 screen pixels** of travel *on the dragged axis's own component*, `GRAPH_CLICK_TOL` |
+| Feedback | a live rubber **band** spanning the plot box across the other axis — `drawtemprect` with `gctiled`/`gc[SELLAYER]` and `graph_rubber_*`, exactly like the Button3 rubber. **Not** a prop token and **not** `draw_graph` bit 16 |
+| Release outside the box | **clamped** to the plot extent and committed, never silently cancelled |
+| Commit | LMB release |
+| Cancel | **Escape** (`abort_operation()` → `graph_axis_drag_abort()`, and its trailing `draw()` repaints over the band) |
+| No-ops | a click below the threshold: no write, no log |
+
+### 17.2 The two maths
+
+Let the current window on that axis be `[A, B]`, `R = B - A`, and let `u(p)` be
+a canvas pixel normalised into it — `u(p) = (G_axis(p) - A) / R`. With
+`ua = u(press)`, `ub = u(release)` and `s = ub - ua`:
+
+* **`s > 0` — forward drag (X left→right, Y upward) — ZOOM IN**
+
+  ```
+  lo = A + ua*R      hi = A + ub*R
+  ```
+
+  i.e. exactly the two data coordinates the press and the release land on.
+
+* **`s < 0` — reverse drag — ZOOM OUT**, anchored:
+
+  ```
+  R2 = R / |s|       lo = A - ub*R2      hi = lo + R2
+  ```
+
+  i.e. the current window ends up occupying the screen span between the release
+  and the press.
+
+**Both endpoints are the specification.** The `- ub*R2` term is the ANCHOR;
+drop it and the new range still has the right WIDTH, so every "the range grew"
+assertion passes while the window has slid sideways. Two worked checks, which
+are also two legs of the suite:
+
+* a **full-extent reverse drag leaves the window unchanged**: `ua = 1`, `ub = 0`,
+  `s = -1`, `R2 = R`, `lo = A - 0 = A`, `hi = B`. Note this is precisely the case
+  the anchor term vanishes in — which is why it cannot be the only reverse leg;
+* a **half-extent reverse drag from the far edge** gives `R2 = 2R`, `lo = A - R`,
+  `hi = A + R`.
+
+`|s|` is clamped below at `1/GRAPH_AXIS_ZOOM_MAX_FACTOR` (1000.0, `xschem.h`) so
+a degenerate drag can never put an `inf` into `x1`/`x2`, where it would be
+permanent; the 3-px threshold normally binds first, so the clamp is a backstop.
+`hi == lo ⇒ hi += 1e-6`, the shipped idiom.
+
+**Log axes need nothing special.** `gr->gx1..gy2` and `G_X`/`G_Y` are *already*
+in log space when `logx`/`logy` is set — the shipped box zoom writes
+`dtoa(G_X(...))` straight into `x1`/`x2` with no `pow(10,·)` — so the map is
+uniform in log space for free. Applying a conversion here would double-convert
+(landmine 35, arriving from the other side).
+
+### 17.3 Where it applies: X propagates, Y does not
+
+X writes `x1`/`x2` on the dragged rect **and on every PARTICIPATING rect**,
+reproducing the shipped predicate of the MMB pan / RMB box zoom / arrow pans
+verbatim:
+
+```c
+rk->sel || (same_sim_type && !(rk->flags & 2)) || k == i
+```
+
+where `same_sim_type` additionally requires the MASTER not to be `unlocked` and
+the two `sim_type` tokens to match. **It is NOT the viewer's `sharedx` flag** —
+the C engine cannot see that, and `wviewer::graph_props` never emits `unlocked`,
+so in the viewer X follows every strip of the same `sim_type` whatever `sharedx`
+is set to, exactly as the pan and the box zoom already do. `sharedx` only affects
+`regenerate`.
+
+Y is per-graph and touches its own rect only. A **digital** strip's Y is the
+`ypos1`/`ypos2` band, not `y1`/`y2` — mirroring the RMB left-margin arm. The
+`digital` flag is read straight off the rect with `get_tok_value`, never through
+a scratch `Graph_ctx`: `setup_graph_data()` parses it *below* its off-screen
+early return (landmine 37a), so an off-screen digital strip would otherwise get
+`y1`/`y2` written into it.
+
+### 17.4 No dirty flag, no C undo, no viewer undo — and one log line
+
+A zoom is **view state**. `graph_axis_zoom()` calls neither `set_modify()` nor
+`push_undo()`, exactly like every other graph gesture (landmine 19) — which is
+also what lets the read-only ASE viewer perform it with **no `with_edit`
+bracket** and what lets the verb apply under `xschem set readonly 1`
+(landmine 17 already lists the box zoom as view state the engine may put in a
+read-only rect). It pushes no `wviewer::push_undo` snapshot either: window view
+state is deliberately outside a snapshot (§14.1), and `wheel_zoom` /
+`zoom_about` push nothing.
+
+It does **not** call `capture_live_graph_state`. A C-side gesture reaches no
+`regenerate`; that helper is what a *later* Tcl model mutation runs to fold
+C-written ranges back out of the rects, and this gesture is one more producer for
+it. The consequence, which is shipped behaviour for the whole class: a plain
+window **resize** (`regenerate` from `on_configure`) discards an axis zoom the
+model never saw, exactly as it discards an MMB pan or an RMB box zoom.
+
+It logs exactly **one** line per commit, in the VERB form, from the primitive:
+
+```
+xschem graph_axis_zoom <graph_idx> x|y <lo> <hi>
+```
+
+`%.17g`, **never pixels** (they do not exist at replay time), and the verb rather
+than a `setprop` so one line replays the whole propagation.
+
+### 17.5 Surface
+
+Three C functions, and the split is the point (`src/draw.c`):
+
+| function | question |
+|---|---|
+| `graph_axis_at(i, px, py)` | which margin is this canvas pixel in? `GRAPH_AXIS_NONE\|_X\|_Y` |
+| `graph_axis_map(i, axis, p0, p1, &lo, &hi, clicktol)` | **THE formula**, in exactly one place |
+| `graph_axis_zoom(i, axis, lo, hi)` | **THE apply**, shared by the gesture and by the verb |
+
+`graph_axis_at()` deliberately does **not** copy `graph_plotbox_at()`'s
+loaded-raw requirement or its digital refusal: it is pure geometry, and zooming
+the axis of an empty or digital strip is meaningful. It fails closed on a bad
+index, a non-graph rect and an off-screen graph, uses a LOCAL `Graph_ctx` and
+brackets `graph_flags`' hcursor bits (landmines 11 and 37).
+
+Tcl:
+
+```
+xschem get graph_axis_at   <gi> <px> <py>       -> "" | x | y      (fail soft)
+xschem get graph_axis_map  <gi> x|y <p0> <p1>   -> {lo hi} | {}    (fail soft)
+xschem get graph_axis_drag                      -> "" | x | y      (fail soft)
+xschem graph_axis_zoom     <gi> x|y <lo> <hi>   -> 1 | 0           (fails LOUD on usage)
+```
+
+`graph_axis_map` is exposed **so the suite can drive the formula headlessly and
+assert both endpoints** — the gesture and the verb share the one function, and a
+source-level leg asserts the anchored expression appears exactly once
+(landmine 45(a)).
+
+**The viewer carries no geometry.** `wviewer::axis_grabbed` is the
+`marker_grabbed` twin — switch ctx, `catch {xschem get graph_axis_drag}`, fail
+closed — and `strip_drag_press` gains exactly one rung, immediately after the
+marker rung and inside the handle test so the grip keeps unconditional first
+refusal:
+
+```tcl
+  if {[wviewer::axis_grabbed $W]} { return 1 }
+```
+
+The press was already forwarded to C at that point, so C has already decided.
+Nothing else changes: `<B1-Motion>` forwards when `strip_drag_motion` returns 0,
+`strip_drag_release` forwards the release unconditionally, and `key_filter`'s
+Escape arm already forwards ESC after cancelling its own drag.
+
+### 17.6 Tests
+
+`tests/headless/test_wave_axis_zoom.tcl`, auto-discovered by `full_audit.sh`.
+`AZ*` the region query, `AM*` the map (every expectation computed in Tcl from
+the closed form, with `xschem graph_coord` as an independent pixel→data
+transform), `AV*` the apply — **witnessing every rect**, `AL*` the log line and
+its replay in a `--logdir` child process, `AS*` the source-level
+one-formula-one-home tripwire; `AG*` the real C gesture and `AX*` the ASE viewer
+seam under DISPLAY. 119 checks in the `--nogui` arm, 173 with a display.

@@ -3913,6 +3913,71 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
               Tcl_SetResult(interp, "-1", TCL_STATIC);
             }
           }
+          /* ---- axis-region drag zoom, issue 0190 -------------------------
+           * doc/claude/specs/waveform_viewer_modes.md §17. Three getters, all
+           * FAIL SOFT (a sentinel + TCL_OK, never an error): the ASE viewer
+           * wraps them in `catch` and must read a missing verb as "nothing
+           * there", never as "locked out". One vocabulary for the whole
+           * feature: "" | x | y.
+           *
+           * xschem get graph_axis_at <graph_idx> <px> <py>
+           *   Which axis-number MARGIN that CANVAS PIXEL is in: "" (neither),
+           *   "x" (the bottom margin, the X tick numbers) or "y" (the left
+           *   margin, the Y tick numbers). Refuses the plot box, everything
+           *   outside the container rect, the reorder-grip column at every
+           *   height and any pixel `graph_legend_at` claims (for vlegend=1 and
+           *   for digital strips the legend IS the left margin). The bottom-LEFT
+           *   corner answers "y", matching the shipped RMB left-margin arm.
+           *   ⚠ Unlike graph_plotbox_at it does NOT require a loaded raw and
+           *   does NOT refuse digital strips -- it is pure geometry. */
+          else if(!strcmp(argv[2], "graph_axis_at")) {
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            Tcl_ResetResult(interp);
+            if(argc > 5) {
+              int ax = graph_axis_at(atoi(argv[3]), atof(argv[4]), atof(argv[5]));
+              if(ax == GRAPH_AXIS_X) Tcl_SetResult(interp, "x", TCL_STATIC);
+              else if(ax == GRAPH_AXIS_Y) Tcl_SetResult(interp, "y", TCL_STATIC);
+            }
+          }
+          /* xschem get graph_axis_map <graph_idx> x|y <p0> <p1>
+           * The new data window `{lo hi}` a drag from canvas pixel <p0> to <p1>
+           * along that axis produces, or {} when the travel is <= 3 screen
+           * pixels / the index is bad / the graph has no transform. THE FORMULA
+           * SEAM: the release arm in callback.c and the graph_axis_zoom verb
+           * both call the same graph_axis_map(), so a headless suite driving
+           * this verb is driving the gesture's own arithmetic -- including BOTH
+           * endpoints, which is what a width-only implementation gets wrong.
+           * The 3.0 is callback.c's file-private GRAPH_CLICK_TOL (the
+           * click-vs-drag travel test); it is deliberately not in the header,
+           * because it answers a different question from GRAPH_TRACE_PICK_TOL. */
+          else if(!strcmp(argv[2], "graph_axis_map")) {
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            Tcl_ResetResult(interp);
+            if(argc > 6) {
+              int ax = GRAPH_AXIS_NONE;
+              double lo = 0.0, hi = 0.0;
+              if(argv[4][0] == 'x') ax = GRAPH_AXIS_X;
+              else if(argv[4][0] == 'y') ax = GRAPH_AXIS_Y;
+              if(graph_axis_map(atoi(argv[3]), ax, atof(argv[5]), atof(argv[6]),
+                                &lo, &hi, 3.0)) {
+                char res[100];
+                my_snprintf(res, S(res), "%.17g %.17g", lo, hi);
+                Tcl_SetResult(interp, res, TCL_VOLATILE); /* copies: stack buf is fine */
+              }
+            }
+          }
+          /* xschem get graph_axis_drag
+           * What the last press ARMED: "" (nothing) | "x" | "y". The
+           * `graph_marker_drag` twin, and read the same way: the ASE viewer's
+           * press seam consults it to decide that C owns the whole gesture
+           * (wviewer::axis_grabbed), instead of hit-testing the margins in Tcl
+           * and growing a second source of truth for the plot box. */
+          else if(!strcmp(argv[2], "graph_axis_drag")) {
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            Tcl_ResetResult(interp);
+            if(xctx->graph_axis_drag == GRAPH_AXIS_X) Tcl_SetResult(interp, "x", TCL_STATIC);
+            else if(xctx->graph_axis_drag == GRAPH_AXIS_Y) Tcl_SetResult(interp, "y", TCL_STATIC);
+          }
           /* ---- waveform markers, doc/claude/specs/graph_markers.md ----
            * Four read-only getters, all FAIL SOFT (a sentinel + TCL_OK on a
            * short or bad query, never an error): the ASE viewer wraps them in
@@ -5121,6 +5186,45 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
           }
         }
       }
+    }
+
+    /* xschem graph_axis_zoom <graph_idx> x|y <lo> <hi>      (issue 0190)
+     *
+     * THE APPLY, and the replay form of the LMB axis-margin drag: 1 when
+     * anything was written, 0 for a bad/non-graph index. Fails LOUD (usage +
+     * TCL_ERROR) on a wrong argc or an unknown axis word -- a script wants a
+     * catchable error, which is the same split the graph_marker verbs use.
+     *
+     * X writes x1/x2 on that rect AND on every PARTICIPATING rect (the shipped
+     * predicate of the MMB pan / RMB box zoom), which is why the log line is the
+     * verb and not a setprop: one line replays the whole propagation. Y writes
+     * y1/y2 -- ypos1/ypos2 on a digital strip -- on that rect only.
+     *
+     * ⚠ Deliberately NOT scheduler_readonly_reject()ed, unlike graph_marker.
+     * A range write is VIEW state the engine has always been allowed to put in
+     * a read-only rect (landmine 17 names the box zoom by name); the ASE viewer
+     * is read-only for its whole life and its MMB pan and RMB box zoom already
+     * write there. Rejecting would break the viewer's own gesture AND abort any
+     * replay of the line this verb logs. A marker is durable CONTENT and is
+     * gated; a zoom is not. */
+    else if(!strcmp(argv[1], "graph_axis_zoom"))
+    {
+      int ax = GRAPH_AXIS_NONE;
+      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(argc < 6) {
+        Tcl_SetResult(interp, "xschem graph_axis_zoom: usage: <graph_idx> x|y <lo> <hi>",
+                      TCL_STATIC);
+        return TCL_ERROR;
+      }
+      if(!strcmp(argv[3], "x")) ax = GRAPH_AXIS_X;
+      else if(!strcmp(argv[3], "y")) ax = GRAPH_AXIS_Y;
+      else {
+        Tcl_SetResult(interp, "xschem graph_axis_zoom: axis must be x or y", TCL_STATIC);
+        return TCL_ERROR;
+      }
+      Tcl_SetResult(interp,
+        my_itoa(graph_axis_zoom(atoi(argv[2]), ax, atof(argv[4]), atof(argv[5]))),
+        TCL_VOLATILE);
     }
 
     /* xschem graph_marker <sub> ...   (doc/claude/specs/graph_markers.md)

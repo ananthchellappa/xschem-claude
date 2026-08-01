@@ -317,6 +317,21 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
   relies on it: its context sets `no_snap`, and `callback()` computes both fields
   unsnapped at the SOURCE for that window (issue 0177). The override above still
   covers graphs EMBEDDED IN A SCHEMATIC, whose context keeps its grid.
+  **LMB press-drag in an AXIS-NUMBER MARGIN = an axis-only zoom** (issue 0190,
+  `doc/claude/specs/waveform_viewer_modes.md` §17). It arms at the **END of the
+  cursor-grab block** — i.e. below the marker press (`mkpress` pre-empts the
+  whole block) and below all four cursor grabs, gated on
+  `!(graph_flags & (16|32|512|1024))`, because a cursor's line crosses the margin
+  and its numeric readout is *drawn* in it. `graph_axis_press_arm()` calls
+  `graph_axis_at()` with the EVENT's own pixels; the motion paints a
+  `drawtemprect` **band** beside the Button3 rubber (same `gctiled`/`gc[SELLAYER]`
+  /`graph_rubber_*` bookkeeping — **not** a prop token and **not** `draw_graph`
+  bit 16), and the release in the `finish:` section calls `graph_axis_map()` then
+  `graph_axis_zoom()`. ESC drops it through `graph_axis_drag_abort()` in
+  `abort_operation()`. The GRAPHPAN latch grew `|| xctx->graph_axis_drag` for the
+  same reason the marker drag did (landmine 36): the Y region is "left of the
+  plot box, anywhere in the container", so a top-left-corner press on a strip
+  with no legend entry there arms with `graph_top` already 1.
   **Writes results into `prop_ptr` tokens via
   `subst_token`, then `draw_graph()`.**
 - **Two different flag words — do not confuse:** `xctx->graph_flags` =
@@ -576,6 +591,38 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
   which keeps the whole sample identity (node, real dataset, absolute point,
   raw x/y) — one scan, three answers. Its x/y are RAW, never log-space:
   landmine 35.
+- **Axis-region drag zoom** (`doc/claude/specs/waveform_viewer_modes.md` §17,
+  issue 0190, 2026-08-01). Three getters in `xschem_cmds_g`'s `get` `case 'g':`,
+  all **fail SOFT** (a sentinel + `TCL_OK`, never an error — the ASE viewer wraps
+  them in `catch` and must read a missing verb as "nothing there", never as
+  "locked out"), and one top-level verb that **fails LOUD** on a usage error.
+  One vocabulary throughout: `""` | `x` | `y`.
+  - `xschem get graph_axis_at <gi> <px> <py>` — which axis-number MARGIN that
+    canvas pixel is in. Backed by `graph_axis_at()` (`draw.c`). Refuses the plot
+    box, everything outside the container, the reorder-grip column at every
+    height, and any pixel `graph_legend_at` claims. **Deliberately does NOT
+    require a loaded raw and does NOT refuse digital strips**, unlike
+    `graph_plotbox_at` — it is pure geometry, and an empty or digital strip still
+    has axes. The bottom-LEFT corner answers `y`.
+  - `xschem get graph_axis_map <gi> x|y <p0> <p1>` — `{lo hi}` for a drag from
+    canvas pixel `p0` to `p1` along that axis, `{}` for a travel of <= 3 screen
+    px / a bad index / no transform. **The FORMULA seam**: the release arm in
+    `callback.c` and the verb below both call the same `graph_axis_map()`, so a
+    headless suite driving this verb drives the gesture's own arithmetic —
+    including BOTH endpoints, which is what a width-only zoom-out gets wrong.
+  - `xschem get graph_axis_drag` — what the last press ARMED. The
+    `graph_marker_drag` twin; `wviewer::axis_grabbed` is the only thing the ASE
+    viewer knows about the axis regions (it hit-tests nothing).
+  - `xschem graph_axis_zoom <gi> x|y <lo> <hi>` — **THE apply**, and the replay
+    form of the gesture. X writes `x1`/`x2` on that rect and on every
+    PARTICIPATING rect (the shipped MMB-pan predicate); Y writes `y1`/`y2` — or
+    `ypos1`/`ypos2` on a digital strip — on that rect only. `1`/`0`; usage error
+    ⇒ `TCL_ERROR`. **NOT `scheduler_readonly_reject()`ed**, unlike
+    `graph_marker`: a range write is view state the engine has always been
+    allowed to put in a read-only rect (landmine 17 names the box zoom), the ASE
+    viewer is read-only for life, and rejecting would abort every replay of the
+    line this verb logs. No `set_modify`, no `push_undo` (landmine 19); exactly
+    one `log_action` line, `%.17g`, never pixels.
 - **Waveform markers** (`doc/claude/specs/graph_markers.md`, 2026-07-28). Four
   read-only getters in `xschem_cmds_g`, all **fail SOFT** (a sentinel +
   `TCL_OK` on a short or bad query, never an error — the ASE viewer wraps them
@@ -686,6 +733,19 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
   the worked example.
 - **New graph gesture/key:** branch in `waves_callback` **and** an
   ACTX_OVER_GRAPH row in `init_input_bindings`. Respect the participation test.
+- **New graph GESTURE IN A MARGIN (not in the plot box):** split it into
+  **query / formula / apply**, three functions, and let the Tcl surface reach all
+  three. Worked example, issue 0190: `graph_axis_at()` (which region is this
+  pixel in — pure geometry, local `Graph_ctx`, the `128|256` bracket, fails
+  closed), `graph_axis_map()` (THE arithmetic, in exactly one place, exposed as
+  `xschem get graph_axis_map` **so a headless suite can assert both endpoints of
+  the transform instead of only its visible consequence**) and
+  `graph_axis_zoom()` (THE mutation, shared by the release arm and by a
+  replayable verb). The split is what stops the gesture and the replay verb from
+  each growing their own copy of the formula — landmine 45(a) in a second shape,
+  and the reason the suite carries a source-level leg counting the expression.
+  Then read landmine 47 before choosing which pixels the region owns: the
+  margins are already occupied.
 - **New CURSOR (a session-wide, non-persisted overlay):** a `graph_flags` bit
   (keep both legends in sync — landmine 6), a draw path, and grab/move/set
   branches in `waves_callback`. This recipe is **only** right for transient
@@ -1730,6 +1790,77 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
     `doc/claude/issues/0189-dblclick-delta-marker-selects-pair.md`.
     Suite: `tests/headless/test_wave_markers.tcl` group `MS*` (both arms) and
     `MS-X1`-`MS-X6` (display).
+
+47. **An axis MARGIN is not free real estate; the formula gets its own function
+    AND its own query verb; and a C-side view write owes no viewer bookkeeping**
+    (2026-08-01, issue 0190, the LMB axis-region drag zoom). Three reusable
+    lessons from one gesture.
+
+    **(a) Everything is already living in the margins.** Before choosing which
+    pixels a new margin gesture owns, list the four owners that are there first,
+    because none of them is obvious from a screenshot:
+      * the **x/y CURSORS**. An x-cursor's line is drawn `gr->ry1..gr->ry2` and
+        its numeric READOUT at `gr->ry2-1` — i.e. *in* the bottom margin
+        (`draw_cursor`, `draw.c`); an hcursor's line spans `rx1+10..rx2-10` and
+        its readout sits at `gr->rx1+5`, *in* the left margin (`draw_hcursor`).
+        ⚠ Their four grab tests have **no plot-box confinement at all** and are
+        compared in **XSCHEM units**, not screen pixels
+        (`fabs(mousey - W_Y(cursor)) < 10`, `callback.c`) — at viewer zoom ≈ 0.27
+        that is ≈ 37 screen px of margin the cursor can claim. So "a press that
+        grabbed a cursor keeps the whole drag" has to be an explicit test
+        (`!(graph_flags & (16|32|512|1024))`), never an assumption about geometry;
+      * the **VERTICAL and DIGITAL legends**, which *are* the left margin
+        (`legend_slot_hit`: `rx1+5 .. x1-5`, and `rx1 .. x1-20*txtsizelab`). The
+        horizontal legend is the only one in the top band, and reading "the
+        legend is at the top" off the horizontal case is how the left margin
+        gets stolen from `vlegend` strips;
+      * the **reorder GRIP**, the right `GRAPH_REORDER_HANDLE_W` (14) screen px
+        at EVERY height, which `graph_marker_press()` already declines
+        unconditionally and which the Tcl seam tests before anything else;
+      * in the ASE viewer, `strip_at_pixel` covers the **whole band**, so the
+        margins were in the strip drag-reorder zone by permissiveness even though
+        the spec's own sentence never claimed them ("the reorder handle (always)
+        or empty waveform body", `waveform_viewer_modes.md` §12.1). Measured
+        before deciding: in the C engine an LMB margin drag was a **complete
+        no-op**, and in the viewer it **reordered the stack**.
+
+    **(b) The formula gets its own function AND its own query verb.** A gesture
+    computes a transform for its live feedback and again for its commit, and a
+    replayable verb computes it a third time — landmine 45(a) says they will
+    drift and that no behavioural leg can see it while they still agree. The
+    shape that fixes it: `graph_axis_at()` / `graph_axis_map()` /
+    `graph_axis_zoom()`, with `graph_axis_map()` exposed as
+    `xschem get graph_axis_map`. The verb is not a convenience — it is what lets
+    a headless suite assert **both endpoints** of the map instead of only the
+    visible consequence, and the anchored zoom-out is exactly the case where a
+    width-only implementation passes every "the range grew" assertion with the
+    window slid sideways. A source-level leg (`count_code`) then asserts the
+    expression appears once in `draw.c` and is CALLED once from `callback.c` and
+    once from `scheduler.c`. ⚠ Write it as `zlo = A - ub * R2;` and not
+    `*lo = A - ub * R2;`: the `count_code` idiom skips lines beginning with `*`,
+    because that is what a C comment continuation looks like.
+
+    **(c) A C-side view write needs no `capture_live_graph_state` and no viewer
+    undo.** It is one more PRODUCER for the capture the *next* Tcl mutation runs,
+    exactly like the MMB pan and the RMB box zoom — not a consumer of it. It sets
+    no dirty flag and pushes no C undo point (landmine 19), which is also what
+    lets the read-only ASE viewer perform it with **no `with_edit` bracket** and
+    what makes readonly-rejecting the verb wrong (landmine 17 already lists the
+    box zoom as view state the engine may put in a read-only rect). The visible
+    consequence — a plain window RESIZE discards it, because `regenerate`
+    re-places every rect from the model — is shipped behaviour for that whole
+    class, not a new defect.
+    ⚠ One thing it DOES owe: the GRAPHPAN **routing** latch (landmine 36). Its
+    own in-flight flag must join `(!graph_top || graph_marker_drag)`, because a
+    region defined as "left of the plot box, anywhere in the container" reaches
+    above the box top, and a drag armed with `graph_top == 1` loses its release
+    silently.
+
+    Spec: `doc/claude/specs/waveform_viewer_modes.md` §17 (+ §12.1 and §15.1);
+    decision doc `doc/claude/code_analysis/ovb01_03_axis_region_drag_zoom_decision.md`;
+    issue `doc/claude/issues/0190-axis-region-drag-zoom.md`.
+    Suite: `tests/headless/test_wave_axis_zoom.tcl` — `AZ*`/`AM*`/`AV*`/`AL*`/`AS*`
+    both arms, `AG*`/`AX*` display.
 
 ---
 

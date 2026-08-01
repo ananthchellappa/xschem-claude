@@ -1921,6 +1921,14 @@ void clear_drawing(void)
  xctx->graph_marker_dragnum = -1;
  xctx->graph_marker_draggraph = -1;
  xctx->graph_marker_moved = 0;
+ /* issue 0190: an armed axis-region drag zoom is bound to a rect INDEX, and this
+  * clear is about to invalidate every one of them. The same xctx is reused by
+  * `xschem clear`, File>Open in the tab, `xschem load`, the disk-undo reload and
+  * wviewer::regenerate's own clear_drawing, so a surviving arm would commit the
+  * drag onto whatever rect lands at that index next. */
+ xctx->graph_axis_drag = GRAPH_AXIS_NONE;
+ xctx->graph_axis_draggraph = -1;
+ xctx->graph_axis_press = 0.0;
  /* viewer plan item 6: the mid-drag shrink preview is transient chrome bound to
   * a graph index that this clear is about to invalidate. Left armed it would
   * shrink whatever trace happened to land at that index next. */

@@ -457,6 +457,23 @@ typedef int Tcl_Size;
  * graph_marker_sel_set` and never needs the cap. */
 #define GRAPH_MARKER_MAX_SEL     8
 
+/* Axis-region drag zoom (issue 0190,
+ * doc/claude/specs/waveform_viewer_modes.md §17). Which axis-number margin of a
+ * strip a canvas pixel is in -- the BOTTOM margin owns X, the LEFT margin owns
+ * Y. Not a bitmask: a pixel is in at most one of them (the bottom-left corner
+ * answers Y, matching the shipped RMB left-margin arm, which tests graph_left
+ * first and never consults graph_bottom). */
+#define GRAPH_AXIS_NONE 0
+#define GRAPH_AXIS_X    1
+#define GRAPH_AXIS_Y    2
+/* Upper bound on the ZOOM-OUT factor of one drag. A reverse drag scales the
+ * window by 1/|s| where s is the drag span as a fraction of the plot extent, so
+ * s -> 0 is 1/0. The 3-px click threshold normally binds first (max factor ~
+ * plot_width/3); this is the backstop that keeps an inf out of the x1/x2 tokens,
+ * where it would be permanent. NOT mirrored in Tcl -- no Tcl code computes the
+ * map (that is the whole point of graph_axis_map). */
+#define GRAPH_AXIS_ZOOM_MAX_FACTOR 1000.0
+
 /* xctx->graph_marker_dragmode -- the EFFECTIVE mode of an armed gesture,
  * latched at PRESS TIME from the selection state and never re-read afterwards.
  * xctx->graph_marker_drag keeps its original meaning, "what was GRABBED"
@@ -1722,6 +1739,15 @@ typedef struct {
                                                       * (the scratch's own x/y are rewritten
                                                       * on the first motion event) */
   GraphMarker graph_marker_scratch; /* live drag state, substituted by the renderer */
+  /* Axis-region drag zoom (issue 0190). ALL TRANSIENT, like the marker block
+   * above: the durable state is the rect's x1/x2/y1/y2 (or ypos1/ypos2) tokens,
+   * written once on the release. graph_axis_press is in SCREEN PIXELS because
+   * that is what graph_axis_map() takes -- the same space every other picking
+   * query on a strip takes (landmine 43). Reset in graph_axis_drag_clear(),
+   * clear_drawing() and alloc_xschem_data(). */
+  int    graph_axis_drag;      /* GRAPH_AXIS_NONE | _X | _Y -- what is armed */
+  int    graph_axis_draggraph; /* rect[GRIDLAYER] index the drag is bound to */
+  double graph_axis_press;     /* press position on that axis, screen pixels */
   /* viewer plan item 6: the mid-drag SHRINK PREVIEW of the trace being dragged
    * to another strip. The marker-scratch idea applied to a polyline: the
    * renderer scales the previewed trace's y values on the fly, so a motion
@@ -2244,6 +2270,38 @@ extern void draw_xhair_line(GC gc, int size, double linex1, double liney1, doubl
 /* viewer plan item 9: the graph snap cursor. draw_graph_snap_cursor() is the
  * hover pump (query + repaint); graph_snap_clear() erases and disarms. */
 extern int  graph_plotbox_at(int i, double px, double py);
+/* --- axis-region drag zoom (issue 0190, doc/claude/specs/waveform_viewer_modes.md
+ * §17). Query / formula / apply, deliberately three functions: the FORMULA has
+ * exactly one home so the gesture (callback.c) and the replayable verb
+ * (scheduler.c) cannot drift apart, and exposing it as `xschem get
+ * graph_axis_map` is what lets a headless suite assert BOTH endpoints of a zoom
+ * instead of only its width (landmine 45(a) in a second shape). */
+
+/* Which axis-number MARGIN of graph `i` the CANVAS PIXEL (px, py) is in:
+ * GRAPH_AXIS_X (below the plot box), GRAPH_AXIS_Y (left of it) or
+ * GRAPH_AXIS_NONE. Pure geometry, and it deliberately does NOT copy
+ * graph_plotbox_at's raw requirement or its digital refusal: an empty strip and
+ * a digital strip both have meaningful axes. It DOES decline the reorder-grip
+ * column and any pixel graph_legend_at claims (the vertical and digital legends
+ * ARE the left margin). Fails closed on a bad index / non-graph rect /
+ * off-screen graph. */
+extern int  graph_axis_at(int i, double px, double py);
+/* THE MAP, in one place. `p0`/`p1` are canvas pixels along `axis` (px for X, py
+ * for Y): the press and the release. Writes the new data window to *lo/*hi and
+ * returns 1; returns 0 for a bad index / no transform / travel <= `clicktol`
+ * screen pixels. Both endpoints come out of one anchored linear map -- a
+ * width-only implementation slides the window sideways and still passes every
+ * "the range grew" assertion. Works in `gr` space, which IS log space when
+ * logx/logy is set (landmine 35 from the other side: do NOT pow(10,.) here). */
+extern int  graph_axis_map(int i, int axis, double p0, double p1,
+                           double *lo, double *hi, double clicktol);
+/* THE APPLY, in one place, shared by the gesture and by `xschem graph_axis_zoom`.
+ * X writes x1/x2 on rect `i` AND on every PARTICIPATING rect (the shipped
+ * predicate of the MMB pan / RMB box zoom); Y writes y1/y2 -- or ypos1/ypos2 on
+ * a digital strip -- on rect `i` only. No set_modify, no push_undo (landmine 19:
+ * a graph gesture is view state), one log_action line in the verb form so a
+ * replay reproduces the whole propagation. Returns 1 when anything was written. */
+extern int  graph_axis_zoom(int i, int axis, double lo, double hi);
 extern void draw_graph_snap_cursor(int mx, int my);
 extern void graph_snap_clear(void);
 extern void draw_string(int layer,int what, const char *str, short rot, short flip, int hcenter, int vcenter,

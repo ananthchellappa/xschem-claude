@@ -2823,6 +2823,25 @@ proc wviewer::marker_grabbed {wp} {
   return [expr {$d ? 1 : 0}]
 }
 
+# 1 when the press just handed to C armed an AXIS-REGION DRAG ZOOM (issue 0190,
+# doc/claude/specs/waveform_viewer_modes.md §17): an LMB drag in the bottom
+# (X-number) or left (Y-number) margin of a strip. The marker_grabbed twin, in
+# shape and in reason — switch ctx first (the query answers for the CURRENT
+# xctx), fail CLOSED so a missing verb degrades to the pre-0190 behaviour.
+#
+# ⚠ The viewer deliberately does NOT hit-test the axis margins itself (D-22).
+# C already decided, on the press this proc's caller forwarded to it, and asking
+# is the whole point: a Tcl copy of the plot-box geometry would be a second
+# source of truth for the 14% margins and the three different top-edge formulas.
+# Contrast GRAPH_REORDER_HANDLE_W, which IS mirrored and carries a "change both"
+# warning for exactly that reason.
+proc wviewer::axis_grabbed {wp} {
+  if {[catch {xschem new_schematic switch $wp}]} { return 0 }
+  set a {}
+  catch {set a [xschem get graph_axis_drag]}
+  return [expr {($a eq {x} || $a eq {y}) ? 1 : 0}]
+}
+
 # The window-wide number of the SELECTED marker, or -1 for none / any error.
 # Same context rule and same fail-closed rule as marker_grabbed above: -1 means
 # "nothing selected", which is what the Delete gate in key_filter must conclude
@@ -2979,6 +2998,17 @@ proc wviewer::strip_drag_press {W px py state} {
     # Marker before cursor (below) is deliberate: an anchor is a smaller, more
     # intentional target than a full-height cursor line.
     if {[wviewer::marker_grabbed $W]} { return 1 }
+    # An axis-region drag zoom (issue 0190) is C's for the whole gesture, for the
+    # same reason the marker drag above is: the press has already been forwarded
+    # to C, C armed it, and a >3 px drag here must zoom the axis rather than
+    # reorder the stack. This is the ONLY place the viewer learns about the axis
+    # regions — there is deliberately no Tcl hit test to drift (D-22). It sits
+    # inside the handle test with the marker rung, so the reorder GRIP keeps
+    # unconditional first refusal (graph_axis_at declines that column itself).
+    # NO with_edit, unlike every neighbouring marker seam: a range write is view
+    # state the engine has always been allowed to put in a read-only rect
+    # (landmine 17 names the box zoom), so there is nothing to defeat.
+    if {[wviewer::axis_grabbed $W]} { return 1 }
     # inside the trace zone the press is NOT a reorder. It is either a cursor
     # grab (the C engine's, and it wins — a cursor can be parked on top of a
     # trace) or a grab of the trace itself, which arms the trace drag.
