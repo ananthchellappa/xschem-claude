@@ -2935,6 +2935,59 @@ int wave_is_hilighted(Graph_ctx *gr, int wcnt)
   return gr->hilight_wave == wcnt;
 }
 
+/* --- the mid-drag SHRINK PREVIEW as a SET (issue 0192) ----------------------
+ * doc/claude/specs/waveform_viewer_modes.md 19. A multi-trace drag carries N
+ * traces, so the preview arm carries N (gi, node) pairs. Storage is the
+ * graph_marker_sel shape (landmine 46): HEAD scalars that keep their exact
+ * pre-0192 meaning + a FIXED set array + a count, with ONE writer and ONE
+ * draw-side predicate. */
+
+/* THE ONE WRITER. Sets the set, the count, the HEAD and the scale together, so
+ * the head cannot drift from element 0 -- which is what keeps `xschem get
+ * graph_preview` byte-identical for the single-trace case. `n` is clamped to
+ * GRAPH_MAX_PREVIEW_WAVES: the cap bounds the PREVIEW only (xschem.h), never the
+ * move, so an over-long selection loses chrome rather than the gesture.
+ * scale == 0.0 or n <= 0 is the DISARM and zeroes all five fields, so there is
+ * exactly one place that turns the preview off. */
+void graph_preview_arm(const int *gis, const int *waves, int n, double scale)
+{
+  int k;
+  if(!xctx) return;
+  if(!gis || !waves || n <= 0 || scale == 0.0) {
+    xctx->graph_preview_scale = 0.0;
+    xctx->graph_preview_gi = 0;
+    xctx->graph_preview_wave = 0;
+    xctx->graph_preview_n = 0;
+    return;
+  }
+  if(n > GRAPH_MAX_PREVIEW_WAVES) n = GRAPH_MAX_PREVIEW_WAVES;
+  for(k = 0; k < n; ++k) {
+    xctx->graph_preview_set_gi[k] = gis[k];
+    xctx->graph_preview_set_wave[k] = waves[k];
+  }
+  xctx->graph_preview_n = n;
+  xctx->graph_preview_gi = gis[0];
+  xctx->graph_preview_wave = waves[0];
+  xctx->graph_preview_scale = scale;
+}
+
+/* THE ONE DRAW-SIDE TEST: is NODE index `wcnt` of graph `gi` being carried?
+ * The graph_marker_is_selected shape. Every `preview_wave == wcnt` comparison in
+ * this file goes through it -- a surviving bare one draws a carried trace at
+ * full size, and no leg that drags a SINGLE trace can see the difference, which
+ * is why DM6 asserts the count at source level.
+ * The scale test comes first so the resting cost is one compare. */
+int graph_preview_has(int gi, int wcnt)
+{
+  int k;
+  if(!xctx || wcnt < 0) return 0;
+  if(xctx->graph_preview_scale == 0.0) return 0;
+  for(k = 0; k < xctx->graph_preview_n; ++k) {
+    if(xctx->graph_preview_set_gi[k] == gi && xctx->graph_preview_set_wave[k] == wcnt) return 1;
+  }
+  return 0;
+}
+
 /* Parse graph rect `i`'s selection into `out` (at most `max` entries, ascending,
  * de-duplicated); returns how many were written, 0 for "nothing selected".
  *
@@ -3544,8 +3597,11 @@ static void draw_graph_points(int idx, int first, int last,
    * ordering entirely rather than assuming it.
    * Analog only: the arming query (graph_wave_at) refuses digital strips, so a
    * digital trace can never be picked up and never previewed; scaling one about
-   * the box centre would also drag it out of its own lane. */
-  if(!digital && gr->preview_wave == wcnt && xctx->graph_preview_scale != 0.0) {
+   * the box centre would also drag it out of its own lane.
+   * Issue 0192: the membership question is graph_preview_has()'s, the ONE
+   * draw-side predicate; gr->preview_gi only says whether THIS graph is
+   * chrome-enabled at all (-1 = no), so nothing walks the set at rest. */
+  if(!digital && gr->preview_gi >= 0 && graph_preview_has(gr->preview_gi, wcnt)) {
     preview = 1;
     prev_c  = (S_Y(gr->gy1) + S_Y(gr->gy2)) * 0.5;
     prev_cx = (S_X(gr->gx1) + S_X(gr->gx2)) * 0.5;
@@ -3819,8 +3875,11 @@ void setup_graph_data(int i, int skip, Graph_ctx *gr)
    * flags. Defaulted here, before the RECT_OUTSIDE early return, for exactly
    * the same shared-graph_struct reason as `active` above: without it a QUERY
    * that calls setup_graph_data (graph_point_at, graph_plotbox_at, ...) would
-   * leave the previous graph's preview armed in the shared struct. */
-  gr->preview_wave = -1;
+   * leave the previous graph's preview armed in the shared struct.
+   * Issue 0192: the field now holds the RECT INDEX this draw may preview rather
+   * than a node index, but the default and its position are unchanged and still
+   * load-bearing for exactly that reason. */
+  gr->preview_gi = -1;
   /* strip drag-reorder affordance: 1 = grip, 2 = grip + TOP drop bar,
    * 3 = grip + BOTTOM drop bar. Same early-default rule as `active` above and
    * for the same reason (shared xctx->graph_struct, off-screen early return). */
@@ -7226,12 +7285,11 @@ void draw_graph(int i, int flags, Graph_ctx *gr, void *ct)
    * printed or SVG'd schematic always gets the trace at full size. `has_x`
    * because a preview is a thing you look at.
    * The scale is read straight from xctx at draw time (a scalar, not the shared
-   * graph_struct), so a motion event only has to write three numbers. */
-  gr->preview_wave = -1;
-  if((flags & 16) && has_x && xctx->graph_preview_scale != 0.0 &&
-     i == xctx->graph_preview_gi) {
-    gr->preview_wave = xctx->graph_preview_wave;
-  }
+   * graph_struct), so a motion event only has to write a handful of numbers.
+   * Issue 0192: this only decides whether the graph is chrome-enabled. The
+   * MEMBERSHIP test moved into graph_preview_has(), so ONE predicate answers for
+   * every graph and a multi-strip drag needs no per-graph bookkeeping here. */
+  gr->preview_gi = ((flags & 16) && has_x) ? i : -1;
 
   if(r->flags & 4) { /* private_cursor */
     const char *s = get_tok_value(r->prop_ptr, "cursor1_x", 0);

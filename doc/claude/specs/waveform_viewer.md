@@ -1356,6 +1356,55 @@ until it has been looked at.
   eyeball-only and was not sabotage-verified**, because no assertion could have
   caught it.
 
+### REVISION 2026-08-01 (issue 0192): the arm is a SET
+
+A multi-trace drag carries N traces, so it previews N. **The effect itself is
+untouched** — same factor, same maths, same centre, same knob, same `flags & 16`
+chrome, same X save/restore. What changed is the arm, in the `graph_marker_sel`
+shape (landmine 46). Full contract:
+`doc/claude/specs/waveform_viewer_modes.md` §19.5.
+
+- **The HEAD keeps its exact meaning.** `graph_preview_scale` / `_gi` / `_wave`
+  are now element 0 of the set, so **`xschem get graph_preview` is
+  byte-identical** and all seven shipped `DV*` legs pass unchanged. The whole set
+  is read through a NEW getter, `xschem get graph_preview_set` →
+  `"gi ni gi ni …"` head first, `""` when nothing is armed.
+- **The setter grew trailing pairs**:
+  `xschem set graph_preview <gi> <ni> <scale> [<gi> <ni> …]`. The
+  three-argument form is unchanged and is the single-trace arm; a trailing odd
+  argument (a `gi` with no `ni`) is ignored rather than refused — this is chrome,
+  and half a pair is not worth a Tcl error. `xschem set graph_preview 0` still
+  clears head, set and count together.
+- **Storage**: `graph_preview_set_gi[]` / `_set_wave[]` / `graph_preview_n`,
+  FIXED arrays capped at `GRAPH_MAX_PREVIEW_WAVES` (**64**, matching
+  `GRAPH_MAX_SEL_WAVES`) — `xctx` is reset, not freed, so a pointer would add a
+  free path for nothing. **The cap bounds the PREVIEW only**: an over-long set
+  TRUNCATES, and the move itself is uncapped, so the worst case of a 65-trace
+  selection is that the 65th carried trace travels at full size. Refusing the
+  gesture over a cosmetic limit would be a functional regression.
+- **ONE writer, ONE predicate**: `graph_preview_arm()` sets set, count, head and
+  scale together (and zeroes all five on the disarm, so that has one home);
+  `graph_preview_has(gi, wcnt)` is the only draw-side membership test.
+  `Graph_ctx.preview_wave` became **`preview_gi`** — *the rect index this draw may
+  preview, or -1* — still defaulted in `setup_graph_data` **above** the
+  `RECT_OUTSIDE` return, which is unchanged and still load-bearing.
+- **Different source strips shrink about their OWN strip's centre**, in place
+  (D-50): `prev_c`/`prev_cx` come from the `gr` being drawn, so this is free. The
+  carried traces do **not** gather at the pointer — that would be a new overlay
+  render outside each rect's bbox clip, and it is recorded as out of scope.
+- **Tcl**: `wviewer::drag_preview_arm_set {token pairs}` is the plural arm (one
+  `xschem set` per motion threshold, however many traces); `drag_preview_arm
+  {token gi ti}` is now a one-line wrapper over it, signature and return contract
+  unchanged.
+- ⚠ **The same eyeball gap, now N-wide.** No leg can see that N traces render
+  shrunk at once, and whether `0.7` is right for a BUNDLE is a question only a
+  human can answer — `set ::wviewer_drag_shrink <0..1>` is the one-line tune.
+  What *is* asserted at source level (`DM6`) is that exactly one draw-side
+  comparison site survives and that the predicate matches on **both** the `gi`
+  and the node index: with a single carried trace a bare comparison and the
+  predicate agree exactly, so no behavioural leg could ever have caught a bare
+  one.
+
 ## Strip drag-to-reorder (2026-07-27)
 
 Full contract: `doc/claude/specs/waveform_viewer_modes.md` §12. As shipped:

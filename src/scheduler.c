@@ -4110,6 +4110,24 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
               Tcl_SetResult(interp, s, TCL_VOLATILE);
             }
           }
+          /* xschem get graph_preview_set -> the WHOLE previewed set as
+           * "<gi> <ni> <gi> <ni> ...", HEAD FIRST; "" when nothing is armed
+           * (issue 0192). The graph_marker_sel_set idiom above, for the same
+           * reason: the HEAD getter keeps its shipped output shape and the set
+           * is read through a NEW verb, so every assertion resting on the old
+           * one stays byte-identical. Never an error -- fails soft. */
+          else if(!strcmp(argv[2], "graph_preview_set")) {
+            int k;
+            char nbuf[32];
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            Tcl_ResetResult(interp);
+            for(k = 0; k < xctx->graph_preview_n; k++) {
+              my_snprintf(nbuf, S(nbuf), "%d", xctx->graph_preview_set_gi[k]);
+              Tcl_AppendElement(interp, nbuf);
+              my_snprintf(nbuf, S(nbuf), "%d", xctx->graph_preview_set_wave[k]);
+              Tcl_AppendElement(interp, nbuf);
+            }
+          }
           else if(!strcmp(argv[2], "graph_snap_cursor")) { /* item 9: per-window snap arming */
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
             Tcl_SetResult(interp, xctx->graph_snap != 0 ? "1" : "0", TCL_STATIC);
@@ -10609,7 +10627,7 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
              * frozen on the canvas with no pump left to erase it */
             if(!xctx->graph_snap) graph_snap_clear();
           }
-          /* xschem set graph_preview <gi> <wave> <scale>
+          /* xschem set graph_preview <gi> <wave> <scale> [<gi> <ni> ...]
            * xschem set graph_preview 0            -> disarm
            * Viewer plan item 6: draw NODE <wave> of graph <gi> vertically
            * shrunk by <scale> about the plot box centre, on screen only. Purely
@@ -10618,19 +10636,30 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
            * A scale of 0 (or a short argument list) disarms, which is also the
            * calloc default -- there is no sentinel to maintain.
            * Caller redraws; this does not, so a motion event can arm and repaint
-           * in one place. */
+           * in one place.
+           * Issue 0192: the three-argument form is unchanged and is the
+           * single-trace arm; TRAILING <gi> <ni> PAIRS extend it to the whole
+           * set a multi-trace drag carries. The head is element 0 either way, so
+           * `xschem get graph_preview` answers exactly what it always did and
+           * the whole set is read through `xschem get graph_preview_set`.
+           * A trailing odd argument (a gi with no ni) is ignored rather than
+           * refused -- this is chrome, and half a pair is not worth a Tcl error. */
           else if(!strcmp(argv[2], "graph_preview")) {
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
             if(argc > 5) {
-              xctx->graph_preview_gi = atoi(argv[3]);
-              xctx->graph_preview_wave = atoi(argv[4]);
-              xctx->graph_preview_scale = atof(argv[5]);
+              int pgi[GRAPH_MAX_PREVIEW_WAVES], pwv[GRAPH_MAX_PREVIEW_WAVES];
+              int pn = 0, a;
+              pgi[0] = atoi(argv[3]);
+              pwv[0] = atoi(argv[4]);
+              pn = 1;
+              for(a = 6; a + 1 < argc && pn < GRAPH_MAX_PREVIEW_WAVES; a += 2) {
+                pgi[pn] = atoi(argv[a]);
+                pwv[pn] = atoi(argv[a + 1]);
+                pn++;
+              }
+              graph_preview_arm(pgi, pwv, pn, atof(argv[5]));
             } else {
-              xctx->graph_preview_scale = 0.0;
-            }
-            if(xctx->graph_preview_scale == 0.0) {
-              xctx->graph_preview_gi = 0;
-              xctx->graph_preview_wave = 0;
+              graph_preview_arm(NULL, NULL, 0, 0.0);
             }
           }
           else if(!strcmp(argv[2], "cadgrid")) { /* set cad grid (default: 20) */

@@ -1935,6 +1935,9 @@ void clear_drawing(void)
  xctx->graph_preview_scale = 0.0;
  xctx->graph_preview_gi = 0;
  xctx->graph_preview_wave = 0;
+ /* issue 0192: the SET joins the same reset class for the same reason -- a
+  * surviving arm would shrink whatever traces land at those indices next. */
+ xctx->graph_preview_n = 0;
  del_inst_table();
  del_wire_table();
  my_free(_ALLOC_ID_, &xctx->schtedaxprop);

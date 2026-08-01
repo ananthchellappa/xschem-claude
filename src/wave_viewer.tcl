@@ -383,12 +383,16 @@ namespace eval wviewer {
   #   tdrag_to   = prospective destination strip index
   #   tdrag_x0/y0 = press pixel (the movement-threshold anchor)
   #   tdrag_active = 1 once the drag passed the threshold and owns the pointer
+  #   tdrag_pairs  = the MOVING SET (issue 0192): MODEL {gi ti} pairs decided at
+  #                  PRESS time — the whole selection when the pressed trace is
+  #                  in it, else just the pressed trace
   variable tdrag_gi;     array set tdrag_gi {}
   variable tdrag_ti;     array set tdrag_ti {}
   variable tdrag_to;     array set tdrag_to {}
   variable tdrag_x0;     array set tdrag_x0 {}
   variable tdrag_y0;     array set tdrag_y0 {}
   variable tdrag_active; array set tdrag_active {}
+  variable tdrag_pairs;  array set tdrag_pairs {}
   # UNDO / REDO of viewer model edits (2026-07-28): per-window stacks of MODEL
   # SNAPSHOTS ({graphs target}), newest last. Transient like the drag state —
   # created on open, dropped by forget, NEVER serialized: a saved layout carries
@@ -523,7 +527,7 @@ proc wviewer::forget {token} {
   catch {unset drag_to($token)}
   catch {unset drag_y0($token)}
   catch {unset drag_active($token)}
-  foreach a {tdrag_gi tdrag_ti tdrag_to tdrag_x0 tdrag_y0 tdrag_active
+  foreach a {tdrag_gi tdrag_ti tdrag_to tdrag_x0 tdrag_y0 tdrag_active tdrag_pairs
              undo_hist redo_hist} {
     catch {unset ::wviewer::${a}($token)}
   }
@@ -3395,6 +3399,148 @@ proc wviewer::move_trace {from_gi from_ti to_gi {token {}}} {
   return [expr {[llength [wviewer::dget [lindex $dgs $to_gi] traces {}]] - 1}]
 }
 
+# PURE: move the MODEL {gi ti} `pairs` to strip `to_gi`, all of them, as one
+# operation (issue 0192, doc/claude/specs/waveform_viewer_modes.md §19). A FOLD
+# over the shipped single-trace primitive above — nothing about a trace dict, a
+# marker, the selection hand-off or the empty-destination range blanking is
+# reimplemented here, which is what keeps a multi-trace drag an extension rather
+# than a second implementation.
+#
+# NORMALISATION comes first and is the thing the caller logs: integers, in range,
+# de-duplicated, ascending by (gi, ti), and every pair already ON the destination
+# DROPPED (D-44: those traces are there, and re-appending them would silently
+# reorder a strip the user did not ask to reorder). A pure list op has no error
+# channel, so any invalid pair returns the list UNCHANGED — move_traces refuses
+# loudly on the caller's behalf.
+#
+# ⚠ THE ONE PIECE OF NEW ARITHMETIC, and the only thing a naive loop gets wrong:
+# each step removes a trace from its source, so every LATER pair from that SAME
+# source has shifted down by one. `- $done($gi)` is that term. Moving indices
+# 0 and 1 cannot see it (0 then 1-1=0 removes the right two either way); moving
+# 0 and 2 of four can, which is what MV8 drives and what SAB-4 kills.
+#
+# Three properties fall out of the ascending fold order, and all three are
+# asserted rather than assumed:
+#   * destination order = SOURCE order, because every step APPENDS at the end;
+#   * the empty-destination range blanking fires EXACTLY ONCE — on the first
+#     step, after which the destination is no longer empty;
+#   * the destination's selection grows by one appended node index per moved
+#     trace, because each step recomputes `dst_ni = node_count $D` before it
+#     appends.
+proc wviewer::move_traces_in_graphs {graphs pairs to_gi} {
+  set n [llength $graphs]
+  if {![string is integer -strict $to_gi]} { return $graphs }
+  if {$to_gi < 0 || $to_gi >= $n} { return $graphs }
+  set norm {}
+  foreach p $pairs {
+    if {[llength $p] != 2} { return $graphs }
+    lassign $p gi ti
+    if {![string is integer -strict $gi] || ![string is integer -strict $ti]} { return $graphs }
+    if {$gi < 0 || $gi >= $n} { return $graphs }
+    if {$ti < 0 || $ti >= [llength [wviewer::dget [lindex $graphs $gi] traces {}]]} {
+      return $graphs
+    }
+    if {$gi == $to_gi} { continue }        ;# already there (D-44)
+    set k [list $gi $ti]
+    # a repeated pair would lreplace twice and take an innocent neighbour with
+    # it — the delete_items rule, for the same reason
+    if {[lsearch -exact $norm $k] >= 0} { continue }
+    lappend norm $k
+  }
+  # ascending by (gi, ti): lsort is STABLE, so sorting on ti and then on gi gives
+  # the composite order without a custom comparator
+  set norm [lsort -integer -index 0 [lsort -integer -index 1 $norm]]
+  set done [dict create]
+  foreach p $norm {
+    lassign $p gi ti
+    set d 0
+    if {[dict exists $done $gi]} { set d [dict get $done $gi] }
+    set graphs [wviewer::move_trace_in_graphs $graphs $gi [expr {$ti - $d}] $to_gi]
+    dict set done $gi [expr {$d + 1}]
+  }
+  return $graphs
+}
+
+# THE authoritative MULTI-trace move (issue 0192). Returns how many traces were
+# moved (0 when the normalised list is empty), or {} on failure.
+#
+# Modelled on delete_items (the N-object template) over move_trace's ordering
+# contract, and it owes exactly ONE of everything the way that one does:
+#   1. validate LOUDLY against the LIVE model — a bad index is a caller bug, and
+#      silently dropping one would move a DIFFERENT trace on a replay
+#   2. normalise, then: nothing left to move -> return WITHOUT mutating and
+#      WITHOUT logging (move_trace's `from_gi == to_gi` rule, applied per pair)
+#   3. verify the context switch (capture reads rect props; switch_ctx silently
+#      no-ops under a raised semaphore — landmine 17)
+#   4. capture the live C-written state FIRST, so the regenerate below cannot
+#      undo a pan/zoom/bold made with the mouse
+#   5. ONE push_undo, after the capture, so three traces are a single `u` (D-54).
+#      The fold runs on the PURE layer, so no intermediate state is snapshotted
+#   6. the DESTINATION becomes the target strip, set IN PLACE — not through
+#      set_target_strip, which would emit a second replay-log line for what is an
+#      internal consequence of this one command
+#   7. exactly ONE regenerate, exactly ONE log line, and the line carries the
+#      NORMALISED pairs (D-57) so replaying it reproduces exactly this run
+proc wviewer::move_traces {pairs to_gi {token {}}} {
+  variable windows
+  variable target
+  set token [wviewer::resolve_token $token]
+  if {$token eq {} || ![dict exists $windows $token]} {
+    if {[info exists ::has_x] && [info commands ::ciw_echo] ne {}} {
+      ciw_echo "wviewer: no waveform viewer window to move traces in" error
+    }
+    return {}
+  }
+  set gs [dict get [wviewer::layout_for $token] graphs]
+  set n [llength $gs]
+  if {![string is integer -strict $to_gi] || $to_gi < 0 || $to_gi >= $n} {
+    if {[info exists ::has_x] && [info commands ::ciw_echo] ne {}} {
+      ciw_echo "wviewer: bad strip index '$to_gi' (0..[expr {$n - 1}])" error
+    }
+    return {}
+  }
+  set norm {}
+  foreach p $pairs {
+    if {[llength $p] != 2} {
+      if {[info exists ::has_x] && [info commands ::ciw_echo] ne {}} {
+        ciw_echo "wviewer: bad trace pair '$p' (expected {gi ti})" error
+      }
+      return {}
+    }
+    lassign $p gi ti
+    if {![string is integer -strict $gi] || $gi < 0 || $gi >= $n} {
+      if {[info exists ::has_x] && [info commands ::ciw_echo] ne {}} {
+        ciw_echo "wviewer: bad strip index '$gi' (0..[expr {$n - 1}])" error
+      }
+      return {}
+    }
+    set cnt [llength [wviewer::dget [lindex $gs $gi] traces {}]]
+    if {![string is integer -strict $ti] || $ti < 0 || $ti >= $cnt} {
+      if {[info exists ::has_x] && [info commands ::ciw_echo] ne {}} {
+        ciw_echo "wviewer: bad trace index '$ti' on strip $gi (0..[expr {$cnt - 1}])" error
+      }
+      return {}
+    }
+    if {$gi == $to_gi} { continue }
+    if {[lsearch -exact $norm [list $gi $ti]] >= 0} { continue }
+    lappend norm [list $gi $ti]
+  }
+  set norm [lsort -integer -index 0 [lsort -integer -index 1 $norm]]
+  # No-op discipline, move_trace's `from == to` rule: a drop where every selected
+  # trace is already on the destination is not a state change, so no undo point,
+  # no repaint and NO log line for a replay to re-run.
+  if {![llength $norm]} { return 0 }
+  if {![wviewer::switch_ctx $token]} { return {} }
+  wviewer::capture_live_graph_state $token
+  wviewer::push_undo $token           ;# AFTER the capture: `u` restores the view
+  set gs [dict get [wviewer::layout_for $token] graphs]
+  wviewer::set_graphs $token [wviewer::move_traces_in_graphs $gs $norm $to_gi]
+  set target($token) $to_gi
+  wviewer::regenerate $token
+  wviewer::log_action [list wviewer::move_traces $norm $to_gi $token]
+  return [llength $norm]
+}
+
 # --- give one trace a strip of its own (viewer plan item 7) -------------------
 # doc/claude/specs/waveform_viewer.md. The payload behind the RMB context menu
 # below, and a CIW-typable command in its own right.
@@ -4019,6 +4165,35 @@ proc wviewer::selected_waves {wp gi} {
   return {}
 }
 
+# THE window-wide selection as MODEL {gi ti} pairs, ascending — the ONE place
+# that folds `selected_waves` across every strip (issue 0192 D-53). Both
+# consumers go through it: the DEL key (delete_selection_at) and the multi-trace
+# drag arm (trace_drag_arm).
+#
+# ⚠ One fold, deliberately. Two copies of this loop would drift — landmine
+# 43/46(a) is the same lesson from the draw side — and the drift is invisible to
+# any test that exercises only one of the two paths: with a single-trace
+# selection every plausible variant of this loop gives the same answer.
+#
+# The mapping is landmine 34's: `selected_waves` answers in NODE space (what the
+# rect stores), the model indexes TRACES, and a vec-less trace occupies a model
+# slot and no node slot. `trace_index_of_node` is the crossing, and a node that
+# maps nowhere is dropped rather than guessed at.
+proc wviewer::selection_pairs {W} {
+  set token [wviewer::token_for_canvas $W]
+  if {$token eq {}} { return {} }
+  set out {}
+  set gi 0
+  foreach G [dict get [wviewer::layout_for $token] graphs] {
+    foreach ni [wviewer::selected_waves $W $gi] {
+      set ti [wviewer::trace_index_of_node $G $ni]
+      if {$ti >= 0} { lappend out [list $gi $ti] }
+    }
+    incr gi
+  }
+  return $out
+}
+
 # Paint the prospective destination strip of a trace drag: clear the frame on
 # `old`, put one on `new`. Rides the SAME `reorder_handle` prop token as the grip
 # and the strip drop bar (value 4 = frame around the whole strip — the target is
@@ -4047,12 +4222,14 @@ proc wviewer::trace_drag_feedback {token old new from} {
 proc wviewer::trace_drag_clear {token} {
   variable tdrag_gi; variable tdrag_ti; variable tdrag_to
   variable tdrag_x0; variable tdrag_y0; variable tdrag_active
+  variable tdrag_pairs
   set tdrag_gi($token) -1
   set tdrag_ti($token) -1
   set tdrag_to($token) -1
   set tdrag_x0($token) 0
   set tdrag_y0($token) 0
   set tdrag_active($token) 0
+  set tdrag_pairs($token) {}    ;# issue 0192: the moving SET dies with the gesture
   return {}
 }
 
@@ -4088,16 +4265,33 @@ proc wviewer::trace_drag_reset {token} {
 # threshold — because that is the affordance: pressing a trace means you are
 # holding it (the Acrobat pan-hand precedent). A press that turns out to be a
 # plain click (the wave-bold toggle) restores it on release, unchanged.
+#
+# THE MOVING SET is decided HERE, on the press (issue 0192, D-41): if the pressed
+# trace is in the live selection the whole window-wide selection travels;
+# otherwise just this trace does. A press on an UNSELECTED trace neither extends
+# nor collapses nor clears the selection — the gesture simply ignores it, which
+# is the rule issue 0174 D3 already settled for clicks.
+#
+# Press time, not drop time, and both reasons are load-bearing:
+#   * the shrink preview arms at the 3-px threshold and needs the set then;
+#   * strip_drag_release forwards the release to C BEFORE trace_drag_drop runs,
+#     and a no-travel release COLLAPSES the selection to the clicked trace
+#     (measured). Reading at drop time would work only because the drag
+#     travelled — a coincidence, not a contract.
 proc wviewer::trace_drag_arm {W token gi px py {ni {}}} {
   variable windows
   variable tdrag_gi; variable tdrag_ti; variable tdrag_to
   variable tdrag_x0; variable tdrag_y0; variable tdrag_active
+  variable tdrag_pairs
   if {![string is integer -strict $ni]} { set ni [wviewer::trace_at $W $gi $px $py] }
   if {$ni < 0} { return 0 }
   set gs [dict get [wviewer::layout_for $token] graphs]
   if {$gi < 0 || $gi >= [llength $gs]} { return 0 }
   set ti [wviewer::trace_index_of_node [lindex $gs $gi] $ni]
   if {$ti < 0} { return 0 }
+  set tdrag_pairs($token) [list [list $gi $ti]]
+  set sel [wviewer::selection_pairs $W]
+  if {[lsearch -exact $sel [list $gi $ti]] >= 0} { set tdrag_pairs($token) $sel }
   set tdrag_gi($token) $gi
   set tdrag_ti($token) $ti
   set tdrag_to($token) $gi
@@ -4135,22 +4329,45 @@ proc wviewer::drag_shrink {} {
   return $v
 }
 
-# Arm the preview for MODEL trace `ti` of strip `gi`, and repaint. The C side
-# speaks NODE indices (the hilight_wave / graph_trace_at space), so the model
-# index has to go through trace_index_of_node's inverse first — mixing the two
-# would shrink a different trace whenever any trace carries an empty `vec`.
+# Arm the preview for the MODEL {gi ti} `pairs` a multi-trace drag is carrying,
+# and repaint (issue 0192). ONE `xschem set graph_preview` for the whole set, so
+# one motion event is one C call and one redraw however many traces travel.
+#
+# The C side speaks NODE indices (the hilight_wave / graph_trace_at space), so
+# every model index goes through node_index_of_trace first — mixing the two would
+# shrink a different trace whenever any trace carries an empty `vec` (landmine
+# 34). A pair that maps to -1 is a vec-less trace: it draws nothing, so it is
+# dropped rather than refused. Nothing left to preview -> no arm at all.
 # Returns 1 when a preview was armed.
-proc wviewer::drag_preview_arm {token gi ti} {
+proc wviewer::drag_preview_arm_set {token pairs} {
   variable windows
   if {![dict exists $windows $token]} { return 0 }
   set gs [dict get [wviewer::layout_for $token] graphs]
-  if {$gi < 0 || $gi >= [llength $gs]} { return 0 }
-  set ni [wviewer::node_index_of_trace [lindex $gs $gi] $ti]
-  if {$ni < 0} { return 0 }                    ;# a vec-less trace draws nothing
+  set n [llength $gs]
+  set flat {}
+  foreach p $pairs {
+    if {[llength $p] != 2} { continue }
+    lassign $p gi ti
+    if {![string is integer -strict $gi] || $gi < 0 || $gi >= $n} { continue }
+    set ni [wviewer::node_index_of_trace [lindex $gs $gi] $ti]
+    if {$ni < 0} { continue }                  ;# a vec-less trace draws nothing
+    lappend flat $gi $ni
+  }
+  if {![llength $flat]} { return 0 }
   if {![wviewer::switch_ctx $token]} { return 0 }
-  if {[catch {xschem set graph_preview $gi $ni [wviewer::drag_shrink]}]} { return 0 }
+  # head first, then the trailing pairs: the C head keeps its pre-0192 meaning
+  set cmd [list xschem set graph_preview [lindex $flat 0] [lindex $flat 1] \
+             [wviewer::drag_shrink]]
+  foreach v [lrange $flat 2 end] { lappend cmd $v }
+  if {[catch {eval $cmd}]} { return 0 }
   catch {xschem redraw}
   return 1
+}
+
+# The SINGLE-trace arm: a one-line wrapper over the plural form above, so there
+# is one implementation and the shipped signature/return contract are unchanged.
+proc wviewer::drag_preview_arm {token gi ti} {
+  return [wviewer::drag_preview_arm_set $token [list [list $gi $ti]]]
 }
 
 # Disarm and repaint. Idempotent, and cheap enough to call on every teardown
@@ -4168,6 +4385,7 @@ proc wviewer::drag_preview_clear {token} {
 proc wviewer::trace_drag_motion {W px py state} {
   variable tdrag_gi; variable tdrag_to; variable tdrag_ti
   variable tdrag_x0; variable tdrag_y0; variable tdrag_active
+  variable tdrag_pairs
   set token [wviewer::token_for_canvas $W]
   if {$token eq {}} { return 0 }
   if {![info exists tdrag_gi($token)] || $tdrag_gi($token) < 0} { return 0 }
@@ -4183,7 +4401,14 @@ proc wviewer::trace_drag_motion {W px py state} {
     # vertically shrunk, so it reads as "picked up" and stops being confusable
     # with the traces it is passing over. Armed ONCE, here, not on every motion:
     # it is pure render state and nothing about it changes as the pointer moves.
-    wviewer::drag_preview_arm $token $from $tdrag_ti($token)
+    # issue 0192: EVERY carried trace shrinks, so the arm takes the whole moving
+    # set decided at press time — one trace when the press was not on a selected
+    # one, which is the shipped single-trace case with n = 1.
+    set pset [list [list $from $tdrag_ti($token)]]
+    if {[info exists tdrag_pairs($token)] && [llength $tdrag_pairs($token)]} {
+      set pset $tdrag_pairs($token)
+    }
+    wviewer::drag_preview_arm_set $token $pset
   }
   # the destination simply FOLLOWS THE POINTER: the strip it is over, or (outside
   # every band) none, which the release reads as "cancel"
@@ -4204,6 +4429,7 @@ proc wviewer::trace_drag_motion {W px py state} {
 # nothing. Returns the destination trace index when a move happened, else {}.
 proc wviewer::trace_drag_drop {W} {
   variable tdrag_gi; variable tdrag_ti; variable tdrag_to; variable tdrag_active
+  variable tdrag_pairs
   set token [wviewer::token_for_canvas $W]
   if {$token eq {}} { return {} }
   if {![info exists tdrag_gi($token)] || $tdrag_gi($token) < 0} { return {} }
@@ -4211,13 +4437,34 @@ proc wviewer::trace_drag_drop {W} {
   set ti $tdrag_ti($token)
   set to $tdrag_to($token)
   set active $tdrag_active($token)
-  wviewer::trace_drag_reset $token
+  set pairs [list [list $from $ti]]
+  if {[info exists tdrag_pairs($token)] && [llength $tdrag_pairs($token)]} {
+    set pairs $tdrag_pairs($token)
+  }
+  wviewer::trace_drag_reset $token          ;# reads before it clears
   if {!$active || $to < 0 || $to == $from} { return {} }
-  # catch: move_trace regenerates, and with_edit ERRORS on a refused context
+  # issue 0192: what actually MOVES is the carried set minus whatever is already
+  # on the destination (D-44) — a trace that is there does not move, and a drop
+  # where nothing would move commits nothing and logs nothing.
+  set movable {}
+  foreach p $pairs {
+    if {[llength $p] != 2} { continue }
+    if {[lindex $p 0] == $to} { continue }
+    lappend movable $p
+  }
+  if {![llength $movable]} { return {} }
+  # catch: both mutations regenerate, and with_edit ERRORS on a refused context
   # switch (raised semaphore). Inside a Tk binding that would pop bgerror's
   # stack-trace modal over the viewer; a refused move must just not happen.
   set r {}
-  catch {set r [wviewer::move_trace $from $ti $to $token]}
+  if {[llength $movable] == 1 && [lindex $movable 0] eq [list $from $ti]} {
+    # D-42: the single-trace gesture keeps calling the SHIPPED mutation, because
+    # `wviewer::move_trace <gi> <ti> <to> <tok>` is a REPLAY CONTRACT — it is what
+    # TD1/TD2/TD7 assert verbatim and what every action log already on disk says.
+    catch {set r [wviewer::move_trace $from $ti $to $token]}
+  } else {
+    catch {set r [wviewer::move_traces $movable $to $token]}
+  }
   return $r
 }
 
@@ -4943,19 +5190,13 @@ proc wviewer::marker_graph_at {wp num} {
 proc wviewer::delete_selection_at {W px py} {
   set token [wviewer::token_for_canvas $W]
   if {$token eq {}} { return {} }
-  set gs [dict get [wviewer::layout_for $token] graphs]
   # THE TRACES: the live selection, read off the rects the way every other
   # selection consumer does (it is view state the C engine owns), mapped from
   # NODE index to MODEL trace index — landmine 34, they are different spaces.
-  set pairs {}
-  set gi 0
-  foreach G $gs {
-    foreach ni [wviewer::selected_waves $W $gi] {
-      set ti [wviewer::trace_index_of_node $G $ni]
-      if {$ti >= 0} { lappend pairs [list $gi $ti] }
-    }
-    incr gi
-  }
+  # That fold is `selection_pairs`, shared with the multi-trace drag arm since
+  # issue 0192: two copies of it would drift, and the drift would be invisible to
+  # any test that drives only one of the two gestures (D-53).
+  set pairs [wviewer::selection_pairs $W]
   # THE MARKER: C's own gate, reproduced rather than loosened — a marker is
   # selected AND the pointer is over the strip that OWNS it (callback.c
   # `case XK_Delete`: `graph_marker_find(sel, &sgi, NULL) && sgi == graph_master`,

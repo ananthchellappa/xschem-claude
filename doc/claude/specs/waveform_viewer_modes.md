@@ -658,6 +658,12 @@ The two gestures are mutually exclusive by *where the press landed* — empty
 waveform body (or the handle) reorders strips, the 10-screen-pixel zone around a
 drawn trace picks that trace up — so one press arms exactly one of them.
 
+> **Extended by §19 (issue 0192).** Everything below still describes the gesture
+> exactly, with one refinement: when the pressed trace is part of a multi-trace
+> SELECTION, the drag carries the WHOLE selection rather than the one trace, and
+> the drop calls `move_traces` instead of `move_trace`. A press on an
+> **unselected** trace is byte-for-byte this section, log line included.
+
 ### 13.1 The gesture
 
 - **Press on a trace** arms the move and turns the pointer into the grab hand
@@ -890,7 +896,8 @@ of trace names above it; "margins" is everything else inside the strip rect
 | gesture | where | owner | effect |
 |---|---|---|---|
 | LMB press-drag (> 3 px) | empty body / the grip | **Tcl** | strip drag-REORDER (§12) |
-| LMB press-drag (> 3 px) | within 10 px of a trace | **Tcl** | trace drag between strips (§13) |
+| LMB press-drag (> 3 px) | within 10 px of an UNSELECTED trace | **Tcl** | trace drag between strips (§13) — that trace alone |
+| LMB press-drag (> 3 px) | within 10 px of a **SELECTED** trace | **Tcl** | the WHOLE window-wide selection moves to the strip it is dropped on, all of it wearing the mid-drag shrink (§19, issue 0192). The press neither extends nor collapses the selection |
 | LMB press-drag (> 3 px) | the **bottom (X-number) margin** | **C** | zoom X on every PARTICIPATING strip (§17, issue 0190) |
 | LMB press-drag (> 3 px) | the **left (Y-number) margin** | **C** | zoom Y on that strip only (§17) |
 | LMB press-drag | on a cursor / a marker | **C** | cursor drag, marker anchor/label drag |
@@ -1649,3 +1656,222 @@ handed the **X** pixel) → `CE3b`, `CE3c` and `CE10`'s map leg **only**; every
 width / other-axis / other-strip leg stays green, which is the point;
 SAB-13 (`$py` → `$px` in `wviewer::wheel_zoom`'s y arm) → `CV2b`, `CV2c` only.
 Both were green-across-the-board before the second repair pass.
+
+---
+
+## 19. Multi-trace drag to a strip (2026-08-01, issue 0192)
+
+§13 taught one trace to travel. This teaches the whole SELECTION to travel with
+it, and to wear the mid-drag shrink on the way.
+
+> **User spec, verbatim.** *"When multiple traces are selected, an
+> LMB-press-and-drag with press on/near one of the traces, and drag to a
+> destination strip will cause all selected traces to be moved to the
+> destination. All selected traces being moved will display the cool-factor
+> shrink during the press-and-drag."*
+
+Nothing here is a new mechanism. The selection has been a SET since §15, the
+trace move has been a PURE list op since §13, the N-object one-undo-point /
+one-log-line shape has existed since §16, and the shrink preview has been
+shipped since viewer plan item 6 (`waveform_viewer.md`). This section is the
+join.
+
+### 19.1 The gesture
+
+| step | what | note |
+|---|---|---|
+| PRESS on a trace | §13's arm, unchanged — `hand2` on the press, the press forwarded to C verbatim | a cursor grab, a marker grab and an axis grab all still win first |
+| PRESS decides **the moving set** | in the live selection ⇒ the whole window-wide selection; not in it ⇒ that trace alone (**D-41**) | see 19.1.1 |
+| > 3 px travel | the drag owns the pointer, and the shrink preview is armed **once**, for **every** carried trace | 19.5 |
+| motion | the destination follows the pointer; `reorder_handle=4` frames it | §13.5, unchanged |
+| RELEASE over another strip | every carried trace that is not already there moves to it | 19.3 |
+| release on the source, outside every strip, sub-threshold, or Escape | commits nothing, logs nothing, takes the preview down | §13.1's rule, unchanged |
+
+**The refusals**, all inherited: a drop where **nothing** would move (every
+carried trace is already on the destination, or the destination *is* the source)
+mutates nothing, logs nothing and takes no undo point.
+
+#### 19.1.1 Why the set is decided at PRESS time
+
+Two reasons, and both are load-bearing:
+
+* the shrink preview arms at the 3-px threshold and needs the set **then**;
+* `strip_drag_release` forwards the release to C **before** `trace_drag_drop`
+  runs, and a no-travel release COLLAPSES the selection to the clicked trace
+  (§15.1 rule 2, issue 0174 D3). Reading the selection at drop time would work
+  only because the drag travelled — a coincidence, not a contract.
+
+Measured on 2026-08-01, and it is what makes the press-time read correct: a
+press **does not** change the selection; only the no-travel *release* does.
+
+**A press on an UNSELECTED trace is exactly today's gesture** (D-41). It does not
+extend the selection, does not collapse it and does not clear it — the gesture
+ignores it. Silently extending a selection on a press is the class of surprise
+0174 D3 already ruled against for clicks.
+
+### 19.2 Model operations
+
+Pure, headless-testable, in `wave_viewer.tcl`:
+
+| proc | what |
+|---|---|
+| `selection_pairs W` | the window-wide selection as MODEL `{gi ti}` pairs, ascending. **THE ONE FOLD** of `selected_waves` across every strip (D-53) — `delete_selection_at` was rewired onto it, so there is exactly one such loop in the file. Crosses NODE→MODEL space through `trace_index_of_node` (landmine 34) |
+| `move_traces_in_graphs graphs pairs to_gi` | **PURE**. Normalise, then FOLD `move_trace_in_graphs` over the result |
+
+**Normalisation** (this is what gets logged, D-57): integers, in range,
+de-duplicated, ascending by `(gi, ti)`, and **every pair whose `gi == to_gi`
+dropped** — those traces are already on the destination and re-appending them
+would silently reorder a strip the user did not ask to reorder (D-44). Any
+*invalid* pair returns the list UNCHANGED; a pure list op has no error channel,
+so `move_traces` refuses loudly on the caller's behalf.
+
+**The fold, and its one new term:**
+
+```tcl
+  foreach {gi ti} <ascending> {
+    set graphs [wviewer::move_trace_in_graphs $graphs $gi [expr {$ti - $done($gi)}] $to_gi]
+    incr done($gi)
+  }
+```
+
+`- $done($gi)` — the number of traces already removed from **that same source
+graph** — is the whole of the new index arithmetic. Everything else (the trace
+dict carried whole, marker migration, the `hilight_wave`/`sel_waves` hand-off,
+the empty-destination range blanking) comes from the shipped primitive unchanged.
+
+⚠ **The probe that can see the term.** Moving model indices **0 and 2 of a
+four-trace strip** leaves the traces that were at 1 and 3; an unadjusted fold
+moves the trace that was at **3** instead of the one at 2 — silently, no refusal.
+`MV8` is that leg; `SAB-4` is that bug.
+
+Three properties fall out of the ascending fold order and are asserted:
+
+1. **destination order = SOURCE order**, because every step appends at the end;
+2. the **empty-destination range blanking fires exactly once**, on the first step
+   (after it the destination is no longer empty);
+3. the destination's **selection grows by one appended node index per moved
+   trace**, because each step recomputes `dst_ni = node_count $D` before its
+   append.
+
+### 19.3 The one mutation
+
+```tcl
+wviewer::move_traces {pairs to_gi ?token?}   ;# -> how many moved, 0, or {}
+```
+
+`delete_items`' N-object shape over `move_trace`'s ordering contract (§13.3),
+and it owes exactly **ONE of everything**:
+
+1. validate LOUDLY (`ciw_echo` + `{}`) against the LIVE model — a bad index is a
+   caller bug, and silently dropping one would move a DIFFERENT trace on replay;
+2. normalise; **nothing left to move ⇒ return without mutating and without
+   logging** (move_trace's `from_gi == to_gi` rule, applied per pair);
+3. verified `switch_ctx` (landmine 17);
+4. `capture_live_graph_state` FIRST, so the regenerate cannot undo a mouse
+   pan/zoom/bold;
+5. **ONE `push_undo`**, after the capture, so three traces are a single `u`
+   (D-54). The fold runs on the PURE layer, so no intermediate state is ever
+   snapshotted;
+6. the destination becomes the target strip, **set in place** — never through
+   `set_target_strip`, which would emit a second replay line for an internal
+   consequence (§12.7);
+7. **ONE `regenerate`**, **ONE `log_action`**, carrying the **normalised** pairs
+   and the explicit token:
+
+```tcl
+wviewer::move_traces {{0 1} {0 3} {1 0}} 2 <token>
+```
+
+Selection state does not exist at replay time (§15, 0175 D8), which is why the
+line is by explicit index; the normalised list is what was actually applied
+(0176 D6), which is why a replay reproduces exactly the run that logged it.
+
+⚠ The **PRESS** may still emit its own `wviewer::set_target_strip` line, exactly
+when it really moved the target (§12.3). That is the shipped re-target, not this
+command's; what this command owes is that **no target line names the
+DESTINATION**.
+
+### 19.4 Singular or plural: the drop dispatches
+
+```tcl
+  if {[llength $movable] == 1 && [lindex $movable 0] eq [list $from $ti]} {
+    wviewer::move_trace $from $ti $to $token          ;# shipped, unchanged
+  } else {
+    wviewer::move_traces $movable $to $token
+  }
+```
+
+**D-42.** `wviewer::move_trace <gi> <ti> <to> <tok>` is a **replay contract**: it
+is what the action log records, what `TD1`/`TD2`/`TD7` in
+`test_wave_viewer.tcl` assert verbatim, and what `MG15` in `test_wave_modes.tcl`
+drives. Routing the single case through the new verb would rewrite that line for
+no behavioural gain and break replay of every log already on disk. Keeping both
+is four lines, and it makes "today's single-trace behaviour, unchanged" true by
+construction rather than by inspection.
+
+### 19.5 The shrink preview as a SET
+
+The preview itself is unchanged — same factor, same maths, same knob
+(`::wviewer_drag_shrink`, default `0.7`), same `flags & 16` chrome. What changed
+is that the arm carries N pairs instead of one, in the `graph_marker_sel` shape
+(landmine 46):
+
+| layer | shape |
+|---|---|
+| `xctx` | `graph_preview_scale` / `_gi` / `_wave` are the **HEAD** (element 0) and keep their exact meaning, plus `graph_preview_set_gi[]` / `_set_wave[]` / `graph_preview_n`. FIXED arrays capped at `GRAPH_MAX_PREVIEW_WAVES` (64) — `xctx` is reset, not freed |
+| ONE writer | `graph_preview_arm(gis, waves, n, scale)` in `draw.c`. Sets set, count, head and scale together, so the head cannot drift from element 0; `scale == 0.0` or `n <= 0` zeroes all five, so the DISARM has one home |
+| ONE draw-side predicate | `graph_preview_has(gi, wcnt)` in `draw.c`, beside `wave_is_hilighted`. Returns 0 when nothing is armed, so at rest it costs one compare |
+| `Graph_ctx` | `preview_wave` (a node index) became `preview_gi` — *the rect index this draw may preview, or -1*. `setup_graph_data` still defaults it **above** the `RECT_OUTSIDE` return (landmine 11); `draw_graph` sets `gr->preview_gi = ((flags & 16) && has_x) ? i : -1` |
+| verbs | `xschem set graph_preview <gi> <ni> <scale> [<gi> <ni> …]` (trailing pairs; a trailing odd argument is ignored; over-long sets truncate at the cap) and the NEW `xschem get graph_preview_set` → `"gi ni gi ni …"` \| `""`. **`xschem get graph_preview` is byte-identical** |
+| Tcl | `wviewer::drag_preview_arm_set {token pairs}` maps each MODEL pair through `node_index_of_trace` (landmine 34), drops the vec-less ones and issues ONE `xschem set graph_preview`. `drag_preview_arm {token gi ti}` is a one-line wrapper over it |
+
+**The cap bounds the PREVIEW only** (D-59). The move is uncapped, so the worst
+case of a 65-trace selection is that the 65th carried trace is drawn full size
+while it travels — refusing the gesture over a cosmetic limit would be a
+functional regression.
+
+**Traces on different source strips shrink about THEIR OWN strip's plot-box
+centre, in place** (D-50). `prev_c`/`prev_cx` come from the `gr` of the graph
+being drawn, so this is free. The alternative — gathering the carried traces
+visually at the pointer — is a new overlay render outside each rect's bbox clip:
+a different feature, recorded as out of scope.
+
+⚠ **The one-predicate rule is asserted at SOURCE level** and it has to be: with a
+single carried trace a bare `preview_gi == wcnt` comparison and
+`graph_preview_has()` agree exactly, so no behavioural leg that drags one trace
+can tell them apart. `DM6` counts the comparison sites in `draw.c` on CODE lines
+only (the `LS5`/`MS13` idiom) and pins both terms of the predicate's membership
+test — the `gi` term is pixels-only and is unreachable any other way.
+
+### 19.6 Tests
+
+| suite | group | arms | what |
+|---|---|---|---|
+| `tests/headless/test_wave_modes.tcl` | `MV1`-`MV12` | **both** | the PURE fold: order, cross-strip, `gi == to_gi`, dict identity, the SELECTION set, markers + no dangling `prev`, **the index-adjustment teeth (MV8)**, range blanking, a vec-less source, the refusals, dedupe |
+| `tests/headless/test_wave_drag_preview.tcl` | `DV8`-`DV12`, `DM0`-`DM6` | verb legs **both**, gesture legs DISPLAY | the C storage (head byte-identical, the new getter, the cap read out of `xschem.h`, odd-argument tolerance) and the multi arm end to end, plus the source-level one-writer/one-predicate leg |
+| `tests/headless/test_wave_trace_menu.tcl` | `MM0`-`MM13` | DISPLAY | the whole gesture on a THREE-strip fixture with inert `sdid` identities and a NON-CONTIGUOUS 2-of-3 selection built through the shipped Ctrl+click bindings |
+
+`test_wave_viewer.tcl`'s `TD*` fixture is one trace plus one empty strip and
+cannot host a multi-selection; it stays the **single-trace regression witness**
+(D-42's teeth) and its count is unchanged at 368.
+
+Nine named sabotages, each verified: SAB-1 (drop always singular) → `MM1`/`MM2`/
+`MM4`/`MM5`/`MM6`/`MM11`, and **`MM7` stays green**, which is what proves `MM7`
+is really driven from an unselected trace; SAB-2 (`push_undo` inside the fold) →
+`MM3`'s depth leg only; SAB-3 (restore the destination's ranges after the fold,
+i.e. the blanking never shows) → `MV9` + `MM11` only; SAB-4 (drop `- done(gi)`)
+→ `MV8` and every other leg that moves ≥ 2 traces from one source; SAB-5 (arm
+only the first pair) → `DM1`/`DM2`, and **`DV8` stays green**, which is what
+proves the verb leg tests the C storage rather than the Tcl arm; SAB-6
+(`graph_preview_has` ignores its `gi`) → `DM6`'s gi-term leg only; SAB-7 (take
+the selection unconditionally) → `DM3` + `MM7`, `MM1` green; SAB-8 (one log line
+per pair) → `MM4` and the log legs of `MM5`/`MM6`; SAB-9 (fold descending) →
+`MV2` + `MM1`'s order leg (and, on a 0-and-2 fixture, their arrival counts too —
+a descending fold computes a negative index and the second move is refused).
+
+**What no assertion can reach** (the honest list): that N traces actually RENDER
+shrunk at once — nothing headless reads pixels, and there is no seam between
+`S_Y()` and `XDrawLines` to spy; whether `0.7` is the right shrink for a BUNDLE
+(it was eyeballed for one trace on 2026-07-29 — one-line tune:
+`set ::wviewer_drag_shrink <0..1>`); and whether traces shrinking in place on
+their own strips reads as "I am carrying these" when the selection spans strips.

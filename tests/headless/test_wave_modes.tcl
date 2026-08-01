@@ -665,6 +665,232 @@ check "DT10 a marker-free graph never gains a markers key" \
 
 foreach dtp {dt_tr dt_g dt_vecs dt_rec} { rename $dtp {} }
 
+# --- MV: dragging MANY traces to one strip, the PURE half (issue 0192) -------
+# doc/claude/specs/waveform_viewer_modes.md §19. `move_traces_in_graphs` is a
+# FOLD over the shipped single-trace primitive M8 pins above, so the trace dict,
+# the marker migration, the selection hand-off and the empty-destination range
+# blanking are all inherited rather than reimplemented. Exactly ONE piece of new
+# arithmetic exists — each `ti` is adjusted by the number of traces already
+# removed from ITS OWN source graph — and MV8 is the leg that can see it.
+#
+# ⚠ WHY MV8 IS SHAPED THE WAY IT IS. Moving model indices 0 and 1 of a strip is
+# a probe where several wrong folds happen to look right or fail loudly; moving
+# 0 and 2 of FOUR is the smallest fixture where an unadjusted fold silently moves
+# the WRONG SECOND TRACE (index 2 of the shortened list is the trace that was at
+# 3) instead of refusing. That is the probe-placement rule: drive the leg from a
+# point where the correct and the incorrect implementation DISAGREE.
+proc mv_tr {v {color 4} {name {}}} { return [dict create expr $v name $name vec $v color $color] }
+proc mv_g {args} {
+  set trs {}
+  foreach v $args { lappend trs [mv_tr $v] }
+  return [dict replace [wviewer::empty_graph] traces $trs]
+}
+proc mv_vecs {gs} {
+  set out {}
+  foreach G $gs {
+    set v {}
+    foreach tr [wviewer::dget $G traces {}] { lappend v [wviewer::dget $tr vec {}] }
+    lappend out $v
+  }
+  return $out
+}
+proc mv_rec {num wave {prev 0}} { return "$num $wave 0 3 0.3 1.3 $prev 0.06 -0.09" }
+proc mv_mk {G} {
+  set out {}
+  foreach r [wviewer::markers_decode [wviewer::dget $G markers {}]] {
+    lappend out [list [dict get $r num] [dict get $r wave] [dict get $r prev]]
+  }
+  return $out
+}
+
+set mvbase [list [mv_g v(a) v(b) v(c)] [mv_g v(x)]]
+
+# --- MV1: two pairs from ONE source, appended at the END, in source order
+set mv1 [pcall {wviewer::move_traces_in_graphs $mvbase {{0 0} {0 2}} 1}]
+check "MV1 both pairs arrive at the destination END, in source order" \
+  [mv_vecs $mv1] {v(b) {v(x) v(a) v(c)}}
+check "MV1 the source keeps its others, in order" \
+  [lindex [mv_vecs $mv1] 0] {v(b)}
+check "MV1 the strip list itself is untouched (2 strips in, 2 out)" \
+  [llength $mv1] 2
+
+# --- MV2: the ARRIVAL ORDER is SOURCE order, not pick order (SAB-9)
+# the caller's list is deliberately scrambled: the fold sorts it, the caller does
+# not have to, and the replay log carries the sorted form
+set mv2 [pcall {wviewer::move_traces_in_graphs $mvbase {{0 2} {0 0} {0 1}} 1}]
+check "MV2 an out-of-order caller list still arrives in SOURCE order" \
+  [mv_vecs $mv2] {{} {v(x) v(a) v(b) v(c)}}
+check "MV2 ... and the emptied source survives as an empty strip (D-51)" \
+  [llength $mv2] 2
+
+# --- MV3: the selection spans TWO source strips (D-43)
+set mv3base [list [mv_g v(a) v(b) v(c)] [mv_g v(x) v(y)] [mv_g]]
+set mv3 [pcall {wviewer::move_traces_in_graphs $mv3base {{1 1} {0 2} {0 0}} 2}]
+check "MV3 pairs from two source strips ALL arrive, ascending by (gi, ti)" \
+  [mv_vecs $mv3] {v(b) v(x) {v(a) v(c) v(y)}}
+
+# --- MV4: the destination IS one of the sources (D-44)
+set mv4base [list [mv_g v(a) v(b)] [mv_g v(x) v(y)]]
+set mv4 [pcall {wviewer::move_traces_in_graphs $mv4base {{0 0} {1 1}} 1}]
+check "MV4 a pair already ON the destination does not move" \
+  [mv_vecs $mv4] {v(b) {v(x) v(y) v(a)}}
+check "MV4 ... it keeps its exact index and its exact dict" \
+  [lindex [dict get [lindex $mv4 1] traces] 1] \
+  [lindex [dict get [lindex $mv4base 1] traces] 1]
+
+# --- MV5: every moved trace dict is carried WHOLE
+set mv5base [list [dict replace [wviewer::empty_graph] traces [list \
+    [mv_tr {v(a)} 4] \
+    [dict create expr {v(out) 2 *} name doubled vec expr1 color 12] \
+    [mv_tr {v(c)} 9 alias_c]]] \
+  [wviewer::empty_graph]]
+set mv5 [pcall {wviewer::move_traces_in_graphs $mv5base {{0 1} {0 2}} 1}]
+check "MV5 the first moved dict is byte-identical to its source dict" \
+  [lindex [dict get [lindex $mv5 1] traces] 0] \
+  [lindex [dict get [lindex $mv5base 0] traces] 1]
+check "MV5 ... and so is the second" \
+  [lindex [dict get [lindex $mv5 1] traces] 1] \
+  [lindex [dict get [lindex $mv5base 0] traces] 2]
+
+# --- MV6: THE SELECTION follows, as a SET (D-52)
+# strip 0 holds a b c d with nodes 0, 2 and 3 selected; a and c move out, so
+# node 3 (d) has TWO holes below it and must end up at node 1 — a leg that only
+# checked "d is still selected" would pass against a single-hole shift.
+set mv6base [list \
+  [wviewer::model_sel_set [mv_g v(a) v(b) v(c) v(d)] {0 2 3}] \
+  [wviewer::model_sel_set [mv_g v(x)] {0}]]
+set mv6 [pcall {wviewer::move_traces_in_graphs $mv6base {{0 0} {0 2}} 1}]
+check "MV6 the source's surviving selection shifts past EVERY hole" \
+  [wviewer::model_sel [lindex $mv6 0]] {1}
+check "MV6 ... which is the node index of the trace it names" \
+  [lindex [mv_vecs $mv6] 0] {v(b) v(d)}
+check "MV6 the destination's unrelated selection SURVIVES and the movers join it" \
+  [wviewer::model_sel [lindex $mv6 1]] {0 1 2}
+check "MV6 ... with hilight_wave as the head and sel_waves as the whole set" \
+  [list [dict get [lindex $mv6 1] hilight_wave] [dict get [lindex $mv6 1] sel_waves]] \
+  {0 {0 1 2}}
+# teeth: an UNSELECTED trace that moves must not join the destination's set
+set mv6b [pcall {wviewer::move_traces_in_graphs $mv6base {{0 1} {0 2}} 1}]
+check "MV6 an unselected mover does not join the destination's selection" \
+  [wviewer::model_sel [lindex $mv6b 1]] {0 2}
+
+# --- MV7: markers migrate per moved trace, survivors remap, no dangling prev
+set mv7base [list \
+  [dict replace [mv_g v(a) v(b) v(c) v(d)] markers \
+     "[mv_rec 1 0]\n[mv_rec 2 1]\n[mv_rec 3 3 1]"] \
+  [dict replace [mv_g v(x)] markers [mv_rec 4 0]]]
+set mv7 [pcall {wviewer::move_traces_in_graphs $mv7base {{0 0} {0 2}} 1}]
+check "MV7 the marker ON a moved trace migrates to its new node index" \
+  [mv_mk [lindex $mv7 1]] {{4 0 0} {1 1 0}}
+check "MV7 the survivors shift down past every hole" \
+  [mv_mk [lindex $mv7 0]] {{2 0 0} {3 1 1}}
+# the window-wide dangling-prev sweep: every `prev` still resolves to a live
+# number SOMEWHERE in the window (marker 3's partner moved to the other strip,
+# which is legal — a delta block's partner is a number, not a strip)
+set mv7nums {}
+foreach G $mv7 { foreach n [wviewer::markers_numbers [wviewer::dget $G markers {}]] { lappend mv7nums $n } }
+set mv7dang 0
+foreach G $mv7 {
+  foreach r [wviewer::markers_decode [wviewer::dget $G markers {}]] {
+    set p [dict get $r prev]
+    if {$p != 0 && [lsearch -exact $mv7nums $p] < 0} { incr mv7dang }
+  }
+}
+check "MV7 no `prev` is left dangling window-wide" [list $mv7dang [lsort -integer $mv7nums]] {0 {1 2 3 4}}
+
+# --- MV8: THE INDEX-ADJUSTMENT TEETH (SAB-4) --------------------------------
+# four traces, moving model indices 0 and 2. Without the per-source `- done`
+# term the second step reads index 2 of the SHORTENED list, which is v(d) — so
+# the wrong trace travels and the wrong two are left behind, silently.
+set mv8base [list [mv_g v(a) v(b) v(c) v(d)] [mv_g]]
+set mv8 [pcall {wviewer::move_traces_in_graphs $mv8base {{0 0} {0 2}} 1}]
+check "MV8 moving model indices 0 and 2 leaves exactly the traces that were at 1 and 3" \
+  [lindex [mv_vecs $mv8] 0] {v(b) v(d)}
+check "MV8 ... and the two that travelled are the ones that were at 0 and 2" \
+  [lindex [mv_vecs $mv8] 1] {v(a) v(c)}
+# the same teeth one strip over: 1 and 3 of four
+set mv8b [pcall {wviewer::move_traces_in_graphs $mv8base {{0 1} {0 3}} 1}]
+check "MV8 moving 1 and 3 leaves the traces that were at 0 and 2" \
+  [mv_vecs $mv8b] {{v(a) v(c)} {v(b) v(d)}}
+
+# --- MV9: the EMPTY-destination range blanking (SAB-3) ----------------------
+# It fires on the FIRST step only: after it, the destination holds a trace. That
+# "exactly once" is not separately observable in a pure fold (blanking is
+# idempotent), so what is asserted is the pair of outcomes it separates —
+# an empty destination is put back to `auto`, a populated one keeps its window.
+set mv9e [list [mv_g v(a) v(b) v(c)] [dict replace [mv_g] x1 0 x2 1 y1 -1 y2 5]]
+set mv9ed [lindex [pcall {wviewer::move_traces_in_graphs $mv9e {{0 0} {0 2}} 1}] 1]
+check "MV9 an EMPTY destination's ranges are blanked to auto" \
+  [list [dict get $mv9ed x1] [dict get $mv9ed x2] \
+        [dict get $mv9ed y1] [dict get $mv9ed y2]] {{} {} {} {}}
+check "MV9 ... and both traces still landed" \
+  [llength [wviewer::dget $mv9ed traces {}]] 2
+set mv9f [list [mv_g v(a) v(b) v(c)] [dict replace [mv_g v(k)] x1 0 x2 1 y1 -1 y2 5]]
+set mv9fd [lindex [pcall {wviewer::move_traces_in_graphs $mv9f {{0 0} {0 2}} 1}] 1]
+check "MV9 a destination that already holds traces keeps its window byte-identical" \
+  [list [dict get $mv9fd x1] [dict get $mv9fd x2] \
+        [dict get $mv9fd y1] [dict get $mv9fd y2]] {0 1 -1 5}
+check "MV9 the SOURCE's ranges are never touched" \
+  [dict get [lindex [pcall {wviewer::move_traces_in_graphs \
+     [list [dict replace [mv_g v(a) v(b) v(c)] y2 9] [mv_g]] {{0 0} {0 2}} 1}] 0] y2] 9
+
+# --- MV10: a source carrying a VEC-LESS trace (landmine 34) -----------------
+# model index 1 has no `vec`, so it occupies a model slot and NO node slot. The
+# fold is in MODEL space and the selection/marker maths inside the primitive is
+# in NODE space; getting that wrong moves or bolds the wrong thing.
+set mv10base [list \
+  [wviewer::model_sel_set [dict replace [wviewer::empty_graph] traces [list \
+     [mv_tr {v(a)}] [dict create expr {} name {} vec {} color 7] [mv_tr {v(c)}]]] {1}] \
+  [mv_g v(x)]]
+set mv10 [pcall {wviewer::move_traces_in_graphs $mv10base {{0 0} {0 2}} 1}]
+check "MV10 the vec-less trace is the only thing left, untouched" \
+  [lindex [dict get [lindex $mv10 0] traces] 0] \
+  [lindex [dict get [lindex $mv10base 0] traces] 1]
+check "MV10 exactly one trace is left on the source" \
+  [llength [wviewer::dget [lindex $mv10 0] traces {}]] 1
+check "MV10 both drawn traces arrived, in source order" \
+  [lindex [mv_vecs $mv10] 1] {v(x) v(a) v(c)}
+# NODE 1 of the source is MODEL index 2 (v(c)) — the vec-less trace at model 1
+# occupies no node slot. It was the selected one, so it is the trace the
+# destination picks up, and it lands BEHIND v(x) and v(a): node 2, not node 1.
+# A fold that confused the two spaces would bold v(a) instead.
+check "MV10 the NODE-space selection followed the right trace" \
+  [wviewer::model_sel [lindex $mv10 1]] {2}
+check "MV10 ... and the source lost its selection entirely" \
+  [wviewer::model_sel [lindex $mv10 0]] {}
+
+# --- MV11: refusals — a pure list op refuses by returning the list UNCHANGED
+foreach {mv11why mv11pairs mv11to} {
+  {a bad source strip}        {{5 0}}        1
+  {a bad trace index}         {{0 9}}        1
+  {a negative trace index}    {{0 -1}}       1
+  {a non-integer trace index} {{0 x}}        1
+  {a non-integer strip index} {{y 0}}        1
+  {a malformed pair}          {{0}}          1
+  {one bad pair among good}   {{0 0} {0 9}}  1
+  {a bad destination}         {{0 0}}        7
+  {a non-integer destination} {{0 0}}        z
+} {
+  check "MV11 $mv11why -> the list is returned unchanged" \
+    [mv_vecs [pcall {wviewer::move_traces_in_graphs $mvbase $mv11pairs $mv11to}]] \
+    [mv_vecs $mvbase]
+}
+check "MV11 an EMPTY pair list changes nothing" \
+  [mv_vecs [pcall {wviewer::move_traces_in_graphs $mvbase {} 1}]] [mv_vecs $mvbase]
+check "MV11 every pair already on the destination changes nothing" \
+  [mv_vecs [pcall {wviewer::move_traces_in_graphs $mvbase {{1 0}} 1}]] [mv_vecs $mvbase]
+check "MV11 an empty strip list is refused rather than indexed" \
+  [pcall {wviewer::move_traces_in_graphs {} {{0 0}} 0}] {}
+
+# --- MV12: duplicates are deduped ------------------------------------------
+# {0 1} twice must move v(b) ONCE. A fold that took it twice would lreplace
+# twice and drag v(a) along with it (index 1 - 1 = 0 on the second pass).
+set mv12 [pcall {wviewer::move_traces_in_graphs $mvbase {{0 1} {0 1}} 1}]
+check "MV12 a repeated pair moves its trace exactly once" \
+  [mv_vecs $mv12] {{v(a) v(c)} {v(x) v(b)}}
+
+foreach mvp {mv_tr mv_g mv_vecs mv_rec mv_mk} { rename $mvp {} }
+
 # --- M9: the context-loan TICKET (issue 0173) --------------------------------
 # wviewer::enter_ctx / wviewer::leave_ctx are the save/restore bracket every
 # viewer-side READ goes through so that switching INTO a viewer stops being a

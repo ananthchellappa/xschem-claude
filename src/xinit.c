@@ -686,6 +686,10 @@ static void alloc_xschem_data(const char *top_path, const char *win_path)
   xctx->graph_preview_scale = 0.0;
   xctx->graph_preview_gi = 0;
   xctx->graph_preview_wave = 0;
+  /* issue 0192: the SET joins the same reset class for the same reason -- a
+   * surviving arm would shrink whatever traces land at those indices in the NEW
+   * document. The pair arrays need no clearing: graph_preview_n bounds them. */
+  xctx->graph_preview_n = 0;
   xctx->graph_lastsel = -1;
   xctx->graph_struct.hilight_wave = -1; /* index of wave */
   xctx->wires = 0;

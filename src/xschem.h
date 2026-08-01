@@ -457,6 +457,20 @@ typedef int Tcl_Size;
  * graph_marker_sel_set` and never needs the cap. */
 #define GRAPH_MARKER_MAX_SEL     8
 
+/* How many traces one MULTI-TRACE drag can PREVIEW at once (issue 0192,
+ * doc/claude/specs/waveform_viewer_modes.md 19). Matches GRAPH_MAX_SEL_WAVES
+ * because the set is derived from the trace selection.
+ * FIXED arrays in xctx, never pointers: xctx is reset, not freed, at
+ * clear_drawing() and alloc_xschem_data(), and a pointer would add a free path
+ * for nothing (the GRAPH_MARKER_MAX_SEL reasoning above).
+ * The cap bounds the PREVIEW only -- the move itself is uncapped, so the worst
+ * case of an over-long selection is that the 65th carried trace is drawn full
+ * size while it travels. Refusing the gesture over a cosmetic limit would be a
+ * functional regression.
+ * NOT mirrored in Tcl: Tcl reads the list back from `xschem get
+ * graph_preview_set` and never needs the cap (the GRAPH_MARKER_MAX_SEL rule). */
+#define GRAPH_MAX_PREVIEW_WAVES  64
+
 /* Axis-region drag zoom (issue 0190,
  * doc/claude/specs/waveform_viewer_modes.md §17). Which axis-number margin of a
  * strip a canvas pixel is in -- the BOTTOM margin owns X, the LEFT margin owns
@@ -1228,13 +1242,19 @@ typedef struct {
                    * no longer distinctive: it is drawn bold ITALIC.
                    * Unlike `active`/`reorder_handle` this is durable CONTENT,
                    * not chrome — it belongs in exports. */
-  int preview_wave; /* viewer plan item 6: NODE index of the trace to draw
-                     * SHRUNK (the mid-drag preview), or -1. Unlike every field
-                     * above it does NOT come from a prop token — it is written
-                     * by draw_graph from the transient xctx preview state, and
-                     * only when flags & 16 (on-screen chrome), so it can never
-                     * reach an export. Compared against `wcnt` exactly like
-                     * hilight_wave, which is the same index space. */
+  int preview_gi;   /* viewer plan item 6, widened by issue 0192: the rect index
+                     * THIS draw may preview, or -1. It is NOT a node index any
+                     * more -- a multi-trace drag carries a SET, so the per-trace
+                     * question ("is this node being carried") moved into
+                     * graph_preview_has(), leaving this field to answer only the
+                     * per-graph one ("is this graph chrome-enabled at all"), so
+                     * draw_graph_points does no set walk when nothing is armed.
+                     * Unlike every field above it does NOT come from a prop
+                     * token -- it is written by draw_graph, and only when
+                     * flags & 16 (on-screen chrome), so it can never reach an
+                     * export. Defaulted to -1 in setup_graph_data BEFORE the
+                     * RECT_OUTSIDE early return, and that is still load-bearing
+                     * (landmine 11: gr is the shared xctx->graph_struct). */
 } Graph_ctx;
 
 /* One waveform marker (doc/claude/specs/graph_markers.md). Persisted in the
@@ -1768,10 +1788,20 @@ typedef struct {
    * default (a -1 sentinel would not be), so the other two are only meaningful
    * when it is non-zero. Transient CHROME — draw_graph applies it only for
    * flags & 16, so every export draws the trace unshrunk.
-   * Reset in graph_preview_clear(), clear_drawing() and alloc_xschem_data(). */
+   * There is deliberately NO graph_preview_clear() function (an earlier version
+   * of this comment named one): the disarm has ONE home, graph_preview_arm()
+   * called with scale 0.0 or n <= 0, and the two document-lifetime resets are
+   * inline in clear_drawing() (actions.c) and alloc_xschem_data() (xinit.c).
+   * Issue 0192 made the arm a SET, in the graph_marker_sel shape above: the
+   * three scalars below are the HEAD (element 0) and keep their exact meaning,
+   * so `xschem get graph_preview` is byte-identical to the single-trace era;
+   * the whole set is read through `xschem get graph_preview_set`. */
   double graph_preview_scale; /* 0.0 = no preview armed; else the y scale factor */
-  int graph_preview_gi;       /* rect[GRIDLAYER] index the preview is bound to */
-  int graph_preview_wave;     /* NODE index within that graph (the wcnt space) */
+  int graph_preview_gi;       /* HEAD: rect[GRIDLAYER] index of set element 0 */
+  int graph_preview_wave;     /* HEAD: NODE index within that graph (the wcnt space) */
+  int graph_preview_set_gi[GRAPH_MAX_PREVIEW_WAVES];   /* the WHOLE carried set, as */
+  int graph_preview_set_wave[GRAPH_MAX_PREVIEW_WAVES]; /* (gi, node) pairs, HEAD FIRST */
+  int graph_preview_n;        /* 0 <=> graph_preview_scale == 0.0 */
   int graph_lastsel; /* last graph that was clicked (selected) */
   /*    */
   XSegment *biggridpoint;
@@ -2035,6 +2065,22 @@ extern int  graph_sel_waves_get(int i, int *out, int max);
 extern int  graph_sel_waves_set(int i, const int *waves, int n);
 extern int  graph_sel_waves_toggle(int i, int wcnt);
 extern int  wave_is_hilighted(Graph_ctx *gr, int wcnt);
+/* The mid-drag SHRINK PREVIEW as a SET (issue 0192,
+ * doc/claude/specs/waveform_viewer_modes.md 19). Same one-writer/one-predicate
+ * discipline wave_is_hilighted enforces for the selection, for the same reason:
+ * a surviving bare comparison draws a carried trace at full size and NO leg that
+ * drags a single trace can see it (with n == 1 the bare test and the predicate
+ * agree exactly), so test_wave_drag_preview.tcl DM6 counts the sites at source
+ * level.
+ *   graph_preview_arm   THE ONE WRITER. Copies at most GRAPH_MAX_PREVIEW_WAVES
+ *                       (gi, node) pairs, sets the count, sets the HEAD from
+ *                       element 0 and sets the scale -- together, so the head can
+ *                       never drift from the set. scale == 0.0 or n <= 0 zeroes
+ *                       all five fields, so the DISARM has one home too.
+ *   graph_preview_has   THE ONE DRAW-SIDE TEST. 0 immediately when nothing is
+ *                       armed, so at rest it costs one compare. */
+extern void graph_preview_arm(const int *gis, const int *waves, int n, double scale);
+extern int  graph_preview_has(int gi, int wcnt);
 /* Which LEGEND entry of graph `i` is under the CANVAS PIXEL (px, py)? The NODE
  * index, or -1. Fails closed. doc/claude/issues/0175-*.md D5. */
 extern int  graph_legend_at(int i, double px, double py);

@@ -532,6 +532,14 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
   index mapping). The C pick is `xschem get graph_trace_at`. Everything
   index-shaped here is in NODE space — landmine 34, which also carries the
   empty-destination range-blanking rule and the bold-marker hand-off.
+  **Since issue 0192 that drag carries the whole SELECTION** when the pressed
+  trace is part of one (`waveform_viewer_modes.md` §19): the moving set is
+  decided at PRESS time in `trace_drag_arm` (the release is forwarded to C
+  *before* the drop runs, and a no-travel release collapses the selection — so
+  drop-time would be a coincidence, not a contract), carried in `tdrag_pairs`,
+  previewed as a set, and applied by the PURE fold `move_traces_in_graphs` under
+  the one mutation `move_traces`. A press on an UNSELECTED trace is byte-for-byte
+  the old gesture, `wviewer::move_trace` log line included — landmine 49.
 - **Undo/redo of viewer edits (2026-07-28,
   `doc/claude/specs/waveform_viewer_modes.md` §14).** `u` / `U` on the
   `WaveViewer` bindtag. **Not the C undo stack** — a viewer edit changes the TCL
@@ -678,6 +686,20 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
     `xschem get rects 2`, which is every rect on the layer: the marker push
     hook uses this for its model↔rect 1:1 guard, and a single stray non-graph
     `GRIDLAYER` rect would permanently disable it.
+  - `xschem get graph_preview` — `<gi> <ni> <scale>` while the mid-drag shrink
+    preview is armed, else the single word `0`. Since issue 0192 this is the
+    **HEAD** of a SET and its output shape is deliberately **byte-identical** to
+    the single-trace era (the `graph_marker_sel` compatibility rule).
+  - `xschem get graph_preview_set` — the WHOLE previewed set as
+    `"<gi> <ni> <gi> <ni> …"`, **head first**; `""` when nothing is armed
+    (issue 0192). Backed by `xctx->graph_preview_set_gi/_set_wave
+    [GRAPH_MAX_PREVIEW_WAVES]` + `graph_preview_n`, fixed arrays, never a prop
+    token — transient chrome, landmine 49.
+  - `xschem set graph_preview <gi> <ni> <scale> [<gi> <ni> …]` — arm; the
+    three-argument form is the single-trace arm and is unchanged, TRAILING PAIRS
+    are issue 0192's multi-trace arm. `xschem set graph_preview 0` disarms head,
+    set and count together. An over-long set truncates at the cap (the preview is
+    chrome; the MOVE is uncapped) and a trailing odd argument is ignored.
 - `xschem graph_marker <sub> ...` (`xschem_cmds_g`, top level) — the marker
   mutations, which **fail LOUD** (unknown sub-verb → usage string +
   `TCL_ERROR`). Every sub-verb except `select`/`list`/`text` is
@@ -2042,6 +2064,78 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
     (`graph_legend_at` declines first for the legend's own band), and a single
     0.25 height found nothing at all on strip 1 about 1 run in 3.
 
+49. **A multi-object viewer gesture FOLDS the pure primitive and owes ONE of
+    everything — and the one term a naive fold gets wrong is per-SOURCE**
+    (2026-08-01, issue 0192, the multi-trace drag to a strip). Four reusable
+    lessons.
+
+    **(a) The index adjustment is per SOURCE GRAPH, not global, and only a
+    non-adjacent multi-index fixture can see it.** `move_traces_in_graphs`
+    normalises its `{gi ti}` pairs (integers, in range, deduped, ascending, and
+    every pair whose `gi` is already the destination DROPPED) and then folds the
+    shipped `move_trace_in_graphs` over them with
+
+    ```tcl
+      set graphs [wviewer::move_trace_in_graphs $graphs $gi [expr {$ti - $done($gi)}] $to_gi]
+    ```
+
+    where `done(g)` counts the members already moved out of **that same** graph.
+    Drop the term and moving model indices **0 and 2** of a four-trace strip
+    silently moves the trace that was at **3** — no refusal, no error, the wrong
+    data on screen. Moving 0 and 1, or two traces from two different strips,
+    cannot tell the two implementations apart, so the fixture has to be
+    non-adjacent AND same-source (`MV8`, `SAB-4`). The reverse mistake —
+    removing highest-index-first, which `delete_in_graphs` does (0176 D6) — is
+    equally valid arithmetic but produces the wrong ARRIVAL ORDER, which is
+    `SAB-9`.
+
+    **(b) One gesture owes ONE undo point, ONE regenerate and ONE log line, and
+    the line carries the NORMALISED indices.** The same rule landmine 46(c)
+    records for the marker delete, arriving from the model side: fold on the
+    **PURE** layer so no intermediate state is ever snapshotted, `push_undo`
+    once immediately after `capture_live_graph_state`, target remapped **in
+    place** (never through `set_target_strip`, which would emit a second replay
+    line for an internal consequence), and log the pairs that were actually
+    APPLIED rather than the caller's raw list — a replay of the raw list could
+    re-derive a different move once a pair had been dropped.
+
+    **(c) A shipped log line is a REPLAY CONTRACT; keep the singular form.** The
+    drop dispatches: exactly the pressed trace ⇒ the shipped
+    `wviewer::move_trace`, anything else ⇒ `move_traces`. Routing the single case
+    through the new verb would rewrite a line that `TD1`/`TD2`/`TD7` assert
+    verbatim, that `MG15` drives, and that every action log already on disk
+    contains. Four lines of dispatch buy "today's behaviour, unchanged" by
+    construction instead of by inspection.
+
+    **(d) The transient CHROME becomes a set the same way the selection did.**
+    `xctx->graph_preview_scale/_gi/_wave` stayed as the HEAD and gained
+    `graph_preview_set_gi[]`/`_set_wave[]`/`graph_preview_n` beside them — FIXED
+    arrays (`xctx` is reset, not freed), ONE writer (`graph_preview_arm`, which
+    also owns the disarm), ONE draw-side predicate (`graph_preview_has`, the
+    `wave_is_hilighted`/`graph_marker_is_selected` shape). `Graph_ctx.preview_wave`
+    became `preview_gi`, *the rect index this draw may preview*, still defaulted
+    above the `RECT_OUTSIDE` return (landmine 11). Because the head keeps its
+    meaning, `xschem get graph_preview` is byte-identical and the whole set is
+    read through a NEW getter — the compatibility rule that made 0189 cheap.
+    ⚠ And the same invisibility trap: with **one** carried trace a bare
+    `preview_gi == wcnt` and the predicate agree exactly, so the one-site rule is
+    asserted at SOURCE level (`DM6`), including that the predicate matches on
+    **both** the `gi` and the node index — that `gi` term affects pixels only and
+    is unreachable by any behavioural leg.
+
+    ⚠ **What the arm decides, it decides at PRESS time.** The release is
+    forwarded to C *before* `trace_drag_drop` runs, and a no-travel release
+    collapses the selection to the clicked trace (issue 0174 D3). A drop-time read
+    would appear to work — because the drag travelled — and would be a
+    coincidence, not a contract. Measured before the design was fixed: a press
+    alone never changes the selection.
+
+    Spec: `doc/claude/specs/waveform_viewer_modes.md` §19 (+ the §15.1 ownership
+    row) and the item-6 revision block in `doc/claude/specs/waveform_viewer.md`;
+    issue `doc/claude/issues/0192-multi-trace-drag-to-strip.md`.
+    Suites: `test_wave_modes.tcl` `MV*` (both arms), `test_wave_drag_preview.tcl`
+    `DV8`-`DV12` + `DM*`, `test_wave_trace_menu.tcl` `MM*` (display).
+
 ---
 
 ## 12. Improvement backlog (ranked, with where-to-touch)
@@ -2183,6 +2277,11 @@ Effort: S=hours, M=days, L=weeks. Impact in caps.
   `M8`/`MG15` = the same split for the TRACE move, 2026-07-28 — `M8` pure
   (list move, node/model index mapping, hilight remap, empty-destination range
   blanking), `MG15` the `move_trace` mutation against real rects, no raw needed;
+  **`MV*` = the MULTI-trace move**, 2026-08-01 issue 0192 — the PURE fold, both
+  arms: source order, cross-strip sources, `gi == to_gi` dropped, dict identity,
+  the SELECTION as a set, marker migration + the window-wide dangling-`prev`
+  check, the refusals, dedupe, and **`MV8`, the index-adjustment teeth** (moving
+  model indices 0 and 2 of FOUR — 0 and 1 cannot discriminate);
   **`MG16` = undo/redo of viewer edits**, 2026-07-28 — history semantics,
   live-state survival, the depth cap, `restore` clearing it, and the real `u`/`U`
   keys with the rc-remap and `{break}` contracts),
