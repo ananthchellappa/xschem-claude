@@ -133,6 +133,31 @@ doc/claude/code_analysis/waveform_subsystem_reference.md   5, 9, landmine 46
 
 ---
 
+## 5b. EYEBALLED — PASS (2026-08-01)
+
+Verified by the user on a real ASE waveform window: *"eyeball on (2) is pass.
+All ok."* This closes every item of §6, and it was the batch's **largest** blind
+spot: a `graph_marker_is_selected()` bounded to the head — so that the PARTNER of
+every pair renders in the unselected style — passes **all 979 DISPLAY and 437
+`--nogui` checks**. No behavioural leg could reach it.
+
+Confirmed in the same pass:
+
+* **both members ring**, including a **cross-strip** pair, with no stale ring left
+  behind (`need_all_redraw` is unobservable to any test);
+* the **D-15 collapse rule** — a plain click on one member of a two-marker
+  selection collapses to that member rather than clearing, and a second click then
+  deselects. A sabotage that wipes the whole selection on that click also passes
+  all 979 checks;
+* the **rigid label-drag latch on the partner** (D11) — behaviour, not pixels, and
+  inside the same blind spot, since every shipped `MX7e` leg exercises a *singly*
+  selected marker;
+* `Delete` takes both with **one** undo point;
+* **the design judgement is ACCEPTED**: per `waveform_viewer_modes.md` §15.4 there
+  is deliberately **no distinct cue for the head**, both members look identical,
+  and that reads correctly as "these two go together". No new rendering was added
+  and none is wanted.
+
 ## 6. WHAT NO CHECK CAN SEE
 
 * **Two markers rendering selected at once** — the hollow ring and the doubled
