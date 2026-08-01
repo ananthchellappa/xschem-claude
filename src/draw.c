@@ -6372,8 +6372,29 @@ int graph_marker_create(int i, double px, double py, int delta)
     graph_marker_refuse("xschem: markers are not supported on digital strips");
     return 0;
   }
-  if(!graph_point_at(i, px, py, GRAPH_MARKER_PICK_TOL, -1, -1, &hit)) {
-    graph_marker_refuse("xschem: no trace near the pointer");
+  /* THE GATE IS THE PLOT BOX, NOT A DISTANCE TO A TRACE. `m`/`d` are keys --
+   * pressing one is a clear intention -- so anywhere inside the strip's plot
+   * area marks the sample the item-9 diamond is already sitting on, however far
+   * that trace is. This is the SAME pair of calls draw_graph_snap_cursor()
+   * makes (its snap pick loop, above), so the marker cannot land anywhere but
+   * under the diamond. Outside the box -- the legend band, the axis-number
+   * margins, the reorder grip column -- no diamond is drawn
+   * (doc/claude/specs/waveform_viewer_modes.md 15.7), so there is no snapped
+   * point to mark and the key refuses.
+   * The gate MUST come from graph_plotbox_at(): the local `gr` above was built
+   * with setup_graph_data(i, 1, ...) and skip = 1 leaves gx1/gx2/gw at 0 with
+   * every derived coefficient at infinity, so gr->digital is the only field of
+   * it that may be read (landmine 45). */
+  if(!graph_plotbox_at(i, px, py)) {
+    graph_marker_refuse("xschem: the pointer is not inside the plot area of a strip");
+    return 0;
+  }
+  /* A tol nothing can exceed: the RANKING graph_point_at does (nearest trace by
+   * point-to-segment distance, then the nearest sample on it) is what we want,
+   * the threshold is not. Reaching the refusal below now means the strip has no
+   * markable trace at all -- traceless, bus-only, or an unresolvable rawfile=. */
+  if(!graph_point_at(i, px, py, 1e30, -1, -1, &hit)) {
+    graph_marker_refuse("xschem: no trace to mark in this strip");
     return 0;
   }
   return graph_marker_add_record(i, hit.wave, hit.dataset, hit.point, hit.x, hit.y, delta);

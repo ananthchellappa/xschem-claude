@@ -43,6 +43,7 @@ through a **push hook from C into Tcl** (§8).
 | D8 | Rendering source | The **cached** `x`/`y` only — the renderer never touches `xctx->raw`. The **label** is built from the *record* the renderer is about to draw, not re-derived from its number, so a live drag reads out the sliding sample (§6.5). |
 | D9 | Selection | One marker at a time, held in `xctx` (transient, never in the token), identified by its **number alone**. Numbers are window-wide unique, so the number already names exactly one marker; `graph_marker_selgraph` is a **hint** for repainting, never a correctness input (§3.5). |
 | D10 | Copy / paste | Renumber; clear all `prev` links. **Two** duplication doors, not one: `merge_box` (`paste.c`, the paste/clipboard path) and `copy_objects` (`move.c`, the `c`-key copy). |
+| D12 | What gates `m`/`d` | The strip's **PLOT BOX** (`graph_plotbox_at()`), not a distance to a trace — and the sample is then the nearest one on the nearest trace *however far*, `graph_point_at(..., 1e30, -1, -1, ...)`. That is **byte-for-byte the pair of calls `draw_graph_snap_cursor()` makes**, so the marker cannot land anywhere but under the item-9 diamond: the glyph that shows *which* sample would be marked and the key that marks it are one gate, by construction. Outside the box — the legend band, either axis-number margin, the reorder grip column — no diamond is drawn (`waveform_viewer_modes.md` §15.7) and the key refuses. Trace **selection** keeps its 10-px `GRAPH_TRACE_PICK_TOL` proximity: picking a trace with a mouse is an aim, pressing `m` is a declaration. Issue 0188; until it, creation gated on a 20-px `GRAPH_MARKER_PICK_TOL` that no longer exists. |
 | D11 | What a TEXT drag does | It **depends on the selection**, latched at PRESS. Unselected → move the callout (unchanged). Selected → **rigid translation**: the anchor re-snaps to a real sample on its own trace and the label offset is frozen, so the whole marker moves. `graph_marker_drag` keeps its 0/1/2 "what was grabbed" contract; a **separate** `graph_marker_dragmode` says what the gesture does. §6.2.1. |
 
 ---
@@ -357,8 +358,8 @@ be unconditional. Reference doc landmine 40.
 
 | key | before | now |
 |---|---|---|
-| `m` | measurement tooltip (`graph_flags ^= 64`) | **create a marker** at the sample nearest the pointer |
-| `d` | fell through to the canvas `deselect_mode` (there was no `ACTX_OVER_GRAPH` row) | **create a marker with a delta block** against the most recently created marker |
+| `m` | measurement tooltip (`graph_flags ^= 64`) | **create a marker** — **anywhere inside the strip's PLOT BOX**, at the sample the item-9 diamond snap cursor has snapped to (D12, issue 0188) |
+| `d` | fell through to the canvas `deselect_mode` (there was no `ACTX_OVER_GRAPH` row) | **create a marker with a delta block** against the most recently created marker — same plot-box gate, same snapped sample |
 | `M` (Shift+m) | broken — no waves guard, ran `readonly_block()` + the cadence schematic move | **the measurement tooltip**, relocated |
 | `Delete` | deletes the schematic selection | **deletes the selected marker** when one is selected *in the strip under the pointer*; otherwise unchanged. ⚠ In the **ASE viewer** this is now only ONE of two arms — see below |
 | `d` **off** a graph | deselect-one mode | unchanged — this is a context split, not a key change |
@@ -607,8 +608,13 @@ press, read only while the mode is set.
 
 ### 6.3 Refusals, all with a CIW message
 
-* `m`/`d` with no trace within `GRAPH_MARKER_PICK_TOL` (20 screen px):
-  *"no trace near the pointer"*.
+* `m`/`d` with the pointer **outside the strip's plot box** — the legend band,
+  either axis-number margin, the reorder grip column: *"the pointer is not
+  inside the plot area of a strip"*. This is the D12 gate, and it is the only
+  geometric one: inside the box there is no distance test at all.
+* `m`/`d` in a strip with **nothing markable in it** — no `node` token, a
+  bus-only `node` list, or a `rawfile=` that does not resolve: *"no trace to
+  mark in this strip"*.
 * `m`/`d` on a **digital strip**: *"markers are not supported on digital strips"*
   — a specific message so the key does not read as broken.
 * At `GRAPH_MARKERS_MAX`: *"too many markers on this graph"* — the **creation**
@@ -620,17 +626,23 @@ press, read only while the mode is set.
 
 **Ordering, because it is not what you would guess.** The read-only gate sits in
 the *primitives*, so on an `m`/`d` keystroke it runs **after**
-`graph_marker_create()`'s digital-strip and no-trace-near tests and **before**
-the cap and non-finite tests. A read-only buffer therefore answers "markers are
-not supported on digital strips" or "no trace near the pointer" when those apply,
-and only says "read-only" once a real sample has been picked. That is a
-deliberate consequence of gating the mutation rather than the key: the message
-always describes the *first* reason the edit cannot happen, and "there is nothing
-here to mark" is a truer answer than "this buffer is locked".
+`graph_marker_create()`'s digital-strip, plot-box and no-trace-to-mark tests and
+**before** the cap and non-finite tests. A read-only buffer therefore answers
+"markers are not supported on digital strips", "the pointer is not inside the
+plot area of a strip" or "no trace to mark in this strip" when those apply, and
+only says "read-only" once a real sample has been picked. That is a deliberate
+consequence of gating the mutation rather than the key: the message always
+describes the *first* reason the edit cannot happen, and "there is nothing here
+to mark" is a truer answer than "this buffer is locked".
+
+The **digital** test stays first for the same reason: `graph_plotbox_at()`
+refuses a digital strip too, and would swallow the specific message.
 
 Bus traces answer "no hit" for the same reason `graph_near_wave` does (their
-rendering is a band, not a polyline), so `m` over a bus-only strip reports "no
-trace near the pointer".
+rendering is a band, not a polyline), so they contribute no candidate to
+`graph_point_at`'s ranking and `m` over a bus-only strip reports "no trace to
+mark in this strip" — the second refusal above, reached from *inside* the plot
+box.
 
 ### 6.4 What is drawn
 
@@ -1338,7 +1350,7 @@ optional per-graph keys is that they are added ad hoc (`auto` via
 | `graph_marker_find(num, &gi, &out)` | locate a marker anywhere in the window — a delta's partner may live in another strip. |
 | `graph_marker_text(num, dest, size)` | by-**number** wrapper over `graph_marker_text_rec` — the `xschem graph_marker text` verb and the tests. Never used by the renderer or the hit-tester: it reads the *stored* record, which is stale for the duration of a drag (§6.5). |
 | `graph_marker_at(i, px, py, tol, &part)` | marker **number** under a canvas pixel (0 = none), `*part` 1 = anchor, 2 = label. Anchors first at a tight tolerance (nearest wins); labels second, last-drawn-on-top. No raw gate. Returns 0 under `--nogui`. Saves and restores `graph_flags` bits 128\|256 across its `setup_graph_data` call — it is a query, reachable from a Tcl verb, and must not leave the session describing a strip nobody is hovering (landmine 37b). |
-| `graph_marker_create(i, px, py, delta)` | pick + create at the pointer. Refuses digital strips and no-trace **before** the read-only gate, then delegates (§6.3 has the ordering). Saves/restores `graph_flags` 128\|256 around its own `setup_graph_data` (landmine 37). |
+| `graph_marker_create(i, px, py, delta)` | pick + create at the pointer. Gates on **`graph_plotbox_at(i, px, py)`** and then picks with `graph_point_at(i, px, py, 1e30, -1, -1, ·)` — the same pair `draw_graph_snap_cursor()` makes (D12). Refuses digital strips, then the plot box, then "no trace to mark", all **before** the read-only gate (§6.3 has the ordering). Saves/restores `graph_flags` 128\|256 around its own `setup_graph_data` (landmine 37). ⚠ That local `Graph_ctx` is built with `skip = 1`, so `gx1/gx2/gw` are 0 and every derived coefficient is **infinity** — `gr->digital` is the only field of it that may be read, and the box must come from `graph_plotbox_at()` (landmine 45). |
 | `graph_marker_create_at(i, wave, dset, point, delta)` | data-addressed create — the headless-testable creator **and** the form `log_action` writes. |
 | `graph_marker_delete(num)` | **read-only gated.** Remove it **and** `graph_marker_clear_prev(num)` window-wide. Resets the selection if it pointed there. |
 | `graph_marker_delete_all(gi)` | **read-only gated.** `gi < 0` = every graph rect; returns the count; one undo point for the lot. Collects the numbers it removed and sweeps them with **one** `graph_marker_clear_prev_n()` pass — a *partial* `delete -all` (`gi >= 0`) otherwise left dangling `prev` links on the strips it did not touch, silently degrading a delta callout to a plain one (§6.5). |
@@ -1378,11 +1390,17 @@ Static to `callback.c`: `graph_marker_press`, `graph_marker_drag_to`,
 `graph_marker_drag_clear`, `graph_marker_drag_abort`, `graph_marker_release`.
 
 Constants live in `xschem.h`, beside `GRAPH_REORDER_HANDLE_W`, because
-`callback.c` consumes them: `GRAPH_MARKERS_MAX 512`, `GRAPH_MARKER_TOL 8.0`
-(anchor/label grab radius), `GRAPH_MARKER_PICK_TOL 20.0` ("is there a trace near
-the pointer" on `m`/`d`). Both tolerances are **screen pixels**, fixed regardless
-of canvas zoom. `GRAPH_DELTA_STR` and `GRAPH_MARKER_FINITE` stay file-local to
-`draw.c`.
+`callback.c` consumes them: `GRAPH_MARKERS_MAX 512` and `GRAPH_MARKER_TOL 8.0`
+(the anchor/label grab radius, **screen pixels**, fixed regardless of canvas
+zoom). `GRAPH_DELTA_STR` and `GRAPH_MARKER_FINITE` stay file-local to `draw.c`.
+
+⚠ **There is no CREATION tolerance, deliberately** (issue 0188). What gates
+`m`/`d` is the strip's plot box — `graph_plotbox_at()`, the same gate the item-9
+diamond uses — and the sample is picked with an unreachable `1e30`. A
+`GRAPH_MARKER_PICK_TOL` did exist (20.0) and had exactly one use; it was deleted
+with the gate it implemented, because a constant documenting a rule that no
+longer holds is the trap the next reader falls into (D12; the
+`test_wave_snap.tcl` SQ3 precedent).
 
 **One parse per operation — the pool.** `graph_markers_collect()` walks every
 graph rect in the window **once** and returns a flat array of `GraphMarkerRef`
@@ -1524,6 +1542,14 @@ erroring.
 * The `markers` prop token, its C parser/formatter/store, and full round-trip
   through save/load, copy/paste, C undo/redo and SVG/PNG export.
 * `m` / `d` create, `M` tooltip relocation, `Delete` deletes a selected marker.
+* **`m` / `d` create ANYWHERE inside the strip's plot box** (issue 0188), at the
+  sample the item-9 diamond snap cursor has snapped to. The creation gate is
+  `graph_plotbox_at()` and the pick is `graph_point_at(..., 1e30, -1, -1, ...)` —
+  the same pair `draw_graph_snap_cursor()` makes, so glyph and key cannot
+  disagree in either direction. `GRAPH_MARKER_PICK_TOL` is gone; trace SELECTION
+  keeps its 10-px `GRAPH_TRACE_PICK_TOL`, untouched and regression-witnessed.
+  No new verb, no Tcl mirror: all three creation doors (both key arms and
+  `xschem graph_marker add`) already went through the one primitive.
 * LMB click to select, LMB drag on the anchor (snap along the trace) and on the
   callout (move the leader), ESC cancel.
 * Delta blocks with Δx / Δy / slope, cross-strip partners, `slope:undef`.

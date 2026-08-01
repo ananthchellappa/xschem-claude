@@ -947,6 +947,17 @@ The last row is the margin that keeps a graph rect grabbable at all. It is
 it was that many XSCHEM units, i.e. `1/zoom` times wider (measured 22 canvas px
 on a 1000x776 viewer), which swallowed the top of every legend entry.
 
+**`m` and `d` create exactly where the diamond appears** (issue 0188). One
+region rule for the glyph and for the key: `graph_marker_create()` now asks the
+same `graph_plotbox_at()` this table's first row asks and then picks with the
+same `graph_point_at(..., 1e30, -1, -1, ...)`, so a marker cannot land anywhere
+the diamond is not already sitting. Read the table's three **nothing** rows as
+"and `m` refuses here" — until 0188 they were not: creation gated on a 20-px
+distance to a trace, which both refused inside an empty plot box and *accepted*
+in the axis margin next to a trace's endpoint (measured: `xschem graph_marker
+add 0 145 480`, 6 px outside the box, created one). See
+`doc/claude/specs/graph_markers.md` D12 and §6.3.
+
 ### 15.2 Storage — two tokens, one writer
 
 ```

@@ -47,7 +47,7 @@ is recomputed each draw. Nothing waveform-specific exists in the file format.
 | `src/callback.c` | **On-canvas interaction.** `waves_selected` (gate/hit-test), `waves_callback` (gesture engine), `backannotate_at_cursor_b_pos`, the marker gesture helpers (`graph_marker_press`/`_drag_to`/`_release`/`_drag_abort`), the input-binding table (`init_input_bindings`, `act_graph_forward`, `current_input_ctx`, `dispatch_input_action`), and 15 inline `if(waves_selected){waves_callback}` guards. |
 | `src/scheduler.c` | **Tcl verb surface.** `raw`/`raw_query` block, `raw_read`/`raw_clear`/`raw_read_from_attr`, `add_graph`, `annotate_op`, `cursor`, `get graph_lastsel`, `get graph_flags`/`graph_near_wave`/`graph_trace_at`/`graph_marker_*`/`graph_rects`, the `graph_marker` sub-verb family, `setprop rect` special tokens (fullxzoom/fullyzoom). |
 | `src/token.c` | `translate()` `@spice_get_voltage`/`@spice_get_node` → substitutes `cursor_b_val[]` into symbol text (C back-annotation display). |
-| `src/xschem.h` | `Raw` struct (~975-998), `Graph_ctx` (~1051-1099), `GraphMarker`/`GraphPointHit` (~1108-1130), `SPICE_DATA` (`#define` = `double`, ~505), coord macros `W_*`/`S_*`/`DS_*`/`G_*`/`DG_*` (~465-480), graph constants `GRAPH_REORDER_HANDLE_W`/`GRAPH_TRACE_DROP_W`/`GRAPH_MARKERS_MAX`/`GRAPH_MARKER_TOL`/`GRAPH_MARKER_PICK_TOL` (~388-406), `xctx` graph fields (`raw`, `extra_raw_arr`, `graph_flags`, `graph_master`, `graph_lastsel`, `graph_cursor1_x/2_x`, `graph_struct`, `graph_marker_*`). |
+| `src/xschem.h` | `Raw` struct (~975-998), `Graph_ctx` (~1051-1099), `GraphMarker`/`GraphPointHit` (~1108-1130), `SPICE_DATA` (`#define` = `double`, ~505), coord macros `W_*`/`S_*`/`DS_*`/`G_*`/`DG_*` (~465-480), graph constants `GRAPH_REORDER_HANDLE_W`/`GRAPH_TRACE_DROP_W`/`GRAPH_TRACE_PICK_TOL`/`GRAPH_MAX_SEL_WAVES`/`GRAPH_MARKERS_MAX`/`GRAPH_MARKER_TOL` (~388-450; there is deliberately **no** marker CREATION tolerance -- landmine 45), `xctx` graph fields (`raw`, `extra_raw_arr`, `graph_flags`, `graph_master`, `graph_lastsel`, `graph_cursor1_x/2_x`, `graph_struct`, `graph_marker_*`). |
 | `src/wave_viewer.tcl` | **ASE Waveform Viewer** — a real read-only editor window driven by a pure-Tcl model. See §8 and the spec. |
 | `src/xschem.tcl` | Sim launch (`simulate`, `execute`), `sim()` array + simconf dialog, native graph editor `graph_edit_properties`, `graph_add_nodes_from_list`, `load_raw`/`waves`. |
 | `src/ngspice_backannotate.tcl` | Legacy pure-Tcl `.raw` op reader → `ngspice::ngspice_data`. Largely vestigial; `update_op` writes the same array. |
@@ -278,7 +278,13 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
   per-trace bold via `edit_wave_attributes`, hover measurement tooltip via
   `G_X`/`G_Y`, cursor grab within 10px, numeric cursor set,
   `a`/`b`/`s`/`t` keys plus `m` = create marker, `d` = create marker with a
-  delta block, and `M` = the measurement tooltip **relocated off `m`**. A marker
+  delta block, and `M` = the measurement tooltip **relocated off `m`**.
+  ⚠ `m`/`d` gate on the strip's **PLOT BOX**, not on a distance to a trace
+  (issue 0188): `graph_marker_create()` asks `graph_plotbox_at()` and then picks
+  with `graph_point_at(..., 1e30, -1, -1, ...)` -- byte-for-byte the pair
+  `draw_graph_snap_cursor()` makes, so the marker lands under the item-9
+  diamond by construction. Trace SELECTION in the same arm keeps its 10-px
+  `GRAPH_TRACE_PICK_TOL` (landmines 33 and 45). A marker
   is durable CONTENT, so the three mutating keys `m`/`d`/`Delete` ARE refused in
   a read-only buffer — but **not here**: the arms call the ops unguarded and the
   gate is `graph_marker_ro_refuse()` down in the mutating primitives
@@ -1605,6 +1611,50 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
     of the value the comment always claimed.
     Issue: `doc/claude/issues/0177-viewer-has-no-snap-grid.md` (per-region hover
     table in §3).
+
+45. **A CREATION gate must match the FEEDBACK gate — and `graph_marker_create`'s
+    own `Graph_ctx` cannot answer a geometry question** (2026-08-01, issue 0188).
+    Two reusable lessons from one three-line fix.
+
+    **(a) The glyph and the key must ask the same question.** The item-9 diamond
+    snap cursor (`draw_graph_snap_cursor`, `draw.c`) is the thing that SHOWS the
+    user which sample `m` would mark. Its gate was fixed to the plot box in the
+    0177 era; `graph_marker_create()`'s was left as a 20-px distance to a trace
+    (`GRAPH_MARKER_PICK_TOL`, now deleted). For a release the two disagreed in
+    **both** directions, and both were user-visible: no marker in the middle of
+    an empty plot box where a diamond was plainly drawn, and a marker created 6
+    px OUTSIDE the box, in the axis-number margin, where no diamond exists
+    (measured: `xschem graph_marker add 0 145 480` created one). The fix is to
+    make the creator issue the *same two calls* the feedback path issues —
+    `graph_plotbox_at(i, px, py)` then
+    `graph_point_at(i, px, py, 1e30, -1, -1, &hit)` — not to re-derive an
+    equivalent test. Generalise: when a feature has a hover GLYPH and a
+    committing KEY/CLICK, the two share a predicate or they will drift, and the
+    drift is invisible to any test that only ever aims at a trace.
+    ⚠ The sibling constant `GRAPH_TRACE_PICK_TOL` (10 px, landmine 33) was
+    deliberately NOT touched: picking a trace with the mouse is an aim and wants
+    proximity; pressing `m` is a declaration and does not. Two gates, two
+    questions, one strip.
+
+    **(b) `graph_marker_create()` builds its `Graph_ctx` with
+    `setup_graph_data(i, 1, gr)` — `skip = 1` — so `gr->digital` is the ONLY
+    field of it that may be read.** `skip` suppresses the `x1`/`x2` parse
+    (`draw.c`, the `if(!skip)` block), leaving `gx1 == gx2 == gw == 0`; the
+    derived `gr->cx = gr->w / gr->gw` is then **infinity**, and so are `dx`,
+    `scx`, `sdx`. Worse, the usual `gr->scx == 0.0` "no transform" sentinel is
+    useless there, because `inf != 0`. Any geometry question inside that
+    function must therefore go through `graph_plotbox_at()`, which builds its
+    own `Graph_ctx` with `skip = 0` and is the single source of truth for the
+    box — the `graph_marker_label_box` doctrine (one function owns one geometry)
+    applied to a second shape. This is a *different* trap from landmine 37's
+    off-screen early return, and it bites in the opposite way: 37 hands you
+    defaults, this hands you infinities.
+
+    Spec: `doc/claude/specs/graph_markers.md` D12 + §6.3;
+    `doc/claude/specs/waveform_viewer_modes.md` §15.7; issue
+    `doc/claude/issues/0188-marker-create-gate-is-proximity-not-plot-box.md`.
+    Suite: `tests/headless/test_wave_markers.tcl` group `MP*` (both arms),
+    `MP20`-`MP22` (display) and the inverted `MX4`/`MX4b`.
 
 ---
 

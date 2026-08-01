@@ -433,14 +433,20 @@ typedef int Tcl_Size;
  * silently mis-rendered node 40 -- see doc/claude/issues/0175-*.md D1. */
 #define GRAPH_MAX_SEL_WAVES     64
 
-/* Waveform markers (doc/claude/specs/graph_markers.md). Tolerances are SCREEN
- * PIXELS, fixed regardless of canvas zoom, like the reorder handle above.
- * These live in the header (not draw.c) because graph_marker_press() in
- * callback.c needs GRAPH_MARKER_TOL -- callback.c's own GRAPH_CLICK_TOL is
- * file-private. MIRRORED in tests/headless/test_wave_markers.tcl. */
+/* Waveform markers (doc/claude/specs/graph_markers.md). GRAPH_MARKER_TOL is
+ * SCREEN PIXELS, fixed regardless of canvas zoom, like the reorder handle
+ * above. It lives in the header (not draw.c) because graph_marker_press() in
+ * callback.c needs it -- callback.c's own GRAPH_CLICK_TOL is file-private.
+ * MIRRORED in tests/headless/test_wave_markers.tcl.
+ *
+ * ⚠ There is NO creation tolerance here, deliberately (issue 0188). What gates
+ * `m` / `d` is the strip's PLOT BOX -- graph_plotbox_at() in draw.c, the same
+ * gate the item-9 diamond snap cursor uses -- and the sample is then picked
+ * with graph_point_at(..., 1e30, ...), i.e. the nearest trace however far. A
+ * proximity threshold here would put the key and the diamond back in
+ * disagreement about where a marker can be created. */
 #define GRAPH_MARKERS_MAX      512  /* max marker records per graph rect */
 #define GRAPH_MARKER_TOL       8.0  /* anchor/label grab radius on a press */
-#define GRAPH_MARKER_PICK_TOL 20.0  /* "is there a trace near the pointer" on m / d */
 
 /* xctx->graph_marker_dragmode -- the EFFECTIVE mode of an armed gesture,
  * latched at PRESS TIME from the selection state and never re-read afterwards.

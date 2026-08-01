@@ -9,7 +9,7 @@
 # viewer learns about every change through a PUSH hook (draw.c graph_marker_notify
 # -> the global ::graph_marker_changed proc), not a pull.
 #
-# FOUR GROUPS, in the order they run:
+# FIVE GROUPS, in the order they run:
 #
 #   MK*  pure Tcl helpers + pure C token math. Run in BOTH arms (--nogui too):
 #        encode/decode/valid/drop/sweep/remap, the graph_props emission shape,
@@ -64,6 +64,13 @@
 #        Every MF leg names its fix and, where it was measured, the pre-fix
 #        value. Four of them (MF1, MF4, MF12, MF13a) were proved red by
 #        temporarily reverting exactly that hunk in src/ and re-running.
+#
+#   MP*  the CREATION GATE is the strip's PLOT BOX, not a distance to a trace
+#        (issue 0188). MP0-MP15 run in BOTH arms, right after the MF engine
+#        half, on their own three-strip fixture (analog / digital / traceless);
+#        MP20-MP22 are the real `m`/`d` KEY arms plus the diamond-equality leg
+#        and sit in the MF display half. MX4 was INVERTED for the same issue and
+#        MX4b added. Every pixel is SCANNED, never hardcoded.
 #
 #   MD*  Delete All Markers / Ctrl-E (viewer plan item 4,
 #        doc/claude/specs/graph_markers.md §6.1.1). Split like the MF group,
@@ -1671,6 +1678,401 @@ pcall {xschem raw clear}
 pcall {xschem set_modify 0}
 
 # ============================================================================
+# MP* — the CREATION GATE is the PLOT BOX, not a distance to a trace (0188)
+#
+# Reported: "to select a trace the pointer needs to be reasonably close to the
+# trace - proximity. Good. However this is not needed for adding a marker.
+# Adding a marker is done by pressing m - clear intention. Therefore if the
+# mouse is within the plot area of a strip and the user presses m, add a marker
+# at the point that the diamond cursor has snapped to."
+#
+# graph_marker_create() used to gate on graph_point_at(..., 20 screen px, ...),
+# while the item-9 diamond snap cursor -- the glyph that SHOWS which sample
+# would be marked -- has gated on graph_plotbox_at() since it shipped. The two
+# disagreed in BOTH directions, and both are asserted below:
+#   * inside the box but > 20 px from every trace: no marker (MP2 now creates);
+#   * OUTSIDE the box but within 20 px of a trace -- a halo the box does not
+#     contain and no diamond is drawn in: a marker WAS created (MP7 now refuses).
+# The fix is the same PAIR of calls draw_graph_snap_cursor() makes:
+# graph_plotbox_at() as the gate, then graph_point_at(..., 1e30, -1, -1, ...).
+#
+# ⚠ This whole group runs in BOTH arms. Everything it touches -- the pixel verb
+# `graph_marker add`, `get graph_plotbox_at`, `get graph_trace_at`,
+# `graph_coord` -- answers correctly with no X server (probe-verified), so the
+# engine half of this item is not a DISPLAY-only assertion. What IS DISPLAY-only
+# is the diamond equality (MP22 in the MF display half): draw_graph_snap_cursor()
+# returns early under !has_x, landmine 41's split rule.
+#
+# ⚠ The explicit x1/x2 on strip 0 are LOAD-BEARING. Without them the default
+# data window is 0 .. 1e-6, every sample is drawn squashed against the left edge
+# of the plot box, and the scans below find nothing useful. The MF fixture sets
+# them for the same reason.
+#
+# Nothing here is hardcoded: every pixel is SCANNED with the engine's own
+# queries and a staging leg FAILS (never skips) when a scan comes up empty.
+# ============================================================================
+
+# Count regexp matches in CODE lines only -- copied verbatim from
+# test_wave_snap.tcl, which has it because a C block comment explaining what the
+# code deliberately does NOT do contains the very string being counted.
+proc mp_count_code {src pat} {
+  set n 0
+  foreach line [split $src "\n"] {
+    set t [string trimleft $line]
+    # ⚠ NOT [string match "*" $t] -- `*` is a glob that matches EVERY string.
+    if {[string index $t 0] eq "*"} { continue }
+    if {[string range $t 0 1] eq "/*" || [string range $t 0 1] eq "//"} { continue }
+    incr n [regexp -all $pat $line]
+  }
+  return $n
+}
+# WORLD box -> canvas pixel band, through the engine's OWN transform (the same
+# arithmetic X_TO_SCREEN does, and the same helper the MF display half uses).
+# ⚠ The seed sweep below MUST be bounded by this and not by an assumed pixel
+# range: `zoom_full` fits the drawing to whatever the canvas happens to be, and
+# a run under a window the WM has not finished sizing puts the strips somewhere
+# an absolute 0..1800 range never reaches. Measured: the whole MP group scanned
+# nothing in one full_audit run and aborted the file, while passing standalone.
+proc mp_band {wx1 wy1 wx2 wy2} {
+  set z  [xschem get zoom]
+  set xo [xschem get xorigin]
+  set yo [xschem get yorigin]
+  if {![string is double -strict $z] || $z == 0.0} { return {} }
+  return [list [expr {int(($wx1 + $xo) / $z)}] [expr {int(($wy1 + $yo) / $z)}] \
+               [expr {int(($wx2 + $xo) / $z)}] [expr {int(($wy2 + $yo) / $z)}]]
+}
+# the PLOT BOX of strip `gi` in canvas pixels, {x1 y1 x2 y2}, found by asking
+# the engine and never by predicting from the rect: a seed sweep inside that
+# strip's own band, then a walk out to each of the four edges. Bounded on every
+# side so a query that started answering 1 everywhere cannot spin.
+proc mp_box {gi band} {
+  if {[llength $band] != 4} { return {} }
+  lassign $band ux1 uy1 ux2 uy2
+  foreach {a b} [list $ux1 $ux2] { if {$b < $a} { set t $ux1; set ux1 $ux2; set ux2 $t } }
+  if {$uy2 < $uy1} { set t $uy1; set uy1 $uy2; set uy2 $t }
+  set step [expr {($ux2 - $ux1) > 2000 || ($uy2 - $uy1) > 2000 ? 8 : 2}]
+  set sx {}; set sy {}
+  for {set y $uy1} {$y <= $uy2} {incr y $step} {
+    for {set x $ux1} {$x <= $ux2} {incr x $step} {
+      if {[xschem get graph_plotbox_at $gi $x $y]} { set sx $x; set sy $y; break }
+    }
+    if {$sx ne {}} break
+  }
+  if {$sx eq {}} { return {} }
+  set x1 $sx
+  while {$x1 > -20000 && [xschem get graph_plotbox_at $gi [expr {$x1 - 1}] $sy]} { incr x1 -1 }
+  set x2 $sx
+  while {$x2 < 20000 && [xschem get graph_plotbox_at $gi [expr {$x2 + 1}] $sy]} { incr x2 }
+  set cx [expr {($x1 + $x2) / 2}]
+  set y1 $sy
+  while {$y1 > -20000 && [xschem get graph_plotbox_at $gi $cx [expr {$y1 - 1}]]} { incr y1 -1 }
+  set y2 $sy
+  while {$y2 < 20000 && [xschem get graph_plotbox_at $gi $cx [expr {$y2 + 1}]]} { incr y2 }
+  return [list $x1 $y1 $x2 $y2]
+}
+# A pixel INSIDE the box and far from every trace: scanned UPWARD from the
+# bottom edge at the box's centre x, so the nearest trace is the LOWER one
+# (node 1, v_b) rather than node 0 -- SAB-3, which restricts the pick to node 0,
+# has nothing to kill otherwise. 25 px is the threshold the suite's other
+# empty-space scanners use, and it is above the 20 that used to be the gate.
+proc mp_far {gi box} {
+  if {[llength $box] != 4} { return {} }
+  lassign $box x1 y1 x2 y2
+  set cx [expr {($x1 + $x2) / 2}]
+  for {set y [expr {$y2 - 1}]} {$y > $y1} {incr y -1} {
+    if {![xschem get graph_plotbox_at $gi $cx $y]} continue
+    if {[xschem get graph_near_wave $gi $cx $y 25]} continue
+    if {[xschem get graph_trace_at $gi $cx $y 1e30] <= 0} continue
+    return [list $cx $y]
+  }
+  return {}
+}
+# The HALO: a pixel the box does NOT contain that is still within the old 20-px
+# creation tolerance of a trace. This is the region the fix takes AWAY, so it is
+# the only leg SAB-2 (delete the plot-box gate) can kill.
+proc mp_halo {gi box} {
+  if {[llength $box] != 4} { return {} }
+  lassign $box x1 y1 x2 y2
+  for {set d 1} {$d <= 20} {incr d} {
+    set x [expr {$x1 - $d}]
+    if {$x < 0} break
+    for {set y $y1} {$y <= $y2} {incr y} {
+      if {[xschem get graph_plotbox_at $gi $x $y]} continue
+      if {[xschem get graph_trace_at $gi $x $y 20] >= 0} { return [list $x $y] }
+    }
+  }
+  return {}
+}
+# an ON-TRACE pixel at the box's centre x -- the control that says the fixture
+# really has a drawn trace where the scans think it does
+proc mp_on {gi box} {
+  if {[llength $box] != 4} { return {} }
+  lassign $box x1 y1 x2 y2
+  set cx [expr {($x1 + $x2) / 2}]
+  for {set y $y1} {$y <= $y2} {incr y} {
+    if {[xschem get graph_trace_at $gi $cx $y 2] >= 0} { return [list $cx $y] }
+  }
+  return {}
+}
+
+# GROUP CATCH -- the same one the MF and MX halves carry. Without it a single
+# Tcl error anywhere in this group unwinds to the file's outer catch and
+# silently drops every leg after it (measured, once: 20 lost to one empty
+# operand). Scoped here it costs this group only, and says so loudly.
+if {[catch {
+
+mk_reset
+pcall {xschem raw clear}
+pcall {xschem raw new mpmark.raw dc vsweep 0 1.0 0.1}
+pcall {xschem raw add v_a {vsweep 1 +}}
+pcall {xschem raw add v_b {vsweep 2 *}}
+# strip 0: two analog traces, explicit data window
+pcall {mk_graph 0 0 800 400}
+pcall {xschem setprop rect 2 0 node "v_a\nv_b"}
+foreach {mpt mpv} {x1 0 x2 1.0 y1 0 y2 2.5} { pcall {xschem setprop rect 2 0 $mpt $mpv} }
+# strip 1: DIGITAL -- refused before the gate and still refused after it
+pcall {mk_graph 0 500 800 900}
+pcall {xschem setprop rect 2 1 node "v_a"}
+pcall {xschem setprop rect 2 1 digital 1}
+foreach {mpt mpv} {x1 0 x2 1.0} { pcall {xschem setprop rect 2 1 $mpt $mpv} }
+# strip 2: TRACELESS -- a real plot box with nothing markable in it
+pcall {mk_graph 0 1000 800 1400}
+foreach {mpt mpv} {x1 0 x2 1.0 y1 0 y2 2.5} { pcall {xschem setprop rect 2 2 $mpt $mpv} }
+pcall {xschem graph_marker delete -all}
+
+# Force the window and the transform to a known state, then re-derive EVERY
+# scanned pixel together. Piecemeal re-scanning is wrong for the same reason it
+# is wrong in the MF and MX halves: a re-fit moves all of them at once.
+proc mp_reestablish {} {
+  if {[info commands winfo] ne {}} {
+    catch {wm deiconify .}
+    catch {raise .}
+    for {set i 0} {$i < 100} {incr i} {
+      catch {update}
+      if {[winfo exists .drw] && [winfo ismapped .drw]} break
+      after 20
+    }
+  }
+  catch {xschem zoom_full}
+  catch {update}
+}
+proc mp0_scan {} {
+  global mpbox mpt2 mpfx mpfy mphx mphy mpox mpoy mpbx1 mpby1 mpbx2 mpby2 mpcx
+  set mpbox [mp_box 0 [mp_band 0 0    800 400]]
+  set mpt2  [mp_box 2 [mp_band 0 1000 800 1400]]
+  # SENTINELS, never {}: an empty coordinate reaching an `expr` further down is a
+  # hard Tcl error that unwinds the whole FILE through the outer catch (measured:
+  # `expr {$mpby1 + 1}`, 20 legs lost). -1 is a canvas pixel no strip can occupy,
+  # so every leg below fails LOUDLY instead and the file runs on.
+  set mpbx1 -1; set mpby1 -1; set mpbx2 -1; set mpby2 -1; set mpcx -1
+  set mpfx -1; set mpfy -1; set mphx -1; set mphy -1; set mpox -1; set mpoy -1
+  if {[llength $mpt2] != 4} { set mpt2 {-1 -1 -1 -1} }
+  if {[llength $mpbox] != 4} { set mpbox {}; return 0 }
+  lassign $mpbox mpbx1 mpby1 mpbx2 mpby2
+  set mpcx [expr {($mpbx1 + $mpbx2) / 2}]
+  lassign [mp_far  0 $mpbox] a b ; if {$a ne {}} { set mpfx $a; set mpfy $b }
+  lassign [mp_halo 0 $mpbox] a b ; if {$a ne {}} { set mphx $a; set mphy $b }
+  lassign [mp_on   0 $mpbox] a b ; if {$a ne {}} { set mpox $a; set mpoy $b }
+  return [expr {($mpfx >= 0 && $mphx >= 0 && $mpox >= 0 &&
+                 [lindex $mpt2 0] >= 0) ? 1 : 0}]
+}
+mp_reestablish
+for {set mp0t 1} {$mp0t <= 3} {incr mp0t} {
+  if {[pcall {mp0_scan}] eq {1}} break
+  if {$mp0t == 3} break
+  note "MP0 the fixture scan is incomplete (box={$mpbox} far={$mpfx,$mpfy}\
+ halo={$mphx,$mphy} on={$mpox,$mpoy} traceless={$mpt2}) (try $mp0t) —\
+ re-mapping, re-fitting and re-scanning"
+  mp_reestablish
+}
+if {$mpfx < 0 || $mphx < 0 || $mpox < 0 || $mpcx < 0} {
+  stall "MP0 a fixture pixel could not be scanned after 3 tries\
+ (band=[pcall {mp_band 0 0 800 400}] box={$mpbox} far={$mpfx,$mpfy}\
+ halo={$mphx,$mphy} on={$mpox,$mpoy} zoom=[pcall {xschem get zoom}]) —\
+ the MP legs below assert against pixels that describe nothing"
+}
+check "MP0 three graph strips (analog / digital / traceless)" \
+  [pcall {xschem get graph_rects}] 3
+check_true "MP0 strip 0's plot box was scanned and is more than 100 px wide\
+ (box=$mpbox)" \
+  [pexpr {[llength $mpbox] == 4 && $mpbx2 - $mpbx1 > 100 && $mpby2 - $mpby1 > 40}]
+check_true "MP0 a FAR pixel inside the box was scanned ($mpfx,$mpfy)" \
+  [pexpr {$mpfx ne {} && $mpfy ne {}}]
+check_true "MP0 a HALO pixel outside the box but near a trace was scanned\
+ ($mphx,$mphy)" [pexpr {$mphx ne {} && $mphy ne {}}]
+check_true "MP0 an ON-TRACE pixel was scanned ($mpox,$mpoy)" \
+  [pexpr {$mpox ne {} && $mpoy ne {}}]
+# SAB-3's whole target: the far pixel's nearest trace must NOT be node 0, or
+# restricting the pick to node 0 would be indistinguishable from not restricting
+check "MP0 the far pixel's nearest trace is node 1, not node 0\
+ (SAB-3 has nothing to kill otherwise)" \
+  [pcall {xschem get graph_trace_at 0 $mpfx $mpfy 1e30}] 1
+
+check "MP1 the far pixel is INSIDE the plot box" \
+  [pcall {xschem get graph_plotbox_at 0 $mpfx $mpfy}] 1
+check "MP1 ... and no trace is within GRAPH_TRACE_PICK_TOL (10 px) of it" \
+  [pcall {xschem get graph_trace_at 0 $mpfx $mpfy 10}] -1
+check "MP1 ... nor within 25 px, which is past the old 20-px creation gate" \
+  [pcall {xschem get graph_trace_at 0 $mpfx $mpfy 25}] -1
+check_true "MP1 ... while an unbounded pick still finds a trace there" \
+  [pexpr {[pcall {xschem get graph_trace_at 0 $mpfx $mpfy 1e30}] >= 0}]
+
+pcall {xschem graph_marker delete -all}
+set mp2 [pcall {xschem graph_marker add 0 $mpfx $mpfy}]
+check "MP2 `m`'s primitive CREATES at a plot-box pixel far from every trace\
+ (before 0188: refused, 'no trace near the pointer')" $mp2 1
+# the two gates side by side, in one leg: creation is the plot box, SELECTION is
+# still proximity, and at this pixel they give opposite answers
+check "MP2 ... while trace SELECTION at that very pixel still answers -1" \
+  [pcall {list $mp2 [xschem get graph_trace_at 0 $mpfx $mpfy]}] {1 -1}
+check "MP3 the anchor is the NEAREST trace, not node 0" \
+  [pcall {mk_field 1 2}] [pcall {xschem get graph_trace_at 0 $mpfx $mpfy 1e30}]
+# the fixture is exact: sample p of `vsweep 0 1.0 0.1` has x == p/10. The token
+# is rendered at %.17g, so the EXPECTED side has to be rendered the same way --
+# `expr {4/10.0}` stringifies as `0.4` while the token says
+# `0.40000000000000002`, and they are the same double.
+check "MP4 the anchor is a REAL sample (x == point/10, exactly, at %.17g)" \
+  [pcall {mk_field 1 5}] \
+  [pcall {format %.17g [expr {[mk_field 1 4] / 10.0}]}]
+check_true "MP4 ... and its y is that sample's value in the raw" \
+  [pcall {mk_close [mk_field 1 6] \
+            [xschem raw value [lindex {v_a v_b} [mk_field 1 2]] [mk_field 1 4]]}]
+check_true "MP5 the anchor's x is inside the graph's x window (0 .. 1)" \
+  [pexpr {[pcall {mk_field 1 5}] >= 0.0 && [pcall {mk_field 1 5}] <= 1.0}]
+# an INDEPENDENT pixel->data path (scheduler.c's graph_coord, not graph_point_at):
+# the snapped sample must be the pointer's own neighbourhood, not some far corner
+check_true "MP6 the anchor is within one sample step of the pointer's own x\
+ (graph_coord, a different verb)" \
+  [pexpr {abs([pcall {mk_field 1 5}] -
+              [lindex [pcall {xschem graph_coord 0 $mpfx $mpfy}] 0]) <= 0.101}]
+
+# THE HALO, which the fix takes away. Both witnesses are read in this same leg so
+# the refusal cannot be "the pixel was not what we thought".
+check "MP7 the halo pixel is OUTSIDE the plot box" \
+  [pcall {xschem get graph_plotbox_at 0 $mphx $mphy}] 0
+check_true "MP7 ... yet within the OLD 20-px creation tolerance of a trace" \
+  [pexpr {[pcall {xschem get graph_trace_at 0 $mphx $mphy 20}] >= 0}]
+check "MP7 ... and creation there is REFUSED (before 0188: it created one)" \
+  [pcall {xschem graph_marker add 0 $mphx $mphy}] {}
+
+# ⚠ its OWN base marker, not MP2's: `prev` is the most recently created marker
+# window-wide, so a sabotage that lets MP7's halo pixel create would otherwise
+# make this leg fail for MP7's reason rather than its own.
+pcall {xschem graph_marker delete -all}
+set mp8a [pcall {xschem graph_marker add 0 $mpfx $mpfy}]
+set mp8  [pcall {xschem graph_marker add 0 $mpfx $mpfy -delta}]
+check_true "MP8 `d` gets the same relaxation (a number came back)" \
+  [pexpr {[string is integer -strict "$mp8"] && $mp8 > 0}]
+# ⚠ the `string is integer` term is load-bearing: with BOTH creations refused
+# `mk_field {} 7` and `$mp8a` are both {} and a bare comparison passes vacuously
+check "MP8 ... and it carries a delta block against the previous marker" \
+  [pcall {list [mk_field $mp8 7] [string is integer -strict "$mp8a"]}] \
+  [list $mp8a 1]
+
+# COVERAGE AS A FRACTION, never a magic count (the test_wave_snap SG6 lesson: a
+# `> 12` threshold was squeaked past by the very proximity gate it was meant to
+# catch). A vertical line through the box in steps of 8 -- every pixel of it is
+# inside the box, so every one must create.
+pcall {xschem graph_marker delete -all}
+set mp9try 0; set mp9got 0
+for {set mp9y [expr {$mpby1 + 1}]} {$mp9y < $mpby2} {incr mp9y 8} {
+  incr mp9try
+  if {[pcall {xschem graph_marker add 0 $mpcx $mp9y}] ne {}} { incr mp9got }
+}
+note "MP9 vertical sweep at x=$mpcx through rows $mpby1..$mpby2: $mp9got/$mp9try created"
+check_true "MP9 the sweep had something to measure" [pexpr {$mp9try > 8}]
+check_true "MP9 essentially EVERY pixel of the box creates (fraction > 0.95,\
+ got $mp9got/$mp9try)" \
+  [pexpr {$mp9try > 0 && double($mp9got) / $mp9try > 0.95}]
+check "MP9 8 px ABOVE the box top creates nothing" \
+  [pcall {xschem graph_marker add 0 $mpcx [expr {$mpby1 - 8}]}] {}
+check "MP9 8 px BELOW the box bottom creates nothing" \
+  [pcall {xschem graph_marker add 0 $mpcx [expr {$mpby2 + 8}]}] {}
+pcall {xschem graph_marker delete -all}
+check "MP9 the sweep left nothing behind" [pcall {llength [mk_nums]}] 0
+
+check "MP10 a DIGITAL strip has no plot box at all" \
+  [pcall {xschem get graph_plotbox_at 1 $mpcx [expr {($mpby1 + $mpby2) / 2 + 500}]}] 0
+check "MP10 ... and still refuses creation, anywhere in it" \
+  [pcall {set r {}
+          for {set y 400} {$y < 900} {incr y 17} {
+            set a [xschem graph_marker add 1 $mpcx $y]
+            if {$a ne {}} { lappend r $y }
+          }
+          set r}] {}
+check_true "MP11 the TRACELESS strip has a real plot box (box={$mpt2})" \
+  [pexpr {[llength $mpt2] == 4 && [lindex $mpt2 0] >= 0}]
+check "MP11 ... where graph_plotbox_at says 1" \
+  [pcall {xschem get graph_plotbox_at 2 [expr {([lindex $mpt2 0] + [lindex $mpt2 2]) / 2}] \
+            [expr {([lindex $mpt2 1] + [lindex $mpt2 3]) / 2}]}] 1
+check "MP11 ... and creation is refused: there is no trace to mark" \
+  [pcall {xschem graph_marker add 2 [expr {([lindex $mpt2 0] + [lindex $mpt2 2]) / 2}] \
+            [expr {([lindex $mpt2 1] + [lindex $mpt2 3]) / 2}]}] {}
+
+# the two source files, read once and used by MP13 and MP14 below
+set mpsrc {}
+set mphdr {}
+if {![catch {open [file join $repo src draw.c] r} mpfh]} {
+  set mpsrc [read $mpfh]; close $mpfh
+}
+if {![catch {open [file join $repo src xschem.h] r} mpfh]} {
+  set mphdr [read $mpfh]; close $mpfh
+}
+check_true "MP0 both sources were read for the tripwires" \
+  [pexpr {[string length $mpsrc] > 1000 && [string length $mphdr] > 1000}]
+
+# TRACE SELECTION KEEPS ITS PROXIMITY -- the half of the user's report that says
+# "Good." This leg must survive EVERY sabotage of the creation gate: it is the
+# regression witness that the item changed one gate and not the other.
+check "MP13 at the far pixel trace SELECTION still answers -1 at the default tol" \
+  [pcall {xschem get graph_trace_at 0 $mpfx $mpfy}] -1
+check "MP13 ... while an on-trace pixel still selects" \
+  [pcall {xschem get graph_trace_at 0 $mpox $mpoy}] 0
+check_true "MP13 ... and GRAPH_TRACE_PICK_TOL is still 10.0 in xschem.h" \
+  [pexpr {[regexp {#define GRAPH_TRACE_PICK_TOL  10\.0} $mphdr]}]
+
+# the dirty flag: markers are the deliberate EXCEPTION to landmine 19 (a graph
+# gesture writes prop tokens silently); the exception must survive the new gate
+pcall {xschem graph_marker delete -all}
+pcall {xschem set_modify 0}
+check "MP15 the buffer starts clean" [pcall {xschem get modified}] 0
+check "MP15 a far-pixel creation still succeeds" \
+  [pcall {xschem graph_marker add 0 $mpfx $mpfy}] 1
+check "MP15 ... and still dirties the buffer (landmine 19's exception intact)" \
+  [pcall {xschem get modified}] 1
+
+# ---- MP14: source tripwires (the test_wave_snap SS8 idiom) ----------------
+# The gate and the threshold are one line each and both are invisible to any
+# behavioural leg once the pixel scan has been made robust: a proximity gate
+# with a large enough tolerance passes MP2 while still refusing at 21 px.
+check_true "MP14 graph_marker_create gates on the PLOT BOX" \
+  [pexpr {[regexp {if\(!graph_plotbox_at\(i, px, py\)\) \{} $mpsrc]}]
+check_true "MP14 ... and hands graph_point_at a threshold nothing can exceed" \
+  [pexpr {[regexp {graph_point_at\(i, px, py, 1e30, -1, -1, &hit\)} $mpsrc]}]
+check "MP14 GRAPH_MARKER_PICK_TOL is gone from draw.c" \
+  [pcall {mp_count_code $mpsrc {GRAPH_MARKER_PICK_TOL}}] 0
+check "MP14 ... and from xschem.h" \
+  [pcall {mp_count_code $mphdr {GRAPH_MARKER_PICK_TOL}}] 0
+
+# LAST in the group: with no raw loaded there is no plot box and nothing to pick
+pcall {xschem graph_marker delete -all}
+pcall {xschem raw clear}
+check "MP12 with the raw cleared the far pixel has no plot box" \
+  [pcall {xschem get graph_plotbox_at 0 $mpfx $mpfy}] 0
+check "MP12 ... and creation there is refused" \
+  [pcall {xschem graph_marker add 0 $mpfx $mpfy}] {}
+
+} mpgerr]} {
+  puts "FAIL: MP group ABORTED: $mpgerr : FAIL"
+  incr fail
+  puts $::errorInfo
+}
+
+mk_reset
+pcall {xschem raw clear}
+pcall {xschem set_modify 0}
+
+# ============================================================================
 # MF* — the MAIN-WINDOW display half (MF2 MF3 MF7 MF8 MF9 MF10 MF11a MF13b)
 #
 # These drive `xschem callback .drw ...` DIRECTLY instead of generating Tk
@@ -1724,10 +2126,16 @@ if {[info exists ::has_x] && [info commands winfo] ne {} && [winfo exists .drw]}
     }
     return {}
   }
-  # empty waveform space WELL INSIDE the band: more than GRAPH_MARKER_PICK_TOL
-  # from any trace and with no marker part under it (the MX0 landmine applies
-  # here too -- a pixel near a strip edge is not claimed by the graph and the
-  # key falls through to the schematic handler)
+  # empty waveform space WELL INSIDE the band: more than 25 px from any trace
+  # and with no marker part under it (the MX0 landmine applies here too -- a
+  # pixel near a strip edge is not claimed by the graph and the key falls
+  # through to the schematic handler).
+  # ⚠ 25, not 10: creation used to gate on GRAPH_MARKER_PICK_TOL (20 screen px)
+  # until issue 0188 deleted it, so a scan written against the SELECTION
+  # tolerance would have been green on the old build too. Since 0188 `m` creates
+  # anywhere in the plot box regardless of this distance -- what the distance
+  # still buys is that the pixel is unambiguously EMPTY, which MP20's narrative
+  # ("empty waveform space") rests on.
   # ⚠ `graph_plotbox_at` is REQUIRED, not belt-and-braces (issue 0175). `band` is
   # the whole graph RECT, so without it this scan hands back the first row below
   # by1+25 where no trace passes -- which on a strip whose traces are near the top
@@ -2198,6 +2606,89 @@ ui_state=[pcall {xschem get ui_state}] rects=[pcall {xschem get graph_rects}]"
   check "MF11a ... and goes through once editable" \
     [pcall {llength [xschem graph_marker list 0]}] 1
   pcall {xschem setprop rect 2 0 hilight_wave -1}
+
+  # --- MP20/MP21/MP22: the KEYS, in empty plot-box space (issue 0188) ------
+  # The MP* engine group above drives the primitive through the pixel VERB. These
+  # three drive the real `m` / `d` key arms at `mfe1x,mfe1y` -- empty waveform
+  # space inside strip 1's PLOT BOX, which mf_empty_px has already verified with
+  # graph_plotbox_at and > 25 px from every trace. Before 0188 both keys were
+  # refused there ("no trace near the pointer").
+  mf_ready {MP20}
+  pcall {xschem graph_marker delete -all}
+  pcall {xschem setprop rect 2 1 hilight_wave -1}
+  check "MP20 the strip starts with no markers" \
+    [pcall {llength [xschem graph_marker list 1]}] 0
+  check "MP20 no stale ui_state latch before the key" [mf_latched] 0
+  pcall {mf_move $mfe1x $mfe1y}
+  pcall {mf_key  $mfe1x $mfe1y 109}
+  check "MP20 `m` in EMPTY plot-box space creates a marker (before 0188: none)" \
+    [pcall {llength [xschem graph_marker list 1]}] 1
+  set mp20 [pcall {lindex [xschem graph_marker list 1] 0}]
+  check "MP20 ... on strip 1, at a real sample of the 11-point grid" \
+    [pcall {list [lindex $mp20 1] \
+              [expr {[lindex $mp20 4] >= 0 && [lindex $mp20 4] <= 10}]}] {1 1}
+  check_true "MP20 ... whose y agrees with `raw value` at that point" \
+    [pcall {mk_close [lindex $mp20 6] [xschem raw value v_b [lindex $mp20 4]]}]
+  # the CONTROL that says the key really arrived: the same key on strip 0's
+  # TRACE pixel also creates, so a refusal above could not be "no key was
+  # delivered". (MF11a just proved the same handler is live on strip 0.)
+  pcall {mf_move $mfax1 $mfay1}
+  pcall {mf_key  $mfax1 $mfay1 109}
+  check "MP20 the control: the same key on a trace pixel of strip 0 also creates" \
+    [pcall {llength [xschem graph_marker list 0]}] 1
+  pcall {xschem graph_marker delete -all 0}
+
+  mf_ready {MP21}
+  pcall {mf_move $mfe1x $mfe1y}
+  pcall {mf_key  $mfe1x $mfe1y 100}
+  check "MP21 `d` gets the same relaxation: a second marker on strip 1" \
+    [pcall {llength [xschem graph_marker list 1]}] 2
+  set mp21l [pcall {xschem graph_marker list 1}]
+  # the `llength` term is load-bearing: with both creations refused every
+  # `lindex` below is {} and a bare comparison would pass vacuously
+  check "MP21 ... and it carries a delta block against the first" \
+    [pcall {list [lindex [lindex $mp21l 1] 7] [llength $mp21l]}] \
+    [pcall {list [lindex [lindex $mp21l 0] 0] 2}]
+
+  # --- MP22: THE DIAMOND EQUALITY -- the user's sentence, asserted ---------
+  # "add a marker at the point that the diamond cursor has snapped to". The two
+  # now make the SAME pair of calls, so the published snap (`xschem get
+  # graph_snap`, item 9's item-10 readout) and the marker the key then creates
+  # must name the same strip, the same trace and the same sample.
+  # DISPLAY-only BY CONSTRUCTION: draw_graph_snap_cursor() returns early under
+  # !has_x, so there is no snap to compare against in the --nogui arm
+  # (landmine 41's split rule, second question).
+  mf_ready {MP22}
+  pcall {xschem graph_marker delete -all}
+  pcall {xschem set graph_snap_cursor 1}
+  # the pick has a BRAKE: draw_graph_snap_cursor returns without querying when
+  # the pointer PIXEL has not changed since the last armed motion. Move somewhere
+  # else first so the motion that matters is a real change.
+  pcall {mf_move $mfax1 $mfay1}
+  pcall {mf_move $mfe1x $mfe1y}
+  set mp22s [pcall {xschem get graph_snap}]
+  if {[llength $mp22s] != 4} {
+    stall "MP22 the snap cursor published nothing at ($mfe1x,$mfe1y)\
+ (graph_snap={$mp22s} armed=[pcall {xschem get graph_snap_cursor}]) —\
+ the equality below has nothing to compare against"
+  }
+  check_true "MP22 the diamond published a snapped sample there {$mp22s}" \
+    [pexpr {[llength $mp22s] == 4}]
+  pcall {mf_key $mfe1x $mfe1y 109}
+  set mp22m [pcall {lindex [xschem graph_marker list 1] 0}]
+  check "MP22 the key created exactly one marker at that pixel" \
+    [pcall {llength [xschem graph_marker list 1]}] 1
+  check "MP22 the marker is on the strip the diamond snapped in" \
+    [pcall {lindex $mp22m 1}] [lindex $mp22s 0]
+  check "MP22 ... on the trace the diamond snapped to" \
+    [pcall {lindex $mp22m 2}] [lindex $mp22s 1]
+  check_true "MP22 ... at the diamond's x" \
+    [pcall {mk_close [lindex $mp22m 5] [lindex $mp22s 2]}]
+  check_true "MP22 ... and at the diamond's y" \
+    [pcall {mk_close [lindex $mp22m 6] [lindex $mp22s 3]}]
+  pcall {xschem set graph_snap_cursor 0}
+  pcall {xschem graph_marker delete -all}
+  pcall {xschem setprop rect 2 1 hilight_wave -1}
 
   # --- MF3: the window is parsed ONCE per operation -----------------------
   # Before the pool, graph_marker_text() ran a full-window graph_marker_find()
@@ -3739,9 +4230,17 @@ v_c} {2 3}]
     return {}
   }
 
-  # Empty waveform space for the refusal legs: inside strip 0's BAND, at least
-  # 25 px from every edge of it, and more than GRAPH_MARKER_PICK_TOL (20) px from
-  # the trace.
+  # Empty waveform space: inside strip 0's PLOT BOX, at least 25 px from every
+  # edge of the band, and more than 25 px from the trace (25, not 10, because
+  # the creation gate USED to be 20 -- issue 0188 removed it, and a leg written
+  # against 10 would have been green on the old build too).
+  #
+  # ⚠ `wviewer::plotbox_at` is REQUIRED, exactly as in mf_empty_px. `band` is the
+  # whole graph RECT, so without it this scan hands back a row in the LEGEND band
+  # or in an axis-number margin just as happily as one inside the box -- and
+  # since 0188 those two answer DIFFERENTLY (inside the box `m` creates, outside
+  # it refuses). A leg whose expected value depends on which one the scan
+  # happened to land on tests nothing.
   #
   # LANDMINE, pre-existing and nothing to do with markers: waves_selected() tests
   # the pointer against the graph rect INSET by `border = 5 * tk_scaling`
@@ -3763,7 +4262,55 @@ v_c} {2 3}]
     foreach mxec [list [expr {$mxy + 45}] [expr {$mxy - 45}] [expr {$mxy + 60}] \
                        [expr {$mxy - 60}] [expr {($mb_lo + $mb_hi) / 2}] $mb_lo $mb_hi] {
       if {$mxec < $mb_lo || $mxec > $mb_hi} continue
+      if {![wviewer::plotbox_at $::vdrw 0 $mxx $mxec]} continue
       if {![mk_near 0 $mxx $mxec 25]} { return $mxec }
+    }
+    # nothing in the shortlist was inside the box -- walk the whole band
+    for {set mxec $mb_lo} {$mxec <= $mb_hi} {incr mxec} {
+      if {![wviewer::plotbox_at $::vdrw 0 $mxx $mxec]} continue
+      if {![mk_near 0 $mxx $mxec 25]} { return $mxec }
+    }
+    return {}
+  }
+  # The MARGIN row: inside strip 0's band, at the same x, but OUTSIDE the plot
+  # box and still within the old 20-px creation halo of a trace. This is the
+  # region issue 0188 takes away, and the only pixel a "delete the plot-box gate"
+  # sabotage can be caught by.
+  # ⚠ Driven through the VERB only -- never a synthetic `m`. A key not claimed by
+  # the graph falls through to the schematic handler where `m` is
+  # readonly_block(), a MODAL that hangs the run to the harness timeout and is
+  # scored CRASH (see the banner above, probe-verified at y = 2).
+  # Returns {x y}: the vertical form first (the same column as every other MX
+  # pixel, so the leg reads as "one column, two regions"), then a sweep of the
+  # LEFT axis-number margin, where a trace's first sample sits right against the
+  # box edge and a halo pixel is guaranteed to exist whatever the strip's aspect.
+  proc mx_margin_row {} {
+    global mxx
+    lassign [lindex [pcall {wviewer::strip_bands_px $::vdrw}] 0] mb_x1 mb_y1 mb_x2 mb_y2
+    if {![string is double -strict $mb_y2]} { return {} }
+    set mb_lo [expr {int($mb_y1) + 1}]
+    set mb_hi [expr {int($mb_y2) - 1}]
+    for {set mxmc $mb_lo} {$mxmc <= $mb_hi} {incr mxmc} {
+      if {[wviewer::plotbox_at $::vdrw 0 $mxx $mxmc]} continue
+      if {[mk_near 0 $mxx $mxmc 20]} { return [list $mxx $mxmc] }
+    }
+    # the left margin: walk in from the box's left edge on this band
+    set mb_bx {}
+    for {set mxmx [expr {int($mb_x1)}]} {$mxmx < int($mb_x2)} {incr mxmx} {
+      set mxmhit 0
+      for {set mxmc $mb_lo} {$mxmc <= $mb_hi} {incr mxmc 4} {
+        if {[wviewer::plotbox_at $::vdrw 0 $mxmx $mxmc]} { set mxmhit 1; break }
+      }
+      if {$mxmhit} { set mb_bx $mxmx; break }
+    }
+    if {$mb_bx eq {}} { return {} }
+    for {set mxmd 1} {$mxmd <= 20} {incr mxmd} {
+      set mxmx [expr {$mb_bx - $mxmd}]
+      if {$mxmx < 0} break
+      for {set mxmc $mb_lo} {$mxmc <= $mb_hi} {incr mxmc} {
+        if {[wviewer::plotbox_at $::vdrw 0 $mxmx $mxmc]} continue
+        if {[mk_near 0 $mxmx $mxmc 20]} { return [list $mxmx $mxmc] }
+      }
     }
     return {}
   }
@@ -3915,23 +4462,63 @@ v_c} {2 3}]
                                      xschem graph_marker text 2}]]}]
   check "MX3 still no viewer log line" [llength $::mxlog] 0
 
-  # --- MX4: `m` where there is no trace creates nothing ---------------
+  # --- MX4: `m` in EMPTY plot-box space CREATES (issue 0188) ----------
+  # This leg used to assert the OPPOSITE ("m in empty waveform space creates
+  # nothing"), because graph_marker_create gated on a 20-px distance to a trace.
+  # The gate is now the PLOT BOX -- the same one the item-9 diamond uses -- so
+  # empty space INSIDE the box marks the sample the diamond is sitting on.
+  # mx_empty_row requires wviewer::plotbox_at for exactly this reason: before
+  # 0188 both regions refused and the scan's choice did not matter; now they
+  # answer differently and an unasserted scan would decide the leg's verdict.
   mx_ready {MX4}
   set mx4n [pcall {llength [mk_list 0]}]
   mk_prep_at $mxx $mxe
   check_true "MX4 the empty pixel is still CLAIMED by the graph (the key reaches C)" \
     [pcall {wviewer::over_graph $vdrw}]
-  # ONE delivery, not a retry loop: hammering a key that is supposed to do
-  # nothing 120 times is both pointless and a good way to trip an unrelated
-  # modal (see the MX0 comment).
-  check_true "MX4 the m KeyPress was delivered" [pcall {mk_send_once $vdrw \
-    [list <Key-m> -x $mxx -y $mxe]}]
-  check "MX4 m in empty waveform space creates nothing" [pcall {llength [mk_list 0]}] $mx4n
+  check "MX4 ... and is inside strip 0's PLOT BOX" \
+    [pcall {wviewer::plotbox_at $vdrw 0 $mxx $mxe}] 1
+  check "MX4 ... with no trace within 25 px of it" [pcall {mk_near 0 $mxx $mxe 25}] 0
+  set mx4d [send_key_fb $vdrw [list <Key-m> -x $mxx -y $mxe] \
+              {[llength [mk_list 0]] > $mx4n} {wviewer::key_filter $vdrw 2 $mxx $mxe 109 m 0} \
+              {mk_prep_at $mxx $mxe}]
+  check_true "MX4 the m KeyPress was delivered" $mx4d
+  check "MX4 `m` in empty plot-box space CREATES one (before 0188: nothing)" \
+    [pcall {llength [mk_list 0]}] [expr {$mx4n + 1}]
   check "MX4 ... and did not throw" [pcall {list ok}] ok
-  check "MX4 the pixel-addressed verb refuses there too" \
-    [pcall {mk_wadd $tok 0 $mxx $mxe}] {}
-  check "MX4 ... while the same verb on a trace pixel succeeds (the control)" \
-    [pcall {set n [mk_wadd $tok 0 $mxx $mxy]; mk_wdel $tok; expr {$n ne {}}}] 1
+  set mx4v [pcall {mk_wadd $tok 0 $mxx $mxe}]
+  check_true "MX4 the pixel-addressed verb creates there too" \
+    [pexpr {[string is integer -strict "$mx4v"] && $mx4v > 0}]
+  check "MX4 ... anchored to the NEAREST trace however far (the 1e30 answer)" \
+    [pcall {set r {}
+            foreach m [mk_list 0] { if {[lindex $m 0] eq "$mx4v"} { set r [lindex $m 2] } }
+            set r}] \
+    [pcall {xschem new_schematic switch $vdrw
+            xschem get graph_trace_at 0 $mxx $mxe 1e30}]
+  check "MX4 ... while the same verb on a trace pixel succeeds too (the control)" \
+    [pcall {set n [mk_wadd $tok 0 $mxx $mxy]; expr {$n ne {}}}] 1
+  pcall {mk_wdel $tok}
+
+  # --- MX4b: the axis/legend MARGIN is REFUSED (issue 0188) -----------
+  # The other direction of the same defect: outside the plot box, but within the
+  # old 20-px creation tolerance of a trace, `m` used to create a marker where no
+  # diamond is drawn at all.
+  # ⚠ Driven through the VERB, never a synthetic `m` key: a key not claimed by
+  # the graph falls through to the schematic handler where `m` is
+  # readonly_block(), a MODAL that hangs the run to the harness timeout and is
+  # scored CRASH (the MX0 banner, probe-verified at y = 2).
+  set mxm [pcall {mx_margin_row}]
+  if {[llength $mxm] != 2} {
+    stall "MX4b no margin pixel (outside the plot box, within 20 px of a trace)\
+ could be scanned in strip 0 — the refusal below has nothing to assert against"
+  }
+  check_true "MX4b a margin pixel was scanned {$mxm}" [pexpr {[llength $mxm] == 2}]
+  check "MX4b it is OUTSIDE the plot box" \
+    [pcall {wviewer::plotbox_at $vdrw 0 [lindex $mxm 0] [lindex $mxm 1]}] 0
+  check "MX4b ... yet within the OLD 20-px creation halo of a trace" \
+    [pcall {mk_near 0 [lindex $mxm 0] [lindex $mxm 1] 20}] 1
+  check "MX4b ... and the VERB refuses there (before 0188: it created one)" \
+    [pcall {mk_wadd $tok 0 [lindex $mxm 0] [lindex $mxm 1]}] {}
+  check "MX4b nothing was left behind by the refusal" [pcall {llength [mk_list 0]}] 0
 
   # --- MX5: SELECT (press+release, no travel) -------------------------
   mx_ready {MX5}
@@ -4679,9 +5266,9 @@ v_c} {2 3}]
 # the new numbers here. That is the point -- the constant is the thing that
 # makes silent coverage loss impossible, so it has to be maintained by hand.
 # These are the counts BEFORE the two MZ legs themselves, so the RESULT line
-# reads two higher (803 / 328).
-set ::mk_expect_x     801   ;# DISPLAY arm: MK + MR + MF + MD + MQ + MR-viewer + MX
-set ::mk_expect_nogui 326   ;# --nogui arm: MK + the engine half of MR/MF/MD
+# reads two higher (870 / 373).
+set ::mk_expect_x     868   ;# DISPLAY arm: MK + MR + MF + MP + MD + MQ + MR-viewer + MX
+set ::mk_expect_nogui 371   ;# --nogui arm: MK + MP + the engine half of MR/MF/MD
 set mkexp [expr {$::mk_ran_x ? $::mk_expect_x : $::mk_expect_nogui}]
 set mkgot [expr {$npass + $fail}]
 check "MZ1 the [expr {$::mk_ran_x ? {DISPLAY} : {--nogui}}] arm ran its full\
