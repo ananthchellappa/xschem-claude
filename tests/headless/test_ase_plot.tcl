@@ -530,7 +530,19 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
       foreach tr $dtr {
         if {[wviewer::dget $tr vec {}] eq {v(d)}} { set p4tc [wviewer::dget $tr color {}] }
       }
-      check "P4 v(d) trace color == the color painted on the wire" $p4tc [expr {-$p4hl}]
+      # $p4hl comes from the wire click above, which is the leg that flakes under
+      # WSLg (the click occasionally lands on nothing and hl_val returns {}).
+      # `expr {-$p4hl}` on {} THROWS, and the throw escapes to the file-level
+      # catch — so one flaked click used to abort the remaining ~56 checks and
+      # the suite reported "4 FAILED (85 passed)" instead of "1 FAILED (144)".
+      # Fail this leg locally instead; the earlier legs already reported the
+      # real problem.
+      if {[string is integer -strict $p4hl]} {
+        check "P4 v(d) trace color == the color painted on the wire" $p4tc [expr {-$p4hl}]
+      } else {
+        check "P4 v(d) trace color == the color painted on the wire" \
+          "no wire highlight to compare against (p4hl={$p4hl})" {}
+      }
       xschem new_schematic switch $cv
       check "P4 the wire highlight PERSISTS past ESC" [hl_val D] $p4hl
       # the two picks must not share a color (they are two different signals)
@@ -595,6 +607,32 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
                [rawq {xschem raw index id}] >= 0}]
       check "P6 redraw rc 0 (stale add-vectors draw clean)" \
         [catch {xschem redraw}] 0
+
+      # --- P6b (issue 0173): a viewer READ driven from the DESIGN window
+      #     BORROWS the xschem context and gives it back. This is the suite that
+      #     has real raw data attached, so readout_refresh's per-context reads
+      #     (`xschem get cursorN_x`, interp_value's `xschem raw` lookups) actually
+      #     resolve — which makes this the leg that proves the borrow HANDED THE
+      #     CONTEXT OVER, not merely that it put it back afterwards. Before the
+      #     fix the bare `new_schematic switch` here left the design window's
+      #     clicks going to the viewer and rewrote the viewer's title.
+      xschem new_schematic switch $vdrw
+      xschem set cursor1_x 0.9
+      set ::wviewer::cva($key) 1                 ;# cursor A on -> the bar has content
+      set t73 [wviewer::title_for $key]
+      wm title $vtop $t73                        ;# known-good starting point
+      xschem new_schematic switch .drw
+      check "P6b the design owns the context before the read" \
+        [xschem get current_win_path] .drw
+      # no `update` past here: the viewer's FocusIn retitle and the editor's
+      # FocusIn ctx switch would both repair the very damage being asserted about
+      wviewer::readout_refresh $key
+      check "P6b a viewer readout from the design window RESTORES the context" \
+        [xschem get current_win_path] .drw
+      check "P6b ... and leaves the viewer's own title intact" [wm title $vtop] $t73
+      check_true "P6b ... having really read in the viewer ctx (readout filled)" \
+        [regexp {^A: x=} [$vtop.wvreadout.a cget -text]]
+      set ::wviewer::cva($key) 0
     }
 
     # --- P7: session close closes the viewer (D10) ---------------------------
@@ -787,6 +825,12 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     set pre_esc9 [bind $cv9 <Key-Escape>]
     set pre_mot9 [bind $cv9 <Motion>]
     set rk [ase::direct_plot_for_current]              ;# the Ctrl-4 command
+    # issue 0173 no-regression, asserted BEFORE the `update` below: Ctrl-4 arms a
+    # pick mode ON THE DESIGN and must leave the context there. It is the sibling
+    # chord of Ctrl-Shift-4, which did leak the context into the viewer, and the
+    # 0173 fix touches procs (in_ctx, readout_refresh) that this path reaches.
+    check "P9 Ctrl-4 left the context on the DESIGN window" \
+      [xschem get current_win_path] $cv9
     update
     check "P9 entry proc returned the bound session key" $rk $key
     check_true "P9 mode armed (ButtonPress-1 seized, sod active)" \

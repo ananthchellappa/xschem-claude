@@ -316,9 +316,12 @@ move.c:3671-3672). Don't "unify" them without preserving the domains.
   :3076) — "selection wins" per touch-component. Deliberately NOT used by overshoot
   (0092) and absent from novel-orphan-stub. **prot[] must be realloc'd+refilled per
   fixpoint iteration** — trim grows `xctx->wires` mid-pass (move.c:3105-3110).
-- **Explicit label** `fluid_wire_explicit_lab` :2471 (non-`#` lab, or contains `[`/`:`)
-  = universal hard decline (except loops' own sole-carrier logic :2719-2735). Note this
-  makes **every named rail and every bus a repair blackout** (risk §11.1).
+- **Explicit label** `fluid_wire_explicit_lab` :2471 (**not** `is_auto_net_name()` — i.e. not
+  a literal `#net<digits>` — or contains `[`/`:`) = universal hard decline (except loops'
+  own sole-carrier logic :2719-2735). Note this makes **every named rail and every bus a
+  repair blackout** (risk §11.1). The test was `lab[0] != '#'` until issue 0162: a
+  user-authored `lab=#foo` failed it and every de-shorter treated the user's net as tool
+  copper. The H2 sole-carrier guard in `fluid_loop_eligible` carries the same swap.
 - **START-degree thresholds** — see pass catalog note.
 
 ## 7. Landmines checklist (walk before ANY move.c change)
@@ -754,6 +757,26 @@ declaring any wiring feature done, convert to xfail tests when touching the area
     nets distinct (the rail's mid-span crossing of #net2 at (−50,−170) shares no endpoint → benign, per
     0136 defect 2). `doc/claude/issues/0139-*.md`, `test_fluid_second_gesture_body_cross_0139.tcl`
     (RED→GREEN 13/13, baseline fails exactly the 3 body-cross checks), wireedit 57/57, 0136 11/11.
+
+15. ~~**A user-authored `#` label is read as regenerable by the fluid label guards**~~
+    **FIXED (0162)**. `fluid_wire_explicit_lab` (~:2945) returned `lab[0] != '#' ||
+    strpbrk(lab, "[:")` and the H2 doom guard (~:3196) exempted `lab[0] == '#'`; both now test
+    `is_auto_net_name()` (strictly `#net<digits>`), so a user-authored `lab=#foo` is protected
+    like any other name. The symptom was worse than "drops a label": `fluid_wire_explicit_lab`
+    is the **universal named-copper decline** consulted by 12 call sites, so a `#foo` net was
+    reshapeable by every de-shorter (measured on the 0105 topology: a `#foo` backbone was
+    rebuilt as a jog, 16→17 wires, where a `VDD` backbone is a blackout and the move is
+    REFUSED; and on the 0088 loop, 2 of the user's 4 wires deleted). The direction is monotone
+    (`is_auto_net_name` ⊂ `[0]=='#'`) — it can only protect MORE copper — and a sweep of every
+    committed `.sch`/`.sym` found zero non-`#net<digits>` `#` labels, so nothing in-tree moves.
+    **Consequence to know:** a `#foo` net now inherits the named-rail blackout of risk §11.1 —
+    the de-shorters decline and the END gate REFUSES instead of rerouting.
+    **Caveat:** the H2 half has **no discriminating fixture** — sabotaging it either way changes
+    nothing, and a 36-shape sweep on an H2-only diagnostic build found zero differences (the
+    branch only fires when the loop pass would doom the LAST carrier of a name, which a
+    lab_pin-named net never presents). Kept as policy alignment, verified by inspection only.
+    `doc/claude/issues/0162-*.md`, test `test_wireedit_58_user_hash_label_0162.tcl` (9 checks,
+    three-way VDD/`#foo`/`#net99` comparison so it cannot pass by blanket-protecting `#`).
 
 Below-cut (quality, keep on radar): elbow legs through pin-less stationary bodies (no
 body class in `fluid_ml_hazards`); two moved devices sharing a channel (NULL node treated

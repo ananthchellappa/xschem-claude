@@ -1361,9 +1361,22 @@ proc slickprop::edit_form {txtlabel} {
   scrollbar .dialog.fa.sb -command ".dialog.fa.c yview" -orient vertical
   frame .dialog.fa.c.inner
   .dialog.fa.c create window 0 0 -anchor nw -window .dialog.fa.c.inner -tags inner
+  # Two SEPARATE bindings, deliberately: the scrollregion follows the content, but
+  # the content's WIDTH must be driven by the CANVAS's own <Configure> (%w).
+  # Driving it from the inner frame's <Configure> self-pins (issue 0170): that
+  # event can arrive while the canvas is still 1px wide, `itemconfigure -width 1`
+  # then shrinks inner to 1 — and since inner never changes size again, no further
+  # <Configure> fires ON INNER, so a later canvas resize can never widen it. Every
+  # field row is laid out inside a 1px frame and the form looks EMPTY (the fields
+  # are all there, mapped, correctly gridded — just clipped to one pixel). The
+  # canvas's own <Configure>, by contrast, fires again when the real size arrives,
+  # so it recovers; the `%w > 1` guard keeps it from ever pinning in the first place.
   bind .dialog.fa.c.inner <Configure> {
     .dialog.fa.c configure -scrollregion [.dialog.fa.c bbox all]
-    .dialog.fa.c itemconfigure inner -width [winfo width .dialog.fa.c]
+  }
+  bind .dialog.fa.c <Configure> {
+    if {%w > 1} { .dialog.fa.c itemconfigure inner -width %w }
+    .dialog.fa.c configure -scrollregion [.dialog.fa.c bbox all]
   }
   pack .dialog.fa.sb -side right -fill y
   pack .dialog.fa.c -side left -fill both -expand yes

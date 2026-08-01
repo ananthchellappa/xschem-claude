@@ -38,6 +38,15 @@ the branch tests the *currently* bold wave, not the one just found, so while any
 trace is bold a click anywhere in the body un-bolds it, and only a click with
 nothing bold selects the closest trace.
 
+> ⚠ **SUPERSEDED by issue 0174 (2026-07-29).** Both paragraphs above are the
+> record of what this issue knowingly left in place, and both were the reported
+> defect the next time round. The pick is now `graph_wave_at()` at
+> `GRAPH_TRACE_PICK_TOL` (10 screen px), so a click more than that from every
+> trace selects nothing; and the toggle compares the trace just PICKED, so a
+> click on trace B while trace A is bold moves the selection instead of clearing
+> it. Kept, not deleted: this file is the record of why they survived this long.
+> See `doc/claude/issues/0174-trace-pick-needs-proximity.md`.
+
 ## Decision (user, 2026-07-25)
 
 - Move it to a plain **LMB click**, and remove it from RMB inside the plot body
@@ -87,7 +96,8 @@ release of the double cannot also toggle the bold.
 - **LMB on the legend** does nothing, as before — the new click arm is gated on
   `POINTINSIDE` the plot body. Recorded as a boundary, not as a desired end
   state; making the legend LMB-selectable would be a separate change.
-- The toggle semantics described above.
+- The toggle semantics described above. **(Superseded by 0174 — see the note in
+  "What it actually was".)**
 
 ## Tests + teeth
 
@@ -102,7 +112,18 @@ sequences through the shipped bindings, never a lone synthetic callback:
 | `WB-rmb-click` | RMB click in the body leaves the bold alone |
 | `WB-rmb-drag` | RMB press-drag box-zoom leaves the bold alone **and still zooms** |
 | `WB-lmb-drag` | a Button1 drag-pan does not bold **and still pans** |
-| `WB-legend` | legend RMB still bolds that trace / un-bolds; legend LMB does not |
+| `WB-legend` | legend RMB still bolds that trace / un-bolds; ~~legend LMB does not~~ **SUPERSEDED — see below** |
+
+⚠ **The `WB-legend` row's second clause is SUPERSEDED by issue 0175
+(2026-07-30).** *"legend LMB does not [bold]"* was true here and was recorded as
+a boundary rather than a decision. It is no longer true: a legend LMB click
+**selects** that trace, Ctrl+LMB adds/removes it, and the leg in
+`test_wave_viewer.tcl` asserts the new answer. The RMB half of the row still
+stands, with one refinement — RMB on a legend entry now toggles that entry's
+MEMBERSHIP of a possibly multi-trace selection, which is byte-identical to this
+issue's behaviour whenever at most one trace is selected. The row is marked, not
+deleted: it is the record of what the button meant between 0152 and 0175. See
+`doc/claude/issues/0175-trace-legend-click-and-multiselect.md`, D5/D7.
 
 Sabotage-verified:
 

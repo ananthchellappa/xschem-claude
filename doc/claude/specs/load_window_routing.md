@@ -56,6 +56,47 @@ inplace_hint = -inplace | -nosymbols | -nodraw | -nofullzoom | -keep_symbols | -
 route_newwin = has_x && -gui && !(-window) && !inplace_hint && !is_pristine_untitled()
 ```
 
+### What "pristine" means (tightened by issue 0172)
+
+`is_pristine_untitled()` is the shared predicate behind all three reuse doors — this
+routing decision, `load_new_window <file>`, and `load_new_window` via the file dialog —
+so it is where the exclusions live, not in the callers. It is true only when the current
+context is top level, not `modified`, named `untitled*` (or unnamed), **empty of every
+object type** (no instances, wires, texts, and no rects/lines/polygons/arcs on any
+layer), and **not a waveform viewer** (`xctx->wave_viewer`, stamped by `wviewer::open`).
+
+Both of the last two are issue 0172. An ASE viewer is a schematic buffer whose content
+is graph *rects* and whose `modified` is pinned at 0 for life by the `with_edit` D1
+contract, so by the old shape test it was permanently "pristine" — and a user open
+landed a real schematic inside a live viewer window, under the viewer's bindtag, where
+`Ctrl-D` then wiped it. Checking every object array closes the same hole for any buffer
+that has had `set_modify 0` applied to it with content in place.
+
+`readonly` is deliberately **not** part of the test: this branch opens ordinary
+schematics read-only (descend read-only, the reopen shortcuts) and those are still fair
+reuse targets. Guards: `tests/headless/test_pristine_untitled_viewer_0172.tcl` (no X,
+**41 checks** — one clause of the predicate → one named set of legs, each verified by
+rebuilding with that clause neutralised; table in the issue doc) and
+`test_wave_clear_all.tcl` CG9/CG10 (need X).
+
+The viewer is not the only buffer this affects: `create_graph` (`src/create_graph.tcl`)
+draws a title text and a graph rect into the current buffer and then clears `modified`
+so the session can quit without a save prompt. That is a shipped helper leaving exactly
+the hijackable state in a window with no viewer brand — it is the workflow the
+object-array half of the predicate protects.
+
+**Why did my open get a new window?** Every refusal names its clause at `dbg` level 1:
+run `xschem -d 1` and look for `is_pristine_untitled(): NO -- ...` (the accepting path
+prints `YES -- empty buffer named "..." (reused in place)`).
+
+There is a **fourth** door that the predicate does not govern: `ask_new_file()`
+(`src/actions.c`), entered from `xschem load` with no filename and from Ctrl-O / Alt-O.
+With `open_in_new_window` 0 (the default) its in-place arm calls `load_schematic()`
+unconditionally — it never asks whether the current window is pristine, which is why
+routing had to be added to `xschem load -gui` in the first place. Issue 0172 gave it the
+one exclusion it needs (`xctx->wave_viewer` forces the new-window arm); everything else
+about it is unchanged.
+
 `has_x`: routing to a "new window" is meaningless without a GUI, so a headless
 (`--nogui`) run — including an action-log replay of a `-gui` line — never routes
 and always loads in place.

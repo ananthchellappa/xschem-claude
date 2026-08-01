@@ -1,0 +1,14 @@
+version 1
+simulator ngspice
+design {lib sky130_tests_ase cell test_stdcells view schematic}
+rundir {}
+temperature 25
+models {{file {$::SKYWATER_MODELS/sky130.lib.spice} section tt}}
+variables {{name vcc value 1.8}}
+analyses {{type op enabled 0} {type dc enabled 0} {type ac enabled 0} {type tran enabled 1 stop 80n step 30p}}
+outputs {{name clk expr clk save 1 plot 1} {name a expr a save 1 plot 1} {name b expr b save 1 plot 1} {name resetb expr reset_b save 1 plot 1} {name q expr q save 1 plot 1} {name x expr x save 1 plot 1} {name y expr y save 1 plot 1} {name qlatch expr qlatch save 1 plot 1} {name xschem expr xschem save 1 plot 1} {name OUTPUTSSPICE expr nothing save 1 plot 1} {name Q expr Q save 1 plot 1} {name X expr X save 1 plot 1} {name Y expr Y save 1 plot 1} {name QLATCH expr QLATCH save 1 plot 1} {name XSCHEM expr XSCHEM save 1 plot 1} {name XQ expr X_Q save 1 plot 1} {name XX expr X_X save 1 plot 1} {name XY expr X_Y save 1 plot 1} {name XQLATCH expr X_QLATCH save 1 plot 1} {name XXSCHEM expr X_XSCHEM save 1 plot 1}}
+save_all_v 0
+save_all_i 0
+options {{name acct value 1} {name list value 1}}
+includes {{file {$::SKYWATER_STDCELLS/sky130_fd_sc_hd.spice}}}
+viewer {}

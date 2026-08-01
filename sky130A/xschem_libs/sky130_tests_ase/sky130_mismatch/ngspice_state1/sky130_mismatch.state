@@ -1,0 +1,14 @@
+version 1
+simulator ngspice
+design {lib sky130_tests_ase cell sky130_mismatch view schematic}
+rundir {}
+temperature 27
+models {{file {$::SKYWATER_MODELS/sky130.lib.spice} section tt_mm}}
+variables {}
+analyses {{type op enabled 1} {type dc enabled 0} {type ac enabled 0} {type tran enabled 0}}
+outputs {{name run expr run save 1 plot 0} {name vth1 expr vth1 save 1 plot 1} {name vth2 expr vth2 save 1 plot 1} {name f2 expr f2 save 1 plot 1} {name f1 expr f1 save 1 plot 1}}
+save_all_v 1
+save_all_i 0
+options {{name savecurrents value 1} {name wnflag value 1}}
+includes {}
+viewer {}

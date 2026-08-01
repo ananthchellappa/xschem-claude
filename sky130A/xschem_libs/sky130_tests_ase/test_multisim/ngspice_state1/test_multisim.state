@@ -1,0 +1,14 @@
+version 1
+simulator ngspice
+design {lib sky130_tests_ase cell test_multisim view schematic}
+rundir {}
+temperature 27
+models {}
+variables {}
+analyses {{type op enabled 0} {type dc enabled 0} {type ac enabled 0} {type tran enabled 1 stop 20u step 1n}}
+outputs {{name a expr a save 1 plot 1} {name vcc expr vcc save 1 plot 1}}
+save_all_v 1
+save_all_i 0
+options {}
+includes {}
+viewer {}

@@ -2573,11 +2573,60 @@ void select_hilight_net(void)
 }
 
 
+/* 'extra' is a symbol's extra= attribute: the whitespace separated list of attribute
+ * names the netlister treats as NODES rather than as instance parameters -- see
+ * src/token.c ("extra is the list of attributes NOT to consider as instance
+ * parameters"), where print_spice_subckt_nodes() emits them as subckt ports and
+ * get_sym_template() keeps them out of the parameter list. Measured on the stock
+ * library: xschem_library/rom8k/lvnot.sym carries extra="VCCPIN VSSPIN" and netlists
+ * as `.subckt lvnot y a VCCPIN VSSPIN` / `x10 FN DDN vcc vss lvnot`.
+ * Those, and only those, are the attributes that may rebind a net name in
+ * resolved_net() -- see doc/claude/issues/0163-resolved-net-instance-attribute-lookup.md
+ * The match is on WHOLE tokens, unlike the strstr() the netlister uses internally, so a
+ * net named "EXTRA" can not be let through by an "EXTRANET" entry.
+ *
+ * Not static: token.c's netlister-side ERC check (issue 0165) must decide "is this
+ * @token an extra=-declared NODE, or an ordinary instance parameter?" using exactly
+ * the same rule, and two copies of that rule would drift. */
+int attr_is_extra_node(const char *extra, const char *name)
+{
+  size_t l;
+  const char *p;
+
+  if(!extra || !name || !name[0]) return 0;
+  l = strlen(name);
+  p = extra;
+  while(*p) {
+    while(*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r') ++p;
+    if(!*p) break;
+    if(!strncmp(p, name, l) &&
+       (p[l] == '\0' || p[l] == ' ' || p[l] == '\t' || p[l] == '\n' || p[l] == '\r')) return 1;
+    while(*p && *p != ' ' && *p != '\t' && *p != '\n' && *p != '\r') ++p;
+  }
+  return 0;
+}
+
 /* returns the full path name of "net" recursively resolving port connections
  * propagating lower level nets to upper levels.
  * "net" can be a bussed net.
  * caller *MUST* free returned string */
 char *resolved_net(const char *net)
+{
+  return resolved_net_from(net, -1);
+}
+
+/* Same, with an EXPLICIT top of the resolution: the returned name is measured from
+ * hierarchy level "from_level" instead of from wherever a raw file happens to be
+ * loaded. from_level < 0 keeps the shipped behavior (sch_waves_loaded(), i.e. the
+ * level the current raw was loaded at, else the top).
+ *
+ * ASE-L needs the explicit form (issue 0168): a Direct Plot pick made while
+ * descended must be named the way the SESSION's deck names it, and that deck's top
+ * is the session's design -- which is a property of the session, not of whatever
+ * raw the schematic window has loaded. With no raw loaded the two agree (both 0),
+ * which is why every shipped caller can keep passing -1.
+ * caller *MUST* free returned string */
+char *resolved_net_from(const char *net, int from_level)
 {
   char *rnet = NULL;
   Str_hashentry *entry;
@@ -2597,9 +2646,10 @@ char *resolved_net(const char *net)
     char *path = xctx->sch_path[level] + 1, *path2 = NULL, *path2_ptr = NULL;
 
     dbg(1, "resolved_net(): net=%s\n", net);
-    start_level = sch_waves_loaded();
+    if(from_level >= 0) start_level = from_level;
+    else start_level = sch_waves_loaded();
     if(start_level == -1) start_level = 0;
-    if(net[0] == '#') net++;
+    if(start_level > xctx->currsch) start_level = xctx->currsch;
     if(path) {
       /* skip path components that are above the level where raw file was loaded */
       while(*path && skip < start_level) {
@@ -2614,11 +2664,60 @@ char *resolved_net(const char *net)
       char *net_name = my_strtok_r(n_s1, ",", "", 0, &n_s2);
       level = xctx->currsch;
       n_s1 = NULL;
+      /* strip the auto-net marker PER ELEMENT. This used to run once on the whole
+       * token before expandlabel(), so only element 0 ever lost its '#'
+       * ({D,#net1} -> D,#net1; descended, the '#' even landed mid-name as
+       * X1.#net1) -- issue 0158. expandlabel() keeps '#' ('#' is in parselabel.l's
+       * label character class) and distributes it over bracket bits, so #a[1:0]
+       * still yields a[1],a[0]. The test stays LOOSE rather than using
+       * is_auto_net_name(): a user-authored lab=#foo netlists as plain 'foo', so
+       * this output-strip site must match that (issue 0156). Never strip a bare
+       * "#" to the empty string -- the "," below is written regardless, which
+       * would emit a stray separator. */
+      if(net_name && net_name[0] == '#' && net_name[1]) net_name++;
       my_strdup2(_ALLOC_ID_, &resolved_net, net_name);
       dbg(1, "resolved_net(): resolved_net=%s\n", resolved_net);
       while(level > start_level) { /* check if net passed by attribute instead of by port */
-        const char *ptr = get_tok_value(xctx->hier_attr[level - 1].prop_ptr, resolved_net, 0);
+        const char *ptr;
+        /* ONLY an attribute the parent symbol declares in its extra= list may rebind a
+         * net. hier_attr[].prop_ptr is the parent instance's ENTIRE property string, so
+         * an ungated get_tok_value() let ANY attribute spelled like the net replace it:
+         * a child net `value` came back as the instance's value=1k, `spice_ignore` as
+         * false, `name` as the instance name, `m`/`wn` as device parameters. Measured on
+         * the stock library too: rom8k/rom2_predec1's x9[15:0] carries a stray
+         * VSSBPIN=VSS that lvnor2.sym's extra= does not list, and lvnor2.sch's VSSBPIN
+         * wires (local nets, no such subckt port) resolved to VSS -- issue 0163.
+         * sym_extra is captured next to prop_ptr at every write site (actions.c,
+         * save.c, spice_netlist.c, spectre_netlist.c) and was, until now, read nowhere. */
+        if(!attr_is_extra_node(xctx->hier_attr[level - 1].sym_extra, resolved_net)) break;
+        ptr = get_tok_value(xctx->hier_attr[level - 1].prop_ptr, resolved_net, 0);
+        /* When the INSTANCE does not carry the attribute at all, the node comes from the
+         * symbol TEMPLATE default, and the netlister says so: translate() does exactly
+         * this two-step (token.c ~5206). Without it an instance relying on
+         * template="... VCCPIN=VCC" resolved to X1.VCCPIN while the netlist said VCC, and
+         * the trace was silently not found -- issue 0164.
+         * The guard is `!xctx->tok_size`, i.e. "the token is ABSENT from the instance
+         * attributes", NOT "its value is empty", again mirroring translate(). Measured:
+         * an instance carrying VCCPIN="" gets NO node in the netlist -- it does not
+         * inherit the default -- so a present-but-empty attribute must stop the walk here
+         * rather than fall through to the template.
+         * get_tok_value() returns a pointer into a STATIC buffer, so this call invalidates
+         * the previous one; that is fine because the previous value is known empty, but do
+         * not rewrite this as `a[0] ? a : b` with both calls live at once. */
+        if(!xctx->tok_size) ptr = get_tok_value(xctx->hier_attr[level - 1].templ, resolved_net, 0);
         if(ptr && ptr[0]) {
+          /* Do NOT strip a leading '#' off the value here, unlike the input strip above
+           * and unlike the portmap path (actions.c:3594-3599). MEASURED, ngspice-42: an
+           * extra= value is passed onto the subckt call line VERBATIM (`X1 topn #hfoo c`),
+           * and ngspice names that node `#hfoo`. A wire LABELLED `#hfoo` netlists as plain
+           * `hfoo` -- so in one deck the two are DIFFERENT, unconnected nodes:
+           *   hfoo 0.0V (from the label)   #hfoo 1.0V (from the binding)
+           * Stripping here would therefore not clean up a name, it would name the wrong
+           * node, and get_raw_index() -- which never strips '#' -- would resolve it to that
+           * wrong node rather than fail. Each path must follow its OWN path's netlist: the
+           * portmap strips because a pin-passed `#net1` really is `net1` downstream; this
+           * one must not. Issue 0163 shipped a strip here on the opposite premise and it
+           * was reverted once measured. */
           my_strdup2(_ALLOC_ID_, &resolved_net, ptr);
           dbg(1, "lcc[%d].prop_ptr=%s\n", level - 1, xctx->hier_attr[level - 1].prop_ptr);
           dbg(1, "resolved_net(): resolved_net=%s\n", resolved_net);
@@ -2651,7 +2750,10 @@ char *resolved_net(const char *net)
       dbg(1, "path2=%s level=%d start_level=%d\n", path2, level, start_level);
 
       if(record_global_node(3, NULL, resolved_net)) {
-        my_strdup2(_ALLOC_ID_, &rnet, resolved_net);
+        /* a global net is flat: append it WITHOUT the path2 hierarchy prefix. Must
+         * APPEND -- my_strdup2() here REPLACED the accumulator, so any global at
+         * k>0 discarded every bus element resolved before it (issue 0157). */
+        my_mstrcat(_ALLOC_ID_, &rnet, resolved_net, NULL);
       } else {
         my_mstrcat(_ALLOC_ID_, &rnet, path2, resolved_net, NULL);
       }

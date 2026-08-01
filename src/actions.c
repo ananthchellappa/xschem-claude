@@ -686,6 +686,19 @@ void ask_new_file(int in_new_window, char *filename)
     char f[PATH_MAX]; /*  overflow safe 20161125 */
 
     if(!has_x) return;
+    /* issue 0172: NEVER load in place over a waveform-viewer window. This is the fourth
+     * door into the current buffer and the only one that does not go through
+     * is_pristine_untitled() at all -- the in-place arm below calls load_schematic()
+     * unconditionally, so the predicate's viewer refusal cannot protect it. A viewer is
+     * a schematic buffer with the WaveViewer bindtag and menubar on it; a schematic
+     * loaded into one is then edited by the viewer's own keys (Ctrl-D wipes it).
+     * Reachable from `xschem load` with no filename (the CIW rewrite only adds -gui to
+     * a load that HAS an argument) while the viewer holds the context. Not reachable
+     * from the viewer's own keyboard -- wviewer::key_filter does not forward Ctrl-O and
+     * the viewer's File menu has only Close -- but the fix belongs here rather than in
+     * an argument about who can press what. Redirect to the new-window arm, which goes
+     * through load_new_window and therefore through the (fixed) predicate. */
+    if(xctx && xctx->wave_viewer) in_new_window = 1;
     if(!(in_new_window || tclgetboolvar("open_in_new_window")) && xctx->modified) {
       if(save(1, 0) == -1 ) return; /*  user cancels save, so do nothing. */
     }
@@ -1417,8 +1430,12 @@ int add_pin_stubs(const char *prefix, const char *suffix, int inst_prefix)
     if(inst_prefix && instname[0]) my_mstrcat(_ALLOC_ID_, &netname, instname, "_", NULL);
     my_mstrcat(_ALLOC_ID_, &netname, prefix, pinname, suffix, NULL); /* empty parts are skipped */
     /* a nameless pin with no prefix/suffix yields an empty net name: skip it rather than drop
-     * a blank lab= net-label (which would name the empty net / error at netlist time). */
-    if(!netname || !netname[0]) { my_free(_ALLOC_ID_, &netname); continue; }
+     * a blank lab= net-label (which would name the empty net / error at netlist time).
+     * str_is_blank(), not netname[0]: a prefix of " " over a nameless pin passed the old
+     * test and emitted `name=l0 lab=  text_size_0=0.2`, whose lab reads back as
+     * "text_size_0=0.2" with text_size_0 destroyed. Measured via
+     * `xschem add_pin_stubs -prefix { }`. Issue 0183. */
+    if(str_is_blank(netname)) { my_free(_ALLOC_ID_, &netname); continue; }
     /* stub wire: pin (start) -> stub end */
     storeobject(-1, g.x1, g.y1, g.x2, g.y2, WIRE, 0, 0, NULL);
     /* lab_pin at the stub end, oriented so the text reads outward; unique name via uniquify */
@@ -1523,7 +1540,14 @@ int create_pin(double x, double y, const char *name, const char *dir, unsigned s
   my_snprintf(nums, S(nums),
     " show_pinname=true name_dx=%g name_dy=%g name_size=%g%s",
     dx, dy, size, flip ? " name_flip=1" : "");
-  my_mstrcat(_ALLOC_ID_, &prop, "name=", name, " dir=", dir, nums, NULL);
+  /* `name` may legitimately be "" -- the guard above turns a NULL into one, and the
+   * argc>5 form of `xschem add_symbol_pin` (scheduler.c:1677) passes argv[4] through
+   * unguarded, unlike the other two callers. An unquoted empty value would make
+   * get_tok_value() read " dir=in" as the NAME and leave the rect with no `dir` at
+   * all -- and dir drives netlist port direction, ERC and set_pin_type. Issue 0183.
+   * `dir` needs no such care: it is forced non-empty a few lines above. */
+  my_mstrcat_tok(_ALLOC_ID_, &prop, "name", name, NULL);
+  my_mstrcat(_ALLOC_ID_, &prop, " dir=", dir, nums, NULL);
   storeobject(-1, x - 2.5, y - 2.5, x + 2.5, y + 2.5, xRECT, PINLAYER, sel, prop);
   my_free(_ALLOC_ID_, &prop);
   ri = xctx->rects[PINLAYER] - 1;
@@ -1865,6 +1889,12 @@ int set_rect_extraptr(int what, xRect *drptr)
 
 void clear_drawing(void)
 {
+  /* viewer plan item 9: the snap diamond belongs to the drawing that is going
+   * away. Nothing to erase (the window is about to be repainted wholesale) --
+   * just disarm, or the next hover would try to gctiled-erase a glyph at a
+   * stale screen position. */
+  xctx->graph_snap_on = 0;
+  xctx->graph_snap_have_prev = 0;
  int i,j;
  /* the document is being torn down (load / clear / new / undo reload): any in-flight
   * Add-Pin cursor preview is now invalid, so drop the flag (cadence_pin_name_text.md
@@ -1875,6 +1905,26 @@ void clear_drawing(void)
  xctx->sympin_preview = 0;
  xctx->wirelabel_preview = 0;
  xctx->graph_lastsel = -1;
+ /* Waveform markers: the selection is a NUMBER, and the same xctx is reused by
+  * `xschem clear`, File>Open in the same tab, `xschem load` and the disk-undo
+  * reload. A surviving selection would silently latch onto whatever marker in
+  * the NEW document happens to carry that number -- the M1 case, i.e. the
+  * common one -- drawing a selection ring the user never asked for and letting
+  * Delete destroy that marker. Any in-flight drag dies with the document too.
+  * doc/claude/specs/graph_markers.md */
+ xctx->graph_marker_sel = -1;
+ xctx->graph_marker_selgraph = -1;
+ xctx->graph_marker_drag = 0;
+ xctx->graph_marker_dragmode = GRAPH_MARKER_MODE_NONE;
+ xctx->graph_marker_dragnum = -1;
+ xctx->graph_marker_draggraph = -1;
+ xctx->graph_marker_moved = 0;
+ /* viewer plan item 6: the mid-drag shrink preview is transient chrome bound to
+  * a graph index that this clear is about to invalidate. Left armed it would
+  * shrink whatever trace happened to land at that index next. */
+ xctx->graph_preview_scale = 0.0;
+ xctx->graph_preview_gi = 0;
+ xctx->graph_preview_wave = 0;
  del_inst_table();
  del_wire_table();
  my_free(_ALLOC_ID_, &xctx->schtedaxprop);
@@ -2597,7 +2647,12 @@ int place_symbol(int pos, const char *symbol_name, double x, double y, short rot
 
     my_strdup(_ALLOC_ID_, &xctx->inst[n].prop_ptr,
           subst_token(xctx->inst[n].prop_ptr, "attach", xctx->inst[n].instname));
-    my_mstrcat(_ALLOC_ID_, &prop, "name=", xctx->inst[n].instname, "\n", NULL);
+    /* instname is "" (never NULL -- set_inst_flags() fills it via my_strdup2 +
+     * get_tok_value) when the scope symbol's template carries no name= token. An
+     * unquoted empty value here would make the floater's `name` swallow the whole
+     * "flags=graph,unlocked" line below, so the rect would not be a graph at all.
+     * Issue 0183. */
+    my_mstrcat_tok(_ALLOC_ID_, &prop, "name", xctx->inst[n].instname, "\n");
     my_mstrcat(_ALLOC_ID_, &prop, "flags=graph,unlocked\n", NULL);
     my_mstrcat(_ALLOC_ID_, &prop, "lock=1\n", NULL);
     my_mstrcat(_ALLOC_ID_, &prop, "color=8\n", NULL);
@@ -3173,7 +3228,14 @@ void get_additional_symbols(int what)
           my_strdup2(_ALLOC_ID_, &sym, add_ext(rel_sym_path(sch), ".sym"));
         }
 
-        my_mstrcat(_ALLOC_ID_, &symname_attr, "symname=", get_cell(sym, 0), NULL);
+        /* get_cell() returns "" whenever the basename is nothing but an extension --
+         * `schematic=foo/` yields sym == "foo/.sym", and get_trailing_path()
+         * (token.c:1434-1440) NUL-terminates at the '.' and then returns the text after
+         * the '/'. Measured reachable: that instance logs `has_included_subcircuit: :`
+         * with an empty cell name. Unquoted, the empty symname would swallow the whole
+         * " symref=..." that follows and translate3() would resolve @symname to the
+         * symref and @symref to nothing. Issue 0183. */
+        my_mstrcat_tok(_ALLOC_ID_, &symname_attr, "symname", get_cell(sym, 0), NULL);
         my_mstrcat(_ALLOC_ID_, &symname_attr, " symref=", get_sym_name(i, 9999, 1, 1), NULL);
         my_strdup(_ALLOC_ID_, &spice_sym_def,
             translate3(spice_sym_def, 1, xctx->inst[i].prop_ptr,

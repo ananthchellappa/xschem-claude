@@ -1,0 +1,14 @@
+version 1
+simulator ngspice
+design {lib sky130_tests_ase cell bandgap view schematic}
+rundir {}
+temperature 27
+models {}
+variables {}
+analyses {{type op enabled 1} {type dc enabled 0} {type ac enabled 0} {type tran enabled 0}}
+outputs {{name x1F1 expr x1.F1 save 1 plot 1} {name x1F2 expr x1.F2 save 1 plot 1} {name x1ADJ2 expr x1.ADJ2 save 1 plot 1} {name x1ADJ expr x1.ADJ save 1 plot 1} {name CLK expr CLK save 1 plot 1} {name x1zminus expr x1.zminus save 1 plot 1} {name x1plus expr x1.plus save 1 plot 1} {name x1minus expr x1.minus save 1 plot 1}}
+save_all_v 0
+save_all_i 0
+options {}
+includes {}
+viewer {}

@@ -47,6 +47,27 @@ rather than swapping 29 call sites.
 - No regressions: `test_wave_viewer` 213, `test_ase_plot` 124, `test_ase_window`
   155, `test_ase_dialogs` 133.
 
+## EXTENDED, NOT SUPERSEDED — by issue 0177 (2026-07-30)
+
+The decision above is right and the code below still ships. What was wrong was
+the **scope claim**: "this unsnaps ALL graph interaction in one place" is true
+only of interaction routed THROUGH `waves_callback`. Anything that runs when
+`waves_selected()` declines the event still saw a grid-quantised pointer — and
+that includes a band just inside every strip rect which contains the **top of the
+legend**, where the schematic arm paints the crosshair *at* the snapped mirror.
+The 0175 eyeball reported it as "the snap grid is at play when it comes to
+clicking on the legend text".
+
+Issue 0177 makes "this canvas has no snap grid" a **property of the window**
+(`xctx->no_snap`, tested where `mousex_snap` is born) instead of a per-handler
+override. **The `waves_callback` un-snap below is deliberately kept**: an
+ordinary schematic window can embed graphs, `waves_callback` runs on those too,
+and that context is not `no_snap` — its grid is real and wanted everywhere except
+inside a graph. `test_graph_box_zoom_xy.tcl` Part 2 (this issue's own witness) is
+exactly that case and goes red the moment the line is deleted.
+
+See `doc/claude/issues/0177-viewer-has-no-snap-grid.md` and landmine 44.
+
 ## Files
 
 - `src/callback.c` — `waves_callback` entry unsnap.

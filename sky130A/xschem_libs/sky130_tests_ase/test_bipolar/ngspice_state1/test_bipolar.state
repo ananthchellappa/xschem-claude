@@ -1,0 +1,14 @@
+version 1
+simulator ngspice
+design {lib sky130_tests_ase cell test_bipolar view schematic}
+rundir {}
+temperature 27
+models {{file {$::SKYWATER_MODELS/sky130.lib.spice} section tt}}
+variables {}
+analyses {{type op enabled 1} {type dc enabled 1 source i0 start 5n stop 100u step 0.05u} {type ac enabled 0} {type tran enabled 0}}
+outputs {{name qxq1qsky130fdprpnp05v5W3p40L3p40vbe expr {@q.xq1.qsky130_fd_pr__pnp_05v5_W3p40L3p40[vbe]} save 1 plot 0} {name qxq2qsky130fdprnpn05v5W1p00L2p00vbe expr {@q.xq2.qsky130_fd_pr__npn_05v5_W1p00L2p00[vbe]} save 1 plot 0} {name e1 expr e1 save 1 plot 1} {name b2 expr b2 save 1 plot 1}}
+save_all_v 1
+save_all_i 0
+options {{name savecurrents value 1}}
+includes {}
+viewer {}

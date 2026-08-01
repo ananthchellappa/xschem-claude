@@ -22,7 +22,7 @@ v {xschem version=3.4.8RC file_version=1.2
 G {}
 K {type=vsource
 format="@name @pinlist @DC PWL(@pwl )"
-template="name=V1 DC=0 pwl=\"0 0 1n 1\""
+template="name=V1 DC=0 pwl=\\"0 0 1n 1\\""
 edit_form=vpwl}
 V {}
 S {}

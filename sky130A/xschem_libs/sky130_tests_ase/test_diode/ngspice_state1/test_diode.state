@@ -1,0 +1,14 @@
+version 1
+simulator ngspice
+design {lib sky130_tests_ase cell test_diode view schematic}
+rundir {}
+temperature 27
+models {{file {$::SKYWATER_MODELS/sky130.lib.spice} section tt}}
+variables {}
+analyses {{type op enabled 0} {type dc enabled 1 source i1 start 1p stop 50u step 0.1u} {type ac enabled 0} {type tran enabled 1 stop 22n step 100p}}
+outputs {{name k1 expr k1 save 1 plot 1} {name k2 expr k2 save 1 plot 1} {name k3 expr k3 save 1 plot 1} {name ivk1 expr i(vk1) save 1 plot 1}}
+save_all_v 1
+save_all_i 0
+options {}
+includes {}
+viewer {}

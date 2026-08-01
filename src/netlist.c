@@ -772,6 +772,27 @@ void get_inst_pin_coord(int i, int j, double *x, double *y)
   }
 }
 
+/* Is `s` the engine's own auto-generated net name, i.e. exactly "#net" followed by at least
+ * one digit? (issue 0156)
+ *
+ * '#' is the engine's PRIVATE marker for an auto-named net: set_unnamed_net() / set_unnamed_inst()
+ * mint "#net<N>" via get_unnamed_node(1,...), and the netlisters strip the '#' again. But nothing
+ * stops a user typing lab=#foo, nor a hand edit or a format converter putting an arbitrary '#'
+ * name in a file -- and '#' names round-trip through disk (the shipped libraries carry thousands
+ * of committed lab=#netN records). A bare `name[0]=='#'` test therefore does NOT mean "auto-named".
+ *
+ * Use this wherever the answer feeds atoi(name + 4): "#foo" + 4 lands on the NUL (or past it for a
+ * shorter name) and "#12345" + 4 silently yields 45, corrupting an unrelated node's multiplicity.
+ * Sites that merely STRIP the marker on the way to a netlist/display name are left alone -- they
+ * are cosmetic and correct for any '#' name. */
+int is_auto_net_name(const char *s)
+{
+  if(!s || s[0] != '#') return 0;
+  if(strncmp(s, "#net", 4)) return 0;
+  if(!isdigit((unsigned char)s[4])) return 0;   /* "#net" with no index is not an auto name */
+  return 1;
+}
+
 /* what==0 -> initialize  */
 /* what==1 -> get new node name, net##   */
 /* what==2 -> update multiplicity   */
@@ -801,7 +822,25 @@ int get_unnamed_node(int what, int mult,int node)
     xctx->node_mult[xctx->new_node]=mult;
     return xctx->new_node;
   }
-  else if(what==2) { /* update node multiplicity if given mult is lower */
+  /* Guard the node_mult[] accesses below (issue 0156). `node` is derived from a net NAME --
+   * atoi(name + 4) at the call sites -- so it is user-reachable and completely unvalidated.
+   * Two crashes came through here:
+   *   - node_mult is NULL whenever what==1 has not run yet. prepare_netlist_structs() frees it
+   *     (what==0) at its start and only refills it in name_unlabeled_nets(), which runs AFTER
+   *     name_nodes_of_pins_labels_and_propagate() -- so a second label on a wire already named
+   *     '#something' reached what==2 with node_mult == NULL. NULL deref.
+   *   - a large well-formed name (lab=#net99999999) indexes far past node_mult_size in the
+   *     vhdl/verilog declaration pass (node_hash.c, what==3). Out-of-bounds read.
+   * Returning 0 is the existing "unknown multiplicity" answer -- an in-range but never-assigned
+   * entry is 0 too (the array is zeroed on growth), and callers already treat mult<=1 as scalar. */
+  else if(what>=2) {   /* what>=2 == every path below that indexes node_mult */
+    if(!xctx->node_mult || node < 0 || node >= xctx->node_mult_size) {
+      dbg(1, "get_unnamed_node(): what=%d: node %d out of range (size=%d, mult=%s) -- ignored\n",
+             what, node, xctx->node_mult_size, xctx->node_mult ? "set" : "NULL");
+      return 0;
+    }
+  }
+  if(what==2) { /* update node multiplicity if given mult is lower */
     if(xctx->node_mult[node]==0) xctx->node_mult[node]=mult;
     else if(mult < xctx->node_mult[node]) xctx->node_mult[node]=mult;
     return 0;
@@ -967,7 +1006,10 @@ static void set_inst_node(int i, int j, const char *node)
 
   set_lab_or_pin_inst_attr(i, j, node);
 
-  if(node[0] == '#') { /* update multilicity of unnamed node */
+  /* update multiplicity of unnamed node. STRICT test (issue 0156): only the engine's own
+   * "#net<N>" carries an index at +4. A user-authored '#foo' used to land here too, and
+   * atoi("#12345" + 4) == 45 would silently retune an unrelated node's multiplicity. */
+  if(is_auto_net_name(inst[i].node[j])) {
     int pin_mult;
     expandlabel(get_tok_value(rect[j].prop_ptr, "name", 0), &pin_mult);
     get_unnamed_node(2, pin_mult * inst_mult, atoi((inst[i].node[j]) + 4));
@@ -1418,7 +1460,14 @@ static int name_nodes_of_pins_labels_and_propagate()
       if(strcmp(type,"label")) {  /* instance is a port (not a label) */
         port=1;
         /* 20071204 only define a dir property if instance is not a label */
-        if(for_netlist)
+        /* The enclosing guard tests inst[i].node, which reset_node_data_and_rehash()
+         * (netlist.c:1636-1640) allocates when rects[PINLAYER] + rects[GENERICLAYER] > 0.
+         * A pin-type symbol carrying ONLY generic rects therefore has a node array but no
+         * rect[PINLAYER] at all, and rect[PINLAYER][0] is an unconditional deref of a NULL
+         * array -- a hard SIGSEGV on `xschem list_nets` / netlist. `dir` is already "" from
+         * the my_strdup2 above, which is what a pin with no pin rect should report.
+         * See doc/claude/issues/0181-pin-symbol-no-pinlayer-rect-null-deref.md */
+        if(for_netlist && xctx->sym[inst[i].ptr].rects[PINLAYER] > 0)
           my_strdup2(_ALLOC_ID_, &dir,
               get_tok_value(xctx->sym[inst[i].ptr].rect[PINLAYER][0].prop_ptr, "dir",0));
       }
@@ -1441,6 +1490,46 @@ static int name_nodes_of_pins_labels_and_propagate()
 
       my_strdup(_ALLOC_ID_, &inst[i].node[0], inst[i].lab);
 
+      /* '#' is reserved for the engine's auto names (issue 0156). A user-authored '#' label
+       * collides with that private namespace: it is excluded from fly-lines (rule A6), it is
+       * read as "regenerable" by the fluid-editing label guards, and its '#' is stripped on the
+       * way to the netlist, so it can silently alias a different net. Warn once per schematic,
+       * on the same print_erc gate and in the same style as the other checks in this loop. */
+      if(print_erc && inst[i].node[0] && inst[i].node[0][0] == '#' &&
+         !is_auto_net_name(inst[i].node[0])) {
+        char str[2048];
+        my_snprintf(str, S(str),
+          "Warning: instance: %s: net name '%s' starts with '#', which is reserved for "
+          "auto-named nets", inst[i].instname ? inst[i].instname : "?", inst[i].node[0]);
+        statusmsg(str,2);
+        inst[i].color = -PINLAYER;
+        xctx->hilight_nets=1;
+      }
+
+      /* A label whose expansion COLLAPSES to nothing -- a re-multiplied zero-multiplicity
+       * list ("2*(0*a)", "0*a*2") or a bus range with a zero/negative repetition count
+       * ("a[3:0:1:0]", "a[3:0:1:-1]") -- used to segfault expandlabel(). It now falls back
+       * to the original label text with multiplicity -1 (parselabel.l:150-153), which is
+       * silent: the node the label was meant to name simply never appears. Warn once per
+       * schematic, on the same print_erc gate and in the same style as the checks above.
+       * expandlabel_collapsed (parselabel.l) is set ONLY by the new guards, never by the
+       * long-standing harmless forms ("0*a", "a*0", "0*a,b", "(a,b)*0"), so schematics that
+       * work today are not nagged. See doc/claude/issues/
+       * 0182-expandlabel-zero-negative-multiplicity-crash.md */
+      if(print_erc && inst[i].node[0]) {
+        int collapse_mult;
+        expandlabel(inst[i].node[0], &collapse_mult);
+        if(expandlabel_collapsed) {
+          char str[2048];
+          my_snprintf(str, S(str),
+            "Warning: instance: %s: net name '%s' has a zero-width sub-expression and "
+            "expands to nothing; it names no node",
+            inst[i].instname ? inst[i].instname : "?", inst[i].node[0]);
+          statusmsg(str,2);
+          inst[i].color = -PINLAYER;
+          xctx->hilight_nets=1;
+        }
+      }
 
       /* do not assign node if pin/label has no 'lab' attribute */
       #if 0
@@ -1699,6 +1788,18 @@ int prepare_netlist_structs(int for_netl)
   dbg(1, "prepare_netlist_structs(): returning\n");
   /* avoid below call: it in turn calls prepare_netlist_structs(), too many side effects */
   /* propagate_hilights(1, 0, XINSERT_NOREPLACE);*/
+  /* Leave the interp result CLEAN (issue 0155). The side-effect Tcl evals above -- notably
+   * set_modify(-2)'s has_x-gated tclvareval("catch {...}") menu recolor in actions.c -- leave
+   * "0" (the value of `catch`) in the result, so every `xschem` verb that calls prep and then
+   * APPENDS its answer emitted a stray leading "0" on its first (cold) call under a GUI:
+   * `resolved_net OUT` -> "0OUT", `list_hilights` -> "0OUT", `instance_nodemap V1` -> "0V1 p ...".
+   * Fixing it here rather than at each caller kills the class: commit c99beb26 patched
+   * `net` / `nets` / `net_members` one at a time and missed three more sites. Nothing in this
+   * function's chain sets a result any caller reads (netlist.c has no Tcl_SetResult /
+   * Tcl_AppendResult at all), and the early returns at the top never dirtied the result, so
+   * this is a clean-up, not a contract change.
+   * See doc/claude/issues/0155-prep-netlist-structs-interp-result-contamination.md */
+  Tcl_ResetResult(interp);
   return err;
 }
 

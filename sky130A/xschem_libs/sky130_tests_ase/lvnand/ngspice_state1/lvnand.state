@@ -1,0 +1,14 @@
+version 1
+simulator ngspice
+design {lib sky130_tests_ase cell lvnand view schematic}
+rundir {}
+temperature 27
+models {{file {$::SKYWATER_MODELS/sky130.lib.spice} section tt_mm}}
+variables {{name L value 0.15} {name W value 0.5}}
+analyses {{type op enabled 0} {type dc enabled 1 source vd start 0 stop 2 step 0.01} {type ac enabled 0} {type tran enabled 0}}
+outputs {}
+save_all_v 0
+save_all_i 0
+options {{name method value gear} {name seed value 12}}
+includes {}
+viewer {}

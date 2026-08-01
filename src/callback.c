@@ -33,6 +33,11 @@
  * Issue 0152. */
 #define GRAPH_CLICK_TOL 3.0
 
+/* waveform-marker gesture helpers, defined just above waves_callback().
+ * Forward-declared because waves_selected() (further up) must be able to drop an
+ * armed gesture, and abort_operation() must too. */
+static void graph_marker_drag_abort(void);
+
 /* Read-only guard. If the current window is marked read-only (xctx->readonly,
  * which is per-window), warn the user with a modal dialog and return 1 so the
  * caller aborts the edit; return 0 when editing is allowed. Only object-mutating
@@ -77,9 +82,36 @@ static int waves_selected(int event, KeySym key, int state, int button)
   int is_inside = 0, skip = 0;
   static unsigned int excl = STARTZOOM | STARTRECT | STARTLINE | STARTWIRE |
                              STARTPAN | STARTSELECT | STARTMOVE | STARTCOPY;
-  int draw_xhair = tclgetboolvar("draw_crosshair");
-  int border;
-  border = (int)(5.0 * tk_scaling); /* fixed number of screen pixels */
+  /* the crosshair is suppressed on a no_snap canvas (issue 0177), and this local
+   * ALSO picks the cursor shape below -- with crosshair_size 0 the `draw_xhair`
+   * arm hides the pointer entirely (`-cursor none`) on the assumption that a
+   * crosshair is standing in for it. On a viewer nothing would be, so the pointer
+   * would simply vanish. Read the property here, at call time. */
+  int draw_xhair = tclgetboolvar("draw_crosshair") && !xctx->no_snap;
+  double border;
+  /* THE INSET IS IN SCREEN PIXELS AND IT HAS TO BE CONVERTED (issue 0177).
+   *
+   * This margin is what keeps a graph from swallowing pointer events right at its
+   * rect edge, so the rect itself stays selectable/grabbable on a schematic canvas.
+   * The intent has always been "a fixed number of screen pixels" -- but the value
+   * was subtracted from r->x1/r->y1/r->x2/r->y2, which are XSCHEM units, with no
+   * conversion. 1 screen pixel is xctx->zoom xschem units (X_TO_XSCHEM), so the
+   * inset was off by 1/zoom.
+   *
+   * MEASURED on the shipping ASE viewer (1000x776 canvas, zoom 0.2738,
+   * tk_scaling 1.334): (int)(5.0*1.334) = 6 xschem units = 21.9 canvas pixels, a
+   * 3.3x overshoot. That band contains the TOP OF THE LEGEND -- legend_slot_hit()
+   * starts its horizontal slots at gr->ry1, the rect top itself (draw.c ~4518) --
+   * so the top 22 pixels of every legend entry answered the QUERY correctly and
+   * then had the press routed to the schematic canvas instead of the graph: the
+   * click selected nothing, and the pointer picked up the schematic crosshair.
+   * The (int) cast also floored the value, which at tk_scaling 1.0 quietly made it
+   * 5 units rather than 5 pixels.
+   *
+   * Converting restores the documented intent. At zoom ~1 (an embedded schematic
+   * graph at normal magnification) the value barely moves; it is only the
+   * zoomed-out end -- which is where the viewer lives -- that was wrong. */
+  border = 5.0 * tk_scaling * xctx->zoom;
   rstate = state; /* rstate does not have ShiftMask bit, so easier to test for KeyPress events */
   rstate &= ~ShiftMask; /* don't use ShiftMask, identifying characters is sufficient */
   if(xctx->ui_state & excl) skip = 1;
@@ -88,15 +120,17 @@ static int waves_selected(int event, KeySym key, int state, int button)
    * This is useful on touchpads with TappingDragLock enabled */
   else if(graph_use_ctrl_key && !(state & ControlMask) && !(xctx->ui_state & GRAPHPAN)) skip = 1;
   else if(SET_MODMASK) skip = 1;
-  /* Button2 (middle) is the canvas pan gesture (handle_button_press), so its
-   * press/drag/release must never be treated as graph-targeted: panning has to
-   * work with the pointer over a waveform graph too. (If the pan gesture is ever
-   * migrated to the binding table like zoom-rect was, these skips go with it.) */
-  else if(event == MotionNotify && (state & Button2Mask)) skip = 1;
+  /* Button2 (middle) OVER A GRAPH is the GRAPH pan (waves_callback), not the
+   * schematic canvas pan. It used to be skipped here so handle_button_press ->
+   * start_pan_logged always got it; the graph pan then lived on Button1 drag,
+   * which collides with everything precise LMB now has to do over a strip
+   * (cursor grab, wave-bold click, and the ASE viewer's drag-to-reorder seam —
+   * doc/claude/specs/waveform_viewer_modes.md). MMB does not need trace-level
+   * precision, so the two swapped: LMB no longer pans a graph, MMB does.
+   * Off a graph MMB still pans the canvas exactly as before — this returns 0
+   * there and handle_button_press takes over. */
   else if(event == MotionNotify && (state & Button1Mask) && (state & ShiftMask)) skip = 1;
-  else if(event == ButtonPress && button == Button2) skip = 1;
   else if(event == ButtonPress && button == Button1 && (state & ShiftMask) ) skip = 1;
-  else if(event == ButtonRelease && button == Button2) skip = 1;
   /* else if(event == KeyPress && (state & ShiftMask)) skip = 1; */
   else if(!skip) for(i=0; i< xctx->rects[GRIDLAYER]; ++i) {
     double lmargin;
@@ -139,6 +173,9 @@ static int waves_selected(int event, KeySym key, int state, int button)
   }
   if(!is_inside) {
     xctx->graph_master = -1;
+    /* defensive: during a real marker drag GRAPHPAN forces `check` true so this
+     * branch cannot run, but a stray release of another button could reach it */
+    graph_marker_drag_abort();
     xctx->ui_state &= ~GRAPHPAN; /* terminate ongoing GRAPHPAN to avoid deadlocks */
     if(draw_xhair) {
       if(tclgetintvar("crosshair_size") == 0) {
@@ -217,6 +254,10 @@ void abort_operation(int deselect)
    * gesture into a later keyboard 'm'/'c' move (which has no press-select to clear it) and
    * spuriously restore a stale pre-press selection -- deselecting the just-moved object. */
   drag_sel_free();
+  /* ESC also drops an armed waveform-marker gesture: the renderer stops
+   * substituting the scratch record the moment the flag clears, and
+   * abort_operation already redraws (doc/claude/specs/graph_markers.md) */
+  graph_marker_drag_abort();
   tcleval("set constr_mv 0" );
   dbg(1, "abort_operation(): Escape: ui_state=%d, last_command=%d\n", xctx->ui_state, xctx->last_command);
   xctx->constr_mv=0;
@@ -529,6 +570,229 @@ void backannotate_at_cursor_b_pos(xRect *r, Graph_ctx *gr)
   }
 }
 
+/* ---------------------------------------------------------------------------
+ * Waveform-marker gestures (doc/claude/specs/graph_markers.md).
+ *
+ * The whole gesture is SCRATCH-BASED: the record being dragged lives in
+ * xctx->graph_marker_scratch and draw_graph_markers() substitutes it for the
+ * stored one, so a motion event costs no allocation and no undo point, the
+ * commit is a single token write at release, and ESC is one flag clear. The
+ * cursor drags next door do the opposite (a subst_token per motion event) and
+ * are why the graph writes have never been undoable.
+ *
+ * The press only ARMS. The RELEASE decides, on the same travel test the
+ * issue-0152 wave-bold uses: no travel = SELECT, travel = COMMIT (landmine 20).
+ * --------------------------------------------------------------------------- */
+
+/* Arm a marker gesture if the press landed on one.
+ *   1 = ours (armed): the caller must suppress the cursor grab / wave-bold /
+ *       key arms for this event
+ *  -1 = not ours, but the press CLEARED a selection somewhere: the caller must
+ *       still repaint, and broadly, because the stale ring may be on another
+ *       strip than the one under the pointer
+ *   0 = not ours, nothing changed */
+static int graph_marker_press(int i, Graph_ctx *gr, xRect *r)
+{
+  int num, part = 0;
+  GraphMarker m;
+  int gi = -1;
+
+  (void) r;
+  /* The ASE strip-reorder GRIP owns the right GRAPH_REORDER_HANDLE_W screen
+   * pixels of the container over the full band height. A callout is clamped to
+   * the PLOT box so it normally cannot reach there, but on a narrow strip the
+   * two zones overlap -- the grip keeps first refusal, in C and in Tcl alike. */
+  if(gr->reorder_handle &&
+     X_TO_SCREEN(xctx->mousex) >= gr->sx2 - GRAPH_REORDER_HANDLE_W) return 0;
+  num = graph_marker_at(i, X_TO_SCREEN(xctx->mousex), Y_TO_SCREEN(xctx->mousey),
+                        GRAPH_MARKER_TOL, &part);
+  if(num <= 0 || part == 0) {
+    /* A press on empty graph space DESELECTS. Without this a stale window-wide
+     * selection would make a later Delete over any strip eat the marker instead
+     * of the schematic selection. */
+    if(xctx->graph_marker_sel >= 0) {
+      graph_marker_select(-1, -1);
+      return -1; /* the ring must be erased, possibly on another strip */
+    }
+    return 0;
+  }
+  if(!graph_marker_find(num, &gi, &m)) return 0;
+  xctx->graph_marker_scratch = m;
+  xctx->graph_marker_drag = part;
+  /* THE EFFECTIVE MODE, LATCHED HERE -- from the selection state as it is at
+   * PRESS time, and never re-read afterwards. `part` says what was GRABBED; the
+   * mode says what the gesture DOES, and a text drag on an ALREADY-SELECTED
+   * marker moves the anchor too (a rigid translation of the whole marker), so
+   * part alone no longer determines the commit.
+   *
+   * It has to be latched rather than read at release for two independent
+   * reasons: the renderer previews the mode on every motion event through the
+   * scratch, and a release that re-read the selection would change the meaning
+   * of a gesture the user had already half-performed.
+   *
+   * The three early returns above (the reorder-grip refusal, and the two
+   * empty-space arms) latch nothing -- they are not our gesture. */
+  if(part == 2 && num == xctx->graph_marker_sel)
+    xctx->graph_marker_dragmode = GRAPH_MARKER_MODE_RIGID;
+  else
+    xctx->graph_marker_dragmode = part;
+  xctx->graph_marker_dragnum = num;
+  xctx->graph_marker_draggraph = gi;
+  xctx->graph_marker_moved = 0;
+  xctx->graph_marker_press_x = xctx->mousex;
+  xctx->graph_marker_press_y = xctx->mousey;
+  xctx->graph_marker_ldx0 = m.ldx;
+  xctx->graph_marker_ldy0 = m.ldy;
+  /* the anchor SAMPLE at press -- the origin a RIGID drag translates from. It
+   * cannot be read back off the scratch, which drag_to rewrites on the first
+   * motion event. Like ldx0/ldy0 it is press-time payload rather than gesture
+   * state, and is only ever read while graph_marker_dragmode is RIGID -- which
+   * this same press is what sets. */
+  xctx->graph_marker_x0 = m.x;
+  xctx->graph_marker_y0 = m.y;
+  return 1;
+}
+
+/* Motion during an armed marker gesture. mx_w/my_w are SCHEMATIC coordinates.
+ * Builds its OWN local Graph_ctx for the graph the drag was bound to at press
+ * time (landmine 11 + landmine 5): the drag must never be re-keyed onto
+ * whatever strip graph_master happens to be under the pointer now.
+ * Returns 1 when the scratch changed and a repaint is needed. */
+static int graph_marker_drag_to(double mx_w, double my_w)
+{
+  Graph_ctx gr_ctx;
+  Graph_ctx *gr = &gr_ctx;
+  int gi = xctx->graph_marker_draggraph;
+  int saveflags;
+
+  if(!xctx->graph_marker_drag) return 0;
+  if(gi < 0 || gi >= xctx->rects[GRIDLAYER]) return 0;
+  if(!(xctx->rect[GRIDLAYER][gi].flags & 1)) return 0;
+  /* below the click threshold nothing happens at all: a 1-px jitter would
+   * visibly re-snap the anchor and then be discarded as a click */
+  if(!xctx->graph_marker_moved) {
+    if(fabs(mx_w - xctx->graph_marker_press_x) <= GRAPH_CLICK_TOL * xctx->zoom &&
+       fabs(my_w - xctx->graph_marker_press_y) <= GRAPH_CLICK_TOL * xctx->zoom) return 0;
+    xctx->graph_marker_moved = 1;
+  }
+  memset(&gr_ctx, 0, sizeof(gr_ctx));
+  /* landmine 37: setup_graph_data() rewrites graph_flags' hcursor bits from the
+   * rect it is given. Today this is provably a no-op here -- GRAPHPAN freezes
+   * graph_master for the whole drag and graph_marker_draggraph is that same
+   * graph, so the bits rewritten are the ones waves_callback just set -- but
+   * the bracket is two lines and the invariant should not rest on that. */
+  saveflags = xctx->graph_flags & (128 | 256);
+  setup_graph_data(gi, 0, gr);
+  xctx->graph_flags = (xctx->graph_flags & ~(128 | 256)) | saveflags;
+  if(gr->scx == 0.0 || gr->scy == 0.0) return 0;
+  if(xctx->graph_marker_dragmode == GRAPH_MARKER_MODE_ANCHOR ||
+     xctx->graph_marker_dragmode == GRAPH_MARKER_MODE_RIGID) {
+    /* the ANCHOR: slide along its OWN trace, snapping to real samples */
+    GraphPointHit hit;
+    double tx = mx_w, ty = my_w;
+
+    if(xctx->graph_marker_dragmode == GRAPH_MARKER_MODE_RIGID) {
+      /* RIGID TRANSLATION -- the selected-marker text drag. The pointer is over
+       * the CALLOUT, not near the trace, so the anchor cannot chase it directly
+       * and the projection rule has to be stated: the target is the pointer
+       * MINUS the constant press-to-anchor vector latched at press, i.e. where
+       * the anchor would be if the whole marker translated with the hand. That
+       * target is then snapped by the SAME point-to-segment nearest-sample rule
+       * a direct anchor drag uses, restricted to this marker's own wave and
+       * dataset. ldx/ldy are left frozen at their press values, so the callout
+       * keeps its offset and follows the anchor.
+       *
+       * Deliberately NOT a strict x-projection of the pointer onto the trace.
+       * Two reasons: with ldx/ldy frozen, x-projection would make a purely
+       * vertical text drag move nothing at all, and it would introduce a second
+       * snapping rule different from the one the anchor drag already ships. On
+       * a locally shallow trace -- most of a waveform -- translate-then-snap IS
+       * the x-projection; they differ only on a steep segment, where following
+       * 2D proximity is exactly what a direct anchor drag does there too. */
+      double a0x = W_X(gr->logx ? mylog10(xctx->graph_marker_x0) : xctx->graph_marker_x0);
+      double a0y = W_Y(gr->logy ? mylog10(xctx->graph_marker_y0) : xctx->graph_marker_y0);
+      tx = a0x + (mx_w - xctx->graph_marker_press_x);
+      ty = a0y + (my_w - xctx->graph_marker_press_y);
+    }
+    if(!graph_point_at(gi, X_TO_SCREEN(tx), Y_TO_SCREEN(ty), 1e30,
+                       xctx->graph_marker_scratch.wave,
+                       xctx->graph_marker_scratch.dataset, &hit)) return 0;
+    if(hit.point == xctx->graph_marker_scratch.point &&
+       hit.dataset == xctx->graph_marker_scratch.dataset) return 0;
+    xctx->graph_marker_scratch.dataset = hit.dataset;
+    xctx->graph_marker_scratch.point = hit.point;
+    xctx->graph_marker_scratch.x = hit.x;
+    xctx->graph_marker_scratch.y = hit.y;
+  } else { /* the LABEL: a delta from the press, so it does not jump to the cursor */
+    double ldx, ldy;
+    if(gr->w == 0.0 || gr->h == 0.0) return 0;
+    ldx = xctx->graph_marker_ldx0 + (mx_w - xctx->graph_marker_press_x) / gr->w;
+    ldy = xctx->graph_marker_ldy0 + (my_w - xctx->graph_marker_press_y) / gr->h;
+    if(ldx < -2.0) ldx = -2.0;
+    if(ldx >  2.0) ldx =  2.0;
+    if(ldy < -2.0) ldy = -2.0;
+    if(ldy >  2.0) ldy =  2.0;
+    if(ldx == xctx->graph_marker_scratch.ldx && ldy == xctx->graph_marker_scratch.ldy) return 0;
+    xctx->graph_marker_scratch.ldx = ldx;
+    xctx->graph_marker_scratch.ldy = ldy;
+  }
+  return 1;
+}
+
+static void graph_marker_drag_clear(void)
+{
+  xctx->graph_marker_drag = 0;
+  xctx->graph_marker_dragmode = GRAPH_MARKER_MODE_NONE;
+  xctx->graph_marker_dragnum = -1;
+  xctx->graph_marker_draggraph = -1;
+  xctx->graph_marker_moved = 0;
+  xctx->graph_marker_press_x = xctx->graph_marker_press_y = -1e30;
+}
+
+/* Drop an armed gesture without committing (ESC, or a non-Button1 release). */
+static void graph_marker_drag_abort(void)
+{
+  if(xctx && xctx->graph_marker_drag) graph_marker_drag_clear();
+}
+
+/* Release of an armed marker gesture. Resolves everything from
+ * graph_marker_draggraph, never from the graph the pointer happens to be over,
+ * so a drag that ends outside its own strip still commits to the right rect.
+ * Returns 1 when the repaint must cover more than the master strip (the
+ * selection moved off another graph, whose ring has to be erased). */
+static int graph_marker_release(void)
+{
+  int num = xctx->graph_marker_dragnum;
+  int gi = xctx->graph_marker_draggraph;
+  int mode = xctx->graph_marker_dragmode;
+  int moved = xctx->graph_marker_moved;
+  int oldsel = xctx->graph_marker_sel;
+  int oldgraph = xctx->graph_marker_selgraph;
+  GraphMarker m = xctx->graph_marker_scratch;
+
+  graph_marker_drag_clear();
+  if(num <= 0) return 0;
+  if(gi < 0 || gi >= xctx->rects[GRIDLAYER]) return 0;
+  if(!(xctx->rect[GRIDLAYER][gi].flags & 1)) return 0;
+  if(moved) {
+    /* the EFFECTIVE MODE decides, not the grabbed part: a text drag on a
+     * SELECTED marker is part 2 but commits an ANCHOR move. ldx/ldy were frozen
+     * for the whole of that gesture, so there is nothing to commit on the label
+     * side -- one token write, one undo point, one notify, and the action log
+     * gets the data-addressed `xschem graph_marker anchor` line for free,
+     * because the log line belongs to whichever primitive ran. */
+    if(mode == GRAPH_MARKER_MODE_ANCHOR || mode == GRAPH_MARKER_MODE_RIGID)
+      graph_marker_anchor_at(num, m.dataset, m.point);
+    else if(mode == GRAPH_MARKER_MODE_LABEL)
+      graph_marker_label_offset(num, m.ldx, m.ldy);
+    return 0;
+  }
+  /* a plain CLICK selects; clicking the already-selected marker deselects */
+  if(xctx->graph_marker_sel == num) graph_marker_select(-1, -1);
+  else graph_marker_select(num, gi);
+  return (oldsel >= 0 && oldgraph != gi);
+}
+
 /* process user input (arrow keys for now) when only graphs are selected */
 
 /* xctx->graph_flags:
@@ -556,6 +820,7 @@ static int waves_callback(int event, int mx, int my, KeySym key, int button, int
   double zoom_m = 0.5;
   int save_mouse_at_end = 0, clear_graphpan_at_end = 0;
   int track_dset = -2; /* used to find dataset of closest wave to mouse if 't' is pressed */
+  int mkpress = 0; /* graph_marker_press() verdict: 1 armed, -1 deselected, 0 not ours */
   xRect *r = NULL;
   int access_cond = !graph_use_ctrl_key || (state & ControlMask);
 
@@ -568,7 +833,21 @@ static int waves_callback(int event, int mx, int my, KeySym key, int button, int
    * sub-region, not grid steps. waves_callback only ever mutates graph tokens /
    * cursors, never schematic geometry, and callback() returns right after this
    * handler (the next event recomputes the snap), so this override is safe and
-   * does not leak into schematic editing. */
+   * does not leak into schematic editing.
+   *
+   * ⚠ ITS SCOPE, STATED HONESTLY (issue 0177). This covers exactly the code
+   * reached THROUGH waves_callback and nothing else. It said "safe and does not
+   * leak", which is true, but the useful question is the other one: what does it
+   * NOT reach? Everything that runs when waves_selected() DECLINES the event --
+   * which on a strip includes the band just inside the rect edge, and therefore
+   * the top of the LEGEND. On the ASE waveform viewer that hole is now closed one
+   * level up: the window sets `xschem set no_snap 1` and callback() computes both
+   * fields unsnapped at the source (~8200), so this assignment is a no-op there.
+   *
+   * It is NOT redundant and must stay: an ordinary SCHEMATIC window can embed
+   * graphs, waves_callback runs on those too, and that context is not no_snap --
+   * its grid is real and wanted everywhere except inside a graph. This line is
+   * what keeps 0143's promise for them. */
   xctx->mousex_snap = xctx->mousex;
   xctx->mousey_snap = xctx->mousey;
   rstate = state; /* rstate does not have ShiftMask bit, so easier to test for KeyPress events */
@@ -594,6 +873,16 @@ static int waves_callback(int event, int mx, int my, KeySym key, int button, int
     if(event == ButtonPress && button == Button1) {
       xctx->graph_press_x = xctx->mousex;
       xctx->graph_press_y = xctx->mousey;
+      /* A fresh press can never be the continuation of an armed marker drag, so
+       * this is the one place that can guarantee no stale arm survives. It has
+       * to be HERE, before the `if(ui_state & GRAPHPAN) goto finish;` below and
+       * outside graph_marker_press(): the ASE viewer binds
+       * <Shift-ButtonRelease-1> / <Alt-ButtonRelease-1> to a bare {break}, so a
+       * modifier-held release never reaches C at all and the release-side
+       * teardown cannot run. A surviving arm would make marker_grabbed answer 1
+       * for every later press (killing the trace-drag and reorder seams) and
+       * would commit the old move on the user's next unrelated click. */
+      graph_marker_drag_abort();
     }
 
    /* Toggle bold ("selected") rendering of the wave nearest the pointer.
@@ -610,26 +899,191 @@ static int waves_callback(int event, int mx, int my, KeySym key, int button, int
     * per-graph loop below clears the grab flags regardless.
     *
     * Applies to every graph, on-canvas schematic graphs included, not just the ASE
-    * waveform viewer. doc/claude/issues/0152-graph-rmb-bolds-wave.md */
-    if(event == ButtonRelease && button == Button1 &&
-       POINTINSIDE(xctx->mousex, xctx->mousey, gr->x1, gr->y1, gr->x2 , gr->y2) &&
+    * waveform viewer. doc/claude/issues/0152-graph-rmb-bolds-wave.md
+    *
+    * Issue 0174 made the PICK precise and the toggle per-trace. Two tests gate
+    * this arm and they answer different questions -- keep both:
+    *   - GRAPH_CLICK_TOL (3 px * zoom, WORLD units) below: is this release a
+    *     click or the end of a drag? The double-click arm (~1199) poisons
+    *     graph_press_x/y with -1e30 to make this unsatisfiable, which is what
+    *     stops a double-click from bolding underneath the wave dialog -- so this
+    *     gate must stay on those two fields;
+    *   - GRAPH_TRACE_PICK_TOL (10 SCREEN px) inside: is the click on a trace?
+    * POINTINSIDE still reads the schematic-space mouse mirror because the arm is
+    * plot-BODY-only (the legend margins are Button3's, ~896) and that contract is
+    * unchanged. */
+    /* A marker gesture owns its own release and MUST come first: the wave-bold
+     * arm below is a release-only travel test with no knowledge of what the
+     * press hit, so a no-travel marker SELECT would also toggle hilight_wave.
+     * A non-Button1 release aborts the arm -- the per-graph teardown further
+     * down only runs for button != Button3, so a stale arm would otherwise
+     * commit an anchor move on the NEXT Button1 release.
+     * It must NOT return: falling through is what reaches the GRAPHPAN clear. */
+    if(event == ButtonRelease && xctx->graph_marker_drag) {
+      if(button == Button1) {
+        if(graph_marker_release()) need_all_redraw = 1;
+      } else {
+        graph_marker_drag_abort();
+      }
+      need_redraw_master = 1;
+    }
+    else if(event == ButtonRelease && button == Button1 &&
        fabs(xctx->mousex - xctx->graph_press_x) <= GRAPH_CLICK_TOL * xctx->zoom &&
        fabs(xctx->mousey - xctx->graph_press_y) <= GRAPH_CLICK_TOL * xctx->zoom) {
-      int wcnt, save;
-      save = gr->hilight_wave;
-      find_closest_wave(i, gr, &wcnt);
-      /* NOTE (pre-existing semantics, kept): the test is on the CURRENT bold wave, not
-       * on wcnt -- so while any wave is bold a click anywhere in the body un-bolds it,
-       * and only a click with nothing bold selects the closest wave. */
-      if(gr->hilight_wave >= 0) gr->hilight_wave = -1;
-      else                      gr->hilight_wave = wcnt;
-      my_strdup2(_ALLOC_ID_, &r->prop_ptr,
-                 subst_token(r->prop_ptr, "hilight_wave", my_itoa(gr->hilight_wave)));
-      if(save != gr->hilight_wave) {
-        draw_graph(i, 1 + 8 + 16 + (xctx->graph_flags & (2 | 4 | 128 | 256)), gr, NULL); /* draw data in graph box */
+      int wcnt;
+      /* TWO picking surfaces, one gesture (issue 0175). The plot BODY answers
+       * with graph_wave_at (proximity to a drawn trace); the LEGEND answers with
+       * graph_legend_at (which per-node slot the pointer is in). They are
+       * mutually exclusive by construction -- the legend sits outside the plot
+       * box -- and a click that is in neither (an axis margin, the reorder grip)
+       * must change NOTHING, which is why `on_body` is carried separately
+       * instead of being folded into `wcnt < 0`.
+       *
+       * ⚠ The body test used to be part of this `else if` condition. It moved
+       * inside so a legend click reaches the arm at all; the TRAVEL test stays in
+       * the condition, because it is what the double-click interlock rides on
+       * (the -3 arm poisons graph_press_x/y with -1e30) and what separates a
+       * click from the end of a strip drag-reorder. */
+      int on_body = POINTINSIDE(xctx->mousex, xctx->mousey, gr->x1, gr->y1, gr->x2 , gr->y2);
+      /* Ctrl+click ADDS to / REMOVES from the selection instead of replacing it
+       * (issue 0175). Measured before choosing the modifier: Ctrl+B1 over a graph
+       * does today exactly what a plain B1 does -- wviewer::strip_drag_press
+       * declines a modified press and forwards it verbatim, and this arm never
+       * looked at `state` -- so nothing is being taken away. The one other
+       * meaning ControlMask carries over a graph is waves_selected's locked-rect
+       * bypass (~line 116), which only concerns rects carrying `lock=true`; the
+       * ASE viewer never writes that token. See 0175 D3. */
+      int ctrl = (state & ControlMask) ? 1 : 0;
+      /* Did the SELECTION change? Not "did hilight_wave change" -- since 0175
+       * the selection is a SET, and collapsing {0,2} to {0} or adding node 5
+       * behind node 2 both leave the scalar alone while changing every pixel.
+       * The redraw has to key off the set. */
+      int selchg = 0;
+      /* WHICH trace, if any, the click is on -- a real point-to-segment distance
+       * in SCREEN PIXELS through the engine's own transform, capped at
+       * GRAPH_TRACE_PICK_TOL, answering the trace's NODE index or -1
+       * (issue 0174). It replaces find_closest_wave(), which had no threshold at
+       * all: it minimised |dy| at the nearest sample and returned the winner
+       * however far away it was, so "click near a trace" was really "click
+       * anywhere in the plot body" (measured: 714 of 776 body rows of a
+       * three-trace strip are more than 10 px from every trace, and a click on
+       * every one of them bolted something).
+       *
+       * This is the SAME query, at the SAME tolerance, that the RMB trace menu
+       * and the LMB trace drag already gate on -- the asymmetry (precise menu,
+       * imprecise select, same pixel, same strip) was the reported defect.
+       *
+       * It takes the EVENT's own pixels, not xctx->mousex/mousey: the C mouse
+       * mirror is schematic-space and is stale for a press with no preceding
+       * Motion (landmine 33), and graph_wave_at wants canvas pixels. It also
+       * uses a LOCAL Graph_ctx and brackets the hcursor flag bits (landmines 11
+       * and 37), so it cannot disturb `gr`, which an active draw may be using.
+       *
+       * Digital strips and bus traces answer -1 by construction (their rendering
+       * is a band/ribbon, not a polyline). That loses nothing: find_closest_wave()
+       * refused both too -- but it refused by returning BEFORE writing
+       * *node_number, so `wcnt` was read uninitialised and the garbage was
+       * persisted into the hilight_wave token (measured: -1859984240 on a digital
+       * strip and with no raw loaded). The refusal now just reads as "no trace
+       * here", which on such a strip means a click clears the selection. */
+      if(on_body) {
+        wcnt = graph_wave_at(i, (double)mx, (double)my, GRAPH_TRACE_PICK_TOL);
+      } else {
+        /* THE LEGEND (issue 0175). Clicking an entry's text selects its trace --
+         * asked for directly, and on a DIGITAL or bus strip it is the only way
+         * there is, because graph_wave_at answers -1 across their whole body.
+         * The SAME query the Button3 legend arm below uses, so the two buttons
+         * cannot disagree about where an entry is. Raw event pixels, like
+         * graph_wave_at above and for the same reason. -1 for the axis margins
+         * and the reorder grip, which own no trace and must change nothing. */
+        wcnt = graph_legend_at(i, (double)mx, (double)my);
       }
+      if(ctrl) {
+        /* CTRL+CLICK: ADD an unselected trace, REMOVE a selected one, and touch
+         * NOTHING else -- not the other strips (a window-wide selection is built
+         * up across strips exactly this way) and not the selection at all when
+         * the click missed. "Ctrl+click on empty space clears everything" would
+         * make the modifier useless for its one job. */
+        if(wcnt >= 0 && graph_sel_waves_toggle(i, wcnt)) selchg = 1;
+      } else if(on_body || wcnt >= 0) {
+        /* THE SELECTION BECOMES WHAT THE CLICK PICKED, AND ONLY THAT. One
+         * assignment covers the whole rule (issue 0174 D2/D3, settled by the
+         * user at review; issue 0175 adds the COLLAPSE half):
+         *   - on another trace -> the selection MOVES there (0174's defect);
+         *   - on empty BODY    -> the selection is CLEARED;
+         *   - on the trace that is already selected -> it STAYS selected. A
+         *     plain click never deselects what it lands on;
+         *   - with several traces selected -> it collapses to the one clicked.
+         * A plain click on a legend entry that is NOT a hit (wcnt < 0 and not on
+         * the body: an axis margin, the grip) falls out of this branch entirely
+         * and changes nothing -- only the plot body clears.
+         *
+         * ⚠ Clearing on a body miss and the strip drag-reorder do NOT collide:
+         * they are separated by the travel test in the condition above, not by
+         * this branch. A real reorder drag travels well past GRAPH_CLICK_TOL and
+         * its release never reaches here.
+         *
+         * graph_sel_waves_set writes BOTH tokens and answers "did anything
+         * change", so a click that re-picks what was already picked does not
+         * churn the prop string. */
+        if(graph_sel_waves_set(i, &wcnt, wcnt >= 0 ? 1 : 0)) selchg = 1;
+        /* THE SELECTION IS ONE SET IN THE WHOLE WINDOW, NOT ONE PER STRIP.
+         *
+         * `hilight_wave`/`sel_waves` are PER-RECT prop tokens, so everything
+         * above only ever touches the strip under the pointer. Without this
+         * sweep, selecting a trace on strip A and then clicking one on strip B
+         * leaves BOTH bold -- the same "the selection cannot move" defect one
+         * level up. Reported at 0174's review: "clicking on another trace SHOULD
+         * deselect all currently selected traces", and likewise for empty space.
+         * Ctrl+click deliberately does NOT run it: that is how a selection
+         * spanning two strips is built.
+         *
+         * An ABSENT token means nothing is bold there -- it must not be read as
+         * index 0, which is what a bare atoi("") would give. `sel_waves` is only
+         * ever present alongside a non-negative `hilight_wave` (graph_sel_waves_set
+         * writes the pair), so testing the scalar covers both.
+         *
+         * The cleared strips are repainted by the all-graphs loop further down
+         * (`need_all_redraw`), which does its own setup_graph_data(k, 0, gr) per
+         * rect and so re-reads the tokens just rewritten. Doing it here instead
+         * would mean calling setup_graph_data on a non-master rect with the
+         * SHARED xctx->graph_struct this arm is still using (landmines 11/37). */
+        {
+          int k;
+          for(k = 0; k < xctx->rects[GRIDLAYER]; ++k) {
+            xRect *rk = &xctx->rect[GRIDLAYER][k];
+            const char *hw;
+            if(k == i) continue;
+            if(!(rk->flags & 1)) continue;             /* 1: graph, 3: graph_unlocked */
+            hw = get_tok_value(rk->prop_ptr, "hilight_wave", 0);
+            if(!hw[0] || atoi(hw) < 0) continue;       /* absent or already clear */
+            if(graph_sel_waves_set(k, NULL, 0)) need_all_redraw = 1;
+          }
+        }
+      }
+      /* Repaint through need_redraw_master rather than the inline draw_graph
+       * this arm used to do: the per-graph loop at the tail re-runs
+       * setup_graph_data(i, 0, gr) first, so the redraw reads back the tokens
+       * just written instead of relying on this arm having patched every field
+       * of the SHARED xctx->graph_struct by hand (it now writes two of them,
+       * hilight_wave and sel_wave[], and forgetting one is a silent stale
+       * render). need_all_redraw already covers the whole stack when the
+       * cross-strip sweep fired. */
+      if(selchg) need_redraw_master = 1;
     }
-    /* button3 click on a wave label (outside the plot body) -> wave attributes dialog */
+    /* Button3 press on a wave label (outside the plot body) -> TOGGLE that
+     * trace's membership of the selection. NOT the wave-attributes dialog, which
+     * this comment claimed for years: `what == 2` has been the toggle since the
+     * selection became a set (issue 0175, draw.c edit_wave_attributes), and
+     * before that it was a plain hilight_wave toggle. The dialog is `what == 1`,
+     * on the double-click arm below.
+     *
+     * ⚠ THIS IS FOR GRAPHS EMBEDDED IN A SCHEMATIC (issue 0178). The ASE
+     * waveform viewer no longer reaches it: an unmodified Button3 PRESS on a
+     * legend entry is swallowed by wviewer::btn3_filter, which posts the TRACE
+     * CONTEXT MENU on the release instead -- the legend was the one region of
+     * that window where RMB was not a context menu, reported at the 0177
+     * eyeball. An embedded graph has no context menus, so it keeps this. */
     else if(event == ButtonPress && button == Button3 &&
             !POINTINSIDE(xctx->mousex, xctx->mousey, gr->x1, gr->y1, gr->x2 , gr->y2)) {
       if( edit_wave_attributes(2, i, gr)) {
@@ -676,8 +1130,15 @@ static int waves_callback(int event, int mx, int my, KeySym key, int button, int
     gr->master_gx2 = gr->gx2;
     gr->master_gw = gr->gw;
     gr->master_cx = gr->cx;
+    /* A live marker drag pre-empts all four cursor-move arms. It must sit BEFORE
+     * the `if(ui_state & GRAPHPAN) goto finish;` below, because during a drag
+     * GRAPHPAN is set and that goto IS taken. It deliberately does not set
+     * save_mouse_at_end and never touches mx/my_double_save (landmine 20). */
+    if(event == MotionNotify && (state & Button1Mask) && xctx->graph_marker_drag) {
+      if(graph_marker_drag_to(xctx->mousex, xctx->mousey)) need_redraw_master = 1;
+    }
     /* move hcursor1 */
-    if(event == MotionNotify && (state & Button1Mask) && (xctx->graph_flags & 512 )) {
+    else if(event == MotionNotify && (state & Button1Mask) && (xctx->graph_flags & 512 )) {
       double c;
 
       c = G_Y(xctx->mousey);
@@ -749,7 +1210,21 @@ static int waves_callback(int event, int mx, int my, KeySym key, int button, int
       xctx->graph_bottom = 0;
     }
     zoom_m = (xctx->mousex  - gr->x1) / gr->w;
-    if(event == ButtonPress && button == Button1) {
+    /* A press ON A MARKER pre-empts the cursor grab and the a/b/s/m/d/t key arms
+     * for this event, and nukes the wave-bold click anchor (the belt to edit
+     * 12's braces -- the `-3` double-click arm uses the same idiom).
+     * It deliberately does NOT do the `event = 0; button = 0;` trick used by the
+     * numeric cursor set: that would also suppress the GRAPHPAN latch below,
+     * which is the ROUTING latch every drag needs (landmine 36). */
+    mkpress = (event == ButtonPress && button == Button1) ? graph_marker_press(i, gr, r) : 0;
+    /* a press that only DESELECTED is not our gesture -- it falls through to the
+     * cursor grab -- but the ring still has to be erased, and possibly on a
+     * different strip than the one under the pointer */
+    if(mkpress < 0) need_all_redraw = 1;
+    if(mkpress > 0) {
+      xctx->graph_press_x = xctx->graph_press_y = -1e30;
+    }
+    else if(event == ButtonPress && button == Button1) {
       /* dragging cursors when mouse is very close */
       if(xctx->graph_flags & 128) { /* hcursor1 */
         double cursor;
@@ -1013,12 +1488,36 @@ static int waves_callback(int event, int mx, int my, KeySym key, int button, int
         else need_all_redraw = 1;
       }
     }
-    /* measurement tooltip */
-    else if((key == 'm') && access_cond) {
+    /* measurement tooltip -- RELOCATED from `m` to `M` (Shift+m) when `m` became
+     * marker creation (doc/claude/specs/graph_markers.md). Bit 64 and both of its
+     * teardown paths (waves_selected's leave-the-graph stop, the <Leave> bind)
+     * stay wired; losing the only key that can SET it would make the whole
+     * tooltip render block dead code. Not Ctrl+m: with graph_use_ctrl_key set,
+     * access_cond REQUIRES Ctrl, so Ctrl+m would have to be both. */
+    else if((key == 'M') && access_cond) {
       xctx->graph_flags ^= 64;
       if(!(xctx->graph_flags & 64)) {
         tcleval("graph_show_measure stop");
       }
+    }
+    /* create a marker at the sample nearest the pointer; `d` also attaches a
+     * delta measurement against the most recently created marker */
+    /* Read-only is enforced INSIDE the marker ops (draw.c), not here. Two
+     * reasons, both learned the hard way: the gate must also cover the
+     * DRAG-COMMIT path, which does not come through a key arm at all; and the
+     * refusal must use the feature's own non-blocking channel
+     * (graph_marker_refuse -> ciw_echo, like "no trace near the pointer"),
+     * because readonly_block() pops a MODAL and a modal on a keystroke deadlocks
+     * every headless test that exercises the refusal. The ASE viewer, readonly
+     * for its whole life by construction, gets through because
+     * wviewer::key_filter forwards m/d/Delete inside wviewer::with_edit. */
+    else if((key == 'm') && access_cond) {
+      if(graph_marker_create(i, X_TO_SCREEN(xctx->mousex), Y_TO_SCREEN(xctx->mousey), 0) > 0)
+        need_redraw_master = 1;
+    }
+    else if((key == 'd') && access_cond) {
+      if(graph_marker_create(i, X_TO_SCREEN(xctx->mousex), Y_TO_SCREEN(xctx->mousey), 1) > 0)
+        need_redraw_master = 1;
     }
     else if(key == 't' && access_cond) {
       if(!gr->digital) {
@@ -1038,11 +1537,31 @@ static int waves_callback(int event, int mx, int my, KeySym key, int button, int
     } /* key == 't' */
   } /* if((i = xctx->graph_master) >= 0 && ((r = &xctx->rect[GRIDLAYER][i])->flags & 1)) */
 
-  /* save mouse position when doing pan operations */
+  /* save mouse position when doing pan operations.
+   * Button2 joined the set when the graph pan moved off LMB: GRAPHPAN is what
+   * keeps waves_selected routing the whole drag to the graph and what latches
+   * graph_left/graph_top/graph_bottom at press time (the `goto finish` above).
+   * Button1 stays in the set: it still owns cursor drags and the wave-bold
+   * click, both of which need that same routing latch. */
   if(
-      ( event == ButtonPress && (button == Button1 || button == Button3)) &&
+      ( event == ButtonPress &&
+        (button == Button1 || button == Button2 || button == Button3)) &&
       !(xctx->ui_state & GRAPHPAN) &&
-      !xctx->graph_top /* && !xctx->graph_bottom */
+      /* ⚠ THE STATED REASON WAS WRONG AND IS CORRECTED HERE (issue 0177). This
+       * used to say graph_top is computed from the SNAPPED pointer while the
+       * marker hit test uses the raw one. It is not: the 0143 override at the
+       * head of this function un-snaps both fields before any branch, and
+       * nothing rewrites them before the margin computation, so the two read the
+       * SAME coordinate and no grid setting can separate them. The real gap is a
+       * TOLERANCE one -- graph_marker_press hit-tests within GRAPH_MARKER_TOL
+       * (8 screen px) of the anchor, so a press up to 8 px ABOVE the plot box
+       * still grabs a marker anchored just inside it while graph_top is already
+       * 1. The extra term is therefore still required; only its justification
+       * changes. GRAPHPAN is not a pan here -- it is the
+       * ROUTING latch (waves_selected keeps an in-flight drag routed and freezes
+       * graph_master with it), so an armed marker drag must always get it or the
+       * release is silently dropped. Provably a no-op when nothing is armed. */
+      (!xctx->graph_top || xctx->graph_marker_drag) /* && !xctx->graph_bottom */
     ) {
     xctx->ui_state |= GRAPHPAN;
     /* box-zoom needs BOTH press coords: an interior RMB drag zooms X and Y */
@@ -1054,8 +1573,9 @@ static int waves_callback(int event, int mx, int my, KeySym key, int button, int
 
   finish:
 
-  /* parameters for absolute positioning by mouse drag in bottom graph area */
-  if( xctx->raw && event == MotionNotify && (state & Button1Mask) && xctx->graph_bottom ) {
+  /* parameters for absolute positioning by mouse drag in bottom graph area
+   * (Button2 since the pan moved off LMB — this IS a graph-range move) */
+  if( xctx->raw && event == MotionNotify && (state & Button2Mask) && xctx->graph_bottom ) {
     int idx;
     int dset;
     double wwx1, wwx2, pp, delta, ccx, ddx;
@@ -1108,6 +1628,8 @@ static int waves_callback(int event, int mx, int my, KeySym key, int button, int
    * Display-only: drawtemprect no-ops when !has_x, so the headless box-zoom math
    * below is unaffected. */
   if(event == MotionNotify && (state & Button3Mask) && (xctx->ui_state & GRAPHPAN) &&
+     !xctx->graph_marker_drag && /* a B1+B3 chord must not move a marker AND
+     paint the box-zoom rubber (same class as the MMB pan guard above) */
      xctx->graph_master >= 0 && !xctx->graph_left && !xctx->graph_top && !xctx->graph_bottom) {
     double xlo = gr->x1 < gr->x2 ? gr->x1 : gr->x2;
     double xhi = gr->x1 < gr->x2 ? gr->x2 : gr->x1;
@@ -1162,7 +1684,14 @@ static int waves_callback(int event, int mx, int my, KeySym key, int button, int
     }
     my_free(_ALLOC_ID_, &curr_sim_type);
 
-    if(event == MotionNotify && (state & Button1Mask) && !xctx->graph_bottom &&
+    /* THE graph pan: drag the data window. Button2 (MMB), not Button1 — LMB over
+     * a strip is reserved for precise interaction and, in the ASE viewer, for
+     * drag-to-reorder. The cursor-move flags stay in the guard: a MMB drag while
+     * a cursor is grabbed must not also pan. */
+    if(event == MotionNotify && (state & Button2Mask) && !xctx->graph_bottom &&
+      !xctx->graph_marker_drag && /* same reason as the cursor flags: a B1+B2
+      chord must not move a marker AND pan in the same event. The marker drag
+      deliberately sets no graph_flags bit (landmine 6), so it needs its own term. */
       !(xctx->graph_flags & (16 | 32 | 512 | 1024))) {
       double delta;
       /* vertical move of waveforms */
@@ -1512,8 +2041,8 @@ static int waves_callback(int event, int mx, int my, KeySym key, int button, int
         }
       } /* raw->values */
     } /* key == 'f' */
-    /* absolute positioning by mouse drag in bottom graph area */
-    else if(event == MotionNotify && (state & Button1Mask) && xctx->graph_bottom ) {
+    /* absolute positioning by mouse drag in bottom graph area (MMB, see above) */
+    else if(event == MotionNotify && (state & Button2Mask) && xctx->graph_bottom ) {
       if(xctx->raw && xctx->raw->values) {
         /* selected or locked or master */
         if(r->sel || (same_sim_type && !(r->flags & 2)) || i == xctx->graph_master) {
@@ -2096,6 +2625,17 @@ static void draw_snap_cursor(int action) {
   int prev_draw_pixmap = xctx->draw_pixmap;
 
   if (!xctx->mouse_inside) return;  /* Early exit if mouse is outside */
+  /* NOT A CONCEPT ON A no_snap CANVAS (issue 0177): this glyph snaps to the
+   * nearest net or symbol pin, and a waveform canvas has neither -- with nothing
+   * found, find_closest_net_or_symbol_pin() falls back to mousex_snap/mousey_snap
+   * (findnet.c ~208), i.e. it paints the grid.
+   * ⚠ THE TEST BELONGS HERE, NOT IN THE CALLERS' `snap_cursor` LOCALS. Those are
+   * computed at the TOP of callback(), BEFORE handle_window_switching() may
+   * reassign xctx -- so on the EnterNotify that switches into (or out of) a
+   * viewer they describe the PREVIOUS context. And the cadence 'z' arm calls this
+   * directly without consulting any local at all. A test inside the drawer is
+   * evaluated at call time, on the right context, from every site there is. */
+  if (xctx->no_snap) return;
   snapcursor_size = tclgetintvar("snap_cursor_size");
   pos_changed = (xctx->mousex_snap != xctx->prev_gridx) || (xctx->mousey_snap != xctx->prev_gridy);
   /* Save current drawing context */
@@ -2175,6 +2715,22 @@ void draw_crosshair(int what, int state)
   sdp = xctx->draw_pixmap;
 
   if(!xctx->mouse_inside) return;
+  /* NOT A CONCEPT ON A no_snap CANVAS (issue 0177). This is drawn AT
+   * mousex_snap/mousey_snap (just below), so on a grid it is the snap grid made
+   * visible -- which is what the 0177 reporter saw hopping over the waveform
+   * legend. It is also a schematic pointer aid on a surface that has no
+   * schematic geometry.
+   * ⚠ THE TEST BELONGS HERE, NOT IN THE CALLERS. draw() itself ends with
+   * `if(tclgetboolvar("draw_crosshair")) draw_crosshair(7, 0);` (draw.c ~8433),
+   * and move.c has three more such sites -- none of them consults callback()'s
+   * `draw_xhair` local. Gating only the local would suppress every ERASE path
+   * while leaving those PAINT paths live: a crosshair stroked on the waveform at
+   * each full redraw that then never moves and never clears, not even on Leave.
+   * (Measured as a regression against the first cut of this fix.) The callers'
+   * locals are also computed before handle_window_switching() may reassign xctx,
+   * so they can describe the wrong context; a test here is evaluated at call
+   * time on the right one. */
+  if(xctx->no_snap) return;
   mx = xctx->mousex_snap;
   my = xctx->mousey_snap;
   if( ( (xctx->ui_state & (MENUSTART | STARTWIRE) ) || xctx->ui_state == 0 ) &&
@@ -4163,6 +4719,14 @@ static void init_input_bindings(void)
    * Canvas-only (never forwarded to a graph); idle-gated so the mode is not entered while
    * a modal dialog is up (semaphore>=2). Replaces the old hardcoded `case 'd'` deselect. */
   set_input_binding_idle(DEV_KEY, 'd', 0,           ACTX_CANVAS, "edit.deselect_mode");
+  /* ... but OVER A GRAPH 'd' creates a marker with a delta measurement
+   * (doc/claude/specs/graph_markers.md). Without this row current_input_ctx
+   * resolves ACTX_CANVAS even over a strip and deselect-one mode was entered
+   * there. Routing-only: the canvas row above is untouched, so `d` off a graph
+   * is byte-for-byte unchanged. Non-idle by choice, but note the chord-wide
+   * idle gate: key_chord_is_idle_only() matches on device+code+mods and is
+   * context-blind, so `d` still does nothing while a modal dialog is up. */
+  set_input_binding(DEV_KEY, 'd', 0,                ACTX_OVER_GRAPH, "graph.forward");
   /* B6 wire-stubs (doc/claude/specs/wire_stub_netlabel.md): SPACE -> edit.add_pin_stubs.
    * Canvas-only, idle_only: SPACE now triggers a MUTATING edit (add_pin_stubs), which must
    * not run re-entrantly while the editor is busy (semaphore>=2, e.g. under a modal dialog).
@@ -4692,7 +5256,12 @@ static void handle_enter_notify(int draw_xhair, int crosshair_size)
     struct stat buf;
     dbg(2, "callback(): Enter event, ui_state=%d\n", xctx->ui_state);
     xctx->mouse_inside = 1;
-    if(draw_xhair) {
+    /* `-cursor none` is only safe when a crosshair is standing in for the pointer.
+     * On a no_snap canvas (issue 0177) none is drawn, so the pointer would just
+     * vanish -- and the caller's draw_xhair local is computed BEFORE the context
+     * switch this very event may have performed, so the property has to be read
+     * here rather than trusted from the argument. */
+    if(draw_xhair && !xctx->no_snap) {
       if(crosshair_size == 0) {
         tclvareval(xctx->top_path, ".drw configure -cursor none" , NULL);
       }
@@ -4760,8 +5329,16 @@ static void handle_motion_notify(int event, KeySym key, int state, int rstate, i
     xctx->mouse_inside = 1;
     if( waves_selected(event, key, state, button)) {
       waves_callback(event, mx, my, key, button, aux, state);
+      /* viewer plan item 9: the diamond snap cursor rides the graph motion
+       * pump, AFTER waves_callback so an armed gesture has already updated
+       * ui_state and the snap yields to it on this very event rather than one
+       * event late. */
+      if(event == MotionNotify) draw_graph_snap_cursor(mx, my);
       return;
     }
+    /* pointer left every graph (still inside the canvas): drop the snap glyph,
+     * or it would sit frozen on the last sample it found */
+    graph_snap_clear();
     if(draw_xhair) {
       draw_crosshair(1, state); /* when moving mouse: first action is delete crosshair, will be drawn later */
     }
@@ -5560,6 +6137,14 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
     case 'M':
       /* Move selection adding wires to moved pins */
       if((rstate == 0) && !(xctx->ui_state & (STARTMOVE | STARTCOPY))) {
+        /* over a graph Shift+M is the measurement tooltip (relocated from `m`
+         * when `m` became marker creation, doc/claude/specs/graph_markers.md).
+         * The `case 'm'` idiom verbatim. Before this, Shift+M over a graph ran
+         * readonly_block() + the schematic move -- an existing wrong. */
+        if(waves_selected(event, key, state, button)) {
+          waves_callback(event, mx, my, key, button, aux, state);
+          break;
+        }
         if(readonly_block()) break;
         if(cadence_compat) {
           /* Cadence Shift+M = MOVE (rigid / disconnected): move selected objects only,
@@ -6348,6 +6933,35 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
       break;
 
     case XK_Delete:
+      /* Delete a SELECTED waveform marker (doc/claude/specs/graph_markers.md).
+       * Deliberately an inline guard and NOT an ACTX_OVER_GRAPH binding row: a
+       * row would consume Delete over a graph unconditionally and silently break
+       * "select a graph rect, hover it, press Delete -> the graph is deleted".
+       * The selgraph test scopes the delete to the strip the pointer is over.
+       * With nothing selected graph_marker_delete_selected() returns 0 without
+       * touching anything and control falls into the historical body below.
+       * The hoisted semaphore test is a strict no-op for the old behaviour (the
+       * body already breaks on it, and without SELECTION the case does nothing)
+       * but it keeps a marker delete -- push_undo + prop write + a Tcl push --
+       * from firing while a modal dialog is up. */
+      if(xctx->semaphore >= 2) break;
+      if(rstate == 0 && xctx->graph_marker_sel >= 0 &&
+         waves_selected(event, key, state, button)) {
+        /* the owning strip is RE-RESOLVED, not read off graph_marker_selgraph:
+         * that is a rect index and goes stale on a strip reorder / a multi-plot
+         * prepend, which would fire the delete from the wrong strip and refuse
+         * on the one actually showing the ring */
+        int sgi = -1;
+        if(graph_marker_find(xctx->graph_marker_sel, &sgi, NULL) &&
+           sgi == xctx->graph_master) {
+          /* read-only is refused inside graph_marker_delete(), non-blocking --
+           * see the m/d arms in waves_callback for why not readonly_block() */
+          if(graph_marker_delete_selected()) {
+            draw();
+            break;
+          }
+        }
+      }
       if(xctx->ui_state & SELECTION) { /* delete selection */
         if(xctx->semaphore >= 2) break;
         if(readonly_block()) break;
@@ -7591,6 +8205,15 @@ int callback(const char *win_path, int event, int mx, int my, KeySym key, int bu
   double c_snap;
   int tabbed_interface = tclgetboolvar("tabbed_interface");
   int enable_stretch = tclgetboolvar("enable_stretch");
+  /* ⚠ THESE TWO ARE NOT WHERE THE issue-0177 no_snap TEST GOES, and the first cut
+   * of that fix put it here, wrongly. They are initialisers, so they run BEFORE
+   * handle_window_switching() below may reassign xctx -- on the EnterNotify that
+   * switches into or out of a waveform viewer they would describe the PREVIOUS
+   * context. And they do not reach draw()'s own crosshair call (draw.c ~8433) or
+   * move.c's three, so gating them would kill the erase paths and leave the paint
+   * paths live. The property is tested inside draw_crosshair()/draw_snap_cursor()
+   * instead, at call time. What these locals still legitimately decide is the
+   * CURSOR SHAPE, and that decision does consult no_snap where it is made. */
   int draw_xhair = tclgetboolvar("draw_crosshair");
   int crosshair_size = tclgetintvar("crosshair_size");
   int infix_interface = tclgetboolvar("infix_interface");
@@ -7670,8 +8293,30 @@ int callback(const char *win_path, int event, int mx, int my, KeySym key, int bu
   }
   xctx->mousex=X_TO_XSCHEM(mx);
   xctx->mousey=Y_TO_XSCHEM(my);
-  xctx->mousex_snap=my_round(xctx->mousex / c_snap) * c_snap;
-  xctx->mousey_snap=my_round(xctx->mousey / c_snap) * c_snap;
+  /* THE SNAP GRID IS A PROPERTY OF THE CANVAS, AND IT IS DECIDED HERE (issue 0177).
+   *
+   * These four lines run for every event on every window, so this is the ONE place
+   * where "this surface has no schematic snap grid" can be expressed once and cover
+   * every downstream reader -- present and future. Issue 0143 instead overrode the
+   * two fields locally at the head of waves_callback(), which was correct but only
+   * for code reached THROUGH that handler: anything that runs when waves_selected()
+   * DECLINES the event still saw a grid-snapped schematic coordinate. On the ASE
+   * viewer that was measurable and visible -- see the 0177 issue file for the
+   * numbers -- because waves_selected() refuses a band just inside the strip rect
+   * that contains the top of the LEGEND, and in that band handle_motion_notify()
+   * falls through to the schematic arm and draws the crosshair AT mousex_snap.
+   *
+   * On a no_snap canvas the two "_snap" fields are simply honest copies of the raw
+   * pointer. Every reader keeps working; none of them gets a grid. waves_callback's
+   * own override stays, because an ordinary SCHEMATIC window can embed graphs and
+   * that context is not no_snap. */
+  if(xctx->no_snap) {
+    xctx->mousex_snap=xctx->mousex;
+    xctx->mousey_snap=xctx->mousey;
+  } else {
+    xctx->mousex_snap=my_round(xctx->mousex / c_snap) * c_snap;
+    xctx->mousey_snap=my_round(xctx->mousey / c_snap) * c_snap;
+  }
 
   if(abs(mx-xctx->mx_save) > 8 || abs(my-xctx->my_save) > 8 ) {
     my_snprintf(str, S(str), "mouse = %.16g %.16g - selected: %d path: %s",
@@ -7696,6 +8341,7 @@ int callback(const char *win_path, int event, int mx, int my, KeySym key, int bu
      xctx->mouse_inside = 0;
      draw_hover(0); /* erase the hover outline when the pointer leaves the canvas */
      draw_flylines(0); /* drop the fly-line overlay state on leave (mouse_inside==0) */
+     graph_snap_clear(); /* item 9: and the graph snap diamond */
      break;
 
    case EnterNotify:

@@ -245,6 +245,13 @@ static void merge_box(FILE *fd)
     else
       ptr[i].fill = 1;
     set_rect_flags(&xctx->rect[c][i]); /* set cached .flags bitmask from on attributes */
+    /* merge_box carries prop_ptr through verbatim, so pasting a graph would give
+     * the copy the SAME marker numbers as the original. Renumber, once, from the
+     * window-wide maximum (doc/claude/specs/graph_markers.md). Note this runs
+     * BEFORE the gfx_register below bumps xctx->rects[c], so the rect being
+     * merged is still invisible to the numbering scan -- which is exactly why
+     * graph_marker_renumber_rect() computes its base ONCE for the whole rect. */
+    if(xctx->rect[c][i].flags & 1) graph_marker_renumber_rect(&xctx->rect[c][i]);
     select_box(c,i, SELECTED, 1, 1);
     gfx_register(xRECT, c, i);
 }

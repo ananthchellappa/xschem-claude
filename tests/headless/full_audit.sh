@@ -72,7 +72,15 @@ nolog_tests=" test_nolog "
 
 in_list() { case "$2" in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
 
-# A test PASSES on "RESULT: ALL PASS"; a handful use their own banner.
+# A test PASSES on "RESULT: ALL PASS" or on the older run_regression sentinel
+# "OVERALL: ok"; a handful use their own banner.
+#
+# Both banners are accepted because ~5 shipped tests (test_wire_split,
+# test_crossview_paste, test_pin_type_edit, test_add_pin_lib_symbol_view,
+# test_select_at) only ever print "OVERALL: ok" -- they were scored FAIL here
+# forever while passing every one of their own checks (red-but-hollow, the
+# inverse of issue 0147). "OVERALL: notok"/"OVERALL: FAIL" are the failure
+# banners and are not substrings of "OVERALL: ok", so the test still fails.
 is_pass() {
   local name="$1" out="$2" ec="$3"
   case "$name" in
@@ -83,13 +91,23 @@ is_pass() {
     test_nogui)                [[ "$out" == *"NOGUI_TEST_PASS"* ]] ;;
     test_readonly_guard)       [[ "$out" == *"READONLY_GUARD_TEST_PASS"* ]] ;;
     test_readonly_action_dispatch) [[ "$out" == *"ACTION_READONLY_TEST_PASS"* ]] ;;
-    *)                         [[ "$out" == *"RESULT: ALL PASS"* && "$out" != *"skipped: no X"* ]] ;;
+    # third banner shape: "<name> headless: all checks passed" / "... N FAILURE(S)"
+    # (test_cadence_descend_newwin_ro passes every check but was scored FAIL;
+    # test_hi_descend shares the banner and really does fail one check)
+    test_cadence_descend_newwin_ro|test_hi_descend) \
+                               [[ "$out" == *"headless: all checks passed"* ]] && ! is_skip "$out" ;;
+    *)                         [[ "$out" == *"RESULT: ALL PASS"* || "$out" == *"OVERALL: ok"* ]] \
+                                 && ! is_skip "$out" ;;
   esac
 }
 # "skipped: no X" is the legacy self-skip banner ("RESULT: ALL PASS (0 checks,
 # skipped: no X)") -- classified as SKIP so an un-converted test can never count
-# as a hollow PASS on a display-less box.
-is_skip() { [[ "$1" == *"RESULT: SKIP"* || "$1" == *"skipped: no X"* ]]; }
+# as a hollow PASS on a display-less box. is_skip runs BEFORE is_pass, which is
+# what keeps the "OVERALL: ok" arm above honest: every X-gated self-skip prints
+# "RESULT: SKIP (no X)" (or, for test_grid_toggle_sel_gc, "SKIP: no X
+# connection") next to its "OVERALL: ok" and is classified SKIP, not PASS.
+is_skip() { [[ "$1" == *"RESULT: SKIP"* || "$1" == *"skipped: no X"* \
+               || "$1" == *"SKIP: no X connection"* ]]; }
 
 # Test selection: explicit args, else all test_*.tcl. The 52-test wireedit
 # suite (wireedit/run_wireedit.sh, true headless) is part of the full run and

@@ -1,0 +1,14 @@
+version 1
+simulator ngspice
+design {lib sky130_tests_ase cell test_hvl_cells view schematic}
+rundir {}
+temperature 27
+models {{file {$::SKYWATER_MODELS/sky130.lib.spice} section tt}}
+variables {}
+analyses {{type op enabled 1} {type dc enabled 0} {type ac enabled 0} {type tran enabled 1 stop 3u step 0.1n}}
+outputs {{name vcc expr vcc save 1 plot 1} {name rstb expr rst_b save 1 plot 1} {name data expr data save 1 plot 1} {name ck expr ck save 1 plot 1} {name q expr q save 1 plot 1} {name out expr out save 1 plot 1}}
+save_all_v 1
+save_all_i 0
+options {{name savecurrents value 1}}
+includes {{file {$PDK_ROOT/$PDK/libs.ref/sky130_fd_sc_hvl/spice/sky130_fd_sc_hvl.spice}}}
+viewer {}

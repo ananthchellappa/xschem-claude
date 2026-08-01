@@ -383,6 +383,77 @@ typedef int Tcl_Size;
 
 #define RECT_TOUCH(xa,ya,xb,yb,x1,y1,x2,y2)  (!(xa > x2 || xb < x1 || ya > y2 || yb < y1))
 
+/* ASE waveform-viewer strip drag-reorder affordance, in SCREEN PIXELS (fixed
+ * regardless of canvas zoom, so the target stays usable at any zoom level).
+ * GRAPH_REORDER_HANDLE_W is the width of the grab zone at the strip's right
+ * edge; GRAPH_REORDER_DROPBAR_H the thickness of the transient drop-destination
+ * bar. MIRRORED IN TCL: wviewer::strip_handle_at_pixel / the drag feedback in
+ * src/wave_viewer.tcl -- change both or the drawn grip and the hit-test drift
+ * apart. doc/claude/specs/waveform_viewer_modes.md */
+#define GRAPH_REORDER_HANDLE_W  14
+#define GRAPH_REORDER_DROPBAR_H  4
+/* thickness of the frame that marks the strip a dragged TRACE would land in
+ * (`reorder_handle=4`, transient drag feedback like the drop bar above) */
+#define GRAPH_TRACE_DROP_W       3
+
+/* How close, in SCREEN PIXELS, a canvas pixel has to be to a drawn trace for
+ * that trace to be PICKED -- the one number every trace-picking surface on a
+ * strip shares (issue 0174). Point-to-segment distance through the engine's own
+ * transform (graph_wave_at, draw.c), so it is a real distance and NOT scaled by
+ * canvas zoom: the distance itself already carries xctx->mooz.
+ *
+ * Four surfaces answer with it and MUST keep agreeing -- three picking surfaces
+ * on one strip disagreeing about "close enough" is the next bug report:
+ *   - the LMB wave-bold click            (callback.c, the waves_callback arm)
+ *   - the RMB trace context menu         (wviewer::trace_menu_pick)
+ *   - the LMB trace drag between strips  (wviewer::strip_drag_press)
+ *   - the RMB strip menu's negative gate (wviewer::strip_menu_pick)
+ * MIRRORED IN TCL as the `{tol 10}` proc defaults of wviewer::trace_at and
+ * wviewer::near_wave_at (src/wave_viewer.tcl) and as the documented default of
+ * `xschem get graph_trace_at` / `graph_near_wave` -- change all of them together.
+ *
+ * ⚠ NOT GRAPH_CLICK_TOL (callback.c, 3.0). That one is the click-vs-drag TRAVEL
+ * test and is compared in WORLD units (`* xctx->zoom`); it is a different
+ * question and the double-click interlock depends on it unchanged. */
+#define GRAPH_TRACE_PICK_TOL  10.0
+
+/* How many traces of ONE strip can be selected at once (issue 0175, Ctrl+click
+ * multi-select). The cap is on the SELECTED COUNT, not on the node index: the
+ * selection lives in a fixed-size array inside Graph_ctx, so node 200 of a strip
+ * can be selected while only 64 traces can be selected together.
+ *
+ * ⚠ Fixed array, deliberately NOT a malloc'ed pointer. SIX call sites build a
+ * LOCAL Graph_ctx and let it die on return (graph_plotbox_at, graph_point_at,
+ * graph_marker_at, graph_marker_create, graph_marker_drag_to in draw.c/callback.c
+ * and raw_read's gr_ctx in save.c); a pointer field would leak on every one of
+ * them, once per hover motion event. 64 ints is 256 bytes on a struct that has
+ * one global instance and a handful of stack ones.
+ *
+ * A bitmask (the option not taken) would have capped the node INDEX at 32 and
+ * silently mis-rendered node 40 -- see doc/claude/issues/0175-*.md D1. */
+#define GRAPH_MAX_SEL_WAVES     64
+
+/* Waveform markers (doc/claude/specs/graph_markers.md). Tolerances are SCREEN
+ * PIXELS, fixed regardless of canvas zoom, like the reorder handle above.
+ * These live in the header (not draw.c) because graph_marker_press() in
+ * callback.c needs GRAPH_MARKER_TOL -- callback.c's own GRAPH_CLICK_TOL is
+ * file-private. MIRRORED in tests/headless/test_wave_markers.tcl. */
+#define GRAPH_MARKERS_MAX      512  /* max marker records per graph rect */
+#define GRAPH_MARKER_TOL       8.0  /* anchor/label grab radius on a press */
+#define GRAPH_MARKER_PICK_TOL 20.0  /* "is there a trace near the pointer" on m / d */
+
+/* xctx->graph_marker_dragmode -- the EFFECTIVE mode of an armed gesture,
+ * latched at PRESS TIME from the selection state and never re-read afterwards.
+ * xctx->graph_marker_drag keeps its original meaning, "what was GRABBED"
+ * (0/1/2), because `xschem get graph_marker_drag`, wviewer::marker_grabbed and
+ * wviewer::strip_drag_release all read it; THIS says what the gesture DOES,
+ * which since the selected-text drag is no longer the same question. */
+#define GRAPH_MARKER_MODE_NONE   0
+#define GRAPH_MARKER_MODE_ANCHOR 1  /* slide the anchor along its own trace */
+#define GRAPH_MARKER_MODE_LABEL  2  /* move the callout; the anchor stays put */
+#define GRAPH_MARKER_MODE_RIGID  3  /* SELECTED + text drag: translate the whole
+                                     * marker; the label offset is frozen */
+
 #define ROTATION(rot, flip, x0, y0, x, y, rx, ry) \
 { \
   double xxtmp = (flip ? 2 * x0 -x : x); \
@@ -1057,7 +1128,22 @@ typedef struct {
   int mode; /* default:0   0:Line, 1:HistoV, 2:HistoH */
   double txtsizelab, digtxtsizelab, txtsizey, txtsizex, txtsizelegend;
   int dataset;
-  int hilight_wave; /* wave index */
+  int hilight_wave; /* NODE index of the FIRST selected wave, -1 = none. Prop token
+                     * `hilight_wave`. Since issue 0175 this is the head of a
+                     * possibly longer selection (sel_wave[] below) and NOT the
+                     * whole of it -- read it through wave_is_hilighted(), never
+                     * with a bare `== wcnt`, or a Ctrl-selected second trace
+                     * renders thin. Its grammar and its -1 sentinel are
+                     * UNCHANGED, which is what keeps every existing .sch and
+                     * every older build reading this rect correctly. */
+  int sel_wave[GRAPH_MAX_SEL_WAVES]; /* issue 0175: the WHOLE selection, NODE indices,
+                     * ascending, no duplicates. Prop token `sel_waves` ("0 2"),
+                     * written ONLY when two or more traces are selected -- a 0- or
+                     * 1-element selection is expressed entirely by hilight_wave, so
+                     * a strip that was never Ctrl-clicked serialises byte-identically
+                     * to pre-0175 (the `active`/`markers` absent-means-absent rule).
+                     * n_sel_waves == 0 means "no list": fall back to hilight_wave. */
+  int n_sel_waves;
   int logx, logy;
   int rainbow; /* draw multiple datasets with incrementing colors */
   double linewidth_mult; /* multiply factor for waveforms line width */
@@ -1066,7 +1152,77 @@ typedef struct {
                * `active=1`) -> draw_graph paints the dull-yellow right-edge marker.
                * Only the waveform viewer ever writes the token, so ordinary
                * schematic graphs are unaffected. */
+  int reorder_handle; /* strip drag-reorder affordance (prop token `reorder_handle`),
+                       * written by the ASE viewer only:
+                       *   1 = draw the grip in the right margin (every viewer strip)
+                       *   2 = grip + a drop bar along the strip's TOP edge
+                       *   3 = grip + a drop bar along the strip's BOTTOM edge
+                       * 2/3 are TRANSIENT drag feedback (prospective destination).
+                       * Like `active`, on-screen only (draw_graph flags bit 16).
+                       * doc/claude/specs/waveform_viewer_modes.md */
+  int grid;       /* viewer plan item 3: 0 = do not draw this graph's dashed
+                   * GRID LINES. Prop token `grid`, written by the ASE viewer
+                   * only (Ctrl-G). The axes, the box, the tick marks, the axis
+                   * NUMBERS and the zero lines are NOT part of this -- turning
+                   * the grid off must leave the plot readable, so only the
+                   * dashed interior lines go. Defaults to 1, and like the
+                   * tokens below it must be set before the RECT_OUTSIDE early
+                   * return (shared xctx->graph_struct). */
+  int griddash;   /* viewer plan item 2 / decision D-B: the OFF run of the graph
+                   * grid's dash pattern, in pixels, against a 1-pixel ON run.
+                   * 0 = the shipped 2-on/2-off (50% duty); 3 = 1-on/3-off,
+                   * which halves the lit pixels WITHOUT removing a grid line or
+                   * changing its colour. Prop token `griddash`, written by the
+                   * ASE viewer only -- draw_graph_grid is shared with every
+                   * embedded schematic graph, so this must not be a global
+                   * (same reasoning as legendbold below). */
+  int legendbold; /* viewer plan item 1: draw EVERY legend entry in the bold face
+                   * (prop token `legendbold=1`), written by the ASE viewer only —
+                   * draw_graph_variables is shared with every embedded schematic
+                   * graph in the tree, so this must not be a global. The bolded
+                   * wave (issue 0152) then needs a different cue, since bold is
+                   * no longer distinctive: it is drawn bold ITALIC.
+                   * Unlike `active`/`reorder_handle` this is durable CONTENT,
+                   * not chrome — it belongs in exports. */
+  int preview_wave; /* viewer plan item 6: NODE index of the trace to draw
+                     * SHRUNK (the mid-drag preview), or -1. Unlike every field
+                     * above it does NOT come from a prop token — it is written
+                     * by draw_graph from the transient xctx preview state, and
+                     * only when flags & 16 (on-screen chrome), so it can never
+                     * reach an export. Compared against `wcnt` exactly like
+                     * hilight_wave, which is the same index space. */
 } Graph_ctx;
+
+/* One waveform marker (doc/claude/specs/graph_markers.md). Persisted in the
+ * graph rect's `markers` prop token, one record per line, fields in this order.
+ * x/y are the UNSCALED sample values -- never mylog10()'ed even on a log axis,
+ * see landmine 35 -- and are guaranteed FINITE by the create/move ops, so the
+ * token alphabet stays numeric and cannot be broken by a "nan"/"inf" spelling.
+ * ldx/ldy are the label offset as a FRACTION of gr->w / gr->h: the only space
+ * stable under canvas zoom, strip resize AND axis autozoom. */
+typedef struct {
+  int num;         /* window-wide marker number, >= 1 (the N in "M<N>") */
+  int wave;        /* NODE index in the owning graph's `node` token (landmine 34) */
+  int dataset;     /* REAL raw dataset index, NOT find_closest_wave's sweepvar_wrap */
+  int point;       /* ABSOLUTE index into raw->values[*][] */
+  double x, y;     /* the sample, unscaled, finite */
+  int prev;        /* partner marker NUMBER for the delta block, 0 = none */
+  double ldx, ldy; /* label offset, fraction of gr->w / gr->h */
+} GraphMarker;
+
+/* Full identity of ONE sample picked by graph_point_at(). */
+typedef struct {
+  int wave;        /* node index (the hilight_wave / graph_trace_at index space) */
+  int dataset;     /* REAL raw dataset index */
+  int point;       /* ABSOLUTE index into raw->values[*][] */
+  int idx;         /* raw column actually read (== raw->nvars for an expression) */
+  int expression;  /* 1 when the trace is an RPN expression (scratch column) */
+  int sweep_idx;   /* raw column of this trace's sweep variable */
+  double x, y;     /* UNSCALED sample values, captured INSIDE the sample loop */
+  double sx, sy;   /* screen pixels of the sample (log-space mapped, S_X/S_Y) */
+  double dist;     /* point distance in pixels from the query pixel */
+  double seg_dist; /* point-to-SEGMENT distance -- the metric traces are RANKED on */
+} GraphPointHit;
 
 typedef struct {
   int savew, saveh;
@@ -1248,6 +1404,22 @@ typedef struct {
   int scope_hi_n;       /* number of objects in the overlay (0 = inactive) */
   int scope_hi_alloc;   /* allocated capacity of the two arrays above */
   GC gc_hover;          /* hover (awareness) highlight: dashed thin colored GC */
+  /* viewer plan item 9: the diamond SNAP CURSOR that sticks to the nearest
+   * sample of the nearest trace while the pointer hovers a graph. Every field
+   * is 0-at-rest on purpose -- xctx is one my_calloc, so a 0 default is free
+   * and a non-zero sentinel would have to be written in three places
+   * (alloc_xschem_data, clear_drawing, and the teardown).
+   * NOT part of any export: the whole cadence draws with draw_pixmap = 0, so
+   * the glyph exists only in the window and cannot reach a print/SVG at all --
+   * a stronger guarantee than the flags-bit-16 rule it would otherwise need. */
+  int graph_snap_on;        /* 1 = a diamond is currently PAINTED */
+  int graph_snap_gi;        /* graph index it belongs to */
+  int graph_snap_wave;      /* node index of the trace it snapped to */
+  double graph_snap_sx, graph_snap_sy; /* screen px of the painted diamond */
+  double graph_snap_x, graph_snap_y;   /* RAW sample values -- item 10's readout.
+                                        * RAW, never mylog10()'d: landmine 35. */
+  int graph_snap_prev_mx, graph_snap_prev_my; /* last mouse pixel QUERIED */
+  int graph_snap_have_prev; /* prev_mx/my hold a real query */
   int hover_type;       /* hover highlight: currently-outlined object type (0 = none) */
   int hover_n;          /* hover highlight: its array index */
   int hover_col;        /* hover highlight: its layer (graphical types) */
@@ -1502,6 +1674,43 @@ typedef struct {
    * current pointer and a click test against them would fire. Set to the raw pointer
    * on every Button1 press over a graph, invalidated by a double-click. */
   double graph_press_x, graph_press_y;
+  /* Waveform markers (doc/claude/specs/graph_markers.md). ALL TRANSIENT: the
+   * durable state is the rect's `markers` prop token.
+   * graph_marker_sel is a marker NUMBER (window-wide numbering) scoped by
+   * graph_marker_selgraph, so a Delete pressed over another strip cannot eat it.
+   * The drag is scratch-based: the record being dragged lives in
+   * graph_marker_scratch and the renderer substitutes it, so a whole gesture is
+   * ONE undo point, zero allocations per motion event, and ESC is a flag clear. */
+  int graph_marker_sel;       /* selected marker number, -1 = none */
+  int graph_marker_selgraph;  /* rect[GRIDLAYER] index owning the selection, -1 = none */
+  int graph_marker_drag;      /* what was GRABBED: 0 none, 1 the ANCHOR, 2 the LABEL.
+                               * This is the value `xschem get graph_marker_drag`
+                               * exports; do NOT overload it -- see dragmode below. */
+  int graph_marker_dragmode;  /* what the gesture DOES: GRAPH_MARKER_MODE_*, latched
+                               * at press from the selection state (a text drag on a
+                               * SELECTED marker is drag==2 but mode==RIGID) */
+  int graph_marker_dragnum;   /* marker number being dragged */
+  int graph_marker_draggraph; /* rect[GRIDLAYER] index the drag is bound to */
+  int graph_marker_moved;     /* travel exceeded GRAPH_CLICK_TOL -> it is a drag, not a click */
+  double graph_marker_press_x, graph_marker_press_y; /* press anchor, schematic units */
+  double graph_marker_ldx0, graph_marker_ldy0;       /* label offset at press time */
+  double graph_marker_x0, graph_marker_y0;           /* anchor SAMPLE at press time, the
+                                                      * origin a RIGID drag translates from
+                                                      * (the scratch's own x/y are rewritten
+                                                      * on the first motion event) */
+  GraphMarker graph_marker_scratch; /* live drag state, substituted by the renderer */
+  /* viewer plan item 6: the mid-drag SHRINK PREVIEW of the trace being dragged
+   * to another strip. The marker-scratch idea applied to a polyline: the
+   * renderer scales the previewed trace's y values on the fly, so a motion
+   * event costs no allocation, no model write and no undo point.
+   * `graph_preview_scale` is the ARM: 0.0 means off, which is the free calloc
+   * default (a -1 sentinel would not be), so the other two are only meaningful
+   * when it is non-zero. Transient CHROME — draw_graph applies it only for
+   * flags & 16, so every export draws the trace unshrunk.
+   * Reset in graph_preview_clear(), clear_drawing() and alloc_xschem_data(). */
+  double graph_preview_scale; /* 0.0 = no preview armed; else the y scale factor */
+  int graph_preview_gi;       /* rect[GRIDLAYER] index the preview is bound to */
+  int graph_preview_wave;     /* NODE index within that graph (the wcnt space) */
   int graph_lastsel; /* last graph that was clicked (selected) */
   /*    */
   XSegment *biggridpoint;
@@ -1515,9 +1724,54 @@ typedef struct {
   int draw_single_layer;
   int draw_dots;
   int only_probes;
+  int graph_snap; /* viewer plan item 9: per-window arming of the diamond snap
+                   * cursor. PER CONTEXT, not a global Tcl var, for the same
+                   * reason no_grid is: draw_graph_variables/graph_point_at are
+                   * shared with every embedded schematic graph in the tree, and
+                   * the pick walks every sample of every trace -- arming it
+                   * globally would put that cost on schematics that never asked
+                   * for it. 0 for every context alloc_xschem_data creates; the
+                   * ASE viewer sets it on its own window and never clears it. */
   int no_grid; /* per-window grid/origin suppression (Waveform Viewer: the window
                 * reads as a graph, not a schematic). NOT mirrored in Tcl -- scoped
                 * to this ctx only; see doc/claude/specs/waveform_viewer.md item 18 */
+  int no_snap; /* THIS CANVAS HAS NO SCHEMATIC SNAP GRID (issue 0177). Per window,
+                * exactly like no_grid above and for the same reason: `cadsnap` is a
+                * GLOBAL Tcl var that the waveform viewer has no business sharing, and
+                * the grid is a property of the SURFACE, not of the handler that
+                * happens to be reading the pointer.
+                *
+                * Set it and three things become true for this context, at the source
+                * and therefore for every present and future reader:
+                *   - callback() computes mousex_snap/mousey_snap UNSNAPPED (they stay
+                *     honest copies of mousex/mousey) instead of rounding to cadsnap;
+                *   - draw_crosshair() is not drawn -- it paints AT mousex_snap
+                *     (callback.c ~2646), so on a grid it IS the snap grid made visible,
+                *     which is precisely what the 0177 reporter saw over the legend;
+                *   - draw_snap_cursor() is not drawn -- it snaps to the nearest net or
+                *     symbol pin, and a waveform canvas has neither.
+                *
+                * This REPLACES the per-handler override strategy issue 0143 started
+                * (waves_callback still carries its own, because an ordinary SCHEMATIC
+                * window can embed graphs and that context is NOT no_snap).
+                * 0 for every context alloc_xschem_data creates; the ASE viewer sets it
+                * on its own window and never clears it.
+                * See doc/claude/issues/0177-viewer-has-no-snap-grid.md */
+  int wave_viewer; /* THIS CONTEXT IS A WAVEFORM VIEWER, NOT A SCHEMATIC (issue 0172).
+                * Per window, exactly like no_grid / no_snap above. The viewer is built
+                * on an ordinary schematic window and is indistinguishable from a
+                * pristine untitled scratch buffer by SHAPE: top level, named untitled,
+                * no instances, no wires (its content is graph rects), and `modified`
+                * permanently 0 because wviewer::with_edit (contract D1) ends every
+                * mutation with `xschem set_modify 0`. is_pristine_untitled() therefore
+                * offered a live viewer as a reuse target, and a real schematic was
+                * loaded INTO it -- destroying its graph rects while the window kept its
+                * WaveViewer bindtag and menubar, after which Ctrl-D wipes the document.
+                * This flag is the honest oracle: a viewer is excluded because it IS
+                * one, not because of what it happens to contain.
+                * 0 for every context alloc_xschem_data creates; the ASE viewer sets it
+                * on its own window and never clears it.
+                * See doc/claude/issues/0172-viewer-buffer-hijacked-by-pristine-untitled-reuse.md */
   int menu_removed; /* fullscreen previous setting */
   double save_lw; /* used to save linewidth when selecting 'only_probes' view */
   int no_draw;
@@ -1621,6 +1875,7 @@ extern int text_ps;
 extern double cadhalfdotsize;
 extern char bus_char[];
 extern int yyparse_error;
+extern int expandlabel_collapsed; /* issue 0182, defined in parselabel.l */
 extern char *xschem_executable;
 extern double tk_scaling;
 extern Tcl_Interp *interp;
@@ -1702,6 +1957,48 @@ extern int sch_waves_loaded(void);
 extern int edit_wave_attributes(int what, int i, Graph_ctx *gr);
 extern void draw_graph(int i, int flags, Graph_ctx *gr, void *ct);
 extern int find_closest_wave(int i, Graph_ctx *gr, int *node_number);
+extern int graph_near_wave(int i, double px, double py, double tol);
+extern int graph_wave_at(int i, double px, double py, double tol);
+/* Trace SELECTION (issue 0175). The set lives in the graph rect's `hilight_wave`
+ * + `sel_waves` prop tokens; these three are the ONLY sanctioned readers/writers
+ * of that pair, so the two tokens can never drift apart.
+ *   graph_sel_waves_get   parse rect `i`'s selection into `out` (up to `max`
+ *                         entries); returns how many, 0 when nothing is selected.
+ *   graph_sel_waves_set   write it back; n == 0 clears both tokens. Returns 1
+ *                         when the rect's prop string actually changed.
+ *   graph_sel_waves_toggle  Ctrl+click: add `wcnt` if absent, remove it if
+ *                         present. Returns 1 when it changed something.
+ * wave_is_hilighted() is the DRAW-side test and replaces every `gr->hilight_wave
+ * == wcnt` comparison. */
+extern int  graph_sel_waves_get(int i, int *out, int max);
+extern int  graph_sel_waves_set(int i, const int *waves, int n);
+extern int  graph_sel_waves_toggle(int i, int wcnt);
+extern int  wave_is_hilighted(Graph_ctx *gr, int wcnt);
+/* Which LEGEND entry of graph `i` is under the CANVAS PIXEL (px, py)? The NODE
+ * index, or -1. Fails closed. doc/claude/issues/0175-*.md D5. */
+extern int  graph_legend_at(int i, double px, double py);
+/* --- waveform markers, doc/claude/specs/graph_markers.md --- */
+extern int  graph_point_at(int i, double px, double py, double tol,
+                           int restrict_wave, int restrict_dataset, GraphPointHit *hit);
+extern int  graph_markers_parse(const char *prop_ptr, GraphMarker **arr, int *n);
+extern void graph_markers_format(char **dest, const GraphMarker *arr, int n);
+extern void graph_markers_store(xRect *r, const GraphMarker *arr, int n);
+extern int  graph_marker_next_number(void);
+extern int  graph_marker_max_number(void);
+extern int  graph_marker_find(int num, int *graph_idx, GraphMarker *out);
+extern int  graph_marker_text(int num, char *dest, int destsize);
+extern int  graph_marker_at(int i, double px, double py, double tol, int *part);
+extern int  graph_marker_create(int i, double px, double py, int delta);
+extern int  graph_marker_create_at(int i, int wave, int dataset, int point, int delta);
+extern int  graph_marker_delete(int num);
+extern int  graph_marker_delete_all(int graph_idx);
+extern int  graph_marker_delete_selected(void);
+extern int  graph_marker_move(int num, double px, double py);
+extern int  graph_marker_anchor_at(int num, int dataset, int point);
+extern int  graph_marker_label_offset(int num, double ldx, double ldy);
+extern int  graph_marker_select(int num, int graph_idx);
+extern int  graph_marker_renumber_rect(xRect *r);
+extern void graph_marker_notify(void);
 extern void setup_graph_data(int i, int skip, Graph_ctx *gr);
 extern int graph_fullyzoom(xRect *r,  Graph_ctx *gr, int graph_dataset);
 extern int graph_fullxzoom(int i, Graph_ctx *gr, int dataset);
@@ -1913,7 +2210,16 @@ extern int find_closest_pin(double mx, double my, Selected *r);
 extern int find_closest_net_or_symbol_pin(double mx,double my, double *x, double *y);
 
 extern void drawline(int c, int what, double x1,double y1,double x2,double y2, double bus, int dash, void *ct);
+/* drawline with an independent OFF run (dash_off <= 0 = same as dash, i.e.
+ * drawline's historical 50% duty cycle). See draw.c. */
+extern void drawline_duty(int c, int what, double x1,double y1,double x2,double y2,
+                          double bus, int dash, int dash_off, void *ct);
 extern void draw_xhair_line(GC gc, int size, double linex1, double liney1, double linex2, double liney2);
+/* viewer plan item 9: the graph snap cursor. draw_graph_snap_cursor() is the
+ * hover pump (query + repaint); graph_snap_clear() erases and disarms. */
+extern int  graph_plotbox_at(int i, double px, double py);
+extern void draw_graph_snap_cursor(int mx, int my);
+extern void graph_snap_clear(void);
 extern void draw_string(int layer,int what, const char *str, short rot, short flip, int hcenter, int vcenter,
        double x1, double y1, double xscale, double yscale);
 extern void get_sym_text_size(int inst, int text_n, double *xscale, double *yscale);
@@ -2256,6 +2562,8 @@ extern void print_vhdl_element(FILE *fd, int inst);
 extern void print_verilog_element(FILE *fd, int inst);
 extern int get_inst_pin_number(int inst, const char *pin_name);
 extern const char *get_tok_value(const char *s,const char *tok,int with_quotes);
+/* NULL, empty, or all separator chars -- a value a producer MUST quote (issue 0183) */
+extern int str_is_blank(const char *s);
 extern const char *list_tokens(const char *s, int with_quotes);
 extern char **parse_cmd_string(const char *cmd, int *argc);
 extern double get_attr_val(const char *str);
@@ -2335,6 +2643,7 @@ extern void propagate_hilights(int set, int clear, int mode);
 extern void  select_connected_nets(int stop_at_junction);
 extern int   select_grow_connected_step(double mx, double my, int pick_seed);
 extern char *resolved_net(const char *net);
+extern char *resolved_net_from(const char *net, int from_level);
 extern void draw_hilight_net(int on_window);
 extern void copy_hilights(void);
 extern void display_hilights(int what, char **str);
@@ -2343,6 +2652,8 @@ extern void set_tcl_netlist_type(void);
 extern void show_unconnected_pins(void);
 extern void auto_set_wire_bus(int start, int end);
 extern int prepare_netlist_structs(int for_netlist);
+extern int is_auto_net_name(const char *s); /* "#net<N>", the engine's auto name (issue 0156) */
+extern int attr_is_extra_node(const char *extra, const char *name); /* whole-token member of extra= (0163) */
 extern int skip_wire(int i);
 extern int skip_instance(int i,  int skip_short, int lvs_ignore);
 extern int shorted_instance(int i, int lvs_ignore);

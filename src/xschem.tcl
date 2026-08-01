@@ -8258,9 +8258,23 @@ proc schpins_to_sympins {} {
   foreach i $lines {
     set ii [split [regexp -all -inline {\S+} $i]]
     if {[regexp {^C \{.*(i|o|io)pin} $i ]} {
+      ## `lab` and `dir` are each assigned only when their own regexp matches, inside
+      ## a loop over every clipboard line -- so they used to CARRY OVER. A pin with no
+      ## lab= token took the PREVIOUS pin's name (two symbol pins called the same
+      ## thing), and if the very first pin had none the proc died with
+      ## `can't read "lab": no such variable` AFTER the clipboard file had already been
+      ## truncated by the [open ... w] above, destroying the copy and generating
+      ## nothing. Reset both per line. Issue 0185.
+      set lab {}
+      set dir {}
       if {[regexp {ipin} [lindex $ii 1]]} { set dir in }
       if {[regexp {opin} [lindex $ii 1]]} { set dir out }
       if {[regexp {iopin} [lindex $ii 1]]} { set dir inout }
+      ## The outer regexp matches (i|o|io)pin ANYWHERE in the line, so a non-pin
+      ## instance whose properties merely mention one -- `lab=ipin` on a lab_pin --
+      ## reaches here with no direction. It is not a pin: skip it rather than emit a
+      ## phantom one carrying the previous pin's dir. Issue 0185.
+      if {$dir eq {}} { continue }
       set rot [lindex $ii 4]
       set flip [lindex $ii 5]
       while {1} {
@@ -8303,7 +8317,15 @@ proc schpins_to_sympins {} {
       lassign [order $linex1 $liney1 $linex2 $liney2] linex1 liney1 linex2 liney2
       lassign [rotation $x0 $y0 $textx0 $texty0 $rot $flip] textx0 texty0
       foreach {textx0 texty0} [rotation $x0 $y0 $textx0 $texty0 $rot $flip] break
-      puts $fd "B 5 $pinx1 $piny1 $pinx2 $piny2 \{name=$lab dir=$dir\}"
+      ## An UNQUOTED empty value makes get_tok_value() read the following " dir=..."
+      ## as the name, so a pin with `lab=` would land in the generated symbol with no
+      ## `dir` at all. `name=""` reads back as present-and-empty and leaves dir alone.
+      ## Issue 0183.
+      ## a value made only of separator chars is blank to get_tok_value() too -- ';'
+      ## counts as one, see str_is_blank() in token.c -- so trim before testing.
+      set labtok $lab
+      if {[string trim $labtok " \t\n;"] eq {}} { set labtok {""} }
+      puts $fd "B 5 $pinx1 $piny1 $pinx2 $piny2 \{name=$labtok dir=$dir\}"
       puts $fd "L 4 $linex1 $liney1 $linex2 $liney2 \{\}"
       puts $fd "T \{$lab\} $textx0 $texty0 $rot $textflip 0.2 0.2 \{\}"
     }
@@ -8369,8 +8391,17 @@ proc create_symbol {name {in {}} {out {}} {inout {}}} {
   puts $fd {K {type=subcircuit format="@name @pinlist @symname" template="name=X1"}}
   set x -150
   set y 0
+  ## An empty element in any of the three pin lists writes `name= dir=in`, and
+  ## get_tok_value() then reads " dir=in" as the NAME -- so the .sym this proc writes to
+  ## disk carries a pin with no direction at all. Measured: `create_symbol s.sym {A {} B}`
+  ## produced `B 5 ... {name= dir=in}`, which reads back as name=<<dir=in>>, dir absent.
+  ## `name=""` reads back as present-and-empty and leaves dir alone. Issue 0183.
+  ## The pin is still emitted rather than skipped: the caller passed a list element, and
+  ## the pin count and geometry are part of this proc's contract. A value of nothing but
+  ## separator characters is blank to the tokenizer as well, hence the trim.
   foreach pin $in { ;# create all input pins on the left
-    puts $fd "B 5 [expr {$x - 2.5}] [expr {$y - 2.5}] [expr {$x + 2.5}] [expr {$y + 2.5}] {name=$pin dir=in}"
+    set pintok $pin ; if {[string trim $pintok " \t\n;"] eq {}} { set pintok {""} }
+    puts $fd "B 5 [expr {$x - 2.5}] [expr {$y - 2.5}] [expr {$x + 2.5}] [expr {$y + 2.5}] {name=$pintok dir=in}"
     puts $fd "T {$pin} [expr {$x + 25}] [expr {$y - 6}] 0 0 0.2 0.2 {}"
     puts $fd "L 4 $x $y [expr {$x + 20}] $y {}"
     incr y 20
@@ -8378,13 +8409,15 @@ proc create_symbol {name {in {}} {out {}} {inout {}}} {
   set x 150
   set y 0
   foreach pin $out { ;# create all out pins on the top right
-    puts $fd "B 5 [expr {$x - 2.5}] [expr {$y - 2.5}] [expr {$x + 2.5}] [expr {$y + 2.5}] {name=$pin dir=out}"
+    set pintok $pin ; if {[string trim $pintok " \t\n;"] eq {}} { set pintok {""} }  ;# issue 0183
+    puts $fd "B 5 [expr {$x - 2.5}] [expr {$y - 2.5}] [expr {$x + 2.5}] [expr {$y + 2.5}] {name=$pintok dir=out}"
     puts $fd "T {$pin} [expr {$x - 25}] [expr {$y - 6}] 0 1 0.2 0.2 {}"
     puts $fd "L 4 [expr {$x - 20}] $y $x $y {}"
     incr y 20
   }
   foreach pin $inout { ;# create all inout pins on the bottom right
-    puts $fd "B 5 [expr {$x - 2.5}] [expr {$y - 2.5}] [expr {$x + 2.5}] [expr {$y + 2.5}] {name=$pin dir=inout}"
+    set pintok $pin ; if {[string trim $pintok " \t\n;"] eq {}} { set pintok {""} }  ;# issue 0183
+    puts $fd "B 5 [expr {$x - 2.5}] [expr {$y - 2.5}] [expr {$x + 2.5}] [expr {$y + 2.5}] {name=$pintok dir=inout}"
     puts $fd "T {$pin} [expr {$x - 25}] [expr {$y - 6}] 0 1 0.2 0.2 {}"
     puts $fd "L 7 [expr {$x - 20}] $y $x $y {}"
     incr y 20
@@ -11019,6 +11052,12 @@ proc addlabel::expand_names {s split_bus} {
 # ONE bus suffix `[i]` or `[hi:lo]` (digits, single colon). Angle brackets normalise to square first,
 # so `B<2:0>` is valid; `B{2:0]`, `C[2;0]`, `B[2:0` (unclosed) and a bare `[2:0]` are rejected.
 proc addlabel::name_ok {n} {
+  # '#' is reserved for the engine's auto-named nets (get_unnamed_node mints "#net<N>";
+  # issue 0156). A user-typed '#' name collides with that private namespace -- fly-lines
+  # rule A6 hides it, the fluid-editing guards read it as regenerable, and the netlister
+  # strips the '#', so it can alias a different net. Refuse it at the point of entry;
+  # existing files keep loading (thousands of committed lab=#netN records depend on that).
+  if {[string index $n 0] eq "#"} { return 0 }
   set n [string map {< \[ > \]} $n]
   return [regexp {^[^][{}<>;:]+(\[[0-9]+(:[0-9]+)?\])?$} $n]
 }
@@ -15520,6 +15559,20 @@ set_ne flylines_dash 4
 # autostart the Library Manager window at launch (doc/claude/specs/library_manager_launch.md)
 set_ne launch_library_manager 0
 set_ne snap_cursor 0
+# viewer plan item 9: the DIAMOND SNAP CURSOR that sticks to the nearest sample
+# of the nearest trace while the pointer hovers a waveform graph, and publishes
+# that sample through `xschem get graph_snap` (item 10's status bar reads it).
+# OFF by default and turned on per window by the ASE viewer: the pick walks
+# every sample of every trace of the strip, so it is not something to leave
+# running on every schematic with an embedded graph.
+# ARMING IS PER WINDOW (`xschem set graph_snap_cursor 1`, the no_grid
+# precedent), not via a global -- these two vars are only the sizes.
+# There is no proximity threshold: the snap is active whenever the pointer is
+# inside a strip's PLOT BOX (the rectangle delineated by the two axes and the
+# two lines opposite them), and it lands on the nearest sample of the nearest
+# trace however far that trace is.
+#   graph_snap_cursor_size  half-diagonal of the diamond, screen pixels
+set_ne graph_snap_cursor_size 5
 set_ne orthogonal_wiring 0
 # wire-editing Phase 6 (Issue E): preserve a one-grid stub out of each moved pin along
 # its outward normal before the route's first bend. Biggest rubber-band behavior change,
@@ -15560,6 +15613,22 @@ set_ne hover_highlight_width 1
 ## never are, and the marker is never exported to SVG/PS.
 set_ne graph_active_strip_color #a0a000
 set_ne graph_active_strip_width 5
+## Waveform-marker callout colour (doc/claude/specs/graph_markers.md). Unlike the
+## active-strip marker above this IS a drawing-layer index, because a marker is
+## durable CONTENT drawn with the ordinary layer GCs and exported like a trace.
+## Layer 7 avoids the cursor colours (1, 3), the hcursor colours (15, 19), the
+## grid/selection layer (2) and the usual first trace colour (4).
+## Out-of-range values are clamped in C (gc[] is indexed unchecked).
+set_ne graph_marker_color 7
+## Marker callout font size, as a multiplier on the graph's Y-axis numbering
+## size (gr->txtsizey). Not txtsizex, the X-axis numbering size the callout used
+## to borrow: BOTH are clamped, and txtsizex's clamp is the BOTTOM MARGIN --
+## where the X-axis numbers are drawn, and nothing to do with a callout drawn
+## inside the plot box -- so the callout font collapsed with strip height and
+## fell below draw_string's 3-px "too small" floor in a tall stack of strips.
+## Raise this if the readout is still too small for your display; the value is
+## clamped in C to 0.1 .. 10 because it feeds the HIT box as well as the glyphs.
+set_ne graph_marker_textmag 1.0
 set_ne use_tclreadline 1
 set_ne en_hilight_conn_inst 0
 ## xpm to png conversion

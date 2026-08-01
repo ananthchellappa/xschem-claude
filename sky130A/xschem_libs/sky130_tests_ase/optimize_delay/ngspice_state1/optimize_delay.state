@@ -1,0 +1,14 @@
+version 1
+simulator ngspice
+design {lib sky130_tests_ase cell optimize_delay view schematic}
+rundir {}
+temperature 27
+models {{file {$::SKYWATER_MODELS/sky130.lib.spice} section tt}}
+variables {{name VCC value 1.8} {name FREQ value 100e6} {name PER value {{1/FREQ}}} {name ILOAD value 100u}}
+analyses {{type op enabled 0} {type dc enabled 0} {type ac enabled 0} {type tran enabled 1 stop 11n step 4p}}
+outputs {{name del expr del save 1 plot 0} {name ck expr ck save 1 plot 1} {name ckdel expr ck_del save 1 plot 1}}
+save_all_v 1
+save_all_i 0
+options {}
+includes {{file {$::SKYWATER_STDCELLS/sky130_fd_sc_hd.spice}}}
+viewer {}

@@ -1,0 +1,14 @@
+version 1
+simulator ngspice
+design {lib sky130_tests_ase cell test_sweep_mos_w view schematic}
+rundir {}
+temperature 27
+models {{file {$::SKYWATER_MODELS/sky130.lib.spice} section tt}}
+variables {{name WN value 1}}
+analyses {{type op enabled 0} {type dc enabled 1 source v2 start 0 stop 1.8 step 0.01} {type ac enabled 0} {type tran enabled 0}}
+outputs {{name mxm1msky130fdprnfet01v8gm expr {@m.xm1.msky130_fd_pr__nfet_01v8[gm]} save 1 plot 0} {name mxm1msky130fdprnfet01v8W expr {@m.xm1.msky130_fd_pr__nfet_01v8[W]} save 1 plot 0} {name mxm1msky130fdprnfet01v8id expr {@m.xm1.msky130_fd_pr__nfet_01v8[id]} save 1 plot 1}}
+save_all_v 1
+save_all_i 0
+options {{name savecurrents value 1}}
+includes {{file test_sweep_mos_w.save}}
+viewer {}

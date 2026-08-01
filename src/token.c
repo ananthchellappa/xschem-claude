@@ -25,6 +25,25 @@
 
 enum status {TOK_BEGIN, TOK_TOKEN, TOK_SEP, TOK_VALUE, TOK_END, TOK_ENDTOK};
 
+/* True when `s` holds nothing get_tok_value() would ever read as a value: NULL, empty,
+ * or made up entirely of separator characters. It lives here, next to SPACE(), so the
+ * two cannot drift apart -- and note SPACE() counts ';' as a separator as well as the
+ * obvious whitespace, so `key=;` is every bit as destructive as `key=`.
+ *
+ * A producer must quote such a value. Unquoted, the state machine below leaves TOK_SEP
+ * on every one of those characters and takes the NEXT TOKEN as the value, so `name= `
+ * followed by `dir=in` yields name=="dir=in" and no `dir` attribute at all. Measured on
+ * space, tab, newline, ';' and mixes of them; only key="" is safe. Issue 0183. */
+int str_is_blank(const char *s)
+{
+  if(!s) return 1;
+  while(*s) {
+    if(!SPACE(*s)) return 0;
+    ++s;
+  }
+  return 1;
+}
+
 unsigned int str_hash(const char *tok)
 {
   register unsigned int hash = 5381;
@@ -1913,7 +1932,10 @@ static int has_included_subcircuit(int inst, int symbol, char **result)
     if(!symname[0]) {
       my_strdup2(_ALLOC_ID_, &symname, xctx->sym[symbol].name);
     }
-    my_mstrcat(_ALLOC_ID_, &symname_attr, "symname=", get_cell(symname, 0), NULL);
+    /* twin of the site in get_additional_symbols() (actions.c): get_cell() returns ""
+     * when the basename is nothing but an extension, and an unquoted empty symname would
+     * swallow the " symref=..." that follows. Issue 0183. */
+    my_mstrcat_tok(_ALLOC_ID_, &symname_attr, "symname", get_cell(symname, 0), NULL);
     my_mstrcat(_ALLOC_ID_, &symname_attr, " symref=", get_sym_name(inst, 9999, 1, 1), NULL);
     translated_sym_def = translate3(spice_sym_def, 1, xctx->inst[inst].prop_ptr,
                                                       xctx->sym[symbol].templ,
@@ -2344,6 +2366,80 @@ int has_token(const char *s, const char *tok)
   return ret;
 }
 
+/* ERC for issue 0165: an `extra=`-declared NODE bound to a name starting with '#'.
+ *
+ * '#' is the engine's private marker for an auto-named net. A wire LABELLED `#foo`
+ * netlists as plain `foo` -- every wire/instance connection goes through net_name(),
+ * which strips. But an `extra=` binding is a "hidden pin" passed as an instance
+ * ATTRIBUTE, and its resolved value is written onto the subcircuit call line VERBATIM
+ * (print_spice_element's generic @token branch, and print_spectre_element's). So one
+ * spelling the user wrote once becomes two unconnected nodes -- measured, ngspice-42:
+ * `X1 topn #hfoo c` and `R9 hfoo 0 1k` give `hfoo` 0.0V and `#hfoo` 1.0V in one deck.
+ *
+ * Decided (0165 D1-D4): WARN, do not rewrite. Stripping here would not actually fix
+ * the shape -- the child's .subckt PORT list keeps its own '#' too (token.c:2098,
+ * spice_netlist.c:375), so the port would still be split from its body -- and it would
+ * change netlist output at ~15 emission sites across five backends. The warning covers
+ * all of them at once and is output-neutral.
+ *
+ * LOOSE, and in the same style/severity as the existing '#'-name warning at
+ * netlist.c:1491: warn on any leading '#' that is NOT the engine's own "#net<N>". The
+ * two warnings are complements -- that one fires on the LABEL half of this trap and
+ * cannot reach the binding half, because it sits behind an IS_LABEL_OR_PIN gate reading
+ * inst[i].node[0], a slot a binding never occupies.
+ *
+ * Take the RESOLVED value, not get_tok_value(prop_ptr, tok, 0): the value is produced by
+ * up to four translate3() rounds and may come from `HN=@FOO` forwarding, a template
+ * default, the containing cell's template, or an expr(). Reading the raw attribute would
+ * miss every one of those.
+ *
+ * Gate on the symbol's extra= list so this stays a check about NODES rather than about
+ * every instance parameter -- a `model=#foo` is not a net and is not our business.
+ * attr_is_extra_node() is hilight.c's, shared deliberately: resolved_net() and this must
+ * agree on what "extra= declares a node" means.
+ *
+ * A binding may be a bus, so check every comma-separated element (issue 0158 established
+ * that a '#' hides per element, not only at the head of the value). */
+static void warn_hash_extra_node(int inst, const char *tokname, const char *value)
+{
+  const char *extra, *p, *e;
+  char elem[256];
+  char str[2048];
+  size_t n;
+  size_t saved_tok_size;
+
+  if(!tokname || !tokname[0] || !value || !value[0]) return;
+  if(!strchr(value, '#')) return;                     /* cheap reject: the common case */
+  /* get_tok_value() overwrites xctx->tok_size, which the callers use as their
+   * "token ABSENT" signal. They both latch it into token_exists BEFORE calling here,
+   * so this is safe today -- restore it anyway so an ERC observer can never become
+   * the reason a netlist value goes missing if the call site ever moves. */
+  saved_tok_size = xctx->tok_size;
+  extra = get_tok_value(xctx->sym[xctx->inst[inst].ptr].prop_ptr, "extra", 0);
+  if(!attr_is_extra_node(extra, tokname)) { xctx->tok_size = saved_tok_size; return; }
+  xctx->tok_size = saved_tok_size;
+  p = value;
+  while(*p) {
+    e = p;
+    while(*e && *e != ',') ++e;
+    if(*p == '#') {
+      n = (size_t)(e - p);
+      if(n >= sizeof(elem)) n = sizeof(elem) - 1;
+      memcpy(elem, p, n);
+      elem[n] = '\0';
+      if(!is_auto_net_name(elem)) {
+        my_snprintf(str, S(str),
+          "Warning: instance: %s: attribute %s=%s binds a node whose name starts with '#', "
+          "which is reserved for auto-named nets: the binding reaches the netlist verbatim "
+          "while a wire labelled the same way is stripped, so the two are DIFFERENT nodes",
+          xctx->inst[inst].instname ? xctx->inst[inst].instname : "?", tokname, elem);
+        statusmsg(str, 2);
+      }
+    }
+    p = *e ? e + 1 : e;
+  }
+}
+
 int print_spice_element(FILE *fd, int inst)
 {
   int i=0, multip, itmp;
@@ -2656,6 +2752,7 @@ int print_spice_element(FILE *fd, int inst)
         if(is_expr(value)) {
           value =  eval_expr(value);
         }
+        warn_hash_extra_node(inst, token + 1, value);   /* ERC, issue 0165 */
         /* token=%xxxx and xxxx is not defined in prop_ptr or template: return xxxx */
         if(!token_exists && token[0] =='%') {
           my_mstrcat(_ALLOC_ID_, &result, token + 1, NULL);
@@ -3048,6 +3145,7 @@ int print_spectre_element(FILE *fd, int inst)
         if(is_expr(value)) {
           value =  eval_expr(value);
         }
+        warn_hash_extra_node(inst, token + 1, value);   /* ERC, issue 0165 */
         /* token=%xxxx and xxxx is not defined in prop_ptr or template: return xxxx */
         if(!token_exists && token[0] =='%') {
           my_mstrcat(_ALLOC_ID_, &result, token + 1, NULL);
@@ -3126,7 +3224,8 @@ void print_tedax_element(FILE *fd, int inst)
  char *numslots=NULL;
  const char *extra_token, *extra_token_val;
  char *extra_ptr;
- char *extra_pinnumber_token, *extra_pinnumber_ptr;
+ const char *extra_pinnumber_token;
+ char *extra_pinnumber_ptr;
  char *saveptr1, *saveptr2;
  const char *tmp;
  int instance_based=0;
@@ -3232,9 +3331,20 @@ void print_tedax_element(FILE *fd, int inst)
      /* fprintf(errfp, "extra_pinnumber: |%s|\n", extra_pinnumber); */
      /* fprintf(errfp, "extra: |%s|\n", extra); */
      for(extra_ptr = extra, extra_pinnumber_ptr = extra_pinnumber; ; extra_ptr=NULL, extra_pinnumber_ptr=NULL) {
-       extra_pinnumber_token=my_strtok_r(extra_pinnumber_ptr, " ", "", 0, &saveptr1);
+       /* extra= and extra_pinnumber= are walked in LOCKSTEP, but nothing keeps the two lists
+        * the same length -- and my_strdup() leaves its destination NULL for an absent or empty
+        * source, so a symbol carrying extra= and no extra_pinnumber= arrives here with
+        * extra_pinnumber == NULL. my_strtok_r() only assigns *saveptr inside its `if(str)`
+        * first-call branch, so a NULL first argument runs `while(**saveptr ...)` on an
+        * UNINITIALISED saveptr1 -- an uncontrolled deref, and a segfault in practice. The
+        * `extra` side is safe only by accident: the loop is entered only when extra != NULL.
+        * Guard the call, and give a missing number the same placeholder the pin loop above
+        * uses for a missing `pinnumber` attribute rather than passing NULL to "%s". Issue 0179. */
+       extra_pinnumber_token = extra_pinnumber ?
+              my_strtok_r(extra_pinnumber_ptr, " ", "", 0, &saveptr1) : NULL;
        extra_token=my_strtok_r(extra_ptr, " ", "", 0, &saveptr2);
        if(!extra_token) break;
+       if(!extra_pinnumber_token) extra_pinnumber_token = "--UNDEF--";
        /* fprintf(errfp, "extra_pinnumber_token: |%s|\n", extra_pinnumber_token); */
        /* fprintf(errfp, "extra_token: |%s|\n", extra_token); */
        instance_based=0;
@@ -4015,8 +4125,14 @@ const char *net_name(int i, int j, int *multip, int hash_prefix_unnamed_net, int
    if(pinname) my_free(_ALLOC_ID_, &pinname);
    if((xctx->inst[i].node[j])[0] == '#') /* unnamed net */
    {
-     /* get unnamed node multiplicity ( minimum multip found in circuit) */
-     *multip = get_unnamed_node(3, 0, atoi((xctx->inst[i].node[j])+4) );
+     /* Get unnamed node multiplicity (minimum multip found in circuit). The branch test stays
+      * LOOSE because the name emission below also strips the '#' for ANY such name -- but the
+      * INDEX is strict (issue 0156): only "#net<N>" carries an index at +4. A user-authored
+      * '#foo' used to reach atoi("o") == 0 here and silently borrow node 0's multiplicity,
+      * which could declare a scalar user net as a bus in the netlist. Treat it as scalar,
+      * the same fallback node_hash.c uses for a non-auto name. */
+     *multip = is_auto_net_name(xctx->inst[i].node[j]) ?
+                 get_unnamed_node(3, 0, atoi((xctx->inst[i].node[j])+4) ) : 1;
      dbg(2, "net_name(): node = %s  n=%d multip=%d\n",
      xctx->inst[i].node[j], atoi(xctx->inst[i].node[j]), *multip);
      if(hash_prefix_unnamed_net) {

@@ -1,0 +1,14 @@
+version 1
+simulator ngspice
+design {lib sky130_tests_ase cell logic_ngspice view schematic}
+rundir {}
+temperature 27
+models {{file {$::SKYWATER_MODELS/sky130.lib.spice} section tt}}
+variables {}
+analyses {{type op enabled 0} {type dc enabled 0} {type ac enabled 0} {type tran enabled 1 stop 200n step 0.1n}}
+outputs {{name aa expr aa save 1 plot 1} {name bb expr bb save 1 plot 1} {name zz expr zz save 1 plot 1} {name ZZ expr ZZ save 1 plot 1} {name AA expr AA save 1 plot 1} {name BB expr BB save 1 plot 1}}
+save_all_v 1
+save_all_i 0
+options {}
+includes {}
+viewer {}

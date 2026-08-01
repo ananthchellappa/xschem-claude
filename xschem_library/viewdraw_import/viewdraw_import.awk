@@ -305,7 +305,13 @@ function get_pin(     l, b, t, x, y, show_all, rot, anchor, size, attr, visible,
       anchor=$6
       size = lenscale($4)
       pin_name = $10
-      b = b " {name=" pin_name " dir=" pin_dir "}"
+      # An empty pin_name would make get_tok_value() read " dir=in" as the NAME and
+      # leave the imported pin with NO dir at all: a ViewDraw pin whose L line carries
+      # no text_label field gives $10 == "" and measured {name= dir=in}. Quote it --
+      # key="" reads back as present-and-empty. `dir` needs no such care: it is forced
+      # to a default just above. Issue 0183.
+      if(pin_name ~ /^[ \t\n;]*$/) pin_name_tok = "\"\""; else pin_name_tok = pin_name
+      b = b " {name=" pin_name_tok " dir=" pin_dir "}"
       t = "T {" pin_name "} " x " " y " " text_align(size, rot, anchor)
       break # assumption is "P " line is followed by "A ", "A ", and "L " lines.
     }

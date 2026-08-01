@@ -1,0 +1,14 @@
+version 1
+simulator ngspice
+design {lib sky130_tests_ase cell tb_bandgap view schematic}
+rundir {}
+temperature 27
+models {{file {$::SKYWATER_MODELS/sky130.lib.spice} section tt_mm}}
+variables {{name ABSVAR value 0.03} {name VCCGAUSS value {agauss(1.8, 'ABSVAR', 1)}} {name VCC value VCCGAUSS}}
+analyses {{type op enabled 1} {type dc enabled 0} {type ac enabled 0} {type tran enabled 1 stop 200u step 10n}}
+outputs {{name VBG expr VBG save 1 plot 1} {name ENN expr EN_N save 1 plot 1} {name START expr START save 1 plot 1} {name Icc expr i(VCC) save 1 plot 1} {name TEMPERAT expr TEMPERAT save 1 plot 1}}
+save_all_v 0
+save_all_i 0
+options {{name method value gear}}
+includes {}
+viewer {}

@@ -43,6 +43,7 @@ typedef struct          /* used in expandlabel.y */
 #define INITIALIDXSIZE 8
 
 extern Stringptr dest_string; /* 20140108 */
+extern int expandlabel_collapsed; /* issue 0182, defined in parselabel.l */
 static int idxsize=INITIALIDXSIZE;
 extern int yylex();
 /*
@@ -124,8 +125,18 @@ static char *expandlabel_strmult2(int n, char *s)
  register char *pos,*prev;
  char *str, *ss;
 
- dbg(3, "expandlabel_strmult2(): n=%d s=%s\n", n, s);
- if(n==0) return expandlabel_strdup("");
+ dbg(3, "expandlabel_strmult2(): n=%d s=%s\n", n, s ? s : "<NULL>");
+ /* issue 0182 rule 2: a negative multiplier is a typo, not a zero-width bus.
+  * Take the existing syntax-error path (yyparse_error), which parselabel.l:128
+  * turns into the usual "syntax error in <label>" message + dialog. Unreachable
+  * through today's lexer -- "a*-1" tokenises as `list '*' list` and is already a
+  * syntax error -- but guarded so the (len+1)*n huge-allocation cannot return. */
+ if(n<0) { yyerror("negative multiplier in identifier expansion"); return NULL; }
+ if(n==0) return expandlabel_strdup(""); /* -> NULL: my_strdup() NULLs dest for "" */
+ /* issue 0182 rule 1: a zero-multiplicity sub-expression is a NULL list string.
+  * Propagate the NULL instead of strlen()ing it; parselabel.l:150-153 then hands
+  * back the original label text with *m == -1, exactly as "0*a" already does. */
+ if(!s) { expandlabel_collapsed = 1; return NULL; }
  len=strlen(s);
  prev=s;
  ss = str=my_malloc(_ALLOC_ID_,  (len+1)*n);
@@ -160,7 +171,11 @@ static char *expandlabel_strmult(int n, char *s)
  register char *pos;
  char *str;
 
- if(n==0) return expandlabel_strdup("");
+ /* issue 0182: see expandlabel_strmult2() for both guards. This is the reachable
+  * one -- "-1*a" does tokenise as B_NUM '*' list. */
+ if(n<0) { yyerror("negative multiplier in identifier expansion"); return NULL; }
+ if(n==0) return expandlabel_strdup(""); /* -> NULL: my_strdup() NULLs dest for "" */
+ if(!s) { expandlabel_collapsed = 1; return NULL; }
  len=strlen(s);
  str=pos=my_malloc(_ALLOC_ID_,  (len+1)*n);
  for(i=1;i<=n;i++)
@@ -175,12 +190,20 @@ static char *expandlabel_strmult(int n, char *s)
 }
 
 
+/* issue 0182 rule 1: in the four expandlabel_strbus*() below n[0] is the element
+ * count, and a bus range with a zero (or negative) repetition count --
+ * "a[3:0:1:0]", "a[3:0:1:-1]" -- leaves it at 0. The tail sprintf() then reads
+ * n[i] with i == 1 (never assigned) and writes through a res that my_realloc()
+ * has just FREED to NULL for a size-0 request (util.c:907-910). Each returns
+ * NULL for that case so the collapse propagates exactly like "0*a" does. */
+
 static char *expandlabel_strbus_suffix(char *s, int *n, char *suffix)
 {
  int i,l;
  int tmplen;
  char *res=NULL;
  char *tmp=NULL;
+ if(!s || n[0] < 1) { expandlabel_collapsed = 1; return NULL; }
  my_realloc(_ALLOC_ID_, &res, n[0] * (strlen(s) + strlen(suffix) + 30));
  my_realloc(_ALLOC_ID_, &tmp, strlen(s) + strlen(suffix) + 30);
  l=0;
@@ -202,6 +225,7 @@ static char *expandlabel_strbus(char *s, int *n)
  int tmplen;
  char *res=NULL;
  char *tmp=NULL;
+ if(!s || n[0] < 1) { expandlabel_collapsed = 1; return NULL; }
  my_realloc(_ALLOC_ID_, &res, n[0]*(strlen(s)+20));
  my_realloc(_ALLOC_ID_, &tmp, strlen(s)+30);
  l=0;
@@ -233,6 +257,7 @@ static char *expandlabel_strbus_nobracket(char *s, int *n)
  int tmplen;
  char *res=NULL;
  char *tmp=NULL;
+ if(!s || n[0] < 1) { expandlabel_collapsed = 1; return NULL; }
  my_realloc(_ALLOC_ID_, &res, n[0]*(strlen(s)+20));
  my_realloc(_ALLOC_ID_, &tmp, strlen(s)+30);
  l=0;
@@ -254,6 +279,7 @@ static char *expandlabel_strbus_nobracket_suffix(char *s, int *n, char *suffix)
  int tmplen;
  char *res=NULL;
  char *tmp=NULL;
+ if(!s || n[0] < 1) { expandlabel_collapsed = 1; return NULL; }
  my_realloc(_ALLOC_ID_, &res, n[0] * (strlen(s) + strlen(suffix) + 30));
  my_realloc(_ALLOC_ID_, &tmp, strlen(s) + strlen(suffix) + 30);
  l=0;

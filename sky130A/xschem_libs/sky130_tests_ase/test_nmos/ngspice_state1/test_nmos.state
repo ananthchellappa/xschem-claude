@@ -1,0 +1,14 @@
+version 1
+simulator ngspice
+design {lib sky130_tests_ase cell test_nmos view schematic}
+rundir {}
+temperature 27
+models {{file {$::SKYWATER_MODELS/sky130.lib.spice} section tt}}
+variables {}
+analyses {{type op enabled 1} {type dc enabled 1 source vd start 0 stop 1.8 step 0.005} {type ac enabled 0} {type tran enabled 0}}
+outputs {{name mxm9msky130fdprnfet01v8lvtgm expr {@m.xm9.msky130_fd_pr__nfet_01v8_lvt[gm]} save 1 plot 0} {name mxm8m1gm expr {@m.xm8.m1[gm]} save 1 plot 0} {name mxm7m1gm expr {@m.xm7.m1[gm]} save 1 plot 0} {name mxm6xmain1msky130fdprnfetg5v0d16v0basegm expr {@m.xm6.xmain1.msky130_fd_pr__nfet_g5v0d16v0__base[gm]} save 1 plot 0} {name mxm6xsky130fdprnfetg5v0d16v00d16v0basegm expr {@m.xm6.xsky130_fd_pr__nfet_g5v0d16v0.msky130_fd_pr__nfet_g5v0d16v0_base[gm]} save 1 plot 0} {name mxm5msky130fdprnfetg5v0d10v5gm expr {@m.xm5.msky130_fd_pr__nfet_g5v0d10v5[gm]} save 1 plot 0} {name mxm4msky130fdprnfet05v0nvtgm expr {@m.xm4.msky130_fd_pr__nfet_05v0_nvt[gm]} save 1 plot 0} {name mxm3msky130fdprnfet03v3nvtgm expr {@m.xm3.msky130_fd_pr__nfet_03v3_nvt[gm]} save 1 plot 0} {name mxm2msky130fdprnfet01v8gm expr {@m.xm2.msky130_fd_pr__nfet_01v8[gm]} save 1 plot 0} {name mxm1msky130fdprnfet01v8lvtgm expr {@m.xm1.msky130_fd_pr__nfet_01v8_lvt[gm]} save 1 plot 0} {name mxm16m1gm expr {@m.xm16.m1[gm]} save 1 plot 0} {name mxm15xsky130fdprnfetg5v0d16v0d16v0basegm expr {@m.xm15.xsky130_fd_pr__nfet_g5v0d16v0.msky130_fd_pr__nfet_g5v0d16v0_base[gm]} save 1 plot 0} {name mxm14msky130fdprnfetg5v0d10v5gm expr {@m.xm14.msky130_fd_pr__nfet_g5v0d10v5[gm]} save 1 plot 0} {name mxm13msky130fdprnfet05v0nvtgm expr {@m.xm13.msky130_fd_pr__nfet_05v0_nvt[gm]} save 1 plot 0} {name mxm12msky130fdprnfet03v3nvtgm expr {@m.xm12.msky130_fd_pr__nfet_03v3_nvt[gm]} save 1 plot 0} {name mxm11msky130fdprnfet01v8gm expr {@m.xm11.msky130_fd_pr__nfet_01v8[gm]} save 1 plot 0} {name mxm10msky130fdprnfet01v8lvtgm expr {@m.xm10.msky130_fd_pr__nfet_01v8_lvt[gm]} save 1 plot 0} {name allvd1branch expr all.vd1#branch save 1 plot 1} {name allvd3branch expr all.vd3#branch save 1 plot 1} {name allvd5branch expr all.vd5#branch save 1 plot 1} {name allvd8branch expr all.vd8#branch save 1 plot 1} {name allvd7branch expr all.vd7#branch save 1 plot 1} {name o01v8lvt expr i(vd1) save 1 plot 1} {name o01v8 expr i(vd2) save 1 plot 1} {name ivd4 expr i(vd4) save 1 plot 1} {name ivd5 expr i(vd5) save 1 plot 1} {name ivd9 expr i(vd9) save 1 plot 1} {name g1v8 expr g1v8 save 1 plot 1} {name ivd17 expr i(vd17) save 1 plot 1}}
+save_all_v 1
+save_all_i 0
+options {{name wnflag value 1} {name savecurrents value 1}}
+includes {}
+viewer {}

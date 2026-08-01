@@ -273,7 +273,7 @@ void print_vhdl_signals(FILE *fd)
       }
       if(ptr->d.port == 0 ) {
         found = 1;
-        if(ptr->token[0]=='#') {
+        if(is_auto_net_name(ptr->token)) {   /* STRICT: only "#net<N>" indexes at +4 (issue 0156) */
           mult=get_unnamed_node(3, 0,  atoi((ptr->token)+4) );
         }
         else {
@@ -332,7 +332,7 @@ void print_verilog_signals(FILE *fd)
     while(ptr) {
       if(ptr->d.port == 0 ) {
         found = 1;
-        if(ptr->token[0]=='#') {
+        if(is_auto_net_name(ptr->token)) {   /* STRICT: only "#net<N>" indexes at +4 (issue 0156) */
          mult=get_unnamed_node(3, 0,  atoi((ptr->token)+4) );
         }
         else {
@@ -390,6 +390,20 @@ void list_nets(char **result)
       for(k = 1; k <= mult; ++k) {
         lab = my_strtok_r(p_n_s1, ",", "", 0, &p_n_s2);
         p_n_s1 = NULL;
+        /* my_mstrcat() reads a NULL argument as its END-OF-LIST SENTINEL, not as empty
+         * data, so a NULL `lab` here would append only "{" and drop the rest of the row --
+         * `result` goes straight to Tcl (scheduler.c:6338) and the caller gets an unbalanced
+         * brace that kills any llength/foreach over it. `lab` IS NULL whenever the token
+         * cursor runs dry before `mult` is exhausted: an empty inst.lab expands to "" with
+         * mult == 1 (parselabel.l:105-113), and my_strtok_r returns NULL for a token-less
+         * string (util.c:189).
+         *
+         * DROP the row rather than emit `{ <type>}`: this output is consumed as {name type}
+         * TUPLES (tests/stable_handles/net_body.tcl NC1a asserts llength == 2 per row), and
+         * a row with an empty name has llength 1 -- that would trade an unbalanced brace for
+         * a malformed tuple in the same consumer. A pin with no name is not a net.
+         * See doc/claude/issues/0180-list-nets-null-token-truncates-tcl-list.md */
+        if(!lab) continue;
         my_mstrcat(_ALLOC_ID_, result, "{", lab, " ", type, "}\n", NULL);
       }
     }

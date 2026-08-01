@@ -61,6 +61,16 @@ typedef struct          /* used in expandlabel.y */
 
 Stringptr dest_string={NULL,0};  /*19102004; */
 
+/* issue 0182: set by the expandlabel_str*() helpers in expandlabel.y when a
+ * sub-expression collapsed to nothing -- a re-multiplied zero-multiplicity list
+ * ("2*(0*a)") or a bus range with a zero repetition count ("a[3:0:1:0]").
+ * Cleared at the top of every expandlabel() call, so it describes the LAST
+ * expansion only. It is deliberately NOT set for the long-standing degenerate
+ * forms that already expand harmlessly ("0*a", "a*0", "0*a,b", ...) -- those are
+ * legal input and must not be warned about. See doc/claude/issues/
+ * 0182-expandlabel-zero-negative-multiplicity-crash.md */
+int expandlabel_collapsed = 0;
+
 extern int yyparse(void) ;
 extern int yylex();
 
@@ -96,6 +106,7 @@ const char *expandlabel(const char *s, int *m)
 {
  YY_BUFFER_STATE buf;
  my_free(_ALLOC_ID_, &dest_string.str);     /* 30102004  delete 'memory' of previous execution */
+ expandlabel_collapsed = 0;                 /* issue 0182: describes THIS expansion only */
 
  if(!s) {
    *m = -1;

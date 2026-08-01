@@ -916,7 +916,7 @@ function print_sch(schname,type_pin, dir_pin, value_pin, class_pin, num_pin, opi
   {
    ipin[num]=toupper(ipin[num])
    printf "C {devices/generic_pin} " (x+sch_x_offset) " " (y+num*space) " 0 0" \
-         " {name=g" g_pin++ " generic_type=" sig_type " lab=" ipin[num] " " >schname
+         " {name=g" g_pin++ " generic_type=" blank_attr(sig_type) " lab=" blank_attr(ipin[num]) " " >schname
 
    # it seems values were not picked from port assignments but from default values and this is
    # an error!.
@@ -928,7 +928,7 @@ function print_sch(schname,type_pin, dir_pin, value_pin, class_pin, num_pin, opi
   {
    ipin[num]=toupper(ipin[num])
    printf "C {devices/ipin} " (x+sch_x_offset) " " (y+num*space) " 0 0 " \
-         " {name=p" p_pin++ " sig_type=" sig_type " lab=" ipin[num] " " >schname
+         " {name=p" p_pin++ " sig_type=" blank_attr(sig_type) " lab=" blank_attr(ipin[num]) " " >schname
    if(value !="") printf "value=" value "}\n" >schname
    else printf "}\n" >schname
   }
@@ -937,7 +937,7 @@ function print_sch(schname,type_pin, dir_pin, value_pin, class_pin, num_pin, opi
   {
    opin[num]=toupper(opin[num])
    printf "C {devices/opin} " (-x+sch_x_offset) " " (y+num*space) " 0 0 " \
-         " {name=p" p_pin++ " sig_type=" sig_type " lab=" opin[num] " " >schname
+         " {name=p" p_pin++ " sig_type=" blank_attr(sig_type) " lab=" blank_attr(opin[num]) " " >schname
    if(value !="") printf "value=" value "}\n" >schname
    else printf "}\n" >schname
   }
@@ -946,7 +946,7 @@ function print_sch(schname,type_pin, dir_pin, value_pin, class_pin, num_pin, opi
   {
    opin[num]=toupper(opin[num])
    printf "C {devices/iopin} " (-x+sch_x_offset) " " (y+num*space) " 0 0 " \
-         " {name=p" p_pin++ " sig_type=" sig_type " lab=" opin[num] " " >schname
+         " {name=p" p_pin++ " sig_type=" blank_attr(sig_type) " lab=" blank_attr(opin[num]) " " >schname
    if(value !="") printf "value=" value "}\n" >schname
    else printf "}\n" >schname
   }
@@ -955,7 +955,7 @@ function print_sch(schname,type_pin, dir_pin, value_pin, class_pin, num_pin, opi
   {
    spin[num]=toupper(spin[num])
    printf "C {devices/lab_pin} " (-x+sch_x_offset+500) " " (y+num*space) " 0 0 " \
-         " {name=p" p_pin++ " sig_type=\"" sig_type "\" lab=" spin[num] " " >schname
+         " {name=p" p_pin++ " sig_type=\"" sig_type "\" lab=" blank_attr(spin[num]) " " >schname
    if(class !="") printf "class=" class " " >schname
    if(value !="") printf "value=" value "}\n" >schname
    else printf "}\n" >schname
@@ -1028,7 +1028,7 @@ function print_signals(inst_name, component_name, name_pin, type_pin, dir_pin,
      sig_type =  entity_pin_type[pin_lower]
    }
    all_signals = all_signals   "C {devices/lab_pin} " xpin " " ypin " 0 0" \
-         " {name=g" g_pin++ " type=" sig_type " lab=" i_ipin[num] " "
+         " {name=g" g_pin++ " type=" blank_attr(sig_type) " lab=" blank_attr(i_ipin[num]) " "
 
    # if(value !="") all_signals = all_signals   "value=" value "}\n"
    # else all_signals = all_signals   "}\n"
@@ -1046,7 +1046,7 @@ function print_signals(inst_name, component_name, name_pin, type_pin, dir_pin,
      sig_type =  entity_pin_type[pin_lower]
    }
    all_signals = all_signals   "C {devices/lab_pin} " xpin " " ypin " 0 0 " \
-         " {name=p" p_pin++ " sig_type=" sig_type " lab=" i_ipin[num] " "
+         " {name=p" p_pin++ " sig_type=" blank_attr(sig_type) " lab=" blank_attr(i_ipin[num]) " "
    if(value !="") all_signals = all_signals   "value=" value "}\n"
    else all_signals = all_signals   "}\n"
   }
@@ -1060,7 +1060,7 @@ function print_signals(inst_name, component_name, name_pin, type_pin, dir_pin,
      sig_type =  entity_pin_type[pin_lower]
    }
    all_signals = all_signals   "C {devices/lab_pin} " xpin " " ypin " 0 1 " \
-         " {name=p" p_pin++ " sig_type=" sig_type " lab=" i_opin[num] " "
+         " {name=p" p_pin++ " sig_type=" blank_attr(sig_type) " lab=" blank_attr(i_opin[num]) " "
    if(value !="") all_signals = all_signals   "value=" value "}\n"
    else all_signals = all_signals   "}\n"
   }
@@ -1074,7 +1074,7 @@ function print_signals(inst_name, component_name, name_pin, type_pin, dir_pin,
      sig_type =  entity_pin_type[pin_lower]
    }
    all_signals = all_signals   "C {devices/lab_pin} " xpin " " ypin " 0 1 " \
-         " {name=p" p_pin++ " sig_type=" sig_type " lab=" i_opin[num] " "
+         " {name=p" p_pin++ " sig_type=" blank_attr(sig_type) " lab=" blank_attr(i_opin[num]) " "
    if(value !="") all_signals = all_signals   "value=" value "}\n"
    else all_signals = all_signals   "}\n"
   }
@@ -1102,6 +1102,25 @@ function abs(x)
 {
  if(x+0<0) return -x
  else return x+0
+}
+
+# An attribute value that is empty -- or nothing but separator characters, which
+# get_tok_value() treats identically (SPACE() in token.c counts ; as one) -- swallows the
+# attribute that FOLLOWS it in the property string. Measured on this script: a port
+# declaration wrapped over two lines,
+#
+#     CLK : in
+#       std_logic;
+#
+# leaves $4 empty, so the emitted instance is {name=p0 sig_type= lab=CLK } and
+# get_tok_value(prop,"sig_type") returns "lab=CLK" while `lab` does not exist at all --
+# the port silently loses its net name. key="" reads back as present-and-empty and leaves
+# the next attribute alone; the signal branch of print_sch() already quoted its sig_type
+# for the same reason. Issue 0183.
+function blank_attr(v)
+{
+  if(v ~ /^[ \t\n;]*$/) return "\"\""
+  return v
 }
 
 function cleanup_line() {

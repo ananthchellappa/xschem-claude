@@ -799,6 +799,42 @@ size_t my_mstrcat(int id, char **str, const char *add, ...)
   va_end(args);
   return s;
 }
+
+/* Append one `key=value` attribute to a property string, writing an EMPTY value
+ * as the QUOTED form key="" -- issue 0183.
+ *
+ * A property string is whitespace-separated key=value tokens, and get_tok_value()
+ * SKIPS the whitespace after '=' before reading the value. That skip is deliberate
+ * and load-bearing: xschem_library/ngspice_verilog_cosim/tb_sar_adc.sch:176 writes
+ * `dac_bridge_model= dac_buff` with a space and means the value `dac_buff`. The
+ * consequence is that an empty value followed by another token makes the first key
+ * swallow the second one WHOLE -- "name= dir=in ..." yields name == "dir=in" and no
+ * `dir` attribute at all. `key=""` is the grammar's way to say empty: it reads back
+ * as present-with-an-empty-value and the next token survives.
+ *
+ * Note the quotes must be part of a LITERAL, not wrapped around the variable:
+ * my_mstrcat() SKIPS an empty argument and keeps walking its varargs (see above),
+ * which is exactly what produces the bare `key=` in the first place.
+ *
+ * A value that is NULL, empty, or nothing but separator characters (see str_is_blank()
+ * in token.c) is written as the quoted empty form.
+ *
+ * `tail`, if non-NULL, is appended after the value -- typically the "\n" or " "
+ * separating this attribute from the next. Callers whose value is provably
+ * non-empty do not need this and can keep using my_mstrcat() directly. */
+size_t my_mstrcat_tok(int id, char **str, const char *key, const char *value, const char *tail)
+{
+  size_t s;
+  s = my_mstrcat(id, str, key, "=", NULL);
+  /* str_is_blank(), not value[0]: a value made only of separator characters is just as
+   * empty to get_tok_value() as "" is, and swallows the next token exactly the same way.
+   * `xschem add_symbol_pin 0 100 { } in` measured `name=<<dir=in>>` with dir GONE. */
+  if(!str_is_blank(value)) s = my_mstrcat(id, str, value, NULL);
+  else                     s = my_mstrcat(id, str, "\"\"", NULL);
+  if(tail && tail[0])   s = my_mstrcat(id, str, tail, NULL);
+  return s;
+}
+
 size_t my_strcat(int id, char **str, const char *append_str)
 {
   size_t s, a;

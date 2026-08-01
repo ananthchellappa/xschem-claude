@@ -1,0 +1,14 @@
+version 1
+simulator ngspice
+design {lib sky130_tests_ase cell test_pmos view schematic}
+rundir {}
+temperature 27
+models {{file {$::SKYWATER_MODELS/sky130.lib.spice} section tt}}
+variables {}
+analyses {{type op enabled 1} {type dc enabled 1 source vd start 0 stop -1.8 step -0.01} {type ac enabled 0} {type tran enabled 0}}
+outputs {{name mxm6m1gm expr {@m.xm6.m1[gm]} save 1 plot 0} {name mxm5xsky130fdprpfetg5v0d16v00d16v0basegm expr {@m.xm5.xsky130_fd_pr__pfet_g5v0d16v0.msky130_fd_pr__pfet_g5v0d16v0_base[gm]} save 1 plot 0} {name mxm4msky130fdprpfetg5v0d10v5gm expr {@m.xm4.msky130_fd_pr__pfet_g5v0d10v5[gm]} save 1 plot 0} {name mxm3msky130fdprpfet01v8hvtgm expr {@m.xm3.msky130_fd_pr__pfet_01v8_hvt[gm]} save 1 plot 0} {name mxm2msky130fdprpfet01v8gm expr {@m.xm2.msky130_fd_pr__pfet_01v8[gm]} save 1 plot 0} {name mxm1msky130fdprpfet01v8lvtgm expr {@m.xm1.msky130_fd_pr__pfet_01v8_lvt[gm]} save 1 plot 0} {name mxm12m1gm expr {@m.xm12.m1[gm]} save 1 plot 0} {name mxm11xsky130fdprpfetg5v0d16v0d16v0basegm expr {@m.xm11.xsky130_fd_pr__pfet_g5v0d16v0.msky130_fd_pr__pfet_g5v0d16v0_base[gm]} save 1 plot 0} {name mxm10msky130fdprpfetg5v0d10v5gm expr {@m.xm10.msky130_fd_pr__pfet_g5v0d10v5[gm]} save 1 plot 0} {name mxm9msky130fdprpfet01v8hvtgm expr {@m.xm9.msky130_fd_pr__pfet_01v8_hvt[gm]} save 1 plot 0} {name mxm8msky130fdprpfet01v8gm expr {@m.xm8.msky130_fd_pr__pfet_01v8[gm]} save 1 plot 0} {name mxm7msky130fdprpfet01v8lvtgm expr {@m.xm7.msky130_fd_pr__pfet_01v8_lvt[gm]} save 1 plot 0} {name dxm6dnw2gm expr {@d.xm6.dnw2[gm]} save 1 plot 0} {name dxm6dnw1gm expr {@d.xm6.dnw1[gm]} save 1 plot 0} {name dxm5dnw2gm expr {@d.xm5.dnw2[gm]} save 1 plot 0} {name dxm5dnw1gm expr {@d.xm5.dnw1[gm]} save 1 plot 0} {name ivd1 expr i(vd1) save 1 plot 1} {name ivd2 expr i(vd2) save 1 plot 1} {name ivd4 expr i(vd4) save 1 plot 1} {name g1v8 expr g1v8 save 1 plot 1}}
+save_all_v 1
+save_all_i 0
+options {{name savecurrents value 1}}
+includes {}
+viewer {}

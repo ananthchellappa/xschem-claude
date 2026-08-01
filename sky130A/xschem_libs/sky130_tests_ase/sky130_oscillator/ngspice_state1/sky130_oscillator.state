@@ -1,0 +1,14 @@
+version 1
+simulator ngspice
+design {lib sky130_tests_ase cell sky130_oscillator view schematic}
+rundir {}
+temperature 27
+models {{file {$::SKYWATER_MODELS/sky130.lib.spice} section ff}}
+variables {{name VCC value 1.7}}
+analyses {{type op enabled 0} {type dc enabled 0} {type ac enabled 0} {type tran enabled 1 stop 600n step 0.04n}}
+outputs {{name mx4xm1msky130fdprnfet01v8id expr {@m.x4.xm1.msky130_fd_pr__nfet_01v8[id]} save 1 plot 1} {name mx5xm1msky130fdprnfet01v8id expr {@m.x5.xm1.msky130_fd_pr__nfet_01v8[id]} save 1 plot 1} {name A expr A save 1 plot 1} {name B expr B save 1 plot 1} {name VCC expr VCC save 1 plot 1} {name vcc expr vcc save 1 plot 1} {name ENAB expr ENAB save 1 plot 1} {name qb17 expr QB save 1 plot 1} {name q17 expr Q save 1 plot 1} {name AB expr AB save 1 plot 1} {name BB expr BB save 1 plot 1} {name ivvcc expr i(vvcc) save 1 plot 1} {name ivb expr i(vb) save 1 plot 1} {name iva expr i(va) save 1 plot 1}}
+save_all_v 1
+save_all_i 0
+options {{name savecurrents value 1} {name method value gear}}
+includes {}
+viewer {}

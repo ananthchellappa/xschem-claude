@@ -1,0 +1,14 @@
+version 1
+simulator ngspice
+design {lib sky130_tests_ase cell tb_diff_amp view schematic}
+rundir {}
+temperature 27
+models {}
+variables {}
+analyses {{type op enabled 1} {type dc enabled 1 source V1 start 0 stop 6 step 0.01} {type ac enabled 0} {type tran enabled 0}}
+outputs {{name b expr b save 1 plot 1} {name a expr a save 1 plot 1} {name z expr z save 1 plot 1}}
+save_all_v 1
+save_all_i 0
+options {{name savecurrents value 1}}
+includes {}
+viewer {}

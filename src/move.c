@@ -952,6 +952,14 @@ void copy_objects(int what)
                    xctx->rx2+xctx->deltax, xctx->ry2+xctx->deltay,xRECT, c, SELECTED, xctx->rect[c][n].prop_ptr);
         l = xctx->rects[c] - 1;
         flip_rotate_ellipse(&xctx->rect[c][l], xctx->move_rot, xctx->move_flip);
+        /* The prop_ptr was cloned verbatim just above, so a copied GRAPH would
+         * carry the ORIGINAL marker numbers -- and window-wide uniqueness is what
+         * graph_marker_find / `prev` / the selection / delete all rest on. This
+         * is the second duplication door; the first is merge_box (paste.c).
+         * Note the ordering differs from merge_box's: storeobject has ALREADY
+         * registered the new rect here, so the numbering scan sees it and the
+         * base comes out above both copies. doc/claude/specs/graph_markers.md */
+        if(xctx->rect[c][l].flags & 1) graph_marker_renumber_rect(&xctx->rect[c][l]);
         break;
 
        case xTEXT:
@@ -2938,11 +2946,19 @@ static int fluid_wire_pretracked_shrink(int e, int xmove)
  * #net, or any bus range? The straightener slides/deletes only tool-generated auto copper: reshaping a
  * wire that solely carries an explicit name could silently RENAME its net (the geometric pin-partition
  * is unchanged, so the partition verify would NOT catch it). Conservative -- declines the whole reshape
- * rather than risk a rename. */
+ * rather than risk a rename.
+ *
+ * "auto" is `is_auto_net_name()` (strictly "#net<digits>", netlist.c), NOT a bare `lab[0]=='#'` test
+ * (issue 0162, WIRING.md open risk 15). `#` is RESERVED for the engine as of issue 0156, but nothing
+ * rewrites an EXISTING file, and only addlabel::name_ok refuses NEW ones -- so a user can still have a
+ * `lab=#foo` net, and the old test read it as tool copper and let every de-shorter reshape it. The
+ * engine only ever generates "#net<N>", so the strict test is exactly the "is this mine to reshape?"
+ * question. Measured on the 0105 topology: with the backbone named `#foo`, the jog rebuilt the user's
+ * net (16 -> 17 wires) where a `VDD` backbone is a repair blackout and the move is REFUSED. */
 static int fluid_wire_explicit_lab(int k)
 {
   const char *lab = get_tok_value(xctx->wire[k].prop_ptr, "lab", 0);
-  return lab && lab[0] && (lab[0] != '#' || strpbrk(lab, "[:") != NULL);
+  return lab && lab[0] && (!is_auto_net_name(lab) || strpbrk(lab, "[:") != NULL);
 }
 
 /* touch-degree of point (x,y): number of wires whose segment covers it. `doomed` (if non-NULL) skips
@@ -3190,10 +3206,13 @@ static int fluid_loop_eligible(int kk, unsigned short *doomed, int *predeg1, int
   if(xctx->wire[kk].bus != 0.0) return 0;                  /* A3-d: no buses in v1 */
   lab = get_tok_value(xctx->wire[kk].prop_ptr, "lab", 0);
   if(lab && strpbrk(lab, "[:")) return 0;                  /* bus label */
-  /* H2 / issue 0040: never doom the SOLE carrier of an EXPLICIT (non-#) label (a #auto label
-   * regenerates, so it is exempt). get_tok_value returns a SHARED buffer, so copy this wire's lab
-   * before the inner get_tok_value calls overwrite it (else `lab` dangles -- valgrind invalid read). */
-  if(lab && lab[0] && lab[0] != '#') {
+  /* H2 / issue 0040: never doom the SOLE carrier of an EXPLICIT label (an AUTO "#net<N>" label
+   * regenerates, so it is exempt). The exemption is `is_auto_net_name()`, not `lab[0]=='#'` --
+   * a user-authored `lab=#foo` is NOT regenerable and must be protected like any other name
+   * (issue 0162; same swap as fluid_wire_explicit_lab above). get_tok_value returns a SHARED buffer,
+   * so copy this wire's lab before the inner get_tok_value calls overwrite it (else `lab` dangles --
+   * valgrind invalid read). */
+  if(lab && lab[0] && !is_auto_net_name(lab)) {
     char *labcopy = NULL;
     int keeps = 0;
     my_strdup(_ALLOC_ID_, &labcopy, lab);

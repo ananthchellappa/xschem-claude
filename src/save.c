@@ -1112,7 +1112,18 @@ int raw_deletevar(const char *name)
   }
   raw->nvars--;
   my_realloc(_ALLOC_ID_, &raw->names, sizeof(char *) * raw->nvars);
-  my_realloc(_ALLOC_ID_, &raw->values, sizeof(SPICE_DATA *) * raw->nvars + 1);
+  /* (nvars + 1), NOT nvars + 1 byte: `values` carries nvars+1 columns, the last
+   * being the scratch column custom-wave expressions are evaluated into
+   * (landmine 1). The old precedence bug shrank the array to 8*nvars+1 bytes,
+   * truncating that slot away; the next `raw add` grew it back and wrote into
+   * what was uninitialised memory -- valgrind: "Invalid write of size 8" in
+   * plot_raw_custom_data <- raw_add_vector, then SIGSEGV. It survived under
+   * plain glibc only because the shrinking realloc happened to stay in place.
+   * Pre-existing (upstream 7a45497b) and backlog item 3 of
+   * doc/claude/code_analysis/waveform_subsystem_reference.md; fixed here
+   * because tests/headless/test_wave_markers.tcl is the tree's first caller of
+   * `xschem raw del`. */
+  my_realloc(_ALLOC_ID_, &raw->values, sizeof(SPICE_DATA *) * (raw->nvars + 1));
   ret = 1;
   return ret;
 }
@@ -4427,6 +4438,15 @@ static void add_pinlayer_boxes(int *lastr, xRect **bb,
   RECTORDER(bb[PINLAYER][i].x1, bb[PINLAYER][i].y1, bb[PINLAYER][i].x2, bb[PINLAYER][i].y2);
   bb[PINLAYER][i].prop_ptr = NULL;
   label = get_tok_value(prop_ptr, "lab", 0);
+  /* get_tok_value() returns "" for an absent lab, and an UNQUOTED empty value makes
+   * get_tok_value() read the following " dir=in" as the NAME -- so a schematic pin with
+   * no lab= produced a synthesised symbol pin with no `dir` at all. Measured on the LCC
+   * path (a .sch instantiated directly as a symbol): pinlist reported name=<<dir=in>>,
+   * dir=<<>>. Emit the quoted empty form instead; the +30 slack below covers the two
+   * extra characters. A WHITESPACE-only lab is blank to the tokenizer too -- a pin
+   * written lab=" " measured the same lost dir -- so the test is str_is_blank(),
+   * not label[0]. Issue 0183. */
+  if(str_is_blank(label)) label = "\"\"";
   save = strlen(label)+30;
   pin_label = my_malloc(_ALLOC_ID_, save);
   pin_label[0] = '\0';

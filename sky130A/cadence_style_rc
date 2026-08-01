@@ -18,8 +18,10 @@ source [file join $_ws .. src cadence_style_rc]
 
 # --- 2. Library registry = the migrated sky130 tree -------------------------
 # Registry-only (Cadence): the Library Manager shows exactly the DEFINEs in this
-# tree's library.defs (sky130_fd_pr, sky130_stdcells, sky130_tests, mips_cpu,
-# stdcells) plus devices -> ../../xschem_libs_newsym/devices.
+# tree's library.defs (sky130_fd_pr, sky130_stdcells, sky130_tests,
+# sky130_tests_ase, mips_cpu, stdcells) plus devices ->
+# ../../xschem_libs_newsym/devices. To add a library to the manager, add a
+# DEFINE line to xschem_libs/library.defs — this file needs no change.
 set XSCHEM_LIBRARY_DEFS [file join $_ws xschem_libs library.defs]
 set library_registry_defs_only 1
 set XSCHEM_LIBRARY_PATH {}

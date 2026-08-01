@@ -838,9 +838,280 @@ proc ase::ui::arg_summary {row} {
 # `v(<net>)`, kind `current` + an instance name -> `i(<inst>)`. The token is
 # LOWERCASED: ngspice echoes `print` expressions lowercased and result_probe
 # matches the expr literally, so only a lowercase token can ever get a Value.
+#
+# The leading `#` of an AUTO-NAMED net is stripped (issue 0154). An unlabeled
+# net carries the engine's marker name `#netN` (get_unnamed_node, netlist.c) but
+# the netlister emits it WITHOUT the marker (`V1 net1 GND 1`), so `v(#net1)`
+# names nothing: `get_raw_index` misses it, `wviewer::validate_rpn` rejects it,
+# and — the worst arm — a `.save v(#net1)` card makes ngspice abort the entire
+# analysis ("no data saved for Transient analysis; analysis not run"), taking
+# every other trace in the session with it. This mirrors send_net_to_graph()
+# (hilight.c), the C path that sends highlighted nets to a graph: strip `#`,
+# then lowercase.
+#
+# Deliberately a PURE string op and NOT `xschem resolved_net` (the C helper
+# send_net_to_graph uses after the strip). Two reasons: this proc is called
+# with no design loaded (test_ase_interact H1), and `xschem resolved_net` is
+# contaminated on its first call after any netlist-struct invalidation — it
+# resets the interp result BEFORE prepare_netlist_structs, so the first answer
+# comes back as `0net1` (scheduler.c; the sibling `nets`/`net_members` verbs
+# already carry the fix and its comment). At top level the two agree byte for
+# byte. Descended, they do NOT — and that is `sod_qualify`'s job below, not this
+# proc's: the token arrives here already hierarchy-qualified (issue 0161), so
+# this stays the pure wrap H1 asserts.
 proc ase::ui::sod_expr {kind token} {
-  if {$kind eq {voltage}} { return "v([string tolower $token])" }
+  if {$kind eq {voltage}} {
+    return "v([string tolower [string trimleft $token #]])"
+  }
   return "i([string tolower $token])"
+}
+
+# The simulator's name for a token picked at hierarchy depth (issue 0161).
+# Identity at the top level, so every shipped top-level expression is unchanged
+# byte for byte; only a descended pick moves.
+#
+# This is where the pick path becomes IMPURE, and that is deliberate: sod_expr
+# is called with no design loaded (test_ase_interact H1) and must stay a string
+# op, while a correct hierarchical name can only come from the engine. Measured
+# on tests/headless/fixtures/ase_hier (xschem netlist -> ngspice-42 -b), the raw
+# carries `x1.x2.mid` and `v.x1.x2.v1#branch`, and `.save v(x1.x2.mid)
+# i(v.x1.x2.v1)` is accepted verbatim — which is exactly what the two arms
+# below produce.
+#
+# VOLTAGE — `xschem resolved_net`, never a Tcl path-prefix. A path-prefix would
+# be wrong four ways that the C already handles:
+#   - a child PORT is not `x1.A`, it is the PARENT's net (`A` -> `TOPNET`);
+#   - a port left dangling one level up stops there (`B` -> `x1.net1`, ONE
+#     prefix level, not two);
+#   - a global net is flat and never prefixed (`0` -> `0`);
+#   - the `#` auto-name marker is stripped per bus element (issue 0158).
+# Called per BIT, after sod_pick_tokens/bus_dialog (issue 0159) have split a bus,
+# so the comma-list arm of resolved_net never fires here.
+#
+# CURRENT — no such resolver exists for instance names, so this mirrors
+# send_current_to_graph() (hilight.c:1720): `i(` + `v.` + the lowercased
+# sch_path + the name, and the bare `i(name)` at the top.
+#
+# Known limits, both inherited rather than introduced (see the issue doc):
+# resolved_net measures its path from `sch_waves_loaded()`, so an expression
+# queued while a raw is loaded BELOW the top is relative to that raw; and
+# resolved_net resolves a net through a parent instance attribute only when the
+# parent symbol declares that attribute in its `extra=` list (issue 0163), taking
+# the symbol TEMPLATE default when the instance omits it (issue 0164).
+#
+# `baselvl` (issue 0168) is the hierarchy level the name is measured FROM: the
+# level at which the SESSION's own design sits in this window's stack, since that
+# design is the top of the deck the expression is written into. 0 (the default)
+# is the shipped meaning, "the window's top", and every top-level session keeps
+# its byte-for-byte behavior. It matters once a session is bound to an
+# intermediate cell: descended two levels under a session on the MID cell, the
+# node ngspice knows is `x2.mid`, not `x1.x2.mid`.
+proc ase::ui::sod_qualify {kind token {baselvl 0}} {
+  if {$token eq {}} { return $token }
+  if {[catch {xschem get currsch} lvl]} { return $token }
+  if {![string is integer -strict $baselvl] || $baselvl < 0} { set baselvl 0 }
+  ## at (or above) the session's own level there is no path to add
+  if {![string is integer -strict $lvl] || $lvl <= $baselvl} { return $token }
+  if {$kind eq {voltage}} {
+    if {[catch {xschem resolved_net $token $baselvl} rn] || $rn eq {}} { return $token }
+    return $rn
+  }
+  set path [ase::ui::sod_rel_path $baselvl]
+  if {$path eq {}} { return $token }
+  return "v.[string tolower $path]$token"
+}
+
+# The instance path from hierarchy level `baselvl` down to the current level,
+# `x2.` style — the current sch_path (`.x1.x2.`) with the base level's own
+# sch_path (`.x1.`) stripped off the front. Plain prefix arithmetic is sound here
+# and NOT for nets: an instance path is a pure prefix chain, while a net can
+# resolve UP through a port and stop at any level (which is why the voltage arm
+# above hands the level to the engine instead). Empty when the two agree or the
+# prefix does not match.
+proc ase::ui::sod_rel_path {baselvl} {
+  set cur {}
+  catch {set cur [xschem get sch_path]}
+  if {$cur eq {}} { return {} }
+  set base {}
+  catch {set base [xschem get sch_path $baselvl]}
+  if {$base eq {} || [string first $base $cur] != 0} {
+    ## no usable base: fall back to the whole path, minus its leading dot
+    return [string range $cur 1 end]
+  }
+  return [string range $cur [string length $base] end]
+}
+
+# Where the session's OWN design sits in this window's hierarchy stack (issue
+# 0168) — the `baselvl` sod_qualify measures names from. 0 (the window's top)
+# whenever the session's design is not in the stack at all, which keeps a
+# scripted/stubbed pick (an unknown key, no design resolvable) on the shipped
+# path. Recomputed per click rather than latched when the mode was armed, so
+# descending or ascending WHILE the pick mode is up stays correct.
+proc ase::ui::sod_base_level {key} {
+  set dpath {}
+  catch {set dpath [ase::ui::design_path $key]}
+  if {$dpath eq {}} { return 0 }
+  set lvl 0
+  catch {set lvl [xschem get currsch]}
+  if {![string is integer -strict $lvl] || $lvl <= 0} { return 0 }
+  for {set l $lvl} {$l >= 0} {incr l -1} {
+    set p {}
+    catch {set p [xschem get schname $l]}
+    if {$p ne {} && [file normalize $p] eq $dpath} { return $l }
+  }
+  return 0
+}
+
+# Split a possibly-bussed net token into its individual bits (issue 0159).
+# `A[1:0]` -> {A[1] A[0]}, `D,E` -> {D E}, `A[1:0],B` -> {A[1] A[0] B}, and a
+# scalar -> a one-element list. The `#` marker rides along per bit; sod_expr
+# strips it later, which is where that mapping belongs.
+#
+# PURE, exactly like sod_expr, and for the same reason: `xschem expandlabel` is
+# the bison label parser and needs no loaded design (verified), unlike
+# `xschem resolved_net` which runs prepare_netlist_structs. test_ase_interact H1
+# calls this family with nothing loaded.
+#
+# Why buses need splitting at all: sod_expr is a string wrap, so a bus picked
+# whole became one invalid vector -- `v(a[1:0])` -- and src/ase.tcl interpolates
+# the expr verbatim into `.save`/`print` cards. Measured with ngspice-42: that
+# card ALONE aborts the entire analysis ("no data saved for Transient analysis;
+# analysis not run"); alongside any other valid `.save` it is silently dropped
+# and the trace just never appears.
+proc ase::ui::sod_bits {token} {
+  if {$token eq {}} { return {} }
+  set r {}
+  if {[catch {xschem expandlabel $token} r]} { return [list $token] }
+  ## `xschem expandlabel` answers "<expanded> <mult>"; the expansion is a
+  ## comma-separated list in MSB-first (declaration) order.
+  set exp [lindex $r 0]
+  if {$exp eq {}} { return [list $token] }
+  return [split $exp ,]
+}
+
+# What one Select-On-Design click should queue: a list of tokens. A scalar (or
+# any `current` pick, which is an instance name and can never be a bus) is
+# itself; a multi-bit net opens the bit dialog and yields the user's chosen bits
+# in the order the dialog displayed them, or {} for Cancel.
+#
+# This is the seam sod_click routes through, so a test can stub
+# `ase::ui::bus_dialog` and assert the queue set without driving Tk (the same
+# idiom the descend tests use to stub `ask_save`).
+proc ase::ui::sod_pick_tokens {key kind token} {
+  if {$kind ne {voltage}} { return [list $token] }
+  set bits [ase::ui::sod_bits $token]
+  if {[llength $bits] < 2} { return [list $token] }
+  return [ase::ui::bus_dialog $key $token $bits]
+}
+
+# Build the bus bit-selection dialog and return its toplevel path. Split out of
+# `bus_dialog` so the widgets can be driven directly by a test without a modal
+# `tkwait` (the ask_save_close precedent keeps its widgets at deterministic
+# paths for the same reason).
+#
+# Contract (user decision, issue 0159): nothing is selected when it opens --
+# OK with an empty selection is therefore a no-op, same as Cancel. `All`
+# selects every bit; Ctrl-click toggles individual bits (Tk `extended`
+# selectmode gives that plus Shift-click ranges for free). `Reverse` flips the
+# DISPLAYED order, carrying the selection with the items, because the display
+# order IS the order the bits get queued in.
+proc ase::ui::bus_dialog_build {parent token bits} {
+  set w [expr {$parent eq {} ? {.asebusbits} : "$parent.busbits"}]
+  catch {destroy $w}
+  toplevel $w
+  wm title $w {Select Bus Bits}
+  catch {wm transient $w [expr {$parent eq {} ? {.} : $parent}]}
+  label $w.msg -font AseLabelFont -justify left -anchor w \
+    -text "Bus “$token” has [llength $bits] bits.\nSelect the bits to plot\
+ (Ctrl-click toggles, Shift-click extends)."
+  pack $w.msg -side top -fill x -padx 12 -pady {10 6}
+  ## list + scrollbar share a frame so the toplevel itself stays pack-managed
+  frame $w.lf
+  set n [llength $bits]
+  listbox $w.lf.list -selectmode extended -exportselection 0 -activestyle none \
+    -height [expr {$n > 16 ? 16 : ($n < 2 ? 2 : $n)}] \
+    -yscrollcommand [list $w.lf.sb set]
+  scrollbar $w.lf.sb -orient vertical -command [list $w.lf.list yview]
+  foreach b $bits { $w.lf.list insert end $b }
+  pack $w.lf.sb -side right -fill y
+  pack $w.lf.list -side left -fill both -expand yes
+  pack $w.lf -side top -fill both -expand yes -padx 12 -pady 4
+  frame $w.btns
+  button $w.btns.all    -text All     -width 8 \
+    -command [list ase::ui::bus_dialog_all $w]
+  button $w.btns.rev    -text Reverse -width 8 \
+    -command [list ase::ui::bus_dialog_reverse $w]
+  button $w.btns.ok     -text OK      -width 8 \
+    -command [list ase::ui::bus_dialog_done $w 1]
+  button $w.btns.cancel -text Cancel  -width 8 \
+    -command [list ase::ui::bus_dialog_done $w 0]
+  pack $w.btns.all $w.btns.rev -side left -padx 5
+  pack $w.btns.cancel $w.btns.ok -side right -padx 5
+  pack $w.btns -side bottom -fill x -padx 8 -pady {4 10}
+  bind $w <Return> [list $w.btns.ok invoke]
+  ase::ui::bind_dialog_esc $w [list $w.btns.cancel invoke]  ;# ESC = Cancel
+  catch {ase::ui::apply_theme $w}
+  set ::ase::ui::bus_dialog_result {}
+  return $w
+}
+
+# The selected bits in DISPLAY order. `curselection` returns indices ascending,
+# which is display order by construction, so Reverse changing the display also
+# changes the queue order -- the whole point of the button.
+proc ase::ui::bus_dialog_selected {w} {
+  set out {}
+  if {![winfo exists $w.lf.list]} { return {} }
+  foreach i [$w.lf.list curselection] { lappend out [$w.lf.list get $i] }
+  return $out
+}
+
+proc ase::ui::bus_dialog_all {w} {
+  if {[winfo exists $w.lf.list]} { $w.lf.list selection set 0 end }
+}
+
+# Flip the displayed order, re-selecting the same BITS (not the same indices) so
+# a selection made before the flip survives it.
+proc ase::ui::bus_dialog_reverse {w} {
+  if {![winfo exists $w.lf.list]} { return }
+  set lb $w.lf.list
+  set sel [ase::ui::bus_dialog_selected $w]
+  ## built by hand rather than with `lreverse`: the C side still declares Tcl
+  ## 8.4 support (CLAUDE.md), and lreverse is 8.5+.
+  set items {}
+  foreach it [$lb get 0 end] { set items [linsert $items 0 $it] }
+  $lb delete 0 end
+  foreach it $items { $lb insert end $it }
+  foreach it $sel {
+    set i [lsearch -exact $items $it]
+    if {$i >= 0} { $lb selection set $i }
+  }
+}
+
+proc ase::ui::bus_dialog_done {w ok} {
+  if {$ok} {
+    set ::ase::ui::bus_dialog_result [ase::ui::bus_dialog_selected $w]
+  } else {
+    set ::ase::ui::bus_dialog_result {}
+  }
+  catch {destroy $w}
+}
+
+# Modal wrapper: show the dialog, block until dismissed, return the chosen bits
+# (empty on Cancel). Same teardown-tolerance as ask_save_close -- the build-time
+# `update` pumps the event loop, so a test or a compositor can destroy $w before
+# tkwait is reached; tkwait on a dead window throws, so guard it. The result
+# bus_dialog_done recorded still stands.
+proc ase::ui::bus_dialog {key token bits} {
+  variable wins
+  set parent {}
+  if {[dict exists $wins $key]} { set parent [dict get $wins $key] }
+  set w [ase::ui::bus_dialog_build $parent $token $bits]
+  update
+  catch {raise $w}
+  catch {grab set $w}
+  catch {focus $w.lf.list}
+  if {[winfo exists $w]} { tkwait window $w }
+  return $::ase::ui::bus_dialog_result
 }
 
 # Select On Design queue merge (pure): dedupe on the EXACT expr string.
@@ -1401,21 +1672,76 @@ proc ase::ui::sod_end {key} {
   }
 }
 
+# The net under a mode click, as the RAW schematic token (issue 0154).
+#
+# `xschem flylines at` is the primary resolver and stays first: it is read-only
+# and resolves wires, net labels and labeled pins through the very switch
+# hilight_net() uses (flyline_net_of, flyline.c), so every named net keeps its
+# shipped behavior byte for byte. It has one blind spot, deliberate for
+# fly-lines and wrong for signal picking — rule A6, "exclude auto-named nets"
+# (flyline.c: `if(netname[0] == '#') netname = NULL`). A `#netN` cluster is
+# unique per physical cluster and can never connect implicitly, so a fly-line
+# star for it would be meaningless; but it is a perfectly ordinary net to
+# probe, and inheriting the exclusion is what made clicking one print the
+# "source currents only" notice. A6 is NOT relaxed — the overlay, the query and
+# tests/headless/test_flylines.sh keep it exactly as shipped.
+#
+# The fallback reads the selection `select_at` already made, via
+# `xschem nets -selected` (cold-correct: that verb resets the interp result
+# AFTER prepare_netlist_structs, unlike `resolved_net`). Restricted to WIRE
+# hits on purpose: on a device BODY `nets -selected` reports every net the
+# device touches (2 for a vsource, 3 for a mosfet), and a two-pin device with
+# both pins on one net would report exactly one — so an llength test alone
+# would misclassify a non-source device click as a voltage pick and break the
+# "non-source click queues nothing" contract (test_ase_interact I6). A wire
+# lies on exactly one net by construction.
+#
+# Returns the token WITH its `#` and in its original case: dp_hilight needs
+# that form (`xschem hilight_netname net1` finds nothing, `#net1` works). The
+# simulator-side mapping belongs to sod_expr, and only there.
+proc ase::ui::sod_net_at {x y hit} {
+  set net {}
+  catch {set net [dict get [xschem flylines at $x $y] net]}
+  if {$net ne {}} { return $net }
+  if {[lindex $hit 0] ne {wire}} { return {} }
+  set rows {}
+  catch {set rows [xschem nets -selected]}
+  if {[llength $rows] != 1} { return {} }
+  set name {}
+  catch {set name [dict get [lindex $rows 0] name]}
+  return $name
+}
+
 # One mode click. Bare x/y (the canvas binding) read the last snapped mouse
 # position — kept current by the generic <Motion> binding that still flows to
 # C; tests pass explicit schematic coordinates (replayable). Classification
 # (D4): select_at miss -> nothing; source-class instance -> current output;
 # anything resolving to a net under the click (wires, net labels, labeled
-# pins — via the read-only flylines query) -> voltage output; else the v1
-# scope notice. select_at doubles as the Cadence-like click feedback and logs
-# its own replayable action-log line.
+# pins — via sod_net_at) -> voltage output; else the v1 scope notice.
+# select_at doubles as the Cadence-like click feedback and logs its own
+# replayable action-log line.
 proc ase::ui::sod_click {key {x {}} {y {}}} {
   variable sod
   if {![info exists sod($key,flavor)]} { return }
   if {$x eq {}} { set x [xschem get mousex_snap] }
   if {$y eq {}} { set y [xschem get mousey_snap] }
+  # issue 0160: an EMPTY hit is not the end of the click. `xschem select_at`
+  # selects with override_lock=0, so a `lock=true` wire returns nothing even
+  # though its net resolves perfectly (`xschem flylines at` uses override_lock=1
+  # and never had a problem with it) — the pick died before classification, so
+  # not even the notice below fired.
+  #
+  # The fix is deliberately NOT to override the lock here. `lock` is enforced in
+  # exactly two files, select.c and findnet.c; there is no lock check in move.c,
+  # actions.c or any delete path, because every edit acts on the SELECTION.
+  # Selection IS the lock, so making a locked wire selectable would make it
+  # deletable. A read-only probe must resolve the net WITHOUT selecting the
+  # object, which is precisely what falling through to sod_net_at does.
+  #
+  # The empty-hit return therefore moves to the bottom (see `$hit eq {}` there),
+  # where it only ends a click that classified as nothing — so an empty-canvas
+  # click stays silent exactly as before.
   set hit [xschem select_at $x $y]
-  if {$hit eq {}} { return }
   set kind {}
   set token {}
   if {[lindex $hit 0] eq {instance}} {
@@ -1428,14 +1754,17 @@ proc ase::ui::sod_click {key {x {}} {y {}}} {
     }
   }
   if {$kind eq {}} {
-    set net {}
-    catch {set net [dict get [xschem flylines at $x $y] net]}
+    set net [ase::ui::sod_net_at $x $y $hit]
     if {$net ne {}} {
       set kind voltage
       set token $net
     }
   }
   if {$kind eq {}} {
+    # nothing under the cursor at all (empty canvas): stay silent, as before
+    # this became the late return — a pick mode that scolded every miss-click
+    # would be noise (issue 0160).
+    if {$hit eq {}} { return }
     catch {ciw_echo "ase: v1 queues source currents only — click a wire, a\
  net label or a voltage source/ammeter"}
     return
@@ -1445,11 +1774,35 @@ proc ase::ui::sod_click {key {x {}} {y {}}} {
   # issue 0153: plot mode also gets the classification (kind + raw net/instance
   # name) so it can paint that object in the color the trace will use — `ex` is
   # already wrapped as v(...)/i(...) and is not a highlight target.
-  set ex [ase::ui::sod_expr $kind $token]
-  if {[info exists sod($key,mode)] && $sod($key,mode) eq {plot}} {
-    ase::ui::dp_queue $key $ex $kind $token
-  } else {
-    ase::ui::sod_queue $key $ex
+  # issue 0159: a BUS net is not one signal. sod_pick_tokens asks the user which
+  # bits (bit dialog; Cancel -> empty list -> queue nothing) and we queue one row
+  # per chosen bit, in the order the dialog displayed them. A scalar or a current
+  # pick comes back as the single original token, so the common path is unchanged.
+  set toks [ase::ui::sod_pick_tokens $key $kind $token]
+  if {![llength $toks]} { return }
+  # issue 0161: a pick at currsch>0 named a node the simulator does not have
+  # (`v(mid)` for what ngspice calls `v(x1.x2.mid)`). sod_qualify resolves the
+  # token against the hierarchy HERE, at the impure click site, so sod_expr can
+  # stay the pure string wrap H1 asserts. Identity at the top level. Note the
+  # 0153 colour cue below still gets the RAW `$token`: `hilight_netname` wants
+  # the schematic's own name, not the simulator's.
+  # issue 0168: names are measured from the level of the SESSION's own design in
+  # this window's stack, not blindly from the window's top — a pick made under a
+  # session bound to an intermediate cell must match THAT session's deck.
+  set base [ase::ui::sod_base_level $key]
+  set first 1
+  foreach t $toks {
+    set ex [ase::ui::sod_expr $kind [ase::ui::sod_qualify $kind $t $base]]
+    if {[info exists sod($key,mode)] && $sod($key,mode) eq {plot}} {
+      # 0153's schematic cue: colour the picked object ONCE, in the first
+      # trace's colour. The bus is a single wire, so N cues would just repaint
+      # it N times and end on the last bit's colour; and the per-bit token is
+      # not a highlightable net name in its own right.
+      ase::ui::dp_queue $key $ex $kind [expr {$first ? $token : {}}]
+    } else {
+      ase::ui::sod_queue $key $ex
+    }
+    set first 0
   }
 }
 
@@ -2816,18 +3169,41 @@ proc ase::ui::design_path {key} {
 # window held the design, else 0. WSLg/Weston drops bare `raise` restack
 # requests, so this goes through the shared withdraw/deiconify re-map helper
 # raise_activate_toplevel (issue 0054 lesson — LibMgr/CIW use it too).
+#
+# A window DESCENDED into the design counts (issue 0168). Its `current_name` is
+# the child, so an exact-name scan alone declared the design "not open anywhere"
+# and design_window re-loaded the top into another window — throwing away the
+# hierarchy the user had navigated to, which is exactly where they wanted to
+# Direct-Plot. The 7th `xschem windows` field is the window's whole stack, so a
+# descended window is now matched on any level of it. Exact `current_name`
+# matches still WIN (first loop): a window actually showing the design is the
+# better answer, and that ordering keeps the shipped behavior byte for byte.
 proc ase::ui::raise_design_editor {dpath} {
-  foreach e [xschem windows] {
+  set wins [xschem windows]
+  foreach e $wins {
     if {[file normalize [lindex $e 4]] eq $dpath} {
-      xschem new_schematic switch [lindex $e 0]
-      set tp [lindex $e 1]
-      if {$tp eq {}} { set tp . }
-      raise_activate_toplevel $tp
-      catch {focus $tp}
-      return 1
+      return [ase::ui::raise_window_entry $e]
+    }
+  }
+  foreach e $wins {
+    foreach s [lindex $e 6] {
+      if {$s ne {} && [file normalize $s] eq $dpath} {
+        return [ase::ui::raise_window_entry $e]
+      }
     }
   }
   return 0
+}
+
+# Make the window described by an `xschem windows` entry current + frontmost.
+# Always returns 1 (the caller has already decided this window is the one).
+proc ase::ui::raise_window_entry {e} {
+  xschem new_schematic switch [lindex $e 0]
+  set tp [lindex $e 1]
+  if {$tp eq {}} { set tp . }
+  raise_activate_toplevel $tp
+  catch {focus $tp}
+  return 1
 }
 
 # Session > Design Window: raise the editor window already holding the design,

@@ -1,0 +1,14 @@
+version 1
+simulator ngspice
+design {lib sky130_tests_ase cell test_varactor view schematic}
+rundir {}
+temperature 27
+models {{file {$::SKYWATER_MODELS/sky130.lib.spice} section tt}}
+variables {}
+analyses {{type op enabled 0} {type dc enabled 0} {type ac enabled 0} {type tran enabled 1 stop 9u step 1n}}
+outputs {{name g1 expr g1 save 1 plot 1} {name g2 expr g2 save 1 plot 1} {name g expr g save 1 plot 1}}
+save_all_v 1
+save_all_i 0
+options {}
+includes {}
+viewer {}

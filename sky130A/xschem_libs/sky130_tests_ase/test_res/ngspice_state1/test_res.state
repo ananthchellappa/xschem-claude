@@ -1,0 +1,14 @@
+version 1
+simulator ngspice
+design {lib sky130_tests_ase cell test_res view schematic}
+rundir {}
+temperature 27
+models {{file {$::SKYWATER_MODELS/sky130.lib.spice} section tt}}
+variables {}
+analyses {{type op enabled 0} {type dc enabled 1 source temp start -40 stop 140 step 1} {type ac enabled 0} {type tran enabled 0}}
+outputs {{name p expr p save 1 plot 1} {name ivr2 expr i(vr2) save 1 plot 1} {name ivr9 expr i(vr9) save 1 plot 1} {name ivr3 expr i(vr3) save 1 plot 1} {name ivr4 expr i(vr4) save 1 plot 1} {name ivr1 expr i(vr1) save 1 plot 1} {name ivr5 expr i(vr5) save 1 plot 1} {name ivr10 expr i(vr10) save 1 plot 1} {name ivr12 expr i(vr12) save 1 plot 1} {name ivr6 expr i(vr6) save 1 plot 1} {name ivr8 expr i(vr8) save 1 plot 1} {name ivr16 expr i(vr16) save 1 plot 1} {name ivr17 expr i(vr17) save 1 plot 1} {name ivr23 expr i(vr23) save 1 plot 1} {name ivr24 expr i(vr24) save 1 plot 1} {name ivr26 expr i(vr26) save 1 plot 1} {name ivr28 expr i(vr28) save 1 plot 1} {name ivr7 expr i(vr7) save 1 plot 1} {name ivr25 expr i(vr25) save 1 plot 1} {name ivr15 expr i(vr15) save 1 plot 1} {name ivr27 expr i(vr27) save 1 plot 1}}
+save_all_v 1
+save_all_i 0
+options {{name savecurrents value 1}}
+includes {}
+viewer {}

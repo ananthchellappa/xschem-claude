@@ -185,7 +185,10 @@ void flyline_compute(const char *netname, int have_pick, const Selected *pick,
   if(cap <= 0) cap = 32;            /* C fallback if the tcl default is unset */
 
   /* A6: auto-named nets (get_unnamed_node -> "#netN", the node[0]=='#' marker) are unique per
-   * physical cluster and can never connect implicitly -- exclude them (empty result). */
+   * physical cluster and can never connect implicitly -- exclude them (empty result).
+   * Deliberately LOOSE, not is_auto_net_name() (issue 0156): '#' is reserved for the engine, so a
+   * user-authored '#foo' is a namespace violation ERC warns about -- excluding it here too is the
+   * conservative reading, and a star on it would be meaningless either way. */
   if(netname && netname[0] == '#') netname = NULL;
   if(!(netname && netname[0])) return;   /* no net -> empty result */
 

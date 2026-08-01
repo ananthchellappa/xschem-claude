@@ -211,9 +211,11 @@ bind .drw <Control-Key-at>      {cadence::make_readonly;          break}
 bind .drw <Control-Shift-Key-2> {cadence::make_readonly;          break}
 # Ctrl-4 : ASE-L "select signals to plot" (Cadence Direct Plot, driven from the
 # design window). Enters the ASE Direct Plot click mode for the session bound to
-# THIS schematic: click wires/net-labels for voltage traces, sources/ammeters for
-# current traces; ESC plots the queue into the session's waveform viewer (opening
-# it if needed). A bottom-status-line prompt shows while the mode is armed.
+# THIS schematic -- or, once descended, to the nearest ANCESTOR of it (issue 0168),
+# so you can run, descend into an instance and probe its internal nodes: click
+# wires/net-labels for voltage traces, sources/ammeters for current traces; ESC
+# plots the queue into the session's waveform viewer (opening it if needed). A
+# bottom-status-line prompt shows while the mode is armed.
 # Overrides the C default (Ctrl+4 = select drawing layer 4), so it ends in
 # `break`, exactly like Ctrl-2 above. Remap: edit the chord on this line.
 bind .drw <Control-Key-4>       {ase::direct_plot_for_current;    break}
@@ -229,6 +231,90 @@ bind .drw <Control-Key-4>       {ase::direct_plot_for_current;    break}
 # replace "dollar" with whatever your Shift-4 produces (`xev`).
 bind .drw <Control-Key-dollar>  {ase::plot_mode_for_current invert; break}
 bind .drw <Control-Shift-Key-4> {ase::plot_mode_for_current invert; break}
+
+# Ctrl-D INSIDE the waveform viewer : Clear All -- delete every graph and every
+# trace and start from scratch (one empty strip remains). The plot mode, Shared
+# X, the cursors and the loaded raw data are KEPT, so you can immediately pick
+# new signals from the same results. Issue 0171; also Graph > Clear All.
+# The viewer canvas SWEEPS every binding cloned from this .drw (it is a
+# read-only graph window, not a schematic), so a viewer key is bound on the
+# `WaveViewer` BINDTAG instead. The default is installed at the first viewer
+# open and only if nothing bound the sequence already -- so a line here WINS.
+# To remap, disable the default with `{break}` (an empty script would read as
+# "never bound" and get re-defaulted) and bind your own:
+# bind WaveViewer <Control-Key-d> {break}
+# bind WaveViewer <Control-Key-r> {wviewer::clear_all_at %W; break}
+
+# `e` INSIDE the waveform viewer : Delete Empty Strips -- remove every strip
+# that holds no traces, tidying the stack after deleting traces or after a plot
+# batch left a blank band. Two strips are never touched: the tool-owned
+# auto-plot strip (it is traceless BETWEEN simulation runs by design) and the
+# last strip standing, so the window is never left with nothing. `e` on a window
+# holding a single empty strip therefore does nothing at all.
+# Also Graph > Delete Empty Strips. Same bindtag rules as Ctrl-D above -- a line
+# here WINS over the shipped default:
+# bind WaveViewer <Key-e> {break}
+# bind WaveViewer <Key-y> {wviewer::delete_empty_strips_at %W; break}
+
+# Waveform-viewer LEGEND text size and weight. The signal names along the top of
+# each strip used to be about 0.6x the size of the Y-axis numbers; they are now
+# drawn at the same size and in bold. Both are viewer-only (per-rect prop
+# tokens written by the viewer's own strip generator), so schematics with
+# embedded graphs render exactly as before.
+#   wviewer_legend_textmag  multiplier on the legend text size. 1.63 is the
+#                           value that matches the Y-axis numbers at the
+#                           viewer's divy=5; clamped to 0.25 .. 6.0, anything
+#                           else falls back to the default.
+#   wviewer_legend_bold     0 = DEFAULT: bold marks the SELECTED trace only
+#                           (click a trace to bold it), which is the
+#                           long-standing behaviour -- only the SIZE changed.
+#                           1 = every legend entry bold; the selected trace is
+#                           then drawn bold ITALIC, since bold no longer
+#                           distinguishes it.
+# set wviewer_legend_textmag 1.63
+# set wviewer_legend_bold 0
+
+# Waveform-viewer GRID density. The dashed grid inside each strip used to light
+# half its pixels (a 2-on/2-off dash); it now lights a quarter (1-on/3-off),
+# which makes the traces stand out without removing a single grid line or
+# changing its colour. Viewer-only, like the legend vars above.
+#   wviewer_grid_dash_off   the OFF run in pixels against a 1-pixel ON run.
+#                           3 = DEFAULT (1-on/3-off, half the old density).
+#                           0 = the old grid, exactly. Bigger = sparser.
+#                           Clamped 0..32; anything else falls back to 3.
+# set wviewer_grid_dash_off 3
+
+# Ctrl-G INSIDE the waveform viewer : show/hide the graph grid of that window.
+# Only the DASHED interior lines go -- the axes, the box, the tick marks, the
+# axis NUMBERS and the zero lines stay, so the plot is still readable. Per
+# window and live; also Graph > Grid (a checkbutton, so the menu always shows
+# the real state). Same bindtag rules as Ctrl-D/`e` above -- a line here WINS:
+# bind WaveViewer <Control-Key-g> {break}
+# bind WaveViewer <Control-Key-h> {wviewer::grid_toggle_at %W; break}
+#   wviewer_grid_show   the grid state a NEWLY OPENED viewer starts in.
+#                       1 = DEFAULT (shown). Anything not a boolean -> 1.
+# set wviewer_grid_show 1
+#
+# --- waveform viewer: mid-drag shrink preview (viewer plan item 6) -----------
+# While a trace is being DRAGGED to another strip (LMB press on the trace, drag,
+# drop on another strip) it is drawn shrunk in BOTH axes about the plot box
+# centre, so the pointer visibly carries something and the dragged trace stops
+# being confusable with the ones it passes over. The STRIP reorder drag gets no
+# preview (decision D-E).
+# Purely on-screen: no prop token, no model write, no undo point, and exports
+# always draw the trace at full size.
+#   wviewer_drag_shrink  the scale of the dragged trace while the drag is live,
+#                        applied to X and Y alike. 0.7 = DEFAULT (a 30 %
+#                        shrink; the first cut was 10 % and Y-only, and on
+#                        review neither read clearly enough).
+#                        1.0 turns the effect off without disabling the drag.
+#                        Anything outside (0, 1] falls back to 0.7.
+# set wviewer_drag_shrink 0.7
+#
+# NOTE Ctrl-G in a SCHEMATIC window still toggles the dot grid (draw_grid,
+# below) -- these do not collide: the viewer key is on the WaveViewer bindtag,
+# which schematic canvases do not carry, and the viewer suppresses the dot grid
+# for life anyway.
 
 # Descend opens the child schematic READ-ONLY by default (browse mode). To edit,
 # press Ctrl-2 after descending, use the "Descend schematic (edit)" right-click

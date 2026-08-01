@@ -254,6 +254,87 @@ one-line notice and queue nothing. Queueing dedupes on the exact expression
 string: an existing row gets the flavor's plot/save flags ORed in, an
 identical re-queue writes nothing.
 
+**Picking works from a DESCENDED schematic** (issue 0168). Run, descend into an
+instance, and Direct Plot (Ctrl-4 or Results > Direct Plot) probes its internals:
+the session is resolved by walking the hierarchy stack from the current level up
+to the top and taking the NEAREST ancestor that owns one, so the parent's session
+— the one that ran the simulation — is found even though the descended cell has
+none of its own (`ase::session_for_current`). Queued names are measured from the
+level of THAT session's design, so they match its deck: `v(x1.x2.mid)` under a
+top-level session, `v(x2.mid)` under a session bound to the mid cell. Results >
+Direct Plot also raises the window that is descended into the design instead of
+re-opening the top elsewhere. Two limits ride along: the node must be in the raw
+(Direct Plot deliberately writes no `.save` rows, so probe internals with no
+explicit outputs or with Save-All-Voltages on), and RUNNING is still top-only —
+`ase::netlist` requires the design to be the current schematic, so ascend before
+Run. `Tools > Launch ASE-L` is deliberately NOT hierarchy-aware: it binds a
+session to the cellview actually on screen.
+
+**A locked object is READ-able** (issue 0160). `lock=true` makes an object
+unselectable, and since every edit acts on the selection, selection *is* the
+lock — there is no lock check in `move.c`/`actions.c`/any delete path. A
+read-only probe therefore resolves the net WITHOUT selecting: a click whose
+`xschem select_at` comes back empty still goes through classification (the
+`xschem flylines at` resolver already uses `override_lock=1`), and only ends
+the click if that finds nothing too. So a locked wire queues its net normally
+while staying unselected, and an empty-canvas miss-click stays silent. Do NOT
+"fix" this by giving `select_at` an override-lock switch — that would make
+locked objects deletable.
+
+**Bus picks open a bit-selection dialog** (issue 0159). A net with more than
+one bit is not one signal, and wrapping it whole produced an invalid vector —
+`A[1:0]` → `v(a[1:0])` — which src/ase.tcl interpolates verbatim into the
+deck's `.save`/`print` cards. Measured with ngspice-42: as the ONLY `.save`
+in the deck that card aborts the entire analysis (`no data saved for
+Transient analysis; analysis not run`); alongside any other valid `.save` it
+is silently dropped and the trace simply never appears.
+
+So a click resolving to a multi-bit net (bracket range or comma list) opens
+**Select Bus Bits**, listing the bits in `xschem expandlabel` order —
+MSB-first for a descending range. Contract:
+- **nothing is selected when it opens**, so OK with an empty selection is a
+  no-op, the same as Cancel;
+- **All** selects every bit; **Ctrl-click** toggles one (Tk `extended`
+  selectmode, which also gives Shift-click ranges);
+- **Reverse** flips the *displayed* order and carries the selection with the
+  items — the display order IS the order the bits are queued in, which is
+  what makes the button meaningful;
+- **OK** queues one row per selected bit, in display order; **Cancel**
+  queues nothing.
+
+It applies to BOTH pick paths — Direct Plot and the persisted Outputs list —
+since both wrote the same broken expr. In Direct Plot the 0153 schematic
+colour cue is painted ONCE, in the first bit's colour: the bus is a single
+wire, so N cues would just repaint it and end on the last bit's colour.
+
+Saved states from before this carry a `v(a[1:0])` row; `ase::state_load`
+expands it per bit on load. That migration is restricted to the **bracket**
+form on purpose — a stored expr is opaque, and `v(a,b)` is also ngspice's
+differential voltage, which a user can legitimately have typed into the
+Add-Output dialog. The comma form is left alone, which costs nothing:
+`.save v(d,e)` does not abort a run (measured). A comma bus picked on the
+*schematic* still splits, because there the token is known to be a net.
+
+**A pick while DESCENDED is hierarchy-qualified** (issue 0161). Picking is
+allowed at any depth; only the RUN is top-only (`ase::netlist` compares
+`xschem get schname` against the design path, and descending changes
+`schname` to the child — there is no `currsch` guard). The queued expression
+is always **top-relative**, so a pick made while descended stays correct
+after ascending to run.
+
+The qualification happens in `ase::ui::sod_qualify`, called from `sod_click`
+per picked bit; `ase::ui::sod_expr` stays a PURE string wrap (it is called
+with no design loaded). At `currsch == 0` it is the identity, so every
+top-level expression is unchanged byte for byte. Voltages go through
+`xschem resolved_net` rather than a path string-prefix, because a port
+resolves UP to the parent's net (`A` → `TOPNET`), a dangling port stops at
+the level that names it (`B` → `x1.net1`), and a global stays flat
+(`0` → `0`) — none of which a prefix can express. Currents mirror
+`send_current_to_graph()`: `i(v.<path>.<name>)` descended, `i(<name>)` at
+the top, which is how ngspice names a nested branch (`v.x1.x2.v1#branch`).
+The 0153 colour cue keeps the RAW schematic token — `hilight_netname` wants
+the schematic's name, not the simulator's.
+
 ### Menu tree (v2)
 - **Launch** — placeholder menu, ignore for now.
 - **Session** — Design Window (raise-or-open the attached schematic window —

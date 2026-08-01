@@ -1,0 +1,91 @@
+v {xschem version=3.4.6 file_version=1.2
+* Copyright 2021 Stefan Frederik Schippers
+* 
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*     https://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+
+}
+G {}
+K {}
+V {}
+S {}
+E {}
+N 440 -230 440 -190 { lab=S}
+N 440 -320 440 -290 { lab=Y}
+N 530 -390 530 -320 { lab=Y}
+N 440 -320 530 -320 { lab=Y}
+N 250 -390 250 -320 { lab=Y}
+N 250 -470 250 -450 { lab=VCCPIN}
+N 250 -470 530 -470 { lab=VCCPIN}
+N 530 -470 530 -450 { lab=VCCPIN}
+N 440 -130 440 -110 { lab=VSSPIN}
+N 530 -320 630 -320 { lab=Y}
+N 190 -420 210 -420 { lab=A}
+N 190 -420 190 -160 { lab=A}
+N 190 -160 400 -160 { lab=A}
+N 380 -260 400 -260 { lab=B}
+N 380 -420 380 -260 { lab=B}
+N 380 -420 490 -420 { lab=B}
+N 250 -320 440 -320 { lab=Y}
+N 120 -420 190 -420 { lab=A}
+N 120 -260 380 -260 { lab=B}
+C {devices/title} 160 -30 0 0 {name=l1 author="Stefan Schippers"}
+C {devices/ipin} 120 -420 0 0 {name=p1 lab=A}
+C {sky130_fd_pr/nfet3_01v8} 420 -260 0 0 {name=M1
+L=LenN
+W=WidthN
+body=VSSPIN
+nf=1
+mult=1
+
+
+model=nfet_01v8
+spiceprefix=X
+}
+C {sky130_fd_pr/pfet3_01v8} 230 -420 0 0 {name=M2
+L=LenP
+W=WidthP
+body=VCCPIN
+nf=1
+mult=1
+
+
+model=pfet_01v8
+spiceprefix=X
+}
+C {sky130_fd_pr/pfet3_01v8} 510 -420 0 0 {name=M3
+L=LenP
+W=WidthP
+body=VCCPIN
+nf=1
+mult=1
+
+
+model=pfet_01v8
+spiceprefix=X
+}
+C {sky130_fd_pr/nfet3_01v8} 420 -160 0 0 {name=M4
+L=LenN
+W=WidthN
+body=VSSPIN
+nf=1
+mult=1
+
+
+model=nfet_01v8
+spiceprefix=X
+}
+C {devices/ipin} 120 -260 0 0 {name=p2 lab=B}
+C {devices/opin} 630 -320 0 0 {name=p3 lab=Y}
+C {devices/lab_wire} 440 -200 0 0 {name=l4 sig_type=std_logic lab=S}
+C {devices/lab_pin} 250 -470 2 1 {name=p179 lab=VCCPIN}
+C {devices/lab_pin} 440 -110 2 1 {name=p4 lab=VSSPIN}

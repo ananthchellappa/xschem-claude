@@ -1,0 +1,14 @@
+version 1
+simulator ngspice
+design {lib sky130_tests_ase cell test_jfet view schematic}
+rundir {}
+temperature 27
+models {}
+variables {}
+analyses {{type op enabled 0} {type dc enabled 1 source VD start 0 stop 20 step 0.01} {type ac enabled 0} {type tran enabled 0}}
+outputs {{name j1id expr {@j1[id]} save 1 plot 1} {name j2id expr {@j2[id]} save 1 plot 1}}
+save_all_v 1
+save_all_i 0
+options {{name savecurrents value 1}}
+includes {}
+viewer {}

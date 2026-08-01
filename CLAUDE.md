@@ -80,6 +80,19 @@ worktree/subagent runs, so one Pause pauses every suite. It **fails open** (no
 `DISPLAY`, `GUI_GATE=0`, or a closed panel → tests just run) so CI/headless is
 unaffected. Spec: `doc/claude/specs/gui_test_gate.md`.
 
+**Don't press Proceed forty times.** Many small runs each cost a click, or a
+2-minute autostart wait with nobody at the desk. Press **`Allow 30m` / `Allow 2h`**
+once and every suite in that window starts unprompted — Pause and Stop keep
+working throughout, and the panel shows how many have run. Approving *before*
+launching a batch works too.
+
+**Getting a run under the panel's control:** `run_suites.sh` (preferred, reports
+PASS/FAIL and gives a pause point between runs) or `gated_xschem.sh` as a
+drop-in for `./src/xschem` in a hand-written loop. A bare
+`for i in ...; do ./src/xschem --script t.tcl; done` enrols in neither, so Pause
+cannot reach it — the panel lists such processes as `UNGATED` and the
+**`Halt N xschem`** button (SIGSTOP, resumable) is the only authority over them.
+
 ## Architecture
 
 ### The `xctx` global context

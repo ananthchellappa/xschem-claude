@@ -2914,7 +2914,11 @@ static int xschem_cmds_d(Tcl_Interp *interp, int argc, const char *argv[], int *
     {
       int flags;
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
-      if(argc > 2) {
+      /* has_x: --nogui has no window, no pixmap and no GCs, and draw_graph goes
+       * straight to Xlib -> SIGSEGV (pre-existing, found while testing waveform
+       * markers). Range: both setup_graph_data() and draw_graph() dereference
+       * rect[GRIDLAYER][i] unchecked. Both are now no-ops rather than crashes. */
+      if(argc > 2 && has_x && atoi(argv[2]) >= 0 && atoi(argv[2]) < xctx->rects[GRIDLAYER]) {
         int i = atoi(argv[2]);
         setup_graph_data(i, 0,  &xctx->graph_struct);
         if(argc > 3) {
@@ -3622,6 +3626,25 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
           if(!strcmp(argv[2], "actionlog_filename")) { /* path of the open action log, empty if disabled */
             Tcl_SetResult(interp, actionlog_filename, TCL_VOLATILE);
           }
+          /* the sibling of `get rects` / `get lines` / `get polygons`, which existed;
+           * `get arcs` did not, so a Tcl caller asking for an arc count got the empty
+           * string with rc 0 (an unknown `get` does not error). Added for the issue-0172
+           * emptiness legs, which must assert the arc they placed survived the open. */
+          else if(!strcmp(argv[2], "arcs")) { /* (xschem get arcs n) number of arcs on layer 'n' */
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            if(argc > 3) {
+              int c = atoi(argv[3]);
+              if(c >=0 && c < cadlayers) {
+                Tcl_SetResult(interp, my_itoa(xctx->arcs[c]),TCL_VOLATILE);
+              } else {
+                Tcl_SetResult(interp, "xschem get arcs n: layer number out of range", TCL_STATIC);
+                return TCL_ERROR;
+              }
+            } else {
+              Tcl_SetResult(interp, "xschem get arcs n: give a layer number", TCL_STATIC);
+              return TCL_ERROR;
+            }
+          }
           break;
 
           case 'b':
@@ -3782,6 +3805,198 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
           if(!strcmp(argv[2], "graph_lastsel")) { /* number of last graph that was clicked */
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
             Tcl_SetResult(interp, my_itoa(xctx->graph_lastsel),TCL_VOLATILE);
+          }
+          /* xschem get graph_flags
+           * The per-session graph interaction flag word (xctx->graph_flags): bits
+           * 2/4 = x-cursor A/B drawn, 16/32 = x-cursor A/B being MOVED (grabbed),
+           * 64 = measurement tooltip, 128/256 = y-cursor 1/2 drawn, 512/1024 =
+           * y-cursor 1/2 being moved. Authoritative legend: callback.c
+           * (waves_callback's header comment). NOT xRect.flags, which is the
+           * per-graph type/lock word (landmine 6).
+           * Added so the ASE viewer's LMB drag-to-reorder seam can tell "this
+           * press grabbed a cursor" from "this press landed on empty waveform
+           * space" without mirroring cursor state in Tcl (reference backlog #1).
+           * Reads a scalar, no side effects — safe to call from a binding. */
+          else if(!strcmp(argv[2], "graph_flags")) {
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            Tcl_SetResult(interp, my_itoa((int)xctx->graph_flags), TCL_VOLATILE);
+          }
+          /* xschem get graph_near_wave <graph_idx> <px> <py> [tol]
+           * 1 when the CANVAS PIXEL (px,py) is within `tol` screen pixels
+           * (default GRAPH_TRACE_PICK_TOL, 10 -- the one tolerance every
+           * trace-picking surface on a strip shares, xschem.h) of a displayed
+           * trace of graph <graph_idx>, else 0.
+           * Uses the engine's own transform + raw data (draw.c graph_near_wave),
+           * so the caller never re-derives the plot box margins in Tcl.
+           * The ASE viewer's trace-exclusion zone: near-trace LMB stays with the
+           * C engine (cursor grab, wave-bold), empty body space belongs to strip
+           * drag-reordering. Deliberately takes the EVENT's pixels rather than the
+           * C mouse mirror, which is stale for a press with no preceding Motion. */
+          else if(!strcmp(argv[2], "graph_near_wave")) {
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            if(argc > 5) {
+              double tol = (argc > 6) ? atof(argv[6]) : GRAPH_TRACE_PICK_TOL;
+              Tcl_SetResult(interp,
+                my_itoa(graph_near_wave(atoi(argv[3]), atof(argv[4]), atof(argv[5]), tol)),
+                TCL_VOLATILE);
+            } else {
+              Tcl_SetResult(interp, "0", TCL_STATIC);
+            }
+          }
+          /* xschem get graph_plotbox_at <graph_idx> <px> <py>
+           * 1 when the CANVAS PIXEL (px,py) is inside graph <graph_idx>'s PLOT
+           * BOX -- the rectangle delineated by the two axes and the two lines
+           * opposite them -- else 0. NOT a distance to a trace: the whole
+           * interior answers 1, the legend/label margins around it answer 0.
+           * Exposes draw.c's graph_plotbox_at (viewer plan item 9's snap-cursor
+           * gate) unchanged, INCLUDING its refusals: a bad index, a non-graph
+           * rect, an off-screen graph, a DIGITAL strip or no loaded data all
+           * answer 0.
+           * The ASE viewer's strip context menu (item 8) uses it to stay OUT of
+           * the label margin, where a Button3 press is already the wave
+           * attributes dialog (callback.c ~896). Tcl cannot re-derive the box:
+           * the margins come from the engine's own transform. */
+          else if(!strcmp(argv[2], "graph_plotbox_at")) {
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            if(argc > 5) {
+              Tcl_SetResult(interp,
+                my_itoa(graph_plotbox_at(atoi(argv[3]), atof(argv[4]), atof(argv[5]))),
+                TCL_VOLATILE);
+            } else {
+              Tcl_SetResult(interp, "0", TCL_STATIC);
+            }
+          }
+          /* xschem get graph_trace_at <graph_idx> <px> <py> [tol]
+           * The NODE INDEX (position in the graph's `node` prop token, the same
+           * index space as `hilight_wave` / find_closest_wave's node_number) of
+           * the trace passing within `tol` screen pixels (default
+           * GRAPH_TRACE_PICK_TOL, 10 -- shared with the RMB trace menu, the LMB
+           * trace drag and the LMB wave-bold click, xschem.h) of the CANVAS
+           * PIXEL (px,py); -1 when none is that close. Nearest wins.
+           * Same engine-side machinery as graph_near_wave above (draw.c
+           * graph_wave_at), which is the same query without the identity: the
+           * ASE viewer uses this one to pick up a trace and drag it onto another
+           * strip. Read-only: no highlight, no prop mutation, no redraw. */
+          /* xschem get graph_legend_at <graph_idx> <px> <py>
+           * The NODE INDEX of the LEGEND entry under the CANVAS PIXEL (px,py),
+           * or -1. The legend's own hit test, extracted out of
+           * edit_wave_attributes() by issue 0175 so both mouse buttons and Tcl
+           * share one answer -- before that it existed only fused to the
+           * Button3 action, which is why two comments in wave_viewer.tcl used to
+           * say the engine had "no C hit-test API" for the legend.
+           * All THREE legend layouts (vertical, digital, horizontal). It does
+           * NOT refuse digital strips, unlike graph_plotbox_at / graph_trace_at:
+           * a digital strip's body answers -1 everywhere, so its legend is the
+           * only place a trace can be picked at all.
+           * ⚠ The `node` token, hence this index space, counts NODES, not model
+           * traces (landmine 34). Fails closed: a bad index, a non-graph rect,
+           * an off-screen graph, `legend=0` or a strip with no `node` token all
+           * answer -1. Read-only: no highlight, no prop mutation, no redraw. */
+          else if(!strcmp(argv[2], "graph_legend_at")) {
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            if(argc > 5) {
+              Tcl_SetResult(interp,
+                my_itoa(graph_legend_at(atoi(argv[3]), atof(argv[4]), atof(argv[5]))),
+                TCL_VOLATILE);
+            } else {
+              Tcl_SetResult(interp, "-1", TCL_STATIC);
+            }
+          }
+          else if(!strcmp(argv[2], "graph_trace_at")) {
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            if(argc > 5) {
+              double tol = (argc > 6) ? atof(argv[6]) : GRAPH_TRACE_PICK_TOL;
+              Tcl_SetResult(interp,
+                my_itoa(graph_wave_at(atoi(argv[3]), atof(argv[4]), atof(argv[5]), tol)),
+                TCL_VOLATILE);
+            } else {
+              Tcl_SetResult(interp, "-1", TCL_STATIC);
+            }
+          }
+          /* ---- waveform markers, doc/claude/specs/graph_markers.md ----
+           * Four read-only getters, all FAIL SOFT (a sentinel + TCL_OK on a
+           * short or bad query, never an error): the ASE viewer wraps them in
+           * `catch` + `string is integer -strict` and must be able to treat a
+           * missing/erroring verb as "nothing there", never as "locked out". */
+
+          /* xschem get graph_marker_at <graph_idx> <px> <py> [tol]
+           * Which marker is under that CANVAS PIXEL, and WHICH PART of it:
+           * "" (nothing) | "<num> anchor" | "<num> label". The part matters
+           * because the two drive DIFFERENT drags -- the anchor slides along its
+           * trace, the label just moves. Default tol = GRAPH_MARKER_TOL. */
+          else if(!strcmp(argv[2], "graph_marker_at")) {
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            if(argc > 5) {
+              int part = 0, num;
+              double tol = (argc > 6) ? atof(argv[6]) : GRAPH_MARKER_TOL;
+              num = graph_marker_at(atoi(argv[3]), atof(argv[4]), atof(argv[5]), tol, &part);
+              if(num > 0 && part) {
+                char res[80];
+                my_snprintf(res, S(res), "%d %s", num, part == 1 ? "anchor" : "label");
+                Tcl_SetResult(interp, res, TCL_VOLATILE);
+              } else {
+                Tcl_ResetResult(interp);
+              }
+            } else {
+              Tcl_ResetResult(interp);
+            }
+          }
+          /* xschem get graph_marker_drag -> 0 none | 1 anchor drag | 2 label drag.
+           * The cursor_grabbed twin: the ASE press seam consults it to decide
+           * that C owns the whole gesture. */
+          else if(!strcmp(argv[2], "graph_marker_drag")) {
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            Tcl_SetResult(interp, my_itoa(xctx->graph_marker_drag), TCL_VOLATILE);
+          }
+          /* xschem get graph_marker_sel -> the selected marker number, -1 = none */
+          else if(!strcmp(argv[2], "graph_marker_sel")) {
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            Tcl_SetResult(interp, my_itoa(xctx->graph_marker_sel), TCL_VOLATILE);
+          }
+          /* xschem get graph_rects -> how many layer-2 rects are GRAPHS.
+           * Not the same as `xschem get rects 2` (every rect on the layer): the
+           * ASE marker push hook uses this for its model<->rect 1:1 guard, and a
+           * single stray non-graph GRIDLAYER rect would permanently disable it. */
+          else if(!strcmp(argv[2], "graph_rects")) {
+            int gi, cnt = 0;
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            for(gi = 0; gi < xctx->rects[GRIDLAYER]; gi++)
+              if(xctx->rect[GRIDLAYER][gi].flags & 1) cnt++;
+            Tcl_SetResult(interp, my_itoa(cnt), TCL_VOLATILE);
+          }
+          /* viewer plan item 9: the snap cursor's current pick, for item 10's
+           * status bar. "<graph-index> <node-index> <x> <y>" with x/y the RAW
+           * sample values, or "" when nothing is snapped. Read-only, and it
+           * NEVER runs the query itself -- it reports what the hover pump last
+           * found, so polling it from Tcl costs nothing. */
+          else if(!strcmp(argv[2], "graph_snap")) {
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            if(!xctx->graph_snap_on) {
+              Tcl_SetResult(interp, "", TCL_STATIC);
+            } else {
+              char s[200];
+              my_snprintf(s, S(s), "%d %d %.10g %.10g", xctx->graph_snap_gi,
+                          xctx->graph_snap_wave, xctx->graph_snap_x, xctx->graph_snap_y);
+              Tcl_SetResult(interp, s, TCL_VOLATILE);
+            }
+          }
+          /* xschem get graph_preview
+           * Viewer plan item 6, the read-back seam: `<gi> <wave> <scale>` while
+           * a shrink preview is armed, else the single word `0`. */
+          else if(!strcmp(argv[2], "graph_preview")) {
+            char s[128];
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            if(xctx->graph_preview_scale == 0.0) {
+              Tcl_SetResult(interp, "0", TCL_STATIC);
+            } else {
+              my_snprintf(s, S(s), "%d %d %.10g", xctx->graph_preview_gi,
+                          xctx->graph_preview_wave, xctx->graph_preview_scale);
+              Tcl_SetResult(interp, s, TCL_VOLATILE);
+            }
+          }
+          else if(!strcmp(argv[2], "graph_snap_cursor")) { /* item 9: per-window snap arming */
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            Tcl_SetResult(interp, xctx->graph_snap != 0 ? "1" : "0", TCL_STATIC);
           }
           else if(!strcmp(argv[2], "gridlayer")) { /* layer number for grid */
             Tcl_SetResult(interp, my_itoa(GRIDLAYER),TCL_VOLATILE);
@@ -3992,6 +4207,15 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
           else if(!strcmp(argv[2], "no_grid")) { /* per-window grid/origin suppression (item 18) */
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
             Tcl_SetResult(interp, xctx->no_grid != 0 ? "1" : "0", TCL_STATIC);
+          }
+          /* xschem get no_snap
+           * per-window "this canvas has no schematic snap grid" (issue 0177).
+           * The blast-radius witness for the whole feature: a viewer window answers 1
+           * and every schematic window answers 0, so a test can prove the property is
+           * scoped to the context rather than global. */
+          else if(!strcmp(argv[2], "no_snap")) {
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            Tcl_SetResult(interp, xctx->no_snap != 0 ? "1" : "0", TCL_STATIC);
           }
           else if(!strcmp(argv[2], "ntabs")) { /* get number of additional tabs (0 = only one tab) */
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
@@ -4268,7 +4492,15 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
           }
           break;
           case 'w':
-          if(!strcmp(argv[2], "wirelayer")) { /* layer used for wires */
+          /* xschem get wave_viewer
+           * per-window "this context is a waveform viewer, not a schematic" (issue
+           * 0172). Set by wviewer::open; the witness a test uses to prove that a
+           * viewer window is excluded from the pristine-untitled reuse path while
+           * every schematic window still answers 0. */
+          if(!strcmp(argv[2], "wave_viewer")) {
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            Tcl_SetResult(interp, xctx->wave_viewer != 0 ? "1" : "0", TCL_STATIC);
+          } else if(!strcmp(argv[2], "wirelayer")) { /* layer used for wires */
             Tcl_SetResult(interp, my_itoa(WIRELAYER), TCL_VOLATILE);
           } else if(!strcmp(argv[2], "wires")) { /* number of wires */
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
@@ -4873,6 +5105,133 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
             Tcl_SetResult(interp, res, TCL_VOLATILE); /* copies: stack buf is fine */
           }
         }
+      }
+    }
+
+    /* xschem graph_marker <sub> ...   (doc/claude/specs/graph_markers.md)
+     *
+     * The MUTATING half of the marker surface -- fails LOUD (usage + TCL_ERROR),
+     * unlike the `xschem get graph_marker_*` getters which fail soft. Must live
+     * in xschem_cmds_g: the top-level dispatch is on argv[1][0], so a verb in the
+     * wrong first-letter function is reachable only as "invalid command".
+     *
+     * Persistence needs no verb of its own -- `xschem getprop/setprop rect 2 <i>
+     * markers` already round-trips the multi-line token exactly.
+     *
+     *   add       <gi> <px> <py> [-delta]              -> new number | {}
+     *   add_at    <gi> <wave> <dset> <point> [-delta]  -> new number | {}
+     *   anchor    <num> <dset> <point>                 -> 1|0
+     *   move      <num> <px> <py>                      -> 1|0
+     *   label     <num> <ldx> <ldy>                    -> 1|0
+     *   delete    <num> | -all [<gi>]                  -> 1|0 | count
+     *   select    <num> [<gi>] | -none                 -> the new selection
+     *   list      [<gi>]  -> {{num graph wave dset point x y prev ldx ldy} ...}
+     *   text      <num>   -> the rendered label (embedded newlines)
+     */
+    else if(!strcmp(argv[1], "graph_marker"))
+    {
+      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(argc < 3) {
+        Tcl_SetResult(interp, "xschem graph_marker: usage: add|add_at|anchor|move|label|"
+                              "delete|select|list|text ...", TCL_STATIC);
+        return TCL_ERROR;
+      }
+      /* `select` is pure UI state, `list`/`text` are queries: not readonly-gated.
+       * Everything else mutates content and is (the ASE viewer defeats the gate
+       * deliberately through wviewer::with_edit, the established pattern). */
+      if(strcmp(argv[2], "select") && strcmp(argv[2], "list") && strcmp(argv[2], "text")) {
+        if(scheduler_readonly_reject(interp, "graph_marker")) return TCL_ERROR;
+      }
+      Tcl_ResetResult(interp);
+      if(!strcmp(argv[2], "add") && argc > 5) {
+        int delta = (argc > 6 && !strcmp(argv[6], "-delta"));
+        int num = graph_marker_create(atoi(argv[3]), atof(argv[4]), atof(argv[5]), delta);
+        /* reset on refusal too: the engine's extra_rawfile() does a tclvareval
+         * internally and leaves the substituted filename in the interp result,
+         * so "" is only really "" if we clear it here */
+        if(num > 0) Tcl_SetResult(interp, my_itoa(num), TCL_VOLATILE);
+        else Tcl_ResetResult(interp);
+      }
+      else if(!strcmp(argv[2], "add_at") && argc > 6) {
+        int delta = (argc > 7 && !strcmp(argv[7], "-delta"));
+        int num = graph_marker_create_at(atoi(argv[3]), atoi(argv[4]), atoi(argv[5]),
+                                         atoi(argv[6]), delta);
+        if(num > 0) Tcl_SetResult(interp, my_itoa(num), TCL_VOLATILE);
+        else Tcl_ResetResult(interp);
+      }
+      else if(!strcmp(argv[2], "anchor") && argc > 5) {
+        Tcl_SetResult(interp,
+          my_itoa(graph_marker_anchor_at(atoi(argv[3]), atoi(argv[4]), atoi(argv[5]))),
+          TCL_VOLATILE);
+      }
+      else if(!strcmp(argv[2], "move") && argc > 5) {
+        Tcl_SetResult(interp,
+          my_itoa(graph_marker_move(atoi(argv[3]), atof(argv[4]), atof(argv[5]))),
+          TCL_VOLATILE);
+      }
+      else if(!strcmp(argv[2], "label") && argc > 5) {
+        Tcl_SetResult(interp,
+          my_itoa(graph_marker_label_offset(atoi(argv[3]), atof(argv[4]), atof(argv[5]))),
+          TCL_VOLATILE);
+      }
+      else if(!strcmp(argv[2], "delete") && argc > 3) {
+        if(!strcmp(argv[3], "-all")) {
+          int gi = (argc > 4) ? atoi(argv[4]) : -1;
+          Tcl_SetResult(interp, my_itoa(graph_marker_delete_all(gi)), TCL_VOLATILE);
+        } else {
+          Tcl_SetResult(interp, my_itoa(graph_marker_delete(atoi(argv[3]))), TCL_VOLATILE);
+        }
+      }
+      else if(!strcmp(argv[2], "select") && argc > 3) {
+        int res;
+        if(!strcmp(argv[3], "-none")) res = graph_marker_select(-1, -1);
+        else res = graph_marker_select(atoi(argv[3]), (argc > 4) ? atoi(argv[4]) : xctx->graph_master);
+        Tcl_SetResult(interp, my_itoa(res), TCL_VOLATILE);
+      }
+      else if(!strcmp(argv[2], "list")) {
+        int gi, want = (argc > 3) ? atoi(argv[3]) : -1;
+        Tcl_Obj *lst = Tcl_NewListObj(0, NULL);
+        for(gi = 0; gi < xctx->rects[GRIDLAYER]; gi++) {
+          GraphMarker *a = NULL;
+          int n = 0, k;
+          if(!(xctx->rect[GRIDLAYER][gi].flags & 1)) continue;
+          if(want >= 0 && want != gi) continue;
+          n = graph_markers_parse(xctx->rect[GRIDLAYER][gi].prop_ptr, &a, &n);
+          for(k = 0; k < n; k++) {
+            char buf[128];
+            Tcl_Obj *rec = Tcl_NewListObj(0, NULL);
+            Tcl_ListObjAppendElement(interp, rec, Tcl_NewIntObj(a[k].num));
+            Tcl_ListObjAppendElement(interp, rec, Tcl_NewIntObj(gi));
+            Tcl_ListObjAppendElement(interp, rec, Tcl_NewIntObj(a[k].wave));
+            Tcl_ListObjAppendElement(interp, rec, Tcl_NewIntObj(a[k].dataset));
+            Tcl_ListObjAppendElement(interp, rec, Tcl_NewIntObj(a[k].point));
+            /* %.17g, not Tcl's 6-significant-digit default: this is the seam the
+             * tests assert exactness against */
+            my_snprintf(buf, S(buf), "%.17g", a[k].x);
+            Tcl_ListObjAppendElement(interp, rec, Tcl_NewStringObj(buf, -1));
+            my_snprintf(buf, S(buf), "%.17g", a[k].y);
+            Tcl_ListObjAppendElement(interp, rec, Tcl_NewStringObj(buf, -1));
+            Tcl_ListObjAppendElement(interp, rec, Tcl_NewIntObj(a[k].prev));
+            my_snprintf(buf, S(buf), "%.10g", a[k].ldx);
+            Tcl_ListObjAppendElement(interp, rec, Tcl_NewStringObj(buf, -1));
+            my_snprintf(buf, S(buf), "%.10g", a[k].ldy);
+            Tcl_ListObjAppendElement(interp, rec, Tcl_NewStringObj(buf, -1));
+            Tcl_ListObjAppendElement(interp, lst, rec);
+          }
+          if(a) my_free(_ALLOC_ID_, &a);
+        }
+        Tcl_SetObjResult(interp, lst);
+      }
+      else if(!strcmp(argv[2], "text") && argc > 3) {
+        char buf[512];
+        if(graph_marker_text(atoi(argv[3]), buf, S(buf)))
+          Tcl_SetResult(interp, buf, TCL_VOLATILE);
+        else Tcl_ResetResult(interp);
+      }
+      else {
+        Tcl_SetResult(interp, "xschem graph_marker: usage: add|add_at|anchor|move|label|"
+                              "delete|select|list|text ...", TCL_STATIC);
+        return TCL_ERROR;
       }
     }
     else { *cmd_found = 0;}
@@ -5834,13 +6193,81 @@ static int is_untitled_basename(const char *path)
  * reused (their work is preserved; the open goes to a new window/tab instead). */
 static int is_pristine_untitled(void)
 {
+  int i;
   if(!xctx) return 0;
-  if(xctx->currsch != 0) return 0;
-  if(xctx->modified) return 0;
-  if(xctx->instances != 0 || xctx->wires != 0) return 0;
-  if(!xctx->sch[xctx->currsch]) return 0;   /* NULL-safe (issue 0023) */
-  return (xctx->sch[xctx->currsch][0] == '\0' ||
-          is_untitled_basename(xctx->sch[xctx->currsch]));
+  /* issue 0172: a waveform-viewer window is NEVER a reuse target. It is a schematic
+   * buffer by construction -- top level, named untitled, no instances, no wires -- and
+   * wviewer::with_edit (contract D1) ends every mutation with `xschem set_modify 0`, so
+   * `modified` is 0 for the buffer's whole life: a viewer never ages out of "pristine"
+   * the way a scratch buffer does the moment the user draws in it. A real schematic was
+   * therefore loaded INTO a live viewer, destroying its graph rects and leaving the
+   * document under the viewer's bindtag and menubar, where Ctrl-D (wviewer::clear_all)
+   * wipes it. The test lives HERE, in the shared predicate, rather than in the three
+   * callers (the `xschem load -gui` routing, `load_new_window <file>`, and
+   * `load_new_window` via the file dialog) so all three doors close at once and the
+   * next caller cannot reintroduce the hijack. */
+  /* Every refusal names itself at dbg level 1: "why did opening a file give me a new
+   * window instead of reusing my blank one?" must be one `xschem -d 1` away, not an
+   * afternoon of git log. Level 1 costs nothing in normal use (dbg() returns
+   * immediately when debug_var < level). */
+  if(xctx->wave_viewer) {
+    dbg(1, "is_pristine_untitled(): NO -- this window is a waveform viewer\n");
+    return 0;
+  }
+  if(xctx->currsch != 0) {
+    dbg(1, "is_pristine_untitled(): NO -- not top level (currsch=%d)\n", xctx->currsch);
+    return 0;
+  }
+  if(xctx->modified) {
+    dbg(1, "is_pristine_untitled(): NO -- buffer is modified\n");
+    return 0;
+  }
+  if(xctx->instances != 0 || xctx->wires != 0) {
+    dbg(1, "is_pristine_untitled(): NO -- buffer has content (instances=%d wires=%d)\n",
+        xctx->instances, xctx->wires);
+    return 0;
+  }
+  /* ...and "pristine" means the buffer is actually EMPTY, not merely free of instances
+   * and wires (issue 0172). Drawing normally sets `modified`, which is what used to
+   * make the rest of the object arrays redundant -- but any path that clears it (the
+   * viewer's D1 contract; a script calling `xschem set_modify 0`) then handed a buffer
+   * with content in it to the next open, silently. rects/lines/polygons/arcs are
+   * per-layer counters, so this is a per-layer scan; a freshly created untitled buffer
+   * is 0 in every one of them (measured, startup and after `xschem clear force`). */
+  if(xctx->texts != 0) {
+    dbg(1, "is_pristine_untitled(): NO -- buffer has %d text object(s)\n", xctx->texts);
+    return 0;
+  }
+  for(i = 0; i < cadlayers; i++) {
+    if(xctx->rects && xctx->rects[i]) {
+      dbg(1, "is_pristine_untitled(): NO -- %d rect(s) on layer %d\n", xctx->rects[i], i);
+      return 0;
+    }
+    if(xctx->lines && xctx->lines[i]) {
+      dbg(1, "is_pristine_untitled(): NO -- %d line(s) on layer %d\n", xctx->lines[i], i);
+      return 0;
+    }
+    if(xctx->polygons && xctx->polygons[i]) {
+      dbg(1, "is_pristine_untitled(): NO -- %d polygon(s) on layer %d\n", xctx->polygons[i], i);
+      return 0;
+    }
+    if(xctx->arcs && xctx->arcs[i]) {
+      dbg(1, "is_pristine_untitled(): NO -- %d arc(s) on layer %d\n", xctx->arcs[i], i);
+      return 0;
+    }
+  }
+  if(!xctx->sch[xctx->currsch]) {           /* NULL-safe (issue 0023) */
+    dbg(1, "is_pristine_untitled(): NO -- no schematic name\n");
+    return 0;
+  }
+  {
+    int pristine = (xctx->sch[xctx->currsch][0] == '\0' ||
+                    is_untitled_basename(xctx->sch[xctx->currsch]));
+    dbg(1, "is_pristine_untitled(): %s -- empty buffer named \"%s\"%s\n",
+        pristine ? "YES" : "NO", xctx->sch[xctx->currsch],
+        pristine ? " (reused in place)" : " (not an untitled basename)");
+    return pristine;
+  }
 }
 
 /* `xschem l...` commands, moved verbatim from the xschem() dispatcher
@@ -9247,17 +9674,25 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
       Tcl_ResetResult(interp);
     }
 
-    /* resolved_net [net]
+    /* resolved_net [net [level]]
      *   if 'net' is given  return its topmost full hierarchy name
      *   else returns the topmost full hierarchy name of selected net/pin/label.
-     *   Nets connected to I/O ports are mapped to upper level recursively */
+     *   Nets connected to I/O ports are mapped to upper level recursively.
+     *   'level' (issue 0168) names the hierarchy level the returned path is
+     *   measured FROM (0 = the window's top). Omitted / negative keeps the
+     *   shipped behavior: measure from the level the loaded raw belongs to
+     *   (sch_waves_loaded()), else from the top. ASE-L passes the level of the
+     *   design its session simulates, so a pick made while descended is named
+     *   the way THAT deck names it. */
     else if(!strcmp(argv[1], "resolved_net"))
     {
       const char *net = NULL;
       char  *rn = NULL;
+      int from_level = -1;
       if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
       Tcl_ResetResult(interp);
       prepare_netlist_structs(0);
+      if(argc > 3) from_level = atoi(argv[3]);
       if(argc > 2) {
         net = argv[2];
       } else if(xctx->lastsel == 1) {
@@ -9276,7 +9711,7 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
           }
         }
       }
-      rn = resolved_net(net);
+      rn = resolved_net_from(net, from_level);
       Tcl_AppendResult(interp, rn, NULL);
       my_free(_ALLOC_ID_, &rn);
     }
@@ -9982,6 +10417,37 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
             actionlog_suppress = atoi(argv[3]);
             if(actionlog_suppress < 0) actionlog_suppress = 0;
           }
+          else if(!strcmp(argv[2], "graph_snap_cursor")) { /* item 9: per-window snap arming */
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            xctx->graph_snap = atoi(argv[3]) ? 1 : 0;
+            /* disarming must also take the painted glyph down, or it would sit
+             * frozen on the canvas with no pump left to erase it */
+            if(!xctx->graph_snap) graph_snap_clear();
+          }
+          /* xschem set graph_preview <gi> <wave> <scale>
+           * xschem set graph_preview 0            -> disarm
+           * Viewer plan item 6: draw NODE <wave> of graph <gi> vertically
+           * shrunk by <scale> about the plot box centre, on screen only. Purely
+           * transient: no prop token, no model write, no undo point, and
+           * draw_graph applies it only for flags & 16 so no export sees it.
+           * A scale of 0 (or a short argument list) disarms, which is also the
+           * calloc default -- there is no sentinel to maintain.
+           * Caller redraws; this does not, so a motion event can arm and repaint
+           * in one place. */
+          else if(!strcmp(argv[2], "graph_preview")) {
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            if(argc > 5) {
+              xctx->graph_preview_gi = atoi(argv[3]);
+              xctx->graph_preview_wave = atoi(argv[4]);
+              xctx->graph_preview_scale = atof(argv[5]);
+            } else {
+              xctx->graph_preview_scale = 0.0;
+            }
+            if(xctx->graph_preview_scale == 0.0) {
+              xctx->graph_preview_gi = 0;
+              xctx->graph_preview_wave = 0;
+            }
+          }
           else if(!strcmp(argv[2], "cadgrid")) { /* set cad grid (default: 20) */
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
             set_grid( atof(argv[3]) );
@@ -10163,6 +10629,27 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
           else if(!strcmp(argv[2], "no_grid")) { /* per-window grid/origin suppression (item 18) */
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
             xctx->no_grid = atoi(argv[3]) ? 1 : 0;
+          }
+          /* xschem set no_snap 0|1
+           * "this canvas has no schematic snap grid" (issue 0177). PER CONTEXT, like
+           * no_grid above -- `cadsnap` is a global the waveform viewer has no business
+           * sharing. Consulted at the SOURCE in callback() (where mousex_snap is born)
+           * and by the two schematic pointer glyphs, so setting it once covers every
+           * downstream reader instead of one override per handler. */
+          else if(!strcmp(argv[2], "no_snap")) {
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            xctx->no_snap = atoi(argv[3]) ? 1 : 0;
+          }
+          /* xschem set wave_viewer 0|1
+           * "this context is a waveform viewer, not a schematic" (issue 0172). PER
+           * CONTEXT, like no_grid / no_snap above, and stamped by wviewer::open in the
+           * same block. Read by is_pristine_untitled(), which refuses to hand a viewer
+           * to an open as a reuse target. Settable from Tcl both because that is where
+           * the viewer is built and because it is what lets a regression test brand a
+           * buffer as a viewer HEADLESSLY, with no Tk and no DISPLAY. */
+          else if(!strcmp(argv[2], "wave_viewer")) {
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            xctx->wave_viewer = atoi(argv[3]) ? 1 : 0;
           }
           else if(!strcmp(argv[2], "readonly")) { /* set window read-only (0 or 1); refresh title */
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
@@ -11802,16 +12289,29 @@ static int xschem_cmds_w(Tcl_Interp *interp, int argc, const char *argv[], int *
       for(i = 0; i < MAX_NEW_WINDOWS; ++i) {
         const char *wp, *tp, *nm;
         char xwin[32], wnum[16];
-        Tcl_Obj *entry;
+        int lvl;
+        Tcl_Obj *entry, *hier;
         ctx = get_window_ctx(i, &wp);
         if(!ctx) continue;
         tp = (ctx->top_path && ctx->top_path[0]) ? ctx->top_path : ".";
         nm = ctx->sch[ctx->currsch] ? ctx->sch[ctx->currsch] : "";
         my_snprintf(xwin, S(xwin), "%lu", (unsigned long)ctx->window);
         my_snprintf(wnum, S(wnum), "%d", ctx->window_number);
-        /* {win_path top_path group xwindow current_name number}; group == tp for now
-         * (Phase 0). 'number' is the Cadence-style stable window number
-         * (doc/claude/specs/window_numbering.md) appended as a 6th trailing field. */
+        /* the window's whole hierarchy STACK, sch[0] (the top) .. sch[currsch] (what
+         * is on screen). 'current_name' above is only the last element, so a window
+         * DESCENDED into a design was invisible to every "which window holds X?"
+         * scan -- issue 0168, where ASE-L's Results > Direct Plot re-opened the top
+         * elsewhere instead of picking in the window the user had navigated. */
+        hier = Tcl_NewListObj(0, NULL);
+        for(lvl = 0; lvl <= ctx->currsch && lvl < CADMAXHIER; ++lvl) {
+          Tcl_ListObjAppendElement(interp, hier,
+            Tcl_NewStringObj(ctx->sch[lvl] ? ctx->sch[lvl] : "", -1));
+        }
+        /* {win_path top_path group xwindow current_name number hier}; group == tp for
+         * now (Phase 0). 'number' is the Cadence-style stable window number
+         * (doc/claude/specs/window_numbering.md) appended as a 6th trailing field,
+         * 'hier' the stack above as a 7th. Both are APPENDED, so every existing
+         * `lindex $e 0..5` consumer is unaffected. */
         entry = Tcl_NewListObj(0, NULL);
         Tcl_ListObjAppendElement(interp, entry, Tcl_NewStringObj(wp, -1));
         Tcl_ListObjAppendElement(interp, entry, Tcl_NewStringObj(tp, -1));
@@ -11819,6 +12319,7 @@ static int xschem_cmds_w(Tcl_Interp *interp, int argc, const char *argv[], int *
         Tcl_ListObjAppendElement(interp, entry, Tcl_NewStringObj(xwin, -1));
         Tcl_ListObjAppendElement(interp, entry, Tcl_NewStringObj(nm, -1));
         Tcl_ListObjAppendElement(interp, entry, Tcl_NewStringObj(wnum, -1));
+        Tcl_ListObjAppendElement(interp, entry, hier);
         Tcl_ListObjAppendElement(interp, result, entry);
       }
       Tcl_SetObjResult(interp, result);

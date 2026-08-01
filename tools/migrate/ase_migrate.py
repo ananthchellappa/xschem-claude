@@ -58,29 +58,76 @@ class MigrationError(Exception):
 # Tcl-list serialization (faithful to ase::state_serialize / Tcl_ConvertElement)
 # --------------------------------------------------------------------------- #
 # A state field's canonical line is `key [list <value>]`: the value (itself a Tcl
-# list string) is wrapped once more by [list ...], which brace-quotes it if it
-# contains whitespace or any of {}[]$;"\ — empirically verified against tclsh.
+# list string) is wrapped once more by [list ...]. Tcl_ScanElement /
+# Tcl_ConvertElement (tclUtil.c) pick one of FOUR forms for that element — bare,
+# brace-wrapped, backslash-escaped, or "mask" (escape everything except braces
+# that are already balanced) — and _tcl_conv reproduces that decision exactly, so
+# NO value is out of domain. It used to brace-quote unconditionally and raise on
+# any backslash, which crashed on a real cell (a graph `node=` line continuation);
+# see doc/claude/issues/0167-ase-migrate-quoting-and-graph-node.md. The rules are
+# differential-fuzzed against tclsh in tools/migrate/test_ase_migrate.py §1.
+# The leading-`#` rule applies to the FIRST element of a list only -> quote_hash.
 
-_QUOTE_CHARS = set(' \t\n\r\v\f{}[]$;"\\')
+_WS_CHARS = " \t\n\v\f\r"
+_ESC_MAP = {" ": "\\ ", "\t": "\\t", "\n": "\\n", "\v": "\\v", "\f": "\\f",
+            "\r": "\\r", "[": "\\[", "]": "\\]", "$": "\\$", ";": "\\;",
+            '"': '\\"', "\\": "\\\\"}
 
 
-def _tcl_conv(s):
-    """Tcl_ConvertElement for the string `s`: return it brace-wrapped iff it needs
-    quoting, bare otherwise. Backslash/unbalanced-brace values fall outside our
-    data domain and raise (the caller can then fall back to xschem canonicalize)."""
+def _tcl_conv(s, quote_hash=True):
+    """Tcl_ConvertElement for the string `s`: byte-for-byte what Tcl's
+    `[list $s]` produces, for every possible `s` (never raises)."""
     if s == "":
         return "{}"
-    if not any(c in _QUOTE_CHARS for c in s):
-        return s
-    if "\\" in s or s.count("{") != s.count("}"):
-        raise MigrationError("value needs backslash quoting (out of domain): %r" % s)
-    return "{" + s + "}"
+    forbid_none = prefer_brace = require_escape = False
+    nesting = 0
+    if s[0] in "{\"" or (quote_hash and s[0] == "#"):
+        forbid_none = prefer_brace = True
+    i, n = 0, len(s)
+    while i < n:
+        c = s[i]
+        if c == "{":
+            nesting += 1
+        elif c == "}":
+            nesting -= 1
+            if nesting < 0:
+                require_escape = True            # closes before it opens
+        elif c == "]" or c == '"':
+            forbid_none = True                   # not brace-preferring on its own
+        elif c in "[$;" or c in _WS_CHARS:
+            forbid_none = True
+            prefer_brace = True
+        elif c == "\\":
+            forbid_none = True
+            if i + 1 >= n or s[i + 1] == "\n":
+                require_escape = True            # a trailing \ would eat the `}`
+            else:
+                prefer_brace = True
+                i += 1                           # escaped char takes no further part
+        i += 1
+    if nesting != 0:
+        require_escape = True
+    if not require_escape:
+        if not forbid_none:
+            return s                             # CONVERT_NONE
+        if prefer_brace:
+            return "{" + s + "}"                 # CONVERT_BRACE
+    out = []                                     # CONVERT_ESCAPE / CONVERT_MASK
+    for idx, c in enumerate(s):
+        if c in "{}":
+            out.append("\\" + c if require_escape else c)   # MASK keeps balanced
+        elif idx == 0 and c == "#" and quote_hash:
+            out.append("\\#")
+        else:
+            out.append(_ESC_MAP.get(c, c))
+    return "".join(out)
 
 
 def _struct_to_str(x):
     """Canonical Tcl-list string of a nested (str | list) structure."""
     if isinstance(x, (list, tuple)):
-        return " ".join(_tcl_conv(_struct_to_str(e)) for e in x)
+        return " ".join(_tcl_conv(_struct_to_str(e), quote_hash=(i == 0))
+                        for i, e in enumerate(x))
     return str(x)
 
 
@@ -154,6 +201,115 @@ _KEEP_CONTROL = frozenset((
     "noise", "disto", "pz", "tf", "sp"))
 
 
+# option names ngspice/Xyce accept (`NONLIN-TRAN` is real); anything else is a
+# stray token, not an option
+_OPT_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_.\-]*$")
+# `plot sig+2` / `plot v(clk)+2` is a DISPLAY offset, not a signal — `.save sig+2`
+# is not a valid vector
+_PLOT_OFFSET_RE = re.compile(
+    r"^([A-Za-z_][A-Za-z0-9_.\[\]]*(?:\([^()]*\))?)([+-]\d+(?:\.\d+)?)$")
+# ngspice `plot`/`print` display keywords — never signals. Probed against
+# ngspice-42: `plot xlog response` plots `response` only.
+_PLOT_FLAGS = frozenset(("xlog", "ylog", "loglog", "linear", "polar", "smith",
+                         "smithgrid", "nogrid", "samep", "retraceplot"))
+_PLOT_KW1 = frozenset(("title", "xlabel", "ylabel", "xdelta", "ydelta",
+                       "xcompress", "xindices"))
+_PLOT_KW2 = frozenset(("xlimit", "ylimit"))
+# `i(@dev[param])` is not an ngspice vector — the device-parameter form is bare
+# `@dev[param]` (probed: `print i(@m1[id])` -> "no such function as i")
+_IDEV_RE = re.compile(r"^i\((@[^()]*\[[A-Za-z0-9_]+\])\)$", re.I)
+
+
+def _unquote(tok):
+    """Strip one layer of matching surrounding quotes."""
+    if len(tok) >= 2 and tok[0] == tok[-1] and tok[0] in "\"'":
+        return tok[1:-1]
+    return tok
+
+
+def _split_ws(text):
+    """Whitespace split that keeps {...}, (...) and "..." groups together, so
+    `.param p={1.8 * 2}` is ONE token and `.include "/opt/my models/x.lib"` is
+    one path. A bare str.split() shredded both."""
+    toks, cur, depth, quote = [], [], 0, None
+    for ch in text:
+        if quote:
+            cur.append(ch)
+            if ch == quote:
+                quote = None
+            continue
+        if ch in "\"'":
+            quote = ch
+            cur.append(ch)
+            continue
+        if ch in "{(":
+            depth += 1
+        elif ch in "})":
+            depth = max(0, depth - 1)
+        if ch.isspace() and depth == 0:
+            if cur:
+                toks.append("".join(cur))
+                cur = []
+            continue
+        cur.append(ch)
+    if cur:
+        toks.append("".join(cur))
+    return toks
+
+
+def _probe_tokens(line, warn=None, display=False):
+    """Probe expressions of a `save`/`print`/`plot`/`.save` line: quoted groups
+    honoured, shell redirection (`print del > result.txt`) removed.
+
+    `display` marks the `plot`/`print` grammar, which additionally has display
+    clauses (`vs <xvector>`, `xlimit a b`, `title t`, `xlog`, …) that are not
+    signals. They are NOT dropped on `save`/`.save`/`.probe`, where `vs` and
+    `title` are ordinary net names."""
+    warn = [] if warn is None else warn
+    toks = _split_ws(line)[1:]
+    out = []
+    i = 0
+    while i < len(toks):
+        t = toks[i]
+        low = t.lower()
+        if t in (">", ">>"):
+            i += 2                                   # `> file`
+            continue
+        if t.startswith(">"):
+            i += 1                                   # `>file`
+            continue
+        if display and low == "vs":
+            warn.append("plot x-axis selector dropped: vs %s"
+                        % (toks[i + 1] if i + 1 < len(toks) else ""))
+            i += 2                                   # `vs time`
+            continue
+        if display and low in _PLOT_FLAGS:
+            warn.append("plot display flag dropped: %s" % t)
+            i += 1
+            continue
+        if display and low in _PLOT_KW1:
+            warn.append("plot display option dropped: %s" % " ".join(toks[i:i + 2]))
+            i += 2
+            continue
+        if display and low in _PLOT_KW2:
+            warn.append("plot display option dropped: %s" % " ".join(toks[i:i + 3]))
+            i += 3
+            continue
+        out.append(_unquote(t))
+        i += 1
+    return out
+
+
+def _normalize_expr(expr, warn):
+    """Map a probe expression onto a form ngspice can actually `.save`."""
+    mo = _IDEV_RE.match(expr)
+    if mo:
+        warn.append("i(@dev[param]) is not a vector, saving %s instead: %s"
+                    % (mo.group(1), expr))
+        return mo.group(1)
+    return expr
+
+
 class SpiceDeck(object):
     """Accumulates the structured pieces extracted from one or more embedded
     SPICE text blocks (a corner symbol maps in directly; a code_shown /
@@ -212,16 +368,25 @@ class SpiceDeck(object):
     def _parse_top_line(self, line):
         low = line.lower()
         if low.startswith(".lib"):
-            toks = line.split()
+            toks = [_unquote(t) for t in _split_ws(line)]
             if len(toks) >= 3:
                 self.models.append((toks[1], toks[2]))
             elif len(toks) == 2:
                 self.includes.append(toks[1])      # `.lib file` (whole-file) ~ include
             return
         if low.startswith(".include") or low.startswith(".inc "):
-            toks = line.split(None, 1)
-            if len(toks) == 2:
-                self.includes.append(toks[1].strip())
+            parts = line.split(None, 1)
+            rest = parts[1].strip() if len(parts) == 2 else ""
+            if not rest:
+                return
+            toks = _split_ws(rest)
+            if len(toks) == 1 or not rest[0] in "\"'":
+                # an UNQUOTED path may legally contain spaces -> rest of line
+                self.includes.append(_unquote(rest) if len(toks) == 1 else rest)
+            else:
+                self.includes.append(_unquote(toks[0]))
+                if len(toks) > 1:
+                    self.warnings.append("extra .include tokens dropped: %s" % line)
             return
         if low.startswith(".param"):
             self._parse_params(line[len(".param"):])
@@ -230,15 +395,23 @@ class SpiceDeck(object):
             self._parse_options(line.split(None, 1)[1] if len(line.split()) > 1 else "")
             return
         if low.startswith(".save") or low.startswith(".probe"):
-            for e in line.split()[1:]:
+            for e in _probe_tokens(line, self.warnings):    # no display clauses
                 self._add_output(e, 0)
             return
         if low.startswith(".temp"):
             toks = line.split()
             if len(toks) >= 2:
-                self.temperature = toks[1]
+                # ASE hard-errors on a non-numeric temperature when it renders the
+                # deck (src/ase.tcl render_deck) — refuse it here, loudly, instead
+                # of shipping a state that only detonates at Run.
+                if _NUM_RE.match(toks[1]):
+                    self.temperature = toks[1]
+                else:
+                    self.warnings.append(
+                        "non-numeric .temp not migrated (ASE needs a number): %s" % line)
             return
-        if low.startswith((".op", ".dc", ".ac", ".tran")):
+        # \b so a typo'd `.opton wnflag=1` is NOT parsed as an `.op` analysis
+        if re.match(r"^\.(op|dc|ac|tran)\b", low):
             self._parse_analysis(line.lstrip("."))
             return
         if low.startswith((".end", ".title", ".global", ".model", ".subckt",
@@ -254,11 +427,18 @@ class SpiceDeck(object):
             self._parse_analysis(line)
             return
         if head in ("save", "print"):
-            for e in line.split()[1:]:
+            # `save` takes vectors only — `vs`/`vd`/`vg` are ordinary net names
+            # there. Only `print`/`plot` have the display grammar.
+            for e in _probe_tokens(line, self.warnings, display=(head == "print")):
                 self._add_output(e, 0)
             return
         if head == "plot":
-            for e in line.split()[1:]:
+            for e in _probe_tokens(line, self.warnings, display=True):
+                mo = _PLOT_OFFSET_RE.match(e)
+                if mo:                       # `plot clk+2` — +2 is a screen offset
+                    self.warnings.append(
+                        "plot display offset dropped: %s -> %s" % (e, mo.group(1)))
+                    e = mo.group(1)
                 self._add_output(e, 1)
             return
         if head in ("option", "options"):
@@ -295,35 +475,163 @@ class SpiceDeck(object):
             self.warnings.append("could not parse analysis: %s" % body)
 
     def _parse_params(self, rest):
-        # `.param a=1 b = 2` -> normalize spaces around '=' then split on ws
+        # `.param a=1 b = 2` -> normalize spaces around '=' then split on ws,
+        # keeping brace/paren groups whole (`.param p={1.8 * 2}` is ONE token —
+        # a bare split() cut it at the space and emitted the value `{1.8`).
         rest = re.sub(r"\s*=\s*", "=", rest.strip())
-        for tok in rest.split():
+        for tok in _split_ws(rest):
             if "=" in tok:
                 name, val = tok.split("=", 1)
                 self.params.append((name, val))
+            elif tok:                        # LOSSLESS-OR-LOUD: never drop silently
+                self.warnings.append("trailing .param token dropped: %s" % tok)
 
     def _parse_options(self, rest):
         rest = re.sub(r"\s*=\s*", "=", rest.strip())
-        for tok in rest.split():
+        toks = _split_ws(rest)
+        i = 0
+        while i < len(toks):
+            tok = toks[i]
+            if (tok.lower() == "save" and i + 1 < len(toks)
+                    and toks[i + 1].lower() == "all"):
+                self.save_all_v = True       # `.options save all` = blanket save
+                i += 2
+                continue
+            i += 1
             if "=" in tok:
                 name, val = tok.split("=", 1)
-                self.options.append((name, val))
-            elif tok:
-                self.options.append((tok, None))
+            else:
+                name, val = tok, None
+            if not name:
+                continue
+            if not _OPT_NAME_RE.match(name):
+                self.warnings.append("non-identifier option token dropped: %s" % tok)
+                continue
+            self.options.append((name, val))
 
 
 # --------------------------------------------------------------------------- #
 # graph blocks (B <layer> ... {flags=graph ... node=...}) -> plotted outputs
 # --------------------------------------------------------------------------- #
 
-def graph_outputs(props):
-    """Plotted expressions recovered from a graph B-record's props: each entry in
-    the `node` token becomes an output (plot=1). node is a ws/;/newline list."""
+# `node` is xschem's trace mini-language, NOT a whitespace list. Authority is
+# draw_graph() src/draw.c ~4645-4801 (row split my_strtok_r(nptr,"\n","\"",4),
+# src/util.c:159); see doc/xschem_man/graphs.html and
+# doc/claude/code_analysis/waveform_subsystem_reference.md §2.5:
+#   * rows are separated by NEWLINE only; `"` quotes a row (quotes stripped, may
+#     span lines) and `\` escapes the next char — a trailing `\` is a
+#     CONTINUATION and must never survive as a token (that stray `\` is what
+#     used to reach the serializer and abort the whole library migration)
+#   * `alias;expr`         -> text before the first `;` is the legend LABEL only
+#   * `label;a[3],a[2],..` -> a BUS row (a `,` after the `;`): one trace, N bits
+#   * unescaped whitespace in the expression -> an xschem RPN expression
+#   * `%N` / `%rawfile%simtype` suffix -> dataset selection (no ASE equivalent)
+# ASE outputs are ngspice `.save`/`print` arguments (src/ase.tcl render_deck), so
+# a bus contributes its BITS and an RPN expression its OPERANDS — the derived
+# trace itself is not a saveable vector. Both are reported, never silent.
+_RPN_OPS = frozenset(("+", "-", "*", "/", "**", "%", "^", "!",
+                      ">", "<", ">=", "<=", "==", "!=", "&", "|"))
+_RPN_FUNC_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*\(\)$")
+_RPN_NUM_RE = re.compile(r"^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?[A-Za-z]*$")
+_BUS_BIT_SEP_RE = re.compile(r"[;,\s\\]+")      # get_bus_idx_array(), draw.c:2842
+
+
+def _graph_rows(node):
+    """Split a `node=` value into trace rows exactly as my_strtok_r(s,"\\n","\\"",4)
+    does: newline-only separator, `"` quoting (quotes stripped), `\\` escapes the
+    next char and is kept, empty rows dropped."""
+    rows, cur, quoted, esc = [], [], False, False
+    for ch in node:
+        if esc:
+            cur.append(ch)
+            esc = False
+            continue
+        if ch == "\\":
+            esc = True
+            cur.append(ch)
+            continue
+        if ch == '"':
+            quoted = not quoted
+            continue
+        if ch == "\n" and not quoted:
+            if cur:
+                rows.append("".join(cur))
+                cur = []
+            continue
+        cur.append(ch)
+    if cur:
+        rows.append("".join(cur))
+    return [r for r in rows if r.strip()]
+
+
+def _graph_unescape(s):
+    """Undo the escapes xschem keeps inside a row: `\\ ` is a literal space
+    (draw.c:4770 str_replace), `\\`+newline is a line continuation."""
+    s = re.sub(r"\\\n[ \t]*", "", s)
+    return s.replace("\\ ", " ").strip()
+
+
+def _row_outputs(row, warn):
+    """One `node=` row -> [(expr, plot, label), ...]."""
+    core = row
+    if "%" in core:
+        core, _sep, tail = core.partition("%")
+        warn.append("graph dataset/rawfile selector dropped: %%%s" % tail.strip())
+    fields = core.split(";")
+    label = fields[0].strip() if len(fields) > 1 else None
+    # find_nth() collapses runs of separators, so `a;;b` gives the expression `b`
+    tail = [f for f in fields[1:] if f.strip()]
+    if len(tail) > 1:
+        warn.append("graph row truncated at its 2nd ';' (as xschem does): %s" % row)
+    if len(fields) > 1:
+        raw = tail[0] if tail else ""
+    else:
+        raw = core
+    if len(fields) > 1 and "," in raw:                          # BUS row
+        # keep index 0 out (it is the bus label) WITHOUT filtering empties first,
+        # else `;a,b` would lose bit `a` with the empty label field
+        bits = [b for b in _BUS_BIT_SEP_RE.split(_graph_unescape(core))[1:] if b]
+        if len(bits) > 32:
+            warn.append("graph bus %s expanded to %d single-bit outputs"
+                        % (label or "?", len(bits)))
+        return [(b, 1, None) for b in bits]
+    raw = raw.strip()
+    if not raw:
+        warn.append("graph row carries no expression, dropped: %s" % row)
+        return []
+    if re.search(r"(?<!\\)[ \t]", raw):                         # RPN expression
+        toks = [_graph_unescape(t) for t in re.split(r"(?<!\\)[ \t]+", raw)]
+        operands = [t for t in toks if t and t not in _RPN_OPS
+                    and not _RPN_FUNC_RE.match(t) and not _RPN_NUM_RE.match(t)]
+        warn.append("graph expression not saveable as one vector, keeping its "
+                    "operands (%s): %s" % (", ".join(operands) or "none", raw))
+        return [(t, 1, None) for t in operands]
+    expr = _graph_unescape(raw)                                 # plain signal
+    if _RPN_NUM_RE.match(expr):
+        # a constant reference line (`-; 0.9`) is not a vector: ngspice aborts
+        # the analysis on `.save 0.9` when nothing else got saved
+        warn.append("graph reference-line constant is not a signal, dropped: %s"
+                    % row)
+        return []
+    return [(expr, 1, label)]
+
+
+def graph_outputs(props, warn=None):
+    """Plotted expressions recovered from a graph B-record's props: [(expr, plot,
+    label), ...]. `warn` collects the lossy bits (bus expansion, dropped dataset
+    selectors, non-saveable expressions)."""
+    warn = [] if warn is None else warn
     found, node = get_tok(props, "node")
     if not found or not node:
         return []
-    exprs = [e for e in re.split(r"[\s;]+", node.strip()) if e]
-    return [(e, 1) for e in exprs]
+    if node.lstrip().startswith("tcleval("):
+        warn.append("graph node= is tcleval(...), evaluated at draw time — "
+                    "outputs not migrated: %s" % node.strip()[:60])
+        return []
+    out = []
+    for row in _graph_rows(node):
+        out.extend(_row_outputs(row, warn))
+    return out
 
 
 # --------------------------------------------------------------------------- #
@@ -379,6 +687,8 @@ def classify(rec):
 
 _VSOURCE_CELLS = frozenset(("vsource", "isource", "vpulse", "ipulse"))
 _NUM_RE = re.compile(r"^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$")
+# `$NAME` without the `::` qualifier — ase::expand_path cannot resolve it
+_UNQUAL_VAR_RE = re.compile(r"\$(?!::)\{?([A-Za-z_][A-Za-z0-9_]*)")
 
 
 class MigrationReport(object):
@@ -437,7 +747,8 @@ class CellMigrator(object):
                     deck.parse(val)
                 self.report.dropped.append(("embedded", _cell_of(rec.fields[0].content)))
             elif cat == "graph":
-                g_outputs.extend(graph_outputs(rec.fields[5].content))
+                g_outputs.extend(graph_outputs(rec.fields[5].content,
+                                               self.report.warnings))
                 self.report.dropped.append(("graph", None))
             elif cat == "drop":
                 self.report.dropped.append(("drop", _cell_of(rec.fields[0].content)))
@@ -502,6 +813,15 @@ class CellMigrator(object):
         for f in ("models", "variables", "outputs", "options", "includes"):
             if st[f]:
                 self.report.extracted[f] = len(st[f])
+        # ase::expand_path substitutes at GLOBAL level, so `$PDK_ROOT/...` only
+        # resolves if ::PDK_ROOT exists — an unqualified name (or one the
+        # workarea rc never sets) makes render_deck hard-error at Run time.
+        for f, path in ([("models", m[1]) for m in st["models"]]
+                        + [("includes", i[1]) for i in st["includes"]]):
+            for var in _UNQUAL_VAR_RE.findall(path):
+                self.report.warnings.append(
+                    "%s path uses unqualified $%s (ase::expand_path resolves at "
+                    "global level): %s" % (f, var, path))
         return st
 
     @staticmethod
@@ -530,17 +850,30 @@ class CellMigrator(object):
     def _outputs(self, deck, g_outputs):
         seen = {}
         order = []
-        for expr, plot in list(deck.outputs) + list(g_outputs):
+        for item in list(deck.outputs) + list(g_outputs):
+            expr, plot = _normalize_expr(item[0], self.report.warnings), item[1]
+            label = item[2] if len(item) > 2 else None     # graph legend alias
             if expr in seen:
                 if plot:                        # a plotted node upgrades plot flag
                     seen[expr]["plot"] = "1"
+                if label and not seen[expr]["label"]:
+                    seen[expr]["label"] = label
                 continue
-            seen[expr] = {"expr": expr, "plot": "1" if plot else "0"}
+            seen[expr] = {"expr": expr, "plot": "1" if plot else "0",
+                          "label": label}
             order.append(expr)
         out = []
+        used = set()
         for i, expr in enumerate(order, 1):
             e = seen[expr]
-            name = _mk_name(expr, i)
+            name = None
+            if e["label"]:                  # the graph legend alias, if it is free
+                cand = _mk_name(e["label"], i)
+                if cand not in used:        # an alias that would need a _2 suffix
+                    name = cand             # reads worse than the expr-derived name
+                    used.add(cand)
+            if name is None:
+                name = _mk_name(expr, i, used)
             out.append(["name", name, "expr", e["expr"], "save", "1",
                         "plot", e["plot"]])
         return out
@@ -550,9 +883,16 @@ class CellMigrator(object):
         sch = os.path.join(out_cellroot, "schematic", self.cellname + ".sch")
         stt = os.path.join(out_cellroot, "ngspice_state1",
                            self.cellname + ".state")
+        # Serialize BOTH views before writing EITHER: a serializer failure used
+        # to leave the clean .sch on disk with no state view beside it (a cell
+        # ASE-L would then open with no setup at all). This also makes --dry-run
+        # exercise the serializer, so a dry run is a real check, not a
+        # false all-clear.
+        sch_text = self.clean_sch
+        state_text = serialize_state(self.state, SCHEMA_KEYS)
         if not dry_run:
-            _write(sch, self.clean_sch)
-            _write(stt, serialize_state(self.state, SCHEMA_KEYS))
+            _write(sch, sch_text)
+            _write(stt, state_text)
         return sch, stt
 
 
@@ -589,9 +929,32 @@ def _dict_to_list(d, key_order):
     return out
 
 
-def _mk_name(expr, i):
+_NAME_MAX = 40
+
+
+def _mk_name(expr, i, used=None):
+    """ASE output name for an expression: an identifier the waveform viewer
+    accepts (`^[A-Za-z_][A-Za-z0-9_]*$`, src/ase_window.tcl) and UNIQUE within
+    the state — ase::result_probe keys its results dict by name, so a duplicate
+    silently shadowed another output's value."""
     base = re.sub(r"[^A-Za-z0-9]", "", expr)
-    return base if base else ("o%d" % i)
+    if len(base) > _NAME_MAX:
+        # keep the TAIL too: for `@m.x11.msky130_fd_pr__pfet…_base[gm|id|vth]`
+        # the discriminating part is the suffix, and a head-only cut left three
+        # identical names that the _2/_3 dedupe then made indistinguishable
+        base = base[:_NAME_MAX - 12] + base[-12:]
+    if not base:
+        base = "o%d" % i
+    if base[0].isdigit():
+        base = "o" + base
+    if used is None:
+        return base
+    name, n = base, 2
+    while name in used:
+        name = "%s_%d" % (base, n)
+        n += 1
+    used.add(name)
+    return name
 
 
 def _read(p):
@@ -618,10 +981,17 @@ class LibraryMigrator(object):
     def __init__(self, libroot, pdk, libname=None, hoist_sources=False):
         self.libroot = libroot
         self.pdk = pdk
+        # The state's `design` must name the library the MIGRATED cell lives in,
+        # not the one it came from: ASE resolves lib/cell/view out of the
+        # registry, so a source-library name sends Session > Design Window back
+        # to the cluttered original. Unless the caller names the library, it is
+        # taken from the DESTINATION root in migrate_all() below.
         self.libname = libname or os.path.basename(os.path.normpath(libroot))
+        self.libname_explicit = libname is not None
         self.hoist_sources = hoist_sources
         self.cells = []          # [(cellname, CellMigrator), ...]
         self.skipped = []        # [(cellname, reason), ...]
+        self.failed = []         # [(cellname, error), ...]
 
     def scan(self):
         for cell in sorted(os.listdir(self.libroot)):
@@ -643,10 +1013,19 @@ class LibraryMigrator(object):
         return self
 
     def migrate_all(self, out_root, dry_run=False):
+        """Migrate every scanned cell. One bad cell is recorded in `failed` and
+        skipped — it must not abort the library walk and strand the rest."""
         results = []
+        if not self.libname_explicit:          # the destination library owns the
+            self.libname = os.path.basename(os.path.normpath(out_root))
         for cell, cm in self.cells:
-            cm.migrate()
-            cm.write(os.path.join(out_root, cell), dry_run=dry_run)
+            cm.libname = self.libname          # migrated cell, so it names it
+            try:
+                cm.migrate()
+                cm.write(os.path.join(out_root, cell), dry_run=dry_run)
+            except Exception as e:
+                self.failed.append((cell, "%s: %s" % (type(e).__name__, e)))
+                continue
             results.append((cell, cm.report))
         return results
 
@@ -804,7 +1183,8 @@ def main(argv=None):
     src.add_argument("--sch", help="a single cluttered <cell>.sch to migrate")
     src.add_argument("--library", help="a lib/cell/view library root; migrate every testbench cell")
     ap.add_argument("--out", help="destination root (a cell root for --sch, a lib root for --library)")
-    ap.add_argument("--lib", help="library name for the state design= (default: inferred)")
+    ap.add_argument("--lib", help="library name for the state design= "
+                                  "(default: the DESTINATION library's name)")
     ap.add_argument("--hoist-sources", action="store_true",
                     help="lift numeric vsource values into named design variables (heuristic)")
     ap.add_argument("--dry-run", action="store_true", help="report only; write nothing")
@@ -827,17 +1207,25 @@ def main(argv=None):
         if lm.skipped:
             print("  skipped %d: %s" % (len(lm.skipped),
                   ", ".join("%s(%s)" % s for s in lm.skipped[:8])))
+        if lm.failed:
+            print("  FAILED %d cell(s):" % len(lm.failed))
+            for cell, err in lm.failed:
+                print("    %s: %s" % (cell, err))
+            return 1
         return 0
 
-    lib, cell = _guess_lib_cell(args.sch)
-    lib = args.lib or lib
-    cm = CellMigrator(_read(args.sch), pdk, lib, cell,
-                      hoist_sources=args.hoist_sources).migrate()
+    _srclib, cell = _guess_lib_cell(args.sch)
     # --out is a LIBRARY-ROOT directory (consistent with --library): the cell is
     # written under out_root/<cell>/{schematic,ngspice_state1}, so a registry
     # DEFINE <lib> out_root resolves <lib>/<cell> for Launch-ASE-L and --verify.
     out_root = args.out or (os.path.dirname(os.path.dirname(
         os.path.dirname(os.path.abspath(args.sch)))) + "_ase")
+    # the state's design= names the DESTINATION library (see LibraryMigrator):
+    # ASE resolves lib/cell/view from the registry, and the source name would
+    # point Session > Design Window back at the cluttered cell.
+    lib = args.lib or os.path.basename(os.path.normpath(out_root))
+    cm = CellMigrator(_read(args.sch), pdk, lib, cell,
+                      hoist_sources=args.hoist_sources).migrate()
     out_cellroot = os.path.join(out_root, cell)
     sch, stt = cm.write(out_cellroot, dry_run=args.dry_run)
     print("%s %s/%s" % ("DRY-RUN" if args.dry_run else "migrated", lib, cell))

@@ -662,6 +662,23 @@ static void alloc_xschem_data(const char *top_path, const char *win_path)
   /* issue 0152: wave-bold click anchor. A huge sentinel means "no live press", so a
    * release that arrives without a preceding press can never read as a click. */
   xctx->graph_press_x = xctx->graph_press_y = -1e30;
+  /* waveform markers (doc/claude/specs/graph_markers.md): all transient, and the
+   * -1 sentinels are meaningful, so they are set explicitly rather than relying
+   * on the my_calloc of xctx. */
+  xctx->graph_marker_sel = -1;
+  xctx->graph_marker_selgraph = -1;
+  xctx->graph_marker_drag = 0;
+  xctx->graph_marker_dragmode = GRAPH_MARKER_MODE_NONE;
+  xctx->graph_marker_dragnum = -1;
+  xctx->graph_marker_draggraph = -1;
+  xctx->graph_marker_moved = 0;
+  xctx->graph_marker_press_x = xctx->graph_marker_press_y = -1e30;
+  /* viewer plan item 6: the shrink preview. 0.0 IS "off", so the my_calloc
+   * already covers it — written explicitly anyway, beside the marker state it
+   * belongs with, so a future non-zero default cannot slip in silently. */
+  xctx->graph_preview_scale = 0.0;
+  xctx->graph_preview_gi = 0;
+  xctx->graph_preview_wave = 0;
   xctx->graph_lastsel = -1;
   xctx->graph_struct.hilight_wave = -1; /* index of wave */
   xctx->wires = 0;
@@ -1615,6 +1632,7 @@ void swap_tabs(void)
     Window window;
     int i = 0;
     int j;
+    int wv;
     for(j = 1; j < MAX_NEW_WINDOWS; j++) {
       if(save_xctx[j]) break;
     }
@@ -1642,6 +1660,19 @@ void swap_tabs(void)
     window = save_xctx[i]->window;
     save_xctx[i]->window = save_xctx[j]->window;
     save_xctx[j]->window = window;
+
+    /* issue 0172: the "this is a waveform viewer" brand belongs to the Tk SURFACE -- its
+     * WaveViewer bindtags and viewer menubar stay on the widget and do NOT move when the
+     * two contexts change places -- so it is swapped back exactly like top_path /
+     * current_win_path / window above. Without it, closing the main window while a viewer
+     * is open re-homes the viewer's context onto .drw and brands that ordinary editor
+     * canvas a viewer for the rest of the session, so .drw is never a pristine-untitled
+     * reuse target again (measured). The sibling per-context flags (readonly, no_grid,
+     * no_snap, graph_snap) have exactly the same surface-vs-document mismatch and are
+     * deliberately left alone here; see doc/claude/issues/0186-viewer-context-destroyed-by-reload-and-inplace-loads.md */
+    wv = save_xctx[i]->wave_viewer;
+    save_xctx[i]->wave_viewer = save_xctx[j]->wave_viewer;
+    save_xctx[j]->wave_viewer = wv;
 
     ctx = save_xctx[i];
     save_xctx[i] = save_xctx[j];
@@ -1674,6 +1705,7 @@ void swap_windows(int dr)
     char wp_i[WINDOW_PATH_SIZE], wp_j[WINDOW_PATH_SIZE];
     Window window;
     int i = 0, j;
+    int wv;
     char geometry[80];
 
     for(j = 1; j < MAX_NEW_WINDOWS; j++) {
@@ -1717,6 +1749,11 @@ void swap_windows(int dr)
     SWAP(save_xctx[i]->current_win_path, save_xctx[j]->current_win_path, tmp);
     /* re-swap window IDs */
     SWAP(save_xctx[i]->window, save_xctx[j]->window, window);
+    /* issue 0172: and re-swap the waveform-viewer brand, which is a property of the Tk
+     * SURFACE (WaveViewer bindtags + viewer menubar stay on the widget), not of the
+     * document that just moved. See the same swap in swap_tabs() above for what goes
+     * wrong without it. */
+    SWAP(save_xctx[i]->wave_viewer, save_xctx[j]->wave_viewer, wv);
 
     new_schematic("switch", wp_i, "", 0);
     /* move primary window to location of deleted window */

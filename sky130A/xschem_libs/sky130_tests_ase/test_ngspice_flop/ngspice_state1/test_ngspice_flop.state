@@ -1,0 +1,14 @@
+version 1
+simulator ngspice
+design {lib sky130_tests_ase cell test_ngspice_flop view schematic}
+rundir {}
+temperature 27
+models {}
+variables {}
+analyses {{type op enabled 0} {type dc enabled 0} {type ac enabled 0} {type tran enabled 1 stop 1100n step 0.2n}}
+outputs {{name ain expr a_in save 1 plot 1} {name aclk expr a_clk save 1 plot 1} {name aout expr a_out save 1 plot 1}}
+save_all_v 1
+save_all_i 0
+options {}
+includes {}
+viewer {}
