@@ -2143,6 +2143,66 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
         update
         check "TD7 ... and `u` again undoes it once more" [sd_order $tok] {i(v1) -}
 
+        # TD8: the GRAB HAND must survive the SUB-THRESHOLD DEAD ZONE. Every
+        # other leg looks at the cursor at the press or PAST the threshold; the
+        # motions in between — the ones a real mouse delivers within ~25 ms of
+        # the press — were unmeasured, and they are exactly the ones the seam
+        # declines, so the binding forwards them and waves_selected() writes
+        # `tcross` (src/callback.c:201) over the hand trace_drag_arm just set.
+        wb_ev $vdrw <ButtonPress-1> -x $sdx -y $sdy
+        update
+        check "TD8 the press shows the grab hand" [$vdrw cget -cursor] hand2
+        # asserted DIRECTLY, so this leg can never pass by having quietly
+        # crossed the threshold and taken the shipped past-threshold write
+        check "TD8 a 2-px motion is NOT consumed by the seam (it is C's)" \
+          [wviewer::trace_drag_motion $vdrw $sdx [expr {$sdy + 2}] 0x100] 0
+        foreach dy {1 2 3} {
+          wb_ev $vdrw <B1-Motion> -x $sdx -y [expr {$sdy + $dy}] -state 0x100
+        }
+        update
+        check "TD8 the drag is STILL in the dead zone (not past threshold)" \
+          [list [expr {$::wviewer::tdrag_gi($tok) >= 0}] \
+                $::wviewer::tdrag_active($tok)] {1 0}
+        check "TD8 the grab hand survived the fall-through to C" \
+          [$vdrw cget -cursor] hand2
+
+        # TD9: ...and it must survive LEAVING THE CANVAS mid-drag. `<Leave>` is
+        # in keepseqs, so it still reaches C, and callback.c:8637 writes
+        # `-cursor {}` unconditionally. During the implicit button grab the
+        # pointer is still showing THIS widget's cursor, so before the re-assert
+        # a drag that crossed the canvas edge lost its hand for good — the write
+        # was a one-shot inside `if {!$active}` and nothing put it back.
+        wb_ev $vdrw <B1-Motion> -x $sdx -y [expr {int(0.60 * $H)}] -state 0x100
+        update
+        check "TD9 past the threshold the hand is there" [$vdrw cget -cursor] hand2
+        event generate $vdrw <Leave>
+        update
+        check "TD9 the C LeaveNotify arm really does wipe the pointer" \
+          [$vdrw cget -cursor] {}
+        event generate $vdrw <Enter>
+        wb_ev $vdrw <B1-Motion> -x $sdx -y [expr {int(0.62 * $H)}] -state 0x100
+        update
+        check "TD9 the next motion takes the grab hand back" [$vdrw cget -cursor] hand2
+        # NEGATIVE: the pointer must NOT be stolen from a C-owned gesture. ESC
+        # disarms both Tcl gestures, so the following motion is purely C's — this
+        # is the leg a blanket re-assert (or deleting the C write) breaks.
+        focus -force $vdrw
+        update
+        event generate $vdrw <KeyPress> -keysym Escape
+        update
+        check "TD9 ESC disarmed both gestures (the helper owns nothing)" \
+          [wviewer::drag_cursor_reassert $vdrw] {}
+        wb_ev $vdrw <B1-Motion> -x $sdx -y [expr {int(0.64 * $H)}] -state 0x100
+        update
+        # NOT `eq tcross`: which of tcross / {} C leaves behind depends on
+        # graph_use_ctrl_key and on where the pixel landed. The property under
+        # test is that the VIEWER did not re-assert a drag pointer it no longer owns.
+        check_true "TD9 with nothing armed the drag pointer is not re-asserted" \
+          [expr {[$vdrw cget -cursor] ne "hand2"}]
+        wb_ev $vdrw <ButtonRelease-1> -x $sdx -y [expr {int(0.64 * $H)}] -state 0x100
+        update
+        check "TD9 the cancelled drag moved nothing" [sd_order $tok] {i(v1) -}
+
         # back to the SD fixture shape
         # gather the traces from WHEREVER the last leg left them (the strip they
         # sit in depends on how many undos ran) and put the fixture back
@@ -2187,6 +2247,33 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
       update
       check "SD4 and back again" [sd_order $tok] {i(v1) -}
       check "SD4 ... strips back in their original order too" [sd_ids $tok] {A B}
+
+      # SD6: the reorder half of the cursor contract. Deliberately the SECOND
+      # arm of drag_cursor_reassert, which no shipped path can reach through a
+      # gesture (every past-threshold reorder motion is CONSUMED, so nothing
+      # forwards to C and nothing clobbers) — so it is driven by a direct call
+      # and labelled as such rather than dressed up as a gesture leg. It also
+      # pins the deliberate asymmetry with the trace drag: an empty-space press
+      # is not yet a reorder, so it owns NO cursor until the threshold.
+      wb_ev $vdrw <ButtonPress-1> -x $sdx -y $sdm1
+      update
+      check "SD6 an empty-space press arms the reorder and owns NO cursor yet" \
+        [list [expr {$::wviewer::drag_from($tok) >= 0}] \
+              [wviewer::drag_cursor_reassert $vdrw]] {1 {}}
+      wb_ev $vdrw <B1-Motion> -x $sdx -y [expr {$sdm0 - 3}] -state 0x100
+      update
+      check "SD6 past the threshold the reorder owns the vertical-move arrow" \
+        [list $::wviewer::drag_active($tok) \
+              [wviewer::drag_cursor_reassert $vdrw] [$vdrw cget -cursor]] \
+        {1 sb_v_double_arrow sb_v_double_arrow}
+      focus -force $vdrw
+      update
+      event generate $vdrw <KeyPress> -keysym Escape
+      update
+      wb_ev $vdrw <ButtonRelease-1> -x $sdx -y [expr {$sdm0 - 3}] -state 0x100
+      update
+      check "SD6 the cancelled reorder left the stack alone" [sd_order $tok] {i(v1) -}
+      check "SD6 ... and the strips too" [sd_ids $tok] {A B}
 
       # SD5: a press that GRABBED A CURSOR keeps the whole drag, even though the
       # pointer is nowhere near a trace. A cursor can be parked anywhere in the

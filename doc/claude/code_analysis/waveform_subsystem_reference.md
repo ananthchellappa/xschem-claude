@@ -2244,6 +2244,57 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
     Suite: `tests/headless/test_wave_grid.tcl` `GX*` (source, both arms) and
     `GS*` (behavioural, display).
 
+51. **A gesture cursor written ONCE is a cursor you do not have — the viewer
+    canvas has three other writers and every one of them runs later**
+    (2026-08-02).
+    `hand2` (trace drag) and `sb_v_double_arrow` (strip reorder) were each a
+    single `catch {$W configure -cursor ...}` made at the moment the gesture
+    engaged. Two clobbers were then measured on a real XTEST pointer with
+    XFixes sampling the server-side sprite:
+
+    **(a) The sub-threshold dead zone.** Below the 3-px tolerance the
+    `<B1-Motion>` seam DECLINES the event on purpose — it still belongs to the
+    C engine (hover readout, an in-flight cursor drag, a press that may still
+    turn out to be a wave-bold click). So the binding forwards it,
+    `waves_selected()` finds the pointer inside a graph rect and writes
+    `.drw configure -cursor tcross` (`callback.c:201`) over the hand
+    `trace_drag_arm` set on the press. Measured 3× per drag; at 125 Hz the
+    first lands ~8 ms after the press, so the press-time affordance that proc's
+    own header promises was effectively invisible.
+
+    **(b) Leaving the canvas mid-drag.** `<Leave>`/`<Enter>` are in
+    `wviewer::keepseqs`, so they still reach C: `callback.c:8637` writes
+    `-cursor {}` UNCONDITIONALLY on LeaveNotify and `handle_enter_notify`
+    (`callback.c:5566`) writes `{}` again coming back in (a viewer is
+    `no_snap`, so the crosshair arm is dead). During the implicit button grab
+    the pointer still displays the canvas's cursor, so a drag that crossed the
+    edge — toward the top strip, over the readout bar, an overshoot — lost its
+    pointer for the whole rest of the gesture. This one the seam cannot see at
+    all: it is happily CONSUMING every motion while C erases the cursor
+    underneath it.
+
+    **The fix is a MAINTAINED INVARIANT, not a third write.**
+    `wviewer::drag_cursor_reassert` runs from the `<B1-Motion>` binding
+    unconditionally (outside the seam test, because the two clobbers live on
+    opposite sides of it) and costs one `cget` per motion. It re-asserts only
+    what an ARMED Tcl gesture owns — the arms are tested, never the widget — so
+    a C-owned cursor grab / marker drag / axis-region zoom / plain click keeps
+    `tcross`, which is the correct affordance for a graph. Do NOT "fix" this in
+    `waves_selected()`: that write is shared with embedded schematic graphs and
+    is half of a pair with the `!is_inside` restore at `callback.c:227-232`.
+
+    ⚠ Related, and the reason `set_drag_cursor` exists: all five cursor writes
+    were bare `catch`es. `catch` is right (a cursor is cosmetic and must never
+    abort a drag) but it means a cursor-theme miss produces "the pointer never
+    changes" with every other part of the gesture working perfectly —
+    indistinguishable from a logic bug, and it costs a session to diagnose. It
+    now says so once per window per session.
+
+    Suite: `tests/headless/test_wave_viewer.tcl` `TD8` (dead zone), `TD9`
+    (Leave/Enter + the negative "nothing armed" leg) and `SD6` (the reorder arm,
+    driven by a DIRECT call and labelled as such — no shipped path forwards a
+    past-threshold reorder motion to C).
+
 ---
 
 ## 12. Improvement backlog (ranked, with where-to-touch)

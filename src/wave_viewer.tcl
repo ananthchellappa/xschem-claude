@@ -393,6 +393,9 @@ namespace eval wviewer {
   variable tdrag_y0;     array set tdrag_y0 {}
   variable tdrag_active; array set tdrag_active {}
   variable tdrag_pairs;  array set tdrag_pairs {}
+  # token -> 1 once set_drag_cursor has reported a cursor this X theme cannot
+  # supply, so the CIW hears it ONCE per window instead of on every motion
+  variable cursor_warned; array set cursor_warned {}
   # UNDO / REDO of viewer model edits (2026-07-28): per-window stacks of MODEL
   # SNAPSHOTS ({graphs target}), newest last. Transient like the drag state —
   # created on open, dropped by forget, NEVER serialized: a saved layout carries
@@ -542,7 +545,7 @@ proc wviewer::forget {token} {
   catch {unset drag_y0($token)}
   catch {unset drag_active($token)}
   foreach a {tdrag_gi tdrag_ti tdrag_to tdrag_x0 tdrag_y0 tdrag_active tdrag_pairs
-             undo_hist redo_hist wavehl} {
+             undo_hist redo_hist wavehl cursor_warned} {
     catch {unset ::wviewer::${a}($token)}
   }
   catch {unset mmb($token)}
@@ -3174,7 +3177,7 @@ proc wviewer::strip_drag_motion {W px py state} {
   if {!$drag_active($token)} {
     if {abs($py - $drag_y0($token)) <= 3} { return 0 }
     set drag_active($token) 1
-    catch {$W configure -cursor sb_v_double_arrow}
+    wviewer::set_drag_cursor $W sb_v_double_arrow
   }
   set to [wviewer::strip_drop_index $W $py $from]
   if {$to < 0} { set to $from }
@@ -3249,6 +3252,89 @@ proc wviewer::strip_drag_cancel {W} {
   set a [wviewer::strip_drag_reset $token]
   set b [wviewer::trace_drag_reset $token]
   return [expr {$a || $b}]
+}
+
+# --- the pointer a live Tcl drag owns ----------------------------------------
+# doc/claude/specs/waveform_viewer_modes.md §13. The gesture cursors (`hand2`
+# for a trace drag, `sb_v_double_arrow` for a strip reorder) used to be ONE-SHOT
+# writes made at the moment the gesture engaged — and the canvas has other
+# writers, all of which run AFTER them and none of which knows a Tcl drag is in
+# flight. Two are measured:
+#
+#   * the SUB-THRESHOLD MOTIONS. Below the 3-pixel tolerance the seam
+#     deliberately declines the event (trace_drag_motion below, strip_drag_motion
+#     above) because it still belongs to the C engine — the hover readout, an
+#     in-flight cursor drag, a press that may still turn out to be a wave-bold
+#     click. So the binding forwards it, waves_selected() finds the pointer
+#     inside a graph rect and writes `.drw configure -cursor tcross`
+#     (src/callback.c:201), landing on top of the grab hand trace_drag_arm set on
+#     the press. Measured 3x per drag; at 125 Hz the first lands ~8 ms after the
+#     press, so the press-time affordance trace_drag_arm's own header promises
+#     was effectively invisible.
+#   * LEAVING THE CANVAS MID-DRAG. `<Leave>`/`<Enter>` are in `keepseqs`, so they
+#     still reach C: callback.c:8637 writes `-cursor {}` UNCONDITIONALLY on
+#     LeaveNotify and handle_enter_notify (callback.c:5566) writes `{}` again on
+#     the way back in (the viewer is `no_snap`, so the crosshair arm is dead
+#     here). During the implicit button grab the pointer still displays THIS
+#     widget's cursor, so a drag that crosses the canvas edge — toward the top
+#     strip, over the readout bar, an overshoot — lost its pointer for the rest
+#     of the gesture and never got it back.
+#
+# So the cursor is a MAINTAINED INVARIANT now, re-asserted from the binding after
+# every B1 motion, rather than a write made once and hoped for. That is one
+# `cget` per motion and it is clobber-source agnostic: it repairs the two above
+# and any third one without having to enumerate it.
+#
+# ⚠ IT RE-ASSERTS ONLY WHAT AN ARMED TCL GESTURE OWNS. The arms are what is
+# tested, never the widget: a press that armed nothing — a C-owned cursor grab, a
+# marker drag, an axis-region zoom, a plain click, a press outside every strip —
+# leaves the pointer entirely to C and keeps `tcross`, which is the shipped
+# affordance for a graph. Returns the cursor the armed gesture owns, {} when
+# nothing is armed.
+proc wviewer::drag_cursor_reassert {W} {
+  variable tdrag_gi
+  variable drag_from; variable drag_active
+  set token [wviewer::token_for_canvas $W]
+  if {$token eq {}} { return {} }
+  set c {}
+  if {[info exists tdrag_gi($token)] && $tdrag_gi($token) >= 0} {
+    # owned from the PRESS, not from the threshold (trace_drag_arm)
+    set c hand2
+  } elseif {[info exists drag_from($token)] && $drag_from($token) >= 0 &&
+            [info exists drag_active($token)] && $drag_active($token)} {
+    # the reorder owns no cursor until the threshold: an empty-space press is not
+    # yet a reorder, and flashing the arrow on every click would be a lie
+    set c sb_v_double_arrow
+  }
+  if {$c eq {}} { return {} }
+  # `cget` first: on the motions nobody clobbered this is a read and no write
+  if {![catch {$W cget -cursor} cur] && $cur eq $c} { return $c }
+  wviewer::set_drag_cursor $W $c
+  return $c
+}
+
+# The ONE cursor write, so a failure is heard ONCE instead of never.
+#
+# Every gesture cursor used to be written as a bare `catch {$W configure -cursor
+# hand2}`. `catch` is right — a cursor is cosmetic and must never abort a drag —
+# but it also means that on a box whose cursor theme lacks `hand2` or
+# `sb_v_double_arrow` the pointer silently never changes while every other part
+# of the gesture works perfectly, which is indistinguishable from a logic bug and
+# costs a session to diagnose. Now it says so, once per window per session (the
+# guard is per token, so a broken theme does not spam the CIW on every motion).
+proc wviewer::set_drag_cursor {W c} {
+  variable cursor_warned
+  if {![catch {$W configure -cursor $c}]} { return 1 }
+  set tok [wviewer::token_for_canvas $W]
+  if {$tok eq {}} { set tok $W }
+  if {![info exists cursor_warned($tok)]} {
+    set cursor_warned($tok) 1
+    if {[info exists ::has_x] && [info commands ::ciw_echo] ne {}} {
+      ciw_echo "wviewer: this X cursor theme has no \"$c\" — drag pointer shapes\
+                are unavailable in this window (the drag itself is unaffected)" error
+    }
+  }
+  return 0
 }
 
 # --- trace drag BETWEEN strips -----------------------------------------------
@@ -4536,7 +4622,7 @@ proc wviewer::trace_drag_arm {W token gi px py {ni {}}} {
   set tdrag_x0($token) $px
   set tdrag_y0($token) $py
   set tdrag_active($token) 0
-  catch {$W configure -cursor hand2}
+  wviewer::set_drag_cursor $W hand2
   return 1
 }
 
@@ -4640,7 +4726,7 @@ proc wviewer::trace_drag_motion {W px py state} {
       return 0
     }
     set tdrag_active($token) 1
-    catch {$W configure -cursor hand2}
+    wviewer::set_drag_cursor $W hand2
     # viewer plan item 6 (decision D-E: the TRACE drag, not the strip reorder):
     # the moment the gesture becomes a drag, the trace being carried is drawn
     # vertically shrunk, so it reads as "picked up" and stops being confusable
@@ -7780,10 +7866,16 @@ proc wviewer::strip_bindings {wp} {
   # <Motion>/<ButtonRelease>, so binding them pre-empts those — every non-drag
   # path here must forward the original event to C exactly once (and the release
   # must also do the readout refresh that was appended to the generic bind).
+  # The re-assert is UNCONDITIONAL, outside the seam test, because both known
+  # clobbers live on different sides of it: the declined sub-threshold motion
+  # forwards to C (waves_selected -> tcross), and a `<Leave>`/`<Enter>` pair
+  # mid-drag writes `{}` from C while the seam is happily CONSUMING every motion.
+  # One `cget` per motion buys a maintained invariant instead of a one-shot.
   bind $wp <B1-Motion> {
     if {![wviewer::strip_drag_motion %W %x %y %s]} {
       xschem callback %W %T %x %y 0 0 0 %s
     }
+    wviewer::drag_cursor_reassert %W
     break
   }
   bind $wp <ButtonRelease-1> {
