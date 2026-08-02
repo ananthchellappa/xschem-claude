@@ -34,18 +34,18 @@ through a **push hook from C into Tcl** (§8).
 | # | Question | Decision |
 |---|---|---|
 | D1 | Where markers live | The graph rect's `markers` prop token. Not a side table, not a new object type. |
-| D2 | What the anchor identifies | A **sample**: `(node index, real dataset, absolute point)` plus the **cached** `x`/`y`. Both are stored; §5 says why. |
+| D2 | What the anchor identifies | A **point on the trace**: `(node index, real dataset, absolute point)` plus the **cached** `x`/`y`. Both are stored; §5 says why. ⚠ **AMENDED by issue 0193.** It used to read "a **sample**", and `x`/`y` were by definition that sample's values. They are the **interpolated position on the curve** now, and `(dataset, point)` is the **ANCHOR** — the LEFT sample of the segment the marker sits on. The reason is that a trace is a polyline whose sample count is the simulator's decision: zoom in past the sample spacing and the visible curve contains **no** sample, so "the nearest sample" is off-screen and marking it puts the marker outside the view. D12's identity with the item-9 diamond is what forces this — both read the same field or the promise in D12 is false. |
 | D3 | Create keys | `m` = plain marker, `d` = marker + delta block against the most recently created marker. The measurement tooltip **moves from `m` to `M`**. |
 | D4 | Delete | Click a marker to **select** it, then `Delete` while the pointer is over that strip. Plus `xschem graph_marker delete`. |
 | D5 | Label offset space | A **fraction of the plot box** (§4). Not screen pixels, not world units, not data units. |
 | D6 | Read-only buffers | A marker is durable **content**, so every mutating path refuses one — but the gate is **`graph_marker_ro_refuse()` inside the mutating primitives** (`draw.c`), *not* `readonly_block()` in the key arms, and the refusal is a **non-modal `ciw_echo`**, not a modal. The verb surface keeps its own, separate `scheduler_readonly_reject()` on every `xschem graph_marker` sub-verb except `select`, `list` and `text`. The ASE viewer — readonly for its whole life by construction — gets through the one way every other viewer mutation does: `key_filter` forwards `m`/`d`, and `strip_drag_release` forwards the marker-drag **release**, inside `wviewer::with_edit`. §6.6. (⚠ `Delete` was a third forwarded key until issue 0176; it is now handled entirely Tcl-side and needs no bracket.) |
 | D7 | Dirty / undo | Create, delete and drag-**commit** each do `push_undo()` + `set_modify(1)`. Mid-drag motion does neither. This deliberately **diverges** from every other graph write (landmine 19). |
-| D8 | Rendering source | The **cached** `x`/`y` only — the renderer never touches `xctx->raw`. The **label** is built from the *record* the renderer is about to draw, not re-derived from its number, so a live drag reads out the sliding sample (§6.5). |
+| D8 | Rendering source | The **cached** `x`/`y` only — the renderer never touches `xctx->raw`. The **label** is built from the *record* the renderer is about to draw, not re-derived from its number, so a live drag reads out the sliding position (§6.5). This is why issue 0193 needed no renderer change at all: nothing on the draw path ever consulted `point`. |
 | D9 | Selection | A **SET of marker numbers**, held in `xctx` (transient, **never in the token**), each member identified by its **number alone**. `xctx->graph_marker_sel` is the **HEAD** of that set and keeps its exact old meaning, so `xschem get graph_marker_sel`, every `graph_marker select` return value and `wviewer::marker_selected` are byte-for-byte unchanged; the whole set is `xctx->graph_marker_sel_set[]` / `graph_marker_n_sel`, read with `xschem get graph_marker_sel_set`. Numbers are window-wide unique, so a number already names exactly one marker; `graph_marker_selgraph` is a **hint** for repainting, never a correctness input (§3.5). Issue 0189 widened this from one marker to a set; up to 0189 it was one. |
 | D13 | Double-click on a marker | Selects it **and**, when it is a *difference* marker whose `prev` partner still resolves, the one marker its deltas are derived from. **The immediate pair only** — never the chain, and never the reverse direction (`prev` is a back-pointer and N deltas may share one reference). It **SETS** the selection: it never toggles and never accumulates. A plain marker, or one whose reference is gone, selects alone and silently. Both parts accept it (anchor and callout). Issue 0189. |
 | D10 | Copy / paste | Renumber; clear all `prev` links. **Two** duplication doors, not one: `merge_box` (`paste.c`, the paste/clipboard path) and `copy_objects` (`move.c`, the `c`-key copy). |
 | D12 | What gates `m`/`d` | The strip's **PLOT BOX** (`graph_plotbox_at()`), not a distance to a trace — and the sample is then the nearest one on the nearest trace *however far*, `graph_point_at(..., 1e30, -1, -1, ...)`. That is **byte-for-byte the pair of calls `draw_graph_snap_cursor()` makes**, so the marker cannot land anywhere but under the item-9 diamond: the glyph that shows *which* sample would be marked and the key that marks it are one gate, by construction. Outside the box — the legend band, either axis-number margin, the reorder grip column — no diamond is drawn (`waveform_viewer_modes.md` §15.7) and the key refuses. Trace **selection** keeps its 10-px `GRAPH_TRACE_PICK_TOL` proximity: picking a trace with a mouse is an aim, pressing `m` is a declaration. Issue 0188; until it, creation gated on a 20-px `GRAPH_MARKER_PICK_TOL` that no longer exists. |
-| D11 | What a TEXT drag does | It **depends on the selection**, latched at PRESS. Unselected → move the callout (unchanged). Selected → **rigid translation**: the anchor re-snaps to a real sample on its own trace and the label offset is frozen, so the whole marker moves. `graph_marker_drag` keeps its 0/1/2 "what was grabbed" contract; a **separate** `graph_marker_dragmode` says what the gesture does. §6.2.1. |
+| D11 | What a TEXT drag does | It **depends on the selection**, latched at PRESS. Unselected → move the callout (unchanged). Selected → **rigid translation**: the anchor re-projects onto its own trace (onto the CURVE since issue 0193, not onto a real sample) and the label offset is frozen, so the whole marker moves. `graph_marker_drag` keeps its 0/1/2 "what was grabbed" contract; a **separate** `graph_marker_dragmode` says what the gesture does. §6.2.1. |
 
 ---
 
@@ -61,9 +61,13 @@ markers="<rec>[\n<rec>]*"
 <num>  ::= int  >= 1     window-wide marker number (the N in "M<N>")
 <wave> ::= int  >= 0     NODE index in this graph's `node` token
 <dset> ::= int  >= 0     REAL raw dataset index, never find_closest_wave's sweepvar_wrap
-<point>::= int  >= 0     ABSOLUTE index into raw->values[*][]   (i.e. ofs + p)
-<x>    ::= %.17g         the sample's x, UNSCALED (never mylog10'ed), FINITE
-<y>    ::= %.17g         the sample's y, UNSCALED, FINITE
+<point>::= int  >= 0     ABSOLUTE index into raw->values[*][]   (i.e. ofs + p).
+                         The ANCHOR: the LEFT sample of the segment the marker
+                         sits on (issue 0193). Equal to the marker's own sample
+                         only when x happens to land exactly on one.
+<x>    ::= %.17g         x ON THE CURVE, UNSCALED (never mylog10'ed), FINITE.
+                         Interpolated between <point> and <point>+1 since 0193.
+<y>    ::= %.17g         y ON THE CURVE, UNSCALED, FINITE
 <prev> ::= int  >= 0     partner marker NUMBER for a delta block, 0 = none
 <ldx>  ::= %.10g         label offset, FRACTION of the plot box width,  FINITE
 <ldy>  ::= %.10g         label offset, FRACTION of the plot box height, FINITE

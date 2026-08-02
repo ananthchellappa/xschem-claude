@@ -5406,16 +5406,39 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
         if(num > 0) Tcl_SetResult(interp, my_itoa(num), TCL_VOLATILE);
         else Tcl_ResetResult(interp);
       }
+      /* xschem graph_marker add_at <gi> <wave> <dataset> <point> [-delta] [<x> <y>]
+       *
+       * The trailing position is issue 0193: a marker sits on the POINT OF THE
+       * CURVE the diamond snapped to, which is only a sample when the pointer
+       * happened to be at one. (dataset, point) remains the anchor. The tail is
+       * scanned rather than positional so every log line written before 0193 --
+       * which has no x/y and meant "the sample" -- still replays unchanged, and
+       * so `-delta` keeps working on either side of the numbers. */
       else if(!strcmp(argv[2], "add_at") && argc > 6) {
-        int delta = (argc > 7 && !strcmp(argv[7], "-delta"));
-        int num = graph_marker_create_at(atoi(argv[3]), atoi(argv[4]), atoi(argv[5]),
-                                         atoi(argv[6]), delta);
-        if(num > 0) Tcl_SetResult(interp, my_itoa(num), TCL_VOLATILE);
-        else Tcl_ResetResult(interp);
+        int delta = 0, have_xy = 0, k;
+        double mx = 0.0, my = 0.0;
+        for(k = 7; k < argc; k++) {
+          if(!strcmp(argv[k], "-delta")) delta = 1;
+          else if(!have_xy && k + 1 < argc && strcmp(argv[k + 1], "-delta")) {
+            mx = atof(argv[k]); my = atof(argv[k + 1]); have_xy = 1; k++;
+          }
+        }
+        {
+          int num = graph_marker_create_at(atoi(argv[3]), atoi(argv[4]), atoi(argv[5]),
+                                           atoi(argv[6]), delta, have_xy, mx, my);
+          if(num > 0) Tcl_SetResult(interp, my_itoa(num), TCL_VOLATILE);
+          else Tcl_ResetResult(interp);
+        }
       }
+      /* xschem graph_marker anchor <num> <dataset> <point> [<x> <y>] -- same
+       * rule: no position means "the sample", which is what the old lines said. */
       else if(!strcmp(argv[2], "anchor") && argc > 5) {
+        int have_xy = (argc > 7);
+        double mx = have_xy ? atof(argv[6]) : 0.0;
+        double my = have_xy ? atof(argv[7]) : 0.0;
         Tcl_SetResult(interp,
-          my_itoa(graph_marker_anchor_at(atoi(argv[3]), atoi(argv[4]), atoi(argv[5]))),
+          my_itoa(graph_marker_anchor_at(atoi(argv[3]), atoi(argv[4]), atoi(argv[5]),
+                                         have_xy, mx, my)),
           TCL_VOLATILE);
       }
       else if(!strcmp(argv[2], "move") && argc > 5) {

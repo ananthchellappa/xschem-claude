@@ -2295,6 +2295,52 @@ graph. Wrong scope / stale `gr` → silently mis-transformed waveforms.
     driven by a DIRECT call and labelled as such — no shipped path forwards a
     past-threshold reorder motion to C).
 
+52. **A trace is a POLYLINE, and its sample count is the simulator's decision —
+    so any hit-test that answers with a SAMPLE dies at high zoom** (2026-08-02,
+    issue 0193).
+    Zoom in past the sample spacing and the visible curve contains no sample at
+    all (a supply is one sample, an enable edge is two). The trace is still
+    *drawn* — and was unpickable, with no diamond, at that zoom.
+
+    **(a) Three loops walked the samples, with three different x-window clips.**
+    The renderer (`draw.c` ~8221) keeps one sample OUTSIDE each edge —
+    `xxfollowing >= start && xxprevious <= end` — precisely so the segment
+    SPANNING the view is stroked. `graph_point_at` had
+    `if(xx < start || xx > end) { have_prev = 0; continue; }`, which dropped the
+    sample AND broke the chain that forms segments; the highlight envelope
+    (~6301) had the bare `continue`. Measured over one 20223-pixel sweep with 3
+    samples in the raw: 821 hits full-view, **16** with one sample in view (only
+    the pixels near that lone sample answered), **0** with none.
+    ⚠ The lesson generalises past this fix: **when a loop over samples exists in
+    more than one place, the clips must be compared, not assumed.** Three copies,
+    three answers, and only the renderer's was right.
+
+    **(b) "The nearest sample" and "the point on the curve" are different
+    answers and BOTH are needed.** `GraphPointHit` carries both: the sample
+    fields (`point`, `x`, `y`) and `seg_*`. Getting this wrong in either
+    direction is a real bug — publish the sample and the diamond vanishes at
+    zoom; publish only the curve point and a marker record loses the sample
+    index that makes it addressable.
+
+    **(c) A derived value that stops being derivable must enter the LOG.**
+    Marker `x`/`y` used to be re-derivable from `(dataset, point)`, so
+    `graph_marker add_at` / `anchor` did not carry them. Once they are
+    interpolated, a replay that re-derives silently moves the marker. Both verbs
+    now take an optional trailing `%.17g %.17g`, and their absence still means
+    "the sample" — which is what every pre-0193 log line meant.
+
+    **(d) A no-op guard must test the thing that MOVES.** The mid-drag guard
+    compared `(dataset, point)`; the anchor is CONSTANT along a segment, so a
+    drag inside one segment became a no-op and the marker hopped sample to
+    sample. ⚠ **The whole 979-check marker suite stayed green against that
+    sabotage** — every existing drag leg travels far enough to cross a sample
+    boundary. Only a SHORT drag distinguishes sliding from hopping (`MX6b`).
+
+    Issue: `doc/claude/issues/0193-trace-unpickable-below-sample-spacing.md`.
+    Spec: `graph_markers.md` D2/D8/D11 + the record grammar (amended).
+    Suite: `test_wave_snap.tcl` `SZ*`/`SZS*`, `test_wave_markers.tcl` `MX6b`
+    plus eight legs rewritten from "== the sample" to "on the segment".
+
 ---
 
 ## 12. Improvement backlog (ranked, with where-to-touch)

@@ -737,7 +737,9 @@ static int graph_marker_drag_to(double mx_w, double my_w)
   if(gr->scx == 0.0 || gr->scy == 0.0) return 0;
   if(xctx->graph_marker_dragmode == GRAPH_MARKER_MODE_ANCHOR ||
      xctx->graph_marker_dragmode == GRAPH_MARKER_MODE_RIGID) {
-    /* the ANCHOR: slide along its OWN trace, snapping to real samples */
+    /* the ANCHOR: slide along its OWN trace, following the CURVE (issue 0193 --
+     * it used to stop at real samples, which stranded a drag off-screen once the
+     * zoom was tighter than the sample spacing) */
     GraphPointHit hit;
     double tx = mx_w, ty = my_w;
 
@@ -767,12 +769,19 @@ static int graph_marker_drag_to(double mx_w, double my_w)
     if(!graph_point_at(gi, X_TO_SCREEN(tx), Y_TO_SCREEN(ty), 1e30,
                        xctx->graph_marker_scratch.wave,
                        xctx->graph_marker_scratch.dataset, &hit)) return 0;
-    if(hit.point == xctx->graph_marker_scratch.point &&
-       hit.dataset == xctx->graph_marker_scratch.dataset) return 0;
-    xctx->graph_marker_scratch.dataset = hit.dataset;
-    xctx->graph_marker_scratch.point = hit.point;
-    xctx->graph_marker_scratch.x = hit.x;
-    xctx->graph_marker_scratch.y = hit.y;
+    /* ⚠ issue 0193: the no-op test is on the POSITION, not on (dataset, point).
+     * The anchor is now the segment's left sample, so it is CONSTANT for the
+     * whole length of a segment -- comparing it would make a drag within one
+     * segment a no-op and the marker would jump sample to sample instead of
+     * sliding along the curve. */
+    if(hit.seg_point == xctx->graph_marker_scratch.point &&
+       hit.seg_dataset == xctx->graph_marker_scratch.dataset &&
+       hit.seg_x == xctx->graph_marker_scratch.x &&
+       hit.seg_y == xctx->graph_marker_scratch.y) return 0;
+    xctx->graph_marker_scratch.dataset = hit.seg_dataset;
+    xctx->graph_marker_scratch.point = hit.seg_point;
+    xctx->graph_marker_scratch.x = hit.seg_x;
+    xctx->graph_marker_scratch.y = hit.seg_y;
   } else { /* the LABEL: a delta from the press, so it does not jump to the cursor */
     double ldx, ldy;
     if(gr->w == 0.0 || gr->h == 0.0) return 0;
@@ -832,7 +841,10 @@ static int graph_marker_release(void)
      * gets the data-addressed `xschem graph_marker anchor` line for free,
      * because the log line belongs to whichever primitive ran. */
     if(mode == GRAPH_MARKER_MODE_ANCHOR || mode == GRAPH_MARKER_MODE_RIGID)
-      graph_marker_anchor_at(num, m.dataset, m.point);
+      /* the scratch carries the interpolated position the drag ended on
+       * (issue 0193), so the commit must pass it -- re-deriving from
+       * (dataset, point) would snap the marker back to the segment's left end */
+      graph_marker_anchor_at(num, m.dataset, m.point, 1, m.x, m.y);
     else if(mode == GRAPH_MARKER_MODE_LABEL)
       graph_marker_label_offset(num, m.ldx, m.ldy);
     return 0;

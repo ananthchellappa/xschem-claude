@@ -457,6 +457,46 @@ proc mk_close {a b {rtol 1e-7}} {
   set m [expr {abs($b) > 1e-300 ? abs($b) : 1.0}]
   return [expr {abs($a - $b) <= $rtol * $m ? 1 : 0}]
 }
+# --- issue 0193: a marker sits on the POINT OF THE CURVE, not on a sample -----
+# `m` marks what the item-9 diamond snapped to (issue 0188's sentence), and the
+# diamond follows the polyline, so below the sample spacing there is no sample
+# to mark at all -- the nearest one is off-screen. The record's (dataset, point)
+# is now the segment's LEFT sample, i.e. an ANCHOR, and x/y are interpolated.
+#
+# So every "x == the sample's sweep value" / "y == raw value at point" leg
+# becomes "x is inside its own segment" + "y is the raw LERPed across it".
+# That is strictly stronger, not weaker: the old assertion is the t == 0 case,
+# and a marker that landed on the wrong segment still fails.
+# Every fixture these run on is `raw new ... dc vsweep 0 1.0 0.1`, hence step.
+proc mk_in_seg {p x {step 0.1}} {
+  if {![string is double -strict $x] || ![string is integer -strict $p]} { return 0 }
+  return [expr {$x >= $p * $step - 1e-9 && $x <= ($p + 1) * $step + 1e-9 ? 1 : 0}]
+}
+# the step-AGNOSTIC form, for the fixtures whose sweep is not `0 1.0 0.1` (MF1
+# sweeps 100..101 through a carried-forward sweep column, so p*step is not its
+# x at all): an interpolated y lies BETWEEN the two bracketing sample values,
+# whatever the x mapping is. Weaker than mk_lerp, and the strongest thing that
+# is true without knowing the sweep column's name.
+proc mk_between {v a b {rtol 1e-7}} {
+  if {![string is double -strict $v] || ![string is double -strict $a]} { return 0 }
+  if {![string is double -strict $b]} { return [mk_close $v $a $rtol] }
+  set lo [expr {$a < $b ? $a : $b}]
+  set hi [expr {$a < $b ? $b : $a}]
+  set pad [expr {$rtol * (abs($hi) > 1e-300 ? abs($hi) : 1.0)}]
+  return [expr {$v >= $lo - $pad && $v <= $hi + $pad ? 1 : 0}]
+}
+proc mk_lerp {node p x {step 0.1}} {
+  if {![string is double -strict $x] || ![string is integer -strict $p]} { return {} }
+  set y0 [pcall {xschem raw value $node $p}]
+  if {![string is double -strict $y0]} { return {} }
+  set y1 [pcall {xschem raw value $node [expr {$p + 1}]}]
+  # the LAST sample owns no segment to its right: it is its own answer
+  if {![string is double -strict $y1]} { return $y0 }
+  set t [expr {($x - $p * $step) / $step}]
+  if {$t < 0.0} { set t 0.0 }
+  if {$t > 1.0} { set t 1.0 }
+  return [expr {$y0 + $t * ($y1 - $y0)}]
+}
 # the `markers` VALUE graph_props emitted, or {} when it emitted no token
 proc mk_props_markers {p} {
   if {[regexp {(?s)\nmarkers="(.*?)"\n} "\n$p\n" -> v]} { return $v }
@@ -1637,8 +1677,9 @@ check_true "MF1 ... i.e. never from raw column 0 (0..1)" \
           foreach v $mf1xs { if {[string is double -strict $v] && $v <= 1.0} {incr bad} }
           expr {$bad == 0}}]
 check "MF1 the anchor stayed on its OWN node" [pcall {mk_field 1 2}] 1
-check_true "MF1 and y still agrees with the raw at the landing point" \
-  [pcall {mk_close [mk_field 1 6] [xschem raw value v_b [mk_field 1 4]]}]
+check_true "MF1 and y still agrees with the raw across the landing segment" \
+  [pcall {mk_between [mk_field 1 6] [xschem raw value v_b [mk_field 1 4]] \
+            [xschem raw value v_b [expr {[mk_field 1 4] + 1}]]}]
 # the CONTROL: the unrestricted walk (graph_trace_at) was never broken, so a leg
 # that only used it could not have caught this
 check "MF1 the UNRESTRICTED walk finds the same graph too (the control)" \
@@ -2197,12 +2238,11 @@ check "MP3 the anchor is the NEAREST trace, not node 0" \
 # is rendered at %.17g, so the EXPECTED side has to be rendered the same way --
 # `expr {4/10.0}` stringifies as `0.4` while the token says
 # `0.40000000000000002`, and they are the same double.
-check "MP4 the anchor is a REAL sample (x == point/10, exactly, at %.17g)" \
-  [pcall {mk_field 1 5}] \
-  [pcall {format %.17g [expr {[mk_field 1 4] / 10.0}]}]
-check_true "MP4 ... and its y is that sample's value in the raw" \
+check_true "MP4 the anchor's x lies inside its OWN segment p/10 .. (p+1)/10" \
+  [pcall {mk_in_seg [mk_field 1 4] [mk_field 1 5]}]
+check_true "MP4 ... and its y is the raw INTERPOLATED across that segment" \
   [pcall {mk_close [mk_field 1 6] \
-            [xschem raw value [lindex {v_a v_b} [mk_field 1 2]] [mk_field 1 4]]}]
+            [mk_lerp [lindex {v_a v_b} [mk_field 1 2]] [mk_field 1 4] [mk_field 1 5]]}]
 check_true "MP5 the anchor's x is inside the graph's x window (0 .. 1)" \
   [pexpr {[pcall {mk_field 1 5}] >= 0.0 && [pcall {mk_field 1 5}] <= 1.0}]
 # an INDEPENDENT pixel->data path (scheduler.c's graph_coord, not graph_point_at):
@@ -2893,8 +2933,9 @@ ui_state=[pcall {xschem get ui_state}] rects=[pcall {xschem get graph_rects}]"
   check "MP20 ... on strip 1, at a real sample of the 11-point grid" \
     [pcall {list [lindex $mp20 1] \
               [expr {[lindex $mp20 4] >= 0 && [lindex $mp20 4] <= 10}]}] {1 1}
-  check_true "MP20 ... whose y agrees with `raw value` at that point" \
-    [pcall {mk_close [lindex $mp20 6] [xschem raw value v_b [lindex $mp20 4]]}]
+  check_true "MP20 ... whose y agrees with the raw INTERPOLATED at its x" \
+    [pcall {mk_close [lindex $mp20 6] \
+              [mk_lerp v_b [lindex $mp20 4] [lindex $mp20 5]]}]
   # the CONTROL that says the key really arrived: the same key on strip 0's
   # TRACE pixel also creates, so a refusal above could not be "no key was
   # delivered". (MF11a just proved the same handler is live on strip 0.)
@@ -4786,10 +4827,10 @@ v_c} {2 3}]
   check_true "MX1 its point is a real sample of the 11-point grid" \
     [pexpr {[string is integer -strict [lindex $mx1 4]] &&
             [lindex $mx1 4] >= 0 && [lindex $mx1 4] <= 10}]
-  check_true "MX1 its x is that sample's sweep value" \
-    [pcall {mk_close [lindex $mx1 5] [expr {[lindex $mx1 4] * 0.1}]}]
-  check_true "MX1 its y agrees with `raw value` at that point" \
-    [pcall {mk_close [lindex $mx1 6] [xschem raw value v_a [lindex $mx1 4]]}]
+  check_true "MX1 its x lies inside its own segment" \
+    [pcall {mk_in_seg [lindex $mx1 4] [lindex $mx1 5]}]
+  check_true "MX1 its y agrees with the raw INTERPOLATED at its x" \
+    [pcall {mk_close [lindex $mx1 6] [mk_lerp v_a [lindex $mx1 4] [lindex $mx1 5]]}]
   check "MX1 the measurement-tooltip bit 64 is UNCHANGED (the m/M collision witness)" \
     [pcall {xschem new_schematic switch $vdrw; xschem get graph_flags}] $mx1gf
   check "MX1 the PUSH HOOK put it in the model" \
@@ -4828,8 +4869,8 @@ v_c} {2 3}]
     [list [lindex $mx3 0] [lindex $mx3 7]] {2 1}
   check_true "MX3 it snapped to a DIFFERENT sample than M1" \
     [pexpr {[lindex $mx3 4] ne {} && [lindex $mx3 4] != [lindex $mx1 4]}]
-  check_true "MX3 its y agrees with `raw value` (numeric, 1e-7 relative)" \
-    [pcall {mk_close [lindex $mx3 6] [xschem raw value v_a [lindex $mx3 4]]}]
+  check_true "MX3 its y agrees with the raw INTERPOLATED (numeric, 1e-7 relative)" \
+    [pcall {mk_close [lindex $mx3 6] [mk_lerp v_a [lindex $mx3 4] [lindex $mx3 5]]}]
   check_true "MX3 the label carries the delta block" \
     [pexpr {[regexp {slope:} [pcall {xschem new_schematic switch $vdrw
                                      xschem graph_marker text 2}]]}]
@@ -4960,10 +5001,11 @@ v_c} {2 3}]
     [pexpr {[string is integer -strict [lindex $mx6after 4]] &&
             [lindex $mx6after 4] != [lindex $mx6before 4] &&
             [lindex $mx6after 4] >= 0 && [lindex $mx6after 4] <= 10}]
-  check_true "MX6 x is that sample's sweep value" \
-    [pcall {mk_close [lindex $mx6after 5] [expr {[lindex $mx6after 4] * 0.1}]}]
-  check_true "MX6 y agrees with `raw value` at the new point" \
-    [pcall {mk_close [lindex $mx6after 6] [xschem raw value v_a [lindex $mx6after 4]]}]
+  check_true "MX6 x lies inside its new segment" \
+    [pcall {mk_in_seg [lindex $mx6after 4] [lindex $mx6after 5]}]
+  check_true "MX6 y agrees with the raw INTERPOLATED at the new x" \
+    [pcall {mk_close [lindex $mx6after 6] \
+              [mk_lerp v_a [lindex $mx6after 4] [lindex $mx6after 5]]}]
   check "MX6 the marker stayed on its OWN trace (wave unchanged)" \
     [lindex $mx6after 2] [lindex $mx6before 2]
   check "MX6 the label offset is UNTOUCHED by an anchor drag" \
@@ -4978,6 +5020,34 @@ v_c} {2 3}]
   check "MX6 the model picked the commit up through the push hook" \
     [pcall {mk_model_mk $tok 0}] [pcall {xschem new_schematic switch $vdrw
                                          xschem getprop rect 2 0 markers}]
+
+  # --- MX6b: A DRAG *WITHIN ONE SEGMENT* STILL MOVES IT (issue 0193) ----
+  # ⚠ THIS LEG EXISTS BECAUSE A SABOTAGE SURVIVED. Putting the mid-drag no-op
+  # test back to `hit.seg_point == scratch.point && seg_dataset == ...` --
+  # i.e. comparing the ANCHOR, which is now CONSTANT along a whole segment --
+  # left this entire suite green: every other drag leg travels far enough to
+  # cross a sample boundary, so a marker that jumps sample-to-sample instead of
+  # sliding along the curve satisfies all of them. Only a SHORT drag can tell
+  # the two apart. 11 samples across the box makes one segment ~1/10 of the
+  # width, so 8 px is inside one; if it does cross a boundary the leg is still
+  # correct, just weaker (x must change either way).
+  set mx6bbefore [lindex [pcall {mk_list 0}] 0]
+  set mx6bA [mx_arm {MX6b} 0 1]
+  check_true "MX6b the anchor pixel was (re-)found by scanning" [pexpr {$mx6bA ne {}}]
+  if {$mx6bA ne {}} {
+    wb_ev $vdrw <B1-Motion> -x [expr {[mk_px $mx6bA 0] + 4}] -y [mk_px $mx6bA 1] -state 0x100
+    wb_ev $vdrw <B1-Motion> -x [expr {[mk_px $mx6bA 0] + 8}] -y [mk_px $mx6bA 1] -state 0x100
+    wb_ev $vdrw <ButtonRelease-1> -x [expr {[mk_px $mx6bA 0] + 8}] \
+      -y [mk_px $mx6bA 1] -state 0x100
+    set mx6bafter [lindex [pcall {mk_list 0}] 0]
+    check_true "MX6b an 8-px drag moved the anchor's x (it SLID, it did not snap)" \
+      [pexpr {[string is double -strict [lindex $mx6bafter 5]] &&
+              [lindex $mx6bafter 5] != [lindex $mx6bbefore 5]}]
+    check_true "MX6b ... and it is still ON the curve" \
+      [pcall {mk_close [lindex $mx6bafter 6] \
+                [mk_lerp v_a [lindex $mx6bafter 4] [lindex $mx6bafter 5]]}]
+    check "MX6b ... on its own trace" [lindex $mx6bafter 2] [lindex $mx6bbefore 2]
+  }
 
   # --- MX7: LABEL DRAG, marker NOT selected ----------------------------
   # The unselected half of the gesture-semantics split (§6.2); MX7e below is the
@@ -5078,10 +5148,17 @@ v_c} {2 3}]
     [pexpr {[string is integer -strict [lindex $mx7eafter 4]] &&
             [lindex $mx7eafter 4] != [lindex $mx7ebefore 4] &&
             [lindex $mx7eafter 4] >= 0 && [lindex $mx7eafter 4] <= 10}]
-  check_true "MX7e x is that sample's sweep value (it SNAPPED, it did not slide)" \
-    [pcall {mk_close [lindex $mx7eafter 5] [expr {[lindex $mx7eafter 4] * 0.1}]}]
-  check_true "MX7e y agrees with `raw value` at the new point" \
-    [pcall {mk_close [lindex $mx7eafter 6] [xschem raw value v_a [lindex $mx7eafter 4]]}]
+  # ⚠ issue 0193 INVERTED THIS LEG. It used to read "it SNAPPED, it did not
+  # slide" and assert x == point*0.1 exactly. Sliding along the curve is now the
+  # contract -- a rigid translation lands the anchor wherever the projection
+  # falls, which is only a sample by coincidence. What still has to hold, and is
+  # what the leg was really defending, is that the anchor stays ON ITS TRACE:
+  # inside its own segment, with y the raw interpolated across it.
+  check_true "MX7e x lies inside its new segment (it SLID along the curve)" \
+    [pcall {mk_in_seg [lindex $mx7eafter 4] [lindex $mx7eafter 5]}]
+  check_true "MX7e y agrees with the raw INTERPOLATED at the new x" \
+    [pcall {mk_close [lindex $mx7eafter 6] \
+              [mk_lerp v_a [lindex $mx7eafter 4] [lindex $mx7eafter 5]]}]
   check "MX7e the marker stayed on its OWN trace (wave unchanged)" \
     [lindex $mx7eafter 2] [lindex $mx7ebefore 2]
   check "MX7e ldx/ldy are FROZEN — a rigid translation, not a label move" \
@@ -5459,8 +5536,9 @@ v_c} {2 3}]
   check_true "MX7b the drag COMMITTED even though the pointer left the window" \
     [pexpr {[lindex $mx7bafter 4] ne {} &&
             [lindex $mx7bafter 4] != [lindex $mx7bbefore 4]}]
-  check_true "MX7b it re-snapped to a real sample of the same trace" \
-    [pcall {mk_close [lindex $mx7bafter 6] [xschem raw value v_a [lindex $mx7bafter 4]]}]
+  check_true "MX7b it re-anchored ON the same trace (curve point, issue 0193)" \
+    [pcall {mk_close [lindex $mx7bafter 6] \
+              [mk_lerp v_a [lindex $mx7bafter 4] [lindex $mx7bafter 5]]}]
   check "MX7b the marker still belongs to the ORIGINAL strip" \
     [pcall {llength [mk_list 0]}] 1
   check "MX7b ... and did NOT migrate to the strip the pointer crossed" \
@@ -5826,8 +5904,11 @@ v_c} {2 3}]
 # the new numbers here. That is the point -- the constant is the thing that
 # makes silent coverage loss impossible, so it has to be maintained by hand.
 # These are the counts BEFORE the two MZ legs themselves, so the RESULT line
-# reads two higher (979 / 437).
-set ::mk_expect_x     977   ;# DISPLAY arm: MK + MS + MR + MF + MP + MD + MQ + MR-viewer + MX
+# reads two higher (983 / 437).
+# 2026-08-02, issue 0193: +4 on the DISPLAY arm (MX6b, the short-drag leg a
+# surviving sabotage forced). The --nogui arm is unchanged -- MX6b is a real Tk
+# drag, so it lives in the DISPLAY half only.
+set ::mk_expect_x     981   ;# DISPLAY arm: MK + MS + MR + MF + MP + MD + MQ + MR-viewer + MX
 set ::mk_expect_nogui 435   ;# --nogui arm: MK + MS + MP + the engine half of MR/MF/MD
 set mkexp [expr {$::mk_ran_x ? $::mk_expect_x : $::mk_expect_nogui}]
 set mkgot [expr {$npass + $fail}]

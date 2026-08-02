@@ -597,6 +597,11 @@ typedef int Tcl_Size;
 /* inverse graph transforms */
 #define G_X(x) (((x) - gr->dx) / gr->cx)
 #define G_Y(y) (((y) - gr->dy) / gr->cy)
+/* inverse SCREEN transforms (screen pixel -> graph value). Still log-space when
+ * gr->logx/logy: pow(10, ...) is the caller's job, exactly as mylog10() is on
+ * the way in -- landmine 35 (a stored value is never log-mapped). */
+#define GS_X(x) (((x) - gr->sdx) / gr->scx)
+#define GS_Y(y) (((y) - gr->sdy) / gr->scy)
 /* for digital graphs (gr->ypos1, gr->ypos2 instead of gr->gy1, gr->gy2) */
 #define DG_Y(y) (((y) - gr->ddy) / gr->dcy)
 
@@ -1348,6 +1353,23 @@ typedef struct {
   double sx, sy;   /* screen pixels of the sample (log-space mapped, S_X/S_Y) */
   double dist;     /* point distance in pixels from the query pixel */
   double seg_dist; /* point-to-SEGMENT distance -- the metric traces are RANKED on */
+  /* THE POINT ON THE CURVE (issue 0193), which is NOT the sample above. A trace
+   * is a polyline: between two samples there are infinitely many points on it
+   * and, once the zoom is tighter than the sample spacing, NONE of them is a
+   * sample. These four are the foot of the perpendicular from the query pixel
+   * onto the winning segment -- what "snap to the trace" means visually, and
+   * the only answer that exists at high zoom.
+   * A MARKER USES THESE TOO (issue 0193): "add a marker at the point the
+   * diamond has snapped to" (issue 0188) is only true if both read the same
+   * answer, and below the sample spacing the nearest sample is off-screen --
+   * marking it would put the marker outside the view the user is looking at.
+   * `seg_point`/`seg_dataset` stay as the record's ANCHOR (the segment's left
+   * sample), so a marker is still addressable by sample index; x/y are the
+   * interpolated position. See doc/claude/specs/graph_markers.md 3.1. */
+  double seg_x, seg_y;   /* UNSCALED values at that point (interpolated) */
+  double seg_sx, seg_sy; /* its screen pixels */
+  int seg_point;         /* LEFT sample of the winning segment (raw->values[] index) */
+  int seg_dataset;       /* its dataset */
 } GraphPointHit;
 
 typedef struct {
@@ -2230,12 +2252,14 @@ extern int  graph_marker_find(int num, int *graph_idx, GraphMarker *out);
 extern int  graph_marker_text(int num, char *dest, int destsize);
 extern int  graph_marker_at(int i, double px, double py, double tol, int *part);
 extern int  graph_marker_create(int i, double px, double py, int delta);
-extern int  graph_marker_create_at(int i, int wave, int dataset, int point, int delta);
+extern int  graph_marker_create_at(int i, int wave, int dataset, int point, int delta,
+                                   int have_xy, double xin, double yin);
 extern int  graph_marker_delete(int num);
 extern int  graph_marker_delete_all(int graph_idx);
 extern int  graph_marker_delete_selected(void);
 extern int  graph_marker_move(int num, double px, double py);
-extern int  graph_marker_anchor_at(int num, int dataset, int point);
+extern int  graph_marker_anchor_at(int num, int dataset, int point, int have_xy,
+                                   double xin, double yin);
 extern int  graph_marker_label_offset(int num, double ldx, double ldy);
 extern int  graph_marker_select(int num, int graph_idx);
 extern int  graph_marker_is_selected(int num);

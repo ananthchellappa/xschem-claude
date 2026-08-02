@@ -139,9 +139,65 @@ check "SS3 the glyph is painted window-only (never into save_pixmap)" \
      {xctx->draw_pixmap = 0;}] 1
 
 # RAW values, never the log-mapped ones (landmine 35: mylog10 clamps <=0 to -35,
-# so a zero sample would read back as 1e-35).
+# so a zero sample would read back as 1e-35). Issue 0193 moved the published
+# point from the nearest SAMPLE (hit.x) to the point on the CURVE (hit.seg_x) --
+# the unscaledness is the invariant, the field is not.
 check_true "SS4 the published x/y are the RAW hit values" \
-  [regexp {xctx->graph_snap_x = hit\.x;\s*/\* RAW -- landmine 35 \*/} $csrc]
+  [regexp {xctx->graph_snap_x = hit\.seg_x;\s*/\* RAW -- landmine 35 \*/} $csrc]
+
+# ============================================================================
+# SZS* — issue 0193 source tripwires
+# ============================================================================
+# THE CLIP THAT WAS THE BUG. graph_point_at's sample loop used to open with
+# `if(xx < start || xx > end) { have_prev = 0; continue; }`, which dropped the
+# sample AND broke the chain, so no segment ever spanned the window edge. It is
+# quoted verbatim in the explanatory comment there, so this must count CODE
+# lines only -- counting the prose is the mistake count_code exists to prevent.
+# ⚠ It must name the X-WINDOW test specifically. `have_prev = 0; continue;`
+# alone also matches the NON-FINITE guard one line below, which is correct and
+# must stay -- the first version of this check counted that one and went red
+# against the fix.
+check "SZS1 the window clip no longer breaks the segment chain" \
+  [count_code $csrc {if\(xx < start \|\| xx > end\) \{ have_prev = 0}] 0
+check_true "SZS1 ...and the non-finite guard, which is correct, is still there" \
+  [expr {[count_code $csrc {have_prev = 0; continue; \}}] == 1}]
+# ...and the replacement really is the both-ends test
+check_true "SZS2 a segment survives unless BOTH ends are off the same edge" \
+  [regexp {seg_ok = have_prev && !\(xx < start && prev_xx < start\)} $csrc]
+
+# THE SNAP SEMANTICS. The diamond is drawn at the point on the curve, not at the
+# nearest sample -- at a zoom below the sample spacing the nearest sample is
+# off-screen, which is what made the diamond vanish.
+check_true "SZS3 the diamond is drawn at the curve point, not the sample" \
+  [regexp {graph_snap_shape\(xctx->gc\[xctx->crosshair_layer\], hit\.seg_sx, hit\.seg_sy, size\)} $csrc]
+# ...and the no-repaint equality test moved with it, or the diamond would freeze
+# wherever the last sample change left it.
+check_true "SZS4 the repaint test compares the curve point too" \
+  [regexp {hit\.seg_sx == xctx->graph_snap_sx && hit\.seg_sy == xctx->graph_snap_sy} $csrc]
+
+# A MARKER FOLLOWS THE DIAMOND. Issue 0188's sentence -- "add a marker at the
+# point that the diamond cursor has snapped to" -- is only true if the two read
+# the SAME field, so both take the curve point. (dataset, point) survives as the
+# record's anchor: the segment's left sample.
+check_true "SZS5 marker creation reads the same curve point the diamond does" \
+  [regexp {graph_marker_add_record\(i, hit\.wave, hit\.seg_dataset, hit\.seg_point,\s*hit\.seg_x, hit\.seg_y, delta\)} $csrc]
+# ...and the drag no-op test is on the POSITION, not on the anchor: the anchor is
+# constant along a whole segment, so comparing it would make a drag inside one
+# segment do nothing and the marker would jump sample to sample.
+set fpc [open [file join $repo src callback.c] r]; set cbsrc [read $fpc]; close $fpc
+check_true "SZS7 the marker drag compares the position, not the anchor" \
+  [regexp {hit\.seg_x == xctx->graph_marker_scratch\.x} $cbsrc]
+# THE REPLAY. x/y used to be re-derivable from (dataset, point); they are not any
+# more, so the log lines carry them or a replay would snap the marker back.
+check_true "SZS8 the add_at log line carries the position" \
+  [regexp {log_action\("xschem graph_marker add_at %d %d %d %d%s %\.17g %\.17g} $csrc]
+check_true "SZS9 the anchor log line carries the position" \
+  [regexp {log_action\("xschem graph_marker anchor %d %d %d %\.17g %\.17g} $csrc]
+
+# THE THIRD INSTANCE. The trace-highlight envelope carried the same clip, so a
+# highlighted trace lost its overlay at the same zoom that made it unpickable.
+check "SZS6 the highlight envelope no longer drops the straddling samples" \
+  [count_code $csrc {if\(xx < start \|\| xx > end\) continue;}] 0
 
 # THE BLAST RADIUS, as a tripwire rather than as behaviour. SG1 below reads the
 # getter, and the getter reports xctx->graph_snap whatever the PUMP actually
@@ -476,6 +532,84 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     update
     set txt2 [pcall {$sb cget -text}]
     check "ST23 outside the box the position is dropped" $txt2 {Plot: single}
+
+    # ========================================================================
+    # SZ* — ZOOMED TIGHTER THAN THE SAMPLE SPACING (issue 0193)
+    # ========================================================================
+    # A trace is a POLYLINE. Its samples are whatever the simulator wrote — an
+    # enable edge is two, a steady supply is one — so at a tight enough zoom the
+    # visible curve contains no sample at all. It is still drawn (draw_graph
+    # keeps one sample outside each edge, ~8221) and it must still be pickable
+    # and snappable, at the point ON THE CURVE.
+    #
+    # The fixture is deliberately 3 samples over the whole sweep, so the three
+    # regimes are reachable by changing only the x range: >=2 in view, exactly
+    # 1, and NONE. Measured before the fix over the same 20223-pixel sweep:
+    # 821 / 16 / 0 hits. After: 821 / 719 / 716.
+    pcall {xschem raw new szoom.raw dc vsweep 0 1.0 0.5}
+    pcall {xschem raw add vv "vsweep 2 *"}
+    wviewer::set_graphs $tok [list [wviewer::empty_graph]]
+    pcall {wviewer::add_trace $tok 0 vv}
+    wviewer::regenerate $tok
+    xschem new_schematic switch $vdrw
+    update
+    set szW [winfo width $vdrw]; set szH [winfo height $vdrw]
+
+    # sweep the box and report how many pixels the ENGINE calls "on a trace"
+    proc sz_hits {W H} {
+      set hits 0; set first {}
+      for {set yy [expr {int($H*0.10)}]} {$yy < int($H*0.92)} {incr yy 6} {
+        for {set xx [expr {int($W*0.15)}]} {$xx < int($W*0.85)} {incr xx 14} {
+          if {[pcall {xschem get graph_near_wave 0 $xx $yy}] eq "1"} {
+            incr hits
+            if {$first eq {}} { set first [list $xx $yy] }
+          }
+        }
+      }
+      return [list $hits $first]
+    }
+
+    lassign [sz_hits $szW $szH] sz_a_hits sz_a_at
+    pcall {wviewer::apply_range $tok 0 0.4 0.6 0 2.0} ; update
+    lassign [sz_hits $szW $szH] sz_b_hits sz_b_at
+    pcall {wviewer::apply_range $tok 0 0.10 0.20 0 2.0} ; update
+    lassign [sz_hits $szW $szH] sz_c_hits sz_c_at
+
+    check_true "SZ1 the full view picks the trace (control)" [expr {$sz_a_hits > 0}]
+    # ⚠ the two that were broken. The counts are compared to the CONTROL, not to
+    # a magic number: a window a third as wide still exposes a comparable band
+    # of the same straight line, so "the same order of magnitude" is the honest
+    # assertion and 16-vs-821 / 0-vs-821 both fail it decisively.
+    check_true "SZ2 ONE sample in view still picks the trace" \
+      [expr {$sz_b_hits > $sz_a_hits / 4}]
+    check_true "SZ3 ZERO samples in view still picks the trace" \
+      [expr {$sz_c_hits > $sz_a_hits / 4}]
+
+    if {$sz_c_at eq {}} {
+      puts "SKIPPED: SZ4/SZ5 (nothing pickable in the zero-sample window)"
+    } else {
+      lassign $sz_c_at szx szy
+      focus -force $vdrw
+      event generate $vdrw <Motion> -x $szx -y $szy
+      update
+      set szg [pcall {xschem get graph_snap}]
+      check_true "SZ4 a hover in the zero-sample window publishes a pick" \
+        [expr {[llength $szg] == 4}]
+      if {[llength $szg] == 4} {
+        lassign $szg szgi szwv szsx szsy
+        # THE SEMANTICS. Not the nearest SAMPLE -- there is none in view, both
+        # neighbours are off-screen -- but the interpolated point on the curve,
+        # which must lie INSIDE the visible x window.
+        check_true "SZ4 the snapped x is inside the visible window, not a sample" \
+          [expr {[string is double -strict $szsx] && $szsx >= 0.0999 && $szsx <= 0.2001}]
+        # vv = 2*vsweep is a straight line, so an interpolated point satisfies it
+        # exactly -- and a log-mapped value would not (landmine 35)
+        check_true "SZ5 the snapped y is the interpolated value on the curve (y=2x)" \
+          [expr {[string is double -strict $szsy] && abs($szsy - 2.0*$szsx) < 1e-6}]
+      }
+    }
+    # put the fixture back for the legs below
+    pcall {wviewer::apply_range $tok 0 0 1.0 0 2.0} ; update
 
     # disarming clears the published pick as well as the glyph
     pcall {xschem set graph_snap_cursor 0}

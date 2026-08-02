@@ -5120,20 +5120,31 @@ int find_closest_wave(int i, Graph_ctx *gr, int *node_number)
 }
 
 /* Screen-pixel distance from point (px,py) to the segment (ax,ay)-(bx,by). */
+/* Distance from (px,py) to the SEGMENT a-b, and -- when ox/oy are given -- the
+ * foot of the perpendicular itself, clamped to the segment's ends. That second
+ * answer is the trace-snap point of issue 0193: at a zoom tighter than the
+ * sample spacing the visible curve contains no sample at all, so the nearest
+ * SAMPLE is the wrong thing to point at (it is off-screen) and the nearest
+ * POINT ON THE CURVE is the only one that exists. */
 static double graph_point_seg_dist(double px, double py,
-                                   double ax, double ay, double bx, double by)
+                                   double ax, double ay, double bx, double by,
+                                   double *ox, double *oy)
 {
   double vx = bx - ax, vy = by - ay;
   double c1, c2, t, dx, dy;
   c2 = vx * vx + vy * vy;
   if(c2 <= 0.0) {
     dx = px - ax; dy = py - ay;
+    if(ox) *ox = ax;
+    if(oy) *oy = ay;
     return sqrt(dx * dx + dy * dy);
   }
   c1 = (px - ax) * vx + (py - ay) * vy;
   t = c1 / c2;
   if(t < 0.0) t = 0.0;
   else if(t > 1.0) t = 1.0;
+  if(ox) *ox = ax + t * vx;
+  if(oy) *oy = ay + t * vy;
   dx = px - (ax + t * vx);
   dy = py - (ay + t * vy);
   return sqrt(dx * dx + dy * dy);
@@ -5782,12 +5793,15 @@ void draw_graph_snap_cursor(int mx, int my)
 
   if(!found) { graph_snap_clear(); return; }
 
-  /* Nothing to repaint when the snapped SAMPLE has not changed: the pointer
-   * can move several pixels and still resolve to the same sample, which is the
-   * whole point of a snap cursor. */
+  /* Nothing to repaint when the snapped POINT has not changed. Issue 0193 moved
+   * this from the sample to the point ON THE CURVE, so at a zoom tighter than
+   * the sample spacing the diamond still has somewhere to be -- it now slides
+   * along the segment under the pointer instead of vanishing. The equality test
+   * still earns its keep on the common case (a near-vertical edge, where many
+   * pointer pixels project onto the same place). */
   if(xctx->graph_snap_on && gi == xctx->graph_snap_gi &&
      hit.wave == xctx->graph_snap_wave &&
-     hit.sx == xctx->graph_snap_sx && hit.sy == xctx->graph_snap_sy) return;
+     hit.seg_sx == xctx->graph_snap_sx && hit.seg_sy == xctx->graph_snap_sy) return;
 
   size = tclgetintvar("graph_snap_cursor_size");
   if(size < 1) size = 4;
@@ -5799,17 +5813,23 @@ void draw_graph_snap_cursor(int mx, int my)
   xctx->draw_pixmap = 0;   /* window only: the glyph must never enter save_pixmap,
                             * or the copy-back erase above would restore it */
   xctx->draw_window = 1;
-  graph_snap_shape(xctx->gc[xctx->crosshair_layer], hit.sx, hit.sy, size);
+  graph_snap_shape(xctx->gc[xctx->crosshair_layer], hit.seg_sx, hit.seg_sy, size);
   xctx->draw_pixmap = prev_pixmap;
   xctx->draw_window = prev_window;
 
   xctx->graph_snap_on = 1;
   xctx->graph_snap_gi = gi;
   xctx->graph_snap_wave = hit.wave;
-  xctx->graph_snap_sx = hit.sx;
-  xctx->graph_snap_sy = hit.sy;
-  xctx->graph_snap_x = hit.x;   /* RAW -- landmine 35 */
-  xctx->graph_snap_y = hit.y;
+  /* issue 0193: the POINT ON THE CURVE, not the nearest sample. A trace is a
+   * polyline and the user is pointing at the polyline; below the sample spacing
+   * the nearest sample is off-screen, which is why the diamond used to snap to
+   * one lone point and then disappear entirely. The readout follows it, so
+   * `xschem get graph_snap` now reports an INTERPOLATED x/y -- still unscaled
+   * (landmine 35), and still the value the eye is on. */
+  xctx->graph_snap_sx = hit.seg_sx;
+  xctx->graph_snap_sy = hit.seg_sy;
+  xctx->graph_snap_x = hit.seg_x;   /* RAW -- landmine 35 */
+  xctx->graph_snap_y = hit.seg_y;
 }
 
 int graph_point_at(int i, double px, double py, double tol,
@@ -5946,6 +5966,22 @@ int graph_point_at(int i, double px, double py, double tol,
       double nd_pdist = -1.0; /* smallest POINT distance found for THIS node */
       double nd_x = 0.0, nd_y = 0.0, nd_sx = 0.0, nd_sy = 0.0;
       int nd_dataset = 0, nd_point = 0;
+      /* the same four again, over samples the x window does NOT contain. Issue
+       * 0193 keeps off-window samples in the walk (they own the segment that
+       * spans the view), but a MARKER must still land on the same sample it
+       * always did, so the in-window answer wins whenever there is one and this
+       * is only the fallback for "the zoom is tighter than the sample spacing",
+       * where there is no in-window sample to prefer. */
+      double no_pdist = -1.0;
+      double no_x = 0.0, no_y = 0.0, no_sx = 0.0, no_sy = 0.0;
+      int no_dataset = 0, no_point = 0;
+      /* the winning point ON THE CURVE, in screen pixels (issue 0193), and the
+       * sample that segment STARTS at -- the anchor a marker record keeps so it
+       * is still addressable by (dataset, point) */
+      double nd_ex = 0.0, nd_ey = 0.0;
+      int nd_epoint = 0, nd_edataset = 0;
+      double prev_xx = 0.0;
+      int prev_point = 0;
       int have_prev;
       for(dset = 0; dset < xctx->raw->datasets; dset++) {
         SPICE_DATA *gvx = xctx->raw->values[sweep_idx];
@@ -5964,40 +6000,91 @@ int graph_point_at(int i, double px, double py, double tol,
         gvy = xctx->raw->values[idx];
         have_prev = 0;
         for(p = ofs; p < ofs_end; p++) {
-          double sx, sy, d, ddx, ddy, pd;
+          double sx, sy, d, ddx, ddy, pd, ex = 0.0, ey = 0.0;
+          int in, seg_ok;
           if(gr->logx) xx = mylog10(gvx[p]); else xx = gvx[p];
           if(gr->logy) yy = mylog10(gvy[p]); else yy = gvy[p];
-          if(xx < start || xx > end) { have_prev = 0; continue; }
           sx = S_X(xx);
           sy = S_Y(yy);
           /* a non-finite screen coordinate cannot be near anything and would
            * poison the distance arithmetic */
           if(!(sx > -1e9 && sx < 1e9 && sy > -1e9 && sy < 1e9)) { have_prev = 0; continue; }
+          in = (xx >= start && xx <= end);
+          /* ⚠ ISSUE 0193 -- THE CLIP THAT USED TO LIVE HERE WAS THE BUG, and it
+           * disagreed with the one the RENDERER uses. This loop used to open
+           * with `if(xx < start || xx > end) { have_prev = 0; continue; }`,
+           * dropping the sample AND breaking the chain, so no segment ever
+           * crossed the window edge. draw_graph's own test (~8221) is
+           * `xxfollowing >= start && xxprevious <= end`: it KEEPS one sample
+           * outside each edge precisely so the segment spanning the view is
+           * still stroked. Hence the three regimes the user hit -- >=2 samples
+           * in view: fine; exactly 1: have_prev never set, so `d = pd` and only
+           * that one sample answered; 0 (zoom tighter than the sample spacing,
+           * e.g. a 2-sample enable edge or a 1-sample supply): the loop body
+           * never ran, nd_min stayed -1 and the trace was UNPICKABLE while
+           * plainly visible on screen.
+           * A segment is relevant unless BOTH its ends are off the same edge. */
+          seg_ok = have_prev && !(xx < start && prev_xx < start)
+                             && !(xx > end   && prev_xx > end);
           ddx = sx - px;
           ddy = sy - py;
           pd = sqrt(ddx * ddx + ddy * ddy);
-          if(have_prev) {
-            d = graph_point_seg_dist(px, py, prev_sx, prev_sy, sx, sy);
+          if(seg_ok) {
+            d = graph_point_seg_dist(px, py, prev_sx, prev_sy, sx, sy, &ex, &ey);
+          } else if(in) {
+            /* a lone in-window sample with no usable neighbour: it IS the curve */
+            d = pd; ex = sx; ey = sy;
           } else {
-            d = pd;
+            d = -1.0;        /* wholly outside and no segment: contributes nothing */
           }
-          if(nd_min < 0.0 || d < nd_min) nd_min = d;
+          if(d >= 0.0 && (nd_min < 0.0 || d < nd_min)) {
+            nd_min = d;
+            nd_ex = ex;
+            nd_ey = ey;
+            /* the segment's LEFT sample when there is a segment, else the lone
+             * sample itself -- either way an index that addresses this trace */
+            nd_epoint = seg_ok ? prev_point : p;
+            nd_edataset = dset;
+          }
           /* the nearest SAMPLE, tracked independently of the ranking metric and
            * frozen HERE -- values[] must not be read again after this loop */
-          if(nd_pdist < 0.0 || pd < nd_pdist) {
-            nd_pdist = pd;
-            nd_x = gvx[p];   /* RAW, not the log-mapped xx */
-            nd_y = gvy[p];   /* RAW, not the log-mapped yy */
-            nd_sx = sx;
-            nd_sy = sy;
-            nd_dataset = dset;
-            nd_point = p;
+          if(in) {
+            if(nd_pdist < 0.0 || pd < nd_pdist) {
+              nd_pdist = pd;
+              nd_x = gvx[p];   /* RAW, not the log-mapped xx */
+              nd_y = gvy[p];   /* RAW, not the log-mapped yy */
+              nd_sx = sx;
+              nd_sy = sy;
+              nd_dataset = dset;
+              nd_point = p;
+            }
+          } else if(no_pdist < 0.0 || pd < no_pdist) {
+            no_pdist = pd;
+            no_x = gvx[p];
+            no_y = gvy[p];
+            no_sx = sx;
+            no_sy = sy;
+            no_dataset = dset;
+            no_point = p;
           }
           prev_sx = sx;
           prev_sy = sy;
+          prev_xx = xx;
+          prev_point = p;
           have_prev = 1;
         }
         ofs = ofs_end;
+      }
+      /* issue 0193: no sample fell inside the x window, so the SAMPLE half of
+       * the answer comes from the straddling neighbour that owns the segment
+       * being drawn. Without this the `nd_pdist >= 0.0` gate below would still
+       * reject the whole trace and the pick would stay dead at high zoom. */
+      if(nd_pdist < 0.0 && no_pdist >= 0.0) {
+        nd_pdist = no_pdist;
+        nd_x = no_x; nd_y = no_y;
+        nd_sx = no_sx; nd_sy = no_sy;
+        nd_dataset = no_dataset;
+        nd_point = no_point;
       }
       /* strictly nearer wins, so overlapping traces resolve to the topmost
        * match by distance and, on a tie, to the FIRST node in the list */
@@ -6017,6 +6104,18 @@ int graph_point_at(int i, double px, double py, double tol,
         best.sy = nd_sy;
         best.dist = nd_pdist;
         best.seg_dist = nd_min;
+        /* the point ON THE CURVE (issue 0193), back-transformed to unscaled
+         * values. GS_X/GS_Y land in graph space, which is still LOG space on a
+         * log axis -- pow(10) undoes the mylog10() applied on the way in, so
+         * what is stored obeys landmine 35 exactly like best.x/best.y do. */
+        best.seg_sx = nd_ex;
+        best.seg_sy = nd_ey;
+        best.seg_point = nd_epoint;
+        best.seg_dataset = nd_edataset;
+        best.seg_x = GS_X(nd_ex);
+        best.seg_y = GS_Y(nd_ey);
+        if(gr->logx) best.seg_x = pow(10.0, best.seg_x);
+        if(gr->logy) best.seg_y = pow(10.0, best.seg_y);
       }
     }
     if(express) my_free(_ALLOC_ID_, &express);
@@ -6298,7 +6397,17 @@ static WaveHilightEnv *wave_hilight_envelope(int gi, int ni, Graph_ctx *gr_out)
           short sh;
           if(gr->logx) xx = mylog10(gvx[p]); else xx = gvx[p];
           if(gr->logy) yy = mylog10(gvy[p]); else yy = gvy[p];
-          if(xx < start || xx > end) continue;     /* the draw's own x window */
+          /* ⚠ issue 0193, third instance of the same clip. Dropping every
+           * off-window sample also drops the two that own the segment SPANNING
+           * the view, so once the zoom is tighter than the sample spacing this
+           * built an EMPTY envelope and the highlight vanished off a trace that
+           * was still being drawn (draw_graph keeps those two -- ~8221). One
+           * neighbour each side is enough: the envelope is per screen column
+           * and the stroke bridges the columns between them. */
+          if(xx < start && !(p + 1 < ofs_end &&
+               (gr->logx ? mylog10(gvx[p + 1]) : gvx[p + 1]) >= start)) continue;
+          if(xx > end && !(p > ofs &&
+               (gr->logx ? mylog10(gvx[p - 1]) : gvx[p - 1]) <= end)) continue;
           sx = S_X(xx);
           sy = S_Y(yy);
           if(!(sx > -1e9 && sx < 1e9 && sy > -1e9 && sy < 1e9)) continue;
@@ -7460,8 +7569,16 @@ static int graph_marker_add_record(int i, int wave, int dataset, int point,
   my_free(_ALLOC_ID_, &a);
   set_modify(1);
   graph_marker_notify();
-  log_action("xschem graph_marker add_at %d %d %d %d%s\n",
-             i, wave, dataset, point, delta ? " -delta" : "");
+  /* ⚠ THE POSITION IS PART OF THE LINE (issue 0193). It used to be just
+   * (i, wave, dataset, point), because x/y were BY DEFINITION that sample's
+   * values and add_at re-derived them. They are interpolated now, so a replay
+   * that re-derived would snap the marker back onto the sample and land it
+   * somewhere the user never put it -- off-screen, at the zoom this matters at.
+   * Old logs without the two trailing numbers still replay: add_at falls back
+   * to the sample, which is exactly what those lines meant when they were
+   * written. */
+  log_action("xschem graph_marker add_at %d %d %d %d%s %.17g %.17g\n",
+             i, wave, dataset, point, delta ? " -delta" : "", x, y);
   return m.num;
 }
 
@@ -7508,20 +7625,34 @@ int graph_marker_create(int i, double px, double py, int delta)
     graph_marker_refuse("xschem: no trace to mark in this strip");
     return 0;
   }
-  return graph_marker_add_record(i, hit.wave, hit.dataset, hit.point, hit.x, hit.y, delta);
+  /* issue 0193: the POINT ON THE CURVE, which is what the diamond is sitting on
+   * -- issue 0188's promise ("add a marker at the point that the diamond cursor
+   * has snapped to") is only kept if the two read the same field. The record
+   * still carries a sample index as its anchor, the segment's left end. */
+  return graph_marker_add_record(i, hit.wave, hit.seg_dataset, hit.seg_point,
+                                 hit.seg_x, hit.seg_y, delta);
 }
 
-int graph_marker_create_at(int i, int wave, int dataset, int point, int delta)
+/* `have_xy` 0 = resolve the position from the sample, which is what every log
+ * line written before issue 0193 meant; 1 = place it at the given interpolated
+ * point, with (dataset, point) kept only as the anchor. */
+int graph_marker_create_at(int i, int wave, int dataset, int point, int delta,
+                           int have_xy, double xin, double yin)
 {
   double x = 0.0, y = 0.0;
 
   if(!xctx) return 0;
   if(i < 0 || i >= xctx->rects[GRIDLAYER]) return 0;
   if(!(xctx->rect[GRIDLAYER][i].flags & 1)) return 0;
+  /* resolved even when the caller supplies x/y: it is the ONE validation that
+   * the trace/dataset/point triple addresses anything at all, and a replay that
+   * silently created a marker on a nonexistent trace would be worse than one
+   * that refuses. */
   if(!graph_marker_sample(i, wave, dataset, point, &x, &y)) {
     graph_marker_refuse("xschem: cannot resolve that trace/point");
     return 0;
   }
+  if(have_xy) { x = xin; y = yin; }
   return graph_marker_add_record(i, wave, dataset, point, x, y, delta);
 }
 
@@ -7784,16 +7915,23 @@ int graph_marker_move(int num, double px, double py)
   /* a huge tolerance so a drag can never "lose" the marker; the two restrictions
    * keep it sliding along its OWN trace, within its own sweep */
   if(!graph_point_at(gi, px, py, 1e30, m.wave, m.dataset, &hit)) return 0;
-  m.dataset = hit.dataset;
-  m.point = hit.point;
-  m.x = hit.x;
-  m.y = hit.y;
+  /* issue 0193: a drag follows the CURVE, for the same reason the creation does
+   * -- the marker must stay under the pointer, and below the sample spacing the
+   * nearest sample is not even on screen. */
+  m.dataset = hit.seg_dataset;
+  m.point = hit.seg_point;
+  m.x = hit.seg_x;
+  m.y = hit.seg_y;
   if(!graph_marker_update(num, &m)) return 0;
-  log_action("xschem graph_marker anchor %d %d %d\n", num, m.dataset, m.point);
+  log_action("xschem graph_marker anchor %d %d %d %.17g %.17g\n",
+             num, m.dataset, m.point, m.x, m.y);
   return 1;
 }
 
-int graph_marker_anchor_at(int num, int dataset, int point)
+/* `have_xy` 0 = snap to the sample (every pre-0193 log line), 1 = the given
+ * interpolated position, with (dataset, point) kept as the anchor. */
+int graph_marker_anchor_at(int num, int dataset, int point, int have_xy,
+                           double xin, double yin)
 {
   GraphMarker m;
   int gi = -1;
@@ -7801,14 +7939,17 @@ int graph_marker_anchor_at(int num, int dataset, int point)
 
   if(!xctx || num <= 0) return 0;
   if(!graph_marker_find(num, &gi, &m)) return 0;
+  /* always resolved: it validates the triple even when x/y are supplied */
   if(!graph_marker_sample(gi, m.wave, dataset, point, &x, &y)) return 0;
+  if(have_xy) { x = xin; y = yin; }
   if(!GRAPH_MARKER_FINITE(x) || !GRAPH_MARKER_FINITE(y)) return 0;
   m.dataset = dataset;
   m.point = point;
   m.x = x;
   m.y = y;
   if(!graph_marker_update(num, &m)) return 0;
-  log_action("xschem graph_marker anchor %d %d %d\n", num, dataset, point);
+  log_action("xschem graph_marker anchor %d %d %d %.17g %.17g\n",
+             num, dataset, point, x, y);
   return 1;
 }
 
