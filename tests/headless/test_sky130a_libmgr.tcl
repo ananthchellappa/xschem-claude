@@ -44,9 +44,12 @@ foreach pair [library_list] {
   set libpath($nm) $pth
 }
 set names [lsort $names]
+# sky130_tests_ase joined the registry in 15bb25ef (the migrated ASE-L testbench
+# library); this expectation was left at the pre-15bb25ef set of 11.
 set expect [lsort {devices sky130_fd_pr sky130_stdcells sky130_tests mips_cpu stdcells \
+                   sky130_tests_ase \
                    analyses examples ngspice ngspice_verilog_cosim xschem_simulator}]
-check "library_list = exactly the 11 intended libs" $names $expect
+check "library_list = exactly the 12 intended libs" $names $expect
 
 # --- devices wired to the repo's already-migrated newsym copy (not duplicated) ---
 check_true "devices -> xschem_libs_newsym/devices" \
