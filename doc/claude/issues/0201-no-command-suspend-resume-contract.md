@@ -1,17 +1,21 @@
 # 0201 — a command interrupted to descend is never resumed: there is no suspend/resume contract
 
-Status: **OPEN**. Filed 2026-08-01, from the same user report as
-[0200](0200-descend-has-no-verb-noun-pick.md). Established by reading; the cross-context
-failure modes below are **reasoned, not measured** (they need a GUI run — see "What still
-has to be measured").
-Area: `src/ase_window.tcl` (`ase::ui::select_on_design` 1575, `sod_end` 1640,
-`sod_click`, `sod_prompt_pump`), `src/ase.tcl` (`direct_plot_for_current` 908),
-`src/cadence_style_rc:221` (the `Ctrl-4` binding), `src/xschem.tcl`
-(`hi_descend_current` 5809, `hi_descend_newwin` 5821), `src/actions.c`
-(`descend_schematic` 3507).
-Tests: none yet.
+Status: **FIXED** (2026-08-01), sabotage-verified three ways. Awaiting the human eyeball.
+Filed the same day, from the same user report as
+[0200](0200-descend-has-no-verb-noun-pick.md).
+Area: **`src/cmdmode.tcl` (new file — the whole mechanism)**, `src/ase_window.tcl` (new
+`sod_release` / `sod_suspend` / `sod_resume` + one `cmdmode::register` line),
+`src/xschem.tcl` (the source line; `hi_descend_pick_arm` / `hi_descend_pick_cancel` /
+`hi_descend_dialog` / `hi_descend_do` hooks), `src/callback.c` (`abort_operation` — ESC
+during an armed pick had no Tcl continuation at all), `utils/cadence_nav.tcl`
+(`return_one_level`'s window-hop arm), `src/Makefile.in` (install list).
+Tests: `tests/headless/test_cmdmode_0201.tcl` — `CR1a`..`CR3c3`, 37 checks, pure Tcl, no
+C / no Tk / no ASE, runs under bare `tclsh`. `tests/headless/test_cmdmode_descend_0201.tcl`
+— `CS1`..`DS6h`, 70 checks, DISPLAY-gated, a real seized canvas driven through
+`xschem callback`.
 Related: [0200](0200-descend-has-no-verb-noun-pick.md) (the pick half — this is unreachable
-without it), [0202](0202-canvas-gesture-seize-has-no-stack.md) (the mechanical blocker),
+without it), [0202](0202-canvas-gesture-seize-has-no-stack.md) (filed as the mechanical
+blocker; **it turned out not to be one** — see "0202 is not a blocker" below),
 0161 (which already made a descended pick name-correct), 0154 / 0168 (the ASE pick lineage).
 Specs: `doc/claude/specs/ase_l.md`, `doc/claude/specs/hi_descend.md`.
 
@@ -95,7 +99,7 @@ one queue is therefore *sound*, not a hazard.
 
 ## Decisions
 
-### D1 — the contract must be generic, not ASE glue ✔ (user, explicit constraint)
+### D1 — the contract must be generic, not ASE glue ✔ (user, explicit constraint) — DONE
 "Keep code changes as orthogonal as possible to any code that supports waveform viewer and
 graph elements." So: a small registry in a **new file** (e.g. `src/cmdmode.tcl`), a command
 registers `{suspend_cb resume_cb}` under a key, descend calls
@@ -103,62 +107,198 @@ registers `{suspend_cb resume_cb}` under a key, descend calls
 participation should be one `cmdmode::register` line next to `select_on_design`, and
 `sod_end` untouched.
 
-### D2 — resume where? → **in the descended context** ✔ (user, explicit)
-`resume_cb` therefore receives the *current* canvas path, and SOD's implementation is
-"re-seize on that canvas, restore prompt + pump, keep `queue`/`qcolors`/`count`".
+Built as `src/cmdmode.tcl`: `register` / `unregister` / `suspend_all` / `resume_all` /
+`rehome` / `is_suspended` / `pending`. Pure Tcl, no Tk (it is sourced unconditionally and
+must survive `--nogui`, where `winfo` is not even a command), no ASE vocabulary anywhere.
+ASE's entire share is two arms next to its own state plus one line:
 
-### D3 — suspend must not finish the command ✔
-`sod_end` plots. A suspend arm must stop short of `dp_finish`: restore bindings, cancel the
-pump, clear the prompt, **keep** `sod($key,*)`. That is a new proc alongside `sod_end`
-(shared teardown factored out), not a flag threaded through it.
+```tcl
+cmdmode::register ase_sod ase::ui::sod_suspend ase::ui::sod_resume
+```
 
-### D4 — descend cancelled / failed → resume in place — OPEN
-`hi_descend` returns 0 on a bad view, a non-subcircuit target (`actions.c:3552`), depth
-`CADMAXHIER` (3517), or a Cancel in the dialog. Every one of those must resume the
-suspended command on the *original* canvas. A `try`/`finally` shape, not a success path.
+### D2 — resume where? → **in the descended context** ✔ (user, explicit) — DONE
+`resume_cb` receives the canvas path, and `resume_all` reads it **itself, after the wrapped
+body**. That timing is the whole decision: `alloc_xschem_data` installs the child path as
+`current_win_path` inside `xschem schematic_in_new_window`, so a read taken any earlier —
+in `hi_descend`, or at suspend time — yields the window the user just left. SOD's
+implementation re-seizes on the given canvas, re-captures *that* canvas' predecessors, and
+keeps `queue`/`qcolors`/`count`. Measured: `DS6c` lands the mode on `.x1.drw`.
 
-### D5 — ESC during the pick → abort the pick, resume the command — OPEN
-Not "end the plot mode". Requires the ESC slot to be genuinely stacked
-([0202](0202-canvas-gesture-seize-has-no-stack.md)).
+### D3 — suspend must not finish the command ✔ — DONE
+The teardown half of `sod_end` (lines 1642-1648: restore the three bindings, cancel the
+pump, clear the prompt) is factored into `ase::ui::sod_release`. `sod_end` calls it and
+then finishes; `sod_suspend` calls it and stops. `sod_end`'s own behaviour is byte-for-byte
+what it was. The capture-then-`array unset` block that sits *between* teardown and finish
+is what made a flag-through-`sod_end` wrong: it is neither, and a suspend must skip it.
 
-### D6 — nesting depth — OPEN
-`select_on_design` already self-serialises: `if {[info exists sod(active)]} { ase::ui::sod_end $sod(active) }`
-(1577) — a second mode *ends* the first. One suspended command at a time is probably the
-right first cut; say so explicitly rather than leaving it to be discovered.
+### D4 — descend cancelled / failed → resume in place ✔ — DONE
+`hi_descend_do` and `hi_descend_dialog` each became a thin wrapper around a `_body` proc,
+with the resume after a `catch` — a finally, not a success path. One wrapper on
+`hi_descend_do` covers every failure below it, because they are all inner frames: bad view,
+non-subcircuit, `CADMAXHIER`, a cancelled Save-As or iteration prompt,
+`schematic_in_new_window` refusing, `load_schematic` failing. The wrapper on
+`hi_descend_dialog` covers Cancel, `<Escape>` on the dialog, the WM closing it, and a Tk
+error building it.
 
-### D7 — go_back — OPEN
-Symmetric case: the user descends, picks, then pops back with `Ctrl-E`
-(`go_back`, `actions.c:3764`). Does the mode follow her up? If resume is keyed on "the
-current canvas after the navigation", `go_back` needs the same wrapper as descend, or the
-mode is left resumed on a context that no longer exists.
+Split into wrapper + `_body` rather than reindenting 85 lines into a `catch` block: the
+diff stays off every line of a proc that lives in an actively-edited file.
 
-### D8 — who else registers — deliberately nobody, at first
-`addpin` / `addlabel` / `ciform` have the same shape (drop hooks + a shared ESC slot,
-`xschem.tcl:10704-10709`, `11072`, `create_instance.tcl:56-61`) and could adopt the
-contract later. Not in the first cut.
+### D5 — ESC during the pick → abort the pick, resume the command ✔ — DONE (needed C)
+There was **no Tcl hook at all**. `abort_operation()` drops the arm via its blanket
+`xctx->ui_state = 0` and calls nothing, so an ESC'd pick would have stranded the suspended
+command forever. New arm at the top of `abort_operation` (`callback.c`), shaped like the
+existing `DESEL_MODE` block and placed above it because that one returns:
 
-## What still has to be measured
+```c
+if((xctx->ui_state & MENUSTART) && (xctx->ui_state2 & MENUSTARTDESCEND)) {
+  xctx->ui_state &= ~MENUSTART;
+  xctx->ui_state2 &= ~MENUSTARTDESCEND;
+  if(has_x) statusmsg(" ", 1);
+  tcleval("hi_descend_pick_cancel");
+}
+```
 
-None of the following has been run; all of it is reachable with a GUI smoke under the test
-gate (`tests/headless/run_suites.sh`, never a bare loop):
+so ESC and the click-on-empty-space cancel share one Tcl terminal. Clearing
+`MENUSTARTDESCEND` is hygiene, not necessity — every arming site *assigns* `ui_state2`
+wholesale, so a stale bit cannot be misread as a live arm — but it keeps
+`xschem get ui_state2` an honest report, which `DS2f` asserts on.
 
-1. With Direct Plot armed, does `e` reach `hi_descend` today? (Reading says yes — SOD
-   seizes only Button-1/Release-1/Escape.)
-2. Does a `target=current` descend leave the seized bindings and the prompt pump intact?
-3. What exactly does the prompt pump do after a `new_window` descend — does it error on a
-   dead path, or silently re-assert on the parent?
-4. Does `dp_finish` behave if the queue spans two hierarchy levels? (0161 says the *names*
-   are right; the plotting side is untested for a mixed-level queue.)
+### D6 — nesting depth → **one suspended set at a time** ✔ — DONE
+`suspend_all` while already suspended is a no-op returning 0: everything is already
+released, there is nothing left to take. `resume_all` with nothing suspended is likewise a
+no-op. That latch is what makes the two-frame verb-noun descend honest — arm the pick, N
+event-loop turns pass, then the dialog and the descend run in a *different Tcl call frame*
+— because the several sites that must be able to resume can each call `resume_all`
+unconditionally and exactly the first to arrive wins.
 
-## Tests (proposed leg IDs)
+### D7 — go_back ✔ — DONE
+Two arms, and only one needed anything. `cadence::return_one_level`'s **in-place**
+`xschem go_back` does not change the canvas, and `ase::ui::sod_base_level` recomputes the
+hierarchy prefix per click rather than latching it at arm time (0161), so a mode simply
+stays correct across an in-place ascent. Its **window-hop** arm (`cadence::focus_window
+$parent`, issue 0053) does change canvas, and now calls `cmdmode::rehome` — a
+suspend+resume pair, not a pause, because the command was never interrupted.
+`cadence::return_to_top` loops through `return_one_level` and inherits it.
 
-Headless: **CR1** register/suspend/resume round trip on a stub command (no ASE, no Tk) —
-the contract's own unit test; **CR2** resume runs even when the wrapped operation throws.
-DISPLAY-gated: **CR3** Direct Plot armed → `e` → pick → descend → mode is live on the
-descended canvas with the queue preserved; **CR4** same with `target=new_window`, mode live
-on the *new* canvas, nothing left seized on the parent; **CR5** dialog Cancel → mode live on
-the original canvas, hierarchy unchanged; **CR6** ESC during the pick → pick aborted, mode
-still live, queue intact; **CR7** `go_back` after CR3.
+### D8 — who else registers — deliberately nobody, still
+`addpin` / `addlabel` / `ciform` have the same shape and could adopt the contract later.
+Unchanged by this fix; nothing in their behaviour moved.
+
+### D9 — abandoning an armed pick by arming a DIFFERENT verb — **OPEN, known gap**
+Armed pick, and instead of clicking or pressing ESC the user presses `m` / `c` / `r`. Those
+handlers do `xctx->ui_state2 = MENUSTARTMOVE;` — a wholesale **assignment** — which discards
+`MENUSTARTDESCEND` silently, with no Tcl continuation. The suspended command is then
+stranded: bindings down, queue unreachable until the user re-arms the mode (`Ctrl-4`, whose
+`select_on_design` self-serialises through `sod_end` and plots the stranded queue, so it is
+recoverable but ugly).
+
+Not fixed here on purpose. The clean fix is a `set_menu_start(sub)` helper in `callback.c`
+that every arming site routes through, notifying on displacement — ~15 call sites in the
+single hottest file of the `fluid-editing` branch, which is exactly the merge risk 0200 and
+0202 both went out of their way to avoid. Filed as a gap rather than smuggled in.
+
+## 0202 is not a blocker after all
+
+[0202](0202-canvas-gesture-seize-has-no-stack.md) was filed as this issue's *mechanical*
+blocker, on the reasoning that a descend pick would have to **nest** above ASE's live
+Button-1 seize, and the slots hold one predecessor each.
+
+The pick does not nest. `hi_descend_pick_arm` suspends **before** `xschem descend_pick`, so
+SOD has already handed `.drw` back by the time the pick is armed — the two owners are
+strictly sequential and each slot still only ever has one. 0202 remains a real latent
+hazard (nothing *enforces* LIFO, and `addpin`/`addlabel` still hand off by hardcoded
+sibling name) but it is not on this path. `CS3a`-`CS3c` assert the hand-back is
+string-identical, trailing `break` included, which is the invariant 0202 says the whole
+scheme rides on.
+
+The ordering has a second payoff nobody had written down. `clone_canvas_bindings`
+(`xschem.tcl`) copies `.drw`'s bindings verbatim onto every new canvas at creation
+(`xinit.c:2036`, `2252`). Had the seize still been up when a `new_window` descend ran, the
+child would have inherited a **copy** of it with the parent's key already substituted:
+clicks there would queue, but the child's ESC would call a `sod_end` that restores bindings
+on the *parent* only, leaving the child permanently seized with dead scripts. Suspending
+first means the clone always copies pristine bindings. `DS6d` is the leg that pins this.
+
+## Measured
+
+The four items this issue previously listed as unmeasured, now run:
+
+1. **With Direct Plot armed, does `e` reach `hi_descend`?** **Yes** — and this needed a
+   second pass to answer honestly. `DS1a` only shows that *calling* `hi_descend` works with
+   the mode live; it enters the chain below the keyboard and proves nothing about the key.
+   `DS7` closes it with real Tk events: `event generate .drw <Key-e>` arms the pick and
+   suspends the command, then a real `<ButtonPress-1>`/`<ButtonRelease-1>` on the instance
+   resolves it. SOD seizes only Button-1/Release-1/Escape, and `cadence_style_rc` binds
+   only `<Control-Key-e>` / `<Alt-Key-e>`, so the plain-`e` binding `set_bindings` installs
+   (`bind $topwin <Key-e>`, default `hi_descend_key e`) is untouched by either.
+
+   **One real limitation, pre-existing and now pinned by `DS7e`:** that binding is on the
+   **canvas**, so `e` only fires while the canvas holds keyboard focus. `select_on_design`
+   does `catch {focus $cv}` at arm time for exactly this reason, so Ctrl-4 leaves focus in
+   the right place — but clicking away into the ASE window or the CIW afterwards parks the
+   focus elsewhere and `e` then does nothing at all. Not introduced here, not fixed here.
+2. **Does a `target=current` descend leave the seize intact?** Moot, and better than the
+   question assumed: the seize is deliberately taken down and put back (`DS5b`-`DS5h`), so
+   the answer does not depend on `descend_schematic` happening not to touch Tk state.
+3. **What does the prompt pump do after a `new_window` descend?** It no longer gets the
+   chance to re-assert on a stale canvas: `sod_release` cancels it at suspend and
+   `sod_resume` restarts it against the new canvas (`DS6c`).
+4. **Does `dp_finish` behave with a queue spanning two hierarchy levels?** **Still
+   unmeasured.** `CS9b` / `DS5i` prove the queue crosses a descend *unshortened* and
+   reaches `dp_finish` whole, but `dp_finish` is stubbed in that test — the plotting side
+   of a genuinely mixed-level queue needs simulation results and is untouched by this fix.
+
+## Tests
+
+**`tests/headless/test_cmdmode_0201.tcl`** — 37 checks, the contract on its own against
+stub modes. No C, no schematic, no canvas, no Tk, no ASE: it runs under bare `tclsh`, which
+is the executable proof of D1. `CR1a`-`CR1c3` registration; `CR1d`-`CR1i` the round trip
+(every registered mode is *asked*, only the live ones are recorded, resume is LIFO and
+carries the canvas); `CR1j`-`CR1l2` the D6 latch; `CR1m`-`CR1n2` the default canvas;
+`CR2a`-`CR2c2` a **throwing suspend arm** does not strand the modes after it and is *not*
+queued for resume (a half-released seize stays down); `CR2d`-`CR2e2` a throwing resume arm
+does not stop the ones after it; `CR2f` a mode unregistered mid-flight is skipped;
+`CR3a`-`CR3c3` `rehome`, including that it is a no-op while a suspend is in flight.
+
+**`tests/headless/test_cmdmode_descend_0201.tcl`** — 70 checks, DISPLAY-gated, a real
+`select_on_design` seize on a real canvas driven through `xschem callback`. `do_raise 0`
+skips `ase::ui::design_window`, so no ASE session window has to exist; `dp_finish` is
+stubbed so a suspend that wrongly *plotted* is visible and so the real end needs no
+simulation. `CS1`-`CS3d` the seize and its verbatim hand-back; `CS4`-`CS5b` the records
+survive; **`CS6`** the point — a suspend does not plot; `CS7`-`CS8c` resume re-seizes with
+the queue intact; `CS9` ending after a full round trip still plots the *whole* original
+queue. Then `DS1`-`DS6h` against the descend: **`DS1b`** the seize lets go so the armed
+pick can actually receive its click, `DS2` ESC, `DS3` click on empty space, `DS4` click on
+the instance with the dialog bailing, `DS5` a real `target=current` descend, `DS6` the hard
+case — `target=new_window`.
+
+**Sabotage-verified, three ways.**
+
+| sabotage | legs that go red |
+|---|---|
+| `sod_suspend` calls `sod_end` (i.e. a suspend that *finishes*) | 27, incl. `CS6`, `CS4a`-`CS4d`, `CS8a` |
+| drop `cmdmode::suspend_all` from `hi_descend_pick_arm` | `DS1b`, `DS1c`, `DS3a` — exactly the "the pick can receive its click" claim |
+| `if(0 && ...)` on the new `abort_operation` arm | `DS2b`, `DS2c`, `DS2f` — exactly the ESC hole |
+
+The first sabotage also exposed a hole in the test itself: legs read `sod()` directly and
+threw on the missing records, aborting the file before its `RESULT:` banner and turning a
+precise red into an unreadable `NORESULT`. Every `sod()` reader is now absence-tolerant.
+
+Regressions, all still green: `test_cmdmode_0201`, `test_hi_descend`,
+`test_ase_hier_pick_0161`, `test_ase_bus_bits_0159`, `test_ase_locked_wire_pick_0160`,
+`test_ase_unnamed_net`, `test_ase_plot` (headless); `test_verb_noun_descend_0200`,
+`test_ase_dialogs` (DISPLAY-gated, under the test gate).
+
+## Not done here (deliberately)
+
+- **D9**, above — an armed pick abandoned by arming a different verb.
+- **The bypass descend entry points.** `callback.c` `case 'e'` / context-menu cases 12 and
+  22, `xschem descend`, `xschem descend_symbol`, `cadence::descend_into_inst` all reach
+  `descend_schematic()` without passing through any `hi_descend*` Tcl proc, so they neither
+  suspend nor resume. Hooking them means wrapping `descend_schematic()` / `go_back()` in C
+  rather than in Tcl. None of them is the reported user path.
+- **A mixed-level queue through the real `dp_finish`** — item 4 above.
+- **`addpin` / `addlabel` / `ciform` adopting the contract** — D8, unchanged.
 
 ## Cross-references
 

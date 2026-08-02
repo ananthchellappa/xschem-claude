@@ -262,6 +262,25 @@ void abort_operation(int deselect)
   dbg(1, "abort_operation(): Escape: ui_state=%d, last_command=%d\n", xctx->ui_state, xctx->last_command);
   xctx->constr_mv=0;
 
+  /* ESC while a verb-noun descend pick is armed (doc/claude/issues/0200-...). The blanket
+   * `ui_state = 0` at the bottom of this function already drops the arm, but it does so
+   * SILENTLY -- and since 0201 the Tcl side has, by then, SUSPENDED whatever command mode
+   * was interrupted to make the pick possible (ASE Direct Plot's Button-1 seize, which
+   * had to let go before an armed pick could ever see a click). With no continuation that
+   * command stays suspended forever: its bindings never come back and its queued traces
+   * are unreachable. Route ESC to the same terminal the click-on-empty-space cancel uses.
+   * Clearing MENUSTARTDESCEND is hygiene rather than necessity -- every arming site
+   * ASSIGNS ui_state2 wholesale, so a stale bit cannot be misread as a live arm -- but it
+   * keeps `xschem get ui_state2` an honest report of what is armed, which is what the
+   * 0200/0201 tests assert on.
+   * Placed here, above the DESEL_MODE early return, because that arm returns. */
+  if((xctx->ui_state & MENUSTART) && (xctx->ui_state2 & MENUSTARTDESCEND)) {
+    xctx->ui_state &= ~MENUSTART;
+    xctx->ui_state2 &= ~MENUSTARTDESCEND;
+    if(has_x) statusmsg(" ", 1);
+    tcleval("hi_descend_pick_cancel");
+  }
+
   /* leaving interactive net-(un)highlight mode: clear its persistent statusbar prompt
    * (abort_operation does not otherwise refresh the statusbar) */
   if(xctx->ui_state & (NET_HILIGHT | NET_UNHILIGHT))

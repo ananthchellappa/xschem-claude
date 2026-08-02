@@ -1637,15 +1637,26 @@ proc ase::ui::select_on_design {key flavor {mode outputs} {do_raise 1}} {
 # SKIPS the ASE-window raise and hands the queued trace expressions to
 # dp_finish, which raises/opens the VIEWER instead. Safe to call when no
 # mode is active for `key` (early return).
-proc ase::ui::sod_end {key} {
-  variable sod; variable wins
-  if {![info exists sod($key,canvas)]} { return }
+# Shared teardown: hand the three seized canvas bindings back verbatim, stop the prompt
+# pump, clear the status-line prompt. Deliberately does NOT touch the sod($key,*) records
+# and does NOT finish the command — both sod_end (which then finishes) and sod_suspend
+# (which must not) go through here. Returns 0 if no mode was live for `key`.
+# doc/claude/issues/0201-no-command-suspend-resume-contract.md D3.
+proc ase::ui::sod_release {key} {
+  variable sod
+  if {![info exists sod($key,canvas)]} { return 0 }
   set cv $sod($key,canvas)
   catch {bind $cv <ButtonPress-1>   $sod($key,prevpress)}
   catch {bind $cv <ButtonRelease-1> $sod($key,prevrel)}
   catch {bind $cv <Key-Escape>      $sod($key,prevesc)}
   if {[info exists sod($key,pump)]} { catch {after cancel $sod($key,pump)} }
   ase::ui::sod_prompt_clear $cv
+  return 1
+}
+
+proc ase::ui::sod_end {key} {
+  variable sod; variable wins
+  if {![ase::ui::sod_release $key]} { return }
   set n 0
   if {[info exists sod($key,count)]} { set n $sod($key,count) }
   # item 13 (D1): capture mode + queue BEFORE the records are wiped
@@ -1671,6 +1682,74 @@ proc ase::ui::sod_end {key} {
     }
   }
 }
+
+# --- cmdmode participation (issue 0201) ---------------------------------------------
+#
+# ASE's ENTIRE share of the suspend/resume contract: two arms and one register line. The
+# mechanism is in src/cmdmode.tcl and knows nothing about sessions, traces, waveforms or
+# graph elements (D1, the user's explicit constraint). sod_end is untouched.
+
+# Suspend arm. Release the canvas, KEEP the records: queue, qcolors, count, flavor, mode
+# and prompt all survive. This is the whole difference from sod_end, which wipes them and
+# — in plot flavour — PLOTS what it wiped. Returns 1 if a live mode was released.
+proc ase::ui::sod_suspend {} {
+  variable sod
+  if {![info exists sod(active)]} { return 0 }
+  set key $sod(active)
+  if {![ase::ui::sod_release $key]} { return 0 }
+  # sod(active) stays SET while suspended, on purpose: select_on_design's self-serialise
+  # (`if {[info exists sod(active)]} { sod_end $sod(active) }`) must still find this mode
+  # and end it properly if the user starts a fresh one instead of coming back, and
+  # sod_click's own gate is sod($key,flavor), not this. The prompt pump does not restart
+  # — sod_release cancelled its pending `after` and only sod_resume re-arms it.
+  set sod($key,suspended) 1
+  return 1
+}
+
+# Resume arm. Bring the paused mode back up on `canvas` — which after a new-window /
+# new-tab descend is NOT the canvas it was seized on (D2). Deliberately NOT a second
+# select_on_design call: that re-initialises queue/qcolors and resets count to 0, i.e. it
+# would silently discard every trace the user picked before the interruption.
+#
+# The three `bind` reads below re-capture the predecessors from the canvas we are landing
+# on, so ESC/Button-1 are handed back correctly on THAT canvas when the mode finally ends
+# — a new canvas has its own binding set (set_bindings + clone_canvas_bindings), and the
+# predecessors latched on the parent do not describe it.
+proc ase::ui::sod_resume {{canvas {}}} {
+  variable sod
+  if {![info exists sod(active)]} { return 0 }
+  set key $sod(active)
+  if {![info exists sod($key,suspended)]} { return 0 }
+  if {$canvas eq {} || ![winfo exists $canvas]} {
+    set canvas {}
+    catch {set canvas $sod($key,canvas)}
+  }
+  if {$canvas eq {} || ![winfo exists $canvas]} {
+    # Nowhere left to come back to (the window was closed while suspended). Drop the
+    # mode rather than leave an unreachable record behind; do not plot a queue the user
+    # can no longer see or extend.
+    catch {ciw_echo "ase: the design window the pick mode was on is gone — mode dropped" error}
+    array unset sod $key,*
+    unset -nocomplain sod(active)
+    return 0
+  }
+  set sod($key,canvas)    $canvas
+  set sod($key,prevpress) [bind $canvas <ButtonPress-1>]
+  set sod($key,prevrel)   [bind $canvas <ButtonRelease-1>]
+  set sod($key,prevesc)   [bind $canvas <Key-Escape>]
+  bind $canvas <ButtonPress-1>   "[list ase::ui::sod_click $key]; break"
+  bind $canvas <ButtonRelease-1> {break}
+  bind $canvas <Key-Escape>      "[list ase::ui::sod_end $key]; break"
+  catch {focus $canvas}
+  unset -nocomplain sod($key,suspended)
+  if {[info exists sod($key,prompt)]} {
+    ase::ui::sod_prompt_set $canvas $sod($key,prompt)
+    ase::ui::sod_prompt_pump $key
+  }
+  return 1
+}
+
+cmdmode::register ase_sod ase::ui::sod_suspend ase::ui::sod_resume
 
 # The net under a mode click, as the RAW schematic token (issue 0154).
 #
